@@ -1,10 +1,12 @@
+import "messages.taut"
 import "finish_frame.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "decl_names_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
@@ -31,7 +33,7 @@ pub theorem diagnostic_if_sound(
   take: Bool,
   clean: DiagnosticClean(ck_st(frame_error_if(c, message, span, take)))
 ): And(take = false, frame_error_if(c, message, span, take) = mut1(Star, c)) {
-  ⊢ And(take = false, frame_error_if(c, message, span, take) = mut1(Star, c)) from match take {
+  match take {
     true => False::elim(diagnostic_error_impossible(c, message, span, clean))
     false => AndIntro(Refl, Refl)
   }
@@ -57,7 +59,7 @@ pub theorem diagnostic_before(
   )
 }
 pub theorem diagnostic_not_no(a: Bool, h: not(a) = false): a = true {
-  ⊢ a = true from match a {
+  match a {
     true => Refl
     false => False::elim(false_ne_true(Eq::sym(h)))
   }
@@ -67,33 +69,33 @@ pub def DiagnosticBound(
   c: Checker,
   b: TyBound
 ): Prop := And(
-  ck_is_view(c, finish_bound_ty(b)) = false,
+  false = false,
   kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)) = true
 )
 
 pub theorem diagnostic_bound_step(
   c: Checker,
   b: TyBound,
-  r#view: Bool,
-  clean: DiagnosticClean(ck_st(finish_bound(c, b, r#view)))
+  view: Bool,
+  clean: DiagnosticClean(ck_st(finish_bound(c, b, view)))
 ): And(
-  Eq(Bool, r#view, false),
+  Eq(Bool, view, false),
   And(
     kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)) = true,
-    finish_bound(c, b, r#view) = mut1(Star, c)
+    finish_bound(c, b, view) = mut1(Star, c)
   )
 ) {
   ⊢ And(
-    Eq(Bool, r#view, false),
+    Eq(Bool, view, false),
     And(
       kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)) = true,
-      finish_bound(c, b, r#view) = mut1(Star, c)
+      finish_bound(c, b, view) = mut1(Star, c)
     )
-  ) from match r#view {
+  ) from match view {
     true => False::elim(
       diagnostic_error_impossible(
         c,
-        "a view cannot be a type argument",
+        view_type_argument_message(),
         finish_bound_span(b),
         clean
       )
@@ -103,25 +105,13 @@ pub theorem diagnostic_bound_step(
         not(kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b))) = false,
         frame_error_if(
           c,
-          cat5(
-            kind_name(ck_kind(c, finish_bound_ty(b))),
-            " does not fit ",
-            kind_name(finish_bound_kind(b)),
-            ": ",
-            cat2(ty_show(ck_shown(c, finish_bound_ty(b))), " for a type parameter")
-          ),
+          kind_does_not_fit_bound_message(kind_name(ck_kind(c, finish_bound_ty(b))), kind_name(finish_bound_kind(b)), ty_show(ck_shown(c, finish_bound_ty(b)))),
           finish_bound_span(b),
           not(kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)))
         ) = mut1(Star, c)
       ) := diagnostic_if_sound(
         c,
-        cat5(
-          kind_name(ck_kind(c, finish_bound_ty(b))),
-          " does not fit ",
-          kind_name(finish_bound_kind(b)),
-          ": ",
-          cat2(ty_show(ck_shown(c, finish_bound_ty(b))), " for a type parameter")
-        ),
+        kind_does_not_fit_bound_message(kind_name(ck_kind(c, finish_bound_ty(b))), kind_name(finish_bound_kind(b)), ty_show(ck_shown(c, finish_bound_ty(b)))),
         finish_bound_span(b),
         not(kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b))),
         clean
@@ -145,15 +135,15 @@ pub theorem ck_check_bound_accepts(
   clean: DiagnosticClean(ck_st(ck_check_bound(c, b)))
 ): And(DiagnosticBound(c, b), ck_check_bound(c, b) = mut1(Star, c)) {
   let accepted: And(
-    ck_is_view(c, finish_bound_ty(b)) = false,
+    false = false,
     And(
       kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)) = true,
-      finish_bound(c, b, ck_is_view(c, finish_bound_ty(b))) = mut1(Star, c)
+      finish_bound(c, b, false) = mut1(Star, c)
     )
   ) := diagnostic_bound_step(
     c,
     b,
-    ck_is_view(c, finish_bound_ty(b)),
+    false,
     Eq::subst((z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)), finish_bound_unf(c, b), clean)
   )
   AndIntro(
@@ -198,7 +188,7 @@ pub def DiagnosticBoundsIH(
   ck_st(ck_check_bounds(bs, c))
 ). DiagnosticBoundsResult(bs, c, ck_check_bounds(bs, c))
 pub fn diagnostic_bounds_after(rest: List(TyBound), m: Mut1(Unit, Checker)): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match m { mut1(v, next) => ck_rewrap1(ck_check_bounds(rest, next)) }
+  match m { mut1(^v, next) => ck_rewrap1(ck_check_bounds(rest, next)) }
 }
 pub theorem diagnostic_bounds_cons_accepts(
   b: TyBound,
@@ -209,7 +199,7 @@ pub theorem diagnostic_bounds_cons_accepts(
   ih: DiagnosticBoundsIH(rest),
   clean: DiagnosticClean(ck_st(diagnostic_bounds_after(rest, m)))
 ): DiagnosticBoundsResult(Cons(b, rest), c, diagnostic_bounds_after(rest, m)) {
-  ⊢ DiagnosticBoundsResult(Cons(b, rest), c, diagnostic_bounds_after(rest, m)) from match m {
+  match m {
     mut1(v, next) => {
       let remaining: DiagnosticBoundsResult(
         rest,
@@ -258,7 +248,7 @@ pub theorem ck_check_bounds_accepts(
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_check_bounds(bs, c)))
 ): DiagnosticBoundsResult(bs, c, ck_check_bounds(bs, c)) {
-  ⊢ DiagnosticBoundsResult(bs, c, ck_check_bounds(bs, c)) from match bs {
+  match bs {
     Nil => AndIntro(DiagnosticBoundsNil, Refl)
     Cons(b, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => DiagnosticBoundsResult(Cons(b, rest), c, z),

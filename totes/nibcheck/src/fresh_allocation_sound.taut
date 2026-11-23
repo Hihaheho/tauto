@@ -1,12 +1,13 @@
 import "local_parameters_allocation.taut"
-import std::Base
-import std::Nat
-import std::Text
+import std::base
+import std::nat
+import std::text
 import "allocation_advance.taut"
 import "allocation_result.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "pattern_frame.taut"
 import "ty.taut"
 import "type_allocation.taut"
@@ -46,7 +47,7 @@ pub theorem allocation_list_start(
   m
 ) { AndIntro(allocation_advance_start(c, next, m, advanced, And::left(tail)), And::right(tail)) }
 pub fn allocation_list_cons(head: Ty, m: Mut1(List(Ty), Checker)): Mut1(List(Ty), Checker) {
-  ⊢ Mut1(List(Ty), Checker) from match m { mut1(tail, next) => mut1(Cons(head, tail), next) }
+  match m { mut1(tail, next) => mut1(Cons(head, tail), next) }
 }
 pub theorem fresh_alloc_list_cons(
   c: Checker,
@@ -55,7 +56,7 @@ pub theorem fresh_alloc_list_cons(
   bounded: TypeAllocated(ck_next_of(c), head),
   tail: TypeListAllocation(c, m)
 ): TypeListAllocation(c, allocation_list_cons(head, m)) {
-  ⊢ TypeListAllocation(c, allocation_list_cons(head, m)) from match m {
+  match m {
     mut1(types, next) => AndIntro(
       And::left(tail),
       AndIntro(
@@ -76,7 +77,7 @@ pub theorem ck_fresh_each_allocation(
   c: Checker,
   state: CheckerAllocation(c)
 ): TypeListAllocation(c, ck_fresh_each(gs, c)) {
-  ⊢ TypeListAllocation(c, ck_fresh_each(gs, c)) from match gs {
+  match gs {
     Nil => AndIntro(allocation_advance_return(c, Nil, state), Trivial)
     Cons(name, rest) => Eq::subst(
       (result: Mut1(List(Ty), Checker)) => TypeListAllocation(c, result),

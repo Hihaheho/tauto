@@ -3,7 +3,7 @@ description = "A caller's expression that a macro places inside a call of its ow
 entry = "src/main.taut"
 files."Tauto.eure" = 'package { name = "embedded-mismatch" version = "0.1.0" }'
 files."src/syntax-defs.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(caller, ```par
 {{par:caller_expression}}```) => struct Root, fn parse
 pub fn count(xs: List(i64)): i64 {
@@ -12,18 +12,20 @@ pub fn count(xs: List(i64)): i64 {
     Cons(x, rest) => 1 + count(rest)
   }
 }
-macro fn one(e: caller::Root): SynExpr {
+pub macro fn one(e: caller::Root): SynExpr {
   let body := e.tauto_expr
   quote { count(Cons($body, Nil)) }
 }
 ````
 files."src/main.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 import "syntax-defs.taut"
-let q := "text"
-let n := one!(```caller
-  ($q)
-```)
+perform main(() => {
+  let q := "text"
+  let n := one!(```caller
+    ($q)
+  ```)
+})
 ````
 diagnostics[] {
   stage = "types"
@@ -53,7 +55,7 @@ diagnostics[] {
 entry = "src/main.taut"
 files."Tauto.eure" = 'package { name = "embedded-product-mismatch" version = "0.1.0" }'
 files."src/syntax-defs.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(caller, ```par
 {{par:caller_expression}}```) => struct Root, fn parse
 pub fn count(xs: List(Text × i64)): i64 {
@@ -62,18 +64,20 @@ pub fn count(xs: List(Text × i64)): i64 {
     Cons(x, rest) => 1 + count(rest)
   }
 }
-macro fn field(e: caller::Root): SynExpr {
+pub macro fn field(e: caller::Root): SynExpr {
   let body := e.tauto_expr
   quote { count(Cons(#("key", $body), Nil)) }
 }
 ````
 files."src/main.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 import "syntax-defs.taut"
-let q := "text"
-let n := field!(```caller
-  ($q)
-```)
+perform main(() => {
+  let q := "text"
+  let n := field!(```caller
+    ($q)
+  ```)
+})
 ````
 diagnostics[] {
   stage = "types"

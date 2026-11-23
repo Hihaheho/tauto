@@ -1,9 +1,9 @@
 import "signature_where_sound.taut"
-import std::Base
-import std::List
-import std::Map
-import std::Row
-import std::Text
+import std::base
+import std::list
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "diagnostic_sound.taut"
 import "rules_where.taut"
@@ -11,6 +11,7 @@ import "signature_frame.taut"
 import "signature_header_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "where_class_sound.taut"
 import "../../surface/src/surface.taut"
@@ -18,7 +19,7 @@ import "../../surface/src/surface.taut"
 pub theorem where_reverse_member<A: Type, item: A, items: List(
   A
 )>(present: Mem(A, item, items)): Mem(A, item, List::reverse(items)) {
-  ⊢ Mem(A, item, List::reverse(items)) from match present {
+  match present {
     MemHere(rest) => Eq::subst(
       (xs: List(A)) => Mem(A, item, xs),
       Eq::sym(List::reverse_cons(item, rest)),
@@ -32,18 +33,18 @@ pub theorem where_reverse_member<A: Type, item: A, items: List(
   }
 }
 pub theorem where_generic_reverse<generics: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), name: Text>(known: WhereGeneric(generics, name)): WhereGeneric(List::reverse(generics), name) {
-  ⊢ WhereGeneric(List::reverse(generics), name) from match known {
+  match known {
     Mk(kind, present) => WhereGeneric::Mk(kind, where_reverse_member(present))
   }
 }
 pub theorem where_generic_term_reverse<generics: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), source: SurfaceTerm, name: Text>(
   known: WhereGenericTerm(generics, source, name)
 ): WhereGenericTerm(List::reverse(generics), source, name) {
-  ⊢ WhereGenericTerm(List::reverse(generics), source, name) from match known {
+  match known {
     Mk(ctor_ast_occurrence, spelling, start, end, declared) => WhereGenericTerm::Mk(
       spelling,
       start,
@@ -56,15 +57,15 @@ pub theorem where_constraint_reverse<classes: Ordmap(
   Text,
   ClassInfo
 ), generics: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), source: SurfaceConstraint, previous: List(
-  Pair(Text, Text)
+  (Text × Text)
 ), final: List(
-  Pair(Text, Text)
+  (Text × Text)
 )>(
   known: WhereConstraint(classes, generics, source, previous, final)
 ): WhereConstraint(classes, List::reverse(generics), source, previous, final) {
-  ⊢ WhereConstraint(classes, List::reverse(generics), source, previous, final) from match known {
+  match known {
     Mk(name, r#class, Generic, Fresh) => WhereConstraint::Mk(
       name,
       r#class,
@@ -77,17 +78,17 @@ pub theorem where_constraints_reverse<classes: Ordmap(
   Text,
   ClassInfo
 ), generics: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), sources: List(
   SurfaceConstraint
 ), previous: List(
-  Pair(Text, Text)
+  (Text × Text)
 ), final: List(
-  Pair(Text, Text)
+  (Text × Text)
 )>(
   known: WhereConstraints(classes, generics, sources, previous, final)
 ): WhereConstraints(classes, List::reverse(generics), sources, previous, final) {
-  ⊢ WhereConstraints(classes, List::reverse(generics), sources, previous, final) from match known {
+  match known {
     WhereConstraintsNil(predicates) => WhereConstraintsNil(predicates)
     WhereConstraintsCons(source, rest, initial, next, final_preds, head, tail) => WhereConstraintsCons(
       source,
@@ -104,15 +105,15 @@ pub theorem where_clauses_reverse<classes: Ordmap(
   Text,
   ClassInfo
 ), generics: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), sources: List(
   SurfaceConstraint
 ), predicates: List(
-  Pair(Text, Text)
+  (Text × Text)
 )>(
   known: WhereClauses(classes, generics, sources, predicates)
 ): WhereClauses(classes, List::reverse(generics), sources, predicates) {
-  ⊢ WhereClauses(classes, List::reverse(generics), sources, predicates) from match known {
+  match known {
     Mk(Reversed, derived, ordered) => WhereClauses::Mk(
       Reversed,
       where_constraints_reverse(derived),
@@ -120,10 +121,10 @@ pub theorem where_clauses_reverse<classes: Ordmap(
     )
   }
 }
-pub fn signature_scheme_generics(scheme: Scheme): List(Pair(Text, Kind)) { scheme.generics }
+pub fn signature_scheme_generics(scheme: Scheme): List(Text × Kind) { scheme.generics }
 pub fn signature_header_generics(
-  header: Pair(List(Pair(Text, Kind)), List(Pair(Text, Kind)))
-): List(Pair(Text, Kind)) { header.fst }
+  header: (List(Text × Kind) × List(Text × Kind))
+): List(Text × Kind) { header.fst }
 pub theorem ck_signature_where_declared(
   c: Checker,
   source: SurfaceFn,
@@ -135,7 +136,7 @@ pub theorem ck_signature_where_declared(
   signature_scheme_predicates(ck_val(ck_signature(c, source)))
 ) {
   Eq::subst(
-    (generics: List(Pair(Text, Kind))) => WhereClauses(
+    (generics: List(Text × Kind)) => WhereClauses(
       where_classes(ck_st(ck_signature(c, source))),
       generics,
       signature_wheres(source),

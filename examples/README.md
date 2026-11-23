@@ -12,7 +12,7 @@ Run these from the repository root; `tauto` is `cargo run -p tauto-cli --bin tau
 | `streams.taut` | A generator (`emit`) and a lazy stream whose items come from an effect (`fetch`), as effects instead of Future and Stream types | `tauto run examples/streams.taut` |
 | `handler-proofs.taut` | Theorems about functions with effects and the handlers that run them, as written: a counter kept in a `var` (by induction), a handler that resumes twice, out-of-order completions | `tauto check examples/handler-proofs.taut` |
 | `ownership.taut` | Moves, borrows, a view function, and writing through a borrow | `tauto run --check-ownership examples/ownership.taut` |
-| `lean-migration/Simp.taut` | What to write where a Lean 4 proof uses `simp`: `Refl`, `match`, `rewrite!`, `calc`, `nat_norm!` ([guide](../docs/guide/from-lean.md)) | `tauto check examples/lean-migration/Simp.taut` |
+| `lean-migration/simp.taut` | What to write where a Lean 4 proof uses `simp`: `Refl`, `match`, `rewrite!`, `calc`, `nat_norm!` ([guide](../docs/guide/from-lean.md)) | `tauto check examples/lean-migration/simp.taut` |
 
 `handlers.taut`, `effects.taut` and `ownership.taut` also run through the Rust backend
 (`tauto run --backend rust FILE`) and print the same lines; `crates/tauto-cli/tests/examples.rs`
@@ -25,7 +25,7 @@ implementation in `src/`. `tauto check` checks those sources; `tauto run --tote 
 program. Axiom-free checking is covered by `cases/check/verified-examples.eure` and
 `cases/check/effect-proofs.eure` and `cases/check/stack-check.eure`.
 
-- `sort/`: insertion sort for **any type with an order** (`Ord`, `std/prelude/Ord.taut`), proved ordered
+- `sort/`: insertion sort for **any type with an order** (`Ord`, `std/builtin/ord.taut`), proved ordered
   and a rearrangement. `main.taut` sorts numbers and words with the same `sort`.
 - `bst/`: a binary search tree (a set) for any `Ord` keys, proved ordered and a set.
 - `compiler/`: arithmetic to a stack machine, proved correct.
@@ -36,13 +36,13 @@ program. Axiom-free checking is covered by `cases/check/verified-examples.eure` 
 - `typed-lang/`: a small typed expression language. `inductive_syntax!` makes the parser and tree from a grammar, `mode!` makes the type checker from the typing rules (sound, complete, unique), and the type safety of the evaluator is proved by hand. See its Japanese README.
 - `bounded-batch/`: a queue snapshot split into a bounded batch and the remaining jobs, with
   proofs of order/duplicate preservation and size, source-bundle replay, and four-backend comparison.
-- `certified-state/`: state transitions with `std/State.taut`; each command is proved to keep the
+- `certified-state/`: state transitions with `std/state.taut`; each command is proved to keep the
   invariant, and the program writes the checked transition's result into a mutable cell.
 - `wf/`: functions by well-founded recursion (`decreasing_by`), with proofs from their unfolding equations.
-- `fixed-width/`: steps on `U8` and `I32` from `std/UInt.taut` and `std/SInt.taut`, proved in the
+- `fixed-width/`: steps on `UInt(8)` and `SInt(32)` from `std/uint.taut` and `std/sint.taut`, proved in the
   kernel and run on Nib's fixed-width integers.
 - `float/` and `float32/`: `Float` and `Float32` code whose theorems the kernel checks by
-  computing with `std/Float.taut` and `std/Float32.taut`.
+  computing with `std/float.taut` and `std/float32.taut`.
 
 `sort/` and `bst/` are where to see type classes: `where Ord(A)` on a function, `Ord::compare` as
 its one comparison, and the laws of `Ord` (`equal_iff`, `swap`, `trans`) as the only facts the

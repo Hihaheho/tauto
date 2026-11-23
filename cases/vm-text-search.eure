@@ -1,0 +1,43 @@
+// A search over a long list takes time in proportion to its length on the
+// machine too. `find_from` reads `hay` again after matching it, so the
+// match borrows it and binds each tail by `&`; when the machine kept such a
+// binding as a borrow of a part of the list, each one named a path one step
+// longer than the last, and the 20000 items below took minutes instead of
+// seconds (the runner stops a run after 120 seconds). This is the shape of
+// `Text::find` in `std/text_ops.taut`.
+@ cases.a-long-list-is-searched-in-linear-time
+source = ```tauto
+fn starts_with(b: List(u64), p: List(u64)): Bool {
+  match b {
+    Nil => match p {
+      Nil => true
+      Cons(y, ys) => false
+    }
+    Cons(x, xs) => match p {
+      Nil => true
+      Cons(y, ys) => x == y && starts_with(xs, ys)
+    }
+  }
+}
+
+fn find_from(hay: List(u64), needle: List(u64), i: u64): u64 ! {overflow} {
+  match hay {
+    Nil => i
+    Cons(x, xs) => match starts_with(hay, needle) {
+      true => i
+      false => find_from(xs, needle, i + 1)
+    }
+  }
+}
+
+fn fill(n: u64, acc: List(u64)): List(u64) ! {overflow} {
+  if n == 0 { acc } else { fill(n - 1, Cons(97, acc)) }
+}
+
+fn at(hay: List(u64), needle: List(u64)): u64 ! {overflow} {
+  find_from(hay, needle, 0)
+}
+
+show(&at(fill(20000, Cons(88, Nil)), Cons(88, Nil)))
+```
+stdout = "20000\n"

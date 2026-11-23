@@ -1,0 +1,1310 @@
+import "../../surface/src/surface.taut"
+import "../../kernel/src/data.taut"
+import "../../identity/src/identity.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::list
+
+// `&mut` parameters and `var`s in programs, read as the host reads them
+// (`crates/tauto-kernel/src/check/mutable.rs`): a function that takes `&mut`
+// parameters is a pure one that returns, with its value, the parameters' last
+// values,
+//
+//   fn f(c: &mut C, x: A): R { body }   is   fn f(c: C, x: A): Mut1(R, C) { body' }
+//
+// `MutK(R, S1, …, SK)` is a family with the one constructor
+// `mutK(value': R, s'1: S1, …, s'K: SK)`. In `body'` the state (the `&mut`
+// parameters and the `var`s in scope) is passed along by name:
+//
+// * a call `g(&mut x, e)` is `match g(x, e) { mut1(v, x) => … }`;
+// * `x := e` and `var x := e` are `match mut0(e) { mut0(x) => … }`;
+// * a `match` or an `if` that changes the state returns the whole state, and
+//   what follows takes it apart; in the function's last position each arm ends
+//   the function itself;
+// * the function ends with `mutK(v, p1, …)`, its `&mut` parameters' last values.
+//
+// What is read here is what needs no record: a place lent `&mut` is a name, and
+// a field is not written. A form the host reads and this does not is an error
+// that says so.
+
+pub(open) struct MuState { name: Text, ty: Option(SurfaceTerm) }
+
+pub(open) enum MuBind {
+  // `match call { mutK(value, outs…) => … }`
+  MuCall(SurfaceTerm, Text, List(Text))
+  // `let name: ty = value`
+  MuLet(Text, Option(SurfaceTerm), SurfaceTerm)
+}
+
+pub(open) struct MuCx {
+  // The states in scope, the latest first.
+  states: List(MuState)
+  // The `&mut` parameters, which the function returns.
+  outs: List(Text)
+  // The families `MutK` used.
+  used: List(Nat)
+  fresh: Nat
+  err: Option(Text)
+}
+
+pub fn mu_term(kind: SurfaceKind, like: SurfaceTerm): SurfaceTerm {
+  SurfaceTerm { occurrence: None, kind: kind, start: like.start, end: like.end }
+}
+
+pub fn mu_v(name: Text, like: SurfaceTerm): SurfaceTerm { mu_term(SkVar(NameSpelled(name)), like) }
+
+pub fn mu_call(f: Text, args: List(SurfaceTerm), like: SurfaceTerm): SurfaceTerm {
+  mu_term(SkApp(mu_v(f, like), args), like)
+}
+
+// `v` at the type written for it, when one is.
+pub fn mu_ascribed(ty: Option(SurfaceTerm), v: SurfaceTerm): SurfaceTerm {
+  match ty {
+    Some(t) => mu_term(SkAscribe(v, t), v)
+    None => v
+  }
+}
+
+pub fn mu_family(k: Nat): Text { Text::concat("Mut", Text::of_nat(k)) }
+
+pub fn mu_ctor(k: Nat): Text { Text::concat_all(["Mut", Text::of_nat(k), "::mut", Text::of_nat(k)]) }
+
+pub fn mu_has_text(xs: List(Text), x: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || mu_has_text(rest, x)
+  }
+}
+
+pub fn mu_has_nat(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || mu_has_nat(rest, x)
+  }
+}
+
+pub fn mu_nth(xs: List(Bool), n: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => match n {
+      Zero => y
+      Succ(m) => mu_nth(rest, m)
+    }
+  }
+}
+
+pub fn mu_split_last(xs: List(SurfaceStmt)): Option(List(SurfaceStmt) × SurfaceStmt) {
+  match List::reverse(xs) {
+    Nil => None
+    Cons(l, init) => Some(#(List::reverse(init), l))
+  }
+}
+
+pub fn mu_root_is(t: SurfaceTerm, x: Text): Bool {
+  match mu_root(t) {
+    Some(r) => r == x
+    None => false
+  }
+}
+
+pub fn mu_fail(cx: &mut MuCx, why: Text): Unit {
+  match cx.err {
+    None => {
+      cx.err := Some(why)
+    }
+    Some(^e) => ()
+  }
+}
+
+// ---- Walking terms --------------------------------------------------------------
+
+pub fn mu_opt_terms(ts: List(Option(SurfaceTerm))): List(SurfaceTerm) {
+  match ts {
+    Nil => Nil
+    Cons(o, rest) => match o {
+      Some(t) => Cons(t, mu_opt_terms(rest))
+      None => mu_opt_terms(rest)
+    }
+  }
+}
+
+pub fn mu_one(o: Option(SurfaceTerm)): List(SurfaceTerm) {
+  match o {
+    Some(t) => [t]
+    None => Nil
+  }
+}
+
+pub fn mu_param_types(ps: List(SurfaceParam)): List(SurfaceTerm) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.ty, mu_param_types(rest))
+  }
+}
+
+pub fn mu_field_values(fs: List(SurfaceField)): List(SurfaceTerm) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(f.value, mu_field_values(rest))
+  }
+}
+
+pub fn mu_arm_terms(arms: List(SurfaceArm)): List(SurfaceTerm) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => List::append(mu_one(a.guard), List::append(mu_one(a.goal), Cons(a.body, mu_arm_terms(rest))))
+  }
+}
+
+pub fn mu_handler_terms(hs: List(SurfaceHandler)): List(SurfaceTerm) {
+  match hs {
+    Nil => Nil
+    Cons(h, rest) => match h {
+      HdReturn(^p, body) => Cons(body, mu_handler_terms(rest))
+      HdOperation(^op, ^hbinds, types, ^patterns, ^hresume, ^hunused, guard, body) => List::append(types, List::append(mu_one(guard), Cons(body, mu_handler_terms(rest))))
+    }
+  }
+}
+
+pub fn mu_stmt_terms(ss: List(SurfaceStmt)): List(SurfaceTerm) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => {
+      let here := match s {
+        StLet(^n, ty, v, ^b, ^m, ^unused, ^stack) => List::append(mu_one(ty), [v])
+        StVar(^n, ty, v, ^b, ^unused, ^stack) => List::append(mu_one(ty), [v])
+        StAssign(^n, place, v) => List::append(mu_one(place), [v])
+        StWhile(c, b) => [c, b]
+        StReturn(v) => mu_one(v)
+        StLoop(b, ^start, ^end) => [b]
+        StModule(^mod_name, ^mod_vis, ^mod_items, ^start, ^end) => []
+        StReexport(^re_path, ^re_names, ^re_spans, ^start, ^end) => []
+        StFor(^for_pat, ^for_src, b, ^start, ^end) => [b]
+        StBreak(v, ^start, ^end) => mu_one(v)
+        StExpr(e) => [e]
+        StCalled(^g, call) => [call]
+        ^other => Nil
+      }
+      List::append(here, mu_stmt_terms(rest))
+    }
+  }
+}
+
+// The terms directly inside `t`.
+pub fn mu_kids(t: SurfaceTerm): List(SurfaceTerm) {
+  match t.kind {
+    SkApp(h, args) => Cons(h, args)
+    SkPi(ps, r, ^e) => List::append(mu_param_types(ps), [r])
+    SkExists(^b, d, body, ^unused) => [d, body]
+    SkLam(^ps, body, types, ^lunused) => List::append(mu_opt_terms(types), [body])
+    SkBorrowLam(^bs, lam) => [lam]
+    SkUnion(items) => items
+    SkTagged(^tag, v) => [v]
+    SkBorrow(^m, ^m_orig, v) => [v]
+    SkSplice(v) => [v]
+    SkFnKind(^k, ty) => [ty]
+    SkIf(c, a, o) => Cons(c, Cons(a, mu_one(o)))
+    SkField(v, ^n) => [v]
+    SkAscribe(v, ty) => [v, ty]
+    SkBlock(stmts) => mu_stmt_terms(stmts)
+    SkHandle(b, hs) => Cons(b, mu_handler_terms(hs))
+    SkBudget(^m, a, b) => [a, b]
+    SkMatch(s, motive, arms, ^binder, ^bunused) => Cons(s, List::append(mu_one(motive), mu_arm_terms(arms)))
+    SkRecord(^n, fs) => mu_field_values(fs)
+    SkPerform(^op, args) => args
+    ^other => Nil
+  }
+}
+
+pub fn mu_fuel(t: SurfaceTerm): Nat { t.end - t.start + 2 }
+
+pub fn mu_subterms(t: SurfaceTerm): List(SurfaceTerm) { mu_subterms_in(mu_fuel(t), t) }
+
+mutual {
+  pub fn mu_subterms_in(k: Nat, t: SurfaceTerm): List(SurfaceTerm) {
+    match k {
+      Zero => [t]
+      Succ(j) => Cons(t, mu_subterms_of(j, mu_kids(t)))
+    }
+  }
+
+  pub fn mu_subterms_of(k: Nat, ts: List(SurfaceTerm)): List(SurfaceTerm) {
+    match k {
+      Zero => Nil
+      Succ(j) => match ts {
+        Nil => Nil
+        Cons(t, rest) => List::append(mu_subterms_in(j, t), mu_subterms_of(j, rest))
+      }
+    }
+  }
+}
+
+pub fn mu_changes(ss: List(SurfaceStmt)): Bool {
+  match ss {
+    Nil => false
+    Cons(s, rest) => match s {
+      StVar(^n, ^ty, ^v, ^b, ^unused, ^stack) => true
+      StAssign(^n, ^place, ^v) => true
+      ^other => mu_changes(rest)
+    }
+  }
+}
+
+// Whether `t` changes a state here: a `&mut`, a `var` or a `:=`.
+pub fn mu_mutates_here(t: SurfaceTerm): Bool {
+  match t.kind {
+    SkBorrow(m, ^m_orig, ^v) => m
+    SkBlock(ss) => mu_changes(ss)
+    ^other => false
+  }
+}
+
+pub fn mu_any_mutates(ts: List(SurfaceTerm)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => mu_mutates_here(t) || mu_any_mutates(rest)
+  }
+}
+
+pub fn mu_mutates(t: SurfaceTerm): Bool { mu_any_mutates(mu_subterms(t)) }
+
+pub fn mu_is_handle(t: SurfaceTerm): Bool {
+  match t.kind {
+    SkHandle(^b, ^hs) => true
+    ^other => false
+  }
+}
+
+pub fn mu_any_handle(ts: List(SurfaceTerm)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => mu_is_handle(t) || mu_any_handle(rest)
+  }
+}
+
+pub fn mu_is_if(t: SurfaceTerm): Bool {
+  match t.kind {
+    SkIf(^c, ^a, ^o) => true
+    ^other => false
+  }
+}
+
+pub fn mu_any_if(ts: List(SurfaceTerm)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => mu_is_if(t) || mu_any_if(rest)
+  }
+}
+
+// A statement a block may have: `let`, a `var` that is not a lends_it, an
+// assignment, an expression.
+pub fn mu_plain_stmt(s: SurfaceStmt): Bool {
+  match s {
+    StLet(^n, ^ty, ^v, ^b, ^m, ^unused, ^stack) => true
+    StVar(^n, ^ty, ^v, b, ^unused, ^stack) => not(b)
+    StAssign(^n, ^place, ^v) => true
+    StExpr(^e) => true
+    ^other => false
+  }
+}
+
+pub fn mu_all_plain(ss: List(SurfaceStmt)): Bool {
+  match ss {
+    Nil => true
+    Cons(s, rest) => mu_plain_stmt(s) && mu_all_plain(rest)
+  }
+}
+
+pub fn mu_other_stmt_here(t: SurfaceTerm): Bool {
+  match t.kind {
+    SkBlock(ss) => not(mu_all_plain(ss))
+    ^other => false
+  }
+}
+
+pub fn mu_any_other(ts: List(SurfaceTerm)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => mu_other_stmt_here(t) || mu_any_other(rest)
+  }
+}
+
+pub fn mu_occurs_here(t: SurfaceTerm, x: Text): Bool {
+  match t.kind {
+    SkVar(n) => surface_name_text(n) == x
+    ^other => false
+  }
+}
+
+pub fn mu_any_occurs(ts: List(SurfaceTerm), x: Text): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => mu_occurs_here(t, x) || mu_any_occurs(rest, x)
+  }
+}
+
+pub fn mu_occurs(t: SurfaceTerm, x: Text): Bool { mu_any_occurs(mu_subterms(t), x) }
+
+pub fn mu_has_effects(e: Option(List(RowEntry))): Bool {
+  match e {
+    None => false
+    Some(es) => match es {
+      Nil => false
+      ^other => true
+    }
+  }
+}
+
+pub fn mu_any_borrow(bs: List(Option(Bool))): Bool {
+  match bs {
+    Nil => false
+    Cons(b, rest) => match b {
+      Some(^m) => true
+      None => mu_any_borrow(rest)
+    }
+  }
+}
+
+// Whether a function is read here: it has `&mut` parameters, or `var`s or
+// assignments the rewrite reads.
+pub fn mu_needs(f: SurfaceFn): Bool {
+  if mu_has_effects(f.effects) { false } else {
+    if mu_any_borrow(f.r#borrows) { true } else {
+      let all := mu_subterms(f.body)
+      if mu_any_mutates(all) && mu_any_handle(all) { false } else { mu_any_mutates(all) && not(mu_any_other(all)) }
+    }
+  }
+}
+
+// ---- Places ---------------------------------------------------------------------
+
+// `x` or `x.f`: the name `x`.
+pub fn mu_root(t: SurfaceTerm): Option(Text) {
+  match t.kind {
+    SkVar(x) => Some(surface_name_text(x))
+    SkField(b, ^n) => match b.kind {
+      SkVar(x) => Some(surface_name_text(x))
+      ^other => None
+    }
+    ^other => None
+  }
+}
+
+pub fn mu_assigns(ss: List(SurfaceStmt), x: Text): Bool {
+  match ss {
+    Nil => false
+    Cons(s, rest) => match s {
+      StAssign(n, ^place, ^v) => n == x || mu_assigns(rest, x)
+      ^other => mu_assigns(rest, x)
+    }
+  }
+}
+
+pub fn mu_writes_here(t: SurfaceTerm, x: Text): Bool {
+  match t.kind {
+    SkBorrow(m, ^m_orig, v) => m && mu_root_is(v, x)
+    SkBlock(ss) => mu_assigns(ss, x)
+    ^other => false
+  }
+}
+
+// Whether `t` writes the place `x`: lends it `&mut`, or assigns it.
+pub fn mu_writes(t: SurfaceTerm, x: Text): Bool { mu_any_writes(mu_subterms(t), x) }
+
+pub fn mu_any_writes(ts: List(SurfaceTerm), x: Text): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => mu_writes_here(t, x) || mu_any_writes(rest, x)
+  }
+}
+
+pub fn mu_later_writes(args: List(SurfaceTerm), x: Text): Bool {
+  match args {
+    Nil => false
+    Cons(b, rest) => mu_writes(b, x) || mu_later_writes(rest, x)
+  }
+}
+
+// A shared lends_it read when the callee runs, after the arguments to its right,
+// that those arguments write.
+pub fn mu_lent_in_args(args: List(SurfaceTerm)): Option(Text) {
+  match args {
+    Nil => None
+    Cons(a, rest) => {
+      let here := ⊢ Option(Text) from match a.kind {
+        SkBorrow(m, ^m_orig, v) => if m { None } else {
+          match mu_root(v) {
+            Some(r) => if mu_later_writes(rest, r) { Some(r) } else { None }
+            None => None
+          }
+        }
+        ^other => None
+      }
+      match here {
+        Some(r) => Some(r)
+        None => mu_lent_in_args(rest)
+      }
+    }
+  }
+}
+
+pub fn mu_lent_in_terms(ts: List(SurfaceTerm)): Option(Text) {
+  match ts {
+    Nil => None
+    Cons(t, rest) => {
+      let here := ⊢ Option(Text) from match t.kind {
+        SkApp(^h, args) => mu_lent_in_args(args)
+        ^other => None
+      }
+      match here {
+        Some(r) => Some(r)
+        None => mu_lent_in_terms(rest)
+      }
+    }
+  }
+}
+
+// ---- The unsupported ------------------------------------------------------------
+
+pub fn mu_is_op(t: SurfaceTerm, ops: List(Text)): Bool {
+  match t.kind {
+    SkVar(n) => mu_has_text(ops, surface_name_text(n))
+    ^other => false
+  }
+}
+
+pub fn mu_arm_changes(arms: List(SurfaceArm), x: Text): Bool {
+  match arms {
+    Nil => false
+    Cons(a, rest) => (mu_mutates(a.body) && mu_occurs(a.body, x)) || mu_arm_changes(rest, x)
+  }
+}
+
+// What the host makes ready before the rewrite and this does not: `a && b` and
+// `a || b` whose `b` changes the state, and a `match` on a variable that an arm
+// changing the state uses.
+pub fn mu_prepared(t: SurfaceTerm): Option(Text) {
+  match t.kind {
+    SkApp(h, args) => match args {
+      Cons(^a, more) => match more {
+        Cons(b, none) => match none {
+          Nil => if mu_is_op(h, ["&&", "||"]) && mu_mutates(b) { Some("an `&&` or `||` whose right side changes the state") } else { None }
+          ^other => None
+        }
+        Nil => None
+      }
+      Nil => None
+    }
+    SkMatch(s, ^motive, arms, ^binder, ^bunused) => match s.kind {
+      SkVar(x) => if mu_arm_changes(arms, surface_name_text(x)) { Some("a `match` on a variable that an arm changing the state uses") } else { None }
+      ^other => None
+    }
+    SkLam(^ps, body, ^types, ^lunused) => if mu_mutates(t) { Some("a lambda that changes a state") } else if mu_any_if(mu_subterms(body)) { Some("an `if` in a lambda") } else { None }
+    SkBorrowLam(^bs, ^lam) => if mu_mutates(t) { Some("a lambda that changes a state") } else { None }
+    ^other => None
+  }
+}
+
+pub fn mu_unprepared(ts: List(SurfaceTerm)): Option(Text) {
+  match ts {
+    Nil => None
+    Cons(t, rest) => match mu_prepared(t) {
+      Some(why) => Some(why)
+      None => mu_unprepared(rest)
+    }
+  }
+}
+
+// ---- The rewrite ----------------------------------------------------------------
+
+pub fn mu_state(sts: List(MuState), name: Text): Option(MuState) {
+  match sts {
+    Nil => None
+    Cons(s, rest) => if s.name == name { Some(s) } else { mu_state(rest, name) }
+  }
+}
+
+pub fn mu_has_state(cx: &MuCx, name: Text): Bool {
+  match mu_state(cx.states, name) {
+    Some(^s) => true
+    None => false
+  }
+}
+
+pub fn mu_borrowed(cx: &MuCx, name: Text): Bool { mu_has_text(cx.outs, name) }
+
+pub fn mu_use(cx: &mut MuCx, k: Nat): Unit {
+  if mu_has_nat(cx.used, k) { () } else {
+    cx.used := Cons(k, cx.used)
+  }
+}
+
+pub fn mu_fresh(cx: &mut MuCx): Text {
+  cx.fresh := cx.fresh + 1
+  Text::concat("v'", Text::of_nat(cx.fresh))
+}
+
+pub fn mu_ctor_term(cx: &mut MuCx, k: Nat, value: SurfaceTerm, states: List(SurfaceTerm), like: SurfaceTerm): SurfaceTerm {
+  mu_use(&mut cx, k)
+  mu_call(mu_ctor(k), Cons(value, states), like)
+}
+
+pub fn mu_wrap_one(cx: &mut MuCx, b: MuBind, rest: SurfaceTerm, goal: Option(SurfaceTerm)): SurfaceTerm {
+  match b {
+    MuCall(call, value, outs) => {
+      mu_use(&mut cx, List::length(outs))
+      let pats := Cons(PtBind(value, None), mu_bind_pats(outs))
+      let arm := SurfaceArm { pattern: PtCtor(NameSpelled(mu_ctor(List::length(outs))), pats), guard: None, goal: None, body: rest }
+      mu_term(SkMatch(call, goal, [arm], None, None), rest)
+    }
+    MuLet(name, ty, value) => mu_term(SkBlock([StLet(name, ty, value, false, false, None, None), StExpr(rest)]), rest)
+  }
+}
+
+pub fn mu_bind_pats(ns: List(Text)): List(SurfacePattern) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(PtBind(n, None), mu_bind_pats(rest))
+  }
+}
+
+// `binds` around `rest`, the first outermost.
+pub fn mu_wrap(cx: &mut MuCx, binds: List(MuBind), rest: SurfaceTerm, goal: Option(SurfaceTerm)): SurfaceTerm {
+  mu_wrap_rev(&mut cx, List::reverse(binds), rest, goal)
+}
+
+pub fn mu_wrap_rev(cx: &mut MuCx, binds: List(MuBind), rest: SurfaceTerm, goal: Option(SurfaceTerm)): SurfaceTerm {
+  match binds {
+    Nil => rest
+    Cons(b, earlier) => {
+      let inner := mu_wrap_one(&mut cx, b, rest, goal)
+      mu_wrap_rev(&mut cx, earlier, inner, goal)
+    }
+  }
+}
+
+// `name` bound to `value`.
+pub fn mu_assign(cx: &mut MuCx, name: Text, value: SurfaceTerm, binds: &mut List(MuBind)): Unit {
+  let args := match mu_state(cx.states, name) {
+    Some(s) => match s.ty {
+      Some(t) => [mu_term(SkAscribe(value, t), value)]
+      None => [value]
+    }
+    None => [value]
+  }
+  mu_use(&mut cx, 0)
+  *binds := List::append(binds, [MuCall(mu_call(mu_ctor(0), args, value), name, Nil)])
+}
+
+// `if c { a } else { b }` as the match on `true` and `false`.
+pub fn mu_if_match(t: SurfaceTerm): SurfaceTerm {
+  match t.kind {
+    SkIf(c, a, o) => {
+      let otherwise := match o {
+        Some(b) => b
+        None => mu_v("Star", t)
+      }
+      let arms := [
+        SurfaceArm { pattern: PtBool(true), guard: None, goal: None, body: a },
+        SurfaceArm { pattern: PtBool(false), guard: None, goal: None, body: otherwise }
+      ]
+      mu_term(SkMatch(c, None, arms, None, None), t)
+    }
+    ^other => t
+  }
+}
+
+// The terms `ts`, evaluated in order, each read before what follows it
+// changes the state; `lent[i]` marks a place a call lends `&mut`, read when
+// the call runs, after what the arguments to its right change.
+pub fn mu_all(cx: &mut MuCx, ts: List(SurfaceTerm), lent: List(Bool), binds: &mut List(MuBind)): List(SurfaceTerm) ! {div} {
+  var parts: List(List(MuBind) × SurfaceTerm) := Nil
+  var rest := ts
+  loop {
+    match rest {
+      Nil => {
+        break
+      }
+      Cons(t, more) => {
+        var own: List(MuBind) := Nil
+        let v := mu_expr(&mut cx, t, &mut own, None)
+        parts := List::append(parts, [#(own, v)])
+        rest := more
+      }
+    }
+  }
+  var last_change: Nat := 0
+  var any_change := false
+  var i: Nat := 0
+  var scan := parts
+  loop {
+    match scan {
+      Nil => {
+        break
+      }
+      Cons(p, more) => {
+        match p.fst {
+          Nil => ()
+          ^other => {
+            last_change := i
+            any_change := true
+          }
+        }
+        i := i + 1
+        scan := more
+      }
+    }
+  }
+  var values: List(SurfaceTerm) := Nil
+  var at: Nat := 0
+  var walk := parts
+  loop {
+    match walk {
+      Nil => {
+        break
+      }
+      Cons(p, more) => {
+        *binds := List::append(binds, p.fst)
+        let v := p.snd
+        let is_lent := mu_nth(lent, at)
+        let read_early := not(is_lent) && any_change && at < last_change && mu_reads_state(cx.states, v)
+        if read_early {
+          let name := mu_fresh(&mut cx)
+          mu_use(&mut cx, 0)
+          *binds := List::append(binds, [MuCall(mu_call(mu_ctor(0), [v], v), name, Nil)])
+          values := List::append(values, [mu_v(name, v)])
+        } else {
+          values := List::append(values, [v])
+        }
+        at := at + 1
+        walk := more
+      }
+    }
+  }
+  values
+}
+
+pub fn mu_reads_state(sts: List(MuState), v: SurfaceTerm): Bool {
+  match sts {
+    Nil => false
+    Cons(s, rest) => mu_occurs(v, s.name) || mu_reads_state(rest, v)
+  }
+}
+
+// The value of `t`, what it needs bound first pushed to `binds`. `want` is its
+// type when known, which a `match` that changes the state needs.
+pub fn mu_expr(cx: &mut MuCx, t: SurfaceTerm, binds: &mut List(MuBind), want: Option(SurfaceTerm)): SurfaceTerm ! {div} {
+  match mu_prepared(t) {
+    Some(why) => {
+      mu_fail(&mut cx, why)
+      t
+    }
+    None => mu_expr_kind(&mut cx, t, &mut binds, want)
+  }
+}
+
+pub fn mu_places(cx: &mut MuCx, args: List(SurfaceTerm)): List(Text) {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => match a.kind {
+      SkBorrow(m, ^m_orig, inner) => if m {
+        match inner.kind {
+          SkVar(x) => if mu_has_state(&cx, surface_name_text(x)) { Cons(surface_name_text(x), mu_places(&mut cx, rest)) } else {
+            mu_fail(&mut cx, "a `&mut` lends what is not a state")
+            mu_places(&mut cx, rest)
+          }
+          ^other => {
+            mu_fail(&mut cx, "a `&mut` lends a field, which needs the record's constructor")
+            mu_places(&mut cx, rest)
+          }
+        }
+      } else { mu_places(&mut cx, rest) }
+      ^other => mu_places(&mut cx, rest)
+    }
+  }
+}
+
+pub fn mu_plain_args(args: List(SurfaceTerm)): List(SurfaceTerm) {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => match a.kind {
+      SkBorrow(m, ^m_orig, inner) => if m { Cons(inner, mu_plain_args(rest)) } else { Cons(a, mu_plain_args(rest)) }
+      ^other => Cons(a, mu_plain_args(rest))
+    }
+  }
+}
+
+pub fn mu_lent_flags(args: List(SurfaceTerm)): List(Bool) {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => match a.kind {
+      SkBorrow(m, ^m_orig, ^inner) => Cons(m, mu_lent_flags(rest))
+      ^other => Cons(false, mu_lent_flags(rest))
+    }
+  }
+}
+
+pub fn mu_expr_kind(cx: &mut MuCx, t: SurfaceTerm, binds: &mut List(MuBind), want: Option(SurfaceTerm)): SurfaceTerm ! {div} {
+  match t.kind {
+    SkApp(function, args) => match function.kind {
+      SkVar(^g) => {
+        let places := mu_places(&mut cx, args)
+        let values := mu_all(&mut cx, mu_plain_args(args), mu_lent_flags(args), &mut binds)
+        let call := mu_term(SkApp(function, values), t)
+        match places {
+          Nil => call
+          ^other => {
+            let value := mu_fresh(&mut cx)
+            mu_use(&mut cx, List::length(places))
+            *binds := List::append(binds, [MuCall(call, value, places)])
+            mu_v(value, t)
+          }
+        }
+      }
+      ^other => {
+        let f2 := mu_expr(&mut cx, function, &mut binds, None)
+        let values := mu_all(&mut cx, args, Nil, &mut binds)
+        mu_term(SkApp(f2, values), t)
+      }
+    }
+    SkBorrow(m, ^m_orig, inner) => if m {
+      mu_fail(&mut cx, "a `&mut` that is not an argument of a call")
+      t
+    } else { mu_expr(&mut cx, inner, &mut binds, want) }
+    SkField(base, name) => {
+      let b2 := mu_expr(&mut cx, base, &mut binds, None)
+      mu_term(SkField(b2, name), t)
+    }
+    SkRecord(name, fields) => {
+      let values := mu_all(&mut cx, mu_field_values(fields), Nil, &mut binds)
+      mu_term(SkRecord(name, mu_zip_fields(fields, values)), t)
+    }
+    SkIf(^c, ^a, ^o) => mu_expr(&mut cx, mu_if_match(t), &mut binds, want)
+    SkMatch(scrutinee, result, arms, binder, ^bunused) => {
+      let s2 := mu_expr(&mut cx, scrutinee, &mut binds, None)
+      if mu_none_states(cx.states) || not(mu_arms_mutate(arms)) {
+        let goal := match result {
+          Some(r) => Some(r)
+          None => want
+        }
+        let arms2 := mu_pure_arms(&mut cx, arms, goal)
+        mu_term(SkMatch(s2, goal, arms2, binder, None), t)
+      } else {
+        // The whole state goes in and comes out.
+        let value_ty := match result {
+          Some(r) => Some(r)
+          None => want
+        }
+        match value_ty {
+          None => {
+            mu_fail(&mut cx, "a `match` that changes the state, without its type")
+            t
+          }
+          Some(vt) => {
+            let names := mu_state_names(cx.states)
+            let tys := mu_state_types(&mut cx, names)
+            let k := List::length(names)
+            let whole_ty := mu_call(mu_family(k), Cons(vt, tys), t)
+            let arms2 := mu_tail_arms(&mut cx, arms, names, Some(whole_ty))
+            mu_use(&mut cx, k)
+            let whole := mu_term(SkMatch(s2, Some(whole_ty), arms2, binder, None), t)
+            let value := mu_fresh(&mut cx)
+            *binds := List::append(binds, [MuCall(whole, value, names)])
+            mu_v(value, t)
+          }
+        }
+      }
+    }
+    SkBlock(stmts) => mu_block(&mut cx, stmts, &mut binds, want, true, t)
+    ^other => if mu_mutates(t) {
+      mu_fail(&mut cx, "a term that changes the state in a form this does not read")
+      t
+    } else { t }
+  }
+}
+
+pub fn mu_zip_fields(fs: List(SurfaceField), vs: List(SurfaceTerm)): List(SurfaceField) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => match vs {
+      Nil => Nil
+      Cons(v, more) => Cons(SurfaceField { name: f.name, value: v }, mu_zip_fields(rest, more))
+    }
+  }
+}
+
+pub fn mu_none_states(sts: List(MuState)): Bool {
+  match sts {
+    Nil => true
+    ^other => false
+  }
+}
+
+pub fn mu_arms_mutate(arms: List(SurfaceArm)): Bool {
+  match arms {
+    Nil => false
+    Cons(a, rest) => mu_mutates(a.body) || mu_arms_mutate(rest)
+  }
+}
+
+// The latest binding of each state, oldest first.
+pub fn mu_state_names(sts: List(MuState)): List(Text) {
+  List::reverse(mu_distinct(sts, Nil))
+}
+
+pub fn mu_distinct(sts: List(MuState), seen: List(Text)): List(Text) {
+  match sts {
+    Nil => List::reverse(seen)
+    Cons(s, rest) => if mu_has_text(seen, s.name) { mu_distinct(rest, seen) } else { mu_distinct(rest, Cons(s.name, seen)) }
+  }
+}
+
+pub fn mu_state_types(cx: &mut MuCx, names: List(Text)): List(SurfaceTerm) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => match mu_state(cx.states, n) {
+      Some(s) => match s.ty {
+        Some(t) => Cons(t, mu_state_types(&mut cx, rest))
+        None => {
+          mu_fail(&mut cx, Text::concat_all(["the state `", n, "` has no type written"]))
+          mu_state_types(&mut cx, rest)
+        }
+      }
+      None => mu_state_types(&mut cx, rest)
+    }
+  }
+}
+
+pub fn mu_pure_arms(cx: &mut MuCx, arms: List(SurfaceArm), goal: Option(SurfaceTerm)): List(SurfaceArm) ! {div} {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => {
+      let body := mu_pure(&mut cx, a.body, goal)
+      Cons(SurfaceArm { pattern: a.pattern, guard: a.guard, goal: a.goal, body: body }, mu_pure_arms(&mut cx, rest, goal))
+    }
+  }
+}
+
+pub fn mu_tail_arms(cx: &mut MuCx, arms: List(SurfaceArm), finish: List(Text), goal: Option(SurfaceTerm)): List(SurfaceArm) ! {div} {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => {
+      let body := mu_tail(&mut cx, a.body, finish, goal)
+      Cons(SurfaceArm { pattern: a.pattern, guard: a.guard, goal: None, body: body }, mu_tail_arms(&mut cx, rest, finish, goal))
+    }
+  }
+}
+
+pub fn mu_pure(cx: &mut MuCx, t: SurfaceTerm, want: Option(SurfaceTerm)): SurfaceTerm ! {div} {
+  var binds: List(MuBind) := Nil
+  let v := mu_expr(&mut cx, t, &mut binds, want)
+  mu_wrap(&mut cx, binds, v, want)
+}
+
+// The statements of a block; its value is the last one's when `valued`.
+pub fn mu_block(cx: &mut MuCx, stmts: List(SurfaceStmt), binds: &mut List(MuBind), want: Option(SurfaceTerm), valued: Bool, like: SurfaceTerm): SurfaceTerm ! {div} {
+  let depth := List::length(cx.states)
+  var value: Option(SurfaceTerm) := None
+  var rest := stmts
+  loop {
+    match rest {
+      Nil => {
+        break
+      }
+      Cons(s, more) => {
+        let last := valued && mu_is_nil_stmts(more)
+        match s {
+          StLet(name, ty, v, ^b, ^m, ^unused, ^stack) => {
+            let v2 := mu_expr(&mut cx, v, &mut binds, ty)
+            if mu_none_states(cx.states) {
+              *binds := List::append(binds, [MuLet(name, ty, v2)])
+            } else {
+              // A `let` stands for its value, which would read the state as it is
+              // where the name is used: bound, it reads the state as it is here.
+              mu_use(&mut cx, 0)
+              *binds := List::append(binds, [MuCall(mu_call(mu_ctor(0), [mu_ascribed(ty, v2)], v2), name, Nil)])
+            }
+          }
+          StVar(name, ty, v, b, ^unused, ^stack) => if b {
+            mu_fail(&mut cx, "a `var` that borrows")
+          } else {
+            let v2 := mu_expr(&mut cx, v, &mut binds, ty)
+            cx.states := Cons(MuState { name: name, ty: ty }, cx.states)
+            mu_assign(&mut cx, name, v2, &mut binds)
+          }
+          StAssign(name, place, v) => match place {
+            None => mu_assign_to(&mut cx, name, false, v, &mut binds)
+            Some(p) => match mu_deref_of(p) {
+              Some(inner) => match inner.kind {
+                SkVar(x) => if surface_name_text(x) == name { mu_assign_to(&mut cx, name, true, v, &mut binds) } else { mu_fail(&mut cx, "an assignment through another name") }
+                ^other => mu_fail(&mut cx, "an assignment to a field, which needs the record's constructor")
+              }
+              None => mu_fail(&mut cx, "an assignment to a field, which needs the record's constructor")
+            }
+          }
+          StExpr(e) => if last {
+            value := Some(mu_expr(&mut cx, e, &mut binds, want))
+          } else {
+            let unit := mu_v("Unit", e)
+            let ignored := mu_expr(&mut cx, e, &mut binds, Some(unit))
+            ()
+          }
+          ^other => mu_fail(&mut cx, "a statement that is not a `let`, `var`, assignment or expression")
+        }
+        rest := more
+      }
+    }
+  }
+  mu_truncate(&mut cx, depth)
+  match value {
+    Some(v) => v
+    None => mu_v("Star", like)
+  }
+}
+
+pub fn mu_is_nil_stmts(ss: List(SurfaceStmt)): Bool {
+  match ss {
+    Nil => true
+    ^other => false
+  }
+}
+
+pub fn mu_truncate(cx: &mut MuCx, depth: Nat): Unit ! {div} {
+  loop {
+    if List::length(cx.states) > depth {
+      match cx.states {
+        Nil => {
+        break
+      }
+        Cons(^s, rest) => {
+          cx.states := rest
+        }
+      }
+    } else {
+      break
+    }
+  }
+}
+
+// `*x` as written: `x`.
+pub fn mu_deref_of(p: SurfaceTerm): Option(SurfaceTerm) {
+  match p.kind {
+    SkApp(h, args) => surface_deref_inner(h, args)
+    ^other => None
+  }
+}
+
+pub fn mu_assign_to(cx: &mut MuCx, name: Text, deref: Bool, v: SurfaceTerm, binds: &mut List(MuBind)): Unit ! {div} {
+  if not(mu_has_state(&cx, name)) {
+    mu_fail(&mut cx, Text::concat_all(["`", name, "` is assigned and is not a `var` or a `&mut` parameter"]))
+  } else {
+    // A `&mut` parameter is written through, `*x := v`; a `var` is assigned.
+    let lends_it := mu_borrowed(&cx, name)
+    if lends_it && not(deref) {
+      mu_fail(&mut cx, Text::concat_all(["`", name, "` is a borrow: it is assigned through, `*", name, " := …`"]))
+    } else if not(lends_it) && deref {
+      mu_fail(&mut cx, Text::concat_all(["`", name, "` is not a `&mut` borrow: `*` needs one"]))
+    } else {
+      let want := match mu_state(cx.states, name) {
+        Some(s) => s.ty
+        None => None
+      }
+      let v2 := mu_expr(&mut cx, v, &mut binds, want)
+      mu_assign(&mut cx, name, v2, &mut binds)
+    }
+  }
+}
+
+// `t` in last position: the term that ends with `mutK(v, finish…)`; `goal` is
+// its type, when known.
+pub fn mu_tail(cx: &mut MuCx, t: SurfaceTerm, finish: List(Text), goal: Option(SurfaceTerm)): SurfaceTerm ! {div} {
+  match t.kind {
+    SkIf(^c, ^a, ^o) => mu_tail(&mut cx, mu_if_match(t), finish, goal)
+    SkMatch(scrutinee, ^motive, arms, binder, ^bunused) => if not(mu_none_states(cx.states)) || mu_arms_mutate(arms) || not(mu_is_nil_text(finish)) {
+      var binds: List(MuBind) := Nil
+      let s2 := mu_expr(&mut cx, scrutinee, &mut binds, None)
+      let arms2 := mu_tail_arms(&mut cx, arms, finish, goal)
+      let m := mu_term(SkMatch(s2, goal, arms2, binder, None), t)
+      mu_wrap(&mut cx, binds, m, goal)
+    } else { mu_tail_end(&mut cx, t, finish, goal) }
+    SkBlock(stmts) => match mu_split_last(stmts) {
+      Some(sl) => match sl.snd {
+        StExpr(last) => {
+          let depth := List::length(cx.states)
+          var binds: List(MuBind) := Nil
+          let ignored := mu_block(&mut cx, sl.fst, &mut binds, None, false, t)
+          // `block` drops the `var`s it declared; the last term sees them.
+          mu_redeclare(&mut cx, sl.fst)
+          let body := mu_tail(&mut cx, last, finish, goal)
+          mu_truncate(&mut cx, depth)
+          mu_wrap(&mut cx, binds, body, goal)
+        }
+        ^other => mu_tail_end(&mut cx, t, finish, goal)
+      }
+      None => mu_tail_end(&mut cx, t, finish, goal)
+    }
+    ^other => mu_tail_end(&mut cx, t, finish, goal)
+  }
+}
+
+pub fn mu_is_nil_text(xs: List(Text)): Bool {
+  match xs {
+    Nil => true
+    ^other => false
+  }
+}
+
+pub fn mu_redeclare(cx: &mut MuCx, init: List(SurfaceStmt)): Unit {
+  match init {
+    Nil => ()
+    Cons(s, rest) => {
+      match s {
+        StVar(name, ty, ^v, ^b, ^unused, ^stack) => {
+          cx.states := Cons(MuState { name: name, ty: ty }, cx.states)
+        }
+        ^other => ()
+      }
+      mu_redeclare(&mut cx, rest)
+    }
+  }
+}
+
+pub fn mu_tail_end(cx: &mut MuCx, t: SurfaceTerm, finish: List(Text), goal: Option(SurfaceTerm)): SurfaceTerm ! {div} {
+  var binds: List(MuBind) := Nil
+  // Without states, the value's type is the goal.
+  let want := if mu_is_nil_text(finish) { goal } else { None }
+  let v := mu_expr(&mut cx, t, &mut binds, want)
+  let end := match finish {
+    Nil => v
+    ^other => mu_ctor_term(&mut cx, List::length(finish), v, mu_names_vars(finish, t), t)
+  }
+  mu_wrap(&mut cx, binds, end, goal)
+}
+
+pub fn mu_names_vars(ns: List(Text), like: SurfaceTerm): List(SurfaceTerm) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(mu_v(n, like), mu_names_vars(rest, like))
+  }
+}
+
+// ---- Functions ------------------------------------------------------------------
+
+pub fn mu_param_states(cx: &mut MuCx, ps: List(Text), bs: List(Option(Bool)), tys: List(Option(SurfaceTerm)), out_tys: List(SurfaceTerm)): List(SurfaceTerm) {
+  match ps {
+    Nil => out_tys
+    Cons(p, rest) => {
+      let b := match List::head(bs) {
+        Some(x) => x
+        None => None
+      }
+      let t := match List::head(tys) {
+        Some(x) => x
+        None => None
+      }
+      match b {
+        Some(m) => if m {
+          cx.states := Cons(MuState { name: p, ty: t }, cx.states)
+          cx.outs := List::append(cx.outs, [p])
+          match t {
+            Some(ty) => mu_param_states(&mut cx, rest, List::tail(bs), List::tail(tys), List::append(out_tys, [ty]))
+            None => {
+              mu_fail(&mut cx, Text::concat_all(["the `&mut` parameter `", p, "` has no type written"]))
+              mu_param_states(&mut cx, rest, List::tail(bs), List::tail(tys), out_tys)
+            }
+          }
+        } else { mu_param_states(&mut cx, rest, List::tail(bs), List::tail(tys), out_tys) }
+        None => mu_param_states(&mut cx, rest, List::tail(bs), List::tail(tys), out_tys)
+      }
+    }
+  }
+}
+
+pub fn mu_nones(n: Nat): List(Option(Bool)) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(None, mu_nones(m))
+  }
+}
+
+// What the rewrite of a function gives: the function, and the families it
+// needs, or why it is not read.
+pub(open) enum MuResult {
+  MuRead(SurfaceFn, List(Nat))
+  MuUnread(Text, List(Nat))
+}
+
+pub fn mu_fn(f: SurfaceFn): MuResult ! {div} {
+  var cx := MuCx { states: Nil, outs: Nil, used: Nil, fresh: 0, err: None }
+  let out_tys := mu_param_states(&mut cx, f.params, f.r#borrows, f.param_types, Nil)
+  let k := List::length(out_tys)
+  // The families it needs, even where it is not read.
+  mu_use(&mut cx, 0)
+  if k > 0 { mu_use(&mut cx, k) } else { () }
+  let result := match f.result {
+    None => None
+    Some(r) => match out_tys {
+      Nil => Some(r)
+      ^other => Some(mu_call(mu_family(k), Cons(r, out_tys), r))
+    }
+  }
+  match mu_lent_in_terms(mu_subterms(f.body)) {
+    Some(x) => MuUnread(Text::concat_all(["a `&` lends_it of `", x, "` is next to an argument that writes it"]), cx.used)
+    None => match mu_unprepared(mu_subterms(f.body)) {
+      Some(why) => MuUnread(Text::concat("it has ", why), cx.used)
+      None => {
+        let outs := cx.outs
+        let body := mu_tail(&mut cx, f.body, outs, result)
+        match cx.err {
+          Some(why) => MuUnread(why, cx.used)
+          None => MuRead(SurfaceFn {
+            name: f.name,
+            generics: f.generics,
+            bounds: f.bounds,
+            params: f.params,
+            r#borrows: mu_nones(List::length(f.params)),
+            param_types: f.param_types,
+            result: result,
+            effects: f.effects,
+            wheres: f.wheres,
+            start: f.start,
+            end: f.end,
+            body: body,
+            lends: f.lends,
+            generic_types: f.generic_types,
+            bound_starts: f.bound_starts,
+            visibility: f.visibility,
+            row_hole: f.row_hole,
+            unused: f.unused,
+            unused_generics: f.unused_generics,
+            unused_params: f.unused_params
+          }, cx.used)
+        }
+      }
+    }
+  }
+}
+
+// The family `Mut_k`: `inductive MutK(R: Type, S1: Type, …): Type { mutK(value': R, s'1: S1, …): MutK(R, S1, …) }`.
+pub fn mu_family_stmt(k: Nat): SurfaceStmt {
+  let ty := SurfaceTerm { occurrence: None, kind: SkVar(NameSpelled("Type")), start: 0, end: 0 }
+  let names := Cons("R", mu_state_params(k, 1))
+  let params := mu_typed(names, ty)
+  let vars := mu_var_terms(names)
+  let result := SurfaceTerm { occurrence: None, kind: SkApp(SurfaceTerm { occurrence: None, kind: SkVar(NameSpelled(mu_family(k))), start: 0, end: 0 }, vars), start: 0, end: 0 }
+  let fields := Cons(SurfaceNamedMk("value'", mu_var_term("R")), mu_state_fields(k, 1))
+  StInductive(SurfaceInductiveMk(
+    mu_family(k),
+    params,
+    ty,
+    [SurfaceCtorMk(Text::concat("mut", Text::of_nat(k)), 0, fields, result)],
+    0,
+    0,
+    VisPrivate
+  ))
+}
+
+pub fn mu_var_term(n: Text): SurfaceTerm { SurfaceTerm { occurrence: None, kind: SkVar(NameSpelled(n)), start: 0, end: 0 } }
+
+pub fn mu_var_terms(ns: List(Text)): List(SurfaceTerm) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(mu_var_term(n), mu_var_terms(rest))
+  }
+}
+
+pub fn mu_typed(ns: List(Text), ty: SurfaceTerm): List(SurfaceNamed) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(SurfaceNamedMk(n, ty), mu_typed(rest, ty))
+  }
+}
+
+// `S_i, …`, `n` of them.
+pub fn mu_state_params(n: Nat, i: Nat): List(Text) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(Text::concat("S", Text::of_nat(i)), mu_state_params(m, i + 1))
+  }
+}
+
+pub fn mu_state_fields(n: Nat, i: Nat): List(SurfaceNamed) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(SurfaceNamedMk(Text::concat("s'", Text::of_nat(i)), mu_var_term(Text::concat("S", Text::of_nat(i)))), mu_state_fields(m, i + 1))
+  }
+}
+
+// ---- Statements -----------------------------------------------------------------
+
+pub(open) enum MuStmt {
+  MuStmtRead(SurfaceStmt, List(Nat))
+  MuStmtUnread(Text, List(Nat))
+  MuStmtNone
+}
+
+pub fn mu_merge(a: List(Nat), b: List(Nat)): List(Nat) {
+  match b {
+    Nil => a
+    Cons(k, rest) => if mu_has_nat(a, k) { mu_merge(a, rest) } else { mu_merge(List::append(a, [k]), rest) }
+  }
+}
+
+// The families in the order the host declares them: the smallest first.
+pub fn mu_sorted(ks: List(Nat)): List(Nat) {
+  match ks {
+    Nil => Nil
+    Cons(k, rest) => mu_insert(k, mu_sorted(rest))
+  }
+}
+
+pub fn mu_insert(k: Nat, ks: List(Nat)): List(Nat) {
+  match ks {
+    Nil => [k]
+    Cons(h, rest) => if k < h { Cons(k, ks) } else { Cons(h, mu_insert(k, rest)) }
+  }
+}
+
+// The families of `ks` the kernel does not have yet, as declarations.
+pub fn mu_declare(core: &KernelCore, ks: List(Nat)): List(SurfaceStmt) {
+  mu_declare_in(core, mu_sorted(ks))
+}
+
+pub fn mu_declare_in(core: &KernelCore, ks: List(Nat)): List(SurfaceStmt) {
+  match ks {
+    Nil => Nil
+    Cons(k, rest) => match kernel_global_get(core, mu_family(k)) {
+      Some(^g) => mu_declare_in(core, rest)
+      None => Cons(mu_family_stmt(k), mu_declare_in(core, rest))
+    }
+  }
+}
+
+pub fn mu_items(items: List(SurfaceStmt)): MuStmt {
+  match items {
+    Nil => MuStmtNone
+    Cons(^s, ^rest) => MuStmtNone
+  }
+}
+
+pub fn mu_stmt(stmt: SurfaceStmt): MuStmt ! {div} {
+  match stmt {
+    StFn(f) => if mu_needs(f) {
+      match mu_fn(f) {
+        MuRead(g, used) => MuStmtRead(StFn(g), used)
+        MuUnread(why, used) => MuStmtUnread(Text::concat_all(["in `", f.name, "`: ", why, ", which the host reads and this does not yet"]), used)
+      }
+    } else { MuStmtNone }
+    ^other => MuStmtNone
+  }
+}
+
+// A function whose types are not the kernel's is skipped before it is read:
+// no family is declared for it.
+pub fn mu_stmt_unless_typed(stmt: SurfaceStmt, skipped: Option((Text × Text))): MuStmt ! {div} {
+  match skipped {
+    Some(sk) => if text_starts_with(sk.snd, "its type is not the kernel's", 0) { MuStmtNone } else { mu_stmt(stmt) }
+    None => mu_stmt(stmt)
+  }
+}

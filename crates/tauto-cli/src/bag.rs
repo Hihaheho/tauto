@@ -120,6 +120,7 @@ fn add(tote: &Path, mut args: Vec<String>) -> Result<ExitCode, Problem> {
     let tag = take_value(&mut args, "--tag").map_err(Problem::Usage)?;
     let dir = take_value(&mut args, "--dir").map_err(Problem::Usage)?;
     let project = take_value(&mut args, "--project").map_err(Problem::Usage)?;
+    let sparse = take_flag(&mut args, "--sparse");
     let mut rest = names(args)?;
     if rest.len() > 1 {
         return Err(Problem::Usage(i18n::t!("bag-add-one-name")));
@@ -156,6 +157,7 @@ fn add(tote: &Path, mut args: Vec<String>) -> Result<ExitCode, Problem> {
                 url: url.clone(),
                 reference,
                 dir: String::new(),
+                sparse: false,
                 project,
             };
             whole.check()?;
@@ -167,12 +169,36 @@ fn add(tote: &Path, mut args: Vec<String>) -> Result<ExitCode, Problem> {
                     reference = &whole.reference
                 )
             );
+            // With a sparse directory named, only that is fetched, even to
+            // look at it.
+            let whole = match (&dir, sparse) {
+                (Some(d), true) => GitSource {
+                    dir: d.trim_matches('/').to_string(),
+                    sparse: true,
+                    ..whole
+                },
+                _ => whole,
+            };
+            let first_was_sparse = whole.sparse;
+            whole.check()?;
             let fetched = totebag::fetch_head(&cache, &whole)?;
             let root = cache.source_dir(&fetched.id);
             let dir = choose_dir(&root, &url, dir, name.as_deref())?;
             let found = tauto::manifest::read(&root.join(&dir))?;
             let name = name.unwrap_or(found.package.name);
-            let source = GitSource { dir, ..whole };
+            let source = GitSource {
+                dir,
+                sparse,
+                ..whole
+            };
+            source.check()?;
+            // Unless the first fetch was the sparse one, a sparse source is
+            // fetched again: its tree is only its directory.
+            let fetched = if sparse && !first_was_sparse {
+                totebag::fetch_head(&cache, &source)?
+            } else {
+                fetched
+            };
             seed = Some(Locked {
                 name: name.clone(),
                 source: source.clone(),
@@ -182,7 +208,7 @@ fn add(tote: &Path, mut args: Vec<String>) -> Result<ExitCode, Problem> {
             (name, Dependency::Git(source))
         }
         (None, Some(path)) => {
-            if branch.is_some() || tag.is_some() || dir.is_some() || project.is_some() {
+            if branch.is_some() || tag.is_some() || dir.is_some() || project.is_some() || sparse {
                 return Err(Problem::Usage(i18n::t!("bag-git-only-flags")));
             }
             let found = tauto::manifest::read(&tote.join(&path)).map_err(|_| {
@@ -303,6 +329,7 @@ fn find_totes(root: &Path, dir: &Path, out: &mut Vec<String>) {
 fn entry(name: &str, dependency: &Dependency) -> String {
     match dependency {
         Dependency::Path(path) => format!("{name} {{ path = {path:?} }}"),
+        Dependency::Workspace => format!("{name}: workspace"),
         Dependency::Git(s) => {
             let mut out = format!(
                 "{name} {{\n  git = \"{}\"\n  ref = \"{}\"\n",
@@ -310,6 +337,9 @@ fn entry(name: &str, dependency: &Dependency) -> String {
             );
             if !s.dir.is_empty() {
                 out.push_str(&format!("  dir = \"{}\"\n", s.dir));
+            }
+            if s.sparse {
+                out.push_str("  sparse = true\n");
             }
             if let Some(p) = &s.project {
                 out.push_str(&format!("  project = \"{p}\"\n"));
@@ -470,7 +500,8 @@ fn fetch(tote: &Path, mut args: Vec<String>) -> Result<ExitCode, Problem> {
     Ok(code)
 }
 
-fn deps(tote: &Path, args: Vec<String>) -> Result<ExitCode, Problem> {
+fn deps(tote: &Path, mut args: Vec<String>) -> Result<ExitCode, Problem> {
+    let json = take_flag(&mut args, "--json");
     names(args)?
         .is_empty()
         .then_some(())
@@ -478,10 +509,116 @@ fn deps(tote: &Path, args: Vec<String>) -> Result<ExitCode, Problem> {
     let manifest = tauto::manifest::read(tote)?;
     let lock = totebag::lock::read(tote)?.unwrap_or_default();
     let cache = Cache::from_env()?;
+    if json {
+        let dir = absolute(tote);
+        let mut path = vec![dir.clone()];
+        let out = serde_json::json!({
+            "name": manifest.package.name,
+            "version": manifest.package.version,
+            "dir": dir.display().to_string(),
+            "dependencies": json_deps(&dir, &manifest, &lock, &cache, &mut path),
+        });
+        println!("{}", serde_json::to_string_pretty(&out).expect("json"));
+        return Ok(ExitCode::SUCCESS);
+    }
     println!("{} {}", manifest.package.name, manifest.package.version);
     let mut seen = HashSet::new();
     show(tote, &manifest, &lock, &cache, "", &mut seen);
     Ok(ExitCode::SUCCESS)
+}
+
+fn absolute(dir: &Path) -> PathBuf {
+    std::fs::canonicalize(dir)
+        .or_else(|_| std::path::absolute(dir))
+        .unwrap_or_else(|_| dir.to_path_buf())
+}
+
+/// `deps --json`: each dependency in the order `Tauto.eure` declares it,
+/// with where it was declared to come from and the directory it resolves to
+/// here, so that a host finds a tote's files without knowing how the cache
+/// lays them out. `dir` is null when the files are not here (`status` says
+/// why); a dependency already on the way from the root is not expanded again
+/// (`cycle`).
+fn json_deps(
+    dir: &Path,
+    manifest: &tauto::manifest::Manifest,
+    lock: &Lock,
+    cache: &Cache,
+    path: &mut Vec<PathBuf>,
+) -> Vec<serde_json::Value> {
+    use serde_json::{Value, json};
+    let mut out = Vec::new();
+    for (name, dependency) in &manifest.dependencies {
+        let mut entry = serde_json::Map::new();
+        entry.insert("name".into(), json!(name));
+        let (target, status) = match dependency {
+            Dependency::Path(p) => {
+                entry.insert("kind".into(), json!("path"));
+                entry.insert("path".into(), json!(p));
+                (Some(dir.join(p)), "resolved")
+            }
+            Dependency::Workspace => {
+                entry.insert("kind".into(), json!("workspace"));
+                match tauto::manifest::dependency_dir(dir, name, dependency) {
+                    Ok(p) => (Some(p), "resolved"),
+                    Err(_) => (None, "unresolved"),
+                }
+            }
+            Dependency::Git(s) => {
+                entry.insert("kind".into(), json!("git"));
+                entry.insert(
+                    "git".into(),
+                    json!({
+                        "url": s.url,
+                        "ref": s.reference,
+                        "dir": s.dir,
+                        "sparse": s.sparse,
+                        "project": s.project,
+                    }),
+                );
+                match lock.get(name) {
+                    Some(l) if l.source == *s => {
+                        entry.insert("rev".into(), json!(l.rev.to_string()));
+                        if cache.has(&l.id) {
+                            (Some(totebag::tote_dir(cache, l)), "resolved")
+                        } else {
+                            (None, "not-fetched")
+                        }
+                    }
+                    _ => (None, "not-locked"),
+                }
+            }
+        };
+        let target = target.map(|t| absolute(&t));
+        let manifest = target.as_ref().and_then(|t| tauto::manifest::read(t).ok());
+        let status = match (&target, &manifest) {
+            (Some(_), None) => "no-manifest",
+            _ => status,
+        };
+        entry.insert("status".into(), json!(status));
+        entry.insert(
+            "dir".into(),
+            target
+                .as_ref()
+                .map_or(Value::Null, |t| json!(t.display().to_string())),
+        );
+        let cycle = target.as_ref().is_some_and(|t| path.contains(t));
+        if cycle {
+            entry.insert("cycle".into(), json!(true));
+        }
+        let children = match (target, manifest) {
+            (Some(t), Some(m)) if !cycle => {
+                path.push(t.clone());
+                let c = json_deps(&t, &m, lock, cache, path);
+                path.pop();
+                json!(c)
+            }
+            _ => json!([]),
+        };
+        entry.insert("dependencies".into(), children);
+        out.push(Value::Object(entry));
+    }
+    out
 }
 
 fn show(
@@ -504,6 +641,13 @@ fn show(
         };
         let (what, target) = match dependency {
             Dependency::Path(p) => (i18n::t!("bag-deps-path", path = p), Some(dir.join(p))),
+            Dependency::Workspace => match tauto::manifest::dependency_dir(dir, name, dependency) {
+                Ok(p) => (
+                    i18n::t!("bag-deps-workspace", path = p.display().to_string()),
+                    Some(p),
+                ),
+                Err(_) => (i18n::t!("bag-deps-workspace-missing", name = name), None),
+            },
             Dependency::Git(s) => match lock.get(name) {
                 Some(l) if l.source == *s => {
                     let fetched = cache.has(&l.id);
@@ -572,6 +716,9 @@ pub(crate) fn totes(
         for (name, dependency) in deps {
             let target = match &dependency {
                 Dependency::Path(p) => Some(dir.join(p)),
+                Dependency::Workspace => {
+                    tauto::manifest::dependency_dir(&dir, &name, &dependency).ok()
+                }
                 Dependency::Git(s) => lock
                     .get(&name)
                     .filter(|l| l.source == *s && cache.has(&l.id))
@@ -831,6 +978,21 @@ impl Resolver<'_> {
                         )
                     })?
                 }
+                Dependency::Workspace => {
+                    let target = tauto::manifest::dependency_dir(dir, name, dependency)
+                        .map_err(|e| e.to_string())?;
+                    if let Some(tree) = &fetched_tree
+                        && !target.canonicalize().is_ok_and(|t| t.starts_with(tree))
+                    {
+                        return Err(i18n::t!(
+                            "bag-path-leads-out",
+                            tote = &manifest.package.name,
+                            name = name,
+                            path = target.display().to_string()
+                        ));
+                    }
+                    target.canonicalize().map_err(|e| e.to_string())?
+                }
                 Dependency::Git(source) => {
                     if fetched_tree.is_some() && source.is_local() {
                         return Err(i18n::t!(
@@ -888,13 +1050,14 @@ impl Resolver<'_> {
                 let same = match (first, dependency) {
                     (Dependency::Git(a), Dependency::Git(b)) => a == b,
                     (Dependency::Path(_), Dependency::Path(_)) => first_target == target,
+                    (Dependency::Workspace, Dependency::Workspace) => first_target == target,
                     _ => false,
                 };
                 if same {
                     return Ok(());
                 }
                 let shown = |d: &Dependency, t: &Path| match d {
-                    Dependency::Path(_) => {
+                    Dependency::Path(_) | Dependency::Workspace => {
                         i18n::t!("bag-the-directory", path = t.display().to_string())
                     }
                     Dependency::Git(s) => s.to_string(),
@@ -1257,5 +1420,33 @@ mod edit {
                 "dependencies {\n  y { path = \"../y\" }\n}\n"
             );
         }
+    }
+}
+
+/// `tauto build --verify`: before the build, every tote `Tauto.lock` fixes
+/// is in the cache with the content the lock names. A tote not fetched yet,
+/// or one whose files were changed since, stops the build: what is built is
+/// then what the lock promised, not what the cache happens to hold.
+pub(crate) fn verify_for_build(tote: &Path) -> Result<(), String> {
+    let Some(lock) = totebag::lock::read(tote)? else {
+        return Ok(());
+    };
+    let cache = Cache::from_env()?;
+    let mut wrong = Vec::new();
+    for t in &lock.totes {
+        if !cache.has(&t.id) {
+            wrong.push(i18n::t!(
+                "bag-verify-not-fetched",
+                name = &t.name,
+                id = t.id.short().to_string()
+            ));
+        } else if let Err(e) = cache.verify(&t.id) {
+            wrong.push(format!("{}: {e}", t.name));
+        }
+    }
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(wrong.join("\n"))
     }
 }

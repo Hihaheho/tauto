@@ -19,7 +19,7 @@ fn cli_build_run_and_errors() {
     let dir = directory();
     let input = dir.join("input.taut");
     let output = dir.join("out");
-    fs::write(&input, &r#"perform show("n", 42)"#.to_string()).unwrap();
+    fs::write(&input, &r#"show(&42)"#.to_string()).unwrap();
     for command in ["build", "run"] {
         let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
             .args([command, "--backend", "javascript", "-o"])
@@ -33,12 +33,12 @@ fn cli_build_run_and_errors() {
             String::from_utf8_lossy(&out.stderr)
         );
         if command == "run" {
-            assert_eq!(String::from_utf8(out.stdout).unwrap(), "n = 42\n");
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), "42\n");
         }
     }
     fs::write(
         &input,
-        &r#"perform show("n", 9223372036854775807 + 1)"#.to_string(),
+        &r#"show(&(9223372036854775807 + 1))"#.to_string(),
     )
     .unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
@@ -59,7 +59,7 @@ fn cli_build_run_and_errors() {
 }
 
 fn run_host(source: &str, host: &str) -> std::process::Output {
-    let pkg = tauto_nir::compile(source).unwrap();
+    let pkg = tauto::nir::compile(source).unwrap();
     let dir = directory();
     fs::write(
         dir.join("program.mjs"),
@@ -82,10 +82,10 @@ fn run_host(source: &str, host: &str) -> std::process::Output {
 #[test]
 fn async_extern_resumes_inside_handler() {
     let out = run_host(
-        r#"extern { fn delayed(n: i64): i64 }
+        r#"extern { fn delayed(n: i64): i64 ! {wait} }
 effect ask(): i64 resume 1
 let x := handle { delayed(40) + perform ask() } with { ask(), k => k(2) }
-perform show("x", x)"#,
+show(&x)"#,
         "await run(console.log, { delayed: n => new Promise(resolve => setTimeout(() => resolve(n), 5)) });",
     );
     assert!(
@@ -93,18 +93,18 @@ perform show("x", x)"#,
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8(out.stdout).unwrap(), "x = 42\n");
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "42\n");
 }
 
 #[test]
 fn async_extern_in_multi_shot_continuation() {
     let out = run_host(
-        r#"extern { fn delayed(n: i64): i64 }
+        r#"extern { fn delayed(n: i64): i64 ! {wait} }
 effect choose(): Bool resume ω
 let x := handle { delayed(if perform choose() { 10 } else { 20 }) } with {
   choose(), k => k(true) + k(false)
 }
-perform show("x", x)"#,
+show(&x)"#,
         "let calls=0; await run(console.log, { delayed: async n => { calls++; await Promise.resolve(); return n; } }); if(calls!==2)throw new Error('expected two calls');",
     );
     assert!(
@@ -112,14 +112,14 @@ perform show("x", x)"#,
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8(out.stdout).unwrap(), "x = 30\n");
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "30\n");
 }
 
 #[test]
 fn async_extern_rejection_propagates() {
     let out = run_host(
-        r#"extern { fn delayed(n: i64): i64 }
-perform show("x", delayed(1))"#,
+        r#"extern { fn delayed(n: i64): i64 ! {wait} }
+show(&delayed(1))"#,
         "const error = new Error('host failure'); try { await run(console.log,{delayed: async () => {throw error;}}); process.exitCode=2; } catch(e) { if(e!==error)throw e; console.log(e.message); }",
     );
     assert!(
@@ -133,8 +133,8 @@ perform show("x", delayed(1))"#,
 #[test]
 fn deep_recursion_uses_trampoline() {
     let out = run_host(
-        &r#"fn count(n: i64): i64 ! {Div} { if n == 0 { 0 } else { count(n - 1) + 1 } }
-perform show("n", count(20000))"#
+        &r#"fn count(n: i64): i64 ! {div} { if n == 0 { 0 } else { count(n - 1) + 1 } }
+show(&count(20000))"#
             .to_string(),
         "await run();",
     );
@@ -143,14 +143,14 @@ perform show("n", count(20000))"#
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8(out.stdout).unwrap(), "n = 20000\n");
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "20000\n");
 }
 
 #[test]
 fn generation_modes_and_invalid_combinations() {
     let dir = directory();
     let input = dir.join("input.taut");
-    fs::write(&input, r#"perform show("n", 42)"#).unwrap();
+    fs::write(&input, r#"show(&42)"#).unwrap();
     for target in ["node", "browser"] {
         let output = dir.join(target);
         let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
@@ -180,7 +180,7 @@ fn generation_modes_and_invalid_combinations() {
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(String::from_utf8(out.stdout).unwrap(), "n = 42\n");
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "42\n");
     }
     for args in [
         vec!["run", "--backend", "javascript", "--target", "browser"],
@@ -199,17 +199,18 @@ fn generation_modes_and_invalid_combinations() {
 
 #[test]
 fn direct_handler_cannot_silently_suspend() {
-    let out = run_host(
-        r#"extern { fn delayed(n: i64): i64 }
+    // A direct arm cannot wait, so the rows refuse the program before it runs.
+    let error = tauto::nir::compile_javascript(
+        r#"extern { fn delayed(n: i64): i64 ! {wait} }
 effect ask(): i64 direct
 let n := handle { perform ask() } with { ask(), k => k(delayed(1)) }
-perform show("n", n)"#,
-        "try { await run(console.log,{delayed: async n=>n}); process.exitCode=2; } catch(e) { if(!e.message.includes('direct handler cannot await'))throw e; }",
-    );
+show(&n)"#,
+    )
+    .err()
+    .expect("a wait in a direct arm is refused");
     assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
+        format!("{error:?}").contains("rows-arm-not-direct"),
+        "{error:?}"
     );
 }
 
@@ -217,7 +218,7 @@ perform show("n", n)"#,
 fn declaration_output_is_opt_in_and_matches_esm_entry_points() {
     let dir = directory();
     let input = dir.join("input.taut");
-    fs::write(&input, r#"perform show("n", 42)"#).unwrap();
+    fs::write(&input, r#"show(&42)"#).unwrap();
     for target in ["node", "browser"] {
         for enabled in [false, true] {
             let output = dir.join(format!("{target}-{enabled}"));
@@ -268,7 +269,7 @@ fn declaration_output_is_opt_in_and_matches_esm_entry_points() {
                 "{}",
                 String::from_utf8_lossy(&result.stderr)
             );
-            assert_eq!(String::from_utf8(result.stdout).unwrap(), "n = 42\n");
+            assert_eq!(String::from_utf8(result.stdout).unwrap(), "42\n");
         }
     }
     for args in [
@@ -287,10 +288,10 @@ fn declaration_output_is_opt_in_and_matches_esm_entry_points() {
 
 #[test]
 fn declarations_describe_async_host_and_adapted_callback_values() {
-    let source = r#"extern { fn host(n: i64, callback: (i64) -> i64): i64 }
+    let source = r#"extern { fn host(n: i64, callback: (i64) -> i64): i64 ! {wait} }
 fn increment(n: i64): i64 { n + 1 }
-perform show("answer", host(40, increment))"#;
-    let pkg = tauto_nir::compile_javascript(source).unwrap();
+show(&host(40, increment))"#;
+    let pkg = tauto::nir::compile_javascript(source).unwrap();
     let declarations = tauto_jsgen::generate_declarations(&pkg).unwrap();
     assert!(declarations.contains("\"host\": (arg0: bigint, arg1: ((arg0: bigint) => bigint | Promise<bigint>)) => bigint | PromiseLike<bigint>"));
     let out = run_host(
@@ -302,7 +303,7 @@ perform show("answer", host(40, increment))"#;
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8(out.stdout).unwrap(), "answer = 42\n");
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "42\n");
 }
 
 /// A top level that reaches only `wait` needs no host handler, so the browser
@@ -314,14 +315,14 @@ fn browser_builds_a_top_level_that_waits() {
     let output = dir.join("out");
     fs::write(
         &input,
-        r#"import std::prelude::Par { wait }
+        r#"import std::builtin::par { wait }
 
-fn start(): Unit ! {Div, wait} {
+fn start(): Unit ! {div, wait} {
   #()
 }
 
 start()
-perform show("n", 1)"#,
+show(&1)"#,
     )
     .unwrap();
     for target in ["node", "browser"] {
@@ -342,8 +343,69 @@ perform show("n", 1)"#,
                 .arg(output.join("main.mjs"))
                 .output()
                 .unwrap();
-            assert_eq!(String::from_utf8(out.stdout).unwrap(), "n = 1\n");
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), "1\n");
         }
     }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+// A parser that the program reads ahead of time is what `syn_load` reads from its text:
+// with `TAUTO_JS_SYNTAX_COMPARE` the program makes both and stops if they differ.
+#[test]
+fn a_parser_read_ahead_of_time_is_what_its_text_reads() {
+    let dir = directory();
+    let input = dir.join("input.taut");
+    fs::write(
+        &input,
+        r#"import std::builtin::macro
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term, fn parse
+show(&math::parse("(1+2)=3"))
+show(&math::parse("1+="))
+"#,
+    )
+    .unwrap();
+    let generated = Command::new(env!("CARGO_BIN_EXE_tauto"))
+        .args(["syntax", "gen"])
+        .arg(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let run = |compare: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tauto"));
+        command.args(["run", "--backend", "javascript", "-o"]);
+        command
+            .arg(dir.join(if compare { "compared" } else { "plain" }))
+            .arg(&input);
+        if compare {
+            command.env("TAUTO_JS_SYNTAX_COMPARE", "1");
+        }
+        let out = command.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let plain = run(false);
+    assert_eq!(run(true), plain);
     fs::remove_dir_all(dir).unwrap();
 }

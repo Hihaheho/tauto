@@ -1,3 +1,4 @@
+import std::array
 import "operations.taut"
 import "results.taut"
 import "steps.taut"
@@ -10,7 +11,7 @@ import "../../vm/src/cps.taut"
 import "../../vm/src/machine.taut"
 import "../../vm/src/mval.taut"
 import "../../vm/src/operations.taut"
-import std::Base
+import std::base
 
 // A structural property of production CPS expressions, independent of evaluation.
 pub(open) inductive EUnaryExpr: (Nat, Cps) -> Prop {
@@ -19,7 +20,7 @@ pub(open) inductive EUnaryExpr: (Nat, Cps) -> Prop {
 }
 
 pub fn e_compile_state(r: CR): CSt {
-  match r { Cr(code, state) => state }
+  match r { Cr(^code, state) => state }
 }
 
 // With sufficient compiler fuel, these expressions allocate no slots or functions
@@ -46,7 +47,7 @@ pub theorem e_unary_step(
   out: MVal,
   cx2: MCx,
   k: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   done: e_operation(p_ctors(p), cx, e_unary(op), Cons(value, Nil)) = ErValue(out, cx2)
@@ -94,13 +95,13 @@ pub theorem e_unary_expr_run<n: Nat, e: Cps>(
   shape: EUnaryExpr(n, e),
   fuel: Nat,
   p: MProgram,
-  env: List(Pair(Nat, EBinding)),
+  env: List(Nat × EBinding),
   cx: MCx,
   value: MVal,
   final: MCx,
   k: MCode,
   cs: CSt,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   done: e_eval(fuel, p_ctors(p), env, e, cx) = ErValue(value, final)
@@ -199,13 +200,13 @@ pub theorem e_unary_expr_mrun<n: Nat, e: Cps>(
   shape: EUnaryExpr(n, e),
   fuel: Nat,
   p: MProgram,
-  env: List(Pair(Nat, EBinding)),
+  env: List(Nat × EBinding),
   cx: MCx,
   value: MVal,
   final: MCx,
   k: MCode,
   cs: CSt,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   done: e_eval(fuel, p_ctors(p), env, e, cx) = ErValue(value, final)

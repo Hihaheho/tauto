@@ -18,13 +18,16 @@ fn root(e: &Message) -> &Message {
 #[test]
 fn bundled_standard_files_keep_the_distribution_check_policy() {
     tauto_messages::install();
-    let policy = parse(include_str!("../../../Tauto.eure"), Path::new("Tauto.eure"))
-        .unwrap()
-        .check;
+    let policy = parse(
+        include_str!("../../../std/Tauto.eure"),
+        Path::new("Tauto.eure"),
+    )
+    .unwrap()
+    .check;
     for (name, _) in tauto::stdlib::FILES {
         let expected = policy
             .slow
-            .get(&format!("std/{name}"))
+            .get(*name)
             .copied()
             .or(policy.time_limit)
             .unwrap_or(tauto::manifest::DEFAULT_TIME_LIMIT);
@@ -58,6 +61,39 @@ rust {
   }
 }
 "#;
+
+#[test]
+fn reads_workspace_affiliation_and_members() {
+    tauto_messages::install();
+    let m = parse(
+        "package { name = \"app\" version = \"0.1.0\" }\nworkspace = \"../..\"\ndependencies {\n  lib: workspace\n}\n",
+        Path::new("Tauto.eure"),
+    )
+    .unwrap();
+    assert_eq!(
+        m.workspace,
+        Some(tauto::manifest::WorkspaceSection::Affiliate("../..".into()))
+    );
+    assert_eq!(m.dependencies, vec![("lib".into(), tauto::manifest::Dependency::Workspace)]);
+    let m = parse(
+        "workspace {\n  parent = \"..\"\n  members = [\".\", glob`pkgs/*`]\n}\n",
+        Path::new("Tauto.eure"),
+    )
+    .unwrap();
+    match m.workspace {
+        Some(tauto::manifest::WorkspaceSection::Root { parent, members }) => {
+            assert_eq!(parent.as_deref(), Some(".."));
+            assert_eq!(
+                members,
+                vec![
+                    tauto::manifest::MemberSpec::Path(".".into()),
+                    tauto::manifest::MemberSpec::Glob("pkgs/*".into()),
+                ]
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
 
 #[test]
 fn reads_the_rust_section() {

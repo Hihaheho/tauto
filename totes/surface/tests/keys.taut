@@ -1,0 +1,23 @@
+import "../src/surface.taut"
+import "../src/keys.taut"
+import "../../identity/src/identity.taut"
+import std::base
+
+pub fn keys_test_env(): SurfaceKeyEnv {
+  SurfaceKeyEnvMk(Nil, Cons(#("Foo", surface_name_text(NameGlobal(DeclIdMk(0)))), Nil))
+}
+
+// A keyed declaration is read as its key.
+pub theorem keys_read_a_keyed_name(): surface_key_text(keys_test_env(), "Foo") = surface_name_text(NameGlobal(DeclIdMk(0))) {
+  Refl
+}
+
+// A member written under a keyed type is read under the type's key.
+pub theorem keys_read_a_member_under_its_type(): surface_key_text(keys_test_env(), "Foo::new") = Text::concat(surface_name_text(NameGlobal(DeclIdMk(0))), "::new") {
+  Refl
+}
+
+// What is not keyed keeps its spelling.
+pub theorem keys_keep_other_names(): surface_key_text(keys_test_env(), "Bar::new") = "Bar::new" {
+  Refl
+}

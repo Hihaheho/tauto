@@ -2,8 +2,8 @@ import "rules_signature_types.taut"
 import "written_sound.taut"
 import "signature_error_sound.taut"
 import "data_fields_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -11,6 +11,7 @@ import "diagnostic_sound.taut"
 import "signature_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
 import "../../surface/src/surface.taut"
@@ -71,7 +72,7 @@ pub theorem signature_existing_borrow(
   requested: Bool,
   borrowed: ty_is_borrow(t) = true
 ): SignatureBorrow(Some(requested), t, t) {
-  ⊢ SignatureBorrow(Some(requested), t, t) from match t {
+  match t {
     TyInt(width) => False::elim(false_ne_true(borrowed))
     TyBool => False::elim(false_ne_true(borrowed))
     TyText => False::elim(false_ne_true(borrowed))
@@ -79,6 +80,7 @@ pub theorem signature_existing_borrow(
     TyNever => False::elim(false_ne_true(borrowed))
     TyDecimal => False::elim(false_ne_true(borrowed))
     TyFloat => False::elim(false_ne_true(borrowed))
+    TyFloat32 => False::elim(false_ne_true(borrowed))
     TyFn(params, result, kind) => False::elim(false_ne_true(borrowed))
     TyUnion(members) => False::elim(false_ne_true(borrowed))
     TyProduct(members) => False::elim(false_ne_true(borrowed))
@@ -109,11 +111,11 @@ pub theorem signature_wrap_if_sound(
   }
 }
 pub theorem signature_wrap_sound(
-  borrow: Option(Bool),
+  r#borrow: Option(Bool),
   c: Checker,
   t: Ty
-): SignatureBorrow(borrow, t, ck_val(signature_wrap(c, t, borrow))) {
-  ⊢ SignatureBorrow(borrow, t, ck_val(signature_wrap(c, t, borrow))) from match borrow {
+): SignatureBorrow(r#borrow, t, ck_val(signature_wrap(c, t, r#borrow))) {
+  match r#borrow {
     None => SignatureBorrowNone(t)
     Some(requested) => signature_wrap_if_sound(c, t, requested, ty_is_borrow(t), Refl)
   }
@@ -123,7 +125,7 @@ pub theorem ck_sig_written_reset(
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkWrittenReset(c, ck_sig_written(c, p, generics)) {
-  ⊢ CkWrittenReset(c, ck_sig_written(c, p, generics)) from match p {
+  match p {
     None => Refl
     Some(source) => Eq::subst(
       (m: Mut1(Ty, Checker)) => CkWrittenReset(c, m),
@@ -133,57 +135,57 @@ pub theorem ck_sig_written_reset(
   }
 }
 
-pub fn signature_parameter_after(borrow: Option(Bool), m: Mut1(Ty, Checker)): Mut1(Ty, Checker) {
-  frame_bind(Ty, Ty, (inner: Ty, next: Checker) => signature_wrap(next, inner, borrow), m)
+pub fn signature_parameter_after(r#borrow: Option(Bool), m: Mut1(Ty, Checker)): Mut1(Ty, Checker) {
+  frame_bind(<A: Ty, B: Ty>, (inner: Ty, next: Checker) => signature_wrap(next, inner, r#borrow), m)
 }
 pub theorem signature_parameter_after_sound(
   env: Datas,
   generics: Ordmap(Text, Ty),
   partial: Bool,
   source: Option(SurfaceTerm),
-  borrow: Option(Bool),
+  r#borrow: Option(Bool),
   m: Mut1(Ty, Checker),
   meaning: ∀ accepted: DiagnosticClean(
     ck_st(m)
-  ). SignatureType(env, generics, partial, signature_borrow_mode(borrow), source, ck_val(m)),
-  clean: DiagnosticClean(ck_st(signature_parameter_after(borrow, m)))
+  ). SignatureType(env, generics, partial, signature_borrow_mode(r#borrow), source, ck_val(m)),
+  clean: DiagnosticClean(ck_st(signature_parameter_after(r#borrow, m)))
 ): SignatureParameter(
   env,
   generics,
   partial,
   source,
-  borrow,
-  ck_val(signature_parameter_after(borrow, m))
+  r#borrow,
+  ck_val(signature_parameter_after(r#borrow, m))
 ) {
   ⊢ SignatureParameter(
     env,
     generics,
     partial,
     source,
-    borrow,
-    ck_val(signature_parameter_after(borrow, m))
+    r#borrow,
+    ck_val(signature_parameter_after(r#borrow, m))
   ) from match m {
     mut1(inner, next) => SignatureParameter::Mk(
       inner,
-      ck_val(signature_wrap(next, inner, borrow)),
-      meaning(signature_wrap_frame_errors(next, inner, borrow, clean)),
-      signature_wrap_sound(borrow, next, inner)
+      ck_val(signature_wrap(next, inner, r#borrow)),
+      meaning(signature_wrap_frame_errors(next, inner, r#borrow, clean)),
+      signature_wrap_sound(r#borrow, next, inner)
     )
   }
 }
 pub theorem ck_sig_param_sound(
   c: Checker,
   source: Option(SurfaceTerm),
-  borrow: Option(Bool),
+  r#borrow: Option(Bool),
   generics: Ordmap(Text, Ty),
-  clean: DiagnosticClean(ck_st(ck_sig_param(c, source, borrow, generics)))
+  clean: DiagnosticClean(ck_st(ck_sig_param(c, source, r#borrow, generics)))
 ): SignatureParameter(
   ck_datas_of(c),
   generics,
   frame_constructor_position(c),
   source,
-  borrow,
-  ck_val(ck_sig_param(c, source, borrow, generics))
+  r#borrow,
+  ck_val(ck_sig_param(c, source, r#borrow, generics))
 ) {
   Eq::subst(
     (m: Mut1(Ty, Checker)) => SignatureParameter(
@@ -191,26 +193,26 @@ pub theorem ck_sig_param_sound(
       generics,
       frame_constructor_position(c),
       source,
-      borrow,
+      r#borrow,
       ck_val(m)
     ),
-    Eq::sym(signature_param_unf(c, source, borrow, generics)),
+    Eq::sym(signature_param_unf(c, source, r#borrow, generics)),
     signature_parameter_after_sound(
       ck_datas_of(c),
       generics,
       frame_constructor_position(c),
       source,
-      borrow,
-      ck_sig_written(frame_set_under_borrow(c, signature_some_borrow(borrow)), source, generics),
+      r#borrow,
+      ck_sig_written(frame_set_under_borrow(c, signature_some_borrow(r#borrow)), source, generics),
       accepted => ck_sig_written_sound(
         source,
-        frame_set_under_borrow(c, signature_some_borrow(borrow)),
+        frame_set_under_borrow(c, signature_some_borrow(r#borrow)),
         generics,
         accepted
       ),
       Eq::subst(
         (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
-        signature_param_unf(c, source, borrow, generics),
+        signature_param_unf(c, source, r#borrow, generics),
         clean
       )
     )
@@ -230,41 +232,41 @@ pub theorem signature_wrap_if_context(
   }
 }
 pub theorem signature_wrap_context(
-  borrow: Option(Bool),
+  r#borrow: Option(Bool),
   c: Checker,
   t: Ty
-): written_context(ck_st(signature_wrap(c, t, borrow))) = written_context(c) {
-  ⊢ written_context(ck_st(signature_wrap(c, t, borrow))) = written_context(c) from match borrow {
+): written_context(ck_st(signature_wrap(c, t, r#borrow))) = written_context(c) {
+  match r#borrow {
     None => Refl
     Some(mutable) => signature_wrap_if_context(c, t, mutable, ty_is_borrow(t))
   }
 }
 pub theorem signature_parameter_after_reset(
   c: Checker,
-  borrow: Option(Bool),
+  r#borrow: Option(Bool),
   m: Mut1(Ty, Checker),
   reset: CkWrittenReset(c, m)
-): CkWrittenReset(c, signature_parameter_after(borrow, m)) {
-  ⊢ CkWrittenReset(c, signature_parameter_after(borrow, m)) from match m {
-    mut1(inner, next) => Eq::trans(signature_wrap_context(borrow, next, inner), reset)
+): CkWrittenReset(c, signature_parameter_after(r#borrow, m)) {
+  match m {
+    mut1(inner, next) => Eq::trans(signature_wrap_context(r#borrow, next, inner), reset)
   }
 }
 pub theorem ck_sig_param_reset(
   c: Checker,
   source: Option(SurfaceTerm),
-  borrow: Option(Bool),
+  r#borrow: Option(Bool),
   generics: Ordmap(Text, Ty)
-): CkWrittenReset(c, ck_sig_param(c, source, borrow, generics)) {
+): CkWrittenReset(c, ck_sig_param(c, source, r#borrow, generics)) {
   Eq::subst(
     (m: Mut1(Ty, Checker)) => CkWrittenReset(c, m),
-    Eq::sym(signature_param_unf(c, source, borrow, generics)),
+    Eq::sym(signature_param_unf(c, source, r#borrow, generics)),
     signature_parameter_after_reset(
       c,
-      borrow,
-      ck_sig_written(frame_set_under_borrow(c, signature_some_borrow(borrow)), source, generics),
+      r#borrow,
+      ck_sig_written(frame_set_under_borrow(c, signature_some_borrow(r#borrow)), source, generics),
       ck_sig_written_reset(
         source,
-        frame_set_under_borrow(c, signature_some_borrow(borrow)),
+        frame_set_under_borrow(c, signature_some_borrow(r#borrow)),
         generics
       )
     )

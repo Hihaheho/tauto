@@ -75,11 +75,13 @@ them: every function is total, and general recursion takes explicit fuel.
   run, an exit, a run-time error, a value to show, a request to the host (`MstepAsk`), or a
   wait until a timer. `mrun` runs at most `fuel` instructions.
 - `compile.taut`: the compiler. It takes the lowering every backend shares
-  (`tauto_nir::cps`), decides which locals are boxed in a cell (a `var` shared with a closure,
+  (`INPUT.md`), decides which locals are boxed in a cell (a `var` shared with a closure,
   one borrowed or written in a handler), and answers the bytecode, or what it cannot compile.
-- `wire.taut`: `read_program` reads the lowering as `crates/tauto-vm/src/wire.rs` writes it. A
-  malformed input reads as `None`, never as a program.
-- `main.taut`: the shell, in the execution language: `vm FILE LIMIT SHOWS ARGS...`. It reads the
+- `wire.taut`: `read_program` reads the lowering as `INPUT.md` defines it; `INPUT.md` and
+  `cps.taut` are the definition of the input, and what writes it follows them. A malformed
+  input reads as `None`, never as a program. What the machine refuses (secret words, an
+  extern it does not bind) it refuses in `compile.taut`, whoever wrote the input.
+- `main.taut`: the shell, in the execution language: `vm FILE LIMIT SHOWS INTERRUPTED TOO_DEEP ARGS...`. It reads the
   program, compiles and runs it, and answers its requests to the host by the standard effects,
   so what the shell is allowed is what the program is allowed. `LIMIT` is the host's limit of
   steps, or `-` for none; `SHOWS` is a file for what the program shows, or `-` for the standard
@@ -109,9 +111,6 @@ the ordered-map invariant by the sequence operations. The empty sequence and seq
 constructed from lists satisfy that invariant. `proof/index.taut` proves that vector bounds
 checks return the same result as checking the length of the visible list.
 `proof/text.taut` proves that text equality agrees with byte-by-byte comparison.
-`proof/map.taut` proves that the text-key scan returns the first position selected by
-heap-dependent equality, even with duplicate keys, non-text entries, references or
-union injections. Other query types use the general scan.
 `proof/path.taut` proves that indexed projections and complete borrowed paths preserve
 the reference result, including projections through union injections. It also proves
 that extending a reversed borrowed path corresponds to appending forward steps, and that

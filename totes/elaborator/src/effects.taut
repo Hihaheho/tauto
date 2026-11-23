@@ -1,0 +1,486 @@
+import "elaborate.taut"
+import "effects_rows.taut"
+import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::list
+
+// The functions of a mutual block that read terms as computations, and the functions with effects and the handlers read with them (rows and tables are in `effects_rows.taut`).
+
+// A call of a function with a row variable: the effects it stands for are the
+// caller's others, passed after the generics as the operations and answers.
+pub fn comp_var_call(cx: CompCx, t: SurfaceTerm, h: SurfaceTerm, name: Text, args: List(SurfaceTerm), lowered: List(SurfaceTerm), row: List(Text)): ElabResult(SurfaceTerm) {
+  match comp_fn_get(cx.fns, name) {
+    None => ElabErr("a function with a row variable is not known")
+    Some(f) => {
+      let nonvar := comp_without_vars(row)
+      let tail := comp_call_tail(cx, f, args, row)
+      let prefix := comp_prefix(f, args)
+      let applied := surface_term_mk(SkApp(h, comp_insert_at(lowered, prefix, [comp_op_ty(cx, tail), comp_res_fn(cx, tail)])), t.start, t.end)
+      comp_lift(cx, applied, List::append(nonvar, tail), name)
+    }
+  }
+}
+
+pub fn comp_call_lifted(cx: CompCx, t: SurfaceTerm, h: SurfaceTerm, name: Text, args: List(SurfaceTerm), lowered: List(SurfaceTerm), applied: SurfaceTerm, row: List(Text)): ElabResult(SurfaceTerm) {
+  if comp_has_var(row) && comp_is_local(cx, name) == false { comp_var_call(cx, t, h, name, args, lowered, row) } else { comp_lift(cx, applied, row, name) }
+}
+
+mutual {
+// `t`, a computation in `cx`, as a term of type `Comp(…)`.
+pub fn comp_computation(k: Nat, t: SurfaceTerm, cx: CompCx): ElabResult(SurfaceTerm) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => if comp_effectful(j, t, cx) == false { ElabOk(comp_call(cx, "Comp::ret", [comp_op(cx), comp_res(cx), t])) } else {
+      ⊢ ElabResult(SurfaceTerm) from match t.kind {
+        SkBlock(stmts) => comp_block(j, stmts, cx)
+        SkPerform(op, args) => comp_perform(j, op, args, cx)
+        SkApp(h, args) => comp_call_term(j, t, h, args, cx)
+        SkIf(c, a, o) => comp_computation(j, comp_if_match(cx, c, a, o), cx)
+        SkMatch(s, motive, arms, binder, _) => ⊢ ElabResult(SurfaceTerm) from match binder {
+          Some(^b) => ElabErr(comp_skip("a `match` binds its value"))
+          None => if comp_effectful(j, s, cx) {
+            let x := comp_fresh(cx, "m", 0)
+            ⊢ ElabResult(SurfaceTerm) from match comp_computation(j, s, comp_deeper(cx)) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(c) => {
+                let typed := comp_typed(cx, c, comp_guess(j, s, cx))
+                let m := surface_term_mk(SkMatch(comp_v(cx, x), motive, arms, None, None), t.start, t.end)
+                ⊢ ElabResult(SurfaceTerm) from match comp_computation(j, m, comp_deeper(cx)) {
+                  ElabErr(e) => ElabErr(e)
+                  ElabOk(rest) => ElabOk(comp_bind_all(cx, [#(x, typed)], rest))
+                }
+              }
+            }
+          } else {
+            ⊢ ElabResult(SurfaceTerm) from match comp_match_arms(j, arms, comp_deeper(cx)) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(out) => ElabOk(surface_term_mk(SkMatch(s, ⊢ Option(SurfaceTerm) from match motive {
+                None => None
+                Some(r) => Some(comp_call(cx, "Comp", [comp_op(cx), comp_res(cx), r]))
+              }, out, None, None), t.start, t.end))
+            }
+          }
+        }
+        SkHandle(body, handlers) => comp_handle(j, body, handlers, cx)
+        SkField(base, name) => ⊢ ElabResult(SurfaceTerm) from match comp_arguments(j, [base], cx, 0) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(r) => ⊢ ElabResult(SurfaceTerm) from match r.fst {
+            Cons(v, ^more) => ElabOk(comp_bind_all(cx, r.snd, comp_call(cx, "Comp::ret", [comp_op(cx), comp_res(cx), surface_term_mk(SkField(v, name), t.start, t.end)])))
+            Nil => ElabErr("a field of nothing")
+          }
+        }
+        _ => ElabErr(comp_skip("a function with effects reads a body of another form"))
+      }
+    }
+  }
+}
+
+pub fn comp_match_arms(k: Nat, arms: List(SurfaceArm), cx: CompCx): ElabResult(List(SurfaceArm)) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => ⊢ ElabResult(List(SurfaceArm)) from match arms {
+      Nil => ElabOk(Nil)
+      Cons(a, rest) => ⊢ ElabResult(List(SurfaceArm)) from match a.guard {
+        Some(^g) => ElabErr(comp_skip("a `match` arm has a guard"))
+        None => ⊢ ElabResult(List(SurfaceArm)) from match comp_computation(j, a.body, cx) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(b) => ⊢ ElabResult(List(SurfaceArm)) from match comp_match_arms(j, rest, cx) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(more) => ElabOk(Cons(SurfaceArmMk(a.pattern, None, None, b), more))
+          }
+        }
+      }
+    }
+  }
+}
+
+// `perform effect(args)` in `cx`.
+pub fn comp_perform(k: Nat, op: Text, args: List(SurfaceTerm), cx: CompCx): ElabResult(SurfaceTerm) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => ⊢ ElabResult(SurfaceTerm) from match comp_instance_in(cx, op) {
+      None => ElabErr(comp_skip(Text::concat("`perform` of an effect not in the row: ", op)))
+      Some(key) => ⊢ ElabResult(SurfaceTerm) from match comp_effect_get(cx.effects, key) {
+        None => ElabErr(comp_skip(Text::concat("`perform` of an effect not read: ", op)))
+        Some(e) => if comp_effect_outside(cx, e) {
+          ElabErr("cannot perform an effect outside its declaring module")
+        } else if e.arity != List::length(args) { ElabErr(comp_skip(Text::concat("`perform` with the wrong number of arguments: ", op))) } else {
+          ⊢ ElabResult(SurfaceTerm) from match comp_arguments(j, args, cx, 0) {
+            ElabErr(m) => ElabErr(m)
+            ElabOk(r) => {
+              let o := comp_instance_call(cx, "@args", key, r.fst)
+              ⊢ ElabResult(SurfaceTerm) from match comp_inject_at(cx, cx.row, key, o) {
+                None => ElabErr(comp_skip("an effect is not in the row"))
+                Some(inj) => ElabOk(comp_bind_all(cx, r.snd, comp_call(cx, "Comp::op", [comp_op(cx), comp_res(cx), inj])))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The arguments, with those that have effects replaced by names, and the
+// computations those names are bound to, in the order written.
+pub fn comp_arguments(k: Nat, args: List(SurfaceTerm), cx: CompCx, i: Nat): ElabResult((List(SurfaceTerm) × List((Text × SurfaceTerm)))) {
+  comp_arguments_keeping(k, args, cx, i, Nil)
+}
+
+// The arguments, where the λs at the positions `keep` are left as they are: the call reads them in the callee's row.
+pub fn comp_arguments_keeping(k: Nat, args: List(SurfaceTerm), cx: CompCx, i: Nat, keep: List(Nat)): ElabResult((List(SurfaceTerm) × List((Text × SurfaceTerm)))) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => ⊢ ElabResult((List(SurfaceTerm) × List((Text × SurfaceTerm)))) from match args {
+      Nil => ElabOk(#(Nil, Nil))
+      Cons(a, rest) => ⊢ ElabResult((List(SurfaceTerm) × List((Text × SurfaceTerm)))) from match comp_arguments_keeping(j, rest, cx, i + 1, keep) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(more) => if comp_has_nat(keep, i) && comp_is_lam(a) { ElabOk(#(Cons(a, more.fst), more.snd)) } else { if comp_effectful(j, a, cx) {
+          // A call of a function without effects is kept, its arguments bound
+          // first, so that each bound computation has a known type.
+          ⊢ ElabResult((List(SurfaceTerm) × List((Text × SurfaceTerm)))) from match comp_plain_call(a, cx) {
+            Some(pc) => ⊢ ElabResult((List(SurfaceTerm) × List((Text × SurfaceTerm)))) from match comp_arguments(j, pc.snd, comp_deeper(cx), 0) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(inner) => ElabOk(#(Cons(comp_app(cx, pc.fst, inner.fst), more.fst), List::append(inner.snd, more.snd)))
+            }
+            None => {
+              let x := comp_fresh(cx, "a", i)
+              let known := comp_guess(j, a, cx)
+              ⊢ ElabResult((List(SurfaceTerm) × List((Text × SurfaceTerm)))) from match comp_computation(j, a, comp_deeper(comp_expecting(cx, known))) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(c) => ElabOk(#(Cons(comp_v(cx, x), more.fst), Cons(#(x, comp_typed(cx, c, known)), more.snd)))
+              }
+            }
+          }
+        } else { ElabOk(#(Cons(a, more.fst), more.snd)) } }
+      }
+    }
+  }
+}
+
+// The arguments of a call of a function with a row variable, with the λs at its callbacks read as computations in the callee's row.
+pub fn comp_lowered(k: Nat, cx: CompCx, h: SurfaceTerm, args: List(SurfaceTerm), lowered: List(SurfaceTerm), row: List(Text)): ElabResult(List(SurfaceTerm)) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => ⊢ ElabResult(List(SurfaceTerm)) from match h.kind {
+      SkVar(g) => if comp_has_var(row) == false || comp_is_local(cx, surface_name_text(g)) { ElabOk(lowered) } else {
+        ⊢ ElabResult(List(SurfaceTerm)) from match comp_fn_get(cx.fns, surface_name_text(g)) {
+          None => ElabOk(lowered)
+          Some(f) => comp_lower_each(j, cx, f, comp_call_tail(cx, f, args, row), comp_prefix(f, args), lowered, 0)
+        }
+      }
+      _ => ElabOk(lowered)
+    }
+  }
+}
+
+pub fn comp_lower_each(k: Nat, cx: CompCx, f: CompFn, tail: List(Text), pre: Nat, xs: List(SurfaceTerm), rel: Nat): ElabResult(List(SurfaceTerm)) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => ⊢ ElabResult(List(SurfaceTerm)) from match xs {
+      Nil => ElabOk(Nil)
+      Cons(x, rest) => ⊢ ElabResult(List(SurfaceTerm)) from match pre {
+        Succ(p) => ⊢ ElabResult(List(SurfaceTerm)) from match comp_lower_each(j, cx, f, tail, p, rest, rel) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(more) => ElabOk(Cons(x, more))
+        }
+        Zero => ⊢ ElabResult(List(SurfaceTerm)) from match comp_lower_each(j, cx, f, tail, Zero, rest, rel + 1) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(more) => if comp_has_nat(comp_uses(f.callbacks, 0), rel) {
+            ⊢ ElabResult(List(SurfaceTerm)) from match x.kind {
+              SkLam(ps, body, tys, unused) => {
+                let own := ⊢ List(Text) from match comp_callback_at(f.callbacks, rel) {
+                  Some(row) => comp_without_vars(row)
+                  None => Nil
+                }
+                let inner := CompCxMk(comp_canonical(cx.effects, List::append(own, tail)), cx.locals, List::append(comp_lam_types(ps, tys), cx.types), None, cx.effects, cx.fns, cx.depth + 1, cx.start, cx.end, cx.owner)
+                ⊢ ElabResult(List(SurfaceTerm)) from match comp_computation(j, body, inner) {
+                  ElabErr(e) => ElabErr(e)
+                  ElabOk(b) => ElabOk(Cons(surface_term_mk(SkLam(ps, b, tys, unused), x.start, x.end), more))
+                }
+              }
+              _ => ElabOk(Cons(x, more))
+            }
+          } else { ElabOk(Cons(x, more)) }
+        }
+      }
+    }
+  }
+}
+
+// A call of a function with effects, or of a local one (the continuation of a
+// handler's arm).
+pub fn comp_call_term(k: Nat, t: SurfaceTerm, h: SurfaceTerm, args: List(SurfaceTerm), cx: CompCx): ElabResult(SurfaceTerm) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => if comp_effectful(j, h, cx) { ElabErr(comp_skip("the called function has effects to bind first")) } else {
+      ⊢ ElabResult(SurfaceTerm) from match comp_arguments_keeping(j, args, cx, 0, comp_keep(cx, h, args)) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(r) => {
+          let applied := surface_term_mk(SkApp(h, r.fst), t.start, t.end)
+          let callee := ⊢ Option((Text × List(Text))) from match h.kind {
+            SkVar(g) => ⊢ Option((Text × List(Text))) from match comp_local_get(cx.locals, surface_name_text(g)) {
+              Some(row) => Some(#(surface_name_text(g), row))
+              None => ⊢ Option((Text × List(Text))) from match comp_fn_get(cx.fns, surface_name_text(g)) {
+                Some(f) => Some(#(f.name, f.row))
+                None => None
+              }
+            }
+            _ => None
+          }
+          ⊢ ElabResult(SurfaceTerm) from match callee {
+            Some(c) => ⊢ ElabResult(SurfaceTerm) from match comp_callee_row(cx, h, args, c.snd) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(row) => ⊢ ElabResult(SurfaceTerm) from match comp_lowered(j, cx, h, args, r.fst, row) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(lowered) => ⊢ ElabResult(SurfaceTerm) from match comp_call_lifted(cx, t, h, c.fst, args, lowered, applied, row) {
+                  ElabErr(e) => ElabErr(e)
+                  ElabOk(lifted) => ElabOk(comp_bind_all(cx, r.snd, lifted))
+                }
+              }
+            }
+            None => ElabOk(comp_bind_all(cx, r.snd, comp_call(cx, "Comp::ret", [comp_op(cx), comp_res(cx), applied])))
+          }
+        }
+      }
+    }
+  }
+}
+
+// `handle { body } with { … }`: the body read in the row with the handled
+// effects, an arm for each of them, every other effect forwarded.
+pub fn comp_handle(k: Nat, body: SurfaceTerm, handlers: List(SurfaceHandler), cx: CompCx): ElabResult(SurfaceTerm) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => ⊢ ElabResult(SurfaceTerm) from match comp_collect(cx, 0, handlers, CompHandlersMk(None, Nil, Nil)) {
+      ElabErr(e) => ElabErr(e)
+      ElabOk(hs) => comp_handle_in(j, body, hs, comp_with_effects(cx, comp_add_instances(cx.effects, hs.insts)))
+    }
+  }
+}
+
+pub fn comp_handle_in(k: Nat, body: SurfaceTerm, hs: CompHandlers, cx: CompCx): ElabResult(SurfaceTerm) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => if comp_unordered(cx.effects, comp_canonical(cx.effects, List::append(cx.row, comp_op_effects(hs.ops)))) { ElabErr("a row with two instances of one effect is not read here") } else {
+        let inner_row := comp_canonical(cx.effects, List::append(cx.row, comp_op_effects(hs.ops)))
+        // A handler that leaves no effect is read as the value its fold gives:
+        // its arms and return clause are ordinary functions.
+        let by_value := comp_row_empty(cx.row)
+        let inner := CompCxMk(inner_row, cx.locals, cx.types, None, cx.effects, cx.fns, cx.depth + 1, cx.start, cx.end, cx.owner)
+        ⊢ ElabResult(SurfaceTerm) from match comp_handle_arms(j, inner_row, hs.ops, comp_deeper(cx), cx, 0, by_value) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(arms) => ⊢ ElabResult(SurfaceTerm) from match comp_handle_return(j, hs.ret, comp_deeper(cx), by_value) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(ret) => {
+              let body_ty := ⊢ Option(SurfaceTerm) from match hs.ret {
+                Some(^r) => comp_guess(j, body, inner)
+                None => cx.expect
+              }
+              ⊢ ElabResult(SurfaceTerm) from match comp_computation(j, body, comp_deeper(comp_expecting(inner, body_ty))) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(c) => if by_value {
+                  let value := comp_call(cx, "Comp::handle_val", [
+                    comp_op(inner),
+                    comp_res(inner),
+                    comp_typed(inner, c, body_ty),
+                    ret,
+                    comp_arm_tree(comp_deeper(cx), inner_row, arms)
+                  ])
+                  let typed_value := ⊢ SurfaceTerm from match cx.expect {
+                    Some(ty) => comp_call(cx, "the", [ty, value])
+                    None => value
+                  }
+                  ElabOk(comp_call(cx, "Comp::ret", [comp_op(cx), comp_res(cx), typed_value]))
+                } else {
+                  ElabOk(comp_call(cx, "Comp::handle_in", [
+                    comp_op(inner),
+                    comp_res(inner),
+                    comp_op(cx),
+                    comp_res(cx),
+                    comp_typed(inner, c, body_ty),
+                    ret,
+                    comp_arm_tree(comp_deeper(cx), inner_row, arms)
+                  ]))
+                }
+              }
+            }
+          }
+        }
+      }
+  }
+}
+
+// `t`, in a context with no effects, as a value.
+pub fn comp_pure_value(k: Nat, t: SurfaceTerm, cx: CompCx): ElabResult(SurfaceTerm) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => if comp_effectful(j, t, cx) == false { ElabOk(t) } else {
+      ⊢ ElabResult(SurfaceTerm) from match comp_computation(j, t, cx) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(c) => ElabOk(comp_call(cx, "Comp::value", [comp_typed(cx, c, cx.expect)]))
+      }
+    }
+  }
+}
+
+// The body of a handler clause: a value when the handler leaves no effect,
+// a computation otherwise.
+pub fn comp_handler_body(k: Nat, by_value: Bool, t: SurfaceTerm, cx: CompCx): ElabResult(SurfaceTerm) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => if by_value { comp_pure_value(j, t, cx) } else { comp_computation(j, t, cx) }
+  }
+}
+
+pub fn comp_handle_return(k: Nat, ret: Option((Text × SurfaceTerm)), cx: CompCx, by_value: Bool): ElabResult(SurfaceTerm) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => ⊢ ElabResult(SurfaceTerm) from match ret {
+      Some(r) => ⊢ ElabResult(SurfaceTerm) from match comp_handler_body(j, by_value, r.snd, cx) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(b) => ElabOk(comp_lam(cx, [r.fst], b))
+      }
+      None => if by_value { let v := comp_fresh(cx, "v", 0)
+        ElabOk(comp_lam(cx, [v], comp_v(cx, v))) } else {
+        let v := comp_fresh(cx, "v", 0)
+        ElabOk(comp_lam(cx, [v], if comp_is_nil(cx.row) { comp_v(cx, v) } else { comp_call(cx, "Comp::ret", [comp_op(cx), comp_res(cx), comp_v(cx, v)]) }))
+      }
+    }
+  }
+}
+
+// The arm of each effect of the inner row: the written one, or forwarding.
+// `cx` is the row outside the handler.
+pub fn comp_handle_arms(k: Nat, row: List(Text), ops: List(CompOpArm), arm_cx: CompCx, cx: CompCx, i: Nat, by_value: Bool): ElabResult(List(SurfaceTerm)) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => ⊢ ElabResult(List(SurfaceTerm)) from match row {
+      Nil => ElabOk(Nil)
+      Cons(e, rest) => ⊢ ElabResult(List(SurfaceTerm)) from match comp_handle_arms(j, rest, ops, arm_cx, cx, i + 1, by_value) {
+        ElabErr(m) => ElabErr(m)
+        ElabOk(more) => {
+          let x := comp_fresh(arm_cx, "x", i)
+          let kk := comp_fresh(arm_cx, "k", i)
+          ⊢ ElabResult(List(SurfaceTerm)) from match comp_op_arm_get(ops, e) {
+            Some(o) => {
+              let armcx := if by_value { comp_deeper(arm_cx) } else { comp_with_locals(comp_deeper(arm_cx), Cons(#(o.cont, cx.row), cx.locals)) }
+              let armcx2 := comp_with_types(comp_with_row(armcx, cx.row), cx.types)
+              ⊢ ElabResult(List(SurfaceTerm)) from match comp_handler_body(j, by_value, o.body, armcx2) {
+                ElabErr(m) => ElabErr(m)
+                ElabOk(b) => ElabOk(Cons(comp_lam(arm_cx, [x, kk], comp_instance_call(arm_cx, "@arm", e, [
+                  comp_lam(arm_cx, List::append(o.params, [o.cont]), b),
+                  comp_v(arm_cx, x),
+                  comp_v(arm_cx, kk)
+                ])), more))
+              }
+            }
+            None => ⊢ ElabResult(List(SurfaceTerm)) from match comp_inject_at(cx, cx.row, e, comp_v(cx, x)) {
+              None => ElabErr(comp_skip("an effect is not in the row"))
+              Some(inj) => ElabOk(Cons(comp_lam(arm_cx, [x, kk], comp_call(cx, "Comp::forward", [comp_op(cx), comp_res(cx), inj, comp_v(cx, kk)])), more))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn comp_block(k: Nat, stmts: List(SurfaceStmt), cx: CompCx): ElabResult(SurfaceTerm) {
+  match k {
+    Zero => ElabErr("a function with effects is too deep to read")
+    Succ(j) => ⊢ ElabResult(SurfaceTerm) from match stmts {
+      Nil => ElabErr(comp_skip("a block has no value"))
+      Cons(first, rest) => ⊢ ElabResult(SurfaceTerm) from match rest {
+        Nil => ⊢ ElabResult(SurfaceTerm) from match first {
+          StExpr(last) => comp_computation(j, last, cx)
+          _ => ElabErr(comp_skip("a block has no value"))
+        }
+        Cons(^next, ^more) => ⊢ ElabResult(SurfaceTerm) from match first {
+          StLet(name, ty, value, lent, mutable, unused, ^stack) => if lent || mutable { ElabErr(comp_skip("a block has a statement of another form")) } else {
+            let known := ⊢ Option(SurfaceTerm) from match ty {
+              Some(x) => Some(x)
+              None => comp_guess(j, value, cx)
+            }
+            let inner := comp_with_locals(
+              ⊢ CompCx from match known {
+                Some(x) => comp_with_types(cx, Cons(#(name, x), comp_type_remove(cx.types, name)))
+                None => comp_with_types(cx, comp_type_remove(cx.types, name))
+              },
+              comp_local_remove(cx.locals, name)
+            )
+            ⊢ ElabResult(SurfaceTerm) from match comp_block(j, rest, comp_deeper(inner)) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(after) => if comp_effectful(j, value, cx) {
+                ⊢ ElabResult(SurfaceTerm) from match comp_computation(j, value, comp_deeper(comp_expecting(cx, known))) {
+                  ElabErr(e) => ElabErr(e)
+                  ElabOk(c) => ElabOk(comp_bind_all(cx, [#(name, comp_typed(cx, c, known))], after))
+                }
+              } else {
+                ElabOk(surface_term_mk(SkBlock([StLet(name, ty, value, false, false, unused, None), StExpr(after)]), cx.start, cx.end))
+              }
+            }
+          }
+          StExpr(e) => ⊢ ElabResult(SurfaceTerm) from match comp_block(j, rest, comp_deeper(cx)) {
+            ElabErr(m) => ElabErr(m)
+            ElabOk(after) => if comp_effectful(j, e, cx) {
+              let known := comp_guess(j, e, cx)
+              ⊢ ElabResult(SurfaceTerm) from match comp_computation(j, e, comp_deeper(comp_expecting(cx, known))) {
+                ElabErr(m) => ElabErr(m)
+                ElabOk(c) => ElabOk(comp_bind_all(cx, [#("_", comp_typed(cx, c, known))], after))
+              }
+            } else { ElabOk(after) }
+          }
+          StVar(^n, ^ty, ^v, ^b, ^unused, ^st) => ElabErr("a `var` in a function with effects is not read here")
+          StAssign(^n, ^pl, ^v) => ElabErr("an assignment in a function with effects is not read here")
+          _ => ElabErr(comp_skip("a block has a statement of another form"))
+        }
+      }
+    }
+  }
+}
+}
+
+// The function and the arguments of a call of a function that has no effects,
+// whose arguments do.
+pub fn comp_plain_call(a: SurfaceTerm, cx: CompCx): Option((SurfaceTerm × List(SurfaceTerm))) {
+  match a.kind {
+    SkApp(h, args) => ⊢ Option((SurfaceTerm × List(SurfaceTerm))) from match h.kind {
+      SkVar(g) => if comp_is_local(cx, surface_name_text(g)) { None } else {
+        ⊢ Option((SurfaceTerm × List(SurfaceTerm))) from match comp_fn_get(cx.fns, surface_name_text(g)) {
+          Some(^f) => None
+          None => Some(#(h, args))
+        }
+      }
+      _ => Some(#(h, args))
+    }
+    _ => None
+  }
+}
+
+pub fn comp_op_effects(ops: List(CompOpArm)): List(Text) {
+  match ops {
+    Nil => Nil
+    Cons(o, rest) => Cons(o.name, comp_op_effects(rest))
+  }
+}
+
+// ---- functions and the program -----------------------------------------------------
+
+pub fn comp_row_names(es: List(RowEntry)): Option(List(Text)) {
+  match es {
+    Nil => Some(Nil)
+    Cons(e, rest) => ⊢ Option(List(Text)) from match e {
+      EntryName(n, ^mark) => ⊢ Option(List(Text)) from match comp_row_names(rest) {
+        None => None
+        Some(ns) => Some(Cons(n, ns))
+      }
+      EntryApplied(^n, ^args, ^universal, ^forall, ^mark) => None
+    }
+  }
+}
+
+

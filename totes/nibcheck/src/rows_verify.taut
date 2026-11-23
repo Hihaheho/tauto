@@ -1,0 +1,1482 @@
+import std::text
+import std::text_ops
+import std::base
+import std::map
+import std::row
+import "../../ordmap/src/ordmap.taut"
+import "../../surface/src/surface.taut"
+import "../../surface/src/extern_blocks.taut"
+import "messages.taut"
+import "freevars.taut"
+import "rows_base.taut"
+import "rows.taut"
+import "rules_rows.taut"
+import "rows_structural.taut"
+import "../../identity/src/identity.taut"
+
+// A check of the rows the analysis found (`rows.taut`), against the rules of
+// `rules_rows.taut`. The analysis follows calls, keeps rows in `memo` and
+// finds the rows of a recursive group together; its answer is taken here as
+// a table, `sig`, and each body is read once against it, form by form, as
+// the rules read it. The proofs (`rows_verify_sound.taut`) are about this
+// check alone: when it passes, the program's rows are derivable, whatever
+// the analysis did to find them.
+
+// ---- rows as lists -------------------------------------------------------------
+
+pub fn vr_has(xs: List(Text), e: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => Text::eq(x, e) || vr_has(rest, e)
+  }
+}
+
+pub fn vr_sub(xs: List(Text), ys: List(Text)): Bool {
+  match xs {
+    Nil => true
+    Cons(x, rest) => vr_has(ys, x) && vr_sub(rest, ys)
+  }
+}
+
+pub fn vr_drop(xs: List(Text), e: Text): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => ⊢ List(Text) from match Text::eq(x, e) {
+      true => vr_drop(rest, e)
+      false => Cons(x, vr_drop(rest, e))
+    }
+  }
+}
+
+
+pub fn vr_same(xs: List(Text), ys: List(Text)): Bool {
+  match xs {
+    Nil => ⊢ Bool from match ys {
+      Nil => true
+      Cons(^y, ^more) => false
+    }
+    Cons(x, rest) => ⊢ Bool from match ys {
+      Nil => false
+      Cons(y, more) => Text::eq(x, y) && vr_same(rest, more)
+    }
+  }
+}
+
+pub fn vr_both(a: Option(List(Text)), b: Option(List(Text))): Option(List(Text)) {
+  match a {
+    None => None
+    Some(x) => ⊢ Option(List(Text)) from match b {
+      None => None
+      Some(y) => Some(List::append(x, y))
+    }
+  }
+}
+
+pub fn vr_cons(e: Text, a: Option(List(Text))): Option(List(Text)) {
+  match a {
+    None => None
+    Some(x) => Some(Cons(e, x))
+  }
+}
+
+pub fn vr_when(ok: Bool, a: Option(List(Text))): Option(List(Text)) {
+  match ok {
+    true => a
+    false => None
+  }
+}
+
+// The row variable `e` of the name `|e`.
+pub fn vr_var(e: Text): Option(Text) {
+  vr_var_bytes(Text::bytes(e))
+}
+
+pub fn vr_var_bytes(bs: List(Nat)): Option(Text) {
+  match bs {
+    Nil => None
+    Cons(b, rest) => ⊢ Option(Text) from match Nat::eq(b, 124) {
+      true => Some(Text::Mk(rest))
+      false => None
+    }
+  }
+}
+
+// The effects of a row that are not row variables, and its variables.
+pub fn vr_not_vars(es: List(Text)): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => ⊢ List(Text) from match vr_var(e) {
+      Some(^v) => vr_not_vars(rest)
+      None => Cons(e, vr_not_vars(rest))
+    }
+  }
+}
+
+pub fn vr_vars(es: List(Text)): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => ⊢ List(Text) from match vr_var(e) {
+      Some(v) => Cons(v, vr_vars(rest))
+      None => vr_vars(rest)
+    }
+  }
+}
+
+// An operation is its own effect.
+pub fn vr_effect_of(op: Text): Text {
+  op
+}
+
+// ---- locals ----------------------------------------------------------------------
+
+pub fn vr_find(locals: List(RowName), n: Text): Option(LocalRow) {
+  match locals {
+    Nil => None
+    Cons(h, rest) => ⊢ Option(LocalRow) from match Text::eq(rr_name(h), n) {
+      true => Some(rr_latent(h))
+      false => vr_find(rest, n)
+    }
+  }
+}
+
+mutual {
+  pub fn vr_bind(p: SurfacePattern, locals: List(RowName)): List(RowName) {
+    match p {
+      PtBind(n, _) => Cons(RowName::Mk(n, LocalRowUnknown), locals)
+      PtCtor(^name, args) => vr_bind_all(args, locals)
+      PtRecord(^name, fields) => vr_bind_fields(fields, locals)
+      PtWild => locals
+      PtInt(^negative, ^n) => locals
+      PtBool(^b) => locals
+      PtText(^t) => locals
+      PtTyped(n, ^ty, _) => Cons(RowName::Mk(n, LocalRowUnknown), locals)
+      PtOther(^w) => locals
+    }
+  }
+
+  pub fn vr_bind_all(ps: List(SurfacePattern), locals: List(RowName)): List(RowName) {
+    match ps {
+      Nil => locals
+      Cons(p, rest) => vr_bind_all(rest, vr_bind(p, locals))
+    }
+  }
+
+  pub fn vr_bind_fields(fs: List(SurfacePatternField), locals: List(RowName)): List(RowName) {
+    match fs {
+      Nil => locals
+      Cons(f, rest) => vr_bind_fields(rest, vr_bind_field(f, locals))
+    }
+  }
+
+  pub fn vr_bind_field(f: SurfacePatternField, locals: List(RowName)): List(RowName) {
+    match f {
+      SurfacePatternFieldMk(^name, p) => vr_bind(p, locals)
+    }
+  }
+}
+
+pub fn vr_bind_name(op: Text, n: Text, locals: List(RowName)): List(RowName) {
+  match Text::eq(op, "exceeded") {
+    true => Cons(RowName::Mk(n, LocalRowInfo), locals)
+    false => ⊢ List(RowName) from match Text::eq(op, "spawn") {
+      true => Cons(RowName::Mk(n, LocalRowKnown(Cons("div", Nil))), locals)
+      false => Cons(RowName::Mk(n, LocalRowUnknown), locals)
+    }
+  }
+}
+
+pub fn vr_bind_op_one(op: Text, p: SurfacePattern, locals: List(RowName)): List(RowName) {
+  match p {
+    PtBind(n, _) => vr_bind_name(op, n, locals)
+    PtCtor(^name, args) => vr_bind_all(args, locals)
+    PtRecord(^name, fields) => vr_bind_fields(fields, locals)
+    PtWild => locals
+    PtInt(^negative, ^n) => locals
+    PtBool(^b) => locals
+    PtText(^t) => locals
+    PtTyped(^n, ^ty, _) => locals
+    PtOther(^w) => locals
+  }
+}
+
+pub fn vr_bind_op(op: Text, ps: List(SurfacePattern), locals: List(RowName)): List(RowName) {
+  match ps {
+    Nil => locals
+    Cons(p, rest) => vr_bind_op(op, rest, vr_bind_op_one(op, p, locals))
+  }
+}
+
+pub fn vr_cont(k: Option(Text), locals: List(RowName)): List(RowName) {
+  match k {
+    None => locals
+    Some(n) => Cons(RowName::Mk(n, LocalRowKnown(Nil)), locals)
+  }
+}
+
+pub fn vr_unknown(ps: List(Text), locals: List(RowName)): List(RowName) {
+  match ps {
+    Nil => locals
+    Cons(p, rest) => vr_unknown(rest, Cons(RowName::Mk(p, LocalRowUnknown), locals))
+  }
+}
+
+mutual {
+  pub fn vr_fn_kind(t: SurfaceTerm): SurfaceKind {
+    match t {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => vr_fn_kind_of(kind)
+    }
+  }
+
+  pub fn vr_fn_kind_of(kind: SurfaceKind): SurfaceKind {
+    match kind {
+      SkFnKind(^fk, ty) => vr_fn_kind(ty)
+      SkBorrow(^m, ^m_orig, ty) => vr_fn_kind(ty)
+      _ => kind
+    }
+  }
+}
+
+pub fn vr_param_row(ty: Option(SurfaceTerm)): LocalRow {
+  match ty {
+    None => LocalRowUnknown
+    Some(t) => vr_param_kind_row(vr_fn_kind(t))
+  }
+}
+
+pub fn vr_param_kind_row(kind: SurfaceKind): LocalRow {
+  match kind {
+    SkPi(^ps, ^r, es) => ⊢ LocalRow from match es {
+      Some(names) => LocalRowKnown(row_entries_text(names))
+      None => LocalRowKnown(Nil)
+    }
+    _ => LocalRowUnknown
+  }
+}
+
+pub fn vr_params(ps: List(Text), types: List(Option(SurfaceTerm)), locals: List(RowName)): List(RowName) {
+  match ps {
+    Nil => locals
+    Cons(p, rest) => ⊢ List(RowName) from match types {
+      Nil => locals
+      Cons(ty, more) => vr_params(rest, more, Cons(RowName::Mk(p, vr_param_row(ty)), locals))
+    }
+  }
+}
+
+// The effects beside `|v` that the type `(…) -> R ! {… | v}` writes.
+pub fn vr_named(ty: Option(SurfaceTerm), v: Text): Option(List(Text)) {
+  match ty {
+    None => None
+    Some(t) => vr_named_kind(vr_fn_kind(t), v)
+  }
+}
+
+pub fn vr_named_kind(kind: SurfaceKind, v: Text): Option(List(Text)) {
+  match kind {
+    SkPi(^ps, ^r, es) => ⊢ Option(List(Text)) from match es {
+      Some(names) => ⊢ Option(List(Text)) from match vr_has(row_entries_text(names), Text::concat("|", v)) {
+        true => Some(vr_not_vars(row_entries_text(names)))
+        false => None
+      }
+      None => None
+    }
+    _ => None
+  }
+}
+
+// Whether the type names any of the variables.
+pub fn vr_names_any(ty: Option(SurfaceTerm), vs: List(Text)): Bool {
+  match vs {
+    Nil => false
+    Cons(v, rest) => vr_is_some(vr_named(ty, v)) || vr_names_any(ty, rest)
+  }
+}
+
+pub fn vr_is_some(o: Option(List(Text))): Bool {
+  match o {
+    None => false
+    Some(^x) => true
+  }
+}
+
+// ---- the declarations ------------------------------------------------------------
+
+pub(open) inductive VrCtx: Type {
+  Mk(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): VrCtx
+}
+
+pub fn vr_env(c: VrCtx): RowEnv { c.env }
+pub fn vr_sig(c: VrCtx): List(Text × List(Text)) { c.sig }
+pub fn vr_dvars(c: VrCtx): List(Text) { c.dvars }
+pub fn vr_lim(c: VrCtx): RankLimit { c.lim }
+
+pub fn vr_lookup(sig: List(Text × List(Text)), n: Text): Option(List(Text)) {
+  match sig {
+    Nil => None
+    Cons(h, rest) => ⊢ Option(List(Text)) from match Text::eq(rr_fst(h), n) {
+      true => Some(h.snd)
+      false => vr_lookup(rest, n)
+    }
+  }
+}
+
+pub fn vr_rank(ranks: List(Text × Nat), n: Text): Option(Nat) {
+  match ranks {
+    Nil => None
+    Cons(h, rest) => ⊢ Option(Nat) from match Text::eq(rr_rank_name(h), n) {
+      true => Some(h.snd)
+      false => vr_rank(rest, n)
+    }
+  }
+}
+
+pub fn vr_ranked(lim: RankLimit, n: Text): Bool {
+  match rr_below(lim) {
+    None => true
+    Some(b) => vr_has(rr_group(lim), n) || vr_ranked_below(lim, b, n)
+  }
+}
+
+pub fn vr_ranked_below(lim: RankLimit, b: Nat, n: Text): Bool {
+  match vr_rank(rr_ranks(lim), n) {
+    None => false
+    Some(r) => Nat::lt(r, b)
+  }
+}
+
+pub fn vr_quant_is(env: RowEnv, e: Text, q: Quant): Bool {
+  match Ordmap::get(rr_quants(env), e, Ordmap::compare_text) {
+    None => false
+    Some(found) => quant_name(found) == quant_name(q)
+  }
+}
+
+pub fn vr_direct(env: RowEnv, dvars: List(Text), e: Text): Bool {
+  vr_quant_is(env, e, QuantDirect) || (⊢ Bool from match vr_var(e) {
+    Some(v) => vr_has(dvars, v)
+    None => false
+  })
+}
+
+pub fn vr_all_direct(env: RowEnv, dvars: List(Text), es: List(Text)): Bool {
+  match es {
+    Nil => true
+    Cons(e, rest) => vr_direct(env, dvars, e) && vr_all_direct(env, dvars, rest)
+  }
+}
+
+pub fn vr_extern_ok(env: RowEnv, dvars: List(Text), es: List(Text)): Bool {
+  match es {
+    Nil => true
+    Cons(e, rest) => (vr_direct(env, dvars, e) || vr_is_var(e) || Text::eq(e, "div")) && vr_extern_ok(env, dvars, rest)
+  }
+}
+
+pub fn vr_is_var(e: Text): Bool {
+  match vr_var(e) {
+    Some(^v) => true
+    None => false
+  }
+}
+
+pub fn vr_none_many(env: RowEnv, es: List(Text)): Bool {
+  match es {
+    Nil => true
+    Cons(e, rest) => not(vr_quant_is(env, e, QuantMany)) && vr_none_many(env, rest)
+  }
+}
+
+pub fn vr_bound(gs: List(Text), bs: List(Option(Text)), v: Text): Option(Text) {
+  match gs {
+    Nil => None
+    Cons(g, more) => ⊢ Option(Text) from match bs {
+      Nil => None
+      Cons(b, rest) => ⊢ Option(Text) from match Text::eq(g, v) {
+        true => b
+        false => vr_bound(more, rest, v)
+      }
+    }
+  }
+}
+
+pub fn vr_bound_holds(env: RowEnv, dvars: List(Text), b: Option(Text), row: List(Text)): Bool {
+  match b {
+    None => true
+    Some(x) => ⊢ Bool from match Text::eq(x, "direct") {
+      true => vr_all_direct(env, dvars, row)
+      false => ⊢ Bool from match Text::eq(x, "<=1") {
+        true => vr_none_many(env, row)
+        false => true
+      }
+    }
+  }
+}
+
+pub fn vr_pure(env: RowEnv, n: Text, args: List(SurfaceTerm)): Bool {
+  Ordmap::contains(rr_data(env), n, Ordmap::compare_text) || vr_has(pure_heads(), n) || Text::eq(n, "std::prelude::Pair::Mk")
+}
+
+pub fn vr_no_args(args: List(SurfaceTerm)): Bool {
+  match args {
+    Nil => true
+    Cons(^a, ^rest) => false
+  }
+}
+
+pub fn vr_info_row(name: Text): List(Text) {
+  match Text::eq(name, "unbounded") {
+    true => Cons("div", Nil)
+    false => Nil
+  }
+}
+
+pub fn vr_irrefutable(ps: List(SurfacePattern)): Bool {
+  match ps {
+    Nil => true
+    Cons(p, rest) => vr_irrefutable_one(p) && vr_irrefutable(rest)
+  }
+}
+
+pub fn vr_irrefutable_one(p: SurfacePattern): Bool {
+  match p {
+    PtWild => true
+    PtBind(^n, _) => true
+    _ => false
+  }
+}
+
+pub fn vr_answers(hs: List(SurfaceHandler), e: Text): Bool {
+  match hs {
+    Nil => false
+    Cons(h, rest) => vr_answers_one(h, e) || vr_answers(rest, e)
+  }
+}
+
+pub fn vr_answers_one(h: SurfaceHandler, e: Text): Bool {
+  match h {
+    HdReturn(^p, ^b) => false
+    HdOperation(op, ^bs, ^ts, ps, ^k, _, guard, ^body) => ⊢ Bool from match guard {
+      None => Text::eq(vr_effect_of(op), e) && vr_irrefutable(ps)
+      Some(^g) => false
+    }
+  }
+}
+
+pub fn vr_unanswered(es: List(Text), hs: List(SurfaceHandler)): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => ⊢ List(Text) from match vr_answers(hs, e) {
+      true => vr_unanswered(rest, hs)
+      false => Cons(e, vr_unanswered(rest, hs))
+    }
+  }
+}
+
+// `θ` applied to a row.
+pub fn vr_inst(theta: List(Text × List(Text)), row: List(Text)): Option(List(Text)) {
+  match row {
+    Nil => Some(Nil)
+    Cons(e, rest) => ⊢ Option(List(Text)) from match vr_var(e) {
+      None => vr_cons(e, vr_inst(theta, rest))
+      Some(v) => vr_both(vr_lookup(theta, v), vr_inst(theta, rest))
+    }
+  }
+}
+
+// ---- the check -------------------------------------------------------------------
+
+pub fn vr_budget(memory: Bool, a: Option(List(Text)), b: Option(List(Text))): Option(List(Text)) {
+  match a {
+    None => None
+    Some(ra) => ⊢ Option(List(Text)) from match b {
+      None => None
+      Some(rb) => Some(List::append(ra, Cons(surface_budget_operation(memory), Cons("exceeded", vr_drop(rb, "div")))))
+    }
+  }
+}
+
+pub fn vr_handle(hs: List(SurfaceHandler), body: Option(List(Text)), arms: Option(List(Text))): Option(List(Text)) {
+  match body {
+    None => None
+    Some(rb) => ⊢ Option(List(Text)) from match arms {
+      None => None
+      Some(ra) => Some(List::append(vr_unanswered(rb, hs), ra))
+    }
+  }
+}
+
+pub fn vr_direct_arm(c: VrCtx, op: Text, arm: Option(List(Text))): Option(List(Text)) {
+  match arm {
+    None => None
+    Some(r) => ⊢ Option(List(Text)) from match vr_quant_is(vr_env(c), op, QuantDirect) {
+      true => vr_when(vr_all_direct(vr_env(c), vr_dvars(c), r), Some(r))
+      false => Some(r)
+    }
+  }
+}
+
+pub fn vr_info_call(locals: List(RowName), base: SurfaceTerm, name: Text): Option(List(Text)) {
+  match base {
+    SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => ⊢ Option(List(Text)) from match kind {
+      SkVar(x) => ⊢ Option(List(Text)) from match vr_find(locals, surface_name_text(x)) {
+        Some(l) => ⊢ Option(List(Text)) from match l {
+          LocalRowInfo => Some(vr_info_row(name))
+          _ => None
+        }
+        None => None
+      }
+      _ => None
+    }
+  }
+}
+
+pub fn vr_latent_name(c: VrCtx, n: Text, found: Option(LocalRow)): Option(List(Text)) {
+  match found {
+    Some(l) => ⊢ Option(List(Text)) from match l {
+      LocalRowKnown(r) => Some(r)
+      _ => None
+    }
+    None => ⊢ Option(List(Text)) from match Ordmap::get(rr_fns(vr_env(c)), n, Ordmap::compare_text) {
+      Some(callee) => vr_unless_template(callee, vr_lookup(vr_sig(c), n))
+      None => None
+    }
+  }
+}
+
+// `θ(v)`: what is passed for the parameters whose types name `|v`, less
+// the effects they write beside it; `None` when none does, or what is
+// passed cannot be told. `ls` is what calling each argument performs.
+pub fn vr_theta_var(v: Text, types: List(Option(SurfaceTerm)), ls: List(Option(List(Text))), found: Option(List(Text))): Option(List(Text)) {
+  match ls {
+    Nil => found
+    Cons(l, rest) => ⊢ Option(List(Text)) from match types {
+      Nil => found
+      Cons(ty, more) => vr_theta_var(v, more, rest, vr_theta_step(vr_named(ty, v), l, found))
+    }
+  }
+}
+
+// Each argument whose parameter names a variable of the row can be told.
+pub fn vr_args_told(vs: List(Text), types: List(Option(SurfaceTerm)), ls: List(Option(List(Text)))): Bool {
+  match ls {
+    Nil => true
+    Cons(l, rest) => ⊢ Bool from match types {
+      Nil => true
+      Cons(ty, more) => vr_arg_told(vr_names_any(ty, vs), l) && vr_args_told(vs, more, rest)
+    }
+  }
+}
+
+pub fn vr_externs(c: VrCtx, locals: List(RowName), args: List(SurfaceTerm), ls: List(Option(List(Text)))): Bool {
+  match args {
+    Nil => true
+    Cons(a, rest) => ⊢ Bool from match ls {
+      Nil => true
+      Cons(l, lrest) => vr_extern_arg(c, locals, a, l) && vr_externs(c, locals, rest, lrest)
+    }
+  }
+}
+
+pub fn vr_theta_step(named: Option(List(Text)), latent: Option(List(Text)), found: Option(List(Text))): Option(List(Text)) {
+  match named {
+    None => found
+    Some(ns) => ⊢ Option(List(Text)) from match latent {
+      None => found
+      Some(r) => ⊢ Option(List(Text)) from match found {
+        None => Some(vr_without(r, ns))
+        Some(sofar) => Some(List::append(sofar, vr_without(r, ns)))
+      }
+    }
+  }
+}
+
+pub fn vr_without(r: List(Text), ns: List(Text)): List(Text) {
+  match r {
+    Nil => Nil
+    Cons(e, rest) => ⊢ List(Text) from match vr_has(ns, e) {
+      true => vr_without(rest, ns)
+      false => Cons(e, vr_without(rest, ns))
+    }
+  }
+}
+
+pub fn vr_arg_told(names: Bool, latent: Option(List(Text))): Bool {
+  match names {
+    false => true
+    true => vr_is_some(latent)
+  }
+}
+
+pub fn vr_extern_arg(c: VrCtx, locals: List(RowName), a: SurfaceTerm, latent: Option(List(Text))): Bool {
+  match latent {
+    Some(r) => vr_extern_ok(vr_env(c), vr_dvars(c), r)
+    None => vr_untold(locals, a)
+  }
+}
+
+// The argument is not a `λ` or a name, or is a local not known to call.
+pub fn vr_untold(locals: List(RowName), a: SurfaceTerm): Bool {
+  match a {
+    SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => ⊢ Bool from match kind {
+      SkVar(n) => ⊢ Bool from match vr_find(locals, surface_name_text(n)) {
+        Some(l) => ⊢ Bool from match l {
+          LocalRowKnown(^r) => false
+          _ => true
+        }
+        None => false
+      }
+      SkLam(^ps, ^b, ^ts, _) => false
+      SkBorrowLam(^bs, ^l) => false
+      SkBorrow(^m, ^m_orig, ^x) => false
+      _ => true
+    }
+  }
+}
+
+pub fn vr_bound_latent(value: SurfaceTerm, lambda: Option(List(Text))): LocalRow {
+  match lambda {
+    Some(r) => LocalRowKnown(r)
+    None => LocalRowUnknown
+  }
+}
+
+// ---- calls of functions ----------------------------------------------------------
+
+// `θ` for the row variables `vs`.
+pub fn vr_theta(vs: List(Text), types: List(Option(SurfaceTerm)), ls: List(Option(List(Text)))): Option(List(Text × List(Text))) {
+  match vs {
+    Nil => Some(Nil)
+    Cons(v, rest) => ⊢ Option(List(Text × List(Text))) from match vr_theta_var(v, types, ls, None) {
+      None => None
+      Some(row) => ⊢ Option(List(Text × List(Text))) from match vr_theta(rest, types, ls) {
+        None => None
+        Some(more) => Some(Cons(#(v, row), more))
+      }
+    }
+  }
+}
+
+pub fn vr_bounds_hold(c: VrCtx, callee: SurfaceFn, theta: List(Text × List(Text))): Bool {
+  match theta {
+    Nil => true
+    Cons(h, rest) => vr_bound_holds(vr_env(c), vr_dvars(c), vr_bound(rr_generics(callee), rr_bounds(callee), rr_fst(h)), h.snd) && vr_bounds_hold(c, callee, rest)
+  }
+}
+
+pub fn vr_call_name(c: VrCtx, locals: List(RowName), n: Text, args: List(SurfaceTerm), ls: List(Option(List(Text))), found: Option(LocalRow)): Option(List(Text)) {
+  match found {
+    Some(l) => ⊢ Option(List(Text)) from match l {
+      LocalRowKnown(r) => Some(r)
+      _ => None
+    }
+    None => ⊢ Option(List(Text)) from match Ordmap::get(rr_fns(vr_env(c)), n, Ordmap::compare_text) {
+      Some(callee) => vr_call_function(c, locals, n, args, ls, callee, vr_lookup(vr_sig(c), n))
+      None => ⊢ Option(List(Text)) from match vr_pure(vr_env(c), n, args) {
+        true => Some(Nil)
+        false => None
+      }
+    }
+  }
+}
+
+pub fn vr_call_function(c: VrCtx, locals: List(RowName), n: Text, args: List(SurfaceTerm), ls: List(Option(List(Text))), callee: SurfaceFn, row: Option(List(Text))): Option(List(Text)) {
+  match rr_template(callee) {
+    true => None
+    false => vr_call_row(c, locals, n, args, ls, callee, row)
+  }
+}
+
+pub fn vr_call_row(c: VrCtx, locals: List(RowName), n: Text, args: List(SurfaceTerm), ls: List(Option(List(Text))), callee: SurfaceFn, row: Option(List(Text))): Option(List(Text)) {
+  match row {
+    None => None
+    Some(r) => vr_call_theta(c, locals, n, args, ls, callee, r, vr_theta(vr_vars(r), rr_param_types(callee), ls))
+  }
+}
+
+// `o`, unless `f` is a template.
+pub fn vr_unless_template(f: SurfaceFn, o: Option(List(Text))): Option(List(Text)) {
+  match rr_template(f) {
+    true => None
+    false => o
+  }
+}
+
+pub fn vr_call_theta(c: VrCtx, locals: List(RowName), n: Text, args: List(SurfaceTerm), ls: List(Option(List(Text))), callee: SurfaceFn, row: List(Text), theta: Option(List(Text × List(Text)))): Option(List(Text)) {
+  match theta {
+    None => None
+    Some(th) => vr_when(
+      vr_args_told(vr_vars(row), rr_param_types(callee), ls)
+        && vr_bounds_hold(c, callee, th)
+        && (not(Ordmap::contains(rr_externs(vr_env(c)), n, Ordmap::compare_text)) || vr_externs(c, locals, args, ls))
+        && vr_ranked(vr_lim(c), n),
+      vr_inst(th, row)
+    )
+  }
+}
+
+// ---- functions and the program ---------------------------------------------------
+
+mutual {
+  // The row `t` performs, or `None` when the rules have no row for it.
+  pub fn vr_term(c: VrCtx, locals: List(RowName), t: SurfaceTerm): Option(List(Text)) {
+    match t {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => vr_kind(c, locals, kind)
+    }
+  }
+
+  pub fn vr_kind(c: VrCtx, locals: List(RowName), kind: SurfaceKind): Option(List(Text)) {
+    match kind {
+      SkPerform(op, args) => vr_cons(vr_effect_of(op), vr_all(c, locals, args))
+      SkApp(f, args) => vr_both(vr_call(c, locals, f, args, vr_latents(c, locals, args)), vr_all(c, locals, args))
+      SkRecord(^name, fields) => vr_fields(c, locals, fields)
+      SkBorrow(^m, ^m_orig, x) => vr_term(c, locals, x)
+      SkField(x, ^name) => vr_term(c, locals, x)
+      SkTagged(^tag, x) => vr_term(c, locals, x)
+      SkIf(cond, th, el) => vr_both(vr_term(c, locals, cond), vr_both(vr_term(c, locals, th), vr_opt(c, locals, el)))
+      SkMatch(s, ^motive, arms, ^binder, _) => vr_both(vr_term(c, locals, s), vr_arms(c, locals, arms))
+      SkBlock(stmts) => vr_stmts(c, locals, stmts)
+      SkBudget(memory, amount, body) => vr_budget(memory, vr_term(c, locals, amount), vr_term(c, locals, body))
+      SkHandle(body, handlers) => vr_handle(handlers, vr_term(c, locals, body), vr_handlers(c, locals, handlers))
+      _ => Some(Nil)
+    }
+  }
+
+  pub fn vr_opt(c: VrCtx, locals: List(RowName), t: Option(SurfaceTerm)): Option(List(Text)) {
+    match t {
+      None => Some(Nil)
+      Some(x) => vr_term(c, locals, x)
+    }
+  }
+
+  pub fn vr_all(c: VrCtx, locals: List(RowName), ts: List(SurfaceTerm)): Option(List(Text)) {
+    match ts {
+      Nil => Some(Nil)
+      Cons(t, rest) => vr_both(vr_term(c, locals, t), vr_all(c, locals, rest))
+    }
+  }
+
+  pub fn vr_fields(c: VrCtx, locals: List(RowName), fs: List(SurfaceField)): Option(List(Text)) {
+    match fs {
+      Nil => Some(Nil)
+      Cons(f, rest) => vr_both(vr_field(c, locals, f), vr_fields(c, locals, rest))
+    }
+  }
+
+  pub fn vr_field(c: VrCtx, locals: List(RowName), f: SurfaceField): Option(List(Text)) {
+    match f {
+      SurfaceFieldMk(^name, value) => vr_term(c, locals, value)
+    }
+  }
+
+  pub fn vr_arms(c: VrCtx, locals: List(RowName), arms: List(SurfaceArm)): Option(List(Text)) {
+    match arms {
+      Nil => Some(Nil)
+      Cons(arm, rest) => vr_both(vr_arm(c, locals, arm), vr_arms(c, locals, rest))
+    }
+  }
+
+  pub fn vr_arm(c: VrCtx, locals: List(RowName), arm: SurfaceArm): Option(List(Text)) {
+    match arm {
+      SurfaceArmMk(pattern, guard, ^goal, body) => vr_both(
+        vr_opt(c, vr_bind(pattern, locals), guard),
+        vr_term(c, vr_bind(pattern, locals), body)
+      )
+    }
+  }
+
+  // What the arms perform together; `None` when an arm has no row, or the
+  // arm of a direct operation may suspend.
+  pub fn vr_handlers(c: VrCtx, locals: List(RowName), hs: List(SurfaceHandler)): Option(List(Text)) {
+    match hs {
+      Nil => Some(Nil)
+      Cons(h, rest) => vr_both(vr_handler(c, locals, h), vr_handlers(c, locals, rest))
+    }
+  }
+
+  pub fn vr_handler(c: VrCtx, locals: List(RowName), h: SurfaceHandler): Option(List(Text)) {
+    match h {
+      HdReturn(pattern, body) => vr_term(c, vr_bind(pattern, locals), body)
+      HdOperation(op, ^binds, ^types, patterns, k, _, guard, body) => vr_direct_arm(
+        c,
+        op,
+        vr_both(
+          vr_opt(c, vr_cont(k, vr_bind_op(op, patterns, locals)), guard),
+          vr_term(c, vr_cont(k, vr_bind_op(op, patterns, locals)), body)
+        )
+      )
+    }
+  }
+
+  // What calling `f` performs, beside its arguments.
+  pub fn vr_call(c: VrCtx, locals: List(RowName), f: SurfaceTerm, args: List(SurfaceTerm), ls: List(Option(List(Text)))): Option(List(Text)) {
+    match f {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => vr_call_kind(c, locals, kind, args, ls)
+    }
+  }
+
+  pub fn vr_call_kind(c: VrCtx, locals: List(RowName), kind: SurfaceKind, args: List(SurfaceTerm), ls: List(Option(List(Text)))): Option(List(Text)) {
+    match kind {
+      SkVar(n) => vr_call_name(c, locals, surface_name_text(n), args, ls, vr_find(locals, surface_name_text(n)))
+      SkField(base, name) => vr_info_call(locals, base, name)
+      SkLam(ps, body, ^types, _) => vr_term(c, vr_unknown(ps, locals), body)
+      SkBorrowLam(^bs, lam) => vr_lambda(c, locals, lam)
+      _ => None
+    }
+  }
+
+  pub fn vr_lambda(c: VrCtx, locals: List(RowName), t: SurfaceTerm): Option(List(Text)) {
+    match t {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => vr_lambda_kind(c, locals, kind)
+    }
+  }
+
+  pub fn vr_lambda_kind(c: VrCtx, locals: List(RowName), kind: SurfaceKind): Option(List(Text)) {
+    match kind {
+      SkLam(ps, body, ^types, _) => vr_term(c, vr_unknown(ps, locals), body)
+      SkBorrowLam(^bs, lam) => vr_lambda(c, locals, lam)
+      _ => None
+    }
+  }
+
+  // What calling the value `t` performs.
+  pub fn vr_latent(c: VrCtx, locals: List(RowName), t: SurfaceTerm): Option(List(Text)) {
+    match t {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => vr_latent_kind(c, locals, kind)
+    }
+  }
+
+  pub fn vr_latent_kind(c: VrCtx, locals: List(RowName), kind: SurfaceKind): Option(List(Text)) {
+    match kind {
+      SkLam(ps, body, ^types, _) => vr_term(c, vr_unknown(ps, locals), body)
+      SkBorrowLam(^bs, lam) => vr_lambda(c, locals, lam)
+      SkBorrow(^m, ^m_orig, x) => vr_latent(c, locals, x)
+      SkVar(n) => vr_latent_name(c, surface_name_text(n), vr_find(locals, surface_name_text(n)))
+      _ => None
+    }
+  }
+
+  // What calling each argument performs.
+  pub fn vr_latents(c: VrCtx, locals: List(RowName), args: List(SurfaceTerm)): List(Option(List(Text))) {
+    match args {
+      Nil => Nil
+      Cons(a, rest) => Cons(vr_latent(c, locals, a), vr_latents(c, locals, rest))
+    }
+  }
+
+  pub fn vr_stmts(c: VrCtx, locals: List(RowName), ss: List(SurfaceStmt)): Option(List(Text)) {
+    match ss {
+      Nil => Some(Nil)
+      Cons(st, rest) => vr_both(vr_stmt(c, locals, st), vr_stmts(c, vr_stmt_bind(c, locals, st), rest))
+    }
+  }
+
+  pub fn vr_stmt(c: VrCtx, locals: List(RowName), st: SurfaceStmt): Option(List(Text)) {
+    match st {
+      StLet(^name, ^ty, value, ^b, ^m, ^unused, ^st_stack) => vr_term(c, locals, value)
+      StVar(^name, ^ty, value, ^b, ^unused, ^st_stack) => vr_term(c, locals, value)
+      StAssign(^name, ^place, value) => vr_term(c, locals, value)
+      StExpr(e) => vr_term(c, locals, e)
+      StReturn(v) => vr_opt(c, locals, v)
+      StWhile(cond, body) => vr_cons("div", vr_both(vr_term(c, locals, cond), vr_term(c, locals, body)))
+      _ => Some(Nil)
+    }
+  }
+
+  pub fn vr_stmt_bind(c: VrCtx, locals: List(RowName), st: SurfaceStmt): List(RowName) {
+    match st {
+      StLet(name, ^ty, value, ^b, ^m, ^unused, ^st_stack) => Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(c, locals, value))), locals)
+      StVar(name, ^ty, value, ^b, ^unused, ^st_stack) => Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(c, locals, value))), locals)
+      _ => locals
+    }
+  }
+}
+
+pub fn vr_direct_generics(gs: List(Text), bs: List(Option(Text))): List(Text) {
+  match gs {
+    Nil => Nil
+    Cons(g, more) => ⊢ List(Text) from match bs {
+      Nil => Nil
+      Cons(b, rest) => ⊢ List(Text) from match b {
+        Some(x) => ⊢ List(Text) from match Text::eq(x, "direct") {
+          true => Cons(g, vr_direct_generics(more, rest))
+          false => vr_direct_generics(more, rest)
+        }
+        None => vr_direct_generics(more, rest)
+      }
+    }
+  }
+}
+
+pub fn vr_limit(env: RowEnv, ranks: List(Text × Nat), name: Text, row: List(Text)): Option(RankLimit) {
+  match vr_has(row, "div") {
+    true => Some(RankLimit::Mk(ranks, None, Nil))
+    false => ⊢ Option(RankLimit) from match vr_rank(ranks, name) {
+      None => None
+      Some(r) => Some(vr_group_limit(env, ranks, name, r, vr_group(env, name)))
+    }
+  }
+}
+
+// The limit of a function of rank `r` in `group`: the group may be called
+// when the function is in it and its recursion is structural.
+pub fn vr_group_limit(env: RowEnv, ranks: List(Text × Nat), name: Text, r: Nat, group: List(Text)): RankLimit {
+  match vr_has(group, name) && rows_decreases(rr_group_fns(env, group)) {
+    true => RankLimit::Mk(ranks, Some(r), group)
+    false => RankLimit::Mk(ranks, Some(r), Nil)
+  }
+}
+
+// The names of the group of mutually recursive functions `name` is in, as
+// the analysis finds it; `Nil` when `name` does not reach itself.
+pub fn vr_group(env: RowEnv, name: Text): List(Text) {
+  match Ordmap::get(rr_fns(env), name, Ordmap::compare_text) {
+    None => Nil
+    Some(f) => {
+      let reached := rows_reached_from(vr_group_steps(env), env, f)
+      ⊢ List(Text) from match Ordmap::contains(reached, name, Ordmap::compare_text) {
+        true => rows_fns_names(rows_group(vr_group_steps(env), env, f, rows_keys(Ordmap::entries(reached))))
+        false => Nil
+      }
+    }
+  }
+}
+
+// The group a function may call without a rank: its group when that recurses
+// structurally.
+pub fn vr_structural_group(env: RowEnv, name: Text): List(Text) {
+  rr_group(vr_group_limit(env, Nil, name, 0, vr_group(env, name)))
+}
+
+pub fn vr_group_steps(env: RowEnv): Nat {
+  (Ordmap::size(rr_fns(env)) + 1) * 64
+}
+
+// The names of `xs` not in `drop`.
+pub fn vr_without_all(xs: List(Text), drop: List(Text)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => ⊢ List(Text) from match vr_has(drop, x) {
+      true => vr_without_all(rest, drop)
+      false => Cons(x, vr_without_all(rest, drop))
+    }
+  }
+}
+
+pub fn vr_written_ok(written: Option(List(Text)), row: List(Text)): Bool {
+  match written {
+    None => true
+    Some(w) => vr_same(w, row)
+  }
+}
+
+// One function against its row in `sig`.
+pub fn vr_function(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat), name: Text, f: SurfaceFn): Bool {
+  match vr_lookup(sig, name) {
+    None => false
+    Some(row) => vr_written_ok(rr_effects(f), row) && (⊢ Bool from match vr_limit(env, ranks, name, row) {
+      None => false
+      Some(lim) => ⊢ Bool from match vr_term(
+        VrCtx::Mk(env, sig, vr_direct_generics(rr_generics(f), rr_bounds(f)), lim),
+        vr_params(rr_params(f), rr_param_types(f), Nil),
+        rr_body(f)
+      ) {
+        None => false
+        Some(r) => vr_sub(r, row)
+      }
+    })
+  }
+}
+
+// The functions that fail their check.
+pub fn vr_failing(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat), fns: List(Text × SurfaceFn)): List(SurfaceFn) {
+  match fns {
+    Nil => Nil
+    Cons(e, rest) => ⊢ List(SurfaceFn) from match rr_unchecked(e.snd) || vr_function(env, sig, ranks, e.fst, e.snd) {
+      true => vr_failing(env, sig, ranks, rest)
+      false => Cons(e.snd, vr_failing(env, sig, ranks, rest))
+    }
+  }
+}
+
+pub fn vr_top_effects(es: List(Text)): Bool {
+  match es {
+    Nil => true
+    Cons(e, rest) => (Text::eq(e, "div") || Text::eq(e, "budget") || Text::eq(e, "budget_memory") || Text::eq(e, "test") || Text::eq(e, "spawn") || vr_has(rows_host_effects(), e)) && vr_top_effects(rest)
+  }
+}
+
+pub fn vr_top_value(env: RowEnv, sig: List(Text × List(Text)), locals: List(RowName), t: SurfaceTerm): Bool {
+  match vr_term(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, t) {
+    None => false
+    Some(r) => vr_top_effects(r)
+  }
+}
+
+pub fn vr_extern_rows(fs: List(SurfaceFn)): Bool {
+  match fs {
+    Nil => true
+    Cons(f, rest) => vr_extern_row(rr_effects(f)) && vr_extern_rows(rest)
+  }
+}
+
+pub fn vr_extern_row(es: Option(List(Text))): Bool {
+  match es {
+    None => true
+    Some(row) => vr_only_wait(row)
+  }
+}
+
+pub fn vr_only_wait(es: List(Text)): Bool {
+  match es {
+    Nil => true
+    Cons(e, rest) => Text::eq(e, "wait") && vr_only_wait(rest)
+  }
+}
+
+pub fn vr_top_keep(ok: Bool, t: SurfaceTerm, rest: List(SurfaceTerm)): List(SurfaceTerm) {
+  match ok {
+    true => rest
+    false => Cons(t, rest)
+  }
+}
+
+// The top-level statements that fail their check.
+pub fn vr_top_failing(env: RowEnv, sig: List(Text × List(Text)), locals: List(RowName), stmts: List(SurfaceStmt)): List(SurfaceTerm) {
+  match stmts {
+    Nil => Nil
+    Cons(st, rest) => ⊢ List(SurfaceTerm) from match st {
+      StLet(name, ^ty, value, ^b, ^m, ^unused, ^st_stack) => vr_top_keep(vr_top_value(env, sig, locals, value), value, vr_top_failing(env, sig, Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value))), locals), rest))
+      StVar(name, ^ty, value, ^b, ^unused, ^st_stack) => vr_top_keep(vr_top_value(env, sig, locals, value), value, vr_top_failing(env, sig, Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value))), locals), rest))
+      StExpr(e) => vr_top_keep(vr_top_value(env, sig, locals, e), e, vr_top_failing(env, sig, locals, rest))
+      StExtern(fs, ^instances, ^types, ^structs, ^enums, a, b) => ⊢ List(SurfaceTerm) from match vr_extern_rows(fs) {
+        true => vr_top_failing(env, sig, locals, rest)
+        false => Cons(surface_term_mk(SkOther("extern"), a, b), vr_top_failing(env, sig, locals, rest))
+      }
+      _ => vr_top_failing(env, sig, locals, rest)
+    }
+  }
+}
+
+
+// ---- the table the analysis gives, and the ranks ---------------------------------
+
+// The names of the functions `f`'s body calls where it is written.
+pub fn vr_callees(env: RowEnv, ts: List(SurfaceTerm)): List(Text) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => List::append(vr_callee_of(env, t), vr_callees(env, rest))
+  }
+}
+
+pub fn vr_callee_of(env: RowEnv, t: SurfaceTerm): List(Text) {
+  match t.kind {
+    SkApp(f, ^args) => ⊢ List(Text) from match f.kind {
+      SkVar(n) => ⊢ List(Text) from match Ordmap::contains(rr_fns(env), surface_name_text(n), Ordmap::compare_text) {
+        true => Cons(surface_name_text(n), Nil)
+        false => Nil
+      }
+      _ => Nil
+    }
+    _ => Nil
+  }
+}
+
+// A rank for each function: 0 with `div`, else one more than the functions
+// it calls. A function with no `div` that can call itself gets no rank;
+// the check then fails at that call. `steps` bounds the depth.
+// The ranks found, and the functions already met: one met but not ranked
+// is on the way to itself, or calls one that is, and has no rank. Meeting
+// each function once keeps the walk from going down a recursive function's
+// calls again at every step.
+pub fn vr_fold_ranks(f: (Ordmap(Text, Nat) × Ordmap(Text, Bool), Text) -> Ordmap(Text, Nat) × Ordmap(Text, Bool), st: Ordmap(Text, Nat) × Ordmap(Text, Bool), names: List(Text)): Ordmap(Text, Nat) × Ordmap(Text, Bool) {
+  match names {
+    Nil => st
+    Cons(n, rest) => vr_fold_ranks(f, f(st, n), rest)
+  }
+}
+
+// The greatest rank of the callees, at least `best`; `None` when one has none.
+pub fn vr_max_rank(ranks: Ordmap(Text, Nat), callees: List(Text), best: Nat): Option(Nat) {
+  match callees {
+    Nil => Some(best)
+    Cons(n, rest) => ⊢ Option(Nat) from match Ordmap::get(ranks, n, Ordmap::compare_text) {
+      None => None
+      Some(r) => vr_max_rank(ranks, rest, ⊢ Nat from match Nat::lt(best, r) {
+        true => r
+        false => best
+      })
+    }
+  }
+}
+
+pub fn vr_rank_after(name: Text, callees: List(Text), st: Ordmap(Text, Nat) × Ordmap(Text, Bool)): Ordmap(Text, Nat) × Ordmap(Text, Bool) {
+  match vr_max_rank(st.fst, callees, 0) {
+    None => st
+    Some(m) => #(Ordmap::insert(st.fst, name, m + 1, Ordmap::compare_text), st.snd)
+  }
+}
+
+// The structural group of each function, found once.
+pub fn vr_groups(env: RowEnv, names: List(Text), out: Ordmap(Text, List(Text))): Ordmap(Text, List(Text)) {
+  match names {
+    Nil => out
+    Cons(n, rest) => vr_groups(env, rest, Ordmap::insert(out, n, vr_structural_group(env, n), Ordmap::compare_text))
+  }
+}
+
+// The callees a rank is above: those outside the structural group.
+pub fn vr_rank_callees(groups: Ordmap(Text, List(Text)), env: RowEnv, name: Text, f: SurfaceFn): List(Text) {
+  vr_without_all(vr_callees(env, subterms(rr_body(f), Nil)), vr_row_or_nil(Ordmap::get(groups, name, Ordmap::compare_text)))
+}
+
+pub fn vr_rank_met(name: Text, st: Ordmap(Text, Nat) × Ordmap(Text, Bool)): Ordmap(Text, Nat) × Ordmap(Text, Bool) {
+  #(st.fst, Ordmap::insert(st.snd, name, true, Ordmap::compare_text))
+}
+
+pub fn vr_rank_of(steps: Nat, env: RowEnv, sig: List(Text × List(Text)), groups: Ordmap(Text, List(Text)), st: Ordmap(Text, Nat) × Ordmap(Text, Bool), name: Text): Ordmap(Text, Nat) × Ordmap(Text, Bool) {
+  match steps {
+    Zero => st
+    Succ(j) => ⊢ Ordmap(Text, Nat) × Ordmap(Text, Bool) from match Ordmap::contains(st.snd, name, Ordmap::compare_text) {
+      true => st
+      false => ⊢ Ordmap(Text, Nat) × Ordmap(Text, Bool) from match Ordmap::get(rr_fns(env), name, Ordmap::compare_text) {
+        None => st
+        Some(f) => ⊢ Ordmap(Text, Nat) × Ordmap(Text, Bool) from match vr_has(vr_row_or_nil(vr_lookup(sig, name)), "div") {
+          true => vr_rank_met(name, #(Ordmap::insert(st.fst, name, 0, Ordmap::compare_text), st.snd))
+          false => {
+            let callees := vr_rank_callees(groups, env, name, f)
+            vr_rank_after(name, callees, vr_fold_ranks((r: Ordmap(Text, Nat) × Ordmap(Text, Bool), n: Text) => vr_rank_of(j, env, sig, groups, r, n), vr_rank_met(name, st), callees))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn vr_ranks_of(steps: Nat, env: RowEnv, sig: List(Text × List(Text)), groups: Ordmap(Text, List(Text)), ranks: Ordmap(Text, Nat), names: List(Text)): Ordmap(Text, Nat) {
+  vr_fold_ranks((s: Ordmap(Text, Nat) × Ordmap(Text, Bool), n: Text) => vr_rank_of(steps, env, sig, groups, s, n), #(ranks, Ordmap::empty()), names).fst
+}
+
+pub fn vr_row_or_nil(o: Option(List(Text))): List(Text) {
+  match o {
+    None => Nil
+    Some(r) => r
+  }
+}
+
+pub fn vr_names_of(fns: List(Text × SurfaceFn)): List(Text) {
+  match fns {
+    Nil => Nil
+    Cons(e, rest) => Cons(e.fst, vr_names_of(rest))
+  }
+}
+
+pub fn vr_rank_table(env: RowEnv, sig: List(Text × List(Text))): List(Text × Nat) {
+  Ordmap::entries(
+    vr_ranks_of(
+      Ordmap::size(rr_fns(env)) + 1,
+      env,
+      sig,
+      vr_groups(env, vr_names_of(Ordmap::entries(rr_fns(env))), Ordmap::empty()),
+      Ordmap::empty(),
+      vr_names_of(Ordmap::entries(rr_fns(env)))
+    )
+  )
+}
+
+pub fn vr_fn_errors(fs: List(SurfaceFn)): List(RowDiagnostic) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(RowDiagnostic::Mk(msg1("rows-unverified", marg("name", f.name)), f.start, f.end), vr_fn_errors(rest))
+  }
+}
+
+pub fn vr_top_errors(ts: List(SurfaceTerm)): List(RowDiagnostic) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(RowDiagnostic::Mk(msg0("rows-unverified-top"), t.start, t.end), vr_top_errors(rest))
+  }
+}
+
+// ---- sets of effects --------------------------------------------------------------
+
+// A row with each set of effects it names (`Show`) replaced by the effects in
+// it, the sets in those too: the rules know effects, not their names.
+pub fn vr_expand_sets(sets: Ordmap(Text, List(Text)), fuel: Nat, row: List(Text)): List(Text) {
+  match fuel {
+    Zero => row
+    Succ(k) => ⊢ List(Text) from match row {
+      Nil => Nil
+      Cons(e, rest) => ⊢ List(Text) from match Ordmap::get(sets, e, Ordmap::compare_text) {
+        Some(members) => List::append(vr_expand_sets(sets, k, members), vr_expand_sets(sets, k, rest))
+        None => Cons(e, vr_expand_sets(sets, k, rest))
+      }
+    }
+  }
+}
+
+pub fn vr_set_row(env: RowEnv, row: List(Text)): List(Text) {
+  vr_expand_sets(env.sets, Ordmap::size(env.sets) + List::length(row) + 1, row)
+}
+
+pub fn vr_set_row_opt(env: RowEnv, row: Option(List(Text))): Option(List(Text)) {
+  match row {
+    None => None
+    Some(r) => Some(vr_set_row(env, r))
+  }
+}
+
+pub fn vr_sig_sets(env: RowEnv, sig: List(Text × List(Text))): List(Text × List(Text)) {
+  match sig {
+    Nil => Nil
+    Cons(e, rest) => Cons(#(e.fst, vr_set_row(env, e.snd)), vr_sig_sets(env, rest))
+  }
+}
+
+pub fn vr_set_entries(env: RowEnv, es: Option(List(RowEntry))): Option(List(RowEntry)) {
+  match es {
+    None => None
+    Some(entries) => Some(vr_entries_sets(env, entries))
+  }
+}
+
+pub fn vr_entries_sets(env: RowEnv, es: List(RowEntry)): List(RowEntry) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => ⊢ List(RowEntry) from match Ordmap::get(env.sets, row_entry_text(e), Ordmap::compare_text) {
+      Some(members) => List::append(vr_entries_of(vr_set_row(env, members)), vr_entries_sets(env, rest))
+      None => Cons(e, vr_entries_sets(env, rest))
+    }
+  }
+}
+
+pub fn vr_entries_of(names: List(Text)): List(RowEntry) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(EntryName(n, None), vr_entries_of(rest))
+  }
+}
+
+pub fn vr_fn_sets(env: RowEnv, f: SurfaceFn): SurfaceFn {
+  SurfaceFn {
+    name: f.name,
+    generics: f.generics,
+    bounds: f.bounds,
+    params: f.params,
+    r#borrows: f.r#borrows,
+    param_types: f.param_types,
+    result: f.result,
+    effects: vr_set_entries(env, f.effects),
+    wheres: f.wheres,
+    start: f.start,
+    end: f.end,
+    body: f.body,
+    lends: f.lends,
+    generic_types: f.generic_types,
+    bound_starts: f.bound_starts,
+    visibility: f.visibility,
+    row_hole: f.row_hole,
+    unused: f.unused,
+    unused_generics: f.unused_generics,
+    unused_params: f.unused_params
+  }
+}
+
+pub fn vr_fns_sets(env: RowEnv, fs: List(Text × SurfaceFn), out: Ordmap(Text, SurfaceFn)): Ordmap(Text, SurfaceFn) {
+  match fs {
+    Nil => out
+    Cons(e, rest) => vr_fns_sets(env, rest, Ordmap::insert(out, e.fst, vr_fn_sets(env, e.snd), Ordmap::compare_text))
+  }
+}
+
+// `env` with the sets in the written rows of its functions replaced by
+// their effects.
+pub fn vr_env_sets(env: RowEnv): RowEnv {
+  match Ordmap::size(env.sets) {
+    Zero => env
+    Succ(^n) => RowEnv::Mk(
+      vr_fns_sets(env, Ordmap::entries(env.fns), Ordmap::empty()),
+      env.quants,
+      env.externs,
+      env.data,
+      env.structs,
+      env.ops,
+      env.refs,
+      env.sets
+    )
+  }
+}
+
+// ---- the report ----------------------------------------------------------------
+
+// The report on the program. When the analysis finds no error, its rows are
+// checked against the rules; a failure there is reported as an error.
+pub fn rows_check(prelude: List(SurfaceStmt), program: List(SurfaceStmt)): RowReport {
+  rows_check_after(rows_prelude(prelude), prelude, program)
+}
+
+// `rows_check` with the prelude checked before (`rows_prelude`).
+pub fn rows_check_after(pre: RowsPrelude, prelude: List(SurfaceStmt), program: List(SurfaceStmt)): RowReport {
+  let env := rows_env(prelude, program)
+  rows_verified(pre, env, program, rows_check_env(env, program))
+}
+
+// The rows of a program whose operators are known (`ops` of `RowEnv`).
+pub fn rows_check_with(pre: RowsPrelude, ops: Ordmap(RowSpan, Text), prelude: List(SurfaceStmt), program: List(SurfaceStmt)): RowReport {
+  let env := rows_env_with_ops(rows_env(prelude, program), ops)
+  rows_verified(pre, env, program, rows_check_env(env, program))
+}
+
+// ---- the prelude, checked once ------------------------------------------------
+
+// What the check finds for the prelude alone. Every program of a run is read
+// against the same prelude, and the prelude's functions call none of the
+// program's, so they are checked once, in the prelude's own environment:
+// `failing` are those that fail, `sig` and `ranks` what they were checked
+// against. A program's own functions are then checked against `sig` after
+// theirs (`vr_errors_after`).
+pub(open) struct RowsPrelude {
+  env: RowEnv
+  sig: List(Text × List(Text))
+  ranks: List(Text × Nat)
+  failing: List(SurfaceFn)
+}
+
+pub fn rp_env(p: RowsPrelude): RowEnv { p.env }
+pub fn rp_sig(p: RowsPrelude): List(Text × List(Text)) { p.sig }
+pub fn rp_ranks(p: RowsPrelude): List(Text × Nat) { p.ranks }
+pub fn rp_failing(p: RowsPrelude): List(SurfaceFn) { p.failing }
+
+pub fn rows_prelude(prelude: List(SurfaceStmt)): RowsPrelude {
+  let env := rows_env(prelude, Nil)
+  let sig := vr_sig_sets(env, vr_sig_of(env, rows_all_rows(env, Nil)))
+  let ranks := vr_rank_table(vr_env_sets(env), sig)
+  RowsPrelude {
+    env: env,
+    sig: sig,
+    ranks: ranks,
+    failing: vr_failing(vr_env_sets(env), sig, ranks, Ordmap::entries(rr_fns(vr_env_sets(env))))
+  }
+}
+
+// The functions the program declares itself, as `rows_env_of` adds them.
+pub fn rows_own_fns(program: List(SurfaceStmt)): Ordmap(Text, SurfaceFn) {
+  rr_fns(
+    rows_env_of(
+      program,
+      RowEnv::Mk(
+        Ordmap::empty(),
+        Ordmap::empty(),
+        Ordmap::empty(),
+        Ordmap::empty(),
+        Ordmap::empty(),
+        Ordmap::empty(),
+        Ordmap::empty(),
+        Ordmap::empty()
+      )
+    )
+  )
+}
+
+// `own` with the sets in their written rows replaced by their effects, as
+// `vr_env_sets` replaces them.
+pub fn vr_own_sets(env: RowEnv, own: Ordmap(Text, SurfaceFn)): Ordmap(Text, SurfaceFn) {
+  match Ordmap::size(env.sets) {
+    Zero => own
+    Succ(^n) => vr_fns_sets(env, Ordmap::entries(own), Ordmap::empty())
+  }
+}
+
+// The entries of `xs` whose name is not among `own`'s.
+pub fn vr_not_own<V: Shared>(own: Ordmap(Text, SurfaceFn), xs: List(Text × V), out: Ordmap(Text, V)): Ordmap(Text, V) {
+  match xs {
+    Nil => out
+    Cons(e, rest) => ⊢ Ordmap(Text, V) from match Ordmap::contains(own, e.fst, Ordmap::compare_text) {
+      true => vr_not_own(own, rest, out)
+      false => vr_not_own(own, rest, Ordmap::insert(out, e.fst, e.snd, Ordmap::compare_text))
+    }
+  }
+}
+
+pub fn vr_all_met(xs: List(Text × Nat), out: Ordmap(Text, Bool)): Ordmap(Text, Bool) {
+  match xs {
+    Nil => out
+    Cons(e, rest) => vr_all_met(rest, Ordmap::insert(out, e.fst, true, Ordmap::compare_text))
+  }
+}
+
+// The ranks of the program's own functions, above the prelude's: the walk
+// starts with the prelude's ranks found and its functions met, so it goes
+// down no prelude function again.
+pub fn vr_own_ranks(env: RowEnv, sig: List(Text × List(Text)), pre_ranks: List(Text × Nat), own: Ordmap(Text, SurfaceFn)): List(Text × Nat) {
+  let names := vr_names_of(Ordmap::entries(own))
+  let kept := vr_not_own(own, pre_ranks, Ordmap::empty())
+  let met := vr_all_met(Ordmap::entries(vr_not_own(own, vr_prelude_names(Ordmap::entries(rr_fns(env))), Ordmap::empty())), Ordmap::empty())
+  Ordmap::entries(
+    vr_fold_ranks(
+      (s: Ordmap(Text, Nat) × Ordmap(Text, Bool), n: Text) => vr_rank_of(Ordmap::size(rr_fns(env)) + 1, env, sig, vr_groups(env, names, Ordmap::empty()), s, n),
+      #(kept, met),
+      names
+    ).fst
+  )
+}
+
+pub fn vr_prelude_names(fs: List(Text × SurfaceFn)): List(Text × Nat) {
+  match fs {
+    Nil => Nil
+    Cons(e, rest) => Cons(#(e.fst, 0), vr_prelude_names(rest))
+  }
+}
+
+// The errors of the check of a program after its prelude's: the prelude's
+// failing functions, then the program's own functions and its top level,
+// against the program's rows `sig` before the prelude's.
+pub fn vr_errors_after(pre: RowsPrelude, env: RowEnv, sig: List(Text × List(Text)), own: Ordmap(Text, SurfaceFn), program: List(SurfaceStmt)): List(RowDiagnostic) {
+  List::append(
+    vr_fn_errors(rp_failing(pre)),
+    vr_errors_own(env, List::append(sig, rp_sig(pre)), vr_own_ranks(env, List::append(sig, rp_sig(pre)), rp_ranks(pre), own), own, program)
+  )
+}
+
+pub fn vr_errors_own(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat), own: Ordmap(Text, SurfaceFn), program: List(SurfaceStmt)): List(RowDiagnostic) {
+  List::append(
+    vr_fn_errors(vr_failing(env, sig, ranks, Ordmap::entries(own))),
+    vr_top_errors(vr_top_failing(env, sig, Nil, program))
+  )
+}
+
+pub fn rows_verified(pre: RowsPrelude, env: RowEnv, program: List(SurfaceStmt), report: RowReport): RowReport {
+  match report.errors {
+    Nil => RowReport::Mk(
+      report.functions,
+      vr_errors_after(
+        pre,
+        vr_env_sets(env),
+        vr_sig_sets(env, vr_sig_of(env, report.functions)),
+        vr_own_sets(env, rows_own_fns(program)),
+        program
+      ),
+      report.calls,
+      report.quants
+    )
+    Cons(^e, ^rest) => report
+  }
+}
+
+// The row `sig` holds for each function: the written one, else the inferred one.
+pub fn vr_sig_of(env: RowEnv, fs: List(RowFn)): List(Text × List(Text)) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(#(f.name, vr_sig_row(rows_env_fn(env, f.name), f)), vr_sig_of(env, rest))
+  }
+}
+
+pub fn vr_sig_row(g: Option(SurfaceFn), f: RowFn): List(Text) {
+  match g {
+    None => rowset_list(f.row)
+    Some(d) => ⊢ List(Text) from match d.effects {
+      None => rowset_list(f.row)
+      Some(w) => row_entries_text(w)
+    }
+  }
+}
+

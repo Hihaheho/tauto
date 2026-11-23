@@ -66,27 +66,26 @@ checks."examples/stack-check/src/typing.taut::check_code" = "ok"
 
 @ cases.checked-execution
 tote = path`../../examples/stack-check`
-backends = ["rust", "javascript"]
-shows = [
-  "2 + 3: output shape = Some(NumOn(Empty))",
-  "2 + 3: result = Some(Number(5, EmptyStack))",
-  "branch true, then double = Some(Number(28, EmptyStack))",
-  "branch false, then double = Some(Number(42, EmptyStack))",
-  "preserved input tail = Some(Number(5, Boolean(false, EmptyStack)))",
-  "duplicate a boolean = Some(Boolean(false, Boolean(false, EmptyStack)))",
-  "underflow: rejected = None",
-  "wrong operand: rejected = None",
-  "different branch types: rejected = None",
-  "hidden error: unchecked run = Some(Number(7, EmptyStack))",
-  "hidden error: rejected = None",
-  "hidden error: checked run = None",
-]
+stdout = ```
+Some(NumOn(Empty))
+Some(Number(5, EmptyStack))
+Some(Number(28, EmptyStack))
+Some(Number(42, EmptyStack))
+Some(Number(5, Boolean(false, EmptyStack)))
+Some(Boolean(false, Boolean(false, EmptyStack)))
+None
+None
+None
+Some(Number(7, EmptyStack))
+None
+None
+```
 
 @ cases.cannot-forge-addition
-imports = [path`../../examples/stack-check/src/typing.taut`]
+imports = [path`../../examples/stack-check/src/typing.taut`, path`../../examples/stack-check/src/machine.taut`]
 source = ```tauto
 theorem forged_add(): Typing(Exec(Add), Empty, NumOn(Empty)) {
-  TExec(Add, NumOn(NumOn(Empty)), NumOn(Empty), TAdd(Empty))
+  TExec(<op: Add, input: NumOn(NumOn(Empty)), output: NumOn(Empty)>, TAdd(<tail: Empty>))
 }
 ```
 checks.forged_add = "error: type mismatch"

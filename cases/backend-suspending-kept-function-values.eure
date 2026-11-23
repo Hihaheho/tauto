@@ -1,0 +1,53 @@
+// A function of the O tier (here, under `ask`) that keeps a continuation as a
+// value and hands it on inside a function value, in the shape a view keeps
+// a part to build it again later:
+//
+// - `keep` returns, from the tail of its body, a closure of the O tier. The
+//   body's checked type carries no row, so the block's value takes the tier
+//   of its tail; a function value is not lifted to the tier it already has.
+// - `rooted` keeps `k` inside a function value of the O tier held in a data
+//   field (`Parent`). The handlers the continuation runs under are the whole
+//   run, apart from the region of the evidence and the future the call
+//   makes.
+// - `twice` makes a closure of the M tier in code of the O tier and reads
+//   `r` after it: the closure takes a copy of what it captures.
+@ cases.suspending-function-keeps-a-continuation-in-a-function-value
+llvm.unimplemented = "unsupported: a function value that performs a direct operation, in a continuation kept as a value"
+niri.bug = "Leak: a value is still alive at the end of the program and nothing owns it"
+source = ```tauto
+import std::builtin::par { Ref, ref_get, ref_new, ref_set }
+effect ask(): nat
+effect cells { ref_new, ref_get, ref_set }
+effect fork(): Forked resume ω
+effect done(n: nat): Never resume 0
+enum Forked { Child, Parent(() -> nat ! {ask, cells}) }
+fn keep<!r>(f: (x: nat) -> nat ! {ask, cells} ∪ r): ((x: nat) -> nat ! {ask, cells}) ! {fork, done, ask, cells} ∪ r {
+  let arg: Ref(nat) := perform ref_new(0)
+  match perform fork() {
+    Child => perform done(f(perform ref_get(arg)))
+    Parent(run) => (x: nat) => {
+      perform ref_set(arg, x)
+      run()
+    }
+  }
+}
+fn rooted(body: () -> nat ! {fork, done, ask, cells}): nat ! {ask, cells} {
+  handle { body() } with {
+    fork(), k => k(Parent(() => k(Child)))
+    done(n) => n
+    return x => x
+  }
+}
+fn twice(r: Ref(nat)): nat ! {ask, cells} {
+  let a := rooted(() => { let g := keep((x: nat) => x + 1); g(perform ref_get(r)) })
+  let b := perform ref_get(r)
+  a + b
+}
+show(&(handle { twice(perform ref_new(40)) } with {
+  ask(), k => k(1)
+  return v => v
+}))
+```
+stdout = ```
+81
+```

@@ -1,0 +1,1132 @@
+import "base.taut" { Bool, List, Nat }
+import "nat.taut" { Nat }
+import "array.taut" { Array }
+import std::prelude::std { List, Option }
+
+// Allocation policies: the algorithm of an allocator as a pure state machine
+// that the kernel checks. A region keeps the state of its policy, asks it
+// where each block goes, and holds the memory of its chunks; the policy never
+// touches memory. The laws say what the region needs to place blocks that do
+// not overlap.
+//
+// A position is a chunk and an offset in it. The state may claim less than
+// the region holds: it may forget freed space (`used` stays `true`) and
+// shrink the size it reports for a chunk. Both are safe, so the laws say
+// only that much.
+
+pub(open) inductive Layout: Type {
+  Mk(size: Nat, align: Nat): Layout
+}
+
+pub fn Layout::size(l: Layout): Nat {
+  match l {
+    Mk(z, g) => z
+  }
+}
+
+pub fn Layout::align(l: Layout): Nat {
+  match l {
+    Mk(z, g) => g
+  }
+}
+
+// Whether the byte `a` of chunk `c` lies in the `n` bytes at `at` of chunk `c0`.
+pub fn Layout::covers(n: Nat, c0: Nat, at: Nat, c: Nat, a: Nat): Bool {
+  Nat::eq(c, c0) && (at <= a) && (a < at + n)
+}
+
+// What a policy answers to a request for a block.
+pub(open) inductive enum Step(S: Type) {
+  // Put it at offset `at` of chunk `chunk`; `s` is the next state.
+  Fit(S, Nat, Nat)
+  // Add a chunk of `size` bytes, then ask again with `s`, which already counts it.
+  Grow(S, Nat)
+  // Put it on the heap.
+  Refuse
+}
+
+pub(open) inductive class Policy(S: Type) {
+  // The number of chunks the region holds.
+  fn chunks(s: S): Nat
+  // At most the size of chunk `c`.
+  fn chunk_size(s: S, c: Nat): Nat
+  // `false` only for a byte that no live block uses.
+  fn used(s: S, c: Nat, a: Nat): Bool
+  // The bytes a block of `l` takes: its size, or more when the policy
+  // rounds it up (a slot of a pool).
+  fn span(s: S, l: Layout): Nat
+  fn alloc(s: S, l: Layout): Step(S)
+  fn free(s: S, c: Nat, at: Nat, l: Layout): S
+
+  // A placed block is in a chunk the region holds, fits in it, is aligned,
+  // and overlaps no used byte. Its bytes are used afterwards, and nothing
+  // used before becomes free.
+  theorem placed_chunk<s: S, l: Layout, s2: S, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): c < Policy::chunks(s) = true
+  theorem placed_fits<s: S, l: Layout, s2: S, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): at + Policy::span(s, l) <= Policy::chunk_size(s, c) = true
+  theorem placed_aligned<s: S, l: Layout, s2: S, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): ∃ q: Nat. at = q * Layout::align(l)
+  theorem placed_fresh<s: S, l: Layout, s2: S, c: Nat, at: Nat, a: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at),
+    lo: at <= a = true,
+    hi: a < at + Policy::span(s, l) = true
+  ): Policy::used(s, c, a) = false
+  theorem placed_marks<s: S, l: Layout, s2: S, c: Nat, at: Nat, c2: Nat, a: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at),
+    u: Policy::used(s, c2, a) || Layout::covers(Policy::span(s, l), c, at, c2, a) = true
+  ): Policy::used(s2, c2, a) = true
+  theorem placed_chunks<s: S, l: Layout, s2: S, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Policy::chunks(s2) = Policy::chunks(s)
+  theorem placed_sizes<s: S, l: Layout, s2: S, c: Nat, at: Nat, c2: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Policy::chunk_size(s2, c2) <= Policy::chunk_size(s, c2) = true
+
+  theorem placed_span<s: S, l: Layout, s2: S, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Layout::size(l) <= Policy::span(s, l) = true
+  theorem placed_span_same<s: S, l: Layout, s2: S, c: Nat, at: Nat, l2: Layout>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Policy::span(s2, l2) = Policy::span(s, l2)
+
+  // Growing adds one chunk of at most `n` bytes after the others, keeps what
+  // the old chunks say, and the next request for the same layout does not grow again.
+  theorem grow_chunks<s: S, l: Layout, s2: S, n: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n)
+  ): Policy::chunks(s2) = Succ(Policy::chunks(s))
+  theorem grow_size<s: S, l: Layout, s2: S, n: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n)
+  ): Policy::chunk_size(s2, Policy::chunks(s)) <= n = true
+  theorem grow_sizes<s: S, l: Layout, s2: S, n: Nat, c2: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n),
+    old: c2 < Policy::chunks(s) = true
+  ): Policy::chunk_size(s2, c2) <= Policy::chunk_size(s, c2) = true
+  theorem grow_marks<s: S, l: Layout, s2: S, n: Nat, c2: Nat, a: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n),
+    old: c2 < Policy::chunks(s) = true,
+    u: Policy::used(s, c2, a) = true
+  ): Policy::used(s2, c2, a) = true
+  theorem grow_once<s: S, l: Layout, s2: S, n: Nat, s3: S, n3: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n),
+    again: Policy::alloc(s2, l) = Grow(s3, n3)
+  ): False
+
+  theorem grow_span_same<s: S, l: Layout, s2: S, n: Nat, l2: Layout>(
+    h: Policy::alloc(s, l) = Grow(s2, n)
+  ): Policy::span(s2, l2) = Policy::span(s, l2)
+
+  // Freeing keeps every chunk and every used byte outside the block.
+  theorem free_chunks<s: S, c: Nat, at: Nat, l: Layout>(): Policy::chunks(
+    Policy::free(s, c, at, l)
+  ) = Policy::chunks(s)
+  theorem free_sizes<s: S, c: Nat, at: Nat, l: Layout, c2: Nat>(): Policy::chunk_size(
+    Policy::free(s, c, at, l),
+    c2
+  ) <= Policy::chunk_size(s, c2) = true
+  theorem free_keeps<s: S, c: Nat, at: Nat, l: Layout, c2: Nat, a: Nat>(
+    u: Policy::used(s, c2, a) = true,
+    out: Layout::covers(Policy::span(s, l), c, at, c2, a) = false
+  ): Policy::used(Policy::free(s, c, at, l), c2, a) = true
+  theorem free_span_same<s: S, c: Nat, at: Nat, l: Layout, l2: Layout>(): Policy::span(
+    Policy::free(s, c, at, l),
+    l2
+  ) = Policy::span(s, l2)
+}
+
+// The bump policy: blocks go one after another in the last chunk, and a block
+// that does not fit there grows the region by a chunk of at least `step` bytes.
+// Freeing does nothing; the chunks before the last count as full.
+pub(open) inductive BumpPolicy: Type {
+  Mk(cur: Nat, size: Nat, next: Nat, step: Nat): BumpPolicy
+}
+
+// One chunk of `size` bytes, growing by at least `step`.
+pub fn BumpPolicy::new(size: Nat, step: Nat): BumpPolicy {
+  BumpPolicy::Mk(0, size, 0, step)
+}
+
+// The last chunk.
+pub fn BumpPolicy::cur(s: BumpPolicy): Nat {
+  match s {
+    Mk(c, z, x, t) => c
+  }
+}
+
+pub fn BumpPolicy::size(s: BumpPolicy): Nat {
+  match s {
+    Mk(c, z, x, t) => z
+  }
+}
+
+// The first offset of the last chunk that no block uses.
+pub fn BumpPolicy::next(s: BumpPolicy): Nat {
+  match s {
+    Mk(c, z, x, t) => x
+  }
+}
+
+pub fn BumpPolicy::step(s: BumpPolicy): Nat {
+  match s {
+    Mk(c, z, x, t) => t
+  }
+}
+
+pub fn BumpPolicy::sel(b: Bool, x: Nat, y: Nat): Nat {
+  match b { false => y, true => x }
+}
+
+pub fn BumpPolicy::selb(b: Bool, x: Bool, y: Bool): Bool {
+  match b { false => y, true => x }
+}
+
+// The first offset at or after `n` that is a multiple of `align`
+// (0 when `align` is 0, where only 0 is aligned).
+pub fn BumpPolicy::start(n: Nat, align: Nat): Nat {
+  match n {
+    Zero => 0
+    Succ(k) => ⊢ Nat from match align {
+      Zero => 0
+      Succ(g) => Nat::div_nz(Succ(k) + g, Succ(g), Nat::succ_ne_zero(g)) * Succ(g)
+    }
+  }
+}
+
+pub fn BumpPolicy::chunk_size(s: BumpPolicy, c: Nat): Nat {
+  BumpPolicy::sel(Nat::eq(c, BumpPolicy::cur(s)), BumpPolicy::size(s), 0)
+}
+
+pub fn BumpPolicy::used(s: BumpPolicy, c: Nat, a: Nat): Bool {
+  BumpPolicy::selb(Nat::eq(c, BumpPolicy::cur(s)), a < BumpPolicy::next(s), true)
+}
+
+pub fn BumpPolicy::at(s: BumpPolicy, l: Layout): Nat {
+  BumpPolicy::start(BumpPolicy::next(s), Layout::align(l))
+}
+
+pub fn BumpPolicy::fits(s: BumpPolicy, l: Layout): Bool {
+  BumpPolicy::next(s) <= BumpPolicy::at(s, l) && BumpPolicy::at(s, l) + Layout::size(l) <= BumpPolicy::size(s)
+}
+
+// The size of the chunk to grow by.
+pub fn BumpPolicy::grown(s: BumpPolicy, l: Layout): Nat {
+  Nat::max(BumpPolicy::step(s), Layout::size(l))
+}
+
+pub fn BumpPolicy::pick(s: BumpPolicy, l: Layout, b: Bool): Step(BumpPolicy) {
+  match b {
+    false => Grow(BumpPolicy::Mk(Succ(BumpPolicy::cur(s)), BumpPolicy::grown(s, l), 0, BumpPolicy::step(s)), BumpPolicy::grown(s, l))
+    true => Fit(
+      BumpPolicy::Mk(BumpPolicy::cur(s), BumpPolicy::size(s), BumpPolicy::at(s, l) + Layout::size(l), BumpPolicy::step(s)),
+      BumpPolicy::cur(s),
+      BumpPolicy::at(s, l)
+    )
+  }
+}
+
+pub fn BumpPolicy::alloc(s: BumpPolicy, l: Layout): Step(BumpPolicy) {
+  BumpPolicy::pick(s, l, BumpPolicy::fits(s, l))
+}
+
+// Lemmas.
+
+pub theorem BumpPolicy::sel_true(b: Bool, x: Nat, y: Nat, h: b = true): BumpPolicy::sel(b, x, y) = x {
+  match b {
+    false => False::elim(false_ne_true(h))
+    true => Refl
+  }
+}
+
+pub theorem BumpPolicy::sel_false(b: Bool, x: Nat, y: Nat, h: b = false): BumpPolicy::sel(b, x, y) = y {
+  match b {
+    false => Refl
+    true => False::elim(true_ne_false(h))
+  }
+}
+
+pub theorem BumpPolicy::selb_true(b: Bool, x: Bool, y: Bool, h: b = true): BumpPolicy::selb(b, x, y) = x {
+  match b {
+    false => False::elim(false_ne_true(h))
+    true => Refl
+  }
+}
+
+pub theorem BumpPolicy::selb_false(b: Bool, x: Bool, y: Bool, h: b = false): BumpPolicy::selb(b, x, y) = y {
+  match b {
+    false => Refl
+    true => False::elim(true_ne_false(h))
+  }
+}
+
+pub theorem BumpPolicy::le_add_r(a: Nat, k: Nat): a <= a + k = true {
+  match k {
+    Zero => Nat::le_refl(a)
+    Succ(j) => Nat::le_trans(a, a + j, Succ(a + j), BumpPolicy::le_add_r(a, j), Nat::le_succ(a + j))
+  }
+}
+
+// `a < b` fails when `b <= a`.
+pub theorem BumpPolicy::le_lt_false(b: Nat, a: Nat, h: b <= a = true): a < b = false {
+  match b {
+    Zero => Nat::lt_zero_false(a)
+    Succ(b2) => ⊢ a < Succ(b2) = false from match a {
+      Zero => False::elim(false_ne_true(h))
+      Succ(a2) => BumpPolicy::le_lt_false(b2, a2, h)
+    }
+  }
+}
+
+// `b <= a` when `a < b` fails.
+pub theorem BumpPolicy::not_lt_le(a: Nat, b: Nat, h: a < b = false): b <= a = true {
+  match a {
+    Zero => ⊢ b <= Zero = true from match b {
+      Zero => Refl
+      Succ(b2) => False::elim(true_ne_false(h))
+    }
+    Succ(a2) => ⊢ b <= Succ(a2) = true from match b {
+      Zero => Refl
+      Succ(b2) => BumpPolicy::not_lt_le(a2, b2, h)
+    }
+  }
+}
+
+pub theorem BumpPolicy::lt_le_lt(a: Nat, b: Nat, c: Nat, h1: a < b = true, h2: b <= c = true): a < c = true {
+  Nat::le_trans(Succ(a), b, c, Eq::trans(Eq::sym(Nat::lt_le_succ(a, b)), h1), h2)
+}
+
+pub theorem BumpPolicy::le_max_right(a: Nat, b: Nat): b <= Nat::max(a, b) = true {
+  ⊢ b <= BumpPolicy::sel(Nat::lt(a, b), b, a) = true from match Nat::lt(a, b) eqn e {
+    false => ⊢ b <= a = true from BumpPolicy::not_lt_le(a, b, e)
+    true => ⊢ b <= b = true from Nat::le_refl(b)
+  }
+}
+
+pub theorem BumpPolicy::start_aligned(n: Nat, g: Nat): ∃ q: Nat. BumpPolicy::start(n, g) = q * g {
+  match n {
+    Zero => ExIntro(0, Eq::sym(Nat::mul_zero_left(g)))
+    Succ(k) => ⊢ ∃ q: Nat. BumpPolicy::start(Succ(k), g) = q * g from match g {
+      Zero => ExIntro(0, Refl)
+      Succ(g2) => ExIntro(Nat::div_nz(Succ(k) + g2, Succ(g2), Nat::succ_ne_zero(g2)), Refl)
+    }
+  }
+}
+
+// `c2` is not the chunk after `k` when it is at most `k`.
+pub theorem BumpPolicy::ne_top(c2: Nat, k: Nat, old: c2 < Succ(k) = true): Nat::eq(c2, Succ(k)) = false {
+  match Nat::eq(c2, Succ(k)) eqn e {
+    false => ⊢ false = false from Refl
+    true => ⊢ true = false from False::elim(
+      true_ne_false(
+        Eq::trans(
+          Eq::sym(
+            Eq::subst(
+              <A: Nat, a: c2, b: Succ(k)>,
+              (x: Nat) => x < Succ(k) = true,
+              Nat::eq_sound(c2, Succ(k), e),
+              old
+            )
+          ),
+          Nat::lt_irrefl(Succ(k))
+        )
+      )
+    )
+  }
+}
+
+// The state after placing a block, and after growing.
+pub fn BumpPolicy::bumped(s: BumpPolicy, l: Layout): BumpPolicy {
+  BumpPolicy::Mk(BumpPolicy::cur(s), BumpPolicy::size(s), BumpPolicy::at(s, l) + Layout::size(l), BumpPolicy::step(s))
+}
+
+pub fn BumpPolicy::fresh(s: BumpPolicy, l: Layout): BumpPolicy {
+  BumpPolicy::Mk(Succ(BumpPolicy::cur(s)), BumpPolicy::grown(s, l), 0, BumpPolicy::step(s))
+}
+
+// What `alloc` answered, from its decision.
+pub theorem BumpPolicy::on_placed(
+  s: BumpPolicy,
+  l: Layout,
+  s2: BumpPolicy,
+  c: Nat,
+  at2: Nat,
+  G: Prop,
+  h: BumpPolicy::pick(s, l, BumpPolicy::fits(s, l)) = Fit(s2, c, at2),
+  k: (e: BumpPolicy::fits(s, l) = true) -> (h2: Fit(BumpPolicy::bumped(s, l), BumpPolicy::cur(s), BumpPolicy::at(s, l)) = Fit(s2, c, at2)) -> G
+): G {
+  match BumpPolicy::fits(s, l) eqn e {
+    false => ⊢ G from False::elim(
+      ⊢ False from match h {
+      }
+    )
+    true => ⊢ G from k(Refl, h)
+  }
+}
+
+pub theorem BumpPolicy::on_grow(
+  s: BumpPolicy,
+  l: Layout,
+  s2: BumpPolicy,
+  n: Nat,
+  G: Prop,
+  h: BumpPolicy::pick(s, l, BumpPolicy::fits(s, l)) = Grow(s2, n),
+  k: (e: BumpPolicy::fits(s, l) = false) -> (h2: Grow(BumpPolicy::fresh(s, l), BumpPolicy::grown(s, l)) = Grow(s2, n)) -> G
+): G {
+  match BumpPolicy::fits(s, l) eqn e {
+    false => ⊢ G from k(Refl, h)
+    true => ⊢ G from False::elim(
+      ⊢ False from match h {
+      }
+    )
+  }
+}
+
+// The pool policy: equal slots, each a chunk of its own, so a block is a slot
+// at offset 0. A table of which slots are taken decides; a free list in a
+// second table names the slot to try next, so `alloc` and `free` do a fixed
+// amount of work. Both tables have one entry per slot and are made once.
+// A block larger than a slot, or a request when the slot named next is
+// taken, goes to the heap.
+pub(open) inductive PoolPolicy: Type {
+  Mk(slot: Nat, taken: Array(Bool), next: Array(Nat), head: Nat): PoolPolicy
+}
+
+// `n` free slots of `slot` bytes.
+pub fn PoolPolicy::new(slot: Nat, n: Nat): PoolPolicy {
+  PoolPolicy::Mk(slot, Array::of_list(PoolPolicy::falses(n)), Array::of_list(PoolPolicy::ups(0, n)), 0)
+}
+
+pub fn PoolPolicy::falses(n: Nat): List(Bool) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(false, PoolPolicy::falses(m))
+  }
+}
+
+// `k + 1, k + 2, …, k + n`: each slot names the one after it.
+pub fn PoolPolicy::ups(k: Nat, n: Nat): List(Nat) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(Succ(k), PoolPolicy::ups(Succ(k), m))
+  }
+}
+
+pub fn PoolPolicy::slot(s: PoolPolicy): Nat {
+  match s {
+    Mk(z, t, x, h) => z
+  }
+}
+
+pub fn PoolPolicy::taken(s: PoolPolicy): Array(Bool) {
+  match s {
+    Mk(z, t, x, h) => t
+  }
+}
+
+pub fn PoolPolicy::next(s: PoolPolicy): Array(Nat) {
+  match s {
+    Mk(z, t, x, h) => x
+  }
+}
+
+pub fn PoolPolicy::head(s: PoolPolicy): Nat {
+  match s {
+    Mk(z, t, x, h) => h
+  }
+}
+
+// The number of slots.
+pub fn PoolPolicy::count(s: PoolPolicy): Nat {
+  Array::len(PoolPolicy::taken(s))
+}
+
+// A missing entry counts as taken.
+pub fn PoolPolicy::optb(o: Option(Bool)): Bool {
+  match o {
+    None => true
+    Some(b) => b
+  }
+}
+
+pub fn PoolPolicy::bit(a: Array(Bool), i: Nat): Bool {
+  PoolPolicy::optb(Array::get(a, i))
+}
+
+pub fn PoolPolicy::chunk_size(s: PoolPolicy, c: Nat): Nat {
+  BumpPolicy::sel(c < Array::len(PoolPolicy::taken(s)), PoolPolicy::slot(s), 0)
+}
+
+// The bytes past the slot never count as free.
+pub fn PoolPolicy::used(s: PoolPolicy, c: Nat, a: Nat): Bool {
+  BumpPolicy::selb(a < PoolPolicy::slot(s), PoolPolicy::bit(PoolPolicy::taken(s), c), true)
+}
+
+pub fn PoolPolicy::ok(s: PoolPolicy, l: Layout): Bool {
+  Layout::size(l) <= PoolPolicy::slot(s) && not(PoolPolicy::bit(PoolPolicy::taken(s), PoolPolicy::head(s)))
+}
+
+pub fn PoolPolicy::took(s: PoolPolicy): PoolPolicy {
+  PoolPolicy::Mk(
+    PoolPolicy::slot(s),
+    Array::set(PoolPolicy::taken(s), PoolPolicy::head(s), true),
+    PoolPolicy::next(s),
+    Array::get_or(PoolPolicy::next(s), PoolPolicy::head(s), Array::len(PoolPolicy::taken(s)))
+  )
+}
+
+pub fn PoolPolicy::pick(s: PoolPolicy, l: Layout, b: Bool): Step(PoolPolicy) {
+  match b {
+    false => Refuse
+    true => Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0)
+  }
+}
+
+pub fn PoolPolicy::alloc(s: PoolPolicy, l: Layout): Step(PoolPolicy) {
+  PoolPolicy::pick(s, l, PoolPolicy::ok(s, l))
+}
+
+pub fn PoolPolicy::freed(s: PoolPolicy, c: Nat): PoolPolicy {
+  PoolPolicy::Mk(PoolPolicy::slot(s), Array::set(PoolPolicy::taken(s), c, false), Array::set(PoolPolicy::next(s), c, PoolPolicy::head(s)), c)
+}
+
+pub fn PoolPolicy::fpick(s: PoolPolicy, c: Nat, b: Bool): PoolPolicy {
+  match b {
+    false => s
+    true => PoolPolicy::freed(s, c)
+  }
+}
+
+// Only a block at offset 0 is a slot; anything else is left alone.
+pub fn PoolPolicy::free(s: PoolPolicy, c: Nat, at: Nat): PoolPolicy {
+  PoolPolicy::fpick(s, c, Nat::eq(at, 0))
+}
+
+// Lemmas.
+
+pub theorem PoolPolicy::bit_false_lt(
+  l: List(Bool),
+  i: Nat,
+  h: PoolPolicy::optb(List::nth(l, i)) = false
+): i < List::length(l) = true {
+  match l {
+    Nil => False::elim(true_ne_false(h))
+    Cons(y, t) => ⊢ i < List::length(Cons(y, t)) = true from match i {
+      Zero => Refl
+      Succ(k) => PoolPolicy::bit_false_lt(t, k, h)
+    }
+  }
+}
+
+pub theorem PoolPolicy::eq_flip_false(a: Nat, b: Nat, h: Nat::eq(a, b) = false): Nat::eq(b, a) = false {
+  match Nat::eq(b, a) eqn e {
+    false => ⊢ false = false from Refl
+    true => ⊢ true = false from False::elim(
+      true_ne_false(
+        Eq::trans(
+          Eq::sym(
+            Eq::subst(
+              <A: Nat, a: b, b: a>,
+              (x: Nat) => Nat::eq(x, b) = true,
+              Nat::eq_sound(b, a, e),
+              Nat::eq_refl(b)
+            )
+          ),
+          h
+        )
+      )
+    )
+  }
+}
+
+pub theorem PoolPolicy::covers_ne(
+  n: Nat,
+  c0: Nat,
+  at: Nat,
+  c: Nat,
+  a: Nat,
+  h: Nat::eq(c, c0) = false
+): Layout::covers(n, c0, at, c, a) = false {
+  Eq::congr(⟦□ && at <= a && a < at + n⟧, h)
+}
+
+pub theorem PoolPolicy::covers_zero(
+  n: Nat,
+  c0: Nat,
+  c: Nat,
+  a: Nat,
+  hc: Nat::eq(c, c0) = true,
+  ha: a < n = true
+): Layout::covers(n, c0, 0, c, a) = true {
+  Eq::trans(
+    Eq::congr(⟦□ && 0 <= a && a < 0 + n⟧, hc),
+    Eq::trans(Eq::congr(⟦a < □⟧, Nat::add_zero_left(n)), ha)
+  )
+}
+
+pub theorem PoolPolicy::head_free(
+  s: PoolPolicy,
+  l: Layout,
+  e: PoolPolicy::ok(s, l) = true
+): PoolPolicy::bit(PoolPolicy::taken(s), PoolPolicy::head(s)) = false {
+  Bool::not_true(
+    PoolPolicy::bit(PoolPolicy::taken(s), PoolPolicy::head(s)),
+    Bool::and_true_right(Layout::size(l) <= PoolPolicy::slot(s), not(PoolPolicy::bit(PoolPolicy::taken(s), PoolPolicy::head(s))), e)
+  )
+}
+
+pub theorem PoolPolicy::head_lt(
+  s: PoolPolicy,
+  l: Layout,
+  e: PoolPolicy::ok(s, l) = true
+): PoolPolicy::head(s) < Array::len(PoolPolicy::taken(s)) = true {
+  PoolPolicy::bit_false_lt(Array::to_list(PoolPolicy::taken(s)), PoolPolicy::head(s), PoolPolicy::head_free(s, l, e))
+}
+
+pub theorem PoolPolicy::on_placed(
+  s: PoolPolicy,
+  l: Layout,
+  s2: PoolPolicy,
+  c: Nat,
+  at2: Nat,
+  G: Prop,
+  h: PoolPolicy::pick(s, l, PoolPolicy::ok(s, l)) = Fit(s2, c, at2),
+  k: (e: PoolPolicy::ok(s, l) = true) -> (h2: Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0) = Fit(s2, c, at2)) -> G
+): G {
+  match PoolPolicy::ok(s, l) eqn e {
+    false => ⊢ G from False::elim(
+      ⊢ False from match h {
+      }
+    )
+    true => ⊢ G from k(Refl, h)
+  }
+}
+
+pub theorem PoolPolicy::never_grows(
+  s: PoolPolicy,
+  l: Layout,
+  s2: PoolPolicy,
+  n: Nat,
+  h: PoolPolicy::pick(s, l, PoolPolicy::ok(s, l)) = Grow(s2, n)
+): False {
+  match PoolPolicy::ok(s, l) eqn e {
+    false => ⊢ False from match h {
+    }
+    true => ⊢ False from match h {
+    }
+  }
+}
+
+instance Policy(BumpPolicy) {
+  fn chunks(s: BumpPolicy): Nat { Succ(BumpPolicy::cur(s)) }
+  fn chunk_size(s: BumpPolicy, c: Nat): Nat { BumpPolicy::chunk_size(s, c) }
+  fn used(s: BumpPolicy, c: Nat, a: Nat): Bool { BumpPolicy::used(s, c, a) }
+  fn span(s: BumpPolicy, l: Layout): Nat { Layout::size(l) }
+  fn alloc(s: BumpPolicy, l: Layout): Step(BumpPolicy) { BumpPolicy::alloc(s, l) }
+  fn free(s: BumpPolicy, c: Nat, at: Nat, l: Layout): BumpPolicy { s }
+
+  theorem placed_chunk<s: BumpPolicy, l: Layout, s2: BumpPolicy, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): c < Policy::chunks(s) = true {
+    BumpPolicy::on_placed(s, l, s2, c, at, c < Succ(BumpPolicy::cur(s)) = true, h,
+      (e: BumpPolicy::fits(s, l) = true) => (h2: Fit(BumpPolicy::bumped(s, l), BumpPolicy::cur(s), BumpPolicy::at(s, l)) = Fit(s2, c, at)) =>
+        ⊢ c < Succ(BumpPolicy::cur(s)) = true from match h2 {
+          Refl => Nat::le_refl(BumpPolicy::cur(s))
+        }
+    )
+  }
+
+  theorem placed_fits<s: BumpPolicy, l: Layout, s2: BumpPolicy, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): at + Policy::span(s, l) <= Policy::chunk_size(s, c) = true {
+    BumpPolicy::on_placed(s, l, s2, c, at, at + Layout::size(l) <= BumpPolicy::chunk_size(s, c) = true, h,
+      (e: BumpPolicy::fits(s, l) = true) => (h2: Fit(BumpPolicy::bumped(s, l), BumpPolicy::cur(s), BumpPolicy::at(s, l)) = Fit(s2, c, at)) =>
+        ⊢ at + Layout::size(l) <= BumpPolicy::chunk_size(s, c) = true from match h2 {
+          Refl => Eq::trans(Eq::congr(⟦BumpPolicy::at(s, l) + Layout::size(l) <= □⟧, BumpPolicy::sel_true(Nat::eq(BumpPolicy::cur(s), BumpPolicy::cur(s)), BumpPolicy::size(s), 0, Nat::eq_refl(BumpPolicy::cur(s)))), Bool::and_true_right(BumpPolicy::next(s) <= BumpPolicy::at(s, l), BumpPolicy::at(s, l) + Layout::size(l) <= BumpPolicy::size(s), e))
+        }
+    )
+  }
+
+  theorem placed_aligned<s: BumpPolicy, l: Layout, s2: BumpPolicy, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): ∃ q: Nat. at = q * Layout::align(l) {
+    BumpPolicy::on_placed(s, l, s2, c, at, ∃ q: Nat. at = q * Layout::align(l), h,
+      (e: BumpPolicy::fits(s, l) = true) => (h2: Fit(BumpPolicy::bumped(s, l), BumpPolicy::cur(s), BumpPolicy::at(s, l)) = Fit(s2, c, at)) =>
+        ⊢ ∃ q: Nat. at = q * Layout::align(l) from match h2 {
+          Refl => BumpPolicy::start_aligned(BumpPolicy::next(s), Layout::align(l))
+        }
+    )
+  }
+
+  theorem placed_fresh<s: BumpPolicy, l: Layout, s2: BumpPolicy, c: Nat, at: Nat, a: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at),
+    lo: at <= a = true,
+    hi: a < at + Policy::span(s, l) = true
+  ): Policy::used(s, c, a) = false {
+    BumpPolicy::on_placed(s, l, s2, c, at, (at <= a = true) -> BumpPolicy::used(s, c, a) = false, h,
+      (e: BumpPolicy::fits(s, l) = true) => (h2: Fit(BumpPolicy::bumped(s, l), BumpPolicy::cur(s), BumpPolicy::at(s, l)) = Fit(s2, c, at)) =>
+        ⊢ (at <= a = true) -> BumpPolicy::used(s, c, a) = false from match h2 {
+          Refl => (lo2: BumpPolicy::at(s, l) <= a = true) => Eq::trans(BumpPolicy::selb_true(Nat::eq(BumpPolicy::cur(s), BumpPolicy::cur(s)), a < BumpPolicy::next(s), true, Nat::eq_refl(BumpPolicy::cur(s))), BumpPolicy::le_lt_false(BumpPolicy::next(s), a, Nat::le_trans(BumpPolicy::next(s), BumpPolicy::at(s, l), a, Bool::and_true_left(BumpPolicy::next(s) <= BumpPolicy::at(s, l), BumpPolicy::at(s, l) + Layout::size(l) <= BumpPolicy::size(s), e), lo2)))
+        }
+    )(lo)
+  }
+
+  theorem placed_marks<s: BumpPolicy, l: Layout, s2: BumpPolicy, c: Nat, at: Nat, c2: Nat, a: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at),
+    u: Policy::used(s, c2, a) || Layout::covers(Policy::span(s, l), c, at, c2, a) = true
+  ): Policy::used(s2, c2, a) = true {
+    BumpPolicy::on_placed(s, l, s2, c, at, (BumpPolicy::used(s, c2, a) || Layout::covers(Layout::size(l), c, at, c2, a) = true) -> BumpPolicy::used(s2, c2, a) = true, h,
+      (e: BumpPolicy::fits(s, l) = true) => (h2: Fit(BumpPolicy::bumped(s, l), BumpPolicy::cur(s), BumpPolicy::at(s, l)) = Fit(s2, c, at)) =>
+        ⊢ (BumpPolicy::used(s, c2, a) || Layout::covers(Layout::size(l), c, at, c2, a) = true) -> BumpPolicy::used(s2, c2, a) = true from match h2 {
+          Refl => (u2: BumpPolicy::used(s, c2, a) || Layout::covers(Layout::size(l), BumpPolicy::cur(s), BumpPolicy::at(s, l), c2, a) = true) => ⊢ BumpPolicy::selb(Nat::eq(c2, BumpPolicy::cur(s)), a < BumpPolicy::at(s, l) + Layout::size(l), true) = true from match Nat::eq(c2, BumpPolicy::cur(s)) eqn ec {
+            false => ⊢ BumpPolicy::selb(false, a < BumpPolicy::at(s, l) + Layout::size(l), true) = true from Refl
+            true => ⊢ BumpPolicy::selb(true, a < BumpPolicy::at(s, l) + Layout::size(l), true) = true from match a < BumpPolicy::next(s) eqn en {
+              false => ⊢ a < BumpPolicy::at(s, l) + Layout::size(l) = true from Bool::and_true_right(
+                Nat::eq(c2, BumpPolicy::cur(s)) && Nat::le(BumpPolicy::at(s, l), a),
+                a < BumpPolicy::at(s, l) + Layout::size(l),
+                Eq::trans(
+                  Eq::sym(Eq::congr(
+                    ⟦□ || Layout::covers(Layout::size(l), BumpPolicy::cur(s), BumpPolicy::at(s, l), c2, a)⟧,
+                    Eq::trans(BumpPolicy::selb_true(Nat::eq(c2, BumpPolicy::cur(s)), a < BumpPolicy::next(s), true, ec), en)
+                  )),
+                  u2
+                )
+              )
+              true => ⊢ a < BumpPolicy::at(s, l) + Layout::size(l) = true from BumpPolicy::lt_le_lt(
+                a,
+                BumpPolicy::next(s),
+                BumpPolicy::at(s, l) + Layout::size(l),
+                en,
+                Nat::le_trans(
+                  BumpPolicy::next(s),
+                  BumpPolicy::at(s, l),
+                  BumpPolicy::at(s, l) + Layout::size(l),
+                  Bool::and_true_left(BumpPolicy::next(s) <= BumpPolicy::at(s, l), BumpPolicy::at(s, l) + Layout::size(l) <= BumpPolicy::size(s), e),
+                  BumpPolicy::le_add_r(BumpPolicy::at(s, l), Layout::size(l))
+                )
+              )
+            }
+          }
+        }
+    )(u)
+  }
+
+  theorem placed_chunks<s: BumpPolicy, l: Layout, s2: BumpPolicy, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Policy::chunks(s2) = Policy::chunks(s) {
+    BumpPolicy::on_placed(s, l, s2, c, at, Succ(BumpPolicy::cur(s2)) = Succ(BumpPolicy::cur(s)), h,
+      (e: BumpPolicy::fits(s, l) = true) => (h2: Fit(BumpPolicy::bumped(s, l), BumpPolicy::cur(s), BumpPolicy::at(s, l)) = Fit(s2, c, at)) =>
+        ⊢ Succ(BumpPolicy::cur(s2)) = Succ(BumpPolicy::cur(s)) from match h2 {
+          Refl => Refl
+        }
+    )
+  }
+
+  theorem placed_sizes<s: BumpPolicy, l: Layout, s2: BumpPolicy, c: Nat, at: Nat, c2: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Policy::chunk_size(s2, c2) <= Policy::chunk_size(s, c2) = true {
+    BumpPolicy::on_placed(s, l, s2, c, at, BumpPolicy::chunk_size(s2, c2) <= BumpPolicy::chunk_size(s, c2) = true, h,
+      (e: BumpPolicy::fits(s, l) = true) => (h2: Fit(BumpPolicy::bumped(s, l), BumpPolicy::cur(s), BumpPolicy::at(s, l)) = Fit(s2, c, at)) =>
+        ⊢ BumpPolicy::chunk_size(s2, c2) <= BumpPolicy::chunk_size(s, c2) = true from match h2 {
+          Refl => Nat::le_refl(BumpPolicy::chunk_size(s, c2))
+        }
+    )
+  }
+
+  theorem grow_chunks<s: BumpPolicy, l: Layout, s2: BumpPolicy, n: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n)
+  ): Policy::chunks(s2) = Succ(Policy::chunks(s)) {
+    BumpPolicy::on_grow(s, l, s2, n, Succ(BumpPolicy::cur(s2)) = Succ(Succ(BumpPolicy::cur(s))), h,
+      (e: BumpPolicy::fits(s, l) = false) => (h2: Grow(BumpPolicy::fresh(s, l), BumpPolicy::grown(s, l)) = Grow(s2, n)) =>
+        ⊢ Succ(BumpPolicy::cur(s2)) = Succ(Succ(BumpPolicy::cur(s))) from match h2 {
+          Refl => Refl
+        }
+    )
+  }
+
+  theorem grow_size<s: BumpPolicy, l: Layout, s2: BumpPolicy, n: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n)
+  ): Policy::chunk_size(s2, Policy::chunks(s)) <= n = true {
+    BumpPolicy::on_grow(s, l, s2, n, BumpPolicy::chunk_size(s2, Succ(BumpPolicy::cur(s))) <= n = true, h,
+      (e: BumpPolicy::fits(s, l) = false) => (h2: Grow(BumpPolicy::fresh(s, l), BumpPolicy::grown(s, l)) = Grow(s2, n)) =>
+        ⊢ BumpPolicy::chunk_size(s2, Succ(BumpPolicy::cur(s))) <= n = true from match h2 {
+          Refl => Eq::trans(Eq::congr(⟦□ <= BumpPolicy::grown(s, l)⟧, BumpPolicy::sel_true(Nat::eq(Succ(BumpPolicy::cur(s)), Succ(BumpPolicy::cur(s))), BumpPolicy::grown(s, l), 0, Nat::eq_refl(Succ(BumpPolicy::cur(s))))), Nat::le_refl(BumpPolicy::grown(s, l)))
+        }
+    )
+  }
+
+  theorem grow_sizes<s: BumpPolicy, l: Layout, s2: BumpPolicy, n: Nat, c2: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n),
+    old: c2 < Policy::chunks(s) = true
+  ): Policy::chunk_size(s2, c2) <= Policy::chunk_size(s, c2) = true {
+    BumpPolicy::on_grow(s, l, s2, n, BumpPolicy::chunk_size(s2, c2) <= BumpPolicy::chunk_size(s, c2) = true, h,
+      (e: BumpPolicy::fits(s, l) = false) => (h2: Grow(BumpPolicy::fresh(s, l), BumpPolicy::grown(s, l)) = Grow(s2, n)) =>
+        ⊢ BumpPolicy::chunk_size(s2, c2) <= BumpPolicy::chunk_size(s, c2) = true from match h2 {
+          Refl => Eq::trans(Eq::congr(⟦□ <= BumpPolicy::chunk_size(s, c2)⟧, BumpPolicy::sel_false(Nat::eq(c2, Succ(BumpPolicy::cur(s))), BumpPolicy::grown(s, l), 0, BumpPolicy::ne_top(c2, BumpPolicy::cur(s), old))), Nat::le_zero(BumpPolicy::chunk_size(s, c2)))
+        }
+    )
+  }
+
+  theorem grow_marks<s: BumpPolicy, l: Layout, s2: BumpPolicy, n: Nat, c2: Nat, a: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n),
+    old: c2 < Policy::chunks(s) = true,
+    u: Policy::used(s, c2, a) = true
+  ): Policy::used(s2, c2, a) = true {
+    BumpPolicy::on_grow(s, l, s2, n, BumpPolicy::used(s2, c2, a) = true, h,
+      (e: BumpPolicy::fits(s, l) = false) => (h2: Grow(BumpPolicy::fresh(s, l), BumpPolicy::grown(s, l)) = Grow(s2, n)) =>
+        ⊢ BumpPolicy::used(s2, c2, a) = true from match h2 {
+          Refl => BumpPolicy::selb_false(Nat::eq(c2, Succ(BumpPolicy::cur(s))), a < 0, true, BumpPolicy::ne_top(c2, BumpPolicy::cur(s), old))
+        }
+    )
+  }
+
+  theorem grow_once<s: BumpPolicy, l: Layout, s2: BumpPolicy, n: Nat, s3: BumpPolicy, n3: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n),
+    again: Policy::alloc(s2, l) = Grow(s3, n3)
+  ): False {
+    BumpPolicy::on_grow(s, l, s2, n, (BumpPolicy::alloc(s2, l) = Grow(s3, n3)) -> False, h,
+      (e: BumpPolicy::fits(s, l) = false) => (h2: Grow(BumpPolicy::fresh(s, l), BumpPolicy::grown(s, l)) = Grow(s2, n)) =>
+        ⊢ (BumpPolicy::alloc(s2, l) = Grow(s3, n3)) -> False from match h2 {
+          Refl => (a2: BumpPolicy::alloc(BumpPolicy::fresh(s, l), l) = Grow(s3, n3)) => ⊢ False from match Eq::trans(
+            Eq::sym(Eq::congr(⟦BumpPolicy::pick(BumpPolicy::fresh(s, l), l, □)⟧, Eq::trans(Eq::congr(⟦□ <= BumpPolicy::grown(s, l)⟧, Nat::add_zero_left(Layout::size(l))), BumpPolicy::le_max_right(BumpPolicy::step(s), Layout::size(l))))),
+            a2
+          ) {
+          }
+        }
+    )(again)
+  }
+
+  theorem free_chunks<s: BumpPolicy, c: Nat, at: Nat, l: Layout>(): Policy::chunks(
+    Policy::free(s, c, at, l)
+  ) = Policy::chunks(s) {
+    Refl
+  }
+  theorem free_sizes<s: BumpPolicy, c: Nat, at: Nat, l: Layout, c2: Nat>(): Policy::chunk_size(
+    Policy::free(s, c, at, l),
+    c2
+  ) <= Policy::chunk_size(s, c2) = true {
+    Nat::le_refl(BumpPolicy::chunk_size(s, c2))
+  }
+  theorem free_keeps<s: BumpPolicy, c: Nat, at: Nat, l: Layout, c2: Nat, a: Nat>(
+    u: Policy::used(s, c2, a) = true,
+    out: Layout::covers(Policy::span(s, l), c, at, c2, a) = false
+  ): Policy::used(Policy::free(s, c, at, l), c2, a) = true {
+    u
+  }
+
+  theorem placed_span<s: BumpPolicy, l: Layout, s2: BumpPolicy, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Layout::size(l) <= Policy::span(s, l) = true {
+    Nat::le_refl(Layout::size(l))
+  }
+  theorem placed_span_same<s: BumpPolicy, l: Layout, s2: BumpPolicy, c: Nat, at: Nat, l2: Layout>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Policy::span(s2, l2) = Policy::span(s, l2) {
+    Refl
+  }
+  theorem grow_span_same<s: BumpPolicy, l: Layout, s2: BumpPolicy, n: Nat, l2: Layout>(
+    h: Policy::alloc(s, l) = Grow(s2, n)
+  ): Policy::span(s2, l2) = Policy::span(s, l2) {
+    Refl
+  }
+  theorem free_span_same<s: BumpPolicy, c: Nat, at: Nat, l: Layout, l2: Layout>(): Policy::span(
+    Policy::free(s, c, at, l),
+    l2
+  ) = Policy::span(s, l2) {
+    Refl
+  }
+}
+
+instance Policy(PoolPolicy) {
+  fn chunks(s: PoolPolicy): Nat { PoolPolicy::count(s) }
+  fn chunk_size(s: PoolPolicy, c: Nat): Nat { PoolPolicy::chunk_size(s, c) }
+  fn used(s: PoolPolicy, c: Nat, a: Nat): Bool { PoolPolicy::used(s, c, a) }
+  fn span(s: PoolPolicy, l: Layout): Nat { PoolPolicy::slot(s) }
+  fn alloc(s: PoolPolicy, l: Layout): Step(PoolPolicy) { PoolPolicy::alloc(s, l) }
+  fn free(s: PoolPolicy, c: Nat, at: Nat, l: Layout): PoolPolicy { PoolPolicy::free(s, c, at) }
+
+  theorem placed_chunk<s: PoolPolicy, l: Layout, s2: PoolPolicy, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): c < Policy::chunks(s) = true {
+    PoolPolicy::on_placed(s, l, s2, c, at, c < PoolPolicy::count(s) = true, h,
+      (e: PoolPolicy::ok(s, l) = true) => (h2: Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0) = Fit(s2, c, at)) =>
+        ⊢ c < PoolPolicy::count(s) = true from match h2 {
+          Refl => PoolPolicy::head_lt(s, l, e)
+        }
+    )
+  }
+
+  theorem placed_fits<s: PoolPolicy, l: Layout, s2: PoolPolicy, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): at + Policy::span(s, l) <= Policy::chunk_size(s, c) = true {
+    PoolPolicy::on_placed(s, l, s2, c, at, at + PoolPolicy::slot(s) <= PoolPolicy::chunk_size(s, c) = true, h,
+      (e: PoolPolicy::ok(s, l) = true) => (h2: Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0) = Fit(s2, c, at)) =>
+        ⊢ at + PoolPolicy::slot(s) <= PoolPolicy::chunk_size(s, c) = true from match h2 {
+          Refl => Eq::trans(Eq::congr(⟦0 + PoolPolicy::slot(s) <= □⟧, BumpPolicy::sel_true(PoolPolicy::head(s) < PoolPolicy::count(s), PoolPolicy::slot(s), 0, PoolPolicy::head_lt(s, l, e))), Eq::trans(Eq::congr(⟦□ <= PoolPolicy::slot(s)⟧, Nat::add_zero_left(PoolPolicy::slot(s))), Nat::le_refl(PoolPolicy::slot(s))))
+        }
+    )
+  }
+
+  theorem placed_aligned<s: PoolPolicy, l: Layout, s2: PoolPolicy, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): ∃ q: Nat. at = q * Layout::align(l) {
+    PoolPolicy::on_placed(s, l, s2, c, at, ∃ q: Nat. at = q * Layout::align(l), h,
+      (e: PoolPolicy::ok(s, l) = true) => (h2: Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0) = Fit(s2, c, at)) =>
+        ⊢ ∃ q: Nat. at = q * Layout::align(l) from match h2 {
+          Refl => ExIntro(0, Eq::sym(Nat::mul_zero_left(Layout::align(l))))
+        }
+    )
+  }
+
+  theorem placed_fresh<s: PoolPolicy, l: Layout, s2: PoolPolicy, c: Nat, at: Nat, a: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at),
+    lo: at <= a = true,
+    hi: a < at + Policy::span(s, l) = true
+  ): Policy::used(s, c, a) = false {
+    PoolPolicy::on_placed(s, l, s2, c, at, (a < at + PoolPolicy::slot(s) = true) -> PoolPolicy::used(s, c, a) = false, h,
+      (e: PoolPolicy::ok(s, l) = true) => (h2: Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0) = Fit(s2, c, at)) =>
+        ⊢ (a < at + PoolPolicy::slot(s) = true) -> PoolPolicy::used(s, c, a) = false from match h2 {
+          Refl => (hi2: a < 0 + PoolPolicy::slot(s) = true) => Eq::trans(BumpPolicy::selb_true(a < PoolPolicy::slot(s), PoolPolicy::bit(PoolPolicy::taken(s), PoolPolicy::head(s)), true, Eq::trans(Eq::sym(Eq::congr(⟦a < □⟧, Nat::add_zero_left(PoolPolicy::slot(s)))), hi2)), PoolPolicy::head_free(s, l, e))
+        }
+    )(hi)
+  }
+
+  theorem placed_marks<s: PoolPolicy, l: Layout, s2: PoolPolicy, c: Nat, at: Nat, c2: Nat, a: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at),
+    u: Policy::used(s, c2, a) || Layout::covers(Policy::span(s, l), c, at, c2, a) = true
+  ): Policy::used(s2, c2, a) = true {
+    PoolPolicy::on_placed(s, l, s2, c, at, (PoolPolicy::used(s, c2, a) || Layout::covers(PoolPolicy::slot(s), c, at, c2, a) = true) -> PoolPolicy::used(s2, c2, a) = true, h,
+      (e: PoolPolicy::ok(s, l) = true) => (h2: Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0) = Fit(s2, c, at)) =>
+        ⊢ (PoolPolicy::used(s, c2, a) || Layout::covers(PoolPolicy::slot(s), c, at, c2, a) = true) -> PoolPolicy::used(s2, c2, a) = true from match h2 {
+          Refl => (u2: PoolPolicy::used(s, c2, a) || Layout::covers(PoolPolicy::slot(s), PoolPolicy::head(s), 0, c2, a) = true) => ⊢ BumpPolicy::selb(a < PoolPolicy::slot(s), PoolPolicy::bit(Array::set(PoolPolicy::taken(s), PoolPolicy::head(s), true), c2), true) = true from match a < PoolPolicy::slot(s) eqn ea {
+            false => ⊢ BumpPolicy::selb(false, PoolPolicy::bit(Array::set(PoolPolicy::taken(s), PoolPolicy::head(s), true), c2), true) = true from Refl
+            true => ⊢ BumpPolicy::selb(true, PoolPolicy::bit(Array::set(PoolPolicy::taken(s), PoolPolicy::head(s), true), c2), true) = true from match Nat::eq(c2, PoolPolicy::head(s)) eqn ec {
+              false => ⊢ PoolPolicy::bit(Array::set(PoolPolicy::taken(s), PoolPolicy::head(s), true), c2) = true from Eq::trans(
+                Eq::congr(PoolPolicy::optb, Array::get_set_ne(PoolPolicy::taken(s), PoolPolicy::head(s), c2, true, PoolPolicy::eq_flip_false(c2, PoolPolicy::head(s), ec))),
+                Eq::trans(
+                  Eq::sym(Eq::trans(
+                    Bool::or_false_right(PoolPolicy::used(s, c2, a), Layout::covers(PoolPolicy::slot(s), PoolPolicy::head(s), 0, c2, a), PoolPolicy::covers_ne(PoolPolicy::slot(s), PoolPolicy::head(s), 0, c2, a, ec)),
+                    BumpPolicy::selb_true(a < PoolPolicy::slot(s), PoolPolicy::bit(PoolPolicy::taken(s), c2), true, ea)
+                  )),
+                  u2
+                )
+              )
+              true => ⊢ PoolPolicy::bit(Array::set(PoolPolicy::taken(s), PoolPolicy::head(s), true), c2) = true from Eq::subst(
+                <A: Nat, a: PoolPolicy::head(s), b: c2>,
+                (x: Nat) => PoolPolicy::bit(Array::set(PoolPolicy::taken(s), PoolPolicy::head(s), true), x) = true,
+                Eq::sym(Nat::eq_sound(c2, PoolPolicy::head(s), ec)),
+                Eq::congr(PoolPolicy::optb, Array::get_set_same(PoolPolicy::taken(s), PoolPolicy::head(s), true, PoolPolicy::head_lt(s, l, e)))
+              )
+            }
+          }
+        }
+    )(u)
+  }
+
+  theorem placed_chunks<s: PoolPolicy, l: Layout, s2: PoolPolicy, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Policy::chunks(s2) = Policy::chunks(s) {
+    PoolPolicy::on_placed(s, l, s2, c, at, PoolPolicy::count(s2) = PoolPolicy::count(s), h,
+      (e: PoolPolicy::ok(s, l) = true) => (h2: Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0) = Fit(s2, c, at)) =>
+        ⊢ PoolPolicy::count(s2) = PoolPolicy::count(s) from match h2 {
+          Refl => Array::len_set(PoolPolicy::taken(s), PoolPolicy::head(s), true)
+        }
+    )
+  }
+
+  theorem placed_sizes<s: PoolPolicy, l: Layout, s2: PoolPolicy, c: Nat, at: Nat, c2: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Policy::chunk_size(s2, c2) <= Policy::chunk_size(s, c2) = true {
+    PoolPolicy::on_placed(s, l, s2, c, at, PoolPolicy::chunk_size(s2, c2) <= PoolPolicy::chunk_size(s, c2) = true, h,
+      (e: PoolPolicy::ok(s, l) = true) => (h2: Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0) = Fit(s2, c, at)) =>
+        ⊢ PoolPolicy::chunk_size(s2, c2) <= PoolPolicy::chunk_size(s, c2) = true from match h2 {
+          Refl => Eq::trans(Eq::congr(⟦BumpPolicy::sel(c2 < □, PoolPolicy::slot(s), 0) <= PoolPolicy::chunk_size(s, c2)⟧, Array::len_set(PoolPolicy::taken(s), PoolPolicy::head(s), true)), Nat::le_refl(PoolPolicy::chunk_size(s, c2)))
+        }
+    )
+  }
+
+  theorem placed_span<s: PoolPolicy, l: Layout, s2: PoolPolicy, c: Nat, at: Nat>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Layout::size(l) <= Policy::span(s, l) = true {
+    PoolPolicy::on_placed(s, l, s2, c, at, Layout::size(l) <= PoolPolicy::slot(s) = true, h,
+      (e: PoolPolicy::ok(s, l) = true) => (h2: Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0) = Fit(s2, c, at)) =>
+        ⊢ Layout::size(l) <= PoolPolicy::slot(s) = true from match h2 {
+          Refl => Bool::and_true_left(Layout::size(l) <= PoolPolicy::slot(s), not(PoolPolicy::bit(PoolPolicy::taken(s), PoolPolicy::head(s))), e)
+        }
+    )
+  }
+
+  theorem placed_span_same<s: PoolPolicy, l: Layout, s2: PoolPolicy, c: Nat, at: Nat, l2: Layout>(
+    h: Policy::alloc(s, l) = Fit(s2, c, at)
+  ): Policy::span(s2, l2) = Policy::span(s, l2) {
+    PoolPolicy::on_placed(s, l, s2, c, at, PoolPolicy::slot(s2) = PoolPolicy::slot(s), h,
+      (e: PoolPolicy::ok(s, l) = true) => (h2: Fit(PoolPolicy::took(s), PoolPolicy::head(s), 0) = Fit(s2, c, at)) =>
+        ⊢ PoolPolicy::slot(s2) = PoolPolicy::slot(s) from match h2 {
+          Refl => Refl
+        }
+    )
+  }
+
+  theorem grow_chunks<s: PoolPolicy, l: Layout, s2: PoolPolicy, n: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n)
+  ): Policy::chunks(s2) = Succ(Policy::chunks(s)) {
+    False::elim(PoolPolicy::never_grows(s, l, s2, n, h))
+  }
+
+  theorem grow_size<s: PoolPolicy, l: Layout, s2: PoolPolicy, n: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n)
+  ): Policy::chunk_size(s2, Policy::chunks(s)) <= n = true {
+    False::elim(PoolPolicy::never_grows(s, l, s2, n, h))
+  }
+
+  theorem grow_sizes<s: PoolPolicy, l: Layout, s2: PoolPolicy, n: Nat, c2: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n),
+    old: c2 < Policy::chunks(s) = true
+  ): Policy::chunk_size(s2, c2) <= Policy::chunk_size(s, c2) = true {
+    False::elim(PoolPolicy::never_grows(s, l, s2, n, h))
+  }
+
+  theorem grow_marks<s: PoolPolicy, l: Layout, s2: PoolPolicy, n: Nat, c2: Nat, a: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n),
+    old: c2 < Policy::chunks(s) = true,
+    u: Policy::used(s, c2, a) = true
+  ): Policy::used(s2, c2, a) = true {
+    False::elim(PoolPolicy::never_grows(s, l, s2, n, h))
+  }
+
+  theorem grow_once<s: PoolPolicy, l: Layout, s2: PoolPolicy, n: Nat, s3: PoolPolicy, n3: Nat>(
+    h: Policy::alloc(s, l) = Grow(s2, n),
+    again: Policy::alloc(s2, l) = Grow(s3, n3)
+  ): False {
+    False::elim(PoolPolicy::never_grows(s, l, s2, n, h))
+  }
+
+  theorem grow_span_same<s: PoolPolicy, l: Layout, s2: PoolPolicy, n: Nat, l2: Layout>(
+    h: Policy::alloc(s, l) = Grow(s2, n)
+  ): Policy::span(s2, l2) = Policy::span(s, l2) {
+    False::elim(PoolPolicy::never_grows(s, l, s2, n, h))
+  }
+
+  theorem free_chunks<s: PoolPolicy, c: Nat, at: Nat, l: Layout>(): Policy::chunks(
+    Policy::free(s, c, at, l)
+  ) = Policy::chunks(s) {
+    ⊢ PoolPolicy::count(
+      PoolPolicy::fpick(s, c, Nat::eq(at, 0))
+    ) = PoolPolicy::count(s) from match Nat::eq(at, 0) eqn ez {
+      false => ⊢ PoolPolicy::count(PoolPolicy::fpick(s, c, false)) = PoolPolicy::count(s) from Refl
+      true => ⊢ PoolPolicy::count(
+        PoolPolicy::fpick(s, c, true)
+      ) = PoolPolicy::count(s) from Array::len_set(PoolPolicy::taken(s), c, false)
+    }
+  }
+  theorem free_sizes<s: PoolPolicy, c: Nat, at: Nat, l: Layout, c2: Nat>(): Policy::chunk_size(
+    Policy::free(s, c, at, l),
+    c2
+  ) <= Policy::chunk_size(s, c2) = true {
+    ⊢ PoolPolicy::chunk_size(
+      PoolPolicy::fpick(s, c, Nat::eq(at, 0)),
+      c2
+    ) <= PoolPolicy::chunk_size(s, c2) = true from match Nat::eq(at, 0) eqn ez {
+      false => ⊢ PoolPolicy::chunk_size(
+        PoolPolicy::fpick(s, c, false),
+        c2
+      ) <= PoolPolicy::chunk_size(s, c2) = true from Nat::le_refl(PoolPolicy::chunk_size(s, c2))
+      true => ⊢ PoolPolicy::chunk_size(
+        PoolPolicy::fpick(s, c, true),
+        c2
+      ) <= PoolPolicy::chunk_size(
+        s,
+        c2
+      ) = true from Eq::trans(
+        Eq::congr(
+          ⟦BumpPolicy::sel(c2 < □, PoolPolicy::slot(s), 0) <= PoolPolicy::chunk_size(s, c2)⟧,
+          Array::len_set(PoolPolicy::taken(s), c, false)
+        ),
+        Nat::le_refl(PoolPolicy::chunk_size(s, c2))
+      )
+    }
+  }
+  theorem free_keeps<s: PoolPolicy, c: Nat, at: Nat, l: Layout, c2: Nat, a: Nat>(
+    u: Policy::used(s, c2, a) = true,
+    out: Layout::covers(Policy::span(s, l), c, at, c2, a) = false
+  ): Policy::used(Policy::free(s, c, at, l), c2, a) = true {
+    ⊢ PoolPolicy::used(
+      PoolPolicy::fpick(s, c, Nat::eq(at, 0)),
+      c2,
+      a
+    ) = true from match Nat::eq(at, 0) eqn ez {
+      false => ⊢ PoolPolicy::used(PoolPolicy::fpick(s, c, false), c2, a) = true from u
+      true => ⊢ BumpPolicy::selb(
+        a < PoolPolicy::slot(s),
+        PoolPolicy::bit(Array::set(PoolPolicy::taken(s), c, false), c2),
+        true
+      ) = true from match a < PoolPolicy::slot(s) eqn ea {
+        false => ⊢ BumpPolicy::selb(
+          false,
+          PoolPolicy::bit(Array::set(PoolPolicy::taken(s), c, false), c2),
+          true
+        ) = true from Refl
+        true => ⊢ BumpPolicy::selb(
+          true,
+          PoolPolicy::bit(Array::set(PoolPolicy::taken(s), c, false), c2),
+          true
+        ) = true from match Nat::eq(c2, c) eqn ec {
+          false => ⊢ PoolPolicy::bit(
+            Array::set(PoolPolicy::taken(s), c, false),
+            c2
+          ) = true from Eq::trans(
+            Eq::congr(
+              PoolPolicy::optb,
+              Array::get_set_ne(
+                PoolPolicy::taken(s),
+                c,
+                c2,
+                false,
+                PoolPolicy::eq_flip_false(c2, c, ec)
+              )
+            ),
+            Eq::trans(
+              Eq::sym(
+                BumpPolicy::selb_true(
+                  a < PoolPolicy::slot(s),
+                  PoolPolicy::bit(PoolPolicy::taken(s), c2),
+                  true,
+                  ea
+                )
+              ),
+              u
+            )
+          )
+          true => ⊢ PoolPolicy::bit(
+            Array::set(PoolPolicy::taken(s), c, false),
+            c2
+          ) = true from False::elim(
+            true_ne_false(
+              Eq::trans(
+                Eq::sym(PoolPolicy::covers_zero(PoolPolicy::slot(s), c, c2, a, ec, ea)),
+                Eq::subst(
+                  <A: Nat, a: at, b: 0>,
+                  (x: Nat) => Layout::covers(PoolPolicy::slot(s), c, x, c2, a) = false,
+                  Nat::eq_sound(at, 0, ez),
+                  out
+                )
+              )
+            )
+          )
+        }
+      }
+    }
+  }
+  theorem free_span_same<s: PoolPolicy, c: Nat, at: Nat, l: Layout, l2: Layout>(): Policy::span(
+    Policy::free(s, c, at, l),
+    l2
+  ) = Policy::span(s, l2) {
+    ⊢ PoolPolicy::slot(
+      PoolPolicy::fpick(s, c, Nat::eq(at, 0))
+    ) = PoolPolicy::slot(s) from match Nat::eq(at, 0) eqn ez {
+      false => ⊢ PoolPolicy::slot(PoolPolicy::fpick(s, c, false)) = PoolPolicy::slot(s) from Refl
+      true => ⊢ PoolPolicy::slot(PoolPolicy::fpick(s, c, true)) = PoolPolicy::slot(s) from Refl
+    }
+  }
+}

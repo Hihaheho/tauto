@@ -42,14 +42,14 @@ let c := handle { perform ask(5) + 1 } with {
   ask(n), k => k(n) + k(n + 1)
   return v => v
 }
-let d := handle { budget(steps: 3) { 7 } } with {
+let d := handle { perform budget(3, () => { 7 }) } with {
   exceeded(info), k => info.more(100)
 }
 ```
 
 A proof is a term, or a step that writes the goal before and the goals after
 it. The tactic is an untrusted macro; the kernel checks every goal written and
-the term the tactic made ([`examples/nat/Mul.taut`](examples/nat/Mul.taut),
+the term the tactic made ([`examples/nat/mul.taut`](examples/nat/mul.taut),
 notation by the syntax macro `nat!`):
 
 ```
@@ -67,8 +67,8 @@ pub theorem mul_comm(n: Nat, m: Nat): nat!(`$n * $m = $m * $n`) {
 
 ## Targets
 
-A checked program runs on a machine written in Tauto (`totes/vm`), on the
-evaluator (`--backend eval`), or is compiled:
+A checked program runs on a machine written in Tauto (`totes/vm`), or is
+compiled:
 
 - **Rust** (`tauto build`, `tauto run --backend rust`): a Rust crate linked
   against `tauto-rt`, with no `unsafe`. See [Rust backend](#rust-backend).
@@ -94,7 +94,7 @@ when uniquely owned). A function whose signature and locals mention no `shared`
 type does no reference counting. In the JavaScript output the engine's garbage
 collector reclaims memory, and the runtime keeps the owners, the drop order and
 the release of resources by counting references
-([`docs/design/javascript-backend.md`](docs/design/javascript-backend.md#runtime-and-validation)).
+([`docs/design/javascript-backend.md`](docs/design/javascript-backend.md#runtime)).
 See [`docs/design/ownership.md`](docs/design/ownership.md).
 
 ## Design principles
@@ -115,10 +115,9 @@ execution are distrusted by default.
 
 ## Prerequisites
 
-- Git, and Rust installed with rustup. `rust-toolchain.toml` pins a dated
-  nightly toolchain, which rustup installs on first use. The nightly is needed
-  because `.cargo/config.toml` enforces a publish-age cooldown on crates and
-  passes `-Znext-solver=coherence`.
+- Git, and Rust installed with rustup. `rust-toolchain.toml` pins Rust
+  1.100, which rustup installs on first use. Cargo 1.100 is the first to
+  enforce the publish-age cooldown on crates in `.cargo/config.toml`.
 - Network access for the first build: Cargo fetches the locked dependencies,
   including [Eure](https://github.com/Hihaheho/eure) from a pinned Git revision.
 - Optional: Node for the JavaScript backend, `rustup target add wasm32-wasip1`
@@ -147,7 +146,6 @@ Keep the checkout for the examples and library sources. See
   keeping paths such as `tauto::check` and `tauto::surface`.
 - `crates/tauto-surface`: shared surface terms, parsing, syntax values and scope.
 - `crates/tauto-nibcheck`: types, effect rows and ownership checking.
-- `crates/tauto-eval`: the evaluator and its execution budget.
 - `crates/tauto-macro`: macro expansion with injected checking services.
 - `crates/tauto-kernel`: named elaboration and the independent core checker.
   The Rust module names mirror the Lean modules. The dependency boundary
@@ -178,8 +176,8 @@ Keep the checkout for the examples and library sources. See
 - `crates/tauto-parol`: the grammar (`tauto.par`) and its generated parser.
 - `crates/tauto-syntax`: the runtime of `syntax` grammars (scanner, LL(k)
   and LALR(1) drivers), read from table files made by `totes/llkgen` and
-  `totes/lalrgen`. `crates/tauto-syntax-wasm` is that runtime compiled to
-  WebAssembly for the JavaScript backend.
+  `totes/lalrgen`. `totes/synrun` is the same parse written in Tauto, which
+  the machine (`totes/vm`) and the JavaScript backend run.
 - `crates/tauto-nir`, `crates/tauto-rustgen`, `crates/tauto-rt`,
   `crates/tauto-build`: the Rust backend. `crates/tauto-jsgen` is the
   JavaScript backend. `crates/tauto-bind` is `tauto bind`.
@@ -192,10 +190,10 @@ Keep the checkout for the examples and library sources. See
   languages, described below. `std/prelude/` is the part every program sees
   without an import (data, effects, host functions). The kernel reads it too:
   its `enum`s and `struct`s shared with proofs become inductive families, and
-  `std/prelude/Ord.taut` is checked in full by both kernels, with no axiom
+  `std/builtin/ord.taut` is checked in full by both kernels, with no axiom
   other than `Quot::sound` and no hole (`kernel_prelude` in
   `crates/tauto-kernel/src/check.rs`). Built-in types and their instances in
-  `std/prelude/Classes.taut` are trusted, not proved.
+  `std/builtin/classes.taut` are trusted, not proved.
 - `totes/`: the parts of the toolchain written in Nib or in the proof language.
 - `examples/`: small programs (`handlers.taut`, `effects.taut`,
   `ownership.taut`, `proofs.taut`), natural-number proofs (`nat/`), the simply
@@ -215,17 +213,17 @@ Keep the checkout for the examples and library sources. See
 ## Development
 
 ```bash
-scripts/test.sh full
-scripts/test.sh focused -p tauto-build --test build_rs
-scripts/test.sh focused -p tauto-test-suite --test cases -- <filter>
+tauto gate full
+tauto gate focused -p tauto-build --test build_rs
+tauto gate focused -p tauto-test-suite --test cases -- <filter>
 # Lean 4.34.1; see lean/README.md for the pinned install
 (cd lean && ELAN='' LAKE_OVERRIDE_LEAN=false ../.tools/lean-4.34.1/bin/lake --keep-toolchain --no-cache build)
 ```
 
-The full gate runs the locked workspace suite, checks `meta/KernelSafe.taut`,
+The full gate runs the locked workspace suite, checks `meta/kernel_safe.taut`,
 and checks formatting of `std/` and `meta/`. The focused tier runs only the
 selected tests and does not establish a full pass. Grammar regeneration and
-Lean verification are required when those sources change. `scripts/test.sh`
+Lean verification are required when those sources change. `scripts/test.taut`
 keeps a build directory per checkout (`TAUTO_TEST_CACHE_ROOT` selects a shared
 root); the caches of the toolchain itself are described in
 [`docs/design/build-cache.md`](docs/design/build-cache.md).
@@ -248,7 +246,7 @@ tauto fmt [--check] FILE…                 # formatter
 tauto lint [--json] [--fix] PATH…         # files, or the .taut files under a directory; rejects holes and other things std/ and meta/ avoid; --json: [{file, line, col, message, kind}]; --fix: writes the import lists and the `=> …` lists
 tauto extract FILE…                       # the Nib that `run` makes of the programs, for reading
 tauto goals | try | fill | suggest | expand | library FILE …  # proofs a step at a time
-tauto test [PATH] [--filter TEXT] [--json] # the perform test statements in the sources
+tauto test [PATH] [--filter TEXT] [--list] [--json] [--backend ENGINE]  # the tests the sources perform, each on its own
 tauto bench PATH [OPTIONS]                # release binary whole-process wall time
 tauto doc PATH [-o DIR]                    # highlighted, linked source pages as HTML
 tauto build [--release] [-o DIR] FILE     # compile to Rust (also a tote directory)
@@ -360,9 +358,9 @@ proves its goal with any term, another step or a hole. The goals written are
 compared with the place's goal and with the ones the tactic left, up to
 computation, and the step becomes `the(G0, …the(G, p)…)`, so the kernel checks
 every goal written and trusts nothing the tactic made. A step that is the whole
-proof of an arm leaves out `: G0`, the arm's goal being it. `std/Rewrite.taut`
-has `rewrite!(e)` (`std/Tactic.taut` adds `nat_norm!` and `nat_le!` and imports `Base`), for `e: Eq(A, l, r)`, whose arm's goal is the goal with
-`r` for `l`. The step of `Nat::add_comm` in `std/Nat.taut`, as written in
+proof of an arm leaves out `: G0`, the arm's goal being it. `std/rewrite.taut`
+has `rewrite!(e)` (`std/tactic.taut` adds `nat_norm!` and `nat_le!` and imports `Base`), for `e: Eq(A, l, r)`, whose arm's goal is the goal with
+`r` for `l`. The step of `Nat::add_comm` in `std/nat.taut`, as written in
 [`docs/design/macro-steps.md`](docs/design/macro-steps.md):
 
 ```
@@ -374,7 +372,7 @@ Succ(k) => by rewrite!(Nat::add_comm(a, k)): Succ(Nat::add(a, k)) = Nat::add(Suc
 ```
 
 `nat_norm!()` proves an equation of `Nat::add`, `Nat::mul`, `Succ`, `Zero` and
-numerals, whatever else is a variable (`std/NatNorm.taut`): it reads the two
+numerals, whatever else is a variable (`std/nat_norm.taut`): it reads the two
 sides as expressions, and the kernel checks that they have the same normal form
 by a normaliser proved sound in Tauto; it leaves no goal, so its arm list is empty.
 `nat_le!()` proves `l <= r = true` and `l < r = true` for such expressions when every term
@@ -411,25 +409,26 @@ calls was already never lowered.
 
 `std/` holds generic data and lemmas:
 
-- `Std.taut`: `Option`, `List`, `Pair` and `Ordering` are the prelude's `enum`s and `struct`, which proofs read as families; a `Pair` is written `#(a, b)`, and its type `A × B`.
-- `Base.taut`: decisions and `Nat` arithmetic; extraction maps `Nat` onto Nib's unbounded `nat`. `Nat.taut`: its laws (associativity, commutativity, distributivity, order).
-- `List.taut`: folds, filters, ranges, zips, `reverse_reverse`, `take`/`drop`, …; `Data.taut`: `Option` and `Pair` functions.
-- `Text.taut` and `TextOps.taut`: bytes, slices, prefixes, search, split and join. `Array.taut`.
-- `Bytes.taut`: byte sequences as a list of `U8`, which extraction maps onto Nib's `Bytes`, whose slices share their storage; UTF-8-checked conversion to and from `Text`.
-- `Stack.taut`: a stack that extraction maps onto Nib's `Vec`.
-- `UInt.taut`: `U8`, `U32` and `U64`, a `Nat` below `2^w`, which extraction maps onto Nib's `u8`, `u32` and `u64`, with arithmetic that takes a proof that the result fits, returns `None` when it does not, performs `overflow`, or wraps modulo `2^w`.
-- `Int.taut`: integers, as a `Nat` or the negative of one's successor. `SInt.taut`: `I32` and `I64`, an `Int` in `-2^(w-1) .. 2^(w-1)`, mapped onto Nib's `i32` and `i64`, with the same checked arithmetic but no wrapping.
-- `Row.taut`: membership.
-- `Ord.taut`: `Ord(Nat)`. The class `Ord` and its instances for `List`, `Option` and `Pair`, with their laws, are in the prelude's `std/prelude/Ord.taut`, which programs and proofs both read.
-- `Sort.taut`: insertion sort by a comparator: sorted, a permutation of its input in membership and length, unchanged on sorted input.
-- `Map.taut`: an AVL ordered map, with its laws in `MapLaws.taut`, `MapRemoveFloor.taut` and `MapText.taut`; `Set.taut`: an ordered set over that map.
-- `HashMap.taut`: `Hmap` and `Hset`, a persistent hash map and set (buckets of entries in an ordered map keyed by the hash).
-- `Deque.taut`: a double-ended queue of two lists; `Heap.taut`: a priority queue (a leftist heap).
-- `Quot.taut`: on the kernel's quotient `Quot(A, r)`, whose classes a function reads with `Quot::lift` and a proof that it respects `r`: lifting over two quotients, exactness for a relation decided by a function, and function extensionality, which rests on the prelude's one axiom `Quot::sound`.
+- `std.taut`: `Option`, `List`, the product `A × B` and `Ordering` are the prelude's data, which proofs read as families; a product is written `#(a, b)`, and its type `A × B`.
+- `base.taut`: decisions and `Nat` arithmetic; extraction maps `Nat` onto Nib's unbounded `nat`. `nat.taut`: its laws (associativity, commutativity, distributivity, order).
+- `list.taut`: folds, filters, ranges, zips, `reverse_reverse`, `take`/`drop`, …; `data.taut`: `Option` and product functions (`Product::fst`, `Product::swap`, …).
+- `text.taut` and `text_ops.taut`: bytes, slices, prefixes, search, split and join. `array.taut`.
+- `bytes.taut`: byte sequences as a list of `UInt(8)`, which extraction maps onto Nib's `Bytes`, whose slices share their storage; UTF-8-checked conversion to and from `Text`.
+- `stack.taut`: a stack that extraction maps onto Nib's `Vec`.
+- `uint.taut`: `UInt(w)`, a `Nat` below `2^w`, with functions for the widths 8, 16, 32 and 64 (`UInt::add64`), which extraction maps onto Nib's `u8`, `u16`, `u32` and `u64`, with arithmetic that takes a proof that the result fits, returns `None` when it does not, performs `overflow`, or wraps modulo `2^w`.
+- `int.taut`: integers, as a `Nat` or the negative of one's successor. `sint.taut`: `SInt(w)`, an `Int` in `-2^(w-1) .. 2^(w-1)`, with functions for the widths 8, 16, 32 and 64, mapped onto Nib's `i8`, `i16`, `i32` and `i64`, with the same checked arithmetic but no wrapping.
+- `row.taut`: membership.
+- `ord.taut`: `Ord(Nat)`. The class `Ord` and its instances for `List`, `Option` and products, with their laws, are in the prelude's `std/builtin/ord.taut`, which programs and proofs both read.
+- `os.taut`: a file that imports it has its functions that perform or handle the standard effects whose types the kernel has (`stdout`, `stdin`, `fs_read`, `env`, the clocks) read in proofs as computation trees; the kernel is given the prelude's own declarations, with `u64` as `U64` and `IoError` as a family.
+- `sort.taut`: insertion sort by a comparator: sorted, a permutation of its input in membership and length, unchanged on sorted input.
+- `map.taut`: an AVL ordered map, with its laws in `map_laws.taut`, `map_remove_floor.taut` and `map_text.taut`; `set.taut`: an ordered set over that map.
+- `hash_map.taut`: `Hmap` and `Hset`, a persistent hash map and set (buckets of entries in an ordered map keyed by the hash).
+- `deque.taut`: a double-ended queue of two lists; `heap.taut`: a priority queue (a leftist heap).
+- `quot.taut`: on the kernel's quotient `Quot(A, r)`, whose classes a function reads with `Quot::lift` and a proof that it respects `r`: lifting over two quotients, exactness for a relation decided by a function, and function extensionality, which rests on the prelude's one axiom `Quot::sound`.
 
 `meta/` holds models of object languages and the proofs about them (the core calculus, the kernel, effects, typing). `meta/` imports `std/`, never the reverse.
 
-`meta/Core.taut` is the Lean file `lean/Proto/Core.lean` re-done in
+`meta/core.taut` is the Lean file `lean/Proto/Core.lean` re-done in
 tauto: terms, renaming and substitution, typing, and the preservation,
 progress and type-safety theorems, checked by the kernel with no axioms
 (`cargo test -p tauto --test tauto_lib`). [`docs/design/lean.md`](docs/design/lean.md) says what is
@@ -443,7 +442,7 @@ that model on generated terms. `def name(params): T := <type>` defines a type or
 `run` checks the program's value types (`crates/tauto-nibcheck/src/types.rs`) and
 effect rows (`rows.rs`), then evaluates it with deep multi-shot effect
 handlers and `budget` (`docs/design/semantics.md`), printing what it shows with
-`perform show(name, v)`. `check` type-checks `theorem`, `axiom`, `inductive` and
+`show(&v)`. `check` type-checks `theorem`, `axiom`, `inductive` and
 fully typed pure `fn` declarations with a bidirectional dependent-type kernel
 over the shared surface AST (`crates/tauto-kernel/src/check.rs`): sorts `Prop`,
 `Type`, `Type1`, …; conversion up to beta, delta and literal arithmetic; a
@@ -489,14 +488,15 @@ A program's own type becomes one of these by writing `inductive` before it:
 `inductive enum Route { Home, Post(u64) }` and `inductive struct Pt { x: u64, label: Text }`
 run as written, and the kernel is also given the family of the same name and
 constructors (a positional field is `_0`, `_1`, …; a struct is built and matched as
-`Pt { … }`), with the proof side's families of the field types (`u64` is `U64`, `Bool`
+`Pt { … }`), with the proof side's families of the field types (`u64` is `UInt(64)`, `Bool`
 is `Bool`, `nat` is `Nat`). The functions on it are then checked, and theorems about them
 are theorems about the program. A field that holds a function is an error, and so is
 a field the kernel has no type for (`i16`, a plain `enum`); a plain `struct` or `enum`
 stays a program's type only ([`docs/design/program-data.md`](docs/design/program-data.md)).
 
-`⊢ T from match x { c(a) => e … }` on a parameter is compiled to the eliminator
-with an explicit motive (`T` may mention `x`), and a call on a field of the
+`match x { c(a) => e … }` on a parameter is compiled to the eliminator whose
+motive is the expected type (or a written goal `⊢ T from match x { … }`, where
+`T` may mention `x`), and a call on a field of the
 matched value becomes the induction hypothesis. The motive generalizes the
 other parameters, so a recursive call may change any of them except those the
 type of `x` mentions (the parameters of its family). A call may also be on a
@@ -518,7 +518,7 @@ rejected unless the function says why it terminates (below). A function that is 
 ### Well-founded recursion
 
 `fn f(x: A, p: P): B decreasing_by W => theorem f_eq { … }`, with `W` a `WfRel(A)` (a relation
-on `A` and the proof that it is well-founded, `std/WellFounded.taut`; `measure(g)`
+on `A` and the proof that it is well-founded, `std/well_founded.taut`; `measure(g)`
 for a `g: (A) -> Nat` compares the numbers `g` gives), recurs on the first parameter
 along that relation, and the parameters after it may change in the call. A recursive
 call `f(y, q, h)` ends with a proof `h` that `y` is below `x`; nothing is inferred.
@@ -643,7 +643,7 @@ syntax restrictions; see [universe specialization](docs/design/universes.md).
   left as written. `std/` and `meta/` are kept formatted (a test checks it).
 * **Modules.** `import "path"` (relative to the importing file, checked
   once, cycles and duplicates rejected). `import std.List` reads
-  `std/List.taut` from the standard library that comes with `tauto`, from a
+  `std/list.taut` from the standard library that comes with `tauto`, from a
   file anywhere; a tote does not list it in its dependencies. `import text.utf8`
   reads `utf8.taut` (`totes/text/src/utf8.taut`) from `src` of `text`, a dependency of the importing
   file's tote; a file of an additional source is named with the directory first
@@ -657,8 +657,8 @@ committed under `crates/tauto-parol/src/generated/`. parol runs only in
 `tools/tauto-parol-gen`, a workspace of its own with its own lockfile.
 
 ```bash
-bash scripts/generate-tauto-parol.sh          # regenerate
-bash scripts/generate-tauto-parol.sh --check  # fail if the committed files are stale
+tauto gen-tauto-parol          # regenerate
+tauto gen-tauto-parol --check  # fail if the committed files are stale
 ```
 
 ## Nib
@@ -683,7 +683,7 @@ with `NAME!(…)`. What it takes decides its kind:
   `m!(e)`;
 - a tactic takes a `ProofStep`, the goals of a step `by t!(arg): G0 { … }`,
   and returns a term with a hole `?armK` for each arm: `rewrite!` in
-  `std/Tactic.taut`, `reduce_goal!` in `examples/lambda`.
+  `std/tactic.taut`, `reduce_goal!` in `examples/lambda`.
 
 Expansion is hygienic. The kernel gets no new rule: every expansion is checked
 again by the kernel and by `types.rs`, `rows.rs` and `lin.rs`, and in a proof a
@@ -705,7 +705,7 @@ system's hygiene (`totes/macros`) and the table generator (`totes/llkgen`,
 which writes, character for character, the tables of the generator of
 `crates/tauto-parol`) are written in Nib.
 
-Equation chains in proofs are written with the `calc!` macro of `std/Calc.taut`,
+Equation chains in proofs are written with the `calc!` macro of `std/calc.taut`,
 a chain of `=` or `↔` whose lines each give the relation, the next expression and
 its proof ([`docs/design/syntax.md`](docs/design/syntax.md)); a typed `let` per step
 with `Eq::trans` also works (see `examples/nat`).
@@ -727,6 +727,10 @@ with. On a name it also answers:
   left is a diagnostic with a quick fix (`textDocument/codeAction`) that
   rewrites the arm's `Δ ⊢ G` to what the tactic left. `tauto check --json` has the
   same edit in the error's `fix` (`title`, the range, `text`).
+- A name that the file uses without importing, and that other files of its tote (or
+  of its directory outside a tote) or of the tote's dependencies declare, has a quick
+  fix for each file that declares it: the `import` is written after the last import of
+  the file.
 - Rename changes the declaration and every use, in the file and in the files
   that import it, and then reads the edited files again: if any name would
   refer to a different declaration afterwards (the new name is already in
@@ -846,14 +850,18 @@ under one is named with that path first: `proof/compiler.taut` is
 `import compiler::proof::compiler`. A directory of `src` may not share the
 name of an additional source (`src/proof` and the source `proof` would both
 name `compiler::proof::…`). `package.sources` is not accepted. A file of the
-same tote is imported by its path (`import "Setoid.taut"`); a tote that has
+same tote is imported by its path (`import "setoid.taut"`); a tote that has
 no `src` can be built from additional sources alone.
 
+A tote's entry, the file whose top level runs when the tote is run or checked
+as a program, is `src/main.taut` (or `src/main.tauto`). `package.entry` names
+another file by its path from `Tauto.eure` (`entry = "app/start.taut"`). The
+tote's other files are imported: their top levels only declare.
+
 `tauto dev` takes the arguments of `tauto run` and runs the program on the
-machine written in Tauto (or the evaluator with `--backend eval`) again from the start whenever a source file under the tote (or the
+machine written in Tauto again from the start whenever a source file under the tote (or the
 file's directory) changes; a version that does not check is not run, and the running one keeps running. What the
-program prints is written as it happens, and on the evaluator a server's listener stays bound
-across reloads. See [`docs/design/dev.md`](docs/design/dev.md).
+program prints is written as it happens. See [`docs/design/dev.md`](docs/design/dev.md).
 
 A tote can give `tauto` commands: a `commands` section in its `Tauto.eure`
 names a program (`main`, outside the sources) and says what it does (`about`),
@@ -931,7 +939,7 @@ in `std/` and `meta/` and is not read by a tool.
   unchecked, never read as empty. The Lean rules are not connected to this
   checker. `budget`'s interruption and multi-shot budget sharing are
   guaranteed by the evaluator's tests only.
-* Preservation, progress, and that a row without `Div` stops, are proved
+* Preservation, progress, and that a row without `div` stops, are proved
   for a non-dependent core of Nib with effects, handlers, `var` and `budget`
   (`lean/Proto/Nib`, `docs/design/semantics.md`); dependent types are open.
 * Holes: not in a `mutual` block, not where a type is written. `suggest` matches types as written (first-order, up to bound names), not up to computation.
@@ -945,7 +953,7 @@ in `std/` and `meta/` and is not read by a tool.
   template is checked and used through numeric instances, and levels outside a
   template are numerals ([`docs/design/universes.md`](docs/design/universes.md)).
 * No cache of macro expansions.
-* The evaluator (`tauto-eval`) has no tote implementation, and the linter, the
+* The linter, the
   named elaborator and the complete Rust generator are not rewritten in Nib.
 * `tauto bind` does not write declarations for `unsafe fn`, `async fn`,
   `dyn Trait`, `Send`/`Sync` bounds, const generics, macros, some primitive
@@ -957,7 +965,7 @@ in `std/` and `meta/` and is not read by a tool.
 ## Supply chain
 
 - `.cargo/config.toml` refuses crate versions published less than 14 days ago
-  (enforced by the nightly Cargo pinned in `rust-toolchain.toml`).
+  (enforced by the Cargo 1.100 pinned in `rust-toolchain.toml`).
 - `.gitignore` is an allowlist: everything is ignored unless allowed. Check it
   when you add a new kind of file.
 
@@ -983,7 +991,9 @@ in `std/` and `meta/` and is not read by a tool.
   (MIT OR Apache-2.0).
 - The Unicode tables in `totes/unicode` and `totes/pargen` are derived from
   the Unicode Character Database (Unicode License v3), through the Rust
-  standard library and the `regex-syntax` crate.
+  standard library and the `regex-syntax` crate. The backslash names of signs
+  the language server offers (`totes/lsp/bridge/src/symbols.txt`) are read from
+  its character names (`UnicodeData.txt`, Unicode 16.0.0).
 - `totes/lalrgen` reproduces the LALR(1) table construction of the
   [lalry](https://github.com/jsinger67/lalry) crate 0.1.0 by Jörg Singer and
   Geoffry Song (MIT OR Apache-2.0), which parol uses.

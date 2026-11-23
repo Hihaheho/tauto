@@ -45,8 +45,8 @@ import "control.taut" {
   rs_returned,
   rs_trace
 }
-import "../../../std/Base.taut" { List }
-import "../../../std/Int.taut" { Int }
+import std::base { List }
+import std::int { Int }
 
 pub def RsCopyable(value: RsValue): Prop := rs_can_copy(value) = true
 
@@ -835,7 +835,7 @@ mutual {
       cleanup_order: RsCallCleanupOrder(kind, slots, captures, cleanup_slots),
       cleanup: RsFinish(rt, cleanup_slots, h2, rs_returned(out), cleaned, h3, t2)
     ): RsApply(program, rt, RsHandle(slot), values, heap, cleaned, h3, List::append(t1, t2))
-    RsApplyBorrowed<borrow: RsBorrow, addr: RsAddress, value: RsValue, args: List(
+    RsApplyBorrowed<r#borrow: RsBorrow, addr: RsAddress, value: RsValue, args: List(
       RsValue
     ), heap: RsStore, out: RsOutcome(
       RsValue
@@ -843,9 +843,9 @@ mutual {
       RsEvent
     )>(
       loaded: rs_load(heap, addr) = Some(value),
-      allowed: RsBorrowCallable(heap, borrow, value),
+      allowed: RsBorrowCallable(heap, r#borrow, value),
       applied: RsApply(program, rt, value, args, heap, out, next, trace)
-    ): RsApply(program, rt, RsReference(borrow, addr), args, heap, out, next, trace)
+    ): RsApply(program, rt, RsReference(r#borrow, addr), args, heap, out, next, trace)
   }
 
   pub(open) inductive RsSelect(

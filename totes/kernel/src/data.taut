@@ -1,9 +1,9 @@
 import "term.taut"
 import "level.taut"
-import std::List
-import std::Map
-import std::Text
-import std::Base
+import std::list
+import std::map
+import std::text
+import std::base
 
 pub(open) inductive KernelGlobal: Type {
   Mk(ty: KernelTerm, value: Option(KernelTerm)): KernelGlobal
@@ -25,7 +25,7 @@ pub(open) inductive KernelIndInfo: Type {
     group: List(Text),
     position: Nat,
     constructors: List(KernelCtorInfo),
-    alias: Option(Pair(Text, List(KernelTerm))),
+    alias: Option(Text × List(KernelTerm)),
     k_like: Option(List(KernelTerm))
   ): KernelIndInfo
 }
@@ -49,7 +49,7 @@ pub(open) inductive KernelCore: Type {
   Mk(
     globals: Ordmap(Text, KernelGlobal),
     inductives: Ordmap(Text, KernelIndInfo),
-    constructors: Ordmap(Text, Pair(Text, Nat)),
+    constructors: Ordmap(Text, Text × Nat),
     eliminators: Ordmap(Text, Text),
     targets: Ordmap(Text, List(Text)),
     defs: Ordmap(Text, KernelDef),
@@ -57,16 +57,16 @@ pub(open) inductive KernelCore: Type {
     next: Nat,
     exhausted: Bool,
     quotient: List(Text),
-    unfolded: List(Pair(Text, Nat)),
+    unfolded: List(Text × Nat),
     binders: Nat,
     whnfs: Ordmap(KernelTerm, KernelTerm),
-    conv_fail: Ordmap(Pair(KernelTerm, KernelTerm), Unit),
+    conv_fail: Ordmap(KernelTerm × KernelTerm, Unit),
     conv_depth: Nat
   ): KernelCore
 }
 
 pub(open) inductive KernelFamily: Type {
-  Mk(name: Text, ty: KernelTerm, constructors: List(Pair(Text, KernelTerm))): KernelFamily
+  Mk(name: Text, ty: KernelTerm, constructors: List(Text × KernelTerm)): KernelFamily
 }
 
 pub(open) inductive KernelCommand: Type {
@@ -109,7 +109,7 @@ pub fn kernel_ind_get(c: KernelCore, name: Text): Option(KernelIndInfo) {
   Ordmap::get(c.inductives, name, kernel_text_cmp)
 }
 
-pub fn kernel_ctor_get(c: KernelCore, name: Text): Option(Pair(Text, Nat)) {
+pub fn kernel_ctor_get(c: KernelCore, name: Text): Option(Text × Nat) {
   Ordmap::get(c.constructors, name, kernel_text_cmp)
 }
 
@@ -121,11 +121,11 @@ pub fn kernel_local_get(c: KernelCore, atom: Nat): Option(KernelTerm) {
   Ordmap::get(c.locals, atom, kernel_nat_cmp)
 }
 
-pub fn kernel_set_to<A>(&mut slot: A, value: A): Unit {
-  slot := value
+pub fn kernel_set_to<A>(slot: &mut A, value: A): Unit {
+  *slot := value
 }
 
-pub fn kernel_fresh(&mut c: KernelCore, ty: KernelTerm): Nat {
+pub fn kernel_fresh(c: &mut KernelCore, ty: KernelTerm): Nat {
   let x := Succ(c.next)
   kernel_set_to(&mut c.next, x)
   kernel_set_to(&mut c.locals, Ordmap::insert(c.locals, x, ty, kernel_nat_cmp))
@@ -133,7 +133,7 @@ pub fn kernel_fresh(&mut c: KernelCore, ty: KernelTerm): Nat {
 }
 
 pub fn kernel_put_global(
-  &mut c: KernelCore,
+  c: &mut KernelCore,
   name: Text,
   ty: KernelTerm,
   value: Option(KernelTerm)
@@ -279,36 +279,38 @@ pub fn kernel_closed(t: KernelTerm): Bool {
   kernel_loose(t) == 0 && not(kernel_mentions_fvar(t))
 }
 
-// The largest numeral, `u128::MAX` of the Rust core.
+// The largest numeral, `2^256 - 1`, as in the Rust core.
 pub fn kernel_lit_max(): Nat {
-  // (2^64 - 1)^2 + 2 * (2^64 - 1) = 2^128 - 1
+  // (2^64 - 1)^2 + 2 * (2^64 - 1) = 2^128 - 1, and the same again from
+  // that: 2^256 - 1
   let h := 18446744073709551615
-  h * h + h + h
+  let m := h * h + h + h
+  m * m + m + m
 }
 
 pub fn kernel_term_valid(t: KernelTerm, depth: Nat): Bool {
   match t {
     KernelBVar(i) => i < depth
-    KernelFVar(x) => false
-    KernelSortTerm(s) => true
-    KernelConst(n) => true
-    KernelPi(a, b, n) => kernel_term_valid(a, depth) && kernel_term_valid(b, Succ(depth))
-    KernelLam(b, n) => kernel_term_valid(b, Succ(depth))
-    KernelApp(f, a, n) => kernel_term_valid(f, depth) && kernel_term_valid(a, depth)
+    KernelFVar(^x) => false
+    KernelSortTerm(^s) => true
+    KernelConst(^n) => true
+    KernelPi(a, b, ^n) => kernel_term_valid(a, depth) && kernel_term_valid(b, Succ(depth))
+    KernelLam(b, ^n) => kernel_term_valid(b, Succ(depth))
+    KernelApp(f, a, ^n) => kernel_term_valid(f, depth) && kernel_term_valid(a, depth)
     KernelLit(v) => v <= 18446744073709551615 || v <= kernel_lit_max()
   }
 }
 
-pub fn kernel_as_pi(t: KernelTerm): Option(Pair(KernelTerm, KernelTerm)) {
+pub fn kernel_as_pi(t: KernelTerm): Option(KernelTerm × KernelTerm) {
   match t {
-    KernelBVar(i) => None
-    KernelFVar(x) => None
-    KernelSortTerm(s) => None
-    KernelConst(n) => None
-    KernelPi(a, b, n) => Some(Pair { fst: a, snd: b })
-    KernelLam(b, n) => None
-    KernelApp(f, a, n) => None
-    KernelLit(v) => None
+    KernelBVar(^i) => None
+    KernelFVar(^x) => None
+    KernelSortTerm(^s) => None
+    KernelConst(^n) => None
+    KernelPi(a, b, ^n) => Some(#(a, b))
+    KernelLam(^b, ^n) => None
+    KernelApp(^f, ^a, ^n) => None
+    KernelLit(^v) => None
   }
 }
 
@@ -321,52 +323,52 @@ pub fn kernel_as_pi_named(t: KernelTerm): Option(@domain KernelTerm × @codomain
 
 pub fn kernel_as_lam(t: KernelTerm): Option(KernelTerm) {
   match t {
-    KernelBVar(i) => None
-    KernelFVar(x) => None
-    KernelSortTerm(s) => None
-    KernelConst(n) => None
-    KernelPi(a, b, n) => None
-    KernelLam(b, n) => Some(b)
-    KernelApp(f, a, n) => None
-    KernelLit(v) => None
+    KernelBVar(^i) => None
+    KernelFVar(^x) => None
+    KernelSortTerm(^s) => None
+    KernelConst(^n) => None
+    KernelPi(^a, ^b, ^n) => None
+    KernelLam(b, ^n) => Some(b)
+    KernelApp(^f, ^a, ^n) => None
+    KernelLit(^v) => None
   }
 }
 
 pub fn kernel_as_const(t: KernelTerm): Option(Text) {
   match t {
-    KernelBVar(i) => None
-    KernelFVar(x) => None
-    KernelSortTerm(s) => None
+    KernelBVar(^i) => None
+    KernelFVar(^x) => None
+    KernelSortTerm(^s) => None
     KernelConst(n) => Some(n)
-    KernelPi(a, b, n) => None
-    KernelLam(b, n) => None
-    KernelApp(f, a, n) => None
-    KernelLit(v) => None
+    KernelPi(^a, ^b, ^n) => None
+    KernelLam(^b, ^n) => None
+    KernelApp(^f, ^a, ^n) => None
+    KernelLit(^v) => None
   }
 }
 
 pub fn kernel_as_sort(t: KernelTerm): Option(KernelSort) {
   match t {
-    KernelBVar(i) => None
-    KernelFVar(x) => None
+    KernelBVar(^i) => None
+    KernelFVar(^x) => None
     KernelSortTerm(s) => Some(s)
-    KernelConst(n) => None
-    KernelPi(a, b, n) => None
-    KernelLam(b, n) => None
-    KernelApp(f, a, n) => None
-    KernelLit(v) => None
+    KernelConst(^n) => None
+    KernelPi(^a, ^b, ^n) => None
+    KernelLam(^b, ^n) => None
+    KernelApp(^f, ^a, ^n) => None
+    KernelLit(^v) => None
   }
 }
 
 pub fn kernel_as_lit(t: KernelTerm): Option(Nat) {
   match t {
-    KernelBVar(i) => None
-    KernelFVar(x) => None
-    KernelSortTerm(s) => None
-    KernelConst(n) => None
-    KernelPi(a, b, n) => None
-    KernelLam(b, n) => None
-    KernelApp(f, a, n) => None
+    KernelBVar(^i) => None
+    KernelFVar(^x) => None
+    KernelSortTerm(^s) => None
+    KernelConst(^n) => None
+    KernelPi(^a, ^b, ^n) => None
+    KernelLam(^b, ^n) => None
+    KernelApp(^f, ^a, ^n) => None
     KernelLit(v) => Some(v)
   }
 }
@@ -374,44 +376,44 @@ pub fn kernel_as_lit(t: KernelTerm): Option(Nat) {
 pub fn kernel_is_lit(t: KernelTerm): Bool {
   match kernel_as_lit(t) {
     None => false
-    Some(v) => true
+    Some(^v) => true
   }
 }
 
 pub fn kernel_is_app(t: KernelTerm): Bool {
   match t {
-    KernelBVar(i) => false
-    KernelFVar(x) => false
-    KernelSortTerm(s) => false
-    KernelConst(n) => false
-    KernelPi(a, b, n) => false
-    KernelLam(b, n) => false
-    KernelApp(f, a, n) => true
-    KernelLit(v) => false
+    KernelBVar(^i) => false
+    KernelFVar(^x) => false
+    KernelSortTerm(^s) => false
+    KernelConst(^n) => false
+    KernelPi(^a, ^b, ^n) => false
+    KernelLam(^b, ^n) => false
+    KernelApp(^f, ^a, ^n) => true
+    KernelLit(^v) => false
   }
 }
 
 pub fn kernel_is_lam(t: KernelTerm): Bool {
   match kernel_as_lam(t) {
     None => false
-    Some(b) => true
+    Some(^b) => true
   }
 }
 
 // The argument of `Succ(x)`.
 pub fn kernel_as_succ(t: KernelTerm): Option(KernelTerm) {
   match t {
-    KernelBVar(i) => None
-    KernelFVar(x) => None
-    KernelSortTerm(s) => None
-    KernelConst(n) => None
-    KernelPi(a, b, n) => None
-    KernelLam(b, n) => None
-    KernelApp(f, a, n) => match kernel_as_const(f) {
+    KernelBVar(^i) => None
+    KernelFVar(^x) => None
+    KernelSortTerm(^s) => None
+    KernelConst(^n) => None
+    KernelPi(^a, ^b, ^n) => None
+    KernelLam(^b, ^n) => None
+    KernelApp(f, a, ^n) => match kernel_as_const(f) {
       None => None
       Some(h) => if h == "Succ" { Some(a) } else { None }
     }
-    KernelLit(v) => None
+    KernelLit(^v) => None
   }
 }
 
@@ -445,7 +447,7 @@ pub fn kernel_expand_lit(t: KernelTerm): KernelTerm {
   }
 }
 
-pub fn kernel_bind_pis(xs: List(Pair(Nat, KernelTerm)), body: KernelTerm): KernelTerm {
+pub fn kernel_bind_pis(xs: List(Nat × KernelTerm), body: KernelTerm): KernelTerm {
   match xs {
     Nil => body
     Cons(x, rest) => kernel_pi_over(x.fst, x.snd, kernel_bind_pis(rest, body))
@@ -456,5 +458,51 @@ pub fn kernel_bind_lams(xs: List(Nat), body: KernelTerm): KernelTerm {
   match xs {
     Nil => body
     Cons(x, rest) => kernel_lam_over(x, kernel_bind_lams(rest, body))
+  }
+}
+
+fn kernel_no_alias(a: Option(Text × List(KernelTerm))): Bool {
+  match a {
+    None => true
+    Some(^x) => false
+  }
+}
+
+// Whether `Eq` is the equality `Quot::lift` is stated with, as
+// `Core::is_equality` of `crates/tauto-kernel/src/check/core.rs`: the family
+// `(A: Type, a: A, b: A): Prop` with the one constructor
+// `Refl: Eq(A, a, a)`, and not whatever else was declared under the name.
+pub fn kernel_is_equality(c: KernelCore): Bool {
+  let family := kernel_pi(
+    kernel_quot_sort_type(),
+    kernel_pi(KernelBVar(0), kernel_pi(KernelBVar(1), KernelSortTerm(KernelProp)))
+  )
+  let refl := kernel_pi(
+    kernel_quot_sort_type(),
+    kernel_pi(
+      KernelBVar(0),
+      kernel_app(
+        kernel_app(kernel_app(KernelConst("Eq"), KernelBVar(1)), KernelBVar(0)),
+        KernelBVar(0)
+      )
+    )
+  )
+  match kernel_ind_get(c, "Eq") {
+    None => false
+    Some(info) => match info.constructors {
+      Cons(r, Nil) => match kernel_global_get(c, "Eq") {
+        None => false
+        Some(g) => match kernel_global_get(c, r.name) {
+          None => false
+          Some(h) => info.params == 2 &&
+          info.indices == 1 &&
+          kernel_no_alias(info.alias) &&
+          r.nargs == 0 &&
+          kernel_term_eq(g.ty, family) &&
+          kernel_term_eq(h.ty, refl)
+        }
+      }
+      _ => false
+    }
   }
 }

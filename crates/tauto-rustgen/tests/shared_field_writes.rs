@@ -9,25 +9,25 @@ fn a_write_through_a_shared_field_reaches_only_its_own_value() {
     tauto_messages::install();
     let source = r#"struct Big { a: Text, b: Text, c: Text, d: Text }
 struct State { origin: Text, big: Big }
-fn set_to<A>(&mut slot: A, value: A): Unit { slot := value }
-fn rename(&mut state: State, name: Text): Unit {
+fn set_to<A>(slot: &mut A, value: A): Unit { *slot := value }
+fn rename(state: &mut State, name: Text): Unit {
   set_to(&mut state.big.a, name)
 }
 var state := State { origin: "o", big: Big { a: "a", b: "b", c: "c", d: "d" } }
 let kept := state
 rename(&mut state, "z")
-perform show("kept", kept.big.a)
-perform show("state", state.big.a)
+show(&kept.big.a)
+show(&state.big.a)
 "#;
-    let expected = "kept = \"a\"\nstate = \"z\"\n";
-    let evaluated = tauto::eval::run(source)
+    let expected = "\"a\"\n\"z\"\n";
+    let evaluated = tauto::exec::run(source)
         .unwrap()
         .outputs
         .into_iter()
         .map(|(name, value)| format!("{name} = {value}\n"))
         .collect::<String>();
     assert_eq!(evaluated, expected, "evaluator");
-    let package = tauto_nir::compile(source).unwrap();
+    let package = tauto::nir::compile(source).unwrap();
     let st = package
         .datas
         .iter()

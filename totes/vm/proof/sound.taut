@@ -1,8 +1,8 @@
-import std::Nat
+import std::nat
 import "vm.taut"
 import "../src/vm.taut"
-import std::Base
-import std::prelude::Ord
+import std::base
+import std::builtin::ord
 
 // The other direction: when the machine running the compiled program answers `w`, the
 // reference semantics gives `w`. With `compile_correct` and `compile_answer`, the machine
@@ -22,38 +22,38 @@ pub(open) inductive IsFinal: (State) -> Prop {
 }
 
 pub fn code_is_ret(c: Bytecode): Bool {
-  ⊢ Bool from match c {
+  match c {
     CRet => true
-    CLoad(i, k) => false
-    CPush(n, k) => false
-    CAdd(k) => false
-    CSub(k) => false
-    CMul(k) => false
-    CLt(k) => false
-    CBind(k) => false
-    CUnbind(k) => false
-    CBranch(t, e, k) => false
-    CMkpair(k) => false
-    CFst(k) => false
-    CSnd(k) => false
-    CCall(f, k) => false
+    CLoad(^i, ^k) => false
+    CPush(^n, ^k) => false
+    CAdd(^k) => false
+    CSub(^k) => false
+    CMul(^k) => false
+    CLt(^k) => false
+    CBind(^k) => false
+    CUnbind(^k) => false
+    CBranch(^t, ^e, ^k) => false
+    CMkpair(^k) => false
+    CFst(^k) => false
+    CSnd(^k) => false
+    CCall(^f, ^k) => false
   }
 }
 
 pub fn state_code(s: State): Bytecode {
-  ⊢ Bytecode from match s {
-    StateMk(c, env, st, fr) => c
+  match s {
+    StateMk(c, ^env, ^st, ^fr) => c
   }
 }
 
 pub theorem final_code<s: State>(fin: IsFinal(s)): (code_is_ret(state_code(s)) = true) {
-  ⊢ (code_is_ret(state_code(s)) = true) from match fin {
+  match fin {
     Mk(env, w) => Refl
   }
 }
 
 pub theorem final_stops<s: State>(prog: List(Bytecode), fin: IsFinal(s)): (step(prog, s) = None) {
-  ⊢ (step(prog, s) = None) from match fin {
+  match fin {
     Mk(env, w) => Refl
   }
 }
@@ -124,9 +124,6 @@ pub theorem starn_inv<prog: List(
       m,
       Nat::le_refl(Succ(m)),
       Eq::subst(
-        State,
-        t2,
-        s2,
         (x: State) => StarN(prog, m, x, t3),
         Option::some_inj(t2, s2, Eq::trans(Eq::sym(h1), e)),
         rest
@@ -306,7 +303,7 @@ pub theorem branch_inv(
 }
 
 pub fn pick(first: Bool, a: Val, b: Val): Val {
-  ⊢ Val from match first {
+  match first {
     true => a
     false => b
   }
@@ -524,9 +521,6 @@ pub theorem back_e(
           lt,
           EvVar(eo),
           Eq::subst(
-            State,
-            s2,
-            StateMk(k, env, Cons(v, st), fr),
             (x: State) => StarN(compile(prog), m, x, s3),
             es,
             rest
@@ -593,13 +587,10 @@ pub theorem back_e(
               m3,
               lt_lt(m3, m2, n, lt3, lt_lt(m2, m1, n, lt2, lt1)),
               EvAdd(
-                Eq::subst(Val, va, VNat(n1), (x: Val) => Eval(prog, env, a, x), ea, eva),
-                Eq::subst(Val, vb, VNat(n2), (x: Val) => Eval(prog, env, b, x), eb, evb)
+                Eq::subst((x: Val) => Eval(prog, env, a, x), ea, eva),
+                Eq::subst((x: Val) => Eval(prog, env, b, x), eb, evb)
               ),
               Eq::subst(
-                State,
-                s2,
-                StateMk(k, env, Cons(VNat(Nat::add(n1, n2)), st), fr),
                 (x: State) => StarN(compile(prog), m3, x, s3),
                 es,
                 r3
@@ -660,13 +651,10 @@ pub theorem back_e(
               m3,
               lt_lt(m3, m2, n, lt3, lt_lt(m2, m1, n, lt2, lt1)),
               EvSub(
-                Eq::subst(Val, va, VNat(n1), (x: Val) => Eval(prog, env, a, x), ea, eva),
-                Eq::subst(Val, vb, VNat(n2), (x: Val) => Eval(prog, env, b, x), eb, evb)
+                Eq::subst((x: Val) => Eval(prog, env, a, x), ea, eva),
+                Eq::subst((x: Val) => Eval(prog, env, b, x), eb, evb)
               ),
               Eq::subst(
-                State,
-                s2,
-                StateMk(k, env, Cons(VNat(Nat::sub(n1, n2)), st), fr),
                 (x: State) => StarN(compile(prog), m3, x, s3),
                 es,
                 r3
@@ -727,13 +715,10 @@ pub theorem back_e(
               m3,
               lt_lt(m3, m2, n, lt3, lt_lt(m2, m1, n, lt2, lt1)),
               EvMul(
-                Eq::subst(Val, va, VNat(n1), (x: Val) => Eval(prog, env, a, x), ea, eva),
-                Eq::subst(Val, vb, VNat(n2), (x: Val) => Eval(prog, env, b, x), eb, evb)
+                Eq::subst((x: Val) => Eval(prog, env, a, x), ea, eva),
+                Eq::subst((x: Val) => Eval(prog, env, b, x), eb, evb)
               ),
               Eq::subst(
-                State,
-                s2,
-                StateMk(k, env, Cons(VNat(Nat::mul(n1, n2)), st), fr),
                 (x: State) => StarN(compile(prog), m3, x, s3),
                 es,
                 r3
@@ -794,13 +779,10 @@ pub theorem back_e(
               m3,
               lt_lt(m3, m2, n, lt3, lt_lt(m2, m1, n, lt2, lt1)),
               EvLt(
-                Eq::subst(Val, va, VNat(n1), (x: Val) => Eval(prog, env, a, x), ea, eva),
-                Eq::subst(Val, vb, VNat(n2), (x: Val) => Eval(prog, env, b, x), eb, evb)
+                Eq::subst((x: Val) => Eval(prog, env, a, x), ea, eva),
+                Eq::subst((x: Val) => Eval(prog, env, b, x), eb, evb)
               ),
               Eq::subst(
-                State,
-                s2,
-                StateMk(k, env, Cons(VNat(bool_nat(Nat::lt(n1, n2))), st), fr),
                 (x: State) => StarN(compile(prog), m3, x, s3),
                 es,
                 r3
@@ -925,7 +907,7 @@ pub theorem back_e(
                 m4,
                 lt_lt(m4, m3, n, lt4, lt_lt(m3, m2, n, lt3, lt_lt(m2, m1, n, lt2, lt1))),
                 EvIfThen(
-                  Eq::subst(Val, vc, VNat(Succ(n0)), (x: Val) => Eval(prog, env, c, x), ec, evc),
+                  Eq::subst((x: Val) => Eval(prog, env, c, x), ec, evc),
                   evt
                 ),
                 r4
@@ -963,7 +945,7 @@ pub theorem back_e(
                 m4,
                 lt_lt(m4, m3, n, lt4, lt_lt(m3, m2, n, lt3, lt_lt(m2, m1, n, lt2, lt1))),
                 EvIfElse(
-                  Eq::subst(Val, vc, VNat(Zero), (x: Val) => Eval(prog, env, c, x), ec, evc),
+                  Eq::subst((x: Val) => Eval(prog, env, c, x), ec, evc),
                   evt
                 ),
                 r4
@@ -1053,11 +1035,8 @@ pub theorem back_e(
             pa,
             m2,
             lt_lt(m2, m1, n, lt2, lt1),
-            EvFst(Eq::subst(Val, va, VPair(pa, pb), (x: Val) => Eval(prog, env, a, x), ep, eva)),
+            EvFst(Eq::subst((x: Val) => Eval(prog, env, a, x), ep, eva)),
             Eq::subst(
-              State,
-              s2,
-              StateMk(k, env, Cons(pa, st), fr),
               (x: State) => StarN(compile(prog), m2, x, s3),
               es,
               r2
@@ -1100,11 +1079,8 @@ pub theorem back_e(
             pb,
             m2,
             lt_lt(m2, m1, n, lt2, lt1),
-            EvSnd(Eq::subst(Val, va, VPair(pa, pb), (x: Val) => Eval(prog, env, a, x), ep, eva)),
+            EvSnd(Eq::subst((x: Val) => Eval(prog, env, a, x), ep, eva)),
             Eq::subst(
-              State,
-              s2,
-              StateMk(k, env, Cons(pb, st), fr),
               (x: State) => StarN(compile(prog), m2, x, s3),
               es,
               r2
@@ -1199,7 +1175,7 @@ pub theorem back_e(
 }
 
 pub theorem back(prog: List(Expr), B: Nat): BackUpTo(prog, B) {
-  ⊢ BackUpTo(prog, B) from match B {
+  match B {
     Zero => (e: Expr) => (k: Bytecode) => (env: List(Val)) => (st: List(Val)) => (fr: List(Frame)) => (s3: State) => (n: Nat) => (hb: Nat::le(n, Zero) = true) => back_e(
       prog,
       Zero,
@@ -1290,9 +1266,6 @@ pub theorem run_from_halt(
     None => (eo0: step(prog, s) = None) => (e0: Some(s) = Some(s2)) => HaltMk(
       Zero,
       Eq::subst(
-        State,
-        s,
-        s2,
         (x: State) => StarN(prog, Zero, s, x),
         Option::some_inj(s, s2, e0),
         StarnRefl(s)
@@ -1349,7 +1322,7 @@ pub theorem sound_from_final(
   h: StarN(compile(prog), n, start(f, arg), s2),
   e: final_answer(s2) = Some(w)
 ): Sound(prog, f, arg, w) {
-  ⊢ Sound(prog, f, arg, w) from match starn_next(
+  match starn_next(
     h,
     final_inv(s2, w, e),
     not_final(CCall(f, CRet), Nil, Cons(arg, Nil), Nil, Refl)

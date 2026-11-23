@@ -40,7 +40,7 @@ pub fn build(
             x.name = name.clone();
         }
     }
-    let mut bindings = Bindings::resolve(&original, Some(m), bridge.as_deref())?;
+    let mut bindings = Bindings::resolve(&mut original, Some(m), bridge.as_deref())?;
     for (alias, source) in origins {
         if let Some(binding) = bindings.externs.get(source).cloned() {
             bindings.externs.insert(alias.clone(), binding);
@@ -723,7 +723,7 @@ impl Codec<'_> {
             arms.push(format!(
                 "\"Vec::len\"|\"Slice::len\"=>json!({{\"$int\":{read}.len().to_string()}})"
             ));
-            arms.push(format!("\"Vec::get\"|\"Slice::get\"|\"Vec::index\"=>{{let value={read};match value.get({index}){{Some(item)=>{{let view=unsafe{{view(item as *const {elem} as *mut {elem},false,{sub},{opaque},&frame)}};if name==\"Vec::index\"{{view}}else{{ctor(\"Option\",\"Some\",json!([null]),json!([view]),false)}}}},None=>if name==\"Vec::index\"{{json!({{\"abiEffect\":\"out_of_bounds\"}})}}else{{ctor(\"Option\",\"None\",json!([]),json!([]),false)}}}}}}"));
+            arms.push(format!("\"Vec::get\"|\"Slice::get\"=>{{let value={read};match value.get({index}){{Some(item)=>{{let view=unsafe{{view(item as *const {elem} as *mut {elem},false,{sub},{opaque},&frame)}};ctor(\"Option\",\"Some\",json!([null]),json!([view]),false)}},None=>ctor(\"Option\",\"None\",json!([]),json!([]),false)}}}}"));
             arms.push(format!("\"Vec::get_mut\"|\"Vec::last_mut\"=>{{let value={write};let index=if name==\"Vec::last_mut\"{{value.len().checked_sub(1)}}else{{Some({index})}};match index.and_then(|i|value.get_mut(i)){{Some(item)=>ctor(\"Option\",\"Some\",json!([null]),json!([unsafe{{view(item as *mut {elem},true,{sub},{opaque},&frame)}}]),false),None=>ctor(\"Option\",\"None\",json!([]),json!([]),false)}}}}"));
             if matches!(t, Ty::Vec(_)) {
                 let slice = self.codec(&Ty::Slice(a.clone()))?;
@@ -735,7 +735,7 @@ impl Codec<'_> {
                 arms.push(format!(
                     "\"Vec::truncate\"=>{{{write}.truncate({index});Value::Null}}"
                 ));
-                arms.push(format!("\"Vec::swap\"=>{{let a={index};let b=args[\"args\"][1][\"$int\"].as_str().unwrap().parse::<usize>().unwrap();let value={write};if a>=value.len()||b>=value.len(){{json!({{\"abiEffect\":\"out_of_bounds\"}})}}else{{value.swap(a,b);Value::Null}}}}"));
+                arms.push(format!("\"Vec::swap_within\"=>{{let a={index};let b=args[\"args\"][1][\"$int\"].as_str().unwrap().parse::<usize>().unwrap();let value={write};if a>=value.len()||b>=value.len(){{Value::Bool(false)}}else{{value.swap(a,b);Value::Bool(true)}}}}"));
             }
         }
         if *t == Ty::Buf {
@@ -857,7 +857,7 @@ fn native_type(t: &mut Ty) {
         | Ty::SharedVar(false, a)
         | Ty::Info(a)
         | Ty::BudgetAnswer(a) => native_type(a),
-        Ty::Pair(a, b) | Ty::Result(a, b) | Ty::HashMap(a, b) => {
+        Ty::Pair(a, b) | Ty::Result(a, b) => {
             native_type(a);
             native_type(b);
         }

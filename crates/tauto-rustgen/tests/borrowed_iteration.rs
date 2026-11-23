@@ -12,7 +12,7 @@ fn matches(condition: Condition, input: u64): Bool {
  Below(maximum) => input < maximum
  Always => true }
 }
-fn all_matches(conditions: List(Condition), input: u64): Bool ! {Div} {
+fn all_matches(conditions: List(Condition), input: u64): Bool ! {div, overflow} {
  var cursor := conditions
  var valid := true
  while valid {
@@ -30,15 +30,15 @@ fn all_matches(conditions: List(Condition), input: u64): Bool ! {Div} {
 }
 fn run_source() -> &'static str {
     r#"
-fn run(steps: i64, conditions: List(Condition), input: u64): Result(Bool, Text) {
- handle { budget(steps: steps) { let local := conditions; Ok(all_matches(local, input)) } } with {
-  exceeded(info), k => Err("exhausted")
+fn run(steps: u64, conditions: List(Condition), input: u64): Result(Bool, Text) ! {budget} {
+ handle { perform budget(steps, () => { let local := conditions; Ok(all_matches(local, input)) }) } with {
+  exceeded(info), k => Err("exhausted"), overflow() => Err("overflow")
  }
 }
 "#
 }
 
-fn inspect(pkg: &Package, source: &str) -> (String, Vec<BorrowDiagnostic>) {
+fn inspect(pkg: &mut Package, source: &str) -> (String, Vec<BorrowDiagnostic>) {
     let manifest = tauto::manifest::parse(
         r#"rust { nonresuming { entries { run_trusted = "run" } } }"#,
         Path::new("Tauto.eure"),
@@ -55,7 +55,8 @@ fn inspect(pkg: &Package, source: &str) -> (String, Vec<BorrowDiagnostic>) {
     )
 }
 fn compiled(source: &str) -> (String, Vec<BorrowDiagnostic>) {
-    inspect(&tauto_nir::compile_with(source, true).unwrap(), source)
+    let mut pkg = tauto::nir::compile_with(source, true).unwrap();
+    inspect(&mut pkg, source)
 }
 fn rejected(source: &str, code: &str) {
     let (rust, reports) = compiled(source);
@@ -160,14 +161,14 @@ fn cursor_construction_capture_and_storage_are_not_read_proofs() {
         "opaque-use",
     );
     let source = r#"
-fn retain(items: List(u64)): List(u64) ! {Div} {
+fn retain(items: List(u64)): List(u64) ! {div, overflow} {
  var cursor := items
  while true { match cursor { Nil => { return cursor }
  Cons(value, rest) => { cursor := rest } } }
  cursor
 }
-fn run(steps: i64, items: List(u64)): List(u64) {
- handle { budget(steps: steps) { let local := items; retain(local) } } with { exceeded(info), k => Nil }
+fn run(steps: u64, items: List(u64)): List(u64) ! {budget} {
+ handle { perform budget(steps, () => { let local := items; retain(local) }) } with { exceeded(info), k => Nil, overflow() => Nil }
 }"#;
     rejected(source, "escaping-result");
 }
@@ -178,7 +179,7 @@ fn cursor_target_cannot_be_a_field_parameter_or_captured_cell() {
     let helpers = helpers_source();
     let source = format!("{helpers}{run}");
     for mode in 0..3 {
-        let mut pkg = tauto_nir::compile_with(&source, true).unwrap();
+        let mut pkg = tauto::nir::compile_with(&source, true).unwrap();
         let f = pkg
             .fns
             .iter_mut()
@@ -221,7 +222,7 @@ fn cursor_target_cannot_be_a_field_parameter_or_captured_cell() {
             }
         }
         change(&mut f.body, mode, &parameter);
-        let (rust, reports) = inspect(&pkg, &source);
+        let (rust, reports) = inspect(&mut pkg, &source);
         assert!(!rust.contains("fn __tauto_budget_borrow_"));
         if mode == 2 {
             let budgets = tauto_rustgen::budget_diagnostics(
@@ -254,7 +255,7 @@ fn cursor_target_cannot_be_a_field_parameter_or_captured_cell() {
 #[test]
 fn iterative_generic_aliases_and_branch_joins_keep_the_fixed_root() {
     let source = r#"
-fn count<T: Shared>(items: List(T), choose: Bool): u64 ! {Div} {
+fn count<T: Shared>(items: List(T), choose: Bool): u64 ! {div, overflow} {
  let root := items
  var cursor := root
  var total: u64 := 0
@@ -270,8 +271,8 @@ fn count<T: Shared>(items: List(T), choose: Bool): u64 ! {Div} {
  }
  total
 }
-fn run(steps: i64, numbers: List(u64), nested: List(List(u64)), choose: Bool): u64 {
- handle { budget(steps: steps) { let ns := numbers; let ls := nested; count(ns, choose) + count(ls, choose) } } with { exceeded(info), k => 999 }
+fn run(steps: u64, numbers: List(u64), nested: List(List(u64)), choose: Bool): u64 ! {budget} {
+ handle { perform budget(steps, () => { let ns := numbers; let ls := nested; count(ns, choose) + count(ls, choose) }) } with { exceeded(info), k => 999, overflow() => 999 }
 }"#;
     let (rust, reports) = compiled(source);
     assert_eq!(
@@ -304,7 +305,7 @@ fn native_saved_children_aliases_nested_loops_and_generic_cursors() {
     use tauto_rustgen::{Options, workspace};
     let source = format!(
         r#"{}{}
-fn count<T: Shared>(items: List(T), choose: Bool): u64 ! {{Div}} {{
+fn count<T: Shared>(items: List(T), choose: Bool): u64 ! {{div, overflow}} {{
  let root := items
  var cursor := root
  var total: u64 := 0
@@ -319,13 +320,13 @@ fn count<T: Shared>(items: List(T), choose: Bool): u64 ! {{Div}} {{
  }}
  total
 }}
-fn twice(value: u64): u64 ! {{Div}} {{
+fn twice(value: u64): u64 ! {{div, overflow}} {{
  var n: u64 := 0
  var total: u64 := 0
  while n < 2 {{ total := total + value; n := n + 1 }}
  total
 }}
-fn sum(items: List(u64)): u64 ! {{Div}} {{
+fn sum(items: List(u64)): u64 ! {{div, overflow}} {{
  var cursor := items
  var total: u64 := 0
  while true {{ match cursor {{ Nil => {{ return total }}
@@ -333,7 +334,7 @@ fn sum(items: List(u64)): u64 ! {{Div}} {{
  }} }}
  total
 }}
-fn saved(items: List(List(u64)), choose: Bool): u64 ! {{Div}} {{
+fn saved(items: List(List(u64)), choose: Bool): u64 ! {{div, overflow}} {{
  let root := items
  var cursor := root
  var total: u64 := 0
@@ -357,7 +358,7 @@ fn accepts_input(condition: Condition, input: Input): Bool {{
  Below(maximum) => input.value < maximum
  Always => true }}
 }}
-fn read_all(conditions: List(Condition), input: Input): Bool ! {{Div}} {{
+fn read_all(conditions: List(Condition), input: Input): Bool ! {{div, overflow}} {{
  var cursor := conditions
  var valid := true
  while valid {{ match cursor {{ Nil => {{ return valid }}
@@ -365,19 +366,19 @@ fn read_all(conditions: List(Condition), input: Input): Bool ! {{Div}} {{
  }} }}
  valid
 }}
-fn run_input(steps: i64, conditions: List(Condition), input: Input): Result(Bool, Text) {{
- handle {{ budget(steps: steps) {{ let cs := conditions; let record := input; Ok(read_all(cs, record)) }} }} with {{ exceeded(info), k => Err("exhausted") }}
+fn run_input(steps: u64, conditions: List(Condition), input: Input): Result(Bool, Text) ! {{budget}} {{
+ handle {{ perform budget(steps, () => {{ let cs := conditions; let record := input; Ok(read_all(cs, record)) }}) }} with {{ exceeded(info), k => Err("exhausted"), overflow() => Err("overflow") }}
 }}
-fn run_saved(steps: i64, items: List(List(u64)), choose: Bool): u64 {{
- handle {{ budget(steps: steps) {{ let local := items; saved(local, choose) }} }} with {{ exceeded(info), k => 999 }}
+fn run_saved(steps: u64, items: List(List(u64)), choose: Bool): u64 ! {{budget}} {{
+ handle {{ perform budget(steps, () => {{ let local := items; saved(local, choose) }}) }} with {{ exceeded(info), k => 999, overflow() => 999 }}
 }}
-fn run_generic(steps: i64, numbers: List(u64), nested: List(List(u64)), choose: Bool): u64 {{
- handle {{ budget(steps: steps) {{ let ns := numbers; let ls := nested; count(ns, choose) + count(ls, choose) }} }} with {{ exceeded(info), k => 999 }}
+fn run_generic(steps: u64, numbers: List(u64), nested: List(List(u64)), choose: Bool): u64 ! {{budget}} {{
+ handle {{ perform budget(steps, () => {{ let ns := numbers; let ls := nested; count(ns, choose) + count(ls, choose) }}) }} with {{ exceeded(info), k => 999, overflow() => 999 }}
 }}
 "#,
         helpers, run
     );
-    let pkg = tauto_nir::compile_with(&source, true).unwrap();
+    let mut pkg = tauto::nir::compile_with(&source, true).unwrap();
     let manifest = tauto::manifest::parse(
         r#"rust { nonresuming { entries {
  run_trusted = "run"
@@ -388,7 +389,7 @@ fn run_generic(steps: i64, numbers: List(u64), nested: List(List(u64)), choose: 
         Path::new("Tauto.eure"),
     )
     .unwrap();
-    let bindings = Bindings::resolve(&pkg, Some(&manifest), None).unwrap();
+    let bindings = Bindings::resolve(&mut pkg, Some(&manifest), None).unwrap();
     let reports = borrowed_budget_diagnostics(
         &pkg,
         &Sources {

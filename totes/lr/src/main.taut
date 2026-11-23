@@ -3,15 +3,14 @@
 // parser's five (`Tables::lr_texts`), then texts to parse. For each text it
 // prints `==`, then the events of the parse a line each (`open N`, `close`,
 // `token T START END`) or `error AT EXPECTED...` (AT `-` at the end).
-import std::Stack
-import std::Text
-import std::prelude::Os
+import std::stack
+import std::text
+import std::builtin::os
 import "../../scan/src/scan.taut"
 import "../../llk/src/llk.taut"
 import "lr.taut"
 import "../../text/src/text.taut"
-import std::Base
-import std::prelude::Affine
+import std::base
 
 fn lr_line_of(parts: List(Text)): Text {
   Text::concat_all(Cons(text_join(parts, " "), Cons(text_newline(), Nil)))
@@ -27,7 +26,7 @@ fn lr_event_line(e: LlkEvent): Text {
   }
 }
 
-fn lr_print_events(&mut events: Stack(LlkEvent)): Unit {
+fn lr_print_events(events: &mut Stack(LlkEvent)): Unit ! {div, stdout} {
   var all: List(LlkEvent) := Nil
   var popping := true
   while popping {
@@ -57,7 +56,7 @@ fn lr_print_events(&mut events: Stack(LlkEvent)): Unit {
   print(Text::of(b))
 }
 
-fn lr_print_error(e: LlkError): Unit {
+fn lr_print_error(e: LlkError): Unit ! {stdout} {
   let at := match e.at {
     None => "-"
     Some(n) => Text::of_nat(n)
@@ -65,7 +64,7 @@ fn lr_print_error(e: LlkError): Unit {
   print(lr_line_of(Cons("error", Cons(at, List::map(Text::of_nat, e.expected)))))
 }
 
-fn lr_each(s: ScanTables, t: LrTables, texts: List(Text)): Unit {
+fn lr_each(s: ScanTables, t: LrTables, texts: List(Text)): Unit ! {div, stdout} {
   match texts {
     Nil => #()
     Cons(text, rest) => {
@@ -81,19 +80,21 @@ fn lr_each(s: ScanTables, t: LrTables, texts: List(Text)): Unit {
   }
 }
 
-match perform argv() {
-  Cons(m, Cons(c, Cons(st, Cons(r, Cons(d, Cons(lm, Cons(lsk, Cons(la, Cons(lg, Cons(lp, texts)))))))))) => match scan_tables_read_dynamic(
-    m,
-    c,
-    st,
-    r,
-    d
-  ) {
-    None => eprint("the scanner's tables are damaged")
-    Some(s) => match lr_tables_read(lm, lsk, la, lg, lp) {
-      None => eprint("the parser's tables are damaged")
-      Some(t) => lr_each(s, t, texts)
+perform main(() => {
+  match perform argv() {
+    Cons(m, Cons(c, Cons(st, Cons(r, Cons(d, Cons(lm, Cons(lsk, Cons(la, Cons(lg, Cons(lp, texts)))))))))) => match scan_tables_read_dynamic(
+      m,
+      c,
+      st,
+      r,
+      d
+    ) {
+      None => eprint("the scanner's tables are damaged")
+      Some(s) => match lr_tables_read(lm, lsk, la, lg, lp) {
+        None => eprint("the parser's tables are damaged")
+        Some(t) => lr_each(s, t, texts)
+      }
     }
+    ^other => eprint("usage: lr SCANNER(5) PARSER(5) TEXT...")
   }
-  other => eprint("usage: lr SCANNER(5) PARSER(5) TEXT...")
-}
+})

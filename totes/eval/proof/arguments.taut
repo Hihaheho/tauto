@@ -11,8 +11,9 @@ import "../../vm/src/cps.taut"
 import "../../vm/src/machine.taut"
 import "../../vm/src/mval.taut"
 import "../../vm/src/operations.taut"
-import std::Base
-import std::List
+import std::base
+import std::array
+import std::list
 
 pub fn e_argument_stack(values: List(MVal), stack: List(MVal)): List(MVal) {
   List::append(List::reverse(values), stack)
@@ -51,7 +52,7 @@ c_expr(fuel, e, e_code(c_all(fuel, rest, k, cs)), cs) {
 }
 
 pub theorem e_operation_wrong_arity(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
   op: MOp,
   args: List(MVal),
@@ -64,7 +65,7 @@ pub theorem e_operation_wrong_arity(
 }
 
 pub theorem e_operation_value_arity(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
   op: MOp,
   args: List(MVal),
@@ -72,7 +73,7 @@ pub theorem e_operation_value_arity(
   final: MCx,
   done: e_operation(ctors, cx, op, args) = ErValue(v, final)
 ): m_op_arity(op) = List::length(args) {
-  ⊢ m_op_arity(op) = List::length(args) from match Nat::eq(m_op_arity(op), List::length(args)) eqn same {
+  match Nat::eq(m_op_arity(op), List::length(args)) eqn same {
     true => ⊢ m_op_arity(op) = List::length(args) from
     Nat::eq_sound(m_op_arity(op), List::length(args), same)
     false => ⊢ m_op_arity(op) = List::length(args) from {
@@ -96,7 +97,7 @@ pub theorem e_primitive_step(
   v: MVal,
   final: MCx,
   k: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   done: e_operation(p_ctors(p), cx, e_primitive(op, count), args) = ErValue(v, final)
@@ -146,7 +147,7 @@ pub fn ECodeResult(
   compiled: CR,
   cs: CSt,
   k: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   cx: MCx,
@@ -169,7 +170,7 @@ pub theorem e_arguments_cons_result<n: Nat, m: Nat>(
   p: MProgram,
   k: MCode,
   cs: CSt,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   cx: MCx,
@@ -287,7 +288,7 @@ pub theorem e_sequence_cons_result<n: Nat, m: Nat>(
   p: MProgram,
   k: MCode,
   cs: CSt,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   cx: MCx,

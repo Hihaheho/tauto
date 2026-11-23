@@ -31,10 +31,10 @@ The Lean binary is installed from the official release, pinned by version and
 SHA-256, into `.tools/lean-<version>/` (git-ignored), and called by absolute
 path; no toolchain manager, `sudo` or `PATH` change (`ELAN=''` below keeps
 `lake` from looking for one). The setup script is
-`scripts/setup-lean-4.34.1.sh`:
+`scripts/setup-lean-4.34.1.taut`:
 
 ```bash
-bash scripts/setup-lean-4.34.1.sh "$PWD/.tools/lean-4.34.1"
+tauto setup-lean "$PWD/.tools/lean-4.34.1"
 ```
 
 Then build with:

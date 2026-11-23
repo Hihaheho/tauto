@@ -51,7 +51,10 @@ impl Server {
             next_id: 1,
         };
         let root = std::env::current_dir().unwrap();
-        s.request("initialize", json!({"rootUri": uri(&root), "capabilities": {}}));
+        s.request(
+            "initialize",
+            json!({"rootUri": uri(&root), "capabilities": {}}),
+        );
         s.notify("initialized", json!({}));
         s
     }
@@ -118,8 +121,8 @@ impl Server {
 
     /// The resident set now and at its peak, in KiB.
     fn memory(&self) -> (u64, u64) {
-        let status =
-            std::fs::read_to_string(format!("/proc/{}/status", self.child.id())).unwrap_or_default();
+        let status = std::fs::read_to_string(format!("/proc/{}/status", self.child.id()))
+            .unwrap_or_default();
         let field = |name: &str| {
             status
                 .lines()
@@ -157,9 +160,14 @@ fn open(s: &mut Server, path: &Path, version: i64) -> (String, String) {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let split = args.iter().position(|a| a == "--").expect("SERVER [ARGS…] -- SCENARIO FILE…");
+    let split = args
+        .iter()
+        .position(|a| a == "--")
+        .expect("SERVER [ARGS…] -- SCENARIO FILE…");
     let server = &args[..split];
-    let scenario = args.get(split + 1).expect("a scenario: open, edit or session");
+    let scenario = args
+        .get(split + 1)
+        .expect("a scenario: open, edit or session");
     let files: Vec<PathBuf> = args[split + 2..].iter().map(PathBuf::from).collect();
     match scenario.as_str() {
         "open" => {
@@ -253,7 +261,10 @@ fn main() {
                 let afresh = fresh.diagnostics(&u);
                 fresh.stop();
                 if kept == afresh {
-                    println!("verify same diagnostics={}", kept.as_array().map_or(0, Vec::len));
+                    println!(
+                        "verify same diagnostics={}",
+                        kept.as_array().map_or(0, Vec::len)
+                    );
                 } else {
                     println!("verify DIFFERENT\nkept={kept}\nafresh={afresh}");
                 }

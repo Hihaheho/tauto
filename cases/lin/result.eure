@@ -1,20 +1,24 @@
 // `Result`, `fail` / `raise` / `catch` and `Slice`.
 
 @ cases.raise-ok
+llvm.unimplemented = "generate: the LLVM backend does not write the operation `fail@Text` yet"
 source = ```nib
 let r: Result(i64, Text) := Ok(1)
-let v := catch(() => raise(r) + 1)
-perform show("v", v)
+let v: Result(i64, Text) := catch(() => raise(r) + 1)
+show(&v)
 ```
-shows = ["v = Ok(2)"]
+stdout = "Ok(2)\n"
 
 @ cases.raise-err-stops
+llvm.unimplemented = "generate: the LLVM backend does not write the operation `fail@Text` yet"
 source = ```nib
 let r: Result(i64, Text) := Err("bad")
-let v := catch(() => raise(r) + 1)
-perform show("v", v)
+let v: Result(i64, Text) := catch(() => raise(r) + 1)
+show(&v)
 ```
-shows = ["v = Err(\"bad\")"]
+stdout = ```
+Err("bad")
+```
 
 @ cases.raise-needs-row
 source = ```nib
@@ -39,7 +43,7 @@ rows = "error: `f` may perform ask"
 
 @ cases.two-fails-are-told-apart
 description = "fail(IoError) and fail(ParseError) are two effects, so `catch` cannot tell which one it handles"
-unimplemented = "the row check does not yet tell effects apart by their type arguments"
+eval.unimplemented = "the row check does not yet tell effects apart by their type arguments"
 source = ```nib
 struct IoError { code: i64 }
 struct ParseError { line: i64 }
@@ -61,7 +65,7 @@ lin = "ok"
 
 @ cases.linear-across-raise
 source = ```nib
-linear struct H {}
+struct(linear) H {}
 fn hello(): H { H {} }
 fn finish(h: H): i64 { match h { H {} => 0 } }
 fn f(r: Result(i64, Text)): i64 ! {fail(Text)} {
@@ -80,23 +84,23 @@ types = "error: Slice(A) can only be borrowed"
 
 @ cases.slice-in-a-vec-is-rejected
 source = ```nib
-fn f(&v: Vec(Slice(i64))): u64 { 0 }
+fn f(v: &Vec(Slice(i64))): u64 { 0 }
 ```
 types = "error: Slice(A) can only be borrowed"
 
 @ cases.slice-borrowed-is-fine
 source = ```nib
-fn f(&s: Slice(i64)): u64 { Slice::len(&s) }
+fn f(s: &Slice(i64)): u64 { Slice::len(&s) }
 ```
 types = "ok"
 
 @ cases.slice-len
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Vec::as_slice` yet"
 source = ```nib
-import std::prelude::Affine
 
 var v := Vec::new()
 Vec::push(&mut v, 1)
-let &s := Vec::as_slice(&v)
-perform show("n", Slice::len(&s))
+let s := Vec::as_slice(&v)
+show(&Slice::len(&s))
 ```
-shows = ["n = 1"]
+stdout = "1\n"

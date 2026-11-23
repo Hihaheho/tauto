@@ -26,4 +26,4 @@ mod tote;
 pub use convert::{Cx, host, host_ref, host_take};
 pub use tauto_nir::interface_fingerprint;
 pub use tauto_vm::Value;
-pub use tote::{Externs, Tote};
+pub use tote::{Externs, Failure, Tote};

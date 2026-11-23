@@ -20,12 +20,12 @@ let c := a
 lin = "ok"
 
 @ cases.declared-copy-with-shared-field
-source = "copy struct Q { t: Text }"
+source = "struct(copy) Q { t: Text }"
 types = "error: declared copy"
 
 @ cases.declared-affine-is-used-once
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 fn f(x: F): F { x }
 let a := F {}
 let b := f(a)
@@ -35,21 +35,21 @@ lin = "error: a is used after move"
 
 @ cases.declared-affine-may-be-dropped
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 fn g(x: F): i64 { 0 }
 ```
 lin = "ok"
 
 @ cases.linear-must-be-used
 source = ```nib
-linear struct H {}
+struct(linear) H {}
 fn g(x: H): i64 { 0 }
 ```
 lin = "error: x is not used"
 
 @ cases.linear-used-on-one-path
 source = ```nib
-linear struct H {}
+struct(linear) H {}
 fn consume(x: H): i64 { match x { H {} => 1 } }
 fn g(x: H, b: Bool): i64 { if b { consume(x) } else { 0 } }
 ```
@@ -57,7 +57,7 @@ lin = "error: used on some paths only"
 
 @ cases.affine-field-makes-affine
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 struct W { f: F }
 fn keep(w: W): W { w }
 let a := W { f: F {} }
@@ -76,24 +76,24 @@ let c := a
 lin = "ok"
 
 @ cases.generic-default-is-affine
-source = "fn twice<A>(x: A): Pair(A, A) { Pair { fst: x, snd: x } }"
+source = "fn twice<A>(x: A): A × A { #(x, x) }"
 lin = "error: x is used after move"
 
 @ cases.generic-shared-may-dup
-source = "fn twice<A: Shared>(x: A): Pair(A, A) { Pair { fst: x, snd: x } }"
+source = "fn twice<A: Shared>(x: A): A × A { #(x, x) }"
 lin = "ok"
 
 @ cases.generic-default-may-drop
-source = "fn fst<A, B>(p: Pair(A, B)): A { match p { Pair { fst: a, snd: _ } => a } }"
+source = "fn fst<A, B>(p: A × B): A { match p { #(a, _) => a } }"
 lin = "ok"
 
 @ cases.generic-linear-may-not-drop
-source = "fn fst<A, B: Linear>(p: Pair(A, B)): A { match p { Pair { fst: a, snd: b } => a } }"
+source = "fn fst<A, B: Linear>(p: A × B): A { match p { #(a, b) => a } }"
 lin = "error: b is not used"
 
 @ cases.linear-does-not-fit-affine-bound
 source = ```nib
-linear struct H {}
+struct(linear) H {}
 fn f<A>(x: A): A { x }
 let h := H {}
 let g := f(h)
@@ -102,7 +102,7 @@ types = "error: linear does not fit affine"
 
 @ cases.closure-capturing-affine-is-affine
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 fn consume(x: F): i64 { 0 }
 let a := F {}
 let g := () => consume(a)
@@ -113,37 +113,36 @@ lin = "error: g is used after move"
 
 @ cases.closure-lending-what-it-captured-is-called-again
 source = ```nib
-affine struct F {}
-fn peek(&x: F): i64 { 1 }
+struct(affine) F {}
+fn peek(x: &F): i64 { 1 }
 let a := F {}
 let g := () => peek(&a)
-perform show("sum", g() + g())
+show(&(g() + g()))
 ```
 lin = "ok"
-shows = ["sum = 2"]
+stdout = "2\n"
 
 @ cases.local-fn-lending-what-it-captured-is-lent-to-a-borrowed-parameter
 source = ```nib
-import std::prelude::Affine
 
-fn apply(&f: (i64) -> i64, x: i64): i64 {
+fn apply(f: &((i64) -> i64 ! {overflow}), x: i64): i64 ! {overflow} {
   let y := f(x)
   f(y)
 }
-fn go(xs: Vec(i64)): i64 {
-  fn pick(i: i64): i64 { i + I64::of_u64(Vec::len(&xs)) }
+fn go(xs: Vec(i64)): i64 ! {overflow} {
+  fn pick(i: i64): i64 ! {overflow} { i + I64::of_u64(Vec::len(&xs)) }
   apply(pick, 1) + pick(0)
 }
 var xs := Vec::new()
 Vec::push(&mut xs, 4)
-perform show("r", go(xs))
+show(&go(xs))
 ```
 lin = "ok"
-shows = ["r = 4"]
+stdout = "4\n"
 
 @ cases.closure-consuming-what-it-captured-is-not-lent
 source = ```nib
-fn apply(&f: (i64) -> i64, x: i64): i64 { f(x) }
+fn apply(f: &((i64) -> i64), x: i64): i64 { f(x) }
 fn eat(xs: Vec(i64)): i64 { I64::of_u64(Vec::len(&xs)) }
 fn go(xs: Vec(i64)): i64 {
   fn pick(i: i64): i64 { i + eat(xs) }
@@ -154,7 +153,7 @@ lin = "error: pick consumes a value it captured, so it can be called only once a
 
 @ cases.closure-capturing-affine-needs-affine-type
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 fn consume(x: F): i64 { 0 }
 fn run(f: () -> i64): i64 { f() }
 let a := F {}
@@ -162,9 +161,41 @@ let r := run(() => consume(a))
 ```
 types = "error: affine closure where shared"
 
+@ cases.a-linear-closure-is-said-with-a-not-an
+source = ```nib
+struct(linear) L {}
+fn peek(l: &L): i64 { 0 }
+fn run(f: () -> i64): i64 { f() }
+let l := L {}
+let r := run(() => peek(&l))
+```
+types = "error: a linear closure where shared"
+
+@ cases.an-affine-closure-is-said-with-an
+source = ```nib
+struct(affine) F {}
+fn consume(x: F): i64 { 0 }
+fn run(f: () -> i64): i64 { f() }
+let a := F {}
+let r := run(() => consume(a))
+```
+types = "error: an affine closure where shared"
+
+@ cases.a-closure-that-does-not-fit-leaves-no-undetermined-type
+// `catch` takes its body borrowed and shared, so a closure that borrows a linear value
+// does not fit it; the one error says so, and the `T` it would have fixed is not
+// reported again.
+source = ```nib
+struct(linear) L {}
+fn peek(l: &L): i64 { 0 }
+let l := L {}
+let r := catch(() => peek(&l))
+```
+types = "error: a linear closure where shared"
+
 @ cases.an-affine-function-type-takes-the-closure
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 fn consume(x: F): i64 { 0 }
 fn run(f: affine () -> i64): i64 { f() }
 let a := F {}
@@ -174,7 +205,7 @@ lin = "ok"
 
 @ cases.an-affine-function-type-keeps-its-parameter-list
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 fn two(f: affine (i64, i64) -> i64): i64 { f(1, 2) }
 fn f(x: F): F {
   let g: affine () -> F := () => x
@@ -187,7 +218,7 @@ lin = "ok"
 
 @ cases.a-type-met-again-at-other-arguments-holds-them
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 enum W(A: Type) { Leaf(A), Node(W(F)) }
 fn keep(w: W(i64)): W(i64) { w }
 let a: W(i64) := Node(Leaf(F {}))
@@ -205,3 +236,53 @@ let b := keep(a)
 let c := keep(a)
 ```
 lin = "ok"
+
+// Writing a place drops the value it held: through `&mut` that value can
+// only be taken out with `replace`, so a linear one may not be overwritten.
+@ cases.linear-overwrite-through-mut
+source = ```nib
+struct(linear) H { n: i64 }
+fn reset(h: &mut H): Unit { *h := H { n: 0 } }
+```
+lin = "error: h holds a linear value that this write would drop"
+
+@ cases.linear-field-overwrite-through-mut
+source = ```nib
+struct(linear) H { n: i64 }
+struct W { h: H, k: i64 }
+fn reset(w: &mut W): Unit { w.h := H { n: 0 } }
+```
+lin = "error: w.h holds a linear value that this write would drop"
+
+@ cases.dup-field-of-linear-may-be-written
+source = ```nib
+struct(linear) H { n: i64 }
+fn reset(h: &mut H): Unit { h.n := 0 }
+```
+lin = "ok"
+
+// A `&mut` may not live across an `ω` effect even when what it points to is
+// copy: the continuation would be duplicated with the borrow in it.
+@ cases.mut-borrow-of-copy-across-many
+source = ```nib
+effect ask(): i64 resume ω
+fn bump(x: &mut i64, n: i64): Unit { *x := x + n }
+fn g(): i64 ! {ask} {
+  var c := 0
+  let r := &mut c
+  bump(&mut r, perform ask())
+  c
+}
+```
+lin = "error: r is live across ask, which resumes ω"
+
+@ cases.second-capture-of-an-affine-value-is-located-at-the-capture
+source = ```nib
+struct(affine) Token { value: i64 }
+fn start(f: affine () -> i64): i64 { f() }
+let tok := Token { value: 41 }
+let a := start(() => match tok { Token { value } => value })
+let b := start(() => match tok { Token { value } => value })
+a + b
+```
+diagnostics = [{ stage => "lin", message => "tok is used after move", span => "let b := start(() => match «tok» { Token { value } => value })" }]

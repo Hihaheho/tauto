@@ -1,0 +1,190 @@
+import "../../macros/src/node.taut"
+import "../../macros/src/lift.taut"
+import "../../parse/src/parse.taut"
+import "../../surface/src/surface.taut"
+import "../../syntax/src/syntax.taut"
+import "../../unicode/src/classes.taut"
+import "../../unicode/src/unicode.taut"
+import "../../synrun/src/syntab.taut"
+import "tables.taut"
+import std::array
+import std::base
+import std::text
+
+// The values a parse makes (`SynVal`) as the `Node` of the macro's world: what the host
+// builds from the tree of a literal (`Builder::node` of `crates/tauto-parse/src/syntax.rs`).
+// A constructor is the number `tb_node_id` gave it; `nodes` says by that number what it
+// is. The five that every parse makes are numbered by `tb_ids`: a span becomes
+// `SynSpan(id=…)` with the position of its start in the text, a token `SynToken(text span ctx)`
+// whose context holds the scopes it was given.
+
+// `start` is the position of the literal's first byte in the file and `shifts` the lines of a block
+// that lost their indentation (`SyntaxLit::shifts`): for each, the offset where it starts and the bytes
+// taken off it and the lines before it.
+// `holes` are the starts of the tokens that are holes (`${ e }`, `$name`): each is read as the expression
+// it is written as, whose names carry `scopes`.
+pub(open) struct TbBuild {
+  nodes: Array(TbNode),
+  scopes: List(i64),
+  start: Nat,
+  shifts: List(Nat × Nat),
+  holes: List(Nat)
+}
+
+// Where byte `offset` of the literal was written (`SyntaxLit::position`).
+pub fn tb_position(b: &TbBuild, offset: Nat): Nat ! {div} {
+  var removed := 0
+  var rest := b.shifts
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(s, more) => match s {
+        #(line, taken) => if line <= offset {
+          removed := taken
+          rest := more
+        } else {
+          going := false
+        }
+      }
+    }
+  }
+  b.start + offset + removed
+}
+
+pub fn tb_labeled_field(label: Option(Text), value: Node): NField {
+  NField { label: label, value: value }
+}
+
+pub fn tb_node_zip(labels: List(Option(Text)), values: List(Node)): List(NField) {
+  match values {
+    Nil => Nil
+    Cons(v, rest) => match labels {
+      Nil => Cons(NField { label: None, value: v }, tb_node_zip(Nil, rest))
+      Cons(l, more) => Cons(NField { label: l, value: v }, tb_node_zip(more, rest))
+    }
+  }
+}
+
+pub fn tb_nodes_list(b: &TbBuild, t: &SyntaxTables, classes: UnicodeClasses, errs: &mut LfSt, vs: List(SynVal)): List(Node) ! {div, out_of_bounds, overflow} {
+  match vs {
+    Nil => Nil
+    Cons(v, rest) => {
+      let n := tb_node(b, t, classes, &mut errs, v)
+      Cons(n, tb_nodes_list(b, t, classes, &mut errs, rest))
+    }
+  }
+}
+
+pub fn tb_text_of(v: SynVal): Text {
+  match v {
+    VText(t) => t
+    ^other => ""
+  }
+}
+
+pub fn tb_nat_of(v: SynVal): Nat {
+  match v {
+    VNat(n) => n
+    ^other => 0
+  }
+}
+
+pub fn tb_first(vs: List(SynVal)): SynVal {
+  match vs {
+    Nil => VNat(0)
+    Cons(v, ^rest) => v
+  }
+}
+
+pub fn tb_second(vs: List(SynVal)): SynVal {
+  match vs {
+    Nil => VNat(0)
+    Cons(^v, rest) => tb_first(rest)
+  }
+}
+
+pub fn tb_third(vs: List(SynVal)): SynVal {
+  match vs {
+    Nil => VNat(0)
+    Cons(^v, rest) => tb_second(rest)
+  }
+}
+
+pub fn tb_span_node(b: &TbBuild, at: Nat): Node ! {div} {
+  nd_st("SynSpan", [NLabeled { name: "id", value: NInt(I64::of_u64(U64::of_nat(tb_position(b, at)))) }])
+}
+
+pub fn tb_is_hole(holes: List(Nat), at: Nat): Bool {
+  match holes {
+    Nil => false
+    Cons(h, rest) => h == at || tb_is_hole(rest, at)
+  }
+}
+
+// A hole's text, from its `$`: the expression after it, as the host reads it (`Builder::embed`);
+// a hole that does not read, or does not lift, is noted in `errs`.
+pub fn tb_embed(b: &TbBuild, t: &SyntaxTables, classes: UnicodeClasses, errs: &mut LfSt, text: Text, at: Nat): Node ! {div, out_of_bounds, overflow} {
+  let inner := Text::slice_or_empty(text, 1, Text::len(text))
+  match surface_parse_program(t, classes, inner, tb_position(b, at + 1)) {
+    None => {
+      Vec::push(&mut errs.errs, "embedded")
+      NList(Nil)
+    }
+    Some(stmts) => match stmts {
+      Cons(SurfaceStmt::StExpr(term), Nil) => lf_expr(
+        LfCtx { scopes: b.scopes, in_quote: false, atoms: Nil, reflip: None },
+        &mut errs,
+        term
+      )
+      ^other => {
+        Vec::push(&mut errs.errs, "embedded")
+        NList(Nil)
+      }
+    }
+  }
+}
+
+pub fn tb_token(b: &TbBuild, t: &SyntaxTables, classes: UnicodeClasses, errs: &mut LfSt, fields: List(SynVal)): Node ! {div, out_of_bounds, overflow} {
+  let at := tb_nat_of(tb_first(tb_data_fields(tb_second(fields))))
+  if tb_is_hole(b.holes, at) {
+    tb_embed(b, t, classes, &mut errs, tb_text_of(tb_first(fields)), at)
+  } else {
+    nd_st("SynToken", [
+      NLabeled { name: "text", value: NText(tb_text_of(tb_first(fields))) },
+      NLabeled { name: "span", value: tb_span_node(b, at) },
+      NLabeled { name: "ctx", value: nd_st("SynCtx", [NLabeled { name: "scopes", value: NList(lf_ints(b.scopes)) }]) }
+    ])
+  }
+}
+
+pub fn tb_data_fields(v: SynVal): List(SynVal) {
+  match v {
+    VData(^c, fields) => fields
+    ^other => Nil
+  }
+}
+
+pub fn tb_node(b: &TbBuild, t: &SyntaxTables, classes: UnicodeClasses, errs: &mut LfSt, v: SynVal): Node ! {div, out_of_bounds, overflow} {
+  match v {
+    VNat(n) => NInt(I64::of_u64(U64::of_nat(n)))
+    VText(x) => NText(x)
+    VList(items) => NList(tb_nodes_list(b, t, classes, &mut errs, items))
+    VOpt(o) => match o {
+      None => NOpt(None)
+      Some(x) => NOpt(Some(tb_node(b, t, classes, &mut errs, x)))
+    }
+    VData(c, fields) => if c == 0 {
+      tb_span_node(b, tb_nat_of(tb_first(fields)))
+    } else if c == 1 {
+      nd_st("SynCtx", [NLabeled { name: "scopes", value: NList(lf_ints(b.scopes)) }])
+    } else if c == 2 {
+      tb_token(b, t, classes, &mut errs, fields)
+    } else {
+      match Array::get(b.nodes, c - 5) {
+        None => NCtor("unknown constructor", Nil)
+        Some(n) => NCtor(n.name, tb_node_zip(n.labels, tb_nodes_list(b, t, classes, &mut errs, fields)))
+      }
+    }
+  }
+}

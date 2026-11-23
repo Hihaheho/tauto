@@ -1,0 +1,50 @@
+import "base.taut" { List }
+import std::prelude::std { List, Option }
+
+// Stacks as the proofs see them: a list with the top
+// at its head. Extraction maps `Stack` onto Nib's `Vec` and the functions
+// here onto `Vec::new`, `Vec::push`, `Vec::pop` and `Vec::len`, which work at the
+// end of a growable buffer in O(1) and need no cell for an element; the
+// definitions here say what those builtins do.
+//
+// A stack is lent (`&s`, `&mut s`) or a local `var`: Nib's `Vec` cannot be a
+// field of a struct, which is `shared`.
+
+pub(open) inductive Stack(A: Type): Type =>
+  fn Stack::beq, theorem Stack::beq_refl, theorem Stack::beq_sound, theorem Stack::deq {
+  Mk(items: List(A)): Stack(A)
+}
+
+// Mapped: the empty stack.
+pub fn Stack::new<A>(): Stack(A) {
+  Stack::Mk(Nil)
+}
+
+// Mapped: `x` on top.
+pub fn Stack::push<A>(s: &mut Stack(A), x: A): Unit {
+  *s := Stack::Mk(Cons(x, s.items))
+}
+
+// Mapped: the top, taken off, or none when the stack is empty.
+pub fn Stack::pop<A>(s: &mut Stack(A)): Option(A) {
+  match s.items {
+    Nil => None
+    Cons(top, below) => {
+      *s := Stack::Mk(below)
+      Some(top)
+    }
+  }
+}
+
+// Mapped: the number of elements.
+pub fn Stack::len<A>(s: &Stack(A)): Nat {
+  List::length(s.items)
+}
+
+// Mapped: whether there is no element.
+pub fn Stack::is_empty<A>(s: &Stack(A)): Bool {
+  match s.items {
+    Nil => true
+    Cons(top, below) => false
+  }
+}

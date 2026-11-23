@@ -1,19 +1,19 @@
 import "../src/bundle.taut"
 import "../src/resolve.taut"
-import std::Text
+import std::text
 
 // How resources are read: junk is reported and skipped, an earlier definition is kept, CRLF is
 // a line end, and references that nest without end stop with an error.
 
 fn added_errors(a: Added): List(ResourceError) {
-  ⊢ List(ResourceError) from match a {
-    Mk(b, es) => es
+  match a {
+    Mk(^b, es) => es
   }
 }
 
 fn added_bundle(a: Added): Bundle {
-  ⊢ Bundle from match a {
-    Mk(b, es) => b
+  match a {
+    Mk(b, ^es) => b
   }
 }
 
@@ -93,22 +93,22 @@ theorem string_literal_escapes(): format_text(
 }
 
 fn has_too_deep(es: List(FluentError)): Bool {
-  ⊢ Bool from match es {
+  match es {
     Nil => false
     Cons(e, rest) => ⊢ Bool from match e {
       TooDeep => true
-      UnknownMessage(i) => has_too_deep(rest)
-      UnknownTerm(i) => has_too_deep(rest)
-      UnknownAttribute(i, a) => has_too_deep(rest)
-      UnknownVariable(n) => has_too_deep(rest)
-      NoValue(i) => has_too_deep(rest)
+      UnknownMessage(^i) => has_too_deep(rest)
+      UnknownTerm(^i) => has_too_deep(rest)
+      UnknownAttribute(^i, ^a) => has_too_deep(rest)
+      UnknownVariable(^n) => has_too_deep(rest)
+      NoValue(^i) => has_too_deep(rest)
     }
   }
 }
 
 fn stops_deep(f: Formatted): Bool {
-  ⊢ Bool from match f {
-    Mk(t, es) => has_too_deep(es)
+  match f {
+    Mk(^t, es) => has_too_deep(es)
   }
 }
 

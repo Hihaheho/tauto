@@ -34,6 +34,14 @@ impl Recorder {
         self.0.declare_program(program)
     }
 
+    /// Supply the nominal types owned by the file's tote before recording it.
+    pub fn set_inference_owners(
+        &mut self,
+        owners: Option<std::collections::HashSet<crate::surface::Name>>,
+    ) {
+        self.0.set_inference_owners(owners);
+    }
+
     /// Check a theorem's curried statement and body directly, without named
     /// elaboration, so that the replay includes core rejections too.
     pub fn theorem_written(&mut self, source: &str) -> Result<bool, String> {
@@ -56,57 +64,6 @@ impl Recorder {
             .0
             .core
             .add_decl(&t.name, &ty, Some(&body), false)
-            .is_ok())
-    }
-
-    /// Read an inductive declaration directly into the independent checker.
-    pub fn inductive_written(&mut self, source: &str) -> Result<bool, String> {
-        let mut p = parse_program_as_written(source)?;
-        self.0.resolver.statements(&mut p.stmts);
-        let Some(Stmt::Inductive(i)) = p.stmts.first() else {
-            return Err("expected an inductive declaration".into());
-        };
-        let mut params = Vec::new();
-        for (name, domain) in &i.params {
-            params.push((
-                name.clone(),
-                self.0.shape(domain).map_err(|d| d.message.to_string())?,
-            ));
-        }
-        let sort = self.0.shape(&i.sort).map_err(|d| d.message.to_string())?;
-        let mut tail = &sort;
-        while let TermKind::Pi { result, .. } = &*tail.kind {
-            tail = result;
-        }
-        let out = crate::check::sort_of(tail).ok_or("expected a sort")?;
-        let mut ctors = Vec::new();
-        for ctor in &i.constructors {
-            let mut args = Vec::new();
-            for (name, domain) in &ctor.params {
-                args.push((
-                    name.clone(),
-                    self.0.shape(domain).map_err(|d| d.message.to_string())?,
-                ));
-            }
-            let result = self
-                .0
-                .shape(&ctor.result)
-                .map_err(|d| d.message.to_string())?;
-            let ty = crate::check::inductive::pi_all(
-                &params,
-                crate::check::inductive::pi_all(&args, result),
-            );
-            ctors.push((ctor.name.clone(), ty));
-        }
-        let spec = FamSpec {
-            name: i.name.clone(),
-            ty: crate::check::inductive::pi_all(&params, sort),
-            ctors,
-        };
-        Ok(self
-            .0
-            .core
-            .add_inductive(&[spec], params.len(), out)
             .is_ok())
     }
 
@@ -140,7 +97,7 @@ impl Recorder {
 
 impl Core {
     pub(super) fn timed<X>(&mut self, f: impl FnOnce(&mut Self) -> X) -> X {
-        let start = std::time::Instant::now();
+        let start = crate::clock::Instant::now();
         let x = f(self);
         self.replay_time += start.elapsed();
         x
@@ -169,9 +126,10 @@ pub(super) fn term(t: &Tm) -> String {
         Lit(n) => {
             let mut n = *n;
             let mut ds = Vec::new();
-            while n != 0 {
-                ds.push((n & 65535).to_string());
-                n >>= 16;
+            let base = super::Num::small(65536);
+            while !n.is_zero() {
+                ds.push(n.checked_rem(base).expect("nonzero divisor").to_string());
+                n = n.checked_div(base).expect("nonzero divisor");
             }
             if ds.is_empty() {
                 "n 0".into()

@@ -1,6 +1,6 @@
-import std::Base
-import std::List
-import std::Text
+import std::base
+import std::list
+import std::text
 import "cmdline.taut"
 
 // The texts a program shows: its help, its usage line, its version and its
@@ -36,14 +36,14 @@ fn nl(): List(Nat) {
 // ---- the option and argument columns -------------------------------------------
 
 fn short_form(s: Option(Nat)): List(Nat) {
-  ⊢ List(Nat) from match s {
+  match s {
     None => spaces(4)
     Some(c) => Cons(45, Cons(c, Cons(44, Cons(32, Nil))))
   }
 }
 
 fn takes_form(t: Takes): List(Nat) {
-  ⊢ List(Nat) from match t {
+  match t {
     Nothing => Nil
     Value(m) => Cons(32, Cons(60, List::append(Text::bytes(m), Cons(62, Nil))))
   }
@@ -54,73 +54,63 @@ fn long_form(o: Opt): List(Nat) {
   Cons(45, Cons(45, Text::bytes(Opt::long(o))))
 }
 
-module Opt {
-  // `-s, --long <VALUE>`, or `    --long` without a short name.
-  fn forms(o: Opt): List(Nat) {
-    List::append(short_form(Opt::short(o)), List::append(long_form(o), takes_form(Opt::takes(o))))
-  }
+// `-s, --long <VALUE>`, or `    --long` without a short name.
+fn Opt::forms(o: Opt): List(Nat) {
+  List::append(short_form(Opt::short(o)), List::append(long_form(o), takes_form(Opt::takes(o))))
+}
 
-  // `--long <VALUE>`, as an error or the usage line names the option.
-  fn name(o: Opt): List(Nat) {
-    List::append(long_form(o), takes_form(Opt::takes(o)))
-  }
+// `--long <VALUE>`, as an error or the usage line names the option.
+fn Opt::name(o: Opt): List(Nat) {
+  List::append(long_form(o), takes_form(Opt::takes(o)))
 }
 
 fn upper(c: Nat): Nat {
-  ⊢ Nat from match Bool::and(Nat::le(97, c), Nat::le(c, 122)) {
+  match Bool::and(Nat::le(97, c), Nat::le(c, 122)) {
     false => c
     true => Nat::sub(c, 32)
   }
 }
 
-module Pos {
-  fn form(p: Pos): List(Nat) {
-    ⊢ List(Nat) from match Pos::arity(p) {
-      ExactlyOne => Cons(60, List::append(Text::bytes(Pos::name(p)), Cons(62, Nil)))
-      AtMostOne => Cons(91, List::append(Text::bytes(Pos::name(p)), Cons(93, Nil)))
-      AnyNumber => Cons(
-        91,
-        List::append(Text::bytes(Pos::name(p)), Cons(93, Cons(46, Cons(46, Cons(46, Nil)))))
-      )
-    }
+fn Pos::form(p: Pos): List(Nat) {
+  match Pos::arity(p) {
+    ExactlyOne => Cons(60, List::append(Text::bytes(Pos::name(p)), Cons(62, Nil)))
+    AtMostOne => Cons(91, List::append(Text::bytes(Pos::name(p)), Cons(93, Nil)))
+    AnyNumber => Cons(
+      91,
+      List::append(Text::bytes(Pos::name(p)), Cons(93, Cons(46, Cons(46, Cons(46, Nil)))))
+    )
   }
 }
 
-module Opt {
-  // The left column of an option's line: two spaces and its forms.
-  pub fn left(o: Opt): List(Nat) {
-    List::append(spaces(2), Opt::forms(o))
-  }
+// The left column of an option's line: two spaces and its forms.
+pub fn Opt::left(o: Opt): List(Nat) {
+  List::append(spaces(2), Opt::forms(o))
 }
 
-module Pos {
-  fn left(p: Pos): List(Nat) {
-    List::append(spaces(2), Pos::form(p))
-  }
+fn Pos::left(p: Pos): List(Nat) {
+  List::append(spaces(2), Pos::form(p))
 }
 
 fn widest_opt(os: List(Opt)): Nat {
-  ⊢ Nat from match os {
+  match os {
     Nil => Zero
     Cons(o, rest) => Nat::max(List::length(Opt::left(o)), widest_opt(rest))
   }
 }
 
 fn widest_pos(ps: List(Pos)): Nat {
-  ⊢ Nat from match ps {
+  match ps {
     Nil => Zero
     Cons(p, rest) => Nat::max(List::length(Pos::left(p)), widest_pos(rest))
   }
 }
 
-module Subcommand {
-  fn left(c: Spec): List(Nat) {
-    List::append(spaces(2), Text::bytes(spec_name(c)))
-  }
+fn Subcommand::left(c: Spec): List(Nat) {
+  List::append(spaces(2), Text::bytes(spec_name(c)))
 }
 
 fn widest_sub(cs: List(Spec)): Nat {
-  ⊢ Nat from match cs {
+  match cs {
     Nil => Zero
     Cons(c, rest) => Nat::max(List::length(Subcommand::left(c)), widest_sub(rest))
   }
@@ -136,7 +126,7 @@ pub fn left_width(sp: Spec): Nat {
 
 // The description after the left column, padded to `w`, and the newline.
 pub fn about_after(w: Nat, left: List(Nat), about: Text): List(Nat) {
-  ⊢ List(Nat) from match Text::bytes(about) {
+  match Text::bytes(about) {
     Nil => nl()
     Cons(c, cs) => List::append(
       spaces(Nat::sub(w, List::length(left))),
@@ -145,37 +135,33 @@ pub fn about_after(w: Nat, left: List(Nat), about: Text): List(Nat) {
   }
 }
 
-module Opt {
-  // An option's line of the help: its left column, then its description.
-  fn line(w: Nat, o: Opt): List(Nat) {
-    List::append(Opt::left(o), about_after(w, Opt::left(o), Opt::about(o)))
-  }
+// An option's line of the help: its left column, then its description.
+fn Opt::line(w: Nat, o: Opt): List(Nat) {
+  List::append(Opt::left(o), about_after(w, Opt::left(o), Opt::about(o)))
+}
 
-  pub fn lines(w: Nat, os: List(Opt)): List(List(Nat)) {
-    ⊢ List(List(Nat)) from match os {
-      Nil => Nil
-      Cons(o, rest) => Cons(Opt::line(w, o), Opt::lines(w, rest))
-    }
+pub fn Opt::lines(w: Nat, os: List(Opt)): List(List(Nat)) {
+  match os {
+    Nil => Nil
+    Cons(o, rest) => Cons(Opt::line(w, o), Opt::lines(w, rest))
   }
 }
 
-module Pos {
-  fn line(w: Nat, p: Pos): List(Nat) {
-    List::append(Pos::left(p), about_after(w, Pos::left(p), Pos::about(p)))
-  }
-
-  fn lines(w: Nat, ps: List(Pos)): List(List(Nat)) {
-    ⊢ List(List(Nat)) from match ps {
-      Nil => Nil
-      Cons(p, rest) => Cons(Pos::line(w, p), Pos::lines(w, rest))
-    }
-  }
-
-  // ---- the usage line ----------------------------------------------------------------
+fn Pos::line(w: Nat, p: Pos): List(Nat) {
+  List::append(Pos::left(p), about_after(w, Pos::left(p), Pos::about(p)))
 }
+
+fn Pos::lines(w: Nat, ps: List(Pos)): List(List(Nat)) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(Pos::line(w, p), Pos::lines(w, rest))
+  }
+}
+
+// ---- the usage line ----------------------------------------------------------------
 
 fn required_names(os: List(Opt)): List(Nat) {
-  ⊢ List(Nat) from match os {
+  match os {
     Nil => Nil
     Cons(o, rest) => ⊢ List(Nat) from match Opt::need(o) {
       false => required_names(rest)
@@ -184,19 +170,17 @@ fn required_names(os: List(Opt)): List(Nat) {
   }
 }
 
-module Pos {
-  fn names(ps: List(Pos)): List(Nat) {
-    ⊢ List(Nat) from match ps {
-      Nil => Nil
-      Cons(p, rest) => Cons(32, List::append(Pos::form(p), Pos::names(rest)))
-    }
+fn Pos::names(ps: List(Pos)): List(Nat) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(32, List::append(Pos::form(p), Pos::names(rest)))
   }
 }
 
 fn command_name(cs: List(Spec), need: Bool): List(Nat) {
-  ⊢ List(Nat) from match cs {
+  match cs {
     Nil => Nil
-    Cons(c, rest) => ⊢ List(Nat) from match need {
+    Cons(^c, ^rest) => ⊢ List(Nat) from match need {
       true => Text::bytes(" <COMMAND>")
       false => Text::bytes(" [COMMAND]")
     }
@@ -232,14 +216,14 @@ fn usage(sp: Spec): Text {
 // ---- the help ----------------------------------------------------------------------
 
 fn about_part(sp: Spec): List(Nat) {
-  ⊢ List(Nat) from match Text::bytes(spec_about(sp)) {
+  match Text::bytes(spec_about(sp)) {
     Nil => Nil
     Cons(c, cs) => Cons(c, List::append(cs, Cons(10, Cons(10, Nil))))
   }
 }
 
 fn args_part(w: Nat, ps: List(Pos)): List(Nat) {
-  ⊢ List(Nat) from match ps {
+  match ps {
     Nil => Nil
     Cons(
       p,
@@ -248,17 +232,15 @@ fn args_part(w: Nat, ps: List(Pos)): List(Nat) {
   }
 }
 
-module Subcommand {
-  fn lines(w: Nat, cs: List(Spec)): List(List(Nat)) {
-    ⊢ List(List(Nat)) from match cs {
-      Nil => Nil
-      Cons(c, rest) => Cons(List::append(Subcommand::left(c), about_after(w, Subcommand::left(c), spec_about(c))), Subcommand::lines(w, rest))
-    }
+fn Subcommand::lines(w: Nat, cs: List(Spec)): List(List(Nat)) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(List::append(Subcommand::left(c), about_after(w, Subcommand::left(c), spec_about(c))), Subcommand::lines(w, rest))
   }
 }
 
 fn commands_part(w: Nat, cs: List(Spec)): List(Nat) {
-  ⊢ List(Nat) from match cs {
+  match cs {
     Nil => Nil
     Cons(c, rest) => List::append(Text::bytes("\nCommands:\n"), List::concat(Subcommand::lines(w, Cons(c, rest))))
   }
@@ -312,14 +294,14 @@ fn nat_min3(a: Nat, b: Nat, c: Nat): Nat {
 }
 
 fn head_or_zero(l: List(Nat)): Nat {
-  ⊢ Nat from match l {
+  match l {
     Nil => Zero
-    Cons(x, rest) => x
+    Cons(x, ^rest) => x
   }
 }
 
 fn cost(c: Nat, d: Nat): Nat {
-  ⊢ Nat from match Nat::eq(c, d) {
+  match Nat::eq(c, d) {
     false => 1
     true => Zero
   }
@@ -329,7 +311,7 @@ fn cost(c: Nat, d: Nat): Nat {
 // before `c`, from its entry for the bytes of `b` before `bs`; `left` is the
 // entry just written.
 fn edit_row(c: Nat, bs: List(Nat), prev: List(Nat), left: Nat): List(Nat) {
-  ⊢ List(Nat) from match bs {
+  match bs {
     Nil => Nil
     Cons(d, more) => ⊢ List(Nat) from match prev {
       Nil => Nil
@@ -350,7 +332,7 @@ fn edit_row(c: Nat, bs: List(Nat), prev: List(Nat), left: Nat): List(Nat) {
 }
 
 fn edit_rows(a: List(Nat), b: List(Nat), row: List(Nat)): List(Nat) {
-  ⊢ List(Nat) from match a {
+  match a {
     Nil => row
     Cons(
       c,
@@ -364,7 +346,7 @@ fn edit_rows(a: List(Nat), b: List(Nat), row: List(Nat)): List(Nat) {
 }
 
 fn last_or_zero(l: List(Nat)): Nat {
-  ⊢ Nat from match List::last(l) {
+  match List::last(l) {
     None => Zero
     Some(x) => x
   }
@@ -381,7 +363,7 @@ fn similar(a: List(Nat), b: List(Nat)): Bool {
 }
 
 fn closest_from(a: List(Nat), os: List(Opt), best: Option(List(Nat)), d: Nat): Option(List(Nat)) {
-  ⊢ Option(List(Nat)) from match os {
+  match os {
     Nil => best
     Cons(
       o,
@@ -406,7 +388,7 @@ fn quoted(b: List(Nat)): List(Nat) {
 }
 
 fn tip(a: List(Nat), os: List(Opt)): List(Nat) {
-  ⊢ List(Nat) from match closest(a, os) {
+  match closest(a, os) {
     None => Nil
     Some(
       l
@@ -416,27 +398,23 @@ fn tip(a: List(Nat), os: List(Opt)): List(Nat) {
   }
 }
 
-module Opt {
-  fn name_at(os: List(Opt), i: Nat): List(Nat) {
-    ⊢ List(Nat) from match List::nth(os, i) {
-      None => Nil
-      Some(o) => Opt::name(o)
-    }
+fn Opt::name_at(os: List(Opt), i: Nat): List(Nat) {
+  match List::nth(os, i) {
+    None => Nil
+    Some(o) => Opt::name(o)
   }
 }
 
-module Pos {
-  fn name_at(ps: List(Pos), k: Nat): List(Nat) {
-    ⊢ List(Nat) from match List::nth(ps, k) {
-      None => Nil
-      Some(p) => Pos::form(p)
-    }
+fn Pos::name_at(ps: List(Pos), k: Nat): List(Nat) {
+  match List::nth(ps, k) {
+    None => Nil
+    Some(p) => Pos::form(p)
   }
 }
 
 // The first line of the message, and what follows it before the usage.
 fn problem_lines(sp: Spec, p: Problem): List(Nat) {
-  ⊢ List(Nat) from match p {
+  match p {
     Unknown(
       a
     ) => Bytes::concat(
@@ -553,30 +531,30 @@ fn problem_lines(sp: Spec, p: Problem): List(Nat) {
         )
       )
     )
-    InSub(k, q) => Nil
+    InSub(^k, ^q) => Nil
   }
 }
 
 fn is_error(p: Problem): Bool {
-  ⊢ Bool from match p {
-    Unknown(a) => true
-    NeedsValue(i) => true
-    NoValue(i, v) => true
-    BadValue(i, v) => true
-    Repeated(i) => true
-    Missing(i) => true
-    MissingArg(k) => true
-    BadArg(k, v) => true
-    ExtraArg(t) => true
+  match p {
+    Unknown(^a) => true
+    NeedsValue(^i) => true
+    NoValue(^i, ^v) => true
+    BadValue(^i, ^v) => true
+    Repeated(^i) => true
+    Missing(^i) => true
+    MissingArg(^k) => true
+    BadArg(^k, ^v) => true
+    ExtraArg(^t) => true
     AskedHelp => false
     AskedVersion => false
     MissingCommand => true
-    InSub(k, q) => is_error(q)
+    InSub(^k, q) => is_error(q)
   }
 }
 
 fn flat_message(sp: Spec, p: Problem): Text {
-  ⊢ Text from match is_error(p) {
+  match is_error(p) {
     false => text(problem_lines(sp, p))
     true => text(
       Bytes::concat(
@@ -594,7 +572,7 @@ fn flat_message(sp: Spec, p: Problem): Text {
 
 // A subcommand as its parent names it: `greet add`.
 fn qualified(parent: Spec, c: Spec): Spec {
-  ⊢ Spec from match c {
+  match c {
     Mk(n, a, v, os, ps, cs, nc) => Spec::Mk(
       Text::concat_all(Cons(spec_name(parent), Cons(" ", Cons(n, Nil)))),
       a,
@@ -607,26 +585,24 @@ fn qualified(parent: Spec, c: Spec): Spec {
   }
 }
 
-module Subcommand {
-  fn message(p: Problem, sp: Spec): Text {
-    ⊢ Text from match p {
-      InSub(k, q) => ⊢ Text from match List::nth(spec_subs(sp), k) {
-        None => Subcommand::message(q, sp)
-        Some(c) => Subcommand::message(q, qualified(sp, c))
-      }
-      Unknown(a) => flat_message(sp, p)
-      NeedsValue(i) => flat_message(sp, p)
-      NoValue(i, v) => flat_message(sp, p)
-      BadValue(i, v) => flat_message(sp, p)
-      Repeated(i) => flat_message(sp, p)
-      Missing(i) => flat_message(sp, p)
-      MissingArg(k) => flat_message(sp, p)
-      BadArg(k, v) => flat_message(sp, p)
-      ExtraArg(t) => flat_message(sp, p)
-      AskedHelp => flat_message(sp, p)
-      AskedVersion => flat_message(sp, p)
-      MissingCommand => flat_message(sp, p)
+fn Subcommand::message(p: Problem, sp: Spec): Text {
+  match p {
+    InSub(k, q) => ⊢ Text from match List::nth(spec_subs(sp), k) {
+      None => Subcommand::message(q, sp)
+      Some(c) => Subcommand::message(q, qualified(sp, c))
     }
+    Unknown(^a) => flat_message(sp, p)
+    NeedsValue(^i) => flat_message(sp, p)
+    NoValue(^i, ^v) => flat_message(sp, p)
+    BadValue(^i, ^v) => flat_message(sp, p)
+    Repeated(^i) => flat_message(sp, p)
+    Missing(^i) => flat_message(sp, p)
+    MissingArg(^k) => flat_message(sp, p)
+    BadArg(^k, ^v) => flat_message(sp, p)
+    ExtraArg(^t) => flat_message(sp, p)
+    AskedHelp => flat_message(sp, p)
+    AskedVersion => flat_message(sp, p)
+    MissingCommand => flat_message(sp, p)
   }
 }
 
@@ -639,7 +615,7 @@ pub fn message(sp: Spec, p: Problem): Text {
 
 // The exit status: 0 for the help and the version, 2 for an error.
 fn exit_code(p: Problem): Nat {
-  ⊢ Nat from match is_error(p) {
+  match is_error(p) {
     false => Zero
     true => 2
   }
@@ -667,14 +643,14 @@ pub fn unquote(t: Text): Text {
 }
 
 fn dash_of(c: Nat): Nat {
-  ⊢ Nat from match Nat::eq(c, 95) {
+  match Nat::eq(c, 95) {
     false => c
     true => 45
   }
 }
 
 fn under_of(c: Nat): Nat {
-  ⊢ Nat from match Nat::eq(c, 45) {
+  match Nat::eq(c, 45) {
     false => upper(c)
     true => 95
   }
@@ -697,16 +673,16 @@ pub fn short_name(t: Text): Option(Nat) {
 
 // A description and its default: `Where [default: out.txt]`.
 pub fn with_default(about: Text, d: Text): Text {
-  ⊢ Text from match Text::bytes(about) {
+  match Text::bytes(about) {
     Nil => Text::concat_all(Cons("[default: ", Cons(d, Cons("]", Nil))))
-    Cons(c, cs) => Text::concat_all(Cons(about, Cons(" [default: ", Cons(d, Cons("]", Nil)))))
+    Cons(^c, ^cs) => Text::concat_all(Cons(about, Cons(" [default: ", Cons(d, Cons("]", Nil)))))
   }
 }
 
 // A description and the names a value may be: `Speed [possible values: fast, slow]`.
 pub fn with_choices(about: Text, names: Text): Text {
-  ⊢ Text from match Text::bytes(about) {
+  match Text::bytes(about) {
     Nil => Text::concat_all(Cons("[possible values: ", Cons(names, Cons("]", Nil))))
-    Cons(c, cs) => Text::concat_all(Cons(about, Cons(" [possible values: ", Cons(names, Cons("]", Nil)))))
+    Cons(^c, ^cs) => Text::concat_all(Cons(about, Cons(" [possible values: ", Cons(names, Cons("]", Nil)))))
   }
 }

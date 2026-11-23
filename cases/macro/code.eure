@@ -1,14 +1,138 @@
+@ cases.a-macro-reads-the-type-and-rows-of-a-fn-declared-before-it
+files."lib.nib" = ````nib
+import std::builtin::macro
+
+pub fn row_names(r: List(SynRowEntry)): Text ! {div} {
+  match r {
+    Nil => ""
+    Cons(e, rest) => {
+      let n := match e {
+        EffName(n, _) => n
+        EffApplied(n, _, _, _, _) => n
+      }
+      concat(concat(n, " "), row_names(rest))
+    }
+  }
+}
+
+pub fn texts(ts: List(Text)): Text ! {div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => concat(concat(t, " "), texts(rest))
+  }
+}
+
+pub fn param_rows(ps: List(SynParam)): Text ! {div} {
+  match ps {
+    Nil => ""
+    Cons(p, rest) => {
+      let here := match p.ty {
+        ExPi(_, _, Some(r), _) => concat("{", concat(row_names(r), "}"))
+        _ => "-"
+      }
+      concat(concat(here, " "), param_rows(rest))
+    }
+  }
+}
+
+pub fn shape(ty: SynExpr): Text ! {div} {
+  match ty {
+    ExPi(ps, _, Some(r), _) => concat(param_rows(ps), concat("-> ", row_names(r)))
+    _ => "not a function type"
+  }
+}
+
+// `@sig!(f)` on a `fn g(): Text` rebuilds `g` to give what `Elab::global` says
+// of `f`: its generics, the rows of its parameters, and its own row.
+pub macro fn sig(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, elab, div} {
+  let at := Syn::call_span()
+  match s {
+    StFn(g) => match Syn::ident_of(e) {
+      None => Syn::error(at, "not a name")
+      Some(i) => match Elab::global(i.name) {
+        None => Syn::error(at, "not a declaration")
+        Some(j) => {
+          let text := concat(
+            concat(Judgement::fragment(j), ": "),
+            concat(concat(texts(Judgement::generics(j)), "| "), shape(Judgement::type_of(j).term))
+          )
+          [StFn(SynFn {
+            name: g.name, generics: g.generics, generic_types: g.generic_types, bounds: g.bounds,
+            params: g.params, r#borrows: g.r#borrows, param_types: g.param_types, result: g.result,
+            effects: g.effects, where_: g.where_, body: ExText(text, at), span: g.span,
+            unused: g.unused, unused_generics: g.unused_generics, unused_params: g.unused_params
+          })]
+        }
+      }
+    }
+    _ => Syn::error(at, "not a fn")
+  }
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+import std::builtin::os
+effect note(t: Text): ()
+pub fn trace<!e>(k: () -> u64 ! {note} ∪ e): u64 ! {stdout} ∪ e {
+  handle { k() } with {
+    note(t), r => { print(t); r(()) }
+  }
+}
+@sig!(trace) => replace fn described
+fn described(): Text { "" }
+show(&described())
+````
+stdout = ```
+"Program: !e | {note e } -> stdout e "
+```
+
+@ cases.a-macro-reads-the-row-of-a-function-argument
+files."lib.nib" = ````nib
+import std::builtin::macro
+
+pub fn row_names(r: List(SynRowEntry)): Text ! {div} {
+  match r {
+    Nil => ""
+    Cons(e, rest) => {
+      let n := match e {
+        EffName(n, _) => n
+        EffApplied(n, _, _, _, _) => n
+      }
+      concat(concat(n, " "), row_names(rest))
+    }
+  }
+}
+
+// `rows_of!(f)` objects with the row of the function `f`.
+pub macro fn rows_of(c: Judgement): SynExpr ! {div, macro_error} {
+  let at := Judgement::span(c)
+  match Judgement::type_of(c).term {
+    ExPi(_, _, Some(r), _) => Syn::error(at, concat("row: ", row_names(r)))
+    _ => Syn::error(at, "no row")
+  }
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+effect note(t: Text): ()
+pub fn call(k: () -> u64 ! {note, div}): u64 ! {note, div} {
+  let f := rows_of!(k)
+  f()
+}
+````
+macro_error = "row: div note "
+
 // Typed macros.
 
 @ cases.unroll-a-power
 files."unroll.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
-pub fn pow(x: i64, n: u64): i64 ! {Div} {
+pub fn pow(x: i64, n: u64): i64 ! {div, overflow} {
   if n == 0 { 1 } else { x * pow(x, n - 1) }
 }
 
-pub fn is_pow_call(f: Judgement): Bool {
+pub fn is_pow_call(f: Judgement): Bool ! {overflow} {
   match Judgement::open(f) {
     VConst(name) => name == "pow"
     _ => false
@@ -41,17 +165,17 @@ pub fn unroll_times(x: Judgement, text: Text): SynExpr ! {macro_error} {
 ````
 files."main.nib" = ````nib
 import "unroll.nib"
-fn cube(x: i64): i64 ! {Div} { unroll!(pow(x, 3)) }
-perform show("c", cube(3))
+fn cube(x: i64): i64 ! {div, overflow} { unroll!(pow(x, 3)) }
+show(&cube(3))
 ````
-shows = ["c = 27"]
+stdout = "27\n"
 trace = ["unroll"]
 expands = ```nib
-fn cube(x: i64): i64 ! {Div} {
+fn cube(x: i64): i64 ! {div, overflow} {
   let t#1 := x
   t#1 * t#1 * t#1
 }
-perform show("c", cube(3))
+show(&cube(3))
 ```
 
 @ cases.a-macro-may-not-add-an-effect
@@ -59,7 +183,7 @@ files."lib.nib" = ````nib
 pub macro fn traced(c: Judgement): SynExpr {
   quote {
     let r := $c
-    perform show("value", r)
+    show(&r)
     r
   }
 }
@@ -92,7 +216,7 @@ macro_error = "macro.unknown_atom"
 
 @ cases.an-input-that-does-not-check-runs-no-macro
 files."lib.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 pub macro fn same(c: Judgement): SynExpr { Judgement::term(c) }
 ````
@@ -101,17 +225,18 @@ import "lib.nib"
 fn f(w: i64): i64 { same!(w + true) }
 ````
 trace = []
+macro_warnings = ["`same!` did not run: the declaration around it does not check, and a typed macro runs only on what checks"]
 
 
 @ cases.unroll-leaves-a-variable-exponent
 files."lib.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
-pub fn pow(x: i64, n: u64): i64 ! {Div} {
+pub fn pow(x: i64, n: u64): i64 ! {div} {
   if n == 0 { 1 } else { x * pow(x, n - 1) }
 }
 
-pub fn is_pow_call(f: Judgement): Bool {
+pub fn is_pow_call(f: Judgement): Bool ! {overflow} {
   match Judgement::open(f) {
     VConst(name) => name == "pow"
     _ => false
@@ -135,34 +260,34 @@ pub macro fn unroll(c: Judgement): SynExpr ! {macro_error} {
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn power(x: i64, n: u64): i64 ! {Div} { unroll!(pow(x, n)) }
+fn power(x: i64, n: u64): i64 ! {div} { unroll!(pow(x, n)) }
 ````
 expands = ```nib
-fn power(x: i64, n: u64): i64 ! {Div} { pow(x, n) }
+fn power(x: i64, n: u64): i64 ! {div} { pow(x, n) }
 ```
 
 @ cases.a-quote-hole-names-a-raw-identifier
-// A hole is named like any name: `$r#view` and `${r#view}` are the hole of
-// `r#view`, and `${c}` is `$c`.
+// A hole is named like any name: `$r#match` and `${r#match}` are the hole of
+// `r#match`, and `${c}` is `$c`.
 files."lib.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 pub macro fn sum3(c: Judgement): SynExpr {
-  let r#view := c
-  quote { $r#view + ${r#view} + ${c} }
+  let r#match := c
+  quote { $r#match + ${r#match} + ${c} }
 }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn triple(x: i64): i64 { sum3!(x) }
+fn triple(x: nat): nat { sum3!(x) }
 ````
 expands = ```nib
-fn triple(x: i64): i64 { x + x + x }
+fn triple(x: nat): nat { x + x + x }
 ```
 
 @ cases.eta-reduces-a-lambda-it-can-open
 files."lib.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 pub macro fn eta_reduce(c: Judgement): SynExpr {
   match Judgement::open(c) {
@@ -207,32 +332,36 @@ macro_error = "macro.scope_extrusion"
 
 @ cases.a-macro-may-not-change-the-signature-it-inferred
 files."lib.nib" = ````nib
-pub fn pow(x: i64, n: u64): i64 ! {Div} {
+import std::builtin::macro
+
+pub fn pow(x: i64, n: u64): i64 ! {div} {
   if n == 0 { 1 } else { x * pow(x, n - 1) }
 }
 pub macro fn cube(c: Judgement): SynExpr { quote { 0 } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn f(x: i64): i64 { cube!(pow(x, 3)) }
+fn f(x: i64): i64 !? { cube!(pow(x, 3)) }
 ````
 macro_error = "macro.signature_changed"
 
 @ cases.a-macro-may-not-use-an-affine-value-twice
 files."lib.nib" = ````nib
-pub(open) affine struct Ticket {}
-pub fn redeem(t: Ticket): u64 { 1 }
+import std::builtin::macro
+
+pub(open) struct(affine) Ticket {}
+pub fn redeem(t: Ticket): nat { 1 }
 pub macro fn dup(c: Judgement): SynExpr { quote { $c + $c } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn bad(t: Ticket): u64 { dup!(redeem(t)) }
+fn bad(t: Ticket): nat { dup!(redeem(t)) }
 ````
 macro_error = "macro.ownership_rejected"
 
 @ cases.a-macro-may-not-drop-a-linear-value
 files."lib.nib" = ````nib
-pub(open) linear struct Handshake {}
+pub(open) struct(linear) Handshake {}
 pub fn finish(h: Handshake): u64 { match h { Handshake {} => 2 } }
 pub macro fn drop_it(c: Judgement): SynExpr { quote { 0 } }
 ````
@@ -254,9 +383,9 @@ macro_error = "macro.nested_typed"
 
 @ cases.a-macro-reads-how-a-value-is-used
 files."lib.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
-pub(open) affine struct Ticket {}
+pub(open) struct(affine) Ticket {}
 pub fn redeem(t: Ticket): u64 { match t { Ticket {} => 1 } }
 pub macro fn how(c: Judgement): SynExpr {
   match Judgement::usage(c) {
@@ -268,11 +397,11 @@ pub macro fn how(c: Judgement): SynExpr {
 files."main.nib" = ````nib
 import "lib.nib"
 fn moved(t: Ticket): u64 { how!(redeem(t)) }
-fn not_used(x: u64): u64 { how!(x + 1) }
+fn not_used(x: nat): nat { how!(x + 1) }
 ````
 expands = ```nib
 fn moved(t: Ticket): u64 { 1 }
-fn not_used(x: u64): u64 { 0 }
+fn not_used(x: nat): nat { 0 }
 ```
 
 // Type preservation is not preservation of meaning: `$c * $c * $c` has the
@@ -280,51 +409,57 @@ fn not_used(x: u64): u64 { 0 }
 // it once with `let`).
 @ cases.a-splice-used-three-times-runs-its-effect-three-times
 files."lib.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 pub macro fn naive(c: Judgement): SynExpr { quote { $c * $c * $c } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn two(): i64 ! {∀ A. show(A)} {
-  perform show("x", 2)
+fn two(): nat ! {Show} {
+  show(&2)
   2
 }
-fn cube(): i64 ! {∀ A. show(A)} { naive!(two()) }
-perform show("cube", cube())
+fn cube(): nat ! {Show} { naive!(two()) }
+show(&cube())
 ````
 expands = ```nib
-fn two(): i64 ! {show} {
-  perform show("x", 2)
+fn two(): nat ! {stdout, stdout_flush} {
+  show(&2)
   2
 }
-fn cube(): i64 ! {show} { two() * two() * two() }
-perform show("cube", cube())
+fn cube(): nat ! {stdout, stdout_flush} { two() * two() * two() }
+show(&cube())
 ```
-shows = ["x = 2", "x = 2", "x = 2", "cube = 8"]
+stdout = ```
+2
+2
+2
+8
+```
 
 // The row compared is the one of the position (`w * h` has none), not the
 // one written on the function.
 @ cases.a-macro-may-not-add-an-effect-the-function-allows
 files."lib.nib" = ````nib
+import std::builtin::macro
 pub macro fn traced(c: Judgement): SynExpr {
   quote {
     let r := $c
-    perform show("value", r)
+    show(&r)
     r
   }
 }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn area(w: i64, h: i64): i64 ! {∀ A. show(A)} { traced!(w * h) }
+fn area(w: i64, h: i64): i64 ! {Show} { traced!(w * h) }
 ````
-macro_error = "macro.row_grew: the macro added the effect show to the expression"
+macro_error = "macro.row_grew: the macro added the effect stdout to the expression"
 
 // `Judgement::type_of` and `Elab::check` read the type; `Elab::defeq` compares.
 @ cases.a-macro-branches-on-the-type
 files."lib.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn is_type(c: Judgement, t: SynExpr): Bool ! {elab} {
   match Elab::check(t, c, None) {
@@ -348,7 +483,7 @@ theorem b1(b: Bool): Bool { b }
 ```
 
 @ cases.a-macro-branches-on-a-type-of-the-program
-unimplemented = "Elab::check answers only in the kernel's fragment; i32 is not in it, so is_type is false"
+eval.unimplemented = "Elab::check answers only in the kernel's fragment; i32 is not in it, so is_type is false"
 files."lib.nib" = ````nib
 pub fn is_type(c: Judgement, t: SynExpr): Bool ! {elab} {
   match Elab::check(t, c, None) {
@@ -389,6 +524,8 @@ macro_error = "macro.type_changed: the macro changed the type of the expression 
 // `plus(n, Zero)` does not reduce.
 @ cases.a-definitionally-equal-output-is-accepted-in-a-proof
 files."lib.nib" = ````nib
+import std::builtin::macro
+
 pub fn plus(n: Nat, m: Nat): Nat {
   ⊢ Nat from match n {
     Zero => m
@@ -398,7 +535,78 @@ pub fn plus(n: Nat, m: Nat): Nat {
 
 pub theorem plus_n_zero(n: Nat): (plus(n, Zero) = n) {
   ⊢ (plus(n, Zero) = n) from match n {
-    Zero => Refl(Nat, Zero)
+    Zero => Refl(<A: Nat, a: Zero>)
+    Succ(k) => Eq::congr(x => Succ(x), plus_n_zero(k))
+  }
+}
+
+pub fn is_const(c: Judgement, name: Text): Bool {
+  match Judgement::open(c) {
+    VConst(n) => n == name
+    _ => false
+  }
+}
+
+pub macro fn dzl(c: Judgement): SynExpr {
+  match Judgement::open(c) {
+    VApp(f, args) => match args {
+      Cons(z, Cons(m, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") { Judgement::term(m) } else { Judgement::term(c) }
+      _ => Judgement::term(c)
+    }
+    _ => Judgement::term(c)
+  }
+}
+
+pub macro fn dzr(c: Judgement): SynExpr {
+  match Judgement::open(c) {
+    VApp(f, args) => match args {
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") { Judgement::term(m) } else { Judgement::term(c) }
+      _ => Judgement::term(c)
+    }
+    _ => Judgement::term(c)
+  }
+}
+
+pub macro fn simp0(c: Judgement): Proved ! {macro_error, elab} {
+  match Judgement::open(c) {
+    VApp(f, args) => match args {
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") {
+        let mt := Judgement::term(m)
+        Proved { term: mt, proof: quote { plus_n_zero($mt) } }
+      } else { Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)") }
+      _ => Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)")
+    }
+    _ => Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)")
+  }
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+theorem t1(n: Nat): (plus(Zero, n) = n) {
+  Refl(<A: Nat, a: dzl!(plus(Zero, n))>)
+}
+````
+expands = ```nib
+theorem t1(n: Nat): plus(Zero, n) = n { Eq::Refl(<A: Nat, a: n>) }
+```
+checks.t1 = "ok"
+
+// A proof that does not check runs no typed macro in it; the expansion says
+// so, and the check reports the proof's own error.
+@ cases.a-proof-that-does-not-check-runs-no-macro-and-says-so
+files."lib.nib" = ````nib
+import std::builtin::macro
+
+pub fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+
+pub theorem plus_n_zero(n: Nat): (plus(n, Zero) = n) {
+  ⊢ (plus(n, Zero) = n) from match n {
+    Zero => Refl(<A: Nat, a: Zero>)
     Succ(k) => Eq::congr(x => Succ(x), plus_n_zero(k))
   }
 }
@@ -449,15 +657,15 @@ theorem t1(n: Nat): (plus(Zero, n) = n) {
   Refl(Nat, dzl!(plus(Zero, n)))
 }
 ````
-expands = ```nib
-theorem t1(n: Nat): plus(Zero, n) = n { Eq::Refl(Nat, n) }
-```
-checks.t1 = "ok"
+trace = []
+macro_warnings = ["`dzl!` did not run: the declaration around it does not check, and a typed macro runs only on what checks"]
 
 // The type of the position is kept (`Nat`), but the type of `Refl(…)`
 // depends on the term, and `n` is not `plus(n, Zero)` by conversion.
 @ cases.an-output-that-is-not-definitionally-equal-breaks-a-dependent-use
 files."lib.nib" = ````nib
+import std::builtin::macro
+
 pub fn plus(n: Nat, m: Nat): Nat {
   ⊢ Nat from match n {
     Zero => m
@@ -467,7 +675,7 @@ pub fn plus(n: Nat, m: Nat): Nat {
 
 pub theorem plus_n_zero(n: Nat): (plus(n, Zero) = n) {
   ⊢ (plus(n, Zero) = n) from match n {
-    Zero => Refl(Nat, Zero)
+    Zero => Refl(<A: Nat, a: Zero>)
     Succ(k) => Eq::congr(x => Succ(x), plus_n_zero(k))
   }
 }
@@ -515,7 +723,7 @@ pub macro fn simp0(c: Judgement): Proved ! {macro_error, elab} {
 files."main.nib" = ````nib
 import "lib.nib"
 theorem t2(n: Nat): plus(n, Zero) = plus(n, Zero) {
-  Refl(Nat, dzr!(plus(n, Zero)))
+  Refl(<A: Nat, a: dzr!(plus(n, Zero))>)
 }
 ````
 macro_error = "macro.dependent_use"
@@ -533,7 +741,7 @@ pub fn plus(n: Nat, m: Nat): Nat {
 
 pub theorem plus_n_zero(n: Nat): (plus(n, Zero) = n) {
   ⊢ (plus(n, Zero) = n) from match n {
-    Zero => Refl(Nat, Zero)
+    Zero => Refl(<A: Nat, a: Zero>)
     Succ(k) => Eq::congr(x => Succ(x), plus_n_zero(k))
   }
 }
@@ -581,11 +789,11 @@ pub macro fn simp0(c: Judgement): Proved ! {macro_error, elab} {
 files."main.nib" = ````nib
 import "lib.nib"
 fn f(n: Nat): Nat { simp0!(plus(n, Zero)) }
-theorem f_is_id(n: Nat): (f(n) = n) { Refl(Nat, n) }
+theorem f_is_id(n: Nat): (f(n) = n) { Refl(<A: Nat, a: n>) }
 ````
 expands = ```nib
 fn f(n: Nat): Nat { n }
-theorem f_is_id(n: Nat): f(n) = n { Eq::Refl(Nat, n) }
+theorem f_is_id(n: Nat): f(n) = n { Eq::Refl(<A: Nat, a: n>) }
 ```
 checks.f_is_id = "ok"
 
@@ -593,54 +801,54 @@ checks.f_is_id = "ok"
 // is accepted. When it is dropped is a change of meaning, not checked.
 @ cases.a-macro-may-drop-an-affine-value
 files."lib.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
-pub(open) affine struct Ticket {}
+pub(open) struct(affine) Ticket {}
 pub fn redeem(t: Ticket): u64 { match t { Ticket {} => 1 } }
 pub macro fn cf(c: Judgement): SynExpr { quote { 1 } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
 fn keep(t: Ticket): u64 { cf!(redeem(t)) }
-perform show("keep", keep(Ticket {}))
+show(&keep(Ticket {}))
 ````
 expands = ```nib
 fn keep(t: Ticket): u64 { 1 }
-perform show("keep", keep(Ticket::Mk {  }))
+show(&keep(Ticket::Mk {  }))
 ```
-shows = ["keep = 1"]
+stdout = "1\n"
 
 // Copying a `Judgement` copies the handle, not the value: splicing a copy value
 // twice is accepted (an affine one is not, above).
 @ cases.a-macro-may-splice-a-copy-value-twice
 files."lib.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 pub macro fn dup(c: Judgement): SynExpr { quote { $c + $c } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn double(x: u64): u64 { dup!(x + 1) }
-perform show("double", double(2))
+fn double(x: u64): u64 ! {overflow} { dup!(x + 1) }
+show(&double(2))
 ````
 expands = ```nib
-fn double(x: u64): u64 { x + 1 + (x + 1) }
-perform show("double", double(2))
+fn double(x: u64): u64 ! {overflow} { x + 1 + (x + 1) }
+show(&double(2))
 ```
-shows = ["double = 6"]
+stdout = "6\n"
 
 // Moving a `let` to its use keeps the type and the row, yet the affine `t`
 // is then live across `choose`, which may resume more than once.
 @ cases.a-macro-may-not-move-an-affine-use-across-a-multi-shot-effect
 files."lib.nib" = ````nib
-pub(open) affine struct Ticket {}
+pub(open) struct(affine) Ticket {}
 pub(open) effect choose(): Bool resume ω
 pub fn redeem(t: Ticket): u64 { match t { Ticket {} => 1 } }
 
 // { let x := e; if c { x } else { d } } as if c { e } else { d }
 pub macro fn sink(c: Judgement): SynExpr {
   match Judgement::term(c) {
-    ExBlock(Cons(StLet(x, ty, e, a, b, s), Cons(StExpr(ExIf(cond, ExVar(y), d, sp)), Nil)), bs) => ExIf(cond, e, d, sp)
+    ExBlock(Cons(StLet(x, ty, e, a, b, s, ls), Cons(StExpr(ExIf(cond, ExVar(y), d, sp)), Nil)), bs) => ExIf(cond, e, d, sp)
     _ => Judgement::term(c)
   }
 }
@@ -660,16 +868,18 @@ macro_error = "macro.ownership_rejected: what the macro made breaks ownership: t
 // resumes once, so the path that moves `t` would run twice.
 @ cases.a-macro-may-not-resume-a-one-shot-continuation-twice
 files."lib.nib" = ````nib
-pub(open) affine struct Ticket {}
+import std::builtin::macro
+
+pub(open) struct(affine) Ticket {}
 pub(open) effect ask(): Bool resume 1
-pub fn redeem(t: Ticket): u64 { match t { Ticket {} => 1 } }
+pub fn redeem(t: Ticket): nat { match t { Ticket {} => 1 } }
 pub macro fn guard(c: Judgement): SynExpr {
   quote { handle { $c } with { ask(), k => k(true) + k(false) } }
 }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn g(t: Ticket): u64 ! {ask} {
+fn g(t: Ticket): nat ! {ask} {
   guard!(if perform ask() { redeem(t) } else { 0 })
 }
 ````
@@ -680,11 +890,11 @@ macro_error = "macro.ownership_rejected: what the macro made breaks ownership: k
 // that leaves it out is refused before it runs.
 @ cases.a-macro-function-holds-the-rows-it-declares
 files."lib.nib" = ````nib
-pub fn check(c: Judgement): Judgement ! {macro_error, Div} {
+pub fn check(c: Judgement): Judgement ! {macro_error, div} {
   Syn::error(Judgement::span(c), "never")
 }
-pub fn quiet(c: Judgement): Judgement ! {Div} { check(c) }
-pub macro fn wrap(c: Judgement): SynExpr ! {macro_error, Div} {
+pub fn quiet(c: Judgement): Judgement ! {div} { check(c) }
+pub macro fn wrap(c: Judgement): SynExpr ! {macro_error, div} {
   let d := quiet(c)
   quote { $d }
 }
@@ -697,7 +907,7 @@ macro_error = "macro.row"
 
 @ cases.typed-input-keeps-selected-constructor-reference
 files."lib.nib" = ```nib
-import std::prelude::Macro
+import std::builtin::macro
 pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
 ```
 files."main.nib" = ```nib
@@ -706,8 +916,186 @@ enum Left { Same(i64) }
 enum Right { Same(Text) }
 fn left(): Left { keep!(Same(17)) }
 fn right(): Right { keep!(Same("right")) }
-perform show("left", left())
-perform show("right", right())
+show(&left())
+show(&right())
 ```
-shows = ["left = Same(17)", "right = Same(\"right\")"]
-backends = ["rust", "javascript"]
+stdout = ```
+Same(17)
+Same("right")
+```
+
+@ cases.a-macro-is-given-a-type-and-reads-its-declaration
+files."lib.nib" = ````nib
+import std::builtin::macro
+
+fn names(fs: List(Option(SynIdent) × SynExpr)): Text ! {div} {
+  match fs {
+    Nil => ""
+    Cons(#(n, ty), rest) => {
+      let t := match Syn::ident_of(ty) {
+        Some(i) => i.name
+        None => "?"
+      }
+      let f := match n {
+        Some(x) => x.name
+        None => "_"
+      }
+      concat(concat(concat(concat(f, ":"), t), " "), names(rest))
+    }
+  }
+}
+
+pub macro fn fields(j: Judgement): SynExpr ! {macro_error, elab, div} {
+  match Syn::ident_of(j.term) {
+    None => Syn::error(Syn::call_span(), "not a type name")
+    Some(i) => match Elab::data(i) {
+      None => Syn::error(Syn::call_span(), "not a struct or an enum")
+      Some(d) => match d.ctors {
+        Cons(c, _) => ExText(names(c.fields), Syn::call_span())
+        Nil => ExText("", Syn::call_span())
+      }
+    }
+  }
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+pub(open) struct Point { x: u64, label: Text }
+fn described(): Text { fields!(Point) }
+show(&described())
+````
+stdout = ```
+"x:u64 label:Text "
+```
+
+@ cases.a-type-argument-gives-the-call-the-type-of-its-output
+files."lib.nib" = ````nib
+import std::builtin::macro
+
+// `first!(T)` is a function giving the first field of a `T`.
+pub macro fn first(j: Judgement): SynExpr ! {macro_error, elab, div} {
+  let at := Syn::call_span()
+  match Syn::ident_of(j.term) {
+    None => Syn::error(at, "not a type name")
+    Some(i) => match Elab::data(i) {
+      Some(d) => match d.ctors {
+        [c] => match c.fields {
+          Cons(#(Some(f), _), _) => {
+            let v := SynIdent { declaration: None, name: "v", ctx: SynCtx { scopes: Nil }, span: at }
+            ExLam([BName(v, Some(j.term), None)], ExField(ExVar(v), f.name, at), at)
+          }
+          _ => Syn::error(at, "no named field")
+        }
+        _ => Syn::error(at, "not a struct")
+      }
+      None => Syn::error(at, "not a struct or an enum")
+    }
+  }
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+pub(open) struct Pair { left: i64, right: i64 }
+fn left_of(p: Pair): i64 ! {overflow} { first!(Pair)(p) + 1 }
+show(&left_of(Pair { left: 41, right: 0 }))
+````
+stdout = "42\n"
+
+@ cases.a-macro-reads-the-methods-of-a-class
+files."lib.nib" = ````nib
+import std::builtin::macro
+
+fn method_names(ms: List(SynFn)): Text ! {div} {
+  match ms {
+    Nil => ""
+    Cons(m, rest) => {
+      let result := match m.result {
+        Some(r) => match Syn::ident_of(r) {
+          Some(i) => i.name
+          None => "?"
+        }
+        None => "()"
+      }
+      concat(concat(concat(concat(m.name.name, ":"), result), " "), method_names(rest))
+    }
+  }
+}
+
+// `@methods!(C)` on a `fn f(): Text` rebuilds `f` to give the methods of
+// the class `C` with their result types, and how many laws it has.
+pub macro fn methods(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, elab, div} {
+  let at := Syn::call_span()
+  match s {
+    StFn(f) => match Syn::ident_of(e) {
+      None => Syn::error(at, "not a class name")
+      Some(i) => match Elab::class_decl(i) {
+        None => Syn::error(at, "not a class")
+        Some(c) => {
+          let laws := match c.laws {
+            Nil => "no laws"
+            _ => "laws"
+          }
+          let text := concat(concat(method_names(c.methods), c.name.name), concat(" ", laws))
+          [StFn(SynFn {
+          name: f.name, generics: f.generics, generic_types: f.generic_types, bounds: f.bounds,
+          params: f.params, r#borrows: f.r#borrows, param_types: f.param_types, result: f.result,
+          effects: f.effects, where_: f.where_, body: ExText(text, at), span: f.span,
+          unused: f.unused, unused_generics: f.unused_generics, unused_params: f.unused_params
+        })]
+        }
+      }
+    }
+    _ => Syn::error(at, "not a fn")
+  }
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+pub class Size(A: Type) {
+  fn size(a: A): u64
+  fn label(a: A): Text
+}
+@methods!(Size) => replace fn described
+fn described(): Text { "" }
+show(&described())
+````
+stdout = ```
+"size:u64 label:Text Size no laws"
+```
+
+@ cases.a-macro-asks-a-class-of-a-name-that-is-no-class
+files."lib.nib" = ````nib
+import std::builtin::macro
+
+pub macro fn is_class(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, elab} {
+  let at := Syn::call_span()
+  match s {
+    StFn(f) => match Syn::ident_of(e) {
+      None => Syn::error(at, "not a name")
+      Some(i) => {
+        let answer := match Elab::class_decl(i) {
+          None => "no"
+          Some(_) => "yes"
+        }
+        [StFn(SynFn {
+          name: f.name, generics: f.generics, generic_types: f.generic_types, bounds: f.bounds,
+          params: f.params, r#borrows: f.r#borrows, param_types: f.param_types, result: f.result,
+          effects: f.effects, where_: f.where_, body: ExText(answer, at), span: f.span,
+          unused: f.unused, unused_generics: f.unused_generics, unused_params: f.unused_params
+        })]
+      }
+    }
+    _ => Syn::error(at, "not a fn")
+  }
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+pub(open) struct Point { x: u64 }
+@is_class!(Point) => replace fn answer
+fn answer(): Text { "" }
+show(&answer())
+````
+stdout = ```
+"no"
+```

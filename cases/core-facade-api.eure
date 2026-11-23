@@ -1,13 +1,14 @@
 description = "Class extraction inputs, macro reports and syntax API contracts."
 
 @ cases.prelude_class_extraction
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
+import std::builtin::ord
 inductive P: Type {
   Mk: P
 }
 instance Ord(P) {
-  fn compare(&a: P, &b: P): Ordering { Equal }
+  fn compare(a: &P, b: &P): Ordering { Equal }
 }
 fn is_less<A>(a: A, b: A): Bool where Ord(A) {
   ⊢ Bool from match Ord::compare(a, b) {
@@ -23,9 +24,9 @@ checks."is_less" = "ok"
 checks."use_it" = "ok"
 
 @ cases.declared_class_extraction
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
-class Key(A: Type) {
+inductive class Key(A: Type) {
   fn key(a: A): Nat
   theorem same<a: A>(): Key::key(a) = Key::key(a)
 }
@@ -39,10 +40,10 @@ checks."Key" = "ok"
 checks."key_of" = "ok"
 
 @ cases.class_missing_law_filled
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 
-class Cmp(A: Type) {
+inductive class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
   theorem refl<a: A>(): Cmp::compare(a, a) = Equal
   theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
@@ -112,14 +113,14 @@ RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
 
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -129,11 +130,11 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -141,19 +142,20 @@ pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
 ````
 files."main.nib" = ```tauto
 import "math.nib"
-theorem one_plus_two(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+theorem one_plus_two(): math!(`1 + 2 = 3`) { Refl(<A: Nat, a: 3>) }
 ```
 checks."one_plus_two" = "ok"
 trace = ["math"]
 
 @ cases.macro_report_typed
 files."lib.nib" = ```tauto
+import std::builtin::macro
 pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
 ```
 files."main.nib" = ```tauto
 import "lib.nib"
-theorem in_type(n: Nat): keep!(n = n) { Refl(Nat, n) }
-theorem in_param(n: keep!(Nat)): n = n { Refl(Nat, n) }
+theorem in_type(n: Nat): keep!(n = n) { Refl(<A: Nat, a: n>) }
+theorem in_param(n: keep!(Nat)): n = n { Refl(<A: Nat, a: n>) }
 ```
 checks."in_type" = "ok"
 checks."in_param" = "ok"
@@ -161,7 +163,7 @@ trace = ["keep", "keep"]
 
 @ cases.syntax_table_isolation_input
 files."main.nib" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 %start Eqn
@@ -191,13 +193,15 @@ let a := ```plaintext
 
     gamma
     ```
-perform show("a", a)
+show(&a)
 ````
-shows = ["a = \"alpha\\n  beta\\n\\ngamma\\n\""]
+stdout = ```
+"alpha\n  beta\n\ngamma\n"
+```
 
 @ cases.syntax_literal_start_type
 files."main.nib" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 %start Eqn

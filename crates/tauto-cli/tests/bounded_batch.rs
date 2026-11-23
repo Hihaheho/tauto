@@ -172,17 +172,21 @@ fn wrong_runtime_limit_is_outside_the_proof_bundle_and_changes_execution() {
     let from = "batch_items(2, pending)";
     assert_eq!(main.matches(from).count(), 1);
     scratch.write(MAIN, &main);
-    let before = command(&scratch.0, &["run", "--backend", "eval", MAIN]);
+    let before = command(&scratch.0, &["run", "--backend", "vm", MAIN]);
     successful(&before);
-    assert!(String::from_utf8_lossy(&before.stdout).contains("first = Cons(7, Cons(7, Nil))"));
+    assert_eq!(
+        String::from_utf8_lossy(&before.stdout).lines().next(),
+        Some("[7, 7]")
+    );
 
     // A valid proof of the pure functions does not certify this caller's choice of limit.
     scratch.write(MAIN, &main.replace(from, "batch_items(3, pending)"));
     successful(&scratch.verify(&bundle));
-    let after = command(&scratch.0, &["run", "--backend", "eval", MAIN]);
+    let after = command(&scratch.0, &["run", "--backend", "vm", MAIN]);
     successful(&after);
     assert_ne!(before.stdout, after.stdout);
-    assert!(
-        String::from_utf8_lossy(&after.stdout).contains("first = Cons(7, Cons(7, Cons(9, Nil)))")
+    assert_eq!(
+        String::from_utf8_lossy(&after.stdout).lines().next(),
+        Some("[7, 7, 9]")
     );
 }

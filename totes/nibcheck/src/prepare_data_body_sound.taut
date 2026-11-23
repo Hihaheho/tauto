@@ -1,7 +1,7 @@
 import "program_data_body_sound.taut"
 import "data_finish_state_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "data_body_metadata_sound.taut"
 import "datas_frame.taut"
@@ -16,6 +16,7 @@ import "program_data_presence_sound.taut"
 import "rules_data_body.taut"
 import "rules_decls.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
@@ -42,7 +43,7 @@ pub theorem body_finish_after(
   ordered: CkDatasOrdered(ck_st(m)),
   present: DataBodyRegistered(ck_datas_of(ck_st(m)), source)
 ): DataBodyRegistered(ck_datas_of(ck_st(registration_finish_after(program, m))), source) {
-  ⊢ DataBodyRegistered(ck_datas_of(ck_st(registration_finish_after(program, m))), source) from match m {
+  match m {
     mut1(ignored, next) => Eq::subst(
       (r: Mut1(Unit, Checker)) => DataBodyRegistered(ck_datas_of(ck_st(r)), source),
       Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
@@ -55,7 +56,7 @@ pub theorem body_finish_after_clean(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_finish_after(program, m)))
 ): DiagnosticClean(ck_st(m)) {
-  ⊢ DiagnosticClean(ck_st(m)) from match m {
+  match m {
     mut1(ignored, next) => ck_finish_datas_errors(
       next,
       program,
@@ -74,7 +75,7 @@ pub theorem body_program_after_registered(
   fresh: UniqueDataNames(types_data_decls(program)),
   clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
 ): DataBodyRegistered(ck_datas_of(ck_st(registration_program_after(program, m))), source) {
-  ⊢ DataBodyRegistered(ck_datas_of(ck_st(registration_program_after(program, m))), source) from match m {
+  match m {
     mut1(ignored, next) => body_finish_after(
       program,
       source,
@@ -205,7 +206,7 @@ pub theorem body_program_after_clean(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
 ): DiagnosticClean(ck_st(m)) {
-  ⊢ DiagnosticClean(ck_st(m)) from match m {
+  match m {
     mut1(ignored, next) => ck_program_data_errors(
       program,
       next,

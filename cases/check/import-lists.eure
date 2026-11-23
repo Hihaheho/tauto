@@ -26,10 +26,10 @@ files."main.nib" = ```tauto
 import "value.taut" { Value }
 fn one(): Value { Vnum(zero()) }
 ```
-checks."main.nib::macro" = 'error: `zero` comes through `import "value.taut"`, whose list does not write it; write `zero` in its list'
+checks.one = 'error: `zero` comes through `import "value.taut"`, whose list does not write it; write `zero` in its list'
 @ cases.a-name-used-and-not-listed-is-an-error.diagnostics[]
 file = "main.nib"
-name = "macro"
+name = "one"
 message = 'comes through `import "value.taut"`'
 fix = 'import "value.taut" { Value, zero }'
 fixed_source = ```tauto
@@ -64,7 +64,7 @@ checks."main.nib::macro" = 'error: `hidden` is in the list of `import "value.tau
 
 @ cases.a-module-import-takes-a-list-too
 files."main.nib" = ```tauto
-import std::prelude::Os { Response }
+import std::builtin::os { Response }
 fn wait_for(s: Response): Nat { 1 }
 ```
 checks_all = "ok"
@@ -100,7 +100,7 @@ import "b.taut"
 pub fn two(): Nat { size() }
 ```
 entry = "main.taut"
-checks."main.taut::macro" = "error: `size` is ambiguous"
+checks.two = "error: `size` is ambiguous"
 
 @ cases.a-name-a-quote-writes-is-used-through-the-import
 files."value.taut" = ```tauto
@@ -109,16 +109,16 @@ pub fn one(): Nat { 1 }
 ```
 files."main.nib" = ```tauto
 import "value.taut" { one }
-import std::prelude::Macro { SynCtx, SynExpr, SynIdent, SynSpan }
+import std::builtin::macro { SynCtx, SynExpr, SynIdent, SynSpan }
 pub macro fn z(e: SynExpr): SynExpr { quote { zero() } }
 fn two(): Nat { one() }
 ```
-checks."main.nib::macro" = 'error: `zero` comes through `import "value.taut"`, whose list does not write it; write `zero` in its list'
+checks.z = 'error: `zero` comes through `import "value.taut"`, whose list does not write it; write `zero` in its list'
 
 @ cases.a-listed-macro-keeps-its-source-name-after-binding
 entry = "main.taut"
 files."lib.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 pub macro fn identity(value: SynExpr): SynExpr { value }
 ```
 files."main.taut" = ```tauto
@@ -130,7 +130,7 @@ checks.one = "ok"
 @ cases.lint-fix-keeps-an-import-used-by-a-bound-macro
 entry = "main.taut"
 files."lib.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 pub macro fn identity(value: SynExpr): SynExpr { value }
 ```
 files."main.taut" = ```tauto
@@ -142,4 +142,182 @@ fixes.applied = ["Write the list of what the import brings"]
 fixes.files."main.taut" = ```tauto
 import "lib.taut" { identity }
 pub theorem one(): Nat { identity!(1) }
+```
+
+@ cases.a-listed-type-brings-its-constructors-while-another-file-has-a-constructor-of-its-name
+entry = "main.taut"
+files."pick.taut" = ```tauto
+pub(open) enum Selected(A: Type, B: Type) { First(A), Second(B) }
+pub fn pick(): Selected(Nat, Nat) { Second(2) }
+```
+files."attr.taut" = ```tauto
+pub(open) enum Attr { Selected(Bool), Hidden(Bool) }
+pub fn attr(): Attr { Hidden(true) }
+```
+files."a.taut" = ```tauto
+import "pick.taut" { Selected, pick }
+pub fn a(): Bool { match pick() { Second(_) => true, _ => false } }
+```
+files."main.taut" = ```tauto
+import "attr.taut"
+import "a.taut" { a }
+pub fn b(): Bool { match attr() { Hidden(_) => a(), Selected(_) => a() } }
+```
+checks.a = "ok"
+checks.b = "ok"
+diagnostics = []
+
+@ cases.a-list-names-the-module-whose-function-a-prelude-file-adds
+description = "`U64::of_text` is a function `std::prelude::collections` adds to the core's `U64`: a list writes the module `U64`, and the file the list is in uses it."
+files."main.nib" = ```tauto
+import std::prelude::collections { U64 }
+fn digits(): Option(u64) { U64::of_text("12") }
+```
+checks_all = "ok"
+checks."main.nib::digits" = "skipped"
+
+@ cases.a-module-function-of-a-prelude-file-needs-the-module-in-the-list
+description = "A file without the prelude sees std::prelude::Collections only through its import: U64::of_text, a function the file adds to the core's U64, is listed by the module U64."
+files_tote = "app"
+tote_errors = ["`U64::of_text` comes through `import std::prelude::collections`, whose list does not write it; write `U64` in its list"]
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  prelude = false
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::prelude::collections { Bytes }
+import std::prelude::std { Option }
+
+pub fn same(b: Bytes): Bytes { b }
+pub fn digits(): Option(u64) { U64::of_text("12") }
+```
+
+@ cases.a-tote-without-the-prelude-lists-the-module-of-a-core-prelude-file
+description = "A file without the prelude imports std::prelude::Text and lists Text: its calls of Text::byte come through the import, and Text is a name the file declares for other files."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  prelude = false
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::prelude::text { Text }
+import std::prelude::std { Option }
+
+pub fn first(t: Text): Option(u8) { Text::byte(t, 0) }
+```
+
+@ cases.a-tote-without-the-prelude-lists-the-module-not-its-function
+description = "A function of module Text is listed by its module: listing byte is an error that asks for Text, and the list names nothing the file does not declare."
+files_tote = "app"
+tote_errors = [
+  "`Text::byte` comes through `import std::prelude::text`, whose list does not write it; write `Text` in its list",
+  "`byte` is in the list of `import std::prelude::text`, but the imported file declares no `byte` for other files",
+]
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  prelude = false
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::prelude::text { byte }
+import std::prelude::std { Option }
+
+pub fn first(t: Text): Option(u8) { Text::byte(t, 0) }
+```
+
+@ cases.a-tote-without-the-prelude-warns-of-a-listed-module-it-does-not-use
+description = "A name of a core prelude file listed and never used is a warning, as any other listed name is."
+files_tote = "app"
+tote_errors = []
+tote_warnings = ["`Text` is in the list of `import std::prelude::text`"]
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  prelude = false
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::prelude::text { Text }
+import std::prelude::std { Option }
+
+pub fn none(t: Text): Option(u8) { None }
+```
+
+@ cases.an-unused-name-of-a-prelude-file-listed-is-a-warning
+description = "A name of a prelude file outside the core, listed and never used, is a warning."
+files_tote = "app"
+tote_errors = []
+tote_warnings = ["`each` is in the list of `import std::prelude::collections`"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::prelude::collections { each }
+
+pub fn zero(): Nat { 0 }
+```
+
+@ cases.a-private-name-of-an-imported-file-does-not-shadow-the-prelude
+differential_program = "elaborator"
+description = "A declaration without `pub` is the file's own: a file that imports it does not see it, so the name means the prelude's `expect` there."
+files."lib.taut" = ```tauto
+pub fn one(): Nat { if helper(1) { 1 } else { 0 } }
+fn expect(n: Nat): Bool { n == 1 }
+fn helper(n: Nat): Bool { expect(n) }
+```
+files."main.taut" = ```tauto
+import "lib.taut" { one }
+pub fn check_one(): Unit ! {fail(Text)} { expect(one() == 1, "one") }
+```
+entry = "main.taut"
+checks."main.taut::check_one" = "skipped"
+
+@ cases.a-constructor-two-types-share-is-listed-by-its-type
+description = "A constructor whose name two types of the imported file share is listed by the type it is matched against, as any constructor is: the list that writes `Mode` brings `Scheduled` of `Mode`."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/schedule.taut" = ```tauto
+pub(open) enum Mode { Serial, Scheduled }
+pub(open) enum Body { Scheduled(List(Nat)), Empty }
+```
+files."app/src/main.taut" = ```tauto
+import "schedule.taut" { Mode }
+pub fn bind(m: Mode): Nat { match m { Serial => 0, Scheduled => 1 } }
+pub fn scheduled(): Mode { Mode::Scheduled }
+```
+
+@ cases.a-constructor-two-types-share-is-listed-by-its-type-in-a-dependency
+description = "A file read as a dependency of a dependency is checked as it is at its own root: its constructor of a shared name, listed by its type, is accepted."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { engine { path = "../engine" } }
+```
+files."engine/Tauto.eure" = ```eure
+package { name = "engine" }
+dependencies { sched { path = "../sched" } }
+```
+files."sched/Tauto.eure" = 'package { name = "sched" }'
+files."sched/src/schedule.taut" = ```tauto
+pub(open) enum Mode { Serial, Scheduled }
+pub(open) enum Body { Scheduled(List(Nat)), Empty }
+```
+files."sched/src/declaration.taut" = ```tauto
+import "schedule.taut" { Mode }
+pub fn bind(m: Mode): Nat { match m { Serial => 0, Scheduled => 1 } }
+```
+files."engine/src/engine.taut" = ```tauto
+import sched::declaration { bind }
+import sched::schedule { Mode }
+pub fn run(): Nat { bind(Mode::Scheduled) }
+```
+files."app/src/main.taut" = ```tauto
+import engine::engine { run }
+pub fn go(): Nat { run() }
 ```

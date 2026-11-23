@@ -1,6 +1,6 @@
 import "../src/vm.taut"
-import std::Base
-import std::prelude::Ord
+import std::base
+import std::builtin::ord
 
 // The compiler is correct: when the reference semantics gives `v` for a call, the machine
 // runs the compiled program to `v`. No axiom is used.
@@ -20,14 +20,14 @@ pub theorem star_trans<prog: List(
   a: Star(prog, s1, s2),
   b: Star(prog, s2, s3)
 ): Star(prog, s1, s3) {
-  ⊢ Star(prog, s1, s3) from match a {
+  match a {
     StarRefl(s) => b
     StarStep(h, rest) => StarStep(h, star_trans(rest, b))
   }
 }
 
 pub fn opt_comp(o: Option(Expr)): Option(Bytecode) {
-  ⊢ Option(Bytecode) from match o {
+  match o {
     None => None
     Some(e) => Some(comp_body(e))
   }
@@ -89,7 +89,7 @@ pub theorem comp_correct<prog: List(
   st: List(Val),
   fr: List(Frame)
 ): Star(compile(prog), StateMk(comp(e, k), env, st, fr), StateMk(k, env, Cons(v, st), fr)) {
-  ⊢ Star(compile(prog), StateMk(comp(e, k), env, st, fr), StateMk(k, env, Cons(v, st), fr)) from match h {
+  match h {
     EvVar(env1, i, v1, hv) => go(
       StateMk(k, env1, Cons(v1, st), fr),
       Eq::congr((o: Option(Val)) => step_load(o, k, env1, st, fr), hv),
@@ -212,7 +212,7 @@ pub theorem comp_correct<prog: List(
 
 // What `run` with one more fuel does after `s` stepped to `o`.
 pub fn run_from(prog: List(Bytecode), fuel: Nat, s: State, o: Option(State)): Option(State) {
-  ⊢ Option(State) from match o {
+  match o {
     None => Some(s)
     Some(x) => run(prog, fuel, x)
   }
@@ -227,7 +227,7 @@ pub(open) inductive RunsTo(prog: List(Bytecode), s1: State, s2: State): Prop {
 pub theorem star_run<prog: List(
   Bytecode
 ), s1: State, s2: State>(a: Star(prog, s1, s2), stop: step(prog, s2) = None): RunsTo(prog, s1, s2) {
-  ⊢ RunsTo(prog, s1, s2) from match a {
+  match a {
     StarRefl(s) => RunsTo::Mk(1, Eq::congr((o: Option(State)) => run_from(prog, Zero, s, o), stop))
     StarStep(t1, t2, t3, h, rest) => ⊢ RunsTo(prog, t1, t3) from match star_run(rest, stop) {
       RunsTo::Mk(fuel, e) => RunsTo::Mk(
@@ -280,7 +280,7 @@ pub theorem compile_correct<prog: List(
   found: List::nth(prog, f) = Some(body),
   h: Eval(prog, Cons(arg, Nil), body, v)
 ): Computes(prog, f, arg, v) {
-  ⊢ Computes(prog, f, arg, v) from match start_runs(found, h) {
+  match start_runs(found, h) {
     RunsTo::Mk(fuel, e) => Computes::Mk(fuel, Eq::congr(answer, e))
   }
 }
@@ -380,7 +380,7 @@ pub theorem compile_answer<prog: List(
   w: Val,
   e: run_program(prog, fuel, f, arg) = Some(w)
 ): (w = v) {
-  ⊢ (w = v) from match start_runs(found, h) {
+  match start_runs(found, h) {
     RunsTo::Mk(fuel0, e0) => answer_det(
       run(compile(prog), fuel, start(f, arg)),
       v,

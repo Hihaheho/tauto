@@ -38,8 +38,115 @@ impl std::ops::Deref for EffectUse {
     }
 }
 impl EffectReference for EffectUse {
+    type Written = WrittenEffect;
     fn display(&self) -> &str {
         self.identity.display()
+    }
+    fn written_display(written: &WrittenEffect) -> &str {
+        &written.display
+    }
+}
+
+/// An effect applied to arguments as the source writes it (`res(Pos)`,
+/// `∀ A. res(A)`), before resolution binds it: the effect's name, the
+/// argument terms and the row's parameters, each kept as what it is. The
+/// passes before resolution edit the head and the arguments as names and
+/// terms, and resolution binds them as such; nothing reads the entry back
+/// from its display, which is only what it is shown as.
+#[derive(Clone, Debug)]
+pub struct WrittenEffect {
+    head: String,
+    arguments: Vec<SurfaceTerm>,
+    parameters: Vec<String>,
+    universal: bool,
+    display: String,
+}
+
+impl WrittenEffect {
+    /// `head(arguments…)`, under `∀ parameters.` when `universal`.
+    pub fn new(
+        head: impl Into<String>,
+        arguments: Vec<SurfaceTerm>,
+        parameters: Vec<String>,
+        universal: bool,
+    ) -> Self {
+        let mut written = Self {
+            head: head.into(),
+            arguments,
+            parameters,
+            universal,
+            display: String::new(),
+        };
+        written.display = written.render();
+        written
+    }
+    pub fn head(&self) -> &str {
+        &self.head
+    }
+    pub fn arguments(&self) -> &[SurfaceTerm] {
+        &self.arguments
+    }
+    pub fn parameters(&self) -> &[String] {
+        &self.parameters
+    }
+    pub fn is_universal(&self) -> bool {
+        self.universal
+    }
+    pub fn display(&self) -> &str {
+        &self.display
+    }
+    /// The entry with its head and its arguments edited.
+    pub fn edited(
+        &self,
+        head: impl FnOnce(&mut String),
+        mut argument: impl FnMut(&mut SurfaceTerm),
+    ) -> Self {
+        let mut out = self.clone();
+        head(&mut out.head);
+        out.arguments.iter_mut().for_each(&mut argument);
+        out.display = out.render();
+        out
+    }
+    fn render(&self) -> String {
+        let entry = if self.arguments.is_empty() {
+            self.head.clone()
+        } else {
+            format!(
+                "{}({})",
+                self.head,
+                self.arguments
+                    .iter()
+                    .map(crate::surface::print::print_term)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        if self.universal {
+            format!("∀ {}. {entry}", self.parameters.join(", "))
+        } else {
+            entry
+        }
+    }
+}
+impl PartialEq for WrittenEffect {
+    fn eq(&self, other: &Self) -> bool {
+        self.display == other.display
+    }
+}
+impl Eq for WrittenEffect {}
+impl Hash for WrittenEffect {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.display.hash(state)
+    }
+}
+impl PartialOrd for WrittenEffect {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for WrittenEffect {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.display.cmp(&other.display)
     }
 }
 impl PartialEq for EffectUse {
@@ -67,8 +174,8 @@ impl Ord for EffectUse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::span::Span;
     use crate::surface::{SurfaceTerm, TermKind};
-    use tauto_parol::Span;
 
     #[test]
     fn applied_effect_retains_argument_identity_despite_equal_display() {

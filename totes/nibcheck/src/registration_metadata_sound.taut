@@ -1,10 +1,11 @@
+import "messages.taut"
 import "existing_data_sound.taut"
 import "finish_data_metadata_sound.taut"
-import std::Base
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Text
+import std::base
+import std::map
+import std::map_laws
+import std::map_text
+import std::text
 import "checker.taut"
 import "data_metadata_sound.taut"
 import "datas.taut"
@@ -13,9 +14,10 @@ import "datas_registration.taut"
 import "summary_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
-import std::prelude::Ord
+import std::builtin::ord
 
 pub def ProtectedData(
   n: Text,
@@ -152,7 +154,7 @@ pub theorem registration_bind_protected<A: Type, B: Type>(
     ProtectedData(n, value, next)
   ) -> ProtectedData(n, value, ck_st(k(v, next)))
 ): ProtectedData(n, value, ck_st(frame_bind(k, m))) {
-  ⊢ ProtectedData(n, value, ck_st(frame_bind(k, m))) from match m {
+  match m {
     mut1(v, next) => hk(v, next, hm)
   }
 }
@@ -168,16 +170,13 @@ pub theorem registration_declare_protected(
   different: (n = registration_name(d)) -> False
 ): ProtectedData(n, value, ck_st(registration_declare(c, d, is_struct, builtin))) {
   registration_bind_protected(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     n,
     value,
     (ignored: Unit, c1: Checker) => frame_bind(
-      List(DataCtor),
-      Unit,
+      <A: List(DataCtor), B: Unit>,
       (constructors: List(DataCtor), c2: Checker) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
           d,
@@ -195,7 +194,7 @@ pub theorem registration_declare_protected(
     ),
     frame_error_if(
       c,
-      "a view struct has no fields: it is an opaque type",
+      view_decl_message(is_struct),
       registration_span(d),
       Bool::and(
         surface_data_is_view(d),
@@ -208,7 +207,7 @@ pub theorem registration_declare_protected(
       c,
       frame_error_if(
         c,
-        "a view struct has no fields: it is an opaque type",
+        view_decl_message(is_struct),
         registration_span(d),
         Bool::and(
           surface_data_is_view(d),
@@ -217,7 +216,7 @@ pub theorem registration_declare_protected(
       ),
       frame_error_if_ok(
         c,
-        "a view struct has no fields: it is an opaque type",
+        view_decl_message(is_struct),
         registration_span(d),
         Bool::and(
           surface_data_is_view(d),
@@ -227,13 +226,11 @@ pub theorem registration_declare_protected(
       ordered
     ),
     ignored => c1 => o1 => registration_bind_protected(
-      List(DataCtor),
-      Unit,
+      <A: List(DataCtor), B: Unit>,
       n,
       value,
       (constructors: List(DataCtor), c2: Checker) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
           d,
@@ -265,8 +262,7 @@ pub theorem registration_declare_protected(
         o1
       ),
       constructors => c2 => o2 => registration_bind_protected(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         n,
         value,
         (ignored2: Unit, c3: Checker) => registration_insert(

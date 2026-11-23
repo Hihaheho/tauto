@@ -1,9 +1,11 @@
+import "../../identity/src/identity.taut"
+import "messages.taut"
 import "pattern_frame.taut"
 import "checked_frame.taut"
 import "written_error_sound.taut"
 import "pattern_read_error_sound.taut"
 import "operation_checked_sound.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -24,34 +26,19 @@ pub theorem pattern_literal_after_frame_checked(
     c,
     frame_error_if(
       c,
-      cat4(
-        "a pattern of ",
-        ty_show(ck_resolve(c, l)),
-        " cannot match ",
-        ty_show(ck_resolve(c, target))
-      ),
+      pattern_cannot_match_message(ty_show(ck_resolve(c, l)), ty_show(ck_resolve(c, target))),
       span,
       not(same)
     ),
     frame_error_if_ok(
       c,
-      cat4(
-        "a pattern of ",
-        ty_show(ck_resolve(c, l)),
-        " cannot match ",
-        ty_show(ck_resolve(c, target))
-      ),
+      pattern_cannot_match_message(ty_show(ck_resolve(c, l)), ty_show(ck_resolve(c, target))),
       span,
       not(same)
     ),
     frame_error_if_ok_errors(
       c,
-      cat4(
-        "a pattern of ",
-        ty_show(ck_resolve(c, l)),
-        " cannot match ",
-        ty_show(ck_resolve(c, target))
-      ),
+      pattern_cannot_match_message(ty_show(ck_resolve(c, l)), ty_show(ck_resolve(c, target))),
       span,
       not(same)
     ),
@@ -67,8 +54,7 @@ pub theorem pattern_literal_frame_checked(
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, pattern_literal(c, l, target, span)) {
   checked_frame_bind(
-    Bool,
-    Unit,
+    <A: Bool, B: Unit>,
     c,
     (same: Bool, c1: Checker) => pattern_literal_after(c1, l, target, span, same),
     ck_unify(c, l, target),
@@ -100,57 +86,32 @@ pub theorem pattern_ctor_arity_frame_checked(
   same: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, pattern_ctor_arity(c, name, args, fields, span, same)) {
-  ⊢ CkCheckedFrame(c, pattern_ctor_arity(c, name, args, fields, span, same)) from match same {
+  match same {
     false => checked_frame_return(c, Some(fields), ordered)
     true => checked_frame_bind(
-      Unit,
-      Option(List(DataField)),
+      <A: Unit, B: Option(List(DataField))>,
       c,
       (ignored: Unit, c1: Checker) => mut1(None, c1),
       ck_error(
         c,
-        cat5(
-          name,
-          " has ",
-          Text::of_nat(list_len(fields)),
-          " fields, the pattern ",
-          Text::of_nat(list_len(args))
-        ),
+        pattern_field_count_message(name, Text::of_nat(list_len(fields)), Text::of_nat(list_len(args))),
         span
       ),
       checked_frame_read(
         c,
         ck_error(
           c,
-          cat5(
-            name,
-            " has ",
-            Text::of_nat(list_len(fields)),
-            " fields, the pattern ",
-            Text::of_nat(list_len(args))
-          ),
+          pattern_field_count_message(name, Text::of_nat(list_len(fields)), Text::of_nat(list_len(args))),
           span
         ),
         ck_error_frame(
           c,
-          cat5(
-            name,
-            " has ",
-            Text::of_nat(list_len(fields)),
-            " fields, the pattern ",
-            Text::of_nat(list_len(args))
-          ),
+          pattern_field_count_message(name, Text::of_nat(list_len(fields)), Text::of_nat(list_len(args))),
           span
         ),
         ck_error_frame_errors(
           c,
-          cat5(
-            name,
-            " has ",
-            Text::of_nat(list_len(fields)),
-            " fields, the pattern ",
-            Text::of_nat(list_len(args))
-          ),
+          pattern_field_count_message(name, Text::of_nat(list_len(fields)), Text::of_nat(list_len(args))),
           span
         ),
         ordered
@@ -166,13 +127,13 @@ pub theorem pattern_ctor_same_frame_checked(
   args: List(SurfacePattern),
   t: Ty,
   span: TySpan,
-  dc: Pair(Text, Nat),
+  dc: Text × Nat,
   targs: List(Ty),
   target: Ty,
   same: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, pattern_ctor_same(c, name, args, t, span, dc, targs, target, same)) {
-  ⊢ CkCheckedFrame(c, pattern_ctor_same(c, name, args, t, span, dc, targs, target, same)) from match same {
+  match same {
     false => pattern_ctor_arity_frame_checked(
       c,
       name,
@@ -190,50 +151,29 @@ pub theorem pattern_ctor_same_frame_checked(
       ordered
     )
     true => checked_frame_bind(
-      Unit,
-      Option(List(DataField)),
+      <A: Unit, B: Option(List(DataField))>,
       c,
       (ignored: Unit, c1: Checker) => mut1(None, c1),
       ck_error(
         c,
-        cat4(
-          "a pattern of ",
-          pattern_ctor_name(dc),
-          " cannot match ",
-          ty_show(ck_shown(c, target))
-        ),
+        pattern_cannot_match_message(pattern_ctor_name(dc), ty_show(ck_shown(c, target))),
         span
       ),
       checked_frame_read(
         c,
         ck_error(
           c,
-          cat4(
-            "a pattern of ",
-            pattern_ctor_name(dc),
-            " cannot match ",
-            ty_show(ck_shown(c, target))
-          ),
+          pattern_cannot_match_message(pattern_ctor_name(dc), ty_show(ck_shown(c, target))),
           span
         ),
         ck_error_frame(
           c,
-          cat4(
-            "a pattern of ",
-            pattern_ctor_name(dc),
-            " cannot match ",
-            ty_show(ck_shown(c, target))
-          ),
+          pattern_cannot_match_message(pattern_ctor_name(dc), ty_show(ck_shown(c, target))),
           span
         ),
         ck_error_frame_errors(
           c,
-          cat4(
-            "a pattern of ",
-            pattern_ctor_name(dc),
-            " cannot match ",
-            ty_show(ck_shown(c, target))
-          ),
+          pattern_cannot_match_message(pattern_ctor_name(dc), ty_show(ck_shown(c, target))),
           span
         ),
         ordered
@@ -249,14 +189,13 @@ pub theorem pattern_ctor_unify_frame_checked(
   args: List(SurfacePattern),
   t: Ty,
   span: TySpan,
-  dc: Pair(Text, Nat),
+  dc: Text × Nat,
   targs: List(Ty),
   target: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, pattern_ctor_unify(c, name, args, t, span, dc, targs, target)) {
   checked_frame_bind(
-    Bool,
-    Option(List(DataField)),
+    <A: Bool, B: Option(List(DataField))>,
     c,
     (same: Bool, c1: Checker) => pattern_ctor_same(
       c1,
@@ -269,8 +208,8 @@ pub theorem pattern_ctor_unify_frame_checked(
       target,
       not(same)
     ),
-    ck_unify(c, target, TyNamed(pattern_ctor_name(dc), targs)),
-    ck_unify_run_frame_checked(c, target, TyNamed(pattern_ctor_name(dc), targs), ordered),
+    ck_unify(c, target, TyNamed(NameSpelled(pattern_ctor_name(dc)), targs)),
+    ck_unify_run_frame_checked(c, target, TyNamed(NameSpelled(pattern_ctor_name(dc)), targs), ordered),
     same => c1 => o_c1 => pattern_ctor_same_frame_checked(
       c1,
       name,
@@ -286,34 +225,55 @@ pub theorem pattern_ctor_unify_frame_checked(
   )
 }
 
+pub theorem pattern_ctor_missing_frame_checked(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  nat: Option(List(DataField)),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, pattern_ctor_missing(c, name, args, t, span, nat)) {
+  match nat {
+    Some(fields) => checked_frame_return(c, Some(fields), ordered)
+    None => checked_frame_bind(
+      <A: Unit, B: Option(List(DataField))>,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(c, datas_pattern_ctor_error(ck_datas_of(c), name, ty_unborrowed(ck_resolve(c, t))), span),
+      checked_frame_read(
+        c,
+        ck_error(c, datas_pattern_ctor_error(ck_datas_of(c), name, ty_unborrowed(ck_resolve(c, t))), span),
+        ck_error_frame(c, datas_pattern_ctor_error(ck_datas_of(c), name, ty_unborrowed(ck_resolve(c, t))), span),
+        ck_error_frame_errors(c, datas_pattern_ctor_error(ck_datas_of(c), name, ty_unborrowed(ck_resolve(c, t))), span),
+        ordered
+      ),
+      ignored => c1 => o_c1 => checked_frame_return(c1, None, o_c1)
+    )
+  }
+}
+
 pub theorem pattern_ctor_lookup_frame_checked(
   c: Checker,
   name: Text,
   args: List(SurfacePattern),
   t: Ty,
   span: TySpan,
-  found: Option(Pair(Text, Nat)),
+  found: Option(Text × Nat),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, pattern_ctor_lookup(c, name, args, t, span, found)) {
-  ⊢ CkCheckedFrame(c, pattern_ctor_lookup(c, name, args, t, span, found)) from match found {
-    None => checked_frame_bind(
-      Unit,
-      Option(List(DataField)),
+  match found {
+    None => pattern_ctor_missing_frame_checked(
       c,
-      (ignored: Unit, c1: Checker) => mut1(None, c1),
-      ck_error(c, datas_ctor_error(ck_datas_of(c), name), span),
-      checked_frame_read(
-        c,
-        ck_error(c, datas_ctor_error(ck_datas_of(c), name), span),
-        ck_error_frame(c, datas_ctor_error(ck_datas_of(c), name), span),
-        ck_error_frame_errors(c, datas_ctor_error(ck_datas_of(c), name), span),
-        ordered
-      ),
-      ignored => c1 => o_c1 => checked_frame_return(c1, None, o_c1)
+      name,
+      args,
+      t,
+      span,
+      nat_pattern_fields(ck_datas_of(c), name, args, ty_unborrowed(ck_resolve(c, t))),
+      ordered
     )
     Some(dc) => checked_frame_bind(
-      List(Ty),
-      Option(List(DataField)),
+      <A: List(Ty), B: Option(List(DataField))>,
       c,
       (targs: List(Ty), c1: Checker) => pattern_ctor_unify(
         c1,
@@ -348,14 +308,14 @@ pub theorem pattern_ctor_lookup_frame_checked(
   }
 }
 
-pub theorem ck_ctor_fields_run_frame_checked(
+pub theorem ck_data_ctor_fields_run_frame_checked(
   c: Checker,
   name: Text,
   args: List(SurfacePattern),
   t: Ty,
   span: TySpan,
   ordered: CkOrdered(c)
-): CkCheckedFrame(c, ck_ctor_fields(c, name, args, t, span)) {
+): CkCheckedFrame(c, ck_data_ctor_fields(c, name, args, t, span)) {
   Eq::subst(
     (z: Mut1(Option(List(DataField)), Checker)) => CkCheckedFrame(c, z),
     Eq::sym(pattern_ctor_fields_unf(c, name, args, t, span)),
@@ -368,5 +328,240 @@ pub theorem ck_ctor_fields_run_frame_checked(
       datas_ctor_expected(ck_datas_of(c), name, ck_resolve(c, t)),
       ordered
     )
+  )
+}
+
+pub theorem pattern_product_same_frame_checked(
+  c: Checker,
+  t: Ty,
+  span: TySpan,
+  parts: List(Ty),
+  target: Ty,
+  same: Bool,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, pattern_product_same(c, t, span, parts, target, same)) {
+  match same {
+    false => checked_frame_return(c, Some(product_pattern_fields(parts)), ordered)
+    true => checked_frame_bind(
+      <A: Unit, B: Option(List(DataField))>,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(c, product_pattern_cannot_match_message(ty_show(ck_shown(c, target))), span),
+      checked_frame_read(
+        c,
+        ck_error(c, product_pattern_cannot_match_message(ty_show(ck_shown(c, target))), span),
+        ck_error_frame(c, product_pattern_cannot_match_message(ty_show(ck_shown(c, target))), span),
+        ck_error_frame_errors(c, product_pattern_cannot_match_message(ty_show(ck_shown(c, target))), span),
+        ordered
+      ),
+      ignored => c1 => o_c1 => checked_frame_return(c1, None, o_c1)
+    )
+  }
+}
+
+pub theorem pattern_product_unify_frame_checked(
+  c: Checker,
+  t: Ty,
+  span: TySpan,
+  parts: List(Ty),
+  target: Ty,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, pattern_product_unify(c, t, span, parts, target)) {
+  checked_frame_bind(
+    <A: Bool, B: Option(List(DataField))>,
+    c,
+    (same: Bool, c1: Checker) => pattern_product_same(c1, t, span, parts, target, not(same)),
+    ck_unify(c, target, ty_product_of(parts)),
+    ck_unify_run_frame_checked(c, target, ty_product_of(parts), ordered),
+    same => c1 => o_c1 => pattern_product_same_frame_checked(c1, t, span, parts, target, not(same), o_c1)
+  )
+}
+
+pub theorem ck_product_fields_run_frame_checked(
+  c: Checker,
+  t: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_product_fields(c, t, span)) {
+  Eq::subst(
+    (z: Mut1(Option(List(DataField)), Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(pattern_product_unf(c, t, span)),
+    checked_frame_bind(
+      <A: List(Ty), B: Option(List(DataField))>,
+      c,
+      (parts: List(Ty), c1: Checker) => pattern_product_unify(
+        c1,
+        t,
+        span,
+        parts,
+        ty_unborrowed(ck_resolve(c1, t))
+      ),
+      ck_fresh_each(product_pattern_names(), c),
+      checked_frame_read(
+        c,
+        ck_fresh_each(product_pattern_names(), c),
+        ck_fresh_each_frame(product_pattern_names(), c),
+        ck_fresh_each_frame_errors(product_pattern_names(), c),
+        ordered
+      ),
+      parts => c1 => o_c1 => pattern_product_unify_frame_checked(
+        c1,
+        t,
+        span,
+        parts,
+        ty_unborrowed(ck_resolve(c1, t)),
+        o_c1
+      )
+    )
+  )
+}
+
+pub theorem pattern_fields_pick_frame_checked(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  product: Bool,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, pattern_fields_pick(c, name, args, t, span, product)) {
+  match product {
+    true => checked_frame_rewrap(
+      c,
+      ck_product_fields(c, t, span),
+      ck_product_fields_run_frame_checked(c, t, span, ordered)
+    )
+    false => checked_frame_rewrap(
+      c,
+      ck_data_ctor_fields(c, name, args, t, span),
+      ck_data_ctor_fields_run_frame_checked(c, name, args, t, span, ordered)
+    )
+  }
+}
+
+pub theorem ck_unlabelled_fields_run_frame_checked(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_unlabelled_fields(c, name, args, t, span)) {
+  Eq::subst(
+    (z: Mut1(Option(List(DataField)), Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(pattern_fields_pick_unf(c, name, args, t, span)),
+    pattern_fields_pick_frame_checked(
+      c,
+      name,
+      args,
+      t,
+      span,
+      Text::eq(name, surface_product_ctor()),
+      ordered
+    )
+  )
+}
+
+
+pub theorem ck_label_fields_frame_checked(
+  c: Checker,
+  tag: Text,
+  target: Ty,
+  span: TySpan,
+  found: Option(Ty),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_label_fields(c, tag, target, span, found)) {
+  match found {
+    Some(under) => checked_frame_return(c, Some(Cons(DataFieldMk(None, under), Nil)), ordered)
+    None => checked_frame_bind(
+      <A: Unit, B: Option(List(DataField))>,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(c, label_not_on_message(tag, ty_show(target)), span),
+      checked_frame_read(
+        c,
+        ck_error(c, label_not_on_message(tag, ty_show(target)), span),
+        ck_error_frame(c, label_not_on_message(tag, ty_show(target)), span),
+        ck_error_frame_errors(c, label_not_on_message(tag, ty_show(target)), span),
+        ordered
+      ),
+      ignored => c1 => o_c1 => checked_frame_return(c1, None, o_c1)
+    )
+  }
+}
+
+pub theorem ck_label_var_frame_checked(c: Checker, tag: Text, target: Ty, o: CkOrdered(c)): CkCheckedFrame(c, ck_label_var(c, tag, target)) {
+  checked_frame_bind(
+    <A: Ty, B: Option(Ty)>,
+    c,
+    (under: Ty, c1: Checker) => frame_bind(
+      <A: Bool, B: Option(Ty)>,
+      (ok: Bool, c2: Checker) => mut1(label_unified(ok, under), c2),
+      ck_unify(c1, target, ty_tagged_with(Cons(tag, Nil), under))
+    ),
+    ck_fresh(c),
+    checked_frame_read(c, ck_fresh(c), ck_fresh_frame(c), ck_fresh_frame_errors(c), o),
+    under => c1 => o1 => checked_frame_bind(
+      <A: Bool, B: Option(Ty)>,
+      c1,
+      (ok: Bool, c2: Checker) => mut1(label_unified(ok, under), c2),
+      ck_unify(c1, target, ty_tagged_with(Cons(tag, Nil), under)),
+      ck_unify_run_frame_checked(c1, target, ty_tagged_with(Cons(tag, Nil), under), o1),
+      ok => c2 => o2 => checked_frame_return(c2, label_unified(ok, under), o2)
+    )
+  )
+}
+pub theorem ck_label_found_frame_checked(c: Checker, tag: Text, target: Ty, unsolved: Bool, o: CkOrdered(c)): CkCheckedFrame(c, ck_label_found(c, tag, target, unsolved)) {
+  match unsolved {
+    true => checked_frame_rewrap(c, ck_label_var(c, tag, target), ck_label_var_frame_checked(c, tag, target, o))
+    false => checked_frame_return(c, label_under(target, tag), o)
+  }
+}
+pub theorem ck_label_at_frame_checked(c: Checker, tag: Text, target: Ty, span: TySpan, o: CkOrdered(c)): CkCheckedFrame(c, ck_label_at(c, tag, target, span)) {
+  checked_frame_bind(
+    <A: Option(Ty), B: Option(List(DataField))>,
+    c,
+    (found: Option(Ty), c1: Checker) => ck_rewrap1(ck_label_fields(c1, tag, target, span, found)),
+    ck_label_found(c, tag, target, ty_is_var(target)),
+    ck_label_found_frame_checked(c, tag, target, ty_is_var(target), o),
+    found => c1 => o1 => checked_frame_rewrap(c1, ck_label_fields(c1, tag, target, span, found), ck_label_fields_frame_checked(c1, tag, target, span, found, o1))
+  )
+}
+
+pub theorem ck_ctor_fields_by_frame_checked(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  label: Option(Text),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_ctor_fields_by(c, name, args, t, span, label)) {
+  match label {
+    Some(tag) => checked_frame_rewrap(
+      c,
+      ck_label_at(c, tag, ty_unborrowed(ck_resolve(c, t)), span),
+      ck_label_at_frame_checked(c, tag, ty_unborrowed(ck_resolve(c, t)), span, ordered)
+    )
+    None => Eq::subst(
+      (z: Mut1(Option(List(DataField)), Checker)) => CkCheckedFrame(c, z),
+      Eq::sym(ck_rewrap1_id(ck_unlabelled_fields(c, name, args, t, span))),
+      ck_unlabelled_fields_run_frame_checked(c, name, args, t, span, ordered)
+    )
+  }
+}
+
+pub theorem ck_ctor_fields_run_frame_checked(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_ctor_fields(c, name, args, t, span)) {
+  Eq::subst(
+    (z: Mut1(Option(List(DataField)), Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(ck_rewrap1_id(ck_ctor_fields_by(c, name, args, t, span, label_of_ctor(name)))),
+    ck_ctor_fields_by_frame_checked(c, name, args, t, span, label_of_ctor(name), ordered)
   )
 }

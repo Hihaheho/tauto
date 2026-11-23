@@ -3,8 +3,8 @@
 //! program's own types.
 
 use crate::stdlib::{
-    Atomic, Bytes, HashMap, Mutex, MutexGuard, Pending, Ref, Secret, Signal, SynDeclaration, Weak,
-    atomic_load, ref_with,
+    Atomic, Bytes, Mutex, MutexGuard, Pending, Place, Placed, Ref, Region, Secret, Signal,
+    SynDeclaration, Weak, atomic_load, ref_with,
 };
 use crate::{Nat, Never, Owned, Rc, Shared, Text, Unlink};
 
@@ -171,16 +171,6 @@ impl<T: Show> Show for [T] {
     }
 }
 
-impl<K: Show, V: Show> Show for HashMap<K, V> {
-    fn show(&self) -> String {
-        let items: Vec<String> = self
-            .iter()
-            .map(|(k, v)| format!("{}: {}", k.show(), v.show()))
-            .collect();
-        format!("HashMap{{{}}}", items.join(", "))
-    }
-}
-
 impl<T: Show> Show for Ref<T> {
     fn show(&self) -> String {
         format!("Ref({})", ref_with(self, |v| v.show()))
@@ -214,6 +204,24 @@ impl Show for Atomic {
 impl Show for Signal {
     fn show(&self) -> String {
         "Signal".to_string()
+    }
+}
+
+impl Show for Region {
+    fn show(&self) -> String {
+        "Region".to_string()
+    }
+}
+
+impl<T> Show for Place<T> {
+    fn show(&self) -> String {
+        "()".to_string()
+    }
+}
+
+impl<T: Show> Show for Placed<'_, T> {
+    fn show(&self) -> String {
+        format!("Placed {{ value: {}, at: () }}", self.value.show())
     }
 }
 

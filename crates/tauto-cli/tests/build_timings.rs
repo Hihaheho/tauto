@@ -96,7 +96,7 @@ fn names(value: &Value) -> Vec<&str> {
 #[test]
 fn emit_preserves_stdout_and_observes_generated_source_reuse() {
     let f = Fixture::new(
-        r#"perform show("answer", 42)
+        r#"show(&42)
 "#,
     );
     let first = f.build(&["--emit", "rust", "--timings=json"]);
@@ -184,7 +184,7 @@ fn failures_keep_exit_codes_and_diagnostics_before_final_json() {
 #[test]
 fn output_and_native_failures_are_not_successful_phases() {
     let f = Fixture::new(
-        r#"perform show("answer", 42)
+        r#"show(&42)
 "#,
     );
     fs::write(f.0.join("out"), "not a directory").unwrap();
@@ -212,7 +212,7 @@ fn output_and_native_failures_are_not_successful_phases() {
 #[test]
 fn native_host_build_reports_cargo_without_changing_binary_path() {
     let f = Fixture::new(
-        r#"perform show("answer", 42)
+        r#"show(&42)
 "#,
     );
     let out = f.build(&["--timings=json"]);
@@ -230,7 +230,7 @@ fn native_host_build_reports_cargo_without_changing_binary_path() {
     assert!(path.is_file(), "{}", path.display());
     let run = Command::new(path).output().unwrap();
     assert!(run.status.success());
-    assert_eq!(run.stdout, b"answer = 42\n");
+    assert_eq!(run.stdout, b"42\n");
     let ordinary = f.build(&[]);
     assert!(ordinary.status.success());
     assert_eq!(ordinary.stdout, stdout.as_bytes());
@@ -240,7 +240,7 @@ fn native_host_build_reports_cargo_without_changing_binary_path() {
 #[test]
 fn javascript_build_targets_do_not_run_the_program_or_claim_native_compilation() {
     let f = Fixture::new(
-        r#"perform show("answer", 42)
+        r#"show(&42)
 "#,
     );
     for target in ["node", "browser"] {
@@ -300,7 +300,7 @@ fn move_into_src(f: &Fixture) {
 fn javascript_rust_extern_failure_reports_the_native_boundary() {
     let f = Fixture::new(
         r#"extern { fn absolute(n: i64): i64 }
-perform show("abs", absolute(0 - 42))
+show(&absolute(0 - 42))
 "#,
     );
     fs::write(
@@ -339,7 +339,7 @@ perform show("abs", absolute(0 - 42))
 #[test]
 fn tote_loading_reports_its_combined_proof_check_and_extraction_boundary() {
     let f = Fixture::new(
-        r#"perform show("answer", 42)
+        r#"show(&42)
 "#,
     );
     fs::write(

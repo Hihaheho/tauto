@@ -4,10 +4,9 @@
 // by them, comments and the places that do not read included.
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
-import std::Text
-import std::TextOps
-import std::UInt
-import std::prelude::Affine
+import std::text
+import std::text_ops
+import std::uint
 
 // A word: its kind and the range `start..end` of the bytes of the grammar it
 // covers (a literal's delimiters included).
@@ -30,7 +29,7 @@ pub fn par_is_name(b: u64): Bool {
   par_is_name_start(b) || (b >= 48 && b <= 57)
 }
 
-pub fn par_name_end(t: Text, at: u64): u64 {
+pub fn par_name_end(t: Text, at: u64): u64 ! {div, overflow} {
   if par_is_name(par_byte(t, at)) && at < std::prelude::Text::len(t) {
     par_name_end(t, at + 1)
   } else {
@@ -39,7 +38,7 @@ pub fn par_name_end(t: Text, at: u64): u64 {
 }
 
 // The end of a name that may be a path of a user type: `a::b::C`.
-pub fn par_path_end(t: Text, at: u64): u64 {
+pub fn par_path_end(t: Text, at: u64): u64 ! {div, overflow} {
   let end := par_name_end(t, at)
   if par_byte(
     t,
@@ -56,7 +55,7 @@ pub fn par_path_end(t: Text, at: u64): u64 {
 
 // The end of a literal that starts at `at` with the delimiter `d`: the place
 // after the closing one, or none when the text ends first.
-pub fn par_literal_end(t: Text, at: u64, d: u64): Option(u64) {
+pub fn par_literal_end(t: Text, at: u64, d: u64): Option(u64) ! {div, overflow} {
   if at >= std::prelude::Text::len(t) {
     None
   } else {
@@ -73,7 +72,7 @@ pub fn par_literal_end(t: Text, at: u64, d: u64): Option(u64) {
 
 // The end of a block comment whose body starts at `at`: the place after `*/`,
 // or none when the text ends first.
-pub fn par_block_end(t: Text, at: u64): Option(u64) {
+pub fn par_block_end(t: Text, at: u64): Option(u64) ! {div, overflow} {
   if at + 1 >= std::prelude::Text::len(t) {
     None
   } else if par_byte(t, at) == 42 && par_byte(t, at + 1) == 47 {
@@ -83,7 +82,7 @@ pub fn par_block_end(t: Text, at: u64): Option(u64) {
   }
 }
 
-pub fn par_line_end(t: Text, at: u64): u64 {
+pub fn par_line_end(t: Text, at: u64): u64 ! {div, overflow} {
   if at >= std::prelude::Text::len(t) || par_byte(t, at) == 10 {
     at
   } else {
@@ -93,7 +92,7 @@ pub fn par_line_end(t: Text, at: u64): u64 {
 
 // The end of a character that starts at `at`: past the bytes that continue it
 // in UTF-8.
-pub fn par_char_end(t: Text, at: u64): u64 {
+pub fn par_char_end(t: Text, at: u64): u64 ! {div, overflow} {
   var end := at + 1
   let n := std::prelude::Text::len(t)
   while end < n && par_byte(t, end) >= 128 && par_byte(t, end) < 192 {
@@ -105,7 +104,7 @@ pub fn par_char_end(t: Text, at: u64): u64 {
 // The words of the grammar `t`, in order, the comments included, ending with
 // the end (kind 8). A place that does not read is a word of its own (kind 12,
 // 13 or 14) and the words go on after it.
-pub fn par_spans(t: Text): Vec(PSpan) {
+pub fn par_spans(t: Text): Vec(PSpan) ! {div, overflow} {
   var out: Vec(PSpan) := Vec::new()
   var at: u64 := 0
   let n := std::prelude::Text::len(t)
@@ -188,7 +187,7 @@ pub fn par_spans(t: Text): Vec(PSpan) {
 // The words of `t` as a text of numbers separated by single spaces, three for
 // each word: its kind, its start and its end (the entry point of the Rust
 // side, `crates/tauto-analyzer`).
-fn spans_text(t: Text): Text ! {Div} {
+fn spans_text(t: Text): Text ! {div, overflow} {
   var words: List(Text) := Nil
   var rest := Vec::into_list(par_spans(t))
   var running := true
@@ -217,7 +216,11 @@ pub fn par_reverse_words(xs: List(Text), acc: List(Text)): List(Text) {
 }
 
 // `spans_text` with its loops bounded: a text the lexer does not finish within
-// the steps gives no tokens, and is then left without highlighting.
-pub fn par_spans_text(t: Text): Text {
-  handle { budget(steps: 100000000) { spans_text(t) } } with { exceeded(info), k => "" }
+// the steps, or whose positions do not fit a `u64`, gives no tokens, and is then
+// left without highlighting.
+pub fn par_spans_text(t: Text): Text ! {budget} {
+  handle { perform budget(100000000, () => { spans_text(t) }) } with {
+    exceeded(^info), k => ""
+    overflow() => ""
+  }
 }

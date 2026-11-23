@@ -2,14 +2,16 @@
 // functions that carry it. The generated type keeps it in a `PhantomData`, since Rust
 // refuses a parameter that nothing uses.
 @ cases.a-struct-parameter-only-in-an-effect-row
-backends = ["rust"]
-extract = true
-imports = [path`../std/Base.taut`]
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+stdout = ```
+"kept"
+```
+imports = [path`../std/base.taut`]
 source = ```tauto
 effect wait<E: Shared>(reason: Text): Unit
 
 struct Options(A: Shared, E: Shared) {
-  run: (x: A) -> A ! {wait(E), Div},
+  run: (x: A) -> A ! {wait(E), div},
   label: Text,
 }
 
@@ -23,20 +25,21 @@ fn label_of(o: Options(Nat, Text)): Text {
   }
 }
 
-perform show("label", label_of(make("kept")))
+show(&label_of(make("kept")))
 ```
-rust_shows = ["label = \"kept\""]
 
 @ cases.an-enum-parameter-only-in-an-effect-row
-backends = ["rust"]
-extract = true
-imports = [path`../std/Base.taut`]
+stdout = ```
+"idle"
+"n"
+```
+imports = [path`../std/base.taut`]
 source = ```tauto
 effect wait<E: Shared>(reason: Text): Unit
 
 enum Step(A: Shared, E: Shared) {
   Idle
-  Run((x: A) -> A ! {wait(E), Div})
+  Run((x: A) -> A ! {wait(E), div})
   Named(Text)
 }
 
@@ -48,7 +51,6 @@ fn name(s: Step(Nat, Text)): Text {
   }
 }
 
-perform show("idle", name(Idle))
-perform show("named", name(Named("n")))
+show(&name(Idle))
+show(&name(Named("n")))
 ```
-rust_shows = ["idle = \"idle\"", "named = \"n\""]

@@ -19,6 +19,9 @@ use tauto_cache::{Action, BuildCache, Outputs};
 use tauto_message::msg;
 
 use crate::Workspace;
+use crate::cargo::{
+    MIN_PUBLISH_AGE, cargo_command, cooldown_enforced, offline_if_requested, toolchain,
+};
 
 /// Why a direct build was not made, so that Cargo builds the crate instead,
 /// or the error to report.
@@ -72,9 +75,8 @@ impl Workspace {
         std::fs::create_dir_all(&libs).map_err(|_| Failed::Fallback)?;
         let rustc_in =
             |crate_type: &str, crate_name: &str, src: &str| {
-                let mut cmd = Command::new(&rustc);
-                cmd.current_dir(dir)
-                    .args(["--edition", "2024", "--crate-type", crate_type])
+                let mut cmd = rustc_command(&rustc, dir);
+                cmd.args(["--edition", "2024", "--crate-type", crate_type])
                     .args(["--crate-name", crate_name])
                     .args(["-C", "debuginfo=2"])
                     .arg("-C")
@@ -124,12 +126,26 @@ impl Workspace {
     }
 }
 
+fn rustc_command(rustc: &str, dir: &Path) -> Command {
+    let mut cmd = Command::new(rustc);
+    cmd.current_dir(dir);
+    // Both compilation steps must use the toolchain that built the runtime.
+    if std::env::var_os("CARGO").is_none() {
+        cmd.env("RUSTUP_TOOLCHAIN", toolchain());
+    }
+    cmd
+}
+
 impl Workspace {
     /// The runtime's files as this crate has them, its `Cargo.toml` among them.
     fn rt_files(&self) -> Vec<(&str, &str)> {
         self.files
             .iter()
-            .filter(|(p, _)| p.starts_with("tauto-rt/") || p.starts_with("tauto-identity/"))
+            .filter(|(p, _)| {
+                p.starts_with("tauto-rt/")
+                    || p.starts_with("tauto-rt-signal/")
+                    || p.starts_with("tauto-identity/")
+            })
             .map(|(p, t)| (p.as_str(), t.as_str()))
             .collect()
     }
@@ -153,8 +169,7 @@ fn runtime(
     features: &[String],
 ) -> Option<Runtime> {
     let cache = BuildCache::from_env().ok()?;
-    let version = Command::new(rustc)
-        .current_dir(dir)
+    let version = rustc_command(rustc, dir)
         .arg("-vV")
         .output()
         .ok()
@@ -171,11 +186,15 @@ fn runtime(
         .input("rustc", &version)
         .input("tauto-rt", &rt)
         .input("features", features.join(",").as_bytes())
+        .input("min-publish-age", MIN_PUBLISH_AGE.as_bytes())
         .input("profile", b"dev");
+    let digest = action.key();
+    let key = digest.hex();
     let outputs = match cache.get(&action) {
         Some(o) => o,
         None => {
-            let built = build_runtime(files, target_dir, features)?;
+            let workspace = target_dir.join("rt-build").join(key);
+            let built = build_runtime(files, &workspace, features)?;
             let mut outputs = Outputs::default();
             for file in built {
                 let bytes = std::fs::read(&file).ok()?;
@@ -186,7 +205,7 @@ fn runtime(
             outputs
         }
     };
-    let at = target_dir.join("rt").join(action.key().hex());
+    let at = target_dir.join("rt").join(key);
     std::fs::create_dir_all(&at).ok()?;
     let mut lib = None;
     for (name, d) in &outputs.0 {
@@ -208,15 +227,11 @@ fn runtime(
     Some(Runtime { dir: at, lib, meta })
 }
 
-/// Builds `tauto-rt` with `features` by Cargo in `target_dir/rt-build`, and
+/// Builds `tauto-rt` with `features` by Cargo in its runtime workspace, and
 /// returns the `rlib`s (and `rmeta`s) it and its dependencies are; none when a dependency
 /// links what an `rlib` does not hold.
-fn build_runtime(
-    files: &[(&str, &str)],
-    target_dir: &Path,
-    features: &[String],
-) -> Option<Vec<PathBuf>> {
-    let ws = target_dir.join("rt-build");
+fn build_runtime(files: &[(&str, &str)], ws: &Path, features: &[String]) -> Option<Vec<PathBuf>> {
+    cooldown_enforced().ok()?;
     for (path, text) in files {
         let p = ws.join(path);
         let text = if *path == "tauto-rt/Cargo.toml" {
@@ -229,8 +244,10 @@ fn build_runtime(
             std::fs::write(&p, text).ok()?;
         }
     }
-    let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+    crate::cargo::ensure_lock(&ws.join("tauto-rt/Cargo.toml"), &ws.join("target")).ok()?;
+    let mut cmd = cargo_command();
     cmd.arg("build")
+        .arg("--locked")
         .arg("--quiet")
         .arg("--lib")
         .arg("--message-format=json")
@@ -239,7 +256,7 @@ fn build_runtime(
         .env("CARGO_TARGET_DIR", ws.join("target"))
         .env("CARGO_BUILD_BUILD_DIR", ws.join("target"))
         .env("CARGO_TERM_COLOR", "never");
-    crate::cargo::offline_if_requested(&mut cmd);
+    offline_if_requested(&mut cmd);
     if !features.is_empty() {
         cmd.arg("--features").arg(features.join(","));
     }

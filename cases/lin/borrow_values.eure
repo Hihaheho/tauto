@@ -1,0 +1,411 @@
+// Values that hold borrows in type arguments, containers and `var`s: a type
+// variable may stand for a type that holds a borrow unless it is bounded by
+// `NoBorrow`. A binding that a `&mut` call or an assignment puts a borrow
+// into absorbs what the borrow borrows, and freezes it while the binding is
+// live (`last_use.eure`); an owner declared after it must outlive its last use. `F` is an
+// affine struct, so that the freeze is the point (a `&i64` is an `i64`).
+
+@ cases.vec-of-borrows-reads
+llvm.unimplemented = "generate: the LLVM backend does not write a `Vec` of borrows yet"
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+let a := F { n: 1 }
+let b := F { n: 2 }
+var v := Vec::new()
+Vec::push(&mut v, &a)
+Vec::push(&mut v, &b)
+let n := match Vec::get(&v, 1) {
+  Some(f) => size(&f)
+  None => 0
+}
+show(&n)
+```
+stdout = "2\n"
+
+@ cases.vec-of-borrows-freezes-owner
+source = ```nib
+
+struct(affine) F {}
+fn take(f: F): i64 { 1 }
+let a := F {}
+var v := Vec::new()
+Vec::push(&mut v, &a)
+take(a)
+let used_later := &v
+```
+lin = "error: a is frozen by v"
+
+@ cases.vec-of-borrows-freeze-ends-with-block
+source = ```nib
+
+struct(affine) F {}
+fn take(f: F): i64 { 1 }
+let a := F {}
+{
+  var v := Vec::new()
+  Vec::push(&mut v, &a)
+}
+take(a)
+```
+lin = "ok"
+
+@ cases.absorbed-owner-in-inner-block-does-not-live-long-enough
+source = ```nib
+
+struct(affine) F {}
+var v := Vec::new()
+{
+  let a := F {}
+  Vec::push(&mut v, &a)
+}
+let used_later := &v
+```
+lin = "error: a does not live as long as v"
+
+@ cases.absorbed-owner-declared-later-is-ok-once-holder-is-dead
+source = ```nib
+
+struct(affine) F {}
+var v := Vec::new()
+let a := F {}
+Vec::push(&mut v, &a)
+```
+lin = "ok"
+
+@ cases.generic-identity-keeps-the-borrow
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn id<A>(x: A): A { x }
+fn take(f: F): i64 { 1 }
+let a := F {}
+let p := id(Pick { f: &a })
+take(a)
+let used_later := &p
+```
+lin = "error: a is frozen by p"
+
+@ cases.generic-effect-argument-needs-no-borrow
+source = ```nib
+effect keep<A>(x: A): Unit
+fn send<A>(x: A): Unit ! {∀ A. keep(A)} { perform keep(x) }
+```
+types = "error: a value of A, which may hold a borrow, cannot be an effect argument"
+
+@ cases.no-borrow-bound-rejects-a-borrow
+source = ```nib
+struct(affine) F {}
+fn keep<A: NoBorrow>(x: A): Unit { #() }
+let a := F {}
+keep(&a)
+```
+types = "error: a type that holds a borrow cannot be a type argument here"
+
+@ cases.no-borrow-bound-takes-an-owned-value
+source = ```nib
+struct(affine) F {}
+fn keep<A: NoBorrow>(x: A): Unit { #() }
+keep(F {})
+```
+lin = "ok"
+
+@ cases.shared-no-borrow-bound-rejects-a-borrow
+source = ```nib
+struct F {}
+fn keep<A: Shared + NoBorrow>(x: A): Unit { #() }
+let a := F {}
+keep(&a)
+```
+types = "error: a type that holds a borrow cannot be a type argument here"
+
+@ cases.no-borrow-shared-bound-takes-an-owned-value
+source = ```nib
+struct F {}
+fn keep<A: NoBorrow + Shared>(x: A): Unit { #() }
+keep(F {})
+```
+lin = "ok"
+
+@ cases.mut-borrow-holder-is-affine
+source = ```nib
+struct(affine) F {}
+struct Edit { f: &mut F }
+fn touch(e: Edit): i64 { 1 }
+var a := F {}
+let e := Edit { f: &mut a }
+touch(e) + touch(e)
+```
+lin = "error: e is used after move"
+
+@ cases.borrow-beside-owned-field
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Note { f: &F, items: Vec(Text) }
+fn size(f: &F): i64 { f.n }
+let a := F { n: 3 }
+var items := Vec::new()
+Vec::push(&mut items, "x")
+let note := Note { f: &a, items: items }
+show(&size(&note.f))
+```
+stdout = "3\n"
+
+@ cases.closure-capturing-a-borrow-holder-cannot-be-returned
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn mk(a: &F): affine () -> i64 {
+  let p := Pick { f: &a }
+  () => { let q := p
+    1 }
+}
+```
+lin = "error: this closure borrows"
+
+@ cases.view-is-a-type-argument
+source = ```nib
+fn id<A>(x: A): A { x }
+struct(affine) F {}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let o := Vec::get(&v, 0)
+let p := id(o)
+```
+lin = "ok"
+
+@ cases.assigned-borrow-freezes-owner-against-move
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn take(f: F): i64 { 1 }
+let a := F {}
+let b := F {}
+var c := Pick { f: &b }
+c := Pick { f: &a }
+take(a)
+let used_later := &c
+```
+lin = "error: a is frozen by c"
+
+@ cases.assigned-borrow-freezes-owner-against-mut-borrow
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn poke(f: &mut F): i64 { 1 }
+var a := F {}
+let b := F {}
+var c := Pick { f: &b }
+c := Pick { f: &a }
+poke(&mut a)
+let used_later := &c
+```
+lin = "error: a is frozen by c"
+
+@ cases.mut-borrow-before-assignment-is-ok
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn poke(f: &mut F): i64 { 1 }
+var a := F {}
+let b := F {}
+var c := Pick { f: &b }
+poke(&mut a)
+c := Pick { f: &a }
+```
+lin = "ok"
+
+@ cases.move-after-assigned-holder-scope-is-ok
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn take(f: F): i64 { 1 }
+let a := F {}
+let b := F {}
+{
+  var c := Pick { f: &b }
+  c := Pick { f: &a }
+}
+take(a)
+```
+lin = "ok"
+
+@ cases.assigned-later-owner-is-ok-once-holder-is-dead
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+let b := F {}
+var c := Pick { f: &b }
+let a := F {}
+c := Pick { f: &a }
+```
+lin = "ok"
+
+@ cases.borrowing-closure-result-stored-in-earlier-var-is-rejected
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+let b := F {}
+var c := Pick { f: &b }
+{
+  var a := F {}
+  let get := () => Pick { f: &a }
+  c := get()
+}
+let used_later := &c
+```
+lin = "error: a does not live as long as c"
+
+@ cases.borrowing-closure-result-freezes-what-it-captured
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn take(f: F): i64 { 1 }
+var a := F {}
+let get := () => Pick { f: &a }
+let p := get()
+take(a)
+let used_later := &p
+```
+lin = "error: a is frozen by p"
+
+@ cases.borrowing-closure-result-used-in-place-is-ok
+source = ```nib
+struct(affine) F { n: i64 }
+struct Pick { f: &F }
+fn size(f: &F): i64 { f.n }
+fn through(a: &F): i64 {
+  let get := () => Pick { f: &a }
+  let p := get()
+  size(&p.f)
+}
+let a := F { n: 5 }
+show(&through(&a))
+```
+stdout = "5\n"
+
+// A `&mut` parameter is the caller's binding: what is put into it may borrow
+// only what the caller lent, the parameters passed as borrows, whatever the
+// order of the parameters. An owned parameter and a local die with the call.
+@ cases.mut-param-cannot-borrow-owned-param
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn put(x: F, o: &mut Option(Holder)): () { *o := Some(Holder { r: &x }) }
+```
+lin = "error: x does not live as long as o"
+
+@ cases.mut-param-push-cannot-borrow-owned-param
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn put(x: F, v: &mut Vec(Holder)): () { Vec::push(&mut v, Holder { r: &x }) }
+```
+lin = "error: x does not live as long as v"
+
+@ cases.mut-param-cannot-borrow-local
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn put(o: &mut Option(Holder)): () {
+  let y := F { n: 1 }
+  *o := Some(Holder { r: &y })
+}
+```
+lin = "error: y does not live as long as o"
+
+@ cases.mut-param-borrows-later-borrow-param
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn put(o: &mut Option(Holder), x: &F): () { *o := Some(Holder { r: x }) }
+```
+lin = "ok"
+
+@ cases.mut-param-borrow-freezes-callers-owner
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn take(f: F): i64 { f.n }
+fn put(o: &mut Option(&F), x: &F): () { *o := Some(x) }
+fn go(): i64 {
+  let a := F { n: 1 }
+  var o: Option(&F) := None
+  put(&mut o, &a)
+  let t := take(a)
+  match o {
+    Some(r) => t + size(r)
+    None => t
+  }
+}
+```
+lin = "error: a is frozen by o"
+
+@ cases.closure-mut-param-takes-captured-borrow-does-not-live-long-enough
+source = ```nib
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn go(): i64 {
+  var o: Option(&F) := None
+  let z := {
+    let a := F { n: 1 }
+    let f := (p: &mut Option(&F)) => { *p := Some(&a) }
+    f(&mut o)
+    0
+  }
+  match o {
+    Some(r) => z + size(r)
+    None => z
+  }
+}
+```
+lin = "error: a does not live as long as p"
+
+@ cases.closure-mut-param-takes-lent-borrow-is-ok
+source = ```nib
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn go(): i64 {
+  let a := F { n: 1 }
+  var keep := Vec::new()
+  let k := (v: &mut Vec(Holder), h: Holder) => { Vec::push(&mut v, h)
+    1 }
+  k(&mut keep, Holder { r: &a })
+}
+```
+lin = "ok"
+
+@ cases.closure-stores-received-holder-in-capture-does-not-live-long-enough
+source = ```nib
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn size(f: &F): i64 { f.n }
+fn go(): i64 { var keep := Vec::new()
+  let k := (h: Holder) => { Vec::push(&mut keep, h)
+    1 }
+  let n := { let b := F { n: 4 }
+    k(Holder { r: &b }) }
+  match Vec::pop(&mut keep) { Some(h) => n + size(&h.r)
+    None => n } }
+```
+lin = "error: h does not live as long as keep"
+
+// An in-place closure that borrows a local is lent to a `&((A) -> B)` parameter.
+@ cases.in-place-borrowing-closure-is-lent-to-a-borrowed-fn-parameter
+source = ```nib
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn twice(cb: &((i64) -> i64 ! {})): i64 { 1 }
+fn m(): i64 {
+  let b := F { n: 7 }
+  twice((x: i64) => size(&b))
+}
+```
+lin = "ok"

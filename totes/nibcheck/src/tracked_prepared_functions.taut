@@ -1,8 +1,8 @@
 import "tracked_finish_sound.taut"
 import "prepare_function_registered.taut"
 import "finish_error_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_report.taut"
@@ -18,15 +18,15 @@ import "../../surface/src/surface.taut"
 
 pub fn prepared_body_finish(
   program: List(SurfaceStmt),
-  prepared: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)
+  prepared: Mut1(List(SurfaceFn × Scheme), Checker)
 ): Mut1(TypeReport, Checker) {
-  ⊢ Mut1(TypeReport, Checker) from match prepared {
+  match prepared {
     mut1(schemes, state) => ck_finish(ck_st(names_function_body(state, program, schemes)))
   }
 }
 pub theorem prepared_body_finish_registered(
   program: List(SurfaceStmt),
-  prepared: Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  prepared: Mut1(List(SurfaceFn × Scheme), Checker),
   ordered: CkOrdered(ck_st(prepared)),
   registered: RegisteredSignatures(stable_functions(ck_st(prepared)), ck_val(prepared)),
   clean: DiagnosticReportClean(prepared_body_finish(program, prepared))
@@ -50,11 +50,11 @@ pub theorem prepared_body_finish_registered(
 }
 pub theorem prepared_body_finish_input_clean(
   program: List(SurfaceStmt),
-  prepared: Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  prepared: Mut1(List(SurfaceFn × Scheme), Checker),
   ordered: CkOrdered(ck_st(prepared)),
   clean: DiagnosticReportClean(prepared_body_finish(program, prepared))
 ): DiagnosticClean(ck_st(prepared)) {
-  ⊢ DiagnosticClean(ck_st(prepared)) from match prepared {
+  match prepared {
     mut1(schemes, state) => And::right(
       names_function_body_checked(state, program, schemes, ordered)
     )(ck_finish_input_clean(ck_st(names_function_body(state, program, schemes)), clean))

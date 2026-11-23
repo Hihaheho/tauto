@@ -1,0 +1,562 @@
+import "../src/decimal.taut"
+import "../src/read.taut"
+import "../src/syntax.taut"
+import "../src/value.taut"
+import "../src/write.taut"
+import std::base
+import std::list
+import std::nat
+import std::text
+import "numbers.taut"
+import "strings.taut"
+
+// Keys of a path: reading what `put_key` wrote for a string or an integer key gives the key back,
+// when the byte after it cannot go on with a name.
+
+pub theorem all_p_list_all(p: (Nat) -> Bool, l: List(Nat)): all_p(p, l) = List::all(p, l) {
+  match l {
+    Nil => Refl
+    Cons(c, t) => Eq::congr(⟦Bool::and(p(c), □)⟧, all_p_list_all(p, t))
+  }
+}
+
+theorem text_of_bytes(t: Text): Text::Mk(Text::bytes(t)) = t {
+  match t {
+    Mk(bs) => Refl
+  }
+}
+
+// ---- bytes that are not one another -----------------------------------------------------
+
+// `Nat::le(a, b)` and `Nat::le(b, c)` cannot both hold when `Nat::le(a, c)` does not.
+theorem le_between(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  h2: Nat::le(b, c) = true,
+  hac: Nat::le(a, c) = false
+): Nat::le(a, b) = false {
+  Bool::cases(
+    (y: Bool) => y = false,
+    Nat::le(a, b),
+    (e: Nat::le(a, b) = false) => Refl,
+    (e: Nat::le(a, b) = true) => False::elim(
+      true_ne_false(Eq::trans(Eq::sym(Nat::le_trans(a, b, c, e, h2)), hac))
+    )
+  )
+}
+
+// `c` is not `k` when `p` holds for `c` and not for `k`.
+pub theorem ne_of_test(
+  p: (Nat) -> Bool,
+  c: Nat,
+  k: Nat,
+  hc: p(c) = true,
+  hk: p(k) = false
+): Nat::eq(c, k) = false {
+  Bool::cases(
+    (y: Bool) => y = false,
+    Nat::eq(c, k),
+    (e: Nat::eq(c, k) = false) => Refl,
+    (e: Nat::eq(c, k) = true) => False::elim(
+      true_ne_false(
+        Eq::trans(
+          Eq::sym(hc),
+          Eq::subst(<A: Nat, a: k, b: c>, (z: Nat) => p(z) = false, Eq::sym(Nat::eq_sound(c, k, e)), hk)
+        )
+      )
+    )
+  )
+}
+
+theorem digit_high(c: Nat, h: is_digit(c) = true): Nat::le(c, 57) = true {
+  And::right(Bool::and_split(Nat::lt(47, c), Nat::lt(c, 58), h))
+}
+
+// A digit cannot start a name.
+theorem digit_not_start(c: Nat, h: is_digit(c) = true): ident_start(c) = false {
+  Eq::trans(
+    Eq::congr(
+      ⟦Bool::or(
+        Bool::and(□, Nat::le(c, 90)),
+        Bool::or(byte_in(c, 97, 122), Bool::or(Nat::eq(c, 95), Nat::le(128, c)))
+      )⟧,
+      le_between(65, c, 57, digit_high(c, h), Refl)
+    ),
+    Eq::trans(
+      Eq::congr(
+        ⟦Bool::or(Bool::and(□, Nat::le(c, 122)), Bool::or(Nat::eq(c, 95), Nat::le(128, c)))⟧,
+        le_between(97, c, 57, digit_high(c, h), Refl)
+      ),
+      Eq::trans(
+        Eq::congr(⟦Bool::or(□, Nat::le(128, c))⟧, ne_of_test(is_digit, c, 95, h, Refl)),
+        le_between(128, c, 57, digit_high(c, h), Refl)
+      )
+    )
+  )
+}
+
+pub theorem not_digit_of_start(c: Nat, h: ident_start(c) = true): is_digit(c) = false {
+  Bool::cases(
+    (y: Bool) => y = false,
+    is_digit(c),
+    (e: is_digit(c) = false) => Refl,
+    (e: is_digit(c) = true) => False::elim(
+      true_ne_false(Eq::trans(Eq::sym(h), digit_not_start(c, e)))
+    )
+  )
+}
+
+pub theorem start_is_char(c: Nat, h: ident_start(c) = true): ident_char(c) = true {
+  Eq::congr(⟦Bool::or(□, Bool::or(is_digit(c), Nat::eq(c, 45)))⟧, h)
+}
+
+theorem dou_is_char(c: Nat, h: is_digit_or_underscore(c) = true): ident_char(c) = true {
+  Bool::cases(
+    (y: Bool) => Bool::or(ident_start(c), Bool::or(y, Nat::eq(c, 45))) = true,
+    is_digit(c),
+    (d: is_digit(c) = false) => Eq::trans(
+      Eq::congr(
+        ⟦Bool::or(□, Bool::or(false, Nat::eq(c, 45)))⟧,
+        Eq::trans(
+          Eq::congr(
+            ⟦Bool::or(
+              byte_in(c, 65, 90),
+              Bool::or(byte_in(c, 97, 122), Bool::or(□, Nat::le(128, c)))
+            )⟧,
+            Eq::trans(Eq::sym(Eq::congr(⟦Bool::or(□, Nat::eq(c, 95))⟧, d)), h)
+          ),
+          or_yes_right(byte_in(c, 65, 90), byte_in(c, 97, 122))
+        )
+      ),
+      Refl
+    ),
+    (d: is_digit(c) = true) => or_yes_right(ident_start(c), true)
+  )
+}
+
+// `a || (b || true)` and `a || true` hold.
+theorem or_yes_right(a: Bool, b: Bool): Bool::or(a, Bool::or(b, true)) = true {
+  match a {
+    false => match b {
+      false => Refl
+      true => Refl
+    }
+    true => Refl
+  }
+}
+
+theorem head_not_dou(
+  r: List(Nat),
+  hr: head_passes(ident_char, r) = false
+): head_passes(is_digit_or_underscore, r) = false {
+  match r {
+    Nil => Refl
+    Cons(c, t) => Bool::cases(
+      (y: Bool) => y = false,
+      is_digit_or_underscore(c),
+      (e: is_digit_or_underscore(c) = false) => Refl,
+      (e: is_digit_or_underscore(c) = true) => False::elim(
+        true_ne_false(Eq::trans(Eq::sym(dou_is_char(c, e)), hr))
+      )
+    )
+  }
+}
+
+// ---- one step of a path ---------------------------------------------------------------
+
+// `read_seg` of `Cons(c, t)`, with its tests on `c` given.
+fn Seg::tested(
+  l: List(Nat),
+  t: List(Nat),
+  dollar: Bool,
+  bracket: Bool,
+  hash: Bool,
+  paren: Bool,
+  str: Bool,
+  num: Bool
+): Rd(Seg) {
+  match dollar {
+    true => rd_map((w: List(Nat)) => Sext(Text::Mk(w)), read_ident(t))
+    false => match bracket {
+      true => read_marker(t)
+      false => match hash {
+        true => rd_then(
+          read_int(t),
+          (p: Bool × Nat, r: List(Nat)) => match number_negative(p) {
+            true => RdErr(t, "a tuple index that is not negative")
+            false => MkRd(Stupidx(number_magnitude(p)), r)
+          }
+        )
+        false => match paren {
+          true => rd_map((k: Key) => Skey(k), read_key_tuple(l))
+          false => match str {
+            true => rd_map((bs: List(Nat)) => Skey(Kstr(Text::Mk(bs))), read_string(l))
+            false => match num {
+              true => rd_map((p: Bool × Nat) => Skey(Knum(number_negative(p), number_magnitude(p))), read_int(l))
+              false => rd_map((w: List(Nat)) => Skey(Kstr(Text::Mk(w))), read_ident(l))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+theorem Seg::is_tested(
+  c: Nat,
+  t: List(Nat)
+): read_seg(Cons(c, t)) = Seg::tested(
+    Cons(c, t),
+    t,
+    Nat::eq(c, 36),
+    Nat::eq(c, 91),
+    Nat::eq(c, 35),
+    Nat::eq(c, 40),
+    starts_string(Cons(c, t)),
+    starts_number(Cons(c, t))
+  ) {
+  Refl
+}
+
+// A byte that is none of `$ [ # ( " '` and does not start a number starts a name or a number key.
+theorem Seg::plain(
+  c: Nat,
+  t: List(Nat),
+  str: Bool,
+  num: Bool,
+  h36: Nat::eq(c, 36) = false,
+  h91: Nat::eq(c, 91) = false,
+  h35: Nat::eq(c, 35) = false,
+  h40: Nat::eq(c, 40) = false
+): Seg::tested(Cons(c, t), t, Nat::eq(c, 36), Nat::eq(c, 91), Nat::eq(c, 35), Nat::eq(c, 40), str, num) = Seg::tested(Cons(c, t), t, false, false, false, false, str, num) {
+  Eq::trans(
+    Eq::congr(
+      ⟦Seg::tested(
+        Cons(c, t),
+        t,
+        □,
+        Nat::eq(c, 91),
+        Nat::eq(c, 35),
+        Nat::eq(c, 40),
+        str,
+        num
+      )⟧,
+      h36
+    ),
+    Eq::trans(
+      Eq::congr(
+        ⟦Seg::tested(Cons(c, t), t, false, □, Nat::eq(c, 35), Nat::eq(c, 40), str, num)⟧,
+        h91
+      ),
+      Eq::trans(
+        Eq::congr(⟦Seg::tested(Cons(c, t), t, false, false, □, Nat::eq(c, 40), str, num)⟧, h35),
+        Eq::congr(⟦Seg::tested(Cons(c, t), t, false, false, false, □, str, num)⟧, h40)
+      )
+    )
+  )
+}
+
+theorem digit_ne_r(
+  d: Nat,
+  k: Nat,
+  hd: is_digit(d) = true,
+  hk: is_digit(k) = false
+): Nat::eq(d, k) = false {
+  ne_of_test(is_digit, d, k, hd, hk)
+}
+
+pub fn starts_after_sign(q: Bool × List(Nat)): Bool {
+  match sign_rest(q) {
+    Nil => false
+    Cons(c, ^t) => is_digit(c)
+  }
+}
+
+fn num_seg(l: List(Nat)): Rd(Seg) {
+  rd_map((p: Bool × Nat) => Skey(Knum(number_negative(p), number_magnitude(p))), read_int(l))
+}
+
+// A path step that starts with a digit, or with `-` and a digit, is read as an integer key.
+theorem Seg::number(
+  neg: Bool,
+  d: Nat,
+  t: List(Nat),
+  hd: is_digit(d) = true
+): read_seg(signed(neg, Cons(d, t))) = num_seg(signed(neg, Cons(d, t))) {
+  match neg {
+    true => Eq::subst(
+      Bool,
+      true,
+      is_digit(d),
+      (y: Bool) => Seg::tested(Cons(45, Cons(d, t)), Cons(d, t), false, false, false, false, false, y) = num_seg(Cons(45, Cons(d, t))),
+      Eq::sym(hd),
+      Refl
+    )
+    false => Eq::trans(
+      Seg::is_tested(d, t),
+      Eq::trans(
+        Seg::plain(
+          d,
+          t,
+          starts_string(Cons(d, t)),
+          starts_number(Cons(d, t)),
+          digit_ne_r(d, 36, hd, Refl),
+          digit_ne_r(d, 91, hd, Refl),
+          digit_ne_r(d, 35, hd, Refl),
+          digit_ne_r(d, 40, hd, Refl)
+        ),
+        Eq::trans(
+          Eq::congr(
+            ⟦Seg::tested(Cons(d, t), t, false, false, false, false, □, starts_number(Cons(d, t)))⟧,
+            Eq::trans(
+              Eq::congr(⟦Bool::or(□, Nat::eq(39, d))⟧, digit_ne(34, d, Refl, hd)),
+              digit_ne(39, d, Refl, hd)
+            )
+          ),
+          Eq::trans(
+            Eq::congr(
+              ⟦Seg::tested(
+                Cons(d, t),
+                t,
+                false,
+                false,
+                false,
+                false,
+                false,
+                starts_after_sign(□)
+              )⟧,
+              sign_of_signed(false, d, t, hd)
+            ),
+            Eq::subst(
+              Bool,
+              true,
+              is_digit(d),
+              (y: Bool) => Seg::tested(Cons(d, t), t, false, false, false, false, false, y) = num_seg(Cons(d, t)),
+              Eq::sym(hd),
+              Refl
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+pub theorem ne_of_test_l(
+  p: (Nat) -> Bool,
+  c: Nat,
+  k: Nat,
+  hc: p(c) = true,
+  hk: p(k) = false
+): Nat::eq(k, c) = false {
+  Bool::cases(
+    (y: Bool) => y = false,
+    Nat::eq(k, c),
+    (e: Nat::eq(k, c) = false) => Refl,
+    (e: Nat::eq(k, c) = true) => False::elim(
+      true_ne_false(
+        Eq::trans(
+          Eq::sym(hc),
+          Eq::subst(<A: Nat, a: k, b: c>, (z: Nat) => p(z) = false, Nat::eq_sound(k, c, e), hk)
+        )
+      )
+    )
+  )
+}
+
+// Digits, then bytes that cannot go on with a name, are read as an integer key.
+theorem Seg::num_lead(
+  neg: Bool,
+  l: List(Nat),
+  r: List(Nat),
+  hl: all_digits(l) = true,
+  hc: is_cons(l) = true,
+  hr: head_passes(ident_char, r) = false
+): read_seg(signed(neg, List::append(l, r))) = MkRd(Skey(Knum(neg, digit_value(l))), r) {
+  match l {
+    Nil => False::elim(false_ne_true(hc))
+    Cons(d, t) => Eq::trans(
+      Seg::number(neg, d, List::append(t, r), And::left(Bool::and_split(is_digit(d), all_digits(t), hl))),
+      Eq::congr(
+        (x: Rd(Bool × Nat)) => rd_map(
+          (p: Bool × Nat) => Skey(Knum(p.fst, p.snd)),
+          x
+        ),
+        read_int_lead(neg, Cons(d, t), r, hl, hc, head_not_dou(r, hr))
+      )
+    )
+  }
+}
+
+// An integer key is read back from what `put_key` writes for it.
+pub theorem read_seg_put_num(
+  neg: Bool,
+  n: Nat,
+  r: List(Nat),
+  hr: head_passes(ident_char, r) = false
+): read_seg(put_key(Knum(neg, n), r)) = MkRd(Skey(Knum(neg, n)), r) {
+  Eq::trans(
+    Eq::congr(⟦read_seg(□)⟧, put_signed(neg, n, r)),
+    Eq::trans(
+      Seg::num_lead(neg, digits(n), r, digits_all_digits(Succ(n), n), digits_is_cons(n), hr),
+      Eq::congr(⟦MkRd(Skey(Knum(neg, □)), r)⟧, digit_value_digits(n))
+    )
+  )
+}
+
+// A name: a byte that starts a name, then bytes that go on with it, then one that does not.
+theorem Seg::name(
+  c: Nat,
+  t: List(Nat),
+  r: List(Nat),
+  hc: ident_start(c) = true,
+  ht: List::all(ident_char, t) = true,
+  hr: head_passes(ident_char, r) = false
+): read_seg(Cons(c, List::append(t, r))) = MkRd(Skey(Kstr(Text::Mk(Cons(c, t)))), r) {
+  Eq::trans(
+    Seg::is_tested(c, List::append(t, r)),
+    Eq::trans(
+      Seg::plain(
+        c,
+        List::append(t, r),
+        starts_string(Cons(c, List::append(t, r))),
+        starts_number(Cons(c, List::append(t, r))),
+        ne_of_test(ident_start, c, 36, hc, Refl),
+        ne_of_test(ident_start, c, 91, hc, Refl),
+        ne_of_test(ident_start, c, 35, hc, Refl),
+        ne_of_test(ident_start, c, 40, hc, Refl)
+      ),
+      Eq::trans(
+        Eq::congr(
+          ⟦Seg::tested(Cons(c, List::append(t, r)), List::append(t, r), false, false, false, false, □, starts_number(
+            Cons(c, List::append(t, r))
+          ))⟧,
+          Eq::trans(
+            Eq::congr(⟦Bool::or(□, Nat::eq(39, c))⟧, ne_of_test_l(ident_start, c, 34, hc, Refl)),
+            ne_of_test_l(ident_start, c, 39, hc, Refl)
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            ⟦Seg::tested(Cons(c, List::append(t, r)), List::append(t, r), false, false, false, false, false, starts_after_sign(
+              □
+            ))⟧,
+            sign_plain(c, List::append(t, r), ne_of_test_l(ident_start, c, 45, hc, Refl), ne_of_test_l(ident_start, c, 43, hc, Refl))
+          ),
+          Eq::trans(
+            Eq::congr(
+              ⟦Seg::tested(Cons(c, List::append(t, r)), List::append(t, r), false, false, false, false, false, □)⟧,
+              not_digit_of_start(c, hc)
+            ),
+            Eq::subst(
+              Bool,
+              true,
+              ident_start(c),
+              (y: Bool) => rd_map((w: List(Nat)) => Skey(Kstr(Text::Mk(w))), ⊢ Rd(List(Nat)) from match y {
+                true => MkRd((span(ident_char, Cons(c, List::append(t, r))): @taken List(Nat)), (
+                  span(ident_char, Cons(c, List::append(t, r))): @rest List(Nat)
+                ))
+                false => RdErr(Cons(c, List::append(t, r)), "a name")
+              }) = MkRd(Skey(Kstr(Text::Mk(Cons(c, t)))), r),
+              Eq::sym(hc),
+              Eq::congr(
+                (q: @taken List(Nat) × @rest List(Nat)) => MkRd(Skey(Kstr(Text::Mk((q: @taken List(Nat))))), (q: @rest List(Nat))),
+                span_append(
+                  ident_char,
+                  Cons(c, t),
+                  r,
+                  Bool::and_intro(
+                    ident_char(c),
+                    all_p(ident_char, t),
+                    start_is_char(c, hc),
+                    Eq::trans(all_p_list_all(ident_char, t), ht)
+                  ),
+                  hr
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+pub theorem sign_plain(
+  c: Nat,
+  t: List(Nat),
+  h45: Nat::eq(45, c) = false,
+  h43: Nat::eq(43, c) = false
+): read_sign(Cons(c, t)) = #(false, Cons(c, t)) {
+  Eq::subst(
+    Bool,
+    false,
+    Nat::eq(45, c),
+    (y: Bool) => Eq(Bool × List(Nat), match y {
+      true => #(true, List::tail(Cons(c, t)))
+      false => match Nat::eq(43, c) {
+        true => #(false, List::tail(Cons(c, t)))
+        false => #(false, Cons(c, t))
+      }
+    }, #(false, Cons(c, t))),
+    Eq::sym(h45),
+    Eq::subst(
+      Bool,
+      false,
+      Nat::eq(43, c),
+      (y: Bool) => Eq(Bool × List(Nat), match y {
+        true => #(false, List::tail(Cons(c, t)))
+        false => #(false, Cons(c, t))
+      }, #(false, Cons(c, t))),
+      Eq::sym(h43),
+      Refl
+    )
+  )
+}
+
+fn Key::seg_goal(t: Text, r: List(Nat), y: Bool): Prop {
+  read_seg(⊢ List(Nat) from match y {
+    true => put_text(t, r)
+    false => put_string(t, r)
+  }) = MkRd(Skey(Kstr(t)), r)
+}
+
+theorem Seg::ident(
+  bs: List(Nat),
+  r: List(Nat),
+  h: is_ident(bs) = true,
+  hr: head_passes(ident_char, r) = false
+): read_seg(List::append(bs, r)) = MkRd(Skey(Kstr(Text::Mk(bs))), r) {
+  match bs {
+    Nil => False::elim(false_ne_true(h))
+    Cons(c, t) => Seg::name(
+      c,
+      t,
+      r,
+      And::left(Bool::and_split(ident_start(c), List::all(ident_char, t), h)),
+      And::right(Bool::and_split(ident_start(c), List::all(ident_char, t), h)),
+      hr
+    )
+  }
+}
+
+// A string key is read back from what `put_key` writes for it: a name when it is one, a quoted
+// string otherwise.
+pub theorem read_seg_put_str(
+  t: Text,
+  r: List(Nat),
+  hr: head_passes(ident_char, r) = false
+): read_seg(put_key(Kstr(t), r)) = MkRd(Skey(Kstr(t)), r) {
+  match t {
+    Mk(bs) => Bool::cases(
+      (y: Bool) => Key::seg_goal(Text::Mk(bs), r, y),
+      is_ident(bs),
+      (e: is_ident(bs) = false) => Eq::congr(
+        (x: Rd(List(Nat))) => rd_map((w: List(Nat)) => Skey(Kstr(Text::Mk(w))), x),
+        read_put_string(Text::Mk(bs), r)
+      ),
+      (e: is_ident(bs) = true) => Seg::ident(bs, r, e, hr)
+    )
+  }
+}

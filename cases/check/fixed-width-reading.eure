@@ -1,0 +1,72 @@
+// A number and an operator at a fixed width (`u8`, `i64`) are read by the
+// kernel as the width's functions of `std/uint.taut` and `std/sint.taut`
+// (`5` at `UInt(64)` is `UInt::mk64(5, Refl)`, `a + b` is
+// `UInt::add_or_overflow64(a, b)`, `mod(a, b)` is `UInt::rem64(a, b)`), and
+// extraction writes each back as Nib's own literal and operator.
+
+@ cases.numbers-and-operators-at-a-width-are-checked-and-run
+source = ```tauto
+import std::uint
+import std::sint
+
+fn small(a: u8): Bool { a < 200 }
+theorem small_7(): small(7) = true { Refl }
+theorem small_250(): small(250) = false { Refl }
+fn same(a: u32, b: u32): Bool { a == b }
+theorem same_3(): same(3, 3) = true { Refl }
+fn neg(): i64 { -5 }
+fn step(a: u64, b: u64): u64 ! {overflow} { a + b * 2 - 1 }
+fn pos(item: u64): u64 ! {divzero} { mod(item, 7) }
+fn half(a: i32): i32 ! {divzero, overflow} { div(a, 2) }
+perform main(() => {
+  show(&small(7))
+  show(&neg())
+  show(&pos(10))
+})
+```
+checks.small = "checked"
+checks.small_7 = "ok"
+checks.small_250 = "ok"
+checks.same_3 = "ok"
+checks.neg = "checked"
+checks.step = "checked"
+checks.pos = "checked"
+checks.half = "checked"
+stdout = "true\n-5\n3\n"
+
+// `i8`, `i16` and `u16` are `SInt(8)`, `SInt(16)` and `UInt(16)` to the kernel,
+// read and run as the other widths are.
+@ cases.the-widths-8-and-16-are-checked-and-run
+source = ```tauto
+import std::uint
+import std::sint
+
+fn widen(a: i8, b: i16, c: u16): i64 ! {overflow} { I64::of_i8(a) + I64::of_i16(b) + I64::of_u64(U64::of_u16(c)) }
+fn small(a: i8): Bool { a < -5 }
+theorem small_m100(): small(-100) = true { Refl }
+fn top(c: u16): Bool { c == 65535 }
+theorem top_max(): top(65535) = true { Refl }
+fn next(b: i16): i16 ! {overflow} { b + 1 }
+fn half(c: u16): u16 ! {divzero} { div(c, 2) }
+perform main(() => {
+  let x: i8 := -100
+  let y: i16 := 30000
+  let z: u16 := 65535
+  show(&x)
+  show(&y)
+  show(&z)
+  show(&widen(x, y, z))
+  show(&small(x))
+  show(&top(z))
+  show(&next(y))
+  show(&half(z))
+})
+```
+checks.widen = "skipped"
+checks.small = "checked"
+checks.small_m100 = "ok"
+checks.top = "checked"
+checks.top_max = "ok"
+checks.next = "checked"
+checks.half = "checked"
+stdout = "-100\n30000\n65535\n95435\ntrue\ntrue\n30001\n32767\n"

@@ -1,0 +1,571 @@
+import "base.taut" { Nat }
+import "text.taut" { Text }
+import std::prelude::std { List, Option, Ordering }
+
+// An ordered map: an AVL tree, persistent (`docs/design/self-host.md`), in
+// the proof language (`docs/design/self-host.md`). The order is the `cmp` given at
+// every call. A set is an `Ordmap(K, Unit)`.
+
+pub(open) inductive OrdmapTree(K: Type, V: Type): Type {
+  OrdmapLeaf: OrdmapTree(K, V)
+  OrdmapNode(l: OrdmapTree(K, V), k: K, v: V, r: OrdmapTree(K, V), h: Nat): OrdmapTree(K, V)
+}
+
+pub(open) inductive Ordmap(K: Type, V: Type): Type {
+  Mk(tree: OrdmapTree(K, V), size: Nat): Ordmap(K, V)
+}
+
+pub fn Ordmap::tree<K: Shared, V: Shared>(m: Ordmap(K, V)): OrdmapTree(K, V) {
+  match m {
+    Mk(t, _) => t
+  }
+}
+
+pub fn Ordmap::size<K: Shared, V: Shared>(m: Ordmap(K, V)): Nat {
+  match m {
+    Mk(_, n) => n
+  }
+}
+
+pub fn Ordmap::empty<K: Shared, V: Shared>(): Ordmap(K, V) {
+  Ordmap::Mk(OrdmapLeaf, 0)
+}
+
+pub fn Ordmap::compare_text(a: Text, b: Text): Ordering {
+  Text::ordering(a, b)
+}
+
+// `less` when the first is before, else `greater` when the second is.
+pub fn Ordmap::select(before: Bool, after: Bool): Ordering {
+  match before {
+    true => Less
+    false => ⊢ Ordering from match after { true => Greater, false => Equal }
+  }
+}
+
+pub fn Ordmap::compare_nat(a: Nat, b: Nat): Ordering {
+  Ordmap::select(a < b, b < a)
+}
+
+pub fn Ordmap::tree_height<K: Shared, V: Shared>(t: OrdmapTree(K, V)): Nat {
+  match t {
+    OrdmapLeaf => 0
+    OrdmapNode(l, k, v, r, h) => h
+  }
+}
+
+// The height of the tree of `m`: at most 1.45 * log2(size + 2).
+pub fn Ordmap::height<K: Shared, V: Shared>(m: Ordmap(K, V)): Nat {
+  Ordmap::tree_height(Ordmap::tree(m))
+}
+
+pub fn Ordmap::node<K: Shared, V: Shared>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V)
+): OrdmapTree(K, V) {
+  OrdmapNode(l, k, v, r, Succ(Nat::max(Ordmap::tree_height(l), Ordmap::tree_height(r))))
+}
+
+// A node whose right tree is the taller by two: the right child comes up.
+pub fn Ordmap::rotate_left<K: Shared, V: Shared>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V)
+): OrdmapTree(K, V) {
+  match r {
+    OrdmapLeaf => Ordmap::node(l, k, v, r)
+    OrdmapNode(rl, rk, rv, rr, rh) => Ordmap::node(Ordmap::node(l, k, v, rl), rk, rv, rr)
+  }
+}
+
+pub fn Ordmap::rotate_right<K: Shared, V: Shared>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V)
+): OrdmapTree(K, V) {
+  match l {
+    OrdmapLeaf => Ordmap::node(l, k, v, r)
+    OrdmapNode(ll, lk, lv, lr, lh) => Ordmap::node(ll, lk, lv, Ordmap::node(lr, k, v, r))
+  }
+}
+
+// The node of a left tree taller by two, `OrdmapNode(ll, lk, lv, lr, lh)`;
+// `c` says whether its left side is the taller (`height(lr) <=
+// height(ll)`). The decisions are parameters so the theorems below can
+// take each case.
+pub fn Ordmap::fix_left_by<K: Shared, V: Shared>(
+  c: Bool,
+  ll: OrdmapTree(K, V),
+  lk: K,
+  lv: V,
+  lr: OrdmapTree(K, V),
+  lh: Nat,
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V)
+): OrdmapTree(K, V) {
+  match c {
+    true => Ordmap::rotate_right(OrdmapNode(ll, lk, lv, lr, lh), k, v, r)
+    false => Ordmap::rotate_right(Ordmap::rotate_left(ll, lk, lv, lr), k, v, r)
+  }
+}
+
+pub fn Ordmap::fix_left<K: Shared, V: Shared>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V)
+): OrdmapTree(K, V) {
+  match l {
+    OrdmapLeaf => Ordmap::node(l, k, v, r)
+    OrdmapNode(ll, lk, lv, lr, lh) => Ordmap::fix_left_by(
+      Ordmap::tree_height(lr) <= Ordmap::tree_height(ll),
+      ll,
+      lk,
+      lv,
+      lr,
+      lh,
+      k,
+      v,
+      r
+    )
+  }
+}
+
+// The mirror of `fix_left_by`: `r` is `OrdmapNode(rl, rk, rv, rr, rh)`.
+pub fn Ordmap::fix_right_by<K: Shared, V: Shared>(
+  c: Bool,
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  rl: OrdmapTree(K, V),
+  rk: K,
+  rv: V,
+  rr: OrdmapTree(K, V),
+  rh: Nat
+): OrdmapTree(K, V) {
+  match c {
+    true => Ordmap::rotate_left(l, k, v, OrdmapNode(rl, rk, rv, rr, rh))
+    false => Ordmap::rotate_left(l, k, v, Ordmap::rotate_right(rl, rk, rv, rr))
+  }
+}
+
+pub fn Ordmap::fix_right<K: Shared, V: Shared>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V)
+): OrdmapTree(K, V) {
+  match r {
+    OrdmapLeaf => Ordmap::node(l, k, v, r)
+    OrdmapNode(rl, rk, rv, rr, rh) => Ordmap::fix_right_by(
+      Ordmap::tree_height(rl) <= Ordmap::tree_height(rr),
+      l,
+      k,
+      v,
+      rl,
+      rk,
+      rv,
+      rr,
+      rh
+    )
+  }
+}
+
+// `left` says the left tree is taller by two, `right` the right one.
+pub fn Ordmap::balance_by<K: Shared, V: Shared>(
+  left: Bool,
+  right: Bool,
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V)
+): OrdmapTree(K, V) {
+  match left {
+    true => Ordmap::fix_left(l, k, v, r)
+    false => ⊢ OrdmapTree(K, V) from match right {
+      true => Ordmap::fix_right(l, k, v, r)
+      false => Ordmap::node(l, k, v, r)
+    }
+  }
+}
+
+// The node of `l`, `k`, `v` and `r` when their heights differ by at most two.
+pub fn Ordmap::balance<K: Shared, V: Shared>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V)
+): OrdmapTree(K, V) {
+  Ordmap::balance_by(
+    Succ(Ordmap::tree_height(r)) < Ordmap::tree_height(l),
+    Succ(Ordmap::tree_height(l)) < Ordmap::tree_height(r),
+    l,
+    k,
+    v,
+    r
+  )
+}
+
+pub fn Ordmap::tree_get<K: Shared, V: Shared>(
+  t: OrdmapTree(K, V),
+  k: K,
+  cmp: (K, K) -> Ordering
+): Option(V) {
+  match t {
+    OrdmapLeaf => None
+    OrdmapNode(l, nk, nv, r, h) => ⊢ Option(V) from match cmp(k, nk) {
+      Less => Ordmap::tree_get(l, k, cmp)
+      Equal => Some(nv)
+      Greater => Ordmap::tree_get(r, k, cmp)
+    }
+  }
+}
+
+pub fn Ordmap::get<K: Shared, V: Shared>(m: Ordmap(K, V), k: K, cmp: (K, K) -> Ordering): Option(V) {
+  Ordmap::tree_get(Ordmap::tree(m), k, cmp)
+}
+
+pub fn Ordmap::contains<K: Shared, V: Shared>(m: Ordmap(K, V), k: K, cmp: (K, K) -> Ordering): Bool {
+  match Ordmap::get(m, k, cmp) {
+    None => false
+    Some(v) => true
+  }
+}
+
+pub fn Ordmap::tree_insert<K: Shared, V: Shared>(
+  t: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  cmp: (K, K) -> Ordering
+): OrdmapTree(K, V) {
+  match t {
+    OrdmapLeaf => Ordmap::node(OrdmapLeaf, k, v, OrdmapLeaf)
+    OrdmapNode(l, nk, nv, r, h) => ⊢ OrdmapTree(K, V) from match cmp(k, nk) {
+      Less => Ordmap::balance(Ordmap::tree_insert(l, k, v, cmp), nk, nv, r)
+      Equal => OrdmapNode(l, k, v, r, h)
+      Greater => Ordmap::balance(l, nk, nv, Ordmap::tree_insert(r, k, v, cmp))
+    }
+  }
+}
+
+// `m` with `v` at `k`; a value already at `k` is replaced.
+pub fn Ordmap::insert<K: Shared, V: Shared>(
+  m: Ordmap(K, V),
+  k: K,
+  v: V,
+  cmp: (K, K) -> Ordering
+): Ordmap(K, V) {
+  Ordmap::Mk(
+    Ordmap::tree_insert(Ordmap::tree(m), k, v, cmp),
+    ⊢ Nat from match Ordmap::contains(m, k, cmp) {
+      true => Ordmap::size(m)
+      false => Succ(Ordmap::size(m))
+    }
+  )
+}
+
+pub fn Ordmap::tree_min<K: Shared, V: Shared>(t: OrdmapTree(K, V)): Option(K × V) {
+  match t {
+    OrdmapLeaf => None
+    OrdmapNode(l, k, v, r, h) => ⊢ Option(K × V) from match l {
+      OrdmapLeaf => Some(#(k, v))
+      OrdmapNode(ll, lk, lv, lr, lh) => Ordmap::tree_min(l)
+    }
+  }
+}
+
+pub fn Ordmap::tree_remove_min<K: Shared, V: Shared>(t: OrdmapTree(K, V)): OrdmapTree(K, V) {
+  match t {
+    OrdmapLeaf => OrdmapLeaf
+    OrdmapNode(l, k, v, r, h) => ⊢ OrdmapTree(K, V) from match l {
+      OrdmapLeaf => r
+      OrdmapNode(ll, lk, lv, lr, lh) => Ordmap::balance(Ordmap::tree_remove_min(l), k, v, r)
+    }
+  }
+}
+
+// `l` and `r` joined, every key of `l` before every key of `r`.
+pub fn Ordmap::join<K: Shared, V: Shared>(l: OrdmapTree(K, V), r: OrdmapTree(K, V)): OrdmapTree(K, V) {
+  match Ordmap::tree_min(r) {
+    None => l
+    Some(least) => ⊢ OrdmapTree(K, V) from match least {
+      #(lk, lv) => Ordmap::balance(l, lk, lv, Ordmap::tree_remove_min(r))
+    }
+  }
+}
+
+pub fn Ordmap::tree_remove<K: Shared, V: Shared>(
+  t: OrdmapTree(K, V),
+  k: K,
+  cmp: (K, K) -> Ordering
+): OrdmapTree(K, V) {
+  match t {
+    OrdmapLeaf => OrdmapLeaf
+    OrdmapNode(l, nk, nv, r, h) => ⊢ OrdmapTree(K, V) from match cmp(k, nk) {
+      Less => Ordmap::balance(Ordmap::tree_remove(l, k, cmp), nk, nv, r)
+      Equal => Ordmap::join(l, r)
+      Greater => Ordmap::balance(l, nk, nv, Ordmap::tree_remove(r, k, cmp))
+    }
+  }
+}
+
+pub fn Ordmap::remove<K: Shared, V: Shared>(
+  m: Ordmap(K, V),
+  k: K,
+  cmp: (K, K) -> Ordering
+): Ordmap(K, V) {
+  match Ordmap::contains(m, k, cmp) {
+    true => Ordmap::Mk(Ordmap::tree_remove(Ordmap::tree(m), k, cmp), Nat::pred(Ordmap::size(m)))
+    false => m
+  }
+}
+
+pub fn Ordmap::tree_entries<K: Shared, V: Shared>(t: OrdmapTree(K, V), done: List(K × V)): List(K × V) {
+  match t {
+    OrdmapLeaf => done
+    OrdmapNode(l, k, v, r, h) => Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, done)))
+  }
+}
+
+// The entries, the least key first.
+pub fn Ordmap::entries<K: Shared, V: Shared>(m: Ordmap(K, V)): List(K × V) {
+  Ordmap::tree_entries(Ordmap::tree(m), Nil)
+}
+
+pub fn Ordmap::tree_floor<K: Shared, V: Shared>(
+  t: OrdmapTree(K, V),
+  k: K,
+  best: Option(K × V),
+  cmp: (K, K) -> Ordering
+): Option(K × V) {
+  match t {
+    OrdmapLeaf => best
+    OrdmapNode(l, nk, nv, r, h) => ⊢ Option(K × V) from match cmp(k, nk) {
+      Less => Ordmap::tree_floor(l, k, best, cmp)
+      Equal => Some(#(nk, nv))
+      Greater => Ordmap::tree_floor(r, k, Some(#(nk, nv)), cmp)
+    }
+  }
+}
+
+// The entry with the greatest key that is not after `k`.
+pub fn Ordmap::floor<K: Shared, V: Shared>(
+  m: Ordmap(K, V),
+  k: K,
+  cmp: (K, K) -> Ordering
+): Option(K × V) {
+  Ordmap::tree_floor(Ordmap::tree(m), k, None, cmp)
+}
+
+// What the tree holds, in order, is kept by every step that rebuilds it:
+// `tree_entries` of the result is that of the node it replaces.
+
+pub theorem Ordmap::rotate_left_entries<K: Type, V: Type>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V),
+  d: List(K × V)
+): Ordmap::tree_entries(Ordmap::rotate_left(l, k, v, r), d) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) {
+  ⊢ Ordmap::tree_entries(
+    Ordmap::rotate_left(l, k, v, r),
+    d
+  ) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) from match r {
+    OrdmapLeaf => Refl
+    OrdmapNode(rl, rk, rv, rr, rh) => Refl
+  }
+}
+
+pub theorem Ordmap::rotate_right_entries<K: Type, V: Type>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V),
+  d: List(K × V)
+): Ordmap::tree_entries(Ordmap::rotate_right(l, k, v, r), d) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) {
+  ⊢ Ordmap::tree_entries(
+    Ordmap::rotate_right(l, k, v, r),
+    d
+  ) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) from match l {
+    OrdmapLeaf => Refl
+    OrdmapNode(ll, lk, lv, lr, lh) => Refl
+  }
+}
+
+pub theorem Ordmap::fix_left_by_entries<K: Type, V: Type>(
+  c: Bool,
+  ll: OrdmapTree(K, V),
+  lk: K,
+  lv: V,
+  lr: OrdmapTree(K, V),
+  lh: Nat,
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V),
+  d: List(K × V)
+): Ordmap::tree_entries(
+  Ordmap::fix_left_by(c, ll, lk, lv, lr, lh, k, v, r),
+  d
+) = Ordmap::tree_entries(OrdmapNode(ll, lk, lv, lr, lh), Cons(#(k, v), Ordmap::tree_entries(r, d))) {
+  ⊢ Ordmap::tree_entries(
+    Ordmap::fix_left_by(c, ll, lk, lv, lr, lh, k, v, r),
+    d
+  ) = Ordmap::tree_entries(
+    OrdmapNode(ll, lk, lv, lr, lh),
+    Cons(#(k, v), Ordmap::tree_entries(r, d))
+  ) from match c {
+    true => Refl
+    false => Eq::trans(
+      Ordmap::rotate_right_entries(Ordmap::rotate_left(ll, lk, lv, lr), k, v, r, d),
+      Ordmap::rotate_left_entries(ll, lk, lv, lr, Cons(#(k, v), Ordmap::tree_entries(r, d)))
+    )
+  }
+}
+
+pub theorem Ordmap::fix_right_by_entries<K: Type, V: Type>(
+  c: Bool,
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  rl: OrdmapTree(K, V),
+  rk: K,
+  rv: V,
+  rr: OrdmapTree(K, V),
+  rh: Nat,
+  d: List(K × V)
+): Ordmap::tree_entries(
+  Ordmap::fix_right_by(c, l, k, v, rl, rk, rv, rr, rh),
+  d
+) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(OrdmapNode(rl, rk, rv, rr, rh), d))) {
+  ⊢ Ordmap::tree_entries(
+    Ordmap::fix_right_by(c, l, k, v, rl, rk, rv, rr, rh),
+    d
+  ) = Ordmap::tree_entries(
+    l,
+    Cons(#(k, v), Ordmap::tree_entries(OrdmapNode(rl, rk, rv, rr, rh), d))
+  ) from match c {
+    true => Refl
+    false => Eq::trans(
+      Ordmap::rotate_left_entries(l, k, v, Ordmap::rotate_right(rl, rk, rv, rr), d),
+      Eq::congr(⟦Ordmap::tree_entries(l, Cons(#(k, v), □))⟧, Ordmap::rotate_right_entries(rl, rk, rv, rr, d))
+    )
+  }
+}
+
+pub theorem Ordmap::fix_left_entries<K: Type, V: Type>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V),
+  d: List(K × V)
+): Ordmap::tree_entries(Ordmap::fix_left(l, k, v, r), d) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) {
+  ⊢ Ordmap::tree_entries(
+    Ordmap::fix_left(l, k, v, r),
+    d
+  ) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) from match l {
+    OrdmapLeaf => Refl
+    OrdmapNode(ll, lk, lv, lr, lh) => Ordmap::fix_left_by_entries(
+      Ordmap::tree_height(lr) <= Ordmap::tree_height(ll),
+      ll,
+      lk,
+      lv,
+      lr,
+      lh,
+      k,
+      v,
+      r,
+      d
+    )
+  }
+}
+
+pub theorem Ordmap::fix_right_entries<K: Type, V: Type>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V),
+  d: List(K × V)
+): Ordmap::tree_entries(Ordmap::fix_right(l, k, v, r), d) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) {
+  ⊢ Ordmap::tree_entries(
+    Ordmap::fix_right(l, k, v, r),
+    d
+  ) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) from match r {
+    OrdmapLeaf => Refl
+    OrdmapNode(rl, rk, rv, rr, rh) => Ordmap::fix_right_by_entries(
+      Ordmap::tree_height(rl) <= Ordmap::tree_height(rr),
+      l,
+      k,
+      v,
+      rl,
+      rk,
+      rv,
+      rr,
+      rh,
+      d
+    )
+  }
+}
+
+pub theorem Ordmap::balance_right_entries<K: Type, V: Type>(
+  right: Bool,
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V),
+  d: List(K × V)
+): Ordmap::tree_entries(
+  Ordmap::balance_by(false, right, l, k, v, r),
+  d
+) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) {
+  ⊢ Ordmap::tree_entries(
+    Ordmap::balance_by(false, right, l, k, v, r),
+    d
+  ) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) from match right {
+    true => Ordmap::fix_right_entries(l, k, v, r, d)
+    false => Refl
+  }
+}
+
+pub theorem Ordmap::balance_by_entries<K: Type, V: Type>(
+  left: Bool,
+  right: Bool,
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V),
+  d: List(K × V)
+): Ordmap::tree_entries(
+  Ordmap::balance_by(left, right, l, k, v, r),
+  d
+) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) {
+  ⊢ Ordmap::tree_entries(
+    Ordmap::balance_by(left, right, l, k, v, r),
+    d
+  ) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) from match left {
+    true => Ordmap::fix_left_entries(l, k, v, r, d)
+    false => Ordmap::balance_right_entries(right, l, k, v, r, d)
+  }
+}
+
+pub theorem Ordmap::balance_entries<K: Type, V: Type>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V),
+  d: List(K × V)
+): Ordmap::tree_entries(Ordmap::balance(l, k, v, r), d) = Ordmap::tree_entries(l, Cons(#(k, v), Ordmap::tree_entries(r, d))) {
+  Ordmap::balance_by_entries(
+    Succ(Ordmap::tree_height(r)) < Ordmap::tree_height(l),
+    Succ(Ordmap::tree_height(l)) < Ordmap::tree_height(r),
+    l,
+    k,
+    v,
+    r,
+    d
+  )
+}

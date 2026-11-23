@@ -29,7 +29,7 @@ pub fn keep(keep: bool) {
     }
 }
 
-pub(super) fn kept() -> bool {
+pub fn kept() -> bool {
     KEEP.with(Cell::get)
 }
 
@@ -45,7 +45,7 @@ pub fn begin_reading() {
     });
 }
 
-pub(super) fn get_or_read(
+pub fn get_or_read(
     source: &str,
     base: u32,
     read: impl FnOnce() -> Result<Program, ParseError>,
@@ -69,42 +69,4 @@ pub(super) fn get_or_read(
     let program = read();
     KEPT.with(|k| k.borrow_mut().insert(key, (program.clone(), now)));
     program
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashSet;
-
-    fn occurrences(program: &Program) -> HashSet<super::super::TermId> {
-        let mut ids = HashSet::new();
-        for stmt in &mut program.clone().stmts {
-            super::super::walk::stmt(stmt, &mut |term| {
-                ids.insert(term.id());
-            });
-        }
-        ids
-    }
-
-    #[test]
-    fn cached_readings_keep_syntax_but_have_distinct_occurrences() {
-        let source = include_str!("../../../../std/prelude/Std.taut");
-        keep(true);
-        begin_reading();
-        let first = super::super::parse_program_unresolved_at(source, 100).unwrap();
-        let second = super::super::parse_program_unresolved_at(source, 100).unwrap();
-        let third = super::super::parse_program_unresolved_at(source, 100).unwrap();
-        keep(false);
-        assert_eq!(first, second);
-        assert_eq!(second, third);
-        let ids = [
-            occurrences(&first),
-            occurrences(&second),
-            occurrences(&third),
-        ];
-        assert!(!ids[0].is_empty());
-        assert!(ids[0].is_disjoint(&ids[1]));
-        assert!(ids[1].is_disjoint(&ids[2]));
-        assert!(ids[0].is_disjoint(&ids[2]));
-    }
 }

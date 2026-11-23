@@ -8,12 +8,45 @@
 
 use std::fmt::Write;
 
-use tauto_parol::Span;
+use crate::span::Span;
 
 use super::{
     BudgetLimit, Constructor, DataConstructor, DataDecl, EffectDecl, FnDecl, Handler,
-    InductiveDecl, Instance, MatchArm, Pattern, Program, Stmt, SurfaceTerm, TermKind, TheoremDecl,
+    InductiveDecl, InferCondition, Instance, MatchArm, Pattern, Program, Stmt, SurfaceTerm,
+    TermKind, TheoremDecl,
 };
+
+fn infer_condition_text(condition: &InferCondition) -> String {
+    match condition {
+        InferCondition::Parameter(name) => format!("P({})", name.as_str()),
+        InferCondition::And(left, right) => format!(
+            "And({},{})",
+            infer_condition_text(left),
+            infer_condition_text(right)
+        ),
+        InferCondition::Or(left, right) => format!(
+            "Or({},{})",
+            infer_condition_text(left),
+            infer_condition_text(right)
+        ),
+    }
+}
+
+/// A name as the dump writes it: one of the reader's own references (`Pair`, `Pair::Mk`,
+/// `Unit`, `Star`, which products and the unit are) by the prelude's full name, as
+/// `totes/surface` spells them; any other as it displays.
+fn reader_spelled(n: &crate::identity::Name) -> String {
+    for short in ["Pair", "Pair::Mk", "Unit", "Star"] {
+        if crate::bindings::is_reader_reference(n, short) {
+            return format!(
+                "{}{}{short}",
+                super::qualify::PRELUDE_MODULE,
+                super::qualify::SEPARATOR
+            );
+        }
+    }
+    n.as_str().to_string()
+}
 
 pub fn dump_program(program: &Program) -> String {
     let mut d = Dump::default();
@@ -179,7 +212,7 @@ impl Dump {
             }
             TermKind::Var(n) => {
                 self.line(depth, &head("Var"));
-                self.name(d, "name", n);
+                self.name(d, "name", &reader_spelled(n));
             }
             TermKind::Nat(n) => {
                 self.line(depth, &head("Nat"));
@@ -213,6 +246,7 @@ impl Dump {
                 params,
                 result,
                 effects,
+                ..
             } => {
                 self.line(depth, &head("Pi"));
                 self.line(d, &format!("params [{}]", params.len()));
@@ -230,6 +264,7 @@ impl Dump {
                 binder,
                 domain,
                 body,
+                ..
             } => {
                 self.line(depth, &head("Exists"));
                 self.name(d, "binder", binder);
@@ -243,14 +278,6 @@ impl Dump {
             }
             TermKind::Union(items) => {
                 self.line(depth, &head("Union"));
-                self.terms(d, "items", items);
-            }
-            TermKind::Product(items) => {
-                self.line(depth, &head("Product"));
-                self.terms(d, "items", items);
-            }
-            TermKind::Tuple(items) => {
-                self.line(depth, &head("Tuple"));
                 self.terms(d, "items", items);
             }
             TermKind::Ascribe { term, ty } => {
@@ -315,6 +342,7 @@ impl Dump {
                 result,
                 binder,
                 arms,
+                ..
             } => {
                 self.line(depth, &head("Match"));
                 self.term_field(d, "scrutinee", scrutinee);
@@ -362,9 +390,17 @@ impl Dump {
                 all.extend(base.iter().map(|b| ("..".to_string(), (**b).clone())));
                 self.named_terms(d, "fields", &all);
             }
-            TermKind::Borrow { mutable, term } => {
+            TermKind::Borrow { mutable, orig, rc, term } => {
                 self.line(depth, &head("Borrow"));
                 self.name(d, "mutable", &mutable.to_string());
+                // `&orig` is shown only where it is written.
+                if *orig {
+                    self.name(d, "orig", "true");
+                }
+                // `&rc` likewise.
+                if *rc {
+                    self.name(d, "rc", "true");
+                }
                 self.term_field(d, "term", term);
             }
             TermKind::FnKind { kind, ty } => {
@@ -417,7 +453,7 @@ impl Dump {
         let d = depth + 1;
         match p {
             Pattern::Wild => self.line(depth, "Pattern.Wild"),
-            Pattern::Bind(n) => {
+            Pattern::Bind { name: n, .. } => {
                 self.line(depth, "Pattern.Bind");
                 self.name(d, "name", n);
             }
@@ -435,7 +471,7 @@ impl Dump {
             }
             Pattern::Ctor { name, args } => {
                 self.line(depth, "Pattern.Ctor");
-                self.name(d, "name", name);
+                self.name(d, "name", &reader_spelled(name));
                 self.line(d, &format!("args [{}]", args.len()));
                 for a in args {
                     self.pattern(d + 1, a);
@@ -450,12 +486,10 @@ impl Dump {
                     self.pattern(d + 2, p);
                 }
             }
-            Pattern::Tuple(items) => {
-                self.line(depth, "Pattern.Tuple");
-                self.line(d, &format!("items [{}]", items.len()));
-                for a in items {
-                    self.pattern(d + 1, a);
-                }
+            Pattern::Typed { name, ty, .. } => {
+                self.line(depth, "Pattern.Typed");
+                self.name(d, "name", name);
+                self.term(d, ty);
             }
             Pattern::Other(n) => {
                 self.line(depth, "Pattern.Other");
@@ -488,6 +522,7 @@ impl Dump {
                 cont,
                 guard,
                 body,
+                ..
             } => {
                 self.line(depth, "Handler.Operation");
                 self.name(depth + 1, "effect", effect);
@@ -527,6 +562,8 @@ impl Dump {
                 value,
                 borrow,
                 borrow_mut,
+                stack,
+                ..
             } => {
                 self.line(depth, "Stmt.Let");
                 self.name(d, "name", name);
@@ -536,12 +573,17 @@ impl Dump {
                 if *borrow_mut {
                     self.name(d, "borrow_mut", "true");
                 }
+                if let Some(word) = stack {
+                    self.name(d, "props", word);
+                }
             }
             Stmt::Var {
                 name,
                 ty,
                 value,
                 borrow,
+                stack,
+                ..
             } => {
                 self.line(depth, "Stmt.Var");
                 self.name(d, "name", name);
@@ -550,8 +592,11 @@ impl Dump {
                 if *borrow {
                     self.name(d, "borrow", "true");
                 }
+                if let Some(word) = stack {
+                    self.name(d, "props", word);
+                }
             }
-            Stmt::Module { name, items, span } => {
+            Stmt::Module { name, items, span, .. } => {
                 self.line(
                     depth,
                     &format!("Stmt.Module {}", at(*span, self.omit_positions)),
@@ -559,10 +604,31 @@ impl Dump {
                 self.name(d, "name", name);
                 self.stmts(d, "items", items);
             }
-            Stmt::Assign { name, place, value } => {
+            Stmt::Assign {
+                name,
+                place,
+                value,
+                deref,
+            } => {
                 self.line(depth, "Stmt.Assign");
                 self.name(d, "name", name);
-                if let Some(place) = place {
+                // `*x := v` is read as the place `*x`, as written.
+                let place = match (deref, place) {
+                    (None, place) => place.clone(),
+                    (Some(written), place) => {
+                        // The name ends where the written `*x` does.
+                        let inner = place.clone().unwrap_or_else(|| {
+                            let start = written.end.saturating_sub(name.as_str().len() as u32);
+                            SurfaceTerm::var(name, Span::new(start, written.end))
+                        });
+                        Some(SurfaceTerm::app(
+                            crate::surface::DEREF,
+                            vec![inner],
+                            *written,
+                        ))
+                    }
+                };
+                if let Some(place) = &place {
                     self.term_field(d, "place", place);
                 }
                 self.term_field(d, "value", value);
@@ -626,7 +692,7 @@ impl Dump {
                 );
                 self.stmts(d, "items", items);
             }
-            Stmt::Import { path, span, .. } => {
+            Stmt::Reexport { module: path, span, .. } | Stmt::Import { path, span, .. } => {
                 self.line(
                     depth,
                     &format!("Stmt.Import {}", at(*span, self.omit_positions)),
@@ -672,6 +738,13 @@ impl Dump {
                 {
                     self.named_terms(d, "parameters", &c.parameters);
                 }
+                for parent in &c.parents {
+                    self.name(d, "parent", &parent.class.to_string());
+                    self.term_field(d + 1, "argument", &parent.ty);
+                    if !parent.arguments.is_empty() {
+                        self.terms(d + 1, "arguments", &parent.arguments);
+                    }
+                }
             }
             Stmt::Instance(i) => {
                 self.line(
@@ -685,6 +758,12 @@ impl Dump {
                 if !i.arguments.is_empty() {
                     self.terms(d, "arguments", &i.arguments);
                 }
+                if let Some(condition) = &i.infer_from {
+                    self.line(
+                        d,
+                        &format!("infer_from {}", infer_condition_text(condition)),
+                    );
+                }
                 if i.generic_types
                     .iter()
                     .any(|t| !matches!(&*t.kind, TermKind::Var(n) if n.as_str() == "Type"))
@@ -697,6 +776,25 @@ impl Dump {
                 self.term_field(d, "condition", condition);
                 self.term_field(d, "body", body);
             }
+            Stmt::For {
+                pattern,
+                source,
+                body,
+            } => {
+                self.line(depth, "Stmt.For");
+                self.pattern(d, pattern);
+                self.term_field(d, "source", source);
+                self.term_field(d, "body", body);
+            }
+            Stmt::Loop { body } => {
+                self.line(depth, "Stmt.Loop");
+                self.term_field(d, "body", body);
+            }
+            Stmt::Break(v) => {
+                self.line(depth, "Stmt.Break");
+                self.opt_term(d, "value", v);
+            }
+            Stmt::Continue => self.line(depth, "Stmt.Continue"),
             Stmt::Return(v) => {
                 self.line(depth, "Stmt.Return");
                 self.opt_term(d, "value", v);
@@ -716,6 +814,7 @@ impl Dump {
                 name,
                 function,
                 span,
+                ..
             } => {
                 self.line(
                     depth,
@@ -843,6 +942,9 @@ impl Dump {
         self.opt_name(d, "kind", &x.kind);
         self.name(d, "name", &x.name);
         self.names(d, "generics", &x.generics);
+        if let Some(c) = &x.coerce {
+            self.line(d, &format!("coerce {} {}", c.field, c.level.written()));
+        }
         self.line(d, &format!("constructors [{}]", x.constructors.len()));
         for c in &x.constructors {
             self.data_constructor(d + 1, c);

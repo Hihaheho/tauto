@@ -1,3 +1,4 @@
+import "messages.taut"
 import "call_variable_sound.taut"
 import "application_frame.taut"
 import "argument_sound.taut"
@@ -8,6 +9,7 @@ import "datas_frame.taut"
 import "diagnostic_sound.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -23,9 +25,9 @@ pub def CallHintFits(
 // A known parameter hint means every argument has been checked against it.
 // The theorems below take this as a hypothesis; no theorem in totes/ proves it.
 pub fn KnownCallArguments(c: Checker, known: Option(List(Ty)), f: Ty, args: List(Ty)): Prop {
-  ⊢ Prop from match known {
+  match known {
     None => True
-    Some(ps) => CallHintFits(c, f, args)
+    Some(^ps) => CallHintFits(c, f, args)
   }
 }
 pub theorem call_function_shape_sound(
@@ -45,7 +47,7 @@ pub theorem call_function_shape_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(ck_app_result(c, term, function, arguments, f, known, args)))
 ): CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) {
-  ⊢ CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) from match known {
+  match known {
     None => ck_app_result_function_sound(
       c,
       term,
@@ -80,10 +82,9 @@ pub theorem call_function_shape_sound(
 }
 pub fn call_invalid(c: Checker, original: Ty, function: SurfaceTerm): Mut1(Ty, Checker) {
   frame_bind(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_fresh(next)),
-    ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    ck_error(c, not_a_function_message(ty_show(original)), span_of(function))
   )
 }
 pub theorem call_invalid_impossible(
@@ -94,7 +95,7 @@ pub theorem call_invalid_impossible(
 ): False {
   diagnostic_error_impossible(
     c,
-    cat2(ty_show(original), " is not a function"),
+    not_a_function_message(ty_show(original)),
     span_of(function),
     clean
   )
@@ -162,7 +163,7 @@ pub theorem call_result_shape_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(ck_app_result(c, term, function, arguments, f, known, args)))
 ): CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) {
-  ⊢ CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) from match fr {
+  match fr {
     TyInt(w) => False::elim(
       call_invalid_impossible(
         c,
@@ -228,6 +229,14 @@ pub theorem call_result_shape_sound(
         ty_unborrowed(ck_resolve(c, f)),
         function,
         call_application_clean(c, term, function, arguments, f, known, args, TyFloat, shape, clean)
+      )
+    )
+    TyFloat32 => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(c, term, function, arguments, f, known, args, TyFloat32, shape, clean)
       )
     )
     TyFn(ps, result, kind) => call_function_shape_sound(

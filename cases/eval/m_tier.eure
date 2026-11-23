@@ -2,9 +2,10 @@
 // a `budget` inside one.
 
 @ cases.return-from-a-handle-that-resumes-twice
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
-fn pick(): i64 {
+fn pick(): i64 ! {overflow} {
   let r := handle {
     let b := perform choose()
     if b {
@@ -16,14 +17,16 @@ fn pick(): i64 {
   }
   r + 1000
 }
-perform show("p", pick())
+show(&pick())
 ```
-shows = ["p = 100"]
+stdout = "100\n"
 
 @ cases.the-second-resume-returns
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
+import std::builtin::os
 effect choose(): Bool resume ω
-fn pick(): i64 {
+fn pick(): i64 ! {overflow, stdout, stdout_flush} {
   let r := handle {
     let b := perform choose()
     if b {
@@ -34,20 +37,24 @@ fn pick(): i64 {
   } with {
     choose(), k => {
       let a := k(true)
-      perform show("a", a)
+      show(&a)
       a + k(false)
     }
   }
   r + 1000
 }
-perform show("p", pick())
+show(&pick())
 ```
-shows = ["a = 2", "p = 7"]
+stdout = ```
+2
+7
+```
 
 @ cases.no-return-taken
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
-fn pick(n: i64): i64 {
+fn pick(n: i64): i64 ! {overflow} {
   let r := handle {
     let b := perform choose()
     if n > 5 {
@@ -59,15 +66,19 @@ fn pick(n: i64): i64 {
   }
   r + 1000
 }
-perform show("a", pick(1))
-perform show("b", pick(9))
+show(&pick(1))
+show(&pick(9))
 ```
-shows = ["a = 1030", "b = -1"]
+stdout = ```
+1030
+-1
+```
 
 @ cases.return-from-a-while-in-the-body
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect pick(): i64 resume ω
-fn first_big(): i64 {
+fn first_big(): i64 ! {div, overflow} {
   let r := handle {
     var i := 0
     while i < 5 {
@@ -83,15 +94,16 @@ fn first_big(): i64 {
   }
   r
 }
-perform show("v", first_big())
+show(&first_big())
 ```
-shows = ["v = 4"]
+stdout = "4\n"
 
 @ cases.return-in-a-function-that-suspends
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
 effect ask(): i64
-fn pick(): i64 ! {ask} {
+fn pick(): i64 ! {ask, overflow} {
   let r := handle {
     let b := perform choose()
     if b {
@@ -106,15 +118,16 @@ fn pick(): i64 ! {ask} {
 let v := handle { pick() } with {
   ask(), k => k(41)
 }
-perform show("v", v)
+show(&v)
 ```
-shows = ["v = 42"]
+stdout = "42\n"
 
 @ cases.return-in-a-function-that-aborts
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
 effect choose(): Bool resume ω
 effect fail(): Never resume 0
-fn pick(): i64 ! {fail} {
+fn pick(): i64 ! {fail, overflow} {
   let r := handle {
     let b := perform choose()
     if b {
@@ -133,39 +146,40 @@ fn pick(): i64 ! {fail} {
 let v := handle { pick() } with {
   fail() => 0 - 1
 }
-perform show("v", v)
+show(&v)
 ```
-shows = ["v = 5"]
+stdout = "5\n"
 
 @ cases.a-budget-in-a-handle-that-resumes-twice
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
-fn spin(): i64 {
+fn spin(): i64 ! {div} {
   while true { }
   0
 }
 let d := handle {
   let b := perform choose()
-  budget(steps: 50) {
+  perform budget(50, () => {
     if b {
       spin()
     } else {
       5
     }
-  }
+  })
 } with {
   choose(), k => k(true) + k(false)
   exceeded(info), k => k(0 - 1)
 }
-perform show("d", d)
+show(&d)
 ```
-shows = ["d = 4"]
-rust_shows = ["d = 4"]
+stdout = "4\n"
 
 @ cases.more-steps-resume-the-body-in-m
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
-fn count(n: i64): i64 {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n {
     i := i + 1
@@ -174,26 +188,26 @@ fn count(n: i64): i64 {
 }
 let d := handle {
   let b := perform choose()
-  budget(steps: 50) {
+  perform budget(50, () => {
     if b {
       count(100)
     } else {
       count(10)
     }
-  }
+  })
 } with {
   choose(), k => k(true) + k(false)
   exceeded(info), k => k(info.more(200))
 }
-perform show("d", d)
+show(&d)
 ```
-shows = ["d = 110"]
-rust_shows = ["d = 110"]
+stdout = "110\n"
 
 @ cases.a-budget-body-that-resumes-twice
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
-fn count(n: i64): i64 {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n {
     i := i + 1
@@ -201,27 +215,90 @@ fn count(n: i64): i64 {
   i
 }
 let d := handle {
-  budget(steps: 1000) {
+  perform budget(1000, () => {
     let b := perform choose()
     if b {
       count(3)
     } else {
       count(4)
     }
-  }
+  })
 } with {
   choose(), k => k(true) + k(false)
   exceeded(info), k => k(0 - 1)
 }
-perform show("d", d)
+show(&d)
 ```
-shows = ["d = 7"]
-rust_shows = ["d = 7"]
+stdout = "7\n"
+
+@ cases.a-while-that-resumes-twice-keeps-its-vars
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+description = "each round and the code after the loop see the vars the last round left"
+source = ```nib
+effect ask(): i64 resume ω
+let d := handle {
+  var i := 0
+  var s := 0
+  while i < 2 {
+    s := s + perform ask()
+    i := i + 1
+  }
+  s * 10 + i
+} with {
+  ask(), k => k(1) + k(2)
+}
+show(&d)
+```
+stdout = "128\n"
+
+@ cases.an-if-that-resumes-twice-keeps-its-vars
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+description = "the code after an `if` sees the var its branch assigned"
+source = ```nib
+effect ask(): i64 resume ω
+let d := handle {
+  var s := 1
+  if s > 0 {
+    s := perform ask()
+  } else {
+    s := 3
+  }
+  s + 10
+} with {
+  ask(), k => k(2) + k(5)
+}
+show(&d)
+```
+stdout = "27\n"
+
+@ cases.a-match-that-resumes-twice-keeps-its-vars
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+description = "the code after a `match` sees the var its arm assigned"
+source = ```nib
+effect ask(): i64 resume ω
+let d := handle {
+  var s := 1
+  match s {
+    1 => {
+      s := perform ask()
+    }
+    other => {
+      s := 3
+    }
+  }
+  s + 10
+} with {
+  ask(), k => k(2) + k(5)
+}
+show(&d)
+```
+stdout = "27\n"
 
 @ cases.unbounded-in-m
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
-fn count(n: i64): i64 {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n {
     i := i + 1
@@ -230,90 +307,72 @@ fn count(n: i64): i64 {
 }
 let d := handle {
   let b := perform choose()
-  budget(steps: 5) {
+  perform budget(5, () => {
     count(if b { 30 } else { 20 })
-  }
+  })
 } with {
   choose(), k => k(true) + k(false)
   exceeded(info), k => k(info.unbounded())
 }
-perform show("d", d)
+show(&d)
 ```
-shows = ["d = 50"]
-rust_shows = ["d = 50"]
+stdout = "50\n"
 
 @ cases.return-from-inside-a-budget-in-m
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
-fn pick(): i64 {
+fn pick(): i64 ! {budget, overflow} {
   let r := handle {
     let b := perform choose()
-    budget(steps: 100) {
+    perform budget(100, () => {
       if b {
         return 9
       }
       1
-    }
+    })
   } with {
     choose(), k => k(false) + k(true)
     exceeded(info), k => k(0)
   }
   r + 1000
 }
-perform show("p", pick())
+show(&pick())
 ```
-shows = ["p = 9"]
-rust_shows = ["p = 9"]
+stdout = "9\n"
 
 @ cases.nested-budgets-in-m
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
-fn spin(): i64 {
+fn spin(): i64 ! {div} {
   while true { }
   0
 }
 let d := handle {
   let b := perform choose()
-  budget(steps: 1000) {
-    budget(steps: 20) {
+  perform budget(1000, () => {
+    perform budget(20, () => {
       if b {
         spin()
       } else {
         3
       }
-    }
-  }
+    })
+  })
 } with {
   choose(), k => k(true) + k(false)
   exceeded(info), k => k(100)
 }
-perform show("d", d)
+show(&d)
 ```
-shows = ["d = 103"]
-rust_shows = ["d = 103"]
+stdout = "103\n"
 
-// Cells are shared between resumptions (`semantics.md`「Cells across
-// resumptions」): a write made in one resumption is seen by the next one,
-// also for a `var` made inside the captured part of the body.
-@ cases.resumptions-share-a-var-made-before-the-handle
-source = ```nib
-effect choose(): Bool resume ω
-var n := 0
-let r := handle {
-  let b := perform choose()
-  n := n + 1
-  if b { n * 10 } else { n }
-} with {
-  choose(), k => k(true) + k(false)
-}
-perform show("r", r)
-perform show("n", n)
-```
-shows = ["r = 12", "n = 2"]
-rust_shows = ["r = 12", "n = 2"]
-javascript_shows = ["r = 12", "n = 2"]
-
-@ cases.resumptions-share-a-var-made-in-the-body
+// A continuation copies the `var`s of the captured part of the body
+// (`semantics.md`「Variables across resumptions」): each resumption starts
+// from the value `n` had at the `perform`.
+@ cases.each-resumption-copies-a-var-made-in-the-body
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
 let r := handle {
@@ -324,11 +383,9 @@ let r := handle {
 } with {
   choose(), k => k(true) + k(false)
 }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 12"]
-rust_shows = ["r = 12"]
-javascript_shows = ["r = 12"]
+stdout = "11\n"
 
 
 // A loop in the body of a budget, before a handle whose body runs out of its
@@ -336,12 +393,13 @@ javascript_shows = ["r = 12"]
 // the names in scope, and the budget's target is not one of them, since it is
 // moved into the frame where the budget starts.
 @ cases.a-loop-in-a-budget-in-an-exceeded-arm
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-fn spin(): i64 {
+fn spin(): i64 ! {div} {
   while true { }
   0
 }
-fn count(n: i64): i64 {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   var s := 0
   while i < n {
@@ -350,90 +408,92 @@ fn count(n: i64): i64 {
   }
   s
 }
-perform show("d", handle { budget(steps: 3) { spin() } } with {
-  exceeded(info), k => k(handle { budget(steps: 2) { count(30) + (handle { budget(steps: 155) { spin() } } with {
+show(&(handle { perform budget(3, () => { spin() }) } with {
+  exceeded(info), k => k(handle { perform budget(2, () => { count(30) + (handle { perform budget(155, () => { spin() }) } with {
     exceeded(info), k => k(5)
-  }) } } with {
+  }) }) } with {
     exceeded(info), k => info.unbounded()
   })
-})
+}))
 ```
-shows = ["d = 470"]
-rust_shows = ["d = 470"]
+stdout = "470\n"
 @ cases.a-nested-budget-runs-out-inside-an-outer-one
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-fn spin(): i64 {
+fn spin(): i64 ! {div} {
   while true {
   }
   0
 }
-fn f1(): i64 {
+fn f1(): i64 ! {budget} {
   handle {
-    budget(steps: 100) {
+    perform budget(100, () => {
       spin()
-    }
+    })
   } with {
     exceeded(info), k => k(1)
   }
 }
-perform show("v", handle {
-  budget(steps: 1000000) {
+show(&(handle {
+  perform budget(1000000, () => {
     f1()
-  }
+  })
 } with {
   exceeded(info), k => k(0)
-})
+}))
 ```
-shows = ["v = 1"]
+stdout = "1\n"
 
 @ cases.an-outer-budget-runs-out-inside-a-nested-one
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-fn spin(): i64 {
+fn spin(): i64 ! {div} {
   while true {
   }
   0
 }
-fn f1(): i64 {
+fn f1(): i64 ! {budget} {
   handle {
-    budget(steps: 100) {
+    perform budget(100, () => {
       spin()
-    }
+    })
   } with {
     exceeded(info), k => k(1)
   }
 }
-perform show("v", handle {
-  budget(steps: 10) {
+show(&(handle {
+  perform budget(10, () => {
     f1()
-  }
+  })
 } with {
   exceeded(info), k => info.unbounded()
-})
+}))
 ```
-shows = ["v = 1"]
+stdout = "1\n"
 
 @ cases.an-outer-budget-stops-a-nested-one
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-fn spin(): i64 {
+fn spin(): i64 ! {div} {
   while true {
   }
   0
 }
-fn f1(): i64 {
+fn f1(): i64 ! {budget} {
   handle {
-    budget(steps: 100000) {
+    perform budget(100000, () => {
       spin()
-    }
+    })
   } with {
     exceeded(info), k => k(1)
   }
 }
-perform show("v", handle {
-  budget(steps: 10) {
+show(&(handle {
+  perform budget(10, () => {
     f1()
-  }
+  })
 } with {
   exceeded(info), k => k(2)
-})
+}))
 ```
-shows = ["v = 2"]
+stdout = "2\n"

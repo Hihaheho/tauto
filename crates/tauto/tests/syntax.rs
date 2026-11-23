@@ -1,7 +1,7 @@
 //! Syntax metadata, search-directory isolation, and block agreement with Eure.
 
 use std::path::{Path, PathBuf};
-use tauto::eval::{RunError, run};
+use tauto::exec::{RunError, run};
 use tauto::syntax::{load_tables, set_search_dirs, types_text, with_search_dirs};
 use tauto::types::check_types;
 
@@ -11,8 +11,8 @@ fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/syntax_fixtures")
 }
 
-fn shown(source: &str) -> Result<Vec<(String, String)>, RunError> {
-    with_search_dirs(vec![fixtures()], || run(source).map(|o| o.outputs))
+fn shown(source: &str) -> Result<String, RunError> {
+    with_search_dirs(vec![fixtures()], || run(source).map(|o| o.stdout))
 }
 
 fn text_of(doc: &eure_document::document::EureDocument, key: &str) -> String {
@@ -95,15 +95,17 @@ fn a_block_matches_what_eure_makes_of_the_same_block() {
 
     gamma
     ```
-perform show("a", a)
+show(&a)
 "#
     .to_string();
     let out = shown(&source).unwrap();
-    assert_eq!(out[0].1, format!("{want:?}"));
+    // `show` writes a `Text` as `Debug` does, quoted, on a line of its own.
+    assert_eq!(out, format!("{want:?}\n"));
 }
 
 #[test]
 fn the_literal_has_the_type_of_the_start_symbol() {
+    tauto_parse::install();
     tauto_messages::install();
     let tables = with_search_dirs(vec![fixtures()], || load_tables(MATH)).unwrap();
     let clause = tauto::syntax::generated_clause("math", &tables, false);

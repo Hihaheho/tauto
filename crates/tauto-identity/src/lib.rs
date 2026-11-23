@@ -11,7 +11,13 @@
 //! qualifier gives it (`app::List`, `std::prelude::List`, `M::T::C`), and
 //! which names a file may use stays with the qualifier.
 
-use std::collections::{HashMap, HashSet};
+pub mod forked;
+pub mod kept;
+pub use forked::{ForkedMap, ForkedSet};
+pub use kept::{Detach, Kept};
+
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -116,6 +122,7 @@ const PRIMITIVES: &[&str] = &[
     "Quot::lift",
     "Quot::ind",
     "Eq",
+    "Nat::divmod",
 ];
 
 /// What a generated declaration is for. A generated declaration is identified
@@ -124,6 +131,9 @@ const PRIMITIVES: &[&str] = &[
 pub enum Generation {
     Induction,
     Recursion,
+    /// A family's own cases: its recursor with the other members of its
+    /// group and the induction hypotheses left out.
+    Cases,
     NoConfusionType,
     NoConfusionDiagonal,
     NoConfusion,
@@ -174,6 +184,7 @@ impl Generation {
             Self::SharedStepGet(index) => format!("@get{index}"),
             Self::Induction => "ind".into(),
             Self::Recursion => "rec".into(),
+            Self::Cases => "@cases".into(),
             Self::NoConfusionType => "nc".into(),
             Self::NoConfusionDiagonal => "nc_diag".into(),
             Self::NoConfusion => "noconf".into(),
@@ -244,14 +255,27 @@ impl DeclRef {
     }
 
     fn generated_named(&self, kind: Generation, display: String) -> Self {
-        let mut reference = locked(&self.0.generated)
-            .entry(kind)
-            .or_insert_with(|| {
-                let mut declaration = Declaration::new(fresh(), display, None, None);
-                declaration.generation = Some(kind);
-                Self(Arc::new(declaration), None)
-            })
-            .clone();
+        let make = |display: String| {
+            let mut declaration = Declaration::new(fresh(), display, None, None);
+            declaration.generation = Some(kind);
+            Self(Arc::new(declaration), None)
+        };
+        let mut generated = locked(&self.0.generated);
+        let mut reference = match generated.entry(kind) {
+            Entry::Vacant(e) => e.insert(make(display)).clone(),
+            // A constructor spelled otherwise than before at the same position (a
+            // revision of a file that renamed it) is another declaration: keeping
+            // the reference would keep the old spelling. A class member's label
+            // is only for display and keeps its reference.
+            Entry::Occupied(mut e)
+                if matches!(kind, Generation::Constructor(_)) && e.get().display() != display =>
+            {
+                e.insert(make(display));
+                e.get().clone()
+            }
+            Entry::Occupied(e) => e.get().clone(),
+        };
+        drop(generated);
         // A generated reference retains its owner, including specialized
         // ancestors. The owner's cache stores the reference without this
         // back edge, so retaining the owner does not create an Arc cycle.
@@ -698,12 +722,22 @@ impl Ord for EffectUse {
 
 /// The display contract of an applied effect carried by a reference.
 pub trait EffectReference: Clone + std::fmt::Debug + Eq + Hash + Ord {
+    /// An effect applied to arguments as the source writes it, before its
+    /// effect is bound: its head and its arguments are kept apart, so that
+    /// nothing reads the entry back from its display.
+    type Written: Clone + std::fmt::Debug + Eq + Hash + Ord;
     fn display(&self) -> &str;
+    fn written_display(written: &Self::Written) -> &str;
 }
 
 impl EffectReference for EffectUse {
+    /// References without a source-language payload have no written form.
+    type Written = std::convert::Infallible;
     fn display(&self) -> &str {
         self.display()
+    }
+    fn written_display(written: &Self::Written) -> &str {
+        match *written {}
     }
 }
 
@@ -725,6 +759,8 @@ pub enum ReferenceName<E: EffectReference> {
     Selection(Selection),
     /// An effect applied to its arguments.
     Effect(Arc<E>),
+    /// An effect applied to its arguments as written; not yet resolved.
+    Written(Arc<E::Written>),
 }
 
 impl<E: EffectReference> ReferenceName<E> {
@@ -736,6 +772,7 @@ impl<E: EffectReference> ReferenceName<E> {
             Self::Local(r) => r.display(),
             Self::Selection(s) => s.display(),
             Self::Effect(e) => e.display(),
+            Self::Written(w) => E::written_display(w),
         }
     }
 
@@ -766,7 +803,7 @@ impl<E: EffectReference> ReferenceName<E> {
         match self {
             Self::Local(_) => Some(self.clone()),
             Self::Spelled(text) => text.strip_prefix('|').map(Self::from),
-            Self::Global(_) | Self::Selection(_) | Self::Effect(_) => None,
+            Self::Global(_) | Self::Selection(_) | Self::Effect(_) | Self::Written(_) => None,
         }
     }
 
@@ -786,7 +823,7 @@ impl<E: EffectReference> ReferenceName<E> {
     }
 
     pub fn is_resolved(&self) -> bool {
-        !matches!(self, Self::Spelled(_))
+        !matches!(self, Self::Spelled(_) | Self::Written(_))
     }
 
     pub fn as_global(&self) -> Option<&DeclRef> {
@@ -809,7 +846,7 @@ impl<E: EffectReference> ReferenceName<E> {
         match self {
             Self::Spelled(name) => SortSymbol::parse(name),
             Self::Global(reference) => reference.sort(),
-            Self::Local(_) | Self::Selection(_) | Self::Effect(_) => None,
+            Self::Local(_) | Self::Selection(_) | Self::Effect(_) | Self::Written(_) => None,
         }
     }
 }
@@ -894,9 +931,20 @@ impl From<EffectUse> for Name {
 /// reserved name that is not declared is not found by [`Declarations::get`].
 #[derive(Debug, Clone, Default)]
 pub struct Declarations {
-    visible: HashMap<String, DeclRef>,
+    visible: ForkedMap<String, DeclRef>,
     reservations: Arc<Mutex<HashMap<String, DeclRef>>>,
-    constructors: HashSet<DeclRef>,
+    constructors: ForkedSet<DeclRef>,
+}
+
+impl Detach for Declarations {
+    /// Reservations made through either copy afterwards are its own.
+    fn detached(&self) -> Self {
+        Self {
+            visible: self.visible.clone(),
+            reservations: Arc::new(Mutex::new(locked(&self.reservations).clone())),
+            constructors: self.constructors.clone(),
+        }
+    }
 }
 
 impl Declarations {
@@ -912,6 +960,21 @@ impl Declarations {
             reservations: Default::default(),
             constructors: self.constructors.clone(),
         }
+    }
+
+    /// Takes in what a copy of this table (a clone, which shares its
+    /// reservations) wrote since it was made ([`ForkedMap::absorb`]). False
+    /// when another copy taken in since wrote the same name.
+    pub fn absorb(&mut self, other: Declarations) -> bool {
+        let visible = self.visible.absorb(other.visible);
+        let constructors = self.constructors.absorb(other.constructors);
+        visible && constructors
+    }
+
+    /// Leaves in this copy only what it wrote, for [`Self::absorb`].
+    pub fn subtract(&mut self, since: u64) {
+        self.visible.subtract(since);
+        self.constructors.subtract(since);
     }
 
     /// The reference of the full name `name`, made if there is none. It is a
@@ -1033,7 +1096,7 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(Name::Global(a.clone()), Name::Global(b));
         assert_eq!(Name::Global(a.clone()), Name::Global(a.clone()));
-        let mut set = HashSet::new();
+        let mut set = std::collections::HashSet::new();
         set.insert(a.clone());
         assert!(set.contains(&a.clone()));
         assert_eq!(set.len(), 1);
@@ -1445,7 +1508,9 @@ pub fn refs_in_order(text: &str) -> String {
         };
         let inner = &after[..close];
         match inner.rfind('#') {
-            Some(h) if h + 1 < inner.len() && inner[h + 1..].bytes().all(|b| b.is_ascii_digit()) => {
+            Some(h)
+                if h + 1 < inner.len() && inner[h + 1..].bytes().all(|b| b.is_ascii_digit()) =>
+            {
                 let key = format!("{}{inner}", &rest[i..start]);
                 let n = seen.len();
                 let n = *seen.entry(key).or_insert(n);
@@ -1478,5 +1543,4 @@ mod refs_tests {
             refs_in_order("LocalRef(a#1) LocalRef(a#1)")
         );
     }
-
 }

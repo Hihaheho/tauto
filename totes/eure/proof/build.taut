@@ -1,0 +1,842 @@
+import "keyfns.taut"
+import "../src/lower.taut"
+import "../src/syntax.taut"
+import "../src/value.taut"
+import "../src/write.taut"
+import "doc.taut"
+import "inline.taut"
+import std::base
+import std::data
+import std::list
+import std::text
+import std::map_text
+import "values.taut"
+
+// Lowering what the reader gives for a node builds the node again: `lower_expr(expr_node(n))` is
+// `low(n)` for every node `wf_node` accepts.
+
+// ---- association lists -------------------------------------------------------------------------
+
+pub theorem find_snoc<K: Type, V: Type>(
+  eq: (K, K) -> Bool,
+  k: K,
+  v: V,
+  q: List(K × V),
+  hk: Option::is_some(assoc_find(eq, k, q)) = false,
+  hkk: eq(k, k) = true
+): assoc_find(eq, k, snoc(q, #(k, v))) = Some(v) {
+  match q {
+    Nil => Eq::subst(
+      Bool,
+      true,
+      eq(k, k),
+      (y: Bool) => Eq(Option(V), ⊢ Option(V) from match y {
+ true => Some(v)
+ false => None
+ }, Some(v)),
+      Eq::sym(hkk),
+      Refl
+    )
+    Cons(p, t) => (⊢ Option::is_some(assoc_find(eq, k, Cons(p, t))) = false -> assoc_find(eq, k, snoc(Cons(p, t), #(k, v))) = Some(v) from match p {
+      #(pk, pv) => Bool::cases(
+        (y: Bool) => Option::is_some(⊢ Option(V) from match y {
+          true => Some(pv)
+          false => assoc_find(eq, k, t)
+        }) = false -> Eq(
+          Option(V),
+          ⊢ Option(V) from match y {
+            true => Some(pv)
+            false => assoc_find(eq, k, snoc(t, #(k, v)))
+          },
+          Some(v)
+        ),
+        eq(pk, k),
+        (e: eq(pk, k) = false) => (h: Option::is_some(assoc_find(eq, k, t)) = false) => find_snoc(eq, k, v, t, h, hkk),
+        (e: eq(pk, k) = true) => (h: true = false) => False::elim(true_ne_false(h))
+      )
+    })(hk)
+  }
+}
+
+pub theorem set_snoc<K: Type, V: Type>(
+  eq: (K, K) -> Bool,
+  k: K,
+  v: V,
+  w: V,
+  q: List(K × V),
+  hk: Option::is_some(assoc_find(eq, k, q)) = false,
+  hkk: eq(k, k) = true
+): assoc_set(eq, k, v, snoc(q, #(k, w))) = snoc(q, #(k, v)) {
+  match q {
+    Nil => Eq::subst(
+      Bool,
+      true,
+      eq(k, k),
+      (y: Bool) => Eq(List(K × V), ⊢ List(K × V) from match y {
+        true => Cons(#(k, v), Nil)
+        false => Cons(#(k, w), assoc_set(eq, k, v, Nil))
+      }, Cons(#(k, v), Nil)),
+      Eq::sym(hkk),
+      Refl
+    )
+    Cons(p, t) => (⊢ Option::is_some(assoc_find(eq, k, Cons(p, t))) = false -> assoc_set(eq, k, v, snoc(Cons(p, t), #(k, w))) = snoc(Cons(p, t), #(k, v)) from match p {
+      #(pk, pv) => Bool::cases(
+        (y: Bool) => Option::is_some(⊢ Option(V) from match y {
+          true => Some(pv)
+          false => assoc_find(eq, k, t)
+        }) = false -> Eq(
+          List(K × V),
+          ⊢ List(K × V) from match y {
+            true => Cons(#(k, v), snoc(t, #(k, w)))
+            false => Cons(#(pk, pv), assoc_set(eq, k, v, snoc(t, #(k, w))))
+          },
+          Cons(#(pk, pv), snoc(t, #(k, v)))
+        ),
+        eq(pk, k),
+        (e: eq(pk, k) = false) => (h: Option::is_some(assoc_find(eq, k, t)) = false) => Eq::congr(
+          ⟦Cons(#(pk, pv), □)⟧,
+          set_snoc(eq, k, v, w, t, h, hkk)
+        ),
+        (e: eq(pk, k) = true) => (h: true = false) => False::elim(true_ne_false(h))
+      )
+    })(hk)
+  }
+}
+
+// `find_snoc` and `set_snoc` for `key_eq`, in terms of `key_find` and `key_set`.
+pub theorem key_find_snoc(
+  k: Key,
+  v: Node,
+  q: List(Key × Node),
+  hk: assoc_has(key_eq, k, q) = false,
+  hkk: key_eq(k, k) = true
+): key_find(k, snoc(q, #(k, v))) = Some(v) {
+  Eq::trans(key_find_eq(k, snoc(q, #(k, v))), find_snoc(key_eq, k, v, q, hk, hkk))
+}
+
+pub theorem key_set_snoc(
+  k: Key,
+  v: Node,
+  w: Node,
+  q: List(Key × Node),
+  hk: assoc_has(key_eq, k, q) = false,
+  hkk: key_eq(k, k) = true
+): key_set(k, v, snoc(q, #(k, w))) = snoc(q, #(k, v)) {
+  Eq::trans(key_set_eq(k, v, snoc(q, #(k, w))), set_snoc(key_eq, k, v, w, q, hk, hkk))
+}
+
+pub theorem text_eq_refl(t: Text): Text::eq(t, t) = true {
+  Eq::congr(
+    (o: Ordering) => ⊢ Bool from match o {
+      Less => false
+      Equal => true
+      Greater => false
+    },
+    Bytes::compare_same(Text::bytes(t))
+  )
+}
+
+pub theorem Key::refl(k: Key, hk: Key::ok(k) = true): key_eq(k, k) = true {
+  match k {
+    Kstr(t) => text_eq_refl(t)
+    Knum(neg, n) => Eq::trans(
+      Eq::congr(⟦Bool::and(□, Nat::eq(n, n))⟧, Bool::eq_refl(neg)),
+      Nat::eq_refl(n)
+    )
+    Ktup(ks) => False::elim(false_ne_true(hk))
+  }
+}
+
+// ---- one binding -------------------------------------------------------------------------------
+
+pub theorem fill_blank(n: Node): fill(n, blank()) = Ok(n) {
+  match n {
+    Mk(v, e) => Refl
+  }
+}
+
+fn bind_k(d: Node, path: List(Seg)): (Result(Node, Nat × Text)) -> Result(Node, Nat × Text) {
+  (o: Result(Node, Nat × Text)) => ⊢ Result(Node, Nat × Text) from match o {
+    Ok(v) => assign(d, Nil, path, v)
+    Err(#(at, what)) => Err(#(at, what))
+  }
+}
+
+fn there_k(d: Node, s: Step, f: (Node) -> Result(Node, Nat × Text)): (Option(Node)) -> Result(Node, Nat × Text) {
+  (o: Option(Node)) => ⊢ Result(Node, Nat × Text) from match o {
+    None => Err(#(0, "a path that is there"))
+    Some(c) => low_then(modify(c, Nil, f), (c2: Node) => Ok(set_child(d, s, c2)))
+  }
+}
+
+pub fn fill_with(v: Node): (Node) -> Result(Node, Nat × Text) {
+  (m: Node) => fill(v, m)
+}
+
+fn resolve_k(s: Step): (Node) -> Result(Node × List(Step), Nat × Text) {
+  (d2: Node) => resolve(d2, Cons(s, Nil), Nil)
+}
+
+pub fn place_k(v: Node): (Node × List(Step)) -> Result(Node, Nat × Text) {
+  (p: Node × List(Step)) => modify(p.fst, p.snd, fill_with(v))
+}
+
+// A path of one step that the node does not have yet: the step makes a blank there, and the
+// value fills it.
+theorem step_one(
+  d: Node,
+  d2: Node,
+  s: Seg,
+  st: Step,
+  e: Expr,
+  n: Node,
+  hreach: resolve(d, Nil, Cons(s, Nil)) = low_then(Ok(d2), resolve_k(st)),
+  hchild: child(d2, st) = Some(blank()),
+  hlow: lower_expr(e) = Ok(n)
+): lower_bind(#(Cons(s, Nil), e), d) = Ok(set_child(d2, st, n)) {
+  Eq::trans(
+    Eq::congr(bind_k(d, Cons(s, Nil)), hlow),
+    Eq::trans(
+      Eq::congr((o: Result(Node × List(Step), Nat × Text)) => low_then(o, place_k(n)), hreach),
+      Eq::trans(
+        Eq::congr(there_k(d2, st, fill_with(n)), hchild),
+        Eq::congr(
+          (o: Result(Node, Nat × Text)) => low_then(o, (c2: Node) => Ok(set_child(d2, st, c2))),
+          fill_blank(n)
+        )
+      )
+    )
+  )
+}
+
+pub theorem reach_map(
+  q: List(Key × Node),
+  x: List(Text × Node),
+  k: Key,
+  hk: assoc_has(key_eq, k, q) = false
+): reach_field(Node::Mk(Vmap(q), x), k) = Ok(Node::Mk(Vmap(snoc(q, #(k, blank()))), x)) {
+  Eq::subst(
+    Bool,
+    false,
+    key_has(k, q),
+    (y: Bool) => Eq(Result(Node, Nat × Text), ⊢ Result(Node, Nat × Text) from match y {
+      true => Ok(Node::Mk(Vmap(q), x))
+      false => Ok(Node::Mk(Vmap(snoc(q, #(k, blank()))), x))
+    }, Ok(Node::Mk(Vmap(snoc(q, #(k, blank()))), x))),
+    Eq::sym(Eq::trans(key_has_eq(k, q), hk)),
+    Refl
+  )
+}
+
+pub theorem reach_ext(
+  v: Value,
+  p: List(Text × Node),
+  k: Text,
+  hk: assoc_has(Text::eq, k, p) = false
+): reach(Node::Mk(v, p), Cext(k)) = Ok(Node::Mk(v, snoc(p, #(k, blank())))) {
+  Eq::subst(
+    Bool,
+    false,
+    assoc_has(Text::eq, k, p),
+    (y: Bool) => Eq(Result(Node, Nat × Text), ⊢ Result(Node, Nat × Text) from match y {
+      true => Ok(Node::Mk(v, p))
+      false => Ok(Node::Mk(v, snoc(p, #(k, blank()))))
+    }, Ok(Node::Mk(v, snoc(p, #(k, blank()))))),
+    Eq::sym(hk),
+    Refl
+  )
+}
+
+theorem step_key(
+  q: List(Key × Node),
+  k: Key,
+  e: Expr,
+  n: Node,
+  hk: assoc_has(key_eq, k, q) = false,
+  hkk: key_eq(k, k) = true,
+  hlow: lower_expr(e) = Ok(n)
+): lower_bind(#(Cons(Skey(k), Nil), e), Node::Mk(Vmap(q), Nil)) = Ok(Node::Mk(Vmap(snoc(q, #(k, n))), Nil)) {
+  Eq::trans(
+    step_one(
+      Node::Mk(Vmap(q), Nil),
+      Node::Mk(Vmap(snoc(q, #(k, blank()))), Nil),
+      Skey(k),
+      Cfield(k),
+      e,
+      n,
+      Eq::congr(⟦low_then(□, resolve_k(Cfield(k)))⟧, reach_map(q, Nil, k, hk)),
+      key_find_snoc(k, blank(), q, hk, hkk),
+      hlow
+    ),
+    Eq::congr(
+      ⟦Ok(Node::Mk(Vmap(□), Nil))⟧,
+      key_set_snoc(k, n, blank(), q, hk, hkk)
+    )
+  )
+}
+
+theorem step_key_first(
+  k: Key,
+  e: Expr,
+  n: Node,
+  hkk: key_eq(k, k) = true,
+  hlow: lower_expr(e) = Ok(n)
+): lower_bind(#(Cons(Skey(k), Nil), e), blank()) = Ok(Node::Mk(Vmap(Cons(#(k, n), Nil)), Nil)) {
+  Eq::trans(
+    step_one(
+      blank(),
+      Node::Mk(Vmap(Cons(#(k, blank()), Nil)), Nil),
+      Skey(k),
+      Cfield(k),
+      e,
+      n,
+      Refl,
+      key_find_snoc(k, blank(), Nil, Refl, hkk),
+      hlow
+    ),
+    Eq::congr(
+      ⟦Ok(Node::Mk(Vmap(□), Nil))⟧,
+      key_set_snoc(k, n, blank(), Nil, Refl, hkk)
+    )
+  )
+}
+
+theorem step_ext(
+  v: Value,
+  p: List(Text × Node),
+  k: Text,
+  e: Expr,
+  n: Node,
+  hk: assoc_has(Text::eq, k, p) = false,
+  hlow: lower_expr(e) = Ok(n)
+): lower_bind(#(Cons(Sext(k), Nil), e), Node::Mk(v, p)) = Ok(Node::Mk(v, snoc(p, #(k, n)))) {
+  Eq::trans(
+    step_one(
+      Node::Mk(v, p),
+      Node::Mk(v, snoc(p, #(k, blank()))),
+      Sext(k),
+      Cext(k),
+      e,
+      n,
+      Eq::congr(⟦low_then(□, resolve_k(Cext(k)))⟧, reach_ext(v, p, k, hk)),
+      find_snoc(Text::eq, k, blank(), p, hk, text_eq_refl(k)),
+      hlow
+    ),
+    Eq::congr(
+      ⟦Ok(Node::Mk(v, □))⟧,
+      set_snoc(Text::eq, k, n, blank(), p, hk, text_eq_refl(k))
+    )
+  )
+}
+
+// ---- objects ---------------------------------------------------------------------------------
+
+fn binds_k(rest: List(List(Seg) × Expr)): (Result(Node, Nat × Text)) -> Result(Node, Nat × Text) {
+  (o: Result(Node, Nat × Text)) => ⊢ Result(Node, Nat × Text) from match o {
+    Ok(n2) => lower_binds(rest, n2)
+    Err(#(at, what)) => Err(#(at, what))
+  }
+}
+
+theorem binds_done(
+  m: Node,
+  hnb: is_blank(m) = false
+): lower_binds(Nil, m) = Ok(m) {
+  Eq::subst(
+    Bool,
+    false,
+    is_blank(m),
+    (y: Bool) => Eq(Result(Node, Nat × Text), ⊢ Result(Node, Nat × Text) from match y {
+      true => Ok(with_value(m, Vmap(Nil)))
+      false => Ok(m)
+    }, Ok(m)),
+    Eq::sym(hnb),
+    Refl
+  )
+}
+
+pub theorem hole_not_blank(
+  lb: Option(Text),
+  x: List(Text × Node),
+  h: label_ok(lb) = true
+): is_blank(Node::Mk(Vhole(lb), x)) = false {
+  match lb {
+    None => Refl
+    Some(t) => match t {
+      Mk(bs) => match bs {
+        Nil => False::elim(false_ne_true(h))
+        Cons(c, u) => Refl
+      }
+    }
+  }
+}
+
+// `{ = v, $e => w, }`: the value, then the extensions.
+theorem wrap_lower(
+  e0: Expr,
+  v: Value,
+  xb: List(List(Seg) × Expr),
+  x: List(Text × Node),
+  h0: lower_expr(e0) = Ok(Node::Mk(v, Nil)),
+  hX: lower_binds(xb, Node::Mk(v, Nil)) = lower_binds(Nil, Node::Mk(v, x)),
+  hnb: is_blank(Node::Mk(v, x)) = false
+): lower_expr(Eobj(Cons(#(Nil, e0), xb))) = Ok(Node::Mk(v, x)) {
+  Eq::trans(
+    Eq::congr(⟦binds_k(xb)(bind_k(blank(), Nil)(□))⟧, h0),
+    Eq::trans(hX, binds_done(Node::Mk(v, x), hnb))
+  )
+}
+
+fn arr_low(): (Result(List(Node), Nat × Text)) -> Result(Node, Nat × Text) {
+  (o: Result(List(Node), Nat × Text)) => ⊢ Result(Node, Nat × Text) from match o {
+    Ok(ns) => Ok(leaf(Varr(ns)))
+    Err(#(at, what)) => Err(#(at, what))
+  }
+}
+
+fn tup_low(): (Result(List(Node), Nat × Text)) -> Result(Node, Nat × Text) {
+  (o: Result(List(Node), Nat × Text)) => ⊢ Result(Node, Nat × Text) from match o {
+    Ok(ns) => Ok(leaf(Vtup(ns)))
+    Err(#(at, what)) => Err(#(at, what))
+  }
+}
+
+fn it_k(rest: List(Expr)): (Result(Node, Nat × Text)) -> Result(List(Node), Nat × Text) {
+  (o: Result(Node, Nat × Text)) => ⊢ Result(List(Node), Nat × Text) from match o {
+    Ok(n) => ⊢ Result(List(Node), Nat × Text) from match lower_items(rest) {
+      Ok(ns) => Ok(Cons(n, ns))
+      Err(#(at, what)) => Err(#(at, what))
+    }
+    Err(#(at, what)) => Err(#(at, what))
+  }
+}
+
+fn it2_k(y: Node): (Result(List(Node), Nat × Text)) -> Result(List(Node), Nat × Text) {
+  (o: Result(List(Node), Nat × Text)) => ⊢ Result(List(Node), Nat × Text) from match o {
+    Ok(ns) => Ok(Cons(y, ns))
+    Err(#(at, what)) => Err(#(at, what))
+  }
+}
+
+pub theorem ent_fresh(
+  k: Key,
+  n: Node,
+  p: List(Key × Node),
+  hw: wf_entry(#(k, n), p) = true
+): assoc_has(key_eq, k, p) = false {
+  Bool::not_true(
+    assoc_has(key_eq, k, p),
+    And::left(
+      Bool::and_split(
+        not(assoc_has(key_eq, k, p)),
+        wf_node(n),
+        And::right(Bool::and_split(Key::ok(k), Bool::and(not(assoc_has(key_eq, k, p)), wf_node(n)), hw))
+      )
+    )
+  )
+}
+
+pub theorem xt_fresh(
+  k: Text,
+  n: Node,
+  p: List(Text × Node),
+  hw: wf_ext(#(k, n), p) = true
+): assoc_has(Text::eq, k, p) = false {
+  Bool::not_true(
+    assoc_has(Text::eq, k, p),
+    And::left(
+      Bool::and_split(
+        not(assoc_has(Text::eq, k, p)),
+        wf_node(n),
+        And::right(
+          Bool::and_split(
+            is_ident(Text::bytes(k)),
+            Bool::and(not(assoc_has(Text::eq, k, p)), wf_node(n)),
+            hw
+          )
+        )
+      )
+    )
+  )
+}
+
+// ---- the nodes ------------------------------------------------------------------------------
+
+mutual {
+  pub theorem node_lower(
+    n: Node,
+    hw: wf_node(n) = true
+  ): lower_expr(expr_node(n)) = Ok(n) {
+    match n {
+      Mk(v, ext) => val_lower(
+        v,
+        ext,
+        And::left(Bool::and_split(wf_value(v), wf_exts(ext, Nil), hw)),
+        (w: Value) => exts_lower(
+          ext,
+          Nil,
+          w,
+          And::right(Bool::and_split(wf_value(v), wf_exts(ext, Nil), hw))
+        )
+      )
+    }
+  }
+  theorem val_lower(
+    v: Value,
+    ext: List(Text × Node),
+    hw: wf_value(v) = true,
+    hEX: (
+      w: Value
+    ) -> lower_binds(ext_binds(ext), Node::Mk(w, Nil)) = lower_binds(Nil, Node::Mk(w, ext))
+  ): lower_expr(expr_put(v, has_ext(ext), ext_binds(ext))) = Ok(Node::Mk(v, ext)) {
+    match v {
+      Vmap(es) => map_lower(es, ext, hw, hEX)
+      Varr(xs) => match ext {
+        Nil => Eq::congr(arr_low(), items_lower(xs, hw))
+        Cons(e, es) => wrap_lower(
+          Earr(expr_items(xs)),
+          Varr(xs),
+          ext_binds(Cons(e, es)),
+          Cons(e, es),
+          Eq::congr(arr_low(), items_lower(xs, hw)),
+          hEX(Varr(xs)),
+          Refl
+        )
+      }
+      Vtup(xs) => match ext {
+        Nil => Eq::congr(tup_low(), items_lower(xs, hw))
+        Cons(e, es) => wrap_lower(
+          Etup(expr_items(xs)),
+          Vtup(xs),
+          ext_binds(Cons(e, es)),
+          Cons(e, es),
+          Eq::congr(tup_low(), items_lower(xs, hw)),
+          hEX(Vtup(xs)),
+          Refl
+        )
+      }
+      Vhole(lb) => match ext {
+        Nil => Refl
+        Cons(e, es) => wrap_lower(
+          Escalar(Vhole(lb)),
+          Vhole(lb),
+          ext_binds(Cons(e, es)),
+          Cons(e, es),
+          Refl,
+          hEX(Vhole(lb)),
+          hole_not_blank(lb, Cons(e, es), hw)
+        )
+      }
+      Vnull => match ext {
+        Nil => Refl
+        Cons(e, es) => wrap_lower(
+          Escalar(Vnull),
+          Vnull,
+          ext_binds(Cons(e, es)),
+          Cons(e, es),
+          Refl,
+          hEX(Vnull),
+          Refl
+        )
+      }
+      Vbool(b) => match ext {
+        Nil => Refl
+        Cons(e, es) => wrap_lower(
+          Escalar(Vbool(b)),
+          Vbool(b),
+          ext_binds(Cons(e, es)),
+          Cons(e, es),
+          Refl,
+          hEX(Vbool(b)),
+          Refl
+        )
+      }
+      Vint(sg, k) => match ext {
+        Nil => Refl
+        Cons(e, es) => wrap_lower(
+          Escalar(Vint(sg, k)),
+          Vint(sg, k),
+          ext_binds(Cons(e, es)),
+          Cons(e, es),
+          Refl,
+          hEX(Vint(sg, k)),
+          Refl
+        )
+      }
+      Vdec(sg, k, es2, d) => match ext {
+        Nil => Refl
+        Cons(e, es) => wrap_lower(
+          Escalar(Vdec(sg, k, es2, d)),
+          Vdec(sg, k, es2, d),
+          ext_binds(Cons(e, es)),
+          Cons(e, es),
+          Refl,
+          hEX(Vdec(sg, k, es2, d)),
+          Refl
+        )
+      }
+      Vtext(lg, t) => match ext {
+        Nil => Refl
+        Cons(e, es) => wrap_lower(
+          Escalar(Vtext(lg, t)),
+          Vtext(lg, t),
+          ext_binds(Cons(e, es)),
+          Cons(e, es),
+          Refl,
+          hEX(Vtext(lg, t)),
+          Refl
+        )
+      }
+    }
+  }
+  theorem map_lower(
+    es: List(Key × Node),
+    ext: List(Text × Node),
+    hw: wf_entries(es, Nil) = true,
+    hEX: (
+      w: Value
+    ) -> lower_binds(ext_binds(ext), Node::Mk(w, Nil)) = lower_binds(Nil, Node::Mk(w, ext))
+  ): lower_binds(List::append(entry_binds(es), ext_binds(ext)), blank()) = Ok(Node::Mk(Vmap(es), ext)) {
+    match es {
+      Nil => hEX(Vhole(Some("")))
+      Cons(e, t) => Eq::trans(
+        Eq::congr(
+          binds_k(List::append(entry_binds(t), ext_binds(ext))),
+          entry_first(e, ent_head(e, t, Nil, hw))
+        ),
+        Eq::trans(
+          entries_lower(t, Cons(e, Nil), ext_binds(ext), ent_rest(e, t, Nil, hw)),
+          hEX(Vmap(Cons(e, t)))
+        )
+      )
+    }
+  }
+  theorem items_lower(
+    xs: List(Node),
+    hw: wf_items(xs) = true
+  ): lower_items(expr_items(xs)) = Ok(xs) {
+    match xs {
+      Nil => Refl
+      Cons(y, t) => Eq::trans(
+        Eq::congr(it_k(expr_items(t)), node_lower(y, items_wf_head(y, t, hw))),
+        Eq::congr(it2_k(y), items_lower(t, items_wf_tail(y, t, hw)))
+      )
+    }
+  }
+  theorem entries_lower(
+    es: List(Key × Node),
+    q: List(Key × Node),
+    bs: List(List(Seg) × Expr),
+    hw: wf_entries(es, q) = true
+  ): lower_binds(List::append(entry_binds(es), bs), Node::Mk(Vmap(q), Nil)) = lower_binds(bs, Node::Mk(Vmap(List::append(q, es)), Nil)) {
+    match es {
+      Nil => Eq::congr(
+        ⟦lower_binds(bs, Node::Mk(Vmap(□), Nil))⟧,
+        Eq::sym(List::append_nil(q))
+      )
+      Cons(e, t) => Eq::trans(
+        Eq::congr(binds_k(List::append(entry_binds(t), bs)), entry_step(e, q, ent_head(e, t, q, hw))),
+        Eq::trans(
+          entries_lower(t, snoc(q, e), bs, ent_rest(e, t, q, hw)),
+          Eq::congr(
+            ⟦lower_binds(bs, Node::Mk(Vmap(□), Nil))⟧,
+            List::append_assoc(q, Cons(e, Nil), t)
+          )
+        )
+      )
+    }
+  }
+  theorem entry_step(
+    e: Key × Node,
+    q: List(Key × Node),
+    hw: wf_entry(e, q) = true
+  ): lower_bind(entry_bind(e), Node::Mk(Vmap(q), Nil)) = Ok(Node::Mk(Vmap(snoc(q, e)), Nil)) {
+    match e {
+      #(k, n) => step_key(
+        q,
+        k,
+        expr_node(n),
+        n,
+        ent_fresh(k, n, q, hw),
+        Key::refl(k, ent_key(k, n, q, hw)),
+        node_lower(n, ent_node(k, n, q, hw))
+      )
+    }
+  }
+  theorem entry_first(
+    e: Key × Node,
+    hw: wf_entry(e, Nil) = true
+  ): lower_bind(entry_bind(e), blank()) = Ok(Node::Mk(Vmap(Cons(e, Nil)), Nil)) {
+    match e {
+      #(k, n) => step_key_first(
+        k,
+        expr_node(n),
+        n,
+        Key::refl(k, ent_key(k, n, Nil, hw)),
+        node_lower(n, ent_node(k, n, Nil, hw))
+      )
+    }
+  }
+  theorem exts_lower(
+    es: List(Text × Node),
+    p: List(Text × Node),
+    w: Value,
+    hw: wf_exts(es, p) = true
+  ): lower_binds(ext_binds(es), Node::Mk(w, p)) = lower_binds(Nil, Node::Mk(w, List::append(p, es))) {
+    match es {
+      Nil => Eq::congr(
+        ⟦lower_binds(Nil, Node::Mk(w, □))⟧,
+        Eq::sym(List::append_nil(p))
+      )
+      Cons(e, t) => Eq::trans(
+        Eq::congr(binds_k(ext_binds(t)), ext_step(e, w, p, xt_head(e, t, p, hw))),
+        Eq::trans(
+          exts_lower(t, snoc(p, e), w, xt_rest(e, t, p, hw)),
+          Eq::congr(
+            ⟦lower_binds(Nil, Node::Mk(w, □))⟧,
+            List::append_assoc(p, Cons(e, Nil), t)
+          )
+        )
+      )
+    }
+  }
+  theorem ext_step(
+    e: Text × Node,
+    w: Value,
+    p: List(Text × Node),
+    hw: wf_ext(e, p) = true
+  ): lower_bind(ext_bind(e), Node::Mk(w, p)) = Ok(Node::Mk(w, snoc(p, e))) {
+    match e {
+      #(k, n) => step_ext(
+        w,
+        p,
+        k,
+        expr_node(n),
+        n,
+        xt_fresh(k, n, p, hw),
+        node_lower(n, xt_node(k, n, p, hw))
+      )
+    }
+  }
+}
+
+// ---- nothing is left blank ---------------------------------------------------------------------
+
+theorem hole_unblank(
+  lb: Option(Text),
+  h: label_ok(lb) = true
+): unblank_v(Vhole(lb)) = Vhole(lb) {
+  match lb {
+    None => Refl
+    Some(t) => match t {
+      Mk(bs) => match bs {
+        Nil => False::elim(false_ne_true(h))
+        Cons(c, u) => Refl
+      }
+    }
+  }
+}
+
+mutual {
+  pub theorem node_unblank(n: Node, hw: wf_node(n) = true): unblank(n) = n {
+    match n {
+      Mk(v, ext) => Eq::trans(
+        Eq::congr(
+          (w: Value) => Node::Mk(w, unblank_exts(ext)),
+          val_unblank(v, And::left(Bool::and_split(wf_value(v), wf_exts(ext, Nil), hw)))
+        ),
+        Eq::congr(
+          (x: List(Text × Node)) => Node::Mk(v, x),
+          exts_unblank(ext, Nil, And::right(Bool::and_split(wf_value(v), wf_exts(ext, Nil), hw)))
+        )
+      )
+    }
+  }
+  theorem val_unblank(v: Value, hw: wf_value(v) = true): unblank_v(v) = v {
+    match v {
+      Vhole(lb) => hole_unblank(lb, hw)
+      Vnull => Refl
+      Vbool(b) => Refl
+      Vint(sg, k) => Refl
+      Vdec(sg, k, es, d) => Refl
+      Vtext(lg, t) => Refl
+      Varr(xs) => Eq::congr(⟦Varr(□)⟧, items_unblank(xs, hw))
+      Vtup(xs) => Eq::congr(⟦Vtup(□)⟧, items_unblank(xs, hw))
+      Vmap(es) => Eq::congr(⟦Vmap(□)⟧, entries_unblank(es, Nil, hw))
+    }
+  }
+  theorem items_unblank(
+    xs: List(Node),
+    hw: wf_items(xs) = true
+  ): unblank_items(xs) = xs {
+    match xs {
+      Nil => Refl
+      Cons(y, t) => Eq::trans(
+        Eq::congr(⟦Cons(□, unblank_items(t))⟧, node_unblank(y, items_wf_head(y, t, hw))),
+        Eq::congr(⟦Cons(y, □)⟧, items_unblank(t, items_wf_tail(y, t, hw)))
+      )
+    }
+  }
+  theorem entries_unblank(
+    es: List(Key × Node),
+    p: List(Key × Node),
+    hw: wf_entries(es, p) = true
+  ): unblank_entries(es) = es {
+    match es {
+      Nil => Refl
+      Cons(e, t) => Eq::trans(
+        Eq::congr(
+          ⟦Cons(□, unblank_entries(t))⟧,
+          entry_unblank(e, p, ent_head(e, t, p, hw))
+        ),
+        Eq::congr(
+          ⟦Cons(e, □)⟧,
+          entries_unblank(t, snoc(p, e), ent_rest(e, t, p, hw))
+        )
+      )
+    }
+  }
+  theorem entry_unblank(
+    e: Key × Node,
+    p: List(Key × Node),
+    hw: wf_entry(e, p) = true
+  ): unblank_entry(e) = e {
+    match e {
+      #(k, n) => Eq::congr(
+        (m: Node) => #(k, m),
+        node_unblank(n, ent_node(k, n, p, hw))
+      )
+    }
+  }
+  theorem exts_unblank(
+    es: List(Text × Node),
+    p: List(Text × Node),
+    hw: wf_exts(es, p) = true
+  ): unblank_exts(es) = es {
+    match es {
+      Nil => Refl
+      Cons(e, t) => Eq::trans(
+        Eq::congr(
+          ⟦Cons(□, unblank_exts(t))⟧,
+          ext_unblank(e, p, xt_head(e, t, p, hw))
+        ),
+        Eq::congr(
+          ⟦Cons(e, □)⟧,
+          exts_unblank(t, snoc(p, e), xt_rest(e, t, p, hw))
+        )
+      )
+    }
+  }
+  theorem ext_unblank(
+    e: Text × Node,
+    p: List(Text × Node),
+    hw: wf_ext(e, p) = true
+  ): unblank_ext(e) = e {
+    match e {
+      #(k, n) => Eq::congr(
+        (m: Node) => #(k, m),
+        node_unblank(n, xt_node(k, n, p, hw))
+      )
+    }
+  }
+}

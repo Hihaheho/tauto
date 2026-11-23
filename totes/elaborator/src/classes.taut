@@ -1,0 +1,1294 @@
+import "program.taut"
+import "elaborate.taut"
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
+import "../../kernel/src/data.taut"
+import "../../kernel/src/level.taut"
+import "../../kernel/src/term.taut"
+import std::text
+import std::base
+
+// Classes of the proof language, read as the host reads them before it checks
+// a declaration. A class is a record the kernel already has, and nothing here
+// is a new rule:
+//
+// * `inductive class C(A: Type) { fn m(…): R  theorem l<g>(…): P }` is
+//   `inductive C(A: Type)` with one constructor `C::Mk` whose fields are the
+//   methods, a projection function `C::m` for each method, and, when it has
+//   laws, a record `C::laws(A, inst@C)` of them with a projection theorem
+//   `C::l` for each.
+// * `instance<G> C(H(G)) where D(G) { … }` is the function `C::inst@H` from the
+//   records of its `where` to the record of `C(H(G))`; each method is a
+//   function `C::m@H` and each law a theorem `C::l@H`.
+// * `where C(T)` is a parameter `inst@C0: C(T)` after the generics, and
+//   `inst@C0@laws: C::laws(T, inst@C0)` after it for the proofs that use laws.
+//
+// Which record a call needs is found where the call is elaborated
+// (`elab_implicit_arguments`): a parameter of a record's type is an implicit
+// one. What is declared here is a list of ordinary statements, so that the
+// kernel and its checkers see only terms. Each class and instance leaves a
+// statement `#class …` or `#instance …` that registers it in the bindings the
+// declarations after it start from.
+
+pub(open) inductive ClsInfo: Type {
+  ClsInfoMk(arity: Nat, methods: List(Text), laws: List(Text), parameters: List(Text), type_heads: List(Bool)): ClsInfo
+}
+
+pub fn cls_v(n: Text, s: Nat, t: Nat): SurfaceTerm {
+  surface_term_mk(SkVar(NameSpelled(n)), s, t)
+}
+
+pub fn cls_apply(f: SurfaceTerm, args: List(SurfaceTerm), s: Nat, t: Nat): SurfaceTerm {
+  match args {
+    Nil => f
+    Cons(^a, ^rest) => surface_term_mk(SkApp(f, args), s, t)
+  }
+}
+
+pub fn cls_call(n: Text, args: List(SurfaceTerm), s: Nat, t: Nat): SurfaceTerm {
+  cls_apply(cls_v(n, s, t), args, s, t)
+}
+
+pub fn cls_pi(ps: List(SurfaceNamed), result: SurfaceTerm, s: Nat, t: Nat): SurfaceTerm {
+  match ps {
+    Nil => result
+    Cons(^p, ^rest) => surface_term_mk(SkPi(elab_params(ps), result, None), s, t)
+  }
+}
+
+pub fn cls_dict_name(cls: Text, i: Nat): Text {
+  Text::concat_all(["inst@", cls, Text::of_nat(i)])
+}
+
+pub fn cls_laws_name(cls: Text): Text { Text::concat(cls, "::laws") }
+
+pub fn cls_words(t: Text): List(Text) {
+  if t == "" { Nil } else { text_split(t, ",") }
+}
+
+// The class `name` as the bindings know it.
+pub fn cls_lookup(env: List(ElabBinding), name: Text): Option(ClsInfo) {
+  match elab_lookup(env, Text::concat("#class ", name)) {
+    None => None
+    Some(b) => ⊢ Option(ClsInfo) from match b.value {
+      KernelLit(n) => ⊢ Option(ClsInfo) from match b.ty {
+        KernelConst(enc) => ⊢ Option(ClsInfo) from match text_split(enc, "|") {
+          Cons(ms, Cons(ls, Cons(ps, Cons(heads, Nil)))) => Some(ClsInfoMk(n, cls_words(ms), cls_words(ls), cls_words(ps), cls_type_flags(text_split(heads, ","))))
+          _ => None
+        }
+        _ => None
+      }
+      _ => None
+    }
+  }
+}
+
+pub fn cls_marker(info: Text, s: Nat, t: Nat): SurfaceStmt { StOther(info, s, t) }
+
+pub fn cls_class_marker(c: SurfaceClass, ms: List(Text), ls: List(Text)): SurfaceStmt {
+  cls_marker(Text::concat_all(["#class ", c.name, " ", Text::of_nat(List::length(c.parameters)), " ", text_join(ms, ","), "|", text_join(ls, ","), "|", text_join(elab_names(c.parameters), ","), "|", text_join(cls_type_flag_words(c.parameters), ",")]), c.start, c.end)
+}
+
+pub fn cls_type_flags(words: List(Text)): List(Bool) {
+  match words {
+    Nil => Nil
+    Cons(word, rest) => Cons(word == "T", cls_type_flags(rest))
+  }
+}
+
+mutual {
+  pub fn cls_type_former(ty: SurfaceTerm): Bool {
+    match ty {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => cls_type_former_kind(kind)
+    }
+  }
+
+  pub fn cls_type_former_kind(kind: SurfaceKind): Bool {
+    match kind {
+      SkPi(^params, result, ^effects) => cls_type_former(result)
+      SkApp(head, args) => ⊢ Bool from match cls_head_name(head) {
+        Some(name) => name == "Type" && List::length(args) == 1
+        None => false
+      }
+      SkVar(name) => ⊢ Bool from match elab_sort(surface_name_text(name)) {
+        Some(KernelSortTerm(KernelType(^level))) => true
+        _ => false
+      }
+      _ => false
+    }
+  }
+}
+
+pub fn cls_type_flag_words(parameters: List(SurfaceNamed)): List(Text) {
+  match parameters {
+    Nil => Nil
+    Cons(parameter, rest) => Cons(if cls_type_former(parameter.ty) { "T" } else { "F" }, cls_type_flag_words(rest))
+  }
+}
+
+pub fn cls_law_names(ls: List(SurfaceLaw)): List(Text) {
+  match ls {
+    Nil => Nil
+    Cons(l, rest) => Cons(l.name, cls_law_names(rest))
+  }
+}
+
+pub fn cls_method_names(ms: List(SurfaceFn)): List(Text) {
+  match ms {
+    Nil => Nil
+    Cons(m, rest) => Cons(m.name, cls_method_names(rest))
+  }
+}
+
+pub fn cls_types_of(ps: List(SurfaceNamed)): List(SurfaceTerm) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.ty, cls_types_of(rest))
+  }
+}
+
+pub fn cls_param_types(ps: List(SurfaceNamed)): List(Option(SurfaceTerm)) {
+  elab_somes(cls_types_of(ps))
+}
+
+// A written type without the borrows the kernel does not read.
+pub fn cls_plain_in(k: Nat, t: SurfaceTerm): SurfaceTerm {
+  match k {
+    Zero => t
+    Succ(j) => ⊢ SurfaceTerm from match t {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => ⊢ SurfaceTerm from match kind {
+        SkBorrow(^mutable, ^mutable_orig, value) => cls_plain_in(j, value)
+        _ => t
+      }
+    }
+  }
+}
+
+pub fn cls_plain(t: SurfaceTerm): SurfaceTerm { cls_plain_in(8, t) }
+
+// ---- a method's signature -----------------------------------------------------
+
+pub(open) inductive ClsMethod: Type {
+  ClsMethodMk(name: Text, generics: List(SurfaceNamed), params: List(SurfaceNamed), result: SurfaceTerm): ClsMethod
+}
+
+pub fn cls_plain_all(ps: List(SurfaceNamed)): List(SurfaceNamed) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(SurfaceNamedMk(p.name, cls_plain(p.ty)), cls_plain_all(rest))
+  }
+}
+
+pub fn cls_method(m: SurfaceFn, s: Nat, t: Nat): Option(ClsMethod) {
+  if elab_has_effects(m.effects) {
+    None
+  } else {
+    ⊢ Option(ClsMethod) from match elab_named_params(m.params, m.param_types) {
+      None => None
+      Some(ps) => Some(ClsMethodMk(
+        m.name,
+        elab_generic_params(m.generics, m.generic_types),
+        cls_plain_all(ps),
+        ⊢ SurfaceTerm from match m.result {
+          Some(r) => cls_plain(r)
+          None => cls_v("Unit", s, t)
+        }
+      ))
+    }
+  }
+}
+
+pub fn cls_methods(ms: List(SurfaceFn), s: Nat, t: Nat): Option(List(ClsMethod)) {
+  match ms {
+    Nil => Some(Nil)
+    Cons(m, rest) => ⊢ Option(List(ClsMethod)) from match cls_method(m, s, t) {
+      None => None
+      Some(x) => ⊢ Option(List(ClsMethod)) from match cls_methods(rest, s, t) {
+        None => None
+        Some(xs) => Some(Cons(x, xs))
+      }
+    }
+  }
+}
+
+pub fn cls_field_of(cls: Text, m: ClsMethod, s: Nat, t: Nat): SurfaceNamed {
+  SurfaceNamedMk(
+    Text::concat_all([cls, "::", m.name]),
+    cls_pi(List::append(m.generics, m.params), m.result, s, t)
+  )
+}
+
+pub fn cls_fields(cls: Text, ms: List(ClsMethod), s: Nat, t: Nat): List(SurfaceNamed) {
+  match ms {
+    Nil => Nil
+    Cons(m, rest) => Cons(cls_field_of(cls, m, s, t), cls_fields(cls, rest, s, t))
+  }
+}
+
+pub fn cls_field_binders(i: Nat, n: Nat): List(Text) {
+  match n {
+    Zero => Nil
+    Succ(k) => Cons(Text::concat("f@", Text::of_nat(i)), cls_field_binders(i + 1, k))
+  }
+}
+
+// `match record: result { mk(f@0, …) => f@i(args) }`.
+pub fn cls_project(record: Text, mk: Text, fields: Nat, result: SurfaceTerm, i: Nat, args: List(SurfaceTerm), s: Nat, t: Nat): SurfaceTerm {
+  surface_term_mk(
+    SkMatch(
+      cls_v(record, s, t),
+      Some(result),
+      [SurfaceArmMk(PtCtor(NameSpelled(mk), elab_bind_patterns(cls_field_binders(0, fields))), None, None, cls_call(Text::concat("f@", Text::of_nat(i)), args, s, t))],
+      None,
+      None
+    ),
+    s,
+    t
+  )
+}
+
+pub fn cls_fn(
+  name: Text,
+  generics: List(SurfaceNamed),
+  params: List(SurfaceNamed),
+  result: SurfaceTerm,
+  body: SurfaceTerm,
+  s: Nat,
+  t: Nat
+): SurfaceStmt {
+  let gnames := elab_names(generics)
+  let pnames := elab_names(params)
+  StFn(SurfaceFnMk(name, gnames, elab_nones_text(gnames), pnames, elab_nones_bool(pnames), cls_param_types(params), Some(result), None, Nil, s, t, body, None, cls_types_of(generics), Nil, VisPrivate, None, None, Nil, Nil))
+}
+
+pub fn cls_projections(c: SurfaceClass, ms: List(ClsMethod), all: List(ClsMethod), i: Nat, dict_ty: SurfaceTerm, s: Nat, t: Nat): List(SurfaceStmt) {
+  match ms {
+    Nil => Nil
+    Cons(m, rest) => {
+      let dict := Text::concat("inst@", c.name)
+      let args := List::append(elab_effect_vars(elab_names(m.generics), s, t), elab_effect_vars(elab_names(m.params), s, t))
+      Cons(
+        cls_fn(
+          Text::concat_all([c.name, "::", m.name]),
+          List::append(c.parameters, m.generics),
+          Cons(SurfaceNamedMk(dict, dict_ty), m.params),
+          m.result,
+          cls_project(dict, Text::concat(c.name, "::Mk"), List::length(all), m.result, i, args, s, t),
+          s,
+          t
+        ),
+        cls_projections(c, rest, all, i + 1, dict_ty, s, t)
+      )
+    }
+  }
+}
+
+// A law as the proposition `∀ params. ty`, with the params it was written with.
+pub fn cls_law_fields(cls: Text, ls: List(SurfaceLaw), s: Nat, t: Nat): List(SurfaceNamed) {
+  match ls {
+    Nil => Nil
+    Cons(l, rest) => Cons(
+      SurfaceNamedMk(Text::concat_all([cls, "::", l.name]), cls_pi(cls_plain_all(l.decl.params), l.decl.ty, s, t)),
+      cls_law_fields(cls, rest, s, t)
+    )
+  }
+}
+
+pub fn cls_law_theorems(
+  c: SurfaceClass,
+  ls: List(SurfaceLaw),
+  all: Nat,
+  j: Nat,
+  dict_ty: SurfaceTerm,
+  laws_ty: SurfaceTerm,
+  s: Nat,
+  t: Nat
+): List(SurfaceStmt) {
+  match ls {
+    Nil => Nil
+    Cons(l, rest) => {
+      let dict := Text::concat("inst@", c.name)
+      let laws_dict := Text::concat(dict, "@laws")
+      let ps := cls_plain_all(l.decl.params)
+      let gens := elab_take_named(ps, l.decl.implicit)
+      let others := elab_drop_named(ps, l.decl.implicit)
+      let params := List::append(c.parameters, List::append(gens, Cons(SurfaceNamedMk(dict, dict_ty), Cons(SurfaceNamedMk(laws_dict, laws_ty), others))))
+      let body := cls_project(laws_dict, Text::concat(cls_laws_name(c.name), "::Mk"), all, l.decl.ty, j, elab_effect_vars(elab_names(ps), s, t), s, t)
+      Cons(
+        StTheorem(SurfaceTheoremMk(
+          Text::concat_all([c.name, "::", l.name]),
+          List::length(c.parameters) + l.decl.implicit + 2,
+          params,
+          l.decl.ty,
+          Some(body),
+          s,
+          t,
+          None,
+          Nil, VisPub
+        )),
+        cls_law_theorems(c, rest, all, j + 1, dict_ty, laws_ty, s, t)
+      )
+    }
+  }
+}
+
+pub fn elab_take_named(ps: List(SurfaceNamed), n: Nat): List(SurfaceNamed) {
+  match n {
+    Zero => Nil
+    Succ(m) => ⊢ List(SurfaceNamed) from match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(p, elab_take_named(rest, m))
+    }
+  }
+}
+
+// The declarations of an `inductive class`: its record, the projection of each
+// method, and the record of its laws with the projection of each law.
+pub fn cls_class_stmts(c: SurfaceClass): Option(List(SurfaceStmt)) {
+  if c.proof_side == false { None } else {
+    let s := c.start
+    let t := c.end
+    ⊢ Option(List(SurfaceStmt)) from match cls_methods(c.methods, s, t) {
+      None => None
+      Some(ms) => {
+        let pnames := elab_names(c.parameters)
+        let class_args := elab_effect_vars(pnames, s, t)
+        let dict_ty := cls_apply(cls_v(c.name, s, t), class_args, s, t)
+        let dict := Text::concat("inst@", c.name)
+        let family := StInductive(SurfaceInductiveMk(
+          c.name,
+          c.parameters,
+          cls_v("Type", s, t),
+          [SurfaceCtorMk("Mk", 0, cls_fields(c.name, ms, s, t), dict_ty)],
+          s,
+          t,
+          VisPrivate
+        ))
+        let projections := cls_projections(c, ms, ms, 0, dict_ty, s, t)
+        let laws_name := cls_laws_name(c.name)
+        let laws_ty := cls_call(laws_name, List::append(class_args, [cls_v(dict, s, t)]), s, t)
+        let laws := ⊢ List(SurfaceStmt) from match c.laws {
+          Nil => Nil
+          _ => Cons(
+            StInductive(SurfaceInductiveMk(
+              laws_name,
+              List::append(c.parameters, [SurfaceNamedMk(dict, dict_ty)]),
+              cls_v("Type", s, t),
+              [SurfaceCtorMk("Mk", 0, cls_law_fields(c.name, c.laws, s, t), laws_ty)],
+              s,
+              t,
+              VisPrivate
+            )),
+            cls_law_theorems(c, c.laws, List::length(c.laws), 0, dict_ty, laws_ty, s, t)
+          )
+        }
+        Some(Cons(cls_class_marker(c, cls_method_names(c.methods), cls_law_names(c.laws)), Cons(family, List::append(projections, laws))))
+      }
+    }
+  }
+}
+
+// ---- `where` --------------------------------------------------------------------
+
+// The arguments of a constraint: its type, then the others written.
+pub fn cls_constraint_args(c: SurfaceConstraint): List(SurfaceTerm) {
+  Cons(c.ty, c.arguments)
+}
+
+// The records of constraints, in order: `inst@C0: C(T)` and, with `laws`, after
+// each the record of its laws `inst@C0@laws: C::laws(T, inst@C0)`. None when a
+// constraint names a class the proofs do not have.
+pub fn cls_dictionaries(env: List(ElabBinding), cs: List(SurfaceConstraint), i: Nat, laws: Bool, s: Nat, t: Nat): Option(List(SurfaceNamed)) {
+  match cs {
+    Nil => Some(Nil)
+    Cons(c, rest) => ⊢ Option(List(SurfaceNamed)) from match cls_lookup(env, c.r#class) {
+      None => None
+      Some(info) => ⊢ Option(List(SurfaceNamed)) from match cls_dictionaries(env, rest, i + 1, laws, s, t) {
+        None => None
+        Some(more) => {
+          let name := cls_dict_name(c.r#class, i)
+          let first := SurfaceNamedMk(name, cls_call(c.r#class, cls_constraint_args(c), s, t))
+          if laws && List::length(info.laws) != 0 {
+            Some(Cons(first, Cons(SurfaceNamedMk(Text::concat(name, "@laws"), cls_call(cls_laws_name(c.r#class), List::append(cls_constraint_args(c), [cls_v(name, s, t)]), s, t)), more)))
+          } else { Some(Cons(first, more)) }
+        }
+      }
+    }
+  }
+}
+
+// A function's `where` as parameters after its generics.
+pub fn cls_where_fn(env: List(ElabBinding), f: SurfaceFn): SurfaceFn {
+  match f.wheres {
+    Nil => f
+    _ => ⊢ SurfaceFn from match cls_dictionaries(env, f.wheres, 0, false, f.start, f.end) {
+      None => f
+      Some(ds) => SurfaceFnMk(f.name, f.generics, f.bounds, List::append(elab_names(ds), f.params), List::append(elab_nones_bool(elab_names(ds)), f.r#borrows), List::append(cls_param_types(ds), f.param_types), f.result, f.effects, Nil, f.start, f.end, f.body, f.lends, f.generic_types, f.bound_starts, f.visibility, f.row_hole, f.unused, f.unused_generics, f.unused_params)
+    }
+  }
+}
+
+// How many of the leading parameters are records of constraints.
+pub fn cls_dicts_run(ps: List(SurfaceNamed)): Nat {
+  match ps {
+    Nil => 0
+    Cons(p, rest) => if text_starts_with(p.name, "inst@", 0) { 1 + cls_dicts_run(rest) } else { 0 }
+  }
+}
+
+pub fn cls_leading_dicts(ps: List(SurfaceNamed), at: Nat): Nat { cls_dicts_run(elab_drop_named(ps, at)) }
+
+// The constraint a record parameter stands for: `C(T…)`.
+pub fn cls_constraint_of(p: SurfaceNamed): Option((Text × List(SurfaceTerm))) {
+  match p.ty {
+    SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => ⊢ Option((Text × List(SurfaceTerm))) from match kind {
+      SkApp(head, args) => ⊢ Option((Text × List(SurfaceTerm))) from match head {
+        SurfaceTermIndexedMk(hk, ^hs, ^he, ^ho) => ⊢ Option((Text × List(SurfaceTerm))) from match hk {
+          SkVar(n) => ⊢ Option((Text × List(SurfaceTerm))) from match n {
+            NameSpelled(c) => Some(#(c, args))
+            _ => None
+          }
+          _ => None
+        }
+      }
+      SkVar(n) => ⊢ Option((Text × List(SurfaceTerm))) from match n {
+        NameSpelled(c) => Some(#(c, Nil))
+        _ => None
+      }
+      _ => None
+    }
+  }
+}
+
+// The parameters of a theorem after `at`, each record with the record of its laws.
+pub fn cls_with_laws(env: List(ElabBinding), ps: List(SurfaceNamed), n: Nat, s: Nat, t: Nat): Option(List(SurfaceNamed)) {
+  match n {
+    Zero => Some(Nil)
+    Succ(m) => ⊢ Option(List(SurfaceNamed)) from match ps {
+      Nil => Some(Nil)
+      Cons(p, rest) => ⊢ Option(List(SurfaceNamed)) from match cls_constraint_of(p) {
+        None => None
+        Some(c) => ⊢ Option(List(SurfaceNamed)) from match cls_lookup(env, c.fst) {
+          None => None
+          Some(info) => ⊢ Option(List(SurfaceNamed)) from match cls_with_laws(env, rest, m, s, t) {
+            None => None
+            Some(more) => if List::length(info.laws) != 0 {
+              Some(Cons(p, Cons(SurfaceNamedMk(Text::concat(p.name, "@laws"), cls_call(cls_laws_name(c.fst), List::append(c.snd, [cls_v(p.name, s, t)]), s, t)), more)))
+            } else { Some(Cons(p, more)) }
+          }
+        }
+      }
+    }
+  }
+}
+
+// A theorem's `where` (already parameters, from the parser) with the records of
+// the laws after them; those records are implicit.
+pub fn cls_where_theorem(env: List(ElabBinding), d: SurfaceTheorem): SurfaceTheorem {
+  let n := cls_leading_dicts(elab_drop_named(d.params, d.implicit), 0)
+  if n == 0 { d } else {
+    let before := elab_take_named(d.params, d.implicit)
+    let after := elab_drop_named(d.params, d.implicit)
+    ⊢ SurfaceTheorem from match cls_with_laws(env, after, n, d.start, d.end) {
+      None => d
+      Some(ds) => SurfaceTheoremMk(d.name, d.implicit + List::length(ds), List::append(before, List::append(ds, elab_drop_named(after, n))), d.ty, d.body, d.start, d.end, d.unused, d.unused_params, d.visibility)
+    }
+  }
+}
+
+// ---- instances ------------------------------------------------------------------
+
+// The constructor an instance's head is built with: `List` of `List(A)`.
+pub fn cls_head_in(k: Nat, t: SurfaceTerm): Option(Text) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Text) from match t {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => ⊢ Option(Text) from match kind {
+        SkVar(n) => ⊢ Option(Text) from match n {
+          // `A × B` is `std::prelude::Pair(A, B)`, which the prelude declares as `Pair`.
+          NameSpelled(x) => Some(if text_starts_with(x, "std::prelude::", 0) { Text::slice_or_empty(x, 14, Text::len(x)) } else { x })
+          _ => None
+        }
+        SkApp(head, ^args) => cls_head_in(j, head)
+        _ => None
+      }
+    }
+  }
+}
+
+pub fn cls_head_name(t: SurfaceTerm): Option(Text) { cls_head_in(8, t) }
+
+pub fn cls_find_fn(ms: List(SurfaceFn), name: Text): Option(SurfaceFn) {
+  match ms {
+    Nil => None
+    Cons(m, rest) => if m.name == name { Some(m) } else { cls_find_fn(rest, name) }
+  }
+}
+
+pub fn cls_find_law(ls: List(SurfaceLaw), name: Text): Option(SurfaceLaw) {
+  match ls {
+    Nil => None
+    Cons(l, rest) => if l.name == name { Some(l) } else { cls_find_law(rest, name) }
+  }
+}
+
+// What an instance's method is in the record: the function, applied to what it
+// takes, abstracted over the method's own parameters.
+pub fn cls_entry(call: SurfaceTerm, own: List(Text), s: Nat, t: Nat): SurfaceTerm {
+  match own {
+    Nil => call
+    Cons(^n, ^rest) => surface_term_mk(SkLam(own, call, Nil, Nil), s, t)
+  }
+}
+
+pub fn cls_unsupported(why: Text, i: SurfaceInstance): List(SurfaceStmt) {
+  [StOther(Text::concat("#unsupported instance: ", why), i.start, i.end)]
+}
+
+pub fn cls_instance_count(env: List(ElabBinding)): Nat {
+  match env {
+    Nil => 0
+    Cons(binding, rest) => {
+      (if text_starts_with(binding.name, "#instance ", 0) { 1 } else { 0 }) + cls_instance_count(rest)
+    }
+  }
+}
+
+pub fn cls_instance_base(env: List(ElabBinding)): Nat {
+  match elab_lookup(env, "#instance-base") {
+    None => 0
+    Some(binding) => ⊢ Nat from match binding.value {
+      KernelLit(count) => count
+      _ => 0
+    }
+  }
+}
+
+pub fn cls_instance_head(env: List(ElabBinding), arity: Nat, head: Text): Text {
+  if arity == 1 { head } else { Text::concat_all([head, "@instance", Text::of_nat(cls_instance_base(env) + cls_instance_count(env))]) }
+}
+
+pub fn cls_infer_tokens(condition: SurfaceInferCondition, parameters: List(Text)): List(Text) {
+  match condition {
+    InferParameter(name) => ["P", Text::of_nat(elab_text_index(parameters, name, 0))]
+    InferAnd(left, right) => List::append(["A"], List::append(cls_infer_tokens(left, parameters), cls_infer_tokens(right, parameters)))
+    InferOr(left, right) => List::append(["O"], List::append(cls_infer_tokens(left, parameters), cls_infer_tokens(right, parameters)))
+  }
+}
+
+pub fn cls_infer_marker(infer_from: Option(SurfaceInferCondition), parameters: List(Text), global: Text, s: Nat, t: Nat): List(SurfaceStmt) {
+  match infer_from {
+    None => Nil
+    Some(condition) => [StOther(Text::concat_all(["#infer ", global, " ", text_join(cls_infer_tokens(condition, parameters), ",")]), s, t)]
+  }
+}
+
+pub fn cls_contains_text(xs: List(Text), target: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => x == target || cls_contains_text(rest, target)
+  }
+}
+
+pub fn cls_arg_at(args: List(SurfaceTerm), index: Nat): Option(SurfaceTerm) {
+  match args {
+    Nil => None
+    Cons(arg, rest) => ⊢ Option(SurfaceTerm) from match index {
+      Zero => Some(arg)
+      Succ(j) => cls_arg_at(rest, j)
+    }
+  }
+}
+
+pub fn cls_type_at(flags: List(Bool), index: Nat): Bool {
+  match flags {
+    Nil => false
+    Cons(flag, rest) => ⊢ Bool from match index {
+      Zero => flag
+      Succ(j) => cls_type_at(rest, j)
+    }
+  }
+}
+
+pub fn cls_infer_valid(condition: SurfaceInferCondition, parameters: List(Text), type_heads: List(Bool)): Bool {
+  match condition {
+    InferParameter(name) => cls_contains_text(parameters, name) && cls_type_at(type_heads, elab_text_index(parameters, name, 0))
+    InferAnd(left, right) => cls_infer_valid(left, parameters, type_heads) && cls_infer_valid(right, parameters, type_heads)
+    InferOr(left, right) => cls_infer_valid(left, parameters, type_heads) && cls_infer_valid(right, parameters, type_heads)
+  }
+}
+
+pub fn cls_infer_condition_valid(i: SurfaceInstance, parameters: List(Text), type_heads: List(Bool)): Bool {
+  match i.infer_from {
+    None => true
+    Some(condition) => cls_infer_valid(condition, parameters, type_heads)
+  }
+}
+
+pub fn cls_owned_atom(env: List(ElabBinding), i: SurfaceInstance, parameters: List(Text), name: Text): Bool {
+  let index := elab_text_index(parameters, name, 0)
+  ⊢ Bool from match cls_arg_at(Cons(i.head, i.arguments), index) {
+    None => false
+    Some(arg) => ⊢ Bool from match cls_head_name(arg) {
+      None => false
+      Some(head) => head != surface_pair_name() && cls_contains_text(i.generics, head) == false && (⊢ Bool from match elab_lookup(env, Text::concat("#local-type ", head)) {
+        None => false
+        Some(found) => ⊢ Bool from match found.value {
+          KernelConst(owner) => owner == cls_current_root(env)
+          _ => false
+        }
+      })
+    }
+  }
+}
+
+pub fn cls_owned_condition(env: List(ElabBinding), i: SurfaceInstance, parameters: List(Text), condition: SurfaceInferCondition): Bool {
+  match condition {
+    InferParameter(name) => cls_owned_atom(env, i, parameters, name)
+    InferAnd(left, right) => cls_owned_condition(env, i, parameters, left) || cls_owned_condition(env, i, parameters, right)
+    InferOr(left, right) => cls_owned_condition(env, i, parameters, left) && cls_owned_condition(env, i, parameters, right)
+  }
+}
+
+pub fn cls_infer_owned(env: List(ElabBinding), i: SurfaceInstance, parameters: List(Text)): Bool {
+  match i.infer_from {
+    None => true
+    Some(condition) => cls_owned_condition(env, i, parameters, condition)
+  }
+}
+
+pub fn cls_current_root(env: List(ElabBinding)): Text {
+  match elab_lookup(env, "#current-tote") {
+    None => ""
+    Some(binding) => ⊢ Text from match binding.value {
+      KernelConst(root) => root
+      _ => ""
+    }
+  }
+}
+
+pub fn cls_local_type(name: Text, root: Text): ElabBinding {
+  ElabBinding::Mk(Text::concat("#local-type ", name), KernelConst(root), KernelLit(0))
+}
+
+pub fn cls_data_ctor_shapes(family: Text, generics: Nat, cs: List(SurfaceDataCtor)): List(ElabBinding) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let canonical := Text::concat_all([family, "::", c.name])
+      let total := generics + List::length(c.fields)
+      Cons(elab_ctor_shape_binding(canonical, canonical, generics, total),
+        Cons(elab_ctor_shape_binding(c.name, canonical, generics, total), cls_data_ctor_shapes(family, generics, rest)))
+    }
+  }
+}
+
+mutual {
+  pub fn cls_type_bindings(stmts: List(SurfaceStmt), root: Text): List(ElabBinding) {
+    match stmts {
+      Nil => Nil
+      Cons(stmt, rest) => List::append(cls_type_binding_stmt(stmt, root), cls_type_bindings(rest, root))
+    }
+  }
+
+  pub fn cls_type_binding_stmt(stmt: SurfaceStmt, root: Text): List(ElabBinding) {
+    match stmt {
+      StInductive(d) => Cons(cls_local_type(d.name, root), elab_ctor_shapes(d.name, List::length(d.params), d.constructors))
+      StStruct(d) => Cons(cls_local_type(d.name, root), cls_data_ctor_shapes(d.name, List::length(d.generics), d.constructors))
+      StEnum(d) => Cons(cls_local_type(d.name, root), cls_data_ctor_shapes(d.name, List::length(d.generics), d.constructors))
+      StMutual(items, ^start, ^end) => cls_type_bindings(items, root)
+      _ => Nil
+    }
+  }
+}
+
+pub fn cls_pattern_key(term: SurfaceTerm, generics: List(Text), type_head: Bool): Text {
+  if type_head {
+    ⊢ Text from match term {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => ⊢ Text from match kind {
+        SkPi(^params, ^result, ^effects) => "#function"
+        _ => ⊢ Text from match cls_head_name(term) {
+          None => "*"
+          Some(head) => if cls_contains_text(generics, head) { "*" } else { head }
+        }
+      }
+    }
+  } else { "*" }
+}
+
+pub fn cls_pattern_keys(args: List(SurfaceTerm), generics: List(Text), type_heads: List(Bool)): List(Text) {
+  match args {
+    Nil => Nil
+    Cons(arg, rest) => ⊢ List(Text) from match type_heads {
+      Nil => Nil
+      Cons(type_head, flags) => Cons(cls_pattern_key(arg, generics, type_head), cls_pattern_keys(rest, generics, flags))
+    }
+  }
+}
+
+pub fn cls_text_key_bytes(k: Nat, value: Text, at: Nat): Text {
+  match k {
+    Zero => ""
+    Succ(remaining) => Text::concat_all([
+      Text::of_nat(Text::byte_value(value, at)),
+      ".",
+      cls_text_key_bytes(remaining, value, Succ(at))
+    ])
+  }
+}
+
+mutual {
+  pub fn cls_nat_pattern(term: SurfaceTerm): Option(Nat) {
+    match term {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => cls_nat_pattern_kind(kind)
+    }
+  }
+
+  pub fn cls_nat_pattern_kind(kind: SurfaceKind): Option(Nat) {
+    match kind {
+      SkNat(digits) => elab_parse_nat(digits)
+      SkVar(name) => if surface_name_text(name) == "Zero" { Some(0) } else { None }
+      SkApp(head, args) => ⊢ Option(Nat) from match cls_head_name(head) {
+        Some(name) => if name == "Succ" { cls_nat_pattern_args(args) } else { None }
+        None => None
+      }
+      _ => None
+    }
+  }
+
+  pub fn cls_nat_pattern_args(args: List(SurfaceTerm)): Option(Nat) {
+    match args {
+      Cons(arg, Nil) => ⊢ Option(Nat) from match cls_nat_pattern(arg) {
+        None => None
+        Some(n) => Some(Succ(n))
+      }
+      _ => None
+    }
+  }
+}
+
+// A constructor's canonical name and its implicit prefix and total arity.
+pub fn cls_ctor_shape(env: List(ElabBinding), name: Text): Option((Text × (Nat × Nat))) {
+  match env {
+    Nil => None
+    Cons(b, rest) => if b.name == Text::concat("#ctor-shape ", name) {
+      ⊢ Option((Text × (Nat × Nat))) from match b.value {
+        KernelApp(KernelApp(KernelConst(canonical), KernelLit(implicit), ^d1), KernelLit(total), ^d2) => Some(#(canonical, #(implicit, total)))
+        _ => None
+      }
+    } else { cls_ctor_shape(rest, name) }
+  }
+}
+
+// A fully written Text constructor containing only literal UTF-8 bytes.
+pub fn cls_text_literal_byte(term: SurfaceTerm): Option(Nat) {
+  ⊢ Option(Nat) from match term.kind {
+    SkNat(digits) => ⊢ Option(Nat) from match elab_parse_nat(digits) {
+      Some(n) => if n < 256 { Some(n) } else { None }
+      None => None
+    }
+    _ => None
+  }
+}
+
+mutual {
+  pub fn cls_text_list_bytes(term: SurfaceTerm): Option(List(Nat)) {
+    match term {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => cls_text_list_kind(kind)
+    }
+  }
+
+  pub fn cls_text_list_kind(kind: SurfaceKind): Option(List(Nat)) {
+    match kind {
+      SkVar(name) => if surface_name_text(name) == "Nil" { Some(Nil) } else { None }
+      SkApp(head, args) => ⊢ Option(List(Nat)) from match cls_head_name(head) {
+        Some(name) => if name == "Nil" && List::length(args) <= 1 { Some(Nil) } else if name == "Cons" { cls_text_cons_bytes(args) } else { None }
+        None => None
+      }
+      _ => None
+    }
+  }
+
+  pub fn cls_text_cons_bytes(args: List(SurfaceTerm)): Option(List(Nat)) {
+    match args {
+      Nil => None
+      Cons(first, rest) => cls_text_cons_rest(first, rest)
+    }
+  }
+
+  pub fn cls_text_cons_rest(first: SurfaceTerm, rest: List(SurfaceTerm)): Option(List(Nat)) {
+    match rest {
+      Nil => None
+      Cons(next, remaining) => ⊢ Option(List(Nat)) from match remaining {
+        Nil => ⊢ Option(List(Nat)) from match cls_text_literal_byte(first) {
+          None => None
+          Some(n) => ⊢ Option(List(Nat)) from match cls_text_list_bytes(next) {
+            None => None
+            Some(more) => Some(Cons(n, more))
+          }
+        }
+        Cons(^other, ^last) => cls_text_cons_last(next, remaining)
+      }
+    }
+  }
+
+  pub fn cls_text_cons_last(byte: SurfaceTerm, rest: List(SurfaceTerm)): Option(List(Nat)) {
+    match rest {
+      Cons(tail, Nil) => ⊢ Option(List(Nat)) from match cls_text_literal_byte(byte) {
+        None => None
+        Some(n) => ⊢ Option(List(Nat)) from match cls_text_list_bytes(tail) {
+          None => None
+          Some(more) => Some(Cons(n, more))
+        }
+      }
+      _ => None
+    }
+  }
+}
+
+pub fn cls_explicit_text_key(args: List(SurfaceTerm)): Option(Text) {
+  match args {
+    Cons(bytes, Nil) => ⊢ Option(Text) from match cls_text_list_bytes(bytes) {
+      None => None
+      Some(bs) => ⊢ Option(Text) from match Text::of_utf8(bs) {
+        None => None
+        Some(value) => Some(Text::concat("#text:", cls_text_key_bytes(Text::len(value), value, 0)))
+      }
+    }
+    _ => None
+  }
+}
+
+pub fn cls_ctor_descriptor(env: List(ElabBinding), name: Text, count: Nat): Option((Text × Nat)) {
+  ⊢ Option((Text × Nat)) from match cls_ctor_shape(env, name) {
+    None => None
+    Some(shape) => if count == shape.snd.snd {
+      Some(#(Text::concat_all(["#ctor:", shape.fst, "|"]), shape.snd.fst))
+    } else if count + shape.snd.fst == shape.snd.snd {
+      Some(#(Text::concat_all(["#ctor:", shape.fst, "|"]), 0))
+    } else { None }
+  }
+}
+
+mutual {
+  pub fn cls_value_pattern_key(env: List(ElabBinding), term: SurfaceTerm, generics: List(Text)): Text {
+    match term {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occ) => cls_value_pattern_kind(env, kind, generics)
+    }
+  }
+
+  pub fn cls_value_pattern_kind(env: List(ElabBinding), kind: SurfaceKind, generics: List(Text)): Text {
+    match kind {
+      SkNat(digits) => ⊢ Text from match elab_parse_nat(digits) {
+        None => "#unknown"
+        Some(n) => Text::concat("#nat:", Text::of_nat(n))
+      }
+      SkBool(value) => if value { "#bool:true" } else { "#bool:false" }
+      SkText(value) => Text::concat("#text:", cls_text_key_bytes(Text::len(value), value, 0))
+      SkVar(name) => {
+        let head := surface_name_text(name)
+        if cls_contains_text(generics, head) { "*" } else if head == "Zero" { "#nat:0" } else if head == "true" { "#bool:true" } else if head == "false" { "#bool:false" } else { ⊢ Text from match cls_ctor_descriptor(env, head, 0) {
+          None => "#unknown"
+          Some(d) => d.fst
+        } }
+      }
+      SkApp(head, args) => ⊢ Text from match cls_head_name(head) {
+        None => "#unknown"
+        Some(name) => if cls_contains_text(generics, name) { "#unknown" } else if name == "Succ" && List::length(args) == 1 {
+          ⊢ Text from match cls_nat_pattern_args(args) {
+            Some(n) => Text::concat("#nat:", Text::of_nat(n))
+            None => Text::concat("#ctor:Succ|", cls_value_pattern_keys_skip(env, args, generics, 0))
+          }
+        } else if name == "Text::Mk" { ⊢ Text from match cls_explicit_text_key(args) {
+          Some(key) => key
+          None => ⊢ Text from match cls_ctor_descriptor(env, name, List::length(args)) {
+            None => "#unknown"
+            Some(d) => Text::concat(d.fst, cls_value_pattern_keys_skip(env, args, generics, d.snd))
+          }
+        } } else { ⊢ Text from match cls_ctor_descriptor(env, name, List::length(args)) {
+          None => "#unknown"
+          Some(d) => Text::concat(d.fst, cls_value_pattern_keys_skip(env, args, generics, d.snd))
+        } }
+      }
+      _ => "#unknown"
+    }
+  }
+
+  pub fn cls_value_pattern_keys_skip(env: List(ElabBinding), args: List(SurfaceTerm), generics: List(Text), skip: Nat): Text {
+    match args {
+      Nil => ""
+      Cons(arg, rest) => ⊢ Text from match skip {
+        Zero => {
+          let key := cls_value_pattern_key(env, arg, generics)
+          Text::concat_all([Text::of_nat(Text::len(key)), ":", key, cls_value_pattern_keys_skip(env, rest, generics, 0)])
+        }
+        Succ(n) => cls_value_pattern_keys_skip(env, rest, generics, n)
+      }
+    }
+  }
+}
+
+pub fn cls_ctor_key_head(key: Text): Text {
+  ⊢ Text from match text_find(key, "|", 0) {
+    None => key
+    Some(at) => Text::slice_or_empty(key, 0, at)
+  }
+}
+
+pub fn cls_ctor_key_args(key: Text): Text {
+  ⊢ Text from match text_find(key, "|", 0) {
+    None => ""
+    Some(at) => Text::slice_or_empty(key, at + 1, Text::len(key))
+  }
+}
+
+pub fn cls_full_pattern_keys(env: List(ElabBinding), args: List(SurfaceTerm), generics: List(Text), type_heads: List(Bool)): List(Text) {
+  match args {
+    Nil => Nil
+    Cons(arg, rest) => ⊢ List(Text) from match type_heads {
+      Nil => Nil
+      Cons(type_head, flags) => Cons(
+        if type_head { cls_pattern_key(arg, generics, true) } else { cls_value_pattern_key(env, arg, generics) },
+        cls_full_pattern_keys(env, rest, generics, flags)
+      )
+    }
+  }
+}
+
+// Read one length-prefixed nested key without using its contents as a separator.
+pub fn cls_take_key(input: Text): Option((Text × Text)) {
+  ⊢ Option((Text × Text)) from match text_find(input, ":", 0) {
+    None => None
+    Some(at) => ⊢ Option((Text × Text)) from match elab_parse_nat(Text::slice_or_empty(input, 0, at)) {
+      None => None
+      Some(n) => if at + 1 + n <= Text::len(input) {
+        Some(#(Text::slice_or_empty(input, at + 1, at + 1 + n), Text::slice_or_empty(input, at + 1 + n, Text::len(input))))
+      } else { None }
+    }
+  }
+}
+
+mutual {
+  pub fn cls_full_key_overlap_fuel(k: Nat, left: Text, right: Text): Bool {
+    match k {
+      Zero => false
+      Succ(j) => if left == "*" || right == "*" { true } else if left == "#unknown" || right == "#unknown" { false } else if left == right { true } else if text_starts_with(left, "#nat:", 0) && cls_ctor_key_head(right) == "#ctor:Succ" {
+        ⊢ Bool from match elab_parse_nat(Text::slice_or_empty(left, 5, Text::len(left))) {
+          None => false
+          Some(n) => ⊢ Bool from match n {
+            Zero => false
+            Succ(m) => cls_ctor_args_overlap(j, Text::concat_all([Text::of_nat(Text::len(Text::concat("#nat:", Text::of_nat(m)))), ":#nat:", Text::of_nat(m)]), cls_ctor_key_args(right))
+          }
+        }
+      } else if text_starts_with(right, "#nat:", 0) && cls_ctor_key_head(left) == "#ctor:Succ" {
+        cls_full_key_overlap_fuel(j, right, left)
+      } else if text_starts_with(left, "#ctor:", 0) && text_starts_with(right, "#ctor:", 0) {
+        cls_ctor_key_head(left) == cls_ctor_key_head(right) && cls_ctor_args_overlap(j, cls_ctor_key_args(left), cls_ctor_key_args(right))
+      } else { false }
+    }
+  }
+
+  pub fn cls_ctor_args_overlap(k: Nat, left: Text, right: Text): Bool {
+    match k {
+      Zero => false
+      Succ(j) => if left == "" { right == "" } else {
+        ⊢ Bool from match cls_take_key(left) {
+          None => false
+          Some(a) => ⊢ Bool from match cls_take_key(right) {
+            None => false
+            Some(b) => cls_full_key_overlap_fuel(j, a.fst, b.fst) && cls_ctor_args_overlap(j, a.snd, b.snd)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn cls_full_key_overlap(left: Text, right: Text): Bool {
+  cls_full_key_overlap_fuel(Text::len(left) + Text::len(right) + 2, left, right)
+}
+
+pub fn cls_full_keys_overlap(left: List(Text), right: List(Text)): Bool {
+  match left {
+    Nil => ⊢ Bool from match right {
+      Nil => true
+      _ => false
+    }
+    Cons(a, more) => ⊢ Bool from match right {
+      Nil => false
+      Cons(b, rest) => cls_full_key_overlap(a, b) && cls_full_keys_overlap(more, rest)
+    }
+  }
+}
+
+pub fn cls_pattern_keys_known(keys: List(Text)): Bool {
+  match keys {
+    Nil => true
+    Cons(key, rest) => ⊢ Bool from match text_find(key, "#unknown", 0) {
+      None => cls_pattern_keys_known(rest)
+      Some(^at) => false
+    }
+  }
+}
+
+pub fn cls_instance_overlaps(env: List(ElabBinding), r#class: Text, keys: List(Text)): Bool {
+  match env {
+    Nil => false
+    Cons(binding, rest) => if binding.name == Text::concat("#instance-pattern ", r#class) {
+      ⊢ Bool from match binding.value {
+        KernelConst(old) => cls_full_keys_overlap(keys, text_split(old, ",")) || cls_instance_overlaps(rest, r#class, keys)
+        _ => cls_instance_overlaps(rest, r#class, keys)
+      }
+    } else { cls_instance_overlaps(rest, r#class, keys) }
+  }
+}
+
+pub fn cls_overlap_mask(left: List(Text), right: List(Text)): List(Bool) {
+  match left {
+    Nil => Nil
+    Cons(a, more) => ⊢ List(Bool) from match right {
+      Nil => Nil
+      Cons(b, rest) => Cons(a == "*" || b == "*" || a == b, cls_overlap_mask(more, rest))
+    }
+  }
+}
+
+pub fn cls_gate_holds(tokens: List(Text), known: List(Bool)): Bool {
+  match elab_infer_gate(1 + List::length(tokens), tokens, known) {
+    None => false
+    Some(value) => value.fst && List::length(value.snd) == 0
+  }
+}
+
+pub fn cls_infer_conflicts(env: List(ElabBinding), r#class: Text, keys: List(Text), gate: List(Text)): Bool {
+  match env {
+    Nil => false
+    Cons(binding, rest) => if binding.name == Text::concat("#infer-rule ", r#class) {
+      ⊢ Bool from match binding.value {
+        KernelConst(old_keys) => ⊢ Bool from match binding.ty {
+          KernelConst(old_gate) => {
+            let known := cls_overlap_mask(keys, text_split(old_keys, ","))
+            (cls_gate_holds(gate, known) && cls_gate_holds(text_split(old_gate, ","), known)) || cls_infer_conflicts(rest, r#class, keys, gate)
+          }
+          _ => cls_infer_conflicts(rest, r#class, keys, gate)
+        }
+        _ => cls_infer_conflicts(rest, r#class, keys, gate)
+      }
+    } else { cls_infer_conflicts(rest, r#class, keys, gate) }
+  }
+}
+
+pub fn cls_infer_rule_conflict(env: List(ElabBinding), i: SurfaceInstance, parameters: List(Text), type_heads: List(Bool)): Bool {
+  match i.infer_from {
+    None => false
+    Some(condition) => cls_infer_conflicts(
+      env,
+      i.r#class,
+      cls_pattern_keys(Cons(i.head, i.arguments), i.generics, type_heads),
+      cls_infer_tokens(condition, parameters)
+    )
+  }
+}
+
+pub fn cls_infer_rule_marker(i: SurfaceInstance, parameters: List(Text), type_heads: List(Bool)): List(SurfaceStmt) {
+  match i.infer_from {
+    None => Nil
+    Some(condition) => [StOther(Text::concat_all([
+      "#infer-rule ", i.r#class, " ",
+      text_join(cls_pattern_keys(Cons(i.head, i.arguments), i.generics, type_heads), ","), " ",
+      text_join(cls_infer_tokens(condition, parameters), ",")
+    ]), i.start, i.end)]
+  }
+}
+
+pub fn cls_call_instance_generics(name: Text, args: List(SurfaceTerm), generics: List(SurfaceNamed), s: Nat, t: Nat): SurfaceTerm {
+  match generics {
+    Nil => cls_call(name, args, s, t)
+    Cons(^g, ^rest) => cls_call(name, Cons(surface_term_mk(SkRecord("@implicits", elab_zip_fields(elab_names(generics), elab_effect_vars(elab_names(generics), s, t))), s, t), args), s, t)
+  }
+}
+
+// The functions of one instance's methods, and what the record holds for each.
+pub fn cls_instance_methods(
+  i: SurfaceInstance,
+  names: List(Text),
+  head: Text,
+  generics: List(SurfaceNamed),
+  dicts: List(SurfaceNamed)
+): Option((List(SurfaceStmt) × List(SurfaceTerm))) {
+  let s := i.start
+  let t := i.end
+  match names {
+    Nil => Some(#(Nil, Nil))
+    Cons(n, rest) => ⊢ Option((List(SurfaceStmt) × List(SurfaceTerm))) from match cls_find_fn(i.methods, n) {
+      None => None
+      Some(w) => ⊢ Option((List(SurfaceStmt) × List(SurfaceTerm))) from match elab_named_params(w.params, w.param_types) {
+        None => None
+        Some(ps0) => ⊢ Option((List(SurfaceStmt) × List(SurfaceTerm))) from match w.result {
+          None => None
+          Some(result) => ⊢ Option((List(SurfaceStmt) × List(SurfaceTerm))) from match cls_instance_methods(i, rest, head, generics, dicts) {
+            None => None
+            Some(more) => {
+              let ps := cls_plain_all(ps0)
+              let own := List::append(elab_generic_params(w.generics, w.generic_types), ps)
+              let fname := Text::concat_all([i.r#class, "::", n, "@", head])
+              let args := elab_effect_vars(elab_names(own), s, t)
+              Some(#(
+                Cons(cls_fn(fname, generics, List::append(dicts, own), cls_plain(result), w.body, s, t), more.fst),
+                Cons(cls_entry(cls_call_instance_generics(fname, args, generics, s, t), elab_names(own), s, t), more.snd)
+              ))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The theorems of the laws an instance proves, and the entries of the record of laws.
+pub fn cls_instance_laws(
+  i: SurfaceInstance,
+  names: List(Text),
+  head: Text,
+  generics: List(SurfaceNamed),
+  dicts: List(SurfaceNamed)
+): Option((List(SurfaceStmt) × List(SurfaceTerm))) {
+  let s := i.start
+  let t := i.end
+  match names {
+    Nil => Some(#(Nil, Nil))
+    Cons(n, rest) => ⊢ Option((List(SurfaceStmt) × List(SurfaceTerm))) from match cls_find_law(i.laws, n) {
+      None => None
+      Some(w) => ⊢ Option((List(SurfaceStmt) × List(SurfaceTerm))) from match w.decl.body {
+        None => None
+        Some(body) => ⊢ Option((List(SurfaceStmt) × List(SurfaceTerm))) from match cls_instance_laws(i, rest, head, generics, dicts) {
+          None => None
+          Some(more) => {
+            let ps := cls_plain_all(w.decl.params)
+            let tname := Text::concat_all([i.r#class, "::", n, "@", head])
+            let args := elab_effect_vars(elab_names(ps), s, t)
+            Some(#(
+              Cons(
+                StTheorem(SurfaceTheoremMk(tname, List::length(generics) + List::length(dicts), List::append(generics, List::append(dicts, ps)), w.decl.ty, Some(body), w.start, w.end, None, Nil, VisPrivate)),
+                more.fst
+              ),
+              Cons(cls_entry(cls_call_instance_generics(tname, args, generics, s, t), elab_names(ps), s, t), more.snd)
+            ))
+          }
+        }
+      }
+    }
+  }
+}
+
+// The declarations of an `instance`: a function for each method, the function
+// that builds the record of the methods, and, when the class has laws, a theorem
+// for each and the function that builds the record of the laws.
+pub fn cls_instance_stmts(env: List(ElabBinding), i: SurfaceInstance): List(SurfaceStmt) {
+  let s := i.start
+  let t := i.end
+  ⊢ List(SurfaceStmt) from match cls_lookup(env, i.r#class) {
+    None => [StOther(Text::concat_all(["#skipped ", i.r#class, ": the class is not one the proofs read"]), s, t)]
+    Some(info) => ⊢ List(SurfaceStmt) from match cls_head_name(i.head) {
+      None => cls_unsupported("only an instance whose head is a constructor is supported", i)
+      Some(first_head) => if info.arity != List::length(i.arguments) + 1 {
+        cls_unsupported("the instance must give every class parameter", i)
+      } else if cls_infer_condition_valid(i, info.parameters, info.type_heads) == false {
+        cls_unsupported("infer from must name a type parameter of the class", i)
+      } else if cls_infer_owned(env, i, info.parameters) == false {
+        cls_unsupported("every infer from path must include a named type defined in this tote", i)
+      } else if cls_infer_rule_conflict(env, i, info.parameters, info.type_heads) {
+        cls_unsupported("infer from conflicts with another instance of this class", i)
+      } else if cls_pattern_keys_known(cls_full_pattern_keys(env, Cons(i.head, i.arguments), i.generics, info.type_heads)) == false {
+        cls_unsupported("instance arguments must be first-order constructor heads, literals, or generics", i)
+      } else if cls_instance_overlaps(env, i.r#class, cls_full_pattern_keys(env, Cons(i.head, i.arguments), i.generics, info.type_heads)) {
+        cls_unsupported("instance is already defined", i)
+      } else {
+        let head := cls_instance_head(env, info.arity, first_head)
+        ⊢ List(SurfaceStmt) from match cls_dictionaries(env, i.wheres, 0, false, s, t) {
+          None => cls_unsupported("a constraint names a class the proofs do not have", i)
+          Some(plain) => ⊢ List(SurfaceStmt) from match cls_dictionaries(env, i.wheres, 0, true, s, t) {
+            None => cls_unsupported("a constraint names a class the proofs do not have", i)
+            Some(withlaws) => {
+              let generics := elab_generic_params(i.generics, i.generic_types)
+              ⊢ List(SurfaceStmt) from match cls_instance_methods(i, info.methods, head, generics, plain) {
+                None => cls_unsupported("a method is missing or its types are not written", i)
+                Some(ms) => {
+                  let class_ty := cls_call(i.r#class, Cons(i.head, i.arguments), s, t)
+                  let global := Text::concat_all([i.r#class, "::inst@", head])
+                  let record := cls_fn(global, generics, plain, class_ty, cls_call(Text::concat(i.r#class, "::Mk"), ms.snd, s, t), s, t)
+                  let pre_record := cls_pre(global, generics, plain, class_ty, s, t)
+                  let laws := ⊢ Option(((List(SurfaceStmt) × List(SurfaceStmt)) × (Text × List(SurfaceStmt)))) from match info.laws {
+                    Nil => Some(#(#(Nil, Nil), #("-", Nil)))
+                    _ => ⊢ Option(((List(SurfaceStmt) × List(SurfaceStmt)) × (Text × List(SurfaceStmt)))) from match cls_instance_laws(i, info.laws, head, generics, withlaws) {
+                      None => None
+                      Some(ls) => {
+                        let laws_global := Text::concat_all([i.r#class, "::laws@", head])
+                        let inst := cls_call(global, Nil, s, t)
+                        let laws_ty := cls_call(cls_laws_name(i.r#class), List::append(Cons(i.head, i.arguments), [inst]), s, t)
+                        Some(#(
+                          #(ls.fst, [StOther(Text::concat("#forget ", laws_global), s, t), cls_fn(laws_global, generics, withlaws, laws_ty, cls_call(Text::concat(cls_laws_name(i.r#class), "::Mk"), ls.snd, s, t), s, t)]),
+                          #(laws_global, [cls_pre(laws_global, generics, withlaws, laws_ty, s, t)])
+                        ))
+                      }
+                    }
+                  }
+                  ⊢ List(SurfaceStmt) from match laws {
+                    None => cls_unsupported("a law is not proved", i)
+                    // The records are declared (without values) while the methods and laws are read, so that
+                    // a method that calls itself through the instance reads as a recursion; they are given
+                    // their values, as the host gives them, once the methods and laws are there.
+                    Some(l) => {
+                      let entry_marker: SurfaceStmt := StOther(Text::concat_all(["#instance ", i.r#class, " ", head, " ", global, " ", l.snd.fst]), s, t)
+                      let pattern_marker: SurfaceStmt := StOther(Text::concat_all(["#instance-pattern ", i.r#class, " ", text_join(cls_full_pattern_keys(env, Cons(i.head, i.arguments), i.generics, info.type_heads), ",")]), s, t)
+                      let finished: List(SurfaceStmt) := Cons(StOther(Text::concat("#forget ", global), s, t), Cons(record, l.fst.snd))
+                      let definitions: List(SurfaceStmt) := List::append(ms.fst, List::append(l.fst.fst, finished))
+                      let markers: List(SurfaceStmt) := Cons(entry_marker, Cons(pattern_marker, List::append(cls_infer_marker(i.infer_from, info.parameters, global, s, t), List::append(cls_infer_rule_marker(i, info.parameters, info.type_heads), definitions))))
+                      Cons(pre_record, List::append(l.snd.snd, markers))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// A record's declaration with no value, for what is read before its value is.
+pub fn cls_pre(name: Text, generics: List(SurfaceNamed), params: List(SurfaceNamed), ty: SurfaceTerm, s: Nat, t: Nat): SurfaceStmt {
+  StDef(SurfaceTheoremMk(Text::concat("#pre ", name), List::length(generics) + List::length(params), List::append(generics, params), ty, None, s, t, None, Nil, VisPrivate))
+}
+
+// ---- the pass -------------------------------------------------------------------
+
+// The statements with each class, instance and `where` read. `env` holds what
+// earlier files registered, and what this pass registers is added as it goes.
+pub fn elab_expand_classes(k: Nat, stmts: List(SurfaceStmt), env: List(ElabBinding)): List(SurfaceStmt) {
+  match k {
+    Zero => stmts
+    Succ(j) => ⊢ List(SurfaceStmt) from match stmts {
+    Nil => Nil
+    Cons(stmt, rest) => ⊢ List(SurfaceStmt) from match stmt {
+      StClass(c) => ⊢ List(SurfaceStmt) from match cls_class_stmts(c) {
+        None => Cons(stmt, elab_expand_classes(j, rest, env))
+        Some(made) => List::append(made, elab_expand_classes(j, rest, List::append(elab_marker_bindings(made), env)))
+      }
+      StInductive(d) => Cons(stmt, elab_expand_classes(j, rest, Cons(cls_local_type(d.name, cls_current_root(env)), env)))
+      StStruct(d) => Cons(stmt, elab_expand_classes(j, rest, Cons(cls_local_type(d.name, cls_current_root(env)), env)))
+      StEnum(d) => Cons(stmt, elab_expand_classes(j, rest, Cons(cls_local_type(d.name, cls_current_root(env)), env)))
+      StInstance(i) => ⊢ List(SurfaceStmt) from {
+        let made := cls_instance_stmts(env, i)
+        List::append(made, elab_expand_classes(j, rest, List::append(elab_marker_bindings(made), env)))
+      }
+      StFn(f) => Cons(StFn(cls_where_fn(env, f)), elab_expand_classes(j, rest, env))
+      StTheorem(d) => Cons(StTheorem(cls_where_theorem(env, d)), elab_expand_classes(j, rest, env))
+      StMutual(items, start, end) => Cons(StMutual(elab_expand_classes(j, items, env), start, end), elab_expand_classes(j, rest, env))
+      _ => Cons(stmt, elab_expand_classes(j, rest, env))
+    }
+    }
+  }
+}

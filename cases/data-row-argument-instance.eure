@@ -1,0 +1,62 @@
+// A data type's row argument (`App(!e)`) is what the functions it holds
+// perform. A construction read against a written type takes that type's row only
+// when the row contains what its arguments perform: a callback that pings,
+// stored in an `App(!{})`, is an `App(!{ping})`, which the written type rejects.
+// Read the other way, the pure row would let `quiet` call the callback with
+// nothing handling `ping`.
+
+@ cases.a-construction-keeps-the-row-its-arguments-perform
+source = ```tauto
+effect ping(): nat
+
+pub struct(shared) Answer(!e) { name: Text, run: (arg: nat) -> nat ! e }
+pub struct(shared) App(!e) { functions: List(Answer(!e)) }
+
+fn answering<!e>(run: (a: nat) -> nat ! e): Answer(!e) { Answer { name: "x", run: run } }
+fn pinged(x: nat): nat ! {ping} { x + perform ping() }
+fn quiet(a: App(!{})): nat { 0 }
+
+fn caller(): nat { quiet(App { functions: [answering(x => pinged(x))] }) }
+```
+rows = "error: a function value may perform ping but its type permits {}"
+types = "ok"
+
+// A call through a field performs the field's row: `run_app` performs `e`, and a
+// caller that passes a pinging `App` performs `ping`.
+@ cases.a-call-through-a-matched-field-performs-the-field-row
+source = ```tauto
+effect ping(): i64
+
+pub struct(shared) Answer(!e) { name: Text, run: (arg: i64) -> i64 ! e }
+pub struct(shared) App(!e) { functions: List(Answer(!e)) }
+
+fn answering<!e>(run: (a: i64) -> i64 ! e): Answer(!e) { Answer { name: "x", run: run } }
+fn pinged(x: i64): i64 ! {ping, overflow} { x + perform ping() }
+fn run_app<!e>(a: App(!e)): i64 ! {} {
+  match a.functions { Cons(f, _) => (f.run)(1), Nil => 0 }
+}
+```
+rows = "error: `run_app` may perform |e but its row is {}"
+types = "ok"
+
+@ cases.a-pinging-app-runs-under-a-handler
+source = ```tauto
+effect ping(): i64
+
+pub struct(shared) Answer(!e) { name: Text, run: (arg: i64) -> i64 ! e }
+pub struct(shared) App(!e) { functions: List(Answer(!e)) }
+
+fn answering<!e>(run: (a: i64) -> i64 ! e): Answer(!e) { Answer { name: "x", run: run } }
+fn pinged(x: i64): i64 ! {ping, overflow} { x + perform ping() }
+fn run_app<!e>(a: App(!e)): i64 ! e {
+  match a.functions { Cons(f, _) => (f.run)(1), Nil => 0 }
+}
+fn caller(): i64 ! {overflow} {
+  handle { run_app(App { functions: [answering(x => pinged(x))] }) } with {
+    ping(), k => k(41)
+    return v => v
+  }
+}
+```
+rows = "ok"
+types = "ok"

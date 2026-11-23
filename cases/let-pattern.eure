@@ -1,0 +1,91 @@
+description = "`let` with a pattern is the `match` of its value with that one arm, whose body is the rest of the block."
+
+@ cases.a_product_pattern_binds_the_members
+source = ```tauto
+fn swap(p: Nat × Nat): Nat × Nat {
+  let #(a, b) := p
+  #(b, a)
+}
+theorem swap_a_pair(): swap(#(Zero, Succ(Zero))) = #(Succ(Zero), Zero) {
+  Refl
+}
+```
+checks."swap" = "checked"
+checks."swap_a_pair" = "checked"
+
+@ cases.a_struct_pattern_binds_its_fields_and_the_rest_may_bind_more
+source = ```tauto
+struct Point { x: i64, y: i64 }
+fn total(p: Point, q: Point): i64 ! {overflow} {
+  let Point { x, y } := p
+  let Point { x: u, y: v } := q
+  x + y + u + v
+}
+show(&total(Point { x: 1, y: 2 }, Point { x: 3, y: 4 }))
+```
+stdout = "10\n"
+
+@ cases.a_constructor_pattern_of_a_single_constructor_type
+source = ```tauto
+inductive Wrap: Type {
+  Mk(n: Nat, m: Nat): Wrap
+}
+fn first(w: Wrap): Nat {
+  let Mk(n, _) := w
+  n
+}
+```
+checks."first" = "checked"
+
+@ cases.a_type_after_the_pattern_is_the_type_of_the_value
+source = ```tauto
+fn first(p: Nat × Nat): Nat {
+  let #(a, _): Nat × Nat := p
+  a
+}
+```
+checks."first" = "checked"
+
+@ cases.a_refutable_pattern_is_the_missing_case_of_the_match
+source = ```tauto
+fn unwrap(o: Option(Nat)): Nat {
+  let Some(v) := o
+  v
+}
+```
+checks."unwrap" = "error: missing case `Option::None`"
+
+@ cases.pattern_lets_read_alike_in_rust_and_selfhost
+source = ```tauto
+struct Point { x: i64, y: i64 }
+inductive Wrap: Type {
+  Mk(n: Nat, m: Nat): Wrap
+}
+fn swap(p: Nat × Nat): Nat × Nat {
+  let #(a, b) := p
+  #(b, a)
+}
+fn total(p: Point, q: Point): i64 {
+  let Point { x, y } := p
+  let Point { x: u, y: v } := q
+  x + y + u + v
+}
+fn first(w: Wrap): Nat {
+  let Mk(n, _) := w
+  n
+}
+fn typed(p: Nat × Nat): Nat {
+  let #(a, _): Nat × Nat := p
+  a
+}
+fn head(l: List(Nat)): Nat {
+  let [x, ..rest] := l
+  let #(y, z) := #(x, x)
+  { let #(w, _) := #(y, z)
+    w }
+}
+fn last_stmt(p: Nat × Nat): Nat {
+  let #(a, b) := p
+}
+```
+differential = "surface"

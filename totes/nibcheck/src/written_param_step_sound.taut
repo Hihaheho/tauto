@@ -1,12 +1,13 @@
 import "written_transfer_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_sound.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
 import "written_drop_sound.taut"
@@ -14,11 +15,12 @@ import "written_parameters_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn written_param_body(p: SurfaceParam): SurfaceTerm {
-  ⊢ SurfaceTerm from match p { SurfaceParamMk(name, body) => body }
+  match p { SurfaceParamMk(^name, body, ^unused) => body }
 }
 pub theorem written_param_step(
   name: Option(Text),
   body: SurfaceTerm,
+  unused: Option(SurfaceSpan),
   c: Checker,
   generics: Ordmap(Text, Ty),
   ordinary: frame_under_borrow(c) = false,
@@ -32,21 +34,21 @@ pub theorem written_param_step(
     body,
     ck_val(ck_written_in(body, c, generics))
   ),
-  clean: DiagnosticClean(ck_st(ck_written_param(SurfaceParamMk(name, body), c, generics)))
+  clean: DiagnosticClean(ck_st(ck_written_param(SurfaceParamMk(name, body, unused), c, generics)))
 ): WrittenTerm(
   ck_datas_of(c),
   generics,
   frame_constructor_position(c),
   false,
   body,
-  ck_val(ck_written_param(SurfaceParamMk(name, body), c, generics))
+  ck_val(ck_written_param(SurfaceParamMk(name, body, unused), c, generics))
 ) {
   written_transfer(
-    Ty,
+    <A: Ty>,
     (t: Ty) => WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), false, body, t),
-    ck_written_param(SurfaceParamMk(name, body), c, generics),
+    ck_written_param(SurfaceParamMk(name, body, unused), c, generics),
     ck_written_in(body, c, generics),
-    written_parameter_value(name, body, c, generics),
+    written_parameter_value(name, body, unused, c, generics),
     inner_clean => written_term_ordinary(
       c,
       generics,
@@ -104,7 +106,7 @@ pub theorem written_params_cons_step(
     ck_val(ck_written_params(Cons(p, rest), c, generics, skip))
   ) from match skip {
     Succ(count) => written_transfer(
-      List(Ty),
+      <A: List(Ty)>,
       (types: List(Ty)) => WrittenParameters(
         ck_datas_of(c),
         generics,
@@ -128,33 +130,34 @@ pub theorem written_params_cons_step(
       Cons(p, rest),
       ck_val(ck_written_params(Cons(p, rest), c, generics, 0))
     ) from match p {
-      SurfaceParamMk(name, body) => written_transfer(
-        List(Ty),
+      SurfaceParamMk(name, body, unused) => written_transfer(
+        <A: List(Ty)>,
         (types: List(Ty)) => WrittenParameters(
           ck_datas_of(c),
           generics,
           frame_constructor_position(c),
-          Cons(SurfaceParamMk(name, body), rest),
+          Cons(SurfaceParamMk(name, body, unused), rest),
           types
         ),
-        ck_written_params(Cons(SurfaceParamMk(name, body), rest), c, generics, 0),
+        ck_written_params(Cons(SurfaceParamMk(name, body, unused), rest), c, generics, 0),
         written_parameters_after(
           rest,
           generics,
-          ck_written_param(SurfaceParamMk(name, body), c, generics)
+          ck_written_param(SurfaceParamMk(name, body, unused), c, generics)
         ),
-        frame_written_params_unf(SurfaceParamMk(name, body), rest, c, generics, 0),
+        frame_written_params_unf(SurfaceParamMk(name, body, unused), rest, c, generics, 0),
         branch_clean => written_parameters_after_sound(
           c,
           name,
           body,
+          unused,
           rest,
           generics,
-          ck_written_param(SurfaceParamMk(name, body), c, generics),
-          ck_written_param_frame(SurfaceParamMk(name, body), c, generics),
+          ck_written_param(SurfaceParamMk(name, body, unused), c, generics),
+          ck_written_param_frame(SurfaceParamMk(name, body, unused), c, generics),
           Eq::subst(
             (m: Mut1(Ty, Checker)) => CkWrittenReset(c, m),
-            Eq::sym(written_parameter_value(name, body, c, generics)),
+            Eq::sym(written_parameter_value(name, body, unused, c, generics)),
             And::left(ck_written_in_frame_context(body, c, generics))
           ),
           ihparam(c, ordinary),

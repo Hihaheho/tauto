@@ -1,0 +1,720 @@
+import "index.taut"
+import "../../syntax/src/syntax.taut"
+import "../../scan/src/scan.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/unicode.taut"
+import std::base
+import std::map
+import std::text
+
+// What an editor asks of a name: the declaration of a use, a hover, the uses
+// of a declaration, and renaming one (`crates/tauto-analyzer/src/navigate.rs`
+// without the types, which come from loading and checking the program).
+//
+// The files of a world are its workspace: a declaration's users are the
+// files that see the file it is in. A rename is made only when every use can
+// be found, and is checked: the files are indexed again with the edits made,
+// and every name must resolve to the same declaration as before.
+
+// A place in a file of the world.
+pub(open) inductive AnPlace: Type {
+  Mk(file: Nat, span: CstSpan): AnPlace
+}
+
+// The new text of one range.
+pub(open) inductive AnEdit: Type {
+  Mk(file: Nat, span: CstSpan, text: Text): AnEdit
+}
+
+// Why there is no answer: the id of a message.
+pub(open) inductive AnAnswer(A: Type): Type {
+  AnOk(value: A): AnAnswer(A)
+  AnRefused(why: Text): AnAnswer(A)
+}
+
+pub fn an_contains(s: CstSpan, at: Nat): Bool {
+  s.start <= at && at <= s.end
+}
+
+pub fn an_span_len(s: CstSpan): Nat {
+  s.end - s.start
+}
+
+pub fn an_same_id(a: AnId, b: AnId): Bool {
+  a.file == b.file && a.index == b.index
+}
+
+pub fn an_world_def(w: AnWorld, id: AnId): AnDef {
+  match an_world_file(w, id.file) {
+    None => an_no_def()
+    Some(f) => an_file_def(f, id.index)
+  }
+}
+
+pub fn an_file_or_empty(w: AnWorld, id: Nat): AnFile {
+  match an_world_file(w, id) {
+    None => an_empty_file("", "", Nil, true)
+    Some(f) => f
+  }
+}
+
+// --- Sites ------------------------------------------------------------------
+
+// The smaller of what was found and `span`, when `span` holds `at`.
+pub fn an_take(best: Option(CstSpan × AnId), span: CstSpan, id: AnId, at: Nat): Option(CstSpan × AnId) {
+  if an_contains(span, at) {
+    match best {
+      None => Some(#(span, id))
+      Some(b) => match b {
+        #(bs, ^bid) => if an_span_len(span) < an_span_len(bs) { Some(#(span, id)) } else { best }
+      }
+    }
+  } else {
+    best
+  }
+}
+
+pub fn an_take_spans(best: Option(CstSpan × AnId), spans: List(CstSpan), id: AnId, at: Nat): Option(CstSpan × AnId) {
+  match spans {
+    Nil => best
+    Cons(s, rest) => an_take_spans(an_take(best, s, id, at), rest, id, at)
+  }
+}
+
+pub fn an_take_defs(best: Option(CstSpan × AnId), defs: List(Nat × AnDef), file: Nat, at: Nat): Option(CstSpan × AnId) {
+  match defs {
+    Nil => best
+    Cons(e, rest) => match e {
+      #(i, d) => an_take_defs(an_take_spans(best, d.spans, AnId { file: file, index: i }, at), rest, file, at)
+    }
+  }
+}
+
+pub fn an_take_refs(best: Option(CstSpan × AnId), refs: List(AnRef), at: Nat): Option(CstSpan × AnId) {
+  match refs {
+    Nil => best
+    Cons(r, rest) => an_take_refs(an_take(best, r.span, r.target, at), rest, at)
+  }
+}
+
+// The declaration or use whose name is written at `at`, the smallest.
+pub fn an_site_at(f: AnFile, file: Nat, at: Nat): Option(CstSpan × AnId) {
+  an_take_refs(an_take_defs(None, Ordmap::entries(f.defs), file, at), f.refs, at)
+}
+
+// --- Colours ----------------------------------------------------------------
+
+// The colour of a name by what it names.
+pub fn an_colour(kind: Text): Text {
+  if kind == "function" || kind == "theorem" || kind == "axiom" || kind == "definition" || kind == "method" || kind == "law" || kind == "macro" {
+    "function"
+  } else if kind == "constructor" || kind == "variant" {
+    "enumMember"
+  } else if kind == "module" {
+    "namespace"
+  } else if kind == "field" {
+    "property"
+  } else if kind == "parameter" {
+    "parameter"
+  } else if kind == "variable" || kind == "pattern variable" || kind == "binder" {
+    "variable"
+  } else {
+    "type"
+  }
+}
+
+pub fn an_colour_spans(spans: List(CstSpan), colour: Text): List(CstSpan × Text) {
+  match spans {
+    Nil => Nil
+    Cons(s, rest) => Cons(#(s, colour), an_colour_spans(rest, colour))
+  }
+}
+
+pub fn an_colour_defs(defs: List(Nat × AnDef)): List(CstSpan × Text) {
+  match defs {
+    Nil => Nil
+    Cons(e, rest) => match e {
+      #(^i, d) => an_append(an_colour_spans(d.spans, an_colour(d.kind)), an_colour_defs(rest))
+    }
+  }
+}
+
+pub fn an_colour_refs(w: AnWorld, refs: List(AnRef)): List(CstSpan × Text) {
+  match refs {
+    Nil => Nil
+    Cons(r, rest) => Cons(#(r.span, an_colour(an_world_def(w, r.target).kind)), an_colour_refs(w, rest))
+  }
+}
+
+pub fn an_colour_words(ws: List(AnWord)): List(CstSpan × Text) {
+  match ws {
+    Nil => Nil
+    Cons(x, rest) => Cons(#(x.span, "variable"), an_colour_words(rest))
+  }
+}
+
+// The colour of each name the file writes, declared or used; a name that
+// resolves to nothing is a variable.
+pub fn an_name_colours(w: AnWorld, file: Nat): List(CstSpan × Text) {
+  let f := an_file_or_empty(w, file)
+  an_append(an_colour_defs(Ordmap::entries(f.defs)), an_append(an_colour_refs(w, f.refs), an_colour_words(f.unresolved)))
+}
+
+// --- Definition and hover ---------------------------------------------------
+
+// The preludes have no file to show.
+pub fn an_place(w: AnWorld, id: AnId): Option(AnPlace) {
+  if id.file < 2 {
+    None
+  } else {
+    an_first_place(w, id)
+  }
+}
+
+pub fn an_first_place(w: AnWorld, id: AnId): Option(AnPlace) {
+  match an_world_def(w, id).spans {
+    Nil => None
+    Cons(s, ^rest) => Some(AnPlace { file: id.file, span: s })
+  }
+}
+
+// The declaration of the name written at `at`.
+pub fn an_definition(w: AnWorld, file: Nat, at: Nat): Option(AnPlace) {
+  match an_site_at(an_file_or_empty(w, file), file, at) {
+    None => None
+    Some(site) => match site {
+      #(^span, id) => an_place(w, id)
+    }
+  }
+}
+
+// The part of a path after its last `/`.
+pub fn an_base_name(path: Text): Text {
+  match text_list_reverse(text_split(path, "/")) {
+    Nil => path
+    Cons(last, ^rest) => last
+  }
+}
+
+// What a hover shows of a declaration, seen from the file `seen_from`.
+pub fn an_describe(w: AnWorld, id: AnId, seen_from: Option(Nat)): Text {
+  let d := an_world_def(w, id)
+  let fence := "```"
+  let head := an_cat([fence, "tauto", text_newline(), d.signature, text_newline(), fence, text_newline(), text_newline(), "_", d.kind, "_"])
+  let place: Text := if id.file < 2 {
+    " · prelude"
+  } else {
+    match seen_from {
+      None => ""
+      Some(f) => {
+        let path := an_file_or_empty(w, id.file).path
+        if path == an_file_or_empty(w, f).path { "" } else { an_cat([" · `", an_base_name(path), "`"]) }
+      }
+    }
+  }
+  Text::concat(head, place)
+}
+
+pub fn an_smallest_call(calls: List(CstSpan), at: Nat, best: Option(CstSpan)): Option(CstSpan) {
+  match calls {
+    Nil => best
+    Cons(c, rest) => {
+      let next: Option(CstSpan) := if an_contains(c, at) {
+        match best {
+          None => Some(c)
+          Some(b) => if an_span_len(c) < an_span_len(b) { Some(c) } else { best }
+        }
+      } else {
+        best
+      }
+      an_smallest_call(rest, at, next)
+    }
+  }
+}
+
+pub fn an_theorem_at(ts: List(CstSpan × Nat), file: Nat, at: Nat): Option(CstSpan × AnId) {
+  match ts {
+    Nil => None
+    Cons(t, rest) => match t {
+      #(s, d) => if an_contains(s, at) { Some(#(s, AnId { file: file, index: d })) } else { an_theorem_at(rest, file, at) }
+    }
+  }
+}
+
+// The hover of the name written at `at`, without types: a declaration's
+// signature and kind, and a macro call as a macro call.
+pub fn an_hover(w: AnWorld, file: Nat, at: Nat): Option(CstSpan × Text) {
+  let f := an_file_or_empty(w, file)
+  let call := an_smallest_call(f.macros, at, None)
+  let site: Option(CstSpan × AnId) := match an_site_at(f, file, at) {
+    Some(s) => Some(s)
+    None => an_theorem_at(f.theorems, file, at)
+  }
+  let on_macro_name: Bool := match site {
+    None => false
+    Some(s) => match s {
+      #(^span, id) => an_world_def(w, id).kind == "macro"
+    }
+  }
+  let in_call: Option(CstSpan) := match site {
+    None => call
+    Some(^s) => if on_macro_name { call } else { None }
+  }
+  match in_call {
+    Some(c) => match site {
+      None => Some(#(c, "macro call"))
+      Some(s) => match s {
+        #(span, id) => Some(#(span, an_cat([an_describe(w, id, None), text_newline(), text_newline(), "macro call"])))
+      }
+    }
+    None => match site {
+      None => None
+      Some(s) => match s {
+        #(span, id) => Some(#(span, an_describe(w, id, Some(file))))
+      }
+    }
+  }
+}
+
+// --- References --------------------------------------------------------------
+
+pub fn an_sees(w: AnWorld, files: List(Nat), def_file: Nat, out: List(Nat)): List(Nat) {
+  match files {
+    Nil => out
+    Cons(f, rest) => if an_has_nat(out, f) {
+      an_sees(w, rest, def_file, out)
+    } else if an_has_nat(an_file_or_empty(w, f).closure, def_file) {
+      an_sees(w, rest, def_file, an_append(out, [f]))
+    } else {
+      an_sees(w, rest, def_file, out)
+    }
+  }
+}
+
+pub fn an_range(start: Nat, fuel: Nat): List(Nat) {
+  match fuel {
+    Zero => Nil
+    Succ(k) => Cons(start, an_range(start + 1, k))
+  }
+}
+
+// The files of the world that see the file `def_file` (and it), the file
+// asked about first.
+pub fn an_users(w: AnWorld, entry: Nat, def_file: Nat): List(Nat) {
+  let first: List(Nat) := if def_file != entry && def_file >= 2 { [entry, def_file] } else { [entry] }
+  an_sees(w, an_range(2, w.count - 2), def_file, first)
+}
+
+pub fn an_files_of_id(w: AnWorld, entry: Nat, id: AnId): List(Nat) {
+  if an_world_def(w, id).exported { an_users(w, entry, id.file) } else { [entry] }
+}
+
+pub fn an_places(file: Nat, spans: List(CstSpan)): List(AnPlace) {
+  match spans {
+    Nil => Nil
+    Cons(s, rest) => Cons(AnPlace { file: file, span: s }, an_places(file, rest))
+  }
+}
+
+pub fn an_ref_places(file: Nat, refs: List(AnRef), id: AnId): List(AnPlace) {
+  match refs {
+    Nil => Nil
+    Cons(r, rest) => if an_same_id(r.target, id) {
+      Cons(AnPlace { file: file, span: r.span }, an_ref_places(file, rest, id))
+    } else {
+      an_ref_places(file, rest, id)
+    }
+  }
+}
+
+pub fn an_references_in(w: AnWorld, files: List(Nat), id: AnId, with_declaration: Bool): List(AnPlace) {
+  match files {
+    Nil => Nil
+    Cons(f, rest) => {
+      let own: List(AnPlace) := if with_declaration && f == id.file { an_places(f, an_world_def(w, id).spans) } else { Nil }
+      an_append(own, an_append(an_ref_places(f, an_file_or_empty(w, f).refs, id), an_references_in(w, rest, id, with_declaration)))
+    }
+  }
+}
+
+// Every place the declaration of the name at `at` is used.
+pub fn an_references(w: AnWorld, entry: Nat, at: Nat, with_declaration: Bool): List(AnPlace) {
+  match an_site_at(an_file_or_empty(w, entry), entry, at) {
+    None => Nil
+    Some(site) => match site {
+      #(^span, id) => an_references_in(w, an_files_of_id(w, entry, id), id, with_declaration)
+    }
+  }
+}
+
+// --- Rename -----------------------------------------------------------------
+
+// The range and the name to start a rename from.
+pub fn an_prepare_rename(w: AnWorld, entry: Nat, at: Nat): AnAnswer(CstSpan × Text) {
+  match an_site_at(an_file_or_empty(w, entry), entry, at) {
+    None => AnRefused("analyzer-rename-no-name")
+    Some(site) => match site {
+      #(span, id) => {
+        let d := an_world_def(w, id)
+        if id.file < 2 {
+          AnRefused("analyzer-rename-prelude")
+        } else {
+          match d.pinned {
+            Some(^why) => AnRefused("analyzer-rename-pinned")
+            None => AnOk(#(span, d.name))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn an_non_trivia(t: &SyntaxTables, tokens: List(ScanToken)): List(ScanToken) {
+  match tokens {
+    Nil => Nil
+    Cons(k, rest) => if cst_is_trivia(t.terminal_kinds, k.token_type) {
+      an_non_trivia(&t, rest)
+    } else {
+      Cons(k, an_non_trivia(&t, rest))
+    }
+  }
+}
+
+// Whether `name` is one name, as the scanner reads one, and not a keyword.
+pub fn an_is_name(t: &SyntaxTables, name: Text): Bool {
+  match an_non_trivia(&t, scan_all(t.scan, name)) {
+    Nil => false
+    Cons(k, rest) => match rest {
+      Cons(^other, ^more) => false
+      Nil => syntax_name(t.terminal_kinds, k.token_type) == "Ident" && k.start == 0 && k.end == Text::len(name) && not(text_starts_with(name, "r#", 0)) && not(an_has_text(an_keywords(), name))
+    }
+  }
+}
+
+pub fn an_keywords(): List(Text) {
+  [
+    "fn", "let", "var", "struct", "enum", "effect", "theorem", "axiom", "def", "inductive", "match", "if",
+    "else", "loop", "while", "return", "break", "continue", "handle", "with", "perform", "import",
+    "mutual", "true", "false", "decreasing_by", "opaque", "ghost", "eqn"
+  ]
+}
+
+pub fn an_trim_bang(name: Text): Text {
+  if text_starts_with(name, "!", Text::len(name) - 1) && Text::len(name) > 0 {
+    an_slice(name, 0, Text::len(name) - 1)
+  } else {
+    name
+  }
+}
+
+pub fn an_inside(scope: Option(CstSpan), s: CstSpan): Bool {
+  match scope {
+    None => true
+    Some(sc) => an_contains(sc, s.start)
+  }
+}
+
+pub fn an_any_word(ws: List(AnWord), old: Text, scope: Option(CstSpan), bang: Bool): Bool {
+  match ws {
+    Nil => false
+    Cons(x, rest) => {
+      let word: Text := if bang { an_trim_bang(x.word) } else { x.word }
+      (word == old && an_inside(scope, x.span)) || an_any_word(rest, old, scope, bang)
+    }
+  }
+}
+
+pub fn an_edits_of(file: Nat, spans: List(CstSpan), text: Text): List(AnEdit) {
+  match spans {
+    Nil => Nil
+    Cons(s, rest) => Cons(AnEdit { file: file, span: s, text: text }, an_edits_of(file, rest, text))
+  }
+}
+
+// The edits of the uses of `id` in `refs`, or `None` when one is approximate.
+pub fn an_ref_edits(file: Nat, refs: List(AnRef), id: AnId, text: Text): Option(List(AnEdit)) {
+  match refs {
+    Nil => Some(Nil)
+    Cons(r, rest) => match an_ref_edits(file, rest, id, text) {
+      None => None
+      Some(more) => if an_same_id(r.target, id) {
+        if r.approximate { None } else { Some(Cons(AnEdit { file: file, span: r.span, text: text }, more)) }
+      } else {
+        Some(more)
+      }
+    }
+  }
+}
+
+pub fn an_rename_files(w: AnWorld, files: List(Nat), id: AnId, old: Text, new_name: Text, scope: Option(CstSpan)): AnAnswer(List(AnEdit)) {
+  match files {
+    Nil => AnOk(Nil)
+    Cons(f, rest) => {
+      let idx := an_file_or_empty(w, f)
+      if idx.broken {
+        AnRefused("analyzer-rename-broken-file")
+      } else if an_any_word(idx.opaque_words, old, scope, false) {
+        AnRefused("analyzer-rename-opaque")
+      } else if an_any_word(idx.unresolved, old, scope, true) {
+        AnRefused("analyzer-rename-unresolved")
+      } else {
+        let own: List(AnEdit) := if f == id.file { an_edits_of(f, an_world_def(w, id).spans, new_name) } else { Nil }
+        match an_ref_edits(f, idx.refs, id, new_name) {
+          None => AnRefused("analyzer-rename-approximate")
+          Some(uses) => match an_rename_files(w, rest, id, old, new_name, scope) {
+            AnRefused(why) => AnRefused(why)
+            AnOk(more) => AnOk(an_append(own, an_append(uses, more)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn an_top_containing(tops: List(CstSpan), at: Nat): Option(CstSpan) {
+  match tops {
+    Nil => None
+    Cons(s, rest) => if an_contains(s, at) { Some(s) } else { an_top_containing(rest, at) }
+  }
+}
+
+pub fn an_has_word(ws: List(Nat × Text), old: Text): Bool {
+  match ws {
+    Nil => false
+    Cons(x, rest) => match x {
+      #(^at, word) => word == old || an_has_word(rest, old)
+    }
+  }
+}
+
+// Whether a text of `mates` (the files that see the declarations of the
+// declaration's file without importing it: the files of its tote and of the
+// totes that depend on it) writes the word.
+pub fn an_mates_write(classes: UnicodeClasses, mates: List(Text), old: Text): Bool ! {overflow} {
+  match mates {
+    Nil => false
+    Cons(m, rest) => an_has_word(an_words_at(classes, m), old) || an_mates_write(classes, rest, old)
+  }
+}
+
+pub fn an_edit_before(a: AnEdit, b: AnEdit): Bool {
+  a.file < b.file || (a.file == b.file && a.span.start <= b.span.start)
+}
+
+pub fn an_insert_edit(e: AnEdit, es: List(AnEdit)): List(AnEdit) {
+  match es {
+    Nil => [e]
+    Cons(x, rest) => if an_edit_before(e, x) { Cons(e, es) } else { Cons(x, an_insert_edit(e, rest)) }
+  }
+}
+
+pub fn an_sort_edits(es: List(AnEdit)): List(AnEdit) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => an_insert_edit(e, an_sort_edits(rest))
+  }
+}
+
+pub fn an_same_edit(a: AnEdit, b: AnEdit): Bool {
+  a.file == b.file && a.span.start == b.span.start && a.span.end == b.span.end && a.text == b.text
+}
+
+pub fn an_dedup_edits(es: List(AnEdit)): List(AnEdit) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => match rest {
+      Nil => [e]
+      Cons(n, ^more) => if an_same_edit(e, n) { an_dedup_edits(rest) } else { Cons(e, an_dedup_edits(rest)) }
+    }
+  }
+}
+
+// The text with the edits of `file` made, the edits sorted by their start
+// and none overlapping.
+pub fn an_apply(text: Text, edits: List(AnEdit), file: Nat, at: Nat, done: List(Text)): Text {
+  match edits {
+    Nil => Text::concat_all(text_list_reverse(Cons(an_slice(text, at, Text::len(text)), done)))
+    Cons(e, rest) => if e.file == file {
+      an_apply(text, rest, file, e.span.end, Cons(e.text, Cons(an_slice(text, at, e.span.start), done)))
+    } else {
+      an_apply(text, rest, file, at, done)
+    }
+  }
+}
+
+pub fn an_without(xs: List(Nat), x: Nat): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(y, rest) => if y == x { an_without(rest, x) } else { Cons(y, an_without(rest, x)) }
+  }
+}
+
+// The world indexed again with the edits made: the preludes as they were,
+// each file with what it saw.
+pub fn an_rebuild(t: &SyntaxTables, classes: UnicodeClasses, w: AnWorld, edits: List(AnEdit), ids: List(Nat), done: AnWorld): AnWorld ! {overflow} {
+  match ids {
+    Nil => done
+    Cons(i, rest) => {
+      let f := an_file_or_empty(w, i)
+      let text := an_apply(f.text, edits, i, 0, Nil)
+      let imports := an_without(an_without(an_without(f.closure, i), 0), 1)
+      match an_add(&t, classes, done, f.path, text, imports) {
+        #(next, ^id) => an_rebuild(&t, classes, w, edits, rest, next)
+      }
+    }
+  }
+}
+
+pub fn an_same_targets(a: List(AnRef), b: List(AnRef)): Bool {
+  match a {
+    Nil => match b {
+      Nil => true
+      Cons(^y, ^more) => false
+    }
+    Cons(x, rest) => match b {
+      Nil => false
+      Cons(y, more) => an_same_id(x.target, y.target) && an_same_targets(rest, more)
+    }
+  }
+}
+
+// Whether each file of `files` reads again, its names resolving as they did.
+pub fn an_verify(before: AnWorld, after: AnWorld, files: List(Nat)): AnAnswer(Unit) {
+  match files {
+    Nil => AnOk(#())
+    Cons(f, rest) => {
+      let a := an_file_or_empty(before, f)
+      let b := an_file_or_empty(after, f)
+      if b.broken {
+        AnRefused("analyzer-rename-leaves-syntax-error")
+      } else if List::length(a.unresolved) == List::length(b.unresolved) && a.count == b.count && an_same_targets(a.refs, b.refs) {
+        an_verify(before, after, rest)
+      } else {
+        AnRefused("analyzer-rename-captures")
+      }
+    }
+  }
+}
+
+pub fn an_preludes(w: AnWorld): AnWorld {
+  let empty := AnWorld { files: Ordmap::empty(), count: 0 }
+  an_world_put(an_world_put(empty, an_file_or_empty(w, 0)), an_file_or_empty(w, 1))
+}
+
+// The edits that rename the declaration of the name at `at` to `new_name`.
+// `mates` are the texts of the files that see the declaration's file without
+// importing it.
+pub fn an_rename(t: &SyntaxTables, classes: UnicodeClasses, w: AnWorld, entry: Nat, at: Nat, new_name: Text, mates: List(Text)): AnAnswer(List(AnEdit)) ! {overflow} {
+  match an_prepare_rename(w, entry, at) {
+    AnRefused(why) => AnRefused(why)
+    AnOk(prepared) => match prepared {
+      #(^span0, old) => match an_site_at(an_file_or_empty(w, entry), entry, at) {
+        None => AnRefused("analyzer-rename-no-name-here")
+        Some(site) => match site {
+          #(^span, id) => if not(an_is_name(&t, new_name)) {
+            AnRefused("analyzer-rename-not-a-name")
+          } else if new_name == old {
+            AnOk(Nil)
+          } else {
+            let d := an_world_def(w, id)
+            let files := an_files_of_id(w, entry, id)
+            // A local is visible in its top-level statement; the rest,
+            // everywhere.
+            let scope: Option(CstSpan) := if d.exported {
+              None
+            } else {
+              match d.spans {
+                Nil => None
+                Cons(s, ^rest) => an_top_containing(an_file_or_empty(w, entry).tops, s.start)
+              }
+            }
+            match an_rename_files(w, files, id, old, new_name, scope) {
+              AnRefused(why) => AnRefused(why)
+              AnOk(edits) => if d.exported && an_mates_write(classes, mates, old) {
+                AnRefused("analyzer-rename-tote-mate")
+              } else {
+                let sorted := an_dedup_edits(an_sort_edits(edits))
+                let after := an_rebuild(&t, classes, w, sorted, an_range(2, w.count - 2), an_preludes(w))
+                match an_verify(w, after, files) {
+                  AnRefused(why) => AnRefused(why)
+                  AnOk(^u) => AnOk(sorted)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// --- Positions ----------------------------------------------------------------
+
+// The UTF-16 units of the character `c`.
+pub fn an_utf16(c: Nat): Nat {
+  if c >= 65536 { 2 } else { 1 }
+}
+
+pub fn an_line_start(t: Text, at: Nat, lines: Nat): Option(Nat) {
+  match lines {
+    Zero => Some(at)
+    Succ(k) => match text_find(t, text_newline(), at) {
+      None => None
+      Some(i) => an_line_start(t, i + 1, k)
+    }
+  }
+}
+
+pub fn an_column_offset(fuel: Nat, t: Text, at: Nat, units: Nat, col: Nat): Nat {
+  match fuel {
+    Zero => at
+    Succ(k) => if at >= Text::len(t) {
+      Text::len(t)
+    } else {
+      match an_char(t, at) {
+        #(c, n) => if c == 10 || units >= col { at } else { an_column_offset(k, t, at + n, units + an_utf16(c), col) }
+      }
+    }
+  }
+}
+
+// The byte offset of an editor's position: a line and a column in UTF-16
+// units.
+pub fn an_offset_of(t: Text, line: Nat, col: Nat): Nat {
+  match an_line_start(t, 0, line) {
+    None => Text::len(t)
+    Some(start) => an_column_offset(Text::len(t) + 1, t, start, 0, col)
+  }
+}
+
+pub fn an_units_from(fuel: Nat, t: Text, at: Nat, end: Nat, units: Nat): Nat {
+  match fuel {
+    Zero => units
+    Succ(k) => if at >= end {
+      units
+    } else {
+      match an_char(t, at) {
+        #(c, n) => an_units_from(k, t, at + n, end, units + an_utf16(c))
+      }
+    }
+  }
+}
+
+pub fn an_last_line_start(t: Text, at: Nat, start: Nat, lines: Nat, end: Nat, fuel: Nat): Nat × Nat {
+  match fuel {
+    Zero => #(lines, start)
+    Succ(k) => match text_find(t, text_newline(), at) {
+      None => #(lines, start)
+      Some(i) => if i < end { an_last_line_start(t, i + 1, i + 1, lines + 1, end, k) } else { #(lines, start) }
+    }
+  }
+}
+
+// The editor's position of a byte offset: its line and its column in UTF-16
+// units.
+pub fn an_position_of(t: Text, offset: Nat): Nat × Nat {
+  let end := Nat::min(offset, Text::len(t))
+  match an_last_line_start(t, 0, 0, 0, end, end + 1) {
+    #(line, start) => #(line, an_units_from(end + 1, t, start, end, 0))
+  }
+}

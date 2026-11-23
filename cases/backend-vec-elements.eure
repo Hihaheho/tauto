@@ -1,0 +1,53 @@
+// A `Vec` of numbers, of texts and of structs that hold a text: pushed,
+// read in place, written through a borrow, popped, truncated, cleared and
+// swapped, and every element it still holds is released with it.
+@ cases.vec-elements
+stdout = ```
+3
+true
+true
+2
+true
+true
+7
+true
+false
+1
+```
+source = ```tauto
+struct Pair { name: Text, n: u64 }
+
+fn is(v: &Vec(Text), i: u64, want: Text): Bool {
+  match Vec::get(&v, i) {
+    Some(t) => t == want
+    None => false
+  }
+}
+
+var texts: Vec(Text) := Vec::new()
+Vec::push(&mut texts, "a")
+Vec::push(&mut texts, "b")
+Vec::push(&mut texts, "c")
+show(&Vec::len(&texts))
+show(&is(&texts, 1, "b"))
+show(&(match Vec::pop(&mut texts) { Some(t) => t == "c", None => false }))
+show(&Vec::len(&texts))
+Vec::push(&mut texts, "d")
+Vec::push(&mut texts, "e")
+Vec::truncate(&mut texts, 1)
+match Vec::get_mut(&mut texts, 0) {
+  Some(t) => { *t := "x" }
+  None => #()
+}
+show(&is(&texts, 0, "x"))
+Vec::clear(&mut texts)
+show(&(match Vec::get(&texts, 0) { Some(t) => false, None => true }))
+
+var pairs: Vec(Pair) := Vec::new()
+Vec::push(&mut pairs, Pair { name: "p", n: 7 })
+Vec::push(&mut pairs, Pair { name: "q", n: 8 })
+show(&(match Vec::get(&pairs, 0) { Some(p) => p.n, None => 0 }))
+show(&Vec::swap_within(&mut pairs, 0, 1))
+show(&Vec::swap_within(&mut pairs, 0, 2))
+show(&(match Vec::get(&pairs, 0) { Some(p) => p.n - 7, None => 0 }))
+```

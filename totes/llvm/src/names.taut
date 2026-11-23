@@ -1,0 +1,333 @@
+import "ir.taut"
+import std::text
+import std::base
+
+// The names and numbers the backend writes in IR. Each is made only by the
+// functions here, so every one is spelled as IR spells it.
+
+// A value a function names: `%t7`.
+pub struct LlLocal { text: Text }
+
+// A temporary of a function, by its number.
+pub fn ll_tmp(n: Nat): LlLocal { LlLocal { text: concat("%t", Text::of_nat(n)) } }
+
+// Word `i` of the parameter that is the local `id`.
+pub fn ll_param(id: Nat, i: Nat): LlLocal {
+  LlLocal { text: Text::concat_all(["%p", Text::of_nat(id), ".", Text::of_nat(i)]) }
+}
+
+// The result of the program's top level in `main`.
+pub fn ll_result(): LlLocal { LlLocal { text: "%r" } }
+
+pub fn ll_local_text(l: LlLocal): Text { l.text }
+
+pub fn ll_value(l: LlLocal): llvm::Value::I { llvm::Value::I::Local_I(l.text) }
+
+// A number as a value.
+pub fn ll_word(n: Nat): llvm::Value::I { llvm::Value::I::Int_I(Text::of_nat(n)) }
+
+// The number below zero of this size as a value.
+pub fn ll_minus(n: Nat): llvm::Value::I { llvm::Value::I::Int_I(concat("-", Text::of_nat(n))) }
+
+// A block of a function: `L7`.
+pub struct LlLabel { text: Text }
+
+pub fn ll_label(n: Nat): LlLabel { LlLabel { text: concat("L", Text::of_nat(n)) } }
+
+// The blocks every function starts with.
+pub fn ll_entry(): LlLabel { LlLabel { text: "entry" } }
+
+pub fn ll_start(): LlLabel { LlLabel { text: "start" } }
+
+// A label where a block starts (`L7:`) and where it is jumped to (`%L7`).
+pub fn ll_label_def(l: LlLabel): Text { concat(l.text, ":") }
+
+pub fn ll_label_ref(l: LlLabel): llvm::LabelRef::I {
+  llvm::LabelRef::I::Local_I(concat("%", l.text))
+}
+
+// A function or a constant of the module: `@f3`.
+pub struct LlGlobal { text: Text }
+
+// The function of the program with this id.
+pub fn ll_fn(id: Nat): LlGlobal { LlGlobal { text: concat("@f", Text::of_nat(id)) } }
+
+// The glue of a kind (`drop`, `dup`, `show`) with this number.
+pub fn ll_glue(kind: Text, id: Nat): LlGlobal {
+  LlGlobal { text: Text::concat_all(["@", kind, ".", Text::of_nat(id)]) }
+}
+
+// The constant text with this number.
+pub fn ll_string(id: Nat): LlGlobal { LlGlobal { text: concat("@.s", Text::of_nat(id)) } }
+pub fn ll_box(id: Nat): LlGlobal { LlGlobal { text: concat("@.t", Text::of_nat(id)) } }
+
+pub fn ll_global_text(g: LlGlobal): Text { g.text }
+
+// A function as what a call names.
+pub fn ll_callee(g: LlGlobal): llvm::Callee::I { llvm::Callee::I::Global_I(g.text) }
+
+pub fn ll_global_value(g: LlGlobal): llvm::Value::I { llvm::Value::I::Global_I(g.text) }
+
+// A number written where IR takes one that is not a value: a size, a place.
+pub struct LlInt { text: Text }
+
+pub fn ll_int(n: Nat): LlInt { LlInt { text: Text::of_nat(n) } }
+
+pub fn ll_count(i: LlInt): llvm::IntOf::I { llvm::IntOf::I::Int_I(i.text) }
+
+pub fn ll_args_rest(xs: List(llvm::TyValue::I)): List(llvm::Args_Rep1::I) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(llvm::Args_Rep1::I::Mk(x), ll_args_rest(rest))
+  }
+}
+
+// The arguments of a call.
+pub fn ll_args(xs: List(llvm::TyValue::I)): llvm::Args::I {
+  match xs {
+    Nil => llvm::Args::I::Mk(None)
+    Cons(x, rest) => llvm::Args::I::Mk(Some(llvm::Args_Opt1::I::Mk(x, ll_args_rest(rest))))
+  }
+}
+
+pub fn ll_args_of(
+  xs: List(llvm::TyValue::I)
+): llvm::ArgsOf::I { llvm::ArgsOf::I::Args_I(ll_args(xs)) }
+
+// The cases of a `switch`.
+pub fn ll_cases(xs: List(llvm::Case::I)): Option(llvm::CasesOf::I) {
+  match xs {
+    Nil => None
+    Cons(c, rest) => Some(llvm::CasesOf::I::Cases_I(llvm::Cases::I::Mk(c, rest)))
+  }
+}
+
+// The parameters of a glue function: the value's address, and the text
+// being built.
+pub fn ll_p(): llvm::Value::I { llvm::Value::I::Local_I("%p") }
+
+pub fn ll_b(): llvm::Value::I { llvm::Value::I::Local_I("%b") }
+
+pub fn ll_ptr_param(v: llvm::Value::I): llvm::Param::I {
+  llvm::Param::I::Mk(llvm::Ty::I::Ptr_I("ptr"), match v {
+    Local_I(s) => s
+    Global_I(s) => s
+    Int_I(s) => s
+    Null_I(s) => s
+    True_I(s) => s
+    False_I(s) => s
+    Poison_I(s) => s
+    Zero_I(s) => s
+  })
+}
+
+// A parameter that is one word.
+pub fn ll_word_param(l: LlLocal): llvm::Param::I {
+  llvm::Param::I::Mk(llvm::Ty::I::IntTy_I("i64"), l.text)
+}
+
+pub fn ll_params_rest(xs: List(llvm::Param::I)): List(llvm::Params_Rep1::I) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(llvm::Params_Rep1::I::Mk(x), ll_params_rest(rest))
+  }
+}
+
+pub fn ll_params(xs: List(llvm::Param::I)): llvm::Params::I {
+  match xs {
+    Nil => llvm::Params::I::Mk(None)
+    Cons(x, rest) => llvm::Params::I::Mk(Some(llvm::Params_Opt1::I::Mk(x, ll_params_rest(rest))))
+  }
+}
+
+// A function of the module, called only from it.
+pub fn ll_define(
+  ret: llvm::Ty::I,
+  name: LlGlobal,
+  params: List(llvm::Param::I),
+  entry: llvm::Block::I,
+  rest: List(llvm::Block::I)
+): llvm::Item::I {
+  llvm::Item::I::Define_I(
+    llvm::Define::I::Mk(
+      Some("internal"),
+      Some("fastcc"),
+      ret,
+      name.text,
+      ll_params(params),
+      None,
+      None,
+      entry,
+      rest
+    )
+  )
+}
+
+// The function the program starts at.
+pub fn ll_define_main(entry: llvm::Block::I, rest: List(llvm::Block::I)): llvm::Item::I {
+  llvm::Item::I::Define_I(
+    llvm::Define::I::Mk(
+      None,
+      None,
+      llvm::Ty::I::IntTy_I("i32"),
+      "@rt_main",
+      llvm::Params::I::Mk(None),
+      None,
+      None,
+      entry,
+      rest
+    )
+  )
+}
+
+pub fn ll_hex_digit(d: Nat): Text {
+  if d < 10 {
+    Text::of_nat(d)
+  } else if d == 10 {
+    "A"
+  } else if d == 11 {
+    "B"
+  } else if d == 12 {
+    "C"
+  } else if d == 13 {
+    "D"
+  } else if d == 14 {
+    "E"
+  } else {
+    "F"
+  }
+}
+
+// The bytes of a text as IR writes a constant.
+pub fn ll_escape(bs: List(Nat)): List(Text) {
+  match bs {
+    Nil => Nil
+    Cons(b, rest) => if b == 32 || (b > 32 && b < 127 && b != 34 && b != 92) {
+      Cons(Text::utf8_of_code_point(b), ll_escape(rest))
+    } else {
+      Cons(
+        Text::concat_all(
+          [
+            "\\",
+            ll_hex_digit(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl))),
+            ll_hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl)))
+          ]
+        ),
+        ll_escape(rest)
+      )
+    }
+  }
+}
+
+// A constant text ended with a zero byte.
+pub fn ll_constant(name: LlGlobal, s: Text): llvm::Item::I {
+  let bytes := llvm::Ty::I::ArrayTy_I(
+    llvm::ArrayTy::I::Mk(ll_count(ll_int(Text::len(s) + 1)), llvm::Ty::I::IntTy_I("i8"))
+  )
+  llvm::Item::I::Constant_I(
+    llvm::Constant::I::Mk(
+      name.text,
+      bytes,
+      Text::concat_all(["c\"", Text::concat_all(ll_escape(Text::bytes(s))), "\\00\""])
+    )
+  )
+}
+
+// A literal's box, laid out as every `Text` is: the count 0, which is never
+// changed, so the box is never freed, then the number of bytes, the bytes
+// and a zero byte.
+pub fn ll_box_constant(name: LlGlobal, s: Text): llvm::Item::I {
+  let bytes := llvm::Ty::I::ArrayTy_I(
+    llvm::ArrayTy::I::Mk(ll_count(ll_int(Text::len(s) + 17)), llvm::Ty::I::IntTy_I("i8"))
+  )
+  llvm::Item::I::Boxed_I(
+    llvm::Boxed::I::Mk(
+      name.text,
+      bytes,
+      Text::concat_all(
+        [
+          "c\"",
+          Text::concat_all(ll_le_bytes(0, 8)),
+          Text::concat_all(ll_le_bytes(Text::len(s), 8)),
+          Text::concat_all(ll_escape(Text::bytes(s))),
+          "\\00\""
+        ]
+      ),
+      ll_count(ll_int(8))
+    )
+  )
+}
+
+// The `k` bytes of `n`, the lowest first, each written as IR writes a byte
+// of a constant.
+pub fn ll_le_bytes(n: Nat, k: Nat): List(Text) {
+  match k {
+    Zero => Nil
+    Succ(j) => {
+      let b := Nat::rem_nz(n, 256, Nat::ne_zero(256, Refl))
+      Cons(
+        Text::concat_all(
+          [
+            "\\",
+            ll_hex_digit(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl))),
+            ll_hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl)))
+          ]
+        ),
+        ll_le_bytes(Nat::div_nz(n, 256, Nat::ne_zero(256, Refl)), j)
+      )
+    }
+  }
+}
+
+// The type of a number of this many bits.
+pub fn ll_int_ty(bits: Nat): llvm::Ty::I { llvm::Ty::I::IntTy_I(concat("i", Text::of_nat(bits))) }
+
+// The operation (`add`, `sub`, `mul`) on numbers of this many bits that
+// says whether the result fits.
+pub fn ll_overflow(signed: Bool, op: Text, bits: Nat): LlGlobal {
+  LlGlobal {
+    text: Text::concat_all(
+      ["@llvm.", if signed { "s" } else { "u" }, op, ".with.overflow.i", Text::of_nat(bits)]
+    )
+  }
+}
+
+pub fn ll_null(): llvm::Value::I { llvm::Value::I::Null_I("null") }
+
+pub fn ll_poison(): llvm::Value::I { llvm::Value::I::Poison_I("poison") }
+
+pub fn ll_true(): llvm::Value::I { llvm::Value::I::True_I("true") }
+
+// A word as an argument of a call.
+pub fn ll_word_arg(v: llvm::Value::I): llvm::TyValue::I {
+  llvm::TyValue::I::Mk(llvm::Ty::I::IntTy_I("i64"), v)
+}
+
+// A value named by what it is, in a function the backend writes whole:
+// `%o`, `%env`.
+pub fn ll_named(name: Text): LlLocal { LlLocal { text: concat("%", name) } }
+
+pub fn ll_named_label(name: Text): LlLabel { LlLabel { text: name } }
+
+// The function that calls a function value of `n` words to `r`.
+pub fn ll_call_value(n: Nat, r: Nat): LlGlobal {
+  LlGlobal { text: Text::concat_all(["@call.", Text::of_nat(n), ".", Text::of_nat(r)]) }
+}
+
+// The function of the function value with this number, and the one that
+// drops what it captured.
+pub fn ll_closure(id: Nat): LlGlobal { LlGlobal { text: concat("@c", Text::of_nat(id)) } }
+
+pub fn ll_closure_drop(id: Nat): LlGlobal { LlGlobal { text: concat("@cd", Text::of_nat(id)) } }
+
+pub fn ll_fn_drop(): LlGlobal { LlGlobal { text: "@fn.drop" } }
+
+// A parameter that is an address.
+pub fn ll_named_ptr_param(l: LlLocal): llvm::Param::I {
+  llvm::Param::I::Mk(llvm::Ty::I::Ptr_I("ptr"), l.text)
+}
+
+// An address as an argument of a call.
+pub fn ll_ptr_arg(v: llvm::Value::I): llvm::TyValue::I {
+  llvm::TyValue::I::Mk(llvm::Ty::I::Ptr_I("ptr"), v)
+}

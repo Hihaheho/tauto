@@ -1,0 +1,245 @@
+import "mutable_state.taut" {
+  Pair, first, second, Place, read, write, whole, left, right, field,
+  Prog, store, then, translate, tree_all, translate_visible, Separate
+}
+
+// The six call shapes, followed by writes through returned places. These are
+// terms of the state model, not examples accepted by the surface &mut reader.
+// Nested products represent arbitrarily many heterogeneous borrowed roots.
+pub(open) inductive Request: Type { Input: Request }
+
+pub ghost fn change_only(): Prog(Nat, Request, Nat, Unit) {
+  store(whole(Nat), 0, Done(Star))
+}
+
+pub ghost fn change_whole(): Prog(Nat, Request, Nat, Place(Nat, Nat)) {
+  store(whole(Nat), 0, Done(whole(Nat)))
+}
+
+pub ghost fn change_part(): Prog(Pair(Nat, Nat), Request, Nat, Place(Pair(Nat, Nat), Nat)) {
+  store(left(Nat, Nat), 0, Done(left(Nat, Nat)))
+}
+
+pub ghost fn effect_only(): Prog(Nat, Request, Nat, Unit) {
+  Perform(Input, n => store(whole(Nat), n, Done(Star)))
+}
+
+pub ghost fn effect_whole(): Prog(Nat, Request, Nat, Place(Nat, Nat)) {
+  Perform(Input, n => store(whole(Nat), n, Done(whole(Nat))))
+}
+
+pub ghost fn effect_part(): Prog(Pair(Nat, Nat), Request, Nat, Place(Pair(Nat, Nat), Nat)) {
+  Perform(Input, n => store(left(Nat, Nat), n, Done(left(Nat, Nat))))
+}
+
+pub theorem pure_no_return(before: Nat): translate(
+  change_only(),
+  before
+) = CompPure(PairOf(Star, 0)) { Refl }
+
+pub theorem pure_whole_return(before: Nat): translate(
+  change_whole(),
+  before
+) = CompPure(PairOf(whole(Nat), 0)) { Refl }
+
+pub theorem pure_part_return(
+  before: Nat,
+  untouched: Nat
+): translate(change_part(), PairOf(before, untouched)) =
+CompPure(PairOf(left(Nat, Nat), PairOf(0, untouched))) { Refl }
+
+pub theorem effect_no_return(before: Nat): translate(effect_only(), before) =
+CompOp(Input, (n: Nat) => CompPure(PairOf(Star, n))) { Refl }
+
+pub theorem effect_whole_return(before: Nat): translate(effect_whole(), before) =
+CompOp(Input, (n: Nat) => CompPure(PairOf(whole(Nat), n))) { Refl }
+
+pub theorem effect_part_return(
+  before: Nat,
+  untouched: Nat
+): translate(effect_part(), PairOf(before, untouched)) =
+CompOp(Input, (n: Nat) => CompPure(PairOf(left(Nat, Nat), PairOf(n, untouched)))) { Refl }
+
+pub theorem returned_whole_write(before: Nat): translate(
+  then(change_whole(), p => store(p, 9, Done(Star))),
+  before
+) =
+CompPure(PairOf(Star, 9)) { Refl }
+
+pub theorem returned_part_write(
+  before: Nat,
+  untouched: Nat
+): translate(then(change_part(), p => store(p, 9, Done(Star))), PairOf(before, untouched)) =
+CompPure(PairOf(Star, PairOf(9, untouched))) { Refl }
+
+pub theorem effect_returned_part_write(
+  before: Nat,
+  untouched: Nat
+): translate(then(effect_part(), p => store(p, 9, Done(Star))), PairOf(before, untouched)) =
+CompOp(Input, (n: Nat) => CompPure(PairOf(Star, PairOf(9, untouched)))) { Refl }
+
+// A before-state hypothesis remains useful for a field the call preserves.
+pub theorem preserves_before_fact(
+  before: Nat,
+  untouched: Nat,
+  h: untouched = 7
+): tree_all(translate(effect_part(), PairOf(before, untouched)), out => second(second(out)) = 7) {
+  n => h
+}
+
+// Selecting a returned place is allowed to depend on an effect answer. The
+// caller must keep that selection, rather than assume a fixed return path.
+pub ghost fn select(n: Nat): Place(Pair(Nat, Nat), Nat) {
+  match n { Zero => left(Nat, Nat), Succ(k) => right(Nat, Nat) }
+}
+
+pub ghost fn choose_part(): Prog(Pair(Nat, Nat), Request, Nat, Place(Pair(Nat, Nat), Nat)) {
+  Perform(Input, n => Done(select(n)))
+}
+
+pub theorem selected_write(
+  a: Nat,
+  b: Nat
+): translate(then(choose_part(), p => store(p, 9, Done(p))), PairOf(a, b)) =
+CompOp(Input, (n: Nat) => CompPure(PairOf(select(n), write(select(n), PairOf(a, b), 9)))) { Refl }
+
+pub theorem selected_postcondition(
+  a: Nat,
+  b: Nat
+): tree_all(
+  translate(then(choose_part(), p => store(p, 9, Done(p))), PairOf(a, b)),
+  out => read(first(out), second(out)) = 9
+) {
+  n => match n { Zero => Refl, Succ(k) => Refl }
+}
+
+// Three inputs: update the first without returning it, return the second
+// whole, and return a field of the third. The third also has a Bool field.
+pub ghost fn Roots(): Type { Pair(Nat, Pair(Nat, Pair(Nat, Bool))) }
+pub ghost fn Returned(): Type { Pair(Place(Roots(), Nat), Place(Roots(), Nat)) }
+pub ghost fn root1(): Place(Roots(), Nat) { left(Nat, Pair(Nat, Pair(Nat, Bool))) }
+pub ghost fn root2(): Place(Roots(), Nat) {
+  field(right(Nat, Pair(Nat, Pair(Nat, Bool))), left(Nat, Pair(Nat, Bool)))
+}
+pub ghost fn root3_field(): Place(Roots(), Nat) {
+  field(field(right(Nat, Pair(Nat, Pair(Nat, Bool))), right(Nat, Pair(Nat, Bool))), left(Nat, Bool))
+}
+
+pub ghost fn mixed(n: Nat): Prog(Roots(), Request, Nat, Returned()) {
+  store(
+    root1(),
+    1,
+    store(root2(), 2, store(root3_field(), n, Done(PairOf(root2(), root3_field()))))
+  )
+}
+
+pub ghost fn use_mixed(p: Returned()): Prog(Roots(), Request, Nat, Unit) {
+  store(first(p), 8, store(second(p), 9, Done(Star)))
+}
+
+pub theorem mixed_pure(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  flag: Bool
+): translate(then(mixed(3), use_mixed), PairOf(a, PairOf(b, PairOf(c, flag)))) =
+CompPure(PairOf(Star, PairOf(1, PairOf(8, PairOf(9, flag))))) { Refl }
+
+pub theorem mixed_effect(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  flag: Bool
+): translate(then(Perform(Input, n => mixed(n)), use_mixed), PairOf(a, PairOf(b, PairOf(c, flag)))) =
+CompOp(Input, (n: Nat) => CompPure(PairOf(Star, PairOf(1, PairOf(8, PairOf(9, flag)))))) { Refl }
+
+// Two successive calls retain a definitional connection to their results.
+pub theorem consecutive_calls(before: Nat): translate(
+  then(change_only(), unit => change_whole()),
+  before
+) =
+CompPure(PairOf(whole(Nat), 0)) { Refl }
+
+// Effect order and the separate answers survive state passing.
+pub theorem two_effects(before: Nat): translate(
+  then(effect_whole(), p => Perform(Input, n => store(p, n, Done(Star)))),
+  before
+) =
+CompOp(Input, (a: Nat) => CompOp(Input, (b: Nat) => CompPure(PairOf(Star, b)))) { Refl }
+
+// Returning a copy of a field is insufficient: updating that copy does not
+// update its owner. Keeping the place makes the owner's field change to 9.
+pub theorem copied_field_loses_writeback(): second(PairOf(9, PairOf(0, 4))) = PairOf(0, 4) { Refl }
+
+pub theorem place_retains_writeback(): write(left(Nat, Nat), PairOf(0, 4), 9) = PairOf(9, 4) { Refl }
+
+// An active whole borrow and a simultaneous borrow of its field are not
+// independent. The model's ability to construct both is not source permission.
+pub theorem overlapping_places_are_not_separate(
+  h: Separate(Pair(Nat, Nat), Pair(Nat, Nat), Nat, whole(Pair(Nat, Nat)), left(Nat, Nat))
+): False {
+  Nat::noconf(False, 1, 0, Eq::congr(p => first(p), And::left(h)(PairOf(0, 0), 1)))
+}
+
+pub ghost fn suspend_after_write(): Prog(Nat, Request, Nat, Unit) {
+  store(whole(Nat), 5, Perform(Input, n => Done(Star)))
+}
+
+// An outer handler that does not resume has no final (result, state) pair to
+// unpack. Supplying its old state loses the write preceding the operation.
+pub ghost fn abort_private(before: Nat): Nat {
+  Comp::fold(
+    Request,
+    (o: Request) => Nat,
+    out => second(out),
+    (o, k) => before,
+    translate(suspend_after_write(), before)
+  )
+}
+
+pub ghost fn abort_visible(before: Nat): Nat {
+  Comp::fold(
+    Pair(Request, Nat),
+    (event: Pair(Request, Nat)) => Pair(Nat, Nat),
+    out => second(out),
+    (event, k) => second(event),
+    translate_visible(suspend_after_write(), before)
+  )
+}
+
+pub theorem abort_private_loses_write(): abort_private(0) = 0 { Refl }
+pub theorem abort_visible_keeps_write(): abort_visible(0) = 5 { Refl }
+
+// A handler updates the exposed state to 9 before resuming. The resumed
+// computation uses that state, not the snapshot from its suspension.
+pub theorem resume_with_handler_state(before: Nat): Comp::fold(
+  Pair(Request, Nat),
+  (event: Pair(Request, Nat)) => Pair(Nat, Nat),
+  out => second(out),
+  (event, k) => k(PairOf(0, 9)),
+  translate_visible(suspend_after_write(), before)
+) = 9 { Refl }
+
+pub theorem abort_skips_later_writes(before: Nat): Comp::fold(
+  Pair(Request, Nat),
+  (event: Pair(Request, Nat)) => Pair(Nat, Nat),
+  out => second(out),
+  (event, k) => second(event),
+  translate_visible(then(suspend_after_write(), unit => store(whole(Nat), 9, Done(Star))), before)
+) = 5 { Refl }
+
+pub theorem visible_mixed(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  flag: Bool
+): Comp::fold(
+  Pair(Request, Roots()),
+  (event: Pair(Request, Roots())) => Pair(Nat, Roots()),
+  out => second(out),
+  (event, k) => k(PairOf(3, second(event))),
+  translate_visible(
+    then(Perform(Input, n => mixed(n)), use_mixed),
+    PairOf(a, PairOf(b, PairOf(c, flag)))
+  )
+) = PairOf(1, PairOf(8, PairOf(9, flag))) { Refl }

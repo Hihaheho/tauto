@@ -1,0 +1,491 @@
+import "messages.taut"
+import "checker.taut"
+import "../../surface/src/surface.taut"
+import std::base
+import std::list
+import std::map
+import std::text
+import "datas.taut"
+import "rows.taut"
+import "rows_base.taut"
+import "ty.taut"
+import "../../identity/src/identity.taut"
+
+
+// Written types and declarations (`written`, `declare_effect`, `declare_data`,
+// `finish_datas`, `signature`, `instantiate` of `types.rs`), in the proof
+// language (`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」).
+
+pub fn ck_written_name(n: Text, generics: Ordmap(Text, Ty)): Ty {
+  if n == "Unit" {
+    TyUnit
+  } else if n == "nat" {
+    TyInt(WidthNat)
+  } else if n == "i32" {
+    TyInt(Width32)
+  } else if n == "i64" {
+    TyInt(Width64)
+  } else if n == "u8" {
+    TyInt(WidthU8)
+  } else if n == "u32" {
+    TyInt(WidthU32)
+  } else if n == "u64" {
+    TyInt(WidthU64)
+  } else if n == "i8" {
+    TyInt(Width8)
+  } else if n == "i16" {
+    TyInt(Width16)
+  } else if n == "u16" {
+    TyInt(WidthU16)
+  } else if n == "uhost" {
+    TyInt(WidthHost)
+  } else if n == "Bool" {
+    TyBool
+  } else if n == "Text" {
+    TyText
+  } else if n == "Never" {
+    TyNever
+  } else if n == "Decimal" {
+    TyDecimal
+  } else if n == "Float" {
+    TyFloat
+  } else if n == "Float32" {
+    TyFloat32
+  } else {
+    ⊢ Ty from match Ordmap::get(generics, n, Ordmap::compare_text) {
+      Some(t) => t
+      None => TyNamed(NameSpelled(n), Nil)
+    }
+  }
+}
+
+pub fn ck_written_ctor_arity(c: &mut Checker, n: Text, span: TySpan): Ty {
+  ck_error(&mut c, type_constructor_variable_one_argument_message(n), span)
+  ck_fresh(&mut c)
+}
+
+pub fn ck_written_bad(c: &mut Checker, span: TySpan): Ty {
+  ck_error(&mut c, not_a_type_message(), span)
+  ck_fresh(&mut c)
+}
+
+pub(open) inductive WrittenApp: Type {
+  WrittenProduct: WrittenApp
+  WrittenInfo: WrittenApp
+  WrittenNamed(name: Text): WrittenApp
+  WrittenGeneric(name: Text): WrittenApp
+  WrittenBad: WrittenApp
+}
+
+pub fn written_nested(function: SurfaceTerm): Bool {
+  match function.kind {
+    SkApp(^inner, ^first) => true
+    _ => false
+  }
+}
+
+pub fn written_app(function: SurfaceTerm, arity: Nat, generics: Ordmap(Text, Ty)): WrittenApp {
+  match function.kind {
+    // `A × B`: the prelude's `Pair` of two members.
+    SkVar(n) => if surface_name_text(n) == "std::prelude::Pair" && arity == 2 {
+      WrittenProduct
+    } else if surface_name_text(n) == "Info" && arity == 1 {
+      WrittenInfo
+    } else if Ordmap::contains(generics, surface_name_text(n), Ordmap::compare_text) {
+      WrittenGeneric(surface_name_text(n))
+    } else if surface_name_text(n) == "std::prelude::Pair" {
+      WrittenBad
+    } else {
+      WrittenNamed(surface_name_text(n))
+    }
+    _ => WrittenBad
+  }
+}
+
+// A declared type is written with all its arguments, except where a type
+// constructor is wanted.
+pub fn ck_arity(c: &mut Checker, name: Text, given: Nat, span: TySpan): Unit {
+  if not(c.constructor_position) {
+    ⊢ Unit from match datas_decl(c.datas, name) {
+      None => #()
+      Some(d) => if given != list_len(d.generics) {
+        ck_error(
+          &mut c,
+          takes_arguments_message(name, Text::of_nat(list_len(d.generics))),
+          span
+        )
+      }
+    }
+  }
+}
+
+pub fn ck_written_var(c: &mut Checker, n: Text, generics: Ordmap(Text, Ty), span: TySpan): Ty {
+  let t := ck_written_name(n, generics)
+  ⊢ Ty from match t {
+    TyNamed(^name, ^args) => if Ordmap::contains(generics, n, Ordmap::compare_text) {
+      t
+    } else {
+      ck_arity(&mut c, n, 0, span)
+      t
+    }
+    _ => t
+  }
+}
+
+pub fn pi_binder(p: SurfaceParam): Option(Text × Kind) {
+  match p.name {
+    None => None
+    Some(n) => ⊢ Option(Text × Kind) from match p.ty.kind {
+      SkVar(k) => ⊢ Option(Text × Kind) from match kind_parse(surface_name_text(k)) {
+        None => None
+        Some(kind) => Some(#(n, kind))
+      }
+      _ => None
+    }
+  }
+}
+
+// The leading `(A: Shared, B: Type, …)` of a function type: the expansion's
+// `<A: Shared, B: Type>(…) -> …`.
+pub fn pi_binders(ps: List(SurfaceParam)): List(Text × Kind) × List(SurfaceParam) {
+  ⊢ (List(Text × Kind) × List(SurfaceParam)) from match ps {
+    Nil => #(Nil, Nil)
+    Cons(p, rest) => ⊢ (List(Text × Kind) × List(SurfaceParam)) from match pi_binder(p) {
+      None => #(Nil, ps)
+      Some(b) => {
+        let more := pi_binders(rest)
+        #(Cons(b, more.fst), more.snd)
+      }
+    }
+  }
+}
+
+pub fn binders_map(bs: List(Text × Kind), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
+  match bs {
+    Nil => map
+    Cons(b, rest) => binders_map(
+      rest,
+      Ordmap::insert(map, b.fst, TyParam(b.fst, b.snd), Ordmap::compare_text)
+    )
+  }
+}
+
+pub fn ty_poly_of(bs: List(Text × Kind), fun: Ty): Ty {
+  match bs {
+    Nil => fun
+    Cons(^b, ^rest) => TyPoly(bs, fun)
+  }
+}
+
+pub fn ck_written_fn_kind(w: Ty, c: &mut Checker, fk: Text, span: TySpan): Ty {
+  match w {
+    TyFn(ps, r, ^k) => TyFn(ps, r, ⊢ Kind from match kind_parse(fk) {
+      Some(x) => x
+      None => KindShared
+    })
+    _ => {
+      ck_error(&mut c, kind_of_function_type_message(fk), span)
+      w
+    }
+  }
+}
+
+// A type written in a program, over the type parameters `generics` names.
+// `under_borrow` is whether the type is the one directly under a `&`.
+mutual {
+  pub fn ck_written_in(t: SurfaceTerm, c: &mut Checker, generics: Ordmap(Text, Ty)): Ty {
+    match t {
+      SurfaceTermIndexedMk(sk, start, end, ^ast_occurrence) => {
+        let under_borrow := c.under_borrow
+        set_to(&mut c.under_borrow, false)
+        ck_written_kind(sk, &mut c, generics, TySpan { start: start, end: end }, under_borrow)
+      }
+    }
+  }
+
+  pub fn ck_written_kind(
+    sk: SurfaceKind,
+    c: &mut Checker,
+    generics: Ordmap(Text, Ty),
+    span: TySpan,
+    under_borrow: Bool
+  ): Ty {
+    match sk {
+      // `()`, the unit.
+      SkVar(n) => if surface_name_text(n) == "std::prelude::Star" { TyUnit } else { ck_written_var(&mut c, surface_name_text(n), generics, span) }
+      SkApp(function, arguments) => if written_nested(function) {
+        // The arguments of both, the inner ones first.
+        let saved := c.constructor_position
+        set_to(&mut c.constructor_position, true)
+        let inner := ck_written_in(function, &mut c, generics)
+        set_to(&mut c.constructor_position, saved)
+        let after := ck_written_each(arguments, &mut c, generics)
+        ⊢ Ty from match inner {
+          TyNamed(n, before) => {
+            let targs := List::append(before, after)
+            ck_arity(&mut c, surface_name_text(n), list_len(targs), span)
+            TyNamed(n, targs)
+          }
+          _ => ck_written_bad(&mut c, span)
+        }
+      } else {
+        ⊢ Ty from match written_app(function, list_len(arguments), generics) {
+          WrittenProduct => ty_product(ck_written_each(arguments, &mut c, generics))
+          WrittenInfo => ⊢ Ty from match ck_written_each(arguments, &mut c, generics) {
+            Cons(a, ^rest) => TyInfo(a)
+            Nil => TyUnit
+          }
+          WrittenNamed(n) => {
+            if n == "Slice" && not(under_borrow) {
+              ck_error(&mut c, slice_only_borrowed_message(), span)
+            }
+            let targs := ck_written_each(arguments, &mut c, generics)
+            ck_arity(&mut c, n, list_len(targs), span)
+            TyNamed(NameSpelled(n), targs)
+          }
+          WrittenGeneric(n) => if list_len(arguments) == 1 {
+            ⊢ Ty from match ck_written_each(arguments, &mut c, generics) {
+              Cons(x, ^more) => ty_apply(ck_written_name(n, generics), x)
+              Nil => ck_written_ctor_arity(&mut c, n, span)
+            }
+          } else {
+            ck_written_ctor_arity(&mut c, n, span)
+          }
+          WrittenBad => ck_written_bad(&mut c, span)
+        }
+      }
+      SkPi(params, result, ^effects) => {
+        let split := pi_binders(params)
+        let inner := binders_map(split.fst, generics)
+        let ps := ck_written_params(params, &mut c, inner, list_len(split.fst))
+        let r := ck_written_in(result, &mut c, inner)
+        ty_poly_of(split.fst, TyFn(ps, r, KindShared))
+      }
+      SkFnKind(fk, ty) => ck_written_fn_kind(ck_written_in(ty, &mut c, generics), &mut c, fk, span)
+      SkBorrow(mutable, ^mutable_orig, x) => {
+        set_to(&mut c.under_borrow, true)
+        let w := ck_written_in(x, &mut c, generics)
+        TyBorrow(w, mutable)
+      }
+      SkUnion(ts) => {
+        let ws := ck_written_each(ts, &mut c, generics)
+        ty_union(ws)
+      }
+      SkTagged(tag, x) => {
+        let w := ck_written_in(x, &mut c, generics)
+        ty_tagged(Cons(tag, Nil), w)
+      }
+      // An effect row given to a row parameter (`Stored(!e)`, `App(!{log})`): the
+      // checker of types does not follow rows, so the argument is the unit type, as
+      // `types.rs` reads it.
+      SkRow(^what_effects) => TyUnit
+      _ => {
+        ck_error(&mut c, not_a_type_of_program_message(), span)
+        ck_fresh(&mut c)
+      }
+    }
+  }
+
+  pub fn ck_written_each(
+    ts: List(SurfaceTerm),
+    c: &mut Checker,
+    generics: Ordmap(Text, Ty)
+  ): List(Ty) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => {
+        let h := ck_written_in(t, &mut c, generics)
+        let tl := ck_written_each(rest, &mut c, generics)
+        Cons(h, tl)
+      }
+    }
+  }
+
+  // The parameters after the first `skip`.
+  pub fn ck_written_params(
+    ps: List(SurfaceParam),
+    c: &mut Checker,
+    generics: Ordmap(Text, Ty),
+    skip: Nat
+  ): List(Ty) {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => ⊢ List(Ty) from match skip {
+        Succ(n) => ck_written_params(rest, &mut c, generics, n)
+        Zero => {
+          let h := ck_written_param(p, &mut c, generics)
+          let tl := ck_written_params(rest, &mut c, generics, 0)
+          Cons(h, tl)
+        }
+      }
+    }
+  }
+
+  pub fn ck_written_param(p: SurfaceParam, c: &mut Checker, generics: Ordmap(Text, Ty)): Ty {
+    match p {
+      SurfaceParamMk(^name, ty, _) => ck_written_in(ty, &mut c, generics)
+    }
+  }
+}
+
+pub fn ck_written(c: &mut Checker, t: SurfaceTerm, generics: Ordmap(Text, Ty)): Ty {
+  ck_written_in(t, &mut c, generics)
+}
+
+pub fn ck_named_generics(gs: List(Text), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
+  match gs {
+    Nil => map
+    Cons(g, rest) => ck_named_generics(
+      rest,
+      Ordmap::insert(map, g, TyNamed(NameSpelled(g), Nil), Ordmap::compare_text)
+    )
+  }
+}
+
+pub fn ck_effect_param(
+  c: &mut Checker,
+  e: SurfaceEffect,
+  p: Option(SurfaceTerm),
+  generics: Ordmap(Text, Ty)
+): Ty {
+  match p {
+    Some(x) => ck_written(&mut c, x, generics)
+    None => {
+      ck_error(
+        &mut c,
+        parameter_has_no_type_message(e.name),
+        TySpan { start: e.start, end: e.end }
+      )
+      TyNever
+    }
+  }
+}
+
+pub fn ck_effect_params(
+  ps: List(Option(SurfaceTerm)),
+  c: &mut Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty)
+): List(Ty) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => {
+      let h := ck_effect_param(&mut c, e, p, generics)
+      let tl := ck_effect_params(rest, &mut c, e, generics)
+      Cons(h, tl)
+    }
+  }
+}
+
+pub fn ck_effect_quant(c: &mut Checker, e: SurfaceEffect): Quant {
+  match e.r#resume {
+    None => QuantAtMostOne
+    Some(q) => ⊢ Quant from match quant_parse(q) {
+      Some(x) => x
+      None => {
+        ck_error(
+          &mut c,
+          resume_quantity_message(q),
+          TySpan { start: e.start, end: e.end }
+        )
+        QuantAtMostOne
+      }
+    }
+  }
+}
+
+pub fn ck_effect_result(c: &mut Checker, e: SurfaceEffect, generics: Ordmap(Text, Ty)): Ty {
+  match e.result {
+    Some(r) => ck_written(&mut c, r, generics)
+    None => TyUnit
+  }
+}
+
+// The kind a bound on an operation's generic gives it: no kind written is
+// linear, as a type parameter of a declaration is.
+pub fn effect_bound_kind(b: Option(Text)): Kind {
+  match b {
+    None => KindLinear
+    Some(t) => ⊢ Kind from match bound_kind_part(t) {
+      None => KindLinear
+      Some(k) => ⊢ Kind from match kind_parse(k) {
+        None => KindLinear
+        Some(x) => x
+      }
+    }
+  }
+}
+
+// The kinds of an operation's generics, from the bounds written on them.
+pub fn effect_kinds(gs: List(Text), bs: List(Option(Text))): List(Kind) {
+  match gs {
+    Nil => Nil
+    Cons(^g, rest) => ⊢ List(Kind) from match bs {
+      Nil => Cons(KindLinear, effect_kinds(rest, Nil))
+      Cons(b, more) => Cons(effect_bound_kind(b), effect_kinds(rest, more))
+    }
+  }
+}
+
+pub fn ck_declare_effect(c: &mut Checker, e: SurfaceEffect): Unit {
+  let generics := ck_named_generics(e.generics, Ordmap::empty())
+  let params := ck_effect_params(e.params, &mut c, e, generics)
+  let result := ck_effect_result(&mut c, e, generics)
+  let quant := ck_effect_quant(&mut c, e)
+  set_to(&mut c.quants, Ordmap::insert(c.quants, e.name, quant, Ordmap::compare_text))
+  set_to(
+    &mut c.effects,
+    Ordmap::insert(
+      c.effects,
+      e.name,
+      EffectSig {
+        generics: e.generics,
+        kinds: effect_kinds(e.generics, e.bounds),
+        params: params,
+        result: result
+      },
+      Ordmap::compare_text
+    )
+  )
+}
+
+pub fn ck_param_generics(gs: List(Text), kind: Kind, map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
+  match gs {
+    Nil => map
+    Cons(g, rest) => ck_param_generics(
+      rest,
+      kind,
+      Ordmap::insert(map, g, TyParam(g, kind), Ordmap::compare_text)
+    )
+  }
+}
+
+pub fn ck_data_fields(
+  fs: List(SurfaceDataField),
+  c: &mut Checker,
+  generics: Ordmap(Text, Ty)
+): List(DataField) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let t := ck_written(&mut c, f.ty, generics)
+      let tl := ck_data_fields(rest, &mut c, generics)
+      Cons(DataField { name: f.name, ty: t }, tl)
+    }
+  }
+}
+
+pub fn ck_data_ctors(
+  cs: List(SurfaceDataCtor),
+  c: &mut Checker,
+  generics: Ordmap(Text, Ty)
+): List(DataCtor) {
+  match cs {
+    Nil => Nil
+    Cons(k, rest) => {
+      let fields := ck_data_fields(k.fields, &mut c, generics)
+      let tl := ck_data_ctors(rest, &mut c, generics)
+      Cons(DataCtor { name: k.name, fields: fields }, tl)
+    }
+  }
+}

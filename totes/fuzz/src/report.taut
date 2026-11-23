@@ -1,0 +1,67 @@
+// What the driver reads: programs written one piece to a line, so a driver
+// in another language reads them without parsing Tauto.
+//
+//   choices N N …   the choices the program took
+//   decl TEXT       its declarations
+//   show TEXT       one show line, in order
+//   end
+//
+// TEXT is the piece as `Text::escape_debug` writes it, without quotes.
+
+import "choices.taut"
+import "program.taut"
+import "shrink.taut"
+
+pub fn fz_numbers(l: List(u64)): Text {
+  match l {
+    Nil => ""
+    Cons(x, rest) => fz_cats([" ", Text::of_u64(x), fz_numbers(rest)])
+  }
+}
+
+pub fn fz_show_lines(l: List(Text)): Text {
+  match l {
+    Nil => ""
+    Cons(x, rest) => fz_cats(["show ", Text::escape_debug(x), "\n", fz_show_lines(rest)])
+  }
+}
+
+pub fn fz_report(p: FzProgram): Text {
+  fz_cats([
+    "choices", fz_numbers(p.choices), "\n",
+    "decl ", Text::escape_debug(p.declarations), "\n",
+    fz_show_lines(p.shows),
+    "end\n"
+  ])
+}
+
+// The program of `seed`.
+pub fn fz_seed_report(seed: u64): Text ! {div, divzero, overflow} {
+  fz_report(fz_program(fz_of_seed(seed)))
+}
+
+// The program `choices` name when replayed.
+pub fn fz_replay_report(choices: List(u64)): Text ! {div, divzero, overflow} {
+  fz_report(fz_program(fz_of_list(choices)))
+}
+
+pub fn fz_replay_all(l: List(List(u64))): Text ! {div, divzero, overflow} {
+  match l {
+    Nil => ""
+    Cons(c, rest) => concat(fz_replay_report(c), fz_replay_all(rest))
+  }
+}
+
+// The programs one shrinking step from `choices`, most promising first.
+pub fn fz_shrink_report(choices: List(u64)): Text ! {div, divzero, overflow} {
+  fz_replay_all(fz_shrinks(choices))
+}
+
+// The programs of the `count` seeds from `first`.
+pub fn fz_seeds_report(first: u64, count: u64): Text ! {div, divzero, overflow} {
+  if count == 0 {
+    ""
+  } else {
+    concat(fz_seed_report(first), fz_seeds_report(first + 1, count - 1))
+  }
+}

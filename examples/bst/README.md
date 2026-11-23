@@ -2,7 +2,7 @@
 
 A tote. `src/bst.taut` has `Tree(A)`, `tree_insert`, `tree_member`, `tree_delete` (with `tree_min`, `tree_remove_min`
 and `tree_join` for a node with two children). The keys are any type with an order: the functions that compare say
-`where Ord(A)` (`std/prelude/Ord.taut`) and use one three-way `Ord::compare`, so each operation has one `match` on an `Ordering`.
+`where Ord(A)` (`std/builtin/ord.taut`) and use one three-way `Ord::compare`, so each operation has one `match` on an `Ordering`.
 `proof/bst.taut` proves, for every such `A` and with no axioms:
 
 - `bst(t)`: at every node the left keys are smaller (`all_less`) and the right ones larger (`all_greater`);

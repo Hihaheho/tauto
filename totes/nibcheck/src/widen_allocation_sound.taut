@@ -8,6 +8,7 @@ import "checker.taut"
 import "checker_frame.taut"
 import "fits_allocation_sound.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "types_match.taut"
@@ -25,7 +26,7 @@ pub theorem widen_alloc_borrow_current(
   current_bound: TypeAllocated(ck_next_of(c), current),
   rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv))
 ): AllocationAdvance(c, widen_borrow_current(c, a, rv, current)) {
-  ⊢ AllocationAdvance(c, widen_borrow_current(c, a, rv, current)) from match current {
+  match current {
     TyInt(width) => allocation_advance_return(c, false, state)
     TyBool => allocation_advance_return(c, false, state)
     TyText => allocation_advance_return(c, false, state)
@@ -33,6 +34,7 @@ pub theorem widen_alloc_borrow_current(
     TyNever => allocation_advance_return(c, false, state)
     TyDecimal => allocation_advance_return(c, false, state)
     TyFloat => allocation_advance_return(c, false, state)
+    TyFloat32 => allocation_advance_return(c, false, state)
     TyParam(name, kind) => allocation_advance_return(c, false, state)
     TyVar(index) => allocation_advance_return(c, false, state)
     TyFn(params, result, kind) => allocation_advance_return(c, false, state)
@@ -42,8 +44,7 @@ pub theorem widen_alloc_borrow_current(
     TyTagged(tags, inner) => allocation_advance_return(c, false, state)
     TyInfo(inner) => allocation_advance_return(c, false, state)
     TyBorrow(inner, mutable) => allocation_advance_bind(
-      Bool,
-      Bool,
+      <A: Bool, B: Bool>,
       c,
       (success: Bool, next: Checker) => widen_attempt(next, rv, inner, success),
       widen_fits_if(
@@ -112,7 +113,7 @@ pub theorem widen_alloc_borrow_arm(
   current_bound: TypeAllocated(ck_next_of(c), current),
   arm_bound: TypeAllocated(ck_next_of(c), arm)
 ): AllocationAdvance(c, widen_borrow_arm(c, current, arm)) {
-  ⊢ AllocationAdvance(c, widen_borrow_arm(c, current, arm)) from match arm {
+  match arm {
     TyInt(width) => allocation_advance_return(c, false, state)
     TyBool => allocation_advance_return(c, false, state)
     TyText => allocation_advance_return(c, false, state)
@@ -120,6 +121,7 @@ pub theorem widen_alloc_borrow_arm(
     TyNever => allocation_advance_return(c, false, state)
     TyDecimal => allocation_advance_return(c, false, state)
     TyFloat => allocation_advance_return(c, false, state)
+    TyFloat32 => allocation_advance_return(c, false, state)
     TyParam(name, kind) => allocation_advance_return(c, false, state)
     TyVar(index) => allocation_advance_return(c, false, state)
     TyFn(params, result, kind) => allocation_advance_return(c, false, state)
@@ -177,7 +179,7 @@ pub theorem widen_alloc_final_fits(
   rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
   failed: Bool
 ): AllocationAdvance(c, widen_final_fits(c, a, current, rv, failed)) {
-  ⊢ AllocationAdvance(c, widen_final_fits(c, a, current, rv, failed)) from match failed {
+  match failed {
     false => allocation_advance_return(c, Star, state)
     true => allocation_advance_rewrap(
       c,
@@ -213,11 +215,10 @@ pub theorem widen_alloc_after_arm(
   rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
   failed: Bool
 ): AllocationAdvance(c, widen_after_arm(c, a, current, rv, failed)) {
-  ⊢ AllocationAdvance(c, widen_after_arm(c, a, current, rv, failed)) from match failed {
+  match failed {
     false => allocation_advance_return(c, Star, state)
     true => allocation_advance_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       c,
       (success: Bool, next: Checker) => widen_final_fits(next, a, current, rv, not(success)),
       ck_attempt_fits(c, a, current),
@@ -250,11 +251,10 @@ pub theorem widen_alloc_after_current(
   rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
   failed: Bool
 ): AllocationAdvance(c, widen_after_current(c, a, current, rv, failed)) {
-  ⊢ AllocationAdvance(c, widen_after_current(c, a, current, rv, failed)) from match failed {
+  match failed {
     false => allocation_advance_return(c, Star, state)
     true => allocation_advance_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       c,
       (success: Bool, next: Checker) => widen_after_arm(next, a, current, rv, not(success)),
       ck_widen_borrowed_arm(c, a, current),
@@ -287,11 +287,10 @@ pub theorem widen_alloc_after_fn(
   rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
   failed: Bool
 ): AllocationAdvance(c, widen_after_fn(c, a, current, rv, failed)) {
-  ⊢ AllocationAdvance(c, widen_after_fn(c, a, current, rv, failed)) from match failed {
+  match failed {
     false => allocation_advance_return(c, Star, state)
     true => allocation_advance_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       c,
       (success: Bool, next: Checker) => widen_after_current(next, a, current, rv, not(success)),
       ck_widen_borrowed_current(c, a, current, rv),
@@ -334,8 +333,7 @@ pub theorem widen_alloc_handle(
   rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv))
 ): AllocationAdvance(c, widen_handle(c, a, current, rv)) {
   allocation_advance_bind(
-    Bool,
-    Unit,
+    <A: Bool, B: Unit>,
     c,
     (success: Bool, next: Checker) => widen_after_fn(next, a, current, rv, not(success)),
     ck_widen_fn(c, a, current, rv),

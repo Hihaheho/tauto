@@ -1,6 +1,6 @@
 import "lock.taut"
-import std::Base
-import std::Text
+import std::base
+import std::text
 
 // What a trust policy (`Trust.eure`) may say, once the host has read it: the
 // aliases a rule names, and whether its age witnesses are independent of its
@@ -13,13 +13,13 @@ pub(open) inductive TbIndex: Type {
 }
 
 pub fn tb_index_alias(i: TbIndex): Text {
-  ⊢ Text from match i {
-    MkIndex(alias, id, repository, reference) => alias
+  match i {
+    MkIndex(alias, ^id, ^repository, ^reference) => alias
   }
 }
 
 pub fn tb_twice(names: List(Text)): Option(Text) {
-  ⊢ Option(Text) from match names {
+  match names {
     Nil => None
     Cons(n, rest) => ⊢ Option(Text) from match tb_named(rest, n) {
       true => Some(n)
@@ -30,9 +30,9 @@ pub fn tb_twice(names: List(Text)): Option(Text) {
 
 // One index is the other, or is read from the same place.
 pub fn tb_same_index(a: TbIndex, b: TbIndex): Bool {
-  ⊢ Bool from match a {
-    MkIndex(a1, i1, r1, b1) => ⊢ Bool from match b {
-      MkIndex(a2, i2, r2, b2) => Bool::or(
+  match a {
+    MkIndex(^a1, i1, r1, b1) => ⊢ Bool from match b {
+      MkIndex(^a2, i2, r2, b2) => Bool::or(
         Text::eq(i1, i2),
         Bool::and(Text::eq(r1, r2), Text::eq(b1, b2))
       )
@@ -45,7 +45,7 @@ pub(open) inductive TbNotIndependent: Type {
 }
 
 pub fn tb_observer_of(w: TbIndex, observers: List(TbIndex)): Option(TbNotIndependent) {
-  ⊢ Option(TbNotIndependent) from match observers {
+  match observers {
     Nil => None
     Cons(o, rest) => ⊢ Option(TbNotIndependent) from match tb_same_index(o, w) {
       true => Some(NotIndependent(tb_index_alias(w), tb_index_alias(o)))
@@ -61,7 +61,7 @@ pub fn tb_independent(
   observers: List(TbIndex),
   witnesses: List(TbIndex)
 ): Option(TbNotIndependent) {
-  ⊢ Option(TbNotIndependent) from match witnesses {
+  match witnesses {
     Nil => None
     Cons(w, rest) => ⊢ Option(TbNotIndependent) from match tb_observer_of(w, observers) {
       Some(found) => Some(found)

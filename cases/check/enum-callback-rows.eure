@@ -9,12 +9,14 @@ let result := handle { read(Read(() => perform ask())) } with {
   ask(), k => k("handled")
   return text => text
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = \"handled\""]
+stdout = ```
+"handled"
+```
 
 @ cases.generic-row-and-alternatives
 source = ```tauto
@@ -27,14 +29,15 @@ let result := handle { read(Read(() => perform ask())) } with {
   ask(), k => k("generic")
   return text => text
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = \"generic\""]
+stdout = ```
+"generic"
+```
 // Effect-only enum parameters do not have a Rust data representation.
-rust = "skip: eval-only"
 
 @ cases.generic-type-payload
 source = ```tauto
@@ -47,12 +50,14 @@ let result := handle { read(Held(() => perform ask())) } with {
   ask(), k => k("typed")
   return text => text
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = \"typed\""]
+stdout = ```
+"typed"
+```
 
 @ cases.nested-constructor-pattern
 source = ```tauto
@@ -66,12 +71,14 @@ let result := handle { read(Wrapped(Read(() => perform ask()))) } with {
   ask(), k => k("nested")
   return text => text
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = \"nested\""]
+stdout = ```
+"nested"
+```
 
 @ cases.named-variant-payload
 source = ```tauto
@@ -84,12 +91,14 @@ let result := handle { read(Read { callback: () => perform ask() }) } with {
   ask(), k => k("named")
   return text => text
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = \"named\""]
+stdout = ```
+"named"
+```
 
 @ cases.qualified-constructor-alias
 source = ```tauto
@@ -103,15 +112,14 @@ let result := handle { read(make(() => perform ask())) } with {
   ask(), k => k("alias")
   return text => text
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = \"alias\""]
-backend_known_failure.rust = "unsupported: the constructor `Reader::Read` used as a function"
-backend_known_failure.javascript = "unsupported: the constructor `Reader::Read` used as a function"
-backend_known_failure.vm = "unsupported: the constructor `Reader::Read` used as a function"
+stdout = ```
+"alias"
+```
 
 @ cases.constructor-does-not-hide-effects
 source = ```tauto
@@ -208,12 +216,14 @@ let result := handle { read(value) } with {
   ask(), k => k("owner")
   return text => text
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = \"owner\""]
+stdout = ```
+"owner"
+```
 
 @ cases.ambiguous-constructor-contract-is-checked
 source = ```tauto
@@ -238,7 +248,7 @@ let result := handle { read(value) } with {
   ask(), k => k("hidden")
   return text => text
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "error: a function value may perform ask but its type permits {}"
@@ -248,18 +258,20 @@ source = ```tauto
 struct Holder { callback: () -> Text ! {} }
 let holder := Holder { callback: () => "qualified" }
 let result := match holder { Holder::Holder { callback } => callback() }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = \"qualified\""]
+stdout = ```
+"qualified"
+```
 
-@ cases.same-named-enum-variant-does-not-hide-effects
+@ cases.enum-variant-record-does-not-hide-effects
 source = ```tauto
 effect ask(): Text direct
-enum Reader { Reader { callback: () -> Text ! {} }, Empty }
-let value: Reader := Reader { callback: () => perform ask() }
+enum Reader { Read { callback: () -> Text ! {} }, Empty }
+let value: Reader := Read { callback: () => perform ask() }
 ```
 types = "ok"
 rows = "error: a function value may perform ask but its type permits {}"
@@ -272,12 +284,14 @@ let result := match value {
   Leaf(number, callback) => callback()
   Branch(left, right) => "branch"
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = \"Leaf\""]
+stdout = ```
+"Leaf"
+```
 
 @ cases.expanding-recursion-does-not-expand-contracts
 source = ```tauto
@@ -312,14 +326,15 @@ let result := handle { forward(Read(() => perform ask())) } with {
   ask(), k => k("forwarded")
   return text => text
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = \"forwarded\""]
+stdout = ```
+"forwarded"
+```
 // Effect-only enum parameters do not have a Rust data representation.
-rust = "skip: eval-only"
 
 @ cases.host-result-keeps-generic-callback-boundaries
 source = ```tauto
@@ -353,25 +368,24 @@ rows = "ok"
 // row: what is put in must fit it, and what is taken out performs it.
 @ cases.a-list-of-functions-keeps-their-row
 source = ```nib
-import std::prelude::Os
+import std::builtin::os
 
 fn hi(): i64 ! {stdout} {
   perform stdout("hi")
   1
 }
-fn run_all(fs: List(() -> i64 ! {stdout})): i64 ! {stdout} {
+fn run_all(fs: List(() -> i64 ! {stdout})): i64 ! {stdout, overflow} {
   match fs {
     Nil => 0
     Cons(f, rest) => f() + run_all(rest)
   }
 }
-perform show("n", run_all([() => 2, hi, hi]))
+show(&run_all([() => 2, hi, hi]))
 ```
-backends = ["rust", "javascript"]
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["n = 4"]
+stdout = "hihi4\n"
 
 @ cases.a-list-of-functions-refuses-a-function-outside-its-row
 source = ```nib
@@ -379,7 +393,7 @@ fn bad(): i64 ! {stderr} {
   perform stderr("x")
   1
 }
-fn run_all(fs: List(() -> i64 ! {stdout})): i64 ! {stdout} {
+fn run_all(fs: List(() -> i64 ! {stdout})): i64 ! {stdout, overflow} {
   match fs {
     Nil => 0
     Cons(f, rest) => f() + run_all(rest)
@@ -402,62 +416,60 @@ rows = "error: may perform stdout"
 
 @ cases.a-hashmap-of-functions-keeps-their-row
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Os
+import std::indexed_map { IndexedMap }
+import std::builtin::os
 
 fn hi(): i64 ! {stdout} {
   perform stdout("hi")
   1
 }
-fn call(&m: HashMap(i64, () -> i64 ! {stdout}), k: i64): i64 ! {stdout} {
-  match HashMap::get(&m, &k) {
+fn call(m: &IndexedMap(i64, () -> i64 ! {stdout}), k: i64): i64 ! {stdout} {
+  match IndexedMap::get(&m, &k) {
     None => 0
     Some(f) => f()
   }
 }
-var m: HashMap(i64, () -> i64 ! {stdout}) := HashMap::new()
-let old := HashMap::insert(&mut m, 1, hi)
-perform show("n", call(&m, 1))
+var m: IndexedMap(i64, () -> i64 ! {stdout}) := IndexedMap::new()
+let old := IndexedMap::insert(&mut m, 1, hi)
+show(&call(&m, 1))
 ```
-backends = ["rust", "javascript"]
 types = "ok"
 rows = "ok"
-shows = ["n = 1"]
+stdout = "hi1\n"
 
 @ cases.a-hashmap-of-pure-functions
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-fn find(&m: HashMap(u64, (x: i64) -> i64), w: u64): Option((x: i64) -> i64) {
-  match HashMap::get(&m, &w) {
+fn find(m: &IndexedMap(nat, (x: nat) -> nat), w: nat): Option((x: nat) -> nat) {
+  match IndexedMap::get(&m, &w) {
     None => None
     Some(f) => Some(f)
   }
 }
-var m: HashMap(u64, (x: i64) -> i64) := HashMap::new()
-let old := HashMap::insert(&mut m, 1, (x: i64) => x + 1)
+var m: IndexedMap(nat, (x: nat) -> nat) := IndexedMap::new()
+let old := IndexedMap::insert(&mut m, 1, (x: nat) => x + 1)
 match find(&m, 1) {
-  None => perform show("n", 0)
-  Some(f) => perform show("n", f(41))
+  None => show(&0)
+  Some(f) => show(&f(41))
 }
 ```
-backends = ["rust", "javascript"]
 types = "ok"
 rows = "ok"
-shows = ["n = 42"]
+stdout = "42\n"
 
 @ cases.a-callable-field-read-out-of-a-hashmap-keeps-its-row
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Os
+import std::indexed_map { IndexedMap }
+import std::builtin::os
 
 fn hi(): i64 ! {stdout} {
   perform stdout("hi")
   1
 }
-affine struct Watcher { run: () -> i64 ! {stdout} }
-fn call(&m: HashMap(u64, Option(Watcher)), k: u64): i64 ! {stdout} {
-  let f := match HashMap::get(&m, &k) {
+struct(affine) Watcher { run: () -> i64 ! {stdout} }
+fn call(m: &IndexedMap(u64, Option(Watcher)), k: u64): i64 ! {stdout} {
+  let f := match IndexedMap::get(&m, &k) {
     None => None
     Some(o) => match o {
       None => None
@@ -469,30 +481,31 @@ fn call(&m: HashMap(u64, Option(Watcher)), k: u64): i64 ! {stdout} {
     Some(g) => g()
   }
 }
-var m: HashMap(u64, Option(Watcher)) := HashMap::new()
-let old := HashMap::insert(&mut m, 1, Some(Watcher { run: hi }))
-perform show("n", call(&m, 1))
+var m: IndexedMap(u64, Option(Watcher)) := IndexedMap::new()
+let old := IndexedMap::insert(&mut m, 1, Some(Watcher { run: hi }))
+show(&call(&m, 1))
 ```
 types = "ok"
 rows = "ok"
-shows = ["n = 1"]
+stdout = "hi1\n"
 
 @ cases.a-mutex-callback-is-given-what-the-mutex-holds
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Os
-import std::prelude::Par
+import std::indexed_map { IndexedMap }
+import std::builtin::os
+import std::builtin::par
 
 fn hi(): i64 ! {stdout} {
   perform stdout("hi")
   1
 }
-affine struct Watcher { run: () -> i64 ! {stdout} }
-fn call(held: Mutex(HashMap(u64, Watcher)), k: u64): i64 ! {stdout, wait} {
+struct(affine) Watcher { run: () -> i64 ! {stdout} }
+fn call(held: Mutex(IndexedMap(u64, Watcher)), k: u64): i64 ! {stdout, wait, mutex_claim} {
   let f := {
     let g := Mutex::lock(held)
-    let &m := MutexGuard::get(&g)
-    match HashMap::get(&m, &k) {
+    let m := MutexGuard::get(&g)
+    match IndexedMap::get(&m, &k) {
       None => None
       Some(w) => Some(w.run)
     }
@@ -502,13 +515,13 @@ fn call(held: Mutex(HashMap(u64, Watcher)), k: u64): i64 ! {stdout, wait} {
     Some(g) => g()
   }
 }
-var m: HashMap(u64, Watcher) := HashMap::new()
-let old := HashMap::insert(&mut m, 1, Watcher { run: hi })
-perform show("n", call(Mutex::new(m), 1))
+var m: IndexedMap(u64, Watcher) := IndexedMap::new()
+let old := IndexedMap::insert(&mut m, 1, Watcher { run: hi })
+show(&call(perform mutex_new(m), 1))
 ```
 types = "ok"
 rows = "ok"
-shows = ["n = 1"]
+stdout = "hi1\n"
 
 @ cases.a-none-branch-does-not-hide-the-other-branchs-row
 source = ```nib
@@ -523,20 +536,21 @@ fn call(b: Bool): i64 ! {} {
     Some(g) => g()
   }
 }
-perform show("n", call(false))
+show(&call(false))
 ```
 types = "ok"
 rows = "error: may perform stdout"
 
 @ cases.a-hashmap-of-pure-functions-refuses-an-effectful-one
 source = ```nib
-var m: HashMap(u64, (x: i64) -> i64) := HashMap::new()
-let old := HashMap::insert(&mut m, 1, (x: i64) => {
+import std::indexed_map { IndexedMap }
+var m: IndexedMap(u64, (x: i64) -> i64) := IndexedMap::new()
+let old := IndexedMap::insert(&mut m, 1, (x: i64) => {
   perform stdout("x")
   x
 })
 ```
-rows = "error: may perform stdout but its type permits {}"
+rows = "error: cannot follow the effects stored in a value required by its type"
 
 @ cases.a-ref-of-a-function-refuses-a-function-outside-its-row
 source = ```nib
@@ -545,24 +559,24 @@ fn bad(): i64 ! {stderr} {
   1
 }
 fn hi(): i64 ! {stdout} { 1 }
-let r: Ref(() -> i64 ! {stdout}) := Ref::new(hi)
-Ref::set(r, bad)
+let r: Ref(() -> i64 ! {stdout}) := perform ref_new(hi)
+perform ref_set(r, bad)
 ```
 rows = "error: may perform stderr but its type permits {stdout}"
 
 @ cases.a-ref-of-a-function-keeps-its-row
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
 source = ```nib
-import std::prelude::Os
-import std::prelude::Par
+import std::builtin::os
+import std::builtin::par
 
 fn hi(): i64 ! {stdout} {
   perform stdout("hi")
   1
 }
-let r: Ref(() -> i64 ! {stdout}) := Ref::new(hi)
-let f := Ref::get(r)
-perform show("n", f())
+let r: Ref(() -> i64 ! {stdout}) := perform ref_new(hi)
+let f := perform ref_get(r)
+show(&f())
 ```
-backends = ["rust", "javascript"]
 rows = "ok"
-shows = ["n = 1"]
+stdout = "hi1\n"

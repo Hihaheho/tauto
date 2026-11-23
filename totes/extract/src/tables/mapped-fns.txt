@@ -1,0 +1,440 @@
+Nat::lt	$0 < $1
+Nat::le	$0 <= $1
+Nat::eq	$0 == $1
+Nat::pred	extract_nat_sub($0, 1)
+Nat::add	$0 + $1
+Nat::sub	extract_nat_sub($0, $1)
+Nat::mul	$0 * $1
+Nat::div_nz	extract_nat_div($0, $1)
+Nat::rem_nz	extract_nat_mod($0, $1)
+Nat::divmod	extract_nat_divmod($0, $1, $2, $3)
+Bool::and	$0 && $1
+Bool::or	$0 || $1
+not	not($0)
+Bool::eq	$0 == $1
+Text::bytes	extract_text_bytes($0)
+Text::len	Nat::of_u64(Text::len($0))
+Text::byte	extract_text_byte($0, $1)
+Text::all_bytes	extract_text_all_bytes($0, $1)
+Text::slice	Text::slice($0, U64::of_nat($1), U64::of_nat($2))
+Text::concat	std::prelude::concat($0, $1)
+Text::concat_all	extract_text_concat_all($0)
+Text::ordering	extract_ordering(Text::compare($0, $1))
+Text::eq	$0 == $1
+Text::beq	$0 == $1
+Text::of_nat	Text::of_nat($0)
+Text::of_code_point	extract_text_of_code_point($0)
+Text::utf8_of_code_point	extract_text_utf8_of_code_point($0)
+Text::of_utf8	extract_text_of_utf8($0)
+Array::of_list	Array::of_list($0)
+Array::to_list	Array::to_list($0)
+Array::get	Array::get($0, U64::of_nat($1))
+Array::len	Nat::of_u64(Array::len($0))
+Array::set	Array::set($0, U64::of_nat($1), $2)
+Bytes::of_list	Bytes::of_list($0)
+Bytes::to_list	Bytes::to_list($0)
+Bytes::len	Nat::of_u64(Bytes::len($0))
+Bytes::get	Bytes::get($0, U64::of_nat($1))
+Bytes::find	Nat::of_u64(Bytes::find($0, U64::of_nat($1), U64::of_nat($2), U64::of_nat($3)))
+Bytes::slice	Bytes::slice($0, U64::of_nat($1), U64::of_nat($2))
+Bytes::concat	Bytes::concat($0, $1)
+Bytes::eq	Bytes::eq($0, $1)
+Bytes::of_text	Bytes::of_text($0)
+Text::of_bytes	Text::of_bytes($0)
+SlotsModel::new	{ let slots_cap := $8
+ Slots::new(slots_cap, $1(slots_cap), $2) }
+SlotsModel::state	Slots::state($1)
+SlotsModel::mark_at	Slots::mark($1, $2)
+SlotsModel::get	Slots::get($1, $2)
+SlotsModel::get_mut	Slots::get_mut($1, $2)
+SlotsModel::put	{ let slots_i := $9
+ let slots_m := $10
+ let slots_x := $11
+ let slots_t := $12
+ var s := $8
+ Slots::put(&mut s, slots_i, slots_m, slots_x, slots_t)
+ s }
+SlotsModel::put_m	{ let slots_i := $9
+ let slots_m := $10
+ let slots_x := $11
+ let slots_t := $12
+ Slots::put($8, slots_i, slots_m, slots_x, slots_t) }
+SlotsModel::resize_put_m	{ let slots_c := $9
+ let slots_t1 := $10
+ let slots_i := $11
+ let slots_m := $12
+ let slots_x := $13
+ let slots_t2 := $14
+ Slots::resize($8, slots_c, $2, slots_t1)
+ Slots::put($8, slots_i, slots_m, slots_x, slots_t2) }
+SlotsModel::move_m	{ let slots_i := $9
+ let slots_m1 := $10
+ let slots_t1 := $11
+ let slots_j := $12
+ let slots_m2 := $13
+ let slots_t2 := $14
+ let slots_x := Slots::take($8, slots_i, slots_m1, slots_t1)
+ Slots::put($8, slots_j, slots_m2, slots_x, slots_t2) }
+SlotsModel::swap_m	{ let slots_i := $2
+ let slots_x := $3
+ let slots_m := Slots::mark($1, slots_i)
+ let slots_t := Slots::state($1)
+ let slots_old := Slots::take($1, slots_i, slots_m, slots_t)
+ Slots::put($1, slots_i, slots_m, slots_x, slots_t)
+ slots_old }
+SlotsModel::take_m	{ let slots_i := $9
+ let slots_m := $10
+ let slots_t := $11
+ Slots::take($8, slots_i, slots_m, slots_t) }
+SlotsModel::resize_m	{ let slots_c := $9
+ let slots_m := $2
+ let slots_t := $10
+ Slots::resize($8, slots_c, slots_m, slots_t) }
+SlotsModel::take	{ let slots_i := $9
+ let slots_m := $10
+ let slots_t := $11
+ var s := $8
+ let x := Slots::take(&mut s, slots_i, slots_m, slots_t)
+ #(s, x) }
+SlotsModel::resize	{ let slots_c := $9
+ let slots_m := $2
+ let slots_t := $10
+ var s := $8
+ Slots::resize(&mut s, slots_c, slots_m, slots_t)
+ s }
+Stack::new	Vec::new()
+Stack::push	Vec::push($0, $1)
+Stack::pop	Vec::pop($0)
+Stack::len	Nat::of_u64(Vec::len($0))
+Stack::is_empty	(Vec::len($0) == 0)
+Never::elim	$0
+UInt::add_or_overflow8	$0 + $1
+UInt::sub_or_overflow8	$0 - $1
+UInt::mul_or_overflow8	$0 * $1
+UInt::div8	div($0, $1)
+UInt::rem8	mod($0, $1)
+UInt::add_or_overflow32	$0 + $1
+UInt::sub_or_overflow32	$0 - $1
+UInt::mul_or_overflow32	$0 * $1
+UInt::div32	div($0, $1)
+UInt::rem32	mod($0, $1)
+UInt::add_or_overflow64	$0 + $1
+UInt::sub_or_overflow64	$0 - $1
+UInt::mul_or_overflow64	$0 * $1
+UInt::div64	div($0, $1)
+UInt::rem64	mod($0, $1)
+SInt::add_or_overflow32	$0 + $1
+SInt::sub_or_overflow32	$0 - $1
+SInt::mul_or_overflow32	$0 * $1
+SInt::neg_or_overflow32	-($0)
+SInt::tdiv32	div($0, $1)
+SInt::tmod32	mod($0, $1)
+SInt::add_or_overflow64	$0 + $1
+SInt::sub_or_overflow64	$0 - $1
+SInt::mul_or_overflow64	$0 * $1
+SInt::neg_or_overflow64	-($0)
+SInt::tdiv64	div($0, $1)
+SInt::tmod64	mod($0, $1)
+SInt::mk32	extract_i32_of_fitting($0)
+SInt::mk64	extract_i64_of_fitting($0)
+UInt::mk8	U8::of_u64(U64::of_nat($0))
+UInt::mk32	U32::of_u64(U64::of_nat($0))
+UInt::mk64	U64::of_nat($0)
+UInt::val8	Nat::of_u64(U64::of_u8($0))
+UInt::of_decided8	extract_u8_of_decided($0, $1)
+UInt::of_nat_checked8	extract_u8_of_nat($0)
+UInt::add8	$0 + $1
+UInt::sub8	$0 - $1
+UInt::mul8	$0 * $1
+UInt::checked_add8	extract_u8_checked_add($0, $1)
+UInt::checked_sub8	extract_u8_checked_sub($0, $1)
+UInt::checked_mul8	extract_u8_checked_mul($0, $1)
+UInt::lt8	$0 < $1
+UInt::le8	$0 <= $1
+UInt::eq8	$0 == $1
+UInt::of_nat_mod8	U8::of_u64(U64::of_nat(extract_nat_mod($0, 256)))
+UInt::wrapping_add8	extract_u8_wrap(extract_u8_nat($0) + extract_u8_nat($1))
+UInt::wrapping_sub8	extract_u8_wrap(extract_u8_nat($0) + extract_u8_modulus() - extract_u8_nat($1))
+UInt::wrapping_mul8	extract_u8_wrap(extract_u8_nat($0) * extract_u8_nat($1))
+UInt::val32	Nat::of_u64(U64::of_u32($0))
+UInt::of_decided32	extract_u32_of_decided($0, $1)
+UInt::of_nat_checked32	extract_u32_of_nat($0)
+UInt::add32	$0 + $1
+UInt::sub32	$0 - $1
+UInt::mul32	$0 * $1
+UInt::checked_add32	extract_u32_checked_add($0, $1)
+UInt::checked_sub32	extract_u32_checked_sub($0, $1)
+UInt::checked_mul32	extract_u32_checked_mul($0, $1)
+UInt::lt32	$0 < $1
+UInt::le32	$0 <= $1
+UInt::eq32	$0 == $1
+UInt::of_nat_mod32	U32::of_u64(U64::of_nat(extract_nat_mod($0, 4294967296)))
+UInt::wrapping_add32	extract_u32_wrap(extract_u32_nat($0) + extract_u32_nat($1))
+UInt::wrapping_sub32	extract_u32_wrap(extract_u32_nat($0) + extract_u32_modulus() - extract_u32_nat($1))
+UInt::wrapping_mul32	extract_u32_wrap(extract_u32_nat($0) * extract_u32_nat($1))
+UInt::val64	Nat::of_u64($0)
+UHost::val	Nat::of_u64(U64::of_uhost($0))
+UHost::zero	UHost::of_u64_below(0)
+UHost::lt	$0 < $1
+UHost::le	$0 <= $1
+UHost::eq	$0 == $1
+UHost::succ_below_proved	UHost::succ_below($0)
+UHost::pred_nz_proved	UHost::pred_nz($0)
+UHost::add_within_proved	UHost::add_within($0, $1)
+UHost::sub_proved	UHost::sub($0, $1)
+UHost::of_u64_below_proved	UHost::of_u64_below($0)
+UHost::of_u32	UHost::of_u64_below(U64::of_u32($0))
+UHost::to_u64	U64::of_uhost($0)
+UInt::of_decided64	extract_u64_of_decided($0, $1)
+UInt::of_nat_checked64	extract_u64_of_nat($0)
+UInt::of_nat_mod64	U64::of_nat(extract_nat_mod($0, 18446744073709551616))
+UInt::add64	$0 + $1
+UInt::sub64	$0 - $1
+UInt::mul64	$0 * $1
+UInt::checked_add64	extract_u64_checked_add($0, $1)
+UInt::checked_sub64	extract_u64_checked_sub($0, $1)
+UInt::checked_mul64	extract_u64_checked_mul($0, $1)
+UInt::lt64	$0 < $1
+UInt::le64	$0 <= $1
+UInt::eq64	$0 == $1
+UInt::wrapping_add64	U64::wrapping_add($0, $1)
+UInt::wrapping_sub64	U64::wrapping_sub($0, $1)
+UInt::wrapping_mul64	U64::wrapping_mul($0, $1)
+UInt::and32	U32::and($0, $1)
+UInt::or32	U32::or($0, $1)
+UInt::xor32	U32::xor($0, $1)
+UInt::shl32	U32::shl($0, U64::of_nat(extract_nat_mod($1, 32)))
+UInt::shr32	U32::shr($0, U64::of_nat(extract_nat_mod($1, 32)))
+UInt::rotl32	U32::rotl($0, U64::of_nat(extract_nat_mod($1, 32)))
+UInt::rotr32	U32::rotr($0, U64::of_nat(extract_nat_mod($1, 32)))
+UInt::and64	U64::and($0, $1)
+UInt::or64	U64::or($0, $1)
+UInt::xor64	U64::xor($0, $1)
+UInt::shl64	U64::shl($0, U64::of_nat(extract_nat_mod($1, 64)))
+UInt::shr64	U64::shr($0, U64::of_nat(extract_nat_mod($1, 64)))
+UInt::rotl64	U64::rotl($0, U64::of_nat(extract_nat_mod($1, 64)))
+UInt::rotr64	U64::rotr($0, U64::of_nat(extract_nat_mod($1, 64)))
+Ct::u8_add	Ct::u8_add($0, $1)
+Ct::u8_sub	Ct::u8_sub($0, $1)
+Ct::u8_mul	Ct::u8_mul($0, $1)
+Ct::u8_and	Ct::u8_and($0, $1)
+Ct::u8_or	Ct::u8_or($0, $1)
+Ct::u8_xor	Ct::u8_xor($0, $1)
+Ct::u8_eq	Ct::u8_eq($0, $1)
+Ct::u8_lt	Ct::u8_lt($0, $1)
+Ct::u8_not	Ct::u8_not($0)
+Ct::u8_shl	Ct::u8_shl($0, U64::of_nat(extract_nat_mod($1, 8)))
+Ct::u8_shr	Ct::u8_shr($0, U64::of_nat(extract_nat_mod($1, 8)))
+Ct::u8_rotl	Ct::u8_rotl($0, U64::of_nat(extract_nat_mod($1, 8)))
+Ct::u8_rotr	Ct::u8_rotr($0, U64::of_nat(extract_nat_mod($1, 8)))
+Ct::u8_select	Ct::u8_select($0, $1, $2)
+Ct::u32_add	Ct::u32_add($0, $1)
+Ct::u32_sub	Ct::u32_sub($0, $1)
+Ct::u32_mul	Ct::u32_mul($0, $1)
+Ct::u32_and	Ct::u32_and($0, $1)
+Ct::u32_or	Ct::u32_or($0, $1)
+Ct::u32_xor	Ct::u32_xor($0, $1)
+Ct::u32_eq	Ct::u32_eq($0, $1)
+Ct::u32_lt	Ct::u32_lt($0, $1)
+Ct::u32_not	Ct::u32_not($0)
+Ct::u32_shl	Ct::u32_shl($0, U64::of_nat(extract_nat_mod($1, 32)))
+Ct::u32_shr	Ct::u32_shr($0, U64::of_nat(extract_nat_mod($1, 32)))
+Ct::u32_rotl	Ct::u32_rotl($0, U64::of_nat(extract_nat_mod($1, 32)))
+Ct::u32_rotr	Ct::u32_rotr($0, U64::of_nat(extract_nat_mod($1, 32)))
+Ct::u32_select	Ct::u32_select($0, $1, $2)
+Ct::u64_add	Ct::u64_add($0, $1)
+Ct::u64_sub	Ct::u64_sub($0, $1)
+Ct::u64_mul	Ct::u64_mul($0, $1)
+Ct::u64_and	Ct::u64_and($0, $1)
+Ct::u64_or	Ct::u64_or($0, $1)
+Ct::u64_xor	Ct::u64_xor($0, $1)
+Ct::u64_eq	Ct::u64_eq($0, $1)
+Ct::u64_lt	Ct::u64_lt($0, $1)
+Ct::u64_not	Ct::u64_not($0)
+Ct::u64_shl	Ct::u64_shl($0, U64::of_nat(extract_nat_mod($1, 64)))
+Ct::u64_shr	Ct::u64_shr($0, U64::of_nat(extract_nat_mod($1, 64)))
+Ct::u64_rotl	Ct::u64_rotl($0, U64::of_nat(extract_nat_mod($1, 64)))
+Ct::u64_rotr	Ct::u64_rotr($0, U64::of_nat(extract_nat_mod($1, 64)))
+Ct::u64_select	Ct::u64_select($0, $1, $2)
+Ct::u64_mul_hi	Ct::u64_mul_hi($0, $1)
+Ct::u64_of_u8	Ct::u64_of_u8($0)
+Ct::u64_of_u32	Ct::u64_of_u32($0)
+Ct::u32_of_u8	Ct::u32_of_u8($0)
+Ct::u8_of_u32	Ct::u8_of_u32($0)
+Ct::u8_of_u64	Ct::u8_of_u64($0)
+Ct::u32_of_u64	Ct::u32_of_u64($0)
+Ct::bytes_len	Nat::of_u64(Ct::bytes_len($0))
+Ct::bytes_get	Ct::bytes_get($0, U64::of_nat($1))
+Ct::bool_and	Ct::bool_and($0, $1)
+Ct::bool_or	Ct::bool_or($0, $1)
+Ct::bool_not	Ct::bool_not($0)
+Ct::bool_select	Ct::bool_select($0, $1, $2)
+expose	expose($0)
+SInt::val32	extract_i32_int($0)
+SInt::of_decided32	extract_i32_of_decided($0, $1)
+SInt::of_int32	extract_i32_of_int($0)
+SInt::add32	$0 + $1
+SInt::sub32	$0 - $1
+SInt::mul32	$0 * $1
+SInt::checked_add32	extract_i32_of_int(Int::add(extract_i32_int($0), extract_i32_int($1)))
+SInt::checked_sub32	extract_i32_of_int(Int::sub(extract_i32_int($0), extract_i32_int($1)))
+SInt::checked_mul32	extract_i32_of_int(Int::mul(extract_i32_int($0), extract_i32_int($1)))
+SInt::lt32	$0 < $1
+SInt::le32	$0 <= $1
+SInt::eq32	$0 == $1
+SInt::val64	extract_i64_int($0)
+SInt::of_decided64	extract_i64_of_decided($0, $1)
+SInt::of_int64	extract_i64_of_int($0)
+SInt::add64	$0 + $1
+SInt::sub64	$0 - $1
+SInt::mul64	$0 * $1
+SInt::checked_add64	extract_i64_of_int(Int::add(extract_i64_int($0), extract_i64_int($1)))
+SInt::checked_sub64	extract_i64_of_int(Int::sub(extract_i64_int($0), extract_i64_int($1)))
+SInt::checked_mul64	extract_i64_of_int(Int::mul(extract_i64_int($0), extract_i64_int($1)))
+SInt::lt64	$0 < $1
+SInt::le64	$0 <= $1
+SInt::eq64	$0 == $1
+Float::raw	Nat::of_u64(Float::bits($0))
+Float::of_raw	Float::of_bits(U64::of_nat(extract_nat_mod($0, 18446744073709551616)))
+Float::bits	Float::bits($0)
+Float::of_bits	Float::of_bits($0)
+Float::add	$0 + $1
+Float::sub	$0 - $1
+Float::mul	$0 * $1
+Float::neg	-$0
+Float::div	$0 / $1
+Float::checked_div	extract_float_checked_div($0, $1)
+Float::is_zero	$0 == 0.0
+Float::is_infinite	extract_float_is_infinite($0)
+Float::eq	$0 == $1
+Float::lt	$0 < $1
+Float::le	$0 <= $1
+Float::of_i64	Float::of_i64($0)
+SInt::of_float_checked64	extract_i64_of_float_checked($0)
+Float::is_nan	Float::is_nan($0)
+Float::abs	Float::abs($0)
+Float::sqrt	Float::sqrt($0)
+Float::trunc	Float::trunc($0)
+Float::floor	Float::floor($0)
+Float::ceil	Float::ceil($0)
+Float::round	Float::round($0)
+Float::cbrt	Float::cbrt($0)
+Float::exp	Float::exp($0)
+Float::ln	Float::ln($0)
+Float::log2	Float::log2($0)
+Float::log10	Float::log10($0)
+Float::pow	Float::pow($0, $1)
+Float::sin	Float::sin($0)
+Float::cos	Float::cos($0)
+Float::tan	Float::tan($0)
+Float::asin	Float::asin($0)
+Float::acos	Float::acos($0)
+Float::atan	Float::atan($0)
+Float::atan2	Float::atan2($0, $1)
+Float::sinh	Float::sinh($0)
+Float::cosh	Float::cosh($0)
+Float::tanh	Float::tanh($0)
+Text::of_float	Text::of_float($0)
+Float::of_text	Float::of_text($0)
+Float32::raw	Nat::of_u64(U64::of_u32(Float32::bits($0)))
+Float32::of_raw	Float32::of_bits(U32::of_u64(U64::of_nat(extract_nat_mod($0, 4294967296))))
+Float32::bits	Float32::bits($0)
+Float32::of_bits	Float32::of_bits($0)
+Float32::of_float	Float32::of_float($0)
+Float::of_float32	Float::of_float32($0)
+Float32::add	$0 + $1
+Float32::sub	$0 - $1
+Float32::mul	$0 * $1
+Float32::neg	-$0
+Float32::div	$0 / $1
+Float32::checked_div	extract_float32_checked_div($0, $1)
+Float32::is_zero	$0 == Float32::of_float(0.0)
+Float32::is_infinite	extract_float32_is_infinite($0)
+Float32::eq	$0 == $1
+Float32::lt	$0 < $1
+Float32::le	$0 <= $1
+Float32::is_nan	Float32::is_nan($0)
+Float32::abs	Float32::abs($0)
+Float32::sqrt	Float32::sqrt($0)
+Float32::trunc	Float32::trunc($0)
+Float32::floor	Float32::floor($0)
+Float32::ceil	Float32::ceil($0)
+Float32::round	Float32::round($0)
+Float32::cbrt	Float32::cbrt($0)
+Float32::exp	Float32::exp($0)
+Float32::ln	Float32::ln($0)
+Float32::log2	Float32::log2($0)
+Float32::log10	Float32::log10($0)
+Float32::sin	Float32::sin($0)
+Float32::cos	Float32::cos($0)
+Float32::tan	Float32::tan($0)
+Float32::asin	Float32::asin($0)
+Float32::acos	Float32::acos($0)
+Float32::atan	Float32::atan($0)
+Float32::sinh	Float32::sinh($0)
+Float32::cosh	Float32::cosh($0)
+Float32::tanh	Float32::tanh($0)
+Float32::pow	Float32::pow($0, $1)
+Float32::atan2	Float32::atan2($0, $1)
+Quot::mk	$0
+Quot::lift	$0($1)
+UInt::add_or_overflow16	$0 + $1
+UInt::sub_or_overflow16	$0 - $1
+UInt::mul_or_overflow16	$0 * $1
+UInt::div16	div($0, $1)
+UInt::rem16	mod($0, $1)
+SInt::add_or_overflow8	$0 + $1
+SInt::add_or_overflow16	$0 + $1
+SInt::sub_or_overflow8	$0 - $1
+SInt::sub_or_overflow16	$0 - $1
+SInt::mul_or_overflow8	$0 * $1
+SInt::mul_or_overflow16	$0 * $1
+SInt::neg_or_overflow8	-($0)
+SInt::neg_or_overflow16	-($0)
+SInt::tdiv8	div($0, $1)
+SInt::tdiv16	div($0, $1)
+SInt::tmod8	mod($0, $1)
+SInt::tmod16	mod($0, $1)
+SInt::mk8	extract_i8_of_fitting($0)
+SInt::mk16	extract_i16_of_fitting($0)
+UInt::mk16	U16::of_u64(U64::of_nat($0))
+UInt::val16	Nat::of_u64(U64::of_u16($0))
+UInt::of_decided16	extract_u16_of_decided($0, $1)
+UInt::of_nat_checked16	extract_u16_of_nat($0)
+UInt::add16	$0 + $1
+UInt::sub16	$0 - $1
+UInt::mul16	$0 * $1
+UInt::checked_add16	extract_u16_checked_add($0, $1)
+UInt::checked_sub16	extract_u16_checked_sub($0, $1)
+UInt::checked_mul16	extract_u16_checked_mul($0, $1)
+UInt::lt16	$0 < $1
+UInt::le16	$0 <= $1
+UInt::eq16	$0 == $1
+UInt::of_nat_mod16	U16::of_u64(U64::of_nat(extract_nat_mod($0, 65536)))
+UInt::wrapping_add16	extract_u16_wrap(extract_u16_nat($0) + extract_u16_nat($1))
+UInt::wrapping_sub16	extract_u16_wrap(extract_u16_nat($0) + extract_u16_modulus() - extract_u16_nat($1))
+UInt::wrapping_mul16	extract_u16_wrap(extract_u16_nat($0) * extract_u16_nat($1))
+SInt::val8	extract_i8_int($0)
+SInt::val16	extract_i16_int($0)
+SInt::of_decided8	extract_i8_of_decided($0, $1)
+SInt::of_decided16	extract_i16_of_decided($0, $1)
+SInt::of_int8	extract_i8_of_int($0)
+SInt::of_int16	extract_i16_of_int($0)
+SInt::add8	$0 + $1
+SInt::add16	$0 + $1
+SInt::sub8	$0 - $1
+SInt::sub16	$0 - $1
+SInt::mul8	$0 * $1
+SInt::mul16	$0 * $1
+SInt::checked_add8	extract_i8_of_int(Int::add(extract_i8_int($0), extract_i8_int($1)))
+SInt::checked_add16	extract_i16_of_int(Int::add(extract_i16_int($0), extract_i16_int($1)))
+SInt::checked_sub8	extract_i8_of_int(Int::sub(extract_i8_int($0), extract_i8_int($1)))
+SInt::checked_sub16	extract_i16_of_int(Int::sub(extract_i16_int($0), extract_i16_int($1)))
+SInt::checked_mul8	extract_i8_of_int(Int::mul(extract_i8_int($0), extract_i8_int($1)))
+SInt::checked_mul16	extract_i16_of_int(Int::mul(extract_i16_int($0), extract_i16_int($1)))
+SInt::lt8	$0 < $1
+SInt::lt16	$0 < $1
+SInt::le8	$0 <= $1
+SInt::le16	$0 <= $1
+SInt::eq8	$0 == $1
+SInt::eq16	$0 == $1

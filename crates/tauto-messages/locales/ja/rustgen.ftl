@@ -6,7 +6,9 @@
 
 rustgen-binding-not-rust = エラー: { $at } の Rust { $rust } は Rust ではない ({ $error })
 rustgen-type-no-binding = エラー: { $name } に rust バインディングがない (Tauto.eure の rust.types に加える)
+rustgen-type-ambiguous = エラー: { $at } の rust.types { $name } が複数の extern 型 ({ $candidates }) を指す。束縛する型の完全名で書く
 rustgen-extern-no-binding = エラー: { $name } に rust バインディングがない (Tauto.eure の rust.extern に加える)
+rustgen-extern-waits = エラー: extern { $name } は wait を行うが、rust バックエンドはまだ束縛できない (バインディングはすぐに答える)
 rustgen-unknown-host-contract = { $at }: 未知の nonresuming ホスト契約 { $contract }
 rustgen-contract-unknown-extern = { $at }: nonresuming 契約が未知の extern { $name } を指している
 rustgen-invalid-facade-name = { $at }: Rust の nonresuming ファサード名 { $name } は不正である
@@ -37,6 +39,10 @@ rustgen-extern-type-not-send =
     {"  "}Send + Sync でない値はホストに留まる。値の代わりに id (アフィン) を取る直接効果の背後に置き、ホストに留めておく。
 rustgen-write-failed = { $dir }: { $error }
 rustgen-cannot-run-cargo = cargo を実行できない: { $error }
+rustgen-lock-out-of-date = error: Cargo.lock が古い。tauto build --update-lock を実行する
+rustgen-lock-failed =
+    error: Cargo.lock を解決できない:
+    { $stderr }
 rustgen-rustc-rejected =
     内部エラー: rustc が生成されたコードを拒否した (生成器のバグである。ソースは { $dir } にある):
     { $stderr }
@@ -77,10 +83,10 @@ rustgen-budget-handler-of = { $function } のハンドラ
 rustgen-budget-analysis-limit = 呼び出しグラフが有界な具体コンテキストの証明を超える
 rustgen-budget-concurrent-observer = 中断された状態を保持する間に、共有値が別のスレッドから観測されうる
 rustgen-budget-multishot = マルチショットの制御は Future の経路を保つ
-rustgen-budget-handler-shape = ハンドラはちょうど一つの Exceeded の腕を持ち、直接の操作を持ってはならない
-rustgen-budget-exceeded-not-total = Exceeded にはバジェットの Info を受け取る無条件で全域な腕が必要である
-rustgen-budget-continuation-used = Exceeded の継続が使われているか、捨てられることを証明できない
-rustgen-budget-abort-not-locally-total = { $op } が証明されていない外側の観測者に逃げうる。局所的で無条件な全域の中断の腕が必要である
+rustgen-budget-handler-shape = ハンドラはちょうど一つの exceeded の腕を持ち、直接の操作を持ってはならない
+rustgen-budget-exceeded-not-total = exceeded にはバジェットの Info を受け取る無条件で全域な腕が必要である
+rustgen-budget-continuation-used = exceeded の継続が使われているか、捨てられることを証明できない
+rustgen-budget-abort-not-locally-total = { $op } が、破棄をホストに観測されうるペイロードを持って逃げうる。局所的で無条件な全域の中断の腕が必要である
 rustgen-budget-unproven-payload = ハンドラのペイロードが暗黙のホストの Clone か Drop を呼びうる
 rustgen-budget-observable-handler = ハンドラの区間がホストのライフタイム観測者に対して閉じていると証明されていない
 rustgen-budget-unproven-lifetime-value = 型 { $ty } の値の破棄または借用のライフタイムが証明されていない

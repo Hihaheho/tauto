@@ -91,13 +91,15 @@ fn decl_of(name: Name, constructor: Name) -> Option<Stmt> {
         .into_iter()
         .map(str::to_string)
         .collect::<Vec<_>>();
-    let span = tauto_parol::Span::default();
+    let span = crate::span::Span::default();
     let generics: Vec<String> = (0..fields.len()).map(|i| format!("A{i}")).collect();
     Some(Stmt::Struct(DataDecl {
         kind: None,
         name,
         vis: Vis::Open,
         generics: generics.iter().map(|g| Name::Spelled(g.clone())).collect(),
+        unused_generics: Vec::new(),
+        unused_fields: Vec::new(),
         rows: vec![false; fields.len()],
         constructors: vec![DataConstructor {
             name: constructor,
@@ -108,6 +110,8 @@ fn decl_of(name: Name, constructor: Name) -> Option<Stmt> {
                 .collect(),
         }],
         host: false,
+        borrowed: false,
+        coerce: None,
         span,
     }))
 }
@@ -126,6 +130,43 @@ pub fn declare(files: &mut [Vec<Stmt>]) -> bool {
             _ => None,
         })
         .collect();
+    // A record a file bound before names by a reference is that reference's
+    // struct, and the same record spelled in another file is that struct
+    // too, not a second one of the same name: the spelling is read as the
+    // reference.
+    let mut bound: std::collections::BTreeMap<String, Vec<Name>> = Default::default();
+    for f in files.iter_mut() {
+        for n in used(f) {
+            if matches!(n, Name::Global(_)) {
+                let refs = bound.entry(n.as_str().to_string()).or_default();
+                if !refs.contains(&n) {
+                    refs.push(n);
+                }
+            }
+        }
+    }
+    bound.retain(|_, refs| refs.len() == 1);
+    if !bound.is_empty() {
+        for s in files.iter_mut().flatten() {
+            walk::stmt(s, &mut |t| {
+                let spelled = match &*t.kind {
+                    TermKind::Var(n @ Name::Spelled(_))
+                    | TermKind::Record {
+                        name: n @ Name::Spelled(_),
+                        ..
+                    } => n.as_str(),
+                    _ => return,
+                };
+                let Some(reference) = bound.get(spelled).map(|refs| refs[0].clone()) else {
+                    return;
+                };
+                match std::sync::Arc::make_mut(&mut t.kind) {
+                    TermKind::Var(n) | TermKind::Record { name: n, .. } => *n = reference,
+                    _ => {}
+                }
+            });
+        }
+    }
     let mut added = false;
     for f in files.iter_mut() {
         let mut add = Vec::new();
@@ -152,7 +193,7 @@ mod tests {
     fn reading(reference: &DeclRef) -> Stmt {
         let term = SurfaceTerm::new(
             TermKind::Var(Name::Global(reference.clone())),
-            tauto_parol::Span::default(),
+            crate::span::Span::default(),
         );
         Stmt::Expr(term)
     }

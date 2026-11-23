@@ -1,0 +1,1982 @@
+import "model.taut"
+import "unicode.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::map
+
+// A package as NIR text, as `tauto_nir::text::print` writes it
+// (`docs/design/nir-text.md`): a package read from the text prints as the
+// same text.
+
+// How a local was bound, for a use of it to say only what differs.
+pub(open) struct PBound { repr: NRepr, ty: Option(NTy) }
+
+pub(open) struct PState {
+  pkg: NPackage,
+  // What is written so far, the last part first.
+  out: List(Text),
+  indent: Nat,
+  bound: Ordmap(Nat, PBound)
+}
+
+pub fn p_set<A>(slot: &mut A, value: A): Unit {
+  *slot := value
+}
+
+pub fn p_s(p: &mut PState, t: Text): Unit {
+  p_set(&mut p.out, Cons(t, p.out))
+}
+
+pub fn p_all(p: &mut PState, parts: List(Text)): Unit {
+  match parts {
+    Nil => ()
+    Cons(t, rest) => {
+      p_s(&mut p, t)
+      p_all(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_line(p: &mut PState): Unit {
+  p_s(&mut p, text_newline())
+  p_s(&mut p, text_repeat("  ", p.indent))
+}
+
+pub fn p_nat(p: &mut PState, n: Nat): Unit { p_s(&mut p, Text::of_nat(n)) }
+
+// ---- names and strings ----
+
+pub fn p_hex_digit(d: Nat): Text { Text::slice_or_empty("0123456789abcdef", d, d + 1) }
+
+// A number in hexadecimal, as Rust writes it in `\u{…}`.
+pub fn p_hex_parts(n: Nat, fuel: Nat, acc: List(Text)): List(Text) {
+  match fuel {
+    Zero => acc
+    Succ(k) => {
+      let digit := p_hex_digit(Nat::rem_nz(n, 16, Nat::ne_zero(16, Refl)))
+      let rest := Nat::div_nz(n, 16, Nat::ne_zero(16, Refl))
+      if rest == 0 { Cons(digit, acc) } else { p_hex_parts(rest, k, Cons(digit, acc)) }
+    }
+  }
+}
+
+pub fn p_hex(n: Nat): Text { Text::concat_all(p_hex_parts(n, 8, Nil)) }
+
+// Whether Rust's `{:?}` writes the character as `\u{…}`.
+pub fn p_unprintable(c: Nat): Bool {
+  c < 32 || c == 127 || (c >= 128 && u_escaped(c))
+}
+
+// A character as Rust's `{:?}` of a string writes it.
+pub fn p_escape_char(c: Nat): Text {
+  if c == 0 {
+    "\\0"
+  } else if c == 9 {
+    "\\t"
+  } else if c == 10 {
+    "\\n"
+  } else if c == 13 {
+    "\\r"
+  } else if c == 34 {
+    "\\\""
+  } else if c == 92 {
+    "\\\\"
+  } else if p_unprintable(c) {
+    Text::concat_all(["\\u{", p_hex(c), "}"])
+  } else {
+    text_code_point(c)
+  }
+}
+
+pub fn p_escape(cs: List(Nat)): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(p_escape_char(c), p_escape(rest))
+  }
+}
+
+// A string as Rust's `{:?}` writes it.
+pub fn p_debug(t: Text): Text {
+  Text::concat_all(Cons("\"", List::append(p_escape(text_code_points(t)), ["\""])))
+}
+
+pub fn p_str(p: &mut PState, t: Text): Unit { p_s(&mut p, p_debug(t)) }
+
+pub fn p_ident_start(c: Nat): Bool {
+  (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || (c >= 128 && u_alpha(c))
+}
+
+pub fn p_ident_continue(c: Nat): Bool {
+  (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || (c >= 48 && c <= 57) || (c >= 128 && u_alnum(c))
+}
+
+pub fn p_all_continue(cs: List(Nat)): Bool {
+  match cs {
+    Nil => true
+    Cons(c, rest) => p_ident_continue(c) && p_all_continue(rest)
+  }
+}
+
+// Lone `_` is the Wild token, not an Ident spelling.
+pub fn p_is_ident(t: Text): Bool {
+  match text_code_points(t) {
+    Nil => false
+    Cons(c, rest) => p_ident_start(c) && p_all_continue(rest) && not(t == "_")
+  }
+}
+
+pub fn p_all_ident(xs: List(Text)): Bool {
+  match xs {
+    Nil => true
+    Cons(x, rest) => p_is_ident(x) && p_all_ident(rest)
+  }
+}
+
+pub fn p_keywords(): List(Text) {
+  [
+    "u8", "u32", "u64", "i32", "i64", "nat", "Bool", "Text", "Unit", "Never", "Float", "Float32",
+    "Buf", "Shown", "Vec", "Array", "Slice", "Option", "Info", "BudgetAnswer",
+    "Result", "Pair", "SharedVar", "std", "union", "fn", "true", "false", "nan", "inf",
+    "declaration", "add", "sub", "mul", "neg", "div", "lt", "gt", "le", "ge", "eq", "ne", "not",
+    "and", "or", "extern", "builtin", "resume", "match", "if", "closure", "perform", "handle",
+    "inject", "remap", "tempref", "deref", "shown", "budget", "unreachable", "fncast", "move",
+    "copy", "clone", "let", "var", "set", "while", "return", "shared", "unique", "ref", "refmut"
+  ]
+}
+
+pub fn p_member(xs: List(Text), t: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => x == t || p_member(rest, t)
+  }
+}
+
+pub fn p_is_bare(t: Text): Bool {
+  p_all_ident(text_split(t, "::")) && not(p_member(p_keywords(), t))
+}
+
+pub fn p_name(p: &mut PState, n: Text): Unit {
+  if p_is_bare(n) { p_s(&mut p, n) } else { p_all(&mut p, ["$", p_debug(n)]) }
+}
+
+// ---- words ----
+
+pub fn p_width_word(w: NWidth): Text {
+  match w {
+    NW32 => "i32"
+    NW64 => "i64"
+    NU8 => "u8"
+    NU32 => "u32"
+    NU64 => "u64"
+    NHost => "uhost"
+    NNat => "nat"
+    NW8 => "i8"
+    NW16 => "i16"
+    NU16 => "u16"
+  }
+}
+
+pub fn p_tier_word(t: NTier): Text {
+  match t {
+    NTierS => "S"
+    NTierA => "A"
+    NTierO => "O"
+    NTierM => "M"
+  }
+}
+
+pub fn p_kind_word(k: NKindWord): Text {
+  match k {
+    NKCopy => "copy"
+    NKShared => "shared"
+    NKAffine => "affine"
+    NKLinear => "linear"
+  }
+}
+
+pub fn p_repr_word(r: NRepr): Text {
+  match r {
+    NPlain => "plain"
+    NSharedVarRepr => "sharedvar"
+    NSharedVarCopy => "sharedvar_copy"
+    NRefRepr => "ref"
+    NRefMutRepr => "refmut"
+    NBorrowClosure => "borrowclosure"
+    NFnRef => "fnref"
+  }
+}
+
+pub fn p_repr_eq(a: NRepr, b: NRepr): Bool { p_repr_word(a) == p_repr_word(b) }
+
+pub fn p_quant_word(q: NQuant): Text {
+  match q {
+    NQZero => "resume 0"
+    NQAtMostOne => "resume <=1"
+    NQOne => "resume 1"
+    NQMany => "resume ω"
+    NQDirect => "direct"
+  }
+}
+
+pub fn p_tick(p: &mut PState, t: NTick): Unit {
+  match t {
+    NTickNone => ()
+    NTickHost => p_s(&mut p, " tick host")
+    NTickBudget => p_s(&mut p, " tick budget")
+  }
+}
+
+pub fn p_indirect_word(i: NIndirect): Text {
+  match i {
+    NDirect => "direct"
+    NShared => "shared"
+    NUnique => "unique"
+  }
+}
+
+pub fn p_indirect_eq(a: NIndirect, b: NIndirect): Bool { p_indirect_word(a) == p_indirect_word(b) }
+
+pub fn p_num_word(t: NTy): Text {
+  match n_int_width(t) {
+    Some(w) => p_width_word(w)
+    None => match t {
+      NFloat32 => "Float32"
+      NInt(w) => p_width_word(w)
+      NBool => "Float"
+      NText => "Float"
+      NUnit => "Float"
+      NNever => "Float"
+      NFloat => "Float"
+      NBuf => "Float"
+      NShown => "Float"
+      NVec(^a) => "Float"
+      NArray(^a) => "Float"
+      NSlice(^a) => "Float"
+      NOption(^a) => "Float"
+      NInfo(^a) => "Float"
+      NBudgetAnswer(^a) => "Float"
+      NResult(^a, ^b) => "Float"
+      NPair(^a, ^b) => "Float"
+      NSharedVar(^c, ^a) => "Float"
+      NStd(^n, ^a) => "Float"
+      NUnion(^n) => "Float"
+      NFn(^a, ^r, ^k, ^x) => "Float"
+      NRef(^a) => "Float"
+      NRefMut(^a) => "Float"
+      NData(^n, ^a) => "Float"
+      NParam(^n) => "Float"
+    }
+  }
+}
+
+// ---- types ----
+
+pub fn p_tys(p: &mut PState, ts: List(NTy)): Unit ! {div} {
+  match ts {
+    Nil => ()
+    Cons(t, rest) => {
+      p_ty(&mut p, t)
+      p_tys_rest(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_tys_rest(p: &mut PState, ts: List(NTy)): Unit ! {div} {
+  match ts {
+    Nil => ()
+    Cons(t, rest) => {
+      p_s(&mut p, ", ")
+      p_ty(&mut p, t)
+      p_tys_rest(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_one(p: &mut PState, word: Text, a: NTy): Unit ! {div} {
+  p_all(&mut p, [word, "("])
+  p_ty(&mut p, a)
+  p_s(&mut p, ")")
+}
+
+pub fn p_two(p: &mut PState, word: Text, a: NTy, b: NTy): Unit ! {div} {
+  p_all(&mut p, [word, "("])
+  p_ty(&mut p, a)
+  p_s(&mut p, ", ")
+  p_ty(&mut p, b)
+  p_s(&mut p, ")")
+}
+
+pub fn p_args_of(p: &mut PState, ts: List(NTy)): Unit ! {div} {
+  match ts {
+    Nil => ()
+    Cons(^t, ^rest) => {
+      p_s(&mut p, "(")
+      p_tys(&mut p, ts)
+      p_s(&mut p, ")")
+    }
+  }
+}
+
+pub fn p_param(p: &mut PState, n: Text): Unit {
+  p_s(&mut p, "'")
+  p_name(&mut p, n)
+}
+
+pub fn p_ty(p: &mut PState, t: NTy): Unit ! {div} {
+  match t {
+    NInt(w) => p_s(&mut p, p_width_word(w))
+    NBool => p_s(&mut p, "Bool")
+    NText => p_s(&mut p, "Text")
+    NUnit => p_s(&mut p, "Unit")
+    NNever => p_s(&mut p, "Never")
+    NFloat => p_s(&mut p, "Float")
+    NFloat32 => p_s(&mut p, "Float32")
+    NBuf => p_s(&mut p, "Buf")
+    NShown => p_s(&mut p, "Shown")
+    NVec(a) => p_one(&mut p, "Vec", a)
+    NArray(a) => p_one(&mut p, "Array", a)
+    NSlice(a) => p_one(&mut p, "Slice", a)
+    NOption(a) => p_one(&mut p, "Option", a)
+    NInfo(a) => p_one(&mut p, "Info", a)
+    NBudgetAnswer(a) => p_one(&mut p, "BudgetAnswer", a)
+    NResult(a, b) => p_two(&mut p, "Result", a, b)
+    NPair(a, b) => p_two(&mut p, "Pair", a, b)
+    NSharedVar(c, a) => {
+      p_s(&mut p, "SharedVar(")
+      if c { p_s(&mut p, "copy, ") } else { () }
+      p_ty(&mut p, a)
+      p_s(&mut p, ")")
+    }
+    NStd(n, args) => {
+      p_s(&mut p, "std ")
+      p_name(&mut p, n)
+      p_args_of(&mut p, args)
+    }
+    NData(n, args) => {
+      p_name(&mut p, n)
+      p_args_of(&mut p, args)
+    }
+    NUnion(id) => p_all(&mut p, ["union(", Text::of_nat(id), ")"])
+    NParam(n) => p_param(&mut p, n)
+    NFn(^params, ^ret, ^kind, ^tier) => p_fn_ty(&mut p, t)
+    NRef(a) => {
+      p_s(&mut p, "&")
+      p_ty(&mut p, a)
+    }
+    NRefMut(a) => {
+      p_s(&mut p, "&mut ")
+      p_ty(&mut p, a)
+    }
+  }
+}
+
+// A function type: `fn(…) -> T kind tier`.
+pub fn p_fn_ty(p: &mut PState, t: NTy): Unit ! {div} {
+  match t {
+    NFn(params, ret, kind, tier) => {
+      p_s(&mut p, "fn(")
+      p_tys(&mut p, params)
+      p_s(&mut p, ") -> ")
+      p_ty(&mut p, ret)
+      p_all(&mut p, [" ", kind, " ", tier])
+    }
+    NInt(^w) => p_ty(&mut p, t)
+    NBool => p_ty(&mut p, t)
+    NText => p_ty(&mut p, t)
+    NUnit => p_ty(&mut p, t)
+    NNever => p_ty(&mut p, t)
+    NFloat => p_ty(&mut p, t)
+    NFloat32 => p_ty(&mut p, t)
+    NBuf => p_ty(&mut p, t)
+    NShown => p_ty(&mut p, t)
+    NVec(^a) => p_ty(&mut p, t)
+    NArray(^a) => p_ty(&mut p, t)
+    NSlice(^a) => p_ty(&mut p, t)
+    NOption(^a) => p_ty(&mut p, t)
+    NInfo(^a) => p_ty(&mut p, t)
+    NBudgetAnswer(^a) => p_ty(&mut p, t)
+    NResult(^a, ^b) => p_ty(&mut p, t)
+    NPair(^a, ^b) => p_ty(&mut p, t)
+    NSharedVar(^c, ^a) => p_ty(&mut p, t)
+    NStd(^n, ^a) => p_ty(&mut p, t)
+    NUnion(^n) => p_ty(&mut p, t)
+    NRef(^a) => p_ty(&mut p, t)
+    NRefMut(^a) => p_ty(&mut p, t)
+    NData(^n, ^a) => p_ty(&mut p, t)
+    NParam(^n) => p_ty(&mut p, t)
+  }
+}
+
+pub fn p_generics(p: &mut PState, gs: List(Text)): Unit {
+  match gs {
+    Nil => ()
+    Cons(g, rest) => {
+      p_s(&mut p, "<")
+      p_param(&mut p, g)
+      p_generics_rest(&mut p, rest)
+      p_s(&mut p, ">")
+    }
+  }
+}
+
+pub fn p_generics_rest(p: &mut PState, gs: List(Text)): Unit {
+  match gs {
+    Nil => ()
+    Cons(g, rest) => {
+      p_s(&mut p, ", ")
+      p_param(&mut p, g)
+      p_generics_rest(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_targs(p: &mut PState, ts: List(NTy)): Unit ! {div} {
+  match ts {
+    Nil => ()
+    Cons(^t, ^rest) => {
+      p_s(&mut p, "<")
+      p_tys(&mut p, ts)
+      p_s(&mut p, ">")
+    }
+  }
+}
+
+// ---- locals ----
+
+pub fn p_local_name(p: &mut PState, l: NLocal): Unit {
+  p_name(&mut p, l.name)
+  p_all(&mut p, ["#", Text::of_nat(l.id)])
+}
+
+// A local where it is bound.
+pub fn p_bind(p: &mut PState, l: NLocal, ty: Option(NTy)): Unit {
+  match l.repr {
+    NPlain => ()
+    NSharedVarRepr => p_all(&mut p, [p_repr_word(l.repr), " "])
+    NSharedVarCopy => p_all(&mut p, [p_repr_word(l.repr), " "])
+    NRefRepr => p_all(&mut p, [p_repr_word(l.repr), " "])
+    NRefMutRepr => p_all(&mut p, [p_repr_word(l.repr), " "])
+    NBorrowClosure => p_all(&mut p, [p_repr_word(l.repr), " "])
+    NFnRef => p_all(&mut p, [p_repr_word(l.repr), " "])
+  }
+  p_local_name(&mut p, l)
+  p_set(
+    &mut p.bound,
+    Ordmap::insert(p.bound, l.id, PBound { repr: l.repr, ty: ty }, Ordmap::compare_nat)
+  )
+}
+
+// A local where it is used: its representation is written when it is not
+// the one it was bound with.
+pub fn p_local(p: &mut PState, l: NLocal): Unit {
+  let same := match Ordmap::get(p.bound, l.id, Ordmap::compare_nat) {
+    None => false
+    Some(b) => p_repr_eq(b.repr, l.repr)
+  }
+  if same { () } else { p_all(&mut p, [p_repr_word(l.repr), " "]) }
+  p_local_name(&mut p, l)
+}
+
+pub fn p_local_list(p: &mut PState, ls: List(NLocal), first: Bool): Unit {
+  match ls {
+    Nil => ()
+    Cons(l, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_local(&mut p, l)
+      p_local_list(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_locals(p: &mut PState, word: Text, ls: List(NLocal)): Unit {
+  match ls {
+    Nil => ()
+    Cons(^l, ^rest) => {
+      p_all(&mut p, [" ", word, "("])
+      p_local_list(&mut p, ls, true)
+      p_s(&mut p, ")")
+    }
+  }
+}
+
+pub fn p_local_ty(repr: NRepr, ty: NTy): NTy {
+  let through := match n_borrowed(ty) {
+    Some(t) => t
+    None => ty
+  }
+  match repr {
+    NRefRepr => through
+    NRefMutRepr => through
+    NFnRef => through
+    NPlain => ty
+    NSharedVarRepr => ty
+    NSharedVarCopy => ty
+    NBorrowClosure => ty
+  }
+}
+
+// The type a use of a local shows.
+pub fn p_bound_ty(p: &mut PState, l: NLocal): Option(NTy) {
+  match Ordmap::get(p.bound, l.id, Ordmap::compare_nat) {
+    None => None
+    Some(b) => match b.ty {
+      None => None
+      Some(t) => Some(p_local_ty(b.repr, t))
+    }
+  }
+}
+
+pub fn p_ty_is(t: Option(NTy), u: NTy): Bool ! {div} {
+  match t {
+    None => false
+    Some(x) => n_ty_eq(x, u)
+  }
+}
+
+// ---- items ----
+
+pub fn p_message_args(p: &mut PState, xs: List(NMessageArg), first: Bool): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(a, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_str(&mut p, a.key)
+      p_s(&mut p, " = ")
+      match a.value {
+        NMsgNum(n) => p_s(&mut p, n)
+        NMsgText(t) => p_str(&mut p, t)
+        NMsgOf(m) => p_message(&mut p, m)
+      }
+      p_message_args(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_message(p: &mut PState, m: NMessage): Unit ! {div} {
+  p_str(&mut p, m.id)
+  p_s(&mut p, "(")
+  p_message_args(&mut p, m.args, true)
+  p_s(&mut p, ")")
+}
+
+pub fn p_strs(p: &mut PState, xs: List(Text), first: Bool): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_str(&mut p, x)
+      p_strs(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_names(p: &mut PState, xs: List(Text), first: Bool): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_name(&mut p, x)
+      p_names(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_nats(p: &mut PState, xs: List(Nat), first: Bool): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_nat(&mut p, x)
+      p_nats(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_nth<A>(xs: List(A), i: Nat): Option(A) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => match i {
+      Zero => Some(x)
+      Succ(j) => p_nth(rest, j)
+    }
+  }
+}
+
+pub fn p_op(p: &mut PState, i: Nat): Unit {
+  match p_nth(p.pkg.ops, i) {
+    Some(o) => p_name(&mut p, o.name)
+    None => p_all(&mut p, ["<no operation ", Text::of_nat(i), ">"])
+  }
+}
+
+pub fn p_ops(p: &mut PState, xs: List(Nat), first: Bool): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_op(&mut p, x)
+      p_ops(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_inst(p: &mut PState, id: Nat): Unit {
+  match p_nth(p.pkg.fns, id) {
+    Some(f) => p_name(&mut p, f.source)
+    None => p_s(&mut p, "<no function>")
+  }
+  p_all(&mut p, ["@", Text::of_nat(id)])
+}
+
+pub fn p_indirect(p: &mut PState, i: NIndirect): Unit {
+  match i {
+    NDirect => ()
+    NShared => p_s(&mut p, "shared ")
+    NUnique => p_s(&mut p, "unique ")
+  }
+}
+
+pub fn p_fields(p: &mut PState, fs: List(NField), first: Bool): Unit ! {div} {
+  match fs {
+    Nil => ()
+    Cons(f, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_indirect(&mut p, f.indirect)
+      match f.name {
+        None => ()
+        Some(n) => {
+          p_name(&mut p, n)
+          p_s(&mut p, ": ")
+        }
+      }
+      p_ty(&mut p, f.ty)
+      p_fields(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_ctors(p: &mut PState, cs: List(NCtor)): Unit ! {div} {
+  match cs {
+    Nil => ()
+    Cons(c, rest) => {
+      p_line(&mut p)
+      p_name(&mut p, c.name)
+      match c.fields {
+        Nil => ()
+        Cons(^f, ^more) => {
+          p_s(&mut p, "(")
+          p_fields(&mut p, c.fields, true)
+          p_s(&mut p, ")")
+        }
+      }
+      p_s(&mut p, ",")
+      p_ctors(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_flag(p: &mut PState, on: Bool, word: Text): Unit {
+  if on { p_all(&mut p, [" ", word]) } else { () }
+}
+
+pub fn p_data(p: &mut PState, d: NData): Unit ! {div, overflow} {
+  p_all(&mut p, ["data ", p_kind_word(d.kind), " ", if d.is_struct { "struct" } else { "enum" }, " "])
+  p_name(&mut p, d.name)
+  p_generics(&mut p, d.generics)
+  p_flag(&mut p, d.is_clone, "clone")
+  p_flag(&mut p, d.is_copy, "copy")
+  p_flag(&mut p, d.is_linear, "linear")
+  p_flag(&mut p, d.is_view, "view")
+  p_flag(&mut p, d.is_host, "host")
+  if d.is_struct { p_all(&mut p, [" as ", p_debug(d.shown)]) } else { () }
+  p_s(&mut p, " {")
+  p_set(&mut p.indent, p.indent + 1)
+  p_ctors(&mut p, d.ctors)
+  p_set(&mut p.indent, p.indent - 1)
+  p_line(&mut p)
+  p_s(&mut p, "}\n\n")
+}
+
+pub fn p_datas(p: &mut PState, ds: List(NData)): Unit ! {div, overflow} {
+  match ds {
+    Nil => ()
+    Cons(d, rest) => {
+      p_data(&mut p, d)
+      p_datas(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_syntax_datas(p: &mut PState, xs: List(NSyntaxData), first: Bool): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_str(&mut p, x.label)
+      p_s(&mut p, " = ")
+      p_name(&mut p, x.name)
+      p_syntax_datas(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_syntax_ctors(p: &mut PState, xs: List(NSyntaxCtor), first: Bool): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_str(&mut p, x.data)
+      p_s(&mut p, ".")
+      p_str(&mut p, x.ctor)
+      p_s(&mut p, " = ")
+      p_name(&mut p, x.name)
+      p_syntax_ctors(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_syntax_parsers(p: &mut PState, xs: List(NSyntaxParser)): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(s, rest) => {
+      p_s(&mut p, "syntax ")
+      p_str(&mut p, s.name)
+      p_s(&mut p, " sha ")
+      p_str(&mut p, s.sha)
+      p_s(&mut p, " result ")
+      p_ty(&mut p, s.result)
+      p_s(&mut p, " tables ")
+      p_str(&mut p, s.tables)
+      p_s(&mut p, " data(")
+      p_syntax_datas(&mut p, s.datas, true)
+      p_s(&mut p, ") constructors(")
+      p_syntax_ctors(&mut p, s.ctors, true)
+      p_s(&mut p, ")\n\n")
+      p_syntax_parsers(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_unions(p: &mut PState, xs: List(NUnionDef)): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(u, rest) => {
+      p_all(&mut p, ["union ", Text::of_nat(u.id), " ", p_kind_word(u.kind), " ("])
+      p_tys(&mut p, u.members)
+      p_s(&mut p, ")\n\n")
+      p_unions(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_op_defs(p: &mut PState, xs: List(NOp)): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(o, rest) => {
+      p_all(&mut p, ["op ", Text::of_nat(o.id), " "])
+      p_name(&mut p, o.name)
+      p_generics(&mut p, o.generics)
+      p_s(&mut p, "(")
+      p_tys(&mut p, o.params)
+      p_s(&mut p, "): ")
+      p_ty(&mut p, o.result)
+      p_all(&mut p, [" ", p_quant_word(o.quant), "\n\n"])
+      p_op_defs(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_extern_params(p: &mut PState, xs: List(NExternParam), first: Bool): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      match x.pass {
+        NPassValue => ()
+        NPassRef => p_s(&mut p, "ref ")
+        NPassRefMut => p_s(&mut p, "refmut ")
+      }
+      p_name(&mut p, x.name)
+      p_s(&mut p, ": ")
+      p_ty(&mut p, x.ty)
+      p_extern_params(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_externs(p: &mut PState, xs: List(NExtern)): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(e, rest) => {
+      p_s(&mut p, "extern fn ")
+      p_name(&mut p, e.name)
+      p_generics(&mut p, e.generics)
+      p_s(&mut p, "(")
+      p_extern_params(&mut p, e.params, true)
+      p_s(&mut p, "): ")
+      p_ty(&mut p, e.ret)
+      p_lends(&mut p, e.lends)
+      if e.waits { p_s(&mut p, " waits") } else { () }
+      p_s(&mut p, "\n\n")
+      p_externs(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_bounds(p: &mut PState, bs: List(Text), first: Bool): Unit {
+  match bs {
+    Nil => ()
+    Cons(b, rest) => {
+      p_all(&mut p, [if first { ": " } else { " + " }, b])
+      p_bounds(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_fn_generics(p: &mut PState, gs: List(NGeneric), first: Bool): Unit {
+  match gs {
+    Nil => ()
+    Cons(g, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_param(&mut p, g.name)
+      p_bounds(&mut p, g.bounds, true)
+      p_fn_generics(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_params(p: &mut PState, xs: List(NParam), first: Bool): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_bind(&mut p, x.local, Some(x.ty))
+      p_s(&mut p, ": ")
+      p_ty(&mut p, x.ty)
+      p_params(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_bools(p: &mut PState, xs: List(Bool), first: Bool): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_s(&mut p, if x { "true" } else { "false" })
+      p_bools(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_lends(p: &mut PState, l: Option(List(Bool))): Unit {
+  match l {
+    None => ()
+    Some(ls) => {
+      p_s(&mut p, " lends(")
+      p_bools(&mut p, ls, true)
+      p_s(&mut p, ")")
+    }
+  }
+}
+
+// A function up to its `=`.
+pub fn p_fn_head(p: &mut PState, f: NFn): Unit ! {div} {
+  p_s(&mut p, "fn ")
+  p_name(&mut p, f.source)
+  p_all(&mut p, ["@", Text::of_nat(f.id)])
+  match f.generics {
+    Nil => ()
+    Cons(^g, ^rest) => {
+      p_s(&mut p, "<")
+      p_fn_generics(&mut p, f.generics, true)
+      p_s(&mut p, ">")
+    }
+  }
+  p_s(&mut p, "(")
+  p_params(&mut p, f.params, true)
+  p_s(&mut p, "): ")
+  p_ty(&mut p, f.ret)
+  p_all(&mut p, [" ", p_tier_word(f.tier)])
+  p_lends(&mut p, f.lends)
+  if f.fn_region { p_s(&mut p, " fn_region") } else { () }
+}
+
+pub fn p_function(p: &mut PState, f: NFn): Unit ! {div, overflow} {
+  p_fn_head(&mut p, f)
+  p_s(&mut p, " = ")
+  p_expr(&mut p, f.body)
+}
+
+pub fn p_functions(p: &mut PState, xs: List(NFn)): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(f, rest) => {
+      p_function(&mut p, f)
+      p_s(&mut p, "\n\n")
+      p_functions(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_exports(p: &mut PState, xs: List(NExport)): Unit {
+  match xs {
+    Nil => ()
+    Cons(e, rest) => {
+      p_s(&mut p, "export ")
+      p_str(&mut p, e.name)
+      p_s(&mut p, " = ")
+      p_inst(&mut p, e.inst)
+      p_s(&mut p, " row(")
+      p_strs(&mut p, e.row, true)
+      p_s(&mut p, ") foreign_row(")
+      p_strs(&mut p, e.foreign_row, true)
+      p_s(&mut p, ") pure_borrow_callbacks(")
+      p_nats(&mut p, e.pure_borrow_callbacks, true)
+      p_s(&mut p, ")\n")
+      p_exports(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_evidence_ops(p: &mut PState, xs: List(NEvidenceOp)): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(e, rest) => {
+      p_s(&mut p, "evidence op ")
+      p_op(&mut p, e.op)
+      p_s(&mut p, "(")
+      p_tys(&mut p, e.params)
+      p_s(&mut p, "): ")
+      p_ty(&mut p, e.answer)
+      p_s(&mut p, "\n")
+      p_evidence_ops(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_evidence_fns(p: &mut PState, xs: List(NEvidenceFn)): Unit {
+  match xs {
+    Nil => ()
+    Cons(e, rest) => {
+      p_s(&mut p, "evidence fn ")
+      p_inst(&mut p, e.inst)
+      p_s(&mut p, "(")
+      p_ops(&mut p, e.ops, true)
+      p_s(&mut p, ")\n")
+      p_evidence_fns(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_evidence_handles(p: &mut PState, xs: List(NEvidenceHandle)): Unit {
+  match xs {
+    Nil => ()
+    Cons(e, rest) => {
+      p_all(&mut p, ["evidence handle ", Text::of_nat(e.id), "("])
+      p_ops(&mut p, e.ops, true)
+      p_s(&mut p, ")\n")
+      p_evidence_handles(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_package(p: &mut PState): Unit ! {div, overflow} {
+  let pkg := p.pkg
+  match pkg.declarations {
+    Nil => ()
+    Cons(^d, ^rest) => {
+      p_s(&mut p, "declarations(")
+      p_names(&mut p, pkg.declarations, true)
+      p_s(&mut p, ")\n\n")
+    }
+  }
+  p_syntax_parsers(&mut p, pkg.syntax_parsers)
+  p_datas(&mut p, pkg.datas)
+  p_unions(&mut p, pkg.unions)
+  p_op_defs(&mut p, pkg.ops)
+  p_externs(&mut p, pkg.externs)
+  p_functions(&mut p, pkg.fns)
+  match pkg.top {
+    None => ()
+    Some(t) => {
+      p_s(&mut p, "top ")
+      p_inst(&mut p, t)
+      p_s(&mut p, "\n")
+    }
+  }
+  p_exports(&mut p, pkg.exports)
+  if pkg.sync { p_s(&mut p, "sync\n") } else { () }
+  match pkg.permissions {
+    Nil => ()
+    Cons(^x, ^rest) => {
+      p_s(&mut p, "permissions(")
+      p_strs(&mut p, pkg.permissions, true)
+      p_s(&mut p, ")\n")
+    }
+  }
+  match pkg.unsupported {
+    None => ()
+    Some(m) => {
+      p_s(&mut p, "unsupported ")
+      p_message(&mut p, m)
+      p_s(&mut p, "\n")
+    }
+  }
+  p_evidence_ops(&mut p, pkg.evidence_ops)
+  p_evidence_fns(&mut p, pkg.evidence_fns)
+  p_evidence_handles(&mut p, pkg.evidence_handles)
+}
+
+// ---- expressions ----
+
+pub fn p_step(p: &mut PState, f: NFieldRef): Unit {
+  p_s(&mut p, ".")
+  p_name(&mut p, f.name)
+  match f.index {
+    None => ()
+    Some(i) => p_all(&mut p, ["[", Text::of_nat(i), "]"])
+  }
+  match f.indirect {
+    NDirect => ()
+    NShared => p_s(&mut p, " shared")
+    NUnique => p_s(&mut p, " unique")
+  }
+}
+
+pub fn p_steps(p: &mut PState, fs: List(NFieldRef)): Unit {
+  match fs {
+    Nil => ()
+    Cons(f, rest) => {
+      p_step(&mut p, f)
+      p_steps(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_place(p: &mut PState, pl: NPlaceOf): Unit ! {div} {
+  let plain := match pl.path {
+    Nil => p_ty_is(p_bound_ty(&mut p, pl.local), pl.ty)
+    Cons(^f, ^rest) => false
+  }
+  if plain {
+    p_local(&mut p, pl.local)
+  } else {
+    p_s(&mut p, "(")
+    p_local(&mut p, pl.local)
+    p_steps(&mut p, pl.path)
+    p_s(&mut p, ": ")
+    p_ty(&mut p, pl.ty)
+    p_s(&mut p, ")")
+  }
+}
+
+pub fn p_stmts(p: &mut PState, xs: List(NStmt)): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(s, rest) => {
+      p_line(&mut p)
+      p_stmt(&mut p, s)
+      p_stmts(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_block(p: &mut PState, b: NBlock): Unit ! {div, overflow} {
+  let empty := match b.stmts {
+    Nil => match b.tail {
+      None => true
+      Some(^t) => false
+    }
+    Cons(^s, ^rest) => false
+  }
+  if empty {
+    p_s(&mut p, "{}")
+  } else {
+    p_s(&mut p, "{")
+    p_set(&mut p.indent, p.indent + 1)
+    p_stmts(&mut p, b.stmts)
+    match b.tail {
+      None => ()
+      Some(t) => {
+        p_line(&mut p)
+        p_expr(&mut p, t)
+      }
+    }
+    p_set(&mut p.indent, p.indent - 1)
+    p_line(&mut p)
+    p_s(&mut p, "}")
+  }
+}
+
+pub fn p_unwind(p: &mut PState, xs: List(NStmt)): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(^s, ^rest) => {
+      p_s(&mut p, " unwind {")
+      p_set(&mut p.indent, p.indent + 1)
+      p_stmts(&mut p, xs)
+      p_set(&mut p.indent, p.indent - 1)
+      p_line(&mut p)
+      p_s(&mut p, "}")
+    }
+  }
+}
+
+// `x#1 := e`, with the type when it is not the type of `e`.
+pub fn p_binding(p: &mut PState, l: NLocal, ty: NTy, init: NExpr): Unit ! {div, overflow} {
+  p_bind(&mut p, l, Some(ty))
+  if n_ty_eq(ty, init.ty) {
+    ()
+  } else {
+    p_s(&mut p, ": ")
+    p_ty(&mut p, ty)
+  }
+  p_s(&mut p, " := ")
+  p_expr(&mut p, init)
+}
+
+pub fn p_stmt(p: &mut PState, s: NStmt): Unit ! {div, overflow} {
+  match s {
+    NLet(l, ty, init, stack) => {
+      p_s(&mut p, if stack { "let stack " } else { "let " })
+      p_binding(&mut p, l, ty, init)
+    }
+    NVar(l, ty, init) => {
+      p_s(&mut p, "var ")
+      p_binding(&mut p, l, ty, init)
+    }
+    NAssign(target, value) => {
+      p_s(&mut p, "set ")
+      p_place(&mut p, target)
+      p_s(&mut p, " := ")
+      p_expr(&mut p, value)
+    }
+    NExprStmt(e) => p_expr(&mut p, e)
+    NWhile(cond, body, tick) => {
+      p_s(&mut p, "while ")
+      p_expr(&mut p, cond)
+      p_tick(&mut p, tick)
+      p_s(&mut p, " do ")
+      p_block(&mut p, body)
+    }
+    NReturn(value) => {
+      p_s(&mut p, "return")
+      match value {
+        None => ()
+        Some(v) => {
+          p_s(&mut p, " ")
+          p_expr(&mut p, v)
+        }
+      }
+    }
+  }
+  p_s(&mut p, ";")
+}
+
+pub fn p_exprs(p: &mut PState, xs: List(NExpr), first: Bool): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_expr(&mut p, x)
+      p_exprs(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_args(p: &mut PState, xs: List(NExpr)): Unit ! {div, overflow} {
+  p_s(&mut p, "(")
+  p_exprs(&mut p, xs, true)
+  p_s(&mut p, ")")
+}
+
+pub fn p_pats(p: &mut PState, xs: List(NPat), first: Bool): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_pat(&mut p, x)
+      p_pats(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_signed(negative: Bool, n: Nat): Text {
+  if negative { concat("-", Text::of_nat(n)) } else { Text::of_nat(n) }
+}
+
+pub fn p_pat(p: &mut PState, pat: NPat): Unit ! {div} {
+  match pat {
+    NWild => p_s(&mut p, "_")
+    NBind(l, t) => {
+      p_bind(&mut p, l, Some(t))
+      p_s(&mut p, ": ")
+      p_ty(&mut p, t)
+    }
+    NIntPat(negative, n) => p_s(&mut p, p_signed(negative, n))
+    NNatPat(n) => p_all(&mut p, [Text::of_nat(n), "nat"])
+    NBoolPat(b) => p_s(&mut p, if b { "true" } else { "false" })
+    NTextPat(t) => p_str(&mut p, t)
+    NCtorPat(c, fields) => {
+      p_name(&mut p, c.name)
+      match fields {
+        Nil => ()
+        Cons(^f, ^rest) => {
+          p_s(&mut p, "(")
+          p_pats(&mut p, fields, true)
+          p_s(&mut p, ")")
+        }
+      }
+    }
+    NInjectPat(u, v, inner) => {
+      p_all(&mut p, ["inject(", Text::of_nat(u), ", ", Text::of_nat(v), ", "])
+      p_pat(&mut p, inner)
+      p_s(&mut p, ")")
+    }
+  }
+}
+
+pub fn p_use(p: &mut PState, how: NUse): Unit {
+  match how {
+    NMove => p_s(&mut p, "move ")
+    NCopy => p_s(&mut p, "copy ")
+    NClone => p_s(&mut p, "clone ")
+    NPlace => ()
+  }
+}
+
+// Whether an expression writes its type itself.
+pub fn p_writes_ty(k: NKind): Bool {
+  match k {
+    NDeclaration(^i) => true
+    NFnValue(^i, ^t) => true
+    NCallOf(^c) => true
+    NCtorOf(^c, ^a) => true
+    NFieldOf(^b, ^f, ^h, ^i) => true
+    NDeref(^v, ^h) => true
+    NUnreachable(^a) => true
+    NFnCast(^a) => true
+    NUnitLit => false
+    NIntLit(^n, ^s) => false
+    NBoolLit(^b) => false
+    NFloatLit(^t) => false
+    NTextLit(^t) => false
+    NClosureOf(^c) => false
+    NHandleOf(^h) => false
+    NBudgetOf(^b) => false
+    NInject(^u, ^v, ^x) => false
+    NRemap(^u, ^t, ^x) => false
+    NRead(^l, ^h) => false
+    NBorrow(^pl) => false
+    NBorrowMut(^pl) => false
+    NTempRef(^a) => false
+    NArithOf(^o, ^n, ^a) => false
+    NCmpOf(^o, ^a) => false
+    NEqOf(^n, ^a) => false
+    NNot(^a) => false
+    NAnd(^a, ^b) => false
+    NOr(^a, ^b) => false
+    NIf(^c, ^t, ^o) => false
+    NBlockOf(^b) => false
+    NMatchOf(^m) => false
+    NShownOf(^a) => false
+    NPerformOf(^x) => false
+  }
+}
+
+// The type an expression has when none is written for it.
+pub fn p_default(p: &mut PState, e: NExpr): Option(NTy) {
+  match e.kind {
+    NUnitLit => Some(NUnit)
+    NBoolLit(^b) => Some(NBool)
+    NCmpOf(^o, ^a) => Some(NBool)
+    NEqOf(^n, ^a) => Some(NBool)
+    NNot(^a) => Some(NBool)
+    NAnd(^a, ^b) => Some(NBool)
+    NOr(^a, ^b) => Some(NBool)
+    NTextLit(^t) => Some(NText)
+    NFloatLit(^t) => Some(NFloat)
+    NRead(l, ^h) => p_bound_ty(&mut p, l)
+    NArithOf(^o, n, ^a) => Some(n)
+    NMatchOf(m) => match m.arms {
+      Nil => None
+      Cons(a, ^rest) => Some(a.body.ty)
+    }
+    NIf(^c, t, ^o) => Some(t.ty)
+    NBlockOf(b) => match b.tail {
+      Some(t) => Some(t.ty)
+      None => Some(NUnit)
+    }
+    NClosureOf(c) => Some(c.fn_ty)
+    NPerformOf(x) => Some(x.result)
+    NHandleOf(h) => Some(h.result)
+    NInject(u, ^v, ^x) => Some(NUnion(u))
+    NRemap(^u, t, ^x) => Some(t)
+    NBorrow(pl) => Some(NRef(pl.ty))
+    NBorrowMut(pl) => Some(NRefMut(pl.ty))
+    NTempRef(a) => Some(NRef(a.ty))
+    NShownOf(^a) => Some(NShown)
+    NBudgetOf(b) => Some(b.body.ty)
+    NIntLit(^n, ^s) => None
+    NDeclaration(^i) => None
+    NFnValue(^i, ^t) => None
+    NCallOf(^c) => None
+    NCtorOf(^c, ^a) => None
+    NFieldOf(^b, ^f, ^h, ^i) => None
+    NDeref(^v, ^h) => None
+    NUnreachable(^a) => None
+    NFnCast(^a) => None
+  }
+}
+
+pub fn p_is_int_ty(t: NTy): Bool {
+  match n_int_width(t) {
+    Some(^w) => true
+    None => false
+  }
+}
+
+pub fn p_is_int_lit(k: NKind): Bool {
+  match k {
+    NIntLit(^n, ^s) => true
+    NUnitLit => false
+    NBoolLit(^b) => false
+    NFloatLit(^t) => false
+    NTextLit(^t) => false
+    NDeclaration(^i) => false
+    NFnValue(^i, ^t) => false
+    NClosureOf(^c) => false
+    NHandleOf(^h) => false
+    NBudgetOf(^b) => false
+    NInject(^u, ^v, ^x) => false
+    NRemap(^u, ^t, ^x) => false
+    NFnCast(^a) => false
+    NRead(^l, ^h) => false
+    NBorrow(^pl) => false
+    NBorrowMut(^pl) => false
+    NTempRef(^a) => false
+    NDeref(^v, ^h) => false
+    NFieldOf(^b, ^f, ^h, ^i) => false
+    NArithOf(^o, ^n, ^a) => false
+    NCmpOf(^o, ^a) => false
+    NEqOf(^n, ^a) => false
+    NNot(^a) => false
+    NAnd(^a, ^b) => false
+    NOr(^a, ^b) => false
+    NIf(^c, ^t, ^o) => false
+    NBlockOf(^b) => false
+    NCtorOf(^c, ^a) => false
+    NMatchOf(^m) => false
+    NCallOf(^c) => false
+    NShownOf(^a) => false
+    NPerformOf(^x) => false
+    NUnreachable(^a) => false
+  }
+}
+
+// Whether `e` is written as `(e: T)`: its text does not show its type.
+pub fn p_overridden(p: &mut PState, e: NExpr): Bool ! {div} {
+  if p_is_int_lit(e.kind) {
+    not(p_is_int_ty(e.ty))
+  } else if p_writes_ty(e.kind) {
+    false
+  } else {
+    not(p_ty_is(p_default(&mut p, e), e.ty))
+  }
+}
+
+// `e` in parentheses, which `(e: T)` already has.
+pub fn p_grouped(p: &mut PState, e: NExpr): Unit ! {div, overflow} {
+  if p_overridden(&mut p, e) {
+    p_expr(&mut p, e)
+  } else {
+    p_s(&mut p, "(")
+    p_expr(&mut p, e)
+    p_s(&mut p, ")")
+  }
+}
+
+// Whether the text of `e` ends with an `if` that has no `else`.
+pub fn p_open_if(p: &mut PState, e: NExpr): Bool ! {div} {
+  if p_overridden(&mut p, e) {
+    false
+  } else {
+    match e.kind {
+      NIf(^c, ^t, o) => match o {
+        None => true
+        Some(x) => p_open_if(&mut p, x)
+      }
+      NClosureOf(c) => p_open_if(&mut p, c.body)
+      NUnitLit => false
+      NIntLit(^n, ^s) => false
+      NBoolLit(^b) => false
+      NFloatLit(^t) => false
+      NTextLit(^t) => false
+      NDeclaration(^i) => false
+      NFnValue(^i, ^t) => false
+      NHandleOf(^h) => false
+      NBudgetOf(^b) => false
+      NInject(^u, ^v, ^x) => false
+      NRemap(^u, ^t, ^x) => false
+      NFnCast(^a) => false
+      NRead(^l, ^h) => false
+      NBorrow(^pl) => false
+      NBorrowMut(^pl) => false
+      NTempRef(^a) => false
+      NDeref(^v, ^h) => false
+      NFieldOf(^b, ^f, ^h, ^i) => false
+      NArithOf(^op, ^n, ^a) => false
+      NCmpOf(^op, ^a) => false
+      NEqOf(^n, ^a) => false
+      NNot(^a) => false
+      NAnd(^a, ^b) => false
+      NOr(^a, ^b) => false
+      NBlockOf(^b) => false
+      NCtorOf(^c, ^a) => false
+      NMatchOf(^m) => false
+      NCallOf(^c) => false
+      NShownOf(^a) => false
+      NPerformOf(^x) => false
+      NUnreachable(^a) => false
+    }
+  }
+}
+
+pub fn p_expr(p: &mut PState, e: NExpr): Unit ! {div, overflow} {
+  match e.kind {
+    NIntLit(negative, n) => match n_int_width(e.ty) {
+      Some(w) => p_all(&mut p, [p_signed(negative, n), p_width_word(w)])
+      None => {
+        p_all(&mut p, ["(", p_signed(negative, n), ": "])
+        p_ty(&mut p, e.ty)
+        p_s(&mut p, ")")
+      }
+    }
+    NUnitLit => p_expr_typed(&mut p, e)
+    NBoolLit(^b) => p_expr_typed(&mut p, e)
+    NFloatLit(^t) => p_expr_typed(&mut p, e)
+    NTextLit(^t) => p_expr_typed(&mut p, e)
+    NDeclaration(^i) => p_expr_typed(&mut p, e)
+    NFnValue(^i, ^t) => p_expr_typed(&mut p, e)
+    NClosureOf(^c) => p_expr_typed(&mut p, e)
+    NHandleOf(^h) => p_expr_typed(&mut p, e)
+    NBudgetOf(^b) => p_expr_typed(&mut p, e)
+    NInject(^u, ^v, ^x) => p_expr_typed(&mut p, e)
+    NRemap(^u, ^t, ^x) => p_expr_typed(&mut p, e)
+    NFnCast(^a) => p_expr_typed(&mut p, e)
+    NRead(^l, ^h) => p_expr_typed(&mut p, e)
+    NBorrow(^pl) => p_expr_typed(&mut p, e)
+    NBorrowMut(^pl) => p_expr_typed(&mut p, e)
+    NTempRef(^a) => p_expr_typed(&mut p, e)
+    NDeref(^v, ^h) => p_expr_typed(&mut p, e)
+    NFieldOf(^b, ^f, ^h, ^i) => p_expr_typed(&mut p, e)
+    NArithOf(^op, ^n, ^a) => p_expr_typed(&mut p, e)
+    NCmpOf(^op, ^a) => p_expr_typed(&mut p, e)
+    NEqOf(^n, ^a) => p_expr_typed(&mut p, e)
+    NNot(^a) => p_expr_typed(&mut p, e)
+    NAnd(^a, ^b) => p_expr_typed(&mut p, e)
+    NOr(^a, ^b) => p_expr_typed(&mut p, e)
+    NIf(^c, ^t, ^o) => p_expr_typed(&mut p, e)
+    NBlockOf(^b) => p_expr_typed(&mut p, e)
+    NCtorOf(^c, ^a) => p_expr_typed(&mut p, e)
+    NMatchOf(^m) => p_expr_typed(&mut p, e)
+    NCallOf(^c) => p_expr_typed(&mut p, e)
+    NShownOf(^a) => p_expr_typed(&mut p, e)
+    NPerformOf(^x) => p_expr_typed(&mut p, e)
+    NUnreachable(^a) => p_expr_typed(&mut p, e)
+  }
+}
+
+pub fn p_expr_typed(p: &mut PState, e: NExpr): Unit ! {div, overflow} {
+  if p_writes_ty(e.kind) {
+    p_kind(&mut p, e)
+    p_s(&mut p, ": ")
+    p_ty(&mut p, e.ty)
+  } else if p_ty_is(p_default(&mut p, e), e.ty) {
+    // The default is asked before the expression is written: what it binds
+    // is not in scope for it.
+    p_kind(&mut p, e)
+  } else {
+    p_s(&mut p, "(")
+    p_kind(&mut p, e)
+    p_s(&mut p, ": ")
+    p_ty(&mut p, e.ty)
+    p_s(&mut p, ")")
+  }
+}
+
+// The base of a field: a local as it is, anything else in parentheses.
+pub fn p_base(p: &mut PState, e: NExpr): Unit ! {div, overflow} {
+  let plain := match e.kind {
+    NRead(^l, how) => match how {
+      NPlace => p_ty_is(p_default(&mut p, e), e.ty)
+      NMove => false
+      NCopy => false
+      NClone => false
+    }
+    NUnitLit => false
+    NIntLit(^n, ^s) => false
+    NBoolLit(^b) => false
+    NFloatLit(^t) => false
+    NTextLit(^t) => false
+    NDeclaration(^i) => false
+    NFnValue(^i, ^t) => false
+    NClosureOf(^c) => false
+    NHandleOf(^h) => false
+    NBudgetOf(^b) => false
+    NInject(^u, ^v, ^x) => false
+    NRemap(^u, ^t, ^x) => false
+    NFnCast(^a) => false
+    NBorrow(^pl) => false
+    NBorrowMut(^pl) => false
+    NTempRef(^a) => false
+    NDeref(^v, ^h) => false
+    NFieldOf(^b, ^f, ^h, ^i) => false
+    NArithOf(^op, ^n, ^a) => false
+    NCmpOf(^op, ^a) => false
+    NEqOf(^n, ^a) => false
+    NNot(^a) => false
+    NAnd(^a, ^b) => false
+    NOr(^a, ^b) => false
+    NIf(^c, ^t, ^o) => false
+    NBlockOf(^b) => false
+    NCtorOf(^c, ^a) => false
+    NMatchOf(^m) => false
+    NCallOf(^c) => false
+    NShownOf(^a) => false
+    NPerformOf(^x) => false
+    NUnreachable(^a) => false
+  }
+  if plain {
+    match e.kind {
+      NRead(l, ^how) => p_local(&mut p, l)
+      NUnitLit => ()
+      NIntLit(^n, ^s) => ()
+      NBoolLit(^b) => ()
+      NFloatLit(^t) => ()
+      NTextLit(^t) => ()
+      NDeclaration(^i) => ()
+      NFnValue(^i, ^t) => ()
+      NClosureOf(^c) => ()
+      NHandleOf(^h) => ()
+      NBudgetOf(^b) => ()
+      NInject(^u, ^v, ^x) => ()
+      NRemap(^u, ^t, ^x) => ()
+      NFnCast(^a) => ()
+      NBorrow(^pl) => ()
+      NBorrowMut(^pl) => ()
+      NTempRef(^a) => ()
+      NDeref(^v, ^h) => ()
+      NFieldOf(^b, ^f, ^h, ^i) => ()
+      NArithOf(^op, ^n, ^a) => ()
+      NCmpOf(^op, ^a) => ()
+      NEqOf(^n, ^a) => ()
+      NNot(^a) => ()
+      NAnd(^a, ^b) => ()
+      NOr(^a, ^b) => ()
+      NIf(^c, ^t, ^o) => ()
+      NBlockOf(^b) => ()
+      NCtorOf(^c, ^a) => ()
+      NMatchOf(^m) => ()
+      NCallOf(^c) => ()
+      NShownOf(^a) => ()
+      NPerformOf(^x) => ()
+      NUnreachable(^a) => ()
+    }
+  } else {
+    p_grouped(&mut p, e)
+  }
+}
+
+pub fn p_ctor_args(p: &mut PState, xs: List(NArg), first: Bool): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(a, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      match a.label {
+        None => ()
+        Some(l) => {
+          p_name(&mut p, l)
+          p_s(&mut p, " = ")
+        }
+      }
+      p_expr(&mut p, a.value)
+      p_ctor_args(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_match_arms(p: &mut PState, xs: List(NArm)): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(a, rest) => {
+      p_line(&mut p)
+      p_pat(&mut p, a.pat)
+      match a.guard {
+        None => ()
+        Some(g) => {
+          p_s(&mut p, " if ")
+          p_expr(&mut p, g)
+        }
+      }
+      p_s(&mut p, " => ")
+      p_expr(&mut p, a.body)
+      p_s(&mut p, ",")
+      p_match_arms(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_captured(p: &mut PState, xs: List(NCapturedRef), first: Bool): Unit {
+  match xs {
+    Nil => ()
+    Cons(r, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      p_bind(&mut p, r.inner, None)
+      p_s(&mut p, if r.mutable { " = &mut " } else { " = &" })
+      p_local(&mut p, r.outer)
+      p_captured(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn p_instance(p: &mut PState, i: Option(NInstance)): Unit ! {div} {
+  match i {
+    None => ()
+    Some(x) => {
+      p_s(&mut p, " instance")
+      p_targs(&mut p, x.type_args)
+      p_s(&mut p, "(")
+      p_tys(&mut p, x.params)
+      p_s(&mut p, ") -> ")
+      p_ty(&mut p, x.answer)
+      p_all(&mut p, [" ", x.admission])
+    }
+  }
+}
+
+pub fn p_wrapped(p: &mut PState, word: Text, a: NExpr): Unit ! {div, overflow} {
+  p_all(&mut p, [word, "("])
+  p_expr(&mut p, a)
+  p_s(&mut p, ")")
+}
+
+pub fn p_arm_word(k: NArmKind): Text {
+  match k {
+    NArmDirect => "direct"
+    NArmAbort => "abort"
+    NArmSuspend => "suspend"
+  }
+}
+
+pub fn p_op_arms(p: &mut PState, xs: List(NOpArm)): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(a, rest) => {
+      p_line(&mut p)
+      p_all(&mut p, [p_arm_word(a.kind), " "])
+      p_op(&mut p, a.op)
+      p_s(&mut p, "(")
+      p_pats(&mut p, a.pats, true)
+      p_s(&mut p, ") params(")
+      p_tys(&mut p, a.params)
+      p_s(&mut p, ") answer ")
+      p_ty(&mut p, a.k_ans)
+      match a.k {
+        None => ()
+        Some(k) => {
+          p_s(&mut p, " k ")
+          p_bind(&mut p, k, None)
+        }
+      }
+      p_instance(&mut p, a.inst)
+      if a.instantiated { p_s(&mut p, " instantiated") } else { () }
+      match a.guard {
+        None => ()
+        Some(g) => {
+          p_s(&mut p, " if ")
+          p_expr(&mut p, g)
+        }
+      }
+      p_s(&mut p, " => ")
+      p_expr(&mut p, a.body)
+      p_s(&mut p, ",")
+      p_op_arms(&mut p, rest)
+    }
+  }
+}
+
+pub fn p_handle(p: &mut PState, h: NHandle): Unit ! {div, overflow} {
+  p_all(&mut p, ["handle ", Text::of_nat(h.id), " ", p_tier_word(h.body_tier)])
+  p_flag(&mut p, h.m, "m")
+  p_flag(&mut p, h.kept, "kept")
+  p_flag(&mut p, h.detached, "detached")
+  match h.host_ret {
+    None => ()
+    Some(t) => {
+      p_s(&mut p, " host_ret ")
+      p_ty(&mut p, t)
+    }
+  }
+  p_locals(&mut p, "captures", h.captures)
+  p_locals(&mut p, "clones", h.clones)
+  p_s(&mut p, " do ")
+  p_expr(&mut p, h.body)
+  if n_ty_eq(h.body_ty, h.body.ty) {
+    ()
+  } else {
+    p_s(&mut p, " as ")
+    p_ty(&mut p, h.body_ty)
+  }
+  p_s(&mut p, " with {")
+  p_set(&mut p.indent, p.indent + 1)
+  match h.ret {
+    None => ()
+    Some(r) => {
+      p_line(&mut p)
+      p_s(&mut p, "return ")
+      p_pat(&mut p, r.pat)
+      p_s(&mut p, " => ")
+      p_expr(&mut p, r.body)
+      p_s(&mut p, ",")
+    }
+  }
+  p_op_arms(&mut p, h.arms)
+  p_set(&mut p.indent, p.indent - 1)
+  p_line(&mut p)
+  p_s(&mut p, "}: ")
+  p_ty(&mut p, h.result)
+}
+
+pub fn p_arith_word(op: NArith): Text {
+  match op {
+    NAdd => "add"
+    NSub => "sub"
+    NMul => "mul"
+    NNeg => "neg"
+    NDivide => "div"
+  }
+}
+
+pub fn p_cmp_word(op: NCmp): Text {
+  match op {
+    NLt => "lt"
+    NGt => "gt"
+    NLe => "le"
+    NGe => "ge"
+  }
+}
+
+pub fn p_call(p: &mut PState, c: NCall): Unit ! {div, overflow} {
+  match c.callee {
+    NCallInst(i) => p_inst(&mut p, i)
+    NCallBuiltin(n) => {
+      p_s(&mut p, "builtin ")
+      p_name(&mut p, n)
+    }
+    NCallExtern(n) => {
+      p_s(&mut p, "extern ")
+      p_name(&mut p, n)
+    }
+    NCallLocal(l) => p_local(&mut p, l)
+    NCallCont(l) => {
+      p_s(&mut p, "resume ")
+      p_local(&mut p, l)
+    }
+    NCallValue(f) => p_grouped(&mut p, f)
+  }
+  p_targs(&mut p, c.targs)
+  p_args(&mut p, c.args)
+  if n_tier_is_s(c.tier) { () } else { p_all(&mut p, [" tier ", p_tier_word(c.tier)]) }
+  p_tick(&mut p, c.tick)
+  if c.recur { p_s(&mut p, " recur") } else { () }
+  p_unwind(&mut p, c.unwind)
+}
+
+pub fn p_closure(p: &mut PState, c: NClosure): Unit ! {div, overflow} {
+  p_s(&mut p, "closure")
+  if c.borrowed { p_s(&mut p, " borrowed") } else { () }
+  if c.pure { p_s(&mut p, " pure") } else { () }
+  p_s(&mut p, "(")
+  p_params(&mut p, c.params, true)
+  p_s(&mut p, ") -> ")
+  p_ty(&mut p, c.ret)
+  p_s(&mut p, " as ")
+  p_fn_ty(&mut p, c.fn_ty)
+  p_locals(&mut p, "clones", c.clones)
+  match c.refs {
+    Nil => ()
+    Cons(^r, ^rest) => {
+      p_s(&mut p, " refs(")
+      p_captured(&mut p, c.refs, true)
+      p_s(&mut p, ")")
+    }
+  }
+  p_locals(&mut p, "owned_refs", c.owned_refs)
+  p_s(&mut p, " => ")
+  p_expr(&mut p, c.body)
+}
+
+pub fn p_kind(p: &mut PState, e: NExpr): Unit ! {div, overflow} {
+  match e.kind {
+    NDeclaration(i) => p_all(&mut p, ["declaration(", Text::of_nat(i), ")"])
+    NUnitLit => p_s(&mut p, "()")
+    NIntLit(negative, n) => p_s(&mut p, p_signed(negative, n))
+    NFloatLit(t) => p_s(&mut p, t)
+    NBoolLit(b) => p_s(&mut p, if b { "true" } else { "false" })
+    NTextLit(t) => p_str(&mut p, t)
+    NRead(l, how) => {
+      p_use(&mut p, how)
+      p_local(&mut p, l)
+    }
+    NFnValue(i, targs) => {
+      p_inst(&mut p, i)
+      p_targs(&mut p, targs)
+    }
+    NCallOf(c) => p_call(&mut p, c)
+    NArithOf(op, num, args) => {
+      p_all(&mut p, [p_arith_word(op), "<", p_num_word(num), ">"])
+      p_args(&mut p, args)
+    }
+    NCmpOf(op, args) => {
+      p_s(&mut p, p_cmp_word(op))
+      p_args(&mut p, args)
+    }
+    NEqOf(negate, args) => {
+      p_s(&mut p, if negate { "ne" } else { "eq" })
+      p_args(&mut p, args)
+    }
+    NNot(a) => p_wrapped(&mut p, "not", a)
+    NAnd(a, b) => {
+      p_s(&mut p, "and(")
+      p_expr(&mut p, a)
+      p_s(&mut p, ", ")
+      p_expr(&mut p, b)
+      p_s(&mut p, ")")
+    }
+    NOr(a, b) => {
+      p_s(&mut p, "or(")
+      p_expr(&mut p, a)
+      p_s(&mut p, ", ")
+      p_expr(&mut p, b)
+      p_s(&mut p, ")")
+    }
+    NCtorOf(c, args) => {
+      p_name(&mut p, c.name)
+      match args {
+        Nil => ()
+        Cons(^a, ^rest) => {
+          p_s(&mut p, "(")
+          p_ctor_args(&mut p, args, true)
+          p_s(&mut p, ")")
+        }
+      }
+    }
+    NFieldOf(base, field, how, read) => {
+      p_use(&mut p, how)
+      p_base(&mut p, base)
+      p_step(&mut p, field)
+      if p_indirect_eq(read, field.indirect) {
+        ()
+      } else {
+        p_all(&mut p, [" read ", p_indirect_word(read)])
+      }
+    }
+    NMatchOf(m) => {
+      p_s(&mut p, "match ")
+      if m.by_ref { p_s(&mut p, "by_ref ") } else { () }
+      if m.exhaustive { () } else { p_s(&mut p, "partial ") }
+      p_expr(&mut p, m.scrut)
+      p_s(&mut p, " {")
+      p_set(&mut p.indent, p.indent + 1)
+      p_match_arms(&mut p, m.arms)
+      p_set(&mut p.indent, p.indent - 1)
+      p_line(&mut p)
+      p_s(&mut p, "}")
+    }
+    NIf(cond, then, otherwise) => {
+      p_s(&mut p, "if ")
+      p_expr(&mut p, cond)
+      p_s(&mut p, " then ")
+      let wrap := match otherwise {
+        None => false
+        Some(^o) => p_open_if(&mut p, then)
+      }
+      if wrap {
+        p_s(&mut p, "(")
+        p_expr(&mut p, then)
+        p_s(&mut p, ")")
+      } else {
+        p_expr(&mut p, then)
+      }
+      match otherwise {
+        None => ()
+        Some(o) => {
+          p_s(&mut p, " else ")
+          p_expr(&mut p, o)
+        }
+      }
+    }
+    NBlockOf(b) => p_block(&mut p, b)
+    NClosureOf(c) => p_closure(&mut p, c)
+    NPerformOf(x) => {
+      p_s(&mut p, "perform ")
+      p_op(&mut p, x.op)
+      p_args(&mut p, x.args)
+      p_all(&mut p, [" ", p_quant_word(x.quant)])
+      if x.detached { p_s(&mut p, " detached") } else { () }
+      p_instance(&mut p, x.inst)
+      p_unwind(&mut p, x.unwind)
+      p_s(&mut p, ": ")
+      p_ty(&mut p, x.result)
+    }
+    NHandleOf(h) => p_handle(&mut p, h)
+    NInject(u, v, x) => {
+      p_all(&mut p, ["inject(", Text::of_nat(u), ", ", Text::of_nat(v), ", "])
+      p_expr(&mut p, x)
+      p_s(&mut p, ")")
+    }
+    NRemap(u, to, x) => {
+      p_all(&mut p, ["remap(", Text::of_nat(u), ", "])
+      p_ty(&mut p, to)
+      p_s(&mut p, ", ")
+      p_expr(&mut p, x)
+      p_s(&mut p, ")")
+    }
+    NBorrow(pl) => {
+      p_s(&mut p, "&")
+      p_place(&mut p, pl)
+    }
+    NBorrowMut(pl) => {
+      p_s(&mut p, "&mut ")
+      p_place(&mut p, pl)
+    }
+    NTempRef(a) => p_wrapped(&mut p, "tempref", a)
+    NDeref(v, how) => {
+      p_use(&mut p, how)
+      p_wrapped(&mut p, "deref", v)
+    }
+    NShownOf(a) => p_wrapped(&mut p, "shown", a)
+    NBudgetOf(b) => {
+      p_all(&mut p, ["budget ", Text::of_nat(b.id)])
+      if b.memory { p_s(&mut p, " memory") } else { () }
+      if b.m { p_s(&mut p, " m") } else { () }
+      p_s(&mut p, "(")
+      p_expr(&mut p, b.steps)
+      p_s(&mut p, ", ")
+      p_expr(&mut p, b.body)
+      p_s(&mut p, ")")
+    }
+    NUnreachable(a) => p_wrapped(&mut p, "unreachable", a)
+    NFnCast(a) => p_wrapped(&mut p, "fncast", a)
+  }
+}
+
+// The package as text.
+pub fn nir_print(pkg: NPackage): Text ! {div, overflow} {
+  var p := PState { pkg: pkg, out: Nil, indent: 0, bound: Ordmap::empty() }
+  p_package(&mut p)
+  Text::concat_all(text_list_reverse(p.out))
+}

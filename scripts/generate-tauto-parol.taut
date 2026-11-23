@@ -1,0 +1,56 @@
+// Regenerates crates/tauto-parol/src/generated from tauto.par with parol.
+// parol lives only in tools/tauto-parol-gen (its own workspace and lockfile),
+// so it never enters the workspace's dependency graph. With --check, fails if the
+// committed files differ from what the grammar generates, and leaves them as
+// they were.
+//   tauto gen-tauto-parol [--check]
+import "lib/sh.taut" {
+  sh_arg1,
+  sh_die,
+  sh_must,
+  sh_none,
+  sh_ok,
+  sh_output,
+  sh_process,
+  sh_root,
+  sh_run
+}
+import std::builtin::os { EnvVars, Process, environ, exit }
+import std::text { Text }
+import std::base { List }
+
+let root := sh_root()
+let generated := "crates/tauto-parol/src/generated"
+let check := sh_arg1() == "--check"
+let grammar_args := if check { ["--check"] } else { [] }
+sh_must(sh_process("tauto", List::append(["gen-tauto-grammar"], grammar_args), root, []))
+
+sh_must(sh_process("mkdir", ["-p", ".tmp"], root, []))
+let before := sh_output(sh_process("mktemp", ["-d", ".tmp/tauto-parol-before.XXXXXX"], root, []))
+sh_must(
+  sh_process("cp", ["-Rp", Text::concat(generated, "/."), Text::concat(before, "/")], root, [])
+)
+
+let code := sh_run(Process {
+  program: "cargo",
+  args: ["run", "--locked", "--quiet", "--manifest-path", "tools/tauto-parol-gen/Cargo.toml"],
+  dir: root,
+  env: EnvVars::set(perform environ(), [#("RUSTUP_AUTO_INSTALL", "0")]),
+  stdin: sh_none()
+})
+let differs := if check && code == 0 {
+  not(sh_ok(sh_process("diff", ["-r", before, generated], root, [])))
+} else { false }
+// --check restores the committed files even if generation itself fails.
+if check {
+  sh_must(sh_process("rm", ["-rf", generated], root, []))
+  sh_must(sh_process("mkdir", ["-p", generated], root, []))
+  sh_must(
+    sh_process("cp", ["-Rp", Text::concat(before, "/."), Text::concat(generated, "/")], root, [])
+  )
+} else { #() }
+sh_must(sh_process("rm", ["-rf", before], root, []))
+if code == 0 { #() } else { perform exit(code) }
+if differs {
+  sh_die(1, Text::concat(generated, " is out of date; run: tauto gen-tauto-parol"))
+} else { #() }

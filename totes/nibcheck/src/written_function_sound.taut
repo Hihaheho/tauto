@@ -1,7 +1,7 @@
 import "written_parameters_sound.taut"
 import "written_binder_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -9,6 +9,7 @@ import "diagnostic_sound.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_composite_sound.taut"
 import "written_context_sound.taut"
@@ -23,11 +24,9 @@ pub fn written_function_after(
   m: Mut1(List(Ty), Checker)
 ): Mut1(Ty, Checker) {
   frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     (arguments: List(Ty), state: Checker) => written_map(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       (returns: Ty) => ty_poly_of(frame_pi_binders(params), TyFn(arguments, returns, KindShared)),
       ck_written_in(result, state, frame_pi_generics(params, generics))
     ),
@@ -38,7 +37,7 @@ pub theorem written_term_state(
   c: Checker,
   next: Checker,
   generics: Ordmap(Text, Ty),
-  borrow: Bool,
+  r#borrow: Bool,
   term: SurfaceTerm,
   t: Ty,
   env: ck_datas_of(next) = ck_datas_of(c),
@@ -47,20 +46,20 @@ pub theorem written_term_state(
     ck_datas_of(next),
     generics,
     frame_constructor_position(next),
-    borrow,
+    r#borrow,
     term,
     t
   )
-): WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), borrow, term, t) {
+): WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), r#borrow, term, t) {
   Eq::subst(
-    (partial: Bool) => WrittenTerm(ck_datas_of(c), generics, partial, borrow, term, t),
+    (partial: Bool) => WrittenTerm(ck_datas_of(c), generics, partial, r#borrow, term, t),
     position,
     Eq::subst(
       (datas: Datas) => WrittenTerm(
         datas,
         generics,
         frame_constructor_position(next),
-        borrow,
+        r#borrow,
         term,
         t
       ),
@@ -72,7 +71,7 @@ pub theorem written_term_state(
 pub theorem written_function_after_sound(
   params: List(SurfaceParam),
   result: SurfaceTerm,
-  effects: Option(List(Text)),
+  effects: Option(List(RowEntry)),
   c: Checker,
   generics: Ordmap(Text, Ty),
   under_borrow: Bool,
@@ -122,8 +121,7 @@ pub theorem written_function_after_sound(
       let result_clean: DiagnosticClean(
         ck_st(ck_written_in(result, state, frame_pi_generics(params, generics)))
       ) := written_map_clean(
-        Ty,
-        Ty,
+        <A: Ty, B: Ty>,
         (returns: Ty) => ty_poly_of(frame_pi_binders(params), TyFn(arguments, returns, KindShared)),
         ck_written_in(result, state, frame_pi_generics(params, generics)),
         clean
@@ -139,8 +137,7 @@ pub theorem written_function_after_sound(
         ),
         Eq::sym(
           written_map_value(
-            Ty,
-            Ty,
+            <A: Ty, B: Ty>,
             (returns: Ty) => ty_poly_of(
               frame_pi_binders(params),
               TyFn(arguments, returns, KindShared)
@@ -207,7 +204,7 @@ pub theorem written_function_after_sound(
 pub theorem written_function_sound(
   params: List(SurfaceParam),
   result: SurfaceTerm,
-  effects: Option(List(Text)),
+  effects: Option(List(RowEntry)),
   c: Checker,
   generics: Ordmap(Text, Ty),
   under_borrow: Bool,

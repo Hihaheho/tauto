@@ -29,8 +29,8 @@ fn tauto(dir: &PathBuf, args: &[&str]) -> (Option<i32>, String) {
 
 /// Programs that fail before they run: a syntax error, a type error.
 const BROKEN: [(&str, &str); 2] = [
-    ("syntax", "import std::prelude::Os\n\nprint(1 + )\n"),
-    ("type", "import std::prelude::Os\n\nprint(1 + \"a\")\n"),
+    ("syntax", "import std::builtin::os\n\nprint(1 + )\n"),
+    ("type", "import std::builtin::os\n\nprint(1 + \"a\")\n"),
 ];
 
 #[test]
@@ -39,7 +39,7 @@ fn a_program_that_does_not_check_fails_on_every_backend() {
     for (name, source) in BROKEN {
         let file = format!("{name}.taut");
         fs::write(d.join(&file), source).unwrap();
-        for backend in ["vm", "eval", "rust"] {
+        for backend in ["vm", "rust"] {
             let (code, err) = tauto(&d, &["run", "--backend", backend, &file]);
             assert!(
                 code.is_some_and(|c| c != 0),
@@ -61,7 +61,7 @@ fn a_program_that_does_not_check_fails_on_every_backend() {
 #[test]
 fn a_missing_file_fails_on_every_backend() {
     let d = dir("missing");
-    for backend in ["vm", "eval", "rust"] {
+    for backend in ["vm", "rust"] {
         let (code, err) = tauto(&d, &["run", "--backend", backend, "nothing.taut"]);
         assert!(
             code.is_some_and(|c| c != 0),
@@ -77,9 +77,9 @@ fn the_status_a_program_exits_with_is_the_status_of_run() {
     let d = dir("exit");
     fs::write(
         d.join("exit.taut"),
-        "import std::prelude::Os\n\nperform exit(3)\n",
+        "import std::builtin::os\n\nperform exit(3)\n",
     )
     .unwrap();
-    let (code, err) = tauto(&d, &["run", "--backend", "eval", "exit.taut"]);
+    let (code, err) = tauto(&d, &["run", "--backend", "vm", "exit.taut"]);
     assert_eq!(code, Some(3), "{err}");
 }

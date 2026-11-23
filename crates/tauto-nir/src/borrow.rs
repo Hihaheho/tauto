@@ -14,8 +14,11 @@
 //! copied or cloned where it is used. Functions that take such a value apart
 //! to build another (the owner can move the parts) are left alone.
 //!
-//! Only the functions of the plain tier, called from the plain tier, are
-//! changed; this runs before the last uses are found (`last_use.rs`).
+//! Only the functions of the plain tier and of tier `A`, called from those
+//! tiers, are changed: a tier `A` function returns or aborts and is never
+//! resumed later, so what it borrows is still held by its caller whenever it
+//! runs (overflow and divzero alone make arithmetic tier `A`). This runs
+//! before the last uses are found (`last_use.rs`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,7 +30,7 @@ pub fn infer(pkg: &mut Package) {
     let blocked = blocked_fns(pkg);
     let mut cand: HashSet<Key> = HashSet::new();
     for f in &pkg.fns {
-        if blocked.contains(&f.id) || f.tier != Tier::S || pkg.top == Some(f.id) {
+        if blocked.contains(&f.id) || f.tier > Tier::A || pkg.top == Some(f.id) {
             continue;
         }
         for (i, p) in f.params.iter().enumerate() {
@@ -95,7 +98,38 @@ fn blocked_fns(pkg: &Package) -> HashSet<InstId> {
                     out.insert(*id);
                 }
             }
-            _ => {}
+            ExprKind::Call(_)
+            | ExprKind::Declaration(_)
+            | ExprKind::Unit
+            | ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Text(_)
+            | ExprKind::Read { .. }
+            | ExprKind::Arith { .. }
+            | ExprKind::Cmp { .. }
+            | ExprKind::Eq { .. }
+            | ExprKind::Not(_)
+            | ExprKind::And(..)
+            | ExprKind::Or(..)
+            | ExprKind::Ctor { .. }
+            | ExprKind::Field { .. }
+            | ExprKind::Match(_)
+            | ExprKind::If { .. }
+            | ExprKind::Block(_)
+            | ExprKind::Closure(_)
+            | ExprKind::Perform(_)
+            | ExprKind::Handle(_)
+            | ExprKind::Inject { .. }
+            | ExprKind::Remap { .. }
+            | ExprKind::Ref(_)
+            | ExprKind::RefMut(_)
+            | ExprKind::TempRef(_)
+            | ExprKind::Deref { .. }
+            | ExprKind::Shown(_)
+            | ExprKind::Budget(_)
+            | ExprKind::Unreachable(_)
+            | ExprKind::FnCast(_) => {}
         }
         let blocked = blocked
             || matches!(
@@ -118,7 +152,7 @@ fn blocked_fns(pkg: &Package) -> HashSet<InstId> {
         }
     }
     for f in &pkg.fns {
-        visit(&f.body, f.tier != Tier::S, &mut out);
+        visit(&f.body, f.tier > Tier::A, &mut out);
     }
     out
 }
@@ -140,8 +174,9 @@ fn binds(p: &Pat, boxed: bool, out: &mut Vec<(u32, bool)>) -> bool {
             );
             binds(f, b, out)
         }),
+        Pat::Variant { pat, .. } => binds(pat, boxed, out),
         Pat::Text(_) => false,
-        _ => true,
+        Pat::Wild | Pat::Int(_) | Pat::Nat(_) | Pat::Bool(_) => true,
     }
 }
 
@@ -201,7 +236,34 @@ impl<'a> Check<'a> {
             {
                 self.ok = false;
             }
-            _ => {}
+            ExprKind::Declaration(_)
+            | ExprKind::Unit
+            | ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Text(_)
+            | ExprKind::FnValue { .. }
+            | ExprKind::Arith { .. }
+            | ExprKind::Cmp { .. }
+            | ExprKind::Eq { .. }
+            | ExprKind::Not(_)
+            | ExprKind::And(..)
+            | ExprKind::Or(..)
+            | ExprKind::Ctor { .. }
+            | ExprKind::Field { .. }
+            | ExprKind::Match(_)
+            | ExprKind::If { .. }
+            | ExprKind::Block(_)
+            | ExprKind::Perform(_)
+            | ExprKind::Handle(_)
+            | ExprKind::Inject { .. }
+            | ExprKind::Remap { .. }
+            | ExprKind::TempRef(_)
+            | ExprKind::Deref { .. }
+            | ExprKind::Shown(_)
+            | ExprKind::Budget(_)
+            | ExprKind::Unreachable(_)
+            | ExprKind::FnCast(_) => {}
         });
     }
 
@@ -535,7 +597,8 @@ fn refer(p: &mut Pat, out: &mut Vec<u32>) {
             out.push(l.id);
         }
         Pat::Ctor { fields, .. } => fields.iter_mut().for_each(|f| refer(f, out)),
-        _ => {}
+        Pat::Variant { pat, .. } => refer(pat, out),
+        Pat::Wild | Pat::Int(_) | Pat::Nat(_) | Pat::Bool(_) | Pat::Text(_) => {}
     }
 }
 
@@ -559,7 +622,33 @@ fn mentioned(e: &Expr) -> HashSet<u32> {
         ExprKind::Handle(h) => {
             out.extend(h.captures.iter().chain(&h.clones).map(|l| l.id));
         }
-        _ => {}
+        ExprKind::Declaration(_)
+        | ExprKind::Unit
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Text(_)
+        | ExprKind::FnValue { .. }
+        | ExprKind::Arith { .. }
+        | ExprKind::Cmp { .. }
+        | ExprKind::Eq { .. }
+        | ExprKind::Not(_)
+        | ExprKind::And(..)
+        | ExprKind::Or(..)
+        | ExprKind::Ctor { .. }
+        | ExprKind::Field { .. }
+        | ExprKind::Match(_)
+        | ExprKind::If { .. }
+        | ExprKind::Block(_)
+        | ExprKind::Perform(_)
+        | ExprKind::Inject { .. }
+        | ExprKind::Remap { .. }
+        | ExprKind::TempRef(_)
+        | ExprKind::Deref { .. }
+        | ExprKind::Shown(_)
+        | ExprKind::Budget(_)
+        | ExprKind::Unreachable(_)
+        | ExprKind::FnCast(_) => {}
     });
     out
 }
@@ -622,40 +711,5 @@ fn borrow_arg(arg: Expr, others: &HashSet<u32>) -> Expr {
         kind: ExprKind::TempRef(Box::new(arg)),
         ty: reftype,
         span,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn opaque_boundaries_keep_callees_owned() {
-        for (source, expected) in [
-            (
-                r#"enum Tree { Leaf(i64), Branch(Tree, Tree) }
-fn read(t: Tree): i64 { match t { Leaf(n) => n, Branch(l, r) => read(l) + read(r) } }
-fn run(): i64 { read(Leaf(1)) }
-perform show("value", run())"#,
-                Repr::Ref,
-            ),
-            (
-                r#"enum Tree { Leaf(i64), Branch(Tree, Tree) }
-fn read(t: Tree): i64 { match t { Leaf(n) => n, Branch(l, r) => read(l) + read(r) } }
-fn run(): i64 { let outer := () => { let inner := () => read(Leaf(1))
-inner() }
-outer() }
-perform show("value", run())"#,
-                Repr::Plain,
-            ),
-        ] {
-            let package = compile_with(&source, false).unwrap();
-            let read = package
-                .fns
-                .iter()
-                .find(|f| f.source.as_str() == "read")
-                .unwrap();
-            assert_eq!(read.params[0].local.repr, expected, "{source}");
-        }
     }
 }

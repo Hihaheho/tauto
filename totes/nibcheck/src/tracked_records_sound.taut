@@ -1,7 +1,7 @@
 import "tracked_state_frame.taut"
 import "literal_record_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "stable_state_frame.taut"
 import "ty.taut"
@@ -15,12 +15,13 @@ pub theorem tracked_natural_record(
   recorded: NaturalRecorded(value, span, ty, stable_literals(c)),
   retained: TrackedState(c, next)
 ): NaturalRecorded(value, span, ty, stable_literals(next)) {
-  ⊢ NaturalRecorded(value, span, ty, stable_literals(next)) from match recorded {
+  match recorded {
     Mk(magnitude, parsed, stored) => NaturalRecorded::Mk(
       magnitude,
       parsed,
       And::left(retained)(natural_literal_record(span, magnitude, ty), stored)
     )
+    AsNat(name, fits, is_nat) => NaturalRecorded::AsNat(name, fits, is_nat)
   }
 }
 pub theorem tracked_function_lookup(

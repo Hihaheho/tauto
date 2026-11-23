@@ -1,0 +1,181 @@
+// What a value is shown as to whoever develops the program, and `show`, which
+// writes it (`docs/design/debug.md`). A `struct` or `enum` whose file writes
+// no instance gets one from the compiler, unless it is recursive.
+pub(open) class Debug(A: Linear) {
+  fn debug(a: &A): Text
+}
+
+pub fn debug<A: Linear>(a: &A): Text where Debug(A) {
+  Debug::debug(&a)
+}
+
+// What `show` performs, for a row to name without importing `std::builtin::os`.
+pub effect Show {
+  stdout,
+  stdout_flush
+}
+
+// `a` on a line of its own on standard output, written out at once.
+pub fn show<A: Linear>(a: &A): Unit ! {Show} where Debug(A) {
+  show_line(Debug::debug(&a))
+}
+
+// `line` and a line break on standard output, written out at once. Apart
+// from `show`, so that what `show` is given is not kept past its call: a
+// generic function that performs an effect asks its type parameters to
+// outlive every borrow.
+fn show_line(line: Text): Unit ! {Show} {
+  perform stdout(concat(line, "\n"))
+  perform stdout_flush()
+}
+
+instance Debug(i64) {
+  fn debug(a: &i64): Text { Text::of_i64(a) }
+}
+
+instance Debug(i8) {
+  fn debug(a: &i8): Text { Text::of_i64(I64::of_i8(a)) }
+}
+
+instance Debug(i16) {
+  fn debug(a: &i16): Text { Text::of_i64(I64::of_i16(a)) }
+}
+
+instance Debug(u16) {
+  fn debug(a: &u16): Text { Text::of_u64(U64::of_u16(a)) }
+}
+
+instance Debug(i32) {
+  fn debug(a: &i32): Text { Text::of_i64(I64::of_i32(a)) }
+}
+
+instance Debug(u8) {
+  fn debug(a: &u8): Text { Text::of_u64(U64::of_u8(a)) }
+}
+
+instance Debug(u32) {
+  fn debug(a: &u32): Text { Text::of_u64(U64::of_u32(a)) }
+}
+
+instance Debug(u64) {
+  fn debug(a: &u64): Text { Text::of_u64(a) }
+}
+
+instance Debug(uhost) {
+  fn debug(a: &uhost): Text { Text::of_u64(U64::of_uhost(a)) }
+}
+
+instance Debug(nat) {
+  fn debug(a: &nat): Text { Text::of_nat(a) }
+}
+
+instance Debug(Bool) {
+  fn debug(a: &Bool): Text { if a { "true" } else { "false" } }
+}
+
+instance Debug(Unit) {
+  fn debug(a: &Unit): Text { "()" }
+}
+
+instance Debug(Float) {
+  fn debug(a: &Float): Text { Text::of_float(a) }
+}
+
+// The digits of the same number as a `Float`.
+instance Debug(Float32) {
+  fn debug(a: &Float32): Text { Text::of_float(&Float::of_float32(a)) }
+}
+
+// Quoted, with `\`, `"`, the line breaks, tabs and NUL escaped.
+instance Debug(Text) {
+  fn debug(a: &Text): Text {
+    concat("\"", concat(Text::escape_debug(a), "\""))
+  }
+}
+
+pub fn Text::slice_or_empty(t: Text, start: u64, end: u64): Text {
+  match Text::slice(&t, start, end) {
+    Some(s) => s
+    None => ""
+  }
+}
+
+instance<A> Debug(List(A)) where Debug(A) {
+  fn debug(a: &List(A)): Text {
+    concat("[", concat(List::debug_items(&a), "]"))
+  }
+}
+
+instance<A, B> Debug(A × B) where Debug(A), Debug(B) {
+  fn debug(a: &(A × B)): Text {
+    concat("#(", concat(Debug::debug(&a.fst), concat(", ", concat(Debug::debug(&a.snd), ")"))))
+  }
+}
+
+// The elements shown, `, ` between them.
+pub fn List::debug_items<A: Linear>(xs: &List(A)): Text where Debug(A) {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => concat(Debug::debug(&x), List::debug_items_after(&rest))
+  }
+}
+
+pub fn List::debug_items_after<A: Linear>(xs: &List(A)): Text where Debug(A) {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => concat(", ", concat(Debug::debug(&x), List::debug_items_after(&rest)))
+  }
+}
+
+// `Bytes[1, 2]`.
+instance Debug(Bytes) {
+  fn debug(a: &Bytes): Text {
+    concat("Bytes[", concat(List::debug_items(&Bytes::to_list(a)), "]"))
+  }
+}
+
+// `Vec[1, 2]`: the elements from the first, `n` of them left after `i`.
+instance<A> Debug(Vec(A)) where Debug(A) {
+  fn debug(a: &Vec(A)): Text {
+    concat("Vec[", concat(Vec::debug_items(&a, 0, Vec::len(&a)), "]"))
+  }
+}
+
+pub fn Vec::debug_items<A: Linear>(v: &Vec(A), i: u64, n: u64): Text ! {} where Debug(A) {
+  if n == 0 {
+    ""
+  } else {
+    let sep := if i == 0 { "" } else { ", " }
+    let item := match Vec::get(&v, i) {
+      Some(x) => Debug::debug(&x)
+      None => ""
+    }
+    // `n` is not 0 and `i < Vec::len(v)`, so neither overflows.
+    concat(
+      sep,
+      concat(
+        item,
+        Vec::debug_items(
+          &v,
+          handle { i + 1 } with { overflow() => i },
+          handle { n - 1 } with { overflow() => 0 }
+        )
+      )
+    )
+  }
+}
+
+// `Array[1, 2]`.
+instance<A: Shared> Debug(Array(A)) where Debug(A) {
+  fn debug(a: &Array(A)): Text {
+    concat("Array[", concat(List::debug_items(&Array::to_list(a)), "]"))
+  }
+}
+
+// How a type with `struct &T` is lent: `lend` makes the `&T` of
+// the original value, and `owned` a value of a `&T`, run only for duplicable
+// `T`. The law `lend(&orig owned(y)) = y` is not checked yet.
+pub(open) class Lend(T: Linear) {
+  fn lend(owned: &orig T): &T
+  fn owned(lent: &T): T
+}

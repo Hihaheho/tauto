@@ -2,25 +2,29 @@
 //! its statement, proof text, checker source and dependencies are unchanged.
 //!
 //! The key of a theorem is a SHA-256 of the checker's own source, the
-//! bound theorem (statement and proof, without places), and the checked
-//! environment: declaration types, unfolding values, family membership,
-//! axiom dependencies and instances. References are numbered within that
-//! environment. A cached reference denotes the declaration in that slot.
+//! bound theorem (statement and proof, without places), and the declarations
+//! it reaches (`Kernel::key`): their types, unfolding values, family
+//! membership and axiom dependencies, and the instances of the classes among
+//! them. References are numbered among those declarations. A cached
+//! reference denotes the declaration in that slot. A declaration the theorem
+//! does not reach changes no key.
 //! Changing a proof therefore invalidates nothing that uses the theorem.
 //!
-//! On a hit the statement is still elaborated and checked by both checkers;
-//! only the proof is taken as checked. The cache is read and written only by
+//! The cache keeps the term a proof elaborated to. On a hit the statement is
+//! elaborated and checked by both checkers, and the cached proof term goes to
+//! the core kernel (`check/core.rs`), which checks it as it checks any other;
+//! only the named checker's elaboration and its own check are left out. The
+//! theorem's axioms are read off that checked term, not off the file. Nothing
+//! the cache holds is trusted: a term that does not check is elaborated
+//! again. The cache is read and written only by
 //! a kernel that calls `Kernel::use_cache` (checking a file or a set of files
 //! unless they are to be checked afresh, and `tauto eval`); any other kernel
 //! checks every proof. The cache lives in `$TAUTO_CACHE`, or
 //! `$XDG_CACHE_HOME/tauto/proofs`, or `~/.cache/tauto/proofs`; with
 //! `TAUTO_CACHE=off` (or `tauto check --fresh`) every proof is checked.
 //!
-//! A function's value unfolds, so it is never taken as checked: the cache
-//! keeps the term it elaborated to, under a key made the same way, and on a
-//! hit that term goes to the core kernel (`check/core.rs`), which checks it
-//! as it checks any other. Only the named checker's elaboration and its own
-//! check are left out. The no-confusion of a family (`check/noconf.rs`) is
+//! A function's value, and every member of a mutual group, is kept and
+//! checked on a hit the same way. The no-confusion of a family (`check/noconf.rs`) is
 //! the same: it is made again, and only the core checks it.
 
 use std::collections::{BTreeSet, HashMap};
@@ -29,10 +33,10 @@ use std::path::PathBuf;
 use tauto_parol::Span;
 use tauto_syntax::sha256_hex;
 
-use super::{ApplicationSite, CtorSite, FieldSite, Kernel, T};
+use super::{ApplicationSite, AscriptionSite, CtorSite, FieldSite, Kernel, T};
 use crate::surface::{Name, Stmt, TermKind, TheoremDecl};
 mod references;
-use references::References;
+use references::{Base, References};
 
 /// The source of the checker: a change to it is a change to every key. Every
 /// file of the kernel is here (`every_kernel_file_is_in_the_key`).
@@ -61,6 +65,7 @@ const CHECKER: &[&str] = &[
     include_str!("deq.rs"),
     include_str!("differential.rs"),
     include_str!("effects.rs"),
+    include_str!("fork.rs"),
     include_str!("incremental.rs"),
     include_str!("level.rs"),
     include_str!("macro_checker.rs"),
@@ -69,9 +74,51 @@ const CHECKER: &[&str] = &[
     include_str!("wf.rs"),
     include_str!("../lib.rs"),
     include_str!("../prelude.taut"),
-    include_str!("../../../../std/prelude/Std.taut"),
-    include_str!("../../../../std/prelude/Ord.taut"),
+    include_str!("../../../../std/prelude/std.taut"),
+    include_str!("../../../../std/builtin/ord.taut"),
 ];
+
+/// The globals or the families of a kernel: a map that is taken apart only
+/// by moving its entries out (`into_map`).
+#[derive(Clone)]
+pub(super) struct Versioned<K, V> {
+    map: tauto_identity::ForkedMap<K, V>,
+}
+
+impl<K, V> Default for Versioned<K, V> {
+    fn default() -> Self {
+        Self {
+            map: Default::default(),
+        }
+    }
+}
+
+impl<K, V> Versioned<K, V> {
+    pub(super) fn into_forked(self) -> tauto_identity::ForkedMap<K, V> {
+        self.map
+    }
+}
+
+impl<K, V> std::ops::Deref for Versioned<K, V> {
+    type Target = tauto_identity::ForkedMap<K, V>;
+    fn deref(&self) -> &tauto_identity::ForkedMap<K, V> {
+        &self.map
+    }
+}
+
+impl<K, V> std::ops::DerefMut for Versioned<K, V> {
+    fn deref_mut(&mut self) -> &mut tauto_identity::ForkedMap<K, V> {
+        &mut self.map
+    }
+}
+
+impl<'a, K, V> IntoIterator for &'a Versioned<K, V> {
+    type Item = (&'a K, &'a V);
+    type IntoIter = std::collections::hash_map::Iter<'a, K, V>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.map.iter()
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct Cache {
@@ -87,6 +134,30 @@ struct Interface {
     global: super::Global,
     dependencies: Vec<Name>,
     hash: String,
+}
+
+impl Cache {
+    /// Lets go of what a kernel copy's cache worked out for its own files
+    /// alone; what it found of the globals' interfaces is kept, for
+    /// [`Cache::absorb`].
+    pub(super) fn settle(&mut self) {
+        self.occurrences = HashMap::new();
+    }
+
+    /// Leaves in this copy only the interfaces it found since it was made of
+    /// `base`.
+    pub(super) fn subtract(&mut self, base: &Cache) {
+        self.interfaces
+            .retain(|k, _| !base.interfaces.contains_key(k));
+    }
+
+    /// Takes in the interfaces a copy found. They were found in the copy's
+    /// environments, not in any of this cache's, so none is taken as in one.
+    pub(super) fn absorb(&mut self, copy: Cache) {
+        for (name, interface) in copy.interfaces {
+            self.interfaces.entry(name).or_insert(interface);
+        }
+    }
 }
 
 impl Interface {
@@ -129,14 +200,14 @@ impl Interface {
             .iter()
             .map(|a| references.slot(a))
             .collect::<Option<Vec<_>>>()?;
-        let labels: Vec<_> = references.names().iter().map(Name::as_str).collect();
+        let labels: Vec<_> = references.base_names().iter().map(Name::as_str).collect();
         let text = without_places(&format!(
             "{labels:?} {ty:?} {value:?} {axioms:?} {} {:?} {} {}",
             global.implicit, global.params, global.failed, global.incomplete
         ));
         Some(Self {
             global: global.clone(),
-            dependencies: references.names().to_vec(),
+            dependencies: references.base_names().to_vec(),
             hash: sha256_hex(text.as_bytes()),
         })
     }
@@ -275,7 +346,9 @@ impl Cache {
                 .get(key)
                 .and_then(|ids| ids.iter().position(|id| *id == s.occurrence))
             else {
-                return;
+                // On a term the checker made (a record's constructor): see
+                // `put_applications`.
+                continue;
             };
             let (Some(start), Some(end)) = (
                 i64::from(s.span.start).checked_sub(i64::from(base)),
@@ -341,7 +414,8 @@ impl Cache {
                 .get(key)
                 .and_then(|all| all.iter().position(|id| *id == site.occurrence))
             else {
-                return;
+                // On a term the checker made: see `put_applications`.
+                continue;
             };
             let Some(family) = encoder.token(&site.family) else {
                 return;
@@ -351,6 +425,60 @@ impl Cache {
             text.push_str(&format!("{occurrence}\t{start}\t{end}\t{family}\n"));
         }
         self.write(&format!("{key}.fields"), text);
+    }
+
+    pub(super) fn get_ascriptions(&self, key: &str, base: u32) -> Option<Vec<AscriptionSite>> {
+        let text = std::fs::read_to_string(self.dir.join(format!("{key}.ascriptions"))).ok()?;
+        let mut lines = text.lines();
+        if lines.next() != Some("ascriptions-reference-occurrences") {
+            return None;
+        }
+        lines
+            .map(|line| {
+                let mut fields = line.split('\t');
+                let occurrence = *self
+                    .occurrences
+                    .get(key)?
+                    .get(fields.next()?.parse::<usize>().ok()?)?;
+                let start = base.checked_add_signed(fields.next()?.parse::<i32>().ok()?)?;
+                let end = base.checked_add_signed(fields.next()?.parse::<i32>().ok()?)?;
+                let members = fields.next()?.parse::<usize>().ok()?;
+                let taken = fields
+                    .next()?
+                    .split(',')
+                    .map(|i| i.parse::<usize>().ok())
+                    .collect::<Option<Vec<_>>>()?;
+                Some(AscriptionSite {
+                    occurrence,
+                    span: Span { start, end },
+                    members,
+                    taken,
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn put_ascriptions(&self, key: &str, sites: &[AscriptionSite], base: u32) {
+        let mut text = String::from("ascriptions-reference-occurrences\n");
+        for site in sites {
+            let Some(occurrence) = self
+                .occurrences
+                .get(key)
+                .and_then(|all| all.iter().position(|id| *id == site.occurrence))
+            else {
+                // On a term the checker made: see `put_applications`.
+                continue;
+            };
+            let start = i64::from(site.span.start) - i64::from(base);
+            let end = i64::from(site.span.end) - i64::from(base);
+            let taken: Vec<String> = site.taken.iter().map(|i| i.to_string()).collect();
+            text.push_str(&format!(
+                "{occurrence}\t{start}\t{end}\t{}\t{}\n",
+                site.members,
+                taken.join(",")
+            ));
+        }
+        self.write(&format!("{key}.ascriptions"), text);
     }
 
     pub(super) fn get_applications(&self, key: &str, base: u32) -> Option<Vec<ApplicationSite>> {
@@ -455,6 +583,19 @@ impl Cache {
     }
 }
 
+/// The declarations generated for a family that a proof's elaborated term
+/// may name though its source does not (`Kernel::key`).
+const GENERATED_FOR_PROOFS: [tauto_surface::identity::Generation; 5] = {
+    use tauto_surface::identity::Generation::*;
+    [
+        Induction,
+        Recursion,
+        NoConfusionType,
+        NoConfusionDiagonal,
+        NoConfusion,
+    ]
+};
+
 impl Kernel {
     /// The key of a theorem's proof, or none when it may not be cached (it
     /// names a declaration that failed or is incomplete).
@@ -462,75 +603,105 @@ impl Kernel {
         self.key(&[Stmt::Theorem(t.clone())], &[t.name.clone()])
     }
 
-    /// Fingerprints bound syntax and the complete checked environment. References
-    /// in the artifact are slots in this environment, not source spellings.
+    /// Fingerprints bound syntax and the declarations it can reach: the names
+    /// it mentions, what their types and values mention, the constructors and
+    /// group of each family among them, and the instances of the classes among
+    /// them with what those mention, followed until nothing new comes. Only
+    /// these can change what checking the statements does, so a declaration
+    /// that none of them reaches changes no key, and the key does not depend
+    /// on which other files happen to be declared already. References in the
+    /// artifact are slots among these names, not source spellings.
     pub(super) fn key(&mut self, statements: &[Stmt], own: &[Name]) -> Option<String> {
         self.cache.as_ref()?;
-        let mut names: Vec<Name> = self
-            .globals
-            .keys()
-            .cloned()
-            .chain(own.iter().cloned())
-            .collect();
+        let mut queue: Vec<Name> = own.to_vec();
         let mut collect = |name: &mut Name| match name {
-            Name::Global(_) => names.push(name.clone()),
+            Name::Global(_) => queue.push(name.clone()),
             Name::Selection(selection) => {
-                names.extend(selection.candidates().iter().cloned().map(Name::from))
+                queue.extend(selection.candidates().iter().cloned().map(Name::from))
             }
             _ => {}
         };
         for statement in statements {
             crate::surface::references::statement(&mut statement.clone(), &mut collect);
         }
-        let cache = self.cache.as_mut()?;
-        for (name, global) in &self.globals {
-            if !cache
-                .interfaces
-                .get(name)
-                .is_some_and(|entry| entry.matches(global))
-            {
-                cache
-                    .interfaces
-                    .insert(name.clone(), Interface::new(global)?);
-            }
-            names.extend(cache.interfaces.get(name)?.dependencies.iter().cloned());
-        }
-        // A family's key names its constructors and the families of its
-        // group (`family:` below), which a nested family's group can hold
-        // without any of them being named elsewhere; without a slot for each,
-        // no declaration that uses the family would have a key.
-        for name in self.globals.keys() {
-            if let Some(family) = self.inds.get(name) {
-                names.extend(family.ctors.iter().map(|c| c.name.clone()));
-                names.extend(family.group.iter().cloned());
-            }
-        }
-        let mut collect = |name: &mut Name| match name {
-            Name::Global(_) => names.push(name.clone()),
-            Name::Selection(selection) => {
-                names.extend(selection.candidates().iter().cloned().map(Name::from))
-            }
-            _ => {}
-        };
-        for ((class, head), instance) in &self.classes.instances {
-            collect(&mut class.clone());
-            collect(&mut head.clone());
-            collect(&mut instance.global.clone());
-            if let Some(laws) = &instance.laws_global {
-                collect(&mut laws.clone());
-            }
-            crate::surface::references::term(&mut instance.head.clone(), &mut collect);
-            for arg in &instance.arguments {
-                crate::surface::references::term(&mut arg.clone(), &mut collect);
-            }
-            for (class, ty) in &instance.wheres {
-                collect(&mut class.clone());
-                for arg in ty {
-                    crate::surface::references::term(&mut arg.clone(), &mut collect);
+        let mut reached: std::collections::HashSet<Name> = std::collections::HashSet::new();
+        let mut instances_in = std::collections::HashSet::new();
+        loop {
+            while let Some(name) = queue.pop() {
+                if !reached.insert(name.clone()) {
+                    continue;
+                }
+                if let Some(global) = self.globals.get(&name) {
+                    let cache = self.cache.as_mut()?;
+                    if !cache
+                        .interfaces
+                        .get(&name)
+                        .is_some_and(|e| e.matches(global))
+                    {
+                        cache
+                            .interfaces
+                            .insert(name.clone(), Interface::new(global)?);
+                    }
+                    queue.extend(cache.interfaces.get(&name)?.dependencies.iter().cloned());
+                }
+                if let Some(family) = self.inds.get(&name) {
+                    queue.extend(family.ctors.iter().map(|c| c.name.clone()));
+                    queue.extend(family.group.iter().cloned());
+                    // What elaborating a `match` on the family or a proof
+                    // about it may name: its eliminators and no-confusion.
+                    // Read off the family's reference: binding them through
+                    // the resolver would make them visible.
+                    if let Some(owner) = name.as_global() {
+                        for kind in GENERATED_FOR_PROOFS {
+                            let generated: Name = owner.generated(kind).into();
+                            if self.globals.contains_key(&generated) {
+                                queue.push(generated);
+                            }
+                        }
+                    }
                 }
             }
+            // The instances of a class reached for a head reached, which
+            // resolving the class at a type with that head may pick: an
+            // instance for another head is picked only at a type that names
+            // that head, so it would be reached.
+            for ((class, head), instance) in &self.classes.instances {
+                if !reached.contains(class)
+                    || (matches!(head, Name::Global(_)) && !reached.contains(head))
+                    || !instances_in.insert((class.clone(), head.clone()))
+                {
+                    continue;
+                }
+                let mut collect = |name: &mut Name| match name {
+                    Name::Global(_) => queue.push(name.clone()),
+                    Name::Selection(selection) => {
+                        queue.extend(selection.candidates().iter().cloned().map(Name::from))
+                    }
+                    _ => {}
+                };
+                collect(&mut head.clone());
+                collect(&mut instance.global.clone());
+                if let Some(laws) = &instance.laws_global {
+                    collect(&mut laws.clone());
+                }
+                crate::surface::references::term(&mut instance.head.clone(), &mut collect);
+                for arg in &instance.arguments {
+                    crate::surface::references::term(&mut arg.clone(), &mut collect);
+                }
+                for (class, ty) in &instance.wheres {
+                    collect(&mut class.clone());
+                    for arg in ty {
+                        crate::surface::references::term(&mut arg.clone(), &mut collect);
+                    }
+                }
+            }
+            if queue.is_empty() {
+                break;
+            }
         }
-        let references = References::new(names)?.with_source(statements);
+        let base = std::sync::Arc::new(Base::new(reached.iter().cloned())?);
+        let names: Vec<Name> = Vec::new();
+        let references = References::extended(base, names)?.with_source(statements);
         let mut encoder = references.encode();
         let syntax = encoder.statements(statements)?;
         let text = format!("{syntax:?}");
@@ -539,19 +710,14 @@ impl Kernel {
         } else {
             without_places(&text)
         };
-        let mut parts = vec![self.cache.as_ref()?.checker.clone(), text];
-        for name in references.names() {
+        let cache = self.cache.as_ref()?;
+        let mut parts = vec![cache.checker.clone(), text];
+        for name in references.base_names() {
             parts.push(format!("declaration:{}", name.as_str()));
-            if own.contains(name) {
+            if own.contains(name) || !self.globals.contains_key(name) {
                 continue;
             }
-            if !self.globals.contains_key(name) {
-                continue;
-            }
-            // Each immutable interface has its own reference numbering. Its
-            // dependency labels link those slots to the complete environment
-            // above; payload slots still use that complete environment.
-            parts.push(self.cache.as_ref()?.interfaces.get(name)?.hash.clone());
+            parts.push(cache.interfaces.get(name)?.hash.clone());
             if let Some(family) = self.inds.get(name) {
                 let constructors = family
                     .ctors
@@ -571,6 +737,9 @@ impl Kernel {
         }
         let mut instances = Vec::new();
         for ((class, head), instance) in &self.classes.instances {
+            if !instances_in.contains(&(class.clone(), head.clone())) {
+                continue;
+            }
             let mut encoder = references.encode();
             let class = references.slot(class)?;
             let head = references.slot(head)?;
@@ -652,6 +821,7 @@ fn write_term(t: &T, out: &mut String) -> bool {
             params,
             result,
             effects: None,
+            ..
         } => {
             out.push_str(&format!("p {} ", params.len()));
             for (n, d) in params {
@@ -744,6 +914,7 @@ fn read_term(line: &str, at: Span) -> Option<T> {
                     params,
                     result: Box::new(next(words, at)?),
                     effects: None,
+                    unused: Vec::new(),
                 }
             }
             "l" => {
@@ -755,6 +926,7 @@ fn read_term(line: &str, at: Span) -> Option<T> {
                     params,
                     body: Box::new(next(words, at)?),
                     types: Vec::new(),
+                    unused_params: Vec::new(),
                 }
             }
             _ => return None,
@@ -877,6 +1049,7 @@ mod tests {
 
     #[test]
     fn field_sites_restore_reference_occurrence_and_relative_position() {
+        tauto_parse::install();
         let dir = std::env::temp_dir().join(format!("tauto-cache-fields-{}", std::process::id()));
         let mut cache = Cache::at(dir.clone());
         let family = tauto_surface::bindings::library_name("Nat");
@@ -927,6 +1100,7 @@ mod tests {
 
     #[test]
     fn a_proof_is_checked_again_when_what_it_uses_changes() {
+        tauto_parse::install();
         let dir = std::env::temp_dir().join(format!("tauto-cache-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -979,12 +1153,13 @@ theorem t(): two() = 2 { Refl }
 
     #[test]
     fn a_proof_is_checked_again_when_an_instance_it_unfolds_changes() {
+        tauto_parse::install();
         let dir = std::env::temp_dir().join(format!("tauto-cache-inst-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(matches!(
             verdict(
                 &dir,
-                r#"class C(A: Type) { fn m(a: A): Nat }
+                r#"inductive class C(A: Type) { fn m(a: A): Nat }
 instance C(Nat) { fn m(a: Nat): Nat { 1 } }
 theorem t(): C::m(Zero) = 1 { Refl }
 "#,
@@ -995,7 +1170,7 @@ theorem t(): C::m(Zero) = 1 { Refl }
         assert!(matches!(
             verdict(
                 &dir,
-                r#"class C(A: Type) { fn m(a: A): Nat }
+                r#"inductive class C(A: Type) { fn m(a: A): Nat }
 instance C(Nat) { fn m(a: Nat): Nat { 1 } }
 theorem t(): C::m(Zero) = 1 { Refl }
 "#,
@@ -1007,7 +1182,7 @@ theorem t(): C::m(Zero) = 1 { Refl }
         assert!(matches!(
             verdict(
                 &dir,
-                r#"class C(A: Type) { fn m(a: A): Nat }
+                r#"inductive class C(A: Type) { fn m(a: A): Nat }
 instance C(Nat) { fn m(a: Nat): Nat { 2 } }
 theorem t(): C::m(Zero) = 1 { Refl }
 "#,
@@ -1019,7 +1194,7 @@ theorem t(): C::m(Zero) = 1 { Refl }
         assert!(matches!(
             verdict(
                 &fresh,
-                r#"class C(A: Type) { fn m(a: A): Nat }
+                r#"inductive class C(A: Type) { fn m(a: A): Nat }
 instance C(Nat) { fn m(a: Nat): Nat { 2 } }
 theorem t(): C::m(Zero) = 1 { Refl }
 "#,
@@ -1032,6 +1207,7 @@ theorem t(): C::m(Zero) = 1 { Refl }
 
     #[test]
     fn axioms_are_those_of_what_the_proof_uses_now() {
+        tauto_parse::install();
         let dir = std::env::temp_dir().join(format!("tauto-cache-ax-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let theorem = "theorem base(): Eq(Nat, 1, 1) { Refl }\n\
@@ -1054,8 +1230,77 @@ theorem t(): C::m(Zero) = 1 { Refl }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The keys of everything declared in `source`.
+    fn keys(source: &str) -> Vec<String> {
+        let dir = std::env::temp_dir().join(format!("tauto-cache-keys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut k = Kernel::new();
+        k.declare(&super::super::kernel_prelude().unwrap(), true);
+        k.cache = Some(Cache::at(dir.clone()));
+        let entries = k.declare(&parse_program(source).unwrap(), false);
+        assert!(
+            entries
+                .iter()
+                .all(|e| matches!(e.verdict, Verdict::Checked { .. }))
+        );
+        let mut keys: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        keys.sort();
+        let _ = std::fs::remove_dir_all(&dir);
+        keys
+    }
+
+    /// A proof by `match` names the family's eliminator, which its source
+    /// does not: the proof is still kept.
+    #[test]
+    fn a_proof_by_match_is_kept() {
+        tauto_parse::install();
+        let dir = std::env::temp_dir().join(format!("tauto-cache-match-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let source = r#"theorem t(n: Nat): Nat::eq(n, n) = true {
+  ⊢ Nat::eq(n, n) = true from match n {
+    Zero => Refl
+    Succ(k) => t(k)
+  }
+}
+"#;
+        assert!(matches!(
+            verdict(&dir, source, "t"),
+            Verdict::Checked { .. }
+        ));
+        let kept = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| std::fs::read_to_string(e.ok()?.path()).ok())
+            .filter(|text| text.starts_with("terms-ids"))
+            .count();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(kept, 1);
+    }
+
+    #[test]
+    fn a_declaration_the_proof_does_not_reach_changes_no_key() {
+        tauto_parse::install();
+        let source = r#"fn two(): Nat {
+  Succ(Succ(Zero))
+}
+fn four(): Nat {
+  Succ(Succ(two()))
+}
+theorem t(): four() = 4 { Refl(<A: Nat, a: 4>) }
+"#;
+        let alone = keys(source);
+        assert!(alone.len() >= 3, "{alone:?}");
+        let with_other = keys(&format!("fn other(): Bool {{\n  true\n}}\n{source}"));
+        for key in &alone {
+            assert!(with_other.contains(key), "{key} not in {with_other:?}");
+        }
+    }
+
     #[test]
     fn every_kernel_file_is_in_the_key() {
+        tauto_parse::install();
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut files = vec![
             src.join("check.rs"),
@@ -1085,6 +1330,7 @@ theorem t(): C::m(Zero) = 1 { Refl }
 
     #[test]
     fn a_function_is_elaborated_again_when_what_it_uses_changes() {
+        tauto_parse::install();
         let dir = std::env::temp_dir().join(format!("tauto-cache-fn-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -1094,7 +1340,7 @@ theorem t(): C::m(Zero) = 1 { Refl }
 fn four(): Nat {
   Succ(Succ(two()))
 }
-theorem t(): four() = 4 { Refl(Nat, 4) }
+theorem t(): four() = 4 { Refl(<A: Nat, a: 4>) }
 "#
         .to_string();
         assert!(matches!(
@@ -1118,7 +1364,7 @@ theorem t(): four() = 4 { Refl(Nat, 4) }
 fn four(): Nat {
   Succ(Succ(two()))
 }
-theorem t(): four() = 4 { Refl(Nat, 4) }
+theorem t(): four() = 4 { Refl(<A: Nat, a: 4>) }
 "#
                 .to_string(),
                 "four"
@@ -1130,6 +1376,7 @@ theorem t(): four() = 4 { Refl(Nat, 4) }
 
     #[test]
     fn a_term_from_the_cache_is_checked_by_the_core() {
+        tauto_parse::install();
         let dir = std::env::temp_dir().join(format!("tauto-cache-core-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let src = &r#"fn two(): Nat {
@@ -1155,8 +1402,101 @@ theorem t(): four() = 4 { Refl(Nat, 4) }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The keys `source` makes, checked with the cache in `dir`, and its
+    /// verdicts.
+    fn keys_made(
+        dir: &std::path::Path,
+        source: &str,
+    ) -> (Vec<String>, Vec<tauto_surface::diagnostic::Entry>) {
+        let mut k = Kernel::new();
+        k.declare(&super::super::kernel_prelude().unwrap(), true);
+        k.cache = Some(Cache::at(dir.to_path_buf()));
+        let entries = k.declare(&parse_program(source).unwrap(), false);
+        let keys = k.cache.unwrap().bindings.into_keys().collect();
+        (keys, entries)
+    }
+
+    /// A cache file is not trusted: one that says a false theorem's proof
+    /// checked before, or holds a term of another type, changes nothing.
+    #[test]
+    fn a_forged_proof_in_the_cache_is_refused() {
+        tauto_parse::install();
+        let dir = std::env::temp_dir().join(format!("tauto-cache-forged-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = "theorem t(): Eq(Nat, 1, 2) { Refl(Nat, 1) }\n";
+        let (keys, entries) = keys_made(&dir, src);
+        assert!(
+            matches!(&entries[0].verdict, Verdict::Failed(d) if d.message.id.as_ref() != "kernel-eq-type-open"),
+            "{entries:?}"
+        );
+        assert_eq!(keys.len(), 1);
+        for forged in ["uses-ids\n", "terms-ids\nt \n", "terms-ids\nn 0 \n"] {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(&keys[0]), forged).unwrap();
+            assert!(
+                matches!(verdict(&dir, src, "t"), Verdict::Failed(_)),
+                "{forged:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The members of a mutual group read from the cache are checked by the
+    /// core: values of another type are refused and the group is elaborated
+    /// again, so that it unfolds as written.
+    #[test]
+    fn a_forged_mutual_group_in_the_cache_is_refused() {
+        tauto_parse::install();
+        let dir = std::env::temp_dir().join(format!("tauto-cache-mutual-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = r#"mutual {
+  fn even(n: Nat): Bool {
+    ⊢ Bool from match n {
+      Zero => true
+      Succ(m) => odd(m)
+    }
+  }
+  fn odd(n: Nat): Bool {
+    ⊢ Bool from match n {
+      Zero => false
+      Succ(m) => even(m)
+    }
+  }
+}
+theorem t(): even(2) = true { Refl }
+"#;
+        let (keys, entries) = keys_made(&dir, src);
+        assert!(
+            entries
+                .iter()
+                .all(|e| matches!(e.verdict, Verdict::Checked { .. })),
+            "{entries:?}"
+        );
+        let mut forged = 0;
+        for key in &keys {
+            let path = dir.join(key);
+            // The terms of `even` and `odd`: `n => …`.
+            if let Ok(text) = std::fs::read_to_string(&path)
+                && text.starts_with("terms-ids\nl 1 l0:6e ")
+            {
+                let lines = text.lines().count() - 1;
+                std::fs::write(&path, format!("terms-ids\n{}", "n 0 \n".repeat(lines))).unwrap();
+                forged += 1;
+            }
+        }
+        assert_eq!(forged, 2);
+        for name in ["even", "odd", "t"] {
+            assert!(
+                matches!(verdict(&dir, src, name), Verdict::Checked { .. }),
+                "{name}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn terms_are_written_and_read_back() {
+        tauto_parse::install();
         let at = Span { start: 0, end: 0 };
         let p = parse_program(&r#"theorem t(): Nat { (x: Nat) => f(x, 3, true) }"#.to_string())
             .unwrap();
@@ -1177,6 +1517,7 @@ theorem t(): four() = 4 { Refl(Nat, 4) }
 
     #[test]
     fn places_are_left_out() {
+        tauto_parse::install();
         assert_eq!(
             without_places("A { span: Span { start: 3, end: 9 }, b: 1 }"),
             "A { span: , b: 1 }"

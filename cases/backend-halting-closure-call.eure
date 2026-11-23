@@ -1,41 +1,43 @@
 @ cases.halting-closure-call-inside-handled-callback
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 effect halt(): Never resume 0
 struct Located { path: Text }
-struct Kind { locate: Option((Text) -> Located ! {halt, Div}) }
-fn in_frame(body: () -> Text ! {halt, Div}): Result(Text, Text) ! {Div} {
+struct Kind { locate: Option((Text) -> Located ! {halt, div}) }
+fn in_frame(body: () -> Text ! {halt, div, ref_set}): Result(Text, Text) ! {div, ref_set} {
   handle { Ok(body()) } with { halt() => Err("halted") }
 }
-fn run(c: Kind, key: Text): Option(Located) ! {Div} {
+fn run(c: Kind, key: Text): Option(Located) ! {div, ref_get, ref_new, ref_set} {
   match c.locate {
     None => None
     Some(f) => {
-      let answer := Ref::new(Located { path: "pending" })
+      let answer := perform ref_new(Located { path: "pending" })
       let r := in_frame(() => {
-        Ref::set(answer, f(key))
+        perform ref_set(answer, f(key))
         ""
       })
       match r {
-        Ok(x) => Some(Ref::get(answer))
+        Ok(x) => Some(perform ref_get(answer))
         Err(e) => None
       }
     }
   }
 }
 let kind := Kind { locate: Some((k) => Located { path: k }) }
-perform show("found", match run(kind, "a.txt") { Some(l) => l.path, None => "none" })
+show(&(match run(kind, "a.txt") { Some(l) => l.path, None => "none" }))
 ```
-shows = ["found = \"a.txt\""]
+stdout = ```
+"a.txt"
+```
 
 @ cases.halting-closure-in-option-field-called-directly
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
 effect halt(): Never resume 0
 struct Located { path: Text }
-struct Kind { locate: Option((Text) -> Located ! {halt, Div}) }
-fn run(c: Kind, key: Text): Option(Located) ! {halt, Div} {
+struct Kind { locate: Option((Text) -> Located ! {halt, div}) }
+fn run(c: Kind, key: Text): Option(Located) ! {halt, div} {
   match c.locate {
     None => None
     Some(f) => Some(f(key))
@@ -43,6 +45,8 @@ fn run(c: Kind, key: Text): Option(Located) ! {halt, Div} {
 }
 let kind := Kind { locate: Some((k) => Located { path: k }) }
 let r := handle { run(kind, "a.txt") } with { halt() => None }
-perform show("found", match r { Some(l) => l.path, None => "none" })
+show(&(match r { Some(l) => l.path, None => "none" }))
 ```
-shows = ["found = \"a.txt\""]
+stdout = ```
+"a.txt"
+```

@@ -23,7 +23,7 @@ line comments are accepted. Parsing does not imply type checking or macro expans
 `tauto syntax source totes/grammar tauto` exports the grammar literal without
 loading its generated types or requiring its table. This permits regeneration
 when the grammar has changed and its old table no longer matches.
-`scripts/generate-tauto-grammar.sh` writes that text verbatim to the bootstrap
+`scripts/generate-tauto-grammar.taut` writes that text verbatim to the bootstrap
 `crates/tauto-parol/tauto.par` and the grammar-table fixture. Its `--check`
 mode fails on drift without changing files. Both parser-generation scripts
 call it, so the compiler and the declared parser derive from the same source.
@@ -31,10 +31,10 @@ call it, so the compiler and the declared parser derive from the same source.
 After editing the declaration's grammar:
 
 ```sh
-bash scripts/generate-tauto-parol.sh
-bash scripts/generate-grammar-tables.sh
+tauto gen-tauto-parol
+tauto gen-grammar-tables
 tauto lint --fix totes/grammar/src/grammar.taut
-bash scripts/generate-syntax-tables.sh
+tauto gen-syntax-tables
 ```
 
 The Rust compiler reads the declaration with committed bootstrap parser
@@ -45,5 +45,6 @@ in Tauto. A shared declarative grammar is not a claim that those bootstrap
 or runtime dependencies have disappeared. The generated typed AST and the
 compiler's trivia-preserving CST are different representations.
 
-The runtime parser retains `syn_parse`'s limits (1 MiB input and 65,536 parse
-stack entries). Exceeding a limit returns a diagnostic, not a partial CST.
+The runtime parser has no input or stack limit: a program parses its own data,
+of any length and depth. A syntax literal read while checking keeps the macro
+limits (`docs/design/macro-security.md`).

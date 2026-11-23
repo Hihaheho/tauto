@@ -17,7 +17,7 @@ fn generate(label: &str, grammar: &str) -> Tables {
     std::fs::write(&path, format!("%start Root\n%%\n{grammar}\n")).unwrap();
     let out = Command::new(generator())
         .env("TAUTO_STEP_LIMIT", "200000000000")
-        .args(["--allow-read", "--", "--gen", path.to_str().unwrap()])
+        .args(["--gen", path.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(
@@ -137,7 +137,6 @@ fn malformed_table_input_is_rejected_at_its_source() {
         let path = dir.join(format!("{label}.tables"));
         std::fs::write(&path, source).unwrap();
         let out = Command::new(generator())
-            .args(["--allow-read", "--"])
             .arg(&path)
             .output()
             .unwrap();
@@ -153,7 +152,6 @@ fn malformed_table_input_is_rejected_at_its_source() {
     }
     let math = selfhost_harness::root().join("crates/tauto-syntax/tests/data/math.tables");
     let out = Command::new(generator())
-        .args(["--allow-read", "--"])
         .arg(&math)
         .output()
         .unwrap();

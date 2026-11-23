@@ -1,7 +1,7 @@
 import "percent.taut"
 import "bytes.taut"
-import std::Text
-import std::Base
+import std::text
+import std::base
 
 pub(open) inductive Authority: Type {
   // `user:pass@host:port`; the empty user and password are left out, and so is
@@ -34,7 +34,7 @@ pub(open) inductive SchemeKind: Type {
 }
 
 pub fn scheme_kind(s: List(Nat)): SchemeKind {
-  ⊢ SchemeKind from match bytes_eq(s, Text::bytes("http")) {
+  match bytes_eq(s, Text::bytes("http")) {
     true => Special(80)
     false => ⊢ SchemeKind from match bytes_eq(s, Text::bytes("https")) {
       true => Special(443)
@@ -56,8 +56,8 @@ pub fn scheme_kind(s: List(Nat)): SchemeKind {
 }
 
 pub fn is_special(s: List(Nat)): Bool {
-  ⊢ Bool from match scheme_kind(s) {
-    Special(d) => true
+  match scheme_kind(s) {
+    Special(^d) => true
     File => true
     NotSpecial => false
   }
@@ -72,14 +72,14 @@ pub fn scheme_byte(b: Nat): Bool {
 
 // A scheme as the parser leaves it: a lower-case letter, then scheme bytes.
 pub fn scheme_ok(s: List(Nat)): Bool {
-  ⊢ Bool from match s {
+  match s {
     Nil => false
     Cons(b, t) => Bool::and(is_lower(b), all_bytes(scheme_byte, t))
   }
 }
 
 pub fn query_set_of(s: List(Nat)): (Nat) -> Bool {
-  ⊢ (Nat) -> Bool from match is_special(s) {
+  match is_special(s) {
     true => special_query_set
     false => query_set
   }
@@ -87,7 +87,7 @@ pub fn query_set_of(s: List(Nat)): (Nat) -> Bool {
 
 // The decimal digits of `n`, with `fuel` digits at most.
 pub fn decimal(fuel: Nat, n: Nat): List(Nat) {
-  ⊢ List(Nat) from match fuel {
+  match fuel {
     Zero => Nil
     Succ(k) => ⊢ List(Nat) from match Nat::lt(n, 10) {
       true => Cons(Nat::add(n, 48), Nil)
@@ -105,7 +105,7 @@ pub fn port_text(n: Nat): List(Nat) {
 }
 
 pub fn digits_value(acc: Nat, l: List(Nat)): Option(Nat) {
-  ⊢ Option(Nat) from match l {
+  match l {
     Nil => Some(acc)
     Cons(b, t) => ⊢ Option(Nat) from match is_digit(b) {
       true => digits_value(Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)), t)
@@ -115,36 +115,36 @@ pub fn digits_value(acc: Nat, l: List(Nat)): Option(Nat) {
 }
 
 pub fn opt_bytes(c: Nat, o: Option(List(Nat))): List(Nat) {
-  ⊢ List(Nat) from match o {
+  match o {
     None => Nil
     Some(x) => Cons(c, x)
   }
 }
 
 pub fn port_part(o: Option(Nat)): List(Nat) {
-  ⊢ List(Nat) from match o {
+  match o {
     None => Nil
     Some(n) => Cons(58, port_text(n))
   }
 }
 
 pub fn pass_part(pass: List(Nat)): List(Nat) {
-  ⊢ List(Nat) from match pass {
+  match pass {
     Nil => Nil
-    Cons(b, t) => Cons(58, pass)
+    Cons(^b, ^t) => Cons(58, pass)
   }
 }
 
 // `user:pass@`, or nothing when both are empty.
 pub fn cred_part(user: List(Nat), pass: List(Nat)): List(Nat) {
-  ⊢ List(Nat) from match Bool::and(is_empty(user), is_empty(pass)) {
+  match Bool::and(is_empty(user), is_empty(pass)) {
     true => Nil
     false => List::append(user, List::append(pass_part(pass), Cons(64, Nil)))
   }
 }
 
 pub fn auth_part(a: Authority): List(Nat) {
-  ⊢ List(Nat) from match a {
+  match a {
     Auth(user, pass, host, port) => List::append(
       cred_part(user, pass),
       List::append(host, port_part(port))
@@ -153,29 +153,29 @@ pub fn auth_part(a: Authority): List(Nat) {
 }
 
 pub fn segments_part(ss: List(List(Nat))): List(Nat) {
-  ⊢ List(Nat) from match ss {
+  match ss {
     Nil => Nil
-    Cons(s, rest) => Cons(47, join(47, ss))
+    Cons(^s, ^rest) => Cons(47, join(47, ss))
   }
 }
 
 // Without an authority, a path whose first segment is empty would read as
 // one: `/.` goes before it.
 pub fn dot_prefix(ss: List(List(Nat))): List(Nat) {
-  ⊢ List(Nat) from match ss {
+  match ss {
     Nil => Nil
     Cons(s, rest) => ⊢ List(Nat) from match is_empty(s) {
       false => Nil
       true => ⊢ List(Nat) from match rest {
         Nil => Nil
-        Cons(s2, more) => Cons(47, Cons(46, Nil))
+        Cons(^s2, ^more) => Cons(47, Cons(46, Nil))
       }
     }
   }
 }
 
 pub fn path_part(has_auth: Bool, p: UrlPath): List(Nat) {
-  ⊢ List(Nat) from match p {
+  match p {
     Opaque(o) => o
     Segments(ss) => ⊢ List(Nat) from match has_auth {
       true => segments_part(ss)
@@ -185,14 +185,14 @@ pub fn path_part(has_auth: Bool, p: UrlPath): List(Nat) {
 }
 
 pub fn hier_part(a: Option(Authority), p: UrlPath): List(Nat) {
-  ⊢ List(Nat) from match a {
+  match a {
     None => path_part(false, p)
     Some(x) => Cons(47, Cons(47, List::append(auth_part(x), path_part(true, p))))
   }
 }
 
 pub fn serialize(u: Url): List(Nat) {
-  ⊢ List(Nat) from match u {
+  match u {
     MkUrl(scheme, auth, path, query, fragment) => List::append(
       scheme,
       Cons(

@@ -1,13 +1,14 @@
 import "final_rigid_sound.taut"
 import "rules_kind_inst.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "diagnostic_lists.taut"
 import "diagnostic_sound.taut"
 import "finish_acceptance.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "rules_ty.taut"
 import "ty.taut"
 import "unify.taut"
@@ -18,7 +19,7 @@ pub theorem diagnostic_bounds_to_items(
   bs: List(TyBound),
   h: DiagnosticBounds(c, bs)
 ): DiagnosticItems(TyBound, DiagnosticBound, c, bs) {
-  ⊢ DiagnosticItems(TyBound, DiagnosticBound, c, bs) from match h {
+  match h {
     DiagnosticBoundsNil => DiagnosticItemsNil
     DiagnosticBoundsCons(b, rest, head, tail) => DiagnosticItemsCons(
       head,
@@ -33,7 +34,7 @@ pub theorem diagnostic_bound_member(
   member: BoundIn(bs, b),
   checked: DiagnosticItems(TyBound, DiagnosticBound, c, bs)
 ): DiagnosticBound(c, b) {
-  ⊢ DiagnosticBound(c, b) from match member {
+  match member {
     BoundHere(head, rest) => diagnostic_items_head(checked)
     BoundThere(rest, target, head, inside) => diagnostic_bound_member(
       c,
@@ -69,12 +70,12 @@ pub theorem final_bound_sound(
 }
 pub theorem final_instantiation_kinds(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   map: Ordmap(Text, Ty),
   r#instance: InstBy(ck_bounds_of(c), gs, map),
   final: FinalDiagnostics0(c)
 ): InstanceKinds(ck_subst_of(c), ck_datas_of(c), gs, map) {
-  ⊢ InstanceKinds(ck_subst_of(c), ck_datas_of(c), gs, map) from match r#instance {
+  match r#instance {
     InstNil => InstanceKindsNil
     InstCons(rest, previous, g, v, bound, tail) => InstanceKindsCons(
       g,
@@ -83,7 +84,7 @@ pub theorem final_instantiation_kinds(
       ty_resolve_eq(
         ck_steps_of(c),
         ck_subst_of(c),
-        (generics: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
+        (generics: List(Text × Kind), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
           ck_subst_of(c),
           generics,
           rigid,

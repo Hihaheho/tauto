@@ -1,0 +1,410 @@
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import "names.taut"
+import "cps.taut"
+import "lower.taut"
+import "direct.taut"
+import "gen.taut"
+import std::text
+import std::base
+
+// Type declarations for the generated module's host boundary
+// (`declarations.rs`).
+
+pub(open) struct JtState {
+  pkg: NPackage,
+  spellings: List(Text),
+  // The data types still to declare, ascending, and those declared.
+  pending: List(Nat),
+  emitted: List(Nat),
+  error: Option(Text)
+}
+
+pub fn jt_fail(st: &mut JtState, what: Text): Text {
+  match st.error {
+    Some(^e) => ()
+    None => { st.error := Some(concat("javascript declarations: ", what)) }
+  }
+  "never"
+}
+
+// A scope: each type parameter and the name it is written as.
+pub fn jt_scope_of(gs: List(Text), i: Nat): List(Text × Text) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => Cons(#(g, concat("T", js_nat(i))), jt_scope_of(rest, i + 1))
+  }
+}
+
+pub fn jt_generics(scope: List(Text × Text)): Text {
+  match scope {
+    Nil => ""
+    Cons(^x, ^y) => Text::concat_all(["<", text_join(jt_scope_names(scope), ", "), ">"])
+  }
+}
+
+pub fn jt_scope_names(scope: List(Text × Text)): List(Text) {
+  match scope {
+    Nil => Nil
+    Cons(s, rest) => match s {
+      #(^g, n) => Cons(n, jt_scope_names(rest))
+    }
+  }
+}
+
+pub fn jt_lookup(scope: List(Text × Text), name: Text): Option(Text) {
+  match scope {
+    Nil => None
+    Cons(s, rest) => match s {
+      #(g, n) => if g == name { Some(n) } else { jt_lookup(rest, name) }
+    }
+  }
+}
+
+pub fn jt_constructor(owner: Text, tag: Text, names: List(Text), fields: List(Text), is_struct: Bool): Text ! {div, overflow} {
+  Text::concat_all([
+    "{ tag: ", js_quote(tag), "; names: [", text_join(names, ", "), "]; fields: [", text_join(fields, ", "), "]; struct: ", js_bool(is_struct), "; owner: ", js_quote(owner), " }"
+  ])
+}
+
+pub fn jt_data_index(ds: List(NData), name: Text, at: Nat): Option(Nat) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => if d.name == name { Some(at) } else { jt_data_index(rest, name, at + 1) }
+  }
+}
+
+pub fn jt_nth_data(ds: List(NData), i: Nat): Option(NData) ! {overflow} {
+  match ds {
+    Nil => None
+    Cons(d, rest) => if i == 0 { Some(d) } else { jt_nth_data(rest, i - 1) }
+  }
+}
+
+pub fn jt_tys(st: &mut JtState, ts: List(NTy), scope: List(Text × Text)): List(Text) ! {div, overflow} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      let x := jt_ty(st, t, scope)
+      Cons(x, jt_tys(st, rest, scope))
+    }
+  }
+}
+
+pub fn jt_variants(st: &mut JtState, id: Nat, ts: List(NTy), i: Nat, scope: List(Text × Text)): List(Text) ! {div, overflow} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      let x := jt_ty(st, t, scope)
+      Cons(Text::concat_all(["{ union: ", js_nat(id), "; variant: ", js_nat(i), "; value: ", x, " }"]), jt_variants(st, id, rest, i + 1, scope))
+    }
+  }
+}
+
+pub fn jt_ty(st: &mut JtState, t: NTy, scope: List(Text × Text)): Text ! {div, overflow} {
+  match t {
+    NInt(^w) => "bigint"
+    NBool => "boolean"
+    NText => "string"
+    NUnit => "null"
+    NNever => "never"
+    NFloat => "number"
+    NFloat32 => "number"
+    NBuf => "{ kind: \"Buf\"; text: string }"
+    NVec(a) => Text::concat_all(["{ kind: \"Vec\"; items: Array<", jt_ty(st, a, scope), "> }"])
+    NSlice(a) => Text::concat_all(["{ kind: \"Vec\"; items: Array<", jt_ty(st, a, scope), "> }"])
+    NArray(a) => Text::concat_all(["{ kind: \"Array\"; items: Array<", jt_ty(st, a, scope), "> }"])
+    NOption(a) => {
+      let x := jt_ty(st, a, scope)
+      Text::concat_all(["(", jt_constructor("Option", "None", Nil, Nil, false), " | ", jt_constructor("Option", "Some", ["null"], [x], false), ")"])
+    }
+    NResult(a, b) => {
+      let x := jt_ty(st, a, scope)
+      let y := jt_ty(st, b, scope)
+      Text::concat_all(["(", jt_constructor("Result", "Ok", ["null"], [x], false), " | ", jt_constructor("Result", "Err", ["null"], [y], false), ")"])
+    }
+    NPair(a, b) => {
+      let x := jt_ty(st, a, scope)
+      let y := jt_ty(st, b, scope)
+      jt_constructor("Pair", "Pair", [js_quote("fst"), js_quote("snd")], [x, y], true)
+    }
+    NData(name, args) => match jt_data_index(st.pkg.datas, name, 0) {
+      None => jt_fail(st, concat("unknown data type ", name))
+      Some(index) => match jt_nth_data(st.pkg.datas, index) {
+        None => "never"
+        Some(d) => if List::length(d.generics) != List::length(args) {
+          jt_fail(st, concat("wrong number of type arguments for ", name))
+        } else {
+          if not(js_contains_nat(st.pending, index)) { st.pending := jl_insert_sorted(st.pending, index) }
+          let xs := jt_tys(st, args, scope)
+          Text::concat_all(["TautoData", js_nat(index), match xs {
+            Nil => ""
+            Cons(^a, ^b) => Text::concat_all(["<", text_join(xs, ", "), ">"])
+          }])
+        }
+      }
+    }
+    NUnion(id) => match js_find_union(st.pkg.unions, id) {
+      None => jt_fail(st, concat("unknown union ", js_nat(id)))
+      Some(u) => match jt_variants(st, id, u.members, 0, scope) {
+        Nil => "never"
+        Cons(v, rest) => Text::concat_all(["(", text_join(Cons(v, rest), " | "), ")"])
+      }
+    }
+    NParam(n) => match jt_lookup(scope, n) {
+      Some(x) => x
+      None => jt_fail(st, concat("unbound type parameter ", n))
+    }
+    NRef(a) => Text::concat_all(["Borrow<", jt_ty(st, a, scope), ">"])
+    NRefMut(a) => Text::concat_all(["MutableBorrow<", jt_ty(st, a, scope), ">"])
+    NShown => "{ kind: \"Shown\"; text: string }"
+    NInfo(^a) => "{ kind: \"Info\"; resource: true }"
+    NBudgetAnswer(a) => Text::concat_all(["({ answer: \"value\"; value: ", jt_ty(st, a, scope), " } | { answer: \"more\"; steps: bigint | null })"])
+    NFn(^p, ^r, ^k, ^x) => jt_fail(st, "functions are supported only as direct extern callback parameters; nested or returned functions use internal runtime calling conventions")
+    NStd(n, ^a) => jt_fail(st, Text::concat_all(["standard type ", n, " has no declared host representation"]))
+    NSharedVar(^c, ^a) => jt_fail(st, "internal or unresolved boundary type SharedVar")
+  }
+}
+
+pub fn jt_args(st: &mut JtState, ts: List(NTy), i: Nat, scope: List(Text × Text)): List(Text) ! {div, overflow} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      let x := jt_ty(st, t, scope)
+      Cons(Text::concat_all(["arg", js_nat(i), ": ", x]), jt_args(st, rest, i + 1, scope))
+    }
+  }
+}
+
+pub fn jt_fn_parts(t: NTy): Option(List(NTy) × NTy) {
+  match t {
+    NFn(ps, r, ^k, ^x) => Some(#(ps, r))
+    NInt(^w) => None
+    NBool => None
+    NText => None
+    NUnit => None
+    NNever => None
+    NFloat => None
+    NFloat32 => None
+    NBuf => None
+    NShown => None
+    NVec(^a) => None
+    NArray(^a) => None
+    NSlice(^a) => None
+    NOption(^a) => None
+    NInfo(^a) => None
+    NBudgetAnswer(^a) => None
+    NResult(^a, ^b) => None
+    NPair(^a, ^b) => None
+    NSharedVar(^c, ^a) => None
+    NStd(^n, ^a) => None
+    NUnion(^n) => None
+    NRef(^a) => None
+    NRefMut(^a) => None
+    NData(^n, ^a) => None
+    NParam(^n) => None
+  }
+}
+
+// A function Nib passes the host (`callback`), or one the host passes Nib
+// (`host_function`, whose result may be a promise-like).
+pub fn jt_function(st: &mut JtState, ps: List(NTy), r: NTy, scope: List(Text × Text), promise: Text): Text ! {div, overflow} {
+  let params := jt_args(st, ps, 0, scope)
+  let ret := jt_ty(st, r, scope)
+  Text::concat_all(["((", text_join(params, ", "), ") => ", ret, " | ", promise, "<", ret, ">)"])
+}
+
+pub fn jt_host(t: NTy, options: JsOptions): Bool {
+  match jg_host_type(t, options) {
+    Some(^n) => true
+    None => false
+  }
+}
+
+pub fn jt_extern_params(st: &mut JtState, ps: List(NExternParam), i: Nat, scope: List(Text × Text), options: JsOptions): List(Text) ! {div, overflow} {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => {
+      let t := if jt_host(p.ty, options) {
+        "unknown"
+      } else {
+        match jt_fn_parts(p.ty) {
+          Some(f) => match f {
+            #(xs, r) => jt_function(st, xs, r, scope, "Promise")
+          }
+          None => {
+            let x := jt_ty(st, p.ty, scope)
+            match p.pass {
+              NPassValue => x
+              NPassRef => Text::concat_all(["Borrow<", x, ">"])
+              NPassRefMut => Text::concat_all(["MutableBorrow<", x, ">"])
+            }
+          }
+        }
+      }
+      Cons(Text::concat_all(["arg", js_nat(i), ": ", t]), jt_extern_params(st, rest, i + 1, scope, options))
+    }
+  }
+}
+
+pub fn jt_externs(st: &mut JtState, xs: List(NExtern), options: JsOptions): List(Text) ! {div, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let scope := jt_scope_of(x.generics, 0)
+      let params := jt_extern_params(st, x.params, 0, scope, options)
+      let ret := if jt_host(x.ret, options) { "unknown" } else { jt_ty(st, x.ret, scope) }
+      let line := Text::concat_all(["  ", js_quote(x.name), ": ", jt_generics(scope), "(", text_join(params, ", "), ") => ", ret, " | PromiseLike<", ret, ">;\n"])
+      Cons(line, jt_externs(st, rest, options))
+    }
+  }
+}
+
+pub fn jt_export_params(st: &mut JtState, ps: List(NParam), cs: List(JgCrossing), i: Nat): List(Text) ! {div, overflow} {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => match cs {
+      Nil => Nil
+      Cons(c, more) => {
+        let t := if c.kind == 1 || c.kind == 2 {
+          "unknown"
+        } else if c.kind == 3 {
+          match jt_fn_parts(jd_strip(p.ty)) {
+            Some(f) => match f {
+              #(xs, r) => jt_function(st, xs, r, Nil, "PromiseLike")
+            }
+            None => jt_ty(st, p.ty, Nil)
+          }
+        } else {
+          jt_ty(st, p.ty, Nil)
+        }
+        Cons(Text::concat_all(["arg", js_nat(i), ": ", t]), jt_export_params(st, rest, more, i + 1))
+      }
+    }
+  }
+}
+
+pub fn jt_instance(st: &mut JtState, es: List(JgExport)): List(Text) ! {div, overflow} {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => {
+      let params := jt_export_params(st, e.f.params, e.params, 0)
+      let ret0 := if e.ret.kind == 1 {
+        "unknown"
+      } else if e.ret.kind == 4 {
+        match jt_fn_parts(e.f.ret) {
+          Some(f) => match f {
+            #(xs, r) => jt_function(st, xs, r, Nil, "Promise")
+          }
+          None => jt_ty(st, e.f.ret, Nil)
+        }
+      } else {
+        jt_ty(st, e.f.ret, Nil)
+      }
+      let ret := if e.sync { ret0 } else { Text::concat_all(["Promise<", ret0, ">"]) }
+      Cons(Text::concat_all(["  ", js_quote(e.name), ": (", text_join(params, ", "), ") => ", ret, ";\n"]), jt_instance(st, rest))
+    }
+  }
+}
+
+pub fn jt_field_names(fs: List(NField)): List(Text) ! {div, overflow} {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(match f.name {
+      Some(n) => js_quote(n)
+      None => "null"
+    }, jt_field_names(rest))
+  }
+}
+
+pub fn jt_field_tys(st: &mut JtState, fs: List(NField), scope: List(Text × Text)): List(Text) ! {div, overflow} {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let x := jt_ty(st, f.ty, scope)
+      Cons(x, jt_field_tys(st, rest, scope))
+    }
+  }
+}
+
+pub fn jt_ctors(st: &mut JtState, d: NData, cs: List(NCtor), scope: List(Text × Text)): List(Text) ! {div, overflow} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let fields := jt_field_tys(st, c.fields, scope)
+      let x := jt_constructor(js_gen_owner(st.spellings, st.pkg.datas, d.name), js_gen_ctor(st.spellings, st.pkg.datas, c.name), jt_field_names(c.fields), fields, d.is_struct)
+      Cons(x, jt_ctors(st, d, rest, scope))
+    }
+  }
+}
+
+pub fn jt_aliases(st: &mut JtState): List(Text) ! {div, overflow} {
+  var out: List(Text) := Nil
+  var going := true
+  while going {
+    match st.pending {
+      Nil => { going := false }
+      Cons(index, rest) => {
+        st.pending := rest
+        if not(js_contains_nat(st.emitted, index)) {
+          st.emitted := Cons(index, st.emitted)
+          match jt_nth_data(st.pkg.datas, index) {
+            None => ()
+            Some(d) => match d.ctors {
+              Nil => {
+                jt_fail(st, Text::concat_all(["opaque data type ", d.name, " has no declared JavaScript representation"]))
+                going := false
+              }
+              Cons(^c, ^more) => {
+                let scope := jt_scope_of(d.generics, 0)
+                let variants := jt_ctors(st, d, d.ctors, scope)
+                out := Cons(Text::concat_all(["export type TautoData", js_nat(index), jt_generics(scope), " = ", text_join(variants, " | "), ";\n"]), out)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  List::reverse(out)
+}
+
+// The declarations of a program (`generate_declarations_with`).
+pub fn js_generate_declarations(pkg: NPackage, options: JsOptions): Result(Text, Text) ! {div, overflow} {
+  var st := JtState { pkg: pkg, spellings: js_library_spellings(), pending: Nil, emitted: Nil, error: None }
+  let externs := Text::concat_all(Cons("export interface Externs {\n", List::append(jt_externs(&mut st, pkg.externs, options), ["}\n"])))
+  let ret := match pkg.top {
+    Some(id) => match js_find_fn(pkg.fns, id) {
+      Some(f) => Ok(jt_ty(&mut st, f.ret, Nil))
+      None => Err(concat("javascript declarations: missing entry function ", js_nat(id)))
+    }
+    None => Ok("null")
+  }
+  let inst_text := match options.exports {
+    Nil => Ok("")
+    Cons(^x, ^y) => match jg_entries(pkg, options) {
+      Err(e) => Err(e)
+      Ok(entries) => match jg_export_table(pkg, options, jg_entry_ids(entries)) {
+      Err(e) => Err(e)
+      Ok(table) => Ok(Text::concat_all(Cons("export interface Instance {\n", List::append(jt_instance(&mut st, table), ["  dispose(): void;\n}\nexport declare function instantiate(externs?: Externs, options?: RunOptions & { show?: (text: string) => void; release?: Record<string, (value: unknown) => void> }): Instance;\n"]))))
+    }
+    }
+  }
+  let aliases := Text::concat_all(jt_aliases(&mut st))
+  match st.error {
+    Some(e) => Err(e)
+    None => match ret {
+      Err(e) => Err(e)
+      Ok(r) => match inst_text {
+        Err(e) => Err(e)
+        Ok(inst) => {
+          let args := match pkg.externs {
+            Nil => "show?: (text: string) => void, externs?: Externs, options?: RunOptions"
+            Cons(^x, ^y) => "show: ((text: string) => void) | undefined, externs: Externs, options?: RunOptions"
+          }
+          Ok(Text::concat_all([include_text!("tables/declarations-prelude.ts"), "\n", aliases, "\n", externs, "\nexport declare function run(", args, "): Promise<", r, ">;\n", inst]))
+        }
+      }
+    }
+  }
+}

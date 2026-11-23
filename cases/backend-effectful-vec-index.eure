@@ -1,0 +1,162 @@
+// `Vec::index` in functions whose rows hold other effects (suspending,
+// resuming once or many times, a row variable, a `Never` effect without
+// `resume 0`): the index is a plain call of the runtime that may abort with
+// `out_of_bounds`, at whatever tier the function around it runs.
+@ cases.vec-index-in-a-suspending-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+source = ```tauto
+import std::builtin::os
+import std::prelude::collections
+
+fn pick(v: &Vec(u64), i: u64): u64 ! {sleep, out_of_bounds, overflow} {
+  perform sleep(1)
+  let a := Vec::index(&v, i)
+  let b := Vec::index(&v, 0)
+  a + b
+}
+var v := Vec::new()
+Vec::push(&mut v, 10)
+Vec::push(&mut v, 20)
+handle { show(&pick(&v, 1)) } with { out_of_bounds() => show(&0) }
+```
+stdout = "30\n"
+
+@ cases.vec-index-in-a-multi-shot-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+source = ```tauto
+import std::prelude::collections
+
+effect choose(): Bool resume ω
+fn pick(v: &Vec(u64)): u64 ! {choose, out_of_bounds, overflow} {
+  let i := if perform choose() { 1 } else { 0 }
+  let a := Vec::index(&v, i)
+  a + 1
+}
+var v := Vec::new()
+Vec::push(&mut v, 10)
+Vec::push(&mut v, 20)
+let r := handle { pick(&v) } with {
+  choose(), k => k(true) + k(false)
+  out_of_bounds() => 0
+}
+show(&r)
+```
+stdout = "32\n"
+
+@ cases.vec-index-in-a-resuming-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+source = ```tauto
+import std::prelude::collections
+
+effect ask(): u64 resume 1
+fn pick(v: &Vec(u64)): u64 ! {ask, out_of_bounds, overflow} {
+  let i := perform ask()
+  let a := Vec::index(&v, i)
+  a + 1
+}
+var v := Vec::new()
+Vec::push(&mut v, 10)
+Vec::push(&mut v, 20)
+let r := handle { pick(&v) } with {
+  ask(), k => k(1) * 2
+  out_of_bounds() => 0
+}
+show(&r)
+```
+stdout = "42\n"
+
+@ cases.vec-index-beside-a-suspending-row-variable
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+source = ```tauto
+import std::prelude::collections
+
+effect ask(): u64 resume 1
+fn pick<!e>(v: &Vec(u64), f: () -> u64 ! e): u64 ! {out_of_bounds, overflow} ∪ e {
+  let i := f()
+  let a := Vec::index(&v, i)
+  a + 1
+}
+var v := Vec::new()
+Vec::push(&mut v, 10)
+Vec::push(&mut v, 20)
+let r := handle { pick(&v, () => perform ask()) } with {
+  ask(), k => k(1) * 2
+  out_of_bounds() => 0
+}
+show(&r)
+```
+stdout = "42\n"
+
+@ cases.vec-index-handled-inside-a-resuming-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+import std::prelude::collections
+
+effect ask(): u64 resume 1
+fn pick(v: &Vec(u64)): u64 ! {ask, overflow} {
+  let i := perform ask()
+  let a := handle { Vec::index(&v, i) + 0 } with { out_of_bounds() => 0 }
+  a + 1
+}
+var v := Vec::new()
+Vec::push(&mut v, 10)
+Vec::push(&mut v, 20)
+let r := handle { pick(&v) } with {
+  ask(), k => k(1) * 2
+}
+show(&r)
+```
+stdout = "42\n"
+
+@ cases.vec-index-in-a-loop-of-a-resuming-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+source = ```tauto
+import std::prelude::collections
+
+effect ask(): u64 resume 1
+fn has(v: &Vec(u64)) ! {div, ask, out_of_bounds, overflow} {
+  let x := perform ask()
+  var i: u64 := 0
+  var found := false
+  while i < Vec::len(&v) && not(found) {
+    let y := Vec::index(&v, i)
+    if y == x {
+      found := true
+    }
+    i := i + 1
+  }
+  found
+}
+var v := Vec::new()
+Vec::push(&mut v, 10)
+Vec::push(&mut v, 20)
+let r := handle { has(&v) } with {
+  ask(), k => k(20)
+  out_of_bounds() => false
+}
+show(&r)
+```
+stdout = "true\n"
+
+@ cases.vec-index-beside-a-never-effect
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+source = ```tauto
+import std::prelude::collections
+
+effect boom(): Never
+fn pick(v: &Vec(u64), i: u64): u64 ! {boom, out_of_bounds, overflow} {
+  if i > 5 { perform boom() } else { #() }
+  let a := Vec::index(&v, i)
+  a + 1
+}
+fn outer(v: &Vec(u64)): u64 ! {boom, out_of_bounds, overflow} { pick(&v, 1) }
+var v := Vec::new()
+Vec::push(&mut v, 10)
+Vec::push(&mut v, 20)
+let r := handle { outer(&v) } with {
+  boom(), k => 0
+  out_of_bounds() => 0
+}
+show(&r)
+```
+stdout = "21\n"

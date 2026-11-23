@@ -1,34 +1,39 @@
 @ cases.order-and-shared-reads
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Vec::into_array` yet"
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Shared
 
 var values := Vec::new()
 Vec::push(&mut values, "日本語")
 Vec::push(&mut values, "two")
 let array := Vec::into_array(values)
-perform show("length", Array::len(array))
-perform show("first", Array::get(array, 0))
-perform show("second", Array::get(array, 1))
-perform show("missing", Array::get(array, 2))
+show(&Array::len(array))
+show(&Array::get(array, 0))
+show(&Array::get(array, 1))
+show(&Array::get(array, 2))
 ```
-shows = ["length = 2", "first = Some(\"日本語\")", "second = Some(\"two\")", "missing = None"]
+stdout = ```
+2
+Some("日本語")
+Some("two")
+None
+```
 
 @ cases.empty
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Vec::into_array` yet"
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Shared
 
 let array: Array(i64) := Vec::into_array(Vec::new())
-perform show("length", Array::len(array))
-perform show("missing", Array::get(array, 0))
+show(&Array::len(array))
+show(&Array::get(array, 0))
 ```
-shows = ["length = 0", "missing = None"]
+stdout = ```
+0
+None
+```
 
 @ cases.large-flat
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Vec::into_array` yet"
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Shared
 
 var values := Vec::new()
 var i: u64 := 0
@@ -37,7 +42,10 @@ while i < 100000 {
   i := i + 1
 }
 let array := Vec::into_array(values)
-perform show("length", Array::len(array))
-perform show("last", Array::get(array, 99999))
+show(&Array::len(array))
+show(&Array::get(array, 99999))
 ```
-shows = ["length = 100000", "last = Some(99999)"]
+stdout = ```
+100000
+Some(99999)
+```

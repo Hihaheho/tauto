@@ -22,7 +22,7 @@
 //!
 //! A syntax name is written as in a literal's opening: a letter or `_`, then letters, digits and `_`.
 
-use tauto_parol::Span;
+use crate::span::Span;
 
 /// A comment of the source text, as the syntax tree holds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,0 +1,380 @@
+import "base.taut" { Nat }
+import "map.taut" { Ordmap }
+import "map_laws.taut" { Ordmap, OrdmapLaw }
+import "text.taut" { Bytes, Text }
+import std::builtin::ord { equal_ne_less, greater_ne_equal, greater_ne_less, less_ne_equal }
+import std::prelude::collections { Bytes }
+import std::prelude::std { List, Option, Ordering }
+
+// `Ordmap::compare_text` (`Text::ordering` of `std/Text::taut`) is a total order, so the
+// theorems of `map_laws.taut` hold for maps keyed by text without assuming `OrdmapLaw`.
+
+// One step of `Bytes::compare`: the first bytes decide, or the rest does.
+pub fn Ordmap::select3(before: Bool, after: Bool, rest: Ordering): Ordering {
+  match before {
+    true => Less
+    false => ⊢ Ordering from match after { true => Greater, false => rest }
+  }
+}
+
+pub theorem Ordmap::select3_false_false(
+  p: Bool,
+  q: Bool,
+  r: Ordering,
+  hp: p = false,
+  hq: q = false
+): Ordmap::select3(p, q, r) = r {
+  match p {
+    false => match q {
+      false => Refl
+      true => False::elim(true_ne_false(hq))
+    }
+    true => False::elim(true_ne_false(hp))
+  }
+}
+
+pub theorem Ordmap::select3_true(p: Bool, q: Bool, r: Ordering, hp: p = true): Ordmap::select3(p, q, r) = Less {
+  match p {
+    false => False::elim(false_ne_true(hp))
+    true => Refl
+  }
+}
+
+pub theorem Ordmap::select3_equal(
+  p: Bool,
+  q: Bool,
+  r: Ordering,
+  e: Ordmap::select3(p, q, r) = Equal
+): p = false ∧ q = false ∧ r = Equal {
+  match p {
+    false => match q {
+      false => AndIntro(Refl, AndIntro(Refl, e))
+      true => False::elim(greater_ne_equal(e))
+    }
+    true => False::elim(less_ne_equal(e))
+  }
+}
+
+pub theorem Bytes::compare_step(
+  x: Nat,
+  xs: List(Nat),
+  y: Nat,
+  ys: List(Nat)
+): Bytes::compare(Cons(x, xs), Cons(y, ys)) = Ordmap::select3(x < y, y < x, Bytes::compare(xs, ys)) {
+  ⊢ Bytes::compare(
+    Cons(x, xs),
+    Cons(y, ys)
+  ) = Ordmap::select3(x < y, y < x, Bytes::compare(xs, ys)) from match x < y {
+    false => ⊢ (⊢ Ordering from match y < x {
+      false => Bytes::compare(xs, ys)
+      true => Greater
+    }) = Ordmap::select3(false, y < x, Bytes::compare(xs, ys)) from match y < x {
+      false => ⊢ Bytes::compare(xs, ys) = Ordmap::select3(false, false, Bytes::compare(xs, ys)) from Refl
+      true => ⊢ Greater = Ordmap::select3(false, true, Bytes::compare(xs, ys)) from Refl
+    }
+    true => ⊢ Less = Ordmap::select3(true, y < x, Bytes::compare(xs, ys)) from Refl
+  }
+}
+
+pub theorem Bytes::compare_same(a: List(Nat)): Bytes::compare(a, a) = Equal {
+  match a {
+    Nil => Refl
+    Cons(x, xs) => Eq::trans(
+      Bytes::compare_step(x, xs, x, xs),
+      Eq::trans(
+        Ordmap::select3_false_false(
+          x < x,
+          x < x,
+          Bytes::compare(xs, xs),
+          Nat::lt_irrefl(x),
+          Nat::lt_irrefl(x)
+        ),
+        Bytes::compare_same(xs)
+      )
+    )
+  }
+}
+
+pub theorem Bytes::compare_eq(a: List(Nat), b: List(Nat), e: Bytes::compare(a, b) = Equal): a = b {
+  match a {
+    Nil => match b {
+      Nil => Refl
+      Cons(y, ys) => False::elim(less_ne_equal(e))
+    }
+    Cons(x, xs) => match b {
+      Nil => False::elim(greater_ne_equal(e))
+      Cons(y, ys) => Eq::trans(
+        Eq::congr(
+          ⟦Cons(□, xs)⟧,
+          Nat::lt_total(
+            x,
+            y,
+            And::left(
+              Ordmap::select3_equal(
+                x < y,
+                y < x,
+                Bytes::compare(xs, ys),
+                Eq::trans(Eq::sym(Bytes::compare_step(x, xs, y, ys)), e)
+              )
+            ),
+            And::left(
+              And::right(
+                Ordmap::select3_equal(
+                  x < y,
+                  y < x,
+                  Bytes::compare(xs, ys),
+                  Eq::trans(Eq::sym(Bytes::compare_step(x, xs, y, ys)), e)
+                )
+              )
+            )
+          )
+        ),
+        Eq::congr(
+          ⟦Cons(y, □)⟧,
+          Bytes::compare_eq(
+            xs,
+            ys,
+            And::right(
+              And::right(
+                Ordmap::select3_equal(
+                  x < y,
+                  y < x,
+                  Bytes::compare(xs, ys),
+                  Eq::trans(Eq::sym(Bytes::compare_step(x, xs, y, ys)), e)
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+}
+
+pub fn Ordering::flip(o: Ordering): Ordering {
+  match o { Less => Greater, Equal => Equal, Greater => Less }
+}
+
+pub theorem Ordmap::select3_flip(
+  p: Bool,
+  q: Bool,
+  r: Ordering,
+  asym: (p = true) -> (q = false)
+): Ordmap::select3(q, p, Ordering::flip(r)) = Ordering::flip(Ordmap::select3(p, q, r)) {
+  match p {
+    false => match q { false => Refl, true => Refl }
+    true => match q {
+      false => Refl
+      true => False::elim(true_ne_false(asym(Refl)))
+    }
+  }
+}
+
+// One step of transitivity: the first bytes `x`, `y`, `z` and the
+// comparisons of the rests `r1`, `r2`, `r3`.
+pub theorem Ordmap::select3_trans(
+  x: Nat,
+  y: Nat,
+  z: Nat,
+  r1: Ordering,
+  r2: Ordering,
+  r3: Ordering,
+  p1: Bool,
+  q1: Bool,
+  p2: Bool,
+  q2: Bool,
+  hp1: x < y = p1,
+  hq1: y < x = q1,
+  hp2: y < z = p2,
+  hq2: z < y = q2,
+  e1: Ordmap::select3(p1, q1, r1) = Less,
+  e2: Ordmap::select3(p2, q2, r2) = Less,
+  ih: (r1 = Less) -> (r2 = Less) -> (r3 = Less)
+): Ordmap::select3(x < z, z < x, r3) = Less {
+  match p1 {
+    true => match p2 {
+      true => Ordmap::select3_true(x < z, z < x, r3, Nat::lt_trans(x, y, z, hp1, hp2))
+      false => match q2 {
+        true => False::elim(greater_ne_less(e2))
+        false => Ordmap::select3_true(
+          x < z,
+          z < x,
+          r3,
+          Eq::subst((w: Nat) => x < w = true, Nat::lt_total(y, z, hp2, hq2), hp1)
+        )
+      }
+    }
+    false => match q1 {
+      true => False::elim(greater_ne_less(e1))
+      false => match p2 {
+        true => Ordmap::select3_true(
+          x < z,
+          z < x,
+          r3,
+          Eq::subst((w: Nat) => w < z = true, Eq::sym(Nat::lt_total(x, y, hp1, hq1)), hp2)
+        )
+        false => match q2 {
+          true => False::elim(greater_ne_less(e2))
+          false => Eq::trans(
+            Ordmap::select3_false_false(
+              x < z,
+              z < x,
+              r3,
+              Eq::subst(
+                (w: Nat) => x < w = false,
+                Eq::trans(Nat::lt_total(x, y, hp1, hq1), Nat::lt_total(y, z, hp2, hq2)),
+                Nat::lt_irrefl(x)
+              ),
+              Eq::subst(
+                (w: Nat) => w < x = false,
+                Eq::trans(Nat::lt_total(x, y, hp1, hq1), Nat::lt_total(y, z, hp2, hq2)),
+                Nat::lt_irrefl(x)
+              )
+            ),
+            ih(e1, e2)
+          )
+        }
+      }
+    }
+  }
+}
+
+pub theorem Ordmap::compare_text_same(a: Text): Ordmap::compare_text(a, a) = Equal {
+  Bytes::compare_same(Text::bytes(a))
+}
+
+pub theorem Ordmap::compare_text_eq(a: Text, b: Text, e: Ordmap::compare_text(a, b) = Equal): a = b {
+  match a {
+    Mk(xs) => match b {
+      Mk(ys) => Eq::congr(Text::Mk, Bytes::compare_eq(xs, ys, e))
+    }
+  }
+}
+
+pub theorem Bytes::compare_flip(
+  a: List(Nat),
+  b: List(Nat)
+): Bytes::compare(b, a) = Ordering::flip(Bytes::compare(a, b)) {
+  match a {
+    Nil => match b {
+      Nil => Refl
+      Cons(y, ys) => Refl
+    }
+    Cons(x, xs) => match b {
+      Nil => Refl
+      Cons(y, ys) => Eq::trans(
+        Bytes::compare_step(y, ys, x, xs),
+        Eq::trans(
+          Eq::congr(⟦Ordmap::select3(y < x, x < y, □)⟧, Bytes::compare_flip(xs, ys)),
+          Eq::trans(
+            Ordmap::select3_flip(
+              x < y,
+              y < x,
+              Bytes::compare(xs, ys),
+              (h: x < y = true) => Nat::lt_asym(x, y, h)
+            ),
+            Eq::congr(Ordering::flip, Eq::sym(Bytes::compare_step(x, xs, y, ys)))
+          )
+        )
+      )
+    }
+  }
+}
+
+pub theorem Bytes::compare_less_trans(
+  a: List(Nat),
+  b: List(Nat),
+  c: List(Nat),
+  e1: Bytes::compare(a, b) = Less,
+  e2: Bytes::compare(b, c) = Less
+): Bytes::compare(a, c) = Less {
+  match a {
+    Nil => match c {
+      Nil => match b {
+        Nil => False::elim(equal_ne_less(e1))
+        Cons(y, ys) => False::elim(greater_ne_less(e2))
+      }
+      Cons(z, zs) => Refl
+    }
+    Cons(x, xs) => match b {
+      Nil => False::elim(greater_ne_less(e1))
+      Cons(y, ys) => match c {
+        Nil => False::elim(greater_ne_less(e2))
+        Cons(z, zs) => Eq::trans(
+          Bytes::compare_step(x, xs, z, zs),
+          Ordmap::select3_trans(
+            x,
+            y,
+            z,
+            Bytes::compare(xs, ys),
+            Bytes::compare(ys, zs),
+            Bytes::compare(xs, zs),
+            x < y,
+            y < x,
+            y < z,
+            z < y,
+            Refl,
+            Refl,
+            Refl,
+            Refl,
+            Eq::trans(Eq::sym(Bytes::compare_step(x, xs, y, ys)), e1),
+            Eq::trans(Eq::sym(Bytes::compare_step(y, ys, z, zs)), e2),
+            (h1: Bytes::compare(xs, ys) = Less) => (h2: Bytes::compare(ys, zs) = Less) => Bytes::compare_less_trans(
+              xs,
+              ys,
+              zs,
+              h1,
+              h2
+            )
+          )
+        )
+      }
+    }
+  }
+}
+
+pub theorem Ordmap::compare_text_flip_less(
+  a: Text,
+  b: Text,
+  e: Ordmap::compare_text(a, b) = Less
+): Ordmap::compare_text(b, a) = Greater {
+  Eq::trans(Bytes::compare_flip(Text::bytes(a), Text::bytes(b)), Eq::congr(Ordering::flip, e))
+}
+
+pub theorem Ordmap::compare_text_flip_greater(
+  a: Text,
+  b: Text,
+  e: Ordmap::compare_text(a, b) = Greater
+): Ordmap::compare_text(b, a) = Less {
+  Eq::trans(Bytes::compare_flip(Text::bytes(a), Text::bytes(b)), Eq::congr(Ordering::flip, e))
+}
+
+pub theorem Ordmap::compare_text_less_trans(
+  a: Text,
+  b: Text,
+  c: Text,
+  e1: Ordmap::compare_text(a, b) = Less,
+  e2: Ordmap::compare_text(b, c) = Less
+): Ordmap::compare_text(a, c) = Less {
+  Bytes::compare_less_trans(Text::bytes(a), Text::bytes(b), Text::bytes(c), e1, e2)
+}
+
+pub theorem Ordmap::compare_text_law(): OrdmapLaw(Text, Ordmap::compare_text) {
+  OrdmapLaw::Mk(
+    Ordmap::compare_text_same,
+    Ordmap::compare_text_eq,
+    Ordmap::compare_text_flip_less,
+    Ordmap::compare_text_flip_greater,
+    Ordmap::compare_text_less_trans
+  )
+}
+
+// For maps keyed by text, the order needs no assumption; the map must be ordered:
+pub theorem Ordmap::text_get_insert_same<V: Type>(
+  m: Ordmap(Text, V),
+  k: Text,
+  v: V,
+  s: Ordmap::ordered(m, Ordmap::compare_text)
+): Ordmap::get(Ordmap::insert(m, k, v, Ordmap::compare_text), k, Ordmap::compare_text) = Some(v) {
+  Ordmap::get_insert_same(Ordmap::compare_text, Ordmap::compare_text_law(), m, k, v, s)
+}

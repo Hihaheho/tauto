@@ -1,0 +1,39 @@
+// A task owns what its function captured: an affine value captured by the
+// function given to `spawn` is moved into the task, which may pass it on by
+// value. The host runs the task's function once (`Host::run` takes it as an
+// affine function), so the function is not lent and its captures are not
+// borrowed.
+@ cases.task-passes-an-affine-capture-by-value
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+source = ```tauto
+import std::builtin::os
+import std::builtin::par
+
+struct(affine) Conn { id: u64 }
+struct(affine) Accepted { who: Text, got: Result(Conn, Text) }
+
+fn serve<S>(c: Conn, s: S): u64 ! {sleep} {
+  perform sleep(1)
+  match c {
+    Conn { id } => id
+  }
+}
+
+fn accept(): Accepted { Accepted { who: "l", got: Ok(Conn { id: 7 }) } }
+
+fn run<S: Shared>(s: S): u64 ! {sleep, wait, ∀ T. spawn(() -> T ! {sleep}), div} {
+  match accept() {
+    Accepted { who, got } => match got {
+      Err(e) => 0
+      Ok(c) => Task::join(perform spawn(() => {
+        let n := serve(c, s)
+        perform sleep(1)
+        n
+      }))
+    }
+  }
+}
+
+show(&run(1))
+```
+stdout = "7\n"

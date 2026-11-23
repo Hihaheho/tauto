@@ -1,37 +1,26 @@
 import "../../surface/src/surface.taut"
 import "datas.taut"
-import std::Text
+import "types_decl.taut"
+import std::text
 import "ty.taut"
+import "types_decl.taut"
 
 // The source-controlled name, kind annotation, parameters, and view marker.
 // Constructor fields and struct/enum form are separate obligations.
 pub(open) inductive DataHeader: Type {
-  Mk(name: Text, declared: Option(Kind), generics: List(Text), r#view: Bool): DataHeader
+  Mk(name: Text, declared: Option(Kind), generics: List(Text), view: Bool): DataHeader
 }
 pub fn data_header(
   data: Data
-): DataHeader { DataHeader::Mk(data.name, data.declared, data.generics, data.r#view) }
+): DataHeader { DataHeader::Mk(data.name, data.declared, data.generics, data.view) }
 pub fn data_header_option(o: Option(Data)): Option(DataHeader) {
-  ⊢ Option(DataHeader) from match o {
+  match o {
     None => None
     Some(data) => Some(data_header(data))
   }
 }
-pub fn header_source_view(s: SurfaceData): Bool {
-  ⊢ Bool from match s.kind {
-    None => false
-    Some(k) => Text::eq(k, "view")
-  }
-}
-pub fn header_source_kind(s: SurfaceData): Option(Kind) {
-  ⊢ Option(Kind) from match header_source_view(s) {
-    true => Some(KindAffine)
-    false => ⊢ Option(Kind) from match s.kind {
-      None => None
-      Some(k) => kind_parse(k)
-    }
-  }
-}
+pub fn header_source_view(s: SurfaceData): Bool { surface_data_is_view(s) }
+pub fn header_source_kind(s: SurfaceData): Option(Kind) { data_declared(s) }
 pub fn source_data_header(
   s: SurfaceData
 ): DataHeader { DataHeader::Mk(s.name, header_source_kind(s), s.generics, header_source_view(s)) }

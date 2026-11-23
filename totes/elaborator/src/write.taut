@@ -4,24 +4,24 @@ import "../../kernel/src/data.taut"
 import "../../kernel/src/level.taut"
 import "../../kernel/src/term.taut"
 import "../../text/src/text.taut"
-import std::Base
-import std::Text
+import std::base
+import std::text
 
 pub fn elab_words(xs: List(Text)): Text { text_join(xs, " ") }
-pub fn elab_write_levels(xs: List(Pair(Text, Nat))): List(Text) {
-  ⊢ List(Text) from match xs {
+pub fn elab_write_levels(xs: List(Text × Nat)): List(Text) {
+  match xs {
     Nil => Nil
     Cons(p, rest) => Cons(p.fst, Cons(Text::of_nat(p.snd), elab_write_levels(rest)))
   }
 }
 pub fn elab_write_digits(xs: List(Nat)): List(Text) {
-  ⊢ List(Text) from match xs {
+  match xs {
     Nil => Nil
     Cons(n, rest) => Cons(Text::of_nat(n), elab_write_digits(rest))
   }
 }
 pub fn elab_write_sort(s: KernelSort): Text {
-  ⊢ Text from match s {
+  match s {
     KernelProp => "P"
     KernelType(l) => elab_words(
       Cons(
@@ -35,14 +35,14 @@ pub fn elab_write_sort(s: KernelSort): Text {
   }
 }
 pub fn elab_write_term(t: KernelTerm): Text {
-  ⊢ Text from match t {
+  match t {
     KernelBVar(i) => Text::concat("b ", Text::of_nat(i))
     KernelFVar(i) => Text::concat("f ", Text::of_nat(i))
     KernelSortTerm(s) => Text::concat("s ", elab_write_sort(s))
     KernelConst(n) => Text::concat("c ", n)
-    KernelPi(a, b, d) => elab_words(Cons("p", Cons(elab_write_term(a), Cons(elab_write_term(b), Nil))))
-    KernelLam(b, d) => Text::concat("l ", elab_write_term(b))
-    KernelApp(f, a, d) => elab_words(
+    KernelPi(a, b, ^d) => elab_words(Cons("p", Cons(elab_write_term(a), Cons(elab_write_term(b), Nil))))
+    KernelLam(b, ^d) => Text::concat("l ", elab_write_term(b))
+    KernelApp(f, a, ^d) => elab_words(
       Cons("a", Cons(elab_write_term(f), Cons(elab_write_term(a), Nil)))
     )
     KernelLit(n) => {
@@ -53,7 +53,7 @@ pub fn elab_write_term(t: KernelTerm): Text {
 }
 pub fn elab_transparent(t: Bool): Text { if t { "1" } else { "0" } }
 pub fn elab_write_declarations(ds: List(ElabDeclaration)): Text {
-  ⊢ Text from match ds {
+  match ds {
     Nil => ""
     Cons(d, rest) => Text::concat_all(
       Cons(
@@ -77,14 +77,14 @@ pub fn elab_write_declarations(ds: List(ElabDeclaration)): Text {
     )
   }
 }
-pub fn elab_write_ctors(cs: List(Pair(Text, KernelTerm))): List(Text) {
-  ⊢ List(Text) from match cs {
+pub fn elab_write_ctors(cs: List(Text × KernelTerm)): List(Text) {
+  match cs {
     Nil => Nil
     Cons(c, rest) => Cons(c.fst, Cons(elab_write_term(c.snd), elab_write_ctors(rest)))
   }
 }
 pub fn elab_write_families(fs: List(KernelFamily)): List(Text) {
-  ⊢ List(Text) from match fs {
+  match fs {
     Nil => Nil
     Cons(f, rest) => Cons(
       f.name,
@@ -105,7 +105,7 @@ pub fn elab_write_inductive(params: Nat, sort: KernelSort, fs: List(KernelFamily
   )
 }
 pub fn elab_write_items(xs: List(ElabItem)): Text {
-  ⊢ Text from match xs {
+  match xs {
     Nil => ""
     Cons(x, rest) => {
       let line := ⊢ Text from match x {
@@ -118,8 +118,24 @@ pub fn elab_write_items(xs: List(ElabItem)): Text {
           )
         )
         ItemInductive(params, sort, f) => Text::concat(elab_write_inductive(params, sort, f), text_newline())
+        ItemSkipped(^name, ^why) => ""
+        ItemAxiom(name, ty, transparent) => Text::concat(elab_words(["D", name, elab_write_term(ty), "0", elab_transparent(transparent)]), text_newline())
       }
       Text::concat(line, elab_write_items(rest))
+    }
+  }
+}
+
+// The declarations skipped, one line each: `skipped NAME: why`.
+pub fn elab_write_skipped(xs: List(ElabItem)): Text {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => {
+      let here := ⊢ Text from match x {
+        ItemSkipped(name, why) => if text_starts_with(name, "#pre ", 0) { "" } else { Text::concat_all(["skipped ", name, ": ", why, text_newline()]) }
+        _ => ""
+      }
+      Text::concat(here, elab_write_skipped(rest))
     }
   }
 }

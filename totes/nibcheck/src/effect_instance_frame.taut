@@ -1,0 +1,66 @@
+import std::map
+import std::text
+import "checker.taut"
+import "datas_frame.taut"
+import "error_frame.taut"
+import "instantiation_error_sound.taut"
+import "instantiation_frame.taut"
+import "ty.taut"
+import "types_decl.taut"
+
+// An operation's type at a perform: its generics as fresh variables, each
+// bound by its kind at the perform.
+pub fn effect_instance_bind(c: Checker, gs: List(Text × Kind), span: TySpan, t: Ty): Mut1(Ty, Checker) {
+  frame_bind(
+    <A: Ordmap(Text, Ty), B: Ty>,
+    (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
+    ck_instantiate_map(gs, c, span, Ordmap::empty())
+  )
+}
+
+pub theorem ck_instantiate_kinded_unf(
+  c: Checker,
+  gs: List(Text × Kind),
+  span: TySpan,
+  t: Ty
+): ck_instantiate_kinded(c, gs, span, t) = effect_instance_bind(c, gs, span, t) { Refl }
+
+pub theorem ck_instantiate_kinded_frame(
+  c: Checker,
+  gs: List(Text × Kind),
+  span: TySpan,
+  t: Ty
+): CkReadFrame(c, ck_instantiate_kinded(c, gs, span, t)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
+    Eq::sym(ck_instantiate_kinded_unf(c, gs, span, t)),
+    frame_bind_ok(
+      <A: Ordmap(Text, Ty), B: Ty>,
+      c,
+      (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
+      ck_instantiate_map(gs, c, span, Ordmap::empty()),
+      ck_instantiate_map_frame(gs, c, span, Ordmap::empty()),
+      map => c1 => Refl
+    )
+  )
+}
+
+pub theorem ck_instantiate_kinded_frame_errors(
+  c: Checker,
+  gs: List(Text × Kind),
+  span: TySpan,
+  t: Ty
+): CkErrorFrame(c, ck_instantiate_kinded(c, gs, span, t)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(ck_instantiate_kinded_unf(c, gs, span, t)),
+    error_frame_bind(
+      <A: Ordmap(Text, Ty), B: Ty>,
+      c,
+      (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
+      ck_instantiate_map(gs, c, span, Ordmap::empty()),
+      ck_instantiate_map_frame_errors(gs, c, span, Ordmap::empty()),
+      map => c1 => (clean_errors => clean_errors)
+    )
+  )
+}

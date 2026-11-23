@@ -1,0 +1,208 @@
+@ cases.a-sentence-indented-between-two-columns-is-rejected
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+        Case Zero. By Refl.
+      Case Succ(k). By Eq::congr.
+    %%
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.a-second-first-sentence-is-rejected
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+    Case Zero. By Refl.
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.a-label-used-twice-is-rejected
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      [s] Case Zero. By Refl.
+      [s] Case Succ(k). By Eq::congr.
+    %%
+    [s] (Succ, ih)
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.proof-code-under-an-unknown-label-is-rejected
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      [succ] Case Succ(k). By Eq::congr.
+    %%
+    [suc] (Succ, ih)
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.a-number-is-a-label-too
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      [2] Case Succ(k). By Eq::congr.
+    %%
+    [2] (Succ, ih)
+  ```)
+}
+````
+checks.add_zero_left = "ok"
+diagnostics = []
+
+// A proof about a type the file declares itself: the macro's check gives the
+// kernel the file's `inductive enum` as the family the file's check gives it.
+@ cases.a-proof-about-an-inductive-enum-of-the-file
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by }
+
+inductive enum N { Z, S(N) }
+
+theorem same(n: N): n = n {
+  proof!(```
+    By Refl.
+  ```)
+}
+````
+checks.same = "ok"
+diagnostics = []
+
+@ cases.induction-on-a-type-of-another-file
+entry = "main.taut"
+files."n.taut" = ````tauto
+import std::base
+
+pub(open) inductive enum N {
+  Z
+  S(N)
+}
+
+pub fn add(a: N, b: N): N {
+  ⊢ N from match b {
+    Z => a
+    S(k) => S(add(a, k))
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
+import "n.taut"
+
+theorem add_z_left(n: N): add(Z, n) = n {
+  proof!(```
+    By induction on n.
+      Case Z. By Refl.
+      [succ] Case S(k). By Eq::congr.
+    %%
+    [succ] (S, ih)
+  ```)
+}
+````
+checks.add_z_left = "ok"
+diagnostics = []
+
+
+@ cases.names-in-unicode-letters
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
+
+pub(open) inductive 記号: Type {
+  M: 記号
+  I: 記号
+}
+
+pub(open) inductive 導出可能: (List(記号)) -> Prop {
+  公理: 導出可能(Cons(M, Cons(I, Nil)))
+  規則2(x: List(記号), h: 導出可能(Cons(M, x))): 導出可能(Cons(M, List::append(x, x)))
+}
+
+theorem 例(): 導出可能(Cons(M, Cons(I, Cons(I, Nil)))) {
+  proof!(```
+    We have 導出1: 導出可能(Cons(M, Cons(I, Cons(I, Nil)))) by 規則2(Cons(I, Nil), 公理). By 導出1.
+  ```)
+}
+
+theorem 零足す(数: Nat): Nat::add(0, 数) = 数 {
+  proof!(```
+    By induction on 数.
+      Case Zero. By Refl.
+      [後者] Case Succ(前). We have 仮定: Nat::add(0, 前) = 前 by the induction hypothesis. By Eq::congr.
+    %%
+    [後者] (Succ, 仮定)
+  ```)
+}
+````
+checks."例" = "ok"
+checks."零足す" = "ok"
+diagnostics = []
+
+@ cases.a-list-literal-in-the-prose
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
+
+theorem append_pair(a: Nat, b: Nat): List::append([a], [b]) = [a, b] {
+  proof!(```
+    We have List::append($[a], $[b]) = $[a, b].
+  ```)
+}
+
+theorem append_empty(a: Nat): List::append([a], []) = [a] {
+  proof!(```
+    We have List::append($[a], $[]) = $[a].
+  ```)
+}
+````
+checks.append_pair = "ok"
+checks.append_empty = "ok"
+diagnostics = []

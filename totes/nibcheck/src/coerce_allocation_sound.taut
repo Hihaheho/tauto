@@ -1,0 +1,535 @@
+import "../../identity/src/identity.taut"
+import "coerce_sound.taut"
+import "allocation_advance.taut"
+import "allocation_resolution.taut"
+import "allocation_state.taut"
+import "checker.taut"
+import "data_field_allocation.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "fits_allocation_sound.taut"
+import "fits_sound.taut"
+import "fits_sound_head.taut"
+import std::base
+import std::map
+import std::nat
+import std::text
+import "ty.taut"
+import "type_allocation.taut"
+import "unify_sound.taut"
+
+// A reading through `coerce` fields (`ck_coerce_fit`) keeps the checker's
+// variables allocated: each step's type is a field of a declared struct,
+// whose types are allocated, at arguments that are.
+
+pub fn CoerceFieldAllocated(limit: Nat, o: Option(DataField)): Prop {
+  match o {
+    None => True
+    Some(f) => TypeAllocated(limit, allocation_field_ty(f))
+  }
+}
+
+pub theorem coerce_field_at_allocated(
+  fs: List(DataField),
+  i: Nat,
+  limit: Nat,
+  bounded: FieldsAllocated(limit, fs)
+): CoerceFieldAllocated(limit, coerce_field_at(fs, i)) {
+  match fs {
+    Nil => Trivial
+    Cons(f, rest) => ⊢ CoerceFieldAllocated(limit, coerce_field_at(Cons(f, rest), i)) from match i {
+      Zero => And::left(bounded)
+      Succ(j) => coerce_field_at_allocated(rest, j, limit, And::right(bounded))
+    }
+  }
+}
+
+pub fn CoerceStepAllocated(limit: Nat, o: Option(CoerceStep)): Prop {
+  match o {
+    None => True
+    Some(s) => TypeAllocated(limit, s.ty)
+  }
+}
+
+
+pub theorem coerce_step_named_allocated(
+  c: Checker,
+  d: Text,
+  f: DataField,
+  level: CoerceLevel,
+  n: Option(Text),
+  values: SubstValuesAllocated(ck_next_of(c), ck_subst_of(c)),
+  bounded: TypeAllocated(ck_next_of(c), allocation_field_ty(f))
+): CoerceStepAllocated(ck_next_of(c), coerce_step_named(c, d, f, level, n)) {
+  match n {
+    None => Trivial
+    Some(x) => ck_resolve_allocated(c, data_field_ty(f), values, bounded)
+  }
+}
+
+pub theorem coerce_step_field_allocated(
+  c: Checker,
+  d: Text,
+  k: DataCoerce,
+  o: Option(DataField),
+  values: SubstValuesAllocated(ck_next_of(c), ck_subst_of(c)),
+  bounded: CoerceFieldAllocated(ck_next_of(c), o)
+): CoerceStepAllocated(ck_next_of(c), coerce_step_field(c, d, k, o)) {
+  match o {
+    None => Trivial
+    Some(f) => coerce_step_named_allocated(c, d, f, k.level, f.name, values, bounded)
+  }
+}
+
+pub theorem coerce_step_declared_allocated(
+  c: Checker,
+  d: Text,
+  args: List(Ty),
+  o: Option(DataCoerce),
+  values: SubstValuesAllocated(ck_next_of(c), ck_subst_of(c)),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  bounded: TypeListAllocated(ck_next_of(c), args)
+): CoerceStepAllocated(ck_next_of(c), coerce_step_declared(c, d, args, o)) {
+  match o {
+    None => Trivial
+    Some(k) => coerce_step_field_allocated(
+      c,
+      d,
+      k,
+      coerce_field_at(datas_fields(ck_datas_of(c), d, 0, args), data_coerce_index(k)),
+      values,
+      coerce_field_at_allocated(
+        datas_fields(ck_datas_of(c), d, 0, args),
+        data_coerce_index(k),
+        ck_next_of(c),
+        datas_fields_allocated(ck_datas_of(c), d, 0, args, ck_next_of(c), declarations, bounded)
+      )
+    )
+  }
+}
+
+pub theorem coerce_step_resolved_allocated(
+  c: Checker,
+  r: Ty,
+  values: SubstValuesAllocated(ck_next_of(c), ck_subst_of(c)),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  bounded: TypeAllocated(ck_next_of(c), r)
+): CoerceStepAllocated(ck_next_of(c), coerce_step_resolved(c, r)) {
+  match r {
+    TyNamed(d, args) => coerce_step_declared_allocated(
+      c,
+      surface_name_text(d),
+      args,
+      datas_coerce(ck_datas_of(c), surface_name_text(d)),
+      values,
+      declarations,
+      bounded
+    )
+    TyInt(w) => Trivial
+    TyBool => Trivial
+    TyText => Trivial
+    TyUnit => Trivial
+    TyNever => Trivial
+    TyDecimal => Trivial
+    TyFloat => Trivial
+    TyFloat32 => Trivial
+    TyParam(n, k) => Trivial
+    TyVar(v) => Trivial
+    TyFn(ps, r2, k) => Trivial
+    TyUnion(ms) => Trivial
+    TyProduct(ms) => Trivial
+    TyTagged(tags, inner) => Trivial
+    TyInfo(h) => Trivial
+    TyBorrow(inner, m) => Trivial
+    TyPoly(gs, inner) => Trivial
+    TyApp(h, a) => Trivial
+  }
+}
+
+pub theorem ck_coerce_step_allocated(
+  c: Checker,
+  t: Ty,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  bounded: TypeAllocated(ck_next_of(c), t)
+): CoerceStepAllocated(ck_next_of(c), ck_coerce_step(c, t)) {
+  Eq::subst(
+    (o: Option(CoerceStep)) => CoerceStepAllocated(ck_next_of(c), o),
+    Eq::sym(coerce_step_unf(c, t)),
+    coerce_step_resolved_allocated(
+      c,
+      ck_resolve(c, t),
+      And::right(state),
+      declarations,
+      ck_resolve_allocated(c, t, And::right(state), bounded)
+    )
+  )
+}
+
+// The steps of `ck_coerce_fit_in`, with the declarations `datas` the
+// checker keeps, allocated below `limit`.
+pub def CoerceFitAllocation(j: Nat, datas: Datas, limit: Nat): Prop := ∀ c: Checker. ∀ t: Ty. ∀ want: Ty. ∀ level: CoerceLevel. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(c). ∀ same: ck_datas_of(c) = datas. ∀ above: Nat::le(limit, ck_next_of(c)) = true. ∀ declarations: DatasAllocated(
+  limit,
+  datas
+). ∀ left: TypeAllocated(ck_next_of(c), t). ∀ right: TypeAllocated(
+  ck_next_of(c),
+  want
+). AllocationAdvance(c, ck_coerce_fit_in(j, c, t, want, level))
+
+pub theorem coerce_declarations_at(
+  c: Checker,
+  datas: Datas,
+  limit: Nat,
+  same: ck_datas_of(c) = datas,
+  above: Nat::le(limit, ck_next_of(c)) = true,
+  declarations: DatasAllocated(limit, datas)
+): DatasAllocated(ck_next_of(c), ck_datas_of(c)) {
+  Eq::subst(
+    (d: Datas) => DatasAllocated(ck_next_of(c), d),
+    Eq::sym(same),
+    datas_allocated_weaken(datas, limit, ck_next_of(c), above, declarations)
+  )
+}
+
+pub theorem coerce_fit_next_allocation(
+  j: Nat,
+  c: Checker,
+  s: CoerceStep,
+  want: Ty,
+  level: CoerceLevel,
+  fits: Bool,
+  datas: Datas,
+  limit: Nat,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  same: ck_datas_of(c) = datas,
+  above: Nat::le(limit, ck_next_of(c)) = true,
+  declarations: DatasAllocated(limit, datas),
+  left: TypeAllocated(ck_next_of(c), s.ty),
+  right: TypeAllocated(ck_next_of(c), want),
+  ih: CoerceFitAllocation(j, datas, limit)
+): AllocationAdvance(c, coerce_fit_next(j, c, s, want, level, fits)) {
+  match fits {
+    true => allocation_advance_return(c, Some(coerce_min(level, s.level)), state)
+    false => allocation_advance_rewrap(
+      c,
+      ck_coerce_fit_in(j, c, s.ty, want, coerce_min(level, s.level)),
+      ih(c, s.ty, want, coerce_min(level, s.level), ordered, state, same, above, declarations, left, right)
+    )
+  }
+}
+
+pub theorem coerce_fit_attempt_allocation(
+  j: Nat,
+  c: Checker,
+  s: CoerceStep,
+  want: Ty,
+  level: CoerceLevel,
+  datas: Datas,
+  limit: Nat,
+  m: Mut1(Bool, Checker),
+  first: AllocationAdvance(c, m),
+  grows: Grows(c, ck_st(m)),
+  same: ck_datas_of(c) = datas,
+  above: Nat::le(limit, ck_next_of(c)) = true,
+  declarations: DatasAllocated(limit, datas),
+  left: TypeAllocated(ck_next_of(c), s.ty),
+  right: TypeAllocated(ck_next_of(c), want),
+  ih: CoerceFitAllocation(j, datas, limit)
+): AllocationAdvance(
+  c,
+  frame_bind(
+    <A: Bool, B: Option(CoerceLevel)>,
+    (fits: Bool, next: Checker) => coerce_fit_next(j, next, s, want, level, fits),
+    m
+  )
+) {
+  ⊢ AllocationAdvance(
+    c,
+    frame_bind(
+      <A: Bool, B: Option(CoerceLevel)>,
+      (fits: Bool, next: Checker) => coerce_fit_next(j, next, s, want, level, fits),
+      m
+    )
+  ) from match m {
+    mut1(fits, next) => allocation_advance_start(
+      c,
+      next,
+      coerce_fit_next(j, next, s, want, level, fits),
+      And::left(first),
+      coerce_fit_next_allocation(
+        j,
+        next,
+        s,
+        want,
+        level,
+        fits,
+        datas,
+        limit,
+        And::left(grows),
+        And::right(first),
+        Eq::trans(Eq::sym(And::left(And::right(And::right(And::right(grows))))), same),
+        Nat::le_trans(limit, ck_next_of(c), ck_next_of(next), above, And::left(first)),
+        declarations,
+        type_allocated_weaken(s.ty, ck_next_of(c), ck_next_of(next), And::left(first), left),
+        type_allocated_weaken(want, ck_next_of(c), ck_next_of(next), And::left(first), right),
+        ih
+      )
+    )
+  }
+}
+
+pub theorem coerce_fit_step_allocation(
+  j: Nat,
+  c: Checker,
+  want: Ty,
+  level: CoerceLevel,
+  o: Option(CoerceStep),
+  datas: Datas,
+  limit: Nat,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  same: ck_datas_of(c) = datas,
+  above: Nat::le(limit, ck_next_of(c)) = true,
+  declarations: DatasAllocated(limit, datas),
+  stepped: CoerceStepAllocated(ck_next_of(c), o),
+  right: TypeAllocated(ck_next_of(c), want),
+  ih: CoerceFitAllocation(j, datas, limit)
+): AllocationAdvance(c, coerce_fit_step(j, c, want, level, o)) {
+  match o {
+    None => allocation_advance_return(c, None, state)
+    Some(s) => coerce_fit_attempt_allocation(
+      j,
+      c,
+      s,
+      want,
+      level,
+      datas,
+      limit,
+      ck_attempt_fits(c, s.ty, want),
+      ck_attempt_fits_allocation(c, s.ty, want, ordered, state, stepped, right),
+      And::left(ck_attempt_fits_ok(c, s.ty, want)(ordered)),
+      same,
+      above,
+      declarations,
+      stepped,
+      right,
+      ih
+    )
+  }
+}
+
+pub theorem coerce_fit_in_allocation(k: Nat, datas: Datas, limit: Nat): CoerceFitAllocation(k, datas, limit) {
+  match k {
+    Zero => (c: Checker, t: Ty, want: Ty, level: CoerceLevel, ordered: CkOrdered(c), state: CheckerAllocation(c), same: ck_datas_of(c) = datas, above: Nat::le(limit, ck_next_of(c)) = true, declarations: DatasAllocated(limit, datas), left: TypeAllocated(ck_next_of(c), t), right: TypeAllocated(ck_next_of(c), want)) => allocation_advance_return(c, None, state)
+    Succ(j) => (c: Checker, t: Ty, want: Ty, level: CoerceLevel, ordered: CkOrdered(c), state: CheckerAllocation(c), same: ck_datas_of(c) = datas, above: Nat::le(limit, ck_next_of(c)) = true, declarations: DatasAllocated(limit, datas), left: TypeAllocated(ck_next_of(c), t), right: TypeAllocated(ck_next_of(c), want)) => Eq::subst(
+      (m: Mut1(Option(CoerceLevel), Checker)) => AllocationAdvance(c, m),
+      Eq::sym(coerce_fit_in_unf(j, c, t, want, level)),
+      coerce_fit_step_allocation(
+        j,
+        c,
+        want,
+        level,
+        ck_coerce_step(c, t),
+        datas,
+        limit,
+        ordered,
+        state,
+        same,
+        above,
+        declarations,
+        ck_coerce_step_allocated(c, t, state, coerce_declarations_at(c, datas, limit, same, above, declarations), left),
+        right,
+        coerce_fit_in_allocation(j, datas, limit)
+      )
+    )
+  }
+}
+
+pub fn CoerceShapeAllocated(limit: Nat, o: Option(CoerceShape)): Prop {
+  match o {
+    None => True
+    Some(s) => And(TypeAllocated(limit, s.source), TypeAllocated(limit, s.want))
+  }
+}
+
+pub fn BorrowPartsAllocated(limit: Nat, o: Option(Ty × Bool)): Prop {
+  match o {
+    None => True
+    Some(x) => TypeAllocated(limit, x.fst)
+  }
+}
+
+pub theorem borrow_parts_allocated(
+  limit: Nat,
+  t: Ty,
+  bounded: TypeAllocated(limit, t)
+): BorrowPartsAllocated(limit, ty_borrow_parts(t)) {
+  match t {
+    TyBorrow(x, m) => bounded
+    _ => Trivial
+  }
+}
+
+pub theorem coerce_shape_lent_allocated(
+  limit: Nat,
+  w: Ty,
+  t: Ty,
+  lent: Bool,
+  wanted: Bool,
+  left: TypeAllocated(limit, w),
+  right: TypeAllocated(limit, t)
+): CoerceShapeAllocated(limit, coerce_shape_lent(w, t, lent, wanted)) {
+  match wanted {
+    true => ⊢ CoerceShapeAllocated(limit, coerce_shape_lent(w, t, lent, true)) from match lent {
+      true => AndIntro(left, right)
+      false => Trivial
+    }
+    false => AndIntro(left, right)
+  }
+}
+
+pub theorem coerce_shape_parts_allocated(
+  limit: Nat,
+  a: Ty,
+  b: Ty,
+  pa: Option(Ty × Bool),
+  pb: Option(Ty × Bool),
+  left: TypeAllocated(limit, a),
+  right: TypeAllocated(limit, b),
+  inner_left: BorrowPartsAllocated(limit, pa),
+  inner_right: BorrowPartsAllocated(limit, pb)
+): CoerceShapeAllocated(limit, coerce_shape_parts(a, b, pa, pb)) {
+  match pa {
+    Some(x) => ⊢ CoerceShapeAllocated(limit, coerce_shape_parts(a, b, Some(x), pb)) from match pb {
+      Some(y) => coerce_shape_lent_allocated(limit, x.fst, y.fst, x.snd, y.snd, inner_left, inner_right)
+      None => Trivial
+    }
+    None => ⊢ CoerceShapeAllocated(limit, coerce_shape_parts(a, b, None, pb)) from match pb {
+      Some(y) => Trivial
+      None => AndIntro(left, right)
+    }
+  }
+}
+
+pub theorem coerce_shape_skip_allocated(
+  limit: Nat,
+  skip: Bool,
+  a: Ty,
+  b: Ty,
+  left: TypeAllocated(limit, a),
+  right: TypeAllocated(limit, b)
+): CoerceShapeAllocated(limit, coerce_shape_skip(skip, a, b)) {
+  match skip {
+    true => Trivial
+    false => coerce_shape_parts_allocated(
+      limit,
+      a,
+      b,
+      ty_borrow_parts(a),
+      ty_borrow_parts(b),
+      left,
+      right,
+      borrow_parts_allocated(limit, a, left),
+      borrow_parts_allocated(limit, b, right)
+    )
+  }
+}
+
+pub theorem coerce_shape_allocated(
+  limit: Nat,
+  a: Ty,
+  b: Ty,
+  left: TypeAllocated(limit, a),
+  right: TypeAllocated(limit, b)
+): CoerceShapeAllocated(limit, coerce_shape(a, b)) {
+  coerce_shape_skip_allocated(limit, ty_is_var(ty_unborrowed(b)), a, b, left, right)
+}
+
+pub theorem coerce_found_allocation(
+  c: Checker,
+  shape: CoerceShape,
+  m: Mut1(Option(CoerceLevel), Checker),
+  first: AllocationAdvance(c, m)
+): AllocationAdvance(
+  c,
+  frame_bind(
+    <A: Option(CoerceLevel), B: Option(CoerceFound)>,
+    (level: Option(CoerceLevel), next: Checker) => mut1(coerce_found(shape, level), next),
+    m
+  )
+) {
+  ⊢ AllocationAdvance(
+    c,
+    frame_bind(
+      <A: Option(CoerceLevel), B: Option(CoerceFound)>,
+      (level: Option(CoerceLevel), next: Checker) => mut1(coerce_found(shape, level), next),
+      m
+    )
+  ) from match m {
+    mut1(level, next) => first
+  }
+}
+
+pub theorem coerce_fit_shaped_allocation(
+  c: Checker,
+  o: Option(CoerceShape),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  shaped: CoerceShapeAllocated(ck_next_of(c), o)
+): AllocationAdvance(c, coerce_fit_shaped(c, o)) {
+  match o {
+    None => allocation_advance_return(c, None, state)
+    Some(shape) => coerce_found_allocation(
+      c,
+      shape,
+      ck_coerce_fit_in(33, c, shape.source, shape.want, CoerceOwned),
+      coerce_fit_in_allocation(33, ck_datas_of(c), ck_next_of(c))(
+        c,
+        shape.source,
+        shape.want,
+        CoerceOwned,
+        ordered,
+        state,
+        Refl,
+        Nat::le_refl(ck_next_of(c)),
+        declarations,
+        And::left(shaped),
+        And::right(shaped)
+      )
+    )
+  }
+}
+
+pub theorem ck_coerce_fit_allocation(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  left: TypeAllocated(ck_next_of(c), a),
+  right: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_coerce_fit(c, a, b)) {
+  Eq::subst(
+    (m: Mut1(Option(CoerceFound), Checker)) => AllocationAdvance(c, m),
+    Eq::sym(coerce_fit_unf(c, a, b)),
+    coerce_fit_shaped_allocation(
+      c,
+      coerce_shape(ck_resolve(c, a), ck_resolve(c, b)),
+      ordered,
+      state,
+      declarations,
+      coerce_shape_allocated(
+        ck_next_of(c),
+        ck_resolve(c, a),
+        ck_resolve(c, b),
+        ck_resolve_allocated(c, a, And::right(state), left),
+        ck_resolve_allocated(c, b, And::right(state), right)
+      )
+    )
+  )
+}

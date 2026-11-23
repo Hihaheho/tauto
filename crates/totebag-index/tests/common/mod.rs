@@ -7,53 +7,7 @@ use std::process::Command;
 use totebag::index::ledger::Key;
 use totebag::index::strict::hex_bytes;
 
-pub struct Scratch(pub PathBuf);
-
-impl Scratch {
-    pub fn new(name: &str) -> Scratch {
-        let dir = std::env::temp_dir().join(format!(
-            "totebag-index-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        Scratch(dir)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-pub fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args([
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@example.org",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "init.defaultBranch=main",
-        ])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
+pub use tauto_test_support::{Scratch, git};
 
 pub const CONFIG: &str = "format = 1\nkind = \"index\"\nname = \"alice\"\nhistory = \"commit-batches\"\ngit_object_format = \"sha1\"\n";
 pub const PROJECT: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";

@@ -14,6 +14,8 @@
 //!   so a reader sees what unifying the indices made of it.
 //! - **No hole.** A `?h` is a proof not written yet; a file of `std/` or
 //!   `meta/` has none.
+//! - **No `!?`.** A `!?` is a row not written yet; a file of `std/` or `meta/` writes its rows.
+//!   `tauto lint --fix` writes the row the body performs in place of it.
 //! - **`typed-macro-in-proof`.** A theorem or a `def` has no call of a typed
 //!   macro (`m!(e)`, with an expression, not a syntax literal) in it: it would
 //!   make a proof nobody reads. `tauto macro expand` writes the expansion out.
@@ -46,12 +48,12 @@
 //!   declares does not write out the implicit arguments when every one of
 //!   them is determined by first-order matching on the explicit ones.
 //! - **`import-list`.** An import writes the list of the names it brings
-//!   (`import std::Text { Text, concat }`), so the file's dependencies read
+//!   (`import std::text { Text, concat }`), so the file's dependencies read
 //!   from its imports. `tauto lint --fix` writes each list from the names the
 //!   file uses through the import, as name resolution reads them.
-//! - **`pair-name`.** A pair is written `A × B` for its type and `#(a, b)` for its
-//!   value and pattern, not `Pair(A, B)` and `Pair { fst: a, snd: b }`: they are
-//!   the same, and the product signs are the one way to write it.
+//! - **`file-name`.** A file name has no capital letter: a module is a file, and
+//!   `import std::text` reads `text.taut`. The paths read as lowercase for the
+//!   location and capitalized from the declaration onward (`std::text::Text::len`).
 //! - **`pair-fields`.** A declaration that takes both `p.fst` and `p.snd` of one
 //!   name `p` takes the pair apart: `let #(a, b) := p` names its members once.
 
@@ -60,9 +62,8 @@ use tauto_parol::Span;
 
 use std::collections::HashMap;
 
-use crate::surface::{
-    Handler, Pattern, Stmt, SurfaceTerm, TermKind, parse_program_as_written, walk,
-};
+use crate::surface::{Handler, Pattern, Stmt, SurfaceTerm, TermKind, walk};
+use tauto_parse::parse_program_as_written;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Finding {
@@ -98,10 +99,65 @@ pub fn lint(source: &str) -> Result<Vec<Finding>, Message> {
     for s in &program.stmts {
         raw_locals(s, source, &mut out);
         import_list(s, &mut out);
+        // An import at the head of a declaration's body writes its list as well.
+        for import in crate::surface::scoped::head_imports(s) {
+            import_list(import, &mut out);
+        }
         pair_fields(s, &mut out);
-        pair_name(s, &mut out);
     }
     Ok(out)
+}
+
+/// [`lint`] of the file at `path`, which also says a file name with a capital
+/// letter (`file-name`): a file is a module and its name is lowercase.
+/// Unused-marker errors from [`crate::deadcode`] are included so `tauto lint`
+/// fails when a `^name` is used or cannot be verified.
+pub fn lint_path(path: &std::path::Path, source: &str) -> Result<Vec<Finding>, Message> {
+    let mut out = file_name(path).into_iter().collect::<Vec<_>>();
+    out.extend(lint(source)?);
+    let runs_alone = crate::report::lint_runs_alone(path, source);
+    for w in crate::deadcode::analyze(path, source, runs_alone)? {
+        if crate::deadcode::is_error(w.code) {
+            out.push(Finding {
+                message: w.message,
+                span: w.span,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// `file-name`: the file's stem has a capital letter.
+pub fn file_name(path: &std::path::Path) -> Option<Finding> {
+    let stem = path.file_stem()?.to_str()?;
+    if !stem.chars().any(|c| c.is_ascii_uppercase()) {
+        return None;
+    }
+    Some(Finding {
+        message: msg!(
+            "tauto-lint-file-name",
+            name = path.file_name()?.to_string_lossy().as_ref(),
+            lower = lower_name(stem).as_str()
+        ),
+        span: Span::new(0, 0),
+    })
+}
+
+/// `FloatBounds` as a file stem is written: `float_bounds`.
+fn lower_name(stem: &str) -> String {
+    let chars: Vec<char> = stem.chars().collect();
+    let mut out = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        if c.is_ascii_uppercase() {
+            let after_lower = i > 0 && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit());
+            let before_lower = i > 0 && chars[i - 1].is_ascii_uppercase() && chars.get(i + 1).is_some_and(|n| n.is_ascii_lowercase());
+            if after_lower || before_lower {
+                out.push('_');
+            }
+        }
+        out.push(c.to_ascii_lowercase());
+    }
+    out
 }
 
 /// `import-list`: an import writes the list of the names it brings.
@@ -146,7 +202,7 @@ fn indexed_constructors(stmts: &[Stmt]) -> Vec<String> {
 
 fn pattern_ctor(p: &Pattern) -> Option<&str> {
     match p {
-        Pattern::Ctor { name, .. } | Pattern::Record { name, .. } | Pattern::Bind(name) => {
+        Pattern::Ctor { name, .. } | Pattern::Record { name, .. } | Pattern::Bind { name: name, .. } => {
             Some(name.rsplit("::").next().unwrap_or(name))
         }
         _ => None,
@@ -182,14 +238,13 @@ fn macro_rules(s: &Stmt, out: &mut Vec<Finding>) {
         if let TermKind::MacroCall { arg, .. } = &*t.kind
             && let TermKind::SyntaxLit(lit) = &*arg.kind
         {
-            braced_names(&lit.text, arg.span, out);
             literal_tactics(&lit.text, arg.span, out);
         }
         match &*t.kind {
-            // `include_text!` is not a macro: the reader makes it a literal.
+            // `include_text!` and `include_bytes!` are not macros: the reader makes them literals.
             TermKind::MacroCall { name, arg }
                 if proof
-                    && name != crate::program::include::NAME
+                    && !crate::program::include::is_include(name)
                     && !matches!(&*arg.kind, TermKind::SyntaxLit(_)) =>
             {
                 out.push(Finding {
@@ -223,7 +278,9 @@ fn stmt(s: &Stmt, out: &mut Vec<Finding>) {
         Stmt::Let { value, .. } | Stmt::Var { value, .. } | Stmt::Assign { value, .. } => {
             term(value, out)
         }
-        Stmt::Fn(f) => term(&f.body, out),
+        Stmt::Fn(f) => {
+            term(&f.body, out)
+        }
         Stmt::Theorem(t) | Stmt::Def(t) => {
             if let Some(b) = &t.body {
                 term(b, out);
@@ -232,6 +289,10 @@ fn stmt(s: &Stmt, out: &mut Vec<Finding>) {
         Stmt::Mutual { items, .. } => items.iter().for_each(|i| stmt(i, out)),
         Stmt::While { condition, body } => {
             term(condition, out);
+            term(body, out);
+        }
+        Stmt::For { source, body, .. } => {
+            term(source, out);
             term(body, out);
         }
         Stmt::Return(Some(e)) | Stmt::Expr(e) => term(e, out),
@@ -262,7 +323,7 @@ fn term(t: &SurfaceTerm, out: &mut Vec<Finding>) {
             // too; the lint sees one file and resolves no import, so a name
             // that starts with a capital letter is taken for a constructor.
             if let Some((last, before)) = arms.split_last()
-                && matches!(&last.pattern, Pattern::Bind(n) if !n.starts_with(|c: char| c.is_uppercase()))
+                && matches!(&last.pattern, Pattern::Bind { name: n, .. } if !n.starts_with(|c: char| c.is_uppercase()))
                 && last.guard.is_none()
                 && before
                     .iter()
@@ -290,9 +351,7 @@ fn term(t: &SurfaceTerm, out: &mut Vec<Finding>) {
             term(body, out);
         }
         TermKind::Lam { body, .. } => term(body, out),
-        TermKind::Union(ts) | TermKind::Product(ts) | TermKind::Tuple(ts) => {
-            ts.iter().for_each(|t| term(t, out))
-        }
+        TermKind::Union(ts) => ts.iter().for_each(|t| term(t, out)),
         TermKind::Tagged { term: inner, .. } => term(inner, out),
         TermKind::If {
             condition,
@@ -420,7 +479,7 @@ fn parenthesized(span: Span, source: &str) -> bool {
 /// The steps a literal says, `by t!`, which the macro puts in its output
 /// (`We have G by t!.` of `proof!`): the same rule as a written step.
 fn literal_tactics(text: &str, span: Span, out: &mut Vec<Finding>) {
-    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let word = tauto_parol::unicode::is_ident_continue;
     let mut rest = text;
     let mut before = None::<char>;
     while let Some(at) = rest.find("by") {
@@ -450,131 +509,6 @@ fn literal_tactics(text: &str, span: Span, out: &mut Vec<Finding>) {
         before = rest[..at + 2].chars().last();
         rest = &rest[at + 2..];
     }
-}
-
-/// `braced-name`: a syntax literal embeds one expression as `$n`, `$f(x)` or `$(a + b)`, never
-/// `${n}`, `${f(x)}` or `${a + b}`; the braces are for statements before the last expression
-/// (`${ let m := …; m }`).
-fn braced_names(text: &str, span: Span, out: &mut Vec<Finding>) {
-    let mut rest = text;
-    while let Some(i) = rest.find("${") {
-        rest = &rest[i + 2..];
-        let Some(j) = closing_brace(rest) else { break };
-        let inner = rest[..j].trim();
-        rest = &rest[j + 1..];
-        if inner.is_empty() || has_statement(inner) {
-            continue;
-        }
-        let to = if is_postfix(inner) {
-            format!("${inner}")
-        } else {
-            format!("$({inner})")
-        };
-        out.push(Finding {
-            message: msg!("tauto-lint-braced-name", to = to, from = format!("${{{inner}}}")),
-            span,
-        });
-    }
-}
-
-/// The `}` that closes the brace just opened in `s`.
-fn closing_brace(s: &str) -> Option<usize> {
-    let (mut depth, mut text) = (0usize, false);
-    let mut chars = s.char_indices();
-    while let Some((i, c)) = chars.next() {
-        match c {
-            '\\' if text => {
-                chars.next();
-            }
-            '"' => text = !text,
-            '{' | '(' | '[' if !text => depth += 1,
-            ')' | ']' if !text => depth = depth.saturating_sub(1),
-            '}' if !text => {
-                if depth == 0 {
-                    return Some(i);
-                }
-                depth -= 1;
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Whether a block's body is more than one expression: a `let`, or a `;` or a line break outside
-/// every bracket.
-fn has_statement(inner: &str) -> bool {
-    let word = |c: char| c.is_alphanumeric() || c == '_';
-    if let Some(rest) = inner.strip_prefix("let")
-        && !rest.starts_with(word)
-    {
-        return true;
-    }
-    let (mut depth, mut text) = (0usize, false);
-    let mut chars = inner.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' if text => {
-                chars.next();
-            }
-            '"' => text = !text,
-            '{' | '(' | '[' if !text => depth += 1,
-            '}' | ')' | ']' if !text => depth = depth.saturating_sub(1),
-            ';' | '\n' if !text && depth == 0 => return true,
-            _ => {}
-        }
-    }
-    false
-}
-
-/// An expression the `$` form reads whole: a name, a call, a macro call, or a parenthesized
-/// expression.
-fn is_postfix(e: &str) -> bool {
-    let b = e.as_bytes();
-    let name_end = |from: usize| {
-        let mut k = from;
-        while k < b.len() && (b[k].is_ascii_alphanumeric() || b[k] == b'_') {
-            k += 1;
-        }
-        k
-    };
-    let closes_at_end = |from: usize| {
-        let (mut depth, mut text) = (0usize, false);
-        let mut skip = false;
-        for (k, c) in e[from..].char_indices() {
-            if skip {
-                skip = false;
-                continue;
-            }
-            match c {
-                '\\' if text => skip = true,
-                '"' => text = !text,
-                '(' | '[' | '{' if !text => depth += 1,
-                ')' | ']' | '}' if !text => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return from + k + 1 == e.len();
-                    }
-                }
-                _ => {}
-            }
-        }
-        false
-    };
-    if b.first() == Some(&b'(') {
-        return closes_at_end(0);
-    }
-    if !b.first().is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_') {
-        return false;
-    }
-    let mut k = name_end(0);
-    while e[k..].starts_with("::") && name_end(k + 2) > k + 2 {
-        k = name_end(k + 2);
-    }
-    if e[k..].starts_with('!') {
-        k += 1;
-    }
-    k == e.len() || (e[k..].starts_with('(') && closes_at_end(k))
 }
 
 /// A name written with dots: `Bool::cases` as one name or as a field of `Bool`.
@@ -662,6 +596,9 @@ fn implicit_decls(stmts: &[Stmt]) -> HashMap<String, ImplicitDecl> {
 /// application, a binder or a λ.
 fn matchable(g: &str, t: &SurfaceTerm) -> bool {
     match &*t.kind {
+        TermKind::App { .. } if let Some(ts) = t.product_value_members() => {
+            ts.iter().any(|a| matchable(g, a))
+        }
         TermKind::Var(n) => n.spelling() == Some(g),
         TermKind::App {
             function,
@@ -674,7 +611,6 @@ fn matchable(g: &str, t: &SurfaceTerm) -> bool {
                         .is_some_and(|l| l.starts_with(char::is_uppercase))
             }) && arguments.iter().any(|a| matchable(g, a))
         }
-        TermKind::Product(ts) | TermKind::Tuple(ts) => ts.iter().any(|a| matchable(g, a)),
         _ => false,
     }
 }
@@ -797,21 +733,35 @@ fn style_rules(
                 })
             }
         }
-        TermKind::Pi { params, result, .. } => {
+        TermKind::Pi {
+            params,
+            unused,
+            result,
+            ..
+        } => {
             let text = t.span.text(source);
             if !(text.starts_with('∀') || text.starts_with("\\forall")) {
                 return;
             }
             for (i, (name, _)) in params.iter().enumerate() {
-                let Some(h) = name.as_deref().filter(|h| *h != "_") else {
+                let Some(h) = name.as_deref() else {
                     continue;
                 };
+                let marked = unused.get(i).is_some_and(|u| u.is_some());
                 let mut used = Vec::new();
                 params[i + 1..]
                     .iter()
                     .for_each(|(_, p)| names_in(p, &mut used));
                 names_in(result, &mut used);
-                if !used.iter().any(|u| u == h) {
+                let is_used = used.iter().any(|u| u == h);
+                if marked {
+                    // Used + mark is reported by deadcode via lint_path; unused
+                    // + mark suppresses this style lint only when confirmed.
+                    if !is_used {
+                        continue;
+                    }
+                }
+                if !is_used {
                     out.push(Finding {
                         message: msg!("tauto-lint-unused-forall", name = h),
                         span: t.span,
@@ -825,10 +775,9 @@ fn style_rules(
 
 fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
     match p {
-        Pattern::Bind(n) => out.push(n.to_string()),
+        Pattern::Bind { name: n, .. } | Pattern::Typed { name: n, .. } => out.push(n.to_string()),
         Pattern::Ctor { args, .. } => args.iter().for_each(|a| pattern_binds(a, out)),
         Pattern::Record { fields, .. } => fields.iter().for_each(|(_, a)| pattern_binds(a, out)),
-        Pattern::Tuple(items) => items.iter().for_each(|a| pattern_binds(a, out)),
         _ => {}
     }
 }
@@ -883,12 +832,14 @@ fn raw_locals(s: &Stmt, source: &str, out: &mut Vec<Finding>) {
         let at = from + i;
         from = at + 2;
         let before = text[..at].chars().next_back();
-        if before.is_some_and(|c| c == '.' || c == ':' || c.is_alphanumeric() || c == '_') {
+        if before
+            .is_some_and(|c| c == '.' || c == ':' || tauto_parol::unicode::is_ident_continue(c))
+        {
             continue;
         }
         let rest = &text[at + 2..];
         let len = rest
-            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .find(|c: char| !tauto_parol::unicode::is_ident_continue(c))
             .unwrap_or(rest.len());
         let name = &rest[..len];
         if name.is_empty() || reported.contains(&name) || !names.iter().any(|n| n == name) {
@@ -901,68 +852,6 @@ fn raw_locals(s: &Stmt, source: &str, out: &mut Vec<Finding>) {
             span: Span::new(start as u32, (start + 2 + len) as u32),
         });
     }
-}
-
-/// Whether `pattern` writes the `Pair` record, itself or in a member.
-fn pair_pattern(pattern: &Pattern) -> bool {
-    match pattern {
-        Pattern::Record { name, fields } => {
-            name.as_str() == "Pair" || fields.iter().any(|(_, p)| pair_pattern(p))
-        }
-        Pattern::Ctor { args, .. } => args.iter().any(pair_pattern),
-        Pattern::Tuple(items) => items.iter().any(pair_pattern),
-        _ => false,
-    }
-}
-
-/// `pair-name`: `Pair(A, B)` and `Pair { fst: a, snd: b }`, in a term or a pattern.
-fn pair_name(s: &Stmt, out: &mut Vec<Finding>) {
-    let mut s = s.clone();
-    walk::stmt(&mut s, &mut |t| {
-        let found = match &*t.kind {
-            TermKind::App {
-                function,
-                arguments,
-            } => {
-                arguments.len() == 2
-                    && matches!(&*function.kind, TermKind::Var(n) if n.as_str() == "Pair")
-            }
-            TermKind::Record { name, .. } => name.as_str() == "Pair",
-            TermKind::Match { arms, .. } => {
-                if let Some(arm) = arms.iter().find(|a| pair_pattern(&a.pattern)) {
-                    out.push(Finding {
-                        message: msg!("tauto-lint-pair-name"),
-                        span: arm.body.span,
-                    });
-                }
-                false
-            }
-            TermKind::Handle { handlers, .. } => {
-                for h in handlers {
-                    let (hit, span) = match h {
-                        Handler::Return { pattern, body } => (pair_pattern(pattern), body.span),
-                        Handler::Operation { patterns, body, .. } => {
-                            (patterns.iter().any(pair_pattern), body.span)
-                        }
-                    };
-                    if hit {
-                        out.push(Finding {
-                            message: msg!("tauto-lint-pair-name"),
-                            span,
-                        });
-                    }
-                }
-                false
-            }
-            _ => false,
-        };
-        if found {
-            out.push(Finding {
-                message: msg!("tauto-lint-pair-name"),
-                span: t.span,
-            });
-        }
-    });
 }
 
 /// `pair-fields`: the names of which a declaration takes both `.fst` and `.snd`.

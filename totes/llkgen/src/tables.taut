@@ -17,10 +17,8 @@ import "../../pargen/src/sch.taut"
 import "../../pargen/src/scn.taut"
 import "../../pargen/src/sha.taut"
 import "../../text/src/text.taut"
-import std::Text
-import std::UInt
-import std::prelude::Affine
-import std::prelude::Shared
+import std::text
+import std::uint
 
 pub fn lg_find_line(lines: List(Text), name: Text): List(Text) {
   match lines {
@@ -35,37 +33,37 @@ pub fn lg_find_line(lines: List(Text), name: Text): List(Text) {
   }
 }
 
-pub fn lg_invalid(context: Text, message: Text): Never {
+pub fn lg_invalid(context: Text, message: Text): Never ! {fail(Text)} {
   perform fail(Text::concat_all(Cons(context, Cons(": ", Cons(message, Nil)))))
 }
 
-pub fn lg_int(t: Text, context: Text): i64 {
+pub fn lg_int(t: Text, context: Text): i64 ! {div, fail(Text), overflow} {
   match text_parse_i64(t) {
     Some(n) => n
     None => lg_invalid(context, Text::concat_all(Cons("invalid integer: ", Cons(t, Nil))))
   }
 }
 
-pub fn lg_unsigned(n: i64, context: Text): u64 {
+pub fn lg_unsigned(n: i64, context: Text): u64 ! {fail(Text)} {
   if n < 0 { lg_invalid(context, "expected a nonnegative integer") } else { U64::of_i64(n) }
 }
 
-pub fn lg_nat(t: Text, context: Text): u64 {
+pub fn lg_nat(t: Text, context: Text): u64 ! {div, fail(Text), overflow} {
   lg_unsigned(lg_int(t, context), context)
 }
 
-pub fn lg_word_array(words: List(Text), context: Text): Array(i64) {
+pub fn lg_word_array(words: List(Text), context: Text): Array(i64) ! {div, fail(Text), overflow} {
   Array::of_list(lg_ints(words, context))
 }
 
-pub fn lg_ints(words: List(Text), context: Text): List(i64) {
+pub fn lg_ints(words: List(Text), context: Text): List(i64) ! {div, fail(Text), overflow} {
   match words {
     Nil => Nil
     Cons(w, rest) => Cons(lg_int(w, context), lg_ints(rest, context))
   }
 }
 
-pub fn lg_at(a: Array(i64), i: u64, context: Text): i64 {
+pub fn lg_at(a: Array(i64), i: u64, context: Text): i64 ! {fail(Text)} {
   match Array::get(a, i) {
     Some(x) => x
     None => lg_invalid(
@@ -84,7 +82,7 @@ pub fn lg_grammar_of(
   n_terms: u64,
   start: u64,
   context: Text
-): LgGrammar {
+): LgGrammar ! {div, fail(Text), out_of_bounds, overflow} {
   if n_nts == 0 || start >= n_nts { lg_invalid(context, "start is not a non-terminal") }
   let a := lg_word_array(words, context)
   let n_prods := lg_unsigned(lg_at(a, 0, context), context)
@@ -137,21 +135,21 @@ pub fn lg_grammar_of(
   }
 }
 
-pub fn lg_vec_list(&v: Vec(List(u64)), i: u64): List(u64) {
-  let &x := Vec::index(&v, i)
+pub fn lg_vec_list(v: &Vec(List(u64)), i: u64): List(u64) ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn lg_push_prod(&mut v: Vec(List(u64)), nt: u64, p: u64): Unit {
+pub fn lg_push_prod(v: &mut Vec(List(u64)), nt: u64, p: u64): Unit ! {fail(Text)} {
   match Vec::get_mut(&mut v, nt) {
     Some(slot) => {
-      slot := Cons(p, slot)
+      *slot := Cons(p, slot)
     }
     None => lg_invalid("productions", "left side is not a non-terminal")
   }
 }
 
-pub fn lg_rev_sym(xs: List(LgSym)): List(LgSym) {
+pub fn lg_rev_sym(xs: List(LgSym)): List(LgSym) ! {div} {
   var out: List(LgSym) := Nil
   var rest := xs
   var running := true
@@ -169,7 +167,7 @@ pub fn lg_rev_sym(xs: List(LgSym)): List(LgSym) {
   out
 }
 
-pub fn lg_rev_prod(xs: List(LgProd)): List(LgProd) {
+pub fn lg_rev_prod(xs: List(LgProd)): List(LgProd) ! {div} {
   var out: List(LgProd) := Nil
   var rest := xs
   var running := true
@@ -187,12 +185,12 @@ pub fn lg_rev_prod(xs: List(LgProd)): List(LgProd) {
   out
 }
 
-pub fn lg_push_num(&mut b: Buf, n: u64): Unit {
+pub fn lg_push_num(b: &mut Buf, n: u64): Unit {
   Buf::push(&mut b, &" ")
   Buf::push(&mut b, &Text::of_u64(n))
 }
 
-pub fn lg_push_prod_num(&mut b: Buf, p: u64): Unit {
+pub fn lg_push_prod_num(b: &mut Buf, p: u64): Unit ! {overflow} {
   Buf::push(&mut b, &" ")
   if p == 0 {
     Buf::push(&mut b, &"-1")
@@ -203,7 +201,7 @@ pub fn lg_push_prod_num(&mut b: Buf, p: u64): Unit {
 
 // One automaton as `lookahead` writes it: the non-terminal, the production
 // with no token read, `k`, the number of transitions and each transition.
-pub fn lg_push_automaton(&mut b: Buf, nt: u64, nodes: List(LgNode), k: u64): Unit {
+pub fn lg_push_automaton(b: &mut Buf, nt: u64, nodes: List(LgNode), k: u64): Unit ! {div, overflow} {
   var count: u64 := 0
   var rest := nodes
   var running := true
@@ -252,18 +250,18 @@ pub fn lg_push_automaton(&mut b: Buf, nt: u64, nodes: List(LgNode), k: u64): Uni
   }
 }
 
-pub fn lg_sort_by_term(nb: List(u64)): List(u64) {
+pub fn lg_sort_by_term(nb: List(u64)): List(u64) ! {div, overflow} {
   lg_unswap(lg_sort_keep(lg_swap(nb)))
 }
 
-pub fn lg_swap(nb: List(u64)): List(u64) {
+pub fn lg_swap(nb: List(u64)): List(u64) ! {overflow} {
   match nb {
     Nil => Nil
     Cons(x, rest) => Cons(mod(x, 65536) * 65536 + div(x, 65536), lg_swap(rest))
   }
 }
 
-pub fn lg_unswap(nb: List(u64)): List(u64) {
+pub fn lg_unswap(nb: List(u64)): List(u64) ! {overflow} {
   lg_swap(nb)
 }
 
@@ -272,7 +270,7 @@ pub fn lg_unswap(nb: List(u64)): List(u64) {
 // LgSet keeps its tuples sorted, so intersection uses a merge walk.
 pub(open) struct LgConflict { left: u64, right: u64, tuple: u64 }
 
-pub fn lg_common(xs: List(u64), ys: List(u64)): Option(u64) {
+pub fn lg_common(xs: List(u64), ys: List(u64)): Option(u64) ! {div} {
   match xs {
     Nil => None
     Cons(x, rest) => match ys {
@@ -284,7 +282,7 @@ pub fn lg_common(xs: List(u64), ys: List(u64)): Option(u64) {
   }
 }
 
-pub fn lg_conflict_with(x: Pair(u64, LgSet), ys: List(Pair(u64, LgSet))): Option(LgConflict) {
+pub fn lg_conflict_with(x: u64 × LgSet, ys: List(u64 × LgSet)): Option(LgConflict) ! {div} {
   match ys {
     Nil => None
     Cons(y, rest) => match lg_common(x.snd.tuples, y.snd.tuples) {
@@ -294,7 +292,7 @@ pub fn lg_conflict_with(x: Pair(u64, LgSet), ys: List(Pair(u64, LgSet))): Option
   }
 }
 
-pub fn lg_conflict(xs: List(Pair(u64, LgSet))): Option(LgConflict) {
+pub fn lg_conflict(xs: List(u64 × LgSet)): Option(LgConflict) ! {div} {
   match xs {
     Nil => None
     Cons(x, rest) => match lg_conflict_with(x, rest) {
@@ -304,14 +302,14 @@ pub fn lg_conflict(xs: List(Pair(u64, LgSet))): Option(LgConflict) {
   }
 }
 
-pub fn lg_name(names: List(Text), at: u64): Text {
+pub fn lg_name(names: List(Text), at: u64): Text ! {overflow} {
   match names {
     Nil => Text::concat_all(Cons("#", Cons(Text::of_u64(at), Nil)))
     Cons(n, rest) => if at == 0 { n } else { lg_name(rest, at - 1) }
   }
 }
 
-pub fn lg_symbol_names(syms: List(LgSym), nts: List(Text), terms: List(Text)): List(Text) {
+pub fn lg_symbol_names(syms: List(LgSym), nts: List(Text), terms: List(Text)): List(Text) ! {overflow} {
   match syms {
     Nil => Nil
     Cons(sym, rest) => Cons(match sym {
@@ -321,7 +319,7 @@ pub fn lg_symbol_names(syms: List(LgSym), nts: List(Text), terms: List(Text)): L
   }
 }
 
-pub fn lg_terminal_names(ts: List(u64), terms: List(Text)): List(Text) {
+pub fn lg_terminal_names(ts: List(u64), terms: List(Text)): List(Text) ! {overflow} {
   match ts {
     Nil => Nil
     Cons(t, rest) => Cons(
@@ -338,7 +336,7 @@ pub fn lg_conflict_text(
   k: u64,
   nts: List(Text),
   terms: List(Text)
-): Text {
+): Text ! {div, out_of_bounds, overflow} {
   let ready := lg_cache_upto(g, cache, k)
   let prefix := Text::concat_all(
     Cons("LL(", Cons(Text::of_u64(k), Cons(") conflict in rule ", Cons(lg_name(nts, nt), Nil))))
@@ -395,7 +393,7 @@ pub fn lg_conflict_text(
 
 pub(open) struct LgRun { text: Text, max_k: u64, failed: Option(Text) }
 
-pub fn lg_lookahead(g: LgGrammar, max_k: u64, nts: List(Text), terms: List(Text)): LgRun {
+pub fn lg_lookahead(g: LgGrammar, max_k: u64, nts: List(Text), terms: List(Text)): LgRun ! {div, out_of_bounds, overflow} {
   var b := Buf::new()
   var cache := LgCache { firsts: Nil, follows: Nil }
   var most: u64 := 0
@@ -449,13 +447,13 @@ pub fn lg_lookahead(g: LgGrammar, max_k: u64, nts: List(Text), terms: List(Text)
 pub fn lg_is_none_text(o: Option(Text)): Bool {
   match o {
     None => true
-    Some(x) => false
+    Some(^x) => false
   }
 }
 
 // The `max_k` and `lookahead` lines of the grammar in a table file (its
 // productions after the EBNF is gone), or why there are none.
-pub fn lg_lookahead_lines(table: Text): Text {
+pub fn lg_lookahead_lines(table: Text): Text ! {div, fail(Text), out_of_bounds, overflow} {
   let lines := text_lines(table)
   let start := match lg_find_line(lines, "start") {
     Cons(w, Nil) => lg_nat(w, "start")
@@ -490,7 +488,7 @@ pub fn lg_lookahead_lines(table: Text): Text {
 }
 
 // The trees of the regular expressions that the lines are, one a line.
-pub fn lg_rx_trees(lines: List(Text)): Text {
+pub fn lg_rx_trees(lines: List(Text)): Text ! {div, fail(Text), overflow} {
   match lines {
     Nil => ""
     Cons(line, rest) => if std::prelude::Text::len(line) > 0 {
@@ -504,8 +502,8 @@ pub fn lg_rx_trees(lines: List(Text)): Text {
 }
 
 // The lines of a table file in the order they are written, from the grammar.
-pub fn lg_tables(source: Text): Text {
-  let m := md_build(par_read(source))
+pub fn lg_tables(source: Text, start: Option(Text)): Text ! {div, divzero, fail(Text), out_of_bounds, overflow} {
+  let m := md_build(par_read_from(source, start))
   if m.lalr {
     par_die("the grammar is LALR(1); totes/lalrgen makes its tables")
   }
@@ -524,7 +522,7 @@ pub fn lg_tables(source: Text): Text {
         "tauto-syntax-tables 1",
         Cons(
           Text::concat_all(Cons("grammar_sha256 ", Cons(sha256_hex(source), Nil))),
-          Cons("generator llkgen 0.1.0", Nil)
+          Cons(Text::concat_all(Cons("generator llkgen 0.1.0 pargen ", Cons(pargen_revision(), Nil))), Nil)
         )
       ),
       lg_cat(
@@ -539,24 +537,24 @@ pub fn lg_tables(source: Text): Text {
   }
 }
 
-pub fn lg_count(xs: List(Text)): u64 {
+pub fn lg_count(xs: List(Text)): u64 ! {overflow} {
   match xs {
     Nil => 0
-    Cons(x, rest) => 1 + lg_count(rest)
+    Cons(^x, rest) => 1 + lg_count(rest)
   }
 }
 
-pub fn lg_take_lines(xs: List(Text), n: u64): List(Text) {
+pub fn lg_take_lines(xs: List(Text), n: u64): List(Text) ! {overflow} {
   match xs {
     Nil => Nil
     Cons(x, rest) => if n == 0 { Nil } else { Cons(x, lg_take_lines(rest, n - 1)) }
   }
 }
 
-pub fn lg_drop_lines(xs: List(Text), n: u64): List(Text) {
+pub fn lg_drop_lines(xs: List(Text), n: u64): List(Text) ! {overflow} {
   match xs {
     Nil => Nil
-    Cons(x, rest) => if n == 0 { xs } else { lg_drop_lines(rest, n - 1) }
+    Cons(^x, rest) => if n == 0 { xs } else { lg_drop_lines(rest, n - 1) }
   }
 }
 
@@ -570,8 +568,13 @@ pub fn lg_cat(a: List(Text), b: List(Text)): List(Text) {
 // What the tote gives, each from a text: a value, or why there is none (an
 // index past the end of a vector is a bug here, and says so).
 
-pub fn llkgen_tables(grammar: Text): Result(Text, Text) {
-  handle { Ok(lg_tables(grammar)) } with {
+pub fn llkgen_tables(grammar: Text): Result(Text, Text) ! {div, divzero, overflow} {
+  llkgen_tables_from(grammar, None)
+}
+
+// The tables for the start symbol `start` (the first of `%start` when `None`).
+pub fn llkgen_tables_from(grammar: Text, start: Option(Text)): Result(Text, Text) ! {div, divzero, overflow} {
+  handle { Ok(lg_tables(grammar, start)) } with {
     fail<Text>(why) => Err(why)
     out_of_bounds() => Err("llkgen: an index is out of bounds")
   }
@@ -580,7 +583,7 @@ pub fn llkgen_tables(grammar: Text): Result(Text, Text) {
 // The lines of the table file of a grammar that the reading of the grammar
 // and the lookahead analysis decide (`title` to `skip`, without
 // `prod_types`).
-pub fn llkgen_model_lines(grammar: Text): Result(Text, Text) {
+pub fn llkgen_model_lines(grammar: Text): Result(Text, Text) ! {div, overflow} {
   handle {
     Ok(Text::concat_all(Cons(em_model(md_build(par_read(grammar))), Cons(text_newline(), Nil))))
   } with {
@@ -591,7 +594,7 @@ pub fn llkgen_model_lines(grammar: Text): Result(Text, Text) {
 
 // The lines of the table file of a grammar that its scanner decides
 // (`classes` to `dynamic_dfas`).
-pub fn llkgen_scan_lines(grammar: Text): Result(Text, Text) {
+pub fn llkgen_scan_lines(grammar: Text): Result(Text, Text) ! {div, overflow} {
   handle {
     Ok(
       Text::concat_all(
@@ -607,7 +610,7 @@ pub fn llkgen_scan_lines(grammar: Text): Result(Text, Text) {
   }
 }
 
-pub fn llkgen_rx_trees(lines: Text): Result(Text, Text) {
+pub fn llkgen_rx_trees(lines: Text): Result(Text, Text) ! {div, overflow} {
   handle { Ok(lg_rx_trees(text_lines(lines))) } with {
     fail<Text>(why) => Err(why)
     out_of_bounds() => Err("llkgen: an index is out of bounds")
@@ -616,14 +619,14 @@ pub fn llkgen_rx_trees(lines: Text): Result(Text, Text) {
 
 // From the grammar in a table file, the `max_k` and `lookahead` lines that
 // the file holds, made again by the lookahead analysis (or why it fails).
-pub fn llkgen_lookahead_lines(table: Text): Result(Text, Text) {
+pub fn llkgen_lookahead_lines(table: Text): Result(Text, Text) ! {div, overflow} {
   handle { Ok(lg_lookahead_lines(table)) } with {
     fail<Text>(why) => Err(why)
     out_of_bounds() => Err("llkgen: an index is out of bounds")
   }
 }
 
-pub fn lg_line_names(lines: List(Text), name: Text): List(Text) {
+pub fn lg_line_names(lines: List(Text), name: Text): List(Text) ! {div, fail(Text), overflow} {
   let context := name
   match lg_find_line(lines, name) {
     Nil => lg_invalid(context, "missing count and names")
@@ -636,7 +639,7 @@ pub fn lg_line_names(lines: List(Text), name: Text): List(Text) {
   }
 }
 
-pub fn em_model(m: MModel): Text {
+pub fn em_model(m: MModel): Text ! {div, fail(Text), out_of_bounds, overflow} {
   let production_words := em_prod_words(m.prods)
   let n_prods := em_len_prods(m.prods)
   let n_nts := md_len_text(m.nts)

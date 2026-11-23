@@ -58,7 +58,7 @@ impl ProofContext {
 
     fn resolve_bounded(&self, ty: &Ty, left: &mut usize, depth: usize) -> Ty {
         if *left == 0 || depth >= 128 {
-            return Ty::Infer;
+            return ty.clone();
         }
         *left -= 1;
         let mut resolve = |t: &Ty| self.resolve_bounded(t, left, depth + 1);
@@ -78,7 +78,6 @@ impl ProofContext {
             Ty::SharedVar(false, t) => Ty::SharedVar(false, Box::new(resolve(t))),
             Ty::Info(t) => Ty::Info(Box::new(resolve(t))),
             Ty::BudgetAnswer(t) => Ty::BudgetAnswer(Box::new(resolve(t))),
-            Ty::HashMap(a, b) => Ty::HashMap(Box::new(resolve(a)), Box::new(resolve(b))),
             Ty::Result(a, b) => Ty::Result(Box::new(resolve(a)), Box::new(resolve(b))),
             Ty::Pair(a, b) => Ty::Pair(Box::new(resolve(a)), Box::new(resolve(b))),
             Ty::Data(name, args) => Ty::Data(name.clone(), args.iter().map(&mut resolve).collect()),
@@ -314,6 +313,11 @@ impl Gen<'_> {
             function,
             &mut check,
         );
+        // An abort unwinds the synchronous body before any arm runs, as in
+        // tier A. Which drops the host sees before an arm outside this handler
+        // runs is not specified, so an abort that this handler does not catch
+        // is sent outward (`run_nonresuming` reraises it) when its payload is
+        // inert: the payload is the only value that outlives the unwinding.
         for (op, payload, span, caller) in check.aborts.clone() {
             let caught = h.aborts.iter().any(|arm| {
                 arm.op == op
@@ -326,7 +330,11 @@ impl Gen<'_> {
                     && arm.pats.len() == payload.len()
                     && arm.k.is_none()
             });
-            if !caught {
+            let inert = payload.iter().all(|ty| {
+                matches!(ty, Ty::Info(_))
+                    || self.inert_drop(ty, &HashSet::new(), &mut HashSet::new())
+            });
+            if !caught && !inert {
                 check.reject(
                     "abort-not-locally-total",
                     &caller,
@@ -343,7 +351,23 @@ impl Gen<'_> {
         // No host observer may run during that interval on the synchronous path.
         let mut observers = Check::default();
         let context = msg!("rustgen-budget-handler-of", function = function).to_string();
-        for arm in h.aborts.iter().chain(&h.susp).chain(&h.direct) {
+        // An abort arm runs after the body has unwound on both paths, exactly
+        // as an arm outside this handler would, so it is not an observer of
+        // the interval; its payload is still checked above and below.
+        for arm in &h.aborts {
+            if arm.params.iter().any(|ty| {
+                !matches!(ty, Ty::Info(_))
+                    && !self.inert_drop(ty, &HashSet::new(), &mut HashSet::new())
+            }) {
+                observers.reject(
+                    "unproven-payload",
+                    &context,
+                    arm.span,
+                    msg!("rustgen-budget-unproven-payload"),
+                );
+            }
+        }
+        for arm in h.susp.iter().chain(&h.direct) {
             if let Some(guard) = &arm.guard {
                 self.tick_only(
                     guard,
@@ -449,8 +473,8 @@ impl Gen<'_> {
         }
         if mode == Mode::Observer {
             match &x.kind {
-                ExprKind::Arith { op, .. }
-                    if (!matches!(x.ty, Ty::Float | Ty::Float32) || *op == Arith::Div)
+                ExprKind::Arith { op, num, .. }
+                    if (matches!(num, Num::Int(_)) || *op == Arith::Div)
                         && constant_integer(x).is_none() =>
                 {
                     check.reject(
@@ -746,14 +770,21 @@ impl Gen<'_> {
                                     | "Text::byte"
                                     | "Text::slice"
                                     | "Text::of_code_point"
+                                    | "Text::escape_debug"
                                     | "Array::len"
                                     | "Array::get"
                                     | "Bytes::len"
                                     | "Bytes::get"
+                                    | "Bytes::find"
                                     | "Vec::len"
                                     | "Vec::get"
                                     | "div"
                                     | "mod"
+                                    | "Nat::of_u64"
+                                    | "U64::of_nat"
+                                    | "U64::wrapping_add"
+                                    | "U64::wrapping_sub"
+                                    | "U64::wrapping_mul"
                                     | "concat"
                                     | "Buf::clone"
                             )
@@ -777,6 +808,7 @@ impl Gen<'_> {
                                     | "Array::get"
                                     | "Bytes::len"
                                     | "Bytes::get"
+                                    | "Bytes::find"
                                     | "Vec::len"
                                     | "Vec::get"
                             )
@@ -1005,6 +1037,7 @@ impl Gen<'_> {
         for stmt in &block.stmts {
             match stmt {
                 Stmt::Let {
+                    stack: _,
                     local,
                     ty,
                     init,
@@ -1218,7 +1251,7 @@ impl Gen<'_> {
 
     fn concrete_type(&self, ty: &Ty, unions: &mut BTreeSet<UnionId>) -> bool {
         match ty {
-            Ty::Param(_) | Ty::Infer => false,
+            Ty::Param(_) => false,
             Ty::Vec(t)
             | Ty::Array(t)
             | Ty::Slice(t)
@@ -1229,7 +1262,7 @@ impl Gen<'_> {
             | Ty::SharedVar(false, t)
             | Ty::Info(t)
             | Ty::BudgetAnswer(t) => self.concrete_type(t, unions),
-            Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
+            Ty::Result(a, b) | Ty::Pair(a, b) => {
                 self.concrete_type(a, unions) && self.concrete_type(b, unions)
             }
             Ty::Data(_, args) | Ty::Std(_, args) => {
@@ -1283,7 +1316,7 @@ impl Gen<'_> {
             | Ty::Ref(t)
             | Ty::RefMut(t)
             | Ty::SharedVar(true, t) => self.inert_drop(t, params, seen),
-            Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
+            Ty::Result(a, b) | Ty::Pair(a, b) => {
                 self.inert_drop(a, params, seen) && self.inert_drop(b, params, seen)
             }
             Ty::Param(p) => params.contains(p),
@@ -1329,7 +1362,6 @@ impl Gen<'_> {
             | Ty::Fn(_)
             | Ty::Info(_)
             | Ty::BudgetAnswer(_)
-            | Ty::Infer
             | Ty::SharedVar(false, _) => false,
         }
     }
@@ -1373,7 +1405,11 @@ fn callback_mode(mode: Mode) -> Mode {
 fn constant_integer(e: &Expr) -> Option<i128> {
     match &e.kind {
         ExprKind::Int(value) => Some(i128::from(*value)),
-        ExprKind::Arith { op, args, width } => {
+        ExprKind::Arith {
+            op,
+            args,
+            num: Num::Int(width),
+        } => {
             let a = constant_integer(args.first()?)?;
             let value = match op {
                 Arith::Neg => a.checked_neg()?,
@@ -1383,11 +1419,14 @@ fn constant_integer(e: &Expr) -> Option<i128> {
                 Arith::Div => return None,
             };
             let (min, max) = match width {
+                Width::W8 => (i128::from(i8::MIN), i128::from(i8::MAX)),
+                Width::W16 => (i128::from(i16::MIN), i128::from(i16::MAX)),
+                Width::U16 => (0, i128::from(u16::MAX)),
                 Width::W32 => (i128::from(i32::MIN), i128::from(i32::MAX)),
                 Width::W64 => (i128::from(i64::MIN), i128::from(i64::MAX)),
                 Width::U8 => (0, i128::from(u8::MAX)),
                 Width::U32 => (0, i128::from(u32::MAX)),
-                Width::U64 => (0, i128::from(u64::MAX)),
+                Width::U64 | Width::Host => (0, i128::from(u64::MAX)),
                 Width::Nat => (0, i128::MAX),
             };
             (min..=max).contains(&value).then_some(value)
@@ -1438,8 +1477,8 @@ mod tests {
 
     #[test]
     fn continuation_aliases_places_and_nested_suspending_arms_are_not_missed() {
-        let pkg = tauto_nir::compile(
-            r#"let result := handle { budget(steps: 0) { 1 } } with { exceeded(info), k => 0 }"#,
+        let pkg = tauto::nir::compile(
+            r#"let result := handle { perform budget(0, () => { 1 }) } with { exceeded(info), k => 0 }"#,
         )
         .unwrap();
         let mut handler = None;
@@ -1468,6 +1507,7 @@ mod tests {
                 },
                 ty: read.ty.clone(),
                 init: read.clone(),
+                stack: false,
                 span: read.span,
             }],
             tail: None,

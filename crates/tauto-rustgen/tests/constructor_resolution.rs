@@ -3,13 +3,13 @@ use std::process::Command;
 use tauto_rustgen::{Bindings, Options, Sources, workspace};
 
 fn compare(source: &str, tag: &str) {
-    let expected = tauto::eval::run(source)
+    let expected = tauto::exec::run(source)
         .unwrap()
         .outputs
         .into_iter()
         .map(|(label, value)| format!("{label} = {value}\n"))
         .collect::<String>();
-    let pkg = tauto_nir::compile(source).unwrap();
+    let pkg = tauto::nir::compile(source).unwrap();
     let dir = std::env::temp_dir().join(format!("tauto-constructors-{tag}-{}", std::process::id()));
     let ws = workspace(
         "constructors",
@@ -81,11 +81,11 @@ fn count(text: Text): u64 {
     Err(diag) => 100 + diag.at
   }
 }
-perform show("both", count("*:*"))
-perform show("neither", count(":"))
-perform show("left", count("*:"))
-perform show("right", count(":*"))
-perform show("bad", count("*"))
+show(&count("*:*"))
+show(&count(":"))
+show(&count("*:"))
+show(&count(":*"))
+show(&count("*"))
 "#
         );
         compare(&source, "syntax");
@@ -101,10 +101,10 @@ extern { fn echo(value: Left): Left
 fn right(): Right }
 let value: Left := Same("日本語")
 let left := echo(value)
-perform show("left", match left { Same(text) => text })
-perform show("right", match right() { Same(text) => text })
+show(&(match left { Same(text) => text }))
+show(&(match right() { Same(text) => text }))
 "#;
-    let pkg = tauto_nir::compile(source).unwrap();
+    let pkg = tauto::nir::compile(source).unwrap();
     let declarations = tauto_jsgen::generate_declarations(&pkg).unwrap();
     assert!(declarations.contains("owner: \"Left\""));
     assert!(declarations.contains("owner: \"Right\""));
@@ -132,7 +132,7 @@ await run(console.log, {{
     );
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        "left = \"日本語\"\nright = \"host\"\n"
+        "\"日本語\"\n\"host\"\n"
     );
     std::fs::write(&path, format!(r#"{js}
 await run(console.log, {{echo:v=>v,right:()=>({{tag:'Same',names:[null],fields:['legacy'],struct:false}})}});
@@ -145,11 +145,12 @@ await run(console.log, {{echo:v=>v,right:()=>({{tag:'Same',names:[null],fields:[
 
 #[test]
 fn expected_owner_checks_linear_fields() {
+    tauto_messages::install();
     for name in [
         "constructor-linear-owner-order-1",
         "constructor-linear-owner-order-2",
     ] {
-        let source = case_inputs::source_static("backend-contracts.eure", name);
+        let source = tauto_case_inputs::source("backend-contracts.eure", name);
         let program = tauto::surface::parse_program_as_written(&source).unwrap();
         let types = tauto::types::check_program(&program);
         assert!(types.errors.is_empty(), "{:?}", types.errors);
@@ -173,40 +174,13 @@ fn syntax_metadata_structs_keep_their_owner_in_macro_conversion() {
         &library,
         r#"
 enum Other { SynSpan(i64), SynToken(Text), SynCtx(i64), SynDiag(Text) }
-macro fn keep(e: SynExpr): SynExpr { e }
+pub macro fn keep(e: SynExpr): SynExpr { e }
 "#,
     )
     .unwrap();
-    std::fs::write(&entry, r#"perform show("macro", keep!(42))"#).unwrap();
+    std::fs::write(&entry, r#"show(&(keep!(42)))"#).unwrap();
     let loaded = tauto::program::load_files(&[library, entry]).unwrap();
-    let out =
-        tauto::eval::run_program_with(&loaded.program, 1_000_000, Default::default()).unwrap();
+    let out = tauto::exec::run_loaded_with(&loaded, 1_000_000, Default::default()).unwrap();
     assert_eq!(out.outputs, vec![("macro".into(), "42".into())]);
     std::fs::remove_dir_all(dir).unwrap();
-}
-
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
-mod case_inputs {
-    pub fn source_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            ("backend-contracts.eure", "constructor-linear-owner-order-1") => {
-                r#"linear struct Token {}
-enum Left { Same(Token) }
-enum Right { Same(i64) }
-fn bad(x: Left): i64 { match x { Same(_) => 0 } }"#
-            }
-            ("backend-contracts.eure", "constructor-linear-owner-order-2") => {
-                r#"linear struct Token {}
-enum Right { Same(i64) }
-enum Left { Same(Token) }
-fn bad(x: Left): i64 { match x { Same(_) => 0 } }"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
-    pub fn source(file: &str, name: &str) -> String {
-        source_static(file, name).to_string()
-    }
 }

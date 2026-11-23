@@ -1,6 +1,6 @@
 import "allocation_result.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "allocation_rigid_state.taut"
 import "allocation_state.taut"
 import "checker.taut"
@@ -8,6 +8,7 @@ import "datas_frame.taut"
 import "instantiation_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_allocation_poly.taut"
 import "unify_allocation_steps.taut"
 import "unify_sound.taut"
@@ -32,8 +33,8 @@ pub theorem allocation_same_bind<A: Type, B: Type>(
   m: Mut1(A, Checker),
   first: AllocationSame(c, m),
   tail: ∀ value: A. ∀ next: Checker. AllocationSame(next, k(value, next))
-): AllocationSame(c, frame_bind(A, B, k, m)) {
-  ⊢ AllocationSame(c, frame_bind(A, B, k, m)) from match m {
+): AllocationSame(c, frame_bind(<A: A, B: B>, k, m)) {
+  match m {
     mut1(value, next) => Eq::trans(first, tail(value, next))
   }
 }
@@ -50,17 +51,17 @@ pub theorem allocation_same_run<A: Type>(
 }
 pub theorem instantiation_pred_allocation_same(
   c: Checker,
-  p: Pair(Text, Text),
+  p: Text × Text,
   what: Text,
   span: TySpan,
   found: Option(Ty)
 ): AllocationSame(c, instantiation_pred(c, p, what, span, found)) {
-  ⊢ AllocationSame(c, instantiation_pred(c, p, what, span, found)) from match found { None => Refl
+  match found { None => Refl
     Some(value) => Refl }
 }
 pub theorem instantiation_preds_cons_allocation_same(
-  p: Pair(Text, Text),
-  rest: List(Pair(Text, Text)),
+  p: Text × Text,
+  rest: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
@@ -68,8 +69,7 @@ pub theorem instantiation_preds_cons_allocation_same(
   ih: ∀ next: Checker. AllocationSame(next, ck_pend_preds(rest, next, map, what, span))
 ): AllocationSame(c, instantiation_preds_cons(p, rest, c, map, what, span)) {
   allocation_same_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_pend_preds(rest, next, map, what, span)),
     instantiation_pred(
@@ -94,13 +94,13 @@ pub theorem instantiation_preds_cons_allocation_same(
   )
 }
 pub theorem ck_pend_preds_allocation_same(
-  ps: List(Pair(Text, Text)),
+  ps: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan
 ): AllocationSame(c, ck_pend_preds(ps, c, map, what, span)) {
-  ⊢ AllocationSame(c, ck_pend_preds(ps, c, map, what, span)) from match ps {
+  match ps {
     Nil => Refl
     Cons(p, rest) => Eq::subst(
       (result: Mut1(Unit, Checker)) => AllocationSame(c, result),

@@ -1,0 +1,814 @@
+import "ir.taut"
+import "names.taut"
+import "tmpl.taut"
+import "build.taut"
+import "layout.taut"
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+
+// The glue of each type: the functions that drop a value, make a copy of
+// one its own, and show one, written once for each type the program does
+// that to. Each takes the address of the value.
+
+pub fn g_same(a: LGlue, b: LGlue): Bool {
+  match a {
+    LDrop => match b { LDrop => true, LDup => false, LShow => false }
+    LDup => match b { LDrop => false, LDup => true, LShow => false }
+    LShow => match b { LDrop => false, LDup => false, LShow => true }
+  }
+}
+
+pub fn g_kind(g: LGlue): Text {
+  match g { LDrop => "drop", LDup => "dup", LShow => "show" }
+}
+
+// The number of a glue function asked for before: how many were asked for
+// before it.
+pub fn g_index(xs: List(LGlue × NTy), g: LGlue, t: NTy): Option(Nat) ! {div} {
+  match xs {
+    Nil => None
+    Cons(x, rest) => match x {
+      #(h, u) => if g_same(h, g) && n_ty_eq(u, t) { Some(l_len(rest)) } else { g_index(rest, g, t) }
+    }
+  }
+}
+
+// The name of the glue function of a type, written once at the end.
+pub fn g_name(m: &mut LModule, g: LGlue, t: NTy): LlGlobal ! {div} {
+  match g_index(m.glue, g, t) {
+    Some(id) => ll_glue(g_kind(g), id)
+    None => {
+      let id := l_len(m.glue)
+      l_set(&mut m.glue, Cons(#(g, t), m.glue))
+      ll_glue(g_kind(g), id)
+    }
+  }
+}
+
+pub fn g_string_index(xs: List(Text), s: Text): Option(Nat) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if x == s { Some(l_len(rest)) } else { g_string_index(rest, s) }
+  }
+}
+
+// The name of a constant text ended with a zero byte.
+pub fn g_string(m: &mut LModule, s: Text): LlGlobal {
+  match g_string_index(m.strings, s) {
+    Some(id) => ll_string(id)
+    None => {
+      let id := l_len(m.strings)
+      l_set(&mut m.strings, Cons(s, m.strings))
+      ll_string(id)
+    }
+  }
+}
+
+// The name of the constant box of a literal `Text`.
+pub fn g_box(m: &mut LModule, s: Text): LlGlobal {
+  match g_string_index(m.boxes, s) {
+    Some(id) => ll_box(id)
+    None => {
+      let id := l_len(m.boxes)
+      l_set(&mut m.boxes, Cons(s, m.boxes))
+      ll_box(id)
+    }
+  }
+}
+
+// Where a field of a value is.
+pub(open) struct GAt {
+  // The address of the field's word in the value: the field itself, or the
+  // address of its box.
+  slot: llvm::Value::I,
+  // The address of the field's own words.
+  content: llvm::Value::I,
+  // The address of the box the field is stored in.
+  boxed: Option(llvm::Value::I)
+}
+
+pub fn g_nth(fields: List(NField), i: Nat): Option(NField) {
+  match fields {
+    Nil => None
+    Cons(f, rest) => if i == 0 { Some(f) } else { g_nth(rest, i - 1) }
+  }
+}
+
+// Field `i` of `fields` in the value at `p`.
+pub fn g_field_at(
+  m: &mut LModule,
+  b: &mut BBody,
+  p: llvm::Value::I,
+  tagged: Bool,
+  fields: List(NField),
+  i: Nat
+): GAt ! {div} {
+  let off := l_offset(&mut m, tagged, fields, i)
+  let slot := b_gep(&mut b, p, off)
+  let indirect := match g_nth(fields, i) {
+    None => false
+    Some(f) => l_is_indirect(f.indirect)
+  }
+  if indirect {
+    let w := b_load_word(&mut b, slot)
+    let boxed := b_ptr(&mut b, w)
+    let content := b_gep(&mut b, boxed, 1)
+    GAt { slot: slot, content: content, boxed: Some(boxed) }
+  } else {
+    GAt { slot: slot, content: slot, boxed: None }
+  }
+}
+
+// Calls the glue of `t` on the value at `p`: nothing for a type that holds
+// nothing on the heap.
+pub fn g_call(m: &mut LModule, b: &mut BBody, g: LGlue, p: llvm::Value::I, t: NTy): Unit ! {div} {
+  if l_plain(&mut m, t) {
+    ()
+  } else {
+    let f := g_name(&mut m, g, t)
+    b_run(&mut b, ll!(`call fastcc void ${f}(ptr $p)`))
+  }
+}
+
+// Calls the `show` glue of `t` on the value at `p`.
+pub fn g_show_at(
+  m: &mut LModule,
+  b: &mut BBody,
+  buf: llvm::Value::I,
+  p: llvm::Value::I,
+  t: NTy
+): Unit ! {div} {
+  let f := g_name(&mut m, LShow, t)
+  b_run(&mut b, ll!(`call fastcc void ${f}(ptr $buf, ptr $p)`))
+}
+
+// A box of its own holding the words `vals`.
+pub fn g_new_box(b: &mut BBody, vals: List(llvm::Value::I)): llvm::Value::I {
+  let size := ll_word(8 * (1 + l_len(vals)))
+  let boxed := b_def(&mut b, ll!(`call ptr @rt_alloc(i64 $size)`))
+  b_ins(&mut b, ll!(`store i64 1, ptr $boxed`))
+  b_store(&mut b, boxed, 1, vals)
+  boxed
+}
+
+// Adds a text of the program to the text being built.
+pub fn g_push(m: &mut LModule, b: &mut BBody, buf: llvm::Value::I, s: Text): Unit {
+  if s == "" {
+    ()
+  } else {
+    let c := ll_global_value(g_string(&mut m, s))
+    let n := ll_word(Text::len(s))
+    b_run(&mut b, ll!(`call void @rt_push(ptr $buf, ptr $c, i64 $n)`))
+  }
+}
+
+// What is done for the constructor a value is.
+pub(open) enum GEach {
+  GEachDrop
+  GEachDup
+  // The text being built, and whether the type is a `struct`.
+  GEachShow(llvm::Value::I, Bool)
+}
+
+pub fn g_drop_fields(
+  m: &mut LModule,
+  b: &mut BBody,
+  p: llvm::Value::I,
+  tagged: Bool,
+  fields: List(NField),
+  todo: List(NField),
+  i: Nat
+): Unit ! {div} {
+  match todo {
+    Nil => ()
+    Cons(f, rest) => {
+      let plain := l_plain(&mut m, f.ty)
+      if not(l_is_indirect(f.indirect)) && plain {
+        ()
+      } else {
+        let at := g_field_at(&mut m, &mut b, p, tagged, fields, i)
+        match at.boxed {
+          None => g_call(&mut m, &mut b, LDrop, at.content, f.ty)
+          Some(boxed) => match f.indirect {
+            NDirect => g_call(&mut m, &mut b, LDrop, at.content, f.ty)
+            NShared => {
+              // The last value that shares the box releases it.
+              let rc := b_load_word(&mut b, boxed)
+              let last := b_def(&mut b, ll!(`icmp eq i64 $rc, 1`))
+              let free := b_label(&mut b)
+              let keep := b_label(&mut b)
+              let done := b_label(&mut b)
+              b_condbr(&mut b, last, free, keep)
+              b_start(&mut b, free)
+              g_call(&mut m, &mut b, LDrop, at.content, f.ty)
+              b_run(&mut b, ll!(`call void @rt_free(ptr $boxed)`))
+              b_br(&mut b, done)
+              b_start(&mut b, keep)
+              let less := b_def(&mut b, ll!(`sub i64 $rc, 1`))
+              b_store_word(&mut b, less, boxed)
+              b_start(&mut b, done)
+            }
+            NUnique => {
+              g_call(&mut m, &mut b, LDrop, at.content, f.ty)
+              b_run(&mut b, ll!(`call void @rt_free(ptr $boxed)`))
+            }
+          }
+        }
+      }
+      g_drop_fields(&mut m, &mut b, p, tagged, fields, rest, i + 1)
+    }
+  }
+}
+
+pub fn g_dup_fields(
+  m: &mut LModule,
+  b: &mut BBody,
+  p: llvm::Value::I,
+  tagged: Bool,
+  fields: List(NField),
+  todo: List(NField),
+  i: Nat
+): Unit ! {div} {
+  match todo {
+    Nil => ()
+    Cons(f, rest) => {
+      let plain := l_plain(&mut m, f.ty)
+      if not(l_is_indirect(f.indirect)) && plain {
+        ()
+      } else {
+        let at := g_field_at(&mut m, &mut b, p, tagged, fields, i)
+        match at.boxed {
+          None => g_call(&mut m, &mut b, LDup, at.content, f.ty)
+          Some(boxed) => match f.indirect {
+            NDirect => g_call(&mut m, &mut b, LDup, at.content, f.ty)
+            NShared => {
+              // One more value shares the box.
+              let rc := b_load_word(&mut b, boxed)
+              let more := b_def(&mut b, ll!(`add i64 $rc, 1`))
+              b_store_word(&mut b, more, boxed)
+            }
+            NUnique => {
+              // The copy owns a box of its own, with a copy of the content.
+              let n := l_words(&mut m, f.ty)
+              let vals := b_load(&mut b, at.content, 0, n)
+              let own := g_new_box(&mut b, vals)
+              let w := b_word(&mut b, own)
+              b_store_word(&mut b, w, at.slot)
+              let content := b_gep(&mut b, own, 1)
+              g_call(&mut m, &mut b, LDup, content, f.ty)
+            }
+          }
+        }
+      }
+      g_dup_fields(&mut m, &mut b, p, tagged, fields, rest, i + 1)
+    }
+  }
+}
+
+pub fn g_all_named(fields: List(NField)): Bool {
+  match fields {
+    Nil => true
+    Cons(f, rest) => match f.name {
+      None => false
+      Some(^n) => g_all_named(rest)
+    }
+  }
+}
+
+// The fields of a constructor written with their names: ` a: 1, b: 2`.
+pub fn g_show_named(
+  m: &mut LModule,
+  b: &mut BBody,
+  buf: llvm::Value::I,
+  p: llvm::Value::I,
+  tagged: Bool,
+  fields: List(NField),
+  todo: List(NField),
+  i: Nat
+): Unit ! {div} {
+  match todo {
+    Nil => ()
+    Cons(f, rest) => {
+      let name := match f.name {
+        None => ""
+        Some(n) => n
+      }
+      g_push(&mut m, &mut b, buf, Text::concat_all([if i == 0 { " " } else { ", " }, name, ": "]))
+      let at := g_field_at(&mut m, &mut b, p, tagged, fields, i)
+      g_show_at(&mut m, &mut b, buf, at.content, f.ty)
+      g_show_named(&mut m, &mut b, buf, p, tagged, fields, rest, i + 1)
+    }
+  }
+}
+
+// The fields of a constructor written in order: `(1, 2`.
+pub fn g_show_placed(
+  m: &mut LModule,
+  b: &mut BBody,
+  buf: llvm::Value::I,
+  p: llvm::Value::I,
+  tagged: Bool,
+  fields: List(NField),
+  todo: List(NField),
+  i: Nat
+): Unit ! {div} {
+  match todo {
+    Nil => ()
+    Cons(f, rest) => {
+      g_push(&mut m, &mut b, buf, if i == 0 { "(" } else { ", " })
+      let at := g_field_at(&mut m, &mut b, p, tagged, fields, i)
+      g_show_at(&mut m, &mut b, buf, at.content, f.ty)
+      g_show_placed(&mut m, &mut b, buf, p, tagged, fields, rest, i + 1)
+    }
+  }
+}
+
+pub fn g_is_empty<A>(xs: List(A)): Bool {
+  match xs {
+    Nil => true
+    Cons(^x, ^rest) => false
+  }
+}
+
+pub fn g_each(
+  m: &mut LModule,
+  b: &mut BBody,
+  each: GEach,
+  p: llvm::Value::I,
+  tagged: Bool,
+  c: LCtor
+): Unit ! {div} {
+  match each {
+    GEachDrop => g_drop_fields(&mut m, &mut b, p, tagged, c.fields, c.fields, 0)
+    GEachDup => g_dup_fields(&mut m, &mut b, p, tagged, c.fields, c.fields, 0)
+    GEachShow(buf, is_struct) => {
+      let named := g_all_named(c.fields)
+      let none := g_is_empty(c.fields)
+      g_push(&mut m, &mut b, buf, c.name)
+      if (is_struct || not(none)) && named {
+        g_push(&mut m, &mut b, buf, " {")
+        g_show_named(&mut m, &mut b, buf, p, tagged, c.fields, c.fields, 0)
+        g_push(&mut m, &mut b, buf, if none { "}" } else { " }" })
+      } else if not(none) {
+        g_show_placed(&mut m, &mut b, buf, p, tagged, c.fields, c.fields, 0)
+        g_push(&mut m, &mut b, buf, ")")
+      } else {
+        ()
+      }
+    }
+  }
+}
+
+pub fn g_labels(b: &mut BBody, cs: List(LCtor)): List(LlLabel) {
+  match cs {
+    Nil => Nil
+    Cons(^c, rest) => {
+      let l := b_label(&mut b)
+      Cons(l, g_labels(&mut b, rest))
+    }
+  }
+}
+
+pub fn g_cases(labels: List(LlLabel), i: Nat): List(llvm::Case::I) {
+  match labels {
+    Nil => Nil
+    Cons(l, rest) => {
+      let n := ll_word(i)
+      let c := ll!(`i64 $n, label $l`)
+      Cons(c, g_cases(rest, i + 1))
+    }
+  }
+}
+
+pub fn g_each_block(
+  m: &mut LModule,
+  b: &mut BBody,
+  each: GEach,
+  p: llvm::Value::I,
+  cs: List(LCtor),
+  labels: List(LlLabel),
+  done: LlLabel
+): Unit ! {div} {
+  match cs {
+    Nil => ()
+    Cons(c, rest) => match labels {
+      Nil => ()
+      Cons(l, more) => {
+        b_start(&mut b, l)
+        g_each(&mut m, &mut b, each, p, true, c)
+        b_br(&mut b, done)
+        g_each_block(&mut m, &mut b, each, p, rest, more, done)
+      }
+    }
+  }
+}
+
+// Runs `each` for the constructor the value at `p` is: on its word, when the
+// type has one.
+pub fn g_for_ctor(
+  m: &mut LModule,
+  b: &mut BBody,
+  each: GEach,
+  p: llvm::Value::I,
+  tagged: Bool,
+  cs: List(LCtor)
+): Unit ! {div} {
+  if tagged {
+    let tag := b_load_word(&mut b, p)
+    let labels := g_labels(&mut b, cs)
+    let other := b_label(&mut b)
+    let done := b_label(&mut b)
+    let cases := g_cases(labels, 0)
+    b_end(&mut b, ll!(`switch i64 $tag, label $other [ $cases ]`))
+    g_each_block(&mut m, &mut b, each, p, cs, labels, done)
+    b_start(&mut b, other)
+    b_end(&mut b, ll!(`unreachable`))
+    b_start(&mut b, done)
+  } else {
+    match cs {
+      Nil => ()
+      Cons(c, ^rest) => g_each(&mut m, &mut b, each, p, false, c)
+    }
+  }
+}
+
+// Drops every flagged slot of `h` from `lo` up to `to`, and clears those
+// flags. A plain element needs no drop; its flag is still cleared.
+pub fn g_drop_slots_range(
+  m: &mut LModule,
+  b: &mut BBody,
+  h: llvm::Value::I,
+  lo: llvm::Value::I,
+  to: llvm::Value::I,
+  nw: Nat,
+  a: NTy
+): Unit ! {div} {
+  let plain := l_plain(&mut m, a)
+  let ip := b_alloca(&mut b, 1)
+  b_store_word(&mut b, lo, ip)
+  let head := b_label(&mut b)
+  let body := b_label(&mut b)
+  let full := b_label(&mut b)
+  let next := b_label(&mut b)
+  let done := b_label(&mut b)
+  b_br(&mut b, head)
+  b_start(&mut b, head)
+  let i := b_load_word(&mut b, ip)
+  let more := b_def(&mut b, ll!(`icmp ult i64 $i, $to`))
+  b_condbr(&mut b, more, body, done)
+  b_start(&mut b, body)
+  let fp := b_def(&mut b, ll!(`call ptr @rt_slots_flag(ptr $h, i64 $i)`))
+  let f := b_load_word(&mut b, fp)
+  let filled := b_def(&mut b, ll!(`icmp ne i64 $f, 0`))
+  b_condbr(&mut b, filled, full, next)
+  b_start(&mut b, full)
+  if plain {
+    ()
+  } else {
+    let nn := ll_word(nw)
+    let at := b_def(&mut b, ll!(`call ptr @rt_slots_elem(ptr $h, i64 $i, i64 $nn)`))
+    g_call(&mut m, &mut b, LDrop, at, a)
+  }
+  b_store_word(&mut b, ll_word(0), fp)
+  b_br(&mut b, next)
+  b_start(&mut b, next)
+  let i1 := b_def(&mut b, ll!(`add i64 $i, 1`))
+  b_store_word(&mut b, i1, ip)
+  b_br(&mut b, head)
+  b_start(&mut b, done)
+}
+
+// Drops the rows of the `Vec` at `v` from the one at `start` to its last, and
+// leaves it as long as it was: the caller sets its length. A row is `nw`
+// words: a value of the type `first`, and at the word `off` one of `second`
+// (`Unit` for a row of one value).
+pub fn g_drop_rows(
+  m: &mut LModule,
+  b: &mut BBody,
+  v: llvm::Value::I,
+  start: llvm::Value::I,
+  nw: Nat,
+  first: NTy,
+  off: Nat,
+  second: NTy
+): Unit ! {div} {
+  let p1 := l_plain(&mut m, first)
+  let p2 := l_plain(&mut m, second)
+  if p1 && p2 {
+    ()
+  } else {
+    let n := ll_word(nw)
+    let lenp := b_gep(&mut b, v, 1)
+    let len := b_load_word(&mut b, lenp)
+    let data := b_def(&mut b, ll!(`load ptr, ptr $v`))
+    let ip := b_alloca(&mut b, 1)
+    b_store_word(&mut b, start, ip)
+    let head := b_label(&mut b)
+    let body := b_label(&mut b)
+    let done := b_label(&mut b)
+    b_br(&mut b, head)
+    b_start(&mut b, head)
+    let i := b_load_word(&mut b, ip)
+    let more := b_def(&mut b, ll!(`icmp ult i64 $i, $len`))
+    b_condbr(&mut b, more, body, done)
+    b_start(&mut b, body)
+    let o := b_def(&mut b, ll!(`mul i64 $i, $n`))
+    let at := b_def(&mut b, ll!(`getelementptr i64, ptr $data, i64 $o`))
+    g_call(&mut m, &mut b, LDrop, at, first)
+    if p2 {
+      ()
+    } else {
+      let at2 := b_gep(&mut b, at, off)
+      g_call(&mut m, &mut b, LDrop, at2, second)
+    }
+    let next := b_def(&mut b, ll!(`add i64 $i, 1`))
+    b_store_word(&mut b, next, ip)
+    b_br(&mut b, head)
+    b_start(&mut b, done)
+  }
+}
+
+pub fn g_drop(m: &mut LModule, b: &mut BBody, p: llvm::Value::I, t: NTy): Unit ! {div} {
+  let shape := l_shape(&mut m, t)
+  match shape {
+    LScalarOf(s) => match s {
+      LShown => {
+        let w := b_load_word(&mut b, p)
+        let s := b_ptr(&mut b, w)
+        b_run(&mut b, ll!(`call void @rt_free(ptr $s)`))
+      }
+      LText => {
+        let w := b_load_word(&mut b, p)
+        let s := b_ptr(&mut b, w)
+        b_run(&mut b, ll!(`call void @rt_text_drop(ptr $s)`))
+      }
+      LFn => {
+        let w := b_load_word(&mut b, p)
+        let s := b_ptr(&mut b, w)
+        b_run(&mut b, ll!(`call fastcc void @fn.drop(ptr $s)`))
+      }
+      LVec => match t {
+        NVec(a) => {
+          let w := b_load_word(&mut b, p)
+          let v := b_ptr(&mut b, w)
+          let n := l_words(&mut m, a)
+          g_drop_rows(&mut m, &mut b, v, ll_word(0), n, a, 0, NUnit)
+          b_run(&mut b, ll!(`call void @rt_vec_free(ptr $v)`))
+        }
+        ^other => l_refuse(&mut m, "internal: a `Vec` that is not one")
+      }
+      LSlots => match t {
+        NStd(^kind, targs) => match targs {
+          Cons(s, Cons(mm, Cons(a, Nil))) => {
+            let n := l_words(&mut m, a)
+            let mn := l_words(&mut m, mm)
+            let w := b_load_word(&mut b, p)
+            let h := b_ptr(&mut b, w)
+            // The state, every mark and the vacant mark are owned; only
+            // flagged slots hold an element.
+            if l_plain(&mut m, s) {
+              ()
+            } else {
+              let sp := b_gep(&mut b, h, 5)
+              g_call(&mut m, &mut b, LDrop, sp, s)
+            }
+            let capp := b_gep(&mut b, h, 1)
+            let cap := b_load_word(&mut b, capp)
+            let drop_marks := not(l_plain(&mut m, mm))
+            let drop_elems := not(l_plain(&mut m, a))
+            if drop_marks || drop_elems {
+              let ip := b_alloca(&mut b, 1)
+              b_store_word(&mut b, ll_word(0), ip)
+              let head := b_label(&mut b)
+              let body := b_label(&mut b)
+              let next := b_label(&mut b)
+              let done := b_label(&mut b)
+              let full := b_label(&mut b)
+              b_br(&mut b, head)
+              b_start(&mut b, head)
+              let i := b_load_word(&mut b, ip)
+              let more := b_def(&mut b, ll!(`icmp ult i64 $i, $cap`))
+              b_condbr(&mut b, more, body, done)
+              b_start(&mut b, body)
+              if drop_marks {
+                let mnn := ll_word(mn)
+                let mp := b_def(&mut b, ll!(`call ptr @rt_slots_mark(ptr $h, i64 $i, i64 $mnn)`))
+                g_call(&mut m, &mut b, LDrop, mp, mm)
+              } else {
+                ()
+              }
+              if drop_elems {
+                let fp := b_def(&mut b, ll!(`call ptr @rt_slots_flag(ptr $h, i64 $i)`))
+                let f := b_load_word(&mut b, fp)
+                let filled := b_def(&mut b, ll!(`icmp ne i64 $f, 0`))
+                b_condbr(&mut b, filled, full, next)
+                b_start(&mut b, full)
+                let nn := ll_word(n)
+                let at := b_def(&mut b, ll!(`call ptr @rt_slots_elem(ptr $h, i64 $i, i64 $nn)`))
+                g_call(&mut m, &mut b, LDrop, at, a)
+                b_br(&mut b, next)
+              } else {
+                b_br(&mut b, next)
+              }
+              b_start(&mut b, next)
+              let i1 := b_def(&mut b, ll!(`add i64 $i, 1`))
+              b_store_word(&mut b, i1, ip)
+              b_br(&mut b, head)
+              b_start(&mut b, done)
+            } else {
+              ()
+            }
+            if drop_marks {
+              let mnn := ll_word(mn)
+              let vacp := b_def(&mut b, ll!(`call ptr @rt_slots_mark(ptr $h, i64 $cap, i64 $mnn)`))
+              g_call(&mut m, &mut b, LDrop, vacp, mm)
+            } else {
+              ()
+            }
+            b_run(&mut b, ll!(`call void @rt_slots_free(ptr $h)`))
+          }
+          ^other => l_refuse(&mut m, "internal: a `Slots` that is not one")
+        }
+        ^other => l_refuse(&mut m, "internal: a `Slots` that is not one")
+      }
+      LInt(^bits, ^signed) => ()
+      LBool => ()
+      LBorrow => ()
+    }
+    LUnit => ()
+    LPair(x, y) => g_for_ctor(
+      &mut m,
+      &mut b,
+      GEachDrop,
+      p,
+      false,
+      [LCtor { name: "", fields: [x, y] }]
+    )
+    LSum(cs, ^is_struct) => g_for_ctor(&mut m, &mut b, GEachDrop, p, true, cs)
+  }
+}
+
+pub fn g_dup(m: &mut LModule, b: &mut BBody, p: llvm::Value::I, t: NTy): Unit ! {div} {
+  let shape := l_shape(&mut m, t)
+  match shape {
+    LScalarOf(s) => match s {
+      LShown => {
+        let w := b_load_word(&mut b, p)
+        let s := b_ptr(&mut b, w)
+        let dup := b_def(&mut b, ll!(`call ptr @rt_strdup(ptr $s)`))
+        let own := b_word(&mut b, dup)
+        b_store_word(&mut b, own, p)
+      }
+      LText => {
+        // One more value shares the text's box.
+        let w := b_load_word(&mut b, p)
+        let s := b_ptr(&mut b, w)
+        b_run(&mut b, ll!(`call void @rt_text_dup(ptr $s)`))
+      }
+      LVec => l_refuse(&mut m, "a copy of a `Vec`")
+      LSlots => l_refuse(&mut m, "a copy of a `Slots`")
+      LFn => {
+        // One more value shares the function value's box.
+        let w := b_load_word(&mut b, p)
+        let s := b_ptr(&mut b, w)
+        b_run(&mut b, ll!(`call void @rt_text_dup(ptr $s)`))
+      }
+      LInt(^bits, ^signed) => ()
+      LBool => ()
+      LBorrow => ()
+    }
+    LUnit => ()
+    LPair(x, y) => g_for_ctor(
+      &mut m,
+      &mut b,
+      GEachDup,
+      p,
+      false,
+      [LCtor { name: "", fields: [x, y] }]
+    )
+    LSum(cs, ^is_struct) => g_for_ctor(&mut m, &mut b, GEachDup, p, true, cs)
+  }
+}
+
+// The members of a product after the first: a product of more members is
+// nested to the right, and shown flat.
+pub fn g_show_rest(
+  m: &mut LModule,
+  b: &mut BBody,
+  buf: llvm::Value::I,
+  p: llvm::Value::I,
+  t: NTy
+): Unit ! {div} {
+  g_push(&mut m, &mut b, buf, ", ")
+  match l_shape(&mut m, t) {
+    LPair(x, y) => {
+      let at := g_field_at(&mut m, &mut b, p, false, [x, y], 0)
+      g_show_at(&mut m, &mut b, buf, at.content, x.ty)
+      let rest := g_field_at(&mut m, &mut b, p, false, [x, y], 1)
+      g_show_rest(&mut m, &mut b, buf, rest.content, y.ty)
+    }
+    LScalarOf(^s) => g_show_last(&mut m, &mut b, buf, p, t)
+    LUnit => g_show_last(&mut m, &mut b, buf, p, t)
+    LSum(^cs, ^is_struct) => g_show_last(&mut m, &mut b, buf, p, t)
+  }
+}
+
+pub fn g_show_last(
+  m: &mut LModule,
+  b: &mut BBody,
+  buf: llvm::Value::I,
+  p: llvm::Value::I,
+  t: NTy
+): Unit ! {div} {
+  g_show_at(&mut m, &mut b, buf, p, t)
+  g_push(&mut m, &mut b, buf, ")")
+}
+
+// Shows the value at `p`, as every backend does (`show`'s format).
+pub fn g_show(
+  m: &mut LModule,
+  b: &mut BBody,
+  buf: llvm::Value::I,
+  p: llvm::Value::I,
+  t: NTy
+): Unit ! {div} {
+  let shape := l_shape(&mut m, t)
+  match shape {
+    LUnit => g_push(&mut m, &mut b, buf, "()")
+    LScalarOf(s) => {
+      let w := b_load_word(&mut b, p)
+      match s {
+        LInt(^bits, signed) => if signed {
+          b_run(&mut b, ll!(`call void @rt_push_i64(ptr $buf, i64 $w)`))
+        } else {
+          b_run(&mut b, ll!(`call void @rt_push_u64(ptr $buf, i64 $w)`))
+        }
+        LBool => {
+          let c := b_cond(&mut b, w)
+          let yes := b_label(&mut b)
+          let no := b_label(&mut b)
+          let done := b_label(&mut b)
+          b_condbr(&mut b, c, yes, no)
+          b_start(&mut b, yes)
+          g_push(&mut m, &mut b, buf, "true")
+          b_br(&mut b, done)
+          b_start(&mut b, no)
+          g_push(&mut m, &mut b, buf, "false")
+          b_start(&mut b, done)
+        }
+        LShown => {
+          let s := b_ptr(&mut b, w)
+          b_run(&mut b, ll!(`call void @rt_push_str(ptr $buf, ptr $s)`))
+        }
+        LText => {
+          let s := b_ptr(&mut b, w)
+          b_run(&mut b, ll!(`call void @rt_push_text(ptr $buf, ptr $s)`))
+        }
+        LFn => l_refuse(&mut m, "`show` of a function value")
+        LVec => l_refuse(&mut m, "`show` of a `Vec`")
+        LSlots => l_refuse(&mut m, "`show` of a `Slots`")
+        LBorrow => match n_borrowed(t) {
+          None => l_refuse(&mut m, "internal: a borrow of no type")
+          Some(inner) => {
+            let q := b_ptr(&mut b, w)
+            g_show_at(&mut m, &mut b, buf, q, inner)
+          }
+        }
+      }
+    }
+    LPair(x, y) => {
+      g_push(&mut m, &mut b, buf, "#(")
+      let at := g_field_at(&mut m, &mut b, p, false, [x, y], 0)
+      g_show_at(&mut m, &mut b, buf, at.content, x.ty)
+      let rest := g_field_at(&mut m, &mut b, p, false, [x, y], 1)
+      g_show_rest(&mut m, &mut b, buf, rest.content, y.ty)
+    }
+    LSum(cs, is_struct) => g_for_ctor(&mut m, &mut b, GEachShow(buf, is_struct), p, true, cs)
+  }
+}
+
+// The glue function of a type.
+pub fn g_function(m: &mut LModule, g: LGlue, t: NTy): llvm::Item::I ! {div} {
+  let name := g_name(&mut m, g, t)
+  var b := b_new()
+  let params := match g {
+    LDrop => {
+      g_drop(&mut m, &mut b, ll_p(), t)
+      [ll_ptr_param(ll_p())]
+    }
+    LDup => {
+      g_dup(&mut m, &mut b, ll_p(), t)
+      [ll_ptr_param(ll_p())]
+    }
+    LShow => {
+      g_show(&mut m, &mut b, ll_b(), ll_p(), t)
+      [ll_ptr_param(ll_b()), ll_ptr_param(ll_p())]
+    }
+  }
+  b_end(&mut b, ll!(`ret void`))
+  let blocks := b_finish(b)
+  let nothing := ll!(`void`)
+  ll_define(nothing, name, params, blocks.entry, blocks.rest)
+}

@@ -1,0 +1,237 @@
+// SHA-256 (FIPS 180-4) of byte strings. The message is the pieces one after
+// another, so a caller that frames many parts never joins them first.
+// Words are kept in `u64` below 2^32.
+
+pub fn sha_mask(x: u64): u64 {
+  U64::and(x, 4294967295)
+}
+
+pub fn sha_add(a: u64, b: u64): u64 ! {overflow} {
+  sha_mask(a + b)
+}
+
+pub fn sha_rotr(x: u64, n: u64): u64 ! {overflow} {
+  sha_mask(U64::or(U64::shr(x, n), U64::shl(x, 32 - n)))
+}
+
+pub fn sha_k(): Array(u64) ! {div, overflow} {
+  sha_numbers(
+    "1116352408 1899447441 3049323471 3921009573 961987163 1508970993 2453635748 2870763221 3624381080 310598401 607225278 1426881987 1925078388 2162078206 2614888103 3248222580 3835390401 4022224774 264347078 604807628 770255983 1249150122 1555081692 1996064986 2554220882 2821834349 2952996808 3210313671 3336571891 3584528711 113926993 338241895 666307205 773529912 1294757372 1396182291 1695183700 1986661051 2177026350 2456956037 2730485921 2820302411 3259730800 3345764771 3516065817 3600352804 4094571909 275423344 430227734 506948616 659060556 883997877 958139571 1322822218 1537002063 1747873779 1955562222 2024104815 2227730452 2361852424 2428436474 2756734187 3204031479 3329325298"
+  )
+}
+
+pub fn sha_h0(): List(u64) ! {div, overflow} {
+  Array::to_list(sha_numbers(
+    "1779033703 3144134277 1013904242 2773480762 1359893119 2600822924 528734635 1541459225"
+  ))
+}
+
+pub fn sha_numbers(t: Text): Array(u64) ! {div, overflow} {
+  var v: Vec(u64) := Vec::new()
+  var n: u64 := 0
+  var digits := false
+  var i: u64 := 0
+  let b := Bytes::of_text(t)
+  let len := Bytes::len(b)
+  while i <= len {
+    let c: u64 := match Bytes::get(b, i) {
+      Some(x) => U64::of_u8(x)
+      None => 32
+    }
+    if c >= 48 && c <= 57 {
+      n := n * 10 + (c - 48)
+      digits := true
+    } else {
+      if digits {
+        Vec::push(&mut v, n)
+      }
+      n := 0
+      digits := false
+    }
+    i := i + 1
+  }
+  Vec::into_array(v)
+}
+
+pub fn sha_at(a: Array(u64), i: u64): u64 {
+  match Array::get(a, i) {
+    Some(x) => x
+    None => 0
+  }
+}
+
+pub fn sha_get(v: &Vec(u64), i: u64): u64 {
+  match Vec::get(&v, i) {
+    Some(x) => x
+    None => 0
+  }
+}
+
+pub fn sha_set(v: &mut Vec(u64), i: u64, x: u64): Unit {
+  match Vec::get_mut(&mut v, i) {
+    Some(^slot) => {
+      *slot := x
+    }
+    None => #()
+  }
+}
+
+// The state between blocks: the eight words, the bytes of the block so far
+// (as a word list being filled) and the length of the message in bytes.
+pub struct ShaState {
+  h: Vec(u64)
+  block: Vec(u64)
+  len: u64
+}
+
+pub fn sha_new(): ShaState ! {div, overflow} {
+  var h: Vec(u64) := Vec::new()
+  var rest := sha_h0()
+  var going := true
+  while going {
+    match rest {
+      Cons(x, more) => {
+        Vec::push(&mut h, x)
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  ShaState { h: h, block: Vec::new(), len: 0 }
+}
+
+// Compresses the 64 bytes in `s.block` into `s.h` and empties the block.
+pub fn sha_compress(s: &mut ShaState, k: Array(u64)): Unit ! {div, overflow} {
+  var w: Vec(u64) := Vec::new()
+  var j: u64 := 0
+  while j < 16 {
+    let at := j * 4
+    Vec::push(
+      &mut w,
+      sha_get(&s.block, at) * 16777216 + sha_get(&s.block, at + 1) * 65536 + sha_get(&s.block, at + 2) * 256 + sha_get(&s.block, at + 3)
+    )
+    j := j + 1
+  }
+  while j < 64 {
+    let w15 := sha_get(&w, j - 15)
+    let w2 := sha_get(&w, j - 2)
+    let s0 := U64::xor(U64::xor(sha_rotr(w15, 7), sha_rotr(w15, 18)), U64::shr(w15, 3))
+    let s1 := U64::xor(U64::xor(sha_rotr(w2, 17), sha_rotr(w2, 19)), U64::shr(w2, 10))
+    Vec::push(&mut w, sha_add(sha_add(sha_get(&w, j - 16), s0), sha_add(sha_get(&w, j - 7), s1)))
+    j := j + 1
+  }
+  var a := sha_get(&s.h, 0)
+  var b := sha_get(&s.h, 1)
+  var c := sha_get(&s.h, 2)
+  var d := sha_get(&s.h, 3)
+  var e := sha_get(&s.h, 4)
+  var f := sha_get(&s.h, 5)
+  var g := sha_get(&s.h, 6)
+  var hh := sha_get(&s.h, 7)
+  var r: u64 := 0
+  while r < 64 {
+    let big1 := U64::xor(U64::xor(sha_rotr(e, 6), sha_rotr(e, 11)), sha_rotr(e, 25))
+    let ch := U64::xor(U64::and(e, f), U64::and(U64::xor(e, 4294967295), g))
+    let t1 := sha_add(sha_add(sha_add(hh, big1), sha_add(ch, sha_at(k, r))), sha_get(&w, r))
+    let big0 := U64::xor(U64::xor(sha_rotr(a, 2), sha_rotr(a, 13)), sha_rotr(a, 22))
+    let maj := U64::xor(U64::xor(U64::and(a, b), U64::and(a, c)), U64::and(b, c))
+    let t2 := sha_add(big0, maj)
+    hh := g
+    g := f
+    f := e
+    e := sha_add(d, t1)
+    d := c
+    c := b
+    b := a
+    a := sha_add(t1, t2)
+    r := r + 1
+  }
+  sha_set(&mut s.h, 0, sha_add(sha_get(&s.h, 0), a))
+  sha_set(&mut s.h, 1, sha_add(sha_get(&s.h, 1), b))
+  sha_set(&mut s.h, 2, sha_add(sha_get(&s.h, 2), c))
+  sha_set(&mut s.h, 3, sha_add(sha_get(&s.h, 3), d))
+  sha_set(&mut s.h, 4, sha_add(sha_get(&s.h, 4), e))
+  sha_set(&mut s.h, 5, sha_add(sha_get(&s.h, 5), f))
+  sha_set(&mut s.h, 6, sha_add(sha_get(&s.h, 6), g))
+  sha_set(&mut s.h, 7, sha_add(sha_get(&s.h, 7), hh))
+  Vec::clear(&mut s.block)
+}
+
+pub fn sha_byte(s: &mut ShaState, k: Array(u64), x: u64): Unit ! {div, overflow} {
+  Vec::push(&mut s.block, x)
+  if Vec::len(&s.block) == 64 {
+    sha_compress(&mut s, k)
+  }
+}
+
+pub fn sha_update(s: &mut ShaState, k: Array(u64), b: Bytes): Unit ! {div, overflow} {
+  let len := Bytes::len(b)
+  var i: u64 := 0
+  while i < len {
+    match Bytes::get(b, i) {
+      Some(x) => sha_byte(&mut s, k, U64::of_u8(x))
+      None => #()
+    }
+    i := i + 1
+  }
+  s.len := s.len + len
+}
+
+pub fn sha_hex8(x: u64): Text ! {div, overflow} {
+  var b := Buf::new()
+  var shift: u64 := 32
+  while shift > 0 {
+    shift := shift - 4
+    let d := U64::and(U64::shr(x, shift), 15)
+    match Text::slice("0123456789abcdef", d, d + 1) {
+      Some(c) => Buf::push(&mut b, &c)
+      None => #()
+    }
+  }
+  Text::of(b)
+}
+
+// Pads the message, compresses the last blocks and writes the digest in
+// lowercase hex.
+pub fn sha_finish(s: ShaState, k: Array(u64)): Text ! {div, overflow} {
+  var st := s
+  let bits := st.len * 8
+  sha_byte(&mut st, k, 128)
+  while Vec::len(&st.block) != 56 {
+    sha_byte(&mut st, k, 0)
+  }
+  var shift: u64 := 64
+  while shift > 0 {
+    shift := shift - 8
+    sha_byte(&mut st, k, U64::and(U64::shr(bits, shift), 255))
+  }
+  var out := Buf::new()
+  var q: u64 := 0
+  while q < 8 {
+    Buf::push(&mut out, &sha_hex8(sha_get(&st.h, q)))
+    q := q + 1
+  }
+  Text::of(out)
+}
+
+// The digest of the pieces as one message.
+pub fn sha256_hex(pieces: List(Bytes)): Text ! {div, overflow} {
+  let k := sha_k()
+  var s := sha_new()
+  var rest := pieces
+  var going := true
+  while going {
+    match rest {
+      Cons(b, more) => {
+        sha_update(&mut s, k, b)
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  sha_finish(s, k)
+}

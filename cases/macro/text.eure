@@ -1,0 +1,262 @@
+// Templates of the syntax `text` (`std/template.taut`): `text!`, the options called in a hole,
+// and macros of other files that read a template through `std::template`.
+
+@ cases.text-renders-holes-with-to-text
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::template { text }
+struct Req { path: Text, status: i64 }
+fn greet(name: Text, n: i64): Text ! {overflow} {
+  text!(`Hello, $name! You have ${n + 1} new messages ($$5 each).`)
+}
+fn hello(name: Text): Text ! {} { text!(`Hello, $name`) }
+fn served(r: Req): Text { text!(`$(r.path): $(r.status)`) }
+fn plain(): Text { text!(`no holes`) }
+fn one(n: i64): Text { text!(`$n`) }
+show(&greet("Ryo", 2))
+show(&hello("Ryo"))
+show(&served(Req { path: "/a", status: 200 }))
+show(&plain())
+show(&one(7))
+````
+stdout = ```
+"Hello, Ryo! You have 3 new messages ($5 each)."
+"Hello, Ryo"
+"/a: 200"
+"no holes"
+"7"
+```
+
+@ cases.a-block-template-keeps-quotes-braces-and-lines
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::template { text }
+fn letter(name: Text, items: List(i64)): Text {
+  text!(```
+    Dear $name,
+      {"items": $items, "price": "$$5"}
+    bye\n
+    ```)
+}
+show(&letter("Ryo", [1, 2]))
+````
+stdout = ```
+"Dear Ryo,\n  {\"items\": [1, 2], \"price\": \"$5\"}\nbye\\n\n"
+```
+
+@ cases.a-text-literal-in-a-hole-is-fixed-text
+entry = "main.taut"
+extract = true
+files."main.taut" = ````tauto
+import std::template { text }
+fn f(name: Text): Text { text!(`a${"\t"}b $name${"!"} c`) }
+````
+expands = 'fn f(name: Text): Text { Text::concat_all(List::Cons("a\tb ", List::Cons(ToText::to_text(&name), List::Cons("! c", List::Nil)))) }'
+
+@ cases.holes-are-evaluated-once-from-left-to-right
+llvm.unimplemented = "generate: the LLVM backend does not write a `var` shared with a closure yet"
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::template { text }
+effect next(tag: Text): i64
+fn three(): Text ! {next} {
+  text!(`${perform next("a")}-${perform next("b")}-${perform next("c")}`)
+}
+var count := 0
+show(&(handle { three() } with {
+  next(tag), k => {
+    count := count + 1
+    show(&count)
+    k(count * 10)
+  }
+}))
+````
+stdout = ```
+1
+2
+3
+"10-20-30"
+```
+
+@ cases.an-affine-value-in-a-hole-is-borrowed
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::template { text }
+import std::builtin::classes { ToText }
+struct(affine) Token { name: Text }
+instance ToText(Token) {
+  fn to_text(a: &Token): Text { a.name }
+}
+fn spend(t: Token): Text { t.name }
+fn twice(): Text {
+  let t := Token { name: "tok" }
+  let s := text!(`$t and $t, `)
+  concat(s, spend(t))
+}
+show(&twice())
+````
+stdout = ```
+"tok and tok, tok"
+```
+
+@ cases.options-pad-and-write-numbers
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `U8::of_u64` yet"
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::template {
+  bin,
+  grouped,
+  hex,
+  hex_upper,
+  oct,
+  pad_end,
+  pad_end_with,
+  pad_start,
+  pad_start_with,
+  quoted,
+  signed,
+  text,
+  zeros
+}
+fn pads(name: Text, n: i64): Text ! {} {
+  text!(`[$(pad_start(name, 6))|$(pad_end(n, 4))|$(pad_start_with(name, 7, "ab"))|$(pad_end_with("é", 3, "·"))|$(pad_start(name, 2))]`)
+}
+fn bases(u: u64): Text ! {} { text!(`$(hex(u)) $(hex_upper(u)) $(bin(u)) $(oct(u))`) }
+fn signs(n: i64): Text ! {} { text!(`$(zeros(n, 6)) $(signed(n)) $(grouped(n, ","))`) }
+show(&pads("ryo", 42))
+show(&bases(48879))
+show(&bases(0))
+show(&bases(18446744073709551615))
+show(&signs(-1234567))
+show(&signs(42))
+show(&signs(-9223372036854775807 - 1))
+show(&(text!(`$(quoted("a\"b\\c\nd\te\u{1}é$"))`)))
+````
+stdout = ```
+"[   ryo|42  |ababryo|é··|ryo]"
+"beef BEEF 1011111011101111 137357"
+"0 0 0 0"
+"ffffffffffffffff FFFFFFFFFFFFFFFF 1111111111111111111111111111111111111111111111111111111111111111 1777777777777777777777"
+"-1234567 -1234567 -1,234,567"
+"000042 +42 42"
+"-9223372036854775808 -9223372036854775808 -9,223,372,036,854,775,808"
+"\"a\\\"b\\\\c\\nd\\te\\u{1}é$\""
+```
+
+@ cases.options-are-definitions-the-kernel-computes
+entry = "main.taut"
+extract = true
+files."main.taut" = ````tauto
+import std::sint { SInt }
+import std::template { grouped, hex, zeros }
+import std::uint { UInt }
+theorem hex_255(): hex(UInt::mk64(255, Refl)) = "ff" { Refl }
+theorem zeros_minus_five(): zeros(SInt::mk64(-5, Refl), 4) = "-005" { Refl }
+theorem grouped_thousand(): grouped(SInt::mk64(1000, Refl), "_") = "1_000" { Refl }
+````
+checks.hex_255 = "ok"
+checks.zeros_minus_five = "ok"
+checks.grouped_thousand = "ok"
+
+@ cases.a-logging-macro-of-a-module-reads-the-template
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
+entry = "main.taut"
+files."log.taut" = ````tauto
+import std::template { each_named, pattern, text }
+import std::builtin::classes { ToText }
+import std::builtin::macro { Syn, SynExpr, macro_error }
+
+pub(open) struct Field { key: Text, value: Text }
+pub(open) struct Event { pattern: Text, fields: List(Field), message: Text }
+pub(open) effect log(e: Event): Unit resume 1
+
+pub macro fn Log::info(t: text::Template): SynExpr ! {macro_error, div} {
+  let pat := Syn::lift_text(pattern(t), Syn::call_span())
+  let fields := each_named(t, (k, e) => quote { Field { key: $k, value: ToText::to_text(&$e) } })
+  let message := text(t)
+  quote { perform log(Event { pattern: $pat, fields: $fields, message: $message }) }
+}
+````
+files."main.taut" = ````tauto
+import "log.taut" { Event, Log, log }
+struct Req { path: Text, status: i64 }
+fn serve(r: Req, user: Text, ms: i64): Unit ! {log, overflow} {
+  Log::info!(`$user got $(r.path): $(r.status) in $(@ms ms)ms, ${1 + 1} tries`)
+}
+handle { serve(Req { path: "/a", status: 200 }, "ryo", 12) } with {
+  log(e), k => {
+    show(&e.pattern)
+    show(&e.fields)
+    show(&e.message)
+    k(#())
+  }
+}
+````
+stdout = ```
+"{user} got {path}: {status} in {ms}ms, {} tries"
+[Field { key: "user", value: "ryo" }, Field { key: "path", value: "/a" }, Field { key: "status", value: "200" }, Field { key: "ms", value: "12" }]
+"ryo got /a: 200 in 12ms, 2 tries"
+```
+
+@ cases.an-escaping-macro-renders-holes-with-its-own-function
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
+entry = "main.taut"
+files."sql.taut" = ````tauto
+import std::template { quoted, text, text_with }
+import std::builtin::macro { Syn, SynExpr }
+
+// A hole is written as a literal.
+pub fn literal(t: &Text): Text { quoted(t) }
+
+pub macro fn sql(t: text::Template): SynExpr ! {div} { text_with(t, Syn::global("literal")) }
+````
+files."main.taut" = ````tauto
+import "sql.taut" { sql }
+fn find(name: Text): Text { sql!(`select * from users where name = $name`) }
+show(&find("R \"x\""))
+````
+stdout = ```
+"select * from users where name = \"R \\\"x\\\"\""
+```
+
+@ cases.a-hole-without-to-text-is-an-error-at-the-hole
+entry = "main.taut"
+extract = true
+files."main.taut" = ````tauto
+import std::template { text }
+struct P { x: i64 }
+fn f(p: P): Text {
+  text!(`point: $p end`)
+}
+````
+diagnostics[] {
+  stage = "types"
+  file = "main.taut"
+  message = "no instance ToText(P)"
+  span = "`point: $«»p end`"
+}
+
+@ cases.a-syntax-error-in-a-hole-is-an-error-of-the-template
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::template { text }
+fn f(n: i64): Text {
+  text!(`n = $n, bad = ${n +}`)
+}
+````
+macro_error = "macro.syntax_error"
+
+@ cases.a-template-highlights-fixed-text-and-escaped-dollars
+files."main.taut" = ````tauto
+import std::template { text }
+
+fn price(n: i64): Text {
+  text!(`cost $$$n`)
+}
+````
+entry = "main.taut"
+editor_tokens = ["4:10 string cost ", "4:15 operator $$", "4:17 operator $", "4:18 parameter n"]
+editor_token_warnings = []

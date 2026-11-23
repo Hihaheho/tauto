@@ -1,0 +1,98 @@
+@ cases.a-handler-answers-an-overflow
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+description = "A fixed-width result that does not fit performs `overflow`; a handler around it answers it."
+source = ```tauto
+fn next(x: u64): u64 ! {overflow} { x + 1 }
+let r := handle { next(18446744073709551615) } with { overflow() => 7 }
+show(&r)
+let s := handle { next(41) } with { overflow() => 0 }
+show(&s)
+```
+stdout = "7\n42\n"
+
+@ cases.a-handler-answers-a-float-division-by-zero
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+description = "`/` on `Float` by zero performs `divzero`; a handler around it answers it."
+source = ```tauto
+fn half(x: Float, y: Float): Float ! {divzero} { x / y }
+let r := handle { half(1.0, 0.0) } with { divzero() => 2.5 }
+show(&r)
+```
+stdout = "2.5\n"
+
+@ cases.an-overflow-nothing-handles-stops-the-program
+description = "The host answers an `overflow` that nothing handles by stopping the program."
+source = ```tauto
+fn next(x: u64): u64 ! {overflow} { x + 1 }
+show(&next(18446744073709551615))
+```
+run_error = "the number is too large"
+
+@ cases.a-handler-answers-an-integer-division-by-zero
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+description = "`div` and `mod` of integers by zero perform `divzero`; a handler around them answers it."
+source = ```tauto
+fn q(x: i64, y: i64): i64 ! {divzero} { div(x, y) }
+fn r(x: u64, y: u64): u64 ! {divzero} { mod(x, y) }
+show(&handle { q(7, 0) } with { divzero() => 11 })
+show(&handle { r(7, 0) } with { divzero() => 12 })
+show(&handle { q(7, 2) } with { divzero() => 0 })
+show(&handle { r(7, 2) } with { divzero() => 0 })
+```
+stdout = "11\n12\n3\n1\n"
+
+@ cases.an-integer-division-by-zero-nothing-handles-stops-the-program
+llvm.unimplemented = "generate: the LLVM backend does not write the standard effect `divzero` yet"
+description = "The host answers a `divzero` that nothing handles by stopping the program."
+source = ```tauto
+fn q(x: i64, y: i64): i64 ! {divzero} { div(x, y) }
+show(&q(7, 0))
+```
+run_error = "division by zero"
+
+@ cases.an-integer-division-must-name-div-zero-in-its-row
+description = "`div` may divide by zero, so a function that calls it and declares an empty row is an error."
+source = ```tauto
+fn q(x: i64, y: i64): i64 ! {} { div(x, y) }
+show(&q(7, 2))
+```
+rows = "error: `q` may perform divzero but its row is {}"
+compile_errors.rust = "front: `q` may perform divzero but its row is {}"
+compile_errors.javascript = "front: `q` may perform divzero but its row is {}"
+
+@ cases.a-total-function-divides-without-performing-div-zero
+description = "A function checked extraction showed total has a row without `divzero`, so its `mod` is the plain call, which stops on a zero divisor; no `divzero` is performed for a handler around the function to answer."
+imports = [path`../std/uint.taut`]
+source = ```tauto
+show(&Nat::checked_rem(7, 2))
+```
+stdout = "Some(1)\n"
+
+@ cases.a-total-function-divides-without-performing-div-zero.nir.fns
+"extract_nat_mod" = ```
+fn extract_nat_mod@6(a#12: nat, b#13: nat): nat S = if eq(clone b#13, 0nat) then move a#12 else builtin mod(move a#12, move b#13): nat
+```
+
+@ cases.a-nat-division-past-i128-reads-its-divisor-once-owned
+llvm.unimplemented = "generate: the LLVM backend does not write the standard effect `divzero` yet"
+description = "`div` of two `nat`s past `i128` checks the divisor against zero and then divides by it: the check reads a clone, so the divisor is never copied while it owns memory."
+source = ```tauto
+fn pow(b: nat, k: u64): nat ! {overflow} { if k == 0 { 1 } else { b * pow(b, k - 1) } }
+show(&div(pow(10, 45), pow(10, 43)))
+show(&mod(pow(10, 45) + 7, pow(10, 43)))
+```
+stdout = "100\n7\n"
+
+@ cases.a-nat-past-i128-adds-subtracts-compares-and-shows
+description = "`nat` arithmetic goes on past `i128`: sums and products are exact, a difference that falls back under `i128` is an ordinary number, and equal numbers compare equal."
+source = ```tauto
+fn pow(b: nat, k: u64): nat ! {overflow} { if k == 0 { 1 } else { b * pow(b, k - 1) } }
+let big := pow(10, 45)
+show(&(big + 1))
+show(&(big + big - big == big))
+show(&(big > pow(10, 44)))
+show(&(big - pow(10, 45) + 5))
+show(&(big * 0 + 3 < big))
+show(&div(big, 7))
+```
+stdout = "1000000000000000000000000000000000000000000001\ntrue\ntrue\n5\ntrue\n142857142857142857142857142857142857142857142\n"

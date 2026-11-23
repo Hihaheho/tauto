@@ -1,102 +1,114 @@
-# 証明の構文マクロ
+# Proof-lang (`proof!`)
 
-`std/proof/Lang.taut` の `proof!` は Proof-lang の文書を受け取る。構成は「Proof-lang の本体」と
-「std の文型」に書く。受理・拒否の検査は `cases/macro/proof-lang.eure` にある。
+`proof!` in `std/proof/lang.taut` takes a Proof-lang document: prose
+(Proof-prose) before `%%`, and a construction program (Proof-code) after it.
+Cases: `cases/macro/proof-lang-1.eure` to `proof-lang-5.eure`.
 
-## 用語
+## Principles
 
-`proof!` が受け取る言語の全体を Proof-lang と呼ぶ。`%%` の手前の本文の言語を Proof-prose、
-後ろの構築プログラムの言語を Proof-code と呼ぶ。
+1. **Closed**: the proof term is rebuilt from the prose and program only; no
+   other declarations or files are read.
+2. **Complete**: any typed core term can be expressed; term literals are the
+   last resort.
+3. **Deterministic**: no search. Inputs are the prose, the program and the
+   goal and context the macro receives; types may be asked of the kernel
+   (`Elab`), and lemma arguments may come from first-order matching of the
+   lemma's conclusion against the goal. The kernel checks the result.
+4. **Minimal**: nothing determined by the prose, or not affecting the core
+   term (binder names, inferable annotations), is written.
+5. **Canonical**: one program per proof and prose; uniqueness and brevity over
+   readability.
+6. **Separated**: prose says what a mathematical proof says; the program says
+   the rest. The boundary follows the correspondence of sentence forms to term
+   syntax.
+7. **General**: no domain notation is built in. Prose expressions are names,
+   applications and numbers; domain notation goes through notation macros such
+   as `nat!` inside `${…}`. The core only builds the sentence tree and turns
+   each sentence into a call of its form's macro; forms carry all meaning.
 
-## 原則
+## The core
 
-Proof-lang は次の七つの原則に従う。
+- A sentence is clauses ending in `.`, starting on one line. Clause words are
+  names, applications `f(x, y)`, numbers, embedded expressions `${…}` (lists
+  also `$[…]`), and `,` `:` `=` `:=`.
+- Nesting is by indentation (off-side rule). After a line ending in `.`, the
+  next line starts a new sentence at its column; otherwise it continues the
+  clause and its indentation is ignored. The first sentence is the root; all
+  others are deeper. A sentence's children are the following deeper
+  sentences; the first child's column is the sibling column, and a column
+  between it and the parent's is an error. (The grammar reads a newline with
+  its following spaces as one token; the tree is built from those lengths.)
+- Labels `[succ]`, `[2]` mark sentences the program refers to; unique, not
+  hierarchical.
+- The program is one entry per line, `[succ] x; y`, given to the sentence with
+  that label. Items: names, numbers, embedded expressions, tuples `(x, y)`,
+  applications, `λ x y. e`. Unknown or repeated labels are errors.
+- Each clause becomes `proof_<first word lowercased>!(proof_clause(proof_words(…), proof_rest(…), proof_code(…), proof_children(…)))`.
+  Form macros are position macros ([`macro.md`](macro.md)); each reads its
+  clause, builds the next clause's call with the remaining program
+  (`ProofCore::next`), and places child calls unexpanded in its holes. Users
+  add forms by writing `proof_<word>` position macros.
 
-1. **閉包性**：本文とプログラムから証明項を復元する関数の入力は、本文とプログラムだけである。
-   外の宣言もファイルも読まない。
-2. **完全性**：型を付けた後の core の項として、どんな証明も表せる。最後の手段は項のリテラルである。
-3. **決定性**：復元は入力だけで答えが決まる関数で、探索をしない。入力は本文とプログラムと、
-   マクロが受け取る目標と文脈である。式の型は、カーネルへの問い合わせ（`Elab`）で決定的に得てよい。
-   復元した項は、そのあとでカーネルが検査する。
-4. **最小性**：本文から決まる情報と、core の項を変えない情報（束縛子の名前、決まる型の注釈）には
-   一文字も使わない。
-5. **正準性**：同じ証明と本文には、プログラムが一つだけ対応する。読みやすさより、一意で短いことを優先する。
-6. **分離**：本文は数学の証明が述べることを書き、プログラムはその残りを書く。この境界は、
-   本文の文と証明項の構文の対応で決まる。
-7. **汎用性**：数学のどの分野の証明にも使える。特定の分野の記法や言い回しを言語に組み込まず、
-   記法、文型、よく使う言い回しは、利用者が定義して参照する。本文の式の文法は名前、適用、数だけで、
-   分野の記号は `nat!` のような記法のマクロで書く。Proof-lang の本体は、文を読んで字下げから木を作り、
-   各文をその文型のマクロの呼び出しに変えることだけをする。文型の意味は、すべて文型のマクロが持つ。
+## Standard forms (`std/proof/forms.taut`)
 
-## Proof-lang の本体
-
-文書は、文の並びと、`%%` の後ろのプログラムからなる。
-
-- 文は `.` で終わる節の並びで、一つの行から始まる。節は言葉の並びで、言葉は名前、適用 `f(x, y)`、数、
-  埋め込みの式 `${…}`（リストリテラルは `$[…]` とも書ける）、記号 `,`・`:`・`=`・`:=` のどれかである。本文の式の文法はこれだけで、分野の記号は
-  記法のマクロで `${…}` の中に書く。
-- 文の入れ子は字下げで決まる（オフサイドルール）。`.` で終わる行の次の行は新しい文で、その行の字下げが文の列である。
-  `.` で終わらない行の次の行は同じ節の続きで、字下げは意味を持たない。一つの文の節は、続きの行を除いて同じ行に書く。
-  - 最初の文が根で、文はちょうど一つの木になる。ほかの文はすべて根より深く字下げする。
-  - 文の子は、その文より深く字下げした後ろの文である。最初の子の列が兄弟の列で、兄弟の列と親の列の間の列はエラー。
-  - 文法は字下げを見ず、改行をその後ろの空白ごと一つのトークンとして読む。木はそのあとトークンの空白の長さから作る。
-- ラベル `[succ]`・`[2]` は、後から参照する文にだけ付ける（今の参照はプログラムの項目だけ）。名前か数で、階層を表さない。
-  文書の中で一意で、重複はエラー。
-- プログラムは、一行に一つの、ラベルごとの項目の並び `[succ] x; y` である。項目は名前、数、埋め込みの式、組 `(x, y)`、
-  適用、`λ x y. e` である。項目は同じラベルの文に渡す。どの文にもないラベルと、二度書いたラベルはエラー。
-- 本体は各節を、最初の言葉を小文字にした `proof_<言葉>!` の呼び出しに変えるだけで、文の意味を持たない。
-  呼び出しの中身は `proof_clause(proof_words(…), proof_rest(…), proof_code(…), proof_children(…))` で、
-  その節の言葉、同じ文の後ろの節、その文のプログラムの残り、子の文の呼び出しを持つ。
-- 文型のマクロは位置のマクロ（`macro.md`「位置のマクロ」）で、自分の節を読み、使ったプログラムの残りを渡して
-  次の節の呼び出しを作る（`ProofCore::next`）。子の文の呼び出しは、展開せずに自分の出力の穴に置く。
-- 別の分野の文型は、利用者が `proof_<言葉>` という名前の位置のマクロとして書き、読み込めば使える。
-
-## std の文型
-
-`std/proof/Forms.taut` にある。各文型は位置の目標と文脈を読み、型はカーネルに問い合わせる（`Elab`）。
-
-| 文型 | 作る項 |
+| Form | Term |
 |---|---|
-| `By induction on x.` | `x` の型の eliminator。`List(A)` のように引数を持つ型では `List::ind` に型の引数を先に渡す。目標をモチーフにし、文脈の `x` より後ろの変数を一般化する。子の文が場合で、再帰のフィールドに帰納法の仮定 `ih` を付け、その型は簡約した形で書く |
-| `Case C(y, …).` の構成子 | 名前のまま（`Cons`）でも、型の名前で修飾して（`List::Cons`）も書ける |
-| `Case C(y, …).` | 何も作らず、後ろの節へ進む。束縛は親の文が作る |
-| `Consider x.` | `x` についての `match`。子の文が場合 |
-| `Consider whether P holds.` | `P` についての `match`。子の文 `Case h: Q.` は、`Q` が `not(P)` のような否定なら `false`、そうでなければ `true` の場合で、`h` はその等式 |
-| `By L.` | `L`。`L` が関数なら、プログラムの次の項目を引数にする（組はその要素） |
-| `This contradicts h.` | `False::elim`。`h` の型の両辺を簡約して `true = false` か `false = true` なら、`true_ne_false` か `false_ne_true` を挟む |
-| `Using e and …, the claim follows from L.` | 各等式で目標を書き換えてから `L` を適用する。書き換える辺と向きは等式の型と目標から決める |
-| `By the induction hypothesis.` | 帰納法の仮定 `ih`。型が `∀ y …. P`（帰納法で後ろの変数を一般化した仮定）なら、場合の文脈の同じ名前の変数に適用する。再帰のフィールドが複数ある場合は使えず、`By ih(f).` と書く |
-| `By the induction hypothesis, h: P.` | 後ろで `h` を `the(P, ih(…))` と読む |
-| `We have h: P by R.` | 後ろで `h` を `the(P, R(…))` と読む。`R` は名前か `the induction hypothesis` |
-| `We have x0 = x1 by R = x2 ….` | 段ごとの証明を `Eq::trans` でつなぎ、各段を書いた等式 `the(xᵢ = xᵢ₊₁, …)` で包む。理由のない段は `Refl`、理由の型が段の等式なら理由そのもの、逆なら `Eq::sym`、そうでなければ両辺の違う一か所への `Eq::congr`。その場所は、複数の引数が違う節点では節点全体である。理由の型が `∀ y …. P`（帰納法で後ろの変数を一般化した仮定）なら、場合の文脈の同じ名前の変数に適用する |
-| `We have h: x0 = x1 by R = x2 ….` | 同じ連鎖を `h` と名付け、後ろで `h` を `the(x0 = xn, …)` と読む。理由は文に書いたものだけで、プログラムは後ろの文に残す |
-| `By $t!(e).` | ステップ `by t!(e): G0 { … }`。`G0` は位置の目標。子の文が tactic の残す各ゴールで、`We show G.` か `Let x: A and assume h: P. We show G.` と書き、その後ろの節か下の一つの文がそのゴールの証明である。子の文がなければ腕のないステップ |
-| `By $t!(e), it suffices to show G.` | 腕が一つ `⊢ G` のステップ。`G` の証明は後ろの節か、下の一つの文 |
-| `We have h: P by $t!(e).` | 後ろで `h` を `the(P, by t!(e): P {})` と読む |
-| `We have x0 = x1 by $t!(e) = ….` | その段を腕のないステップ `by t!(e): x0 = x1 {}` で証明する |
-| `Let x = e.` | 後ろの節、プログラム、子の文で `x` を `e` と読む |
+| `By induction on x.` | `x`'s eliminator (type arguments first, e.g. `List::ind`), goal as motive, generalizing later context variables. Children are cases; recursive fields get `ih`, typed in reduced form. |
+| `Case C(y, …).` | Nothing (the parent binds). `C` may be qualified (`List::Cons`). |
+| `Consider x.` | `match` on `x`; children are cases. For a variable, later assumptions whose types depend on it are generalized and rebound per case under the same names. |
+| `This is impossible by h.` | Armless `match` on `h`, an equation with distinct head constructors. |
+| `Let x.` / `Let x: A.` | `λ x.` for the goal's `∀`. |
+| `Assume h.` / `Assume h: P.` | `λ h.` for the goal's premise. |
+| `Take x = e.` | `ExIntro(e, …)`; the rest reads `x` as `e`. |
+| `Obtain x and h from e.` | One-arm `match` on `ExIntro(x, h)` (`∃`) or `AndIntro(x, h)` (`∧`). |
+| `We show both.` | `AndIntro`; the two children are the sides. |
+| `We show the left.` / `the right.` | `OrInl` / `OrInr`. (Case split on `∨`: `Consider e.` with `Case OrInl(h).`) |
+| `By transitivity of L on h1, h2, ….` | `L(h1, L(h2, …))`, endpoints implicit; for chains of `≤`, `<`, etc. |
+| `Consider whether P holds.` | `match` on `P`; `Case h: Q.` is the `false` case if `Q` is a negation like `not(P)`, else `true`; `h` is the equation. |
+| `By L.` | `L`, its explicit arguments matched against the goal; unmatched ones are taken in order from the next program item (a tuple for several). Missing or extra items are errors. If nothing matches and `L` is a function, the next item is its argument. |
+| `This contradicts h.` | `False::elim`, via `true_ne_false`/`false_ne_true` when `h` reduces to `true = false` or the reverse. |
+| `Using e and …, the claim follows from L.` | Rewrite the goal by each equation (side and direction from the types), then apply `L`. |
+| `By the induction hypothesis.` | `ih`, applied to same-named case variables if generalized. With several recursive fields write `By ih(f).` |
+| `By the induction hypothesis, h: P.` | Later, `h` reads `the(P, ih(…))`. |
+| `We have h: P by R.` | Later, `h` reads `the(P, R(…))`; `R` a name or `the induction hypothesis`. |
+| `We have x0 = x1 by R = x2 ….` | `Eq::trans` of the steps, each wrapped as `the(xᵢ = xᵢ₊₁, …)`: no reason is `Refl`; a reason of that type is itself, reversed is `Eq::sym`, otherwise `Eq::congr` at the single differing place (a whole node if several arguments differ). Generalized reasons are applied to same-named variables. |
+| `We have h: x0 = x1 by R = x2 ….` | The same chain named `h` (`the(x0 = xn, …)`); only written reasons, program left for later sentences. |
+| `By $t!(e).` | Step `by t!(e): G0 { … }` with `G0` the position's goal. Children are the remaining goals, `We show G.` or `Let x: A and assume h: P. We show G.`, each proved by its rest or one child; no children means an armless step. |
+| `By $t!(e), it suffices to show G.` | A step with the single arm `⊢ G`. |
+| `We have h: P by $t!(e).` | Later, `h` reads `the(P, by t!(e): P {})`. |
+| `We have x0 = x1 by $t!(e) = ….` | That link proved by `by t!(e): x0 = x1 {}`. |
+| `Let x = e.` | The rest, program and children read `x` as `e`. |
 
-tactic は本文に `$t!(e)` と書く。どの文型も、ステップの元のゴールを位置の目標か文に書いた命題から埋め、tactic の残すゴールは
-本文に書いたものだけを腕にする。tactic が作る項は、書かれたステップと同じく、書いたゴールと一緒にカーネルが検査する。
+"The rest" means the following clauses, or else the one child sentence. Steps
+take their original goal from the position or the written proposition, and only
+written goals become arms; the kernel checks the tactic's term against them.
+Naming forms substitute the value in what follows, so later forms can query
+its type and unused names are fine. Names refer to same-spelled context
+variables (after generalization, the generalized ones); the induction
+hypothesis is `ih` / `ih(f, …)` in code and `the induction hypothesis` in
+prose.
 
-名前を付ける文型（`Case h`、帰納法の仮定、事実、`Let`）は、後ろの部分の名前を値に置き換える。値はどれも文脈の項なので、
-後ろの文型が型を問い合わせられ、使わない名前は誤りにならない。
+### Matching lemma arguments
 
-文と Proof-code に書いた名前は、位置の文脈にある同じ綴りの変数を指す。`By induction on x.` で一般化した変数は、
-各場合の文脈で一般化したものを指す。帰納法の仮定は Proof-code の名前 `ih` で、再帰のフィールドが複数あるときは
-`ih(f, …)` と書いてフィールド `f` の仮定を指す。文の中では `the induction hypothesis` と書く。
+`By L.` matches `L`'s conclusion against the goal as the kernel reads it (`=` as
+`Eq` with its type), `L`'s parameters being variables: a variable matches
+anything, consistently; applications match when heads and arguments match
+(named arguments first); anything else only when identical. No unfolding or
+search. Determined arguments are not written; implicit arguments are still
+inferred by the kernel.
 
-## 整形と色付け
+## Formatting and highlighting
 
-`proof_lang` は `fmt` と `tokens` を登録する（`std/proof/Tooling.taut`）。字下げが文の入れ子を決めるので、
-整形は各行の始まる列を変えず、行の中の空白だけを整える。語の間は空白一つ、`.`・`,`・`:`・`)` の前と `(` の後ろは詰め、
-続く空行は一つにする。`%%` の後ろのプログラムは、ラベルごとの項目を一行に一つ、最初の文の列に置く。
-埋め込みの式の中身は変えない。
+`proof_lang` registers `fmt` and `tokens` (`std/proof/tooling.taut`). The
+formatter keeps each line's starting column, uses single spaces between words,
+no space before `.` `,` `:` `)` or after `(`, collapses blank lines, and puts
+program entries one per line at the root's column; embedded expressions are
+untouched. Highlighting: a clause's first word is a keyword, labels variables or
+numbers, symbols operators; in the program, applied names are functions;
+embedded expressions are highlighted as Tauto.
 
-色付けは、節の最初の言葉（文型を決める言葉）をキーワード、ラベルを変数か数、記号を演算子とする。
-プログラムでは、適用する名前を関数、ほかの名前を変数とする。埋め込みの式は、エディタが Tauto の式として色付けする。
+## Undecided
 
-## 未決定
-
-- 型から決まる補題の引数を、プログラムに書かずに補う規則。
-- 一つの文のどこかで文型のマクロが失敗したとき、ほかの文の展開を続けるかどうか。
+- Matching for other reasons (chain steps `by L`, `the claim follows from L`)
+  and for arguments determined by hypothesis types.
+- Whether expansion continues in other sentences after a form fails.

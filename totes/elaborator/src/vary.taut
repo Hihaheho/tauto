@@ -1,0 +1,263 @@
+// What a recursion's calls pass: which parameters they change, and which
+// write implicit arguments by name. Pure syntax, so kept apart from the
+// elaborator that uses it (a file's checking is limited in time).
+import "../../surface/src/surface.taut"
+import "nested.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
+import "../../text/src/text.taut"
+import std::list
+import std::text
+import std::base
+
+pub fn elab_has_nat(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || elab_has_nat(rest, x)
+  }
+}
+
+pub fn elab_var_named(a: SurfaceTerm, n: Text): Bool {
+  match a.kind {
+    SkVar(x) => surface_name_text(x) == n
+    _ => false
+  }
+}
+
+pub fn elab_vary_args(names: List(Text), args: List(SurfaceTerm), mask: List(Bool)): List(Bool) {
+  match mask {
+    Nil => Nil
+    Cons(b, bs) => ⊢ List(Bool) from match names {
+      Nil => mask
+      Cons(n, ns) => ⊢ List(Bool) from match args {
+        Nil => mask
+        Cons(a, rest) => Cons(b || elab_var_named(a, n) == false, elab_vary_args(ns, rest, bs))
+      }
+    }
+  }
+}
+
+// `n` names the declaration `name`, written in full or, in its module, by
+// its last segment.
+pub fn elab_calls_self(n: Text, name: Text): Bool {
+  let tail := Text::concat("::", n)
+  let ln := Text::len(name)
+  let lt := Text::len(tail)
+  let ends := ⊢ Bool from match Text::slice(name, Nat::sub(ln, lt), ln) {
+    None => false
+    Some(t) => lt <= ln && t == tail
+  }
+  // An instance's method is `C::m@H`, which a call of `C::m` inside it is.
+  n == name || ends || text_starts_with(name, Text::concat(n, "@"), 0)
+}
+
+mutual {
+  pub fn elab_vary(k: Nat, name: Text, names: List(Text), t: SurfaceTerm, mask: List(Bool)): List(Bool) {
+    match k {
+      Zero => mask
+      Succ(j) => ⊢ List(Bool) from match t.kind {
+        SkApp(head, args) => {
+          let here := ⊢ List(Bool) from match head.kind {
+            SkVar(n) => if elab_calls_self(surface_name_text(n), name) { elab_vary_args(names, elab_named_split(args).snd, mask) } else { mask }
+            _ => elab_vary(j, name, names, head, mask)
+          }
+          elab_vary_list(j, name, names, args, here)
+        }
+        SkLam(^ps, body, _, _) => elab_vary(j, name, names, body, mask)
+        SkIf(c, a, b) => {
+          let ab := elab_vary(j, name, names, a, elab_vary(j, name, names, c, mask))
+          ⊢ List(Bool) from match b {
+            None => ab
+            Some(e) => elab_vary(j, name, names, e, ab)
+          }
+        }
+        SkMatch(scrutinee, ^motive, arms, ^binder, _) => elab_vary_arms(j, name, names, arms, elab_vary(j, name, names, scrutinee, mask))
+        SkBlock(stmts) => elab_vary_stmts(j, name, names, stmts, mask)
+        _ => mask
+      }
+    }
+  }
+
+  pub fn elab_vary_list(k: Nat, name: Text, names: List(Text), xs: List(SurfaceTerm), mask: List(Bool)): List(Bool) {
+    match k {
+      Zero => mask
+      Succ(j) => ⊢ List(Bool) from match xs {
+        Nil => mask
+        Cons(x, rest) => elab_vary_list(j, name, names, rest, elab_vary(j, name, names, x, mask))
+      }
+    }
+  }
+
+  pub fn elab_vary_arms(k: Nat, name: Text, names: List(Text), arms: List(SurfaceArm), mask: List(Bool)): List(Bool) {
+    match k {
+      Zero => mask
+      Succ(j) => ⊢ List(Bool) from match arms {
+        Nil => mask
+        Cons(a, rest) => elab_vary_arms(j, name, names, rest, elab_vary(j, name, names, a.body, mask))
+      }
+    }
+  }
+
+  // A block's calls, as the arm of a nested pattern writes them under the
+  // `let`s that give its names the fields: after a `let` of a parameter's
+  // name, that name is not the parameter, so a call passing it changes it.
+  pub fn elab_vary_stmts(k: Nat, name: Text, names: List(Text), stmts: List(SurfaceStmt), mask: List(Bool)): List(Bool) {
+    match k {
+      Zero => mask
+      Succ(j) => ⊢ List(Bool) from match stmts {
+        Nil => mask
+        Cons(st, rest) => ⊢ List(Bool) from match st {
+          StExpr(v) => elab_vary_stmts(j, name, names, rest, elab_vary(j, name, names, v, mask))
+          StLet(n, ^a, v, ^b, ^m, ^unused, ^st_stack) => elab_vary_stmts(j, name, elab_vary_shadowed(names, n), rest, elab_vary(j, name, names, v, mask))
+          _ => elab_vary_stmts(j, name, names, rest, mask)
+        }
+      }
+    }
+  }
+}
+
+// `names` with `n` no longer standing for its parameter.
+pub fn elab_vary_shadowed(names: List(Text), n: Text): List(Text) {
+  match names {
+    Nil => Nil
+    Cons(x, rest) => Cons(if x == n { "" } else { x }, elab_vary_shadowed(rest, n))
+  }
+}
+
+// Whether a call of `name` in `t` writes implicit arguments by name.
+mutual {
+  pub fn elab_named_call(k: Nat, name: Text, t: SurfaceTerm): Bool {
+    match k {
+      Zero => false
+      Succ(j) => ⊢ Bool from match t.kind {
+        SkApp(head, args) => {
+          let here := ⊢ Bool from match head.kind {
+            SkVar(n) => elab_calls_self(surface_name_text(n), name) && elab_has_named(args)
+            _ => elab_named_call(j, name, head)
+          }
+          here || elab_named_calls(j, name, args)
+        }
+        SkLam(^ps, body, _, _) => elab_named_call(j, name, body)
+        SkIf(c, a, b) => {
+          let rest := ⊢ Bool from match b {
+            None => false
+            Some(e) => elab_named_call(j, name, e)
+          }
+          elab_named_call(j, name, c) || elab_named_call(j, name, a) || rest
+        }
+        SkMatch(scrutinee, ^motive, arms, ^binder, _) => elab_named_call(j, name, scrutinee) || elab_named_arms(j, name, arms)
+        SkBlock(stmts) => elab_named_stmts(j, name, stmts)
+        _ => false
+      }
+    }
+  }
+
+  pub fn elab_named_calls(k: Nat, name: Text, xs: List(SurfaceTerm)): Bool {
+    match k {
+      Zero => false
+      Succ(j) => ⊢ Bool from match xs {
+        Nil => false
+        Cons(x, rest) => elab_named_call(j, name, x) || elab_named_calls(j, name, rest)
+      }
+    }
+  }
+
+  pub fn elab_named_arms(k: Nat, name: Text, arms: List(SurfaceArm)): Bool {
+    match k {
+      Zero => false
+      Succ(j) => ⊢ Bool from match arms {
+        Nil => false
+        Cons(a, rest) => elab_named_call(j, name, a.body) || elab_named_arms(j, name, rest)
+      }
+    }
+  }
+
+  pub fn elab_named_stmts(k: Nat, name: Text, stmts: List(SurfaceStmt)): Bool {
+    match k {
+      Zero => false
+      Succ(j) => ⊢ Bool from match stmts {
+        Nil => false
+        Cons(st, rest) => ⊢ Bool from match st {
+          StExpr(v) => elab_named_call(j, name, v) || elab_named_stmts(j, name, rest)
+          StLet(^n, ^a, v, ^b, ^m, ^unused, ^st_stack) => elab_named_call(j, name, v) || elab_named_stmts(j, name, rest)
+          _ => elab_named_stmts(j, name, rest)
+        }
+      }
+    }
+  }
+}
+
+// Whether `vs` generalizes one of the first `n` parameters (the implicit ones).
+pub fn elab_gen_has_below(vs: List(Nat), n: Nat): Bool {
+  match vs {
+    Nil => false
+    Cons(v, rest) => v < n || elab_gen_has_below(rest, n)
+  }
+}
+
+// The value each implicit parameter is given in a call: the one written by
+// name, or the parameter itself.
+pub fn elab_named_values(names: List(Text), fields: List(SurfaceField), n: Nat, at: List(SurfaceTerm)): List(SurfaceTerm) {
+  match names {
+    Nil => Nil
+    Cons(m, rest) => match n {
+      Zero => Nil
+      Succ(i) => Cons(elab_named_value(m, fields, at), elab_named_values(rest, fields, i, at))
+    }
+  }
+}
+
+pub fn elab_named_value(name: Text, fields: List(SurfaceField), at: List(SurfaceTerm)): SurfaceTerm {
+  match fields {
+    Nil => elab_var(name, elab_first_term(at))
+    Cons(f, rest) => if f.name == name { f.value } else { elab_named_value(name, rest, at) }
+  }
+}
+
+pub fn elab_first_term(ts: List(SurfaceTerm)): SurfaceTerm {
+  match ts {
+    Cons(t, ^rest) => t
+    Nil => SurfaceTerm { occurrence: None, kind: SkHole(""), start: 0, end: 0 }
+  }
+}
+
+pub fn elab_falses(n: Nat): List(Bool) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(false, elab_falses(m))
+  }
+}
+
+// The positions among all the parameters of the explicit ones marked, but
+// the matched one.
+pub fn elab_mask_ids(mask: List(Bool), p: Nat, at: Nat): List(Nat) {
+  match mask {
+    Nil => Nil
+    Cons(b, rest) => if b && p != at { Cons(p, elab_mask_ids(rest, p + 1, at)) } else { elab_mask_ids(rest, p + 1, at) }
+  }
+}
+
+// `f(<x: v>, a)`: the implicit arguments written by name, and the others.
+pub fn elab_named_split(args: List(SurfaceTerm)): (List(SurfaceField) × List(SurfaceTerm)) {
+  match args {
+    Cons(a, rest) => ⊢ (List(SurfaceField) × List(SurfaceTerm)) from match a.kind {
+      SkRecord(r, fields) => if r == "@implicits" { #(fields, rest) } else { #(Nil, args) }
+      _ => #(Nil, args)
+    }
+    Nil => #(Nil, Nil)
+  }
+}
+
+pub fn elab_has_named(args: List(SurfaceTerm)): Bool {
+  match elab_named_split(args).fst {
+    Nil => false
+    Cons(^f, ^rest) => true
+  }
+}
+
+pub fn elab_first_name(n: Text): Text {
+  match text_find(n, "::", 0) {
+    None => n
+    Some(at) => Text::slice_or_empty(n, 0, at)
+  }
+}

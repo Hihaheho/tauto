@@ -9,14 +9,14 @@ fn execute_mode(source: &str, tag: &str, expected: &str, sync: bool) {
     let _build = BUILD_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let evaluated = tauto::eval::run(source)
+    let evaluated = tauto::exec::run(source)
         .unwrap()
         .outputs
         .into_iter()
         .map(|(name, value)| format!("{name} = {value}\n"))
         .collect::<String>();
     assert_eq!(evaluated, expected, "evaluator: {tag}");
-    let mut package = tauto_nir::compile(source).unwrap();
+    let mut package = tauto::nir::compile(source).unwrap();
     package.sync |= sync;
     let ws = workspace(
         "callback-lifetimes",
@@ -63,10 +63,10 @@ let result := handle { apply(() => perform ask()) } with {
   ask(), k => k(42)
   return value => value
 }
-perform show("value", result)
+show(&result)
 "#,
         "shared-sync",
-        "value = 42\n",
+        "42\n",
         true,
     );
     execute_mode(
@@ -83,10 +83,10 @@ let result := handle {
   ask(), k => k(42)
   return value => value
 }
-perform show("value", result)
+show(&result)
 "#,
         "affine-sync",
-        "value = \"kept\"\n",
+        "\"kept\"\n",
         true,
     );
 }

@@ -25,8 +25,8 @@ fn alias<!e>(source: () -> Text ! e): Text ! e {
   let read: () -> Text ! e := source
   read()
 }
-fn r#view<!e>(v: View(e)): Text ! e { v.read() }
-fn forwarded<!outer>(v: View(outer)): Text ! outer { r#view(v) }
+fn view<!e>(v: View(e)): Text ! e { v.read() }
+fn forwarded<!outer>(v: View(outer)): Text ! outer { view(v) }
 ```
 rows = "ok"
 types = "ok"
@@ -157,7 +157,7 @@ source = ```tauto
 effect ask(): Text
 var read: () -> Text ! {} := () => "ok"
 read := () => perform ask()
-perform show("value", read())
+show(&read())
 ```
 rows = "error: a function value may perform ask but its type permits {}"
 types = "ok"
@@ -166,8 +166,8 @@ types = "ok"
 source = ```tauto
 
 effect ask(): Text
-fn replace_read(&mut read: () -> Text ! {ask}): Unit ! {} {
-  read := () => perform ask()
+fn replace_read(read: &mut (() -> Text ! {ask})): Unit ! {} {
+  *read := () => perform ask()
 }
 fn caller(): Text ! {} {
   var read: () -> Text ! {} := () => "ok"
@@ -182,7 +182,7 @@ types = "ok"
 source = ```tauto
 
 effect ask(): Text
-extern { fn host(&read: () -> Text): Text }
+extern { fn host(read: &(() -> Text)): Text }
 fn caller(): Text ! {ask} {
   let run := host
   run(&(() => perform ask()))
@@ -229,7 +229,7 @@ source = ```tauto
 effect ask(): Text
 var read: () -> Text ! {} := () => "ok"
 while false { read := () => perform ask() }
-perform show("value", read())
+show(&read())
 ```
 rows = "error: a function value may perform ask but its type permits {}"
 types = "ok"
@@ -249,7 +249,7 @@ rows_javascript = "error: cannot erase the callback capabilities of a host funct
 source = ```tauto
 
 effect ask(): Text
-extern { fn host(&read: () -> Text ! {}): Text }
+extern { fn host(read: &(() -> Text ! {})): Text }
 let result := host(&(() => perform ask()))
 ```
 rows = "error: a closure passed to an extern cannot perform ask, which may suspend"
@@ -303,7 +303,7 @@ source = ```tauto
 fn spin(): i64 ! {} { let again := spin
  again() }
 ```
-rows = "error: `spin` may perform Div but its row is {}"
+rows = "error: `spin` may perform div but its row is {}"
 types = "ok"
 
 @ cases.recursive-function-aliases-keep-divergence-2
@@ -315,7 +315,7 @@ fn spin(): i64 ! {} {
   holder.call()
 }
 ```
-rows = "error: a function value may perform Div but its type permits {}"
+rows = "error: a function value may perform div but its type permits {}"
 types = "ok"
 
 @ cases.returned-function-cycles-keep-divergence-1
@@ -324,7 +324,7 @@ source = ```tauto
 fn make(): (() -> i64 ! {}) ! {} { spin }
 fn spin(): i64 ! {} { make()() }
 ```
-rows = "error: `make` may perform Div but its row is {}"
+rows = "error: `make` may perform div but its row is {}"
 types = "ok"
 
 @ cases.foreign-returned-callables-keep-host-callback-effects-1
@@ -355,9 +355,9 @@ rows_javascript = "error: cannot follow the effects of calling `holder.run`"
 @ cases.pure-mutable-callback-contracts-can-be-inferred-and-preserved-1
 source = ```tauto
 
-fn offset(value: i64): i64 ! {} { value + 1 }
-fn apply(&read: (i64) -> i64 ! {}): i64 ! {} { read(1) }
-fn run(): i64 ! {} {
+fn offset(value: nat): nat ! {} { value + 1 }
+fn apply(read: &((nat) -> nat ! {})): nat ! {} { read(1) }
+fn run(): nat ! {} {
   var read := offset
   let captured := () => apply(&read)
   read := (value) => value + 2
@@ -385,7 +385,7 @@ types = "ok"
 @ cases.mutable-host-callbacks-require-an-explicit-persistent-row-1
 source = ```tauto
 
-extern { fn change(&mut read: () -> Text): Unit }
+extern { fn change(read: &mut (() -> Text)): Unit }
 fn run(): Text ! {} {
   var read := () => "ok"
   change(&mut read)
@@ -427,13 +427,13 @@ types = "ok"
 source = ```tauto
 
 effect ask(): Text
-fn change(cell: Ref(() -> Text ! {ask})): Unit ! {} {
-  Ref::set(cell, () => perform ask())
+fn change(cell: Ref(() -> Text ! {ask})): Unit ! {ref_set} {
+  perform ref_set(cell, () => perform ask())
 }
-fn caller(): Text ! {} {
-  let cell := Ref::new(() => "ok")
+fn caller(): Text ! {ref_get, ref_new, ref_set} {
+  let cell := perform ref_new(() => "ok")
   change(cell)
-  let read := Ref::get(cell)
+  let read := perform ref_get(cell)
   read()
 }
 ```
@@ -452,12 +452,12 @@ types = "ok"
 @ cases.spawned-bodies-allow-divergence-without-capturing-handlers-1
 source = ```tauto
 
-fn work(): u64 {
+fn work(): u64 ! {div, overflow} {
   var n: u64 := 0
   while n < 2 { n := n + 1 }
   n
 }
-fn launch(): u64 ! {∀ T. spawn(T), wait} {
+fn launch(): u64 ! {∀ T. spawn(() -> T ! {}), wait} {
   let task := perform spawn(() => work())
   Task::join(task)
 }
@@ -469,12 +469,12 @@ types = "ok"
 source = ```tauto
 
 effect ask(): u64 resume 1
-fn launch(): u64 ! {∀ T. spawn(T), ask, wait} {
+fn launch(): u64 ! {∀ T. spawn(() -> T ! {}), ask, wait} {
   let task := perform spawn(() => perform ask())
   Task::join(task)
 }
 ```
-rows = "error: a function value may perform ask but its type permits {Div, argv, env, fs_canonicalize, fs_copy, fs_create_dir, fs_list_dir, fs_read, fs_read_bytes, fs_read_bytes_under, fs_read_link, fs_read_under, fs_remove, fs_rename, fs_stat, fs_temp_dir, fs_write, fs_write_bytes, fs_write_new, monotonic_clock, net, net_addr, net_resolve, permission, proc_close, proc_close_stdin, proc_read, proc_run, proc_spawn, proc_wait, proc_write, random, secure_random, shutdown_token, sleep, stderr, stdin_bytes, stdout, stdout_flush, tcp_accept, tcp_close, tcp_connect, tcp_listen, tcp_read, tcp_shutdown, tcp_unlisten, tcp_write, tls_accept, tls_close, tls_connect, tls_read, tls_shutdown, tls_write, wait, wall_clock}"
+rows = "error: a function value may perform ask but its type permits {argv, atomic_fetch_add, atomic_load, atomic_new, atomic_store, budget, budget_memory, div, divzero, env, environ, fs_canonicalize, fs_copy, fs_create_dir, fs_list_dir, fs_lock, fs_read, fs_read_bytes, fs_read_bytes_under, fs_read_link, fs_read_under, fs_remove, fs_rename, fs_set_mode, fs_stat, fs_temp_dir, fs_unlock, fs_write, fs_write_bytes, fs_write_new, hash_seed, host_width, monotonic_clock, mutex_claim, mutex_new, mutex_put, mutex_take_claimed, mutex_withdraw, net, net_addr, net_cancel, net_close, net_finish, net_open, net_read, net_resolve, net_write, overflow, permission, proc_close, proc_close_stdin, proc_read, proc_run, proc_spawn, proc_wait, proc_write, random, ref_get, ref_new, ref_set, secure_random, shutdown_token, sleep, spawn, stderr, stdin_bytes, stdout, stdout_flush, tcp_accept, tcp_close, tcp_connect, tcp_listen, tcp_read, tcp_shutdown, tcp_unlisten, tcp_write, timer, tls_accept, tls_close, tls_connect, tls_read, tls_shutdown, tls_write, uhost_add, uhost_mul, uhost_of_u64, uhost_sub, wait, wall_clock, weak_get, weak_of}; a task runs apart from the handlers around its `spawn`, so its handler goes in the task's body: `spawn(() => handler(f))`"
 types = "ok"
 
 @ cases.generic-function-aliases-instantiate-callback-rows-closed
@@ -505,7 +505,7 @@ rows_javascript = "ok"
 @ cases.mutable-host-callbacks-require-an-explicit-persistent-row-explicit
 source = ```tauto
 
-extern { fn change(&mut read: () -> Text ! {}): Unit }
+extern { fn change(read: &mut (() -> Text ! {})): Unit }
 fn run(): Text ! {} {
   var read := () => "ok"
   change(&mut read)
@@ -520,13 +520,13 @@ rows_javascript = "ok"
 source = ```tauto
 
 effect ask(): Text
-fn change(cell: Ref(() -> Text ! {})): Unit ! {} {
-  Ref::set(cell, () => "next")
+fn change(cell: Ref(() -> Text ! {})): Unit ! {ref_set} {
+  perform ref_set(cell, () => "next")
 }
-fn caller(): Text ! {} {
-  let cell := Ref::new(() => "ok")
+fn caller(): Text ! {ref_get, ref_new, ref_set} {
+  let cell := perform ref_new(() => "ok")
   change(cell)
-  let read := Ref::get(cell)
+  let read := perform ref_get(cell)
   read()
 }
 ```
@@ -536,7 +536,7 @@ types = "ok"
 @ cases.spawned-bodies-allow-divergence-without-capturing-handlers-closed
 source = ```tauto
 
-fn work(): u64 {
+fn work(): u64 ! {div, overflow} {
   var n: u64 := 0
   while n < 2 { n := n + 1 }
   n
@@ -574,23 +574,23 @@ source = ```tauto
 
 effect pause(): Unit resume ω
 effect tick(): Unit resume ω
-fn spin(): Unit ! {Div} { spin() }
-fn leak(): (() -> Unit ! {}) ! {Div} {
+fn spin(): Unit ! {div} { spin() }
+fn leak(): (() -> Unit ! {}) ! {div} {
   handle { perform pause(); perform tick(); () => #() } with {
     pause(), k => () => k(#())()
     tick(), k => { spin(); k(#()) }
   }
 }
 ```
-rows = "error: a function value may perform Div but its type permits {}"
+rows = "error: a function value may perform div but its type permits {}"
 types = "ok"
 
 @ cases.escaping-continuation-after-the-last-operation-is-pure
 source = ```tauto
 
 effect pause(): Unit resume ω
-fn spin(): Unit ! {Div} { spin() }
-fn kept(): (() -> Unit ! {}) ! {Div} {
+fn spin(): Unit ! {div} { spin() }
+fn kept(): (() -> Unit ! {}) ! {div} {
   handle { spin(); perform pause(); () => #() } with {
     pause(), k => { spin(); () => k(#())() }
   }
@@ -602,14 +602,14 @@ types = "ok"
 @ cases.open-row-of-a-call-is-inferred-through-a-constructed-list
 source = ```tauto
 
-struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {Div} ∪ e }
-fn loading<!e>(name: Text, run: () -> Result(Text, Text) ! {Div} ∪ e): Answer(e) {
+struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {div} ∪ e }
+fn loading<!e>(name: Text, run: () -> Result(Text, Text) ! {div} ∪ e): Answer(e) {
   Answer { name: name, run: (arg: Text) => run() }
 }
 struct App(!e) { resources: List(Answer(e)) }
-fn run_app<!e>(app: App(e)): Text ! {Div} ∪ e { "x" }
-fn now(): Result(Text, Text) ! {Div} { Ok("a") }
-fn main(): Text ! {Div} {
+fn run_app<!e>(app: App(e)): Text ! {div} ∪ e { "x" }
+fn now(): Result(Text, Text) ! {div} { Ok("a") }
+fn main(): Text ! {div} {
   run_app(App { resources: Cons(loading("m", now), Nil) })
 }
 ```
@@ -620,25 +620,25 @@ types = "ok"
 source = ```tauto
 
 effect read_db(key: Text): Text
-struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {Div} ∪ e }
-fn loading<!e>(name: Text, run: () -> Result(Text, Text) ! {Div} ∪ e): Answer(e) {
+struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {div} ∪ e }
+fn loading<!e>(name: Text, run: () -> Result(Text, Text) ! {div} ∪ e): Answer(e) {
   Answer { name: name, run: (arg: Text) => run() }
 }
 struct App(!e) { resources: List(Answer(e)) }
-fn run_app<!e>(app: App(e)): Text ! {Div} ∪ e { "x" }
-fn load(): Result(Text, Text) ! {Div, read_db} { Ok(perform read_db("k")) }
-fn main(): Text ! {Div} {
+fn run_app<!e>(app: App(e)): Text ! {div} ∪ e { "x" }
+fn load(): Result(Text, Text) ! {div, read_db} { Ok(perform read_db("k")) }
+fn main(): Text ! {div} {
   run_app(App { resources: Cons(loading("m", load), Nil) })
 }
 ```
-rows = "error: `main` may perform read_db but its row is {Div}"
+rows = "error: `main` may perform read_db but its row is {div}"
 types = "ok"
 
 @ cases.a-handle-without-a-return-arm-gives-its-body-value-too
 source = ```tauto
 effect ask(): u64
-fn leak(): ((u64) -> u64) {
-  handle { budget(steps: 1000) { (i) => perform ask() } } with { exceeded(info), k => (j) => 0 }
+fn leak(): ((u64) -> u64) ! {budget} {
+  handle { perform budget(1000, () => { (i) => perform ask() }) } with { exceeded(info), k => (j) => 0 }
 }
 ```
 rows = "error: cannot follow the effects of a function value required by its type"

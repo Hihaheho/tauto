@@ -1,17 +1,23 @@
+import "../../identity/src/identity.taut"
+import std::base
+import "messages.taut"
 import "types_run.taut"
 import "freevars.taut"
-import std::List
-import std::Map
-import std::Text
+import std::list
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "rows.taut"
+import "lin_live.taut"
+import "rows_base.taut"
 import "ty.taut"
 import "../../surface/src/surface.taut"
 import "../../text/src/text.taut"
+import "effect_key.taut"
 
 // Use, control-flow linearity and borrows (`lin.rs`): the checker's state and
-// what it does to the bindings, in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
+// what it does to the bindings, in the proof language (`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」).
 // Every name a program binds is a binding, kept by its index (the order it was
 // pushed in); `count` is how many there are.
 
@@ -40,6 +46,9 @@ pub(open) inductive LinState: Type {
   BsMoved: LinState
   // Moved on some paths.
   BsMaybe: LinState
+  // Some fields moved out (`p.fst`), each by its path from the binding: the
+  // others can still be taken or borrowed, the whole no longer.
+  BsPartial(moved: List(List(Text))): LinState
 }
 
 pub(open) inductive Binding: Type {
@@ -48,23 +57,58 @@ pub(open) inductive Binding: Type {
     r#class: LinClass,
     mode: LinMode,
     state: LinState,
-    // The loops around its declaration, in its function.
-    loops: Nat,
-    // `let &x` bindings that freeze it: their index, and whether what they
+    // `let x` bindings that freeze it: their index, and whether what they
     // borrow is lent `&mut`. The oldest first.
-    frozen: List(Pair(Nat, Bool)),
+    frozen: List(Nat × Bool × List(Text)),
     // Not a name but a value moved into a call whose later arguments are still
     // being evaluated: it lives across them.
     held: Bool,
     // A shared view (`Option(&A)`, a `Pair` of one): it is copied.
-    shared_view: Bool
+    shared_view: Bool,
+    // A parameter of the function or closure being walked. A `&mut` one is
+    // the caller's binding and may take in only what the caller lent.
+    param: Bool,
+    // A parameter of a closure: the borrows it brings in belong to the caller,
+    // so a value of it that holds one may not be stored where the closure's
+    // captures outlive the call.
+    lam_param: Bool,
+    // A `let`, a `var` or a parameter of the body walked whose type holds no
+    // opaque view: what it freezes stays frozen only while it is live
+    // (`lin_live.taut`). Any other holder freezes to the end of its scope.
+    nll: Bool,
+    // Its value may be a lent function, or hold one: a function behind a `&`
+    // that came from a parameter or from a closure that borrows, not a copy
+    // out of owned data. Such a function is called or lent on, and a copy of
+    // it is still lent.
+    lent_function: Bool,
+    // A parameter of a function type behind `&` or `&mut`
+    // (`lin_param_binding`): lending it is an exclusive use.
+    fn_borrow: Bool,
+    // The lent functions this one may be, under another name
+    // (`let g := cb`, `let g := same(cb)`): lending it lends them.
+    origins: List(Nat),
+    // The type of the name, for the fields it can be taken apart by.
+    ty: Option(Ty),
+    // For a closure written here, whether its body consumes what it captured
+    // (`once` of `lin.rs`): such a closure is called once and never lent to a
+    // borrowed function parameter.
+    once: Option(Bool)
   ): Binding
 }
 
 // A `handle` whose body is being walked: where its bindings start, what it
 // answers, and the bindings its `return` arm uses, which live across the body.
+// `arms`: the operations it has an arm for, guarded or not. `owned_at_arm`: the
+// bindings from outside that are not moved where the body may perform one of
+// them, which the function still owns when an arm runs.
 pub(open) inductive HandleCtx: Type {
-  HandleCtxMk(start: Nat, answers: Ordmap(Text, Bool), return_uses: List(Nat)): HandleCtx
+  HandleCtxMk(
+    start: Nat,
+    answers: Ordmap(Text, Bool),
+    return_uses: List(Nat),
+    arms: List(Text),
+    owned_at_arm: List(Nat)
+  ): HandleCtx
 }
 
 // A function's body (or a closure's) being walked. `handles` is the newest
@@ -73,10 +117,8 @@ pub(open) inductive Frame: Type {
   FrameMk(
     base: Nat,
     handles: List(HandleCtx),
-    // How many `budget` bodies of this function the walk is inside; `loops`,
-    // how many loops.
+    // How many `budget` bodies of this function the walk is inside.
     budgets: Nat,
-    loops: Nat,
     bounded: List(Text),
     direct_bounded: List(Text),
     returns_borrow: Bool
@@ -122,11 +164,69 @@ pub(open) inductive Lin: Type {
     arm_floor: Option(Nat),
     // Inside the arm of a `direct` operation: the bindings below the first
     // index are outside the handle, and the arm may not move them.
-    arm_direct: Option(Pair(Nat, Text)),
-    // What the call a `let &x` binds lends.
-    lent: List(Pair(Nat, Bool)),
-    steps: Nat
+    arm_direct: Option(Nat × Text),
+    // What the call a `let x` binds lends.
+    lent: List(Nat × Bool × List(Text)),
+    // `borrows(…)`: for each function that writes it, whether its result
+    // may borrow each parameter.
+    // For each function with `borrows(…)`, per parameter: the field paths of
+    // it the result borrows (`borrows(p.a)` is `a` of `p`, `borrows(p)` the
+    // empty path), or `None` where it is not named.
+    lends: Ordmap(Text, List(Option(List(List(Text))))),
+    // `borrows(…)`: for each function that writes it, the operations of its
+    // row it names.
+    lends_effects: Ordmap(Text, List(Text)),
+    // In the arm of an operation whose result holds a borrow: what the arm
+    // answers is lent to `k`, so a `&` of a binding from outside is allowed.
+    arm_lends: Bool,
+    // What a result of each operation that lends borrows here: what its
+    // innermost handle answers, innermost first.
+    lenders: List(Text × List(Nat × Bool × List(Text))),
+    // The bindings lent through an operation, with the operation.
+    lent_through: List(Nat × Text),
+    // Whether a lent function was met since this was last cleared: a value
+    // walked since then may be one, or hold one.
+    met: Bool,
+    // The lent functions met, as `met` says one was.
+    met_origins: List(Nat),
+    // The borrows the earlier arguments of the calls around hold: those calls
+    // have not run yet.
+    outer_accesses: List(Access),
+    // Whether the closure checked last owns a value it captured that is not
+    // duplicable.
+    closure_owns: Bool,
+    // Whether the body of the closure checked last consumes a value it captured.
+    closure_consumes: Bool,
+    // For the call being walked: whether each argument met a lent function,
+    // what the closures written in place as arguments borrow, and such a
+    // closure that owns what it captured, gone when the call returns.
+    arg_mets: List(Bool),
+    closure_lent: List(Nat × Bool × List(Text)),
+    temporary: Option(TySpan),
+    // For each function, whether each parameter is a borrow of one of its
+    // type parameters (`x: &A`): a lent function is not given to one.
+    generic_borrows: Ordmap(Text, List(Bool)),
+    // For each function whose signature is parametric (no `where`): its
+    // type parameters and parameters as written, for what a `&mut`
+    // argument may take in.
+    parametric: Ordmap(Text, LinParametric),
+    // The starts of the `budget`s whose stopped body cannot leave the
+    // `handle` around them (`confined_budget`): they may borrow from outside.
+    confined: List(Nat),
+    steps: Nat,
+    // Where the bindings of the function walked are live, the innermost
+    // first: a closure's body is part of its function's.
+    live: List(LiveMap)
   ): Lin
+}
+
+// A function's signature as written: its type parameters, which parameters
+// are borrowed, and their types.
+pub(open) struct LinParametric {
+  generics: List(Text),
+  effects: Option(List(RowEntry)),
+  r#borrows: List(Option(Bool)),
+  types: List(Option(SurfaceTerm))
 }
 
 pub fn lin_new(types: TypeReport, rows: RowReport, steps: Nat): Lin {
@@ -141,7 +241,24 @@ pub fn lin_new(types: TypeReport, rows: RowReport, steps: Nat): Lin {
     arm_floor: None,
     arm_direct: None,
     lent: Nil,
-    steps: steps
+    lends: Ordmap::empty(),
+    lends_effects: Ordmap::empty(),
+    arm_lends: false,
+    lenders: Nil,
+    lent_through: Nil,
+    met: false,
+    met_origins: Nil,
+    outer_accesses: Nil,
+    closure_owns: false,
+    closure_consumes: false,
+    arg_mets: Nil,
+    closure_lent: Nil,
+    temporary: None,
+    generic_borrows: Ordmap::empty(),
+    parametric: Ordmap::empty(),
+    confined: Nil,
+    steps: steps,
+    live: Nil
   }
 }
 
@@ -150,7 +267,6 @@ pub fn frame_default(): Frame {
     base: 0,
     handles: Nil,
     budgets: 0,
-    loops: 0,
     bounded: Nil,
     direct_bounded: Nil,
     returns_borrow: false
@@ -163,15 +279,22 @@ pub fn binding_dummy(): Binding {
     r#class: ClassDup,
     mode: ModeOwned,
     state: BsOwned,
-    loops: 0,
     frozen: Nil,
     held: false,
-    shared_view: false
+    shared_view: false,
+    param: false,
+    lam_param: false,
+    nll: false,
+    lent_function: false,
+    fn_borrow: false,
+    origins: Nil,
+    ty: None,
+    once: None
   }
 }
 
 pub fn class_of_kind(k: Kind): LinClass {
-  ⊢ LinClass from match k {
+  match k {
     KindCopy => ClassDup
     KindShared => ClassDup
     KindAffine => ClassAffine
@@ -180,94 +303,121 @@ pub fn class_of_kind(k: Kind): LinClass {
 }
 
 pub fn class_word(c: LinClass): Text {
-  ⊢ Text from match c {
-    ClassDup => "shared"
-    ClassAffine => "affine"
-    ClassLinear => "linear"
+  match c {
+    ClassDup => lin_class_shared_message()
+    ClassAffine => lin_class_affine_message()
+    ClassLinear => lin_class_linear_message()
   }
 }
 
 pub fn class_is_dup(c: LinClass): Bool {
-  ⊢ Bool from match c {
+  match c {
     ClassDup => true
     _ => false
   }
 }
 
 pub fn class_is_linear(c: LinClass): Bool {
-  ⊢ Bool from match c {
+  match c {
     ClassLinear => true
     _ => false
   }
 }
 
 pub fn mode_is_owned(m: LinMode): Bool {
-  ⊢ Bool from match m {
+  match m {
     ModeOwned => true
     _ => false
   }
 }
 
+pub fn mode_is_var_in_closure(m: LinMode): Bool {
+  match m {
+    ModeVarInClosure => true
+    _ => false
+  }
+}
+
 pub fn mode_is_borrow(m: LinMode): Bool {
-  ⊢ Bool from match m {
-    ModeBorrow(x) => true
+  match m {
+    ModeBorrow(^x) => true
     _ => false
   }
 }
 
 pub fn mode_is_shared_borrow(m: LinMode): Bool {
-  ⊢ Bool from match m {
+  match m {
     ModeBorrow(x) => not(x)
     _ => false
   }
 }
 
 pub fn mode_borrows(m: LinMode): Bool {
-  ⊢ Bool from match m {
-    ModeBorrow(x) => true
-    ModeBorrowClosure(names, x) => true
+  match m {
+    ModeBorrow(^x) => true
+    ModeBorrowClosure(^names, ^x) => true
     _ => false
   }
 }
 
 pub fn state_is_owned(s: LinState): Bool {
-  ⊢ Bool from match s {
+  match s {
     BsOwned => true
     _ => false
   }
 }
 
 pub fn state_is_moved(s: LinState): Bool {
-  ⊢ Bool from match s {
+  match s {
     BsMoved => true
     _ => false
   }
 }
 
+pub fn paths_eq(a: List(List(Text)), b: List(List(Text))): Bool {
+  match a {
+    Nil => ⊢ Bool from match b {
+      Nil => true
+      Cons(^y, ^ys) => false
+    }
+    Cons(x, xs) => ⊢ Bool from match b {
+      Nil => false
+      Cons(y, ys) => text_list_eq(x, y) && paths_eq(xs, ys)
+    }
+  }
+}
+
 pub fn state_eq(a: LinState, b: LinState): Bool {
-  ⊢ Bool from match a {
+  match a {
     BsOwned => state_is_owned(b)
     BsMoved => state_is_moved(b)
-    BsMaybe => not(state_is_owned(b)) && not(state_is_moved(b))
+    BsMaybe => ⊢ Bool from match b {
+      BsMaybe => true
+      _ => false
+    }
+    BsPartial(m) => ⊢ Bool from match b {
+      BsPartial(n) => paths_eq(m, n)
+      _ => false
+    }
   }
 }
 
 pub fn pos_is_let(p: LinPos): Bool {
-  ⊢ Bool from match p {
+  match p {
     PosLet => true
     _ => false
   }
 }
 
 pub fn pos_is_result(p: LinPos): Bool {
-  ⊢ Bool from match p {
+  match p {
     PosResult => true
     _ => false
   }
 }
 
 pub fn pos_is_drop(p: LinPos): Bool {
-  ⊢ Bool from match p {
+  match p {
     PosDrop => true
     _ => false
   }
@@ -279,10 +429,57 @@ pub fn binding_with_state(b: Binding, s: LinState): Binding {
     r#class: b.r#class,
     mode: b.mode,
     state: s,
-    loops: b.loops,
     frozen: b.frozen,
     held: b.held,
-    shared_view: b.shared_view
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
+  }
+}
+
+pub fn binding_with_once(b: Binding, once: Option(Bool)): Binding {
+  Binding {
+    name: b.name,
+    r#class: b.r#class,
+    mode: b.mode,
+    state: b.state,
+    frozen: b.frozen,
+    held: b.held,
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: once
+  }
+}
+
+pub fn binding_with_ty(b: Binding, ty: Option(Ty)): Binding {
+  Binding {
+    name: b.name,
+    r#class: b.r#class,
+    mode: b.mode,
+    state: b.state,
+    frozen: b.frozen,
+    held: b.held,
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: ty,
+    once: b.once
   }
 }
 
@@ -292,10 +489,17 @@ pub fn binding_with_mode(b: Binding, m: LinMode): Binding {
     r#class: b.r#class,
     mode: m,
     state: b.state,
-    loops: b.loops,
     frozen: b.frozen,
     held: b.held,
-    shared_view: b.shared_view
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
   }
 }
 
@@ -305,10 +509,17 @@ pub fn binding_with_class(b: Binding, c: LinClass): Binding {
     r#class: c,
     mode: b.mode,
     state: b.state,
-    loops: b.loops,
     frozen: b.frozen,
     held: b.held,
-    shared_view: b.shared_view
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
   }
 }
 
@@ -318,23 +529,97 @@ pub fn binding_with_held(b: Binding, h: Bool): Binding {
     r#class: b.r#class,
     mode: b.mode,
     state: b.state,
-    loops: b.loops,
     frozen: b.frozen,
     held: h,
-    shared_view: b.shared_view
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
   }
 }
 
-pub fn binding_with_frozen(b: Binding, f: List(Pair(Nat, Bool))): Binding {
+pub fn binding_with_frozen(b: Binding, f: List(Nat × Bool × List(Text))): Binding {
   Binding {
     name: b.name,
     r#class: b.r#class,
     mode: b.mode,
     state: b.state,
-    loops: b.loops,
     frozen: f,
     held: b.held,
-    shared_view: b.shared_view
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
+  }
+}
+
+pub fn binding_as_param(b: Binding): Binding {
+  Binding {
+    name: b.name,
+    r#class: b.r#class,
+    mode: b.mode,
+    state: b.state,
+    frozen: b.frozen,
+    held: b.held,
+    shared_view: b.shared_view,
+    param: true,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
+  }
+}
+
+pub fn binding_as_lam_param(b: Binding): Binding {
+  Binding {
+    name: b.name,
+    r#class: b.r#class,
+    mode: b.mode,
+    state: b.state,
+    frozen: b.frozen,
+    held: b.held,
+    shared_view: b.shared_view,
+    param: true,
+    lam_param: true,
+    nll: false,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
+  }
+}
+
+pub fn binding_with_nll(b: Binding, v: Bool): Binding {
+  Binding {
+    name: b.name,
+    r#class: b.r#class,
+    mode: b.mode,
+    state: b.state,
+    frozen: b.frozen,
+    held: b.held,
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: v,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
   }
 }
 
@@ -344,10 +629,68 @@ pub fn binding_with_shared_view(b: Binding, v: Bool): Binding {
     r#class: b.r#class,
     mode: b.mode,
     state: b.state,
-    loops: b.loops,
     frozen: b.frozen,
     held: b.held,
-    shared_view: v
+    shared_view: v,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
+  }
+}
+
+// A lent function, or a value that holds one: a borrow, affine as a closure
+// that borrows is, whatever kind its type has.
+pub fn binding_lend_function(b: Binding, mutable: Bool): Binding {
+  let mode: LinMode := ⊢ LinMode from match b.mode {
+    ModeOwned => ModeBorrow(mutable)
+    _ => b.mode
+  }
+  let r#class: LinClass := ⊢ LinClass from match b.r#class {
+    ClassDup => ClassAffine
+    _ => b.r#class
+  }
+  Binding {
+    name: b.name,
+    r#class: r#class,
+    mode: mode,
+    state: b.state,
+    frozen: b.frozen,
+    held: b.held,
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: true,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
+  }
+}
+
+// A value that may hold a lent function it took in, as it is otherwise.
+pub fn binding_holding_lent(b: Binding): Binding {
+  Binding {
+    name: b.name,
+    r#class: b.r#class,
+    mode: b.mode,
+    state: b.state,
+    frozen: b.frozen,
+    held: b.held,
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: true,
+    fn_borrow: b.fn_borrow,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
   }
 }
 
@@ -356,50 +699,50 @@ pub fn binding_owns(b: Binding): Bool {
     ModeOwned => true
     ModeVar => true
     ModeVarInClosure => true
-    ModeBorrow(m) => false
-    ModeBorrowClosure(names, m) => false
+    ModeBorrow(^m) => false
+    ModeBorrowClosure(^names, ^m) => false
   })
 }
 
 pub fn lin_get(c: Lin, i: Nat): Binding {
-  ⊢ Binding from match Ordmap::get(c.bindings, i, Ordmap::compare_nat) {
+  match Ordmap::get(c.bindings, i, Ordmap::compare_nat) {
     Some(b) => b
     None => binding_dummy()
   }
 }
 
-pub fn lin_put(&mut c: Lin, i: Nat, b: Binding): Unit {
+pub fn lin_put(c: &mut Lin, i: Nat, b: Binding): Unit {
   set_to(&mut c.bindings, Ordmap::insert(c.bindings, i, b, Ordmap::compare_nat))
 }
 
-pub fn lin_set_state(&mut c: Lin, i: Nat, s: LinState): Unit {
+pub fn lin_set_state(c: &mut Lin, i: Nat, s: LinState): Unit {
   lin_put(&mut c, i, binding_with_state(lin_get(c, i), s))
 }
 
 pub fn lin_frame(c: Lin): Frame {
-  ⊢ Frame from match c.frames {
-    Cons(f, rest) => f
+  match c.frames {
+    Cons(f, ^rest) => f
     Nil => frame_default()
   }
 }
 
-pub fn lin_set_frame(&mut c: Lin, f: Frame): Unit {
-  ⊢ Unit from match c.frames {
-    Cons(old, rest) => set_to(&mut c.frames, Cons(f, rest))
+pub fn lin_set_frame(c: &mut Lin, f: Frame): Unit {
+  match c.frames {
+    Cons(^old, rest) => set_to(&mut c.frames, Cons(f, rest))
     Nil => #()
   }
 }
 
-pub fn lin_push_frame(&mut c: Lin, f: Frame): Unit {
+pub fn lin_push_frame(c: &mut Lin, f: Frame): Unit {
   set_to(&mut c.frames, Cons(f, c.frames))
 }
 
-pub fn lin_pop_frame(&mut c: Lin): Unit {
+pub fn lin_pop_frame(c: &mut Lin): Unit {
   set_to(&mut c.frames, List::tail(c.frames))
 }
 
 pub fn lin_has_error(es: List(LinError), message: Text, span: TySpan): Bool {
-  ⊢ Bool from match es {
+  match es {
     Nil => false
     Cons(e, rest) => (
       e.message == message && e.start == span.start && e.end == span.end
@@ -407,7 +750,7 @@ pub fn lin_has_error(es: List(LinError), message: Text, span: TySpan): Bool {
   }
 }
 
-pub fn lin_error(&mut c: Lin, message: Text, span: TySpan): Unit {
+pub fn lin_error(c: &mut Lin, message: Text, span: TySpan): Unit {
   if not(lin_has_error(c.errors, message, span)) {
     set_to(
       &mut c.errors,
@@ -419,7 +762,7 @@ pub fn lin_error(&mut c: Lin, message: Text, span: TySpan): Unit {
 // The newest binding below index `n` named `name`; a held value (`held`)
 // is not a name and is skipped.
 pub fn lin_find_below(n: Nat, c: Lin, name: Text): Option(Nat) {
-  ⊢ Option(Nat) from match n {
+  match n {
     Zero => None
     Succ(i) => if lin_get(c, i).name == name && not(lin_get(c, i).held) {
       Some(i)
@@ -441,39 +784,119 @@ pub fn lin_term_type(c: Lin, t: SurfaceTerm): Option(Ty) {
   Ordmap::get(c.types.terms, term_at_of(t), term_at_compare)
 }
 
+// Whether a value of `ty` may hold a lent function, and whether behind
+// `&mut`.
+pub fn lin_lent(c: Lin, ty: Option(Ty)): Option(Bool) {
+  match ty {
+    Some(t) => datas_lent_function(c.types.datas, t)
+    None => None
+  }
+}
+
+pub fn lin_holds_lent(c: Lin, ty: Option(Ty)): Bool {
+  match lin_lent(c, ty) {
+    Some(^m) => true
+    None => false
+  }
+}
+
+// Binding `i` is a lent function, or holds one.
+pub fn lin_lend_function(c: &mut Lin, i: Nat, mutable: Bool): Unit {
+  lin_put(&mut c, i, binding_lend_function(lin_get(c, i), mutable))
+}
+
+pub fn binding_with_origins(b: Binding, origins: List(Nat)): Binding {
+  Binding {
+    name: b.name,
+    r#class: b.r#class,
+    mode: b.mode,
+    state: b.state,
+    frozen: b.frozen,
+    held: b.held,
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: b.fn_borrow,
+    origins: origins,
+    ty: b.ty,
+    once: b.once
+  }
+}
+
+pub fn origin_listed(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => Nat::eq(x, y) || origin_listed(rest, x)
+  }
+}
+
+// `xs` and those of `ys` it does not list.
+pub fn origins_join(xs: List(Nat), ys: List(Nat)): List(Nat) {
+  match ys {
+    Nil => xs
+    Cons(y, rest) => if origin_listed(xs, y) {
+      origins_join(xs, rest)
+    } else {
+      origins_join(List::append(xs, Cons(y, Nil)), rest)
+    }
+  }
+}
+
+// The lent functions binding `i` may be: itself, or those it renames.
+pub fn lin_origins_of(c: Lin, i: Nat): List(Nat) {
+  match lin_get(c, i).origins {
+    Nil => Cons(i, Nil)
+    Cons(o, rest) => Cons(o, rest)
+  }
+}
+
+// Notes that binding `i`, read or lent here, may be a lent function.
+pub fn lin_meet(c: &mut Lin, i: Nat): Unit {
+  let b: Binding := lin_get(c, i)
+  if b.lent_function {
+    set_to(&mut c.met_origins, origins_join(c.met_origins, lin_origins_of(c, i)))
+  }
+  if b.lent_function || (⊢ Bool from match b.mode {
+    ModeBorrowClosure(^names, ^m) => true
+    _ => false
+  }) {
+    set_to(&mut c.met, true)
+  }
+}
+
 pub fn lin_kind(c: Lin, t: Ty): LinClass {
   class_of_kind(datas_kind(c.types.datas, t))
 }
 
-pub fn lin_class_of_borrow(r#class: LinClass, m: Bool): Pair(LinClass, Option(Bool)) {
-  if class_is_dup(
-    r#class
-  ) { Pair { fst: ClassDup, snd: None } } else { Pair { fst: r#class, snd: Some(m) } }
+pub fn lin_class_of_borrow(r#class: LinClass, m: Bool): LinClass × Option(Bool) {
+  // A `&mut` of a duplicable value is still a `&mut`: it writes through.
+  if class_is_dup(r#class) && not(m) { #(ClassDup, None) } else { #(r#class, Some(m)) }
 }
 
-pub fn lin_class_of_value(c: Lin, t: Ty): Pair(LinClass, Option(Bool)) {
-  ⊢ Pair(LinClass, Option(Bool)) from match datas_view_borrow(c.types.datas, t) {
-    Some(m) => Pair { fst: ClassAffine, snd: Some(m) }
-    None => Pair { fst: lin_kind(c, t), snd: None }
+pub fn lin_class_of_value(c: Lin, t: Ty): LinClass × Option(Bool) {
+  ⊢ (LinClass × Option(Bool)) from match datas_view_borrow(c.types.datas, t) {
+    Some(m) => #(ClassAffine, Some(m))
+    None => #(lin_kind(c, t), None)
   }
 }
 
-pub fn lin_class_of_ty(c: Lin, t: Ty): Pair(LinClass, Option(Bool)) {
-  ⊢ Pair(LinClass, Option(Bool)) from match t {
+pub fn lin_class_of_ty(c: Lin, t: Ty): LinClass × Option(Bool) {
+  ⊢ (LinClass × Option(Bool)) from match t {
     TyBorrow(inner, m) => lin_class_of_borrow(lin_kind(c, inner), m)
     _ => lin_class_of_value(c, t)
   }
 }
 
-pub fn lin_class_of(c: Lin, ty: Option(Ty)): Pair(LinClass, Option(Bool)) {
-  ⊢ Pair(LinClass, Option(Bool)) from match ty {
-    None => Pair { fst: ClassDup, snd: None }
+pub fn lin_class_of(c: Lin, ty: Option(Ty)): LinClass × Option(Bool) {
+  ⊢ (LinClass × Option(Bool)) from match ty {
+    None => #(ClassDup, None)
     Some(t) => lin_class_of_ty(c, t)
   }
 }
 
-pub fn lin_push_binding(&mut c: Lin, name: Text, r#class: LinClass, mode: LinMode): Nat {
-  let loops := lin_frame(c).loops
+pub fn lin_push_binding(c: &mut Lin, name: Text, r#class: LinClass, mode: LinMode): Nat {
   let i := c.count
   lin_put(
     &mut c,
@@ -483,10 +906,17 @@ pub fn lin_push_binding(&mut c: Lin, name: Text, r#class: LinClass, mode: LinMod
       r#class: r#class,
       mode: mode,
       state: BsOwned,
-      loops: loops,
       frozen: Nil,
       held: false,
-      shared_view: false
+      shared_view: false,
+      param: false,
+      lam_param: false,
+      nll: false,
+      lent_function: false,
+      fn_borrow: false,
+      origins: Nil,
+      ty: None,
+      once: None
     }
   )
   set_to(&mut c.count, i + 1)
@@ -494,54 +924,55 @@ pub fn lin_push_binding(&mut c: Lin, name: Text, r#class: LinClass, mode: LinMod
 }
 
 pub fn view_is_shared(v: Option(Bool)): Bool {
-  ⊢ Bool from match v {
+  match v {
     Some(m) => not(m)
     None => false
   }
 }
 
 pub fn lin_ty_shared_view(c: Lin, t: Ty): Bool {
-  ⊢ Bool from match t {
-    TyBorrow(x, m) => false
+  match t {
+    TyBorrow(^x, ^m) => false
     _ => view_is_shared(datas_view_borrow(c.types.datas, t))
   }
 }
 
 pub fn lin_shared_view(c: Lin, ty: Option(Ty)): Bool {
-  ⊢ Bool from match ty {
+  match ty {
     Some(t) => lin_ty_shared_view(c, t)
     None => false
   }
 }
 
-pub fn lin_mode_of(is_var: Bool, borrow: Option(Bool)): LinMode {
+pub fn lin_mode_of(is_var: Bool, r#borrow: Option(Bool)): LinMode {
   if is_var {
     ModeVar
   } else {
-    ⊢ LinMode from match borrow {
+    ⊢ LinMode from match r#borrow {
       Some(m) => ModeBorrow(m)
       None => ModeOwned
     }
   }
 }
 
-pub fn lin_push(&mut c: Lin, name: Text, site: Nat, is_var: Bool): Nat {
+pub fn lin_push(c: &mut Lin, name: Text, site: Nat, is_var: Bool): Nat {
   let cm := lin_class_of(c, lin_local_type(c, name, site))
   let i := lin_push_binding(&mut c, name, cm.fst, lin_mode_of(is_var, cm.snd))
+  lin_put(&mut c, i, binding_with_ty(lin_get(c, i), lin_local_type(c, name, site)))
   if lin_shared_view(c, lin_local_type(c, name, site)) {
     lin_put(&mut c, i, binding_with_shared_view(lin_get(c, i), true))
   }
   i
 }
 
-pub fn lin_push_unit(&mut c: Lin, name: Text, site: Nat, is_var: Bool): Unit {
+pub fn lin_push_unit(c: &mut Lin, name: Text, site: Nat, is_var: Bool): Unit {
   let i := lin_push(&mut c, name, site, is_var)
   #()
 }
 
 // The bindings from `mark` on are gone (the indexes below `n`).
 pub fn lin_remove_below(n: Nat, m: Ordmap(Nat, Binding), mark: Nat): Ordmap(Nat, Binding) {
-  ⊢ Ordmap(Nat, Binding) from match n {
+  match n {
     Zero => m
     Succ(i) => if i < mark { m } else {
       lin_remove_below(i, Ordmap::remove(m, i, Ordmap::compare_nat), mark)
@@ -549,23 +980,153 @@ pub fn lin_remove_below(n: Nat, m: Ordmap(Nat, Binding), mark: Nat): Ordmap(Nat,
   }
 }
 
-pub fn lin_truncate(&mut c: Lin, mark: Nat): Unit {
+pub fn lin_truncate(c: &mut Lin, mark: Nat): Unit {
   if mark < c.count {
     set_to(&mut c.bindings, lin_remove_below(c.count, c.bindings, mark))
     set_to(&mut c.count, mark)
   }
 }
 
-pub fn lin_report_one(&mut c: Lin, i: Nat, span: TySpan): Unit {
+pub fn lin_field_find(fs: List(DataField), seg: Text): Option(Ty) {
+  match fs {
+    Nil => None
+    Cons(f, rest) => ⊢ Option(Ty) from match f.name {
+      Some(n) => if n == seg { Some(f.ty) } else { lin_field_find(rest, seg) }
+      None => lin_field_find(rest, seg)
+    }
+  }
+}
+
+// The type of the field `seg` of a value of the declaration `d` at `args`.
+pub fn lin_field_type(c: Lin, d: Text, args: List(Ty), seg: Text): Option(Ty) {
+  lin_field_find(datas_fields(c.types.datas, d, 0, args), seg)
+}
+
+// `m` is a prefix of `path`.
+pub fn path_starts_with(path: List(Text), m: List(Text)): Bool {
+  match m {
+    Nil => true
+    Cons(x, xs) => ⊢ Bool from match path {
+      Nil => false
+      Cons(y, ys) => x == y && path_starts_with(ys, xs)
+    }
+  }
+}
+
+// One of `moved` is a prefix of `path`: the place was taken out.
+pub fn paths_taken(moved: List(List(Text)), path: List(Text)): Bool {
+  match moved {
+    Nil => false
+    Cons(m, rest) => path_starts_with(path, m) || paths_taken(rest, path)
+  }
+}
+
+// One of `moved` is inside `path`.
+pub fn paths_under(moved: List(List(Text)), path: List(Text)): Bool {
+  match moved {
+    Nil => false
+    Cons(m, rest) => (List::length(m) > List::length(path) && path_starts_with(m, path)) || paths_under(
+      rest,
+      path
+    )
+  }
+}
+
+// One of `moved` is inside the other of the same place.
+pub fn paths_overlap_any(moved: List(List(Text)), path: List(Text)): Bool {
+  match moved {
+    Nil => false
+    Cons(m, rest) => paths_overlap(m, path) || paths_overlap_any(rest, path)
+  }
+}
+
+mutual {
+  pub fn lin_left_in_fields(
+    k: Nat,
+    c: Lin,
+    fs: List(DataField),
+    moved: List(List(Text)),
+    at: List(Text),
+    left: List(List(Text))
+  ): List(List(Text)) {
+    match k {
+      Zero => left
+      Succ(j) => ⊢ List(List(Text)) from match fs {
+        Nil => left
+        Cons(f, rest) => ⊢ List(List(Text)) from match f.name {
+          None => lin_left_in_fields(j, c, rest, moved, at, left)
+          Some(n) => {
+            let here: List(Text) := List::append(at, Cons(n, Nil))
+            let next: List(List(Text)) := if paths_taken(moved, here) {
+              left
+            } else if paths_under(moved, here) {
+              lin_linear_left(j, c, f.ty, moved, here, left)
+            } else if class_is_linear(lin_kind(c, f.ty)) {
+              List::append(left, Cons(here, Nil))
+            } else {
+              left
+            }
+            lin_left_in_fields(j, c, rest, moved, at, next)
+          }
+        }
+      }
+    }
+  }
+
+  // The linear fields of a value of `ty` under `at` that no path of `moved`
+  // took out. The fields walked are bounded by `k`.
+  pub fn lin_linear_left(
+    k: Nat,
+    c: Lin,
+    ty: Ty,
+    moved: List(List(Text)),
+    at: List(Text),
+    left: List(List(Text))
+  ): List(List(Text)) {
+    match k {
+      Zero => left
+      Succ(j) => ⊢ List(List(Text)) from match ty {
+        TyNamed(d, args) => ⊢ List(List(Text)) from match datas_decl(c.types.datas, surface_name_text(d)) {
+          Some(data) => if data.is_struct {
+            lin_left_in_fields(j, c, datas_fields(c.types.datas, surface_name_text(d), 0, args), moved, at, left)
+          } else {
+            left
+          }
+          None => left
+        }
+        _ => left
+      }
+    }
+  }
+}
+
+pub fn lin_report_left(c: &mut Lin, left: List(List(Text)), span: TySpan): Unit {
+  match left {
+    Nil => #()
+    Cons(path, rest) => {
+      lin_error(&mut c, lin_not_used_message(text_join(path, ".")), span)
+      lin_report_left(&mut c, rest, span)
+    }
+  }
+}
+
+pub fn lin_report_one(c: &mut Lin, i: Nat, span: TySpan): Unit {
   let b := lin_get(c, i)
-  if class_is_linear(b.r#class) && mode_is_owned(b.mode) && state_is_owned(b.state) {
-    lin_error(&mut c, cat2(b.name, " is not used"), span)
+  if class_is_linear(b.r#class) && mode_is_owned(b.mode) {
+    ⊢ Unit from match b.state {
+      BsOwned => lin_error(&mut c, lin_not_used_message(b.name), span)
+      BsPartial(moved) => ⊢ Unit from match b.ty {
+        Some(ty) => lin_report_left(&mut c, lin_linear_left(4096, c, ty, moved, Cons(b.name, Nil), Nil), span)
+        None => #()
+      }
+      _ => #()
+    }
   }
 }
 
 // The linear bindings from `mark` on (below `n`) that are still owned.
-pub fn lin_report_unused_below(n: Nat, &mut c: Lin, mark: Nat, span: TySpan): Unit {
-  ⊢ Unit from match n {
+pub fn lin_report_unused_below(n: Nat, c: &mut Lin, mark: Nat, span: TySpan): Unit {
+  match n {
     Zero => #()
     Succ(i) => if mark <= i {
       lin_report_one(&mut c, i, span)
@@ -574,8 +1135,8 @@ pub fn lin_report_unused_below(n: Nat, &mut c: Lin, mark: Nat, span: TySpan): Un
   }
 }
 
-pub fn frozen_keep(fs: List(Pair(Nat, Bool)), mark: Nat): List(Pair(Nat, Bool)) {
-  ⊢ List(Pair(Nat, Bool)) from match fs {
+pub fn frozen_keep(fs: List(Nat × Bool × List(Text)), mark: Nat): List(Nat × Bool × List(Text)) {
+  match fs {
     Nil => Nil
     Cons(f, rest) => if f.fst < mark { Cons(f, frozen_keep(rest, mark)) } else {
       frozen_keep(rest, mark)
@@ -583,16 +1144,16 @@ pub fn frozen_keep(fs: List(Pair(Nat, Bool)), mark: Nat): List(Pair(Nat, Bool)) 
   }
 }
 
-pub fn lin_unfreeze_one(&mut c: Lin, i: Nat, mark: Nat): Unit {
+pub fn lin_unfreeze_one(c: &mut Lin, i: Nat, mark: Nat): Unit {
   let b := lin_get(c, i)
   ⊢ Unit from match b.frozen {
     Nil => #()
-    Cons(f, rest) => lin_put(&mut c, i, binding_with_frozen(b, frozen_keep(b.frozen, mark)))
+    Cons(^f, ^rest) => lin_put(&mut c, i, binding_with_frozen(b, frozen_keep(b.frozen, mark)))
   }
 }
 
-pub fn lin_unfreeze_below(n: Nat, &mut c: Lin, mark: Nat): Unit {
-  ⊢ Unit from match n {
+pub fn lin_unfreeze_below(n: Nat, c: &mut Lin, mark: Nat): Unit {
+  match n {
     Zero => #()
     Succ(i) => {
       lin_unfreeze_one(&mut c, i, mark)
@@ -603,12 +1164,59 @@ pub fn lin_unfreeze_below(n: Nat, &mut c: Lin, mark: Nat): Unit {
 
 // Leaves a scope: reports the linear bindings left (unless the path returned)
 // and lifts the freezes the leaving bindings made.
-pub fn lin_pop_to(&mut c: Lin, mark: Nat, span: TySpan): Unit {
+// An owner that leaves while a holder from outside the scope is still live
+// would leave that holder pointing at nothing.
+pub fn lin_outlived_one(
+  c: &mut Lin,
+  owner: Nat,
+  fs: List(Nat × Bool × List(Text)),
+  mark: Nat,
+  span: TySpan,
+  reported: List(Nat)
+): List(Nat) {
+  match fs {
+    Nil => reported
+    Cons(f, rest) => if f.fst < mark && not(nat_in(reported, f.fst)) && lin_holder_live(c, f.fst, span) {
+      lin_error(
+        &mut c,
+        lin_does_not_live_long_enough_message(lin_get(c, owner).name, lin_get(c, f.fst).name),
+        span
+      )
+      lin_outlived_one(&mut c, owner, rest, mark, span, Cons(f.fst, reported))
+    } else {
+      lin_outlived_one(&mut c, owner, rest, mark, span, reported)
+    }
+  }
+}
+
+pub fn nat_in(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => Nat::eq(x, y) || nat_in(rest, x)
+  }
+}
+
+// The owners from `mark` on (below `n`), the oldest first.
+pub fn lin_outlived_below(n: Nat, c: &mut Lin, mark: Nat, span: TySpan): List(Nat) {
+  match n {
+    Zero => Nil
+    Succ(i) => if mark <= i {
+      let reported := lin_outlived_below(i, &mut c, mark, span)
+      lin_outlived_one(&mut c, i, lin_get(c, i).frozen, mark, span, reported)
+    } else {
+      Nil
+    }
+  }
+}
+
+pub fn lin_pop_to(c: &mut Lin, mark: Nat, span: TySpan): Unit {
   if not(c.dead) {
     lin_report_unused_below(c.count, &mut c, mark, span)
+    let reported := lin_outlived_below(c.count, &mut c, mark, span)
   }
   lin_truncate(&mut c, mark)
   lin_unfreeze_below(c.count, &mut c, mark)
+  set_to(&mut c.lent_through, through_below(c.lent_through, mark))
 }
 
 pub fn lin_capture_what(b: Binding): Option(Text) {
@@ -616,20 +1224,20 @@ pub fn lin_capture_what(b: Binding): Option(Text) {
     None
   } else {
     ⊢ Option(Text) from match b.mode {
-      ModeBorrow(m) => if m { Some("&mut") } else { None }
+      ModeBorrow(m) => if m { Some(lin_what_mut_borrow_message()) } else { None }
       ModeOwned => Some(class_word(b.r#class))
-      ModeVar => Some(cat2(class_word(b.r#class), " var"))
-      ModeVarInClosure => Some(cat2(class_word(b.r#class), " var"))
-      ModeBorrowClosure(names, m) => Some("the borrowing closure")
+      ModeVar => Some(lin_class_var_message(class_word(b.r#class)))
+      ModeVarInClosure => Some(lin_class_var_message(class_word(b.r#class)))
+      ModeBorrowClosure(^names, ^m) => Some(lin_what_borrowing_closure_message())
     }
   }
 }
 
-pub fn lin_arm_captures(&mut c: Lin, b: Binding, span: TySpan): Bool {
-  ⊢ Bool from match lin_capture_what(b) {
+pub fn lin_arm_captures(c: &mut Lin, b: Binding, span: TySpan): Bool {
+  match lin_capture_what(b) {
     None => false
     Some(w) => {
-      lin_error(&mut c, cat4("arm captures ", w, " ", b.name), span)
+      lin_error(&mut c, lin_arm_captures_message(w, b.name), span)
       true
     }
   }
@@ -637,40 +1245,227 @@ pub fn lin_arm_captures(&mut c: Lin, b: Binding, span: TySpan): Bool {
 
 // Whether binding `i` may be touched from here: in a handler arm, a binding
 // from outside the handle must be duplicable or a `&` borrow.
-pub fn lin_captured_by_arm(&mut c: Lin, i: Nat, span: TySpan): Bool {
-  ⊢ Bool from match c.arm_floor {
+pub fn lin_captured_by_arm(c: &mut Lin, i: Nat, span: TySpan): Bool {
+  match c.arm_floor {
     None => false
-    Some(floor) => if floor <= i { false } else { lin_arm_captures(&mut c, lin_get(c, i), span) }
-  }
-}
-
-pub fn lin_frozen_find(
-  bindings: Ordmap(Nat, Binding),
-  fs: List(Pair(Nat, Bool)),
-  mutable: Bool
-): Option(Text) {
-  ⊢ Option(Text) from match fs {
-    Nil => None
-    Cons(f, rest) => if mutable || f.snd {
-      ⊢ Option(Text) from match Ordmap::get(bindings, f.fst, Ordmap::compare_nat) {
-        Some(b) => Some(b.name)
-        None => Some("")
-      }
+    Some(floor) => if floor <= i {
+      false
     } else {
-      lin_frozen_find(bindings, rest, mutable)
+      // In an arm that answers a borrow, what the answer borrows is frozen
+      // by `k`: that is the reason a move or a `&mut` is refused.
+      ⊢ Bool from match lin_arm_frozen(c, i, span) {
+        Some(r#by) => {
+          lin_error(&mut c, lin_frozen_by_message(lin_get(c, i).name, r#by), span)
+          true
+        }
+        None => lin_arm_captures(&mut c, lin_get(c, i), span)
+      }
     }
   }
 }
 
-pub fn lin_frozen_by(c: Lin, i: Nat, mutable: Bool): Option(Text) {
-  lin_frozen_find(c.bindings, lin_get(c, i).frozen, mutable)
+pub fn lin_arm_frozen(c: Lin, i: Nat, span: TySpan): Option(Text) {
+  if c.arm_lends { lin_frozen_by(c, i, true, span) } else { None }
 }
 
-pub fn lin_direct_move(&mut c: Lin, b: Binding, eff: Text, span: TySpan): Bool {
+// Whether the operation `eff` answers a value that holds a borrow: its result
+// borrows from its handler, as a borrowed parameter's would.
+pub fn lin_lends_through(c: Lin, eff: Text): Bool {
+  // An instance of an indexed operation (`place@Node`) lends as the
+  // operation does.
+  lending_has(c.types.lending, effect_base(eff))
+}
+
+// An operation's name without its module and its instance.
+pub fn effect_base(e: Text): Text {
+  let name: Text := ⊢ Text from match text_split(e, "@") {
+    Cons(n, ^more) => n
+    Nil => e
+  }
+  list_last_text(text_split(name, "::"), name)
+}
+
+pub fn lending_has(xs: List(Text), base: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => effect_base(y) == base || lending_has(rest, base)
+  }
+}
+
+pub fn text_list_has(xs: List(Text), x: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || text_list_has(rest, x)
+  }
+}
+
+pub fn lender_find(ls: List(Text × List(Nat × Bool × List(Text))), eff: Text): List(Nat × Bool × List(Text)) {
+  match ls {
+    Nil => Nil
+    Cons(l, rest) => if effect_key_text(l.fst) == effect_key_text(eff) { l.snd } else { lender_find(rest, eff) }
+  }
+}
+
+// What a result of `eff` borrows here: what the innermost handle of it
+// answers. Outside one, the function's caller lends it, and nothing of the
+// function is borrowed.
+pub fn lin_lender(c: Lin, eff: Text): List(Nat × Bool × List(Text)) {
+  lender_find(c.lenders, eff)
+}
+
+pub fn through_has(ts: List(Nat × Text), root: Nat): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => Nat::eq(t.fst, root) || through_has(rest, root)
+  }
+}
+
+pub fn through_find(ts: List(Nat × Text), root: Nat): Option(Text) {
+  match ts {
+    Nil => None
+    Cons(t, rest) => if Nat::eq(t.fst, root) { Some(t.snd) } else { through_find(rest, root) }
+  }
+}
+
+pub fn through_below(ts: List(Nat × Text), mark: Nat): List(Nat × Text) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => if t.fst < mark { Cons(t, through_below(rest, mark)) } else { through_below(rest, mark) }
+  }
+}
+
+pub fn lin_note_through(c: &mut Lin, loans: List(Nat × Bool × List(Text)), eff: Text): Unit {
+  match loans {
+    Nil => #()
+    Cons(l, rest) => {
+      if not(through_has(c.lent_through, l.fst)) {
+        set_to(&mut c.lent_through, List::append(c.lent_through, Cons(#(l.fst, eff), Nil)))
+      }
+      lin_note_through(&mut c, rest, eff)
+    }
+  }
+}
+
+// `perform eff()` of an operation that lends: what is lent takes in what its
+// handler answers.
+pub fn lin_lend_through(c: &mut Lin, eff: Text): Unit {
+  let loans: List(Nat × Bool × List(Text)) := lin_lender(c, eff)
+  lin_note_through(&mut c, loans, eff)
+  set_to(&mut c.lent, List::append(c.lent, loans))
+}
+
+// The operations of `row` that lend, and that `named` (the callee's
+// `borrows(…)`, when it writes one) names: each lends to what is lent.
+pub fn lin_lend_row(c: &mut Lin, effs: List(Text), named: Option(List(Text))): Unit {
+  match effs {
+    Nil => #()
+    Cons(e, rest) => {
+      let in_named: Bool := ⊢ Bool from match named {
+        None => true
+        Some(ns) => effect_keys_have(ns, effect_key_text(e))
+      }
+      if lin_lends_through(c, e) && in_named {
+        lin_lend_through(&mut c, e)
+      }
+      lin_lend_row(&mut c, rest, named)
+    }
+  }
+}
+
+pub fn effect_keys_have(ns: List(Text), key: Text): Bool {
+  match ns {
+    Nil => false
+    Cons(n, rest) => effect_key_text(n) == key || effect_keys_have(rest, key)
+  }
+}
+
+// Whether holder `by` may still be read after `span`
+// (`docs/design/ownership.md`「凍結は最後の使用で解ける」).
+pub fn lin_holder_live(c: Lin, r#by: Nat, span: TySpan): Bool {
+  match Ordmap::get(c.bindings, r#by, Ordmap::compare_nat) {
+    None => true
+    Some(b) => if not(b.nll) {
+      true
+    } else {
+      ⊢ Bool from match c.live {
+        Nil => true
+        Cons(m, ^rest) => ⊢ Bool from match live_after(m, span, b.name) {
+          Some(l) => l
+          None => true
+        }
+      }
+    }
+  }
+}
+
+pub fn lin_frozen_find(
+  c: Lin,
+  fs: List(Nat × Bool × List(Text)),
+  path: List(Text),
+  mutable: Bool,
+  span: TySpan
+): Option(Text) {
+  match fs {
+    Nil => None
+    Cons(f, rest) => if (mutable || f.snd.fst) && paths_overlap(f.snd.snd, path) && lin_holder_live(c, f.fst, span) {
+      ⊢ Option(Text) from match Ordmap::get(c.bindings, f.fst, Ordmap::compare_nat) {
+        Some(b) => Some(b.name)
+        None => Some("")
+      }
+    } else {
+      lin_frozen_find(c, rest, path, mutable, span)
+    }
+  }
+}
+
+// A freeze holds only while its holder is live after `span`.
+pub fn lin_frozen_by(c: Lin, i: Nat, mutable: Bool, span: TySpan): Option(Text) {
+  lin_frozen_at(c, i, Nil, mutable, span)
+}
+
+// Who freezes the field path `path` of binding `i` against a use that writes
+// (`mutable`) or reads: a freeze of an overlapping path whose holder is live.
+pub fn lin_frozen_at(c: Lin, i: Nat, path: List(Text), mutable: Bool, span: TySpan): Option(Text) {
+  lin_frozen_find(c, lin_get(c, i).frozen, path, mutable, span)
+}
+
+// One path is a prefix of the other: `p` and `p.a` overlap, `p.a` and `p.b` do
+// not.
+pub fn paths_overlap(a: List(Text), b: List(Text)): Bool {
+  match a {
+    Nil => true
+    Cons(x, xs) => ⊢ Bool from match b {
+      Nil => true
+      Cons(y, ys) => x == y && paths_overlap(xs, ys)
+    }
+  }
+}
+
+// Binding `i` is moved or captured: its freezes no longer follow its name, so
+// they last to the end of its scope.
+pub fn lin_pin_holder(c: &mut Lin, i: Nat): Unit {
+  let b := lin_get(c, i)
+  if b.nll {
+    lin_put(&mut c, i, binding_with_nll(b, false))
+  }
+}
+
+// Binding `i`, a `let`, a `var` or a parameter, frees what it freezes after its
+// last use, unless its type holds an opaque view.
+pub fn lin_mark_nll(c: &mut Lin, i: Nat, name: Text, site: Nat): Unit {
+  match lin_local_type(c, name, site) {
+    None => #()
+    Some(t) => if not(datas_holds_opaque_view(c.types.datas, t)) {
+      lin_put(&mut c, i, binding_with_nll(lin_get(c, i), true))
+    }
+  }
+}
+
+pub fn lin_direct_move(c: &mut Lin, b: Binding, eff: Text, span: TySpan): Bool {
   if not(class_is_dup(b.r#class)) && not(mode_borrows(b.mode)) {
     lin_error(
       &mut c,
-      cat4("the arm of ", eff, cat3(" moves ", b.name, ", but it runs many times"), ""),
+      lin_arm_moves_many_times_message(eff, b.name),
       span
     )
     true
@@ -681,52 +1476,51 @@ pub fn lin_direct_move(&mut c: Lin, b: Binding, eff: Text, span: TySpan): Bool {
 
 // In the arm of a direct operation: a binding from outside the handle is not
 // moved, for the arm runs many times.
-pub fn lin_direct_arm_moves(&mut c: Lin, i: Nat, span: TySpan): Bool {
-  ⊢ Bool from match c.arm_direct {
+pub fn lin_direct_arm_moves(c: &mut Lin, i: Nat, span: TySpan): Bool {
+  match c.arm_direct {
     None => false
     Some(a) => if a.fst <= i { false } else { lin_direct_move(&mut c, lin_get(c, i), a.snd, span) }
   }
 }
 
-// What a use of `name` says when `by` holds it: a `let &x` freezes it, a direct
+// What a use of `name` says when `by` holds it: a `let x` freezes it, a direct
 // arm borrows it.
 pub fn lin_frozen_text(name: Text, r#by: Text): Text {
   if text_starts_with(r#by, "the arm of ", 0) {
-    cat3(name, " is borrowed by ", r#by)
+    lin_borrowed_by_arm_message(name, Text::slice_or_empty(r#by, 11, Text::len(r#by)))
   } else {
-    cat3(name, " is frozen by ", r#by)
+    lin_frozen_by_message(name, r#by)
   }
 }
 
-pub fn lin_take_owned(&mut c: Lin, i: Nat, b: Binding, span: TySpan): Unit {
-  ⊢ Unit from match lin_frozen_by(c, i, true) {
+pub fn lin_take_owned(c: &mut Lin, i: Nat, b: Binding, span: TySpan): Unit {
+  match lin_frozen_by(c, i, true, span) {
     Some(r#by) => lin_error(&mut c, lin_frozen_text(b.name, r#by), span)
     None => if not(state_is_owned(b.state)) {
-      lin_error(&mut c, cat2(b.name, " is used after move"), span)
-    } else if b.loops < lin_frame(c).loops {
-      lin_error(&mut c, cat2(b.name, " is moved inside a loop"), span)
+      lin_error(&mut c, lin_used_after_move_message(b.name), span)
     } else {
       lin_set_state(&mut c, i, BsMoved)
+      lin_pin_holder(&mut c, i)
     }
   }
 }
 
-pub fn lin_take_binding(&mut c: Lin, i: Nat, b: Binding, span: TySpan): Unit {
+pub fn lin_take_binding(c: &mut Lin, i: Nat, b: Binding, span: TySpan): Unit {
   if not(class_is_dup(b.r#class)) {
     ⊢ Unit from match b.mode {
       ModeBorrow(m) => if not(m) && b.shared_view {
         #()
       } else {
-        lin_error(&mut c, cat2(b.name, " is borrowed and cannot be moved"), span)
+        lin_error(&mut c, lin_borrowed_cannot_move_message(b.name), span)
       }
-      ModeBorrowClosure(borrows, m) => lin_error(
+      ModeBorrowClosure(r#borrows, ^m) => lin_error(
         &mut c,
-        cat5(b.name, " borrows ", text_join(borrows, ", "), " and cannot be stored", ""),
+        lin_closure_borrows_cannot_store_message(b.name, text_join(r#borrows, ", ")),
         span
       )
       ModeVarInClosure => lin_error(
         &mut c,
-        cat2(b.name, " is a var and cannot be moved out of a closure"),
+        lin_var_moved_out_of_closure_message(b.name),
         span
       )
       ModeOwned => lin_take_owned(&mut c, i, b, span)
@@ -735,7 +1529,7 @@ pub fn lin_take_binding(&mut c: Lin, i: Nat, b: Binding, span: TySpan): Unit {
   }
 }
 
-pub fn lin_take(&mut c: Lin, i: Nat, span: TySpan): Unit {
+pub fn lin_take(c: &mut Lin, i: Nat, span: TySpan): Unit {
   if lin_direct_arm_moves(&mut c, i, span) {
     #()
   } else if not(lin_captured_by_arm(&mut c, i, span)) {
@@ -744,11 +1538,31 @@ pub fn lin_take(&mut c: Lin, i: Nat, span: TySpan): Unit {
 }
 
 // Reads binding `i` without moving it (a duplicable field, a borrow).
-pub fn lin_read(&mut c: Lin, i: Nat, span: TySpan): Unit {
+pub fn lin_read(c: &mut Lin, i: Nat, span: TySpan): Unit {
   if not(lin_captured_by_arm(&mut c, i, span)) {
     let b := lin_get(c, i)
     if binding_owns(b) && not(state_is_owned(b.state)) {
-      lin_error(&mut c, cat2(b.name, " is used after move"), span)
+      lin_error(&mut c, lin_used_after_move_message(b.name), span)
     }
+  }
+}
+
+pub fn binding_as_fn_borrow(b: Binding): Binding {
+  Binding {
+    name: b.name,
+    r#class: b.r#class,
+    mode: b.mode,
+    state: b.state,
+    frozen: b.frozen,
+    held: b.held,
+    shared_view: b.shared_view,
+    param: b.param,
+    lam_param: b.lam_param,
+    nll: b.nll,
+    lent_function: b.lent_function,
+    fn_borrow: true,
+    origins: b.origins,
+    ty: b.ty,
+    once: b.once
   }
 }

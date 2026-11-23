@@ -1,0 +1,179 @@
+description = "A function passed as an operation's argument, or passed as a callback and returned at a row variable's tier, runs alike on every backend."
+
+// The arm takes the argument at the tier the row written on the operation's
+// parameter gives (`{fail(Text)}`), as the `perform` passes it.
+@ cases.operation-param-with-an-applied-effect-row
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```tauto
+
+effect job(body: () -> Unit ! {fail(Text)}): Unit resume <=1
+
+fn drive(top: &(() -> Unit ! {job})): Unit ! {fail(Text)} {
+  handle { top() } with {
+    job(body), k => {
+      body()
+      k(#())
+    }
+  }
+}
+
+let r := match catch(() => drive(() => {
+  perform job(() => expect(false, "x"))
+})) {
+  Ok(u) => "ok"
+  Err(why) => why
+}
+show(&r)
+```
+stdout = ```
+"x"
+```
+
+// The arm passes the operation's argument itself to `catch`: its row is the
+// one written on the operation's parameter, so `catch` knows what it performs.
+@ cases.operation-param-passed-to-catch
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```tauto
+
+effect job(body: () -> Unit ! {fail(Text)}): Unit resume <=1
+
+fn drive(top: &(() -> Unit ! {job})): Text {
+  handle { top(); "none" } with {
+    job(body), k => match catch(body) {
+      Ok(u) => "ok"
+      Err(why) => why
+    }
+  }
+}
+
+show(&drive(() => perform job(() => expect(false, "x"))))
+```
+stdout = ```
+"x"
+```
+
+// A closure whose body performs less than the row written on the parameter
+// is still passed at that row's tier.
+@ cases.operation-param-given-a-pure-closure
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```tauto
+
+effect job(body: () -> Unit ! {fail(Text)}): Unit resume <=1
+
+fn drive(top: &(() -> Unit ! {job})): Unit ! {fail(Text)} {
+  handle { top() } with {
+    job(body), k => {
+      body()
+      k(#())
+    }
+  }
+}
+
+let r := match catch(() => drive(() => {
+  perform job(() => #())
+})) {
+  Ok(u) => "ok"
+  Err(why) => why
+}
+show(&r)
+```
+stdout = ```
+"ok"
+```
+
+// An `affine` function type on an operation's parameter is extracted as
+// written, and the arm takes the function as the `perform` passes it.
+@ cases.operation-param-of-an-affine-function-type
+source = ```tauto
+effect log(m: Text): Unit resume 1
+effect job(body: affine () -> Unit ! {log}): Unit resume <=1
+
+fn drive(top: &(() -> Unit ! {job})): Unit ! {log} {
+  handle { top() } with {
+    job(body), k => {
+      body()
+      k(#())
+    }
+  }
+}
+
+handle {
+  drive(() => {
+    perform job(() => perform log("in a"))
+  })
+} with {
+  log(m), k => {
+    show(&m)
+    k(#())
+  }
+}
+```
+stdout = ```
+"in a"
+```
+
+// A function item of a multi-shot row passed as a callback to a
+// row-polymorphic function is called with the handlers and its continuation.
+@ cases.multi-shot-function-item-as-a-callback
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect choose(): Bool resume ω
+fn apply<!e>(f: (x: i64) -> i64 ! e, x: i64): i64 ! e { f(x) }
+fn pick(n: i64): i64 ! {choose, overflow} {
+  if perform choose() { n } else { n * 10 }
+}
+fn both(n: i64): i64 ! {choose, overflow} { apply(pick, n) }
+let sum := handle { both(3) } with {
+  choose(), k => k(true) + k(false)
+}
+show(&sum)
+```
+stdout = "33\n"
+
+// A function returned at a row variable a multi-shot callback gives is of
+// that row's tier where the result is held.
+@ cases.multi-shot-closure-returned-at-a-row-variable
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect choose(): Bool resume ω
+fn wrap<!e>(f: (x: i64) -> i64 ! e): (x: i64) -> i64 ! e { (y) => f(y) }
+fn pick(n: i64): i64 ! {choose, overflow} {
+  if perform choose() { n } else { n * 10 }
+}
+fn both(n: i64): i64 ! {choose, overflow} {
+  let g := wrap((m) => pick(m))
+  g(n)
+}
+let sum := handle { both(3) } with {
+  choose(), k => k(true) + k(false)
+}
+show(&sum)
+```
+stdout = "33\n"
+
+// An arm that calls its operation's argument inside a closure it passes on
+// (here to `catch`): the closure calls it at the tier the operation's
+// parameter gives, as the arm itself does.
+@ cases.operation-param-called-inside-a-closure-of-the-arm
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```tauto
+import std::builtin::os
+import std::builtin::par
+
+effect job(body: () -> Unit ! {fail(Text), stdout, sleep}): Unit resume <=1
+
+fn run(top: &(() -> Unit ! {job})): Unit ! {stdout, sleep} {
+  handle { top() } with {
+    job(body), k => {
+      match catch(() => body()) {
+        Ok(u) => print("ok;")
+        Err(why) => print(why)
+      }
+      k(#())
+    }
+  }
+}
+
+run(() => perform job(() => { print("called;"); expect(false, "no") }))
+```
+stdout = "called;no"

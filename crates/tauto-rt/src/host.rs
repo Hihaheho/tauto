@@ -177,6 +177,23 @@ pub trait Host: Send + Sync {
         let _ = (from, to);
         Err(absent("fs_rename"))
     }
+    /// Makes what is at `path` (links followed) read-only or writable by its
+    /// owner, and executable or not: on Unix the mode `444`, `555`, `644` or
+    /// `755`; elsewhere only `readonly` is kept.
+    fn set_mode(&self, path: &str, readonly: bool, executable: bool) -> Result<(), HostError> {
+        let _ = (path, readonly, executable);
+        Err(absent("fs_set_mode"))
+    }
+    /// Waits until this process alone holds the lock `File::lock` takes on
+    /// the file at `path`, made empty when there is none; the lock's number.
+    fn lock(&self, path: &str) -> Result<u64, HostError> {
+        let _ = path;
+        Err(absent("fs_lock"))
+    }
+    /// Lets go of the lock `id`; one let go already is left as it is.
+    fn unlock(&self, id: u64) {
+        let _ = id;
+    }
     /// Where the link at `path` points, without following it; `None` when what is there is not
     /// a link, or nothing is.
     fn read_link(&self, path: &str) -> Result<Option<String>, HostError> {
@@ -210,11 +227,25 @@ pub trait Host: Send + Sync {
         Err(absent("proc_run"))
     }
     fn env(&self, name: &str) -> Option<String>;
+    /// The names of the environment variables, in order.
+    fn env_names(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// Milliseconds since the Unix epoch.
     fn wall_ms(&self) -> i64;
     /// Nanoseconds that never go back.
     fn monotonic_ns(&self) -> i64;
     fn sleep(&self, ms: u64);
+    /// The bits of the word `uhost` holds on this host.
+    fn host_bits(&self) -> u64 {
+        usize::BITS as u64
+    }
+    /// The seed of the run's hash maps: new for each run, the same for the
+    /// whole of it.
+    fn hash_seed(&self) -> (u64, u64) {
+        static SEED: std::sync::OnceLock<(u64, u64)> = std::sync::OnceLock::new();
+        *SEED.get_or_init(|| (self.random(), self.random()))
+    }
     /// Random bits, not for secrets (the program sees the top 63).
     fn random(&self) -> u64;
     /// `n` bytes from a cryptographically secure random source.
@@ -227,11 +258,13 @@ pub trait Host: Send + Sync {
 }
 
 /// What [`Host::stat`] knows of a path: `kind` is `file`, `dir` or `other`,
-/// `modified_ms` is milliseconds since the Unix epoch (0 when unknown).
+/// `modified_ms` is milliseconds since the Unix epoch (0 when unknown), and
+/// `executable` whether the owner may execute it (`false` without such a bit).
 pub struct Stat {
     pub kind: &'static str,
     pub size: u64,
     pub modified_ms: u64,
+    pub executable: bool,
 }
 
 /// A program to run ([`Host::run`]): its name or path, its arguments, the
@@ -246,6 +279,16 @@ pub struct Process {
 }
 
 pub struct System;
+
+/// The file locks `System` holds, by number.
+#[derive(Default)]
+struct Locks {
+    next: u64,
+    held: std::collections::HashMap<u64, std::fs::File>,
+}
+
+static LOCKS: std::sync::LazyLock<std::sync::Mutex<Locks>> =
+    std::sync::LazyLock::new(Default::default);
 
 impl Host for System {
     fn stdout(&self, t: &str) {
@@ -360,10 +403,18 @@ impl Host for System {
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_millis() as u64);
+        #[cfg(unix)]
+        let executable = {
+            use std::os::unix::fs::PermissionsExt;
+            meta.permissions().mode() & 0o100 != 0
+        };
+        #[cfg(not(unix))]
+        let executable = false;
         Ok(Some(Stat {
             kind,
             size: meta.len(),
             modified_ms,
+            executable,
         }))
     }
 
@@ -384,6 +435,46 @@ impl Host for System {
 
     fn rename(&self, from: &str, to: &str) -> Result<(), HostError> {
         std::fs::rename(from, to).map_err(HostError::from)
+    }
+
+    fn set_mode(&self, path: &str, readonly: bool, executable: bool) -> Result<(), HostError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = if readonly { 0o444 } else { 0o644 } | if executable { 0o111 } else { 0 };
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                .map_err(HostError::from)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = executable;
+            let mut p = std::fs::metadata(path)
+                .map_err(HostError::from)?
+                .permissions();
+            p.set_readonly(readonly);
+            std::fs::set_permissions(path, p).map_err(HostError::from)
+        }
+    }
+
+    fn lock(&self, path: &str) -> Result<u64, HostError> {
+        let file = std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)
+            .map_err(HostError::from)?;
+        file.lock().map_err(HostError::from)?;
+        let mut locks = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        locks.next += 1;
+        let id = locks.next;
+        locks.held.insert(id, file);
+        Ok(id)
+    }
+
+    fn unlock(&self, id: u64) {
+        let mut locks = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        // Closing the file lets go of its lock.
+        locks.held.remove(&id);
     }
 
     fn read_link(&self, path: &str) -> Result<Option<String>, HostError> {
@@ -441,6 +532,7 @@ impl Host for System {
         let mut command = Command::new(&process.program);
         command
             .args(&process.args)
+            .env_clear()
             .envs(process.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -470,17 +562,25 @@ impl Host for System {
         std::env::var(name).ok()
     }
 
+    fn env_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::env::vars_os()
+            .filter_map(|(k, _)| k.into_string().ok())
+            .collect();
+        names.sort();
+        names
+    }
+
     fn wall_ms(&self) -> i64 {
-        match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-            Ok(d) => i64::try_from(d.as_millis()).unwrap_or(i64::MAX),
-            Err(e) => -i64::try_from(e.duration().as_millis()).unwrap_or(i64::MAX),
-        }
+        crate::clock::wall_ms()
     }
 
     fn monotonic_ns(&self) -> i64 {
-        static START: OnceLock<std::time::Instant> = OnceLock::new();
-        let start = START.get_or_init(std::time::Instant::now);
-        i64::try_from(start.elapsed().as_nanos()).unwrap_or(i64::MAX)
+        i64::try_from(
+            crate::clock::Instant::now()
+                .elapsed_since_start()
+                .as_nanos(),
+        )
+        .unwrap_or(i64::MAX)
     }
 
     fn sleep(&self, ms: u64) {

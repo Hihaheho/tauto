@@ -49,16 +49,17 @@ fn manifest_fetch_effect_and_rejection() {
         &d,
         "Tauto.eure",
         r#"package { name = "http-demo" }
-javascript { extern { get = "host/http.mjs#get" } async = ["get"] sources = ["host"] }
+javascript { extern { get = "host/http.mjs#get" } sources = ["host"] }
 "#,
     );
     write(
         &d,
         "src/main.taut",
-        r#"extern { fn get(url: Text): Text }
+        r#"import std::builtin::par
+extern { fn get(url: Text): Text ! {wait} }
 effect http_get(url: Text): Text resume 1
 let text := handle { perform http_get("data:text/plain,hello") } with { http_get(url), k => k(get(url)) }
-perform show("response", text)"#,
+show(&text)"#,
     );
     write(
         &d,
@@ -71,7 +72,7 @@ perform show("response", text)"#,
         success(&out);
         assert_eq!(
             String::from_utf8_lossy(&out.stdout),
-            "response = \"hello\"\n"
+            "\"hello\"\n"
         );
     }
     write(
@@ -92,14 +93,15 @@ fn bindings_are_checked_for_target_and_direct_handlers() {
         &d,
         "Tauto.eure",
         r#"package { name = "host-demo" }
-javascript { node { wait = "host.mjs#wait" } async = ["wait"] }"#,
+javascript { node { wait = "host.mjs#wait" } }"#,
     );
     write(&d, "host.mjs", "export async function wait(){return 1n;}");
     write(
         &d,
         "src/main.taut",
-        r#"extern { fn wait(): i64 }
-perform show("n", wait())"#,
+        r#"import std::builtin::par
+extern { fn wait(): i64 ! {wait} }
+show(&wait())"#,
     );
     let out = cli(&d, "browser");
     assert!(!out.status.success());
@@ -107,14 +109,15 @@ perform show("n", wait())"#,
     write(
         &d,
         "src/main.taut",
-        r#"extern { fn wait(): i64 }
+        r#"import std::builtin::par
+extern { fn wait(): i64 ! {wait} }
 effect ask(): i64 direct
 let n := handle { perform ask() } with { ask(), k => k(wait()) }
-perform show("n", n)"#,
+show(&n)"#,
     );
     let out = cli(&d, "node");
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("direct handler"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("performs wait, which is not direct"));
     fs::remove_dir_all(d).unwrap();
 }
 #[test]
@@ -148,27 +151,27 @@ pub fn maybe(n:i64)->Option<i64>{Some(n+1)}
     write(
         &d,
         "src/main.taut",
-        r#"import std::prelude::Affine
+        r#"import std::prelude::collections
 
-affine struct Counter {}
+struct(affine) Counter {}
 extern {
  fn make(n: i64): Counter
- fn bump(&mut n: Counter): i64
+ fn bump(n: &mut Counter): i64
  fn consume(n: Counter): i64
  fn twice(n: i64): i64
- fn hello(&s: Text): Text
- fn append(&mut v: Vec(i64)): Unit
+ fn hello(s: &Text): Text
+ fn append(v: &mut Vec(i64)): Unit
  fn maybe(n: i64): Option(i64)
 }
-perform show("wide", twice(9007199254740993))
-perform show("text", hello("世界"))
+show(&twice(9007199254740993))
+show(&hello("世界"))
 var values := Vec::new()
 append(&mut values)
-perform show("values", values)
-perform show("option", maybe(9))
+show(&values)
+show(&maybe(9))
 var c := make(40)
-perform show("bump", bump(&mut c))
-perform show("consume", consume(c))
+show(&bump(&mut c))
+show(&consume(c))
 "#,
     );
     success(&cli(&d, "node"));
@@ -176,7 +179,7 @@ perform show("consume", consume(c))
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "wide = 18014398509481986\ntext = \"hello 世界\"\nvalues = Vec[42]\noption = Some(10)\nbump = 41\nconsume = 41\n"
+        "18014398509481986\n\"hello 世界\"\nVec[42]\nSome(10)\n41\n41\n"
     );
     assert!(d.join("out/externs.wasm").exists());
     fs::remove_dir_all(d).unwrap();
@@ -188,7 +191,7 @@ fn async_host_callback_can_suspend_through_a_nib_handler() {
         &d,
         "Tauto.eure",
         r#"package { name = "callback-demo" }
-javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
+javascript { extern { apply = "host.mjs#apply" } }"#,
     );
     write(
         &d,
@@ -198,15 +201,16 @@ javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
     write(
         &d,
         "src/main.taut",
-        r#"effect ask(n: i64): i64 resume 1
-extern { fn apply(&f: (n: i64) -> i64): i64 }
-let r := handle { apply(&(n) => perform ask(n)) + 1 } with { ask(n), k => k(n * 10) }
-perform show("r", r)"#,
+        r#"import std::builtin::par
+effect ask(n: i64): i64 resume 1
+extern { fn apply(f: &((n: i64) -> i64)): i64 ! {wait} }
+let r := handle { apply((n) => perform ask(n)) + 1 } with { ask(n), k => k(n * 10) }
+show(&r)"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "r = 51\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "51\n");
     fs::remove_dir_all(d).unwrap();
 }
 #[test]
@@ -216,7 +220,7 @@ fn callback_abort_leaves_the_host_frame() {
         &d,
         "Tauto.eure",
         r#"package { name = "callback-demo" }
-javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
+javascript { extern { apply = "host.mjs#apply" } }"#,
     );
     write(
         &d,
@@ -226,15 +230,16 @@ javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
     write(
         &d,
         "src/main.taut",
-        r#"effect ask(n: i64): i64 resume <=1
-extern { fn apply(&f: (n: i64) -> i64): i64 }
-let r := handle { apply(&(n) => perform ask(n)) + 1 } with { ask(n), k => 7 }
-perform show("r", r)"#,
+        r#"import std::builtin::par
+effect ask(n: i64): i64 resume <=1
+extern { fn apply(f: &((n: i64) -> i64)): i64 ! {wait} }
+let r := handle { apply((n) => perform ask(n)) + 1 } with { ask(n), k => 7 }
+show(&r)"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "r = 7\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n");
     fs::remove_dir_all(d).unwrap();
 }
 #[test]
@@ -261,19 +266,19 @@ pub fn make(n:i64)->Probe{Probe(n)}pub fn dropped()->i64{DROPS.load(Ordering::Se
     write(
         &d,
         "src/main.taut",
-        r#"affine struct Probe {}
+        r#"struct(affine) Probe {}
 extern { fn make(n: i64): Probe
  fn dropped(): i64 }
 effect stop(): Never resume 0
 fn scope(): Unit { let a := make(10); let b := make(20); #() }
 fn leave(): Unit ! {stop} { let a := make(4); let b := make(8); perform stop() }
 scope()
-perform show("normal", dropped())
+show(&dropped())
 handle { leave() } with { stop() => #() }
-perform show("abort", dropped())
+show(&dropped())
 let p := Some(make(9))
 match p { Some(value) => #(), None => #() }
-perform show("match", dropped())
+show(&dropped())
 "#,
     );
     success(&cli(&d, "node"));
@@ -281,7 +286,7 @@ perform show("match", dropped())
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "normal = 30\nabort = 42\nmatch = 51\n"
+        "30\n42\n51\n"
     );
     fs::remove_dir_all(d).unwrap();
 }
@@ -293,7 +298,7 @@ fn host_boundaries_reject_reusable_callbacks_and_expired_borrows() {
         &d,
         "Tauto.eure",
         r#"package { name = "boundary-demo" }
-javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
+javascript { extern { apply = "host.mjs#apply" } }"#,
     );
     write(
         &d,
@@ -303,10 +308,11 @@ javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
     write(
         &d,
         "src/main.taut",
-        r#"effect choose(): i64 resume ω
-extern { fn apply(&f: (n: i64) -> i64): i64 }
-let n := handle { apply(&(n) => perform choose()) } with { choose(), k => k(1) + k(2) }
-perform show("n", n)"#,
+        r#"import std::builtin::par
+effect choose(): i64 resume ω
+extern { fn apply(f: &((n: i64) -> i64)): i64 ! {wait} }
+let n := handle { apply((n) => perform choose()) } with { choose(), k => k(1) + k(2) }
+show(&n)"#,
     );
     let out = cli(&d, "node");
     assert!(!out.status.success());
@@ -329,11 +335,11 @@ javascript { extern { remember = "host.mjs#remember" inspect = "host.mjs#inspect
     write(
         &d,
         "src/main.taut",
-        r#"extern { fn remember(&n: i64): Unit
+        r#"extern { fn remember(n: &i64): Unit
 fn inspect(): i64 }
 let n := 3
 remember(&n)
-perform show("n", inspect())"#,
+show(&inspect())"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
@@ -363,17 +369,17 @@ rust { bridge = "bridge" types { Probe = "shared_demo_bridge::Probe" } }"#,
     write(
         &d,
         "src/main.taut",
-        r#"shared struct Probe {}
+        r#"struct(shared) Probe {}
 extern { fn make(n: i64): Probe
 fn inspect(p: Probe, n: i64): i64 }
 effect choose(): i64 resume ω
 let result := handle { inspect(make(10), perform choose()) } with { choose(), k => k(1) + k(2) }
-perform show("result", result)"#,
+show(&result)"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "result = 23\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "23\n");
     fs::remove_dir_all(d).unwrap();
 }
 
@@ -399,26 +405,26 @@ rust { bridge = "bridge" }"#,
     write(
         &d,
         "src/main.taut",
-        r#"import std::prelude::Affine
+        r#"import std::prelude::collections
 
 extern {
  fn identity<A>(x: A): A
  fn reverse<A>(xs: Vec(A)): Vec(A)
 }
 fn indirect<A>(x: A): A { identity(x) }
-perform show("number", indirect(42))
-perform show("text", indirect("hello"))
+show(&indirect(42))
+show(&indirect("hello"))
 var xs := Vec::new()
 Vec::push(&mut xs, 1)
 Vec::push(&mut xs, 2)
-perform show("reverse", reverse(xs))"#,
+show(&reverse(xs))"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "number = 42\ntext = \"hello\"\nreverse = Vec[2, 1]\n"
+        "42\n\"hello\"\nVec[2, 1]\n"
     );
     fs::remove_dir_all(d).unwrap();
 }
@@ -449,23 +455,23 @@ pub fn number(n:i64)->i64{n*10}
         &d,
         "src/main.taut",
         r#"extern {
- fn twice(&f: (n: i64) -> i64): i64
+ fn twice(f: &((n: i64) -> i64)): i64
  fn add(n: i64): (i64) -> i64
  fn number(n: i64): i64
 }
 effect adjust(n: i64): i64 direct
-let result := handle { twice(&(n) => number(n) + perform adjust(n)) } with { adjust(n), k => k(n) }
-perform show("callback", result)
+let result := handle { twice((n) => number(n) + perform adjust(n)) } with { adjust(n), k => k(n) }
+show(&result)
 let f := add(40)
-perform show("returned", f(2))
-perform show("again", twice(&f))"#,
+show(&f(2))
+show(&twice(&f))"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "callback = 55\nreturned = 42\nagain = 85\n"
+        "55\n42\n85\n"
     );
     fs::remove_dir_all(d).unwrap();
 }
@@ -501,41 +507,41 @@ pub fn bump(n:&mut i64){*n+=1}
     write(
         &d,
         "src/main.taut",
-        r#"import std::prelude::Affine
+        r#"import std::prelude::collections
 
-affine struct Counter {}
+struct(affine) Counter {}
 extern {
  fn make(n: i64): Counter
- fn count(&c: Counter): &i64
- fn count_mut(&mut c: Counter): &mut i64
+ fn count(c: &Counter): &i64
+ fn count_mut(c: &mut Counter): &mut i64
  fn consume(c: Counter): i64
- fn first(&mut v: Vec(i64)): Option(&mut i64)
- fn numbers(&mut v: Vec(i64)): &mut Vec(i64)
- fn slice(&v: Vec(i64)): &Slice(i64)
- fn bump(&mut n: i64): Unit
+ fn first(v: &mut Vec(i64)): Option(&mut i64)
+ fn numbers(v: &mut Vec(i64)): &mut Vec(i64)
+ fn slice(v: &Vec(i64)): &Slice(i64)
+ fn bump(n: &mut i64): Unit
 }
 var c := make(40)
-{ let &n := count(&c); perform show("read", n) }
-{ let &mut n := count_mut(&mut c); n := n + 1; bump(&mut n) }
-perform show("owner", consume(c))
+{ let n := count(&c); show(&n) }
+{ let n := count_mut(&mut c); *n := n + 1; bump(&mut n) }
+show(&consume(c))
 var values := Vec::new()
 Vec::push(&mut values, 10)
 match first(&mut values) { Some(n) => bump(&mut n), None => #() }
-{ let &mut list := numbers(&mut values)
+{ let list := numbers(&mut values)
   Vec::push(&mut list, 20)
   handle { Vec::swap(&mut list, 0, 1) } with { out_of_bounds() => #() }
   match Vec::get_mut(&mut list, 0) { Some(n) => bump(&mut n), None => #() }
-  perform show("popped", Vec::pop(&mut list))
+  show(&Vec::pop(&mut list))
 }
-{ let &s := slice(&values); perform show("length", Slice::len(&s)) }
-perform show("updated", values)"#,
+{ let s := slice(&values); show(&Slice::len(&s)) }
+show(&values)"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "read = 40\nowner = 42\npopped = Some(11)\nlength = 1\nupdated = Vec[21]\n"
+        "40\n42\nSome(11)\n1\nVec[21]\n"
     );
     fs::remove_dir_all(d).unwrap();
 }
@@ -548,7 +554,7 @@ fn wasm_callback_waits_for_fetch_and_reenters_after_suspension() {
         "Tauto.eure",
         r#"package { name = "async-wasm" }
 rust { bridge = "bridge" }
-javascript { extern { get = "host.mjs#get" } async = ["get"] }"#,
+javascript { extern { get = "host.mjs#get" } }"#,
     );
     write(
         &d,
@@ -569,21 +575,22 @@ pub fn number(n:i64)->i64{n*10}"#,
     write(
         &d,
         "src/main.taut",
-        r#"extern {
- fn twice(&f: (n: i64) -> i64): i64
+        r#"import std::builtin::par
+extern {
+ fn twice(f: &((n: i64) -> i64)): i64
  fn number(n: i64): i64
- fn get(): i64
+ fn get(): i64 ! {wait}
 }
 effect ask(n: i64): i64 resume 1
-let result := handle { twice(&(n) => perform ask(n)) } with {
+let result := handle { twice((n) => perform ask(n)) } with {
  ask(n), k => k(number(n) + get())
 }
-perform show("async", result)"#,
+show(&result)"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "async = 64\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "64\n");
     fs::remove_dir_all(d).unwrap();
 }
 
@@ -609,15 +616,15 @@ rust { bridge = "bridge" }"#,
     write(
         &d,
         "src/main.taut",
-        r#"extern { fn edit(&f: (&mut n: i64) -> Unit): i64 }
-fn change(&mut value: i64): Unit { value := value + 2 }
+        r#"extern { fn edit(f: &((n: &mut i64) -> Unit)): i64 }
+fn change(value: &mut i64): Unit { *value := value + 2 }
 let n := edit(&change)
-perform show("edited", n)"#,
+show(&n)"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "edited = 42\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
     fs::remove_dir_all(d).unwrap();
 }
 
@@ -645,28 +652,28 @@ pub fn next<'a>(v:&mut Cursor<'a>)->Option<&'a i64>{v.0.next()}"#,
     write(
         &d,
         "src/main.taut",
-        r#"import std::prelude::Affine
+        r#"import std::prelude::collections
 
-view struct Cursor {}
 extern {
- fn cursor(&v: Vec(i64)): Cursor
- fn next(&mut c: Cursor): Option(&i64)
+ type(borrow) Cursor
+ fn cursor(v: &Vec(i64)): Cursor
+ fn next(c: &mut Cursor): Option(&i64)
 }
 var values := Vec::new()
 Vec::push(&mut values, 10)
 Vec::push(&mut values, 20)
-{ var &it := cursor(&values)
-  match next(&mut it) { Some(n) => perform show("first", n), None => #() }
-  match next(&mut it) { Some(n) => perform show("second", n), None => #() }
+{ var it := cursor(&values)
+  match next(&mut it) { Some(n) => show(&n), None => #() }
+  match next(&mut it) { Some(n) => show(&n), None => #() }
 }
-perform show("owner", values)"#,
+show(&values)"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "first = 10\nsecond = 20\nowner = Vec[10, 20]\n"
+        "10\n20\nVec[10, 20]\n"
     );
     fs::remove_dir_all(d).unwrap();
 }
@@ -692,17 +699,18 @@ rust { bridge = "bridge" }"#,
         let arm = if effect == "stop" {
             r#"stop() => 42"#
         } else {
-            r#"maybe(), k => k(2)"#
+            // A tail `k(2)` would make `maybe` direct; this arm may not resume.
+            r#"maybe(), k => if true { k(2) } else { 0 }"#
         };
         write(
             &d,
             "src/main.taut",
             &format!(
                 r#"{}
-extern {{ fn apply(&f: (i64) -> i64): i64 }}
+extern {{ fn apply(f: &((i64) -> i64)): i64 }}
 fn callback(n:i64): i64 ! {{ {} }} {{ {} }}
 let result := handle {{ apply(&callback) }} with {{ {} }}
-perform show("result",result)"#,
+show(&result)"#,
                 declaration, effect, body, arm
             ),
         );
@@ -741,22 +749,22 @@ pub fn use_saved(s:&Saved,n:i64)->i64{(s.0)(n)}"#,
     write(
         &d,
         "src/main.taut",
-        r#"affine struct Saved {}
+        r#"struct(affine) Saved {}
 extern {
  fn save(f: (i64) -> i64): Saved
- fn use_saved(&s: Saved, n: i64): i64
+ fn use_saved(s: &Saved, n: i64): i64
 }
 let offset := 40
 let saved := save((n) => offset + n)
-perform show("stored", use_saved(&saved, 2))
-perform show("again", use_saved(&saved, 3))"#,
+show(&use_saved(&saved, 2))
+show(&use_saved(&saved, 3))"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "stored = 42\nagain = 43\n"
+        "42\n43\n"
     );
     fs::remove_dir_all(d).unwrap();
 }
@@ -783,27 +791,27 @@ rust { bridge = "bridge" }"#,
     write(
         &d,
         "src/main.taut",
-        r#"copy struct Point { x: i64, y: i64 }
-extern { fn r#view<A>(&mut value: A): &mut A }
-fn through<A>(&mut value: A): &mut A { r#view(&mut value) }
-fn forward(&mut point: Point): &mut Point { &mut point }
-fn bump(&mut n: i64): Unit { n := n + 1 }
-fn set(&mut n: i64, value:i64): Unit { n := value }
+        r#"struct(copy) Point { x: i64, y: i64 }
+extern { fn view<A>(value: &mut A): &mut A }
+fn through<A>(value: &mut A): &mut A { view(&mut value) }
+fn forward(point: &mut Point): &mut Point { &mut point }
+fn bump(n: &mut i64): Unit { *n := n + 1 }
+fn set(n: &mut i64, value:i64): Unit { *n := value }
 var point := Point { x: 10, y: 20 }
-{ let &mut borrowed := through(&mut point)
+{ let borrowed := through(&mut point)
   set(&mut borrowed.x, 40)
   bump(&mut borrowed.x)
-  { let &mut again := forward(&mut borrowed); set(&mut again.y, 50) }
-  perform show("field", borrowed.x)
+  { let again := forward(&mut borrowed); set(&mut again.y, 50) }
+  show(&borrowed.x)
 }
-perform show("owner", point)"#,
+show(&point)"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "field = 41\nowner = Point { x: 41, y: 50 }\n"
+        "41\nPoint { x: 41, y: 50 }\n"
     );
     fs::remove_dir_all(d).unwrap();
 }
@@ -816,7 +824,7 @@ fn concurrent_async_callbacks_preserve_wasm_stack_order() {
         "Tauto.eure",
         r#"package { name = "concurrent-wasm" }
 rust { bridge = "bridge" }
-javascript { extern { parallel = "host.mjs#parallel" wait = "host.mjs#wait" } async = ["parallel", "wait"] }"#,
+javascript { extern { parallel = "host.mjs#parallel" wait = "host.mjs#wait" } }"#,
     );
     write(
         &d,
@@ -836,18 +844,19 @@ javascript { extern { parallel = "host.mjs#parallel" wait = "host.mjs#wait" } as
     write(
         &d,
         "src/main.taut",
-        r#"extern {
- fn twice(&f: (i64) -> i64): i64
- fn parallel(&f: (i64) -> i64): i64
- fn wait(n: i64): i64
+        r#"import std::builtin::par
+extern {
+ fn twice(f: &((i64) -> i64)): i64
+ fn parallel(f: &((i64) -> i64)): i64 ! {wait}
+ fn wait(n: i64): i64 ! {wait}
 }
-fn task(n: i64): i64 { twice(&(value) => n + wait(value)) }
-perform show("concurrent", parallel(&task))"#,
+fn task(n: i64): i64 { twice((value) => n + wait(value)) }
+show(&parallel(&task))"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "concurrent = 66\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "66\n");
     fs::remove_dir_all(d).unwrap();
 }
 
@@ -880,26 +889,26 @@ pub fn copies()->i64{COPIES.load(Ordering::SeqCst)}"#,
     write(
         &d,
         "src/main.taut",
-        r#"shared struct State {}
+        r#"struct(shared) State {}
 extern {
  fn make(n: i64): State
- fn read(&s: State): i64
- fn update(&mut s: State, n: i64): Unit
+ fn read(s: &State): i64
+ fn update(s: &mut State, n: i64): Unit
  fn copies(): i64
 }
 var original := make(1)
 let copied := original
 update(&mut original, 2)
-perform show("copy", read(&copied))
-perform show("original", read(&original))
-perform show("clones", copies())"#,
+show(&read(&copied))
+show(&read(&original))
+show(&copies())"#,
     );
     success(&cli(&d, "node"));
     let out = run(&d);
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "copy = 1\noriginal = 2\nclones = 1\n"
+        "1\n2\n1\n"
     );
     let rust = Command::new(env!("CARGO_BIN_EXE_tauto"))
         .args(["run", "--backend", "rust", "-o"])
@@ -930,18 +939,18 @@ javascript {
         &d,
         "src/main.taut",
         r#"extern {
-  affine type Node
+  type(affine) Node
   fn make(name: Text): Node
-  fn label(&n: Node): Text
+  fn label(n: &Node): Text
   fn consume(n: Node): Text
 }
 let a := make("a")
-perform show("label", label(&a))
-perform show("consume", consume(a))
+show(&label(&a))
+show(&consume(a))
 { let b := make("b") }
 let s := make("s")
 let t := s
-perform show("moved", label(&t))
+show(&label(&t))
 "#,
     );
     write(
@@ -954,13 +963,13 @@ perform show("moved", label(&t))
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "label = \"a\"\nconsume = \"took a\"\nrelease b\nmoved = \"s\"\nrelease s\nrelease a\n"
+        "\"a\"\n\"took a\"\nrelease b\n\"s\"\nrelease s\nrelease a\n"
     );
     write(
         &d,
         "src/main.taut",
         r#"extern {
-  affine type Node
+  type(affine) Node
   fn make(name: Text): Node
 }
 let n := Node {}
@@ -974,17 +983,18 @@ let n := Node {}
     );
 }
 
+/// A type of the same name in another file does not take the key from the
+/// extern type: `javascript.types { Node }` binds the extern `Node`.
 #[test]
-fn instances_export_named_functions_without_running_the_program() {
+fn a_host_type_key_binds_the_extern_type_when_another_type_has_the_name() {
     let d = dir();
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "exports" }
+        r#"package { name = "host-types-collide" }
 javascript {
-  exports = ["add", "greet", "fetch_len", "count"]
-  extern { get = "host/h.mjs#get" }
-  async = ["get"]
+  extern { make = "host/h.mjs#make" label = "host/h.mjs#label" }
+  types { Node = "host/h.mjs#release" }
   sources = ["host"]
 }
 "#,
@@ -992,16 +1002,60 @@ javascript {
     write(
         &d,
         "src/main.taut",
-        r#"extern { fn get(url: Text): Text }
+        "import std::builtin::os\nimport \"native.taut\"\nimport \"other.taut\"\nperform main(() => {\n  let a := make(\"a\")\n  perform stdout(label(&a))\n  perform stdout(\"\\n\")\n  if weight() == 7 { perform stdout(\"seven\\n\") } else { () }\n})\n",
+    );
+    write(
+        &d,
+        "src/native.taut",
+        "extern {\n  pub type(affine) Node\n  pub fn make(name: Text): Node\n  pub fn label(n: &Node): Text\n}\n",
+    );
+    write(
+        &d,
+        "src/other.taut",
+        "pub(open) struct Node { w: i64 }\npub fn weight(): i64 { Node { w: 7 }.w }\n",
+    );
+    write(
+        &d,
+        "host/h.mjs",
+        "export function make(name){return {name};}\nexport function label(n){return n.name;}\nexport function release(n){console.log('release '+n.name);}\n",
+    );
+    success(&cli(&d, "node"));
+    let out = run(&d);
+    success(&out);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "a\nseven\nrelease a\n"
+    );
+}
+
+#[test]
+fn instances_export_named_functions_without_running_the_program() {
+    let d = dir();
+    write(
+        &d,
+        "Tauto.eure",
+        r#"package { name = "exports" }
+exports = ["add", "greet", "fetch_len", "count"]
+javascript {
+  extern { get = "host/h.mjs#get" }
+  sources = ["host"]
+}
+"#,
+    );
+    write(
+        &d,
+        "src/main.taut",
+        r#"import std::builtin::par
+extern { fn get(url: Text): Text ! {wait} }
 enum Shape { Circle(i64), Square(i64) }
 fn add(a: i64, b: i64): i64 { a + b }
 fn greet(s: Shape): Text { match s { Circle(r) => "circle", Square(n) => "square" } }
 fn fetch_len(u: Text): i64 { if get(u) == "x" { 1 } else { 2 } }
 fn count(n: i64): i64 {
-  perform show("n", n)
+  show(&n)
   n
 }
-perform show("top", 1)
+show(&1)
 "#,
     );
     write(
@@ -1038,7 +1092,7 @@ try { i.add(1n, 1n); } catch (e) { console.log(e.message); }
         &d,
         "Tauto.eure",
         r#"package { name = "exports" }
-javascript { exports = ["ask_twice"] }
+exports = ["ask_twice"]
 "#,
     );
     write(
@@ -1056,14 +1110,101 @@ fn ask_twice(): i64 { perform ask() + perform ask() }
 }
 
 #[test]
+fn an_export_starts_a_task_that_outlives_the_call() {
+    let d = dir();
+    write(
+        &d,
+        "Tauto.eure",
+        r#"package { name = "tasks" }
+exports = ["start", "once"]
+javascript {
+  extern { next = "host/h.mjs#next" report = "host/h.mjs#report" }
+  sources = ["host"]
+}
+"#,
+    );
+    write(
+        &d,
+        "src/main.taut",
+        r#"import std::builtin::par
+extern {
+  fn next(): i64 ! {wait}
+  fn report(v: i64): Unit
+}
+fn listen(n: i64): Unit ! {div, wait} {
+  let v := next()
+  report(v)
+  if v < n { listen(n) } else { #() }
+}
+fn start(n: i64): Unit ! {div, wait, ∀ T. spawn(() -> T ! {})} {
+  Task::detach(perform spawn(() => listen(n)))
+}
+fn once(): Unit ! {wait} { report(next()) }
+"#,
+    );
+    write(
+        &d,
+        "host/h.mjs",
+        "let waiting=[];export function next(){return new Promise(r=>waiting.push(r));}\nexport function report(v){console.log('got '+v);}\nexport function fire(v){const w=waiting;waiting=[];for(const r of w)r(v);return w.length;}\n",
+    );
+    success(&cli(&d, "node"));
+    write(
+        &d,
+        "out/use.mjs",
+        r#"import { instantiate } from './program.mjs';
+import * as h from './host/host/h.mjs';
+const flush = () => new Promise(r => setTimeout(r, 5));
+const i = instantiate({next: h.next, report: h.report});
+await i.start(3n);
+console.log('returned');
+for (const v of [1n, 2n]) { await flush(); console.log('fired', h.fire(v)); }
+await flush();
+i.dispose();
+console.log('disposed', h.fire(9n));
+await flush();
+console.log('waiting after dispose', h.fire(9n));
+"#,
+    );
+    let out = Command::new("node")
+        .arg(d.join("out/use.mjs"))
+        .output()
+        .unwrap();
+    success(&out);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "returned\nfired 1\ngot 1\nfired 1\ngot 2\ndisposed 1\nwaiting after dispose 0\n"
+    );
+    // `report` has no `wait` in its row, so its binding may not answer with
+    // a Promise.
+    write(
+        &d,
+        "out/promise.mjs",
+        r#"import { instantiate } from './program.mjs';
+const i = instantiate({next: async () => 1n, report: async () => null});
+try { await i.once(); } catch (e) { console.log(e.message); }
+"#,
+    );
+    let out = Command::new("node")
+        .arg(d.join("out/promise.mjs"))
+        .output()
+        .unwrap();
+    success(&out);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "extern report returned a Promise but its row has no wait\n"
+    );
+    fs::remove_dir_all(d).unwrap();
+}
+
+#[test]
 fn kept_callbacks_live_as_long_as_their_host_owner() {
     let d = dir();
     write(
         &d,
         "Tauto.eure",
         r#"package { name = "callbacks" }
+exports = ["setup", "teardown"]
 javascript {
-  exports = ["setup", "teardown"]
   extern { emitter = "host/h.mjs#emitter" listen = "host/h.mjs#listen" stash = "host/h.mjs#stash" take = "host/h.mjs#take" }
   types { Emitter = "host/h.mjs#close" }
   retain = ["listen"]
@@ -1075,9 +1216,9 @@ javascript {
         &d,
         "src/main.taut",
         r#"extern {
-  affine type Emitter
+  type(affine) Emitter
   fn emitter(): Emitter
-  fn listen(&e: Emitter, f: (n: i64) -> i64): Unit
+  fn listen(e: &Emitter, f: (n: i64) -> i64): Unit
   fn stash(e: Emitter): Unit
   fn take(): Emitter
 }
@@ -1085,7 +1226,7 @@ fn setup(base: i64): Unit {
   let e := emitter()
   let offset := base * 10
   listen(&e, (n) => {
-    perform show("event", n)
+    show(&n)
     n + offset
   })
   stash(e)
@@ -1118,16 +1259,16 @@ console.log(h.fire(2n));
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "event = 1\n[ 41n ]\nclose\n[ undefined ]\n"
+        "1\n[ 41n ]\nclose\n[ undefined ]\n"
     );
     write(
         &d,
         "src/main.taut",
         r#"effect ask(): i64
 extern {
-  affine type Emitter
+  type(affine) Emitter
   fn emitter(): Emitter
-  fn listen(&e: Emitter, f: (n: i64) -> i64 ! {ask}): Unit
+  fn listen(e: &Emitter, f: (n: i64) -> i64 ! {ask}): Unit
   fn stash(e: Emitter): Unit
   fn take(): Emitter
 }
@@ -1147,12 +1288,11 @@ fn a_running_kept_callback_holds_its_owner_until_it_finishes() {
         &d,
         "Tauto.eure",
         r#"package { name = "callbacks" }
+exports = ["setup", "teardown"]
 javascript {
-  exports = ["setup", "teardown"]
   extern { emitter = "host/h.mjs#emitter" listen = "host/h.mjs#listen" stash = "host/h.mjs#stash" take = "host/h.mjs#take" wait = "host/h.mjs#wait" }
   types { Emitter = "host/h.mjs#close" }
   retain = ["listen"]
-  async = ["wait"]
   sources = ["host"]
 }
 "#,
@@ -1160,19 +1300,20 @@ javascript {
     write(
         &d,
         "src/main.taut",
-        r#"extern {
-  affine type Emitter
+        r#"import std::builtin::par
+extern {
+  type(affine) Emitter
   fn emitter(): Emitter
-  fn listen(&e: Emitter, f: (n: i64) -> i64): ()
+  fn listen(e: &Emitter, f: (n: i64) -> i64): ()
   fn stash(e: Emitter): ()
   fn take(): Emitter
-  fn wait(n: i64): i64
+  fn wait(n: i64): i64 ! {wait}
 }
 fn setup(): () {
   let e := emitter()
   listen(&e, (n) => {
     let m := wait(n)
-    perform show("done", m)
+    show(&m)
     m
   })
   stash(e)
@@ -1217,7 +1358,7 @@ console.log(await running);
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "released\n[ undefined ]\ndone = 1\nclose\n1n\n"
+        "released\n[ undefined ]\n1\nclose\n1n\n"
     );
 }
 
@@ -1228,8 +1369,8 @@ fn exports_pass_host_values_and_functions() {
         &d,
         "Tauto.eure",
         r#"package { name = "exports" }
+exports = ["name_of", "rename", "make", "twice", "adder"]
 javascript {
-  exports = ["name_of", "rename", "make", "twice", "adder"]
   extern { label = "host/h.mjs#label" fresh = "host/h.mjs#fresh" }
   types { Node = "host/h.mjs#close" }
   sources = ["host"]
@@ -1240,14 +1381,14 @@ javascript {
         &d,
         "src/main.taut",
         r#"extern {
-  affine type Node
-  fn label(&n: Node): Text
+  type(affine) Node
+  fn label(n: &Node): Text
   fn fresh(name: Text): Node
 }
-fn name_of(&n: Node): Text { label(&n) }
+fn name_of(n: &Node): Text { label(&n) }
 fn rename(n: Node): Text { label(&n) }
 fn make(name: Text): Node { fresh(name) }
-fn twice(&f: (n: i64) -> i64, x: i64): i64 { f(f(x)) }
+fn twice(f: &((n: i64) -> i64), x: i64): i64 { f(f(x)) }
 fn adder(k: i64): (n: i64) -> i64 { (n) => n + k }
 "#,
     );
@@ -1303,7 +1444,7 @@ console.log(add(5n));
             &d,
             "Tauto.eure",
             r#"package { name = "exports" }
-javascript { exports = ["keep"] }
+exports = ["keep"]
 "#,
         );
         write(&d, "src/main.taut", source);
@@ -1332,14 +1473,14 @@ javascript { extern { make = "host/h.mjs#make" } types { Node = "host/h.mjs#rele
         "src/main.taut",
         r#"effect stop(): i64 resume 0
 extern {
-  affine type Node
+  type(affine) Node
   fn make(name: Text): Node
 }
 let r := handle {
   let a := make("aborted")
   perform stop()
 } with { stop() => 0 }
-perform show("after", r)
+show(&r)
 "#,
     );
     write(
@@ -1352,7 +1493,7 @@ perform show("after", r)
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "release aborted\nafter = 0\n"
+        "release aborted\n0\n"
     );
 }
 
@@ -1379,24 +1520,24 @@ rust { bridge = "bridge" }"#,
 fn choose<B: Shared, A: Shared>(first: B, second: A, pick: Bool): (B | A) {
   if pick { native_identity(first) } else { native_identity(second) }
 }
-perform show("left", choose("known", 7, true))
-perform show("right", choose("known", 7, false))
+show(&choose("known", 7, true))
+show(&choose("known", 7, false))
 let alias := choose
-perform show("alias", alias("other", 8, false))
+show(&alias("other", 8, false))
 fn outer<C: Shared>(captured: C): Unit {
   fn captured_choose<B: Shared, A: Shared>(known: B, witness: A, input: B | A, first: Bool): (B | A) {
-    perform show("captured", captured)
+    show(&captured)
     if first { known } else { input }
   }
   let alias := captured_choose
   let number: i64 := 7
   let input := if true { number } else { "unseen" }
-  perform show("direct", captured_choose("known", number, input, false))
-  perform show("alias", alias("known", number, input, true))
+  show(&captured_choose("known", number, input, false))
+  show(&alias("known", number, input, true))
 }
 outer("kept")
-perform show("native", native_identity(11))"#;
-    let package = tauto_nir::compile_javascript(source).unwrap();
+show(&native_identity(11))"#;
+    let package = tauto::nir::compile_javascript(source).unwrap();
     assert!(package.externs.iter().any(
         |external| external.name.as_str() == "native_identity" && !external.generics.is_empty()
     ));
@@ -1433,7 +1574,7 @@ perform show("native", native_identity(11))"#;
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "left = \"known\"\nright = 7\nalias = 8\ncaptured = \"kept\"\ndirect = 7\ncaptured = \"kept\"\nalias = \"known\"\nnative = 11\n"
+        "\"known\"\n7\n8\n\"kept\"\n7\n\"kept\"\n\"known\"\n11\n"
     );
     assert!(out.stderr.is_empty());
     fs::remove_dir_all(d).unwrap();
@@ -1455,9 +1596,9 @@ javascript { chunks { settings = ["settings"] } }
         r#"fn square(n: i64): i64 { n * n }
 fn doubled_square(n: i64): i64 { square(n) * 2 }
 fn settings(n: i64): i64 { doubled_square(n) + 1 }
-perform show("main", square(3))
-perform show("chunk", settings(2))
-perform show("again", settings(3))
+show(&square(3))
+show(&settings(2))
+show(&settings(3))
 "#,
     );
     success(&cli(&d, "node"));
@@ -1467,14 +1608,14 @@ perform show("again", settings(3))
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "main = 9\nchunk = 9\nagain = 19\n"
+        "9\n9\n19\n"
     );
     // The chunk is read only when its entry is called: without it, the
     // program runs until that call and then fails.
     fs::remove_file(d.join("out/chunk-settings.mjs")).unwrap();
     let out = run(&d);
     assert!(!out.status.success());
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "main = 9\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
     assert!(String::from_utf8_lossy(&out.stderr).contains("chunk-settings.mjs"));
     // A rebuild without chunks removes the module.
     write(
@@ -1525,14 +1666,14 @@ rust { bridge = "bridge" }
         &d,
         "src/main.taut",
         r#"extern {
-  affine type Node
+  type(affine) Node
   fn make(name: Text): Node
-  fn label(&n: Node): Text
+  fn label(n: &Node): Text
   fn double(n: i64): i64
 }
 let a := make("a")
-perform show("label", label(&a))
-perform show("double", double(21))
+show(&label(&a))
+show(&double(21))
 "#,
     );
     write(
@@ -1545,7 +1686,47 @@ perform show("double", double(21))
     success(&out);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "label = \"a\"\ndouble = 42\nrelease a\n"
+        "\"a\"\n42\nrelease a\n"
     );
     fs::remove_dir_all(d).unwrap();
+}
+
+#[test]
+fn a_value_the_host_got_back_can_be_passed_in_again() {
+    let d = dir();
+    write(
+        &d,
+        "Tauto.eure",
+        r#"package { name = "passback" }
+exports = ["make", "size"]
+"#,
+    );
+    write(
+        &d,
+        "src/main.taut",
+        r#"struct Bag { items: List(i64), name: Text }
+fn make(n: i64): Option(Bag) { Some(Bag { items: Cons(n, Cons(n + 1, Nil)), name: "bag" }) }
+fn total(l: List(i64)): i64 { match l { Nil => 0, Cons(x, rest) => x + total(rest) } }
+fn size(b: Option(Bag)): i64 {
+  show(&0)
+  match b { None => 0, Some(x) => total(x.items) }
+}
+"#,
+    );
+    success(&cli(&d, "node"));
+    write(
+        &d,
+        "out/use.mjs",
+        r#"import { instantiate } from './program.mjs';
+const i = instantiate({}, {show: t => {}});
+const s = i.make(4n);
+console.log(i.size(s), i.size(s));
+"#,
+    );
+    let out = Command::new("node")
+        .arg(d.join("out/use.mjs"))
+        .output()
+        .unwrap();
+    success(&out);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "9n 9n\n");
 }

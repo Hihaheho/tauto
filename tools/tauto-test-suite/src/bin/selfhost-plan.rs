@@ -10,16 +10,12 @@ fn main() {
     for case in cases.into_iter().filter(|c| c.name.contains(&filter)) {
         selected += 1;
         for backend in [Backend::Rust, Backend::Javascript] {
-            if case.host_harness_only || case.excluded(backend) {
+            if case.host_harness_only {
                 println!(
                     "{}\t{}\t-\t-\t-\t{}",
                     case.name,
                     backend.name(),
-                    if case.host_harness_only {
-                        "host harness only"
-                    } else {
-                        "explicitly excluded"
-                    }
+                    "host harness only"
                 );
                 continue;
             }

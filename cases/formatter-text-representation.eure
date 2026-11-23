@@ -1,9 +1,9 @@
 @ cases.prelude-text
 files."defs.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(word, ```par
 {{par:formatter_words}}```, with(fmt: word_fmt)) => struct Word, fn parse
-pub fn word_fmt(tokens: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn word_fmt(tokens: List(SynTok), width: u64): Option(Text) ! {div} {
   Some("first second")
 }
 ````
@@ -19,11 +19,11 @@ let value := word`first second`
 
 @ cases.standard-text
 files."defs.taut" = ````tauto
-import std::prelude::Macro
-import std::Text
+import std::builtin::macro
+import std::text
 syntax!(word, ```par
 {{par:formatter_words}}```, with(fmt: word_fmt)) => struct Word, fn parse
-pub fn word_fmt(tokens: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn word_fmt(tokens: List(SynTok), width: u64): Option(Text) ! {div} {
   Some("first second")
 }
 ````
@@ -39,11 +39,11 @@ let value := word`first second`
 
 @ cases.unrelated-text-is-not-the-formatters-result-type
 files."defs.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 struct Text { value: u64 }
 syntax!(word, ```par
 {{par:formatter_words}}```, with(fmt: word_fmt)) => struct Word, fn parse
-pub fn word_fmt(tokens: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn word_fmt(tokens: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(Text { value: 0 })
 }
 ````
@@ -56,4 +56,4 @@ format_literals = ```tauto
 import "defs.taut"
 let value := word`first    second`
 ```
-format_literals_warnings = ["the fmt function, makes Option(defs::Text)"]
+format_literals_warnings = ["the fmt function, makes Option(Text)"]

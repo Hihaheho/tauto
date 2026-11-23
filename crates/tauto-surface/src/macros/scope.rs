@@ -235,9 +235,17 @@ impl<'c> Resolver<'c> {
                 }
                 Stmt::Effect(e) => declare(self, &mut e.name),
                 Stmt::Inductive(d) => declare(self, &mut d.name),
-                Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
-                    self.collect_globals(items)
+                Stmt::Module { name, items, .. } => {
+                    let (plain, marks) = split_on(name, self.sep);
+                    if !marks.is_empty() {
+                        let unique = format!("{plain}#{marks}");
+                        self.globals
+                            .insert((plain.into(), marks.into()), unique.clone());
+                        *name = unique;
+                    }
+                    self.collect_globals(items);
                 }
+                Stmt::Mutual { items, .. } => self.collect_globals(items),
                 _ => {}
             }
         }
@@ -295,6 +303,20 @@ impl<'c> Resolver<'c> {
                 self.term(condition);
                 self.term(body);
             }
+            Stmt::For {
+                pattern,
+                source,
+                body,
+            } => {
+                self.term(source);
+                let mark = self.mark();
+                self.pattern(pattern);
+                self.term(body);
+                self.pop(mark);
+            }
+            Stmt::Loop { body } => self.term(body),
+            Stmt::Break(e) => self.opt(e),
+            Stmt::Continue => {}
             Stmt::Return(e) => self.opt(e),
             Stmt::Expr(e) => self.term(e),
             Stmt::Struct(d) | Stmt::Enum(d) => self.data(d),
@@ -302,6 +324,12 @@ impl<'c> Resolver<'c> {
             Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
                 for i in items {
                     self.stmt(i);
+                }
+            }
+            Stmt::Reexport { module, names, .. } => {
+                *module = self.reference(module);
+                for (name, _) in names {
+                    *name = self.reference(name);
                 }
             }
             Stmt::Inductive(d) => self.inductive(d),
@@ -325,6 +353,12 @@ impl<'c> Resolver<'c> {
             f.params[i] = self.bind_name(&f.params[i].clone());
         }
         self.opt(&mut f.result);
+        for c in &mut f.where_ {
+            self.term(&mut c.ty);
+            for a in &mut c.arguments {
+                self.term(a);
+            }
+        }
         self.term(&mut f.body);
         self.pop(mark);
     }
@@ -382,7 +416,7 @@ impl<'c> Resolver<'c> {
 
     fn pattern(&mut self, p: &mut Pattern) {
         match p {
-            Pattern::Bind(n) => {
+            Pattern::Bind { name: n, .. } => {
                 let (plain, _) = split_on(n, self.sep);
                 let is_ctor = self.ctors.contains(plain);
                 if is_ctor {
@@ -406,10 +440,9 @@ impl<'c> Resolver<'c> {
                     self.pattern(f);
                 }
             }
-            Pattern::Tuple(items) => {
-                for a in items {
-                    self.pattern(a);
-                }
+            Pattern::Typed { name, ty, .. } => {
+                self.term(ty);
+                *name = self.bind_name(name);
             }
             Pattern::Wild
             | Pattern::Int(_)
@@ -499,6 +532,7 @@ impl<'c> Resolver<'c> {
                 binder,
                 domain,
                 body,
+                ..
             } => {
                 self.term(domain);
                 let mark = self.mark();
@@ -510,6 +544,7 @@ impl<'c> Resolver<'c> {
                 params,
                 body,
                 types,
+                ..
             } => {
                 for ty in types.iter_mut().flatten() {
                     self.term(ty);
@@ -522,7 +557,7 @@ impl<'c> Resolver<'c> {
                 self.pop(mark);
             }
             TermKind::BorrowLam { lam, .. } => self.term(lam),
-            TermKind::Union(items) | TermKind::Product(items) | TermKind::Tuple(items) => {
+            TermKind::Union(items) => {
                 for i in items {
                     self.term(i);
                 }
@@ -568,6 +603,7 @@ impl<'c> Resolver<'c> {
                 result,
                 binder,
                 arms,
+                ..
             } => {
                 self.term(scrutinee);
                 // The equation is bound in the arms, not in the result type.

@@ -6,15 +6,15 @@ use std::time::Duration;
 
 use tauto::check::{Kernel, Verdict, declare_prelude};
 
-/// `p` counts a numeral down one at a time, so `p(10^12)` does not finish.
+/// `p` rebuilds a numeral one `Succ` at a time, so `p(10^12)` does not finish.
 fn source() -> String {
     r#"fn p(n: Nat): Nat {
   ⊢ Nat from match n {
     Zero => 0
-    Succ(k) => p(k)
+    Succ(k) => Succ(p(k))
   }
 }
-theorem slow(): p(1000000000000) = 0 { Refl }
+theorem slow(): p(1000000000000) = 1000000000000 { Refl }
 theorem after(): Eq(Nat, 1, 1) { Refl }
 "#
     .to_string()

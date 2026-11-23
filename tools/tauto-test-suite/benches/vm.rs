@@ -62,18 +62,19 @@ fn run() {
         .collect();
     assert!(!selected.is_empty(), "no matching workload");
     for name in selected {
-        let source = case_inputs::fixture_static("backend-bench-inputs.eure", name);
-        let package = tauto_nir::compile_javascript(source).expect("compile input");
+        let source = case_inputs::fixture("backend-bench-inputs.eure", name);
+        let package = tauto::nir::compile_javascript(&source).expect("compile input");
         let wire = tauto_vm::wire::write(&package).expect("encode input");
         let input = work.join(format!("{name}.cps"));
         std::fs::write(&input, wire).unwrap();
         let flags = vec!["--allow-div".to_owned()];
-        let command_args = tauto_vm::wire::machine_args(&flags, &input, None, None, &[]);
+        let command_args = tauto_vm::wire::machine_args(&flags, &input, None, None, None, None, &[]);
         eprintln!("{name}: {} {}", machine.display(), command_args.join(" "));
         if prepare {
             continue;
         }
-        let evaluated = tauto::eval::run_with_budget(source, u64::MAX / 4).expect("evaluate input");
+        let evaluated =
+            tauto::exec::run_with_budget(&source, u64::MAX / 4).expect("evaluate input");
         assert!(evaluated.stdout.is_empty() && evaluated.stderr.is_empty());
         assert_eq!(evaluated.exit.unwrap_or(0), 0);
         let expected = evaluated
@@ -125,114 +126,13 @@ fn run() {
     }
 }
 
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
+/// The inputs these tests read, kept as files under `benches/fixtures`.
 mod case_inputs {
-    pub fn fixture_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            ("backend-bench-inputs.eure", "vec-50000") => {
-                r#"var v := Vec::new()
-var i := 0
-while i < 50000 {
-  Vec::push(&mut v, i)
-  i := i + 1
-}
-var s := 0
-var j := 0
-while j < 50000 {
-  match Vec::get(&v, j) {
-    Some(x) => { s := s + x }
-    None => #()
-  }
-  j := j + 1
-}
-perform show("s", s)
-"#
-            }
-            ("backend-bench-inputs.eure", "list-2000") => {
-                r#"fn build(n: i64): List(i64) { if n == 0 { Nil } else { Cons(n, build(n - 1)) } }
-fn sum(xs: List(i64)): i64 {
-  match xs {
-    Nil => 0
-    Cons(x, r) => x + sum(r)
-  }
-}
-var k := 0
-var t := 0
-while k < 20 {
-  t := t + sum(build(2000))
-  k := k + 1
-}
-perform show("t", t)
-"#
-            }
-            ("backend-bench-inputs.eure", "while-3e6") => {
-                r#"var i := 0
-var s := 0
-while i < 3000000 {
-  s := s + mod(i, 7)
-  i := i + 1
-}
-perform show("s", s)
-"#
-            }
-            ("backend-bench-inputs.eure", "hashmap-5000") => {
-                r#"var m := HashMap::new()
-var i := 0
-while i < 5000 {
-  HashMap::insert(&mut m, Text::of_u64(i), i)
-  i := i + 1
-}
-var s := 0
-var j := 0
-while j < 5000 {
-  match HashMap::get(&m, &Text::of_u64(j)) {
-    Some(x) => { s := s + x }
-    None => #()
-  }
-  j := j + 1
-}
-perform show("s", s)
-"#
-            }
-            ("backend-bench-inputs.eure", "fib-27") => {
-                r#"fn fib(n: i64): i64 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
-perform show("fib", fib(27))
-"#
-            }
-            ("backend-bench-inputs.eure", "direct-effect-2000") => {
-                r#"effect tick(n: i64): i64 direct
-fn go(n: i64, acc: i64): i64 ! {tick, Div} {
-  if n == 0 { acc } else {
-    let v := perform tick(n)
-    go(n - 1, acc + v)
-  }
-}
-let r := handle { go(2000, 0) } with {
-  tick(n), k => k(n)
-}
-perform show("r", r)
-"#
-            }
-            ("backend-bench-inputs.eure", "resume-effect-2000") => {
-                r#"effect tick(n: i64): i64
-fn go(n: i64, acc: i64): i64 ! {tick, Div} {
-  if n == 0 { acc } else {
-    let v := perform tick(n)
-    go(n - 1, acc + v)
-  }
-}
-let r := handle { go(2000, 0) } with {
-  tick(n), k => k(n)
-}
-perform show("r", r)
-"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
+    fn read(path: &str) -> String {
+        let path = format!("{}/benches/fixtures/{path}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"))
     }
-    #[allow(dead_code)]
     pub fn fixture(file: &str, name: &str) -> String {
-        fixture_static(file, name).to_string()
+        read(&format!("{}/{}.taut", file.trim_end_matches(".eure"), name))
     }
 }

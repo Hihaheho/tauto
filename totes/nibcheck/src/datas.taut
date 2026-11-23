@@ -1,13 +1,16 @@
+import "messages.taut"
 import "ty.taut"
-import std::Base
-import std::Map
-import std::Text
+import "../../identity/src/identity.taut"
+import std::base
+import std::map
+import std::text
 import "../../surface/src/surface.taut"
 import "../../text/src/text.taut"
+import "../../unicode/src/unicode.taut"
 
 // The declared `struct`s and `enum`s, and the kinds of types over them
 // (`Datas` and `Data` of `types.rs`), in the proof language
-// (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
+// (`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」).
 
 pub(open) inductive DataField: Type {
   DataFieldMk(name: Option(Text), ty: Ty): DataField
@@ -33,111 +36,143 @@ pub(open) inductive Data: Type {
     holds: List(Text),
     // Declared by the prelude and implemented by the evaluator.
     builtin: Bool,
-    // A `view struct`: an extern type that holds a borrow.
-    r#view: Bool
+    // An extern `type(borrow)`: an opaque type that holds a borrow.
+    view: Bool
   ): Data
+}
+
+// How far a struct's `coerce` field lends the struct as the field's type:
+// `coerce` by `&`, `coerce(mut)` also by `&mut`, `coerce(owned)` also as the
+// value itself (`docs/design/ownership.md`「Coercing structs (`coerce`)」).
+pub(open) inductive CoerceLevel: Type {
+  CoerceRef: CoerceLevel
+  CoerceMut: CoerceLevel
+  CoerceOwned: CoerceLevel
+}
+
+// A struct's `coerce` field: its index, and the level written.
+pub(open) inductive DataCoerce: Type {
+  DataCoerceMk(field: Nat, level: CoerceLevel): DataCoerce
 }
 
 pub(open) inductive Datas: Type {
   DatasMk(
     decls: Ordmap(Text, Data),
     // A constructor's name (`Some`, `Shape::Circle`) to its type and index.
-    ctors: Ordmap(Text, Pair(Text, Nat)),
+    ctors: Ordmap(Text, Text × Nat),
+    // A constructor's own name (`Circle`) to every type declaring one so
+    // named, and its index there: the candidates of an unqualified name,
+    // ordered by the type's name.
+    owners: Ordmap(Text, Ordmap(Text, Nat)),
+    // A struct with a `coerce` field to that field.
+    coerces: Ordmap(Text, DataCoerce),
     // Enough steps for the kinds of the types of the program.
-    steps: Nat
+    steps: Nat,
+    // What `char::to_lowercase` changes beyond ASCII (`unicode_lowercase`),
+    // for the near spellings of constructors. The table is data the host
+    // gives; the proofs take it as given.
+    lower: Ordmap(Nat, List(Nat))
   ): Datas
 }
 
 pub fn datas_empty(steps: Nat): Datas {
-  Datas { decls: Ordmap::empty(), ctors: Ordmap::empty(), steps: steps }
+  Datas {
+    decls: Ordmap::empty(),
+    ctors: Ordmap::empty(),
+    owners: Ordmap::empty(),
+    coerces: Ordmap::empty(),
+    steps: steps,
+    lower: Ordmap::empty()
+  }
 }
 
 pub fn datas_decl(d: Datas, name: Text): Option(Data) {
   Ordmap::get(d.decls, name, Ordmap::compare_text)
 }
 
-pub fn datas_ctor(d: Datas, name: Text): Option(Pair(Text, Nat)) {
+pub fn datas_ctor(d: Datas, name: Text): Option(Text × Nat) {
   Ordmap::get(d.ctors, name, Ordmap::compare_text)
 }
 
-pub fn datas_named_ctor(cs: List(DataCtor), name: Text, index: Nat): Option(Nat) {
-  ⊢ Option(Nat) from match cs {
-    Nil => None
-    Cons(c, rest) => ⊢ Option(Nat) from match c.name == name {
-      true => Some(index)
-      false => datas_named_ctor(rest, name, index + 1)
-    }
+pub fn datas_ctor_candidates(d: Datas, name: Text): List(Text × Nat) {
+  match Ordmap::get(d.owners, name, Ordmap::compare_text) {
+    None => Nil
+    Some(owners) => Ordmap::entries(owners)
   }
 }
 
-pub fn datas_ctor_candidates_in(ds: List(Pair(Text, Data)), name: Text): List(Pair(Text, Nat)) {
-  ⊢ List(Pair(Text, Nat)) from match ds {
-    Nil => Nil
-    Cons(d, rest) => ⊢ List(Pair(Text, Nat)) from match datas_named_ctor(d.snd.constructors, name, 0) {
-      None => datas_ctor_candidates_in(rest, name)
-      Some(index) => Cons(Pair { fst: d.fst, snd: index }, datas_ctor_candidates_in(rest, name))
-    }
+// `owners` with the constructor `name`, at `index` of the type `owner`: a
+// type declared again keeps only its last index.
+pub fn datas_owners_insert(
+  owners: Ordmap(Text, Ordmap(Text, Nat)),
+  name: Text,
+  owner: Text,
+  index: Nat
+): Ordmap(Text, Ordmap(Text, Nat)) {
+  let those := ⊢ Ordmap(Text, Nat) from match Ordmap::get(owners, name, Ordmap::compare_text) {
+    None => Ordmap::empty()
+    Some(m) => m
   }
-}
-
-pub fn datas_ctor_candidates(d: Datas, name: Text): List(Pair(Text, Nat)) {
-  datas_ctor_candidates_in(Ordmap::entries(d.decls), name)
+  Ordmap::insert(
+    owners,
+    name,
+    Ordmap::insert(those, owner, index, Ordmap::compare_text),
+    Ordmap::compare_text
+  )
 }
 
 pub fn datas_ctor_ambiguous(d: Datas, name: Text): Bool {
-  ⊢ Bool from match datas_ctor_candidates(d, name) {
+  match datas_ctor_candidates(d, name) {
     Nil => false
-    Cons(first, rest) => ⊢ Bool from match rest {
+    Cons(^first, rest) => ⊢ Bool from match rest {
       Nil => false
-      Cons(second, more) => true
+      Cons(^second, ^more) => true
     }
   }
 }
 
 pub fn constructor_result_owner(ty: Ty): Option(Text) {
-  ⊢ Option(Text) from match ty {
-    TyNamed(name, args) => Some(name)
-    TyFn(params, result, kind) => constructor_result_owner(result)
-    TyBorrow(inner, mutable) => constructor_result_owner(inner)
+  match ty {
+    TyNamed(name, ^args) => Some(surface_name_text(name))
+    TyFn(^params, result, ^kind) => constructor_result_owner(result)
+    TyBorrow(inner, ^mutable) => constructor_result_owner(inner)
     _ => None
   }
 }
 
-pub fn constructor_candidate(cs: List(Pair(Text, Nat)), owner: Text): Option(Pair(Text, Nat)) {
-  ⊢ Option(Pair(Text, Nat)) from match cs {
+pub fn constructor_candidate(cs: List(Text × Nat), owner: Text): Option(Text × Nat) {
+  match cs {
     Nil => None
-    Cons(c, rest) => ⊢ Option(Pair(Text, Nat)) from match c.fst == owner {
+    Cons(c, rest) => ⊢ Option(Text × Nat) from match c.fst == owner {
       true => Some(c)
       false => constructor_candidate(rest, owner)
     }
   }
 }
 
-pub fn constructor_resolve(d: Datas, name: Text, expected: Ty): Option(Pair(Text, Nat)) {
-  ⊢ Option(Pair(Text, Nat)) from match constructor_result_owner(expected) {
+pub fn constructor_resolve(d: Datas, name: Text, expected: Ty): Option(Text × Nat) {
+  match constructor_result_owner(expected) {
     None => None
     Some(owner) => constructor_candidate(datas_ctor_candidates(d, name), owner)
   }
 }
 
-pub fn constructor_names(cs: List(Pair(Text, Nat)), name: Text): List(Text) {
-  ⊢ List(Text) from match cs {
+pub fn constructor_names(cs: List(Text × Nat), name: Text): List(Text) {
+  match cs {
     Nil => Nil
-    Cons(c, rest) => Cons(cat3(c.fst, ".", name), constructor_names(rest, name))
+    Cons(c, rest) => Cons(cat3(c.fst, "::", name), constructor_names(rest, name))
   }
 }
 
 pub fn constructor_ambiguity_message(d: Datas, name: Text): Text {
-  cat4(
-    "ambiguous constructor `",
+  ambiguous_constructor_message(
     name,
-    "`: use a type annotation or ",
     text_join(constructor_names(datas_ctor_candidates(d, name), name), " or ")
   )
 }
 
 // Resolve an ambiguous name only from its expected result owner.
-pub fn datas_ctor_expected(d: Datas, name: Text, expected: Ty): Option(Pair(Text, Nat)) {
+pub fn datas_ctor_expected(d: Datas, name: Text, expected: Ty): Option(Text × Nat) {
   if datas_ctor_ambiguous(d, name) {
     constructor_resolve(d, name, expected)
   } else {
@@ -149,7 +184,154 @@ pub fn datas_ctor_error(d: Datas, name: Text): Text {
   if datas_ctor_ambiguous(d, name) {
     constructor_ambiguity_message(d, name)
   } else {
-    cat2(name, " is not a constructor")
+    not_a_constructor_message(name)
+  }
+}
+
+// A near spelling of `name` among a type's constructors, compared without
+// case and underscores (`closest_name` of `tauto_surface::suggest`): the
+// written part only, unless `name` has an owner, at most a third of its
+// characters apart. Characters are code points, lowered as
+// `char::to_lowercase` lowers them.
+pub fn suggest_key(lower: Ordmap(Nat, List(Nat)), cs: List(Nat)): List(Nat) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => if c == 95 { suggest_key(lower, rest) } else {
+      List::append(unicode_to_lowercase(lower, c), suggest_key(lower, rest))
+    }
+  }
+}
+
+pub fn suggest_key_of(lower: Ordmap(Nat, List(Nat)), t: Text): List(Nat) {
+  suggest_key(lower, text_code_points(t))
+}
+
+pub fn suggest_min3(a: Nat, b: Nat, c: Nat): Nat {
+  Nat::min(a, Nat::min(b, c))
+}
+
+// The next row of the edit distance for the letter `x` of the first word:
+// `prev` is the row above, from its second entry, `diag` the entry above
+// and to the left, `left` the entry just written.
+pub fn suggest_row(x: Nat, bs: List(Nat), prev: List(Nat), diag: Nat, left: Nat): List(Nat) {
+  match bs {
+    Nil => Nil
+    Cons(y, rest) => ⊢ List(Nat) from match prev {
+      Nil => Nil
+      Cons(up, more) => {
+        let here := suggest_min3(up + 1, left + 1, if x == y { diag } else { diag + 1 })
+        Cons(here, suggest_row(x, rest, more, up, here))
+      }
+    }
+  }
+}
+
+pub fn suggest_rows(xs: List(Nat), bs: List(Nat), row: List(Nat), i: Nat): List(Nat) {
+  match xs {
+    Nil => row
+    Cons(x, rest) => ⊢ List(Nat) from match row {
+      Nil => row
+      Cons(first, more) => suggest_rows(
+        rest,
+        bs,
+        Cons(i + 1, suggest_row(x, bs, more, first, i + 1)),
+        i + 1
+      )
+    }
+  }
+}
+
+pub fn suggest_count(bs: List(Nat), i: Nat): List(Nat) {
+  match bs {
+    Nil => Cons(i, Nil)
+    Cons(^b, rest) => Cons(i, suggest_count(rest, i + 1))
+  }
+}
+
+pub fn suggest_last(xs: List(Nat), last: Nat): Nat {
+  match xs {
+    Nil => last
+    Cons(x, rest) => suggest_last(rest, x)
+  }
+}
+
+pub fn suggest_distance(a: List(Nat), b: List(Nat)): Nat {
+  suggest_last(suggest_rows(a, b, suggest_count(b, 0), 0), 0)
+}
+
+pub fn suggest_last_text(ts: List(Text), last: Text): Text {
+  match ts {
+    Nil => last
+    Cons(t, rest) => suggest_last_text(rest, t)
+  }
+}
+
+pub fn suggest_written(name: Text, c: Text): Text {
+  if List::length(text_split(name, "::")) == 1 {
+    suggest_last_text(text_split(c, "::"), c)
+  } else { c }
+}
+
+pub fn suggest_closest(
+  lower: Ordmap(Nat, List(Nat)),
+  name: Text,
+  want: List(Nat),
+  cs: List(DataCtor),
+  best: Option(Nat × Text)
+): Option(Text) {
+  match cs {
+    Nil => ⊢ Option(Text) from match best {
+      None => None
+      Some(b) => Some(b.snd)
+    }
+    Cons(k, rest) => if k.name == name { suggest_closest(lower, name, want, rest, best) } else {
+      let d := suggest_distance(want, suggest_key_of(lower, suggest_written(name, k.name)))
+      if d == 0 { Some(k.name) } else {
+        let near := d <= 1 || d + d + d <= List::length(want)
+        let better := ⊢ Bool from match best {
+          None => true
+          Some(b) => d < b.fst
+        }
+        if near && better {
+          suggest_closest(lower, name, want, rest, Some(#(d, k.name)))
+        } else { suggest_closest(lower, name, want, rest, best) }
+      }
+    }
+  }
+}
+
+// A pattern's name that is no constructor of the matched type `t`, said as
+// the kernel says it, with a near spelling of one of its constructors.
+pub fn datas_pattern_ctor_error(d: Datas, name: Text, t: Ty): Text {
+  if datas_ctor_ambiguous(d, name) { constructor_ambiguity_message(d, name) } else {
+    let hint := ⊢ Option(Text) from match t {
+      TyNamed(n, ^args) => ⊢ Option(Text) from match datas_decl(d, surface_name_text(n)) {
+        Some(data) => suggest_closest(
+          d.lower,
+          name,
+          suggest_key_of(d.lower, name),
+          data.constructors,
+          None
+        )
+        None => None
+      }
+      _ => None
+    }
+    ⊢ Text from match hint {
+      Some(h) => not_a_constructor_hint_message(name, h)
+      None => not_a_constructor_message(name)
+    }
+  }
+}
+
+pub fn datas_with_lower(d: Datas, lower: Ordmap(Nat, List(Nat))): Datas {
+  Datas {
+    decls: d.decls,
+    ctors: d.ctors,
+    owners: d.owners,
+    coerces: d.coerces,
+    steps: d.steps,
+    lower: lower
   }
 }
 
@@ -162,21 +344,21 @@ pub fn list_len<A>(xs: List(A)): Nat {
 }
 
 pub fn list_has_text(xs: List(Text), x: Text): Bool {
-  ⊢ Bool from match xs {
+  match xs {
     Nil => false
     Cons(y, rest) => y == x || list_has_text(rest, x)
   }
 }
 
 pub fn datas_constructor(d: Datas, name: Text, c: Nat): Option(DataCtor) {
-  ⊢ Option(DataCtor) from match datas_decl(d, name) {
+  match datas_decl(d, name) {
     None => None
     Some(data) => nth_item(data.constructors, c)
   }
 }
 
 pub fn data_instance_from(gs: List(Text), args: List(Ty), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
-  ⊢ Ordmap(Text, Ty) from match gs {
+  match gs {
     Nil => map
     Cons(g, rest) => ⊢ Ordmap(Text, Ty) from match args {
       Nil => map
@@ -194,14 +376,14 @@ pub fn data_instance(d: Data, args: List(Ty)): Ordmap(Text, Ty) {
 }
 
 pub fn fields_mention(fs: List(DataField), generic: Text): Bool {
-  ⊢ Bool from match fs {
+  match fs {
     Nil => false
     Cons(f, rest) => ty_param_in(f.ty, generic) || fields_mention(rest, generic)
   }
 }
 
 pub fn ctors_mention(cs: List(DataCtor), generic: Text): Bool {
-  ⊢ Bool from match cs {
+  match cs {
     Nil => false
     Cons(c, rest) => fields_mention(c.fields, generic) || ctors_mention(rest, generic)
   }
@@ -212,30 +394,30 @@ pub fn data_mentions(d: Data, generic: Text): Bool {
 }
 
 pub fn data_declared_kind(data: Data): Kind {
-  ⊢ Kind from match data.declared {
+  match data.declared {
     Some(k) => k
     None => KindCopy
   }
 }
 
 pub fn generics_picked(gs: List(Text), holds: List(Text)): List(Bool) {
-  ⊢ List(Bool) from match gs {
+  match gs {
     Nil => Nil
     Cons(g, rest) => Cons(list_has_text(holds, g), generics_picked(rest, holds))
   }
 }
 
 pub fn picks_head(every: Bool, picks: List(Bool)): Bool {
-  ⊢ Bool from match picks {
+  match picks {
     Nil => every
-    Cons(p, rest) => every || p
+    Cons(p, ^rest) => every || p
   }
 }
 
 pub fn picks_tail(picks: List(Bool)): List(Bool) {
-  ⊢ List(Bool) from match picks {
+  match picks {
     Nil => Nil
-    Cons(p, rest) => rest
+    Cons(^p, rest) => rest
   }
 }
 
@@ -244,7 +426,7 @@ mutual {
   // `acc` joined with the kinds of `ts`: every one, or those `picks` picks
   // (a list of arguments stops with the generics).
   pub fn datas_kind_list(d: Datas, ts: List(Ty), every: Bool, picks: List(Bool), acc: Kind): Kind {
-    ⊢ Kind from match ts {
+    match ts {
       Nil => acc
       Cons(t, rest) => ⊢ Kind from match every || list_len(picks) != 0 {
         false => acc
@@ -263,30 +445,31 @@ mutual {
   }
 
   pub fn datas_kind(d: Datas, t: Ty): Kind {
-    ⊢ Kind from match t {
-      TyInt(w) => KindCopy
+    match t {
+      TyInt(^w) => KindCopy
       TyBool => KindCopy
       TyUnit => KindCopy
       TyNever => KindCopy
       TyDecimal => KindCopy
       TyFloat => KindCopy
+      TyFloat32 => KindCopy
       TyText => KindShared
-      TyFn(ps, r, fk) => fk
+      TyFn(^ps, ^r, fk) => fk
       TyUnion(ts) => datas_kind_list(d, ts, true, Nil, KindCopy)
       TyProduct(ts) => datas_kind_list(d, ts, true, Nil, KindCopy)
-      TyTagged(tags, x) => datas_kind(d, x)
-      TyBorrow(x, m) => datas_kind(d, x)
-      TyParam(n, pk) => pk
-      TyInfo(x) => KindAffine
-      TyPoly(gs, x) => KindShared
+      TyTagged(^tags, x) => datas_kind(d, x)
+      TyBorrow(x, ^m) => datas_kind(d, x)
+      TyParam(^n, pk) => pk
+      TyInfo(^x) => KindAffine
+      TyPoly(^gs, ^x) => KindShared
       // What `F` makes is bounded by the kind `F` is declared with.
-      TyApp(h, x) => ⊢ Kind from match h {
-        TyParam(n, pk) => pk
+      TyApp(h, ^x) => ⊢ Kind from match h {
+        TyParam(^n, pk) => pk
         _ => KindCopy
       }
       // Not known yet: nothing is said of it.
-      TyVar(v) => KindCopy
-      TyNamed(n, args) => ⊢ Kind from match datas_decl(d, n) {
+      TyVar(^v) => KindCopy
+      TyNamed(n, args) => ⊢ Kind from match datas_decl(d, surface_name_text(n)) {
         None => KindShared
         Some(data) => datas_kind_list(
           d,
@@ -300,8 +483,70 @@ mutual {
   }
 }
 
+// The kinds a type may have once its inference variables are resolved, least
+// and most (`kind_range` of `types.rs`). Only a declaration's held arguments
+// affect its kind; a function's arguments and result do not affect its own.
+pub(open) inductive KindRange: Type {
+  KindRangeMk(least: Kind, most: Kind): KindRange
+}
+
+pub fn kind_range_join(a: KindRange, b: KindRange): KindRange {
+  KindRangeMk(kind_join(a.least, b.least), kind_join(a.most, b.most))
+}
+
+mutual {
+  pub fn datas_kind_range_list(
+    d: Datas,
+    ts: List(Ty),
+    every: Bool,
+    picks: List(Bool),
+    acc: KindRange
+  ): KindRange {
+    match ts {
+      Nil => acc
+      Cons(t, rest) => ⊢ KindRange from match every || list_len(picks) != 0 {
+        false => acc
+        true => datas_kind_range_list(
+          d,
+          rest,
+          every,
+          picks_tail(picks),
+          ⊢ KindRange from match picks_head(every, picks) {
+            true => kind_range_join(acc, datas_kind_range(d, t))
+            false => acc
+          }
+        )
+      }
+    }
+  }
+
+  pub fn datas_kind_range(d: Datas, t: Ty): KindRange {
+    match t {
+      TyVar(^v) => KindRangeMk(KindCopy, KindLinear)
+      TyApp(h, ^x) => ⊢ KindRange from match h {
+        TyParam(^n, pk) => KindRangeMk(pk, pk)
+        _ => KindRangeMk(KindCopy, KindLinear)
+      }
+      TyUnion(ts) => datas_kind_range_list(d, ts, true, Nil, KindRangeMk(KindCopy, KindCopy))
+      TyTagged(^tags, x) => datas_kind_range(d, x)
+      TyBorrow(x, ^m) => datas_kind_range(d, x)
+      TyNamed(n, args) => ⊢ KindRange from match datas_decl(d, surface_name_text(n)) {
+        None => KindRangeMk(KindShared, KindShared)
+        Some(data) => datas_kind_range_list(
+          d,
+          args,
+          false,
+          generics_picked(data.generics, data.holds),
+          KindRangeMk(data.base, data.base)
+        )
+      }
+      _ => KindRangeMk(datas_kind(d, t), datas_kind(d, t))
+    }
+  }
+}
+
 pub fn texts_within(xs: List(Text), ys: List(Text)): Bool {
-  ⊢ Bool from match xs {
+  match xs {
     Nil => true
     Cons(x, rest) => list_has_text(ys, x) && texts_within(rest, ys)
   }
@@ -311,11 +556,8 @@ pub fn holds_add(holds: List(Text), n: Text): List(Text) {
   if list_has_text(holds, n) { holds } else { Cons(n, holds) }
 }
 
-pub fn kind_pair_join(
-  acc: Pair(Kind, List(Text)),
-  r: Pair(Kind, List(Text))
-): Pair(Kind, List(Text)) {
-  Pair { fst: kind_join(acc.fst, r.fst), snd: r.snd }
+pub fn kind_pair_join(acc: Kind × List(Text), r: (Kind × List(Text))): Kind × List(Text) {
+  #(kind_join(acc.fst, r.fst), r.snd)
 }
 
 // The kind of field type `t` over `gs`, but for the arguments: the generics
@@ -327,11 +569,11 @@ mutual {
     every: Bool,
     picks: List(Bool),
     gs: List(Text),
-    acc: Pair(Kind, List(Text))
-  ): Pair(Kind, List(Text)) {
-    ⊢ Pair(Kind, List(Text)) from match ts {
+    acc: (Kind × List(Text))
+  ): Kind × List(Text) {
+    ⊢ (Kind × List(Text)) from match ts {
       Nil => acc
-      Cons(t, rest) => ⊢ Pair(Kind, List(Text)) from match every || list_len(picks) != 0 {
+      Cons(t, rest) => ⊢ (Kind × List(Text)) from match every || list_len(picks) != 0 {
         false => acc
         true => field_kind_list(
           d,
@@ -339,7 +581,7 @@ mutual {
           every,
           picks_tail(picks),
           gs,
-          ⊢ Pair(Kind, List(Text)) from match picks_head(every, picks) {
+          ⊢ (Kind × List(Text)) from match picks_head(every, picks) {
             true => kind_pair_join(acc, field_kind(d, t, gs, acc.snd))
             false => acc
           }
@@ -348,37 +590,37 @@ mutual {
     }
   }
 
-  pub fn field_kind(d: Datas, t: Ty, gs: List(Text), holds: List(Text)): Pair(Kind, List(Text)) {
-    ⊢ Pair(Kind, List(Text)) from match t {
-      TyParam(n, pk) => ⊢ Pair(Kind, List(Text)) from match list_has_text(gs, n) {
-        true => Pair { fst: KindCopy, snd: holds_add(holds, n) }
-        false => Pair { fst: pk, snd: holds }
+  pub fn field_kind(d: Datas, t: Ty, gs: List(Text), holds: List(Text)): Kind × List(Text) {
+    ⊢ (Kind × List(Text)) from match t {
+      TyParam(n, pk) => ⊢ (Kind × List(Text)) from match list_has_text(gs, n) {
+        true => #(KindCopy, holds_add(holds, n))
+        false => #(pk, holds)
       }
       // `F(X)`: what `F` makes holds at most what `F` and `X` do.
       TyApp(h, x) => kind_pair_join(
         field_kind(d, h, gs, holds),
         field_kind(d, x, gs, field_kind(d, h, gs, holds).snd)
       )
-      TyUnion(ts) => field_kind_list(d, ts, true, Nil, gs, Pair { fst: KindCopy, snd: holds })
-      TyProduct(ts) => field_kind_list(d, ts, true, Nil, gs, Pair { fst: KindCopy, snd: holds })
-      TyTagged(tags, x) => field_kind(d, x, gs, holds)
-      TyBorrow(x, m) => field_kind(d, x, gs, holds)
+      TyUnion(ts) => field_kind_list(d, ts, true, Nil, gs, #(KindCopy, holds))
+      TyProduct(ts) => field_kind_list(d, ts, true, Nil, gs, #(KindCopy, holds))
+      TyTagged(^tags, x) => field_kind(d, x, gs, holds)
+      TyBorrow(x, ^m) => field_kind(d, x, gs, holds)
       // A generic written as a name, as `ty_substitute` reads it.
-      TyNamed(n, args) => ⊢ Pair(Kind, List(Text)) from match ty_no_args(args) && list_has_text(gs, n) {
-        true => Pair { fst: KindCopy, snd: holds_add(holds, n) }
-        false => ⊢ Pair(Kind, List(Text)) from match datas_decl(d, n) {
-          None => Pair { fst: KindShared, snd: holds }
+      TyNamed(n, args) => ⊢ (Kind × List(Text)) from match ty_no_args(args) && list_has_text(gs, surface_name_text(n)) {
+        true => #(KindCopy, holds_add(holds, surface_name_text(n)))
+        false => ⊢ (Kind × List(Text)) from match datas_decl(d, surface_name_text(n)) {
+          None => #(KindShared, holds)
           Some(data) => field_kind_list(
             d,
             args,
             false,
             generics_picked(data.generics, data.holds),
             gs,
-            Pair { fst: data.base, snd: holds }
+            #(data.base, holds)
           )
         }
       }
-      _ => Pair { fst: datas_kind(d, t), snd: holds }
+      _ => #(datas_kind(d, t), holds)
     }
   }
 }
@@ -387,9 +629,9 @@ pub fn fields_kind(
   d: Datas,
   fs: List(DataField),
   gs: List(Text),
-  acc: Pair(Kind, List(Text))
-): Pair(Kind, List(Text)) {
-  ⊢ Pair(Kind, List(Text)) from match fs {
+  acc: (Kind × List(Text))
+): Kind × List(Text) {
+  ⊢ (Kind × List(Text)) from match fs {
     Nil => acc
     Cons(f, rest) => fields_kind(d, rest, gs, kind_pair_join(acc, field_kind(d, f.ty, gs, acc.snd)))
   }
@@ -399,9 +641,9 @@ pub fn ctors_kind(
   d: Datas,
   cs: List(DataCtor),
   gs: List(Text),
-  acc: Pair(Kind, List(Text))
-): Pair(Kind, List(Text)) {
-  ⊢ Pair(Kind, List(Text)) from match cs {
+  acc: (Kind × List(Text))
+): Kind × List(Text) {
+  ⊢ (Kind × List(Text)) from match cs {
     Nil => acc
     Cons(c, rest) => ctors_kind(d, rest, gs, fields_kind(d, c.fields, gs, acc))
   }
@@ -418,16 +660,54 @@ pub fn data_with_summary(data: Data, base: Kind, holds: List(Text)): Data {
     base: base,
     holds: holds,
     builtin: data.builtin,
-    r#view: data.r#view
+    view: data.view
   }
 }
 
 pub fn datas_with_decls(d: Datas, decls: Ordmap(Text, Data)): Datas {
-  Datas { decls: decls, ctors: d.ctors, steps: d.steps }
+  Datas {
+    decls: decls,
+    ctors: d.ctors,
+    owners: d.owners,
+    coerces: d.coerces,
+    steps: d.steps,
+    lower: d.lower
+  }
+}
+
+// The `i`th of the fields `fs`.
+pub fn coerce_field_at(fs: List(DataField), i: Nat): Option(DataField) {
+  match fs {
+    Nil => None
+    Cons(f, rest) => ⊢ Option(DataField) from match i {
+      Zero => Some(f)
+      Succ(j) => coerce_field_at(rest, j)
+    }
+  }
+}
+
+// The `coerce` field the struct `d` declares, when it declares one.
+pub fn datas_coerce(datas: Datas, d: Text): Option(DataCoerce) {
+  Ordmap::get(datas.coerces, d, Ordmap::compare_text)
+}
+
+pub fn data_coerce_index(k: DataCoerce): Nat { k.field }
+
+pub fn data_field_ty(f: DataField): Ty { f.ty }
+
+pub fn datas_with_coerces(d: Datas, coerces: Ordmap(Text, DataCoerce)): Datas {
+  Datas {
+    decls: d.decls,
+    ctors: d.ctors,
+    owners: d.owners,
+    coerces: coerces,
+    steps: d.steps,
+    lower: d.lower
+  }
 }
 
 pub fn generics_unmentioned(data: Data, gs: List(Text)): List(Text) {
-  ⊢ List(Text) from match gs {
+  match gs {
     Nil => Nil
     Cons(g, rest) => ⊢ List(Text) from match data_mentions(data, g) {
       true => generics_unmentioned(data, rest)
@@ -450,11 +730,11 @@ pub fn data_top(data: Data): Data {
 }
 
 pub fn datas_map_decls(
-  es: List(Pair(Text, Data)),
+  es: List(Text × Data),
   f: (Data) -> Data,
   acc: Ordmap(Text, Data)
 ): Ordmap(Text, Data) {
-  ⊢ Ordmap(Text, Data) from match es {
+  match es {
     Nil => acc
     Cons(e, rest) => datas_map_decls(
       rest,
@@ -464,18 +744,13 @@ pub fn datas_map_decls(
   }
 }
 
-pub fn datas_round(es: List(Pair(Text, Data)), d: Datas, grew: Bool): Pair(Datas, Bool) {
-  ⊢ Pair(Datas, Bool) from match es {
-    Nil => Pair { fst: d, snd: grew }
-    Cons(e, rest) => ⊢ Pair(Datas, Bool) from match datas_decl(d, e.fst) {
+pub fn datas_round(es: List(Text × Data), d: Datas, grew: Bool): Datas × Bool {
+  ⊢ (Datas × Bool) from match es {
+    Nil => #(d, grew)
+    Cons(e, rest) => ⊢ (Datas × Bool) from match datas_decl(d, e.fst) {
       None => datas_round(rest, d, grew)
       Some(data) => {
-        let r := ctors_kind(
-          d,
-          data.constructors,
-          data.generics,
-          Pair { fst: data.base, snd: data.holds }
-        )
+        let r := ctors_kind(d, data.constructors, data.generics, #(data.base, data.holds))
         let base := kind_join(data.base, r.fst)
         if kind_eq(base, data.base) && texts_within(r.snd, data.holds) {
           datas_round(rest, d, grew)
@@ -500,7 +775,7 @@ pub fn datas_round(es: List(Pair(Text, Data)), d: Datas, grew: Bool): Pair(Datas
 }
 
 pub fn datas_rounds(k: Nat, d: Datas): Datas {
-  ⊢ Datas from match k {
+  match k {
     Zero => datas_with_decls(d, datas_map_decls(Ordmap::entries(d.decls), data_top, d.decls))
     Succ(j) => {
       let r := datas_round(Ordmap::entries(d.decls), d, false)
@@ -522,19 +797,19 @@ pub fn datas_summarize(d: Datas): Datas {
 }
 
 pub fn ty_in_list(xs: List(Ty), t: Ty): Bool {
-  ⊢ Bool from match xs {
+  match xs {
     Nil => false
     Cons(x, rest) => ty_eq(x, t) || ty_in_list(rest, t)
   }
 }
 
 pub fn class_is_structural(r#class: Text): Bool {
-  r#class == "PartialEq" || r#class == "DecEq" || r#class == "Hash"
+  r#class == "PartialEq" || r#class == "DecEq"
 }
 
 // `class` is assumed of the generic `n`: `DecEq` gives `PartialEq`.
-pub fn class_assumed(assume: List(Pair(Text, Text)), r#class: Text, n: Text): Bool {
-  ⊢ Bool from match assume {
+pub fn class_assumed(assume: List(Text × Text), r#class: Text, n: Text): Bool {
+  match assume {
     Nil => false
     Cons(a, rest) => if a.snd == n && (
       a.fst == r#class || (r#class == "PartialEq" && a.fst == "DecEq")
@@ -547,22 +822,18 @@ pub fn class_assumed(assume: List(Pair(Text, Text)), r#class: Text, n: Text): Bo
 }
 
 pub fn kind_is_affine_or_linear(k: Option(Kind)): Bool {
-  ⊢ Bool from match k {
-    Some(x) => ⊢ Bool from match x {
-      KindAffine => true
-      KindLinear => true
-      _ => false
-    }
+  match k {
+    Some(x) => ⊢ Bool from match x { KindAffine => true, KindLinear => true, _ => false }
     None => false
   }
 }
 
 pub fn ctors_all_empty(cs: List(DataCtor)): Bool {
-  ⊢ Bool from match cs {
+  match cs {
     Nil => true
     Cons(c, rest) => ⊢ Bool from match c.fields {
       Nil => ctors_all_empty(rest)
-      Cons(f, more) => false
+      Cons(^f, ^more) => false
     }
   }
 }
@@ -583,13 +854,13 @@ mutual {
     d: Datas,
     r#class: Text,
     t: Ty,
-    assume: List(Pair(Text, Text)),
+    assume: List(Text × Text),
     visiting: List(Ty)
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match t {
-        TyInt(w) => true
+        TyInt(^w) => true
         TyBool => true
         TyText => true
         TyUnit => true
@@ -598,24 +869,25 @@ mutual {
         // settled.
         TyDecimal => r#class == "PartialEq"
         TyFloat => r#class == "PartialEq"
-        TyFn(ps, r, fk) => false
-        TyInfo(x) => false
-        TyPoly(gs, x) => false
+        TyFloat32 => r#class == "PartialEq"
+        TyFn(^ps, ^r, ^fk) => false
+        TyInfo(^x) => false
+        TyPoly(^gs, ^x) => false
         // `F(X)`: nothing is known of what `F` makes.
-        TyApp(h, x) => false
+        TyApp(^h, ^x) => false
         TyUnion(ts) => datas_structural_all_in(j, d, r#class, ts, assume, visiting)
         TyProduct(ts) => datas_structural_all_in(j, d, r#class, ts, assume, visiting)
-        TyTagged(tags, x) => datas_structural_in(j, d, r#class, x, assume, visiting)
-        TyBorrow(x, m) => datas_structural_in(j, d, r#class, x, assume, visiting)
-        TyParam(n, pk) => class_assumed(assume, r#class, n)
+        TyTagged(^tags, x) => datas_structural_in(j, d, r#class, x, assume, visiting)
+        TyBorrow(x, ^m) => datas_structural_in(j, d, r#class, x, assume, visiting)
+        TyParam(n, ^pk) => class_assumed(assume, r#class, n)
         // Not known yet: checked when it is.
-        TyVar(v) => true
-        TyNamed(n, args) => if n == "Buf" {
+        TyVar(^v) => true
+        TyNamed(n, args) => if surface_name_text(n) == "Buf" {
           true
         } else {
-          ⊢ Bool from match datas_decl(d, n) {
+          ⊢ Bool from match datas_decl(d, surface_name_text(n)) {
             None => false
-            Some(data) => if data.r#view || data_hides_ctors(data) {
+            Some(data) => if data.view || data_hides_ctors(data) {
               false
             } else if ty_in_list(visiting, TyNamed(n, args)) {
               true
@@ -641,10 +913,10 @@ mutual {
     d: Datas,
     r#class: Text,
     ts: List(Ty),
-    assume: List(Pair(Text, Text)),
+    assume: List(Text × Text),
     visiting: List(Ty)
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match ts {
         Nil => true
@@ -666,10 +938,10 @@ mutual {
     r#class: Text,
     cs: List(DataCtor),
     map: Ordmap(Text, Ty),
-    assume: List(Pair(Text, Text)),
+    assume: List(Text × Text),
     visiting: List(Ty)
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match cs {
         Nil => true
@@ -692,10 +964,10 @@ mutual {
     r#class: Text,
     fs: List(DataField),
     map: Ordmap(Text, Ty),
-    assume: List(Pair(Text, Text)),
+    assume: List(Text × Text),
     visiting: List(Ty)
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match fs {
         Nil => true
@@ -712,40 +984,40 @@ mutual {
   }
 }
 
-pub fn datas_structural(d: Datas, r#class: Text, t: Ty, assume: List(Pair(Text, Text))): Bool {
+pub fn datas_structural(d: Datas, r#class: Text, t: Ty, assume: List(Text × Text)): Bool {
   datas_structural_in(d.steps, d, r#class, t, assume, Nil)
 }
 
 pub fn field_types(fs: List(DataField), map: Ordmap(Text, Ty)): List(Ty) {
-  ⊢ List(Ty) from match fs {
+  match fs {
     Nil => Nil
     Cons(f, rest) => Cons(ty_substitute(f.ty, map), field_types(rest, map))
   }
 }
 
 pub fn data_field_types(cs: List(DataCtor), map: Ordmap(Text, Ty)): List(Ty) {
-  ⊢ List(Ty) from match cs {
+  match cs {
     Nil => Nil
     Cons(c, rest) => List::append(field_types(c.fields, map), data_field_types(rest, map))
   }
 }
 
 pub fn datas_all_dup(d: Datas, ts: List(Ty)): Bool {
-  ⊢ Bool from match ts {
+  match ts {
     Nil => true
     Cons(t, rest) => kind_dup(datas_kind(d, t)) && datas_all_dup(d, rest)
   }
 }
 
 pub fn kind_is_affine_opt(k: Option(Kind)): Bool {
-  ⊢ Bool from match k {
+  match k {
     Some(x) => kind_eq(x, KindAffine)
     None => false
   }
 }
 
 pub fn no_clone_of(t: Ty): Option(Text) {
-  Some(ty_cat(Cons(ty_show(t), Cons(" has no clone", Nil))))
+  Some(type_has_no_clone_message(ty_show(t)))
 }
 
 // Why `t` has no `clone`, when it has none: a `linear` type, an opaque one
@@ -753,7 +1025,7 @@ pub fn no_clone_of(t: Ty): Option(Text) {
 // `Info` that is not duplicable.
 mutual {
   pub fn datas_no_clone_find(k: Nat, d: Datas, ts: List(Ty), visiting: List(Ty)): Option(Text) {
-    ⊢ Option(Text) from match k {
+    match k {
       Zero => None
       Succ(j) => ⊢ Option(Text) from match ts {
         Nil => None
@@ -773,7 +1045,7 @@ mutual {
     args: List(Ty),
     visiting: List(Ty)
   ): Option(Text) {
-    ⊢ Option(Text) from match k {
+    match k {
       Zero => None
       Succ(j) => if data.builtin {
         datas_no_clone_find(j, d, args, Cons(t, visiting))
@@ -795,30 +1067,30 @@ mutual {
     whole: Ty,
     visiting: List(Ty)
   ): Option(Text) {
-    ⊢ Option(Text) from match k {
+    match k {
       Zero => None
       Succ(j) => ⊢ Option(Text) from match t {
-        TyNamed(n, args) => ⊢ Option(Text) from match datas_decl(d, n) {
+        TyNamed(n, args) => ⊢ Option(Text) from match datas_decl(d, surface_name_text(n)) {
           None => None
           Some(data) => datas_no_clone_named(j, d, whole, data, args, visiting)
         }
         TyUnion(ts) => datas_no_clone_find(j, d, ts, visiting)
         TyProduct(ts) => datas_no_clone_find(j, d, ts, visiting)
-        TyTagged(tags, x) => datas_no_clone_in(j, d, x, visiting)
+        TyTagged(^tags, x) => datas_no_clone_in(j, d, x, visiting)
         _ => no_clone_of(whole)
       }
     }
   }
 
   pub fn datas_no_clone_in(k: Nat, d: Datas, t: Ty, visiting: List(Ty)): Option(Text) {
-    ⊢ Option(Text) from match k {
+    match k {
       Zero => None
       Succ(j) => if ty_in_list(visiting, t) {
         None
       } else {
         let kind := datas_kind(d, t)
         if kind_eq(kind, KindLinear) {
-          Some(ty_cat(Cons(ty_show(t), Cons(" is linear", Nil))))
+          Some(type_is_linear_message(ty_show(t)))
         } else if kind_dup(kind) {
           None
         } else {
@@ -839,21 +1111,21 @@ pub(open) inductive Positional: Type {
 }
 
 pub fn field_name_is(f: DataField, name: Text): Bool {
-  ⊢ Bool from match f.name {
+  match f.name {
     Some(n) => n == name
     None => false
   }
 }
 
 pub fn field_declared(fs: List(DataField), name: Text): Bool {
-  ⊢ Bool from match fs {
+  match fs {
     Nil => false
     Cons(f, rest) => field_name_is(f, name) || field_declared(rest, name)
   }
 }
 
 pub fn pattern_field_find(fields: List(SurfacePatternField), name: Text): Option(SurfacePattern) {
-  ⊢ Option(SurfacePattern) from match fields {
+  match fields {
     Nil => None
     Cons(f, rest) => if f.name == name { Some(f.pattern) } else { pattern_field_find(rest, name) }
   }
@@ -864,25 +1136,25 @@ pub fn positional_check(
   declared: List(DataField),
   fields: List(SurfacePatternField)
 ): Option(Text) {
-  ⊢ Option(Text) from match fields {
+  match fields {
     Nil => None
     Cons(f, rest) => if field_declared(declared, f.name) {
       positional_check(name, declared, rest)
     } else {
-      Some(ty_cat(Cons(name, Cons(" has no field `", Cons(f.name, Cons("`", Nil))))))
+      Some(no_field_message(name, f.name))
     }
   }
 }
 
 pub fn field_name_or_empty(f: DataField): Text {
-  ⊢ Text from match f.name {
+  match f.name {
     Some(x) => x
     None => ""
   }
 }
 
 pub fn positional_cons(p: SurfacePattern, rest: Positional): Positional {
-  ⊢ Positional from match rest {
+  match rest {
     PositionalErr(e) => PositionalErr(e)
     PositionalOk(ps) => PositionalOk(Cons(p, ps))
   }
@@ -892,26 +1164,22 @@ pub fn positional_collect(
   declared: List(DataField),
   fields: List(SurfacePatternField)
 ): Positional {
-  ⊢ Positional from match declared {
+  match declared {
     Nil => PositionalOk(Nil)
     Cons(f, rest) => ⊢ Positional from match pattern_field_find(fields, field_name_or_empty(f)) {
-      None => PositionalErr(
-        ty_cat(
-          Cons("field `", Cons(field_name_or_empty(f), Cons("` is missing from the pattern", Nil)))
-        )
-      )
+      None => PositionalErr(pattern_field_missing_message(field_name_or_empty(f)))
       Some(p) => positional_cons(p, positional_collect(rest, fields))
     }
   }
 }
 
 pub fn not_a_constructor(name: Text): Positional {
-  PositionalErr(ty_cat(Cons(name, Cons(" is not a constructor", Nil))))
+  PositionalErr(not_a_constructor_message(name))
 }
 
 // A record pattern's patterns in the order of the struct's fields.
 pub fn datas_positional(d: Datas, name: Text, fields: List(SurfacePatternField)): Positional {
-  ⊢ Positional from match datas_ctor(d, name) {
+  match datas_ctor(d, name) {
     None => not_a_constructor(name)
     Some(dc) => ⊢ Positional from match datas_constructor(d, dc.fst, dc.snd) {
       None => not_a_constructor(name)
@@ -930,7 +1198,7 @@ pub fn datas_positional_expected(
   fields: List(SurfacePatternField),
   expected: Ty
 ): Positional {
-  ⊢ Positional from match datas_ctor_expected(d, name, expected) {
+  match datas_ctor_expected(d, name, expected) {
     None => PositionalErr(datas_ctor_error(d, name))
     Some(dc) => ⊢ Positional from match datas_constructor(d, dc.fst, dc.snd) {
       None => PositionalErr(datas_ctor_error(d, name))
@@ -943,7 +1211,7 @@ pub fn datas_positional_expected(
 }
 
 pub fn substituted_fields(fs: List(DataField), map: Ordmap(Text, Ty)): List(DataField) {
-  ⊢ List(DataField) from match fs {
+  match fs {
     Nil => Nil
     Cons(f, rest) => Cons(
       DataField { name: f.name, ty: ty_substitute(f.ty, map) },
@@ -953,7 +1221,7 @@ pub fn substituted_fields(fs: List(DataField), map: Ordmap(Text, Ty)): List(Data
 }
 
 pub fn datas_fields(d: Datas, dname: Text, c: Nat, args: List(Ty)): List(DataField) {
-  ⊢ List(DataField) from match datas_decl(d, dname) {
+  match datas_decl(d, dname) {
     None => Nil
     Some(data) => ⊢ List(DataField) from match nth_item(data.constructors, c) {
       None => Nil
@@ -967,14 +1235,14 @@ pub(open) inductive Reach: Type {
 }
 
 pub fn fields_named(fs: List(DataField), out: List(Text)): List(Text) {
-  ⊢ List(Text) from match fs {
+  match fs {
     Nil => out
     Cons(f, rest) => fields_named(rest, ty_named_in(f.ty, out))
   }
 }
 
 pub fn data_named(cs: List(DataCtor), out: List(Text)): List(Text) {
-  ⊢ List(Text) from match cs {
+  match cs {
     Nil => out
     Cons(c, rest) => data_named(rest, fields_named(c.fields, out))
   }
@@ -990,7 +1258,7 @@ mutual {
     target: Text,
     seen: Ordmap(Text, Bool)
   ): Reach {
-    ⊢ Reach from match k {
+    match k {
       Zero => Reach { found: false, seen: seen }
       Succ(j) => ⊢ Reach from match datas_decl(d, r#from) {
         None => Reach { found: false, seen: seen }
@@ -1010,7 +1278,7 @@ mutual {
   }
 
   pub fn reach_next(k: Nat, d: Datas, r: Reach, rest: List(Text), target: Text): Reach {
-    ⊢ Reach from match k {
+    match k {
       Zero => r
       Succ(j) => if r.found { r } else { reach_any(j, d, rest, target, r.seen) }
     }
@@ -1023,7 +1291,7 @@ mutual {
     target: Text,
     seen: Ordmap(Text, Bool)
   ): Reach {
-    ⊢ Reach from match k {
+    match k {
       Zero => Reach { found: false, seen: seen }
       Succ(j) => ⊢ Reach from match names {
         Nil => Reach { found: false, seen: seen }
@@ -1042,44 +1310,264 @@ pub fn datas_reaches_from(d: Datas, r#from: Text, target: Text): Bool {
 }
 
 pub fn bool_or_opt(found: Option(Bool), m: Bool): Option(Bool) {
-  ⊢ Option(Bool) from match found {
+  match found {
     Some(f) => Some(f || m)
     None => Some(m)
   }
 }
 
-pub fn data_is_view(d: Datas, n: Text): Bool {
-  ⊢ Bool from match datas_decl(d, n) {
-    Some(data) => data.r#view
-    None => false
+// The types of the fields of a declaration, as written.
+pub fn data_written_fields(cs: List(DataCtor)): List(Ty) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => List::append(data_field_tys(c.fields), data_written_fields(rest))
   }
+}
+
+pub fn data_field_tys(fs: List(DataField)): List(Ty) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(f.ty, data_field_tys(rest))
+  }
+}
+
+// Whether a declaration holds a borrow: it is an extern `type(borrow)`, or a field
+// holds one, through a borrow, a declaration that holds one, or a type
+// applied to one. Declarations refer to each other and share fields: each
+// declaration is looked at once (`seen`), so the search takes time in the
+// number of declarations, not in the number of paths through them. A
+// declaration seen before added nothing, or the search would have ended.
+pub struct ViewSearch {
+  found: Bool,
+  seen: List(Text)
+}
+
+mutual {
+  pub fn datas_holds_view_in(k: Nat, d: Datas, n: Text, seen: List(Text)): ViewSearch {
+    match k {
+      Zero => ViewSearch { found: false, seen: seen }
+      Succ(j) => if list_has_text(seen, n) {
+        ViewSearch { found: false, seen: seen }
+      } else {
+        ⊢ ViewSearch from match datas_decl(d, n) {
+          None => ViewSearch { found: false, seen: seen }
+          Some(data) => if data.view {
+            ViewSearch { found: true, seen: seen }
+          } else {
+            datas_fields_hold_view_in(j, d, data_written_fields(data.constructors), Cons(n, seen))
+          }
+        }
+      }
+    }
+  }
+
+  pub fn datas_fields_hold_view_in(k: Nat, d: Datas, ts: List(Ty), seen: List(Text)): ViewSearch {
+    match k {
+      Zero => ViewSearch { found: false, seen: seen }
+      Succ(j) => ⊢ ViewSearch from match ts {
+        Nil => ViewSearch { found: false, seen: seen }
+        Cons(t, rest) => {
+          let r := datas_field_holds_view_in(j, d, t, seen)
+          if r.found { r } else { datas_fields_hold_view_in(j, d, rest, r.seen) }
+        }
+      }
+    }
+  }
+
+  pub fn datas_field_holds_view_in(k: Nat, d: Datas, t: Ty, seen: List(Text)): ViewSearch {
+    match k {
+      Zero => ViewSearch { found: false, seen: seen }
+      Succ(j) => ⊢ ViewSearch from match t {
+        TyBorrow(^x, ^m) => ViewSearch { found: true, seen: seen }
+        TyNamed(n, args) => {
+          let r := datas_holds_view_in(j, d, surface_name_text(n), seen)
+          if r.found { r } else { datas_fields_hold_view_in(j, d, args, r.seen) }
+        }
+        _ => ViewSearch { found: false, seen: seen }
+      }
+    }
+  }
+}
+
+pub fn data_is_view(d: Datas, n: Text): Bool {
+  datas_holds_view_in(d.steps, d, n, Nil).found
 }
 
 // Whether a type holds a borrow of something that is not duplicable (a shared
 // borrow of a duplicable value is the value): `some(true)` when the borrow is
-// `&mut`.
+// `&mut`. An opaque view may hold anything; a declaration with fields holds
+// what its fields do at its arguments, and any other type applied to
+// arguments what they hold. A declaration met again inside itself
+// (`visiting`) adds nothing.
 mutual {
-  pub fn datas_view_borrow_each(d: Datas, ts: List(Ty), found: Option(Bool)): Option(Bool) {
-    ⊢ Option(Bool) from match ts {
-      Nil => found
-      Cons(t, rest) => ⊢ Option(Bool) from match datas_view_borrow(d, t) {
-        None => datas_view_borrow_each(d, rest, found)
-        Some(m) => datas_view_borrow_each(d, rest, bool_or_opt(found, m))
+  pub fn datas_view_borrow_each_in(
+    k: Nat,
+    d: Datas,
+    ts: List(Ty),
+    found: Option(Bool),
+    visiting: List(Ty)
+  ): Option(Bool) {
+    match k {
+      Zero => found
+      Succ(j) => ⊢ Option(Bool) from match ts {
+        Nil => found
+        Cons(t, rest) => ⊢ Option(Bool) from match datas_view_borrow_in(j, d, t, visiting) {
+          None => datas_view_borrow_each_in(j, d, rest, found, visiting)
+          Some(m) => datas_view_borrow_each_in(j, d, rest, bool_or_opt(found, m), visiting)
+        }
       }
     }
   }
 
-  pub fn datas_view_borrow(d: Datas, t: Ty): Option(Bool) {
-    ⊢ Option(Bool) from match t {
-      TyBorrow(inner, m) => if m || not(kind_dup(datas_kind(d, inner))) { Some(m) } else { None }
-      TyNamed(n, args) => if data_is_view(d, n) {
-        Some(true)
-      } else if n == "Option" || n == "Result" || n == "Pair" {
-        datas_view_borrow_each(d, args, None)
-      } else {
-        None
+  pub fn datas_view_borrow_in(k: Nat, d: Datas, t: Ty, visiting: List(Ty)): Option(Bool) {
+    match k {
+      Zero => None
+      Succ(j) => ⊢ Option(Bool) from match t {
+        TyBorrow(inner, m) => if m || not(kind_dup(datas_kind(d, inner))) { Some(m) } else { None }
+        TyNamed(n, args) => if data_is_view(d, surface_name_text(n)) {
+          ⊢ Option(Bool) from match datas_decl(d, surface_name_text(n)) {
+            None => Some(true)
+            Some(data) => ⊢ Option(Bool) from match data_written_fields(data.constructors) {
+              Nil => Some(true)
+              Cons(^f, ^more) => if ty_in_list(visiting, t) {
+                None
+              } else {
+                datas_view_borrow_each_in(
+                  j,
+                  d,
+                  data_field_types(data.constructors, data_instance(data, args)),
+                  None,
+                  Cons(t, visiting)
+                )
+              }
+            }
+          }
+        } else {
+          datas_view_borrow_each_in(j, d, args, None, visiting)
+        }
+        // A product holds what its members hold, as `D(T₁, …)` holds what its
+        // type arguments do.
+        TyProduct(members) => datas_view_borrow_each_in(j, d, members, None, visiting)
+        _ => None
       }
-      _ => None
     }
   }
+}
+
+pub fn datas_view_borrow(d: Datas, t: Ty): Option(Bool) {
+  datas_view_borrow_in(d.steps, d, t, Nil)
+}
+
+// Whether a value of the type may hold a lent function: a `&` or `&mut` of a
+// function type, in a field of a declaration that holds a borrow or in a type
+// argument (`some(true)` when `&mut`). The function behind the borrow may be
+// a closure that borrows, whatever kind its type has.
+mutual {
+  pub fn datas_lent_function_each_in(
+    k: Nat,
+    d: Datas,
+    ts: List(Ty),
+    found: Option(Bool),
+    visiting: List(Ty)
+  ): Option(Bool) {
+    match k {
+      Zero => found
+      Succ(j) => ⊢ Option(Bool) from match ts {
+        Nil => found
+        Cons(t, rest) => ⊢ Option(Bool) from match datas_lent_function_in(j, d, t, visiting) {
+          None => datas_lent_function_each_in(j, d, rest, found, visiting)
+          Some(m) => datas_lent_function_each_in(j, d, rest, bool_or_opt(found, m), visiting)
+        }
+      }
+    }
+  }
+
+  pub fn datas_lent_function_in(k: Nat, d: Datas, t: Ty, visiting: List(Ty)): Option(Bool) {
+    match k {
+      Zero => None
+      Succ(j) => ⊢ Option(Bool) from match t {
+        TyBorrow(inner, m) => ⊢ Option(Bool) from match ty_unborrowed(inner) {
+          TyFn(^ps, ^r, ^kd) => Some(m)
+          _ => datas_lent_function_in(j, d, inner, visiting)
+        }
+        TyNamed(n, args) => if data_is_view(d, surface_name_text(n)) {
+          if ty_in_list(visiting, t) {
+            None
+          } else {
+            ⊢ Option(Bool) from match datas_decl(d, surface_name_text(n)) {
+              None => datas_lent_function_each_in(j, d, args, None, visiting)
+              Some(data) => datas_lent_function_each_in(
+                j,
+                d,
+                args,
+                datas_lent_function_each_in(
+                  j,
+                  d,
+                  data_field_types(data.constructors, data_instance(data, args)),
+                  None,
+                  Cons(t, visiting)
+                ),
+                visiting
+              )
+            }
+          }
+        } else {
+          datas_lent_function_each_in(j, d, args, None, visiting)
+        }
+        TyProduct(members) => datas_lent_function_each_in(j, d, members, None, visiting)
+        _ => None
+      }
+    }
+  }
+}
+
+pub fn datas_lent_function(d: Datas, t: Ty): Option(Bool) {
+  datas_lent_function_in(d.steps, d, t, Nil)
+}
+
+// its drop may use what it borrows. A borrow of one drops nothing.
+mutual {
+  pub fn datas_holds_opaque_in(k: Nat, d: Datas, t: Ty, visiting: List(Ty)): Bool {
+    match k {
+      Zero => true
+      Succ(j) => if ty_in_list(visiting, t) {
+        false
+      } else {
+        ⊢ Bool from match t {
+          TyNamed(n, args) => if data_is_view(d, surface_name_text(n)) {
+            ⊢ Bool from match datas_decl(d, surface_name_text(n)) {
+              None => true
+              Some(data) => ⊢ Bool from match data_written_fields(data.constructors) {
+                Nil => true
+                Cons(^f, ^more) => datas_holds_opaque_each(
+                  j,
+                  d,
+                  data_field_types(data.constructors, data_instance(data, args)),
+                  Cons(t, visiting)
+                )
+              }
+            }
+          } else {
+            datas_holds_opaque_each(j, d, args, Cons(t, visiting))
+          }
+          TyProduct(members) => datas_holds_opaque_each(j, d, members, Cons(t, visiting))
+          _ => false
+        }
+      }
+    }
+  }
+
+  pub fn datas_holds_opaque_each(k: Nat, d: Datas, ts: List(Ty), visiting: List(Ty)): Bool {
+    match k {
+      Zero => true
+      Succ(j) => ⊢ Bool from match ts {
+        Nil => false
+        Cons(t, rest) => datas_holds_opaque_in(j, d, t, visiting) || datas_holds_opaque_each(j, d, rest, visiting)
+      }
+    }
+  }
+}
+
+pub fn datas_holds_opaque_view(d: Datas, t: Ty): Bool {
+  datas_holds_opaque_in(d.steps, d, t, Nil)
 }

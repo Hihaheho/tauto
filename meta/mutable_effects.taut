@@ -1,0 +1,408 @@
+import "mutable_state.taut" { Pair, first, second }
+
+// State instructions and external operations share a computation tree. Each
+// operation keeps its own answer family; no tagged untyped answer is admitted.
+// All definitions are proof models, independent of the surface reader.
+pub(open) inductive StateOp(S: Type): Type {
+  Load: StateOp(S)
+  Save(next: S): StateOp(S)
+}
+
+pub ghost fn StateRes(S: Type, o: StateOp(S)): Type {
+  match o { Load => S, Save(next) => Unit }
+}
+
+pub ghost fn Ops(S: Type, Op: Type): Type { OpSum(StateOp(S), Op) }
+pub ghost fn Answers(S: Type, Op: Type, Res: (Op) -> Type, o: Ops(S, Op)): Type {
+  res_sum(StateOp(S), Op, StateRes(S), Res, o)
+}
+pub ghost fn Program(S: Type, Op: Type, Res: (Op) -> Type, R: Type): Type {
+  Comp(Ops(S, Op), Answers(S, Op, Res), R)
+}
+pub ghost fn Reply(S: Type, Op: Type, Res: (Op) -> Type, event: Pair(Op, S)): Type {
+  Pair(Res(first(event)), S)
+}
+
+// State is exposed on abort and supplied again on resumption.
+pub ghost fn lower_step<S: Type, Op: Type, Res: (Op) -> Type, R: Type>(
+  op: Ops(S, Op),
+  next: (Answers(S, Op, Res, op), S) -> Comp(Pair(Op, S), Reply(S, Op, Res), Pair(R, S)),
+  state: S
+): Comp(Pair(Op, S), Reply(S, Op, Res), Pair(R, S)) {
+  match op {
+    OpHere(local) => match local {
+      Load => next(state, state)
+      Save(updated) => next(Star, updated)
+    }
+    OpThere(external) => CompOp(
+      PairOf(external, state),
+      answer => next(first(answer), second(answer))
+    )
+  }
+}
+
+pub ghost fn lower<S: Type, Op: Type, Res: (Op) -> Type, R: Type>(
+  code: Program(S, Op, Res, R),
+  state: S
+): Comp(Pair(Op, S), Reply(S, Op, Res), Pair(R, S)) {
+  match code {
+    CompPure(value) => CompPure(PairOf(value, state))
+    CompOp(op, next) => lower_step(op, (answer, updated) => lower(next(answer), updated), state)
+  }
+}
+
+pub ghost fn load<S: Type, Op: Type, Res: (Op) -> Type, R: Type>(
+  next: (S) -> Program(S, Op, Res, R)
+): Program(S, Op, Res, R) { CompOp(OpHere(Load), next) }
+
+pub ghost fn save<S: Type, Op: Type, Res: (Op) -> Type, R: Type>(
+  state: S,
+  next: Program(S, Op, Res, R)
+): Program(S, Op, Res, R) { CompOp(OpHere(Save(state)), unit => next) }
+
+pub ghost fn request<S: Type, Op: Type, Res: (Op) -> Type, R: Type>(
+  op: Op,
+  next: (Res(op)) -> Program(S, Op, Res, R)
+): Program(S, Op, Res, R) { CompOp(OpThere(op), next) }
+
+// Allowed answers retain their operation's type. Allowed state transitions
+// express freezing, owner liveness, return provenance and operation contracts.
+pub ghost fn source_step<S: Type, Op: Type, Res: (Op) -> Type>(
+  op: Ops(S, Op),
+  next: (Answers(S, Op, Res, op), S) -> Prop,
+  state: S,
+  invariant: (S) -> Prop,
+  update: (S, S) -> Prop,
+  suspend: (Op, S) -> Prop,
+  allowed: ∀ external: Op. (S) -> (Res(external)) -> (S) -> Prop
+): Prop {
+  invariant(state) ∧ match op {
+    OpHere(local) => match local {
+      Load => next(state, state)
+      Save(updated) => update(state, updated) ∧ next(Star, updated)
+    }
+    OpThere(external) => suspend(
+      external,
+      state
+    ) ∧ ∀ answer: Res(external), updated: S. (
+      allowed(external, state, answer, updated)
+    ) -> next(answer, updated)
+  }
+}
+
+pub ghost fn source_safe<S: Type, Op: Type, Res: (Op) -> Type, R: Type>(
+  code: Program(S, Op, Res, R),
+  state: S,
+  invariant: (S) -> Prop,
+  update: (S, S) -> Prop,
+  suspend: (Op, S) -> Prop,
+  allowed: ∀ op: Op. (S) -> (Res(op)) -> (S) -> Prop,
+  post: (R, S) -> Prop
+): Prop {
+  match code {
+    CompPure(value) => invariant(state) ∧ post(value, state)
+    CompOp(op, next) => source_step(
+      op,
+      (answer, updated) => source_safe(
+        next(answer),
+        updated,
+        invariant,
+        update,
+        suspend,
+        allowed,
+        post
+      ),
+      state,
+      invariant,
+      update,
+      suspend,
+      allowed
+    )
+  }
+}
+
+pub ghost fn target_safe<S: Type, Op: Type, Res: (Op) -> Type, R: Type>(
+  code: Comp(Pair(Op, S), Reply(S, Op, Res), Pair(R, S)),
+  invariant: (S) -> Prop,
+  update: (S, S) -> Prop,
+  suspend: (Op, S) -> Prop,
+  allowed: ∀ op: Op. (S) -> (Res(op)) -> (S) -> Prop,
+  post: (R, S) -> Prop
+): Prop {
+  match code {
+    CompPure(out) => invariant(second(out)) ∧ post(first(out), second(out))
+    CompOp(event, next) => invariant(second(event)) ∧ suspend(first(event), second(event)) ∧
+    ∀ answer: Reply(
+      S,
+      Op,
+      Res,
+      event
+    ). (allowed(first(event), second(event), first(answer), second(answer))) ->
+    target_safe(next(answer), invariant, update, suspend, allowed, post)
+  }
+}
+
+pub theorem step_safe<S: Type, Op: Type, Res: (Op) -> Type, R: Type>(
+  op: Ops(S, Op),
+  source: (Answers(S, Op, Res, op), S) -> Prop,
+  target: (Answers(S, Op, Res, op), S) -> Comp(Pair(Op, S), Reply(S, Op, Res), Pair(R, S)),
+  state: S,
+  invariant: (S) -> Prop,
+  update: (S, S) -> Prop,
+  suspend: (Op, S) -> Prop,
+  allowed: ∀ external: Op. (S) -> (Res(external)) -> (S) -> Prop,
+  post: (R, S) -> Prop,
+  ih: ∀ answer: Answers(
+    S,
+    Op,
+    Res,
+    op
+  ), updated: S. (
+    source(answer, updated)
+  ) -> target_safe(target(answer, updated), invariant, update, suspend, allowed, post),
+  h: source_step(op, source, state, invariant, update, suspend, allowed)
+): target_safe(lower_step(op, target, state), invariant, update, suspend, allowed, post) {
+  match op {
+    OpHere(local) => match local {
+      Load => ih(state, state, And::right(h))
+      Save(updated) => ih(Star, updated, And::right(And::right(h)))
+    }
+    OpThere(external) => AndIntro(
+      And::left(h),
+      AndIntro(
+        And::left(And::right(h)),
+        answer => permitted => ih(
+          first(answer),
+          second(answer),
+          And::right(And::right(h))(first(answer), second(answer), permitted)
+        )
+      )
+    )
+  }
+}
+
+pub theorem lowering_safe<S: Type, Op: Type, Res: (Op) -> Type, R: Type>(
+  code: Program(S, Op, Res, R),
+  state: S,
+  invariant: (S) -> Prop,
+  update: (S, S) -> Prop,
+  suspend: (Op, S) -> Prop,
+  allowed: ∀ op: Op. (S) -> (Res(op)) -> (S) -> Prop,
+  post: (R, S) -> Prop,
+  h: source_safe(code, state, invariant, update, suspend, allowed, post)
+): target_safe(lower(code, state), invariant, update, suspend, allowed, post) {
+  match code {
+    CompPure(value) => h
+    CompOp(op, next) => step_safe(
+      op,
+      (answer, updated) => source_safe(
+        next(answer),
+        updated,
+        invariant,
+        update,
+        suspend,
+        allowed,
+        post
+      ),
+      (answer, updated) => lower(next(answer), updated),
+      state,
+      invariant,
+      update,
+      suspend,
+      allowed,
+      post,
+      (answer, updated, hn) => lowering_safe(
+        next(answer),
+        updated,
+        invariant,
+        update,
+        suspend,
+        allowed,
+        post,
+        hn
+      ),
+      h
+    )
+  }
+}
+
+// The arm contract covers every handler path, including paths with no resume.
+// In particular an abort must establish the handler's postcondition from the
+// state at suspension and perform the required scope cleanup. A property of
+// resumed branches alone does not justify an aborting handler.
+pub theorem handled_safe<S: Type, Op: Type, Res: (Op) -> Type, R: Type, B: Type>(
+  code: Comp(Pair(Op, S), Reply(S, Op, Res), Pair(R, S)),
+  invariant: (S) -> Prop,
+  update: (S, S) -> Prop,
+  suspend: (Op, S) -> Prop,
+  allowed: ∀ op: Op. (S) -> (Res(op)) -> (S) -> Prop,
+  post: (R, S) -> Prop,
+  ret: (Pair(R, S)) -> B,
+  arm: ∀ event: Pair(Op, S). ((Reply(S, Op, Res, event)) -> B) -> B,
+  result: (B) -> Prop,
+  ret_ok: ∀ out: Pair(
+    R,
+    S
+  ). (invariant(second(out))) -> (post(first(out), second(out))) -> result(ret(out)),
+  arm_ok: ∀ event: Pair(
+    Op,
+    S
+  ), k: (
+    Reply(S, Op, Res, event)
+  ) -> B. (
+    invariant(second(event))
+  ) -> (
+    suspend(first(event), second(event))
+  ) -> (
+    ∀ answer: Reply(
+      S,
+      Op,
+      Res,
+      event
+    ). (allowed(first(event), second(event), first(answer), second(answer))) -> result(k(answer))
+  ) -> result(arm(event, k)),
+  h: target_safe(code, invariant, update, suspend, allowed, post)
+): result(Comp::fold(Pair(Op, S), Reply(S, Op, Res), ret, arm, code)) {
+  match code {
+    CompPure(out) => ret_ok(out, And::left(h), And::right(h))
+    CompOp(event, next) => arm_ok(
+      event,
+      answer => Comp::fold(Pair(Op, S), Reply(S, Op, Res), ret, arm, next(answer)),
+      And::left(h),
+      And::left(And::right(h)),
+      answer => permission => handled_safe(
+        next(answer),
+        invariant,
+        update,
+        suspend,
+        allowed,
+        post,
+        ret,
+        arm,
+        result,
+        ret_ok,
+        arm_ok,
+        And::right(And::right(h))(answer, permission)
+      )
+    )
+  }
+}
+
+pub ghost fn interpret_step<S: Type, Op: Type, Res: (Op) -> Type, B: Type>(
+  op: Ops(S, Op),
+  next: (Answers(S, Op, Res, op), S) -> B,
+  state: S,
+  arm: ∀ event: Pair(Op, S). ((Reply(S, Op, Res, event)) -> B) -> B
+): B {
+  match op {
+    OpHere(local) => match local {
+      Load => next(state, state),
+      Save(updated) => next(Star, updated)
+    }
+    OpThere(external) => arm(PairOf(external, state), answer => next(first(answer), second(answer)))
+  }
+}
+pub ghost fn interpret<S: Type, Op: Type, Res: (Op) -> Type, R: Type, B: Type>(
+  code: Program(S, Op, Res, R),
+  state: S,
+  ret: (Pair(R, S)) -> B,
+  arm: ∀ event: Pair(Op, S). ((Reply(S, Op, Res, event)) -> B) -> B
+): B {
+  match code {
+    CompPure(value) => ret(PairOf(value, state))
+    CompOp(op, next) => interpret_step(
+      op,
+      (answer, updated) => interpret(next(answer), updated, ret, arm),
+      state,
+      arm
+    )
+  }
+}
+pub theorem lower_step_agrees<S: Type, Op: Type, Res: (Op) -> Type, R: Type, B: Type>(
+  op: Ops(S, Op),
+  target: (Answers(S, Op, Res, op), S) -> Comp(Pair(Op, S), Reply(S, Op, Res), Pair(R, S)),
+  source: (Answers(S, Op, Res, op), S) -> B,
+  state: S,
+  ret: (Pair(R, S)) -> B,
+  arm: ∀ event: Pair(Op, S). ((Reply(S, Op, Res, event)) -> B) -> B,
+  respects: ∀ event: Pair(
+    Op,
+    S
+  ), k1: (
+    Reply(S, Op, Res, event)
+  ) -> B, k2: (
+    Reply(S, Op, Res, event)
+  ) -> B. (
+    ∀ answer: Reply(S, Op, Res, event). k1(answer) = k2(answer)
+  ) -> (arm(event, k1) = arm(event, k2)),
+  ih: ∀ answer: Answers(
+    S,
+    Op,
+    Res,
+    op
+  ), updated: S. Comp::fold(
+    Pair(Op, S),
+    Reply(S, Op, Res),
+    ret,
+    arm,
+    target(answer, updated)
+  ) = source(answer, updated)
+): Comp::fold(
+  Pair(Op, S),
+  Reply(S, Op, Res),
+  ret,
+  arm,
+  lower_step(op, target, state)
+) = interpret_step(op, source, state, arm) {
+  match op {
+    OpHere(local) => match local { Load => ih(state, state), Save(updated) => ih(Star, updated) }
+    OpThere(external) => respects(
+      PairOf(external, state),
+      answer => Comp::fold(
+        Pair(Op, S),
+        Reply(S, Op, Res),
+        ret,
+        arm,
+        target(first(answer), second(answer))
+      ),
+      answer => source(first(answer), second(answer)),
+      answer => ih(first(answer), second(answer))
+    )
+  }
+}
+pub theorem lower_agrees<S: Type, Op: Type, Res: (Op) -> Type, R: Type, B: Type>(
+  code: Program(S, Op, Res, R),
+  state: S,
+  ret: (Pair(R, S)) -> B,
+  arm: ∀ event: Pair(Op, S). ((Reply(S, Op, Res, event)) -> B) -> B,
+  respects: ∀ event: Pair(
+    Op,
+    S
+  ), k1: (
+    Reply(S, Op, Res, event)
+  ) -> B, k2: (
+    Reply(S, Op, Res, event)
+  ) -> B. (
+    ∀ answer: Reply(S, Op, Res, event). k1(answer) = k2(answer)
+  ) -> (arm(event, k1) = arm(event, k2))
+): Comp::fold(
+  Pair(Op, S),
+  Reply(S, Op, Res),
+  ret,
+  arm,
+  lower(code, state)
+) = interpret(code, state, ret, arm) {
+  match code {
+    CompPure(value) => Refl
+    CompOp(op, next) => lower_step_agrees(
+      op,
+      (answer, updated) => lower(next(answer), updated),
+      (answer, updated) => interpret(next(answer), updated, ret, arm),
+      state,
+      ret,
+      arm,
+      respects,
+      (answer, updated) => lower_agrees(next(answer), updated, ret, arm, respects)
+    )
+  }
+}

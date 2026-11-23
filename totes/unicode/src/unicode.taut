@@ -1,11 +1,11 @@
-import std::Base
-import std::Map
+import std::base
+import std::map
 import "../../ordmap/src/ordmap.taut"
 import "../../text/src/text.taut"
 
 // Which characters are letters or digits, and which are white space, as
 // Rust's `char::is_alphanumeric` and `char::is_whitespace` say
-// (`docs/design/self-host.md`「text と unicode（`totes/text`、`totes/unicode`）」). The ASCII ones are decided here; the others by the
+// (`docs/design/self-host.md`「Proofs」). The ASCII ones are decided here; the others by the
 // ranges of the tables that `tables.taut` holds and `classes.taut` passes in.
 
 pub(open) inductive UnicodeClasses: Type {
@@ -13,7 +13,7 @@ pub(open) inductive UnicodeClasses: Type {
 }
 
 pub fn unicode_number(t: Text): Nat {
-  ⊢ Nat from match text_parse_u64(t) {
+  match text_parse_u64(t) {
     None => 0
     Some(n) => n
   }
@@ -26,7 +26,7 @@ pub fn unicode_ranges(
   first: Option(Nat),
   done: Ordmap(Nat, Nat)
 ): Ordmap(Nat, Nat) {
-  ⊢ Ordmap(Nat, Nat) from match numbers {
+  match numbers {
     Nil => done
     Cons(n, rest) => ⊢ Ordmap(Nat, Nat) from match first {
       None => unicode_ranges(rest, Some(unicode_number(n)), done)
@@ -47,16 +47,16 @@ pub fn unicode_classes_of(alphanumeric: Text, whitespace: Text): UnicodeClasses 
 }
 
 pub fn unicode_in(ranges: Ordmap(Nat, Nat), c: Nat): Bool {
-  ⊢ Bool from match Ordmap::floor(ranges, c, Ordmap::compare_nat) {
+  match Ordmap::floor(ranges, c, Ordmap::compare_nat) {
     None => false
     Some(range) => ⊢ Bool from match range {
-      Pair { fst: start, snd: last } => Nat::le(c, last)
+      #(^start, last) => Nat::le(c, last)
     }
   }
 }
 
 pub fn unicode_is_alphanumeric(classes: UnicodeClasses, c: Nat): Bool {
-  ⊢ Bool from match Nat::lt(c, 128) {
+  match Nat::lt(c, 128) {
     true => Bool::or(
       Bool::and(Nat::le(48, c), Nat::le(c, 57)),
       Bool::or(
@@ -65,16 +65,70 @@ pub fn unicode_is_alphanumeric(classes: UnicodeClasses, c: Nat): Bool {
       )
     )
     false => ⊢ Bool from match classes {
-      UnicodeClassesWith(alphanumeric, whitespace) => unicode_in(alphanumeric, c)
+      UnicodeClassesWith(alphanumeric, ^whitespace) => unicode_in(alphanumeric, c)
     }
   }
 }
 
 pub fn unicode_is_whitespace(classes: UnicodeClasses, c: Nat): Bool {
-  ⊢ Bool from match Nat::lt(c, 128) {
+  match Nat::lt(c, 128) {
     true => Bool::or(Nat::eq(c, 32), Bool::and(Nat::le(9, c), Nat::le(c, 13)))
     false => ⊢ Bool from match classes {
-      UnicodeClassesWith(alphanumeric, whitespace) => unicode_in(whitespace, c)
+      UnicodeClassesWith(^alphanumeric, whitespace) => unicode_in(whitespace, c)
+    }
+  }
+}
+
+// The lowercase of the characters that `char::to_lowercase` changes, from
+// the table `c n l1 … ln c n l1 … ln …` (`tables.taut`).
+pub fn unicode_lower_take(k: Nat, ns: List(Nat), done: List(Nat)): List(Nat) × List(Nat) {
+  match k {
+    Zero => #(List::reverse(done), ns)
+    Succ(k2) => ⊢ List(Nat) × List(Nat) from match ns {
+      Nil => #(List::reverse(done), Nil)
+      Cons(n, rest) => unicode_lower_take(k2, rest, Cons(n, done))
+    }
+  }
+}
+
+pub fn unicode_lower_entries(
+  fuel: Nat,
+  ns: List(Nat),
+  done: Ordmap(Nat, List(Nat))
+): Ordmap(Nat, List(Nat)) {
+  match fuel {
+    Zero => done
+    Succ(fuel2) => ⊢ Ordmap(Nat, List(Nat)) from match ns {
+      Nil => done
+      Cons(c, r1) => ⊢ Ordmap(Nat, List(Nat)) from match r1 {
+        Nil => done
+        Cons(n, r2) => ⊢ Ordmap(Nat, List(Nat)) from match unicode_lower_take(n, r2, Nil) {
+          #(lower, rest) => unicode_lower_entries(
+            fuel2,
+            rest,
+            Ordmap::insert(done, c, lower, Ordmap::compare_nat)
+          )
+        }
+      }
+    }
+  }
+}
+
+pub fn unicode_lowercase_of(table: Text): Ordmap(Nat, List(Nat)) {
+  let ns := text_number_list(table)
+  unicode_lower_entries(List::length(ns), ns, Ordmap::empty())
+}
+
+// What `char::to_lowercase` gives for `c`: ASCII here, the rest by `lower`.
+pub fn unicode_to_lowercase(lower: Ordmap(Nat, List(Nat)), c: Nat): List(Nat) {
+  match Nat::lt(c, 128) {
+    true => ⊢ List(Nat) from match Bool::and(Nat::le(65, c), Nat::le(c, 90)) {
+      true => Cons(c + 32, Nil)
+      false => Cons(c, Nil)
+    }
+    false => ⊢ List(Nat) from match Ordmap::get(lower, c, Ordmap::compare_nat) {
+      Some(ls) => ls
+      None => Cons(c, Nil)
     }
   }
 }

@@ -1,9 +1,9 @@
 import "final_instantiation_bindings.taut"
 import "finish_literal_sound.taut"
-import std::Base
-import std::Map
-import std::Row
-import std::Text
+import std::base
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_report.taut"
@@ -14,18 +14,19 @@ import "instantiation_requirements.taut"
 import "rules_kind_bindings.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
 pub fn finish_requirements_view(
   c: Checker
-): Pair(List(TyBound), List(TyCtorBound)) { Pair {fst: c.bounds, snd: c.ctor_bounds} }
+): List(TyBound) × List(TyCtorBound) { #(c.bounds, c.ctor_bounds) }
 pub fn finish_requirement_bounds(
-  r#view: Pair(List(TyBound), List(TyCtorBound))
-): List(TyBound) { r#view.fst }
+  view: (List(TyBound) × List(TyCtorBound))
+): List(TyBound) { view.fst }
 pub fn finish_requirement_ctors(
-  r#view: Pair(List(TyBound), List(TyCtorBound))
-): List(TyCtorBound) { r#view.snd }
+  view: (List(TyBound) × List(TyCtorBound))
+): List(TyCtorBound) { view.snd }
 pub def LiteralRecordsFrame_requirements<A: Type>(
   c: Checker,
   m: Mut1(A, Checker)
@@ -36,10 +37,10 @@ pub theorem literal_records_bind_requirements<A: Type, B: Type>(
   m: Mut1(A, Checker),
   first: LiteralRecordsFrame_requirements(c, m),
   tail: ∀ value: A. ∀ next: Checker. LiteralRecordsFrame_requirements(next, k(value, next))
-): LiteralRecordsFrame_requirements(c, frame_bind(A, B, k, m)) {
+): LiteralRecordsFrame_requirements(c, frame_bind(<A: A, B: B>, k, m)) {
   ⊢ LiteralRecordsFrame_requirements(
     c,
-    frame_bind(A, B, k, m)
+    frame_bind(<A: A, B: B>, k, m)
   ) from match m { mut1(value, next) => Eq::trans(tail(value, next), first) }
 }
 pub theorem literal_records_rewrap_requirements<A: Type>(
@@ -57,7 +58,7 @@ pub theorem literal_default_records_requirements(
   c: Checker,
   t: Ty
 ): LiteralRecordsFrame_requirements(c, finish_default(c, t)) {
-  ⊢ LiteralRecordsFrame_requirements(c, finish_default(c, t)) from match t {
+  match t {
     TyInt(w) => Refl
     TyBool => Refl
     TyText => Refl
@@ -65,6 +66,7 @@ pub theorem literal_default_records_requirements(
     TyNever => Refl
     TyDecimal => Refl
     TyFloat => Refl
+    TyFloat32 => Refl
     TyFn(ps, result, kind) => Refl
     TyUnion(ys) => Refl
     TyProduct(ys) => Refl
@@ -89,17 +91,16 @@ pub theorem ck_default_int_records_requirements(
   )
 }
 pub theorem ck_default_ints_records_requirements(
-  vs: List(Pair(Nat, Bool)),
+  vs: List(Nat × Bool),
   c: Checker
 ): LiteralRecordsFrame_requirements(c, ck_default_ints(vs, c)) {
-  ⊢ LiteralRecordsFrame_requirements(c, ck_default_ints(vs, c)) from match vs {
+  match vs {
     Nil => Refl
     Cons(v, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => LiteralRecordsFrame_requirements(c, m),
       Eq::sym(finish_defaults_unf(v, rest, c)),
       literal_records_bind_requirements(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_default_ints(rest, next)),
         ck_default_int(c, finish_int_key(v)),
@@ -119,10 +120,6 @@ pub theorem literal_after_defaults_records_requirements(
   clean: DiagnosticReportClean(finish_after_defaults(c, widths))
 ): LiteralRecordsFrame_requirements(c, finish_after_defaults(c, widths)) {
   Eq::congr(
-    Mut1(TypeReport, Checker),
-    Pair(List(TyBound), List(TyCtorBound)),
-    finish_after_defaults(c, widths),
-    mut1(finish_report(c, widths), c),
     (m: Mut1(TypeReport, Checker)) => finish_requirements_view(ck_st(m)),
     And::right(finish_after_defaults_accepts(c, widths, clean))
   )
@@ -133,7 +130,7 @@ pub theorem literal_finish_default_records_requirements(
   first: LiteralRecordsFrame_requirements(c, m),
   clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
 ): LiteralRecordsFrame_requirements(c, diagnostic_finish_default_result(m)) {
-  ⊢ LiteralRecordsFrame_requirements(c, diagnostic_finish_default_result(m)) from match m {
+  match m {
     mut1(value, next) => Eq::trans(
       literal_after_defaults_records_requirements(
         next,
@@ -181,7 +178,7 @@ pub theorem ck_finish_requirements_frame(
   )
 }
 pub theorem ck_finish_instantiation_bindings<gs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), initial: Ordmap(
   Text,
   Ty
@@ -219,7 +216,7 @@ pub theorem ck_finish_instantiation_bindings<gs: List(
 }
 
 pub theorem ck_instantiate_map_final_kinds(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
   name: Text,
   span: TySpan,

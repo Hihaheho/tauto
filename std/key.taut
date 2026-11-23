@@ -1,0 +1,336 @@
+import std::uint { UInt }
+import std::builtin::macro { Syn, SynExpr, SynIdent, SynStmt, macro_error }
+import std::base { Bool }
+import std::prelude::std { List, Option, Ordering }
+import std::text { Text }
+import std::int { Int }
+import std::sint { SInt }
+import std::map_text { Bytes }
+
+// What a map asks of its keys: when two keys
+// are equal, and the words a key feeds to a hash function. The hash function
+// is not a class: a map names one (`Sip`) and calls it as plain functions.
+pub(open) inductive class Key(K: Type) {
+  fn eq(a: &K, b: &K): Bool
+  fn feed<H>(a: &K, h: H, step: &((H, UInt(64)) -> H)): H
+
+  theorem eq_refl<a: K>(): Key::eq(a, a) = true
+  theorem feed_eq<a: K, b: K, H: Type, s: H, step: (
+    (H, UInt(64)) -> H
+  )>(h: Key::eq(a, b) = true): Key::feed(a, s, step) = Key::feed(b, s, step)
+}
+
+instance Key(Nat) {
+  fn eq(a: &Nat, b: &Nat): Bool { Nat::eq(a, b) }
+  fn feed<H>(a: &Nat, h: H, step: &((H, UInt(64)) -> H)): H { step(h, UInt::of_nat_mod64(a)) }
+
+  theorem eq_refl<a: Nat>(): Key::eq(a, a) = true {
+    Nat::eq_refl(a)
+  }
+
+  theorem feed_eq<a: Nat, b: Nat, H: Type, s: H, step: (
+    (H, UInt(64)) -> H
+  )>(h: Key::eq(a, b) = true): Key::feed(a, s, step) = Key::feed(b, s, step) {
+    Eq::congr(⟦step(s, UInt::of_nat_mod64(□))⟧, Nat::eq_sound(a, b, h))
+  }
+}
+
+instance Key(UInt(8)) {
+  fn eq(a: &UInt(8), b: &UInt(8)): Bool { UInt::eq8(a, b) }
+  fn feed<H>(a: &UInt(8), h: H, step: &((H, UInt(64)) -> H)): H { step(h, UInt::of_nat_mod64(UInt::val8(a))) }
+
+  theorem eq_refl<a: UInt(8)>(): Key::eq(a, a) = true {
+    Nat::eq_refl(UInt::val8(a))
+  }
+
+  theorem feed_eq<a: UInt(8), b: UInt(8), H: Type, s: H, step: (
+    (H, UInt(64)) -> H
+  )>(h: Key::eq(a, b) = true): Key::feed(a, s, step) = Key::feed(b, s, step) {
+    Eq::congr(⟦step(s, UInt::of_nat_mod64(□))⟧, Nat::eq_sound(UInt::val8(a), UInt::val8(b), h))
+  }
+}
+
+instance Key(UInt(32)) {
+  fn eq(a: &UInt(32), b: &UInt(32)): Bool { UInt::eq32(a, b) }
+  fn feed<H>(a: &UInt(32), h: H, step: &((H, UInt(64)) -> H)): H { step(h, UInt::of_nat_mod64(UInt::val32(a))) }
+
+  theorem eq_refl<a: UInt(32)>(): Key::eq(a, a) = true {
+    Nat::eq_refl(UInt::val32(a))
+  }
+
+  theorem feed_eq<a: UInt(32), b: UInt(32), H: Type, s: H, step: (
+    (H, UInt(64)) -> H
+  )>(h: Key::eq(a, b) = true): Key::feed(a, s, step) = Key::feed(b, s, step) {
+    Eq::congr(⟦step(s, UInt::of_nat_mod64(□))⟧, Nat::eq_sound(UInt::val32(a), UInt::val32(b), h))
+  }
+}
+
+instance Key(UInt(64)) {
+  fn eq(a: &UInt(64), b: &UInt(64)): Bool { UInt::eq64(a, b) }
+  fn feed<H>(a: &UInt(64), h: H, step: &((H, UInt(64)) -> H)): H { step(h, UInt::of_nat_mod64(UInt::val64(a))) }
+
+  theorem eq_refl<a: UInt(64)>(): Key::eq(a, a) = true {
+    Nat::eq_refl(UInt::val64(a))
+  }
+
+  theorem feed_eq<a: UInt(64), b: UInt(64), H: Type, s: H, step: (
+    (H, UInt(64)) -> H
+  )>(h: Key::eq(a, b) = true): Key::feed(a, s, step) = Key::feed(b, s, step) {
+    Eq::congr(⟦step(s, UInt::of_nat_mod64(□))⟧, Nat::eq_sound(UInt::val64(a), UInt::val64(b), h))
+  }
+}
+
+// One word for an integer: twice it for one at least zero, twice its size less one plus one for
+// one below.
+pub fn KeyInt::word(x: Int): UInt(64) {
+  match x {
+    IntOfNat(a) => UInt::of_nat_mod64(a + a)
+    IntNegSucc(a) => UInt::of_nat_mod64(Succ(a + a))
+  }
+}
+
+pub theorem KeyInt::eq_refl(x: Int): Int::eq(x, x) = true {
+  match x {
+    IntOfNat(a) => Nat::eq_refl(a)
+    IntNegSucc(a) => Nat::eq_refl(a)
+  }
+}
+
+pub theorem KeyInt::word_eq(x: Int, y: Int, h: Int::eq(x, y) = true): KeyInt::word(x) = KeyInt::word(y) {
+  match x {
+    IntOfNat(a) => match y {
+      IntOfNat(b) => Eq::congr(⟦UInt::of_nat_mod64(□ + □)⟧, Nat::eq_sound(a, b, h))
+      IntNegSucc(b) => False::elim(false_ne_true(h))
+    }
+    IntNegSucc(a) => match y {
+      IntOfNat(b) => False::elim(false_ne_true(h))
+      IntNegSucc(b) => Eq::congr(⟦UInt::of_nat_mod64(Succ(□ + □))⟧, Nat::eq_sound(a, b, h))
+    }
+  }
+}
+
+instance Key(SInt(64)) {
+  fn eq(a: &SInt(64), b: &SInt(64)): Bool { SInt::eq64(a, b) }
+  fn feed<H>(a: &SInt(64), h: H, step: &((H, UInt(64)) -> H)): H { step(h, KeyInt::word(SInt::val64(a))) }
+
+  theorem eq_refl<a: SInt(64)>(): Key::eq(a, a) = true {
+    KeyInt::eq_refl(SInt::val64(a))
+  }
+
+  theorem feed_eq<a: SInt(64), b: SInt(64), H: Type, s: H, step: (
+    (H, UInt(64)) -> H
+  )>(h: Key::eq(a, b) = true): Key::feed(a, s, step) = Key::feed(b, s, step) {
+    Eq::congr(⟦step(s, □)⟧, KeyInt::word_eq(SInt::val64(a), SInt::val64(b), h))
+  }
+}
+
+// The bytes of a text fed one word each, then their number.
+pub fn KeyText::feed_bytes<H>(bs: List(Nat), n: Nat, h: H, step: &((H, UInt(64)) -> H)): H {
+  match bs {
+    Nil => step(h, UInt::of_nat_mod64(n))
+    Cons(x, rest) => KeyText::feed_bytes(rest, Succ(n), step(h, UInt::of_nat_mod64(x)), step)
+  }
+}
+
+// What `Text::eq` answers for an ordering.
+pub fn KeyText::of_ordering(o: Ordering): Bool {
+  match o { Less => false, Equal => true, Greater => false }
+}
+
+// Texts `Text::eq` calls equal have the same bytes.
+pub theorem KeyText::eq_bytes(a: Text, b: Text, h: Text::eq(a, b) = true): Text::bytes(a) = Text::bytes(b) {
+  match Text::ordering(a, b) eqn q {
+    Less => False::elim(false_ne_true(Eq::trans(Eq::sym(Eq::congr(⟦KeyText::of_ordering(□)⟧, q)), h)))
+    Equal => Bytes::compare_eq(Text::bytes(a), Text::bytes(b), q)
+    Greater => False::elim(false_ne_true(Eq::trans(Eq::sym(Eq::congr(⟦KeyText::of_ordering(□)⟧, q)), h)))
+  }
+}
+
+instance Key(Text) {
+  fn eq(a: &Text, b: &Text): Bool { Text::eq(a, b) }
+  fn feed<H>(a: &Text, h: H, step: &((H, UInt(64)) -> H)): H { KeyText::feed_bytes(Text::bytes(a), 0, h, step) }
+
+  theorem eq_refl<a: Text>(): Key::eq(a, a) = true {
+    Eq::congr(⟦KeyText::of_ordering(□)⟧, Bytes::compare_same(Text::bytes(a)))
+  }
+
+  theorem feed_eq<a: Text, b: Text, H: Type, s: H, step: (
+    (H, UInt(64)) -> H
+  )>(h: Key::eq(a, b) = true): Key::feed(a, s, step) = Key::feed(b, s, step) {
+    Eq::congr(⟦KeyText::feed_bytes(□, 0, s, step)⟧, KeyText::eq_bytes(a, b, h))
+  }
+}
+
+pub theorem KeyLaws::and_both(x: Bool, y: Bool, hx: x = true, hy: y = true): x && y = true {
+  Eq::trans(Eq::congr(⟦□ && y⟧, hx), Eq::trans(Eq::congr(⟦true && □⟧, hy), Refl))
+}
+
+pub fn Kd::id(e: SynExpr): SynIdent ! {macro_error} {
+  match Syn::ident_of(e) {
+    Some(i) => i
+    None => Syn::error(Syn::call_span(), "not a name")
+  }
+}
+
+pub fn Kd::fld(a: SynIdent, f: SynIdent): SynExpr {
+  ExField(ExVar(a), f.name, Syn::call_span())
+}
+
+// `Key::eq(a.f, b.f) && … && true` for the fields of a struct.
+pub fn Kd::eq(
+  a: SynIdent,
+  b: SynIdent,
+  fs: List(Option(SynIdent) × SynExpr)
+): SynExpr ! {macro_error, div} {
+  match fs {
+    Nil => quote { true }
+    Cons(#(Some(f), ty), rest) => {
+      let r := Kd::eq(a, b, rest)
+      let fa := Kd::fld(a, f)
+      let fb := Kd::fld(b, f)
+      quote { Key::eq($fa, $fb) && $r }
+    }
+    Cons(#(None, ty), rest) => Syn::error(Syn::call_span(), "a field has no name")
+  }
+}
+
+// The words of the fields fed in order, from the accumulator `acc`.
+pub fn Kd::feed(
+  a: SynIdent,
+  step: SynIdent,
+  acc: SynExpr,
+  fs: List(Option(SynIdent) × SynExpr)
+): SynExpr ! {macro_error, div} {
+  match fs {
+    Nil => acc
+    Cons(#(Some(f), ty), rest) => {
+      let fa := Kd::fld(a, f)
+      Kd::feed(a, step, quote { Key::feed($fa, $acc, $step) }, rest)
+    }
+    Cons(#(None, ty), rest) => Syn::error(Syn::call_span(), "a field has no name")
+  }
+}
+
+// A proof of `Kd::eq(a, a, fs) = true`.
+pub fn Kd::refl(a: SynIdent, fs: List(Option(SynIdent) × SynExpr)): SynExpr ! {macro_error, div} {
+  match fs {
+    Nil => quote { Refl }
+    Cons(#(Some(f), ty), rest) => {
+      let r := Kd::eq(a, a, rest)
+      let pr := Kd::refl(a, rest)
+      let fa := Kd::fld(a, f)
+      quote { KeyLaws::and_both(Key::eq($fa, $fa), $r, Key::eq_refl(<K: $ty, a: $fa>), $pr) }
+    }
+    Cons(#(None, ty), rest) => Syn::error(Syn::call_span(), "a field has no name")
+  }
+}
+
+// A proof that the fields of `a` and `b` fed from `xa` and `xb` agree, given
+// `ex: xa = xb` and `hh: Kd::eq(a, b, fs) = true`.
+pub fn Kd::feed_eq(
+  a: SynIdent,
+  b: SynIdent,
+  h_ty: SynIdent,
+  step: SynIdent,
+  xa: SynExpr,
+  xb: SynExpr,
+  ex: SynExpr,
+  hh: SynExpr,
+  fs: List(Option(SynIdent) × SynExpr)
+): SynExpr ! {macro_error, div} {
+  match fs {
+    Nil => ex
+    Cons(#(Some(f), ty), rest) => {
+      let r := Kd::eq(a, b, rest)
+      let fa := Kd::fld(a, f)
+      let fb := Kd::fld(b, f)
+      let one := quote { Key::eq($fa, $fb) }
+      let hf := quote { Bool::and_true_left($one, $r, $hh) }
+      let hr := quote { Bool::and_true_right($one, $r, $hh) }
+      let xa2 := quote { Key::feed($fa, $xa, $step) }
+      let xb2 := quote { Key::feed($fb, $xb, $step) }
+      let ex2 := quote {
+        Eq::trans(
+          Eq::congr(⟦Key::feed($fa, □, $step)⟧, $ex),
+          Key::feed_eq(<K: $ty, a: $fa, b: $fb, H: $h_ty, s: $xb, step: $step>, $hf)
+        )
+      }
+      Kd::feed_eq(a, b, h_ty, step, xa2, xb2, ex2, hr, rest)
+    }
+    Cons(#(None, ty), rest) => Syn::error(Syn::call_span(), "a field has no name")
+  }
+}
+
+// `@keyed!(0) => instance Key` on a struct gives it the `Key` of its fields.
+pub macro fn keyed(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
+  match s {
+    StStruct(d) => match d.ctors {
+      Cons(c, Nil) => {
+        let n := d.name
+        let ma := Syn::decl_name(d.name, "a")
+        let mb := Syn::decl_name(d.name, "b")
+        let mh := Syn::decl_name(d.name, "h")
+        let mst := Syn::decl_name(d.name, "step")
+        let mht := Syn::decl_name(d.name, "H")
+        let a := Kd::id(quote { a })
+        let b := Kd::id(quote { b })
+        let hh := Kd::id(quote { hh })
+        let s0 := Kd::id(quote { s })
+        let st := Kd::id(quote { step })
+        let ht := Kd::id(quote { H })
+        let m_eq := Syn::decl_name(d.name, "eq")
+        let m_feed := Syn::decl_name(d.name, "feed")
+        let t_refl := Syn::decl_name(d.name, "eq_refl")
+        let t_fe := Syn::decl_name(d.name, "feed_eq")
+        let fs := c.fields
+        let eq := Kd::eq(ma, mb, fs)
+        let feed := Kd::feed(ma, mst, quote { $mh }, fs)
+        let refl := Kd::refl(a, fs)
+        let fe := Kd::feed_eq(
+          a,
+          b,
+          ht,
+          st,
+          quote { $s0 },
+          quote { $s0 },
+          quote { Eq::Refl(<A: $ht, a: $s0>) },
+          quote { $hh },
+          fs
+        )
+        let t_eq := Kd::eq(a, b, fs)
+        quote stmts {
+          instance Key($n) {
+            fn $m_eq($ma: &$n, $mb: &$n): Bool { $eq }
+            fn $m_feed<H>($ma: &$n, $mh: $mht, $mst: &(($mht, UInt(64)) -> $mht)): $mht { $feed }
+            theorem $t_refl<a: $n>(): Key::eq($a, $a) = true { $refl }
+            theorem $t_fe<a: $n, b: $n, H: Type, s: H, step: (
+              (H, UInt(64)) -> H
+            )>(
+              $hh: Key::eq($a, $b) = true
+            ): Key::feed($a, $s0, $st) = Key::feed($b, $s0, $st) { $fe }
+          }
+        }
+      }
+      Nil => Syn::error(Syn::call_span(), "a struct with one constructor")
+      Cons(c, Cons(d, rest)) => Syn::error(Syn::call_span(), "a struct with one constructor")
+    }
+    StLet(n, t, v, a, b, u, sp) => Syn::error(Syn::call_span(), "not a struct")
+    StVar(n, t, v, a, u, sp) => Syn::error(Syn::call_span(), "not a struct")
+    StAssign(n, v, sp) => Syn::error(Syn::call_span(), "not a struct")
+    StFn(f) => Syn::error(Syn::call_span(), "not a struct")
+    StExpr(v) => Syn::error(Syn::call_span(), "not a struct")
+    StWhile(c, b) => Syn::error(Syn::call_span(), "not a struct")
+    StReturn(v) => Syn::error(Syn::call_span(), "not a struct")
+    StTheorem(t) => Syn::error(Syn::call_span(), "not a struct")
+    StDef(t) => Syn::error(Syn::call_span(), "not a struct")
+    StEnum(d) => Syn::error(Syn::call_span(), "not a struct")
+    StInductive(d) => Syn::error(Syn::call_span(), "not a struct")
+    StEffect(e) => Syn::error(Syn::call_span(), "not a struct")
+    StClass(c) => Syn::error(Syn::call_span(), "not a struct")
+    StInstance(i) => Syn::error(Syn::call_span(), "not a struct")
+    StMutual(ss, sp) => Syn::error(Syn::call_span(), "not a struct")
+    StModule(n, p, ss, ds, sp) => Syn::error(Syn::call_span(), "not a struct")
+    StReexport(n, ps, sp) => Syn::error(Syn::call_span(), "not a struct")
+    StMacroCall(n, t, sp) => Syn::error(Syn::call_span(), "not a struct")
+  }
+}

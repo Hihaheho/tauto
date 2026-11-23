@@ -1,0 +1,86 @@
+description = "`handle { b } with { h1 } with { h2 }` is `handle { handle { b } with { h1 } } with { h2 }`: each `with` wraps the ones before it."
+
+@ cases.the-first-with-is-the-inner-handler
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect ask(n: i64): i64
+let c := handle { perform ask(1) } with {
+  ask(n), k => k(n + 10)
+} with {
+  ask(n), k => k(n + 100)
+}
+show(&c)
+```
+stdout = "11\n"
+
+@ cases.an-operation-the-inner-with-does-not-handle-goes-out
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect ask(n: i64): i64
+effect tell(n: i64): i64
+let c := handle { perform ask(1) + perform tell(2) } with {
+  ask(n), k => k(n * 10)
+} with {
+  tell(n), k => k(n * 100)
+}
+show(&c)
+```
+stdout = "210\n"
+
+@ cases.an-operation-an-inner-arm-performs-goes-to-the-next-with
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect ask(n: i64): i64
+effect tell(n: i64): i64
+let c := handle { perform ask(3) } with {
+  ask(n), k => k(perform tell(n) + 1)
+} with {
+  tell(n), k => k(n * 2)
+}
+show(&c)
+```
+stdout = "7\n"
+
+@ cases.return-clauses-run-from-the-inside-out
+source = ```tauto
+effect ask(n: i64): i64
+let c := handle { perform ask(1) } with {
+  ask(n), k => k(n)
+  return v => v + 1
+} with {
+  return v => v * 10
+} with {
+  return v => v - 3
+}
+show(&c)
+```
+stdout = "17\n"
+
+@ cases.a-chain-runs-like-the-nested-handles
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect ask(n: i64): i64 resume ω
+effect tell(n: i64): i64
+let a := handle { perform ask(2) + perform tell(3) } with {
+  ask(n), k => k(n) + k(n + 1)
+  return v => v * 2
+} with {
+  tell(n), k => k(n * 5)
+  return v => v + 1
+}
+let b := handle {
+  handle { perform ask(2) + perform tell(3) } with {
+    ask(n), k => k(n) + k(n + 1)
+    return v => v * 2
+  }
+} with {
+  tell(n), k => k(n * 5)
+  return v => v + 1
+}
+show(&a)
+show(&b)
+```
+stdout = ```
+71
+71
+```

@@ -7,7 +7,7 @@ init-help =
     ディレクトリ名には英小文字・数字・`-` を使い、英小文字で始める。
     依存の解決、バージョン管理、ツールの実行は行わない。
 init-created = { $path } を作成した
-init-run-hint = そのディレクトリで `tauto run --tote .` を実行する
+init-run-hint = そのディレクトリで `tauto run .` を実行する
 init-failed = tauto init: { $error }
 init-not-plain-directory = { $path } は通常のディレクトリではない
 init-bad-path = PATH は空にできず、`..` を含められない

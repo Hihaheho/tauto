@@ -5,7 +5,7 @@
 // the fields taken from `b` by `Refl`.
 
 @ cases.an-updated-struct-keeps-the-other-fields
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 inductive struct Bundle {
@@ -42,3 +42,25 @@ struct Pt { x: Nat, y: Nat }
 fn move_to(p: Pt): Pt { Pt { x: 1, y: 2, ..p } }
 ```
 macro_error = "every field of `Pt` is written: `..` takes none of them"
+
+// A struct of the prelude is updated as one of the program's: `SynFn` of
+// `std::builtin::macro` is declared in no file of the program.
+@ cases.a-struct-of-the-prelude-is-updated
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::builtin::macro { SynFn, SynExpr }
+
+fn rebody(f: SynFn, body: SynExpr): SynFn { SynFn { body: body, ..f } }
+```
+types = "ok"
+
+// The literal's name is held to the file's imports as any name is: `..` does
+// not let a file name a prelude struct it does not import.
+@ cases.a-struct-of-the-prelude-not-imported-is-refused
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn rebody(f: std::builtin::macro::SynFn, body: std::builtin::macro::SynExpr): std::builtin::macro::SynFn {
+  SynFn { body: body, ..f }
+}
+```
+macro_error = "`SynFn` is declared by `std::builtin::macro`, which this file does not import (what another file or a dependency imports does not reach this one); `import std::builtin::macro` in this file"

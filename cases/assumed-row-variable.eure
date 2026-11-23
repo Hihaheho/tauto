@@ -5,15 +5,16 @@
 // specializes it to the synchronous tier.
 @ cases.assumed-row-variable-runs
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
 effect ask(): i64
 
-fn twice<!e, !h>(run: (() -> i64 ! e) -> i64 ! h, x: i64): i64 ! h {
-  run(() => x) + run(() => x + 1)
+fn twice<!e, !h>(run: (() -> i64 ! e) -> i64 ! h, x: i64): i64 ! {overflow} ∪ h {
+  let y := x + 1
+  run(() => x) + run(() => y)
 }
 
-fn asked(): i64 ! {ask} {
+fn asked(): i64 ! {ask, overflow} {
   twice((k) => k() + perform ask(), 3)
 }
 
@@ -23,8 +24,6 @@ print(Text::of_i64(handle { asked() } with {
 }))
 ```
 stdout = "27"
-rust_shows = []
-javascript_shows = []
 
 // Thunks of row `e` are made for every `e`: one that performs anything is
 // not one of them.
@@ -45,3 +44,34 @@ fn quiet(): i64 ! {} { twice((k) => k() + perform ask()) }
 print(Text::of_i64(quiet()))
 ```
 rows = "error: `quiet` may perform ask but its row is {}"
+
+// A row variable that a direct callback parameter supplies, `b`, may also
+// be in a callback's own parameter, `part` of `lift`: the body makes `part`
+// at the tier `b` gives the row, and `lift`'s argument is called with it
+// whatever it performs itself, here a handled `ask`.
+@ cases.assumed-and-supplied-row-variable-runs
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```tauto
+import std::builtin::os
+
+effect ask(): i64
+
+fn run_by<!e>(lift: (part: () -> i64 ! e) -> i64 ! {overflow}, b: () -> i64 ! e): i64 ! {div, overflow} {
+  let r := lift(() => b())
+  match r {
+    0 => run_by(lift, b)
+    other => other
+  }
+}
+
+fn by_handler(part: () -> i64 ! {ask}): i64 ! {overflow} {
+  handle { part() } with {
+    ask(), k => k(10) + 1000
+    return v => v
+  }
+}
+
+print(Text::of_i64(run_by(by_handler, () => 1)))
+print(Text::of_i64(run_by(by_handler, () => perform ask())))
+```
+stdout = "11010"

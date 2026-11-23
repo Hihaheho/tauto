@@ -1,0 +1,204 @@
+import std::base
+import std::array
+import std::list
+import std::text
+import "mval.taut"
+import "seq.taut"
+
+// The host values of the machine: what an `extern` the machine binds gives (the case
+// host's `Probe::new`). A host value is an object of the heap, and it is dropped once
+// nothing the run can still read reaches it: no slot, stack or frame of a task, and no
+// continuation, closure or cell those reach. The machine looks after each statement and
+// at the end of each local's scope (the input marks them, with `CSweep`, `CTake` and the
+// `drop` of `CDefine`, when a program makes host values: `INPUT.md`), and drops what it finds the newest first, so the locals of a block, which
+// end the last declared first, drop in the reverse order of their declaration. At the end
+// of the run every host value left is dropped, the newest first.
+
+pub fn h_tasks(cx: MCx): List(MTask) {
+  match cx {
+    Mcx(MkHeap, ^next, ^left, ^cells, ^now, tasks, ^result, Timers, TopDone, ^writes, Hosts, ^budgeted) => tasks
+  }
+}
+
+// The values one frame holds.
+pub fn h_frame_values(f: MFrame): List(MVal) {
+  match f {
+    MfCall(^k, slots, st, ^depth) => List::append(Array::to_list(slots), st)
+    MfResume(^k, slots, st) => List::append(Array::to_list(slots), st)
+    MfBlock(^k, st) => st
+    MfCond(^c, ^b, ^k, st) => st
+    MfBody(^c, ^b, ^k, st) => st
+    MfGuard(scrut, ^pats, ^guards, ^bodies, ^body, ^k, st) => Cons(scrut, st)
+    _ => Nil
+  }
+}
+
+pub fn h_frames_values(fr: List(MFrame), acc: List(MVal)): List(MVal) {
+  match fr {
+    Nil => acc
+    Cons(f, rest) => h_frames_values(rest, List::append(h_frame_values(f), acc))
+  }
+}
+
+// What a running place reaches first: its slots, its stack and its frames.
+pub fn h_place_values(slots: Array(MVal), st: List(MVal), fr: List(MFrame)): List(MVal) {
+  h_frames_values(fr, List::append(Array::to_list(slots), st))
+}
+
+pub fn h_tasks_values(ts: List(MTask), acc: List(MVal)): List(MVal) {
+  match ts {
+    Nil => acc
+    Cons(t, rest) => match t {
+      Mtask(^code, slots, st, fr, ^wait, ^result, ^asked) => h_tasks_values(
+        rest,
+        List::append(h_place_values(slots, st, fr), acc)
+      )
+    }
+  }
+}
+
+// The values a heap object holds.
+pub fn h_obj_values(o: MObj): List(MVal) {
+  match o {
+    MoCell(v) => Cons(v, Nil)
+    MoCont(^code, slots, st, fr) => h_place_values(slots, st, fr)
+    MoSignal(^raised, handed) => match handed {
+      Some(v) => Cons(v, Nil)
+      None => Nil
+    }
+    MoChoice(inputs) => List::map((i: Nat) => MvSignal(i), inputs)
+    MoPending(state, signal) => match state {
+      MpendReady(v) => Cons(v, Cons(MvSignal(signal), Nil))
+      _ => Cons(MvSignal(signal), Nil)
+    }
+    MoMutex(value, ^waiting, ^taker) => match value {
+      Some(v) => Cons(v, Nil)
+      None => Nil
+    }
+    _ => Nil
+  }
+}
+
+// The heap object a value names, if any, and the values it holds in itself.
+pub fn h_parts(v: MVal): Option(Nat) × List(MVal) {
+  match v {
+    MvData(^c, xs) => #(None, xs)
+    MvProduct(xs) => #(None, xs)
+    MvInject(^u, ^i, x) => #(None, Cons(x, Nil))
+    MvClosure(^f, caps) => #(None, caps)
+    MvCont(id) => #(Some(id), Nil)
+    MvVec(xs) => #(None, ms_to_list(MvUnit, xs))
+    MvArray(xs) => #(None, ms_to_list(MvUnit, xs))
+    MvSlots(s, vac, ms, xs) => #(None, Cons(s, Cons(vac, List::append(ms_to_list(MvUnit, ms), ms_to_list(MvUnit, xs)))))
+    MvRef(cell, path) => match path {
+      MrSeen(^reversed, at, ^writes) => #(Some(cell), Cons(at, Nil))
+      MrPath(^reversed) => #(Some(cell), Nil)
+    }
+    MvShared(^k, cell) => #(Some(cell), Nil)
+    MvSignal(id) => #(Some(id), Nil)
+    MvPending(id) => #(Some(id), Nil)
+    MvMutex(id) => #(Some(id), Nil)
+    MvGuard(m, cell) => #(Some(m), Cons(MvShared(0, cell), Nil))
+    MvAnswer(x) => #(None, Cons(x, Nil))
+    MvSecret(x) => #(None, Cons(x, Nil))
+    MvHost(id) => #(Some(id), Nil)
+    _ => #(None, Nil)
+  }
+}
+
+// The heap objects `work` reaches, added to `seen`. A value of the machine is finite and
+// each object is visited once, so the work ends; `fuel` only says so to the checker and is
+// more steps than any run takes.
+pub fn h_reach(fuel: Nat, cx: MCx, seen: MTrie(Bool), work: List(MVal)): MTrie(Bool) {
+  match fuel {
+    Zero => seen
+    Succ(f) => match work {
+      Nil => seen
+      Cons(v, rest) => match h_parts(v) {
+        #(obj, inner) => {
+          let more := List::append(inner, rest)
+          match obj {
+            None => h_reach(f, cx, seen, more)
+            Some(id) => match mt_get(64, seen, id) {
+              Some(^b) => h_reach(f, cx, seen, more)
+              None => {
+                let held := match cx_obj(cx, id) {
+                  Some(o) => h_obj_values(o)
+                  None => Nil
+                }
+                h_reach(f, cx, mt_set(64, seen, id, Some(true)), List::append(held, more))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn h_name(cx: MCx, id: Nat): Text {
+  match cx_obj(cx, id) {
+    Some(o) => match o {
+      MoHost(name) => name
+      _ => ""
+    }
+    None => ""
+  }
+}
+
+// Each of `live`, the newest first, that `seen` does not hold is dropped.
+pub fn h_drop_unseen(
+  cx: MCx,
+  seen: MTrie(Bool),
+  live: List(Nat),
+  kept: List(Nat),
+  dropped: List(Text)
+): List(Nat) × List(Text) {
+  match live {
+    Nil => #(List::reverse(kept), dropped)
+    Cons(id, rest) => match mt_get(64, seen, id) {
+      Some(^b) => h_drop_unseen(cx, seen, rest, Cons(id, kept), dropped)
+      None => h_drop_unseen(cx, seen, rest, kept, Cons(h_name(cx, id), dropped))
+    }
+  }
+}
+
+// Drops the host values that nothing reaches from the running place and the tasks that
+// wait.
+pub fn h_sweep(cx: MCx, slots: Array(MVal), st: List(MVal), fr: List(MFrame)): MCx {
+  match cx_hosts(cx) {
+    Mhosts(live, dropped) => match live {
+      Nil => cx
+      Cons(^first, ^others) => {
+        let roots := h_tasks_values(h_tasks(cx), h_place_values(slots, st, fr))
+        let seen := h_reach(18446744073709551616, cx, MtLeaf, roots)
+        match h_drop_unseen(cx, seen, live, Nil, dropped) {
+          #(kept, dropped2) => cx_with_hosts(cx, Mhosts(kept, dropped2))
+        }
+      }
+    }
+  }
+}
+
+// A new host value named `name`.
+pub fn h_new(cx: MCx, name: Text): MVal × MCx {
+  match cx_alloc(cx, MoHost(name)) {
+    #(id, cx2) => match cx_hosts(cx2) {
+      Mhosts(live, dropped) => #(MvHost(id), cx_with_hosts(cx2, Mhosts(Cons(id, live), dropped)))
+    }
+  }
+}
+
+// At the end of the run: every host value left is dropped, the newest first. The names
+// in the order they were dropped, or `None` when the run made no host value.
+pub fn h_finish(cx: MCx): Option(List(Text)) {
+  match cx_hosts(cx) {
+    Mhosts(live, dropped) => match live {
+      Nil => match dropped {
+        Nil => None
+        _ => Some(List::reverse(dropped))
+      }
+      _ => Some(List::append(List::reverse(dropped), List::map((id: Nat) => h_name(cx, id), live)))
+    }
+  }
+}

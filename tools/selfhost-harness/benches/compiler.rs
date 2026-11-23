@@ -17,7 +17,7 @@ mod support;
 fn report(mode: &str, source: &str) -> String {
     // Differential tests represent a rejected or unreadable input as `error`.
     std::panic::catch_unwind(|| {
-        let program = tauto::surface::parse_program_as_written(source).ok()?;
+        let program = tauto_parse::parse_program_as_written(source).ok()?;
         match mode {
             "--rows" => Some(tauto::rows::dump_rows(&tauto::rows::check_program_rows(
                 &program,

@@ -65,14 +65,14 @@ as version 1. File IDs are unique; root order is preserved, and repeated roots
 are visited once. There must be at least one root, every root must have a file,
 and root and file counts are each at most 4096. The whole wire remains limited
 to 16 MiB. Contents preserve original newlines, NUL bytes and UTF-8 byte offsets.
-Decimal fields contain one to eight digits. The existing 256-unit traversal
+Decimal fields contain one to eight digits. The 256-unit traversal
 budget counts import edges and top-level statement traversal, not just depth;
 exhaustion is explicitly unsupported rather than partial input success.
-Version 2 additionally bounds each ID and written/resolved import or resource
+Version 2 also bounds each ID and written/resolved import or resource
 path to 4096 UTF-8 bytes and 256 slash-separated components, before recursive
 normalization. Oversized wire IDs are input errors; oversized language paths
 are unsupported input-resource limits, not source-language rejection. Version 1
-is unchanged.
+has no such bound.
 Non-UTF-8 fixture inputs are outside this transport's scope, not converted to
 replacement text.
 
@@ -119,7 +119,7 @@ dependency proof files. Complete input delivery does not establish compiler
 selfcompilation or a stage fixed point.
 
 Run `cargo test --locked --manifest-path tools/selfhost-harness/Cargo.toml --test bootstrap_graph`. It compares
-source order and byte ranges against the existing host loader, executes emitted
+source order and byte ranges against the host loader, executes emitted
 Rust after removing its input bundle, and submits the original compiler graph
 without removing proof declarations. Acceptance of that graph is not a stage1
 compiler or a stage2 fixed point; unsupported compilation must fail without
@@ -137,7 +137,7 @@ cargo test --locked --manifest-path tools/selfhost-harness/Cargo.toml --test sha
 
 `--contract-reader BUNDLE` substitutes written `include_text!` calls using only
 original bytes supplied by the input plan. `--contract-bundle` performs that same
-reader pass before the existing limited Rust emitter. The original source,
+reader pass before the limited Rust emitter. The original source,
 ordered roots and dependency-ordered per-file statements remain available;
 resource lookup is relative to each original source file, not the entry file.
 The reader preserves each replaced call's byte span and the exact UTF-8 resource
@@ -159,7 +159,7 @@ The resource boundary and portable input limits above remain in force. Missing
 supplied resources and invalid literal arguments are semantic reader diagnostics;
 nonportable paths, excessive input bounds and unsupported binary transport do not
 become language rejection observations. The inventory command still audits paths
-without substituting anything, including its unchanged unsupported result for a
+without substituting anything, including its unsupported result for a
 dynamic resource path.
 
 `reader-complete` prints the source/resource report followed by
@@ -168,7 +168,7 @@ expanded-source printer required by a shared `expands` assertion. It establishes
 neither macro-evaluator success nor compilation. `reader-rejected` carries the
 original source ID, local start/end byte offsets and an `include.*` diagnostic;
 `reader-unsupported` is incomplete evidence. The strict adapter records actual
-reader diagnostics under the existing shared `macro_error` requirement, with
+reader diagnostics under the shared `macro_error` requirement, with
 `reader_implementation` identifying `tauto-source-reader/include_text` and stating
 that no macro evaluator ran. Audit errors are never converted to those diagnostics.
 A successful reader pass does not satisfy a missing general macro assertion.

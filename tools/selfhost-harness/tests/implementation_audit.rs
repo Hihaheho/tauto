@@ -82,7 +82,7 @@ fn nibcheck_modes_preserve_file_order_and_parse_errors() {
             assert_eq!(
                 out.stdout,
                 format!(
-                    "{head}quant Div Zero\nquant Exceeded AtMostOne\nquant show Direct\n{tail}"
+                    "{head}quant div Zero\nquant exceeded AtMostOne\nquant show Direct\n{tail}"
                 )
             );
         } else {

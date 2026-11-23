@@ -2,10 +2,10 @@ import "instantiation_obligations.taut"
 import "rules_kind_bindings.taut"
 import "final_kind_sound.taut"
 import "literal_typing_sound.taut"
-import std::Base
-import std::Map
-import std::Row
-import std::Text
+import std::base
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "diagnostic_leaves.taut"
 import "diagnostic_sound.taut"
@@ -21,7 +21,7 @@ import "unify_sound.taut"
 
 pub theorem final_instance_scalar_bound(
   c: Checker,
-  g: Pair(Text, Kind),
+  g: Text × Kind,
   value: Ty,
   span: TySpan,
   member: Mem(TyBound, instance_scalar_bound(g, value, span), finish_bounds(c)),
@@ -43,7 +43,7 @@ pub theorem final_instance_scalar_bound(
 }
 pub theorem final_instance_constructor_bound(
   c: Checker,
-  g: Pair(Text, Kind),
+  g: Text × Kind,
   value: Ty,
   name: Text,
   span: TySpan,
@@ -66,7 +66,7 @@ pub theorem final_instance_constructor_bound(
   )
 }
 pub theorem final_instantiation_bindings<gs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), initial: Ordmap(
   Text,
   Ty
@@ -80,7 +80,7 @@ pub theorem final_instantiation_bindings<gs: List(
   recorded: RecordedInstantiation(c, Nil, name, span, gs, initial, result),
   final: FinalDiagnostics0(c)
 ): InstanceKindBindings(ck_subst_of(c), ck_datas_of(c), gs, initial, result) {
-  ⊢ InstanceKindBindings(ck_subst_of(c), ck_datas_of(c), gs, initial, result) from match recorded {
+  match recorded {
     RecordedInstantiationNil(map) => InstanceKindBindingsNil(map)
     RecordedInstantiationCons(g, value, rest, before, after, bound, tail) => InstanceKindBindingsCons(
       g,
@@ -92,7 +92,7 @@ pub theorem final_instantiation_bindings<gs: List(
       ty_resolve_eq(
         ck_steps_of(c),
         ck_subst_of(c),
-        (generics: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
+        (generics: List(Text × Kind), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
           ck_subst_of(c),
           generics,
           rigid,

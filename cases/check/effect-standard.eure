@@ -1,0 +1,253 @@
+description = "The standard effects read in proofs: a file that imports `std::os` has its functions that perform `stdout`, `stdin`, the clocks and the like read as computation trees, and a handler states what a host answers."
+
+@ cases.a-handler-stands-for-the-host
+source = ```tauto
+import std::os
+import std::text
+import std::builtin::os
+
+fn greet(): Unit ! {stdout} {
+  perform stdout("hi")
+  perform stdout("there")
+}
+
+fn last_of(): Text {
+  var last: Text := ""
+  handle { greet() } with {
+    stdout(t), k => {
+      last := t
+      k(Star)
+    }
+  }
+  last
+}
+
+theorem last_is(): last_of() = "there" { Refl }
+
+greet()
+```
+checks.greet = "checked"
+checks.last_of = "checked"
+checks.last_is = "ok"
+stdout = "hithere"
+
+// The host is the answers it gives, in order. A run that ends was given
+// finitely many, so what holds for every list holds for that run.
+@ cases.whatever-the-host-answers
+extract = true
+source = ```tauto
+import std::os
+import std::text
+import std::builtin::os
+
+fn ask_name(): Unit ! {stdin, stdout} {
+  perform stdout("name?")
+  let line := perform stdin()
+  ⊢ Unit from match line {
+    None => perform stdout("bye")
+    Some(name) => {
+      perform stdout(name)
+      perform stdout("bye")
+    }
+  }
+}
+
+fn asked(answers: List(Option(Text))): List(Text) {
+  var rest: List(Option(Text)) := answers
+  var out: List(Text) := Nil
+  handle { ask_name() } with {
+    stdin(), k => {
+      ⊢ Unit from match rest {
+        Nil => k(None)
+        Cons(a, more) => {
+          rest := more
+          k(a)
+        }
+      }
+    }
+    stdout(t), k => {
+      out := Cons(t, out)
+      k(Star)
+    }
+  }
+  out
+}
+
+fn last_written(out: List(Text)): Option(Text) {
+  ⊢ Option(Text) from match out {
+    Nil => None
+    Cons(t, more) => Some(t)
+  }
+}
+
+theorem leaves_politely(answers: List(Option(Text))): last_written(asked(answers)) = Some("bye") {
+  ⊢ last_written(asked(answers)) = Some("bye") from match answers {
+    Nil => Refl
+    Cons(a, more) => ⊢ last_written(asked(Cons(a, more))) = Some("bye") from match a {
+      None => Refl
+      Some(name) => Refl
+    }
+  }
+}
+```
+checks.ask_name = "checked"
+checks.asked = "checked"
+checks.leaves_politely = "ok"
+
+// `u64` is `UInt(64)` and `i64` is `SInt(64)` in the operation the kernel reads.
+@ cases.machine-integers-are-their-models
+extract = true
+source = ```tauto
+import std::os
+import std::sint
+import std::uint
+import std::builtin::os
+
+fn waited(ms: UInt(64)): SInt(64) ! {monotonic_clock, sleep} {
+  perform sleep(ms)
+  perform monotonic_clock()
+}
+
+fn at(ms: UInt(64), now: SInt(64)): SInt(64) {
+  handle { waited(ms) } with {
+    sleep(n), k => k(Star)
+    monotonic_clock(), k => k(now)
+  }
+}
+
+theorem at_is(ms: UInt(64), now: SInt(64)): at(ms, now) = now { Refl }
+```
+checks.waited = "checked"
+checks.at_is = "ok"
+
+@ cases.without-the-import-it-runs-as-written
+extract = true
+source = ```tauto
+import std::text
+import std::builtin::os
+
+fn greet(): Unit ! {stdout} {
+  perform stdout("hi")
+}
+```
+checks.greet = "skipped"
+
+// The prelude's `IoError` and `FileStat` are families of the same shape, so
+// a handler answers a file effect with any value of them.
+@ cases.file-effects-answer-with-the-preludes-data
+extract = true
+source = ```tauto
+import std::os
+import std::text
+import std::uint
+import std::builtin::os
+
+fn load(p: Text): Text ! {fs_read} {
+  let r := perform fs_read(p)
+  ⊢ Text from match r {
+    Ok(t) => t
+    Err(e) => ⊢ Text from match e {
+      Denied(m) => "denied"
+      Failed(m) => "failed"
+      TimedOut => "timeout"
+    }
+  }
+}
+
+fn load_from(answer: Result(Text, IoError)): Text {
+  handle { load("a.txt") } with {
+    fs_read(p), k => k(answer)
+  }
+}
+
+theorem denied_is_said(m: Text): load_from(Err(Denied(m))) = "denied" { Refl }
+theorem content_is_returned(t: Text): load_from(Ok(t)) = t { Refl }
+
+fn size_of(p: Text): Nat ! {fs_stat} {
+  let r := perform fs_stat(p)
+  ⊢ Nat from match r {
+    Ok(o) => ⊢ Nat from match o {
+      Some(s) => UInt::val64(s.size)
+      None => 0
+    }
+    Err(e) => 0
+  }
+}
+
+fn size_with(n: UInt(64)): Nat {
+  handle { size_of("x") } with {
+    fs_stat(p), k => k(Ok(Some(FileStat { kind: IsFile, size: n, modified_ms: n, executable: false })))
+  }
+}
+
+theorem size_is(n: UInt(64)): size_with(n) = UInt::val64(n) { Refl }
+```
+checks.load = "checked"
+checks.denied_is_said = "ok"
+checks.content_is_returned = "ok"
+checks.size_of = "checked"
+checks.size_is = "ok"
+
+// What a function writes, whatever it writes it for.
+@ cases.a-function-writes-only-the-path-it-is-given
+extract = true
+source = ```tauto
+import std::os
+import std::text
+import std::builtin::os
+
+fn save(root: Text, name: Text, body: Text): Bool ! {env, fs_write} {
+  let skip := perform env("SKIP")
+  ⊢ Bool from match skip {
+    Ok(v) => ⊢ Bool from match v {
+      Some(s) => false
+      None => {
+        let r := perform fs_write(Text::concat(root, name), body)
+        ⊢ Bool from match r {
+          Ok(u) => true
+          Err(e) => false
+        }
+      }
+    }
+    Err(e) => false
+  }
+}
+
+fn written(root: Text, name: Text, body: Text): List(Text) {
+  var paths: List(Text) := Nil
+  handle { save(root, name, body) } with {
+    env(n), k => k(Ok(None))
+    fs_write(p, c), k => {
+      paths := Cons(p, paths)
+      k(Ok(Star))
+    }
+  }
+  paths
+}
+
+theorem writes_one_path_under_root(
+  root: Text,
+  name: Text,
+  body: Text
+): written(root, name, body) = Cons(Text::concat(root, name), Nil) {
+  Refl
+}
+```
+checks.save = "checked"
+checks.writes_one_path_under_root = "ok"
+
+// `timer` answers with a `Signal`, which only the host makes.
+@ cases.an-effect-of-a-type-the-kernel-lacks-is-not-read
+extract = true
+source = ```tauto
+import std::os
+import std::sint
+import std::builtin::os
+import std::builtin::par
+
+fn armed(deadline: SInt(64)): Unit ! {timer} {
+  let s := perform timer(deadline)
+  Star
+}
+```
+checks.armed = "skipped"

@@ -1,0 +1,61 @@
+import "written_unique_base.taut"
+import "written_unique_info.taut"
+import "written_unique_cases.taut"
+import std::base
+import std::map
+import std::text
+import "datas.taut"
+import "rules_written.taut"
+import "rules_written_name.taut"
+import "ty.taut"
+import "unify_sound.taut"
+import "written_value_base.taut"
+import "../../surface/src/surface.taut"
+import "written_unique_application_head.taut"
+import "../../identity/src/identity.taut"
+
+// Continued from `written_unique_application_head.taut`.
+
+pub theorem written_unique_generic<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, r#borrow: Bool, name: SurfaceName, arg: SurfaceTerm, start: Nat, end: Nat, other: Ty>(
+  ast_occurrence: Option(TermOccurrence),
+  meaning: WrittenKind(
+    env,
+    generics,
+    partial,
+    r#borrow,
+    SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
+    other
+  ),
+  head: Ty,
+  t: Ty,
+  bound: Ty,
+  not_info: (surface_name_text(name) = "Info") -> False,
+  parameter: Ordmap::get(generics, surface_name_text(name), Ordmap::compare_text) = Some(bound),
+  constructor: WrittenTypeName(generics, surface_name_text(name), head),
+  ih: WrittenTermUnique(generics, partial, false, arg, t)
+): ty_apply(head, t) = other {
+  match meaning {
+    WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, first, value, begin, finish, argument) => False::elim(
+      not_info(Refl)
+    )
+    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, spelling, terms, values, begin, finish, other_not_pair, other_not_info, unbound, SliceBorrowed, arguments, arity) => False::elim(
+      ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), parameter))
+    )
+    WrittenKindProduct(ctor_ast_occurrence, gs, Mode, borrowing, parts, values, begin, finish, Two, meanings) => False::elim(
+      false_ne_true(Eq::sym(Eq::congr((n: Nat) => Nat::eq(n, 1), Two)))
+    )
+    WrittenKindGeneric(ctor_ast_occurrence, gs, Mode, borrowing, spelling, first, other_head, value, other_bound, begin, finish, other_not_info, other_parameter, other_constructor, argument) => Eq::trans(
+      Eq::congr(
+        (h: Ty) => ty_apply(h, t),
+        Eq::trans(
+          Eq::sym(written_name_determined(constructor)),
+          written_name_determined(other_constructor)
+        )
+      ),
+      Eq::congr((a: Ty) => ty_apply(other_head, a), ih(env, value, argument))
+    )
+  }
+}

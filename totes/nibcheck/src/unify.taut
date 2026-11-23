@@ -1,14 +1,14 @@
 import "rules_ty.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "ty.taut"
 
 // The unifier of `src/checker.taut` against the rules of `rules_ty.taut`
-// (`docs/design/self-host.md`「層 2：`ck_unify`（`src/unify_sound.taut`）」).
+// (`docs/design/self-host.md`「Layer 2: `ck_unify` (`src/unify_sound.taut`)」).
 
 pub fn ty_resolve_var(j: Nat, s: Ordmap(Nat, Ty), i: Nat, o: Option(Ty)): Ty {
-  ⊢ Ty from match o {
+  match o {
     Some(x) => ty_resolve_in(j, s, x)
     None => TyVar(i)
   }
@@ -20,7 +20,7 @@ pub theorem ty_option_cases<A: Type>(
   a: (o = None) -> P(None),
   b: ∀ x: A. (o = Some(x)) -> P(Some(x))
 ): P(o) {
-  ⊢ P(o) from match o {
+  match o {
     None => a(Refl)
     Some(x) => b(x, Refl)
   }
@@ -28,10 +28,10 @@ pub theorem ty_option_cases<A: Type>(
 
 pub theorem tyeq_list_refl(
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
   ts: List(Ty)
 ): TyEqList(s, ok, ts, ts) {
-  ⊢ TyEqList(s, ok, ts, ts) from match ts {
+  match ts {
     Nil => TyeqNil
     Cons(t, rest) => TyeqCons(TyeqRefl(t), tyeq_list_refl(s, ok, rest))
   }
@@ -41,24 +41,24 @@ pub theorem tyeq_list_refl(
 pub def ResolveEqAt(
   k: Nat,
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop
 ): Prop := ∀ t: Ty. TyEq(s, ok, t, ty_resolve_in(k, s, t))
 
 pub def ResolveListEqAt(
   k: Nat,
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop
 ): Prop := ∀ ts: List(Ty). TyEqList(s, ok, ts, ty_resolve_list_in(k, s, ts))
 
 pub theorem ty_resolve_list_step(
   j: Nat,
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
   ht: ResolveEqAt(j, s, ok),
   hl: ResolveListEqAt(j, s, ok),
   ts: List(Ty)
 ): TyEqList(s, ok, ts, ty_resolve_list_in(Succ(j), s, ts)) {
-  ⊢ TyEqList(s, ok, ts, ty_resolve_list_in(Succ(j), s, ts)) from match ts {
+  match ts {
     Nil => TyeqNil
     Cons(t, rest) => TyeqCons(ht(t), hl(rest))
   }
@@ -67,12 +67,12 @@ pub theorem ty_resolve_list_step(
 pub theorem ty_resolve_step(
   j: Nat,
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
   ht: ResolveEqAt(j, s, ok),
   hl: ResolveListEqAt(j, s, ok),
   t: Ty
 ): TyEq(s, ok, t, ty_resolve_in(Succ(j), s, t)) {
-  ⊢ TyEq(s, ok, t, ty_resolve_in(Succ(j), s, t)) from match t {
+  match t {
     TyVar(i) => ty_option_cases(
       (o: Option(Ty)) => TyEq(s, ok, TyVar(i), ty_resolve_var(j, s, i, o)),
       Ordmap::get(s, i, Ordmap::compare_nat),
@@ -99,6 +99,7 @@ pub theorem ty_resolve_step(
     TyNever => TyeqRefl(TyNever)
     TyDecimal => TyeqRefl(TyDecimal)
     TyFloat => TyeqRefl(TyFloat)
+    TyFloat32 => TyeqRefl(TyFloat32)
     TyParam(n, pk) => TyeqRefl(TyParam(n, pk))
     TyPoly(gs, x) => TyeqPolyBody(gs, ht(x))
     TyApp(h, x) => TyeqTrans(
@@ -111,9 +112,9 @@ pub theorem ty_resolve_step(
 pub theorem ty_resolve_at(
   k: Nat,
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop
 ): And(ResolveEqAt(k, s, ok), ResolveListEqAt(k, s, ok)) {
-  ⊢ And(ResolveEqAt(k, s, ok), ResolveListEqAt(k, s, ok)) from match k {
+  match k {
     Zero => AndIntro((t: Ty) => TyeqRefl(t), (ts: List(Ty)) => tyeq_list_refl(s, ok, ts))
     Succ(j) => AndIntro(
       (t: Ty) => ty_resolve_step(
@@ -139,7 +140,7 @@ pub theorem ty_resolve_at(
 pub theorem ty_resolve_eq(
   k: Nat,
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
   t: Ty
 ): TyEq(s, ok, t, ty_resolve_in(k, s, t)) {
   And::left(ty_resolve_at(k, s, ok))(t)
@@ -148,7 +149,7 @@ pub theorem ty_resolve_eq(
 pub theorem ty_resolve_list_eq(
   k: Nat,
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
   ts: List(Ty)
 ): TyEqList(s, ok, ts, ty_resolve_list_in(k, s, ts)) {
   And::right(ty_resolve_at(k, s, ok))(ts)
@@ -157,25 +158,25 @@ pub theorem ty_resolve_list_eq(
 // What is the same type under `s` is under a substitution that binds more,
 // and with more uses of rigid types allowed.
 pub def OkExt(
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
-  ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ok2: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop
 ): Prop := ∀ gs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ). ∀ r: Ordmap(Text, Ty). ∀ a: Ty. ∀ b: Ty. (ok(gs, r, a, b)) -> ok2(gs, r, a, b)
 
 mutual {
   pub theorem tyeq_list_move(
     s: Ordmap(Nat, Ty),
-    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
     s2: Ordmap(Nat, Ty),
-    ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    ok2: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
     hs: SubstExt(s, s2),
     hk: OkExt(ok, ok2),
     xs: List(Ty),
     ys: List(Ty),
     h: TyEqList(s, ok, xs, ys)
   ): TyEqList(s2, ok2, xs, ys) {
-    ⊢ TyEqList(s2, ok2, xs, ys) from match h {
+    match h {
       TyeqNil => TyeqNil
       TyeqCons(x, y, xs1, ys1, h1, h2) => TyeqCons(
         tyeq_move(s, ok, s2, ok2, hs, hk, x, y, h1),
@@ -186,16 +187,16 @@ mutual {
 
   pub theorem tyeq_move(
     s: Ordmap(Nat, Ty),
-    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
     s2: Ordmap(Nat, Ty),
-    ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    ok2: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
     hs: SubstExt(s, s2),
     hk: OkExt(ok, ok2),
     a: Ty,
     b: Ty,
     h: TyEq(s, ok, a, b)
   ): TyEq(s2, ok2, a, b) {
-    ⊢ TyEq(s2, ok2, a, b) from match h {
+    match h {
       TyeqRefl(a1) => TyeqRefl(a1)
       TyeqSym(a1, b1, h1) => TyeqSym(tyeq_move(s, ok, s2, ok2, hs, hk, a1, b1, h1))
       TyeqTrans(a1, b1, c1, h1, h2) => TyeqTrans(

@@ -1,8 +1,9 @@
+import "rules_ty.taut"
 import "rules_literal.taut"
 import "literal_record_sound.taut"
 import "final_rigid_sound.taut"
-import std::Row
-import std::Text
+import std::row
+import std::text
 import "checker.taut"
 import "diagnostic_leaves.taut"
 import "diagnostic_lists.taut"
@@ -18,7 +19,7 @@ pub theorem diagnostic_items_member<A: Type, p: (
 ) -> Prop, c: Checker, item: A, items: List(
   A
 )>(member: Mem(A, item, items), checked: DiagnosticItems(A, p, c, items)): p(c, item) {
-  ⊢ p(c, item) from match member {
+  match member {
     MemHere(rest) => diagnostic_items_head(checked)
     MemThere(head, rest, tail) => diagnostic_items_member(tail, diagnostic_items_tail(checked))
   }
@@ -31,7 +32,7 @@ pub theorem natural_literal_checked(
   ty: Ty,
   magnitude: Nat,
   width: Width,
-  parsed: text_parse_u64(value) = Some(magnitude),
+  parsed: text_parse_i128(value) = Some(magnitude),
   checked: DiagnosticLiteral(
     c,
     natural_literal_record(TySpan { start: start, end: end }, magnitude, ty)
@@ -108,6 +109,19 @@ pub theorem natural_record_typing(
       diagnostic_items_member(stored, checked),
       resolved
     )
+    AsNat(name, fits, is_nat) => NaturalNatTyped(
+      value,
+      start,
+      end,
+      ty,
+      name,
+      fits,
+      Eq::subst(
+        (t: Ty) => TyEqAt(c, ty, t),
+        is_nat,
+        TyeqRefl(ty)
+      )
+    )
   }
 }
 
@@ -118,7 +132,7 @@ pub theorem natural_literal_accepted_at(
   end: Nat,
   ty: Ty,
   magnitude: Nat,
-  parsed: text_parse_u64(value) = Some(magnitude),
+  parsed: text_parse_i128(value) = Some(magnitude),
   resolved: Ty,
   equal: ck_resolve(c, ty) = resolved,
   checked: DiagnosticLiteralType(
@@ -158,6 +172,7 @@ pub theorem natural_literal_accepted_at(
     TyNever => False::elim(checked)
     TyDecimal => False::elim(checked)
     TyFloat => False::elim(checked)
+    TyFloat32 => False::elim(checked)
     TyFn(ps, result, kind) => False::elim(checked)
     TyUnion(ys) => False::elim(checked)
     TyProduct(ys) => False::elim(checked)
@@ -205,6 +220,19 @@ pub theorem natural_record_checked_sound(
       ck_resolve(c, ty),
       Refl,
       diagnostic_items_member(stored, checked)
+    )
+    AsNat(name, fits, is_nat) => NaturalNatTyped(
+      value,
+      start,
+      end,
+      ty,
+      name,
+      fits,
+      Eq::subst(
+        (t: Ty) => TyEqAt(c, ty, t),
+        is_nat,
+        TyeqRefl(ty)
+      )
     )
   }
 }

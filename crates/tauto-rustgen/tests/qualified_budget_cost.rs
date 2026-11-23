@@ -15,21 +15,21 @@ fn source_source() -> &'static str {
     r#"
 effect stop(total: u64): Never resume 0
 extern { fn native(value: u64): u64 }
-fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+fn sum(read: &((u64) -> u64), size: u64): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < size { total := total + read(index)
     index := index + 1 }
   total
 }
-fn ext_sum(size: u64): u64 ! {Div} {
+fn ext_sum(size: u64): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < size { total := total + native(index)
     index := index + 1 }
   total
 }
-fn scan(&read: (u64) -> u64, size: u64, stop_at: u64): u64 ! {Div, stop} {
+fn scan(read: &((u64) -> u64), size: u64, stop_at: u64): u64 ! {div, overflow, stop} {
   var index: u64 := 0
   var total: u64 := 0
   while index < size {
@@ -39,18 +39,18 @@ fn scan(&read: (u64) -> u64, size: u64, stop_at: u64): u64 ! {Div, stop} {
   }
   total
 }
-fn callback_run(steps: i64, &read: (u64) -> u64, size: u64): Result(u64, Text) {
-  handle { budget(steps: steps) { Ok(sum(&(index) => read(index), size)) } } with {
+fn callback_run(steps: u64, read: &((u64) -> u64), size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(steps, () => { Ok(sum((index) => read(index), size)) }) } with {
     exceeded(info), k => Err("exhausted")
   }
 }
-fn extern_run(steps: i64, size: u64): Result(u64, Text) {
-  handle { budget(steps: steps) { Ok(ext_sum(size)) } } with {
+fn extern_run(steps: u64, size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(steps, () => { Ok(ext_sum(size)) }) } with {
     exceeded(info), k => Err("exhausted")
   }
 }
-fn combined_run(steps: i64, &read: (u64) -> u64, size: u64, stop_at: u64): Result(u64, Text) {
-  handle { budget(steps: steps) { Ok(scan(&(index) => read(index), size, stop_at)) } } with {
+fn combined_run(steps: u64, read: &((u64) -> u64), size: u64, stop_at: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(steps, () => { Ok(scan((index) => read(index), size, stop_at)) }) } with {
     stop(total) => Ok(total)
     exceeded(info), k => Err("exhausted")
   }
@@ -123,9 +123,9 @@ fn main() {
 #[test]
 #[ignore = "builds native release executables and requires an isolated timing window"]
 fn ordinary_and_qualified_facade_costs() {
-    let package = tauto_nir::compile_with(source_source(), true).unwrap();
+    let mut package = tauto::nir::compile_with(source_source(), true).unwrap();
     let manifest = tauto::manifest::parse(MANIFEST, Path::new("Tauto.eure")).unwrap();
-    let bindings = Bindings::resolve(&package, Some(&manifest), None).unwrap();
+    let bindings = Bindings::resolve(&mut package, Some(&manifest), None).unwrap();
     let sources = Sources {
         file: "qualified-cost.taut",
         text: source_source(),

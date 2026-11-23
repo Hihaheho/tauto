@@ -1,0 +1,1368 @@
+import std::text
+import std::text_ops
+import std::row
+import std::map
+import std::base
+import "../../ordmap/src/ordmap.taut"
+import "../../surface/src/surface.taut"
+import "../../surface/src/extern_blocks.taut"
+import "rows_base.taut"
+import "rows_structural.taut"
+import "../../identity/src/identity.taut"
+
+// The effect layer (`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」, layer 6):
+// which effects a piece of executable code may perform, as relations that do
+// not use the analysis of `rows.taut` and `rows_base.taut`. They read only
+// the syntax, the declarations (`RowEnv`) and the quantities of operations.
+//
+// They follow `lean/Proto/Nib/Row.lean` and the rows of `HasType` in
+// `lean/Proto/Nib/Typing.lean`:
+//
+// * an effect is named by its declaration, a row variable `e` by `|e`;
+// * a row is read as a set (`Mem` and `Sub` of `std::row`): order and repeats
+//   do not matter, and a larger row is also a row of the same code
+//   (`PerformsWider`);
+// * a call performs what its callee and its arguments perform
+//   (`HasType.app`); `perform` performs its effect and what its arguments
+//   perform (`HasType.perform`); a `handle` performs what its body performs
+//   that no arm answers, and what its arms perform (`HasType.handle`); a
+//   budget turns its body's `div` into `exceeded` (`Prim.budget`);
+// * a generic callee's row variable is given a row that what is passed for
+//   it fits (`Row.inst`).
+//
+// An effect the analysis cannot follow (its `?…` names) has no rule: code
+// that holds one is not derivable, and the analysis reports it as an error.
+
+// Accessors: the kernel's inductive families read fields through functions.
+pub fn rr_name(n: RowName): Text { n.name }
+pub fn rr_latent(n: RowName): LocalRow { n.latent }
+pub fn rr_fst(p: Text × List(Text)): Text { p.fst }
+pub fn rr_kind(t: SurfaceTerm): SurfaceKind { t.kind }
+pub fn rr_fns(env: RowEnv): Ordmap(Text, SurfaceFn) { env.fns }
+pub fn rr_quants(env: RowEnv): Ordmap(Text, Quant) { env.quants }
+pub fn rr_externs(env: RowEnv): Ordmap(Text, Bool) { env.externs }
+pub fn rr_data(env: RowEnv): Ordmap(Text, Bool) { env.data }
+pub fn rr_bounds(f: SurfaceFn): List(Option(Text)) { f.bounds }
+pub fn rr_generics(f: SurfaceFn): List(Text) { f.generics }
+pub fn rr_param_types(f: SurfaceFn): List(Option(SurfaceTerm)) { f.param_types }
+pub fn rr_params(f: SurfaceFn): List(Text) { f.params }
+pub fn rr_effects(f: SurfaceFn): Option(List(Text)) { row_opt_entries_text(f.effects) }
+pub fn rr_body(f: SurfaceFn): SurfaceTerm { f.body }
+
+// ---- what a local is known to perform ----------------------------------------
+
+// What calling a local performs: a known row, nothing known (no call of it is
+// derivable), or the `info` of an `exceeded` arm.
+pub(open) inductive LocalRow: Type {
+  LocalRowKnown(row: List(Text)): LocalRow
+  LocalRowUnknown: LocalRow
+  LocalRowInfo: LocalRow
+}
+
+pub(open) inductive RowName: Type {
+  Mk(name: Text, latent: LocalRow): RowName
+}
+
+// The most recent local of the name is the one in scope.
+pub(open) inductive RowNameBinding: (List(RowName), Text, LocalRow) -> Prop {
+  RowNameHere(name: Text, latent: LocalRow, rest: List(RowName)): RowNameBinding(Cons(RowName::Mk(name, latent), rest), name, latent)
+  RowNameLater<rest: List(RowName), name: Text, latent: LocalRow>(
+    head: RowName,
+    different: (rr_name(head) = name) -> False,
+    tail: RowNameBinding(rest, name, latent)
+  ): RowNameBinding(Cons(head, rest), name, latent)
+}
+
+pub(open) inductive RowNameAbsent(name: Text): (List(RowName)) -> Prop {
+  RowNameAbsentNil: RowNameAbsent(name, Nil)
+  RowNameAbsentCons<rest: List(RowName)>(
+    head: RowName,
+    different: (rr_name(head) = name) -> False,
+    tail: RowNameAbsent(name, rest)
+  ): RowNameAbsent(name, Cons(head, rest))
+}
+
+// The names a pattern binds, each not known to call.
+mutual {
+  pub(open) inductive PatternBinds: (SurfacePattern, List(RowName), List(RowName)) -> Prop {
+    PatternBindsName(n: Text, unused: Option(SurfaceSpan), locals: List(RowName)): PatternBinds(PtBind(n, unused), locals, Cons(RowName::Mk(n, LocalRowUnknown), locals))
+    PatternBindsCtor<locals: List(RowName), out: List(RowName)>(
+      name: SurfaceName,
+      args: List(SurfacePattern),
+      binds: PatternsBind(args, locals, out)
+    ): PatternBinds(PtCtor(name, args), locals, out)
+    PatternBindsRecord<locals: List(RowName), out: List(RowName)>(
+      name: Text,
+      fields: List(SurfacePatternField),
+      binds: PatternFieldsBind(fields, locals, out)
+    ): PatternBinds(PtRecord(name, fields), locals, out)
+    PatternBindsWild(locals: List(RowName)): PatternBinds(PtWild, locals, locals)
+    PatternBindsInt(negative: Bool, n: Nat, locals: List(RowName)): PatternBinds(PtInt(negative, n), locals, locals)
+    PatternBindsBool(b: Bool, locals: List(RowName)): PatternBinds(PtBool(b), locals, locals)
+    PatternBindsText(t: Text, locals: List(RowName)): PatternBinds(PtText(t), locals, locals)
+    PatternBindsTyped(n: Text, ty: SurfaceTerm, unused: Option(SurfaceSpan), locals: List(RowName)): PatternBinds(PtTyped(n, ty, unused), locals, Cons(RowName::Mk(n, LocalRowUnknown), locals))
+    PatternBindsOther(what: Text, locals: List(RowName)): PatternBinds(PtOther(what), locals, locals)
+  }
+
+  pub(open) inductive PatternsBind: (List(SurfacePattern), List(RowName), List(RowName)) -> Prop {
+    PatternsBindNil(locals: List(RowName)): PatternsBind(Nil, locals, locals)
+    PatternsBindCons<locals: List(RowName), mid: List(RowName), out: List(RowName)>(
+      p: SurfacePattern,
+      ps: List(SurfacePattern),
+      first: PatternBinds(p, locals, mid),
+      rest: PatternsBind(ps, mid, out)
+    ): PatternsBind(Cons(p, ps), locals, out)
+  }
+
+  pub(open) inductive PatternFieldsBind: (List(SurfacePatternField), List(RowName), List(RowName)) -> Prop {
+    PatternFieldsBindNil(locals: List(RowName)): PatternFieldsBind(Nil, locals, locals)
+    PatternFieldsBindCons<locals: List(RowName), mid: List(RowName), out: List(RowName)>(
+      name: Text,
+      p: SurfacePattern,
+      fs: List(SurfacePatternField),
+      first: PatternBinds(p, locals, mid),
+      rest: PatternFieldsBind(fs, mid, out)
+    ): PatternFieldsBind(Cons(SurfacePatternFieldMk(name, p), fs), locals, out)
+  }
+}
+
+// The patterns of an operation arm: the `info` of `exceeded` is known as
+// such; the body that `spawn` receives may diverge and performs nothing else
+// on the caller's handlers.
+pub(open) inductive OperationBinds(op: Text): (List(SurfacePattern), List(RowName), List(RowName)) -> Prop {
+  OperationBindsNil(locals: List(RowName)): OperationBinds(op, Nil, locals, locals)
+  OperationBindsInfo<locals: List(RowName), out: List(RowName)>(
+    n: Text,
+    unused: Option(SurfaceSpan),
+    ps: List(SurfacePattern),
+    exceeded: op = "exceeded",
+    rest: OperationBinds(op, ps, Cons(RowName::Mk(n, LocalRowInfo), locals), out)
+  ): OperationBinds(op, Cons(PtBind(n, unused), ps), locals, out)
+  OperationBindsSpawn<locals: List(RowName), out: List(RowName)>(
+    n: Text,
+    unused: Option(SurfaceSpan),
+    ps: List(SurfacePattern),
+    spawn: op = "spawn",
+    rest: OperationBinds(op, ps, Cons(RowName::Mk(n, LocalRowKnown(Cons("div", Nil))), locals), out)
+  ): OperationBinds(op, Cons(PtBind(n, unused), ps), locals, out)
+  OperationBindsName<locals: List(RowName), out: List(RowName)>(
+    n: Text,
+    unused: Option(SurfaceSpan),
+    ps: List(SurfacePattern),
+    not_exceeded: (op = "exceeded") -> False,
+    not_spawn: (op = "spawn") -> False,
+    rest: OperationBinds(op, ps, Cons(RowName::Mk(n, LocalRowUnknown), locals), out)
+  ): OperationBinds(op, Cons(PtBind(n, unused), ps), locals, out)
+  OperationBindsCtor<locals: List(RowName), mid: List(RowName), out: List(RowName)>(
+    name: SurfaceName,
+    args: List(SurfacePattern),
+    ps: List(SurfacePattern),
+    first: PatternsBind(args, locals, mid),
+    rest: OperationBinds(op, ps, mid, out)
+  ): OperationBinds(op, Cons(PtCtor(name, args), ps), locals, out)
+  OperationBindsRecord<locals: List(RowName), mid: List(RowName), out: List(RowName)>(
+    name: Text,
+    fields: List(SurfacePatternField),
+    ps: List(SurfacePattern),
+    first: PatternFieldsBind(fields, locals, mid),
+    rest: OperationBinds(op, ps, mid, out)
+  ): OperationBinds(op, Cons(PtRecord(name, fields), ps), locals, out)
+  OperationBindsNone<locals: List(RowName), out: List(RowName)>(
+    p: SurfacePattern,
+    ps: List(SurfacePattern),
+    binds_nothing: PatternBindsNothing(p),
+    rest: OperationBinds(op, ps, locals, out)
+  ): OperationBinds(op, Cons(p, ps), locals, out)
+}
+
+pub(open) inductive PatternBindsNothing: (SurfacePattern) -> Prop {
+  NothingWild: PatternBindsNothing(PtWild)
+  NothingInt(negative: Bool, n: Nat): PatternBindsNothing(PtInt(negative, n))
+  NothingBool(b: Bool): PatternBindsNothing(PtBool(b))
+  NothingText(t: Text): PatternBindsNothing(PtText(t))
+  NothingTyped(n: Text, ty: SurfaceTerm, unused: Option(SurfaceSpan)): PatternBindsNothing(PtTyped(n, ty, unused))
+  NothingOther(what: Text): PatternBindsNothing(PtOther(what))
+}
+
+// `k` of an operation arm: calling it performs what the `handle` performs,
+// which the `handle`'s own row holds.
+pub(open) inductive ContinuationBinds: (Option(Text), List(RowName), List(RowName)) -> Prop {
+  ContinuationNone(locals: List(RowName)): ContinuationBinds(None, locals, locals)
+  ContinuationSome(k: Text, locals: List(RowName)): ContinuationBinds(Some(k), locals, Cons(RowName::Mk(k, LocalRowKnown(Nil)), locals))
+}
+
+// A parameter is known to call at the row its function type writes (the
+// empty row when it writes none); other parameters are not known to call.
+pub(open) inductive ParamRow: (Option(SurfaceTerm), LocalRow) -> Prop {
+  ParamRowNone: ParamRow(None, LocalRowUnknown)
+  ParamRowWritten<names: List(RowEntry)>(
+    ty: SurfaceTerm,
+    params: List(SurfaceParam),
+    result: SurfaceTerm,
+    shape: FunctionTypeOf(ty, SkPi(params, result, Some(names)))
+  ): ParamRow(Some(ty), LocalRowKnown(row_entries_text(names)))
+  ParamRowPure(
+    ty: SurfaceTerm,
+    params: List(SurfaceParam),
+    result: SurfaceTerm,
+    shape: FunctionTypeOf(ty, SkPi(params, result, None))
+  ): ParamRow(Some(ty), LocalRowKnown(Nil))
+  ParamRowOther(
+    ty: SurfaceTerm,
+    not_fn: ∀ ps: List(SurfaceParam). ∀ r: SurfaceTerm. ∀ es: Option(List(RowEntry)). (FunctionTypeOf(ty, SkPi(ps, r, es))) -> False
+  ): ParamRow(Some(ty), LocalRowUnknown)
+}
+
+// A type under `fn`/`fn_once`/… and borrows is its function type.
+pub(open) inductive FunctionTypeOf: (SurfaceTerm, SurfaceKind) -> Prop {
+  FunctionTypeHere(oc1: Option(TermOccurrence), ps: List(SurfaceParam), r: SurfaceTerm, es: Option(List(RowEntry)), start: Nat, end: Nat): FunctionTypeOf(SurfaceTermIndexedMk(SkPi(ps, r, es), start, end, oc1), SkPi(ps, r, es))
+  FunctionTypeKind<kind: SurfaceKind>(oc1: Option(TermOccurrence),
+    fk: Text,
+    ty: SurfaceTerm,
+    start: Nat,
+    end: Nat,
+    inner: FunctionTypeOf(ty, kind)
+  ): FunctionTypeOf(SurfaceTermIndexedMk(SkFnKind(fk, ty), start, end, oc1), kind)
+  FunctionTypeBorrow<kind: SurfaceKind>(oc1: Option(TermOccurrence),
+    m: Bool,
+    m_orig: Bool,
+    ty: SurfaceTerm,
+    start: Nat,
+    end: Nat,
+    inner: FunctionTypeOf(ty, kind)
+  ): FunctionTypeOf(SurfaceTermIndexedMk(SkBorrow(m, m_orig, ty), start, end, oc1), kind)
+}
+
+pub(open) inductive ParamsBind: (List(Text), List(Option(SurfaceTerm)), List(RowName), List(RowName)) -> Prop {
+  ParamsBindNoName(types: List(Option(SurfaceTerm)), locals: List(RowName)): ParamsBind(Nil, types, locals, locals)
+  ParamsBindNoType(p: Text, ps: List(Text), locals: List(RowName)): ParamsBind(Cons(p, ps), Nil, locals, locals)
+  ParamsBindOne<locals: List(RowName), latent: LocalRow, out: List(RowName)>(
+    p: Text,
+    ps: List(Text),
+    ty: Option(SurfaceTerm),
+    types: List(Option(SurfaceTerm)),
+    row: ParamRow(ty, latent),
+    rest: ParamsBind(ps, types, Cons(RowName::Mk(p, latent), locals), out)
+  ): ParamsBind(Cons(p, ps), Cons(ty, types), locals, out)
+}
+
+// The parameters of a `λ` are not known to call.
+pub(open) inductive UnknownBind: (List(Text), List(RowName), List(RowName)) -> Prop {
+  UnknownBindNil(locals: List(RowName)): UnknownBind(Nil, locals, locals)
+  UnknownBindCons<locals: List(RowName), out: List(RowName)>(
+    p: Text,
+    ps: List(Text),
+    rest: UnknownBind(ps, Cons(RowName::Mk(p, LocalRowUnknown), locals), out)
+  ): UnknownBind(Cons(p, ps), locals, out)
+}
+
+// ---- declarations --------------------------------------------------------------
+
+pub(open) inductive FunctionDecl(env: RowEnv, name: Text, f: SurfaceFn): Prop {
+  FunctionDeclMk(found: Ordmap::get(rr_fns(env), name, Ordmap::compare_text) = Some(f)): FunctionDecl(env, name, f)
+}
+
+pub(open) inductive NoFunctionDecl(env: RowEnv, name: Text): Prop {
+  NoFunctionDeclMk(missing: Ordmap::get(rr_fns(env), name, Ordmap::compare_text) = None): NoFunctionDecl(env, name)
+}
+
+// The effect `perform op(…)` performs: the operation's own name.
+pub(open) inductive EffectOfOp: (Text, Text) -> Prop {
+  EffectOfSame(op: Text): EffectOfOp(op, op)
+}
+
+// An operation that is answered at once: its arm calls `k` once, at the end.
+pub(open) inductive DirectOp(env: RowEnv, eff: Text): Prop {
+  DirectOpMk(found: Ordmap::get(rr_quants(env), eff, Ordmap::compare_text) = Some(QuantDirect)): DirectOp(env, eff)
+}
+
+pub(open) inductive ManyOp(env: RowEnv, eff: Text): Prop {
+  ManyOpMk(found: Ordmap::get(rr_quants(env), eff, Ordmap::compare_text) = Some(QuantMany)): ManyOp(env, eff)
+}
+
+// An effect that does not suspend: a direct operation, or a row variable
+// bounded `direct` in the function the code is in (`dvars`).
+pub(open) inductive DirectEffect(env: RowEnv, dvars: List(Text)): (Text) -> Prop {
+  DirectEffectOp(eff: Text, is_direct: DirectOp(env, eff)): DirectEffect(env, dvars, eff)
+  DirectEffectVar(v: Text, bounded: Mem(Text, v, dvars)): DirectEffect(env, dvars, Text::concat("|", v))
+}
+
+// A closure passed to an extern runs inside a host frame, which cannot be
+// suspended: it performs direct operations, row variables and `div` only.
+pub(open) inductive ExternEffect(env: RowEnv, dvars: List(Text)): (Text) -> Prop {
+  ExternEffectDirect(eff: Text, is_direct: DirectEffect(env, dvars, eff)): ExternEffect(env, dvars, eff)
+  ExternEffectVar(v: Text): ExternEffect(env, dvars, Text::concat("|", v))
+  ExternEffectDiv: ExternEffect(env, dvars, "div")
+}
+
+// The bound written on the callee's generic `v`.
+pub(open) inductive GenericBound: (List(Text), List(Option(Text)), Text, Option(Text)) -> Prop {
+  GenericBoundHere(v: Text, gs: List(Text), b: Option(Text), bs: List(Option(Text))): GenericBound(Cons(v, gs), Cons(b, bs), v, b)
+  GenericBoundNoBounds(v: Text, gs: List(Text)): GenericBound(Cons(v, gs), Nil, v, None)
+  GenericBoundLater<gs: List(Text), bs: List(Option(Text)), v: Text, b: Option(Text)>(
+    g: Text,
+    first: Option(Text),
+    different: (g = v) -> False,
+    rest: GenericBound(gs, bs, v, b)
+  ): GenericBound(Cons(g, gs), Cons(first, bs), v, b)
+  GenericBoundLaterNone<gs: List(Text), v: Text, b: Option(Text)>(
+    g: Text,
+    different: (g = v) -> False,
+    rest: GenericBound(gs, Nil, v, b)
+  ): GenericBound(Cons(g, gs), Nil, v, b)
+}
+
+// `<e: direct>`: the row given for `e` does not suspend; `<e: <=1>`: it does
+// not resume more than once.
+pub(open) inductive BoundHolds(env: RowEnv, dvars: List(Text)): (Option(Text), List(Text)) -> Prop {
+  BoundNone(row: List(Text)): BoundHolds(env, dvars, None, row)
+  BoundDirect(row: List(Text), each: ∀ e: Text. (Mem(Text, e, row)) -> DirectEffect(env, dvars, e)): BoundHolds(env, dvars, Some("direct"), row)
+  BoundOnce(row: List(Text), each: ∀ e: Text. (Mem(Text, e, row)) -> (ManyOp(env, e)) -> False): BoundHolds(env, dvars, Some("<=1"), row)
+  BoundOther(b: Text, not_direct: (b = "direct") -> False, not_once: (b = "<=1") -> False, row: List(Text)): BoundHolds(env, dvars, Some(b), row)
+}
+
+// ---- row variables -------------------------------------------------------------
+
+// `θ`: a row for each row variable of the callee.
+pub(open) inductive ThetaRow: (List(Text × List(Text)), Text, List(Text)) -> Prop {
+  ThetaRowHere(v: Text, row: List(Text), rest: List(Text × List(Text))): ThetaRow(Cons(#(v, row), rest), v, row)
+  ThetaRowLater<rest: List(Text × List(Text)), v: Text, row: List(Text)>(
+    head: Text × List(Text),
+    different: (rr_fst(head) = v) -> False,
+    tail: ThetaRow(rest, v, row)
+  ): ThetaRow(Cons(head, rest), v, row)
+}
+
+// `RowInst(θ, ρ, ρ')`: `ρ'` is `ρ` with `θ(e)` for each `|e` (`Row.inst`).
+pub(open) inductive RowInst(theta: List(Text × List(Text))): (List(Text), List(Text)) -> Prop {
+  RowInstNil: RowInst(theta, Nil, Nil)
+  RowInstEffect<rest: List(Text), out: List(Text)>(
+    eff: Text,
+    not_var: ∀ v: Text. (eff = Text::concat("|", v)) -> False,
+    tail: RowInst(theta, rest, out)
+  ): RowInst(theta, Cons(eff, rest), Cons(eff, out))
+  RowInstVar<rest: List(Text), row: List(Text), out: List(Text)>(
+    v: Text,
+    given: ThetaRow(theta, v, row),
+    tail: RowInst(theta, rest, out)
+  ): RowInst(theta, Cons(Text::concat("|", v), rest), List::append(row, out))
+}
+
+// The type `(…) -> R ! {named | e}` (through the wrappers of
+// `FunctionTypeOf`) names `|e`, beside the effects `named`.
+pub(open) inductive TypeNamesVar(ty: Option(SurfaceTerm), v: Text, named: List(Text)): Prop {
+  TypeNamesVarMk(
+    t: SurfaceTerm,
+    ps: List(SurfaceParam),
+    r: SurfaceTerm,
+    es: List(RowEntry),
+    some: ty = Some(t),
+    shape: FunctionTypeOf(t, SkPi(ps, r, Some(es))),
+    holds: Mem(Text, Text::concat("|", v), row_entries_text(es)),
+    rest: NotVars(row_entries_text(es), named)
+  ): TypeNamesVar(ty, v, named)
+}
+
+// The effects of a row that are not row variables.
+pub(open) inductive NotVars: (List(Text), List(Text)) -> Prop {
+  NotVarsNil: NotVars(Nil, Nil)
+  NotVarsVar<es: List(Text), out: List(Text)>(v: Text, rest: NotVars(es, out)): NotVars(Cons(Text::concat("|", v), es), out)
+  NotVarsEffect<es: List(Text), out: List(Text)>(
+    e: Text,
+    not_var: ∀ v: Text. (e = Text::concat("|", v)) -> False,
+    rest: NotVars(es, out)
+  ): NotVars(Cons(e, es), Cons(e, out))
+}
+
+// ---- the forms that run nothing ------------------------------------------------
+
+// Names, literals and types run nothing; making a `λ` runs nothing (its
+// row is latent). The forms of the proof language and of macros do not
+// reach Nib, and run nothing here either.
+pub(open) inductive InertKind: (SurfaceKind) -> Prop {
+  InertVar(n: SurfaceName): InertKind(SkVar(n))
+  InertNat(d: Text): InertKind(SkNat(d))
+  InertFloat(d: Text): InertKind(SkFloat(d))
+  InertRow(es: List(RowEntry)): InertKind(SkRow(es))
+  InertText(v: Text): InertKind(SkText(v))
+  InertBool(v: Bool): InertKind(SkBool(v))
+  InertPi(ps: List(SurfaceParam), r: SurfaceTerm, es: Option(List(RowEntry))): InertKind(SkPi(ps, r, es))
+  InertExists(b: Text, d: SurfaceTerm, body: SurfaceTerm, unused: Option(SurfaceSpan)): InertKind(SkExists(b, d, body, unused))
+  InertLam(ps: List(Text), body: SurfaceTerm, types: List(Option(SurfaceTerm)), unused: List(Option(SurfaceSpan))): InertKind(SkLam(ps, body, types, unused))
+  InertBorrowLam(bs: List(Option(Bool)), lam: SurfaceTerm): InertKind(SkBorrowLam(bs, lam))
+  InertUnion(parts: List(SurfaceTerm)): InertKind(SkUnion(parts))
+  InertHole(n: Text): InertKind(SkHole(n))
+  InertFnKind(k: Text, ty: SurfaceTerm): InertKind(SkFnKind(k, ty))
+  InertOther(w: Text): InertKind(SkOther(w))
+  InertAscribe(v: SurfaceTerm, t: SurfaceTerm): InertKind(SkAscribe(v, t))
+  InertMacroCall(n: Text, arg: SurfaceTerm): InertKind(SkMacroCall(n, arg))
+  InertQuote(f: Bool, ss: List(SurfaceStmt)): InertKind(SkQuote(f, ss))
+  InertSplice(v: SurfaceTerm): InertKind(SkSplice(v))
+  InertSyntaxLit(n: Option(Text), b: Text): InertKind(SkSyntaxLit(n, b))
+  InertStep(t: Text, a: SurfaceTerm, cs: Nat, ce: Nat, b: Option(SurfaceTerm), arms: List(SurfaceStepArm)): InertKind(SkStep(t, a, cs, ce, b, arms))
+}
+
+// Statements that run nothing inside a block: declarations.
+pub(open) inductive StmtInert: (SurfaceStmt) -> Prop {
+  InertCalled(g: List(Text), c: SurfaceTerm): StmtInert(StCalled(g, c))
+  InertFn(f: SurfaceFn): StmtInert(StFn(f))
+  InertTheorem(t: SurfaceTheorem): StmtInert(StTheorem(t))
+  InertDef(t: SurfaceTheorem): StmtInert(StDef(t))
+  InertMutual(ss: List(SurfaceStmt), a: Nat, b: Nat): StmtInert(StMutual(ss, a, b))
+  InertImport(p: Text, a: Nat, b: Nat): StmtInert(StImport(p, a, b))
+  InertInductive(i: SurfaceInductive): StmtInert(StInductive(i))
+  InertEffect(e: SurfaceEffect): StmtInert(StEffect(e))
+  InertStruct(d: SurfaceData): StmtInert(StStruct(d))
+  InertEnum(d: SurfaceData): StmtInert(StEnum(d))
+  InertExtern(
+    fs: List(SurfaceFn),
+    instances: List(SurfaceConstraint),
+    types: List(SurfaceData),
+    structs: List(SurfaceData),
+    enums: List(SurfaceData),
+    a: Nat,
+    b: Nat
+  ): StmtInert(StExtern(fs, instances, types, structs, enums, a, b))
+  InertClass(c: SurfaceClass): StmtInert(StClass(c))
+  InertInstance(i: SurfaceInstance): StmtInert(StInstance(i))
+  InertStmtOther(w: Text, a: Nat, b: Nat): StmtInert(StOther(w, a, b))
+  InertStmtLoop(body: SurfaceTerm, a: Nat, b: Nat): StmtInert(StLoop(body, a, b))
+  InertStmtModule(name: Text, vis: SurfaceVis, items: List(SurfaceStmt), a: Nat, b: Nat): StmtInert(StModule(name, vis, items, a, b))
+  InertStmtReexport(path: Text, names: List(Text), spans: List(SurfaceSpan), a: Nat, b: Nat): StmtInert(StReexport(path, names, spans, a, b))
+  InertStmtFor(pattern: SurfacePattern, source: SurfaceTerm, body: SurfaceTerm, a: Nat, b: Nat): StmtInert(StFor(pattern, source, body, a, b))
+  InertStmtBreak(value: Option(SurfaceTerm), a: Nat, b: Nat): StmtInert(StBreak(value, a, b))
+  InertStmtContinue(a: Nat, b: Nat): StmtInert(StContinue(a, b))
+  InertMacro(n: Text, f: Text, a: Nat, b: Nat): StmtInert(StMacro(n, f, a, b))
+  InertSyntax(n: Text, g: Text, a: Nat, b: Nat): StmtInert(StSyntax(n, g, a, b))
+  InertAttributed(n: Text, arg: SurfaceTerm, g: List(Text), st: SurfaceStmt): StmtInert(StAttributed(n, arg, g, st))
+}
+
+// The heads whose calls perform nothing beside their arguments: data
+// constructors, the operators and `clone`, `div`, `mod`, and `Pair::Mk`: a
+// product `#(a, b)` is read as a call of the prelude's `Pair::Mk`, and makes
+// its value of its arguments alone.
+pub(open) inductive PureHead(env: RowEnv): (Text, List(SurfaceTerm)) -> Prop {
+  PureData(n: Text, args: List(SurfaceTerm), data: Ordmap::contains(rr_data(env), n, Ordmap::compare_text) = true): PureHead(env, n, args)
+  PureNamed(n: Text, args: List(SurfaceTerm), listed: Mem(Text, n, pure_heads())): PureHead(env, n, args)
+  // `#(a, b)`: a product, no call.
+  PureProduct(args: List(SurfaceTerm)): PureHead(env, "std::prelude::Pair::Mk", args)
+}
+
+pub fn pure_heads(): List(Text) {
+  Cons("+", Cons("-", Cons("*", Cons("/", Cons("==", Cons("!=",
+  Cons("<", Cons(">", Cons("<=", Cons(">=", Cons("&&", Cons("||",
+  Cons("clone", Cons("div", Cons("mod", Cons("std::prelude::Pair::Mk", Nil))))))))))))))))
+}
+
+// An operation arm that answers its effect whatever is performed: no guard,
+// and patterns that cannot fail.
+pub(open) inductive Irrefutable: (SurfacePattern) -> Prop {
+  IrrefutableWild: Irrefutable(PtWild)
+  IrrefutableName(n: Text, unused: Option(SurfaceSpan)): Irrefutable(PtBind(n, unused))
+}
+
+pub(open) inductive HandlersAnswer(e: Text): (List(SurfaceHandler)) -> Prop {
+  AnswerHere(
+    op: Text,
+    binds: List(Text),
+    types: List(SurfaceTerm),
+    patterns: List(SurfacePattern),
+    k: Option(Text),
+    cont_unused: Option(SurfaceSpan),
+    body: SurfaceTerm,
+    hs: List(SurfaceHandler),
+    of_op: EffectOfOp(op, e),
+    total: ∀ p: SurfacePattern. (Mem(SurfacePattern, p, patterns)) -> Irrefutable(p)
+  ): HandlersAnswer(e, Cons(HdOperation(op, binds, types, patterns, k, cont_unused, None, body), hs))
+  AnswerLater<hs: List(SurfaceHandler)>(h: SurfaceHandler, later: HandlersAnswer(e, hs)): HandlersAnswer(e, Cons(h, hs))
+}
+
+// The row of `info.unbounded()` and `info.more(m)` on the `info` of an
+// `exceeded` arm.
+pub(open) inductive InfoCall: (Text, List(Text)) -> Prop {
+  InfoUnbounded: InfoCall("unbounded", Cons("div", Nil))
+  InfoOther(name: Text, different: (name = "unbounded") -> False): InfoCall(name, Nil)
+}
+
+// An argument whose calls the rule does not follow: not a `λ` or a name,
+// or a local not known to call. A closure passed this way is not checked to
+// not suspend (the analysis cannot see it either).
+pub(open) inductive ArgumentUntold(locals: List(RowName)): (SurfaceTerm) -> Prop {
+  UntoldForm(a: SurfaceTerm, form: UntoldKind(rr_kind(a))): ArgumentUntold(locals, a)
+  UntoldUnknown(oc1: Option(TermOccurrence), n: SurfaceName, start: Nat, end: Nat, bound: RowNameBinding(locals, surface_name_text(n), LocalRowUnknown)): ArgumentUntold(locals, SurfaceTermIndexedMk(SkVar(n), start, end, oc1))
+  UntoldInfo(oc1: Option(TermOccurrence), n: SurfaceName, start: Nat, end: Nat, bound: RowNameBinding(locals, surface_name_text(n), LocalRowInfo)): ArgumentUntold(locals, SurfaceTermIndexedMk(SkVar(n), start, end, oc1))
+}
+
+pub(open) inductive UntoldKind: (SurfaceKind) -> Prop {
+  UntoldKindMk(
+    k: SurfaceKind,
+    not_var: ∀ n: SurfaceName. (k = SkVar(n)) -> False,
+    not_lam: ∀ ps: List(Text). ∀ b: SurfaceTerm. ∀ ts: List(Option(SurfaceTerm)). ∀ us: List(Option(SurfaceSpan)). (k = SkLam(ps, b, ts, us)) -> False,
+    not_borrow_lam: ∀ bs: List(Option(Bool)). ∀ l: SurfaceTerm. (k = SkBorrowLam(bs, l)) -> False,
+    not_borrow: ∀ m: Bool. ∀ m_orig: Bool. ∀ x: SurfaceTerm. (k = SkBorrow(m, m_orig, x)) -> False
+  ): UntoldKind(k)
+}
+
+// ---- performing ----------------------------------------------------------------
+
+// `env`: the declarations; `sig`: the row callers of each function see;
+// `dvars`: the row variables bounded `direct` of the function the code is in.
+mutual {
+  // `Performs(…, locals, t, ρ)`: running `t` performs effects of `ρ` only.
+  pub(open) inductive Performs(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), SurfaceTerm, List(Text)) -> Prop {
+    // A larger row is also a row of `t`.
+    PerformsWider<locals: List(RowName), t: SurfaceTerm, r: List(Text), r2: List(Text)>(
+      p: Performs(env, sig, dvars, lim, locals, t, r),
+      sub: Sub(Text, r, r2)
+    ): Performs(env, sig, dvars, lim, locals, t, r2)
+    PerformsInert<locals: List(RowName)>(t: SurfaceTerm, inert: InertKind(rr_kind(t))): Performs(env, sig, dvars, lim, locals, t, Nil)
+    PerformsPerform<locals: List(RowName), e: Text, r: List(Text)>(oc1: Option(TermOccurrence),
+      op: Text,
+      args: List(SurfaceTerm),
+      start: Nat,
+      end: Nat,
+      of_op: EffectOfOp(op, e),
+      a: PerformsAll(env, sig, dvars, lim, locals, args, r)
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkPerform(op, args), start, end, oc1), Cons(e, r))
+    PerformsApp<locals: List(RowName), rc: List(Text), ra: List(Text)>(oc1: Option(TermOccurrence),
+      f: SurfaceTerm,
+      args: List(SurfaceTerm),
+      start: Nat,
+      end: Nat,
+      c: CallPerforms(env, sig, dvars, lim, locals, f, args, rc),
+      a: PerformsAll(env, sig, dvars, lim, locals, args, ra)
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkApp(f, args), start, end, oc1), List::append(rc, ra))
+    PerformsRecord<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      name: Text,
+      fields: List(SurfaceField),
+      start: Nat,
+      end: Nat,
+      a: PerformsFields(env, sig, dvars, lim, locals, fields, r)
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkRecord(name, fields), start, end, oc1), r)
+    PerformsBorrow<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      m: Bool,
+      m_orig: Bool,
+      x: SurfaceTerm,
+      start: Nat,
+      end: Nat,
+      p: Performs(env, sig, dvars, lim, locals, x, r)
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkBorrow(m, m_orig, x), start, end, oc1), r)
+    PerformsField<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      x: SurfaceTerm,
+      name: Text,
+      start: Nat,
+      end: Nat,
+      p: Performs(env, sig, dvars, lim, locals, x, r)
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkField(x, name), start, end, oc1), r)
+    PerformsTagged<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      tag: Text,
+      x: SurfaceTerm,
+      start: Nat,
+      end: Nat,
+      p: Performs(env, sig, dvars, lim, locals, x, r)
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkTagged(tag, x), start, end, oc1), r)
+    PerformsIf<locals: List(RowName), rc: List(Text), rt: List(Text), re: List(Text)>(oc1: Option(TermOccurrence),
+      c: SurfaceTerm,
+      th: SurfaceTerm,
+      el: Option(SurfaceTerm),
+      start: Nat,
+      end: Nat,
+      pc: Performs(env, sig, dvars, lim, locals, c, rc),
+      pt: Performs(env, sig, dvars, lim, locals, th, rt),
+      pe: PerformsOpt(env, sig, dvars, lim, locals, el, re)
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkIf(c, th, el), start, end, oc1), List::append(rc, List::append(rt, re)))
+    PerformsMatch<locals: List(RowName), rs: List(Text), ra: List(Text)>(oc1: Option(TermOccurrence),
+      s: SurfaceTerm,
+      motive: Option(SurfaceTerm),
+      arms: List(SurfaceArm),
+      binder: Option(Text),
+      unused: Option(SurfaceSpan),
+      start: Nat,
+      end: Nat,
+      ps: Performs(env, sig, dvars, lim, locals, s, rs),
+      pa: PerformsArms(env, sig, dvars, lim, locals, arms, ra)
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkMatch(s, motive, arms, binder, unused), start, end, oc1), List::append(rs, ra))
+    PerformsBlock<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      stmts: List(SurfaceStmt),
+      start: Nat,
+      end: Nat,
+      p: PerformsStmts(env, sig, dvars, lim, locals, stmts, r)
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkBlock(stmts), start, end, oc1), r)
+    // The body at `div ∪ ρ`; the budget performs `ρ`, `exceeded` and its
+    // operation, `budget` or `budget_memory`: the host counts.
+    PerformsBudget<locals: List(RowName), ra: List(Text), r: List(Text)>(oc1: Option(TermOccurrence),
+      memory: Bool,
+      amount: SurfaceTerm,
+      body: SurfaceTerm,
+      start: Nat,
+      end: Nat,
+      pa: Performs(env, sig, dvars, lim, locals, amount, ra),
+      pb: Performs(env, sig, dvars, lim, locals, body, Cons("div", r))
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkBudget(memory, amount, body), start, end, oc1), List::append(ra, Cons(surface_budget_operation(memory), Cons("exceeded", r))))
+    // Each effect of the body's row is answered by an arm or is in `ρ`;
+    // every arm runs at `ρ`.
+    PerformsHandle<locals: List(RowName), rb: List(Text), r: List(Text)>(oc1: Option(TermOccurrence),
+      body: SurfaceTerm,
+      handlers: List(SurfaceHandler),
+      start: Nat,
+      end: Nat,
+      pb: Performs(env, sig, dvars, lim, locals, body, rb),
+      covered: ∀ e: Text. (Mem(Text, e, rb)) -> HandlersAnswer(e, handlers) ∨ Mem(Text, e, r),
+      arms: HandlersPerform(env, sig, dvars, lim, locals, handlers, r)
+    ): Performs(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkHandle(body, handlers), start, end, oc1), r)
+  }
+
+  pub(open) inductive PerformsOpt(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), Option(SurfaceTerm), List(Text)) -> Prop {
+    PerformsNone(locals: List(RowName)): PerformsOpt(env, sig, dvars, lim, locals, None, Nil)
+    PerformsSome<locals: List(RowName), r: List(Text)>(t: SurfaceTerm, p: Performs(env, sig, dvars, lim, locals, t, r)): PerformsOpt(env, sig, dvars, lim, locals, Some(t), r)
+  }
+
+  pub(open) inductive PerformsAll(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), List(SurfaceTerm), List(Text)) -> Prop {
+    PerformsAllNil(locals: List(RowName)): PerformsAll(env, sig, dvars, lim, locals, Nil, Nil)
+    PerformsAllCons<locals: List(RowName), r: List(Text), rs: List(Text)>(
+      t: SurfaceTerm,
+      ts: List(SurfaceTerm),
+      p: Performs(env, sig, dvars, lim, locals, t, r),
+      ps: PerformsAll(env, sig, dvars, lim, locals, ts, rs)
+    ): PerformsAll(env, sig, dvars, lim, locals, Cons(t, ts), List::append(r, rs))
+  }
+
+  pub(open) inductive PerformsFields(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), List(SurfaceField), List(Text)) -> Prop {
+    PerformsFieldsNil(locals: List(RowName)): PerformsFields(env, sig, dvars, lim, locals, Nil, Nil)
+    PerformsFieldsCons<locals: List(RowName), r: List(Text), rs: List(Text)>(
+      name: Text,
+      value: SurfaceTerm,
+      fs: List(SurfaceField),
+      p: Performs(env, sig, dvars, lim, locals, value, r),
+      ps: PerformsFields(env, sig, dvars, lim, locals, fs, rs)
+    ): PerformsFields(env, sig, dvars, lim, locals, Cons(SurfaceFieldMk(name, value), fs), List::append(r, rs))
+  }
+
+  pub(open) inductive PerformsArms(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), List(SurfaceArm), List(Text)) -> Prop {
+    PerformsArmsNil(locals: List(RowName)): PerformsArms(env, sig, dvars, lim, locals, Nil, Nil)
+    PerformsArmsCons<locals: List(RowName), bound: List(RowName), rg: List(Text), rb: List(Text), rs: List(Text)>(
+      pattern: SurfacePattern,
+      guard: Option(SurfaceTerm),
+      goal: Option(SurfaceTerm),
+      body: SurfaceTerm,
+      arms: List(SurfaceArm),
+      binds: PatternBinds(pattern, locals, bound),
+      pg: PerformsOpt(env, sig, dvars, lim, bound, guard, rg),
+      pb: Performs(env, sig, dvars, lim, bound, body, rb),
+      ps: PerformsArms(env, sig, dvars, lim, locals, arms, rs)
+    ): PerformsArms(env, sig, dvars, lim, locals, Cons(SurfaceArmMk(pattern, guard, goal, body), arms), List::append(rg, List::append(rb, rs)))
+  }
+
+  // Every arm of a `handle` runs at `ρ`. The arm of a direct operation
+  // performs effects that do not suspend.
+  pub(open) inductive HandlersPerform(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), List(SurfaceHandler), List(Text)) -> Prop {
+    HandlersPerformNil(locals: List(RowName), r: List(Text)): HandlersPerform(env, sig, dvars, lim, locals, Nil, r)
+    HandlersPerformReturn<locals: List(RowName), bound: List(RowName), r: List(Text)>(
+      pattern: SurfacePattern,
+      body: SurfaceTerm,
+      hs: List(SurfaceHandler),
+      binds: PatternBinds(pattern, locals, bound),
+      p: Performs(env, sig, dvars, lim, bound, body, r),
+      ps: HandlersPerform(env, sig, dvars, lim, locals, hs, r)
+    ): HandlersPerform(env, sig, dvars, lim, locals, Cons(HdReturn(pattern, body), hs), r)
+    HandlersPerformOperation<locals: List(RowName), mid: List(RowName), bound: List(RowName), r: List(Text), rg: List(Text), rb: List(Text)>(
+      op: Text,
+      binds: List(Text),
+      types: List(SurfaceTerm),
+      patterns: List(SurfacePattern),
+      k: Option(Text),
+      cont_unused: Option(SurfaceSpan),
+      guard: Option(SurfaceTerm),
+      body: SurfaceTerm,
+      hs: List(SurfaceHandler),
+      bind_patterns: OperationBinds(op, patterns, locals, mid),
+      bind_k: ContinuationBinds(k, mid, bound),
+      pg: PerformsOpt(env, sig, dvars, lim, bound, guard, rg),
+      pb: Performs(env, sig, dvars, lim, bound, body, rb),
+      inside: Sub(Text, List::append(rg, rb), r),
+      is_direct: ∀ e: Text. (DirectOp(env, op)) -> (Mem(Text, e, List::append(rg, rb))) -> DirectEffect(env, dvars, e),
+      ps: HandlersPerform(env, sig, dvars, lim, locals, hs, r)
+    ): HandlersPerform(env, sig, dvars, lim, locals, Cons(HdOperation(op, binds, types, patterns, k, cont_unused, guard, body), hs), r)
+  }
+
+  // What a call of `f` performs, beside its arguments.
+  pub(open) inductive CallPerforms(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), SurfaceTerm, List(SurfaceTerm), List(Text)) -> Prop {
+    // A local known to call at a row.
+    CallLocal<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      n: SurfaceName,
+      start: Nat,
+      end: Nat,
+      args: List(SurfaceTerm),
+      bound: RowNameBinding(locals, surface_name_text(n), LocalRowKnown(r))
+    ): CallPerforms(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkVar(n), start, end, oc1), args, r)
+    // A function of the program, not hidden by a local: its row with `θ`
+    // for its row variables, which what is passed fits; the bounds on the
+    // row variables hold of `θ`; a closure passed to an extern does not
+    // suspend.
+    CallFunction<locals: List(RowName), row: List(Text), theta: List(Text × List(Text)), r: List(Text)>(oc1: Option(TermOccurrence),
+      n: SurfaceName,
+      start: Nat,
+      end: Nat,
+      args: List(SurfaceTerm),
+      callee: SurfaceFn,
+      absent: RowNameAbsent(surface_name_text(n), locals),
+      found: FunctionDecl(env, surface_name_text(n), callee),
+      not_template: rr_template(callee) = false,
+      seen: ThetaRow(sig, surface_name_text(n), row),
+      inst: RowInst(theta, row, r),
+      fit: ArgumentsFit(env, sig, dvars, lim, locals, theta, row, rr_param_types(callee), args),
+      bounds: ∀ v: Text. ∀ given: List(Text). ∀ b: Option(Text). (ThetaRow(theta, v, given)) -> (GenericBound(rr_generics(callee), rr_bounds(callee), v, b)) -> BoundHolds(env, dvars, b, given),
+      externs: ExternArguments(env, sig, dvars, lim, locals, surface_name_text(n), args),
+      ranked: RankedCall(lim, surface_name_text(n))
+    ): CallPerforms(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkVar(n), start, end, oc1), args, r)
+    // A data constructor, an operator, … (`PureHead`).
+    CallPure<locals: List(RowName)>(oc1: Option(TermOccurrence),
+      n: SurfaceName,
+      start: Nat,
+      end: Nat,
+      args: List(SurfaceTerm),
+      absent: RowNameAbsent(surface_name_text(n), locals),
+      no_function: NoFunctionDecl(env, surface_name_text(n)),
+      is_pure: PureHead(env, surface_name_text(n), args)
+    ): CallPerforms(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkVar(n), start, end, oc1), args, Nil)
+    // A `λ` called where it is written performs what its body does.
+    CallLambda<locals: List(RowName), r: List(Text)>(
+      f: SurfaceTerm,
+      args: List(SurfaceTerm),
+      lambda: LambdaPerforms(env, sig, dvars, lim, locals, f, r)
+    ): CallPerforms(env, sig, dvars, lim, locals, f, args, r)
+    // `info.unbounded()` performs `div`; `info.more(m)` nothing beyond
+    // the `handle`.
+    CallInfo<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence), oc2: Option(TermOccurrence),
+      x: SurfaceName,
+      xs: Nat,
+      xe: Nat,
+      name: Text,
+      start: Nat,
+      end: Nat,
+      args: List(SurfaceTerm),
+      info: RowNameBinding(locals, surface_name_text(x), LocalRowInfo),
+      row: InfoCall(name, r)
+    ): CallPerforms(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkField(SurfaceTermIndexedMk(SkVar(x), xs, xe, oc1), name), start, end, oc2), args, r)
+  }
+
+  // A `λ` (also with borrow annotations) performs what its body does, its
+  // parameters not known to call.
+  pub(open) inductive LambdaPerforms(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), SurfaceTerm, List(Text)) -> Prop {
+    LambdaPlain<locals: List(RowName), inner: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      params: List(Text),
+      body: SurfaceTerm,
+      types: List(Option(SurfaceTerm)),
+      unused_params: List(Option(SurfaceSpan)),
+      start: Nat,
+      end: Nat,
+      binds: UnknownBind(params, locals, inner),
+      p: Performs(env, sig, dvars, lim, inner, body, r)
+    ): LambdaPerforms(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkLam(params, body, types, unused_params), start, end, oc1), r)
+    LambdaBorrows<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      bs: List(Option(Bool)),
+      lam: SurfaceTerm,
+      start: Nat,
+      end: Nat,
+      p: LambdaPerforms(env, sig, dvars, lim, locals, lam, r)
+    ): LambdaPerforms(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkBorrowLam(bs, lam), start, end, oc1), r)
+  }
+
+  // What calling the value `t` performs: a `λ`, possibly borrowed, or a
+  // name of a local or a function.
+  pub(open) inductive LatentPerforms(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), SurfaceTerm, List(Text)) -> Prop {
+    LatentLambda<locals: List(RowName), r: List(Text)>(t: SurfaceTerm, p: LambdaPerforms(env, sig, dvars, lim, locals, t, r)): LatentPerforms(env, sig, dvars, lim, locals, t, r)
+    LatentBorrow<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      m: Bool,
+      m_orig: Bool,
+      x: SurfaceTerm,
+      start: Nat,
+      end: Nat,
+      p: LatentPerforms(env, sig, dvars, lim, locals, x, r)
+    ): LatentPerforms(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkBorrow(m, m_orig, x), start, end, oc1), r)
+    // A local known to call at a row.
+    LatentLocal<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      n: SurfaceName,
+      start: Nat,
+      end: Nat,
+      bound: RowNameBinding(locals, surface_name_text(n), LocalRowKnown(r))
+    ): LatentPerforms(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkVar(n), start, end, oc1), r)
+    // A function passed as a value: the row callers of it see.
+    LatentFunction<locals: List(RowName), r: List(Text)>(oc1: Option(TermOccurrence),
+      n: SurfaceName,
+      start: Nat,
+      end: Nat,
+      callee: SurfaceFn,
+      absent: RowNameAbsent(surface_name_text(n), locals),
+      found: FunctionDecl(env, surface_name_text(n), callee),
+      not_template: rr_template(callee) = false,
+      seen: ThetaRow(sig, surface_name_text(n), r)
+    ): LatentPerforms(env, sig, dvars, lim, locals, SurfaceTermIndexedMk(SkVar(n), start, end, oc1), r)
+    LatentWider<locals: List(RowName), t: SurfaceTerm, r: List(Text), r2: List(Text)>(
+      p: LatentPerforms(env, sig, dvars, lim, locals, t, r),
+      sub: Sub(Text, r, r2)
+    ): LatentPerforms(env, sig, dvars, lim, locals, t, r2)
+  }
+
+  // What is passed for a parameter of type `(…) -> R ! {named | e}` fits it
+  // at `θ(e)`, for each row variable `e` of the callee's row the type names.
+  pub(open) inductive ArgumentsFit(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), List(Text × List(Text)), List(Text), List(Option(SurfaceTerm)), List(SurfaceTerm)) -> Prop {
+    ArgumentsFitNoType<locals: List(RowName), theta: List(Text × List(Text)), row: List(Text)>(args: List(SurfaceTerm)): ArgumentsFit(env, sig, dvars, lim, locals, theta, row, Nil, args)
+    ArgumentsFitNoArg<locals: List(RowName), theta: List(Text × List(Text)), row: List(Text)>(types: List(Option(SurfaceTerm))): ArgumentsFit(env, sig, dvars, lim, locals, theta, row, types, Nil)
+    ArgumentsFitSilent<locals: List(RowName), theta: List(Text × List(Text)), row: List(Text), types: List(Option(SurfaceTerm)), args: List(SurfaceTerm)>(
+      ty: Option(SurfaceTerm),
+      arg: SurfaceTerm,
+      silent: ∀ v: Text. ∀ named: List(Text). (TypeNamesVar(ty, v, named)) -> (Mem(Text, Text::concat("|", v), row)) -> False,
+      tail: ArgumentsFit(env, sig, dvars, lim, locals, theta, row, types, args)
+    ): ArgumentsFit(env, sig, dvars, lim, locals, theta, row, Cons(ty, types), Cons(arg, args))
+    ArgumentsFitPassed<locals: List(RowName), theta: List(Text × List(Text)), row: List(Text), types: List(Option(SurfaceTerm)), args: List(SurfaceTerm), r: List(Text)>(
+      ty: Option(SurfaceTerm),
+      arg: SurfaceTerm,
+      latent: LatentPerforms(env, sig, dvars, lim, locals, arg, r),
+      fit: ∀ v: Text. ∀ named: List(Text). (TypeNamesVar(ty, v, named)) -> (Mem(Text, Text::concat("|", v), row)) -> ∃ given: List(Text). ThetaRow(theta, v, given) ∧ Sub(Text, r, List::append(named, given)),
+      tail: ArgumentsFit(env, sig, dvars, lim, locals, theta, row, types, args)
+    ): ArgumentsFit(env, sig, dvars, lim, locals, theta, row, Cons(ty, types), Cons(arg, args))
+  }
+
+  pub(open) inductive ExternArguments(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), Text, List(SurfaceTerm)) -> Prop {
+    ExternNot<locals: List(RowName)>(
+      n: Text,
+      args: List(SurfaceTerm),
+      not_extern: Ordmap::contains(rr_externs(env), n, Ordmap::compare_text) = false
+    ): ExternArguments(env, sig, dvars, lim, locals, n, args)
+    ExternArgs<locals: List(RowName)>(
+      n: Text,
+      args: List(SurfaceTerm),
+      each: ∀ a: SurfaceTerm. (Mem(SurfaceTerm, a, args)) -> ExternArgument(env, sig, dvars, lim, locals, a)
+    ): ExternArguments(env, sig, dvars, lim, locals, n, args)
+  }
+
+  // A closure passed to an extern: its row does not suspend. An argument
+  // whose calls cannot be told is not a closure the rule follows.
+  pub(open) inductive ExternArgument(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), SurfaceTerm) -> Prop {
+    ExternArgumentRow<locals: List(RowName), r: List(Text)>(
+      a: SurfaceTerm,
+      latent: LatentPerforms(env, sig, dvars, lim, locals, a, r),
+      each: ∀ e: Text. (Mem(Text, e, r)) -> ExternEffect(env, dvars, e)
+    ): ExternArgument(env, sig, dvars, lim, locals, a)
+    ExternArgumentUntold<locals: List(RowName)>(
+      a: SurfaceTerm,
+      untold: ArgumentUntold(locals, a)
+    ): ExternArgument(env, sig, dvars, lim, locals, a)
+  }
+
+  pub(open) inductive PerformsStmts(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), List(SurfaceStmt), List(Text)) -> Prop {
+    PerformsStmtsNil(locals: List(RowName)): PerformsStmts(env, sig, dvars, lim, locals, Nil, Nil)
+    // `let`/`var`: the value's row; the name is known to call at a row when
+    // the value is a `λ` that performs it.
+    PerformsLet<locals: List(RowName), r: List(Text), latent: LocalRow, rs: List(Text)>(
+      name: Text,
+      ty: Option(SurfaceTerm),
+      value: SurfaceTerm,
+      b: Bool,
+      m: Bool,
+      unused: Option(SurfaceSpan),
+      st_stack: Option(Text),
+      rest: List(SurfaceStmt),
+      p: Performs(env, sig, dvars, lim, locals, value, r),
+      l: BoundLatent(env, sig, dvars, lim, locals, value, latent),
+      ps: PerformsStmts(env, sig, dvars, lim, Cons(RowName::Mk(name, latent), locals), rest, rs)
+    ): PerformsStmts(env, sig, dvars, lim, locals, Cons(StLet(name, ty, value, b, m, unused, st_stack), rest), List::append(r, rs))
+    PerformsVar<locals: List(RowName), r: List(Text), latent: LocalRow, rs: List(Text)>(
+      name: Text,
+      ty: Option(SurfaceTerm),
+      value: SurfaceTerm,
+      b: Bool,
+      unused: Option(SurfaceSpan),
+      st_stack: Option(Text),
+      rest: List(SurfaceStmt),
+      p: Performs(env, sig, dvars, lim, locals, value, r),
+      l: BoundLatent(env, sig, dvars, lim, locals, value, latent),
+      ps: PerformsStmts(env, sig, dvars, lim, Cons(RowName::Mk(name, latent), locals), rest, rs)
+    ): PerformsStmts(env, sig, dvars, lim, locals, Cons(StVar(name, ty, value, b, unused, st_stack), rest), List::append(r, rs))
+    PerformsAssign<locals: List(RowName), r: List(Text), rs: List(Text)>(
+      name: Text,
+      place: Option(SurfaceTerm),
+      value: SurfaceTerm,
+      rest: List(SurfaceStmt),
+      p: Performs(env, sig, dvars, lim, locals, value, r),
+      ps: PerformsStmts(env, sig, dvars, lim, locals, rest, rs)
+    ): PerformsStmts(env, sig, dvars, lim, locals, Cons(StAssign(name, place, value), rest), List::append(r, rs))
+    PerformsExpr<locals: List(RowName), r: List(Text), rs: List(Text)>(
+      e: SurfaceTerm,
+      rest: List(SurfaceStmt),
+      p: Performs(env, sig, dvars, lim, locals, e, r),
+      ps: PerformsStmts(env, sig, dvars, lim, locals, rest, rs)
+    ): PerformsStmts(env, sig, dvars, lim, locals, Cons(StExpr(e), rest), List::append(r, rs))
+    PerformsReturn<locals: List(RowName), r: List(Text), rs: List(Text)>(
+      v: Option(SurfaceTerm),
+      rest: List(SurfaceStmt),
+      p: PerformsOpt(env, sig, dvars, lim, locals, v, r),
+      ps: PerformsStmts(env, sig, dvars, lim, locals, rest, rs)
+    ): PerformsStmts(env, sig, dvars, lim, locals, Cons(StReturn(v), rest), List::append(r, rs))
+    // A loop may not end: `div`.
+    PerformsWhile<locals: List(RowName), rc: List(Text), rb: List(Text), rs: List(Text)>(
+      c: SurfaceTerm,
+      body: SurfaceTerm,
+      rest: List(SurfaceStmt),
+      pc: Performs(env, sig, dvars, lim, locals, c, rc),
+      pb: Performs(env, sig, dvars, lim, locals, body, rb),
+      ps: PerformsStmts(env, sig, dvars, lim, locals, rest, rs)
+    ): PerformsStmts(env, sig, dvars, lim, locals, Cons(StWhile(c, body), rest), Cons("div", List::append(rc, List::append(rb, rs))))
+    PerformsDecl<locals: List(RowName), rs: List(Text)>(
+      st: SurfaceStmt,
+      rest: List(SurfaceStmt),
+      decl: StmtInert(st),
+      ps: PerformsStmts(env, sig, dvars, lim, locals, rest, rs)
+    ): PerformsStmts(env, sig, dvars, lim, locals, Cons(st, rest), rs)
+  }
+
+  pub(open) inductive BoundLatent(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), SurfaceTerm, LocalRow) -> Prop {
+    BoundUnknown<locals: List(RowName)>(value: SurfaceTerm): BoundLatent(env, sig, dvars, lim, locals, value, LocalRowUnknown)
+    BoundLambda<locals: List(RowName), r: List(Text)>(
+      value: SurfaceTerm,
+      p: LambdaPerforms(env, sig, dvars, lim, locals, value, r)
+    ): BoundLatent(env, sig, dvars, lim, locals, value, LocalRowKnown(r))
+  }
+}
+
+// ---- functions and the program -------------------------------------------------
+
+// Calls that may not end. A function whose row has no `div` only performs
+// calls of functions of a lower rank, so a chain of its calls ends; one with
+// `div` may call any function. `below` is `None` when calls are not ranked
+// (a row with `div`, the top level).
+pub(open) inductive RankLimit: Type {
+  Mk(ranks: List(Text × Nat), below: Option(Nat), group: List(Text)): RankLimit
+}
+
+pub fn rr_group(l: RankLimit): List(Text) { l.group }
+
+// A function whose row, or the row of a function its parameters take,
+// writes an effect with type arguments (`fail(E)`) is a template: the calls
+// of the program are to its copies, one for each instance (`name@…`), and
+// it is neither run nor called (`indexed_template` of `rows.rs`).
+// The functions the rules take at their written rows without checking
+// them: the templates, and the host's own (`Host::…`), which answer the
+// host's effects by the `extern`s of the host, as an `extern` does. They are
+// trusted as the `extern`s are.
+pub fn rr_unchecked(f: SurfaceFn): Bool {
+  rr_template(f) || rr_host(f)
+}
+
+pub fn rr_host(f: SurfaceFn): Bool {
+  Text::starts_with(f.name, "Host::")
+}
+
+pub fn rr_template(f: SurfaceFn): Bool {
+  rr_unexpanded_opt(rr_effects(f)) || rr_params_unexpanded(rr_param_types(f))
+}
+
+pub fn rr_unexpanded_opt(es: Option(List(Text))): Bool {
+  match es {
+    None => false
+    Some(row) => rr_unexpanded(row)
+  }
+}
+
+pub fn rr_unexpanded(es: List(Text)): Bool {
+  match es {
+    Nil => false
+    Cons(e, rest) => (Text::contains(e, "(") && not(Text::contains(e, "@"))) || rr_unexpanded(rest)
+  }
+}
+
+pub fn rr_params_unexpanded(ts: List(Option(SurfaceTerm))): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => rr_param_unexpanded(t) || rr_params_unexpanded(rest)
+  }
+}
+
+pub fn rr_param_unexpanded(t: Option(SurfaceTerm)): Bool {
+  match t {
+    None => false
+    Some(ty) => ⊢ Bool from match rows_function_kind(ty) {
+      SkPi(^ps, ^r, es) => rr_unexpanded_opt(row_opt_entries_text(es))
+      _ => false
+    }
+  }
+}
+
+// The functions of `env` that `names` name, in order.
+pub fn rr_group_fns(env: RowEnv, names: List(Text)): List(SurfaceFn) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => ⊢ List(SurfaceFn) from match Ordmap::get(rr_fns(env), n, Ordmap::compare_text) {
+      None => rr_group_fns(env, rest)
+      Some(f) => Cons(f, rr_group_fns(env, rest))
+    }
+  }
+}
+
+pub fn rr_ranks(l: RankLimit): List(Text × Nat) { l.ranks }
+pub fn rr_below(l: RankLimit): Option(Nat) { l.below }
+
+pub(open) inductive RankOf: (List(Text × Nat), Text, Nat) -> Prop {
+  RankHere(name: Text, rank: Nat, rest: List(Text × Nat)): RankOf(Cons(#(name, rank), rest), name, rank)
+  RankLater<rest: List(Text × Nat), name: Text, rank: Nat>(
+    head: Text × Nat,
+    different: (rr_rank_name(head) = name) -> False,
+    tail: RankOf(rest, name, rank)
+  ): RankOf(Cons(head, rest), name, rank)
+}
+
+pub fn rr_rank_name(p: Text × Nat): Text { p.fst }
+
+pub(open) inductive RankedCall(lim: RankLimit, n: Text): Prop {
+  RankedFree(free: rr_below(lim) = None): RankedCall(lim, n)
+  RankedBelow(b: Nat, r: Nat, bound: rr_below(lim) = Some(b), rank: RankOf(rr_ranks(lim), n, r), lower: Nat::lt(r, b) = true): RankedCall(lim, n)
+  // A call inside a group whose recursion is structural.
+  RankedGroup(member: Mem(Text, n, rr_group(lim))): RankedCall(lim, n)
+}
+
+// The limit inside a function: free when its row has `div`, else below its
+// own rank. A function in a group whose every reference to the group is a
+// call on a strict part of the parameter at one fixed position
+// (`rows_decreases`, the structural recursion the kernel accepts) may also
+// call the group.
+pub(open) inductive FunctionLimit(env: RowEnv, ranks: List(Text × Nat), name: Text, row: List(Text)): (RankLimit) -> Prop {
+  FunctionLimitDiv(div: Mem(Text, "div", row)): FunctionLimit(env, ranks, name, row, RankLimit::Mk(ranks, None, Nil))
+  FunctionLimitRank(r: Nat, rank: RankOf(ranks, name, r)): FunctionLimit(env, ranks, name, row, RankLimit::Mk(ranks, Some(r), Nil))
+  FunctionLimitStructural(
+    r: Nat,
+    group: List(Text),
+    rank: RankOf(ranks, name, r),
+    member: Mem(Text, name, group),
+    decreases: rows_decreases(rr_group_fns(env, group)) = true
+  ): FunctionLimit(env, ranks, name, row, RankLimit::Mk(ranks, Some(r), group))
+}
+
+// Each function performs, when called, what `sig` holds for it: its body is
+// derivable at that row, its parameters known to call at the rows their
+// types write; a written row is the one `sig` holds; a function whose calls
+// can come back to it has `div` or recurses structurally. Every function of
+// `env` is checked, the prelude's too.
+pub(open) inductive FunctionRowsOk(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat)): Prop {
+  FunctionRowsOkMk(
+    each: ∀ name: Text. ∀ f: SurfaceFn. (FunctionDecl(env, name, f)) -> (rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f)
+  ): FunctionRowsOk(env, sig, ranks)
+}
+
+pub(open) inductive FunctionRowOk(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat), name: Text, f: SurfaceFn): Prop {
+  FunctionRowOkMk(
+    row: List(Text),
+    locals: List(RowName),
+    dvars: List(Text),
+    lim: RankLimit,
+    seen: ThetaRow(sig, name, row),
+    written: WrittenRowIs(rr_effects(f), row),
+    params: ParamsBind(rr_params(f), rr_param_types(f), Nil, locals),
+    is_direct: DirectGenerics(rr_generics(f), rr_bounds(f), dvars),
+    limit: FunctionLimit(env, ranks, name, row, lim),
+    body: Performs(env, sig, dvars, lim, locals, rr_body(f), row)
+  ): FunctionRowOk(env, sig, ranks, name, f)
+}
+
+pub(open) inductive WrittenRowIs: (Option(List(Text)), List(Text)) -> Prop {
+  WrittenNone(row: List(Text)): WrittenRowIs(None, row)
+  WrittenSome(row: List(Text)): WrittenRowIs(Some(row), row)
+}
+
+// The generics bounded `direct`.
+pub(open) inductive DirectGenerics: (List(Text), List(Option(Text)), List(Text)) -> Prop {
+  DirectGenericsNil(bs: List(Option(Text))): DirectGenerics(Nil, bs, Nil)
+  DirectGenericsYes<gs: List(Text), bs: List(Option(Text)), out: List(Text)>(g: Text, rest: DirectGenerics(gs, bs, out)): DirectGenerics(Cons(g, gs), Cons(Some("direct"), bs), Cons(g, out))
+  DirectGenericsNo<gs: List(Text), bs: List(Option(Text)), out: List(Text)>(
+    g: Text,
+    b: Option(Text),
+    not_direct: (b = Some("direct")) -> False,
+    rest: DirectGenerics(gs, bs, out)
+  ): DirectGenerics(Cons(g, gs), Cons(b, bs), out)
+  DirectGenericsEnd<gs: List(Text), out: List(Text)>(g: Text, rest: DirectGenerics(gs, Nil, out)): DirectGenerics(Cons(g, gs), Nil, out)
+}
+
+// An extern names no effect but `wait` (a call may wait on the host).
+pub(open) inductive ExternRowOk: (Option(List(Text))) -> Prop {
+  ExternRowNone: ExternRowOk(None)
+  ExternRowWait(row: List(Text), each: ∀ e: Text. (Mem(Text, e, row)) -> e = "wait"): ExternRowOk(Some(row))
+}
+
+// What the host answers at the top level: `div`, `budget`, `budget_memory`,
+// `test`, `spawn` and the standard effects of the host.
+pub(open) inductive TopEffect: (Text) -> Prop {
+  TopDiv: TopEffect("div")
+  TopBudget: TopEffect("budget")
+  TopBudgetMemory: TopEffect("budget_memory")
+  TopTest: TopEffect("test")
+  TopSpawn: TopEffect("spawn")
+  TopHost(e: Text, host: Mem(Text, e, rows_host_effects())): TopEffect(e)
+}
+
+// The top-level statements: what each value performs is answered by the
+// host; each extern names no effect but `wait`. What a top-level `let`
+// binds is a local of the statements after it.
+pub(open) inductive TopRowsOk(env: RowEnv, sig: List(Text × List(Text))): (List(RowName), List(SurfaceStmt)) -> Prop {
+  TopNil(locals: List(RowName)): TopRowsOk(env, sig, locals, Nil)
+  TopValue<locals: List(RowName), r: List(Text), rest: List(SurfaceStmt), next: List(RowName)>(
+    st: SurfaceStmt,
+    t: SurfaceTerm,
+    value: TopValueOf(st, t),
+    p: Performs(env, sig, Nil, RankLimit::Mk(Nil, None, Nil), locals, t, r),
+    answered: ∀ e: Text. (Mem(Text, e, r)) -> TopEffect(e),
+    binds: TopBinds(env, sig, locals, st, next),
+    more: TopRowsOk(env, sig, next, rest)
+  ): TopRowsOk(env, sig, locals, Cons(st, rest))
+  TopExtern<locals: List(RowName), rest: List(SurfaceStmt)>(
+    fs: List(SurfaceFn),
+    instances: List(SurfaceConstraint),
+    types: List(SurfaceData),
+    structs: List(SurfaceData),
+    enums: List(SurfaceData),
+    a: Nat,
+    b: Nat,
+    each: ∀ f: SurfaceFn. (Mem(SurfaceFn, f, fs)) -> ExternRowOk(rr_effects(f)),
+    more: TopRowsOk(env, sig, locals, rest)
+  ): TopRowsOk(env, sig, locals, Cons(StExtern(fs, instances, types, structs, enums, a, b), rest))
+  TopReplaceableExtern<locals: List(RowName), rest: List(SurfaceStmt)>(
+    fs: List(SurfaceFn),
+    instances: List(SurfaceConstraint),
+    types: List(SurfaceData),
+    structs: List(SurfaceData),
+    enums: List(SurfaceData),
+    a: Nat,
+    b: Nat,
+    replaceable: extern_is_replaceable(fs, instances, types, structs, enums) = true,
+    more: TopRowsOk(env, sig, locals, rest)
+  ): TopRowsOk(env, sig, locals, Cons(StExtern(fs, instances, types, structs, enums, a, b), rest))
+  TopOther<locals: List(RowName), rest: List(SurfaceStmt)>(
+    st: SurfaceStmt,
+    other: TopRunsNothing(st),
+    more: TopRowsOk(env, sig, locals, rest)
+  ): TopRowsOk(env, sig, locals, Cons(st, rest))
+}
+
+// The locals after a top-level value: a `let` or `var` binds its name, known
+// to call at a row when the value is a `λ` that performs it.
+pub(open) inductive TopBinds(env: RowEnv, sig: List(Text × List(Text))): (List(RowName), SurfaceStmt, List(RowName)) -> Prop {
+  TopBindsLet(locals: List(RowName), name: Text, ty: Option(SurfaceTerm), value: SurfaceTerm, b: Bool, m: Bool, unused: Option(SurfaceSpan), st_stack: Option(Text), latent: LocalRow, l: BoundLatent(env, sig, Nil, RankLimit::Mk(Nil, None, Nil), locals, value, latent)): TopBinds(env, sig, locals, StLet(name, ty, value, b, m, unused, st_stack), Cons(RowName::Mk(name, latent), locals))
+  TopBindsVar(locals: List(RowName), name: Text, ty: Option(SurfaceTerm), value: SurfaceTerm, b: Bool, unused: Option(SurfaceSpan), st_stack: Option(Text), latent: LocalRow, l: BoundLatent(env, sig, Nil, RankLimit::Mk(Nil, None, Nil), locals, value, latent)): TopBinds(env, sig, locals, StVar(name, ty, value, b, unused, st_stack), Cons(RowName::Mk(name, latent), locals))
+  TopBindsExpr(locals: List(RowName), e: SurfaceTerm): TopBinds(env, sig, locals, StExpr(e), locals)
+}
+
+pub(open) inductive TopValueOf: (SurfaceStmt, SurfaceTerm) -> Prop {
+  TopLet(name: Text, ty: Option(SurfaceTerm), value: SurfaceTerm, b: Bool, m: Bool, unused: Option(SurfaceSpan), st_stack: Option(Text)): TopValueOf(StLet(name, ty, value, b, m, unused, st_stack), value)
+  TopVar(name: Text, ty: Option(SurfaceTerm), value: SurfaceTerm, b: Bool, unused: Option(SurfaceSpan), st_stack: Option(Text)): TopValueOf(StVar(name, ty, value, b, unused, st_stack), value)
+  TopExpr(e: SurfaceTerm): TopValueOf(StExpr(e), e)
+}
+
+pub(open) inductive TopRunsNothing(st: SurfaceStmt): Prop {
+  TopRunsNothingMk(
+    not_value: ∀ t: SurfaceTerm. (TopValueOf(st, t)) -> False,
+    not_extern: ∀ fs: List(SurfaceFn). ∀ instances: List(SurfaceConstraint). ∀ types: List(SurfaceData). ∀ structs: List(SurfaceData). ∀ enums: List(SurfaceData). ∀ a: Nat. ∀ b: Nat. (st = StExtern(fs, instances, types, structs, enums, a, b)) -> False
+  ): TopRunsNothing(st)
+}
+
+// The rows of the functions a program declares itself, `own`, in the
+// environment of the program.
+pub(open) inductive OwnRowsOk(own: Ordmap(Text, SurfaceFn), env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat)): Prop {
+  OwnRowsOkMk(
+    each: ∀ name: Text. ∀ f: SurfaceFn. (Ordmap::get(own, name, Ordmap::compare_text) = Some(f)) -> (rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f)
+  ): OwnRowsOk(own, env, sig, ranks)
+}
+
+// The program's rows, after its prelude's. The prelude's functions keep
+// some `psig` in the prelude's own environment `penv`: they call none of the
+// program's. The program's own functions keep `sig` in its environment `env`,
+// where a function the program does not declare keeps its row of `psig`, and
+// the top level runs against the same.
+pub(open) inductive ProgramRows(penv: RowEnv, own: Ordmap(Text, SurfaceFn), env: RowEnv, program: List(SurfaceStmt)): Prop {
+  ProgramRowsMk(
+    psig: List(Text × List(Text)),
+    pranks: List(Text × Nat),
+    prelude: FunctionRowsOk(penv, psig, pranks),
+    sig: List(Text × List(Text)),
+    ranks: List(Text × Nat),
+    functions: OwnRowsOk(own, env, List::append(sig, psig), ranks),
+    tops: TopRowsOk(env, List::append(sig, psig), Nil, program)
+  ): ProgramRows(penv, own, env, program)
+}
+
+// ---- the syntax inside a term --------------------------------------------------
+
+// `SubtermOf(u, t)`: `u` is `t` or is written inside it, where code runs
+// (the forms `Performs` descends into, and the bodies of `λ`s).
+mutual {
+  pub(open) inductive SubtermOf(u: SurfaceTerm): (SurfaceTerm) -> Prop {
+    SubtermSelf: SubtermOf(u, u)
+    SubtermInside(k: SurfaceKind, start: Nat, end: Nat, occ: Option(TermOccurrence), inside: SubtermKind(u, k)): SubtermOf(u, SurfaceTermIndexedMk(k, start, end, occ))
+  }
+
+  pub(open) inductive SubtermKind(u: SurfaceTerm): (SurfaceKind) -> Prop {
+    InApp(f: SurfaceTerm, args: List(SurfaceTerm), at: SubtermOf(u, f)): SubtermKind(u, SkApp(f, args))
+    InAppArg(f: SurfaceTerm, args: List(SurfaceTerm), at: SubtermAny(u, args)): SubtermKind(u, SkApp(f, args))
+    InLam(ps: List(Text), body: SurfaceTerm, types: List(Option(SurfaceTerm)), unused: List(Option(SurfaceSpan)), at: SubtermOf(u, body)): SubtermKind(u, SkLam(ps, body, types, unused))
+    InBorrowLam(bs: List(Option(Bool)), lam: SurfaceTerm, at: SubtermOf(u, lam)): SubtermKind(u, SkBorrowLam(bs, lam))
+    InField(x: SurfaceTerm, n: Text, at: SubtermOf(u, x)): SubtermKind(u, SkField(x, n))
+    InTagged(tag: Text, x: SurfaceTerm, at: SubtermOf(u, x)): SubtermKind(u, SkTagged(tag, x))
+    InBorrow(m: Bool, m_orig: Bool, x: SurfaceTerm, at: SubtermOf(u, x)): SubtermKind(u, SkBorrow(m, m_orig, x))
+    InRecord(n: Text, fs: List(SurfaceField), at: SubtermFields(u, fs)): SubtermKind(u, SkRecord(n, fs))
+    InIfCond(c: SurfaceTerm, th: SurfaceTerm, el: Option(SurfaceTerm), at: SubtermOf(u, c)): SubtermKind(u, SkIf(c, th, el))
+    InIfThen(c: SurfaceTerm, th: SurfaceTerm, el: Option(SurfaceTerm), at: SubtermOf(u, th)): SubtermKind(u, SkIf(c, th, el))
+    InIfElse(c: SurfaceTerm, th: SurfaceTerm, el: SurfaceTerm, at: SubtermOf(u, el)): SubtermKind(u, SkIf(c, th, Some(el)))
+    InPerform(op: Text, args: List(SurfaceTerm), at: SubtermAny(u, args)): SubtermKind(u, SkPerform(op, args))
+    InBudgetAmount(m: Bool, a: SurfaceTerm, b: SurfaceTerm, at: SubtermOf(u, a)): SubtermKind(u, SkBudget(m, a, b))
+    InBudgetBody(m: Bool, a: SurfaceTerm, b: SurfaceTerm, at: SubtermOf(u, b)): SubtermKind(u, SkBudget(m, a, b))
+    InBlock(ss: List(SurfaceStmt), at: SubtermStmts(u, ss)): SubtermKind(u, SkBlock(ss))
+    InHandleBody(b: SurfaceTerm, hs: List(SurfaceHandler), at: SubtermOf(u, b)): SubtermKind(u, SkHandle(b, hs))
+    InHandler(b: SurfaceTerm, hs: List(SurfaceHandler), at: SubtermHandlers(u, hs)): SubtermKind(u, SkHandle(b, hs))
+    InMatchScrutinee(s: SurfaceTerm, m: Option(SurfaceTerm), arms: List(SurfaceArm), hb: Option(Text), unused: Option(SurfaceSpan), at: SubtermOf(u, s)): SubtermKind(u, SkMatch(s, m, arms, hb, unused))
+    InMatchArm(s: SurfaceTerm, m: Option(SurfaceTerm), arms: List(SurfaceArm), hb: Option(Text), unused: Option(SurfaceSpan), at: SubtermArms(u, arms)): SubtermKind(u, SkMatch(s, m, arms, hb, unused))
+  }
+
+  pub(open) inductive SubtermAny(u: SurfaceTerm): (List(SurfaceTerm)) -> Prop {
+    AnyHere(t: SurfaceTerm, ts: List(SurfaceTerm), at: SubtermOf(u, t)): SubtermAny(u, Cons(t, ts))
+    AnyLater(t: SurfaceTerm, ts: List(SurfaceTerm), at: SubtermAny(u, ts)): SubtermAny(u, Cons(t, ts))
+  }
+
+  pub(open) inductive SubtermFields(u: SurfaceTerm): (List(SurfaceField)) -> Prop {
+    FieldsHere(n: Text, v: SurfaceTerm, fs: List(SurfaceField), at: SubtermOf(u, v)): SubtermFields(u, Cons(SurfaceFieldMk(n, v), fs))
+    FieldsLater(f: SurfaceField, fs: List(SurfaceField), at: SubtermFields(u, fs)): SubtermFields(u, Cons(f, fs))
+  }
+
+  pub(open) inductive SubtermStmts(u: SurfaceTerm): (List(SurfaceStmt)) -> Prop {
+    StmtsHere(s: SurfaceStmt, ss: List(SurfaceStmt), at: SubtermStmt(u, s)): SubtermStmts(u, Cons(s, ss))
+    StmtsLater(s: SurfaceStmt, ss: List(SurfaceStmt), at: SubtermStmts(u, ss)): SubtermStmts(u, Cons(s, ss))
+  }
+
+  pub(open) inductive SubtermStmt(u: SurfaceTerm): (SurfaceStmt) -> Prop {
+    InLet(n: Text, ty: Option(SurfaceTerm), v: SurfaceTerm, b: Bool, m: Bool, at: SubtermOf(u, v), unused: Option(SurfaceSpan), st_stack: Option(Text)): SubtermStmt(u, StLet(n, ty, v, b, m, unused, st_stack))
+    InVar(n: Text, ty: Option(SurfaceTerm), v: SurfaceTerm, b: Bool, at: SubtermOf(u, v), unused: Option(SurfaceSpan), st_stack: Option(Text)): SubtermStmt(u, StVar(n, ty, v, b, unused, st_stack))
+    InAssign(n: Text, p: Option(SurfaceTerm), v: SurfaceTerm, at: SubtermOf(u, v)): SubtermStmt(u, StAssign(n, p, v))
+    InExpr(e: SurfaceTerm, at: SubtermOf(u, e)): SubtermStmt(u, StExpr(e))
+    InReturn(e: SurfaceTerm, at: SubtermOf(u, e)): SubtermStmt(u, StReturn(Some(e)))
+    InWhileCond(c: SurfaceTerm, b: SurfaceTerm, at: SubtermOf(u, c)): SubtermStmt(u, StWhile(c, b))
+    InWhileBody(c: SurfaceTerm, b: SurfaceTerm, at: SubtermOf(u, b)): SubtermStmt(u, StWhile(c, b))
+  }
+
+  pub(open) inductive SubtermHandlers(u: SurfaceTerm): (List(SurfaceHandler)) -> Prop {
+    HandlersHere(h: SurfaceHandler, hs: List(SurfaceHandler), at: SubtermHandler(u, h)): SubtermHandlers(u, Cons(h, hs))
+    HandlersLater(h: SurfaceHandler, hs: List(SurfaceHandler), at: SubtermHandlers(u, hs)): SubtermHandlers(u, Cons(h, hs))
+  }
+
+  pub(open) inductive SubtermHandler(u: SurfaceTerm): (SurfaceHandler) -> Prop {
+    InReturnArm(p: SurfacePattern, b: SurfaceTerm, at: SubtermOf(u, b)): SubtermHandler(u, HdReturn(p, b))
+    InOperationBody(op: Text, bs: List(Text), ts: List(SurfaceTerm), ps: List(SurfacePattern), k: Option(Text), cu: Option(SurfaceSpan), g: Option(SurfaceTerm), b: SurfaceTerm, at: SubtermOf(u, b)): SubtermHandler(u, HdOperation(op, bs, ts, ps, k, cu, g, b))
+    InOperationGuard(op: Text, bs: List(Text), ts: List(SurfaceTerm), ps: List(SurfacePattern), k: Option(Text), cu: Option(SurfaceSpan), g: SurfaceTerm, b: SurfaceTerm, at: SubtermOf(u, g)): SubtermHandler(u, HdOperation(op, bs, ts, ps, k, cu, Some(g), b))
+  }
+
+  pub(open) inductive SubtermArms(u: SurfaceTerm): (List(SurfaceArm)) -> Prop {
+    ArmsHere(p: SurfacePattern, g: Option(SurfaceTerm), goal: Option(SurfaceTerm), b: SurfaceTerm, arms: List(SurfaceArm), at: SubtermOf(u, b)): SubtermArms(u, Cons(SurfaceArmMk(p, g, goal, b), arms))
+    ArmsGuard(p: SurfacePattern, g: SurfaceTerm, goal: Option(SurfaceTerm), b: SurfaceTerm, arms: List(SurfaceArm), at: SubtermOf(u, g)): SubtermArms(u, Cons(SurfaceArmMk(p, Some(g), goal, b), arms))
+    ArmsLater(a: SurfaceArm, arms: List(SurfaceArm), at: SubtermArms(u, arms)): SubtermArms(u, Cons(a, arms))
+  }
+}
+
+// ---- direct arms (`direct.taut`) -----------------------------------------------
+
+// `k` occurs in `t`: as a name, or as the target of an assignment.
+pub(open) inductive NameOccurs(k: Text, t: SurfaceTerm): Prop {
+  OccursName(oc1: Option(TermOccurrence), start: Nat, end: Nat, n: SurfaceName, same: surface_name_text(n) = k, at: SubtermOf(SurfaceTermIndexedMk(SkVar(n), start, end, oc1), t)): NameOccurs(k, t)
+  OccursAssign(oc1: Option(TermOccurrence),
+    stmts: List(SurfaceStmt),
+    start: Nat,
+    end: Nat,
+    place: Option(SurfaceTerm),
+    value: SurfaceTerm,
+    at: SubtermOf(SurfaceTermIndexedMk(SkBlock(stmts), start, end, oc1), t),
+    assigns: Mem(SurfaceStmt, StAssign(k, place, value), stmts)
+  ): NameOccurs(k, t)
+}
+
+// `k` occurs in a statement: in what it runs, or as what it assigns.
+pub(open) inductive OccursStmt(k: Text, s: SurfaceStmt): Prop {
+  OccursStmtName(oc1: Option(TermOccurrence), start: Nat, end: Nat, n: SurfaceName, same: surface_name_text(n) = k, at: SubtermStmt(SurfaceTermIndexedMk(SkVar(n), start, end, oc1), s)): OccursStmt(k, s)
+  OccursStmtBlock(oc1: Option(TermOccurrence),
+    stmts: List(SurfaceStmt),
+    start: Nat,
+    end: Nat,
+    place: Option(SurfaceTerm),
+    value: SurfaceTerm,
+    at: SubtermStmt(SurfaceTermIndexedMk(SkBlock(stmts), start, end, oc1), s),
+    assigns: Mem(SurfaceStmt, StAssign(k, place, value), stmts)
+  ): OccursStmt(k, s)
+  OccursStmtAssign(place: Option(SurfaceTerm), value: SurfaceTerm, same: s = StAssign(k, place, value)): OccursStmt(k, s)
+}
+
+pub(open) inductive OccursOpt(k: Text): (Option(SurfaceTerm)) -> Prop {
+  OccursSome(t: SurfaceTerm, occurs: NameOccurs(k, t)): OccursOpt(k, Some(t))
+}
+
+// The arm of a `direct` operation ends, on every path, in one call `k(e)`,
+// and `k` is nowhere else.
+mutual {
+  pub(open) inductive DirectTail(k: Text): (SurfaceTerm) -> Prop {
+    DirectCall(oc1: Option(TermOccurrence), oc2: Option(TermOccurrence),
+      e: SurfaceTerm,
+      fs: Nat,
+      fe: Nat,
+      start: Nat,
+      end: Nat,
+      n: SurfaceName,
+      same: surface_name_text(n) = k,
+      fresh: (NameOccurs(k, e)) -> False
+    ): DirectTail(k, SurfaceTermIndexedMk(SkApp(SurfaceTermIndexedMk(SkVar(n), fs, fe, oc1), Cons(e, Nil)), start, end, oc2))
+    DirectBlock(oc1: Option(TermOccurrence), stmts: List(SurfaceStmt), start: Nat, end: Nat, tail: DirectStmtsTail(k, stmts)): DirectTail(k, SurfaceTermIndexedMk(SkBlock(stmts), start, end, oc1))
+    DirectIf(oc1: Option(TermOccurrence),
+      c: SurfaceTerm,
+      th: SurfaceTerm,
+      el: Option(SurfaceTerm),
+      start: Nat,
+      end: Nat,
+      fresh: (NameOccurs(k, c)) -> False,
+      then_tail: DirectTail(k, th),
+      else_tail: DirectElse(k, el)
+    ): DirectTail(k, SurfaceTermIndexedMk(SkIf(c, th, el), start, end, oc1))
+    DirectMatch(oc1: Option(TermOccurrence),
+      s: SurfaceTerm,
+      motive: Option(SurfaceTerm),
+      arms: List(SurfaceArm),
+      binder: Option(Text),
+      unused: Option(SurfaceSpan),
+      start: Nat,
+      end: Nat,
+      fresh: (NameOccurs(k, s)) -> False,
+      arms_tail: DirectArmsTail(k, arms)
+    ): DirectTail(k, SurfaceTermIndexedMk(SkMatch(s, motive, arms, binder, unused), start, end, oc1))
+  }
+
+  // An `if` without `else` has a path that does not call `k`.
+  pub(open) inductive DirectElse(k: Text): (Option(SurfaceTerm)) -> Prop {
+    DirectElseSome(el: SurfaceTerm, tail: DirectTail(k, el)): DirectElse(k, Some(el))
+  }
+
+  pub(open) inductive DirectStmtsTail(k: Text): (List(SurfaceStmt)) -> Prop {
+    DirectLast(e: SurfaceTerm, tail: DirectTail(k, e)): DirectStmtsTail(k, Cons(StExpr(e), Nil))
+    DirectBefore(
+      s: SurfaceStmt,
+      next: SurfaceStmt,
+      rest: List(SurfaceStmt),
+      fresh: (OccursStmt(k, s)) -> False,
+      more: DirectStmtsTail(k, Cons(next, rest))
+    ): DirectStmtsTail(k, Cons(s, Cons(next, rest)))
+  }
+
+  pub(open) inductive DirectArmsTail(k: Text): (List(SurfaceArm)) -> Prop {
+    DirectArmsNil: DirectArmsTail(k, Nil)
+    DirectArmsCons(
+      pattern: SurfacePattern,
+      guard: Option(SurfaceTerm),
+      goal: Option(SurfaceTerm),
+      body: SurfaceTerm,
+      arms: List(SurfaceArm),
+      fresh: (OccursOpt(k, guard)) -> False,
+      tail: DirectTail(k, body),
+      more: DirectArmsTail(k, arms)
+    ): DirectArmsTail(k, Cons(SurfaceArmMk(pattern, guard, goal, body), arms))
+  }
+}

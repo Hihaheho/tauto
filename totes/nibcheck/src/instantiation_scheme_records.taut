@@ -1,8 +1,8 @@
 import "where_predicates_declared.taut"
 import "instantiation_context_sound.taut"
-import std::Map
-import std::Row
-import std::Text
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "diagnostic_sound.taut"
 import "finish_frame.taut"
@@ -12,6 +12,7 @@ import "instantiation_frame.taut"
 import "instantiation_pending_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "where_order_sound.taut"
 import "../../surface/src/surface.taut"
@@ -19,8 +20,8 @@ import "../../surface/src/surface.taut"
 // A class predicate's substituted type is present in the map and in the
 // deferred checks, with the assumptions of the use site.
 pub(open) inductive InstancePredicateRecorded(
-  assume: List(Pair(Text, Text)),
-  p: Pair(Text, Text),
+  assume: List(Text × Text),
+  p: Text × Text,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
@@ -37,28 +38,25 @@ pub(open) inductive InstancePredicateRecorded(
   ): InstancePredicateRecorded(assume, p, map, what, span, pending)
 }
 pub def InstancePredicatesRecorded(
-  assume: List(Pair(Text, Text)),
-  ps: List(Pair(Text, Text)),
+  assume: List(Text × Text),
+  ps: List(Text × Text),
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
   pending: List(TyPending)
-): Prop := ∀ p: Pair(
-  Text,
-  Text
-). ∀ member: Mem(
-  Pair(Text, Text),
+): Prop := ∀ p: (Text × Text). ∀ member: Mem(
+  Text × Text,
   p,
   ps
 ). InstancePredicateRecorded(assume, p, map, what, span, pending)
 pub theorem instance_predicate_from_name(
   c: Checker,
-  ps: List(Pair(Text, Text)),
+  ps: List(Text × Text),
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
-  p: Pair(Text, Text),
-  member: Mem(Pair(Text, Text), p, ps),
+  p: Text × Text,
+  member: Mem(Text × Text, p, ps),
   named: InstanceNamePresent(map, instantiation_parameter(p))
 ): InstancePredicateRecorded(
   inference_assume(c),
@@ -85,8 +83,8 @@ pub theorem instance_predicate_from_name(
 }
 pub theorem ck_pend_declared_predicates(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
-  ps: List(Pair(Text, Text)),
+  gs: List(Text × Kind),
+  ps: List(Text × Text),
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
@@ -133,6 +131,8 @@ pub(open) inductive SchemeInstanceRecorded(
   ): SchemeInstanceRecorded(c, name, scheme, span, m)
 }
 pub fn instance_scheme_after_preds(
+  name: Text,
+  span: TySpan,
   scheme: Scheme,
   map: Ordmap(Text, Ty),
   m: Mut1(Unit, Checker)
@@ -140,7 +140,7 @@ pub fn instance_scheme_after_preds(
   ⊢ Mut1(
     Ty,
     Checker
-  ) from match m { mut1(ignored, next) => mut1(ty_substitute(instantiation_scheme_ty(scheme), map), next) }
+  ) from match m { mut1(^ignored, next) => instantiation_scheme_done(next, name, scheme, span, map) }
 }
 pub theorem instance_scheme_preds_recorded(
   c: Checker,
@@ -158,13 +158,13 @@ pub theorem instance_scheme_preds_recorded(
     span,
     finish_pending_items(ck_st(m))
   )
-): SchemeInstanceRecorded(c, name, scheme, span, instance_scheme_after_preds(scheme, map, m)) {
+): SchemeInstanceRecorded(c, name, scheme, span, instance_scheme_after_preds(name, span, scheme, map, m)) {
   ⊢ SchemeInstanceRecorded(
     c,
     name,
     scheme,
     span,
-    instance_scheme_after_preds(scheme, map, m)
+    instance_scheme_after_preds(name, span, scheme, map, m)
   ) from match m {
     mut1(ignored, next) => SchemeInstanceRecorded::Mk(map, covered, Refl, predicates)
   }
@@ -175,8 +175,10 @@ pub fn instance_scheme_after_map(
   span: TySpan,
   m: Mut1(Ordmap(Text, Ty), Checker)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match m {
+  match m {
     mut1(map, next) => instance_scheme_after_preds(
+      name,
+      span,
       scheme,
       map,
       ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span)
@@ -212,7 +214,7 @@ pub theorem instance_scheme_map_recorded(
       ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span),
       covered,
       Eq::subst(
-        (assume: List(Pair(Text, Text))) => InstancePredicatesRecorded(
+        (assume: List(Text × Text)) => InstancePredicatesRecorded(
           assume,
           instantiation_scheme_preds(scheme),
           map,

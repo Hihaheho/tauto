@@ -1,0 +1,914 @@
+// Random well-typed programs, generated from the types down, so the checker
+// accepts each and each stops on every backend. The evaluator and every
+// backend must agree on what one shows and on how it ends.
+//
+// The generator builds a small syntax tree (`FzE`) and prints it, so a later
+// step can change a program in one place without reading text back.
+//
+// The programs cover integer arithmetic at the edges of `i64` (overflow and
+// division by zero are run-time errors every backend must raise at the same
+// point), `if`, `let` blocks, `struct` and `enum` values and `match`,
+// first-order functions, closures, `while` loops over `var`s, multi-shot
+// handlers, and the two uses of `budget` whose answer does not depend on how
+// a backend counts steps: a body that never stops, answered with `k(v)`, and
+// a body that stops, resumed with `info.unbounded()`.
+//
+// They also own and borrow: an affine `Tok` and a linear `Lin` are bound by
+// `let`, read through `&` and through a `View` that holds a `&Tok`, renamed
+// by a move, and then consumed (a `Lin` always, a `Tok` or dropped at the end
+// of its block); an `i64` cell is written through `&mut`; and a function may
+// take a `&Tok`. An owned value is used only by borrowing until the end of
+// the block that binds it, where it is moved once, so every program keeps
+// the ownership rules by construction. Closures and handlers do not see
+// owned values: capturing one would move it.
+//
+// Every choice is drawn from an `FzChoices`, with its simplest answer at 0: a
+// leaf rather than a node, a small number rather than an edge of `i64`.
+
+import "choices.taut"
+
+pub enum FzTy { FzInt, FzBool, FzPoint, FzShape }
+
+// The type of a parameter of a generated function: a value, or a `&Tok`.
+pub enum FzParamTy { FzByValue(FzTy), FzRefTok }
+
+pub struct FzVar { name: Text, ty: FzTy }
+
+// How a block holds an owned or borrowed value it may read.
+pub enum FzHold {
+  // `let t := Tok { … }`: read as `t.v` or `peek(&t)`, lent as `&t`.
+  FzOwnTok,
+  // A `&Tok` parameter: read as `p.v` or `peek(p)`, lent as `p`.
+  FzRefTokParam,
+  // `let w := View { r: &t, k: … }`: read as `w.k` or `w.r.v`.
+  FzViewOf,
+}
+
+pub struct FzOwned { name: Text, hold: FzHold }
+
+pub struct FzFunc { name: Text, params: List(FzParamTy), ret: FzTy }
+
+pub struct FzGen {
+  c: FzChoices,
+  funcs: List(FzFunc),
+  scope: List(FzVar),
+  // What may be borrowed here, the nearest first.
+  owned: List(FzOwned),
+  // The `var` cells of `i64` that may be lent as `&mut`.
+  cells: List(Text),
+  // False inside the body of a `budget`, where every step may be stopped:
+  // a linear value may not be live there.
+  lin_ok: Bool,
+  fresh: u64,
+}
+
+// An expression. Every node prints as one Tauto expression (`fz_print`).
+pub enum FzE {
+  // Text that is already an expression: a literal or a name.
+  EAtom(Text),
+  // `(a op b)`.
+  EBin(Text, FzE, FzE),
+  // `f(args)`; `f` may be `perform budget`.
+  ECall(Text, List(FzE)),
+  // `(if c { a } else { b })`.
+  EIf(FzE, FzE, FzE),
+  // `{ let x := v\n body }`.
+  ELet(Text, FzE, FzE),
+  // `{ var x := v\n body }`.
+  EVarIn(Text, FzE, FzE),
+  // `{ s\n body }`: `s` runs for its effect on cells.
+  ESeq(FzE, FzE),
+  // `{ e }`.
+  EBraces(FzE),
+  // `e.f`.
+  EField(FzE, Text),
+  // `S { f: v, … }`, the fields as `EArm(f, v)`.
+  ENew(Text, List(FzE)),
+  // `(match s { arms })`, the arms as `EArm(pattern, body)`.
+  EMatch(FzE, List(FzE)),
+  // `(x) => body`; `x` may be empty.
+  ELambda(Text, FzE),
+  // `(handle { body } with {\n  arms\n})`, the arms as `EArm(head, body)`.
+  EHandle(FzE, List(FzE)),
+  // A field of `ENew`, an arm of `EMatch` or of `EHandle`.
+  EArm(Text, FzE),
+  // `&path` or `&mut path`.
+  EBorrow(Bool, Text),
+}
+
+// A program: its declarations, then its `show` lines. The declarations with
+// the first `n` lines after them are a program too.
+pub(open) struct FzProgram { declarations: Text, shows: List(Text), choices: List(u64) }
+
+pub fn fz_prelude(): Text {
+  "struct Point { x: i64, y: i64 }
+enum Shape { Dot, Line(i64), Rect(i64, i64) }
+struct(affine) Tok { v: i64 }
+struct(linear) Lin { v: i64 }
+struct View { r: &Tok, k: i64 }
+effect ask(n: i64): i64 resume ω
+fn spin(): i64 ! {div} {
+  while true { }
+  0
+}
+fn twice(f: (i64) -> i64 ! {budget, div, divzero, overflow}, x: i64): i64 ! {budget, div, divzero, overflow} {
+  f(f(x))
+}
+fn count(n: i64): i64 ! {div, overflow} {
+  var i := 0
+  var s := 0
+  while i < n {
+    i := i + 1
+    s := s + i
+  }
+  s
+}
+fn peek(t: &Tok): i64 {
+  t.v
+}
+fn peek_lin(l: &Lin): i64 {
+  match l { Lin { v } => v }
+}
+fn take(t: Tok): i64 {
+  match t { Tok { v } => v }
+}
+fn finish(l: Lin): i64 {
+  match l { Lin { v } => v }
+}
+fn bump(c: &mut i64, d: i64): i64 ! {overflow} {
+  *c := c + d
+  c
+}
+"
+}
+
+pub fn fz_cat(a: Text, b: Text): Text {
+  concat(a, b)
+}
+
+pub fn fz_cats(parts: List(Text)): Text {
+  match parts {
+    Nil => ""
+    Cons(x, rest) => concat(x, fz_cats(rest))
+  }
+}
+
+pub fn fz_cat3(a: Text, b: Text, c: Text): Text {
+  concat(concat(a, b), c)
+}
+
+pub fn fz_join(sep: Text, l: List(Text)): Text {
+  match l {
+    Nil => ""
+    Cons(x, rest) => match rest {
+      Nil => x
+      Cons(^y, ^more) => fz_cat3(x, sep, fz_join(sep, rest))
+    }
+  }
+}
+
+// The expression as Tauto text.
+pub fn fz_print(e: FzE): Text ! {div} {
+  match e {
+    EAtom(t) => t
+    EBin(op, a, b) => fz_cats(["(", fz_print(a), " ", op, " ", fz_print(b), ")"])
+    ECall(f, args) => fz_cats([f, "(", fz_join(", ", fz_print_all(args)), ")"])
+    EIf(c, a, b) => fz_cats(["(if ", fz_print(c), " { ", fz_print(a), " } else { ", fz_print(b), " })"])
+    ELet(x, v, body) => fz_cats(["{ let ", x, " := ", fz_print(v), "\n ", fz_print(body), " }"])
+    EVarIn(x, v, body) => fz_cats(["{ var ", x, " := ", fz_print(v), "\n ", fz_print(body), " }"])
+    ESeq(s, body) => fz_cats(["{ ", fz_print(s), "\n ", fz_print(body), " }"])
+    EBraces(b) => fz_cat3("{ ", fz_print(b), " }")
+    EField(s, f) => fz_cat3(fz_print(s), ".", f)
+    ENew(name, fields) => fz_cats([name, " { ", fz_join(", ", fz_print_fields(fields)), " }"])
+    EMatch(s, arms) => fz_cats(["(match ", fz_print(s), " { ", fz_join(", ", fz_print_all(arms)), " })"])
+    ELambda(x, body) => fz_cats(["(", x, ") => ", fz_print(body)])
+    EHandle(body, arms) => fz_cats([
+      "(handle { ", fz_print(body), " } with {\n  ", fz_join("\n  ", fz_print_all(arms)), "\n})"
+    ])
+    EArm(head, body) => fz_cat3(head, " => ", fz_print(body))
+    EBorrow(m, path) => if m { fz_cat("&mut ", path) } else { fz_cat("&", path) }
+  }
+}
+
+pub fn fz_print_all(l: List(FzE)): List(Text) ! {div} {
+  match l {
+    Nil => Nil
+    Cons(e, rest) => Cons(fz_print(e), fz_print_all(rest))
+  }
+}
+
+pub fn fz_print_fields(l: List(FzE)): List(Text) ! {div} {
+  match l {
+    Nil => Nil
+    Cons(e, rest) => {
+      let field := match e {
+        EArm(name, v) => fz_cat3(name, ": ", fz_print(v))
+        other => fz_print(other)
+      }
+      Cons(field, fz_print_fields(rest))
+    }
+  }
+}
+
+pub fn fz_ty_same(a: FzTy, b: FzTy): Bool {
+  match a {
+    FzInt => match b { FzInt => true, FzBool => false, FzPoint => false, FzShape => false }
+    FzBool => match b { FzInt => false, FzBool => true, FzPoint => false, FzShape => false }
+    FzPoint => match b { FzInt => false, FzBool => false, FzPoint => true, FzShape => false }
+    FzShape => match b { FzInt => false, FzBool => false, FzPoint => false, FzShape => true }
+  }
+}
+
+pub fn fz_ty_name(t: FzTy): Text {
+  match t {
+    FzInt => "i64"
+    FzBool => "Bool"
+    FzPoint => "Point"
+    FzShape => "Shape"
+  }
+}
+
+pub fn fz_ty(g: &mut FzGen): FzTy ! {div, divzero} {
+  match fz_below(&mut g.c, 4) {
+    0 => FzInt
+    1 => FzBool
+    2 => FzPoint
+    ^n => FzShape
+  }
+}
+
+pub fn fz_name(g: &mut FzGen, prefix: Text): Text ! {overflow} {
+  g.fresh := g.fresh + 1
+  fz_cat(prefix, Text::of_u64(g.fresh))
+}
+
+pub fn fz_push(g: &mut FzGen, name: Text, ty: FzTy): Unit {
+  g.scope := Cons(FzVar { name: name, ty: ty }, g.scope)
+}
+
+pub fn fz_pop(g: &mut FzGen): Unit {
+  match g.scope {
+    Nil => ()
+    Cons(^v, rest) => { g.scope := rest }
+  }
+}
+
+pub fn fz_hold(g: &mut FzGen, name: Text, hold: FzHold): Unit {
+  g.owned := Cons(FzOwned { name: name, hold: hold }, g.owned)
+}
+
+pub fn fz_release(g: &mut FzGen): Unit {
+  match g.owned {
+    Nil => ()
+    Cons(^o, rest) => { g.owned := rest }
+  }
+}
+
+pub fn fz_texts_len(l: List(Text)): u64 ! {overflow} {
+  match l {
+    Nil => 0
+    Cons(^x, rest) => 1 + fz_texts_len(rest)
+  }
+}
+
+pub fn fz_text_at(l: List(Text), i: u64): Text ! {overflow} {
+  match l {
+    Nil => ""
+    Cons(x, rest) => if i == 0 { x } else { fz_text_at(rest, i - 1) }
+  }
+}
+
+// One of `l`, or `None` when it is empty.
+pub fn fz_pick(g: &mut FzGen, l: List(Text)): Option(Text) ! {div, divzero, overflow} {
+  let n := fz_texts_len(l)
+  if n == 0 {
+    None
+  } else {
+    Some(fz_text_at(l, fz_below(&mut g.c, n)))
+  }
+}
+
+pub fn fz_vars_of(scope: List(FzVar), ty: FzTy): List(Text) {
+  match scope {
+    Nil => Nil
+    Cons(v, rest) => if fz_ty_same(v.ty, ty) { Cons(v.name, fz_vars_of(rest, ty)) } else { fz_vars_of(rest, ty) }
+  }
+}
+
+// A variable of `ty` in scope, the nearest first.
+pub fn fz_var(g: &mut FzGen, ty: FzTy): Option(Text) ! {div, divzero, overflow} {
+  let found := fz_vars_of(g.scope, ty)
+  fz_pick(g, found)
+}
+
+// How an owned or borrowed value is read as an `i64`.
+pub fn fz_read_owned(o: FzOwned, second: Bool): FzE {
+  match o.hold {
+    FzOwnTok => if second { ECall("peek", [EBorrow(false, o.name)]) } else { EField(EAtom(o.name), "v") }
+    FzRefTokParam => if second { ECall("peek", [EAtom(o.name)]) } else { EField(EAtom(o.name), "v") }
+    FzViewOf => if second { EField(EField(EAtom(o.name), "r"), "v") } else { EField(EAtom(o.name), "k") }
+  }
+}
+
+// How an owned or borrowed value is lent as a `&Tok`, if it can be.
+pub fn fz_lend_tok(o: FzOwned): Option(FzE) {
+  match o.hold {
+    FzOwnTok => Some(EBorrow(false, o.name))
+    FzRefTokParam => Some(EAtom(o.name))
+    // Passing `w.r` on would move it out of `w`.
+    FzViewOf => None
+  }
+}
+
+pub fn fz_owned_len(l: List(FzOwned)): u64 ! {overflow} {
+  match l {
+    Nil => 0
+    Cons(^x, rest) => 1 + fz_owned_len(rest)
+  }
+}
+
+pub fn fz_owned_at(l: List(FzOwned), i: u64): Option(FzOwned) ! {overflow} {
+  match l {
+    Nil => None
+    Cons(x, rest) => if i == 0 { Some(x) } else { fz_owned_at(rest, i - 1) }
+  }
+}
+
+pub fn fz_tok_lenders(l: List(FzOwned)): List(FzE) {
+  match l {
+    Nil => Nil
+    Cons(o, rest) => match fz_lend_tok(o) {
+      Some(e) => Cons(e, fz_tok_lenders(rest))
+      None => fz_tok_lenders(rest)
+    }
+  }
+}
+
+pub fn fz_es_len(l: List(FzE)): u64 ! {overflow} {
+  match l {
+    Nil => 0
+    Cons(^x, rest) => 1 + fz_es_len(rest)
+  }
+}
+
+pub fn fz_e_at(l: List(FzE), i: u64): FzE ! {overflow} {
+  match l {
+    Nil => EAtom("0")
+    Cons(x, rest) => if i == 0 { x } else { fz_e_at(rest, i - 1) }
+  }
+}
+
+// An `i64` read from what the block owns or borrows, if anything.
+pub fn fz_owned_leaf(g: &mut FzGen): Option(FzE) ! {div, divzero, overflow} {
+  let n := fz_owned_len(g.owned)
+  if n == 0 {
+    None
+  } else {
+    let i := fz_below(&mut g.c, n)
+    let second := fz_chance(&mut g.c, 50)
+    match fz_owned_at(g.owned, i) {
+      None => None
+      Some(o) => Some(fz_read_owned(o, second))
+    }
+  }
+}
+
+pub fn fz_int_literal(g: &mut FzGen): FzE ! {div, divzero, overflow} {
+  let t := match fz_below(&mut g.c, 10) {
+    0 => Text::of_u64(fz_below(&mut g.c, 100))
+    1 => "0"
+    2 => "(0 - 1)"
+    3 => "9223372036854775807"
+    4 => "(0 - 9223372036854775807 - 1)"
+    5 => "4611686018427387904"
+    6 => Text::of_u64(3037000499 + fz_below(&mut g.c, 3))
+    ^n => Text::of_u64(fz_below(&mut g.c, 100))
+  }
+  EAtom(t)
+}
+
+pub fn fz_point(x: FzE, y: FzE): FzE {
+  ENew("Point", [EArm("x", x), EArm("y", y)])
+}
+
+pub fn fz_leaf(g: &mut FzGen, ty: FzTy): FzE ! {div, divzero, overflow} {
+  let from_scope := if fz_chance(&mut g.c, 50) { fz_var(g, ty) } else { None }
+  match from_scope {
+    Some(v) => EAtom(v)
+    None => match ty {
+      FzInt => {
+        let from_owned := if fz_chance(&mut g.c, 50) { None } else { fz_owned_leaf(g) }
+        match from_owned {
+          Some(e) => e
+          None => fz_int_literal(g)
+        }
+      }
+      FzBool => EAtom(if fz_chance(&mut g.c, 50) { "true" } else { "false" })
+      FzPoint => {
+        let x := fz_int_literal(g)
+        let y := fz_int_literal(g)
+        fz_point(x, y)
+      }
+      FzShape => match fz_below(&mut g.c, 3) {
+        0 => EAtom("Dot")
+        1 => ECall("Line", [fz_int_literal(g)])
+        ^n => {
+          let a := fz_int_literal(g)
+          let b := fz_int_literal(g)
+          ECall("Rect", [a, b])
+        }
+      }
+    }
+  }
+}
+
+// An expression of `ty`, at most `depth` deep.
+pub fn fz_expr(g: &mut FzGen, ty: FzTy, depth: u64): FzE ! {div, divzero, overflow} {
+  if depth == 0 || fz_chance(&mut g.c, 20) {
+    fz_leaf(g, ty)
+  } else {
+    let d := depth - 1
+    // 0 to 5 are the forms of the type itself; 6 to 9 give any type.
+    match fz_below(&mut g.c, 10) {
+      6 => fz_if(g, ty, d)
+      7 => fz_let(g, ty, d)
+      8 => match fz_call(g, ty, d) {
+        Some(call) => call
+        None => fz_own_form(g, ty, d)
+      }
+      9 => fz_match_shape(g, ty, d)
+      ^n => fz_own_form(g, ty, d)
+    }
+  }
+}
+
+// An expression of `ty` that sees no owned value and no cell: the body of a
+// closure or of a handler, which would capture them.
+pub fn fz_expr_apart(g: &mut FzGen, ty: FzTy, d: u64): FzE ! {div, divzero, overflow} {
+  let owned := g.owned
+  let cells := g.cells
+  g.owned := Nil
+  g.cells := Nil
+  let e := fz_expr(g, ty, d)
+  g.owned := owned
+  g.cells := cells
+  e
+}
+
+pub fn fz_own_form(g: &mut FzGen, ty: FzTy, d: u64): FzE ! {div, divzero, overflow} {
+  match ty {
+    FzInt => fz_int_expr(g, d)
+    FzBool => fz_bool_expr(g, d)
+    FzPoint => {
+      let x := fz_expr(g, FzInt, d)
+      let y := fz_expr(g, FzInt, d)
+      fz_point(x, y)
+    }
+    FzShape => match fz_below(&mut g.c, 3) {
+      0 => EAtom("Dot")
+      1 => ECall("Line", [fz_expr(g, FzInt, d)])
+      ^n => {
+        let a := fz_expr(g, FzInt, d)
+        let b := fz_expr(g, FzInt, d)
+        ECall("Rect", [a, b])
+      }
+    }
+  }
+}
+
+pub fn fz_if(g: &mut FzGen, ty: FzTy, d: u64): FzE ! {div, divzero, overflow} {
+  let c := fz_expr(g, FzBool, d)
+  let a := fz_expr(g, ty, d)
+  let b := fz_expr(g, ty, d)
+  EIf(c, a, b)
+}
+
+pub fn fz_let(g: &mut FzGen, ty: FzTy, d: u64): FzE ! {div, divzero, overflow} {
+  let bty := fz_ty(g)
+  let bound := fz_expr(g, bty, d)
+  let name := fz_name(g, "x")
+  fz_push(g, name, bty)
+  let body := fz_expr(g, ty, d)
+  fz_pop(g)
+  ELet(name, bound, body)
+}
+
+pub fn fz_funcs_returning(l: List(FzFunc), ty: FzTy): List(FzFunc) {
+  match l {
+    Nil => Nil
+    Cons(f, rest) => if fz_ty_same(f.ret, ty) { Cons(f, fz_funcs_returning(rest, ty)) } else { fz_funcs_returning(rest, ty) }
+  }
+}
+
+pub fn fz_funcs_len(l: List(FzFunc)): u64 ! {overflow} {
+  match l {
+    Nil => 0
+    Cons(^x, rest) => 1 + fz_funcs_len(rest)
+  }
+}
+
+pub fn fz_func_at(l: List(FzFunc), i: u64): Option(FzFunc) ! {overflow} {
+  match l {
+    Nil => None
+    Cons(x, rest) => if i == 0 { Some(x) } else { fz_func_at(rest, i - 1) }
+  }
+}
+
+// The arguments for `params`. A `&Tok` is lent from the block when it holds
+// one, else from `tmp`, which the call's caller binds.
+pub fn fz_args(g: &mut FzGen, params: List(FzParamTy), tmp: Text, d: u64): List(FzE) ! {div, divzero, overflow} {
+  match params {
+    Nil => Nil
+    Cons(t, rest) => {
+      let a := match t {
+        FzByValue(ty) => fz_expr(g, ty, d)
+        FzRefTok => {
+          let lenders := fz_tok_lenders(g.owned)
+          let n := fz_es_len(lenders)
+          if n == 0 || fz_chance(&mut g.c, 30) {
+            EBorrow(false, tmp)
+          } else {
+            fz_e_at(lenders, fz_below(&mut g.c, n))
+          }
+        }
+      }
+      Cons(a, fz_args(g, rest, tmp, d))
+    }
+  }
+}
+
+pub fn fz_takes_tok(params: List(FzParamTy)): Bool {
+  match params {
+    Nil => false
+    Cons(t, rest) => match t {
+      FzRefTok => true
+      FzByValue(^ty) => fz_takes_tok(rest)
+    }
+  }
+}
+
+pub fn fz_lends(l: List(FzE), tmp: Text): Bool {
+  match l {
+    Nil => false
+    Cons(e, rest) => match e {
+      EBorrow(^m, path) => path == tmp || fz_lends(rest, tmp)
+      ^other => fz_lends(rest, tmp)
+    }
+  }
+}
+
+pub fn fz_call(g: &mut FzGen, ty: FzTy, d: u64): Option(FzE) ! {div, divzero, overflow} {
+  let candidates := fz_funcs_returning(g.funcs, ty)
+  let n := fz_funcs_len(candidates)
+  if n == 0 {
+    None
+  } else {
+    match fz_func_at(candidates, fz_below(&mut g.c, n)) {
+      None => None
+      Some(f) => {
+        let tmp := if fz_takes_tok(f.params) { fz_name(g, "t") } else { "" }
+        let args := fz_args(g, f.params, tmp, d)
+        let call := ECall(f.name, args)
+        if fz_lends(args, tmp) {
+          // A `Tok` bound for the call and dropped after it.
+          let v := fz_expr(g, FzInt, d)
+          Some(ELet(tmp, ENew("Tok", [EArm("v", v)]), call))
+        } else {
+          Some(call)
+        }
+      }
+    }
+  }
+}
+
+pub fn fz_match_shape(g: &mut FzGen, ty: FzTy, d: u64): FzE ! {div, divzero, overflow} {
+  let s := fz_expr(g, FzShape, d)
+  let a := fz_name(g, "a")
+  let b := fz_name(g, "b")
+  let dot := fz_expr(g, ty, d)
+  fz_push(g, a, FzInt)
+  let line := fz_expr(g, ty, d)
+  fz_push(g, b, FzInt)
+  let rect := fz_expr(g, ty, d)
+  fz_pop(g)
+  fz_pop(g)
+  EMatch(s, [
+    EArm("Dot", dot),
+    EArm(fz_cat3("Line(", a, ")"), line),
+    EArm(fz_cats(["Rect(", a, ", ", b, ")"]), rect)
+  ])
+}
+
+pub fn fz_binary(g: &mut FzGen, ty: FzTy, op: Text, d: u64): FzE ! {div, divzero, overflow} {
+  let a := fz_expr(g, ty, d)
+  let b := fz_expr(g, ty, d)
+  EBin(op, a, b)
+}
+
+pub fn fz_int_expr(g: &mut FzGen, d: u64): FzE ! {div, divzero, overflow} {
+  match fz_below(&mut g.c, 18) {
+    0 => fz_binary(g, FzInt, "+", d)
+    1 => fz_binary(g, FzInt, "-", d)
+    2 => fz_binary(g, FzInt, "*", d)
+    3 => {
+      let f := if fz_chance(&mut g.c, 50) { "div" } else { "mod" }
+      let a := fz_expr(g, FzInt, d)
+      let b := fz_expr(g, FzInt, d)
+      ECall(f, [a, b])
+    }
+    4 => {
+      let field := if fz_chance(&mut g.c, 50) { "x" } else { "y" }
+      EField(fz_expr(g, FzPoint, d), field)
+    }
+    // A loop of a bounded, generated length.
+    5 => ECall("count", [ECall("mod", [fz_expr(g, FzInt, d), EAtom("50")])])
+    6 => fz_handle_ask(g, d)
+    7 => {
+      let v := fz_expr_apart(g, FzInt, d)
+      let n := Text::of_u64(1 + fz_below(&mut g.c, 200))
+      EHandle(
+        ECall("perform budget", [EAtom(n), ELambda("", EBraces(ECall("spin", [])))]),
+        [EArm("exceeded(info), k", ECall("k", [v]))]
+      )
+    }
+    8 => {
+      let lin_ok := g.lin_ok
+      g.lin_ok := false
+      let body := fz_expr_apart(g, FzInt, d)
+      g.lin_ok := lin_ok
+      let n := Text::of_u64(1 + fz_below(&mut g.c, 60))
+      EHandle(
+        ECall("perform budget", [
+          EAtom(n),
+          ELambda("", EBraces(EBin("+", ECall("count", [EAtom("30")]), body)))
+        ]),
+        [EArm("exceeded(info), k", ECall("info.unbounded", []))]
+      )
+    }
+    // Owning and borrowing.
+    9 => fz_own_tok(g, d)
+    10 => if g.lin_ok { fz_own_lin(g, d) } else { fz_own_tok(g, d) }
+    11 => fz_cell(g, d)
+    12 => fz_closure(g, d)
+    13 => fz_closure(g, d)
+    14 => match fz_pick(g, g.cells) {
+      // A write through `&mut`.
+      Some(c) => ECall("bump", [EBorrow(true, c), fz_expr(g, FzInt, d)])
+      None => fz_own_tok(g, d)
+    }
+    ^n => fz_leaf(g, FzInt)
+  }
+}
+
+// `let t := Tok { … }`, read while it is borrowed, perhaps through a `View`,
+// then moved once (by `take`, a rename, or a `match`) or dropped.
+pub fn fz_own_tok(g: &mut FzGen, d: u64): FzE ! {div, divzero, overflow} {
+  let v := fz_expr(g, FzInt, d)
+  let t := fz_name(g, "t")
+  fz_hold(g, t, FzOwnTok)
+  let body := if fz_chance(&mut g.c, 50) {
+    fz_body(g, d)
+  } else {
+    let k := fz_expr(g, FzInt, d)
+    let w := fz_name(g, "w")
+    fz_hold(g, w, FzViewOf)
+    let inner := fz_body(g, d)
+    fz_release(g)
+    ELet(w, ENew("View", [EArm("r", EBorrow(false, t)), EArm("k", k)]), inner)
+  }
+  fz_release(g)
+  let r := fz_name(g, "r")
+  let last := match fz_below(&mut g.c, 4) {
+    0 => EAtom(r)
+    1 => EBin("+", EAtom(r), ECall("take", [EAtom(t)]))
+    2 => {
+      let u := fz_name(g, "u")
+      ELet(u, EAtom(t), EBin("+", EAtom(r), ECall("take", [EAtom(u)])))
+    }
+    ^m => {
+      let q := fz_name(g, "q")
+      EMatch(EAtom(t), [EArm(fz_cat3("Tok { v: ", q, " }"), EBin("-", EAtom(r), EAtom(q)))])
+    }
+  }
+  ELet(t, ENew("Tok", [EArm("v", v)]), ELet(r, body, last))
+}
+
+// `let l := Lin { … }`, read through `&`, then consumed exactly once (by
+// `finish`, a rename, or a `match`). A linear value may not be live across an
+// operation that does not resume, and `overflow` is one, so nothing between
+// the binding and the move can fail; what uses the read comes after the move.
+pub fn fz_own_lin(g: &mut FzGen, d: u64): FzE ! {div, divzero, overflow} {
+  let v := fz_expr(g, FzInt, d)
+  let l := fz_name(g, "l")
+  let r := fz_name(g, "r")
+  fz_push(g, r, FzInt)
+  let last := match fz_below(&mut g.c, 3) {
+    0 => {
+      let s := fz_name(g, "s")
+      fz_push(g, s, FzInt)
+      let body := fz_expr(g, FzInt, d)
+      fz_pop(g)
+      ELet(s, ECall("finish", [EAtom(l)]), body)
+    }
+    1 => {
+      let u := fz_name(g, "u")
+      let s := fz_name(g, "s")
+      fz_push(g, s, FzInt)
+      let body := fz_expr(g, FzInt, d)
+      fz_pop(g)
+      ELet(u, EAtom(l), ELet(s, ECall("finish", [EAtom(u)]), body))
+    }
+    ^m => {
+      let q := fz_name(g, "q")
+      fz_push(g, q, FzInt)
+      let body := fz_expr(g, FzInt, d)
+      fz_pop(g)
+      EMatch(EAtom(l), [EArm(fz_cat3("Lin { v: ", q, " }"), body)])
+    }
+  }
+  fz_pop(g)
+  ELet(l, ENew("Lin", [EArm("v", v)]), ELet(r, ECall("peek_lin", [EBorrow(false, l)]), last))
+}
+
+// The `i64` a block computes while it owns or borrows something.
+pub fn fz_body(g: &mut FzGen, d: u64): FzE ! {div, divzero, overflow} {
+  let e := fz_expr(g, FzInt, d)
+  match fz_owned_leaf(g) {
+    Some(read) => EBin("+", e, read)
+    None => e
+  }
+}
+
+// `var c := …`, written through `&mut` and read, then read at the end.
+pub fn fz_cell(g: &mut FzGen, d: u64): FzE ! {div, divzero, overflow} {
+  let v := fz_expr(g, FzInt, d)
+  let c := fz_name(g, "c")
+  let cells := g.cells
+  g.cells := Cons(c, cells)
+  let step := ECall("bump", [EBorrow(true, c), fz_expr(g, FzInt, d)])
+  let body := fz_expr(g, FzInt, d)
+  g.cells := cells
+  EVarIn(c, v, ESeq(step, EBin("+", body, EAtom(c))))
+}
+
+pub fn fz_closure(g: &mut FzGen, d: u64): FzE ! {div, divzero, overflow} {
+  let x := fz_name(g, "l")
+  fz_push(g, x, FzInt)
+  let body := fz_expr_apart(g, FzInt, d)
+  fz_pop(g)
+  let arg := fz_expr(g, FzInt, d)
+  let f := ELambda(x, body)
+  if fz_chance(&mut g.c, 50) {
+    ECall("twice", [f, arg])
+  } else {
+    let name := fz_cat("g", x)
+    ELet(name, f, ECall(name, [arg]))
+  }
+}
+
+// A handled `ask`: the arm resumes zero, one or two times.
+pub fn fz_handle_ask(g: &mut FzGen, d: u64): FzE ! {div, divzero, overflow} {
+  let n := fz_name(g, "n")
+  let arg := fz_expr_apart(g, FzInt, d)
+  // The body asks once, and uses the answer.
+  let r := fz_name(g, "r")
+  fz_push(g, r, FzInt)
+  let after := fz_expr_apart(g, FzInt, d)
+  fz_pop(g)
+  fz_push(g, n, FzInt)
+  let arm := match fz_below(&mut g.c, 3) {
+    0 => fz_expr_apart(g, FzInt, d)
+    1 => ECall("k", [fz_expr_apart(g, FzInt, d)])
+    ^m => EBin("+", ECall("k", [EAtom(n)]), ECall("k", [fz_expr_apart(g, FzInt, d)]))
+  }
+  fz_pop(g)
+  let arms := if fz_chance(&mut g.c, 50) {
+    [EArm(fz_cat3("ask(", n, "), k"), arm)]
+  } else {
+    let v := fz_name(g, "v")
+    fz_push(g, v, FzInt)
+    let e := fz_expr_apart(g, FzInt, d)
+    fz_pop(g)
+    [EArm(fz_cat3("ask(", n, "), k"), arm), EArm(fz_cat("return ", v), e)]
+  }
+  EHandle(ELet(r, ECall("perform ask", [arg]), after), arms)
+}
+
+pub fn fz_bool_expr(g: &mut FzGen, d: u64): FzE ! {div, divzero, overflow} {
+  match fz_below(&mut g.c, 4) {
+    0 => {
+      let op := match fz_below(&mut g.c, 6) {
+        0 => "<"
+        1 => "<="
+        2 => "=="
+        3 => ">"
+        4 => ">="
+        ^m => "!="
+      }
+      fz_binary(g, FzInt, op, d)
+    }
+    1 => fz_binary(g, FzBool, if fz_chance(&mut g.c, 50) { "&&" } else { "||" }, d)
+    ^n => fz_leaf(g, FzBool)
+  }
+}
+
+pub struct FzParam { name: Text, ty: FzParamTy }
+
+pub fn fz_params(g: &mut FzGen, i: u64, j: u64, n: u64): List(FzParam) ! {div, divzero, overflow} {
+  if j >= n {
+    Nil
+  } else {
+    let t := if fz_chance(&mut g.c, 80) { FzByValue(fz_ty(g)) } else { FzRefTok }
+    let name := fz_cats(["p", Text::of_u64(i), "_", Text::of_u64(j)])
+    Cons(FzParam { name: name, ty: t }, fz_params(g, i, j + 1, n))
+  }
+}
+
+pub fn fz_param_tys(l: List(FzParam)): List(FzParamTy) {
+  match l {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.ty, fz_param_tys(rest))
+  }
+}
+
+pub fn fz_param_sigs(l: List(FzParam)): List(Text) {
+  match l {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ty := match p.ty {
+        FzByValue(t) => fz_ty_name(t)
+        FzRefTok => "&Tok"
+      }
+      Cons(fz_cat3(p.name, ": ", ty), fz_param_sigs(rest))
+    }
+  }
+}
+
+// The value parameters, as the scope of the body.
+pub fn fz_param_vars(l: List(FzParam)): List(FzVar) {
+  match l {
+    Nil => Nil
+    Cons(p, rest) => match p.ty {
+      FzByValue(t) => Cons(FzVar { name: p.name, ty: t }, fz_param_vars(rest))
+      FzRefTok => fz_param_vars(rest)
+    }
+  }
+}
+
+// The `&Tok` parameters, as what the body borrows.
+pub fn fz_param_borrows(l: List(FzParam)): List(FzOwned) {
+  match l {
+    Nil => Nil
+    Cons(p, rest) => match p.ty {
+      FzByValue(^t) => fz_param_borrows(rest)
+      FzRefTok => Cons(FzOwned { name: p.name, hold: FzRefTokParam }, fz_param_borrows(rest))
+    }
+  }
+}
+
+pub fn fz_funcs_snoc(l: List(FzFunc), f: FzFunc): List(FzFunc) {
+  match l {
+    Nil => Cons(f, Nil)
+    Cons(x, rest) => Cons(x, fz_funcs_snoc(rest, f))
+  }
+}
+
+pub fn fz_func(g: &mut FzGen, i: u64): Text ! {div, divzero, overflow} {
+  let params := fz_params(g, i, 0, fz_below(&mut g.c, 3))
+  let ret := fz_ty(g)
+  g.scope := fz_param_vars(params)
+  g.owned := fz_param_borrows(params)
+  let body := fz_expr(g, ret, 4)
+  g.scope := Nil
+  g.owned := Nil
+  let name := fz_cat("f", Text::of_u64(i))
+  g.funcs := fz_funcs_snoc(g.funcs, FzFunc { name: name, params: fz_param_tys(params), ret: ret })
+  fz_cats([
+    "fn ", name, "(", fz_join(", ", fz_param_sigs(params)), "): ", fz_ty_name(ret), " ! {budget, div, divzero, overflow} {\n  ", fz_print(body), "\n}\n"
+  ])
+}
+
+pub fn fz_shows(g: &mut FzGen, n: u64): List(Text) ! {div, divzero, overflow} {
+  if n == 0 {
+    Nil
+  } else {
+    let ty := fz_ty(g)
+    let e := fz_expr(g, ty, 4)
+    let line := fz_cat3("show(&(", fz_print(e), "))\n")
+    Cons(line, fz_shows(g, n - 1))
+  }
+}
+
+// The program the choices of `c` name, with the choices it took.
+pub fn fz_program(c: FzChoices): FzProgram ! {div, divzero, overflow} {
+  var g := FzGen { c: c, funcs: Nil, scope: Nil, owned: Nil, cells: Nil, lin_ok: true, fresh: 0 }
+  var decls := fz_prelude()
+  let nfuncs := fz_below(&mut g.c, 5)
+  var i: u64 := 0
+  while i < nfuncs {
+    decls := fz_cat(decls, fz_func(&mut g, i))
+    i := i + 1
+  }
+  let shows := fz_shows(&mut g, 1 + fz_below(&mut g.c, 6))
+  FzProgram { declarations: decls, shows: shows, choices: fz_drawn(&g.c) }
+}

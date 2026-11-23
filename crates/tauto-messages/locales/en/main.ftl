@@ -24,7 +24,8 @@ main-fmt-fix-outside = { $file }: a fix is outside the file
 
 # `tauto run`.
 main-run-tote-no-main = the tote { $name } has no src/main.taut or src/main.tauto
-main-run-interrupted = after { $steps } steps; `--steps N` raises it, `--allow-div` lifts it
+main-run-no-entry = { $path } has nothing to run: no top-level statement other than declarations (for example `perform print(...)`)
+main-run-interrupted = after { $steps } steps; `--steps N` raises it, allowing `div` at the start lifts it
 main-eval-text = text
 main-lint-unknown-option = lint: unknown option { $flag }
 main-fix-applied = fixed: { $file }:{ $line }:{ $col }: { $title }

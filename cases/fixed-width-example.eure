@@ -1,0 +1,40 @@
+@ cases.fixed_width_example_runs
+description = "examples/fixed-width checks and prints the same on every backend: its `overflow` arms have no `k`, as `overflow` does not resume."
+tote = path`../examples/fixed-width`
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `U8::of_u64` yet"
+stdout = ```
+Some(255)
+None
+255
+None
+Some(4294967295)
+None
+Some(9223372036854775807)
+Some(4611686018427387904)
+None
+None
+255
+255
+0
+4294967295
+0
+73786976294838206464
+None
+Some(-2147483648)
+None
+Some(-9223372036854775808)
+None
+2147483647
+2147483640
+18446744073709551615
+18446744073709551614
+36893488147419103233
+```
+
+@ cases.niri_rows_name_divzero
+description = "totes/niri's evaluator checks: every function that reaches an operator that may perform `divzero` names it in its row."
+imports = [path`../totes/niri/src/eval.taut`]
+source = ```tauto
+show(&1)
+```
+stdout = "1\n"

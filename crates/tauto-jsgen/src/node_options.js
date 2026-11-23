@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync, readSync, realpathSync, lstatSync, readlinkSync, readdirSync, rmSync, mkdtempSync, statSync, renameSync, copyFileSync, openSync, closeSync, fstatSync, constants as fsConstants } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, readSync, realpathSync, lstatSync, readlinkSync, readdirSync, rmSync, mkdtempSync, statSync, renameSync, chmodSync, copyFileSync, openSync, closeSync, fstatSync, constants as fsConstants, accessSync } from 'node:fs';
+import { dirname, isAbsolute, join, sep, delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
@@ -119,8 +119,24 @@ const waitFor = (wakes, ready, deadline) => new Promise(resolve => {
 });
 const children = new Map(); let nextChild = 1;
 const childOf = id => { const s = children.get(id); if (!s) throw new Error('no such program'); return s; };
+// The environment of a program run: the pairs it is given, and nothing else.
+const runEnv = env => Object.fromEntries(env);
+// The file a program name runs, as every backend resolves it: a name with a
+// directory in it as spelled; `tauto` as the `tauto` that started this run
+// (`TAUTO_EXE`); any other bare name on this run's own `PATH`, whatever
+// environment the program is given. A name not found is left as spelled.
+const runProgram = program => {
+  if (program === '' || program.includes('/') || program.includes(sep)) return program;
+  if (program === 'tauto' && process.env.TAUTO_EXE) return process.env.TAUTO_EXE;
+  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+    if (dir === '') continue;
+    const file = join(dir, program);
+    try { if (statSync(file).isFile()) { accessSync(file, fsConstants.X_OK); return file; } } catch { /* the next directory */ }
+  }
+  return program;
+};
 const childSpawn = (program, args, dir, env, stdin, modes) => new Promise((resolve, reject) => {
-  const p = spawnChild(program, args, { cwd: dir === '' ? undefined : dir, env: { ...process.env, ...Object.fromEntries(env) }, stdio: modes.map(m => m === 1 ? 'inherit' : 'pipe'), detached: true });
+  const p = spawnChild(runProgram(program), args, { cwd: dir === '' ? undefined : dir, env: runEnv(env), stdio: modes.map(m => m === 1 ? 'inherit' : 'pipe'), detached: true });
   const s = { p, done: false, code: null, wake: [], pipes: [null, null, null] };
   const wake = () => { for (const f of s.wake.splice(0)) f(); };
   const pipe = (stream, i) => { if (!stream) return; const q = { chunks: [], ended: false }; s.pipes[i] = q; stream.on('data', c => { q.chunks.push(c); wake(); }); stream.on('end', () => { q.ended = true; wake(); }); stream.on('close', () => { q.ended = true; wake(); }); stream.on('error', () => { q.ended = true; wake(); }); };
@@ -258,7 +274,16 @@ function readUnder(root,path){
   const fd=openSync(join(root,...parts),fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW|(fsConstants.O_NONBLOCK??0));
   try{if(!fstatSync(fd).isFile())throw new Error(path+': not a file');return readFileSync(fd);}finally{closeSync(fd);}
 }
-const options = {args:rest,os_on_shutdown:onShutdown,os_resolve:resolveHost,os_fetch_at:fetchAt,os_tcp_listen:tcpListen,os_tcp_accept:tcpAccept,os_tcp_connect:tcpConnect,os_tcp_read:tcpRead,os_tcp_write:tcpWrite,os_tcp_shutdown:tcpShutdown,os_tcp_close:tcpClose,os_tcp_unlisten:tcpUnlisten,permissions,env:process.env,cwd:process.cwd(),resolvePath:realPath,os_read_line:readLine,os_child_spawn:childSpawn,os_child_read:childRead,os_child_write:childWrite,os_child_close_stdin:childCloseStdin,os_child_wait:childWait,os_child_close:childClose,os_read_stdin:readStdin,os_flush:()=>{},os_print:s=>process.stdout.write(s),os_eprint:s=>process.stderr.write(s),os_read_file:p=>readFileSync(p,'utf8'),os_write_file:(p,s)=>writeFileSync(p,s),os_read_bytes:p=>new Uint8Array(readFileSync(p)),os_write_bytes:(p,b)=>writeFileSync(p,b),os_read_under:(r,p)=>new TextDecoder('utf-8',{fatal:true}).decode(readUnder(r,p)),os_read_bytes_under:(r,p)=>new Uint8Array(readUnder(r,p)),os_create_dir:p=>{mkdirSync(p,{recursive:true});},os_list_dir:p=>readdirSync(p),os_remove:p=>{if(!lstatSync(p))return;rmSync(p,{recursive:true});},os_stat:p=>{let st;try{st=statSync(p);}catch(e){if(e&&e.code==='ENOENT')return null;throw e;}return {kind:st.isDirectory()?'dir':st.isFile()?'file':'other',size:st.size,modified_ms:Math.max(0,Math.trunc(st.mtimeMs))};},os_read_link:p=>{let st;try{st=lstatSync(p);}catch(e){if(e&&e.code==='ENOENT')return null;throw e;}return st.isSymbolicLink()?readlinkSync(p):null;},os_write_new:(p,s)=>writeFileSync(p,s,{flag:'wx'}),os_move_path:(a,b)=>renameSync(a,b),os_copy_file:(a,b)=>copyFileSync(a,b),os_canonicalize:p=>realpathSync(p),os_temp_dir:()=>mkdtempSync(join(tmpdir(),'tauto-')),os_run:(program,args,dir,env,stdin)=>{const r=spawnSync(program,args,{cwd:dir===''?undefined:dir,env:{...process.env,...Object.fromEntries(env)},input:stdin,maxBuffer:1<<30});if(r.error)throw r.error;return {status:r.status,stdout:new Uint8Array(r.stdout),stderr:r.stderr.toString('utf8')};}};
+// What the run is for and where its report goes (`TAUTO_ENTRY`, `TAUTO_TEST_NAMES`,
+// `TAUTO_TEST_RETRIES`, `TAUTO_TEST_REPORT`): a line for each event, its fields apart by tabs.
+const entryField = f => String(f).replace(/\\/g, '\\\\').replace(/\t/g, '\\t').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+const entryFields = l => l.split('\t').map(f => f.replace(/\\(.)/g, (_, c) => c === 't' ? '\t' : c === 'n' ? '\n' : c === 'r' ? '\r' : c));
+// What `tauto check --lines` says of a file, seven fields for each diagnostic.
+const entryCheck = path => {const unavailable=why=>['error','check-unavailable','0','0','0','0',why],exe=process.env.TAUTO_EXE??'tauto',root=process.env.TAUTO_TEST_ROOT,file=root&&!isAbsolute(path)?join(root,path):path,env={...process.env};delete env.TAUTO_ENTRY;delete env.TAUTO_TEST_NAMES;delete env.TAUTO_TEST_REPORT;const r=spawnSync(exe,['check','--lines',file],{env,maxBuffer:1<<30});if(r.error)return unavailable(exe+': '+r.error.message);const answer=[];for(const l of r.stdout.toString('utf8').split('\n')){if(l==='')continue;const f=entryFields(l);if(f.length===7)answer.push(...f);}if(answer.length===0&&r.status!==0)return unavailable(r.stderr.toString('utf8').trim());return answer;};
+const entry = {check:entryCheck,mode:process.env.TAUTO_ENTRY,retries:Number(process.env.TAUTO_TEST_RETRIES??0)||0,names:process.env.TAUTO_TEST_NAMES===undefined?undefined:entryFields(process.env.TAUTO_TEST_NAMES),report:fields=>{const file=process.env.TAUTO_TEST_REPORT;if(file)appendFileSync(file,fields.map(entryField).join('\t')+'\n');}};
+// The language of the messages, as the tauto command chooses it.
+const lang = ['TAUTO_LANG', 'LC_ALL', 'LC_MESSAGES', 'LANG'].map(k => process.env[k]).find(v => v);
+const options = {lang,entry,args:rest,os_on_shutdown:onShutdown,os_resolve:resolveHost,os_fetch_at:fetchAt,os_tcp_listen:tcpListen,os_tcp_accept:tcpAccept,os_tcp_connect:tcpConnect,os_tcp_read:tcpRead,os_tcp_write:tcpWrite,os_tcp_shutdown:tcpShutdown,os_tcp_close:tcpClose,os_tcp_unlisten:tcpUnlisten,permissions,env:process.env,cwd:process.cwd(),resolvePath:realPath,os_read_line:readLine,os_child_spawn:childSpawn,os_child_read:childRead,os_child_write:childWrite,os_child_close_stdin:childCloseStdin,os_child_wait:childWait,os_child_close:childClose,os_read_stdin:readStdin,os_flush:()=>{},os_print:s=>process.stdout.write(s),os_eprint:s=>process.stderr.write(s),os_read_file:p=>readFileSync(p,'utf8'),os_write_file:(p,s)=>writeFileSync(p,s),os_read_bytes:p=>new Uint8Array(readFileSync(p)),os_write_bytes:(p,b)=>writeFileSync(p,b),os_read_under:(r,p)=>new TextDecoder('utf-8',{fatal:true}).decode(readUnder(r,p)),os_read_bytes_under:(r,p)=>new Uint8Array(readUnder(r,p)),os_create_dir:p=>{mkdirSync(p,{recursive:true});},os_list_dir:p=>readdirSync(p),os_remove:p=>{if(!lstatSync(p))return;rmSync(p,{recursive:true});},os_stat:p=>{let st;try{st=statSync(p);}catch(e){if(e&&e.code==='ENOENT')return null;throw e;}return {kind:st.isDirectory()?'dir':st.isFile()?'file':'other',size:st.size,modified_ms:Math.max(0,Math.trunc(st.mtimeMs)),executable:(st.mode&0o100)!==0};},os_read_link:p=>{let st;try{st=lstatSync(p);}catch(e){if(e&&e.code==='ENOENT')return null;throw e;}return st.isSymbolicLink()?readlinkSync(p):null;},os_write_new:(p,s)=>writeFileSync(p,s,{flag:'wx'}),os_move_path:(a,b)=>renameSync(a,b),os_set_mode:(p,r,x)=>chmodSync(p,(r?0o444:0o644)|(x?0o111:0)),os_copy_file:(a,b)=>copyFileSync(a,b),os_canonicalize:p=>realpathSync(p),os_temp_dir:()=>mkdtempSync(join(tmpdir(),'tauto-')),os_run:(program,args,dir,env,stdin)=>{const r=spawnSync(runProgram(program),args,{cwd:dir===''?undefined:dir,env:runEnv(env),input:stdin,maxBuffer:1<<30});if(r.error)throw r.error;return {status:r.status,stdout:new Uint8Array(r.stdout),stderr:r.stderr.toString('utf8')};}};
 
 // A suspended program cannot resume once Node has no remaining host work.
 const runUntilIdle = async promise => {

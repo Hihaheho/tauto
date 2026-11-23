@@ -91,6 +91,7 @@ fn semver(rev: Text): TbLocked {
     "https://example.com/tauto/monorepo",
     "refs/heads/main",
     "semver",
+    false,
     None,
     rev,
     "sha256:0000000000000000000000000000000000000000000000000000000000000000"
@@ -103,12 +104,45 @@ fn text_tote(): TbLocked {
     "file:///srv/git/text.git",
     "refs/tags/v1",
     "",
+    false,
     None,
     "sha1:1111111111111111111111111111111111111111",
     "sha256:2222222222222222222222222222222222222222222222222222222222222222"
   )
 }
 
+fn draw_typeset(): TbLocked {
+  MkLocked(
+    "typeset",
+    "https://example.com/tauto/draw",
+    "refs/heads/main",
+    "totes/typeset",
+    true,
+    None,
+    "sha1:1111111111111111111111111111111111111111",
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  )
+}
+
+// A sparse source is written with `sparse = true` after `dir`, and is not the
+// source of the same directory fetched whole.
+pub theorem tb_render_sparse(): tb_render(Cons(draw_typeset(), Nil)) =
+"// Written by `tauto lock` and `tauto update`: the exact commit and content\n// of each tote fetched from Git. Commit it with the project.\nformat = 1\n\n@ totes[] {\n  name = \"typeset\"\n  git = \"https://example.com/tauto/draw\"\n  ref = \"refs/heads/main\"\n  dir = \"totes/typeset\"\n  sparse = true\n  rev = \"sha1:1111111111111111111111111111111111111111\"\n  source = \"sha256:2222222222222222222222222222222222222222222222222222222222222222\"\n}\n" {
+  Refl
+}
+pub theorem tb_sparse_is_another_source(): tb_same_source(
+  draw_typeset(),
+  MkLocked(
+    "typeset",
+    "https://example.com/tauto/draw",
+    "refs/heads/main",
+    "totes/typeset",
+    false,
+    None,
+    "sha1:1111111111111111111111111111111111111111",
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  )
+) = false { Refl }
 pub theorem tb_put_in_order(): tb_put(
   Cons(text_tote(), Nil),
   semver("sha1:0")

@@ -1,13 +1,13 @@
 // Macros over several files. A
 // `{{par:NAME}}` is the grammar in `grammars/NAME.par`; its tables are in
-// `.tauto-syntax`, made by `scripts/generate-syntax-fixtures.sh`.
+// `.tauto-syntax`, made by `scripts/generate-syntax-fixtures.taut`.
 
 @ cases.a-syntax-macro-makes-the-theorem-statement
 files."math.nib" = ````nib
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
@@ -15,7 +15,7 @@ pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -25,11 +25,11 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -56,7 +56,7 @@ files."math.nib" = ````nib
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
@@ -64,7 +64,7 @@ pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -74,11 +74,11 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -95,7 +95,7 @@ files."math.nib" = ````nib
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
@@ -103,7 +103,7 @@ pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -113,11 +113,11 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -134,7 +134,7 @@ files."main.nib" = ````nib
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
@@ -142,7 +142,7 @@ fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
   }
 }
 
-fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -152,11 +152,11 @@ fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, 
   }
 }
 
-fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -171,8 +171,8 @@ files."math.nib" = ````nib
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
-  let _ := read_file("/etc/passwd")
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
+  let ^read := read_file("/etc/passwd")
   quote { Eq(Nat, 1, 1) }
 }
 ````
@@ -187,9 +187,9 @@ files."math.nib" = ````nib
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-pub fn spin(n: i64): i64 ! {Div} { spin(n) }
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
-  let _ := spin(0)
+pub fn spin(n: i64): i64 ! {div} { spin(n) }
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
+  let ^spun := spin(0)
   quote { Eq(Nat, 1, 1) }
 }
 ````
@@ -205,40 +205,39 @@ macro_error = "macro.budget_exceeded"
 // rules the generator adds (`SumList`), and the parser.
 @ cases.a-syntax-declaration-makes-types-and-a-parser
 files."main.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
 ````
 expands = ```nib
-module math {
-  pub(open) struct Eqn {
-    span: SynSpan, sum: math::Sum, equals: SynToken, sum_2: math::Sum
-  }
-  pub(open) struct Paren {
-    span: SynSpan, l_paren: SynToken, sum: math::Sum, r_paren: SynToken
-  }
-  pub(open) struct Sum {
-    span: SynSpan, term: math::Term, rep: List(math::Sum_Rep1)
-  }
-  pub(open) struct Sum_Rep1 {
-    span: SynSpan, plus: SynToken, term: math::Term
-  }
-  pub(open) enum Term {
-    Num(SynToken)
-    Paren(math::Paren)
-    Embed(SynExpr)
-  }
-  pub(open) fn parse(t: Text): Result(math::Eqn, SynDiag) { Syn::parse("math", "de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791", t) }
+pub(open) struct math::Eqn {
+  span: SynSpan, sum: math::Sum, equals: SynToken, sum_2: math::Sum
 }
+pub(open) struct math::Paren {
+  span: SynSpan, l_paren: SynToken, sum: math::Sum, r_paren: SynToken
+}
+pub(open) struct math::Sum {
+  span: SynSpan, term: math::Term, rep: List(math::Sum_Rep1)
+}
+pub(open) struct math::Sum_Rep1 {
+  span: SynSpan, plus: SynToken, term: math::Term
+}
+pub(open) enum math::Term {
+  Num(SynToken)
+  Paren(math::Paren)
+  Embed(SynExpr)
+}
+pub(open) fn math::parse(t: Text): Result(math::Eqn, SynDiag) { Syn::parse("math", "de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791", t) }
 ```
 
 // A literal that no macro reads is the value of the typed AST. It runs no
 // code of the user, so it may be in the file of the `syntax` declaration.
 @ cases.a-literal-without-a-macro-is-a-value
+llvm.unimplemented = "generate: the LLVM backend does not write a `SynDeclaration` yet"
 files."main.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
@@ -254,11 +253,15 @@ let rhs := match e.sum_2.term {
   Paren(p) => "paren"
   Embed(x) => "embed"
 }
-perform show("lhs", lhs)
-perform show("equals", e.equals.text)
-perform show("rhs", rhs)
+show(&lhs)
+show(&e.equals.text)
+show(&rhs)
 ````
-shows = ["lhs = \"paren\"", "equals = \"=\"", "rhs = \"6\""]
+stdout = ```
+"paren"
+"="
+"6"
+```
 
 @ cases.a-literal-without-a-macro-is-read-when-checked
 files."main.nib" = ````nib
@@ -279,7 +282,7 @@ let x := `1 + 2 = 3`
 macro_error = "a syntax literal needs the syntax's name"
 
 @ cases.an-embedded-expression-is-only-in-a-macro-argument
-unimplemented = "a literal that no macro reads takes $n and ${…} as a SynExpr instead of refusing them"
+eval.unimplemented = "a literal that no macro reads takes $n and ${…} as a SynExpr instead of refusing them"
 files."main.nib" = ````nib
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
@@ -292,12 +295,12 @@ macro_error = "is written only in a macro argument"
 // A second macro of the same syntax, with another meaning.
 @ cases.two-macros-read-one-syntax
 files."math.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
@@ -305,7 +308,7 @@ pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -315,11 +318,11 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div, overflow} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -327,16 +330,16 @@ pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
 ````
 files."check.nib" = ````nib
 import "math.nib"
-import std::prelude::Macro
+import std::builtin::macro
 
-pub fn digits(t: Text, i: u64, acc: u64): u64 ! {Div} {
+pub fn digits(t: Text, i: u64, acc: u64): u64 ! {div, overflow} {
   match Text::byte(t, i) {
     Some(b) => digits(t, i + 1, acc * 10 + (U64::of_u8(b) - 48))
     None => acc
   }
 }
 
-pub fn math_term_value(t: math::Term, at: SynSpan): u64 ! {macro_error, Div} {
+pub fn math_term_value(t: math::Term, at: SynSpan): u64 ! {macro_error, div, overflow} {
   match t {
     Num(tok) => digits(tok.text, 0, 0)
     Paren(p) => math_value(p.sum)
@@ -344,18 +347,18 @@ pub fn math_term_value(t: math::Term, at: SynSpan): u64 ! {macro_error, Div} {
   }
 }
 
-pub fn math_rest_value(acc: u64, rest: List(math::Sum_Rep1)): u64 ! {macro_error, Div} {
+pub fn math_rest_value(acc: u64, rest: List(math::Sum_Rep1)): u64 ! {macro_error, div, overflow} {
   match rest {
     Nil => acc
     Cons(r, more) => math_rest_value(acc + math_term_value(r.term, r.span), more)
   }
 }
 
-pub fn math_value(s: math::Sum): u64 ! {macro_error, Div} {
+pub fn math_value(s: math::Sum): u64 ! {macro_error, div, overflow} {
   math_rest_value(math_term_value(s.term, s.span), s.rep)
 }
 
-pub macro fn math_check(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math_check(e: math::Eqn): SynExpr ! {macro_error, div, overflow} {
   if math_value(e.sum) == math_value(e.sum_2) { quote { true } } else { quote { false } }
 }
 ````
@@ -364,25 +367,28 @@ import "check.nib"
 theorem t(): math!(`1 + 2 = 3`) { Refl }
 let ok := math_check!(`1 + 2 = 3`)
 let ng := math_check!(math`(1 + 2) + 10 = 4`)
-perform show("ok", ok)
-perform show("ng", ng)
+show(&ok)
+show(&ng)
 ````
 expands = ```nib
 theorem t(): 1 + 2 = 3 { Eq::Refl }
 let ok := true
 let ng := false
-perform show("ok", ok)
-perform show("ng", ng)
+show(&ok)
+show(&ng)
 ```
 trace = ["math", "math_check", "math_check"]
-shows = ["ok = true", "ng = false"]
+stdout = ```
+true
+false
+```
 
 @ cases.a-literal-of-another-syntax-is-refused
 files."math.nib" = ````nib
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
@@ -390,7 +396,7 @@ pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -400,11 +406,11 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -424,12 +430,12 @@ macro_error = "macro.syntax_mismatch: macro math reads math, and the literal is 
 // `plaintext` is a built-in syntax (its value is the `Text`), so a literal of
 // it is refused as another syntax.
 @ cases.a-plaintext-literal-is-another-syntax
-unimplemented = "a plaintext literal is refused as no syntax literal at all (macro.argument: macro math takes a syntax literal)"
+eval.unimplemented = "a plaintext literal is refused as no syntax literal at all (macro.argument: macro math takes a syntax literal)"
 files."math.nib" = ````nib
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
@@ -437,7 +443,7 @@ pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -447,11 +453,11 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -467,54 +473,54 @@ macro_error = "macro.syntax_mismatch: macro math reads math, and the literal is 
 // literal (`Syn::lift_u64`): the one way across the stages.
 @ cases.a-macro-computes-at-compile-time
 files."fib.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(fibn, ```par
 {{par:fibn}}```) => struct N, fn parse
-pub fn fib_value(n: u64): u64 ! {Div} { if n < 2 { n } else { fib_value(n - 1) + fib_value(n - 2) } }
+pub fn fib_value(n: u64): u64 ! {div, overflow} { if n < 2 { n } else { fib_value(n - 1) + fib_value(n - 2) } }
 
-pub fn digits(t: Text, i: u64, acc: u64): u64 ! {Div} {
+pub fn digits(t: Text, i: u64, acc: u64): u64 ! {div, overflow} {
   match Text::byte(t, i) {
     Some(b) => digits(t, i + 1, acc * 10 + (U64::of_u8(b) - 48))
     None => acc
   }
 }
 
-macro fn fib(n: fibn::N): SynExpr ! {macro_error, Div} {
+pub macro fn fib(n: fibn::N): SynExpr ! {macro_error, div, overflow} {
   Syn::lift_u64(fib_value(digits(n.digits.text, 0, 0)), n.span)
 }
 ````
 files."main.nib" = ````nib
 import "fib.nib"
 let x := fib!(`20`)
-perform show("x", x)
+show(&x)
 ````
 expands = ```nib
 let x := 6765
-perform show("x", x)
+show(&x)
 ```
-shows = ["x = 6765"]
+stdout = "6765\n"
 
 @ cases.a-compile-time-computation-runs-out-of-its-budget
 files."fib.nib" = ````nib
 syntax!(fibn, ```par
 {{par:fibn}}```) => struct N, fn parse
-pub fn fib_value(n: u64): u64 ! {Div} { if n < 2 { n } else { fib_value(n - 1) + fib_value(n - 2) } }
+pub fn fib_value(n: u64): u64 ! {div, overflow} { if n < 2 { n } else { fib_value(n - 1) + fib_value(n - 2) } }
 
-pub fn digits(t: Text, i: u64, acc: u64): u64 ! {Div} {
+pub fn digits(t: Text, i: u64, acc: u64): u64 ! {div, overflow} {
   match Text::byte(t, i) {
     Some(b) => digits(t, i + 1, acc * 10 + (U64::of_u8(b) - 48))
     None => acc
   }
 }
 
-macro fn fib(n: fibn::N): SynExpr ! {macro_error, Div} {
+pub macro fn fib(n: fibn::N): SynExpr ! {macro_error, div, overflow} {
   Syn::lift_u64(fib_value(digits(n.digits.text, 0, 0)), n.span)
 }
 ````
 files."main.nib" = ````nib
 import "fib.nib"
-let x := fib!(`30`)
+let x := fib!(`40`)
 ````
 macro_error = "macro.budget_exceeded"
 
@@ -540,11 +546,12 @@ macro_error = "macro.row"
 
 @ cases.a-macro-function-may-not-show
 files."math.nib" = ````nib
+import std::builtin::macro
 syntax!(math, ```par
 {{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-pub macro fn noisy(e: math::Eqn): SynExpr ! {∀ A. show(A)} {
-  perform show("e", 1)
+pub macro fn noisy(e: math::Eqn): SynExpr ! {Show} {
+  show(&1)
   quote { 0 }
 }
 ````
@@ -552,7 +559,7 @@ files."main.nib" = ````nib
 import "math.nib"
 let x := noisy!(`1 = 1`)
 ````
-macro_error = "macro.row: the function of a macro may perform macro_error, macro_warn, elab and Div, and `noisy` performs show"
+macro_error = "macro.row: the function of a macro may perform macro_error, macro_warn, elab, div, budget, budget_memory and the operations on a `Ref`, and `noisy` performs stdout"
 
 @ cases.a-macro-may-not-produce-an-axiom
 files."math.nib" = ````nib
@@ -581,7 +588,7 @@ macro_error = "$ is written only inside quote"
 // the files that read the standard library's `Text` still mean the type.
 @ cases.a-terminal-named-text-does-not-hide-the-text-type
 files."atom.nib" = ````nib
-import std::Text
+import std::text
 syntax!(atom, ```par
 {{par:text_atom}}```) => enum Atom, fn parse
 pub fn atom_name(a: atom::Atom): std.prelude.Text {
@@ -600,16 +607,16 @@ pub fn atom_kind(src: std.prelude.Text): std.prelude.Text {
 ````
 files."main.nib" = ````nib
 import "atom.nib"
-import std::Text
+import std::text
 theorem len(): Text::len("ab") = 2 { Refl }
 ````
 checks.len = "ok"
 
 // The names a syntax literal's value is built with (`SynToken`, `SynSpan`) are written by the
-// literal's expansion: the file that uses the literal need not import `std::prelude::Macro`.
+// literal's expansion: the file that uses the literal need not import `std::builtin::macro`.
 @ cases.a-syntax-literal-does-not-need-the-macro-import
 files."atom.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(atom, ```par
 {{par:text_atom}}```) => enum Atom, fn parse
 ````
@@ -621,3 +628,36 @@ fn other(): atom::Atom {
 }
 ````
 types = "ok"
+
+@ cases.a-caret-on-a-token-non-terminal-drops-its-field
+files."clip.nib" = ````nib
+syntax!(clip, ```par
+{{par:clip_token}}```) => struct Clause, struct Piece, struct Clause_Rep1, fn parse
+import std::builtin::macro
+pub macro fn clip(c: clip::Clause): SynExpr { c.dot }
+````
+files."main.nib" = ````nib
+import "clip.nib"
+theorem t(): clip!(`a b, c.`) { Refl }
+````
+checks."main.nib::macro" = "error: macro.function: `clip`, the function of macro clip, is not defined before this file: it does not check (clip::Clause has no field `dot`)"
+
+// A run-time parse reads the first start symbol: the types only a later start symbol reaches
+// (`Extra`, read by a macro) are never made at run time, and the program needs no type of them.
+@ cases.a-run-time-parse-of-a-grammar-with-a-second-start-symbol
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Syn::parse` yet"
+files."main.taut" = ````tauto
+import std::builtin::macro
+
+syntax!(two, ```par
+{{par:two_starts}}```) => struct Pair, struct Extra, fn parse
+
+match two::parse("1 2") {
+  Ok(p) => show(&p.num_2.text)
+  Err(d) => show(&d.message)
+}
+````
+entry = "main.taut"
+stdout = ```
+"2"
+```

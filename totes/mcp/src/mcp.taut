@@ -1,9 +1,8 @@
-import std::Base
-import std::prelude::Os
-import std::prelude::Shared
-import std::List
-import std::Text
-import std::Data
+import std::base
+import std::builtin::os
+import std::list
+import std::text
+import std::data
 import json::json
 import "../src/jsonrpc.taut"
 
@@ -52,12 +51,13 @@ pub(open) enum McpError {
   ToolNotFound(Text)
   ToolExecutionFailed(Text)
   InvalidToolParams(Text)
+  UnknownMethod(Text)
 }
 
 pub fn handle_mcp_request(
   state: McpState,
   req: RpcRequest
-): Result(Pair(McpState, Json), McpError) {
+): Result(McpState × Json, McpError) ! {div, environ, overflow, proc_run} {
   match state.initialized {
     false => match Text::eq(req.method, "initialize") {
       true => handle_initialize(state, req)
@@ -71,7 +71,7 @@ pub fn handle_mcp_request(
           true => handle_tools_list(state, req)
           false => match Text::eq(req.method, "tools/call") {
             true => handle_tools_call(state, req)
-            false => Err(ToolNotFound(req.method))
+            false => Err(UnknownMethod(req.method))
           }
         }
       }
@@ -82,7 +82,7 @@ pub fn handle_mcp_request(
 fn handle_initialize(
   state: McpState,
   req: RpcRequest
-): Result(Pair(McpState, Json), McpError) {
+): Result(McpState × Json, McpError) ! {div} {
   let client_info: ClientInfo := extract_client_info(req.params)
   let new_state: McpState := McpState {
     initialized: true,
@@ -94,7 +94,7 @@ fn handle_initialize(
   Ok(#(new_state, response))
 }
 
-fn extract_client_info(params: Option(Json)): ClientInfo {
+fn extract_client_info(params: Option(Json)): ClientInfo ! {div} {
   match params {
     None => ClientInfo { name: "unknown", version: "0.0.0" }
     Some(p) => {
@@ -111,7 +111,7 @@ fn extract_client_info(params: Option(Json)): ClientInfo {
   }
 }
 
-fn extract_string_field(obj: Json, key: Text, default: Text): Text {
+fn extract_string_field(obj: Json, key: Text, default: Text): Text ! {div} {
   match json_get(obj, key) {
     None => default
     Some(val) => match json_str(Some(val)) {
@@ -141,14 +141,14 @@ fn make_initialize_response(state: McpState): Json {
   )
 }
 
-fn handle_ping(state: McpState, req: RpcRequest): Result(Pair(McpState, Json), McpError) {
+fn handle_ping(state: McpState, req: RpcRequest): Result(McpState × Json, McpError) {
   Ok(#(state, JObj(Nil)))
 }
 
 fn handle_tools_list(
   state: McpState,
   req: RpcRequest
-): Result(Pair(McpState, Json), McpError) {
+): Result(McpState × Json, McpError) {
   let tools: List(Json) := make_tool_list()
   let response: Json := JObj(Cons(#("tools", JArr(tools)), Nil))
   Ok(#(state, response))
@@ -414,7 +414,7 @@ fn make_library_params_schema(): Json {
 fn handle_tools_call(
   state: McpState,
   req: RpcRequest
-): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+): Result(McpState × Json, McpError) ! {proc_run, environ, div, overflow} {
   match req.params {
     None => Err(InvalidToolParams("missing params"))
     Some(params) => {
@@ -434,7 +434,7 @@ fn execute_tool(
   state: McpState,
   name: Text,
   args: Json
-): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+): Result(McpState × Json, McpError) ! {proc_run, environ, div, overflow} {
   match Text::eq(name, "tauto_check") {
     true => execute_check_tool(state, args)
     false => match Text::eq(name, "tauto_goals") {
@@ -456,7 +456,7 @@ fn execute_tool(
 fn execute_check_tool(
   state: McpState,
   args: Json
-): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+): Result(McpState × Json, McpError) ! {proc_run, environ, div, overflow} {
   let file: Text := extract_string_field(args, "file", "")
   match Text::eq(file, "") {
     true => Err(InvalidToolParams("file required"))
@@ -465,8 +465,8 @@ fn execute_check_tool(
         program: "tauto",
         args: Cons("check", Cons("--json", Cons(file, Nil))),
         dir: "",
-        env: Nil,
-        stdin: Bytes::empty
+        env: perform environ(),
+        stdin: Bytes::of_list(Nil)
       }
       match perform proc_run(process) {
         Err(_) => Err(ToolExecutionFailed("failed to run tauto check"))
@@ -491,7 +491,7 @@ fn execute_check_tool(
 fn execute_goals_tool(
   state: McpState,
   args: Json
-): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+): Result(McpState × Json, McpError) ! {proc_run, environ, div, overflow} {
   let file: Text := extract_string_field(args, "file", "")
   let hole: Text := extract_string_field(args, "hole", "")
   match Text::eq(file, "") {
@@ -502,8 +502,8 @@ fn execute_goals_tool(
         program: "tauto",
         args: tauto_args,
         dir: "",
-        env: Nil,
-        stdin: Bytes::empty
+        env: perform environ(),
+        stdin: Bytes::of_list(Nil)
       }
       match perform proc_run(process) {
         Err(_) => Err(ToolExecutionFailed("failed to run tauto goals"))
@@ -535,7 +535,7 @@ fn build_goals_args(file: Text, hole: Text): List(Text) {
 fn execute_try_tool(
   state: McpState,
   args: Json
-): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+): Result(McpState × Json, McpError) ! {proc_run, environ, div, overflow} {
   let file: Text := extract_string_field(args, "file", "")
   let hole: Text := extract_string_field(args, "hole", "")
   let expr: Text := extract_string_field(args, "expr", "")
@@ -556,8 +556,8 @@ fn execute_try_tool(
               )
             ),
             dir: "",
-            env: Nil,
-            stdin: Bytes::empty
+            env: perform environ(),
+            stdin: Bytes::of_list(Nil)
           }
           match perform proc_run(process) {
             Err(_) => Err(ToolExecutionFailed("failed to run tauto try"))
@@ -569,7 +569,7 @@ fn execute_try_tool(
                   Err(_) => Err(ToolExecutionFailed("invalid JSON output"))
                   Ok(json_output) => {
                     let result: Json := make_tool_result(json_output)
-                    Ok(#(mcp_state_new(), result))
+                    Ok(#(state, result))
                   }
                 }
               }
@@ -584,7 +584,7 @@ fn execute_try_tool(
 fn execute_suggest_tool(
   state: McpState,
   args: Json
-): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+): Result(McpState × Json, McpError) ! {proc_run, environ, div, overflow} {
   let file: Text := extract_string_field(args, "file", "")
   let hole: Text := extract_string_field(args, "hole", "")
   let limit_val: Option(Json) := json_get(args, "limit")
@@ -598,8 +598,8 @@ fn execute_suggest_tool(
           program: "tauto",
           args: tauto_args,
           dir: "",
-          env: Nil,
-          stdin: Bytes::empty
+          env: perform environ(),
+          stdin: Bytes::of_list(Nil)
         }
         match perform proc_run(process) {
           Err(_) => Err(ToolExecutionFailed("failed to run tauto suggest"))
@@ -611,7 +611,7 @@ fn execute_suggest_tool(
                 Err(_) => Err(ToolExecutionFailed("invalid JSON output"))
                 Ok(json_output) => {
                   let result: Json := make_tool_result(json_output)
-                  Ok(#(mcp_state_new(), result))
+                  Ok(#(state, result))
                 }
               }
             }
@@ -643,7 +643,7 @@ fn build_suggest_args(file: Text, hole: Text, limit: Option(Json)): List(Text) {
 fn execute_library_tool(
   state: McpState,
   args: Json
-): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+): Result(McpState × Json, McpError) ! {proc_run, environ, div, overflow} {
   let file: Text := extract_string_field(args, "file", "")
   match Text::eq(file, "") {
     true => Err(InvalidToolParams("file required"))
@@ -652,8 +652,8 @@ fn execute_library_tool(
         program: "tauto",
         args: Cons("library", Cons("--json", Cons(file, Nil))),
         dir: "",
-        env: Nil,
-        stdin: Bytes::empty
+        env: perform environ(),
+        stdin: Bytes::of_list(Nil)
       }
       match perform proc_run(process) {
         Err(_) => Err(ToolExecutionFailed("failed to run tauto library"))
@@ -682,7 +682,7 @@ fn bytes_to_text(b: Bytes): Text {
   }
 }
 
-fn make_tool_result(json: Json): Json {
+fn make_tool_result(json: Json): Json ! {div, overflow} {
   JObj(
     Cons(
       #(
@@ -710,6 +710,7 @@ pub fn mcp_error_to_rpc_error(err: McpError): RpcError {
     AlreadyInitialized => ServerError(-32003, "Server already initialized")
     ToolNotFound(name) => ServerError(-32004, Text::concat("Tool not found: ", name))
     ToolExecutionFailed(msg) => ServerError(-32005, Text::concat("Tool execution failed: ", msg))
+    UnknownMethod(_) => MethodNotFound
     InvalidToolParams(msg) => ServerError(-32006, Text::concat("Invalid tool params: ", msg))
   }
 }

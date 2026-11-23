@@ -2,9 +2,9 @@ import "rules_registered_signatures.taut"
 import "program_function_table_preserved.taut"
 import "function_name_fresh.taut"
 import "../../surface/src/surface.taut"
-import std::Map
-import std::Row
-import std::Text
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "function_name_absence.taut"
@@ -15,18 +15,19 @@ import "rules_decls.taut"
 import "signature_frame.taut"
 import "signature_table_frame.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
 pub(open) inductive FunctionBeforeRest(
   rest: List(SurfaceStmt)
-): (Option(Pair(SurfaceFn, Scheme))) -> Prop {
+): (Option(SurfaceFn × Scheme)) -> Prop {
   FunctionBeforeNone: FunctionBeforeRest(rest, None)
   FunctionBeforeSome(
     source: SurfaceFn,
     scheme: Scheme,
     apart: FunctionNameAbsent(signature_name(source), types_function_decls(rest))
-  ): FunctionBeforeRest(rest, Some(Pair {fst: source, snd: scheme}))
+  ): FunctionBeforeRest(rest, Some(#(source, scheme)))
 }
 
 pub theorem fnt_some_registered(
@@ -63,7 +64,7 @@ pub theorem fnt_some_before(
   m: Mut1(Scheme, Checker),
   absent: FunctionNameAbsent(signature_name(source), types_function_decls(rest))
 ): FunctionBeforeRest(rest, ck_val(signature_some_after(source, m))) {
-  ⊢ FunctionBeforeRest(rest, ck_val(signature_some_after(source, m))) from match m {
+  match m {
     mut1(scheme, next) => FunctionBeforeSome(source, scheme, absent)
   }
 }
@@ -71,7 +72,7 @@ pub theorem fnt_none_before(
   rest: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
 ): FunctionBeforeRest(rest, ck_val(signature_none_after(m))) {
-  ⊢ FunctionBeforeRest(rest, ck_val(signature_none_after(m))) from match m {
+  match m {
     mut1(ignored, next) => FunctionBeforeNone
   }
 }
@@ -88,13 +89,12 @@ pub theorem ck_program_decl_registered(
     fnt_table(ck_st(ck_program_decl(c, stmt))),
     ck_val(ck_program_decl(c, stmt))
   ) from match stmt {
-    StLet(name, ty, value, borrow, mutable) => RegisteredOptionalNone
-    StVar(name, ty, value, borrow) => RegisteredOptionalNone
-    StModule(name, stmts, start, end) => RegisteredOptionalNone
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => RegisteredOptionalNone
+    StVar(name, ty, value, r#borrow, unused, st_stack) => RegisteredOptionalNone
     StAssign(name, name_place, value) => RegisteredOptionalNone
     StCalled(name_generates, value) => RegisteredOptionalNone
     StFn(f) => Eq::subst(
-      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => RegisteredOptionalSignature(
+      (result: Mut1(Option(SurfaceFn × Scheme), Checker)) => RegisteredOptionalSignature(
         fnt_table(ck_st(result)),
         ck_val(result)
       ),
@@ -107,7 +107,7 @@ pub theorem ck_program_decl_registered(
     StImport(path, start, end) => RegisteredOptionalNone
     StInductive(i) => RegisteredOptionalNone
     StEffect(e) => Eq::subst(
-      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => RegisteredOptionalSignature(
+      (result: Mut1(Option(SurfaceFn × Scheme), Checker)) => RegisteredOptionalSignature(
         fnt_table(ck_st(result)),
         ck_val(result)
       ),
@@ -116,12 +116,12 @@ pub theorem ck_program_decl_registered(
     )
     StStruct(d) => RegisteredOptionalNone
     StEnum(d) => RegisteredOptionalNone
-    StExtern(abi, fns, start, end) => Eq::subst(
-      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => RegisteredOptionalSignature(
+    StExtern(fns, instances, types, structs, enums, start, end) => Eq::subst(
+      (result: Mut1(Option(SurfaceFn × Scheme), Checker)) => RegisteredOptionalSignature(
         fnt_table(ck_st(result)),
         ck_val(result)
       ),
-      Eq::sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+      Eq::sym(signature_program_decl_StExtern_unf(fns, instances, types, structs, enums, start, end, c)),
       fnt_none_registered(ck_extern_fns(fns, c))
     )
     StClass(class_decl) => RegisteredOptionalNone
@@ -130,6 +130,12 @@ pub theorem ck_program_decl_registered(
     StReturn(value) => RegisteredOptionalNone
     StExpr(value) => RegisteredOptionalNone
     StOther(what, start, end) => RegisteredOptionalNone
+    StLoop(st_body, start, end) => RegisteredOptionalNone
+    StModule(mod_name, mod_vis, mod_items, start, end) => RegisteredOptionalNone
+    StReexport(re_path, re_names, re_spans, start, end) => RegisteredOptionalNone
+    StFor(for_pat, for_src, st_body, start, end) => RegisteredOptionalNone
+    StBreak(st_value, start, end) => RegisteredOptionalNone
+    StContinue(start, end) => RegisteredOptionalNone
     StMacro(name, function, start, end) => RegisteredOptionalNone
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => RegisteredOptionalNone
     StSyntax(name, grammar, start, end) => RegisteredOptionalNone
@@ -143,14 +149,13 @@ pub theorem ck_program_decl_before(
   seen: List(Text),
   fresh: FreshFunctionNames(types_function_decls(Cons(stmt, rest)), seen)
 ): FunctionBeforeRest(rest, ck_val(ck_program_decl(c, stmt))) {
-  ⊢ FunctionBeforeRest(rest, ck_val(ck_program_decl(c, stmt))) from match stmt {
-    StLet(name, ty, value, borrow, mutable) => FunctionBeforeNone
-    StVar(name, ty, value, borrow) => FunctionBeforeNone
-    StModule(name, stmts, start, end) => FunctionBeforeNone
+  match stmt {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => FunctionBeforeNone
+    StVar(name, ty, value, r#borrow, unused, st_stack) => FunctionBeforeNone
     StAssign(name, name_place, value) => FunctionBeforeNone
     StCalled(name_generates, value) => FunctionBeforeNone
     StFn(f) => Eq::subst(
-      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => FunctionBeforeRest(
+      (result: Mut1(Option(SurfaceFn × Scheme), Checker)) => FunctionBeforeRest(
         rest,
         ck_val(result)
       ),
@@ -174,7 +179,7 @@ pub theorem ck_program_decl_before(
     StImport(path, start, end) => FunctionBeforeNone
     StInductive(i) => FunctionBeforeNone
     StEffect(e) => Eq::subst(
-      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => FunctionBeforeRest(
+      (result: Mut1(Option(SurfaceFn × Scheme), Checker)) => FunctionBeforeRest(
         rest,
         ck_val(result)
       ),
@@ -183,12 +188,12 @@ pub theorem ck_program_decl_before(
     )
     StStruct(d) => FunctionBeforeNone
     StEnum(d) => FunctionBeforeNone
-    StExtern(abi, fns, start, end) => Eq::subst(
-      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => FunctionBeforeRest(
+    StExtern(fns, instances, types, structs, enums, start, end) => Eq::subst(
+      (result: Mut1(Option(SurfaceFn × Scheme), Checker)) => FunctionBeforeRest(
         rest,
         ck_val(result)
       ),
-      Eq::sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+      Eq::sym(signature_program_decl_StExtern_unf(fns, instances, types, structs, enums, start, end, c)),
       fnt_none_before(rest, ck_extern_fns(fns, c))
     )
     StClass(class_decl) => FunctionBeforeNone
@@ -197,6 +202,12 @@ pub theorem ck_program_decl_before(
     StReturn(value) => FunctionBeforeNone
     StExpr(value) => FunctionBeforeNone
     StOther(what, start, end) => FunctionBeforeNone
+    StLoop(st_body, start, end) => FunctionBeforeNone
+    StModule(mod_name, mod_vis, mod_items, start, end) => FunctionBeforeNone
+    StReexport(re_path, re_names, re_spans, start, end) => FunctionBeforeNone
+    StFor(for_pat, for_src, st_body, start, end) => FunctionBeforeNone
+    StBreak(st_value, start, end) => FunctionBeforeNone
+    StContinue(start, end) => FunctionBeforeNone
     StMacro(name, function, start, end) => FunctionBeforeNone
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => FunctionBeforeNone
     StSyntax(name, grammar, start, end) => FunctionBeforeNone
@@ -205,7 +216,7 @@ pub theorem ck_program_decl_before(
 
 // Earlier body schemes remain in the map because source names are distinct.
 pub theorem fnt_option_after_rest<first: Option(
-  Pair(SurfaceFn, Scheme)
+  (SurfaceFn × Scheme)
 )>(
   rest: List(SurfaceStmt),
   c: Checker,
@@ -213,11 +224,11 @@ pub theorem fnt_option_after_rest<first: Option(
   before: FunctionBeforeRest(rest, first),
   registered: RegisteredOptionalSignature(fnt_table(c), first)
 ): RegisteredOptionalSignature(fnt_table(ck_st(ck_program_decls(rest, c))), first) {
-  ⊢ RegisteredOptionalSignature(fnt_table(ck_st(ck_program_decls(rest, c))), first) from match before {
+  match before {
     FunctionBeforeNone => RegisteredOptionalNone
     FunctionBeforeSome(source, scheme, absent) => ⊢ RegisteredOptionalSignature(
       fnt_table(ck_st(ck_program_decls(rest, c))),
-      Some(Pair {fst: source, snd: scheme})
+      Some(#(source, scheme))
     ) from match registered {
       RegisteredOptionalSome(stored_source, stored_scheme, found) => RegisteredOptionalSome(
         source,
@@ -234,13 +245,13 @@ pub theorem fnt_registered_opt_cons<table: Ordmap(
   Text,
   Scheme
 ), first: Option(
-  Pair(SurfaceFn, Scheme)
+  (SurfaceFn × Scheme)
 )>(
   registered: RegisteredOptionalSignature(table, first),
-  rest: List(Pair(SurfaceFn, Scheme)),
+  rest: List(SurfaceFn × Scheme),
   remaining: RegisteredSignatures(table, rest)
 ): RegisteredSignatures(table, opt_cons(first, rest)) {
-  ⊢ RegisteredSignatures(table, opt_cons(first, rest)) from match registered {
+  match registered {
     RegisteredOptionalNone => remaining
     RegisteredOptionalSome(source, scheme, found) => RegisteredSignaturesCons(
       source,
@@ -252,19 +263,18 @@ pub theorem fnt_registered_opt_cons<table: Ordmap(
   }
 }
 pub fn fnt_cons_after_tail(
-  first: Option(Pair(SurfaceFn, Scheme)),
-  m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  first: Option(SurfaceFn × Scheme),
+  m: Mut1(List(SurfaceFn × Scheme), Checker)
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    List(Pair(SurfaceFn, Scheme)),
-    List(Pair(SurfaceFn, Scheme)),
-    (tail: List(Pair(SurfaceFn, Scheme)), next: Checker) => mut1(opt_cons(first, tail), next),
+    <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+    (tail: List(SurfaceFn × Scheme), next: Checker) => mut1(opt_cons(first, tail), next),
     m
   )
 }
 pub theorem fnt_after_tail_registered(
-  first: Option(Pair(SurfaceFn, Scheme)),
-  m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  first: Option(SurfaceFn × Scheme),
+  m: Mut1(List(SurfaceFn × Scheme), Checker),
   head: RegisteredOptionalSignature(fnt_table(ck_st(m)), first),
   tail: RegisteredSignatures(fnt_table(ck_st(m)), ck_val(m))
 ): RegisteredSignatures(
@@ -280,12 +290,11 @@ pub theorem fnt_after_tail_registered(
 }
 pub fn fnt_cons_after_head(
   rest: List(SurfaceStmt),
-  m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  m: Mut1(Option(SurfaceFn × Scheme), Checker)
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    Option(Pair(SurfaceFn, Scheme)),
-    List(Pair(SurfaceFn, Scheme)),
-    (first: Option(Pair(SurfaceFn, Scheme)), next: Checker) => fnt_cons_after_tail(
+    <A: Option(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+    (first: Option(SurfaceFn × Scheme), next: Checker) => fnt_cons_after_tail(
       first,
       ck_program_decls(rest, next)
     ),
@@ -294,7 +303,7 @@ pub fn fnt_cons_after_head(
 }
 pub theorem fnt_after_head_registered(
   rest: List(SurfaceStmt),
-  m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker),
+  m: Mut1(Option(SurfaceFn × Scheme), Checker),
   ordered: CkFnsOrdered(ck_st(m)),
   registered: RegisteredOptionalSignature(fnt_table(ck_st(m)), ck_val(m)),
   before: FunctionBeforeRest(rest, ck_val(m)),
@@ -337,7 +346,7 @@ pub theorem ck_program_decls_registered(
   ) from match program {
     Nil => RegisteredSignaturesNil
     Cons(Stmt, rest) => Eq::subst(
-      (result: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => RegisteredSignatures(
+      (result: Mut1(List(SurfaceFn × Scheme), Checker)) => RegisteredSignatures(
         fnt_table(ck_st(result)),
         ck_val(result)
       ),

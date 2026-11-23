@@ -1,26 +1,30 @@
-use tauto::surface::{Stmt, SurfaceTerm, TermKind, walk};
-use tauto::types::{Ty, Width};
-use tauto_nir::{Callee, ExprKind, LowerInput};
+use tauto_nibcheck::lower::LowerInput;
+use tauto_nibcheck::types::{Ty, Width};
+use tauto_nir::{Callee, ExprKind};
+use tauto_surface::surface::{Stmt, SurfaceTerm, TermKind, walk};
 
-#[test]
-fn equal_display_spans_keep_types_widths_rows_and_binding_sites_separate() {
-    let mut program = tauto::surface::parse_program(
-        r#"
-enum Item { Item(Text) }
-fn inspect(item: Item): u64 { match item { Item(text) => Text::len(text) } }
-fn forward(item: Item, read: () -> Text): u64 { inspect(item) + Text::len(read()) }
-fn narrow(value: u32): u32 { value + 1 }
-fn wide(value: u64): u64 { value + 1 }
-fn generic<A: Shared>(&value: A): A { value }
+/// The declarations of the program, and the call whose value is observed.
+const DECLARATIONS: &str = r#"
+enum Item { Entry(Text) }
+fn inspect(item: Item): u64 { match item { Entry(text) => Text::len(text) } }
+fn forward(item: Item, read: () -> Text): u64 ! {overflow} { inspect(item) + Text::len(read()) }
+fn narrow(value: u32): u32 ! {overflow} { value + 1 }
+fn wide(value: u64): u64 ! {overflow} { value + 1 }
+fn generic<A: Shared>(value: &A): A { value }
 effect ask(): u64
 fn request(): u64 ! {ask} { perform ask() }
 fn pure(): u64 { 0 }
-fn choose(): u64 ! {ask} { pure() + request() }
-perform show("value", forward(Item("hello"), () => { let value := "hello"; generic(&value) }))
-"#,
-    )
-    .unwrap();
-    tauto::resolve::Resolver::default().statements(&mut program.stmts);
+fn choose(): u64 ! {ask, overflow} { pure() + request() }
+"#;
+const CALL: &str = r#"forward(Entry("hello"), () => { let value := "hello"; generic(&value) })"#;
+
+#[test]
+fn equal_display_spans_keep_types_widths_rows_and_binding_sites_separate() {
+    // The top level only binds: `show` is answered by the host wrapper, which a
+    // hand-lowered package does not have. The same program is run with `show` at the end.
+    let mut program =
+        tauto::surface::parse_program(&format!("{DECLARATIONS}let result := {CALL}\n")).unwrap();
+    tauto_surface::resolve::Resolver::default().statements(&mut program.stmts);
     let ask = program
         .stmts
         .iter()
@@ -32,9 +36,9 @@ perform show("value", forward(Item("hello"), () => { let value := "hello"; gener
     for stmt in &mut program.stmts {
         walk::stmt(stmt, &mut |term| term.span = tauto_parol::Span::new(7, 8));
     }
-    let types = tauto::types::check_program(&program).with_prelude();
+    let types = tauto_nibcheck::types::check_program(&program).with_prelude_for(&program);
     assert!(types.errors.is_empty(), "{:?}", types.errors);
-    let rows = tauto::rows::check_program_rows(&program);
+    let rows = tauto_nibcheck::rows::check_program_rows(&program);
     assert!(rows.errors.is_empty(), "{:?}", rows.errors);
     let mut operations = Vec::new();
     let mut calls = Vec::new();
@@ -47,7 +51,7 @@ perform show("value", forward(Item("hello"), () => { let value := "hello"; gener
                 }
                 calls.push(term.id());
                 if let TermKind::Var(name) = &*function.kind {
-                    if name.as_str() != "+" && name.as_str() != "Tuple" {
+                    if name.as_str() != "+" && name.as_str() != "Pair::Mk" {
                         assert!(types.term(function).is_some(), "{function:?}");
                     }
                     if name.as_str() == "pure" {
@@ -76,9 +80,7 @@ perform show("value", forward(Item("hello"), () => { let value := "hello"; gener
     assert!(operations.contains(&Width::U32));
     assert!(operations.contains(&Width::U64));
     assert!(calls.iter().all(|id| rows.calls.contains_key(id)));
-    let result = tauto::eval::run_program_with(&program, 100_000, Default::default()).unwrap();
-    assert_eq!(result.outputs, [("value".into(), "10".into())]);
-    let package = tauto_nir::lower(LowerInput {
+    let package = tauto_nibcheck::lower::lower(LowerInput {
         program: &program,
         types: &types,
         rows: &rows,
@@ -86,6 +88,8 @@ perform show("value", forward(Item("hello"), () => { let value := "hello"; gener
         expansion_only: None,
     })
     .unwrap();
+    let result = tauto::exec::run(&format!("{DECLARATIONS}show(&{CALL})\n")).unwrap();
+    assert_eq!(result.stdout, "10\n");
     let mut forwards = 0;
     for function in &package.fns {
         function.body.walk(&mut |expr| {
@@ -93,7 +97,9 @@ perform show("value", forward(Item("hello"), () => { let value := "hello"; gener
                 && let Callee::Inst(inst) = call.callee
                 && package.fns[inst].source.as_str() == "forward"
             {
-                assert!(!matches!(call.args[0].kind, ExprKind::TempRef(_)));
+                // `item` is only matched on (by `inspect`), so `forward` borrows it:
+                // the argument is lent as a temporary, not moved or copied.
+                assert!(matches!(call.args[0].kind, ExprKind::TempRef(_)));
                 forwards += 1;
             }
         });
@@ -120,7 +126,7 @@ fn occurrence_identity_survives_clones_and_copy_on_write_not_fresh_copies() {
 
 #[test]
 fn class_signature_and_expression_generations_have_distinct_identities() {
-    let mut program = tauto::surface::parse_program_as_written(
+    let mut program = tauto_parse::parse_program_as_written(
         r#"class C(A: Shared) { fn read(value: A): Text }
 fn choose<A: Shared>(): (A) -> Text where C(A) { C.read }"#,
     )
@@ -135,7 +141,7 @@ fn choose<A: Shared>(): (A) -> Text where C(A) { C.read }"#,
         function.body = body.clone();
     }
     let mut per_file = vec![program.stmts.clone()];
-    tauto::types::expand_loaded(&mut program, &mut per_file, 1 << 30);
+    tauto_nibcheck::types::expand_loaded(&mut program, &mut per_file, &[], 1 << 30);
     let Stmt::Fn(function) = &program.stmts[0] else {
         panic!("expanded function")
     };
@@ -155,6 +161,6 @@ fn choose<A: Shared>(): (A) -> Text where C(A) { C.read }"#,
             .unwrap()
             .id()
     );
-    let report = tauto::types::check_program(&program);
+    let report = tauto_nibcheck::types::check_program(&program);
     assert!(report.errors.is_empty(), "{:?}", report.errors);
 }

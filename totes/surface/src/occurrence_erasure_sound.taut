@@ -1142,23 +1142,14 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfaceclass(value, erase_path, false) from match value {
-      SurfaceClassMk(slot_name, slot_param, slot_arity, slot_bound, slot_methods, slot_laws, slot_start, slot_end, slot_parameters) => Eq::trans(
+      SurfaceClassMk(slot_name, slot_param, slot_arity, slot_bound, slot_methods, slot_laws, slot_start, slot_end, slot_parameters, slot_inductive, slot_parents, slot_unused_parameters, c_vis) => Eq::trans(
         Eq::congr(
-          (replacement: List(SurfaceFn)) => SurfaceClassMk(
-            slot_name,
-            slot_param,
-            slot_arity,
-            slot_bound,
-            replacement,
-            surface_index_list_surfacelaw_from(
+          (replacement: List(SurfaceFn)) => SurfaceClassMk(slot_name, slot_param, slot_arity, slot_bound, replacement, surface_index_list_surfacelaw_from(
               surface_index_list_surfacelaw_from(slot_laws, surface_index_child(path, 5), keep, 0),
               surface_index_child(erase_path, 5),
               false,
               0
-            ),
-            slot_start,
-            slot_end,
-            surface_index_list_surfacenamed_from(
+            ), slot_start, slot_end, surface_index_list_surfacenamed_from(
               surface_index_list_surfacenamed_from(
                 slot_parameters,
                 surface_index_child(path, 8),
@@ -1168,8 +1159,7 @@ mutual {
               surface_index_child(erase_path, 8),
               false,
               0
-            )
-          ),
+            ), slot_inductive, surface_index_list_surfaceconstraint_from(surface_index_list_surfaceconstraint_from(slot_parents, surface_index_child(path, 10), keep, 0), surface_index_child(erase_path, 10), false, 0), slot_unused_parameters, c_vis),
           surface_index_list_surfacefn_erase_from(
             slot_methods,
             surface_index_child(path, 4),
@@ -1181,21 +1171,12 @@ mutual {
         ),
         Eq::trans(
           Eq::congr(
-            (replacement: List(SurfaceLaw)) => SurfaceClassMk(
-              slot_name,
-              slot_param,
-              slot_arity,
-              slot_bound,
-              surface_index_list_surfacefn_from(
+            (replacement: List(SurfaceLaw)) => SurfaceClassMk(slot_name, slot_param, slot_arity, slot_bound, surface_index_list_surfacefn_from(
                 slot_methods,
                 surface_index_child(erase_path, 4),
                 false,
                 0
-              ),
-              replacement,
-              slot_start,
-              slot_end,
-              surface_index_list_surfacenamed_from(
+              ), replacement, slot_start, slot_end, surface_index_list_surfacenamed_from(
                 surface_index_list_surfacenamed_from(
                   slot_parameters,
                   surface_index_child(path, 8),
@@ -1205,8 +1186,7 @@ mutual {
                 surface_index_child(erase_path, 8),
                 false,
                 0
-              )
-            ),
+              ), slot_inductive, surface_index_list_surfaceconstraint_from(surface_index_list_surfaceconstraint_from(slot_parents, surface_index_child(path, 10), keep, 0), surface_index_child(erase_path, 10), false, 0), slot_unused_parameters, c_vis),
             surface_index_list_surfacelaw_erase_from(
               slot_laws,
               surface_index_child(path, 5),
@@ -1216,28 +1196,19 @@ mutual {
               0
             )
           ),
+          Eq::trans(
           Eq::congr(
-            (replacement: List(SurfaceNamed)) => SurfaceClassMk(
-              slot_name,
-              slot_param,
-              slot_arity,
-              slot_bound,
-              surface_index_list_surfacefn_from(
+            (replacement: List(SurfaceNamed)) => SurfaceClassMk(slot_name, slot_param, slot_arity, slot_bound, surface_index_list_surfacefn_from(
                 slot_methods,
                 surface_index_child(erase_path, 4),
                 false,
                 0
-              ),
-              surface_index_list_surfacelaw_from(
+              ), surface_index_list_surfacelaw_from(
                 slot_laws,
                 surface_index_child(erase_path, 5),
                 false,
                 0
-              ),
-              slot_start,
-              slot_end,
-              replacement
-            ),
+              ), slot_start, slot_end, replacement, slot_inductive, surface_index_list_surfaceconstraint_from(surface_index_list_surfaceconstraint_from(slot_parents, surface_index_child(path, 10), keep, 0), surface_index_child(erase_path, 10), false, 0), slot_unused_parameters, c_vis),
             surface_index_list_surfacenamed_erase_from(
               slot_parameters,
               surface_index_child(path, 8),
@@ -1246,6 +1217,28 @@ mutual {
               surface_index_child(erase_path, 8),
               0
             )
+          ),
+          Eq::congr(
+            (replacement: List(SurfaceConstraint)) => SurfaceClassMk(slot_name, slot_param, slot_arity, slot_bound, surface_index_list_surfacefn_from(
+                slot_methods,
+                surface_index_child(erase_path, 4),
+                false,
+                0
+              ), surface_index_list_surfacelaw_from(
+                slot_laws,
+                surface_index_child(erase_path, 5),
+                false,
+                0
+              ), slot_start, slot_end, surface_index_list_surfacenamed_from(slot_parameters, surface_index_child(erase_path, 8), false, 0), slot_inductive, replacement, slot_unused_parameters, c_vis),
+            surface_index_list_surfaceconstraint_erase_from(
+              slot_parents,
+              surface_index_child(path, 10),
+              keep,
+              0,
+              surface_index_child(erase_path, 10),
+              0
+            )
+          )
           )
         )
       )
@@ -1388,15 +1381,8 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfacedata(value, erase_path, false) from match value {
-      SurfaceDataMk(slot_kind, slot_name, slot_generics, slot_constructors, slot_start, slot_end) => Eq::congr(
-        (replacement: List(SurfaceDataCtor)) => SurfaceDataMk(
-          slot_kind,
-          slot_name,
-          slot_generics,
-          replacement,
-          slot_start,
-          slot_end
-        ),
+      SurfaceDataMk(slot_kind, slot_name, slot_generics, slot_constructors, slot_start, slot_end, slot_coerce, slot_coerce_field, slot_visibility, slot_unused_generics, slot_rows) => Eq::congr(
+        (replacement: List(SurfaceDataCtor)) => SurfaceDataMk(slot_kind, slot_name, slot_generics, replacement, slot_start, slot_end, slot_coerce, slot_coerce_field, slot_visibility, slot_unused_generics, slot_rows),
         surface_index_list_surfacedatactor_erase_from(
           slot_constructors,
           surface_index_child(path, 3),
@@ -1480,22 +1466,13 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfaceeffect(value, erase_path, false) from match value {
-      SurfaceEffectMk(slot_name, slot_generics, slot_params, slot_result, slot_resume, slot_start, slot_end, slot_set) => Eq::trans(
+      SurfaceEffectMk(slot_name, slot_generics, slot_params, slot_result, slot_resume, slot_start, slot_end, slot_set, slot_unused_generics, slot_bounds, e_vis, slot_rows) => Eq::trans(
         Eq::congr(
-          (replacement: List(Option(SurfaceTerm))) => SurfaceEffectMk(
-            slot_name,
-            slot_generics,
-            replacement,
-            surface_index_option_surfaceterm(
+          (replacement: List(Option(SurfaceTerm))) => SurfaceEffectMk(slot_name, slot_generics, replacement, surface_index_option_surfaceterm(
               surface_index_option_surfaceterm(slot_result, surface_index_child(path, 3), keep),
               surface_index_child(erase_path, 3),
               false
-            ),
-            slot_resume,
-            slot_start,
-            slot_end,
-            slot_set
-          ),
+            ), slot_resume, slot_start, slot_end, slot_set, slot_unused_generics, slot_bounds, e_vis, slot_rows),
           surface_index_list_option_surfaceterm_erase_from(
             slot_params,
             surface_index_child(path, 2),
@@ -1506,21 +1483,12 @@ mutual {
           )
         ),
         Eq::congr(
-          (replacement: Option(SurfaceTerm)) => SurfaceEffectMk(
-            slot_name,
-            slot_generics,
-            surface_index_list_option_surfaceterm_from(
+          (replacement: Option(SurfaceTerm)) => SurfaceEffectMk(slot_name, slot_generics, surface_index_list_option_surfaceterm_from(
               slot_params,
               surface_index_child(erase_path, 2),
               false,
               0
-            ),
-            replacement,
-            slot_resume,
-            slot_start,
-            slot_end,
-            slot_set
-          ),
+            ), replacement, slot_resume, slot_start, slot_end, slot_set, slot_unused_generics, slot_bounds, e_vis, slot_rows),
           surface_index_option_surfaceterm_erase(
             slot_result,
             surface_index_child(path, 3),
@@ -1574,15 +1542,9 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfacefn(value, erase_path, false) from match value {
-      SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, slot_param_types, slot_result, slot_effects, slot_wheres, slot_start, slot_end, slot_body, slot_generic_types) => Eq::trans(
+      SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, slot_param_types, slot_result, slot_effects, slot_wheres, slot_start, slot_end, slot_body, slot_lends, slot_generic_types, slot_bound_starts, slot_visibility, slot_row_hole, slot_unused, slot_unused_generics, slot_unused_params) => Eq::trans(
         Eq::congr(
-          (generic_replacement: List(SurfaceTerm)) => SurfaceFnMk(
-            slot_name,
-            slot_generics,
-            slot_bounds,
-            slot_params,
-            slot_borrows,
-            surface_index_list_option_surfaceterm_from(
+          (generic_replacement: List(SurfaceTerm)) => SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, surface_index_list_option_surfaceterm_from(
               surface_index_list_option_surfaceterm_from(
                 slot_param_types,
                 surface_index_child(path, 5),
@@ -1592,14 +1554,11 @@ mutual {
               surface_index_child(erase_path, 5),
               false,
               0
-            ),
-            surface_index_option_surfaceterm(
+            ), surface_index_option_surfaceterm(
               surface_index_option_surfaceterm(slot_result, surface_index_child(path, 6), keep),
               surface_index_child(erase_path, 6),
               false
-            ),
-            slot_effects,
-            surface_index_list_surfaceconstraint_from(
+            ), slot_effects, surface_index_list_surfaceconstraint_from(
               surface_index_list_surfaceconstraint_from(
                 slot_wheres,
                 surface_index_child(path, 8),
@@ -1609,16 +1568,11 @@ mutual {
               surface_index_child(erase_path, 8),
               false,
               0
-            ),
-            slot_start,
-            slot_end,
-            surface_index_surfaceterm(
+            ), slot_start, slot_end, surface_index_surfaceterm(
               surface_index_surfaceterm(slot_body, surface_index_child(path, 11), keep),
               surface_index_child(erase_path, 11),
               false
-            ),
-            generic_replacement
-          ),
+            ), slot_lends, generic_replacement, slot_bound_starts, slot_visibility, slot_row_hole, slot_unused, slot_unused_generics, slot_unused_params),
           surface_index_list_surfaceterm_erase_from(
             slot_generic_types,
             surface_index_child(path, 12),
@@ -1630,20 +1584,11 @@ mutual {
         ),
         Eq::trans(
           Eq::congr(
-            (replacement: List(Option(SurfaceTerm))) => SurfaceFnMk(
-              slot_name,
-              slot_generics,
-              slot_bounds,
-              slot_params,
-              slot_borrows,
-              replacement,
-              surface_index_option_surfaceterm(
+            (replacement: List(Option(SurfaceTerm))) => SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, replacement, surface_index_option_surfaceterm(
                 surface_index_option_surfaceterm(slot_result, surface_index_child(path, 6), keep),
                 surface_index_child(erase_path, 6),
                 false
-              ),
-              slot_effects,
-              surface_index_list_surfaceconstraint_from(
+              ), slot_effects, surface_index_list_surfaceconstraint_from(
                 surface_index_list_surfaceconstraint_from(
                   slot_wheres,
                   surface_index_child(path, 8),
@@ -1653,21 +1598,16 @@ mutual {
                 surface_index_child(erase_path, 8),
                 false,
                 0
-              ),
-              slot_start,
-              slot_end,
-              surface_index_surfaceterm(
+              ), slot_start, slot_end, surface_index_surfaceterm(
                 surface_index_surfaceterm(slot_body, surface_index_child(path, 11), keep),
                 surface_index_child(erase_path, 11),
                 false
-              ),
-              surface_index_list_surfaceterm_from(
+              ), slot_lends, surface_index_list_surfaceterm_from(
                 slot_generic_types,
                 surface_index_child(erase_path, 12),
                 false,
                 0
-              )
-            ),
+              ), slot_bound_starts, slot_visibility, slot_row_hole, slot_unused, slot_unused_generics, slot_unused_params),
             surface_index_list_option_surfaceterm_erase_from(
               slot_param_types,
               surface_index_child(path, 5),
@@ -1679,21 +1619,12 @@ mutual {
           ),
           Eq::trans(
             Eq::congr(
-              (replacement: Option(SurfaceTerm)) => SurfaceFnMk(
-                slot_name,
-                slot_generics,
-                slot_bounds,
-                slot_params,
-                slot_borrows,
-                surface_index_list_option_surfaceterm_from(
+              (replacement: Option(SurfaceTerm)) => SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, surface_index_list_option_surfaceterm_from(
                   slot_param_types,
                   surface_index_child(erase_path, 5),
                   false,
                   0
-                ),
-                replacement,
-                slot_effects,
-                surface_index_list_surfaceconstraint_from(
+                ), replacement, slot_effects, surface_index_list_surfaceconstraint_from(
                   surface_index_list_surfaceconstraint_from(
                     slot_wheres,
                     surface_index_child(path, 8),
@@ -1703,21 +1634,16 @@ mutual {
                   surface_index_child(erase_path, 8),
                   false,
                   0
-                ),
-                slot_start,
-                slot_end,
-                surface_index_surfaceterm(
+                ), slot_start, slot_end, surface_index_surfaceterm(
                   surface_index_surfaceterm(slot_body, surface_index_child(path, 11), keep),
                   surface_index_child(erase_path, 11),
                   false
-                ),
-                surface_index_list_surfaceterm_from(
+                ), slot_lends, surface_index_list_surfaceterm_from(
                   slot_generic_types,
                   surface_index_child(erase_path, 12),
                   false,
                   0
-                )
-              ),
+                ), slot_bound_starts, slot_visibility, slot_row_hole, slot_unused, slot_unused_generics, slot_unused_params),
               surface_index_option_surfaceterm_erase(
                 slot_result,
                 surface_index_child(path, 6),
@@ -1727,39 +1653,25 @@ mutual {
             ),
             Eq::trans(
               Eq::congr(
-                (replacement: List(SurfaceConstraint)) => SurfaceFnMk(
-                  slot_name,
-                  slot_generics,
-                  slot_bounds,
-                  slot_params,
-                  slot_borrows,
-                  surface_index_list_option_surfaceterm_from(
+                (replacement: List(SurfaceConstraint)) => SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, surface_index_list_option_surfaceterm_from(
                     slot_param_types,
                     surface_index_child(erase_path, 5),
                     false,
                     0
-                  ),
-                  surface_index_option_surfaceterm(
+                  ), surface_index_option_surfaceterm(
                     slot_result,
                     surface_index_child(erase_path, 6),
                     false
-                  ),
-                  slot_effects,
-                  replacement,
-                  slot_start,
-                  slot_end,
-                  surface_index_surfaceterm(
+                  ), slot_effects, replacement, slot_start, slot_end, surface_index_surfaceterm(
                     surface_index_surfaceterm(slot_body, surface_index_child(path, 11), keep),
                     surface_index_child(erase_path, 11),
                     false
-                  ),
-                  surface_index_list_surfaceterm_from(
+                  ), slot_lends, surface_index_list_surfaceterm_from(
                     slot_generic_types,
                     surface_index_child(erase_path, 12),
                     false,
                     0
-                  )
-                ),
+                  ), slot_bound_starts, slot_visibility, slot_row_hole, slot_unused, slot_unused_generics, slot_unused_params),
                 surface_index_list_surfaceconstraint_erase_from(
                   slot_wheres,
                   surface_index_child(path, 8),
@@ -1770,40 +1682,26 @@ mutual {
                 )
               ),
               Eq::congr(
-                (replacement: SurfaceTerm) => SurfaceFnMk(
-                  slot_name,
-                  slot_generics,
-                  slot_bounds,
-                  slot_params,
-                  slot_borrows,
-                  surface_index_list_option_surfaceterm_from(
+                (replacement: SurfaceTerm) => SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, surface_index_list_option_surfaceterm_from(
                     slot_param_types,
                     surface_index_child(erase_path, 5),
                     false,
                     0
-                  ),
-                  surface_index_option_surfaceterm(
+                  ), surface_index_option_surfaceterm(
                     slot_result,
                     surface_index_child(erase_path, 6),
                     false
-                  ),
-                  slot_effects,
-                  surface_index_list_surfaceconstraint_from(
+                  ), slot_effects, surface_index_list_surfaceconstraint_from(
                     slot_wheres,
                     surface_index_child(erase_path, 8),
                     false,
                     0
-                  ),
-                  slot_start,
-                  slot_end,
-                  replacement,
-                  surface_index_list_surfaceterm_from(
+                  ), slot_start, slot_end, replacement, slot_lends, surface_index_list_surfaceterm_from(
                     slot_generic_types,
                     surface_index_child(erase_path, 12),
                     false,
                     0
-                  )
-                ),
+                  ), slot_bound_starts, slot_visibility, slot_row_hole, slot_unused, slot_unused_generics, slot_unused_params),
                 surface_index_surfaceterm_erase(
                   slot_body,
                   surface_index_child(path, 11),
@@ -1863,7 +1761,7 @@ mutual {
           )
         )
       )
-      HdOperation(slot_op, slot_binds, slot_types, slot_patterns, slot_resume, slot_guard, slot_body) => Eq::trans(
+      HdOperation(slot_op, slot_binds, slot_types, slot_patterns, slot_resume, slot_cont_unused, slot_guard, slot_body) => Eq::trans(
         Eq::congr(
           (replacement: List(SurfaceTerm)) => HdOperation(
             slot_op,
@@ -1881,14 +1779,15 @@ mutual {
               0
             ),
             slot_resume,
+            slot_cont_unused,
             surface_index_option_surfaceterm(
-              surface_index_option_surfaceterm(slot_guard, surface_index_child(path, 5), keep),
-              surface_index_child(erase_path, 5),
+              surface_index_option_surfaceterm(slot_guard, surface_index_child(path, 6), keep),
+              surface_index_child(erase_path, 6),
               false
             ),
             surface_index_surfaceterm(
-              surface_index_surfaceterm(slot_body, surface_index_child(path, 6), keep),
-              surface_index_child(erase_path, 6),
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 7), keep),
+              surface_index_child(erase_path, 7),
               false
             )
           ),
@@ -1914,14 +1813,15 @@ mutual {
               ),
               replacement,
               slot_resume,
+              slot_cont_unused,
               surface_index_option_surfaceterm(
-                surface_index_option_surfaceterm(slot_guard, surface_index_child(path, 5), keep),
-                surface_index_child(erase_path, 5),
+                surface_index_option_surfaceterm(slot_guard, surface_index_child(path, 6), keep),
+                surface_index_child(erase_path, 6),
                 false
               ),
               surface_index_surfaceterm(
-                surface_index_surfaceterm(slot_body, surface_index_child(path, 6), keep),
-                surface_index_child(erase_path, 6),
+                surface_index_surfaceterm(slot_body, surface_index_child(path, 7), keep),
+                surface_index_child(erase_path, 7),
                 false
               )
             ),
@@ -1952,18 +1852,19 @@ mutual {
                   0
                 ),
                 slot_resume,
+                slot_cont_unused,
                 replacement,
                 surface_index_surfaceterm(
-                  surface_index_surfaceterm(slot_body, surface_index_child(path, 6), keep),
-                  surface_index_child(erase_path, 6),
+                  surface_index_surfaceterm(slot_body, surface_index_child(path, 7), keep),
+                  surface_index_child(erase_path, 7),
                   false
                 )
               ),
               surface_index_option_surfaceterm_erase(
                 slot_guard,
-                surface_index_child(path, 5),
+                surface_index_child(path, 6),
                 keep,
-                surface_index_child(erase_path, 5)
+                surface_index_child(erase_path, 6)
               )
             ),
             Eq::congr(
@@ -1983,18 +1884,19 @@ mutual {
                   0
                 ),
                 slot_resume,
+                slot_cont_unused,
                 surface_index_option_surfaceterm(
                   slot_guard,
-                  surface_index_child(erase_path, 5),
+                  surface_index_child(erase_path, 6),
                   false
                 ),
                 replacement
               ),
               surface_index_surfaceterm_erase(
                 slot_body,
-                surface_index_child(path, 6),
+                surface_index_child(path, 7),
                 keep,
-                surface_index_child(erase_path, 6)
+                surface_index_child(erase_path, 7)
               )
             )
           )
@@ -2018,7 +1920,7 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfaceinductive(value, erase_path, false) from match value {
-      SurfaceInductiveMk(slot_name, slot_params, slot_sort, slot_constructors, slot_start, slot_end) => Eq::trans(
+      SurfaceInductiveMk(slot_name, slot_params, slot_sort, slot_constructors, slot_start, slot_end, slot_visibility) => Eq::trans(
         Eq::congr(
           (replacement: List(SurfaceNamed)) => SurfaceInductiveMk(
             slot_name,
@@ -2040,7 +1942,8 @@ mutual {
               0
             ),
             slot_start,
-            slot_end
+            slot_end,
+            slot_visibility
           ),
           surface_index_list_surfacenamed_erase_from(
             slot_params,
@@ -2074,7 +1977,8 @@ mutual {
                 0
               ),
               slot_start,
-              slot_end
+              slot_end,
+              slot_visibility
             ),
             surface_index_surfaceterm_erase(
               slot_sort,
@@ -2095,7 +1999,8 @@ mutual {
               surface_index_surfaceterm(slot_sort, surface_index_child(erase_path, 2), false),
               replacement,
               slot_start,
-              slot_end
+              slot_end,
+              slot_visibility
             ),
             surface_index_list_surfacector_erase_from(
               slot_constructors,
@@ -2126,14 +2031,9 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfaceinstance(value, erase_path, false) from match value {
-      SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, slot_head, slot_wheres, slot_methods, slot_laws, slot_start, slot_end, slot_generic_types, slot_arguments) => Eq::trans(
+      SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, slot_head, slot_wheres, slot_methods, slot_laws, slot_start, slot_end, slot_generic_types, slot_arguments, slot_infer_from, slot_unused_generics) => Eq::trans(
         Eq::congr(
-          (replacement: SurfaceTerm) => SurfaceInstanceMk(
-            slot_generics,
-            slot_bounds,
-            slot_class,
-            replacement,
-            surface_index_list_surfaceconstraint_from(
+          (replacement: SurfaceTerm) => SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, replacement, surface_index_list_surfaceconstraint_from(
               surface_index_list_surfaceconstraint_from(
                 slot_wheres,
                 surface_index_child(path, 4),
@@ -2143,8 +2043,7 @@ mutual {
               surface_index_child(erase_path, 4),
               false,
               0
-            ),
-            surface_index_list_surfacefn_from(
+            ), surface_index_list_surfacefn_from(
               surface_index_list_surfacefn_from(
                 slot_methods,
                 surface_index_child(path, 5),
@@ -2154,16 +2053,12 @@ mutual {
               surface_index_child(erase_path, 5),
               false,
               0
-            ),
-            surface_index_list_surfacelaw_from(
+            ), surface_index_list_surfacelaw_from(
               surface_index_list_surfacelaw_from(slot_laws, surface_index_child(path, 6), keep, 0),
               surface_index_child(erase_path, 6),
               false,
               0
-            ),
-            slot_start,
-            slot_end,
-            surface_index_list_surfaceterm_from(
+            ), slot_start, slot_end, surface_index_list_surfaceterm_from(
               surface_index_list_surfaceterm_from(
                 slot_generic_types,
                 surface_index_child(path, 9),
@@ -2173,8 +2068,7 @@ mutual {
               surface_index_child(erase_path, 9),
               false,
               0
-            ),
-            surface_index_list_surfaceterm_from(
+            ), surface_index_list_surfaceterm_from(
               surface_index_list_surfaceterm_from(
                 slot_arguments,
                 surface_index_child(path, 10),
@@ -2184,8 +2078,7 @@ mutual {
               surface_index_child(erase_path, 10),
               false,
               0
-            )
-          ),
+            ), slot_infer_from, slot_unused_generics),
           surface_index_surfaceterm_erase(
             slot_head,
             surface_index_child(path, 3),
@@ -2195,13 +2088,7 @@ mutual {
         ),
         Eq::trans(
           Eq::congr(
-            (replacement: List(SurfaceConstraint)) => SurfaceInstanceMk(
-              slot_generics,
-              slot_bounds,
-              slot_class,
-              surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false),
-              replacement,
-              surface_index_list_surfacefn_from(
+            (replacement: List(SurfaceConstraint)) => SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false), replacement, surface_index_list_surfacefn_from(
                 surface_index_list_surfacefn_from(
                   slot_methods,
                   surface_index_child(path, 5),
@@ -2211,8 +2098,7 @@ mutual {
                 surface_index_child(erase_path, 5),
                 false,
                 0
-              ),
-              surface_index_list_surfacelaw_from(
+              ), surface_index_list_surfacelaw_from(
                 surface_index_list_surfacelaw_from(
                   slot_laws,
                   surface_index_child(path, 6),
@@ -2222,10 +2108,7 @@ mutual {
                 surface_index_child(erase_path, 6),
                 false,
                 0
-              ),
-              slot_start,
-              slot_end,
-              surface_index_list_surfaceterm_from(
+              ), slot_start, slot_end, surface_index_list_surfaceterm_from(
                 surface_index_list_surfaceterm_from(
                   slot_generic_types,
                   surface_index_child(path, 9),
@@ -2235,8 +2118,7 @@ mutual {
                 surface_index_child(erase_path, 9),
                 false,
                 0
-              ),
-              surface_index_list_surfaceterm_from(
+              ), surface_index_list_surfaceterm_from(
                 surface_index_list_surfaceterm_from(
                   slot_arguments,
                   surface_index_child(path, 10),
@@ -2246,8 +2128,7 @@ mutual {
                 surface_index_child(erase_path, 10),
                 false,
                 0
-              )
-            ),
+              ), slot_infer_from, slot_unused_generics),
             surface_index_list_surfaceconstraint_erase_from(
               slot_wheres,
               surface_index_child(path, 4),
@@ -2259,19 +2140,12 @@ mutual {
           ),
           Eq::trans(
             Eq::congr(
-              (replacement: List(SurfaceFn)) => SurfaceInstanceMk(
-                slot_generics,
-                slot_bounds,
-                slot_class,
-                surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false),
-                surface_index_list_surfaceconstraint_from(
+              (replacement: List(SurfaceFn)) => SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false), surface_index_list_surfaceconstraint_from(
                   slot_wheres,
                   surface_index_child(erase_path, 4),
                   false,
                   0
-                ),
-                replacement,
-                surface_index_list_surfacelaw_from(
+                ), replacement, surface_index_list_surfacelaw_from(
                   surface_index_list_surfacelaw_from(
                     slot_laws,
                     surface_index_child(path, 6),
@@ -2281,10 +2155,7 @@ mutual {
                   surface_index_child(erase_path, 6),
                   false,
                   0
-                ),
-                slot_start,
-                slot_end,
-                surface_index_list_surfaceterm_from(
+                ), slot_start, slot_end, surface_index_list_surfaceterm_from(
                   surface_index_list_surfaceterm_from(
                     slot_generic_types,
                     surface_index_child(path, 9),
@@ -2294,8 +2165,7 @@ mutual {
                   surface_index_child(erase_path, 9),
                   false,
                   0
-                ),
-                surface_index_list_surfaceterm_from(
+                ), surface_index_list_surfaceterm_from(
                   surface_index_list_surfaceterm_from(
                     slot_arguments,
                     surface_index_child(path, 10),
@@ -2305,8 +2175,7 @@ mutual {
                   surface_index_child(erase_path, 10),
                   false,
                   0
-                )
-              ),
+                ), slot_infer_from, slot_unused_generics),
               surface_index_list_surfacefn_erase_from(
                 slot_methods,
                 surface_index_child(path, 5),
@@ -2318,27 +2187,17 @@ mutual {
             ),
             Eq::trans(
               Eq::congr(
-                (replacement: List(SurfaceLaw)) => SurfaceInstanceMk(
-                  slot_generics,
-                  slot_bounds,
-                  slot_class,
-                  surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false),
-                  surface_index_list_surfaceconstraint_from(
+                (replacement: List(SurfaceLaw)) => SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false), surface_index_list_surfaceconstraint_from(
                     slot_wheres,
                     surface_index_child(erase_path, 4),
                     false,
                     0
-                  ),
-                  surface_index_list_surfacefn_from(
+                  ), surface_index_list_surfacefn_from(
                     slot_methods,
                     surface_index_child(erase_path, 5),
                     false,
                     0
-                  ),
-                  replacement,
-                  slot_start,
-                  slot_end,
-                  surface_index_list_surfaceterm_from(
+                  ), replacement, slot_start, slot_end, surface_index_list_surfaceterm_from(
                     surface_index_list_surfaceterm_from(
                       slot_generic_types,
                       surface_index_child(path, 9),
@@ -2348,8 +2207,7 @@ mutual {
                     surface_index_child(erase_path, 9),
                     false,
                     0
-                  ),
-                  surface_index_list_surfaceterm_from(
+                  ), surface_index_list_surfaceterm_from(
                     surface_index_list_surfaceterm_from(
                       slot_arguments,
                       surface_index_child(path, 10),
@@ -2359,8 +2217,7 @@ mutual {
                     surface_index_child(erase_path, 10),
                     false,
                     0
-                  )
-                ),
+                  ), slot_infer_from, slot_unused_generics),
                 surface_index_list_surfacelaw_erase_from(
                   slot_laws,
                   surface_index_child(path, 6),
@@ -2372,33 +2229,22 @@ mutual {
               ),
               Eq::trans(
                 Eq::congr(
-                  (replacement: List(SurfaceTerm)) => SurfaceInstanceMk(
-                    slot_generics,
-                    slot_bounds,
-                    slot_class,
-                    surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false),
-                    surface_index_list_surfaceconstraint_from(
+                  (replacement: List(SurfaceTerm)) => SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false), surface_index_list_surfaceconstraint_from(
                       slot_wheres,
                       surface_index_child(erase_path, 4),
                       false,
                       0
-                    ),
-                    surface_index_list_surfacefn_from(
+                    ), surface_index_list_surfacefn_from(
                       slot_methods,
                       surface_index_child(erase_path, 5),
                       false,
                       0
-                    ),
-                    surface_index_list_surfacelaw_from(
+                    ), surface_index_list_surfacelaw_from(
                       slot_laws,
                       surface_index_child(erase_path, 6),
                       false,
                       0
-                    ),
-                    slot_start,
-                    slot_end,
-                    replacement,
-                    surface_index_list_surfaceterm_from(
+                    ), slot_start, slot_end, replacement, surface_index_list_surfaceterm_from(
                       surface_index_list_surfaceterm_from(
                         slot_arguments,
                         surface_index_child(path, 10),
@@ -2408,8 +2254,7 @@ mutual {
                       surface_index_child(erase_path, 10),
                       false,
                       0
-                    )
-                  ),
+                    ), slot_infer_from, slot_unused_generics),
                   surface_index_list_surfaceterm_erase_from(
                     slot_generic_types,
                     surface_index_child(path, 9),
@@ -2420,39 +2265,27 @@ mutual {
                   )
                 ),
                 Eq::congr(
-                  (replacement: List(SurfaceTerm)) => SurfaceInstanceMk(
-                    slot_generics,
-                    slot_bounds,
-                    slot_class,
-                    surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false),
-                    surface_index_list_surfaceconstraint_from(
+                  (replacement: List(SurfaceTerm)) => SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false), surface_index_list_surfaceconstraint_from(
                       slot_wheres,
                       surface_index_child(erase_path, 4),
                       false,
                       0
-                    ),
-                    surface_index_list_surfacefn_from(
+                    ), surface_index_list_surfacefn_from(
                       slot_methods,
                       surface_index_child(erase_path, 5),
                       false,
                       0
-                    ),
-                    surface_index_list_surfacelaw_from(
+                    ), surface_index_list_surfacelaw_from(
                       slot_laws,
                       surface_index_child(erase_path, 6),
                       false,
                       0
-                    ),
-                    slot_start,
-                    slot_end,
-                    surface_index_list_surfaceterm_from(
+                    ), slot_start, slot_end, surface_index_list_surfaceterm_from(
                       slot_generic_types,
                       surface_index_child(erase_path, 9),
                       false,
                       0
-                    ),
-                    replacement
-                  ),
+                    ), replacement, slot_infer_from, slot_unused_generics),
                   surface_index_list_surfaceterm_erase_from(
                     slot_arguments,
                     surface_index_child(path, 10),
@@ -2563,17 +2396,43 @@ mutual {
           )
         )
       )
-      SkExists(slot_binder, slot_domain, slot_body) => Eq::trans(
+      SkAscribe(slot_value, slot_ty) => Eq::trans(
         Eq::congr(
-          (replacement: SurfaceTerm) => SkExists(
-            slot_binder,
+          (replacement: SurfaceTerm) => SkAscribe(
             replacement,
             surface_index_surfaceterm(
-              surface_index_surfaceterm(slot_body, surface_index_child(path, 2), keep),
-              surface_index_child(erase_path, 2),
+              surface_index_surfaceterm(slot_ty, surface_index_child(path, 1), keep),
+              surface_index_child(erase_path, 1),
               false
             )
           ),
+          surface_index_surfaceterm_erase(
+            slot_value,
+            surface_index_child(path, 0),
+            keep,
+            surface_index_child(erase_path, 0)
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkAscribe(
+            surface_index_surfaceterm(slot_value, surface_index_child(erase_path, 0), false),
+            replacement
+          ),
+          surface_index_surfaceterm_erase(
+            slot_ty,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        )
+      )
+      SkExists(slot_binder, slot_domain, slot_body, unused) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkExists(slot_binder, replacement, surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
+              false
+            ), unused),
           surface_index_surfaceterm_erase(
             slot_domain,
             surface_index_child(path, 1),
@@ -2582,11 +2441,7 @@ mutual {
           )
         ),
         Eq::congr(
-          (replacement: SurfaceTerm) => SkExists(
-            slot_binder,
-            surface_index_surfaceterm(slot_domain, surface_index_child(erase_path, 1), false),
-            replacement
-          ),
+          (replacement: SurfaceTerm) => SkExists(slot_binder, surface_index_surfaceterm(slot_domain, surface_index_child(erase_path, 1), false), replacement, unused),
           surface_index_surfaceterm_erase(
             slot_body,
             surface_index_child(path, 2),
@@ -2595,8 +2450,8 @@ mutual {
           )
         )
       )
-      SkLam(slot_params, slot_body) => Eq::congr(
-        (replacement: SurfaceTerm) => SkLam(slot_params, replacement),
+      SkLam(slot_params, slot_body, slot_types, unused) => Eq::congr(
+        (replacement: SurfaceTerm) => SkLam(slot_params, replacement, slot_types, unused),
         surface_index_surfaceterm_erase(
           slot_body,
           surface_index_child(path, 1),
@@ -2608,17 +2463,6 @@ mutual {
         (replacement: List(SurfaceTerm)) => SkUnion(replacement),
         surface_index_list_surfaceterm_erase_from(
           slot_parts,
-          surface_index_child(path, 0),
-          keep,
-          0,
-          surface_index_child(erase_path, 0),
-          0
-        )
-      )
-      SkProduct(slot_members) => Eq::congr(
-        (replacement: List(SurfaceTerm)) => SkProduct(replacement),
-        surface_index_list_surfaceterm_erase_from(
-          slot_members,
           surface_index_child(path, 0),
           keep,
           0,
@@ -2701,36 +2545,6 @@ mutual {
           surface_index_child(path, 0),
           keep,
           surface_index_child(erase_path, 0)
-        )
-      )
-      SkProject(slot_value, slot_ty) => Eq::trans(
-        Eq::congr(
-          (replacement: SurfaceTerm) => SkProject(
-            replacement,
-            surface_index_surfaceterm(
-              surface_index_surfaceterm(slot_ty, surface_index_child(path, 1), keep),
-              surface_index_child(erase_path, 1),
-              false
-            )
-          ),
-          surface_index_surfaceterm_erase(
-            slot_value,
-            surface_index_child(path, 0),
-            keep,
-            surface_index_child(erase_path, 0)
-          )
-        ),
-        Eq::congr(
-          (replacement: SurfaceTerm) => SkProject(
-            surface_index_surfaceterm(slot_value, surface_index_child(erase_path, 0), false),
-            replacement
-          ),
-          surface_index_surfaceterm_erase(
-            slot_ty,
-            surface_index_child(path, 1),
-            keep,
-            surface_index_child(erase_path, 1)
-          )
         )
       )
       SkBlock(slot_stmts) => Eq::congr(
@@ -2825,7 +2639,7 @@ mutual {
           )
         )
       )
-      SkMatch(slot_scrutinee, slot_motive, slot_arms, slot_binder) => Eq::trans(
+      SkMatch(slot_scrutinee, slot_motive, slot_arms, slot_binder, slot_binder_unused) => Eq::trans(
         Eq::congr(
           (replacement: SurfaceTerm) => SkMatch(
             replacement,
@@ -2840,7 +2654,8 @@ mutual {
               false,
               0
             ),
-            slot_binder
+            slot_binder,
+            slot_binder_unused
           ),
           surface_index_surfaceterm_erase(
             slot_scrutinee,
@@ -2865,7 +2680,8 @@ mutual {
                 false,
                 0
               ),
-              slot_binder
+              slot_binder,
+              slot_binder_unused
             ),
             surface_index_option_surfaceterm_erase(
               slot_motive,
@@ -2883,7 +2699,8 @@ mutual {
                 false
               ),
               replacement,
-              slot_binder
+              slot_binder,
+              slot_binder_unused
             ),
             surface_index_list_surfacearm_erase_from(
               slot_arms,
@@ -2908,8 +2725,8 @@ mutual {
           0
         )
       )
-      SkBorrow(slot_mutable, slot_value) => Eq::congr(
-        (replacement: SurfaceTerm) => SkBorrow(slot_mutable, replacement),
+      SkBorrow(slot_mutable, slot_mutable_orig, slot_value) => Eq::congr(
+        (replacement: SurfaceTerm) => SkBorrow(slot_mutable, slot_mutable_orig, replacement),
         surface_index_surfaceterm_erase(
           slot_value,
           surface_index_child(path, 1),
@@ -3066,7 +2883,15 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfacelaw(value, erase_path, false) from match value {
-      SurfaceLawMk(slot_name, slot_start, slot_end) => Refl
+      SurfaceLawMk(slot_name, slot_start, slot_end, slot_theorem) => Eq::congr(
+        (replacement: SurfaceTheorem) => SurfaceLawMk(slot_name, slot_start, slot_end, replacement),
+        surface_index_surfacetheorem_erase(
+          slot_theorem,
+          surface_index_child(path, 3),
+          keep,
+          surface_index_child(erase_path, 3)
+        )
+      )
     }
   }
 
@@ -3112,8 +2937,8 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfaceparam(value, erase_path, false) from match value {
-      SurfaceParamMk(slot_name, slot_ty) => Eq::congr(
-        (replacement: SurfaceTerm) => SurfaceParamMk(slot_name, replacement),
+      SurfaceParamMk(slot_name, slot_ty, unused) => Eq::congr(
+        (replacement: SurfaceTerm) => SurfaceParamMk(slot_name, replacement, unused),
         surface_index_surfaceterm_erase(
           slot_ty,
           surface_index_child(path, 1),
@@ -3140,7 +2965,7 @@ mutual {
       false
     ) = surface_index_surfacepattern(value, erase_path, false) from match value {
       PtWild => Refl
-      PtBind(slot_name) => Refl
+      PtBind(slot_name, _) => Refl
       PtInt(slot_negative, slot_magnitude) => Refl
       PtBool(slot_value) => Refl
       PtText(slot_value) => Refl
@@ -3164,6 +2989,15 @@ mutual {
           0,
           surface_index_child(erase_path, 1),
           0
+        )
+      )
+      PtTyped(slot_name, slot_ty, slot_unused) => Eq::congr(
+        (replacement: SurfaceTerm) => PtTyped(slot_name, replacement, slot_unused),
+        surface_index_surfaceterm_erase(
+          slot_ty,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
         )
       )
       PtOther(slot_what) => Refl
@@ -3212,18 +3046,19 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfacesteparm(value, erase_path, false) from match value {
-      SurfaceStepArmMk(slot_binders, slot_goal, slot_body, slot_start, slot_end) => Eq::trans(
+      SurfaceStepArmMk(slot_binders, slot_unused_binders, slot_goal, slot_body, slot_start, slot_end) => Eq::trans(
         Eq::congr(
           (replacement: List(SurfaceField)) => SurfaceStepArmMk(
             replacement,
+            slot_unused_binders,
             surface_index_surfaceterm(
-              surface_index_surfaceterm(slot_goal, surface_index_child(path, 1), keep),
-              surface_index_child(erase_path, 1),
+              surface_index_surfaceterm(slot_goal, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
               false
             ),
             surface_index_surfaceterm(
-              surface_index_surfaceterm(slot_body, surface_index_child(path, 2), keep),
-              surface_index_child(erase_path, 2),
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 3), keep),
+              surface_index_child(erase_path, 3),
               false
             ),
             slot_start,
@@ -3247,10 +3082,11 @@ mutual {
                 false,
                 0
               ),
+              slot_unused_binders,
               replacement,
               surface_index_surfaceterm(
-                surface_index_surfaceterm(slot_body, surface_index_child(path, 2), keep),
-                surface_index_child(erase_path, 2),
+                surface_index_surfaceterm(slot_body, surface_index_child(path, 3), keep),
+                surface_index_child(erase_path, 3),
                 false
               ),
               slot_start,
@@ -3258,9 +3094,9 @@ mutual {
             ),
             surface_index_surfaceterm_erase(
               slot_goal,
-              surface_index_child(path, 1),
+              surface_index_child(path, 2),
               keep,
-              surface_index_child(erase_path, 1)
+              surface_index_child(erase_path, 2)
             )
           ),
           Eq::congr(
@@ -3271,16 +3107,17 @@ mutual {
                 false,
                 0
               ),
-              surface_index_surfaceterm(slot_goal, surface_index_child(erase_path, 1), false),
+              slot_unused_binders,
+              surface_index_surfaceterm(slot_goal, surface_index_child(erase_path, 2), false),
               replacement,
               slot_start,
               slot_end
             ),
             surface_index_surfaceterm_erase(
               slot_body,
-              surface_index_child(path, 2),
+              surface_index_child(path, 3),
               keep,
-              surface_index_child(erase_path, 2)
+              surface_index_child(erase_path, 3)
             )
           )
         )
@@ -3303,19 +3140,13 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfacestmt(value, erase_path, false) from match value {
-      StLet(slot_name, slot_ty, slot_value, slot_borrow, slot_mutable) => Eq::trans(
+      StLet(slot_name, slot_ty, slot_value, slot_borrow, slot_mutable, unused, st_stack) => Eq::trans(
         Eq::congr(
-          (replacement: Option(SurfaceTerm)) => StLet(
-            slot_name,
-            replacement,
-            surface_index_surfaceterm(
+          (replacement: Option(SurfaceTerm)) => StLet(slot_name, replacement, surface_index_surfaceterm(
               surface_index_surfaceterm(slot_value, surface_index_child(path, 2), keep),
               surface_index_child(erase_path, 2),
               false
-            ),
-            slot_borrow,
-            slot_mutable
-          ),
+            ), slot_borrow, slot_mutable, unused, st_stack),
           surface_index_option_surfaceterm_erase(
             slot_ty,
             surface_index_child(path, 1),
@@ -3324,13 +3155,7 @@ mutual {
           )
         ),
         Eq::congr(
-          (replacement: SurfaceTerm) => StLet(
-            slot_name,
-            surface_index_option_surfaceterm(slot_ty, surface_index_child(erase_path, 1), false),
-            replacement,
-            slot_borrow,
-            slot_mutable
-          ),
+          (replacement: SurfaceTerm) => StLet(slot_name, surface_index_option_surfaceterm(slot_ty, surface_index_child(erase_path, 1), false), replacement, slot_borrow, slot_mutable, unused, st_stack),
           surface_index_surfaceterm_erase(
             slot_value,
             surface_index_child(path, 2),
@@ -3339,18 +3164,13 @@ mutual {
           )
         )
       )
-      StVar(slot_name, slot_ty, slot_value, slot_borrow) => Eq::trans(
+      StVar(slot_name, slot_ty, slot_value, slot_borrow, unused, st_stack) => Eq::trans(
         Eq::congr(
-          (replacement: Option(SurfaceTerm)) => StVar(
-            slot_name,
-            replacement,
-            surface_index_surfaceterm(
+          (replacement: Option(SurfaceTerm)) => StVar(slot_name, replacement, surface_index_surfaceterm(
               surface_index_surfaceterm(slot_value, surface_index_child(path, 2), keep),
               surface_index_child(erase_path, 2),
               false
-            ),
-            slot_borrow
-          ),
+            ), slot_borrow, unused, st_stack),
           surface_index_option_surfaceterm_erase(
             slot_ty,
             surface_index_child(path, 1),
@@ -3359,29 +3179,13 @@ mutual {
           )
         ),
         Eq::congr(
-          (replacement: SurfaceTerm) => StVar(
-            slot_name,
-            surface_index_option_surfaceterm(slot_ty, surface_index_child(erase_path, 1), false),
-            replacement,
-            slot_borrow
-          ),
+          (replacement: SurfaceTerm) => StVar(slot_name, surface_index_option_surfaceterm(slot_ty, surface_index_child(erase_path, 1), false), replacement, slot_borrow, unused, st_stack),
           surface_index_surfaceterm_erase(
             slot_value,
             surface_index_child(path, 2),
             keep,
             surface_index_child(erase_path, 2)
           )
-        )
-      )
-      StModule(slot_name, slot_stmts, slot_start, slot_end) => Eq::congr(
-        (replacement: List(SurfaceStmt)) => StModule(slot_name, replacement, slot_start, slot_end),
-        surface_index_list_surfacestmt_erase_from(
-          slot_stmts,
-          surface_index_child(path, 1),
-          keep,
-          0,
-          surface_index_child(erase_path, 1),
-          0
         )
       )
       StAssign(slot_name, slot_place, slot_value) => Eq::trans(
@@ -3497,6 +3301,18 @@ mutual {
           0
         )
       )
+      StModule(slot_name, slot_visibility, slot_items, slot_start, slot_end) => Eq::congr(
+        (replacement: List(SurfaceStmt)) => StModule(slot_name, slot_visibility, replacement, slot_start, slot_end),
+        surface_index_list_surfacestmt_erase_from(
+          slot_items,
+          surface_index_child(path, 2),
+          keep,
+          0,
+          surface_index_child(erase_path, 2),
+          0
+        )
+      )
+      StReexport(slot_path, slot_names, slot_spans, slot_start, slot_end) => Refl
       StImport(slot_path, slot_start, slot_end) => Refl
       StInductive(slot_i) => Eq::congr(
         (replacement: SurfaceInductive) => StInductive(replacement),
@@ -3534,14 +3350,22 @@ mutual {
           surface_index_child(erase_path, 0)
         )
       )
-      StExtern(slot_abi, slot_fns, slot_start, slot_end) => Eq::congr(
-        (replacement: List(SurfaceFn)) => StExtern(slot_abi, replacement, slot_start, slot_end),
+      StExtern(slot_fns, slot_instances, slot_types, slot_structs, slot_enums, slot_start, slot_end) => Eq::congr(
+        (replacement: List(SurfaceFn)) => StExtern(
+          replacement,
+          slot_instances,
+          slot_types,
+          slot_structs,
+          slot_enums,
+          slot_start,
+          slot_end
+        ),
         surface_index_list_surfacefn_erase_from(
           slot_fns,
-          surface_index_child(path, 1),
+          surface_index_child(path, 0),
           keep,
           0,
-          surface_index_child(erase_path, 1),
+          surface_index_child(erase_path, 0),
           0
         )
       )
@@ -3612,6 +3436,10 @@ mutual {
         )
       )
       StOther(slot_what, slot_start, slot_end) => Refl
+      StLoop(st_body, slot_start, slot_end) => Refl
+      StFor(for_pat, for_src, st_body, slot_start, slot_end) => Refl
+      StBreak(st_value, slot_start, slot_end) => Refl
+      StContinue(slot_start, slot_end) => Refl
       StMacro(slot_name, slot_function, slot_start, slot_end) => Refl
       StSyntax(slot_name, slot_grammar, slot_start, slot_end) => Refl
     }
@@ -3660,25 +3488,17 @@ mutual {
       erase_path,
       false
     ) = surface_index_surfacetheorem(value, erase_path, false) from match value {
-      SurfaceTheoremMk(slot_name, slot_implicit, slot_params, slot_ty, slot_body, slot_start, slot_end) => Eq::trans(
+      SurfaceTheoremMk(slot_name, slot_implicit, slot_params, slot_ty, slot_body, slot_start, slot_end, slot_unused, slot_unused_params, t_vis) => Eq::trans(
         Eq::congr(
-          (replacement: List(SurfaceNamed)) => SurfaceTheoremMk(
-            slot_name,
-            slot_implicit,
-            replacement,
-            surface_index_surfaceterm(
+          (replacement: List(SurfaceNamed)) => SurfaceTheoremMk(slot_name, slot_implicit, replacement, surface_index_surfaceterm(
               surface_index_surfaceterm(slot_ty, surface_index_child(path, 3), keep),
               surface_index_child(erase_path, 3),
               false
-            ),
-            surface_index_option_surfaceterm(
+            ), surface_index_option_surfaceterm(
               surface_index_option_surfaceterm(slot_body, surface_index_child(path, 4), keep),
               surface_index_child(erase_path, 4),
               false
-            ),
-            slot_start,
-            slot_end
-          ),
+            ), slot_start, slot_end, slot_unused, slot_unused_params, t_vis),
           surface_index_list_surfacenamed_erase_from(
             slot_params,
             surface_index_child(path, 2),
@@ -3690,24 +3510,16 @@ mutual {
         ),
         Eq::trans(
           Eq::congr(
-            (replacement: SurfaceTerm) => SurfaceTheoremMk(
-              slot_name,
-              slot_implicit,
-              surface_index_list_surfacenamed_from(
+            (replacement: SurfaceTerm) => SurfaceTheoremMk(slot_name, slot_implicit, surface_index_list_surfacenamed_from(
                 slot_params,
                 surface_index_child(erase_path, 2),
                 false,
                 0
-              ),
-              replacement,
-              surface_index_option_surfaceterm(
+              ), replacement, surface_index_option_surfaceterm(
                 surface_index_option_surfaceterm(slot_body, surface_index_child(path, 4), keep),
                 surface_index_child(erase_path, 4),
                 false
-              ),
-              slot_start,
-              slot_end
-            ),
+              ), slot_start, slot_end, slot_unused, slot_unused_params, t_vis),
             surface_index_surfaceterm_erase(
               slot_ty,
               surface_index_child(path, 3),
@@ -3716,20 +3528,12 @@ mutual {
             )
           ),
           Eq::congr(
-            (replacement: Option(SurfaceTerm)) => SurfaceTheoremMk(
-              slot_name,
-              slot_implicit,
-              surface_index_list_surfacenamed_from(
+            (replacement: Option(SurfaceTerm)) => SurfaceTheoremMk(slot_name, slot_implicit, surface_index_list_surfacenamed_from(
                 slot_params,
                 surface_index_child(erase_path, 2),
                 false,
                 0
-              ),
-              surface_index_surfaceterm(slot_ty, surface_index_child(erase_path, 3), false),
-              replacement,
-              slot_start,
-              slot_end
-            ),
+              ), surface_index_surfaceterm(slot_ty, surface_index_child(erase_path, 3), false), replacement, slot_start, slot_end, slot_unused, slot_unused_params, t_vis),
             surface_index_option_surfaceterm_erase(
               slot_body,
               surface_index_child(path, 4),

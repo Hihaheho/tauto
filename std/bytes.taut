@@ -1,0 +1,144 @@
+import "base.taut" { List, Nat }
+import "nat.taut" { Nat }
+import "text.taut" { Bytes, Text }
+import "uint.taut" { UInt }
+import std::prelude::std { List, Option }
+
+// Byte sequences as the proofs see them: a list of `UInt(8)`. Extraction maps
+// `Bytes` onto Nib's `Bytes`, whose slices share the storage they are cut
+// from, and the functions marked "Mapped" onto its builtins; their
+// definitions here say what those builtins do.
+
+pub(open) inductive Bytes: Type {
+  Mk(items: List(UInt(8))): Bytes
+}
+
+// Mapped: the bytes of a list.
+pub fn Bytes::of_list(l: List(UInt(8))): Bytes {
+  Bytes::Mk(l)
+}
+
+// Mapped: the bytes, in order.
+pub fn Bytes::to_list(b: Bytes): List(UInt(8)) {
+  match b {
+    Mk(l) => l
+  }
+}
+
+pub fn Bytes::values(b: Bytes): List(Nat) {
+  List::map((x: UInt(8)) => UInt::val8(x), Bytes::to_list(b))
+}
+
+// Mapped: the number of bytes.
+pub fn Bytes::len(b: Bytes): Nat {
+  List::length(Bytes::to_list(b))
+}
+
+// Mapped: the byte at `i`.
+pub fn Bytes::get(b: Bytes, i: Nat): Option(UInt(8)) {
+  List::nth(Bytes::to_list(b), i)
+}
+
+// The first index from `i` before `e` whose byte is `c`, looking at no more
+// than `k` bytes; `e` when there is none. `find` with enough bytes to look
+// at, as a recursion a proof can follow one byte at a time.
+pub fn Bytes::find_within(b: Bytes, c: Nat, i: Nat, e: Nat, k: Nat): Nat {
+  match k {
+    Zero => e
+    Succ(k2) => ⊢ Nat from match i < e {
+      false => e
+      true => ⊢ Nat from match Bytes::get(b, i) {
+        None => e
+        Some(x) => ⊢ Nat from match Nat::eq(UInt::val8(x), c) {
+          true => i
+          false => Bytes::find_within(b, c, Succ(i), e, k2)
+        }
+      }
+    }
+  }
+}
+
+// Mapped: the first index from `i` before `e` whose byte is `c`; `e` when
+// there is none. A program runs it as one search over the bytes.
+pub fn Bytes::find(b: Bytes, c: Nat, i: Nat, e: Nat): Nat {
+  Bytes::find_within(b, c, i, e, e)
+}
+
+// Mapped: the bytes from `start` to `end`, when `start <= end <= len`.
+pub fn Bytes::slice(b: Bytes, start: Nat, end: Nat): Option(Bytes) {
+  match start <= end && end <= Bytes::len(b) {
+    false => None
+    true => Some(Bytes::Mk(List::take(end - start, List::drop(start, Bytes::to_list(b)))))
+  }
+}
+
+// Mapped: the bytes of `a`, then those of `b`.
+pub fn Bytes::concat(a: Bytes, b: Bytes): Bytes {
+  Bytes::Mk(List::append(Bytes::to_list(a), Bytes::to_list(b)))
+}
+
+// Mapped: whether the two are the same bytes.
+pub fn Bytes::eq(a: Bytes, b: Bytes): Bool {
+  match Bytes::compare(Bytes::values(a), Bytes::values(b)) { Less => false, Equal => true, Greater => false }
+}
+
+// `n` as a byte, modulo 256.
+pub fn UInt::of_byte8(n: Nat): UInt(8) {
+  UInt::mk8(Nat::rem_nz(n, 256, Nat::ne_zero(256, Refl)), Nat::mod_lt(n, 256, Refl))
+}
+
+// Mapped: the UTF-8 bytes of `t`. The bytes of a text are below 256, so
+// taking each modulo 256 changes none of them; it only makes the definition
+// total.
+pub fn Bytes::of_text(t: Text): Bytes {
+  Bytes::Mk(List::map((n: Nat) => UInt::of_byte8(n), Text::bytes(t)))
+}
+
+pub theorem Bytes::len_of_list(l: List(UInt(8))): Bytes::len(Bytes::of_list(l)) = List::length(l) {
+  Refl
+}
+
+pub theorem Bytes::to_list_of_list(l: List(UInt(8))): Bytes::to_list(Bytes::of_list(l)) = l {
+  Refl
+}
+
+pub theorem Bytes::get_of_list(l: List(UInt(8)), i: Nat): Bytes::get(Bytes::of_list(l), i) = List::nth(l, i) {
+  Refl
+}
+
+pub theorem Bytes::find_colon(): Bytes::find(Bytes::of_text("a:b:c"), 58, 2, 5) = 3 {
+  Refl
+}
+
+pub theorem Bytes::find_none_past_the_length(): Bytes::find(Bytes::of_text("a:b:c"), 120, 0, 9) = 9 {
+  Refl
+}
+
+pub theorem Bytes::slice_whole_ab(): Bytes::slice(Bytes::of_text("ab"), 0, 2) = Some(Bytes::of_text("ab")) {
+  Refl
+}
+
+pub theorem Bytes::slice_past_the_end(): Bytes::slice(Bytes::of_text("ab"), 1, 3) = None {
+  Refl
+}
+
+// Mapped: the text the bytes encode, when they are well-formed UTF-8.
+pub fn Text::of_bytes(b: Bytes): Option(Text) {
+  Text::of_utf8(Bytes::values(b))
+}
+
+pub theorem Text::of_bytes_of_text_e_acute(): Text::of_bytes(Bytes::of_text("é")) = Some("é") {
+  Refl
+}
+
+// A cut through the middle of a character is bytes, not text.
+pub theorem Text::of_bytes_half_a_character(): (⊢ Option(Text) from match Bytes::slice(
+  Bytes::of_text("é"),
+  0,
+  1
+) {
+  None => None
+  Some(b) => Text::of_bytes(b)
+}) = None {
+  Refl
+}

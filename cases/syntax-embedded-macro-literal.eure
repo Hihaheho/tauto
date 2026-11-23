@@ -1,0 +1,29 @@
+description = "A macro call in `$…` in a syntax literal may take a syntax literal without parentheses: `$caller!`(${41})``, as `$caller!((${41}))` takes it with them."
+@ cases.bare-literal-call
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name = "embedded-macro-literal" version = "0.1.0" }'
+files."src/syntax-defs.taut" = ````tauto
+import std::builtin::macro
+syntax!(caller, ```par
+{{par:caller_expression}}```) => struct Root, fn parse
+pub macro fn caller(e: caller::Root): SynExpr {
+  let body := e.tauto_expr
+  quote { (() => $body)() }
+}
+````
+files."src/main.taut" = ````tauto
+import std::builtin::macro
+import "syntax-defs.taut"
+fn mark(): i64 {
+  caller!(```caller
+    ($caller!`(${41})`)
+  ```)
+}
+perform main(() => {
+  show(&mark())
+})
+````
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = "41\n"

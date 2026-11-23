@@ -1,0 +1,341 @@
+import "text.taut" { Text }
+import "list.taut" { List }
+import "nat.taut" { Nat }
+import "data.taut" { Option }
+import "base.taut" { List, Nat }
+import std::prelude::collections { Bytes }
+import std::prelude::std { List, Option }
+
+// More of `Text` (`Text::taut`), through its bytes: prefixes, search, and
+// splitting at a one-byte separator. A separator below 128 is an ASCII
+// character, so the parts of a split are texts again.
+
+pub fn Bytes::starts_with(b: List(Nat), p: List(Nat)): Bool {
+  match b {
+    Nil => ⊢ Bool from match p {
+      Nil => true
+      Cons(y, ys) => false
+    }
+    Cons(x, xs) => ⊢ Bool from match p {
+      Nil => true
+      Cons(y, ys) => x == y && Bytes::starts_with(xs, ys)
+    }
+  }
+}
+
+// The offset of the first place `needle` starts in `hay`, counted from `i`.
+pub fn Bytes::find_from(hay: List(Nat), needle: List(Nat), i: Nat): Option(Nat) {
+  match hay {
+    Nil => ⊢ Option(Nat) from match needle {
+      Nil => Some(i)
+      Cons(y, ys) => None
+    }
+    Cons(x, xs) => ⊢ Option(Nat) from match Bytes::starts_with(hay, needle) {
+      true => Some(i)
+      false => Bytes::find_from(xs, needle, Succ(i))
+    }
+  }
+}
+
+// `Bytes::split(bs, sep)` is the part that `bs` starts with and the parts
+// after it, in order.
+// The pair is `#(rest, cur)`: the parts after the first, then the part being read.
+pub fn Bytes::split_step(
+  h: Nat,
+  sep: Nat,
+  pr: List(List(Nat)) × List(Nat)
+): List(List(Nat)) × List(Nat) {
+  match pr {
+    #(rest, cur) => ⊢ List(List(Nat)) × List(Nat) from match h == sep {
+      true => #(Cons(cur, rest), Nil(<A: Nat>))
+      false => #(rest, Cons(h, cur))
+    }
+  }
+}
+
+pub fn Bytes::split(bs: List(Nat), sep: Nat): List(List(Nat)) × List(Nat) {
+  match bs {
+    Nil => #(Nil(<A: List(Nat)>), Nil(<A: Nat>))
+    Cons(h, t) => Bytes::split_step(h, sep, Bytes::split(t, sep))
+  }
+}
+
+// The parts after the first, each after a `sep`.
+pub fn Bytes::join_rest(sep: List(Nat), rest: List(List(Nat))): List(Nat) {
+  match rest {
+    Nil => Nil
+    Cons(q, qs) => List::append(sep, List::append(q, Bytes::join_rest(sep, qs)))
+  }
+}
+
+pub fn Bytes::unsplit(sep: List(Nat), pr: List(List(Nat)) × List(Nat)): List(Nat) {
+  match pr {
+    #(rest, cur) => List::append(cur, Bytes::join_rest(sep, rest))
+  }
+}
+
+pub theorem Bytes::starts_with_nil(b: List(Nat)): Bytes::starts_with(b, Nil) = true {
+  match b {
+    Nil => Refl
+    Cons(x, xs) => Refl
+  }
+}
+
+pub theorem Bytes::starts_with_self(b: List(Nat)): Bytes::starts_with(b, b) = true {
+  match b {
+    Nil => Refl
+    Cons(x, xs) => Eq::trans(
+      Eq::congr(⟦□ && Bytes::starts_with(xs, xs)⟧, Nat::eq_refl(x)),
+      Bytes::starts_with_self(xs)
+    )
+  }
+}
+
+pub theorem Bytes::starts_with_append(
+  p: List(Nat),
+  r: List(Nat)
+): Bytes::starts_with(List::append(p, r), p) = true {
+  match p {
+    Nil => Bytes::starts_with_nil(r)
+    Cons(y, ys) => Eq::trans(
+      Eq::congr(⟦□ && Bytes::starts_with(List::append(ys, r), ys)⟧, Nat::eq_refl(y)),
+      Bytes::starts_with_append(ys, r)
+    )
+  }
+}
+
+pub theorem Bytes::find_from_prefix(
+  hay: List(Nat),
+  needle: List(Nat),
+  i: Nat,
+  h: Bytes::starts_with(hay, needle) = true
+): Bytes::find_from(hay, needle, i) = Some(i) {
+  match hay {
+    Nil => ⊢ Bytes::find_from(Nil, needle, i) = Some(i) from match needle {
+      Nil => Refl
+      Cons(y, ys) => False::elim(false_ne_true(h))
+    }
+    Cons(x, xs) => ⊢ Bytes::find_from(
+      Cons(x, xs),
+      needle,
+      i
+    ) = Some(i) from match Bytes::starts_with(Cons(x, xs), needle) {
+      true => ⊢ Some(i) = Some(i) from Refl
+      false => ⊢ Bytes::find_from(xs, needle, Succ(i)) = Some(i) from False::elim(false_ne_true(h))
+    }
+  }
+}
+
+pub theorem Bytes::unsplit_step(
+  h: Nat,
+  sep: Nat,
+  pr: List(List(Nat)) × List(Nat)
+): Bytes::unsplit([sep], Bytes::split_step(h, sep, pr)) = Cons(h, Bytes::unsplit([sep], pr)) {
+  match pr {
+    #(rest, cur) => ⊢ Bytes::unsplit(
+      [sep],
+      Bytes::split_step(h, sep, #(rest, cur))
+    ) = Cons(h, List::append(cur, Bytes::join_rest([sep], rest))) from match h == sep eqn e {
+      true => ⊢ Bytes::unsplit(
+        [sep],
+        #(Cons(cur, rest), Nil(<A: Nat>))
+      ) = Cons(
+        h,
+        List::append(cur, Bytes::join_rest([sep], rest))
+      ) from Eq::congr(
+        ⟦Cons(□, List::append(cur, Bytes::join_rest([sep], rest)))⟧,
+        Eq::sym(Nat::eq_sound(h, sep, e))
+      )
+      false => ⊢ Bytes::unsplit(
+        [sep],
+        #(rest, Cons(h, cur))
+      ) = Cons(h, List::append(cur, Bytes::join_rest([sep], rest))) from Refl
+    }
+  }
+}
+
+pub theorem Bytes::split_unsplit(bs: List(Nat), sep: Nat): Bytes::unsplit([sep], Bytes::split(bs, sep)) = bs {
+  match bs {
+    Nil => Refl
+    Cons(h, t) => Eq::trans(
+      Bytes::unsplit_step(h, sep, Bytes::split(t, sep)),
+      Eq::congr(⟦Cons(h, □)⟧, Bytes::split_unsplit(t, sep))
+    )
+  }
+}
+
+
+pub fn Text::is_empty(t: Text): Bool {
+  match Text::bytes(t) {
+    Nil => true
+    Cons(x, xs) => false
+  }
+}
+
+pub fn Text::starts_with(t: Text, p: Text): Bool {
+  Bytes::starts_with(Text::bytes(t), Text::bytes(p))
+}
+
+pub fn Text::ends_with(t: Text, s: Text): Bool {
+  Bytes::starts_with(List::reverse(Text::bytes(t)), List::reverse(Text::bytes(s)))
+}
+
+// The byte offset where `needle` first occurs.
+pub fn Text::find(t: Text, needle: Text): Option(Nat) {
+  Bytes::find_from(Text::bytes(t), Text::bytes(needle), Zero)
+}
+
+pub fn Text::contains(t: Text, needle: Text): Bool {
+  Option::is_some(Text::find(t, needle))
+}
+
+pub fn Text::repeat(t: Text, n: Nat): Text {
+  match n {
+    Zero => Text::Mk(Nil)
+    Succ(k) => Text::concat(t, Text::repeat(t, k))
+  }
+}
+
+pub fn Text::of_bytes_list(parts: List(List(Nat))): List(Text) {
+  List::map((b: List(Nat)) => Text::Mk(b), parts)
+}
+
+pub fn Text::of_split(pr: List(List(Nat)) × List(Nat)): List(Text) {
+  match pr {
+    #(rest, cur) => Cons(Text::Mk(cur), Text::of_bytes_list(rest))
+  }
+}
+
+// The parts of `t` between the bytes equal to `sep` (below 128).
+pub fn Text::split_on(t: Text, sep: Nat): List(Text) {
+  Text::of_split(Bytes::split(Text::bytes(t), sep))
+}
+
+pub fn Text::join(sep: Text, parts: List(Text)): Text {
+  match parts {
+    Nil => Text::Mk(Nil)
+    Cons(p, rest) => Text::Mk(
+      List::append(
+        Text::bytes(p),
+        Bytes::join_rest(Text::bytes(sep), List::map((q: Text) => Text::bytes(q), rest))
+      )
+    )
+  }
+}
+
+pub theorem Text::eta(t: Text): Text::Mk(Text::bytes(t)) = t {
+  match t {
+    Mk(bs) => Refl
+  }
+}
+
+pub theorem Text::concat_empty_left(t: Text): Text::concat(Text::Mk(Nil), t) = t {
+  Text::eta(t)
+}
+
+pub theorem Text::concat_empty_right(t: Text): Text::concat(t, Text::Mk(Nil)) = t {
+  Eq::trans(Eq::congr(⟦Text::Mk(□)⟧, List::append_nil(Text::bytes(t))), Text::eta(t))
+}
+
+pub theorem Text::concat_assoc(
+  a: Text,
+  b: Text,
+  c: Text
+): Text::concat(Text::concat(a, b), c) = Text::concat(a, Text::concat(b, c)) {
+  Eq::congr(⟦Text::Mk(□)⟧, List::append_assoc(Text::bytes(a), Text::bytes(b), Text::bytes(c)))
+}
+
+pub theorem Text::len_concat(
+  a: Text,
+  b: Text
+): Text::len(Text::concat(a, b)) = Nat::add(Text::len(a), Text::len(b)) {
+  List::length_append(Text::bytes(a), Text::bytes(b))
+}
+
+pub theorem Text::len_repeat(t: Text, n: Nat): Text::len(Text::repeat(t, n)) = Nat::mul(Text::len(t), n) {
+  match n {
+    Zero => Refl
+    Succ(k) => Eq::trans(
+      List::length_append(Text::bytes(t), Text::bytes(Text::repeat(t, k))),
+      Eq::trans(
+        Nat::add_comm(Text::len(t), Text::len(Text::repeat(t, k))),
+        Eq::congr(⟦Nat::add(□, Text::len(t))⟧, Text::len_repeat(t, k))
+      )
+    )
+  }
+}
+
+pub theorem Text::starts_with_concat(a: Text, b: Text): Text::starts_with(Text::concat(a, b), a) = true {
+  Bytes::starts_with_append(Text::bytes(a), Text::bytes(b))
+}
+
+pub theorem Text::starts_with_self(t: Text): Text::starts_with(t, t) = true {
+  Bytes::starts_with_self(Text::bytes(t))
+}
+
+pub theorem Text::find_prefix(a: Text, b: Text): Text::find(Text::concat(a, b), a) = Some(Zero) {
+  Bytes::find_from_prefix(
+    List::append(Text::bytes(a), Text::bytes(b)),
+    Text::bytes(a),
+    Zero,
+    Bytes::starts_with_append(Text::bytes(a), Text::bytes(b))
+  )
+}
+
+pub theorem Text::contains_concat(a: Text, b: Text): Text::contains(Text::concat(a, b), a) = true {
+  Eq::congr(⟦Option::is_some(□)⟧, Text::find_prefix(a, b))
+}
+
+pub theorem Text::bytes_of_parts(
+  rest: List(List(Nat))
+): List::map((q: Text) => Text::bytes(q), Text::of_bytes_list(rest)) = rest {
+  Eq::trans(
+    List::map_map((b: List(Nat)) => Text::Mk(b), (q: Text) => Text::bytes(q), rest),
+    List::map_id(rest)
+  )
+}
+
+pub theorem Text::join_pair(
+  pr: List(List(Nat)) × List(Nat),
+  sep: Nat
+): Text::join(Text::Mk([sep]), Text::of_split(pr)) = Text::Mk(Bytes::unsplit([sep], pr)) {
+  match pr {
+    #(rest, cur) => Eq::congr(
+      ⟦Text::Mk(List::append(cur, Bytes::join_rest([sep], □)))⟧,
+      Text::bytes_of_parts(rest)
+    )
+  }
+}
+
+pub theorem Text::split_on_join(t: Text, sep: Nat): Text::join(Text::Mk([sep]), Text::split_on(t, sep)) = t {
+  match t {
+    Mk(bs) => Eq::trans(
+      Text::join_pair(Bytes::split(bs, sep), sep),
+      Eq::congr(⟦Text::Mk(□)⟧, Bytes::split_unsplit(bs, sep))
+    )
+  }
+}
+
+pub theorem Text::split_on_commas(): Text::split_on("a,b,c", 44) = ["a", "b", "c"] {
+  Refl
+}
+
+pub theorem Text::find_ll(): Text::find("hello", "ll") = Some(2) {
+  Refl
+}
+
+pub theorem Text::find_missing(): Text::find("hello", "z") = None {
+  Refl
+}
+
+pub theorem Text::repeat_ab(): Text::repeat("ab", 3) = "ababab" {
+  Refl
+}
+
+pub theorem Text::ends_with_lo(): Text::ends_with("hello", "lo") = true {
+  Refl
+}
+
+pub theorem Text::join_commas(): Text::join(",", ["a", "b"]) = "a,b" {
+  Refl
+}

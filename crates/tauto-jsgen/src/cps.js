@@ -1,31 +1,47 @@
 // Computations return a trampoline step. Promise suspension belongs to the
 // driver; effect continuations remain ordinary, reusable values.
 const more = f => f;
-const pure = value => (c, k) => more(() => k(c, value));
+const pure = value => {const e=(c, k) => more(() => k(c, value));e.now=()=>value;return e;};
 const mapValue = (e, f) => (c, k) => e(c, (d, v) => more(() => k(d, f(v))));
-const values = (es, f) => (c, k) => {
-    const scope=openScope(c.scope),env={...c.env};
+const values = (es, f) => {
+    // When each part is known at once (`now`: a constant or a local), no part can
+    // suspend between them, so the parts need no slots unless one is a temporary.
+    if(es.every(e=>e.now))return (c,k)=>{
+        const args=new Array(es.length);let held=false;
+        for(let i=0;i<es.length;i++){const v=es[i].now(c);args[i]=v;if(v?.temporary)held=true;}
+        if(!held)return more(()=>f(c,args,k));
+        return slotted(es,f,c,k,args);
+    };
+    return (c,k)=>slotted(es,f,c,k,null);
+};
+// `values` with a slot for each part; `known` holds the parts already computed.
+function slotted(es,f,c,k,known){
+    const scope=openScope(c.scope),env=envChild(c.env);
     // Temporaries are numbered by their depth in the context, so siblings reuse
     // ids and environments keep the same shape from one iteration to the next.
     const base=c.td??0,ids=es.map((_,i)=>-(base+i+1));
-    for(const id of ids)env[id]=own(scope,{id,value:undefined,shared:false});
+    for(const id of ids)envSet(env,id,own(scope,{id,value:undefined,shared:false}));
     const finish=(d,value)=>{
         const parent=exitScope(d.scope,scope.id);
         return more(()=>k({...d,scope:parent,env:restoreEnv(c.env,parent),td:c.td},value));
     };
     const loop = (i, d) => {
         if(i===es.length){
-            const args=ids.map(id=>{const slot=d.env[id],value=slot.value;if(!value?.temporary)slot.value=undefined;return value;});
+            const args=ids.map(id=>{const slot=envGet(d.env,id),value=slot.value;if(!value?.temporary)slot.value=undefined;return value;});
             return more(()=>f(d,args,finish));
         }
-        return es[i](d,(next,value)=>{next.env[ids[i]].value=value;return more(()=>loop(i+1,next));});
+        if(known){envGet(d.env,ids[i]).value=known[i];return loop(i+1,d);}
+        return es[i](d,(next,value)=>{envGet(next.env,ids[i]).value=value;return more(()=>loop(i+1,next));});
     };
     return loop(0,{...c,scope,env,td:base+ids.length});
-};
-function readLocal(id,deref=false,copy=false,move=false) { return (c,k)=>more(()=>{const slot=c.env[id];let v=slot.value;if(deref&&copy&&v?.cloneOwned){v=v.cloneOwned();copy=false;}else if(deref)v=unref(v);if(move)slot.value=undefined;return k(c,copy?copyValue(v):!deref&&!move&&v?.ref?borrowedRef(v):v);}); }
+}
+function readLocal(id,deref=false,copy=false,move=false) {
+    const now=c=>{const slot=envGet(c.env,id);let v=slot.value,cp=copy;if(deref&&cp&&v?.cloneOwned){v=v.cloneOwned();cp=false;}else if(deref)v=unref(v);if(move)slot.value=undefined;return cp?copyValue(v):!deref&&!move&&v?.ref?borrowedRef(v):v;};
+    const e=(c,k)=>more(()=>k(c,now(c)));e.now=now;return e;
+}
 function defineLocal(id, shared, init, immutable=false) {
     return (c, k) => init(c, (d, v) => {
-        const env = {...d.env, [id]: own(d.scope,{id,value: v, shared,immutable})};
+        const env = envWith(d.env,id,own(d.scope,{id,value: v, shared,immutable}));
         return more(() => k({...d, env}, null));
     });
 }
@@ -53,34 +69,45 @@ const returnValue = e => (c, k) => e(c,(d,v) => more(() => d.ret(d,v)));
 function callFunction(fn, args, ticked) {
     return values([fn,...args], (c,[value,...vs],k) => {
         const f=unref(value),scope=openScope(c.scope),id=-(c.td??0)-1;
-        const env={...c.env,[id]:own(scope,{id,value,shared:false})};
+        // A temporary stays with the statement's slot until the statement
+        // ends (`slotted`); the call's slot is another owner of it, as a
+        // parameter is (`enterFunction`).
+        if(value?.temporary&&value.retain)value.retain();
+        const env=envWith(c.env,id,own(scope,{id,value,shared:false}));
         const inner={...c,env,scope,td:-id};
         const finish=(d,v)=>{const parent=exitScope(d.scope,scope.id);return more(()=>k({...d,scope:parent,env:restoreEnv(c.env,parent),td:c.td},v));};
         const enter=d=>f.tautoNative?external(f,vs.map(pure))(d,finish):more(()=>f(d,vs,finish));
         return ticked?tickBudget(inner,enter):enter(inner);
     });
 }
+// The arguments a frame may restart with: stable values, and borrows, which
+// the `recur` mark lets point only outside the frame. A loop, not `every`,
+// which the program's host may have replaced.
+function restartableArgs(values){
+    for(let i=0;i<values.length;i++){const v=values[i];if(!stableMember(v)&&!v?.ref)return false;}
+    return true;
+}
 function tailSelfCall(fn,args) {
     return (c,k)=>{
         if(!c.restart)return callFunction(fn,args,false)(c,k);
         return values(args,(d,vs,finish)=>{
-            // Static eligibility excludes effects, borrows and destructors.
-            // Unknown host values still keep the ordinary ownership path.
-            if(d.h!==d.restart.handlers||!allStableMembers(vs))return callFunction(fn,vs.map(pure),false)(d,finish);
+            // A borrow passed on points outside the frame (the `recur` mark asks
+            // it); other unknown host values keep the ordinary ownership path.
+            if(d.h!==d.restart.handlers||!restartableArgs(vs))return callFunction(fn,vs.map(pure),false)(d,finish);
             return more(()=>d.restart.run(d,vs));
         })(c,k);
     };
 }
 function enterFunction(body, params, captures, caller, args, k, borrowed=false, exportBorrows=true, ownedParams=[], restartable=false, consumeCaptures=false) {
-    const env = {},scope=openScope(caller.scope);
-    for(const [id,slot] of Object.entries(captures)){
-        if(borrowed||slot.shared){env[id]=slot;scopeAlias(scope,Number(id),slot);}
+    const env = envNew(),scope=openScope(caller.scope);
+    if(captures)for(const [id,slot] of captures){
+        if(borrowed||slot.shared){envSet(env,id,slot);scopeAlias(scope,id,slot);}
         else {
-            env[id]=own(scope,{...slot,value:consumeCaptures?slot.value:copyValue(slot.value)});
+            envSet(env,id,own(scope,{...slot,value:consumeCaptures?slot.value:copyValue(slot.value)}));
             if(consumeCaptures)slot.value=undefined;
         }
     }
-    for (let i=0;i<params.length;i++){if(args[i]?.ref&&args[i]?.retain)args[i].retain();env[params[i]]=own(scope,{id:params[i],value:args[i],shared:false,immutable:ownedParams[i]===true});}
+    for (let i=0;i<params.length;i++){if(args[i]?.ref&&args[i]?.retain)args[i].retain();envSet(env,params[i],own(scope,{id:params[i],value:args[i],shared:false,immutable:ownedParams[i]===true}));}
     const boundary = caller.h?.id;
     const ret = (d,v) => {
         if(exportBorrows)v=exportBorrow(v);
@@ -89,7 +116,7 @@ function enterFunction(body, params, captures, caller, args, k, borrowed=false, 
         const scope=unwind(d.scope,caller.scope);
         return more(() => k({...caller,scope,env:restoreEnv(caller.env,scope),h},v));
     };
-    const restart=restartable&&allStableMembers(args)?{
+    const restart=restartable&&restartableArgs(args)?{
         handlers:caller.h,
         run:(d,values)=>{
             const parent=unwind(d.scope,caller.scope);
@@ -101,26 +128,26 @@ function enterFunction(body, params, captures, caller, args, k, borrowed=false, 
 function closureValue(body,params,captureIds,borrowed=false,refs=[],exportBorrows=true,ownedParams=[],captureMoves=[],once=false,ownedRefs=[]) {
     return (c,k) => {
         if(!borrowed)charge(1);
-        const captures = {};
+        const captures = new Map();
         const releaseCaptures=()=>{
-            for(const slot of Object.values(captures)){
+            for(const slot of captures.values()){
                 if(slot.shared){if(--slot.owners===0)dropValue(slot.value);}
                 else if(!borrowed){dropValue(slot.value);slot.value=undefined;}
             }
         };
         try{
             for(const id of captureIds){
-                if(!Object.hasOwn(c.env,id))continue;
-                const slot=c.env[id];
+                const slot=envGet(c.env,id);
+                if(slot===undefined)continue;
                 if(slot.shared)slot.owners++;
-                if(borrowed||slot.shared)captures[id]=slot;
+                if(borrowed||slot.shared)captures.set(id,slot);
                 else{
                     const moved=captureMoves.includes(id);
-                    captures[id]={...slot,value:ownedRefs.includes(id)?temporaryRef(dereference(slot.value,true),true):moved?slot.value:copyValue(slot.value)};
+                    captures.set(id,{...slot,value:ownedRefs.includes(id)?temporaryRef(dereference(slot.value,true),true):moved?slot.value:copyValue(slot.value)});
                     if(moved)slot.value=undefined;
                 }
             }
-            for(const [inner,outer] of refs) captures[inner]={value:placeRef(c,outer,[],true),shared:true};
+            for(const [inner,outer] of refs) captures.set(inner,{value:placeRef(c,outer,[],true),shared:true});
         }catch(error){releaseCaptures();throw error;}
         let called=false;
         const fn=(caller,args,target)=>{
@@ -142,11 +169,13 @@ function matchPattern(p,v,bindings,taken=null,from=null,index=0) {
     switch(p[0]) {
         case 'wild': return true;
         case 'bind':
-            if(taken&&!p[2]&&!v?.ref){bindings[p[1]]={value:v,shared:false,immutable:p[3]===true};taken.push([from,index,bindings[p[1]]]);return true;}
-            bindings[p[1]]={value:p[2]?(v?.ref?copyValue(v):reference(()=>v,x=>{v=x;})):copyValue(unref(v)),shared:false,immutable:!p[2]&&p[3]===true};return true;
+            if(taken&&!p[2]&&!v?.ref){const slot={value:v,shared:false,immutable:p[3]===true};bindings.set(p[1],slot);taken.push([from,index,slot]);return true;}
+            bindings.set(p[1],{value:p[2]?(v?.ref?copyValue(v):reference(()=>v,x=>{v=x;})):copyValue(unref(v)),shared:false,immutable:!p[2]&&p[3]===true});return true;
         case 'literal': return equal(p[1],unref(v));
         case 'product': { const obj=unref(v);const inner=v?.ref||retainedGraphs.has(obj)?null:taken;return p[1].every((q,i)=>matchPattern(q,v?.ref?fieldRef(v,i):obj.fields[i],bindings,inner,obj,i)); }
         case 'ctor': { const obj=unref(v);requireDataOwner(obj);const inner=v?.ref||retainedGraphs.has(obj)?null:taken;return obj?.tag===p[1]&&obj.owner===p[3]&&p[2].every((q,i)=>matchPattern(q,v?.ref?fieldRef(v,i):obj.fields[i],bindings,inner,obj,i)); }
+        // A union's value `{union,variant,value}`: what was injected, taken as the whole scrutinee is.
+        case 'variant': { const u=unref(v);if(u?.variant!==p[1])return false;return matchPattern(p[2],v?.ref?reference(()=>unref(v).value,x=>{unref(v).value=x;}):u.value,bindings,v?.ref?null:taken,from,index); }
     }
 }
 // `take` is set only when the scrutinee is a fresh owned value and no arm has
@@ -155,22 +184,22 @@ function matchValue(scrut,arms,take=false) {
     return (c,k)=>scrut(c,(d,v)=>{
         const scope=openScope(d.scope),id=-(d.td??0)-1;
         const slot=own(scope,{id,value:v,shared:false});
-        const env={...d.env,[id]:slot};
+        const env=envWith(d.env,id,slot);
         const finish=(after,value)=>{const parent=exitScope(after.scope,scope.id);return more(()=>k({...after,scope:parent,env:restoreEnv(d.env,parent),td:d.td},value));};
         const loop=i=>{
             if(i===arms.length)throw new Error('no arm of the match fits');
-            const [pat,guard,body]=arms[i],bindings={},taken=take?[]:null;
+            const [pat,guard,body]=arms[i],bindings=new Map(),taken=take?[]:null;
             if(!matchPattern(pat,v,bindings,taken)){
                 const kept=new Set(taken?.map(t=>t[2]));
-                for(const binding of Object.values(bindings))if(!kept.has(binding))dropValue(binding.value);
+                for(const binding of bindings.values())if(!kept.has(binding))dropValue(binding.value);
                 return more(()=>loop(i+1));
             }
             if(taken)for(const [from,index] of taken){if(from){if(sharedData.has(from))continue;stableData.delete(from);from.fields[index]=undefined;}else slot.value=undefined;}
-            for(const [id,slot] of Object.entries(bindings))own(scope,Object.assign(slot,{id:Number(id)}));
-            const inner={...d,scope,env:{...env,...bindings},td:-id};
+            for(const [id,slot] of bindings)own(scope,Object.assign(slot,{id}));
+            const inner={...d,scope,env:envWithAll(env,bindings),td:-id};
             return guard(inner,(next,yes)=>{
                 if(yes)return more(()=>body(next,finish));
-                for(const slot of Object.values(bindings)){dropValue(slot.value);slot.value=undefined;}
+                for(const slot of bindings.values()){dropValue(slot.value);slot.value=undefined;}
                 return more(()=>loop(i+1));
             });
         };
@@ -206,6 +235,9 @@ function route(c,op,quant,vs,k,inside=null,skip=null) {
             if(op==='show'){const text=vs[0]+' = '+shown(vs[1]);forgetStableData();try{c.host.show(text);}finally{forgetStableData();}return more(()=>k(c,null));}
             // The host answers `wait`: the task goes on once its signal is raised.
             if(op==='wait'&&vs[0]?.kind==='Signal'){const s=vs[0];if(s.raised)return more(()=>k(c,null));return new Promise(resolve=>waitSignal(s,()=>resolve(more(()=>k(c,null)))));}
+            // The host answers `overflow` and `divzero` by stopping the program.
+            if(op==='overflow'&&vs.length===0)throw new Error('the number is too large');
+            if(op==='divzero'&&vs.length===0)throw new Error('division by zero');
             throw new Error('nothing handles '+op);
         }
         if(frame.callback && quant!=='direct' && frame.id!==skip?.id)return frame.suspend(c,op,quant,vs,k);
@@ -214,7 +246,7 @@ function route(c,op,quant,vs,k,inside=null,skip=null) {
         const arms=outside?frame.arms.filter(a=>a.op===op):[];
         const armAt=i=>{
             if(i===arms.length)return more(()=>search(frame.outer));
-            const arm=arms[i],bindings={};
+            const arm=arms[i],bindings=new Map();
             if(!arm.pats.every((p,j)=>matchPattern(p,vs[j],bindings)))return more(()=>armAt(i+1));
             const captured=[...prefix];
             const snapshot=captureContext(c,frame.scope,quant==='many',frame.env);
@@ -228,7 +260,7 @@ function route(c,op,quant,vs,k,inside=null,skip=null) {
                 for(let i=captured.length-1;i>=0;i--) {
                     const old=captured[i];
                     const scope=context.scopes.get(old.scope)??caller.scope;
-                    const env=Object.fromEntries(Object.entries(old.env).map(([id,slot])=>[id,context.sourceSlots.get(slot)??slot]));
+                    const env=envOf(envEntries(old.env).map(([id,slot])=>[id,context.sourceSlots.get(slot)??slot]));
                     h={...old,outer:h,scope,env,target:i===captured.length-1?back:old.target};
                 }
                 return more(()=>k({...c,env:context.env,scope:context.scope,h},v));
@@ -240,17 +272,17 @@ function route(c,op,quant,vs,k,inside=null,skip=null) {
             // The arm owns one continuation reference until it completes or
             // fails, unless it moved `k` out (into a value it returns).
             const pending=c.scope.pending;
-            const releaseInitial=()=>{if(!initialOwned)return;initialOwned=false;pending.delete(releaseInitial);if(accepted&&!resumed)for(const frame of captured)frame.cancel?.();if(arm.k===null||bindings[arm.k].value===resume)resume.release();keepAround();};
+            const releaseInitial=()=>{if(!initialOwned)return;initialOwned=false;pending.delete(releaseInitial);if(accepted&&!resumed)for(const frame of captured)frame.cancel?.();if(arm.k===null||bindings.get(arm.k).value===resume)resume.release();keepAround();};
             if(quant!=='direct')pending.add(releaseInitial);
             resume.retain=()=>{owners++;};
             // The bindings around the handle: a `k` kept past its arm reads
             // them after their scope may have closed, so that scope leaves
             // them to it.
             let around=[];
-            const keepAround=()=>{if(owners===0||quant==='direct')return;around=Object.values(frame.env);for(const slot of around)(slot.keptBy??=new Set()).add(resume);};
+            const keepAround=()=>{if(owners===0||quant==='direct')return;around=envEntries(frame.env).map(e=>e[1]);for(const slot of around)(slot.keptBy??=new Set()).add(resume);};
             resume.release=()=>{if(--owners!==0)return;unprotect();if(ownsSnapshot())for(const scope of snapshot.originals)closeScope(scope);for(const slot of around)unkeep(slot,resume);};
-            if(arm.k!==null)bindings[arm.k]={value:resume,shared:false};
-            const env={...frame.env,...bindings},scope=openAliasScope(frame.scope,env);
+            if(arm.k!==null)bindings.set(arm.k,{value:resume,shared:false});
+            const env=envWithAll(frame.env,bindings),scope=openAliasScope(frame.scope,env);
             const outside={...c,h:frame.outer,scope,env};
             return arm.guard(outside,(next,yes)=>{
                 if(!yes){releaseInitial();exitScope(next.scope,scope.id);return more(()=>armAt(i+1));}
@@ -393,6 +425,8 @@ function external(name,args) {
         finally{for(const handle of consumed)handle.toHost();}
         forgetStableData();
         if(value&&typeof value.then==='function') {
+            // A Promise is a wait on the host, which the extern's row says.
+            if(typeof name==='string'&&!fn.tautoNative&&typeof hostWaits!=='undefined'&&!hostWaits.has(name)){cancel();Promise.resolve(value).catch(()=>{});throw new Error('extern '+name+' returned a Promise but its row has no wait');}
             if(c.direct){cancel();Promise.resolve(value).catch(()=>{});throw new Error('a direct handler cannot await javascript extern '+name);}
             Promise.resolve(value).then(v=>enqueue(d=>{forgetStableData();cancel();if(signature?.ret)v=hostHandle(c.host,signature.ret,v);return more(()=>k(d,v));}),e=>enqueue(()=>{forgetStableData();cancel();throw e;}));
             return next();
@@ -404,7 +438,7 @@ function external(name,args) {
     });
 }
 // The host's step limit: `options.steps`, else ten million; none when
-// `permissions.div` lets `Div` run without it (`--allow-div`).
+// `permissions.div` lets `div` run without it (`--allow-div`).
 function hostSteps(options){return options.steps??(options.permissions?.div===true?Infinity:10000000);}
 function newHost(show,externs,options){
     return {show,externs,options,temporary:0,fuel:{left:hostSteps(options)},handles:new Set(),objects:new WeakMap(),instance:{}};
@@ -414,7 +448,7 @@ function newHost(show,externs,options){
 function startCall(host){
     const call={...host,temporary:0,fuel:{left:hostSteps(host.options)}};
     let result;
-    const c={env:{},h:null,host:call,ret:null,direct:false,scope:openScope(null)};
+    const c={env:envNew(),h:null,host:call,ret:null,direct:false,scope:openScope(null)};
     const finish=(_,v)=>{result=thaw(v);return null;};
     c.ret=finish;
     return {c,finish,result:()=>result};
@@ -429,17 +463,50 @@ function disposeHost(host){
     try{for(const handle of [...host.handles].reverse())handle.dispose();}
     finally{forgetStableData();}
 }
-async function driveIn(start,host){
+// The task running now (`null` on the program's main): the mutexes it takes
+// from note it, so that its failure poisons them (`poisonHeld`).
+let TASK=null;
+async function driveIn(start,host,task=null){
     forgetStableData();
     const {c,finish,result}=startCall(host);
     try {
+        TASK=task;
         let step=start(c,finish);
         while(step!==null){
+            // A task of a disposed instance stops at its next step.
+            if(host.instance.disposed)throw new Error('the instance was disposed');
+            TASK=task;
             if(typeof step==='function')step=step();
             else{forgetStableData();try{step=await step;}finally{forgetStableData();}}
         }
+    } catch(e) {
+        // Before its guards are dropped with its scopes, which then give
+        // nothing back to a poisoned mutex.
+        if(task)poisonHeld(task);
+        throw e;
     } finally {endCall(c);}
     return result();
+}
+// A task failed: each mutex whose content it holds is poisoned, and the places
+// in its line wake to fail.
+function poisonHeld(task){
+    for(const m of task.held){
+        if(m.taker!==task)continue;
+        m.poisoned=true;
+        for(const s of m.waiting.splice(0))raise(s);
+    }
+    task.held.clear();
+}
+function tookMutex(m){m.taker=TASK;if(TASK)TASK.held.add(m);}
+function checkPoisoned(m){if(m.poisoned)throw new Error('the Mutex is poisoned: a task that held its content failed');}
+// The host hears of a task's failure at once: `options.task_failed(message)`,
+// else its standard error.
+function reportTaskFailure(host,e){
+    const message=e?.message??String(e);
+    const f=host.options.task_failed;
+    if(typeof f==='function'){f(message);return;}
+    const line='a task failed: '+message+'\n';
+    if(typeof host.options.os_eprint==='function')host.options.os_eprint(line);else console.error(line.trimEnd());
 }
 function driveSync(start,host,name){
     forgetStableData();
@@ -453,9 +520,9 @@ function driveSync(start,host,name){
     } finally {endCall(c);}
     return result();
 }
-async function drive(start,show,externs,options={}) {
+async function drive(start,show,externs,options={},task=null) {
     const host=newHost(show,externs,options);
-    try{return await driveIn(start,host);}finally{disposeHost(host);}
+    try{return await driveIn(start,host,task);}finally{disposeHost(host);}
 }
 // An instance runs exported functions; importing the module runs nothing.
 // A host object argument gets a handle of the instance, a borrowed one only
@@ -463,9 +530,12 @@ async function drive(start,show,externs,options={}) {
 // result is kept by the instance until it is disposed.
 function instantiateWith(table,externs,options){
     const host=newHost(options.show??console.log,externs,options);
+    // A task an export starts runs in the instance, after the call returns,
+    // until the instance is disposed.
+    host.instance.tasks=host;host.instance.disposed=false;
     let disposed=false,running=0;
     const owner={kept:[],closing:false,enter(){},leave(){}};
-    const instance={dispose(){if(disposed)return;disposed=true;owner.closing=true;
+    const instance={dispose(){if(disposed)return;disposed=true;host.instance.disposed=true;owner.closing=true;
         try{for(const callback of owner.kept.splice(0).reverse())callback.close();}finally{disposeHost(host);}}};
     for(const [name,[f,sync,params,ret]] of Object.entries(table)){
         instance[name]=(...args)=>{
@@ -480,7 +550,9 @@ function instantiateWith(table,externs,options){
                     let active=true;ends.push(()=>{active=false;});
                     return (c,vs,k)=>{if(!active)throw new Error('a host function outlived the call of '+name);return external(v,vs.map(pure))(c,k);};
                 }
-                return v;
+                // The call owns what it is given, and may take its parts apart; the host
+                // keeps its value, which it may pass again (a shared graph is not copied).
+                return v!==null&&typeof v==='object'?copyValue(v):v;
             });
             const out=v=>{
                 if(ret?.host){const object=hostObject(host,ret.host,v);v.toHost();return object;}
@@ -498,7 +570,7 @@ function instantiateWith(table,externs,options){
 // Direct forms run on the host stack. `H` is the host whose fuel they count;
 // they never reach the driver, so it stays the same until they return.
 let H=null;
-function T(v){if(H.fuel.left--<=0)throw new Error('interrupted: the step limit ran out');return v;}
+function T(v){if(H.fuel.left--<=0)throw stepLimitError(H);return v;}
 // What a direct form changes in place is logged, so that starting again in
 // continuation form starts from the same values: `J` holds triples of a
 // target, a key and the value before (an index or a property of the target;
@@ -516,7 +588,7 @@ function undo(log){
 // Data a direct form builds, its fields in the declaration's order. The
 // arrays are the form's own, never a host's, so the value is certified as
 // `construct` certifies ordinary arrays.
-function dcons(tag,names,fields,isStruct,owner,retainable=false){charge(1+fields.length);return generatedAggregate({owner,tag,names,fields,struct:isStruct},fields,retainable&&ordinaryArrayMethods(fields)&&ordinaryArrayMethods(names));}
+function dcons(tag,names,fields,isStruct,owner,retainable=false){charge(1+fields.length);return generatedAggregate({owner,tag,names,fields,struct:isStruct},fields,retainable&&ordinaryArrayPair(fields,names));}
 const dsome=v=>dcons('Some',[null],[v],false,'Option'),dnone=()=>dcons('None',[],[],false,'Option');
 function vecNew(){const v=vec([]);F.add(v.items);return v;}
 function vecGet(v,i){const a=v.items;i=Number(i);return i>=0&&i<a.length?dsome(a[i]):dnone();}
@@ -561,8 +633,10 @@ function direct(d,cps,c,args,k,borrowed){
         H=c.host;J=log;F=new WeakSet();
         try{const v=d(...args.map((a,i)=>borrowed[i]===1||borrowed[i]===2?unref(a):a));return more(()=>k(c,v));}
         catch(e){
-            // Too deep for the host stack: start again in continuation form.
-            if(!(e instanceof RangeError))throw e;
+            // Too deep for the host stack, or an operator whose result does not
+            // exist (which performs `overflow` or `divzero`, as only the
+            // continuation form can): start again in continuation form.
+            if(!(e instanceof RangeError)&&!(e instanceof OpFail))throw e;
             undo(log);
             c.host.fuel.left=left;
         }finally{H=outer;J=outerJ;F=outerF;}

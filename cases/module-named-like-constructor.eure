@@ -1,10 +1,10 @@
-description = "A module's functions keep their own names where another file of the program has a constructor of the module's name."
+description = "A `T::` function keeps its own name where another file of the program has a constructor of the module's name."
 
 // `escape.taut` has a constructor `Digit`, so the type `Digit` of
 // `status.taut` is told apart by its full name. `Digit::value_zero` that
-// `status.taut` writes is still the theorem of its own `module Digit`, though
+// `status.taut` writes is still the theorem of its own `Digit::value_zero`, though
 // `status.taut` does not import `escape.taut` and the program expands macros
-// (`std::NatDiv` has them).
+// (`std::nat_div` has them).
 @ cases.a-module-function-is-not-renamed-with-its-type
 entry = "src/main.taut"
 files."src/escape.taut" = ```tauto
@@ -22,24 +22,20 @@ pub(open) inductive Digit: Type {
 pub(open) inductive Status: Type {
   Mk(d: Digit): Status
 }
-module Digit {
-  pub fn value(d: Digit): Nat { 0 }
-  pub theorem value_zero(d: Digit): Digit::value(d) = 0 {
-    ⊢ Digit::value(d) = 0 from match d {
-      D0 => Refl
-    }
+pub fn Digit::value(d: Digit): Nat { 0 }
+pub theorem Digit::value_zero(d: Digit): Digit::value(d) = 0 {
+  ⊢ Digit::value(d) = 0 from match d {
+    D0 => Refl
   }
 }
-module Status {
-  pub fn value(s: Status): Nat {
-    ⊢ Nat from match s {
-      Mk(d) => Digit::value(d)
-    }
+pub fn Status::value(s: Status): Nat {
+  ⊢ Nat from match s {
+    Mk(d) => Digit::value(d)
   }
-  pub theorem value_zero(s: Status): Status::value(s) = 0 {
-    ⊢ Status::value(s) = 0 from match s {
-      Mk(d) => Digit::value_zero(d)
-    }
+}
+pub theorem Status::value_zero(s: Status): Status::value(s) = 0 {
+  ⊢ Status::value(s) = 0 from match s {
+    Mk(d) => Digit::value_zero(d)
   }
 }
 ```
@@ -52,7 +48,7 @@ import "escape.taut" { unescaped }
 pub fn zero(): Nat { unescaped(0) }
 ```
 files."src/main.taut" = ```tauto
-import std::NatDiv
+import std::nat_div
 import "http.taut"
 import "percent.taut"
 ```
@@ -61,8 +57,8 @@ checks."Status::value_zero" = "ok"
 
 // `percent.taut` imports the dependency's `escape` with a list that does not
 // write `Escape`, whose constructor `Percent` has the name of the file's own
-// `module Percent`: `Percent::encoded_id` is the module's theorem.
-@ cases.a-local-module-wins-over-an-unlisted-constructor
+// `Percent::` functions: `Percent::encoded_id` is the file's theorem.
+@ cases.a-prefixed-theorem-wins-over-an-unlisted-constructor
 files_tote = "app"
 files."app/Tauto.eure" = ```eure
 package { name = "app" }
@@ -78,15 +74,9 @@ pub fn unescaped(n: Nat): Nat { n }
 ```
 files."app/src/percent.taut" = ```tauto
 import lib::escape { unescaped }
-module Percent {
-  pub fn encoded(n: Nat): Nat { unescaped(n) }
-}
-module Percent {
-  theorem encoded_id(n: Nat): Percent::encoded(n) = n { Refl }
-}
-module Percent {
-  pub theorem zero_encoded(): Percent::encoded(0) = 0 { Percent::encoded_id(0) }
-}
+pub fn Percent::encoded(n: Nat): Nat { unescaped(n) }
+theorem Percent::encoded_id(n: Nat): Percent::encoded(n) = n { Refl }
+pub theorem Percent::zero_encoded(): Percent::encoded(0) = 0 { Percent::encoded_id(0) }
 ```
 files."app/src/main.taut" = ```tauto
 import "percent.taut"

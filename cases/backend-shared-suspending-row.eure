@@ -2,25 +2,25 @@
 // that suspend: each argument is made for the same tier, and both are
 // called in the body.
 @ cases.two-callbacks-share-a-suspending-row
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a call that may stop yet"
 source = ```nib
-import std::prelude::Os
+import std::builtin::os
 
-fn both<!e>(load: (k: u64) -> u64 ! e, put: (v: u64) -> u64 ! e): u64 ! e {
+fn both<!e>(load: (k: nat) -> nat ! e, put: (v: nat) -> nat ! e): nat ! e {
   put(load(1)) + put(load(2))
 }
-fn load(k: u64): u64 ! {sleep} { perform sleep(1); k * 10 }
-fn put(v: u64): u64 ! {sleep} { perform sleep(1); v + 1 }
-perform show("r", both(load, put))
+fn load(k: nat): nat ! {sleep} { perform sleep(1); k * 10 }
+fn put(v: nat): nat ! {sleep} { perform sleep(1); v + 1 }
+show(&both(load, put))
 ```
-shows = ["r = 32"]
+stdout = "32\n"
 
 @ cases.two-callbacks-share-a-suspending-row-passed-down
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
 source = ```nib
-import std::prelude::Os
+import std::builtin::os
 
-fn steps<!e>(ks: List(u64), load: (k: u64) -> Result(u64, u64) ! {Div} ∪ e, put: (v: u64) -> Bool ! {Div} ∪ e): Option(u64) ! {Div} ∪ e {
+fn steps<!e>(ks: List(u64), load: (k: u64) -> Result(u64, u64) ! {div} ∪ e, put: (v: u64) -> Bool ! {div} ∪ e): Option(u64) ! {div, overflow} ∪ e {
   match ks {
     Nil => Some(0)
     Cons(k, rest) => match load(k) {
@@ -34,65 +34,94 @@ fn steps<!e>(ks: List(u64), load: (k: u64) -> Result(u64, u64) ! {Div} ∪ e, pu
     }
   }
 }
-fn go<!e>(load: (k: u64) -> Result(u64, u64) ! {Div} ∪ e, put: (v: u64) -> Bool ! {Div} ∪ e): Option(u64) ! {Div} ∪ e {
+fn go<!e>(load: (k: u64) -> Result(u64, u64) ! {div} ∪ e, put: (v: u64) -> Bool ! {div} ∪ e): Option(u64) ! {div, overflow} ∪ e {
   if put(0) { steps([1, 2, 3], load, put) } else { None }
 }
-let r := go((k) => { perform sleep(1); Ok(k * 10) }, (v) => { perform sleep(1); perform show("put", v); true })
+let r := go((k) => { perform sleep(1); Ok(k * 10) }, (v) => { perform sleep(1); show(&v); true })
 match r {
-  Some(n) => perform show("r", n)
-  None => perform show("r", 0)
+  Some(n) => show(&n)
+  None => show(&0)
 }
 ```
-shows = ["put = 0", "put = 10", "put = 20", "put = 30", "r = 60"]
+stdout = ```
+0
+10
+20
+30
+60
+```
 
 @ cases.two-callbacks-share-a-suspending-row-captured
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
 source = ```nib
-import std::prelude::Os
+import std::builtin::os
 
-fn each<!e>(ks: List(u64), f: (k: u64) -> u64 ! e): u64 ! e {
+fn each<!e>(ks: List(nat), f: (k: nat) -> nat ! e): nat ! e {
   match ks {
     Nil => 0
     Cons(k, rest) => f(k) + each(rest, f)
   }
 }
-fn go<!e>(load: (k: u64) -> u64 ! {Div} ∪ e, put: (v: u64) -> u64 ! {Div} ∪ e): u64 ! {Div} ∪ e {
+fn go<!e>(load: (k: nat) -> nat ! {div} ∪ e, put: (v: nat) -> nat ! {div} ∪ e): nat ! {div} ∪ e {
   each([1, 2, 3], (k) => put(load(k)))
 }
-perform show("r", go((k) => { perform sleep(1); k * 10 }, (v) => { perform sleep(1); v + 1 }))
+show(&go((k) => { perform sleep(1); k * 10 }, (v) => { perform sleep(1); v + 1 }))
 ```
-shows = ["r = 63"]
+stdout = "63\n"
 
 @ cases.callback-of-a-smaller-row-passed-with-a-suspending-one
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a call that may stop yet"
 source = ```nib
-import std::prelude::Os
+import std::builtin::os
 
-fn both<!e>(load: (k: u64) -> u64 ! {Div} ∪ e, put: (v: u64) -> u64 ! {Div} ∪ e): u64 ! {Div} ∪ e {
+fn both<!e>(load: (k: u64) -> u64 ! {div} ∪ e, put: (v: u64) -> u64 ! {div} ∪ e): u64 ! {div, overflow} ∪ e {
   put(load(1)) + put(load(2))
 }
-fn go<!e>(load: (k: u64) -> u64 ! {Div} ∪ e): u64 ! {Div, sleep} ∪ e {
+fn go<!e>(load: (k: u64) -> u64 ! {div} ∪ e): u64 ! {div, sleep, overflow} ∪ e {
   both(load, (v) => { perform sleep(1); v + 1 })
 }
-perform show("r", go((k) => k * 10))
+show(&go((k) => k * 10))
 ```
-shows = ["r = 32"]
+stdout = "32\n"
 
 @ cases.wrapped-callback-of-a-smaller-row-passed-with-a-suspending-one
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a call that may stop yet"
 source = ```nib
-import std::prelude::Os
+import std::builtin::os
 
-fn both<!e>(load: (k: u64) -> Result(u64, u64) ! {Div} ∪ e, put: (v: u64) -> Bool ! {Div} ∪ e): Bool ! {Div} ∪ e {
+fn both<!e>(load: (k: u64) -> Result(u64, u64) ! {div} ∪ e, put: (v: u64) -> Bool ! {div} ∪ e): Bool ! {div} ∪ e {
   match load(1) {
     Ok(v) => put(v)
     Err(_) => false
   }
 }
-fn go<!e>(load: (k: u64) -> Result(u64, u64) ! {Div} ∪ e): Bool ! {Div, sleep} ∪ e {
+fn go<!e>(load: (k: u64) -> Result(u64, u64) ! {div} ∪ e): Bool ! {div, sleep} ∪ e {
   let fetch := (k) => load(k)
   both(fetch, (v) => { perform sleep(1); v == 10 })
 }
-perform show("r", go((k) => Ok(k * 10)))
+show(&go((k) => Ok(k * 10)))
 ```
-shows = ["r = true"]
+stdout = "true\n"
+
+// A call's result passed as a callback has the row row checking followed
+// it to, which specializes the callee's row variable.
+@ cases.callback-made-by-a-call-specializes-the-row-variable
+source = ```tauto
+fn reported<!e>(what: Text, f: (k: Text, a: Text) -> Text ! {div} ∪ e): (k: Text, a: Text) -> Text ! {div} ∪ e {
+  (k: Text, a: Text) => concat(what, f(k, a))
+}
+
+fn use_it<!e>(load: (k: Text) -> Text ! {div} ∪ e, f: (k: Text, a: Text) -> Text ! {div} ∪ e): Text ! {div} ∪ e {
+  concat(load("y"), f("x", ""))
+}
+
+fn go<!e>(load: (k: Text) -> Text ! {div} ∪ e, call: (k: Text, a: Text) -> Text ! {div} ∪ e): Text ! {div} ∪ e {
+  let loads := reported("load:", (k: Text, a: Text) => load(k))
+  use_it((k: Text) => loads(k, ""), reported("call:", call))
+}
+
+show(&go((k: Text) => k, (k: Text, a: Text) => k))
+```
+stdout = ```
+"load:ycall:x"
+```

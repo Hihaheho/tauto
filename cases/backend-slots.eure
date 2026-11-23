@@ -1,0 +1,42 @@
+// Native `Slots`: a place is filled by `put` and emptied by `take`, read in
+// place by `get` and `get_mut`, kept (with its mark) by a larger `resize`, and
+// dropped by a smaller one. The state and the marks are what the caller wrote.
+@ cases.slots-basic
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
+stdout = ```
+4
+0
+7
+true
+"b"
+"x"
+"b"
+true
+10
+2
+false
+8
+```
+source = ```tauto
+var r: Slots(u64, u64, Text) := Slots::new(4, 0, 0)
+show(&Slots::cap(&r))
+show(&Slots::state(&r))
+Slots::put(&mut r, 1, 7, "a", 1)
+show(&Slots::mark(&r, 1))
+show(&(Slots::get(&r, 1) == "a"))
+Slots::put(&mut r, 2, 8, "b", 2)
+show(&Slots::get(&r, 2))
+{
+  let t := Slots::get_mut(&mut r, 1)
+  *t := "x"
+}
+show(&Slots::get(&r, 1))
+show(&Slots::take(&mut r, 2, 0, 1))
+Slots::resize(&mut r, 8, 3, 10)
+show(&(Slots::get(&r, 1) == "x"))
+show(&Slots::state(&r))
+show(&Slots::mark(&r, 1) - 5)
+Slots::resize(&mut r, 2, 0, 5)
+show(&(Slots::cap(&r) == 8))
+show(&Slots::mark(&r, 1) + 1)
+```

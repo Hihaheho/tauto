@@ -1,0 +1,102 @@
+// The evaluator runs spawned tasks on one thread: a new task goes on at its
+// `spawn` until it waits or ends, and a task that waits is set aside while the
+// others go on. `shows` as in `basics.eure`.
+
+@ cases.a-resident-worker-answers-while-the-spawner-goes-on
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+description = "A worker that waits on a channel for its next request is set aside at each wait, so the spawner goes on, sends, and gets each answer before the worker ends."
+source = ```nib
+import std::builtin::par
+
+let requests := Channel::new(1)
+let answers := Channel::new(1)
+let worker := perform spawn(() => {
+  var going := true
+  while going {
+    match Channel::recv(requests) {
+      Some(n) => Channel::send(answers, n * 2)
+      None => { going := false }
+    }
+  }
+})
+Channel::send(requests, 1)
+let a := Channel::recv(answers)
+Channel::send(requests, 20)
+let b := Channel::recv(answers)
+Channel::close(requests)
+Task::join(worker)
+show(&([a, b]))
+```
+stdout = "[Some(2), Some(40)]\n"
+
+@ cases.a-task-waiting-on-an-empty-mutex-goes-on-at-the-put
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+description = "A task that takes an empty mutex waits; the spawner's `mutex_put` hands it the content."
+source = ```nib
+import std::builtin::par
+
+let m: Mutex(nat) := perform mutex_new(0)
+let first := Mutex::take(m)
+let t := perform spawn(() => Mutex::take(m) + 1)
+perform mutex_put(m, 41 + first)
+show(&Task::join(t))
+```
+stdout = "42\n"
+
+@ cases.a-waiting-task-polls-as-running
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+description = "`Task::poll` of a task that waits gives it back as `Running`; once what it waits for comes, `Task::join` gives its result."
+source = ```nib
+import std::builtin::par
+
+let m: Mutex(nat) := perform mutex_new(0)
+let empty := Mutex::take(m)
+let t := perform spawn(() => Mutex::take(m))
+let r := match Task::poll(t) {
+  Finished(v) => v
+  Running(t) => {
+    perform mutex_put(m, 7 + empty)
+    Task::join(t) + 100
+  }
+}
+show(&r)
+```
+stdout = "107\n"
+
+@ cases.tasks-waiting-on-one-mutex-take-it-in-the-order-they-came
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+description = "Places in a mutex's line are handed the content first come, first served."
+source = ```nib
+import std::builtin::par
+
+let m := perform mutex_new(Vec::new())
+let held := Mutex::take(m)
+let a := perform spawn(() => {
+  var v := Mutex::take(m)
+  Vec::push(&mut v, 1)
+  perform mutex_put(m, v)
+})
+let b := perform spawn(() => {
+  var v := Mutex::take(m)
+  Vec::push(&mut v, 2)
+  perform mutex_put(m, v)
+})
+perform mutex_put(m, held)
+Task::join(a)
+Task::join(b)
+show(&Mutex::take(m))
+```
+stdout = "Vec[1, 2]\n"
+
+@ cases.tasks-that-wait-on-each-other-are-a-deadlock
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+description = "When every task waits and no signal can be raised, the run stops with a deadlock."
+source = ```nib
+import std::builtin::par
+
+let m := perform mutex_new(0)
+let empty := Mutex::take(m)
+let t := perform spawn(() => Mutex::take(m))
+show(&(Task::join(t) + empty))
+```
+run_error = "deadlock"

@@ -1,0 +1,38 @@
+description = "An erased function of the proof language keeps the ownership kinds its generics are written with when its body uses each value at most once on every path, so a native function can pass it an affine type. One that uses a value twice still asks for `shared`."
+
+// `n: u64` makes `drop` native, while `tail` is a function of the proof
+// language that is erased. `tail` moves `xs` once, so `drop`'s affine `A`
+// fits it.
+@ cases.a-native-caller-passes-an-affine-type-to-an-erased-function
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+fn Forms::tail<A>(xs: List(A)): List(A) {
+  match xs {
+    Nil => Nil
+    Cons(_, rest) => rest
+  }
+}
+
+fn Forms::drop<A>(xs: List(A), n: u64): List(A) ! {div, overflow} {
+  if n == 0 { xs } else { Forms::drop(Forms::tail(xs), n - 1) }
+}
+```
+tote_errors = []
+
+// `twice` uses its element `x` twice, so its `A` is `shared` after erasure
+// and an affine `A` does not fit it.
+@ cases.an-erased-function-that-copies-still-needs-shared
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+fn twice<A>(xs: List(A)): List(A) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(x, Cons(x, rest))
+  }
+}
+
+fn lead<A>(xs: List(A), n: u64): List(A) { twice(xs) }
+```
+tote_errors = ["x is used after move"]

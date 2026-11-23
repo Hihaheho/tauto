@@ -1,0 +1,101 @@
+// The structural predicates `PartialEq` and `DecEq` as the proofs read them: a
+// class whose one method `beq` is what `a == b` calls, with laws. Their
+// instances come from the structure of the type and no file writes them:
+// these for `Nat` and `Bool`, and for each inductive that lists its decidable
+// equality the ones `check/deq.rs` makes from the generated `I::beq`.
+// `DecEq(A)` gives `PartialEq(A)` by the rule of the structural predicates,
+// not as a superclass; both `beq` of a type are the same function.
+
+inductive class PartialEq(A: Type) {
+  fn beq(a: A, b: A): Bool
+  theorem symm(a: A, b: A, h: PartialEq::beq(a, b) = true): PartialEq::beq(b, a) = true
+  theorem trans(
+    a: A,
+    b: A,
+    c: A,
+    h1: PartialEq::beq(a, b) = true,
+    h2: PartialEq::beq(b, c) = true
+  ): PartialEq::beq(a, c) = true
+}
+
+inductive class DecEq(A: Type) {
+  fn beq(a: A, b: A): Bool
+  theorem beq_refl(a: A): DecEq::beq(a, a) = true
+  theorem beq_sound(a: A, b: A, h: DecEq::beq(a, b) = true): a = b
+}
+
+instance DecEq(Nat) {
+  fn beq(a: Nat, b: Nat): Bool {
+    Nat::eq(a, b)
+  }
+  theorem beq_refl(a: Nat): DecEq::beq(a, a) = true {
+    Nat::eq_refl(a)
+  }
+  theorem beq_sound(a: Nat, b: Nat, h: DecEq::beq(a, b) = true): a = b {
+    Nat::eq_sound(a, b, h)
+  }
+}
+
+instance PartialEq(Nat) {
+  fn beq(a: Nat, b: Nat): Bool {
+    Nat::eq(a, b)
+  }
+  theorem symm(a: Nat, b: Nat, h: PartialEq::beq(a, b) = true): PartialEq::beq(b, a) = true {
+    Eq::subst(<A: Nat, a: a, b: b>, (z: Nat) => Eq(Bool, Nat::eq(z, a), true), Nat::eq_sound(a, b, h), Nat::eq_refl(a))
+  }
+  theorem trans(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    h1: PartialEq::beq(a, b) = true,
+    h2: PartialEq::beq(b, c) = true
+  ): PartialEq::beq(a, c) = true {
+    Eq::subst(<A: Nat, a: b, b: a>, (z: Nat) => Eq(Bool, Nat::eq(z, c), true), Eq::sym(Nat::eq_sound(a, b, h1)), h2)
+  }
+}
+
+instance DecEq(Bool) {
+  fn beq(a: Bool, b: Bool): Bool {
+    Bool::eq(a, b)
+  }
+  theorem beq_refl(a: Bool): DecEq::beq(a, a) = true {
+    Bool::eq_refl(a)
+  }
+  theorem beq_sound(a: Bool, b: Bool, h: DecEq::beq(a, b) = true): a = b {
+    Bool::eq_sound(a, b, h)
+  }
+}
+
+instance PartialEq(Bool) {
+  fn beq(a: Bool, b: Bool): Bool {
+    Bool::eq(a, b)
+  }
+  theorem symm(a: Bool, b: Bool, h: PartialEq::beq(a, b) = true): PartialEq::beq(b, a) = true {
+    Eq::subst(<A: Bool, a: a, b: b>, (z: Bool) => Eq(Bool, Bool::eq(z, a), true), Bool::eq_sound(a, b, h), Bool::eq_refl(a))
+  }
+  theorem trans(
+    a: Bool,
+    b: Bool,
+    c: Bool,
+    h1: PartialEq::beq(a, b) = true,
+    h2: PartialEq::beq(b, c) = true
+  ): PartialEq::beq(a, c) = true {
+    Eq::subst(<A: Bool, a: b, b: a>, (z: Bool) => Eq(Bool, Bool::eq(z, c), true), Eq::sym(Bool::eq_sound(a, b, h1)), h2)
+  }
+}
+
+// The laws of `PartialEq(A)` from those of `DecEq(A)`: what the record of
+// `PartialEq(A)` that a `where DecEq(A)` gives is made of (`check/implicit.rs`).
+theorem dec_eq_symm<A>(a: A, b: A, h: DecEq::beq(a, b) = true): DecEq::beq(b, a) = true where DecEq(A) {
+  Eq::subst(<A: A, a: a, b: b>, (z: A) => Eq(Bool, DecEq::beq(z, a), true), DecEq::beq_sound(a, b, h), DecEq::beq_refl(a))
+}
+
+theorem dec_eq_trans<A>(
+  a: A,
+  b: A,
+  c: A,
+  h1: DecEq::beq(a, b) = true,
+  h2: DecEq::beq(b, c) = true
+): DecEq::beq(a, c) = true where DecEq(A) {
+  Eq::subst(<A: A, a: b, b: a>, (z: A) => Eq(Bool, DecEq::beq(z, c), true), Eq::sym(DecEq::beq_sound(a, b, h1)), h2)
+}

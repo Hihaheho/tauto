@@ -45,7 +45,7 @@ JavaScript の実行には Node が必要である。
 
 ```sh
 cargo build --locked -p tauto-cli --bin tauto
-TAUTO_BIN="$PWD/target/debug/tauto" bash scripts/check-bounded-batch.sh
+TAUTO_BIN="$PWD/target/debug/tauto" tauto check-bounded-batch
 ```
 
 スクリプトは CLI をビルドし直さない。fresh な証明検査、source bundle の出力と

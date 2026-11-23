@@ -1,10 +1,11 @@
 import "rules_data_shape.taut"
 import "registration_body_sound.taut"
-import std::Base
+import std::base
 import "checker.taut"
 import "datas_registration.taut"
 import "diagnostic_sound.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -14,7 +15,7 @@ pub theorem empty_data_ctor_step(
   tail: ∀ h: ctors_have_fields(rest) = false. EmptyDataConstructors(rest),
   clean: ctors_have_fields(Cons(k, rest)) = false
 ): EmptyDataConstructors(Cons(k, rest)) {
-  ⊢ EmptyDataConstructors(Cons(k, rest)) from match k {
+  match k {
     SurfaceDataCtorMk(name, fields) => ⊢ EmptyDataConstructors(
       Cons(SurfaceDataCtorMk(name, fields), rest)
     ) from match fields {
@@ -27,7 +28,7 @@ pub theorem ctors_have_fields_sound(
   cs: List(SurfaceDataCtor),
   clean: ctors_have_fields(cs) = false
 ): EmptyDataConstructors(cs) {
-  ⊢ EmptyDataConstructors(cs) from match cs {
+  match cs {
     Nil => EmptyDataConstructorsNil
     Cons(k, rest) => empty_data_ctor_step(k, rest, h => ctors_have_fields_sound(rest, h), clean)
   }
@@ -35,14 +36,14 @@ pub theorem ctors_have_fields_sound(
 pub theorem data_view_shape_checked(
   source: SurfaceData,
   is_struct: Bool,
-  r#view: Bool,
-  equal: surface_data_is_view(source) = r#view,
+  view: Bool,
+  equal: surface_data_is_view(source) = view,
   allowed: Bool::and(
-    r#view,
+    view,
     Bool::or(not(is_struct), ctors_have_fields(registration_ctors(source)))
   ) = false
 ): DataViewShape(surface_data_is_view(source), is_struct, registration_ctors(source)) {
-  ⊢ DataViewShape(surface_data_is_view(source), is_struct, registration_ctors(source)) from match r#view {
+  match view {
     false => DataViewOrdinary(equal)
     true => ⊢ DataViewShape(
       surface_data_is_view(source),

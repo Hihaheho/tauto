@@ -1,0 +1,116 @@
+// A package failure of one macro's entry (`let(stack)` after lowering) must
+// not be remembered as a failure of the whole macro library: a later call of
+// another macro of the same library still expands.
+
+@ cases.a-package-failure-of-one-macro-does-not-block-another
+files."lib.nib" = ````nib
+import std::builtin::macro
+
+// The checker accepts the type; lowering stores the large field of a shared
+// struct behind an indirection, so the NIR stack check rejects the binding.
+struct(shared) Big { a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64 }
+struct(shared) Outer { big: Big }
+
+pub macro fn bad(e: SynExpr): SynExpr ! {macro_error, div} {
+  let(stack) o := Outer { big: Big { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9 } }
+  e
+}
+
+pub macro fn good(e: SynExpr): SynExpr ! {macro_error, div} {
+  e
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn use_bad(): i64 { bad!(10) }
+fn use_good(): i64 { good!(20) }
+````
+expands = ```nib
+fn use_bad(): i64 { bad!(10) }
+fn use_good(): i64 { 20 }
+```
+
+@ cases.a-package-failure-of-one-macro-does-not-block-another.diagnostics {
+  @ []
+  message = "macro.runtime: macro bad: `let(stack) o` is not placed without an allocation: the field Outer.big is stored behind an indirection"
+  span = "{ «bad!(10)» }"
+}
+
+// An Unsupported shape of one macro's entry (a divergent callback made
+// outside a budget, used under one) must not be remembered as a failure of
+// the whole macro library: a later call of another macro of the same library
+// still expands.
+
+@ cases.an-unsupported-entry-does-not-block-another-macro
+files."lib.nib" = ````nib
+import std::builtin::macro
+
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+fn wrap<!e>(f: &((i64) -> Unit ! e)): Bool ! {budget} ∪ e {
+  handle { perform budget(0, () => { f(3); true }) } with { exceeded(info), k => false }
+}
+
+pub macro fn bad(e: SynExpr): SynExpr ! {budget, macro_error, div} {
+  discard(wrap((n) => visit(n)))
+  e
+}
+
+fn discard(b: Bool): Unit { () }
+
+pub macro fn good(e: SynExpr): SynExpr ! {macro_error, div} {
+  e
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn use_bad(): i64 { bad!(10) }
+fn use_good(): i64 { good!(20) }
+````
+expands = ```nib
+fn use_bad(): i64 { bad!(10) }
+fn use_good(): i64 { 20 }
+```
+
+@ cases.an-unsupported-entry-does-not-block-another-macro.diagnostics {
+  @ []
+  message = "macro.runtime: macro bad: not supported by the rust backend: the potentially divergent function value `f` created outside a budget, used under a budget"
+  span = "{ «bad!(10)» }"
+}
+
+// A row error on one macro's dependency must not stop another macro of the
+// same library from expanding. Selected-entry row failures found while
+// lowering for expansion are `Package` (entry-local), not library-wide
+// `Front`.
+
+@ cases.a-row-error-of-one-macro-does-not-block-another
+files."lib.nib" = ````nib
+import std::builtin::macro
+
+fn leak(): Unit ! {} {
+  while true {}
+}
+
+pub macro fn bad(e: SynExpr): SynExpr ! {macro_error, div} {
+  leak()
+  e
+}
+
+pub macro fn good(e: SynExpr): SynExpr ! {macro_error, div} {
+  e
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn use_bad(): i64 { bad!(10) }
+fn use_good(): i64 { good!(20) }
+````
+expands = ```nib
+fn use_bad(): i64 { bad!(10) }
+fn use_good(): i64 { 20 }
+```
+
+@ cases.a-row-error-of-one-macro-does-not-block-another.diagnostics {
+  @ []
+  message = "macro.row: `bad` reaches bad -> leak, whose row does not check: `leak` may perform div but its row is {}"
+  span = "{ «bad!(10)» }"
+}

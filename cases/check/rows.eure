@@ -23,32 +23,65 @@ rows = "ok"
 @ cases.budget-leaves-exceeded
 parses = true
 source = ```nib
-fn spin(): i64 {
+fn spin(): i64 ! {div} {
   while true { }
   0
 }
-let d := budget(steps: 10) { spin() }
+let d := perform budget(10, () => { spin() })
 ```
-rows = "error: unhandled effect Exceeded"
+rows = "error: unhandled effect exceeded"
 
 @ cases.an-extern-has-no-row
 source = ```nib
-affine struct File {}
+struct(affine) File {}
 effect io_error(): Never resume 0
 extern {
-  fn file_open(&path: Text): File ! {io_error}
+  fn file_open(path: &Text): File ! {io_error}
 }
 ```
-rows = "error: an extern cannot perform effects; wrap it in a tauto function"
+rows = "error: an extern can perform only wait; wrap other effects in a tauto function"
+
+@ cases.an-extern-may-wait-on-the-host
+source = ```nib
+import std::builtin::par
+extern {
+  fn host_sleep(ms: u64): Bool ! {wait}
+}
+fn start(): Bool ! {wait} { host_sleep(10) }
+```
+rows = "ok"
+
+@ cases.a-waiting-extern-shows-in-the-caller-row
+source = ```nib
+import std::builtin::par
+extern {
+  fn host_sleep(ms: u64): Bool ! {wait}
+}
+fn start(): Bool ! {} { host_sleep(10) }
+```
+rows = "error: may perform wait"
+
+@ cases.a-waiting-extern-is-not-called-in-a-direct-arm
+source = ```nib
+import std::builtin::par
+effect ask(): Bool direct
+extern {
+  fn host_sleep(ms: u64): Bool ! {wait}
+}
+fn go(): Bool ! {wait} {
+  handle { perform ask() } with { ask(), k => k(host_sleep(1)) }
+}
+```
+rows = "error: the arm of ask performs wait, which is not direct"
 
 @ cases.a-closure-for-an-extern-cannot-suspend
 source = ```nib
 effect ask(): i64
 extern {
-  fn each_byte(&f: (n: i64) -> Unit): Unit
+  fn each_byte(f: &((n: i64) -> Unit)): Unit
 }
 fn go(): Unit ! {ask} {
-  each_byte(&(n) => { perform ask() })
+  each_byte((n) => { perform ask() })
 }
 ```
 rows = "error: a closure passed to an extern cannot perform ask, which may suspend"
@@ -57,10 +90,10 @@ rows = "error: a closure passed to an extern cannot perform ask, which may suspe
 source = ```nib
 effect log(t: Text): Unit direct
 extern {
-  fn each_byte(&f: (n: i64) -> Unit): Unit
+  fn each_byte(f: &((n: i64) -> Unit)): Unit
 }
 fn go(): Unit ! {log} {
-  each_byte(&(n) => { perform log("x") })
+  each_byte((n) => { perform log("x") })
 }
 ```
 rows = "ok"

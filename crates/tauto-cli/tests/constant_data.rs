@@ -18,13 +18,13 @@ fn a_long_constant_list_does_not_delay_the_run() {
     fs::write(
         &file,
         format!(
-            "let rules := [{}]\nlet main := perform show(\"r\", \"x\")\n",
+            "let rules := [{}]\nlet main := show(&\"x\")\n",
             items.join(", ")
         ),
     )
     .unwrap();
     let warm = dir.join("warm.taut");
-    fs::write(&warm, "let main := perform show(\"w\", \"x\")\n").unwrap();
+    fs::write(&warm, "let main := show(&\"x\")\n").unwrap();
     let run = |file: &std::path::Path| {
         Command::new(env!("CARGO_BIN_EXE_tauto"))
             .arg("run")
@@ -47,6 +47,6 @@ fn a_long_constant_list_does_not_delay_the_run() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "r = \"x\"\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "\"x\"\n");
     assert!(elapsed < Duration::from_secs(20), "took {elapsed:?}");
 }

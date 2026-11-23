@@ -1,0 +1,619 @@
+import "../../surface/src/superclasses.taut"
+import "program.taut"
+import "effects.taut"
+import "effects_rows.taut"
+import "effects_fns.taut"
+import "modname.taut"
+import "visibility.taut"
+import "classes.taut"
+import "mutable.taut"
+import "manifest.taut"
+import "elaborate.taut"
+import "../../surface/src/surface.taut"
+import "../../parse/src/parse.taut"
+import "../../syntax/src/syntax.taut"
+import "../../kernel/src/data.taut"
+import "../../kernel/src/term.taut"
+import "../../unicode/src/classes.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::builtin::os
+import surface::resolve
+
+// The kernel's prelude, as the host reads it: `crates/tauto-kernel/src/prelude*.taut`
+// (read through the tote's `include-from`), and the library's shared data (`tables/prelude_data.txt`). Each declaration the elaborator
+// checks is declared; one it does not is left out, so a program that uses it
+// fails as on an unknown name rather than on something else.
+pub fn elab_prelude_text(): Text {
+  Text::concat_all([
+    include_text!("../../../crates/tauto-kernel/src/prelude.taut"),
+    text_newline(),
+    include_text!("tables/prelude_data.txt"),
+    text_newline(),
+    include_text!("../../../crates/tauto-kernel/src/prelude_nat.taut"),
+    text_newline(),
+    include_text!("../../../crates/tauto-kernel/src/prelude_deq.taut")
+  ])
+}
+
+pub fn elab_prelude_stmts(tables: SyntaxTables): Option(List(SurfaceStmt)) ! {div} {
+  let source := elab_prelude_text()
+  ⊢ Option(List(SurfaceStmt)) from match syntax_parse(tables, source) {
+    None => None
+    Some(Root) => Some(Cons(mu_family_stmt(0), surface_program_of(
+      SurfaceCtx { source: source, base: 0, classes: unicode_classes(), fuel: surface_size(Root) + 1, lambda_types: true, own_budget: false, own_budget_memory: false },
+      Root
+    )))
+  }
+}
+
+pub fn elab_count_instances(stmts: List(SurfaceStmt)): Nat {
+  match stmts {
+    Nil => 0
+    Cons(stmt, rest) => ⊢ Nat from match stmt {
+      StInstance(^decl) => 1 + elab_count_instances(rest)
+      _ => elab_count_instances(rest)
+    }
+  }
+}
+
+pub fn elab_explicit_prelude_instances(tables: SyntaxTables): Nat ! {div} {
+  let eq := include_text!("../../../crates/tauto-kernel/src/prelude_eq.taut")
+  let ord := include_text!("../../../std/builtin/ord.taut")
+  let eq_count := ⊢ Nat from match elab_library_stmts(tables, eq) {
+    None => 0
+    Some(stmts) => elab_count_instances(stmts)
+  }
+  let ord_count := ⊢ Nat from match elab_library_stmts(tables, ord) {
+    None => 0
+    Some(stmts) => elab_count_instances(stmts)
+  }
+  eq_count + ord_count
+}
+
+// The implicit parameters of the prelude's declarations, as a program reads them.
+pub fn elab_prelude_imps(stmts: List(SurfaceStmt)): List(ElabBinding) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => {
+      let counted := ⊢ List(ElabBinding) from match elab_stmt_implicits(s) {
+        None => Nil
+        Some(p) => if p.snd == 0 { Nil } else { Cons(elab_implicit_binding(p.fst, p.snd), Nil) }
+      }
+      List::append(elab_marker_bindings([s]), List::append(elab_stmt_names(s), List::append(counted, elab_prelude_imps(rest))))
+    }
+  }
+}
+
+// Each declaration in turn, within its modules; one that is not checked is
+// left out, and named in what this returns with why.
+mutual {
+pub fn elab_prelude_each(k: Nat, core: &mut KernelCore, stmts: List(SurfaceStmt), imps: List(ElabBinding), modules: List(ElabBinding)): List(Text) ! {div} {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(Text) from match s {
+      StOther(what, ^start, ^end) => if what == "#leave" { elab_prelude_each(k, &mut core, rest, imps, elab_leave(modules)) } else { if text_starts_with(what, "#skipped ", 0) || text_starts_with(what, "#unsupported", 0) || text_starts_with(what, "#forget ", 0) { elab_prelude_one(k, &mut core, s, rest, imps, modules) } else {
+        ⊢ List(Text) from match elab_marker_binding(what) {
+          Some(b) => elab_prelude_each(k, &mut core, rest, Cons(b, imps), modules)
+          None => ⊢ List(Text) from match Text::slice(what, 7, Text::len(what)) {
+            Some(m) => elab_prelude_each(k, &mut core, rest, imps, Cons(ElabBinding::Mk("#module", KernelConst(m), KernelLit(0)), modules))
+            None => elab_prelude_each(k, &mut core, rest, imps, modules)
+          }
+        }
+      } }
+      StLoop(^st_body, ^start, ^end) => if "LoopExpr" == "#leave" { elab_prelude_each(k, &mut core, rest, imps, elab_leave(modules)) } else {
+        ⊢ List(Text) from match Text::slice("LoopExpr", 7, Text::len("LoopExpr")) {
+          Some(m) => elab_prelude_each(k, &mut core, rest, imps, Cons(ElabBinding::Mk("#module", KernelConst(m), KernelLit(0)), modules))
+          None => elab_prelude_each(k, &mut core, rest, imps, modules)
+        }
+      }
+      StModule(^mod_name, ^mod_vis, ^mod_items, ^start, ^end) => if "ModuleDecl" == "#leave" { elab_prelude_each(k, &mut core, rest, imps, elab_leave(modules)) } else {
+        ⊢ List(Text) from match Text::slice("ModuleDecl", 7, Text::len("ModuleDecl")) {
+          Some(m) => elab_prelude_each(k, &mut core, rest, imps, Cons(ElabBinding::Mk("#module", KernelConst(m), KernelLit(0)), modules))
+          None => elab_prelude_each(k, &mut core, rest, imps, modules)
+        }
+      }
+      StReexport(^re_path, ^re_names, ^re_spans, ^start, ^end) => if "ReexportDecl" == "#leave" { elab_prelude_each(k, &mut core, rest, imps, elab_leave(modules)) } else {
+        ⊢ List(Text) from match Text::slice("ReexportDecl", 7, Text::len("ReexportDecl")) {
+          Some(m) => elab_prelude_each(k, &mut core, rest, imps, Cons(ElabBinding::Mk("#module", KernelConst(m), KernelLit(0)), modules))
+          None => elab_prelude_each(k, &mut core, rest, imps, modules)
+        }
+      }
+      StFor(^for_pat, ^for_src, ^st_body, ^start, ^end) => if "ForStmt" == "#leave" { elab_prelude_each(k, &mut core, rest, imps, elab_leave(modules)) } else {
+        ⊢ List(Text) from match Text::slice("ForStmt", 7, Text::len("ForStmt")) {
+          Some(m) => elab_prelude_each(k, &mut core, rest, imps, Cons(ElabBinding::Mk("#module", KernelConst(m), KernelLit(0)), modules))
+          None => elab_prelude_each(k, &mut core, rest, imps, modules)
+        }
+      }
+      StBreak(^st_value, ^start, ^end) => if "BreakStmt" == "#leave" { elab_prelude_each(k, &mut core, rest, imps, elab_leave(modules)) } else {
+        ⊢ List(Text) from match Text::slice("BreakStmt", 7, Text::len("BreakStmt")) {
+          Some(m) => elab_prelude_each(k, &mut core, rest, imps, Cons(ElabBinding::Mk("#module", KernelConst(m), KernelLit(0)), modules))
+          None => elab_prelude_each(k, &mut core, rest, imps, modules)
+        }
+      }
+      StContinue(^start, ^end) => if "ContinueStmt" == "#leave" { elab_prelude_each(k, &mut core, rest, imps, elab_leave(modules)) } else {
+        ⊢ List(Text) from match Text::slice("ContinueStmt", 7, Text::len("ContinueStmt")) {
+          Some(m) => elab_prelude_each(k, &mut core, rest, imps, Cons(ElabBinding::Mk("#module", KernelConst(m), KernelLit(0)), modules))
+          None => elab_prelude_each(k, &mut core, rest, imps, modules)
+        }
+      }
+      // A runtime `enum` or `struct` is not a kernel family, as on the host:
+      // what uses it is skipped, not "not declared".
+      StEnum(d) => List::append(elab_skip_data_texts(d), elab_prelude_each(k, &mut core, rest, elab_skip_data(d, imps), modules))
+      StStruct(d) => List::append(elab_skip_data_texts(d), elab_prelude_each(k, &mut core, rest, elab_skip_data(d, imps), modules))
+      _ => elab_prelude_one(k, &mut core, s, rest, imps, modules)
+    }
+  }
+}
+
+pub fn elab_prelude_one(k: Nat, core: &mut KernelCore, s: SurfaceStmt, rest: List(SurfaceStmt), imps: List(ElabBinding), modules: List(ElabBinding)): List(Text) ! {div} {
+  match elab_program_in(Cons(s, Nil), k, &mut core, List::append(modules, imps), Nil) {
+    // A declaration skipped, as the host skips it, is skipped for what uses it.
+    ElabOk(items) => List::append(elab_skip_item_texts(items), elab_prelude_each(k, &mut core, rest, elab_skip_items(items, imps), modules))
+    // What reads it later says why it is missing.
+    ElabErr(e) => Cons(Text::concat_all([elab_stmt_label(s), ": ", e]), elab_prelude_each(k, &mut core, rest, elab_unread_here(elab_stmt_label(s), e, imps), modules))
+  }
+}
+}
+
+// The names a skip leaves, as the `#skip NAME` entries `elab_unread_marks` reads.
+pub fn elab_skip_item_texts(items: List(ElabItem)): List(Text) {
+  match items {
+    Nil => Nil
+    Cons(i, rest) => ⊢ List(Text) from match i {
+      ItemSkipped(n, ^why) => Cons(Text::concat("#skip ", n), elab_skip_item_texts(rest))
+      _ => elab_skip_item_texts(rest)
+    }
+  }
+}
+
+pub fn elab_skip_data_texts(d: SurfaceData): List(Text) {
+  Cons(Text::concat("#skip ", d.name), elab_skip_ctor_texts(d.name, d.constructors))
+}
+
+pub fn elab_skip_ctor_texts(family: Text, cs: List(SurfaceDataCtor)): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(Text::concat_all(["#skip ", family, "::", c.name]), elab_skip_ctor_texts(family, rest))
+  }
+}
+
+pub fn elab_skip_items(items: List(ElabItem), env: List(ElabBinding)): List(ElabBinding) {
+  match items {
+    Nil => env
+    Cons(i, rest) => ⊢ List(ElabBinding) from match i {
+      ItemSkipped(n, ^why) => elab_skip_items(rest, Cons(elab_skip_mark(n), env))
+      _ => elab_skip_items(rest, env)
+    }
+  }
+}
+
+pub fn elab_stmt_label(s: SurfaceStmt): Text {
+  match s {
+    StDef(d) => d.name
+    StTheorem(d) => d.name
+    StFn(f) => f.name
+    StInductive(i) => i.name
+    _ => "a statement"
+  }
+}
+
+// The prelude declared in `core`, and the bindings a program starts from.
+pub fn elab_prelude_source(k: Nat, core: &mut KernelCore, tables: SyntaxTables): Option((List(ElabBinding) × List(Text))) ! {div} {
+  match elab_prelude_stmts(tables) {
+    None => None
+    Some(stmts) => {
+      let flat := elab_flatten_modules(k, stmts)
+      let imps := elab_prelude_imps(flat)
+      Some(#(imps, elab_prelude_each(k, &mut core, flat, imps, Nil)))
+    }
+  }
+}
+
+// A library file read by an `import`: parsed as the prelude is.
+pub fn elab_library_stmts(tables: SyntaxTables, source: Text): Option(List(SurfaceStmt)) ! {div} {
+  match syntax_parse(tables, source) {
+    None => None
+    Some(Root) => Some(surface_program_of(
+      SurfaceCtx { source: source, base: 0, classes: unicode_classes(), fuel: surface_size(Root) + 1, lambda_types: true, own_budget: false, own_budget_memory: false },
+      Root
+    ))
+  }
+}
+
+// Declares an imported file as the prelude is declared: each declaration the
+// elaborator checks, and none it does not, which a program then cannot use.
+// The bindings a later file starts from.
+fn elab_has_module_effects(stmts: List(SurfaceStmt)): Bool {
+  match stmts {
+    Nil => false
+    Cons(s, rest) => match s {
+      StOther(what, ^start, ^end) => text_starts_with(what, "#effect-mode ", 0) || elab_has_module_effects(rest)
+      _ => elab_has_module_effects(rest)
+    }
+  }
+}
+
+pub fn elab_declare_library_at(k: Nat, core: &mut KernelCore, stmts: List(SurfaceStmt), imps: List(ElabBinding), root: Text): List(ElabBinding) ! {div} {
+  let current := ElabBinding::Mk("#current-tote", KernelConst(root), KernelLit(0))
+  let owners := cls_type_bindings(stmts, root)
+  let context := Cons(current, List::append(owners, imps))
+  let flat := elab_expand_classes(k, stmts, context)
+  let prepared: List(SurfaceStmt) := if elab_has_module_effects(flat) {
+    elab_read_effects(elab_expand_effects(flat, context), context)
+  } else { flat }
+  let all := List::append(elab_prelude_imps(prepared), context)
+  let left := elab_prelude_each(k, &mut core, prepared, all, Nil)
+  elab_unread_marks(left, all)
+}
+
+pub fn elab_declare_library(k: Nat, core: &mut KernelCore, stmts: List(SurfaceStmt), imps: List(ElabBinding)): List(ElabBinding) ! {div} {
+  elab_declare_library_at(k, &mut core, stmts, imps, "")
+}
+
+// Each `name: why` the library could not declare, kept so that a use of
+// `name` says why.
+pub fn elab_unread_marks(left: List(Text), env: List(ElabBinding)): List(ElabBinding) {
+  match left {
+    Nil => env
+    Cons(l, rest) => if text_starts_with(l, "#skip ", 0) { elab_unread_marks(rest, Cons(elab_skip_mark(Text::slice_or_empty(l, 6, Text::len(l))), env)) } else { ⊢ List(ElabBinding) from match text_find(l, ": ", 0) {
+      None => elab_unread_marks(rest, env)
+      Some(at) => elab_unread_marks(rest, Cons(ElabBinding::Mk("#unread", KernelConst(Text::slice_or_empty(l, 0, at)), KernelConst(Text::slice_or_empty(l, at + 2, Text::len(l)))), env))
+    } }
+  }
+}
+
+// What a file imports, as written: `std.List`, or a quoted path. The imports at the
+// head of a declaration's body are the file's too: it depends on them.
+pub fn elab_import_paths(stmts: List(SurfaceStmt)): List(Text) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(Text) from match s {
+      StImport(path, ^start, ^end) => Cons(path, elab_import_paths(rest))
+      _ => List::append(elab_body_import_paths(s), elab_import_paths(rest))
+    }
+  }
+}
+
+// The paths of the imports at the head of a list of statements.
+pub fn elab_leading_imports(stmts: List(SurfaceStmt)): List(Text) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(Text) from match s {
+      StImport(path, ^start, ^end) => Cons(path, elab_leading_imports(rest))
+      _ => Nil
+    }
+  }
+}
+
+// The statements after the imports at their head.
+pub fn elab_after_leading_imports(stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+      StImport(^path, ^start, ^end) => elab_after_leading_imports(rest)
+      _ => stmts
+    }
+  }
+}
+
+// The imports at the head of a body.
+pub fn elab_head_imports(body: SurfaceTerm): List(Text) {
+  match body.kind {
+    SkBlock(stmts) => elab_leading_imports(stmts)
+    _ => Nil
+  }
+}
+
+// The imports at the head of the body of a `fn`, `theorem` or `def`.
+pub fn elab_body_import_paths(s: SurfaceStmt): List(Text) {
+  match s {
+    StFn(f) => elab_head_imports(f.body)
+    StTheorem(t) => ⊢ List(Text) from match t.body {
+      Some(b) => elab_head_imports(b)
+      None => Nil
+    }
+    StDef(t) => ⊢ List(Text) from match t.body {
+      Some(b) => elab_head_imports(b)
+      None => Nil
+    }
+    _ => Nil
+  }
+}
+
+// A body without the imports at its head: a block of one expression left is that
+// expression, as the reader reads it.
+pub fn elab_strip_head(body: SurfaceTerm): SurfaceTerm {
+  match body.kind {
+    SkBlock(stmts) => ⊢ SurfaceTerm from match elab_leading_imports(stmts) {
+      Nil => body
+      Cons(^p, ^ps) => surface_block_of(elab_after_leading_imports(stmts), SurfaceSpan::Mk(body.start, body.end))
+    }
+    _ => body
+  }
+}
+
+// A body, when written, without the imports at its head.
+pub fn elab_strip_head_of(body: Option(SurfaceTerm)): Option(SurfaceTerm) {
+  match body {
+    Some(b) => Some(elab_strip_head(b))
+    None => None
+  }
+}
+
+// The statements with the imports at the head of each declaration's body taken away,
+// once the files they name are read.
+pub fn elab_strip_body_imports(stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => Cons(⊢ SurfaceStmt from match s {
+      StFn(SurfaceFnMk(name, generics, bounds, params, r#borrows, param_types, result, effects, wheres, start, end, body, lends, generic_types, bound_starts, visibility, row_hole, unused, unused_generics, unused_params)) => StFn(
+        SurfaceFnMk(name, generics, bounds, params, r#borrows, param_types, result, effects, wheres, start, end, elab_strip_head(body), lends, generic_types, bound_starts, visibility, row_hole, unused, unused_generics, unused_params)
+      )
+      StTheorem(SurfaceTheoremMk(name, implicit, params, ty, body, start, end, unused, unused_params, t_vis)) => StTheorem(
+        SurfaceTheoremMk(name, implicit, params, ty, elab_strip_head_of(body), start, end, unused, unused_params, t_vis)
+      )
+      StDef(SurfaceTheoremMk(name, implicit, params, ty, body, start, end, unused, unused_params, t_vis)) => StDef(
+        SurfaceTheoremMk(name, implicit, params, ty, elab_strip_head_of(body), start, end, unused, unused_params, t_vis)
+      )
+      _ => s
+    }, elab_strip_body_imports(rest))
+  }
+}
+
+// Where imports are read from: the standard library (`--std DIR`) and the
+// dependencies by their tote names (`--dep NAME=DIR`).
+pub(open) inductive ElabRoots: Type {
+  Mk(library: Text, deps: List(Text × Text)): ElabRoots
+}
+
+// The roots an import in a file of `dir` reads: the dependencies its tote's
+// manifest names, then the ones given on the command line.
+pub fn elab_roots_of(roots: ElabRoots, dir: Text): ElabRoots ! {fs_read} {
+  match elab_tote_deps(Text::len(dir) + 1, dir) {
+    None => roots
+    Some(ds) => ElabRoots::Mk(roots.library, List::append(ds, roots.deps))
+  }
+}
+
+pub fn elab_dep_dir(deps: List(Text × Text), name: Text): Option(Text) {
+  match deps {
+    Nil => None
+    Cons(#(n, d), rest) => if n == name { Some(d) } else { elab_dep_dir(rest, name) }
+  }
+}
+
+// The file an import reads: `std.A.B` is `A/B.taut` under the standard
+// library; `dep::a::b` is `a/b.taut` under the `src` of the dependency `dep`
+// (the tote `dep`, a `_` of its name a `-`); a quoted path is beside the
+// importing file. The prelude's own modules are already declared (`None`).
+pub fn elab_import_file(roots: ElabRoots, dir: Text, written: Text): Result(Option(Text), Text) {
+  let p := text_join(text_split(written, "::"), ".")
+  if p == "std.prelude" || text_starts_with(p, "std.prelude.", 0) { Ok(None) } else {
+    if text_starts_with(p, "std.", 0) {
+      if roots.library == "" { Err(Text::concat_all(["`import ", written, "` needs the standard library: pass --std DIR"])) } else {
+        Ok(Some(Text::concat_all([roots.library, "/", text_join(text_split(Text::slice_or_empty(p, 4, Text::len(p)), "."), "/"), ".taut"])))
+      }
+    } else {
+      ⊢ Result(Option(Text), Text) from match text_split(written, "::") {
+        Cons(first, rest) => ⊢ Result(Option(Text), Text) from match rest {
+          Nil => Ok(Some(Text::concat(dir, written)))
+          Cons(^m, ^more) => ⊢ Result(Option(Text), Text) from match elab_dep_dir(roots.deps, text_join(text_split(first, "_"), "-")) {
+            None => Err(Text::concat_all(["`import ", written, "` names no dependency: pass --dep ", text_join(text_split(first, "_"), "-"), "=DIR"]))
+            Some(d) => Ok(Some(Text::concat_all([d, "/src/", text_join(rest, "/"), ".taut"])))
+          }
+        }
+        Nil => Ok(Some(Text::concat(dir, written)))
+      }
+    }
+  }
+}
+
+pub fn elab_text_in(xs: List(Text), x: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || elab_text_in(rest, x)
+  }
+}
+
+fn elab_exported_effects(stmts: List(SurfaceStmt), bindings: List(ElabBinding), source: List(SurfaceStmt)): List(CompEffect) {
+  match stmts {
+    Nil => Nil
+    Cons(statement, rest) => {
+      let following := elab_exported_effects(rest, bindings, source)
+      match statement {
+        StEffect(operation) => {
+          let mode := comp_effect_mode(source, operation.name)
+          if (mode == "open" || mode == "pub" || mode == "handle") && elab_effect_readable(operation, bindings) {
+            Cons(comp_effect_entry(operation, Text::concat("imported-", mode)), following)
+          } else { following }
+        }
+        _ => following
+      }
+    }
+  }
+}
+
+pub(open) struct ElabImports {
+  files: List(Text),
+  bindings: List(ElabBinding),
+  classes: List(SurfaceClass),
+  effects: List(CompEffect),
+  // The files read and what each declares, imports and uses, for the check that
+  // a file sees only what it imports (`visibility.taut`).
+  visible: List(VisFile)
+}
+
+// The names written between the braces of an import's list: separated by commas,
+// spaces or newlines.
+pub fn elab_list_items(inner: Text): List(Text) {
+  let commas := text_join(text_split(text_join(text_split(text_join(text_split(inner, "\n"), ","), " "), ","), "\t"), ",")
+  elab_nonempty(text_split(commas, ","))
+}
+
+pub fn elab_nonempty(items: List(Text)): List(Text) {
+  match items {
+    Nil => Nil
+    Cons(i, rest) => if Text::len(i) == 0 { elab_nonempty(rest) } else { Cons(i, elab_nonempty(rest)) }
+  }
+}
+
+// The import written at `start..end` of `source`, with its list when it writes one.
+pub fn elab_vis_import(file: Text, path: Text, source: Text, start: Nat, end: Nat): VisImport {
+  let written := Text::slice_or_empty(source, start, end)
+  match text_find(written, "{", 0) {
+    None => VisImport { file: file, spelling: path, listed: false, names: Nil }
+    Some(open) => ⊢ VisImport from match text_find(written, "}", open) {
+      None => VisImport { file: file, spelling: path, listed: false, names: Nil }
+      Some(close) => VisImport { file: file, spelling: path, listed: true, names: elab_list_items(Text::slice_or_empty(written, open + 1, close)) }
+    }
+  }
+}
+
+// The imports among `stmts` that read a file, each with its list.
+pub fn elab_import_stmts(roots: ElabRoots, dir: Text, source: Text, stmts: List(SurfaceStmt)): List(VisImport) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(VisImport) from match s {
+      StImport(path, start, end) => ⊢ List(VisImport) from match elab_import_file(roots, dir, path) {
+        Ok(Some(file)) => Cons(elab_vis_import(file, path, source, start, end), elab_import_stmts(roots, dir, source, rest))
+        _ => elab_import_stmts(roots, dir, source, rest)
+      }
+      _ => elab_import_stmts(roots, dir, source, rest)
+    }
+  }
+}
+
+// The declarations of `stmts` whose body has imports at its head, with the files read.
+pub fn elab_vis_bodies(roots: ElabRoots, dir: Text, source: Text, stmts: List(SurfaceStmt)): List(VisBody) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => {
+      let here: List(VisBody) := ⊢ List(VisBody) from match s {
+        StFn(f) => elab_vis_body(roots, dir, source, f.body)
+        StTheorem(t) => ⊢ List(VisBody) from match t.body {
+          Some(b) => elab_vis_body(roots, dir, source, b)
+          None => Nil
+        }
+        StDef(t) => ⊢ List(VisBody) from match t.body {
+          Some(b) => elab_vis_body(roots, dir, source, b)
+          None => Nil
+        }
+        _ => Nil
+      }
+      List::append(here, elab_vis_bodies(roots, dir, source, rest))
+    }
+  }
+}
+
+pub fn elab_vis_body(roots: ElabRoots, dir: Text, source: Text, body: SurfaceTerm): List(VisBody) {
+  match body.kind {
+    SkBlock(stmts) => match elab_leading_imports(stmts) {
+      Nil => Nil
+      Cons(^p, ^ps) => Cons(VisBody { start: body.start, end: body.end, files: elab_import_stmts(roots, dir, source, stmts) }, Nil)
+    }
+    _ => Nil
+  }
+}
+
+// Each import among those of `bodies` and of the file that writes a list.
+pub fn elab_listed(imports: List(VisImport), bodies: List(VisBody)): List(VisImport) {
+  match bodies {
+    Nil => elab_listed_of(imports)
+    Cons(b, rest) => List::append(elab_listed_of(b.files), elab_listed(imports, rest))
+  }
+}
+
+pub fn elab_listed_of(imports: List(VisImport)): List(VisImport) {
+  match imports {
+    Nil => Nil
+    Cons(i, rest) => if i.listed { Cons(i, elab_listed_of(rest)) } else { elab_listed_of(rest) }
+  }
+}
+
+// What a file declares, imports and uses, as the check of what it sees reads it.
+pub fn elab_vis_file(roots: ElabRoots, file: Text, source: Text, stmts: List(SurfaceStmt), checked: Bool): VisFile ! {div, fs_read} {
+  let dir := elab_dir_of(file)
+  let rs := elab_roots_of(roots, dir)
+  let bodies := elab_vis_bodies(rs, dir, source, stmts)
+  let imports := elab_import_stmts(rs, dir, source, stmts)
+  let resolved := surface_resolve(stmts)
+  VisFile {
+    file: file,
+    declared: vis_declared(resolved.decls),
+    named: vis_named(resolved.decls),
+    private: vis_private(stmts),
+    imports: imports,
+    listed: if checked { elab_listed(imports, bodies) } else { Nil },
+    uses: if checked { vis_uses(source, bodies, resolved.uses) } else { Nil }
+  }
+}
+
+// The imports of a file, each read once, its own imports first, and
+// declared as the prelude is: the bindings the program starts from.
+pub fn elab_load(
+  fuel: Nat,
+  k: Nat,
+  core: &mut KernelCore,
+  tables: SyntaxTables,
+  lib: ElabRoots,
+  dir: Text,
+  paths: List(Text),
+  loaded: ElabImports
+): Result(ElabImports, Text) ! {div, fs_canonicalize, fs_read} {
+  match fuel {
+    Zero => Err("imports nest too deeply")
+    Succ(j) => match paths {
+      Nil => Ok(loaded)
+      Cons(p, rest) => match elab_import_file(elab_roots_of(lib, dir), dir, p) {
+        Err(e) => Err(e)
+        Ok(None) => elab_load(j, k, &mut core, tables, lib, dir, rest, loaded)
+        Ok(Some(file)) => if elab_text_in(loaded.files, file) { elab_load(j, k, &mut core, tables, lib, dir, rest, loaded) } else {
+          {
+            match read_file(file) {
+              Err(m) => Err(Text::concat_all([file, ": ", m]))
+              Ok(src) => match elab_library_stmts(tables, src) {
+                None => Err(Text::concat(file, ": cannot parse"))
+                Some(stmts) => {
+                  let visiting := ElabImports { files: Cons(file, loaded.files), ..loaded }
+                  match elab_load(j, k, &mut core, tables, lib, elab_dir_of(file), elab_import_paths(stmts), visiting) {
+                    Err(e) => Err(e)
+                    Ok(imported) => {
+                      let flat := elab_flatten_modules(k, elab_strip_body_imports(stmts))
+                      let expanded := expand_superclasses(flat, imported.classes)
+                      match expanded.snd {
+                        Cons(error, ^more) => Err(Text::concat_all([file, ": ", error.message]))
+                        Nil => {
+                          let roots := elab_declared_runtime(flat)
+                          let bindings := ⊢ List(ElabBinding) from match roots {
+                            Nil => elab_declare_library_at(k, &mut core, expanded.fst, imported.bindings, elab_owner_root(file, lib.library))
+                            _ => elab_alias_bindings(roots, elab_file_module(file), elab_declare_library_at(k, &mut core, Cons(StOther(Text::concat("#enter ", elab_file_module(file)), 0, 0), List::append(elab_requalify_roots(expanded.fst, roots, elab_file_module(file)), Cons(StOther("#leave", 0, 0), Nil))), imported.bindings, elab_owner_root(file, lib.library)))
+                          }
+                          let next := ElabImports {
+                            files: imported.files,
+                            bindings: bindings,
+                            classes: List::append(superclass_classes(flat), imported.classes),
+                            effects: List::append(comp_effect_aliases(flat, elab_exported_effects(flat, bindings, flat)), imported.effects),
+                            visible: Cons(elab_vis_file(lib, file, src, stmts, lib.library == "" || not(text_starts_with(file, lib.library, 0))), imported.visible)
+                          }
+                          elab_load(j, k, &mut core, tables, lib, dir, rest, next)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+
+// `name` (qualified by its modules) marked as not read, with why.
+pub fn elab_unread_here(name: Text, why: Text, imps: List(ElabBinding)): List(ElabBinding) {
+  Cons(ElabBinding::Mk("#unread", KernelConst(name), KernelConst(why)), imps)
+}

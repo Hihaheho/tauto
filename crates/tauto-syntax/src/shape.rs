@@ -5,7 +5,7 @@
 //! parse tables `parse` reads. A parser that follows them gives what `parse` and `build_ast`
 //! give.
 
-use crate::tables::{NtKind, Production, Sym, Tables};
+use crate::tables::{NtKind, Production, Tables};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Element {
@@ -114,12 +114,12 @@ fn element(prod: &Production, skip: usize, ty: i64, ctor: u32) -> Element {
     }
 }
 
-/// Which of the symbols from `skip` on are fields: all but the clipped terminals.
+/// Which of the symbols from `skip` on are fields: all but the clipped symbols.
 fn keep(prod: &Production, skip: usize) -> Vec<bool> {
     prod.rhs
         .iter()
         .zip(&prod.clipped)
         .skip(skip)
-        .map(|(s, clipped)| !(matches!(s, Sym::Term(_)) && *clipped))
+        .map(|(_, clipped)| !*clipped)
         .collect()
 }

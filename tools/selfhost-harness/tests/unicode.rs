@@ -3,12 +3,20 @@
 use std::fs;
 
 use selfhost_harness::{
-    assert_same_dump, llkgen_unicode_table_files, root, run_tote_at, stale, unicode_table_files,
+    assert_same_dump, llkgen_unicode_table_files, parol_unicode_table_files, root, run_tote_at,
+    security_table_files,
+    stale, unicode_table_files,
 };
 
 /// Reads code points, one a line, and prints `<code point> <alphanumeric> <whitespace>`.
 fn main_source() -> &'static str {
     r#"
+import std::builtin::os { argv, print, read_file }
+import std::text
+import unicode::unicode { UnicodeClasses, unicode_is_alphanumeric, unicode_is_whitespace }
+import unicode::classes { unicode_classes }
+import text::text { text_lines, text_newline, text_parse_u64 }
+
 fn flag(b: Bool): Text {
   if b { "1" } else { "0" }
 }
@@ -52,7 +60,7 @@ fn the_tables_are_current() {
     let problems = stale(&unicode_table_files());
     assert!(
         problems.is_empty(),
-        "{problems:?}: run scripts/generate-unicode-tables.sh"
+        "{problems:?}: run scripts/generate-unicode-tables.taut"
     );
 }
 
@@ -61,7 +69,7 @@ fn the_tables_of_the_scanner_generator_are_current() {
     let problems = stale(&llkgen_unicode_table_files());
     assert!(
         problems.is_empty(),
-        "{problems:?}: run scripts/generate-unicode-tables.sh"
+        "{problems:?}: run scripts/generate-unicode-tables.taut"
     );
 }
 
@@ -103,8 +111,9 @@ fn classes_match_char() {
     fs::write(
         dir.join("probe/Tauto.eure"),
         format!(
-            "package {{\n  name = \"probe\"\n  version = \"0.1.0\"\n}}\n\ndependencies {{\n  unicode {{ path = \"{}\" }}\n}}\n",
-            root().join("totes/unicode").display()
+            "package {{\n  name = \"probe\"\n  version = \"0.1.0\"\n}}\n\ndependencies {{\n  unicode {{ path = \"{}\" }}\n  text {{ path = \"{}\" }}\n}}\n",
+            root().join("totes/unicode").display(),
+            root().join("totes/text").display()
         ),
     )
     .unwrap();
@@ -126,4 +135,66 @@ fn classes_match_char() {
         ));
     }
     assert_same_dump("unicode", &rust, &out.stdout);
+}
+
+#[test]
+fn the_identifier_tables_of_the_parser_are_current() {
+    let problems = stale(&parol_unicode_table_files());
+    assert!(
+        problems.is_empty(),
+        "{problems:?}: run scripts/generate-unicode-tables.taut"
+    );
+}
+
+/// `tauto_parol::unicode::nfc` against icu_normalizer's NFC, on every
+/// character and on pairs and triples of the characters that take part in
+/// compositions or have a combining class.
+#[test]
+fn nfc_matches_icu() {
+    use icu_normalizer::ComposingNormalizerBorrowed;
+    let icu = ComposingNormalizerBorrowed::new_nfc();
+    let check = |s: &str| {
+        let want: Vec<u32> = icu.normalize(s).chars().map(|c| c as u32).collect();
+        assert_eq!(tauto_parol::unicode::nfc(s), want, "{s:?}");
+        assert_eq!(tauto_parol::unicode::is_nfc(s), icu.is_normalized(s), "{s:?}");
+    };
+    let all: Vec<char> = (0..=0x10FFFFu32).filter_map(char::from_u32).collect();
+    for c in &all {
+        check(&c.to_string());
+    }
+    // The characters of the tables: starters that compose, and marks.
+    let mut interesting: Vec<char> = Vec::new();
+    for (path, text) in parol_unicode_table_files() {
+        if path.ends_with("composition.txt") || path.ends_with("decomposition.txt") {
+            interesting.extend(
+                text.split_whitespace()
+                    .filter_map(|n| n.parse::<u32>().ok())
+                    .filter_map(char::from_u32),
+            );
+        }
+    }
+    interesting.extend(['\u{1100}', '\u{1161}', '\u{11a8}', '\u{ac00}', '\u{ac01}', 'a', 'e']);
+    interesting.sort_unstable();
+    interesting.dedup();
+    let mut seed = 11u64;
+    let mut pick = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        interesting[((seed >> 33) as usize) % interesting.len()]
+    };
+    for _ in 0..200_000 {
+        let n = 2 + (pick() as usize % 3);
+        let s: String = (0..n).map(|_| pick()).collect();
+        check(&s);
+    }
+}
+
+#[test]
+fn the_tables_of_uts39_are_current() {
+    let problems = stale(&security_table_files());
+    assert!(
+        problems.is_empty(),
+        "{problems:?}: run scripts/generate-unicode-tables.taut"
+    );
 }

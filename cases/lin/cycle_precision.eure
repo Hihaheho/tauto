@@ -7,10 +7,10 @@
 // both calls, the closure would go into `b` too, and `s → b → closure → s`
 // would be a cycle.
 source = ```nib
-fn keep<A>(m: Mutex(A), v: A): Unit { Mutex::put(m, v) }
-let b := Mutex::new(0)
-let s := Ref::new(b)
-let a := Mutex::new(() => 0)
+fn keep<A: NoBorrow>(m: Mutex(A), v: A): Unit { perform mutex_put(m, v) }
+let b := perform mutex_new(0)
+let s := perform ref_new(b)
+let a := perform mutex_new(() => 0)
 keep(b, 1)
 keep(a, () => {
   let t := s
@@ -25,22 +25,22 @@ lin = "ok"
 // only into the vec, and `s → closure → inner → s` is not a cycle.
 source = ```nib
 struct Rt { inner: Ref(Ref(() -> i64)), tab: Mutex(Vec(() -> i64)) }
-let s := Ref::new(() => 0)
-let inner := Ref::new(s)
-let rt := Rt { inner: inner, tab: Mutex::new(Vec::new()) }
+let s := perform ref_new(() => 0)
+let inner := perform ref_new(s)
+let rt := Rt { inner: inner, tab: perform mutex_new(Vec::new()) }
 var v := Mutex::take(rt.tab)
 Vec::push(&mut v, () => {
   let t := inner
   0
 })
-Mutex::put(rt.tab, v)
+perform mutex_put(rt.tab, v)
 ```
 lin = "ok"
 
 @ cases.a-closure-kept-through-a-generic-helper-in-its-own-mutex-is-a-cycle
 source = ```nib
-fn keep<A>(m: Mutex(A), v: A): Unit { Mutex::put(m, v) }
-let a := Mutex::new(() => 0)
+fn keep<A: NoBorrow>(m: Mutex(A), v: A): Unit { perform mutex_put(m, v) }
+let a := perform mutex_new(() => 0)
 keep(a, () => {
   let t := a
   0
@@ -49,14 +49,35 @@ keep(a, () => {
 lin = "error: strong reference cycle"
 
 @ cases.a-closure-in-a-hashmap-in-its-own-mutex-is-a-cycle
+extract = true
 // The precise reading still follows a storage through the map it is kept in.
 source = ```nib
-let m := Mutex::new(HashMap::new())
+import std::builtin::par
+import std::indexed_map { IndexedMap }
+let m := perform mutex_new(IndexedMap::new())
 var t := Mutex::take(m)
-HashMap::insert(&mut t, 1, () => {
+IndexedMap::insert(&mut t, 1, () => {
   let x := m
   0
 })
-Mutex::put(m, t)
+perform mutex_put(m, t)
 ```
 lin = "error: strong reference cycle"
+
+@ cases.the-steps-of-a-cycle-are-placed-as-file-line-col
+// `tauto check` writes each step of the cycle where it is, as it writes the error itself,
+// not as a byte offset.
+files."main.taut" = ```tauto
+import std::builtin::par
+
+struct Bus { listeners: Ref(List(() -> Unit ! {ref_get})) }
+fn main(): Unit ! {ref_get, ref_new, ref_set} {
+  let bus := Bus { listeners: perform ref_new(Nil) }
+  let f := () => perform ref_get(bus.listeners)
+  perform ref_set(bus.listeners, Cons(() => { let ^called := f()
+ #() }, Nil))
+  #()
+}
+```
+entry = "main.taut"
+check_report = "main.taut:5:"

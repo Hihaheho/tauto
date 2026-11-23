@@ -46,4 +46,3 @@ trust-gate-changed = { $title } changed since it was approved:
 trust-gate-nothing-trusted = (nothing is trusted any more)
 trust-gate-file-error = { $path }: { $error }
 trust-gate-trust-section = The trust section of { $path }
-trust-gate-permissions-file = The permissions file { $path }

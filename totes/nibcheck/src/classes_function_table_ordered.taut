@@ -1,6 +1,7 @@
+import "messages.taut"
 import "function_table_steps.taut"
 import "../../surface/src/surface.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "classes_frame.taut"
 import "datas.taut"
@@ -9,39 +10,31 @@ import "function_table_registration.taut"
 import "signature_frame.taut"
 import "ty.taut"
 import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 
 pub theorem cf_effects_fns_ordered(
   c: Checker,
   m: SurfaceFn,
   cl: SurfaceClass,
-  es: List(Text)
+  es: List(RowEntry)
 ): CkFnsStep(c, cf_effects(c, m, cl, es)) {
-  ⊢ CkFnsStep(c, cf_effects(c, m, cl, es)) from match es {
+  match es {
     Nil => ordered => ordered
     Cons(e, more) => fnt_step_rewrap(
       c,
       ck_error(
         c,
-        cat5(
-          cf_class_name(cl),
-          ".",
-          signature_name(m),
-          " performs effects, so ",
-          cat2(cf_class_name(cl), " cannot have laws")
-        ),
+        class_method_performs_effects_message(cf_class_name(cl), signature_name(m)),
         cf_method_span(m)
       ),
       fnt_error_step(
         c,
-        cat5(
-          cf_class_name(cl),
-          ".",
-          signature_name(m),
-          " performs effects, so ",
-          cat2(cf_class_name(cl), " cannot have laws")
-        ),
+        class_method_performs_effects_message(cf_class_name(cl), signature_name(m)),
         cf_method_span(m)
       )
     )
@@ -52,9 +45,9 @@ pub theorem cf_effects_opt_fns_ordered(
   c: Checker,
   m: SurfaceFn,
   cl: SurfaceClass,
-  o: Option(List(Text))
+  o: Option(List(RowEntry))
 ): CkFnsStep(c, cf_effects_opt(c, m, cl, o)) {
-  ⊢ CkFnsStep(c, cf_effects_opt(c, m, cl, o)) from match o {
+  match o {
     None => ordered => ordered
     Some(es) => cf_effects_fns_ordered(c, m, cl, es)
   }
@@ -68,8 +61,7 @@ pub theorem cf_law_cons_fns_ordered(
   ih: ∀ next: Checker. CkFnsStep(next, ck_law_methods(rest, next, cl))
 ): CkFnsStep(c, cf_law_cons(m, rest, c, cl)) {
   fnt_step_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_law_methods(rest, c1, cl)),
     cf_effects_opt(c, m, cl, cf_method_effects(m)),
@@ -83,7 +75,7 @@ pub theorem ck_law_methods_fns_ordered(
   c: Checker,
   cl: SurfaceClass
 ): CkFnsStep(c, ck_law_methods(ms, c, cl)) {
-  ⊢ CkFnsStep(c, ck_law_methods(ms, c, cl)) from match ms {
+  match ms {
     Nil => ordered => ordered
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
@@ -102,20 +94,19 @@ pub theorem cf_laws_dup_fns_ordered(
   dup: Bool,
   ih: ∀ ns: List(Text). ∀ next: Checker. CkFnsStep(next, ck_class_laws_each(rest, ns, next, cl))
 ): CkFnsStep(c, cf_laws_dup(l, rest, seen, c, cl, dup)) {
-  ⊢ CkFnsStep(c, cf_laws_dup(l, rest, seen, c, cl, dup)) from match dup {
+  match dup {
     true => fnt_step_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_class_laws_each(rest, seen, c1, cl)),
       ck_error(
         c,
-        cat4(cf_class_name(cl), ".", cf_law_name(l), " is declared twice"),
+        class_member_declared_twice_message(cf_class_name(cl), cf_law_name(l)),
         cf_law_span(l)
       ),
       fnt_error_step(
         c,
-        cat4(cf_class_name(cl), ".", cf_law_name(l), " is declared twice"),
+        class_member_declared_twice_message(cf_class_name(cl), cf_law_name(l)),
         cf_law_span(l)
       ),
       ignored => c1 => fnt_step_rewrap(c1, ck_class_laws_each(rest, seen, c1, cl), ih(seen, c1))
@@ -134,7 +125,7 @@ pub theorem ck_class_laws_each_fns_ordered(
   c: Checker,
   cl: SurfaceClass
 ): CkFnsStep(c, ck_class_laws_each(ls, seen, c, cl)) {
-  ⊢ CkFnsStep(c, ck_class_laws_each(ls, seen, c, cl)) from match ls {
+  match ls {
     Nil => ordered => ordered
     Cons(l, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
@@ -157,7 +148,7 @@ pub theorem cf_laws_any_fns_ordered(
   cl: SurfaceClass,
   ls: List(SurfaceLaw)
 ): CkFnsStep(c, cf_laws_any(c, cl, ls)) {
-  ⊢ CkFnsStep(c, cf_laws_any(c, cl, ls)) from match ls {
+  match ls {
     Nil => ordered => ordered
     Cons(l, rest) => fnt_step_rewrap(
       c,
@@ -169,8 +160,7 @@ pub theorem cf_laws_any_fns_ordered(
 
 pub theorem cf_laws_fns_ordered(c: Checker, cl: SurfaceClass): CkFnsStep(c, cf_laws(c, cl)) {
   fnt_step_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_class_laws_each(cf_class_laws(cl), Nil, c1, cl)),
     cf_laws_any(c, cl, cf_class_laws(cl)),
@@ -194,40 +184,6 @@ pub theorem ck_class_laws_fns_ordered(
   )
 }
 
-pub theorem cf_method_where_fns_ordered(
-  c: Checker,
-  m: SurfaceFn,
-  cl: SurfaceClass,
-  ws: List(SurfaceConstraint)
-): CkFnsStep(c, cf_method_where(c, m, cl, ws)) {
-  ⊢ CkFnsStep(c, cf_method_where(c, m, cl, ws)) from match ws {
-    Nil => ordered => ordered
-    Cons(w, more) => fnt_step_rewrap(
-      c,
-      ck_error(
-        c,
-        cat4(
-          cf_class_name(cl),
-          ".",
-          signature_name(m),
-          " has no where: write it outside the class"
-        ),
-        cf_method_span(m)
-      ),
-      fnt_error_step(
-        c,
-        cat4(
-          cf_class_name(cl),
-          ".",
-          signature_name(m),
-          " has no where: write it outside the class"
-        ),
-        cf_method_span(m)
-      )
-    )
-  }
-}
-
 pub theorem cf_methods_cons_fns_ordered(
   m: SurfaceFn,
   rest: List(SurfaceFn),
@@ -237,84 +193,28 @@ pub theorem cf_methods_cons_fns_ordered(
   ih: ∀ ns: List(Text). ∀ next: Checker. CkFnsStep(next, ck_class_methods(rest, ns, next, cl))
 ): CkFnsStep(c, cf_methods_cons(m, rest, seen, c, cl)) {
   fnt_step_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
-    (ignored1: Unit, c1: Checker) => frame_bind(
-      Unit,
-      Unit,
-      (ignored2: Unit, c2: Checker) => frame_bind(
-        Unit,
-        Unit,
-        (ignored3: Unit, c3: Checker) => ck_rewrap1(
-          ck_class_methods(rest, Cons(signature_name(m), seen), c3, cl)
-        ),
-        frame_error_if(
-          c2,
-          cat5(cf_class_name(cl), ".", signature_name(m), " does not mention ", cf_class_param(cl)),
-          cf_method_span(m),
-          not(cf_method_mentions(m, cl))
-        )
+    (ignored1: Unit, c1: Checker) => ck_rewrap1(
+        ck_class_methods(rest, Cons(signature_name(m), seen), c1, cl)
       ),
-      cf_method_where(c1, m, cl, cf_method_wheres(m))
-    ),
     frame_error_if(
       c,
-      cat4(cf_class_name(cl), ".", signature_name(m), " is declared twice"),
+      class_member_declared_twice_message(cf_class_name(cl), signature_name(m)),
       cf_method_span(m),
       text_list_has(seen, signature_name(m))
     ),
     fnt_error_if_step(
       c,
-      cat4(cf_class_name(cl), ".", signature_name(m), " is declared twice"),
+      class_member_declared_twice_message(cf_class_name(cl), signature_name(m)),
       cf_method_span(m),
       text_list_has(seen, signature_name(m))
     ),
-    ignored1 => c1 => fnt_step_bind(
-      Unit,
-      Unit,
-      c1,
-      (ignored2: Unit, c2: Checker) => frame_bind(
-        Unit,
-        Unit,
-        (ignored3: Unit, c3: Checker) => ck_rewrap1(
-          ck_class_methods(rest, Cons(signature_name(m), seen), c3, cl)
-        ),
-        frame_error_if(
-          c2,
-          cat5(cf_class_name(cl), ".", signature_name(m), " does not mention ", cf_class_param(cl)),
-          cf_method_span(m),
-          not(cf_method_mentions(m, cl))
-        )
-      ),
-      cf_method_where(c1, m, cl, cf_method_wheres(m)),
-      cf_method_where_fns_ordered(c1, m, cl, cf_method_wheres(m)),
-      ignored2 => c2 => fnt_step_bind(
-        Unit,
-        Unit,
-        c2,
-        (ignored3: Unit, c3: Checker) => ck_rewrap1(
-          ck_class_methods(rest, Cons(signature_name(m), seen), c3, cl)
-        ),
-        frame_error_if(
-          c2,
-          cat5(cf_class_name(cl), ".", signature_name(m), " does not mention ", cf_class_param(cl)),
-          cf_method_span(m),
-          not(cf_method_mentions(m, cl))
-        ),
-        fnt_error_if_step(
-          c2,
-          cat5(cf_class_name(cl), ".", signature_name(m), " does not mention ", cf_class_param(cl)),
-          cf_method_span(m),
-          not(cf_method_mentions(m, cl))
-        ),
-        ignored3 => c3 => fnt_step_rewrap(
-          c3,
-          ck_class_methods(rest, Cons(signature_name(m), seen), c3, cl),
-          ih(Cons(signature_name(m), seen), c3)
-        )
+    ignored1 => c1 => fnt_step_rewrap(
+        c1,
+        ck_class_methods(rest, Cons(signature_name(m), seen), c1, cl),
+        ih(Cons(signature_name(m), seen), c1)
       )
-    )
   )
 }
 
@@ -324,7 +224,7 @@ pub theorem ck_class_methods_fns_ordered(
   c: Checker,
   cl: SurfaceClass
 ): CkFnsStep(c, ck_class_methods(ms, seen, c, cl)) {
-  ⊢ CkFnsStep(c, ck_class_methods(ms, seen, c, cl)) from match ms {
+  match ms {
     Nil => ordered => ordered
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
@@ -345,16 +245,15 @@ pub theorem cf_bound_ctor_fns_ordered(
   c: Checker,
   cl: SurfaceClass,
   b: Text,
-  o: Option(Pair(Kind, Kind))
+  o: Option(Kind × Kind)
 ): CkFnsStep(c, cf_bound_ctor(c, cl, b, o)) {
-  ⊢ CkFnsStep(c, cf_bound_ctor(c, cl, b, o)) from match o {
+  match o {
     None => fnt_step_bind(
-      Unit,
-      Option(Pair(Kind, Option(Kind))),
+      <A: Unit, B: Option(Kind × Option(Kind))>,
       c,
       (ignored: Unit, c1: Checker) => mut1(None, c1),
-      ck_error(c, cat2(b, " is not a kind"), cf_class_span(cl)),
-      fnt_error_step(c, cat2(b, " is not a kind"), cf_class_span(cl)),
+      ck_error(c, value_indexed_classes_message(), cf_class_span(cl)),
+      fnt_error_step(c, value_indexed_classes_message(), cf_class_span(cl)),
       ignored => c1 => ordered => ordered
     )
     Some(ak) => ordered => ordered
@@ -367,7 +266,7 @@ pub theorem cf_bound_kind_fns_ordered(
   b: Text,
   o: Option(Kind)
 ): CkFnsStep(c, cf_bound_kind(c, cl, b, o)) {
-  ⊢ CkFnsStep(c, cf_bound_kind(c, cl, b, o)) from match o {
+  match o {
     None => cf_bound_ctor_fns_ordered(c, cl, b, kind_parse_ctor(b))
     Some(k) => ordered => ordered
   }
@@ -378,7 +277,7 @@ pub theorem cf_bound_fns_ordered(
   cl: SurfaceClass,
   o: Option(Text)
 ): CkFnsStep(c, cf_bound(c, cl, o)) {
-  ⊢ CkFnsStep(c, cf_bound(c, cl, o)) from match o {
+  match o {
     None => ordered => ordered
     Some(b) => cf_bound_kind_fns_ordered(c, cl, b, kind_parse(b))
   }
@@ -389,7 +288,7 @@ pub theorem ck_class_bound_fns_ordered(
   cl: SurfaceClass
 ): CkFnsStep(c, ck_class_bound(c, cl)) {
   Eq::subst(
-    (z: Mut1(Option(Pair(Kind, Option(Kind))), Checker)) => CkFnsStep(c, z),
+    (z: Mut1(Option(Kind × Option(Kind)), Checker)) => CkFnsStep(c, z),
     Eq::sym(cf_bound_unf(c, cl)),
     cf_bound_fns_ordered(c, cl, cf_class_bound(cl))
   )
@@ -398,30 +297,27 @@ pub theorem ck_class_bound_fns_ordered(
 pub theorem cf_class_store_fns_ordered(
   c: Checker,
   cl: SurfaceClass,
-  bound: Pair(Kind, Option(Kind))
+  bound: (Kind × Option(Kind))
 ): CkFnsStep(c, cf_class_store(c, cl, bound)) { ordered => ordered }
 pub theorem cf_class_bound_result_fns_ordered(
   c: Checker,
   cl: SurfaceClass,
-  o: Option(Pair(Kind, Option(Kind)))
+  o: Option(Kind × Option(Kind))
 ): CkFnsStep(c, cf_class_bound_result(c, cl, o)) {
-  ⊢ CkFnsStep(c, cf_class_bound_result(c, cl, o)) from match o {
+  match o {
     None => ordered => ordered
     Some(bound) => fnt_step_bind(
-      Unit,
-      Bool,
+      <A: Unit, B: Bool>,
       c,
       (ignored1: Unit, c1: Checker) => frame_bind(
-        Unit,
-        Bool,
+        <A: Unit, B: Bool>,
         (ignored2: Unit, c2: Checker) => cf_class_store(c2, cl, bound),
         ck_class_laws(c1, cl)
       ),
       ck_class_methods(cf_class_methods(cl), Nil, c, cl),
       ck_class_methods_fns_ordered(cf_class_methods(cl), Nil, c, cl),
       ignored1 => c1 => fnt_step_bind(
-        Unit,
-        Bool,
+        <A: Unit, B: Bool>,
         c1,
         (ignored2: Unit, c2: Checker) => cf_class_store(c2, cl, bound),
         ck_class_laws(c1, cl),
@@ -438,36 +334,25 @@ pub theorem cf_class_arity_fns_ordered(
   own_types: List(Text),
   bad: Bool
 ): CkFnsStep(c, cf_class_arity(c, cl, own_types, bad)) {
-  ⊢ CkFnsStep(c, cf_class_arity(c, cl, own_types, bad)) from match bad {
+  match bad {
     true => fnt_step_return_after(
       c,
       false,
       ck_error(
         c,
-        cat4(
-          "class ",
-          cf_class_name(cl),
-          " takes one parameter, not ",
-          Text::of_nat(cf_class_count(cl))
-        ),
+        class_parameter_count_message(cf_class_name(cl), Text::of_nat(cf_class_count(cl))),
         cf_class_span(cl)
       ),
       fnt_error_step(
         c,
-        cat4(
-          "class ",
-          cf_class_name(cl),
-          " takes one parameter, not ",
-          Text::of_nat(cf_class_count(cl))
-        ),
+        class_parameter_count_message(cf_class_name(cl), Text::of_nat(cf_class_count(cl))),
         cf_class_span(cl)
       )
     )
     false => fnt_step_bind(
-      Option(Pair(Kind, Option(Kind))),
-      Bool,
+      <A: Option(Kind × Option(Kind)), B: Bool>,
       c,
-      (o: Option(Pair(Kind, Option(Kind))), c1: Checker) => cf_class_bound_result(c1, cl, o),
+      (o: Option(Kind × Option(Kind)), c1: Checker) => cf_class_bound_result(c1, cl, o),
       ck_class_bound(c, cl),
       ck_class_bound_fns_ordered(c, cl),
       o => c1 => cf_class_bound_result_fns_ordered(c1, cl, o)
@@ -481,12 +366,12 @@ pub theorem cf_class_type_fns_ordered(
   own_types: List(Text),
   bad: Bool
 ): CkFnsStep(c, cf_class_type(c, cl, own_types, bad)) {
-  ⊢ CkFnsStep(c, cf_class_type(c, cl, own_types, bad)) from match bad {
+  match bad {
     true => fnt_step_return_after(
       c,
       false,
-      ck_error(c, cat2(cf_class_name(cl), " is already a type"), cf_class_span(cl)),
-      fnt_error_step(c, cat2(cf_class_name(cl), " is already a type"), cf_class_span(cl))
+      ck_error(c, class_already_type_message(cf_class_name(cl)), cf_class_span(cl)),
+      fnt_error_step(c, class_already_type_message(cf_class_name(cl)), cf_class_span(cl))
     )
     false => cf_class_arity_fns_ordered(c, cl, own_types, not(Nat::eq(cf_class_count(cl), 1)))
   }
@@ -498,12 +383,12 @@ pub theorem cf_class_duplicate_fns_ordered(
   own_types: List(Text),
   bad: Bool
 ): CkFnsStep(c, cf_class_duplicate(c, cl, own_types, bad)) {
-  ⊢ CkFnsStep(c, cf_class_duplicate(c, cl, own_types, bad)) from match bad {
+  match bad {
     true => fnt_step_return_after(
       c,
       false,
-      ck_error(c, cat3("class ", cf_class_name(cl), " is declared twice"), cf_class_span(cl)),
-      fnt_error_step(c, cat3("class ", cf_class_name(cl), " is declared twice"), cf_class_span(cl))
+      ck_error(c, class_declared_twice_message(cf_class_name(cl)), cf_class_span(cl)),
+      fnt_error_step(c, class_declared_twice_message(cf_class_name(cl)), cf_class_span(cl))
     )
     false => cf_class_type_fns_ordered(
       c,
@@ -520,12 +405,12 @@ pub theorem cf_class_builtin_fns_ordered(
   own_types: List(Text),
   bad: Bool
 ): CkFnsStep(c, cf_class_builtin(c, cl, own_types, bad)) {
-  ⊢ CkFnsStep(c, cf_class_builtin(c, cl, own_types, bad)) from match bad {
+  match bad {
     true => fnt_step_return_after(
       c,
       false,
-      ck_error(c, cat2(cf_class_name(cl), " is built in"), cf_class_span(cl)),
-      fnt_error_step(c, cat2(cf_class_name(cl), " is built in"), cf_class_span(cl))
+      ck_error(c, class_built_in_message(cf_class_name(cl)), cf_class_span(cl)),
+      fnt_error_step(c, class_built_in_message(cf_class_name(cl)), cf_class_span(cl))
     )
     false => cf_class_duplicate_fns_ordered(c, cl, own_types, cf_has_class(c, cl))
   }
@@ -558,15 +443,26 @@ pub theorem cf_declare_methods_cons_fns_ordered(
   ih: ∀ next: Checker. CkFnsStep(next, ck_declare_methods_each(rest, next, cl, info))
 ): CkFnsStep(c, cf_declare_methods_cons(m, rest, c, cl, info)) {
   fnt_step_bind(
-    Scheme,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
-    (scheme: Scheme, c1: Checker) => ck_rewrap1(
+    (ignored0: Unit, c0: Checker) => frame_bind(
+      <A: Scheme, B: Unit>,
+      (scheme: Scheme, c1: Checker) => ck_rewrap1(
       ck_declare_methods_each(rest, cf_store_state(c1, cf_method_fn(cl, info, m), scheme), cl, info)
     ),
-    ck_signature(c, cf_method_fn(cl, info, m)),
-    fnt_signature_step(c, cf_method_fn(cl, info, m)),
-    scheme => c1 => fnt_step_changed(
+      ck_signature(c0, cf_method_fn(cl, info, m))
+    ),
+    frame_error_if(c, class_method_where_cycle_message(where_cycle_path(c.classes, cf_class_name(cl), signature_name(m), m.wheres)), cf_method_span(m), where_cycle_found(c.classes, cf_class_name(cl), signature_name(m), m.wheres)),
+    fnt_error_if_step(c, class_method_where_cycle_message(where_cycle_path(c.classes, cf_class_name(cl), signature_name(m), m.wheres)), cf_method_span(m), where_cycle_found(c.classes, cf_class_name(cl), signature_name(m), m.wheres)),
+    ignored0 => c0 => fnt_step_bind(
+      <A: Scheme, B: Unit>,
+      c0,
+      (scheme: Scheme, c1: Checker) => ck_rewrap1(
+      ck_declare_methods_each(rest, cf_store_state(c1, cf_method_fn(cl, info, m), scheme), cl, info)
+    ),
+      ck_signature(c0, cf_method_fn(cl, info, m)),
+      fnt_signature_step(c0, cf_method_fn(cl, info, m)),
+      scheme => c1 => fnt_step_changed(
       c1,
       cf_store_state(c1, cf_method_fn(cl, info, m), scheme),
       ck_rewrap1(
@@ -589,6 +485,7 @@ pub theorem cf_declare_methods_cons_fns_ordered(
         ih(cf_store_state(c1, cf_method_fn(cl, info, m), scheme))
       )
     )
+    )
   )
 }
 
@@ -598,7 +495,7 @@ pub theorem ck_declare_methods_each_fns_ordered(
   cl: SurfaceClass,
   info: ClassInfo
 ): CkFnsStep(c, ck_declare_methods_each(ms, c, cl, info)) {
-  ⊢ CkFnsStep(c, ck_declare_methods_each(ms, c, cl, info)) from match ms {
+  match ms {
     Nil => ordered => ordered
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
@@ -620,7 +517,7 @@ pub theorem cf_declare_methods_get_fns_ordered(
   cl: SurfaceClass,
   o: Option(ClassInfo)
 ): CkFnsStep(c, cf_declare_methods_get(c, cl, o)) {
-  ⊢ CkFnsStep(c, cf_declare_methods_get(c, cl, o)) from match o {
+  match o {
     None => ordered => ordered
     Some(info) => fnt_step_rewrap(
       c,
@@ -637,8 +534,7 @@ pub theorem cf_methods_classes_cons_fns_ordered(
   ih: ∀ next: Checker. CkFnsStep(next, ck_declare_methods(rest, next))
 ): CkFnsStep(c, cf_methods_classes_cons(cl, rest, c)) {
   fnt_step_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_declare_methods(rest, c1)),
     cf_declare_methods_get(c, cl, cf_class_get(c, cl)),
@@ -651,7 +547,7 @@ pub theorem ck_declare_methods_fns_ordered(
   cls: List(SurfaceClass),
   c: Checker
 ): CkFnsStep(c, ck_declare_methods(cls, c)) {
-  ⊢ CkFnsStep(c, ck_declare_methods(cls, c)) from match cls {
+  match cls {
     Nil => ordered => ordered
     Cons(cl, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
@@ -672,7 +568,7 @@ pub theorem cf_cons_if_mut_fns_ordered<A: Type>(
   xs: List(A),
   take: Bool
 ): CkFnsStep(c, cf_cons_if_mut(c, x, xs, take)) {
-  ⊢ CkFnsStep(c, cf_cons_if_mut(c, x, xs, take)) from match take {
+  match take {
     true => ordered => ordered
     false => ordered => ordered
   }
@@ -686,20 +582,17 @@ pub theorem cf_class_list_cons_fns_ordered(
   ih: ∀ next: Checker. CkFnsStep(next, ck_declare_class_list(rest, next, own_types))
 ): CkFnsStep(c, cf_class_list_cons(cl, rest, c, own_types)) {
   fnt_step_bind(
-    Bool,
-    List(SurfaceClass),
+    <A: Bool, B: List(SurfaceClass)>,
     c,
     (ok: Bool, c1: Checker) => frame_bind(
-      List(SurfaceClass),
-      List(SurfaceClass),
+      <A: List(SurfaceClass), B: List(SurfaceClass)>,
       (tl: List(SurfaceClass), c2: Checker) => cf_cons_if_mut(c2, cl, tl, ok),
       ck_declare_class_list(rest, c1, own_types)
     ),
     ck_declare_class(c, cl, own_types),
     ck_declare_class_fns_ordered(c, cl, own_types),
     ok => c1 => fnt_step_bind(
-      List(SurfaceClass),
-      List(SurfaceClass),
+      <A: List(SurfaceClass), B: List(SurfaceClass)>,
       c1,
       (tl: List(SurfaceClass), c2: Checker) => cf_cons_if_mut(c2, cl, tl, ok),
       ck_declare_class_list(rest, c1, own_types),
@@ -716,20 +609,15 @@ pub theorem cf_class_list_step_fns_ordered(
   own_types: List(Text),
   ih: ∀ next: Checker. CkFnsStep(next, ck_declare_class_list(rest, next, own_types))
 ): CkFnsStep(c, ck_declare_class_list(Cons(s, rest), c, own_types)) {
-  ⊢ CkFnsStep(c, ck_declare_class_list(Cons(s, rest), c, own_types)) from match s {
-    StLet(name, ty, value, borrow, mutable) => Eq::subst(
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => Eq::subst(
       (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
-      Eq::sym(cf_class_list_StLet_unf(name, ty, value, borrow, mutable, rest, c, own_types)),
+      Eq::sym(cf_class_list_StLet_unf(name, ty, value, r#borrow, mutable, unused, st_stack, rest, c, own_types)),
       fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
     )
-    StVar(name, ty, value, borrow) => Eq::subst(
+    StVar(name, ty, value, r#borrow, unused, st_stack) => Eq::subst(
       (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
-      Eq::sym(cf_class_list_StVar_unf(name, ty, value, borrow, rest, c, own_types)),
-      fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
-    )
-    StModule(name, stmts, start, end) => Eq::subst(
-      (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
-      Eq::sym(cf_class_list_StModule_unf(name, stmts, start, end, rest, c, own_types)),
+      Eq::sym(cf_class_list_StVar_unf(name, ty, value, r#borrow, unused, st_stack, rest, c, own_types)),
       fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
     )
     StAssign(name, name_place, value) => Eq::subst(
@@ -787,9 +675,9 @@ pub theorem cf_class_list_step_fns_ordered(
       Eq::sym(cf_class_list_StEnum_unf(d, rest, c, own_types)),
       fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
     )
-    StExtern(abi, fns, start, end) => Eq::subst(
+    StExtern(fns, instances, types, structs, enums, start, end) => Eq::subst(
       (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
-      Eq::sym(cf_class_list_StExtern_unf(abi, fns, start, end, rest, c, own_types)),
+      Eq::sym(cf_class_list_StExtern_unf(fns, instances, types, structs, enums, start, end, rest, c, own_types)),
       fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
     )
     StClass(cl) => Eq::subst(
@@ -820,6 +708,36 @@ pub theorem cf_class_list_step_fns_ordered(
     StOther(what, start, end) => Eq::subst(
       (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
       Eq::sym(cf_class_list_StOther_unf(what, start, end, rest, c, own_types)),
+      fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StLoop(st_body, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
+      Eq::sym(cf_class_list_StOther_unf("LoopExpr", start, end, rest, c, own_types)),
+      fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StModule(mod_name, mod_vis, mod_items, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
+      Eq::sym(cf_class_list_StOther_unf("ModuleDecl", start, end, rest, c, own_types)),
+      fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StReexport(re_path, re_names, re_spans, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
+      Eq::sym(cf_class_list_StOther_unf("ReexportDecl", start, end, rest, c, own_types)),
+      fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StFor(for_pat, for_src, st_body, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
+      Eq::sym(cf_class_list_StOther_unf("ForStmt", start, end, rest, c, own_types)),
+      fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StBreak(st_value, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
+      Eq::sym(cf_class_list_StOther_unf("BreakStmt", start, end, rest, c, own_types)),
+      fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StContinue(start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkFnsStep(c, z),
+      Eq::sym(cf_class_list_StOther_unf("ContinueStmt", start, end, rest, c, own_types)),
       fnt_step_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
     )
     StMacro(name, function, start, end) => Eq::subst(
@@ -855,7 +773,7 @@ pub theorem ck_declare_class_list_fns_ordered(
   c: Checker,
   own_types: List(Text)
 ): CkFnsStep(c, ck_declare_class_list(ss, c, own_types)) {
-  ⊢ CkFnsStep(c, ck_declare_class_list(ss, c, own_types)) from match ss {
+  match ss {
     Nil => ordered => ordered
     Cons(s, rest) => cf_class_list_step_fns_ordered(
       s,

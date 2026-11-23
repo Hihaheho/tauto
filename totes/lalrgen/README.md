@@ -66,9 +66,9 @@ the repository) runs parol's own steps: reading, augmentation, then
 `generate_parser_export_model_from_grammar`. It prints the productions and
 the table in the form `--lr` has.
 
-It was run on every grammar of parol's examples and tests and of this
-repository (`tauto.par` too), with `%grammar_type 'lalr(1)'` put in. All 104
-are the same, except:
+Run on the grammars of parol's examples and tests and of this repository
+(`tauto.par` too), with `%grammar_type 'lalr(1)'` put in, the tables are the
+same, except:
 
 - the one parol cannot read (`%state`);
 - `examples/nat`, whose start symbol is used inside the grammar. There lalry

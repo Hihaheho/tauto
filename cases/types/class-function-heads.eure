@@ -1,0 +1,97 @@
+// Instances whose head is a function type over distinct generics.
+
+@ cases.function-head-runs
+source = ```nib
+class Arg(A: Shared) { fn arg(n: nat): A }
+instance Arg(nat) { fn arg(n: nat): nat { n } }
+instance Arg(Bool) { fn arg(n: nat): Bool { n > 2 } }
+class Num(R: Shared) { fn num(r: &R): nat }
+instance Num(nat) { fn num(r: &nat): nat { r } }
+class Handler(F: Shared) { fn call(f: F, n: nat): nat }
+instance<A: Shared, R: Shared> Handler((A) -> R) where Arg(A), Num(R) {
+  fn call(f: (A) -> R, n: nat): nat { Num::num(&f(Arg::arg(n))) }
+}
+instance<A: Shared, B: Shared, R: Shared> Handler((A, B) -> R) where Arg(A), Arg(B), Num(R) {
+  fn call(f: (A, B) -> R, n: nat): nat { Num::num(&f(Arg::arg(n), Arg::arg(n))) }
+}
+fn twice(n: nat): nat { n * 2 }
+fn pick(n: nat, long: Bool): nat { if long { n } else { 0 } }
+fn run<F: Shared>(f: F, n: nat): nat where Handler(F) { Handler::call(f, n) }
+show(&run(twice, 3))
+show(&run(pick, 4))
+show(&run(pick, 1))
+```
+stdout = ```
+6
+4
+0
+```
+
+@ cases.function-head-borrowed-runs
+source = ```nib
+class Arg(A: Shared) { fn arg(n: nat): A }
+instance Arg(nat) { fn arg(n: nat): nat { n } }
+instance Arg(Bool) { fn arg(n: nat): Bool { n > 2 } }
+class Num(R: Shared) { fn num(r: &R): nat }
+instance Num(nat) { fn num(r: &nat): nat { r } }
+class Handler(F: Shared) { fn call(f: &F, n: nat): nat }
+instance<A: Shared, R: Shared> Handler((A) -> R) where Arg(A), Num(R) {
+  fn call(f: &((A) -> R), n: nat): nat { Num::num(&f(Arg::arg(n))) }
+}
+instance<A: Shared, B: Shared, R: Shared> Handler((A, B) -> R) where Arg(A), Arg(B), Num(R) {
+  fn call(f: &((A, B) -> R), n: nat): nat { Num::num(&f(Arg::arg(n), Arg::arg(n))) }
+}
+fn twice(n: nat): nat { n * 2 }
+fn pick(n: nat, long: Bool): nat { if long { n } else { 0 } }
+fn run<F: Shared>(f: F, n: nat): nat where Handler(F) { Handler::call(&f, n) }
+show(&run(twice, 3))
+show(&run(pick, 4))
+show(&run(pick, 1))
+```
+stdout = ```
+6
+4
+0
+```
+
+@ cases.function-head-one-per-arity
+source = ```nib
+class C(F: Shared) { fn m(f: &F): i64 }
+instance<A, R> C((A) -> R) { fn m(f: &((A) -> R)): i64 { 1 } }
+instance<B, S> C((B) -> S) { fn m(f: &((B) -> S)): i64 { 2 } }
+```
+types = "error: C already has an instance for (_) -> _"
+
+@ cases.function-head-generics-distinct
+source = ```nib
+class C(F: Shared) { fn m(f: &F): i64 }
+instance<A> C((A) -> A) { fn m(f: &((A) -> A)): i64 { 1 } }
+```
+types = "error: instance head"
+
+@ cases.function-head-concrete-parameter
+source = ```nib
+class C(F: Shared) { fn m(f: &F): i64 }
+instance<R> C((i64) -> R) { fn m(f: &((i64) -> R)): i64 { 1 } }
+```
+types = "error: instance head"
+
+@ cases.function-head-no-instance-for-other-arity
+source = ```nib
+class C(F: Shared) { fn m(f: &F): i64 }
+instance<A, R> C((A) -> R) { fn m(f: &((A) -> R)): i64 { 1 } }
+fn g(x: i64, y: i64): i64 { x }
+C::m(&g)
+```
+types = "error: no instance C((i64, i64) -> i64)"
+
+@ cases.inductive-function-head-arities-overlap
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive class C(F: Type) { fn m(f: F): Nat }
+instance<A, R> C((A) -> R) { fn m(f: (A) -> R): Nat { 1 } }
+instance<A, B, R> C((A, B) -> R) { fn m(f: (A, B) -> R): Nat { 2 } }
+```
+checks_all = "ok"
+checks."input/main.taut::C((A) -> R)" = "error: instance C((A) -> R) is already defined"

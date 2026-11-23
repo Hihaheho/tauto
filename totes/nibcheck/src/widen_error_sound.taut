@@ -15,7 +15,7 @@ pub theorem widen_store_frame_checked(
   occurs: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_store(c, rv, value, occurs)) {
-  ⊢ CkCheckedFrame(c, widen_store(c, rv, value, occurs)) from match occurs {
+  match occurs {
     false => checked_frame_return(c, Star, ordered)
     true => checked_frame_rewrap(
       c,
@@ -32,8 +32,7 @@ pub theorem widen_store_true_frame_checked(
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_store_true(c, rv, value)) {
   checked_frame_bind(
-    Unit,
-    Bool,
+    <A: Unit, B: Bool>,
     c,
     (ignored: Unit, c1: Checker) => mut1(true, c1),
     widen_store(c, rv, value, not(ck_occurs(c, rv, value))),
@@ -49,7 +48,7 @@ pub theorem widen_attempt_frame_checked(
   success: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_attempt(c, rv, wide, success)) {
-  ⊢ CkCheckedFrame(c, widen_attempt(c, rv, wide, success)) from match success {
+  match success {
     true => widen_store_true_frame_checked(c, rv, ck_resolve(c, wide), ordered)
     false => checked_frame_return(c, false, ordered)
   }
@@ -67,10 +66,9 @@ pub theorem widen_fn_allowed_frame_checked(
   allowed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
-  ⊢ CkCheckedFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) from match allowed {
+  match allowed {
     true => checked_frame_bind(
-      Bool,
-      Bool,
+      <A: Bool, B: Bool>,
       c,
       (success: Bool, c1: Checker) => widen_attempt(
         c1,
@@ -106,7 +104,7 @@ pub theorem widen_fn_current_frame_checked(
   current: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
-  ⊢ CkCheckedFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) from match current {
+  match current {
     TyInt(w) => checked_frame_return(c, false, ordered)
     TyBool => checked_frame_return(c, false, ordered)
     TyText => checked_frame_return(c, false, ordered)
@@ -114,6 +112,7 @@ pub theorem widen_fn_current_frame_checked(
     TyNever => checked_frame_return(c, false, ordered)
     TyDecimal => checked_frame_return(c, false, ordered)
     TyFloat => checked_frame_return(c, false, ordered)
+    TyFloat32 => checked_frame_return(c, false, ordered)
     TyFn(pb, rb, kb) => widen_fn_allowed_frame_checked(
       c,
       pa,
@@ -146,7 +145,7 @@ pub theorem widen_fn_arm_frame_checked(
   arm: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_fn_arm(c, current, rv, arm)) {
-  ⊢ CkCheckedFrame(c, widen_fn_arm(c, current, rv, arm)) from match arm {
+  match arm {
     TyInt(w) => checked_frame_return(c, false, ordered)
     TyBool => checked_frame_return(c, false, ordered)
     TyText => checked_frame_return(c, false, ordered)
@@ -154,6 +153,7 @@ pub theorem widen_fn_arm_frame_checked(
     TyNever => checked_frame_return(c, false, ordered)
     TyDecimal => checked_frame_return(c, false, ordered)
     TyFloat => checked_frame_return(c, false, ordered)
+    TyFloat32 => checked_frame_return(c, false, ordered)
     TyFn(pa, ra, ka) => widen_fn_current_frame_checked(c, pa, ra, ka, rv, current, ordered)
     TyUnion(members) => checked_frame_return(c, false, ordered)
     TyProduct(members) => checked_frame_return(c, false, ordered)
@@ -189,7 +189,7 @@ pub theorem widen_fits_if_frame_checked(
   allowed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_fits_if(c, a, b, allowed)) {
-  ⊢ CkCheckedFrame(c, widen_fits_if(c, a, b, allowed)) from match allowed {
+  match allowed {
     true => checked_frame_rewrap(
       c,
       ck_attempt_fits(c, a, b),
@@ -206,7 +206,7 @@ pub theorem widen_borrow_current_frame_checked(
   current: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_borrow_current(c, a, rv, current)) {
-  ⊢ CkCheckedFrame(c, widen_borrow_current(c, a, rv, current)) from match current {
+  match current {
     TyInt(w) => checked_frame_return(c, false, ordered)
     TyBool => checked_frame_return(c, false, ordered)
     TyText => checked_frame_return(c, false, ordered)
@@ -214,6 +214,7 @@ pub theorem widen_borrow_current_frame_checked(
     TyNever => checked_frame_return(c, false, ordered)
     TyDecimal => checked_frame_return(c, false, ordered)
     TyFloat => checked_frame_return(c, false, ordered)
+    TyFloat32 => checked_frame_return(c, false, ordered)
     TyFn(params, result, kind) => checked_frame_return(c, false, ordered)
     TyUnion(members) => checked_frame_return(c, false, ordered)
     TyProduct(members) => checked_frame_return(c, false, ordered)
@@ -222,8 +223,7 @@ pub theorem widen_borrow_current_frame_checked(
     TyParam(name, bound) => checked_frame_return(c, false, ordered)
     TyInfo(inner) => checked_frame_return(c, false, ordered)
     TyBorrow(x, m) => checked_frame_bind(
-      Bool,
-      Bool,
+      <A: Bool, B: Bool>,
       c,
       (success: Bool, c1: Checker) => widen_attempt(c1, rv, x, success),
       widen_fits_if(
@@ -267,7 +267,7 @@ pub theorem widen_borrow_arm_frame_checked(
   arm: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_borrow_arm(c, current, arm)) {
-  ⊢ CkCheckedFrame(c, widen_borrow_arm(c, current, arm)) from match arm {
+  match arm {
     TyInt(w) => checked_frame_return(c, false, ordered)
     TyBool => checked_frame_return(c, false, ordered)
     TyText => checked_frame_return(c, false, ordered)
@@ -275,6 +275,7 @@ pub theorem widen_borrow_arm_frame_checked(
     TyNever => checked_frame_return(c, false, ordered)
     TyDecimal => checked_frame_return(c, false, ordered)
     TyFloat => checked_frame_return(c, false, ordered)
+    TyFloat32 => checked_frame_return(c, false, ordered)
     TyFn(params, result, kind) => checked_frame_return(c, false, ordered)
     TyUnion(members) => checked_frame_return(c, false, ordered)
     TyProduct(members) => checked_frame_return(c, false, ordered)
@@ -316,7 +317,7 @@ pub theorem widen_final_fits_frame_checked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_final_fits(c, a, current, rv, failed)) {
-  ⊢ CkCheckedFrame(c, widen_final_fits(c, a, current, rv, failed)) from match failed {
+  match failed {
     true => checked_frame_rewrap(
       c,
       ck_set_subst(c, rv, ty_union(Cons(current, Cons(ck_resolve(c, a), Nil)))),
@@ -339,10 +340,9 @@ pub theorem widen_after_arm_frame_checked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_after_arm(c, a, current, rv, failed)) {
-  ⊢ CkCheckedFrame(c, widen_after_arm(c, a, current, rv, failed)) from match failed {
+  match failed {
     true => checked_frame_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       c,
       (success: Bool, c1: Checker) => widen_final_fits(c1, a, current, rv, not(success)),
       ck_attempt_fits(c, a, current),
@@ -368,10 +368,9 @@ pub theorem widen_after_current_frame_checked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_after_current(c, a, current, rv, failed)) {
-  ⊢ CkCheckedFrame(c, widen_after_current(c, a, current, rv, failed)) from match failed {
+  match failed {
     true => checked_frame_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       c,
       (success: Bool, c1: Checker) => widen_after_arm(c1, a, current, rv, not(success)),
       ck_widen_borrowed_arm(c, a, current),
@@ -390,10 +389,9 @@ pub theorem widen_after_fn_frame_checked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_after_fn(c, a, current, rv, failed)) {
-  ⊢ CkCheckedFrame(c, widen_after_fn(c, a, current, rv, failed)) from match failed {
+  match failed {
     true => checked_frame_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       c,
       (success: Bool, c1: Checker) => widen_after_current(c1, a, current, rv, not(success)),
       ck_widen_borrowed_current(c, a, current, rv),
@@ -419,8 +417,7 @@ pub theorem widen_handle_frame_checked(
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_handle(c, a, current, rv)) {
   checked_frame_bind(
-    Bool,
-    Unit,
+    <A: Bool, B: Unit>,
     c,
     (success: Bool, c1: Checker) => widen_after_fn(c1, a, current, rv, not(success)),
     ck_widen_fn(c, a, current, rv),

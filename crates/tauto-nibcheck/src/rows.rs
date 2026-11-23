@@ -4,8 +4,8 @@
 //! AST, without deriving effects from erased value types: `perform` adds its effect, a call adds the
 //! callee's row, `handle` removes the effects its arms answer *completely*
 //! (an irrefutable, unguarded arm) and adds what the arms and the `return`
-//! arm perform, `budget` swaps `Div` for `Exceeded`, and a `while` loop or a
-//! recursive call adds `Div`.
+//! arm perform, `budget` swaps `div` for `exceeded`, and a `while` loop or a
+//! recursive call adds `div`.
 //!
 //! A function without a written row gets its inferred one; a written row must
 //! contain the inferred one. A row variable `| e` is a name like any other
@@ -33,8 +33,12 @@ use crate::surface::{
 };
 use crate::types::{Quant, TypeReport};
 
+pub mod origins;
+mod reach;
 mod structural;
 mod values;
+
+pub use reach::{free_names_of, row_error_reached};
 
 pub type Row = BTreeSet<Name>;
 
@@ -69,10 +73,43 @@ pub struct DeclarationRows {
     pub inferred: Row,
 }
 
+/// The rows of a function value, nested as its type is: a parameter or the
+/// result that is not a function has none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowSignature {
+    pub row: Row,
+    pub params: Vec<Option<RowSignature>>,
+    pub result: Option<Box<RowSignature>>,
+}
+
+impl RowSignature {
+    fn of_latent(l: &Latent) -> Option<Self> {
+        match l.unborrowed() {
+            Latent::Known(f) => Some(Self {
+                row: f.row.clone(),
+                params: f.params.iter().map(Self::of_latent).collect(),
+                result: Self::of_latent(&f.result).map(Box::new),
+            }),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowDiagnostic {
-    pub message: String,
+    pub message: Message,
     pub span: Span,
+    /// An effect a function performs that its written row leaves out: the
+    /// edit that writes it into the row can be offered.
+    pub missing: Option<MissingEffect>,
+}
+
+/// An effect to write into the row of a function, as a row names it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MissingEffect {
+    pub effect: String,
+    /// Where the result type of the function ends: its row is written after it.
+    pub after: u32,
 }
 
 impl fmt::Display for RowDiagnostic {
@@ -93,13 +130,33 @@ pub struct RowReport {
     /// Each operation's resume quantity.
     pub quants: HashMap<Name, Quant>,
     pub declarations: Vec<DeclarationRows>,
-    /// The standard effects (`std/prelude/Os.taut`) that reach the top level
+    /// The standard effects (`std/builtin/os.taut`) that reach the top level
     /// unanswered: what the host answers, and so the permissions a run needs.
     pub host_effects: BTreeSet<String>,
+    /// For each of `host_effects`, the functions it comes from
+    /// ([`origins`]): what a run's permissions are granted to.
+    pub host_origins: std::collections::BTreeMap<String, BTreeSet<origins::Origin>>,
+    /// The functions with a row `!?` that call themselves or a later `!?` function: the row of
+    /// each depends on a row not known yet, so none is found for them.
+    pub row_hole_cycles: BTreeSet<Name>,
     /// Whether `wait` is among them: the top level is then a future the host
     /// runs.
     pub host_waits: bool,
+    /// Whether the top level performs an entry (`main` or `test`): the
+    /// program is then a module's entries, which `Entry::run` of the prelude
+    /// runs.
+    pub entries: bool,
+    /// What each statement the top level runs performs, and where it is.
+    pub top_rows: Vec<(Row, Span)>,
     pub call_owners: HashMap<TermId, Option<RowOwner>>,
+    /// The latent row of each term whose value is a function, with the
+    /// declaration whose row variables it is written in. A term followed
+    /// more than once with different rows has none.
+    pub values: HashMap<TermId, (Option<RowOwner>, Row)>,
+    /// The latent signature of each term whose value is a function: its row,
+    /// and those of its parameters and result that are functions. Value types
+    /// erase rows; this is what a function type's rows are.
+    pub signatures: HashMap<TermId, (Option<RowOwner>, RowSignature)>,
     pub row_variables: HashMap<Name, RowVariable>,
     // Addresses are lookup keys for the borrowed immutable AST only. They
     // never order declarations or appear in diagnostics or generated code.
@@ -107,9 +164,21 @@ pub struct RowReport {
     ambiguous_owners: HashSet<RowOwner>,
     ambiguous_calls: HashSet<TermId>,
     call_sources: HashMap<TermId, usize>,
+    /// The functions checked extraction showed total, and the profile the
+    /// rows were found for: what [`check_rewrapped_rows`] judges the same
+    /// program, wrapped, with.
+    evidence: HashSet<Name>,
+    pub(crate) target: Target,
 }
 
 impl RowReport {
+    /// Whether checked extraction showed the function `name` total: its row
+    /// leaves out the effects of the operators in it (`overflow`, `divzero`),
+    /// so the body must not perform them.
+    pub fn is_total(&self, name: &Name) -> bool {
+        self.evidence.contains(name)
+    }
+
     pub fn declaration_row(
         &self,
         name: &Name,
@@ -134,10 +203,7 @@ impl RowReport {
         row.iter()
             .map(|effect| {
                 if let Some(what) = effect.strip_prefix('?') {
-                    return Err(Message::text(display_text(
-                        &unfollowed(what),
-                        &self.row_variables,
-                    )));
+                    return Err(display_message(unfollowed(what), &self.row_variables));
                 }
                 let Some(key) = effect.row_variable() else {
                     return Ok(effect.clone());
@@ -153,6 +219,37 @@ impl RowReport {
                 }
             })
             .collect()
+    }
+
+    /// The latent row of the function value `t`, normalized, when row
+    /// checking followed it to one.
+    pub fn value_row(&self, t: TermId) -> Option<Row> {
+        let (owner, row) = self.values.get(&t)?;
+        self.normalize_row(row, *owner).ok()
+    }
+
+    /// The latent signature of the function value `t`, its rows normalized,
+    /// when row checking followed it to one.
+    pub fn value_signature(&self, t: TermId) -> Option<RowSignature> {
+        let (owner, sig) = self.signatures.get(&t)?;
+        fn norm(r: &RowReport, s: &RowSignature, owner: Option<RowOwner>) -> Option<RowSignature> {
+            Some(RowSignature {
+                row: r.normalize_row(&s.row, owner).ok()?,
+                params: s
+                    .params
+                    .iter()
+                    .map(|p| match p {
+                        Some(p) => norm(r, p, owner).map(Some),
+                        None => Some(None),
+                    })
+                    .collect::<Option<_>>()?,
+                result: match &s.result {
+                    Some(x) => Some(Box::new(norm(r, x, owner)?)),
+                    None => None,
+                },
+            })
+        }
+        norm(self, sig, *owner)
     }
 
     /// The calls' rows, normalized; what fails says where the call is.
@@ -208,6 +305,21 @@ impl RowReport {
                         && l.declared == r.declared
                 })
             })
+    }
+
+    /// Keeps, for a call the prelude's report and this one read differently,
+    /// the row this one read: a macro's program holds copies of the
+    /// prelude's declarations, checked again where the macro runs.
+    pub fn keep_own_calls(&mut self) {
+        // Reachable row failures were already refused for the selected
+        // entries (`refuse_row_errors` / `row_error_reached`). Unreached
+        // errors are dropped so lowering does not see them again.
+        self.errors.clear();
+        self.ambiguous_calls.clear();
+        self.ambiguous_owners.clear();
+        let mut seen = HashSet::new();
+        self.declarations
+            .retain(|d| seen.insert((d.name.clone(), d.body)));
     }
 
     pub fn merge_prelude(&mut self, mut other: RowReport) {
@@ -307,6 +419,20 @@ impl RowReport {
                 }
             }
         }
+        for (id, value) in other.signatures {
+            if self.signatures.get(&id).is_some_and(|v| *v != value) {
+                self.signatures.remove(&id);
+            } else {
+                self.signatures.insert(id, value);
+            }
+        }
+        for (id, value) in other.values {
+            if self.values.get(&id).is_some_and(|v| *v != value) {
+                self.values.remove(&id);
+            } else {
+                self.values.insert(id, value);
+            }
+        }
         self.row_variables.extend(other.row_variables);
         self.owner_sources.extend(other.owner_sources);
         self.ambiguous_calls.extend(other.ambiguous_calls);
@@ -328,6 +454,31 @@ impl RowReport {
     /// The source spelling used by diagnostics, not a substitution key.
     pub fn effect_name(&self, effect: &str) -> String {
         display_text(effect.trim_start_matches('|'), &self.row_variables)
+    }
+
+    /// A row as a declaration writes it after `!`: `{Log, div} ∪ e`, the effects in a fixed order,
+    /// the row variable last; `None` when the row holds an effect that could not be followed
+    /// (`?…`), which no source writes, and the empty string for the empty row.
+    pub fn written_row(&self, row: &Row) -> Option<String> {
+        let mut literals = Vec::new();
+        let mut variables = Vec::new();
+        for effect in diagnostic_order(row) {
+            if effect.starts_with('?') {
+                return None;
+            }
+            let text = self.effect_name(&effect.display_in_row());
+            if effect.row_variable().is_some() {
+                variables.push(text);
+            } else {
+                literals.push(text);
+            }
+        }
+        let mut parts = Vec::new();
+        if !literals.is_empty() {
+            parts.push(format!("{{{}}}", literals.join(", ")));
+        }
+        parts.extend(variables);
+        Some(parts.join(" ∪ "))
     }
 
     /// The quantities an effect of a row may have: a declared one's own,
@@ -352,15 +503,63 @@ impl RowReport {
         if effect.starts_with('?') {
             return Vec::new();
         }
+        // An index label resumes as its family's operation does: what it
+        // holds runs elsewhere.
+        if let Some((family, _)) = crate::types::indices::split_index_label(effect) {
+            return vec![
+                self.quants
+                    .iter()
+                    .find(|(k, _)| crate::types::indices::family_of(k) == family)
+                    .map(|(_, q)| *q)
+                    .unwrap_or(Quant::One),
+            ];
+        }
         vec![self.quants.get(effect).copied().unwrap_or(Quant::AtMostOne)]
     }
 }
 
+pub use tauto_nir::Target;
+
 /// Check host callbacks against the JavaScript Promise boundary.
 pub fn check_program_rows_javascript(program: &Program) -> RowReport {
     let mut analysis = Analysis::new(program);
-    analysis.javascript = true;
+    analysis.target = Target::JavaScript;
     analysis.run(program)
+}
+
+/// The rows of `wrapped`, the program `rows` were found for with its
+/// top-level statements run under `Entry::run` (`host::wrap`). The wrapper changes no declaration's recursion, so the
+/// extraction evidence `rows` were found with holds for `wrapped` too: a
+/// function the kernel accepted as total stays without `div`.
+pub fn check_rewrapped_rows(rows: &RowReport, wrapped: &Program) -> RowReport {
+    let mut analysis = Analysis::new(wrapped);
+    analysis.total.clone_from(&rows.evidence);
+    analysis.target = rows.target;
+    analysis.run(wrapped)
+}
+
+/// The rows of `copy`, a program made from the one `rows` were found for by
+/// copying declarations (`copied_from` names the declaration each copy is
+/// made from) and rewriting calls to reach the copies. A copy recurses as the
+/// declaration it is made from does, so the extraction evidence `rows` were
+/// found with holds for the copies of a function it shows total, and the
+/// copy is judged with it.
+pub fn check_copied_rows_with_types(
+    rows: &RowReport,
+    copied_from: &HashMap<Name, Name>,
+    copy: &Program,
+    types: &TypeReport,
+) -> RowReport {
+    let mut analysis = Analysis::new(copy).with_types(types);
+    analysis.total.clone_from(&rows.evidence);
+    analysis.total.extend(
+        copied_from
+            .iter()
+            .filter(|(_, from)| rows.evidence.contains(*from))
+            .map(|(copy, _)| copy.clone()),
+    );
+    analysis.target = rows.target;
+    analysis.run(copy)
 }
 
 pub fn check_program_rows(program: &Program) -> RowReport {
@@ -378,7 +577,7 @@ pub fn check_program_rows_javascript_with_types(
     types: &TypeReport,
 ) -> RowReport {
     let mut analysis = Analysis::new(program).with_types(types);
-    analysis.javascript = true;
+    analysis.target = Target::JavaScript;
     analysis.run(program)
 }
 
@@ -388,11 +587,11 @@ pub fn check_program_rows_javascript_with_types(
 pub fn check_program_rows_trusted(
     program: &Program,
     total: &HashSet<Name>,
-    javascript: bool,
+    target: Target,
 ) -> RowReport {
     let mut analysis = Analysis::new(program);
     analysis.total.clone_from(total);
-    analysis.javascript = javascript;
+    analysis.target = target;
     analysis.run(program)
 }
 
@@ -401,12 +600,12 @@ pub fn check_program_rows_trusted(
 pub fn check_program_rows_trusted_with_types(
     program: &Program,
     total: &HashSet<Name>,
-    javascript: bool,
+    target: Target,
     types: &TypeReport,
 ) -> RowReport {
     let mut analysis = Analysis::new(program).with_types(types);
     analysis.total.clone_from(total);
-    analysis.javascript = javascript;
+    analysis.target = target;
     analysis.run(program)
 }
 
@@ -452,7 +651,7 @@ enum Latent {
     /// is an `Option(A)` for every `A`. Any contract agrees with it.
     Absent,
     /// The `info` of an `exceeded` arm: `info.more(m)` performs what `k`
-    /// does, `info.unbounded()` that and `Div`.
+    /// does, `info.unbounded()` that and `div`.
     Info,
 }
 
@@ -497,6 +696,9 @@ struct Analysis<'a> {
     resolved: bool,
     nominal_owners: Option<Cow<'a, HashMap<TermId, Name>>>,
     nominal_owners_checked: bool,
+    /// The value types, for the effect an operator performs; read once, when
+    /// the first operator is met.
+    operand_types: Option<Cow<'a, TypeReport>>,
     /// The checked type of each term, read once when a record's rows index an effect.
     term_types: Option<HashMap<TermId, crate::types::Ty>>,
     fns: HashMap<&'a Name, &'a FnDecl>,
@@ -512,16 +714,29 @@ struct Analysis<'a> {
     expected_result: Option<Latent>,
     memo: HashMap<&'a Name, Row>,
     in_progress: HashSet<&'a Name>,
+    /// The functions being followed that the current body has read before
+    /// their rows were known.
+    leaned: HashSet<&'a Name>,
+    /// The rows the last pass over a recursive group found for its members,
+    /// which the next pass reads where it reaches a member being followed.
+    seeds: HashMap<&'a Name, Row>,
+    /// The members of the recursive groups being followed that this pass
+    /// has already followed, with what each leaned on, in the order found.
+    pass: Vec<(&'a Name, Row, HashSet<&'a Name>)>,
     recursive_refs: HashSet<&'a Name>,
     /// Recursive functions that call only themselves, on a strict part of
     /// a parameter: they end without a proof.
     structural: HashSet<&'a Name>,
     /// Exact declarations certified by the extraction facade.
     total: HashSet<Name>,
+    /// Whether the body being followed belongs to a `total` declaration,
+    /// whose arithmetic the extractor emits only behind its guards.
+    in_total: bool,
     quants: HashMap<Name, Quant>,
     calls: HashMap<TermId, Row>,
     /// Errors found while following calls, once each.
     found: Vec<RowDiagnostic>,
+    row_hole_cycles: BTreeSet<Name>,
     /// The innermost written term being followed. A diagnostic on a term
     /// the class expansion made is reported there: its own span is in no
     /// source.
@@ -534,7 +749,7 @@ struct Analysis<'a> {
     inferring: Vec<Name>,
     /// The `extern` functions the program declares: their rows are empty.
     user_externs: HashSet<&'a Name>,
-    javascript: bool,
+    target: Target,
     owners: HashMap<usize, RowOwner>,
     owner_sources: HashMap<RowOwner, usize>,
     owner_order: Vec<RowOwner>,
@@ -544,8 +759,10 @@ struct Analysis<'a> {
     scope: Vec<(Name, Name)>,
     owner: Option<RowOwner>,
     row_variables: HashMap<Name, RowVariable>,
-    task_effects: BTreeSet<String>,
     call_owners: HashMap<TermId, Option<RowOwner>>,
+    /// See [`RowReport::values`]; `None` where two followings disagree.
+    values: HashMap<TermId, Option<(Option<RowOwner>, Row)>>,
+    signatures: HashMap<TermId, Option<(Option<RowOwner>, RowSignature)>>,
     ambiguous_owners: HashSet<RowOwner>,
     ambiguous_calls: HashSet<TermId>,
     call_sources: HashMap<TermId, usize>,
@@ -570,35 +787,87 @@ struct Analysis<'a> {
     continuations: HashMap<(TermId, usize), Row>,
 }
 
-fn effect_of_op(op: &Name) -> Name {
-    if tauto_surface::bindings::is_library(&op, "exceeded") {
-        if op.is_resolved() {
-            tauto_surface::bindings::library_name("Exceeded")
-        } else {
-            Name::from("Exceeded")
-        }
-    } else {
-        op.clone()
+/// The prelude's placement operations (`place`, `rc_place`): their arms only
+/// answer a place, `k(e)`, so that a backend may pass the place as an
+/// argument instead of suspending.
+fn is_placement(op: &Name) -> bool {
+    let spelled = op.as_str();
+    let base = spelled.split('@').next().unwrap_or(spelled);
+    let short = base.rsplit("::").next();
+    ["place", "rc_place"].into_iter().any(|name| {
+        short == Some(name)
+            && (!op.is_resolved()
+                || tauto_surface::bindings::library_reference(name)
+                    .is_some_and(|l| l.as_str().split('@').next() == Some(base)))
+    })
+}
+
+/// Whether an arm in `handled` removes the index label `e`: an arm of its
+/// family for every instance does.
+fn handles_label(handled: &BTreeSet<Name>, e: &Name) -> bool {
+    crate::types::indices::split_index_label(e).is_some_and(|(family, _)| {
+        handled
+            .iter()
+            .any(|h| !h.to_string().contains('@') && crate::types::indices::family_of(h) == family)
+    })
+}
+
+/// The host's effect an index label (`spawn@^env`) holds, as the library
+/// names it.
+fn label_host_member(label: &Name) -> Option<Name> {
+    let (_, member) = crate::types::indices::split_index_label(label)?;
+    let short = member.split('@').next().unwrap_or(&member);
+    let short = short.rsplit("::").next().unwrap_or(short);
+    crate::host::HOST_EFFECTS
+        .iter()
+        .find(|h| **h == short)
+        .map(|h| tauto_surface::bindings::library_name(h))
+}
+
+/// An effect the checker cannot follow, named by what it is: `?call:f`,
+/// `?row-variable:e`, `?expression:` or, for a name the program does not
+/// have, `?kernel:n` / `?undefined:n`.
+/// The stand-in extraction writes for a match with no arms never runs: it is not a reason
+/// for a function that calls it to say `div`.
+fn is_extract_unreachable(name: &Name) -> bool {
+    name.to_string().contains("extract_unreachable")
+        || format!("{name:?}").contains("extract_unreachable")
+}
+
+fn unchecked(kind: &str, name: &str) -> Name {
+    format!("?{kind}:{name}").into()
+}
+
+/// What an unchecked row says, from the tag `unchecked` wrote.
+fn unfollowed(what: &str) -> Message {
+    let (kind, name) = what.split_once(':').unwrap_or((what, ""));
+    let name = name.to_string();
+    match kind {
+        "kernel" => msg!("rows-kernel-name", name = name),
+        "undefined" => msg!("rows-undefined-name", name = name),
+        "call" => msg!("rows-unfollowed-call", name = name),
+        "row-variable" => msg!("rows-unfollowed-row-variable", name = name),
+        _ => msg!("rows-unfollowed-expression"),
     }
 }
 
-fn unchecked(what: &str) -> Name {
-    format!("?{what}").into()
-}
-
-/// What an unchecked row says. A name that is not the program's own is said
-/// as such (`!`), not as effects that cannot be followed.
-fn unfollowed(what: &str) -> String {
-    match what.strip_prefix('!') {
-        Some(why) => why.to_string(),
-        None => format!("cannot follow the effects of {what}"),
-    }
-}
-
-fn unfollowed_in(what: &str, owner: &str) -> String {
-    match what.strip_prefix('!') {
-        Some(why) => format!("in `{owner}`: {why}"),
-        None => format!("cannot follow the effects of {what} in `{owner}`"),
+fn unfollowed_in(what: &str, owner: &str) -> Message {
+    let (kind, name) = what.split_once(':').unwrap_or((what, ""));
+    match kind {
+        // A name the program does not have is told as it is at every place that finds it,
+        // inside a function or not: the span says where.
+        "kernel" | "undefined" => unfollowed(what),
+        "call" => msg!(
+            "rows-unfollowed-call-in",
+            name = name.to_string(),
+            owner = owner.to_string()
+        ),
+        "row-variable" => msg!(
+            "rows-unfollowed-row-variable-in",
+            name = name.to_string(),
+            owner = owner.to_string()
+        ),
+        _ => msg!("rows-unfollowed-expression-in", owner = owner.to_string()),
     }
 }
 
@@ -625,6 +894,27 @@ fn display_text(text: &str, variables: &HashMap<Name, RowVariable>) -> String {
         text = text.replace(key.as_str(), var.name.as_str());
     }
     shown_indices(&text)
+}
+
+/// The message with the row-variable names of its text arguments written as
+/// the source wrote them.
+fn display_message(message: Message, variables: &HashMap<Name, RowVariable>) -> Message {
+    use tauto_message::Value;
+    Message {
+        id: message.id,
+        args: message
+            .args
+            .into_iter()
+            .map(|(name, value)| {
+                let value = match value {
+                    Value::Text(t) => Value::Text(display_text(&t, variables)),
+                    Value::Message(m) => Value::Message(Box::new(display_message(*m, variables))),
+                    other => other,
+                };
+                (name, value)
+            })
+            .collect(),
+    }
 }
 
 /// Whether a row of `f` (its own or a parameter's) still writes an effect
@@ -657,6 +947,21 @@ pub fn shown_indices(text: &str) -> String {
     let mut chars = text.chars().peekable();
     let mut last = ' ';
     while let Some(c) = chars.next() {
+        // An index label, `spawn@^env`: the body's row it holds.
+        if c == '@' && chars.peek() == Some(&'^') {
+            chars.next();
+            out.push_str("(() -> _ ! {");
+            while let Some(&n) = chars.peek() {
+                if !(n.is_alphanumeric() || n == '_' || n == ':') {
+                    break;
+                }
+                out.push(n);
+                chars.next();
+            }
+            out.push_str("})");
+            last = ')';
+            continue;
+        }
         if c != '@' || !(last.is_alphanumeric() || last == '_') {
             out.push(c);
             last = c;
@@ -689,10 +994,88 @@ pub fn shown_indices(text: &str) -> String {
     out
 }
 
+/// The strongly connected component of each node of `graph`, by a number
+/// (Tarjan's algorithm, without recursion): two nodes have the same number
+/// exactly when each reaches the other.
+fn components<'n>(graph: &HashMap<&'n Name, HashSet<&'n Name>>) -> HashMap<&'n Name, usize> {
+    let mut index: HashMap<&Name, usize> = HashMap::new();
+    let mut low: HashMap<&Name, usize> = HashMap::new();
+    let mut on_stack: HashSet<&Name> = HashSet::new();
+    let mut stack: Vec<&Name> = Vec::new();
+    let mut out: HashMap<&Name, usize> = HashMap::new();
+    let mut next = 0;
+    let mut roots: Vec<&Name> = graph.keys().copied().collect();
+    roots.sort();
+    for root in roots {
+        if index.contains_key(root) {
+            continue;
+        }
+        // Each frame: a node and the edges of it still to follow.
+        let edges = |n: &'n Name| -> Vec<&'n Name> {
+            let mut e: Vec<&Name> = graph.get(n).into_iter().flatten().copied().collect();
+            e.sort();
+            e
+        };
+        let mut frames: Vec<(&Name, Vec<&Name>)> = Vec::new();
+        index.insert(root, next);
+        low.insert(root, next);
+        next += 1;
+        stack.push(root);
+        on_stack.insert(root);
+        frames.push((root, edges(root)));
+        while let Some((node, pending)) = frames.last_mut() {
+            let node = *node;
+            if let Some(to) = pending.pop() {
+                if !index.contains_key(to) {
+                    index.insert(to, next);
+                    low.insert(to, next);
+                    next += 1;
+                    stack.push(to);
+                    on_stack.insert(to);
+                    frames.push((to, edges(to)));
+                } else if on_stack.contains(to) {
+                    let l = low[node].min(index[to]);
+                    low.insert(node, l);
+                }
+                continue;
+            }
+            frames.pop();
+            if let Some((parent, _)) = frames.last() {
+                let l = low[*parent].min(low[node]);
+                low.insert(*parent, l);
+            }
+            if low[node] == index[node] {
+                let id = out.len();
+                while let Some(m) = stack.pop() {
+                    on_stack.remove(m);
+                    out.insert(m, id);
+                    if m == node {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 impl<'a> Analysis<'a> {
+    /// `div` and the operators' effects as `intrinsic` names them, however
+    /// a row or a handler spells them.
+    fn operator_effect_name(&self, effect: &Name) -> Option<Name> {
+        ["div", "overflow", "divzero"]
+            .into_iter()
+            .find(|name| tauto_surface::bindings::is_library_effect(effect, name))
+            .map(|name| self.intrinsic(name))
+    }
+
+    fn operator_name(&self, effect: Name) -> Name {
+        self.operator_effect_name(&effect).unwrap_or(effect)
+    }
+
     fn intrinsic(&self, name: &str) -> Name {
         if self.resolved {
-            tauto_surface::bindings::library_name(name)
+            tauto_surface::bindings::library_effect_name(name)
         } else {
             Name::from(name)
         }
@@ -712,15 +1095,16 @@ impl<'a> Analysis<'a> {
             .any(|n| n.is_resolved());
         let intrinsic = |name: &str| {
             if resolved {
-                tauto_surface::bindings::library_name(name)
+                tauto_surface::bindings::library_effect_name(name)
             } else {
                 Name::from(name)
             }
         };
         let mut quants = HashMap::from([
-            (intrinsic("show"), Quant::Direct),
-            (intrinsic("Exceeded"), Quant::AtMostOne),
-            (intrinsic("Div"), Quant::Zero),
+            (intrinsic("exceeded"), Quant::AtMostOne),
+            (intrinsic("budget"), Quant::One),
+            (intrinsic("budget_memory"), Quant::One),
+            (intrinsic("div"), Quant::Zero),
         ]);
         let mut owners = HashMap::new();
         let mut owner_sources = HashMap::new();
@@ -739,8 +1123,9 @@ impl<'a> Analysis<'a> {
                 if let Some(owner) = owners.get(&source) {
                     ambiguous_owners.insert(*owner);
                     found.push(RowDiagnostic {
-                        message: format!("ambiguous lexical occurrence of function `{}`", f.name),
+                        message: msg!("rows-ambiguous-function", name = f.name.to_string()),
                         span: f.span,
+                        missing: None,
                     });
                 } else {
                     let owner = RowOwner(fresh_identity());
@@ -776,8 +1161,9 @@ impl<'a> Analysis<'a> {
                     {
                         ambiguous_calls.insert(t.id());
                         found.push(RowDiagnostic {
-                            message: msg!("rows-ambiguous-call").to_string(),
+                            message: msg!("rows-ambiguous-call"),
                             span: t.span,
+                            missing: None,
                         });
                     }
                 });
@@ -791,11 +1177,28 @@ impl<'a> Analysis<'a> {
                         externs.remove(&f.name);
                     }
                     Stmt::Extern {
-                        fns: declarations, ..
+                        fns: declarations,
+                        instances,
+                        types,
+                        structs,
+                        enums,
+                        ..
                     } => {
+                        let replaceable = tauto_surface::surface::extern_is_replaceable(
+                            declarations,
+                            instances,
+                            types,
+                            structs,
+                            enums,
+                        );
                         for f in declarations {
                             fns.insert(&f.name, f);
-                            externs.insert(&f.name);
+                            // Bodyful replaceable members get ordinary row
+                            // inference; only required host signatures stay
+                            // as empty-row externs.
+                            if !replaceable || !tauto_surface::surface::extern_fn_has_body(f) {
+                                externs.insert(&f.name);
+                            }
                         }
                     }
                     Stmt::Struct(d) | Stmt::Enum(d) => {
@@ -829,52 +1232,51 @@ impl<'a> Analysis<'a> {
                 (name, refs)
             })
             .collect();
-        let recursive_refs = graph
-            .keys()
-            .copied()
-            .filter(|start| {
-                let mut seen = HashSet::new();
-                let mut pending: Vec<_> = graph[start].iter().copied().collect();
-                while let Some(next) = pending.pop() {
-                    if next == *start {
-                        return true;
-                    }
-                    if seen.insert(next) {
-                        if let Some(refs) = graph.get(next) {
-                            pending.extend(refs);
-                        }
-                    }
-                }
-                false
-            })
-            .collect::<HashSet<&Name>>();
-        let reaches = |from: &Name, to: &Name| {
-            let mut seen = HashSet::new();
-            let mut pending = vec![from];
-            while let Some(next) = pending.pop() {
-                if next == to {
-                    return true;
-                }
-                if seen.insert(next)
-                    && let Some(refs) = graph.get(next)
-                {
-                    pending.extend(refs);
-                }
+        // A function written `!?` has no row yet: it is an error, in the order of the functions.
+        // One that calls itself or a later `!?` function would take its row from a row that is not
+        // known yet: no row is found for it.
+        let mut holes: Vec<(&Name, &HashSet<&Name>)> = graph
+            .iter()
+            .filter(|(name, _)| fns[**name].row_hole.is_some())
+            .map(|(name, refs)| (*name, refs))
+            .collect();
+        holes.sort_by_key(|(name, _)| fns[*name].span.start);
+        let mut row_hole_cycles = BTreeSet::new();
+        for (name, refs) in holes {
+            let f = fns[name];
+            found.push(RowDiagnostic {
+                message: msg!("rows-row-hole", name = f.name.to_string()),
+                span: f.row_hole.unwrap_or(f.span),
+                missing: None,
+            });
+            if refs.iter().any(|g| {
+                let g = fns[*g];
+                g.row_hole.is_some() && (std::ptr::eq(g, f) || g.span.start > f.span.start)
+            }) {
+                row_hole_cycles.insert(f.name.clone());
             }
-            false
-        };
+        }
+        // The groups of functions that reach one another, each found once:
+        // a function is recursive when its group has another function in it,
+        // or when it names itself.
+        let component = components(&graph);
+        let mut groups: HashMap<usize, Vec<&Name>> = HashMap::new();
+        for &name in fns.keys() {
+            groups.entry(component[name]).or_default().push(name);
+        }
+        let recursive_refs = graph
+            .iter()
+            .filter(|(name, refs)| groups[&component[*name]].len() > 1 || refs.contains(*name))
+            .map(|(name, _)| *name)
+            .collect::<HashSet<&Name>>();
         let structural = recursive_refs
             .iter()
             .copied()
             .filter(|&name| {
                 // The functions that call one another with `name`: itself
                 // alone, or a group of mutually recursive ones.
-                let group: Vec<&FnDecl> = fns
-                    .keys()
-                    .copied()
-                    .filter(|&m| m == name || (reaches(name, m) && reaches(m, name)))
-                    .map(|m| fns[m])
-                    .collect();
+                let group: Vec<&FnDecl> =
+                    groups[&component[name]].iter().map(|m| fns[*m]).collect();
                 structural::decreases(&group)
             })
             .collect();
@@ -883,8 +1285,9 @@ impl<'a> Analysis<'a> {
             resolved,
             nominal_owners: None,
             nominal_owners_checked: false,
+            operand_types: None,
             term_types: None,
-            javascript: false,
+            target: Target::Rust,
             fns,
             externs,
             constructors: values::Constructors::new(&datas, &structs),
@@ -893,15 +1296,19 @@ impl<'a> Analysis<'a> {
             structs,
             operations,
             expected_result: None,
-            task_effects: BTreeSet::new(),
             memo: HashMap::new(),
             in_progress: HashSet::new(),
+            leaned: HashSet::new(),
+            seeds: HashMap::new(),
+            pass: Vec::new(),
             recursive_refs,
             structural,
             total: HashSet::new(),
+            in_total: false,
             quants,
             calls: HashMap::new(),
             found,
+            row_hole_cycles,
             written: None,
             direct_vars: Vec::new(),
             inferring: Vec::new(),
@@ -909,7 +1316,11 @@ impl<'a> Analysis<'a> {
                 .stmts
                 .iter()
                 .filter_map(|s| match s {
-                    Stmt::Extern { fns, .. } => Some(fns.iter().map(|f| &f.name)),
+                    Stmt::Extern { fns, .. } => Some(
+                        fns.iter()
+                            .filter(|f| !tauto_surface::surface::extern_fn_has_body(f))
+                            .map(|f| &f.name),
+                    ),
                     _ => None,
                 })
                 .flatten()
@@ -924,6 +1335,8 @@ impl<'a> Analysis<'a> {
             owner: None,
             row_variables: HashMap::new(),
             call_owners: HashMap::new(),
+            values: HashMap::new(),
+            signatures: HashMap::new(),
             ambiguous_owners,
             ambiguous_calls,
             call_sources,
@@ -939,7 +1352,13 @@ impl<'a> Analysis<'a> {
 
     /// Why `name` is not a value the program has: it is not a local, a
     /// function or a constructor. `None` when it is one of those.
-    fn unresolved(&self, name: &Name, locals: &Locals) -> Option<String> {
+    fn unresolved(&self, name: &Name, locals: &Locals) -> Option<Message> {
+        self.unresolved_tag(name, locals)
+            .map(|(kind, name)| unfollowed(&format!("{kind}:{name}")))
+    }
+
+    /// The tag of `unchecked` for a name that is not a value the program has.
+    fn unresolved_tag(&self, name: &Name, locals: &Locals) -> Option<(&'static str, Name)> {
         if locals.iter().any(|(local, _)| local == name)
             || self.fns.contains_key(name)
             || self.structs.contains(name)
@@ -947,23 +1366,82 @@ impl<'a> Analysis<'a> {
         {
             return None;
         }
-        Some(if KERNEL_NAMES.contains(&name.as_str()) {
-            format!(
-                "`{name}` is the kernel's own; a program uses it inside a function of the proof language"
-            )
-        } else {
-            format!(
-                "`{name}` is not defined in the program (a declaration of the proof language is used inside a function of the proof language)"
-            )
-        })
+        Some((
+            if KERNEL_NAMES.contains(&name.as_str()) {
+                "kernel"
+            } else {
+                "undefined"
+            },
+            name.clone(),
+        ))
     }
 
     fn with_types(mut self, types: &'a TypeReport) -> Self {
+        self.operand_types = Some(Cow::Borrowed(types));
         if let Some(owners) = types.nominal_owners_for(self.program) {
             self.nominal_owners = Some(Cow::Borrowed(owners));
             self.nominal_owners_checked = true;
         }
         self
+    }
+
+    /// The effect the operator `op` at `term` performs when its result does not exist:
+    /// `overflow` for a fixed-width `+`, `-` or `*` whose result does not fit,
+    /// `uhost_add`, `uhost_sub` and `uhost_mul` for a `uhost`, `divzero` for a
+    /// `Float` divided by zero and for `div` and `mod` of integers. Unbounded
+    /// `nat` arithmetic does not perform `overflow` (Succ elimination extracts
+    /// as `n - 1` on `nat`).
+    fn operator_effect(
+        &mut self,
+        term: &SurfaceTerm,
+        op: &str,
+        arguments: &[SurfaceTerm],
+    ) -> Option<Name> {
+        // The kernel checked a `total` declaration, and its extraction
+        // writes `-` only after the guard that keeps it in range.
+        if self.in_total {
+            return None;
+        }
+        if self.operand_types.is_none() {
+            self.operand_types = Some(Cow::Owned(crate::types::check_program(self.program)));
+        }
+        let types = self.operand_types.as_ref()?;
+        let width = types.widths.get(&term.id()).copied();
+        // Numerals whose result fits, as `0 - 1` for `-1`: nothing to fail.
+        if let Some(w) = width
+            && w != crate::types::Width::Host
+            && let Some(n) = literal_result(op, arguments)
+            && w.fits(n)
+        {
+            return None;
+        }
+        let effect = match (op, types.widths.get(&term.id())) {
+            // An integer divided by a divisor that may be zero; a nonzero
+            // literal divisor cannot fail.
+            ("div" | "mod", _) => {
+                if matches!(arguments.get(1).map(|a| &*a.kind), Some(TermKind::Nat(n)) if n.parse::<i128>().is_ok_and(|n| n != 0))
+                {
+                    return None;
+                }
+                "divzero"
+            }
+            // The arithmetic of `uhost` is the host's to answer
+            // (`uhost_add` of `std/builtin/os.taut`); a handler may take it.
+            ("+", Some(crate::types::Width::Host)) => "uhost_add",
+            ("-", Some(crate::types::Width::Host)) => "uhost_sub",
+            ("*", Some(crate::types::Width::Host)) => "uhost_mul",
+            ("+" | "-" | "*", Some(w)) if *w != crate::types::Width::Nat => "overflow",
+            ("/", _)
+                if matches!(
+                    types.terms.get(&term.id()),
+                    Some(crate::types::Ty::Float | crate::types::Ty::Float32)
+                ) =>
+            {
+                "divzero"
+            }
+            _ => return None,
+        };
+        Some(self.intrinsic(effect))
     }
 
     fn nominal_owner(&mut self, term: &SurfaceTerm) -> Option<Name> {
@@ -980,16 +1458,34 @@ impl<'a> Analysis<'a> {
     }
 
     fn run(mut self, program: &'a Program) -> RowReport {
-        let mut report = RowReport::default();
+        let mut report = RowReport {
+            evidence: self.total.clone(),
+            target: self.target,
+            row_hole_cycles: self.row_hole_cycles.clone(),
+            ..RowReport::default()
+        };
         let mut names: Vec<&Name> = self
             .fns
             .keys()
             .copied()
             .filter(|n| {
-                program
-                    .stmts
-                    .iter()
-                    .any(|s| matches!(s, Stmt::Fn(f) if f.name == **n))
+                program.stmts.iter().any(|s| match s {
+                    Stmt::Fn(f) => f.name == **n,
+                    Stmt::Extern {
+                        fns,
+                        instances,
+                        types,
+                        structs,
+                        enums,
+                        ..
+                    } if tauto_surface::surface::extern_is_replaceable(
+                        fns, instances, types, structs, enums,
+                    ) =>
+                    {
+                        fns.iter().any(|f| f.name == **n)
+                    }
+                    _ => false,
+                })
             })
             .collect();
         names.sort_by_key(|n| self.fns[n].span.start);
@@ -1002,45 +1498,87 @@ impl<'a> Analysis<'a> {
                 continue;
             }
             let inferred = self.inferred_row(name);
-            let allowed = f
-                .effects
-                .as_ref()
-                .map(|w| self.scope_row(w, &self.scopes[&self.owner_of(f)]));
+            let allowed = self
+                .written_of(f)
+                .map(|w| self.scope_row(&w, &self.scopes[&self.owner_of(f)]));
             // A row does not say which type arguments an effect is performed
             // with; an entry that writes them would be read as another effect.
-            for written in f
+            // A function is not an effect: that its name is in a row is what
+            // is said, below, not how it writes its arguments.
+            let with_arguments: Vec<_> = f
                 .effects
                 .iter()
                 .flatten()
                 .filter(|e| e.contains('(') && !e.contains('@'))
-            {
+                .filter(|e| !self.names_function(e))
+                .collect();
+            for written in with_arguments {
                 let head = written.split('(').next().unwrap_or_default().trim();
-                let hint = if matches!(head, "show" | "exceeded") {
-                    format!("; write `∀ A. {head}(A)` for every instance")
+                let message = if head == "exceeded" {
+                    msg!(
+                        "rows-writes-type-arguments-instances",
+                        name = name.to_string(),
+                        written = written.to_string(),
+                        head = head.to_string()
+                    )
                 } else {
-                    String::new()
+                    msg!(
+                        "rows-writes-type-arguments",
+                        name = name.to_string(),
+                        written = written.to_string()
+                    )
                 };
-                self.diagnostic(
-                    format!(
-                        "the row of `{name}` writes type arguments ({written}); a row names \
-                         effects without them{hint}"
-                    ),
-                    f.span,
-                );
+                self.diagnostic(message, f.span);
+            }
+            // An entry that names no declared effect is a misspelling or a
+            // missing import, not an unused effect.
+            // The rows written in the signature's types (a callback's
+            // `() -> A ! {…}`) are rows too, and name only effects.
+            let mut written_rows: Vec<Name> = f.effects.iter().flatten().cloned().collect();
+            for t in f.param_types.iter().flatten().chain(f.result.iter()) {
+                let mut t = t.clone();
+                walk::term(&mut t, &mut |x| match &*x.kind {
+                    TermKind::Pi {
+                        effects: Some(row), ..
+                    }
+                    | TermKind::Row(row) => written_rows.extend(row.iter().cloned()),
+                    _ => {}
+                });
+            }
+            for written in &written_rows {
+                if let Some(effect) = self.undefined_effect(written) {
+                    let message = if self.names_function(written) {
+                        msg!(
+                            "rows-function-in-row",
+                            name = name.to_string(),
+                            effect = effect
+                        )
+                    } else {
+                        msg!(
+                            "rows-undefined-effect",
+                            name = name.to_string(),
+                            effect = effect
+                        )
+                    };
+                    self.diagnostic(message, f.span);
+                }
             }
             for effect in diagnostic_order(&inferred) {
                 if let Some(what) = effect.strip_prefix('?') {
                     self.diagnostic(unfollowed_in(what, name), f.span);
                 } else if let Some(allowed) = &allowed
                     && !allowed.contains(effect)
+                    && !self.permits_index_label(allowed, effect)
                 {
-                    self.diagnostic(
-                        format!(
-                            "`{name}` may perform {} but its row is {{{}}}",
-                            effect.display_in_row(),
-                            show(allowed.iter()),
+                    self.diagnostic_missing(
+                        msg!(
+                            "rows-may-perform",
+                            name = name.to_string(),
+                            effect = effect.display_in_row(),
+                            row = show(allowed.iter())
                         ),
                         f.span,
+                        missing_effect(f, effect),
                     );
                 }
             }
@@ -1049,16 +1587,36 @@ impl<'a> Analysis<'a> {
                 .push((name.clone(), display_row(&inferred, &self.row_variables)));
         }
         let mut top_locals = Vec::new();
+        let mut top_rows = Vec::new();
         for stmt in &program.stmts {
-            if let Stmt::Extern { fns, .. } = stmt {
+            if let Stmt::Extern {
+                fns,
+                instances,
+                types,
+                structs,
+                enums,
+                ..
+            } = stmt
+            {
+                // Replaceable bodies are ordinary definitions; only required
+                // host signatures are limited to `{wait}` in a written row.
+                if tauto_surface::surface::extern_is_replaceable(
+                    fns, instances, types, structs, enums,
+                ) {
+                    continue;
+                }
                 for f in fns.iter().filter(|f| {
-                    f.span.start < crate::surface::PRELUDE_BASE
-                        && f.effects.as_ref().is_some_and(|e| !e.is_empty())
+                    f.effects.as_ref().is_some_and(|row| {
+                        // A call may wait on the host (a JavaScript
+                        // Promise, a Rust Future); nothing else.
+                        row.iter()
+                            .any(|e| !tauto_surface::bindings::is_library(e, "wait"))
+                    })
                 }) {
                     report.errors.push(RowDiagnostic {
-                        message: "an extern cannot perform effects; wrap it in a tauto function"
-                            .into(),
+                        message: msg!("rows-extern-effects"),
                         span: f.span,
+                        missing: None,
                     });
                 }
             }
@@ -1073,8 +1631,25 @@ impl<'a> Analysis<'a> {
                 }
                 _ => continue,
             };
-            // The host answers `show`, `test`, `spawn` and the standard effects.
             for effect in row.iter() {
+                if tauto_surface::bindings::is_library(effect, "main")
+                    || tauto_surface::bindings::is_library(effect, "test")
+                {
+                    report.entries = true;
+                }
+            }
+            top_rows.push((row.clone(), span));
+            // The host answers `show`, the entries, `spawn`, the standard effects, and
+            // `overflow` and `divzero` of the operators, by stopping the run.
+            for effect in row.iter() {
+                // What a task left at the top asks of the host.
+                if let Some(member) = label_host_member(effect) {
+                    report.host_effects.insert(member.to_string());
+                    if tauto_surface::bindings::is_library(&member, "wait") {
+                        report.host_waits = true;
+                    }
+                    continue;
+                }
                 if crate::host::HOST_EFFECTS
                     .iter()
                     .any(|name| tauto_surface::bindings::is_library(effect, name))
@@ -1086,19 +1661,64 @@ impl<'a> Analysis<'a> {
                 }
             }
             for effect in row.iter().filter(|e| {
-                !["Div", "show", "test", "spawn"]
+                label_host_member(e).is_none()
+                // What the host answers in any body by stopping or waiting.
+                && !crate::types::indices::split_index_label(e).is_some_and(|(_, m)| {
+                    ["div", "overflow", "divzero", "wait"].contains(&m.as_str())
+                })
+                    && ![
+                        "div", "budget", "budget_memory", "test", "main", "spawn", "overflow",
+                        "divzero",
+                    ]
                     .iter()
-                    .any(|name| tauto_surface::bindings::is_library(e, name))
+                    .any(|name| tauto_surface::bindings::is_library_effect(e, name))
                     && !crate::host::HOST_EFFECTS
                         .iter()
                         .any(|name| tauto_surface::bindings::is_library(e, name))
             }) {
                 let message = match effect.strip_prefix('?') {
                     Some(what) => unfollowed(what),
-                    None => format!("unhandled effect {effect} at the top level"),
+                    None => msg!("rows-unhandled-top-level", effect = effect.to_string()),
                 };
-                let message = display_text(&message, &self.row_variables);
-                report.errors.push(RowDiagnostic { message, span });
+                let message = display_message(message, &self.row_variables);
+                report.errors.push(RowDiagnostic {
+                    message,
+                    span,
+                    missing: None,
+                });
+            }
+        }
+        // A module's top level only says which entries it has: it is
+        // evaluated before any body is called, and again to call them, so it
+        // asks nothing of the host but `div`.
+        report.top_rows = top_rows.clone();
+        if report.entries {
+            for (row, span) in &top_rows {
+                for effect in row.iter().filter(|e| {
+                    ![
+                        "div",
+                        "budget",
+                        "budget_memory",
+                        "overflow",
+                        "divzero",
+                        "test",
+                        "main",
+                    ]
+                    .iter()
+                    .any(|name| tauto_surface::bindings::is_library_effect(e, name))
+                        && !e.starts_with('?')
+                        && !crate::types::indices::split_index_label(e)
+                            .is_some_and(|(family, _)| family == "main" || family == "test")
+                }) {
+                    report.errors.push(RowDiagnostic {
+                        message: display_message(
+                            msg!("rows-entry-top-level", effect = effect.to_string()),
+                            &self.row_variables,
+                        ),
+                        span: *span,
+                        missing: None,
+                    });
+                }
             }
         }
         // What an arm may perform is found while following it, and says more
@@ -1114,22 +1734,27 @@ impl<'a> Analysis<'a> {
         let unexpanded = report
             .errors
             .iter()
-            .any(|e| e.message.to_string().contains("writes type arguments"));
-        if !report.errors.is_empty() {
-            let found = if unexpanded {
-                crate::types::check_program(program).errors
-            } else {
-                crate::types::expansion_errors(program)
-            };
-            if !found.is_empty() {
-                report.errors = found
-                    .into_iter()
-                    .map(|e| RowDiagnostic {
-                        message: format!("type error: {}", e.message),
-                        span: e.span,
-                    })
-                    .collect();
-            }
+            .any(|e| e.message.id.starts_with("rows-writes-type-arguments"));
+        // A clean report takes the type errors (including replaceable-`extern`
+        // validation from `Checker::run`), so `--rows` refuses the same blocks
+        // as `--types`. A report with errors of its own keeps them, as the
+        // rows found them, unless they only echo a failed expansion: an
+        // unknown callee stays "cannot follow", not a type error that hides
+        // what the rows could not read.
+        let found = if report.errors.is_empty() || unexpanded {
+            crate::types::check_program(program).errors
+        } else {
+            crate::types::expansion_errors(program)
+        };
+        if !found.is_empty() {
+            report.errors = found
+                .into_iter()
+                .map(|e| RowDiagnostic {
+                    message: msg!("rows-type-error", message = e.message.clone()),
+                    span: e.span,
+                    missing: None,
+                })
+                .collect();
         }
         // A row that still writes type arguments (`fail(Text)`) did not
         // expand because the program does not check: that is the error, and
@@ -1144,8 +1769,9 @@ impl<'a> Analysis<'a> {
                 report.errors = found
                     .into_iter()
                     .map(|e| RowDiagnostic {
-                        message: format!("type error: {}", e.message),
+                        message: msg!("rows-type-error", message = e.message.clone()),
                         span: e.span,
+                        missing: None,
                     })
                     .collect();
             }
@@ -1153,11 +1779,23 @@ impl<'a> Analysis<'a> {
         report.calls = self.calls;
         report.quants = self.quants;
         report.call_owners = self.call_owners;
+        report.values = self
+            .values
+            .into_iter()
+            .filter_map(|(id, v)| Some((id, v?)))
+            .collect();
+        report.signatures = self
+            .signatures
+            .into_iter()
+            .filter_map(|(id, v)| Some((id, v?)))
+            .collect();
         report.row_variables = self.row_variables;
         report.owner_sources = self.owner_sources;
         report.ambiguous_owners = self.ambiguous_owners;
         report.ambiguous_calls = self.ambiguous_calls;
         report.call_sources = self.call_sources;
+        let top = report.top_rows.first().map(|(_, s)| *s).unwrap_or_default();
+        report.host_origins = origins::host_origins(program, &report, top);
         report.declarations = self
             .owner_order
             .iter()
@@ -1198,7 +1836,7 @@ impl<'a> Analysis<'a> {
                 .is_some_and(|(_, key)| self.row_variables.get(&key).is_some_and(|v| v.declared));
             if !declared_here && !declared_outside {
                 self.diagnostic(
-                    format!("the row variable `{var}` is not declared; write `<!{var}>`"),
+                    msg!("rows-undeclared-row-variable", var = var.to_string()),
                     f.span,
                 );
             }
@@ -1237,11 +1875,89 @@ impl<'a> Analysis<'a> {
         scope
     }
 
+    /// The effect a written row entry names when no effect of that name is
+    /// declared: the resolver gives such a name a reserved identity, so only
+    /// the declarations tell it from an effect.
+    fn undefined_effect(&self, entry: &Name) -> Option<String> {
+        // The effect of divergence is made by the binding phase and is declared
+        // in no source, so no table below holds it.
+        if tauto_surface::bindings::is_divergence(entry) {
+            return None;
+        }
+        if entry.row_variable().is_some()
+            || crate::types::indices::split_index_label(entry).is_some()
+        {
+            return None;
+        }
+        let head: Name = match entry {
+            Name::Global(_) => entry.clone(),
+            Name::Effect(use_) => use_.effect().clone().into(),
+            // A program read as written (the differential's oracle) keeps the
+            // names as spelled.
+            Name::Spelled(text) => {
+                if text.starts_with(['|', '?', '∀']) || text.contains('@') {
+                    return None;
+                }
+                let head = text.split('(').next().unwrap_or_default().trim();
+                let name = Name::from(head);
+                let declared = head.is_empty()
+                    || self.quants.contains_key(&name)
+                    || self.operations.contains_key(&name)
+                    // The library's own effect (`div`) is declared under its
+                    // resolved name, while the entry is spelled.
+                    || tauto_surface::bindings::library_reference(head).is_some_and(|r| {
+                        let r = Name::from(r);
+                        self.quants.contains_key(&r) || self.operations.contains_key(&r)
+                    })
+                    || crate::host::HOST_EFFECTS
+                        .iter()
+                        .chain(["test", "spawn", "exceeded"].iter())
+                        .any(|host| *host == head);
+                return (!declared).then(|| entry.to_string());
+            }
+            _ => return None,
+        };
+        let mut origin = head.as_global()?;
+        while let Some(next) = origin.origin() {
+            origin = next;
+        }
+        let head = Name::Global(origin.clone());
+        let declared = self.quants.contains_key(&head)
+            || self.operations.contains_key(&head)
+            || self
+                .operations
+                .keys()
+                .any(|k| k.as_global() == Some(origin))
+            || crate::host::HOST_EFFECTS
+                .iter()
+                .chain(["test", "spawn", "exceeded"].iter())
+                .any(|name| tauto_surface::bindings::is_library(&head, name));
+        (!declared).then(|| entry.to_string())
+    }
+
+    /// Whether a row entry names a function: a function is called, not
+    /// performed, so it is no effect however the name resolves.
+    fn names_function(&self, entry: &Name) -> bool {
+        self.fns.contains_key(entry)
+            || match entry {
+                Name::Effect(use_) => {
+                    let head: Name = use_.effect().clone().into();
+                    self.fns.contains_key(&head)
+                }
+                _ => false,
+            }
+    }
+
     fn scope_row(&self, row: &[Name], scope: &[(Name, Name)]) -> Row {
         row.iter()
             .map(|effect| {
-                if tauto_surface::bindings::is_library(&effect, "Div") {
-                    return self.intrinsic("Div");
+                // An index label is read by its spelling, whatever the
+                // resolver made of it.
+                if crate::types::indices::split_index_label(effect).is_some() {
+                    return Name::from(effect.to_string());
+                }
+                if let Some(name) = self.operator_effect_name(effect) {
+                    return name;
                 }
                 effect
                     .row_variable()
@@ -1292,16 +2008,15 @@ impl<'a> Analysis<'a> {
             }),
             generics: self.generic_keys[&owner].clone(),
             host,
-            row_written: f.effects.is_some(),
+            row_written: self.written_of(f).is_some(),
         }
     }
 
     fn record_declaration(&mut self, f: &FnDecl, inferred: Row) {
         let owner = self.owner_of(f);
-        let row = f
-            .effects
-            .as_ref()
-            .map(|w| self.scope_row(w, &self.scopes[&owner]))
+        let row = self
+            .written_of(f)
+            .map(|w| self.scope_row(&w, &self.scopes[&owner]))
             .unwrap_or_else(|| inferred.clone());
         self.declarations.insert(
             owner,
@@ -1322,10 +2037,7 @@ impl<'a> Analysis<'a> {
             .is_some_and(|owner| *owner != self.owner)
         {
             self.ambiguous_calls.insert(t.id());
-            self.diagnostic(
-                "ambiguous lexical owner of an effect-row call".into(),
-                t.span,
-            );
+            self.diagnostic(msg!("rows-ambiguous-call-owner"), t.span);
         }
         self.calls.insert(t.id(), row);
         self.call_owners.insert(t.id(), self.owner);
@@ -1342,13 +2054,27 @@ impl<'a> Analysis<'a> {
             .is_some_and(|previous| *previous != fact)
         {
             self.ambiguous_calls.insert(t.id());
-            self.diagnostic(
-                "ambiguous lexical owner of a constructor call".into(),
-                t.span,
-            );
+            self.diagnostic(msg!("rows-ambiguous-constructor-owner"), t.span);
         }
         if !self.ambiguous_calls.contains(&t.id()) {
             self.constructions.insert(t.id(), fact);
+        }
+    }
+
+    /// The row written on `f`. A `fn` with a body and no row written is `! {}`;
+    /// only `!?` (a row not written yet) and an `extern` have none.
+    fn written_of(&self, f: &FnDecl) -> Option<Vec<Name>> {
+        match &f.effects {
+            Some(w) => Some(w.clone()),
+            // The helpers extraction writes (`TautoErased…`, `extract_…`) are the compiler's
+            // own text, not a program's: they keep the row their body performs.
+            None if f.name.to_string().starts_with("Tauto")
+                || f.name.to_string().starts_with("extract_") =>
+            {
+                None
+            }
+            None if f.row_hole.is_none() && !self.externs.contains(&f.name) => Some(Vec::new()),
+            None => None,
         }
     }
 
@@ -1356,13 +2082,11 @@ impl<'a> Analysis<'a> {
     fn fn_row(&mut self, name: &'a Name) -> Row {
         let f = self.fns[name];
         let scope = self.prepare_scope(f, &[]);
-        match &f.effects {
-            // The host's own code calls these to answer the effect in the
-            // row; the call is the answer, not a request for it.
-            Some(_) if self.externs.contains(name) && crate::host::is_host_primitive(f) => {
-                Row::new()
-            }
-            Some(written) => self.scope_row(written, &scope),
+        if is_extract_unreachable(name) {
+            return Row::new();
+        }
+        match self.written_of(f) {
+            Some(written) => self.scope_row(&written, &scope),
             None if self.externs.contains(name) => {
                 self.record_declaration(f, Row::new());
                 Row::new()
@@ -1380,13 +2104,66 @@ impl<'a> Analysis<'a> {
         }
         // What a `λ` is worth depends on the functions being inferred.
         self.lambda_values.clear();
-        if !self.in_progress.insert(name) {
-            return if self.total.contains(name) || self.structural.contains(name) {
-                Row::new()
-            } else {
-                Row::from([self.intrinsic("Div")])
-            };
+        if let Some((_, row, leaned)) = self.pass.iter().find(|(n, _, _)| *n == name) {
+            let (row, leaned) = (row.clone(), leaned.clone());
+            self.leaned.extend(leaned);
+            return row;
         }
+        if self.in_progress.contains(name) {
+            // Its row is not known yet: the last pass's, else only `div`.
+            self.leaned.insert(name);
+            let mut row = self.seeds.get(name).cloned().unwrap_or_default();
+            if !self.total.contains(name)
+                && !self.structural.contains(name)
+                && !is_extract_unreachable(name)
+            {
+                row.insert(self.intrinsic("div"));
+            }
+            return row;
+        }
+        // A body that reads a function still being followed is in a
+        // recursive group, whose rows are found together: each pass reads the
+        // rows the last one found where it reaches a member being followed,
+        // until a pass finds them again. Only then are they kept in `memo`; a
+        // row found from a guess would miss what the guessed member performs.
+        let outer_leaned = std::mem::take(&mut self.leaned);
+        let start = self.pass.len();
+        loop {
+            let row = self.follow_body(name, f, scope.clone());
+            let mut leaned = std::mem::take(&mut self.leaned);
+            let reentered = leaned.remove(name);
+            if !leaned.is_empty() {
+                // A member of a group whose head is further out.
+                self.pass.push((name, row.clone(), leaned.clone()));
+                self.leaned = outer_leaned;
+                self.leaned.extend(leaned);
+                return row;
+            }
+            let members: Vec<_> = self.pass.drain(start..).collect();
+            let settled = (!reentered && members.is_empty())
+                || (self.seeds.get(name) == Some(&row)
+                    && members.iter().all(|(n, r, _)| self.seeds.get(n) == Some(r)));
+            if settled {
+                for (n, r, _) in members {
+                    self.seeds.remove(n);
+                    self.memo.insert(n, r);
+                }
+                self.seeds.remove(name);
+                self.memo.insert(name, row.clone());
+                self.leaned = outer_leaned;
+                return row;
+            }
+            for (n, r, _) in members {
+                self.seeds.insert(n, r);
+            }
+            self.seeds.insert(name, row);
+        }
+    }
+
+    /// Follows the body of `name` once.
+    fn follow_body(&mut self, name: &'a Name, f: &'a FnDecl, scope: Vec<(Name, Name)>) -> Row {
+        self.lambda_values.clear();
+        self.in_progress.insert(name);
         let mut locals: Locals = f
             .params
             .iter()
@@ -1401,27 +2178,35 @@ impl<'a> Analysis<'a> {
             .map(|(g, _)| scope.iter().rev().find(|(n, _)| n == g).unwrap().1.clone())
             .collect();
         let outer_direct = std::mem::replace(&mut self.direct_vars, direct_vars);
+        let outer_total = std::mem::replace(&mut self.in_total, self.total.contains(name));
         let outer_scope = std::mem::replace(&mut self.scope, scope);
         let outer_owner = self.owner.replace(self.owner_of(f));
         let result = f.result.as_ref().map(|ty| self.scoped_type(ty));
         let outer_result = std::mem::replace(&mut self.expected_result, result.clone());
-        let mut row = self.term_row_as(&f.body, &mut locals, result.as_ref());
+        let row = self.term_row_as(&f.body, &mut locals, result.as_ref());
+        // A row read from a type spells the operators' effects as written.
+        let mut row: Row = row.into_iter().map(|e| self.operator_name(e)).collect();
         if let Some(expected) = result {
             self.check_term(&f.body, &expected, &locals);
         }
         self.expected_result = outer_result;
         self.direct_vars = outer_direct;
+        self.in_total = outer_total;
         self.scope = outer_scope;
         self.owner = outer_owner;
         self.in_progress.remove(name);
         self.lambda_values.clear();
-        if !self.total.contains(name)
-            && !self.structural.contains(name)
+        if self.total.contains(name) {
+            // The kernel checked the declaration total: a `div` its body
+            // reaches comes only from the erased calling convention, whose
+            // function values are its own total code.
+            row.remove(&self.intrinsic("div"));
+        } else if !self.structural.contains(name)
+            && !is_extract_unreachable(name)
             && self.recursive_refs.contains(name)
         {
-            row.insert(self.intrinsic("Div"));
+            row.insert(self.intrinsic("div"));
         }
-        self.memo.insert(name, row.clone());
         self.record_declaration(f, row.clone());
         row
     }
@@ -1466,6 +2251,11 @@ impl<'a> Analysis<'a> {
     ) -> Row {
         let mut row = Row::new();
         match &*t.kind {
+            TermKind::App { .. } if let Some(members) = t.product_value_members() => {
+                for m in members {
+                    row.extend(self.term_row(m, locals));
+                }
+            }
             TermKind::Perform { effect, args } => {
                 let before = self.found.len();
                 if let Some(signature) = self.operation_signature(effect) {
@@ -1475,15 +2265,8 @@ impl<'a> Analysis<'a> {
                 // the `spawn` answers: say where its handler goes.
                 if tauto_surface::bindings::is_library(&effect, "spawn") {
                     for d in &mut self.found[before..] {
-                        if d.message
-                            .to_string()
-                            .starts_with("a function value may perform")
-                        {
-                            d.message.push_str(
-                                "; a task runs apart from the handlers around its `spawn`, \
-                                 so its handler goes in the task's body: \
-                                 `spawn(() => handler(f))`",
-                            );
+                        if d.message.id == "rows-value-performs" {
+                            d.message.id = "rows-value-performs-spawn".into();
                         }
                     }
                 }
@@ -1494,13 +2277,33 @@ impl<'a> Analysis<'a> {
                 // of the `spawn` or `test` that starts it, so that a type
                 // shows it.
                 let body = match (effect.as_str(), args.as_slice()) {
-                    ("spawn", [f]) | ("test", [_, f]) => Some(f),
+                    ("spawn", [f]) | ("test", [_, f]) | ("main", [f]) => Some(f),
                     _ => None,
                 };
+                // An entry's body runs when a command calls it, under the
+                // host: what it asks of the host is what the run needs, and is
+                // not performed where the entry is.
+                let entry = tauto_surface::bindings::is_library(effect, "test")
+                    || tauto_surface::bindings::is_library(effect, "main");
                 if let Some(f) = body
                     && let Latent::Known(c) = self.latent_of(f, locals)
                 {
                     for e in c.row.iter() {
+                        // The indices of a task's own tasks fold into its index.
+                        // An entry's index includes the permissions its tasks need.
+                        if let Some(member) = label_host_member(e) {
+                            row.insert(crate::types::indices::index_label(effect, &member));
+                            continue;
+                        }
+                        if entry {
+                            if crate::host::HOST_EFFECTS
+                                .iter()
+                                .any(|name| tauto_surface::bindings::is_library(e, name))
+                            {
+                                row.insert(crate::types::indices::index_label(effect, e));
+                            }
+                            continue;
+                        }
                         // A task's waits hold up that task only: the host
                         // answers them where it runs the task.
                         if tauto_surface::bindings::is_library(&e, "wait")
@@ -1512,8 +2315,10 @@ impl<'a> Analysis<'a> {
                             .iter()
                             .any(|name| tauto_surface::bindings::is_library(e, name))
                         {
-                            row.insert(e.clone());
-                            self.task_effects.insert(e.to_string());
+                            // The body's row is the label's index: no handler
+                            // around the `spawn` answers it, since the body
+                            // runs apart from them.
+                            row.insert(crate::types::indices::index_label(effect, e));
                         } else if self.set_bound(e).is_some() {
                             // `<h: Host>`: some of the host's effects, which
                             // the function's row names, so that a call
@@ -1522,14 +2327,22 @@ impl<'a> Analysis<'a> {
                         }
                     }
                 }
-                let own = Row::from([effect_of_op(effect)]);
+                let own = Row::from([effect.clone()]);
                 self.record_call(t, own.clone());
                 row.extend(own);
             }
             TermKind::Record { fields, .. } => {
                 self.value_of(t, locals, expected);
-                for (_, v) in fields {
-                    row.extend(self.term_row(v, locals));
+                // Each field is followed against the type the context gives
+                // it, as a constructor's arguments are: a call there whose row
+                // argument the context writes out is checked against it.
+                let given = expected.and_then(|e| self.fields(e)).unwrap_or_default();
+                for (name, v) in fields {
+                    let field = given
+                        .iter()
+                        .find(|(n, _)| n == name)
+                        .map(|(_, l)| l.clone());
+                    row.extend(self.term_row_as(v, locals, field.as_ref()));
                 }
             }
             TermKind::Borrow { term, .. } => {
@@ -1539,6 +2352,8 @@ impl<'a> Analysis<'a> {
                 function,
                 arguments,
             } => {
+                // `f(<A: T>, x)`: the named type arguments are no argument.
+                let arguments = crate::types::split_implicits(arguments).1;
                 let mut params = Vec::new();
                 // A construction checks its arguments against the type the
                 // context gives it. Checked again without that type, its
@@ -1571,13 +2386,21 @@ impl<'a> Analysis<'a> {
                     args.extend(self.term_row_as(a, locals, params.get(i)));
                 }
                 let evaluated = self.term_row(function, locals);
+                if let TermKind::Var(name) = &*function.kind
+                    && !locals.iter().any(|(n, _)| n == name)
+                    && !self.fns.contains_key(name)
+                    && matches!(name.as_str(), "+" | "-" | "*" | "/" | "div" | "mod")
+                    && let Some(effect) = self.operator_effect(t, name.as_str(), arguments)
+                {
+                    row.insert(effect);
+                }
                 match &*function.kind {
                     TermKind::Field { base, name }
                         if matches!(&*base.kind, TermKind::Var(n)
                             if matches!(locals.iter().rev().find(|(m, _)| m == n), Some((_, Latent::Info)))) =>
                     {
                         if name == "unbounded" {
-                            row.insert(self.intrinsic("Div"));
+                            row.insert(self.intrinsic("div"));
                         }
                     }
                     TermKind::Var(n)
@@ -1594,16 +2417,16 @@ impl<'a> Analysis<'a> {
                             row.extend(self.callable_row(&f, arguments, locals, t.span))
                         }
                         _ => {
-                            row.insert(unchecked(&match &*function.kind {
-                                TermKind::Var(n) => match self.unresolved(n, locals) {
-                                    Some(why) => format!("!{why}"),
-                                    None => format!("calling `{n}`"),
+                            row.insert(match &*function.kind {
+                                TermKind::Var(n) => match self.unresolved_tag(n, locals) {
+                                    Some((kind, name)) => unchecked(kind, &name),
+                                    None => unchecked("call", n),
                                 },
                                 _ => match dotted(function) {
-                                    Some(n) => format!("calling `{n}`"),
-                                    None => "an applied expression".into(),
+                                    Some(n) => unchecked("call", &n),
+                                    None => unchecked("expression", ""),
                                 },
-                            }));
+                            });
                         }
                     },
                 }
@@ -1615,12 +2438,16 @@ impl<'a> Analysis<'a> {
                 row.extend(self.term_row(steps, locals));
                 let mut inner = self.term_row(body, locals);
                 // Only steps stop a body that does not: a memory budget
-                // leaves `Div` in the row.
+                // leaves `div` in the row.
                 if *limit == BudgetLimit::Steps {
-                    inner.remove(&self.intrinsic("Div"));
+                    inner.remove(&self.intrinsic("div"));
                 }
                 row.extend(inner);
-                row.insert(self.intrinsic("Exceeded"));
+                row.insert(self.intrinsic("exceeded"));
+                // The host counts: the same body may stop at another place
+                // on another backend, so running a budget is an effect, its
+                // operation's.
+                row.insert(self.intrinsic(limit.operation()));
             }
             TermKind::Handle { body, handlers } => {
                 let raw = self.term_row(body, locals);
@@ -1632,11 +2459,23 @@ impl<'a> Analysis<'a> {
                             patterns,
                             guard: None,
                             ..
-                        } if patterns.iter().all(irrefutable) => Some(effect_of_op(effect)),
+                        } if patterns.iter().all(irrefutable) => {
+                            Some(self.operator_name(effect.clone()))
+                        }
                         _ => None,
                     })
                     .collect();
-                row.extend(raw.iter().filter(|e| !handled.contains(*e)).cloned());
+                // An index label is another label than its members: only an
+                // arm of its family removes it. An arm of one instance
+                // (`spawn<i64>(f)`) answers only the performs of that
+                // instance, while the label holds the merged index of all of
+                // them: it leaves the label, and the host is still asked for
+                // what it holds (rule 3).
+                row.extend(
+                    raw.iter()
+                        .filter(|e| !handles_label(&handled, e) && !handled.contains(*e))
+                        .cloned(),
+                );
                 let mut returned = Row::new();
                 for h in handlers {
                     if let Handler::Return { pattern, body } = h {
@@ -1675,6 +2514,40 @@ impl<'a> Analysis<'a> {
                     })
                     .collect();
                 self.found.truncate(found);
+                // An arm of `place` or `rc_place` only says where the value goes: its
+                // body is `k(e)`, and `e` performs nothing.
+                for (h, arm_own) in handlers.iter().zip(&own) {
+                    if let Handler::Operation {
+                        effect,
+                        cont,
+                        body: arm_body,
+                        ..
+                    } = h
+                        && is_placement(effect)
+                    {
+                        let shaped = matches!(&*arm_body.kind, TermKind::App { function, arguments }
+                            if arguments.len() == 1
+                                && matches!(&*function.kind, TermKind::Var(n) if Some(n) == cont.as_ref()));
+                        if !shaped || !arm_own.is_empty() {
+                            self.found.push(RowDiagnostic {
+                                message: msg!(
+                                    "rows-placement-arm-answers-only",
+                                    op = effect
+                                        .as_str()
+                                        .split('@')
+                                        .next()
+                                        .unwrap_or("")
+                                        .rsplit("::")
+                                        .next()
+                                        .unwrap_or("")
+                                        .to_string()
+                                ),
+                                span: arm_body.span,
+                                missing: None,
+                            });
+                        }
+                    }
+                }
                 for (i, h) in handlers.iter().enumerate() {
                     if let Handler::Operation { effect, .. } = h {
                         // `k` may be called after its arm has returned, so
@@ -1684,7 +2557,7 @@ impl<'a> Analysis<'a> {
                         // return arm.
                         let resumed = self.resumed_row(
                             body,
-                            &effect_of_op(effect),
+                            &effect.clone(),
                             handlers,
                             &handled,
                             &own,
@@ -1709,7 +2582,7 @@ impl<'a> Analysis<'a> {
                             effect, patterns, cont, guard, arm_body, resumed, &value, locals,
                         );
                         // Resuming is not part of what a direct arm does.
-                        if self.quants.get(&effect_of_op(effect)) == Some(&Quant::Direct) {
+                        if self.quants.get(&effect.clone()) == Some(&Quant::Direct) {
                             self.direct_arm(effect, &own[i], arm_body.span);
                         }
                         row.extend(arm);
@@ -1749,11 +2622,6 @@ impl<'a> Analysis<'a> {
             TermKind::Field { base, .. } | TermKind::Ascribe { term: base, .. } => {
                 row.extend(self.term_row(base, locals))
             }
-            TermKind::Product(members) | TermKind::Tuple(members) => {
-                for m in members {
-                    row.extend(self.term_row(m, locals));
-                }
-            }
             TermKind::Tagged { term, .. } => row.extend(self.term_row_as(term, locals, expected)),
             TermKind::Match {
                 scrutinee, arms, ..
@@ -1792,20 +2660,25 @@ impl<'a> Analysis<'a> {
         let operation = self.operation_signature(effect);
         for (i, p) in patterns.iter().enumerate() {
             match p {
-                Pattern::Bind(n) if tauto_surface::bindings::is_library(&effect, "exceeded") => {
+                Pattern::Bind { name: n, .. }
+                    if tauto_surface::bindings::is_library(&effect, "exceeded") =>
+                {
                     locals.push((n.clone(), Latent::Info))
                 }
                 // A spawned body may diverge, but performs no operation on
                 // its caller's handler stack: what it asks of the host is in
                 // the row of its `spawn`.
-                Pattern::Bind(n) if tauto_surface::bindings::is_library(&effect, "spawn") => locals
-                    .push((
+                Pattern::Bind { name: n, .. }
+                    if tauto_surface::bindings::is_library(&effect, "spawn") =>
+                {
+                    locals.push((
                         n.clone(),
-                        Latent::Known(Callable::simple(Row::from([self.intrinsic("Div")]))),
-                    )),
+                        Latent::Known(Callable::simple(Row::from([self.intrinsic("div")]))),
+                    ))
+                }
                 // An argument is what the operation's parameter type says
                 // it is: a function it takes performs the row of that type.
-                Pattern::Bind(n) => locals.push((
+                Pattern::Bind { name: n, .. } => locals.push((
                     n.clone(),
                     operation
                         .as_ref()
@@ -1861,7 +2734,7 @@ impl<'a> Analysis<'a> {
             let next: Vec<Name> = handlers
                 .iter()
                 .filter_map(|h| match h {
-                    Handler::Operation { effect, .. } => Some(effect_of_op(effect)),
+                    Handler::Operation { effect, .. } => Some(effect.clone()),
                     Handler::Return { .. } => None,
                 })
                 .filter(|e| rest.contains(e) && !reached.contains(e))
@@ -1876,10 +2749,13 @@ impl<'a> Analysis<'a> {
                 reached.insert(e);
             }
         }
-        let mut row: Row = rest.into_iter().filter(|e| !handled.contains(e)).collect();
+        let mut row: Row = rest
+            .into_iter()
+            .filter(|e| !handles_label(handled, e) && !handled.contains(e))
+            .collect();
         for (h, arm) in handlers.iter().zip(own) {
             if let Handler::Operation { effect, .. } = h
-                && reached.contains(&effect_of_op(effect))
+                && reached.contains(&effect.clone())
             {
                 row.extend(arm.iter().cloned());
             }
@@ -1893,7 +2769,7 @@ impl<'a> Analysis<'a> {
     fn after(&self, t: &SurfaceTerm, op: &Name) -> Option<Row> {
         let whole = |t: &SurfaceTerm| self.term_rows.get(&t.id()).cloned().unwrap_or_default();
         match &*t.kind {
-            TermKind::Perform { effect, .. } if effect_of_op(effect) == *op => Some(Row::new()),
+            TermKind::Perform { effect, .. } if *effect == *op => Some(Row::new()),
             TermKind::Block(stmts) => {
                 let rows = self.block_rows.get(&t.id())?;
                 let mut found: Option<Row> = None;
@@ -1939,7 +2815,7 @@ impl<'a> Analysis<'a> {
     }
 
     /// Checks callback effects against the host frame's capabilities. Known
-    /// native callback effects must be direct or `Div`. JavaScript callbacks
+    /// native callback effects must be direct or `div`. JavaScript callbacks
     /// reject operations that may resume many times and open rows.
     fn extern_closures(&mut self, arguments: &[SurfaceTerm], locals: &Locals, span: Span) {
         for a in arguments {
@@ -1947,23 +2823,22 @@ impl<'a> Analysis<'a> {
                 continue;
             };
             if let Some(effect) = row.row.iter().find(|e| {
-                if self.javascript {
+                if self.target.promise_callbacks() {
                     self.quants.get(*e) == Some(&Quant::Many) || e.row_variable().is_some()
                 } else {
                     !self.is_direct(e)
                         && !e.row_variable().is_some()
-                        && !tauto_surface::bindings::is_library(e, "Div")
+                        && !tauto_surface::bindings::is_divergence(e)
+                        && !tauto_surface::bindings::is_library(e, "budget")
+                        && !tauto_surface::bindings::is_library(e, "budget_memory")
                 }
             }) {
-                let message = if self.javascript {
-                    format!(
-                        "a callback through a JavaScript host frame cannot perform {effect}, which may resume more than once; keep reusable continuations in Nib"
-                    )
+                let message = if self.target.promise_callbacks() {
+                    msg!("rows-js-callback-effect", effect = effect.to_string())
                 } else {
-                    format!(
-                        "a closure passed to an extern cannot perform {effect}, which may suspend"
-                    )
+                    msg!("rows-extern-closure-effect", effect = effect.to_string())
                 };
+                let message = display_message(message, &self.row_variables);
                 if !self
                     .found
                     .iter()
@@ -1989,9 +2864,59 @@ impl<'a> Analysis<'a> {
     /// effect, or the effect is a row variable bounded by a set it names.
     pub(super) fn permits(&self, allowed: &Row, effect: &Name) -> bool {
         allowed.contains(effect)
+            || self.permits_index_label(allowed, effect)
             || self
                 .set_bound(effect)
                 .is_some_and(|set| set.iter().all(|e| allowed.contains(e)))
+    }
+
+    /// Whether a row naming a family's own label for every instance
+    /// (`spawn`, as the library's `Host` has it) and the effect an index
+    /// label holds (`spawn@^div` holds `div`) permits that label: a body
+    /// that calls a function which spawns, inside a body the host runs.
+    /// The label is the host's to answer, and what it holds is a
+    /// host effect the row names.
+    fn permits_index_label(&self, allowed: &Row, effect: &Name) -> bool {
+        let Some((family, member)) = crate::types::indices::split_index_label(effect) else {
+            return false;
+        };
+        let short = member.split('@').next().unwrap_or(&member);
+        let short = short.rsplit("::").next().unwrap_or(short);
+        if !allowed
+            .iter()
+            .any(|a| !a.to_string().contains('@') && crate::types::indices::family_of(a) == family)
+        {
+            return false;
+        }
+        // `spawn@^e` for a row variable `<!e: Host>`: it holds some of the
+        // host's effects, which the row names. The label names the variable as
+        // written, so the variables of that name are told apart by where they are
+        // declared. If the function being followed declares one, that one is meant,
+        // and its bound must be a set the row covers. Otherwise it comes from a
+        // callee's row, and some variable of that name must be bounded by such a set.
+        let covered = |v: &Name| {
+            self.set_bound(v)
+                .is_some_and(|set| set.iter().all(|e| allowed.contains(e)))
+        };
+        let named: Vec<&Name> = self
+            .row_variables
+            .keys()
+            .filter(|v| v.to_string().split('#').next() == Some(member.as_str()))
+            .collect();
+        let own: Vec<&Name> = named
+            .iter()
+            .copied()
+            .filter(|v| Some(&self.row_variables[*v].owner) == self.owner.as_ref())
+            .collect();
+        if !own.is_empty() {
+            return own.into_iter().all(covered);
+        }
+        if named.iter().copied().any(covered) {
+            return true;
+        }
+        allowed
+            .iter()
+            .any(|a| tauto_surface::bindings::is_library_effect(a, short))
     }
 
     fn is_direct(&self, effect: &Name) -> bool {
@@ -2010,9 +2935,13 @@ impl<'a> Analysis<'a> {
             if self.is_direct(effect) {
                 continue;
             }
-            let message = format!(
-                "the arm of {op} performs {}, which is not direct",
-                effect.trim_start_matches('|')
+            let message = display_message(
+                msg!(
+                    "rows-arm-not-direct",
+                    op = op.to_string(),
+                    effect = effect.trim_start_matches('|').to_string()
+                ),
+                &self.row_variables,
             );
             if !self
                 .found
@@ -2079,8 +3008,10 @@ impl<'a> Analysis<'a> {
             Stmt::While { condition, body } => {
                 row.extend(self.term_row(condition, locals));
                 row.extend(self.term_row(body, locals));
-                row.insert(self.intrinsic("Div"));
+                row.insert(self.intrinsic("div"));
             }
+            // `lower_fors` / `lower_loops` expand them where the program is read.
+            Stmt::For { .. } | Stmt::Loop { .. } | Stmt::Break(_) | Stmt::Continue => {}
             _ => {}
         }
         row
@@ -2093,14 +3024,18 @@ impl<'a> Analysis<'a> {
         let outer_owner = self.owner.replace(owner);
         let result = f.result.as_ref().map(|ty| self.scoped_type(ty));
         let outer_result = std::mem::replace(&mut self.expected_result, result.clone());
-        let written = f.effects.as_ref().map(|w| self.scope_row(w, &self.scope));
+        let written = f
+            .effects
+            .clone()
+            .or_else(|| f.row_hole.is_none().then(Vec::new))
+            .map(|w| self.scope_row(&w, &self.scope));
         let mut inferred = Row::new();
         loop {
             // A self reference carries divergence through aliases and fields.
             // Local source declarations cannot inherit a top-level extraction
             // certificate just because they reuse its name.
             let mut recursive = written.clone().unwrap_or_else(|| inferred.clone());
-            recursive.insert(self.intrinsic("Div"));
+            recursive.insert(self.intrinsic("div"));
             let signature = self.signature(f, recursive);
             let mut inner = captures.clone();
             inner.push((f.name.clone(), Latent::Known(signature.clone())));
@@ -2120,15 +3055,17 @@ impl<'a> Analysis<'a> {
                 self.diagnostic(unfollowed_in(what, &f.name), f.span);
             } else if let Some(allowed) = &written
                 && !allowed.contains(effect)
+                && !self.permits_index_label(allowed, effect)
             {
-                self.diagnostic(
-                    format!(
-                        "`{}` may perform {} but its row is {{{}}}",
-                        f.name,
-                        effect.display_in_row(),
-                        show(allowed.iter())
+                self.diagnostic_missing(
+                    msg!(
+                        "rows-may-perform",
+                        name = f.name.to_string(),
+                        effect = effect.display_in_row(),
+                        row = show(allowed.iter())
                     ),
                     f.span,
+                    missing_effect(f, effect),
                 );
             }
         }
@@ -2141,6 +3078,25 @@ impl<'a> Analysis<'a> {
     }
 }
 
+/// The value of an operator applied to numerals only: `-a`, `a + b`,
+/// `a - b`, `a * b`.
+fn literal_result(op: &str, arguments: &[SurfaceTerm]) -> Option<i128> {
+    let values: Option<Vec<i128>> = arguments
+        .iter()
+        .map(|a| match &*a.kind {
+            TermKind::Nat(n) => n.parse::<i128>().ok(),
+            _ => None,
+        })
+        .collect();
+    match (op, values?.as_slice()) {
+        ("-", [a]) => Some(-a),
+        ("-", [a, b]) => Some(a - b),
+        ("+", [a, b]) => a.checked_add(*b),
+        ("*", [a, b]) => a.checked_mul(*b),
+        _ => None,
+    }
+}
+
 fn latent_of_type(ty: Option<&SurfaceTerm>) -> Latent {
     ty.map(value_type).unwrap_or(Latent::Unknown)
 }
@@ -2148,15 +3104,17 @@ fn latent_of_type(ty: Option<&SurfaceTerm>) -> Latent {
 use values::{substitute, value_type};
 
 fn irrefutable(p: &Pattern) -> bool {
-    matches!(p, Pattern::Wild | Pattern::Bind(_))
+    matches!(p, Pattern::Wild | Pattern::Bind { .. })
 }
 
 fn bind_pattern(p: &Pattern, locals: &mut Locals) {
     match p {
-        Pattern::Bind(n) => locals.push((n.clone(), Latent::Unknown)),
+        Pattern::Ctor { .. } if let Some(items) = p.product_members() => {
+            items.iter().for_each(|a| bind_pattern(a, locals))
+        }
+        Pattern::Bind { name: n, .. } => locals.push((n.clone(), Latent::Unknown)),
         Pattern::Ctor { args, .. } => args.iter().for_each(|a| bind_pattern(a, locals)),
         Pattern::Record { fields, .. } => fields.iter().for_each(|(_, a)| bind_pattern(a, locals)),
-        Pattern::Tuple(items) => items.iter().for_each(|a| bind_pattern(a, locals)),
         _ => {}
     }
 }
@@ -2178,6 +3136,19 @@ fn diagnostic_order(row: &Row) -> Vec<&Name> {
     let mut effects: Vec<_> = row.iter().collect();
     effects.sort_by_key(|effect| effect.display_in_row());
     effects
+}
+
+/// The effect `f` performs and its written row leaves out, to write into the row: a row
+/// variable of a callee is not one, nor is a function whose result type is not written.
+fn missing_effect(f: &FnDecl, effect: &Name) -> Option<MissingEffect> {
+    if effect.as_local().is_some() || effect.starts_with('?') {
+        return None;
+    }
+    let result = f.result.as_ref()?;
+    Some(MissingEffect {
+        effect: effect.display_in_row(),
+        after: result.span.end,
+    })
 }
 
 fn show<'s>(items: impl Iterator<Item = &'s Name>) -> String {
@@ -2203,7 +3174,7 @@ fn pure_builtin(name: &str, arity: usize) -> bool {
             | "clone"
             | "div"
             | "mod"
-    ) || (name == "Tuple" && arity == 0)
+    )
 }
 
 #[cfg(test)]

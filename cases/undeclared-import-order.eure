@@ -1,0 +1,24 @@
+// A name an import asks for and the file does not declare is reported first;
+// what the missing name leaves unread after it (a native call whose type it
+// left unknown, a declaration that did not check) follows.
+
+@ cases.undeclared-import-before-native-call-inference
+description = "A name that `std::hash` does not declare is reported as it is, not behind an error about a native call whose type it left unknown."
+extract = true
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::uhost { UHost }
+import std::hash { HashSeed }
+import std::slots { Byte, SlotsModel, Table }
+import std::hash_table { tb_used, tb_laws }
+
+inductive struct Holder(
+  K: Type,
+  V: Type
+) { table: SlotsModel(Table, Byte, K × V, tb_used), seed: HashSeed }
+
+fn Holder::with_seed<K: Linear, V: Linear>(seed: HashSeed): Holder(K, V) {
+  Holder { table: SlotsModel::new(UHost::lit(0, Refl), tb_laws()), seed: seed }
+}
+```
+load_error = "`HashSeed` is in the list of `import std::hash`, but the imported file declares no `HashSeed` for other files"

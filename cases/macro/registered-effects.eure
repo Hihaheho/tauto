@@ -4,9 +4,9 @@
 
 @ cases.a-registered-fmt-function-that-performs-a-host-effect-is-refused
 files."lib.taut" = ````tauto
-import std::prelude::Macro
-import std::prelude::Os
-import std::prelude::Par
+import std::builtin::macro
+import std::builtin::os
+import std::builtin::par
 
 pub fn noisy_fmt(ts: List(SynTok), width: u64): Option(Text) ! {stdout} {
   print("laying out")
@@ -30,22 +30,21 @@ message = "syntax noisy: `noisy_fmt`, the fmt function, performs the host effect
 
 @ cases.a-registered-fmt-function-may-use-closures-and-collections
 files."lib.taut" = ````tauto
-import std::prelude::Macro
-import std::prelude::Par
-import std::prelude::Shared
-import std::prelude::Affine
+import std::builtin::macro
+import std::builtin::par
+import std::indexed_map { IndexedMap }
 
-pub fn texts(ts: List(SynTok)): List(Text) ! {Div} {
+pub fn texts(ts: List(SynTok)): List(Text) ! {div} {
   map(ts, (t: SynTok) => concat(t.text, "!"))
 }
 
-pub fn total(xs: List(Text)): u64 ! {Div} {
-  let m: HashMap(Text, u64) := HashMap::new()
-  HashMap::insert(m, "a", 1)
-  Vec::len(HashMap::into_vec(m))
+pub fn total(xs: List(Text)): u64 ! {div} {
+  var m: IndexedMap(Text, u64) := IndexedMap::new()
+  IndexedMap::insert(&mut m, "a", 1)
+  Vec::len(&IndexedMap::into_vec(m))
 }
 
-pub fn count_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn count_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   if total(texts(ts)) == 0 { None } else { Some("abc") }
 }
 
@@ -72,3 +71,75 @@ fn other(): count::Doc {
   count`abc`
 }
 ````
+
+@ cases.a-registered-fmt-function-may-use-a-std-module-beyond-the-prelude
+files."lib.taut" = ````tauto
+import std::builtin::macro
+import std::builtin::par
+import std::indexed_map { IndexedMap }
+import std::hash { SipSeed }
+
+pub fn texts(ts: List(SynTok)): List(Text) ! {div} {
+  map(ts, (t: SynTok) => concat(t.text, "!"))
+}
+
+pub fn total(xs: List(Text)): u64 ! {div} {
+  var m: IndexedMap(Nat, u64) := IndexedMap::with_seed(SipSeed::of(1, 2))
+  let _r := IndexedMap::insert(&mut m, 7, 1)
+  Vec::len(&IndexedMap::into_vec(m))
+}
+
+pub fn count_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
+  if total(texts(ts)) == 0 { None } else { Some("abc") }
+}
+
+syntax!(count, ```par
+%start Doc
+%title "count"
+%%
+Doc: Word;
+Word: /[a-z]+/;
+```, with(fmt: count_fmt)) => struct Doc, fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+fn other(): count::Doc {
+  count`abc`
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+fn other(): count::Doc {
+  count`abc`
+}
+````
+
+@ cases.a-registered-tokens-function-that-performs-an-effect-of-its-own-is-refused
+files."lib.taut" = ````tauto
+import std::builtin::macro
+import std::builtin::par
+
+effect log(m: Text): Unit
+
+pub fn noisy(ts: List(SynTok)): List(SynHighlight) ! {log} {
+  perform log("x")
+  Nil
+}
+
+syntax!(noisy_syntax, ```par
+%start Doc
+%title "noisy"
+%%
+Doc: Word;
+Word: /[a-z]+/;
+```, with(tokens: noisy)) => struct Doc, fn parse
+````
+entry = "lib.taut"
+checks."lib.taut::macro" = "error: "
+@ cases.a-registered-tokens-function-that-performs-an-effect-of-its-own-is-refused.diagnostics[]
+file = "lib.taut"
+name = "macro"
+message = "syntax noisy_syntax: `noisy`, the tokens function, may perform div, divzero, overflow and macro_error only, and it performs log"

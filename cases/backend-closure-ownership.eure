@@ -1,55 +1,59 @@
 @ cases.copy-captures-remain-readable
-backends = ["rust", "javascript"]
 source = ```nib
-copy struct Stamp { value: i64 }
+struct(copy) Stamp { value: i64 }
 let original := Stamp { value: 17 }
 let read := () => original.value
-perform show("first", read())
-perform show("original", original.value)
-perform show("second", read())
+show(&read())
+show(&original.value)
+show(&read())
 ```
-shows = ["first = 17", "original = 17", "second = 17"]
+stdout = ```
+17
+17
+17
+```
 
 @ cases.shared-capture-last-use-remains-repeatable
-backends = ["rust", "javascript"]
 source = ```nib
 fn make_read(): () -> Text {
   let text := "kept"
   () => text
 }
 let read := make_read()
-perform show("first", read())
-perform show("second", read())
+show(&read())
+show(&read())
 ```
-shows = ["first = \"kept\"", "second = \"kept\""]
+stdout = ```
+"kept"
+"kept"
+```
 
 @ cases.nested-affine-capture
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a closure whose body moves what it captured yet"
 source = ```nib
-affine struct Token { value: i64 }
+struct(affine) Token { value: i64 }
 let original := Token { value: 23 }
 let outer: affine () -> affine () -> Token := () => () => original
 let inner := outer()
 let result := inner()
-perform show("nested", match result { Token { value } => value })
+show(&(match result { Token { value } => value }))
 ```
-shows = ["nested = 23"]
+stdout = "23\n"
 
 @ cases.linear-capture-is-consumed
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `linear` type yet"
 source = ```nib
-linear struct Token { value: i64 }
+struct(linear) Token { value: i64 }
 let original := Token { value: 31 }
 let consume: linear () -> Token := () => original
 let result := consume()
-perform show("linear", match result { Token { value } => value })
+show(&(match result { Token { value } => value }))
 ```
-shows = ["linear = 31"]
+stdout = "31\n"
 
 @ cases.linear-capture-cannot-be-abandoned
-backends = ["rust", "javascript"]
 source = ```nib
-linear struct Token {}
+struct(linear) Token {}
 fn invalid(value: Token): Unit {
   let unused: linear () -> Token := () => value
   #()
@@ -60,19 +64,21 @@ compile_errors.rust = "front: unused is not used"
 compile_errors.javascript = "front: unused is not used"
 
 @ cases.borrowed-capture-is-not-consumed
-backends = ["rust", "javascript"]
 source = ```nib
-fn twice(&read: () -> i64): i64 { read() + read() }
+fn twice(read: &(() -> i64)): i64 ! {overflow} { read() + read() }
 var value := 7
-perform show("before", twice(() => value))
+show(&twice(() => value))
 value := 9
-perform show("after", twice(() => value))
-perform show("original", value)
+show(&twice(() => value))
+show(&value)
 ```
-shows = ["before = 14", "after = 18", "original = 9"]
+stdout = ```
+14
+18
+9
+```
 
 @ cases.generic-struct-of-closures-clones-without-bound
-backends = ["rust", "javascript"]
 source = ```nib
 struct Codec(A: Type) { encode: (A) -> Text, decode: (Text) -> A }
 struct Opaque { inner: i64 }
@@ -81,50 +87,62 @@ fn twice<A>(c: Codec(A)): Codec(A) {
   Codec { encode: (x) => r#copy.encode(x), decode: (t) => c.decode(t) }
 }
 let c := twice(Codec { encode: (o: Opaque) => "opaque", decode: (t: Text) => Opaque { inner: 5 } })
-perform show("encoded", c.encode(Opaque { inner: 1 }))
-perform show("decoded", match c.decode("x") { Opaque { inner } => inner })
+show(&(c.encode(Opaque { inner: 1 })))
+show(&(match c.decode("x") { Opaque { inner } => inner }))
 ```
-shows = ["encoded = \"opaque\"", "decoded = 5"]
+stdout = ```
+"opaque"
+5
+```
 
 @ cases.match-keeps-reused-closure-owner
-backends = ["rust", "javascript"]
 source = ```nib
-enum Action { Ready(() -> i64), Empty }
+enum Action { Ready(() -> nat), Empty }
 fn keep(action: Action): Action {
   match action { Empty => Empty, _ => action }
 }
-fn run(): i64 {
+fn run(): nat {
   let offset := 12
   let action := Ready(() => offset + 3)
   match keep(keep(action)) { Ready(read) => read(), Empty => 0 }
 }
-perform show("kept", run())
+show(&run())
 ```
-shows = ["kept = 15"]
+stdout = "15\n"
 
 @ cases.a-borrowed-callback-keeps-earlier-owned-reads-live
-backends = ["rust", "javascript"]
 source = ```nib
-import std::prelude::Shared
 effect pause(): Unit resume 1
-fn apply<T>(&f: () -> T ! {pause}): T ! {pause} { f() }
+fn apply<T>(f: &(() -> T ! {pause})): T ! {pause} { f() }
 fn identity(value: Text): Text { value }
 fn twice(value: Text): Text ! {pause} {
   let first := identity(value)
   concat(first, apply(() => { perform pause(); value }))
 }
 let answer := handle { twice("kept") } with { pause(), k => k(#()) }
-perform show("twice", answer)
+show(&answer)
 ```
-shows = ["twice = \"keptkept\""]
+stdout = ```
+"keptkept"
+```
 
 @ cases.nested-owned-callback-retains-a-shared-borrow
-backends = ["javascript"]
 source = ```nib
-fn apply<T>(&f: () -> T): T { f() }
-fn keep(&name: Text): () -> Text { apply(() => () => name) }
+fn apply<T>(f: &(() -> T)): T { f() }
+fn keep(name: &Text): () -> Text { apply(() => () => name) }
 let read := keep("mission")
-perform show("first", read())
-perform show("second", read())
+show(&read())
+show(&read())
 ```
-shows = ["first = \"mission\"", "second = \"mission\""]
+stdout = ```
+"mission"
+"mission"
+```
+
+@ cases.lent-closure-bound-by-let
+source = ```nib
+fn twice(f: &(Text) -> u64): u64 ! {overflow} { f("a") + f("bc") }
+let g := (t) => Text::len(t)
+show(&twice(&g))
+```
+stdout = "3\n"

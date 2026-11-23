@@ -1,0 +1,31 @@
+// A replaceable block whose struct carries a proof-bearing `SlotsModel`: the
+// block's bodies are kept as written, and a `SlotsModel` operation in them
+// still gets the policy the checker fixed at the call.
+
+@ cases.extern-slots-model-state-in-body
+description = "`SlotsModel::state` inside an extern body reads the model of the table whose constructor is written outside the block."
+source = ```tauto
+import std::uhost { UHost }
+import std::uint { UInt }
+import std::slots { Byte, SlotsModel, Table }
+import std::hash_table { tb_used, tb_laws }
+
+fn Bag::empty_table(): SlotsModel(Table, Byte, Nat, tb_used) {
+  SlotsModel::new(UHost::lit(0, Refl), tb_laws())
+}
+
+extern {
+  pub struct(affine) Bag { table: SlotsModel(Table, Byte, Nat, tb_used) }
+
+  pub fn Bag::new(): Bag {
+    Bag { table: Bag::empty_table() }
+  }
+
+  pub fn Bag::cap(b: &Bag): Nat {
+    UInt::val64(UHost::to_u64(Table::cap(SlotsModel::state(&b.table))))
+  }
+}
+let b := Bag::new()
+show(&Bag::cap(&b))
+```
+stdout = "0\n"

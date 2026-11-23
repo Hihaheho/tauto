@@ -119,19 +119,48 @@ fn reference(mode: &str, source: &str) -> Result<String, Actual> {
                 })
             }
             "fmt" => tauto::fmt::format(source).map_err(|_| earlier()),
-            "types" => tauto::surface::parse_program_as_written(source)
+            "types" => tauto_parse::parse_program_as_written(source)
                 .map(|p| tauto::types::dump_types(&tauto::types::check_program(&p)))
                 .map_err(|_| earlier()),
-            "rows" => tauto::surface::parse_program_as_written(source)
+            "rows" => tauto_parse::parse_program_as_written(source)
                 .map(|p| tauto::rows::dump_rows(&tauto::rows::check_program_rows(&p)))
                 .map_err(|_| earlier()),
-            "lin" => tauto::surface::parse_program_as_written(source)
+            "lin" => tauto_parse::parse_program_as_written(source)
                 .map_err(|_| earlier())
                 .and_then(|p| tauto::lin::check_lin_program(&p).map_err(|_| earlier()))
                 .map(|r| tauto::lin::dump_lin(&r)),
             _ => Err(Actual::HarnessFailure("unknown reference mode".into())),
         }
     })
+}
+
+/// A case supplies the program whose types it compares. The prelude and
+/// generated instances are built separately by each checker and have their
+/// own spans. Keep declaration facts and diagnostics in the case's source.
+pub fn source_types(report: &str, source_len: usize) -> String {
+    report
+        .split_inclusive('\n')
+        .filter(|line| {
+            let mut words = line.split_ascii_whitespace();
+            let span = match words.next() {
+                Some("local") => words.nth(1),
+                Some("error" | "term" | "width") => words.next(),
+                _ => None,
+            };
+            span.and_then(|n| n.parse::<usize>().ok())
+                .is_none_or(|start| start <= source_len)
+        })
+        .collect()
+}
+
+fn case_differential_report(mode: &str, source: &str, report: &str) -> Actual {
+    match differential_report(mode, reference(mode, source), report) {
+        Actual::Differential { reference, actual } if mode == "types" => Actual::Differential {
+            reference: canonical_variables(&source_types(&reference, source.len())),
+            actual: canonical_variables(&source_types(&actual, source.len())),
+        },
+        observation => observation,
+    }
 }
 
 /// Equality is meaningful only after both reports establish the requested
@@ -186,6 +215,22 @@ pub fn format_result(report: &str) -> Actual {
 
 #[cfg(test)]
 mod reference_tests {
+    #[test]
+    fn source_types_keeps_source_diagnostics_and_declarations() {
+        let report = concat!(
+            "error 3 8 unresolved\n",
+            "error 2147483648 2147483650 prelude\n",
+            "local result 14 Bool\n",
+            "local x 805306462 Bool\n",
+            "term 8 14 Bool\n",
+            "data Answer Shared\n",
+        );
+        assert_eq!(
+            super::source_types(report, 14),
+            "error 3 8 unresolved\nlocal result 14 Bool\nterm 8 14 Bool\ndata Answer Shared\n"
+        );
+    }
+
     #[test]
     fn a_reference_panic_is_not_a_language_diagnostic() {
         assert!(matches!(
@@ -348,10 +393,9 @@ pub fn run(
             for ((case, observed), artifact) in
                 cases.iter().zip(&mut observations).zip(&mut artifacts)
             {
-                if (case.text("selfhost_entry").is_some()
+                if case.text("selfhost_entry").is_some()
                     || case.text("load_error").is_some()
-                    || case.text("macro_error").is_some())
-                    && !case.excluded(target)
+                    || case.text("macro_error").is_some()
                 {
                     observed.extend(adapter.observe(case, backend, target));
                     *artifact = adapter.artifacts();
@@ -424,7 +468,7 @@ pub fn run(
                     Ok(reports) => {
                         let report = &reports[position];
                         if r.name == "differential" && r.expected.text() == Some(mode) {
-                            Some(differential_report(mode, reference(mode, source), report))
+                            Some(case_differential_report(mode, source, report))
                         } else {
                             match (mode.as_str(),r.name.as_str()){
                             ("syntax","parses")=>Some(parse_result(report)),

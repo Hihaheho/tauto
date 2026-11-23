@@ -1,0 +1,118 @@
+// `borrows(…)` may name an operation of the function's row whose result holds
+// a borrow (`borrows(spot)`): such an operation lends like a borrowed
+// parameter, so the result may borrow what its handler answers only when the
+// contract names it, and a parameter left out is lent for the call alone.
+
+@ cases.a-parameter-left-out-is-not-frozen
+description = "With `borrows(spot)`, the borrowed parameter is lent only while the call runs: its owner may move while the result lives."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+struct Node { v: u64 }
+struct(affine) K {}
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn tag(k: &K): Kept ! {spot} borrows(spot) { Kept { value: Node { v: 1 }, at: perform spot() } }
+let r := Bump::new(64, 64)
+let s := handle {
+  let k := K {}
+  let a := tag(&k)
+  let moved := k
+  a.value.v
+} with { spot(), k => k(Region::place(&r)) }
+show(&s)
+```
+lin = "ok"
+
+@ cases.without-the-contract-the-parameter-is-frozen
+description = "Without `borrows(…)`, the result borrows every borrowed parameter too."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+struct Node { v: u64 }
+struct(affine) K {}
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn tag(k: &K): Kept ! {spot} { Kept { value: Node { v: 1 }, at: perform spot() } }
+let r := Bump::new(64, 64)
+let s := handle {
+  let k := K {}
+  let a := tag(&k)
+  let moved := k
+  a.value.v
+} with { spot(), k => k(Region::place(&r)) }
+show(&s)
+```
+lin = "error: k is frozen by a"
+
+@ cases.the-named-operation-still-lends
+description = "The result of a function with `borrows(spot)` still borrows what the handle of `spot` answers: it cannot leave the region's block."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+struct Node { v: u64 }
+struct(affine) K {}
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn tag(k: &K): Kept ! {spot} borrows(spot) { Kept { value: Node { v: 1 }, at: perform spot() } }
+fn bad(): Kept {
+  let r := Bump::new(64, 64)
+  let k := K {}
+  handle { tag(&k) } with { spot(), k => k(Region::place(&r)) }
+}
+```
+lin = "error: a borrow of r cannot be returned"
+
+@ cases.an-operation-left-out-cannot-be-borrowed
+description = "A body whose result borrows the answer of an operation that `borrows(…)` does not name is an error."
+source = ```nib
+import std::builtin::region { Region, Place }
+
+struct Node { v: u64 }
+effect spot(): Place(Node) resume 1
+struct Two { at: Place(Node), n: &Node }
+fn tag(n: &Node): Two ! {spot} borrows(n) { Two { at: perform spot(), n: n } }
+```
+lin = "error: the result borrows spot, which is not in borrows(…)"
+
+@ cases.a-name-neither-parameter-nor-operation-is-an-error
+description = "`borrows(…)` names only borrowed parameters and the operations of the row."
+source = ```nib
+import std::builtin::region { Region, Place }
+
+struct Node { v: u64 }
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn tag(n: &Node): Kept ! {spot} borrows(nope) { Kept { value: Node { v: 1 }, at: perform spot() } }
+```
+types = "error: `nope` in `borrows(…)` is not a parameter that lends a borrow"
+
+@ cases.an-instance-is-named-as-the-row-writes-it
+description = "`borrows(place(Tree))` names one instance of `place`: a result that borrows the answer of `place(Node)` is not within it."
+source = ```nib
+import std::builtin::region { Placed, Place, place }
+
+struct Node { v: u64 }
+struct Tree { v: u64 }
+struct Both { t: Placed(Tree), n: Placed(Node) }
+fn both(): Both ! {place(Tree), place(Node)} borrows(place(Tree)) {
+  Both { t: Placed::new(Tree { v: 1 }), n: Placed::new(Node { v: 2 }) }
+}
+```
+lin = "error: the result borrows place(Node), which is not in borrows(…)"
+
+@ cases.a-bare-name-does-not-name-an-instance
+description = "An operation with type arguments is named with them: `borrows(place)` does not name `place(Tree)`."
+source = ```nib
+import std::builtin::region { Placed, Place, place }
+
+struct Tree { v: u64 }
+fn one(): Placed(Tree) ! {place(Tree)} borrows(place) { Placed::new(Tree { v: 1 }) }
+```
+types = "error: `place` in `borrows(…)` is not a parameter that lends a borrow"

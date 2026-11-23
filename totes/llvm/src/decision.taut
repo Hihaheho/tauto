@@ -1,0 +1,279 @@
+import "../../nir/src/model.taut"
+import std::text
+import std::base
+
+// Pattern matching as a decision tree.
+//
+// `d_compile` turns the arms of a `match` into a tree of tests on the
+// scrutinee: each `DSwitch` looks at one part of it once, each `DLeaf` names
+// the arm that runs, and a guard that fails goes on to the arms below it.
+// The tree means what the arms mean in order: for any value, it reaches the
+// first arm whose pattern matches and whose guard holds.
+
+// What a part of the scrutinee is tested to be.
+pub(open) enum DCase {
+  // The constructor of this declared index, with this many fields.
+  DCtor(Nat, Nat)
+  DInt(Bool, Nat)
+  DNat(Nat)
+  DBool(Bool)
+  DText(Text)
+}
+
+pub(open) struct DBranch { case: DCase, next: Decision }
+
+pub(open) enum Decision {
+  // No arm matches: the match is exhaustive, so this is never reached.
+  DFail
+  // The arm of this index runs.
+  DLeaf(Nat)
+  // The arm runs if its guard holds; otherwise the rest.
+  DGuard(Nat, Decision)
+  // The part at the path (the fields taken from the scrutinee, outermost
+  // first, by their declared position) is tested once: the first case that
+  // it is goes on; every other value takes the default.
+  DSwitch(List(Nat), List(DBranch), Option(Decision))
+}
+
+pub(open) struct DCol { path: List(Nat), pat: NPat }
+
+pub(open) struct DRow { cols: List(DCol), arm: Nat, guarded: Bool }
+
+pub fn d_len<A>(xs: List(A)): Nat {
+  match xs {
+    Nil => 0
+    Cons(^x, rest) => 1 + d_len(rest)
+  }
+}
+
+pub fn d_path_eq(a: List(Nat), b: List(Nat)): Bool {
+  match a {
+    Nil => match b {
+      Nil => true
+      Cons(^y, ^more) => false
+    }
+    Cons(x, rest) => match b {
+      Nil => false
+      Cons(y, more) => x == y && d_path_eq(rest, more)
+    }
+  }
+}
+
+pub fn d_case_eq(a: DCase, b: DCase): Bool {
+  match a {
+    DCtor(i, n) => match b {
+      DCtor(j, k) => i == j && n == k
+      DInt(^s, ^k) => false
+      DNat(^k) => false
+      DBool(^x) => false
+      DText(^t) => false
+    }
+    DInt(neg, n) => match b {
+      DCtor(^j, ^k) => false
+      DInt(s, k) => neg == s && n == k
+      DNat(^k) => false
+      DBool(^x) => false
+      DText(^t) => false
+    }
+    DNat(n) => match b {
+      DCtor(^j, ^k) => false
+      DInt(^s, ^k) => false
+      DNat(k) => n == k
+      DBool(^x) => false
+      DText(^t) => false
+    }
+    DBool(v) => match b {
+      DCtor(^j, ^k) => false
+      DInt(^s, ^k) => false
+      DNat(^k) => false
+      DBool(x) => v == x
+      DText(^t) => false
+    }
+    DText(s) => match b {
+      DCtor(^j, ^k) => false
+      DInt(^x, ^k) => false
+      DNat(^k) => false
+      DBool(^x) => false
+      DText(t) => s == t
+    }
+  }
+}
+
+pub fn d_case_of(p: NPat): Option(DCase) {
+  match p {
+    NCtorPat(c, fields) => Some(DCtor(c.index, d_len(fields)))
+    // A union's layout is refused ("a union") before its patterns are read.
+    NInjectPat(^u, k, ^q) => Some(DCtor(k, 1))
+    NIntPat(neg, n) => Some(DInt(neg, n))
+    NNatPat(n) => Some(DNat(n))
+    NBoolPat(b) => Some(DBool(b))
+    NTextPat(t) => Some(DText(t))
+    NWild => None
+    NBind(^l, ^t) => None
+  }
+}
+
+// The columns that test something: not `_`, not a binding.
+pub fn d_settle(cols: List(DCol)): List(DCol) {
+  match cols {
+    Nil => Nil
+    Cons(c, rest) => match d_case_of(c.pat) {
+      None => d_settle(rest)
+      Some(^k) => Cons(c, d_settle(rest))
+    }
+  }
+}
+
+pub fn d_settle_rows(rows: List(DRow)): List(DRow) {
+  match rows {
+    Nil => Nil
+    Cons(r, rest) => Cons(
+      DRow { cols: d_settle(r.cols), arm: r.arm, guarded: r.guarded },
+      d_settle_rows(rest)
+    )
+  }
+}
+
+pub fn d_find(cols: List(DCol), path: List(Nat)): Option(DCol) {
+  match cols {
+    Nil => None
+    Cons(c, rest) => if d_path_eq(c.path, path) { Some(c) } else { d_find(rest, path) }
+  }
+}
+
+pub fn d_has_case(cases: List(DCase), c: DCase): Bool {
+  match cases {
+    Nil => false
+    Cons(x, rest) => if d_case_eq(x, c) { true } else { d_has_case(rest, c) }
+  }
+}
+
+pub fn d_snoc<A>(xs: List(A), x: A): List(A) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, d_snoc(rest, x))
+  }
+}
+
+// The cases the rows test the part at `path` to be, each once, in order.
+pub fn d_cases(rows: List(DRow), path: List(Nat), done: List(DCase)): List(DCase) {
+  match rows {
+    Nil => done
+    Cons(r, rest) => match d_find(r.cols, path) {
+      None => d_cases(rest, path, done)
+      Some(col) => match d_case_of(col.pat) {
+        None => d_cases(rest, path, done)
+        Some(c) => if d_has_case(
+          done,
+          c
+        ) { d_cases(rest, path, done) } else { d_cases(rest, path, d_snoc(done, c)) }
+      }
+    }
+  }
+}
+
+pub fn d_sub_cols(path: List(Nat), fields: List(NPat), i: Nat, after: List(DCol)): List(DCol) {
+  match fields {
+    Nil => after
+    Cons(f, rest) => Cons(
+      DCol { path: d_snoc(path, i), pat: f },
+      d_sub_cols(path, rest, i + 1, after)
+    )
+  }
+}
+
+// The columns with the one at `path` replaced by its constructor's fields.
+pub fn d_open(cols: List(DCol), path: List(Nat)): List(DCol) {
+  match cols {
+    Nil => Nil
+    Cons(c, rest) => if d_path_eq(c.path, path) {
+      match c.pat {
+        NCtorPat(^ctor, fields) => d_sub_cols(path, fields, 0, rest)
+        NInjectPat(^u, ^k, q) => d_sub_cols(path, [q], 0, rest)
+        NIntPat(^neg, ^n) => rest
+        NNatPat(^n) => rest
+        NBoolPat(^b) => rest
+        NTextPat(^t) => rest
+        NWild => rest
+        NBind(^l, ^t) => rest
+      }
+    } else {
+      Cons(c, d_open(rest, path))
+    }
+  }
+}
+
+// The rows that go on when the part at `path` is `case` (or, with `None`,
+// none of the cases tested): a row that tests it to be another case drops
+// out; a constructor's fields become columns of their own.
+pub fn d_specialize(rows: List(DRow), path: List(Nat), case: Option(DCase)): List(DRow) {
+  match rows {
+    Nil => Nil
+    Cons(r, rest) => match d_find(r.cols, path) {
+      None => Cons(r, d_specialize(rest, path, case))
+      Some(col) => match case {
+        None => d_specialize(rest, path, case)
+        Some(want) => match d_case_of(col.pat) {
+          None => d_specialize(rest, path, case)
+          Some(got) => if d_case_eq(got, want) {
+            Cons(
+              DRow { cols: d_open(r.cols, path), arm: r.arm, guarded: r.guarded },
+              d_specialize(rest, path, case)
+            )
+          } else {
+            d_specialize(rest, path, case)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn d_branches(rows: List(DRow), path: List(Nat), cases: List(DCase)): List(DBranch) ! {div} {
+  match cases {
+    Nil => Nil
+    Cons(c, rest) => Cons(
+      DBranch { case: c, next: d_tree(d_specialize(rows, path, Some(c))) },
+      d_branches(rows, path, rest)
+    )
+  }
+}
+
+pub fn d_tree(unsettled: List(DRow)): Decision ! {div} {
+  match d_settle_rows(unsettled) {
+    Nil => DFail
+    Cons(first, others) => match first.cols {
+      // The first row tests nothing: it is taken, or its guard is tried.
+      Nil => if first.guarded { DGuard(first.arm, d_tree(others)) } else { DLeaf(first.arm) }
+      // Test the first part the first row looks at.
+      Cons(col, ^more) => {
+        let rows := Cons(first, others)
+        let rest := d_specialize(rows, col.path, None)
+        DSwitch(col.path, d_branches(rows, col.path, d_cases(rows, col.path, Nil)), match rest {
+          Nil => None
+          Cons(^r, ^rs) => Some(d_tree(rest))
+        })
+      }
+    }
+  }
+}
+
+pub fn d_rows(arms: List(NArm), at: Nat): List(DRow) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => Cons(
+      DRow {
+        cols: [DCol { path: Nil, pat: a.pat }],
+        arm: at,
+        guarded: match a.guard {
+          Some(^g) => true
+          None => false
+        }
+      },
+      d_rows(rest, at + 1)
+    )
+  }
+}
+
+// The decision tree of a `match` with these arms.
+pub fn d_compile(arms: List(NArm)): Decision ! {div} { d_tree(d_rows(arms, 0)) }

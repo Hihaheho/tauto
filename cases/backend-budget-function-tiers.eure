@@ -1,0 +1,74 @@
+// In a program that runs a budget, a function that may diverge is held at
+// the tier that counts the budget's steps wherever it is
+// (`Lowerer::value_tier`). The places that hold such a function agree on
+// that tier: what a function returns, and the function parameters of a
+// field's function.
+
+// A function written to return a divergent function returns the closure it
+// makes at that tier, though the closure's own body does not diverge.
+@ cases.budget-program-returns-a-closure-at-the-tier-of-its-written-type
+llvm.unimplemented = "generate: the LLVM backend does not write a call that may stop yet"
+source = ```tauto
+struct Page { title: Text, view: (n: Text) -> Text ! {div} }
+
+fn post(id: Text): (n: Text) -> Text ! {div} {
+  (n: Text) => concat(n, id)
+}
+
+fn home(n: Text): Text ! {div} { n }
+
+fn page(r: Bool): Page ! {div} {
+  match r {
+    true => Page { title: "home", view: home }
+    false => Page { title: "post", view: post("1") }
+  }
+}
+
+let p := page(false)
+show(&((p.view)("post ")))
+let b := handle { perform budget(1000, () => { (p.view)("b") }) } with {
+  exceeded(info), k => ""
+}
+show(&b)
+```
+stdout = ```
+"post 1"
+"b1"
+```
+
+// The parameter of a field's function is taken at the tier the data holds
+// it at: the closure made for the field calls it at that tier, and a caller
+// of the field gives it at that tier.
+@ cases.budget-program-field-function-takes-its-parameter-at-the-data-tier
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+pub struct Ui(!e) {
+  name: Text,
+  lift: (part: () -> Unit ! {div} ∪ e) -> Unit ! {div}
+}
+pub effect ui<!e>(): Ui(e) direct
+
+pub fn with_ui<A, !f>(body: () -> A ! {ui(!{})} ∪ f): A ! f {
+  let u: Ui(!{}) := Ui { name: "u", lift: part => part() }
+  with_ui_of(u, body)
+}
+
+pub fn with_ui_of<A, !e, !f>(u: Ui(e), body: () -> A ! {ui(e)} ∪ f): A ! f {
+  handle { body() } with {
+    ui(), k => k(u)
+    return value => value
+  }
+}
+
+fn page(): i64 ! {ui(!{}), div} {
+  let u: Ui(!{}) := perform ui()
+  (u.lift)(() => #())
+  1
+}
+
+let b := handle { perform budget(1000, () => { with_ui(() => page()) }) } with {
+  exceeded(info), k => 0
+}
+show(&b)
+```
+stdout = "1\n"

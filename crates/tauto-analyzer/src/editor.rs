@@ -138,6 +138,107 @@ pub fn dsl_completion(path: &Path, text: &str, offset: usize) -> Result<Vec<Stri
     Ok(Vec::new())
 }
 
+/// An edit of the file asked about, as byte offsets of its text: `text` in place of the range.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextEdit {
+    pub title: String,
+    pub start: usize,
+    pub end: usize,
+    pub text: String,
+}
+
+/// A use of a name the file does not import, as a byte range of the file, with the import that
+/// makes it seen for each file of the program that declares it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportChoice {
+    pub start: usize,
+    pub end: usize,
+    pub edits: Vec<TextEdit>,
+}
+
+/// The names the file at `path` uses without importing them that a file it could import
+/// declares: the files of its tote and the tote's dependencies, or, outside a tote, the
+/// source files under its directory. `source` gives the text of the files that are open.
+pub fn import_choices(
+    path: &Path,
+    source: &tauto::program::Source<'_>,
+) -> Result<Vec<ImportChoice>, String> {
+    let dirs = vec![path.parent().unwrap_or(Path::new(".")).to_path_buf()];
+    let loaded = tauto::syntax::with_search_dirs(dirs, || {
+        tauto::program::load_home_with_source(path, source).map_err(|e| e.to_string())
+    })?;
+    let own = tauto::program::canonical_path(path);
+    let Some(file) = loaded
+        .files
+        .iter()
+        .find(|f| tauto::program::canonical_path(&f.path) == own)
+    else {
+        return Ok(Vec::new());
+    };
+    let (base, end) = (file.base as usize, file.base as usize + file.text.len());
+    // A span a macro made is where it was written.
+    let written = |mut offset: u32| {
+        while let Some((w, _)) = loaded.spans.origin(offset) {
+            offset = w;
+        }
+        offset as usize
+    };
+    let mut out: Vec<ImportChoice> = Vec::new();
+    for (at, fixes) in &loaded.import_choices {
+        let (start, stop) = (written(at.start), written(at.end));
+        if start < base || start > stop || stop > end {
+            continue;
+        }
+        let edits: Vec<TextEdit> = fixes
+            .iter()
+            .map(|f| TextEdit {
+                title: f.title.clone(),
+                start: written(f.span.start) - base,
+                end: written(f.span.end) - base,
+                text: f.text.clone(),
+            })
+            .collect();
+        let choice = ImportChoice {
+            start: start - base,
+            end: stop - base,
+            edits,
+        };
+        if !out.contains(&choice) {
+            out.push(choice);
+        }
+    }
+    Ok(out)
+}
+
+/// The functions of the file at `path` written `!?`, each as a byte range of the file (the `!?`)
+/// with the edit that writes the row its body performs in its place, or takes the `!?` away
+/// when the row is empty: the edit `tauto check --fix` makes. A function whose row cannot be
+/// found (it calls itself or a later `!?`) has no edit. `source` gives the text of the files
+/// that are open.
+pub fn row_hole_fixes(path: &Path, source: &tauto::program::Source<'_>) -> Vec<ImportChoice> {
+    let entries = tauto::report::row_holes_with_source(path, source);
+    let mut out = Vec::new();
+    for e in entries {
+        let tauto::check::Verdict::Failed(d) = &e.entry.verdict else {
+            continue;
+        };
+        let (Some(span), Some(fix)) = (d.span, &d.fix) else {
+            continue;
+        };
+        out.push(ImportChoice {
+            start: span.start as usize,
+            end: span.end as usize,
+            edits: vec![TextEdit {
+                title: fix.title.clone(),
+                start: fix.span.start as usize,
+                end: fix.span.end as usize,
+                text: fix.text.clone(),
+            }],
+        });
+    }
+    out
+}
+
 /// The byte offset of an LSP position (line, UTF-16 units).
 pub fn offset_of(text: &str, line: usize, col: usize) -> usize {
     let mut start = 0;

@@ -1,0 +1,215 @@
+// A `&mut` argument whose value may hold a borrow takes in what the other
+// arguments lend. For a callee whose signature is parametric (no `where`,
+// no effects, no parameter that holds a function, and a `&mut` parameter
+// that can hold a borrow only through its type parameters), a value of
+// such a type parameter can reach the `&mut` place only from a parameter
+// whose type mentions that type parameter. A borrowed parameter hands in
+// the values it holds, not a borrow of the place itself.
+
+@ cases.parametric-mut-takes-nothing-from-a-borrowed-sibling
+description = "Moving values between two `&mut Vec(A)` does not make one borrow the other."
+source = ```nib
+fn refill<A>(f: &mut Vec(A), b: &mut Vec(A)): Unit {
+  match Vec::pop(&mut b) {
+    Some(x) => Vec::push(&mut f, x)
+    None => #()
+  }
+}
+fn turn<A>(front: Vec(A), back: Vec(A)): Vec(A) {
+  var f := front
+  var b := back
+  refill(&mut f, &mut b)
+  let got := Vec::pop(&mut f)
+  let rest := Vec::pop(&mut b)
+  let more := Vec::pop(&mut f)
+  f
+}
+```
+lin = "ok"
+
+@ cases.parametric-mut-recursion-keeps-both-usable
+description = "The same parametric callee called recursively and at a concrete type."
+source = ```nib
+struct(affine) F {}
+fn refill<A>(f: &mut Vec(A), b: &mut Vec(A), left: u64): Unit {
+  if left == 0 {
+    #()
+  } else {
+    match Vec::pop(&mut b) {
+      Some(x) => Vec::push(&mut f, x)
+      None => #()
+    }
+    refill(&mut f, &mut b, left - 1)
+  }
+}
+let x := F {}
+let y := F {}
+var f := Vec::new()
+var b := Vec::new()
+Vec::push(&mut b, &x)
+refill(&mut f, &mut b, 1)
+Vec::push(&mut b, &y)
+Vec::push(&mut f, &y)
+let used_later := &b
+```
+lin = "ok"
+
+@ cases.parametric-mut-takes-in-a-sibling-of-its-type
+description = "A value parameter of type `A` may be put in the `&mut Vec(A)`: a borrow passed for it is taken in."
+source = ```nib
+struct(affine) F {}
+fn put<A>(v: &mut Vec(A), x: A): Unit { Vec::push(&mut v, x) }
+fn take(f: F): i64 { 1 }
+var v := Vec::new()
+let a := F {}
+put(&mut v, &a)
+take(a)
+let used_later := &v
+```
+lin = "error: a is frozen by v"
+
+@ cases.parametric-mut-takes-in-what-a-borrowed-sibling-holds
+description = "The values a borrowed `&mut Vec(A)` holds may move into the other: their borrows are taken in."
+source = ```nib
+struct(affine) F {}
+fn refill<A>(f: &mut Vec(A), b: &mut Vec(A)): Unit {
+  match Vec::pop(&mut b) {
+    Some(x) => Vec::push(&mut f, x)
+    None => #()
+  }
+}
+fn take(f: F): i64 { 1 }
+let a := F {}
+var f := Vec::new()
+var b := Vec::new()
+Vec::push(&mut b, &a)
+refill(&mut f, &mut b)
+take(a)
+let used_later := &f
+```
+lin = "error: a is frozen by f"
+
+@ cases.parametric-mut-through-a-function-parameter
+description = "A parameter that holds a function can turn any argument into an `A`: the rule is not narrowed."
+source = ```nib
+struct(affine) F {}
+struct Holder { r: &F }
+fn via<A>(v: &mut Vec(A), x: &F, k: (&F) -> A): Unit { Vec::push(&mut v, k(&x)) }
+fn take(f: F): i64 { 1 }
+var v := Vec::new()
+let a := F {}
+via(&mut v, &a, (y: &F) => Holder { r: &y })
+take(a)
+let used_later := &v
+```
+lin = "error: a is frozen by v"
+
+@ cases.parametric-mut-under-a-class-constraint
+description = "An instance can make `A` concrete: under a `where` the rule is not narrowed."
+source = ```nib
+struct(affine) F {}
+struct Holder { r: &F }
+class Make(A: Linear) {
+  fn make(x: &F): A
+}
+instance Make(Holder) {
+  fn make(x: &F): Holder { Holder { r: &x } }
+}
+fn fill<A>(v: &mut Vec(A), x: &F): Unit where Make(A) { Vec::push(&mut v, Make::make(&x)) }
+fn take(f: F): i64 { 1 }
+var v: Vec(Holder) := Vec::new()
+let a := F {}
+fill(&mut v, &a)
+take(a)
+let used_later := &v
+```
+lin = "error: a is frozen by v"
+
+@ cases.parametric-mut-into-a-type-that-holds-a-borrow
+description = "A `&mut` of a type whose declaration holds a borrow takes in a borrow of any type: the rule is not narrowed."
+source = ```nib
+struct(affine) F {}
+struct Holder(A: Type) { r: Option(&F), items: Vec(A) }
+fn keep<A>(h: &mut Holder(A), x: &F): Unit { h.r := Some(&x) }
+fn take(f: F): i64 { 1 }
+var h := Holder { r: None, items: Vec::new() }
+let a := F {}
+Vec::push(&mut h.items, 1)
+keep(&mut h, &a)
+take(a)
+let used_later := &h
+```
+lin = "error: a is frozen by h"
+
+@ cases.class-method-mut-is-not-parametric
+description = "A class method's instance knows its type: a `&mut` of the class parameter takes in the other arguments."
+source = ```nib
+struct(affine) F {}
+struct Holder { r: &F }
+struct Bag { items: Vec(Holder) }
+class Fill(C: Linear) {
+  fn fill(dst: &mut C, x: &F): Unit
+}
+instance Fill(Bag) {
+  fn fill(dst: &mut Bag, x: &F): Unit { Vec::push(&mut dst.items, Holder { r: &x }) }
+}
+fn take(f: F): i64 { 1 }
+var v := Bag { items: Vec::new() }
+let a := F {}
+Fill::fill(&mut v, &a)
+take(a)
+let used_later := &v
+```
+lin = "error: a is frozen by v"
+
+@ cases.mut-takes-in-what-a-borrowed-sibling-holds
+description = "Where the rule is not narrowed (a function parameter), the values a borrowed argument holds may also move into the `&mut` place."
+source = ```nib
+struct(affine) F {}
+struct Holder { r: &F }
+fn shift<A>(f: &mut Vec(A), b: &mut Vec(A), k: (A) -> A): Unit {
+  match Vec::pop(&mut b) {
+    Some(x) => Vec::push(&mut f, k(x))
+    None => #()
+  }
+}
+fn take(f: F): i64 { 1 }
+let a := F {}
+var f := Vec::new()
+var b := Vec::new()
+Vec::push(&mut b, Holder { r: &a })
+shift(&mut f, &mut b, (h: Holder) => h)
+take(a)
+let used_later := &f
+```
+lin = "error: a is frozen by f"
+
+@ cases.mut-name-takes-in-for-its-owner
+description = "A name bound to a `&mut` passed as is (`Vec::push(r, &a)`) puts what it is given in what it borrows."
+source = ```nib
+struct(affine) F {}
+fn take(f: F): i64 { 1 }
+var v := Vec::new()
+let a := F {}
+{
+  let r := &mut v
+  Vec::push(r, &a)
+}
+take(a)
+let used_later := &v
+```
+lin = "error: a is frozen by v"
+
+@ cases.mut-parameter-name-takes-in-for-the-caller
+description = "A `&mut` parameter passed as is takes in for the caller's place."
+source = ```nib
+struct(affine) F {}
+fn put(v: &mut Vec(&F), x: &F): Unit { Vec::push(v, x) }
+fn take(f: F): i64 { 1 }
+var v := Vec::new()
+let a := F {}
+put(&mut v, &a)
+take(a)
+let used_later := &v
+```
+lin = "error: a is frozen by v"

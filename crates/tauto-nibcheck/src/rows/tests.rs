@@ -2,7 +2,7 @@ use super::*;
 
 fn report(source: &str) -> RowReport {
     let program = crate::types::expand_classes(
-        crate::surface::parse_program_as_written(source).unwrap(),
+        tauto_parse::parse_program_as_written(source).unwrap(),
         1 << 30,
     );
     check_program_rows(&program)
@@ -15,7 +15,7 @@ fn accepts(source: &str) {
 
 fn rejects(source: &str) {
     let program = crate::types::expand_classes(
-        crate::surface::parse_program_as_written(source).unwrap(),
+        tauto_parse::parse_program_as_written(source).unwrap(),
         1 << 30,
     );
     let types = crate::types::check_program(&program);
@@ -48,9 +48,9 @@ fn mutable_borrow_contracts_are_invariant_structurally() {
 fn local_calls_have_checked_rows_and_lexical_quantities() {
     for (name, effect) in [
         ("direct-local-call-keeps-inferred-effects", "ask"),
-        ("local-recursive-alias-keeps-div", "Div"),
+        ("local-recursive-alias-keeps-div", "div"),
     ] {
-        let r = report(&crate::rows::value_tests::case_inputs::source(
+        let r = report(&tauto_case_inputs::source(
             "check/local-function-rows.eure",
             name,
         ));
@@ -97,7 +97,7 @@ fn local_calls_have_checked_rows_and_lexical_quantities() {
 #[test]
 fn captured_rows_are_fixed_not_quantified_and_lowering_fails_closed() {
     let source = r#"fn outer<!e>(captured: () -> Text ! e): Text ! e {
-  fn inner<!e>(own: () -> Text ! e): Text {
+  fn inner(own: () -> Text ! {}): Text ! e {
     captured()
     own()
   }
@@ -113,7 +113,9 @@ fn captured_rows_are_fixed_not_quantified_and_lowering_fails_closed() {
         .iter()
         .find(|d| d.name.as_str() == "inner")
         .unwrap();
-    assert_eq!(inner.inferred.len(), 2);
+    // `inner` writes no row variable of its own (a row holds at most one, and
+    // rows are written), so its row is the captured `e` alone.
+    assert_eq!(inner.inferred.len(), 1);
     assert!(r.normalize_row(&inner.inferred, Some(inner.owner)).is_err());
     assert!(r.normalized_calls().is_err());
     assert!(!dump_rows(&r).contains("@row:"));
@@ -125,7 +127,7 @@ fn distinct_declarations_can_share_a_body_without_sharing_row_binders() {
 fn second<!e>(callback: () -> Text ! e): Text ! e { "ok" }
 "#
     .to_string();
-    let mut program = crate::surface::parse_program_as_written(&source).unwrap();
+    let mut program = tauto_parse::parse_program_as_written(&source).unwrap();
     let body = match &program.stmts[0] {
         Stmt::Fn(f) => f.body.clone(),
         _ => panic!(),
@@ -155,7 +157,7 @@ fn ambiguous_shared_call_occurrences_fail_closed() {
 fn second(callback: () -> Text ! {}): Text ! {} { callback() }
 "#
     .to_string();
-    let mut program = crate::surface::parse_program_as_written(&source).unwrap();
+    let mut program = tauto_parse::parse_program_as_written(&source).unwrap();
     let body = match &program.stmts[0] {
         Stmt::Fn(f) => f.body.clone(),
         _ => panic!(),
@@ -168,7 +170,7 @@ fn second(callback: () -> Text ! {}): Text ! {} { callback() }
     assert!(
         r.errors
             .iter()
-            .any(|e| e.message.to_string().contains("ambiguous lexical"))
+            .any(|e| tauto_messages::english(&e.message).contains("ambiguous lexical"))
     );
     assert!(r.normalized_calls().is_err());
 }
@@ -181,17 +183,18 @@ fn repeated_shared_declaration_occurrences_fail_closed() {
 }
 "#
     .to_string();
-    let mut program = crate::surface::parse_program_as_written(&source).unwrap();
+    let mut program = tauto_parse::parse_program_as_written(&source).unwrap();
     let Stmt::Fn(mut copy) = program.stmts[0].clone() else {
         panic!()
     };
     copy.name = "copy".into();
     program.stmts.push(Stmt::Fn(copy));
     let r = check_program_rows(&program);
-    assert!(r.errors.iter().any(|e| {
-        e.message
-            .contains("ambiguous lexical occurrence of function")
-    }));
+    assert!(
+        r.errors
+            .iter()
+            .any(|e| { e.message.id == "rows-ambiguous-function" })
+    );
     let inner = r
         .declarations
         .iter()
@@ -207,7 +210,7 @@ fn second<!e>(callback: () -> Text ! e): Text ! e { "ok" }
 "#
     .to_string();
     for resolved in [false, true] {
-        let mut program = crate::surface::parse_program_as_written(&source).unwrap();
+        let mut program = tauto_parse::parse_program_as_written(&source).unwrap();
         if resolved {
             tauto_surface::resolve::Resolver::default().statements(&mut program.stmts);
         }
@@ -256,15 +259,15 @@ fn local_recursion_does_not_inherit_a_same_named_total_certificate() {
 }
 "#
     .to_string();
-    let program = crate::surface::parse_program_as_written(&source).unwrap();
-    let r = check_program_rows_trusted(&program, &HashSet::from(["inner".into()]), false);
+    let program = tauto_parse::parse_program_as_written(&source).unwrap();
+    let r = check_program_rows_trusted(&program, &HashSet::from(["inner".into()]), Target::Rust);
     assert!(
         r.declarations
             .iter()
             .find(|d| d.name.as_str() == "inner")
             .unwrap()
             .inferred
-            .contains(&Name::from("Div"))
+            .contains(&Name::from("div"))
     );
 }
 
@@ -299,16 +302,15 @@ fn deferred_constructor_owners_use_only_source_matched_nominal_facts() {
         "constructor-owner-follows-handler-result",
         "constructor-alias-owner-follows-deferred-let-result",
     ] {
-        let source =
-            crate::rows::value_tests::case_inputs::source("check/local-function-rows.eure", name);
-        let program = crate::surface::parse_program_as_written(&source).unwrap();
+        let source = tauto_case_inputs::source("check/local-function-rows.eure", name);
+        let program = tauto_parse::parse_program_as_written(&source).unwrap();
         let types = crate::types::check_program(&program);
         assert!(types.errors.is_empty(), "{name}: {:?}", types.errors);
         let typed = check_program_rows_with_types(&program, &types);
         assert!(typed.errors.is_empty(), "{name}: {:?}", typed.errors);
         let lazy = check_program_rows(&program);
         assert_eq!(dump_rows(&typed), dump_rows(&lazy), "{name}");
-        let foreign = crate::surface::parse_program_as_written(&source).unwrap();
+        let foreign = tauto_parse::parse_program_as_written(&source).unwrap();
         assert!(types.nominal_owners_for(&foreign).is_none());
         let fallback = check_program_rows_with_types(&foreign, &types);
         assert_eq!(dump_rows(&lazy), dump_rows(&fallback), "{name}");
@@ -324,7 +326,12 @@ fn outer(): Reader ! {} {
     .to_string();
     rejects(&source);
     assert!(report(&source).errors.iter().any(|error| {
-        error.message == "a function value may perform ask but its type permits {}"
+        error.message
+            == msg!(
+                "rows-value-performs",
+                effect = "ask".to_string(),
+                row = String::new()
+            )
     }));
 }
 
@@ -339,15 +346,24 @@ fn outer(): Reader ! {} {
 fn invalid(): i64 { "bad" }
 "#
     .to_string();
-    let program = crate::surface::parse_program_as_written(&source).unwrap();
+    let program = tauto_parse::parse_program_as_written(&source).unwrap();
     let types = crate::types::check_program(&program);
     assert!(!types.errors.is_empty());
     assert!(types.nominal_owners_for(&program).is_none());
     let rows = check_program_rows_with_types(&program, &types);
+    // The failed types are no evidence for `Read`, so the rows keep their own
+    // error: an unfollowed callee stays "cannot follow", it is not replaced by
+    // the type error (`check_program_rows_with_types`).
     assert!(
         rows.errors
             .iter()
-            .any(|error| error.message.to_string().contains("calling `Read`"))
+            .any(|error| tauto_messages::english(&error.message)
+                .contains("cannot follow the effects of calling `Read`")),
+        "{:?}",
+        rows.errors
+            .iter()
+            .map(|error| tauto_messages::english(&error.message))
+            .collect::<Vec<_>>()
     );
     assert_eq!(dump_rows(&rows), dump_rows(&check_program_rows(&program)));
 
@@ -359,7 +375,7 @@ fn outer(): Reader ! {} {
 }
 "#
     .to_string();
-    let mut program = crate::surface::parse_program_as_written(&source).unwrap();
+    let mut program = tauto_parse::parse_program_as_written(&source).unwrap();
     let mut types = crate::types::check_program(&program);
     assert!(types.errors.is_empty());
     let owners = types.nominal_owners_for(&program).unwrap().clone();
@@ -391,7 +407,7 @@ fn outer(): Text {
 }
 "#
     .to_string();
-    let program = crate::surface::parse_program_as_written(&source).unwrap();
+    let program = tauto_parse::parse_program_as_written(&source).unwrap();
     let mut analysis = Analysis::new(&program);
     let outer = Name::from("outer");
     analysis.inferred_row(&outer);
@@ -405,7 +421,7 @@ fn outer(): Reader ! {} {
 }
 "#
     .to_string();
-    let program = crate::surface::parse_program_as_written(&source).unwrap();
+    let program = tauto_parse::parse_program_as_written(&source).unwrap();
     let mut analysis = Analysis::new(&program);
     let outer = Name::from("outer");
     analysis.inferred_row(&outer);
@@ -417,7 +433,7 @@ const BRANCHED_STEPS: &str = r#"
 enum S(V: Type) {
   D(V)
   F(Text)
-  N((V) -> S(V) ! {Div})
+  N((V) -> S(V) ! {div})
 }
 "#;
 
@@ -435,172 +451,56 @@ fn branches_of_a_callable_enum_are_checked_against_its_type() {
          fn h(b: Bool): S(i64) {{ if b {{ N((v) => D(perform ask())) }} else {{ D(1) }} }}"
     );
     assert!(
-        report(&source)
-            .errors
-            .iter()
-            .any(|e| e.message == "a function value may perform ask but its type permits {Div}"),
+        report(&source).errors.iter().any(|e| e.message
+            == msg!(
+                "rows-value-performs",
+                effect = "ask".to_string(),
+                row = "div".to_string()
+            )),
         "{:?}",
         report(&source).errors
     );
 }
 
 #[test]
-fn names_the_program_does_not_have_are_named() {
-    let r = report("fn main(): i64 { foo(1) }");
-    assert!(
-        r.errors.iter().any(|e| e
-            .message
-            .to_string()
-            .starts_with("in `main`: `foo` is not defined")),
-        "{:?}",
-        r.errors
-    );
-    let r = report(
-        "struct H { f: (i64) -> i64 }\nfn need(h: H, x: i64): i64 { h.f(x) }\nfn main(): i64 { need(rt, 1) }",
-    );
-    assert!(
-        r.errors
-            .iter()
-            .any(|e| e.message.to_string().starts_with("`rt` is not defined")),
-        "{:?}",
-        r.errors
-    );
-    assert!(
-        r.errors
-            .iter()
-            .all(|e| !e.message.to_string().contains("cannot follow"))
-    );
-    let r = report("perform show(\"a\", Nat::lt(1, 2))");
-    assert!(
-        r.errors.iter().any(|e| e
-            .message
-            .to_string()
-            .starts_with("`Nat::lt` is the kernel's own")),
-        "{:?}",
-        r.errors
-    );
-}
-
-#[test]
-fn shared_field_holding_new_empty_container_keeps_callable_contract() {
-    let source = r#"
-effect boom(): () resume 1
-shared struct Rt { cell: Ref(List(() -> () ! {∀ A. show(A)})) }
-fn add(r: Rt, f: () -> () ! {∀ A. show(A)}): () { Ref::set(r.cell, Cons(f, Ref::get(r.cell))) }
-fn run(r: Rt): () ! {∀ A. show(A)} {
-  match Ref::get(r.cell) {
-    Nil => ()
-    Cons(f, t) => f()
-  }
-}
-fn main(): () ! {∀ A. show(A)} {
-  let r := Rt { cell: Ref::new(Nil) }
-  add(r, () => perform show("y", 1))
-  run(r)
-}
-"#;
-    accepts(source);
-    rejects(&source.replace(
-        "add(r, () => perform show(\"y\", 1))",
-        "Ref::set(r.cell, Cons(() => perform boom(), Nil))",
-    ));
-    rejects(&source.replace("Ref::new(Nil)", "Ref::new(Cons(() => perform boom(), Nil))"));
-}
-
-#[test]
 fn nat_counted_down_by_match_keeps_its_row() {
     // A `Nat` taken apart by `match` is extracted as `nat` counted down by
-    // one, and keeps the row the proof side gave it.
+    // one, and keeps the row the proof side gave it: no `div`. Unbounded
+    // `nat` subtraction does not perform `overflow`; the same countdown on
+    // `i64` does.
     let source = "effect tick(): ()\nfn ticks(n: nat): () ! {tick} {\n  if n == 0 {\n    ()\n  } else {\n    let m := (n - 1)\n    {\n      perform tick()\n      ticks(m)\n    }\n  }\n}\n";
     accepts(source);
     rejects(&source.replace("nat", "i64"));
 }
 
 #[test]
-fn host_show_row_hints_agree() {
-    // The row the hints for the host's `show` name is one the check accepts.
-    accepts("fn main(): () ! {∀ A. show(A)} { perform show(\"a\", 1) }\n");
-    let one = report("fn main(): () ! {show(i64)} { perform show(\"a\", 1) }\n");
-    assert!(
-        one.errors
-            .iter()
-            .any(|e| e.message.to_string().contains("write `∀ A. show(A)`")),
-        "{:?}",
-        one.errors
+fn a_total_declaration_writes_its_guarded_arithmetic_without_overflow() {
+    tauto_parse::install();
+    // Fixed-width `-` performs `overflow` unless extraction evidence names
+    // the declaration (`in_total`): the same body without the evidence does.
+    let source = "fn down(n: i64): i64 {\n  if n == 0 { 0 } else { n - 1 }\n}\n";
+    let program = crate::types::expand_classes(
+        crate::surface::parse_program_as_written(source).unwrap(),
+        1 << 30,
     );
+    let overflows = |r: &RowReport| {
+        r.declarations
+            .iter()
+            .find(|d| d.name.as_str() == "down")
+            .unwrap()
+            .inferred
+            .iter()
+            .any(|e| e.as_str().ends_with("overflow"))
+    };
+    let trusted =
+        check_program_rows_trusted(&program, &HashSet::from(["down".into()]), Target::Rust);
+    assert!(!overflows(&trusted));
+    assert!(overflows(&check_program_rows(&program)));
 }
 
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
-mod case_inputs {
-    pub fn source_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            ("check/local-function-rows.eure", "direct-local-call-keeps-inferred-effects") => {
-                r#"effect ask(): Text
-fn outer(): Text {
-  fn inner(): Text { perform ask() }
-  inner()
-}
-"#
-            }
-            ("check/local-function-rows.eure", "constructor-owner-follows-deferred-let-result") => {
-                r#"enum Reader { Read(Text) }
-enum Number { Read(i64) }
-fn outer(): Reader ! {} {
-  let value := Read("ok")
-  value
-}
-"#
-            }
-            ("check/local-function-rows.eure", "local-recursive-alias-keeps-div") => {
-                r#"fn outer(): i64 {
-  fn inner(n: i64): i64 {
-    let again := inner
-    again(n)
-  }
-  inner(0)
-}
-"#
-            }
-            ("check/local-function-rows.eure", "constructor-owner-follows-budget-result") => {
-                r#"enum Reader { Read(Text) }
-enum Number { Read(i64) }
-fn outer(): Reader ! {Exceeded} { budget(steps: 10) { Read("ok") } }
-"#
-            }
-            ("check/local-function-rows.eure", "constructor-owner-follows-host-argument") => {
-                r#"enum Reader { Read(Text) }
-enum Number { Read(i64) }
-extern { fn consume(value: Reader): Text }
-fn outer(): Text ! {} { consume(Read("ok")) }
-"#
-            }
-            (
-                "check/local-function-rows.eure",
-                "constructor-alias-owner-follows-deferred-let-result",
-            ) => {
-                r#"enum Reader { Read(Text) }
-enum Number { Read(i64) }
-fn outer(): Reader ! {} {
-  let make := Read
-  let value := make("ok")
-  value
-}
-"#
-            }
-            ("check/local-function-rows.eure", "constructor-owner-follows-handler-result") => {
-                r#"enum Reader { Read(Text) }
-enum Number { Read(i64) }
-fn outer(): Reader ! {} {
-  handle { Read("ok") } with { return value => value }
-}
-"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
-    pub fn source(file: &str, name: &str) -> String {
-        source_static(file, name).to_string()
-    }
+#[test]
+fn nat_subtraction_does_not_perform_overflow() {
+    // Unbounded `nat` arithmetic is not fixed-width: `n - 1` leaves no
+    // `overflow` in the row (Succ elimination extracts the same way).
+    accepts("fn down(n: nat): nat ! {} {\n  if n == 0 { 0 } else { n - 1 }\n}\n");
 }

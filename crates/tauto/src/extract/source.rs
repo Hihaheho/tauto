@@ -8,11 +8,13 @@ struct Names {
     written: HashMap<Name, String>,
     occupied: HashSet<String>,
     library: HashMap<Name, String>,
+    /// The module of each file, longest first ([`written_path`]).
+    file_modules: Vec<String>,
     error: Option<Message>,
 }
 
 impl Names {
-    fn new() -> Self {
+    fn new(file_modules: &[String]) -> Self {
         let bindings = crate::bindings::library_bindings();
         let mut aliases: Vec<_> = bindings.bindings().collect();
         aliases.sort_by_key(|(text, reference)| {
@@ -36,6 +38,7 @@ impl Names {
             written: HashMap::new(),
             occupied,
             library,
+            file_modules: file_modules.to_vec(),
             error: None,
         }
     }
@@ -44,10 +47,19 @@ impl Names {
         if let Some(written) = self.written.get(name) {
             return written.clone();
         }
-        let base: String = name
+        // `M::T::f` of a declaration `T::f` of the file `M` is written in
+        // `module T`, not in the modules of the file's path.
+        let spelled = if name.as_global().is_some() {
+            written_path(name, &self.file_modules)
+        } else {
+            name
+        };
+        let base: String = spelled
             .chars()
             .map(|c| {
-                if c.is_alphanumeric() || c == '_' || (name.as_global().is_some() && c == ':') {
+                if tauto_parol::unicode::is_ident_continue(c)
+                    || (name.as_global().is_some() && c == ':')
+                {
                     c
                 } else {
                     '_'
@@ -86,6 +98,15 @@ impl Names {
             let reference = reference.clone();
             let written = self.allocate(name);
             *name = Name::Local(reference.with_display(written));
+            return;
+        }
+        // A product is written `A × B` and `#(a, b)`, which the printer reads
+        // from the reference to `Pair` and `Pair::Mk`: renamed to its text, it
+        // would be written as the name the reader refuses.
+        if ["Pair", "Pair::Mk"]
+            .iter()
+            .any(|head| crate::bindings::is_reader_reference(name, head))
+        {
             return;
         }
         if let Some(written) = self.written.get(name).or_else(|| self.library.get(name)) {
@@ -150,13 +171,13 @@ impl Names {
                     application
                 }
             }
-            Name::Spelled(_) => return,
+            Name::Spelled(_) | Name::Written(_) => return,
         };
         *name = written.into();
     }
 }
 
-pub(super) fn write(statements: &[Stmt]) -> Result<String, Message> {
+pub(super) fn write(statements: &[Stmt], file_modules: &[String]) -> Result<String, Message> {
     let program = crate::surface::Program {
         stmts: statements.to_vec(),
         errors: Vec::new(),
@@ -169,7 +190,22 @@ pub(super) fn write(statements: &[Stmt]) -> Result<String, Message> {
             why = error.message.to_string()
         ));
     }
-    let mut names = Names::new();
+    write_with(statements, Some(&report), file_modules)
+}
+
+/// [`write`] without the type check: for text that was checked when it was
+/// extracted and is only read again, whose names the reader has not resolved
+/// (a written `Pair::Mk` is not yet the library's).
+pub(super) fn write_unchecked(statements: &[Stmt]) -> Result<String, Message> {
+    write_with(statements, None, &[])
+}
+
+fn write_with(
+    statements: &[Stmt],
+    report: Option<&crate::types::TypeReport>,
+    file_modules: &[String],
+) -> Result<String, Message> {
+    let mut names = Names::new(file_modules);
     // Constructors are emitted under their owner. Their labels stay shared
     // when a source occurrence selects among several owners by type.
     let mut constructors = HashSet::new();
@@ -211,7 +247,7 @@ pub(super) fn write(statements: &[Stmt]) -> Result<String, Message> {
     for statement in &mut written {
         let occupied = names.occupied.clone();
         walk::stmt(statement, &mut |term| {
-            if let Err(error) = report.resolve_selection_at(term) {
+            if let Some(Err(error)) = report.map(|r| r.resolve_selection_at(term)) {
                 names.error.get_or_insert(error.into());
             }
             if matches!(&*term.kind, TermKind::Declaration(_)) {

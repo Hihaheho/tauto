@@ -92,7 +92,7 @@ fn setup_and_execution_have_separate_limits_and_selection() {
     }
 }
 fn passed() -> serde_json::Value {
-    json!({"invocation":"current","phase":"execution","status":"completed","semantic_execution_verified":true,"summary":{"passed":1,"failed":0,"incomplete":0,"host_harness":0,"explicitly_excluded":0},"cases":[{"case":"one","status":"passed"}]})
+    json!({"invocation":"current","phase":"execution","status":"completed","semantic_execution_verified":true,"summary":{"passed":1,"failed":0,"incomplete":0,"host_harness":0},"cases":[{"case":"one","status":"passed"}]})
 }
 #[test]
 fn stale_wrong_phase_missing_cases_signals_and_false_counts_are_rejected() {
@@ -118,7 +118,7 @@ fn stale_wrong_phase_missing_cases_signals_and_false_counts_are_rejected() {
 }
 #[test]
 fn preparation_requires_an_artifact_and_never_claims_semantic_success() {
-    let mut report = json!({"invocation":"current","phase":"setup","status":"prepared","semantic_execution_verified":false,"summary":{"passed":0,"failed":0,"incomplete":0,"host_harness":0,"explicitly_excluded":0},"cases":[],"prepared":{"artifact_sha256":"a".repeat(64)}});
+    let mut report = json!({"invocation":"current","phase":"setup","status":"prepared","semantic_execution_verified":false,"summary":{"passed":0,"failed":0,"incomplete":0,"host_harness":0},"cases":[],"prepared":{"artifact_sha256":"a".repeat(64)}});
     assert!(validate_worker_report(&report, "current", "setup", &[], Some(0)).unwrap());
     report["semantic_execution_verified"] = json!(true);
     assert!(validate_worker_report(&report, "current", "setup", &[], Some(0)).is_err());

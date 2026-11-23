@@ -1,74 +1,89 @@
-# 秘密の値と定数時間
+# Secrets and constant time
 
-秘密の値（鍵、鍵から作った値、復号中の平文）は `Secret(A)` に入れる。証明からは中身が見え、実行されるコードからは見えない型で、秘密の値にできるのは定数時間で動く少数の演算だけである。だから `Secret` を受け取る関数は、その中身によって分岐も、触れるメモリの場所も、時間の変わる命令も変えない。
+Secret values (keys, values derived from them, plaintext being decrypted) live
+in `Secret(A)`. Proofs see inside it; executable code cannot, except through a
+few constant-time operations and `expose`.
 
-## 保証すること
+## Guarantee
 
-秘密の中身だけが違う二つの入力で、プログラムを動かしたときに外から観測できるもの（漏洩の跡）が同じになる。漏洩の跡とみなすのは次のもの。
+Two inputs differing only in secret contents produce the same leakage trace:
 
-- 制御の流れ：どの腕を選んだか、どの関数を呼んだか、何回繰り返したか。
-- メモリ：どの要素・どの添字に触れたか、確保の大きさ。
-- 時間の変わる演算の被演算子：割り算、`nat` の演算、途中で打ち切る比較。
+- control flow (arms taken, functions called, iteration counts);
+- memory (elements and indices touched, allocation sizes);
+- operands of variable-time operations (division, `nat` arithmetic,
+  early-exit comparison).
 
-扱わないもの：電力や電磁波、投機的実行、使い終わった秘密のメモリからの消去。
+Not covered: power and EM side channels, speculative execution, erasing used
+secrets.
 
-## 二つの見え方
+## Two views
 
-### 証明（`std/Secret.taut`）
+**Proofs** (`std/secret.taut`): `Secret(A)` is an ordinary inductive with
+`Secret::Mk(v)` and `expose(s)`, and theorems may `match` on it. Each secret
+operation is defined as the plain operation wrapped in `Secret::Mk` (e.g.
+`ct_u64_add(a, b) = Secret::Mk(UInt::wrapping_add64(expose(a), expose(b)))`),
+stated by `Refl` theorems such as `ct_u64_add_val`, so functional correctness
+is proved as usual.
 
-`Secret(A)` は普通の帰納型で、コンストラクタ `Secret::Mk(v)` と、中身を返す `expose(s)` を持つ。定理の中では `match` で中身を取り出せる。定理と証明の引数は抽出で消えるので、これは実行されない。
+**Executable code** (`std/builtin/secret.taut`): extraction maps it to Nib's
+`Secret(A)`, a `pub` (not `pub(open)`) struct with no visible fields, so it
+cannot be built or matched outside the prelude
+([`visibility.md`](visibility.md)). `secure_random` returns `Secret(Bytes)`,
+and TLS keys (`TlsCert`, `TlsClientCert`) are `Secret(Bytes)`.
 
-秘密の演算はどれも、中身についての普通の演算を `Secret::Mk` で包んだ定義を持ち（`ct_u64_add(a, b)` は `Secret::Mk(U64::wrapping_add(expose(a), expose(b)))`）、`ct_u64_add_val` のような定理がそれを `Refl` で述べる。機能的な正しさは、秘密を使う関数についても、これまでどおり同じ関数に対して証明する。
+- A `match` on `Secret` left in executable code is an extraction error.
+- `Secret` has no `PartialEq`, `Ord` or `Hash`, and types containing it have no
+  structural `==`. `show` prints `Secret`.
+- Generic code may move secrets but not read them.
+- Lengths and shapes are public (`List(Secret(UInt(8)))`'s length, `Some`/`None`).
 
-### 実行されるコード（`std/prelude/Secret.taut`）
+## Operations
 
-抽出は `Secret(A)` を Nib の `Secret(A)` に写す。これは prelude が `pub` で（`pub(open)` でなく）宣言する中身のない struct で、prelude の外では抽象的な型なので、リテラルで作ることもパターンで照合することもできない（型検査が拒む。`docs/design/visibility.md`）。値は `Secret::Mk` で作り、`expose` と下の演算でだけ読む。OS の乱数 `secure_random` は `Secret(Bytes)` を返し、TLS の鍵（`TlsCert` と `TlsClientCert` の `key`）も `Secret(Bytes)` で渡す。
+For `W` in `u8`, `u32`, `u64` (and `Bool`):
 
-- 実行される部分に残った `Secret` への `match` は、抽出がその場所を指して誤りにする。
-- `Secret` は `PartialEq`、`Ord`、`Hash` を持たないので、`==` や比較、`HashMap` の鍵には使えない。それを含む型も構造的な `==` を持たない。
-- `show` は中身を出さず `Secret` と表示する。
-- 型引数に対する総称的な関数は値を動かすだけで、中を読めない。`List(Secret(U8))` を `List::append` に渡してよい。
-- 長さと形は公開である。`List(Secret(U8))` の長さ、`Option(Secret(U64))` の `Some`/`None` は秘密ではない。公開の値での分岐、再帰、繰り返しはこれまでどおり書ける。
-
-## 秘密の演算
-
-`U8`・`U32`・`U64` の秘密（Nib の `u8`・`u32`・`u64`）と、`Bool` の秘密（Nib の `Bool`）について：
-
-| 種類 | 証明の名前 | 意味 |
+| Kind | Names | Meaning |
 | --- | --- | --- |
-| 算術 | `ct_W_add`、`ct_W_sub`、`ct_W_mul` | `2^w` を法とする和・差・積 |
-| 128 ビットの積の上半分 | `ct_u64_mul_hi` | `⌊a·b / 2^64⌋` |
-| ビット | `ct_W_and`、`ct_W_or`、`ct_W_xor`、`ct_W_not` | ビットごとの演算 |
-| シフトと回転 | `ct_W_shl`、`ct_W_shr`、`ct_W_rotl`、`ct_W_rotr` | 量 `s` は公開で、幅を法とする |
-| 比較 | `ct_W_eq`、`ct_W_lt` | 答えは `Secret(Bool)` |
-| 選択 | `ct_W_select(c, a, b)`、`ct_bool_select` | `c` なら `a`、そうでなければ `b` |
-| 幅の変換 | `ct_u64_of_u8` など | 広い語へはそのまま、狭い語へは下位ビット |
-| 真偽 | `ct_bool_and`、`ct_bool_or`、`ct_bool_not` | `Secret(Bool)` の論理演算 |
-| バイト列 | `ct_bytes_len`、`ct_bytes_get(s, i)` | `Secret(Bytes)` の長さ（公開の `Nat`）と、公開の添字 `i` にあるバイト（`Option(Secret(U8))`） |
+| Arithmetic | `ct_W_add`, `ct_W_sub`, `ct_W_mul` | modulo `2^w` |
+| High product | `ct_u64_mul_hi` | `⌊a·b / 2^64⌋` |
+| Bits | `ct_W_and`, `ct_W_or`, `ct_W_xor`, `ct_W_not` | bitwise |
+| Shifts | `ct_W_shl`, `ct_W_shr`, `ct_W_rotl`, `ct_W_rotr` | public amount, modulo width |
+| Comparison | `ct_W_eq`, `ct_W_lt` | result `Secret(Bool)` |
+| Selection | `ct_W_select(c, a, b)`, `ct_bool_select` | `c ? a : b` |
+| Width | `ct_u64_of_u8`, … | zero-extend or truncate |
+| Booleans | `ct_bool_and`, `ct_bool_or`, `ct_bool_not` | |
+| Bytes | `ct_bytes_len`, `ct_bytes_get(s, i)` | public length; byte at public index as `Option(Secret(UInt(8)))` |
 
-`W` は `u8`・`u32`・`u64`。Nib では `Bool` の演算は `ct_bool_*` という名前で、抽出が写す。`secure_random` の乱数や TLS の鍵のような `Secret(Bytes)` は、`expose` せずに `ct_bytes_get` で一バイトずつ `Secret(U8)` として取り出す。長さと添字は公開なので、触れる場所は秘密に依らない。割り算と剰余、`nat` の演算、秘密の値による添字は置かない。表引きは全要素を走って `ct_W_select` で選ぶ関数として書き、バイト列の比較も上の演算から書く。どちらも写像を増やさない。
+There is no secret division, `nat` arithmetic or secret indexing. Table lookups
+scan every element with `ct_W_select`; byte comparisons are built from the
+operations above.
 
-## 出口：`expose`
+## `expose`
 
-`expose` は秘密を公開の値にする唯一の道である。暗号文、公開鍵、「タグが合ったか」のように、外に出してよいと暗号の議論で言える値だけをここで出す。`expose` を本体に含む関数は、信頼の一覧（[`trust-bundles.md`](trust-bundles.md)）の確かめていない記述に、ファイルと関数の名前つきで出る。定理の中で中身を言うときにも同じ関数を使うが、定理は実行されないので一覧には出ない。
+`expose` is the only way out: use it only for values the cryptographic
+argument says are public (ciphertext, public keys, "the tag matched"). Every
+executable function whose body calls `expose` is listed as unchecked in trust
+reports ([`trust-bundles.md`](trust-bundles.md)).
 
-## バックエンド
+## Backends
 
-| バックエンド | 秘密の演算 | 定数時間 |
+| Backend | Operations | Constant time |
 | --- | --- | --- |
-| Rust | `tauto_rt::ct` | 保証する |
-| JavaScript | なし | 保証しない。`Secret::Mk` と `expose` で包んで運ぶだけのプログラム（`secure_random` の鍵、TLS の鍵）は動かし、`ct_` の関数を使うプログラムは生成で拒否する |
-| 評価器 | 解釈 | 保証しない。開発と試験のために動かす |
+| Rust | `tauto_rt::ct` | yes |
+| JavaScript | none | no: programs that only carry secrets run; using `ct_` functions is a build error |
+| VM (`totes/vm`) | none | no: as JavaScript, its words and numbers take a time that depends on the value |
+| niri (`tauto run --backend niri`) | interpreted | no |
 
-Rust の `Secret<T>` は中身をそのまま持つ型で、比較は引き算の借りと `x | -x` の最上位ビットで、選択はマスクの算術で計算する。マスクと比較の結果は最適化の壁（`std::hint::black_box`）を通し、コンパイラがそれを分岐に戻さないようにする。前提は二つで、どちらも証明の外にある。
+Rust `Secret<T>` holds the value; comparisons use the subtraction borrow and
+the top bit of `x | -x`, selection uses masks, and masks pass through
+`std::hint::black_box`. This relies, outside any proof, on the compiler not
+turning masks back into branches (`tauto-rt` `tests/ct_branches.rs` checks
+optimized x86_64 code has no secret branches) and on the CPU running word
+arithmetic, bit operations and register shifts in operand-independent time.
 
-1. コンパイラが最適化の壁を越えて、マスクの算術を秘密による分岐に戻さない。`tauto-rt` の試験（`tests/ct_branches.rs`）は、x86_64 で最適化して生成したコードの秘密の演算に条件分岐がないことを確かめる。
-2. 対象の CPU で、語の加減乗、ビット演算、レジスタの量によるシフトが被演算子によらない時間で動く。
+## Undecided
 
-## 未決定
-
-- JavaScript で `ct_` の関数を使うプログラムを、定数時間でないことを承知で許すフラグを置くか。
-- aarch64 の生成コードの試験。
-- 速いバイト列の型の秘密版。
-- 使い終わった秘密の消去。
-- 漏洩の跡が秘密に依らないことを、Lean の Nib のモデルで定理として示すこと。
+- A flag allowing `ct_` functions on JavaScript without the guarantee.
+- Tests for aarch64 codegen.
+- A secret version of the fast byte type.
+- Erasing used secrets.
+- A Lean theorem, on the Nib model, that traces do not depend on secrets.

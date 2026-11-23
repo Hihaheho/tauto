@@ -1,0 +1,616 @@
+import "base.taut" { List, Nat, Ordering }
+import "map_laws.taut" { OrdmapLaw }
+import "nat.taut" { Nat }
+import "sort.taut" {
+  SortLe,
+  sort_all_le,
+  sort_all_le_trans,
+  sort_le_of_less,
+  sort_le_total,
+  sort_le_trans
+}
+import "tactic.taut" { nat_norm }
+import std::builtin::ord { equal_ne_greater }
+import std::prelude::std { List, Option, Ordering }
+
+// A priority queue, persistent: a leftist heap ordered by a comparator `cmp`
+// given at every call, as in `Map::taut`. The least element is at the root;
+// taking it merges its two children along their right spines, which a
+// leftist heap keeps short. The theorems about the order assume
+// `OrdmapLaw(A, cmp)` (`map_laws.taut`); the ones about the size assume nothing.
+
+pub(open) inductive Heap(A: Type): Type {
+  HeapLeaf: Heap(A)
+  // The rank (the length of the right spine), the element, and the children.
+  HeapNode(rank: Nat, x: A, l: Heap(A), r: Heap(A)): Heap(A)
+}
+
+pub fn Heap::new<A: Shared>(): Heap(A) {
+  HeapLeaf
+}
+
+pub fn Heap::rank<A: Shared>(h: Heap(A)): Nat {
+  match h {
+    HeapLeaf => 0
+    HeapNode(k, x, l, r) => k
+  }
+}
+
+// A node over `a` and `b`, the one of the larger rank on the left.
+pub fn Heap::make<A: Shared>(x: A, a: Heap(A), b: Heap(A)): Heap(A) {
+  match Heap::rank(b) <= Heap::rank(a) {
+    true => HeapNode(Succ(Heap::rank(b)), x, a, b)
+    false => HeapNode(Succ(Heap::rank(a)), x, b, a)
+  }
+}
+
+// The merge of `HeapNode(k, x, l, r)` and `h`, where `rest` merges `r` with
+// a heap. It goes down the right spine of `h` while the root of `h` is before
+// `x`.
+pub fn Heap::merge_into<A: Shared>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  l: Heap(A),
+  rest: (Heap(A)) -> Heap(A),
+  h: Heap(A)
+): Heap(A) {
+  match h {
+    HeapLeaf => Heap::make(x, l, rest(HeapLeaf))
+    HeapNode(k, y, hl, hr) => ⊢ Heap(A) from match cmp(x, y) {
+      Less => Heap::make(x, l, rest(h))
+      Equal => Heap::make(x, l, rest(h))
+      Greater => Heap::make(y, hl, Heap::merge_into(cmp, x, l, rest, hr))
+    }
+  }
+}
+
+pub fn Heap::merge<A: Shared>(cmp: (A, A) -> Ordering, a: Heap(A), b: Heap(A)): Heap(A) {
+  match a {
+    HeapLeaf => b
+    HeapNode(k, x, l, r) => Heap::merge_into(cmp, x, l, (z: Heap(A)) => Heap::merge(cmp, r, z), b)
+  }
+}
+
+pub fn Heap::push<A: Shared>(cmp: (A, A) -> Ordering, h: Heap(A), x: A): Heap(A) {
+  Heap::merge(cmp, HeapNode(1, x, HeapLeaf, HeapLeaf), h)
+}
+
+// The least element, or none when the heap is empty.
+pub fn Heap::peek<A: Shared>(h: Heap(A)): Option(A) {
+  match h {
+    HeapLeaf => None
+    HeapNode(k, x, l, r) => Some(x)
+  }
+}
+
+// The least element and the heap without it, or none when it is empty.
+pub fn Heap::pop<A: Shared>(cmp: (A, A) -> Ordering, h: Heap(A)): Option(A × Heap(A)) {
+  match h {
+    HeapLeaf => None
+    HeapNode(k, x, l, r) => Some(#(x, Heap::merge(cmp, l, r)))
+  }
+}
+
+pub fn Heap::len<A: Shared>(h: Heap(A)): Nat {
+  match h {
+    HeapLeaf => 0
+    HeapNode(k, x, l, r) => Succ(Nat::add(Heap::len(l), Heap::len(r)))
+  }
+}
+
+pub fn Heap::is_empty<A: Shared>(h: Heap(A)): Bool {
+  match h {
+    HeapLeaf => true
+    HeapNode(k, x, l, r) => false
+  }
+}
+
+// The elements, the root first and then those of the children.
+pub fn Heap::to_list<A: Shared>(h: Heap(A)): List(A) {
+  match h {
+    HeapLeaf => Nil
+    HeapNode(k, x, l, r) => Cons(x, List::append(Heap::to_list(l), Heap::to_list(r)))
+  }
+}
+
+pub fn Heap::of_list<A: Shared>(cmp: (A, A) -> Ordering, l: List(A)): Heap(A) {
+  match l {
+    Nil => HeapLeaf
+    Cons(x, rest) => Heap::push(cmp, Heap::of_list(cmp, rest), x)
+  }
+}
+
+// At most `n` elements popped one after another.
+pub fn Heap::drain<A: Shared>(cmp: (A, A) -> Ordering, n: Nat, h: Heap(A)): List(A) {
+  match n {
+    Zero => Nil
+    Succ(m) => ⊢ List(A) from match Heap::pop(cmp, h) {
+      None => Nil
+      Some(#(x, rest)) => Cons(x, Heap::drain(cmp, m, rest))
+    }
+  }
+}
+
+// The elements, least first.
+pub fn Heap::into_sorted<A: Shared>(cmp: (A, A) -> Ordering, h: Heap(A)): List(A) {
+  Heap::drain(cmp, Heap::len(h), h)
+}
+
+pub theorem Heap::make_len<A: Type>(
+  x: A,
+  a: Heap(A),
+  b: Heap(A)
+): Heap::len(Heap::make(x, a, b)) = Succ(Nat::add(Heap::len(a), Heap::len(b))) {
+  ⊢ Heap::len(
+    Heap::make(x, a, b)
+  ) = Succ(Nat::add(Heap::len(a), Heap::len(b))) from match Heap::rank(b) <= Heap::rank(a) {
+    true => ⊢ Heap::len(
+      HeapNode(Succ(Heap::rank(b)), x, a, b)
+    ) = Succ(Nat::add(Heap::len(a), Heap::len(b))) from Refl
+    false => ⊢ Heap::len(
+      HeapNode(Succ(Heap::rank(a)), x, b, a)
+    ) = Succ(
+      Nat::add(Heap::len(a), Heap::len(b))
+    ) from Eq::congr(⟦Succ(□)⟧, Nat::add_comm(Heap::len(b), Heap::len(a)))
+  }
+}
+
+pub theorem Heap::len_arith_leaf(
+  l: Nat,
+  n: Nat
+): Succ(Nat::add(l, Nat::add(n, 0))) = Succ(Nat::add(Nat::add(l, n), 0)) {
+  by nat_norm!(): Succ(Nat::add(l, Nat::add(n, 0))) = Succ(Nat::add(Nat::add(l, n), 0)) {}
+}
+
+pub theorem Heap::len_arith_left(
+  l: Nat,
+  n: Nat,
+  h: Nat
+): Succ(Nat::add(l, Nat::add(n, h))) = Succ(Nat::add(Nat::add(l, n), h)) {
+  by nat_norm!(): Succ(Nat::add(l, Nat::add(n, h))) = Succ(Nat::add(Nat::add(l, n), h)) {}
+}
+
+pub theorem Heap::len_arith_right(
+  m: Nat,
+  j: Nat,
+  h: Nat
+): Succ(Nat::add(j, Succ(Nat::add(m, h)))) = Succ(Nat::add(m, Succ(Nat::add(j, h)))) {
+  by nat_norm!(): Succ(
+    Nat::add(j, Succ(Nat::add(m, h)))
+  ) = Succ(Nat::add(m, Succ(Nat::add(j, h)))) {}
+}
+
+// The merge when `x` is not after the root of `h`: `rest` takes all of `h`.
+pub theorem Heap::merge_into_len_take<A: Type>(
+  x: A,
+  l: Heap(A),
+  rest: (Heap(A)) -> Heap(A),
+  n: Nat,
+  hr: ∀ z: Heap(A). Heap::len(rest(z)) = Nat::add(n, Heap::len(z)),
+  h: Heap(A)
+): Heap::len(Heap::make(x, l, rest(h))) = Succ(Nat::add(Nat::add(Heap::len(l), n), Heap::len(h))) {
+  Eq::trans(
+    Heap::make_len(x, l, rest(h)),
+    Eq::trans(
+      Eq::congr(⟦Succ(Nat::add(Heap::len(l), □))⟧, hr(h)),
+      Heap::len_arith_left(Heap::len(l), n, Heap::len(h))
+    )
+  )
+}
+
+// The merge into `HeapNode(k, x, l, r)` has its elements and those of `h`
+// when `rest` adds `n` elements, those of `r`, to a heap.
+pub theorem Heap::merge_into_len<A: Type>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  l: Heap(A),
+  rest: (Heap(A)) -> Heap(A),
+  n: Nat,
+  hr: ∀ z: Heap(A). Heap::len(rest(z)) = Nat::add(n, Heap::len(z)),
+  h: Heap(A)
+): Heap::len(
+  Heap::merge_into(cmp, x, l, rest, h)
+) = Succ(Nat::add(Nat::add(Heap::len(l), n), Heap::len(h))) {
+  ⊢ Heap::len(
+    Heap::merge_into(cmp, x, l, rest, h)
+  ) = Succ(Nat::add(Nat::add(Heap::len(l), n), Heap::len(h))) from match h {
+    HeapLeaf => Eq::trans(
+      Heap::make_len(x, l, rest(HeapLeaf)),
+      Eq::trans(
+        Eq::congr(⟦Succ(Nat::add(Heap::len(l), □))⟧, hr(HeapLeaf)),
+        Heap::len_arith_leaf(Heap::len(l), n)
+      )
+    )
+    HeapNode(k, y, hl, hh) => Ordering::cases(
+      (o: Ordering) => Heap::len(⊢ Heap(A) from match o {
+          Less => Heap::make(x, l, rest(HeapNode(k, y, hl, hh)))
+          Equal => Heap::make(x, l, rest(HeapNode(k, y, hl, hh)))
+          Greater => Heap::make(y, hl, Heap::merge_into(cmp, x, l, rest, hh))
+        }) = Succ(Nat::add(Nat::add(Heap::len(l), n), Succ(Nat::add(Heap::len(hl), Heap::len(hh))))),
+      cmp(x, y),
+      (e: cmp(x, y) = Less) => Heap::merge_into_len_take(x, l, rest, n, hr, HeapNode(k, y, hl, hh)),
+      (e: cmp(x, y) = Equal) => Heap::merge_into_len_take(x, l, rest, n, hr, HeapNode(k, y, hl, hh)),
+      (
+        e: cmp(x, y) = Greater
+      ) => Eq::trans(
+        Heap::make_len(y, hl, Heap::merge_into(cmp, x, l, rest, hh)),
+        Eq::trans(
+          Eq::congr(
+            ⟦Succ(Nat::add(Heap::len(hl), □))⟧,
+            Heap::merge_into_len(cmp, x, l, rest, n, hr, hh)
+          ),
+          Heap::len_arith_right(Nat::add(Heap::len(l), n), Heap::len(hl), Heap::len(hh))
+        )
+      )
+    )
+  }
+}
+
+pub theorem Heap::merge_len<A: Type>(
+  cmp: (A, A) -> Ordering,
+  a: Heap(A),
+  b: Heap(A)
+): Heap::len(Heap::merge(cmp, a, b)) = Nat::add(Heap::len(a), Heap::len(b)) {
+  match a {
+    HeapLeaf => Eq::sym(Nat::add_zero_left(Heap::len(b)))
+    HeapNode(k, x, l, r) => Eq::trans(
+      Heap::merge_into_len(
+        cmp,
+        x,
+        l,
+        (z: Heap(A)) => Heap::merge(cmp, r, z),
+        Heap::len(r),
+        (z: Heap(A)) => Heap::merge_len(cmp, r, z),
+        b
+      ),
+      Eq::sym(Nat::add_succ_left(Nat::add(Heap::len(l), Heap::len(r)), Heap::len(b)))
+    )
+  }
+}
+
+pub theorem Heap::push_len<A: Type>(
+  cmp: (A, A) -> Ordering,
+  h: Heap(A),
+  x: A
+): Heap::len(Heap::push(cmp, h, x)) = Succ(Heap::len(h)) {
+  Eq::trans(
+    Heap::merge_len(cmp, HeapNode(1, x, HeapLeaf, HeapLeaf), h),
+    Eq::trans(
+      Nat::add_succ_left(0, Heap::len(h)),
+      Eq::congr(⟦Succ(□)⟧, Nat::add_zero_left(Heap::len(h)))
+    )
+  )
+}
+
+// `x` is not before the bound `o`; every element is above no bound.
+pub fn Heap::above<A: Shared>(cmp: (A, A) -> Ordering, o: Option(A), x: A): Prop {
+  match o {
+    None => True
+    Some(a) => SortLe(A, cmp, a, x)
+  }
+}
+
+// Every element of `h` is above `o`, and above the element of each node over it.
+pub fn Heap::ok<A: Shared>(cmp: (A, A) -> Ordering, o: Option(A), h: Heap(A)): Prop {
+  match h {
+    HeapLeaf => True
+    HeapNode(k, x, l, r) => Heap::above(cmp, o, x) ∧ Heap::ok(cmp, Some(x), l) ∧ Heap::ok(cmp, Some(x), r)
+  }
+}
+
+// The heap property: no element is before the element of a node over it.
+pub fn Heap::ordered<A: Shared>(cmp: (A, A) -> Ordering, h: Heap(A)): Prop {
+  Heap::ok(cmp, None, h)
+}
+
+// What a pop answers is a least element: the heap left is above it.
+pub fn Heap::popped_ok<A: Shared>(cmp: (A, A) -> Ordering, o: Option(A × Heap(A))): Prop {
+  match o {
+    None => True
+    Some(#(x, rest)) => Heap::ok(cmp, Some(x), rest)
+  }
+}
+
+pub theorem Heap::above_trans<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  o: Option(A),
+  a: A,
+  b: A,
+  h1: Heap::above(cmp, o, a),
+  h2: SortLe(A, cmp, a, b)
+): Heap::above(cmp, o, b) {
+  match o {
+    None => Trivial
+    Some(c) => sort_le_trans(cmp, w, c, a, b, h1, h2)
+  }
+}
+
+pub theorem Heap::ok_weaken<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  h: Heap(A),
+  o: Option(A),
+  a: A,
+  ha: Heap::above(cmp, o, a),
+  hok: Heap::ok(cmp, Some(a), h)
+): Heap::ok(cmp, o, h) {
+  match h {
+    HeapLeaf => Trivial
+    HeapNode(k, x, l, r) => AndIntro(
+      Heap::above_trans(cmp, w, o, a, x, ha, And::left(hok)),
+      And::right(hok)
+    )
+  }
+}
+
+pub theorem Heap::make_ok<A: Type>(
+  cmp: (A, A) -> Ordering,
+  o: Option(A),
+  x: A,
+  a: Heap(A),
+  b: Heap(A),
+  hx: Heap::above(cmp, o, x),
+  ha: Heap::ok(cmp, Some(x), a),
+  hb: Heap::ok(cmp, Some(x), b)
+): Heap::ok(cmp, o, Heap::make(x, a, b)) {
+  match Heap::rank(b) <= Heap::rank(a) {
+    true => ⊢ Heap::ok(cmp, o, HeapNode(Succ(Heap::rank(b)), x, a, b)) from AndIntro(hx, AndIntro(ha, hb))
+    false => ⊢ Heap::ok(cmp, o, HeapNode(Succ(Heap::rank(a)), x, b, a)) from AndIntro(hx, AndIntro(hb, ha))
+  }
+}
+
+// `x` is not after the root of `h`: `h` is above `x`.
+pub theorem Heap::ok_lower<A: Type>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  k: Nat,
+  y: A,
+  hl: Heap(A),
+  hh: Heap(A),
+  le: SortLe(A, cmp, x, y),
+  hok: Heap::ok(cmp, Some(y), hl) ∧ Heap::ok(cmp, Some(y), hh)
+): Heap::ok(cmp, Some(x), HeapNode(k, y, hl, hh)) {
+  AndIntro(le, hok)
+}
+
+pub theorem Heap::merge_into_ok<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  x: A,
+  l: Heap(A),
+  rest: (Heap(A)) -> Heap(A),
+  hl: Heap::ok(cmp, Some(x), l),
+  hr: ∀ z: Heap(A). (Heap::ok(cmp, Some(x), z)) -> Heap::ok(cmp, Some(x), rest(z)),
+  h: Heap(A),
+  o: Option(A),
+  hx: Heap::above(cmp, o, x),
+  hh: Heap::ok(cmp, o, h)
+): Heap::ok(cmp, o, Heap::merge_into(cmp, x, l, rest, h)) {
+  match h {
+    HeapLeaf => Heap::make_ok(cmp, o, x, l, rest(HeapLeaf), hx, hl, hr(HeapLeaf, Trivial))
+    HeapNode(k, y, yl, yr) => Ordering::cases(
+      (c: Ordering) => Heap::ok(cmp, o, ⊢ Heap(A) from match c {
+        Less => Heap::make(x, l, rest(HeapNode(k, y, yl, yr)))
+        Equal => Heap::make(x, l, rest(HeapNode(k, y, yl, yr)))
+        Greater => Heap::make(y, yl, Heap::merge_into(cmp, x, l, rest, yr))
+      }),
+      cmp(x, y),
+      (
+        e: cmp(x, y) = Less
+      ) => Heap::make_ok(
+        cmp,
+        o,
+        x,
+        l,
+        rest(HeapNode(k, y, yl, yr)),
+        hx,
+        hl,
+        hr(
+          HeapNode(k, y, yl, yr),
+          Heap::ok_lower(cmp, x, k, y, yl, yr, sort_le_of_less(cmp, x, y, e), And::right(hh))
+        )
+      ),
+      (
+        e: cmp(x, y) = Equal
+      ) => Heap::make_ok(
+        cmp,
+        o,
+        x,
+        l,
+        rest(HeapNode(k, y, yl, yr)),
+        hx,
+        hl,
+        hr(
+          HeapNode(k, y, yl, yr),
+          Heap::ok_lower(
+            cmp,
+            x,
+            k,
+            y,
+            yl,
+            yr,
+            (f: cmp(x, y) = Greater) => equal_ne_greater(Eq::trans(Eq::sym(e), f)),
+            And::right(hh)
+          )
+        )
+      ),
+      (
+        e: cmp(x, y) = Greater
+      ) => Heap::make_ok(
+        cmp,
+        o,
+        y,
+        yl,
+        Heap::merge_into(cmp, x, l, rest, yr),
+        And::left(hh),
+        And::left(And::right(hh)),
+        Heap::merge_into_ok(
+          cmp,
+          w,
+          x,
+          l,
+          rest,
+          hl,
+          hr,
+          yr,
+          Some(y),
+          sort_le_total(cmp, w, x, y, e),
+          And::right(And::right(hh))
+        )
+      )
+    )
+  }
+}
+
+pub theorem Heap::merge_ok<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  a: Heap(A),
+  o: Option(A),
+  ha: Heap::ok(cmp, o, a),
+  b: Heap(A),
+  hb: Heap::ok(cmp, o, b)
+): Heap::ok(cmp, o, Heap::merge(cmp, a, b)) {
+  match a {
+    HeapLeaf => hb
+    HeapNode(k, x, l, r) => Heap::merge_into_ok(
+      cmp,
+      w,
+      x,
+      l,
+      (z: Heap(A)) => Heap::merge(cmp, r, z),
+      And::left(And::right(ha)),
+      (z: Heap(A)) => (hz: Heap::ok(cmp, Some(x), z)) => Heap::merge_ok(
+        cmp,
+        w,
+        r,
+        Some(x),
+        And::right(And::right(ha)),
+        z,
+        hz
+      ),
+      b,
+      o,
+      And::left(ha),
+      hb
+    )
+  }
+}
+
+pub theorem Heap::new_ordered<A: Type>(cmp: (A, A) -> Ordering): Heap::ordered(cmp, Heap::new()) {
+  Trivial
+}
+
+pub theorem Heap::merge_ordered<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  a: Heap(A),
+  b: Heap(A),
+  ha: Heap::ordered(cmp, a),
+  hb: Heap::ordered(cmp, b)
+): Heap::ordered(cmp, Heap::merge(cmp, a, b)) {
+  Heap::merge_ok(cmp, w, a, None, ha, b, hb)
+}
+
+pub theorem Heap::push_ordered<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  h: Heap(A),
+  x: A,
+  ok: Heap::ordered(cmp, h)
+): Heap::ordered(cmp, Heap::push(cmp, h, x)) {
+  Heap::merge_ok(
+    cmp,
+    w,
+    HeapNode(1, x, HeapLeaf, HeapLeaf),
+    None,
+    AndIntro(Trivial, AndIntro(Trivial, Trivial)),
+    h,
+    ok
+  )
+}
+
+// A pop answers an element that no element left is before.
+pub theorem Heap::pop_least<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  h: Heap(A),
+  ok: Heap::ordered(cmp, h)
+): Heap::popped_ok(cmp, Heap::pop(cmp, h)) {
+  match h {
+    HeapLeaf => Trivial
+    HeapNode(k, x, l, r) => Heap::merge_ok(
+      cmp,
+      w,
+      l,
+      Some(x),
+      And::left(And::right(ok)),
+      r,
+      And::right(And::right(ok))
+    )
+  }
+}
+
+pub theorem Heap::pop_ordered<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  x: A,
+  h: Heap(A),
+  ok: Heap::ok(cmp, Some(x), h)
+): Heap::ordered(cmp, h) {
+  Heap::ok_weaken(cmp, w, h, None, x, Trivial, ok)
+}
+
+pub theorem Heap::all_le_append<A: Type>(
+  cmp: (A, A) -> Ordering,
+  a: A,
+  l: List(A),
+  m: List(A),
+  hl: sort_all_le(cmp, a, l),
+  hm: sort_all_le(cmp, a, m)
+): sort_all_le(cmp, a, List::append(l, m)) {
+  match l {
+    Nil => hm
+    Cons(y, t) => AndIntro(And::left(hl), Heap::all_le_append(cmp, a, t, m, And::right(hl), hm))
+  }
+}
+
+pub theorem Heap::ok_all_le<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  h: Heap(A),
+  a: A,
+  ok: Heap::ok(cmp, Some(a), h)
+): sort_all_le(cmp, a, Heap::to_list(h)) {
+  match h {
+    HeapLeaf => Trivial
+    HeapNode(k, x, l, r) => AndIntro(
+      And::left(ok),
+      Heap::all_le_append(
+        cmp,
+        a,
+        Heap::to_list(l),
+        Heap::to_list(r),
+        sort_all_le_trans(
+          cmp,
+          w,
+          a,
+          x,
+          Heap::to_list(l),
+          And::left(ok),
+          Heap::ok_all_le(cmp, w, l, x, And::left(And::right(ok)))
+        ),
+        sort_all_le_trans(
+          cmp,
+          w,
+          a,
+          x,
+          Heap::to_list(r),
+          And::left(ok),
+          Heap::ok_all_le(cmp, w, r, x, And::right(And::right(ok)))
+        )
+      )
+    )
+  }
+}

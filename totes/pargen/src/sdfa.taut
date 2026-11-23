@@ -9,8 +9,8 @@ import "cc.taut"
 import "list.taut"
 import "nfa.taut"
 import "rx.taut"
-import std::Text
-import std::prelude::Affine
+import std::text
+import std::indexed_map { IndexedMap }
 
 pub(open) struct SdTr { cc: u64, to: u64 }
 
@@ -27,7 +27,7 @@ pub fn sd_has_leaf(leaves: List(RHir), h: RHir): Bool {
 
 // The leaves of the transitions of the NFA and of the NFAs of the lookaheads
 // of its patterns, once each, added to the leaves given.
-pub fn sd_leaves(a: Nfa, found: List(RHir)): List(RHir) {
+pub fn sd_leaves(a: Nfa, found: List(RHir)): List(RHir) ! {div, fail(Text), overflow} {
   var out := found
   var states := a.states
   var running := true
@@ -75,7 +75,7 @@ pub fn sd_ids_of(leaves: List(RHir), ids: List(List(u64)), h: RHir): List(u64) {
   }
 }
 
-pub fn sd_convert_trans(ts: List(NTr), cc: CcOut): List(NTr) {
+pub fn sd_convert_trans(ts: List(NTr), cc: CcOut): List(NTr) ! {div} {
   var out: List(NTr) := Nil
   var rest := ts
   var running := true
@@ -109,7 +109,7 @@ pub fn sd_convert_trans(ts: List(NTr), cc: CcOut): List(NTr) {
   nf_rev_trans(out)
 }
 
-pub fn nf_rev_trans(xs: List(NTr)): List(NTr) {
+pub fn nf_rev_trans(xs: List(NTr)): List(NTr) ! {div} {
   var out: List(NTr) := Nil
   var rest := xs
   var running := true
@@ -128,7 +128,7 @@ pub fn nf_rev_trans(xs: List(NTr)): List(NTr) {
 }
 
 // The NFA with its transitions on the disjoint classes of `cc`.
-pub fn sd_convert(a: Nfa, cc: CcOut): Nfa {
+pub fn sd_convert(a: Nfa, cc: CcOut): Nfa ! {div} {
   var out: List(NSt) := Nil
   var rest := a.states
   var running := true
@@ -196,31 +196,31 @@ pub fn sd_add_pat(xs: List(SPat), p: SPat): List(SPat) {
   sd_truncate(sd_insert_pat(xs, p))
 }
 
-pub fn sd_nst_get(&v: Vec(NSt), i: u64): NSt {
-  let &x := Vec::index(&v, i)
+pub fn sd_nst_get(v: &Vec(NSt), i: u64): NSt ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn sd_list_get(&v: Vec(List(u64)), i: u64): List(u64) {
-  let &x := Vec::index(&v, i)
+pub fn sd_list_get(v: &Vec(List(u64)), i: u64): List(u64) ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn sd_bool_get(&v: Vec(Bool), i: u64): Bool {
-  let &x := Vec::index(&v, i)
+pub fn sd_bool_get(v: &Vec(Bool), i: u64): Bool ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn sd_bool_set(&mut v: Vec(Bool), i: u64): Unit {
+pub fn sd_bool_set(v: &mut Vec(Bool), i: u64): Unit {
   match Vec::get_mut(&mut v, i) {
-    Some(slot) => {
-      slot := true
+    Some(^slot) => {
+      *slot := true
     }
     None => #()
   }
 }
 
-pub fn sd_vec_of_states(xs: List(NSt)): Vec(NSt) {
+pub fn sd_vec_of_states(xs: List(NSt)): Vec(NSt) ! {div} {
   var out: Vec(NSt) := Vec::new()
   var rest := xs
   var running := true
@@ -239,7 +239,7 @@ pub fn sd_vec_of_states(xs: List(NSt)): Vec(NSt) {
 }
 
 // The states reached from `s` by empty transitions, sorted.
-pub fn sd_closure(&states: Vec(NSt), s: u64, n: u64): List(u64) {
+pub fn sd_closure(states: &Vec(NSt), s: u64, n: u64): List(u64) ! {div, out_of_bounds, overflow} {
   var seen: Vec(Bool) := Vec::new()
   var i: u64 := 0
   while i < n {
@@ -286,13 +286,13 @@ pub fn sd_closure(&states: Vec(NSt), s: u64, n: u64): List(u64) {
 pub fn true_stack(s: List(u64)): Bool {
   match s {
     Nil => false
-    Cons(x, rest) => true
+    Cons(^x, ^rest) => true
   }
 }
 
 // The pairs of a class and a target, packed, of the non-epsilon transitions
 // of the states of a subset.
-pub fn sd_moves(&states: Vec(NSt), subset: List(u64)): List(u64) {
+pub fn sd_moves(states: &Vec(NSt), subset: List(u64)): List(u64) ! {div, out_of_bounds, overflow} {
   var out: List(u64) := Nil
   var rest := subset
   var running := true
@@ -331,7 +331,7 @@ pub fn sd_concat_ids(a: List(u64), b: List(u64)): List(u64) {
   }
 }
 
-pub fn sd_accepts(&states: Vec(NSt), subset: List(u64)): List(SPat) {
+pub fn sd_accepts(states: &Vec(NSt), subset: List(u64)): List(SPat) ! {div, out_of_bounds} {
   var out: List(SPat) := Nil
   var rest := subset
   var running := true
@@ -354,17 +354,17 @@ pub fn sd_accepts(&states: Vec(NSt), subset: List(u64)): List(SPat) {
   out
 }
 
-pub fn sd_closure_get(&v: Vec(List(u64)), i: u64): List(u64) {
-  let &x := Vec::index(&v, i)
+pub fn sd_closure_get(v: &Vec(List(u64)), i: u64): List(u64) ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn sd_trans_get(&v: Vec(List(SdTr)), i: u64): List(SdTr) {
-  let &x := Vec::index(&v, i)
+pub fn sd_trans_get(v: &Vec(List(SdTr)), i: u64): List(SdTr) ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn sd_rev_trs(xs: List(SdTr)): List(SdTr) {
+pub fn sd_rev_trs(xs: List(SdTr)): List(SdTr) ! {div} {
   var out: List(SdTr) := Nil
   var rest := xs
   var running := true
@@ -382,7 +382,7 @@ pub fn sd_rev_trs(xs: List(SdTr)): List(SdTr) {
   out
 }
 
-pub fn sd_rev_sts(xs: List(SdSt)): List(SdSt) {
+pub fn sd_rev_sts(xs: List(SdSt)): List(SdSt) ! {div} {
   var out: List(SdSt) := Nil
   var rest := xs
   var running := true
@@ -400,7 +400,7 @@ pub fn sd_rev_sts(xs: List(SdSt)): List(SdSt) {
   out
 }
 
-pub fn sd_subset(a: Nfa): List(SdSt) {
+pub fn sd_subset(a: Nfa): List(SdSt) ! {div, out_of_bounds, overflow} {
   let states := sd_vec_of_states(a.states)
   var closures: Vec(List(u64)) := Vec::new()
   var i: u64 := 0
@@ -410,10 +410,10 @@ pub fn sd_subset(a: Nfa): List(SdSt) {
   }
   var subsets: Vec(List(u64)) := Vec::new()
   var trans: Vec(List(SdTr)) := Vec::new()
-  var ids := HashMap::new()
+  var ids := IndexedMap::new()
   let first := sd_closure_get(&closures, a.start)
   Vec::push(&mut subsets, first)
-  HashMap::insert(&mut ids, cc_key(first), 0)
+  IndexedMap::insert(&mut ids, cc_key(first), 0)
   var q: u64 := 0
   while q < Vec::len(&subsets) {
     let subset := sd_list_get(&subsets, q)
@@ -422,7 +422,7 @@ pub fn sd_subset(a: Nfa): List(SdSt) {
     while sd_some(moves) {
       match moves {
         Nil => #()
-        Cons(m, rest) => {
+        Cons(m, ^rest) => {
           let cc := div(m, 4294967296)
           var combined: List(u64) := Nil
           var more := moves
@@ -444,7 +444,7 @@ pub fn sd_subset(a: Nfa): List(SdSt) {
           let target := cc_unique(combined)
           let key := cc_key(target)
           var found: Option(u64) := None
-          match HashMap::get(&ids, key) {
+          match IndexedMap::get(&ids, key) {
             Some(g) => {
               found := Some(g + 0)
             }
@@ -455,7 +455,7 @@ pub fn sd_subset(a: Nfa): List(SdSt) {
             None => {
               let g := Vec::len(&subsets)
               Vec::push(&mut subsets, target)
-              HashMap::insert(&mut ids, key, g)
+              IndexedMap::insert(&mut ids, key, g)
               g
             }
           }
@@ -481,11 +481,11 @@ pub fn sd_subset(a: Nfa): List(SdSt) {
 pub fn sd_some(xs: List(u64)): Bool {
   match xs {
     Nil => false
-    Cons(x, rest) => true
+    Cons(^x, ^rest) => true
   }
 }
 
-pub fn sd_hex(n: u64): Text {
+pub fn sd_hex(n: u64): Text ! {div, overflow} {
   if n < 16 {
     lk_slice("0123456789abcdef", n, n + 1)
   } else {
@@ -494,7 +494,7 @@ pub fn sd_hex(n: u64): Text {
 }
 
 // `{:?}` of a string: quoted, with the escapes Rust writes.
-pub fn sd_debug_text(t: Text): Text {
+pub fn sd_debug_text(t: Text): Text ! {div, overflow} {
   var b := Buf::new()
   Buf::push(&mut b, &"\"")
   var at: u64 := 0
@@ -531,7 +531,7 @@ pub fn sd_debug_text(t: Text): Text {
 
 // A pattern written out with all its fields: the text of what a state
 // accepts, by which `sd_minimize` groups and orders the accepting states.
-pub fn sd_debug_pat(p: SPat): Text {
+pub fn sd_debug_pat(p: SPat): Text ! {div, overflow} {
   Text::concat_all(
     Cons(
       "Pattern { pattern: ",
@@ -567,7 +567,7 @@ pub fn sd_debug_pat(p: SPat): Text {
   )
 }
 
-pub fn sd_debug_pats(xs: List(SPat)): Text {
+pub fn sd_debug_pats(xs: List(SPat)): Text ! {div, overflow} {
   var b := Buf::new()
   Buf::push(&mut b, &"[")
   var first := true
@@ -592,7 +592,7 @@ pub fn sd_debug_pats(xs: List(SPat)): Text {
   Text::of(b)
 }
 
-pub fn sd_insert_text(xs: List(Text), t: Text): List(Text) ! {Div} {
+pub fn sd_insert_text(xs: List(Text), t: Text): List(Text) ! {div} {
   match xs {
     Nil => Cons(t, Nil)
     Cons(x, rest) => if Text::compare(
@@ -602,20 +602,20 @@ pub fn sd_insert_text(xs: List(Text), t: Text): List(Text) ! {Div} {
   }
 }
 
-pub fn sd_acc_get(&v: Vec(SdSt), i: u64): SdSt {
-  let &x := Vec::index(&v, i)
+pub fn sd_acc_get(v: &Vec(SdSt), i: u64): SdSt ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn sd_nat_get(&v: Vec(u64), i: u64): u64 {
-  let &x := Vec::index(&v, i)
+pub fn sd_nat_get(v: &Vec(u64), i: u64): u64 ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn sd_nat_set(&mut v: Vec(u64), i: u64, x: u64): Unit {
+pub fn sd_nat_set(v: &mut Vec(u64), i: u64, x: u64): Unit {
   match Vec::get_mut(&mut v, i) {
-    Some(slot) => {
-      slot := x
+    Some(^slot) => {
+      *slot := x
     }
     None => #()
   }
@@ -628,7 +628,7 @@ pub fn sd_cmp_sig(a: List(u64), b: List(u64)): i64 {
   match a {
     Nil => match b {
       Nil => 0
-      Cons(y, ys) => -1
+      Cons(^y, ^ys) => -1
     }
     Cons(x, xs) => match b {
       Nil => 1
@@ -649,7 +649,7 @@ pub fn sd_insert_sig(xs: List(SdSig), x: SdSig): List(SdSig) {
   }
 }
 
-pub fn sd_signature(&states: Vec(SdSt), &gid: Vec(u64), s: u64): List(u64) {
+pub fn sd_signature(states: &Vec(SdSt), gid: &Vec(u64), s: u64): List(u64) ! {div, out_of_bounds} {
   var out: List(u64) := Nil
   var ts := sd_acc_get(&states, s).trans
   var running := true
@@ -667,12 +667,12 @@ pub fn sd_signature(&states: Vec(SdSt), &gid: Vec(u64), s: u64): List(u64) {
   text_u64_reverse(out)
 }
 
-pub fn sd_groups_get(&v: Vec(List(u64)), i: u64): List(u64) {
-  let &x := Vec::index(&v, i)
+pub fn sd_groups_get(v: &Vec(List(u64)), i: u64): List(u64) ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
+pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) ! {div, out_of_bounds, overflow} {
   var states: Vec(SdSt) := Vec::new()
   var rest0 := dfa
   var run0 := true
@@ -691,7 +691,7 @@ pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
   // The initial partition: the states that accept nothing, then the ones that
   // accept the same, by the text of what they accept.
   var keys: Vec(Text) := Vec::new()
-  var names := HashMap::new()
+  var names := IndexedMap::new()
   var sorted: List(Text) := Nil
   var i: u64 := 0
   while i < n {
@@ -700,25 +700,25 @@ pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
       Nil => {
         Vec::push(&mut keys, "")
       }
-      Cons(p, more) => {
+      Cons(^p, ^more) => {
         let k := sd_debug_pats(acc)
         Vec::push(&mut keys, k)
         var known := false
-        match HashMap::get(&names, k) {
-          Some(x) => {
+        match IndexedMap::get(&names, k) {
+          Some(^x) => {
             known := true
           }
           None => #()
         }
         if not(known) {
-          HashMap::insert(&mut names, k, 0)
+          IndexedMap::insert(&mut names, k, 0)
           sorted := sd_insert_text(sorted, k)
         }
       }
     }
     i := i + 1
   }
-  var index := HashMap::new()
+  var index := IndexedMap::new()
   var next: u64 := 1
   var ks := sorted
   var run1 := true
@@ -728,7 +728,7 @@ pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
         run1 := false
       }
       Cons(k, more) => {
-        HashMap::insert(&mut index, k, next)
+        IndexedMap::insert(&mut index, k, next)
         next := next + 1
         ks := more
       }
@@ -746,7 +746,7 @@ pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
     var id: u64 := 0
     let k := sd_keys_get(&keys, j)
     if std::prelude::Text::len(k) > 0 {
-      match HashMap::get(&index, k) {
+      match IndexedMap::get(&index, k) {
         Some(x) => {
           id := x + 0
         }
@@ -763,8 +763,8 @@ pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
     let id := sd_nat_get(&gid, m)
     let old := sd_groups_get(&groups, id)
     match Vec::get_mut(&mut groups, id) {
-      Some(slot) => {
-        slot := Cons(m, old)
+      Some(^slot) => {
+        *slot := Cons(m, old)
       }
       None => #()
     }
@@ -790,7 +790,7 @@ pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
             Vec::push(&mut next_groups, members)
             sd_nat_set(&mut next_gid, only, id)
           }
-          more => {
+          ^more => {
             var sigs: List(SdSig) := Nil
             var ms := members
             var walking := true
@@ -915,7 +915,7 @@ pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
       Cons(gi, more) => {
         match sd_groups_get(&groups, gi) {
           Nil => #()
-          Cons(rep, tail) => {
+          Cons(rep, ^tail) => {
             let st := sd_acc_get(&states, rep)
             var ts: List(SdTr) := Nil
             var walking := st.trans
@@ -944,7 +944,7 @@ pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
   sd_rev_sts(out)
 }
 
-pub fn sd_keys_get(&v: Vec(Text), i: u64): Text {
-  let &x := Vec::index(&v, i)
+pub fn sd_keys_get(v: &Vec(Text), i: u64): Text ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }

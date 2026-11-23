@@ -1,0 +1,1008 @@
+import "surface.taut"
+import "../../identity/src/identity.taut"
+import std::base
+
+// A program with each `(e: T)` read as `#ascribe(T, e)`: for a checker that
+// takes an ascription as that application. The walk is the one `occurrence.taut` makes, with
+// the occurrences left as they are; `path` is only passed along. `keep` says
+// whether the written type is kept: without it, `(e: T)` and `#ascribe(T, e)`
+// are read as `e`, for an analysis that reads no types (the rows).
+pub fn surface_unascribe_child(path: List(Nat), field: Nat): List(Nat) {
+  List::append(path, Cons(field, Nil))
+}
+
+mutual {
+  pub fn surface_unascribe_list_option_surfaceterm_from(
+    value: List(Option(SurfaceTerm)),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(Option(SurfaceTerm)) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_option_surfaceterm(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_option_surfaceterm_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacearm_from(
+    value: List(SurfaceArm),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceArm) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacearm(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacearm_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfaceconstraint_from(
+    value: List(SurfaceConstraint),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceConstraint) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfaceconstraint(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfaceconstraint_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacector_from(
+    value: List(SurfaceCtor),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceCtor) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacector(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacector_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+
+
+
+  pub fn surface_unascribe_list_surfacedatactor_from(
+    value: List(SurfaceDataCtor),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceDataCtor) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacedatactor(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacedatactor_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacedatafield_from(
+    value: List(SurfaceDataField),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceDataField) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacedatafield(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacedatafield_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacefield_from(
+    value: List(SurfaceField),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceField) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacefield(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacefield_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacefn_from(
+    value: List(SurfaceFn),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceFn) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacefn(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacefn_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacehandler_from(
+    value: List(SurfaceHandler),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceHandler) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacehandler(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacehandler_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacelaw_from(
+    value: List(SurfaceLaw),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceLaw) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacelaw(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacelaw_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacenamed_from(
+    value: List(SurfaceNamed),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceNamed) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacenamed(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacenamed_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfaceparam_from(
+    value: List(SurfaceParam),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceParam) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfaceparam(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfaceparam_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacepattern_from(
+    value: List(SurfacePattern),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfacePattern) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacepattern(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacepattern_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacepatternfield_from(
+    value: List(SurfacePatternField),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfacePatternField) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacepatternfield(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacepatternfield_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacesteparm_from(
+    value: List(SurfaceStepArm),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceStepArm) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacesteparm(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacesteparm_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfacestmt_from(
+    value: List(SurfaceStmt),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceStmt) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfacestmt(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfacestmt_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_list_surfaceterm_from(
+    value: List(SurfaceTerm),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat
+  ): List(SurfaceTerm) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_unascribe_surfaceterm(item, surface_unascribe_child(path, index), keep),
+        surface_unascribe_list_surfaceterm_from(rest, path, keep, index + 1)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_option_surfaceterm(
+    value: Option(SurfaceTerm),
+    path: List(Nat),
+    keep: Bool
+  ): Option(SurfaceTerm) {
+    match value {
+      None => None
+      Some(item) => Some(surface_unascribe_surfaceterm(item, surface_unascribe_child(path, 0), keep))
+    }
+  }
+
+  pub fn surface_unascribe_surfacearm(value: SurfaceArm, path: List(Nat), keep: Bool): SurfaceArm {
+    match value {
+      SurfaceArmMk(slot_pattern, slot_guard, slot_goal, slot_body) => SurfaceArmMk(
+        surface_unascribe_surfacepattern(slot_pattern, surface_unascribe_child(path, 0), keep),
+        surface_unascribe_option_surfaceterm(slot_guard, surface_unascribe_child(path, 1), keep),
+        surface_unascribe_option_surfaceterm(slot_goal, surface_unascribe_child(path, 2), keep),
+        surface_unascribe_surfaceterm(slot_body, surface_unascribe_child(path, 3), keep)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfaceclass(
+    value: SurfaceClass,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceClass {
+    match value {
+      SurfaceClassMk(slot_name, slot_param, slot_arity, slot_bound, slot_methods, slot_laws, slot_start, slot_end, slot_parameters, slot_inductive, slot_parents, slot_unused_parameters, c_vis) => SurfaceClassMk(slot_name, slot_param, slot_arity, slot_bound, surface_unascribe_list_surfacefn_from(slot_methods, surface_unascribe_child(path, 4), keep, 0), surface_unascribe_list_surfacelaw_from(slot_laws, surface_unascribe_child(path, 5), keep, 0), slot_start, slot_end, surface_unascribe_list_surfacenamed_from(slot_parameters, surface_unascribe_child(path, 8), keep, 0), slot_inductive, surface_unascribe_list_surfaceconstraint_from(slot_parents, surface_unascribe_child(path, 10), keep, 0), slot_unused_parameters, c_vis)
+    }
+  }
+
+  pub fn surface_unascribe_surfaceconstraint(
+    value: SurfaceConstraint,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceConstraint {
+    match value {
+      SurfaceConstraintMk(slot_class, slot_ty, slot_start, slot_end, slot_arguments) => SurfaceConstraintMk(
+        slot_class,
+        surface_unascribe_surfaceterm(slot_ty, surface_unascribe_child(path, 1), keep),
+        slot_start,
+        slot_end,
+        surface_unascribe_list_surfaceterm_from(slot_arguments, surface_unascribe_child(path, 4), keep, 0)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfacector(value: SurfaceCtor, path: List(Nat), keep: Bool): SurfaceCtor {
+    match value {
+      SurfaceCtorMk(slot_name, slot_implicit, slot_params, slot_result) => SurfaceCtorMk(
+        slot_name,
+        slot_implicit,
+        surface_unascribe_list_surfacenamed_from(slot_params, surface_unascribe_child(path, 2), keep, 0),
+        surface_unascribe_surfaceterm(slot_result, surface_unascribe_child(path, 3), keep)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfacedata(value: SurfaceData, path: List(Nat), keep: Bool): SurfaceData {
+    match value {
+      SurfaceDataMk(slot_kind, slot_name, slot_generics, slot_constructors, slot_start, slot_end, slot_coerce, slot_coerce_field, slot_visibility, slot_unused_generics, slot_rows) => SurfaceDataMk(slot_kind, slot_name, slot_generics, surface_unascribe_list_surfacedatactor_from(
+          slot_constructors,
+          surface_unascribe_child(path, 3),
+          keep,
+          0
+        ), slot_start, slot_end, slot_coerce, slot_coerce_field, slot_visibility, slot_unused_generics, slot_rows)
+    }
+  }
+
+  pub fn surface_unascribe_surfacedatactor(
+    value: SurfaceDataCtor,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceDataCtor {
+    match value {
+      SurfaceDataCtorMk(slot_name, slot_fields) => SurfaceDataCtorMk(
+        slot_name,
+        surface_unascribe_list_surfacedatafield_from(slot_fields, surface_unascribe_child(path, 1), keep, 0)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfacedatafield(
+    value: SurfaceDataField,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceDataField {
+    match value {
+      SurfaceDataFieldMk(slot_name, slot_ty) => SurfaceDataFieldMk(
+        slot_name,
+        surface_unascribe_surfaceterm(slot_ty, surface_unascribe_child(path, 1), keep)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfaceeffect(
+    value: SurfaceEffect,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceEffect {
+    match value {
+      SurfaceEffectMk(slot_name, slot_generics, slot_params, slot_result, slot_resume, slot_start, slot_end, slot_set, slot_unused_generics, slot_bounds, e_vis, slot_rows) => SurfaceEffectMk(slot_name, slot_generics, surface_unascribe_list_option_surfaceterm_from(
+          slot_params,
+          surface_unascribe_child(path, 2),
+          keep,
+          0
+        ), surface_unascribe_option_surfaceterm(slot_result, surface_unascribe_child(path, 3), keep), slot_resume, slot_start, slot_end, slot_set, slot_unused_generics, slot_bounds, e_vis, slot_rows)
+    }
+  }
+
+  pub fn surface_unascribe_surfacefield(
+    value: SurfaceField,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceField {
+    match value {
+      SurfaceFieldMk(slot_name, slot_value) => SurfaceFieldMk(
+        slot_name,
+        surface_unascribe_surfaceterm(slot_value, surface_unascribe_child(path, 1), keep)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfacefn(value: SurfaceFn, path: List(Nat), keep: Bool): SurfaceFn {
+    match value {
+      SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, slot_param_types, slot_result, slot_effects, slot_wheres, slot_start, slot_end, slot_body, slot_lends, slot_generic_types, slot_bound_starts, slot_visibility, slot_row_hole, slot_unused, slot_unused_generics, slot_unused_params) => SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, surface_unascribe_list_option_surfaceterm_from(
+          slot_param_types,
+          surface_unascribe_child(path, 5),
+          keep,
+          0
+        ), surface_unascribe_option_surfaceterm(slot_result, surface_unascribe_child(path, 6), keep), slot_effects, surface_unascribe_list_surfaceconstraint_from(
+          slot_wheres,
+          surface_unascribe_child(path, 8),
+          keep,
+          0
+        ), slot_start, slot_end, surface_unascribe_surfaceterm(slot_body, surface_unascribe_child(path, 11), keep), slot_lends, surface_unascribe_list_surfaceterm_from(
+          slot_generic_types,
+          surface_unascribe_child(path, 12),
+          keep,
+          0
+        ), slot_bound_starts, slot_visibility, slot_row_hole, slot_unused, slot_unused_generics, slot_unused_params)
+    }
+    }
+
+  pub fn surface_unascribe_surfacehandler(
+    value: SurfaceHandler,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceHandler {
+    match value {
+      HdReturn(slot_pattern, slot_body) => HdReturn(
+        surface_unascribe_surfacepattern(slot_pattern, surface_unascribe_child(path, 0), keep),
+        surface_unascribe_surfaceterm(slot_body, surface_unascribe_child(path, 1), keep)
+      )
+      HdOperation(slot_op, slot_binds, slot_types, slot_patterns, slot_resume, slot_cont_unused, slot_guard, slot_body) => HdOperation(
+        slot_op,
+        slot_binds,
+        surface_unascribe_list_surfaceterm_from(slot_types, surface_unascribe_child(path, 2), keep, 0),
+        surface_unascribe_list_surfacepattern_from(
+          slot_patterns,
+          surface_unascribe_child(path, 3),
+          keep,
+          0
+        ),
+        slot_resume,
+        slot_cont_unused,
+        surface_unascribe_option_surfaceterm(slot_guard, surface_unascribe_child(path, 6), keep),
+        surface_unascribe_surfaceterm(slot_body, surface_unascribe_child(path, 7), keep)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfaceinductive(
+    value: SurfaceInductive,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceInductive {
+    match value {
+      SurfaceInductiveMk(slot_name, slot_params, slot_sort, slot_constructors, slot_start, slot_end, slot_visibility) => SurfaceInductiveMk(
+        slot_name,
+        surface_unascribe_list_surfacenamed_from(slot_params, surface_unascribe_child(path, 1), keep, 0),
+        surface_unascribe_surfaceterm(slot_sort, surface_unascribe_child(path, 2), keep),
+        surface_unascribe_list_surfacector_from(
+          slot_constructors,
+          surface_unascribe_child(path, 3),
+          keep,
+          0
+        ),
+        slot_start,
+        slot_end,
+        slot_visibility
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfaceinstance(
+    value: SurfaceInstance,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceInstance {
+    match value {
+      SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, slot_head, slot_wheres, slot_methods, slot_laws, slot_start, slot_end, slot_generic_types, slot_arguments, slot_infer_from, slot_unused_generics) => SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, surface_unascribe_surfaceterm(slot_head, surface_unascribe_child(path, 3), keep), surface_unascribe_list_surfaceconstraint_from(
+          slot_wheres,
+          surface_unascribe_child(path, 4),
+          keep,
+          0
+        ), surface_unascribe_list_surfacefn_from(slot_methods, surface_unascribe_child(path, 5), keep, 0), surface_unascribe_list_surfacelaw_from(slot_laws, surface_unascribe_child(path, 6), keep, 0), slot_start, slot_end, surface_unascribe_list_surfaceterm_from(
+          slot_generic_types,
+          surface_unascribe_child(path, 9),
+          keep,
+          0
+        ), surface_unascribe_list_surfaceterm_from(slot_arguments, surface_unascribe_child(path, 10), keep, 0), slot_infer_from, slot_unused_generics)
+    }
+  }
+
+  pub fn surface_unascribe_surfacekind(value: SurfaceKind, path: List(Nat), keep: Bool): SurfaceKind {
+    match value {
+      SkVar(slot_name) => SkVar(slot_name)
+      SkNat(slot_digits) => SkNat(slot_digits)
+      SkFloat(slot_digits) => SkFloat(slot_digits)
+      SkRow(slot_effects) => SkRow(slot_effects)
+      SkText(slot_value) => SkText(slot_value)
+      SkBool(slot_value) => SkBool(slot_value)
+      SkApp(slot_head, slot_args) => SkApp(
+        surface_unascribe_surfaceterm(slot_head, surface_unascribe_child(path, 0), keep),
+        surface_unascribe_list_surfaceterm_from(slot_args, surface_unascribe_child(path, 1), keep, 0)
+      )
+      SkPi(slot_params, slot_result, slot_effects) => SkPi(
+        surface_unascribe_list_surfaceparam_from(slot_params, surface_unascribe_child(path, 0), keep, 0),
+        surface_unascribe_surfaceterm(slot_result, surface_unascribe_child(path, 1), keep),
+        slot_effects
+      )
+      SkExists(slot_binder, slot_domain, slot_body, unused) => SkExists(slot_binder, surface_unascribe_surfaceterm(slot_domain, surface_unascribe_child(path, 1), keep), surface_unascribe_surfaceterm(slot_body, surface_unascribe_child(path, 2), keep), unused)
+      SkLam(slot_params, slot_body, slot_types, unused) => SkLam(
+        slot_params,
+        surface_unascribe_surfaceterm(slot_body, surface_unascribe_child(path, 1), keep),
+        slot_types,
+        unused
+      )
+      SkUnion(slot_parts) => SkUnion(
+        surface_unascribe_list_surfaceterm_from(slot_parts, surface_unascribe_child(path, 0), keep, 0)
+      )
+      SkTagged(slot_tag, slot_value) => SkTagged(
+        slot_tag,
+        surface_unascribe_surfaceterm(slot_value, surface_unascribe_child(path, 1), keep)
+      )
+      SkIf(slot_cond, slot_then, slot_otherwise) => SkIf(
+        surface_unascribe_surfaceterm(slot_cond, surface_unascribe_child(path, 0), keep),
+        surface_unascribe_surfaceterm(slot_then, surface_unascribe_child(path, 1), keep),
+        surface_unascribe_option_surfaceterm(slot_otherwise, surface_unascribe_child(path, 2), keep)
+      )
+      SkField(slot_value, slot_name) => SkField(
+        surface_unascribe_surfaceterm(slot_value, surface_unascribe_child(path, 0), keep),
+        slot_name
+      )
+      SkBlock(slot_stmts) => SkBlock(
+        surface_unascribe_list_surfacestmt_from(slot_stmts, surface_unascribe_child(path, 0), keep, 0)
+      )
+      SkPerform(slot_op, slot_args) => SkPerform(
+        slot_op,
+        surface_unascribe_list_surfaceterm_from(slot_args, surface_unascribe_child(path, 1), keep, 0)
+      )
+      SkHandle(slot_body, slot_handlers) => SkHandle(
+        surface_unascribe_surfaceterm(slot_body, surface_unascribe_child(path, 0), keep),
+        surface_unascribe_list_surfacehandler_from(slot_handlers, surface_unascribe_child(path, 1), keep, 0)
+      )
+      SkBudget(slot_memory, slot_amount, slot_body) => SkBudget(
+        slot_memory,
+        surface_unascribe_surfaceterm(slot_amount, surface_unascribe_child(path, 1), keep),
+        surface_unascribe_surfaceterm(slot_body, surface_unascribe_child(path, 2), keep)
+      )
+      SkMatch(slot_scrutinee, slot_motive, slot_arms, slot_binder, slot_binder_unused) => SkMatch(
+        surface_unascribe_surfaceterm(slot_scrutinee, surface_unascribe_child(path, 0), keep),
+        surface_unascribe_option_surfaceterm(slot_motive, surface_unascribe_child(path, 1), keep),
+        surface_unascribe_list_surfacearm_from(slot_arms, surface_unascribe_child(path, 2), keep, 0),
+        slot_binder,
+        slot_binder_unused
+      )
+      SkHole(slot_name) => SkHole(slot_name)
+      SkRecord(slot_name, slot_fields) => SkRecord(
+        slot_name,
+        surface_unascribe_list_surfacefield_from(slot_fields, surface_unascribe_child(path, 1), keep, 0)
+      )
+      SkBorrow(slot_mutable, slot_mutable_orig, slot_value) => SkBorrow(
+        slot_mutable, slot_mutable_orig,
+        surface_unascribe_surfaceterm(slot_value, surface_unascribe_child(path, 1), keep)
+      )
+      SkFnKind(slot_kind, slot_ty) => SkFnKind(
+        slot_kind,
+        surface_unascribe_surfaceterm(slot_ty, surface_unascribe_child(path, 1), keep)
+      )
+      SkBorrowLam(slot_borrows, slot_lam) => SkBorrowLam(
+        slot_borrows,
+        surface_unascribe_surfaceterm(slot_lam, surface_unascribe_child(path, 1), keep)
+      )
+      SkOther(slot_what) => SkOther(slot_what)
+      SkMacroCall(slot_name, slot_arg) => SkMacroCall(
+        slot_name,
+        surface_unascribe_surfaceterm(slot_arg, surface_unascribe_child(path, 1), keep)
+      )
+      SkQuote(slot_stmts_form, slot_stmts) => SkQuote(
+        slot_stmts_form,
+        surface_unascribe_list_surfacestmt_from(slot_stmts, surface_unascribe_child(path, 1), keep, 0)
+      )
+      SkSplice(slot_value) => SkSplice(
+        surface_unascribe_surfaceterm(slot_value, surface_unascribe_child(path, 0), keep)
+      )
+      SkSyntaxLit(slot_name, slot_body) => SkSyntaxLit(slot_name, slot_body)
+      SkStep(slot_tactic, slot_arg, slot_call_start, slot_call_end, slot_before, slot_arms) => SkStep(
+        slot_tactic,
+        surface_unascribe_surfaceterm(slot_arg, surface_unascribe_child(path, 1), keep),
+        slot_call_start,
+        slot_call_end,
+        surface_unascribe_option_surfaceterm(slot_before, surface_unascribe_child(path, 4), keep),
+        surface_unascribe_list_surfacesteparm_from(slot_arms, surface_unascribe_child(path, 5), keep, 0)
+      )
+      SkAscribe(slot_value, slot_ty) => SkAscribe(
+        surface_unascribe_surfaceterm(slot_value, surface_unascribe_child(path, 0), keep),
+        surface_unascribe_surfaceterm(slot_ty, surface_unascribe_child(path, 1), keep)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfacelaw(value: SurfaceLaw, path: List(Nat), keep: Bool): SurfaceLaw {
+    match value {
+      SurfaceLawMk(slot_name, slot_start, slot_end, slot_theorem) => SurfaceLawMk(
+        slot_name,
+        slot_start,
+        slot_end,
+        surface_unascribe_surfacetheorem(slot_theorem, surface_unascribe_child(path, 3), keep)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfacenamed(
+    value: SurfaceNamed,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceNamed {
+    match value {
+      SurfaceNamedMk(slot_name, slot_ty) => SurfaceNamedMk(
+        slot_name,
+        surface_unascribe_surfaceterm(slot_ty, surface_unascribe_child(path, 1), keep)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfaceparam(
+    value: SurfaceParam,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceParam {
+    match value {
+      SurfaceParamMk(slot_name, slot_ty, unused) => SurfaceParamMk(
+        slot_name,
+        surface_unascribe_surfaceterm(slot_ty, surface_unascribe_child(path, 1), keep),
+        unused
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfacepattern(
+    value: SurfacePattern,
+    path: List(Nat),
+    keep: Bool
+  ): SurfacePattern {
+    match value {
+      PtWild => PtWild
+      PtBind(slot_name, unused) => PtBind(slot_name, unused)
+      PtInt(slot_negative, slot_magnitude) => PtInt(slot_negative, slot_magnitude)
+      PtBool(slot_value) => PtBool(slot_value)
+      PtText(slot_value) => PtText(slot_value)
+      PtCtor(slot_name, slot_args) => PtCtor(
+        slot_name,
+        surface_unascribe_list_surfacepattern_from(slot_args, surface_unascribe_child(path, 1), keep, 0)
+      )
+      PtRecord(slot_name, slot_fields) => PtRecord(
+        slot_name,
+        surface_unascribe_list_surfacepatternfield_from(
+          slot_fields,
+          surface_unascribe_child(path, 1),
+          keep,
+          0
+        )
+      )
+      PtTyped(slot_name, slot_ty, slot_unused) => PtTyped(
+        slot_name,
+        surface_unascribe_surfaceterm(slot_ty, surface_unascribe_child(path, 1), keep),
+        slot_unused
+      )
+      PtOther(slot_what) => PtOther(slot_what)
+    }
+  }
+
+  pub fn surface_unascribe_surfacepatternfield(
+    value: SurfacePatternField,
+    path: List(Nat),
+    keep: Bool
+  ): SurfacePatternField {
+    match value {
+      SurfacePatternFieldMk(slot_name, slot_pattern) => SurfacePatternFieldMk(
+        slot_name,
+        surface_unascribe_surfacepattern(slot_pattern, surface_unascribe_child(path, 1), keep)
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfacesteparm(
+    value: SurfaceStepArm,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceStepArm {
+    match value {
+      SurfaceStepArmMk(slot_binders, slot_unused_binders, slot_goal, slot_body, slot_start, slot_end) => SurfaceStepArmMk(
+        surface_unascribe_list_surfacefield_from(slot_binders, surface_unascribe_child(path, 0), keep, 0),
+        slot_unused_binders,
+        surface_unascribe_surfaceterm(slot_goal, surface_unascribe_child(path, 2), keep),
+        surface_unascribe_surfaceterm(slot_body, surface_unascribe_child(path, 3), keep),
+        slot_start,
+        slot_end
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfacestmt(value: SurfaceStmt, path: List(Nat), keep: Bool): SurfaceStmt {
+    match value {
+      StLet(slot_name, slot_ty, slot_value, slot_borrow, slot_mutable, unused, st_stack) => StLet(slot_name, surface_unascribe_option_surfaceterm(slot_ty, surface_unascribe_child(path, 1), keep), surface_unascribe_surfaceterm(slot_value, surface_unascribe_child(path, 2), keep), slot_borrow, slot_mutable, unused, st_stack)
+      StVar(slot_name, slot_ty, slot_value, slot_borrow, unused, st_stack) => StVar(slot_name, surface_unascribe_option_surfaceterm(slot_ty, surface_unascribe_child(path, 1), keep), surface_unascribe_surfaceterm(slot_value, surface_unascribe_child(path, 2), keep), slot_borrow, unused, st_stack)
+      StAssign(slot_name, slot_place, slot_value) => StAssign(
+        slot_name,
+        surface_unascribe_option_surfaceterm(slot_place, surface_unascribe_child(path, 1), keep),
+        surface_unascribe_surfaceterm(slot_value, surface_unascribe_child(path, 2), keep)
+      )
+      StCalled(slot_generates, slot_call) => StCalled(
+        slot_generates,
+        surface_unascribe_surfaceterm(slot_call, surface_unascribe_child(path, 1), keep)
+      )
+      StAttributed(slot_name, slot_arg, slot_generates, slot_stmt) => StAttributed(
+        slot_name,
+        surface_unascribe_surfaceterm(slot_arg, surface_unascribe_child(path, 1), keep),
+        slot_generates,
+        surface_unascribe_surfacestmt(slot_stmt, surface_unascribe_child(path, 3), keep)
+      )
+      StFn(slot_f) => StFn(surface_unascribe_surfacefn(slot_f, surface_unascribe_child(path, 0), keep))
+      StTheorem(slot_t) => StTheorem(
+        surface_unascribe_surfacetheorem(slot_t, surface_unascribe_child(path, 0), keep)
+      )
+      StDef(slot_t) => StDef(
+        surface_unascribe_surfacetheorem(slot_t, surface_unascribe_child(path, 0), keep)
+      )
+      StMutual(slot_stmts, slot_start, slot_end) => StMutual(
+        surface_unascribe_list_surfacestmt_from(slot_stmts, surface_unascribe_child(path, 0), keep, 0),
+        slot_start,
+        slot_end
+      )
+      StModule(slot_name, slot_visibility, slot_items, slot_start, slot_end) => StModule(
+        slot_name,
+        slot_visibility,
+        surface_unascribe_list_surfacestmt_from(slot_items, surface_unascribe_child(path, 2), keep, 0),
+        slot_start,
+        slot_end
+      )
+      StReexport(slot_path, slot_names, slot_spans, slot_start, slot_end) => StReexport(slot_path, slot_names, slot_spans, slot_start, slot_end)
+      StImport(slot_path, slot_start, slot_end) => StImport(slot_path, slot_start, slot_end)
+      StInductive(slot_i) => StInductive(
+        surface_unascribe_surfaceinductive(slot_i, surface_unascribe_child(path, 0), keep)
+      )
+      StEffect(slot_e) => StEffect(
+        surface_unascribe_surfaceeffect(slot_e, surface_unascribe_child(path, 0), keep)
+      )
+      StStruct(slot_d) => StStruct(
+        surface_unascribe_surfacedata(slot_d, surface_unascribe_child(path, 0), keep)
+      )
+      StEnum(slot_d) => StEnum(
+        surface_unascribe_surfacedata(slot_d, surface_unascribe_child(path, 0), keep)
+      )
+      StExtern(slot_fns, slot_instances, slot_types, slot_structs, slot_enums, slot_start, slot_end) => StExtern(
+        surface_unascribe_list_surfacefn_from(slot_fns, surface_unascribe_child(path, 0), keep, 0),
+        slot_instances,
+        slot_types,
+        slot_structs,
+        slot_enums,
+        slot_start,
+        slot_end
+      )
+      StClass(slot_c) => StClass(
+        surface_unascribe_surfaceclass(slot_c, surface_unascribe_child(path, 0), keep)
+      )
+      StInstance(slot_i) => StInstance(
+        surface_unascribe_surfaceinstance(slot_i, surface_unascribe_child(path, 0), keep)
+      )
+      StWhile(slot_cond, slot_body) => StWhile(
+        surface_unascribe_surfaceterm(slot_cond, surface_unascribe_child(path, 0), keep),
+        surface_unascribe_surfaceterm(slot_body, surface_unascribe_child(path, 1), keep)
+      )
+      StReturn(slot_value) => StReturn(
+        surface_unascribe_option_surfaceterm(slot_value, surface_unascribe_child(path, 0), keep)
+      )
+      StExpr(slot_value) => StExpr(
+        surface_unascribe_surfaceterm(slot_value, surface_unascribe_child(path, 0), keep)
+      )
+      StOther(slot_what, slot_start, slot_end) => StOther(slot_what, slot_start, slot_end)
+      StLoop(^st_body, slot_start, slot_end) => StOther("LoopExpr", slot_start, slot_end)
+      StFor(^for_pat, ^for_src, ^st_body, slot_start, slot_end) => StOther("ForStmt", slot_start, slot_end)
+      StBreak(^st_value, slot_start, slot_end) => StOther("BreakStmt", slot_start, slot_end)
+      StContinue(slot_start, slot_end) => StOther("ContinueStmt", slot_start, slot_end)
+      StMacro(slot_name, slot_function, slot_start, slot_end) => StMacro(
+        slot_name,
+        slot_function,
+        slot_start,
+        slot_end
+      )
+      StSyntax(slot_name, slot_grammar, slot_start, slot_end) => StSyntax(
+        slot_name,
+        slot_grammar,
+        slot_start,
+        slot_end
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfaceterm(value: SurfaceTerm, path: List(Nat), keep: Bool): SurfaceTerm {
+    match value {
+      SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_old_occurrence) =>
+      surface_unascribe_peel(
+        surface_unascribe_surfacekind(slot_kind, surface_unascribe_child(path, 0), keep),
+        slot_start,
+        slot_end,
+        slot_old_occurrence,
+        keep
+      )
+    }
+  }
+
+  pub fn surface_unascribe_surfacetheorem(
+    value: SurfaceTheorem,
+    path: List(Nat),
+    keep: Bool
+  ): SurfaceTheorem {
+    match value {
+      SurfaceTheoremMk(slot_name, slot_implicit, slot_params, slot_ty, slot_body, slot_start, slot_end, slot_unused, slot_unused_params, t_vis) => SurfaceTheoremMk(slot_name, slot_implicit, surface_unascribe_list_surfacenamed_from(slot_params, surface_unascribe_child(path, 2), keep, 0), surface_unascribe_surfaceterm(slot_ty, surface_unascribe_child(path, 3), keep), surface_unascribe_option_surfaceterm(slot_body, surface_unascribe_child(path, 4), keep), slot_start, slot_end, slot_unused, slot_unused_params, t_vis)
+    }
+    }
+
+}
+
+pub fn surface_unascribe_list_option_surfaceterm(
+  value: List(Option(SurfaceTerm)),
+  path: List(Nat),
+  keep: Bool
+): List(Option(SurfaceTerm)) {
+  surface_unascribe_list_option_surfaceterm_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacearm(
+  value: List(SurfaceArm),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceArm) {
+  surface_unascribe_list_surfacearm_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfaceconstraint(
+  value: List(SurfaceConstraint),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceConstraint) {
+  surface_unascribe_list_surfaceconstraint_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacector(
+  value: List(SurfaceCtor),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceCtor) {
+  surface_unascribe_list_surfacector_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacedatactor(
+  value: List(SurfaceDataCtor),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceDataCtor) {
+  surface_unascribe_list_surfacedatactor_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacedatafield(
+  value: List(SurfaceDataField),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceDataField) {
+  surface_unascribe_list_surfacedatafield_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacefield(
+  value: List(SurfaceField),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceField) {
+  surface_unascribe_list_surfacefield_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacefn(
+  value: List(SurfaceFn),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceFn) {
+  surface_unascribe_list_surfacefn_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacehandler(
+  value: List(SurfaceHandler),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceHandler) {
+  surface_unascribe_list_surfacehandler_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacelaw(
+  value: List(SurfaceLaw),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceLaw) {
+  surface_unascribe_list_surfacelaw_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacenamed(
+  value: List(SurfaceNamed),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceNamed) {
+  surface_unascribe_list_surfacenamed_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfaceparam(
+  value: List(SurfaceParam),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceParam) {
+  surface_unascribe_list_surfaceparam_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacepattern(
+  value: List(SurfacePattern),
+  path: List(Nat),
+  keep: Bool
+): List(SurfacePattern) {
+  surface_unascribe_list_surfacepattern_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacepatternfield(
+  value: List(SurfacePatternField),
+  path: List(Nat),
+  keep: Bool
+): List(SurfacePatternField) {
+  surface_unascribe_list_surfacepatternfield_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacesteparm(
+  value: List(SurfaceStepArm),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceStepArm) {
+  surface_unascribe_list_surfacesteparm_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfacestmt(
+  value: List(SurfaceStmt),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceStmt) {
+  surface_unascribe_list_surfacestmt_from(value, path, keep, 0)
+}
+
+pub fn surface_unascribe_list_surfaceterm(
+  value: List(SurfaceTerm),
+  path: List(Nat),
+  keep: Bool
+): List(SurfaceTerm) {
+  surface_unascribe_list_surfaceterm_from(value, path, keep, 0)
+}
+
+// A term whose kind's parts are already read: `(e: T)` is `#ascribe(T, e)`,
+// or `e` when the type is not kept (and so is `#ascribe(T, e)` read before).
+pub fn surface_unascribe_peel(
+  kind: SurfaceKind,
+  start: Nat,
+  end: Nat,
+  occurrence: Option(TermOccurrence),
+  keep: Bool
+): SurfaceTerm {
+  match kind {
+    SkAscribe(value, ty) => if keep {
+      SurfaceTermIndexedMk(
+        SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("#ascribe")), start, end, None), Cons(ty, Cons(value, Nil))),
+        start,
+        end,
+        occurrence
+      )
+    } else { value }
+    SkApp(f, args) => ⊢ SurfaceTerm from match surface_unascribe_erased(f, args, keep) {
+      Some(value) => value
+      None => SurfaceTermIndexedMk(kind, start, end, occurrence)
+    }
+    _ => SurfaceTermIndexedMk(kind, start, end, occurrence)
+  }
+}
+
+// `e` of `#ascribe(T, e)` when the type is not kept.
+pub fn surface_unascribe_erased(f: SurfaceTerm, args: List(SurfaceTerm), keep: Bool): Option(SurfaceTerm) {
+  if keep { None } else {
+    match f.kind {
+      SkVar(n) => ⊢ Option(SurfaceTerm) from match n {
+        NameSpelled(text) => if text == "#ascribe" {
+          ⊢ Option(SurfaceTerm) from match args {
+            Cons(^ty, Cons(value, Nil)) => Some(value)
+            _ => None
+          }
+        } else { None }
+        _ => None
+      }
+      _ => None
+    }
+  }
+}
+
+// The statements of a program with every `(e: T)` read as `#ascribe(T, e)`.
+pub fn surface_unascribe(stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  surface_unascribe_list_surfacestmt(stmts, Nil, true)
+}
+
+// The statements of a program with every `(e: T)` and `#ascribe(T, e)` read as `e`.
+pub fn surface_unascribe_erase(stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  surface_unascribe_list_surfacestmt(stmts, Nil, false)
+}

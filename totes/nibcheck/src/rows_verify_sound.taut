@@ -1,0 +1,2210 @@
+import std::text
+import std::row
+import std::base
+import std::map
+import std::map_text
+import "../../ordmap/src/ordmap.taut"
+import "../../surface/src/surface.taut"
+import "rows_base.taut"
+import "rows.taut"
+import "rules_rows.taut"
+import "rows_structural.taut"
+import "rows_verify.taut"
+import "kind_sound.taut"
+import "unify_sound.taut"
+import "../../identity/src/identity.taut"
+
+// `rows_verify.taut` against `rules_rows.taut`: when the check of a body
+// gives a row, the body performs effects of that row only (`Performs`); when
+// the check of the program passes, its rows are derivable (`ProgramRows`).
+
+// ---- booleans, options and rows ----------------------------------------------
+
+pub theorem vs_absurd<C: Prop>(b: Bool, yes: b = true, no: b = false): C {
+  False::elim(false_ne_true(Eq::trans(Eq::sym(no), yes)))
+}
+
+pub theorem vs_none_some<C: Prop>(r: List(Text), h: Option::None(<A: List(Text)>) = Some(r)): C {
+  match h {
+  }
+}
+
+pub theorem vs_text_ne(a: Text, b: Text, h: Text::eq(a, b) = false): (a = b) -> False {
+  same => vs_absurd(Text::eq(a, b), Eq::subst((z: Text) => Text::eq(a, z) = true, same, text_eq_refl(a)), h)
+}
+
+pub theorem vs_or_split<C: Prop>(a: Bool, b: Bool, h: a || b = true, left: (a = true) -> C, right: (b = true) -> C): C {
+  match a {
+    true => left(Refl)
+    false => right(h)
+  }
+}
+
+pub theorem vs_has_sound(xs: List(Text), e: Text, h: vr_has(xs, e) = true): Mem(Text, e, xs) {
+  match xs {
+    Nil => vs_absurd(false, h, Refl)
+    Cons(x, rest) => vs_or_split(
+      Text::eq(x, e),
+      vr_has(rest, e),
+      h,
+      same => Eq::subst((z: Text) => Mem(Text, e, Cons(z, rest)), Eq::sym(text_eq_sound(x, e, same)), MemHere(rest)),
+      later => MemThere(x, rest, vs_has_sound(rest, e, later))
+    )
+  }
+}
+
+pub theorem vs_sub_sound(xs: List(Text), ys: List(Text), h: vr_sub(xs, ys) = true): Sub(Text, xs, ys) {
+  match xs {
+    Nil => nil_sub(ys)
+    Cons(x, rest) => vs_sub_cons(x, rest, ys, vs_has_sound(ys, x, Bool::and_true_left(vr_has(ys, x), vr_sub(rest, ys), h)), vs_sub_sound(rest, ys, Bool::and_true_right(vr_has(ys, x), vr_sub(rest, ys), h)))
+  }
+}
+
+pub theorem vs_sub_cons(x: Text, rest: List(Text), ys: List(Text), here: Mem(Text, x, ys), later: Sub(Text, rest, ys)): Sub(Text, Cons(x, rest), ys) {
+  e => m => ⊢ Mem(Text, e, ys) from match m {
+    MemHere(t) => here
+    MemThere(b, t, m2) => later(e, m2)
+  }
+}
+
+// ---- locals ----------------------------------------------------------------------
+
+pub theorem vs_find_some(locals: List(RowName), n: Text, l: LocalRow, h: vr_find(locals, n) = Some(l)): RowNameBinding(locals, n, l) {
+  match locals {
+    Nil => vs_none_found(l, h)
+    Cons(x, rest) => (⊢ (vr_find(Cons(x, rest), n) = Some(l)) -> RowNameBinding(Cons(x, rest), n, l) from match Text::eq(rr_name(x), n) eqn same {
+      true => (h2: Some(rr_latent(x)) = Some(l)) => vs_find_here(x, rest, n, l, text_eq_sound(rr_name(x), n, same), h2)
+      false => (h2: vr_find(rest, n) = Some(l)) => RowNameLater(x, vs_text_ne(rr_name(x), n, same), vs_find_some(rest, n, l, h2))
+    })(h)
+  }
+}
+
+pub theorem vs_find_here(x: RowName, rest: List(RowName), n: Text, l: LocalRow, e: rr_name(x) = n, h: Some(rr_latent(x)) = Some(l)): RowNameBinding(Cons(x, rest), n, l) {
+  match x {
+    Mk(name, latent) => ⊢ RowNameBinding(Cons(RowName::Mk(name, latent), rest), n, l) from match h {
+      Refl => Eq::subst((z: Text) => RowNameBinding(Cons(RowName::Mk(z, latent), rest), n, latent), Eq::sym(e), RowNameHere(n, latent, rest))
+    }
+  }
+}
+
+pub theorem vs_none_found<C: Prop>(l: LocalRow, h: Option::None(<A: LocalRow>) = Some(l)): C {
+  match h {
+  }
+}
+
+pub theorem vs_find_none(locals: List(RowName), n: Text, h: vr_find(locals, n) = None): RowNameAbsent(n, locals) {
+  match locals {
+    Nil => RowNameAbsentNil
+    Cons(x, rest) => (⊢ (vr_find(Cons(x, rest), n) = None) -> RowNameAbsent(n, Cons(x, rest)) from match Text::eq(rr_name(x), n) eqn same {
+      true => (h2: Some(rr_latent(x)) = None) => vs_some_none(rr_latent(x), h2)
+      false => (h2: vr_find(rest, n) = None) => RowNameAbsentCons(x, vs_text_ne(rr_name(x), n, same), vs_find_none(rest, n, h2))
+    })(h)
+  }
+}
+
+pub theorem vs_some_none<C: Prop>(l: LocalRow, h: Some(l) = Option::None(<A: LocalRow>)): C {
+  match h {
+  }
+}
+
+pub theorem vs_effect_of(op: Text): EffectOfOp(op, vr_effect_of(op)) {
+  EffectOfSame(op)
+}
+
+mutual {
+  pub theorem vs_bind(p: SurfacePattern, locals: List(RowName)): PatternBinds(p, locals, vr_bind(p, locals)) {
+    match p {
+      PtBind(n, unused) => PatternBindsName(n, unused, locals)
+      PtCtor(name, args) => PatternBindsCtor(name, args, vs_bind_all(args, locals))
+      PtRecord(name, fields) => PatternBindsRecord(name, fields, vs_bind_fields(fields, locals))
+      PtWild => PatternBindsWild(locals)
+      PtInt(negative, n) => PatternBindsInt(negative, n, locals)
+      PtBool(b) => PatternBindsBool(b, locals)
+      PtText(t) => PatternBindsText(t, locals)
+      PtTyped(n, ty, unused) => PatternBindsTyped(n, ty, unused, locals)
+      PtOther(w) => PatternBindsOther(w, locals)
+    }
+  }
+
+  pub theorem vs_bind_all(ps: List(SurfacePattern), locals: List(RowName)): PatternsBind(ps, locals, vr_bind_all(ps, locals)) {
+    match ps {
+      Nil => PatternsBindNil(locals)
+      Cons(p, rest) => PatternsBindCons(p, rest, vs_bind(p, locals), vs_bind_all(rest, vr_bind(p, locals)))
+    }
+  }
+
+  pub theorem vs_bind_fields(fs: List(SurfacePatternField), locals: List(RowName)): PatternFieldsBind(fs, locals, vr_bind_fields(fs, locals)) {
+    match fs {
+      Nil => PatternFieldsBindNil(locals)
+      Cons(f, rest) => vs_bind_field(f, rest, locals, l => vs_bind_fields(rest, l))
+    }
+  }
+
+  pub theorem vs_bind_field(f: SurfacePatternField, rest: List(SurfacePatternField), locals: List(RowName), more: (l: List(RowName)) -> PatternFieldsBind(rest, l, vr_bind_fields(rest, l))): PatternFieldsBind(Cons(f, rest), locals, vr_bind_fields(Cons(f, rest), locals)) {
+    match f {
+      SurfacePatternFieldMk(name, p) => PatternFieldsBindCons(name, p, rest, vs_bind(p, locals), more(vr_bind(p, locals)))
+    }
+  }
+}
+
+pub theorem vs_bind_name(op: Text, n: Text, unused: Option(SurfaceSpan), ps: List(SurfacePattern), locals: List(RowName), rest: (l: List(RowName)) -> OperationBinds(op, ps, l, vr_bind_op(op, ps, l))): OperationBinds(op, Cons(PtBind(n, unused), ps), locals, vr_bind_op(op, ps, vr_bind_name(op, n, locals))) {
+  match Text::eq(op, "exceeded") eqn ex {
+    true => OperationBindsInfo(n, unused, ps, text_eq_sound(op, "exceeded", ex), rest(Cons(RowName::Mk(n, LocalRowInfo), locals)))
+    false => ⊢ OperationBinds(op, Cons(PtBind(n, unused), ps), locals, vr_bind_op(op, ps, ⊢ List(RowName) from match Text::eq(op, "spawn") {
+      true => Cons(RowName::Mk(n, LocalRowKnown(Cons("div", Nil))), locals)
+      false => Cons(RowName::Mk(n, LocalRowUnknown), locals)
+    })) from match Text::eq(op, "spawn") eqn sp {
+      true => OperationBindsSpawn(n, unused, ps, text_eq_sound(op, "spawn", sp), rest(Cons(RowName::Mk(n, LocalRowKnown(Cons("div", Nil))), locals)))
+      false => OperationBindsName(n, unused, ps, vs_text_ne(op, "exceeded", ex), vs_text_ne(op, "spawn", sp), rest(Cons(RowName::Mk(n, LocalRowUnknown), locals)))
+    }
+  }
+}
+
+pub theorem vs_bind_op(op: Text, ps: List(SurfacePattern), locals: List(RowName)): OperationBinds(op, ps, locals, vr_bind_op(op, ps, locals)) {
+  match ps {
+    Nil => OperationBindsNil(locals)
+    Cons(p, rest) => ⊢ OperationBinds(op, Cons(p, rest), locals, vr_bind_op(op, Cons(p, rest), locals)) from match p {
+      PtBind(n, unused) => vs_bind_name(op, n, unused, rest, locals, l => vs_bind_op(op, rest, l))
+      PtCtor(name, args) => OperationBindsCtor(name, args, rest, vs_bind_all(args, locals), vs_bind_op(op, rest, vr_bind_all(args, locals)))
+      PtRecord(name, fields) => OperationBindsRecord(name, fields, rest, vs_bind_fields(fields, locals), vs_bind_op(op, rest, vr_bind_fields(fields, locals)))
+      PtWild => OperationBindsNone(PtWild, rest, NothingWild, vs_bind_op(op, rest, locals))
+      PtInt(negative, n) => OperationBindsNone(PtInt(negative, n), rest, NothingInt(negative, n), vs_bind_op(op, rest, locals))
+      PtBool(b) => OperationBindsNone(PtBool(b), rest, NothingBool(b), vs_bind_op(op, rest, locals))
+      PtText(t) => OperationBindsNone(PtText(t), rest, NothingText(t), vs_bind_op(op, rest, locals))
+      PtTyped(n, ty, unused) => OperationBindsNone(PtTyped(n, ty, unused), rest, NothingTyped(n, ty, unused), vs_bind_op(op, rest, locals))
+      PtOther(w) => OperationBindsNone(PtOther(w), rest, NothingOther(w), vs_bind_op(op, rest, locals))
+    }
+  }
+}
+
+pub theorem vs_cont(k: Option(Text), locals: List(RowName)): ContinuationBinds(k, locals, vr_cont(k, locals)) {
+  match k {
+    None => ContinuationNone(locals)
+    Some(n) => ContinuationSome(n, locals)
+  }
+}
+
+pub theorem vs_unknown(ps: List(Text), locals: List(RowName)): UnknownBind(ps, locals, vr_unknown(ps, locals)) {
+  match ps {
+    Nil => UnknownBindNil(locals)
+    Cons(p, rest) => UnknownBindCons(p, rest, vs_unknown(rest, Cons(RowName::Mk(p, LocalRowUnknown), locals)))
+  }
+}
+
+// ---- row variables ---------------------------------------------------------------
+
+pub theorem vs_no_some<A: Type, C: Prop>(x: A, h: Option::None(<A: A>) = Some(x)): C {
+  match h {
+  }
+}
+
+pub theorem vs_no_none<A: Type, C: Prop>(x: A, h: Some(x) = Option::None(<A: A>)): C {
+  match h {
+  }
+}
+
+pub theorem vs_text_eta(v: Text): Text::Mk(Text::bytes(v)) = v {
+  match v {
+    Mk(bs) => Refl
+  }
+}
+
+pub theorem vs_text_false(a: Text, b: Text, ne: (a = b) -> False): Text::eq(a, b) = false {
+  match Text::eq(a, b) eqn q {
+    true => False::elim(ne(text_eq_sound(a, b, q)))
+    false => Refl
+  }
+}
+
+pub theorem vs_var_some(e: Text, v: Text, h: vr_var(e) = Some(v)): e = Text::concat("|", v) {
+  match e {
+    Mk(bs) => ⊢ Text::Mk(bs) = Text::concat("|", v) from match bs {
+      Nil => vs_no_some(v, h)
+      Cons(b, rest) => (⊢ (vr_var(Text::Mk(Cons(b, rest))) = Some(v)) -> Text::Mk(Cons(b, rest)) = Text::concat("|", v) from match Nat::eq(b, 124) eqn q {
+        true => (h2: Some(Text::Mk(rest)) = Some(v)) => ⊢ Text::Mk(Cons(b, rest)) = Text::concat("|", v) from match h2 {
+          Refl => Eq::subst((z: Nat) => Text::Mk(Cons(z, rest)) = Text::Mk(Cons(124, rest)), Eq::sym(Nat::eq_sound(b, 124, q)), Refl)
+        }
+        false => (h2: Option::None(<A: Text>) = Some(v)) => vs_no_some(v, h2)
+      })(h)
+    }
+  }
+}
+
+pub theorem vs_var_of(v: Text): vr_var(Text::concat("|", v)) = Some(Text::Mk(Text::bytes(v))) {
+  Refl
+}
+
+pub theorem vs_var_none(e: Text, h: vr_var(e) = None): ∀ v: Text. (e = Text::concat("|", v)) -> False {
+  v => same => vs_no_none(Text::Mk(Text::bytes(v)), Eq::trans(Eq::sym(vs_var_of(v)), Eq::subst((z: Text) => vr_var(z) = None, same, h)))
+}
+
+pub theorem vs_vars_mem(row: List(Text), v: Text, m: Mem(Text, Text::concat("|", v), row)): Mem(Text, v, vr_vars(row)) {
+  match m {
+    MemHere(t) => Eq::subst((z: Text) => Mem(Text, z, Cons(Text::Mk(Text::bytes(v)), vr_vars(t))), vs_text_eta(v), MemHere(vr_vars(t)))
+    MemThere(b, t, m2) => ⊢ Mem(Text, v, vr_vars(Cons(b, t))) from match vr_var(b) eqn q {
+      Some(w) => MemThere(w, vr_vars(t), vs_vars_mem(t, v, m2))
+      None => vs_vars_mem(t, v, m2)
+    }
+  }
+}
+
+pub theorem vs_has_complete(xs: List(Text), e: Text, m: Mem(Text, e, xs)): vr_has(xs, e) = true {
+  match m {
+    MemHere(t) => Bool::or_true_left(Text::eq(e, e), vr_has(t, e), text_eq_refl(e))
+    MemThere(b, t, m2) => Bool::or_true_right(Text::eq(b, e), vr_has(t, e), vs_has_complete(t, e, m2))
+  }
+}
+
+pub theorem vs_not_vars(es: List(Text), out: List(Text), nv: NotVars(es, out)): vr_not_vars(es) = out {
+  match nv {
+    NotVarsNil => Refl
+    NotVarsVar<es: es1, out: out1>(v, rest) => ⊢ vr_not_vars(Cons(Text::concat("|", v), es1)) = out1 from vs_not_vars(es1, out1, rest)
+    NotVarsEffect<es: es1, out: out1>(e, not_var, rest) => ⊢ vr_not_vars(Cons(e, es1)) = Cons(e, out1) from match vr_var(e) eqn q {
+      Some(w) => False::elim(not_var(w, vs_var_some(e, w, q)))
+      None => Eq::congr(⟦Cons(e, □)⟧, vs_not_vars(es1, out1, rest))
+    }
+  }
+}
+
+// ---- quantities and direct effects -------------------------------------------------
+
+pub theorem vs_when(b: Bool, x: Option(List(Text)), r: List(Text), h: vr_when(b, x) = Some(r)): b = true ∧ x = Some(r) {
+  match b {
+    true => AndIntro(Refl, h)
+    false => vs_no_some(r, h)
+  }
+}
+
+pub theorem vs_quant_direct_name(q: Quant, h: quant_name(q) == quant_name(QuantDirect) = true): q = QuantDirect {
+  match q {
+    QuantZero => vs_absurd(quant_name(QuantZero) == quant_name(QuantDirect), h, Refl)
+    QuantAtMostOne => vs_absurd(quant_name(QuantAtMostOne) == quant_name(QuantDirect), h, Refl)
+    QuantOne => vs_absurd(quant_name(QuantOne) == quant_name(QuantDirect), h, Refl)
+    QuantMany => vs_absurd(quant_name(QuantMany) == quant_name(QuantDirect), h, Refl)
+    QuantDirect => Refl
+  }
+}
+
+pub theorem vs_quant_direct(env: RowEnv, e: Text, h: vr_quant_is(env, e, QuantDirect) = true): DirectOp(env, e) {
+  (⊢ (vr_quant_is(env, e, QuantDirect) = true) -> DirectOp(env, e) from match Ordmap::get(rr_quants(env), e, Ordmap::compare_text) eqn g {
+    None => (h2: false = true) => vs_absurd(false, h2, Refl)
+    Some(q) => (h2: quant_name(q) == quant_name(QuantDirect) = true) => DirectOpMk(Eq::subst((z: Quant) => Ordmap::get(rr_quants(env), e, Ordmap::compare_text) = Some(z), vs_quant_direct_name(q, h2), g))
+  })(h)
+}
+
+pub theorem vs_direct_quant(env: RowEnv, e: Text, d: DirectOp(env, e)): vr_quant_is(env, e, QuantDirect) = true {
+  match d {
+    DirectOpMk(found) => Eq::subst(
+      (z: Option(Quant)) => (⊢ Bool from match z {
+        None => false
+        Some(f) => quant_name(f) == quant_name(QuantDirect)
+      }) = true,
+      Eq::sym(found),
+      text_eq_refl(quant_name(QuantDirect))
+    )
+  }
+}
+
+pub theorem vs_many_quant(env: RowEnv, e: Text, d: ManyOp(env, e)): vr_quant_is(env, e, QuantMany) = true {
+  match d {
+    ManyOpMk(found) => Eq::subst(
+      (z: Option(Quant)) => (⊢ Bool from match z {
+        None => false
+        Some(f) => quant_name(f) == quant_name(QuantMany)
+      }) = true,
+      Eq::sym(found),
+      text_eq_refl(quant_name(QuantMany))
+    )
+  }
+}
+
+pub theorem vs_direct(env: RowEnv, dvars: List(Text), e: Text, h: vr_direct(env, dvars, e) = true): DirectEffect(env, dvars, e) {
+  vs_or_split(
+    vr_quant_is(env, e, QuantDirect),
+    ⊢ Bool from match vr_var(e) {
+      Some(v) => vr_has(dvars, v)
+      None => false
+    },
+    h,
+    q => DirectEffectOp(e, vs_quant_direct(env, e, q)),
+    r => (⊢ ((⊢ Bool from match vr_var(e) {
+      Some(v) => vr_has(dvars, v)
+      None => false
+    }) = true) -> DirectEffect(env, dvars, e) from match vr_var(e) eqn ve {
+      Some(v) => (h2: vr_has(dvars, v) = true) => Eq::subst((z: Text) => DirectEffect(env, dvars, z), Eq::sym(vs_var_some(e, v, ve)), DirectEffectVar(v, vs_has_sound(dvars, v, h2)))
+      None => (h2: false = true) => vs_absurd(false, h2, Refl)
+    })(r)
+  )
+}
+
+pub theorem vs_all_direct(env: RowEnv, dvars: List(Text), es: List(Text), h: vr_all_direct(env, dvars, es) = true): ∀ e: Text. (Mem(Text, e, es)) -> DirectEffect(env, dvars, e) {
+  match es {
+    Nil => e => m => Mem::nil(DirectEffect(env, dvars, e), m)
+    Cons(x, rest) => e => m => ⊢ DirectEffect(env, dvars, e) from match m {
+      MemHere(t) => vs_direct(env, dvars, x, Bool::and_true_left(vr_direct(env, dvars, x), vr_all_direct(env, dvars, rest), h))
+      MemThere(b, t, m2) => vs_all_direct(env, dvars, rest, Bool::and_true_right(vr_direct(env, dvars, x), vr_all_direct(env, dvars, rest), h), e, m2)
+    }
+  }
+}
+
+pub theorem vs_extern_effect(env: RowEnv, dvars: List(Text), e: Text, h: vr_direct(env, dvars, e) || vr_is_var(e) || Text::eq(e, "div") = true): ExternEffect(env, dvars, e) {
+  vs_or_split(
+    vr_direct(env, dvars, e) || vr_is_var(e),
+    Text::eq(e, "div"),
+    h,
+    dv => vs_or_split(
+      vr_direct(env, dvars, e),
+      vr_is_var(e),
+      dv,
+      d => ExternEffectDirect(e, vs_direct(env, dvars, e, d)),
+      v => (⊢ (vr_is_var(e) = true) -> ExternEffect(env, dvars, e) from match vr_var(e) eqn ve {
+        Some(w) => (h2: true = true) => Eq::subst((z: Text) => ExternEffect(env, dvars, z), Eq::sym(vs_var_some(e, w, ve)), ExternEffectVar(w))
+        None => (h2: false = true) => vs_absurd(false, h2, Refl)
+      })(v)
+    ),
+    div => Eq::subst((z: Text) => ExternEffect(env, dvars, z), Eq::sym(text_eq_sound(e, "div", div)), ExternEffectDiv)
+  )
+}
+
+pub theorem vs_extern_ok(env: RowEnv, dvars: List(Text), es: List(Text), h: vr_extern_ok(env, dvars, es) = true): ∀ e: Text. (Mem(Text, e, es)) -> ExternEffect(env, dvars, e) {
+  match es {
+    Nil => e => m => Mem::nil(ExternEffect(env, dvars, e), m)
+    Cons(x, rest) => e => m => ⊢ ExternEffect(env, dvars, e) from match m {
+      MemHere(t) => vs_extern_effect(env, dvars, x, Bool::and_true_left(vr_direct(env, dvars, x) || vr_is_var(x) || Text::eq(x, "div"), vr_extern_ok(env, dvars, rest), h))
+      MemThere(b, t, m2) => vs_extern_ok(env, dvars, rest, Bool::and_true_right(vr_direct(env, dvars, x) || vr_is_var(x) || Text::eq(x, "div"), vr_extern_ok(env, dvars, rest), h), e, m2)
+    }
+  }
+}
+
+pub theorem vs_none_many(env: RowEnv, es: List(Text), h: vr_none_many(env, es) = true): ∀ e: Text. (Mem(Text, e, es)) -> (ManyOp(env, e)) -> False {
+  match es {
+    Nil => e => m => Mem::nil((ManyOp(env, e)) -> False, m)
+    Cons(x, rest) => e => m => ⊢ (ManyOp(env, e)) -> False from match m {
+      MemHere(t) => mo => vs_absurd(
+        vr_quant_is(env, x, QuantMany),
+        vs_many_quant(env, x, mo),
+        Bool::not_true(vr_quant_is(env, x, QuantMany), Bool::and_true_left(not(vr_quant_is(env, x, QuantMany)), vr_none_many(env, rest), h))
+      )
+      MemThere(b, t, m2) => vs_none_many(env, rest, Bool::and_true_right(not(vr_quant_is(env, x, QuantMany)), vr_none_many(env, rest), h), e, m2)
+    }
+  }
+}
+
+// ---- bounds ------------------------------------------------------------------------
+
+pub theorem vs_bound_nil(gs: List(Text), v: Text): vr_bound(gs, Nil, v) = None {
+  match gs {
+    Nil => Refl
+    Cons(g, more) => Refl
+  }
+}
+
+pub theorem vs_bound<gs: List(Text), bs: List(Option(Text)), v: Text, b: Option(Text)>(g: GenericBound(gs, bs, v, b)): vr_bound(gs, bs, v) = b {
+  match g {
+    GenericBoundHere(w, gs1, b1, bs1) => Eq::subst(
+      (z: Bool) => (⊢ Option(Text) from match z {
+        true => b1
+        false => vr_bound(gs1, bs1, w)
+      }) = b1,
+      Eq::sym(text_eq_refl(w)),
+      Refl
+    )
+    GenericBoundNoBounds(w, gs1) => Refl
+    GenericBoundLater<gs: gs1, bs: bs1, v: w, b: b1>(g1, first, different, rest) => Eq::subst(
+      (z: Bool) => (⊢ Option(Text) from match z {
+        true => first
+        false => vr_bound(gs1, bs1, w)
+      }) = b1,
+      Eq::sym(vs_text_false(g1, w, different)),
+      vs_bound(rest)
+    )
+    GenericBoundLaterNone<gs: gs1, v: w, b: b1>(g1, different, rest) => Eq::trans(Eq::sym(vs_bound_nil(gs1, w)), vs_bound(rest))
+  }
+}
+
+pub theorem vs_bound_holds(env: RowEnv, dvars: List(Text), b: Option(Text), row: List(Text), h: vr_bound_holds(env, dvars, b, row) = true): BoundHolds(env, dvars, b, row) {
+  match b {
+    None => BoundNone(row)
+    Some(x) => (⊢ (vr_bound_holds(env, dvars, Some(x), row) = true) -> BoundHolds(env, dvars, Some(x), row) from match Text::eq(x, "direct") eqn d {
+      true => (h2: vr_all_direct(env, dvars, row) = true) => Eq::subst((z: Text) => BoundHolds(env, dvars, Some(z), row), Eq::sym(text_eq_sound(x, "direct", d)), BoundDirect(row, vs_all_direct(env, dvars, row, h2)))
+      false => (h2: (⊢ Bool from match Text::eq(x, "<=1") {
+        true => vr_none_many(env, row)
+        false => true
+      }) = true) => (⊢ ((⊢ Bool from match Text::eq(x, "<=1") {
+        true => vr_none_many(env, row)
+        false => true
+      }) = true) -> BoundHolds(env, dvars, Some(x), row) from match Text::eq(x, "<=1") eqn o {
+        true => (h3: vr_none_many(env, row) = true) => Eq::subst((z: Text) => BoundHolds(env, dvars, Some(z), row), Eq::sym(text_eq_sound(x, "<=1", o)), BoundOnce(row, vs_none_many(env, row, h3)))
+        false => (h3: true = true) => BoundOther(x, vs_text_ne(x, "direct", d), vs_text_ne(x, "<=1", o), row)
+      })(h2)
+    })(h)
+  }
+}
+
+// ---- tables ------------------------------------------------------------------------
+
+pub theorem vs_lookup_here(hd: Text × List(Text), rest: List(Text × List(Text)), n: Text, row: List(Text), e: rr_fst(hd) = n, h: Some(hd.snd) = Some(row)): ThetaRow(Cons(hd, rest), n, row) {
+  match hd {
+    #(a, b) => ⊢ ThetaRow(Cons(#(a, b), rest), n, row) from match h {
+      Refl => Eq::subst((z: Text) => ThetaRow(Cons(#(z, b), rest), n, b), Eq::sym(e), ThetaRowHere(n, b, rest))
+    }
+  }
+}
+
+pub theorem vs_lookup(sig: List(Text × List(Text)), n: Text, row: List(Text), h: vr_lookup(sig, n) = Some(row)): ThetaRow(sig, n, row) {
+  match sig {
+    Nil => vs_no_some(row, h)
+    Cons(hd, rest) => (⊢ (vr_lookup(Cons(hd, rest), n) = Some(row)) -> ThetaRow(Cons(hd, rest), n, row) from match Text::eq(rr_fst(hd), n) eqn q {
+      true => (h2: Some(hd.snd) = Some(row)) => vs_lookup_here(hd, rest, n, row, text_eq_sound(rr_fst(hd), n, q), h2)
+      false => (h2: vr_lookup(rest, n) = Some(row)) => ThetaRowLater(hd, vs_text_ne(rr_fst(hd), n, q), vs_lookup(rest, n, row, h2))
+    })(h)
+  }
+}
+
+pub theorem vs_rank_here(hd: Text × Nat, rest: List(Text × Nat), n: Text, r: Nat, e: rr_rank_name(hd) = n, h: Some(hd.snd) = Some(r)): RankOf(Cons(hd, rest), n, r) {
+  match hd {
+    #(a, b) => ⊢ RankOf(Cons(#(a, b), rest), n, r) from match h {
+      Refl => Eq::subst((z: Text) => RankOf(Cons(#(z, b), rest), n, b), Eq::sym(e), RankHere(n, b, rest))
+    }
+  }
+}
+
+pub theorem vs_rank(ranks: List(Text × Nat), n: Text, r: Nat, h: vr_rank(ranks, n) = Some(r)): RankOf(ranks, n, r) {
+  match ranks {
+    Nil => vs_no_some(r, h)
+    Cons(hd, rest) => (⊢ (vr_rank(Cons(hd, rest), n) = Some(r)) -> RankOf(Cons(hd, rest), n, r) from match Text::eq(rr_rank_name(hd), n) eqn q {
+      true => (h2: Some(hd.snd) = Some(r)) => vs_rank_here(hd, rest, n, r, text_eq_sound(rr_rank_name(hd), n, q), h2)
+      false => (h2: vr_rank(rest, n) = Some(r)) => RankLater(hd, vs_text_ne(rr_rank_name(hd), n, q), vs_rank(rest, n, r, h2))
+    })(h)
+  }
+}
+
+pub theorem vs_ranked_below(lim: RankLimit, b: Nat, n: Text, bl: rr_below(lim) = Some(b), h: vr_ranked_below(lim, b, n) = true): RankedCall(lim, n) {
+  (⊢ (vr_ranked_below(lim, b, n) = true) -> RankedCall(lim, n) from match vr_rank(rr_ranks(lim), n) eqn rk {
+    None => (h3: false = true) => vs_absurd(false, h3, Refl)
+    Some(r) => (h3: Nat::lt(r, b) = true) => RankedBelow(b, r, bl, vs_rank(rr_ranks(lim), n, r, rk), h3)
+  })(h)
+}
+
+pub theorem vs_ranked(lim: RankLimit, n: Text, h: vr_ranked(lim, n) = true): RankedCall(lim, n) {
+  (⊢ (vr_ranked(lim, n) = true) -> RankedCall(lim, n) from match rr_below(lim) eqn bl {
+    None => (h2: true = true) => RankedFree(bl)
+    Some(b) => (h2: vr_has(rr_group(lim), n) || vr_ranked_below(lim, b, n) = true) => vs_or_split(
+      vr_has(rr_group(lim), n),
+      vr_ranked_below(lim, b, n),
+      h2,
+      g => RankedGroup(vs_has_sound(rr_group(lim), n, g)),
+      w => vs_ranked_below(lim, b, n, bl, w)
+    )
+  })(h)
+}
+
+// ---- heads, `info`, arguments ------------------------------------------------------
+
+pub theorem vs_pure_product(env: RowEnv, n: Text, args: List(SurfaceTerm), h: Text::eq(n, "std::prelude::Pair::Mk") = true): PureHead(env, n, args) {
+  Eq::subst((z: Text) => PureHead(env, z, args), Eq::sym(text_eq_sound(n, "std::prelude::Pair::Mk", h)), PureProduct(args))
+}
+
+pub theorem vs_pure(env: RowEnv, n: Text, args: List(SurfaceTerm), h: vr_pure(env, n, args) = true): PureHead(env, n, args) {
+  vs_or_split(
+    Ordmap::contains(rr_data(env), n, Ordmap::compare_text) || vr_has(pure_heads(), n),
+    Text::eq(n, "std::prelude::Pair::Mk"),
+    h,
+    dn => vs_or_split(
+      Ordmap::contains(rr_data(env), n, Ordmap::compare_text),
+      vr_has(pure_heads(), n),
+      dn,
+      d => PureData(n, args, d),
+      p => PureNamed(n, args, vs_has_sound(pure_heads(), n, p))
+    ),
+    u => vs_pure_product(env, n, args, u)
+  )
+}
+
+pub theorem vs_info_row(name: Text): InfoCall(name, vr_info_row(name)) {
+  match Text::eq(name, "unbounded") eqn q {
+    true => Eq::subst((z: Text) => InfoCall(z, Cons("div", Nil)), Eq::sym(text_eq_sound(name, "unbounded", q)), InfoUnbounded)
+    false => InfoOther(name, vs_text_ne(name, "unbounded", q))
+  }
+}
+
+pub theorem vs_untold_var(locals: List(RowName), n: SurfaceName, start: Nat, end: Nat, occ: Option(TermOccurrence), h: vr_untold(locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ)) = true): ArgumentUntold(locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ)) {
+  (⊢ (vr_untold(locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ)) = true) -> ArgumentUntold(locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ)) from match vr_find(locals, surface_name_text(n)) eqn f {
+    None => (h2: false = true) => vs_absurd(false, h2, Refl)
+    Some(l) => h2 => ⊢ ArgumentUntold(locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ)) from match l {
+      LocalRowKnown(r) => vs_absurd(false, h2, Refl)
+      LocalRowUnknown => UntoldUnknown(occ, n, start, end, vs_find_some(locals, surface_name_text(n), LocalRowUnknown, f))
+      LocalRowInfo => UntoldInfo(occ, n, start, end, vs_find_some(locals, surface_name_text(n), LocalRowInfo, f))
+    }
+  })(h)
+}
+
+pub theorem vs_untold_form(locals: List(RowName), kind: SurfaceKind, start: Nat, end: Nat, occ: Option(TermOccurrence),
+  not_var: ∀ n: SurfaceName. (kind = SkVar(n)) -> False,
+  not_lam: ∀ ps: List(Text). ∀ b: SurfaceTerm. ∀ ts: List(Option(SurfaceTerm)). ∀ us: List(Option(SurfaceSpan)). (kind = SkLam(ps, b, ts, us)) -> False,
+  not_borrow_lam: ∀ bs: List(Option(Bool)). ∀ l: SurfaceTerm. (kind = SkBorrowLam(bs, l)) -> False,
+  not_borrow: ∀ m: Bool. ∀ m_orig: Bool. ∀ x: SurfaceTerm. (kind = SkBorrow(m, m_orig, x)) -> False
+): ArgumentUntold(locals, SurfaceTermIndexedMk(kind, start, end, occ)) {
+  UntoldForm(SurfaceTermIndexedMk(kind, start, end, occ), UntoldKindMk(kind, not_var, not_lam, not_borrow_lam, not_borrow))
+}
+
+// ---- handlers ----------------------------------------------------------------------
+
+pub theorem vs_irrefutable(ps: List(SurfacePattern), h: vr_irrefutable(ps) = true): ∀ p: SurfacePattern. (Mem(SurfacePattern, p, ps)) -> Irrefutable(p) {
+  match ps {
+    Nil => p => m => Mem::nil(Irrefutable(p), m)
+    Cons(x, rest) => p => m => ⊢ Irrefutable(p) from match m {
+      MemHere(t) => vs_irrefutable_one(x, Bool::and_true_left(vr_irrefutable_one(x), vr_irrefutable(rest), h))
+      MemThere(b, t, m2) => vs_irrefutable(rest, Bool::and_true_right(vr_irrefutable_one(x), vr_irrefutable(rest), h), p, m2)
+    }
+  }
+}
+
+pub theorem vs_irrefutable_one(p: SurfacePattern, h: vr_irrefutable_one(p) = true): Irrefutable(p) {
+  match p {
+    PtWild => IrrefutableWild
+    PtBind(n, unused) => IrrefutableName(n, unused)
+    PtCtor(name, args) => vs_absurd(false, h, Refl)
+    PtRecord(name, fields) => vs_absurd(false, h, Refl)
+    PtInt(negative, n) => vs_absurd(false, h, Refl)
+    PtBool(b) => vs_absurd(false, h, Refl)
+    PtText(t) => vs_absurd(false, h, Refl)
+    PtTyped(n, ty, _) => vs_absurd(false, h, Refl)
+    PtOther(w) => vs_absurd(false, h, Refl)
+  }
+}
+
+pub theorem vs_answer_one(hd: SurfaceHandler, rest: List(SurfaceHandler), e: Text, h: vr_answers_one(hd, e) = true): HandlersAnswer(e, Cons(hd, rest)) {
+  match hd {
+    HdReturn(p, b) => vs_absurd(false, h, Refl)
+    HdOperation(op, bs, ts, ps, k, cont_unused, guard, body) => ⊢ HandlersAnswer(e, Cons(HdOperation(op, bs, ts, ps, k, cont_unused, guard, body), rest)) from match guard {
+      Some(g) => vs_absurd(false, h, Refl)
+      None => AnswerHere(
+        op,
+        bs,
+        ts,
+        ps,
+        k,
+        cont_unused,
+        body,
+        rest,
+        Eq::subst((z: Text) => EffectOfOp(op, z), text_eq_sound(vr_effect_of(op), e, Bool::and_true_left(Text::eq(vr_effect_of(op), e), vr_irrefutable(ps), h)), vs_effect_of(op)),
+        vs_irrefutable(ps, Bool::and_true_right(Text::eq(vr_effect_of(op), e), vr_irrefutable(ps), h))
+      )
+    }
+  }
+}
+
+pub theorem vs_answers(hs: List(SurfaceHandler), e: Text, h: vr_answers(hs, e) = true): HandlersAnswer(e, hs) {
+  match hs {
+    Nil => vs_absurd(false, h, Refl)
+    Cons(hd, rest) => vs_or_split(
+      vr_answers_one(hd, e),
+      vr_answers(rest, e),
+      h,
+      one => vs_answer_one(hd, rest, e, one),
+      later => AnswerLater(hd, vs_answers(rest, e, later))
+    )
+  }
+}
+
+pub theorem vs_unanswered(rb: List(Text), hs: List(SurfaceHandler), e: Text, m: Mem(Text, e, rb)): HandlersAnswer(e, hs) ∨ Mem(Text, e, vr_unanswered(rb, hs)) {
+  match m {
+    MemHere(t) => ⊢ HandlersAnswer(e, hs) ∨ Mem(Text, e, vr_unanswered(Cons(e, t), hs)) from match vr_answers(hs, e) eqn q {
+      true => OrInl(vs_answers(hs, e, q))
+      false => OrInr(MemHere(vr_unanswered(t, hs)))
+    }
+    MemThere(b, t, m2) => ⊢ HandlersAnswer(e, hs) ∨ Mem(Text, e, vr_unanswered(Cons(b, t), hs)) from match vr_answers(hs, b) eqn q {
+      true => vs_unanswered(t, hs, e, m2)
+      false => Or::elim(vs_unanswered(t, hs, e, m2), l => OrInl(l), r => OrInr(MemThere(b, vr_unanswered(t, hs), r)))
+    }
+  }
+}
+
+pub theorem vs_mem_skip(x: Text, e: Text, b: Text, d: List(Text), m: Mem(Text, x, Cons(e, d))): Mem(Text, x, Cons(e, Cons(b, d))) {
+  match m {
+    MemHere(t) => MemHere(Cons(b, d))
+    MemThere(c, t, m2) => MemThere(e, Cons(b, d), MemThere(b, d, m2))
+  }
+}
+
+pub theorem vs_drop_mem(rb: List(Text), e: Text, x: Text, m: Mem(Text, x, rb)): Mem(Text, x, Cons(e, vr_drop(rb, e))) {
+  match m {
+    MemHere(t) => ⊢ Mem(Text, x, Cons(e, vr_drop(Cons(x, t), e))) from match Text::eq(x, e) eqn q {
+      true => Eq::subst((z: Text) => Mem(Text, z, Cons(e, vr_drop(t, e))), Eq::sym(text_eq_sound(x, e, q)), MemHere(vr_drop(t, e)))
+      false => MemThere(e, Cons(x, vr_drop(t, e)), MemHere(vr_drop(t, e)))
+    }
+    MemThere(b, t, m2) => ⊢ Mem(Text, x, Cons(e, vr_drop(Cons(b, t), e))) from match Text::eq(b, e) eqn q {
+      true => vs_drop_mem(t, e, x, m2)
+      false => vs_mem_skip(x, e, b, vr_drop(t, e), vs_drop_mem(t, e, x, m2))
+    }
+  }
+}
+
+pub theorem vs_drop_sub(rb: List(Text), e: Text): Sub(Text, rb, Cons(e, vr_drop(rb, e))) {
+  x => m => vs_drop_mem(rb, e, x, m)
+}
+
+pub theorem vs_same(xs: List(Text), ys: List(Text), h: vr_same(xs, ys) = true): xs = ys {
+  match xs {
+    Nil => ⊢ Nil = ys from match ys {
+      Nil => Refl
+      Cons(y, more) => vs_absurd(false, h, Refl)
+    }
+    Cons(x, rest) => ⊢ Cons(x, rest) = ys from match ys {
+      Nil => vs_absurd(false, h, Refl)
+      Cons(y, more) => Eq::subst(
+        (z: Text) => Cons(x, rest) = Cons(z, more),
+        text_eq_sound(x, y, Bool::and_true_left(Text::eq(x, y), vr_same(rest, more), h)),
+        Eq::congr(⟦Cons(x, □)⟧, vs_same(rest, more, Bool::and_true_right(Text::eq(x, y), vr_same(rest, more), h)))
+      )
+    }
+  }
+}
+
+// ---- the declarations of a function --------------------------------------------------
+
+pub theorem vs_dg_nil(gs: List(Text)): DirectGenerics(gs, Nil, Nil) {
+  match gs {
+    Nil => DirectGenericsNil(Nil)
+    Cons(g, more) => DirectGenericsEnd(g, vs_dg_nil(more))
+  }
+}
+
+pub theorem vs_some_text(x: Text, y: Text, e: Some(x) = Some(y)): x = y {
+  match e {
+    Refl => Refl
+  }
+}
+
+pub theorem vs_direct_generics(gs: List(Text), bs: List(Option(Text))): DirectGenerics(gs, bs, vr_direct_generics(gs, bs)) {
+  match gs {
+    Nil => DirectGenericsNil(bs)
+    Cons(g, more) => ⊢ DirectGenerics(Cons(g, more), bs, vr_direct_generics(Cons(g, more), bs)) from match bs {
+      Nil => DirectGenericsEnd(g, vs_dg_nil(more))
+      Cons(b, rest) => ⊢ DirectGenerics(Cons(g, more), Cons(b, rest), vr_direct_generics(Cons(g, more), Cons(b, rest))) from match b {
+        None => DirectGenericsNo(g, None, (e: Option::None(<A: Text>) = Some("direct")) => vs_no_some("direct", e), vs_direct_generics(more, rest))
+        Some(x) => ⊢ DirectGenerics(Cons(g, more), Cons(Some(x), rest), vr_direct_generics(Cons(g, more), Cons(Some(x), rest))) from match Text::eq(x, "direct") eqn d {
+          true => Eq::subst((z: Text) => DirectGenerics(Cons(g, more), Cons(Some(z), rest), Cons(g, vr_direct_generics(more, rest))), Eq::sym(text_eq_sound(x, "direct", d)), DirectGenericsYes(g, vs_direct_generics(more, rest)))
+          false => DirectGenericsNo(g, Some(x), (e: Some(x) = Some("direct")) => vs_text_ne(x, "direct", d, vs_some_text(x, "direct", e)), vs_direct_generics(more, rest))
+        }
+      }
+    }
+  }
+}
+
+mutual {
+  pub theorem vs_fn_type(t: SurfaceTerm, ps: List(SurfaceParam), r: SurfaceTerm, es: Option(List(RowEntry)), h: vr_fn_kind(t) = SkPi(ps, r, es)): FunctionTypeOf(t, SkPi(ps, r, es)) {
+    match t {
+      SurfaceTermIndexedMk(kind, start, end, occ) => vs_fn_type_kind(kind, start, end, occ, ps, r, es, h)
+    }
+  }
+
+  pub theorem vs_fn_type_kind(kind: SurfaceKind, start: Nat, end: Nat, occ: Option(TermOccurrence), ps: List(SurfaceParam), r: SurfaceTerm, es: Option(List(RowEntry)), h: vr_fn_kind_of(kind) = SkPi(ps, r, es)): FunctionTypeOf(SurfaceTermIndexedMk(kind, start, end, occ), SkPi(ps, r, es)) {
+    match kind {
+      SkFnKind(fk, ty) => FunctionTypeKind(occ, fk, ty, start, end, vs_fn_type(ty, ps, r, es, h))
+      SkBorrow(m, m_orig, ty) => FunctionTypeBorrow(occ, m, m_orig, ty, start, end, vs_fn_type(ty, ps, r, es, h))
+      SkPi(ps1, r1, es1) => ⊢ FunctionTypeOf(SurfaceTermIndexedMk(SkPi(ps1, r1, es1), start, end, occ), SkPi(ps, r, es)) from match h {
+        Refl => FunctionTypeHere(occ, ps, r, es, start, end)
+      }
+      _ => ⊢ FunctionTypeOf(SurfaceTermIndexedMk(kind, start, end, occ), SkPi(ps, r, es)) from match h {
+      }
+    }
+  }
+}
+
+pub theorem vs_fn_type_det<t: SurfaceTerm, k: SurfaceKind>(f: FunctionTypeOf(t, k)): vr_fn_kind(t) = k {
+  match f {
+    FunctionTypeHere(oc1, ps, r, es, start, end) => Refl
+    FunctionTypeKind(oc1, fk, ty, start, end, inner) => vs_fn_type_det(inner)
+    FunctionTypeBorrow(oc1, m, m_orig, ty, start, end, inner) => vs_fn_type_det(inner)
+  }
+}
+
+pub theorem vs_param_row(ty: Option(SurfaceTerm)): ParamRow(ty, vr_param_row(ty)) {
+  match ty {
+    None => ParamRowNone
+    Some(t) => ⊢ ParamRow(Some(t), vr_param_kind_row(vr_fn_kind(t))) from match vr_fn_kind(t) eqn fk {
+      SkPi(ps, r, es) => ⊢ ParamRow(Some(t), vr_param_kind_row(SkPi(ps, r, es))) from match es {
+        Some(names) => ParamRowWritten(t, ps, r, vs_fn_type(t, ps, r, Some(names), fk))
+        None => ParamRowPure(t, ps, r, vs_fn_type(t, ps, r, None, fk))
+      }
+      _ => ParamRowOther(t, ps => r => es => f => ⊢ False from match Eq::trans(Eq::sym(fk), vs_fn_type_det(f)) {
+      })
+    }
+  }
+}
+
+pub theorem vs_params(ps: List(Text), types: List(Option(SurfaceTerm)), locals: List(RowName)): ParamsBind(ps, types, locals, vr_params(ps, types, locals)) {
+  match ps {
+    Nil => ParamsBindNoName(types, locals)
+    Cons(p, rest) => ⊢ ParamsBind(Cons(p, rest), types, locals, vr_params(Cons(p, rest), types, locals)) from match types {
+      Nil => ParamsBindNoType(p, rest, locals)
+      Cons(ty, more) => ParamsBindOne(p, rest, ty, more, vs_param_row(ty), vs_params(rest, more, Cons(RowName::Mk(p, vr_param_row(ty)), locals)))
+    }
+  }
+}
+
+pub theorem vs_names_var(ty: Option(SurfaceTerm), v: Text, named: List(Text), tn: TypeNamesVar(ty, v, named)): vr_named(ty, v) = Some(named) {
+  match tn {
+    TypeNamesVarMk(t, ps, r, es, some, shape, holds, rest) => Eq::subst(
+      (z: Option(SurfaceTerm)) => vr_named(z, v) = Some(named),
+      Eq::sym(some),
+      Eq::subst(
+        (k: SurfaceKind) => vr_named_kind(k, v) = Some(named),
+        Eq::sym(vs_fn_type_det(shape)),
+        Eq::subst(
+          (b: Bool) => (⊢ Option(List(Text)) from match b {
+            true => Some(vr_not_vars(row_entries_text(es)))
+            false => None
+          }) = Some(named),
+          Eq::sym(vs_has_complete(row_entries_text(es), Text::concat("|", v), holds)),
+          Eq::congr(⟦Some(□)⟧, vs_not_vars(row_entries_text(es), named, rest))
+        )
+      )
+    )
+  }
+}
+
+pub theorem vs_names_any(ty: Option(SurfaceTerm), vs: List(Text), v: Text, m: Mem(Text, v, vs), h: vr_is_some(vr_named(ty, v)) = true): vr_names_any(ty, vs) = true {
+  match m {
+    MemHere(t) => Bool::or_true_left(vr_is_some(vr_named(ty, v)), vr_names_any(ty, t), h)
+    MemThere(b, t, m2) => Bool::or_true_right(vr_is_some(vr_named(ty, b)), vr_names_any(ty, t), vs_names_any(ty, t, v, m2, h))
+  }
+}
+
+pub theorem vs_without_mem(r: List(Text), ns: List(Text), x: Text, m: Mem(Text, x, r), h: vr_has(ns, x) = false): Mem(Text, x, vr_without(r, ns)) {
+  match m {
+    MemHere(t) => ⊢ Mem(Text, x, vr_without(Cons(x, t), ns)) from match vr_has(ns, x) eqn q {
+      true => vs_absurd(true, Refl, h)
+      false => MemHere(vr_without(t, ns))
+    }
+    MemThere(b, t, m2) => ⊢ Mem(Text, x, vr_without(Cons(b, t), ns)) from match vr_has(ns, b) eqn q {
+      true => vs_without_mem(t, ns, x, m2, h)
+      false => MemThere(b, vr_without(t, ns), vs_without_mem(t, ns, x, m2, h))
+    }
+  }
+}
+
+pub theorem vs_without_sub(r: List(Text), ns: List(Text), given: List(Text), s: Sub(Text, vr_without(r, ns), given)): Sub(Text, r, List::append(ns, given)) {
+  x => m => ⊢ Mem(Text, x, List::append(ns, given)) from match vr_has(ns, x) eqn q {
+    true => Mem::append_left(given, vs_has_sound(ns, x, q))
+    false => Mem::append_right(ns, given, s(x, vs_without_mem(r, ns, x, m, q)))
+  }
+}
+
+// ---- `θ` -----------------------------------------------------------------------------
+
+// What the arguments from here on give `θ(v)`: each argument whose type
+// names `|v` performs, less what the type writes beside it, within `given`.
+pub(open) inductive VsCovers(v: Text, given: List(Text)): (List(Option(SurfaceTerm)), List(Option(List(Text)))) -> Prop {
+  CoversNoType(ls: List(Option(List(Text)))): VsCovers(v, given, Nil, ls)
+  CoversNoArg(types: List(Option(SurfaceTerm))): VsCovers(v, given, types, Nil)
+  CoversCons<types: List(Option(SurfaceTerm)), ls: List(Option(List(Text)))>(
+    ty: Option(SurfaceTerm),
+    l: Option(List(Text)),
+    here: ∀ ns: List(Text). ∀ r: List(Text). (vr_named(ty, v) = Some(ns)) -> (l = Some(r)) -> Sub(Text, vr_without(r, ns), given),
+    tail: VsCovers(v, given, types, ls)
+  ): VsCovers(v, given, Cons(ty, types), Cons(l, ls))
+}
+
+pub theorem vs_sub_append_left(a: List(Text), b: List(Text)): Sub(Text, a, List::append(a, b)) {
+  e => m => Mem::append_left(b, m)
+}
+
+pub theorem vs_sub_append_right(a: List(Text), b: List(Text)): Sub(Text, b, List::append(a, b)) {
+  e => m => Mem::append_right(a, b, m)
+}
+
+// One step of `vr_theta_var` keeps what it had and adds what the argument gives.
+pub theorem vs_step_keeps(named: Option(List(Text)), l: Option(List(Text)), found: Option(List(Text)), s: List(Text), e: found = Some(s)): ∃ s2: List(Text). vr_theta_step(named, l, found) = Some(s2) ∧ Sub(Text, s, s2) {
+  match e {
+    Refl => ⊢ ∃ s2: List(Text). vr_theta_step(named, l, Some(s)) = Some(s2) ∧ Sub(Text, s, s2) from match named {
+      None => ExIntro(s, AndIntro(Refl, Sub::refl(s)))
+      Some(ns) => ⊢ ∃ s2: List(Text). vr_theta_step(Some(ns), l, Some(s)) = Some(s2) ∧ Sub(Text, s, s2) from match l {
+        None => ExIntro(s, AndIntro(Refl, Sub::refl(s)))
+        Some(r) => ExIntro(List::append(s, vr_without(r, ns)), AndIntro(Refl, vs_sub_append_left(s, vr_without(r, ns))))
+      }
+    }
+  }
+}
+
+pub theorem vs_step_adds(named: Option(List(Text)), l: Option(List(Text)), found: Option(List(Text)), ns: List(Text), r: List(Text), en: named = Some(ns), el: l = Some(r)): ∃ s2: List(Text). vr_theta_step(named, l, found) = Some(s2) ∧ Sub(Text, vr_without(r, ns), s2) {
+  match en {
+    Refl => ⊢ ∃ s2: List(Text). vr_theta_step(Some(ns), l, found) = Some(s2) ∧ Sub(Text, vr_without(r, ns), s2) from match el {
+      Refl => ⊢ ∃ s2: List(Text). vr_theta_step(Some(ns), Some(r), found) = Some(s2) ∧ Sub(Text, vr_without(r, ns), s2) from match found {
+        None => ExIntro(vr_without(r, ns), AndIntro(Refl, Sub::refl(vr_without(r, ns))))
+        Some(sofar) => ExIntro(List::append(sofar, vr_without(r, ns)), AndIntro(Refl, vs_sub_append_right(sofar, vr_without(r, ns))))
+      }
+    }
+  }
+}
+
+// Once found, a row only grows.
+pub theorem vs_theta_var_keeps(v: Text, types: List(Option(SurfaceTerm)), ls: List(Option(List(Text))), found: Option(List(Text)), out: List(Text), s: List(Text), h: vr_theta_var(v, types, ls, found) = Some(out), e: found = Some(s)): Sub(Text, s, out) {
+  match ls {
+    Nil => Eq::subst((z: List(Text)) => Sub(Text, s, z), vs_some_rows(s, out, Eq::trans(Eq::sym(e), h)), Sub::refl(s))
+    Cons(l, rest) => ⊢ Sub(Text, s, out) from match types {
+      Nil => Eq::subst((z: List(Text)) => Sub(Text, s, z), vs_some_rows(s, out, Eq::trans(Eq::sym(e), h)), Sub::refl(s))
+      Cons(ty, more) => ⊢ Sub(Text, s, out) from match vs_step_keeps(vr_named(ty, v), l, found, s, e) {
+        ExIntro(s2, both) => Sub::trans(And::right(both), vs_theta_var_keeps(v, more, rest, vr_theta_step(vr_named(ty, v), l, found), out, s2, h, And::left(both)))
+      }
+    }
+  }
+}
+
+pub theorem vs_some_rows(x: List(Text), y: List(Text), e: Some(x) = Some(y)): x = y {
+  match e {
+    Refl => Refl
+  }
+}
+
+pub theorem vs_theta_var(v: Text, types: List(Option(SurfaceTerm)), ls: List(Option(List(Text))), found: Option(List(Text)), out: List(Text), h: vr_theta_var(v, types, ls, found) = Some(out)): VsCovers(v, out, types, ls) {
+  match ls {
+    Nil => CoversNoArg(types)
+    Cons(l, rest) => ⊢ VsCovers(v, out, types, Cons(l, rest)) from match types {
+      Nil => CoversNoType(Cons(l, rest))
+      Cons(ty, more) => CoversCons(
+        ty,
+        l,
+        ns => r => en => el => ⊢ Sub(Text, vr_without(r, ns), out) from match vs_step_adds(vr_named(ty, v), l, found, ns, r, en, el) {
+          ExIntro(s2, both) => Sub::trans(And::right(both), vs_theta_var_keeps(v, more, rest, vr_theta_step(vr_named(ty, v), l, found), out, s2, h, And::left(both)))
+        },
+        vs_theta_var(v, more, rest, vr_theta_step(vr_named(ty, v), l, found), out, h)
+      )
+    }
+  }
+}
+
+pub theorem vs_theta_cons(
+  w: Text,
+  roww: List(Text),
+  more: List(Text × List(Text)),
+  rest: List(Text),
+  types: List(Option(SurfaceTerm)),
+  ls: List(Option(List(Text))),
+  th: List(Text × List(Text)),
+  tv: vr_theta_var(w, types, ls, None) = Some(roww),
+  h: Some(Cons(#(w, roww), more)) = Some(th),
+  ih: ∀ v: Text. (Mem(Text, v, rest)) -> ∃ given: List(Text). ThetaRow(more, v, given) ∧ VsCovers(v, given, types, ls)
+): ∀ v: Text. (Mem(Text, v, Cons(w, rest))) -> ∃ given: List(Text). ThetaRow(th, v, given) ∧ VsCovers(v, given, types, ls) {
+  match h {
+    Refl => v => m => ⊢ ∃ given: List(Text). ThetaRow(Cons(#(w, roww), more), v, given) ∧ VsCovers(v, given, types, ls) from match Text::eq(w, v) eqn q {
+      true => Eq::subst(
+        (z: Text) => ∃ given: List(Text). ThetaRow(Cons(#(w, roww), more), z, given) ∧ VsCovers(z, given, types, ls),
+        text_eq_sound(w, v, q),
+        ExIntro(roww, AndIntro(ThetaRowHere(w, roww, more), vs_theta_var(w, types, ls, None, roww, tv)))
+      )
+      false => ⊢ ∃ given: List(Text). ThetaRow(Cons(#(w, roww), more), v, given) ∧ VsCovers(v, given, types, ls) from match m {
+        MemHere(t) => vs_absurd(Text::eq(w, w), text_eq_refl(w), q)
+        MemThere(b, t, m2) => ⊢ ∃ given: List(Text). ThetaRow(Cons(#(w, roww), more), v, given) ∧ VsCovers(v, given, types, ls) from match ih(v, m2) {
+          ExIntro(given, both) => ExIntro(given, AndIntro(ThetaRowLater(#(w, roww), vs_text_ne(w, v, q), And::left(both)), And::right(both)))
+        }
+      }
+    }
+  }
+}
+
+pub theorem vs_theta(vs: List(Text), types: List(Option(SurfaceTerm)), ls: List(Option(List(Text))), th: List(Text × List(Text)), h: vr_theta(vs, types, ls) = Some(th)): ∀ v: Text. (Mem(Text, v, vs)) -> ∃ given: List(Text). ThetaRow(th, v, given) ∧ VsCovers(v, given, types, ls) {
+  match vs {
+    Nil => v => m => Mem::nil(∃ given: List(Text). ThetaRow(th, v, given) ∧ VsCovers(v, given, types, ls), m)
+    Cons(w, rest) => (⊢ (vr_theta(Cons(w, rest), types, ls) = Some(th)) -> ∀ v: Text. (Mem(Text, v, Cons(w, rest))) -> ∃ given: List(Text). ThetaRow(th, v, given) ∧ VsCovers(v, given, types, ls) from match vr_theta_var(w, types, ls, None) eqn tv {
+      None => h2 => vs_no_some(th, h2)
+      Some(roww) => h2 => (⊢ ((⊢ Option(List(Text × List(Text))) from match vr_theta(rest, types, ls) {
+        None => None
+        Some(more) => Some(Cons(#(w, roww), more))
+      }) = Some(th)) -> ∀ v: Text. (Mem(Text, v, Cons(w, rest))) -> ∃ given: List(Text). ThetaRow(th, v, given) ∧ VsCovers(v, given, types, ls) from match vr_theta(rest, types, ls) eqn tr {
+        None => h3 => vs_no_some(th, h3)
+        Some(more) => h3 => vs_theta_cons(w, roww, more, rest, types, ls, th, tv, h3, (v: Text) => (m: Mem(Text, v, rest)) => vs_theta(rest, types, ls, more, tr, v, m))
+      })(h2)
+    })(h)
+  }
+}
+
+// What calling each argument performs, as the check found it.
+pub(open) inductive VsLatents(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit): (List(RowName), List(SurfaceTerm), List(Option(List(Text)))) -> Prop {
+  VsLatentsNil(locals: List(RowName)): VsLatents(env, sig, dvars, lim, locals, Nil, Nil)
+  VsLatentsCons<locals: List(RowName), args: List(SurfaceTerm), ls: List(Option(List(Text)))>(
+    a: SurfaceTerm,
+    l: Option(List(Text)),
+    each: ∀ r: List(Text). (l = Some(r)) -> LatentPerforms(env, sig, dvars, lim, locals, a, r),
+    tail: VsLatents(env, sig, dvars, lim, locals, args, ls)
+  ): VsLatents(env, sig, dvars, lim, locals, Cons(a, args), Cons(l, ls))
+}
+
+pub theorem vs_covers_tail<given: List(Text), types: List(Option(SurfaceTerm)), ls: List(Option(List(Text)))>(v: Text, ty: Option(SurfaceTerm), l: Option(List(Text)), c: VsCovers(v, given, Cons(ty, types), Cons(l, ls))): VsCovers(v, given, types, ls) {
+  match c {
+    CoversCons(ty1, l1, here, tail) => tail
+  }
+}
+
+pub theorem vs_covers_here<given: List(Text), types: List(Option(SurfaceTerm)), ls: List(Option(List(Text)))>(v: Text, ty: Option(SurfaceTerm), l: Option(List(Text)), c: VsCovers(v, given, Cons(ty, types), Cons(l, ls))): ∀ ns: List(Text). ∀ r: List(Text). (vr_named(ty, v) = Some(ns)) -> (l = Some(r)) -> Sub(Text, vr_without(r, ns), given) {
+  match c {
+    CoversCons(ty1, l1, here, tail) => here
+  }
+}
+
+pub theorem vs_fit(
+  env: RowEnv,
+  sig: List(Text × List(Text)),
+  dvars: List(Text),
+  lim: RankLimit,
+  locals: List(RowName),
+  theta: List(Text × List(Text)),
+  row: List(Text),
+  vs: List(Text),
+  types: List(Option(SurfaceTerm)),
+  args: List(SurfaceTerm),
+  ls: List(Option(List(Text))),
+  lat: VsLatents(env, sig, dvars, lim, locals, args, ls),
+  told: vr_args_told(vs, types, ls) = true,
+  vars_ok: ∀ v: Text. (Mem(Text, Text::concat("|", v), row)) -> Mem(Text, v, vs),
+  cover: ∀ v: Text. (Mem(Text, Text::concat("|", v), row)) -> ∃ given: List(Text). ThetaRow(theta, v, given) ∧ VsCovers(v, given, types, ls)
+): ArgumentsFit(env, sig, dvars, lim, locals, theta, row, types, args) {
+  match lat {
+    VsLatentsNil(locals1) => ArgumentsFitNoArg(types)
+    VsLatentsCons<locals: locals1, args: args1, ls: ls1>(a, l, each, tail) => ⊢ ArgumentsFit(env, sig, dvars, lim, locals1, theta, row, types, Cons(a, args1)) from match types {
+      Nil => ArgumentsFitNoType(Cons(a, args1))
+      Cons(ty, more) => (⊢ (vr_args_told(vs, Cons(ty, more), Cons(l, ls1)) = true) -> ArgumentsFit(env, sig, dvars, lim, locals1, theta, row, Cons(ty, more), Cons(a, args1)) from match vr_names_any(ty, vs) eqn na {
+        false => told2 => ArgumentsFitSilent(
+          ty,
+          a,
+          v => named => tn => m => vs_absurd(
+            vr_names_any(ty, vs),
+            vs_names_any(ty, vs, v, vars_ok(v, m), Eq::subst((z: Option(List(Text))) => vr_is_some(z) = true, Eq::sym(vs_names_var(ty, v, named, tn)), Refl)),
+            na
+          ),
+          vs_fit(env, sig, dvars, lim, locals1, theta, row, vs, more, args1, ls1, tail, Bool::and_true_right(vr_arg_told(false, l), vr_args_told(vs, more, ls1), told2), vars_ok, v => m => ⊢ ∃ given: List(Text). ThetaRow(theta, v, given) ∧ VsCovers(v, given, more, ls1) from match cover(v, m) {
+            ExIntro(given, both) => ExIntro(given, AndIntro(And::left(both), vs_covers_tail(v, ty, l, And::right(both))))
+          })
+        )
+        true => told2 => ⊢ ArgumentsFit(env, sig, dvars, lim, locals1, theta, row, Cons(ty, more), Cons(a, args1)) from match l {
+          None => vs_absurd(false, Bool::and_true_left(false, vr_args_told(vs, more, ls1), told2), Refl)
+          Some(r) => ArgumentsFitPassed(
+            ty,
+            a,
+            each(r, Refl),
+            v => named => tn => m => ⊢ ∃ given: List(Text). ThetaRow(theta, v, given) ∧ Sub(Text, r, List::append(named, given)) from match cover(v, m) {
+              ExIntro(given, both) => ExIntro(given, AndIntro(And::left(both), vs_without_sub(r, named, given, vs_covers_here(v, ty, Some(r), And::right(both), named, r, vs_names_var(ty, v, named, tn), Refl))))
+            },
+            vs_fit(env, sig, dvars, lim, locals1, theta, row, vs, more, args1, ls1, tail, Bool::and_true_right(true, vr_args_told(vs, more, ls1), told2), vars_ok, v => m => ⊢ ∃ given: List(Text). ThetaRow(theta, v, given) ∧ VsCovers(v, given, more, ls1) from match cover(v, m) {
+              ExIntro(given, both) => ExIntro(given, AndIntro(And::left(both), vs_covers_tail(v, ty, Some(r), And::right(both))))
+            })
+          )
+        }
+      })(told)
+    }
+  }
+}
+
+// ---- calls -------------------------------------------------------------------------
+
+// The forms an argument's calls are not followed through.
+pub fn vs_plain(kind: SurfaceKind): Bool {
+  match kind {
+    SkVar(^n) => false
+    SkLam(^ps, ^b, ^ts, _) => false
+    SkBorrowLam(^bs, ^l) => false
+    SkBorrow(^m, ^m_orig, ^x) => false
+    _ => true
+  }
+}
+
+pub theorem vs_untold_kind(kind: SurfaceKind, hp: vs_plain(kind) = true): UntoldKind(kind) {
+  UntoldKindMk(
+    kind,
+    n => e => vs_absurd(vs_plain(SkVar(n)), Eq::subst((z: SurfaceKind) => vs_plain(z) = true, e, hp), Refl),
+    ps => b => ts => us => e => vs_absurd(vs_plain(SkLam(ps, b, ts, us)), Eq::subst((z: SurfaceKind) => vs_plain(z) = true, e, hp), Refl),
+    bs => l => e => vs_absurd(vs_plain(SkBorrowLam(bs, l)), Eq::subst((z: SurfaceKind) => vs_plain(z) = true, e, hp), Refl),
+    m => m_orig => x => e => vs_absurd(vs_plain(SkBorrow(m, m_orig, x)), Eq::subst((z: SurfaceKind) => vs_plain(z) = true, e, hp), Refl)
+  )
+}
+
+pub theorem vs_untold(locals: List(RowName), a: SurfaceTerm, h: vr_untold(locals, a) = true): ArgumentUntold(locals, a) {
+  match a {
+    SurfaceTermIndexedMk(kind, start, end, occ) => ⊢ ArgumentUntold(locals, SurfaceTermIndexedMk(kind, start, end, occ)) from match vs_plain(kind) eqn hp {
+      true => UntoldForm(SurfaceTermIndexedMk(kind, start, end, occ), vs_untold_kind(kind, hp))
+      false => ⊢ ArgumentUntold(locals, SurfaceTermIndexedMk(kind, start, end, occ)) from match kind {
+        SkVar(n) => vs_untold_var(locals, n, start, end, occ, h)
+        SkLam(ps, b, ts, _) => vs_absurd(false, h, Refl)
+        SkBorrowLam(bs, l) => vs_absurd(false, h, Refl)
+        SkBorrow(m, m_orig, x) => vs_absurd(false, h, Refl)
+        _ => vs_absurd(true, Refl, hp)
+      }
+    }
+  }
+}
+
+pub theorem vs_extern_arg(c: VrCtx, locals: List(RowName), a: SurfaceTerm, l: Option(List(Text)), each: ∀ r: List(Text). (l = Some(r)) -> LatentPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, a, r), h: vr_extern_arg(c, locals, a, l) = true): ExternArgument(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, a) {
+  match l {
+    Some(r) => ExternArgumentRow(a, each(r, Refl), vs_extern_ok(vr_env(c), vr_dvars(c), r, h))
+    None => ExternArgumentUntold(a, vs_untold(locals, a, h))
+  }
+}
+
+pub theorem vs_externs_cons<locals: List(RowName), args: List(SurfaceTerm)>(
+  c: VrCtx,
+  a0: SurfaceTerm,
+  l: Option(List(Text)),
+  here: ExternArgument(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, a0),
+  later: ∀ a: SurfaceTerm. (Mem(SurfaceTerm, a, args)) -> ExternArgument(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, a)
+): ∀ a: SurfaceTerm. (Mem(SurfaceTerm, a, Cons(a0, args))) -> ExternArgument(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, a) {
+  x => m => ⊢ ExternArgument(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, x) from match m {
+    MemHere(t) => here
+    MemThere(b, t, m2) => later(x, m2)
+  }
+}
+
+pub theorem vs_externs<locals: List(RowName), args: List(SurfaceTerm), ls: List(Option(List(Text)))>(c: VrCtx, lat: VsLatents(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, args, ls), h: vr_externs(c, locals, args, ls) = true): ∀ a: SurfaceTerm. (Mem(SurfaceTerm, a, args)) -> ExternArgument(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, a) {
+  match lat {
+    VsLatentsNil(locals1) => x => m => Mem::nil(ExternArgument(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals1, x), m)
+    VsLatentsCons<locals: locals1, args: args1, ls: ls1>(a0, l, each, tail) => vs_externs_cons(
+      c,
+      a0,
+      l,
+      vs_extern_arg(c, locals1, a0, l, each, Bool::and_true_left(vr_extern_arg(c, locals1, a0, l), vr_externs(c, locals1, args1, ls1), h)),
+      vs_externs(c, tail, Bool::and_true_right(vr_extern_arg(c, locals1, a0, l), vr_externs(c, locals1, args1, ls1), h))
+    )
+  }
+}
+
+pub theorem vs_bounds_hold_at<theta: List(Text × List(Text)), v: Text, given: List(Text)>(c: VrCtx, callee: SurfaceFn, b: Option(Text), h: vr_bounds_hold(c, callee, theta) = true, tr: ThetaRow(theta, v, given), gb: GenericBound(rr_generics(callee), rr_bounds(callee), v, b)): BoundHolds(vr_env(c), vr_dvars(c), b, given) {
+  match tr {
+    ThetaRowHere(w, row, rest) => vs_bound_holds(
+      vr_env(c),
+      vr_dvars(c),
+      b,
+      row,
+      Eq::subst(
+        (z: Option(Text)) => vr_bound_holds(vr_env(c), vr_dvars(c), z, row) = true,
+        vs_bound(gb),
+        Bool::and_true_left(vr_bound_holds(vr_env(c), vr_dvars(c), vr_bound(rr_generics(callee), rr_bounds(callee), w), row), vr_bounds_hold(c, callee, rest), h)
+      )
+    )
+    ThetaRowLater<rest: rest1>(head, different, tail) => vs_bounds_hold_at(
+      c,
+      callee,
+      b,
+      Bool::and_true_right(vr_bound_holds(vr_env(c), vr_dvars(c), vr_bound(rr_generics(callee), rr_bounds(callee), rr_fst(head)), head.snd), vr_bounds_hold(c, callee, rest1), h),
+      tail,
+      gb
+    )
+  }
+}
+
+pub theorem vs_inst(theta: List(Text × List(Text)), row: List(Text), r: List(Text), h: vr_inst(theta, row) = Some(r)): RowInst(theta, row, r) {
+  match row {
+    Nil => ⊢ RowInst(theta, Nil, r) from match h {
+      Refl => RowInstNil
+    }
+    Cons(e, rest) => (⊢ (vr_inst(theta, Cons(e, rest)) = Some(r)) -> RowInst(theta, Cons(e, rest), r) from match vr_var(e) eqn ve {
+      None => h2 => (⊢ (vr_cons(e, vr_inst(theta, rest)) = Some(r)) -> RowInst(theta, Cons(e, rest), r) from match vr_inst(theta, rest) eqn vi {
+        None => h3 => vs_no_some(r, h3)
+        Some(out) => h3 => ⊢ RowInst(theta, Cons(e, rest), r) from match h3 {
+          Refl => RowInstEffect(e, vs_var_none(e, ve), vs_inst(theta, rest, out, vi))
+        }
+      })(h2)
+      Some(v) => h2 => (⊢ (vr_both(vr_lookup(theta, v), vr_inst(theta, rest)) = Some(r)) -> RowInst(theta, Cons(e, rest), r) from match vr_lookup(theta, v) eqn lk {
+        None => h3 => vs_no_some(r, h3)
+        Some(given) => h3 => (⊢ (vr_both(Some(given), vr_inst(theta, rest)) = Some(r)) -> RowInst(theta, Cons(e, rest), r) from match vr_inst(theta, rest) eqn vi {
+          None => h4 => vs_no_some(r, h4)
+          Some(out) => h4 => ⊢ RowInst(theta, Cons(e, rest), r) from match h4 {
+            Refl => Eq::subst(
+              (z: Text) => RowInst(theta, Cons(z, rest), List::append(given, out)),
+              Eq::sym(vs_var_some(e, v, ve)),
+              RowInstVar(v, vs_lookup(theta, v, given, lk), vs_inst(theta, rest, out, vi))
+            )
+          }
+        })(h3)
+      })(h2)
+    })(h)
+  }
+}
+
+pub theorem vs_call_checked(
+  c: VrCtx,
+  locals: List(RowName),
+  n: SurfaceName,
+  args: List(SurfaceTerm),
+  ls: List(Option(List(Text))),
+  callee: SurfaceFn,
+  start: Nat,
+  end: Nat,
+  occ: Option(TermOccurrence),
+  r: List(Text),
+  row: List(Text),
+  th: List(Text × List(Text)),
+  lat: VsLatents(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, args, ls),
+  absent: RowNameAbsent(surface_name_text(n), locals),
+  decl: Ordmap::get(rr_fns(vr_env(c)), surface_name_text(n), Ordmap::compare_text) = Some(callee),
+  nt: rr_template(callee) = false,
+  lk: vr_lookup(vr_sig(c), surface_name_text(n)) = Some(row),
+  tq: vr_theta(vr_vars(row), rr_param_types(callee), ls) = Some(th),
+  h: vr_call_theta(c, locals, surface_name_text(n), args, ls, callee, row, Some(th)) = Some(r)
+): CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) {
+  let w: (vr_args_told(vr_vars(row), rr_param_types(callee), ls)
+    && vr_bounds_hold(c, callee, th)
+    && (not(Ordmap::contains(rr_externs(vr_env(c)), surface_name_text(n), Ordmap::compare_text)) || vr_externs(c, locals, args, ls))
+    && vr_ranked(vr_lim(c), surface_name_text(n))) = true ∧ vr_inst(th, row) = Some(r) := vs_when(
+    vr_args_told(vr_vars(row), rr_param_types(callee), ls)
+      && vr_bounds_hold(c, callee, th)
+      && (not(Ordmap::contains(rr_externs(vr_env(c)), surface_name_text(n), Ordmap::compare_text)) || vr_externs(c, locals, args, ls))
+      && vr_ranked(vr_lim(c), surface_name_text(n)),
+    vr_inst(th, row),
+    r,
+    h
+  )
+  let abc: (vr_args_told(vr_vars(row), rr_param_types(callee), ls)
+    && vr_bounds_hold(c, callee, th)
+    && (not(Ordmap::contains(rr_externs(vr_env(c)), surface_name_text(n), Ordmap::compare_text)) || vr_externs(c, locals, args, ls))) = true := Bool::and_true_left(
+    vr_args_told(vr_vars(row), rr_param_types(callee), ls)
+      && vr_bounds_hold(c, callee, th)
+      && (not(Ordmap::contains(rr_externs(vr_env(c)), surface_name_text(n), Ordmap::compare_text)) || vr_externs(c, locals, args, ls)),
+    vr_ranked(vr_lim(c), surface_name_text(n)),
+    And::left(w)
+  )
+  let ab: (vr_args_told(vr_vars(row), rr_param_types(callee), ls) && vr_bounds_hold(c, callee, th)) = true := Bool::and_true_left(
+    vr_args_told(vr_vars(row), rr_param_types(callee), ls) && vr_bounds_hold(c, callee, th),
+    not(Ordmap::contains(rr_externs(vr_env(c)), surface_name_text(n), Ordmap::compare_text)) || vr_externs(c, locals, args, ls),
+    abc
+  )
+  CallFunction(
+    occ,
+    n,
+    start,
+    end,
+    args,
+    callee,
+    absent,
+    FunctionDeclMk(decl),
+    nt,
+    vs_lookup(vr_sig(c), surface_name_text(n), row, lk),
+    vs_inst(th, row, r, And::right(w)),
+    vs_fit(
+      vr_env(c),
+      vr_sig(c),
+      vr_dvars(c),
+      vr_lim(c),
+      locals,
+      th,
+      row,
+      vr_vars(row),
+      rr_param_types(callee),
+      args,
+      ls,
+      lat,
+      Bool::and_true_left(vr_args_told(vr_vars(row), rr_param_types(callee), ls), vr_bounds_hold(c, callee, th), ab),
+      v => m => vs_vars_mem(row, v, m),
+      v => m => vs_theta(vr_vars(row), rr_param_types(callee), ls, th, tq, v, vs_vars_mem(row, v, m))
+    ),
+    v => given => b => tr => gb => vs_bounds_hold_at(c, callee, b, Bool::and_true_right(vr_args_told(vr_vars(row), rr_param_types(callee), ls), vr_bounds_hold(c, callee, th), ab), tr, gb),
+    vs_or_split(
+      not(Ordmap::contains(rr_externs(vr_env(c)), surface_name_text(n), Ordmap::compare_text)),
+      vr_externs(c, locals, args, ls),
+      Bool::and_true_right(
+        vr_args_told(vr_vars(row), rr_param_types(callee), ls) && vr_bounds_hold(c, callee, th),
+        not(Ordmap::contains(rr_externs(vr_env(c)), surface_name_text(n), Ordmap::compare_text)) || vr_externs(c, locals, args, ls),
+        abc
+      ),
+      nc => ExternNot(surface_name_text(n), args, Bool::not_true(Ordmap::contains(rr_externs(vr_env(c)), surface_name_text(n), Ordmap::compare_text), nc)),
+      ex => ExternArgs(surface_name_text(n), args, vs_externs(c, lat, ex))
+    ),
+    vs_ranked(
+      vr_lim(c),
+      surface_name_text(n),
+      Bool::and_true_right(
+        vr_args_told(vr_vars(row), rr_param_types(callee), ls)
+          && vr_bounds_hold(c, callee, th)
+          && (not(Ordmap::contains(rr_externs(vr_env(c)), surface_name_text(n), Ordmap::compare_text)) || vr_externs(c, locals, args, ls)),
+        vr_ranked(vr_lim(c), surface_name_text(n)),
+        And::left(w)
+      )
+    )
+  )
+}
+
+pub theorem vs_call_row(
+  c: VrCtx,
+  locals: List(RowName),
+  n: SurfaceName,
+  args: List(SurfaceTerm),
+  ls: List(Option(List(Text))),
+  callee: SurfaceFn,
+  start: Nat,
+  end: Nat,
+  occ: Option(TermOccurrence),
+  r: List(Text),
+  lat: VsLatents(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, args, ls),
+  absent: RowNameAbsent(surface_name_text(n), locals),
+  decl: Ordmap::get(rr_fns(vr_env(c)), surface_name_text(n), Ordmap::compare_text) = Some(callee),
+  nt: rr_template(callee) = false,
+  h: vr_call_row(c, locals, surface_name_text(n), args, ls, callee, vr_lookup(vr_sig(c), surface_name_text(n))) = Some(r)
+): CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) {
+  (⊢ (vr_call_row(c, locals, surface_name_text(n), args, ls, callee, vr_lookup(vr_sig(c), surface_name_text(n))) = Some(r)) -> CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) from match vr_lookup(vr_sig(c), surface_name_text(n)) eqn lk {
+    None => h2 => vs_no_some(r, h2)
+    Some(row) => h2 => (⊢ (vr_call_theta(c, locals, surface_name_text(n), args, ls, callee, row, vr_theta(vr_vars(row), rr_param_types(callee), ls)) = Some(r)) -> CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) from match vr_theta(vr_vars(row), rr_param_types(callee), ls) eqn tq {
+      None => h3 => vs_no_some(r, h3)
+      Some(th) => h3 => vs_call_checked(c, locals, n, args, ls, callee, start, end, occ, r, row, th, lat, absent, decl, nt, lk, tq, h3)
+    })(h2)
+  })(h)
+}
+
+pub theorem vs_call_function(c: VrCtx, locals: List(RowName), n: SurfaceName, args: List(SurfaceTerm), ls: List(Option(List(Text))), callee: SurfaceFn, start: Nat, end: Nat, occ: Option(TermOccurrence), r: List(Text), lat: VsLatents(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, args, ls), absent: RowNameAbsent(surface_name_text(n), locals), decl: Ordmap::get(rr_fns(vr_env(c)), surface_name_text(n), Ordmap::compare_text) = Some(callee), h: vr_call_function(c, locals, surface_name_text(n), args, ls, callee, vr_lookup(vr_sig(c), surface_name_text(n))) = Some(r)): CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) {
+  (⊢ (vr_call_function(c, locals, surface_name_text(n), args, ls, callee, vr_lookup(vr_sig(c), surface_name_text(n))) = Some(r)) -> CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) from match rr_template(callee) eqn tp {
+    true => h0 => vs_no_some(r, h0)
+    false => h0 => vs_call_row(c, locals, n, args, ls, callee, start, end, occ, r, lat, absent, decl, tp, h0)
+  })(h)
+}
+
+pub theorem vs_unless_template(f: SurfaceFn, o: Option(List(Text)), r: List(Text), h: vr_unless_template(f, o) = Some(r)): rr_template(f) = false ∧ o = Some(r) {
+  (⊢ (vr_unless_template(f, o) = Some(r)) -> rr_template(f) = false ∧ o = Some(r) from match rr_template(f) eqn tp {
+    true => h0 => vs_no_some(r, h0)
+    false => h0 => AndIntro(Refl, h0)
+  })(h)
+}
+
+pub theorem vs_call_name(
+  c: VrCtx,
+  locals: List(RowName),
+  n: SurfaceName,
+  start: Nat,
+  end: Nat,
+  occ: Option(TermOccurrence),
+  args: List(SurfaceTerm),
+  ls: List(Option(List(Text))),
+  lat: VsLatents(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, args, ls),
+  r: List(Text),
+  h: vr_call_name(c, locals, surface_name_text(n), args, ls, vr_find(locals, surface_name_text(n))) = Some(r)
+): CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) {
+  (⊢ (vr_call_name(c, locals, surface_name_text(n), args, ls, vr_find(locals, surface_name_text(n))) = Some(r)) -> CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) from match vr_find(locals, surface_name_text(n)) eqn f {
+    Some(l) => h2 => ⊢ CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) from match l {
+      LocalRowKnown(r1) => Eq::subst((z: List(Text)) => CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, z), vs_some_rows(r1, r, h2), CallLocal(occ, n, start, end, args, vs_find_some(locals, surface_name_text(n), LocalRowKnown(r1), f)))
+      LocalRowUnknown => vs_no_some(r, h2)
+      LocalRowInfo => vs_no_some(r, h2)
+    }
+    None => h2 => (⊢ (vr_call_name(c, locals, surface_name_text(n), args, ls, None) = Some(r)) -> CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) from match Ordmap::get(rr_fns(vr_env(c)), surface_name_text(n), Ordmap::compare_text) eqn g {
+      Some(callee) => h3 => vs_call_function(c, locals, n, args, ls, callee, start, end, occ, r, lat, vs_find_none(locals, surface_name_text(n), f), g, h3)
+      None => h3 => (⊢ ((⊢ Option(List(Text)) from match vr_pure(vr_env(c), surface_name_text(n), args) {
+        true => Some(Nil)
+        false => None
+      }) = Some(r)) -> CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) from match vr_pure(vr_env(c), surface_name_text(n), args) eqn p {
+        true => h4 => ⊢ CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), args, r) from match h4 {
+          Refl => CallPure(occ, n, start, end, args, vs_find_none(locals, surface_name_text(n), f), NoFunctionDeclMk(g), vs_pure(vr_env(c), surface_name_text(n), args, p))
+        }
+        false => h4 => vs_no_some(r, h4)
+      })(h3)
+    })(h2)
+  })(h)
+}
+
+pub theorem vs_info_call(
+  c: VrCtx,
+  locals: List(RowName),
+  base: SurfaceTerm,
+  name: Text,
+  start: Nat,
+  end: Nat,
+  occ: Option(TermOccurrence),
+  args: List(SurfaceTerm),
+  r: List(Text),
+  h: vr_info_call(locals, base, name) = Some(r)
+): CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkField(base, name), start, end, occ), args, r) {
+  match base {
+    SurfaceTermIndexedMk(kind, xs, xe, oc1) => ⊢ CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkField(SurfaceTermIndexedMk(kind, xs, xe, oc1), name), start, end, occ), args, r) from match kind {
+      SkVar(x) => (⊢ (vr_info_call(locals, SurfaceTermIndexedMk(SkVar(x), xs, xe, oc1), name) = Some(r)) -> CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkField(SurfaceTermIndexedMk(SkVar(x), xs, xe, oc1), name), start, end, occ), args, r) from match vr_find(locals, surface_name_text(x)) eqn f {
+        None => h2 => vs_no_some(r, h2)
+        Some(l) => h2 => ⊢ CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkField(SurfaceTermIndexedMk(SkVar(x), xs, xe, oc1), name), start, end, occ), args, r) from match l {
+          LocalRowInfo => ⊢ CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkField(SurfaceTermIndexedMk(SkVar(x), xs, xe, oc1), name), start, end, occ), args, r) from match h2 {
+            Refl => CallInfo(oc1, occ, x, xs, xe, name, start, end, args, vs_find_some(locals, surface_name_text(x), LocalRowInfo, f), vs_info_row(name))
+          }
+          LocalRowKnown(r1) => vs_no_some(r, h2)
+          LocalRowUnknown => vs_no_some(r, h2)
+        }
+      })(h)
+      _ => vs_no_some(r, h)
+    }
+  }
+}
+
+pub theorem vs_latent_name(
+  c: VrCtx,
+  locals: List(RowName),
+  n: SurfaceName,
+  start: Nat,
+  end: Nat,
+  occ: Option(TermOccurrence),
+  r: List(Text),
+  h: vr_latent_name(c, surface_name_text(n), vr_find(locals, surface_name_text(n))) = Some(r)
+): LatentPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), r) {
+  (⊢ (vr_latent_name(c, surface_name_text(n), vr_find(locals, surface_name_text(n))) = Some(r)) -> LatentPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), r) from match vr_find(locals, surface_name_text(n)) eqn f {
+    Some(l) => h2 => ⊢ LatentPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), r) from match l {
+      LocalRowKnown(r1) => Eq::subst((z: List(Text)) => LatentPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), z), vs_some_rows(r1, r, h2), LatentLocal(occ, n, start, end, vs_find_some(locals, surface_name_text(n), LocalRowKnown(r1), f)))
+      LocalRowUnknown => vs_no_some(r, h2)
+      LocalRowInfo => vs_no_some(r, h2)
+    }
+    None => h2 => (⊢ (vr_latent_name(c, surface_name_text(n), None) = Some(r)) -> LatentPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkVar(n), start, end, occ), r) from match Ordmap::get(rr_fns(vr_env(c)), surface_name_text(n), Ordmap::compare_text) eqn g {
+      Some(callee) => h3 => LatentFunction(occ, n, start, end, callee, vs_find_none(locals, surface_name_text(n), f), FunctionDeclMk(g), And::left(vs_unless_template(callee, vr_lookup(vr_sig(c), surface_name_text(n)), r, h3)), vs_lookup(vr_sig(c), surface_name_text(n), r, And::right(vs_unless_template(callee, vr_lookup(vr_sig(c), surface_name_text(n)), r, h3))))
+      None => h3 => vs_no_some(r, h3)
+    })(h2)
+  })(h)
+}
+
+pub theorem vs_inert(c: VrCtx, locals: List(RowName), kind: SurfaceKind, start: Nat, end: Nat, occ: Option(TermOccurrence), r: List(Text), i: InertKind(kind), h: Some(Nil(<A: Text>)) = Some(r)): Performs(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(kind, start, end, occ), r) {
+  match h {
+    Refl => PerformsInert(SurfaceTermIndexedMk(kind, start, end, occ), i)
+  }
+}
+
+pub theorem vs_decl(
+  c: VrCtx,
+  locals: List(RowName),
+  st: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  r: List(Text),
+  i: StmtInert(st),
+  more: ∀ l: List(RowName). ∀ rs: List(Text). (vr_stmts(c, l, rest) = Some(rs)) -> PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), l, rest, rs),
+  h: vr_both(Some(Nil(<A: Text>)), vr_stmts(c, locals, rest)) = Some(r)
+): PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(st, rest), r) {
+  (⊢ (vr_both(Some(Nil(<A: Text>)), vr_stmts(c, locals, rest)) = Some(r)) -> PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(st, rest), r) from match vr_stmts(c, locals, rest) eqn q {
+    None => h2 => vs_no_some(r, h2)
+    Some(rs) => h2 => Eq::subst((z: List(Text)) => PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(st, rest), z), vs_some_rows(rs, r, h2), PerformsDecl(st, rest, i, more(locals, rs, q)))
+  })(h)
+}
+
+// ---- splitting what the check combines -------------------------------------------
+
+pub theorem vs_both_split<C: Prop>(a: Option(List(Text)), b: Option(List(Text)), r: List(Text), h: vr_both(a, b) = Some(r), k: ∀ x: List(Text). ∀ y: List(Text). (a = Some(x)) -> (b = Some(y)) -> (List::append(x, y) = r) -> C): C {
+  match a {
+    None => vs_no_some(r, h)
+    Some(x) => ⊢ C from match b {
+      None => vs_no_some(r, h)
+      Some(y) => k(x, y, Refl, Refl, vs_some_rows(List::append(x, y), r, h))
+    }
+  }
+}
+
+pub theorem vs_cons_split<C: Prop>(e: Text, a: Option(List(Text)), r: List(Text), h: vr_cons(e, a) = Some(r), k: ∀ x: List(Text). (a = Some(x)) -> (Cons(e, x) = r) -> C): C {
+  match a {
+    None => vs_no_some(r, h)
+    Some(x) => k(x, Refl, vs_some_rows(Cons(e, x), r, h))
+  }
+}
+
+pub theorem vs_budget_split<C: Prop>(memory: Bool, a: Option(List(Text)), b: Option(List(Text)), r: List(Text), h: vr_budget(memory, a, b) = Some(r), k: ∀ ra: List(Text). ∀ rb: List(Text). (a = Some(ra)) -> (b = Some(rb)) -> (List::append(ra, Cons(surface_budget_operation(memory), Cons("exceeded", vr_drop(rb, "div")))) = r) -> C): C {
+  match a {
+    None => vs_no_some(r, h)
+    Some(ra) => ⊢ C from match b {
+      None => vs_no_some(r, h)
+      Some(rb) => k(ra, rb, Refl, Refl, vs_some_rows(List::append(ra, Cons(surface_budget_operation(memory), Cons("exceeded", vr_drop(rb, "div")))), r, h))
+    }
+  }
+}
+
+pub theorem vs_handle_split<C: Prop>(hs: List(SurfaceHandler), a: Option(List(Text)), b: Option(List(Text)), r: List(Text), h: vr_handle(hs, a, b) = Some(r), k: ∀ rb: List(Text). ∀ ra: List(Text). (a = Some(rb)) -> (b = Some(ra)) -> (List::append(vr_unanswered(rb, hs), ra) = r) -> C): C {
+  match a {
+    None => vs_no_some(r, h)
+    Some(rb) => ⊢ C from match b {
+      None => vs_no_some(r, h)
+      Some(ra) => k(rb, ra, Refl, Refl, vs_some_rows(List::append(vr_unanswered(rb, hs), ra), r, h))
+    }
+  }
+}
+
+pub theorem vs_direct_arm_split<C: Prop>(c: VrCtx, op: Text, a: Option(List(Text)), r: List(Text), h: vr_direct_arm(c, op, a) = Some(r), k: ∀ x: List(Text). (a = Some(x)) -> (x = r) -> ((vr_quant_is(vr_env(c), op, QuantDirect) = true) -> vr_all_direct(vr_env(c), vr_dvars(c), x) = true) -> C): C {
+  match a {
+    None => vs_no_some(r, h)
+    Some(x) => vs_direct_arm_some(c, op, x, r, h, (xr: x = r) => (d: (vr_quant_is(vr_env(c), op, QuantDirect) = true) -> vr_all_direct(vr_env(c), vr_dvars(c), x) = true) => k(x, Refl, xr, d))
+  }
+}
+
+pub theorem vs_direct_arm_some<C: Prop>(c: VrCtx, op: Text, x: List(Text), r: List(Text), h: vr_direct_arm(c, op, Some(x)) = Some(r), k: (x = r) -> ((vr_quant_is(vr_env(c), op, QuantDirect) = true) -> vr_all_direct(vr_env(c), vr_dvars(c), x) = true) -> C): C {
+  (⊢ (vr_direct_arm(c, op, Some(x)) = Some(r)) -> ((x = r) -> ((vr_quant_is(vr_env(c), op, QuantDirect) = true) -> vr_all_direct(vr_env(c), vr_dvars(c), x) = true) -> C) -> C from match vr_quant_is(vr_env(c), op, QuantDirect) eqn q {
+    true => h2 => k2 => k2(
+      vs_some_rows(x, r, And::right(vs_when(vr_all_direct(vr_env(c), vr_dvars(c), x), Some(x), r, h2))),
+      t => And::left(vs_when(vr_all_direct(vr_env(c), vr_dvars(c), x), Some(x), r, h2))
+    )
+    false => h2 => k2 => k2(vs_some_rows(x, r, h2), f => vs_absurd(false, f, Refl))
+  })(h, k)
+}
+
+pub theorem vs_bl(env: RowEnv, sig: List(Text × List(Text)), dvars: List(Text), lim: RankLimit, locals: List(RowName), value: SurfaceTerm, o: Option(List(Text)), k: ∀ r: List(Text). (o = Some(r)) -> LambdaPerforms(env, sig, dvars, lim, locals, value, r)): BoundLatent(env, sig, dvars, lim, locals, value, vr_bound_latent(value, o)) {
+  match o {
+    Some(r) => BoundLambda(value, k(r, Refl))
+    None => BoundUnknown(value)
+  }
+}
+
+// ---- the check of a body gives `Performs` -------------------------------------
+
+mutual {
+  pub theorem vs_term(c: VrCtx, locals: List(RowName), t: SurfaceTerm, r: List(Text), h: vr_term(c, locals, t) = Some(r)): Performs(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, t, r) {
+    match t {
+      SurfaceTermIndexedMk(kind, start, end, occ) => vs_kind(c, locals, kind, start, end, occ, r, h)
+    }
+  }
+
+  pub theorem vs_kind(c: VrCtx, locals: List(RowName), kind: SurfaceKind, start: Nat, end: Nat, occ: Option(TermOccurrence), r: List(Text), h: vr_kind(c, locals, kind) = Some(r)): Performs(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(kind, start, end, occ), r) {
+    match kind {
+      SkPerform(op, args) => vs_cons_split(vr_effect_of(op), vr_all(c, locals, args), r, h, x => ex => er => Eq::subst((z: List(Text)) => Performs(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkPerform(op, args), start, end, occ), z), er, PerformsPerform(occ, op, args, start, end, vs_effect_of(op), vs_all(c, locals, args, x, ex))))
+      SkApp(f, args) => vs_both_split(vr_call(c, locals, f, args, vr_latents(c, locals, args)), vr_all(c, locals, args), r, h, rc => ra => e1 => e2 => er => Eq::subst((z: List(Text)) => Performs(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkApp(f, args), start, end, occ), z), er, PerformsApp(occ, f, args, start, end, vs_call(c, locals, f, args, vr_latents(c, locals, args), vs_latents(c, locals, args), rc, e1), vs_all(c, locals, args, ra, e2))))
+      SkRecord(name, fields) => PerformsRecord(occ, name, fields, start, end, vs_fields(c, locals, fields, r, h))
+      SkBorrow(m, m_orig, x) => PerformsBorrow(occ, m, m_orig, x, start, end, vs_term(c, locals, x, r, h))
+      SkField(x, name) => PerformsField(occ, x, name, start, end, vs_term(c, locals, x, r, h))
+      SkTagged(tag, x) => PerformsTagged(occ, tag, x, start, end, vs_term(c, locals, x, r, h))
+      SkIf(cond, th, el) => vs_both_split(vr_term(c, locals, cond), vr_both(vr_term(c, locals, th), vr_opt(c, locals, el)), r, h, rc => rte => ec => ete => er => vs_both_split(vr_term(c, locals, th), vr_opt(c, locals, el), rte, ete, rt => re => et => ee => er2 => Eq::subst((z: List(Text)) => Performs(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkIf(cond, th, el), start, end, occ), z), er, Eq::subst((z: List(Text)) => Performs(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkIf(cond, th, el), start, end, occ), List::append(rc, z)), er2, PerformsIf(occ, cond, th, el, start, end, vs_term(c, locals, cond, rc, ec), vs_term(c, locals, th, rt, et), vs_opt(c, locals, el, re, ee))))))
+      SkMatch(s, motive, arms, binder, unused) => vs_both_split(vr_term(c, locals, s), vr_arms(c, locals, arms), r, h, rs => ra => e1 => e2 => er => Eq::subst((z: List(Text)) => Performs(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkMatch(s, motive, arms, binder, unused), start, end, occ), z), er, PerformsMatch(occ, s, motive, arms, binder, unused, start, end, vs_term(c, locals, s, rs, e1), vs_arms(c, locals, arms, ra, e2))))
+      SkBlock(stmts) => PerformsBlock(occ, stmts, start, end, vs_stmts(c, locals, stmts, r, h))
+      SkBudget(memory, amount, body) => vs_budget_split(memory, vr_term(c, locals, amount), vr_term(c, locals, body), r, h, ra => rb => e1 => e2 => er => Eq::subst((z: List(Text)) => Performs(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkBudget(memory, amount, body), start, end, occ), z), er, PerformsBudget(occ, memory, amount, body, start, end, vs_term(c, locals, amount, ra, e1), PerformsWider(vs_term(c, locals, body, rb, e2), vs_drop_sub(rb, "div")))))
+      SkHandle(body, handlers) => vs_handle_split(handlers, vr_term(c, locals, body), vr_handlers(c, locals, handlers), r, h, rb => ra => e1 => e2 => er => Eq::subst((z: List(Text)) => Performs(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(SkHandle(body, handlers), start, end, occ), z), er, PerformsHandle(occ, body, handlers, start, end, vs_term(c, locals, body, rb, e1), e => m => Or::elim(vs_unanswered(rb, handlers, e, m), an => OrInl(an), u => OrInr(Mem::append_left(ra, u))), vs_handlers(c, locals, handlers, ra, e2, List::append(vr_unanswered(rb, handlers), ra), vs_sub_append_right(vr_unanswered(rb, handlers), ra)))))
+      SkVar(n) => vs_inert(c, locals, SkVar(n), start, end, occ, r, InertVar(n), h)
+      SkNat(d) => vs_inert(c, locals, SkNat(d), start, end, occ, r, InertNat(d), h)
+      SkFloat(d) => vs_inert(c, locals, SkFloat(d), start, end, occ, r, InertFloat(d), h)
+      SkRow(es) => vs_inert(c, locals, SkRow(es), start, end, occ, r, InertRow(es), h)
+      SkText(v) => vs_inert(c, locals, SkText(v), start, end, occ, r, InertText(v), h)
+      SkBool(v) => vs_inert(c, locals, SkBool(v), start, end, occ, r, InertBool(v), h)
+      SkPi(ps, pr, es) => vs_inert(c, locals, SkPi(ps, pr, es), start, end, occ, r, InertPi(ps, pr, es), h)
+      SkExists(b, d, body, unused) => vs_inert(c, locals, SkExists(b, d, body, unused), start, end, occ, r, InertExists(b, d, body, unused), h)
+      SkLam(ps, body, types, unused) => vs_inert(
+        c,
+        locals,
+        SkLam(ps, body, types, unused),
+        start,
+        end,
+        occ,
+        r,
+        InertLam(ps, body, types, unused),
+        h
+      )
+      SkBorrowLam(bs, lam) => vs_inert(c, locals, SkBorrowLam(bs, lam), start, end, occ, r, InertBorrowLam(bs, lam), h)
+      SkUnion(parts) => vs_inert(c, locals, SkUnion(parts), start, end, occ, r, InertUnion(parts), h)
+      SkHole(n) => vs_inert(c, locals, SkHole(n), start, end, occ, r, InertHole(n), h)
+      SkFnKind(k, ty) => vs_inert(c, locals, SkFnKind(k, ty), start, end, occ, r, InertFnKind(k, ty), h)
+      SkOther(what) => vs_inert(c, locals, SkOther(what), start, end, occ, r, InertOther(what), h)
+      SkAscribe(what, what_ty) => vs_inert(c, locals, SkAscribe(what, what_ty), start, end, occ, r, InertAscribe(what, what_ty), h)
+      SkMacroCall(n, arg) => vs_inert(c, locals, SkMacroCall(n, arg), start, end, occ, r, InertMacroCall(n, arg), h)
+      SkQuote(f, ss) => vs_inert(c, locals, SkQuote(f, ss), start, end, occ, r, InertQuote(f, ss), h)
+      SkSplice(v) => vs_inert(c, locals, SkSplice(v), start, end, occ, r, InertSplice(v), h)
+      SkSyntaxLit(n, b) => vs_inert(c, locals, SkSyntaxLit(n, b), start, end, occ, r, InertSyntaxLit(n, b), h)
+      SkStep(tc, a, cs, ce, b, sarms) => vs_inert(c, locals, SkStep(tc, a, cs, ce, b, sarms), start, end, occ, r, InertStep(tc, a, cs, ce, b, sarms), h)
+    }
+  }
+
+  pub theorem vs_opt(c: VrCtx, locals: List(RowName), t: Option(SurfaceTerm), r: List(Text), h: vr_opt(c, locals, t) = Some(r)): PerformsOpt(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, t, r) {
+    match t {
+      None => Eq::subst((z: List(Text)) => PerformsOpt(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, None, z), vs_some_rows(Nil, r, h), PerformsNone(locals))
+      Some(x) => PerformsSome(x, vs_term(c, locals, x, r, h))
+    }
+  }
+
+  pub theorem vs_all(c: VrCtx, locals: List(RowName), ts: List(SurfaceTerm), r: List(Text), h: vr_all(c, locals, ts) = Some(r)): PerformsAll(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, ts, r) {
+    match ts {
+      Nil => Eq::subst((z: List(Text)) => PerformsAll(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Nil, z), vs_some_rows(Nil, r, h), PerformsAllNil(locals))
+      Cons(t, rest) => vs_both_split(vr_term(c, locals, t), vr_all(c, locals, rest), r, h, x => y => ex => ey => er => Eq::subst((z: List(Text)) => PerformsAll(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(t, rest), z), er, PerformsAllCons(t, rest, vs_term(c, locals, t, x, ex), vs_all(c, locals, rest, y, ey))))
+    }
+  }
+
+  pub theorem vs_fields(c: VrCtx, locals: List(RowName), fs: List(SurfaceField), r: List(Text), h: vr_fields(c, locals, fs) = Some(r)): PerformsFields(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, fs, r) {
+    match fs {
+      Nil => Eq::subst((z: List(Text)) => PerformsFields(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Nil, z), vs_some_rows(Nil, r, h), PerformsFieldsNil(locals))
+      Cons(f, rest) => vs_field(c, locals, f, rest, r, (rs: List(Text)) => (e: vr_fields(c, locals, rest) = Some(rs)) => vs_fields(c, locals, rest, rs, e), h)
+    }
+  }
+
+  pub theorem vs_field(c: VrCtx, locals: List(RowName), f: SurfaceField, rest: List(SurfaceField), r: List(Text), more: ∀ rs: List(Text). (vr_fields(c, locals, rest) = Some(rs)) -> PerformsFields(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, rest, rs), h: vr_both(vr_field(c, locals, f), vr_fields(c, locals, rest)) = Some(r)): PerformsFields(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(f, rest), r) {
+    match f {
+      SurfaceFieldMk(name, value) => vs_both_split(vr_term(c, locals, value), vr_fields(c, locals, rest), r, h, x => y => ex => ey => er => Eq::subst((z: List(Text)) => PerformsFields(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(SurfaceFieldMk(name, value), rest), z), er, PerformsFieldsCons(name, value, rest, vs_term(c, locals, value, x, ex), more(y, ey))))
+    }
+  }
+
+  pub theorem vs_arms(c: VrCtx, locals: List(RowName), arms: List(SurfaceArm), r: List(Text), h: vr_arms(c, locals, arms) = Some(r)): PerformsArms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, arms, r) {
+    match arms {
+      Nil => Eq::subst((z: List(Text)) => PerformsArms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Nil, z), vs_some_rows(Nil, r, h), PerformsArmsNil(locals))
+      Cons(arm, rest) => vs_arm(c, locals, arm, rest, r, (rs: List(Text)) => (e: vr_arms(c, locals, rest) = Some(rs)) => vs_arms(c, locals, rest, rs, e), h)
+    }
+  }
+
+  pub theorem vs_arm(c: VrCtx, locals: List(RowName), arm: SurfaceArm, rest: List(SurfaceArm), r: List(Text), more: ∀ rs: List(Text). (vr_arms(c, locals, rest) = Some(rs)) -> PerformsArms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, rest, rs), h: vr_both(vr_arm(c, locals, arm), vr_arms(c, locals, rest)) = Some(r)): PerformsArms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(arm, rest), r) {
+    match arm {
+      SurfaceArmMk(pattern, guard, goal, body) => vs_both_split(vr_both(vr_opt(c, vr_bind(pattern, locals), guard), vr_term(c, vr_bind(pattern, locals), body)), vr_arms(c, locals, rest), r, h, x => y => ex => ey => er => vs_both_split(vr_opt(c, vr_bind(pattern, locals), guard), vr_term(c, vr_bind(pattern, locals), body), x, ex, rg => rb => eg => eb => ex2 => Eq::subst((z: List(Text)) => PerformsArms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(SurfaceArmMk(pattern, guard, goal, body), rest), z), Eq::trans(Eq::sym(List::append_assoc(rg, rb, y)), Eq::trans(Eq::congr(⟦List::append(□, y)⟧, ex2), er)), PerformsArmsCons(pattern, guard, goal, body, rest, vs_bind(pattern, locals), vs_opt(c, vr_bind(pattern, locals), guard, rg, eg), vs_term(c, vr_bind(pattern, locals), body, rb, eb), more(y, ey)))))
+    }
+  }
+
+  pub theorem vs_handlers(c: VrCtx, locals: List(RowName), hs: List(SurfaceHandler), ra: List(Text), h: vr_handlers(c, locals, hs) = Some(ra), R: List(Text), sub: Sub(Text, ra, R)): HandlersPerform(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, hs, R) {
+    match hs {
+      Nil => HandlersPerformNil(locals, R)
+      Cons(hd, rest) => vs_both_split(vr_handler(c, locals, hd), vr_handlers(c, locals, rest), ra, h, r1 => r2 => e1 => e2 => er => vs_handler(c, locals, hd, rest, R, r1, e1, Sub::trans(vs_sub_append_left(r1, r2), Eq::subst((z: List(Text)) => Sub(Text, z, R), Eq::sym(er), sub)), vs_handlers(c, locals, rest, r2, e2, R, Sub::trans(vs_sub_append_right(r1, r2), Eq::subst((z: List(Text)) => Sub(Text, z, R), Eq::sym(er), sub)))))
+    }
+  }
+
+  pub theorem vs_handler(c: VrCtx, locals: List(RowName), hd: SurfaceHandler, rest: List(SurfaceHandler), R: List(Text), r1: List(Text), h1: vr_handler(c, locals, hd) = Some(r1), sub1: Sub(Text, r1, R), more: HandlersPerform(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, rest, R)): HandlersPerform(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(hd, rest), R) {
+    match hd {
+      HdReturn(pattern, body) => HandlersPerformReturn(pattern, body, rest, vs_bind(pattern, locals), PerformsWider(vs_term(c, vr_bind(pattern, locals), body, r1, h1), sub1), more)
+      HdOperation(op, binds, types, patterns, k, cont_unused, guard, body) => vs_direct_arm_split(c, op, vr_both(vr_opt(c, vr_cont(k, vr_bind_op(op, patterns, locals)), guard), vr_term(c, vr_cont(k, vr_bind_op(op, patterns, locals)), body)), r1, h1, x => ex => xr => dir => vs_both_split(vr_opt(c, vr_cont(k, vr_bind_op(op, patterns, locals)), guard), vr_term(c, vr_cont(k, vr_bind_op(op, patterns, locals)), body), x, ex, rg => rb => eg => eb => ex2 => HandlersPerformOperation(
+        op, binds, types, patterns, k, cont_unused, guard, body, rest,
+        vs_bind_op(op, patterns, locals),
+        vs_cont(k, vr_bind_op(op, patterns, locals)),
+        vs_opt(c, vr_cont(k, vr_bind_op(op, patterns, locals)), guard, rg, eg),
+        vs_term(c, vr_cont(k, vr_bind_op(op, patterns, locals)), body, rb, eb),
+        Eq::subst((z: List(Text)) => Sub(Text, z, R), Eq::sym(Eq::trans(ex2, xr)), sub1),
+        e => d => m => vs_all_direct(vr_env(c), vr_dvars(c), List::append(rg, rb), Eq::subst((z: List(Text)) => vr_all_direct(vr_env(c), vr_dvars(c), z) = true, Eq::sym(ex2), dir(vs_direct_quant(vr_env(c), op, d))), e, m),
+        more
+      )))
+    }
+  }
+
+  pub theorem vs_call(c: VrCtx, locals: List(RowName), f: SurfaceTerm, args: List(SurfaceTerm), ls: List(Option(List(Text))), lat: VsLatents(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, args, ls), r: List(Text), h: vr_call(c, locals, f, args, ls) = Some(r)): CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, f, args, r) {
+    match f {
+      SurfaceTermIndexedMk(kind, start, end, occ) => vs_call_kind(c, locals, kind, start, end, occ, args, ls, lat, r, h)
+    }
+  }
+
+  pub theorem vs_call_kind(c: VrCtx, locals: List(RowName), kind: SurfaceKind, start: Nat, end: Nat, occ: Option(TermOccurrence), args: List(SurfaceTerm), ls: List(Option(List(Text))), lat: VsLatents(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, args, ls), r: List(Text), h: vr_call_kind(c, locals, kind, args, ls) = Some(r)): CallPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(kind, start, end, occ), args, r) {
+    match kind {
+      SkVar(n) => vs_call_name(c, locals, n, start, end, occ, args, ls, lat, r, h)
+      SkField(base, name) => vs_info_call(c, locals, base, name, start, end, occ, args, r, h)
+      SkLam(ps, body, types, unused) => CallLambda(
+        SurfaceTermIndexedMk(SkLam(ps, body, types, unused), start, end, occ),
+        args,
+        LambdaPlain(occ, ps, body, types, unused, start, end, vs_unknown(ps, locals), vs_term(c, vr_unknown(ps, locals), body, r, h))
+      )
+      SkBorrowLam(bs, lam) => CallLambda(SurfaceTermIndexedMk(SkBorrowLam(bs, lam), start, end, occ), args, LambdaBorrows(occ, bs, lam, start, end, vs_lambda(c, locals, lam, r, h)))
+      _ => vs_no_some(r, h)
+    }
+  }
+
+  pub theorem vs_lambda(c: VrCtx, locals: List(RowName), t: SurfaceTerm, r: List(Text), h: vr_lambda(c, locals, t) = Some(r)): LambdaPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, t, r) {
+    match t {
+      SurfaceTermIndexedMk(kind, start, end, occ) => vs_lambda_kind(c, locals, kind, start, end, occ, r, h)
+    }
+  }
+
+  pub theorem vs_lambda_kind(c: VrCtx, locals: List(RowName), kind: SurfaceKind, start: Nat, end: Nat, occ: Option(TermOccurrence), r: List(Text), h: vr_lambda_kind(c, locals, kind) = Some(r)): LambdaPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(kind, start, end, occ), r) {
+    match kind {
+      SkLam(ps, body, types, unused) => LambdaPlain(occ, ps, body, types, unused, start, end, vs_unknown(ps, locals), vs_term(c, vr_unknown(ps, locals), body, r, h))
+      SkBorrowLam(bs, lam) => LambdaBorrows(occ, bs, lam, start, end, vs_lambda(c, locals, lam, r, h))
+      _ => vs_no_some(r, h)
+    }
+  }
+
+  pub theorem vs_latent(c: VrCtx, locals: List(RowName), t: SurfaceTerm, r: List(Text), h: vr_latent(c, locals, t) = Some(r)): LatentPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, t, r) {
+    match t {
+      SurfaceTermIndexedMk(kind, start, end, occ) => vs_latent_kind(c, locals, kind, start, end, occ, r, h)
+    }
+  }
+
+  pub theorem vs_latent_kind(c: VrCtx, locals: List(RowName), kind: SurfaceKind, start: Nat, end: Nat, occ: Option(TermOccurrence), r: List(Text), h: vr_latent_kind(c, locals, kind) = Some(r)): LatentPerforms(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, SurfaceTermIndexedMk(kind, start, end, occ), r) {
+    match kind {
+      SkLam(ps, body, types, unused) => LatentLambda(
+        SurfaceTermIndexedMk(SkLam(ps, body, types, unused), start, end, occ),
+        LambdaPlain(occ, ps, body, types, unused, start, end, vs_unknown(ps, locals), vs_term(c, vr_unknown(ps, locals), body, r, h))
+      )
+      SkBorrowLam(bs, lam) => LatentLambda(SurfaceTermIndexedMk(SkBorrowLam(bs, lam), start, end, occ), LambdaBorrows(occ, bs, lam, start, end, vs_lambda(c, locals, lam, r, h)))
+      SkBorrow(m, m_orig, x) => LatentBorrow(occ, m, m_orig, x, start, end, vs_latent(c, locals, x, r, h))
+      SkVar(n) => vs_latent_name(c, locals, n, start, end, occ, r, h)
+      _ => vs_no_some(r, h)
+    }
+  }
+
+  pub theorem vs_latents(c: VrCtx, locals: List(RowName), args: List(SurfaceTerm)): VsLatents(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, args, vr_latents(c, locals, args)) {
+    match args {
+      Nil => VsLatentsNil(locals)
+      Cons(a, rest) => VsLatentsCons(a, vr_latent(c, locals, a), (r: List(Text)) => (e: vr_latent(c, locals, a) = Some(r)) => vs_latent(c, locals, a, r, e), vs_latents(c, locals, rest))
+    }
+  }
+
+  pub theorem vs_stmts(c: VrCtx, locals: List(RowName), ss: List(SurfaceStmt), r: List(Text), h: vr_stmts(c, locals, ss) = Some(r)): PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, ss, r) {
+    match ss {
+      Nil => Eq::subst((z: List(Text)) => PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Nil, z), vs_some_rows(Nil, r, h), PerformsStmtsNil(locals))
+      Cons(st, rest) => vs_stmt(c, locals, st, rest, r, (l: List(RowName)) => (rs: List(Text)) => (e: vr_stmts(c, l, rest) = Some(rs)) => vs_stmts(c, l, rest, rs, e), h)
+    }
+  }
+
+  pub theorem vs_stmt(c: VrCtx, locals: List(RowName), st: SurfaceStmt, rest: List(SurfaceStmt), r: List(Text), more: ∀ l: List(RowName). ∀ rs: List(Text). (vr_stmts(c, l, rest) = Some(rs)) -> PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), l, rest, rs), h: vr_both(vr_stmt(c, locals, st), vr_stmts(c, vr_stmt_bind(c, locals, st), rest)) = Some(r)): PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(st, rest), r) {
+    match st {
+      StLet(name, ty, value, b, m, unused, st_stack) => vs_both_split(vr_term(c, locals, value), vr_stmts(c, Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(c, locals, value))), locals), rest), r, h, rv => rs => ev => es => er => Eq::subst((z: List(Text)) => PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(StLet(name, ty, value, b, m, unused, st_stack), rest), z), er, PerformsLet(name, ty, value, b, m, unused, st_stack, rest, vs_term(c, locals, value, rv, ev), vs_bl(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, value, vr_lambda(c, locals, value), (lr: List(Text)) => (le: vr_lambda(c, locals, value) = Some(lr)) => vs_lambda(c, locals, value, lr, le)), more(Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(c, locals, value))), locals), rs, es))))
+      StVar(name, ty, value, b, unused, st_stack) => vs_both_split(vr_term(c, locals, value), vr_stmts(c, Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(c, locals, value))), locals), rest), r, h, rv => rs => ev => es => er => Eq::subst((z: List(Text)) => PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(StVar(name, ty, value, b, unused, st_stack), rest), z), er, PerformsVar(name, ty, value, b, unused, st_stack, rest, vs_term(c, locals, value, rv, ev), vs_bl(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, value, vr_lambda(c, locals, value), (lr: List(Text)) => (le: vr_lambda(c, locals, value) = Some(lr)) => vs_lambda(c, locals, value, lr, le)), more(Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(c, locals, value))), locals), rs, es))))
+      StAssign(name, place, value) => vs_both_split(vr_term(c, locals, value), vr_stmts(c, locals, rest), r, h, rv => rs => ev => es => er => Eq::subst((z: List(Text)) => PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(StAssign(name, place, value), rest), z), er, PerformsAssign(name, place, value, rest, vs_term(c, locals, value, rv, ev), more(locals, rs, es))))
+      StExpr(e) => vs_both_split(vr_term(c, locals, e), vr_stmts(c, locals, rest), r, h, rv => rs => ev => es => er => Eq::subst((z: List(Text)) => PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(StExpr(e), rest), z), er, PerformsExpr(e, rest, vs_term(c, locals, e, rv, ev), more(locals, rs, es))))
+      StReturn(v) => vs_both_split(vr_opt(c, locals, v), vr_stmts(c, locals, rest), r, h, rv => rs => ev => es => er => Eq::subst((z: List(Text)) => PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(StReturn(v), rest), z), er, PerformsReturn(v, rest, vs_opt(c, locals, v, rv, ev), more(locals, rs, es))))
+      StWhile(cond, body) => vs_both_split(vr_cons("div", vr_both(vr_term(c, locals, cond), vr_term(c, locals, body))), vr_stmts(c, locals, rest), r, h, x => rs => ex => es => er => vs_cons_split("div", vr_both(vr_term(c, locals, cond), vr_term(c, locals, body)), x, ex, y => ey => ex2 => vs_both_split(vr_term(c, locals, cond), vr_term(c, locals, body), y, ey, rc => rb => ec => eb => ey2 => Eq::subst((z: List(Text)) => PerformsStmts(vr_env(c), vr_sig(c), vr_dvars(c), vr_lim(c), locals, Cons(StWhile(cond, body), rest), z), Eq::trans(Eq::congr(⟦Cons("div", □)⟧, Eq::sym(List::append_assoc(rc, rb, rs))), Eq::trans(Eq::congr(⟦Cons("div", List::append(□, rs))⟧, ey2), Eq::trans(Eq::congr(⟦List::append(□, rs)⟧, ex2), er))), PerformsWhile(cond, body, rest, vs_term(c, locals, cond, rc, ec), vs_term(c, locals, body, rb, eb), more(locals, rs, es))))))
+      StCalled(g, cc) => vs_decl(c, locals, StCalled(g, cc), rest, r, InertCalled(g, cc), more, h)
+      StFn(f) => vs_decl(c, locals, StFn(f), rest, r, InertFn(f), more, h)
+      StTheorem(tt) => vs_decl(c, locals, StTheorem(tt), rest, r, InertTheorem(tt), more, h)
+      StDef(tt) => vs_decl(c, locals, StDef(tt), rest, r, InertDef(tt), more, h)
+      StMutual(ss, a, bb) => vs_decl(c, locals, StMutual(ss, a, bb), rest, r, InertMutual(ss, a, bb), more, h)
+      StImport(p, a, bb) => vs_decl(c, locals, StImport(p, a, bb), rest, r, InertImport(p, a, bb), more, h)
+      StInductive(i) => vs_decl(c, locals, StInductive(i), rest, r, InertInductive(i), more, h)
+      StEffect(e) => vs_decl(c, locals, StEffect(e), rest, r, InertEffect(e), more, h)
+      StStruct(d) => vs_decl(c, locals, StStruct(d), rest, r, InertStruct(d), more, h)
+      StEnum(d) => vs_decl(c, locals, StEnum(d), rest, r, InertEnum(d), more, h)
+      StExtern(fs, instances, types, structs, enums, a, bb) => vs_decl(c, locals, StExtern(fs, instances, types, structs, enums, a, bb), rest, r, InertExtern(fs, instances, types, structs, enums, a, bb), more, h)
+      StClass(cc) => vs_decl(c, locals, StClass(cc), rest, r, InertClass(cc), more, h)
+      StInstance(i) => vs_decl(c, locals, StInstance(i), rest, r, InertInstance(i), more, h)
+      StOther(w, a, bb) => vs_decl(c, locals, StOther(w, a, bb), rest, r, InertStmtOther(w, a, bb), more, h)
+      StLoop(st_body, a, bb) => vs_decl(c, locals, StLoop(st_body, a, bb), rest, r, InertStmtLoop(st_body, a, bb), more, h)
+      StModule(mod_name, mod_vis, mod_items, a, bb) => vs_decl(c, locals, StModule(mod_name, mod_vis, mod_items, a, bb), rest, r, InertStmtModule(mod_name, mod_vis, mod_items, a, bb), more, h)
+      StReexport(re_path, re_names, re_spans, a, bb) => vs_decl(c, locals, StReexport(re_path, re_names, re_spans, a, bb), rest, r, InertStmtReexport(re_path, re_names, re_spans, a, bb), more, h)
+      StFor(for_pat, for_src, st_body, a, bb) => vs_decl(c, locals, StFor(for_pat, for_src, st_body, a, bb), rest, r, InertStmtFor(for_pat, for_src, st_body, a, bb), more, h)
+      StBreak(st_value, a, bb) => vs_decl(c, locals, StBreak(st_value, a, bb), rest, r, InertStmtBreak(st_value, a, bb), more, h)
+      StContinue(a, bb) => vs_decl(c, locals, StContinue(a, bb), rest, r, InertStmtContinue(a, bb), more, h)
+      StMacro(n, f, a, bb) => vs_decl(c, locals, StMacro(n, f, a, bb), rest, r, InertMacro(n, f, a, bb), more, h)
+      StSyntax(n, g, a, bb) => vs_decl(c, locals, StSyntax(n, g, a, bb), rest, r, InertSyntax(n, g, a, bb), more, h)
+      StAttributed(n, arg, g, inner) => vs_decl(c, locals, StAttributed(n, arg, g, inner), rest, r, InertAttributed(n, arg, g, inner), more, h)
+    }
+  }
+}
+
+// ---- functions -------------------------------------------------------------------
+
+pub theorem vs_some_inj<A: Type>(x: A, y: A, e: Some(x) = Some(y)): x = y {
+  match e {
+    Refl => Refl
+  }
+}
+
+pub theorem vs_written(w: Option(List(Text)), row: List(Text), h: vr_written_ok(w, row) = true): WrittenRowIs(w, row) {
+  match w {
+    None => WrittenNone(row)
+    Some(x) => Eq::subst((z: List(Text)) => WrittenRowIs(Some(z), row), Eq::sym(vs_same(x, row, h)), WrittenSome(row))
+  }
+}
+
+pub theorem vs_group_limit(env: RowEnv, ranks: List(Text × Nat), name: Text, row: List(Text), r: Nat, group: List(Text), rk: RankOf(ranks, name, r)): FunctionLimit(env, ranks, name, row, vr_group_limit(env, ranks, name, r, group)) {
+  (⊢ (vr_has(group, name) && rows_decreases(rr_group_fns(env, group)) = vr_has(group, name) && rows_decreases(rr_group_fns(env, group))) -> FunctionLimit(env, ranks, name, row, vr_group_limit(env, ranks, name, r, group)) from match vr_has(group, name) && rows_decreases(rr_group_fns(env, group)) eqn g {
+    true => q => FunctionLimitStructural(r, group, rk, vs_has_sound(group, name, Bool::and_true_left(vr_has(group, name), rows_decreases(rr_group_fns(env, group)), g)), Bool::and_true_right(vr_has(group, name), rows_decreases(rr_group_fns(env, group)), g))
+    false => q => FunctionLimitRank(r, rk)
+  })(Refl)
+}
+
+pub theorem vs_limit(env: RowEnv, ranks: List(Text × Nat), name: Text, row: List(Text), lim: RankLimit, h: vr_limit(env, ranks, name, row) = Some(lim)): FunctionLimit(env, ranks, name, row, lim) {
+  (⊢ (vr_limit(env, ranks, name, row) = Some(lim)) -> FunctionLimit(env, ranks, name, row, lim) from match vr_has(row, "div") eqn d {
+    true => h2 => Eq::subst((z: RankLimit) => FunctionLimit(env, ranks, name, row, z), vs_some_inj(RankLimit::Mk(ranks, None, Nil), lim, h2), FunctionLimitDiv(vs_has_sound(row, "div", d)))
+    false => h2 => (⊢ ((⊢ Option(RankLimit) from match vr_rank(ranks, name) {
+      None => None
+      Some(r) => Some(vr_group_limit(env, ranks, name, r, vr_group(env, name)))
+    }) = Some(lim)) -> FunctionLimit(env, ranks, name, row, lim) from match vr_rank(ranks, name) eqn rk {
+      None => h3 => vs_no_some(lim, h3)
+      Some(r) => h3 => Eq::subst((z: RankLimit) => FunctionLimit(env, ranks, name, row, z), vs_some_inj(vr_group_limit(env, ranks, name, r, vr_group(env, name)), lim, h3), vs_group_limit(env, ranks, name, row, r, vr_group(env, name), vs_rank(ranks, name, r, rk)))
+    })(h2)
+  })(h)
+}
+
+pub theorem vs_function_body(
+  env: RowEnv,
+  sig: List(Text × List(Text)),
+  ranks: List(Text × Nat),
+  name: Text,
+  f: SurfaceFn,
+  row: List(Text),
+  lim: RankLimit,
+  lk: vr_lookup(sig, name) = Some(row),
+  wo: vr_written_ok(rr_effects(f), row) = true,
+  vl: vr_limit(env, ranks, name, row) = Some(lim),
+  h: (⊢ Bool from match vr_term(VrCtx::Mk(env, sig, vr_direct_generics(rr_generics(f), rr_bounds(f)), lim), vr_params(rr_params(f), rr_param_types(f), Nil), rr_body(f)) {
+    None => false
+    Some(r) => vr_sub(r, row)
+  }) = true
+): FunctionRowOk(env, sig, ranks, name, f) {
+  match vr_term(VrCtx::Mk(env, sig, vr_direct_generics(rr_generics(f), rr_bounds(f)), lim), vr_params(rr_params(f), rr_param_types(f), Nil), rr_body(f)) eqn vt {
+    None => vs_absurd(false, h, Refl)
+    Some(r) => FunctionRowOkMk(
+      row,
+      vr_params(rr_params(f), rr_param_types(f), Nil),
+      vr_direct_generics(rr_generics(f), rr_bounds(f)),
+      lim,
+      vs_lookup(sig, name, row, lk),
+      vs_written(rr_effects(f), row, wo),
+      vs_params(rr_params(f), rr_param_types(f), Nil),
+      vs_direct_generics(rr_generics(f), rr_bounds(f)),
+      vs_limit(env, ranks, name, row, lim, vl),
+      PerformsWider(
+        vs_term(VrCtx::Mk(env, sig, vr_direct_generics(rr_generics(f), rr_bounds(f)), lim), vr_params(rr_params(f), rr_param_types(f), Nil), rr_body(f), r, vt),
+        vs_sub_sound(r, row, h)
+      )
+    )
+  }
+}
+
+pub theorem vs_function_limit(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat), name: Text, f: SurfaceFn, row: List(Text), lk: vr_lookup(sig, name) = Some(row), wo: vr_written_ok(rr_effects(f), row) = true, h: (⊢ Bool from match vr_limit(env, ranks, name, row) {
+      None => false
+      Some(lim) => ⊢ Bool from match vr_term(VrCtx::Mk(env, sig, vr_direct_generics(rr_generics(f), rr_bounds(f)), lim), vr_params(rr_params(f), rr_param_types(f), Nil), rr_body(f)) {
+        None => false
+        Some(r) => vr_sub(r, row)
+      }
+    }) = true): FunctionRowOk(env, sig, ranks, name, f) {
+  match vr_limit(env, ranks, name, row) eqn vl {
+    None => vs_absurd(false, h, Refl)
+    Some(lim) => vs_function_body(env, sig, ranks, name, f, row, lim, lk, wo, vl, h)
+  }
+}
+
+pub theorem vs_function(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat), name: Text, f: SurfaceFn, h: vr_function(env, sig, ranks, name, f) = true): FunctionRowOk(env, sig, ranks, name, f) {
+  (⊢ (vr_function(env, sig, ranks, name, f) = true) -> FunctionRowOk(env, sig, ranks, name, f) from match vr_lookup(sig, name) eqn lk {
+    None => h2 => vs_absurd(false, h2, Refl)
+    Some(row) => h2 => vs_function_limit(env, sig, ranks, name, f, row, lk, Bool::and_true_left(vr_written_ok(rr_effects(f), row), ⊢ Bool from match vr_limit(env, ranks, name, row) {
+      None => false
+      Some(lim) => ⊢ Bool from match vr_term(VrCtx::Mk(env, sig, vr_direct_generics(rr_generics(f), rr_bounds(f)), lim), vr_params(rr_params(f), rr_param_types(f), Nil), rr_body(f)) {
+        None => false
+        Some(r) => vr_sub(r, row)
+      }
+    }, h2), Bool::and_true_right(vr_written_ok(rr_effects(f), row), ⊢ Bool from match vr_limit(env, ranks, name, row) {
+      None => false
+      Some(lim) => ⊢ Bool from match vr_term(VrCtx::Mk(env, sig, vr_direct_generics(rr_generics(f), rr_bounds(f)), lim), vr_params(rr_params(f), rr_param_types(f), Nil), rr_body(f)) {
+        None => false
+        Some(r) => vr_sub(r, row)
+      }
+    }, h2))
+  })(h)
+}
+
+// ---- the declarations of the program -----------------------------------------------
+
+pub theorem vs_entries_keep(t: OrdmapTree(Text, SurfaceFn), done: List(Text × SurfaceFn), x: Text × SurfaceFn, m: Mem(Text × SurfaceFn, x, done)): Mem(Text × SurfaceFn, x, Ordmap::tree_entries(t, done)) {
+  match t {
+    OrdmapLeaf => m
+    OrdmapNode(l, k, v, r, h) => vs_entries_keep(l, Cons(#(k, v), Ordmap::tree_entries(r, done)), x, MemThere(#(k, v), Ordmap::tree_entries(r, done), vs_entries_keep(r, done, x, m)))
+  }
+}
+
+pub theorem vs_tree_get(t: OrdmapTree(Text, SurfaceFn), n: Text, f: SurfaceFn, done: List(Text × SurfaceFn), h: Ordmap::tree_get(t, n, Ordmap::compare_text) = Some(f)): Mem(Text × SurfaceFn, #(n, f), Ordmap::tree_entries(t, done)) {
+  match t {
+    OrdmapLeaf => vs_no_some(f, h)
+    OrdmapNode(l, nk, nv, r, hh) => (⊢ (Ordmap::tree_get(OrdmapNode(l, nk, nv, r, hh), n, Ordmap::compare_text) = Some(f)) -> Mem(Text × SurfaceFn, #(n, f), Ordmap::tree_entries(OrdmapNode(l, nk, nv, r, hh), done)) from match Ordmap::compare_text(n, nk) eqn q {
+      Less => h2 => vs_tree_get(l, n, f, Cons(#(nk, nv), Ordmap::tree_entries(r, done)), h2)
+      Equal => h2 => vs_entries_keep(
+        l,
+        Cons(#(nk, nv), Ordmap::tree_entries(r, done)),
+        #(n, f),
+        Eq::subst(
+          (z: Text) => Mem(Text × SurfaceFn, #(z, f), Cons(#(nk, nv), Ordmap::tree_entries(r, done))),
+          Eq::sym(Ordmap::compare_text_eq(n, nk, q)),
+          Eq::subst(
+            (g: SurfaceFn) => Mem(Text × SurfaceFn, #(nk, g), Cons(#(nk, nv), Ordmap::tree_entries(r, done))),
+            vs_some_inj(nv, f, h2),
+            MemHere(Ordmap::tree_entries(r, done))
+          )
+        )
+      )
+      Greater => h2 => vs_entries_keep(l, Cons(#(nk, nv), Ordmap::tree_entries(r, done)), #(n, f), MemThere(#(nk, nv), Ordmap::tree_entries(r, done), vs_tree_get(r, n, f, done, h2)))
+    })(h)
+  }
+}
+
+pub theorem vs_failing_step(
+  env: RowEnv,
+  sig: List(Text × List(Text)),
+  ranks: List(Text × Nat),
+  e: Text × SurfaceFn,
+  rest: List(Text × SurfaceFn),
+  b: Bool,
+  h: (⊢ List(SurfaceFn) from match b {
+    true => vr_failing(env, sig, ranks, rest)
+    false => Cons(e.snd, vr_failing(env, sig, ranks, rest))
+  }) = Nil,
+  ok: rr_unchecked(e.snd) || vr_function(env, sig, ranks, e.fst, e.snd) = b,
+  ih: (vr_failing(env, sig, ranks, rest) = Nil) -> ∀ name: Text. ∀ f: SurfaceFn. (Mem(Text × SurfaceFn, #(name, f), rest)) -> (rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f)
+): ∀ name: Text. ∀ f: SurfaceFn. (Mem(Text × SurfaceFn, #(name, f), Cons(e, rest))) -> (rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f) {
+  match b {
+    true => vs_failing_cons(env, sig, ranks, e, rest, nt => vs_or_split(
+      rr_unchecked(e.snd),
+      vr_function(env, sig, ranks, e.fst, e.snd),
+      ok,
+      t => vs_absurd(rr_unchecked(e.snd), t, nt),
+      w => vs_function(env, sig, ranks, e.fst, e.snd, w)
+    ), ih(h))
+    false => ⊢ ∀ name: Text. ∀ f: SurfaceFn. (Mem(Text × SurfaceFn, #(name, f), Cons(e, rest))) -> (rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f) from match h {
+    }
+  }
+}
+
+pub theorem vs_failing(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat), fns: List(Text × SurfaceFn), h: vr_failing(env, sig, ranks, fns) = Nil): ∀ name: Text. ∀ f: SurfaceFn. (Mem(Text × SurfaceFn, #(name, f), fns)) -> (rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f) {
+  match fns {
+    Nil => name => f => m => Mem::nil((rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f), m)
+    Cons(e, rest) => vs_failing_step(env, sig, ranks, e, rest, rr_unchecked(e.snd) || vr_function(env, sig, ranks, e.fst, e.snd), h, Refl, h2 => vs_failing(env, sig, ranks, rest, h2))
+  }
+}
+
+pub theorem vs_failing_cons(
+  env: RowEnv,
+  sig: List(Text × List(Text)),
+  ranks: List(Text × Nat),
+  e: Text × SurfaceFn,
+  rest: List(Text × SurfaceFn),
+  here: (rr_unchecked(e.snd) = false) -> FunctionRowOk(env, sig, ranks, e.fst, e.snd),
+  later: ∀ name: Text. ∀ f: SurfaceFn. (Mem(Text × SurfaceFn, #(name, f), rest)) -> (rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f)
+): ∀ name: Text. ∀ f: SurfaceFn. (Mem(Text × SurfaceFn, #(name, f), Cons(e, rest))) -> (rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f) {
+  name => f => m => ⊢ (rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f) from match m {
+    MemHere(t) => here
+    MemThere(b, t, m2) => later(name, f, m2)
+  }
+}
+
+pub theorem vs_functions(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat), h: vr_failing(env, sig, ranks, Ordmap::entries(rr_fns(env))) = Nil): FunctionRowsOk(env, sig, ranks) {
+  FunctionRowsOkMk(name => f => d => ⊢ (rr_unchecked(f) = false) -> FunctionRowOk(env, sig, ranks, name, f) from match d {
+    FunctionDeclMk(found) => vs_failing(env, sig, ranks, Ordmap::entries(rr_fns(env)), h, name, f, vs_tree_get(Ordmap::tree(rr_fns(env)), name, f, Nil, found))
+  })
+}
+
+// ---- the top level -------------------------------------------------------------------
+
+pub theorem vs_top_effect(e: Text, h: Text::eq(e, "div") || Text::eq(e, "budget") || Text::eq(e, "budget_memory") || Text::eq(e, "test") || Text::eq(e, "spawn") || vr_has(rows_host_effects(), e) = true): TopEffect(e) {
+  vs_or_split(
+    Text::eq(e, "div") || Text::eq(e, "budget") || Text::eq(e, "budget_memory") || Text::eq(e, "test") || Text::eq(e, "spawn"),
+    vr_has(rows_host_effects(), e),
+    h,
+    l5 => vs_or_split(
+      Text::eq(e, "div") || Text::eq(e, "budget") || Text::eq(e, "budget_memory") || Text::eq(e, "test"),
+      Text::eq(e, "spawn"),
+      l5,
+      l4 => vs_or_split(
+        Text::eq(e, "div") || Text::eq(e, "budget") || Text::eq(e, "budget_memory"),
+        Text::eq(e, "test"),
+        l4,
+        l3 => vs_or_split(
+          Text::eq(e, "div") || Text::eq(e, "budget"),
+          Text::eq(e, "budget_memory"),
+          l3,
+          l2 => vs_or_split(
+            Text::eq(e, "div"),
+            Text::eq(e, "budget"),
+            l2,
+            d => Eq::subst((z: Text) => TopEffect(z), Eq::sym(text_eq_sound(e, "div", d)), TopDiv),
+            bu => Eq::subst((z: Text) => TopEffect(z), Eq::sym(text_eq_sound(e, "budget", bu)), TopBudget)
+          ),
+          bm => Eq::subst((z: Text) => TopEffect(z), Eq::sym(text_eq_sound(e, "budget_memory", bm)), TopBudgetMemory)
+        ),
+        t => Eq::subst((z: Text) => TopEffect(z), Eq::sym(text_eq_sound(e, "test", t)), TopTest)
+      ),
+      sp => Eq::subst((z: Text) => TopEffect(z), Eq::sym(text_eq_sound(e, "spawn", sp)), TopSpawn)
+    ),
+    hh => TopHost(e, vs_has_sound(rows_host_effects(), e, hh))
+  )
+}
+
+pub theorem vs_top_effects(es: List(Text), h: vr_top_effects(es) = true): ∀ e: Text. (Mem(Text, e, es)) -> TopEffect(e) {
+  match es {
+    Nil => e => m => Mem::nil(TopEffect(e), m)
+    Cons(x, rest) => e => m => ⊢ TopEffect(e) from match m {
+      MemHere(t) => vs_top_effect(x, Bool::and_true_left(Text::eq(x, "div") || Text::eq(x, "budget") || Text::eq(x, "budget_memory") || Text::eq(x, "test") || Text::eq(x, "spawn") || vr_has(rows_host_effects(), x), vr_top_effects(rest), h))
+      MemThere(b, t, m2) => vs_top_effects(rest, Bool::and_true_right(Text::eq(x, "div") || Text::eq(x, "budget") || Text::eq(x, "budget_memory") || Text::eq(x, "test") || Text::eq(x, "spawn") || vr_has(rows_host_effects(), x), vr_top_effects(rest), h), e, m2)
+    }
+  }
+}
+
+pub theorem vs_only_wait(es: List(Text), h: vr_only_wait(es) = true): ∀ e: Text. (Mem(Text, e, es)) -> e = "wait" {
+  match es {
+    Nil => e => m => Mem::nil(e = "wait", m)
+    Cons(x, rest) => e => m => ⊢ e = "wait" from match m {
+      MemHere(t) => text_eq_sound(x, "wait", Bool::and_true_left(Text::eq(x, "wait"), vr_only_wait(rest), h))
+      MemThere(b, t, m2) => vs_only_wait(rest, Bool::and_true_right(Text::eq(x, "wait"), vr_only_wait(rest), h), e, m2)
+    }
+  }
+}
+
+pub theorem vs_extern_row(es: Option(List(Text)), h: vr_extern_row(es) = true): ExternRowOk(es) {
+  match es {
+    None => ExternRowNone
+    Some(row) => ExternRowWait(row, vs_only_wait(row, h))
+  }
+}
+
+pub theorem vs_extern_rows(fs: List(SurfaceFn), h: vr_extern_rows(fs) = true): ∀ f: SurfaceFn. (Mem(SurfaceFn, f, fs)) -> ExternRowOk(rr_effects(f)) {
+  match fs {
+    Nil => f => m => Mem::nil(ExternRowOk(rr_effects(f)), m)
+    Cons(x, rest) => f => m => ⊢ ExternRowOk(rr_effects(f)) from match m {
+      MemHere(t) => vs_extern_row(rr_effects(x), Bool::and_true_left(vr_extern_row(rr_effects(x)), vr_extern_rows(rest), h))
+      MemThere(b, t, m2) => vs_extern_rows(rest, Bool::and_true_right(vr_extern_row(rr_effects(x)), vr_extern_rows(rest), h), f, m2)
+    }
+  }
+}
+
+pub theorem vs_top_value_step(
+  env: RowEnv,
+  sig: List(Text × List(Text)),
+  locals: List(RowName),
+  st: SurfaceStmt,
+  t: SurfaceTerm,
+  rest: List(SurfaceStmt),
+  next: List(RowName),
+  tvo: TopValueOf(st, t),
+  binds: TopBinds(env, sig, locals, st, next),
+  o: Option(List(Text)),
+  h: (⊢ Bool from match o {
+    None => false
+    Some(r) => vr_top_effects(r)
+  }) = true,
+  vt: vr_term(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, t) = o,
+  more: TopRowsOk(env, sig, next, rest)
+): TopRowsOk(env, sig, locals, Cons(st, rest)) {
+  match o {
+    None => vs_absurd(false, h, Refl)
+    Some(r) => TopValue(st, t, tvo, vs_term(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, t, r, vt), vs_top_effects(r, h), binds, more)
+  }
+}
+
+pub theorem vs_top_keep_step(
+  env: RowEnv,
+  sig: List(Text × List(Text)),
+  locals: List(RowName),
+  st: SurfaceStmt,
+  t: SurfaceTerm,
+  tvo: TopValueOf(st, t),
+  rest: List(SurfaceStmt),
+  next: List(RowName),
+  binds: TopBinds(env, sig, locals, st, next),
+  b: Bool,
+  h: vr_top_keep(b, t, vr_top_failing(env, sig, next, rest)) = Nil,
+  ok: vr_top_value(env, sig, locals, t) = b,
+  ih: (vr_top_failing(env, sig, next, rest) = Nil) -> TopRowsOk(env, sig, next, rest)
+): TopRowsOk(env, sig, locals, Cons(st, rest)) {
+  match b {
+    true => vs_top_value_step(env, sig, locals, st, t, rest, next, tvo, binds, vr_term(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, t), ok, Refl, ih(h))
+    false => ⊢ TopRowsOk(env, sig, locals, Cons(st, rest)) from match h {
+    }
+  }
+}
+
+pub theorem vs_top_extern_step(
+  env: RowEnv,
+  sig: List(Text × List(Text)),
+  locals: List(RowName),
+  fs: List(SurfaceFn),
+  instances: List(SurfaceConstraint),
+  types: List(SurfaceData),
+  structs: List(SurfaceData),
+  enums: List(SurfaceData),
+  a: Nat,
+  bb: Nat,
+  rest: List(SurfaceStmt),
+  b: Bool,
+  h: (⊢ List(SurfaceTerm) from match b {
+    true => vr_top_failing(env, sig, locals, rest)
+    false => Cons(surface_term_mk(SkOther("extern"), a, bb), vr_top_failing(env, sig, locals, rest))
+  }) = Nil,
+  ok: vr_extern_rows(fs) = b,
+  ih: (vr_top_failing(env, sig, locals, rest) = Nil) -> TopRowsOk(env, sig, locals, rest)
+): TopRowsOk(env, sig, locals, Cons(StExtern(fs, instances, types, structs, enums, a, bb), rest)) {
+  match b {
+    true => TopExtern(fs, instances, types, structs, enums, a, bb, vs_extern_rows(fs, ok), ih(h))
+    false => ⊢ TopRowsOk(env, sig, locals, Cons(StExtern(fs, instances, types, structs, enums, a, bb), rest)) from match h {
+    }
+  }
+}
+
+pub theorem vs_top_other(
+  env: RowEnv,
+  sig: List(Text × List(Text)),
+  locals: List(RowName),
+  st: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  not_value: ∀ t: SurfaceTerm. (TopValueOf(st, t)) -> False,
+  not_extern: ∀ fs: List(SurfaceFn). ∀ instances: List(SurfaceConstraint). ∀ types: List(SurfaceData). ∀ structs: List(SurfaceData). ∀ enums: List(SurfaceData). ∀ a: Nat. ∀ b: Nat. (st = StExtern(fs, instances, types, structs, enums, a, b)) -> False,
+  more: TopRowsOk(env, sig, locals, rest)
+): TopRowsOk(env, sig, locals, Cons(st, rest)) {
+  TopOther(st, TopRunsNothingMk(not_value, not_extern), more)
+}
+
+pub theorem vs_top(env: RowEnv, sig: List(Text × List(Text)), locals: List(RowName), program: List(SurfaceStmt), h: vr_top_failing(env, sig, locals, program) = Nil): TopRowsOk(env, sig, locals, program) {
+  match program {
+    Nil => TopNil(locals)
+    Cons(st, rest) => ⊢ TopRowsOk(env, sig, locals, Cons(st, rest)) from match st {
+      StLet(name, ty, value, b, m, unused, st_stack) => vs_top_keep_step(env, sig, locals, StLet(name, ty, value, b, m, unused, st_stack), value, TopLet(name, ty, value, b, m, unused, st_stack), rest, Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value))), locals), TopBindsLet(locals, name, ty, value, b, m, unused, st_stack, vr_bound_latent(value, vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value)), vs_bl(env, sig, Nil, RankLimit::Mk(Nil, None, Nil), locals, value, vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value), (lr: List(Text)) => (le: vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value) = Some(lr)) => vs_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value, lr, le))), vr_top_value(env, sig, locals, value), h, Refl, h2 => vs_top(env, sig, Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value))), locals), rest, h2))
+      StVar(name, ty, value, b, unused, st_stack) => vs_top_keep_step(env, sig, locals, StVar(name, ty, value, b, unused, st_stack), value, TopVar(name, ty, value, b, unused, st_stack), rest, Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value))), locals), TopBindsVar(locals, name, ty, value, b, unused, st_stack, vr_bound_latent(value, vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value)), vs_bl(env, sig, Nil, RankLimit::Mk(Nil, None, Nil), locals, value, vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value), (lr: List(Text)) => (le: vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value) = Some(lr)) => vs_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value, lr, le))), vr_top_value(env, sig, locals, value), h, Refl, h2 => vs_top(env, sig, Cons(RowName::Mk(name, vr_bound_latent(value, vr_lambda(VrCtx::Mk(env, sig, Nil, RankLimit::Mk(Nil, None, Nil)), locals, value))), locals), rest, h2))
+      StExpr(e) => vs_top_keep_step(env, sig, locals, StExpr(e), e, TopExpr(e), rest, locals, TopBindsExpr(locals, e), vr_top_value(env, sig, locals, e), h, Refl, h2 => vs_top(env, sig, locals, rest, h2))
+      StExtern(fs, instances, types, structs, enums, a, bb) => vs_top_extern_step(
+        env,
+        sig,
+        locals,
+        fs,
+        instances,
+        types,
+        structs,
+        enums,
+        a,
+        bb,
+        rest,
+        vr_extern_rows(fs),
+        h,
+        Refl,
+        h2 => vs_top(env, sig, locals, rest, h2)
+      )
+      StAssign(n, place, value) => vs_top_other(env, sig, locals, StAssign(n, place, value), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StCalled(g, cc) => vs_top_other(env, sig, locals, StCalled(g, cc), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StFn(f) => vs_top_other(env, sig, locals, StFn(f), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StTheorem(tt) => vs_top_other(env, sig, locals, StTheorem(tt), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StDef(tt) => vs_top_other(env, sig, locals, StDef(tt), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StMutual(ss, a, bb) => vs_top_other(env, sig, locals, StMutual(ss, a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StImport(p, a, bb) => vs_top_other(env, sig, locals, StImport(p, a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StInductive(i) => vs_top_other(env, sig, locals, StInductive(i), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StEffect(e) => vs_top_other(env, sig, locals, StEffect(e), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StStruct(d) => vs_top_other(env, sig, locals, StStruct(d), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StEnum(d) => vs_top_other(env, sig, locals, StEnum(d), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StClass(cc) => vs_top_other(env, sig, locals, StClass(cc), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StInstance(i) => vs_top_other(env, sig, locals, StInstance(i), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StWhile(cond, body) => vs_top_other(env, sig, locals, StWhile(cond, body), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StReturn(v) => vs_top_other(env, sig, locals, StReturn(v), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StOther(w, a, bb) => vs_top_other(env, sig, locals, StOther(w, a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StLoop(st_body, a, bb) => vs_top_other(env, sig, locals, StLoop(st_body, a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StModule(mod_name, mod_vis, mod_items, a, bb) => vs_top_other(env, sig, locals, StModule(mod_name, mod_vis, mod_items, a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StReexport(re_path, re_names, re_spans, a, bb) => vs_top_other(env, sig, locals, StReexport(re_path, re_names, re_spans, a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StFor(for_pat, for_src, st_body, a, bb) => vs_top_other(env, sig, locals, StFor(for_pat, for_src, st_body, a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StBreak(st_value, a, bb) => vs_top_other(env, sig, locals, StBreak(st_value, a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StContinue(a, bb) => vs_top_other(env, sig, locals, StContinue(a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StMacro(n, f, a, bb) => vs_top_other(env, sig, locals, StMacro(n, f, a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StSyntax(n, g, a, bb) => vs_top_other(env, sig, locals, StSyntax(n, g, a, bb), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+      StAttributed(n, arg, g, inner) => vs_top_other(env, sig, locals, StAttributed(n, arg, g, inner), rest, t => tv => ⊢ False from match tv {
+      }, fs => instances => types => structs => enums => a1 => b1 => e1 => ⊢ False from match e1 {
+      }, vs_top(env, sig, locals, rest, h))
+    }
+  }
+}
+
+// ---- the program -----------------------------------------------------------------------
+
+pub theorem vs_append_nil<A: Type>(a: List(A), b: List(A), h: List::append(a, b) = Nil): a = Nil ∧ b = Nil {
+  match a {
+    Nil => AndIntro(Refl, h)
+    Cons(x, t) => ⊢ Cons(x, t) = Nil ∧ b = Nil from match h {
+    }
+  }
+}
+
+pub theorem vs_fn_errors_nil(fs: List(SurfaceFn), h: vr_fn_errors(fs) = Nil): fs = Nil {
+  match fs {
+    Nil => Refl
+    Cons(f, rest) => ⊢ Cons(f, rest) = Nil from match h {
+    }
+  }
+}
+
+pub theorem vs_top_errors_nil(ts: List(SurfaceTerm), h: vr_top_errors(ts) = Nil): ts = Nil {
+  match ts {
+    Nil => Refl
+    Cons(t, rest) => ⊢ Cons(t, rest) = Nil from match h {
+    }
+  }
+}
+
+// When the prelude's functions pass the check, their rows are derivable in
+// the prelude's environment.
+pub theorem vs_prelude(prelude: List(SurfaceStmt), h: vr_fn_errors(rp_failing(rows_prelude(prelude))) = Nil): FunctionRowsOk(vr_env_sets(rp_env(rows_prelude(prelude))), rp_sig(rows_prelude(prelude)), rp_ranks(rows_prelude(prelude))) {
+  vs_functions(
+    vr_env_sets(rp_env(rows_prelude(prelude))),
+    rp_sig(rows_prelude(prelude)),
+    rp_ranks(rows_prelude(prelude)),
+    vs_fn_errors_nil(rp_failing(rows_prelude(prelude)), h)
+  )
+}
+
+// When the program's own functions pass the check, their rows are derivable.
+pub theorem vs_own(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat), own: Ordmap(Text, SurfaceFn), h: vr_failing(env, sig, ranks, Ordmap::entries(own)) = Nil): OwnRowsOk(own, env, sig, ranks) {
+  OwnRowsOkMk(name => f => found => vs_failing(env, sig, ranks, Ordmap::entries(own), h, name, f, vs_tree_get(Ordmap::tree(own), name, f, Nil, found)))
+}
+
+pub theorem vs_own_and_tops(env: RowEnv, sig: List(Text × List(Text)), ranks: List(Text × Nat), own: Ordmap(Text, SurfaceFn), program: List(SurfaceStmt), h: vr_errors_own(env, sig, ranks, own, program) = Nil): OwnRowsOk(own, env, sig, ranks) ∧ TopRowsOk(env, sig, Nil, program) {
+  let both: vr_fn_errors(vr_failing(env, sig, ranks, Ordmap::entries(own))) = Nil ∧ vr_top_errors(vr_top_failing(env, sig, Nil, program)) = Nil := vs_append_nil(
+    vr_fn_errors(vr_failing(env, sig, ranks, Ordmap::entries(own))),
+    vr_top_errors(vr_top_failing(env, sig, Nil, program)),
+    h
+  )
+  AndIntro(
+    vs_own(env, sig, ranks, own, vs_fn_errors_nil(vr_failing(env, sig, ranks, Ordmap::entries(own)), And::left(both))),
+    vs_top(env, sig, Nil, program, vs_top_errors_nil(vr_top_failing(env, sig, Nil, program), And::right(both)))
+  )
+}
+
+// When the check after the prelude finds no error, the program's rows are
+// derivable.
+pub theorem vs_after(prelude: List(SurfaceStmt), env: RowEnv, sig: List(Text × List(Text)), own: Ordmap(Text, SurfaceFn), program: List(SurfaceStmt), h: vr_errors_after(rows_prelude(prelude), env, sig, own, program) = Nil): ProgramRows(vr_env_sets(rp_env(rows_prelude(prelude))), own, env, program) {
+  let both: vr_fn_errors(rp_failing(rows_prelude(prelude))) = Nil ∧ vr_errors_own(env, List::append(sig, rp_sig(rows_prelude(prelude))), vr_own_ranks(env, List::append(sig, rp_sig(rows_prelude(prelude))), rp_ranks(rows_prelude(prelude)), own), own, program) = Nil := vs_append_nil(
+    vr_fn_errors(rp_failing(rows_prelude(prelude))),
+    vr_errors_own(env, List::append(sig, rp_sig(rows_prelude(prelude))), vr_own_ranks(env, List::append(sig, rp_sig(rows_prelude(prelude))), rp_ranks(rows_prelude(prelude)), own), own, program),
+    h
+  )
+  ProgramRowsMk(
+    rp_sig(rows_prelude(prelude)),
+    rp_ranks(rows_prelude(prelude)),
+    vs_prelude(prelude, And::left(both)),
+    sig,
+    vr_own_ranks(env, List::append(sig, rp_sig(rows_prelude(prelude))), rp_ranks(rows_prelude(prelude)), own),
+    And::left(vs_own_and_tops(env, List::append(sig, rp_sig(rows_prelude(prelude))), vr_own_ranks(env, List::append(sig, rp_sig(rows_prelude(prelude))), rp_ranks(rows_prelude(prelude)), own), own, program, And::right(both))),
+    And::right(vs_own_and_tops(env, List::append(sig, rp_sig(rows_prelude(prelude))), vr_own_ranks(env, List::append(sig, rp_sig(rows_prelude(prelude))), rp_ranks(rows_prelude(prelude)), own), own, program, And::right(both)))
+  )
+}
+
+pub fn vs_errors_of(report: RowReport): List(RowDiagnostic) {
+  report.errors
+}
+
+pub theorem vs_verified(prelude: List(SurfaceStmt), env: RowEnv, program: List(SurfaceStmt), report: RowReport, h: vs_errors_of(rows_verified(rows_prelude(prelude), env, program, report)) = Nil): ProgramRows(vr_env_sets(rp_env(rows_prelude(prelude))), vr_own_sets(env, rows_own_fns(program)), vr_env_sets(env), program) {
+  match report {
+    Mk(functions, errors, calls, quants) => ⊢ ProgramRows(vr_env_sets(rp_env(rows_prelude(prelude))), vr_own_sets(env, rows_own_fns(program)), vr_env_sets(env), program) from match errors {
+      Nil => vs_after(prelude, vr_env_sets(env), vr_sig_sets(env, vr_sig_of(env, functions)), vr_own_sets(env, rows_own_fns(program)), program, h)
+      Cons(e, rest) => ⊢ ProgramRows(vr_env_sets(rp_env(rows_prelude(prelude))), vr_own_sets(env, rows_own_fns(program)), vr_env_sets(env), program) from match h {
+      }
+    }
+  }
+}
+
+// The report of the effect layer: when it holds no error, the rows of the
+// program are derivable by the rules of `rules_rows.taut`, each set of
+// effects a written row names read as the effects in it. The prelude's
+// functions are checked once, in the prelude's environment
+// (`rows_prelude`); the program's own, in the program's.
+pub theorem rows_check_sound(prelude: List(SurfaceStmt), program: List(SurfaceStmt), h: vs_errors_of(rows_check(prelude, program)) = Nil): ProgramRows(vr_env_sets(rows_env(prelude, Nil)), vr_own_sets(rows_env(prelude, program), rows_own_fns(program)), vr_env_sets(rows_env(prelude, program)), program) {
+  vs_verified(prelude, rows_env(prelude, program), program, rows_check_env(rows_env(prelude, program), program), h)
+}
+
+// The same for a program whose operators are known, with its prelude checked
+// by `rows_prelude`.
+pub theorem rows_check_with_sound(prelude: List(SurfaceStmt), ops: Ordmap(RowSpan, Text), program: List(SurfaceStmt), h: vs_errors_of(rows_check_with(rows_prelude(prelude), ops, prelude, program)) = Nil): ProgramRows(vr_env_sets(rows_env(prelude, Nil)), vr_own_sets(rows_env_with_ops(rows_env(prelude, program), ops), rows_own_fns(program)), vr_env_sets(rows_env_with_ops(rows_env(prelude, program), ops)), program) {
+  vs_verified(prelude, rows_env_with_ops(rows_env(prelude, program), ops), program, rows_check_env(rows_env_with_ops(rows_env(prelude, program), ops), program), h)
+}

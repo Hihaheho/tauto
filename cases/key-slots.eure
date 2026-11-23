@@ -1,0 +1,91 @@
+description = "A checked Key instance supplies borrowed lookup and rehash closures for a Slots-backed map."
+
+@ cases.key-methods-with-slots
+source = ```tauto
+import std::prelude::std { Option }
+import std::base { Bool, Nat }
+import std::uhost { UHost }
+import std::uint { UInt }
+import std::hash { SipSeed, Sip }
+import std::key { Key }
+import std::slots { Byte, SlotsModel, Table }
+import std::hash_table { tb_used, tb_laws, HT }
+
+inductive struct Umap(
+  K: Type,
+  V: Type
+) { table: SlotsModel(Table, Byte, K × V, tb_used), seed: SipSeed }
+
+fn Umap::hash_in<K: Linear>(seed: SipSeed, k: &K): UInt(64) where Key(K) {
+  Sip::finish(Key::feed(k, Sip::start(seed), Sip::step))
+}
+
+fn Umap::with_seed<K: Linear, V: Linear>(seed: SipSeed): Umap(K, V) {
+  Umap { table: SlotsModel::new(UHost::lit(0, Refl), tb_laws()), seed: seed }
+}
+
+fn Umap::len<K: Linear, V: Linear>(m: &Umap(K, V)): Nat {
+  HT::count(&m.table)
+}
+
+fn Umap::is_with<K: Linear, V: Linear>(same: &((a: &K, b: &K) -> Bool), k: &K, p: &(K × V)): Bool {
+  match p { #(a, b) => same(a, k) }
+}
+
+fn Umap::value<K: Linear, V: Linear>(p: &(K × V)): &V {
+  match p { #(a, b) => b }
+}
+
+fn Umap::find_with<K: Linear, V: Linear>(
+  t: &SlotsModel(Table, Byte, K × V, tb_used),
+  h: UInt(64),
+  same: &((a: &K, b: &K) -> Bool),
+  k: &K
+): Option(&(K × V)) borrows(t) {
+  HT::find_in(t, h, (p: &(K × V)) => Umap::is_with(same, k, p))
+}
+
+fn Umap::get<K: Linear, V: Linear>(m: &Umap(K, V), k: &K): Option(&V) borrows(m) where Key(K) {
+  match Umap::find_with(&m.table, Umap::hash_in(m.seed, k), Key::eq, k) {
+    None => None
+    Some(p) => Some(Umap::value(p))
+  }
+}
+
+fn Umap::rehash<K: Linear, V: Linear>(seed: SipSeed, p: &(K × V)): UInt(64) where Key(K) {
+  match p { #(k, v) => Umap::hash_in(seed, k) }
+}
+
+fn Umap::insert<K: Linear, V: Linear>(m: &mut Umap(K, V), k: K, v: V): Option(K × V) where Key(K) {
+  let seed := m.seed
+  let h := Umap::hash_in(seed, &k)
+  HT::insert_grow(&mut m.table, h, (p: &(K × V)) => Umap::rehash(seed, p), #(k, v))
+}
+
+fn Umap::grow<K: Linear, V: Linear>(m: &mut Umap(K, V)): Bool where Key(K) {
+  let seed := m.seed
+  HT::grow(&mut m.table, (p: &(K × V)) => Umap::rehash(seed, p))
+}
+
+fn Umap::is_key<K: Linear, V: Linear>(k: &K, p: &(K × V)): Bool where Key(K) {
+  match p { #(candidate, value) => Key::eq(candidate, k) }
+}
+
+fn Umap::remove<K: Linear, V: Linear>(m: &mut Umap(K, V), k: &K): Option(K × V) where Key(K) {
+  let h := Umap::hash_in(m.seed, k)
+  HT::remove_in(&mut m.table, h, (p: &(K × V)) => Umap::is_key(k, p))
+}
+
+fn demo(): (Bool × Nat) × (Nat × Nat) {
+  var m: Umap(Nat, Nat) := Umap::with_seed(SipSeed::of(UInt::of_nat_mod64(0), UInt::of_nat_mod64(0)))
+  let ^_failed := Umap::insert(&mut m, 7, 42)
+  let grew := Umap::grow(&mut m)
+  let found: Nat := match Umap::get(&m, &7) { None => 0, Some(v) => v }
+  let count := Umap::len(&m)
+  let ^_removed := Umap::remove(&mut m, &7)
+  #(#(grew, count), #(found, Umap::len(&m)))
+}
+
+show(&demo())
+```
+stdout = "#(#(true, 1), #(42, 0))\n"

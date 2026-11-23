@@ -7,3 +7,4 @@ assumptions-axioms = axioms:  { $names }
 assumptions-externs = externs: { $names }
 assumptions-holes = holes:   { $names }
 assumptions-uses-incomplete = uses incomplete: { $names }
+assumptions-unread = assumptions: { $path } could not be read, so what it trusts is not known: { $error }

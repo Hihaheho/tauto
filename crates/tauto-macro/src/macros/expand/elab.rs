@@ -21,6 +21,7 @@ pub struct ElabEnv {
     pub atoms: std::cell::RefCell<HashMap<u64, crate::surface::Name>>,
     /// The declarations before the one the macro is in.
     pub prefix: Vec<Stmt>,
+    pub prefix_files: Vec<usize>,
     /// The declarations of the enclosing modules by their names there, inner
     /// modules winning.
     pub module_names: HashMap<String, tauto_surface::identity::DeclRef>,
@@ -30,6 +31,13 @@ pub struct ElabEnv {
     pub bindings: tauto_surface::resolve::Resolver,
     pub families: HashMap<crate::surface::Name, Vec<crate::surface::Name>>,
     pub arities: HashMap<crate::surface::Name, usize>,
+    /// The `struct` and `enum` declarations by their names, for `Elab::data`.
+    pub datas: HashMap<crate::surface::Name, crate::surface::DataDecl>,
+    /// The `class` declarations by their names, for `Elab::class_decl`.
+    pub classes: HashMap<crate::surface::Name, crate::surface::ClassDecl>,
+    /// The `fn` declarations by their names: what `Elab::global` and
+    /// `Elab::resolve` answer for a function of the program.
+    pub fns: HashMap<crate::surface::Name, crate::surface::FnDecl>,
 }
 
 struct Parts<'n> {
@@ -106,6 +114,28 @@ pub(super) fn module_resolved(
 }
 
 impl ElabEnv {
+    /// `Some` of the declaration `statement` holds, lifted as written.
+    fn lift_declaration(statement: &Stmt) -> R<Node> {
+        let statement = Lift {
+            scopes: &[],
+            quote: false,
+            atoms: Some(&HashMap::new()),
+            spans: None,
+            reflip: None,
+        }
+        .stmt(statement)?;
+        let Node::Ctor(_, fields) = statement else {
+            return Err("a lifted declaration".into());
+        };
+        Ok(Node::some(
+            fields
+                .into_iter()
+                .next()
+                .ok_or("a lifted declaration field")?
+                .1,
+        ))
+    }
+
     fn constructor_reference(&self, ident: &Node) -> R<Option<crate::surface::Name>> {
         match ident.named("declaration").and_then(Node::as_option) {
             Some(Some(Node::Declaration(reference))) => Ok(Some(reference.clone().into())),
@@ -138,6 +168,91 @@ impl ElabEnv {
             }
             _ => Err("a term".into()),
         }
+    }
+
+    /// The declaration a variable names, by its reference: a name the file did not
+    /// resolve is read as the file's bindings read it.
+    fn reference_of(&self, t: &SurfaceTerm) -> Option<crate::surface::Name> {
+        match &*t.kind {
+            crate::surface::TermKind::Var(name @ crate::surface::Name::Spelled(s)) => self
+                .bindings
+                .source_reference(s)
+                .or_else(|| Some(name.clone())),
+            crate::surface::TermKind::Var(name) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// The `Judgement` of a function of the program: the function itself, of the
+    /// type its signature writes, over the generics it declares. Rows are written
+    /// (only `!?` asks for one), so the written signature is the row checker's.
+    fn program_fn(&self, term: &SurfaceTerm) -> R<Option<Node>> {
+        let Some(f) = self.reference_of(term).and_then(|r| self.fns.get(&r)) else {
+            return Ok(None);
+        };
+        let span = f.span;
+        let mut params = Vec::new();
+        for ((name, ty), borrow) in f
+            .params
+            .iter()
+            .zip(&f.param_types)
+            .zip(f.borrows.iter().chain(std::iter::repeat(&None)))
+        {
+            let Some(ty) = ty else { return Ok(None) };
+            let ty = match borrow {
+                Some(mutable) => SurfaceTerm::new(
+                    crate::surface::TermKind::Borrow {
+                        mutable: *mutable,
+                        orig: false, rc: false,
+                        term: Box::new(ty.clone()),
+                    },
+                    ty.span,
+                ),
+                None => ty.clone(),
+            };
+            params.push((Some(name.clone()), ty));
+        }
+        let result = f.result.clone().unwrap_or_else(|| {
+            SurfaceTerm::var(&tauto_surface::bindings::library_name("Unit"), span)
+        });
+        let ty = SurfaceTerm::new(
+            crate::surface::TermKind::Pi {
+                params,
+                result: Box::new(result),
+                effects: Some(f.effects.clone().unwrap_or_default()),
+                unused: Vec::new(),
+            },
+            span,
+        );
+        let none = HashMap::new();
+        let mut generics: Vec<Node> = f
+            .generics
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                if f.rows.get(i).copied().unwrap_or(false) {
+                    Node::text(&format!("!{n}"))
+                } else {
+                    Node::text(&n.to_string())
+                }
+            })
+            .collect();
+        let mut code = self.code(
+            &SurfaceTerm::var(&f.name, span),
+            &ty,
+            &none,
+            &Node::List(Vec::new()),
+        )?;
+        if let Node::Ctor(_, fields) = &mut code {
+            for (k, v) in fields.iter_mut() {
+                match k.as_deref() {
+                    Some("generics") => *v = Node::List(std::mem::take(&mut generics)),
+                    Some("fragment") => *v = Node::text("Program"),
+                    _ => {}
+                }
+            }
+        }
+        Ok(Some(code))
     }
 
     fn lift(&self, t: &SurfaceTerm, names: &HashMap<crate::surface::Name, u64>) -> R<Node> {
@@ -210,6 +325,7 @@ impl ElabEnv {
                 (Some("term".into()), self.lift(term, names)?),
                 (Some("ty".into()), self.lift(ty, names)?),
                 (Some("row".into()), Node::List(Vec::new())),
+                (Some("generics".into()), Node::List(Vec::new())),
                 (Some("ctx".into()), ctx_node.clone()),
                 (Some("fragment".into()), Node::text("Kernel")),
                 (Some("tys".into()), Node::List(Vec::new())),
@@ -254,7 +370,7 @@ impl ElabEnv {
                 .ok_or_else(|| msg!("macro-elab-more-arguments", op = op).to_string())
         };
         match op {
-            "Elab::defeq" => {
+            "Elab::Raw::defeq" => {
                 let (a, b) = (parts(arg(0)?)?, parts(arg(1)?)?);
                 let (atoms_a, _) = self.atoms(&a)?;
                 let (atoms_b, _) = self.atoms(&b)?;
@@ -264,33 +380,41 @@ impl ElabEnv {
                     return Ok(Node::Bool(crate::surface::same_term_structure(&ta, &tb)));
                 }
                 let context = self.context(&a, &atoms_a)?;
-                let mut k = self.checker.elaborator(&self.prefix, &context)?;
+                let mut k = self.checker.elaborator_with_owners(
+                    &self.prefix,
+                    &context,
+                    &self.prefix_files,
+                )?;
                 Ok(Node::Bool(k.defeq(&ta, &tb)?))
             }
-            "Elab::whnf" => {
+            "Elab::Raw::whnf" => {
                 let c = parts(arg(0)?)?;
                 let (atoms, names) = self.atoms(&c)?;
                 let t = self.lower(c.term, &atoms)?;
                 if c.fragment != "Kernel" {
                     return Ok(arg(0)?.clone());
                 }
-                let mut k = self
-                    .checker
-                    .elaborator(&self.prefix, &self.context(&c, &atoms)?)?;
+                let mut k = self.checker.elaborator_with_owners(
+                    &self.prefix,
+                    &self.context(&c, &atoms)?,
+                    &self.prefix_files,
+                )?;
                 let w = k.whnf(&t)?;
                 let ty = self.lower(c.ty, &atoms)?;
                 self.code(&w, &ty, &names, arg(0)?.named("ctx").ok_or("ctx")?)
             }
-            "Elab::check" => {
+            "Elab::Raw::check" => {
                 let ctx = parts(arg(1)?)?;
                 let (atoms, names) = self.atoms(&ctx)?;
                 let e = self.lower(arg(0)?, &atoms)?;
                 if ctx.fragment != "Kernel" {
                     return Ok(Self::diag(msg!("macro-elab-check-kernel").to_string()));
                 }
-                let mut k = self
-                    .checker
-                    .elaborator(&self.prefix, &self.context(&ctx, &atoms)?)?;
+                let mut k = self.checker.elaborator_with_owners(
+                    &self.prefix,
+                    &self.context(&ctx, &atoms)?,
+                    &self.prefix_files,
+                )?;
                 let wanted = match arg(2)?.as_option() {
                     Some(Some(t)) => Some(self.lower(parts(t)?.term, &atoms)?),
                     _ => None,
@@ -308,11 +432,16 @@ impl ElabEnv {
                     Err(m) => Ok(Self::diag(m)),
                 }
             }
-            "Elab::global" => {
+            "Elab::Raw::global" => {
                 let name = arg(0)?.as_text().ok_or("a Text")?;
-                let mut k = self.checker.elaborator(&self.prefix, &[])?;
+                let mut k =
+                    self.checker
+                        .elaborator_with_owners(&self.prefix, &[], &self.prefix_files)?;
                 let mut term = SurfaceTerm::var(name, Span::new(0, 1));
                 module_resolved(&mut term, &self.module_names);
+                if let Some(code) = self.program_fn(&term)? {
+                    return Ok(Node::some(code));
+                }
                 Ok(match k.infer(&term) {
                     Ok((term, ty)) => {
                         let none = HashMap::new();
@@ -321,15 +450,24 @@ impl ElabEnv {
                     Err(_) => Node::none(),
                 })
             }
-            "Elab::resolve" => {
+            "Elab::Raw::resolve" => {
                 let id = arg(0)?;
 
                 let ctx = parts(arg(1)?)?;
                 let (atoms, names) = self.atoms(&ctx)?;
-                let mut k = self
-                    .checker
-                    .elaborator(&self.prefix, &self.context(&ctx, &atoms)?)?;
+                let mut k = self.checker.elaborator_with_owners(
+                    &self.prefix,
+                    &self.context(&ctx, &atoms)?,
+                    &self.prefix_files,
+                )?;
                 let term = self.lower(&Node::ctor("SynExpr::ExVar", vec![id.clone()]), &atoms)?;
+                if !atoms
+                    .values()
+                    .any(|n| matches!(&*term.kind, crate::surface::TermKind::Var(v) if v == n))
+                    && let Some(code) = self.program_fn(&term)?
+                {
+                    return Ok(Node::some(code));
+                }
                 Ok(match k.infer(&term) {
                     Ok((term, ty)) => {
                         let ctx_node = arg(1)?.named("ctx").ok_or("ctx")?;
@@ -338,7 +476,7 @@ impl ElabEnv {
                     Err(_) => Node::none(),
                 })
             }
-            "Elab::constructor_arity" => Ok(
+            "Elab::Raw::constructor_arity" => Ok(
                 match self
                     .constructor_reference(arg(0)?)?
                     .and_then(|reference| self.arities.get(&reference))
@@ -347,7 +485,23 @@ impl ElabEnv {
                     None => Node::none(),
                 },
             ),
-            "Elab::siblings" => Ok(
+            "Elab::Raw::implicit_names" => {
+                let k =
+                    self.checker
+                        .elaborator_with_owners(&self.prefix, &[], &self.prefix_files)?;
+                Ok(
+                    match self
+                        .constructor_reference(arg(0)?)?
+                        .and_then(|reference| k.implicit_names(&reference))
+                    {
+                        Some(names) => {
+                            Node::some(Node::List(names.iter().map(|n| Node::text(n)).collect()))
+                        }
+                        None => Node::none(),
+                    },
+                )
+            }
+            "Elab::Raw::siblings" => Ok(
                 match self
                     .constructor_reference(arg(0)?)?
                     .and_then(|reference| self.families.get(&reference))
@@ -375,6 +529,24 @@ impl ElabEnv {
                     None => Node::none(),
                 },
             ),
+            "Elab::Raw::data" => {
+                let Some(d) = self
+                    .constructor_reference(arg(0)?)?
+                    .and_then(|reference| self.datas.get(&reference))
+                else {
+                    return Ok(Node::none());
+                };
+                Self::lift_declaration(&Stmt::Struct(d.clone()))
+            }
+            "Elab::Raw::class_decl" => {
+                let Some(c) = self
+                    .constructor_reference(arg(0)?)?
+                    .and_then(|reference| self.classes.get(&reference))
+                else {
+                    return Ok(Node::none());
+                };
+                Self::lift_declaration(&Stmt::Class(c.clone()))
+            }
             other => Err(msg!("macro-elab-unknown-op", op = other).to_string()),
         }
     }

@@ -11,7 +11,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use tauto::eval::RunOptions;
 use tauto::manifest::{Command, CommandTrust, Manifest};
 
 use crate::i18n;
@@ -192,10 +191,15 @@ fn flags(trust: &CommandTrust, project: &Path) -> Vec<String> {
 
 /// `tauto NAME ARGS…`. `None` when no command has the name, which is then
 /// an unknown command of `tauto` itself.
-pub(crate) fn run(name: &str, args: &[String]) -> Option<ExitCode> {
+///
+/// The project's `trust` section is approved as for `tauto run` before the
+/// command is granted anything from it (`approve` is `--approve-trust`), and
+/// the manifest is read from the same text that was approved.
+pub(crate) fn run(name: &str, args: &[String], approve: bool) -> Option<ExitCode> {
     let project = project()?;
-    let manifest = match tauto::manifest::read(&project) {
-        Ok(m) => m,
+    let read = tauto::manifest::read_with_text(&project);
+    let (text, manifest) = match read {
+        Ok(read) => read,
         Err(e) => {
             eprintln!("{e}");
             return Some(ExitCode::from(2));
@@ -221,6 +225,10 @@ pub(crate) fn run(name: &str, args: &[String]) -> Option<ExitCode> {
             return Some(ExitCode::from(2));
         }
     };
+    if let Err(e) = crate::trust_gate::check_project(&project, &text, approve) {
+        eprintln!("{e}");
+        return Some(ExitCode::from(2));
+    }
     Some(crate::with_deep_stack(|| {
         run_offer(&project, &manifest, offer, args)
     }))
@@ -235,7 +243,7 @@ fn run_offer(project: &Path, manifest: &Manifest, offer: &Offer, args: &[String]
             return ExitCode::from(2);
         }
     };
-    let rows = loaded.check_rows(false);
+    let rows = loaded.check_rows(tauto::rows::Target::Rust);
     if !rows.errors.is_empty() {
         for e in &rows.errors {
             eprintln!("{}", locate_in(&loaded, &entry, &e.to_string()));
@@ -275,23 +283,7 @@ fn run_offer(project: &Path, manifest: &Manifest, offer: &Offer, args: &[String]
         );
         return ExitCode::FAILURE;
     }
-    let options = RunOptions {
-        args: args.to_vec(),
-        permissions,
-        live: true,
-        ..RunOptions::default()
-    };
-    match tauto::eval::run_loaded_with(&loaded, u64::MAX, options) {
-        Ok(outcome) => {
-            print!("{}", outcome.stdout);
-            eprint!("{}", outcome.stderr);
-            ExitCode::from(outcome.exit.map_or(0, |code| code as u8))
-        }
-        Err(error) => {
-            eprintln!("{}", locate_in(&loaded, &entry, &error.to_string()));
-            ExitCode::FAILURE
-        }
-    }
+    crate::vm::run_loaded(&loaded, &entry, permissions, args)
 }
 
 /// What a command that needs `missing` and is not granted them is told: the

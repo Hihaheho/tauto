@@ -1,0 +1,51 @@
+// A Float literal is the node `ExFloat` of a macro's syntax tree, its digits as
+// written: an attribute macro is given a declaration with one, a macro reads the
+// digits, and a quote writes a Float that reads back as the same value.
+
+@ cases.an-attribute-macro-is-given-a-function-whose-body-has-a-float-literal
+entry = "main.taut"
+llvm.unimplemented = "generate: the LLVM backend does not write a `Float` yet"
+files."keep.taut" = ````tauto
+import std::builtin::macro
+
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) { Nil }
+````
+files."main.taut" = ````tauto
+import "keep.taut"
+
+@keep!(here)
+fn half(x: Float): Float { x * 0.5 + 1.25e1 }
+
+show(&half(3.0))
+````
+stdout = ```
+14
+```
+
+@ cases.a-macro-reads-the-digits-of-a-float-literal-and-quotes-one
+entry = "main.taut"
+llvm.unimplemented = "generate: the LLVM backend does not write arithmetic on a type that is not a number yet"
+files."lit.taut" = ````tauto
+import std::builtin::macro
+
+pub macro fn digits(e: SynExpr): SynExpr {
+  match e {
+    ExFloat(t, at) => ExText(t, at)
+    _ => ExText("", Syn::call_span())
+  }
+}
+
+pub macro fn tenth(e: SynExpr): SynExpr { quote { $e + 0.1 } }
+````
+files."main.taut" = ````tauto
+import "lit.taut"
+
+show(&(digits!(6.02e23)))
+show(&(digits!(0.50)))
+show(&(tenth!(0.2)))
+````
+stdout = ```
+"6.02e23"
+"0.50"
+0.30000000000000004
+```

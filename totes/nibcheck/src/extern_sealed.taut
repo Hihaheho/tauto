@@ -1,0 +1,595 @@
+import "../../identity/src/identity.taut"
+import "../../surface/src/surface.taut"
+import "../../surface/src/extern_blocks.taut"
+import "checker.taut"
+import "datas.taut"
+import "freevars.taut"
+import "messages.taut"
+import "ty.taut"
+import std::base
+import std::map
+import std::text
+
+// After types are known: refuse construction, projection, update, and match
+// on a replaceable extern type outside its block
+// (`refuse_sealed_repr` of `crates/tauto-nibcheck/src/types.rs`).
+
+fn extern_repr_error(name: Text, start: Nat, end: Nat): TypeError {
+  TypeError {
+    message: msg_with("surface-extern-repr-sealed", Cons(marg("name", name), Nil)),
+    start: start,
+    end: end
+  }
+}
+
+fn extern_owner_of(datas: Datas, data_or_ctor: Text): Text {
+  match datas_ctor(datas, data_or_ctor) {
+    Some(p) => p.fst
+    None => ⊢ Text from match datas_decl(datas, data_or_ctor) {
+      Some(^d) => data_or_ctor
+      None => data_or_ctor
+    }
+  }
+}
+
+fn extern_refuse(
+  blocks: ExternBlocks,
+  datas: Datas,
+  data_or_ctor: Text,
+  accessor: Option(Text),
+  start: Nat,
+  end: Nat,
+  out: List(TypeError)
+): List(TypeError) {
+  let owner := extern_owner_of(datas, data_or_ctor)
+  if may_access_repr(blocks, owner, accessor) {
+    out
+  } else {
+    Cons(extern_repr_error(owner, start, end), out)
+  }
+}
+
+fn extern_ty_named(t: Ty): Option(Text) {
+  match ty_unborrowed(t) {
+    TyNamed(n, ^args) => Some(surface_name_text(n))
+    _ => None
+  }
+}
+
+fn extern_term_ty(terms: Ordmap(TermAt, Ty), t: SurfaceTerm): Option(Ty) {
+  Ordmap::get(terms, term_at_of(t), term_at_compare)
+}
+
+fn extern_refuse_ty(
+  blocks: ExternBlocks,
+  datas: Datas,
+  terms: Ordmap(TermAt, Ty),
+  t: SurfaceTerm,
+  accessor: Option(Text),
+  start: Nat,
+  end: Nat,
+  out: List(TypeError)
+): List(TypeError) {
+  match extern_term_ty(terms, t) {
+    None => out
+    Some(ty) => ⊢ List(TypeError) from match extern_ty_named(ty) {
+      None => out
+      Some(name) => extern_refuse(blocks, datas, name, accessor, start, end, out)
+    }
+  }
+}
+
+mutual {
+  fn extern_sealed_pattern(
+    p: SurfacePattern,
+    blocks: ExternBlocks,
+    datas: Datas,
+    accessor: Option(Text),
+    start: Nat,
+    end: Nat,
+    out: List(TypeError)
+  ): List(TypeError) {
+    match p {
+      PtCtor(name, args) => extern_sealed_patterns(
+        args,
+        blocks,
+        datas,
+        accessor,
+        start,
+        end,
+        extern_refuse(blocks, datas, surface_name_text(name), accessor, start, end, out)
+      )
+      PtRecord(name, fields) => extern_sealed_pattern_fields(
+        fields,
+        blocks,
+        datas,
+        accessor,
+        start,
+        end,
+        extern_refuse(blocks, datas, name, accessor, start, end, out)
+      )
+      _ => out
+    }
+  }
+
+  fn extern_sealed_patterns(
+    ps: List(SurfacePattern),
+    blocks: ExternBlocks,
+    datas: Datas,
+    accessor: Option(Text),
+    start: Nat,
+    end: Nat,
+    out: List(TypeError)
+  ): List(TypeError) {
+    match ps {
+      Nil => out
+      Cons(p, rest) => extern_sealed_patterns(
+        rest,
+        blocks,
+        datas,
+        accessor,
+        start,
+        end,
+        extern_sealed_pattern(p, blocks, datas, accessor, start, end, out)
+      )
+    }
+  }
+
+  fn extern_sealed_pattern_field(
+    f: SurfacePatternField,
+    blocks: ExternBlocks,
+    datas: Datas,
+    accessor: Option(Text),
+    start: Nat,
+    end: Nat,
+    out: List(TypeError)
+  ): List(TypeError) {
+    match f {
+      SurfacePatternFieldMk(^name, pattern) => extern_sealed_pattern(
+        pattern,
+        blocks,
+        datas,
+        accessor,
+        start,
+        end,
+        out
+      )
+    }
+  }
+
+  fn extern_sealed_pattern_fields(
+    fs: List(SurfacePatternField),
+    blocks: ExternBlocks,
+    datas: Datas,
+    accessor: Option(Text),
+    start: Nat,
+    end: Nat,
+    out: List(TypeError)
+  ): List(TypeError) {
+    match fs {
+      Nil => out
+      Cons(f, rest) => extern_sealed_pattern_fields(
+        rest,
+        blocks,
+        datas,
+        accessor,
+        start,
+        end,
+        extern_sealed_pattern_field(f, blocks, datas, accessor, start, end, out)
+      )
+    }
+  }
+}
+
+fn extern_sealed_arms(
+  arms: List(SurfaceArm),
+  blocks: ExternBlocks,
+  datas: Datas,
+  accessor: Option(Text),
+  start: Nat,
+  end: Nat,
+  out: List(TypeError)
+): List(TypeError) {
+  match arms {
+    Nil => out
+    Cons(arm, rest) => extern_sealed_arms(
+      rest,
+      blocks,
+      datas,
+      accessor,
+      start,
+      end,
+      ⊢ List(TypeError) from match arm {
+        SurfaceArmMk(pattern, ^guard, ^goal, ^body) => extern_sealed_pattern(
+          pattern,
+          blocks,
+          datas,
+          accessor,
+          start,
+          end,
+          out
+        )
+      }
+    )
+  }
+}
+
+// An assignment place: each `SkField` checks the owner's type (the base), not
+// the field's type. Nested places (`c.a.b`) walk every field base.
+mutual {
+  fn extern_sealed_place(
+    t: SurfaceTerm,
+    blocks: ExternBlocks,
+    datas: Datas,
+    terms: Ordmap(TermAt, Ty),
+    accessor: Option(Text),
+    out: List(TypeError)
+  ): List(TypeError) {
+    match t {
+      SurfaceTermIndexedMk(k, start, end, ^occ) => extern_sealed_place_kind(
+        k,
+        start,
+        end,
+        blocks,
+        datas,
+        terms,
+        accessor,
+        out
+      )
+    }
+  }
+
+  fn extern_sealed_place_kind(
+    k: SurfaceKind,
+    start: Nat,
+    end: Nat,
+    blocks: ExternBlocks,
+    datas: Datas,
+    terms: Ordmap(TermAt, Ty),
+    accessor: Option(Text),
+    out: List(TypeError)
+  ): List(TypeError) {
+    match k {
+      SkField(base, ^name) => extern_sealed_place(
+        base,
+        blocks,
+        datas,
+        terms,
+        accessor,
+        extern_refuse_ty(blocks, datas, terms, base, accessor, start, end, out)
+      )
+      SkBorrow(^mutable, ^mutable_orig, inner) => extern_sealed_place(
+        inner,
+        blocks,
+        datas,
+        terms,
+        accessor,
+        out
+      )
+      // `*h.r := …` is SkApp("*", [h.r]); walk the deref inner under the
+      // same accessor (`surface_deref_inner`).
+      SkApp(head, args) => if surface_is_deref(head) {
+        extern_sealed_place_deref_args(args, blocks, datas, terms, accessor, out)
+      } else {
+        out
+      }
+      _ => out
+    }
+  }
+
+  fn extern_sealed_place_deref_args(
+    args: List(SurfaceTerm),
+    blocks: ExternBlocks,
+    datas: Datas,
+    terms: Ordmap(TermAt, Ty),
+    accessor: Option(Text),
+    out: List(TypeError)
+  ): List(TypeError) {
+    match args {
+      Cons(inner, rest) => ⊢ List(TypeError) from match rest {
+        Nil => extern_sealed_place(inner, blocks, datas, terms, accessor, out)
+        Cons(^b, ^more) => out
+      }
+      Nil => out
+    }
+  }
+}
+
+// One term's sealed uses (subterms are checked separately).
+fn extern_sealed_one(
+  t: SurfaceTerm,
+  blocks: ExternBlocks,
+  datas: Datas,
+  terms: Ordmap(TermAt, Ty),
+  accessor: Option(Text),
+  out: List(TypeError)
+): List(TypeError) {
+  match t {
+    SurfaceTermIndexedMk(k, start, end, ^occ) => match k {
+      SkVar(name) => extern_refuse(
+        blocks,
+        datas,
+        surface_name_text(name),
+        accessor,
+        start,
+        end,
+        out
+      )
+      SkRecord(name, ^fields) => extern_refuse(
+        blocks,
+        datas,
+        name,
+        accessor,
+        start,
+        end,
+        out
+      )
+      SkField(base, ^name) => extern_refuse_ty(
+        blocks,
+        datas,
+        terms,
+        base,
+        accessor,
+        start,
+        end,
+        out
+      )
+      SkMatch(scrutinee, ^motive, arms, ^binder, _) => extern_sealed_arms(
+        arms,
+        blocks,
+        datas,
+        accessor,
+        start,
+        end,
+        extern_refuse_ty(
+          blocks,
+          datas,
+          terms,
+          scrutinee,
+          accessor,
+          scrutinee.start,
+          scrutinee.end,
+          out
+        )
+      )
+      // `subterms` walks only the RHS of `StAssign`; field updates need the
+      // place checked under the enclosing function's accessor.
+      SkBlock(stmts) => extern_sealed_assign_places(
+        stmts,
+        blocks,
+        datas,
+        terms,
+        accessor,
+        out
+      )
+      _ => out
+    }
+  }
+}
+
+mutual {
+  fn extern_sealed_assign_place_opt(
+    name_place: Option(SurfaceTerm),
+    blocks: ExternBlocks,
+    datas: Datas,
+    terms: Ordmap(TermAt, Ty),
+    accessor: Option(Text),
+    out: List(TypeError)
+  ): List(TypeError) {
+    match name_place {
+      Some(place) => extern_sealed_place(place, blocks, datas, terms, accessor, out)
+      None => out
+    }
+  }
+
+  fn extern_sealed_assign_place_stmt(
+    s: SurfaceStmt,
+    blocks: ExternBlocks,
+    datas: Datas,
+    terms: Ordmap(TermAt, Ty),
+    accessor: Option(Text),
+    out: List(TypeError)
+  ): List(TypeError) {
+    match s {
+      StAssign(^name, name_place, ^value) => extern_sealed_assign_place_opt(
+        name_place,
+        blocks,
+        datas,
+        terms,
+        accessor,
+        out
+      )
+      StMutual(items, ^start, ^end) => extern_sealed_assign_places(
+        items,
+        blocks,
+        datas,
+        terms,
+        accessor,
+        out
+      )
+      StAttributed(^name, ^arg, ^generates, inner) => extern_sealed_assign_place_stmt(
+        inner,
+        blocks,
+        datas,
+        terms,
+        accessor,
+        out
+      )
+      _ => out
+    }
+  }
+
+  fn extern_sealed_assign_places(
+    ss: List(SurfaceStmt),
+    blocks: ExternBlocks,
+    datas: Datas,
+    terms: Ordmap(TermAt, Ty),
+    accessor: Option(Text),
+    out: List(TypeError)
+  ): List(TypeError) {
+    match ss {
+      Nil => out
+      Cons(s, rest) => extern_sealed_assign_places(
+        rest,
+        blocks,
+        datas,
+        terms,
+        accessor,
+        extern_sealed_assign_place_stmt(s, blocks, datas, terms, accessor, out)
+      )
+    }
+  }
+}
+
+fn extern_sealed_term_list(
+  ts: List(SurfaceTerm),
+  blocks: ExternBlocks,
+  datas: Datas,
+  terms: Ordmap(TermAt, Ty),
+  accessor: Option(Text),
+  out: List(TypeError)
+): List(TypeError) {
+  match ts {
+    Nil => out
+    Cons(t, rest) => extern_sealed_term_list(
+      rest,
+      blocks,
+      datas,
+      terms,
+      accessor,
+      extern_sealed_one(t, blocks, datas, terms, accessor, out)
+    )
+  }
+}
+
+fn extern_sealed_body(
+  body: SurfaceTerm,
+  blocks: ExternBlocks,
+  datas: Datas,
+  terms: Ordmap(TermAt, Ty),
+  accessor: Option(Text),
+  out: List(TypeError)
+): List(TypeError) {
+  extern_sealed_term_list(subterms(body, Nil), blocks, datas, terms, accessor, out)
+}
+
+fn extern_sealed_fns(
+  fns: List(SurfaceFn),
+  blocks: ExternBlocks,
+  datas: Datas,
+  terms: Ordmap(TermAt, Ty),
+  out: List(TypeError)
+): List(TypeError) {
+  match fns {
+    Nil => out
+    Cons(f, rest) => extern_sealed_fns(
+      rest,
+      blocks,
+      datas,
+      terms,
+      extern_sealed_body(f.body, blocks, datas, terms, Some(f.name), out)
+    )
+  }
+}
+
+mutual {
+  fn extern_sealed_stmt(
+    s: SurfaceStmt,
+    blocks: ExternBlocks,
+    datas: Datas,
+    terms: Ordmap(TermAt, Ty),
+    out: List(TypeError)
+  ): List(TypeError) {
+    match s {
+      StFn(f) => extern_sealed_body(f.body, blocks, datas, terms, Some(f.name), out)
+      StExtern(fns, instances, types, structs, enums, ^start, ^end) => if extern_is_replaceable(
+        fns,
+        instances,
+        types,
+        structs,
+        enums
+      ) {
+        extern_sealed_fns(fns, blocks, datas, terms, out)
+      } else {
+        out
+      }
+      StLet(^name, ^ty, value, ^r#borrow, ^bm, _, ^st_stack) => extern_sealed_body(
+        value,
+        blocks,
+        datas,
+        terms,
+        None,
+        out
+      )
+      StVar(^name, ^ty, value, ^vb, _, ^st_stack) => extern_sealed_body(
+        value,
+        blocks,
+        datas,
+        terms,
+        None,
+        out
+      )
+      StAssign(^name, name_place, value) => extern_sealed_assign_place_opt(
+        name_place,
+        blocks,
+        datas,
+        terms,
+        None,
+        extern_sealed_body(value, blocks, datas, terms, None, out)
+      )
+      StExpr(e) => extern_sealed_body(e, blocks, datas, terms, None, out)
+      StReturn(e) => ⊢ List(TypeError) from match e {
+        None => out
+        Some(x) => extern_sealed_body(x, blocks, datas, terms, None, out)
+      }
+      StWhile(c, body) => extern_sealed_body(
+        body,
+        blocks,
+        datas,
+        terms,
+        None,
+        extern_sealed_body(c, blocks, datas, terms, None, out)
+      )
+      StMutual(items, ^start, ^end) => extern_sealed_stmts(items, blocks, datas, terms, out)
+      StAttributed(^name, ^arg, ^generates, inner) => extern_sealed_stmt(
+        inner,
+        blocks,
+        datas,
+        terms,
+        out
+      )
+      StInstance(i) => extern_sealed_fns(i.methods, blocks, datas, terms, out)
+      _ => out
+    }
+  }
+
+  fn extern_sealed_stmts(
+    ss: List(SurfaceStmt),
+    blocks: ExternBlocks,
+    datas: Datas,
+    terms: Ordmap(TermAt, Ty),
+    out: List(TypeError)
+  ): List(TypeError) {
+    match ss {
+      Nil => out
+      Cons(s, rest) => extern_sealed_stmts(
+        rest,
+        blocks,
+        datas,
+        terms,
+        extern_sealed_stmt(s, blocks, datas, terms, out)
+      )
+    }
+  }
+}
+
+/// Errors for sealed replaceable-extern representation uses, oldest first.
+pub fn extern_sealed_errors(
+  program: List(SurfaceStmt),
+  datas: Datas,
+  terms: Ordmap(TermAt, Ty)
+): List(TypeError) {
+  List::reverse(
+    extern_sealed_stmts(program, extern_blocks_collect(program), datas, terms, Nil)
+  )
+}

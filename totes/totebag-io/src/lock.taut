@@ -1,0 +1,296 @@
+import totebag::lock
+import totebag::spec
+import eure::eure
+import eure::value
+import std::base
+import std::text
+
+// Reading `Tauto.lock` (`crates/totebag/src/lock.rs`): the Eure document is
+// read by totes/eure, and the reading is strict: an unknown key, a missing
+// key or a malformed value is an error. The entries come back in name
+// order, each name once. An error is the message ID `crates/totebag` gives.
+
+pub fn tb_lock_max_bytes(): u64 {
+  4194304
+}
+
+pub fn tb_key_text(k: Key): Text {
+  match k {
+    Kstr(t) => t
+    Knum(neg, n) => if neg { Text::concat("-", Text::of_nat(n)) } else { Text::of_nat(n) }
+    Ktup(_) => "()"
+  }
+}
+
+pub fn tb_entries(n: Node): Result(List(Key × Node), Text) {
+  match as_entries(n) {
+    Some(es) => Ok(es)
+    None => Err("totebag-expected-block")
+  }
+}
+
+pub fn tb_text(n: Node): Result(Text, Text) {
+  match node_value(n) {
+    Vtext(_, t) => Ok(t)
+    Vhole(_) => Err("totebag-expected-text")
+    Vnull => Err("totebag-expected-text")
+    Vbool(_) => Err("totebag-expected-text")
+    Vint(_, _) => Err("totebag-expected-text")
+    Vdec(_, _, _, _) => Err("totebag-expected-text")
+    Varr(_) => Err("totebag-expected-text")
+    Vtup(_) => Err("totebag-expected-text")
+    Vmap(_) => Err("totebag-expected-text")
+  }
+}
+
+pub fn tb_locked_of(n: Node): Result(TbLocked, Text) {
+  let es := match tb_entries(n) {
+    Ok(es) => es
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var name: Option(Text) := None
+  var git: Option(Text) := None
+  var reference: Option(Text) := None
+  var dir := ""
+  var project: Option(Text) := None
+  var rev: Option(Text) := None
+  var source: Option(Text) := None
+  var sparse := false
+  var rest := es
+  var going := true
+  while going {
+    match rest {
+      Cons(e, more) => {
+        let key := tb_key_text(e.fst)
+        if key == "sparse" {
+          match node_value(e.snd) {
+            Vbool(true) => {
+              sparse := true
+            }
+            Vbool(false) => {
+              return Err("totebag-lock-sparse")
+            }
+            Vhole(_) => {
+              return Err("totebag-lock-sparse")
+            }
+            Vnull => {
+              return Err("totebag-lock-sparse")
+            }
+            Vint(_, _) => {
+              return Err("totebag-lock-sparse")
+            }
+            Vdec(_, _, _, _) => {
+              return Err("totebag-lock-sparse")
+            }
+            Vtext(_, _) => {
+              return Err("totebag-lock-sparse")
+            }
+            Varr(_) => {
+              return Err("totebag-lock-sparse")
+            }
+            Vtup(_) => {
+              return Err("totebag-lock-sparse")
+            }
+            Vmap(_) => {
+              return Err("totebag-lock-sparse")
+            }
+          }
+        } else {
+          let value := match tb_text(e.snd) {
+            Ok(t) => t
+            Err(why) => {
+              return Err(why)
+            }
+          }
+          if key == "name" {
+            name := Some(value)
+          } else if key == "git" {
+            git := Some(value)
+          } else if key == "ref" {
+            reference := Some(value)
+          } else if key == "dir" {
+            dir := value
+          } else if key == "project" {
+            project := Some(value)
+          } else if key == "rev" {
+            if not(tb_check_rev(value)) {
+              return Err("totebag-bad-rev")
+            }
+            rev := Some(value)
+          } else if key == "source" {
+            if not(tb_check_source_id(value)) {
+              return Err("totebag-bad-source-id")
+            }
+            source := Some(value)
+          } else {
+            return Err("totebag-lock-unknown-key")
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  let n := match name {
+    Some(t) => t
+    None => {
+      return Err("totebag-lock-missing")
+    }
+  }
+  if not(tb_valid_name(n)) {
+    return Err("totebag-not-a-tote-name")
+  }
+  let g := match git {
+    Some(t) => t
+    None => {
+      return Err("totebag-lock-missing")
+    }
+  }
+  let r := match reference {
+    Some(t) => t
+    None => {
+      return Err("totebag-lock-missing")
+    }
+  }
+  match tb_check_url(g) {
+    Some(_) => {
+      return Err("totebag-bad-url")
+    }
+    None => #()
+  }
+  if not(tb_check_ref(r)) {
+    return Err("totebag-bad-ref")
+  }
+  if not(tb_check_dir(dir)) {
+    return Err("totebag-bad-dir")
+  }
+  if sparse && dir == "" {
+    return Err("totebag-sparse-needs-dir")
+  }
+  match project {
+    Some(p) => if not(tb_check_source_id(p)) {
+      return Err("totebag-bad-sha256")
+    }
+    None => #()
+  }
+  let v := match rev {
+    Some(t) => t
+    None => {
+      return Err("totebag-lock-missing")
+    }
+  }
+  let s := match source {
+    Some(t) => t
+    None => {
+      return Err("totebag-lock-missing")
+    }
+  }
+  Ok(MkLocked(n, g, r, dir, sparse, project, v, s))
+}
+
+// The entries of a lock's text, in name order.
+pub fn tb_parse_lock(text: Text): Result(List(TbLocked), Text) {
+  if Bytes::len(Bytes::of_text(text)) > tb_lock_max_bytes() {
+    return Err("totebag-lock-too-large")
+  }
+  let doc := match parse(text) {
+    Ok(d) => d
+    Err(_) => {
+      return Err("eure")
+    }
+  }
+  let es := match tb_entries(doc) {
+    Ok(es) => es
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var lock: List(TbLocked) := Nil
+  var format := false
+  var rest := es
+  var going := true
+  while going {
+    match rest {
+      Cons(e, more) => {
+        let key := tb_key_text(e.fst)
+        if key == "format" {
+          match node_value(e.snd) {
+            Vint(false, 1) => {
+              format := true
+            }
+            Vint(_, _) => {
+              return Err("totebag-lock-format")
+            }
+            Vhole(_) => {
+              return Err("totebag-lock-format")
+            }
+            Vnull => {
+              return Err("totebag-lock-format")
+            }
+            Vbool(_) => {
+              return Err("totebag-lock-format")
+            }
+            Vdec(_, _, _, _) => {
+              return Err("totebag-lock-format")
+            }
+            Vtext(_, _) => {
+              return Err("totebag-lock-format")
+            }
+            Varr(_) => {
+              return Err("totebag-lock-format")
+            }
+            Vtup(_) => {
+              return Err("totebag-lock-format")
+            }
+            Vmap(_) => {
+              return Err("totebag-lock-format")
+            }
+          }
+        } else if key == "totes" {
+          let items := match as_items(e.snd) {
+            Some(xs) => xs
+            None => {
+              return Err("totebag-lock-totes-list")
+            }
+          }
+          var its := items
+          var inner := true
+          while inner {
+            match its {
+              Cons(item, more2) => {
+                let t := match tb_locked_of(item) {
+                  Ok(t) => t
+                  Err(why) => {
+                    return Err(why)
+                  }
+                }
+                if tb_has(lock, tb_locked_name(t)) {
+                  return Err("totebag-locked-twice")
+                }
+                lock := tb_put(lock, t)
+                its := more2
+              }
+              Nil => {
+                inner := false
+              }
+            }
+          }
+        } else {
+          return Err("totebag-unknown-key")
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  if not(format) {
+    return Err("totebag-lock-no-format")
+  }
+  Ok(lock)
+}

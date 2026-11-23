@@ -1,6 +1,6 @@
 import "instantiation_requirements.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "diagnostic_sound.taut"
 import "finish_frame.taut"
@@ -12,6 +12,7 @@ import "instantiation_requirement_frame.taut"
 import "instantiation_scheme_records.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "where_order_sound.taut"
 import "where_predicates_declared.taut"
@@ -74,20 +75,35 @@ pub theorem instance_obligations_after_preds(
     Ordmap::empty(),
     map
   )
-): SchemeInstanceObligations(c, name, scheme, span, instance_scheme_after_preds(scheme, map, m)) {
+): SchemeInstanceObligations(c, name, scheme, span, instance_scheme_after_preds(name, span, scheme, map, m)) {
   ⊢ SchemeInstanceObligations(
     c,
     name,
     scheme,
     span,
-    instance_scheme_after_preds(scheme, map, m)
+    instance_scheme_after_preds(name, span, scheme, map, m)
   ) from match m {
     mut1(ignored, next) => SchemeInstanceObligations::Mk(
       map,
       covered,
       Refl,
       predicates,
-      requirements
+      recorded_instantiation_move(
+        next,
+        ck_st(
+          ck_record_use(
+            next,
+            name,
+            ck_use_generics(instantiation_scheme_generics(scheme), instantiation_scheme_ty(scheme), map),
+            span
+          )
+        ),
+        instantiation_scheme_ctors(scheme),
+        name,
+        span,
+        requirement_state_refl(next),
+        requirements
+      )
     )
   }
 }
@@ -135,7 +151,7 @@ pub theorem instance_obligations_after_map(
       ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span),
       covered,
       Eq::subst(
-        (assume: List(Pair(Text, Text))) => InstancePredicatesRecorded(
+        (assume: List(Text × Text)) => InstancePredicatesRecorded(
           assume,
           instantiation_scheme_preds(scheme),
           map,

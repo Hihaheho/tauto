@@ -1,4 +1,5 @@
-use tauto_nir::{CompilePhase, compile_javascript_with_observer, compile_with_observer};
+use tauto::nir::{compile_javascript_with_observer, compile_with_observer};
+use tauto_nibcheck::lower::CompilePhase;
 
 #[test]
 fn observers_see_only_reached_phase_boundaries() {
@@ -18,7 +19,7 @@ fn observers_see_only_reached_phase_boundaries() {
                 false,
             ),
             (
-                r#"perform show("x", 42)
+                r#"show(&42)
 "#,
                 vec![ParseExpand, Check, Lower],
                 true,

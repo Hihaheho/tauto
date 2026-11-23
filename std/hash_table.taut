@@ -1,0 +1,1344 @@
+import std::prelude::std { List, Option }
+import std::prelude::collections { Vec }
+import std::base { Bool, Nat }
+import std::nat { Nat }
+import std::uhost { UHost }
+import std::uint { UInt }
+import std::slots { Byte, OccLaws, Proxy, SlotsModel, Table, occ_laws, sel }
+
+// A small model of `HashTable(A)`: the stored elements
+// with the hash each was stored under, in a list. `find` and `insert` take the
+// pure closures the design gives them: `is` (the match test) and `rehash` (the
+// hash of an element, used when the table grows).
+pub fn HT::hash_of<A: Shared>(p: Nat × A): Nat {
+  match p {
+    #(h, x) => h
+  }
+}
+
+pub fn HT::elem_of<A: Shared>(p: Nat × A): A {
+  match p {
+    #(h, x) => x
+  }
+}
+
+// The first stored element under `hash` for which `is` holds.
+pub fn HT::find<A: Shared>(t: List(Nat × A), hash: Nat, is: (A) -> Bool): Option(A) {
+  match t {
+    Nil => None
+    Cons(p, rest) => match Nat::eq(HT::hash_of(p), hash) && is(HT::elem_of(p)) {
+      true => Some(HT::elem_of(p))
+      false => HT::find(rest, hash, is)
+    }
+  }
+}
+
+// Every element stored again under its `rehash`.
+pub fn HT::rebuild<A: Shared>(t: List(Nat × A), rehash: (A) -> Nat): List(Nat × A) {
+  match t {
+    Nil => Nil
+    Cons(p, rest) => Cons(#(rehash(HT::elem_of(p)), HT::elem_of(p)), HT::rebuild(rest, rehash))
+  }
+}
+
+pub fn HT::kept<A: Shared>(t: List(Nat × A), rehash: (A) -> Nat, grow: Bool): List(Nat × A) {
+  match grow {
+    true => HT::rebuild(t, rehash)
+    false => t
+  }
+}
+
+// Put `x` under `hash`; when the table `grow`s, all the others are stored again first.
+pub fn HT::insert<A: Shared>(
+  t: List(Nat × A),
+  hash: Nat,
+  x: A,
+  rehash: (A) -> Nat,
+  grow: Bool
+): List(Nat × A) {
+  Cons(#(hash, x), HT::kept(t, rehash, grow))
+}
+
+// Every element is stored under the hash `h` gives it.
+pub fn HT::inv<A: Shared>(t: List(Nat × A), h: (A) -> Nat): Bool {
+  match t {
+    Nil => true
+    Cons(p, rest) => Nat::eq(HT::hash_of(p), h(HT::elem_of(p))) && HT::inv(rest, h)
+  }
+}
+
+// The head decides when it matches.
+pub theorem HT::find_cons_true<A: Shared>(
+  p: Nat × A,
+  rest: List(Nat × A),
+  hash: Nat,
+  is: (A) -> Bool,
+  e: Nat::eq(HT::hash_of(p), hash) && is(HT::elem_of(p)) = true
+): HT::find(Cons(p, rest), hash, is) = Some(HT::elem_of(p)) {
+  Eq::congr((b: Bool) => sel(b, Some(HT::elem_of(p)), HT::find(rest, hash, is)), e)
+}
+
+pub theorem HT::find_cons_false<A: Shared>(
+  p: Nat × A,
+  rest: List(Nat × A),
+  hash: Nat,
+  is: (A) -> Bool,
+  e: Nat::eq(HT::hash_of(p), hash) && is(HT::elem_of(p)) = false
+): HT::find(Cons(p, rest), hash, is) = HT::find(rest, hash, is) {
+  Eq::congr((b: Bool) => sel(b, Some(HT::elem_of(p)), HT::find(rest, hash, is)), e)
+}
+
+// What was inserted is found, whatever the table and whether or not it grew.
+pub theorem HT::find_insert<A: Shared>(
+  t: List(Nat × A),
+  hash: Nat,
+  x: A,
+  rehash: (A) -> Nat,
+  grow: Bool,
+  is: (A) -> Bool,
+  e: is(x) = true
+): HT::find(HT::insert(t, hash, x, rehash, grow), hash, is) = Some(x) {
+  HT::find_cons_true(
+    #(hash, x),
+    HT::kept(t, rehash, grow),
+    hash,
+    is,
+    Bool::and_intro(Nat::eq(hash, hash), is(x), Nat::eq_refl(hash), e)
+  )
+}
+
+// Stored again under the hash it already has, an element does not move.
+pub theorem HT::rebuild_id<A: Shared>(
+  t: List(Nat × A),
+  h: (A) -> Nat,
+  hi: HT::inv(t, h) = true
+): HT::rebuild(t, h) = t {
+  match t {
+    Nil => Refl
+    Cons(p, rest) => match p {
+      #(a, x) => ⊢ HT::rebuild(
+        Cons(#(a, x), rest),
+        h
+      ) = Cons(
+        #(a, x),
+        rest
+      ) from Eq::trans(
+        Eq::congr(
+          ⟦Cons(#(□, x), HT::rebuild(rest, h))⟧,
+          Eq::sym(Nat::eq_sound(a, h(x), Bool::and_true_left(Nat::eq(a, h(x)), HT::inv(rest, h), hi)))
+        ),
+        Eq::congr(
+          ⟦Cons(#(a, x), □)⟧,
+          HT::rebuild_id(rest, h, Bool::and_true_right(Nat::eq(a, h(x)), HT::inv(rest, h), hi))
+        )
+      )
+    }
+  }
+}
+
+// Inserting under the hash `h` gives keeps "every element is stored under its hash".
+pub theorem HT::inv_insert<A: Shared>(
+  t: List(Nat × A),
+  hash: Nat,
+  x: A,
+  h: (A) -> Nat,
+  grow: Bool,
+  hi: HT::inv(t, h) = true,
+  hx: hash = h(x)
+): HT::inv(HT::insert(t, hash, x, h, grow), h) = true {
+  Bool::and_intro(Nat::eq(hash, h(x)), HT::inv(HT::kept(t, h, grow), h), Eq::trans(Eq::congr(⟦Nat::eq(□, h(x))⟧, hx), Nat::eq_refl(h(x))), match grow {
+    true => ⊢ HT::inv(HT::rebuild(t, h), h) = true from Eq::trans(Eq::congr(⟦HT::inv(□, h)⟧, HT::rebuild_id(t, h, hi)), hi)
+    false => hi
+  })
+}
+
+// An insert that does not match the search leaves the search as it was, grown or not.
+pub theorem HT::find_insert_other<A: Shared>(
+  t: List(Nat × A),
+  hash: Nat,
+  x: A,
+  h: (A) -> Nat,
+  grow: Bool,
+  hash2: Nat,
+  is: (A) -> Bool,
+  hi: HT::inv(t, h) = true,
+  hn: Nat::eq(hash, hash2) && is(x) = false
+): HT::find(HT::insert(t, hash, x, h, grow), hash2, is) = HT::find(t, hash2, is) {
+  Eq::trans(
+    HT::find_cons_false(#(hash, x), HT::kept(t, h, grow), hash2, is, hn),
+    match grow {
+      true => ⊢ HT::find(HT::rebuild(t, h), hash2, is) = HT::find(t, hash2, is) from Eq::congr(⟦HT::find(□, hash2, is)⟧, HT::rebuild_id(t, h, hi))
+      false => Refl
+    }
+  )
+}
+
+// Closures given as lambdas evaluate too.
+pub theorem lambda_example(): HT::find(
+  HT::insert(Nil, 7, 5, (x: Nat) => Nat::add(x, 2), false),
+  7,
+  (y: Nat) => Nat::eq(y, 5)
+) = Some(5) {
+  Refl
+}
+
+// The design's borrowed closure parameter, `&((x: &A) -> Bool)`, with `&A` elements.
+pub fn HTB::find<A: Shared>(t: &List(Nat × A), hash: Nat, is: &((x: &A) -> Bool)): Option(A) {
+  match t {
+    Nil => None
+    Cons(p, rest) => match Nat::eq(HT::hash_of(p), hash) && is(HT::elem_of(p)) {
+      true => Some(HT::elem_of(p))
+      false => HTB::find(rest, hash, is)
+    }
+  }
+}
+
+// The deletion rule: the removed slot becomes empty when its
+// group (8 slots) already has an empty one, a tombstone otherwise. The search
+// goes group by group and passes a group only when it has no empty slot.
+// A slot is the pair (group, offset), so there is no division.
+
+pub(open) inductive Ctl: Type { Empty: Ctl, Tomb: Ctl, Full: Ctl }
+
+pub fn Ctl::is_empty(c: Ctl): Bool {
+  match c { Empty => true, Tomb => false, Full => false }
+}
+
+pub fn Ctl::is_full(c: Ctl): Bool {
+  match c { Empty => false, Tomb => false, Full => true }
+}
+
+// Some of the first `w` slots of group `g` is empty.
+pub fn Table::any_empty(mk: (Nat, Nat) -> Ctl, g: Nat, w: Nat): Bool {
+  match w {
+    Zero => false
+    Succ(k) => Ctl::is_empty(mk(g, k)) || Table::any_empty(mk, g, k)
+  }
+}
+
+pub fn Table::has_empty(mk: (Nat, Nat) -> Ctl, g: Nat): Bool {
+  Table::any_empty(mk, g, 8)
+}
+
+pub theorem Table::or_split(b: Bool, c: Bool, h: b || c = true): (b = true ∨ c = true) {
+  match b {
+    false => OrInr(h)
+    true => OrInl(Refl)
+  }
+}
+
+// The empties of `mk2` are empties of `mk`, or are in a group that has an empty in `mk`.
+pub theorem Table::any_empty_mono(
+  mk: (Nat, Nat) -> Ctl,
+  mk2: (Nat, Nat) -> Ctl,
+  g: Nat,
+  hg: ∀ r: Nat. Ctl::is_empty(
+    mk2(g, r)
+  ) = true -> (Ctl::is_empty(mk(g, r)) = true ∨ Table::has_empty(mk, g) = true),
+  w: Nat,
+  h: Table::any_empty(mk2, g, w) = true
+): (Table::any_empty(mk, g, w) = true ∨ Table::has_empty(mk, g) = true) {
+  match w {
+    Zero => False::elim(false_ne_true(h))
+    Succ(k) => match Table::or_split(Ctl::is_empty(mk2(g, k)), Table::any_empty(mk2, g, k), h) {
+      OrInl(e) => match hg(k, e) {
+        OrInl(e2) => OrInl(Bool::or_true_left(Ctl::is_empty(mk(g, k)), Table::any_empty(mk, g, k), e2))
+        OrInr(e3) => OrInr(e3)
+      }
+      OrInr(e) => match Table::any_empty_mono(mk, mk2, g, hg, k, e) {
+        OrInl(e2) => OrInl(Bool::or_true_right(Ctl::is_empty(mk(g, k)), Table::any_empty(mk, g, k), e2))
+        OrInr(e3) => OrInr(e3)
+      }
+    }
+  }
+}
+
+pub theorem Table::not_true_false(b: Bool, h: b = true -> False): b = false {
+  match b {
+    false => Refl
+    true => False::elim(h(Refl))
+  }
+}
+
+// A group with no empty slot has none after a change that makes empties only
+// where they were, or in a group that had one.
+pub theorem Table::no_empty_stays(
+  mk: (Nat, Nat) -> Ctl,
+  mk2: (Nat, Nat) -> Ctl,
+  g: Nat,
+  hg: ∀ r: Nat. Ctl::is_empty(
+    mk2(g, r)
+  ) = true -> (Ctl::is_empty(mk(g, r)) = true ∨ Table::has_empty(mk, g) = true),
+  h: Table::has_empty(mk, g) = false
+): Table::has_empty(mk2, g) = false {
+  Table::not_true_false(Table::has_empty(mk2, g), (e: Table::has_empty(mk2, g) = true) => match Table::any_empty_mono(mk, mk2, g, hg, 8, e) {
+    OrInl(e2) => false_ne_true(Eq::trans(Eq::sym(h), e2))
+    OrInr(e3) => false_ne_true(Eq::trans(Eq::sym(h), e3))
+  })
+}
+
+// The rule. `(dg, dr)` becomes empty when its group has an empty slot, a tombstone otherwise.
+pub fn Table::after_delete(mk: (Nat, Nat) -> Ctl, dg: Nat, dr: Nat): (Nat, Nat) -> Ctl {
+  (g: Nat, r: Nat) => sel(
+    Nat::eq(g, dg) && Nat::eq(r, dr),
+    sel(Table::has_empty(mk, dg), Empty, Tomb),
+    mk(g, r)
+  )
+}
+
+// What the rule leaves empty was empty, or is in a group that had an empty slot.
+pub theorem Table::delete_empties_b(
+  mk: (Nat, Nat) -> Ctl,
+  dg: Nat,
+  dr: Nat,
+  g: Nat,
+  r: Nat,
+  b: Bool,
+  hb: b = (Nat::eq(g, dg) && Nat::eq(r, dr))
+): Ctl::is_empty(
+  sel(b, sel(Table::has_empty(mk, dg), Empty, Tomb), mk(g, r))
+) = true -> (Ctl::is_empty(mk(g, r)) = true ∨ Table::has_empty(mk, g) = true) {
+  match b {
+    true => (x: Ctl::is_empty(sel(true, sel(Table::has_empty(mk, dg), Empty, Tomb), mk(g, r))) = true) => OrInr(
+      Table::empty_group(
+        mk,
+        dg,
+        Table::has_empty(mk, dg),
+        Refl,
+        g,
+        Bool::and_true_left(Nat::eq(g, dg), Nat::eq(r, dr), Eq::sym(hb)),
+        x
+      )
+    )
+    false => (x: Ctl::is_empty(sel(false, sel(Table::has_empty(mk, dg), Empty, Tomb), mk(g, r))) = true) => OrInl(x)
+  }
+}
+
+pub theorem Table::empty_group(
+  mk: (Nat, Nat) -> Ctl,
+  dg: Nat,
+  c: Bool,
+  hc: c = Table::has_empty(mk, dg),
+  g: Nat,
+  e: Nat::eq(g, dg) = true,
+  x: Ctl::is_empty(sel(c, Empty, Tomb)) = true
+): Table::has_empty(mk, g) = true {
+  match c {
+    true => Eq::subst(⟦Table::has_empty(mk, □) = true⟧, Eq::sym(Nat::eq_sound(g, dg, e)), Eq::sym(hc))
+    false => False::elim(false_ne_true(x))
+  }
+}
+
+// The table is probe-closed: every full slot's key, reached at step `kstep` of
+// its group sequence `kseq`, passed only groups with no empty slot.
+pub fn Table::probe_ok(
+  mk: (Nat, Nat) -> Ctl,
+  kseq: (Nat, Nat) -> (Nat) -> Nat,
+  kstep: (Nat, Nat) -> Nat
+): Prop {
+  ∀ g: Nat. ∀ r: Nat. Ctl::is_full(
+    mk(g, r)
+  ) = true -> ∀ i: Nat. i < kstep(g, r) = true -> Table::has_empty(mk, kseq(g, r)(i)) = false
+}
+
+pub theorem Table::delete_empties(
+  mk: (Nat, Nat) -> Ctl,
+  dg: Nat,
+  dr: Nat,
+  g: Nat
+): ∀ r: Nat. Ctl::is_empty(
+  Table::after_delete(mk, dg, dr)(g, r)
+) = true -> (Ctl::is_empty(mk(g, r)) = true ∨ Table::has_empty(mk, g) = true) {
+  (r: Nat) => Table::delete_empties_b(mk, dg, dr, g, r, Nat::eq(g, dg) && Nat::eq(r, dr), Refl)
+}
+
+// A slot full after the rule was full before (the rule empties or tombs one slot).
+pub theorem Table::full_b(
+  mk: (Nat, Nat) -> Ctl,
+  dg: Nat,
+  g: Nat,
+  r: Nat,
+  b: Bool,
+  c: Bool
+): Ctl::is_full(sel(b, sel(c, Empty, Tomb), mk(g, r))) = true -> Ctl::is_full(mk(g, r)) = true {
+  match b {
+    true => (x: Ctl::is_full(sel(true, sel(c, Empty, Tomb), mk(g, r))) = true) => match c {
+      true => False::elim(false_ne_true(x))
+      false => False::elim(false_ne_true(x))
+    }
+    false => (x: Ctl::is_full(sel(false, sel(c, Empty, Tomb), mk(g, r))) = true) => x
+  }
+}
+
+// Deleting keeps the table probe-closed.
+pub theorem Table::probe_ok_delete(
+  mk: (Nat, Nat) -> Ctl,
+  kseq: (Nat, Nat) -> (Nat) -> Nat,
+  kstep: (Nat, Nat) -> Nat,
+  dg: Nat,
+  dr: Nat,
+  hi: Table::probe_ok(mk, kseq, kstep)
+): Table::probe_ok(Table::after_delete(mk, dg, dr), kseq, kstep) {
+  (g: Nat) => (r: Nat) => (f: Ctl::is_full(Table::after_delete(mk, dg, dr)(g, r)) = true) => (i: Nat) => (lt: i < kstep(g, r) = true) => Table::no_empty_stays(
+    mk,
+    Table::after_delete(mk, dg, dr),
+    kseq(g, r)(i),
+    Table::delete_empties(mk, dg, dr, kseq(g, r)(i)),
+    hi(g, r, Table::full_b(mk, dg, g, r, Nat::eq(g, dg) && Nat::eq(r, dr), Table::has_empty(mk, dg), f), i, lt)
+  )
+}
+
+// The first slot in group `g` (looking at the first `w` offsets, from the top) that holds a full key the test `hit` accepts.
+pub fn Table::first_hit(
+  mk: (Nat, Nat) -> Ctl,
+  hit: (Nat, Nat) -> Bool,
+  g: Nat,
+  w: Nat
+): Option(Nat × Nat) {
+  match w {
+    Zero => None
+    Succ(k) => match hit(g, k) && Ctl::is_full(mk(g, k)) {
+      true => Some(#(g, k))
+      false => Table::first_hit(mk, hit, g, k)
+    }
+  }
+}
+
+// One group of the search: a hit answers; a group with an empty slot ends it; otherwise the next group.
+pub fn Table::search_step(o: Option(Nat × Nat), he: Bool, next: Option(Nat × Nat)): Option(Nat × Nat) {
+  match o {
+    Some(s) => Some(s)
+    None => match he { true => None, false => next }
+  }
+}
+
+// The search along the group sequence `seq`, at most `fuel` more groups.
+pub fn Table::search(
+  mk: (Nat, Nat) -> Ctl,
+  hit: (Nat, Nat) -> Bool,
+  seq: (Nat) -> Nat,
+  fuel: Nat
+): Option(Nat × Nat) {
+  match fuel {
+    Zero => Table::search_step(Table::first_hit(mk, hit, seq(0), 8), Table::has_empty(mk, seq(0)), None)
+    Succ(f) => Table::search_step(
+      Table::first_hit(mk, hit, seq(0), 8),
+      Table::has_empty(mk, seq(0)),
+      Table::search(mk, hit, (i: Nat) => seq(Succ(i)), f)
+    )
+  }
+}
+
+pub theorem Table::first_hit_some_b(
+  mk: (Nat, Nat) -> Ctl,
+  hit: (Nat, Nat) -> Bool,
+  g: Nat,
+  k: Nat,
+  r: Nat,
+  hr: r < Succ(k) = true,
+  hh: hit(g, r) && Ctl::is_full(mk(g, r)) = true,
+  c: Bool,
+  hc: c = (hit(g, k) && Ctl::is_full(mk(g, k))),
+  d: Bool,
+  hd: d = Nat::eq(r, k),
+  ih: r < k = true -> ∃ s: Nat × Nat. Table::first_hit(mk, hit, g, k) = Some(s)
+): ∃ s: Nat × Nat. sel(c, Some(#(g, k)), Table::first_hit(mk, hit, g, k)) = Some(s) {
+  match c {
+    true => ExIntro(#(g, k), Refl)
+    false => match d {
+      true => False::elim(
+        false_ne_true(
+          Eq::trans(
+            hc,
+            Eq::subst(
+              y => hit(g, y) && Ctl::is_full(mk(g, y)) = true,
+              Nat::eq_sound(r, k, Eq::sym(hd)),
+              hh
+            )
+          )
+        )
+      )
+      false => ih(Nat::lt_succ_ne(r, k, hr, Eq::sym(hd)))
+    }
+  }
+}
+
+pub theorem Table::first_hit_some(
+  mk: (Nat, Nat) -> Ctl,
+  hit: (Nat, Nat) -> Bool,
+  g: Nat,
+  w: Nat,
+  r: Nat,
+  hr: r < w = true,
+  hh: hit(g, r) && Ctl::is_full(mk(g, r)) = true
+): ∃ s: Nat × Nat. Table::first_hit(mk, hit, g, w) = Some(s) {
+  match w {
+    Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(r)), hr)))
+    Succ(k) => Table::first_hit_some_b(
+      mk,
+      hit,
+      g,
+      k,
+      r,
+      hr,
+      hh,
+      hit(g, k) && Ctl::is_full(mk(g, k)),
+      Refl,
+      Nat::eq(r, k),
+      Refl,
+      (l: r < k = true) => Table::first_hit_some(mk, hit, g, k, r, l, hh)
+    )
+  }
+}
+
+pub theorem Table::search_hit_now(
+  mk: (Nat, Nat) -> Ctl,
+  hit: (Nat, Nat) -> Bool,
+  seq: (Nat) -> Nat,
+  fuel: Nat,
+  s: Nat × Nat,
+  e: Table::first_hit(mk, hit, seq(0), 8) = Some(s)
+): Table::search(mk, hit, seq, fuel) = Some(s) {
+  match fuel {
+    Zero => Eq::congr(⟦Table::search_step(□, Table::has_empty(mk, seq(0)), None)⟧, e)
+    Succ(f) => Eq::congr(
+      ⟦Table::search_step(□, Table::has_empty(mk, seq(0)), Table::search(mk, hit, (i: Nat) => seq(Succ(i)), f))⟧,
+      e
+    )
+  }
+}
+
+// The search passes a group with no empty slot and no hit.
+pub theorem Table::search_pass(
+  mk: (Nat, Nat) -> Ctl,
+  hit: (Nat, Nat) -> Bool,
+  seq: (Nat) -> Nat,
+  f: Nat,
+  e: Table::first_hit(mk, hit, seq(0), 8) = None(<A: Nat × Nat>),
+  e2: Table::has_empty(mk, seq(0)) = false
+): Table::search(mk, hit, seq, Succ(f)) = Table::search(mk, hit, (i: Nat) => seq(Succ(i)), f) {
+  Eq::trans(
+    Eq::congr(
+      ⟦Table::search_step(□, Table::has_empty(mk, seq(0)), Table::search(mk, hit, (i: Nat) => seq(Succ(i)), f))⟧,
+      e
+    ),
+    Eq::congr(
+      ⟦Table::search_step(None(<A: Nat × Nat>), □, Table::search(mk, hit, (i: Nat) => seq(Succ(i)), f))⟧,
+      e2
+    )
+  )
+}
+
+pub theorem Table::search_found_b(
+  mk: (Nat, Nat) -> Ctl,
+  hit: (Nat, Nat) -> Bool,
+  seq: (Nat) -> Nat,
+  n: Nat,
+  fuel: Nat,
+  r: Nat,
+  hr: r < 8 = true,
+  hh: hit(seq(n), r) && Ctl::is_full(mk(seq(n), r)) = true,
+  hno: ∀ i: Nat. i < n = true -> Table::has_empty(mk, seq(i)) = false,
+  hf: n <= fuel = true,
+  o: Option(Nat × Nat),
+  ho: Table::first_hit(mk, hit, seq(0), 8) = o
+): ∃ s: Nat × Nat. Table::search(mk, hit, seq, fuel) = Some(s) decreasing_by n {
+  match o {
+    Some(s) => ExIntro(s, Table::search_hit_now(mk, hit, seq, fuel, s, ho))
+    None => match n {
+      Zero => match Table::first_hit_some(mk, hit, seq(0), 8, r, hr, hh) {
+        ExIntro(s, e) => ExIntro(s, Table::search_hit_now(mk, hit, seq, fuel, s, e))
+      }
+      Succ(n2) => match fuel {
+        Zero => False::elim(false_ne_true(hf))
+        Succ(f) => match Table::search_found_b(
+          mk,
+          hit,
+          (i: Nat) => seq(Succ(i)),
+          n2,
+          f,
+          r,
+          hr,
+          hh,
+          (i: Nat) => (l: i < n2 = true) => hno(Succ(i), l),
+          hf,
+          Table::first_hit(mk, hit, seq(1), 8),
+          Refl
+        ) {
+          ExIntro(s, e) => ExIntro(
+            s,
+            Eq::trans(Table::search_pass(mk, hit, seq, f, ho, hno(0, Refl)), e)
+          )
+        }
+      }
+    }
+  }
+}
+
+// The search finds some key when the one at step `n` of its sequence passes only groups without empty slots.
+pub theorem Table::search_found(
+  mk: (Nat, Nat) -> Ctl,
+  hit: (Nat, Nat) -> Bool,
+  seq: (Nat) -> Nat,
+  n: Nat,
+  fuel: Nat,
+  r: Nat,
+  hr: r < 8 = true,
+  hh: hit(seq(n), r) && Ctl::is_full(mk(seq(n), r)) = true,
+  hno: ∀ i: Nat. i < n = true -> Table::has_empty(mk, seq(i)) = false,
+  hf: n <= fuel = true
+): ∃ s: Nat × Nat. Table::search(mk, hit, seq, fuel) = Some(s) {
+  Table::search_found_b(mk, hit, seq, n, fuel, r, hr, hh, hno, hf, Table::first_hit(mk, hit, seq(0), 8), Refl)
+}
+
+pub theorem Table::after_other(
+  mk: (Nat, Nat) -> Ctl,
+  dg: Nat,
+  dr: Nat,
+  g: Nat,
+  r: Nat,
+  hne: Nat::eq(g, dg) && Nat::eq(r, dr) = false
+): Table::after_delete(mk, dg, dr)(g, r) = mk(g, r) {
+  Eq::congr((b: Bool) => sel(b, sel(Table::has_empty(mk, dg), Empty, Tomb), mk(g, r)), hne)
+}
+
+// The deleted slot is not full any more.
+pub theorem Table::deleted_not_full(
+  mk: (Nat, Nat) -> Ctl,
+  dg: Nat,
+  dr: Nat
+): Ctl::is_full(Table::after_delete(mk, dg, dr)(dg, dr)) = false {
+  Eq::trans(
+    Eq::congr(
+      (b: Bool) => Ctl::is_full(sel(b, sel(Table::has_empty(mk, dg), Empty, Tomb), mk(dg, dr))),
+      Bool::and_intro(Nat::eq(dg, dg), Nat::eq(dr, dr), Nat::eq_refl(dg), Nat::eq_refl(dr))
+    ),
+    Table::empty_or_tomb_not_full(Table::has_empty(mk, dg))
+  )
+}
+
+pub theorem Table::empty_or_tomb_not_full(c: Bool): Ctl::is_full(sel(c, Empty, Tomb)) = false {
+  match c { true => Refl, false => Refl }
+}
+
+// After the rule, every key still in the table is found by its search:
+// the search does not stop early at a new empty slot.
+pub theorem Table::delete_keeps_found(
+  mk: (Nat, Nat) -> Ctl,
+  kseq: (Nat, Nat) -> (Nat) -> Nat,
+  kstep: (Nat, Nat) -> Nat,
+  hit: (Nat, Nat) -> Bool,
+  dg: Nat,
+  dr: Nat,
+  hi: Table::probe_ok(mk, kseq, kstep),
+  g: Nat,
+  r: Nat,
+  hne: Nat::eq(g, dg) && Nat::eq(r, dr) = false,
+  hfull: Ctl::is_full(mk(g, r)) = true,
+  hhit: hit(g, r) = true,
+  hr: r < 8 = true,
+  hs: kseq(g, r)(kstep(g, r)) = g,
+  fuel: Nat,
+  hf: kstep(g, r) <= fuel = true
+): ∃ s: Nat × Nat. Table::search(Table::after_delete(mk, dg, dr), hit, kseq(g, r), fuel) = Some(s) {
+  Table::search_found(
+    Table::after_delete(mk, dg, dr),
+    hit,
+    kseq(g, r),
+    kstep(g, r),
+    fuel,
+    r,
+    hr,
+    Eq::subst(
+      y => hit(y, r) && Ctl::is_full(Table::after_delete(mk, dg, dr)(y, r)) = true,
+      Eq::sym(hs),
+      Bool::and_intro(
+        hit(g, r),
+        Ctl::is_full(Table::after_delete(mk, dg, dr)(g, r)),
+        hhit,
+        Eq::trans(Eq::congr(Ctl::is_full, Table::after_other(mk, dg, dr, g, r, hne)), hfull)
+      )
+    ),
+    (i: Nat) => (l: i < kstep(g, r) = true) => Table::probe_ok_delete(
+      mk,
+      kseq,
+      kstep,
+      dg,
+      dr,
+      hi
+    )(g, r, Eq::trans(Eq::congr(Ctl::is_full, Table::after_other(mk, dg, dr, g, r, hne)), hfull), i, l),
+    hf
+  )
+}
+
+// ---- the table over `Slots`: control bytes, one per slot ----
+
+pub fn tb_used(s: Table, i: UHost, m: Byte): Bool { Table::used(s, i, m) }
+pub fn tb_empty(c: UHost): Table { Table::Mk(c) }
+pub fn tb_cap(s: Table): UHost { Table::cap(s) }
+pub fn tb_put(s: Table, i: UHost, old: Byte, new: Byte): Option(Table) { Table::keep(s, Table::put_test(s, i, old, new)) }
+pub fn tb_take(s: Table, i: UHost, old: Byte, new: Byte): Option(Table) { Table::keep(s, Table::take_test(s, i, old, new)) }
+pub fn tb_recap(s: Table, c: UHost): Option(Table) { Table::recap(s, c) }
+pub fn tb_full(s: Table, lo: UHost, hi: UHost): Bool { false }
+
+pub theorem tb_laws(): OccLaws(
+  Table,
+  Byte,
+  tb_used,
+  tb_empty,
+  Byte { val: 255 },
+  tb_cap,
+  tb_put,
+  tb_take,
+  tb_recap,
+  tb_full
+) {
+  occ_laws(<S: Table, M: Byte>, Proxy::Mk, Proxy::Mk)
+}
+
+// The slot `x` names, when it is a number strictly below the table's capacity.
+pub fn HT::idx(cap: UHost, x: UInt(64)): Option(UHost) {
+  match UInt::lt64(x, UHost::to_u64(cap)) eqn q {
+    true => Some(
+      UHost::of_u64_below_proved(
+        x,
+        cap,
+        Nat::le_trans(
+          UInt::val64(x),
+          Succ(UInt::val64(x)),
+          UHost::val(cap),
+          Nat::le_succ(UInt::val64(x)),
+          Eq::trans(Eq::sym(Nat::lt_le_succ(UInt::val64(x), UHost::val(cap))), q)
+        )
+      )
+    )
+    false => None
+  }
+}
+
+// The first of `left` slots from `base` that holds an element with the tag
+// and that `is` accepts (the whole group is looked at: a slot emptied by a
+// removal does not end it).
+pub fn HT::scan<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  tag: Byte,
+  is: &((x: &A) -> Bool),
+  base: UInt(64),
+  left: Nat
+): Option(&A) borrows(t) {
+  match left {
+    Zero => None
+    Succ(rest) => match HT::idx(Table::cap(SlotsModel::state(t)), base) {
+      None => None
+      Some(i) => match tb_used(SlotsModel::state(t), i, SlotsModel::mark_at(t, i)) eqn q {
+        true => match Nat::eq(Byte::val(SlotsModel::mark_at(t, i)), Byte::val(tag)) && is(SlotsModel::get(t, i, q)) {
+          true => Some(SlotsModel::get(t, i, q))
+          false => HT::scan(t, tag, is, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+        }
+        false => HT::scan(t, tag, is, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+      }
+    }
+  }
+}
+
+pub theorem tb_put_ok(s: Table, i: UHost, old: Byte, new: Byte, q: Table::put_test(s, i, old, new) = true): tb_put(s, i, old, new) = Some(s) {
+  Eq::congr(⟦Table::keep(s, □)⟧, q)
+}
+
+// Fills the empty slot `i` with `x` under the byte `m`; the element comes back when the slot is not an empty one in range.
+pub fn HT::put_raw<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  i: UHost,
+  m: Byte,
+  x: A
+): Option(A) {
+  // Range before the mark: `mark_at` is total in the model, but a finite
+  // buffer only holds marks below the capacity.
+  match UHost::lt(i, Table::cap(SlotsModel::state(t))) {
+    false => Some(x)
+    true => match Table::put_test(SlotsModel::state(t), i, SlotsModel::mark_at(t, i), m) eqn q {
+      true => {
+        SlotsModel::put_m(&mut t, i, m, x, SlotsModel::state(t), tb_laws(), tb_put_ok(SlotsModel::state(t), i, SlotsModel::mark_at(t, i), m, q))
+        None
+      }
+      false => Some(x)
+    }
+  }
+}
+
+
+// Whether one of `left` slots from `base` is an empty one.
+pub fn HT::has_empty<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  base: UInt(64),
+  left: Nat
+): Bool {
+  match left {
+    Zero => false
+    Succ(rest) => match HT::idx(Table::cap(SlotsModel::state(t)), base) {
+      None => false
+      Some(i) => match Nat::eq(Byte::val(SlotsModel::mark_at(t, i)), 255) {
+        true => true
+        false => HT::has_empty(t, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+      }
+    }
+  }
+}
+
+// How many groups of eight the capacity covers, rounding up so a trailing
+// partial group (capacity not a multiple of eight) is still probed.
+pub fn HT::group_count(cap: UHost): Option(UInt(64)) {
+  match UInt::checked_div64(
+    UInt::wrapping_add64(UHost::to_u64(cap), UInt::of_nat_mod64(7)),
+    UInt::of_nat_mod64(8)
+  ) {
+    None => None
+    Some(g) => match UInt::eq64(g, UInt::of_nat_mod64(0)) {
+      true => None
+      false => Some(g)
+    }
+  }
+}
+
+// The first slot of the probe for `hash`: group index times eight. Insert,
+// find, remove, and rehash all start here.
+pub fn HT::start_base(cap: UHost, hash: UInt(64)): Option(UInt(64)) {
+  match HT::group_count(cap) {
+    None => None
+    Some(groups) => match UInt::checked_rem64(UInt::shr64(hash, 7), groups) {
+      None => None
+      Some(g) => Some(UInt::wrapping_mul64(g, UInt::of_nat_mod64(8)))
+    }
+  }
+}
+
+// The next group's first slot after `base`, wrapping by the number of groups.
+// One group at a time: triangular steps on the group index miss groups when
+// the count is not a power of two (capacity 24 has three groups). Capacities
+// that are not a multiple of eight include a last partial group.
+pub fn HT::next_group(cap: UHost, base: UInt(64)): Option(UInt(64)) {
+  match HT::group_count(cap) {
+    None => None
+    Some(gcount) => match UInt::checked_div64(base, UInt::of_nat_mod64(8)) {
+      None => None
+      Some(g) => match UInt::checked_rem64(UInt::wrapping_add64(g, UInt::of_nat_mod64(1)), gcount) {
+        None => None
+        Some(ng) => Some(UInt::wrapping_mul64(ng, UInt::of_nat_mod64(8)))
+      }
+    }
+  }
+}
+
+// The groups of eight from `base`, then the next group, and so on round the
+// table, at most `groups` of them; a group with an empty slot ends the search.
+pub fn HT::probe<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  tag: Byte,
+  is: &((x: &A) -> Bool),
+  base: UInt(64),
+  groups: Nat
+): Option(&A) borrows(t) {
+  match HT::scan(t, tag, is, base, 8) {
+    Some(r) => Some(r)
+    None => match HT::has_empty(t, base, 8) {
+      true => None
+      false => match groups {
+        Zero => None
+        Succ(rest) => match HT::next_group(Table::cap(SlotsModel::state(t)), base) {
+          None => None
+          Some(next) => HT::probe(t, tag, is, next, rest)
+        }
+      }
+    }
+  }
+}
+
+// The tag of a hash: its low seven bits (a filled slot's control byte).
+pub fn HT::tag_of(hash: UInt(64)): Byte {
+  match UInt::checked_rem64(hash, UInt::of_nat_mod64(128)) {
+    Some(r) => Byte { val: UInt::val64(r) }
+    None => Byte { val: 0 }
+  }
+}
+
+// The first element stored under `hash` that `is` accepts.
+pub fn HT::find_in<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  hash: UInt(64),
+  is: &((x: &A) -> Bool)
+): Option(&A) borrows(t) {
+  match HT::group_count(Table::cap(SlotsModel::state(t))) {
+    None => None
+    Some(groups) => match HT::start_base(Table::cap(SlotsModel::state(t)), hash) {
+      None => None
+      Some(base) => HT::probe(t, HT::tag_of(hash), is, base, UInt::val64(groups))
+    }
+  }
+}
+
+// The first slot of `left` from `base` that is not filled (an empty one or a tombstone).
+pub fn HT::free_in<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  base: UInt(64),
+  left: Nat
+): Option(UHost) {
+  match left {
+    Zero => None
+    Succ(rest) => match HT::idx(Table::cap(SlotsModel::state(t)), base) {
+      None => None
+      Some(i) => match Table::dead(SlotsModel::mark_at(t, i)) {
+        true => Some(i)
+        false => HT::free_in(t, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+      }
+    }
+  }
+}
+
+// A free slot along the probe sequence of the hash.
+pub fn HT::free_slot<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  base: UInt(64),
+  groups: Nat
+): Option(UHost) {
+  match HT::free_in(t, base, 8) {
+    Some(i) => Some(i)
+    None => match groups {
+      Zero => None
+      Succ(rest) => match HT::next_group(Table::cap(SlotsModel::state(t)), base) {
+        None => None
+        Some(next) => HT::free_slot(t, next, rest)
+      }
+    }
+  }
+}
+
+// Stores `x` under `hash` in a free slot of its probe sequence. The element comes
+// back when there is none (the table is full: the caller makes a larger one).
+// A new element goes to one of the first groups of its probe sequence; a table with no room there
+// grows (`HT::insert_grow`), so that no search walks far.
+pub fn HT::insert_in<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  hash: UInt(64),
+  x: A
+): Option(A) {
+  match HT::free_within(t, hash, 4) {
+    None => Some(x)
+    Some(i) => HT::put_raw(&mut t, i, HT::tag_of(hash), x)
+  }
+}
+
+
+pub theorem tb_take_ok(s: Table, i: UHost, old: Byte, new: Byte, q: Table::take_test(s, i, old, new) = true): tb_take(s, i, old, new) = Some(s) {
+  Eq::congr(⟦Table::keep(s, □)⟧, q)
+}
+
+// The slot of the first element under the group `base` that has the tag and that `is` accepts, scanning `left` slots.
+pub fn HT::scan_idx<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  tag: Byte,
+  is: &((x: &A) -> Bool),
+  base: UInt(64),
+  left: Nat
+): Option(UHost) {
+  match left {
+    Zero => None
+    Succ(rest) => match HT::idx(Table::cap(SlotsModel::state(t)), base) {
+      None => None
+      Some(i) => match tb_used(SlotsModel::state(t), i, SlotsModel::mark_at(t, i)) eqn q {
+        true => match Nat::eq(Byte::val(SlotsModel::mark_at(t, i)), Byte::val(tag)) && is(SlotsModel::get(t, i, q)) {
+          true => Some(i)
+          false => HT::scan_idx(t, tag, is, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+        }
+        false => HT::scan_idx(t, tag, is, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+      }
+    }
+  }
+}
+
+pub fn HT::probe_idx<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  tag: Byte,
+  is: &((x: &A) -> Bool),
+  base: UInt(64),
+  groups: Nat
+): Option(UHost) {
+  match HT::scan_idx(t, tag, is, base, 8) {
+    Some(i) => Some(i)
+    None => match HT::has_empty(t, base, 8) {
+      true => None
+      false => match groups {
+        Zero => None
+        Succ(rest) => match HT::next_group(Table::cap(SlotsModel::state(t)), base) {
+          None => None
+          Some(next) => HT::probe_idx(t, tag, is, next, rest)
+        }
+      }
+    }
+  }
+}
+
+// The slot of the first element stored under `hash` that `is` accepts.
+pub fn HT::find_idx<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  hash: UInt(64),
+  is: &((x: &A) -> Bool)
+): Option(UHost) {
+  match HT::group_count(Table::cap(SlotsModel::state(t))) {
+    None => None
+    Some(groups) => match HT::start_base(Table::cap(SlotsModel::state(t)), hash) {
+      None => None
+      Some(base) => HT::probe_idx(t, HT::tag_of(hash), is, base, UInt::val64(groups))
+    }
+  }
+}
+
+pub fn HT::after_take(group_has_empty: Bool): Byte {
+  match group_has_empty {
+    true => Byte { val: 255 }
+    false => Byte { val: 254 }
+  }
+}
+
+// Empties the filled slot `i`: its byte becomes an empty one when the group
+// has an empty slot (a probe through it already ends there), a tombstone otherwise.
+pub fn HT::take_at<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  i: UHost
+): Option(A) {
+  match UInt::checked_rem64(UHost::to_u64(i), UInt::of_nat_mod64(8)) {
+    None => None
+    Some(r) => {
+      let base := UInt::wrapping_sub64(UHost::to_u64(i), r)
+      let m := HT::after_take(HT::has_empty(t, base, 8))
+      match Table::take_test(SlotsModel::state(t), i, SlotsModel::mark_at(t, i), m) eqn q {
+        true => Some(
+          SlotsModel::take_m(&mut t, i, m, SlotsModel::state(t), tb_laws(), tb_take_ok(SlotsModel::state(t), i, SlotsModel::mark_at(t, i), m, q))
+        )
+        false => None
+      }
+    }
+  }
+}
+
+// Removes the first element stored under `hash` that `is` accepts, and gives it back.
+pub fn HT::remove_in<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  hash: UInt(64),
+  is: &((x: &A) -> Bool)
+): Option(A) {
+  match HT::find_idx(t, hash, is) {
+    None => None
+    Some(i) => HT::take_at(&mut t, i)
+  }
+}
+
+
+pub theorem Table::recap_of_ok(
+  s: Table,
+  c: UHost,
+  o: Bool,
+  h: o = UHost::le(Table::cap(s), c),
+  e: o = true
+): Table::recap_of(s, c, o, h) = Some(Table::Mk(c)) {
+  match o {
+    true => Refl
+    false => False::elim(false_ne_true(e))
+  }
+}
+
+pub theorem tb_recap_ok(s: Table, c: UHost, q: UHost::le(Table::cap(s), c) = true): tb_recap(s, c) = Some(Table::Mk(c)) {
+  Table::recap_of_ok(s, c, UHost::le(Table::cap(s), c), Refl, q)
+}
+
+// A free slot for the hash, along its probe sequence.
+// The first empty slot of the probe sequence of `hash` within `fuel` groups.
+pub fn HT::free_within<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  hash: UInt(64),
+  fuel: Nat
+): Option(UHost) {
+  match HT::start_base(Table::cap(SlotsModel::state(t)), hash) {
+    None => None
+    Some(base) => HT::free_slot(t, base, fuel)
+  }
+}
+
+// The first empty slot of the probe sequence of `hash`, all of it looked at.
+pub fn HT::free_for<A: Linear>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  hash: UInt(64)
+): Option(UHost) {
+  match HT::group_count(Table::cap(SlotsModel::state(t))) {
+    None => None
+    Some(groups) => HT::free_within(t, hash, UInt::val64(groups))
+  }
+}
+
+// Moves the element of slot `i` to the free slot `j` (marked `m2`), when both
+// tests hold; otherwise nothing changes and the element stays in `i`.
+pub fn HT::move_slot<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  i: UHost,
+  j: UHost,
+  m2: Byte
+): Bool {
+  match Table::take_test(SlotsModel::state(t), i, SlotsModel::mark_at(t, i), Byte { val: 254 }) eqn q1 {
+    true => match Table::put_test(
+      SlotsModel::state(t),
+      j,
+      sel(UHost::eq(i, j), Byte { val: 254 }, SlotsModel::mark_at(t, j)),
+      m2
+    ) eqn q2 {
+      true => {
+        SlotsModel::move_m(
+          &mut t,
+          i,
+          Byte { val: 254 },
+          SlotsModel::state(t),
+          j,
+          m2,
+          SlotsModel::state(t),
+          tb_laws(),
+          tb_take_ok(SlotsModel::state(t), i, SlotsModel::mark_at(t, i), Byte { val: 254 }, q1),
+          tb_put_ok(
+            SlotsModel::state(t),
+            j,
+            sel(UHost::eq(i, j), Byte { val: 254 }, SlotsModel::mark_at(t, j)),
+            m2,
+            q2
+          )
+        )
+        true
+      }
+      false => false
+    }
+    false => false
+  }
+}
+
+// Stores the element of slot `i` again under its hash, when it is filled.
+pub fn HT::rehash_slot<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  rehash: &((x: &A) -> UInt(64)),
+  i: UHost
+): Bool {
+  match tb_used(SlotsModel::state(t), i, SlotsModel::mark_at(t, i)) eqn q {
+    true => HT::rehash_to(&mut t, i, rehash(SlotsModel::get(t, i, q)))
+    false => true
+  }
+}
+
+pub fn HT::rehash_to<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  i: UHost,
+  hash: UInt(64)
+): Bool {
+  match HT::free_for(t, hash) {
+    None => false
+    Some(j) => HT::move_slot(&mut t, i, j, HT::tag_of(hash))
+  }
+}
+
+// Every slot from `base`, `left` of them, stored again; the answer is whether all went.
+pub fn HT::rehash_from<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  rehash: &((x: &A) -> UInt(64)),
+  base: UInt(64),
+  left: Nat
+): Bool {
+  match left {
+    Zero => true
+    Succ(rest) => match HT::idx(Table::cap(SlotsModel::state(t)), base) {
+      None => true
+      Some(i) => match HT::rehash_slot(&mut t, rehash, i) {
+        true => HT::rehash_from(&mut t, rehash, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+        false => false
+      }
+    }
+  }
+}
+
+// The capacity doubled (8 for an empty table), in place, and every element
+// stored again under its hash.
+pub fn HT::grow<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  rehash: &((x: &A) -> UInt(64))
+): Bool {
+  match HT::host_of(HT::doubled(UHost::to_u64(Table::cap(SlotsModel::state(t))))) {
+    None => false
+    Some(c) => match UHost::le(Table::cap(SlotsModel::state(t)), c) eqn q {
+      true => {
+        SlotsModel::resize_m(
+          &mut t,
+          c,
+          Table::Mk(c),
+          tb_laws(),
+          tb_recap_ok(SlotsModel::state(t), c, q)
+        )
+        HT::rehash_from(&mut t, rehash, UInt::of_nat_mod64(0), UHost::val(c))
+      }
+      false => false
+    }
+  }
+}
+
+// A capacity of a `uhost` that a 32-bit count reaches.
+pub fn HT::host_of(x: UInt(64)): Option(UHost) {
+  match UInt::le64(x, UInt::of_nat_mod64(4294967295)) eqn q {
+    true => Some(UHost::of_u64_below_proved(x, UHost::lit(4294967295, Refl), q))
+    false => None
+  }
+}
+
+pub fn HT::doubled(cap: UInt(64)): UInt(64) {
+  match UInt::eq64(cap, UInt::of_nat_mod64(0)) {
+    true => UInt::of_nat_mod64(8)
+    false => UInt::wrapping_mul64(cap, UInt::of_nat_mod64(2))
+  }
+}
+
+// `insert_in`, growing the table when it is full; the element comes back when it still does not fit.
+pub fn HT::insert_grow<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  hash: UInt(64),
+  rehash: &((x: &A) -> UInt(64)),
+  x: A
+): Option(A) {
+  match HT::insert_in(&mut t, hash, x) {
+    None => None
+    Some(y) => match HT::grow(&mut t, rehash) {
+      true => HT::insert_in(&mut t, hash, y)
+      false => Some(y)
+    }
+  }
+}
+
+
+// The element of a used slot, for writing in place.
+pub fn HT::get_mut_at<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  i: UHost
+): Option(&mut A) borrows(t) {
+  match tb_used(SlotsModel::state(t), i, SlotsModel::mark_at(t, i)) eqn q {
+    true => Some(SlotsModel::get_mut(t, i, q))
+    false => None
+  }
+}
+
+// The element whose key `is` accepts under `hash`, for writing in place.
+pub fn HT::get_mut_in<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  hash: UInt(64),
+  is: &((x: &A) -> Bool)
+): Option(&mut A) borrows(t) {
+  match HT::find_idx(t, hash, is) {
+    None => None
+    Some(i) => HT::get_mut_at(t, i)
+  }
+}
+
+// Folds `f` over the elements of slots `base`, `base + 1`, … (at most `left` of them), in slot order.
+pub fn HT::fold_from<A: Linear, B: Shared>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  init: B,
+  f: &((acc: B, x: &A) -> B),
+  base: UInt(64),
+  left: Nat
+): B {
+  match left {
+    Zero => init
+    Succ(rest) => match HT::idx(Table::cap(SlotsModel::state(t)), base) {
+      None => init
+      Some(i) => match tb_used(SlotsModel::state(t), i, SlotsModel::mark_at(t, i)) eqn q {
+        true => HT::fold_from(t, f(init, SlotsModel::get(t, i, q)), f, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+        false => HT::fold_from(t, init, f, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+      }
+    }
+  }
+}
+
+// Folds `f` over every element once.
+pub fn HT::fold<A: Linear, B: Shared>(
+  t: &SlotsModel(Table, Byte, A, tb_used),
+  init: B,
+  f: &((acc: B, x: &A) -> B)
+): B {
+  HT::fold_from(t, init, f, UInt::of_nat_mod64(0), UInt::val64(UHost::to_u64(Table::cap(SlotsModel::state(t)))))
+}
+
+pub fn HT::count_step<A: Linear>(acc: Nat, x: &A): Nat { Succ(acc) }
+
+// The number of elements.
+pub fn HT::count<A: Linear>(t: &SlotsModel(Table, Byte, A, tb_used)): Nat {
+  HT::fold(t, Zero, HT::count_step)
+}
+
+// Calls `f` on each filled slot from `base`, at most `left` of them, for writing in place.
+pub fn HT::each_mut_from<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  f: &((x: &mut A) -> Unit),
+  base: UInt(64),
+  left: Nat
+): Unit {
+  match left {
+    Zero => #()
+    Succ(rest) => match HT::idx(Table::cap(SlotsModel::state(t)), base) {
+      None => #()
+      Some(i) => {
+        match HT::get_mut_at(t, i) {
+          None => #()
+          Some(x) => f(x)
+        }
+        HT::each_mut_from(&mut t, f, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+      }
+    }
+  }
+}
+
+// Calls `f` on every element once, for writing in place.
+pub fn HT::each_mut<A: Linear>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  f: &((x: &mut A) -> Unit)
+): Unit {
+  HT::each_mut_from(&mut t, f, UInt::of_nat_mod64(0), UInt::val64(UHost::to_u64(Table::cap(SlotsModel::state(t)))))
+}
+
+// The table's capacity (kept off `Vec`-using drains: those run as written and
+// cannot call `SlotsModel::state` with omitted term generics).
+pub fn HT::cap<A: Linear>(t: &SlotsModel(Table, Byte, A, tb_used)): UHost {
+  Table::cap(SlotsModel::state(t))
+}
+
+// Takes every filled slot from `base`, at most `left` of them, into `out` (slot order).
+// `A` is Shared so `var` may hold `Vec(A)` and lend `&mut` for `Vec::push` / `HT::take_at`
+// (a cell cannot hold a linear `Vec`).
+pub fn HT::drain_into<A: Shared>(
+  t: &mut SlotsModel(Table, Byte, A, tb_used),
+  out: &mut Vec(A),
+  cap: UHost,
+  base: UInt(64),
+  left: Nat
+): Unit {
+  match left {
+    Zero => #()
+    Succ(rest) => {
+      match HT::idx(cap, base) {
+        None => #()
+        Some(i) => match HT::take_at(&mut t, i) {
+          None => #()
+          Some(x) => Vec::push(&mut out, x)
+        }
+      }
+      HT::drain_into(&mut t, &mut out, cap, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+    }
+  }
+}
+
+// Every element, in slot order. Empties the table.
+pub fn HT::into_vec<A: Shared>(t: SlotsModel(Table, Byte, A, tb_used)): Vec(A) {
+  var table := t
+  var out: Vec(A) := Vec::new()
+  let c := HT::cap(&table)
+  HT::drain_into(&mut table, &mut out, c, UInt::of_nat_mod64(0), UInt::val64(UHost::to_u64(c)))
+  out
+}

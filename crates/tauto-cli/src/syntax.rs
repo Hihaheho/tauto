@@ -101,6 +101,21 @@ fn declared(dir: &Path) -> Result<Vec<Declared>, String> {
     Ok(out)
 }
 
+/// Whether the tables at `path` were made by the current generator. Unreadable tables are not.
+fn is_current(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .is_some_and(|t| tauto::syntax::tables_text_is_current(&t))
+}
+
+/// The directory whose `.tauto-syntax` holds the tables of `d`.
+fn tables_dir(root: &Path, d: &Declared) -> PathBuf {
+    match d.file.parent() {
+        Some(p) if p.starts_with(root) => p.to_path_buf(),
+        _ => root.to_path_buf(),
+    }
+}
+
 fn gen_tables(dir: &Path, check: bool, force: bool) -> ExitCode {
     let found = match declared(dir) {
         Ok(f) => f,
@@ -109,13 +124,29 @@ fn gen_tables(dir: &Path, check: bool, force: bool) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let tables = dir.join(".tauto-syntax");
-    let wanted: BTreeMap<String, &Declared> =
-        found.iter().map(|d| (grammar_sha(&d.grammar), d)).collect();
+    // The tables of a declaration are in the `.tauto-syntax` of the directory
+    // of the file that declares it: that is where the reader looks first, and
+    // a tote's subdirectory keeps its own.
+    // A grammar with several start symbols (`%start A, B`) has tables for each.
+    let wanted: BTreeMap<(PathBuf, String), (&Declared, Option<String>)> = found
+        .iter()
+        .flat_map(|d| {
+            let sha = grammar_sha(&d.grammar);
+            let others = tauto::syntax::start_symbols(&d.grammar).into_iter().skip(1);
+            std::iter::once(None)
+                .chain(others.map(Some))
+                .map(move |start| {
+                    let key = tauto::syntax::tables_key(&sha, start.as_deref());
+                    ((tables_dir(dir, d), key), (d, start))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
     let mut stale = false;
-    for (sha, d) in &wanted {
-        let path = table_path(dir, sha);
-        if path.is_file() && !force {
+    for ((table_dir, key), (d, start)) in &wanted {
+        let tables = table_dir.join(".tauto-syntax");
+        let path = table_path(table_dir, key);
+        if path.is_file() && !force && is_current(&path) {
             continue;
         }
         if check {
@@ -130,7 +161,7 @@ fn gen_tables(dir: &Path, check: bool, force: bool) -> ExitCode {
             stale = true;
             continue;
         }
-        match generate(&d.grammar) {
+        match generate(&d.grammar, start.as_deref()) {
             Ok(text) => {
                 if let Err(e) =
                     std::fs::create_dir_all(&tables).and_then(|()| std::fs::write(&path, text))
@@ -150,11 +181,20 @@ fn gen_tables(dir: &Path, check: bool, force: bool) -> ExitCode {
         }
     }
     // Tables no declaration asks for any more.
-    if let Ok(entries) = std::fs::read_dir(&tables) {
+    let mut table_dirs: Vec<PathBuf> = wanted.keys().map(|(d, _)| d.clone()).collect();
+    table_dirs.push(dir.to_path_buf());
+    table_dirs.sort();
+    table_dirs.dedup();
+    for table_dir in table_dirs {
+        let Ok(entries) = std::fs::read_dir(table_dir.join(".tauto-syntax")) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let sha = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if path.extension().is_some_and(|e| e == "tables") && !wanted.contains_key(sha) {
+            if path.extension().is_some_and(|e| e == "tables")
+                && !wanted.contains_key(&(table_dir.clone(), sha.to_string()))
+            {
                 if check {
                     eprintln!(
                         "{}",
@@ -183,7 +223,8 @@ fn gen_tables(dir: &Path, check: bool, force: bool) -> ExitCode {
 /// output. The grammar goes through a file of its own, not standard input:
 /// the generator hashes the exact bytes it reads, and the read permission it
 /// is given covers that one file and nothing else.
-fn generate(grammar: &str) -> Result<String, String> {
+/// `start` is a start symbol other than the first, the tables are made for (`--start`).
+fn generate(grammar: &str, start: Option<&str>) -> Result<String, String> {
     let program = std::env::current_exe()
         .map_err(|e| crate::i18n::t!("syntax-cannot-run-generator", error = e.to_string()))?;
     let input = GrammarFile::new(grammar)?;
@@ -200,6 +241,9 @@ fn generate(grammar: &str) -> Result<String, String> {
         "--gen",
         file,
     ]);
+    if let Some(start) = start {
+        command.args(["--start", start]);
+    }
     if std::env::var_os("TAUTO_STEP_LIMIT").is_none() {
         command.env("TAUTO_STEP_LIMIT", GENERATOR_STEPS);
     }

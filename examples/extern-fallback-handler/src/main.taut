@@ -1,0 +1,23 @@
+pub(open) effect ask(): i64 resume 1
+
+extern {
+  fn answer(): i64
+}
+
+extern {
+  pub fn unrelated(): i64 {
+    0
+  }
+}
+
+perform main(() => {
+  let n := handle {
+    perform ask() + 1
+  } with {
+    ask(), k => {
+      let result := k(answer())
+      result + 1
+    }
+  }
+  show(&(n + unrelated()))
+})

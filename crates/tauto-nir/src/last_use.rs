@@ -1,4 +1,4 @@
-//! The last use of a name moves it (`docs/design/rust-backend.md`「使用」): a read
+//! The last use of a name moves it (`docs/design/rust-backend.md`「Uses」): a read
 //! that clones a local nothing reads afterwards is a move. Without this, a
 //! shared value is cloned at every use, and a list walked by a loop or by
 //! recursion is copied at each step.
@@ -167,7 +167,11 @@ fn live_in(e: &mut Expr, live: &mut Live, mutate: bool) {
                 if let Some(g) = &mut arm.guard {
                     let mut gl = union.clone();
                     gl.extend(after.iter().copied());
-                    live_in(g, &mut gl, mutate);
+                    // A guard that fails leaves the value to a later arm, and
+                    // one that holds leaves what the arm binds to its body:
+                    // no read in it is a last use (a move of a binding there
+                    // would take what the body or the scrutinee still owns).
+                    live_in(g, &mut gl, false);
                     l.extend(gl);
                 }
                 // A name the pattern binds is new in each run of the arm.
@@ -178,17 +182,24 @@ fn live_in(e: &mut Expr, live: &mut Live, mutate: bool) {
                 }
             }
             // `match xs` of a name nobody reads again where an arm takes the
-            // value apart: Rust moves the parts out, and an arm that takes
-            // nothing leaves `xs` as it is.
+            // value apart: Rust moves the parts out. When no arm takes a
+            // part, the match leaves `xs` as it is.
             if mutate
                 && let ExprKind::Read { local, how } = &mut m.scrut.kind
                 && *how == Use::Clone
                 && local.repr == Repr::Plain
-                && m.arms.iter().zip(&arm_lives).all(|(arm, l)| {
+                // A machine that runs the match takes the scrutinee out of
+                // its local: one read again after the match is not moved.
+                && !after.contains(&local.id)
+                // One arm that takes a part out of it moves the scrutinee
+                // into the match, so an arm that takes nothing cannot read
+                // it either: the backend holds the value in a temporary
+                // (`match unrc(x) { Cons(Some(w), more) => …, _ => … x … }`).
+                && (!m.arms.iter().any(|arm| {
                     let mut bound = Vec::new();
                     binds(&arm.pat, &mut bound);
-                    !bound.iter().any(|(_, ty)| !is_copy(ty)) || !l.contains(&local.id)
-                })
+                    bound.iter().any(|(_, ty)| !is_copy(ty))
+                }) || arm_lives.iter().all(|l| !l.contains(&local.id)))
             {
                 *how = Use::Move;
             }
@@ -218,6 +229,7 @@ fn binds(p: &Pat, out: &mut Vec<(u32, Ty)>) {
                 binds(f, out);
             }
         }
+        Pat::Variant { pat, .. } => binds(pat, out),
         _ => {}
     }
 }

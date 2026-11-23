@@ -1,5 +1,5 @@
-import std::prelude::Affine
-import std::prelude::Os {
+import std::prelude::collections
+import std::builtin::os {
   argv,
   eprint,
   fs_read,
@@ -14,7 +14,7 @@ import std::prelude::Os {
 // Renders a release changelog (`docs/changelogs/<date>.eure`) as one
 // standalone HTML page.
 //
-//   tauto run --allow-read --allow-write --allow-div scripts/changelog-to-html.taut -- IN.eure OUT.html
+//   tauto changelog-to-html IN.eure OUT.html
 //
 // It reads only the subset of Eure the changelog schema uses: `base`, the
 // top-level `summary`, and the entries `@ kind[]` with `area`, `breaking`,
@@ -45,11 +45,11 @@ fn same(a: Text, b: Text): Bool {
   Text::compare(a, b) == 0
 }
 
-fn has_prefix(t: Text, prefix: Text, at: u64): Bool {
+fn has_prefix(t: Text, prefix: Text, at: u64): Bool ! {overflow} {
   at + Text::len(prefix) <= Text::len(t) && same(sub(t, at, at + Text::len(prefix)), prefix)
 }
 
-fn put(&mut b: Buf, s: Text): Unit {
+fn put(b: &mut Buf, s: Text): Unit {
   Buf::push(&mut b, &s)
 }
 
@@ -61,7 +61,7 @@ fn join2(a: Text, c: Text): Text {
 }
 
 // The position of the line break at or after `start`, or the end of `t`.
-fn line_end(t: Text, start: u64): u64 {
+fn line_end(t: Text, start: u64): u64 ! {div, overflow} {
   var i := start
   while i < Text::len(t) && byte_at(t, i) != 10 {
     i := i + 1
@@ -70,7 +70,7 @@ fn line_end(t: Text, start: u64): u64 {
 }
 
 // The first position at or after `start` holding the byte `c`.
-fn find_byte(t: Text, c: u64, start: u64): Option(u64) {
+fn find_byte(t: Text, c: u64, start: u64): Option(u64) ! {div, overflow} {
   var i := start
   var found: Option(u64) := None
   var running := true
@@ -88,7 +88,7 @@ fn find_byte(t: Text, c: u64, start: u64): Option(u64) {
 }
 
 // The first position at or after `start` holding the byte `c` twice in a row.
-fn find_pair(t: Text, c: u64, start: u64): Option(u64) {
+fn find_pair(t: Text, c: u64, start: u64): Option(u64) ! {div, overflow} {
   var i := start
   var found: Option(u64) := None
   var running := true
@@ -105,7 +105,7 @@ fn find_pair(t: Text, c: u64, start: u64): Option(u64) {
   found
 }
 
-fn is_blank(line: Text): Bool {
+fn is_blank(line: Text): Bool ! {div, overflow} {
   var blank := true
   var i: u64 := 0
   while i < Text::len(line) {
@@ -123,7 +123,7 @@ fn is_blank(line: Text): Bool {
 // --- Inline Markdown ------------------------------------------------------
 
 // Writes the bytes `a` to `z` of `s` with `& < > " '` escaped.
-fn esc_push(&mut b: Buf, s: Text, a: u64, z: u64): Unit {
+fn esc_push(b: &mut Buf, s: Text, a: u64, z: u64): Unit ! {div, overflow} {
   var start := a
   var i := a
   while i < z {
@@ -154,7 +154,7 @@ fn esc_push(&mut b: Buf, s: Text, a: u64, z: u64): Unit {
 }
 
 // The positions of `]` and `)` of a link `[text](url)` starting at `i`.
-fn find_link(s: Text, i: u64): Option(u64 × u64) {
+fn find_link(s: Text, i: u64): Option(u64 × u64) ! {div, overflow} {
   match find_byte(s, 93, i + 1) {
     None => None
     Some(j) => if byte_at(s, j + 1) == 40 {
@@ -169,7 +169,7 @@ fn find_link(s: Text, i: u64): Option(u64 × u64) {
 }
 
 // A link target is kept when it is `http(s)` or has no scheme at all.
-fn url_ok(url: Text): Bool {
+fn url_ok(url: Text): Bool ! {div, overflow} {
   if has_prefix(url, "http://", 0) || has_prefix(url, "https://", 0) {
     true
   } else {
@@ -181,7 +181,7 @@ fn url_ok(url: Text): Bool {
 }
 
 // Writes `s` with `code`, **bold**, *emphasis* and [links](url) as HTML.
-fn inline(&mut b: Buf, s: Text): Unit {
+fn inline(b: &mut Buf, s: Text): Unit ! {div, overflow} {
   let n := Text::len(s)
   var start: u64 := 0
   var i: u64 := 0
@@ -261,7 +261,7 @@ fn inline(&mut b: Buf, s: Text): Unit {
 
 // Ends the open block: `mode` 1 is a paragraph over the bytes `ps` to `pe` of
 // `src`, 2 is an open list, 0 is none.
-fn close_block(&mut b: Buf, mode: u64, src: Text, ps: u64, pe: u64): Unit {
+fn close_block(b: &mut Buf, mode: u64, src: Text, ps: u64, pe: u64): Unit ! {div, overflow} {
   if mode == 1 {
     put(&mut b, "<p>")
     inline(&mut b, sub(src, ps, pe))
@@ -274,7 +274,7 @@ fn close_block(&mut b: Buf, mode: u64, src: Text, ps: u64, pe: u64): Unit {
 }
 
 // The HTML of a Markdown text.
-fn markdown(src: Text): Text {
+fn markdown(src: Text): Text ! {div, overflow} {
   var b := Buf::new()
   var pos: u64 := 0
   var mode: u64 := 0
@@ -359,7 +359,7 @@ pub(open) struct Changelog {
 
 // 1 added, 2 changed, 3 removed, 4 fixed, 5 deprecated, 6 security; 0 for any
 // other line.
-fn kind_of(line: Text): u64 {
+fn kind_of(line: Text): u64 ! {overflow} {
   if has_prefix(line, "@ added", 0) {
     1
   } else if has_prefix(line, "@ changed", 0) {
@@ -394,7 +394,7 @@ fn kind_name(k: u64): Text {
 }
 
 // The position of the first ` = ` in a line.
-fn find_eq(line: Text): Option(u64) {
+fn find_eq(line: Text): Option(u64) ! {div, overflow} {
   var i: u64 := 0
   var found: Option(u64) := None
   var running := true
@@ -413,7 +413,7 @@ fn find_eq(line: Text): Option(u64) {
 
 // The string written at the start of `v` (which begins with `"`), with the
 // escapes `\"`, `\\` and `\n` decoded.
-fn unquote(v: Text): Text {
+fn unquote(v: Text): Text ! {div, overflow} {
   var b := Buf::new()
   var start: u64 := 1
   var i: u64 := 1
@@ -446,7 +446,7 @@ fn unquote(v: Text): Text {
 
 // The lines of `src` from `start` up to a line that is exactly four backticks,
 // and the position after that line.
-fn read_block(src: Text, start: u64): Text × u64 {
+fn read_block(src: Text, start: u64): Text × u64 ! {div, overflow} {
   var pos := start
   var content_end := Text::len(src)
   var next := Text::len(src)
@@ -472,7 +472,7 @@ fn read_block(src: Text, start: u64): Text × u64 {
   #(sub(src, start, content_end), next)
 }
 
-fn reverse_entries(es: List(Entry)): List(Entry) {
+fn reverse_entries(es: List(Entry)): List(Entry) ! {div} {
   var rest := es
   var done: List(Entry) := Nil
   var running := true
@@ -491,7 +491,7 @@ fn reverse_entries(es: List(Entry)): List(Entry) {
 }
 
 // The release summary, the base commit and the entries (in file order).
-fn parse(src: Text): Changelog {
+fn parse(src: Text): Changelog ! {div, overflow} {
   var pos: u64 := 0
   var base: Text := ""
   var top_summary: Text := ""
@@ -634,7 +634,7 @@ fn css(): Text {
   Text::of(b)
 }
 
-fn entry_html(&mut b: Buf, e: Entry): Unit {
+fn entry_html(b: &mut Buf, e: Entry): Unit ! {div, overflow} {
   put(&mut b, "<article class='entry'><div class='meta'>")
   if same(e.area, "") {
     #()
@@ -668,7 +668,7 @@ fn entry_html(&mut b: Buf, e: Entry): Unit {
   put(&mut b, "</article>\n")
 }
 
-fn count_kind(es: List(Entry), k: u64): u64 {
+fn count_kind(es: List(Entry), k: u64): u64 ! {div, overflow} {
   var rest := es
   var n: u64 := 0
   var running := true
@@ -691,7 +691,7 @@ fn count_kind(es: List(Entry), k: u64): u64 {
 }
 
 // The section of the entries of kind `k`; nothing when there are none.
-fn section(&mut b: Buf, es: List(Entry), k: u64): Unit {
+fn section(b: &mut Buf, es: List(Entry), k: u64): Unit ! {div, overflow} {
   let n := count_kind(es, k)
   if n > 0 {
     put(&mut b, "<section>\n<h2>")
@@ -722,7 +722,7 @@ fn section(&mut b: Buf, es: List(Entry), k: u64): Unit {
   }
 }
 
-fn page(date: Text, c: Changelog): Text {
+fn page(date: Text, c: Changelog): Text ! {div, overflow} {
   var b := Buf::new()
   let title := join2("tauto changelog ", date)
   put(&mut b, "<!doctype html>\n<html lang='en'>\n<head>\n<meta charset='utf-8'>\n")
@@ -748,7 +748,7 @@ fn page(date: Text, c: Changelog): Text {
 }
 
 // The file name of `path` without its directory and its `.eure`.
-fn file_date(path: Text): Text {
+fn file_date(path: Text): Text ! {div, overflow} {
   var start: u64 := 0
   var i: u64 := 0
   while i < Text::len(path) {
@@ -774,7 +774,7 @@ fn file_date(path: Text): Text {
 
 // --- Entry point ----------------------------------------------------------
 
-fn run(args: List(Text)): Unit ! {fs_read, fs_write, stdout, stderr, Div} {
+fn run(args: List(Text)): Unit ! {fs_read, fs_write, stdout, stderr, div, overflow} {
   match args {
     Cons(input, Cons(output, Nil)) => match read_file(input) {
       Err(why) => eprint(join2("cannot read the changelog: ", why))

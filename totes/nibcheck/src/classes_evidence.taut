@@ -1,0 +1,707 @@
+import "messages.taut"
+import "../../surface/src/surface.taut"
+import std::base
+import std::list
+import std::map
+import std::text
+import "checker.taut"
+import "datas.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_decl_head.taut"
+import "types_classes.taut"
+import "classes_expand.taut"
+import "types_run.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
+
+// The expansion of classes directed by the types (`types/expand.rs`): the
+// program is checked with its classes, each use of a function or a method
+// that asks for a class is told how each class is met (an assumption of the
+// function the use is in, or an instance and the evidence for its `where`),
+// and the use is made a call that passes the dictionaries: a method call is a
+// call of the dictionary parameter or of the instance's function.
+
+// How a class is met at a use: the `where` of the function the use is in
+// (the class and its generic), an instance (the class, the head the
+// instance's functions are named by, and the evidence for its `where`), a
+// structural class (no run-time value), or not at all (an error was reported).
+pub(open) inductive ClassEv: Type {
+  ClassEvAssume(r#class: Text, generic: Text): ClassEv
+  ClassEvInst(r#class: Text, head: Text, subs: List(ClassEv)): ClassEv
+  ClassEvStructural: ClassEv
+  ClassEvMissing: ClassEv
+}
+
+// The head an instance's functions are named by: the product `A × B` is the
+// prelude's `Pair`, however it is written (`head_name`).
+pub fn ev_head(ctor: Text): Text {
+  if ctor == "std::prelude::Pair" { "Pair" } else { ctor }
+}
+
+// The evidence for `class(t)`, found as `ck_resolve_class_in` resolves it.
+mutual {
+  pub fn ck_ev_in(
+    k: Nat,
+    c: &Checker,
+    r#class: Text,
+    t: Ty,
+    assume: List(Text × Text)
+  ): ClassEv {
+    match k {
+      Zero => ClassEvMissing
+      Succ(j) => ⊢ ClassEv from match t {
+        TyParam(n, ^kind) => if preds_have(assume, r#class, n) { ClassEvAssume(r#class, n) } else {
+          ClassEvMissing
+        }
+        TyVar(^v) => ClassEvMissing
+        _ => if class_is_structural(r#class) { ClassEvStructural } else {
+          ⊢ ClassEv from match ty_constructor(t) {
+            None => ClassEvMissing
+            Some(ctor) => ⊢ ClassEv from match Ordmap::get(
+              c.instances,
+              instance_key(r#class, ctor),
+              Ordmap::compare_text
+            ) {
+              None => ClassEvMissing
+              Some(inst) => ClassEvInst(
+                r#class,
+                ev_head(ctor),
+                ck_ev_preds(
+                  j,
+                  &c,
+                  inst.preds,
+                  head_found(ty_named_args(inst.head), ty_named_args(t), Ordmap::empty()),
+                  assume
+                )
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn ck_ev_preds(
+    k: Nat,
+    c: &Checker,
+    preds: List(Text × Text),
+    found: Ordmap(Text, Ty),
+    assume: List(Text × Text)
+  ): List(ClassEv) {
+    match k {
+      Zero => Nil
+      Succ(j) => ⊢ List(ClassEv) from match preds {
+        Nil => Nil
+        Cons(p, rest) => Cons(
+          ck_ev_in(j, &c, p.fst, ty_strip_one(ck_resolve(&c, found_or_unit(found, p.snd))), assume),
+          ck_ev_preds(j, &c, rest, found, assume)
+        )
+      }
+    }
+  }
+}
+
+// The key of a use's evidence: where the use is written.
+pub fn ev_key(start: Nat, end: Nat): Text {
+  cat3(Text::of_nat(start), ":", Text::of_nat(end))
+}
+
+pub fn ev_add(m: Ordmap(Text, List(ClassEv)), key: Text, ev: ClassEv): Ordmap(Text, List(ClassEv)) {
+  match Ordmap::get(m, key, Ordmap::compare_text) {
+    None => Ordmap::insert(m, key, Cons(ev, Nil), Ordmap::compare_text)
+    Some(evs) => Ordmap::insert(m, key, List::append(evs, Cons(ev, Nil)), Ordmap::compare_text)
+  }
+}
+
+// The evidence of each use, in the order of the classes its function asks
+// for, from what the check left to resolve (oldest first). A structural
+// class has no dictionary and is left out.
+pub fn ck_evidence(
+  ps: List(TyPending),
+  c: &Checker,
+  out: Ordmap(Text, List(ClassEv))
+): Ordmap(Text, List(ClassEv)) {
+  match ps {
+    Nil => out
+    Cons(p, rest) => if class_is_structural(p.r#class) { ck_evidence(rest, &c, out) } else {
+      ck_evidence(
+        rest,
+        &c,
+        ev_add(
+          out,
+          ev_key(p.start, p.end),
+          ck_ev_in(c.steps, &c, p.r#class, ty_strip_one(ck_resolve(&c, p.ty)), p.assume)
+        )
+      )
+    }
+  }
+}
+
+// The check of `program` with its classes, and the evidence of each use.
+pub fn types_check_evidence(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt)
+): TypeReport × Ordmap(Text, List(ClassEv)) {
+  var c: Checker := checker_new(16 * (program_extent(prelude) + program_extent(program) + 1))
+  let report := ck_types_run(&mut c, prelude, program, Nil)
+  #(report, ck_evidence(List::reverse(c.pending), &c, Ordmap::empty()))
+}
+
+// What the expansion reads: the classes, the evidence of each use, and the
+// functions the host gives (a call of one passes no dictionary).
+pub(open) struct EvEnv {
+  classes: List(SurfaceClass),
+  evidence: Ordmap(Text, List(ClassEv)),
+  externs: List(Text)
+}
+
+pub fn ev_of(env: EvEnv, t: SurfaceTerm): Option(List(ClassEv)) {
+  if ev_host(env, t) { None } else {
+    Ordmap::get(env.evidence, ev_key(t.start, t.end), Ordmap::compare_text)
+  }
+}
+
+pub fn ev_host(env: EvEnv, t: SurfaceTerm): Bool {
+  match t.kind {
+    SkVar(n) => text_list_has(env.externs, surface_name_text(n))
+    _ => false
+  }
+}
+
+pub fn ev_var(name: Text, start: Nat, end: Nat): SurfaceTerm {
+  surface_term_mk(SkVar(NameSpelled(name)), start, end)
+}
+
+pub fn ev_method_in(ms: List(SurfaceFn), r#class: SurfaceClass, name: Text): Option(SurfaceClass × SurfaceFn) {
+  match ms {
+    Nil => None
+    Cons(m, rest) => if cat3(r#class.name, "::", m.name) == name { Some(#(r#class, m)) } else {
+      ev_method_in(rest, r#class, name)
+    }
+  }
+}
+
+pub fn ev_method_named(cs: List(SurfaceClass), name: Text): Option(SurfaceClass × SurfaceFn) {
+  match cs {
+    Nil => None
+    Cons(cl, rest) => ⊢ Option(SurfaceClass × SurfaceFn) from match ev_method_in(cl.methods, cl, name) {
+      Some(found) => Some(found)
+      None => ev_method_named(rest, name)
+    }
+  }
+}
+
+// `C::m` (or `C.m`), a method of a class.
+pub fn ev_method_use(env: EvEnv, f: SurfaceTerm): Option(SurfaceClass × SurfaceFn) {
+  match f.kind {
+    SkField(base, name) => ⊢ Option(SurfaceClass × SurfaceFn) from match base.kind {
+      SkVar(cn) => ev_method_named(env.classes, cat3(surface_name_text(cn), "::", name))
+      _ => None
+    }
+    SkVar(n) => ev_method_named(env.classes, surface_name_text(n))
+    _ => None
+  }
+}
+
+pub fn ev_numbered(prefix: Text, n: Nat, i: Nat): List(Text) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(cat3(prefix, "@", Text::of_nat(i)), ev_numbered(prefix, m, i + 1))
+  }
+}
+
+pub fn ev_vars(names: List(Text), start: Nat, end: Nat): List(SurfaceTerm) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(ev_var(n, start, end), ev_vars(rest, start, end))
+  }
+}
+
+// The dictionaries a method's own `where` asks for, as the parameters of the
+// function that stands for it (`C::m@method`).
+pub fn ev_held_methods(ms: List(SurfaceFn), r#class: Text, method: Text): List(Text) {
+  match ms {
+    Nil => Nil
+    Cons(h, rest) => Cons(cat5(r#class, "::", h.name, "@", method), ev_held_methods(rest, r#class, method))
+  }
+}
+
+pub fn ev_held(ws: List(SurfaceConstraint), cs: List(SurfaceClass), method: Text): List(Text) {
+  match ws {
+    Nil => Nil
+    Cons(w, rest) => ⊢ List(Text) from match class_named(cs, w.r#class) {
+      Some(cl) => List::append(ev_held_methods(cl.methods, cl.name, method), ev_held(rest, cs, method))
+      None => ev_held(rest, cs, method)
+    }
+  }
+}
+
+pub fn ev_any_borrow(bs: List(Option(Bool))): Bool {
+  match bs {
+    Nil => false
+    Cons(b, rest) => ⊢ Bool from match b {
+      Some(^m) => true
+      None => ev_any_borrow(rest)
+    }
+  }
+}
+
+pub fn ev_closure(
+  params: List(Text),
+  r#borrows: List(Option(Bool)),
+  body: SurfaceTerm,
+  start: Nat,
+  end: Nat
+): SurfaceTerm {
+  let lam := surface_term_mk(SkLam(params, body, Nil, Nil), start, end)
+  if ev_any_borrow(r#borrows) { surface_term_mk(SkBorrowLam(r#borrows, lam), start, end) } else { lam }
+}
+
+// The value that stands for the method `m` met by an assumption of `cn` for
+// `g` (`a`), or by the instance of `cn` for `head`, whose `where` is met by the
+// dictionaries `sub`.
+pub fn ev_method_value(
+  env: EvEnv,
+  m: SurfaceFn,
+  cn: Text,
+  head: Text,
+  assumed: Bool,
+  sub: List(SurfaceTerm),
+  start: Nat,
+  end: Nat
+): SurfaceTerm {
+  if assumed { ev_var(cat5(cn, "::", m.name, "@", head), start, end) } else {
+    ⊢ SurfaceTerm from match sub {
+      Nil => ev_var(instance_fn(cn, m.name, head), start, end)
+      Cons(d, ds) => {
+        // The method's parameters, then the instance's dictionaries, then
+        // the method's own evidence, passed through.
+        let names := ev_numbered(m.name, list_len(m.params), 0)
+        let held := ev_held(m.wheres, env.classes, m.name)
+        let call := surface_term_mk(
+          SkApp(
+            ev_var(instance_fn(cn, m.name, head), start, end),
+            List::append(ev_vars(names, start, end), List::append(Cons(d, ds), ev_vars(held, start, end)))
+          ),
+          start,
+          end
+        )
+        let all := List::append(names, held)
+        ev_closure(all, opts_resize(list_len(all), m.r#borrows), call, start, end)
+      }
+    }
+  }
+}
+
+pub fn ev_methods_values(
+  env: EvEnv,
+  ms: List(SurfaceFn),
+  cn: Text,
+  head: Text,
+  assumed: Bool,
+  sub: List(SurfaceTerm),
+  start: Nat,
+  end: Nat
+): List(SurfaceTerm) {
+  match ms {
+    Nil => Nil
+    Cons(m, rest) => Cons(
+      ev_method_value(env, m, cn, head, assumed, sub, start, end),
+      ev_methods_values(env, rest, cn, head, assumed, sub, start, end)
+    )
+  }
+}
+
+pub fn ev_class_values(
+  env: EvEnv,
+  cn: Text,
+  head: Text,
+  assumed: Bool,
+  sub: List(SurfaceTerm),
+  start: Nat,
+  end: Nat
+): List(SurfaceTerm) {
+  match class_named(env.classes, cn) {
+    None => Nil
+    Some(cl) => ev_methods_values(env, cl.methods, cn, head, assumed, sub, start, end)
+  }
+}
+
+mutual {
+  // The arguments that stand for the evidence: one for each method of each
+  // class.
+  pub fn ev_dictionaries(env: EvEnv, evs: List(ClassEv), start: Nat, end: Nat): List(SurfaceTerm) {
+    match evs {
+      Nil => Nil
+      Cons(ev, rest) => List::append(
+        ev_one_dictionary(env, ev, start, end),
+        ev_dictionaries(env, rest, start, end)
+      )
+    }
+  }
+
+  pub fn ev_one_dictionary(env: EvEnv, ev: ClassEv, start: Nat, end: Nat): List(SurfaceTerm) {
+    match ev {
+      ClassEvAssume(cn, g) => ev_class_values(env, cn, g, true, Nil, start, end)
+      ClassEvInst(cn, head, subs) => ev_class_values(
+        env,
+        cn,
+        head,
+        false,
+        ev_dictionaries(env, subs, start, end),
+        start,
+        end
+      )
+      ClassEvStructural => Nil
+      ClassEvMissing => Nil
+    }
+  }
+}
+
+// The value of the method `m` met by `ev`.
+pub fn ev_method_of(env: EvEnv, m: SurfaceFn, ev: ClassEv, start: Nat, end: Nat): SurfaceTerm {
+  match ev {
+    ClassEvAssume(cn, g) => ev_method_value(env, m, cn, g, true, Nil, start, end)
+    ClassEvInst(cn, head, subs) => ev_method_value(
+      env,
+      m,
+      cn,
+      head,
+      false,
+      ev_dictionaries(env, subs, start, end),
+      start,
+      end
+    )
+    ClassEvStructural => surface_term_mk(SkVar(NameSpelled("std::prelude::Star")), start, end)
+    ClassEvMissing => surface_term_mk(SkVar(NameSpelled("std::prelude::Star")), start, end)
+  }
+}
+
+// The callee of a call with evidence, and the arguments it is given after
+// the written ones.
+pub fn ev_call_target(env: EvEnv, f: SurfaceTerm, evs: List(ClassEv)): SurfaceTerm × List(SurfaceTerm) {
+  match ev_method_use(env, f) {
+    None => #(f, ev_dictionaries(env, evs, f.start, f.end))
+    // The evidence for the method's own `where` follows the class's.
+    Some(found) => ⊢ SurfaceTerm × List(SurfaceTerm) from match evs {
+      Nil => #(f, Nil)
+      Cons(first, own) => {
+        let extra := ev_dictionaries(env, own, f.start, f.end)
+        ⊢ SurfaceTerm × List(SurfaceTerm) from match first {
+          ClassEvAssume(cn, g) => #(ev_var(cat5(cn, "::", found.snd.name, "@", g), f.start, f.end), extra)
+          ClassEvInst(cn, head, subs) => #(
+            ev_var(instance_fn(cn, found.snd.name, head), f.start, f.end),
+            List::append(ev_dictionaries(env, subs, f.start, f.end), extra)
+          )
+          ClassEvStructural => #(f, extra)
+          ClassEvMissing => #(f, extra)
+        }
+      }
+    }
+  }
+}
+
+// A method used as a value, not called.
+pub fn ev_value_form(env: EvEnv, t: SurfaceTerm, evs: List(ClassEv)): SurfaceTerm {
+  match ev_method_use(env, t) {
+    None => t
+    Some(found) => ⊢ SurfaceTerm from match evs {
+      Nil => t
+      Cons(first, ^rest) => ev_method_of(env, found.snd, first, t.start, t.end)
+    }
+  }
+}
+
+pub fn ev_remake(t: SurfaceTerm, k: SurfaceKind): SurfaceTerm {
+  match t {
+    SurfaceTermIndexedMk(^old, start, end, occurrence) => SurfaceTermIndexedMk(k, start, end, occurrence)
+  }
+}
+
+// Whether a field of the implicit record names a class's argument (`@class0`, …).
+pub fn ev_class_field(name: Text): Bool {
+  Text::slice_or_empty(name, 0, 6) == "@class" && Text::len(name) > 6
+}
+
+pub fn ev_without_class_fields(fs: List(SurfaceField)): List(SurfaceField) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => if ev_class_field(f.name) {
+      ev_without_class_fields(rest)
+    } else {
+      Cons(f, ev_without_class_fields(rest))
+    }
+  }
+}
+
+// `C(T)::m(…)`: the class's arguments chose the instance; the function the
+// call becomes does not take them, and no record is left when nothing else
+// is named.
+pub fn ev_class_args(env: EvEnv, f: SurfaceTerm, args: List(SurfaceTerm)): List(SurfaceTerm) {
+  match ev_method_use(env, f) {
+    None => args
+    Some(^found) => ⊢ List(SurfaceTerm) from match args {
+      Nil => Nil
+      Cons(a, rest) => ⊢ List(SurfaceTerm) from match a.kind {
+        SkRecord(name, fields) => if name == "@implicits" {
+          ⊢ List(SurfaceTerm) from match ev_without_class_fields(fields) {
+            Nil => rest
+            Cons(g, more) => Cons(ev_remake(a, SkRecord(name, Cons(g, more))), rest)
+          }
+        } else {
+          args
+        }
+        _ => args
+      }
+    }
+  }
+}
+
+
+mutual {
+  pub fn ev_term(t: SurfaceTerm, env: EvEnv): SurfaceTerm {
+    match t {
+      SurfaceTermIndexedMk(k, start, end, occurrence) => ⊢ SurfaceTerm from match k {
+        SkApp(f, args) => ⊢ SurfaceTerm from match ev_of(env, f) {
+          Some(evs) => {
+            let target := ev_call_target(env, f, evs)
+            SurfaceTermIndexedMk(SkApp(target.fst, List::append(ev_class_args(env, f, ev_terms(args, env)), target.snd)), start, end, occurrence)
+          }
+          None => SurfaceTermIndexedMk(SkApp(ev_term(f, env), ev_terms(args, env)), start, end, occurrence)
+        }
+        SkVar(^n) => ⊢ SurfaceTerm from match ev_of(env, t) {
+          Some(evs) => ev_value_form(env, t, evs)
+          None => t
+        }
+        SkField(base, name) => ⊢ SurfaceTerm from match ev_of(env, t) {
+          Some(evs) => ev_value_form(env, t, evs)
+          None => SurfaceTermIndexedMk(SkField(ev_term(base, env), name), start, end, occurrence)
+        }
+        _ => SurfaceTermIndexedMk(ev_kind(k, env), start, end, occurrence)
+      }
+    }
+  }
+
+  pub fn ev_kind(k: SurfaceKind, env: EvEnv): SurfaceKind {
+    match k {
+      SkLam(params, body, types, unused) => SkLam(params, ev_term(body, env), types, unused)
+      SkBorrowLam(r#borrows, lam) => SkBorrowLam(r#borrows, ev_term(lam, env))
+      SkBorrow(m, m_orig, x) => SkBorrow(m, m_orig, ev_term(x, env))
+      SkTagged(tag, x) => SkTagged(tag, ev_term(x, env))
+      SkRecord(name, fields) => SkRecord(name, ev_fields(fields, env))
+      SkIf(c, th, el) => SkIf(ev_term(c, env), ev_term(th, env), ev_opt(el, env))
+      SkPerform(eff, args) => SkPerform(eff, ev_terms(args, env))
+      SkBudget(memory, amount, body) => SkBudget(memory, ev_term(amount, env), ev_term(body, env))
+      SkBlock(stmts) => SkBlock(ev_stmts(stmts, env))
+      SkHandle(body, handlers) => SkHandle(ev_term(body, env), ev_handlers(handlers, env))
+      SkMatch(scrutinee, r, arms, binder, unused) => SkMatch(
+        ev_term(scrutinee, env),
+        r,
+        ev_arms(arms, env),
+        binder,
+        unused
+      )
+      SkAscribe(value, ty) => SkAscribe(ev_term(value, env), ty)
+      _ => k
+    }
+  }
+
+  pub fn ev_terms(ts: List(SurfaceTerm), env: EvEnv): List(SurfaceTerm) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(ev_term(t, env), ev_terms(rest, env))
+    }
+  }
+
+  pub fn ev_opt(t: Option(SurfaceTerm), env: EvEnv): Option(SurfaceTerm) {
+    match t {
+      None => None
+      Some(x) => Some(ev_term(x, env))
+    }
+  }
+
+  pub fn ev_fields(fs: List(SurfaceField), env: EvEnv): List(SurfaceField) {
+    match fs {
+      Nil => Nil
+      Cons(f, rest) => Cons(ev_field(f, env), ev_fields(rest, env))
+    }
+  }
+
+  pub fn ev_field(f: SurfaceField, env: EvEnv): SurfaceField {
+    match f {
+      SurfaceFieldMk(name, value) => SurfaceFieldMk(name, ev_term(value, env))
+    }
+  }
+
+  pub fn ev_handlers(hs: List(SurfaceHandler), env: EvEnv): List(SurfaceHandler) {
+    match hs {
+      Nil => Nil
+      Cons(h, rest) => Cons(ev_handler(h, env), ev_handlers(rest, env))
+    }
+  }
+
+  pub fn ev_handler(h: SurfaceHandler, env: EvEnv): SurfaceHandler {
+    match h {
+      HdReturn(p, body) => HdReturn(p, ev_term(body, env))
+      HdOperation(eff, hfa, hty, ps, cont, cont_unused, guard, body) => HdOperation(
+        eff,
+        hfa,
+        hty,
+        ps,
+        cont,
+        cont_unused,
+        ev_opt(guard, env),
+        ev_term(body, env)
+      )
+    }
+  }
+
+  pub fn ev_arms(arms: List(SurfaceArm), env: EvEnv): List(SurfaceArm) {
+    match arms {
+      Nil => Nil
+      Cons(a, rest) => Cons(ev_arm(a, env), ev_arms(rest, env))
+    }
+  }
+
+  pub fn ev_arm(a: SurfaceArm, env: EvEnv): SurfaceArm {
+    match a {
+      SurfaceArmMk(pattern, guard, goal, body) => SurfaceArmMk(
+        pattern,
+        ev_opt(guard, env),
+        goal,
+        ev_term(body, env)
+      )
+    }
+  }
+
+  pub fn ev_stmts(ss: List(SurfaceStmt), env: EvEnv): List(SurfaceStmt) {
+    match ss {
+      Nil => Nil
+      Cons(st, rest) => Cons(ev_stmt(st, env), ev_stmts(rest, env))
+    }
+  }
+
+  pub fn ev_stmt(st: SurfaceStmt, env: EvEnv): SurfaceStmt {
+    match st {
+      StLet(name, ty, value, b, bm, unused, st_stack) => StLet(name, ty, ev_term(value, env), b, bm, unused, st_stack)
+      StVar(name, ty, value, vb, unused, st_stack) => StVar(name, ty, ev_term(value, env), vb, unused, st_stack)
+      StAssign(name, name_place, value) => StAssign(name, ev_opt(name_place, env), ev_term(value, env))
+      StWhile(c, body) => StWhile(ev_term(c, env), ev_term(body, env))
+      StReturn(e) => StReturn(ev_opt(e, env))
+      StExpr(e) => StExpr(ev_term(e, env))
+      StLoop(body, start, end) => StLoop(ev_term(body, env), start, end)
+      StFor(pat, src, body, start, end) => StFor(pat, src, body, start, end)
+      StBreak(value, start, end) => StBreak(ev_opt(value, env), start, end)
+      StFn(f) => StFn(ev_fn_with(f, env, ev_term(f.body, env)))
+      _ => st
+    }
+  }
+}
+
+// A function that asks for a class takes the class's methods, after its
+// own parameters; its body is expanded.
+pub fn ev_fn_with(f: SurfaceFn, env: EvEnv, body: SurfaceTerm): SurfaceFn {
+  let a: Added := added_constraints(
+    f.wheres,
+    env.classes,
+    Added { params: Nil, param_types: Nil, r#borrows: Nil }
+  )
+  SurfaceFn {
+    name: f.name,
+    generics: f.generics,
+    bounds: f.bounds,
+    params: List::append(f.params, a.params),
+    r#borrows: List::append(f.r#borrows, a.r#borrows),
+    param_types: List::append(f.param_types, a.param_types),
+    result: f.result,
+    effects: f.effects,
+    wheres: structural_constraints(f.wheres, env.classes),
+    start: f.start,
+    end: f.end,
+    body: body,
+    lends: f.lends,
+    generic_types: f.generic_types,
+    bound_starts: f.bound_starts,
+    visibility: f.visibility,
+    row_hole: f.row_hole,
+    unused: f.unused,
+    unused_generics: f.unused_generics,
+    unused_params: f.unused_params
+  }
+}
+
+pub fn ev_expand_fn(f: SurfaceFn, env: EvEnv): SurfaceFn {
+  ev_fn_with(f, env, ev_term(f.body, env))
+}
+
+pub fn ev_expand_instance(
+  i: SurfaceInstance,
+  ms: List(SurfaceFn),
+  env: EvEnv,
+  rest: List(SurfaceStmt)
+): List(SurfaceStmt) {
+  match ms {
+    Nil => rest
+    Cons(m, more) => Cons(
+      StFn(ev_expand_fn(instance_method(i, m, head_name(i.head)), env)),
+      ev_expand_instance(i, more, env, rest)
+    )
+  }
+}
+
+pub fn ev_expand_stmts(ss: List(SurfaceStmt), env: EvEnv): List(SurfaceStmt) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+      StClass(c) => if class_kept(env.classes, c.name) { Cons(s, ev_expand_stmts(rest, env)) } else {
+        ev_expand_stmts(rest, env)
+      }
+      StInstance(i) => if class_kept(env.classes, i.r#class) { Cons(s, ev_expand_stmts(rest, env)) } else {
+        ev_expand_instance(i, i.methods, env, ev_expand_stmts(rest, env))
+      }
+      StFn(f) => Cons(StFn(ev_expand_fn(f, env)), ev_expand_stmts(rest, env))
+      StExtern(^fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => Cons(s, ev_expand_stmts(rest, env))
+      _ => Cons(ev_stmt(s, env), ev_expand_stmts(rest, env))
+    }
+  }
+}
+
+pub fn ev_extern_names(ss: List(SurfaceStmt)): List(Text) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(Text) from match s {
+      StExtern(fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => List::append(
+        ev_fn_names(fns),
+        ev_extern_names(rest)
+      )
+      _ => ev_extern_names(rest)
+    }
+  }
+}
+
+pub fn ev_fn_names(fs: List(SurfaceFn)): List(Text) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(f.name, ev_fn_names(rest))
+  }
+}
+
+// The prelude with its classes expanded by the evidence its check finds. A
+// prelude that does not check keeps the expansion of the signatures alone
+// (`classes_expand_prelude`), for the checks after it to report on.
+pub fn classes_expand_typed(ss: List(SurfaceStmt)): List(SurfaceStmt) {
+  match stmts_classes(ss) {
+    Nil => ss
+    Cons(c, more) => {
+      let checked := types_check_evidence(Nil, ss)
+      ⊢ List(SurfaceStmt) from match checked.fst.errors {
+        Nil => ev_expand_stmts(
+          ss,
+          EvEnv { classes: Cons(c, more), evidence: checked.snd, externs: ev_extern_names(ss) }
+        )
+        Cons(^e, ^rest) => classes_expand_prelude(ss)
+      }
+    }
+  }
+}

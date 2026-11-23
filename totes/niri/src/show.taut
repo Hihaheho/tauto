@@ -1,0 +1,219 @@
+import "value.taut"
+import "num.taut"
+import "../../nir/src/model.taut"
+import "../../nir/src/print.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::float
+import std::base
+
+// The text `show` gives a value: the same as every other backend's
+// (crates/tauto-niri/src/show.rs). `None` for a value that cannot be shown,
+// with what it is.
+
+pub(open) enum Shown {
+  ShownText(Text)
+  ShownNot(Text)
+}
+
+pub fn s_join(parts: List(Shown), sep: Text, acc: List(Text)): Shown {
+  match parts {
+    Nil => ShownText(Text::concat_all(l_rev(acc)))
+    Cons(p, rest) => match p {
+      ShownNot(^w) => p
+      ShownText(t) => match acc {
+        Nil => s_join(rest, sep, [t])
+        Cons(^a, ^more) => s_join(rest, sep, Cons(t, Cons(sep, acc)))
+      }
+    }
+  }
+}
+
+pub fn s_wrap(open: Text, inner: Shown, close: Text): Shown {
+  match inner {
+    ShownNot(^w) => inner
+    ShownText(t) => ShownText(Text::concat_all([open, t, close]))
+  }
+}
+
+pub fn s_list(datas: List(NData), cells: List(Val), xs: List(Val)): List(Shown) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(show(datas, cells, x), s_list(datas, cells, rest))
+  }
+}
+
+pub fn s_data_of(ds: List(NData), name: Text): Option(NData) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => if d.name == name { Some(d) } else { s_data_of(rest, name) }
+  }
+}
+
+pub fn s_last(n: Text): Text {
+  match l_rev(text_split(n, "::")) {
+    Nil => n
+    Cons(x, ^rest) => x
+  }
+}
+
+pub fn s_all_named(ls: List(Option(Text))): Bool {
+  match ls {
+    Nil => true
+    Cons(l, rest) => match l {
+      Some(^n) => s_all_named(rest)
+      None => false
+    }
+  }
+}
+
+pub fn s_fields(datas: List(NData), cells: List(Val), ls: List(Option(Text)), fs: List(Val)): List(Shown) ! {div} {
+  match fs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let label := match ls {
+        Cons(l, ^more) => match l {
+          Some(n) => n
+          None => ""
+        }
+        Nil => ""
+      }
+      let more_ls := match ls {
+        Cons(^l, more) => more
+        Nil => Nil
+      }
+      Cons(s_wrap(Text::concat(label, ": "), show(datas, cells, x), ""), s_fields(datas, cells, more_ls, rest))
+    }
+  }
+}
+
+pub fn s_is_pair(v: Val): Bool {
+  match v {
+    VData(c, ^fs, ^t) => match c.data {
+      NDataPair => true
+      NDataGen(^n) => false
+      NDataOption => false
+      NDataResult => false
+    }
+    VUnit => false
+    VBool(^b) => false
+    VFloat(^b) => false
+    VInt(^n, ^g, ^t) => false
+    VText(^x, ^t) => false
+    VShown(^x, ^t) => false
+    VInject(^i, ^x) => false
+    VFn(^f, ^t) => false
+    VRef(^p) => false
+    VCell(^c) => false
+    VSeq(^xs, ^t, ^a) => false
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => false
+    VBuf(^x, ^t) => false
+    VShared(^c, ^t) => false
+    VInfo => false
+    VAnswer(^a) => false
+    VCont(^c) => false
+    VMoved => false
+  }
+}
+
+// The items of a pair nested to the right: `#(a, b, c)`.
+pub fn s_pair_items(v: Val): List(Val) {
+  match v {
+    VData(^c, fs, ^t) => if s_is_pair(v) {
+      match fs {
+        Cons(a, rest) => match rest {
+          Cons(b, ^more) => Cons(a, s_pair_items(b))
+          Nil => [v]
+        }
+        Nil => [v]
+      }
+    } else {
+      [v]
+    }
+    VUnit => [v]
+    VBool(^b) => [v]
+    VFloat(^b) => [v]
+    VInt(^n, ^g, ^t) => [v]
+    VText(^x, ^t) => [v]
+    VShown(^x, ^t) => [v]
+    VInject(^i, ^x) => [v]
+    VFn(^f, ^t) => [v]
+    VRef(^p) => [v]
+    VCell(^c) => [v]
+    VSeq(^xs, ^t, ^a) => [v]
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => [v]
+    VBuf(^x, ^t) => [v]
+    VShared(^c, ^t) => [v]
+    VInfo => [v]
+    VAnswer(^a) => [v]
+    VCont(^c) => [v]
+    VMoved => [v]
+  }
+}
+
+pub fn show(datas: List(NData), cells: List(Val), v: Val): Shown ! {div} {
+  match v {
+    VUnit => ShownText("()")
+    VBool(b) => ShownText(if b { "true" } else { "false" })
+    VFloat(b) => ShownText(Text::of_float(b))
+    VInt(n, g, ^t) => ShownText(int_text(int_of(n, g)))
+    VText(x, ^t) => ShownText(p_debug(x))
+    VShown(x, ^t) => ShownText(x)
+    VInject(^i, x) => show(datas, cells, x)
+    VSeq(xs, ^t, a) => s_wrap(if a { "Array[" } else { "Vec[" }, s_join(s_list(datas, cells, seq_list(xs)), ", ", Nil), "]")
+    VBuf(x, ^t) => ShownText(Text::concat_all(["Buf(", p_debug(x), ")"]))
+    VSlots(^st, ^vac, ^cap, ^ms, ^xs, ^t) => ShownText("Slots")
+    VShared(c, ^t) => match l_nth(cells, nn_of(c)) {
+      Some(x) => s_wrap("Ref(", show(datas, cells, x), ")")
+      None => s_wrap("Ref(", ShownText("()"), ")")
+    }
+    VData(c, fs, ^t) => if s_is_pair(v) {
+      match fs {
+        Cons(a, rest) => match rest {
+          Cons(b, ^more) => s_wrap("#(", s_join(s_list(datas, cells, Cons(a, s_pair_items(b))), ", ", Nil), ")")
+          Nil => ShownText("#()")
+        }
+        Nil => ShownText("#()")
+      }
+    } else {
+      let owner := match c.data {
+        NDataGen(n) => s_data_of(datas, n)
+        NDataOption => None
+        NDataResult => None
+        NDataPair => None
+      }
+      let is_struct := match owner {
+        Some(d) => d.is_struct
+        None => false
+      }
+      let tag := match owner {
+        Some(d) => if d.is_struct { d.name } else { s_last(c.name) }
+        None => s_last(c.name)
+      }
+      let empty := match fs {
+        Nil => true
+        Cons(^x, ^rest) => false
+      }
+      if (is_struct || not(empty)) && s_all_named(c.labels) {
+        if empty {
+          ShownText(Text::concat(tag, " {}"))
+        } else {
+          s_wrap(Text::concat(tag, " { "), s_join(s_fields(datas, cells, c.labels, fs), ", ", Nil), " }")
+        }
+      } else if empty {
+        ShownText(tag)
+      } else {
+        s_wrap(Text::concat(tag, "("), s_join(s_list(datas, cells, fs), ", ", Nil), ")")
+      }
+    }
+    VFn(^f, ^t) => ShownNot(v_kind(v))
+    VRef(^p) => ShownNot(v_kind(v))
+    VCell(^c) => ShownNot(v_kind(v))
+    VInfo => ShownNot(v_kind(v))
+    VAnswer(^a) => ShownNot(v_kind(v))
+    VCont(^c) => ShownNot(v_kind(v))
+    VMoved => ShownNot(v_kind(v))
+  }
+}
+
+pub fn nn_of(n: u64): Nat { Nat::of_u64(n) }

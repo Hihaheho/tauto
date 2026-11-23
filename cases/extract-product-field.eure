@@ -3,8 +3,7 @@
 // typed with the same product, and extracted, Nib sees the same type on both
 // sides.
 @ cases.product-field-passed-to-a-function
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 inductive Element: Type { E(attrs: List(Nat × Nat)): Element }
 
@@ -19,16 +18,16 @@ fn read(element: Element): Nat {
   ⊢ Nat from match element { E(attrs) => count(attrs) }
 }
 
-perform show("count", read(E(Nil)))
-perform show("two", read(E(Cons(#(1, 2), Cons(#(3, 4), Nil)))))
+show(&read(E(Nil)))
+show(&read(E(Cons(#(1, 2), Cons(#(3, 4), Nil)))))
 ```
-shows = ["count = 0", "two = 2"]
-rust_shows = ["count = 0", "two = 2"]
-javascript_shows = ["count = 0", "two = 2"]
+stdout = ```
+0
+2
+```
 
 @ cases.labelled-product-field-passed-to-a-function
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 inductive Element: Type { E(attrs: List(@name Nat × @value Nat)): Element }
 
@@ -43,15 +42,12 @@ fn read(element: Element): Nat {
   ⊢ Nat from match element { E(attrs) => count(attrs) }
 }
 
-perform show("count", read(E(Nil)))
+show(&read(E(Nil)))
 ```
-shows = ["count = 0"]
-rust_shows = ["count = 0"]
-javascript_shows = ["count = 0"]
+stdout = "0\n"
 
 @ cases.product-field-direct
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 inductive Cell: Type { C(p: Nat × Nat): Cell }
 
@@ -63,8 +59,6 @@ fn get(c: Cell): Nat {
   ⊢ Nat from match c { C(p) => first(p) }
 }
 
-perform show("first", get(C(#(7, 8))))
+show(&get(C(#(7, 8))))
 ```
-shows = ["first = 7"]
-rust_shows = ["first = 7"]
-javascript_shows = ["first = 7"]
+stdout = "7\n"

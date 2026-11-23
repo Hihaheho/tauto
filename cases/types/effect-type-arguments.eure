@@ -25,14 +25,15 @@ let r: Text := handle { f(); "none" } with { ∀ A. give<A>(a), k => a }
 types = "error: the arm of `give` must work for whatever type arguments"
 
 @ cases.an-arm-that-works-for-every-type-argument-is-accepted
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
 source = ```nib
 effect wrap<A>(a: A): Option(A)
 fn f(): Option(i64) ! {∀ A. wrap(A)} { perform wrap(3) }
 let r := handle { f() } with { ∀ A. wrap<A>(a), k => k(Some(a)) }
-perform show("r", r)
+show(&r)
 ```
 types = "ok"
-shows = ['r = Some(3)']
+stdout = "Some(3)\n"
 
 @ cases.a-row-that-writes-type-arguments-names-one-instance
 source = ```nib
@@ -43,10 +44,10 @@ fn get(): i64 ! {res(Pos)} {
   p.x
 }
 let r := handle { get() } with { res<Pos>(), k => k(Pos { x: 4 }) }
-perform show("r", r)
+show(&r)
 ```
 types = "ok"
-shows = ['r = 4']
+stdout = "4\n"
 
 // `res(Pos)` and `res(Vel)` are two effects: a handler of one does not see
 // the other, also when the handler is written once for every index (`res<C>`).
@@ -55,30 +56,30 @@ source = ```nib
 struct Pos { x: i64 }
 struct Vel { v: i64 }
 effect res<A>(): A
-fn with_res<C, T, !e>(c: C, &body: () -> T ! {res(C)} ∪ e): T ! e {
+fn with_res<C, T, !e>(c: C, body: &(() -> T ! {res(C)} ∪ e)): T ! e {
   handle { body() } with {
     res<C>(), k => k(c)
   }
 }
-fn sum(): i64 ! {res(Pos), res(Vel)} {
+fn sum(): i64 ! {res(Pos), res(Vel), overflow} {
   let p: Pos := perform res()
   let v: Vel := perform res()
   p.x + v.v
 }
 let r := with_res(Pos { x: 1 }, () => with_res(Vel { v: 40 }, () => sum()))
 let s := with_res(Vel { v: 2 }, () => with_res(Pos { x: 3 }, () => sum()))
-perform show("r", r)
-perform show("s", s)
+show(&r)
+show(&s)
 ```
 types = "ok"
-shows = ['r = 41', 's = 5']
+stdout = "41\n5\n"
 
 @ cases.an-arm-of-one-instance-leaves-the-other-unhandled
 source = ```nib
 struct Pos { x: i64 }
 struct Vel { v: i64 }
 effect res<A>(): A
-fn sum(): i64 ! {res(Pos), res(Vel)} {
+fn sum(): i64 ! {res(Pos), res(Vel), overflow} {
   let p: Pos := perform res()
   let v: Vel := perform res()
   p.x + v.v
@@ -99,14 +100,36 @@ fn get(): i64 ! {res(Pos)} {
 ```
 rows = "error: `get` may perform res(Vel) but its row is {res(Pos)}"
 
+// A product written as an effect's argument is the instance a `perform` of a
+// tuple infers: `fail(Text × i64)` is the `fail` of `Pair(Text, i64)`.
+@ cases.a-product-argument-of-an-effect-is-the-pair-it-names
+llvm.unimplemented = "generate: the LLVM backend does not write the operation `fail@Pair(Text,i64)` yet"
+source = ```nib
+fn g(): i64 ! {fail(Text × i64)} { perform fail(#("a", 2)) }
+fn h(): i64 ! {fail(Text × Text × Text)} { perform fail(#("a", "b", "c")) }
+let r: Result(i64, Text × i64) := catch(() => g())
+let s: Result(i64, Text × Text × Text) := catch(() => h())
+show(&(match r {
+  Ok(_) => "ok"
+  Err(#(t, n)) => t
+}))
+show(&(match s {
+  Ok(_) => "ok"
+  Err(#(a, b, c)) => c
+}))
+```
+types = "ok"
+stdout = "\"a\"\n\"c\"\n"
+
 // `fail(E)` is an effect for each `E`: each `catch` takes the one its result
 // says.
 @ cases.catch-takes-the-fail-its-result-names
+llvm.unimplemented = "generate: the LLVM backend does not write the operation `fail@main::IoError` yet"
 source = ```nib
 struct IoError { code: i64 }
 fn read(): i64 ! {fail(IoError)} { perform fail(IoError { code: 7 }) }
 fn parse(): i64 ! {fail(Text)} { perform fail("bad") }
-fn both(): i64 ! {fail(IoError), fail(Text)} { read() + parse() }
+fn both(): i64 ! {fail(IoError), fail(Text), overflow} { read() + parse() }
 let r: Result(Result(i64, Text), IoError) := catch(() => catch(() => both()))
 let shown := match r {
   Ok(inner) => match inner {
@@ -115,10 +138,10 @@ let shown := match r {
   }
   Err(e) => "io"
 }
-perform show("r", shown)
+show(&shown)
 ```
 types = "ok"
-shows = ['r = "io"']
+stdout = "\"io\"\n"
 
 @ cases.a-catch-whose-fail-is-not-known-is-an-error
 source = ```nib
@@ -128,7 +151,116 @@ fn parse(): i64 ! {fail(Text)} { perform fail("bad") }
 fn both(): i64 ! {fail(IoError), fail(Text)} { read() + parse() }
 let r := catch(() => catch(() => both()))
 ```
-types = "error: the type `T` of `catch` is not determined here"
+types = "error: `catch` indexes an effect by `E`: the argument performs it as main::IoError and Text; write which with the result's type"
+
+// A generic that only a field's row of a parameter's data type writes as an
+// index is read from what that field of the record built at the call
+// performs, as `catch`'s `E` is read from what its body fails with. The
+// result's type and the instance waited on are separate generics.
+@ cases.a-field-of-a-parameters-data-type-reads-the-index-from-what-it-performs
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```nib
+effect wait<A>(a: A): i64
+struct(shared) Pos { x: i64 }
+fn at(p: Pos): i64 ! {wait(Pos)} { perform wait(p) }
+struct Opts(B: Shared, R: Shared) { run: () -> B ! {wait(R)}, done: (b: B) -> Unit }
+fn drive<B: Shared, R: Shared>(o: Opts(B, R)): B {
+  let b := handle { (o.run)() } with {
+    wait<R>(a), k => k(1)
+    return v => v
+  }
+  (o.done)(b)
+  b
+}
+fn go(): Text {
+  drive(Opts { run: () => if at(Pos { x: 1 }) == 1 { "one" } else { "other" }, done: b => #() })
+}
+show(&go())
+```
+types = "ok"
+rows = "ok"
+stdout = "\"one\"\n"
+
+// The module of a file whose name begins with a digit is still a name: a
+// row's entry `wait(R)` of `15b.nib` is the effect `wait` of that module
+// applied to `R`, as in any other file.
+@ cases.a-file-whose-name-begins-with-a-digit-reads-the-index-from-what-it-performs
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+files."15b.nib" = ```nib
+effect wait<A>(a: A): i64
+struct(shared) Pos { x: i64 }
+fn at(p: Pos): i64 ! {wait(Pos)} { perform wait(p) }
+struct Opts(B: Shared, R: Shared) { run: () -> B ! {wait(R)}, done: (b: B) -> Unit }
+fn drive<B: Shared, R: Shared>(o: Opts(B, R)): B {
+  let b := handle { (o.run)() } with {
+    wait<R>(a), k => k(1)
+    return v => v
+  }
+  (o.done)(b)
+  b
+}
+fn go(): Text {
+  drive(Opts { run: () => if at(Pos { x: 1 }) == 1 { "one" } else { "other" }, done: b => #() })
+}
+show(&go())
+```
+entry = "15b.nib"
+types = "ok"
+stdout = "\"one\"\n"
+
+@ cases.a-field-that-performs-two-instances-does-not-choose-one
+source = ```nib
+effect wait<A>(a: A): i64
+struct(shared) Pos { x: i64 }
+struct(shared) Vel { v: i64 }
+fn at(p: Pos): i64 ! {wait(Pos)} { perform wait(p) }
+fn speed(v: Vel): i64 ! {wait(Vel)} { perform wait(v) }
+struct Opts(R: Shared) { run: () -> i64 ! {wait(R)} }
+fn drive<R: Shared>(o: Opts(R)): i64 {
+  handle { (o.run)() } with {
+    wait<R>(a), k => k(1)
+    return v => v
+  }
+}
+fn go(): i64 { drive(Opts { run: () => at(Pos { x: 1 }) + speed(Vel { v: 2 }) }) }
+```
+types = "error: `drive` indexes an effect by `R`: the argument performs it as Pos and Vel; write which with the result's type"
+
+// A field that performs no instance leaves the index open: the type is
+// written, here by the options' annotation.
+@ cases.a-field-that-performs-no-instance-leaves-the-index-to-be-written
+source = ```nib
+effect wait<A>(a: A): i64
+struct Opts(R: Shared) { run: () -> i64 ! {wait(R)} }
+fn drive<R: Shared>(o: Opts(R)): i64 {
+  handle { (o.run)() } with {
+    wait<R>(a), k => k(1)
+    return v => v
+  }
+}
+fn go(): i64 { drive(Opts { run: () => 2 }) }
+```
+types = "error: `drive` indexes an effect by `R`, which is not known here"
+
+@ cases.an-annotation-writes-the-index-a-field-does-not-perform
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```nib
+effect wait<A>(a: A): i64
+struct Opts(R: Shared) { run: () -> i64 ! {wait(R)} }
+fn drive<R: Shared>(o: Opts(R)): i64 {
+  handle { (o.run)() } with {
+    wait<R>(a), k => k(1)
+    return v => v
+  }
+}
+fn go(): i64 {
+  let o: Opts(Text) := Opts { run: () => 2 }
+  drive(o)
+}
+show(&go())
+```
+types = "ok"
+stdout = "2\n"
 
 // A row that writes type arguments expands only in a program that checks;
 // in one that does not, the type error is what is reported, not the rows it
@@ -137,7 +269,7 @@ types = "error: the type `T` of `catch` is not determined here"
 source = ```nib
 fn g(): u64 { "a" }
 fn f(): i64 ! {fail(Text)} { perform fail("q") }
-perform show("x", catch(() => f()))
+show(&catch(() => f()))
 ```
 rows = "error: type error: the result of `g`: Text does not fit u64"
 
@@ -177,50 +309,103 @@ types = "error: `tick` takes no type arguments"
 @ cases.a-handler-answers-the-instance-its-function-chooses
 source = ```nib
 effect ask<K, V>(k: K): V
-fn rule(): i64 ! {ask(Text, i64)} { perform ask("a") + 1 }
-fn run<K, V, !e>(db: (K) -> V, &rule: () -> V ! {ask(K, V)} ∪ e): V ! e {
+fn rule(): i64 ! {ask(Text, i64), overflow} { perform ask("a") + 1 }
+fn run<K, V, !e>(db: (K) -> V, rule: &(() -> V ! {ask(K, V)} ∪ e)): V ! e {
   handle { rule() } with { ask<K, V>(k), c => c(db(k)) }
 }
 let r := run((k: Text) => 41, () => rule())
-perform show("r", r)
+show(&r)
 ```
 types = "ok"
-shows = ['r = 42']
+stdout = "42\n"
 
 // An arm for every instance names the type it reads the argument as.
 @ cases.an-arm-for-every-instance-names-its-type
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with two arms of an operation yet"
 source = ```nib
 effect give<A>(a: A): Unit
 fn f(): Unit ! {∀ A. give(A)} { perform give(1); perform give("x") }
 let r := handle { f(); 0 } with { ∀ T. give<T>(a), k => { let kept: T := a; k(#()) } }
-perform show("r", r)
+show(&r)
 ```
 types = "ok"
-shows = ['r = 0']
+stdout = "0\n"
 
 @ cases.a-function-name-does-not-replace-an-effect-reference
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
-fn fail(n: i64): i64 { n + 1 }
+fn fail(n: i64): i64 ! {overflow} { n + 1 }
 fn reject(): i64 ! {fail(Text)} { perform fail("rejected") }
 let value := handle { reject() } with {
   fail<Text>(message) => fail(40)
 }
-perform show("value", value)
+show(&value)
 ```
 types = "ok"
 rows = "ok"
-shows = ['value = 41']
+stdout = "41\n"
 
 @ cases.a-function-and-an-effect-keep-separate-declarations
 source = ```nib
-effect answer(): i64 resume 1
-fn answer(n: i64): i64 { n + 1 }
-fn ask(): i64 ! {answer} { perform answer() }
+effect answer(): nat resume 1
+fn answer(n: nat): nat { n + 1 }
+fn ask(): nat ! {answer} { perform answer() }
 let value := handle { ask() } with {
   answer(), k => k(answer(40))
 }
-perform show("value", value)
+show(&value)
 ```
 types = "ok"
 rows = "ok"
-shows = ['value = 41']
+stdout = "41\n"
+
+// `perform e(<T: A>, x)` writes the instance at the `perform`: a callback's
+// row does not tell it, and the written one is the instance wherever the
+// `perform` stands.
+@ cases.a-perform-names-its-type-arguments-in-a-callback
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect take<T>(n: i64): T
+fn sum(): Unit ! {take(i64), take(Text)} {
+  each(Cons(1, Cons(2, Nil)), (n: i64) => {
+    let a := perform take(<T: i64>, n)
+    let b := perform take(<T: Text>, a)
+  })
+}
+handle { sum() } with {
+  take<i64>(n), k => { show(&n); k(n + 10) }
+  take<Text>(n), k => { show(&n); k("t") }
+}
+```
+types = "ok"
+stdout = "1\n11\n2\n12\n"
+
+@ cases.a-perform-names-a-type-argument-no-row-gives
+source = ```tauto
+effect remove<T>(n: i64): Unit
+fn discard(): Unit ! {remove(i64)} {
+  each(Cons(0, Nil), (n: i64) => {
+    perform remove(<T: i64>, n)
+  })
+}
+```
+types = "ok"
+
+@ cases.a-perform-type-argument-is-not-overridden-by-the-row
+source = ```tauto
+effect remove<T>(n: i64): Unit
+fn discard(): Unit ! {remove(i64)} {
+  perform remove(<T: Text>, 0)
+}
+```
+types = "ok"
+rows = "error: `discard` may perform remove(Text) but its row is {remove(i64)}"
+
+@ cases.a-perform-names-only-the-effects-type-arguments
+source = ```tauto
+effect remove<T>(n: i64): Unit
+fn discard(): Unit ! {remove(i64)} {
+  perform remove(<U: i64>, 0)
+}
+```
+types = "error: `remove` has no type argument named `U`"

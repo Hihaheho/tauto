@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
+use tauto_test_support::{Scratch, git};
 
 use totebag::cache::Cache;
 use totebag::git::Mirror;
@@ -16,53 +16,9 @@ use totebag::spec::GitSource;
 const PROJECT: &str = "sha256:5555555555555555555555555555555555555555555555555555555555555555";
 const INDEX: &str = "format = 1\nkind = \"index\"\nname = \"me\"\nhistory = \"commit-batches\"\ngit_object_format = \"sha1\"\n";
 
-struct Temp(PathBuf);
-impl Temp {
-    fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "tauto-totebag-index-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&path).unwrap();
-        Self(path)
-    }
-}
-impl Drop for Temp {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
 fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
-}
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args([
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@example.org",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "init.defaultBranch=main",
-        ])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
 
 fn now() -> i64 {
@@ -80,14 +36,14 @@ fn at(offset: i64) -> String {
 /// A repository `lib` with the tote `word` at its root, an index `me`, and a
 /// project `app`.
 struct World {
-    temp: Temp,
+    temp: Scratch,
     batches: u64,
 }
 
 impl World {
     fn new() -> World {
         let w = World {
-            temp: Temp::new(),
+            temp: Scratch::new("tauto-totebag-index"),
             batches: 0,
         };
         fs::create_dir_all(w.lib()).unwrap();
@@ -103,11 +59,11 @@ impl World {
         w.publish(0, "events = []\n");
         write(
             &w.app().join("Tauto.eure"),
-            "package {\n  name = \"app\"\n  version = \"0.1.0\"\n}\n",
+            "package {\n  name = \"app\"\n  version = \"0.1.0\"\n}\nworkspace {\n  members = [\".\"]\n}\n",
         );
         write(
             &w.app().join("src/main.taut"),
-            "import word::word\n\nperform show(\"answer\", word())\n",
+            "import word::word\n\nperform main(() => show(&word()))\n",
         );
         w.user_trust("@ require {\n  min_age_seconds = 0\n}\n");
         w
@@ -163,6 +119,7 @@ impl World {
                 url: self.url(&self.lib()),
                 reference: "refs/heads/main".into(),
                 dir: String::new(),
+                sparse: false,
                 project: None,
             },
         )
@@ -298,7 +255,7 @@ fn a_commit_is_adopted_only_once_the_index_allows_it() {
         w.read("Tauto.lock")
             .contains(&format!("project = \"{PROJECT}\""))
     );
-    assert_eq!(w.ok(&["run", "--tote", "."]), "answer = 41\n");
+    assert_eq!(w.ok(&["run", "--tote", "app"]), "41\n");
     assert!(w.ok(&["index", "check"]).contains("may be adopted"));
 
     // A new commit the index has not seen: update holds the locked one.
@@ -313,7 +270,7 @@ fn a_commit_is_adopted_only_once_the_index_allows_it() {
     w.vouch();
     let out = w.ok(&["update"]);
     assert!(out.contains("Updated   word"), "{out}");
-    assert_eq!(w.ok(&["run", "--tote", "."]), "answer = 42\n");
+    assert_eq!(w.ok(&["run", "--tote", "app"]), "42\n");
 
     let status = w.ok(&["index", "status"]);
     assert!(status.contains("me (file://"), "{status}");

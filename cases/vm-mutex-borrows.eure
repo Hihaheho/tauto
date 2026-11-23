@@ -1,69 +1,100 @@
 @ cases.map-updates-through-a-mutex-guard-persist
-backends = ["rust", "javascript", "vm"]
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```tauto
-import std::prelude::Affine
-import std::prelude::Par
-import std::prelude::Shared
+import std::indexed_map { IndexedMap }
+import std::builtin::par
 
-let table: Mutex(HashMap(u64, u64)) := Mutex::new(HashMap::new())
+let table: Mutex(IndexedMap(u64, u64)) := perform mutex_new(IndexedMap::new())
 {
   var guard := Mutex::lock(table)
-  HashMap::insert(MutexGuard::get_mut(&mut guard), (1: u64), (42: u64))
+  IndexedMap::insert(MutexGuard::get_mut(&mut guard), (1: u64), (42: u64))
   #()
 }
 {
   let guard := Mutex::lock(table)
-  let result: u64 := match HashMap::get(MutexGuard::get(&guard), &(1: u64)) {
+  let result: u64 := match IndexedMap::get(MutexGuard::get(&guard), &(1: u64)) {
     Some(value) => value
     None => 0
   }
-  perform show("direct", result)
+  show(&result)
 }
-fn with_table<A, R>(m: Mutex(A), &body: (&mut x: A) -> R): R ! {wait} {
+fn with_table<A, R>(m: Mutex(A), body: &((x: &mut A) -> R)): R ! {wait, mutex_claim} {
   var guard := Mutex::lock(m)
   body(MutexGuard::get_mut(&mut guard))
 }
-with_table(table, (&mut map) => {
-  HashMap::insert(&mut map, (2: u64), (43: u64))
+with_table(table, (map) => {
+  IndexedMap::insert(&mut map, (2: u64), (43: u64))
   #()
 })
-let result := with_table(table, (&mut map) => {
-  let result: u64 := match HashMap::get(&map, &(2: u64)) {
+let result := with_table(table, (map) => {
+  let result: u64 := match IndexedMap::get(&map, &(2: u64)) {
     Some(value) => value
     None => 0
   }
   result
 })
-perform show("through callback", result)
+show(&result)
 ```
-shows = ["direct = 42", "through callback = 43"]
+stdout = ```
+42
+43
+```
 
 @ cases.a-returned-mutable-borrow-is-forwarded-to-a-borrowed-parameter
-backends = ["rust", "javascript", "vm"]
 source = ```nib
-fn same(&mut value: i64): &mut i64 { value }
-fn set(&mut value: i64, next: i64): Unit { value := next }
-fn read(&value: i64): i64 { value }
+fn same(value: &mut i64): &mut i64 { value }
+fn set(value: &mut i64, next: i64): Unit { *value := next }
+fn read(value: &i64): i64 { value }
 fn copied(value: i64): i64 { value }
 var value := 1
 set(same(&mut value), 42)
-perform show("owner", value)
-perform show("borrowed", read(same(&mut value)))
-perform show("copied", copied(same(&mut value)))
+show(&value)
+show(&read(same(&mut value)))
+show(&copied(same(&mut value)))
 ```
-shows = ["owner = 42", "borrowed = 42", "copied = 42"]
+stdout = ```
+42
+42
+42
+```
 
 @ cases.a-map-update-without-a-mutex-persists
-backends = ["rust", "javascript", "vm"]
 source = ```tauto
-import std::prelude::Affine
-import std::prelude::Shared
-var table: HashMap(u64, u64) := HashMap::new()
-HashMap::insert(&mut table, (1: u64), (42: u64))
-let value: u64 := match HashMap::get(&table, &(1: u64)) {
+import std::indexed_map { IndexedMap }
+var table: IndexedMap(u64, u64) := IndexedMap::new()
+IndexedMap::insert(&mut table, (1: u64), (42: u64))
+let value: u64 := match IndexedMap::get(&table, &(1: u64)) {
   Some(value) => value
   None => 0
 }
-perform show("without mutex", value)
+show(&value)
 ```
-shows = ["without mutex = 42"]
+stdout = "42\n"
+
+// A `HashMap` behind a `Mutex` and a closure that gets it as `&mut`: the
+// borrow reaches the host map through several references, and every backend
+// still finds the map (the JavaScript host once read only one reference deep).
+@ cases.a-hashmap-in-a-mutex-is-reached-through-a-borrowed-closure-parameter
+llvm.unimplemented = "generate: the LLVM backend does not write the standard effect `mutex_new` yet"
+source = ```tauto
+import std::hashmap { HashMap }
+import std::builtin::par
+
+fn with_table<A, R>(m: Mutex(A), body: &((x: &mut A) -> R)): R ! {wait, mutex_claim} {
+  var guard := Mutex::lock(m)
+  body(MutexGuard::get_mut(&mut guard))
+}
+let table: Mutex(HashMap(u32, u32)) := perform mutex_new(HashMap::new())
+with_table(table, (m) => {
+  HashMap::insert(&mut m, 1, 7)
+  #()
+})
+let found: u32 := with_table(table, (m) => match HashMap::get(&m, &1) {
+  Some(x) => x
+  None => 0
+})
+show(&found)
+```
+stdout = ```
+7
+```

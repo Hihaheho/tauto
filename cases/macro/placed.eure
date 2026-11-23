@@ -1,7 +1,7 @@
 @ cases.a-placed-macro-is-given-its-goal-and-what-is-written
 entry = "main.taut"
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 // What is written, used as it is.
 pub macro fn same(at: Judgement, e: SynExpr): SynExpr { e }
@@ -13,7 +13,7 @@ pub macro fn trivially(at: Judgement, e: SynExpr): SynExpr { quote { Refl } }
 pub macro fn later(at: Judgement, e: SynExpr): SynExpr { quote { trivially!(ignored) } }
 ````
 files."main.taut" = ````tauto
-import std::Base
+import std::base
 import "lib.taut" { same, trivially, later }
 
 theorem a(n: Nat): n = n { same!(Refl) }
@@ -30,12 +30,12 @@ diagnostics = []
 @ cases.what-a-placed-macro-makes-is-checked-at-its-place
 entry = "main.taut"
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub macro fn trivially(at: Judgement, e: SynExpr): SynExpr { quote { Refl } }
 ````
 files."main.taut" = ````tauto
-import std::Base
+import std::base
 import "lib.taut" { trivially }
 
 theorem d(n: Nat): Nat::lt(n, Succ(n)) = false { trivially!(()) }
@@ -45,7 +45,7 @@ checks.d = "error: type mismatch"
 @ cases.a-typed-macro-sees-a-helper-written-after-its-declaration
 entry = "main.taut"
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub macro fn trivially(at: Judgement): SynExpr { quote { Refl } }
 ````
@@ -58,3 +58,22 @@ theorem later(n: Nat): n = n { Refl }
 ````
 checks.uses_later = "ok"
 trace = ["trivially"]
+
+@ cases.a-typed-macro-only-an-output-calls-is-expanded
+entry = "main.taut"
+files."lib.taut" = ````tauto
+import std::builtin::macro
+
+pub macro fn trivially(at: Judgement, e: SynExpr): SynExpr { quote { Refl } }
+
+// A call of `trivially!`, which the file using `later!` does not write.
+pub macro fn later(at: Judgement, e: SynExpr): SynExpr { quote { trivially!(ignored) } }
+````
+files."main.taut" = ````tauto
+import std::base
+import "lib.taut" { later }
+
+theorem c(n: Nat): n = n { later!(()) }
+````
+checks.c = "ok"
+diagnostics = []

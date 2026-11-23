@@ -1,0 +1,208 @@
+description = "`fn f(): T !?` asks for its row to be written: it is an error of `tauto check` (exit 1), the program does not run, and `tauto check --fix` writes the row its body performs."
+
+@ cases.a-row-hole-is-an-error-with-the-row-in-the-note
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 !? { perform ask(1) }
+```
+check_report = "the row of `f` is `!?`: it is not written yet"
+rows = "error: the row of `f` is `!?`: it is not written yet"
+inferred_rows.f = ["ask"]
+
+@ cases.a-pure-body-has-the-empty-row
+source = ```tauto
+fn f(x: i64): i64 !? { x }
+fn g(): i64 ! {} { f(1) }
+```
+rows = "error: the row of `f` is `!?`: it is not written yet"
+inferred_rows.f = []
+
+@ cases.a-space-between-the-bang-and-the-hole-reads-the-same
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(x: i64): i64 ! ? { x }
+```
+check_report = "the row of `f` is `!?`: it is not written yet"
+
+@ cases.a-row-hole-calling-itself-is-an-error
+source = ```tauto
+fn f(n: i64): i64 !? { f(n) }
+```
+rows = "error: the row of `f` is `!?`: it is not written yet"
+
+@ cases.a-row-hole-is-not-a-type
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(g: (i64) -> i64 !?): i64 { 0 }
+```
+load_error = "`!?` (a row not written yet) is written only after the result of a `fn` with a body"
+
+@ cases.a-row-hole-is-not-in-an-effect
+entry = "main.taut"
+files."main.taut" = ```tauto
+extern { fn f(): i64 !? }
+```
+load_error = "`!?` (a row not written yet) is written only after the result of a `fn` with a body"
+
+@ cases.a-row-hole-in-a-struct-field-is-refused
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct S { g: () -> i64 !? }
+```
+load_error = "`!?` (a row not written yet) is written only after the result of a `fn` with a body"
+
+@ cases.check-fix-writes-the-row-of-the-body
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 !? { perform ask(1) }
+```
+fixes.applied = ["write `! {ask}`"]
+fixes.files."main.taut" = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {ask} { perform ask(1) }
+```
+
+@ cases.check-fix-takes-the-hole-away-from-a-pure-body
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(x: i64): i64 !? { x }
+```
+fixes.applied = ["remove `!?`"]
+fixes.files."main.taut" = ```tauto
+fn f(x: i64): i64 { x }
+```
+
+@ cases.check-fix-writes-the-rows-of-a-chain-in-one-run
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect ask(q: i64): i64
+fn g(): i64 !? { perform ask(1) }
+fn f(): i64 !? { g() }
+```
+fixes.applied = ["write `! {ask}`", "write `! {ask}`"]
+fixes.files."main.taut" = ```tauto
+effect ask(q: i64): i64
+fn g(): i64 ! {ask} { perform ask(1) }
+fn f(): i64 ! {ask} { g() }
+```
+
+@ cases.check-fix-writes-div-for-a-row-hole-that-calls-itself
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(n: i64): i64 !? { f(n) }
+```
+fixes.applied = ["write `! {div}`"]
+fixes.files."main.taut" = ```tauto
+fn f(n: i64): i64 ! {div} { f(n) }
+```
+
+@ cases.check-fix-writes-the-fixed-point-of-two-row-holes-that-call-each-other
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect ask(q: i64): i64
+fn f(n: i64): i64 !? { if n == 0 { perform ask(1) } else { g(n) } }
+fn g(n: i64): i64 !? { f(n) }
+```
+fixes.applied = ["write `! {ask, div}`", "write `! {ask, div}`"]
+fixes.files."main.taut" = ```tauto
+effect ask(q: i64): i64
+fn f(n: i64): i64 ! {ask, div} { if n == 0 { perform ask(1) } else { g(n) } }
+fn g(n: i64): i64 ! {ask, div} { f(n) }
+```
+
+@ cases.check-fix-lets-a-handler-in-a-cycle-take-away-what-it-answers
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect ask(q: i64): i64
+fn f(n: i64): i64 !? {
+  handle { g(n) } with {
+    ask(q), k => k(q)
+    return v => v
+  }
+}
+fn g(n: i64): i64 !? { if n == 0 { perform ask(1) } else { f(n) } }
+```
+fixes.applied = ["write `! {div}`", "write `! {ask, div}`"]
+fixes.files."main.taut" = ```tauto
+effect ask(q: i64): i64
+fn f(n: i64): i64 ! {div} {
+  handle { g(n) } with {
+    ask(q), k => k(q)
+    return v => v
+  }
+}
+fn g(n: i64): i64 ! {ask, div} { if n == 0 { perform ask(1) } else { f(n) } }
+```
+
+@ cases.check-fix-gives-up-when-the-row-cannot-be-followed
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(n: i64): i64 !? { f(n) + missing(n) }
+```
+fixes.applied = []
+
+@ cases.a-program-with-a-row-hole-does-not-run
+source = ```tauto
+fn g(): i64 !? { 1 }
+show(&g())
+```
+compile_errors.rust = "front: the row of `g` is `!?`: it is not written yet"
+compile_errors.javascript = "front: the row of `g` is `!?`: it is not written yet"
+
+@ cases.fmt-writes-the-hole-together
+source = ```tauto
+fn f(x: i64): i64 ! ? { x }
+```
+format = ```tauto
+fn f(x: i64): i64 !? { x }
+```
+
+@ cases.quick-fix-writes-the-row-of-the-body
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 !? { perform ask(1) }
+```
+
+@ cases.quick-fix-writes-the-row-of-the-body.row_hole_fixes[]
+at = "!?"
+fixed_sources = [```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {ask} { perform ask(1) }
+```]
+
+@ cases.quick-fix-takes-the-hole-away-from-a-pure-body
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(x: i64): i64 !? { x }
+```
+
+@ cases.quick-fix-takes-the-hole-away-from-a-pure-body.row_hole_fixes[]
+at = "!?"
+fixed_sources = [```tauto
+fn f(x: i64): i64 { x }
+```]
+
+@ cases.quick-fix-writes-div-for-a-row-hole-calling-itself
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(n: i64): i64 !? { f(n) }
+```
+
+@ cases.quick-fix-writes-div-for-a-row-hole-calling-itself.row_hole_fixes[]
+at = "!?"
+fixed_sources = [```tauto
+fn f(n: i64): i64 ! {div} { f(n) }
+```]
+
+@ cases.quick-fix-is-not-offered-when-the-row-cannot-be-followed
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(n: i64): i64 !? { f(n) + missing(n) }
+```
+
+@ cases.quick-fix-is-not-offered-when-the-row-cannot-be-followed.row_hole_fixes[]
+at = "!?"
+fixed_sources = []

@@ -65,3 +65,18 @@ fn words(text: &str) -> impl Iterator<Item = &str> {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
         .filter(|w| !w.is_empty())
 }
+
+#[cfg(test)]
+mod tests {
+    /// The runtime says the step limit in the words of `eval-step-limit`,
+    /// in each language it has.
+    #[test]
+    fn the_step_limit_is_said_as_the_toolchain_says_it() {
+        let runtime = include_str!("runtime.js");
+        let m = tauto_message::msg!("eval-step-limit");
+        for lang in ["en", "ja"] {
+            let text = tauto_messages::in_language(lang, || tauto_messages::text(&m)).unwrap();
+            assert!(runtime.contains(&format!("'{text}'")), "{lang}: {text}");
+        }
+    }
+}

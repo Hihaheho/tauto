@@ -12,14 +12,14 @@
 //! - Integer `/` is a type error; `div(a, b)` and `mod(a, b)` divide.
 //! - A `handle` gives the union of the types of its arms and of its `return`
 //!   arm (or of its body when there is none).
-//! - `budget(steps: n) { body }` has the body's type `T`; an `exceeded(info), k`
+//! - `perform budget(n, () => { body })` has the body's type `T`; an `exceeded(info), k`
 //!   arm gets `k: (T) -> H` and `info.more(m)`, `info.unbounded()` of type `H`,
 //!   `H` the handle's result type.
 //! - `show<A>(name: Text, value: A): Unit` is the host's operation, declared
 //!   everywhere.
 //!
 //! Kinds, borrows and resume quantities:
-//! every type has a [`Kind`]; a declaration may bound it (`affine struct
+//! every type has a [`Kind`]; a declaration may bound it (`struct(affine)
 //! File {}`), never loosen it. A function type carries its kind (`affine
 //! (A) -> B`, `shared` when none is written), a closure the join of what it
 //! captures, and a continuation the one its operation's [`Quant`] gives. A
@@ -31,6 +31,7 @@
 //! Not checked here: `Decimal` and `Float` arithmetic beyond `+ - * /`, and
 //! `budget`s whose `exceeded` escapes through a call.
 
+use crate::surface::CoerceLevel;
 use crate::surface::Name;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -53,134 +54,7 @@ use crate::surface::{
     SurfaceTerm, TermId, TermKind,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Width {
-    W32,
-    W64,
-    U8,
-    U32,
-    U64,
-    Nat,
-}
-
-impl Width {
-    pub fn fits(self, n: i128) -> bool {
-        match self {
-            Width::W32 => i32::try_from(n).is_ok(),
-            Width::W64 => i64::try_from(n).is_ok(),
-            Width::U8 => u8::try_from(n).is_ok(),
-            Width::U32 => u32::try_from(n).is_ok(),
-            Width::U64 => u64::try_from(n).is_ok(),
-            Width::Nat => n >= 0,
-        }
-    }
-}
-
-/// How freely a value may be copied and dropped: `copy ⊑ shared ⊑ affine ⊑
-/// linear`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Kind {
-    Copy,
-    Shared,
-    Affine,
-    Linear,
-}
-
-impl Kind {
-    pub fn join(self, other: Kind) -> Kind {
-        self.max(other)
-    }
-
-    /// Copied and dropped freely: `copy` or `shared`.
-    pub fn dup(self) -> bool {
-        self <= Kind::Shared
-    }
-
-    pub fn parse(word: &str) -> Option<Kind> {
-        Some(match word {
-            "copy" => Kind::Copy,
-            "shared" => Kind::Shared,
-            "affine" => Kind::Affine,
-            "linear" => Kind::Linear,
-            _ => return None,
-        })
-    }
-
-    /// `(k₁)->k₂`, the bound of a type constructor variable: what it takes
-    /// and what it makes.
-    pub fn parse_ctor(word: &str) -> Option<(Kind, Kind)> {
-        let rest = word.strip_prefix('(')?;
-        let (arg, result) = rest.split_once(")->")?;
-        Some((Kind::parse(arg)?, Kind::parse(result)?))
-    }
-
-    /// `self` may stand where `bound` is expected; the two duplicable kinds
-    /// differ only in their run-time cost.
-    pub fn fits(self, bound: Kind) -> bool {
-        self <= bound || (self.dup() && bound.dup())
-    }
-}
-
-impl fmt::Display for Kind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Kind::Copy => "copy",
-            Kind::Shared => "shared",
-            Kind::Affine => "affine",
-            Kind::Linear => "linear",
-        })
-    }
-}
-
-/// How many times an arm may call its continuation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Quant {
-    /// `resume 0`: the arm has no `k`.
-    Zero,
-    /// `resume <=1`, the default.
-    AtMostOne,
-    /// `resume 1`.
-    One,
-    /// `resume ω`.
-    Many,
-    /// `direct`: the arm continues with `k(e)` at the end of every path.
-    Direct,
-}
-
-impl Quant {
-    pub fn parse(written: &str) -> Option<Quant> {
-        Some(match written {
-            "0" => Quant::Zero,
-            "<=1" => Quant::AtMostOne,
-            "1" => Quant::One,
-            "ω" => Quant::Many,
-            "direct" => Quant::Direct,
-            _ => return None,
-        })
-    }
-
-    /// The kind of `k`: `<=1` an affine function, `1` a linear one, `ω` a
-    /// duplicable one.
-    pub fn continuation_kind(self) -> Kind {
-        match self {
-            Quant::Zero | Quant::AtMostOne => Kind::Affine,
-            Quant::One | Quant::Direct => Kind::Linear,
-            Quant::Many => Kind::Shared,
-        }
-    }
-}
-
-impl fmt::Display for Quant {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Quant::Zero => "0",
-            Quant::AtMostOne => "<=1",
-            Quant::One => "1",
-            Quant::Many => "ω",
-            Quant::Direct => "direct",
-        })
-    }
-}
+pub use tauto_surface::kinds::{Kind, Quant, Width};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Ty {
@@ -208,6 +82,12 @@ pub enum Ty {
     /// `&A` (`false`) or `&mut A` (`true`): a borrowed parameter, what
     /// `: &A` returns, a name `let &x` binds.
     Borrow(Box<Ty>, bool),
+    /// `&orig T` of a type with `struct &T`: the borrow of the owner, not
+    /// through `Lend`. Of another type it is `&T`.
+    Orig(Box<Ty>),
+    /// `&rc T`: a counted box of a `T`, shared by every copy. It is read
+    /// only through a shared borrow of the contents (`&orig T`, then `&T`).
+    Rc(Box<Ty>),
     Var(usize),
     /// `<A, B>(…) -> …`: a function that takes its type parameters at each
     /// call. Only the expansion makes one: the
@@ -222,8 +102,33 @@ pub enum Ty {
 impl Ty {
     pub fn unborrowed(&self) -> &Ty {
         match self {
-            Ty::Borrow(t, _) => t.unborrowed(),
+            Ty::Borrow(t, _) | Ty::Orig(t) => t.unborrowed(),
             t => t,
+        }
+    }
+}
+
+impl Ty {
+    /// How tight the written form of the type binds, from the loosest: an arrow, `|`, `×`, a
+    /// prefix (`@tag`, `&`) on one operand, and last what stands alone. A type is written in
+    /// parentheses where it stands in a place that takes a tighter one, as `@value (Text × u64)`
+    /// and not `@value Text × u64`, which reads as `(@value Text) × u64`.
+    fn written_binding(&self) -> u8 {
+        match self {
+            Ty::Fn(..) | Ty::Poly(..) => 0,
+            Ty::Union(_) => 1,
+            Ty::Named(n, args) if is_pair_name(n) && args.len() == 2 => 2,
+            Ty::Tagged(..) | Ty::Borrow(..) | Ty::Orig(_) | Ty::Rc(_) => 3,
+            _ => 4,
+        }
+    }
+
+    /// The written form of the type where it takes a form that binds at least `least`.
+    fn write_at(&self, f: &mut fmt::Formatter<'_>, least: u8) -> fmt::Result {
+        if self.written_binding() < least {
+            write!(f, "({self})")
+        } else {
+            write!(f, "{self}")
         }
     }
 }
@@ -240,11 +145,15 @@ impl fmt::Display for Ty {
             Ok(())
         };
         match self {
+            Ty::Int(Width::W8) => write!(f, "i8"),
+            Ty::Int(Width::W16) => write!(f, "i16"),
+            Ty::Int(Width::U16) => write!(f, "u16"),
             Ty::Int(Width::W32) => write!(f, "i32"),
             Ty::Int(Width::W64) => write!(f, "i64"),
             Ty::Int(Width::U8) => write!(f, "u8"),
             Ty::Int(Width::U32) => write!(f, "u32"),
             Ty::Int(Width::U64) => write!(f, "u64"),
+            Ty::Int(Width::Host) => write!(f, "uhost"),
             Ty::Int(Width::Nat) => write!(f, "nat"),
             Ty::Bool => write!(f, "Bool"),
             Ty::Text => write!(f, "Text"),
@@ -261,7 +170,15 @@ impl fmt::Display for Ty {
                 list(f, ps, ", ")?;
                 write!(f, ") -> {r}")
             }
-            Ty::Union(ts) => list(f, ts, " | "),
+            Ty::Union(ts) => {
+                for (i, t) in ts.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " | ")?;
+                    }
+                    t.write_at(f, 2)?;
+                }
+                Ok(())
+            }
             // `Pair(A, B)` is `A × B`, and `Pair(A, Pair(B, C))` is `A × B × C`.
             Ty::Named(n, args) if is_pair_name(n) && args.len() == 2 => {
                 let mut members = vec![&args[0]];
@@ -278,13 +195,7 @@ impl fmt::Display for Ty {
                     if i > 0 {
                         write!(f, " × ")?;
                     }
-                    match t {
-                        Ty::Union(_) | Ty::Fn(..) => write!(f, "({t})")?,
-                        Ty::Named(n, args) if is_pair_name(n) && args.len() == 2 => {
-                            write!(f, "({t})")?
-                        }
-                        _ => write!(f, "{t}")?,
-                    }
+                    t.write_at(f, 3)?;
                 }
                 Ok(())
             }
@@ -292,7 +203,7 @@ impl fmt::Display for Ty {
                 for tag in tags {
                     write!(f, "@{tag} ")?;
                 }
-                write!(f, "{t}")
+                t.write_at(f, 3)
             }
             // A record without a name, `@record.a.b(A, B)`, as it is written: `{ a: A, b: B }`.
             Ty::Named(n, args)
@@ -316,14 +227,27 @@ impl fmt::Display for Ty {
             }
             Ty::Param(n, _) => write!(f, "{n}"),
             Ty::Info(t) => write!(f, "Info({t})"),
-            Ty::Borrow(t, false) => write!(f, "&{t}"),
-            Ty::Borrow(t, true) => write!(f, "&mut {t}"),
+            Ty::Borrow(t, mutable) => {
+                write!(f, "{}", if *mutable { "&mut " } else { "&" })?;
+                t.write_at(f, 3)
+            }
+            Ty::Orig(t) => {
+                write!(f, "&orig ")?;
+                t.write_at(f, 3)
+            }
+            Ty::Rc(t) => {
+                write!(f, "&rc ")?;
+                t.write_at(f, 3)
+            }
             Ty::Var(_) => write!(f, "_"),
             Ty::Poly(gs, t) => {
                 let names: Vec<&str> = gs.iter().map(|(n, _)| n.name()).collect();
                 write!(f, "<{}>{t}", names.join(", "))
             }
-            Ty::App(h, x) => write!(f, "{h}({x})"),
+            Ty::App(h, x) => {
+                h.write_at(f, 4)?;
+                write!(f, "({x})")
+            }
         }
     }
 }
@@ -355,10 +279,12 @@ pub struct Data {
     pub base: Kind,
     pub holds: Vec<Name>,
     /// Declared by the prelude and implemented by the evaluator (`Buf`,
-    /// `Vec`, `HashMap`): its clone copies what it holds.
+    /// `Vec`): its clone copies what it holds.
     pub builtin: bool,
-    /// A `view struct`: an extern type that holds a borrow.
+    /// An extern `type(borrow)`: an opaque type that holds a borrow.
     pub view: bool,
+    /// The struct's `coerce` field, by its index, and the level written.
+    pub coerce: Option<(usize, crate::surface::CoerceLevel)>,
 }
 
 #[derive(Debug, Clone)]
@@ -375,9 +301,56 @@ pub struct Datas {
     pub ctors: HashMap<Name, (Name, usize)>,
     /// All owners of an ambiguous unqualified constructor name.
     pub ambiguous_ctors: HashMap<Name, Vec<(Name, usize)>>,
+    /// `T` to its `struct &T`.
+    pub lent_of: HashMap<Name, Name>,
 }
 
 impl Datas {
+    /// `&T` as the struct `struct &T` declares, for a type that has one.
+    pub fn lent_struct(&self, t: &Ty) -> Option<Ty> {
+        let Ty::Borrow(inner, false) = t else {
+            return None;
+        };
+        let Ty::Named(n, args) = &**inner else {
+            return None;
+        };
+        let lent = self.lent_of.get(n)?;
+        Some(Ty::Named(lent.clone(), args.clone()))
+    }
+
+    /// The constructor `IntOfNat` when `t` is std's `Int`: the type with no
+    /// generics and the two constructors `IntOfNat(Nat)` and `IntNegSucc(Nat)`.
+    /// A numeral where an `Int` is expected is `IntOfNat` of it, as the kernel
+    /// reads it (`3` is `IntOfNat(3)`), so the executable code reads a numeral
+    /// as the proofs do and the backends build it with this constructor.
+    pub fn int_of_nat(&self, t: &Ty) -> Option<&Name> {
+        let Ty::Named(name, args) = t else {
+            return None;
+        };
+        let decl = self.decls.get(name)?;
+        // The executable code holds a `Nat` as a `nat`.
+        let nat = |c: &DataCtor| match c.fields.as_slice() {
+            [(_, Ty::Int(Width::Nat))] => true,
+            [(_, Ty::Named(n, a))] => a.is_empty() && tauto_surface::bindings::is_library(n, "Nat"),
+            _ => false,
+        };
+        match decl.constructors.as_slice() {
+            [of_nat, neg_succ]
+                if args.is_empty()
+                    && decl.generics.is_empty()
+                    && !decl.is_struct
+                    && name.as_str() == "Int"
+                    && of_nat.name.as_str().ends_with("IntOfNat")
+                    && neg_succ.name.as_str().ends_with("IntNegSucc")
+                    && nat(of_nat)
+                    && nat(neg_succ) =>
+            {
+                Some(&of_nat.name)
+            }
+            _ => None,
+        }
+    }
+
     /// Resolve a constructor by its owning result type, never declaration order.
     pub fn resolve_ctor(
         &self,
@@ -524,31 +497,275 @@ impl Datas {
         }
     }
 
+    /// Marks the declarations that hold a borrow: a field holds a borrow, a
+    /// declaration that holds one, or a type applied to
+    /// them. Declarations refer to each other, so this runs to a fixpoint.
+    pub fn find_views(&mut self) {
+        loop {
+            let found: Vec<Name> = self
+                .decls
+                .values()
+                .filter(|d| {
+                    !d.view
+                        && d.constructors
+                            .iter()
+                            .flat_map(|c| c.fields.iter())
+                            .any(|(_, t)| self.field_holds_view(t))
+                })
+                .map(|d| d.name.clone())
+                .collect();
+            if found.is_empty() {
+                return;
+            }
+            for n in found {
+                if let Some(d) = self.decls.get_mut(&n) {
+                    d.view = true;
+                }
+            }
+        }
+    }
+
+    fn field_holds_view(&self, t: &Ty) -> bool {
+        match t {
+            Ty::Borrow(..) | Ty::Orig(_) => true,
+            Ty::Named(n, args) => {
+                self.decls.get(n).is_some_and(|d| d.view)
+                    || args.iter().any(|a| self.field_holds_view(a))
+            }
+            _ => false,
+        }
+    }
+
     /// Whether a type holds a borrow of something that is not duplicable (a
     /// shared borrow of a duplicable value is the value): `Some(true)` when
     /// the borrow is `&mut`.
-    pub fn view_borrow(&self, t: &Ty) -> Option<bool> {
-        match t {
-            Ty::Borrow(inner, m) => (*m || !self.kind(inner).dup()).then_some(*m),
-            Ty::Named(n, args) => {
-                if self.decls.get(n).is_some_and(|d| d.view) {
-                    return Some(true);
-                }
-                if ["Option", "Result", "Pair"]
+    /// Whether a value of `t` holds an opaque view (`type(affine, borrow)
+    /// Guard` of an `extern`), itself or in a field or a type argument: its
+    /// drop may run code that uses what it borrows, so `lin` keeps it live
+    /// to the end of its scope. A borrow of one (`&Guard`) drops nothing.
+    pub fn holds_opaque_view(&self, t: &Ty) -> bool {
+        self.holds_opaque_view_in(t, &mut Vec::new())
+    }
+
+    fn holds_opaque_view_in(&self, t: &Ty, visiting: &mut Vec<Ty>) -> bool {
+        let Ty::Named(n, args) = t else {
+            return false;
+        };
+        if visiting.contains(t) {
+            return false;
+        }
+        visiting.push(t.clone());
+        let found = match self.decls.get(n).filter(|d| d.view) {
+            Some(d) => {
+                let map = d.instance(args);
+                let fields: Vec<Ty> = d
+                    .constructors
                     .iter()
-                    .any(|native| tauto_surface::bindings::is_library(n, native))
-                {
+                    .flat_map(|c| c.fields.iter().map(|(_, f)| substitute(f, &map)))
+                    .collect();
+                fields.is_empty()
+                    || fields
+                        .iter()
+                        .any(|f| self.holds_opaque_view_in(f, visiting))
+            }
+            None => args.iter().any(|a| self.holds_opaque_view_in(a, visiting)),
+        };
+        visiting.pop();
+        found
+    }
+
+    pub fn view_borrow(&self, t: &Ty) -> Option<bool> {
+        self.view_borrow_in(t, &mut Vec::new())
+    }
+
+    /// `view_borrow` with the view types being unfolded: a recursive view
+    /// (`enum Tree { Leaf, Branch(Placed(Tree), u64) }`) holds what its
+    /// fields hold apart from itself, so a type met again adds nothing (the
+    /// least fixed point).
+    fn view_borrow_in(&self, t: &Ty, visiting: &mut Vec<Ty>) -> Option<bool> {
+        match t {
+            // A `&A` is a borrow even of a duplicable `A`: it is copied
+            // only where an `A` is wanted (`&A → A`).
+            Ty::Borrow(_, m) => Some(*m),
+            Ty::Orig(_) => Some(false),
+            Ty::Named(n, args) => {
+                if let Some(d) = self.decls.get(n).filter(|d| d.view) {
+                    // An opaque view may hold anything; a view struct holds
+                    // what its fields do.
+                    let fields: Vec<&Ty> = d
+                        .constructors
+                        .iter()
+                        .flat_map(|c| c.fields.iter().map(|(_, t)| t))
+                        .collect();
+                    if fields.is_empty() {
+                        return Some(true);
+                    }
+                    // Borrows of duplicable values only: the value is the
+                    // values it borrows (`&A ≡ A`).
+                    if visiting.contains(t) {
+                        return None;
+                    }
+                    visiting.push(t.clone());
+                    let map = d.instance(args);
                     let mut found = None;
-                    for a in args {
-                        if let Some(m) = self.view_borrow(a) {
+                    for f in fields {
+                        if let Some(m) = self.view_borrow_in(&substitute(f, &map), visiting) {
                             found = Some(found.unwrap_or(false) || m);
                         }
                     }
+                    visiting.pop();
                     return found;
                 }
-                None
+                // `D(T₁, …)` holds what its type arguments hold.
+                let mut found = None;
+                for a in args {
+                    if let Some(m) = self.view_borrow_in(a, visiting) {
+                        found = Some(found.unwrap_or(false) || m);
+                    }
+                }
+                found
             }
             _ => None,
+        }
+    }
+
+    /// Whether every borrow a type holds is a shared `&` of a duplicable
+    /// value: such a holder is copied where its value is wanted.
+    pub fn view_value_dup(&self, t: &Ty) -> bool {
+        self.nondup_borrow_in(t, &mut Vec::new()).is_none()
+    }
+
+    fn nondup_borrow_in(&self, t: &Ty, visiting: &mut Vec<Ty>) -> Option<bool> {
+        match t {
+            Ty::Borrow(inner, m) => (*m || !self.kind(inner).dup()).then_some(*m),
+            Ty::Orig(inner) => (!self.kind(inner).dup()).then_some(false),
+            Ty::Named(n, args) => {
+                if let Some(d) = self.decls.get(n).filter(|d| d.view) {
+                    // An opaque view may hold anything; a view struct holds
+                    // what its fields do.
+                    let fields: Vec<&Ty> = d
+                        .constructors
+                        .iter()
+                        .flat_map(|c| c.fields.iter().map(|(_, t)| t))
+                        .collect();
+                    if fields.is_empty() {
+                        return Some(true);
+                    }
+                    // Borrows of duplicable values only: the value is the
+                    // values it borrows (`&A ≡ A`).
+                    if visiting.contains(t) {
+                        return None;
+                    }
+                    visiting.push(t.clone());
+                    let map = d.instance(args);
+                    let mut found = None;
+                    for f in fields {
+                        if let Some(m) = self.nondup_borrow_in(&substitute(f, &map), visiting) {
+                            found = Some(found.unwrap_or(false) || m);
+                        }
+                    }
+                    visiting.pop();
+                    return found;
+                }
+                // `D(T₁, …)` holds what its type arguments hold.
+                let mut found = None;
+                for a in args {
+                    if let Some(m) = self.nondup_borrow_in(a, visiting) {
+                        found = Some(found.unwrap_or(false) || m);
+                    }
+                }
+                found
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a value of the type may hold a lent function: a `&` or `&mut`
+    /// of a function type, in a field of a view struct or in a type argument
+    /// (`Some(true)` when `&mut`). The function behind the borrow may be a
+    /// closure that borrows, whatever kind its type has, so the copy that
+    /// `&A ≡ A` allows is for `lin.rs` to decide from where the value came.
+    pub fn lent_function(&self, t: &Ty) -> Option<bool> {
+        self.lent_function_in(t, &mut Vec::new())
+    }
+
+    fn lent_function_in(&self, t: &Ty, visiting: &mut Vec<Ty>) -> Option<bool> {
+        match t {
+            Ty::Borrow(inner, m) if matches!(inner.unborrowed(), Ty::Fn(..)) => Some(*m),
+            Ty::Borrow(inner, _) => self.lent_function_in(inner, visiting),
+            Ty::Named(n, args) => {
+                let mut found = None;
+                if let Some(d) = self.decls.get(n).filter(|d| d.view) {
+                    if visiting.contains(t) {
+                        return None;
+                    }
+                    visiting.push(t.clone());
+                    let map = d.instance(args);
+                    for c in &d.constructors {
+                        for (_, f) in &c.fields {
+                            if let Some(m) = self.lent_function_in(&substitute(f, &map), visiting) {
+                                found = Some(found.unwrap_or(false) || m);
+                            }
+                        }
+                    }
+                    visiting.pop();
+                }
+                for a in args {
+                    if let Some(m) = self.lent_function_in(a, visiting) {
+                        found = Some(found.unwrap_or(false) || m);
+                    }
+                }
+                found
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a value of `t` may hold a function, or a type the check does
+    /// not read through (a variable, a type constructor not known yet): a
+    /// function type in `t`, in a field of a declaration it names, or in a
+    /// type argument. A type parameter holds none of its own.
+    pub fn may_hold_function(&self, t: &Ty) -> bool {
+        self.may_hold_function_in(t, &mut Vec::new())
+    }
+
+    fn may_hold_function_in(&self, t: &Ty, visiting: &mut Vec<Ty>) -> bool {
+        match t {
+            Ty::Fn(..) | Ty::Var(_) | Ty::Poly(..) | Ty::App(..) => true,
+            Ty::Borrow(inner, _) | Ty::Tagged(_, inner) | Ty::Info(inner) | Ty::Rc(inner) => {
+                self.may_hold_function_in(inner, visiting)
+            }
+            Ty::Union(ts) => ts.iter().any(|t| self.may_hold_function_in(t, visiting)),
+            Ty::Named(n, args) => {
+                if args.iter().any(|a| self.may_hold_function_in(a, visiting)) {
+                    return true;
+                }
+                let Some(d) = self.decls.get(n) else {
+                    return false;
+                };
+                // By the declaration, not the instance: a field that names
+                // the declaration again at other arguments (`Nest(Pair(A,
+                // A))`) would make a new instance at every step. Its
+                // arguments were read above, and a parameter holds none.
+                //
+                // A declaration is read once in a whole query: its arguments
+                // hold no function here, so what it holds does not depend on
+                // them, and an answer of yes ends the query. Taking it off
+                // `visiting` again would read a declaration once for every
+                // path to it, exponentially many in a deep program.
+                let key = Ty::Named(n.clone(), Vec::new());
+                if visiting.contains(&key) {
+                    return false;
+                }
+                visiting.push(key);
+                let map = d.instance(args);
+                d.constructors.iter().any(|c| {
+                    c.fields
+                        .iter()
+                        .any(|(_, f)| self.may_hold_function_in(&substitute(f, &map), visiting))
+                })
+            }
+            _ => false,
         }
     }
 
@@ -557,7 +774,7 @@ impl Datas {
         self.kind_in(t)
     }
 
-    /// Whether `class` (a structural one: `PartialEq`, `DecEq`, `Hash`) holds
+    /// Whether `class` (a structural one: `PartialEq`, `DecEq`) holds
     /// of `t`, given the `(class, parameter)` pairs that are assumed.
     pub fn structural(&self, class: &str, t: &Ty, assume: &[(Name, Param)]) -> bool {
         self.structural_in(class, t, assume, &mut Vec::new())
@@ -581,17 +798,22 @@ impl Datas {
             Ty::Union(ts) => ts
                 .iter()
                 .all(|t| self.structural_in(class, t, assume, visiting)),
-            Ty::Tagged(_, t) | Ty::Borrow(t, _) => self.structural_in(class, t, assume, visiting),
+            Ty::Tagged(_, t) | Ty::Borrow(t, _) | Ty::Orig(t) | Ty::Rc(t) => {
+                self.structural_in(class, t, assume, visiting)
+            }
             Ty::Param(n, _) => assume.iter().any(|(c, g)| {
                 g == n
                     && (tauto_surface::bindings::is_library(c, class)
                         || (class == "PartialEq"
                             && tauto_surface::bindings::is_library(&c, "DecEq")))
             }),
-            // Not known yet: checked when it is.
-            Ty::Var(_) => true,
+            // The caller settles every variable first (`Checker::settled`):
+            // an open one is never taken to have the class.
+            Ty::Var(_) => false,
             Ty::Named(n, args) => {
-                if tauto_surface::bindings::is_library(&n, "Buf") {
+                // `Buf` is the prelude's text buffer, compared as its text
+                // (`docs/design/classes.md`「Structural predicates」).
+                if tauto_surface::bindings::is_library(&n, "Buf") && args.is_empty() {
                     return true;
                 }
                 let Some(d) = self.decls.get(n) else {
@@ -640,7 +862,9 @@ impl Datas {
                 _ => Kind::Copy,
             },
             Ty::Union(ts) => ts.iter().fold(Kind::Copy, |k, t| k.join(self.kind_in(t))),
-            Ty::Tagged(_, t) | Ty::Borrow(t, _) => self.kind_in(t),
+            Ty::Tagged(_, t) | Ty::Borrow(t, _) | Ty::Orig(t) => self.kind_in(t),
+            // Every copy shares the box, whatever the contents' kind.
+            Ty::Rc(_) => Kind::Shared,
             Ty::Param(_, k) => *k,
             Ty::Info(_) => Kind::Affine,
             // Not known yet: nothing is said of it.
@@ -670,7 +894,8 @@ impl Datas {
             Ty::Union(ts) => ts
                 .iter()
                 .fold((Kind::Copy, Kind::Copy), |k, t| join(k, self.kind_range(t))),
-            Ty::Tagged(_, t) | Ty::Borrow(t, _) => self.kind_range(t),
+            Ty::Tagged(_, t) | Ty::Borrow(t, _) | Ty::Orig(t) => self.kind_range(t),
+            Ty::Rc(_) => (Kind::Shared, Kind::Shared),
             Ty::Named(n, args) => match self.decls.get(n) {
                 None => (Kind::Shared, Kind::Shared),
                 Some(d) => d
@@ -717,8 +942,12 @@ impl Datas {
                 let d = &self.decls[n];
                 let mut base = d.base;
                 let mut holds = d.holds.clone();
+                // A `struct &T` is a borrow: a shared borrow it
+                // holds is copied as a borrow, whatever its contents' kind.
+                let lent = self.lent_of.values().any(|l| l == n);
                 for c in &d.constructors {
                     for (_, f) in &c.fields {
+                        let f = if lent { &unborrow_shared(f) } else { f };
                         base = base.join(self.field_kind(f, &d.parameters(), &mut holds));
                     }
                 }
@@ -755,7 +984,10 @@ impl Datas {
             Ty::Union(ts) => ts.iter().fold(Kind::Copy, |k, t| {
                 k.join(self.field_kind(t, generics, holds))
             }),
-            Ty::Tagged(_, t) | Ty::Borrow(t, _) => self.field_kind(t, generics, holds),
+            Ty::Tagged(_, t) | Ty::Borrow(t, _) | Ty::Orig(t) => {
+                self.field_kind(t, generics, holds)
+            }
+            Ty::Rc(_) => Kind::Shared,
             Ty::Named(n, args) => match self.decls.get(n) {
                 None => Kind::Shared,
                 Some(d) => d
@@ -774,17 +1006,17 @@ impl Datas {
     /// Why `t` has no `clone`, when it has none: a `linear` type, an opaque
     /// one (declared `affine` and holding nothing affine of its own), or a
     /// function or `Info` that is not duplicable.
-    pub fn no_clone(&self, t: &Ty) -> Option<String> {
+    pub fn no_clone(&self, t: &Ty) -> Option<Message> {
         self.no_clone_in(t, &mut Vec::new())
     }
 
-    fn no_clone_in(&self, t: &Ty, visiting: &mut Vec<Ty>) -> Option<String> {
+    fn no_clone_in(&self, t: &Ty, visiting: &mut Vec<Ty>) -> Option<Message> {
         if visiting.contains(t) {
             return None;
         }
         let k = self.kind(t);
         if k == Kind::Linear {
-            return Some(format!("{t} is linear"));
+            return Some(msg!("nibcheck-type-is-linear", ty = t.to_string()));
         }
         if k.dup() {
             return None;
@@ -804,7 +1036,7 @@ impl Datas {
                         .collect();
                     if d.declared == Some(Kind::Affine) && fields.iter().all(|f| self.kind(f).dup())
                     {
-                        Some(format!("{t} has no clone"))
+                        Some(msg!("nibcheck-type-has-no-clone", ty = t.to_string()))
                     } else {
                         fields.iter().find_map(|f| self.no_clone_in(f, visiting))
                     }
@@ -814,8 +1046,10 @@ impl Datas {
             }
             Ty::Union(ts) => ts.iter().find_map(|t| self.no_clone_in(t, visiting)),
             Ty::Tagged(_, t) => self.no_clone_in(t, visiting),
-            Ty::Param(..) => Some(format!("{t} has no clone")),
-            _ => Some(format!("{t} has no clone")),
+            // A text is copied by value, whatever its kind: `clone(&t)` always has one.
+            Ty::Text => None,
+            Ty::Param(..) => Some(msg!("nibcheck-type-has-no-clone", ty = t.to_string())),
+            _ => Some(msg!("nibcheck-type-has-no-clone", ty = t.to_string())),
         }
     }
 
@@ -897,7 +1131,7 @@ impl Data {
 /// What the checker found: the errors, the width of every integer
 /// operation, keyed by the operation's identity, for the evaluator, and the
 /// types `lin.rs` reads.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct TypeReport {
     pub errors: Vec<TypeError>,
     pub widths: HashMap<TermId, Width>,
@@ -938,6 +1172,9 @@ pub struct TypeReport {
     /// members (`A × B <: A`), with the type it is taken to. Taking one twice
     /// gives the same value.
     pub product_fits: HashMap<Span, Ty>,
+    /// Each `(e: T)`, by its identity, with the `T` written: a picked member
+    /// `(p: @a T)` is a `T`, but which member it picks is `@a T`.
+    pub ascribed: HashMap<TermId, Ty>,
     /// The `(e: T)` whose `e` is a `Pair` (nested to the right, as `A × B`
     /// reads in the prelude) and whose `T` takes some of its members: the
     /// members taken, by their place in the pair, in the order `T` writes
@@ -948,12 +1185,37 @@ pub struct TypeReport {
     /// the body is: the arms before them take every value they would. A
     /// backend need not write them.
     pub redundant_arms: HashMap<TermId, Span>,
+    /// The terms, by their spans, that are read through `coerce` fields: the
+    /// struct and the field of each step, outermost first. `w` read as `T`
+    /// is `w.W::value` (`&w` is `&w.W::value`), and the base of `w.x` is
+    /// read so too. The coercion expansion writes them as fields.
+    pub coercions: HashMap<Span, Vec<(Name, String)>>,
+    /// The fields written with their struct's name, `w.Placed::at`, by the
+    /// span of the field term, with the field's own name.
+    pub qualified_fields: HashMap<Span, String>,
+    /// The struct whose field each field term reads, by the span of the
+    /// term: the type the value has, past its `coerce` fields. Visibility
+    /// asks it where a field's name alone does not tell its type
+    /// (`docs/design/visibility.md`).
+    pub field_owners: HashMap<Span, Name>,
+    /// The coercions that give the value itself (`coerce(owned)`, `W` as
+    /// `T`), which the expansion takes apart rather than reads a field of.
+    pub coercion_moves: HashSet<Span>,
+    /// Where a `&T` is given as `T` (`Lend::owned`), and where a `&orig T`
+    /// is given as `&T` (`Lend::lend`), for the lend expansion.
+    pub lent_copies: HashSet<Span>,
+    pub orig_lends: HashSet<Span>,
+    /// Where a `&rc T` is read as a borrow of its contents, and where a
+    /// value is moved into a new `&rc T` box.
+    pub rc_reads: HashSet<Span>,
+    pub rc_boxes: HashSet<Span>,
+    pub rc_copies: HashSet<Span>,
     /// Successful nominal projections, sealed to their checked source.
     nominal_facts: Option<NominalFacts>,
     operation_facts: Option<OperationFacts>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct NominalFacts {
     program: Program,
     occurrences: Vec<TermId>,
@@ -974,11 +1236,15 @@ fn value_occurrences(program: &Program) -> Vec<TermId> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ev {
-    /// The `where` of the function the use is in: the class and the generic.
-    Assume(Name, Param),
+    /// The `where` of the function the use is in: the class and every generic
+    /// it constrains (`Convert(A, B)` → `[A, B]`).
+    Assume(Name, Vec<Param>),
     /// An instance of the class for the type constructor, the types its
     /// generics were matched to, and the evidence for its `where`.
     Inst(Name, Name, Vec<Ty>, Vec<Ev>),
+    /// `Debug` of a union: the evidence for each member, which a `match`
+    /// with a typed arm for each member takes apart.
+    Union(Name, Vec<(Ty, Ev)>),
     /// A structural predicate: no run-time value.
     Structural,
     /// Not found: an error was reported.
@@ -1073,6 +1339,48 @@ impl TypeReport {
             .or_else(|| self.local_schemes.get(name))
     }
 
+    /// The effect `effect` of the row of a call of `callee` as the program
+    /// would write it at this use: `fail(E)` of `raise<T, E>` with `E` taken as
+    /// `Text` is `fail(Text)`. `None` when the effect names no type argument
+    /// of the callee.
+    pub fn effect_at_use(&self, callee: &Name, at: TermId, effect: &str) -> Option<String> {
+        let split = effect.find(['@', '('])?;
+        let (head, arguments) = effect.split_at(split);
+        let scheme = self.scheme(callee)?;
+        let inst = self.instantiations.get(&at)?;
+        let mut out = String::new();
+        let mut word = String::new();
+        let mut changed = false;
+        let mut flush = |word: &mut String, out: &mut String, changed: &mut bool| {
+            if word.is_empty() {
+                return;
+            }
+            let found = scheme
+                .generics
+                .iter()
+                .find(|(p, _)| p.name() == word.as_str())
+                .and_then(|(p, _)| inst.get(p.id()));
+            match found {
+                Some(ty) => {
+                    out.push_str(&ty.to_string());
+                    *changed = true;
+                }
+                None => out.push_str(word),
+            }
+            word.clear();
+        };
+        for c in arguments.chars() {
+            if c.is_alphanumeric() || c == '_' {
+                word.push(c);
+            } else {
+                flush(&mut word, &mut out, &mut changed);
+                out.push(c);
+            }
+        }
+        flush(&mut word, &mut out, &mut changed);
+        changed.then(|| format!("{head}{out}"))
+    }
+
     /// Adds what the prelude's report knows of its own functions.
     pub fn with_prelude(self) -> Self {
         self.with_library_report(prelude_report())
@@ -1097,6 +1405,8 @@ impl TypeReport {
         self.widths.extend(lib.widths.iter().map(|(k, v)| (*k, *v)));
         self.product_fits
             .extend(lib.product_fits.iter().map(|(k, v)| (*k, v.clone())));
+        self.ascribed
+            .extend(lib.ascribed.iter().map(|(k, v)| (*k, v.clone())));
         self
     }
 
@@ -1140,19 +1450,14 @@ pub fn check_program(program: &Program) -> TypeReport {
         }
         return c.finish();
     }
+    let inherited = tauto_surface::surface::superclasses::expanded(program);
+    let program = inherited.as_ref();
     let mut report = check_program_in(program, prelude_for(program));
-    // A program still using a class did not expand: what the class-aware
-    // check finds kept it from expanding, and the rest (`Ord is not defined`)
-    // follows from that.
-    if !report.errors.is_empty() {
-        let found = expansion_errors(program);
-        if !found.is_empty() {
-            let mut c = Checker::default();
-            for e in found {
-                c.error(e.message, e.span);
-            }
-            return c.finish();
-        }
+    // A program still using a class did not expand, and the expanded prelude
+    // has no classes (`Ord is not defined`): the program is checked against
+    // the prelude as written, with its classes, and that is the report.
+    if !report.errors.is_empty() && expand::uses_classes(program) {
+        report = check_program_in(program, prelude_source_for(program));
     }
     report.seal_nominal_owners(program);
     report
@@ -1182,6 +1487,8 @@ pub(crate) fn check_program_rows_as_types(program: &Program, prelude: &Program) 
     report
 }
 
+const NOT_SUPPORTED_YET: &str = "nibcheck-not-supported-yet";
+
 /// The report as text, for `totes/nibcheck` to write the same: the errors in
 /// order, the top-level lets, and then the locals, terms, widths, quantities,
 /// declarations and constructors, each sorted. A type is written with
@@ -1190,10 +1497,12 @@ pub(crate) fn check_program_rows_as_types(program: &Program, prelude: &Program) 
 pub fn dump_types(report: &TypeReport) -> String {
     let mut out = String::new();
     for e in &report.errors {
-        let mut message = e.message.to_string();
-        if let Some(rest) = message.clone().strip_prefix("not supported yet: ") {
-            let name = rest.split(['(', ' ']).next().unwrap_or("");
-            message = format!("not supported yet: {name}");
+        let mut message = e.message.clone();
+        if let (NOT_SUPPORTED_YET, Some(tauto_message::Value::Text(what))) =
+            (&*message.id, message.get("what"))
+        {
+            let name = what.split(['(', ' ']).next().unwrap_or("");
+            message = msg!(NOT_SUPPORTED_YET, what = name.to_string());
         }
         out.push_str(&format!(
             "error {} {} {message}\n",
@@ -1243,11 +1552,12 @@ pub fn dump_types(report: &TypeReport) -> String {
             })
             .collect();
         out.push_str(&format!(
-            "data {} {declared} {} {} {} {} {}\n",
+            "data {} {declared} {} {} {} {} {} {}\n",
             d.name,
             d.recursive,
             d.is_struct,
             d.builtin,
+            d.view,
             d.generics
                 .iter()
                 .map(ToString::to_string)
@@ -1289,10 +1599,28 @@ pub fn dump_ty(t: &Ty) -> String {
             let tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
             format!("Tagged([{}],{})", tags.join(","), dump_ty(t))
         }
+        // A product is shown as one, its members in order: the checker
+        // holds `A × B` as the prelude's `Pair`, which only the kernel
+        // reads (`docs/design/program-data.md`), and a last member that is
+        // a product is the rest of it (`A × (B × C)` is `A × B × C`).
+        Ty::Named(..) if is_pair_ty(t) => {
+            let mut members = Vec::new();
+            let mut rest = t;
+            while let Ty::Named(_, args) = rest
+                && is_pair_ty(rest)
+            {
+                members.push(args[0].clone());
+                rest = &args[1];
+            }
+            members.push(rest.clone());
+            format!("Product({})", list(&members))
+        }
         Ty::Named(n, args) => format!("Named({n},{})", list(args)),
         Ty::Param(n, k) => format!("Param({n},{k})"),
         Ty::Info(t) => format!("Info({})", dump_ty(t)),
         Ty::Borrow(t, m) => format!("Borrow({},{})", dump_ty(t), if *m { "mut" } else { "ref" }),
+        Ty::Orig(t) => format!("Orig({})", dump_ty(t)),
+        Ty::Rc(t) => format!("Rc({})", dump_ty(t)),
         Ty::Var(v) => format!("Var({v})"),
         Ty::Poly(gs, t) => {
             let names: Vec<String> = gs.iter().map(|(n, k)| format!("{n}:{k}")).collect();
@@ -1302,10 +1630,58 @@ pub fn dump_ty(t: &Ty) -> String {
     }
 }
 
-/// The declarations every program sees before its own: `std/prelude/Std.taut`
+/// The declarations every program sees before its own: `std/prelude/std.taut`
 /// and the affine standard library. A program's own
 /// declaration of a name hides the prelude's.
 static PRELUDE: OnceLock<Program> = OnceLock::new();
+/// [`PRELUDE`] read with the library's references ([`prelude_for`]).
+static PRELUDE_RESOLVED: OnceLock<Program> = OnceLock::new();
+/// The prelude as written ([`prelude_source`]).
+static PRELUDE_SOURCE: OnceLock<Program> = OnceLock::new();
+/// [`PRELUDE_SOURCE`] read with the library's references.
+static PRELUDE_SOURCE_RESOLVED: OnceLock<Program> = OnceLock::new();
+
+/// Which of the preludes this module keeps for the life of the process
+/// `prelude` is, by address: what is computed of one of them alone can be
+/// kept with it, since it never changes. Any other program (the prelude
+/// checked against itself while it is made, a caller's own) is `None`.
+/// Whether what the check computes once and reuses ([`kept_prelude`]) is
+/// computed again at each use and compared with what was kept, stopping on
+/// any difference: on with `TAUTO_VERIFY_REUSE=1` in the environment or
+/// [`set_verify_reuse`]. A run with it on gives the same results as one
+/// without, only slower, so a test suite can show that the reuse changes
+/// nothing.
+pub fn verify_reuse() -> bool {
+    use std::sync::atomic::Ordering;
+    match VERIFY_REUSE.load(Ordering::Relaxed) {
+        0 => {
+            let on =
+                std::env::var_os("TAUTO_VERIFY_REUSE").is_some_and(|v| v != "0" && !v.is_empty());
+            VERIFY_REUSE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
+            on
+        }
+        v => v == 2,
+    }
+}
+
+/// Turns [`verify_reuse`] on or off for the process, whatever the environment says.
+pub fn set_verify_reuse(on: bool) {
+    VERIFY_REUSE.store(if on { 2 } else { 1 }, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 0: not read yet; 1: off; 2: on.
+static VERIFY_REUSE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub(crate) fn kept_prelude(prelude: &Program) -> Option<usize> {
+    [
+        &PRELUDE,
+        &PRELUDE_RESOLVED,
+        &PRELUDE_SOURCE,
+        &PRELUDE_SOURCE_RESOLVED,
+    ]
+    .iter()
+    .position(|kept| kept.get().is_some_and(|p| std::ptr::eq(p, prelude)))
+}
 
 fn has_references(program: &Program) -> bool {
     let mut resolved = tauto_surface::bindings::declared_names(&program.stmts)
@@ -1315,6 +1691,14 @@ fn has_references(program: &Program) -> bool {
         for statement in &program.stmts {
             let mut statement = statement.clone();
             crate::surface::walk::stmt(&mut statement, &mut |term| match &*term.kind {
+                // A declaration the reader writes by the library's own reference (`Pair` of
+                // `A × B`, `Pair::Mk` of `#(a, b)`, `Star` of `#()`) is so in every program,
+                // resolved or not: the parser writes it, so it says nothing of how the
+                // program was read.
+                TermKind::Var(name)
+                    if ["Pair", "Pair::Mk", "Star", "Unit"]
+                        .iter()
+                        .any(|s| tauto_surface::bindings::is_reader_reference(name, s)) => {}
                 TermKind::Var(name) | TermKind::Perform { effect: name, .. } => {
                     resolved |= name.is_resolved()
                 }
@@ -1333,8 +1717,7 @@ pub fn prelude_for(program: &Program) -> &'static Program {
     if !resolved {
         return prelude();
     }
-    static RESOLVED: OnceLock<Program> = OnceLock::new();
-    RESOLVED.get_or_init(|| {
+    PRELUDE_RESOLVED.get_or_init(|| {
         let mut program = expand::expand_prelude(
             resolved_prelude_source().clone(),
             crate::surface::PRELUDE_BASE + (1 << 30),
@@ -1382,21 +1765,20 @@ pub fn prelude() -> &'static Program {
 /// The prelude as written, its classes and instances still in it: what a
 /// program that uses a class is checked against before it is expanded.
 pub fn prelude_source() -> &'static Program {
-    static SOURCE: OnceLock<Program> = OnceLock::new();
-    SOURCE.get_or_init(|| {
-        let mut program = crate::surface::parse_program_as_written_at(
+    PRELUDE_SOURCE.get_or_init(|| {
+        let mut program = tauto_parse::parse_builtin_as_written_at(
             crate::nibstd::PRELUDE,
             crate::surface::PRELUDE_BASE,
         )
         .expect("the prelude parses");
+        debug::add_instances(&mut program, &mut [], None);
         crate::surface::qualify::lower_prelude_names(&mut program.stmts);
         program
     })
 }
 
 fn resolved_prelude_source() -> &'static Program {
-    static SOURCE: OnceLock<Program> = OnceLock::new();
-    SOURCE.get_or_init(|| {
+    PRELUDE_SOURCE_RESOLVED.get_or_init(|| {
         let mut program = prelude_source().clone();
         for statement in &mut program.stmts {
             crate::surface::walk::stmt(statement, &mut SurfaceTerm::freshen);
@@ -1612,29 +1994,45 @@ pub struct Scheme {
     /// A [`Ty::Fn`]: the parameters (a borrowed one a [`Ty::Borrow`]), the
     /// result.
     pub ty: Ty,
-    /// The `where` constraints: the class and the generic it constrains.
-    pub preds: Vec<(Name, Param)>,
+    /// The `where` constraints: the class and the generics it constrains.
+    pub preds: Vec<(Name, Vec<Param>)>,
+    /// The associated types (`type_functions::ASSOC`): `(C::t, G, H)` is
+    /// `H = C::t(G)`.
+    pub equations: Vec<(Name, Param, Param)>,
     /// The generics that are type constructors, with the kind each takes;
     /// the kind in `generics` is the one it makes.
     pub ctors: Vec<(Param, Kind)>,
 }
 
 mod classes;
+mod coerce;
+mod debug;
 mod expand;
-pub(crate) mod indices;
+mod lend;
+pub use coerce::expand_coercions;
+pub mod indices;
 pub(crate) use classes::Unresolved;
-pub use expand::{expand_classes, expand_loaded, expansion_errors, index_expansion_errors};
+pub use expand::{
+    InstanceMethod, expand_classes, expand_library, expand_loaded, expand_loaded_reporting,
+    expansion_errors, index_expansion_errors, instance_methods,
+};
+
+/// Whether `span` belongs to an instance the compiler made, not one the
+/// program wrote.
+pub fn is_made_instance(span: tauto_parol::Span) -> bool {
+    debug::is_made(span)
+}
 
 /// The classes whose instances follow from a type's structure.
-pub const STRUCTURAL: &[&str] = &["PartialEq", "DecEq", "Hash"];
+pub const STRUCTURAL: &[&str] = &["PartialEq", "DecEq"];
 
-/// A constraint to check once the types are known: `ty` has the `class` the
+/// A constraint to check once the types are known: `tys` have the `class` the
 /// use of `what` asks for, given what the enclosing function assumes.
 struct Pending {
     class: Name,
-    ty: Ty,
+    tys: Vec<Ty>,
     what: String,
-    assume: Vec<(Name, Param)>,
+    assume: Vec<(Name, Vec<Param>)>,
     span: Span,
     /// Which constraint of which use this is: the occurrence, its index
     /// among the function's constraints, and how many there are.
@@ -1644,6 +2042,8 @@ struct Pending {
 #[derive(Debug, Clone)]
 pub struct EffectSig {
     pub generics: Vec<Param>,
+    /// The kind each generic is bounded by (`Linear` when nothing is written).
+    pub kinds: Vec<Kind>,
     pub params: Vec<Ty>,
     pub result: Ty,
 }
@@ -1674,19 +2074,46 @@ pub(crate) const ROW_TYPE: &str = "!row";
 /// A row's tail inside a [`ROW_TYPE`] type.
 pub(crate) const ROW_TAIL: &str = "!tail";
 
+/// One change an `attempt` may undo: a variable's binding before it was
+/// set, or a variable marked as an integer.
+enum Undo {
+    Subst(usize, Option<Ty>),
+    Int(usize),
+}
+
 #[derive(Default)]
 struct Checker {
     /// Whether the program being checked names its declarations by reference.
     resolved_names: bool,
+    /// The type each nullary `def Name(): Type := T` of the program names:
+    /// where a type is written, the def is the type it names.
+    type_defs: HashMap<Name, SurfaceTerm>,
     type_references: HashMap<TermId, Name>,
     classes: HashMap<Name, classes::ClassInfo>,
     /// By class and the constructor at the head of the instance.
     instances: HashMap<(Name, Name), classes::InstanceInfo>,
+    /// By a class method that is not executable (`C::child_type`) and the
+    /// constructor at the head of an instance: the type the instance gives
+    /// it, which `C::child_type(H)` is.
+    type_methods: HashMap<(Name, Name), (Ty, Ty)>,
+    /// Inside a function with associated types (`Scheme::equations`): `C::t(G)`
+    /// is the generic `H`.
+    local_projections: Vec<(Name, ParamId, Ty)>,
+    /// At the uses of such functions: `C::t(G)` and the type `H` stands for,
+    /// made equal once `G` is known.
+    deferred_projections: Vec<(Ty, Ty, Span)>,
     subst: Vec<Option<Ty>>,
     /// While an argument is checked against a general type: the first variable
     /// made for the argument itself; none otherwise.
     local_from: Option<usize>,
     ints: HashSet<usize>,
+    /// What `set_subst` and `add_int` changed while an `attempt` or a `probe`
+    /// runs, to be undone in reverse when it fails: undoing by this record
+    /// costs what was changed, where a copy of `subst` costs every variable
+    /// of the program.
+    trail: Vec<Undo>,
+    /// How many `attempt`s and `probe`s are running.
+    trying: usize,
     /// A type constructor variable at a use: what it takes and makes, and
     /// the function it was for.
     ctor_bounds: Vec<(Ty, Kind, Kind, String, Span)>,
@@ -1695,14 +2122,8 @@ struct Checker {
     /// How many rigid generics `fits` has made, for their names.
     rigids: usize,
     fns: HashMap<Name, Scheme>,
-    /// The prelude's functions that only its own code calls: the externs
-    /// that answer the standard effects, each marked by the effect in its
-    /// row, and the functions of `module Host` that wrap them
-    /// (`std/prelude/Os.taut`).
-    host_only: HashSet<Name>,
     local_fns: Vec<(Name, Scheme)>,
     effects: HashMap<Name, EffectSig>,
-    builtin_show_owner: Option<EffectOwner>,
     operation_performs: Vec<(TermId, CheckedOperationInstance)>,
     operation_arms: Vec<ArmObservation>,
     quants: HashMap<Name, Quant>,
@@ -1721,10 +2142,23 @@ struct Checker {
     /// The body type of the budgets the nearest `exceeded` arm answers.
     exceeded: Vec<Ty>,
     lets: Vec<(Name, Ty)>,
-    /// A type that must fit a bound: an instantiated type parameter.
-    bounds: Vec<(Ty, Kind, Span)>,
+    /// A type that must fit a bound: an instantiated type parameter, and
+    /// whether the parameter is bounded by `NoBorrow`.
+    bounds: Vec<(Ty, Kind, Span, bool)>,
+    /// The type parameters bounded by `NoBorrow`: they take no type that
+    /// holds a borrow.
+    no_borrow: HashSet<ParamId>,
+    /// An effect's argument: a type variable in its type must be bounded by
+    /// `NoBorrow`.
+    effect_values: Vec<(Ty, Span)>,
+    /// What a `&rc T` holds, written or built: at most affine, and holding
+    /// no borrow.
+    rc_contents: Vec<(Ty, Span)>,
+    /// The term being inferred: where a bound made by instantiating a
+    /// general type is reported.
+    at: Span,
     /// What the function being checked may assume: its `where`.
-    assume: Vec<(Name, Param)>,
+    assume: Vec<(Name, Vec<Param>)>,
     /// The current function's own type binders for local annotations.
     type_params: HashMap<Name, Ty>,
     function_owner: Option<FunctionOwner>,
@@ -1736,6 +2170,9 @@ struct Checker {
     locals: Vec<((Name, TermId), Ty)>,
     terms: Vec<(TermId, Ty)>,
     instantiations: Vec<(TermId, HashMap<ParamId, Ty>)>,
+    /// The generics of a top-level function at a use, by the names a call
+    /// writes them with: `f(<A: T>)`.
+    instance_names: HashMap<TermId, Vec<(Name, Ty)>>,
     /// The effects a row names with type arguments, and the arguments each
     /// `perform` and arm of one of them is checked with.
     indexed: HashSet<Name>,
@@ -1766,6 +2203,8 @@ struct Checker {
     /// Each closure's result type, which may not be a borrow: checked once
     /// the types are known.
     closure_results: Vec<(Ty, Span)>,
+    /// The `struct &T` declarations, by [`Datas::lent_name`].
+    lent_decls: Vec<(Name, Span)>,
     /// Owned captures and the function kind fixed at their declaration.
     /// Inference may not later grant the function weaker ownership.
     capture_kinds: Vec<(Vec<(Name, Ty)>, Kind, Span)>,
@@ -1775,6 +2214,8 @@ struct Checker {
     /// position: a function's body, a `return`, and their tails. A call
     /// reads it to fix its type arguments before its arguments are checked.
     result_hint: Option<Ty>,
+    /// The spans of the text literals, which fit a `&Text` as they are.
+    text_literals: HashSet<Span>,
     /// The type being written is the one directly under a `&`: `Slice(A)`
     /// may be written there only.
     under_borrow: bool,
@@ -1783,10 +2224,30 @@ struct Checker {
     widen_products: bool,
     /// Where a product forgot members, and the type it was fitted to.
     product_fits: Vec<(Span, Ty)>,
+    ascribed: Vec<(TermId, Ty)>,
     pair_members: HashMap<TermId, (Vec<usize>, usize)>,
     /// Why a product did not fit by the types of its members, for the next error.
     product_note: Option<ProductNote>,
     redundant_arms: Vec<(TermId, Span)>,
+    coercions: Vec<(Span, Vec<(Name, String)>)>,
+    qualified_fields: Vec<(Span, String)>,
+    field_owners: Vec<(Span, Name)>,
+    coercion_moves: Vec<Span>,
+    lent_copies: Vec<Span>,
+    orig_lends: Vec<Span>,
+    /// Where a `&rc T` is read as `&orig T` (`rc_reads`), and where a `T`
+    /// is given as a `&rc T` (`rc_boxes`), for the expansion.
+    rc_reads: Vec<Span>,
+    rc_boxes: Vec<Span>,
+    /// Where the duplicable contents of a `&rc T` are copied out.
+    rc_copies: Vec<Span>,
+    /// The next `fits` is the one `expect` asks.
+    rc_top: bool,
+    /// The field being read is the place an assignment writes.
+    assigning: bool,
+    /// Replaceable `extern` blocks: sealed representation is checked here,
+    /// not only during lowering.
+    extern_blocks: tauto_surface::surface::extern_blocks::ExternBlocks,
 }
 
 impl Checker {
@@ -1797,6 +2258,36 @@ impl Checker {
         });
     }
 
+    /// Refuses construction, projection, update, or match on a replaceable
+    /// extern type outside its block.
+    fn refuse_sealed_repr(&mut self, data_or_ctor: &Name, span: Span) {
+        let owner = self
+            .datas
+            .ctors
+            .get(data_or_ctor)
+            .map(|(d, _)| d.clone())
+            .or_else(|| {
+                self.datas
+                    .decls
+                    .keys()
+                    .find(|d| d.as_str() == data_or_ctor.as_str())
+                    .cloned()
+            })
+            .unwrap_or_else(|| data_or_ctor.clone());
+        let accessor = self.function_owner.as_ref().map(|o| &o.name);
+        if tauto_surface::surface::extern_blocks::may_access_repr(
+            &self.extern_blocks,
+            &owner,
+            accessor,
+        ) {
+            return;
+        }
+        self.error(
+            msg!("surface-extern-repr-sealed", name = owner.to_string()),
+            span,
+        );
+    }
+
     fn fresh(&mut self) -> Ty {
         self.subst.push(None);
         Ty::Var(self.subst.len() - 1)
@@ -1805,7 +2296,7 @@ impl Checker {
     fn fresh_int(&mut self) -> Ty {
         let v = self.fresh();
         if let Ty::Var(i) = v {
-            self.ints.insert(i);
+            self.add_int(i);
         }
         v
     }
@@ -1824,10 +2315,49 @@ impl Checker {
             Ty::Union(ts) => union(ts.iter().map(|t| self.resolve(t)).collect()),
             Ty::Tagged(tags, t) => tagged(tags.clone(), self.resolve(t)),
             Ty::Named(n, args) => {
-                Ty::Named(n.clone(), args.iter().map(|a| self.resolve(a)).collect())
+                let args: Vec<Ty> = args.iter().map(|a| self.resolve(a)).collect();
+                if let [head] = args.as_slice() {
+                    if let Some(ctor) = classes::head_constructor(head, self.resolved_names)
+                        && let Some((pattern, given)) = self.type_methods.get(&(n.clone(), ctor))
+                    {
+                        // The instance's head is its constructor over distinct
+                        // generics: each argument is what one generic is.
+                        let mut found: HashMap<ParamId, Ty> = HashMap::new();
+                        if let (Ty::Named(_, params), Ty::Named(_, args)) = (pattern, head) {
+                            for (p, a) in params.iter().zip(args) {
+                                if let Ty::Param(g, _) = p {
+                                    found.insert(g.id().clone(), a.clone());
+                                }
+                            }
+                        }
+                        return self.resolve(&substitute(given, &found));
+                    }
+                    if let Ty::Param(g, _) = head
+                        && let Some((_, _, h)) = self
+                            .local_projections
+                            .iter()
+                            .find(|(m, x, _)| m == n && x == g.id())
+                    {
+                        return h.clone();
+                    }
+                }
+                Ty::Named(n.clone(), args)
             }
             Ty::Info(t) => Ty::Info(Box::new(self.resolve(t))),
-            Ty::Borrow(t, m) => Ty::Borrow(Box::new(self.resolve(t)), *m),
+            Ty::Borrow(t, m) => {
+                let inner = self.resolve(t);
+                // `&A` with `A` a type that has `struct &T` is that struct,
+                // also where `A` was a type variable.
+                if !*m
+                    && let Ty::Named(n, args) = &inner
+                    && let Some(lent) = self.datas.lent_of.get(n)
+                {
+                    return Ty::Named(lent.clone(), args.clone());
+                }
+                Ty::Borrow(Box::new(inner), *m)
+            }
+            Ty::Orig(t) => Ty::Orig(Box::new(self.resolve(t))),
+            Ty::Rc(t) => Ty::Rc(Box::new(self.resolve(t))),
             Ty::Poly(gs, t) => Ty::Poly(gs.clone(), Box::new(self.resolve(t))),
             Ty::App(h, x) => apply(self.resolve(h), self.resolve(x)),
             other => other.clone(),
@@ -1843,7 +2373,7 @@ impl Checker {
             Ty::Var(i) => i == v,
             Ty::Fn(ps, r, _) => ps.iter().any(|p| self.occurs(v, p)) || self.occurs(v, &r),
             Ty::Union(ts) => ts.iter().any(|t| self.occurs(v, t)),
-            Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Poly(_, t) => {
+            Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Rc(t) | Ty::Poly(_, t) => {
                 self.occurs(v, &t)
             }
             Ty::App(h, x) => self.occurs(v, &h) || self.occurs(v, &x),
@@ -1858,9 +2388,9 @@ impl Checker {
                 return Ok(());
             }
             if self.ints.contains(&v) {
-                self.ints.insert(w);
+                self.add_int(w);
             }
-            self.subst[v] = Some(Ty::Var(w));
+            self.set_subst(v, Some(Ty::Var(w)));
             return Ok(());
         }
         if self.ints.contains(&v) && !matches!(t, Ty::Int(_)) {
@@ -1869,7 +2399,7 @@ impl Checker {
         if self.occurs(v, &t) {
             return Err(());
         }
-        self.subst[v] = Some(t);
+        self.set_subst(v, Some(t));
         Ok(())
     }
 
@@ -1923,8 +2453,15 @@ impl Checker {
             }
             (Ty::Info(x), Ty::Info(y)) => self.unify(x, y),
             (Ty::Borrow(x, ma), Ty::Borrow(y, mb)) if ma == mb => self.unify(x, y),
+            (Ty::Orig(x), Ty::Orig(y)) => self.unify(x, y),
+            (Ty::Rc(x), Ty::Rc(y)) => self.unify(x, y),
             (Ty::Tagged(ta, x), Ty::Tagged(tb, y)) if ta == tb => self.unify(x, y),
             (Ty::Union(xa), Ty::Union(xb)) if xa.len() == xb.len() => {
+                // Members solved since the union was built are sorted again:
+                // `?b | ?a` with `?b = Text`, `?a = i64` is `i64 | Text`.
+                if self.resolve(&a) == self.resolve(&b) {
+                    return Ok(());
+                }
                 for (x, y) in xa.iter().zip(xb) {
                     self.unify(x, y)?;
                 }
@@ -1987,7 +2524,7 @@ impl Checker {
                 ps.iter().any(|p| self.mentions(names, p)) || self.mentions(names, &r)
             }
             Ty::Union(ts) => ts.iter().any(|t| self.mentions(names, t)),
-            Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Poly(_, t) => {
+            Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Rc(t) | Ty::Poly(_, t) => {
                 self.mentions(names, &t)
             }
             Ty::App(h, x) => self.mentions(names, &h) || self.mentions(names, &x),
@@ -2000,7 +2537,8 @@ impl Checker {
         gs.iter()
             .map(|(n, k)| {
                 let v = self.fresh();
-                self.bounds.push((v.clone(), *k, Span::new(0, 0)));
+                let plain = self.no_borrow.contains(&n.id);
+                self.bounds.push((v.clone(), *k, self.at, plain));
                 (n.id.clone(), v)
             })
             .collect()
@@ -2013,7 +2551,7 @@ impl Checker {
                 ps.iter().any(|p| self.has_open_vars(p, except)) || self.has_open_vars(&r, except)
             }
             Ty::Union(ts) => ts.iter().any(|t| self.has_open_vars(t, except)),
-            Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Poly(_, t) => {
+            Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Rc(t) | Ty::Poly(_, t) => {
                 self.has_open_vars(&t, except)
             }
             Ty::App(h, x) => self.has_open_vars(&h, except) || self.has_open_vars(&x, except),
@@ -2027,7 +2565,9 @@ impl Checker {
             Ty::Var(_) => true,
             Ty::Fn(ps, r, _) => ps.iter().any(|p| self.has_vars(p)) || self.has_vars(&r),
             Ty::Union(ts) => ts.iter().any(|t| self.has_vars(t)),
-            Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Poly(_, t) => self.has_vars(&t),
+            Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Rc(t) | Ty::Poly(_, t) => {
+                self.has_vars(&t)
+            }
             Ty::App(h, x) => self.has_vars(&h) || self.has_vars(&x),
             Ty::Named(_, args) => args.iter().any(|a| self.has_vars(a)),
             _ => false,
@@ -2036,32 +2576,136 @@ impl Checker {
 
     /// Whether `f` succeeds, undoing what it bound either way.
     fn probe(&mut self, f: impl FnOnce(&mut Self) -> Result<(), ()>) -> bool {
-        let (subst, ints) = (self.subst.clone(), self.ints.clone());
+        let mark = self.mark();
         let note = self.product_note.take();
         let r = f(self);
-        self.subst = subst;
-        self.ints = ints;
+        self.undo_to(mark);
         self.product_note = note;
         r.is_ok()
     }
 
     /// Tries `f`, undoing what it bound when it fails.
     fn attempt(&mut self, f: impl FnOnce(&mut Self) -> Result<(), ()>) -> Result<(), ()> {
-        let (subst, ints) = (self.subst.clone(), self.ints.clone());
+        let mark = self.mark();
         let r = f(self);
         if r.is_err() {
-            self.subst = subst;
-            self.ints = ints;
+            self.undo_to(mark);
+        } else {
+            self.keep(mark);
         }
         r
+    }
+
+    /// Where an `attempt` or a `probe` starts: what it may undo back to.
+    fn mark(&mut self) -> (usize, usize) {
+        self.trying += 1;
+        (self.subst.len(), self.trail.len())
+    }
+
+    /// The changes since `mark` stay: they are undone only with an outer
+    /// attempt's, so the record is kept while one runs.
+    fn keep(&mut self, mark: (usize, usize)) {
+        self.trying -= 1;
+        if self.trying == 0 {
+            self.trail.truncate(mark.1);
+        }
+    }
+
+    /// `subst` and `ints` as they were at `mark`: the variables made since are
+    /// gone, and what was bound or marked since is undone.
+    fn undo_to(&mut self, (len, at): (usize, usize)) {
+        while self.trail.len() > at {
+            match self.trail.pop() {
+                Some(Undo::Subst(v, t)) => {
+                    if v < self.subst.len() {
+                        self.subst[v] = t;
+                    }
+                }
+                Some(Undo::Int(v)) => {
+                    self.ints.remove(&v);
+                }
+                None => {}
+            }
+        }
+        self.subst.truncate(len);
+        self.trying -= 1;
+    }
+
+    fn set_subst(&mut self, v: usize, t: Option<Ty>) {
+        let old = std::mem::replace(&mut self.subst[v], t);
+        if self.trying > 0 {
+            self.trail.push(Undo::Subst(v, old));
+        }
+    }
+
+    fn add_int(&mut self, v: usize) {
+        if self.ints.insert(v) && self.trying > 0 {
+            self.trail.push(Undo::Int(v));
+        }
     }
 
     /// A value of type `a` may stand where `b` is expected.
     fn fits(&mut self, a: &Ty, b: &Ty) -> Result<(), ()> {
         let (a, b) = (self.resolve(a), self.resolve(b));
+        // A `&rc T` is read, or a `T` boxed, only where a written type asks
+        // for it (`expect`), never inside another type.
+        let top = std::mem::take(&mut self.rc_top);
+        // A value holding only `&` of duplicables is copied where its value
+        // is wanted (`Option(&V)` where an `Option(V)` is): `&A → A`.
+        if matches!(a, Ty::Named(..))
+            && matches!(b, Ty::Named(..))
+            && self.is_view(&a)
+            && !self.is_view(&b)
+            && let Some(plain) = self.view_value(&a)
+        {
+            return self.fits(&plain, &b);
+        }
         match (&a, &b) {
             (Ty::Never, _) => Ok(()),
+            (Ty::Rc(x), Ty::Rc(y)) => self.unify(x, y),
+            (Ty::Var(v), Ty::Rc(y))
+                if top && self.ints.contains(v) && !self.has_open_vars(y, &HashSet::new()) =>
+            {
+                let y = (**y).clone();
+                self.fits(&a, &y)
+            }
+            // An integer literal where a union is wanted is the union's
+            // integer member: `i64` when the union has it, as a literal
+            // nothing fixes is, or else its one integer member. Two other
+            // integer members leave it unsettled, which is an error.
+            (Ty::Var(v), Ty::Union(ys)) if self.ints.contains(v) => {
+                let members: Vec<&Ty> = ys.iter().filter(|y| matches!(y, Ty::Int(_))).collect();
+                let member = members
+                    .iter()
+                    .find(|y| matches!(y, Ty::Int(Width::W64)))
+                    .or(match members.as_slice() {
+                        [one] => Some(one),
+                        _ => None,
+                    });
+                match member {
+                    Some(m) => self.unify(&a, m),
+                    None => self.unify(&a, &b),
+                }
+            }
             (Ty::Var(_), _) | (_, Ty::Var(_)) => self.unify(&a, &b),
+            // The contents of a `&rc T` are read through a shared borrow,
+            // `&orig T` (`&T` of a type without `struct &T`), and copied
+            // from it only when they are duplicable.
+            (Ty::Rc(x), _) if top && self.rc_reads_as(&b) => {
+                let borrowed =
+                    matches!(b, Ty::Borrow(_, false) | Ty::Orig(_)) || self.is_lent_struct(&b);
+                if !borrowed && !self.kind(x).dup() {
+                    return Err(());
+                }
+                let read = self.rc_read(x);
+                self.fits(&read, &b)
+            }
+            // A `T` where a `&rc T` is wanted is moved into a new box, when
+            // the box's type is known.
+            (_, Ty::Rc(y)) if top && !self.has_open_vars(y, &HashSet::new()) => {
+                let y = (**y).clone();
+                self.unify(&a, &y)
+            }
             // What is wanted is general: `a` has to be as general. What is
             // given is general: some instance of it will do.
             (_, Ty::Poly(gs, t)) => {
@@ -2073,6 +2717,32 @@ impl Checker {
                 let fresh = self.instance_of(gs);
                 self.fits(&substitute(t, &fresh), &b)
             }
+            // A `&T` is copied where a duplicable `T` is wanted (`owned`).
+            (Ty::Named(l, la), Ty::Named(o, oa))
+                if self.datas.lent_of.get(o) == Some(l)
+                    && la.len() == oa.len()
+                    && self.kind(&b).dup() =>
+            {
+                for (p, q) in la.clone().iter().zip(oa.clone().iter()) {
+                    self.fits(p, q)?;
+                }
+                Ok(())
+            }
+            // `&orig T` is lent as `&T` (`lend`), and fits another `&orig T`.
+            (Ty::Orig(x), Ty::Orig(y)) => self.fits(x, y),
+            (Ty::Orig(x), Ty::Named(l, args)) if matches!(&**x, Ty::Named(n, xa) if self.datas.lent_of.get(n) == Some(l) && xa.len() == args.len()) =>
+            {
+                let Ty::Named(_, xa) = &**x else {
+                    unreachable!()
+                };
+                for (p, q) in xa.clone().iter().zip(args) {
+                    self.fits(p, q)?;
+                }
+                Ok(())
+            }
+            (Ty::Orig(x), Ty::Borrow(y, false)) => self.fits(x, y),
+            // A copy of the original value (`&orig T → T`).
+            (Ty::Orig(x), _) => self.fits(x, &b),
             // A `&mut` borrow may be lent as a `&` one.
             (Ty::Borrow(x, ma), Ty::Borrow(y, mb)) if ma == mb || !mb => self.fits(x, y),
             // A borrow used as a value: `lin.rs` says whether it may be.
@@ -2117,9 +2787,21 @@ impl Checker {
                 }
                 Err(())
             }
-            // Tags are forgotten, never added.
-            (Ty::Tagged(ta, x), Ty::Tagged(tb, y)) if tb.is_subset(ta) => self.fits(x, y),
-            (Ty::Tagged(_, x), _) if !matches!(b, Ty::Tagged(..)) => self.fits(x, &b),
+            // Tags are forgotten, never added. What is under a label is taken whole
+            // (`@a T <: T`): a product under it keeps its members, as the kernel's
+            // ascription takes the label off once and does not go on to a member.
+            (Ty::Tagged(ta, x), Ty::Tagged(tb, y)) if tb.is_subset(ta) => {
+                let widen = std::mem::replace(&mut self.widen_products, false);
+                let fitted = self.fits(x, y);
+                self.widen_products = widen;
+                fitted
+            }
+            (Ty::Tagged(_, x), _) if !matches!(b, Ty::Tagged(..)) => {
+                let widen = std::mem::replace(&mut self.widen_products, false);
+                let fitted = self.fits(x, &b);
+                self.widen_products = widen;
+                fitted
+            }
             // A product is a `Pair` nested to the right. Where a type is expected, its members
             // are matched to that type's by their types (`A × B <: A`, `A × B <: B × A`), but
             // only where both sides are closed and the members of each side differ.
@@ -2143,12 +2825,32 @@ impl Checker {
                 let fitted = pa
                     .iter()
                     .zip(pb)
-                    .try_for_each(|(x, y)| self.fits(y, x))
+                    .try_for_each(|(x, y)| self.fits_param(x, y))
                     .and_then(|()| self.fits(ra, rb));
                 self.widen_products = widen;
                 fitted
             }
             _ => self.unify(&a, &b),
+        }
+    }
+
+    /// A function whose parameter is `x` may stand where one whose parameter
+    /// is `y` is expected. One that borrows (`&A`) may be given a value (`A`)
+    /// of any kind: the caller's value is lent for the call and dropped after
+    /// it. One that takes a value may be lent one only when `A` is
+    /// duplicable: what is lent is copied for it.
+    fn fits_param(&mut self, x: &Ty, y: &Ty) -> Result<(), ()> {
+        match (self.resolve(x), self.resolve(y)) {
+            (Ty::Borrow(inner, false), y) if !matches!(y, Ty::Borrow(..) | Ty::Var(_)) => {
+                self.fits(&y, &inner)
+            }
+            (x, Ty::Borrow(inner, _)) if !matches!(x, Ty::Borrow(..) | Ty::Var(_)) => {
+                if !self.kind(&x).dup() {
+                    return Err(());
+                }
+                self.fits(&inner, &x)
+            }
+            _ => self.fits(y, x),
         }
     }
 
@@ -2216,10 +2918,131 @@ impl Checker {
         Ok(())
     }
 
+    /// The struct `t` read through its `coerce` field: the struct, the
+    /// field, the field's type and the level written.
+    fn coerce_step(&self, t: &Ty) -> Option<(Name, String, Ty, CoerceLevel)> {
+        let Ty::Named(d, args) = self.resolve(t) else {
+            return None;
+        };
+        let (index, level) = self.datas.decls.get(&d)?.coerce?;
+        let (field, ty) = self.datas.fields(&d, 0, &args).into_iter().nth(index)?;
+        Some((d, field?, self.resolve(&ty), level))
+    }
+
+    /// `a` where `b` is wanted, read through `coerce` fields: `&W` as `&T`,
+    /// `&mut W` as `&mut T`, `W` as `T`. A wanted type that is still a
+    /// variable is not one to read into (a type variable takes `W` as it is).
+    /// The level each step allows is checked here; the place is recorded for
+    /// the expansion.
+    fn coerce_fit(&mut self, a: &Ty, b: &Ty, span: Span) -> bool {
+        let (a, b) = (self.resolve(a), self.resolve(b));
+        let (from, want, mode) = match (&a, &b) {
+            (_, Ty::Var(_)) | (_, Ty::Borrow(_, _)) if matches!(b.unborrowed(), Ty::Var(_)) => {
+                return false;
+            }
+            (Ty::Borrow(w, lent), Ty::Borrow(t, wanted)) if *lent || !*wanted => (
+                (**w).clone(),
+                (**t).clone(),
+                if *wanted {
+                    CoerceLevel::Mut
+                } else {
+                    CoerceLevel::Ref
+                },
+            ),
+            (Ty::Borrow(..), _) | (_, Ty::Borrow(..)) => return false,
+            _ => (a.clone(), b.clone(), CoerceLevel::Owned),
+        };
+        let mut current = from.clone();
+        let mut steps = Vec::new();
+        let mut level = CoerceLevel::Owned;
+        loop {
+            let Some((d, field, ty, l)) = self.coerce_step(&current) else {
+                return false;
+            };
+            steps.push((d, field));
+            level = level.min(l);
+            current = ty;
+            if self.attempt(|c| c.fits(&current, &want)).is_ok() {
+                break;
+            }
+            if steps.len() > 32 {
+                return false;
+            }
+        }
+        let (ty, target) = (self.shown(&from), self.shown(&want));
+        let duplicable = mode == CoerceLevel::Ref && self.kind(&want).dup();
+        let needed = if duplicable { CoerceLevel::Owned } else { mode };
+        if level < needed {
+            let allowed = match level {
+                CoerceLevel::Ref => "`&`",
+                _ => "`&` and `&mut`",
+            };
+            let message = match mode {
+                _ if duplicable => msg!(
+                    "nibcheck-coerce-duplicable",
+                    ty = ty.to_string(),
+                    target = target.to_string()
+                ),
+                CoerceLevel::Mut => msg!(
+                    "nibcheck-coerce-lend-mut",
+                    ty = ty.to_string(),
+                    target = target.to_string()
+                ),
+                _ => msg!(
+                    "nibcheck-coerce-move",
+                    ty = ty.to_string(),
+                    target = target.to_string(),
+                    allowed = allowed
+                ),
+            };
+            self.error(message, span);
+        }
+        if mode == CoerceLevel::Owned {
+            self.coercion_moves.push(span);
+        }
+        self.coercions.push((span, steps));
+        true
+    }
+
+    /// What reading a `&rc T` gives: the borrow of its contents.
+    fn rc_read(&self, contents: &Ty) -> Ty {
+        match contents {
+            Ty::Named(n, _) if self.datas.lent_of.contains_key(n) => {
+                Ty::Orig(Box::new(contents.clone()))
+            }
+            _ => Ty::Borrow(Box::new(contents.clone()), false),
+        }
+    }
+
+    /// Whether a `&rc T` given where `b` is wanted is read: `b` is a
+    /// borrow or a value of one type, not a box, a union or a type not
+    /// known yet.
+    fn rc_reads_as(&self, b: &Ty) -> bool {
+        !matches!(
+            b,
+            Ty::Rc(_)
+                | Ty::Var(_)
+                | Ty::Union(_)
+                | Ty::Poly(..)
+                | Ty::Tagged(..)
+                | Ty::App(..)
+                | Ty::Never
+        ) && !matches!(b, Ty::Borrow(_, true))
+    }
+
     fn expect(&mut self, a: &Ty, b: &Ty, span: Span, what: Message) {
         self.product_note = None;
+        // A text literal where a `&Text` is expected: it is a constant, there is nothing to lend.
+        if self.text_literals.contains(&span)
+            && matches!(self.resolve(a), Ty::Text)
+            && matches!(self.resolve(b), Ty::Borrow(inner, false) if *inner == Ty::Text)
+        {
+            return;
+        }
         let widen = std::mem::replace(&mut self.widen_products, true);
+        self.rc_top = true;
         let mut fitted = self.fits(a, b);
+        self.rc_top = false;
         // `T` where `@a T` is expected: the value is wrapped (`T` written as `@a T`), which a
         // label, a mark of the type, leaves as it is.
         if fitted.is_err()
@@ -2229,6 +3052,37 @@ impl Checker {
             fitted = self.fits(a, under);
         }
         self.widen_products = widen;
+        if fitted.is_err() && self.coerce_fit(a, b, span) {
+            fitted = Ok(());
+        }
+        if fitted.is_ok() {
+            match (self.resolve(a), self.resolve(b)) {
+                (Ty::Rc(_), Ty::Rc(_)) | (Ty::Never, _) => {}
+                (Ty::Rc(x), want) if self.rc_reads_as(&want) => {
+                    let borrowed =
+                        matches!(want, Ty::Borrow(..) | Ty::Orig(_)) || self.is_lent_struct(&want);
+                    if borrowed {
+                        self.rc_reads.push(span);
+                    } else {
+                        self.rc_copies.push(span);
+                    }
+                    // `&orig T` given as `&T` is lent.
+                    if let (Ty::Named(n, _), Ty::Named(l, _)) = (&*x, &want)
+                        && self.datas.lent_of.get(n) == Some(l)
+                    {
+                        self.orig_lends.push(span)
+                    }
+                }
+                (_, Ty::Rc(_)) => self.rc_boxes.push(span),
+                (Ty::Named(l, _), Ty::Named(o, _)) if self.datas.lent_of.get(&o) == Some(&l) => {
+                    self.lent_copies.push(span)
+                }
+                (Ty::Orig(x), Ty::Named(l, _)) if matches!(&*x, Ty::Named(n, _) if self.datas.lent_of.get(n) == Some(&l)) => {
+                    self.orig_lends.push(span)
+                }
+                _ => {}
+            }
+        }
         if fitted.is_ok()
             && is_pair_ty(self.resolve(a).unborrowed())
             && self.resolve(a).unborrowed() != self.resolve(b).unborrowed()
@@ -2254,6 +3108,19 @@ impl Checker {
         if fitted.is_err() {
             let (a, b) = (self.shown(a), self.shown(b));
             let message = match (a.unborrowed(), b.unborrowed()) {
+                // The contents of a `&rc T` are only borrowed.
+                (Ty::Rc(x), y)
+                    if !matches!(y, Ty::Borrow(..) | Ty::Orig(_) | Ty::Rc(_))
+                        && x.as_ref() == y =>
+                {
+                    msg!(
+                        "nibcheck-rc-not-owned",
+                        what = what,
+                        found = a.to_string(),
+                        expected = b.to_string()
+                    )
+                }
+                (Ty::Rc(_), Ty::Borrow(_, true)) => msg!("nibcheck-rc-mut", ty = a.to_string()),
                 (p, _) if is_pair_ty(p) && matches!(note, Some(ProductNote::Open)) => msg!(
                     "nibcheck-mismatch-open-product",
                     what = what,
@@ -2286,16 +3153,20 @@ impl Checker {
                 }
                 // `nat` and a machine integer are two types, not one type
                 // of two sizes: the kernel's `Nat` is `nat`, and the type of
-                // the width it sees is `U64` of `std::UInt` (`I64` of
-                // `std::SInt`), which runs as `u64`.
+                // the width it sees is `UInt(64)` of `std::uint` (`SInt(64)` of
+                // `std::sint`), which runs as `u64`.
                 (Ty::Int(x), Ty::Int(y)) if (*x == Width::Nat) != (*y == Width::Nat) => {
                     let machine = if *x == Width::Nat { y } else { x };
                     let (checked, module) = match machine {
-                        Width::U8 => ("U8", "UInt"),
-                        Width::U32 => ("U32", "UInt"),
-                        Width::U64 => ("U64", "UInt"),
-                        Width::W32 => ("I32", "SInt"),
-                        Width::W64 | Width::Nat => ("I64", "SInt"),
+                        Width::U8 => ("UInt(8)", "uint"),
+                        Width::U16 => ("UInt(16)", "uint"),
+                        Width::W8 => ("SInt(8)", "sint"),
+                        Width::W16 => ("SInt(16)", "sint"),
+                        Width::U32 => ("UInt(32)", "uint"),
+                        Width::U64 => ("UInt(64)", "uint"),
+                        Width::Host => ("UHost", "uhost"),
+                        Width::W32 => ("SInt(32)", "sint"),
+                        Width::W64 | Width::Nat => ("SInt(64)", "sint"),
                     };
                     msg!(
                         "nibcheck-mismatch-number",
@@ -2322,6 +3193,31 @@ impl Checker {
                 ),
             };
             self.error(message, span);
+        }
+    }
+
+    /// `t` with the variables nothing fixed settled, for a structural
+    /// class: an integer literal's is `i64`, as everywhere else, and any
+    /// other is `Never`, since nothing fixed the type of a value that has
+    /// it (`Nil == Nil`). A structural class is decided on this, never on
+    /// an open variable.
+    fn settled(&self, t: &Ty) -> Ty {
+        match self.resolve(t) {
+            Ty::Var(v) if self.ints.contains(&v) => Ty::Int(Width::W64),
+            Ty::Var(_) => Ty::Never,
+            Ty::Fn(ps, r, k) => Ty::Fn(
+                ps.iter().map(|p| self.settled(p)).collect(),
+                Box::new(self.settled(&r)),
+                k,
+            ),
+            Ty::Union(ts) => union(ts.iter().map(|t| self.settled(t)).collect()),
+            Ty::Tagged(tags, t) => tagged(tags, self.settled(&t)),
+            Ty::Named(n, args) => Ty::Named(n, args.iter().map(|a| self.settled(a)).collect()),
+            Ty::Info(t) => Ty::Info(Box::new(self.settled(&t))),
+            Ty::Borrow(t, m) => Ty::Borrow(Box::new(self.settled(&t)), m),
+            Ty::Poly(ps, t) => Ty::Poly(ps, Box::new(self.settled(&t))),
+            Ty::App(h, x) => Ty::App(Box::new(self.settled(&h)), Box::new(self.settled(&x))),
+            other => other,
         }
     }
 
@@ -2389,14 +3285,47 @@ impl Checker {
             if !fits {
                 let shown = self.shown(&t);
                 self.error(
-                    format!("a `$` in an expression of a `quote` takes a SynExpr, a SynIdent or a Judgement, not {shown}"),
+                    msg!("nibcheck-quote-splice-type", found = shown.to_string()),
                     span,
                 );
             }
         }
     }
 
+    /// `C::t(G) = H` for each use whose `G` is now known well enough for
+    /// `C::t(G)` to be a type: an instance's, or a generic of the function.
+    fn solve_projections(&mut self) {
+        loop {
+            let mut progress = false;
+            for (projection, h, span) in std::mem::take(&mut self.deferred_projections) {
+                let reduced = self.resolve(&projection);
+                if matches!(&reduced, Ty::Named(n, _) if matches!(&projection, Ty::Named(m, _) if m == n))
+                {
+                    self.deferred_projections.push((projection, h, span));
+                    continue;
+                }
+                progress = true;
+                if self.unify(&reduced, &h).is_err() {
+                    let (got, want) = (self.shown(&reduced), self.shown(&h));
+                    self.error(
+                        msg!(
+                            "nibcheck-mismatch",
+                            what = "an associated type",
+                            expected = want.to_string(),
+                            found = got.to_string()
+                        ),
+                        span,
+                    );
+                }
+            }
+            if !progress {
+                break;
+            }
+        }
+    }
+
     fn finish(mut self) -> TypeReport {
+        self.solve_projections();
         let mut pending = std::mem::take(&mut self.constructor_uses);
         let mut records = std::mem::take(&mut self.constructor_records);
         loop {
@@ -2460,7 +3389,7 @@ impl Checker {
         let unknown: Vec<usize> = self.ints.iter().copied().collect();
         for v in unknown {
             if let Ty::Var(w) = self.resolve(&Ty::Var(v)) {
-                self.subst[w] = Some(Ty::Int(Width::W64));
+                self.set_subst(w, Some(Ty::Int(Width::W64)));
             }
         }
         let mut report = TypeReport::default();
@@ -2483,15 +3412,20 @@ impl Checker {
                         );
                     }
                 }
-                _ => self.error("an integer literal has no integer type", span),
+                _ => self.error(msg!("nibcheck-int-literal-no-type"), span),
             }
         }
-        // A closure returns no borrow but of a duplicable value (`&A ≡ A`);
-        // a type still unknown might not be one.
+        // A closure returns no bare borrow but of a duplicable value
+        // (`&A ≡ A`); a type still unknown might not be one.
         for (r, span) in std::mem::take(&mut self.closure_results) {
             let t = self.resolve(&r);
-            if self.is_view(&t) && (self.has_vars(&t) || self.view_value(&t).is_none()) {
-                self.error("a closure cannot return a borrow", span);
+            // A value that holds a borrow may be returned: lin gives the
+            // result the borrows of the borrowed arguments and of what the
+            // closure captured. A bare borrow is still not returned.
+            let bare = matches!(t, Ty::Borrow(..));
+            // A bare borrow of a duplicable value is copied out (`&A → A`).
+            if bare && self.is_view(&t) && (self.has_vars(&t) || self.view_value(&t).is_none()) {
+                self.error(msg!("nibcheck-closure-returns-borrow"), span);
             }
         }
         // A capture inferred after its function was declared must still fit
@@ -2508,27 +3442,53 @@ impl Checker {
                     continue;
                 }
                 let message = if least == most {
-                    format!(
-                        "capture `{name}` is inferred as {most} after its function kind was fixed; add a type annotation to the captured binding"
+                    msg!(
+                        "nibcheck-capture-kind-fixed",
+                        name = name.to_string(),
+                        kind = most.to_string()
                     )
                 } else {
-                    format!(
-                        "the kind of capture `{name}` is not determined; add a type annotation to the captured binding"
+                    msg!(
+                        "nibcheck-capture-kind-undetermined",
+                        name = name.to_string()
                     )
                 };
                 if !self
                     .errors
                     .iter()
-                    .any(|e| e.span == span && e.message.as_text() == Some(message.as_str()))
+                    .any(|e| e.span == span && e.message == message)
                 {
                     self.error(message, span);
                 }
                 break;
             }
         }
-        for (t, bound, span) in std::mem::take(&mut self.bounds) {
-            if self.is_view(&t) {
-                self.error("a view cannot be a type argument", span);
+        for (t, span) in std::mem::take(&mut self.rc_contents) {
+            let t = self.resolve(&t);
+            let shown = self.shown(&t).to_string();
+            if self.kind(&t) == Kind::Linear {
+                self.error(msg!("nibcheck-rc-linear", ty = shown), span);
+            } else if self.is_view(&t) {
+                self.error(msg!("nibcheck-rc-borrow", ty = shown), span);
+            } else if let Some(p) = self.borrowing_param(&t) {
+                self.error(
+                    msg!("nibcheck-rc-generic-borrow", name = p.to_string()),
+                    span,
+                );
+            }
+        }
+        for (t, span) in std::mem::take(&mut self.effect_values) {
+            let t = self.resolve(&t);
+            if let Some(p) = self.borrowing_param(&t) {
+                self.error(
+                    msg!("nibcheck-generic-effect-argument", name = p.to_string()),
+                    span,
+                );
+            }
+        }
+        for (t, bound, span, plain) in std::mem::take(&mut self.bounds) {
+            if plain && self.is_view(&t) {
+                self.error(msg!("nibcheck-view-type-argument"), span);
                 continue;
             }
             let k = self.kind(&t);
@@ -2556,7 +3516,14 @@ impl Checker {
             if !k.fits(result) {
                 let shown = self.shown(&made);
                 self.error(
-                    format!("{what} takes constructors from {arg} to {result}, and {shown} is {k}"),
+                    msg!(
+                        "nibcheck-constructor-kind-mismatch",
+                        what = what.to_string(),
+                        arg = arg.to_string(),
+                        result = result.to_string(),
+                        shown = shown.to_string(),
+                        kind = k.to_string()
+                    ),
                     span,
                 );
             }
@@ -2564,39 +3531,64 @@ impl Checker {
         self.check_splices();
         let mut evidence: HashMap<TermId, Vec<Ev>> = HashMap::new();
         for p in std::mem::take(&mut self.pending) {
-            let t = self.resolve(&p.ty);
+            let tys: Vec<Ty> = p.tys.iter().map(|t| self.resolve(t)).collect();
+            let t = tys.first().cloned().unwrap_or(Ty::Unit);
+            let shown_all = || {
+                tys.iter()
+                    .map(|t| self.shown(t).to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
             let ev = if STRUCTURAL.contains(&p.class.as_str()) {
-                if self.datas.structural(&p.class, &t, &p.assume) {
+                let flat: Vec<(Name, Param)> = p
+                    .assume
+                    .iter()
+                    .filter_map(|(c, ps)| Some((c.clone(), ps.first()?.clone())))
+                    .collect();
+                if tys.len() == 1 && self.datas.structural(&p.class, &self.settled(&t), &flat) {
                     Ev::Structural
                 } else {
-                    let shown = self.shown(&t);
+                    let shown = shown_all();
                     let class = written(&p.class);
-                    let hint = match t {
-                        Ty::Param(..) => format!(": add where {class}({shown})"),
-                        _ => String::new(),
+                    let what = written(&p.what).to_string();
+                    let message = match t {
+                        Ty::Param(..) => msg!(
+                            "nibcheck-needs-class-add-where",
+                            what = what,
+                            class = class.to_string(),
+                            ty = shown
+                        ),
+                        _ => msg!(
+                            "nibcheck-needs-class",
+                            what = what,
+                            class = class.to_string(),
+                            ty = shown
+                        ),
                     };
-                    self.error(
-                        format!("{} needs {class}({shown}){hint}", written(&p.what)),
-                        p.span,
-                    );
+                    self.error(message, p.span);
                     Ev::Missing
                 }
             } else {
-                match self.resolve_class(&p.class, &t, &p.assume) {
+                match self.resolve_class(&p.class, &tys, &p.assume) {
                     Ok(ev) => ev,
                     Err(why) => {
                         let class = written(&p.class);
                         let message = match why {
-                            Unresolved::Undetermined => {
-                                format!("the type in {class}(?) is not determined")
-                            }
-                            Unresolved::Assumption(shown) => format!(
-                                "{} needs {class}({shown}): add where {class}({shown})",
-                                written(&p.what)
+                            Unresolved::Undetermined => msg!(
+                                "nibcheck-class-type-undetermined",
+                                class = class.to_string()
                             ),
-                            Unresolved::NoInstance(shown) => {
-                                format!("no instance {class}({shown})")
-                            }
+                            Unresolved::Assumption(shown) => msg!(
+                                "nibcheck-needs-class-add-where",
+                                what = written(&p.what).to_string(),
+                                class = class.to_string(),
+                                ty = shown
+                            ),
+                            Unresolved::NoInstance(shown) => msg!(
+                                "nibcheck-no-instance",
+                                class = class.to_string(),
+                                ty = shown
+                            ),
                         };
                         self.error(message, p.span);
                         Ev::Missing
@@ -2629,6 +3621,23 @@ impl Checker {
             .into_iter()
             .collect();
         report.pair_members = std::mem::take(&mut self.pair_members);
+        report.coercions = std::mem::take(&mut self.coercions).into_iter().collect();
+        report.qualified_fields = std::mem::take(&mut self.qualified_fields)
+            .into_iter()
+            .collect();
+        report.field_owners = std::mem::take(&mut self.field_owners).into_iter().collect();
+        report.coercion_moves = std::mem::take(&mut self.coercion_moves)
+            .into_iter()
+            .collect();
+        report.lent_copies = std::mem::take(&mut self.lent_copies).into_iter().collect();
+        report.orig_lends = std::mem::take(&mut self.orig_lends).into_iter().collect();
+        report.rc_reads = std::mem::take(&mut self.rc_reads).into_iter().collect();
+        report.rc_boxes = std::mem::take(&mut self.rc_boxes).into_iter().collect();
+        report.rc_copies = std::mem::take(&mut self.rc_copies).into_iter().collect();
+        report.ascribed = std::mem::take(&mut self.ascribed)
+            .into_iter()
+            .map(|(id, t)| (id, self.resolve(&t)))
+            .collect();
         report.product_fits = std::mem::take(&mut self.product_fits)
             .into_iter()
             .map(|(span, t)| (span, self.resolve(&t)))
@@ -2658,7 +3667,24 @@ impl Checker {
                 _ => {}
             }
         }
-        for (id, name, generics) in std::mem::take(&mut self.undetermined) {
+        // A generic that indexes an effect (`catch`'s `E`) is given by the
+        // expansion from what the argument performs, so a type that waits
+        // only for it (the `Result(T, E)` such a call returns, passed on to
+        // another generic function) is determined there too.
+        let undetermined = std::mem::take(&mut self.undetermined);
+        for (_, name, generics) in &undetermined {
+            let Some(indices) = self.index_generics.get(name) else {
+                continue;
+            };
+            for (g, t) in generics {
+                if indices.contains(&g.name)
+                    && let Ty::Var(w) = self.resolve(t)
+                {
+                    arm.insert(w);
+                }
+            }
+        }
+        for (id, name, generics) in undetermined {
             let open: Vec<&str> = generics
                 .iter()
                 .filter(|(g, t)| {
@@ -2671,11 +3697,21 @@ impl Checker {
                 })
                 .map(|(g, _)| g.name.as_str())
                 .collect();
-            if !open.is_empty() {
+            // An argument that did not fit leaves the generics it would have fixed open: the
+            // mismatch is the error, and this one would only follow from it.
+            let after_mismatch = self.errors.iter().any(|e| {
+                e.span.start >= id.span().start && e.message.id.starts_with("nibcheck-mismatch")
+            });
+            if !open.is_empty() && !after_mismatch {
                 self.error(
-                    format!(
-                        "the type {} of `{name}` is not determined here: give the value a type, as in `let x: T = ...`",
-                        open.iter().map(|g| format!("`{g}`")).collect::<Vec<_>>().join(", ")
+                    msg!(
+                        "nibcheck-type-not-determined",
+                        generics = open
+                            .iter()
+                            .map(|g| format!("`{g}`"))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        name = name.to_string()
                     ),
                     id.span(),
                 );
@@ -2733,7 +3769,14 @@ impl Checker {
             && given != d.generics.len()
         {
             let want = d.generics.len();
-            self.error(format!("{name} takes {want} arguments"), span);
+            self.error(
+                msg!(
+                    "nibcheck-takes-arguments",
+                    name = name.to_string(),
+                    count = want.to_string()
+                ),
+                span,
+            );
         }
     }
 
@@ -2805,16 +3848,26 @@ impl Checker {
         }
         let under_borrow = std::mem::take(&mut self.under_borrow);
         match &*t.kind {
+            // `#()` where a type stands is the unit type.
+            _ if t.is_unit() => Ty::Unit,
+            TermKind::App { .. } if let Some(ts) = t.product_type_members() => {
+                let members = ts.iter().map(|t| self.written(t, generics)).collect();
+                self.product(members)
+            }
             TermKind::Var(n) => match if tauto_surface::bindings::is_library(n, n.as_str()) {
                 n.as_str()
             } else {
                 ""
             } {
+                "i8" => Ty::Int(Width::W8),
+                "i16" => Ty::Int(Width::W16),
                 "i32" => Ty::Int(Width::W32),
                 "i64" => Ty::Int(Width::W64),
                 "u8" => Ty::Int(Width::U8),
+                "u16" => Ty::Int(Width::U16),
                 "u32" => Ty::Int(Width::U32),
                 "u64" => Ty::Int(Width::U64),
+                "uhost" => Ty::Int(Width::Host),
                 "nat" => Ty::Int(Width::Nat),
                 "Bool" => Ty::Bool,
                 "Text" => Ty::Text,
@@ -2825,6 +3878,13 @@ impl Checker {
                 "Float32" => Ty::Float32,
                 _ => match generics.get(n) {
                     Some(t) => t.clone(),
+                    // Taken out while it is read, so that a def that names
+                    // itself is a name, not a loop.
+                    None if let Some(body) = self.type_defs.remove(n) => {
+                        let ty = self.written(&body, &HashMap::new());
+                        self.type_defs.insert(n.clone(), body);
+                        ty
+                    }
                     None => {
                         self.arity(n, 0, t.span);
                         Ty::Named(n.clone(), Vec::new())
@@ -2836,11 +3896,6 @@ impl Checker {
                 arguments,
             } => match &*function.kind {
                 TermKind::Var(n)
-                    if tauto_surface::bindings::is_library(&n, "Tuple") && arguments.is_empty() =>
-                {
-                    Ty::Unit
-                }
-                TermKind::Var(n)
                     if tauto_surface::bindings::is_library(&n, "Info") && arguments.len() == 1 =>
                 {
                     Ty::Info(Box::new(self.written(&arguments[0], generics)))
@@ -2848,7 +3903,10 @@ impl Checker {
                 TermKind::Var(n) if generics.contains_key(n) => {
                     if arguments.len() != 1 {
                         self.error(
-                            format!("{n} is a type constructor variable and takes one argument"),
+                            msg!(
+                                "nibcheck-type-constructor-variable-one-argument",
+                                name = n.to_string()
+                            ),
                             t.span,
                         );
                         return self.fresh();
@@ -2872,9 +3930,9 @@ impl Checker {
                     );
                     self.written(&flat, generics)
                 }
-                TermKind::Var(n) if !tauto_surface::bindings::is_library(n, "Tuple") => {
+                TermKind::Var(n) => {
                     if tauto_surface::bindings::is_library(&n, "Slice") && !under_borrow {
-                        self.error("Slice(A) can only be borrowed", t.span);
+                        self.error(msg!("nibcheck-slice-only-borrowed"), t.span);
                     }
                     let rows = self.row_params.get(n).cloned().unwrap_or_default();
                     let args: Vec<Ty> = arguments
@@ -2886,7 +3944,7 @@ impl Checker {
                                 // is the row check's to say.
                                 if !matches!(&*a.kind, TermKind::Row(_) | TermKind::Var(_)) {
                                     self.error(
-                                        format!("{n} takes an effect row here, as in `{n}(!{{a | e}})`"),
+                                        msg!("nibcheck-takes-effect-row", name = n.to_string()),
                                         a.span,
                                     );
                                 }
@@ -2898,7 +3956,10 @@ impl Checker {
                             }
                             TermKind::Row(_) => {
                                 self.error(
-                                    format!("an effect row is given only to a row parameter, and this one of {n} is not"),
+                                    msg!(
+                                        "nibcheck-effect-row-only-to-row-parameter",
+                                        name = n.to_string()
+                                    ),
                                     a.span,
                                 );
                                 Ty::Unit
@@ -2910,30 +3971,44 @@ impl Checker {
                     Ty::Named(n.clone(), args)
                 }
                 _ => {
-                    self.error("not a type", t.span);
+                    self.error(msg!("nibcheck-not-a-type"), t.span);
                     self.fresh()
                 }
             },
             TermKind::Pi { params, result, .. } => {
                 // `(A: Shared, B: Type, …)` first: the expansion's
                 // `<A: Shared, B: Type>(…) -> …`.
-                let binders: Vec<(Param, Kind)> = params
+                // A binder `shared+noborrow` (a class method's
+                // `<T: Shared + NoBorrow>`) keeps its `NoBorrow`.
+                let binders: Vec<(Param, Kind, bool)> = params
                     .iter()
                     .enumerate()
                     .map_while(|(index, (n, p))| match (n, &*p.kind) {
-                        (Some(n), TermKind::Var(k)) => Some((
-                            Param::new(
+                        (Some(n), TermKind::Var(k)) => {
+                            let (kind, plain) = without_no_borrow(k.as_str());
+                            let kind = match kind {
+                                None => Kind::Affine,
+                                Some(k) => Kind::parse(&k)?,
+                            };
+                            let param = Param::new(
                                 ParamId::Poly {
                                     occurrence: t.id(),
                                     index,
                                 },
                                 n.clone(),
-                            ),
-                            Kind::parse(k)?,
-                        )),
+                            );
+                            Some((param, kind, plain))
+                        }
                         _ => None,
                     })
                     .collect();
+                for (param, _, plain) in &binders {
+                    if *plain {
+                        self.no_borrow.insert(param.id.clone());
+                    }
+                }
+                let binders: Vec<(Param, Kind)> =
+                    binders.into_iter().map(|(p, k, _)| (p, k)).collect();
                 let mut inner = generics.clone();
                 for (n, k) in &binders {
                     inner.insert(n.name.clone(), Ty::Param(n.clone(), *k));
@@ -2955,19 +4030,43 @@ impl Checker {
             TermKind::FnKind { kind, ty } => match self.written(ty, generics) {
                 Ty::Fn(ps, r, _) => Ty::Fn(ps, r, Kind::parse(kind).unwrap_or(Kind::Shared)),
                 other => {
-                    self.error(format!("`{kind}` is the kind of a function type"), t.span);
+                    self.error(
+                        msg!("nibcheck-kind-of-function-type", kind = kind.to_string()),
+                        t.span,
+                    );
                     other
                 }
             },
-            TermKind::Borrow { mutable, term } => {
+            // `&rc T`: what the box holds is checked once the program's
+            // types are known (`rc_contents`).
+            TermKind::Borrow { rc: true, term, .. } => {
+                let inner = self.written(term, generics);
+                self.rc_contents.push((inner.clone(), t.span));
+                Ty::Rc(Box::new(inner))
+            }
+            TermKind::Borrow {
+                mutable,
+                orig,
+                term,
+                ..
+            } => {
                 self.under_borrow = true;
-                Ty::Borrow(Box::new(self.written(term, generics)), *mutable)
+                let inner = self.written(term, generics);
+                // `&T` of a type with `struct &T` is that struct, which holds
+                // borrows; `&orig T` is the borrow of the owner.
+                if !*mutable
+                    && let Some(lent) = self
+                        .datas
+                        .lent_struct(&Ty::Borrow(Box::new(inner.clone()), false))
+                {
+                    if *orig {
+                        return Ty::Orig(Box::new(inner));
+                    }
+                    return lent;
+                }
+                Ty::Borrow(Box::new(inner), *mutable)
             }
             TermKind::Union(ts) => union(ts.iter().map(|t| self.written(t, generics)).collect()),
-            TermKind::Product(ts) => {
-                let members = ts.iter().map(|t| self.written(t, generics)).collect();
-                self.product(members)
-            }
             TermKind::Tagged { tag, term } => {
                 tagged(BTreeSet::from([tag.clone()]), self.written(term, generics))
             }
@@ -2977,7 +4076,7 @@ impl Checker {
                 self.fresh()
             }
             _ => {
-                self.error("not a type of a program", t.span);
+                self.error(msg!("nibcheck-not-a-type-of-program"), t.span);
                 self.fresh()
             }
         }
@@ -2997,6 +4096,22 @@ impl Checker {
 
     fn declare_effect(&mut self, e: &EffectDecl) {
         let owner = self.effect_owner(&e.name, e.span);
+        // A written bound that is a kind (`<A: Shared>`); anything else, or
+        // nothing, leaves the generic linear.
+        let kinds: Vec<Kind> = (0..e.generics.len())
+            .map(|i| {
+                e.bounds
+                    .get(i)
+                    .cloned()
+                    .flatten()
+                    .as_deref()
+                    .map(without_no_borrow)
+                    .and_then(|(b, _)| b)
+                    .as_deref()
+                    .and_then(Kind::parse)
+                    .unwrap_or(Kind::Linear)
+            })
+            .collect();
         let generics: HashMap<Name, Ty> = e
             .generics
             .iter()
@@ -3004,7 +4119,7 @@ impl Checker {
             .map(|(index, g)| {
                 (
                     g.clone(),
-                    Ty::Param(Param::effect(&owner, index, g), Kind::Linear),
+                    Ty::Param(Param::effect(&owner, index, g), kinds[index]),
                 )
             })
             .collect();
@@ -3019,7 +4134,10 @@ impl Checker {
             .map(|p| match p {
                 Some(p) => self.written(p, &generics),
                 None => {
-                    self.error(format!("a parameter of `{}` has no type", e.name), e.span);
+                    self.error(
+                        msg!("nibcheck-parameter-has-no-type", name = e.name.to_string()),
+                        e.span,
+                    );
                     Ty::Never
                 }
             })
@@ -3031,7 +4149,10 @@ impl Checker {
         let quant = match &e.resume {
             None => Quant::AtMostOne,
             Some(q) => Quant::parse(q).unwrap_or_else(|| {
-                self.error(format!("`resume {q}`: write 0, <=1, 1 or ω"), e.span);
+                self.error(
+                    msg!("nibcheck-resume-quantity", quantity = q.to_string()),
+                    e.span,
+                );
                 Quant::AtMostOne
             }),
         };
@@ -3045,6 +4166,7 @@ impl Checker {
                     .enumerate()
                     .map(|(i, g)| Param::effect(&owner, i, g))
                     .collect(),
+                kinds,
                 params,
                 result,
             },
@@ -3053,18 +4175,126 @@ impl Checker {
 
     /// Records a `struct` or `enum`; field types are checked again after
     /// all declarations are known.
-    fn declare_data(&mut self, d: &DataDecl, is_struct: bool, builtin: bool) {
-        let view = d.kind.as_deref() == Some("view");
-        let declared = if view {
-            Some(Kind::Affine)
-        } else {
-            d.kind.as_deref().and_then(Kind::parse)
+    /// `struct &T { … }`: declared under [`Datas::lent_name`], beside `T` of
+    /// the same module (the same qualified name) and over its type
+    /// parameters. Its fields are duplicable values or borrows.
+    fn declare_lent(&mut self, d: &DataDecl, stmts: &[Stmt]) {
+        let shown = d.name.as_str().trim_start_matches('&').to_string();
+        let owners: Vec<&DataDecl> = stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Struct(o) | Stmt::Enum(o) if !o.borrowed && last_segment(o.name.as_str()) == last_segment(&shown) => {
+                    Some(o)
+                }
+                _ => None,
+            })
+            .collect();
+        let [owner] = owners.as_slice() else {
+            self.error(
+                msg!("nibcheck-lent-struct-without-owner", name = shown),
+                d.span,
+            );
+            return;
         };
-        if view && (!is_struct || d.constructors.iter().any(|c| !c.fields.is_empty())) {
-            self.error("a view struct has no fields: it is an opaque type", d.span);
+        if owner.generics.len() != d.generics.len() {
+            self.error(msg!("nibcheck-lent-struct-generics", name = shown), d.span);
+            return;
         }
+        // `struct &T` asks for `Lend(T)` in the same module.
+        let lends = stmts.iter().any(|s| match s {
+            Stmt::Instance(i) => {
+                i.class.as_str().rsplit("::").next() == Some("Lend")
+                    && match &*i.head.kind {
+                        TermKind::Var(h) => last_segment(h.as_str()) == shown,
+                        TermKind::App { function, .. } => {
+                            matches!(&*function.kind, TermKind::Var(h) if last_segment(h.as_str()) == shown)
+                        }
+                        _ => false,
+                    }
+            }
+            // After the classes are expanded: the dictionary's functions.
+            Stmt::Fn(f) => f
+                .name
+                .as_str()
+                .strip_prefix("Lend::lend@")
+                .is_some_and(|h| last_segment(h) == shown),
+            _ => false,
+        });
+        if !lends {
+            self.error(
+                msg!("nibcheck-lent-struct-without-lend", name = shown.clone()),
+                d.span,
+            );
+        }
+        self.declare_data(d, true, false);
+        self.datas
+            .lent_of
+            .insert(owner.name.clone(), d.name.clone());
+        self.lent_decls.push((d.name.clone(), d.span));
+    }
+
+    /// Whether `t` is a `struct &T`.
+    fn is_lent_struct(&self, t: &Ty) -> bool {
+        matches!(t, Ty::Named(n, _) if self.datas.lent_of.values().any(|l| l == n))
+    }
+
+    /// A field of `struct &T` is a duplicable value or a borrow.
+    fn check_lent_fields(&mut self) {
+        for (name, span) in self.lent_decls.clone() {
+            let Some(d) = self.datas.decls.get(&name) else {
+                continue;
+            };
+            let fields: Vec<(Option<String>, Ty)> = d
+                .constructors
+                .iter()
+                .flat_map(|c| {
+                    c.fields
+                        .iter()
+                        .map(|(n, t)| (n.as_ref().map(|n| n.to_string()), t.clone()))
+                })
+                .collect();
+            for (field, t) in fields {
+                let ok = self.kind(&unborrow_shared(&t)).dup();
+                if !ok {
+                    let shown = name.as_str().trim_start_matches('&').to_string();
+                    self.error(
+                        msg!(
+                            "nibcheck-lent-struct-field",
+                            name = shown,
+                            field = field.unwrap_or_default()
+                        ),
+                        span,
+                    );
+                }
+            }
+        }
+    }
+
+    fn declare_data(&mut self, d: &DataDecl, is_struct: bool, builtin: bool) {
+        // The words in the parentheses: a kind, and `borrow` on an extern
+        // `type` (`type(affine, borrow) Guard`). A type with fields holds a
+        // borrow when a field does, with nothing written; only an opaque
+        // extern type says so in its declaration, which the grammar keeps to
+        // `extern`.
+        let mut words: Vec<&str> = d
+            .kind
+            .as_deref()
+            .map(|k| k.split(',').map(str::trim).collect())
+            .unwrap_or_default();
+        let inductive = words.contains(&tauto_surface::inductive_data::KIND);
+        words.retain(|w| *w != tauto_surface::inductive_data::KIND);
+        let view = words.contains(&"borrow");
+        if view && (!is_struct || d.constructors.iter().any(|c| !c.fields.is_empty())) {
+            self.error(msg!("nibcheck-borrow-only-extern-type"), d.span);
+        }
+        let declared = match words.iter().find(|w| **w != "borrow") {
+            Some(k) => Kind::parse(k),
+            // A borrow is not copied out of the value that holds it.
+            None if view => Some(Kind::Affine),
+            None => None,
+        };
         // Still here: it could not be the `inductive` it says it is.
-        if d.kind.as_deref() == Some(tauto_surface::inductive_data::KIND) {
+        if inductive {
             for (why, at) in tauto_surface::inductive_data::problems(d, is_struct) {
                 self.error(why, at);
             }
@@ -3088,12 +4318,7 @@ impl Checker {
                 fields: c
                     .fields
                     .iter()
-                    .map(|(n, t)| {
-                        if term_has_borrow(t) {
-                            self.error("a borrow cannot be a field", t.span);
-                        }
-                        (n.clone(), self.written(t, &generics))
-                    })
+                    .map(|(n, t)| (n.clone(), self.written(t, &generics)))
                     .collect(),
             })
             .collect::<Vec<_>>();
@@ -3114,7 +4339,10 @@ impl Checker {
                     .insert(format!("{}::{written}", d.name).into(), (d.name.clone(), i));
             }
         }
-        if is_struct && constructors.len() == 1 {
+        // A variant of another type may share the struct's name: the name then
+        // stays ambiguous, whichever of them is declared first.
+        if is_struct && constructors.len() == 1 && !self.datas.ambiguous_ctors.contains_key(&d.name)
+        {
             self.datas.ctors.insert(d.name.clone(), (d.name.clone(), 0));
         }
         self.datas.decls.insert(
@@ -3130,6 +4358,7 @@ impl Checker {
                 holds: d.generics.clone(),
                 builtin,
                 view,
+                coerce: d.coerce.as_ref().map(|c| (c.field, c.level)),
             },
         );
     }
@@ -3138,6 +4367,7 @@ impl Checker {
     /// looser than what the fields give.
     fn finish_datas(&mut self, program: &Program) {
         let names: Vec<Name> = self.datas.decls.keys().cloned().collect();
+        self.datas.find_views();
         for n in &names {
             let recursive = reaches(&self.datas, n, n, &mut HashSet::new());
             if let Some(d) = self.datas.decls.get_mut(n) {
@@ -3157,9 +4387,10 @@ impl Checker {
             };
             if data.recursive && declared < Kind::Shared {
                 self.error(
-                    format!(
-                        "declared {declared} but `{}` holds itself, so it is shared",
-                        d.name
+                    msg!(
+                        "nibcheck-declared-shared-holds-itself",
+                        declared = declared.to_string(),
+                        name = d.name.to_string()
                     ),
                     d.span,
                 );
@@ -3178,7 +4409,12 @@ impl Checker {
                     if !k.fits(declared) || (declared == Kind::Copy && k != Kind::Copy) {
                         let field = n.clone().unwrap_or_else(|| format!("{} of {}", i, c.name));
                         self.error(
-                            format!("declared {declared} but field {field} is {k}"),
+                            msg!(
+                                "nibcheck-declared-but-field",
+                                declared = declared.to_string(),
+                                field = field.to_string(),
+                                kind = k.to_string()
+                            ),
                             d.span,
                         );
                         break 'fields;
@@ -3208,12 +4444,43 @@ impl Checker {
         let mut generics: Vec<(Param, Kind)> = Vec::new();
         let mut ctors: Vec<(Param, Kind)> = Vec::new();
         let mut map: HashMap<Name, Ty> = HashMap::new();
+        // A local function's `where` may name a type parameter of the
+        // function it is in (`expand.rs` writes the enclosing `where` on it),
+        // and so may the dictionary parameters it is given for it. Other
+        // outer names are not in its signature.
+        let mut named: Vec<&str> = Vec::new();
+        for c in &f.where_ {
+            if let TermKind::Var(g) = &*c.ty.kind {
+                named.push(g.as_str());
+            }
+        }
+        // A dictionary parameter is named `member@A` (`expand.rs`).
+        named.extend(
+            f.params
+                .iter()
+                .filter_map(|p| p.as_str().rsplit_once('@').map(|(_, g)| g)),
+        );
+        for (g, t) in &self.type_params {
+            if named.contains(&g.as_str())
+                && !f.generics.iter().any(|own| own.as_str() == g.as_str())
+            {
+                map.insert(g.clone(), t.clone());
+            }
+        }
         for (i, g) in f.generics.iter().enumerate() {
             // Native Nib has type and row generics only. A checked term
             // telescope must first be lowered to ordinary value parameters;
             // ignoring its domain here would silently erase an argument.
             fn native_kind(ty: &SurfaceTerm) -> bool {
                 match &*ty.kind {
+                    // `NoBorrow`, alone or beside a kind (`Shared + NoBorrow`).
+                    TermKind::Var(name) if name.as_str() == "NoBorrow" => true,
+                    TermKind::App {
+                        function,
+                        arguments,
+                    } if matches!(&*function.kind, TermKind::Var(n) if n.as_str() == "+") => {
+                        arguments.iter().all(native_kind)
+                    }
                     TermKind::Var(name) => name.sort_symbol().is_some_and(|sort| {
                         matches!(sort, tauto_surface::identity::SortSymbol::Type(_))
                     }),
@@ -3223,6 +4490,7 @@ impl Checker {
                         params,
                         result,
                         effects,
+                        ..
                     } => {
                         effects.as_ref().is_none_or(Vec::is_empty)
                             && params.iter().all(|(_, ty)| native_kind(ty))
@@ -3237,12 +4505,16 @@ impl Checker {
                         .get(i)
                         .and_then(|bound| bound.as_deref())
                         .is_some_and(|bound| {
-                            Kind::parse(bound).is_none() && Kind::parse_ctor(bound).is_none()
+                            let (kind, _) = without_no_borrow(bound);
+                            kind.as_deref().is_some_and(|k| {
+                                Kind::parse(k).is_none() && Kind::parse_ctor(k).is_none()
+                            })
                         }))
             {
                 self.error(
-                    format!(
-                        "term generic `{g}` requires checked extraction before native compilation"
+                    msg!(
+                        "nibcheck-term-generic-needs-extraction",
+                        name = g.to_string()
                     ),
                     f.bound_spans.get(i).copied().unwrap_or(f.span),
                 );
@@ -3260,6 +4532,14 @@ impl Checker {
                 ctors.push((param.clone(), arg));
                 map.insert(g.clone(), Ty::Param(param, result));
                 continue;
+            }
+            // `NoBorrow` beside the kind (`<A: Shared + NoBorrow>`).
+            let (bound, plain) = match bound.as_deref().map(without_no_borrow) {
+                Some((b, plain)) => (b, plain),
+                None => (None, false),
+            };
+            if plain {
+                self.no_borrow.insert(param.id.clone());
             }
             let bound = match bound.as_deref() {
                 None => Some(Kind::Affine),
@@ -3292,6 +4572,18 @@ impl Checker {
                 // An inferred parameter has no written type to consume this flag.
                 self.under_borrow = false;
                 match b {
+                    // `x: &T` of a type with `struct &T` takes that struct.
+                    Some(false)
+                        if !matches!(t, Ty::Borrow(..))
+                            && let Some(lent) = self
+                                .datas
+                                .lent_struct(&Ty::Borrow(Box::new(t.clone()), false)) =>
+                    {
+                        lent
+                    }
+                    // Already written as `&T` and read as its `struct &T`, or
+                    // as `&orig T`.
+                    Some(false) if self.is_lent_struct(&t) || matches!(t, Ty::Orig(_)) => t,
                     Some(m) if !matches!(t, Ty::Borrow(..)) => Ty::Borrow(Box::new(t), *m),
                     _ => t,
                 }
@@ -3301,48 +4593,203 @@ impl Checker {
             Some(r) => self.written(r, &map),
             None => self.fresh(),
         };
-        if self.is_view(&result) {
+        // A result that may hold a borrow needs a lender only when it is
+        // written `&T` or `&mut T` itself. Without a borrowed parameter the
+        // result borrows nothing: the body's check sees to that (an extern,
+        // which has no body, is trusted to keep it).
+        let lends = params.iter().any(|p| matches!(p, Ty::Borrow(..)));
+        let direct = matches!(self.resolve(&result), Ty::Borrow(..));
+        if self.is_view(&result) && (lends || direct) {
             let span = f.result.as_ref().map_or(f.span, |r| r.span);
             let shown = self.shown(&result);
             if self.has_mut_borrow(&result) {
                 if !params.iter().any(|p| matches!(p, Ty::Borrow(_, true))) {
-                    self.error(format!("-> {shown} needs a &mut parameter"), span);
+                    self.error(
+                        msg!(
+                            "nibcheck-return-needs-mut-parameter",
+                            ty = shown.to_string()
+                        ),
+                        span,
+                    );
                 }
-            } else if !params.iter().any(|p| matches!(p, Ty::Borrow(..))) {
-                self.error(format!("-> {shown} needs a borrowed parameter"), span);
+            } else if !lends {
+                self.error(
+                    msg!(
+                        "nibcheck-return-needs-borrowed-parameter",
+                        ty = shown.to_string()
+                    ),
+                    span,
+                );
             }
         }
-        let mut preds: Vec<(Name, Param)> = Vec::new();
-        for c in &f.where_ {
-            if !c.arguments.is_empty() {
+        // `borrows(m, x.f)`: the result holds a borrow, and each path starts
+        // at a parameter that lends one.
+        if let Some(lends) = &f.lends {
+            let span = f.result.as_ref().map_or(f.span, |r| r.span);
+            if !self.is_view(&result) {
+                let shown = self.shown(&result);
                 self.error(
-                    "value-indexed constraints require checked dictionary extraction",
+                    msg!(
+                        "nibcheck-borrows-result-holds-no-borrow",
+                        ty = shown.to_string()
+                    ),
+                    span,
+                );
+            }
+            let mut lends_mut = false;
+            for path in lends {
+                let root = path.split('.').next().unwrap_or(path);
+                let at = f.params.iter().position(|p| p.as_str() == root);
+                // `borrows(place)`: an operation of the written row.
+                let in_row = !path.contains('.')
+                    && f.effects.iter().flatten().any(|e| {
+                        crate::lin::effect_key(&e.to_string()) == crate::lin::effect_key(path)
+                    });
+                let at = if in_row { None } else { at };
+                match at.map(|i| &params[i]) {
+                    Some(Ty::Borrow(_, m)) => lends_mut |= *m,
+                    Some(t) if self.is_view(t) => lends_mut |= self.has_mut_borrow(t),
+                    None if in_row => {}
+                    _ => self.error(
+                        msg!(
+                            "nibcheck-borrows-not-a-borrowed-parameter",
+                            name = root.to_string()
+                        ),
+                        span,
+                    ),
+                }
+            }
+            if self.is_view(&result) && self.has_mut_borrow(&result) && !lends_mut {
+                let shown = self.shown(&result);
+                self.error(
+                    msg!(
+                        "nibcheck-return-needs-mut-parameter",
+                        ty = shown.to_string()
+                    ),
+                    span,
+                );
+            }
+        }
+        let mut preds: Vec<(Name, Vec<Param>)> = Vec::new();
+        let mut equations: Vec<(Name, Param, Param)> = Vec::new();
+        let generic_param = |n: &Name| {
+            generics
+                .iter()
+                .find(|(g, _)| &g.name == n)
+                .map(|(g, _)| g.clone())
+        };
+        for c in &f.where_ {
+            if c.class.as_str() == type_functions::ASSOC {
+                if let (TermKind::Var(h), [projection]) = (&*c.ty.kind, c.arguments.as_slice())
+                    && let TermKind::App {
+                        function,
+                        arguments,
+                    } = &*projection.kind
+                    && let (TermKind::Var(member), [g]) = (&*function.kind, arguments.as_slice())
+                    && let TermKind::Var(g) = &*g.kind
+                    && let (Some(g), Some(h)) = (generic_param(g), generic_param(h))
+                {
+                    equations.push((member.clone(), g, h));
+                }
+                continue;
+            }
+            let asked = self.classes.get(&c.class).map(|info| info.decl.arity);
+            let args: Vec<&SurfaceTerm> = std::iter::once(&c.ty).chain(&c.arguments).collect();
+            if let Some(arity) = asked
+                && args.len() != arity
+            {
+                self.error(
+                    msg!(
+                        "nibcheck-class-argument-arity",
+                        name = c.class.to_string(),
+                        expected = arity.to_string(),
+                        count = args.len().to_string()
+                    ),
                     c.span,
                 );
                 continue;
             }
-            if !STRUCTURAL.contains(&c.class.as_str()) && !self.classes.contains_key(&c.class) {
-                self.error(format!("{} is not a class", c.class), c.span);
-                continue;
-            }
-            let generic = match &*c.ty.kind {
-                TermKind::Var(g) if generics.iter().any(|(n, _)| &n.name == g) => generics
-                    .iter()
-                    .find(|(n, _)| &n.name == g)
-                    .unwrap()
-                    .0
-                    .clone(),
-                _ => {
-                    self.error(
-                        format!("where constrains only generics of {}", f.name),
-                        c.span,
-                    );
+            if asked.is_none() && !c.arguments.is_empty() {
+                // Unknown / structural multi-arg: value index needs extraction.
+                if !STRUCTURAL.contains(&c.class.as_str()) {
+                    self.error(msg!("nibcheck-value-indexed-constraints"), c.span);
                     continue;
                 }
+            }
+            if !STRUCTURAL.contains(&c.class.as_str()) && !self.classes.contains_key(&c.class) {
+                self.error(
+                    msg!("nibcheck-not-a-class", name = c.class.to_string()),
+                    c.span,
+                );
+                continue;
+            }
+            let resolve_generic = |g: &Name| -> Option<Param> {
+                if generics.iter().any(|(n, _)| &n.name == g) {
+                    return generics
+                        .iter()
+                        .find(|(n, _)| &n.name == g)
+                        .map(|(n, _)| n.clone());
+                }
+                // A local function's `where` may name a type parameter of
+                // the function it is in (`expand.rs` writes the enclosing
+                // `where` on it).
+                match self.type_params.get(g) {
+                    Some(Ty::Param(p, _)) => Some(p.clone()),
+                    _ => None,
+                }
             };
-            let pred = (c.class.clone(), generic);
-            if preds.contains(&pred) {
-                self.error(format!("{}({}) is written twice", pred.0, pred.1), c.span);
+            let mut params = Vec::new();
+            let mut ok = true;
+            for a in &args {
+                match &*a.kind {
+                    TermKind::Var(g) => match resolve_generic(g) {
+                        Some(p) => params.push(p),
+                        None => {
+                            self.error(
+                                msg!(
+                                    "nibcheck-where-only-generics-of-function",
+                                    name = f.name.to_string()
+                                ),
+                                c.span,
+                            );
+                            ok = false;
+                            break;
+                        }
+                    },
+                    _ => {
+                        self.error(
+                            msg!(
+                                "nibcheck-where-only-generics-of-function",
+                                name = f.name.to_string()
+                            ),
+                            c.span,
+                        );
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let pred = (c.class.clone(), params);
+            if preds
+                .iter()
+                .any(|(cls, ps)| cls == &pred.0 && ps == &pred.1)
+            {
+                self.error(
+                    msg!(
+                        "nibcheck-predicate-written-twice",
+                        class = pred.0.to_string(),
+                        argument = pred
+                            .1
+                            .iter()
+                            .map(|p| p.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    c.span,
+                );
                 continue;
             }
             preds.push(pred);
@@ -3352,6 +4799,7 @@ impl Checker {
             generics,
             ty: Ty::Fn(params, Box::new(result), Kind::Shared),
             preds,
+            equations,
             ctors,
         }
     }
@@ -3377,7 +4825,10 @@ impl Checker {
                     self.ctor_bounds
                         .push((v.clone(), *arg, *k, name.to_string(), span))
                 }
-                None => self.bounds.push((v.clone(), *k, span)),
+                None => {
+                    let plain = self.no_borrow.contains(&g.id);
+                    self.bounds.push((v.clone(), *k, span, plain))
+                }
             }
             arguments.insert(g.id.clone(), v);
         }
@@ -3394,10 +4845,38 @@ impl Checker {
             self.undetermined.push((id, name.clone(), generics));
         }
         self.instantiations.push((id, arguments.clone()));
-        for (n, (class, g)) in s.preds.iter().enumerate() {
+        self.instance_names.insert(
+            id,
+            s.generics
+                .iter()
+                .map(|(g, _)| (g.name.clone(), arguments[g.id()].clone()))
+                .collect(),
+        );
+        for (member, g, h) in &s.equations {
+            self.deferred_projections.push((
+                Ty::Named(member.clone(), vec![arguments[g.id()].clone()]),
+                arguments[h.id()].clone(),
+                span,
+            ));
+        }
+        self.solve_projections();
+        for (n, (class, gs)) in s.preds.iter().enumerate() {
+            // A `where` on a type parameter of the enclosing function (a
+            // local function's) is about that parameter as it is.
+            let tys: Vec<Ty> = gs
+                .iter()
+                .map(|g| match arguments.get(g.id()) {
+                    Some(t) => t.clone(),
+                    None => self
+                        .type_params
+                        .get(&g.name)
+                        .cloned()
+                        .unwrap_or(Ty::Param(g.clone(), Kind::Affine)),
+                })
+                .collect();
             self.pending.push(Pending {
                 class: class.clone(),
-                ty: arguments[g.id()].clone(),
+                tys,
                 what: name.to_string(),
                 assume: self.assume.clone(),
                 span,
@@ -3408,17 +4887,78 @@ impl Checker {
         substitute(&self.resolve(&s.ty), &arguments)
     }
 
+    /// A type variable in `t` that may stand for a type holding a borrow:
+    /// one not bounded by `NoBorrow`.
+    fn borrowing_param(&self, t: &Ty) -> Option<Name> {
+        match t {
+            Ty::Param(p, _) if !self.no_borrow.contains(&p.id) => Some(p.name.clone()),
+            Ty::Named(_, args) => args.iter().find_map(|a| self.borrowing_param(a)),
+            Ty::Borrow(t, _) | Ty::Tagged(_, t) | Ty::Rc(t) => self.borrowing_param(t),
+            Ty::Union(ts) => ts.iter().find_map(|a| self.borrowing_param(a)),
+            _ => None,
+        }
+    }
+
+    /// `let(stack) x := e`: the value of `x` is placed in the frame's slot,
+    /// so its type has a size known here and is placed without an
+    /// allocation: no type parameter, and not a type that holds itself.
+    fn stack_let(&mut self, name: &Name, word: &str, t: &Ty, span: Span) {
+        if word != "stack" {
+            self.error(
+                msg!("nibcheck-let-unknown-prop", word = word.to_string()),
+                span,
+            );
+            return;
+        }
+        let shown = |s: &Self| s.shown(t).to_string();
+        if let Some(param) = self.stack_param(t) {
+            let ty = shown(self);
+            self.error(
+                msg!(
+                    "nibcheck-stack-type-param",
+                    name = name.to_string(),
+                    ty = ty,
+                    param = param
+                ),
+                span,
+            );
+        } else if let Ty::Named(n, _) = self.resolve(t)
+            && self.datas.decls.get(&n).is_some_and(|d| d.recursive)
+        {
+            let ty = shown(self);
+            self.error(
+                msg!("nibcheck-stack-recursive", name = name.to_string(), ty = ty),
+                span,
+            );
+        }
+    }
+
+    /// A type parameter somewhere in `t`: its size is not known in the frame.
+    fn stack_param(&self, t: &Ty) -> Option<String> {
+        match self.resolve(t) {
+            Ty::Param(p, _) => Some(p.name.to_string()),
+            Ty::Union(ts) => ts.iter().find_map(|t| self.stack_param(t)),
+            Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Orig(t) | Ty::Rc(t) => {
+                self.stack_param(&t)
+            }
+            Ty::App(h, x) => self.stack_param(&h).or_else(|| self.stack_param(&x)),
+            Ty::Named(_, args) => args.iter().find_map(|a| self.stack_param(a)),
+            Ty::Fn(ps, r, _) => ps
+                .iter()
+                .find_map(|p| self.stack_param(p))
+                .or_else(|| self.stack_param(&r)),
+            _ => None,
+        }
+    }
+
     /// A type that holds a borrow, received as one is: a borrow, a
-    /// `view struct`, or an `Option`, `Result` or `Pair` of one.
+    /// extern `type(borrow)`, or a type applied to one.
     fn is_view(&self, t: &Ty) -> bool {
         match self.resolve(t) {
             Ty::Borrow(..) => true,
             Ty::Named(n, args) => {
                 self.datas.decls.get(&n).is_some_and(|d| d.view)
-                    || (["Option", "Result", "Pair"]
-                        .iter()
-                        .any(|native| tauto_surface::bindings::is_library(&n, native))
-                        && args.iter().any(|a| self.is_view(a)))
+                    || args.iter().any(|a| self.is_view(a))
             }
             _ => false,
         }
@@ -3510,12 +5050,46 @@ impl Checker {
             self.bind_local(&mut env, name, ty.clone(), false, site(&f.body));
         }
         self.returns.push((**result).clone());
-        let outer = std::mem::replace(&mut self.assume, scheme.preds.clone());
-        let type_params = scheme
-            .generics
+        // A local function is inside the enclosing function's type
+        // parameters, so it may assume their `where` as well as its own.
+        // A generic the local function declares again hides the outer one.
+        let mut assume = scheme.preds.clone();
+        assume.extend(
+            self.assume
+                .iter()
+                .filter(|(_, gs)| {
+                    gs.iter().all(|g| {
+                        !scheme
+                            .generics
+                            .iter()
+                            .any(|(own, _)| own.name.as_str() == g.name.as_str())
+                    })
+                })
+                .cloned(),
+        );
+        let outer = std::mem::replace(&mut self.assume, assume);
+        let projections = scheme
+            .equations
             .iter()
-            .map(|(g, k)| (g.name.clone(), Ty::Param(g.clone(), *k)))
+            .map(|(m, g, h)| {
+                let kind = scheme
+                    .generics
+                    .iter()
+                    .find(|(x, _)| x == h)
+                    .map_or(Kind::Affine, |(_, k)| *k);
+                (m.clone(), g.id().clone(), Ty::Param(h.clone(), kind))
+            })
             .collect();
+        let outer_projections = std::mem::replace(&mut self.local_projections, projections);
+        // The enclosing function's type parameters are in scope, under the
+        // local function's own.
+        let mut type_params = self.type_params.clone();
+        type_params.extend(
+            scheme
+                .generics
+                .iter()
+                .map(|(g, k)| (g.name.clone(), Ty::Param(g.clone(), *k))),
+        );
         let outer_types = std::mem::replace(&mut self.type_params, type_params);
         self.result_hint = Some((**result).clone());
         let body = self.infer(&f.body, &mut env);
@@ -3525,6 +5099,7 @@ impl Checker {
         self.term_path = outer_terms;
         self.term_children = outer_children;
         self.assume = outer;
+        self.local_projections = outer_projections;
         self.returns.pop();
         self.expect(
             &body,
@@ -3535,9 +5110,36 @@ impl Checker {
     }
 
     fn run(&mut self, program: &Program, prelude: &Program) {
-        for (message, span) in &program.errors {
+        for s in &program.stmts {
+            if let Stmt::Def(t) = s
+                && t.params.is_empty()
+                && matches!(&*t.ty.kind, TermKind::Var(n) if n.as_str() == "Type")
+                && let Some(body) = &t.body
+            {
+                self.type_defs.insert(t.name.clone(), body.clone());
+            }
+        }
+        // The mark of a program whose classes did not expand is not an error.
+        for (message, span) in unexpanded_errors(program).unwrap_or(&program.errors) {
             self.error(message.clone(), *span);
         }
+        // Validate replaceable `extern` here too: differentials parse without
+        // the loader that already pushed these into `program.errors`. Skip a
+        // diagnostic the loader already recorded (same id and span).
+        for (message, span) in
+            tauto_surface::surface::extern_blocks::validate_extern_blocks(&program.stmts)
+        {
+            let already = self.errors.iter().any(|e| {
+                &*e.message.id == &*message.id
+                    && e.span.start == span.start
+                    && e.span.end == span.end
+            });
+            if !already {
+                self.error(message, span);
+            }
+        }
+        self.extern_blocks =
+            tauto_surface::surface::extern_blocks::ExternBlocks::collect(&program.stmts);
         self.resolved_names = has_references(program);
         let resolved = tauto_surface::bindings::declared_names(&prelude.stmts)
             .iter()
@@ -3549,21 +5151,6 @@ impl Checker {
                 Name::from(name)
             }
         };
-        let show = intrinsic("show");
-        let show_owner = self.effect_owner(&show, Span::new(0, 0));
-        self.builtin_show_owner = Some(show_owner.clone());
-        self.effects.insert(
-            show.clone(),
-            EffectSig {
-                generics: vec![Param::effect(&show_owner, 0, &"A".into())],
-                params: vec![
-                    Ty::Text,
-                    Ty::Param(Param::effect(&show_owner, 0, &"A".into()), Kind::Linear),
-                ],
-                result: Ty::Unit,
-            },
-        );
-        self.quants.insert(show, Quant::Direct);
         self.quants.insert(intrinsic("exceeded"), Quant::AtMostOne);
         self.row_params = crate::surface::row_parameters_of(
             prelude
@@ -3579,54 +5166,40 @@ impl Checker {
             if let Stmt::Struct(d) | Stmt::Enum(d) = stmt {
                 for var in d.undeclared_rows() {
                     self.error(
-                        format!(
-                            "the row variable `{var}` is not declared; write `{}(!{var})`",
-                            d.name
+                        msg!(
+                            "nibcheck-row-variable-not-declared-type",
+                            variable = var.to_string(),
+                            name = d.name.to_string()
                         ),
                         d.span,
                     );
                 }
             }
         }
+        let of_prelude = indices::prelude_indices(prelude);
         self.indexed = indices::indexed_effects(program);
-        self.indexed.extend(indices::indexed_effects(prelude));
-        self.index_generics = indices::index_generics(prelude);
+        self.indexed.extend(of_prelude.indexed.iter().cloned());
+        self.index_generics = of_prelude.generics.clone();
         self.index_generics.extend(indices::index_generics(program));
         // The prelude's declarations, unless the program declares the name.
+        // A program's own externs are its own too: the prelude read as a
+        // program declares the host primitives it wraps.
         let own: HashSet<&Name> = program
             .stmts
             .iter()
-            .filter_map(|s| match s {
-                Stmt::Struct(d) | Stmt::Enum(d) => Some(&d.name),
-                Stmt::Fn(f) => Some(&f.name),
-                Stmt::Effect(e) => Some(&e.name),
-                _ => None,
+            .flat_map(|s| match s {
+                Stmt::Struct(d) | Stmt::Enum(d) => vec![&d.name],
+                Stmt::Fn(f) => vec![&f.name],
+                Stmt::Effect(e) => vec![&e.name],
+                Stmt::Extern { fns, .. } => fns.iter().map(|f| &f.name).collect(),
+                _ => vec![],
             })
             .collect();
         for s in &prelude.stmts {
             match s {
-                // An extern whose row names a standard effect is how the host
-                // answers that effect (`HOST_EFFECTS`).
-                Stmt::Extern { fns, .. } => {
-                    for f in fns {
-                        if crate::host::is_host_primitive(f) && !own.contains(&f.name) {
-                            self.host_only.insert(f.name.clone());
-                        }
-                    }
+                Stmt::Struct(d) if d.borrowed && !own.contains(&d.name) => {
+                    self.declare_lent(d, &prelude.stmts)
                 }
-                // `module Host` wraps those externs with the permission
-                // check and the waiting.
-                Stmt::Fn(f)
-                    if tauto_surface::bindings::is_host_module_fn(&f.name)
-                        && !own.contains(&f.name) =>
-                {
-                    self.host_only.insert(f.name.clone());
-                }
-                _ => {}
-            }
-        }
-        for s in &prelude.stmts {
-            match s {
                 Stmt::Struct(d) if !own.contains(&d.name) => {
                     let opaque = d.constructors.iter().all(|c| c.fields.is_empty());
                     self.declare_data(d, true, opaque)
@@ -3641,12 +5214,16 @@ impl Checker {
         let mut declared = HashSet::new();
         for s in &program.stmts {
             match s {
+                Stmt::Struct(d) if d.borrowed && declared.insert(&d.name) => {
+                    self.declare_lent(d, &program.stmts)
+                }
                 Stmt::Struct(d) if declared.insert(&d.name) => self.declare_data(d, true, false),
                 Stmt::Enum(d) if declared.insert(&d.name) => self.declare_data(d, false, false),
                 _ => {}
             }
         }
         self.finish_datas(program);
+        self.check_lent_fields();
         let mut data_names = HashSet::new();
         let duplicate_data = program
             .stmts
@@ -3657,7 +5234,10 @@ impl Checker {
             })
             .find(|d| !data_names.insert(&d.name));
         if let Some(d) = duplicate_data {
-            self.error(format!("type {} is declared twice", d.name), d.span);
+            self.error(
+                msg!("nibcheck-type-declared-twice", name = d.name.to_string()),
+                d.span,
+            );
         }
         let mut function_names = HashSet::new();
         let duplicate = program
@@ -3670,7 +5250,13 @@ impl Checker {
             })
             .find(|f| !function_names.insert(&f.name));
         if let Some(f) = duplicate {
-            self.error(format!("function {} is declared twice", f.name), f.span);
+            self.error(
+                msg!(
+                    "nibcheck-function-declared-twice",
+                    name = f.name.to_string()
+                ),
+                f.span,
+            );
         }
         // At this point every declaration is available, including forward and recursive references.
         for stmt in &program.stmts {
@@ -3724,11 +5310,24 @@ impl Checker {
                     self.fns.insert(f.name.clone(), scheme.clone());
                     fns.push((f, scheme));
                 }
-                Stmt::Extern { fns: externs, .. } => {
+                Stmt::Extern {
+                    fns: externs,
+                    instances,
+                    types,
+                    structs,
+                    enums,
+                    ..
+                } => {
+                    let replaceable = tauto_surface::surface::extern_is_replaceable(
+                        externs, instances, types, structs, enums,
+                    );
                     for (j, f) in externs.iter().enumerate() {
                         self.declaration_path = vec![1, i, j];
                         let scheme = self.signature(f);
-                        self.fns.insert(f.name.clone(), scheme);
+                        self.fns.insert(f.name.clone(), scheme.clone());
+                        if replaceable {
+                            fns.push((f, scheme));
+                        }
                     }
                 }
                 _ => {}
@@ -3772,6 +5371,8 @@ impl Checker {
                 value,
                 borrow,
                 borrow_mut,
+                stack,
+                ..
             } => {
                 // The written type is what the value is checked against (`let n: Nat := 1`).
                 let written = ty
@@ -3797,8 +5398,9 @@ impl Checker {
                     (true, true) => {
                         if *borrow_mut && !self.has_mut_borrow(&resolved) {
                             self.error(
-                                format!(
-                                    "`let &mut {name}` binds what a function returns as `-> &mut A`"
+                                msg!(
+                                    "nibcheck-let-mut-borrow-binds-return",
+                                    name = name.to_string()
                                 ),
                                 value.span,
                             );
@@ -3806,28 +5408,22 @@ impl Checker {
                     }
                     (true, false) => self.error(
                         if *borrow_mut {
-                            format!(
-                                "`let &mut {name}` binds what a function returns as `-> &mut A`"
+                            msg!(
+                                "nibcheck-let-mut-borrow-binds-return",
+                                name = name.to_string()
                             )
                         } else {
-                            format!("`let &{name}` binds what a function returns as `-> &A`")
+                            msg!("nibcheck-let-borrow-binds-return", name = name.to_string())
                         },
                         value.span,
                     ),
-                    (false, true) => match self.view_value(&resolved) {
-                        Some(plain) if !matches!(&*value.kind, TermKind::Borrow { .. }) => {
-                            // `&A ≡ A`: a duplicable value is copied out.
-                            t = plain;
-                        }
-                        _ => self.error(
-                            format!(
-                                "a borrow cannot be stored: `{name}` would hold {}",
-                                self.shown(&resolved)
-                            ),
-                            value.span,
-                        ),
-                    },
-                    (false, false) => {}
+                    // A value that holds a borrow is received as a borrow,
+                    // even of duplicable values: an unannotated `let` asks for
+                    // no copy (`&A → A` happens only where an `A` is wanted).
+                    (false, _) => {}
+                }
+                if let Some(word) = stack {
+                    self.stack_let(name, word, &resolved, value.span);
                 }
                 self.bind_local(env, name, t, false, site(value));
                 Ty::Unit
@@ -3837,7 +5433,17 @@ impl Checker {
                 ty,
                 value,
                 borrow,
+                stack,
+                ..
             } => {
+                if let Some(word) = stack {
+                    let message = if word == "stack" {
+                        msg!("nibcheck-stack-var", name = name.to_string())
+                    } else {
+                        msg!("nibcheck-let-unknown-prop", word = word.clone())
+                    };
+                    self.error(message, value.span);
+                }
                 let v = self.infer(value, env);
                 let t = match ty {
                     Some(ty) => {
@@ -3853,23 +5459,20 @@ impl Checker {
                     None => v,
                 };
                 let resolved = self.resolve(&t);
+                let borrow = &(*borrow || self.is_view(&resolved));
                 if *borrow {
                     if !self.is_view(&resolved) {
                         self.error(
-                            format!("`var &{name}` binds what a function returns as a view"),
+                            msg!("nibcheck-var-borrow-binds-view", name = name.to_string()),
                             value.span,
                         );
                     }
-                } else if self.is_view(&resolved) {
-                    self.error(
-                        format!("a borrow cannot be stored in `var {name}`"),
-                        value.span,
-                    );
                 } else if self.kind(&resolved) == Kind::Linear {
                     self.error(
-                        format!(
-                            "a var cannot hold a linear value: `{name}` is {}",
-                            self.shown(&resolved)
+                        msg!(
+                            "nibcheck-var-holds-linear",
+                            name = name.to_string(),
+                            ty = self.shown(&resolved).to_string()
                         ),
                         value.span,
                     );
@@ -3884,6 +5487,7 @@ impl Checker {
                 name,
                 place: Some(place),
                 value,
+                deref,
             } => {
                 let v = self.infer(value, env);
                 let target = msg!(
@@ -3892,30 +5496,74 @@ impl Checker {
                 );
                 match env.iter().rev().find(|l| l.name == *name) {
                     Some(l) if l.view => {
-                        self.error("a field of a view var cannot be assigned", value.span);
+                        self.error(msg!("nibcheck-view-var-field-assigned"), value.span);
                         return Ty::Unit;
                     }
                     Some(_) if self.mutable_place(place, env) => {}
                     Some(_) => {
                         self.error(
-                            format!("{target} assigns a field of a `var` or a `&mut` parameter"),
+                            msg!("nibcheck-assigns-field-of-var", target = target.to_string()),
                             place.span,
                         );
                         return Ty::Unit;
                     }
                     None => {
-                        self.error(format!("{name} is not defined"), place.span);
+                        self.error(
+                            msg!("nibcheck-not-defined", name = name.to_string()),
+                            place.span,
+                        );
                         return Ty::Unit;
                     }
                 }
                 // The place's type, not the borrow a read through `&mut`
                 // would give.
+                self.assigning = true;
                 let ty = self.infer(place, env);
-                let ty = self.resolve(&ty).unborrowed().clone();
-                self.expect(&v, &ty, value.span, target);
+                self.assigning = false;
+                let ty = self.resolve(&ty);
+                // The field's type as declared: a read through a borrowed
+                // root wraps a field that is not copied in one more borrow.
+                let root_borrowed = env
+                    .iter()
+                    .rev()
+                    .find(|l| l.name == *name)
+                    .is_some_and(|l| matches!(self.resolve(&l.ty), Ty::Borrow(..)));
+                let declared = match &ty {
+                    Ty::Borrow(inner, _) if root_borrowed && !self.kind(inner).dup() => {
+                        (**inner).clone()
+                    }
+                    t => t.clone(),
+                };
+                let shown = crate::surface::print::print_term(place);
+                match (deref.is_some(), &declared) {
+                    // `*p.r := v` writes where the `&mut` in the field points.
+                    (true, Ty::Borrow(inner, true)) => {
+                        let inner = (**inner).clone();
+                        self.expect(&v, &inner, value.span, target);
+                    }
+                    (true, _) => {
+                        self.error(
+                            msg!("nibcheck-deref-needs-mut-borrow", place = shown),
+                            place.span,
+                        );
+                    }
+                    // `p.r := v` would rebind the borrow the field holds.
+                    (false, Ty::Borrow(..)) => {
+                        self.error(
+                            msg!("nibcheck-assign-through-borrow", place = shown),
+                            place.span,
+                        );
+                    }
+                    (false, _) => {
+                        let ty = ty.unborrowed().clone();
+                        self.expect(&v, &ty, value.span, target);
+                    }
+                }
                 Ty::Unit
             }
-            Stmt::Assign { name, value, .. } => {
+            Stmt::Assign {
+                name, value, deref, ..
+            } => {
                 let v = self.infer(value, env);
                 let found = env
                     .iter()
@@ -3927,24 +5575,43 @@ impl Checker {
                         l
                     });
                 match found {
-                    Some(l) if l.view => self.error("a view var cannot be reassigned", value.span),
+                    // `*a := v` writes where the `&mut` borrow `a` points.
+                    Some(Local {
+                        ty: Ty::Borrow(inner, true),
+                        mutable: false,
+                        ..
+                    }) if deref.is_some() => self.expect(
+                        &v,
+                        &inner,
+                        value.span,
+                        msg!("nibcheck-what-named", name = name.to_string()),
+                    ),
+                    Some(_) if deref.is_some() => self.error(
+                        msg!("nibcheck-deref-needs-mut-borrow", place = name.to_string()),
+                        value.span,
+                    ),
                     Some(l) if l.mutable => self.expect(
                         &v,
                         &l.ty,
                         value.span,
                         msg!("nibcheck-what-named", name = name.to_string()),
                     ),
+                    // `a := v` rebinds `a`, which a `let` does not allow.
                     Some(Local {
-                        ty: Ty::Borrow(inner, true),
+                        ty: Ty::Borrow(_, true),
                         ..
-                    }) => self.expect(
-                        &v,
-                        &inner,
+                    }) => self.error(
+                        msg!("nibcheck-assign-through-borrow", place = name.to_string()),
                         value.span,
-                        msg!("nibcheck-what-named", name = name.to_string()),
                     ),
-                    Some(_) => self.error(format!("`{name}` is not a var"), value.span),
-                    None => self.error(format!("{name} is not defined"), value.span),
+                    Some(_) => self.error(
+                        msg!("nibcheck-not-a-var", name = name.to_string()),
+                        value.span,
+                    ),
+                    None => self.error(
+                        msg!("nibcheck-not-defined", name = name.to_string()),
+                        value.span,
+                    ),
                 }
                 Ty::Unit
             }
@@ -3953,6 +5620,7 @@ impl Checker {
                 let lam = SurfaceTerm::new(
                     TermKind::Lam {
                         params: f.params.clone(),
+                        unused_params: Vec::new(),
                         body: Box::new(f.body.clone()),
                         types: Vec::new(),
                     },
@@ -3995,13 +5663,16 @@ impl Checker {
                 };
                 match self.returns.last().cloned() {
                     Some(r) => self.expect(&t, &r, span, msg!("nibcheck-what-returned-value")),
-                    None => self.error("`return` outside a function", span),
+                    None => self.error(msg!("nibcheck-return-outside-function"), span),
                 }
                 Ty::Never
             }
             Stmt::Expr(e) => self.infer(e, env),
+            // `lower_fors` / `lower_loops` expand them where the program is read.
+            Stmt::For { .. } | Stmt::Loop { .. } | Stmt::Break(_) | Stmt::Continue => Ty::Unit,
             Stmt::Theorem(_)
             | Stmt::Def(_)
+            | Stmt::Reexport { .. }
             | Stmt::Import { .. }
             | Stmt::Module { .. }
             | Stmt::Mutual { .. }
@@ -4011,22 +5682,37 @@ impl Checker {
             | Stmt::Instance(_)
             | Stmt::Inductive(_) => Ty::Unit,
             Stmt::Struct(d) | Stmt::Enum(d) => {
-                self.error("declare a type at the top level", d.span);
+                self.error(msg!("nibcheck-declare-type-at-top-level"), d.span);
                 Ty::Unit
             }
             Stmt::Extern { span, .. } => {
-                self.error("declare an `extern` block at the top level", *span);
+                self.error(msg!("nibcheck-declare-extern-at-top-level"), *span);
                 Ty::Unit
             }
             Stmt::Other(what, span) => {
-                self.error(format!("not supported yet: {what}"), *span);
+                self.error(
+                    msg!("nibcheck-not-supported-yet", what = what.to_string()),
+                    *span,
+                );
                 Ty::Unit
             }
             Stmt::Syntax { span, .. } | Stmt::Macro { span, .. } => {
-                self.error("a syntax or a macro is declared at the top level", *span);
+                self.error(msg!("nibcheck-declare-syntax-at-top-level"), *span);
                 Ty::Unit
             }
         }
+    }
+
+    /// How many arguments the class of the method `name` (`C::m`) takes, if
+    /// `name` is a class's method.
+    fn class_member_arity(&self, name: &Name) -> Option<usize> {
+        self.classes.values().find_map(|c| {
+            c.decl
+                .methods
+                .iter()
+                .any(|m| classes::member_fn(&c.decl, &m.name) == *name)
+                .then_some(c.decl.parameters.len())
+        })
     }
 
     fn lookup(&mut self, name: &Name, env: &[Local], id: TermId) -> Ty {
@@ -4043,14 +5729,6 @@ impl Checker {
             };
         }
         if let Some(s) = self.fns.get(name).cloned() {
-            if span.start < crate::surface::PRELUDE_BASE && self.host_only.contains(name) {
-                self.error(
-                    format!(
-                        "{name} is how the host answers the standard effects; perform the effect instead"
-                    ),
-                    span,
-                );
-            }
             return self.instantiate_scheme(name, &s, id, Instantiation::Fresh);
         }
         if tauto_surface::bindings::is_library(&name, "div")
@@ -4073,7 +5751,7 @@ impl Checker {
             self.constructor_uses.push((name.clone(), t.clone(), span));
             return t;
         }
-        self.error(format!("{name} is not defined"), span);
+        self.error(msg!("nibcheck-not-defined", name = name.to_string()), span);
         self.fresh()
     }
 
@@ -4084,6 +5762,7 @@ impl Checker {
         let args: Vec<Ty> = data.generics.iter().map(|_| self.fresh()).collect();
         let fields = self.datas.fields(d, c, &args);
         let result = Ty::Named(d.clone(), args);
+        self.refuse_sealed_repr(d, span);
         if data.is_struct {
             self.error(struct_value_message(name), span);
         }
@@ -4107,7 +5786,9 @@ impl Checker {
         self.term_path.push(child);
         self.term_children.push(0);
         let hint = self.result_hint.take();
+        let outer = std::mem::replace(&mut self.at, term.span);
         let t = self.infer_term(term, env, hint);
+        self.at = outer;
         self.term_children.pop();
         self.term_path.pop();
         self.terms.push((term.id(), t.clone()));
@@ -4117,6 +5798,61 @@ impl Checker {
     fn infer_term(&mut self, term: &SurfaceTerm, env: &mut Vec<Local>, hint: Option<Ty>) -> Ty {
         let span = term.span;
         match &*term.kind {
+            // `#()`: the one value of `Unit`.
+            _ if term.is_unit() => Ty::Unit,
+            // `×` is a type operator: a product value is `#(…)`.
+            TermKind::App { .. } if let Some(members) = term.product_type_members() => {
+                for m in members {
+                    self.infer(m, env);
+                }
+                self.error(msg!("nibcheck-product-type-as-value"), span);
+                self.fresh()
+            }
+            // `#(a, b)`: the product of its members' types, as [`product`] puts them:
+            // `#(a, #(b, c))` is an `A × B × C`, `#(#(a, b), c)` an `(A × B) × C`, and
+            // `#(a, #())` an `A × Unit`.
+            TermKind::App { .. } if let Some(members) = term.product_value_members() => {
+                // Where a product of as many members is expected, each member is checked
+                // against the member in its place (`#(1, 2)` where `Nat × Nat` is expected).
+                let hints = match hint.as_ref().map(|h| self.resolve(h)) {
+                    Some(h) if is_pair_ty(&h) => {
+                        Some(self.product_members(&h)).filter(|hs| hs.len() == members.len())
+                    }
+                    _ => None,
+                };
+                let mut types = Vec::new();
+                for (i, m) in members.iter().enumerate() {
+                    self.result_hint = hints.as_ref().map(|hs| hs[i].clone());
+                    let t = self.infer(m, env);
+                    types.push(self.resolve(&t));
+                }
+                // A member that fits neither the member expected in its place nor the
+                // place of another member that does not fit its own is the part that
+                // does not fit: the mismatch is at it (`#(k, q)` with `q: Text` where
+                // `Text × Json` is expected), not at the whole `#(…)`, which may be a
+                // macro's and `q` the user's. Members that only trade places are left
+                // to the product's match by member types.
+                if let Some(hs) = &hints {
+                    let misfits: Vec<usize> = (0..types.len())
+                        .filter(|&i| !self.probe(|c| c.fits(&types[i], &hs[i])))
+                        .collect();
+                    for &i in &misfits {
+                        let elsewhere = misfits
+                            .iter()
+                            .any(|&j| j != i && self.probe(|c| c.fits(&types[i], &hs[j])));
+                        if !elsewhere {
+                            self.expect(
+                                &types[i],
+                                &hs[i],
+                                members[i].span,
+                                msg!("nibcheck-what-product-member"),
+                            );
+                            types[i] = self.resolve(&hs[i]);
+                        }
+                    }
+                }
+                self.product(types)
+            }
             TermKind::Nat(n) => {
                 // Where a `Nat` is expected, a numeral is a `Nat`, as on the proof side.
                 if let Some(h) = &hint
@@ -4125,20 +5861,36 @@ impl Checker {
                     && tauto_surface::bindings::is_library(&name, "Nat")
                 {
                     if n.parse::<u128>().is_err() {
-                        self.error(format!("{n} is not a Nat"), span);
+                        self.error(msg!("nibcheck-not-a-nat", value = n.to_string()), span);
                     }
                     return Ty::Named(name, args);
+                }
+                // Where std's `Int` is expected, a numeral is `IntOfNat` of it, as on the
+                // proof side (`Datas::int_of_nat`).
+                if let Some(h) = &hint
+                    && let h = self.resolve(h)
+                    && self.datas.int_of_nat(&h).is_some()
+                {
+                    if n.parse::<u128>().is_err() {
+                        self.error(msg!("nibcheck-not-an-int", value = n.to_string()), span);
+                    }
+                    return h;
                 }
                 let t = self.fresh_int();
                 match n.parse::<i128>() {
                     Ok(v) => self.literals.push((span, v, t.clone())),
-                    Err(_) => self.error(format!("{n} is too large"), span),
+                    Err(_) => {
+                        self.error(msg!("nibcheck-nat-too-large", value = n.to_string()), span)
+                    }
                 }
                 t
             }
             TermKind::Float(x) => {
                 if !x.parse::<f64>().is_ok_and(f64::is_finite) {
-                    self.error(format!("{x} is too large for a Float"), span);
+                    self.error(
+                        msg!("nibcheck-float-too-large", value = x.to_string()),
+                        span,
+                    );
                 }
                 Ty::Float
             }
@@ -4146,45 +5898,110 @@ impl Checker {
                 tauto_surface::bindings::library_name("SynDeclaration"),
                 vec![],
             ),
-            TermKind::Text(_) => Ty::Text,
+            // A literal is a constant of the module and freezes nothing, so it fits a `&Text`
+            // with no `&` written (`expect` reads `text_literals`).
+            TermKind::Text(_) => {
+                self.text_literals.insert(span);
+                Ty::Text
+            }
             TermKind::Bool(_) => Ty::Bool,
             TermKind::Var(name) => self.lookup(name, env, term.id()),
             TermKind::Lam { .. } => self.lambda(term, &[], env),
             TermKind::BorrowLam { borrows, lam } => self.lambda(lam, borrows, env),
+            // `&rc e` moves the value of `e` into a new box.
+            TermKind::Borrow {
+                rc: true,
+                term: inner,
+                ..
+            } => {
+                let t = self.infer(inner, env);
+                let t = self.resolve(&t);
+                self.rc_contents.push((t.clone(), span));
+                Ty::Rc(Box::new(t))
+            }
             TermKind::Borrow {
                 mutable,
+                orig,
                 term: inner,
+                ..
             } => {
+                // `&T { f: e }` builds the `struct &T` of `T`.
+                if !*mutable
+                    && !*orig
+                    && let TermKind::Record { name, fields, .. } = &*inner.kind
+                    && let Some((family, _)) = self.datas.ctors.get(name).cloned()
+                    && let Some(lent) = self.datas.lent_of.get(&family).cloned()
+                    && let Some(ctor) = self
+                        .datas
+                        .decls
+                        .get(&lent)
+                        .and_then(|d| d.constructors.first())
+                        .map(|c| c.name.clone())
+                {
+                    return self.record(&ctor, fields, env, span);
+                }
                 if *mutable && !self.mutable_place(inner, env) {
                     let what = place_name(inner).unwrap_or_else(|| "this".into());
                     self.error(
-                        format!("{what} is not a var: only a var lends `&mut`"),
+                        msg!("nibcheck-not-a-var-for-lend", what = what.to_string()),
                         span,
                     );
                 }
                 let t = self.infer(inner, env);
-                match self.resolve(&t) {
-                    // Lending a borrow lends what it borrows.
-                    Ty::Borrow(t, _) => Ty::Borrow(t, *mutable),
-                    t => Ty::Borrow(Box::new(t), *mutable),
+                let t = match self.resolve(&t) {
+                    // Lending a borrow lends what it borrows, and a borrow of
+                    // a `&rc T` borrows its contents, which are never written.
+                    Ty::Borrow(t, _) | Ty::Orig(t) => *t,
+                    Ty::Rc(t) => {
+                        if *mutable {
+                            let shown = self.shown(&Ty::Rc(t.clone()));
+                            self.error(msg!("nibcheck-rc-mut", ty = shown.to_string()), span);
+                        }
+                        *t
+                    }
+                    t => t,
+                };
+                // `&orig x` of a type with `struct &T` borrows the owner.
+                if *orig
+                    && let Ty::Named(n, _) = &t
+                    && self.datas.lent_of.contains_key(n)
+                {
+                    return Ty::Orig(Box::new(t));
                 }
+                self.resolve(&Ty::Borrow(Box::new(t), *mutable))
             }
             TermKind::Record { name, fields, .. } => self.record(name, fields, env, span),
+            // `*a` stands only on the left of `:=`; elsewhere a borrow reads
+            // as its value.
+            TermKind::App { arguments, .. } if crate::surface::deref_of(term).is_some() => {
+                self.error(msg!("nibcheck-deref-outside-assign"), span);
+                let inner = arguments[0].clone();
+                let t = self.infer(&inner, env);
+                self.resolve(&t).unborrowed().clone()
+            }
             TermKind::App {
                 function,
                 arguments,
             } => {
+                // `f(<A: T>, x)`: the named implicit arguments are carried first as a record
+                // of the generics' names, not an argument of the call.
+                let (implicits, arguments) = match arguments.split_first() {
+                    Some((first, rest))
+                        if matches!(&*first.kind, TermKind::Record { name, .. }
+                            if name.spelling() == Some(tauto_surface::IMPLICITS)) =>
+                    {
+                        (Some(first), rest)
+                    }
+                    _ => (None, arguments.as_slice()),
+                };
                 if let TermKind::Var(name) = &*function.kind
                     && !env.iter().any(|l| l.name == *name)
                 {
-                    if tauto_surface::bindings::is_library(&name, "Tuple") && arguments.is_empty() {
-                        return Ty::Unit;
-                    }
                     if OPERATORS.contains(&name.as_str()) {
                         return self.operator(name, arguments, env, term.id());
                     }
                     if tauto_surface::bindings::is_library(&name, "Syn::expr_of")
-                        && let [filled] = arguments.as_slice()
+                        && let [filled] = arguments
                     {
                         self.splices.push((filled.id(), filled.span));
                     }
@@ -4195,12 +6012,18 @@ impl Checker {
                     }
                     // A constructor without fields is written without
                     // `()`: `Start`, not `Start()`.
+                    // `Nil(<A: T>)` names the generic of one: it has no
+                    // arguments, and is not `Nil()`.
                     if arguments.is_empty()
+                        && implicits.is_none()
                         && !self.fns.contains_key(name)
                         && self.datas.only_nullary(name)
                     {
                         self.error(
-                            format!("`{name}` is a constructor without fields: write `{name}`, without `()`"),
+                            msg!(
+                                "nibcheck-constructor-without-fields",
+                                name = name.to_string()
+                            ),
                             span,
                         );
                         self.result_hint = hint;
@@ -4208,11 +6031,49 @@ impl Checker {
                     }
                 }
                 let mut f = self.infer(function, env);
+                // The generics a call can name: a `Poly` value's, or a
+                // top-level function's, which is instantiated where it is
+                // looked up.
+                let mut named_generics: Option<Vec<(Name, Ty)>> = None;
                 if let Ty::Poly(gs, t) = self.resolve(&f) {
                     let fresh = self.instance_of(&gs);
                     f = substitute(&t, &fresh);
                     // What the call sees of the callee is the instance.
                     self.terms.push((function.id(), f.clone()));
+                    named_generics = Some(
+                        gs.iter()
+                            .map(|(g, _)| (g.name.clone(), fresh[&g.id].clone()))
+                            .collect(),
+                    );
+                } else if let Some(names) = self.instance_names.get(&function.id()) {
+                    named_generics = Some(names.clone());
+                }
+                // A generic named in `<A: T>` is the written type.
+                if let (Some(generics), Some(TermKind::Record { fields, .. })) =
+                    (&named_generics, implicits.map(|i| &*i.kind))
+                {
+                    let scope = self.type_params.clone();
+                    // `C(T)::m(…)`: the class's arguments, by their places,
+                    // lead the generics of its method.
+                    let class_arity = match &*function.kind {
+                        TermKind::Var(n) => self.class_member_arity(n),
+                        _ => None,
+                    };
+                    for (field, written) in fields {
+                        let found = match tauto_surface::class_argument_index(field) {
+                            Some(i) if class_arity.is_some_and(|a| i < a) => generics.get(i),
+                            _ => generics.iter().find(|(g, _)| g.as_str() == field),
+                        };
+                        let Some((_, inst)) = found else {
+                            self.error(
+                                msg!("nibcheck-call-no-type-argument-named", name = field.clone()),
+                                written.span,
+                            );
+                            continue;
+                        };
+                        let want = self.written(written, &scope);
+                        self.expect(&want, inst, written.span, msg!("nibcheck-what-argument"));
+                    }
                 }
                 // The type the call is checked against fixes the
                 // instance first, so that an argument meets the type it
@@ -4262,10 +6123,10 @@ impl Checker {
                     Ty::Fn(ps, r, _) => {
                         if ps.len() != args.len() {
                             self.error(
-                                format!(
-                                    "a function of {} values is given {}",
-                                    ps.len(),
-                                    args.len()
+                                msg!(
+                                    "nibcheck-function-argument-count",
+                                    expected = ps.len().to_string(),
+                                    given = args.len().to_string()
                                 ),
                                 span,
                             );
@@ -4282,12 +6143,17 @@ impl Checker {
                             .unify(&f, &Ty::Fn(args, Box::new(r.clone()), Kind::Shared))
                             .is_err()
                         {
-                            self.error("cannot infer a function type for this call", function.span);
+                            self.error(msg!("nibcheck-cannot-infer-function-type"), function.span);
                         }
                         r
                     }
+                    // `Nil(<A: T>)`: a constructor without fields, its generics named.
+                    other if args.is_empty() && implicits.is_some() => other,
                     other => {
-                        self.error(format!("{other} is not a function"), function.span);
+                        self.error(
+                            msg!("nibcheck-not-a-function", found = other.to_string()),
+                            function.span,
+                        );
                         self.fresh()
                     }
                 }
@@ -4306,7 +6172,14 @@ impl Checker {
                         let full = classes::member_fn(class, name);
                         return self.lookup(&full, env, term.id());
                     }
-                    self.error(format!("{c} has no method {name}"), span);
+                    self.error(
+                        msg!(
+                            "nibcheck-no-method",
+                            owner = c.to_string(),
+                            name = name.to_string()
+                        ),
+                        span,
+                    );
                     return self.fresh();
                 }
                 // `T::C`: the constructor `C` of the type `T`, as written
@@ -4327,15 +6200,123 @@ impl Checker {
                         return self.constructor(d, index, span, &reference);
                     }
                 }
+                let assigning = std::mem::take(&mut self.assigning);
+                self.assigning = assigning;
                 let b = self.infer(base, env);
-                let resolved = self.resolve(&b);
-                let borrowed = matches!(resolved, Ty::Borrow(..));
-                match (resolved.unborrowed().clone(), name.as_str()) {
-                    (Ty::Info(h), "more") => Ty::Fn(vec![Ty::Int(Width::W64)], h, Kind::Shared),
+                self.assigning = assigning;
+                let mut resolved = self.resolve(&b);
+                // A field of a `&rc T` is read through the borrow of its
+                // contents.
+                if let Ty::Rc(x) = &resolved {
+                    self.rc_reads.push(base.span);
+                    resolved = self.rc_read(x);
+                }
+                if let Ty::Named(data, _) = resolved.unborrowed() {
+                    self.refuse_sealed_repr(data, span);
+                }
+                let borrowed = matches!(resolved, Ty::Borrow(..) | Ty::Orig(_));
+                // `w.x` reads the field of what `w` coerces to, through every
+                // `coerce` field; `w.W::f` the field `f` of `W` on that way.
+                let (qualifier, field) = match name.rsplit_once("::") {
+                    Some((q, f)) => (Some(q), f),
+                    None => (None, name.as_str()),
+                };
+                let last = |n: &str| n.rsplit("::").next().unwrap_or(n).to_string();
+                let mut current = resolved.unborrowed().clone();
+                let mut steps: Vec<(Name, String)> = Vec::new();
+                let mut passed: Vec<Name> = Vec::new();
+                let mut level = CoerceLevel::Owned;
+                // A field the coercion expansion wrote is the struct's own.
+                let own = term.is_own_field();
+                loop {
+                    if own {
+                        break;
+                    }
+                    if let (Some(q), Ty::Named(d, _)) = (qualifier, &current)
+                        && last(d) == last(q)
+                    {
+                        break;
+                    }
+                    let Some((d, f, ty, l)) = self.coerce_step(&current) else {
+                        break;
+                    };
+                    if steps.len() > 32 {
+                        break;
+                    }
+                    passed.push(d.clone());
+                    steps.push((d, f));
+                    level = level.min(l);
+                    current = ty;
+                }
+                if let Some(q) = qualifier
+                    && !matches!(&current, Ty::Named(d, _) if last(d) == last(q))
+                {
+                    let shown = self.shown(resolved.unborrowed());
+                    self.error(
+                        msg!(
+                            "nibcheck-no-field",
+                            name = shown.to_string(),
+                            field = name.to_string()
+                        ),
+                        span,
+                    );
+                    return self.fresh();
+                }
+                if qualifier.is_none()
+                    && !own
+                    && let Ty::Named(here, _) = &current
+                    && !self.datas.decls.get(here).is_some_and(|d| {
+                        d.is_struct
+                            && d.constructors[0]
+                                .fields
+                                .iter()
+                                .any(|(n, _)| n.as_deref() == Some(field))
+                    })
+                    && let Some(owner) = passed.iter().find(|d| {
+                        self.datas.decls[*d].constructors[0]
+                            .fields
+                            .iter()
+                            .any(|(n, _)| n.as_deref() == Some(field))
+                    })
+                {
+                    let place = place_name(base).unwrap_or_else(|| "w".into());
+                    self.error(
+                        msg!(
+                            "nibcheck-coerce-own-field",
+                            field = field.to_string(),
+                            ty = last(owner),
+                            place = place.to_string()
+                        ),
+                        span,
+                    );
+                    return self.fresh();
+                }
+                if !steps.is_empty() {
+                    if self.assigning && level < CoerceLevel::Mut {
+                        let (ty, target) =
+                            (self.shown(resolved.unborrowed()), self.shown(&current));
+                        self.error(
+                            msg!(
+                                "nibcheck-coerce-assign",
+                                ty = ty.to_string(),
+                                target = target.to_string()
+                            ),
+                            span,
+                        );
+                    }
+                    self.coercions.push((base.span, steps));
+                }
+                if qualifier.is_some() {
+                    self.qualified_fields.push((span, field.to_string()));
+                }
+                let name = &field.to_string();
+                match (current, name.as_str()) {
+                    (Ty::Info(h), "more") => Ty::Fn(vec![Ty::Int(Width::U64)], h, Kind::Shared),
                     (Ty::Info(h), "unbounded") => Ty::Fn(vec![], h, Kind::Shared),
                     (Ty::Named(d, args), _)
                         if self.datas.decls.get(&d).is_some_and(|d| d.is_struct) =>
                     {
+                        self.field_owners.push((span, d.clone()));
                         let fields = self.datas.fields(&d, 0, &args);
                         match fields.into_iter().find(|(n, _)| n.as_deref() == Some(name)) {
                             // A field of a `&mut` is lent as `&mut` where the
@@ -4345,83 +6326,43 @@ impl Checker {
                             }
                             Some((_, t)) => t,
                             None => {
-                                self.error(format!("{d} has no field `{name}`"), span);
+                                self.error(
+                                    msg!(
+                                        "nibcheck-no-field",
+                                        name = d.to_string(),
+                                        field = name.to_string()
+                                    ),
+                                    span,
+                                );
                                 self.fresh()
                             }
                         }
                     }
                     (other, _) => {
-                        self.error(format!("{other} has no field `{name}`"), span);
+                        self.error(
+                            msg!(
+                                "nibcheck-no-field",
+                                name = other.to_string(),
+                                field = name.to_string()
+                            ),
+                            span,
+                        );
                         self.fresh()
                     }
                 }
-            }
-            // `#(a, b)`: the product of its members' types, as [`product`] puts them:
-            // `#(a, #(b, c))` is an `A × B × C`, `#(#(a, b), c)` an `(A × B) × C`, and
-            // `#(a, #())` an `A`.
-            TermKind::Tuple(members) => {
-                // Where a product of as many members is expected, each member is checked
-                // against the member in its place (`#(1, 2)` where `Nat × Nat` is expected).
-                let hints = match hint.as_ref().map(|h| self.resolve(h)) {
-                    Some(h) if is_pair_ty(&h) => {
-                        Some(self.product_members(&h)).filter(|hs| hs.len() == members.len())
-                    }
-                    _ => None,
-                };
-                let mut types = Vec::new();
-                for (i, m) in members.iter().enumerate() {
-                    self.result_hint = hints.as_ref().map(|hs| hs[i].clone());
-                    let t = self.infer(m, env);
-                    types.push(self.resolve(&t));
-                }
-                // A member that fits neither the member expected in its place nor the
-                // place of another member that does not fit its own is the part that
-                // does not fit: the mismatch is at it (`#(k, q)` with `q: Text` where
-                // `Text × Json` is expected), not at the whole `#(…)`, which may be a
-                // macro's and `q` the user's. Members that only trade places are left
-                // to the product's match by member types.
-                if let Some(hs) = &hints {
-                    let misfits: Vec<usize> = (0..types.len())
-                        .filter(|&i| !self.probe(|c| c.fits(&types[i], &hs[i])))
-                        .collect();
-                    for &i in &misfits {
-                        let elsewhere = misfits
-                            .iter()
-                            .any(|&j| j != i && self.probe(|c| c.fits(&types[i], &hs[j])));
-                        if !elsewhere {
-                            self.expect(
-                                &types[i],
-                                &hs[i],
-                                members[i].span,
-                                msg!("nibcheck-what-product-member"),
-                            );
-                            types[i] = self.resolve(&hs[i]);
-                        }
-                    }
-                }
-                self.product(types)
-            }
-            // `×` is a type operator: a product value is `#(…)`.
-            TermKind::Product(members) => {
-                for m in members {
-                    self.infer(m, env);
-                }
-                self.error(
-                    "`×` builds a type, not a value: write the product as `#(…)`",
-                    span,
-                );
-                self.fresh()
             }
             // `(e: T)`: `e` fits `T`, which may take fewer members of a
             // product (`A × B <: A`, `A × B × C <: A × C`, `@a T <: T`).
             TermKind::Ascribe { term: base, ty } => {
                 let b = self.infer(base, env);
                 let want = self.written(ty, &self.type_params.clone());
+                self.ascribed.push((term.id(), want.clone()));
                 match self.resolve(&b) {
                     // A member of a borrowed product is borrowed, but a copy.
                     Ty::Borrow(inner, _) if !matches!(want, Ty::Borrow(..)) => {
                         self.expect(&inner, &want, base.span, msg!("nibcheck-what-ascription"));
                         let want = self.resolve(&want);
+                        let want = untagged(want);
                         if self.kind(&want).dup() {
                             want
                         } else {
@@ -4430,7 +6371,8 @@ impl Checker {
                     }
                     _ => {
                         self.expect(&b, &want, base.span, msg!("nibcheck-what-ascription"));
-                        want
+                        // `(p: @a T)` is a `T`, as the kernel types it.
+                        untagged(self.resolve(&want))
                     }
                 }
             }
@@ -4519,12 +6461,51 @@ impl Checker {
                 scrutinee, arms, ..
             } => self.match_expr(scrutinee, arms, env, span, hint),
             TermKind::Perform { effect, args } => {
+                // `perform e(<T: A>, x)`: the named type arguments are carried
+                // first as a record, not a value the operation takes.
+                let (implicits, args) = split_implicits(args);
                 let types: Vec<Ty> = args.iter().map(|a| self.infer(a, env)).collect();
                 let Some(sig) = self.effects.get(effect).cloned() else {
-                    self.error(format!("no effect `{effect}` is declared"), span);
+                    self.error(
+                        msg!("nibcheck-no-effect-declared", effect = effect.to_string()),
+                        span,
+                    );
                     return self.fresh();
                 };
                 let instance = self.instantiate_operation(&sig);
+                // A type argument written at the `perform` is the instance's,
+                // wherever the `perform` stands (a callback's row need not
+                // tell the instance).
+                if let Some(fields) = implicits {
+                    let scope = self.type_params.clone();
+                    for (field, written) in fields {
+                        let Some(i) = sig.generics.iter().position(|g| g.name.as_str() == field)
+                        else {
+                            self.error(
+                                msg!(
+                                    "nibcheck-effect-no-type-argument-named",
+                                    effect = effect.to_string(),
+                                    name = field.clone()
+                                ),
+                                written.span,
+                            );
+                            continue;
+                        };
+                        let want = self.written(written, &scope);
+                        self.expect(
+                            &want,
+                            &instance.type_args[i],
+                            written.span,
+                            msg!("nibcheck-what-argument"),
+                        );
+                    }
+                }
+                // Each type argument meets the bound the operation declares.
+                for (t, k) in instance.type_args.iter().zip(&sig.kinds) {
+                    if *k != Kind::Linear {
+                        self.bounds.push((t.clone(), *k, span, false));
+                    }
+                }
                 if self.indexed.contains(effect) {
                     self.effect_args
                         .push((site(term), instance.type_args.clone()));
@@ -4534,16 +6515,18 @@ impl Checker {
                 self.operation_performs.push((term.id(), instance));
                 if ps.len() != types.len() {
                     self.error(
-                        format!(
-                            "`{effect}` takes {} values, given {}",
-                            ps.len(),
-                            types.len()
+                        msg!(
+                            "nibcheck-effect-value-count",
+                            effect = effect.to_string(),
+                            expected = ps.len().to_string(),
+                            given = types.len().to_string()
                         ),
                         span,
                     );
                 } else {
                     for ((a, p), at) in types.iter().zip(&ps).zip(args) {
                         self.expect(a, p, at.span, msg!("nibcheck-what-argument"));
+                        self.effect_values.push((a.clone(), at.span));
                     }
                 }
                 r
@@ -4555,15 +6538,12 @@ impl Checker {
                     BudgetLimit::Steps => msg!("nibcheck-what-budget-steps"),
                     BudgetLimit::Memory => msg!("nibcheck-what-budget-memory"),
                 };
-                self.expect(&s, &Ty::Int(Width::W64), steps.span, what);
+                self.expect(&s, &Ty::Int(Width::U64), steps.span, what);
                 let t = self.infer(body, env);
                 if let Some(x) = self.exceeded.last().cloned()
                     && self.unify(&x, &t).is_err()
                 {
-                    self.error(
-                        "budgets answered by one `exceeded` arm give different types",
-                        span,
-                    );
+                    self.error(msg!("nibcheck-budget-arms-differ"), span);
                 }
                 t
             }
@@ -4583,7 +6563,10 @@ impl Checker {
                 self.fresh()
             }
             other => {
-                self.error(format!("not supported yet: {other:?}"), span);
+                self.error(
+                    msg!("nibcheck-not-supported-yet", what = format!("{other:?}")),
+                    span,
+                );
                 self.fresh()
             }
         }
@@ -4600,6 +6583,7 @@ impl Checker {
             params,
             body,
             types,
+            ..
         } = &*lam.kind
         else {
             return self.fresh();
@@ -4626,19 +6610,22 @@ impl Checker {
                 }
             })
             .collect();
-        if let Some(Ty::Fn(hs, _, _)) = hint.map(|h| self.resolve(&h).unborrowed().clone())
+        let r = self.fresh();
+        if let Some(Ty::Fn(hs, hr, _)) = hint.map(|h| self.resolve(&h).unborrowed().clone())
             && hs.len() == ps.len()
         {
             for (p, h) in ps.iter().zip(&hs) {
                 let _ = self.attempt(|c| c.unify(p, h));
             }
+            // The expected result asks for a copy of a borrowed result
+            // (`&A → A`), so it is known before the body.
+            let _ = self.attempt(|c| c.unify(&r, &hr));
         }
         let kind = self.capture_kind(&crate::lin::free_vars(lam), env, Kind::Copy, lam.span);
         let mut inner = env.to_vec();
         for (name, t) in params.iter().zip(&ps) {
             self.bind_local(&mut inner, name, t.clone(), false, site(body));
         }
-        let r = self.fresh();
         self.returns.push(r.clone());
         let b = self.infer(body, &mut inner);
         self.returns.pop();
@@ -4685,14 +6672,14 @@ impl Checker {
 
     fn clone_of(&mut self, arguments: &[SurfaceTerm], env: &mut Vec<Local>, span: Span) -> Ty {
         let [arg] = arguments else {
-            self.error("`clone` takes one borrow, `clone(&x)`", span);
+            self.error(msg!("nibcheck-clone-takes-one-borrow"), span);
             return self.fresh();
         };
         let t = self.infer(arg, env);
         let t = match self.resolve(&t) {
-            Ty::Borrow(t, _) => *t,
+            Ty::Borrow(t, _) | Ty::Orig(t) => *t,
             other => {
-                self.error("`clone` takes a borrow: write `clone(&x)`", arg.span);
+                self.error(msg!("nibcheck-clone-takes-borrow"), arg.span);
                 other
             }
         };
@@ -4730,8 +6717,13 @@ impl Checker {
         // Report an unknown constructor before inferring fields without a schema.
         let ctor = self.datas.ctors.get(name).cloned();
         if ctor.is_none() && !self.datas.has_ctor(name) {
-            self.error(format!("{name} is not a struct"), span);
+            self.error(msg!("nibcheck-not-a-struct", name = name.to_string()), span);
             return self.fresh();
+        }
+        if let Some((d, _)) = &ctor {
+            self.refuse_sealed_repr(d, span);
+        } else {
+            self.refuse_sealed_repr(name, span);
         }
         // As with a call's arguments, the fields are checked in the order
         // written, and a lambda learns its parameters' types from its
@@ -4755,12 +6747,13 @@ impl Checker {
                 TermKind::Lam { .. } | TermKind::BorrowLam { .. }
             ) {
                 self.hint = want.clone();
+            } else {
+                // As a call's argument is, a field is checked against its
+                // field's type: a numeral where an `Int` is expected is one.
+                self.result_hint = want.clone();
             }
             let v = self.infer(value, env);
             self.hint = None;
-            if matches!(&*value.kind, TermKind::Borrow { .. }) {
-                self.error("a borrow cannot be a field", value.span);
-            }
             // A mismatch is reported once, with the others, below.
             if let Some(want) = &want {
                 let _ = self.attempt(|c| c.unify(&v, want));
@@ -4787,7 +6780,10 @@ impl Checker {
         let mut seen = HashSet::new();
         for (field, v, at) in values {
             if !seen.insert(field.clone()) {
-                self.error(format!("field `{field}` is given twice"), *at);
+                self.error(
+                    msg!("nibcheck-field-given-twice", field = field.to_string()),
+                    *at,
+                );
             }
             match declared.iter().find(|(n, _)| n.as_deref() == Some(field)) {
                 Some((_, t)) => self.expect(
@@ -4796,14 +6792,28 @@ impl Checker {
                     *at,
                     msg!("nibcheck-what-field", field = field.to_string()),
                 ),
-                None => self.error(format!("{name} has no field `{field}`"), *at),
+                None => self.error(
+                    msg!(
+                        "nibcheck-no-field",
+                        name = name.to_string(),
+                        field = field.to_string()
+                    ),
+                    *at,
+                ),
             }
         }
         for (n, _) in declared {
             if let Some(n) = n
                 && !seen.contains(n)
             {
-                self.error(format!("field `{n}` of {name} is missing"), span);
+                self.error(
+                    msg!(
+                        "nibcheck-field-missing",
+                        field = n.to_string(),
+                        name = name.to_string()
+                    ),
+                    span,
+                );
             }
         }
     }
@@ -4820,9 +6830,14 @@ impl Checker {
             .iter()
             .map(|a| {
                 let t = self.infer(a, env);
-                // Operands are duplicable: a borrow of one is the value.
+                // Operands are duplicable: a borrow of one is the value,
+                // and a `&rc T` is read through the borrow of its contents.
                 match self.resolve(&t) {
-                    Ty::Borrow(t, _) => *t,
+                    Ty::Borrow(t, _) | Ty::Orig(t) => *t,
+                    Ty::Rc(t) => {
+                        self.rc_reads.push(a.span);
+                        *t
+                    }
                     t => t,
                 }
             })
@@ -4851,17 +6866,25 @@ impl Checker {
             (_, [a, b]) => {
                 if self.unify(a, b).is_err() {
                     let (a, b) = (self.shown(a), self.shown(b));
-                    let mut message = format!("`{op}` of {a} and {b}: the operands differ");
+                    let mut message = msg!(
+                        "nibcheck-operands-differ",
+                        op = op.to_string(),
+                        left = a.to_string(),
+                        right = b.to_string()
+                    );
                     // A label binds tighter than a binary operator, so
                     // `@tag a + b` labels only `a`.
                     if let Some(tag) = arguments.iter().find_map(|t| match &*t.kind {
                         TermKind::Tagged { tag, .. } => Some(tag),
                         _ => None,
                     }) {
-                        message.push_str(&format!(
-                            "; `@{tag}` labels only its operand, since it binds tighter than `{op}`\
-                             ; to label the result, write `@{tag} (a {op} b)`"
-                        ));
+                        message = msg!(
+                            "nibcheck-operands-differ-labeled",
+                            op = op.to_string(),
+                            left = a.to_string(),
+                            right = b.to_string(),
+                            tag = tag.to_string()
+                        );
                     }
                     self.error(message, span);
                     return if matches!(op, "+" | "-" | "*" | "/") {
@@ -4874,7 +6897,7 @@ impl Checker {
                     "==" | "!=" => {
                         self.pending.push(Pending {
                             class: "PartialEq".into(),
-                            ty: a.clone(),
+                            tys: vec![a.clone()],
                             what: op.into(),
                             assume: self.assume.clone(),
                             span,
@@ -4889,14 +6912,10 @@ impl Checker {
                     "/" => {
                         match self.resolve(a) {
                             Ty::Decimal | Ty::Float | Ty::Float32 => {}
-                            Ty::Var(v) if !self.ints.contains(&v) => self.error(
-                                "the operands of `/` have no known type: write it",
-                                span,
-                            ),
-                            _ => self.error(
-                                "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
-                                span,
-                            ),
+                            Ty::Var(v) if !self.ints.contains(&v) => {
+                                self.error(msg!("nibcheck-division-operands-unknown"), span)
+                            }
+                            _ => self.error(msg!("nibcheck-integer-division"), span),
                         }
                         a.clone()
                     }
@@ -4908,7 +6927,10 @@ impl Checker {
                 }
             }
             _ => {
-                self.error(format!("`{op}` takes other operands"), span);
+                self.error(
+                    msg!("nibcheck-operator-other-operands", op = op.to_string()),
+                    span,
+                );
                 self.fresh()
             }
         }
@@ -4919,9 +6941,16 @@ impl Checker {
         match self.resolve(t) {
             Ty::Int(_) | Ty::Decimal | Ty::Float | Ty::Float32 => {}
             Ty::Var(v) => {
-                self.ints.insert(v);
+                self.add_int(v);
             }
-            other => self.error(format!("`{op}` of {other}: not a number"), span),
+            other => self.error(
+                msg!(
+                    "nibcheck-operator-not-a-number",
+                    op = op.to_string(),
+                    ty = other.to_string()
+                ),
+                span,
+            ),
         }
     }
 
@@ -4929,22 +6958,57 @@ impl Checker {
     /// name that is a constructor without fields is that constructor. Over a
     /// borrow, what a pattern binds is borrowed too.
     fn pattern(&mut self, p: &Pattern, t: &Ty, env: &mut Vec<Local>, span: Span, at: TermId) {
-        // `#(p, #())` is `p` and `#(#(p, q), r)` is `#(p, q, r)`, as the value is.
-        if let Some(flat) = crate::surface::qualify::flatten_pair_pattern(p) {
-            return self.pattern(&flat, t, env, span, at);
-        }
         let resolved = self.resolve(t);
         let borrowed = match &resolved {
             Ty::Borrow(_, m) => Some(*m),
             _ => None,
         };
+        // A typed arm is read by `match_arms`; anywhere else it is not a pattern.
+        if let Pattern::Typed { name, .. } = p {
+            self.error(
+                msg!("nibcheck-typed-arm-nested", name = name.to_string()),
+                span,
+            );
+            return;
+        }
+        // On a union, a constructor or a literal does not apply: the member is narrowed first.
+        if matches!(resolved.unborrowed(), Ty::Union(_))
+            && matches!(
+                p,
+                Pattern::Int(_)
+                    | Pattern::Bool(_)
+                    | Pattern::Text(_)
+                    | Pattern::Ctor { .. }
+                    | Pattern::Record { .. }
+            )
+        {
+            let shown = self.shown(resolved.unborrowed());
+            self.error(
+                msg!("nibcheck-pattern-on-union", ty = shown.to_string()),
+                span,
+            );
+            return;
+        }
         let lit = match p {
+            Pattern::Ctor { .. }
+                if p.product_members().is_some()
+                    && (!matches!(resolved.unborrowed(), Ty::Named(..))
+                        || is_pair_ty(resolved.unborrowed())) =>
+            {
+                self.pair_pattern(p, t, borrowed, env, span, at);
+                return;
+            }
+            // `#(p, q)` on a `Pair` kept as a type of its own: its record.
+            Pattern::Ctor { .. } if let Some(record) = pair_record(p) => {
+                self.pattern(&record, t, env, span, at);
+                return;
+            }
             Pattern::Wild => return,
-            Pattern::Bind(name) if self.datas.nullary(name, Some(&resolved)) => {
+            Pattern::Bind { name: name, .. } if self.datas.nullary(name, Some(&resolved)) => {
                 self.ctor_pattern(name, &[], t, borrowed, env, span, at);
                 return;
             }
-            Pattern::Bind(name) => {
+            Pattern::Bind { name: name, .. } => {
                 self.bind_local(env, name, t.clone(), false, at);
                 return;
             }
@@ -4982,7 +7046,14 @@ impl Checker {
                         };
                         self.pattern(inner, &under, env, span, at);
                     }
-                    None => self.error(format!("the label `@{tag}` is not on {resolved}"), span),
+                    None => self.error(
+                        msg!(
+                            "nibcheck-label-not-on",
+                            tag = tag.to_string(),
+                            ty = resolved.to_string()
+                        ),
+                        span,
+                    ),
                 }
                 return;
             }
@@ -4995,7 +7066,26 @@ impl Checker {
                             .is_some_and(|n| n == "Unit::Star" || n.ends_with("::Unit::Star"))) =>
             {
                 if self.unify(&Ty::Unit, &resolved).is_err() {
-                    self.error(format!("`#()` does not match {resolved}"), span);
+                    self.error(
+                        msg!("nibcheck-unit-pattern-mismatch", ty = resolved.to_string()),
+                        span,
+                    );
+                }
+                return;
+            }
+            // `Zero` and `Succ(p)` on a `Nat`: the executable code holds it as a `nat`,
+            // and `Succ(p)` takes a value of at least 1 with `p` on one less.
+            Pattern::Ctor { name, args }
+                if let Some(inner) = nat_ctor(name, args)
+                    && self.takes_nat(name, resolved.unborrowed()) =>
+            {
+                if let Some(inner) = inner {
+                    let nat = self.resolve(resolved.unborrowed());
+                    let under = match borrowed {
+                        Some(m) => Ty::Borrow(Box::new(nat), m),
+                        None => nat,
+                    };
+                    self.pattern(inner, &under, env, span, at);
                 }
                 return;
             }
@@ -5011,19 +7101,6 @@ impl Checker {
                 self.pair_pattern(p, t, borrowed, env, span, at);
                 return;
             }
-            Pattern::Tuple(_)
-                if !matches!(resolved.unborrowed(), Ty::Named(..))
-                    || is_pair_ty(resolved.unborrowed()) =>
-            {
-                self.pair_pattern(p, t, borrowed, env, span, at);
-                return;
-            }
-            // `#(p, q)` on a `Pair` kept as a type of its own: its record.
-            Pattern::Tuple(_) => {
-                let pair = crate::surface::qualify::tuple_pattern_as_pairs(p, "Pair");
-                self.pattern(&pair, t, env, span, at);
-                return;
-            }
             Pattern::Record { name, fields } => {
                 match self.datas.positional(name, fields, Some(&resolved)) {
                     Ok(args) => self.ctor_pattern(name, &args, t, borrowed, env, span, at),
@@ -5032,15 +7109,26 @@ impl Checker {
                 return;
             }
             Pattern::Other(what) => {
-                self.error(format!("this pattern is not supported yet: {what}"), span);
+                self.error(
+                    msg!("nibcheck-pattern-not-supported", what = what.to_string()),
+                    span,
+                );
                 return;
             }
+            Pattern::Typed { .. } => return,
         };
         let target = resolved.unborrowed().clone();
         if self.unify(&lit, &target).is_err() {
             let target = self.resolve(&target);
             let lit = self.resolve(&lit);
-            self.error(format!("a pattern of {lit} cannot match {target}"), span);
+            self.error(
+                msg!(
+                    "nibcheck-pattern-cannot-match",
+                    pattern = lit.to_string(),
+                    target = target.to_string()
+                ),
+                span,
+            );
         }
     }
 
@@ -5056,12 +7144,11 @@ impl Checker {
     ) {
         let pats = pair_pattern_members(p);
         let target = self.resolve(t).unborrowed().clone();
-        let labelled = pats.iter().all(|q| q.label().is_some());
         let members: Vec<Ty> = match &target {
             t if is_pair_ty(t) => {
                 let mut ms = self.product_members(t);
                 // `#(p, q)` on `A × B × C` takes `A` and `B × C`, as `Pair { fst, snd }` does.
-                if !labelled && pats.len() >= 2 && pats.len() < ms.len() {
+                if pats.len() >= 2 && pats.len() < ms.len() {
                     let rest = self.product(ms.split_off(pats.len() - 1));
                     ms.push(rest);
                 }
@@ -5075,45 +7162,63 @@ impl Checker {
             }
             other => {
                 let other = self.shown(other);
-                self.error(format!("a pattern of a product cannot match {other}"), span);
+                self.error(
+                    msg!(
+                        "nibcheck-product-pattern-cannot-match",
+                        ty = other.to_string()
+                    ),
+                    span,
+                );
                 return;
             }
         };
         if members.len() != pats.len() {
             let shown = self.shown(&target);
             self.error(
-                format!("a pattern of {} members cannot match {shown}", pats.len()),
+                msg!(
+                    "nibcheck-product-pattern-members",
+                    count = pats.len().to_string(),
+                    ty = shown.to_string()
+                ),
                 span,
             );
             return;
         }
-        let tags: Option<Vec<&str>> = pats.iter().map(|q| q.label().map(|(l, _)| l)).collect();
-        let order: Vec<usize> = match tags {
-            Some(tags) => {
-                let mut order = Vec::new();
-                for tag in &tags {
-                    match members
-                        .iter()
-                        .position(|m| matches!(m, Ty::Tagged(ts, _) if ts.contains(*tag)))
-                    {
-                        Some(i) if !order.contains(&i) => order.push(i),
-                        _ => {
-                            let shown = self.shown(&target);
-                            self.error(format!("the label `@{tag}` is not on {shown}"), span);
-                            return;
-                        }
-                    }
-                }
-                order
-            }
-            None => (0..pats.len()).collect(),
-        };
-        for (q, i) in pats.iter().zip(order) {
+        // Members match by position, labelled or not: only a subtyping to a written type
+        // reorders by label.
+        for (q, m) in pats.iter().zip(&members) {
             let m = match borrowed {
-                Some(b) => Ty::Borrow(Box::new(members[i].clone()), b),
-                None => members[i].clone(),
+                Some(b) => Ty::Borrow(Box::new(m.clone()), b),
+                None => m.clone(),
             };
             self.pattern(q, &m, env, span, at);
+        }
+    }
+
+    /// Whether the constructor pattern `name` of the library's `Nat` is on a value the
+    /// executable code holds as a `nat`: one of that type, or one whose type is still open
+    /// and that no data of the program names a constructor `name` of.
+    /// Whether `t` is the library's `Nat`: a `nat`, or the type `Nat` that no data
+    /// of the program declares the constructors of.
+    pub(crate) fn is_nat(&self, t: &Ty) -> bool {
+        match t {
+            Ty::Int(Width::Nat) => true,
+            Ty::Named(d, args) => {
+                args.is_empty()
+                    && tauto_surface::bindings::is_library(d, "Nat")
+                    && !self.datas.decls.contains_key(d)
+            }
+            _ => false,
+        }
+    }
+
+    fn takes_nat(&mut self, name: &Name, target: &Ty) -> bool {
+        match target {
+            t if self.is_nat(t) => true,
+            Ty::Var(_) if !self.datas.has_ctor(name) => {
+                self.unify(target, &Ty::Int(Width::Nat)).is_ok()
+            }
+            _ => false,
         }
     }
 
@@ -5144,8 +7249,12 @@ impl Checker {
                     _ => None,
                 };
                 let message = match hint {
-                    Some(hint) => format!("`{name}` is not a constructor; did you mean `{hint}`?"),
-                    None => format!("`{name}` is not a constructor"),
+                    Some(hint) => msg!(
+                        "nibcheck-not-a-constructor-hint",
+                        name = name.to_string(),
+                        hint = hint.to_string()
+                    ),
+                    None => msg!("nibcheck-not-a-constructor-plain", name = name.to_string()),
                 };
                 self.error(message, span);
                 return;
@@ -5162,17 +7271,45 @@ impl Checker {
             .unify(&target, &Ty::Named(d.clone(), targs.clone()))
             .is_err()
         {
+            // A value under a label (`@a T`) is not a `T`: the pattern is written with the
+            // label (`@a C(…)`), or the value is annotated as the `T` it holds.
+            if let Ty::Tagged(tags, under) = &target
+                && let Ty::Named(inner, _) = self.resolve(under).unborrowed()
+                && *inner == d
+            {
+                let labels: Vec<String> = tags.iter().map(|t| format!("@{t}")).collect();
+                let shown = self.shown(&target);
+                self.error(
+                    msg!(
+                        "nibcheck-pattern-cannot-match-labelled",
+                        pattern = d.to_string(),
+                        name = name.to_string(),
+                        target = shown.to_string(),
+                        label = labels.join(" ")
+                    ),
+                    span,
+                );
+                return;
+            }
             let target = self.shown(&target);
-            self.error(format!("a pattern of {d} cannot match {target}"), span);
+            self.error(
+                msg!(
+                    "nibcheck-pattern-cannot-match",
+                    pattern = d.to_string(),
+                    target = target.to_string()
+                ),
+                span,
+            );
             return;
         }
         let fields = self.datas.fields(&d, c, &targs);
         if fields.len() != args.len() {
             self.error(
-                format!(
-                    "{name} has {} fields, the pattern {}",
-                    fields.len(),
-                    args.len()
+                msg!(
+                    "nibcheck-pattern-field-count",
+                    name = name.to_string(),
+                    fields = fields.len().to_string(),
+                    pattern = args.len().to_string()
                 ),
                 span,
             );
@@ -5202,12 +7339,42 @@ impl Checker {
         });
         if let Some(n) = named {
             self.error(
-                format!("the type of this `match` depends on the value `{n}`, which only a proof can check"),
+                msg!("nibcheck-match-depends-on-value", name = n.to_string()),
                 t.span,
             );
             return None;
         }
         Some(self.written(t, &self.type_params.clone()))
+    }
+
+    /// A `match` whose patterns are of a type that the scrutinee's struct
+    /// coerces to (`match &w { Some(x) => … }` with `w: W` coercing to
+    /// `Option(A)`): the scrutinee is read as that type, as an argument
+    /// where it is expected (`coerce_fit`).
+    fn coerce_scrutinee(&mut self, s: &Ty, arms: &[MatchArm], span: Span) -> Option<Ty> {
+        let owner = arms.iter().find_map(|arm| match &arm.pattern {
+            Pattern::Ctor { name, .. } | Pattern::Record { name, .. } => {
+                self.datas.ctors.get(name).map(|(ty, _)| ty.clone())
+            }
+            _ => None,
+        })?;
+        let resolved = self.resolve(s);
+        let mut current = resolved.unborrowed().clone();
+        if matches!(&current, Ty::Named(d, _) if *d == owner) {
+            return None;
+        }
+        for _ in 0..32 {
+            let (_, _, ty, _) = self.coerce_step(&current)?;
+            current = ty;
+            if matches!(&current, Ty::Named(d, _) if *d == owner) {
+                let want = match &resolved {
+                    Ty::Borrow(_, m) => Ty::Borrow(Box::new(current), *m),
+                    _ => current,
+                };
+                return self.coerce_fit(&resolved, &want, span).then_some(want);
+            }
+        }
+        None
     }
 
     fn match_expr(
@@ -5230,11 +7397,47 @@ impl Checker {
         hint: Option<Ty>,
     ) -> (Ty, Vec<Ty>) {
         let mut bodies = Vec::new();
-        let s = self.infer(scrutinee, env);
+        let mut s = self.infer(scrutinee, env);
+        // A `&rc T` is matched as the borrow of its contents: what a
+        // pattern binds of it is borrowed.
+        if let Ty::Rc(x) = self.resolve(&s) {
+            self.rc_reads.push(scrutinee.span);
+            s = self.rc_read(&x);
+        }
+        if let Ty::Named(data, _) = self.resolve(&s).unborrowed() {
+            self.refuse_sealed_repr(data, scrutinee.span);
+        }
+        if let Some(read) = self.coerce_scrutinee(&s, arms, scrutinee.span) {
+            s = read;
+        }
         let mut result: Option<Ty> = None;
+        // Typed arms narrow a union: its members, and for each arm the members it takes.
+        let members = arms
+            .iter()
+            .any(|a| matches!(a.pattern, Pattern::Typed { .. }))
+            .then(|| self.narrowed_members(&s, span))
+            .flatten();
+        let mut taken: Vec<Option<Vec<usize>>> = Vec::new();
         for arm in arms {
             let mut inner = env.clone();
-            self.pattern(&arm.pattern, &s, &mut inner, arm.body.span, site(&arm.body));
+            match &arm.pattern {
+                Pattern::Typed { name, ty, .. } => {
+                    let picked = self.typed_arm(
+                        name,
+                        ty,
+                        &s,
+                        members.as_deref(),
+                        &mut inner,
+                        arm.body.span,
+                        site(&arm.body),
+                    );
+                    taken.push(picked);
+                }
+                p => {
+                    self.pattern(p, &s, &mut inner, arm.body.span, site(&arm.body));
+                    taken.push(None);
+                }
+            }
             if let Some(g) = &arm.guard {
                 let gt = self.infer(g, &mut inner);
                 self.expect(&gt, &Ty::Bool, g.span, msg!("nibcheck-what-guard"));
@@ -5247,14 +7450,191 @@ impl Checker {
                 Some(r) => self.join(&r, &b),
             });
         }
+        if arms
+            .iter()
+            .any(|a| matches!(a.pattern, Pattern::Typed { .. }))
+        {
+            if let Some(members) = &members {
+                self.narrowed_coverage(members, arms, &taken, span);
+            }
+            return (result.unwrap_or(Ty::Never), bodies);
+        }
         if !self.exhaustive(&s, arms) {
-            self.error("the `match` does not cover every value", span);
+            self.error(msg!("nibcheck-match-not-exhaustive"), span);
         } else {
             self.rest_arm(&s, arms, span);
         }
         self.redundant(&s, arms);
         self.default_arm(&s, arms);
         (result.unwrap_or(Ty::Never), bodies)
+    }
+
+    /// The members of the union a `match` with typed arms is on, or `None` after an error:
+    /// its type is a union, known in full.
+    fn narrowed_members(&mut self, s: &Ty, span: Span) -> Option<Vec<Ty>> {
+        let resolved = self.resolve(s);
+        if self.has_vars(&resolved) {
+            let shown = self.shown(&resolved);
+            self.error(
+                msg!("nibcheck-typed-arm-unsolved", ty = shown.to_string()),
+                span,
+            );
+            return None;
+        }
+        match resolved.unborrowed() {
+            Ty::Union(members) => Some(members.clone()),
+            other => {
+                let shown = self.shown(other);
+                self.error(
+                    msg!("nibcheck-typed-arm-not-union", ty = shown.to_string()),
+                    span,
+                );
+                None
+            }
+        }
+    }
+
+    /// `y: T` on a union of `members`: binds `y` at `T` (a borrow of it over a borrow) and
+    /// gives the members `T` takes. `T` is a member or a union of members, and every member
+    /// left out has a head no member of `T` has, so the head of a value tells which it is.
+    #[allow(clippy::too_many_arguments)]
+    fn typed_arm(
+        &mut self,
+        name: &Name,
+        written: &SurfaceTerm,
+        s: &Ty,
+        members: Option<&[Ty]>,
+        env: &mut Vec<Local>,
+        span: Span,
+        at: TermId,
+    ) -> Option<Vec<usize>> {
+        let t = self.written(written, &self.type_params.clone());
+        let t = self.resolve(&t);
+        let borrowed = match self.resolve(s) {
+            Ty::Borrow(_, m) => Some(m),
+            _ => None,
+        };
+        let bound = match borrowed {
+            Some(m) => Ty::Borrow(Box::new(t.clone()), m),
+            None => t.clone(),
+        };
+        self.bind_local(env, name, bound, false, at);
+        let members = members?;
+        let picked: Vec<Ty> = match &t {
+            Ty::Union(us) => us.clone(),
+            other => vec![other.clone()],
+        };
+        let union_shown = self.shown(&Ty::Union(members.to_vec()));
+        let mut indices = Vec::new();
+        for p in &picked {
+            match members.iter().position(|m| m == p) {
+                Some(i) => indices.push(i),
+                None => {
+                    let shown = self.shown(&t);
+                    self.error(
+                        msg!(
+                            "nibcheck-typed-arm-not-member",
+                            arm = shown.to_string(),
+                            ty = union_shown.to_string()
+                        ),
+                        span,
+                    );
+                    return None;
+                }
+            }
+        }
+        let mut ok = true;
+        for m in members {
+            if matches!(m.unborrowed(), Ty::Param(..))
+                || matches!(m, Ty::Tagged(_, under) if matches!(**under, Ty::Param(..)))
+            {
+                self.error(
+                    msg!("nibcheck-typed-arm-type-variable", member = m.to_string()),
+                    span,
+                );
+                ok = false;
+            } else if head_of(m).is_none() {
+                self.error(
+                    msg!("nibcheck-typed-arm-no-head", member = m.to_string()),
+                    span,
+                );
+                ok = false;
+            }
+        }
+        if !ok {
+            return None;
+        }
+        for m in members.iter().filter(|m| !picked.contains(m)) {
+            if let Some(p) = picked.iter().find(|p| head_of(p) == head_of(m)) {
+                let shown = self.shown(&t);
+                self.error(
+                    msg!(
+                        "nibcheck-typed-arm-same-head",
+                        arm = shown.to_string(),
+                        member = p.to_string(),
+                        other = m.to_string()
+                    ),
+                    span,
+                );
+                return None;
+            }
+        }
+        Some(indices)
+    }
+
+    /// Exhaustiveness of a `match` with typed arms, member by member: an arm without a guard
+    /// takes the members of its type, or all of them when it is a name or `_`. Also the arms
+    /// that take only members taken before, and the place of `_ =>`.
+    fn narrowed_coverage(
+        &mut self,
+        members: &[Ty],
+        arms: &[MatchArm],
+        taken: &[Option<Vec<usize>>],
+        span: Span,
+    ) {
+        let mut covered = vec![false; members.len()];
+        let last = arms.len().saturating_sub(1);
+        for (i, (arm, picked)) in arms.iter().zip(taken).enumerate() {
+            let indices: Vec<usize> = match &arm.pattern {
+                Pattern::Typed { .. } => match picked {
+                    Some(p) => p.clone(),
+                    // After an error: as if it took every member.
+                    None => (0..members.len()).collect(),
+                },
+                Pattern::Wild | Pattern::Bind { .. } => (0..members.len()).collect(),
+                _ => (0..members.len()).collect(),
+            };
+            let before = indices.iter().all(|k| covered[*k]);
+            if matches!(arm.pattern, Pattern::Wild) && arm.guard.is_none() {
+                if i != last {
+                    self.error(msg!("nibcheck-default-arm-last"), arm.body.span);
+                } else if before {
+                    self.error(msg!("nibcheck-default-arm-unreachable"), arm.body.span);
+                }
+            } else if before {
+                self.redundant_arms.push((arm.body.id(), arm.body.span));
+            }
+            if arm.guard.is_none() {
+                for k in indices {
+                    covered[k] = true;
+                }
+            }
+        }
+        let missing: Vec<String> = members
+            .iter()
+            .zip(&covered)
+            .filter(|(_, c)| !**c)
+            .map(|(m, _)| self.shown(m).to_string())
+            .collect();
+        if !missing.is_empty() {
+            self.error(
+                msg!(
+                    "nibcheck-match-members-not-covered",
+                    members = missing.join(", ")
+                ),
+                span,
+            );
+        }
     }
 
     /// Literals of a number or a text are a chain of `==` tests: the
@@ -5270,13 +7650,10 @@ impl Checker {
         if literal {
             let named = arms.last().is_some_and(|a| {
                 a.guard.is_none()
-                    && matches!(&a.pattern, Pattern::Bind(n) if !self.datas.nullary(n, None))
+                    && matches!(&a.pattern, Pattern::Bind { name: n, .. } if !self.datas.nullary(n, None))
             });
             if !named {
-                self.error(
-                    "a `match` on literals ends with a named rest arm (`other => …`)",
-                    span,
-                );
+                self.error(msg!("nibcheck-match-literals-need-rest-arm"), span);
             }
         }
     }
@@ -5305,7 +7682,7 @@ impl Checker {
                 continue;
             }
             if i != last {
-                self.error("the default arm `_ =>` must be the last", arm.body.span);
+                self.error(msg!("nibcheck-default-arm-last"), arm.body.span);
                 return;
             }
             let before: Vec<Vec<Pattern>> = arms[..i]
@@ -5314,7 +7691,7 @@ impl Checker {
                 .map(|a| vec![a.pattern.clone()])
                 .collect();
             if !before.is_empty() && self.covers_within(&[t.clone()], &before, &[Pattern::Wild]) {
-                self.error("the default arm `_ =>` matches no value", arm.body.span);
+                self.error(msg!("nibcheck-default-arm-unreachable"), arm.body.span);
             }
         }
     }
@@ -5366,8 +7743,7 @@ impl Checker {
             q[0] = strip(&q[0]);
             return self.covers_within(&tys, &rows, &q);
         }
-        if let Some(ms) = self.product_pattern_members(t, rows.iter().map(|r| &r[0]).chain([&q[0]]))
-        {
+        if let Some(ms) = self.product_pattern_members(t) {
             let ms = &ms;
             let tys = [ms.clone(), rest.to_vec()].concat();
             let spread = |r: &[Pattern]| {
@@ -5379,15 +7755,53 @@ impl Checker {
             return self.covers_within(&tys, &rows, &q);
         }
         // `#(…)` on a `Pair` kept as a type of its own: its record.
-        if rows.iter().any(|r| matches!(r[0], Pattern::Tuple(_)))
-            || matches!(q[0], Pattern::Tuple(_))
-        {
-            let rows: Vec<Vec<Pattern>> = rows.iter().map(|r| tuple_head_as_pair(r)).collect();
-            return self.covers_within(tys, &rows, &tuple_head_as_pair(q));
+        if rows.iter().any(|r| pair_record(&r[0]).is_some()) || pair_record(&q[0]).is_some() {
+            let rows: Vec<Vec<Pattern>> = rows.iter().map(|r| pair_head_as_record(r)).collect();
+            return self.covers_within(tys, &rows, &pair_head_as_record(q));
+        }
+        // A column of `nat` that `Succ` is written on: `Zero` and `Succ(n)`, as the
+        // kernel's `Nat` has them, with a literal `k` as `Succ` taken `k` times of `Zero`.
+        if self.is_nat(t) && rows.iter().any(|r| written_succ(&r[0])) || written_succ(&q[0]) {
+            let nat = t.clone();
+            let zero_rows: Vec<Vec<Pattern>> = rows
+                .iter()
+                .filter_map(|r| match nat_head(&r[0]) {
+                    NatHead::Zero | NatHead::Any => Some(r[1..].to_vec()),
+                    _ => None,
+                })
+                .collect();
+            let succ_rows: Vec<Vec<Pattern>> = rows
+                .iter()
+                .filter_map(|r| match nat_head(&r[0]) {
+                    NatHead::Succ(p) => Some([vec![p], r[1..].to_vec()].concat()),
+                    NatHead::Any => Some([vec![Pattern::Wild], r[1..].to_vec()].concat()),
+                    _ => None,
+                })
+                .collect();
+            let succ_tys = [vec![nat], rest.to_vec()].concat();
+            return match nat_head(&q[0]) {
+                NatHead::Zero => self.covers_within(rest, &zero_rows, &q[1..]),
+                NatHead::Succ(p) => {
+                    self.covers_within(&succ_tys, &succ_rows, &[vec![p], q[1..].to_vec()].concat())
+                }
+                NatHead::Any => {
+                    self.covers_within(rest, &zero_rows, &q[1..])
+                        && self.covers_within(
+                            &succ_tys,
+                            &succ_rows,
+                            &[vec![Pattern::Wild], q[1..].to_vec()].concat(),
+                        )
+                }
+                NatHead::None => false,
+            };
         }
         let wild = |p: &Pattern| {
             matches!(p, Pattern::Wild)
-                || matches!(p, Pattern::Bind(n) if !self.datas.nullary(n, Some(t)))
+                || matches!(p, Pattern::Bind { name: n, .. } if !self.datas.nullary(n, Some(t))
+                    // The executable code holds a `Nat` as a `nat`, whose `Zero`
+                    // is a value, not a name that takes any.
+                    && !(self.is_nat(t)
+                        && tauto_surface::bindings::is_library_selected(n, "Zero")))
         };
         let taking = |p: &Pattern| -> Vec<Vec<Pattern>> {
             rows.iter()
@@ -5416,7 +7830,7 @@ impl Checker {
                         Pattern::Record { name: n, fields } if this(n) => {
                             self.datas.positional(n, fields, Some(t)).ok()?
                         }
-                        Pattern::Bind(n) if this(n) => Vec::new(),
+                        Pattern::Bind { name: n, .. } if this(n) => Vec::new(),
                         _ => return None,
                     };
                     (head.len() == fields.len()).then(|| [head, r[1..].to_vec()].concat())
@@ -5464,7 +7878,7 @@ impl Checker {
             Pattern::Bool(_) | Pattern::Int(_) | Pattern::Text(_) => {
                 self.covers_within(rest, &taking(head), &q[1..])
             }
-            Pattern::Ctor { .. } | Pattern::Record { .. } | Pattern::Bind(_) => {
+            Pattern::Ctor { .. } | Pattern::Record { .. } | Pattern::Bind { .. } => {
                 let Some((d, args, _)) = data else {
                     return false;
                 };
@@ -5476,7 +7890,7 @@ impl Checker {
                             Err(_) => return false,
                         }
                     }
-                    Pattern::Bind(name) => (name, None),
+                    Pattern::Bind { name: name, .. } => (name, None),
                     _ => unreachable!(),
                 };
                 let Ok((dd, c)) = self.datas.resolve_ctor(name, Some(t)) else {
@@ -5505,13 +7919,12 @@ impl Checker {
     fn product_columns(&self, ms: &[Ty], p: &Pattern) -> Option<Vec<Pattern>> {
         match p {
             Pattern::Wild => Some(vec![Pattern::Wild; ms.len()]),
-            Pattern::Bind(n) if !self.datas.has_ctor(n) => Some(vec![Pattern::Wild; ms.len()]),
+            Pattern::Bind { name: n, .. } if !self.datas.has_ctor(n) => {
+                Some(vec![Pattern::Wild; ms.len()])
+            }
             Pattern::Record { name, .. } if is_pair_ctor(name) => {
                 let pats = self.regroup(ms.len(), pair_pattern_members(p));
                 self.tuple_columns(ms, pats)
-            }
-            Pattern::Tuple(_) => {
-                self.tuple_columns(ms, self.regroup(ms.len(), pair_pattern_members(p)))
             }
             Pattern::Ctor { name, args } if is_pair_ctor(name) && args.len() == 2 => {
                 self.tuple_columns(ms, args.clone())
@@ -5520,34 +7933,24 @@ impl Checker {
         }
     }
 
-    /// The columns the `#(…)` patterns `pats` put their patterns on in the product `t`: its
-    /// members read flat where a pattern names them all by labels (`#(@b q, @a p)`), else its
-    /// first member and the product of the rest, as the `Pair`s a tuple pattern nests to.
-    fn product_pattern_members<'p>(
-        &self,
-        t: &Ty,
-        mut pats: impl Iterator<Item = &'p Pattern>,
-    ) -> Option<Vec<Ty>> {
+    /// The columns the `#(…)` patterns put their patterns on in the product `t`: its first
+    /// member and the product of the rest, as the `Pair`s a product pattern nests to. Members
+    /// match by position, labelled or not.
+    fn product_pattern_members(&self, t: &Ty) -> Option<Vec<Ty>> {
         if !is_pair_ty(t) {
             return None;
         }
         let mut ms = self.product_members(t);
-        let labelled = |p: &Pattern| {
-            matches!(p, Pattern::Tuple(items)
-                if items.len() == ms.len() && items.iter().all(|q| q.label().is_some()))
-        };
-        if !pats.any(labelled) {
-            let rest = self.product(ms.split_off(1));
-            ms.push(rest);
-        }
+        let rest = self.product(ms.split_off(1));
+        ms.push(rest);
         Some(ms)
     }
 
-    /// The patterns `pats` of a tuple put on `columns` columns: where there are more and
+    /// The patterns `pats` of a product put on `columns` columns: where there are more and
     /// the columns are two, the first and `#(…)` of the rest.
     fn regroup(&self, columns: usize, mut pats: Vec<Pattern>) -> Vec<Pattern> {
-        if columns == 2 && pats.len() > 2 && !pats.iter().all(|q| q.label().is_some()) {
-            let rest = Pattern::Tuple(pats.split_off(1));
+        if columns == 2 && pats.len() > 2 {
+            let rest = Pattern::product(pats.split_off(1));
             pats.push(rest);
         }
         pats
@@ -5566,27 +7969,11 @@ impl Checker {
                 _ => q,
             })
             .collect();
-        let tags: Option<Vec<&str>> = pats.iter().map(|q| q.label().map(|(l, _)| l)).collect();
-        match tags {
-            None => Some(pats),
-            Some(tags) => {
-                let mut out = vec![Pattern::Wild; ms.len()];
-                for (tag, q) in tags.iter().zip(&pats) {
-                    let i = ms
-                        .iter()
-                        .position(|m| matches!(m, Ty::Tagged(ts, _) if ts.contains(*tag)))?;
-                    out[i] = q.clone();
-                }
-                Some(out)
-            }
-        }
+        Some(pats)
     }
 
     fn covers(&self, t: &Ty, pats: &[&Pattern]) -> bool {
-        let rows: Vec<Vec<Pattern>> = pats
-            .iter()
-            .map(|p| vec![crate::surface::qualify::flatten_pair_patterns(p)])
-            .collect();
+        let rows: Vec<Vec<Pattern>> = pats.iter().map(|p| vec![(*p).clone()]).collect();
         self.covers_rows(&[t.clone()], rows)
     }
 
@@ -5613,7 +8000,7 @@ impl Checker {
                 .collect();
             return self.covers_rows(&tys, rows);
         }
-        if let Some(ms) = self.product_pattern_members(t, rows.iter().map(|r| &r[0])) {
+        if let Some(ms) = self.product_pattern_members(t) {
             let ms = &ms;
             let tys = [ms.clone(), rest.to_vec()].concat();
             let rows: Vec<Vec<Pattern>> = rows
@@ -5626,13 +8013,39 @@ impl Checker {
             return self.covers_rows(&tys, rows);
         }
         // `#(…)` on a `Pair` kept as a type of its own: its record.
-        if rows.iter().any(|r| matches!(r[0], Pattern::Tuple(_))) {
-            let rows = rows.iter().map(|r| tuple_head_as_pair(r)).collect();
+        if rows.iter().any(|r| pair_record(&r[0]).is_some()) {
+            let rows = rows.iter().map(|r| pair_head_as_record(r)).collect();
             return self.covers_rows(tys, rows);
+        }
+        // A column of `nat` that `Succ` is written on: `Zero` and `Succ(n)`, as the
+        // kernel's `Nat` has them, with a literal `k` as `Succ` taken `k` times of `Zero`.
+        if self.is_nat(t) && rows.iter().any(|r| written_succ(&r[0])) {
+            let nat = t.clone();
+            let zero_rows: Vec<Vec<Pattern>> = rows
+                .iter()
+                .filter_map(|r| match nat_head(&r[0]) {
+                    NatHead::Zero | NatHead::Any => Some(r[1..].to_vec()),
+                    _ => None,
+                })
+                .collect();
+            let succ_rows: Vec<Vec<Pattern>> = rows
+                .iter()
+                .filter_map(|r| match nat_head(&r[0]) {
+                    NatHead::Succ(p) => Some([vec![p], r[1..].to_vec()].concat()),
+                    NatHead::Any => Some([vec![Pattern::Wild], r[1..].to_vec()].concat()),
+                    _ => None,
+                })
+                .collect();
+            let succ_tys = [vec![nat], rest.to_vec()].concat();
+            return self.covers_rows(rest, zero_rows) && self.covers_rows(&succ_tys, succ_rows);
         }
         let wild = |p: &Pattern| {
             matches!(p, Pattern::Wild)
-                || matches!(p, Pattern::Bind(n) if !self.datas.nullary(n, Some(t)))
+                || matches!(p, Pattern::Bind { name: n, .. } if !self.datas.nullary(n, Some(t))
+                    // The executable code holds a `Nat` as a `nat`, whose `Zero`
+                    // is a value, not a name that takes any.
+                    && !(self.is_nat(t)
+                        && tauto_surface::bindings::is_library_selected(n, "Zero")))
         };
         let defaults = |rows: &[Vec<Pattern>]| -> Vec<Vec<Pattern>> {
             rows.iter()
@@ -5677,7 +8090,7 @@ impl Checker {
                         Pattern::Record { name: n, fields } if this(n) => {
                             self.datas.positional(n, fields, Some(t)).ok()?
                         }
-                        Pattern::Bind(n) if this(n) => Vec::new(),
+                        Pattern::Bind { name: n, .. } if this(n) => Vec::new(),
                         _ => return None,
                     };
                     (head.len() == fields.len()).then(|| [head, r[1..].to_vec()].concat())
@@ -5724,7 +8137,7 @@ impl Checker {
             }
             None => b,
         };
-        self.subst[result_var] = Some(first);
+        self.set_subst(result_var, Some(first));
         self.handle_arms(
             handlers,
             env,
@@ -5757,6 +8170,7 @@ impl Checker {
                 cont,
                 guard,
                 body,
+                ..
             } = h
             else {
                 continue;
@@ -5774,7 +8188,8 @@ impl Checker {
                         let generics: Vec<(Param, Kind)> = sig
                             .generics
                             .iter()
-                            .map(|g| (g.clone(), Kind::Linear))
+                            .cloned()
+                            .zip(sig.kinds.iter().copied())
                             .collect();
                         // The generics the values mention; a row's generic
                         // (`test<!e>`) is not written.
@@ -5845,18 +8260,33 @@ impl Checker {
                                     && !instance.forall.is_empty()
                                 {
                                     self.error(
-                                        format!(
-                                            "`{effect}` is told apart by its type arguments: an arm answers one instance, `{effect}<…>(…)`"
+                                        msg!(
+                                            "nibcheck-arm-told-apart-by-type-arguments",
+                                            effect = effect.to_string()
                                         ),
                                         body.span,
                                     );
                                 }
-                                // Unbounded, as a function's generics are.
+                                // With the bound the operation declares, which
+                                // the instance performed met; a function's
+                                // default when none is written.
                                 let unbounded: Vec<(Param, Kind)> = generics
                                     .iter()
-                                    .map(|(g, _)| (g.clone(), Kind::Affine))
+                                    .map(|(g, k)| {
+                                        (
+                                            g.clone(),
+                                            if *k == Kind::Linear { Kind::Affine } else { *k },
+                                        )
+                                    })
                                     .collect();
                                 rigid = self.rigid(&unbounded);
+                                // The request's payload was checked where it
+                                // was performed: an arm may perform it again.
+                                for t in rigid.values() {
+                                    if let Ty::Param(p, _) = t {
+                                        self.no_borrow.insert(p.id.clone());
+                                    }
+                                }
                                 for (name, g) in instance.forall.iter().zip(&typed) {
                                     if let Some(t) = rigid.get(&g.id) {
                                         bound.push((name.clone(), t.clone()));
@@ -5895,17 +8325,32 @@ impl Checker {
                         (checked.params, checked.answer)
                     }
                     None => {
-                        self.error(format!("no effect `{effect}` is declared"), body.span);
+                        // The host answers a budget, as it does `wait`: no
+                        // program's `handle` has an arm for it.
+                        if tauto_surface::bindings::is_library(&effect, "budget")
+                            || tauto_surface::bindings::is_library(&effect, "budget_memory")
+                        {
+                            self.error(
+                                msg!("nibcheck-host-answers", effect = effect.to_string()),
+                                body.span,
+                            );
+                        } else {
+                            self.error(
+                                msg!("nibcheck-no-effect-declared", effect = effect.to_string()),
+                                body.span,
+                            );
+                        }
                         continue;
                     }
                 }
             };
             if params.len() != patterns.len() {
                 self.error(
-                    format!(
-                        "`{effect}` gives {} values, the arm takes {}",
-                        params.len(),
-                        patterns.len()
+                    msg!(
+                        "nibcheck-arm-value-count",
+                        effect = effect.to_string(),
+                        expected = params.len().to_string(),
+                        given = patterns.len().to_string()
                     ),
                     body.span,
                 );
@@ -5921,7 +8366,10 @@ impl Checker {
                 });
                 if !tail {
                     self.error(
-                        format!("{effect} is direct; every path of its arm must end in k(e)"),
+                        msg!(
+                            "nibcheck-direct-arm-must-resume",
+                            effect = effect.to_string()
+                        ),
                         body.span,
                     );
                 }
@@ -5933,7 +8381,11 @@ impl Checker {
             if let Some(k) = cont {
                 if quant == Quant::Zero {
                     self.error(
-                        format!("{effect} does not resume (`resume 0`): its arm has no `{k}`"),
+                        msg!(
+                            "nibcheck-arm-does-not-resume",
+                            effect = effect.to_string(),
+                            k = k.to_string()
+                        ),
                         body.span,
                     );
                 }
@@ -5971,10 +8423,7 @@ impl Checker {
                     || env.iter().any(|l| self.mentions(&names, &l.ty)))
             {
                 self.error(
-                    format!(
-                        "the arm of `{effect}` must work for whatever type arguments it is \
-                         performed with: they are chosen where it is performed"
-                    ),
+                    msg!("nibcheck-arm-must-be-generic", effect = effect.to_string()),
                     body.span,
                 );
                 continue;
@@ -6003,7 +8452,7 @@ impl Checker {
                 if self.attempt(|c| c.unify(&probe, &wide)).is_ok() {
                     let wide = self.resolve(&wide);
                     if !self.occurs(result_var, &wide) {
-                        self.subst[result_var] = Some(wide);
+                        self.set_subst(result_var, Some(wide));
                     }
                     continue;
                 }
@@ -6016,7 +8465,7 @@ impl Checker {
             {
                 let x = self.resolve(x);
                 if !self.occurs(result_var, &x) {
-                    self.subst[result_var] = Some(x);
+                    self.set_subst(result_var, Some(x));
                 }
                 continue;
             }
@@ -6029,7 +8478,7 @@ impl Checker {
             }
             if self.attempt(|c| c.fits(&a, &current)).is_err() {
                 let a = self.resolve(&a);
-                self.subst[result_var] = Some(union(vec![current, a]));
+                self.set_subst(result_var, Some(union(vec![current, a])));
             }
         }
     }
@@ -6061,7 +8510,9 @@ fn named_in(t: &Ty, out: &mut Vec<Name>) {
             args.iter().for_each(|a| named_in(a, out));
         }
         Ty::Union(ts) => ts.iter().for_each(|t| named_in(t, out)),
-        Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) => named_in(t, out),
+        Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Orig(t) | Ty::Rc(t) => {
+            named_in(t, out)
+        }
         // A function holds no value of its parameters' or result's types.
         _ => {}
     }
@@ -6132,7 +8583,9 @@ fn param_in(t: &Ty, generic: &Param) -> bool {
         Ty::Named(_, args) => args.iter().any(|a| param_in(a, generic)),
         Ty::Fn(ps, r, _) => ps.iter().any(|p| param_in(p, generic)) || param_in(r, generic),
         Ty::Union(ts) => ts.iter().any(|t| param_in(t, generic)),
-        Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) => param_in(t, generic),
+        Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Orig(t) | Ty::Rc(t) => {
+            param_in(t, generic)
+        }
         _ => false,
     }
 }
@@ -6170,6 +8623,18 @@ fn poly_map(
         .collect()
 }
 
+/// `t` with each shared borrow in it read as `Unit`: what a field of a
+/// `struct &T` is, for its kind, once its borrows are copies of the borrow.
+fn unborrow_shared(t: &Ty) -> Ty {
+    match t {
+        Ty::Borrow(_, false) => Ty::Unit,
+        Ty::Named(n, args) => Ty::Named(n.clone(), args.iter().map(unborrow_shared).collect()),
+        Ty::Union(ts) => Ty::Union(ts.iter().map(unborrow_shared).collect()),
+        Ty::Tagged(tags, t) => Ty::Tagged(tags.clone(), Box::new(unborrow_shared(t))),
+        other => other.clone(),
+    }
+}
+
 fn substitute(t: &Ty, map: &HashMap<ParamId, Ty>) -> Ty {
     match t {
         Ty::Param(n, _) if map.contains_key(n.id()) => map[n.id()].clone(),
@@ -6185,6 +8650,8 @@ fn substitute(t: &Ty, map: &HashMap<ParamId, Ty>) -> Ty {
         Ty::Tagged(tags, t) => tagged(tags.clone(), substitute(t, map)),
         Ty::Info(t) => Ty::Info(Box::new(substitute(t, map))),
         Ty::Borrow(t, m) => Ty::Borrow(Box::new(substitute(t, map)), *m),
+        Ty::Orig(t) => Ty::Orig(Box::new(substitute(t, map))),
+        Ty::Rc(t) => Ty::Rc(Box::new(substitute(t, map))),
         Ty::App(h, x) => apply(substitute(h, map), substitute(x, map)),
         Ty::Poly(gs, t) => {
             let mut inner = map.clone();
@@ -6194,6 +8661,40 @@ fn substitute(t: &Ty, map: &HashMap<ParamId, Ty>) -> Ty {
             Ty::Poly(gs.clone(), Box::new(substitute(t, &inner)))
         }
         other => other.clone(),
+    }
+}
+
+/// What a typed arm tests of a value of a union (`docs/design/nib.md`「Matching on a union」):
+/// its width, `Bool`, `Unit`, `Text`, `Decimal`, `Float`, `Float32`, the data type that
+/// declares it whatever its type arguments (a product's is `Pair`), or that it is a function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Head {
+    Int(Width),
+    Bool,
+    Unit,
+    Text,
+    Decimal,
+    Float,
+    Float32,
+    Data(Name),
+    Fn,
+}
+
+/// The head of the values of `t`; a label does not change a value, so `@a T` has `T`'s.
+/// A type variable and what no union holds have none.
+pub(crate) fn head_of(t: &Ty) -> Option<Head> {
+    match t {
+        Ty::Tagged(_, t) => head_of(t),
+        Ty::Int(w) => Some(Head::Int(*w)),
+        Ty::Bool => Some(Head::Bool),
+        Ty::Unit => Some(Head::Unit),
+        Ty::Text => Some(Head::Text),
+        Ty::Decimal => Some(Head::Decimal),
+        Ty::Float => Some(Head::Float),
+        Ty::Float32 => Some(Head::Float32),
+        Ty::Named(n, _) => Some(Head::Data(n.clone())),
+        Ty::Fn(..) => Some(Head::Fn),
+        _ => None,
     }
 }
 
@@ -6221,8 +8722,8 @@ fn union(ts: Vec<Ty>) -> Ty {
 
 /// The members of `#(p₁, …, pₙ)`, read from `Pair { fst, snd }` nested to the right.
 fn pair_pattern_members(p: &Pattern) -> Vec<Pattern> {
-    if let Pattern::Tuple(items) = p {
-        return items.clone();
+    if let Some(items) = p.product_members() {
+        return items.into_iter().cloned().collect();
     }
     let mut out = Vec::new();
     let mut at = p;
@@ -6245,11 +8746,20 @@ fn pair_pattern_members(p: &Pattern) -> Vec<Pattern> {
     }
 }
 
+/// `#(p, q)` as the record of the prelude's `Pair`, `Pair { fst: p, snd: q }`.
+fn pair_record(p: &Pattern) -> Option<Pattern> {
+    let (fst, snd) = p.as_pair()?;
+    Some(Pattern::Record {
+        name: Name::from("Pair"),
+        fields: vec![("fst".into(), fst.clone()), ("snd".into(), snd.clone())],
+    })
+}
+
 /// `r` with its first pattern, when it is `#(…)`, put as the record of the prelude's `Pair`.
-fn tuple_head_as_pair(r: &[Pattern]) -> Vec<Pattern> {
+fn pair_head_as_record(r: &[Pattern]) -> Vec<Pattern> {
     let mut r = r.to_vec();
-    if let Some(head @ Pattern::Tuple(_)) = r.first() {
-        r[0] = crate::surface::qualify::tuple_pattern_as_pairs(head, "Pair");
+    if let Some(record) = r.first().and_then(pair_record) {
+        r[0] = record;
     }
     r
 }
@@ -6331,21 +8841,6 @@ impl Checker {
     }
 }
 
-/// The members of a product already resolved: see [`Checker::product_members`].
-pub(crate) fn pair_spine(t: &Ty) -> Vec<Ty> {
-    let mut out = Vec::new();
-    let mut at = t;
-    while let Ty::Named(n, args) = at
-        && is_pair_name(n)
-        && args.len() == 2
-    {
-        out.push(args[0].clone());
-        at = &args[1];
-    }
-    out.push(at.clone());
-    out
-}
-
 pub(crate) fn is_pair_ty(t: &Ty) -> bool {
     matches!(t, Ty::Named(n, args) if is_pair_name(n) && args.len() == 2)
 }
@@ -6369,6 +8864,7 @@ enum StableTypeKey {
     Param(StableParamKey, Kind),
     Info(Box<StableTypeKey>),
     Borrow(Box<StableTypeKey>, bool),
+    Rc(Box<StableTypeKey>),
     Var(usize),
     Poly(Vec<(StableParamKey, Kind)>, Box<StableTypeKey>),
     App(Box<StableTypeKey>, Box<StableTypeKey>),
@@ -6393,6 +8889,8 @@ fn stable_type_key(t: &Ty) -> StableTypeKey {
         Ty::Param(p, k) => StableTypeKey::Param(p.stable_key(), *k),
         Ty::Info(t) => StableTypeKey::Info(boxed(t)),
         Ty::Borrow(t, m) => StableTypeKey::Borrow(boxed(t), *m),
+        Ty::Orig(t) => StableTypeKey::Borrow(boxed(t), false),
+        Ty::Rc(t) => StableTypeKey::Rc(boxed(t)),
         Ty::Var(v) => StableTypeKey::Var(*v),
         Ty::Poly(gs, t) => StableTypeKey::Poly(
             gs.iter().map(|(p, k)| (p.stable_key(), *k)).collect(),
@@ -6420,7 +8918,8 @@ fn tagged(mut tags: BTreeSet<String>, t: Ty) -> Ty {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn view_wrappers_require_the_designated_declaration() {
+    fn a_type_applied_to_a_borrow_holds_it() {
+        tauto_parse::install();
         let datas = Datas::default();
         for spelling in ["Option", "Result", "Pair"] {
             let args = vec![Ty::Borrow(Box::new(Ty::Unit), true)];
@@ -6433,12 +8932,13 @@ mod tests {
                 args,
             );
             assert_eq!(datas.view_borrow(&native), Some(true));
-            assert_eq!(datas.view_borrow(&foreign), None);
+            assert_eq!(datas.view_borrow(&foreign), Some(true));
         }
     }
 
     #[test]
     fn primitive_type_display_does_not_authorize_a_foreign_declaration() {
+        tauto_parse::install();
         let mut checker = Checker::default();
         for spelling in ["i64", "Bool", "Text", "Unit", "Never", "Decimal", "Float"] {
             let foreign = Name::Global(tauto_surface::identity::DeclRef::fresh(spelling));
@@ -6471,7 +8971,7 @@ mod tests {
     }
 
     fn check_types(source: &str) -> Result<TypeReport, String> {
-        let program = expand_classes(crate::surface::parse_program_as_written(source)?, 1 << 30);
+        let program = expand_classes(tauto_parse::parse_program_as_written(source)?, 1 << 30);
         Ok(check_program(&program))
     }
     use super::*;
@@ -6567,7 +9067,7 @@ mod tests {
             .unwrap()
             .errors
             .into_iter()
-            .map(|e| e.message.to_string())
+            .map(|e| format!("{:?}", e.message))
             .collect()
     }
 
@@ -6614,7 +9114,7 @@ mod tests {
   }
   repeat(value, false)
 }
-perform show("answer", outer("text"))"#
+show(&outer("text"))"#
             .to_string();
         let report = check_types(&source).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
@@ -6644,9 +9144,9 @@ fn outer<A: Shared>(value: A): Text where Render(A) {
   }
   repeat(value, false)
 }
-perform show("answer", outer("text"))"#
+show(&outer("text"))"#
             .to_string();
-        let program = crate::surface::parse_program_as_written(&source).unwrap();
+        let program = tauto_parse::parse_program_as_written(&source).unwrap();
         let report = check_program(&program);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         let own = &report.local_schemes[&Name::from("repeat")].generics[0].0;
@@ -6660,11 +9160,11 @@ perform show("answer", outer("text"))"#
         assert_eq!(self_uses.len(), 1);
         assert_eq!(
             report.evidence[self_uses[0].0],
-            [Ev::Assume("Render".into(), own.clone())]
+            [Ev::Assume("Render".into(), vec![own.clone()])]
         );
         assert!(report.instantiations.iter().any(|(term, args)| {
             args.get(own.id()) == Some(&Ty::Param(outer.clone(), Kind::Shared))
-                && report.evidence[term] == [Ev::Assume("Render".into(), outer.clone())]
+                && report.evidence[term] == [Ev::Assume("Render".into(), vec![outer.clone()])]
         }));
     }
 
@@ -6674,7 +9174,7 @@ perform show("answer", outer("text"))"#
 enum Number { Read(i64) }
 let value: Reader := Read("original")"#
             .to_string();
-        let program = crate::surface::parse_program_as_written(&source).unwrap();
+        let program = tauto_parse::parse_program_as_written(&source).unwrap();
         let mut report = check_program(&program);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         let Stmt::Let { value, .. } = &program.stmts[2] else {
@@ -6693,7 +9193,7 @@ let value: Reader := Read("original")"#
             report.nominal_owners_for(&program).unwrap()[&id].as_str(),
             "Reader"
         );
-        let fresh = crate::surface::parse_program_as_written(&source).unwrap();
+        let fresh = tauto_parse::parse_program_as_written(&source).unwrap();
         assert_eq!(program, fresh);
         assert!(report.nominal_owners_for(&fresh).is_none());
         let mut edited = program.clone();
@@ -6717,7 +9217,7 @@ let value: Reader := Read("original")"#
   }
 }"#
         .to_string();
-        let failed = crate::surface::parse_program_as_written(&source).unwrap();
+        let failed = tauto_parse::parse_program_as_written(&source).unwrap();
         let mut report = check_program(&failed);
         assert!(!report.errors.is_empty());
         report.errors.clear();
@@ -6731,7 +9231,7 @@ enum Other { Read(Text) }
 let first: Reader := Read("original")
 let second: Other := Read("original")"#
             .to_string();
-        let mut program = crate::surface::parse_program_as_written(&source).unwrap();
+        let mut program = tauto_parse::parse_program_as_written(&source).unwrap();
         let Stmt::Let { value, .. } = &program.stmts[2] else {
             panic!("first constructor")
         };
@@ -6763,7 +9263,7 @@ fn outer(): Reader ! {} {
 }
 "#
         .to_string();
-        let program = crate::surface::parse_program_as_written(&source).unwrap();
+        let program = tauto_parse::parse_program_as_written(&source).unwrap();
         let report = check_program(&program);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         let mut aliases = Vec::new();
@@ -6790,16 +9290,16 @@ fn outer(): Reader ! {} {
     fn lexical_declarations_distinguish_shared_function_bodies() {
         let source = r#"fn outer<A: Shared>(value: A): A {
   fn inner<A: Shared>(other: A): A {
-    perform show("captured", value)
+    let seen := value
     let local: A := other
     local
   }
-  perform show("number", inner(1))
+  show(&inner(1))
   inner(value)
 }
-perform show("answer", outer("text"))"#
+show(&outer("text"))"#
             .to_string();
-        let program = crate::surface::parse_program_as_written(&source).unwrap();
+        let program = tauto_parse::parse_program_as_written(&source).unwrap();
         let Stmt::Fn(outer) = &program.stmts[0] else {
             panic!("outer function")
         };
@@ -6834,14 +9334,14 @@ perform show("answer", outer("text"))"#
     fn local_function_schemes_keep_captured_and_own_parameters_distinct() {
         let source = r#"fn outer<A: Shared>(value: A): A {
   fn inner<A: Shared>(other: A): A {
-    perform show("captured", value)
+    let seen := value
     let local: A := other
     local
   }
-  perform show("number", inner(1))
+  show(&inner(1))
   inner(value)
 }
-perform show("answer", outer("text"))"#
+show(&outer("text"))"#
             .to_string();
         let report = check_types(&source).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
@@ -6868,7 +9368,7 @@ perform show("answer", outer("text"))"#
   let local: A := value
   local
 }
-perform show("answer", keep("text"))"#
+show(&keep("text"))"#
             .to_string();
         let report = check_types(&source).unwrap();
         for (name, scheme) in &prelude_report().schemes {
@@ -6884,9 +9384,9 @@ perform show("answer", keep("text"))"#
 let result := handle { perform identity(7) } with {
   ∀ A. identity<A>(value), k => k(value)
 }
-perform show("answer", result)"#
+show(&result)"#
             .to_string();
-        let program = crate::surface::parse_program_as_written(&source).unwrap();
+        let program = tauto_parse::parse_program_as_written(&source).unwrap();
         let Stmt::Effect(effect) = &program.stmts[0] else {
             panic!("effect declaration")
         };
@@ -6911,19 +9411,19 @@ perform show("answer", result)"#
     fn final_capture_kinds_do_not_weaken_declared_function_ownership() {
         // Nothing fixes the element of `vec_new()` either, which is its own error.
         let name = "unresolved-owned-capture-kind-needs-annotation";
-        let source = crate::types::case_inputs::source("types/scoped-generics.eure", name);
-        let expected =
-            crate::types::case_inputs::expected("types/scoped-generics.eure", name, "types");
+        let source = tauto_case_inputs::source("types/scoped-generics.eure", name);
+        let expected = tauto_case_inputs::expected("types/scoped-generics.eure", name, "types");
+        let found = check_types(&source).unwrap().errors;
+        assert_eq!(found.len(), 2, "{found:?}");
         assert_eq!(
-            errors(&source),
-            [
-                expected.strip_prefix("error: ").unwrap(),
-                VEC_NEW_UNDETERMINED
-            ]
+            tauto_messages::english(&found[0].message),
+            expected.strip_prefix("error: ").unwrap()
         );
+        assert_eq!(format!("{:?}", found[1].message), VEC_NEW_UNDETERMINED);
     }
 
-    const VEC_NEW_UNDETERMINED: &str = "the type `A` of `Vec::new` is not determined here: give the value a type, as in `let x: T = ...`";
+    const VEC_NEW_UNDETERMINED: &str =
+        "nibcheck-type-not-determined(generics: \"`A`\", name: \"Vec::new\")";
 
     #[test]
     fn fixed_capture_kinds_keep_shared_and_annotated_affine_uses() {
@@ -6945,8 +9445,10 @@ perform show("answer", result)"#
 
     #[test]
     fn capture_kind_ranges_only_follow_ownership_dependencies() {
-        let source = r#"struct Phantom(A: Type) { callback: (A) -> i64 }
-linear struct LinearBox(A: Type) { item: A }"#
+        // The instances written for the types call the prelude's `concat`.
+        let source = r#"fn concat(a: Text, b: Text): Text { a }
+struct Phantom(A: Type) { callback: (A) -> i64 }
+struct(linear) LinearBox(A: Type) { item: A }"#
             .to_string();
         let report = check_types(&source).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
@@ -6963,10 +9465,10 @@ linear struct LinearBox(A: Type) { item: A }"#
                 .kind_range(&Ty::Named("LinearBox".into(), vec![Ty::Var(0)])),
             (Kind::Linear, Kind::Linear)
         );
-        let source = r#"linear struct Token {}
+        let source = r#"struct(linear) Token {}
 fn outer(token: Token): Unit {
   let value := Vec::new()
-  fn consume() { Pair { fst: token, snd: value } }
+  fn consume() { #(token, value) }
   let result := consume()
 }"#
         .to_string();
@@ -6982,11 +9484,13 @@ fn outer(token: Token): Unit {
             Span::new(0, 0),
         ));
         let report = checker.finish();
-        let expected = r#"error: the kind of capture `value` is not determined; add a type annotation to the captured binding"#.to_string();
         assert_eq!(report.errors.len(), 1);
         assert_eq!(
-            report.errors[0].message.to_string(),
-            expected.strip_prefix("error: ").unwrap()
+            report.errors[0].message,
+            msg!(
+                "nibcheck-capture-kind-undetermined",
+                name = "value".to_string()
+            )
         );
     }
 
@@ -6998,9 +9502,9 @@ fn outer(token: Token): Unit {
             "named-owned-affine-capture-single-use",
             "generic-named-owned-affine-capture-single-use",
         ] {
-            let source = crate::types::case_inputs::source("types/scoped-generics.eure", name);
+            let source = tauto_case_inputs::source("types/scoped-generics.eure", name);
             let program = expand_classes(
-                crate::surface::parse_program_as_written(&source).unwrap(),
+                tauto_parse::parse_program_as_written(&source).unwrap(),
                 1 << 30,
             );
             let report = check_program(&program);
@@ -7022,10 +9526,9 @@ fn outer(token: Token): Unit {
             let found = crate::lin::check_lin_program(&program)
                 .unwrap()
                 .into_iter()
-                .map(|e| e.message)
+                .map(|e| tauto_messages::english(&e.message))
                 .collect::<Vec<_>>();
-            let expected =
-                crate::types::case_inputs::expected("types/scoped-generics.eure", name, "lin");
+            let expected = tauto_case_inputs::expected("types/scoped-generics.eure", name, "lin");
             if expected == "ok" {
                 assert!(found.is_empty(), "{name}: {found:?}");
             } else {
@@ -7038,14 +9541,14 @@ fn outer(token: Token): Unit {
     fn type_fact_output_does_not_depend_on_occurrence_allocation() {
         let source = r#"fn outer<A: Shared>(value: A): A {
   fn inner<A: Shared>(other: A): A {
-    perform show("captured", value)
+    let seen := value
     let local: A := other
     local
   }
-  perform show("number", inner(1))
+  show(&inner(1))
   inner(value)
 }
-perform show("answer", outer("text"))"#
+show(&outer("text"))"#
             .to_string();
         let first = check_types(&source).unwrap();
         assert!(first.errors.is_empty(), "{:?}", first.errors);
@@ -7059,8 +9562,8 @@ fn outer<A: Shared>(value: A): Text where Render(A) {
   }
   inner(value)
 }
-perform show("first", outer(7))
-perform show("second", outer("text"))"#
+show(&outer(7))
+show(&outer("text"))"#
             .to_string();
         let _ = check_types(&noise).unwrap();
         let second = check_types(&source).unwrap();
@@ -7090,7 +9593,7 @@ perform show("second", outer("text"))"#
                 report
                     .errors
                     .iter()
-                    .any(|e| { e.message.to_string() == "an integer literal has no integer type" })
+                    .any(|e| { e.message == msg!("nibcheck-int-literal-no-type") })
             );
         }
     }
@@ -7108,7 +9611,7 @@ perform show("second", outer("text"))"#
     #[test]
     fn kinds_follow_the_fields() {
         let report = check_types(
-            r#"affine struct F {}
+            r#"struct(affine) F {}
 struct W { f: F }
 struct Q { t: Text }
 enum L { Nil, Cons(i64, L) }
@@ -7121,9 +9624,11 @@ struct P { x: i64 }"#,
         assert_eq!(k("Q"), Kind::Shared);
         assert_eq!(k("L"), Kind::Shared);
         assert_eq!(k("P"), Kind::Copy);
-        let e = errors(r#"copy struct Q { t: Text }"#);
+        let e = errors(r#"struct(copy) Q { t: Text }"#);
         assert!(
-            e[0].contains("declared copy but field t is shared"),
+            e[0].contains(
+                "nibcheck-declared-but-field(declared: \"copy\", field: \"t\", kind: \"shared\")"
+            ),
             "{e:?}"
         );
     }
@@ -7137,9 +9642,7 @@ fn term_has_borrow(t: &SurfaceTerm) -> bool {
             arguments,
         } => term_has_borrow(function) || arguments.iter().any(term_has_borrow),
         TermKind::Tagged { term, .. } => term_has_borrow(term),
-        TermKind::Union(ts) | TermKind::Product(ts) | TermKind::Tuple(ts) => {
-            ts.iter().any(term_has_borrow)
-        }
+        TermKind::Union(ts) => ts.iter().any(term_has_borrow),
         TermKind::Pi { params, result, .. } => {
             params.iter().any(|(_, p)| term_has_borrow(p)) || term_has_borrow(result)
         }
@@ -7147,126 +9650,100 @@ fn term_has_borrow(t: &SurfaceTerm) -> bool {
     }
 }
 
-#[cfg(test)]
-#[cfg(test)]
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
-mod case_inputs {
-    pub fn source_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            ("types/scoped-generics.eure", "named-owned-affine-capture-is-used-once") => {
-                r#"fn outer(): Unit {
-  let text := "text"
-  let value := Buf::of(&text)
-  fn consume(marker: i64): Text { Text::of(value) }
-  perform show("first", consume(1))
-  perform show("second", consume(2))
-}
-outer()"#
-            }
-            ("types/scoped-generics.eure", "named-owned-affine-capture-single-use") => {
-                r#"fn outer(): Text {
-  let text := "text"
-  let value := Buf::of(&text)
-  fn consume(marker: i64): Text { Text::of(value) }
-  consume(1)
-}
-perform show("answer", outer())"#
-            }
-            ("types/scoped-generics.eure", "generic-named-owned-affine-capture-is-used-once") => {
-                r#"fn outer(): Unit {
-  let text := "text"
-  let value := Buf::of(&text)
-  fn consume<A: Shared>(marker: A): Text {
-    let local: A := marker
-    Text::of(value)
-  }
-  perform show("first", consume(1))
-  perform show("second", consume("again"))
-}
-outer()"#
-            }
-            ("types/scoped-generics.eure", "generic-named-owned-affine-capture-single-use") => {
-                r#"fn outer(): Text {
-  let text := "text"
-  let value := Buf::of(&text)
-  fn consume<A: Shared>(marker: A): Text {
-    let local: A := marker
-    Text::of(value)
-  }
-  consume(1)
-}
-perform show("answer", outer())"#
-            }
-            ("types/scoped-generics.eure", "unresolved-owned-capture-kind-needs-annotation") => {
-                r#"fn outer(): Unit {
-  let value := Vec::new()
-  fn consume() { value }
-}"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
-    pub fn source(file: &str, name: &str) -> String {
-        source_static(file, name).to_string()
-    }
-    pub fn expected_static(file: &str, name: &str, input: &str) -> &'static str {
-        match (file, name, input) {
-            ("types/scoped-generics.eure", "named-owned-affine-capture-is-used-once", "types") => {
-                r#"ok"#
-            }
-            ("types/scoped-generics.eure", "named-owned-affine-capture-is-used-once", "lin") => {
-                r#"error: consume is used after move"#
-            }
-            ("types/scoped-generics.eure", "named-owned-affine-capture-single-use", "types") => {
-                r#"ok"#
-            }
-            ("types/scoped-generics.eure", "named-owned-affine-capture-single-use", "lin") => {
-                r#"ok"#
-            }
-            (
-                "types/scoped-generics.eure",
-                "generic-named-owned-affine-capture-is-used-once",
-                "types",
-            ) => r#"ok"#,
-            (
-                "types/scoped-generics.eure",
-                "generic-named-owned-affine-capture-is-used-once",
-                "lin",
-            ) => r#"error: consume is used after move"#,
-            (
-                "types/scoped-generics.eure",
-                "generic-named-owned-affine-capture-single-use",
-                "types",
-            ) => r#"ok"#,
-            (
-                "types/scoped-generics.eure",
-                "generic-named-owned-affine-capture-single-use",
-                "lin",
-            ) => r#"ok"#,
-            (
-                "types/scoped-generics.eure",
-                "unresolved-owned-capture-kind-needs-annotation",
-                "types",
-            ) => {
-                r#"error: the kind of capture `value` is not determined; add a type annotation to the captured binding"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
-    pub fn expected(file: &str, name: &str, input: &str) -> String {
-        expected_static(file, name, input).to_string()
+/// A struct used as a value. A record type `{ x: A }` is the struct
+/// `@record.x`, which is never written, so it gets its own message.
+fn struct_value_message(name: &Name) -> tauto_message::Message {
+    if name.starts_with("@record.") {
+        msg!("nibcheck-record-type-not-a-value")
+    } else {
+        msg!("nibcheck-struct-as-value", name = name.to_string())
     }
 }
 
-/// A struct used as a value. A record type `{ x: A }` is the struct
-/// `@record.x`, which is never written, so it gets its own message.
-fn struct_value_message(name: &Name) -> String {
-    if name.starts_with("@record.") {
-        "a record type `{ … }` is not a value: write a record without a name as `#{ … }`".to_string()
-    } else {
-        format!("`{name}` is a struct: write `{name} {{ field: value }}`")
+/// A bound string with `noborrow` taken out (`shared+noborrow` is `shared`,
+/// `noborrow` alone no kind), and whether it was there.
+pub(crate) fn without_no_borrow(bound: &str) -> (Option<String>, bool) {
+    let parts: Vec<&str> = bound.split('+').collect();
+    if !parts.contains(&"noborrow") {
+        return (Some(bound.to_string()), false);
     }
+    let rest: Vec<&str> = parts.into_iter().filter(|p| *p != "noborrow").collect();
+    ((!rest.is_empty()).then(|| rest.join("+")), true)
+}
+
+/// `T` for `@a T`: the label of a member picked out of a product is not part
+/// of the picked value's type.
+fn untagged(ty: Ty) -> Ty {
+    match ty {
+        Ty::Tagged(_, under) => untagged(*under),
+        other => other,
+    }
+}
+
+/// The named type arguments written first in a call or a `perform`
+/// (`<T: A>`, a record of the internal name `IMPLICITS`), and the rest.
+pub(crate) fn split_implicits(
+    args: &[SurfaceTerm],
+) -> (Option<&[(String, SurfaceTerm)]>, &[SurfaceTerm]) {
+    match args.split_first() {
+        Some((first, rest)) => match &*first.kind {
+            TermKind::Record { name, fields, .. }
+                if name.spelling() == Some(tauto_surface::IMPLICITS) =>
+            {
+                (Some(fields.as_slice()), rest)
+            }
+            _ => (None, args),
+        },
+        None => (None, args),
+    }
+}
+
+/// `Zero` (none) or `Succ(p)` (`p`), the library's constructors of `Nat` as a pattern.
+pub(crate) fn nat_ctor<'p>(name: &Name, args: &'p [Pattern]) -> Option<Option<&'p Pattern>> {
+    match args {
+        [] if tauto_surface::bindings::is_library_selected(name, "Zero") => Some(None),
+        [inner] if tauto_surface::bindings::is_library_selected(name, "Succ") => Some(Some(inner)),
+        _ => None,
+    }
+}
+
+/// A pattern on a `nat` read as the kernel's `Nat`: `Zero`, `Succ(p)`, one that takes
+/// every value, or one that takes none (a negative literal).
+enum NatHead {
+    Zero,
+    Succ(Pattern),
+    Any,
+    None,
+}
+
+fn nat_head(p: &Pattern) -> NatHead {
+    match p {
+        Pattern::Wild => NatHead::Any,
+        Pattern::Int(0) => NatHead::Zero,
+        Pattern::Int(k) if *k > 0 => NatHead::Succ(Pattern::Int(k - 1)),
+        Pattern::Int(_) => NatHead::None,
+        Pattern::Bind { name, .. }
+            if tauto_surface::bindings::is_library_selected(name, "Zero") =>
+        {
+            NatHead::Zero
+        }
+        Pattern::Bind { .. } => NatHead::Any,
+        Pattern::Ctor { name, args } => match nat_ctor(name, args) {
+            Some(None) => NatHead::Zero,
+            Some(Some(inner)) => NatHead::Succ(inner.clone()),
+            None => NatHead::None,
+        },
+        _ => NatHead::None,
+    }
+}
+
+/// Whether `p` is `Succ(…)` written on a `nat`.
+fn written_succ(p: &Pattern) -> bool {
+    matches!(p, Pattern::Ctor { name, args } if matches!(nat_ctor(name, args), Some(Some(_))))
+}
+
+/// `T` of `m::T`: a type of a module is written in full where it is declared,
+/// and its `struct &T` by the short name.
+fn last_segment(name: &str) -> &str {
+    name.rsplit_once("::").map_or(name, |(_, n)| n)
 }

@@ -45,12 +45,12 @@ fn the_tables_still_match_tauto_par() {
     .unwrap();
     assert_eq!(
         par, current,
-        "tests/data/tauto.par is out of date: run bash scripts/generate-tauto-grammar.sh"
+        "tests/data/tauto.par is out of date: run tauto gen-tauto-grammar"
     );
     assert_eq!(
         t.grammar_sha256(),
         sha256_hex(par.as_bytes()),
-        "tests/data/tauto.tables is out of date: run bash scripts/generate-grammar-tables.sh"
+        "tests/data/tauto.tables is out of date: run tauto gen-grammar-tables"
     );
     assert_eq!(t.max_k(), 2);
 }

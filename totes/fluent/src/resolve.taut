@@ -1,5 +1,5 @@
-import std::Base
-import std::Text
+import std::base
+import std::text
 import "syntax.taut"
 import "plural.taut"
 
@@ -43,7 +43,7 @@ pub(open) inductive Ev: Type {
 }
 
 pub fn find_arg(args: List(Arg), name: List(Nat)): Option(Value) {
-  ⊢ Option(Value) from match args {
+  match args {
     Nil => None
     Cons(a, rest) => ⊢ Option(Value) from match a {
       Arg::Mk(n, v) => ⊢ Option(Value) from match byte_list_eq(n, name) {
@@ -55,24 +55,24 @@ pub fn find_arg(args: List(Arg), name: List(Nat)): Option(Value) {
 }
 
 pub fn find_message(es: List(Entry), id: List(Nat)): Option(Entry) {
-  ⊢ Option(Entry) from match es {
+  match es {
     Nil => None
     Cons(e, rest) => ⊢ Option(Entry) from match e {
-      Message(i, v, a) => ⊢ Option(Entry) from match byte_list_eq(i, id) {
+      Message(i, ^v, ^a) => ⊢ Option(Entry) from match byte_list_eq(i, id) {
         true => Some(e)
         false => find_message(rest, id)
       }
-      Term(i, v, a) => find_message(rest, id)
+      Term(^i, ^v, ^a) => find_message(rest, id)
     }
   }
 }
 
 pub fn find_term(es: List(Entry), id: List(Nat)): Option(Entry) {
-  ⊢ Option(Entry) from match es {
+  match es {
     Nil => None
     Cons(e, rest) => ⊢ Option(Entry) from match e {
-      Message(i, v, a) => find_term(rest, id)
-      Term(i, v, a) => ⊢ Option(Entry) from match byte_list_eq(i, id) {
+      Message(^i, ^v, ^a) => find_term(rest, id)
+      Term(i, ^v, ^a) => ⊢ Option(Entry) from match byte_list_eq(i, id) {
         true => Some(e)
         false => find_term(rest, id)
       }
@@ -81,7 +81,7 @@ pub fn find_term(es: List(Entry), id: List(Nat)): Option(Entry) {
 }
 
 pub fn find_attr(attrs: List(Attr), name: List(Nat)): Option(List(Elem)) {
-  ⊢ Option(List(Elem)) from match attrs {
+  match attrs {
     Nil => None
     Cons(a, rest) => ⊢ Option(List(Elem)) from match a {
       Attr::Mk(n, p) => ⊢ Option(List(Elem)) from match byte_list_eq(n, name) {
@@ -93,48 +93,48 @@ pub fn find_attr(attrs: List(Attr), name: List(Nat)): Option(List(Elem)) {
 }
 
 pub fn entry_attrs(e: Entry): List(Attr) {
-  ⊢ List(Attr) from match e {
-    Message(i, v, a) => a
-    Term(i, v, a) => a
+  match e {
+    Message(^i, ^v, a) => a
+    Term(^i, ^v, a) => a
   }
 }
 
 // A number matches a numeric key equal to it and the key naming its plural category; a string
 // matches the key with the same name.
 pub fn key_matches(locale: List(Nat), v: Value, k: Key): Bool {
-  ⊢ Bool from match v {
+  match v {
     VNum(n) => ⊢ Bool from match k {
       KeyNum(m) => Nat::eq(n, m)
       KeyId(name) => byte_list_eq(name, category_name(plural(locale, n)))
     }
     VStr(s) => ⊢ Bool from match k {
-      KeyNum(m) => false
+      KeyNum(^m) => false
       KeyId(name) => byte_list_eq(name, s)
     }
   }
 }
 
 pub fn variant_key(x: Variant): Key {
-  ⊢ Key from match x {
-    Mk(k, p) => k
+  match x {
+    Mk(k, ^p) => k
   }
 }
 
 pub fn variant_pat(x: Variant): List(Elem) {
-  ⊢ List(Elem) from match x {
-    Mk(k, p) => p
+  match x {
+    Mk(^k, p) => p
   }
 }
 
 pub fn find_step(o: Bool, y: Variant, later: Option(Variant)): Option(Variant) {
-  ⊢ Option(Variant) from match o {
+  match o {
     true => Some(y)
     false => later
   }
 }
 
 pub fn find_variant(locale: List(Nat), v: Value, vs: List(Variant)): Option(Variant) {
-  ⊢ Option(Variant) from match vs {
+  match vs {
     Nil => None
     Cons(x, rest) => find_step(
       key_matches(locale, v, variant_key(x)),
@@ -145,7 +145,7 @@ pub fn find_variant(locale: List(Nat), v: Value, vs: List(Variant)): Option(Vari
 }
 
 pub fn pattern_of(dpat: List(Elem), o: Option(Variant)): List(Elem) {
-  ⊢ List(Elem) from match o {
+  match o {
     None => dpat
     Some(x) => variant_pat(x)
   }
@@ -158,21 +158,21 @@ pub fn pick(locale: List(Nat), v: Value, vs: List(Variant), dpat: List(Elem)): L
 }
 
 pub fn value_bytes(v: Value): List(Nat) {
-  ⊢ List(Nat) from match v {
+  match v {
     VStr(b) => b
     VNum(n) => Text::bytes(Text::of_nat(n))
   }
 }
 
 pub fn lit_value(l: Lit): Value {
-  ⊢ Value from match l {
+  match l {
     LitStr(b) => VStr(b)
     LitNum(n) => VNum(n)
   }
 }
 
 pub fn term_args(xs: List(NamedArg)): List(Arg) {
-  ⊢ List(Arg) from match xs {
+  match xs {
     Nil => Nil
     Cons(x, rest) => ⊢ List(Arg) from match x {
       Named(n, l) => Cons(Arg::Mk(n, lit_value(l)), term_args(rest))
@@ -194,19 +194,19 @@ pub fn failed(text: List(Nat), e: FluentError): Ev {
 }
 
 pub fn with_errors(es: List(FluentError), x: Ev): Ev {
-  ⊢ Ev from match x {
+  match x {
     Mk(v, es2) => Ev::Mk(v, List::append(es, es2))
   }
 }
 
 pub fn out_ev(o: Out): Ev {
-  ⊢ Ev from match o {
+  match o {
     Mk(b, es) => Ev::Mk(VStr(b), es)
   }
 }
 
 pub fn isolate(on: Bool, bs: List(Nat)): List(Nat) {
-  ⊢ List(Nat) from match on {
+  match on {
     false => bs
     // U+2068 FIRST STRONG ISOLATE … U+2069 POP DIRECTIONAL ISOLATE
     true => Cons(226, Cons(129, Cons(168, List::append(bs, Cons(226, Cons(129, Cons(169, Nil)))))))
@@ -215,57 +215,57 @@ pub fn isolate(on: Bool, bs: List(Nat)): List(Nat) {
 
 // Placeables are isolated only when the pattern has more than one element.
 pub fn isolates(b: Bundle, p: List(Elem)): Bool {
-  ⊢ Bool from match b {
-    Mk(l, iso, es) => ⊢ Bool from match p {
+  match b {
+    Mk(^l, iso, ^es) => ⊢ Bool from match p {
       Nil => false
-      Cons(x, rest) => ⊢ Bool from match rest {
+      Cons(^x, rest) => ⊢ Bool from match rest {
         Nil => false
-        Cons(y, more) => iso
+        Cons(^y, ^more) => iso
       }
     }
   }
 }
 
 pub fn bundle_locale(b: Bundle): List(Nat) {
-  ⊢ List(Nat) from match b {
-    Mk(l, iso, es) => l
+  match b {
+    Mk(l, ^iso, ^es) => l
   }
 }
 
 pub fn bundle_entries(b: Bundle): List(Entry) {
-  ⊢ List(Entry) from match b {
-    Mk(l, iso, es) => es
+  match b {
+    Mk(^l, ^iso, es) => es
   }
 }
 
 pub fn prepend(bs: List(Nat), es: List(FluentError), o: Out): Out {
-  ⊢ Out from match o {
+  match o {
     Mk(b2, es2) => Out::Mk(List::append(bs, b2), List::append(es, es2))
   }
 }
 
 pub fn ev_out(on: Bool, x: Ev, rest: Out): Out {
-  ⊢ Out from match x {
+  match x {
     Mk(v, es) => prepend(isolate(on, value_bytes(v)), es, rest)
   }
 }
 
 pub fn ev_errors(x: Ev): List(FluentError) {
-  ⊢ List(FluentError) from match x {
-    Mk(v, es) => es
+  match x {
+    Mk(^v, es) => es
   }
 }
 
 pub fn ev_value(x: Ev): Value {
-  ⊢ Value from match x {
-    Mk(v, es) => v
+  match x {
+    Mk(v, ^es) => v
   }
 }
 
 mutual {
   // The elements of a pattern, from `p` on; `on` is whether placeables are isolated.
   pub fn r_elems(fuel: Nat, b: Bundle, args: List(Arg), on: Bool, p: List(Elem)): Out {
-    ⊢ Out from match fuel {
+    match fuel {
       Zero => Out::Mk(Nil, Cons(TooDeep, Nil))
       Succ(j) => ⊢ Out from match p {
         Nil => Out::Mk(Nil, Nil)
@@ -278,14 +278,14 @@ mutual {
   }
 
   pub fn r_pattern(fuel: Nat, b: Bundle, args: List(Arg), p: List(Elem)): Out {
-    ⊢ Out from match fuel {
+    match fuel {
       Zero => Out::Mk(Nil, Cons(TooDeep, Nil))
       Succ(j) => r_elems(j, b, args, isolates(b, p), p)
     }
   }
 
   pub fn r_expr(fuel: Nat, b: Bundle, args: List(Arg), e: Expr): Ev {
-    ⊢ Ev from match fuel {
+    match fuel {
       Zero => failed(Nil, TooDeep)
       Succ(j) => ⊢ Ev from match e {
         ExStr(bs) => Ev::Mk(VStr(bs), Nil)
@@ -298,11 +298,11 @@ mutual {
           None => failed(id, UnknownMessage(id))
           Some(m) => ⊢ Ev from match a {
             None => ⊢ Ev from match m {
-              Message(i, v, at) => ⊢ Ev from match v {
+              Message(^i, v, ^at) => ⊢ Ev from match v {
                 None => failed(id, NoValue(id))
                 Some(p) => out_ev(r_pattern(j, b, args, p))
               }
-              Term(i, v, at) => out_ev(r_pattern(j, b, args, v))
+              Term(^i, v, ^at) => out_ev(r_pattern(j, b, args, v))
             }
             Some(name) => ⊢ Ev from match find_attr(entry_attrs(m), name) {
               None => failed(dotted(id, name), UnknownAttribute(id, name))
@@ -315,8 +315,8 @@ mutual {
           None => failed(Cons(45, id), UnknownTerm(id))
           Some(t) => ⊢ Ev from match a {
             None => ⊢ Ev from match t {
-              Message(i, v, at) => failed(Cons(45, id), UnknownTerm(id))
-              Term(i, v, at) => out_ev(r_pattern(j, b, term_args(xs), v))
+              Message(^i, ^v, ^at) => failed(Cons(45, id), UnknownTerm(id))
+              Term(^i, v, ^at) => out_ev(r_pattern(j, b, term_args(xs), v))
             }
             Some(name) => ⊢ Ev from match find_attr(entry_attrs(t), name) {
               None => failed(Cons(45, dotted(id, name)), UnknownAttribute(id, name))
@@ -325,7 +325,7 @@ mutual {
           }
         }
         // a selector that fails picks the default variant
-        ExSelect(sel, vs, dk, dp) => r_select(j, b, args, r_expr(j, b, args, sel), vs, dp)
+        ExSelect(sel, vs, ^dk, dp) => r_select(j, b, args, r_expr(j, b, args, sel), vs, dp)
       }
     }
   }
@@ -338,7 +338,7 @@ mutual {
     vs: List(Variant),
     dp: List(Elem)
   ): Ev {
-    ⊢ Ev from match fuel {
+    match fuel {
       Zero => failed(Nil, TooDeep)
       Succ(j) => ⊢ Ev from match ev_errors(s) {
         Nil => out_ev(r_pattern(j, b, args, pick(bundle_locale(b), ev_value(s), vs, dp)))

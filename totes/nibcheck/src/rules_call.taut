@@ -1,15 +1,20 @@
+import "rules_coerce.taut"
 import "rules_ty.taut"
-import std::Map
-import std::Text
+import "datas.taut"
+import std::map
+import std::text
 import "ty.taut"
 
-// A function accepts a pointwise compatible argument list. Borrowed callees
+// A function accepts a pointwise compatible argument list: each argument
+// fits its parameter's type or is read as it through `coerce` fields
+// (`rules_coerce.taut`). Borrowed callees
 // keep the same calling signature; their uses are checked by linearity.
 pub(open) inductive CallType(
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
-  inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
-  dup: (Ty) -> Prop
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup: (Ty) -> Prop,
+  datas: Datas
 ): (Ty, List(Ty), Ty) -> Prop {
   CallFunction<args: List(
     Ty
@@ -17,18 +22,18 @@ pub(open) inductive CallType(
     Ty
   ), result: Ty>(
     kind: Kind,
-    fits: TySubList(s, ok, inst, dup, args, ps)
-  ): CallType(s, ok, inst, dup, TyFn(ps, result, kind), args, result)
+    fits: ArgFitList(s, ok, inst, dup, datas, args, ps)
+  ): CallType(s, ok, inst, dup, datas, TyFn(ps, result, kind), args, result)
   CallBorrow<function: Ty, args: List(
     Ty
   ), result: Ty>(
     mutable: Bool,
-    inner: CallType(s, ok, inst, dup, function, args, result)
-  ): CallType(s, ok, inst, dup, TyBorrow(function, mutable), args, result)
+    inner: CallType(s, ok, inst, dup, datas, function, args, result)
+  ): CallType(s, ok, inst, dup, datas, TyBorrow(function, mutable), args, result)
   CallConvert<function: Ty, resolved: Ty, args: List(
     Ty
   ), result: Ty>(
     equal: TyEq(s, ok, function, resolved),
-    inner: CallType(s, ok, inst, dup, resolved, args, result)
-  ): CallType(s, ok, inst, dup, function, args, result)
+    inner: CallType(s, ok, inst, dup, datas, resolved, args, result)
+  ): CallType(s, ok, inst, dup, datas, function, args, result)
 }

@@ -1,0 +1,162 @@
+@ cases.var-assigned-in-one-branch
+source = ```nib
+fn f(c: Bool): Bool {
+  var r: Option(Text) := None
+  if c { r := Some("x") }
+  match r { Some(_) => true, None => false }
+}
+show(&f(true))
+show(&f(false))
+```
+stdout = ```
+true
+false
+```
+
+@ cases.guard-reads-an-owned-binding
+llvm.unimplemented = "generate: the LLVM backend does not write a guard on a `match` that takes its value apart yet"
+source = ```nib
+fn f(n: Option(Text)): u64 {
+  match n {
+    Some(x) if x == "a" => 1
+    Some(x) if x == "bc" => Text::len(x)
+    _ => 0
+  }
+}
+show(&f(Some("a")))
+show(&f(Some("bc")))
+show(&f(Some("d")))
+show(&f(None))
+```
+stdout = ```
+1
+2
+0
+0
+```
+
+@ cases.var-assigned-in-an-else-if-of-a-loop
+source = ```nib
+fn pending<A>(o: Option(A)): Bool {
+  match o { None => true, Some(_) => false }
+}
+fn f(n: u64): u64 ! {div, overflow} {
+  var i := 0
+  var r: Option(Text) := None
+  while pending(r) {
+    if i < n {
+      i := i + 1
+    } else if i == n {
+      r := Some("done")
+    } else {
+      r := Some("past")
+    }
+  }
+  i
+}
+show(&f(3))
+show(&f(0))
+```
+stdout = ```
+3
+0
+```
+
+@ cases.var-assigned-in-one-arm-of-a-nested-match
+source = ```nib
+fn f(xs: List(u64)): u64 ! {div} {
+  var rest := xs
+  var err: Option(Text) := None
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, tail) => {
+        if x > 9 {
+          match Some(x) {
+            None => {
+              err := Some("none")
+              running := false
+            }
+            Some(y) => if y > 99 {
+              err := Some("big")
+              running := false
+            } else {
+              rest := tail
+            }
+          }
+        } else {
+          rest := tail
+        }
+      }
+    }
+  }
+  match err { Some(e) => Text::len(e), None => 0 }
+}
+show(&f(Cons(1, Cons(20, Nil))))
+show(&f(Cons(1, Cons(200, Nil))))
+```
+stdout = ```
+0
+3
+```
+
+@ cases.discarded-statement-value-is-dropped
+source = ```nib
+fn make(n: u64): Vec(Text) {
+  var v: Vec(Text) := Vec::new()
+  Vec::push(&mut v, "a")
+  Vec::push(&mut v, "b")
+  v
+}
+fn f(): u64 {
+  make(1)
+  make(2)
+  7
+}
+show(&f())
+```
+stdout = ```
+7
+```
+
+@ cases.match-a-field-of-a-mut-param-and-assign-it
+source = ```nib
+struct S { rest: List(u64), n: u64 }
+fn take(c: &mut S): u64 {
+  match c.rest {
+    Nil => 0
+    Cons(x, more) => { c.rest := more; x }
+  }
+}
+var s := S { rest: [4, 5], n: 0 }
+show(&take(&mut s))
+show(&take(&mut s))
+show(&take(&mut s))
+```
+stdout = ```
+4
+5
+0
+```
+
+@ cases.match-a-field-of-a-shared-borrow
+source = ```nib
+struct S { rest: List(u64), n: u64 }
+fn head(c: &S): u64 {
+  match c.rest {
+    Nil => 0
+    Cons(x, _) => x
+  }
+}
+var s := S { rest: [], n: 0 }
+var t := S { rest: [7], n: 0 }
+show(&head(&s))
+show(&head(&t))
+```
+stdout = ```
+0
+7
+```

@@ -1,0 +1,199 @@
+import "source.taut"
+import sha256::sha256
+import std::text
+import std::builtin::os
+
+// The cache of fetched trees (`crates/totebag/src/cache.rs`): each tree under
+// `src/<hex of its ID>`, written whole into `tmp/` first and moved into
+// place, so a tree in `src/` is always complete; the Git mirrors under
+// `git/<SHA-256 of the URL>.git`. The files of a tree are made read-only,
+// and executable where the tree says so.
+
+// `TAUTO_TOTES`, else `$XDG_CACHE_HOME/tauto/totes`, else
+// `$HOME/.cache/tauto/totes`.
+pub fn tb_cache_root(): Result(Text, Text) {
+  match perform env("TAUTO_TOTES") {
+    Ok(Some(v)) => if v != "" {
+      return Ok(v)
+    }
+    Ok(None) => #()
+    Err(_) => #()
+  }
+  match perform env("XDG_CACHE_HOME") {
+    Ok(Some(v)) => if v != "" {
+      return Ok(tb_join(v, "tauto/totes"))
+    }
+    Ok(None) => #()
+    Err(_) => #()
+  }
+  match perform env("HOME") {
+    Ok(Some(v)) => if v != "" {
+      return Ok(tb_join(v, ".cache/tauto/totes"))
+    }
+    Ok(None) => #()
+    Err(_) => #()
+  }
+  Err("totebag-no-cache-place")
+}
+
+// The hex digits of a source ID, after `sha256:`.
+pub fn tb_id_hex(id: Text): Text {
+  match Text::slice(id, 7, Text::len(id)) {
+    Some(h) => h
+    None => id
+  }
+}
+
+pub fn tb_source_dir(root: Text, id: Text): Text {
+  tb_join(tb_join(root, "src"), tb_id_hex(id))
+}
+
+pub fn tb_mirror_dir(root: Text, url: Text, sparse: Bool): Text {
+  let h := sha256_hex(Cons(Bytes::of_text(url), Nil))
+  tb_join(tb_join(root, "git"), Text::concat(h, if sparse { "-sparse.git" } else { ".git" }))
+}
+
+pub fn tb_is_dir(path: Text): Bool {
+  match perform fs_stat(path) {
+    Ok(Some(st)) => match st.kind {
+      IsDir => true
+      IsFile => false
+      IsOther => false
+    }
+    Ok(None) => false
+    Err(_) => false
+  }
+}
+
+pub fn tb_io(place: Text, e: IoError): Text {
+  Text::concat_all(Cons(place, Cons(": ", Cons(io_message(e), Nil))))
+}
+
+// The directory part of a relative path, `""` for a top-level file.
+pub fn tb_parent(path: Text): Text {
+  let b := Bytes::of_text(path)
+  var i := Bytes::len(b)
+  var at: Option(u64) := None
+  while i > 0 && at == None {
+    i := i - 1
+    match Bytes::get(b, i) {
+      Some(c) => if U64::of_u8(c) == 47 {
+        at := Some(i)
+      }
+      None => #()
+    }
+  }
+  match at {
+    Some(k) => match Bytes::slice(b, 0, k) {
+      Some(p) => match Text::of_bytes(p) {
+        Some(t) => t
+        None => ""
+      }
+      None => ""
+    }
+    None => ""
+  }
+}
+
+pub fn tb_write_tree(dir: Text, files: List(TbFile)): Result(Unit, Text) {
+  match perform fs_create_dir(dir) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(tb_io(dir, e))
+    }
+  }
+  var rest := files
+  var going := true
+  while going {
+    match rest {
+      Cons(f, more) => {
+        let parent := tb_parent(f.path)
+        if parent != "" {
+          match perform fs_create_dir(tb_join(dir, parent)) {
+            Ok(_) => #()
+            Err(e) => {
+              return Err(tb_io(tb_join(dir, parent), e))
+            }
+          }
+        }
+        let path := tb_join(dir, f.path)
+        match perform fs_write_bytes(path, f.bytes) {
+          Ok(_) => #()
+          Err(e) => {
+            return Err(tb_io(path, e))
+          }
+        }
+        match perform fs_set_mode(path, true, f.executable) {
+          Ok(_) => #()
+          Err(e) => {
+            return Err(tb_io(path, e))
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(#())
+}
+
+// Puts the tree `id` with `files` under `src/` of the cache at `root`,
+// unless it is there; gives its directory. The tree written is read back
+// and must have the same ID before it is moved into place.
+pub fn tb_install(root: Text, files: List(TbFile), id: Text): Result(Text, Text) {
+  let dest := tb_source_dir(root, id)
+  if tb_is_dir(dest) {
+    return Ok(dest)
+  }
+  let tmp_root := tb_join(root, "tmp")
+  match perform fs_create_dir(tmp_root) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(tb_io(tmp_root, e))
+    }
+  }
+  match perform fs_create_dir(tb_join(root, "src")) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(tb_io(root, e))
+    }
+  }
+  let short := match Text::slice(tb_id_hex(id), 0, 12) {
+    Some(s) => s
+    None => tb_id_hex(id)
+  }
+  let tmp := tb_join(tmp_root, Text::concat_all(Cons(short, Cons("-", Cons(Text::of_u64(perform random()), Cons("-", Cons(Text::of_i64(perform wall_clock()), Nil)))))))
+  let written: Result(Unit, Text) := match tb_write_tree(tmp, files) {
+    Ok(_) => match tb_read_dir(tmp) {
+      Ok(again) => if again.snd == id { Ok(#()) } else { Err(Text::concat("totebag-written-tree-differs: ", tmp)) }
+      Err(_) => Err(Text::concat("totebag-written-tree-differs: ", tmp))
+    }
+    Err(e) => Err(e)
+  }
+  match written {
+    Ok(_) => #()
+    Err(e) => {
+      let ^removed := perform fs_remove(tmp)
+      return Err(e)
+    }
+  }
+  match perform fs_rename(tmp, dest) {
+    Ok(_) => Ok(dest)
+    Err(e) => {
+      let ^removed := perform fs_remove(tmp)
+      // Another process wrote the same tree first.
+      if tb_is_dir(dest) { Ok(dest) } else { Err(tb_io(dest, e)) }
+    }
+  }
+}
+
+// Reads the tree `id` again and checks it is still that tree.
+pub fn tb_verify(root: Text, id: Text): Result(Unit, Text) {
+  let dir := tb_source_dir(root, id)
+  match tb_read_dir(dir) {
+    Ok(found) => if found.snd == id { Ok(#()) } else { Err(Text::concat("totebag-tree-changed: ", dir)) }
+    Err(_) => Err(Text::concat("totebag-tree-changed: ", dir))
+  }
+}

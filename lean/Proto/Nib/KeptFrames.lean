@@ -23,19 +23,18 @@ namespace Proto.Nib
 
 /-- A term of row `ρ` that has run to `perform e` with no handler of `e` around it has `e` in `ρ`. -/
 theorem running_call_performs {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
-    {μ t μ' S X ρ} {E : List Frame} {e : Eff} {vs : List Tm}
-    (hs : Steps sg μ t μ' (plug E (.perform e vs))) (ht : HasType sg S [] t X ρ)
-    (hμ : StoreOk sg S μ) (hv : ∀ v ∈ vs, Value v) (hno : ∀ F ∈ E, ¬ Frame.Handles e F) : e ∈ ρ := by
-  obtain ⟨_, _, _, h⟩ := preservation_steps hb hsig hd hs ht hμ
-  exact plug_perform_mem hb hv E hno h
+    {t X ρ} {E : List Frame} {e : Eff} {vs : List Tm}
+    (hs : Steps sg t (plug E (.perform e vs))) (ht : HasType sg [] t X ρ)
+    (hv : ∀ v ∈ vs, Value v) (hno : ∀ F ∈ E, ¬ Frame.Handles e F) : e ∈ ρ :=
+  plug_perform_mem hb hv E hno (preservation_steps hb hsig hd hs ht)
 
 /-- A call whose row lacks `e` cannot be waiting on an unanswered `perform e`. -/
 theorem no_wait_without_row {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
-    {μ t μ' S X ρ} {E : List Frame} {e : Eff} {vs : List Tm}
-    (ht : HasType sg S [] t X ρ) (hμ : StoreOk sg S μ) (hv : ∀ v ∈ vs, Value v)
+    {t X ρ} {E : List Frame} {e : Eff} {vs : List Tm}
+    (ht : HasType sg [] t X ρ) (hv : ∀ v ∈ vs, Value v)
     (hno : ∀ F ∈ E, ¬ Frame.Handles e F) (hne : e ∉ ρ) :
-    ¬ Steps sg μ t μ' (plug E (.perform e vs)) :=
-  fun hs => hne (running_call_performs hb hsig hd hs ht hμ hv hno)
+    ¬ Steps sg t (plug E (.perform e vs)) :=
+  fun hs => hne (running_call_performs hb hsig hd hs ht hv hno)
 
 /-- A call on the stack: its row, and the node of what its frame holds. -/
 structure RunFrame where

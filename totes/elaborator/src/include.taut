@@ -1,0 +1,568 @@
+// `include_text!("path")`: the text of a file, read where the call is written
+// (`crates/tauto/src/program/include.rs`, `docs/design/macro.md`「`include_text!`」).
+//
+// `ic_program` replaces each call written in the statements of the file at
+// `file` by a `Text` literal with the file's text, before any macro runs. The
+// path is relative to the file that writes the call and stays inside the tote
+// of that file (the nearest directory above it with a `Tauto.eure`, or the
+// file's own directory): an absolute path, a path that leaves it with `..`, a
+// symbolic link that leads out of it, an empty path, a file that cannot be
+// read and one that is not UTF-8 are errors. A call that fails is left as
+// `SkOther("include_text!")` and its span is recorded. `include_bytes!` is not
+// read here and stays a macro call.
+//
+// The walk covers the same statements and terms as `totes/macros/src/scope.taut`.
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::builtin::os
+
+pub(open) struct IcState {
+  // The directory of the file, and the tote it may read in.
+  dir: Text
+  root: Text
+  // The spans of the calls that failed, `start end`.
+  errs: Vec(Text)
+}
+
+// The last `/` of a path.
+pub fn ic_last_slash(t: Text): Option(Nat) ! {div} {
+  var at: Nat := 0
+  var last: Option(Nat) := None
+  var go := true
+  while go {
+    match text_find(t, "/", at) {
+      Some(i) => {
+        last := Some(i)
+        at := i + 1
+      }
+      None => {
+        go := false
+      }
+    }
+  }
+  last
+}
+
+// The directory of a path, or `None` at the top.
+pub fn ic_pop(t: Text): Option(Text) ! {div} {
+  if t == "/" {
+    None
+  } else {
+    match ic_last_slash(t) {
+      None => None
+      Some(i) => if i == 0 { Some("/") } else { Some(Text::slice_or_empty(t, 0, i)) }
+    }
+  }
+}
+
+pub fn ic_push(t: Text, part: Text): Text {
+  if t == "/" { Text::concat("/", part) } else { Text::concat_all([t, "/", part]) }
+}
+
+// Whether `path` is `root` or below it.
+pub fn ic_under(root: Text, path: Text): Bool {
+  if path == root {
+    true
+  } else if root == "/" {
+    text_starts_with(path, "/", 0)
+  } else {
+    text_starts_with(path, Text::concat(root, "/"), 0)
+  }
+}
+
+// The path the parts name from `dir`, or `None` where one leaves `root`.
+pub fn ic_walk(root: Text, dir: Text, parts: List(Text)): Option(Text) ! {div} {
+  match parts {
+    Nil => Some(dir)
+    Cons(p, rest) => if p == "" || p == "." {
+      ic_walk(root, dir, rest)
+    } else if p == ".." {
+      if dir == root {
+        None
+      } else {
+        match ic_pop(dir) {
+          None => None
+          Some(up) => ic_walk(root, up, rest)
+        }
+      }
+    } else {
+      ic_walk(root, ic_push(dir, p), rest)
+    }
+  }
+}
+
+pub fn ic_canonical(path: Text): Text ! {fs_canonicalize} {
+  match perform fs_canonicalize(path) {
+    Ok(p) => p
+    Err(^e) => path
+  }
+}
+
+// The nearest directory from `dir` upwards with a `Tauto.eure`.
+pub fn ic_find_root(dir: Text, own: Text): Text ! {div, fs_stat} {
+  let marker := ic_push(dir, "Tauto.eure")
+  let found := match perform fs_stat(marker) {
+    Ok(Some(s)) => match s.kind {
+      IsFile => true
+      ^other => false
+    }
+    ^other => false
+  }
+  if found {
+    dir
+  } else {
+    match ic_pop(dir) {
+      None => own
+      Some(up) => ic_find_root(up, own)
+    }
+  }
+}
+
+// The state for the file at `file`.
+pub fn ic_state(file: Text): IcState ! {div, fs_canonicalize, fs_stat} {
+  let path := ic_canonical(file)
+  let dir := match ic_pop(path) {
+    Some(d) => d
+    None => "/"
+  }
+  IcState { dir: dir, root: ic_find_root(dir, dir), errs: Vec::new() }
+}
+
+// The text `written` names, from the file's directory.
+pub fn ic_read(st: &IcState, written: Text): Option(Text) ! {div, fs_canonicalize, fs_read} {
+  if written == "" || text_starts_with(written, "/", 0) {
+    None
+  } else {
+    match ic_walk(st.root, st.dir, text_split(written, "/")) {
+      None => None
+      Some(target) => if ic_under(st.root, target) {
+        let real := ic_canonical(target)
+        if ic_under(st.root, real) {
+          match perform fs_read(real) {
+            Ok(text) => Some(text)
+            Err(^e) => None
+          }
+        } else {
+          None
+        }
+      } else {
+        None
+      }
+    }
+  }
+}
+
+pub fn ic_span(st: &mut IcState, t: SurfaceTerm): Unit {
+  Vec::push(&mut st.errs, Text::concat_all([Text::of_nat(t.start), " ", Text::of_nat(t.end)]))
+}
+
+pub fn ic_top(st: &mut IcState, xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, fs_canonicalize, fs_read} {
+  ic_stmt_list(&mut st, xs)
+}
+
+pub fn ic_stmt_list(st: &mut IcState, xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => {
+      let out := ic_stmt(&mut st, s)
+      Cons(out, ic_stmt_list(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_opt(st: &mut IcState, t: Option(SurfaceTerm)): Option(SurfaceTerm) ! {div, fs_canonicalize, fs_read} {
+  match t {
+    None => None
+    Some(x) => Some(ic_term(&mut st, x))
+  }
+}
+
+pub fn ic_terms(st: &mut IcState, xs: List(SurfaceTerm)): List(SurfaceTerm) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let y := ic_term(&mut st, x)
+      Cons(y, ic_terms(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_opts(st: &mut IcState, xs: List(Option(SurfaceTerm))): List(Option(SurfaceTerm)) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let y := ic_opt(&mut st, x)
+      Cons(y, ic_opts(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_stmt(st: &mut IcState, s: SurfaceStmt): SurfaceStmt ! {div, fs_canonicalize, fs_read} {
+  match s {
+    StLet(name, ty, value, a, b, unused, st_stack) => {
+      let ty2 := ic_opt(&mut st, ty)
+      let value2 := ic_term(&mut st, value)
+      StLet(name, ty2, value2, a, b, unused, st_stack)
+    }
+    StVar(name, ty, value, a, unused, st_stack) => {
+      let ty2 := ic_opt(&mut st, ty)
+      let value2 := ic_term(&mut st, value)
+      StVar(name, ty2, value2, a, unused, st_stack)
+    }
+    StAssign(name, place, value) => {
+      let place2 := match place {
+        Some(p) => Some(ic_term(&mut st, p))
+        None => None
+      }
+      StAssign(name, place2, ic_term(&mut st, value))
+    }
+    StCalled(generates, call) => StCalled(generates, ic_term(&mut st, call))
+    StFn(f) => StFn(ic_fn(&mut st, f))
+    StTheorem(d) => StTheorem(ic_theorem(&mut st, d))
+    StDef(d) => StDef(ic_theorem(&mut st, d))
+    StWhile(c, body) => {
+      let c2 := ic_term(&mut st, c)
+      StWhile(c2, ic_term(&mut st, body))
+    }
+    StReturn(e) => StReturn(ic_opt(&mut st, e))
+    StExpr(e) => StExpr(ic_term(&mut st, e))
+    StStruct(d) => StStruct(ic_data(&mut st, d))
+    StEnum(d) => StEnum(ic_data(&mut st, d))
+    StEffect(e) => StEffect(ic_effect(&mut st, e))
+    StMutual(items, a, b) => StMutual(ic_stmt_list(&mut st, items), a, b)
+    StInductive(d) => StInductive(ic_inductive(&mut st, d))
+    other => other
+  }
+}
+
+pub fn ic_fn(st: &mut IcState, f: SurfaceFn): SurfaceFn ! {div, fs_canonicalize, fs_read} {
+  let gs := ic_named(&mut st, surface_generic_named(f.generics, f.generic_types))
+  let ptypes := ic_opts(&mut st, f.param_types)
+  let result := ic_opt(&mut st, f.result)
+  let wheres := ic_constraints(&mut st, f.wheres)
+  let body := ic_term(&mut st, f.body)
+  SurfaceFn {
+    name: f.name,
+    generics: surface_named_names(gs),
+    bounds: f.bounds,
+    params: f.params,
+    r#borrows: f.r#borrows,
+    param_types: ptypes,
+    result: result,
+    effects: f.effects,
+    wheres: wheres,
+    start: f.start,
+    end: f.end,
+    body: body,
+    lends: f.lends,
+    generic_types: surface_named_types(gs),
+    bound_starts: Nil,
+    visibility: f.visibility,
+    row_hole: f.row_hole,
+    unused: f.unused,
+    unused_generics: f.unused_generics,
+    unused_params: f.unused_params
+  }
+}
+
+pub fn ic_constraints(st: &mut IcState, xs: List(SurfaceConstraint)): List(SurfaceConstraint) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let ty := ic_term(&mut st, c.ty)
+      let arguments := ic_terms(&mut st, c.arguments)
+      let head := SurfaceConstraint {
+        r#class: c.r#class,
+        ty: ty,
+        start: c.start,
+        end: c.end,
+        arguments: arguments
+      }
+      Cons(head, ic_constraints(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_named(st: &mut IcState, xs: List(SurfaceNamed)): List(SurfaceNamed) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ty := ic_term(&mut st, p.ty)
+      Cons(SurfaceNamed { name: p.name, ty: ty }, ic_named(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_theorem(st: &mut IcState, d: SurfaceTheorem): SurfaceTheorem ! {div, fs_canonicalize, fs_read} {
+  let params := ic_named(&mut st, d.params)
+  let ty := ic_term(&mut st, d.ty)
+  let body := ic_opt(&mut st, d.body)
+  SurfaceTheorem {
+    visibility: d.visibility,
+    name: d.name,
+    implicit: d.implicit,
+    params: params,
+    ty: ty,
+    body: body,
+    start: d.start,
+    end: d.end,
+    unused: d.unused,
+    unused_params: d.unused_params
+  }
+}
+
+pub fn ic_data_fields(st: &mut IcState, xs: List(SurfaceDataField)): List(SurfaceDataField) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let ty := ic_term(&mut st, f.ty)
+      Cons(SurfaceDataField { name: f.name, ty: ty }, ic_data_fields(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_data_ctors(st: &mut IcState, xs: List(SurfaceDataCtor)): List(SurfaceDataCtor) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let fields := ic_data_fields(&mut st, c.fields)
+      Cons(SurfaceDataCtor { name: c.name, fields: fields }, ic_data_ctors(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_data(st: &mut IcState, d: SurfaceData): SurfaceData ! {div, fs_canonicalize, fs_read} {
+  let cs := ic_data_ctors(&mut st, d.constructors)
+  SurfaceData {
+    kind: d.kind,
+    name: d.name,
+    generics: d.generics,
+    constructors: cs,
+    start: d.start,
+    end: d.end,
+    coerce_level: d.coerce_level,
+    coerce_field: d.coerce_field,
+    visibility: d.visibility,
+  unused_generics: Nil,
+  rows: d.rows
+  }
+}
+
+pub fn ic_effect(st: &mut IcState, e: SurfaceEffect): SurfaceEffect ! {div, fs_canonicalize, fs_read} {
+  let params := ic_opts(&mut st, e.params)
+  let result := ic_opt(&mut st, e.result)
+  SurfaceEffect {
+    visibility: e.visibility,
+    name: e.name,
+    generics: e.generics,
+    params: params,
+    result: result,
+    r#resume: e.r#resume,
+    start: e.start,
+    end: e.end,
+    set: e.set,
+  unused_generics: Nil,
+  bounds: Nil,
+  rows: e.rows
+  }
+}
+
+pub fn ic_ind_ctors(st: &mut IcState, xs: List(SurfaceCtor)): List(SurfaceCtor) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let params := ic_named(&mut st, c.params)
+      let result := ic_term(&mut st, c.result)
+      Cons(
+        SurfaceCtor { name: c.name, implicit: c.implicit, params: params, result: result },
+        ic_ind_ctors(&mut st, rest)
+      )
+    }
+  }
+}
+
+pub fn ic_inductive(st: &mut IcState, d: SurfaceInductive): SurfaceInductive ! {div, fs_canonicalize, fs_read} {
+  let params := ic_named(&mut st, d.params)
+  let sort := ic_term(&mut st, d.sort)
+  let cs := ic_ind_ctors(&mut st, d.constructors)
+  SurfaceInductive {
+    name: d.name,
+    params: params,
+    sort: sort,
+    constructors: cs,
+    start: d.start,
+    end: d.end,
+    visibility: d.visibility
+  }
+}
+
+pub fn ic_arms(st: &mut IcState, xs: List(SurfaceArm)): List(SurfaceArm) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let guard := ic_opt(&mut st, a.guard)
+      let goal := ic_opt(&mut st, a.goal)
+      let body := ic_term(&mut st, a.body)
+      Cons(
+        SurfaceArm { pattern: a.pattern, guard: guard, goal: goal, body: body },
+        ic_arms(&mut st, rest)
+      )
+    }
+  }
+}
+
+pub fn ic_step_binders(st: &mut IcState, xs: List(SurfaceField)): List(SurfaceField) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let ty := ic_term(&mut st, f.value)
+      Cons(SurfaceField { name: f.name, value: ty }, ic_step_binders(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_step_arms(st: &mut IcState, xs: List(SurfaceStepArm)): List(SurfaceStepArm) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let binders := ic_step_binders(&mut st, a.binders)
+      let goal := ic_term(&mut st, a.goal)
+      let body := ic_term(&mut st, a.body)
+      let arm := SurfaceStepArm {
+        binders: binders,
+        unused_binders: a.unused_binders,
+        goal: goal,
+        body: body,
+        start: a.start,
+        end: a.end
+      }
+      Cons(arm, ic_step_arms(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_handler(st: &mut IcState, h: SurfaceHandler): SurfaceHandler ! {div, fs_canonicalize, fs_read} {
+  match h {
+    HdReturn(p, body) => HdReturn(p, ic_term(&mut st, body))
+    HdOperation(eff, hfa, hty, patterns, cont, cont_unused, guard, body) => {
+      let guard2 := ic_opt(&mut st, guard)
+      let body2 := ic_term(&mut st, body)
+      HdOperation(eff, hfa, hty, patterns, cont, cont_unused, guard2, body2)
+    }
+  }
+}
+
+pub fn ic_handlers(st: &mut IcState, xs: List(SurfaceHandler)): List(SurfaceHandler) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(h, rest) => {
+      let h2 := ic_handler(&mut st, h)
+      Cons(h2, ic_handlers(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_pi_params(st: &mut IcState, xs: List(SurfaceParam)): List(SurfaceParam) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ty := ic_term(&mut st, p.ty)
+      Cons(SurfaceParam { name: p.name, ty: ty, unused: p.unused }, ic_pi_params(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_fields(st: &mut IcState, xs: List(SurfaceField)): List(SurfaceField) ! {div, fs_canonicalize, fs_read} {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let v := ic_term(&mut st, f.value)
+      Cons(SurfaceField { name: f.name, value: v }, ic_fields(&mut st, rest))
+    }
+  }
+}
+
+pub fn ic_term(st: &mut IcState, t: SurfaceTerm): SurfaceTerm ! {div, fs_canonicalize, fs_read} {
+  match t.kind {
+    SkMacroCall(name, arg) => if name == "include_text" {
+      match arg.kind {
+        SkText(path) => match ic_read(&st, path) {
+          Some(text) => SurfaceTerm { occurrence: None, kind: SkText(text), start: t.start, end: t.end }
+          None => {
+            ic_span(&mut st, t)
+            SurfaceTerm { occurrence: None, kind: SkOther("include_text!"), start: t.start, end: t.end }
+          }
+        }
+        ^other => {
+          ic_span(&mut st, t)
+          SurfaceTerm { occurrence: None, kind: SkOther("include_text!"), start: t.start, end: t.end }
+        }
+      }
+    } else {
+      SurfaceTerm { occurrence: None, kind: ic_kind(&mut st, t.kind), start: t.start, end: t.end }
+    }
+    ^other => SurfaceTerm { occurrence: None, kind: ic_kind(&mut st, t.kind), start: t.start, end: t.end }
+  }
+}
+
+pub fn ic_kind(st: &mut IcState, k: SurfaceKind): SurfaceKind ! {div, fs_canonicalize, fs_read} {
+  match k {
+    SkMacroCall(name, arg) => SkMacroCall(name, ic_term(&mut st, arg))
+    SkSplice(arg) => SkSplice(ic_term(&mut st, arg))
+    SkApp(f, args) => {
+      let f2 := ic_term(&mut st, f)
+      SkApp(f2, ic_terms(&mut st, args))
+    }
+    SkPi(params, result, effects) => {
+      let params2 := ic_pi_params(&mut st, params)
+      SkPi(params2, ic_term(&mut st, result), effects)
+    }
+    SkExists(binder, domain, body, ^unused) => {
+      let domain2 := ic_term(&mut st, domain)
+      SkExists(binder, domain2, ic_term(&mut st, body), None)
+    }
+    SkLam(params, body, types, _) => {
+      let types2 := ic_opts(&mut st, types)
+      SkLam(params, ic_term(&mut st, body), types2, Nil)
+    }
+    SkBorrowLam(modes, lam) => SkBorrowLam(modes, ic_term(&mut st, lam))
+    SkUnion(items) => SkUnion(ic_terms(&mut st, items))
+    SkTagged(tag, term) => SkTagged(tag, ic_term(&mut st, term))
+    SkBorrow(m, m_orig, term) => SkBorrow(m, m_orig, ic_term(&mut st, term))
+    SkFnKind(kind, ty) => SkFnKind(kind, ic_term(&mut st, ty))
+    SkIf(c, a, b) => {
+      let c2 := ic_term(&mut st, c)
+      let a2 := ic_term(&mut st, a)
+      SkIf(c2, a2, ic_opt(&mut st, b))
+    }
+    SkField(base, name) => SkField(ic_term(&mut st, base), name)
+    SkBlock(stmts) => SkBlock(ic_stmt_list(&mut st, stmts))
+    SkPerform(eff, args) => SkPerform(eff, ic_terms(&mut st, args))
+    SkHandle(body, handlers) => {
+      let body2 := ic_term(&mut st, body)
+      SkHandle(body2, ic_handlers(&mut st, handlers))
+    }
+    SkBudget(memory, steps, body) => {
+      let steps2 := ic_term(&mut st, steps)
+      SkBudget(memory, steps2, ic_term(&mut st, body))
+    }
+    SkMatch(scrutinee, result, arms, binder, binder_unused) => {
+      let s2 := ic_term(&mut st, scrutinee)
+      let r2 := ic_opt(&mut st, result)
+      SkMatch(s2, r2, ic_arms(&mut st, arms), binder, binder_unused)
+    }
+    SkRecord(name, fields) => SkRecord(name, ic_fields(&mut st, fields))
+    SkStep(tactic, arg, cs, ce, Before, arms) => {
+      let arg2 := ic_term(&mut st, arg)
+      let before2 := ic_opt(&mut st, Before)
+      SkStep(tactic, arg2, cs, ce, before2, ic_step_arms(&mut st, arms))
+    }
+    other => other
+  }
+}
+
+// The statements of the file at `file` with each `include_text!` read.
+pub fn ic_program(st: &mut IcState, stmts: List(SurfaceStmt)): List(SurfaceStmt) ! {div, fs_canonicalize, fs_read} {
+  ic_top(&mut st, stmts)
+}

@@ -1,0 +1,3505 @@
+import "../../identity/src/identity.taut"
+import std::base
+import std::data
+import std::text
+import query_flow::codec
+import surface::surface
+
+// The statements of `totes/surface` as text and back, for keeping a query's
+// output (`Codec`, totes/query-flow). Every part is a field of query-flow's
+// codec (`5:hello`): a constructor is its name followed by its fields in order,
+// a list its length followed by its items, an option `n`, or `s` followed by the
+// value, a `Nat` its digits and a `Bool` `t` or `f`. One writer and one reader
+// for each type of the surface syntax, in the order the types are declared.
+
+// The statements of one file: the output of `BuildParse`.
+pub(open) struct BuildStatements { stmts: List(SurfaceStmt) }
+
+pub fn BuildStatements::codec(): Codec(BuildStatements) {
+  Codec::new(
+    (x: BuildStatements) => Text::concat_all(List::reverse(bsc_w_List_SurfaceStmt(x.stmts, Nil))),
+    (t: Text) => match bsc_r_List_SurfaceStmt(reader(t)) {
+      None => None
+      Some(p) => match p {
+        #(x, r) => if at_end(r) { Some(BuildStatements { stmts: x }) } else { None }
+      }
+    }
+  )
+}
+
+pub fn bsc_w_Text(x: Text, acc: List(Text)): List(Text) ! {div} { Cons(field(x), acc) }
+
+pub fn bsc_r_Text(r: Reader): Option(Text × Reader) ! {div} { next_field(r) }
+
+pub fn bsc_w_Nat(x: Nat, acc: List(Text)): List(Text) ! {div} {
+  Cons(field(Text::of_u64(nat_to_u64(x))), acc)
+}
+
+pub fn bsc_r_Nat(r: Reader): Option(Nat × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(t, r0) => match parse_u64(t) {
+        None => None
+        Some(n) => Some(#(u64_to_nat(n), r0))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_Bool(x: Bool, acc: List(Text)): List(Text) ! {div} {
+  Cons(field(if x { "t" } else { "f" }), acc)
+}
+
+pub fn bsc_r_Bool(r: Reader): Option(Bool × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(t, r0) => if t == "t" { Some(#(true, r0)) } else if t == "f" { Some(#(false, r0)) } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceVis(x: SurfaceVis, acc: List(Text)): List(Text) ! {div} {
+  Cons(
+    field(
+      match x {
+        VisPrivate => "private"
+        VisPub => "pub"
+        VisOpen => "open"
+        VisHandle => "handle"
+      }
+    ),
+    acc
+  )
+}
+
+pub fn bsc_r_SurfaceVis(r: Reader): Option(SurfaceVis × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(t, r0) => if t == "private" {
+        Some(#(VisPrivate, r0))
+      } else if t == "pub" {
+        Some(#(VisPub, r0))
+      } else if t == "open" {
+        Some(#(VisOpen, r0))
+      } else if t == "handle" {
+        Some(#(VisHandle, r0))
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceArm(x: SurfaceArm, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceArmMk(f0, f1, f2, f3) => bsc_w_SurfaceTerm(
+      f3,
+      bsc_w_Option_SurfaceTerm(
+        f2,
+        bsc_w_Option_SurfaceTerm(f1, bsc_w_SurfacePattern(f0, Cons(field("SurfaceArmMk"), acc)))
+      )
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceArm(r: Reader): Option(SurfaceArm × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceArmMk" {
+        match bsc_r_SurfacePattern(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Option_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Option_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_SurfaceTerm(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => Some(#(SurfaceArmMk(f0, f1, f2, f3), r4))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceData(x: SurfaceData, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceDataMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, slot_unused_generics, slot_rows) => bsc_w_SurfaceVis(f8, bsc_w_Nat(
+      f7,
+      bsc_w_Option_Text(
+        f6,
+        bsc_w_Nat(
+          f5,
+          bsc_w_Nat(
+            f4,
+            bsc_w_List_SurfaceDataCtor(
+              f3,
+              bsc_w_List_Text(
+                f2,
+                bsc_w_Text(f1, bsc_w_Option_Text(f0, Cons(field("SurfaceDataMk"), acc)))
+              )
+            )
+          )
+        )
+      )
+    ))
+  }
+}
+
+pub fn bsc_r_SurfaceData(r: Reader): Option(SurfaceData × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceDataMk" {
+        match bsc_r_Option_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Text(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_List_Text(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_List_SurfaceDataCtor(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_Nat(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_Nat(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => match bsc_r_Option_Text(r6) {
+                                  None => None
+                                  Some(p7) => match p7 {
+                                    #(f6, r7) => match bsc_r_Nat(r7) {
+                                      None => None
+                                      Some(p8) => match p8 {
+                                        #(f7, r8) => match bsc_r_SurfaceVis(r8) {
+ None => None
+ Some(p9) => match p9 {
+ #(f8, r9) => Some(#(SurfaceDataMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, Nil, Nil), r9))
+ }
+ }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceInferCondition(x: SurfaceInferCondition, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    InferParameter(name) => bsc_w_Text(name, Cons(field("InferParameter"), acc))
+    InferAnd(left, right) => bsc_w_SurfaceInferCondition(right, bsc_w_SurfaceInferCondition(left, Cons(field("InferAnd"), acc)))
+    InferOr(left, right) => bsc_w_SurfaceInferCondition(right, bsc_w_SurfaceInferCondition(left, Cons(field("InferOr"), acc)))
+  }
+}
+
+pub fn bsc_r_SurfaceInferCondition(r: Reader): Option(SurfaceInferCondition × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "InferParameter" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(pair) => match pair { #(name, rest) => Some(#(InferParameter(name), rest)) }
+        }
+      } else if tag == "InferAnd" || tag == "InferOr" {
+        match bsc_r_SurfaceInferCondition(r0) {
+          None => None
+          Some(first) => match first {
+            #(left, r1) => ⊢ Option(SurfaceInferCondition × Reader) from match bsc_r_SurfaceInferCondition(r1) {
+              None => None
+              Some(second) => match second {
+                #(right, r2) => if tag == "InferAnd" { Some(#(InferAnd(left, right), r2)) } else { Some(#(InferOr(left, right), r2)) }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_Option_SurfaceInferCondition(x: Option(SurfaceInferCondition), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(value) => bsc_w_SurfaceInferCondition(value, Cons(field("s"), acc))
+  }
+}
+
+pub fn bsc_r_Option_SurfaceInferCondition(r: Reader): Option(Option(SurfaceInferCondition) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "n" { Some(#(None, r0)) } else if tag == "s" {
+        match bsc_r_SurfaceInferCondition(r0) {
+          None => None
+          Some(pair) => match pair { #(value, rest) => Some(#(Some(value), rest)) }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceInstance(x: SurfaceInstance, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceInstanceMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, slot_unused_generics) => bsc_w_Option_SurfaceInferCondition(f11, bsc_w_List_SurfaceTerm(
+      f10,
+      bsc_w_List_SurfaceTerm(
+        f9,
+        bsc_w_Nat(
+          f8,
+          bsc_w_Nat(
+            f7,
+            bsc_w_List_SurfaceLaw(
+              f6,
+              bsc_w_List_SurfaceFn(
+                f5,
+                bsc_w_List_SurfaceConstraint(
+                  f4,
+                  bsc_w_SurfaceTerm(
+                    f3,
+                    bsc_w_Text(
+                      f2,
+                      bsc_w_List_Option_Text(
+                        f1,
+                        bsc_w_List_Text(f0, Cons(field("SurfaceInstanceMk"), acc))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    ))
+  }
+}
+
+pub fn bsc_r_SurfaceInstance(r: Reader): Option(SurfaceInstance × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceInstanceMk" {
+        match bsc_r_List_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_Option_Text(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Text(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_SurfaceTerm(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_List_SurfaceConstraint(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_List_SurfaceFn(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => match bsc_r_List_SurfaceLaw(r6) {
+                                  None => None
+                                  Some(p7) => match p7 {
+                                    #(f6, r7) => match bsc_r_Nat(r7) {
+                                      None => None
+                                      Some(p8) => match p8 {
+                                        #(f7, r8) => match bsc_r_Nat(r8) {
+                                          None => None
+                                          Some(p9) => match p9 {
+                                            #(f8, r9) => match bsc_r_List_SurfaceTerm(r9) {
+                                              None => None
+                                              Some(p10) => match p10 {
+                                                #(f9, r10) => match bsc_r_List_SurfaceTerm(r10) {
+                                                  None => None
+                                                  Some(p11) => match p11 {
+                                                    #(f10, r11) => match bsc_r_Option_SurfaceInferCondition(r11) {
+                                                      None => None
+                                                      Some(p12) => match p12 {
+                                                        #(f11, r12) => Some(#(SurfaceInstanceMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, Nil), r12))
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceFn(x: SurfaceFn, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceFnMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f13, f12, f14, f15, f16, slot_unused, slot_unused_generics, slot_unused_params) => bsc_w_Option_SurfaceSpan(f16, bsc_w_SurfaceVis(f15, bsc_w_List_Option_Nat(f14, bsc_w_List_SurfaceTerm(
+      f12,
+      bsc_w_Option_List_Text(
+      f13,
+      bsc_w_SurfaceTerm(
+        f11,
+        bsc_w_Nat(
+          f10,
+          bsc_w_Nat(
+            f9,
+            bsc_w_List_SurfaceConstraint(
+              f8,
+              bsc_w_Option_List_RowEntry(
+                f7,
+                bsc_w_Option_SurfaceTerm(
+                  f6,
+                  bsc_w_List_Option_SurfaceTerm(
+                    f5,
+                    bsc_w_List_Option_Bool(
+                      f4,
+                      bsc_w_List_Text(
+                        f3,
+                        bsc_w_List_Option_Text(
+                          f2,
+                          bsc_w_List_Text(f1, bsc_w_Text(f0, Cons(field("SurfaceFnMk"), acc)))
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+    ))))
+  }
+}
+
+pub fn bsc_r_SurfaceFn(r: Reader): Option(SurfaceFn × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceFnMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_Text(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_List_Option_Text(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_List_Text(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_List_Option_Bool(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_List_Option_SurfaceTerm(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => match bsc_r_Option_SurfaceTerm(r6) {
+                                  None => None
+                                  Some(p7) => match p7 {
+                                    #(f6, r7) => match bsc_r_Option_List_RowEntry(r7) {
+                                      None => None
+                                      Some(p8) => match p8 {
+                                        #(f7, r8) => match bsc_r_List_SurfaceConstraint(r8) {
+                                          None => None
+                                          Some(p9) => match p9 {
+                                            #(f8, r9) => match bsc_r_Nat(r9) {
+                                              None => None
+                                              Some(p10) => match p10 {
+                                                #(f9, r10) => match bsc_r_Nat(r10) {
+                                                  None => None
+                                                  Some(p11) => match p11 {
+                                                    #(f10, r11) => match bsc_r_SurfaceTerm(r11) {
+                                                      None => None
+                                                      Some(p12) => match p12 {
+                                                        #(f11, r12) => match bsc_r_Option_List_Text(r12) {
+                                                        None => None
+                                                        Some(pl) => match pl {
+                                                        #(f13, r12) => match bsc_r_List_SurfaceTerm(r12) {
+                                                          None => None
+                                                          Some(p13) => match p13 {
+                                                            #(f12, r13) => match bsc_r_List_Option_Nat(r13) {
+ None => None
+ Some(p14) => match p14 {
+ #(f14, r14) => match bsc_r_SurfaceVis(r14) {
+ None => None
+ Some(p15) => match p15 {
+ #(f15, r15) => match bsc_r_Option_SurfaceSpan(r15) {
+ None => None
+ Some(p16) => match p16 {
+ #(f16, r16) => Some(#(SurfaceFnMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f13, f12, f14, f15, f16, None, Nil, Nil), r16))
+ }
+ }
+ }
+ }
+ }
+ }
+                                                          }
+                                                        }
+                                                      }
+                                                        }
+                                                        }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceCtor(x: SurfaceCtor, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceCtorMk(f0, f1, f2, f3) => bsc_w_SurfaceTerm(
+      f3,
+      bsc_w_List_SurfaceNamed(f2, bsc_w_Nat(f1, bsc_w_Text(f0, Cons(field("SurfaceCtorMk"), acc))))
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceCtor(r: Reader): Option(SurfaceCtor × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceCtorMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Nat(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_List_SurfaceNamed(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_SurfaceTerm(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => Some(#(SurfaceCtorMk(f0, f1, f2, f3), r4))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceStmt(x: SurfaceStmt, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    StLet(f0, f1, f2, f3, f4, unused, st_stack) => bsc_w_Option_Text(st_stack, bsc_w_Bool(
+      f4,
+      bsc_w_Bool(
+        f3,
+        bsc_w_SurfaceTerm(
+          f2,
+          bsc_w_Option_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("StLet"), acc)))
+        )
+      )
+    ))
+    StVar(f0, f1, f2, f3, unused, st_stack) => bsc_w_Option_Text(st_stack, bsc_w_Bool(
+      f3,
+      bsc_w_SurfaceTerm(f2, bsc_w_Option_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("StVar"), acc))))
+    ))
+    StAssign(f0, f1, f2) => bsc_w_SurfaceTerm(
+      f2,
+      bsc_w_Option_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("StAssign"), acc)))
+    )
+    StCalled(f0, f1) => bsc_w_SurfaceTerm(f1, bsc_w_List_Text(f0, Cons(field("StCalled"), acc)))
+    StFn(f0) => bsc_w_SurfaceFn(f0, Cons(field("StFn"), acc))
+    StTheorem(f0) => bsc_w_SurfaceTheorem(f0, Cons(field("StTheorem"), acc))
+    StDef(f0) => bsc_w_SurfaceTheorem(f0, Cons(field("StDef"), acc))
+    StMutual(f0, f1, f2) => bsc_w_Nat(
+      f2,
+      bsc_w_Nat(f1, bsc_w_List_SurfaceStmt(f0, Cons(field("StMutual"), acc)))
+    )
+    StImport(f0, f1, f2) => bsc_w_Nat(
+      f2,
+      bsc_w_Nat(f1, bsc_w_Text(f0, Cons(field("StImport"), acc)))
+    )
+    StInductive(f0) => bsc_w_SurfaceInductive(f0, Cons(field("StInductive"), acc))
+    StEffect(f0) => bsc_w_SurfaceEffect(f0, Cons(field("StEffect"), acc))
+    StStruct(f0) => bsc_w_SurfaceData(f0, Cons(field("StStruct"), acc))
+    StEnum(f0) => bsc_w_SurfaceData(f0, Cons(field("StEnum"), acc))
+    StExtern(f0, f1, f2, f3, f4, f5, f6) => bsc_w_Nat(
+      f6,
+      bsc_w_Nat(
+        f5,
+        bsc_w_List_SurfaceData(
+          f4,
+          bsc_w_List_SurfaceData(
+            f3,
+            bsc_w_List_SurfaceData(
+              f2,
+              bsc_w_List_SurfaceConstraint(
+                f1,
+                bsc_w_List_SurfaceFn(f0, Cons(field("StExtern"), acc))
+              )
+            )
+          )
+        )
+      )
+    )
+    StClass(f0) => bsc_w_SurfaceClass(f0, Cons(field("StClass"), acc))
+    StInstance(f0) => bsc_w_SurfaceInstance(f0, Cons(field("StInstance"), acc))
+    StWhile(f0, f1) => bsc_w_SurfaceTerm(f1, bsc_w_SurfaceTerm(f0, Cons(field("StWhile"), acc)))
+    StReturn(f0) => bsc_w_Option_SurfaceTerm(f0, Cons(field("StReturn"), acc))
+    StExpr(f0) => bsc_w_SurfaceTerm(f0, Cons(field("StExpr"), acc))
+    StOther(f0, f1, f2) => bsc_w_Nat(f2, bsc_w_Nat(f1, bsc_w_Text(f0, Cons(field("StOther"), acc))))
+    StLoop(st_body, f1, f2) => bsc_w_Nat(f2, bsc_w_Nat(f1, bsc_w_Text("LoopExpr", Cons(field("StOther"), acc))))
+    StModule(mod_name, mod_vis, mod_items, f1, f2) => bsc_w_Nat(f2, bsc_w_Nat(f1, bsc_w_Text("ModuleDecl", Cons(field("StOther"), acc))))
+    StReexport(re_path, re_names, re_spans, f1, f2) => bsc_w_Nat(f2, bsc_w_Nat(f1, bsc_w_Text("ReexportDecl", Cons(field("StOther"), acc))))
+    StFor(for_pat, for_src, st_body, f1, f2) => bsc_w_Nat(f2, bsc_w_Nat(f1, bsc_w_Text("ForStmt", Cons(field("StOther"), acc))))
+    StBreak(st_value, f1, f2) => bsc_w_Nat(f2, bsc_w_Nat(f1, bsc_w_Text("BreakStmt", Cons(field("StOther"), acc))))
+    StContinue(f1, f2) => bsc_w_Nat(f2, bsc_w_Nat(f1, bsc_w_Text("ContinueStmt", Cons(field("StOther"), acc))))
+    StMacro(f0, f1, f2, f3) => bsc_w_Nat(
+      f3,
+      bsc_w_Nat(f2, bsc_w_Text(f1, bsc_w_Text(f0, Cons(field("StMacro"), acc))))
+    )
+    StSyntax(f0, f1, f2, f3) => bsc_w_Nat(
+      f3,
+      bsc_w_Nat(f2, bsc_w_Text(f1, bsc_w_Text(f0, Cons(field("StSyntax"), acc))))
+    )
+    StAttributed(f0, f1, f2, f3) => bsc_w_SurfaceStmt(
+      f3,
+      bsc_w_List_Text(f2, bsc_w_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("StAttributed"), acc))))
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceStmt(r: Reader): Option(SurfaceStmt × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "StLet" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Option_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Bool(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_Bool(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_Option_Text(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => Some(#(StLet(f0, f1, f2, f3, f4, None, f5), r6))
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "StVar" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Option_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Bool(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_Option_Text(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => Some(#(StVar(f0, f1, f2, f3, None, f4), r5))
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "StAssign" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Option_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => Some(#(StAssign(f0, f1, f2), r3))
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "StCalled" {
+        match bsc_r_List_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(StCalled(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "StFn" {
+        match bsc_r_SurfaceFn(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StFn(f0), r1))
+          }
+        }
+      } else if tag == "StTheorem" {
+        match bsc_r_SurfaceTheorem(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StTheorem(f0), r1))
+          }
+        }
+      } else if tag == "StDef" {
+        match bsc_r_SurfaceTheorem(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StDef(f0), r1))
+          }
+        }
+      } else if tag == "StMutual" {
+        match bsc_r_List_SurfaceStmt(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Nat(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Nat(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => Some(#(StMutual(f0, f1, f2), r3))
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "StImport" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Nat(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Nat(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => Some(#(StImport(f0, f1, f2), r3))
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "StInductive" {
+        match bsc_r_SurfaceInductive(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StInductive(f0), r1))
+          }
+        }
+      } else if tag == "StEffect" {
+        match bsc_r_SurfaceEffect(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StEffect(f0), r1))
+          }
+        }
+      } else if tag == "StStruct" {
+        match bsc_r_SurfaceData(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StStruct(f0), r1))
+          }
+        }
+      } else if tag == "StEnum" {
+        match bsc_r_SurfaceData(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StEnum(f0), r1))
+          }
+        }
+      } else if tag == "StExtern" {
+        match bsc_r_List_SurfaceFn(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfaceConstraint(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_List_SurfaceData(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_List_SurfaceData(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_List_SurfaceData(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_Nat(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => match bsc_r_Nat(r6) {
+                                  None => None
+                                  Some(p7) => match p7 {
+                                    #(f6, r7) => Some(#(StExtern(f0, f1, f2, f3, f4, f5, f6), r7))
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "StClass" {
+        match bsc_r_SurfaceClass(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StClass(f0), r1))
+          }
+        }
+      } else if tag == "StInstance" {
+        match bsc_r_SurfaceInstance(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StInstance(f0), r1))
+          }
+        }
+      } else if tag == "StWhile" {
+        match bsc_r_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(StWhile(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "StReturn" {
+        match bsc_r_Option_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StReturn(f0), r1))
+          }
+        }
+      } else if tag == "StExpr" {
+        match bsc_r_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(StExpr(f0), r1))
+          }
+        }
+      } else if tag == "StOther" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Nat(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Nat(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => Some(#(StOther(f0, f1, f2), r3))
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "StMacro" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Text(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Nat(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Nat(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => Some(#(StMacro(f0, f1, f2, f3), r4))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "StSyntax" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Text(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Nat(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Nat(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => Some(#(StSyntax(f0, f1, f2, f3), r4))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "StAttributed" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_List_Text(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_SurfaceStmt(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => Some(#(StAttributed(f0, f1, f2, f3), r4))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceField(x: SurfaceField, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceFieldMk(f0, f1) => bsc_w_SurfaceTerm(
+      f1,
+      bsc_w_Text(f0, Cons(field("SurfaceFieldMk"), acc))
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceField(r: Reader): Option(SurfaceField × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceFieldMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SurfaceFieldMk(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceEffect(x: SurfaceEffect, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceEffectMk(f0, f1, f2, f3, f4, f5, f6, f7, slot_unused_generics, slot_bounds, e_vis, slot_rows) => bsc_w_Option_List_RowEntry(
+      f7,
+      bsc_w_Nat(
+        f6,
+        bsc_w_Nat(
+          f5,
+          bsc_w_Option_Text(
+            f4,
+            bsc_w_Option_SurfaceTerm(
+              f3,
+              bsc_w_List_Option_SurfaceTerm(
+                f2,
+                bsc_w_List_Text(f1, bsc_w_Text(f0, Cons(field("SurfaceEffectMk"), acc)))
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceEffect(r: Reader): Option(SurfaceEffect × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceEffectMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_Text(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_List_Option_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Option_SurfaceTerm(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_Option_Text(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_Nat(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => match bsc_r_Nat(r6) {
+                                  None => None
+                                  Some(p7) => match p7 {
+                                    #(f6, r7) => match bsc_r_Option_List_RowEntry(r7) {
+                                      None => None
+                                      Some(p8) => match p8 {
+                                        #(f7, r8) => Some(
+                                          #(SurfaceEffectMk(f0, f1, f2, f3, f4, f5, f6, f7, Nil, Nil, VisPrivate, Nil), r8)
+                                        )
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceTheorem(x: SurfaceTheorem, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceTheoremMk(f0, f1, f2, f3, f4, f5, f6, slot_unused, slot_unused_params, t_vis) => bsc_w_Nat(
+      f6,
+      bsc_w_Nat(
+        f5,
+        bsc_w_Option_SurfaceTerm(
+          f4,
+          bsc_w_SurfaceTerm(
+            f3,
+            bsc_w_List_SurfaceNamed(
+              f2,
+              bsc_w_Nat(f1, bsc_w_Text(f0, Cons(field("SurfaceTheoremMk"), acc)))
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceTheorem(r: Reader): Option(SurfaceTheorem × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceTheoremMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Nat(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_List_SurfaceNamed(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_SurfaceTerm(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_Option_SurfaceTerm(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_Nat(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => match bsc_r_Nat(r6) {
+                                  None => None
+                                  Some(p7) => match p7 {
+                                    #(f6, r7) => Some(
+                                      #(SurfaceTheoremMk(f0, f1, f2, f3, f4, f5, f6, None, Nil, VisPrivate), r7)
+                                    )
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceConstraint(x: SurfaceConstraint, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceConstraintMk(f0, f1, f2, f3, f4) => bsc_w_List_SurfaceTerm(
+      f4,
+      bsc_w_Nat(
+        f3,
+        bsc_w_Nat(
+          f2,
+          bsc_w_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("SurfaceConstraintMk"), acc)))
+        )
+      )
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceConstraint(r: Reader): Option(SurfaceConstraint × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceConstraintMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Nat(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Nat(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_List_SurfaceTerm(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => Some(#(SurfaceConstraintMk(f0, f1, f2, f3, f4), r5))
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceKind(x: SurfaceKind, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SkVar(f0) => bsc_w_Text(surface_name_text(f0), Cons(field("SkVar"), acc))
+    SkNat(f0) => bsc_w_Text(f0, Cons(field("SkNat"), acc))
+    SkFloat(f0) => bsc_w_Text(f0, Cons(field("SkFloat"), acc))
+    SkRow(f0) => bsc_w_List_RowEntry(f0, Cons(field("SkRow"), acc))
+    SkText(f0) => bsc_w_Text(f0, Cons(field("SkText"), acc))
+    SkBool(f0) => bsc_w_Bool(f0, Cons(field("SkBool"), acc))
+    SkApp(f0, f1) => bsc_w_List_SurfaceTerm(f1, bsc_w_SurfaceTerm(f0, Cons(field("SkApp"), acc)))
+    SkPi(f0, f1, f2) => bsc_w_Option_List_RowEntry(
+      f2,
+      bsc_w_SurfaceTerm(f1, bsc_w_List_SurfaceParam(f0, Cons(field("SkPi"), acc)))
+    )
+    SkExists(f0, f1, f2, unused) => bsc_w_SurfaceTerm(
+      f2,
+      bsc_w_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("SkExists"), acc)))
+    )
+    SkLam(f0, f1, f2, _) => bsc_w_List_Option_SurfaceTerm(f2, bsc_w_SurfaceTerm(f1, bsc_w_List_Text(f0, Cons(field("SkLam"), acc))))
+    SkUnion(f0) => bsc_w_List_SurfaceTerm(f0, Cons(field("SkUnion"), acc))
+    SkAscribe(f0, f1) => bsc_w_SurfaceTerm(f1, bsc_w_SurfaceTerm(f0, Cons(field("SkAscribe"), acc)))
+    SkTagged(f0, f1) => bsc_w_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("SkTagged"), acc)))
+    SkIf(f0, f1, f2) => bsc_w_Option_SurfaceTerm(
+      f2,
+      bsc_w_SurfaceTerm(f1, bsc_w_SurfaceTerm(f0, Cons(field("SkIf"), acc)))
+    )
+    SkField(f0, f1) => bsc_w_Text(f1, bsc_w_SurfaceTerm(f0, Cons(field("SkField"), acc)))
+    SkBlock(f0) => bsc_w_List_SurfaceStmt(f0, Cons(field("SkBlock"), acc))
+    SkPerform(f0, f1) => bsc_w_List_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("SkPerform"), acc)))
+    SkHandle(f0, f1) => bsc_w_List_SurfaceHandler(
+      f1,
+      bsc_w_SurfaceTerm(f0, Cons(field("SkHandle"), acc))
+    )
+    SkBudget(f0, f1, f2) => bsc_w_SurfaceTerm(
+      f2,
+      bsc_w_SurfaceTerm(f1, bsc_w_Bool(f0, Cons(field("SkBudget"), acc)))
+    )
+    SkMatch(f0, f1, f2, f3, _) => bsc_w_Option_Text(
+      f3,
+      bsc_w_List_SurfaceArm(
+        f2,
+        bsc_w_Option_SurfaceTerm(f1, bsc_w_SurfaceTerm(f0, Cons(field("SkMatch"), acc)))
+      )
+    )
+    SkHole(f0) => bsc_w_Text(f0, Cons(field("SkHole"), acc))
+    SkRecord(f0, f1) => bsc_w_List_SurfaceField(f1, bsc_w_Text(f0, Cons(field("SkRecord"), acc)))
+    SkBorrow(f0, f1, f2) => bsc_w_SurfaceTerm(f2, bsc_w_Bool(f1, bsc_w_Bool(f0, Cons(field("SkBorrow"), acc))))
+    SkFnKind(f0, f1) => bsc_w_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("SkFnKind"), acc)))
+    SkBorrowLam(f0, f1) => bsc_w_SurfaceTerm(
+      f1,
+      bsc_w_List_Option_Bool(f0, Cons(field("SkBorrowLam"), acc))
+    )
+    SkOther(f0) => bsc_w_Text(f0, Cons(field("SkOther"), acc))
+    SkMacroCall(f0, f1) => bsc_w_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("SkMacroCall"), acc)))
+    SkQuote(f0, f1) => bsc_w_List_SurfaceStmt(f1, bsc_w_Bool(f0, Cons(field("SkQuote"), acc)))
+    SkSplice(f0) => bsc_w_SurfaceTerm(f0, Cons(field("SkSplice"), acc))
+    SkSyntaxLit(f0, f1) => bsc_w_Text(f1, bsc_w_Option_Text(f0, Cons(field("SkSyntaxLit"), acc)))
+    SkStep(f0, f1, f2, f3, f4, f5) => bsc_w_List_SurfaceStepArm(
+      f5,
+      bsc_w_Option_SurfaceTerm(
+        f4,
+        bsc_w_Nat(
+          f3,
+          bsc_w_Nat(f2, bsc_w_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("SkStep"), acc))))
+        )
+      )
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceKind(r: Reader): Option(SurfaceKind × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SkVar" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkVar(NameSpelled(f0)), r1))
+          }
+        }
+      } else if tag == "SkNat" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkNat(f0), r1))
+          }
+        }
+      } else if tag == "SkFloat" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkFloat(f0), r1))
+          }
+        }
+      } else if tag == "SkRow" {
+        match bsc_r_List_RowEntry(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkRow(f0), r1))
+          }
+        }
+      } else if tag == "SkText" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkText(f0), r1))
+          }
+        }
+      } else if tag == "SkBool" {
+        match bsc_r_Bool(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkBool(f0), r1))
+          }
+        }
+      } else if tag == "SkApp" {
+        match bsc_r_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkApp(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkPi" {
+        match bsc_r_List_SurfaceParam(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Option_List_RowEntry(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => Some(#(SkPi(f0, f1, f2), r3))
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "SkExists" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => Some(#(SkExists(f0, f1, f2, None), r3))
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "SkLam" {
+        match bsc_r_List_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_List_Option_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => Some(#(SkLam(f0, f1, f2, Nil), r3))
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "SkUnion" {
+        match bsc_r_List_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkUnion(f0), r1))
+          }
+        }
+      } else if tag == "SkAscribe" {
+        match bsc_r_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkAscribe(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkTagged" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkTagged(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkIf" {
+        match bsc_r_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Option_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => Some(#(SkIf(f0, f1, f2), r3))
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "SkField" {
+        match bsc_r_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Text(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkField(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkBlock" {
+        match bsc_r_List_SurfaceStmt(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkBlock(f0), r1))
+          }
+        }
+      } else if tag == "SkPerform" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkPerform(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkHandle" {
+        match bsc_r_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfaceHandler(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkHandle(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkBudget" {
+        match bsc_r_Bool(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => Some(#(SkBudget(f0, f1, f2), r3))
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "SkMatch" {
+        match bsc_r_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Option_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_List_SurfaceArm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Option_Text(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => Some(#(SkMatch(f0, f1, f2, f3, None), r4))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "SkHole" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkHole(f0), r1))
+          }
+        }
+      } else if tag == "SkRecord" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfaceField(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkRecord(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkBorrow" {
+        match bsc_r_Bool(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Bool(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => Some(#(SkBorrow(f0, f1, f2), r3))
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if tag == "SkFnKind" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkFnKind(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkBorrowLam" {
+        match bsc_r_List_Option_Bool(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkBorrowLam(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkOther" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkOther(f0), r1))
+          }
+        }
+      } else if tag == "SkMacroCall" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkMacroCall(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkQuote" {
+        match bsc_r_Bool(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfaceStmt(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkQuote(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkSplice" {
+        match bsc_r_SurfaceTerm(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(SkSplice(f0), r1))
+          }
+        }
+      } else if tag == "SkSyntaxLit" {
+        match bsc_r_Option_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Text(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SkSyntaxLit(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "SkStep" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Nat(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Nat(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_Option_SurfaceTerm(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_List_SurfaceStepArm(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => Some(#(SkStep(f0, f1, f2, f3, f4, f5), r6))
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceHandler(x: SurfaceHandler, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    HdReturn(f0, f1) => bsc_w_SurfaceTerm(
+      f1,
+      bsc_w_SurfacePattern(f0, Cons(field("HdReturn"), acc))
+    )
+    HdOperation(f0, f1, f2, f3, f4, _, f5, f6) => bsc_w_SurfaceTerm(
+      f6,
+      bsc_w_Option_SurfaceTerm(
+        f5,
+        bsc_w_Option_Text(
+          f4,
+          bsc_w_List_SurfacePattern(
+            f3,
+            bsc_w_List_SurfaceTerm(
+              f2,
+              bsc_w_List_Text(f1, bsc_w_Text(f0, Cons(field("HdOperation"), acc)))
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceHandler(r: Reader): Option(SurfaceHandler × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "HdReturn" {
+        match bsc_r_SurfacePattern(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(HdReturn(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "HdOperation" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_Text(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_List_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_List_SurfacePattern(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_Option_Text(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_Option_SurfaceTerm(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => match bsc_r_SurfaceTerm(r6) {
+                                  None => None
+                                  Some(p7) => match p7 {
+                                    #(f6, r7) => Some(
+                                      #(HdOperation(f0, f1, f2, f3, f4, None, f5, f6), r7)
+                                    )
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceDataField(x: SurfaceDataField, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceDataFieldMk(f0, f1) => bsc_w_SurfaceTerm(
+      f1,
+      bsc_w_Option_Text(f0, Cons(field("SurfaceDataFieldMk"), acc))
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceDataField(r: Reader): Option(SurfaceDataField × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceDataFieldMk" {
+        match bsc_r_Option_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SurfaceDataFieldMk(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceLaw(x: SurfaceLaw, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceLawMk(f0, f1, f2, f3) => bsc_w_SurfaceTheorem(
+      f3,
+      bsc_w_Nat(f2, bsc_w_Nat(f1, bsc_w_Text(f0, Cons(field("SurfaceLawMk"), acc))))
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceLaw(r: Reader): Option(SurfaceLaw × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceLawMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Nat(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Nat(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_SurfaceTheorem(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => Some(#(SurfaceLawMk(f0, f1, f2, f3), r4))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceClass(x: SurfaceClass, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceClassMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, slot_unused_parameters, c_vis) => bsc_w_List_SurfaceConstraint(f10, bsc_w_Bool(
+      f9,
+      bsc_w_List_SurfaceNamed(
+      f8,
+      bsc_w_Nat(
+        f7,
+        bsc_w_Nat(
+          f6,
+          bsc_w_List_SurfaceLaw(
+            f5,
+            bsc_w_List_SurfaceFn(
+              f4,
+              bsc_w_Option_Text(
+                f3,
+                bsc_w_Nat(f2, bsc_w_Text(f1, bsc_w_Text(f0, Cons(field("SurfaceClassMk"), acc))))
+              )
+            )
+          )
+        )
+      )
+    )))
+  }
+}
+
+pub fn bsc_r_SurfaceClass(r: Reader): Option(SurfaceClass × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceClassMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Text(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Nat(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Option_Text(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_List_SurfaceFn(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_List_SurfaceLaw(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => match bsc_r_Nat(r6) {
+                                  None => None
+                                  Some(p7) => match p7 {
+                                    #(f6, r7) => match bsc_r_Nat(r7) {
+                                      None => None
+                                      Some(p8) => match p8 {
+                                        #(f7, r8) => match bsc_r_List_SurfaceNamed(r8) {
+                                          None => None
+                                          Some(p9) => match p9 {
+                                            #(f8, r9) => match bsc_r_Bool(r9) {
+                                              None => None
+                                              Some(p10) => match p10 {
+                                                #(f9, r10) => match bsc_r_List_SurfaceConstraint(r10) {
+                                                  None => None
+                                                  Some(p11) => match p11 {
+                                                    #(f10, r11) => Some(#(SurfaceClassMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, Nil, VisPrivate), r11))
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceInductive(x: SurfaceInductive, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceInductiveMk(f0, f1, f2, f3, f4, f5, f6) => bsc_w_SurfaceVis(f6, bsc_w_Nat(
+      f5,
+      bsc_w_Nat(
+        f4,
+        bsc_w_List_SurfaceCtor(
+          f3,
+          bsc_w_SurfaceTerm(
+            f2,
+            bsc_w_List_SurfaceNamed(f1, bsc_w_Text(f0, Cons(field("SurfaceInductiveMk"), acc)))
+          )
+        )
+      )
+    ))
+  }
+}
+
+pub fn bsc_r_SurfaceInductive(r: Reader): Option(SurfaceInductive × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceInductiveMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfaceNamed(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_List_SurfaceCtor(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_Nat(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => match bsc_r_Nat(r5) {
+                              None => None
+                              Some(p6) => match p6 {
+                                #(f5, r6) => match bsc_r_SurfaceVis(r6) {
+ None => None
+ Some(p7) => match p7 {
+ #(f6, r7) => Some(#(SurfaceInductiveMk(f0, f1, f2, f3, f4, f5, f6), r7))
+ }
+ }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfacePatternField(x: SurfacePatternField, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfacePatternFieldMk(f0, f1) => bsc_w_SurfacePattern(
+      f1,
+      bsc_w_Text(f0, Cons(field("SurfacePatternFieldMk"), acc))
+    )
+  }
+}
+
+pub fn bsc_r_SurfacePatternField(r: Reader): Option(SurfacePatternField × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfacePatternFieldMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfacePattern(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SurfacePatternFieldMk(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_TermOccurrence(x: TermOccurrence, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    TermOccurrenceMk(f0) => bsc_w_List_Nat(f0, Cons(field("TermOccurrenceMk"), acc))
+  }
+}
+
+pub fn bsc_r_TermOccurrence(r: Reader): Option(TermOccurrence × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "TermOccurrenceMk" {
+        match bsc_r_List_Nat(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(TermOccurrenceMk(f0), r1))
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceNamed(x: SurfaceNamed, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceNamedMk(f0, f1) => bsc_w_SurfaceTerm(
+      f1,
+      bsc_w_Text(f0, Cons(field("SurfaceNamedMk"), acc))
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceNamed(r: Reader): Option(SurfaceNamed × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceNamedMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SurfaceNamedMk(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfacePattern(x: SurfacePattern, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    PtWild => Cons(field("PtWild"), acc)
+    PtBind(f0, _) => bsc_w_Text(f0, Cons(field("PtBind"), acc))
+    PtInt(f0, f1) => bsc_w_Nat(f1, bsc_w_Bool(f0, Cons(field("PtInt"), acc)))
+    PtBool(f0) => bsc_w_Bool(f0, Cons(field("PtBool"), acc))
+    PtText(f0) => bsc_w_Text(f0, Cons(field("PtText"), acc))
+    PtCtor(f0, f1) => bsc_w_List_SurfacePattern(f1, bsc_w_Text(surface_name_text(f0), Cons(field("PtCtor"), acc)))
+    PtRecord(f0, f1) => bsc_w_List_SurfacePatternField(
+      f1,
+      bsc_w_Text(f0, Cons(field("PtRecord"), acc))
+    )
+    PtTyped(f0, f1, _) => bsc_w_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("PtTyped"), acc)))
+    PtOther(f0) => bsc_w_Text(f0, Cons(field("PtOther"), acc))
+  }
+}
+
+pub fn bsc_r_SurfacePattern(r: Reader): Option(SurfacePattern × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "PtWild" {
+        Some(#(PtWild, r0))
+      } else if tag == "PtBind" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(PtBind(f0, None), r1))
+          }
+        }
+      } else if tag == "PtInt" {
+        match bsc_r_Bool(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Nat(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(PtInt(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "PtBool" {
+        match bsc_r_Bool(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(PtBool(f0), r1))
+          }
+        }
+      } else if tag == "PtText" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(PtText(f0), r1))
+          }
+        }
+      } else if tag == "PtCtor" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfacePattern(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(PtCtor(NameSpelled(f0), f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "PtRecord" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfacePatternField(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(PtRecord(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "PtTyped" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(PtTyped(f0, f1, None), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "PtOther" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => Some(#(PtOther(f0), r1))
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceTerm(x: SurfaceTerm, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceTermIndexedMk(f0, f1, f2, f3) => bsc_w_Option_TermOccurrence(
+      f3,
+      bsc_w_Nat(f2, bsc_w_Nat(f1, bsc_w_SurfaceKind(f0, Cons(field("SurfaceTermIndexedMk"), acc))))
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceTerm(r: Reader): Option(SurfaceTerm × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceTermIndexedMk" {
+        match bsc_r_SurfaceKind(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Nat(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Nat(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Option_TermOccurrence(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => Some(#(SurfaceTermIndexedMk(f0, f1, f2, f3), r4))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceDataCtor(x: SurfaceDataCtor, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceDataCtorMk(f0, f1) => bsc_w_List_SurfaceDataField(
+      f1,
+      bsc_w_Text(f0, Cons(field("SurfaceDataCtorMk"), acc))
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceDataCtor(r: Reader): Option(SurfaceDataCtor × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceDataCtorMk" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfaceDataField(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SurfaceDataCtorMk(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceParam(x: SurfaceParam, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceParamMk(f0, f1, _) => bsc_w_SurfaceTerm(
+      f1,
+      bsc_w_Option_Text(f0, Cons(field("SurfaceParamMk"), acc))
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceParam(r: Reader): Option(SurfaceParam × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceParamMk" {
+        match bsc_r_Option_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(SurfaceParamMk(f0, f1, None), r2))
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_SurfaceStepArm(x: SurfaceStepArm, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceStepArmMk(f0, _, f1, f2, f3, f4) => bsc_w_Nat(
+      f4,
+      bsc_w_Nat(
+        f3,
+        bsc_w_SurfaceTerm(
+          f2,
+          bsc_w_SurfaceTerm(f1, bsc_w_List_SurfaceField(f0, Cons(field("SurfaceStepArmMk"), acc)))
+        )
+      )
+    )
+  }
+}
+
+pub fn bsc_r_SurfaceStepArm(r: Reader): Option(SurfaceStepArm × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "SurfaceStepArmMk" {
+        match bsc_r_List_SurfaceField(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_SurfaceTerm(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_Nat(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_Nat(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => Some(#(SurfaceStepArmMk(f0, Nil, f1, f2, f3, f4), r5))
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_List_Nat(xs: List(Nat), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_Nat_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_Nat_items(xs: List(Nat), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_Nat_items(rest, bsc_w_Nat(y, acc))
+  }
+}
+
+pub fn bsc_r_List_Nat(r: Reader): Option(List(Nat) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_Nat_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_Nat_items(k: u64, r: Reader, acc: List(Nat)): Option(List(Nat) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_Nat(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_Nat_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceCtor(xs: List(SurfaceCtor), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceCtor_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceCtor_items(xs: List(SurfaceCtor), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceCtor_items(rest, bsc_w_SurfaceCtor(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceCtor(r: Reader): Option(List(SurfaceCtor) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceCtor_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceCtor_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceCtor)
+): Option(List(SurfaceCtor) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceCtor(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceCtor_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceArm(xs: List(SurfaceArm), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceArm_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceArm_items(xs: List(SurfaceArm), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceArm_items(rest, bsc_w_SurfaceArm(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceArm(r: Reader): Option(List(SurfaceArm) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceArm_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceArm_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceArm)
+): Option(List(SurfaceArm) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceArm(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceArm_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceTerm(xs: List(SurfaceTerm), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceTerm_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceTerm_items(xs: List(SurfaceTerm), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceTerm_items(rest, bsc_w_SurfaceTerm(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceTerm(r: Reader): Option(List(SurfaceTerm) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceTerm_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceTerm_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceTerm)
+): Option(List(SurfaceTerm) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceTerm(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceTerm_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_Option_Text(xs: List(Option(Text)), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_Option_Text_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_Option_Text_items(xs: List(Option(Text)), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_Option_Text_items(rest, bsc_w_Option_Text(y, acc))
+  }
+}
+
+pub fn bsc_r_List_Option_Text(r: Reader): Option(List(Option(Text)) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_Option_Text_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_Option_Text_items(
+  k: u64,
+  r: Reader,
+  acc: List(Option(Text))
+): Option(List(Option(Text)) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_Option_Text(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_Option_Text_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceHandler(xs: List(SurfaceHandler), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceHandler_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceHandler_items(xs: List(SurfaceHandler), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceHandler_items(rest, bsc_w_SurfaceHandler(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceHandler(r: Reader): Option(List(SurfaceHandler) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceHandler_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceHandler_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceHandler)
+): Option(List(SurfaceHandler) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceHandler(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceHandler_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceConstraint(
+  xs: List(SurfaceConstraint),
+  acc: List(Text)
+): List(Text) ! {div} {
+  bsc_w_List_SurfaceConstraint_items(
+    xs,
+    Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc)
+  )
+}
+
+fn bsc_w_List_SurfaceConstraint_items(
+  xs: List(SurfaceConstraint),
+  acc: List(Text)
+): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceConstraint_items(rest, bsc_w_SurfaceConstraint(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceConstraint(r: Reader): Option(List(SurfaceConstraint) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceConstraint_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceConstraint_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceConstraint)
+): Option(List(SurfaceConstraint) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceConstraint(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceConstraint_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_Option_Bool(xs: List(Option(Bool)), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_Option_Bool_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_Option_Bool_items(xs: List(Option(Bool)), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_Option_Bool_items(rest, bsc_w_Option_Bool(y, acc))
+  }
+}
+
+pub fn bsc_r_List_Option_Bool(r: Reader): Option(List(Option(Bool)) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_Option_Bool_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_Option_Bool_items(
+  k: u64,
+  r: Reader,
+  acc: List(Option(Bool))
+): Option(List(Option(Bool)) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_Option_Bool(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_Option_Bool_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfacePattern(xs: List(SurfacePattern), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfacePattern_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfacePattern_items(xs: List(SurfacePattern), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfacePattern_items(rest, bsc_w_SurfacePattern(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfacePattern(r: Reader): Option(List(SurfacePattern) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfacePattern_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfacePattern_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfacePattern)
+): Option(List(SurfacePattern) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfacePattern(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfacePattern_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_Text(xs: List(Text), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_Text_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_Text_items(xs: List(Text), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_Text_items(rest, bsc_w_Text(y, acc))
+  }
+}
+
+pub fn bsc_r_List_Text(r: Reader): Option(List(Text) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_Text_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_Text_items(k: u64, r: Reader, acc: List(Text)): Option(List(Text) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_Text(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_Text_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_Option_TermOccurrence(x: Option(TermOccurrence), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bsc_w_TermOccurrence(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bsc_r_Option_TermOccurrence(r: Reader): Option(Option(TermOccurrence) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "n" { Some(#(None, r0)) } else if tag == "s" {
+        match bsc_r_TermOccurrence(r0) {
+          None => None
+          Some(q) => match q {
+            #(y, r1) => Some(#(Some(y), r1))
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceLaw(xs: List(SurfaceLaw), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceLaw_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceLaw_items(xs: List(SurfaceLaw), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceLaw_items(rest, bsc_w_SurfaceLaw(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceLaw(r: Reader): Option(List(SurfaceLaw) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceLaw_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceLaw_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceLaw)
+): Option(List(SurfaceLaw) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceLaw(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceLaw_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceParam(xs: List(SurfaceParam), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceParam_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceParam_items(xs: List(SurfaceParam), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceParam_items(rest, bsc_w_SurfaceParam(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceParam(r: Reader): Option(List(SurfaceParam) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceParam_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceParam_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceParam)
+): Option(List(SurfaceParam) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceParam(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceParam_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceStmt(xs: List(SurfaceStmt), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceStmt_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceStmt_items(xs: List(SurfaceStmt), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceStmt_items(rest, bsc_w_SurfaceStmt(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceStmt(r: Reader): Option(List(SurfaceStmt) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceStmt_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceStmt_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceStmt)
+): Option(List(SurfaceStmt) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceStmt(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceStmt_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceDataCtor(xs: List(SurfaceDataCtor), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceDataCtor_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceDataCtor_items(
+  xs: List(SurfaceDataCtor),
+  acc: List(Text)
+): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceDataCtor_items(rest, bsc_w_SurfaceDataCtor(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceDataCtor(r: Reader): Option(List(SurfaceDataCtor) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceDataCtor_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceDataCtor_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceDataCtor)
+): Option(List(SurfaceDataCtor) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceDataCtor(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceDataCtor_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfacePatternField(
+  xs: List(SurfacePatternField),
+  acc: List(Text)
+): List(Text) ! {div} {
+  bsc_w_List_SurfacePatternField_items(
+    xs,
+    Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc)
+  )
+}
+
+fn bsc_w_List_SurfacePatternField_items(
+  xs: List(SurfacePatternField),
+  acc: List(Text)
+): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfacePatternField_items(rest, bsc_w_SurfacePatternField(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfacePatternField(r: Reader): Option(
+  List(SurfacePatternField) × Reader
+) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfacePatternField_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfacePatternField_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfacePatternField)
+): Option(List(SurfacePatternField) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfacePatternField(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfacePatternField_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_Option_SurfaceTerm(
+  xs: List(Option(SurfaceTerm)),
+  acc: List(Text)
+): List(Text) ! {div} {
+  bsc_w_List_Option_SurfaceTerm_items(
+    xs,
+    Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc)
+  )
+}
+
+fn bsc_w_List_Option_SurfaceTerm_items(
+  xs: List(Option(SurfaceTerm)),
+  acc: List(Text)
+): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_Option_SurfaceTerm_items(rest, bsc_w_Option_SurfaceTerm(y, acc))
+  }
+}
+
+pub fn bsc_r_List_Option_SurfaceTerm(r: Reader): Option(List(Option(SurfaceTerm)) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_Option_SurfaceTerm_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_Option_SurfaceTerm_items(
+  k: u64,
+  r: Reader,
+  acc: List(Option(SurfaceTerm))
+): Option(List(Option(SurfaceTerm)) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_Option_SurfaceTerm(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_Option_SurfaceTerm_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_Option_Text(x: Option(Text), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bsc_w_Text(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bsc_r_Option_Text(r: Reader): Option(Option(Text) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "n" { Some(#(None, r0)) } else if tag == "s" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(q) => match q {
+            #(y, r1) => Some(#(Some(y), r1))
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_Option_List_Text(x: Option(List(Text)), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bsc_w_List_Text(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bsc_r_Option_List_Text(r: Reader): Option(Option(List(Text)) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "n" { Some(#(None, r0)) } else if tag == "s" {
+        match bsc_r_List_Text(r0) {
+          None => None
+          Some(q) => match q {
+            #(y, r1) => Some(#(Some(y), r1))
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceNamed(xs: List(SurfaceNamed), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceNamed_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceNamed_items(xs: List(SurfaceNamed), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceNamed_items(rest, bsc_w_SurfaceNamed(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceNamed(r: Reader): Option(List(SurfaceNamed) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceNamed_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceNamed_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceNamed)
+): Option(List(SurfaceNamed) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceNamed(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceNamed_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceField(xs: List(SurfaceField), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceField_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceField_items(xs: List(SurfaceField), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceField_items(rest, bsc_w_SurfaceField(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceField(r: Reader): Option(List(SurfaceField) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceField_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceField_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceField)
+): Option(List(SurfaceField) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceField(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceField_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceStepArm(xs: List(SurfaceStepArm), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceStepArm_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceStepArm_items(xs: List(SurfaceStepArm), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceStepArm_items(rest, bsc_w_SurfaceStepArm(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceStepArm(r: Reader): Option(List(SurfaceStepArm) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceStepArm_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceStepArm_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceStepArm)
+): Option(List(SurfaceStepArm) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceStepArm(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceStepArm_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_Option_SurfaceTerm(x: Option(SurfaceTerm), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bsc_w_SurfaceTerm(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bsc_r_Option_SurfaceTerm(r: Reader): Option(Option(SurfaceTerm) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "n" { Some(#(None, r0)) } else if tag == "s" {
+        match bsc_r_SurfaceTerm(r0) {
+          None => None
+          Some(q) => match q {
+            #(y, r1) => Some(#(Some(y), r1))
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceDataField(
+  xs: List(SurfaceDataField),
+  acc: List(Text)
+): List(Text) ! {div} {
+  bsc_w_List_SurfaceDataField_items(
+    xs,
+    Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc)
+  )
+}
+
+fn bsc_w_List_SurfaceDataField_items(
+  xs: List(SurfaceDataField),
+  acc: List(Text)
+): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceDataField_items(rest, bsc_w_SurfaceDataField(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceDataField(r: Reader): Option(List(SurfaceDataField) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceDataField_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceDataField_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceDataField)
+): Option(List(SurfaceDataField) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceDataField(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceDataField_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceData(xs: List(SurfaceData), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceData_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceData_items(xs: List(SurfaceData), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceData_items(rest, bsc_w_SurfaceData(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceData(r: Reader): Option(List(SurfaceData) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceData_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceData_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceData)
+): Option(List(SurfaceData) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceData(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceData_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_List_SurfaceFn(xs: List(SurfaceFn), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_SurfaceFn_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_SurfaceFn_items(xs: List(SurfaceFn), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_SurfaceFn_items(rest, bsc_w_SurfaceFn(y, acc))
+  }
+}
+
+pub fn bsc_r_List_SurfaceFn(r: Reader): Option(List(SurfaceFn) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_SurfaceFn_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_SurfaceFn_items(
+  k: u64,
+  r: Reader,
+  acc: List(SurfaceFn)
+): Option(List(SurfaceFn) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_SurfaceFn(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_SurfaceFn_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_Option_Bool(x: Option(Bool), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bsc_w_Bool(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bsc_r_Option_Bool(r: Reader): Option(Option(Bool) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "n" { Some(#(None, r0)) } else if tag == "s" {
+        match bsc_r_Bool(r0) {
+          None => None
+          Some(q) => match q {
+            #(y, r1) => Some(#(Some(y), r1))
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_List_Option_Nat(xs: List(Option(Nat)), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_Option_Nat_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_Option_Nat_items(xs: List(Option(Nat)), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_Option_Nat_items(rest, bsc_w_Option_Nat(y, acc))
+  }
+}
+
+pub fn bsc_r_List_Option_Nat(r: Reader): Option(List(Option(Nat)) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_Option_Nat_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_Option_Nat_items(
+  k: u64,
+  r: Reader,
+  acc: List(Option(Nat))
+): Option(List(Option(Nat)) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_Option_Nat(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_Option_Nat_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_Option_Nat(x: Option(Nat), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bsc_w_Nat(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bsc_r_Option_Nat(r: Reader): Option(Option(Nat) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "n" { Some(#(None, r0)) } else if tag == "s" {
+        match bsc_r_Nat(r0) {
+          None => None
+          Some(q) => match q {
+            #(y, r1) => Some(#(Some(y), r1))
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+
+pub fn bsc_w_Option_SurfaceSpan(x: Option(SurfaceSpan), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => match y {
+      SurfaceSpan::Mk(a, b) => bsc_w_Nat(b, bsc_w_Nat(a, Cons(field("s"), acc)))
+    }
+  }
+}
+
+pub fn bsc_r_Option_SurfaceSpan(r: Reader): Option(Option(SurfaceSpan) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "n" { Some(#(None, r0)) } else if tag == "s" {
+        match bsc_r_Nat(r0) {
+          None => None
+          Some(q) => match q {
+            #(a, r1) => match bsc_r_Nat(r1) {
+              None => None
+              Some(q2) => match q2 {
+                #(b, r2) => Some(#(Some(SurfaceSpan::Mk(a, b)), r2))
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_RowEntry(x: RowEntry, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    EntryName(f0, f1) => bsc_w_Option_SurfaceSpan(f1, bsc_w_Text(f0, Cons(field("EntryName"), acc)))
+    EntryApplied(f0, f1, f2, f3, f4) => bsc_w_Option_SurfaceSpan(
+      f4,
+      bsc_w_List_Text(
+        f3,
+        bsc_w_Bool(f2, bsc_w_List_SurfaceTerm(f1, bsc_w_Text(f0, Cons(field("EntryApplied"), acc))))
+      )
+    )
+  }
+}
+
+pub fn bsc_r_RowEntry(r: Reader): Option(RowEntry × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "EntryName" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_Option_SurfaceSpan(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => Some(#(EntryName(f0, f1), r2))
+              }
+            }
+          }
+        }
+      } else if tag == "EntryApplied" {
+        match bsc_r_Text(r0) {
+          None => None
+          Some(p1) => match p1 {
+            #(f0, r1) => match bsc_r_List_SurfaceTerm(r1) {
+              None => None
+              Some(p2) => match p2 {
+                #(f1, r2) => match bsc_r_Bool(r2) {
+                  None => None
+                  Some(p3) => match p3 {
+                    #(f2, r3) => match bsc_r_List_Text(r3) {
+                      None => None
+                      Some(p4) => match p4 {
+                        #(f3, r4) => match bsc_r_Option_SurfaceSpan(r4) {
+                          None => None
+                          Some(p5) => match p5 {
+                            #(f4, r5) => Some(#(EntryApplied(f0, f1, f2, f3, f4), r5))
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else { None }
+    }
+  }
+}
+
+pub fn bsc_w_List_RowEntry(xs: List(RowEntry), acc: List(Text)): List(Text) ! {div} {
+  bsc_w_List_RowEntry_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bsc_w_List_RowEntry_items(xs: List(RowEntry), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsc_w_List_RowEntry_items(rest, bsc_w_RowEntry(y, acc))
+  }
+}
+
+pub fn bsc_r_List_RowEntry(r: Reader): Option(List(RowEntry) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(n, r0) => match parse_u64(n) {
+        None => None
+        Some(k) => handle { bsc_r_List_RowEntry_items(k, r0, Nil) } with { overflow() => None }
+      }
+    }
+  }
+}
+
+fn bsc_r_List_RowEntry_items(
+  k: u64,
+  r: Reader,
+  acc: List(RowEntry)
+): Option(List(RowEntry) × Reader) ! {div, overflow} {
+  if k == 0 { Some(#(List::reverse(acc), r)) } else {
+    match bsc_r_RowEntry(r) {
+      None => None
+      Some(p) => match p {
+        #(y, r1) => bsc_r_List_RowEntry_items(k - 1, r1, Cons(y, acc))
+      }
+    }
+  }
+}
+
+pub fn bsc_w_Option_List_RowEntry(x: Option(List(RowEntry)), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bsc_w_List_RowEntry(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bsc_r_Option_List_RowEntry(r: Reader): Option(Option(List(RowEntry)) × Reader) ! {div} {
+  match next_field(r) {
+    None => None
+    Some(p) => match p {
+      #(tag, r0) => if tag == "n" { Some(#(None, r0)) } else if tag == "s" {
+        match bsc_r_List_RowEntry(r0) {
+          None => None
+          Some(q) => match q {
+            #(y, r1) => Some(#(Some(y), r1))
+          }
+        }
+      } else { None }
+    }
+  }
+}

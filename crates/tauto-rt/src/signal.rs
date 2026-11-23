@@ -1,4 +1,4 @@
-//! `Signal` (`std/prelude/Par.taut`): a flag raised once and never lowered.
+//! `Signal` (`std/builtin/par.taut`): a flag raised once and never lowered.
 //! A task's result, a mutex's content handed to a place in its line and the
 //! answer of a host operation that takes a while each come with one; every
 //! `wait` is a wait for one. The host answers `wait` where it runs the task

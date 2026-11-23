@@ -1,9 +1,10 @@
 import "instance_allocation_sound.taut"
-import std::Base
-import std::Nat
+import std::base
+import std::nat
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "unify_allocation_steps.taut"
 import "unify_sound.taut"
 
@@ -58,7 +59,7 @@ pub fn allocation_advance_choice(
   fallback: Mut1(Bool, Checker),
   flag: Bool
 ): Mut1(Bool, Checker) {
-  ⊢ Mut1(Bool, Checker) from match flag { true => chosen
+  match flag { true => chosen
     false => fallback }
 }
 pub theorem allocation_advance_choice_ok(
@@ -69,7 +70,7 @@ pub theorem allocation_advance_choice_ok(
   last: AllocationAdvance(c, fallback),
   flag: Bool
 ): AllocationAdvance(c, allocation_advance_choice(chosen, fallback, flag)) {
-  ⊢ AllocationAdvance(c, allocation_advance_choice(chosen, fallback, flag)) from match flag { true => first
+  match flag { true => first
     false => last }
 }
 pub theorem allocation_advance_and_next(
@@ -81,7 +82,7 @@ pub theorem allocation_advance_and_next(
   tail: AllocationAdvance(next, k(next)),
   flag: Bool
 ): AllocationAdvance(c, ck_and_k(k, next, flag)) {
-  ⊢ AllocationAdvance(c, ck_and_k(k, next, flag)) from match flag {
+  match flag {
     false => AndIntro(advanced, state)
     true => allocation_advance_rewrap(
       c,
@@ -103,7 +104,7 @@ pub theorem allocation_advance_and(
     next
   ). ∀ order: CkOrdered(next). AllocationAdvance(next, k(next))
 ): AllocationAdvance(c, ck_and(k, m)) {
-  ⊢ AllocationAdvance(c, ck_and(k, m)) from match m {
+  match m {
     mut1(flag, next) => allocation_advance_and_next(
       c,
       next,
@@ -124,7 +125,7 @@ pub theorem allocation_advance_or_next(
   tail: AllocationAdvance(next, k(next)),
   flag: Bool
 ): AllocationAdvance(c, ck_or_k(k, next, flag)) {
-  ⊢ AllocationAdvance(c, ck_or_k(k, next, flag)) from match flag {
+  match flag {
     true => AndIntro(advanced, state)
     false => allocation_advance_rewrap(
       c,
@@ -146,7 +147,7 @@ pub theorem allocation_advance_or(
     next
   ). ∀ order: CkOrdered(next). AllocationAdvance(next, k(next))
 ): AllocationAdvance(c, ck_or(k, m)) {
-  ⊢ AllocationAdvance(c, ck_or(k, m)) from match m {
+  match m {
     mut1(flag, next) => allocation_advance_or_next(
       c,
       next,
@@ -164,7 +165,7 @@ pub theorem allocation_advance_attempt(
   state: CheckerAllocation(c),
   h: AllocationAdvance(c, m)
 ): AllocationAdvance(c, ck_attempt_k(c, m)) {
-  ⊢ AllocationAdvance(c, ck_attempt_k(c, m)) from match m {
+  match m {
     mut1(flag, next) => ⊢ AllocationAdvance(c, ck_attempt_k(c, mut1(flag, next))) from match flag {
       true => h
       false => AndIntro(Nat::le_refl(ck_next_of(c)), state)

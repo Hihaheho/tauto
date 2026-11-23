@@ -1,0 +1,21 @@
+description = "A numeral where std's `Int` is expected is `IntOfNat` of it in the executable code too, as the proofs read it."
+
+@ cases.numeral-as-int
+imports = [path`../std/int.taut`]
+source = ```tauto
+struct Scaled { step: Int, at: Nat }
+fn twice(x: Int): Int { Int::add(x, x) }
+fn three(): Int { 3 }
+let one: Int := 1
+let s := Scaled { step: 2, at: 5 }
+show(&one)
+show(&twice(Int::add(one, three())))
+show(&s.step)
+show(&Int::add(0, Int::neg(IntOfNat(4))))
+```
+stdout = ```
+IntOfNat(1)
+IntOfNat(8)
+IntOfNat(2)
+IntNegSucc(3)
+```

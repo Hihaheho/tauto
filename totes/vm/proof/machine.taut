@@ -1,3 +1,4 @@
+import std::array
 import "../src/machine.taut"
 import "../src/builtins.taut"
 import "../src/mval.taut"
@@ -32,6 +33,7 @@ pub theorem mcontinue_correct(
   match r {
     MstepNext(s2) => ih(s2)
     MstepDone => Refl
+    MstepReport(d) => Refl
     MstepExit(c) => Refl
     MstepShow(n, v, s2) => Refl
     MstepAsk(n, args, s2) => Refl
@@ -39,6 +41,7 @@ pub theorem mcontinue_correct(
     MstepStart(n, args, q, cx2) => Refl
     MstepIdle(cx2) => Refl
     MstepError(m) => Refl
+    MstepTaskFailed(m, cx2) => Refl
   }
 }
 
@@ -47,7 +50,7 @@ pub theorem mop_continue_correct(
   fuel: Nat,
   o: MOut,
   k: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   st: List(MVal),
   fr: List(MFrame),
   ih: (s: MState) -> mrun(p, fuel, s) = meval(p, fuel, s)
@@ -68,7 +71,12 @@ pub theorem mop_continue_correct(
     MoutErr(m) => Refl
     MoutExit(c) => Refl
     MoutAsk(n, args, cx2) => Refl
-    MoutPerform(op) => Refl
+    MoutPerform(op, cx2) => mcontinue_correct(
+      p,
+      fuel,
+      m_out(p, MoutPerform(op, cx2), k, slots, st, fr),
+      ih
+    )
     MoutSpawn(fnval, pid, cx2) => mcontinue_correct(
       p,
       fuel,
@@ -89,15 +97,15 @@ pub theorem mop_pop_correct(
   fuel: Nat,
   op: MOp,
   k: MCode,
-  slots: List(MVal),
-  popped: Option(Pair(List(MVal), List(MVal))),
+  slots: Array(MVal),
+  popped: Option(List(MVal) × List(MVal)),
   fr: List(MFrame),
   cx: MCx,
   ih: (s: MState) -> mrun(p, fuel, s) = meval(p, fuel, s)
 ): (⊢ MStep from match popped {
   None => MstepError("internal: the bytecode is malformed")
   Some(r) => match r {
-    Pair { fst: args, snd: rest } => match m_op(p_ctors(p), cx, op, args) {
+    #(args, rest) => match m_op(p_ctors(p), cx, op, args) {
       MoutVal(v, cx2) => mexec(p, fuel, k, slots, Cons(v, rest), fr, cx2)
       out => match m_out(p, out, k, slots, rest, fr) {
         MstepNext(s2) => match s2 {
@@ -110,7 +118,7 @@ pub theorem mop_pop_correct(
 }) = (⊢ MStep from match (⊢ MStep from match popped {
     None => MstepError("internal: the bytecode is malformed")
     Some(r) => match r {
-      Pair { fst: args, snd: rest } => m_out(p, m_op(p_ctors(p), cx, op, args), k, slots, rest, fr)
+      #(args, rest) => m_out(p, m_op(p_ctors(p), cx, op, args), k, slots, rest, fr)
     }
   }) {
   MstepNext(s2) => meval(p, fuel, s2)
@@ -119,7 +127,7 @@ pub theorem mop_pop_correct(
   match popped {
     None => Refl
     Some(r) => match r {
-      Pair { fst: args, snd: rest } => mop_continue_correct(
+      #(args, rest) => mop_continue_correct(
         p,
         fuel,
         m_op(p_ctors(p), cx, op, args),
@@ -140,7 +148,7 @@ pub theorem mcond_continue_correct(
   c: MCode,
   b: MCode,
   k: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   st: List(MVal),
   fr: List(MFrame),
   cx: MCx,
@@ -175,7 +183,7 @@ pub theorem mexec_correct(
   p: MProgram,
   fuel: Nat,
   code: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   st: List(MVal),
   fr: List(MFrame),
   cx: MCx
@@ -189,10 +197,10 @@ pub theorem mexec_correct(
       }
       match code {
         McPush(v, k) => mexec_correct(p, f, k, slots, Cons(v, st), fr, cx)
-        McLoad(i, k) => mexec_correct(p, f, k, slots, Cons(m_nth_or_unit(slots, i), st), fr, cx)
+        McLoad(i, k) => mexec_correct(p, f, k, slots, Cons(m_slot(slots, i), st), fr, cx)
         McStore(i, k) => match st {
           Nil => Refl
-          Cons(v, rest) => mexec_correct(p, f, k, m_set(slots, i, v), rest, fr, cx)
+          Cons(v, rest) => mexec_correct(p, f, k, Array::set(slots, i, v), rest, fr, cx)
         }
         McPop(k) => match st {
           Nil => Refl
@@ -203,7 +211,7 @@ pub theorem mexec_correct(
           Cons(v, unused) => match fr {
             Nil => mcontinue_correct(p, f, m_finish(v, cx), ih)
             Cons(frame, rest) => match frame {
-              MfCall(k, sl2, st2) => ih(Mstate(k, sl2, Cons(v, st2), rest, cx))
+              MfCall(k, sl2, st2, d2) => ih(Mstate(k, sl2, Cons(v, st2), rest, cx))
               MfResume(k, sl2, st2) => ih(Mstate(k, sl2, Cons(v, st2), rest, cx))
               MfBlock(k, st2) => ih(Mstate(k, slots, Cons(v, st2), rest, cx))
               MfBody(c, b, k, st2) => ih(Mstate(McWhile(c, b, k), slots, st2, rest, cx))
@@ -271,6 +279,12 @@ pub theorem mexec_correct(
           step(p, Mstate(McMatch(ps, gs, bs, k), slots, st, fr, cx)),
           ih
         )
+        McSwitch(table, all) => mcontinue_correct(
+          p,
+          f,
+          step(p, Mstate(McSwitch(table, all), slots, st, fr, cx)),
+          ih
+        )
         McClosure(fnid, n, k) => mcontinue_correct(
           p,
           f,
@@ -305,6 +319,12 @@ pub theorem mexec_correct(
           p,
           f,
           step(p, Mstate(McAsk(n, arity, k), slots, st, fr, cx)),
+          ih
+        )
+        McSweep(k) => mcontinue_correct(
+          p,
+          f,
+          step(p, Mstate(McSweep(k), slots, st, fr, cx)),
           ih
         )
       }

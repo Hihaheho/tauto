@@ -68,26 +68,38 @@ impl TypeReport {
 
 fn pattern(pattern: &mut Pattern, ty: &super::Ty, datas: &super::Datas) -> Result<(), Message> {
     use super::Ty;
-    if let Pattern::Tuple(items) = pattern {
-        if super::is_pair_ty(ty.unborrowed()) {
-            let types = super::pair_spine(ty.unborrowed());
-            for (item, ty) in items.iter_mut().zip(&types) {
+    // `#(p, q)`: the constructor `Pair::Mk`, its members on the `Pair`'s.
+    if let Pattern::Ctor { name, args } = pattern
+        && args.len() == 2
+        && tauto_surface::bindings::is_library(name, "Pair::Mk")
+    {
+        if super::is_pair_ty(ty.unborrowed())
+            && let Ty::Named(_, types) = ty.unborrowed()
+        {
+            for (item, ty) in args.iter_mut().zip(types) {
                 self::pattern(item, ty, datas)?;
             }
         }
         return Ok(());
     }
-    if let Pattern::Bind(Name::Selection(selection)) = pattern {
+    if let Pattern::Bind {
+        name: Name::Selection(selection),
+        ..
+    } = pattern
+    {
         if let Some(binding) = selection.binding() {
             let name = Name::Selection(selection.clone());
             if !datas.nullary(&name, Some(ty)) {
-                *pattern = Pattern::Bind(binding.clone().into());
+                *pattern = Pattern::Bind {
+                    name: binding.clone().into(),
+                    unused: None,
+                };
                 return Ok(());
             }
         }
     }
     let name = match pattern {
-        Pattern::Bind(name) if datas.has_ctor(name) => name,
+        Pattern::Bind { name: name, .. } if datas.has_ctor(name) => name,
         Pattern::Ctor { name, .. } | Pattern::Record { name, .. } => name,
         _ => return Ok(()),
     };

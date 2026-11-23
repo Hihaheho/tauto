@@ -1,15 +1,15 @@
 //! The user approves what a run is trusted with before it runs, and again
-//! whenever that changes: the `trust` section of the project's `Tauto.eure`
-//! and each file given with `--permissions FILE`.
+//! whenever that changes: the `trust` section of the project's `Tauto.eure`,
+//! `trust.run` (the paths and hosts `tauto run` is narrowed to) among it.
 //!
 //! What was approved last is kept as a snapshot under `~/.tauto/approved/`
-//! (or `$TAUTO_HOME/approved/`), one file per project folder or permissions
-//! file, named by a hash of its absolute path. When what is written now
+//! (or `$TAUTO_HOME/approved/`), one file per project folder, named by a
+//! hash of its absolute path. When what is written now
 //! differs from the snapshot, or there is no snapshot yet, the whole of what
 //! would be trusted is shown with the lines that changed marked, and the
 //! user is asked at the terminal; the answer is No unless it is `y` or
-//! `yes`. Without a terminal the run does not start, as an `--allow-*`
-//! question without one is denied; `--approve-trust` approves without asking,
+//! `yes`. Without a terminal the run does not start, as a run's question at
+//! its start without one is not run; `--approve-trust` approves without asking,
 //! for scripts and CI that have reviewed the files themselves.
 //!
 //! A snapshot is of what the run would be trusted with, not of the file's
@@ -35,6 +35,20 @@ struct Source {
 /// `args` are the command's arguments, its name first; `--approve-trust` is
 /// taken out of them. `Err` is the message of a run that must not start.
 pub(crate) fn check(args: &mut Vec<String>) -> Result<(), String> {
+    let approve = take_approve(args);
+    approve_sources(sources(args)?, approve)
+}
+
+/// `tauto NAME` for a command of the project in `dir`, whose `Tauto.eure`
+/// reads `text`: its `trust` section is approved as for `tauto run`, from
+/// the same text the command is then granted from.
+pub(crate) fn check_project(dir: &Path, text: &str, approve: bool) -> Result<(), String> {
+    approve_sources(vec![project_source(dir, text)?], approve)
+}
+
+/// Whether `--approve-trust` is among tauto's own arguments (before `--`),
+/// taking it out of them.
+pub(crate) fn take_approve(args: &mut Vec<String>) -> bool {
     let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
     let approve = args[..end].iter().any(|a| a == "--approve-trust");
     if approve {
@@ -44,7 +58,10 @@ pub(crate) fn check(args: &mut Vec<String>) -> Result<(), String> {
             !(i <= end && a == "--approve-trust")
         });
     }
-    let sources = sources(args)?;
+    approve
+}
+
+fn approve_sources(sources: Vec<Source>, approve: bool) -> Result<(), String> {
     let pending: Vec<(Source, Option<Vec<String>>)> = sources
         .into_iter()
         .filter_map(|s| {
@@ -103,43 +120,26 @@ fn describe(pending: &[(Source, Option<Vec<String>>)]) -> String {
     out
 }
 
+fn project_source(dir: &Path, text: &str) -> Result<Source, String> {
+    let file = dir.join("Tauto.eure");
+    Ok(Source {
+        title: crate::i18n::t!(
+            "trust-gate-trust-section",
+            path = file.display().to_string()
+        ),
+        lines: trust_lines(text).map_err(|e| file_error(&file.display().to_string(), e))?,
+        path: dir.to_path_buf(),
+    })
+}
+
+/// What the projects of `args` trust.
 fn sources(args: &[String]) -> Result<Vec<Source>, String> {
     let mut out = Vec::new();
-    if let Some(dir) = project_dir(args) {
+    for dir in project_dirs(args) {
         let file = dir.join("Tauto.eure");
         let text = std::fs::read_to_string(&file)
             .map_err(|e| file_error(&file.display().to_string(), e))?;
-        out.push(Source {
-            title: crate::i18n::t!(
-                "trust-gate-trust-section",
-                path = file.display().to_string()
-            ),
-            lines: trust_lines(&text).map_err(|e| file_error(&file.display().to_string(), e))?,
-            path: dir,
-        });
-    }
-    let mut rest = args.iter().take_while(|a| *a != "--");
-    while let Some(a) = rest.next() {
-        let file = match a.strip_prefix("--permissions") {
-            Some("") => match rest.next() {
-                Some(f) => f.clone(),
-                None => continue,
-            },
-            Some(f) if f.starts_with('=') => f[1..].to_string(),
-            _ => continue,
-        };
-        let path = absolute(Path::new(&file));
-        let text = std::fs::read_to_string(&file).map_err(|e| file_error(&file, e))?;
-        let dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
-        let flags = crate::permission_file::flags(&text, &dir).map_err(|e| file_error(&file, e))?;
-        out.push(Source {
-            title: crate::i18n::t!(
-                "trust-gate-permissions-file",
-                path = path.display().to_string()
-            ),
-            lines: flags.iter().map(|f| flag_line(f)).collect(),
-            path,
-        });
+        out.push(project_source(&dir, &text)?);
     }
     Ok(out)
 }
@@ -153,51 +153,47 @@ fn file_error(path: &str, error: impl std::fmt::Display) -> String {
     )
 }
 
-/// The lines are kept in the approval snapshot, so they stay the same in
-/// every language: a change of language must not ask again.
-/// `--allow-read=a,b` as `read: a, b`; `--allow-net` as `net: everything`.
-fn flag_line(flag: &str) -> String {
-    let flag = flag.trim_start_matches("--allow-");
-    match flag.split_once('=') {
-        Some((kind, items)) => format!(
-            "{kind}: {}",
-            items.split(',').collect::<Vec<_>>().join(", ")
-        ),
-        None if flag == "all" => "all: every permission".into(),
-        None => format!("{flag}: everything"),
-    }
-}
-
-/// The folder of the `Tauto.eure` the command reads: the nearest one above
-/// the first path it is given (`--tote DIR`, a FILE or a DIR), else above the
-/// current folder.
-fn project_dir(args: &[String]) -> Option<PathBuf> {
+/// The folders of every `Tauto.eure` the command may read: the nearest one
+/// above each path it is given (a FILE or a DIR, or the value of any option
+/// that names an existing path), else above the current folder. `--tote NAME`
+/// is a package name, not a path, so when it does not name an existing path
+/// the working directory is used. Which option takes a value is not guessed
+/// here: a path the command does not read as a project only asks about one
+/// more `trust`, while a path skipped would let a project run unapproved.
+fn project_dirs(args: &[String]) -> Vec<PathBuf> {
     let mut starts = Vec::new();
     let mut rest = args.iter().skip(1).take_while(|a| *a != "--");
     while let Some(a) = rest.next() {
-        if a == "--tote" || a == "--permissions" || a == "--steps" || a == "--backend" {
-            let v = rest.next();
-            if a == "--tote" {
-                starts.extend(v.map(PathBuf::from));
+        if let Some(v) = a.strip_prefix("--").and_then(|a| a.split_once('=')) {
+            if Path::new(v.1).exists() {
+                starts.push(PathBuf::from(v.1));
             }
         } else if !a.starts_with('-') && Path::new(a).exists() {
             starts.push(PathBuf::from(a));
         }
     }
-    starts.push(std::env::current_dir().ok()?);
-    let start = absolute(&starts[0]);
-    let mut dir = if start.is_dir() {
-        Some(start.as_path())
-    } else {
-        start.parent()
-    };
-    while let Some(d) = dir {
-        if d.join("Tauto.eure").is_file() {
-            return Some(d.to_path_buf());
-        }
-        dir = d.parent();
+    if starts.is_empty() {
+        starts.extend(std::env::current_dir().ok());
     }
-    None
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for start in starts {
+        let start = absolute(&start);
+        let mut dir = if start.is_dir() {
+            Some(start.as_path())
+        } else {
+            start.parent()
+        };
+        while let Some(d) = dir {
+            if d.join("Tauto.eure").is_file() {
+                if !dirs.iter().any(|x| x == d) {
+                    dirs.push(d.to_path_buf());
+                }
+                break;
+            }
+            dir = d.parent();
+        }
+    }
+    dirs
 }
 
 /// Every key under `trust`, one line per key, sorted.
@@ -305,13 +301,6 @@ mod tests {
     }
 
     #[test]
-    fn flags_read_as_words() {
-        assert_eq!(flag_line("--allow-read=/a,/b"), "read: /a, /b");
-        assert_eq!(flag_line("--allow-net"), "net: everything");
-        assert_eq!(flag_line("--allow-all"), "all: every permission");
-    }
-
-    #[test]
     fn changes_are_marked() {
         let s = Source {
             title: "T".into(),
@@ -321,5 +310,33 @@ mod tests {
         let shown = describe(&[(s, Some(vec!["extern: a".into()]))]);
         assert!(shown.contains("  + extern: a, b\n"), "{shown}");
         assert!(shown.contains("  - extern: a\n"), "{shown}");
+    }
+
+    #[test]
+    fn every_given_project_is_asked_about() {
+        let base = std::env::temp_dir().join(format!("tauto-gate-dirs-{}", std::process::id()));
+        for p in ["a", "b"] {
+            std::fs::create_dir_all(base.join(p)).unwrap();
+            std::fs::write(base.join(p).join("Tauto.eure"), "").unwrap();
+        }
+        let a = base.join("a");
+        let b = base.join("b");
+        let args: Vec<String> = [
+            "build",
+            "--target",
+            a.to_str().unwrap(),
+            &format!("--tote={}", b.display()),
+        ]
+        .map(String::from)
+        .to_vec();
+        let dirs = project_dirs(&args);
+        assert_eq!(
+            dirs,
+            vec![
+                std::fs::canonicalize(&a).unwrap(),
+                std::fs::canonicalize(&b).unwrap()
+            ]
+        );
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

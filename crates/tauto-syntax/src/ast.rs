@@ -1,11 +1,11 @@
 //! The generic tree: the events of a parse shaped by the table's schema.
 //! Every node says which type and constructor it is by number; the caller
 //! (the `tauto` crate) turns it into Nib values. Skipped tokens and clipped
-//! terminals (`^`) do not appear.
+//! symbols (`^`) do not appear.
 
 use crate::parse::Event;
 use crate::scan::Token;
-use crate::tables::{NtKind, Sym, Tables};
+use crate::tables::{NtKind, Tables};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ast {
@@ -156,7 +156,9 @@ fn close(tables: &Tables, f: Frame, span: (u32, u32)) -> Result<Value, SchemaErr
                         return Err(SchemaError("a repetition does not start with itself"));
                     };
                     let span = (f.rest_start.unwrap_or(f.end), f.end);
-                    list.push(element(prod, 1, ty, ctor, values, span)?);
+                    let mut item = element(prod, 1, ty, ctor, values, span)?;
+                    tighten(&mut item);
+                    list.push(item);
                     Ok(Value::List(list))
                 }
                 _ => Err(SchemaError("a repetition production without its attribute")),
@@ -204,6 +206,27 @@ fn close(tables: &Tables, f: Frame, span: (u32, u32)) -> Result<Value, SchemaErr
     }
 }
 
+/// Narrows an LR repetition item's span to the tokens of its own fields: the text it was read from
+/// also holds the clipped symbols (a separator `Comma^`), which are not part of the item.
+fn tighten(item: &mut Ast) {
+    fn extent(a: &Ast) -> Option<(u32, u32)> {
+        let join = |it: &mut dyn Iterator<Item = Option<(u32, u32)>>| {
+            it.flatten().reduce(|(a, b), (c, d)| (a.min(c), b.max(d)))
+        };
+        match a {
+            Ast::Token(t) => Some((t.start, t.end)),
+            Ast::Node { fields, .. } => join(&mut fields.iter().map(extent)),
+            Ast::List(l) => join(&mut l.iter().map(extent)),
+            Ast::Opt(o) => o.as_deref().and_then(extent),
+        }
+    }
+    if let Some(e) = extent(item)
+        && let Ast::Node { span, .. } = item
+    {
+        *span = e;
+    }
+}
+
 /// One item of a repetition or option: a record of the items if there are several, else the item.
 /// The values are the production's symbols from `skip` on.
 fn element(
@@ -225,7 +248,7 @@ fn element(
     }
 }
 
-/// The node of a production: its symbols without the clipped terminals, as fields.
+/// The node of a production: its symbols without the clipped symbols, as fields.
 /// The values are the symbols from `skip` on. (A repetition's own tail or, LR, head is not among
 /// them here.)
 fn node(
@@ -239,7 +262,7 @@ fn node(
     let fields = values
         .into_iter()
         .zip(prod.rhs.iter().zip(&prod.clipped).skip(skip))
-        .filter(|(_, (s, clipped))| !(matches!(s, Sym::Term(_)) && **clipped))
+        .filter(|(_, (_, clipped))| !**clipped)
         .map(|(v, _)| v.into_ast())
         .collect();
     Ast::Node {

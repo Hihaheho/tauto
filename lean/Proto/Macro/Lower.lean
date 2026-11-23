@@ -13,7 +13,7 @@ no position of a binder.
 namespace Proto.Macro
 
 /-- A syntax value: what a macro function builds (the `Syn*` data of
-`std/prelude/Macro.taut`). -/
+`std/builtin/Macro.taut`). -/
 inductive Val where
   | global (reference : DeclRef)
   | ident (i : Ident)

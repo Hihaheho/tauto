@@ -1,7 +1,10 @@
+import "../../identity/src/identity.taut"
+import "messages.taut"
 import "lookup_allocation_sound.taut"
 import "join_allocation_sound.taut"
-import std::Nat
-import std::Text
+import std::nat
+import std::text
+import "allocation_normalization.taut"
 import "allocation_resolution.taut"
 import "allocation_result.taut"
 import "allocation_state.taut"
@@ -12,17 +15,19 @@ import "datas_frame.taut"
 import "expr_access_frame.taut"
 import "expr_checks_frame.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "fresh_allocation_sound.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn allocation_field_name(field: DataField): Option(Text) { field.name }
 pub fn allocation_find_choice(ty: Ty, rest: Option(Ty), same: Bool): Option(Ty) {
-  ⊢ Option(Ty) from match same { true => Some(ty)
+  match same { true => Some(ty)
     false => rest }
 }
 pub fn allocation_find_name(
@@ -31,7 +36,7 @@ pub fn allocation_find_name(
   name: Text,
   named: Option(Text)
 ): Option(Ty) {
-  ⊢ Option(Ty) from match named { None => rest
+  match named { None => rest
     Some(n) => allocation_find_choice(allocation_field_ty(field), rest, Text::eq(n, name)) }
 }
 pub theorem allocation_find_choice_ok(
@@ -42,7 +47,7 @@ pub theorem allocation_find_choice_ok(
   tail: OptionTypeAllocated(limit, rest),
   same: Bool
 ): OptionTypeAllocated(limit, allocation_find_choice(ty, rest, same)) {
-  ⊢ OptionTypeAllocated(limit, allocation_find_choice(ty, rest, same)) from match same { true => bounded
+  match same { true => bounded
     false => tail }
 }
 pub theorem allocation_find_name_ok(
@@ -54,7 +59,7 @@ pub theorem allocation_find_name_ok(
   tail: OptionTypeAllocated(limit, rest),
   named: Option(Text)
 ): OptionTypeAllocated(limit, allocation_find_name(field, rest, name, named)) {
-  ⊢ OptionTypeAllocated(limit, allocation_find_name(field, rest, name, named)) from match named { None => tail
+  match named { None => tail
     Some(n) => allocation_find_choice_ok(
       allocation_field_ty(field),
       rest,
@@ -83,7 +88,7 @@ pub theorem ck_field_find_allocated(
   limit: Nat,
   bounded: FieldsAllocated(limit, fields)
 ): OptionTypeAllocated(limit, ck_field_find(fields, name)) {
-  ⊢ OptionTypeAllocated(limit, ck_field_find(fields, name)) from match fields { Nil => Trivial
+  match fields { Nil => Trivial
     Cons(head, tail) => Eq::subst(
       (found: Option(Ty)) => OptionTypeAllocated(limit, found),
       Eq::sym(allocation_find_unf(head, tail, name)),
@@ -103,7 +108,7 @@ pub theorem ty_unborrowed_allocated(
   limit: Nat,
   bounded: TypeAllocated(limit, ty)
 ): TypeAllocated(limit, ty_unborrowed(ty)) {
-  ⊢ TypeAllocated(limit, ty_unborrowed(ty)) from match ty {
+  match ty {
     TyInt(w) => bounded
     TyBool => bounded
     TyText => bounded
@@ -111,6 +116,7 @@ pub theorem ty_unborrowed_allocated(
     TyNever => bounded
     TyDecimal => bounded
     TyFloat => bounded
+    TyFloat32 => bounded
     TyFn(ps, r, k) => bounded
     TyUnion(ts) => bounded
     TyProduct(ts) => bounded
@@ -132,14 +138,13 @@ pub theorem allocation_error_fresh(
 ): AllocationResult(
   c,
   frame_bind(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_fresh(next)),
     ck_error(c, message, span)
   )
 ) {
   allocation_result_bind(
-    Unit,
+    <A: Unit>,
     c,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_fresh(next)),
     ck_error(c, message, span),
@@ -161,7 +166,7 @@ pub theorem ck_field_missing_allocation(
   Eq::subst(
     (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
     Eq::sym(leaf_ck_field_missing_unf(c, term, ty, name)),
-    allocation_error_fresh(c, cat4(ty_show(ty), " has no field `", name, "`"), span_of(term), state)
+    allocation_error_fresh(c, no_field_message(ty_show(ty), name), span_of(term), state)
   )
 }
 pub theorem access_info_unbounded_allocation(
@@ -173,7 +178,7 @@ pub theorem access_info_unbounded_allocation(
   bounded: TypeAllocated(ck_next_of(c), h),
   unbounded: Bool
 ): AllocationResult(c, access_info_unbounded(c, term, name, h, unbounded)) {
-  ⊢ AllocationResult(c, access_info_unbounded(c, term, name, h, unbounded)) from match unbounded {
+  match unbounded {
     true => allocation_result_return(c, TyFn(Nil, h, KindShared), state, AndIntro(Trivial, bounded))
 
     false => allocation_result_rewrap(
@@ -191,10 +196,10 @@ pub theorem access_info_allocation(
   bounded: TypeAllocated(ck_next_of(c), h),
   more: Bool
 ): AllocationResult(c, access_info(c, term, name, h, more)) {
-  ⊢ AllocationResult(c, access_info(c, term, name, h, more)) from match more {
+  match more {
     true => allocation_result_return(
       c,
-      TyFn(Cons(TyInt(Width64), Nil), h, KindShared),
+      TyFn(Cons(TyInt(WidthU64), Nil), h, KindShared),
       state,
       AndIntro(AndIntro(Trivial, Trivial), bounded)
     )
@@ -214,9 +219,9 @@ pub theorem access_borrow_allocation(
   ty: Ty,
   state: CheckerAllocation(c),
   bounded: TypeAllocated(ck_next_of(c), ty),
-  borrow: Bool
-): AllocationResult(c, access_borrow(c, ty, borrow)) {
-  ⊢ AllocationResult(c, access_borrow(c, ty, borrow)) from match borrow {
+  r#borrow: Bool
+): AllocationResult(c, access_borrow(c, ty, r#borrow)) {
+  match r#borrow {
     true => allocation_result_return(c, TyBorrow(ty, false), state, bounded)
 
     false => allocation_result_return(c, ty, state, bounded) }
@@ -231,14 +236,72 @@ pub theorem access_found_allocation(
   found: Option(Ty),
   bounded: OptionTypeAllocated(ck_next_of(c), found)
 ): AllocationResult(c, access_found(c, term, name, d, borrowed, found)) {
-  ⊢ AllocationResult(c, access_found(c, term, name, d, borrowed, found)) from match found {
-    None => allocation_error_fresh(c, cat4(d, " has no field `", name, "`"), span_of(term), state)
+  match found {
+    None => allocation_error_fresh(c, no_field_message(d, name), span_of(term), state)
     Some(t) => access_borrow_allocation(
       c,
       t,
       state,
       bounded,
       Bool::and(borrowed, not(kind_dup(ck_kind(c, t))))
+    ) }
+}
+pub theorem product_field_pick_allocated(
+  first: Ty,
+  rest: List(Ty),
+  limit: Nat,
+  h: TypeListAllocated(limit, Cons(first, rest)),
+  fst: Bool,
+  snd: Bool
+): OptionTypeAllocated(limit, product_field_pick(first, rest, fst, snd)) {
+  match fst {
+    true => And::left(h)
+    false => ⊢ OptionTypeAllocated(limit, product_field_pick(first, rest, false, snd)) from match snd {
+      true => allocated_product_of(rest, limit, And::right(h))
+      false => Trivial
+    }
+  }
+}
+pub theorem product_field_type_allocated(
+  ms: List(Ty),
+  name: Text,
+  limit: Nat,
+  h: TypeListAllocated(limit, ms)
+): OptionTypeAllocated(limit, product_field_type(ms, name)) {
+  match ms {
+    Nil => Trivial
+    Cons(first, rest) => product_field_pick_allocated(
+      first,
+      rest,
+      limit,
+      h,
+      Text::eq(name, "fst"),
+      Text::eq(name, "snd")
+    )
+  }
+}
+pub theorem access_product_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  original: Ty,
+  borrowed: Bool,
+  state: CheckerAllocation(c),
+  found: Option(Ty),
+  bounded: OptionTypeAllocated(ck_next_of(c), found)
+): AllocationResult(c, access_product(c, term, name, original, borrowed, found)) {
+  match found {
+    Some(t) => access_borrow_allocation(
+      c,
+      t,
+      state,
+      bounded,
+      Bool::and(borrowed, not(kind_dup(ck_kind(c, t))))
+    )
+    None => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
     ) }
 }
 pub theorem access_struct_allocation(
@@ -275,8 +338,8 @@ pub theorem access_struct_allocation(
 
     false => allocation_result_rewrap(
       c,
-      ck_field_missing(c, term, TyNamed(d, args), name),
-      ck_field_missing_allocation(c, term, TyNamed(d, args), name, state)
+      ck_field_missing(c, term, TyNamed(NameSpelled(d), args), name),
+      ck_field_missing_allocation(c, term, TyNamed(NameSpelled(d), args), name, state)
     ) }
 }
 pub theorem access_field_allocation(
@@ -290,7 +353,7 @@ pub theorem access_field_allocation(
   ty: Ty,
   bounded: TypeAllocated(ck_next_of(c), ty)
 ): AllocationResult(c, access_field(c, term, name, original, borrowed, ty)) {
-  ⊢ AllocationResult(c, access_field(c, term, name, original, borrowed, ty)) from match ty {
+  match ty {
     TyInt(w) => allocation_result_rewrap(
       c,
       ck_field_missing(c, term, original, name),
@@ -326,6 +389,11 @@ pub theorem access_field_allocation(
       ck_field_missing(c, term, original, name),
       ck_field_missing_allocation(c, term, original, name, state)
     )
+    TyFloat32 => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
     TyFn(ps, r, k) => allocation_result_rewrap(
       c,
       ck_field_missing(c, term, original, name),
@@ -336,10 +404,15 @@ pub theorem access_field_allocation(
       ck_field_missing(c, term, original, name),
       ck_field_missing_allocation(c, term, original, name, state)
     )
-    TyProduct(ts) => allocation_result_rewrap(
+    TyProduct(ts) => access_product_allocation(
       c,
-      ck_field_missing(c, term, original, name),
-      ck_field_missing_allocation(c, term, original, name, state)
+      term,
+      name,
+      original,
+      borrowed,
+      state,
+      product_field_type(ts, name),
+      product_field_type_allocated(ts, name, ck_next_of(c), bounded)
     )
     TyTagged(tags, inner) => allocation_result_rewrap(
       c,
@@ -350,13 +423,13 @@ pub theorem access_field_allocation(
       c,
       term,
       name,
-      d,
+      surface_name_text(d),
       args,
       borrowed,
       state,
       declarations,
       bounded,
-      data_is_struct(ck_datas_of(c), d)
+      data_is_struct(ck_datas_of(c), surface_name_text(d))
     )
     TyParam(n, k) => allocation_result_rewrap(
       c,

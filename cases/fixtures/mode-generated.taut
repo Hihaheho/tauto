@@ -1,4 +1,4 @@
-import "../../std/Mode.taut"
+import std::mode
 
 @mode!(
   `depth(rec l, out n) -> Measured { MeasuredYes | MeasuredNo }`
@@ -15,7 +15,7 @@ inductive Le: (Nat, Nat) -> Prop {
 }
 
 fn answer(l: List(Nat)): Nat {
-  ⊢ Nat from match depth(l) {
+  match depth(l) {
     MeasuredYes(n, h, unique) => n
     MeasuredNo(refute) => Zero
   }
@@ -25,7 +25,7 @@ theorem empty_depth(): answer(Nil) = Zero { Refl }
 theorem two_depth(): answer(Cons(Zero, Cons(Zero, Nil))) = Succ(Succ(Zero)) { Refl }
 
 fn le_bool(n: Nat, m: Nat): Bool {
-  ⊢ Bool from match le(n, m) {
+  match le(n, m) {
     LeYes(h) => true
     LeNo(refute) => false
   }
@@ -42,7 +42,7 @@ inductive Nested: (Nat, Nat) -> Prop {
   NPair<n: Nat, m: Nat>(h: Nested(n, m)): Nested(Succ(Succ(n)), Succ(m))
 }
 fn nested_value(n: Nat): Option(Nat) {
-  ⊢ Option(Nat) from match nested(n) {
+  match nested(n) {
     NestedYes(m, h, unique) => Some(m)
     NestedNo(refute) => None
   }
@@ -58,7 +58,7 @@ inductive Mixed: (Nat, Nat, Nat) -> Prop {
   MRight<m: Nat>: Mixed(Zero, Succ(m), m)
 }
 fn mixed_value(n: Nat, m: Nat): Option(Nat) {
-  ⊢ Option(Nat) from match mixed(n, m) {
+  match mixed(n, m) {
     MixedYes(k, h, unique) => Some(k)
     MixedNo(refute) => None
   }
@@ -82,7 +82,7 @@ inductive BoolAnswer(a: Bool, b: Bool): Type {
   BoolDiff(no: (a = b) -> False): BoolAnswer(a, b)
 }
 fn bool_dec(a: Bool, b: Bool): BoolAnswer(a, b) {
-  ⊢ BoolAnswer(a, b) from match a {
+  match a {
     true => ⊢ BoolAnswer(true, b) from match b {
       true => BoolSame(Refl)
       false => BoolDiff(e => ⊢ False from match e {})
@@ -104,7 +104,7 @@ inductive Select: (Nat, Bool, Nat) -> Prop {
   SelectPacket<n: Nat, b: Bool>(h: Build(n, Wrapped(Packed(b)))): Select(n, b, Zero)
 }
 fn selected(n: Nat, b: Bool): Bool {
-  ⊢ Bool from match select(n, b) {
+  match select(n, b) {
     SelectedYes(k, h, unique) => true
     SelectedNo(refute) => false
   }
@@ -121,7 +121,7 @@ theorem depth_unique(
   hn: Depth(l, n),
   hm: Depth(l, m)
 ): n = m {
-  ⊢ n = m from match depth(l) {
+  match depth(l) {
     MeasuredYes(k, h, unique) => Eq::trans(unique(n, hn), Eq::sym(unique(m, hm)))
     MeasuredNo(refute) => False::elim(refute(n, hn))
   }
@@ -130,7 +130,7 @@ fn select_contract(
   n: Nat,
   b: Bool
 ): Or(Exists(Nat, k => Select(n, b, k)), (∀ k: Nat. (Select(n, b, k)) -> False)) {
-  ⊢ Or(Exists(Nat, k => Select(n, b, k)), (∀ k: Nat. (Select(n, b, k)) -> False)) from match select(
+  match select(
     n,
     b
   ) {
@@ -139,7 +139,7 @@ fn select_contract(
   }
 }
 fn le_contract(n: Nat, m: Nat): Or(Le(n, m), (Le(n, m)) -> False) {
-  ⊢ Or(Le(n, m), (Le(n, m)) -> False) from match le(n, m) {
+  match le(n, m) {
     LeYes(h) => OrInl(h)
     LeNo(refute) => OrInr(refute)
   }
@@ -150,7 +150,7 @@ fn le_contract(n: Nat, m: Nat): Or(Le(n, m), (Le(n, m)) -> False) {
 ) => inductive NeverAnswer, fn never
 inductive NeverRelated: (Nat, Nat) -> Prop {}
 theorem never_contract(n: Nat, m: Nat, h: NeverRelated(n, m)): False {
-  ⊢ False from match never(n) {
+  match never(n) {
     NeverYes(k, hk, unique) => ⊢ False from match hk {}
     NeverNo(refute) => refute(m, h)
   }
@@ -164,7 +164,7 @@ inductive BoolIdentity: (Bool, Bool) -> Prop {
   BIFalse: BoolIdentity(false, false)
 }
 fn bool_value(b: Bool): Bool {
-  ⊢ Bool from match bool_identity(b) {
+  match bool_identity(b) {
     BIYes(c, h, unique) => c
     BINo(refute) => false
   }
@@ -172,10 +172,10 @@ fn bool_value(b: Bool): Bool {
 theorem bool_true(): bool_value(true) = true { Refl }
 theorem bool_false(): bool_value(false) = false { Refl }
 
-perform show("selected", selected(Succ(Zero), true))
-perform show("different", selected(Succ(Zero), false))
-perform show("shape", selected(Zero, true))
-perform show("le", le_bool(Zero, Succ(Zero)))
-perform show("not-le", le_bool(Succ(Zero), Zero))
-perform show("true", bool_value(true))
-perform show("false", bool_value(false))
+show(&selected(Succ(Zero), true))
+show(&selected(Succ(Zero), false))
+show(&selected(Zero, true))
+show(&le_bool(Zero, Succ(Zero)))
+show(&le_bool(Succ(Zero), Zero))
+show(&bool_value(true))
+show(&bool_value(false))

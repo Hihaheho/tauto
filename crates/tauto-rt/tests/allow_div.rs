@@ -1,4 +1,4 @@
-//! `--allow-div`: `Div` outside any `budget` runs past the host's step limit.
+//! `--allow-div`: `div` outside any `budget` runs past the host's step limit.
 
 use tauto_rt::permissions::{self, Permissions};
 use tauto_rt::{DEFAULT_STEP_LIMIT, Loc, host_tick};

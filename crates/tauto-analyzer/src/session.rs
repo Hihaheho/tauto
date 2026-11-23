@@ -46,7 +46,7 @@ type Key = (u64, PathBuf);
 
 thread_local! {
     static SESSIONS: RefCell<HashMap<Key, Session>> = RefCell::new(HashMap::new());
-    static GENESIS: RefCell<HashMap<bool, Checker>> = RefCell::new(HashMap::new());
+    static GENESIS: RefCell<HashMap<bool, tauto_identity::Kept<Checker>>> = RefCell::new(HashMap::new());
 }
 
 /// Runs `f` on the session of `entry` in workspace `ws`. `f` must not ask
@@ -73,10 +73,10 @@ pub(crate) fn genesis(proof_cache: bool) -> Result<Checker, String> {
     GENESIS.with(|g| {
         let mut g = g.borrow_mut();
         if let Some(c) = g.get(&proof_cache) {
-            return Ok(c.clone());
+            return Ok(c.get());
         }
         let c = Checker::new(proof_cache)?;
-        g.insert(proof_cache, c.clone());
+        g.insert(proof_cache, tauto_identity::Kept::new(&c));
         Ok(c)
     })
 }

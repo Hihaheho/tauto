@@ -1,0 +1,222 @@
+// `tail`: a call of the function itself in tail position whose frame may be
+// discarded is marked `recur`; one whose frame is still needed stays a call.
+
+@ cases.tail-marks-an-owned-accumulator
+source = ```tauto
+fn count(n: u64, done: u64): u64 ! {overflow} {
+    if n == 0 { done } else { count(n - 1, done + 1) }
+}
+show(&count(3, 0))
+```
+stdout = "3\n"
+nir.fns.count = ```nir
+fn count@2(n#4: u64, done#5: u64): u64 A = if eq(copy n#4, 0u64) then copy done#5 else count@2(sub<u64>(copy n#4, 1u64), add<u64>(copy done#5, 1u64)) tier A recur: u64
+```
+
+@ cases.tail-marks-a-borrow-passed-on
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+source = ```tauto
+
+fn sum_from(v: &Vec(u64), i: u64, left: u64, acc: u64): u64 ! {out_of_bounds, overflow} {
+    if left == 0 {
+        acc
+    } else {
+        let x := Vec::index(&v, i)
+        let next := if i + 1 == Vec::len(&v) { 0 } else { i + 1 }
+        sum_from(&v, next, left - 1, acc + x)
+    }
+}
+var v: Vec(u64) := Vec::new()
+Vec::push(&mut v, 1)
+Vec::push(&mut v, 2)
+show(&(handle { sum_from(&v, 0, 3, 0) } with { out_of_bounds() => 0 }))
+```
+stdout = "4\n"
+nir.fns.sum_from = ```nir
+fn sum_from@2(ref v#5: &Vec(u64), i#6: u64, left#7: u64, acc#8: u64): u64 A = if eq(copy left#7, 0u64) then copy acc#8 else {
+  let ref x#9 := Vec::index@5<u64>(&v#5, copy i#6) tier A: &u64;
+  let next#10 := if eq(add<u64>(copy i#6, 1u64), builtin Vec::len(&v#5): u64) then 0u64 else add<u64>(copy i#6, 1u64);
+  sum_from@2(&v#5, copy next#10, sub<u64>(copy left#7, 1u64), add<u64>(copy acc#8, copy x#9)) tier A recur: u64
+}
+```
+
+@ cases.tail-marks-a-borrow-of-a-parameters-part
+source = ```tauto
+fn reverse_onto<A>(l: List(A), acc: List(A)): List(A) {
+    ⊢ List(A) from match l {
+        Nil => acc
+        Cons(h, t) => reverse_onto(t, Cons(h, acc))
+    }
+}
+fn len<A>(l: List(A), n: u64): u64 ! {overflow} {
+    ⊢ u64 from match l {
+        Nil => n
+        Cons(_, t) => len(t, n + 1)
+    }
+}
+let xs: List(u64) := Cons(1, Cons(2, Cons(3, Nil)))
+let ys := reverse_onto(xs, Nil)
+let n := len(ys, 0) + len(xs, 0)
+show(&n)
+```
+stdout = "6\n"
+nir.fns.reverse_onto = ```nir
+fn reverse_onto@1<'A: Clone>(l#5: List('A), acc#6: List('A)): List('A) S = match move l#5 {
+  List::Nil => move acc#6,
+  List::Cons(h#7: 'A, t#8: List('A)) => reverse_onto@1<'A>(move t#8, List::Cons(move h#7, move acc#6): List('A)) recur: List('A),
+}
+```
+nir.fns.len = ```nir
+fn len@2<'A: Clone>(l#9: List('A), n#10: u64): u64 A = match move l#9 {
+  List::Nil => copy n#10,
+  List::Cons(_, t#11: List('A)) => len@2<'A>(move t#11, add<u64>(copy n#10, 1u64)) tier A recur: u64,
+}
+```
+
+@ cases.tail-leaves-a-call-whose-value-is-used
+source = ```tauto
+fn count(n: u64): u64 ! {overflow} {
+    if n == 0 { 0 } else { 1 + count(n - 1) }
+}
+show(&count(3))
+```
+stdout = "3\n"
+nir.fns.count = ```nir
+fn count@2(n#4: u64): u64 A = if eq(copy n#4, 0u64) then 0u64 else add<u64>(1u64, count@2(sub<u64>(copy n#4, 1u64)) tier A: u64)
+```
+
+@ cases.tail-leaves-a-borrow-of-a-local
+source = ```tauto
+
+fn walk(v: &Vec(u64), left: u64): u64 ! {overflow} {
+    if left == 0 {
+        Vec::len(&v)
+    } else {
+        var w: Vec(u64) := Vec::new()
+        Vec::push(&mut w, left)
+        walk(&w, left - 1)
+    }
+}
+var v: Vec(u64) := Vec::new()
+show(&walk(&v, 2))
+```
+stdout = "1\n"
+nir.fns.walk = ```nir
+fn walk@2(ref v#5: &Vec(u64), left#6: u64): u64 A = if eq(copy left#6, 0u64) then builtin Vec::len(&v#5): u64 else {
+  var w#7 := builtin Vec::new(): Vec(u64);
+  builtin Vec::push(&mut w#7, copy left#6): Unit;
+  walk@2(&w#7, sub<u64>(copy left#6, 1u64)) tier A: u64
+}
+```
+
+@ cases.tail-leaves-a-call-in-a-handle
+source = ```tauto
+effect ask(): u64 direct
+fn inner(n: u64): u64 ! {overflow} {
+    handle {
+        if n == 0 { perform ask() } else { inner(n - 1) }
+    } with {
+        ask(), k => k(7)
+    }
+}
+show(&inner(3))
+```
+stdout = "7\n"
+nir.fns.inner = ```nir
+fn inner@2(n#4: u64): u64 A = handle 1 A do if eq(copy n#4, 0u64) then perform ask() direct instance() -> u64 legacy: u64 else inner@2(sub<u64>(copy n#4, 1u64)) tier A: u64 with {
+  direct ask() params() answer Unit instance() -> u64 legacy => 7u64,
+}: u64
+```
+
+@ cases.tail-leaves-a-function-that-holds-an-extern-value
+source = ```tauto
+extern {
+  type(affine) Tally
+  fn tally_new(n: i64): Tally
+  fn tally_get(t: &Tally): i64
+}
+fn drain(n: i64, acc: i64): i64 ! {div, overflow} {
+    if n == 0 {
+        acc
+    } else {
+        let t := tally_new(n)
+        let v := tally_get(&t)
+        drain(n - 1, acc + v)
+    }
+}
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+nir.library = true
+nir.fns.drain = ```nir
+fn drain@1(n#1: i64, acc#2: i64): i64 A = if eq(copy n#1, 0i64) then copy acc#2 else {
+  let t#3 := extern tally_new(copy n#1): Tally;
+  let v#4 := extern tally_get(&t#3): i64;
+  drain@1(sub<i64>(copy n#1, 1i64), add<i64>(copy acc#2, copy v#4)) tier A tick host: i64
+}
+```
+
+@ cases.tail-leaves-a-function-of-the-m-tier
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect choose(): Bool resume ω
+fn pick(n: u64, acc: u64): u64 ! {choose, overflow} {
+    if n == 0 {
+        acc
+    } else {
+        let b := perform choose()
+        pick(n - 1, if b { acc + 1 } else { acc })
+    }
+}
+fn all(): u64 ! {overflow} {
+    handle { pick(2, 0) } with {
+        choose(), k => k(true) + k(false)
+        return v => v
+    }
+}
+show(&all())
+```
+stdout = "4\n"
+nir.fns.pick = ```nir
+fn pick@5(n#8: u64, acc#9: u64): u64 M = if eq(copy n#8, 0u64) then copy acc#9 else {
+  let b#10 := perform choose() resume ω instance() -> Bool legacy: Bool;
+  pick@5(sub<u64>(copy n#8, 1u64), if copy b#10 then add<u64>(copy acc#9, 1u64) else copy acc#9) tier M: u64
+}
+```
+
+@ cases.tail-marks-a-borrowed-callback-passed-on
+source = ```tauto
+fn scan(items: &List(u64), predicate: &((u64) -> Bool)): Bool ! {div} {
+  match &items {
+    Nil => false
+    Cons(value, rest) => if predicate(value) { true } else { scan(&rest, &predicate) }
+  }
+}
+```
+nir.library = true
+nir.fns.scan = ```nir
+fn scan@1(ref items#1: &List(u64), fnref predicate#2: &fn(u64) -> Bool shared S): Bool S = match by_ref &items#1 {
+  List::Nil => false,
+  List::Cons(ref value#3: &u64, ref rest#4: &List(u64)) => if predicate#2(copy value#3): Bool then true else scan@1(&rest#4, &predicate#2) tick host recur: Bool,
+}
+```
+
+@ cases.tail-leaves-a-borrowed-callback-that-is-replaced
+source = ```tauto
+fn scan(items: &List(u64), predicate: &((u64) -> Bool)): Bool ! {div} {
+  match &items {
+    Nil => false
+    Cons(value, rest) => if predicate(value) { true } else {
+      scan(&rest, (next) => predicate(next))
+    }
+  }
+}
+```
+nir.library = true
+nir.fns.scan = ```nir
+fn scan@1(ref items#1: &List(u64), fnref predicate#2: &fn(u64) -> Bool shared S): Bool S = match by_ref &items#1 {
+  List::Nil => false,
+  List::Cons(ref value#3: &u64, ref rest#4: &List(u64)) => if predicate#2(copy value#3): Bool then true else scan@1(&rest#4, closure borrowed(next#5: u64) -> Bool as fn(u64) -> Bool copy S => predicate#2(copy next#5): Bool) tick host: Bool,
+}
+```

@@ -1,44 +1,6 @@
 use super::*;
 
-/// What the bounded, directly executed body establishes about an arm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperationAdmission {
-    Legacy,
-    BuiltinShow,
-    Unique,
-    Incomplete,
-    ExplicitReturn,
-    Missing,
-    Indeterminate,
-    Distinct,
-    Unresolved,
-}
-
-impl OperationAdmission {
-    pub fn limitation(self) -> Option<&'static str> {
-        match self {
-            Self::Legacy | Self::BuiltinShow | Self::Unique => None,
-            Self::Incomplete => {
-                Some("the handled body has an opaque or storage-sensitive operation context")
-            }
-            Self::ExplicitReturn => {
-                Some("an explicit return arm is outside checked operation-instance admission")
-            }
-            Self::Missing => {
-                Some("the handled body supplies no directly determined operation instance")
-            }
-            Self::Indeterminate => {
-                Some("the handled operation instances are not determined before checking the arm")
-            }
-            Self::Distinct => {
-                Some("the handled body has distinct parameterized operation instances")
-            }
-            Self::Unresolved => {
-                Some("a checked operation instance still has unresolved type arguments")
-            }
-        }
-    }
-}
+pub use tauto_nir::OperationAdmission;
 
 /// The complete formal signature, instantiated together by the checker.
 #[derive(Debug, Clone)]
@@ -53,9 +15,6 @@ pub struct CheckedOperationInstance {
 impl CheckedOperationInstance {
     pub fn is_generic(&self) -> bool {
         !self.type_args.is_empty()
-    }
-    pub fn is_builtin_show(&self) -> bool {
-        self.admission == OperationAdmission::BuiltinShow
     }
 }
 
@@ -72,7 +31,7 @@ pub(super) struct ArmObservation {
     instance: CheckedOperationInstance,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct OperationFacts {
     program: Option<Program>,
     occurrences: Vec<TermId>,
@@ -150,11 +109,7 @@ impl Checker {
             ParamId::Effect { owner, .. } => Some(owner.clone()),
             _ => None,
         });
-        let admission = if owner.is_some() && owner == self.builtin_show_owner {
-            OperationAdmission::BuiltinShow
-        } else {
-            OperationAdmission::Legacy
-        };
+        let admission = OperationAdmission::Legacy;
         CheckedOperationInstance {
             owner,
             type_args,
@@ -185,7 +140,13 @@ impl Checker {
             | Ty::Param(..) => true,
             // Function signatures do not describe borrowed captures or shared cells.
             // Product ownership is outside this bounded admission.
-            Ty::Borrow(..) | Ty::Fn(..) | Ty::Var(_) | Ty::App(..) | Ty::Poly(..) => false,
+            Ty::Borrow(..)
+            | Ty::Orig(_)
+            | Ty::Rc(_)
+            | Ty::Fn(..)
+            | Ty::Var(_)
+            | Ty::App(..)
+            | Ty::Poly(..) => false,
             Ty::Union(args) => args.iter().all(|p| self.owned_known_in(p, visiting)),
             Ty::Tagged(_, inner) | Ty::Info(inner) => self.owned_known_in(inner, visiting),
             Ty::Named(name, args) => {
@@ -334,7 +295,7 @@ impl Checker {
         complete_pass: bool,
         span: Span,
     ) {
-        if instance.is_generic() && !instance.is_builtin_show() {
+        if instance.is_generic() {
             let candidates: Vec<_> = body
                 .requests
                 .iter()
@@ -454,21 +415,15 @@ mod tests {
     use super::*;
 
     fn checked(case: &str) -> (Program, TypeReport) {
-        let source = crate::types::operation_instances::case_inputs::source_static(
-            "types/operation-instances.eure",
-            case,
-        );
-        let program = crate::surface::parse_program_as_written(source).unwrap();
+        let source = tauto_case_inputs::source("types/operation-instances.eure", case);
+        let program = tauto_parse::parse_program_as_written(&source).unwrap();
         let report = check_program(&program);
         (program, report)
     }
 
     fn fixture(name: &str) -> (Program, TypeReport) {
-        let source = crate::types::operation_instances::case_inputs::fixture_static(
-            "types/operation-instances.eure",
-            name,
-        );
-        let program = crate::surface::parse_program_as_written(source).unwrap();
+        let source = tauto_case_inputs::source("types/operation-instances.eure", name);
+        let program = tauto_parse::parse_program_as_written(&source).unwrap();
         let report = check_program(&program);
         (program, report)
     }
@@ -663,34 +618,6 @@ mod tests {
     }
 
     #[test]
-    fn builtin_show_exemption_belongs_to_its_checked_owner() {
-        let (program, report) = checked("operation-instance-builtin-show-keeps-erased-payloads");
-        assert!(report.errors.is_empty(), "{:?}", report.errors);
-        let facts = report.operation_instances_for(&program).unwrap();
-        assert!(
-            facts
-                .arms
-                .values()
-                .all(CheckedOperationInstance::is_builtin_show)
-        );
-        let (program, report) = fixture("operation-instance-user-show-is-not-builtin");
-        assert!(report.errors.is_empty(), "{:?}", report.errors);
-        let facts = report.operation_instances_for(&program).unwrap();
-        assert!(
-            facts
-                .arms
-                .values()
-                .all(|instance| !instance.is_builtin_show())
-        );
-        assert!(
-            facts
-                .performs
-                .values()
-                .all(|instance| !instance.is_builtin_show())
-        );
-    }
-
-    #[test]
     fn sealed_signature_facts_do_not_come_from_mutable_public_type_tables() {
         let (program, mut report) =
             checked("operation-instance-independent-parameters-and-wildcard");
@@ -745,312 +672,5 @@ mod tests {
             assert_eq!(arms.len(), 1, "{name}: {facts:?}");
             assert_eq!(arms[0].admission, admission, "{name}: {facts:?}");
         }
-    }
-
-    #[test]
-    fn host_wrapper_has_distinct_occurrences_and_preserves_full_signatures() {
-        let (program, _) = checked("operation-instance-host-wrapper-keeps-signatures");
-        let wrapped = crate::host::wrap(&program).unwrap();
-        let original_occurrences = value_occurrences(&program);
-        let wrapped_occurrences = value_occurrences(&wrapped);
-        let unique: HashSet<_> = wrapped_occurrences.iter().copied().collect();
-        assert_eq!(unique.len(), wrapped_occurrences.len());
-        assert!(original_occurrences.iter().all(|at| unique.contains(at)));
-        let report = check_program(&wrapped);
-        let facts = report.operation_instances_for(&wrapped).unwrap();
-        for owner in ["identity", "keep"] {
-            let arms: Vec<_> = facts
-                .arms
-                .values()
-                .filter(|instance| {
-                    instance
-                        .owner
-                        .as_ref()
-                        .is_some_and(|at| at.name.as_str() == owner)
-                })
-                .collect();
-            assert_eq!(arms.len(), 1, "{owner}: {facts:?}");
-            assert_eq!(arms[0].admission, OperationAdmission::Unique, "{owner}");
-            let requests: Vec<_> = facts
-                .performs
-                .values()
-                .filter(|instance| {
-                    instance
-                        .owner
-                        .as_ref()
-                        .is_some_and(|at| at.name.as_str() == owner)
-                })
-                .collect();
-            assert_eq!(requests.len(), 1, "{owner}: {facts:?}");
-            assert_eq!(requests[0].params, arms[0].params, "{owner}");
-            assert_eq!(requests[0].type_args, arms[0].type_args, "{owner}");
-            assert_eq!(requests[0].answer, arms[0].answer, "{owner}");
-        }
-    }
-}
-
-#[cfg(test)]
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
-mod case_inputs {
-    pub fn fixture_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            (
-                "types/operation-instances.eure",
-                "operation-instance-equal-payloads-have-distinct-answer-arguments",
-            ) => {
-                r#"effect convert<A, B>(value: A): B
-handle {
-  let number: i64 := perform convert(true)
-  let text: Text := perform convert(true)
-  true
-} with { ∀ A, B. convert<A, B>(_), k => true }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-mutable-storage-is-not-replayed",
-            ) => {
-                r#"effect identity<A>(value: A): A
-let result := handle {
-  var value := perform identity(7)
-  value
-} with { ∀ A. identity<A>(value), k => k(value) }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-latent-body-is-not-a-request",
-            ) => {
-                r#"effect identity<A>(value: A): A
-let result := handle {
-  fn unused(): Text { perform identity("latent") }
-  perform identity(7)
-} with { ∀ A. identity<A>(value), k => k(value) }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-phantom-argument-is-not-invented",
-            ) => {
-                r#"effect phantom<A>(value: i64): i64
-let result := handle { perform phantom(7) } with { phantom(value), k => k(value) }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-rigid-outer-parameter-is-owned",
-            ) => {
-                r#"effect identity<A>(value: A): A
-fn relay<T>(input: T): T {
-  handle { perform identity(input) } with { identity<T>(value), k => k(value) }
-}"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-product-is-not-owned-evidence",
-            ) => {
-                r#"effect identity<A>(value: A): A
-let callback := () => "kept"
-let product := #(callback, true)
-let result := handle { perform identity(product) } with { ∀ A. identity<A>(value), k => k(value) }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-nominal-fields-are-owned-evidence",
-            ) => {
-                r#"struct Holder { callback: () -> Text }
-struct Wrapped { holder: Holder }
-effect identity<A>(value: A): A
-let wrapped := Wrapped { holder: Holder { callback: () => "kept" } }
-let result := handle { perform identity(wrapped) } with { ∀ A. identity<A>(value), k => k(value) }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-return-storage-is-not-replayed",
-            ) => {
-                r#"linear struct Token {}
-effect identity<A>(): A
-let result := handle { perform identity() } with {
-  return value => { var saved := value; 7 }
-  identity<Token>(), k => k(Token {})
-}"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-result-only-requests-remain-distinct",
-            ) => {
-                r#"effect supply<A>(): A
-handle {
-  let number: i64 := perform supply()
-  let text: Text := perform supply()
-  true
-} with { ∀ A. supply<A>(), k => true }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-nested-handler-is-not-a-direct-summary",
-            ) => {
-                r#"effect identity<A>(value: A): A
-effect ask(): i64
-let result := handle {
-  handle { perform ask() } with { ask(), k => k(perform identity(7)) }
-} with { ∀ A. identity<A>(value), k => k(value) }"#
-            }
-            ("types/operation-instances.eure", "operation-instance-user-show-is-not-builtin") => {
-                r#"effect show<A>(value: A): A
-let result := handle { perform show(7) } with { ∀ A. show<A>(value), k => k(value) }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-captured-cell-is-not-owned-evidence",
-            ) => {
-                r#"effect identity<A>(value: A): A
-var text: Text := "kept"
-let callback := () => text
-let result := handle { perform identity(callback) } with { ∀ A. identity<A>(value), k => k(value) }"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
-    pub fn fixture(file: &str, name: &str) -> String {
-        fixture_static(file, name).to_string()
-    }
-    pub fn source_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            (
-                "types/operation-instances.eure",
-                "operation-instance-linear-wildcard-is-rejected",
-            ) => {
-                r#"linear struct Token {}
-effect second<A, B>(first: A, second: B): B
-let result := handle { perform second(Token {}, 7) } with {
-  second<Token, i64>(_, value), k => k(value)
-}"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-nested-linear-wildcard-is-rejected",
-            ) => {
-                r#"linear struct Token {}
-struct Wrapped(A: Type) { value: A }
-effect second<A, B>(first: Wrapped(A), second: B): B
-let token: Token := Token {}
-let wrapped: Wrapped(Token) := Wrapped { value: token }
-let result := handle { perform second(wrapped, 7) } with {
-  second<Token, i64>(Wrapped { value: _ }, value), k => k(value)
-}"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-nested-linear-return-builds-with-its-instance",
-            ) => {
-                r#"linear struct Token {}
-struct Wrapped(A: Type) { value: A }
-effect supply<A>(): A
-let result := handle { let w: Wrapped(Token) := perform supply(); w } with {
-  return Wrapped { value: _ } => 7
-  supply<Wrapped(Token)>(), k => k(Wrapped { value: Token {} })
-}"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-independent-parameters-and-wildcard",
-            ) => {
-                r#"effect second<A, B>(first: A, second: B): B
-let result := handle { perform second("kept", 7) } with {
-  second<Text, i64>(_, value), k => k(value)
-}
-perform show("answer", result)"#
-            }
-            ("types/operation-instances.eure", "operation-instance-result-only-singleton") => {
-                r#"effect supply<A>(): A
-let result: i64 := handle { perform supply() } with { supply<i64>(), k => k(7) }
-perform show("answer", result)"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-indeterminate-integers-keep-frontend-behavior",
-            ) => {
-                r#"effect identity<A>(value: A): A
-let result := handle {
-  if true { perform identity(7) } else { perform identity(8) }
-} with { ∀ A. identity<A>(value), k => k(value) }
-perform show("answer", result)"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-host-wrapper-keeps-signatures",
-            ) => {
-                r#"effect identity<A>(value: A): A
-effect keep<B>(fixed: i64 | Text, value: B): B
-let number: i64 := 7
-let result := handle { perform identity(number) } with { ∀ A. identity<A>(value), k => k(value) }
-let kept := handle { perform keep(number, true) } with { ∀ B. keep<B>(_, value), k => k(value) }
-perform stdout("host\n")
-perform show("answer", result)
-perform show("kept", kept)"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-independent-parameters-cannot-collapse",
-            ) => {
-                r#"effect second<A, B>(first: A, second: B): B
-let result := handle { perform second("kept", 7) } with {
-  second<Text, i64>(first, second), k => k(first)
-}"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-distinct-requests-remain-a-rust-boundary",
-            ) => {
-                r#"effect identity<A>(value: A): A
-handle {
-  let number: i64 := perform identity(7)
-  let text: Text := perform identity("kept")
-  perform show("number", number)
-  perform show("text", text)
-} with { ∀ A. identity<A>(value), k => k(value) }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-builtin-show-keeps-erased-payloads",
-            ) => {
-                r#"let result := handle {
-  perform show("number", 7)
-  perform show("text", "kept")
-  9
-} with { ∀ A. show<A>(_, _), k => k(#()) }
-perform show("answer", result)"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-opaque-callback-keeps-javascript-behavior",
-            ) => {
-                r#"effect identity<A>(value: A): A
-let action := () => perform identity(7)
-let result := handle { action() } with { ∀ A. identity<A>(value), k => k(value) }
-perform show("answer", result)"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-linear-return-wildcard-builds-with-its-instance",
-            ) => {
-                r#"linear struct Token {}
-effect supply<A>(): A
-let result := handle { let t: Token := perform supply(); t } with {
-  return _ => 7
-  supply<Token>(), k => k(Token {})
-}"#
-            }
-            ("types/operation-instances.eure", "operation-instance-narrowed-arm-mismatch") => {
-                r#"effect identity<A>(value: A): A
-let result := handle { perform identity("kept") } with {
-  identity<Text>(value), k => k(value + 1)
-}"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
-    pub fn source(file: &str, name: &str) -> String {
-        source_static(file, name).to_string()
     }
 }

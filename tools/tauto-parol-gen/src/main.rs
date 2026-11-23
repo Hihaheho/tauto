@@ -1,6 +1,6 @@
 //! Generates the Tauto parser from `crates/tauto-parol/tauto.par` with
 //! parol into `crates/tauto-parol/src/generated/`, which is committed. Run it
-//! through `scripts/generate-tauto-parol.sh` after every grammar change.
+//! through `scripts/generate-tauto-parol.taut` after every grammar change.
 
 use std::fs;
 use std::path::Path;

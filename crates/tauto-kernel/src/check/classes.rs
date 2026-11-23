@@ -24,10 +24,10 @@ use std::collections::{HashMap, HashSet};
 use tauto_message::{Message, msg};
 use tauto_parol::Span;
 
-use super::{Diagnostic, Entry, Kernel, T, Verdict, pi};
+use super::{Diagnostic, Entry, Kernel, T, Verdict};
 use crate::surface::{
-    ClassDecl, Constraint, Constructor, DICT, FnDecl, InductiveDecl, InstanceDecl, MatchArm,
-    Pattern, Stmt, TermKind, TheoremDecl, dictionary_name,
+    ClassDecl, Constraint, Constructor, DICT, FnDecl, InductiveDecl, InferCondition, InstanceDecl,
+    MatchArm, Pattern, Stmt, TermKind, TheoremDecl, dictionary_name,
 };
 
 pub(super) fn is_dict(name: &Name) -> bool {
@@ -36,26 +36,89 @@ pub(super) fn is_dict(name: &Name) -> bool {
 
 #[derive(Default, Clone)]
 pub(super) struct Registry {
-    classes: HashMap<Name, Class>,
-    constructor_shapes: HashMap<Name, (usize, usize)>,
-    pub(super) law_owners: HashMap<Name, Name>,
-    pub(super) law_records: HashMap<Name, Name>,
-    pub(super) member_owners: HashMap<Name, Name>,
-    pub(super) member_labels: HashMap<Name, String>,
-    pub(super) direct_members: HashMap<(Name, Name), Name>,
-    pub(super) direct_origins: HashMap<Name, (Name, Name)>,
+    classes: tauto_identity::ForkedMap<Name, Class>,
+    constructor_shapes: tauto_identity::ForkedMap<Name, (usize, usize)>,
+    pub(super) law_owners: tauto_identity::ForkedMap<Name, Name>,
+    pub(super) law_records: tauto_identity::ForkedMap<Name, Name>,
+    pub(super) member_owners: tauto_identity::ForkedMap<Name, Name>,
+    pub(super) member_labels: tauto_identity::ForkedMap<Name, String>,
+    pub(super) direct_members: tauto_identity::ForkedMap<(Name, Name), Name>,
+    pub(super) direct_origins: tauto_identity::ForkedMap<Name, (Name, Name)>,
     /// `C::m` for every method and law of a class: the names a program may
     /// write as `C::m(…)`.
-    members: HashSet<Name>,
-    methods: HashSet<Name>,
+    members: tauto_identity::ForkedSet<Name>,
+    methods: tauto_identity::ForkedSet<Name>,
     /// For each law `C::l`, how many generics it has of its own.
-    laws: HashMap<Name, usize>,
+    laws: tauto_identity::ForkedMap<Name, usize>,
     /// Where each law an instance proves is written, and what is wrong if
     /// the record of the laws does not take it.
     law_spans: Vec<(Span, Message)>,
-    pub(super) instances: HashMap<(Name, Name), Instance>,
+    pub(super) instances: tauto_identity::ForkedMap<(Name, Name), Instance>,
     /// An instance's function, by name: the class and the head it is for.
-    pub(super) globals: HashMap<Name, (Name, Name)>,
+    pub(super) globals: tauto_identity::ForkedMap<Name, (Name, Name)>,
+}
+
+impl Registry {
+    pub(super) fn law_spans_len(&self) -> usize {
+        self.law_spans.len()
+    }
+
+    /// Leaves in this copy only what it wrote since it was made, and of the
+    /// `law_spans` it shares the first `law_spans` of, only what follows.
+    pub(super) fn subtract(&mut self, since: u64, law_spans: usize) {
+        self.classes.subtract(since);
+        self.constructor_shapes.subtract(since);
+        self.law_owners.subtract(since);
+        self.law_records.subtract(since);
+        self.member_owners.subtract(since);
+        self.member_labels.subtract(since);
+        self.direct_members.subtract(since);
+        self.direct_origins.subtract(since);
+        self.members.subtract(since);
+        self.methods.subtract(since);
+        self.laws.subtract(since);
+        self.instances.subtract(since);
+        self.globals.subtract(since);
+        self.law_spans.drain(..law_spans.min(self.law_spans.len()));
+    }
+
+    /// Takes in what a copy of this registry wrote (`check/fork.rs`); false
+    /// as [`tauto_identity::ForkedMap::absorb`] is.
+    pub(super) fn absorb(&mut self, other: Registry, law_spans: usize) -> bool {
+        use super::fork::add_after;
+        let Registry {
+            classes,
+            constructor_shapes,
+            law_owners,
+            law_records,
+            member_owners,
+            member_labels,
+            direct_members,
+            direct_origins,
+            members,
+            methods,
+            laws,
+            law_spans: spans,
+            instances,
+            globals,
+        } = other;
+        let mut alone = true;
+        alone &= self.classes.absorb_any(classes);
+        alone &= self.constructor_shapes.absorb(constructor_shapes);
+        alone &= self.law_owners.absorb(law_owners);
+        alone &= self.law_records.absorb(law_records);
+        alone &= self.member_owners.absorb(member_owners);
+        alone &= self.member_labels.absorb(member_labels);
+        alone &= self.direct_members.absorb(direct_members);
+        alone &= self.direct_origins.absorb(direct_origins);
+        alone &= self.members.absorb(members);
+        alone &= self.methods.absorb(methods);
+        alone &= self.laws.absorb(laws);
+        add_after(&mut self.law_spans, spans, law_spans);
+        alone &= self.instances.absorb_any(instances);
+        alone &= self.globals.absorb(globals);
+        alone
+    }
 }
 
 fn member_name(class: &Name, descriptor: &Class, label: &str) -> Name {
@@ -78,7 +141,7 @@ fn member_name(class: &Name, descriptor: &Class, label: &str) -> Name {
     }
 }
 
-fn laws_name(class: &Name) -> Name {
+pub(super) fn laws_name(class: &Name) -> Name {
     match class.as_global() {
         Some(owner) => owner
             .generated(tauto_surface::identity::Generation::ClassLaws)
@@ -96,7 +159,7 @@ fn instance_name(member: &Name, head: &Name) -> Name {
     }
 }
 
-fn constructor_name(family: &Name) -> Name {
+pub(super) fn constructor_name(family: &Name) -> Name {
     match family.as_global() {
         Some(owner) => owner.constructor(0, "Mk").into(),
         None => format!("{family}::Mk").into(),
@@ -105,11 +168,9 @@ fn constructor_name(family: &Name) -> Name {
 
 impl Registry {
     pub(super) fn resolve(&mut self, resolver: &mut tauto_surface::resolve::Resolver) {
-        self.constructor_shapes = self
-            .constructor_shapes
-            .drain()
-            .map(|(n, shape)| (resolver.global(&n), shape))
-            .collect();
+        // What is already resolved stays as it is, and is not written: a
+        // copy hands back only what it changed (`tauto_identity::forked`).
+        self.constructor_shapes.rename_keys(|n| resolver.global(n));
         for (class, descriptor) in &self.classes {
             let class_ref = resolver.global(class);
             for label in descriptor
@@ -119,8 +180,8 @@ impl Registry {
                 .chain(descriptor.laws.iter().map(|l| &l.name))
             {
                 let member = resolver.global(&member_name(&class_ref, descriptor, label));
-                self.member_owners.insert(member.clone(), class_ref.clone());
-                self.member_labels.insert(member.clone(), label.to_string());
+                self.member_owners.put(member.clone(), class_ref.clone());
+                self.member_labels.put(member.clone(), label.to_string());
                 for ((owner, head), instance) in &self.instances {
                     if owner != class {
                         continue;
@@ -133,42 +194,44 @@ impl Registry {
                     let head = resolver.global(head);
                     let direct = resolver.global(&instance_name(&member, &head));
                     self.direct_members
-                        .insert((member.clone(), head.clone()), direct.clone());
-                    self.direct_origins.insert(direct, (member.clone(), head));
+                        .put((member.clone(), head.clone()), direct.clone());
+                    self.direct_origins.put(direct, (member.clone(), head));
                 }
             }
         }
-        self.members = self.members.drain().map(|n| resolver.global(&n)).collect();
-        self.methods = self.methods.drain().map(|n| resolver.global(&n)).collect();
-        self.laws = self
-            .laws
-            .drain()
-            .map(|(n, v)| (resolver.global(&n), v))
-            .collect();
-        self.classes = self
-            .classes
-            .drain()
-            .map(|(n, c)| {
-                let law = resolver.global(&laws_name(&n));
-                let n = resolver.global(&n);
-                self.law_records.insert(n.clone(), law.clone());
-                self.law_owners.insert(law, n.clone());
-                (n, c)
-            })
-            .collect();
-        self.globals = self
-            .globals
-            .drain()
-            .map(|(n, (c, h))| {
-                (
-                    resolver.global(&n),
-                    (resolver.global(&c), resolver.global(&h)),
-                )
-            })
-            .collect();
-        self.instances = self
+        self.members.rename(|n| resolver.global(n));
+        self.methods.rename(|n| resolver.global(n));
+        self.laws.rename_keys(|n| resolver.global(n));
+        let classes: Vec<Name> = self.classes.keys().cloned().collect();
+        for n in classes {
+            let law = resolver.global(&laws_name(&n));
+            let n = resolver.global(&n);
+            self.law_records.put(n.clone(), law.clone());
+            self.law_owners.put(law, n);
+        }
+        self.classes.rename_keys(|n| resolver.global(n));
+        self.globals.rename_keys(|n| resolver.global(n));
+        self.globals.change_values(|_, (c, h)| {
+            let to = (resolver.global(c), resolver.global(h));
+            let changed = to != (c.clone(), h.clone());
+            (*c, *h) = to;
+            changed
+        });
+        // An instance is resolved once, when its names are not yet: one
+        // whose names are resolved already is left as it is, unwritten.
+        let unresolved: Vec<(Name, Name)> = self
             .instances
-            .drain()
+            .iter()
+            .filter(|((c, h), instance)| {
+                resolver.global(c) != *c
+                    || resolver.global(h) != *h
+                    || resolver.global(&instance.global) != instance.global
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        let resolved: Vec<((Name, Name), Instance)> = unresolved
+            .into_iter()
+            .filter_map(|k| self.instances.remove(&k).map(|v| (k, v)))
             .map(|((c, h), mut instance)| {
                 instance.global = resolver.global(&instance.global);
                 instance.laws_global = instance.laws_global.as_ref().map(|n| resolver.global(n));
@@ -190,6 +253,9 @@ impl Registry {
                 ((resolver.global(&c), resolver.global(&h)), instance)
             })
             .collect();
+        for (k, v) in resolved {
+            self.instances.insert(k, v);
+        }
     }
 
     pub(super) fn member_bindings(&self) -> HashMap<(Name, String), Name> {
@@ -278,6 +344,34 @@ struct Class {
 
 // `bounds` also retains ordinary typed-binder spellings such as `Nat`.
 // Only ownership kinds belong to the metadata this pure path cannot preserve.
+/// A written parameter or result as the kernel reads a passing convention:
+/// an outer `&A` or `&mut A` is the value `A`. Borrows that appear inside a
+/// type (the item of `FiniteStep(&mut I, …)`, `Option(&mut I)`, …) stay:
+/// they are part of what the method returns or relates, and Nib still
+/// checks exclusivity for those positions.
+pub(super) fn without_borrows(t: &T) -> T {
+    let mut t = t.clone();
+    while let crate::surface::TermKind::Borrow { term, .. } = &*t.kind {
+        t = (**term).clone();
+    }
+    t
+}
+
+/// The reader's `borrows` mark put back on a parameter type for the
+/// dictionary field and its projection, so exclusive places stay places.
+fn with_borrow_mark(ty: &T, mark: Option<bool>) -> T {
+    match mark {
+        Some(mutable) => T::new(
+            TermKind::Borrow { orig: false, rc: false,
+                mutable,
+                term: Box::new(without_borrows(ty)),
+            },
+            ty.span,
+        ),
+        None => without_borrows(ty),
+    }
+}
+
 fn method_has_ownership_bounds(method: &FnDecl) -> bool {
     method.bounds.iter().flatten().any(|bound| {
         bound
@@ -291,6 +385,14 @@ struct Method {
     name: String,
     generics: Vec<(Name, T)>,
     params: Vec<(Name, T)>,
+    /// Outer `&` / `&mut` on each parameter of [`Self::params`], including a
+    /// leading `None` for each `where` dictionary. Extraction restores those
+    /// marks on the dictionary fields and projections so exclusive places are
+    /// not retyped as owned values.
+    borrows: Vec<Option<bool>>,
+    /// `borrows(…)` after the result: projections keep this so an item-lending
+    /// method is not rewritten as a Mut'k out-parameter function.
+    lends: Option<Vec<String>>,
     result: T,
 }
 
@@ -306,6 +408,7 @@ struct Law {
 
 #[derive(Clone)]
 pub(super) struct Instance {
+    pub(super) infer_from: Option<InferenceGate>,
     pub(super) generics: Vec<Name>,
     pub(super) head: T,
     pub(super) arguments: Vec<T>,
@@ -317,6 +420,82 @@ pub(super) struct Instance {
     pub(super) laws_global: Option<Name>,
     /// The laws it proves: the others are holes of its record.
     pub(super) proved: HashSet<String>,
+}
+
+#[derive(Clone)]
+pub(super) enum InferenceGate {
+    Slot(usize),
+    And(Box<Self>, Box<Self>),
+    Or(Box<Self>, Box<Self>),
+}
+
+impl InferenceGate {
+    pub(super) fn holds(&self, known: &[bool]) -> bool {
+        match self {
+            Self::Slot(index) => known.get(*index).copied().unwrap_or(false),
+            Self::And(left, right) => left.holds(known) && right.holds(known),
+            Self::Or(left, right) => left.holds(known) || right.holds(known),
+        }
+    }
+}
+
+fn inference_gate(
+    condition: &InferCondition,
+    class: &Class,
+    type_heads: &[bool],
+) -> Option<InferenceGate> {
+    Some(match condition {
+        InferCondition::Parameter(name) => {
+            InferenceGate::Slot(class.parameters.iter().enumerate().find_map(
+                |(index, (parameter, _))| {
+                    (inference_parameter_label(parameter) == name.as_str() && type_heads[index])
+                        .then_some(index)
+                },
+            )?)
+        }
+        InferCondition::And(left, right) => InferenceGate::And(
+            Box::new(inference_gate(left, class, type_heads)?),
+            Box::new(inference_gate(right, class, type_heads)?),
+        ),
+        InferCondition::Or(left, right) => InferenceGate::Or(
+            Box::new(inference_gate(left, class, type_heads)?),
+            Box::new(inference_gate(right, class, type_heads)?),
+        ),
+    })
+}
+
+fn inference_parameter_label(name: &Name) -> &str {
+    tauto_surface::macros::scope::split(name.as_str()).0
+}
+
+fn inference_owned(
+    condition: &InferCondition,
+    class: &Class,
+    arguments: &[T],
+    owners: &HashSet<Name>,
+    generics: &[Name],
+) -> bool {
+    match condition {
+        InferCondition::Parameter(parameter) => class
+            .parameters
+            .iter()
+            .position(|(name, _)| inference_parameter_label(name) == parameter.as_str())
+            .is_some_and(|index| {
+                let argument = &arguments[index];
+                !matches!(&*argument.kind, TermKind::Pi { .. })
+                    && argument.product_type_members().is_none()
+                    && head_name(argument)
+                        .is_some_and(|head| !generics.contains(&head) && owners.contains(&head))
+            }),
+        InferCondition::And(left, right) => {
+            inference_owned(left, class, arguments, owners, generics)
+                || inference_owned(right, class, arguments, owners, generics)
+        }
+        InferCondition::Or(left, right) => {
+            inference_owned(left, class, arguments, owners, generics)
+                && inference_owned(right, class, arguments, owners, generics)
+        }
+    }
 }
 
 /// A structural discriminator for first-order instance selection. Display text
@@ -358,6 +537,11 @@ impl HeadKey {
             }
             (Self::App(f, a), Self::App(g, b)) => {
                 a.len() == b.len() && f.overlaps(g) && a.iter().zip(b).all(|(x, y)| x.overlaps(y))
+            }
+            // A type applied to numerals (`UInt(64)`, [`numeral_arguments`])
+            // and the same type with its arguments not told apart.
+            (n @ Self::Name(_), Self::App(f, _)) | (Self::App(f, _), n @ Self::Name(_)) => {
+                **f == *n
             }
             _ => self == other,
         }
@@ -411,6 +595,14 @@ fn literal_text(t: &T, text_ctor: Option<&Name>) -> Option<String> {
         };
         out.push(n.parse::<u8>().ok()?);
         list = &args[args.len() - 1];
+    }
+}
+/// Whether a class parameter of this kind is written by a type: `Type`, or a
+/// type constructor `(Type) -> Type` (a higher-kinded class's parameter).
+fn type_or_type_former(kind: &T) -> bool {
+    match &*kind.kind {
+        TermKind::Pi { result, .. } => type_or_type_former(result),
+        _ => matches!(super::sort_of(kind), Some(super::Sort::Type(_))),
     }
 }
 fn argument_key(
@@ -480,11 +672,35 @@ fn argument_key(
         ))
     };
     match &*t.kind {
+        // A function type is its own head, whatever it takes and gives.
+        TermKind::Pi { .. } if type_head => Some(HeadKey::Name(function_head())),
         TermKind::Var(name) if generics.contains(name) => Some(HeadKey::Any),
         TermKind::Var(name) if type_head => Some(HeadKey::Name(name.clone())),
         TermKind::Var(name) => constructor(name, &[]),
         TermKind::Nat(n) => Some(HeadKey::Nat(nat_key(n))),
         TermKind::Bool(b) => Some(HeadKey::Bool(*b)),
+        // A type applied to numerals is told apart by them: `UInt(8)` and
+        // `UInt(64)` are two heads.
+        TermKind::App {
+            function,
+            arguments,
+        } if type_head && numeral_arguments(arguments) => Some(HeadKey::App(
+            Box::new(argument_key(
+                function,
+                generics,
+                true,
+                text_ctor,
+                shapes,
+                allow_unknown,
+            )?),
+            arguments
+                .iter()
+                .map(|a| match &*a.kind {
+                    TermKind::Nat(n) => HeadKey::Nat(nat_key(n)),
+                    _ => HeadKey::Unknown,
+                })
+                .collect(),
+        )),
         TermKind::App { function, .. } if type_head => {
             argument_key(function, generics, true, text_ctor, shapes, allow_unknown)
         }
@@ -500,34 +716,62 @@ fn argument_key(
     .or_else(|| allow_unknown.then_some(HeadKey::Unknown))
 }
 
+/// Whether every argument of a type is a numeral (`UInt(64)`): such a type
+/// is a head of instances of its own.
+pub(super) fn numeral_arguments(arguments: &[T]) -> bool {
+    !arguments.is_empty()
+        && arguments
+            .iter()
+            .all(|a| matches!(&*a.kind, TermKind::Nat(_)))
+}
+
+/// The name the instances of a type applied to numerals are kept under
+/// (`UInt@64` for `UInt(64)`): the same name each time it is asked for, so
+/// that extraction finds the members of the instance by its head.
+pub fn numeral_head(head: &T) -> Option<Name> {
+    let TermKind::App {
+        function,
+        arguments,
+    } = &*head.kind
+    else {
+        return None;
+    };
+    let TermKind::Var(n) = &*function.kind else {
+        return None;
+    };
+    if !numeral_arguments(arguments) {
+        return None;
+    }
+    let widths = arguments
+        .iter()
+        .map(|a| match &*a.kind {
+            TermKind::Nat(w) => nat_key(w),
+            _ => String::new(),
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let label = format!("{n}@{widths}");
+    Some(match n.as_global() {
+        Some(owner) => owner
+            .specialize(&format!("numeral-head:{widths}"), label)
+            .into(),
+        None => Name::from(label),
+    })
+}
+
+/// The head of the instances for function types, `(A) -> R`: a spelling no
+/// declaration can have.
+pub(super) fn function_head() -> Name {
+    Name::from("(_) -> _")
+}
+
 pub(super) fn head_name(head: &T) -> Option<Name> {
     match &*head.kind {
+        TermKind::Pi { .. } => Some(function_head()),
         TermKind::Var(n) => Some(n.clone()),
         TermKind::App { function, .. } => head_name(function),
         _ => None,
     }
-}
-
-/// An instance's head with a product `A × B × C` in it as `Prod(A, Prod(B, C))`, the
-/// type the checker reads it as: the instance is keyed by `Prod`, never by `Pair`.
-fn product_head(head: &T) -> T {
-    let TermKind::Product(items) = &*head.kind else {
-        return head.clone();
-    };
-    let mut items = tauto_surface::surface::qualify::product_type_members(items);
-    let Some(last) = items.pop() else {
-        return T::var(&tauto_surface::bindings::library_name("Unit"), head.span);
-    };
-    items
-        .into_iter()
-        .rev()
-        .fold(product_head(&last), |snd, fst| {
-            T::app(
-                &tauto_surface::bindings::library_name("Prod"),
-                vec![product_head(&fst), snd],
-                head.span,
-            )
-        })
 }
 
 pub(super) fn call(f: impl Into<Name>, args: Vec<T>, sp: Span) -> T {
@@ -540,10 +784,25 @@ pub(super) fn call(f: impl Into<Name>, args: Vec<T>, sp: Span) -> T {
 }
 
 fn pis(params: &[(Name, T)], result: T) -> T {
-    params
-        .iter()
-        .rev()
-        .fold(result, |acc, (n, d)| pi(n, d.clone(), acc))
+    if params.is_empty() {
+        return result;
+    }
+    // One multi-argument Π matches a Nib call `f(a, b, c)`. Currying would
+    // make the field a function of one value while projections apply all
+    // method arguments at once.
+    let span = result.span;
+    T::new(
+        TermKind::Pi {
+            params: params
+                .iter()
+                .map(|(n, d)| (Some(n.clone()), d.clone()))
+                .collect(),
+            result: Box::new(result),
+            effects: None,
+            unused: Vec::new(),
+        },
+        span,
+    )
 }
 
 fn failed(message: Message, span: Span) -> Verdict {
@@ -672,6 +931,32 @@ impl Kernel {
     /// `stmts` with each class, instance and `where` read; what goes wrong
     /// reading one is an entry of its own.
     pub(super) fn class_pass(&mut self, stmts: &[Stmt], entries: &mut Vec<Entry>) -> Vec<Stmt> {
+        fn collect(stmts: &[Stmt], owners: &mut HashSet<Name>) {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Inductive(decl) => {
+                        owners.insert(decl.name.clone());
+                    }
+                    Stmt::Struct(decl) | Stmt::Enum(decl) => {
+                        owners.insert(decl.name.clone());
+                    }
+                    Stmt::Mutual { items, .. } => collect(items, owners),
+                    _ => {}
+                }
+            }
+        }
+        let mut owners = HashSet::new();
+        collect(stmts, &mut owners);
+        let owners = self.inference_owners.clone().unwrap_or(owners);
+        self.class_pass_with_owners(stmts, entries, &owners)
+    }
+
+    fn class_pass_with_owners(
+        &mut self,
+        stmts: &[Stmt],
+        entries: &mut Vec<Entry>,
+        owners: &HashSet<Name>,
+    ) -> Vec<Stmt> {
         // The prepass also sees constructors declared in this unit, before
         // checking has populated `ctors`. Implicit constructor parameters do
         // not discriminate instances: both source and elaborated applications
@@ -700,7 +985,7 @@ impl Kernel {
                         verdict,
                     }),
                 },
-                Stmt::Instance(i) => match self.instance_decl(i) {
+                Stmt::Instance(i) => match self.instance_decl(i, owners) {
                     Ok(made) => out.extend(made),
                     Err(verdict) => entries.push(Entry {
                         name: format!(
@@ -719,7 +1004,7 @@ impl Kernel {
                 Stmt::Fn(f) => out.push(Stmt::Fn(self.where_fn(f))),
                 Stmt::Theorem(t) => out.push(Stmt::Theorem(self.where_theorem(t))),
                 Stmt::Mutual { items, span } => out.push(Stmt::Mutual {
-                    items: self.class_pass(items, entries),
+                    items: self.class_pass_with_owners(items, entries, owners),
                     span: *span,
                 }),
                 other => out.push(other.clone()),
@@ -741,18 +1026,22 @@ impl Kernel {
             return f.clone();
         };
         let dicts = self.dictionaries(&wheres, false, f.span);
+        let n_dicts = dicts.len();
         let mut f = f.clone();
         f.where_ = Vec::new();
         let mut params: Vec<Name> = dicts.iter().map(|(n, _)| n.clone()).collect();
         params.extend(f.params);
         f.params = params;
-        f.borrows = std::iter::repeat_n(None, dicts.len())
+        f.borrows = std::iter::repeat_n(None, n_dicts)
             .chain(f.borrows)
             .collect();
         f.param_types = dicts
             .into_iter()
             .map(|(_, t)| Some(t))
             .chain(f.param_types)
+            .collect();
+        f.unused_params = std::iter::repeat_n(None, n_dicts)
+            .chain(f.unused_params)
             .collect();
         f
     }
@@ -820,8 +1109,16 @@ impl Kernel {
 
     fn class_decl(&mut self, c: &ClassDecl) -> Result<Vec<Stmt>, Verdict> {
         let sp = c.span;
-        let skip =
-            |why: Message| Verdict::Skipped(msg!("kernel-class-skipped", why = why));
+        // Only an `inductive class` is a class of the proof language; what it
+        // cannot be is an error where it is declared, not a class the kernel
+        // leaves to the program.
+        if !c.inductive {
+            return Err(Verdict::Skipped(msg!(
+                "kernel-class-skipped",
+                why = msg!("kernel-class-not-inductive")
+            )));
+        }
+        let skip = |why: Message| failed(msg!("kernel-class-skipped", why = why), sp);
         if !c.over_types() {
             return Err(skip(msg!("kernel-class-one-param")));
         }
@@ -855,8 +1152,7 @@ impl Kernel {
             if !m.generics.is_empty()
                 && (m.rows.iter().any(|row| *row)
                     || method_has_ownership_bounds(m)
-                    || !m.where_.is_empty()
-                    || m.borrows.iter().any(Option::is_some))
+                    || !m.where_.is_empty() && self.constraints(&m.where_).is_none())
             {
                 return Err(skip(msg!(
                     "kernel-class-method-generics",
@@ -882,6 +1178,8 @@ impl Kernel {
                 .any(|n| {
                     tauto_surface::surface::qualify::BUILTIN_TYPES
                         .iter()
+                        // `Bool` is the kernel's own inductive (`prelude_nat.taut`).
+                        .filter(|b| **b != "Bool")
                         .any(|b| tauto_surface::bindings::is_library(&n, b))
                 });
             if builtin {
@@ -920,16 +1218,44 @@ impl Kernel {
                 })) else {
                     unreachable!()
                 };
+                // The evidence the method asks for leads its parameters, as the
+                // parameters a function's `where` makes.
+                let evidence = self
+                    .constraints(&m.where_)
+                    .map(|wheres| self.dictionaries(&wheres, false, m.span))
+                    .unwrap_or_default();
+                // Restore outer `&` / `&mut` on method parameters in the
+                // dictionary field type. The reader splits them into
+                // `borrows` + inner type; leaving the field as a bare `A`
+                // made exclusive methods unify the place into the class
+                // parameter (`MutIt(&mut A)` vs `MutIt(A)`) and extraction
+                // then lost writes through the class path.
+                let method_params: Vec<(Name, T)> = m
+                    .params
+                    .iter()
+                    .cloned()
+                    .zip(m.param_types.iter().flatten())
+                    .enumerate()
+                    .map(|(i, (n, ty))| {
+                        (n, with_borrow_mark(ty, m.borrows.get(i).copied().flatten()))
+                    })
+                    .collect();
+                let mut borrows = vec![None; evidence.len()];
+                borrows.extend(m.borrows.iter().copied());
+                if borrows.len() < evidence.len() + method_params.len() {
+                    borrows.resize(evidence.len() + method_params.len(), None);
+                }
                 Method {
                     name: m.name.to_string(),
                     generics: m.generic_parameters(),
-                    params: m
-                        .params
-                        .iter()
-                        .cloned()
-                        .zip(m.param_types.iter().flatten().cloned())
-                        .collect(),
-                    result: m.result.clone().unwrap_or_else(|| unit.clone()),
+                    params: evidence.into_iter().chain(method_params).collect(),
+                    borrows,
+                    lends: m.lends.clone(),
+                    result: m
+                        .result
+                        .as_ref()
+                        .map(without_borrows)
+                        .unwrap_or_else(|| unit.clone()),
                 }
             })
             .collect();
@@ -998,6 +1324,7 @@ impl Kernel {
             T::new(
                 TermKind::Match {
                     binder: None,
+                    binder_unused: None,
                     scrutinee: Box::new(T::var(scrutinee, sp)),
                     result: Some(Box::new(result.clone())),
                     arms: vec![MatchArm {
@@ -1005,7 +1332,10 @@ impl Kernel {
                         pattern: Pattern::Ctor {
                             name: mk.clone(),
                             args: (0..fields)
-                                .map(|i| Pattern::Bind(format!("f@{i}").into()))
+                                .map(|i| Pattern::Bind {
+                                    name: format!("f@{i}").into(),
+                                    unused: None,
+                                })
                                 .collect(),
                         },
                         guard: None,
@@ -1033,11 +1363,20 @@ impl Kernel {
             params.extend(m.params.iter().map(|(n, _)| n.clone()));
             let mut types = vec![Some(dict_ty.clone())];
             types.extend(m.params.iter().map(|(_, t)| Some(t.clone())));
+            // Dictionary binder is never a place; method parameters keep the
+            // class method's `&` / `&mut` marks for extraction.
+            let mut borrows = vec![None];
+            borrows.extend(m.borrows.iter().copied());
+            if borrows.len() < params.len() {
+                borrows.resize(params.len(), None);
+            }
             out.push(Stmt::Fn(FnDecl {
+                lends: m.lends.clone(),
                 budget: None,
                 vis: Default::default(),
                 generates: None,
                 opaque: false,
+                ghost: false,
                 decreasing_by: None,
                 name: member_name(&c.name, &class, &m.name),
                 generic_types: c
@@ -1055,14 +1394,19 @@ impl Kernel {
                 rows: vec![false; c.parameters.len() + m.generics.len()],
                 bounds: vec![None; c.parameters.len() + m.generics.len()],
                 bound_spans: Vec::new(),
-                borrows: vec![None; params.len()],
+                borrows,
                 params,
                 param_types: types,
                 result: Some(m.result.clone()),
                 effects: None,
+                written_effects: None,
+                row_hole: None,
                 where_: Vec::new(),
                 span: sp,
                 body,
+                unused: None,
+                unused_generics: Vec::new(),
+                unused_params: Vec::new(),
             }));
         }
         if !class.laws.is_empty() {
@@ -1138,6 +1482,8 @@ impl Kernel {
                     ty: l.ty.clone(),
                     body: Some(body),
                     span: sp,
+                    unused: None,
+                    unused_params: Vec::new(),
                 }));
             }
         }
@@ -1160,21 +1506,33 @@ impl Kernel {
             })
     }
 
-    fn instance_decl(&mut self, i: &InstanceDecl) -> Result<Vec<Stmt>, Verdict> {
+    fn instance_decl(
+        &mut self,
+        i: &InstanceDecl,
+        owners: &HashSet<Name>,
+    ) -> Result<Vec<Stmt>, Verdict> {
         let i = &InstanceDecl {
-            head: product_head(&i.head),
-            arguments: i.arguments.iter().map(product_head).collect(),
+            head: i.head.clone(),
+            arguments: i.arguments.clone(),
             ..i.clone()
         };
         let sp = i.span;
         let Some(class) = self.classes.classes.get(&i.class).cloned() else {
-            return Err(Verdict::Skipped(
-                msg!(
-                    "kernel-instance-not-class-skipped",
-                    name = (&i.class).to_string()
-                ),
-            ));
+            return Err(Verdict::Skipped(msg!(
+                "kernel-instance-not-class-skipped",
+                name = (&i.class).to_string()
+            )));
         };
+        if !self.structural_instances
+            && ["PartialEq", "DecEq"]
+                .iter()
+                .any(|c| tauto_surface::bindings::is_library(&i.class, c))
+        {
+            return Err(failed(
+                msg!("kernel-instance-structural", name = (&i.class).to_string()),
+                sp,
+            ));
+        }
         let head = head_name(&i.head).unwrap_or_else(|| Name::from("value"));
         let all_args: Vec<T> = std::iter::once(i.head.clone())
             .chain(i.arguments.clone())
@@ -1185,8 +1543,20 @@ impl Kernel {
         let type_heads: Vec<bool> = class
             .parameters
             .iter()
-            .map(|(_, ty)| matches!(super::sort_of(ty), Some(super::Sort::Type(_))))
+            .map(|(_, ty)| type_or_type_former(ty))
             .collect();
+        let infer_from = match &i.infer_from {
+            Some(condition) => Some(
+                inference_gate(condition, &class, &type_heads)
+                    .ok_or_else(|| failed(msg!("kernel-instance-infer-condition"), sp))?,
+            ),
+            None => None,
+        };
+        if i.infer_from.as_ref().is_some_and(|condition| {
+            !inference_owned(condition, &class, &all_args, owners, &i.generics)
+        }) {
+            return Err(failed(msg!("kernel-instance-infer-owner"), sp));
+        }
         let keys: Option<Vec<_>> = all_args
             .iter()
             .zip(&type_heads)
@@ -1206,7 +1576,46 @@ impl Kernel {
                         old.len() == keys.len() && old.iter().zip(&keys).all(|(a, b)| a.overlaps(b))
                     })
         });
-        let head = if class.parameters.len() == 1 && type_heads[0] {
+        let inference_conflict = infer_from.as_ref().is_some_and(|new_gate| {
+            self.classes
+                .instances
+                .iter()
+                .any(|((owner, _), old_instance)| {
+                    if owner != &i.class {
+                        return false;
+                    }
+                    let Some(old_gate) = &old_instance.infer_from else {
+                        return false;
+                    };
+                    let Some(old_keys): Option<Vec<_>> = std::iter::once(&old_instance.head)
+                        .chain(&old_instance.arguments)
+                        .zip(&old_instance.type_heads)
+                        .map(|(argument, type_head)| {
+                            self.instance_argument_key(
+                                argument,
+                                &old_instance.generics,
+                                *type_head,
+                                false,
+                            )
+                        })
+                        .collect()
+                    else {
+                        return false;
+                    };
+                    if old_keys.len() != keys.len() {
+                        return false;
+                    }
+                    let potentially_known: Vec<bool> = old_keys
+                        .iter()
+                        .zip(&keys)
+                        .map(|(old, new)| old.overlaps(new))
+                        .collect();
+                    old_gate.holds(&potentially_known) && new_gate.holds(&potentially_known)
+                })
+        });
+        let head = if let Some(numeral) = numeral_head(&i.head) {
+            numeral
+        } else if class.parameters.len() == 1 && type_heads[0] {
             head
         } else {
             let label = format!("{}@instance{}", head, self.classes.instances.len());
@@ -1230,6 +1639,9 @@ impl Kernel {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        if inference_conflict {
+            return Err(failed(msg!("kernel-instance-infer-conflict"), sp));
+        }
         if overlapping {
             return Err(failed(
                 msg!("kernel-instance-defined", instance = &shown),
@@ -1314,8 +1726,7 @@ impl Kernel {
             if !m.generics.is_empty()
                 && (written.rows.iter().any(|row| *row)
                     || method_has_ownership_bounds(written)
-                    || !written.where_.is_empty()
-                    || written.borrows.iter().any(Option::is_some)
+                    || !written.where_.is_empty() && self.constraints(&written.where_).is_none()
                     || written
                         .effects
                         .as_ref()
@@ -1330,13 +1741,22 @@ impl Kernel {
                 ));
             }
             let method_generics = written.generic_parameters();
-            if written.params.len() != m.params.len() {
+            let evidence = self
+                .constraints(&written.where_)
+                .map(|wheres| self.dictionaries(&wheres, false, written.span))
+                .unwrap_or_default();
+            let written_names: Vec<Name> = evidence
+                .iter()
+                .map(|(n, _)| n.clone())
+                .chain(written.params.iter().cloned())
+                .collect();
+            if written_names.len() != m.params.len() {
                 return Err(failed(
                     msg!(
                         "kernel-instance-method-params",
                         method = (&m.name).to_string(),
                         instance = &shown,
-                        written = written.params.len(),
+                        written = written_names.len(),
                         class = m.params.len()
                     ),
                     written.span,
@@ -1353,7 +1773,7 @@ impl Kernel {
                     method_generics
                         .iter()
                         .map(|(name, _)| name)
-                        .chain(&written.params),
+                        .chain(&written_names),
                 )
                 .filter(|_| !m.generics.is_empty())
                 .map(|(declared, actual)| {
@@ -1370,16 +1790,31 @@ impl Kernel {
                 }
                 ty
             };
-            let params: Vec<(Name, T)> = written
-                .params
+            // Keep the reader's split of `&mut T` into `borrows` + inner type.
+            // Nested borrows in the result (`FiniteStep(&mut I, …)`) stay so
+            // exclusive items type-check; extraction reads `borrows` to emit
+            // `&mut TautoErasedValue` parameters.
+            let params: Vec<(Name, T)> = evidence
                 .iter()
-                .zip(&written.param_types)
-                .zip(&m.params)
-                .map(|((n, t), (_, class_ty))| {
-                    let t = t.clone().unwrap_or_else(|| inherit_type(class_ty));
-                    (n.clone(), t)
-                })
+                .cloned()
+                .chain(
+                    written
+                        .params
+                        .iter()
+                        .zip(&written.param_types)
+                        .map(|(n, t)| (n.clone(), t.clone()))
+                        .zip(m.params.iter().skip(evidence.len()))
+                        .map(|((n, t), (_, class_ty))| {
+                            (
+                                n,
+                                t.unwrap_or_else(|| without_borrows(&inherit_type(class_ty))),
+                            )
+                        }),
+                )
                 .collect();
+            // Keep borrows in the result (outer `&mut I` and nested
+            // `FiniteStep(&mut I, …)`) so the mutable rewrite treats the
+            // method as an item lend, not a Mut'k out-parameter function.
             let result = written
                 .result
                 .clone()
@@ -1392,11 +1827,23 @@ impl Kernel {
                 methods_only.iter().map(|(_, t)| Some(t.clone())).collect();
             types.extend(method_generics.iter().map(|(_, t)| Some(t.clone())));
             types.extend(params.iter().map(|(_, t)| Some(t.clone())));
+            let written_at = methods_only.len() + method_generics.len() + evidence.len();
+            let mut method_borrows = vec![None; all_params.len()];
+            for (i, flag) in written.borrows.iter().enumerate() {
+                if let Some(slot) = method_borrows.get_mut(written_at + i) {
+                    *slot = *flag;
+                }
+            }
+            // `borrows(source)` after the result is `lends`: exclusive
+            // methods that lend an item keep that clause so the mutable
+            // rewrite does not turn `&mut source` into a Mut'k out.
             out.push(Stmt::Fn(FnDecl {
+                lends: written.lends.clone(),
                 budget: None,
                 vis: Default::default(),
                 generates: None,
                 opaque: false,
+                ghost: false,
                 decreasing_by: None,
                 name: fname.clone(),
                 generic_types: i.generic_types.clone(),
@@ -1404,14 +1851,19 @@ impl Kernel {
                 rows: vec![false; i.generics.len()],
                 bounds: vec![None; i.generics.len()],
                 bound_spans: Vec::new(),
-                borrows: vec![None; all_params.len()],
+                borrows: method_borrows,
                 params: all_params,
                 param_types: types,
                 result: Some(result),
                 effects: None,
+                written_effects: None,
+                row_hole: None,
                 where_: Vec::new(),
                 span: written.span,
                 body: written.body.clone(),
+                unused: None,
+                unused_generics: Vec::new(),
+                unused_params: Vec::new(),
             }));
             let mut args = generic_vars.clone();
             args.extend(vars(&names(&methods_only)));
@@ -1430,6 +1882,7 @@ impl Kernel {
                             .collect(),
                         body: Box::new(applied),
                         types: Vec::new(),
+                        unused_params: Vec::new(),
                     },
                     written.span,
                 )
@@ -1500,6 +1953,8 @@ impl Kernel {
                 ty: t.ty.clone(),
                 body: Some(body.clone()),
                 span: written.span,
+                unused: None,
+                unused_params: Vec::new(),
             }));
             let mut args = generic_vars.clone();
             args.extend(vars(&names(&with_laws)));
@@ -1519,6 +1974,7 @@ impl Kernel {
                     params: t.params.iter().map(|(n, _)| n.clone()).collect(),
                     body: Box::new(applied),
                     types: Vec::new(),
+                    unused_params: Vec::new(),
                 },
                 written.span,
             ));
@@ -1529,10 +1985,12 @@ impl Kernel {
         let head_ty = T::app(&i.class, instance_args.clone(), sp);
         let method_names = names(&methods_only);
         out.push(Stmt::Fn(FnDecl {
+            lends: None,
             budget: None,
             vis: Default::default(),
             generates: None,
             opaque: false,
+            ghost: false,
             decreasing_by: None,
             name: global.clone(),
             generic_types: i.generic_types.clone(),
@@ -1545,9 +2003,14 @@ impl Kernel {
             param_types: methods_only.iter().map(|(_, t)| Some(t.clone())).collect(),
             result: Some(head_ty),
             effects: None,
+            written_effects: None,
+            row_hole: None,
             where_: Vec::new(),
             span: sp,
             body: T::app(&constructor_name(&i.class), methods, sp),
+            unused: None,
+            unused_generics: Vec::new(),
+            unused_params: Vec::new(),
         }));
         let has_laws = !class.laws.is_empty();
         if has_laws {
@@ -1555,10 +2018,12 @@ impl Kernel {
             inst_args.extend(vars(&method_names));
             let all = names(&with_laws);
             out.push(Stmt::Fn(FnDecl {
+                lends: None,
                 budget: None,
                 vis: Default::default(),
                 generates: None,
                 opaque: false,
+                ghost: false,
                 decreasing_by: None,
                 name: laws_global.clone(),
                 generic_types: i.generic_types.clone(),
@@ -1579,9 +2044,14 @@ impl Kernel {
                     sp,
                 )),
                 effects: None,
+                written_effects: None,
+                row_hole: None,
                 where_: Vec::new(),
                 span: sp,
                 body: T::app(&constructor_name(&laws_name(&i.class)), laws, sp),
+                unused: None,
+                unused_generics: Vec::new(),
+                unused_params: Vec::new(),
             }));
             self.classes
                 .globals
@@ -1590,6 +2060,7 @@ impl Kernel {
         self.classes.instances.insert(
             key.clone(),
             Instance {
+                infer_from,
                 generics: i.generics.clone(),
                 head: i.head.clone(),
                 arguments: i.arguments.clone(),

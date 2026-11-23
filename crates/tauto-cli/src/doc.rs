@@ -116,11 +116,19 @@ fn generate(input: &Path, output: &Path) -> Result<ExitCode, String> {
         .unwrap_or(Path::new("."));
     fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     fs::create_dir(output).map_err(|e| format!("{}: {e}", output.display()))?;
-    let title = root_abs
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("doc")
-        .to_string();
+    // A tote's pages are titled by its name, whatever its directory is called;
+    // a lone file's by the directory it is in.
+    let title = package
+        .and_then(|dir| tauto::manifest::read(dir).ok())
+        .map(|m| m.package.name)
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            root_abs
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "doc".to_string());
     let path_text = |p: &Path| -> Result<String, String> {
         p.to_str()
             .map(String::from)

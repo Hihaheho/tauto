@@ -1,13 +1,14 @@
 import "instantiation_frame.taut"
 import "inference_base.taut"
 import "finish_frame.taut"
-import std::Map
-import std::Row
-import std::Text
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 
 pub fn instantiated_pending(
@@ -15,7 +16,7 @@ pub fn instantiated_pending(
   ty: Ty,
   what: Text,
   span: TySpan,
-  assume: List(Pair(Text, Text))
+  assume: List(Text × Text)
 ): TyPending {
   TyPending {r#class: r#class, ty: ty, what: what, assume: assume, start: span.start, end: span.end}
 }
@@ -48,8 +49,8 @@ pub theorem pending_frame_bind<A: Type, B: Type>(
   m: Mut1(A, Checker),
   first: PendingFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. PendingFrame(next, k(value, next))
-): PendingFrame(c, frame_bind(A, B, k, m)) {
-  ⊢ PendingFrame(c, frame_bind(A, B, k, m)) from match m {
+): PendingFrame(c, frame_bind(<A: A, B: B>, k, m)) {
+  match m {
     mut1(value, next) => pending_state_trans(
       c,
       next,
@@ -94,20 +95,19 @@ pub theorem ck_pend_records(
   finish_pending_items(ck_st(ck_pend(c, r#class, ty, what, span)))
 ) {
   MemHere(
-    TyPending,
-    instantiated_pending(r#class, ty, what, span, inference_assume(c)),
+    <A: TyPending, a: instantiated_pending(r#class, ty, what, span, inference_assume(c))>,
     finish_pending_items(c)
   )
 }
 
 pub theorem instantiation_pred_retains(
   c: Checker,
-  p: Pair(Text, Text),
+  p: Text × Text,
   what: Text,
   span: TySpan,
   found: Option(Ty)
 ): PendingFrame(c, instantiation_pred(c, p, what, span, found)) {
-  ⊢ PendingFrame(c, instantiation_pred(c, p, what, span, found)) from match found {
+  match found {
     None => pending_state_refl(c)
     Some(t) => pending_frame_rewrap(
       c,
@@ -118,8 +118,8 @@ pub theorem instantiation_pred_retains(
 }
 
 pub theorem instantiation_preds_cons_retains(
-  p: Pair(Text, Text),
-  rest: List(Pair(Text, Text)),
+  p: Text × Text,
+  rest: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
@@ -127,8 +127,7 @@ pub theorem instantiation_preds_cons_retains(
   ih: ∀ next: Checker. PendingFrame(next, ck_pend_preds(rest, next, map, what, span))
 ): PendingFrame(c, instantiation_preds_cons(p, rest, c, map, what, span)) {
   pending_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_pend_preds(rest, c1, map, what, span)),
     instantiation_pred(
@@ -150,13 +149,13 @@ pub theorem instantiation_preds_cons_retains(
 }
 
 pub theorem ck_pend_preds_retains(
-  ps: List(Pair(Text, Text)),
+  ps: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan
 ): PendingFrame(c, ck_pend_preds(ps, c, map, what, span)) {
-  ⊢ PendingFrame(c, ck_pend_preds(ps, c, map, what, span)) from match ps {
+  match ps {
     Nil => pending_state_refl(c)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => PendingFrame(c, z),
@@ -176,17 +175,14 @@ pub theorem ck_pend_preds_retains(
 
 pub def PredicatesPresent(
   c: Checker,
-  ps: List(Pair(Text, Text)),
+  ps: List(Text × Text),
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
   m: Mut1(Unit, Checker)
 ): Prop :=
-∀ p: Pair(
-  Text,
-  Text
-). ∀ ty: Ty. ∀ member: Mem(
-  Pair(Text, Text),
+∀ p: (Text × Text). ∀ ty: Ty. ∀ member: Mem(
+  Text × Text,
   p,
   ps
 ). ∀ found: Ordmap::get(
@@ -203,7 +199,7 @@ pub def PredicatesPresent(
 
 pub theorem instantiation_pred_records(
   c: Checker,
-  p: Pair(Text, Text),
+  p: Text × Text,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
@@ -244,7 +240,7 @@ pub theorem instantiation_pred_records(
 }
 pub def PredicateHeadPresent(
   c: Checker,
-  p: Pair(Text, Text),
+  p: Text × Text,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
@@ -261,7 +257,7 @@ pub def PredicateHeadPresent(
   finish_pending_items(ck_st(m))
 )
 pub def PredicatesTailIH(
-  rest: List(Pair(Text, Text)),
+  rest: List(Text × Text),
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan
@@ -274,7 +270,7 @@ pub def PredicatesTailIH(
   ck_pend_preds(rest, next, map, what, span)
 )
 pub fn pending_after_preds(
-  rest: List(Pair(Text, Text)),
+  rest: List(Text × Text),
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
@@ -283,12 +279,12 @@ pub fn pending_after_preds(
   ⊢ Mut1(
     Unit,
     Checker
-  ) from match m { mut1(ignored, next) => ck_rewrap1(ck_pend_preds(rest, next, map, what, span)) }
+  ) from match m { mut1(^ignored, next) => ck_rewrap1(ck_pend_preds(rest, next, map, what, span)) }
 }
 pub theorem pending_after_pred_member(
   c: Checker,
-  p: Pair(Text, Text),
-  rest: List(Pair(Text, Text)),
+  p: Text × Text,
+  rest: List(Text × Text),
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
@@ -296,9 +292,9 @@ pub theorem pending_after_pred_member(
   retained: PendingFrame(c, m),
   head: PredicateHeadPresent(c, p, map, what, span, m),
   ih: PredicatesTailIH(rest, map, what, span),
-  entry: Pair(Text, Text),
+  entry: Text × Text,
   ty: Ty,
-  member: Mem(Pair(Text, Text), entry, Cons(p, rest)),
+  member: Mem(Text × Text, entry, Cons(p, rest)),
   found: Ordmap::get(map, instantiation_parameter(entry), Ordmap::compare_text) = Some(ty)
 ): Mem(
   TyPending,
@@ -333,7 +329,7 @@ pub theorem pending_after_pred_member(
           head(ty, found)
         )
         MemThere(first, more, inside) => Eq::subst(
-          (assume: List(Pair(Text, Text))) => Mem(
+          (assume: List(Text × Text)) => Mem(
             TyPending,
             instantiated_pending(instantiation_constraint(entry), ty, what, span, assume),
             finish_pending_items(ck_st(ck_pend_preds(rest, next, map, what, span)))
@@ -361,13 +357,13 @@ pub theorem pending_after_pred_member(
   }
 }
 pub theorem ck_pend_preds_records(
-  ps: List(Pair(Text, Text)),
+  ps: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan
 ): PredicatesPresent(c, ps, map, what, span, ck_pend_preds(ps, c, map, what, span)) {
-  ⊢ PredicatesPresent(c, ps, map, what, span, ck_pend_preds(ps, c, map, what, span)) from match ps {
+  match ps {
     Nil => entry => ty => member => found => ⊢ Mem(
       TyPending,
       instantiated_pending(instantiation_constraint(entry), ty, what, span, inference_assume(c)),

@@ -158,36 +158,40 @@ let r := Request {
 
 @ cases.nested-record-literals-settle-in-one-pass
 source = ```tauto
-fn nest(a: List(Nat), b: List(Nat)): Pair(Pair(List(Nat), List(Nat)), Pair(Pair(List(Nat), List(Nat)), Pair(List(Nat), List(Nat)))) {
-  Pair { fst: Pair { fst: Nil, snd: a }, snd: Pair { fst: Pair { fst: Nil, snd: List::map((x: Nat) => x, b) }, snd: Pair { fst: Pair { fst: Nil, snd: List::map((x: Nat) => x, a) }, snd: Pair { fst: Nil, snd: b } } } }
+fn nest(a: List(Nat), b: List(Nat)): (List(Nat) × List(Nat)) × (List(Nat) × List(Nat)) × List(Nat) × List(Nat) {
+  #(#(Nil, a), #(Nil, List::map((x: Nat) => x, b)), #(Nil, List::map((x: Nat) => x, a)), Nil, b)
 }
 ```
 format = ```tauto
 fn nest(
   a: List(Nat),
   b: List(Nat)
-): Pair(Pair(List(Nat), List(Nat)), Pair(Pair(List(Nat), List(Nat)), Pair(List(Nat), List(Nat)))) {
-  Pair {
-    fst: Pair { fst: Nil, snd: a },
-    snd: Pair {
-      fst: Pair { fst: Nil, snd: List::map((x: Nat) => x, b) },
-      snd: Pair {
-        fst: Pair { fst: Nil, snd: List::map((x: Nat) => x, a) },
-        snd: Pair { fst: Nil, snd: b }
-      }
-    }
-  }
+): (List(Nat) × List(Nat)) × (List(Nat) × List(Nat)) × List(Nat) × List(Nat) {
+  #(#(Nil, a), #(Nil, List::map((x: Nat) => x, b)), #(Nil, List::map((x: Nat) => x, a)), Nil, b)
 }
 ```
 
 @ cases.a-long-effect-row-breaks-after-its-commas
 source = ```tauto
-fn f(g: () -> Nat ! {Div, stdout, stderr, argv, wall_clock, monotonic_clock, sleep, random, fs_read, fs_write}): Nat {
+fn f(g: () -> Nat ! {div, stdout, stderr, argv, wall_clock, monotonic_clock, sleep, random, fs_read, fs_write}): Nat {
   Zero
 }
 ```
 format = ```tauto
-fn f(g: () -> Nat ! {Div, stdout, stderr, argv, wall_clock, monotonic_clock, sleep, random, fs_read, fs_write}): Nat {
+fn f(
+  g: () -> Nat ! {
+    div,
+    stdout,
+    stderr,
+    argv,
+    wall_clock,
+    monotonic_clock,
+    sleep,
+    random,
+    fs_read,
+    fs_write
+  }
+): Nat {
   Zero
 }
 ```
@@ -224,10 +228,10 @@ fn g(x: Nat, y: Bool): Bool × Nat { #(y, x) }
 
 @ cases.an-import-list-is-kept-as-written
 source = ```tauto
-import std::Text { Text,concat }
+import std::text { Text,concat }
 import "value.taut" { Value }
 ```
 format = ```tauto
-import std::Text { Text, concat }
+import std::text { Text, concat }
 import "value.taut" { Value }
 ```

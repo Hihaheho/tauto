@@ -1,0 +1,249 @@
+import std::base
+import std::nat
+import std::uint
+
+// The unsigned integer of the machine the program runs on, as the proofs see
+// it: a `Nat` below 2^64, the widest target. A target with a narrower word
+// answers the effects below with its own handler.
+pub inductive UHost: Type {
+  Mk(val: Nat, ok: val < 18446744073709551616 = true): UHost
+}
+
+pub(open) inductive enum Width {
+  W32
+  W64
+}
+
+// The largest count of values a word of the width holds: 2^32 or 2^64.
+pub fn Width::bound(w: Width): Nat {
+  match w {
+    W32 => 4294967296
+    W64 => 18446744073709551616
+  }
+}
+
+pub theorem Width::bound_le(w: Width): Width::bound(w) <= 18446744073709551616 = true {
+  match w {
+    W32 => Refl
+    W64 => Refl
+  }
+}
+
+// Arithmetic as effects: the handler computes.
+pub(open) effect uhost_add(a: UHost, b: UHost): UHost
+pub(open) effect uhost_sub(a: UHost, b: UHost): UHost
+pub(open) effect uhost_mul(a: UHost, b: UHost): UHost
+pub(open) effect uhost_of_u64(x: UInt(64)): UHost
+pub(open) effect host_width(): Width
+
+pub fn UHost::val(x: UHost): Nat {
+  match x {
+    Mk(v, ^h) => v
+  }
+}
+
+pub theorem UHost::ok(x: UHost): UHost::val(x) < 18446744073709551616 = true {
+  match x {
+    Mk(v, h) => h
+  }
+}
+
+// The functions that take a proof of fitting: the result is no larger than
+// a value that already exists, so it fits every width.
+pub fn UHost::lt(a: UHost, b: UHost): Bool { UHost::val(a) < UHost::val(b) }
+pub fn UHost::le(a: UHost, b: UHost): Bool { UHost::val(a) <= UHost::val(b) }
+pub fn UHost::eq(a: UHost, b: UHost): Bool { Nat::eq(UHost::val(a), UHost::val(b)) }
+
+pub fn UHost::zero(): UHost { UHost::Mk(0, Refl) }
+
+pub fn UHost::sub_proved(a: UHost, b: UHost, h: UHost::val(b) <= UHost::val(a) = true): UHost {
+  UHost::Mk(UHost::val(a) - UHost::val(b), Nat::le_lt_trans(UHost::val(a) - UHost::val(b), UHost::val(a), 18446744073709551616, Nat::sub_le(UHost::val(a), UHost::val(b)), UHost::ok(a)))
+}
+
+// `a + 1`, where `a` is below `bound`, which exists.
+pub fn UHost::succ_below_proved(a: UHost, bound: UHost, h: UHost::val(a) < UHost::val(bound) = true): UHost {
+  UHost::Mk(Succ(UHost::val(a)), Nat::le_trans(Succ(Succ(UHost::val(a))), Succ(UHost::val(bound)), 18446744073709551616, h, UHost::ok(bound)))
+}
+
+// `a - 1`, where `a` is not 0.
+pub fn UHost::pred_nz_proved(a: UHost, h: ¬(UHost::val(a) = 0)): UHost {
+  UHost::Mk(Nat::pred(UHost::val(a)), Nat::le_lt_trans(Nat::pred(UHost::val(a)), UHost::val(a), 18446744073709551616, Nat::pred_le(UHost::val(a)), UHost::ok(a)))
+}
+
+// `a + b`, where `h` says the sum is at most `bound`, which exists.
+pub fn UHost::add_within_proved(a: UHost, b: UHost, bound: UHost, h: UHost::val(a) + UHost::val(b) <= UHost::val(bound) = true): UHost {
+  UHost::Mk(UHost::val(a) + UHost::val(b), Nat::le_lt_trans(UHost::val(a) + UHost::val(b), UHost::val(bound), 18446744073709551616, h, UHost::ok(bound)))
+}
+
+pub fn UHost::of_u64_below_proved(x: UInt(64), bound: UHost, h: UInt::val64(x) <= UHost::val(bound) = true): UHost {
+  UHost::Mk(UInt::val64(x), Nat::le_lt_trans(UInt::val64(x), UHost::val(bound), 18446744073709551616, h, UHost::ok(bound)))
+}
+
+pub fn UHost::of_u32(x: UInt(32)): UHost {
+  UHost::Mk(UInt::val32(x), Nat::lt_trans(UInt::val32(x), 4294967296, 18446744073709551616, UInt::ok32(x), Refl))
+}
+
+pub fn UHost::to_u64(x: UHost): UInt(64) {
+  UInt::mk64(UHost::val(x), UHost::ok(x))
+}
+
+// Two `UHost`s with the same number are the same value.
+pub theorem UHost::ext(a: UHost, b: UHost, h: UHost::val(a) = UHost::val(b)): a = b {
+  match a {
+    Mk(v, p) => match b {
+      Mk(w, q) => match h {
+        Refl => Refl
+      }
+    }
+  }
+}
+
+pub theorem UHost::eq_refl(a: UHost): UHost::eq(a, a) = true {
+  Nat::eq_refl(UHost::val(a))
+}
+
+pub theorem UHost::eq_sound(a: UHost, b: UHost, h: UHost::eq(a, b) = true): a = b {
+  UHost::ext(a, b, Nat::eq_sound(UHost::val(a), UHost::val(b), h))
+}
+
+// `n` as a `UHost` when `o`, the decision of `n < bound(w)`, says it fits.
+pub fn UHost::of_decided(w: Width, n: Nat, o: Bool, h: n < Width::bound(w) = o): Option(UHost) {
+  match o {
+    true => Some(UHost::Mk(n, Nat::le_trans(Succ(n), Width::bound(w), 18446744073709551616, h, Width::bound_le(w))))
+    false => None
+  }
+}
+
+// The sum, or `None` when it does not fit in `w`.
+pub fn UHost::add_in(w: Width, a: UHost, b: UHost): Option(UHost) {
+  UHost::of_decided(w, UHost::val(a) + UHost::val(b), UHost::val(a) + UHost::val(b) < Width::bound(w), Refl)
+}
+
+// What fits in 32 bits fits in 64, with the same answer.
+pub theorem UHost::add_in_widen(a: UHost, b: UHost, r: UHost, h: UHost::add_in(W32, a, b) = Some(r)): UHost::add_in(W64, a, b) = Some(r) {
+  UHost::of_decided_widen(UHost::val(a) + UHost::val(b), UHost::val(a) + UHost::val(b) < 4294967296, Refl, UHost::val(a) + UHost::val(b) < 18446744073709551616, Refl, r, h)
+}
+
+pub fn UHost::mul_in(w: Width, a: UHost, b: UHost): Option(UHost) {
+  match UHost::val(a) * UHost::val(b) < Width::bound(w) eqn h {
+    true => Some(UHost::Mk(UHost::val(a) * UHost::val(b), Nat::le_trans(Succ(UHost::val(a) * UHost::val(b)), Width::bound(w), 18446744073709551616, h, Width::bound_le(w))))
+    false => None
+  }
+}
+
+// A subtraction never leaves the width: `None` only when `b` is larger.
+pub fn UHost::sub_in(a: UHost, b: UHost): Option(UHost) {
+  match UHost::val(b) <= UHost::val(a) eqn h {
+    true => Some(UHost::sub_proved(a, b, h))
+    false => None
+  }
+}
+
+pub fn UHost::of_u64_in(w: Width, x: UInt(64)): Option(UHost) {
+  match UInt::val64(x) < Width::bound(w) eqn h {
+    true => Some(UHost::Mk(UInt::val64(x), Nat::le_trans(Succ(UInt::val64(x)), Width::bound(w), 18446744073709551616, h, Width::bound_le(w))))
+    false => None
+  }
+}
+
+pub theorem UHost::of_decided_val(w: Width, n: Nat, o: Bool, h: n < Width::bound(w) = o, r: UHost, p: UHost::of_decided(w, n, o, h) = Some(r)): UHost::val(r) = n {
+  match o {
+    true => ⊢ UHost::val(r) = n from match p {
+      Refl => Refl
+    }
+    false => ⊢ UHost::val(r) = n from match p {
+    }
+  }
+}
+
+pub theorem UHost::of_decided_none(w: Width, n: Nat, o: Bool, h: n < Width::bound(w) = o, d: o = false): UHost::of_decided(w, n, o, h) = None {
+  match o {
+    true => False::elim(true_ne_false(d))
+    false => Refl
+  }
+}
+
+pub theorem UHost::of_decided_some(w: Width, n: Nat, o: Bool, h: n < Width::bound(w) = o, d: o = true): ∃ r: UHost. UHost::of_decided(w, n, o, h) = Some(r) {
+  match o {
+    true => ExIntro(UHost::Mk(n, Nat::le_trans(Succ(n), Width::bound(w), 18446744073709551616, h, Width::bound_le(w))), Refl)
+    false => False::elim(false_ne_true(d))
+  }
+}
+
+pub theorem UHost::of_decided_widen(n: Nat, o: Bool, h: n < 4294967296 = o, o2: Bool, h2: n < 18446744073709551616 = o2, r: UHost, p: UHost::of_decided(W32, n, o, h) = Some(r)): UHost::of_decided(W64, n, o2, h2) = Some(r) {
+  match o {
+    true => ⊢ UHost::of_decided(W64, n, o2, h2) = Some(r) from match p {
+      Refl => ⊢ UHost::of_decided(W64, n, o2, h2) = Some(UHost::Mk(n, Nat::le_trans(Succ(n), 4294967296, 18446744073709551616, h, Width::bound_le(W32)))) from match o2 {
+        true => Refl
+        false => False::elim(false_ne_true(Eq::trans(Eq::sym(h2), Nat::le_trans(Succ(n), 4294967296, 18446744073709551616, h, Refl))))
+      }
+    }
+    false => ⊢ UHost::of_decided(W64, n, o2, h2) = Some(r) from match p {
+    }
+  }
+}
+
+// The standard handler of the five effects for a target of width `w`. It
+// resumes with the exact answer when the answer exists in the width, and
+// does not resume otherwise (the run is `None`: a host stops it).
+pub fn run_host<A, !e>(
+  w: Width,
+  c: &(() -> A ! {uhost_add, uhost_sub, uhost_mul, uhost_of_u64, host_width} ∪ e)
+): Option(A) ! e {
+  handle { c() } with {
+    uhost_add(a, b), k => match UHost::add_in(w, a, b) {
+      Some(r) => k(r)
+      None => None
+    }
+    uhost_sub(a, b), k => match UHost::sub_in(a, b) {
+      Some(r) => k(r)
+      None => None
+    }
+    uhost_mul(a, b), k => match UHost::mul_in(w, a, b) {
+      Some(r) => k(r)
+      None => None
+    }
+    uhost_of_u64(x), k => match UHost::of_u64_in(w, x) {
+      Some(r) => k(r)
+      None => None
+    }
+    host_width(), k => k(w)
+    return v => Some(v)
+  }
+}
+
+// Two additions: `(a + b) + c`.
+pub fn add3(a: UHost, b: UHost, c: UHost): UHost ! {uhost_add} {
+  let x := perform uhost_add(a, b)
+  perform uhost_add(x, c)
+}
+
+// The standard handler written around a named computation (a closure with
+// effects passed to `run_host` is not read, a named function is).
+pub fn run_add3(w: Width, a: UHost, b: UHost, c: UHost): Option(UHost) {
+  handle { add3(a, b, c) } with {
+    uhost_add(x, y), k => match UHost::add_in(w, x, y) {
+      Some(r) => k(r)
+      None => None
+    }
+    return v => Some(v)
+  }
+}
+
+
+pub fn UHost::lit(n: Nat, h: n < 18446744073709551616 = true): UHost { UHost::Mk(n, h) }
+
+// With 64 bits, 2^32 - 1 plus 1 plus 0 is answered: 2^32.
+pub theorem w64_sum_answered(): run_add3(W64, UHost::Mk(4294967295, Refl), UHost::Mk(1, Refl), UHost::Mk(0, Refl)) = Some(UHost::Mk(4294967296, Refl)) {
+  Refl
+}
+
+// With 32 bits the same computation is not answered: the handler does not resume.
+pub theorem w32_sum_stops(): run_add3(W32, UHost::Mk(4294967295, Refl), UHost::Mk(1, Refl), UHost::Mk(0, Refl)) = None {
+  Refl
+}
+
+// A sum that fits in 32 bits is answered alike in both widths.
+pub theorem small_sum_same_in_both_widths(): run_add3(W32, UHost::Mk(4000000000, Refl), UHost::Mk(1, Refl), UHost::Mk(2, Refl)) = run_add3(W64, UHost::Mk(4000000000, Refl), UHost::Mk(1, Refl), UHost::Mk(2, Refl)) {
+  Refl
+}

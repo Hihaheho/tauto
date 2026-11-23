@@ -1,0 +1,56 @@
+import "written_value_base.taut"
+import std::map
+import std::text
+import "datas.taut"
+import "rules_written.taut"
+import "ty.taut"
+import "../../surface/src/surface.taut"
+import "written_unique_base.taut"
+import "../../identity/src/identity.taut"
+
+// Uniqueness of the elaborated value, continued: a declaration's info and a borrow.
+
+pub theorem written_unique_info<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, r#borrow: Bool, start: Nat, end: Nat, arg: SurfaceTerm, other: Ty>(
+  ast_occurrence: Option(TermOccurrence),
+  meaning: WrittenKind(
+    env,
+    generics,
+    partial,
+    r#borrow,
+    SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("Info")), start, end, ast_occurrence), Cons(arg, Nil)),
+    other
+  ),
+  t: Ty,
+  ih: WrittenTermUnique(generics, partial, false, arg, t)
+): TyInfo(t) = other {
+  match meaning {
+    WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, first, value, begin, finish, argument) => Eq::congr(
+      TyInfo,
+      ih(env, value, argument)
+    )
+    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, name, args, types, begin, finish, NotPair, not_info, unbound, SliceBorrowed, arguments, arity) => False::elim(
+      not_info(Refl, Refl)
+    )
+    WrittenKindGeneric(ctor_ast_occurrence, gs, Mode, borrowing, name, first, head, value, bound, begin, finish, not_info, Parameter, constructor, argument) => False::elim(
+      not_info(Refl)
+    )
+  }
+}
+pub theorem written_unique_borrow<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, r#borrow: Bool, mutable: Bool, mutable_orig: Bool, body: SurfaceTerm, other: Ty>(
+  meaning: WrittenKind(env, generics, partial, r#borrow, SkBorrow(mutable, mutable_orig, body), other),
+  t: Ty,
+  ih: WrittenTermUnique(generics, partial, true, body, t)
+): TyBorrow(t, mutable) = other {
+  match meaning {
+    WrittenKindBorrow(gs, Mode, borrowing, r#mut, mut_orig, term, value, inner) => Eq::congr(
+      (x: Ty) => TyBorrow(x, r#mut),
+      ih(env, value, inner)
+    )
+  }
+}

@@ -1,7 +1,6 @@
 @ cases.a-mutable-borrow-returned-as-a-value-is-copied
-extract = true
 source = ```tauto
-fn advance(&mut state: Nat): Nat { state := state + 1; state }
+fn advance(state: &mut Nat): Nat { *state := state + 1; state }
 fn combine(first: Nat, second: Nat): Nat { first * 10 + second }
 fn result(): Nat {
   var state := 2;
@@ -9,9 +8,35 @@ fn result(): Nat {
   combined + state * 100
 }
 theorem ordered(): result() = 323 { Refl }
-perform show("ordered", result())
+show(&result())
 ```
 checks_all = "ok"
-shows = ["ordered = 323"]
-rust_shows = ["ordered = 323"]
-javascript_shows = ["ordered = 323"]
+stdout = "323\n"
+
+@ cases.a-place-lent-to-a-call-is-written-by-an-argument-before-it
+source = ```tauto
+fn advance(state: &mut Nat): Nat { *state := state + 1; 5 }
+fn combine(first: Nat, state: &mut Nat): Nat { state * 10 + first }
+fn result(): Nat {
+  var state := 2;
+  combine(advance(&mut state), &mut state)
+}
+theorem ordered(): result() = 35 { Refl }
+show(&result())
+```
+checks_all = "ok"
+stdout = "35\n"
+
+@ cases.a-place-lent-to-a-call-is-written-by-an-argument-after-it
+source = ```tauto
+fn advance(state: &mut Nat): Nat { *state := state + 1; 5 }
+fn combine(state: &mut Nat, second: Nat): Nat { state * 10 + second }
+fn result(): Nat {
+  var state := 2;
+  combine(&mut state, advance(&mut state))
+}
+theorem ordered(): result() = 35 { Refl }
+show(&result())
+```
+checks_all = "ok"
+stdout = "35\n"

@@ -1,0 +1,768 @@
+$schema: changelog.schema.eure
+
+base = "7a5e2a5143c78c672407b0d98b84868347f905b9"
+summary = ````markdown
+Borrows are written in the type (`x: &T`) and are values that can be stored; kinds are written `struct(affine)`; library modules have lower-case names and the prelude is split into `std::prelude` and `std::builtin`; arithmetic performs `overflow` and `divzero`; `show` is a function over the class `Debug`; `for` loops, `let` patterns, `ghost fn` and `inductive class` join the language; `HashMap` is a checked library type; `tauto run` asks for permissions at the start; workspaces, an LLVM backend and a run-time ownership checker are added, and the tree evaluator is removed.
+````
+
+@ added[]
+area = "ownership"
+summary = ````markdown
+`borrows(m, x.f)` after a function's result names the parameters the result borrows from: `fn get(m: &HashMap(K, V), k: &K): Option(&V) borrows(m)`.
+````
+details = ````markdown
+Without it the result borrows from every borrowed parameter. It is written after the result and row, before `where`, and is trusted on extern functions.
+````
+
+@ added[]
+area = "ownership"
+summary = ````markdown
+Borrowed structs `struct &T { … }`, `&orig T`, and counted references `&rc T`.
+````
+details = ````markdown
+A type may define what its borrow is as a second struct over the same parameters (`struct &Vec(T) { slots: &Slots(T) }`), with an instance of the prelude class `Lend(T)` (`lend`, `owned`); `lend` and `owned` are inserted where a `&T` or a `T` is expected, and `&T { f, … }` builds and matches it. `&orig T` / `&orig x` is a shared reference to the original value that does not go through `Lend`. `&rc e` moves a value into a reference-counted box of type `&rc T`, which is shared whatever the kind of `T`, is read through a shared borrow, and is never written through.
+````
+
+@ added[]
+area = "ownership"
+summary = ````markdown
+`coerce` fields: `struct Checked { coerce value: Text, length: u64 }` lets `&Checked` be used as `&Text`. `coerce(mut)` also allows `&mut` and field writes, and `coerce(owned)` also the owned value.
+````
+
+@ added[]
+area = "ownership"
+summary = ````markdown
+`let(stack) x := e` places a binding in the function's frame, with no allocation or reference counting. The type must be sized and non-recursive.
+````
+
+@ added[]
+area = "effects"
+summary = ````markdown
+`pub(handle) effect`: other files may name the effect in rows and handle it, but only the declaring scope performs it.
+````
+
+@ added[]
+area = "syntax"
+summary = ````markdown
+`for x in e { … }` loops over an owned `Iterator`, with `break` and `continue`. The loop is a finite fold, so it adds no `div` to the row.
+````
+details = ````markdown
+`std/finite_iteration.taut` (`FiniteStep`, `IterationControl`, `fold_finite`, `run_finite`, `fold_finite_effectful`) and `std/iterator.taut` (classes `Iterator`, `SharedIterator`, `ExclusiveIterator`, `ListSource`, with instances for `List`) are what the loop is read as. The pattern may destructure.
+````
+
+@ added[]
+area = "syntax"
+summary = ````markdown
+`let` with a pattern: `let #(a, b) := p`, `let Point { x, y } := p`, `let [x, ..rest] := l`. It is the `match` of the value with that one arm, so the pattern must be exhaustive.
+````
+
+@ added[]
+area = "syntax"
+summary = ````markdown
+`ghost fn`: a function only proofs and types use. The kernel reads it as it reads `fn`, extraction never writes it, and executable code that calls it is an error.
+````
+
+@ added[]
+area = "syntax"
+summary = ````markdown
+Trailing commas in parameter, argument, generic, variant, pattern, product, list and constraint lists; row literals that span lines; lambdas and `×` / `->` types as named implicit arguments (`f(<step: (h, w) => next(h, w)>, x)`); `r#` on any path segment (`List::r#type`).
+````
+
+@ added[]
+area = "types"
+summary = ````markdown
+Typed arms on a union: `match s { c: Shape => area(c), n: i64 => n }`, with `rest: {Text | Bool} => …` for several members. Exhaustiveness is per member.
+````
+
+@ added[]
+area = "types"
+summary = ````markdown
+`uhost`, the unsigned integer of the target's word (32 bits on JavaScript, 64 elsewhere), and the integer types `i8`, `i16` and `u16`.
+````
+details = ````markdown
+`+`, `-`, `*` on `uhost` are the host effects `uhost_add`, `uhost_sub`, `uhost_mul`, and `host_width()` tells the width. `std/uhost.taut` gives the model `UHost` for proofs.
+````
+
+@ added[]
+area = "classes"
+summary = ````markdown
+Superclasses (`class Child(A: Type) where Parent(A) { … }`), `where` on a class method, instances for function types (`instance<A, R> Handler((A) -> R)`), `infer from` conditions on an instance, and naming an instance at a call with `C(T)::m(…)`.
+````
+details = ````markdown
+`instance C(A, B) infer from A ∧ B where …` states which known class arguments determine the others. A method need not mention the class parameter (`fn name(): Text`) and is then called as `Named(Circle)::name()`.
+````
+
+@ added[]
+area = "modules"
+summary = ````markdown
+An `import` may be written at the head of the body of a top-level `fn`, `macro fn`, `theorem` or `def`; it brings its names into that body only.
+````
+
+@ added[]
+area = "modules"
+summary = ````markdown
+Replaceable `extern` blocks: an `extern { … }` whose `struct` / `enum` and `fn` members have Tauto bodies runs those bodies unless host bindings are given for every member of the block.
+````
+details = ````markdown
+Binding only some members is a build error, and the types' representation is sealed to the block. Members without bodies and replaceable members do not share a block.
+````
+
+@ added[]
+area = "proofs"
+summary = ````markdown
+`proof!` has sentence forms for connectives and quantifiers: `Let x.`, `Assume h: P.`, `Take x = e.`, `Obtain x and h from e.`, `We show both.`, `We show the left.` / `We show the right.`, `This is impossible by h.`, and `By transitivity of L on h1, h2, ….`.
+````
+details = ````markdown
+`Consider x.` on a variable generalizes the later assumptions whose types depend on `x` and rebinds them in each case under the same names.
+````
+
+@ added[]
+area = "macros"
+summary = ````markdown
+Macros can make and read classes and instances: `quote stmts { … }` accepts `class` and `instance`, syntax values have `StClass` and `StInstance`, and a generated-declaration list may name `module`, `effect`, `class` and `instance` (`@keyed!(0) => instance Key`).
+````
+
+@ added[]
+area = "macros"
+summary = ````markdown
+A declaration takes several attribute macros, one per line; a typed macro takes a type as its argument (`json_schema!(Forecast)`); a macro declared under a path is called by that path (`M::NAME!(…)`).
+````
+details = ````markdown
+New functions of the macro API: `Elab::data`, `Elab::class_decl`, `Elab::implicit_names`, `Elab::call`, `Judgement::generics` and `Syn::product_items`. Float literals are syntax values (`ExFloat`).
+````
+
+@ added[]
+area = "macros"
+summary = ````markdown
+Grammars of `syntax!` and `inductive_syntax!` name several start symbols with `%start A, B, …`, and an `inductive_syntax!` may hold holes (`Value: Num | Hole;` with `Hole: TautoExpr;`).
+````
+details = ````markdown
+`tauto syntax gen` writes the tables of another start symbol `B` to `<sha256>.B.tables`. More expressions are read after a bare `$` in a DSL: paths (`$Nat::add(n, 0)`), tuples (`$#(a, b)`) and macro calls taking a backtick literal.
+````
+
+@ added[]
+area = "macros"
+summary = ````markdown
+The built-in `include_bytes!("path")` embeds a file as `Bytes`, and `include_text!` / `include_bytes!` may read the directories that the manifest lists in `package.include-from`.
+````
+
+@ added[]
+area = "std"
+summary = ````markdown
+The class `Debug` with `debug(&a): Text` (`std/prelude/debug.taut`). Every `struct`, `enum` and `inductive` has an instance: the one its file writes, or one the compiler writes.
+````
+
+@ added[]
+area = "std"
+summary = ````markdown
+`std/key.taut`: the class `Key(K)` (`eq`, `feed`, with laws) and the macro `keyed!` that derives the instance of a struct from its fields. `std/hash.taut`: SipHash-1-3. `std/indexed_map.taut`: `IndexedMap(K, V)`, a hash map that walks in insertion order.
+````
+
+@ added[]
+area = "std"
+summary = ````markdown
+Slot storage and the containers built on it: the prelude type `Slots`, `std/slots.taut`, `std/slots_store.taut`, `std/vec.taut` (`VecModel`) and `std/hash_table.taut`, with their proofs.
+````
+
+@ added[]
+area = "std"
+summary = ````markdown
+Regions and allocators: `std/builtin/region.taut` (`Region`, `Place`, `Placed` and their counted forms), `std/alloc.taut` (the class `Policy` with the proved `BumpPolicy` and `PoolPolicy`), `std/bump.taut` and `std/pool.taut`.
+````
+
+@ added[]
+area = "std"
+summary = ````markdown
+`std/template.taut`: the `text!` macro (``text!(`Hello, $name! ${n + 1}`)``) and formatters such as `pad_start`, `hex`, `bin`, `grouped` and `quoted`.
+````
+
+@ added[]
+area = "std"
+summary = ````markdown
+`std/sse.taut`: a decoder of server-sent events with the theorem that feeding pieces equals feeding their concatenation. `std/os.taut`: proofs can read functions that perform or handle the standard effects.
+````
+
+@ added[]
+area = "std"
+summary = ````markdown
+Host effects in `std::builtin::os`: streaming HTTP (`net_open`, `net_write`, `net_finish`, `net_cancel`, `net_read`, `net_close`), `fs_set_mode`, `fs_lock` / `fs_unlock`, `timer`, `environ`, `hash_seed` and `host_width`; path helpers `path_parent`, `path_name`, `path_join`.
+````
+details = ````markdown
+`FileStat` has the field `executable`, so a handler of `fs_stat` that builds a `FileStat` gives it.
+````
+
+@ added[]
+area = "std"
+summary = ````markdown
+Waiting with a deadline in `std::builtin::par`: `wait_until`, `Task::join_until`, `Mutex::take_until`, `Semaphore::acquire_until` and `Channel::recv_until`.
+````
+
+@ added[]
+area = "std"
+summary = ````markdown
+Prelude functions `map_ref`, `each_ref`, `fold_ref`, `Array::set`, `Bytes::find`, `U64::of_text`, `U64::wrapping_add` / `sub` / `mul`, `Text::replace_all`, `Text::index_from` and `Text::occurs_at`, with lemmas for `Array::set` and `Bytes::find` in `std/array.taut` and `std/bytes.taut`.
+````
+
+@ added[]
+area = "meta"
+summary = ````markdown
+Axiom-free models of mutable state in `meta/mutable_*.taut` (`docs/design/mutable-state-model.md`), and `meta/latent_rows.taut` for the effects of a spawned body.
+````
+
+@ added[]
+area = "lean"
+summary = ````markdown
+The Lean kernel model covers numerals and `+`, `*`, `-` on `Nat` (`lean/Proto/Kernel/Literals.lean`), and the Nib model proves that a freeze ends at the last use of its holder (`lean/Proto/Nib/LastUse.lean`) and that an effect whose answer holds a borrow keeps loans free of conflicts (`lean/Proto/Nib/EffectLend.lean`).
+````
+
+@ added[]
+area = "manifest"
+summary = ````markdown
+Workspaces: a root lists member totes (`workspace { members = ["engine", glob`plugins/*`] }`), each member names its root (`workspace = ".."`), and members depend on each other by package name (`engine: workspace`).
+````
+details = ````markdown
+A manifest without `package` is a virtual root. The project lock is the `Tauto.lock` beside the outermost root. `tauto check` at a workspace root checks every member. Design: `docs/design/workspace.md`.
+````
+
+@ added[]
+area = "manifest"
+summary = ````markdown
+`trust.run` lists the permissions a project grants its own runs, narrowed to paths, names or hosts; `test { retries = N }`; `package.entry` names the file whose top level runs; `rust.main-thread` runs `main` on the process's main thread; `sparse = true` on a Git dependency with `dir` fetches and hashes only that directory.
+````
+
+@ added[]
+area = "cli"
+summary = ````markdown
+`tauto build --backend llvm [--emit llvm|nir] [--export ENTRY]... [-o FILE]` builds a native program through LLVM and `clang`.
+````
+details = ````markdown
+On Linux x86_64 the program stands on system calls and links no library; elsewhere it uses only the C library's entry points to the OS. A program that uses something the backend does not write (`Float`, unions, `linear` types, resuming or aborting handlers, host-bound `extern`s) is refused whole with a message naming it. Design: `docs/design/llvm-backend.md`.
+````
+
+@ added[]
+area = "cli"
+summary = ````markdown
+`tauto run --backend niri FILE` runs the program on an interpreter that checks ownership at run time: it stops at a value used after a move, dropped twice or never dropped, and at a borrow used after its owner is gone.
+````
+
+@ added[]
+area = "cli"
+summary = ````markdown
+`tauto run` of an unchanged tote reuses the machine's bytecode and the generated crate, and tactic results of proof steps are cached; cached proof results still go through the kernel. `tauto build --verify` re-verifies the locked dependencies before building.
+````
+
+@ added[]
+area = "cli"
+summary = ````markdown
+`tauto check` reports struct fields that are never read (`warning[unused_field]`).
+````
+
+@ added[]
+area = "lsp"
+summary = ````markdown
+Language server: a quick fix that writes the `import` for a name used without importing it, a quick fix at `!?` that writes the row, hover on a name in a macro's `=> …` list, and completion of signs by their Unicode character names after a backslash.
+````
+
+@ added[]
+area = "backends"
+summary = ````markdown
+NIR has a text form and static checks (`docs/design/nir-text.md`, `docs/design/nir-wf.md`); `tauto build --backend llvm --emit nir` writes it.
+````
+
+@ added[]
+area = "backends"
+summary = ````markdown
+Rust backend: regions (`Region`, `Place`, `Placed`) with a bump allocator; `tauto-embed`'s `Tote::try_call` returns `Failure::Exit(code)` or `Failure::Error(message)` instead of ending the host process; a tote keeps its Cargo lock in `Tauto.Cargo.lock` when a `Cargo.toml` of another crate sits beside `Tauto.eure`.
+````
+
+@ added[]
+area = "totes"
+summary = ````markdown
+`totes/eure` (a reader, writer and shape checker for Eure documents, with a proved round trip), `totes/sha256`, `totes/totebag-io` (the part of Totebag that touches files), `totes/identity` and `totes/fuzz` (a generator of random well-typed programs).
+````
+
+@ added[]
+area = "totes"
+summary = ````markdown
+More of the compiler is written in Tauto: `totes/parse`, `totes/analyzer`, `totes/extract`, `totes/build`, `totes/nir`, `totes/lower`, `totes/niri`, `totes/llvm`, `totes/jsgen`, `totes/synrun` and `totes/synread`.
+````
+
+@ added[]
+area = "totes"
+summary = ````markdown
+`totes/unicode`: NFC normalization (`unicode_nfc`, `unicode_is_nfc`), lower-casing (`unicode_lowercase`) and the `XID_Continue` table. `totes/text`: `text_code_points` and `text_parse_i128`.
+````
+
+@ added[]
+area = "examples"
+summary = ````markdown
+`examples/user-data-structures/` (models of a growable array and a hash table with their theorems), `examples/borrow-proofs.taut`, `examples/extern-fallback-*`, and the Rust examples `main-thread`, `dependency-bridge` and `bridge-name-collision`.
+````
+
+@ changed[]
+area = "ownership"
+summary = ````markdown
+Borrowed parameters and bindings are written in the type: `x: &T`, `x: &mut T`, `let x := first(&v)`. The binder forms `&x: T`, `&mut x: T`, `let &x := …` and `var &it := …` are gone.
+````
+details = ````markdown
+Whether a `let` borrows is read from the type of its value. This applies to functions, closures (`(q: &P) => q.a`), class methods and extern signatures.
+````
+breaking = true
+migration = ````markdown
+Move the `&` / `&mut` from the name to the type in every parameter (`fn size(&p: P)` becomes `fn size(p: &P)`), and drop it from `let &x :=` / `var &x :=`.
+````
+
+@ changed[]
+area = "ownership"
+summary = ````markdown
+Writing through a `&mut` borrow is `*x := v` (and `*p.r := v` for a borrow held in a field). A field write through `p: &mut Person` stays `p.name := e`.
+````
+breaking = true
+migration = ````markdown
+Rewrite assignments to a `&mut` parameter or binding from `x := e` to `*x := e`.
+````
+
+@ changed[]
+area = "ownership"
+summary = ````markdown
+Borrows are values that can be stored, and a freeze ends at the holder's last use instead of the end of the block.
+````
+details = ````markdown
+`&p` / `&mut p` may stand as a struct field, a `:=` right side, a `match` scrutinee, a generic argument and an element of a container, and a type argument may hold a borrow (`Vec(&F)`, `Option(&V)`). A type parameter bounded with `NoBorrow` refuses borrow-holding arguments. Borrows still cannot be effect arguments or be captured by an escaping closure.
+````
+
+@ changed[]
+area = "syntax"
+summary = ````markdown
+A kind is written in parentheses after the keyword: `struct(affine) File {}`, `enum(linear) Handshake { … }`, `type(affine) Regex`. The `view` kind is gone: an extern type that holds a borrow is `type(borrow) Iter(A: Type)`.
+````
+breaking = true
+migration = ````markdown
+Rewrite `KIND struct|enum|type Name` as `struct(KIND)|enum(KIND)|type(KIND) Name`, and `view struct Iter(A) {}` in an `extern` block as `type(borrow) Iter(A: Type)`.
+````
+
+@ changed[]
+area = "syntax"
+summary = ````markdown
+A lone `_` is a wildcard only in patterns, and `^name` asserts that a binding is unused: `let ^x := e`, `(^x: T) => …`, `fn f<^A>(…)`, `Some(^x)`.
+````
+details = ````markdown
+`^` suppresses the unused warning when the binding is unused and is an error (`unused_marker_used`) when it is used; it is not part of the name. A leading `_` in a name no longer suppresses unused warnings.
+````
+breaking = true
+migration = ````markdown
+Give each `_` binding a name and mark it: `let _ := e` becomes `let ^x := e`. Replace `_name` used to silence a warning with `^name`.
+````
+
+@ changed[]
+area = "syntax"
+summary = ````markdown
+A `match` takes its result type from where it stands (a declaration's body, an arm's body, an annotated `let`, an argument whose parameter type is fixed), so `⊢ T from` is written only where no type is expected or a different goal is needed.
+````
+
+@ changed[]
+area = "syntax"
+summary = ````markdown
+`for`, `in`, `ghost`, `coerce`, `infer`, `borrows`, `orig` and `borrow` are reserved words. Identifiers follow Unicode `XID_Start` / `XID_Continue`.
+````
+breaking = true
+migration = ````markdown
+Write a name spelled like one of these as `r#name` (`r#in`, `t.r#for`).
+````
+
+@ changed[]
+area = "types"
+summary = ````markdown
+A product is written only as `A × B` and `#(a, b)`; the prelude's `Pair` cannot be named. Members are taken by `#(…)`, by the type of a member, or by `.fst` / `.snd`.
+````
+breaking = true
+migration = ````markdown
+Replace `Pair(A, B)` with `A × B`, and `Pair { fst: a, snd: b }` in values and patterns with `#(a, b)`.
+````
+
+@ changed[]
+area = "effects"
+summary = ````markdown
+A `fn` with a body and no row written has the empty row; its row is no longer taken from the body. `fn f(): T !?` asks for the row to be written: `tauto check` reports the row the body performs, and `tauto check --fix` and `tauto lint --fix` write it in place of `!?`.
+````
+details = ````markdown
+An effect written in a row that the body never performs is `warning[unused_effect]`; `^name` in the row (`! { ^Host }`) asserts that it is unused. `tauto lint` rejects `!?` in the files it checks.
+````
+breaking = true
+migration = ````markdown
+Write the row on every function that performs effects, `div`, `overflow` and `divzero` included. Put `!?` after the result and run `tauto check --fix` to have the rows written.
+````
+
+@ changed[]
+area = "effects"
+summary = ````markdown
+Built-in effects are lower case (`div`, `divzero`, `exceeded`), and arithmetic that has no result performs an effect: `+`, `-`, `*` on a fixed-width integer whose result does not fit perform `overflow`, and division by zero performs `divzero`.
+````
+details = ````markdown
+Both are declared in `std::prelude::num`, appear in rows and can be answered by a `handle`. Unanswered, the host stops the program with `the number is too large` or `division by zero`.
+````
+breaking = true
+migration = ````markdown
+Rename `Div` / `DivZero` / `Exceeded` in rows and arms, and add `overflow` (and `divzero`) to the rows of functions that use these operators, or use the `checked_*`, `wrapping_*` and proof-carrying forms.
+````
+
+@ changed[]
+area = "effects"
+summary = ````markdown
+A run-time budget is the host operation `perform budget(n, () => { body })`, with `perform budget_memory(n, f)` for memory. A function that runs a budget has `budget` in its row.
+````
+breaking = true
+migration = ````markdown
+Rewrite `budget(steps: n) { body }` as `perform budget(n, () => { body })` and `budget(memory: n) { body }` as `perform budget_memory(n, () => { body })`, and add `budget` / `budget_memory` to the rows.
+````
+
+@ changed[]
+area = "effects"
+summary = ````markdown
+`show` is a prelude function over the class `Debug`: `show(&v)` writes the `Debug` text of a value and a line break to `stdout`. `Show` is the effect set `{ stdout, stdout_flush }`.
+````
+breaking = true
+migration = ````markdown
+Replace `perform show(name, v)` with `show(&v)` and the row entry `show` with `Show`.
+````
+
+@ changed[]
+area = "effects"
+summary = ````markdown
+Entries of a program are the prelude effects `main(body)` and `test(name, body)`: a program writes `perform main(() => { … })`. `test` has a fixed row, and `run_test` is removed.
+````
+details = ````markdown
+A test body may perform `check(path)` to get the `List(Diagnostic)` that `tauto check` gives for a file.
+````
+breaking = true
+migration = ````markdown
+Remove calls to `run_test`; a test body that performed other effects handles them inside the body.
+````
+
+@ changed[]
+area = "effects"
+summary = ````markdown
+Shared state is made and used through effects: `ref_new`, `ref_get`, `ref_set`, `weak_of`, `weak_get`, `mutex_new`, `mutex_put`, `atomic_new`, `atomic_load`, `atomic_store`, `atomic_fetch_add`. `Ref::new`, `Ref::get`, `Ref::set`, `Mutex::new` and `Atomic::*` are no longer callable.
+````
+breaking = true
+migration = ````markdown
+`Ref::new(v)` becomes `perform ref_new(v)`, `Ref::get(r)` becomes `perform ref_get(r)`, `Mutex::new(v)` becomes `perform mutex_new(v)`, `Atomic::fetch_add(a, n)` becomes `perform atomic_fetch_add(a, n)`; add the effects to the rows of the functions that do so.
+````
+
+@ changed[]
+area = "classes"
+summary = ````markdown
+`inductive class` is the class of the proof language; a plain `class` is a program class without laws. The structural predicate `Hash` is removed: maps take their keys by the class `Key`.
+````
+breaking = true
+migration = ````markdown
+Write `inductive class` for every class that has `theorem` laws or is used in proofs. Replace `where DecEq(K), Hash(K)` with `where Key(K)` and give key types a `Key` instance.
+````
+
+@ changed[]
+area = "modules"
+summary = ````markdown
+A member of `module m { … }` without `pub` is seen only inside the module; `pub module` exposes its public members to importing files, and `pub import M { name }` re-exports a member. A `macro fn` and a function of an `extern` block are seen from other files only when written `pub`.
+````
+breaking = true
+migration = ````markdown
+Add `pub` to module members, `macro fn`s and extern functions that other files or the outside of the module use, and write `pub module` for modules other files name.
+````
+
+@ changed[]
+area = "std"
+summary = ````markdown
+Every library file has a lower-case `snake_case` name, so every import path changed: `std::Nat` is `std::nat`, `std::MapLaws` is `std::map_laws`, `std::proof::Lang` is `std::proof::lang`. The same holds for `meta/`, `examples/`, `totes/algebra` and `totes/whale`. The lint `file-name` reports a `.taut` file whose name has a capital letter.
+````
+details = ````markdown
+The declarations inside keep their names (`Nat::add_comm`, `Ordmap::insert`).
+````
+breaking = true
+migration = ````markdown
+Rewrite each import path to the lower-case file name: `import std::Nat { Nat }` becomes `import std::nat { Nat }`, `import std::IntOrder {…}` becomes `import std::int_order {…}`, and `"../std/Base.taut"` becomes `"../std/base.taut"`.
+````
+
+@ changed[]
+area = "std"
+summary = ````markdown
+The prelude is split into `std::prelude` (data and functions: `std`, `collections`, `num`, `text`, `debug`) and `std::builtin` (what the host and the compiler provide: `os`, `par`, `macro`, `secret`, `ord`, `classes`, `region`). `std::prelude::Affine` and `std::prelude::Shared` are merged into `std::prelude::collections`.
+````
+breaking = true
+migration = ````markdown
+`import std::prelude::Os {…}` becomes `import std::builtin::os {…}`, and likewise for `Par`, `Macro`, `Secret`, `Ord` and `Classes`. Import `concat` from `std::prelude::std` and `Vec`, `Buf`, `Array`, `Bytes`, `Map` from `std::prelude::collections` where an import is needed.
+````
+
+@ changed[]
+area = "std"
+summary = ````markdown
+Fixed-width integers of the proofs are two indexed families, `UInt(w)` (`std/uint.taut`) and `SInt(w)` (`std/sint.taut`), at widths 8, 16, 32 and 64. They replace the separate types `U8`, `U32`, `U64`, `I32` and `I64`, and functions carry the width in their name: `U64::add` is `UInt::add64`, `I64::checked_tdiv` is `SInt::checked_tdiv64`.
+````
+breaking = true
+migration = ````markdown
+Write the types as `UInt(8)`, `UInt(32)`, `UInt(64)`, `SInt(32)`, `SInt(64)` and move the width to the end of the function name under `UInt::` / `SInt::` (`U32::xor(a, b)` becomes `UInt::xor32(a, b)`).
+````
+
+@ changed[]
+area = "std"
+summary = ````markdown
+`HashMap` is a library type in `std/hashmap.taut`, a checked open-addressing table. Keys need `Key(K)`; `HashMap::new()` performs `hash_seed`; `insert` returns `Option(K × V) × Option(K × V)`; `get` takes the key as `&K`; `HashMap::index` is removed.
+````
+details = ````markdown
+New operations include `with_seed`, `len`, `contains`, `remove`, `insert_with`, `each_mut` and `fold`.
+````
+breaking = true
+migration = ````markdown
+Add `import std::hashmap { HashMap }`, give key types a `Key` instance (`@keyed!(0) => instance Key` on a struct), add `hash_seed` to the row of code that calls `HashMap::new()` or call `HashMap::with_seed`, and replace `HashMap::index(&m, &k)` with `HashMap::get`.
+````
+
+@ changed[]
+area = "std"
+summary = ````markdown
+Sockets and TLS streams are affine handles that each effect hands back: `tcp_accept`, `tcp_read`, `tcp_write`, `tls_read` and `tls_write` return a struct holding the handle and the result. `TcpListener`, `TcpStream` and `TlsStream` are read through accessor functions (`TcpStream::peer`, `TlsStream::alpn`), and the shutdown effects take a stopper (`TcpStream::stopper(&s)`).
+````
+breaking = true
+migration = ````markdown
+Take the stream back from the returned struct (`let r := perform tcp_read(s, max, d)`, then `r.stream` and `r.got`), replace field reads with the accessor functions, and pass `TcpStream::stopper(&s)` to `tcp_shutdown`.
+````
+
+@ changed[]
+area = "std"
+summary = ````markdown
+`Process.env` is the whole environment of the started program instead of variables set on top of the run's own. `perform environ()` gives the run's environment, and `EnvVars::set`, `EnvVars::without` and `EnvVars::names` edit it.
+````
+breaking = true
+migration = ````markdown
+To keep passing the run's environment, write `env: EnvVars::set(perform environ(), pairs)` where `env: pairs` was written.
+````
+
+@ changed[]
+area = "std"
+summary = ````markdown
+Functions that only inspect their argument take it lent: `Text::len`, `Text::byte`, `Text::slice` and `Text::compare` take `&Text`; the predicates of `List::filter`, `any`, `all`, `find` take `&A`; `List::sort` takes `cmp: (&A, &A) -> Ordering`.
+````
+breaking = true
+migration = ````markdown
+Pass `&t` to the `Text` functions and write predicates and comparators over borrowed elements (`(x: &A) => …`).
+````
+
+@ changed[]
+area = "std"
+summary = ````markdown
+`spawn` takes an `affine` function; `Cancelled` is a struct (`Cancelled {}`); `raise`, `Channel` and `Mutex::take` / `lock` ask for `NoBorrow` types.
+````
+breaking = true
+migration = ````markdown
+Write `Cancelled {}` where the constructor `Cancelled` was used as a value or pattern.
+````
+
+@ changed[]
+area = "std"
+summary = ````markdown
+`std/` is a tote of its own (`std/Tauto.eure`), and `std/nat.taut` no longer depends on `calc!`, so importing it brings in no macros.
+````
+
+@ changed[]
+area = "proofs"
+summary = ````markdown
+`By L.` in `proof!` matches the conclusion of `L` against the goal and fills the explicit arguments this determines; only the remaining arguments are taken from the Proof-code entry.
+````
+breaking = true
+migration = ````markdown
+In the program after `%%`, remove from a `By L.` entry the arguments that the goal already determines.
+````
+
+@ changed[]
+area = "macros"
+summary = ````markdown
+Syntax-value constructors carry the unused marker and structured rows: `BName`, `PtBind`, `StLet`, `StVar` and `ExMatch` have one more `Option(SynSpan)` field, `SynParam` has the field `unused`, and the row of `ExPi` is `Option(List(SynRowEntry))`. The macro API is declared as `fn Syn::name` in `std/builtin/macro.taut`.
+````
+breaking = true
+migration = ````markdown
+Macros that build or match these constructors add the new field (`None` when the binding is not marked `^`) and write row entries as `EffName(name, None)` or `EffApplied(…)`.
+````
+
+@ changed[]
+area = "macros"
+summary = ````markdown
+`Syn::global(name)` and the globals of a `quote` mean what `name` means where the call is written, including the imports at the head of the `macro fn` body. A syntax's `parse` called at run time reads a text of any length.
+````
+
+@ changed[]
+area = "lean"
+summary = ````markdown
+The Lean model of Nib has no store: a `var` is a scope in the term (`lean/Proto/Nib/ScopeCore.lean`), and ownership is proved in `Lin.lean`, `Own.lean` and `Safety.lean`. The pinned Lean is installed with `tauto setup-lean "$PWD/.tools/lean-4.34.1"`.
+````
+
+@ changed[]
+area = "cli"
+summary = ````markdown
+`tauto run`, `dev` and `test` ask at the start for the permissions the program's effects need, and `--yes` allows what is asked without a prompt. The `--allow-*`, `-A` and `--permissions FILE` options of `run` and `dev` are gone.
+````
+details = ````markdown
+The question lists each permission kind with the function it comes from. `read` and `write` are allowed under the folder the run starts in; narrower or wider grants are written in `trust.run` of `Tauto.eure`.
+````
+breaking = true
+migration = ````markdown
+Drop `--allow-*` and `--permissions FILE` from `tauto run` / `tauto dev`. Answer the prompt, or pass `--yes` in non-interactive runs. Move narrowed grants into `trust { run { read = [...], net = [...] } }` of the project's `Tauto.eure`.
+````
+
+@ changed[]
+area = "cli"
+summary = ````markdown
+`tauto build` asks for the program's permissions (or takes `--yes` / `--allow-KIND[=…]`) and fixes the answer in the output; the whole command line of a built program goes to the program.
+````
+breaking = true
+migration = ````markdown
+Give the permissions when building (`tauto build --allow-read=data …` or `--yes`) and remove leading `--allow-*` flags from the built program's invocation.
+````
+
+@ changed[]
+area = "cli"
+summary = ````markdown
+`--tote` takes a workspace member's package name, not a directory (`tauto run --tote game`).
+````
+breaking = true
+migration = ````markdown
+Outside a workspace, pass the directory or file as the path argument (`tauto run DIR`, `tauto check DIR`) instead of `--tote DIR`.
+````
+
+@ changed[]
+area = "cli"
+summary = ````markdown
+`tauto test` runs each selected test on its own, in a process of its own, and gains `--list`, `--retries N`, `--steps`, `--yes` and `--check-ownership`. Statuses are `passed`, `passed_after_retry`, `failed`, `stopped`, `not_run` and `error`.
+````
+details = ````markdown
+Two tests with one name in a file are an error. A file with tests performs nothing else at its top level.
+````
+breaking = true
+migration = ````markdown
+Move top-level printing or I/O of a test file into the test bodies. Readers of `--json` accept the new status values.
+````
+
+@ changed[]
+area = "cli"
+summary = ````markdown
+`tauto run --check-ownership` runs the program on `--backend niri`; `tauto dev` no longer accepts it. Tote commands (`tauto NAME`) require the project's `trust` section to be approved.
+````
+
+@ changed[]
+area = "manifest"
+summary = ````markdown
+One top-level `exports = ["double", "game::*"]` list replaces `rust.exports` and `javascript.exports`, and every backend reads it; `tauto build --export ENTRY` adds an entry for one build. Design: `docs/design/exports.md`.
+````
+breaking = true
+migration = ````markdown
+Move the entries of `rust { exports = [...] }` and `javascript { exports = [...] }` to a top-level `exports = [...]` in `Tauto.eure`.
+````
+
+@ changed[]
+area = "fmt"
+summary = ````markdown
+`tauto fmt` lays out an effect row as a group that may break across lines at its commas, and drops a trailing comma on a one-line group.
+````
+
+@ changed[]
+area = "backends"
+summary = ````markdown
+A failed task ends only itself: a run-time error in a spawned task is reported as `a task failed: …`, re-raises in whoever joins it, and poisons every `Mutex` whose contents it held.
+````
+
+@ changed[]
+area = "backends"
+summary = ````markdown
+Syntax parsing at run time on the JavaScript backend uses a parser written in Tauto and compiled into the program instead of a Wasm module.
+````
+
+@ changed[]
+area = "tools"
+summary = ````markdown
+The repository's scripts are tote commands written in Tauto: `scripts/test.sh` is `tauto gate full|focused`, and the generators are `tauto gen-tauto-parol`, `gen-tauto-grammar`, `gen-syntax-tables`, `gen-syntax-fixtures`, `gen-grammar-tables` and `gen-unicode-tables`. The toolchain is pinned to a stable Rust (`rust-toolchain.toml`).
+````
+breaking = true
+migration = ````markdown
+Replace `scripts/NAME.sh ARGS` with the matching `tauto NAME ARGS` run from the checkout.
+````
+
+@ changed[]
+area = "tools"
+summary = ````markdown
+Test-suite cases expect displayed values in `stdout`; the `shows` and `drops` expectations and the per-backend `*_shows` / `*_error` keys are removed, and a backend is opted out with `rust|javascript|vm|llvm|niri { unimplemented = "…" | bug = "…" }`.
+````
+breaking = true
+migration = ````markdown
+In case files, expect displayed values in `stdout` instead of `shows`, and replace `unimplemented` / `backends` marks with the per-backend sections.
+````
+
+@ changed[]
+area = "totes"
+summary = ````markdown
+The reader of the surface syntax moved from `totes/surface` to `totes/parse`; `totes/names` reads declarations and uses from the resolved program (`names_decls_from`, `names_kept`), and `totes/doc` links a use to its declaration by identity.
+````
+breaking = true
+migration = ````markdown
+Depend on `totes/parse` and import `parse::parse` for the reader. Callers of the removed `names_*` walkers resolve the program with `totes/surface` first.
+````
+
+@ changed[]
+area = "totes"
+summary = ````markdown
+`totes/query-flow`: `@query!(Q)` on a query without `keys` also makes `fn Q::register`, and the functions that touch the runtime state `ref_get`, `ref_set` and `ref_new` in their rows. `totes/totebag`: `TbLocked::MkLocked` has a `sparse: Bool` field after `dir`.
+````
+breaking = true
+migration = ````markdown
+Write the generated list in full (`@query!(Add) => fn Add, fn Add::register`), add the `ref_*` effects to the rows of query functions, and add the `sparse` field to uses and patterns of `MkLocked`.
+````
+
+@ changed[]
+area = "totes"
+summary = ````markdown
+`totes/json` reads as a number only text of the JSON number grammar (`is_json_number`, `json_number`). `totes/lsp` gives up a message that runs out of its step budget alone and goes on. `totes/mcp` passes its environment to the `tauto` it starts.
+````
+
+@ changed[]
+area = "docs"
+summary = ````markdown
+The design documents under `docs/design/` are in English.
+````
+
+@ removed[]
+area = "cli"
+summary = ````markdown
+The tree evaluator: `tauto run --backend eval`, `tauto dev --backend eval` and the crate `tauto-eval`. Programs, tests and macros run on the bytecode machine.
+````
+breaking = true
+migration = ````markdown
+Remove `--backend eval`. Rust callers of `tauto::eval::run` call `tauto::exec::run`.
+````
+
+@ removed[]
+area = "manifest"
+summary = ````markdown
+`javascript.async`: an extern that returns a Promise declares the row `{wait}` in its signature (`fn fetch_text(url: Text): Text ! {wait}`).
+````
+breaking = true
+migration = ````markdown
+Delete `javascript { async = [...] }` from `Tauto.eure` and write `! {wait}` on the extern functions it listed.
+````
+
+@ removed[]
+area = "lint"
+summary = ````markdown
+The lint rules `pair-name` and `braced-name`.
+````
+
+@ removed[]
+area = "std"
+summary = ````markdown
+`Bool::or` of `std/base.taut`; its lemmas are stated over `||`.
+````
+breaking = true
+migration = ````markdown
+Write `a || b`.
+````
+
+@ removed[]
+area = "backends"
+summary = ````markdown
+The crate `tauto-syntax-wasm`.
+````

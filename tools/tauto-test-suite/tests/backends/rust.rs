@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tauto_nir::CompileError;
+use tauto_nibcheck::lower::CompileError;
 use tauto_rustgen::Sources;
 use tauto_test_suite::{RustCase, coverage::status};
 
@@ -12,8 +12,6 @@ enum Result_ {
     Passed,
     /// Not a program the front end accepts (a case about an error).
     Skipped,
-    /// Declared `rust = "skip: <reason>"`.
-    Declined(String),
     Todo(String),
     Failed(String),
     Partial(String),
@@ -58,23 +56,19 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
     if !case.selects_backend("rust") {
         return Result_::Skipped;
     }
-    if let Some(rust) = &case.rust {
-        if case.explicit_backend("rust") {
-            return Result_::Failed("an explicit Rust route cannot be skipped".into());
-        }
-        return Result_::Declined(rust.clone());
-    }
     let source = match case.compilation_source() {
         Ok(source) => source,
         Err(message) => return compilation_failure(case, "front", &message),
     };
-    let (package, files_dir, _files) = match case.compile_with_files("rust") {
+    let (mut package, files_dir, _files) = match case.compile_with_files("rust") {
         Ok(p) => p,
         Err(CompileError::Unsupported(u)) => {
             return compilation_failure(case, "unsupported", &u.what.to_string());
         }
         Err(CompileError::Build(m)) => return compilation_failure(case, "build", &m),
-        Err(CompileError::Front(m)) => return compilation_failure(case, "front", &m),
+        Err(CompileError::Front(m) | CompileError::Package(m)) => {
+            return compilation_failure(case, "front", &m)
+        }
     };
     let manifest = match case
         .tote
@@ -85,8 +79,14 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
         Ok(m) => m,
         Err(m) => return compilation_failure(case, "build", &m.to_string()),
     };
-    // The case host's probe, as every runner gives it.
+    // The dependencies' bindings and bridge crates, as `tauto build` adds them.
     let mut manifest = manifest;
+    if let (Some(m), Some(tote)) = (&mut manifest, &case.tote)
+        && let Err(e) = tauto::manifest::add_dependency_rust(m, tote)
+    {
+        return compilation_failure(case, "build", &e.to_string());
+    }
+    // The case host's probe, as every runner gives it.
     if !package.externs.is_empty() {
         let m = manifest.get_or_insert_with(Default::default);
         for (map, name, rust) in [
@@ -101,7 +101,18 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
                 });
         }
     }
-    let bindings = match tauto_rustgen::Bindings::resolve(&package, manifest.as_ref(), None) {
+    // A tote's own bridge crate, which names an extern the manifest does not bind.
+    let bridge = manifest.as_ref().and_then(|m| {
+        m.rust
+            .bridge
+            .as_ref()
+            .map(|_| tauto_rustgen::bridge_ident(&m.package.name))
+    });
+    let bindings = match tauto_rustgen::Bindings::resolve(
+        &mut package,
+        manifest.as_ref(),
+        bridge.as_deref(),
+    ) {
         Ok(b) => b,
         Err(e) => return compilation_failure(case, "build", &e),
     };
@@ -162,6 +173,10 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
     let show_path = work.join("shows");
     let out_path = work.join("stdout");
     let err_path = work.join("stderr");
+    let report_path = work.join("report");
+    let _ = std::fs::remove_file(&report_path);
+    let tests_path = work.join("tests-report");
+    let _ = std::fs::remove_file(&tests_path);
     std::fs::write(&show_path, "").unwrap();
     // `{dir}` is the directory that holds the case's files.
     let placed = |s: &String| match &files_dir {
@@ -169,17 +184,28 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
         None => s.clone(),
     };
     let mut command = std::process::Command::new(&bin);
+    // The cases' messages are the English ones, whatever the machine's locale.
+    command.env("TAUTO_LANG", "en");
     // A case's `budget` is the session's step limit, as `TAUTO_STEP_LIMIT` says it.
     if let Some(n) = case.budget {
         command.env("TAUTO_STEP_LIMIT", n.to_string());
+    }
+    if let Some(mb) = case.rust_stack_mb {
+        command.env("TAUTO_STACK_MB", mb.to_string());
+    }
+    // A case that names its tests runs the bodies of the `test` entries, not
+    // `main`: the process is told so as `tauto test` tells a built program.
+    if case.tests.is_some() {
+        command
+            .env("TAUTO_ENTRY", "test")
+            .env("TAUTO_TEST_REPORT", &tests_path);
     }
     let mut child = match command
         .args(case.permissions.iter().map(placed))
         .arg("--")
         .args(case.args.iter().map(placed))
         .env("TAUTO_CASE_SHOWS", &show_path)
-        .env("TAUTO_REPORT_BUDGET_STEPS", "1")
-        .env("TAUTO_REPORT_PROBE_DROPS", "1")
+        .env("TAUTO_REPORT", &report_path)
         .stdout(std::fs::File::create(&out_path).unwrap())
         .stderr(std::fs::File::create(&err_path).unwrap())
         .spawn()
@@ -212,28 +238,22 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
         .collect::<Vec<_>>();
     let stdout = std::fs::read_to_string(out_path).unwrap();
     let stderr = std::fs::read_to_string(err_path).unwrap();
-    // The runtime's reports are its last lines; the program's own stderr
-    // is the rest.
+    // The runtime's reports are in their own file, so the program's stderr
+    // is compared as it is.
+    let report = std::fs::read_to_string(&report_path).unwrap_or_default();
     let mut steps = None;
     let mut probe_drops = None;
-    let stderr: String = stderr
-        .split_inclusive('\n')
-        .filter(|line| {
-            if let Some(n) = line.strip_prefix("tauto-budget-steps: ") {
-                steps = n.trim().parse::<u64>().ok();
-            } else if let Some(names) = line.strip_prefix("tauto-probe-drops: ") {
-                let names = names.trim_end_matches('\n');
-                probe_drops = Some(if names.is_empty() {
-                    Vec::new()
-                } else {
-                    names.split(',').map(str::to_string).collect::<Vec<_>>()
-                });
+    for line in report.lines() {
+        if let Some(n) = line.strip_prefix("tauto-budget-steps: ") {
+            steps = n.trim().parse::<u64>().ok();
+        } else if let Some(names) = line.strip_prefix("tauto-probe-drops: ") {
+            probe_drops = Some(if names.is_empty() {
+                Vec::new()
             } else {
-                return true;
-            }
-            false
-        })
-        .collect();
+                names.split(',').map(str::to_string).collect::<Vec<_>>()
+            });
+        }
+    }
     if let Some(want) = &case.probe_drops {
         if probe_drops.as_ref() != Some(want) {
             return Result_::Failed(format!(
@@ -246,7 +266,28 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
             return Result_::Failed(format!("rust_budget_steps: expected {want}, got {steps:?}"));
         }
     }
-    if case.backend_known_failure.contains_key("rust") {
+    if let Some(want) = &case.tests {
+        let report = tauto_rt::entry::read(&std::fs::read_to_string(&tests_path).unwrap_or_default());
+        if let Some(e) = &report.error {
+            return Result_::Failed(format!("tests: {e}"));
+        }
+        let failed: Vec<String> = report
+            .tests
+            .iter()
+            .filter_map(|(n, o)| match o {
+                tauto_rt::entry::Outcome::Passed | tauto_rt::entry::Outcome::Retried(_) => None,
+                o => Some(format!("{n}: {o:?}")),
+            })
+            .collect();
+        if !failed.is_empty() {
+            return Result_::Failed(format!("tests failed: {failed:?}"));
+        }
+        let names: Vec<String> = report.tests.iter().map(|(n, _)| n.clone()).collect();
+        if &names != want {
+            return Result_::Failed(format!("tests: expected {want:?}, got {names:?}"));
+        }
+    }
+    if case.runtime_opt_out("rust") {
         if status.success() {
             return Result_::Failed(
                 "declared known failure Rust behavior succeeded; remove the stale limitation"
@@ -259,8 +300,9 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
             Ok(false) => unreachable!(),
         };
     }
-    match case.check_output("rust", &shows, &stdout, &stderr, status.code()) {
-        Ok(()) => checked(case),
+    match case.check_output("rust", &stdout, &stderr, status.code()) {
+        Ok(Some(e)) => Result_::Todo(format!("declared output: {e}")),
+        Ok(None) => checked(case),
         Err(e) => Result_::Failed(e),
     }
 }
@@ -281,7 +323,6 @@ pub fn runner(worker: usize) -> impl FnMut(usize, &RustCase) -> String {
         match run_case(case, &work, &target) {
             Result_::Passed => "pass".into(),
             Result_::Skipped => unreachable!("selected cases are not skipped"),
-            Result_::Declined(why) => status("declined", &why),
             Result_::Partial(why) => status("partial", &why),
             Result_::Todo(why) => status("todo", &why),
             Result_::Failed(why) => status("fail", &why),

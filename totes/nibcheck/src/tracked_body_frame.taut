@@ -1,4 +1,5 @@
 import "tracked_inference_frame.taut"
+import "tracked_inference_frame_head.taut"
 import "run_data_names_sound.taut"
 import "../../surface/src/surface.taut"
 import "body_frame.taut"
@@ -10,6 +11,7 @@ import "tracked_run_frame.taut"
 import "tracked_state_frame.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "types_run.taut"
 import "unify_sound.taut"
@@ -39,7 +41,7 @@ pub theorem ck_stmt_frame_tracked(
 }
 
 pub def BodyFunctionsIH_tracked(
-  rest: List(Pair(SurfaceFn, Scheme))
+  rest: List(SurfaceFn × Scheme)
 ): Prop := ∀ c: Checker. ∀ ordered: CkOrdered(c). TrackedRunFrame(c, ck_check_fns(rest, c))
 pub def BodyTopIH_tracked(
   rest: List(SurfaceStmt)
@@ -48,15 +50,14 @@ pub def BodyTopIH_tracked(
 ). TrackedScopeFrame(c, ck_top_level(rest, c, env))
 
 pub theorem body_functions_cons_frame_tracked(
-  p: Pair(SurfaceFn, Scheme),
-  rest: List(Pair(SurfaceFn, Scheme)),
+  p: SurfaceFn × Scheme,
+  rest: List(SurfaceFn × Scheme),
   c: Checker,
   ih: BodyFunctionsIH_tracked(rest),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, body_functions_cons(p, rest, c)) {
   tracked_run_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (checked: Unit, c1: Checker) => ck_rewrap1(ck_check_fns(rest, c1)),
     ck_check_fn(c, body_function(p), body_scheme(p), Nil),
@@ -65,7 +66,7 @@ pub theorem body_functions_cons_frame_tracked(
   )
 }
 
-pub theorem ck_check_fns_frame_tracked(fs: List(Pair(SurfaceFn, Scheme)), c: Checker, ordered: CkOrdered(c)): TrackedRunFrame(c, ck_check_fns(fs, c)) { ⊢ TrackedRunFrame(c, ck_check_fns(fs, c)) from match fs { Nil => AndIntro(
+pub theorem ck_check_fns_frame_tracked(fs: List(SurfaceFn × Scheme), c: Checker, ordered: CkOrdered(c)): TrackedRunFrame(c, ck_check_fns(fs, c)) { match fs { Nil => AndIntro(
   ordered,
   AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
 )
@@ -85,8 +86,8 @@ pub theorem ck_top_let_frame_tracked(
   c: Checker,
   s: SurfaceStmt,
   env: Scope
-): TrackedFrame(c, ck_top_let(c, s, env)) { ⊢ TrackedFrame(c, ck_top_let(c, s, env)) from match s {
-    StLet(name, ty, value, borrow, bm) => ⊢ TrackedFrame(c, ck_top_let(c, StLet(name, ty, value, borrow, bm), env)) from match env { ScopeMk(items) => ⊢ TrackedFrame(c, ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))) from match items { Nil => AndIntro(
+): TrackedFrame(c, ck_top_let(c, s, env)) { match s {
+    StLet(name, ty, value, r#borrow, bm, unused, st_stack) => ⊢ TrackedFrame(c, ck_top_let(c, StLet(name, ty, value, r#borrow, bm, unused, st_stack), env)) from match env { ScopeMk(items) => ⊢ TrackedFrame(c, ck_top_let(c, StLet(name, ty, value, r#borrow, bm, unused, st_stack), ScopeMk(items))) from match items { Nil => AndIntro(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
@@ -94,7 +95,7 @@ pub theorem ck_top_let_frame_tracked(
           item => member => member,
           AndIntro(Refl, obligation_state_refl(c))
         ) } }
-    StVar(name, ty, value, vb) => AndIntro(
+    StVar(name, ty, value, vb, unused, st_stack) => AndIntro(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
@@ -114,10 +115,6 @@ pub theorem ck_top_let_frame_tracked(
     )
     StReturn(e) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StExpr(e) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
-    StModule(pat_name, pat_stmts, pat_start, pat_end) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
     StTheorem(pat_t) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StDef(pat_t) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StMutual(pat_stmts, pat_start, pat_end) => AndIntro(
@@ -134,7 +131,7 @@ pub theorem ck_top_let_frame_tracked(
     )
     StStruct(pat_d) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StEnum(pat_d) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
-    StExtern(pat_abi, pat_fns, pat_start, pat_end) => AndIntro(
+    StExtern(pat_fns, pat_instances, pat_types, pat_structs, pat_enums, pat_start, pat_end) => AndIntro(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
@@ -159,6 +156,30 @@ pub theorem ck_top_let_frame_tracked(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
+    StLoop(st_body, start, end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StModule(mod_name, mod_vis, mod_items, start, end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StReexport(re_path, re_names, re_spans, start, end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StFor(for_pat, for_src, st_body, start, end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StBreak(st_value, start, end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StContinue(start, end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
   } }
 
 pub theorem body_top_one_frame_tracked(
@@ -168,10 +189,9 @@ pub theorem body_top_one_frame_tracked(
   check: Bool,
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, body_top_one(s, c, env, check)) {
-  ⊢ TrackedScopeFrame(c, body_top_one(s, c, env, check)) from match check {
+  match check {
     true => tracked_pattern_bind(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       c,
       (t: Ty, c1: Checker, env1: Scope) => pattern_lift(env1, ck_top_let(c1, s, env1)),
       ck_stmt(c, s, env),
@@ -202,8 +222,7 @@ pub theorem body_top_cons_frame_tracked(
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, body_top_cons(s, rest, c, env)) {
   tracked_pattern_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (checked: Unit, c1: Checker, env1: Scope) => pattern_rewrap(ck_top_level(rest, c1, env1)),
     body_top_one(s, c, env, not(stmt_is_declaration(s))),
@@ -216,7 +235,7 @@ pub theorem body_top_cons_frame_tracked(
   )
 }
 
-pub theorem ck_top_level_frame_tracked(ss: List(SurfaceStmt), c: Checker, env: Scope, ordered: CkOrdered(c)): TrackedScopeFrame(c, ck_top_level(ss, c, env)) { ⊢ TrackedScopeFrame(c, ck_top_level(ss, c, env)) from match ss { Nil => AndIntro(
+pub theorem ck_top_level_frame_tracked(ss: List(SurfaceStmt), c: Checker, env: Scope, ordered: CkOrdered(c)): TrackedScopeFrame(c, ck_top_level(ss, c, env)) { match ss { Nil => AndIntro(
   ordered,
   AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
 )
@@ -235,24 +254,21 @@ pub theorem ck_top_level_frame_tracked(ss: List(SurfaceStmt), c: Checker, env: S
 pub theorem names_function_body_tracked(
   c: Checker,
   program: List(SurfaceStmt),
-  fns: List(Pair(SurfaceFn, Scheme)),
+  fns: List(SurfaceFn × Scheme),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, names_function_body(c, program, fns)) {
   tracked_run_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, next: Checker) => inference_bind_scope(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (finished: Unit, final: Checker, env: Scope) => mut1(finished, final),
       ck_top_level(program, next, ScopeMk(Nil))
     ),
     ck_check_fns(fns, c),
     ck_check_fns_frame_tracked(fns, c, ordered),
     ignored => next => ord => inference_bind_scope_frame_tracked(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       next,
       (finished: Unit, final: Checker, env: Scope) => mut1(finished, final),
       ck_top_level(program, next, ScopeMk(Nil)),

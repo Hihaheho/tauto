@@ -1,0 +1,80 @@
+import std::well_founded { NatLt, measure }
+
+// A successful step provides the next state and proves that its remaining
+// measure is smaller. The state need not have a length or even be a collection.
+pub(open) inductive FiniteStep(I: Type, S: Type, remaining: Nat): Type {
+  Done: FiniteStep(I, S, remaining)
+  Yield(
+    item: I,
+    state: S,
+    smaller: Nat,
+    progress: NatLt(smaller, remaining)
+  ): FiniteStep(I, S, remaining)
+}
+
+pub(open) inductive IterationControl(B: Type): Type {
+  Continue(value: B): IterationControl(B)
+  Break(value: B): IterationControl(B)
+}
+
+fn remaining_measure(n: Nat): Nat { n }
+
+pub fn fold_finite<I, S, B, !e>(remaining: Nat, state: S, next: (n: Nat, s: S) -> FiniteStep(I, S, n), init: B, step: (B, I) -> IterationControl(B) ! e): B ! e decreasing_by measure(remaining_measure) => theorem fold_finite::eq {
+  match next(remaining, state) {
+    Done => init
+    Yield(item, newer, smaller, progress) => {
+      let control: IterationControl(B) := step(init, item)
+      ⊢ B from match control {
+        Continue(value) => fold_finite(smaller, newer, next, value, step, progress)
+        Break(value) => value
+      }
+    }
+  }
+}
+
+// A transition returns the accumulator on exit, or carries it forward with
+// the new state and the proof that the remaining measure has decreased.
+pub(open) inductive FiniteTransition(S: Type, B: Type, remaining: Nat): Type {
+  Finish(value: B): FiniteTransition(S, B, remaining)
+  Advance(
+    state: S,
+    value: B,
+    smaller: Nat,
+    progress: NatLt(smaller, remaining)
+  ): FiniteTransition(S, B, remaining)
+}
+
+pub fn run_finite<S, B, !e>(remaining: Nat, state: S, initial: B, step: (n: Nat, s: S, value: B) -> FiniteTransition(S, B, n) ! e): B ! e decreasing_by measure(remaining_measure) => theorem run_finite::eq {
+  let transition: FiniteTransition(S, B, remaining) := step(remaining, state, initial)
+  ⊢ B from match transition {
+    Finish(value) => value
+    Advance(newer, updated, smaller, proof) => run_finite(smaller, newer, updated, step, proof)
+  }
+}
+
+pub fn fold_finite_effectful<I, S, B, !e>(
+  remaining: Nat,
+  state: S,
+  next: (n: Nat, s: S) -> FiniteStep(I, S, n) ! e,
+  init: B,
+  step: (B, I) -> IterationControl(B) ! e
+): B ! e {
+  run_finite(
+    remaining,
+    state,
+    init,
+    (n: Nat, cursor: S, value: B) => {
+      let acquired: FiniteStep(I, S, n) := next(n, cursor)
+      ⊢ FiniteTransition(S, B, n) from match acquired {
+        Done => FiniteTransition::Finish(value)
+        Yield(item, newer, smaller, progress) => {
+          let control: IterationControl(B) := step(value, item)
+          ⊢ FiniteTransition(S, B, n) from match control {
+            Continue(updated) => FiniteTransition::Advance(newer, updated, smaller, progress)
+            Break(result) => FiniteTransition::Finish(result)
+          }
+        }
+      }
+    }
+  )
+}

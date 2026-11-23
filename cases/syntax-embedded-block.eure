@@ -1,21 +1,20 @@
 description = "The text of `${ … }` in a syntax literal is a block body: statements may come before the value, and their bindings stay inside."
 @ cases.let-before-value
 entry = "src/main.taut"
-backends = ["rust", "javascript", "vm"]
 files."Tauto.eure" = 'package { name = "embedded-block" version = "0.1.0" }'
 files."src/syntax-defs.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(caller, ```par
 {{par:caller_expression}}```) => struct Root, fn parse
-macro fn caller(e: caller::Root): SynExpr {
+pub macro fn caller(e: caller::Root): SynExpr {
   let body := e.tauto_expr
   quote { (() => $body)() }
 }
 ````
 files."src/main.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 import "syntax-defs.taut"
-fn mark(n: i64): i64 {
+fn mark(n: i64): i64 ! {overflow} {
   caller!(```caller
     (${
       let doubled := n + n
@@ -23,58 +22,60 @@ fn mark(n: i64): i64 {
     })
   ```)
 }
-perform show("mark", mark(20))
+perform main(() => {
+  show(&mark(20))
+})
 ````
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["mark = 41"]
+stdout = "41\n"
 
 @ cases.one-expression-is-unchanged
 entry = "src/main.taut"
-backends = ["rust", "javascript", "vm"]
 files."Tauto.eure" = 'package { name = "embedded-block" version = "0.1.0" }'
 files."src/syntax-defs.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(caller, ```par
 {{par:caller_expression}}```) => struct Root, fn parse
-macro fn caller(e: caller::Root): SynExpr {
+pub macro fn caller(e: caller::Root): SynExpr {
   let body := e.tauto_expr
   quote { (() => $body)() }
 }
 ````
 files."src/main.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 import "syntax-defs.taut"
 fn read(n: i64): i64 {
   caller!(```caller
     (${n})
   ```)
 }
-perform show("read", read(7))
+perform main(() => {
+  show(&read(7))
+})
 ````
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["read = 7"]
+stdout = "7\n"
 
 @ cases.binding-stays-inside
 entry = "src/main.taut"
-backends = ["rust", "javascript", "vm"]
 files."Tauto.eure" = 'package { name = "embedded-block" version = "0.1.0" }'
 files."src/syntax-defs.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(caller, ```par
 {{par:caller_expression}}```) => struct Root, fn parse
-macro fn caller(e: caller::Root): SynExpr {
+pub macro fn caller(e: caller::Root): SynExpr {
   let body := e.tauto_expr
   quote { (() => $body)() }
 }
 ````
 files."src/main.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 import "syntax-defs.taut"
-fn read(n: i64): i64 {
+fn read(n: i64): i64 ! {overflow} {
   let inner := 1
   let outer := caller!(```caller
     (${
@@ -84,10 +85,12 @@ fn read(n: i64): i64 {
   ```)
   outer + inner
 }
-perform show("read", read(5))
+perform main(() => {
+  show(&read(5))
+})
 ````
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["read = 6"]
+stdout = "6\n"
 

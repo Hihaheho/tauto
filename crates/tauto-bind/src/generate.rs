@@ -48,10 +48,12 @@ const RESERVED: &[&str] = &[
     "continue",
     "eqn",
     "opaque",
+    "ghost",
     "budget",
     "resume",
     "direct",
     "mut",
+    "coerce",
     "type",
     "in",
     "use",
@@ -66,7 +68,7 @@ struct Bound {
     name: String,
     rust: String,
     /// How many lifetimes the type has (`Match<'h>` one, `Matches<'r, 'h>`
-    /// two); a type that has any is written `view struct`.
+    /// two); a type that has any is an extern `type(borrow)`.
     lifetimes: usize,
 }
 
@@ -274,7 +276,9 @@ impl<'a> Gen<'a> {
                 }
                 self.externs.insert(qualified, rust);
             }
-            Err(why) => self.report.push(msg!("bind-unbound", item = path, reason = why)),
+            Err(why) => self
+                .report
+                .push(msg!("bind-unbound", item = path, reason = why)),
         }
     }
 
@@ -343,17 +347,17 @@ impl<'a> Gen<'a> {
                     let (fname, line, rust_fn) = match tname.as_str() {
                         "Display" => (
                             "to_text",
-                            format!("fn to_text(&s: {name}): Text"),
+                            format!("fn to_text(s: &{name}): Text"),
                             format!("<{rust} as ToString>::to_string"),
                         ),
                         "Clone" => (
                             "clone",
-                            format!("fn clone(&s: {name}): {name}"),
+                            format!("fn clone(s: &{name}): {name}"),
                             format!("<{rust} as Clone>::clone"),
                         ),
                         "PartialEq" => (
                             "eq",
-                            format!("fn eq(&a: {name}, &b: {name}): Bool"),
+                            format!("fn eq(a: &{name}, b: &{name}): Bool"),
                             format!("<{rust} as PartialEq>::eq"),
                         ),
                         "Default" => (
@@ -387,7 +391,7 @@ impl<'a> Gen<'a> {
                                     }
                                     (
                                         "next",
-                                        format!("fn next(&mut it: {name}): Option({t})"),
+                                        format!("fn next(it: &mut {name}): Option({t})"),
                                         format!("<{rust} as Iterator>::next"),
                                     )
                                 }
@@ -577,7 +581,7 @@ impl<'a> Gen<'a> {
             && let Some((tauto, _)) = subst.get(g)
         {
             return Ok(if tauto == "&str" {
-                format!("&{n}: Text")
+                format!("{n}: &Text")
             } else {
                 format!("{n}: {tauto}")
             });
@@ -590,14 +594,14 @@ impl<'a> Gen<'a> {
                     if *is_mutable {
                         return Err(msg!("bind-why-mut-str"));
                     }
-                    Ok(format!("&{n}: Text"))
+                    Ok(format!("{n}: &Text"))
                 }
                 Type::Slice(inner) => {
                     if *is_mutable {
                         return Err(msg!("bind-why-mut-slice"));
                     }
                     Ok(format!(
-                        "&{n}: {}({})",
+                        "{n}: &{}({})",
                         self.affine("Slice"),
                         self.ty(inner, owner, subst)?
                     ))
@@ -605,9 +609,9 @@ impl<'a> Gen<'a> {
                 other => {
                     let inner = self.ty(other, owner, subst)?;
                     Ok(if *is_mutable {
-                        format!("&mut {n}: {inner}")
+                        format!("{n}: &mut {inner}")
                     } else {
-                        format!("&{n}: {inner}")
+                        format!("{n}: &{inner}")
                     })
                 }
             },
@@ -627,7 +631,7 @@ impl<'a> Gen<'a> {
                             Some(o) => self.ty(o, owner, subst)?,
                             None => "Unit".into(),
                         };
-                        return Ok(format!("&{n}: ({}) -> {out}", ins?.join(", ")));
+                        return Ok(format!("{n}: &(({}) -> {out})", ins?.join(", ")));
                     }
                 }
                 Err(msg!("bind-why-impl-trait-argument"))
@@ -647,11 +651,14 @@ impl<'a> Gen<'a> {
                 other => Err(msg!("bind-why-type", type_name = other)),
             },
             Type::Tuple(v) if v.is_empty() => Ok("Unit".into()),
-            Type::Tuple(v) if v.len() == 2 => Ok(format!(
-                "Pair({}, {})",
-                self.ty(&v[0], owner, subst)?,
-                self.ty(&v[1], owner, subst)?
-            )),
+            // A pair is the product `A × B`; a member written with spaces is put in parentheses.
+            Type::Tuple(v) if v.len() == 2 => {
+                let member = |t: &Type| -> Result<String, Message> {
+                    let m = self.ty(t, owner, subst)?;
+                    Ok(if m.contains(' ') { format!("({m})") } else { m })
+                };
+                Ok(format!("({} × {})", member(&v[0])?, member(&v[1])?))
+            }
             Type::Tuple(_) => Err(msg!("bind-why-large-tuple")),
             Type::Generic(g) if g == "Self" => match owner {
                 Some((_, n)) => Ok(n.to_string()),
@@ -767,26 +774,33 @@ impl<'a> Gen<'a> {
         let affine_types = self.affine_types.borrow();
         if !affine_types.is_empty() {
             t.push_str(&format!(
-                "import std::prelude::Affine {{ {} }}\n\n",
+                "import std::prelude::collections {{ {} }}\n\n",
                 affine_types.iter().copied().collect::<Vec<_>>().join(", ")
             ));
         }
         for (_, name, _, lifetimes) in bound {
-            let kw = if *lifetimes > 0 {
-                "view struct"
-            } else {
-                "affine struct"
-            };
-            t.push_str(&format!("pub(open) {kw} {name} {{}}\n"));
+            if *lifetimes == 0 {
+                t.push_str(&format!("pub(open) struct(affine) {name} {{}}\n"));
+            }
+        }
+        // A type with lifetimes holds a borrow; only an extern type says so.
+        if bound.iter().any(|(_, _, _, lifetimes)| *lifetimes > 0) {
+            t.push_str("extern {\n");
+            for (_, name, _, lifetimes) in bound {
+                if *lifetimes > 0 {
+                    t.push_str(&format!("  pub(open) type(borrow) {name}\n"));
+                }
+            }
+            t.push_str("}\n");
         }
         for (name, lines) in type_modules {
-            t.push_str(&format!("\nmodule {name} {{\n  extern {{\n"));
+            t.push_str("\nextern {\n");
             for l in lines {
-                t.push_str(&format!("    {l}\n"));
+                t.push_str(&format!("  {}\n", public(&prefixed(l, name))));
             }
-            t.push_str("  }\n}\n");
+            t.push_str("}\n");
         }
-        render_module(&mut t, root, 0);
+        render_module(&mut t, root, "");
 
         let mut e = header("//");
         e.push_str(&format!("crate = \"{}\"\n", self.cfg.crate_name));
@@ -843,19 +857,39 @@ impl<'a> Gen<'a> {
     }
 }
 
-fn render_module(out: &mut String, m: &Module, depth: usize) {
-    let pad = "  ".repeat(depth);
+/// A bound function is declared `pub`: another file of the program calls it, and a function
+/// is private to its file unless it says otherwise.
+fn public(line: &str) -> String {
+    if line.starts_with("fn ") {
+        format!("pub {line}")
+    } else {
+        line.to_string()
+    }
+}
+
+/// `fn name(…)` as `fn prefix::name(…)`; any other line as it is.
+fn prefixed(line: &str, prefix: &str) -> String {
+    match line.strip_prefix("fn ") {
+        Some(rest) if !prefix.is_empty() => format!("fn {prefix}::{rest}"),
+        _ => line.to_string(),
+    }
+}
+
+fn render_module(out: &mut String, m: &Module, prefix: &str) {
     if !m.externs.is_empty() {
-        out.push_str(&format!("{pad}extern {{\n"));
+        out.push_str("\nextern {\n");
         for l in &m.externs {
-            out.push_str(&format!("{pad}  {l}\n"));
+            out.push_str(&format!("  {}\n", public(&prefixed(l, prefix))));
         }
-        out.push_str(&format!("{pad}}}\n"));
+        out.push_str("}\n");
     }
     for (name, child) in &m.children {
-        out.push_str(&format!("\n{pad}module {name} {{\n"));
-        render_module(out, child, depth + 1);
-        out.push_str(&format!("{pad}}}\n"));
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}::{name}")
+        };
+        render_module(out, child, &path);
     }
 }
 
@@ -974,13 +1008,13 @@ mod tests {
         assert!(
             output
                 .tauto
-                .contains("import std::prelude::Affine { Buf, Slice, Vec }"),
+                .contains("import std::prelude::collections { Buf, Slice, Vec }"),
             "{}",
             output.tauto
         );
         let rejected = generate(&krate, &cfg(&["rejected"]), "fixture.config.eure");
         assert!(
-            !rejected.tauto.contains("import std::prelude::Affine"),
+            !rejected.tauto.contains("import std::prelude::collections"),
             "{}",
             rejected.tauto
         );
@@ -1019,12 +1053,13 @@ mod tests {
         };
         let out = generate(&krate, &cfg, "fixture.config.eure");
         assert!(
-            out.tauto.contains("fn identity(x: Float): Float"),
+            out.tauto.contains("fn fixture::identity(x: Float): Float"),
             "{}",
             out.tauto
         );
         assert!(
-            out.tauto.contains("fn generic_identity(x: Float): Float"),
+            out.tauto
+                .contains("fn fixture::generic_identity(x: Float): Float"),
             "{}",
             out.tauto
         );

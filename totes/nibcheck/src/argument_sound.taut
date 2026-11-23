@@ -1,3 +1,4 @@
+import "messages.taut"
 import "expect_growth.taut"
 import "argument_checked_sound.taut"
 import "argument_frame.taut"
@@ -7,10 +8,14 @@ import "datas.taut"
 import "diagnostic_sound.taut"
 import "expect_sound.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "operation_error_sound.taut"
 import "rules_ty.taut"
+import "rules_coerce.taut"
+import "coerce_rules_sound.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -18,7 +23,28 @@ pub def ArgumentTypes(
   c: Checker,
   actual: List(Ty),
   expected: List(Ty)
-): Prop := TySubList(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), actual, expected)
+): Prop := ArgFitList(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), ck_datas_of(c), actual, expected)
+// `a` where `b` is expected, after `ck_expect` reported nothing, later.
+pub theorem expect_at_move(c: Checker, c2: Checker, g: Grows(c, c2), a: Ty, b: Ty, h: ExpectAt(c, a, b)): ExpectAt(c2, a, b) {
+  match h {
+    OrInl(sub) => OrInl(sub_at_move(c, c2, g, a, b, sub))
+    OrInr(co) => OrInr(coerce_type_at_move(c, c2, g, a, b, co))
+  }
+}
+pub theorem arg_fit_cons(
+  c: Checker,
+  a: Ty,
+  p: Ty,
+  rest: List(Ty),
+  more: List(Ty),
+  head: ExpectAt(c, a, p),
+  tail: ArgumentTypes(c, rest, more)
+): ArgumentTypes(c, Cons(a, rest), Cons(p, more)) {
+  match head {
+    OrInl(sub) => ArgFitSub(sub, tail)
+    OrInr(co) => ArgFitCoerce(co, tail)
+  }
+}
 pub def ArgumentsResult(
   c: Checker,
   actual: List(Ty),
@@ -47,7 +73,7 @@ pub def ArgumentFirst(
   a: Ty,
   p: Ty,
   m: Mut1(Unit, Checker)
-): Prop := ∀ clean: DiagnosticClean(ck_st(m)). And(Grows(c, ck_st(m)), SubAt(ck_st(m), a, p))
+): Prop := ∀ clean: DiagnosticClean(ck_st(m)). And(Grows(c, ck_st(m)), ExpectAt(ck_st(m), a, p))
 pub fn arguments_after(
   rest: List(Ty),
   more: List(Ty),
@@ -57,7 +83,7 @@ pub fn arguments_after(
   ⊢ Mut1(
     Unit,
     Checker
-  ) from match m { mut1(value, state) => ck_rewrap1(ck_expect_args(rest, state, more, terms)) }
+  ) from match m { mut1(^value, state) => ck_rewrap1(ck_expect_args(rest, state, more, terms)) }
 }
 pub theorem arguments_cons_after(
   c: Checker,
@@ -74,7 +100,7 @@ pub theorem arguments_cons_after(
   ordered: CkOrdered(ck_st(m)),
   clean: DiagnosticClean(ck_st(arguments_after(rest, more, terms, m)))
 ): ArgumentsResult(c, Cons(a, rest), Cons(p, more), arguments_after(rest, more, terms, m)) {
-  ⊢ ArgumentsResult(c, Cons(a, rest), Cons(p, more), arguments_after(rest, more, terms, m)) from match m {
+  match m {
     mut1(value, state) => {
       let tail_clean: DiagnosticClean(
         ck_st(ck_expect_args(rest, state, more, terms))
@@ -96,7 +122,7 @@ pub theorem arguments_cons_after(
         ck_expect_args(rest, state, more, terms),
         And::left(tail)
       )(tail_clean)
-      let head: And(Grows(c, state), SubAt(state, a, p)) := first(state_clean)
+      let head: And(Grows(c, state), ExpectAt(state, a, p)) := first(state_clean)
       let combined: ArgumentsResult(
         c,
         Cons(a, rest),
@@ -110,15 +136,13 @@ pub theorem arguments_cons_after(
           And::left(head),
           And::left(tail)
         ),
-        TysubCons(
-          sub_at_move(
-            state,
-            ck_st(ck_expect_args(rest, state, more, terms)),
-            And::left(tail),
-            a,
-            p,
-            And::right(head)
-          ),
+        arg_fit_cons(
+          ck_st(ck_expect_args(rest, state, more, terms)),
+          a,
+          p,
+          rest,
+          more,
+          expect_at_move(state, ck_st(ck_expect_args(rest, state, more, terms)), And::left(tail), a, p, And::right(head)),
           And::right(tail)
         )
       )
@@ -145,7 +169,7 @@ pub theorem argument_terms_unf(
   p,
   more,
   Cons(at, terms)
-) = arguments_after(rest, more, terms, ck_expect(c, a, p, span_of(at), "an argument")) { Refl }
+) = arguments_after(rest, more, terms, ck_expect(c, a, p, span_of(at), what_argument_message())) { Refl }
 pub theorem argument_terms_sound(
   a: Ty,
   rest: List(Ty),
@@ -176,15 +200,15 @@ pub theorem argument_terms_sound(
         rest,
         more,
         terms,
-        ck_expect(c, a, p, span_of(at), "an argument"),
+        ck_expect(c, a, p, span_of(at), what_argument_message()),
         head_clean => AndIntro(
-          ck_expect_grows(c, a, p, span_of(at), "an argument", ordered, head_clean),
-          ck_expect_sound(c, a, p, span_of(at), "an argument", ordered, head_clean)
+          ck_expect_grows(c, a, p, span_of(at), what_argument_message(), ordered, head_clean),
+          ck_expect_sound(c, a, p, span_of(at), what_argument_message(), ordered, head_clean)
         ),
         ih,
         same,
         count,
-        And::left(ck_expect_run_frame(c, a, p, span_of(at), "an argument", ordered)),
+        And::left(ck_expect_run_frame(c, a, p, span_of(at), what_argument_message(), ordered)),
         Eq::subst(
           (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
           argument_terms_unf(a, rest, c, p, more, at, terms),
@@ -206,7 +230,7 @@ pub theorem argument_params_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(argument_params(a, rest, c, args, ps)))
 ): ArgumentsResult(c, Cons(a, rest), ps, argument_params(a, rest, c, args, ps)) {
-  ⊢ ArgumentsResult(c, Cons(a, rest), ps, argument_params(a, rest, c, args, ps)) from match ps {
+  match ps {
     Nil => False::elim(false_ne_true(same))
     Cons(p, more) => argument_terms_sound(
       a,
@@ -229,8 +253,8 @@ pub theorem arguments_nil_sound(
   same: Nat::eq(0, list_len(ps)) = true,
   ordered: CkOrdered(c)
 ): ArgumentsResult(c, Nil, ps, mut1(Star, c)) {
-  ⊢ ArgumentsResult(c, Nil, ps, mut1(Star, c)) from match ps {
-    Nil => AndIntro(grows_refl(c, ordered), TysubNil)
+  match ps {
+    Nil => AndIntro(grows_refl(c, ordered), ArgFitNil)
     Cons(p, more) => False::elim(false_ne_true(same))
   }
 }
@@ -244,7 +268,7 @@ pub theorem ck_expect_args_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(ck_expect_args(actual, c, ps, args)))
 ): ArgumentsResult(c, actual, ps, ck_expect_args(actual, c, ps, args)) {
-  ⊢ ArgumentsResult(c, actual, ps, ck_expect_args(actual, c, ps, args)) from match actual {
+  match actual {
     Nil => arguments_nil_sound(c, ps, same, ordered)
     Cons(a, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => ArgumentsResult(c, Cons(a, rest), ps, m),

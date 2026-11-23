@@ -1,0 +1,127 @@
+// Fails when a tote's committed Cargo.lock no longer matches the crate Tauto
+// generates for it (a new generated dependency, a changed pin). Nothing is
+// built or updated: the lock is only read (`cargo metadata --locked`).
+// Fix a stale lock with `tauto build --release --update-lock` in the tote, then
+// review the lock diff against crates.io.
+//   TAUTO=path/to/tauto tauto run \
+//     scripts/check-tote-locks.taut [-- tote-dir...]
+import "lib/sh.taut" {
+  sh_basename,
+  sh_capture,
+  sh_die,
+  sh_env,
+  sh_executable,
+  sh_process,
+  sh_root,
+  sh_run_quiet,
+  sh_status
+}
+import std::builtin::os {
+  argv,
+  eprint,
+  exit,
+  fs_copy,
+  fs_list_dir,
+  fs_remove,
+  fs_stat,
+  fs_temp_dir,
+  io_message,
+  print
+}
+import std::text { Text }
+import std::text_ops { Text }
+import std::list { List }
+
+let root := sh_root()
+let tauto := match sh_env("TAUTO") {
+  Some(t) => t
+  None => Text::concat(root, "/target/debug/tauto")
+}
+if sh_executable(tauto) { #() } else {
+  sh_die(2, Text::concat_all(["no tauto at ", tauto, " (cargo build -p tauto-cli, or set TAUTO)"]))
+}
+let totes := match perform argv() {
+  Nil => {
+    let dir := Text::concat(root, "/totes")
+    match perform fs_list_dir(dir) {
+      // `totes/*/`: the directories whose names do not start with a dot.
+      Ok(names) => map(
+        List::filter((n) => not(Text::starts_with(n, ".")), names),
+        (n) => Text::concat_all([dir, "/", n, "/"])
+      )
+      Err(e) => {
+        sh_die(1, io_message(e))
+        []
+      }
+    }
+  }
+  given => given
+}
+let work := match perform fs_temp_dir() {
+  Ok(d) => d
+  Err(e) => {
+    sh_die(1, io_message(e))
+    ""
+  }
+}
+var status: i32 := 0
+var rest := totes
+while rest != Nil {
+  match rest {
+    Nil => #()
+    Cons(given, more) => {
+      rest := more
+      let tote := if Text::ends_with(given, "/") && given != "/" {
+        Text::slice_or_empty(given, 0, Text::len(given) - 1)
+      } else { given }
+      let lock := Text::concat(tote, "/Cargo.lock")
+      // `[ -f … ]`, which follows links.
+      let is_file := match perform fs_stat(lock) {
+        Ok(Some(s)) => match s.kind { IsFile => true, _ => false }
+        _ => false
+      }
+      if is_file {
+        let name := sh_basename(tote)
+        let out := Text::concat_all([work, "/", name])
+        let code := sh_run_quiet(
+          sh_process(tauto, ["build", "--emit", "rust", "-o", out, "."], tote, [])
+        )
+        if code == 0 { #() } else {
+          let ^removed := perform fs_remove(work)
+          perform exit(code)
+        }
+        match perform fs_copy(lock, Text::concat(out, "/Cargo.lock")) {
+          Ok(_) => #()
+          Err(e) => {
+            let ^removed := perform fs_remove(work)
+            sh_die(1, io_message(e))
+          }
+        }
+        let meta := sh_capture(
+          sh_process(
+            "cargo",
+            [
+              "metadata",
+              "--locked",
+              "--format-version",
+              "1",
+              "--manifest-path",
+              Text::concat(out, "/Cargo.toml")
+            ],
+            "",
+            []
+          )
+        )
+        if sh_status(meta.status) == 0 {
+          print(Text::concat_all(["ok: ", name, "\n"]))
+        } else {
+          eprint(Text::concat_all(["STALE: ", lock, "\n"]))
+          eprint(meta.stderr)
+          status := 1
+        }
+      } else { #() }
+    }
+  }
+}
+let ^removed := perform fs_remove(work)
+perform exit(status)

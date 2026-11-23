@@ -1,0 +1,242 @@
+description = "Owned `for … in` folds with `iterator_ready` and stops at break."
+
+@ cases.for-in-sums-a-list
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
+source = ```tauto
+import std::iterator { ListSource, iterator_ready, IteratorReady }
+import std::finite_iteration { fold_finite, IterationControl }
+import std::base { Nat }
+
+fn example(): Nat {
+  var total: Nat := Zero
+  for item in ListSource::FromList([Succ(Zero), Succ(Succ(Zero)), Succ(Succ(Succ(Zero)))]) {
+    total := Nat::add(total, item)
+  }
+  total
+}
+show(&example())
+```
+stdout = "6\n"
+
+@ cases.for-in-breaks
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
+source = ```tauto
+import std::iterator { ListSource, iterator_ready, IteratorReady }
+import std::finite_iteration { fold_finite, IterationControl }
+import std::os
+import std::builtin::os { stdout, stdout_flush }
+
+fn example(): Nat ! {stdout} {
+  var seen: Nat := Zero
+  for item in ListSource::FromList([Succ(Zero), Succ(Succ(Zero)), Succ(Succ(Succ(Zero)))]) {
+    perform stdout("visit\n")
+    seen := item
+    break
+  }
+  seen
+}
+show(&example())
+```
+stdout = "visit\n1\n"
+
+@ cases.for-in-break-in-match-arm
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
+description = "`break` in a `match` arm of the `for` body becomes IterationControl::Break"
+source = ```tauto
+import std::iterator { ListSource, iterator_ready, IteratorReady }
+import std::finite_iteration { fold_finite, IterationControl }
+import std::base { Nat }
+
+fn example(): Nat {
+  var seen: Nat := Zero
+  for item in ListSource::FromList([Succ(Zero), Succ(Succ(Zero)), Succ(Succ(Succ(Zero)))]) {
+    let flag := Nat::eq(item, Succ(Zero))
+    match flag {
+      true => {
+        seen := item
+        break
+      }
+      false => {
+        seen := item
+      }
+    }
+  }
+  seen
+}
+show(&example())
+```
+stdout = "1\n"
+
+@ cases.for-in-branch-keeps-let-scopes
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
+description = "lets in an `if` branch stay scoped; a later `let` with the same name is not the same binding"
+source = ```tauto
+import std::iterator { ListSource, iterator_ready, IteratorReady }
+import std::finite_iteration { fold_finite, IterationControl }
+import std::base { Nat }
+
+fn example(): Nat {
+  var total: Nat := Zero
+  for item in ListSource::FromList([Succ(Zero), Succ(Succ(Zero))]) {
+    if Nat::eq(item, Succ(Zero)) {
+      let value := item
+      total := Nat::add(total, value)
+    } else {
+      continue
+    }
+    let value := Succ(Succ(Succ(Zero)))
+    total := Nat::add(total, value)
+  }
+  total
+}
+show(&example())
+```
+stdout = "4\n"
+
+@ cases.for-in-branch-let-visible-to-inner-if
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
+description = "a `let` in a branch stays visible to a later `if` in that same branch (not closed over by nest_prefix)"
+source = ```tauto
+import std::iterator { ListSource, iterator_ready, IteratorReady }
+import std::finite_iteration { fold_finite, IterationControl }
+import std::base { Nat }
+
+fn example(): Nat {
+  var total: Nat := Zero
+  for item in ListSource::FromList([Succ(Zero), Zero, Succ(Succ(Zero))]) {
+    if Nat::eq(item, Zero) {
+      let stop := Nat::eq(item, Zero)
+      if stop {
+        break
+      }
+    }
+    total := Nat::add(total, item)
+  }
+  total
+}
+show(&example())
+```
+stdout = "1\n"
+
+@ cases.for-in-nested-jump-keeps-outer-let-scoped
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
+description = "after a branch with an inner break, a later `let` with the same name does not sit in that branch's scope"
+source = ```tauto
+import std::iterator { ListSource, iterator_ready, IteratorReady }
+import std::finite_iteration { fold_finite, IterationControl }
+import std::base { Nat }
+
+fn example(): Nat {
+  var total: Nat := Zero
+  for item in ListSource::FromList([Succ(Zero), Succ(Succ(Zero))]) {
+    if Nat::eq(item, Succ(Zero)) {
+      let value := item
+      if Nat::eq(value, Zero) {
+        break
+      }
+    }
+    let value := Succ(Zero)
+    total := Nat::add(total, value)
+  }
+  total
+}
+show(&example())
+```
+stdout = "2\n"
+
+@ cases.for-in-match-pattern-keeps-outer-let-scoped
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
+description = "statements after a `match` do not sit in an arm's pattern-binder scope"
+source = ```tauto
+import std::iterator { ListSource, iterator_ready, IteratorReady }
+import std::finite_iteration { fold_finite, IterationControl }
+import std::base { Nat }
+
+fn example(): Nat {
+  var total: Nat := Zero
+  for item in ListSource::FromList([Succ(Zero), Zero, Succ(Succ(Zero))]) {
+    match item {
+      Zero => {
+        continue
+      }
+      Succ(value) => {
+        #()
+      }
+    }
+    let value := Succ(Zero)
+    total := Nat::add(total, value)
+  }
+  total
+}
+show(&example())
+```
+stdout = "2\n"
+
+@ cases.a-lambda-return-outside-for-is-kept
+description = "`return` inside a λ that is not leaving a `for` is not reported as surface-return-in-for"
+source = ```tauto
+fn example(): Nat {
+  let f := (x: Nat) => {
+    return x
+  }
+  f(Succ(Zero))
+}
+show(&example())
+```
+stdout = "1\n"
+
+@ cases.for-in-break-in-nested-lambda-is-rejected
+description = "`break` inside a λ nested in a `for` is not rewritten as the `for`'s jump; it is rejected as outside a loop"
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::iterator { ListSource, iterator_ready, IteratorReady }
+import std::finite_iteration { fold_finite, IterationControl }
+import std::base { Nat }
+
+fn example(): Nat {
+  var total: Nat := Zero
+  for item in ListSource::FromList([Succ(Zero)]) {
+    let f := (^n: Nat) => {
+      break
+    }
+    total := item
+  }
+  total
+}
+```
+checks.example = "error: `break` is written only inside a `loop`, `while` or `for`"
+
+@ cases.for-in-needs-no-import
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
+description = "`for` over a `List` reads its expansion without an import of `std::iterator` or `std::finite_iteration`"
+source = ```tauto
+import std::base { Nat }
+
+fn example(): Nat {
+  var total: Nat := Zero
+  for item in [Succ(Zero), Succ(Succ(Zero)), Succ(Succ(Succ(Zero)))] {
+    total := Nat::add(total, item)
+  }
+  total
+}
+show(&example())
+```
+stdout = "6\n"
+
+@ cases.for-in-keeps-a-partial-import-list
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
+description = "an import list that does not name the expansion's functions still lets `for` expand"
+source = ```tauto
+import std::iterator { ListSource }
+import std::base { Nat }
+
+fn example(): Nat {
+  var total: Nat := Zero
+  for item in ListSource::FromList([Succ(Zero), Succ(Succ(Zero))]) {
+    total := Nat::add(total, item)
+  }
+  total
+}
+show(&example())
+```
+stdout = "3\n"

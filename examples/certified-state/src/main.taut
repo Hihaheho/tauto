@@ -1,16 +1,18 @@
 import "state.taut"
 
 // This one-assignment adapter is trusted; its transition is the checked function.
-pub fn gate_commit(&mut cell: GateState, commands: List(GateCommand)): Unit {
-  cell := gate_advance(commands, cell)
+pub fn gate_commit(cell: &mut GateState, commands: List(GateCommand)): Unit {
+  *cell := gate_advance(commands, cell)
 }
 
-var cell := gate_run(Nil, 2)
-gate_commit(&mut cell, Cons(GateSpend, Nil))
-perform show("denied", gate_balance(cell))
-gate_commit(&mut cell, Cons(GateAuthorize, Cons(GateSpend, Nil)))
-perform show("remaining", gate_balance(cell))
-gate_commit(&mut cell, Cons(GateRevoke, Cons(GateSpend, Nil)))
-perform show("revoked", gate_balance(cell))
-gate_commit(&mut cell, Cons(GateAuthorize, Cons(GateSpend, Cons(GateSpend, Nil))))
-perform show("exhausted", gate_balance(cell))
+perform main(() => {
+  var cell := gate_run(Nil, 2)
+  gate_commit(&mut cell, Cons(GateSpend, Nil))
+  show(&gate_balance(cell))
+  gate_commit(&mut cell, Cons(GateAuthorize, Cons(GateSpend, Nil)))
+  show(&gate_balance(cell))
+  gate_commit(&mut cell, Cons(GateRevoke, Cons(GateSpend, Nil)))
+  show(&gate_balance(cell))
+  gate_commit(&mut cell, Cons(GateAuthorize, Cons(GateSpend, Cons(GateSpend, Nil))))
+  show(&gate_balance(cell))
+})

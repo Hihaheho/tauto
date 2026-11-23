@@ -1,0 +1,178 @@
+// NIR as text (`docs/design/nir-text.md`): a package is read from the text and
+// printed as the same text.
+
+@ cases.a-package-is-printed-as-it-was-read
+nir.source = ```nir
+data shared enum List<'A> clone {
+  List::Nil,
+  List::Cons('A, shared List('A)),
+}
+
+data affine struct P clone as "" {
+  P::Mk(x: u64, name: Text),
+}
+
+op 0 ask(): u64 direct
+
+fn get@0(ref p#1: &P): Text S = clone p#1.name: Text
+
+fn sum@1(l#1: List(u64), acc#2: u64): u64 S = match move l#1 {
+  List::Nil => copy acc#2,
+  List::Cons(h#3: u64, t#4: List(u64)) => sum@1(move t#4, add<u64>(copy acc#2, copy h#3)) tick host recur: u64,
+}
+
+fn main@2(): u64 S = {
+  var x#1 := 1u64;
+  let p#2 := P::Mk(x = 2u64, name = "a"): P;
+  let f#4 := closure(y#3: u64) -> u64 as fn(u64) -> u64 shared S clones(p#2) => add<u64>(copy y#3, copy p#2.x: u64);
+  set x#1 := add<u64>(f#4(copy x#1): u64, builtin Text::len(get@0(&p#2): Text): u64);
+  while lt(copy x#1, 10u64) tick host do {
+    set x#1 := add<u64>(copy x#1, 1u64);
+  };
+  handle 0 S do add<u64>(perform ask() direct: u64, copy x#1) with {
+    direct ask() params() answer Unit => 7u64,
+  }: u64
+}
+
+top main@2
+```
+nir.package = ```nir
+data shared enum List<'A> clone {
+  List::Nil,
+  List::Cons('A, shared List('A)),
+}
+
+data affine struct P clone as "" {
+  P::Mk(x: u64, name: Text),
+}
+
+op 0 ask(): u64 direct
+
+fn get@0(ref p#1: &P): Text S = clone p#1.name: Text
+
+fn sum@1(l#1: List(u64), acc#2: u64): u64 S = match move l#1 {
+  List::Nil => copy acc#2,
+  List::Cons(h#3: u64, t#4: List(u64)) => sum@1(move t#4, add<u64>(copy acc#2, copy h#3)) tick host recur: u64,
+}
+
+fn main@2(): u64 S = {
+  var x#1 := 1u64;
+  let p#2 := P::Mk(x = 2u64, name = "a"): P;
+  let f#4 := closure(y#3: u64) -> u64 as fn(u64) -> u64 shared S clones(p#2) => add<u64>(copy y#3, copy p#2.x: u64);
+  set x#1 := add<u64>(f#4(copy x#1): u64, builtin Text::len(get@0(&p#2): Text): u64);
+  while lt(copy x#1, 10u64) tick host do {
+    set x#1 := add<u64>(copy x#1, 1u64);
+  };
+  handle 0 S do add<u64>(perform ask() direct: u64, copy x#1) with {
+    direct ask() params() answer Unit => 7u64,
+  }: u64
+}
+
+top main@2
+```
+
+@ cases.a-use-of-a-borrowed-local-shows-what-it-borrows
+description = "`p#1` is bound as a borrow (`ref`) with the type `&P`: a use of it shows `P`, and another type is written."
+nir.source = ```nir
+data affine struct P clone as "" {
+  P::Mk(x: u64),
+}
+
+fn same@0(ref p#1: &P): &P S = (p#1: &P)
+
+fn x@1(ref p#1: &P): u64 S = copy p#1.x: u64
+
+fn again@2(ref p#1: &P): u64 S = x@1(&p#1): u64
+```
+nir.package = ```nir
+data affine struct P clone as "" {
+  P::Mk(x: u64),
+}
+
+fn same@0(ref p#1: &P): &P S = (p#1: &P)
+
+fn x@1(ref p#1: &P): u64 S = copy p#1.x: u64
+
+fn again@2(ref p#1: &P): u64 S = x@1(&p#1): u64
+```
+
+@ cases.a-node-has-the-span-it-is-written-at
+description = "`check-anf` reports the operand by its span: bytes 83 to 97 of the text, `f@0(1u64): u64`."
+nir.source = ```nir
+fn f@0(n#1: u64): u64 S = copy n#1
+
+fn main@1(): u64 S = add<u64>(f@0(1u64): u64, 1u64)
+```
+nir.passes = ["check-anf"]
+nir.error = "Span { start: 66, end: 80 }"
+
+@ cases.a-name-that-is-a-reserved-word-is-quoted
+nir.source = ```nir
+data shared enum $"match" clone {
+  $"if",
+  $"a b"(u64),
+}
+
+fn $"<top>"@0($"let"#1: $"match"): $"match" S = match move $"let"#1 {
+  $"if" => $"a b"(0u64): $"match",
+  $"a b"(_) => $"if": $"match",
+}
+```
+nir.package = ```nir
+data shared enum $"match" clone {
+  $"if",
+  $"a b"(u64),
+}
+
+fn $"<top>"@0($"let"#1: $"match"): $"match" S = match move $"let"#1 {
+  $"if" => $"a b"(0u64): $"match",
+  $"a b"(_) => $"if": $"match",
+}
+```
+
+@ cases.a-local-used-before-it-is-bound-is-refused
+nir.source = ```nir
+fn main@0(): u64 S = copy x#1
+```
+nir.error = "the local x#1 is not bound before"
+
+@ cases.a-constructor-no-data-type-declares-is-refused
+nir.source = ```nir
+fn main@0(): u64 S = Tree::Leaf(1u64): Tree
+```
+nir.error = "no data type above declares this constructor"
+
+@ cases.an-operation-the-package-does-not-declare-is-refused
+nir.source = ```nir
+fn main@0(): u64 S = perform ask() direct: u64
+```
+nir.error = "no operation is named ask"
+
+@ cases.a-function-the-package-does-not-hold-is-refused
+nir.source = ```nir
+fn main@0(): u64 S = helper@1(): u64
+```
+nir.error = "no function is helper@1"
+
+@ cases.an-expression-that-does-not-show-its-type-is-refused
+description = "A number without a width shows no type: it is written `1u64`, or `(1: T)` for a type that is not an integer."
+nir.source = ```nir
+fn main@0(): u64 S = 1
+```
+nir.error = "does not show its type"
+
+@ cases.the-text-is-written-one-way
+description = "Parentheses that only group are read, but the printer does not write them here."
+nir.source = ```nir
+fn main@0(): u64 S = (1u64)
+```
+nir.error = "not as the printer writes it"
+
+@ cases.float-arithmetic-names-its-numbers
+source = ```tauto
+fn scale(x: Float): Float ! {divzero} { -((x + 1.5) * 2.0 / 4.0 - x) }
+show(&scale(2.0))
+```
+nir.fns.scale = ```nir
+fn scale@2(x#4: Float): Float A = neg<Float>(sub<Float>(div<Float>(mul<Float>(add<Float>(copy x#4, 1.5), 2.0), 4.0), copy x#4))
+```

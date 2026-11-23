@@ -1,0 +1,45 @@
+import "../src/surface.taut"
+import "../src/resolve.taut"
+import "../src/apply.taut"
+import "../../identity/src/identity.taut"
+import std::base
+
+pub fn apply_test_uses(): List(SurfaceUse) {
+  Cons(
+    SurfaceUseMk("f", "", NameGlobal(DeclIdMk(0)), 3, 4),
+    Cons(SurfaceUseMk("x", "", NameLocal(LocalIdMk(1)), 7, 8), Nil)
+  )
+}
+
+// A variable the resolver found takes its id.
+pub theorem apply_takes_the_global_id(): surface_apply_var(3, 4, apply_test_uses(), SkVar(NameSpelled("f"))) = SkVar(NameGlobal(DeclIdMk(0))) {
+  Refl
+}
+
+pub theorem apply_takes_the_local_id(): surface_apply_var(7, 8, apply_test_uses(), SkVar(NameSpelled("x"))) = SkVar(NameLocal(LocalIdMk(1))) {
+  Refl
+}
+
+// A variable the resolver did not find, or found at another place, stays spelled.
+pub theorem apply_leaves_an_unresolved_name(): surface_apply_var(5, 6, apply_test_uses(), SkVar(NameSpelled("f"))) = SkVar(NameSpelled("f")) {
+  Refl
+}
+
+pub fn apply_test_decls(): List(SurfaceDecl) {
+  Cons(
+    SurfaceDeclMk(DeclIdMk(0), "f", "fn", 0, 5),
+    Cons(
+      SurfaceDeclMk(DeclIdMk(0), "M::f", "fn", 0, 5),
+      Cons(SurfaceDeclMk(DeclIdMk(1), "g", "fn", 6, 9), Nil)
+    )
+  )
+}
+
+// Each declaration is shown as its first spelling.
+pub theorem decl_table_shows_the_first_spelling(): decl_table_display(surface_decl_table_from(apply_test_decls(), decl_table_empty()), DeclIdMk(1)) = Some("g") {
+  Refl
+}
+
+pub theorem decl_table_has_one_entry_per_id(): decl_table_size(surface_decl_table_from(apply_test_decls(), decl_table_empty())) = 2 {
+  Refl
+}

@@ -1,25 +1,25 @@
 import "../src/resolve.taut"
 import "../src/syntax.taut"
-import std::Base
+import std::base
 
 // A pattern of text alone formats to its text, without errors, given enough depth.
 
 fn all_text(p: List(Elem)): Prop {
-  ⊢ Prop from match p {
+  match p {
     Nil => True
     Cons(x, rest) => ⊢ Prop from match x {
-      ElText(bs) => all_text(rest)
-      ElPlace(e) => False
+      ElText(^bs) => all_text(rest)
+      ElPlace(^e) => False
     }
   }
 }
 
 fn text_of(p: List(Elem)): List(Nat) {
-  ⊢ List(Nat) from match p {
+  match p {
     Nil => Nil
     Cons(x, rest) => ⊢ List(Nat) from match x {
       ElText(bs) => List::append(bs, text_of(rest))
-      ElPlace(e) => text_of(rest)
+      ElPlace(^e) => text_of(rest)
     }
   }
 }

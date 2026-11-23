@@ -1,0 +1,34 @@
+// `Slots`: made with a capacity, a state and a mark, filled, read in place,
+// marked and emptied by slot, grown, and released with the elements it still
+// holds (and only those) when it goes out of scope.
+@ cases.slots-fill-take-and-resize
+stdout = ```
+2
+2
+6
+true
+9
+5
+true
+true
+true
+```
+source = ```tauto
+var r: Slots(u64, u64, Text) := Slots::new(2, 0, 0)
+show(&U64::of_uhost(Slots::cap(&r)))
+Slots::put(&mut r, 0, 5, "a", 1)
+Slots::put(&mut r, 1, 6, "b", 2)
+show(&Slots::state(&r))
+show(&Slots::mark(&r, 1))
+show(&(Slots::get(&r, 0) == "a"))
+Slots::resize(&mut r, 5, 9, 2)
+show(&Slots::mark(&r, 4))
+show(&Slots::mark(&r, 0))
+let t := Slots::take(&mut r, 0, 0, 1)
+show(&(t == "a"))
+match Slots::get_mut(&mut r, 1) { x => { *x := "c" } }
+show(&(Slots::get(&r, 1) == "c"))
+var n: Slots(Unit, Unit, u64) := Slots::new(3, #(), #())
+Slots::put(&mut n, 2, #(), 7, #())
+show(&(Slots::get(&n, 2) == 7))
+```

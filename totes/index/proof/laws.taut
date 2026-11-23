@@ -1,7 +1,7 @@
 import "../src/engine.taut"
 import "../src/admission.taut"
 import "../src/history.taut"
-import std::Base
+import std::base
 
 pub theorem ix_and_left(
   left: Bool,
@@ -16,7 +16,7 @@ pub theorem ix_and_right(
 ): right = true { And::right(Bool::and_split(left, right, accepted)) }
 
 pub fn ix_option_or<A>(value: Option(A), fallback: A): A {
-  ⊢ A from match value {
+  match value {
     None => fallback
     Some(item) => item
   }
@@ -31,7 +31,7 @@ pub theorem ix_some_injective<A>(
 pub theorem ix_none_ne_some<A>(
   value: A,
   equality: None = Some(value)
-): False { ⊢ False from match equality { } }
+): False { match equality { } }
 
 pub theorem ix_gate_sound<A>(
   allowed: Bool,
@@ -39,7 +39,7 @@ pub theorem ix_gate_sound<A>(
   output: A,
   accepted: ix_gate(allowed, result) = Some(output)
 ): And(allowed = true, result = Some(output)) {
-  ⊢ And(allowed = true, result = Some(output)) from match allowed {
+  match allowed {
     false => False::elim(ix_none_ne_some(output, accepted))
     true => AndIntro(Refl, accepted)
   }
@@ -151,7 +151,7 @@ pub theorem ix_clock_monotone(
 }
 
 pub theorem ix_and_no_right(left: Bool): Bool::and(left, false) = false {
-  ⊢ Bool::and(left, false) = false from match left {
+  match left {
     false => Refl
     true => Refl
   }

@@ -211,7 +211,7 @@ fn a_mismatch_points_at_the_argument_and_has_its_parts() {
 fn a_plain_mismatch_has_expected_found_and_the_differing_part() {
     let path = file(
         "plain",
-        r#"theorem wrong(): Eq(Nat, 3, 4) { Refl(Nat, 3) }
+        r#"theorem wrong(): Eq(Nat, 3, 4) { Refl(<A: Nat, a: 3>) }
 "#,
     );
     let report = check_report(&path, None).unwrap();
@@ -258,9 +258,9 @@ fn std_file(name: &str) -> String {
 fn expand_writes_the_arms_the_tactic_leaves() {
     // expand_step reads the step's messages in English.
     tauto_messages::install();
-    let base = std_file("Base.taut");
-    let nat = std_file("Nat.taut");
-    let tactic = std_file("Tactic.taut");
+    let base = std_file("base.taut");
+    let nat = std_file("nat.taut");
+    let tactic = std_file("tactic.taut");
     let dir = scratch("expand");
     let path = dir.join("main.taut");
     let head = format!(
@@ -314,9 +314,9 @@ theorem t(a: Nat, b: Nat, c: Nat, h: a + b = c): b + a = c {{
   ?g
 }}
 "#,
-            std_file("Base.taut"),
-            std_file("Nat.taut"),
-            std_file("Tactic.taut")
+            std_file("base.taut"),
+            std_file("nat.taut"),
+            std_file("tactic.taut")
         ),
     )
     .unwrap();

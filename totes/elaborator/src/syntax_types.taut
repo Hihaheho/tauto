@@ -1,0 +1,282 @@
+// The types a `syntax` declaration makes, from its tables
+// (`crates/tauto-parse/src/syntax.rs`, `types_text`, which `tauto syntax show`
+// prints): the `schema` section of the table file says, for each type, its
+// fields and constructors.
+//
+//   schema N { S NAME PRODUCTION RECORD | E NAME M { CTOR PRODUCTION (R RECORD | P TYPE) } }
+//   RECORD = N { FIELD TYPE }       TYPE = K | E | N NAME | L TYPE | O TYPE
+//
+// `st_types_text(syntax, tables)` gives the Nib source of those types, the
+// text the host's `types_text` gives; every record starts with the `span`
+// field, and the types are named `syntax::NAME`.
+import "../../text/src/text.taut"
+import std::text
+
+pub(open) enum SchTy {
+  SchToken
+  SchExpr
+  SchNamed(Text)
+  SchList(SchTy)
+  SchOpt(SchTy)
+}
+
+pub(open) struct SchField { name: Text, ty: SchTy }
+
+pub(open) enum SchPayload {
+  SchRecord(List(SchField))
+  SchSingle(SchTy)
+}
+
+pub(open) struct SchCtor { name: Text, payload: SchPayload }
+
+pub(open) enum SchType {
+  SchStruct(Text, List(SchField))
+  SchEnum(Text, List(SchCtor))
+}
+
+// The words of the `schema` line of a table file, after the keyword.
+pub fn st_words(tables: Text): Option(List(Text)) {
+  st_find_line(text_lines(tables))
+}
+
+pub fn st_find_line(lines: List(Text)): Option(List(Text)) {
+  match lines {
+    Nil => None
+    Cons(l, rest) => if text_starts_with(l, "schema ", 0) {
+      Some(st_nonempty(text_split(Text::slice_or_empty(l, 7, Text::len(l)), " ")))
+    } else {
+      st_find_line(rest)
+    }
+  }
+}
+
+pub fn st_nonempty(ws: List(Text)): List(Text) {
+  match ws {
+    Nil => Nil
+    Cons(w, rest) => if w == "" { st_nonempty(rest) } else { Cons(w, st_nonempty(rest)) }
+  }
+}
+
+pub fn st_num(ws: List(Text)): Option(Nat × List(Text)) {
+  match ws {
+    Nil => None
+    Cons(w, rest) => match text_parse_u64(w) {
+      None => None
+      Some(n) => Some(#(n, rest))
+    }
+  }
+}
+
+pub fn st_ty(ws: List(Text)): Option(SchTy × List(Text)) ! {div, overflow} {
+  match ws {
+    Nil => None
+    Cons(w, rest) => if w == "K" {
+      Some(#(SchToken, rest))
+    } else if w == "E" {
+      Some(#(SchExpr, rest))
+    } else if w == "N" {
+      match rest {
+        Cons(n, more) => Some(#(SchNamed(n), more))
+        Nil => None
+      }
+    } else if w == "L" {
+      match st_ty(rest) {
+        None => None
+        Some(r) => Some(#(SchList(r.fst), r.snd))
+      }
+    } else if w == "O" {
+      match st_ty(rest) {
+        None => None
+        Some(r) => Some(#(SchOpt(r.fst), r.snd))
+      }
+    } else {
+      None
+    }
+  }
+}
+
+pub fn st_fields_n(n: Nat, ws: List(Text)): Option(List(SchField) × List(Text)) ! {div, overflow} {
+  if n == 0 {
+    Some(#(Nil, ws))
+  } else {
+    match ws {
+      Nil => None
+      Cons(name, rest) => match st_ty(rest) {
+        None => None
+        Some(t) => match st_fields_n(n - 1, t.snd) {
+          None => None
+          Some(r) => Some(#(Cons(SchField { name: name, ty: t.fst }, r.fst), r.snd))
+        }
+      }
+    }
+  }
+}
+
+pub fn st_record(ws: List(Text)): Option(List(SchField) × List(Text)) ! {div, overflow} {
+  match st_num(ws) {
+    None => None
+    Some(n) => st_fields_n(n.fst, n.snd)
+  }
+}
+
+pub fn st_ctors_n(n: Nat, ws: List(Text)): Option(List(SchCtor) × List(Text)) ! {div, overflow} {
+  if n == 0 {
+    Some(#(Nil, ws))
+  } else {
+    match ws {
+      Cons(name, Cons(^production, Cons(kind, rest))) => {
+        let payload := if kind == "R" {
+          match st_record(rest) {
+            None => None
+            Some(r) => Some(#(SchRecord(r.fst), r.snd))
+          }
+        } else if kind == "P" {
+          match st_ty(rest) {
+            None => None
+            Some(r) => Some(#(SchSingle(r.fst), r.snd))
+          }
+        } else {
+          None
+        }
+        match payload {
+          None => None
+          Some(p) => match st_ctors_n(n - 1, p.snd) {
+            None => None
+            Some(r) => Some(#(Cons(SchCtor { name: name, payload: p.fst }, r.fst), r.snd))
+          }
+        }
+      }
+      ^other => None
+    }
+  }
+}
+
+pub fn st_drop(ws: List(Text)): List(Text) {
+  match ws {
+    Nil => Nil
+    Cons(^w, rest) => rest
+  }
+}
+
+pub fn st_types_n(n: Nat, ws: List(Text)): Option(List(SchType)) ! {div, overflow} {
+  if n == 0 {
+    match ws {
+      Nil => Some(Nil)
+      ^other => None
+    }
+  } else {
+    match ws {
+      Cons(kind, Cons(name, rest)) => if kind == "S" {
+        // The number after a struct's name is its production.
+        match st_record(st_drop(rest)) {
+          None => None
+          Some(r) => match st_types_n(n - 1, r.snd) {
+            None => None
+            Some(more) => Some(Cons(SchStruct(name, r.fst), more))
+          }
+        }
+      } else if kind == "E" {
+        match st_num(rest) {
+          None => None
+          Some(m) => match st_ctors_n(m.fst, m.snd) {
+            None => None
+            Some(c) => match st_types_n(n - 1, c.snd) {
+              None => None
+              Some(more) => Some(Cons(SchEnum(name, c.fst), more))
+            }
+          }
+        }
+      } else {
+        None
+      }
+      ^other => None
+    }
+  }
+}
+
+// The types of the schema of a table file, in its order.
+pub fn st_schema(tables: Text): Option(List(SchType)) ! {div, overflow} {
+  match st_words(tables) {
+    None => None
+    Some(ws) => match st_num(ws) {
+      None => None
+      Some(n) => st_types_n(n.fst, n.snd)
+    }
+  }
+}
+
+pub fn st_ty_text(syntax: Text, t: SchTy): Text {
+  match t {
+    SchToken => "SynToken"
+    SchExpr => "SynExpr"
+    SchNamed(n) => Text::concat_all([syntax, "::", n])
+    SchList(i) => Text::concat_all(["List(", st_ty_text(syntax, i), ")"])
+    SchOpt(i) => Text::concat_all(["Option(", st_ty_text(syntax, i), ")"])
+  }
+}
+
+pub fn st_record_text(syntax: Text, fields: List(SchField)): Text {
+  Text::concat_all(Cons("span: SynSpan", st_field_texts(syntax, fields)))
+}
+
+pub fn st_field_texts(syntax: Text, fields: List(SchField)): List(Text) {
+  match fields {
+    Nil => Nil
+    Cons(f, rest) => Cons(
+      Text::concat_all([", ", f.name, ": ", st_ty_text(syntax, f.ty)]),
+      st_field_texts(syntax, rest)
+    )
+  }
+}
+
+pub fn st_ctors_text(syntax: Text, cs: List(SchCtor)): Text {
+  match cs {
+    Nil => ""
+    Cons(c, rest) => {
+      let line := match c.payload {
+        SchSingle(t) => Text::concat_all(["  ", c.name, "(", st_ty_text(syntax, t), ")\n"])
+        SchRecord(fields) => Text::concat_all(["  ", c.name, " { ", st_record_text(syntax, fields), " }\n"])
+      }
+      Text::concat(line, st_ctors_text(syntax, rest))
+    }
+  }
+}
+
+pub fn st_type_text(syntax: Text, t: SchType): Text {
+  match t {
+    SchStruct(name, fields) => Text::concat_all([
+      "struct ",
+      syntax,
+      "::",
+      name,
+      " { ",
+      st_record_text(syntax, fields),
+      " }\n"
+    ])
+    SchEnum(name, cs) => Text::concat_all([
+      "enum ",
+      syntax,
+      "::",
+      name,
+      " {\n",
+      st_ctors_text(syntax, cs),
+      "}\n"
+    ])
+  }
+}
+
+pub fn st_types_text_of(syntax: Text, ts: List(SchType)): Text {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => Text::concat(st_type_text(syntax, t), st_types_text_of(syntax, rest))
+  }
+}
+
+// The source of the types a syntax named `syntax` makes, from the text of its
+// tables, or `None` when the schema is not read.
+pub fn st_types_text(syntax: Text, tables: Text): Option(Text) ! {div, overflow} {
+  match st_schema(tables) {
+    None => None
+    Some(ts) => Some(st_types_text_of(syntax, ts))
+  }
+}

@@ -1,6 +1,6 @@
 import "written_function_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -9,13 +9,14 @@ import "rules_written.taut"
 import "rules_written_binders.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_binder_sound.taut"
 import "written_context_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn written_drop_parameters(params: List(SurfaceParam), skip: Nat): List(SurfaceParam) {
-  ⊢ List(SurfaceParam) from match params {
+  match params {
     Nil => Nil
     Cons(first, rest) => ⊢ List(SurfaceParam) from match skip {
       Zero => Cons(first, rest)
@@ -26,7 +27,7 @@ pub fn written_drop_parameters(params: List(SurfaceParam), skip: Nat): List(Surf
 pub theorem written_drop_zero(
   params: List(SurfaceParam)
 ): written_drop_parameters(params, 0) = params {
-  ⊢ written_drop_parameters(params, 0) = params from match params {
+  match params {
     Nil => Refl
     Cons(first, rest) => Refl
   }
@@ -34,13 +35,13 @@ pub theorem written_drop_zero(
 pub theorem written_prefix_drop<params: List(
   SurfaceParam
 ), binders: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), suffix: List(
   SurfaceParam
 )>(
   split: WrittenBindersPrefix(params, binders, suffix)
 ): written_drop_parameters(params, list_len(binders)) = suffix {
-  ⊢ written_drop_parameters(params, list_len(binders)) = suffix from match split {
+  match split {
     WrittenBindersNil => Refl
     WrittenBindersStop(first, rest, ordinary) => Refl
     WrittenBindersCons(first, rest, binder, binders_tail, remaining, head, tail) => written_prefix_drop(
@@ -52,7 +53,7 @@ pub theorem written_prefix_drop<params: List(
 pub theorem written_function_drop_sound(
   params: List(SurfaceParam),
   result: SurfaceTerm,
-  effects: Option(List(Text)),
+  effects: Option(List(RowEntry)),
   c: Checker,
   generics: Ordmap(Text, Ty),
   under_borrow: Bool,

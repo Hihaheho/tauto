@@ -15,7 +15,7 @@ source = ```nib
 effect log(t: Text): Unit direct
 let r := handle { perform log("a") } with {
   log(t), k => {
-    perform show("t", t)
+    show(&t)
     k(#())
   }
 }
@@ -27,7 +27,7 @@ source = ```nib
 effect log(t: Text): Unit direct
 let r := handle { perform log("a") } with {
   log(t), k => if t == "a" { k(#()) } else {
-    perform show("t", t)
+    show(&t)
     k(#())
   }
 }
@@ -108,8 +108,8 @@ let r := handle { perform log("a") } with {
 types = "error: log is direct; every path of its arm must end in k(e)"
 
 @ cases.direct-arm-tail-runs-statements
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
 source = ```nib
-import std::prelude::Affine
 
 effect log(t: Text): Unit direct
 var out := Buf::new()
@@ -120,15 +120,17 @@ handle { perform log("a") } with {
     k(#())
   }
 }
-perform show("out", Text::of(Buf::clone(&out)))
+show(&Text::of(Buf::clone(&out)))
 ```
-shows = ["out = \"a!\""]
+stdout = ```
+"a!"
+```
 
 @ cases.direct-arm-performs-direct
 source = ```nib
 effect log(t: Text): Unit direct
 let r := handle { perform log("a") } with {
-  log(t), k => k(perform show("log", t))
+  log(t), k => k(show(&t))
 }
 ```
 rows = "ok"
@@ -150,7 +152,7 @@ let r := handle { perform log("a") } with {
   log(t), k => k({ while true { }; #() })
 }
 ```
-rows = "error: the arm of log performs Div, which is not direct"
+rows = "error: the arm of log performs div, which is not direct"
 
 @ cases.direct-arm-borrows-mut
 source = ```nib
@@ -204,7 +206,7 @@ lin = "error: arm captures affine var out"
 @ cases.linear-across-direct
 source = ```nib
 effect log(t: Text): Unit direct
-linear struct H {}
+struct(linear) H {}
 fn hello(): H { H {} }
 fn finish(h: H): i64 { match h { H {} => 0 } }
 fn f(): i64 ! {log} {
@@ -218,7 +220,7 @@ lin = "ok"
 @ cases.row-variable-direct-bound
 source = ```nib
 effect log(t: Text): Unit direct
-fn each_d<!e: direct>(&f: () -> Unit ! e): Unit ! e { f() }
+fn each_d<!e: direct>(f: &(() -> Unit ! e)): Unit ! e { f() }
 fn main(): Unit ! {log} { each_d(() => perform log("a")) }
 ```
 rows = "ok"
@@ -226,14 +228,14 @@ rows = "ok"
 @ cases.row-variable-direct-rejects-ask
 source = ```nib
 effect ask(): i64
-fn each_d<!e: direct>(&f: () -> Unit ! e): Unit ! e { f() }
+fn each_d<!e: direct>(f: &(() -> Unit ! e)): Unit ! e { f() }
 fn main(): Unit ! {ask} { each_d(() => { perform ask(); #() }) }
 ```
 rows = "error: ask is not direct but e is direct"
 
 @ cases.direct-arm-runs-in-order
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
 source = ```nib
-import std::prelude::Affine
 
 effect log(t: Text): Unit direct
 var out := Buf::new()
@@ -243,17 +245,11 @@ handle {
 } with {
   log(t), k => k(Buf::push(&mut out, &t))
 }
-perform show("out", Text::of(Buf::clone(&out)))
+show(&Text::of(Buf::clone(&out)))
 ```
-shows = ["out = \"ab\""]
-
-@ cases.show-is-direct
-source = ```nib
-handle { perform show("x", 1) } with {
-  ∀ A. show<A>(n, v), k => k(perform show(n, v))
-}
+stdout = ```
+"ab"
 ```
-shows = ["x = 1"]
 
 @ cases.nested-direct-reaches-outer
 source = ```nib
@@ -263,7 +259,10 @@ handle {
     log(t), k => k(perform log(t))
   }
 } with {
-  log(t), k => k(perform show("seen", t))
+  log(t), k => k(show(&t))
 }
 ```
-shows = ["seen = \"a\"", "seen = \"b\""]
+stdout = ```
+"a"
+"b"
+```

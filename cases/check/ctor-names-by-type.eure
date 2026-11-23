@@ -75,7 +75,7 @@ inductive B: Type {
 }
 theorem t(): Start = Start { Refl }
 ```
-checks."main.nib::macro#1" = "error: `Start` is ambiguous: it is a constructor of more than one type (`main::A::Start` and `main::B::Start`), and the type wanted here does not say which; write it with its type, `T::Start`"
+checks.t = "error: `Start` is ambiguous: it is a constructor of more than one type (`main::A::Start` and `main::B::Start`), and the type wanted here does not say which; write it with its type, `T::Start`"
 
 @ cases.inductive-enums-of-one-file-and-the-prelude-share-a-constructor-name
 files."main.nib" = ```tauto
@@ -122,7 +122,7 @@ inductive enum Fan {
 }
 theorem t(): Off = Off { Refl }
 ```
-checks."main.nib::macro#1" = "error: `Off` is ambiguous: it is a constructor of more than one type (`main::Light::Off` and `main::Fan::Off`), and the type wanted here does not say which; write it with its type, `T::Off`"
+checks.t = "error: `Off` is ambiguous: it is a constructor of more than one type (`main::Light::Off` and `main::Fan::Off`), and the type wanted here does not say which; write it with its type, `T::Off`"
 
 @ cases.nested-patterns-retain-nullary-constructor-candidates
 source = ```tauto
@@ -130,14 +130,14 @@ inductive Other: Type {
   None: Other
   Some(n: Nat): Other
 }
-fn first_pair(value: Option(Pair(Nat, Nat))): Nat {
+fn first_pair(value: Option(Nat × Nat)): Nat {
   ⊢ Nat from match value {
     None => 0
-    Some(Pair { fst: first, snd: _ }) => first
+    Some(#(first, _)) => first
   }
 }
 theorem absent_pair(): first_pair(Option::None) = 0 { Refl }
-theorem present_pair(): first_pair(Option::Some(Pair { fst: 3, snd: 4 })) = 3 { Refl }
+theorem present_pair(): first_pair(Option::Some(#(3, 4))) = 3 { Refl }
 ```
 checks.Other = "ok"
 checks.first_pair = "ok"
@@ -145,5 +145,45 @@ checks.absent_pair = "ok"
 checks.present_pair = "ok"
 
 @ cases.an-imported-constructor-keeps-its-name-beside-an-unimported-prelude-type
-source = path`../../meta/Typing.taut`
+source = path`../../meta/typing.taut`
 checks_all = "ok"
+
+// A constructor named as a type of the language (`Text`) that the file
+// imports does not make the bare name mean either one: it is ambiguous, and
+// the full name says which.
+@ cases.an-imported-constructor-named-text-makes-text-ambiguous
+files."atom.nib" = ```tauto
+pub(open) enum Atom {
+  Text(std::prelude::Text)
+  Num(i64)
+}
+```
+files."main.nib" = ```tauto
+import "atom.nib"
+fn k(src: Text): Text { src }
+```
+checks.k = "error: `Text` is ambiguous: it is declared as `atom::Atom::Text` and `std::prelude::Text`; write `std::prelude::Text` for the type, or the other declaration with its type, as in `T::Text`"
+
+@ cases.the-full-names-tell-text-from-the-constructor
+files."atom.nib" = ```tauto
+pub(open) enum Atom {
+  Text(std::prelude::Text)
+  Num(i64)
+}
+```
+files."main.nib" = ```tauto
+import "atom.nib"
+fn k(src: std::prelude::Text): std::prelude::Text { src }
+fn n(a: Atom): i64 {
+  match a {
+    Atom::Text(t) => 0
+    Atom::Num(x) => x
+  }
+}
+show(&k("hi"))
+show(&(n(Atom::Num(3)) + n(Atom::Text("t"))))
+```
+stdout = ```
+"hi"
+3
+```

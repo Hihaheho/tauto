@@ -2,7 +2,6 @@
 
 @ cases.a-field-row-is-read-at-the-record-argument
 source = ```nib
-import std::prelude::Shared
 
 effect wait_on<A: Shared>(a: A): Unit
 struct Opts(A: Shared) { run: () -> A ! {wait_on(A)} }
@@ -22,10 +21,22 @@ lin = "ok"
 
 @ cases.a-field-cannot-perform-another-instance
 source = ```nib
-import std::prelude::Shared
 
 effect wait_on<A: Shared>(a: A): Unit
 struct Opts(A: Shared) { run: () -> A ! {wait_on(A)} }
 let o: Opts(u64) := Opts { run: () => { perform wait_on((1: i64)); 5 } }
 ```
 rows = "error: a function value may perform wait_on(i64) but its type permits {wait_on(u64)}"
+
+// Another field whose type argument is `Unit` does not keep the row of `run` from being
+// read at the record's arguments: `boom(E)` at `E = Text` is `boom(Text)`.
+@ cases.a-field-row-is-read-at-the-record-argument-beside-a-unit-argument
+source = ```nib
+import std::prelude::NoBorrow
+
+effect boom<E: Shared + NoBorrow>(why: E): Unit
+fn thrower<E: Shared + NoBorrow>(e: E): u64 ! {boom(E)} { perform boom(e); 1 }
+struct Opts(E: Shared, I: Shared) { first: () -> I, run: () -> u64 ! {boom(E)} }
+let o: Opts(Text, Unit) := Opts { first: () => #(), run: () => thrower("x") }
+```
+rows = "ok"

@@ -1,0 +1,77 @@
+description = "A class method whose arguments do not mention the class's parameter is called with the instance written as its constraint is, `C(T)::m(…)`."
+
+@ cases.a-method-without-the-type-is-called-by-its-instance
+source = ```tauto
+import std::base
+class Named(T: Shared) {
+  fn name(): Text
+}
+struct Circle { r: i64 }
+struct Square { side: i64 }
+instance Named(Circle) { fn name(): Text { "circle" } }
+instance Named(Square) { fn name(): Text { "square" } }
+fn name_of<A: Shared>(v: A): Text where Named(A) { Named(A)::name() }
+perform test("the instance written picks the method", () => {
+  expect(Named(Circle)::name() == "circle", "the instance for Circle")
+  expect(Named(Square)::name() == "square", "the instance for Square")
+})
+fn name_for<A: Shared>(): Text where Named(A) { Named(A)::name() }
+perform test("a generic function names the instance of its parameter", () => {
+  expect(name_of(Square { side: 2 }) == "square", "the instance for the argument's type")
+  expect(name_for(<A: Circle>) == "circle", "the instance for the type given")
+})
+```
+tests = ["the instance written picks the method", "a generic function names the instance of its parameter"]
+
+@ cases.the-instance-written-beside-named-implicits
+source = ```tauto
+import std::base
+class Sized(T: Shared) {
+  fn count<B: Shared>(b: B): i64
+}
+instance Sized(Bool) { fn count<B: Shared>(b: B): i64 { 1 } }
+perform test("the class's argument leads the method's own", () => {
+  expect(Sized(Bool)::count(<B: Text>, "x") == 1, "both are given")
+})
+```
+tests = ["the class's argument leads the method's own"]
+
+@ cases.a-law-uses-a-method-without-the-type
+source = ```tauto
+inductive class Sized(T: Type) {
+  fn size(): Nat
+  theorem size_pos(): Nat::lt(0, Sized(T)::size()) = true
+}
+instance Sized(Bool) {
+  fn size(): Nat { 1 }
+  theorem size_pos(): Nat::lt(0, 1) = true { Refl }
+}
+theorem bool_size(): Sized(Bool)::size() = 1 { Refl }
+theorem any_pos<A>(): Nat::lt(0, Sized(A)::size()) = true where Sized(A) { Sized(A)::size_pos() }
+theorem bool_pos(): Nat::lt(0, Sized(Bool)::size()) = true { Sized(Bool)::size_pos() }
+```
+checks."bool_size" = "checked"
+checks."any_pos" = "checked"
+checks."bool_pos" = "checked"
+
+@ cases.the-instance-written-gives-the-class-its-arguments
+source = ```tauto
+inductive class Sized(T: Type) {
+  fn size(): Nat
+}
+instance Sized(Bool) { fn size(): Nat { 1 } }
+theorem t(): Sized(Bool, Nat)::size() = 1 { Refl }
+```
+checks."t" = "error: the class of `Sized::size` takes 1 argument(s), not 2"
+
+@ cases.a-class-method-named-by-its-instance-is-called
+source = ```nib
+class Named(T: Shared) { fn name(): Text }
+struct Circle {}
+instance Named(Circle) { fn name(): Text { "circle" } }
+fn f(): Text {
+  let g := Named(Circle)::name
+  g()
+}
+```
+types = "error: `C(T)::m` names the method `m` of the instance of `C` for `T`, and is called: write `C(T)::m(…)`"

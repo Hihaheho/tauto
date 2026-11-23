@@ -1,0 +1,158 @@
+// The shell of the JavaScript backend (`crates/tauto-jsgen`).
+//
+//   jsgen emit [OPTION]... FILE...   each FILE is a package as NIR text
+//
+// OPTION is `--host-type NAME`, `--export NAME`, `--retain NAME` or
+// `--chunk NAME=F,G`, as the host configuration gives them. Each answer
+// follows a line `== FILE`: the program, then each chunk's module after a
+// line `-- NAME`; or one line `error: …` that says what the backend does not
+// write; then, after a line `-- declarations`, the module's TypeScript
+// declarations or what they do not state. A file `FILE.opts` adds options to FILE's, one a line.
+import "shake.taut"
+import "cps.taut"
+import "lower.taut"
+import "direct.taut"
+import "gen.taut"
+import "decl.taut"
+import "../../nir/src/syntax.taut"
+import "../../nir/src/model.taut"
+import "../../nir/src/read.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::builtin::os
+
+pub fn js_main_chunks(cs: List(Text × Text)): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => match c {
+      #(name, text) => Cons(Text::concat_all(["-- ", name, "\n", text]), js_main_chunks(rest))
+    }
+  }
+}
+
+pub fn js_modules_text(pkg: NPackage, options: JsOptions): Text ! {div, overflow} {
+  match js_generate_modules(pkg, options) {
+    Err(e) => Text::concat_all(["error: ", e, "\n"])
+    Ok(m) => Text::concat_all(Cons(m.program, js_main_chunks(m.chunks)))
+  }
+}
+
+pub fn js_emit_text(source: Text, options: JsOptions): Text ! {div, overflow} {
+  match nir::parse(source) {
+    Err(d) => Text::concat_all(["error: not NIR text: ", d.message, "\n"])
+    Ok(tree) => match nir_read(tree) {
+      Err(e) => Text::concat_all(["error: not NIR text: ", e, "\n"])
+      Ok(pkg) => Text::concat_all([js_modules_text(pkg, options), "-- declarations\n", match js_generate_declarations(pkg, options) {
+        Ok(t) => t
+        Err(e) => Text::concat_all(["error: ", e, "\n"])
+      }])
+    }
+  }
+}
+
+pub fn js_main_each(options: JsOptions, paths: List(Text)): Unit ! {div, fs_read, overflow, stdout} {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      print(Text::concat_all(["== ", path, "\n"]))
+      match read_file(path) {
+        Err(e) => print(Text::concat_all(["error: cannot read: ", e, "\n"]))
+        Ok(source) => print(js_emit_text(source, js_file_options(options, path)))
+      }
+      js_main_each(options, rest)
+    }
+  }
+}
+
+// The options of a file: those given, and those of the lines of `FILE.opts`
+// if there is one, each an option and its value.
+pub fn js_file_options(o: JsOptions, path: Text): JsOptions ! {fs_read} {
+  match read_file(concat(path, ".opts")) {
+    Err(^e) => o
+    Ok(t) => match js_main_options(o, js_words_of_lines(text_lines(t))) {
+      Some(found) => match found {
+        #(x, ^rest) => x
+      }
+      None => o
+    }
+  }
+}
+
+pub fn js_words_of_lines(ls: List(Text)): List(Text) {
+  match ls {
+    Nil => Nil
+    Cons(l, rest) => match text_find(l, " ", 0) {
+      Some(at) => Cons(Text::slice_or_empty(l, 0, at), Cons(Text::slice_or_empty(l, at + 1, Text::len(l)), js_words_of_lines(rest)))
+      None => js_words_of_lines(rest)
+    }
+  }
+}
+
+pub fn js_split_chunk(t: Text): Option(Text × List(Text)) {
+  match text_find(t, "=", 0) {
+    None => None
+    Some(at) => Some(#(Text::slice_or_empty(t, 0, at), text_split(Text::slice_or_empty(t, at + 1, Text::len(t)), ",")))
+  }
+}
+
+// Inserts a chunk in the order of the names.
+pub fn js_insert_chunk(cs: List(Text × List(Text)), c: Text × List(Text)): List(Text × List(Text)) {
+  match cs {
+    Nil => [c]
+    Cons(x, rest) => match x {
+      #(n, ^xs) => match c {
+        #(m, ^ys) => match Text::ordering(m, n) {
+          Less => Cons(c, cs)
+          Equal => Cons(c, rest)
+          Greater => Cons(x, js_insert_chunk(rest, c))
+        }
+      }
+    }
+  }
+}
+
+pub fn js_main_options(o: JsOptions, args: List(Text)): Option(JsOptions × List(Text)) {
+  match args {
+    Nil => Some(#(o, Nil))
+    Cons(a, rest) => if a == "--host-type" || a == "--export" || a == "--retain" || a == "--chunk" {
+      match rest {
+        Nil => None
+        Cons(v, more) => if a == "--host-type" {
+          js_main_options(JsOptions { host_types: List::append(o.host_types, [v]), exports: o.exports, retain: o.retain, chunks: o.chunks }, more)
+        } else if a == "--export" {
+          js_main_options(JsOptions { host_types: o.host_types, exports: List::append(o.exports, [v]), retain: o.retain, chunks: o.chunks }, more)
+        } else if a == "--retain" {
+          js_main_options(JsOptions { host_types: o.host_types, exports: o.exports, retain: List::append(o.retain, [v]), chunks: o.chunks }, more)
+        } else {
+          match js_split_chunk(v) {
+            None => None
+            Some(c) => js_main_options(JsOptions { host_types: o.host_types, exports: o.exports, retain: o.retain, chunks: js_insert_chunk(o.chunks, c) }, more)
+          }
+        }
+      }
+    } else {
+      Some(#(o, args))
+    }
+  }
+}
+
+pub fn js_main(args: List(Text)): Unit ! {div, fs_read, overflow, stderr, stdout} {
+  match args {
+    Nil => eprint("usage: jsgen emit [OPTION]... FILE...")
+    Cons(mode, rest) => if mode == "emit" {
+      match js_main_options(js_options_default(), rest) {
+        None => eprint("usage: jsgen emit [OPTION]... FILE...")
+        Some(found) => match found {
+          #(options, paths) => js_main_each(options, paths)
+        }
+      }
+    } else {
+      eprint("usage: jsgen emit [OPTION]... FILE...")
+    }
+  }
+}
+
+perform main(() => {
+  js_main(perform argv())
+})

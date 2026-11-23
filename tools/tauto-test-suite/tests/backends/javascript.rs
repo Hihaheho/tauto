@@ -32,13 +32,38 @@ fn checked(case: &RustCase, what: &str) -> String {
 }
 
 fn run_case(case: &RustCase, i: usize, dir: &Path) -> String {
-    let (pkg, files_dir, _files) = match case.compile_with_files("javascript") {
+    let manifest = match case
+        .tote
+        .as_ref()
+        .map(|p| tauto::manifest::load(p))
+        .transpose()
+    {
+        Ok(m) => m,
+        Err(m) => {
+            return declared_failure(case, "build", &m.to_string())
+                .unwrap_or_else(|| status("fail", &format!("unexpected build: {m}")));
+        }
+    };
+    // A tote with JavaScript host modules is run through the CLI so bindings
+    // and `host/` copies match `tauto run --backend javascript`.
+    if let (Some(tote), Some(m)) = (case.tote.as_ref(), manifest.as_ref()) {
+        if !m.javascript.externs.is_empty()
+            || !m.javascript.node.is_empty()
+            || !m.javascript.types.is_empty()
+        {
+            return run_tote_cli(case, tote);
+        }
+    }
+    let (mut pkg, files_dir, _files) = match case.compile_with_files("javascript") {
         Ok(p) => p,
         Err(error) => {
             let (stage, message) = match error {
-                tauto_nir::CompileError::Front(m) => ("front", m),
-                tauto_nir::CompileError::Build(m) => ("build", m),
-                tauto_nir::CompileError::Unsupported(u) => ("unsupported", u.what.to_string()),
+                tauto_nibcheck::lower::CompileError::Front(m)
+                | tauto_nibcheck::lower::CompileError::Package(m) => ("front", m),
+                tauto_nibcheck::lower::CompileError::Build(m) => ("build", m),
+                tauto_nibcheck::lower::CompileError::Unsupported(u) => {
+                    ("unsupported", u.what.to_string())
+                }
             };
             if let Some(s) = declared_failure(case, stage, &message) {
                 return s;
@@ -46,8 +71,19 @@ fn run_case(case: &RustCase, i: usize, dir: &Path) -> String {
             return status("fail", &format!("unexpected {stage}: {message}"));
         }
     };
-    let probes =
-        !pkg.externs.is_empty() && pkg.externs.iter().all(|e| e.name.as_str() == "Probe::new");
+    if let Err(e) = tauto_rustgen::apply_javascript_selection(&mut pkg, manifest.as_ref(), "node") {
+        return declared_failure(case, "build", &e)
+            .unwrap_or_else(|| status("fail", &format!("unexpected build: {e}")));
+    }
+    let host_types: std::collections::BTreeSet<String> = manifest
+        .as_ref()
+        .map(|m| m.javascript.types.keys().cloned().collect())
+        .unwrap_or_default();
+    let probes = !pkg.externs.is_empty()
+        && pkg
+            .externs
+            .iter()
+            .all(|e| e.name.as_str() == "Probe::new" || case.host.contains_key(e.name.as_str()));
     if !pkg.externs.is_empty() && !probes {
         return declared_failure(case, "unsupported", "host extern bindings").unwrap_or_else(
             || {
@@ -68,6 +104,7 @@ fn run_case(case: &RustCase, i: usize, dir: &Path) -> String {
         &pkg,
         &tauto_jsgen::Options {
             exports: pkg.exports.iter().map(|e| e.name.clone()).collect(),
+            host_types,
             ..Default::default()
         },
     ) {
@@ -98,9 +135,41 @@ fn run_case(case: &RustCase, i: usize, dir: &Path) -> String {
     // The standard probe: a host resource that logs its name when its
     // last owner releases it.
     let host = if probes {
-        "{'Probe::new'(name){name=name.get();let owners=1;return {resource:true,retain(){owners++;},release(){if(--owners===0)dropped.push(name);}};}}"
+        let mut entries = vec![
+            "'Probe::new'(name){name=name.get();let owners=1;return {resource:true,retain(){owners++;},release(){if(--owners===0)dropped.push(name);}};}".to_string(),
+        ];
+        // The externs the case declares: each answers as `host.<name>` says.
+        for (name, spec) in &case.host {
+            let name = serde_json::to_string(name).unwrap();
+            let owner = spec.owner.as_deref().map(|o| serde_json::to_string(o).unwrap());
+            let error = serde_json::to_string(spec.error.as_deref().unwrap_or("host failure"))
+                .unwrap();
+            let guard = spec.drops_at_call.map_or(String::new(), |n| {
+                format!(
+                    "if(dropped.length!=={n})throw new Error('probes dropped at the call: '+dropped.length);"
+                )
+            });
+            let answer = match (&owner, spec.answers.as_deref().unwrap_or("now")) {
+                (Some(o), "now") => format!(
+                    "{{let owners=1;return {{owner:{o},tag:{o},names:['value'],fields:[{value}n],release(){{if(--owners===0)dropped.push({o});}}}};}}",
+                    value = spec.value.unwrap_or(0)
+                ),
+                (None, "now") => "return null;".to_string(),
+                (None, "later") => "return Promise.resolve().then(()=>{"
+                    .to_string()
+                    + &format!(
+                        "if(dropped.length!=={n})throw new Error('probes dropped during the wait: '+dropped.length);return null;}});",
+                        n = spec.drops_at_call.unwrap_or(0)
+                    ),
+                (None, "rejects") => format!("return Promise.reject(new Error({error}));"),
+                (None, "throws") => format!("throw new Error({error});"),
+                (_, other) => format!("throw new Error('unsupported host answer: {other}');"),
+            };
+            entries.push(format!("{name}(){{{guard}{answer}}}"));
+        }
+        format!("{{{}}}", entries.join(","))
     } else {
-        "{}"
+        "{}".to_string()
     };
     // The host of the command line (`tauto run`): the files, processes and
     // sockets the standard effects reach, under the permissions of the case.
@@ -163,7 +232,14 @@ fn run_case(case: &RustCase, i: usize, dir: &Path) -> String {
             serde_json::from_str::<Vec<String>>(&text)
                 .map_err(|e| format!("invalid show capture: {e}"))
         });
-    if case.backend_known_failure.contains_key("javascript") {
+    if case.runtime_opt_out("javascript") {
+        if exit.is_none() {
+            return match case.check_limitation("javascript", "runtime", "runtime safety limit exceeded") {
+                Ok(true) => status("todo", "declared runtime: runtime safety limit exceeded"),
+                Err(e) => status("fail", &e),
+                Ok(false) => unreachable!(),
+            };
+        }
         if exit.is_some_and(|s| !s.success()) {
             return match case.check_limitation("javascript", "runtime", &err) {
                 Ok(true) => status("todo", &format!("declared runtime: {err}")),
@@ -190,16 +266,60 @@ fn run_case(case: &RustCase, i: usize, dir: &Path) -> String {
     let result = exit
         .ok_or_else(|| "runtime safety limit exceeded".to_string())
         .and_then(|s| {
-            shows.and_then(|shows| case.check_output("javascript", &shows, &out, &err, s.code()))
+            shows.and_then(|_| case.check_output("javascript", &out, &err, s.code()))
         });
     match result {
-        Ok(()) => checked(case, "output checked"),
+        Ok(Some(e)) => status("todo", &format!("declared output: {e}")),
+        Ok(None) => checked(case, "output checked"),
         Err(e) => status("fail", &e),
     }
 }
 
 /// Each worker has a directory of its own: `out` and `err` are shared by the
 /// cases of one directory.
+fn run_tote_cli(case: &RustCase, tote: &Path) -> String {
+    let bin = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/tauto");
+    let output = match Command::new(&bin)
+        .args(["run", "--backend", "javascript"])
+        .arg(tote)
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            return declared_failure(case, "build", &e.to_string())
+                .unwrap_or_else(|| status("fail", &format!("unexpected build: {e}")));
+        }
+    };
+    let out = String::from_utf8_lossy(&output.stdout);
+    let err = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        let message = if err.is_empty() {
+            out.to_string()
+        } else {
+            err.to_string()
+        };
+        let message = message.trim();
+        if let Some(s) = declared_failure(case, "build", message) {
+            return s;
+        }
+        if let Some(s) = declared_failure(case, "front", message) {
+            return s;
+        }
+        return status("fail", &format!("unexpected build: {message}"));
+    }
+    if let Err(e) = case.check_compiled("javascript") {
+        return status("fail", &e);
+    }
+    if !case.expects_runtime() {
+        return checked(case, "compile checked");
+    }
+    match case.check_output("javascript", &out, &err, output.status.code()) {
+        Ok(Some(e)) => status("todo", &format!("declared output: {e}")),
+        Ok(None) => checked(case, "output checked"),
+        Err(e) => status("fail", &e),
+    }
+}
+
 pub fn runner(worker: usize) -> impl FnMut(usize, &RustCase) -> String {
     let dir: PathBuf =
         std::env::temp_dir().join(format!("tauto-js-corpus-{}-{worker}", std::process::id()));

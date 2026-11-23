@@ -65,7 +65,7 @@ fn proof_erasure_keeps_the_actual_interpreter_and_transition() {
     tauto_messages::install();
     let output = extract_files(&[state_file()]).unwrap();
     assert!(output.contains("fn state_certified_run"));
-    assert!(output.contains("state_run(step, commands, state)"));
+    assert!(output.contains("state_run(step, commands, state_1)"));
     let advance = output
         .split("fn gate_advance")
         .nth(1)
@@ -75,7 +75,7 @@ fn proof_erasure_keeps_the_actual_interpreter_and_transition() {
         .unwrap();
     assert!(advance.contains("state_run("));
     assert!(advance.contains("=> gate_step("));
-    assert!(advance.contains("commands, state)"));
+    assert!(advance.contains("commands, state_1)"));
     assert!(output.contains("fn gate_step"));
     assert!(!output.contains("GateInvariant"));
     assert!(!output.contains("StatePreserves"));

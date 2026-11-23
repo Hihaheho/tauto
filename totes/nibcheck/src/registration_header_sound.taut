@@ -1,9 +1,10 @@
+import "messages.taut"
 import "rules_data_header.taut"
 import "program_data_metadata_sound.taut"
-import std::Base
-import std::Map
-import std::MapText
-import std::Text
+import std::base
+import std::map
+import std::map_text
+import std::text
 import "checker.taut"
 import "data_metadata_sound.taut"
 import "data_presence_sound.taut"
@@ -13,13 +14,14 @@ import "datas_registration.taut"
 import "summary_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub theorem header_metadata_ignores(
   o: Option(Data)
 ): data_header_option(data_metadata_option(o)) = data_header_option(o) {
-  ⊢ data_header_option(data_metadata_option(o)) = data_header_option(o) from match o {
+  match o {
     None => Refl
     Some(data) => Refl
   }
@@ -50,7 +52,7 @@ pub theorem registration_bind_header<A: Type, B: Type>(
     CkDatasOrdered(next)
   ) -> DataHeaderMatches(ck_datas_of(ck_st(k(v, next))), d)
 ): DataHeaderMatches(ck_datas_of(ck_st(frame_bind(k, m))), d) {
-  ⊢ DataHeaderMatches(ck_datas_of(ck_st(frame_bind(k, m))), d) from match m {
+  match m {
     mut1(v, next) => hk(v, next, hm)
   }
 }
@@ -84,15 +86,12 @@ pub theorem registration_declare_header(
   ordered: CkDatasOrdered(c)
 ): DataHeaderMatches(ck_datas_of(ck_st(registration_declare(c, d, is_struct, builtin))), d) {
   registration_bind_header(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     d,
     (ignored: Unit, c1: Checker) => frame_bind(
-      List(DataCtor),
-      Unit,
+      <A: List(DataCtor), B: Unit>,
       (constructors: List(DataCtor), c2: Checker) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
           d,
@@ -110,7 +109,7 @@ pub theorem registration_declare_header(
     ),
     frame_error_if(
       c,
-      "a view struct has no fields: it is an opaque type",
+      view_decl_message(is_struct),
       registration_span(d),
       Bool::and(
         surface_data_is_view(d),
@@ -121,7 +120,7 @@ pub theorem registration_declare_header(
       c,
       frame_error_if(
         c,
-        "a view struct has no fields: it is an opaque type",
+        view_decl_message(is_struct),
         registration_span(d),
         Bool::and(
           surface_data_is_view(d),
@@ -130,7 +129,7 @@ pub theorem registration_declare_header(
       ),
       frame_error_if_ok(
         c,
-        "a view struct has no fields: it is an opaque type",
+        view_decl_message(is_struct),
         registration_span(d),
         Bool::and(
           surface_data_is_view(d),
@@ -140,12 +139,10 @@ pub theorem registration_declare_header(
       ordered
     ),
     ignored => c1 => o1 => registration_bind_header(
-      List(DataCtor),
-      Unit,
+      <A: List(DataCtor), B: Unit>,
       d,
       (constructors: List(DataCtor), c2: Checker) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
           d,
@@ -175,8 +172,7 @@ pub theorem registration_declare_header(
         o1
       ),
       constructors => c2 => o2 => registration_bind_header(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         d,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
@@ -220,7 +216,7 @@ pub theorem header_registered_entry(
   present: DataPresent(summary_decls(env), registration_name(source)),
   header: DataHeaderMatches(env, source)
 ): SourceDataEntry(env, source) {
-  ⊢ SourceDataEntry(env, source) from match present {
+  match present {
     Mk(data, found) => SourceDataEntry::Mk(
       data,
       found,

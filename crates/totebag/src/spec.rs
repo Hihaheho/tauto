@@ -17,6 +17,8 @@ pub struct GitSource {
     pub reference: String,
     /// The tote's directory in the repository, `""` for its root.
     pub dir: String,
+    /// Only `dir` is fetched and hashed, not the whole repository.
+    pub sparse: bool,
     /// The project its revisions are known as in the indexes a trust policy
     /// names, `sha256:<hex>`: when a project has a policy, what it adopts
     /// from here must be eligible under it.
@@ -28,6 +30,9 @@ impl GitSource {
         check_url(&self.url)?;
         check_ref(&self.reference)?;
         check_dir(&self.dir)?;
+        if self.sparse && self.dir.is_empty() {
+            return Err(say!("totebag-sparse-needs-dir"));
+        }
         if let Some(p) = &self.project {
             crate::index::strict::sha256(p).map_err(|e| e.to_string())?;
         }
@@ -50,6 +55,9 @@ impl fmt::Display for GitSource {
         write!(f, "{} {}", self.url, self.reference)?;
         if !self.dir.is_empty() {
             write!(f, " ({})", self.dir)?;
+        }
+        if self.sparse {
+            write!(f, " [sparse]")?;
         }
         Ok(())
     }

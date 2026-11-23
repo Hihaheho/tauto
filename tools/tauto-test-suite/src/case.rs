@@ -48,31 +48,44 @@ macro_rules! record {
     }
 }
 record!(Expectations = "case" {
-    source: Text, files: BTreeMap<String, Text>, tote: Text, files_tote: String, entry: String, imports: Vec<Text>, extract: bool, extract_source: bool,
+    source: Text, files: BTreeMap<String, Text>, tote: Text, files_tote: String, check_tote: String, run_tote: String, workspace_check: bool, entry: String, imports: Vec<Text>, extract: bool, extract_source: bool,
     a: Vec<String>, b: Vec<String>, equal: bool,
     parses: bool, types: String, rows: String, rows_javascript: String, lin: String,
     inferred_types: BTreeMap<String, String>, inferred_rows: BTreeMap<String, Vec<String>>,
+    host_origins: BTreeMap<String, Vec<String>>,
     inferred_kinds: BTreeMap<String, String>,
     format: String, format_error: String, format_literals: String,
-    format_literals_warnings: Vec<String>, editor_tokens: Vec<String>, editor_token_warnings: Vec<String>, lint: Vec<String>, tote_warnings: Vec<String>, tote_errors: Vec<String>,
+    format_literals_warnings: Vec<String>, editor_tokens: Vec<String>, editor_token_warnings: Vec<String>, lint: Vec<String>, tote_warnings: Vec<String>, tote_errors: Vec<String>, check_errors: Vec<String>, externs: Vec<String>,
     checks: BTreeMap<String, String>, checks_all: String, declarations: Vec<String>,
     evals: BTreeMap<String, String>,
     diagnostics: Vec<Diagnostic>, holes: Vec<Hole>,
-    shows: Vec<String>, tests: Vec<String>, stdout: String, stderr: String, exit: i32,
-    run_error: String, drops: Vec<String>, probe_drops: Vec<String>, budget: u64, rust_budget_steps: u64, args: Vec<String>,
+    tests: Vec<String>, stdout: String, stderr: String, exit: i32,
+    run_error: String, probe_drops: Vec<String>, host: BTreeMap<String, HostExtern>, budget: u64, rust_budget_steps: u64, rust_stack_mb: u64, args: Vec<String>,
     permissions: Vec<String>, links: BTreeMap<String, String>,
-    macro_error: String, load_error: String, expands: String, extracted_nib: BTreeMap<String, String>, trace: Vec<String>,
-    rust_shows: Vec<String>, rust_error: String, build: String, rust: String,
-    backends: Vec<String>, compile_errors: BTreeMap<String, String>, differential: String,
-    backend_known_failure: BTreeMap<String, String>, javascript_shows: Vec<String>, javascript_error: String,
+    macro_error: String, load_error: String, expands: String, extracted_nib: BTreeMap<String, String>, extracted_text: Vec<String>, extracted_lacks: Vec<String>, trace: Vec<String>, macro_warnings: Vec<String>, check_report: String,
+    build: String, compile_errors: BTreeMap<String, String>, differential: String, differential_program: String, component_rejects: bool,
+    eval: OptOut, rust: OptOut, javascript: OptOut, vm: OptOut, llvm: OptOut, niri: OptOut, nir_wf: OptOut,
     selfhost_entry: String, selfhost_stdout: String, selfhost_compile_error: String, selfhost_run_error: String,
-    fixes: FixRun, proofs: Vec<ProofView>, hovers: Vec<HoverView>,
-    unimplemented: Mark, scenarios: Vec<String>,
+    fixes: FixRun, proofs: Vec<ProofView>, hovers: Vec<HoverView>, import_fixes: Vec<ImportFixView>, row_hole_fixes: Vec<ImportFixView>, nir: NirRun,
+    scenarios: Vec<String>, checked_before: Vec<Text>,
     cases: BTreeMap<String, Expectations>, fixtures: BTreeMap<String, Fixture>, description: String,
+    lang: String,
+});
+// A backend that fails a case today, and how: `unimplemented` when it lacks
+// the feature, `bug` when it has it and gets it wrong.
+// What the case host answers to one of the program's externs.
+record!(HostExtern = "host-extern" {
+    owner: String, value: i64, answers: String, error: String, drops_at_call: usize,
+});
+record!(OptOut = "backend-opt-out" {
+    unimplemented: String, bug: String,
 });
 record!(HoverView = "hover-view" {
-    at: String, occurrence: usize, contains: Vec<String>, absent: bool,
-    proof: String, proof_file: String, buffers: BTreeMap<String, Text>,
+    at: String, occurrence: usize, contains: Vec<String>, lacks: Vec<String>, absent: bool,
+    span: bool, proof: String, proof_file: String, buffers: BTreeMap<String, Text>,
+});
+record!(ImportFixView = "import-fix-view" {
+    at: String, occurrence: usize, fixed_sources: Vec<Text>,
 });
 record!(ProofView = "proof-view" {
     name: String, format: String, output: Text, error: String,
@@ -98,6 +111,20 @@ record!(FixRun = "fix-run" {
     reverted: Vec<String>,
     files: BTreeMap<String, Text>,
     diff: Text,
+});
+record!(NirRun = "nir-run" {
+    source: Text,
+    target: String,
+    library: bool,
+    export: Vec<String>,
+    passes: Vec<String>,
+    fns: BTreeMap<String, String>,
+    blocks: BTreeMap<String, String>,
+    datas: BTreeMap<String, String>,
+    evidence: String,
+    exports: String,
+    package: String,
+    error: String,
 });
 record!(Hole = "hole" {
     declaration: String, name: String, file: String, goal: String, context: Vec<String>,
@@ -130,37 +157,21 @@ fn nested_or_build<S: 'static, T: eure_schema::BuildSchema + 'static>(
     ))
 }
 
-#[derive(Debug)]
-pub struct Mark(bool);
-impl eure_schema::BuildSchema for Mark {
-    fn type_name() -> Option<&'static str> {
-        Some("unimplemented-mark")
-    }
-    fn build_schema(ctx: &mut eure_schema::SchemaBuilder) -> eure_schema::SchemaNodeContent {
-        let variants = [
-            ("flag".to_string(), ctx.build::<bool>()),
-            ("reason".to_string(), ctx.build::<Text>()),
-        ];
-        eure_schema::SchemaNodeContent::Union(eure_schema::UnionSchema {
-            variants: variants.into_iter().collect(),
-            unambiguous: Default::default(),
-            interop: Default::default(),
-            deny_untagged: Default::default(),
-        })
-    }
-}
-impl<'doc> FromEure<'doc> for Mark {
-    type Error = ParseError;
-    fn parse(ctx: &ParseContext<'doc>) -> Result<Self, ParseError> {
-        use eure_document::value::PrimitiveValue as P;
-        Ok(Self(match ctx.parse_primitive()? {
-            P::Bool(b) => *b,
-            _ => {
-                let _: Text = ctx.parse()?;
-                true
-            }
-        }))
-    }
+/// Whether an opt-out string is a compile/runtime stage (`output: …`,
+/// `generate: …`, …) rather than an ownership rule name (`Leak: …`).
+fn stage_opt_out(want: &str) -> bool {
+    want.split_once(": ").is_some_and(|(stage, message)| {
+        [
+            "front",
+            "unsupported",
+            "generate",
+            "build",
+            "runtime",
+            "output",
+        ]
+        .contains(&stage)
+            && !message.trim().is_empty()
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -168,14 +179,18 @@ pub enum Backend {
     Rust,
     Javascript,
     Vm,
+    Llvm,
+    Niri,
 }
 impl Backend {
-    pub const ALL: [Self; 3] = [Self::Rust, Self::Javascript, Self::Vm];
+    pub const ALL: [Self; 5] = [Self::Rust, Self::Javascript, Self::Vm, Self::Llvm, Self::Niri];
     pub fn name(self) -> &'static str {
         match self {
             Self::Rust => "rust",
             Self::Javascript => "javascript",
             Self::Vm => "vm",
+            Self::Llvm => "llvm",
+            Self::Niri => "niri",
         }
     }
     pub fn from_name(name: &str) -> Option<Self> {
@@ -193,16 +208,22 @@ pub enum Scenario {
     Backend(Backend),
 }
 impl Scenario {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::Eval,
         Self::Backend(Backend::Rust),
         Self::Backend(Backend::Javascript),
         Self::Backend(Backend::Vm),
+        Self::Backend(Backend::Llvm),
+        Self::Backend(Backend::Niri),
     ];
-    pub const BACKENDS: [Self; 3] = [
+    /// Every backend the harness runs: a case that does not opt out runs on
+    /// each of these (`<backend>.bug` / `<backend>.unimplemented`).
+    pub const BACKENDS: [Self; 5] = [
         Self::Backend(Backend::Rust),
         Self::Backend(Backend::Javascript),
         Self::Backend(Backend::Vm),
+        Self::Backend(Backend::Llvm),
+        Self::Backend(Backend::Niri),
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -228,7 +249,15 @@ impl std::ops::Deref for Case {
 
 pub(super) struct CompilationInput {
     pub loaded: tauto::program::Loaded,
-    pub javascript_exports: Vec<String>,
+    /// The functions the tote's `exports` names, each `TOTE::*` read as the
+    /// functions it brings; None when the manifest has no `exports`.
+    pub exports: Option<std::collections::BTreeSet<String>>,
+    /// The name a host finds each of `exports` by.
+    pub export_names: std::collections::BTreeMap<String, String>,
+    /// The order the exports are written in.
+    pub export_order: Vec<String>,
+    /// The entry file of a program read as `tauto build FILE` reads it.
+    pub entry: Option<PathBuf>,
     _scratch: Option<Scratch>,
 }
 
@@ -262,6 +291,12 @@ impl Case {
             || self.lint.is_some()
             || self.tote_warnings.is_some()
             || self.tote_errors.is_some()
+            || self.workspace_check.is_some()
+            || self.check_tote.is_some()
+            || self.run_tote.is_some()
+            || self.nir.is_some()
+            || self.check_errors.is_some()
+            || self.externs.is_some()
             || self.evaluates_program()
         {
             out.insert(Scenario::Eval);
@@ -284,6 +319,7 @@ impl Case {
             || self.inferred_types.is_some()
             || self.inferred_kinds.is_some()
             || self.inferred_rows.is_some()
+            || self.host_origins.is_some()
             || self.rows_javascript.is_some()
             || self.rows.is_some()
             || self.lin.is_some()
@@ -291,58 +327,85 @@ impl Case {
             || (self.checks_all.is_some() || self.declarations.is_some())
             || self.diagnostics.is_some()
             || self.holes.is_some()
-            || self.shows.is_some()
             || self.tests.is_some()
             || self.stdout.is_some()
             || self.stderr.is_some()
             || self.exit.is_some()
             || self.run_error.is_some()
-            || self.drops.is_some()
             || self.probe_drops.is_some()
             || self.load_error.is_some()
             || self.macro_error.is_some()
             || self.expands.is_some()
             || self.proofs.is_some()
-            || self.hovers.is_some()
+            || self.hovers.is_some() || self.import_fixes.is_some() || self.row_hole_fixes.is_some()
             || self.extracted_nib.is_some()
+            || self.extracted_text.is_some()
+            || self.extracted_lacks.is_some()
             || self.trace.is_some()
+            || self.macro_warnings.is_some()
+            || self.check_report.is_some()
+            || self.workspace_check.is_some()
+            || self.check_tote.is_some()
+            || self.run_tote.is_some()
     }
 
     pub fn expects_runtime(&self) -> bool {
-        self.shows.is_some()
-            || self.rust_shows.is_some()
-            || self.run_error.is_some()
-            || self.rust_error.is_some()
+        self.run_error.is_some()
             || self.stdout.is_some()
             || self.stderr.is_some()
             || self.exit.is_some()
-            || self.javascript_shows.is_some()
-            || self.javascript_error.is_some()
+    }
+
+    /// Ownership-rule opt-outs for niri and the NIR check: `(niri, nir_wf)`,
+    /// each `what: why` (not a compile/runtime stage). Stage-shaped niri
+    /// marks (`output: …`, `generate: …`, …) live in [`Self::opt_outs`].
+    pub fn nir_opt_outs(&self) -> (Option<String>, Option<String>) {
+        let get = |o: &Option<OptOut>| {
+            o.as_ref()
+                .and_then(|o| o.unimplemented.clone().or(o.bug.clone()))
+                .filter(|w| !stage_opt_out(w))
+        };
+        (get(&self.niri), get(&self.nir_wf))
+    }
+
+    /// The backends this case opts out of, each with its `stage: message`.
+    /// niri's ownership rule names (`UseAfterMove: …`, `Leak: …`, `split: …`)
+    /// stay in [`Self::nir_opt_outs`]; a stage-shaped niri mark is here.
+    pub fn opt_outs(&self) -> BTreeMap<String, String> {
+        [
+            ("rust", &self.rust),
+            ("javascript", &self.javascript),
+            ("vm", &self.vm),
+            ("llvm", &self.llvm),
+            ("niri", &self.niri),
+        ]
+        .into_iter()
+        .filter_map(|(b, o)| {
+            let o = o.as_ref()?;
+            let w = o.unimplemented.clone().or(o.bug.clone())?;
+            if b == "niri" && !stage_opt_out(&w) {
+                return None;
+            }
+            Some((b.to_string(), w))
+        })
+        .collect()
     }
 
     /// An explicit route is a requirement, never an automatic unsupported skip.
     pub fn explicit_backend(&self, backend: &str) -> bool {
-        self.backends
+        self.compile_errors
             .as_ref()
-            .is_some_and(|bs| bs.iter().any(|b| b == backend))
-            || self
-                .compile_errors
-                .as_ref()
-                .is_some_and(|es| es.contains_key(backend))
-            || self
-                .backend_known_failure
-                .as_ref()
-                .is_some_and(|es| es.contains_key(backend))
+            .is_some_and(|es| es.contains_key(backend))
+            || self.opt_outs().contains_key(backend)
     }
 
     fn selects_backend(&self, backend: &str) -> bool {
-        (self.source.is_some() || self.files.is_some() || self.tote.is_some())
-            && self
-                .backends
-                .as_ref()
-                .is_none_or(|bs| bs.iter().any(|b| b == backend))
+        // A backend writes its messages in English only.
+        self.lang.is_none()
+            && (self.source.is_some() || self.files.is_some() || self.tote.is_some())
             && (self.expects_runtime()
-                || (backend == "rust" && self.build.is_some())
+                // Only the Rust backend runs a case's test entries so far.
+                || (backend == "rust" && (self.build.is_some() || self.tests.is_some()))
                 || self.explicit_backend(backend))
     }
 
@@ -355,48 +418,40 @@ impl Case {
                 out.push(field.to_string());
             }
         };
-        let either =
-            runs(Scenario::Backend(Backend::Rust)) || runs(Scenario::Backend(Backend::Javascript));
-        if self.javascript_shows.is_some() {
-            need(
-                "javascript_shows",
-                runs(Scenario::Backend(Backend::Javascript)),
-            );
-        }
-        if self.javascript_error.is_some() {
-            need(
-                "javascript_error",
-                runs(Scenario::Backend(Backend::Javascript)),
-            );
-        }
-        if self.rust_shows.is_some() {
-            need("rust_shows", either);
-        }
-        if self.rust_error.is_some() {
-            need("rust_error", either);
-        }
+        let any_backend = Scenario::BACKENDS.iter().any(|&b| runs(b));
         if self.build.is_some() {
             need("build", runs(Scenario::Backend(Backend::Rust)));
-        }
-        if self.rust.is_some() {
-            need("rust", runs(Scenario::Backend(Backend::Rust)));
         }
         if self.rust_budget_steps.is_some() {
             need("rust_budget_steps", runs(Scenario::Backend(Backend::Rust)));
         }
-        for (field, map) in [
-            ("compile_errors", &self.compile_errors),
-            ("backend_known_failure", &self.backend_known_failure),
+        if self.rust_stack_mb.is_some() {
+            need("rust_stack_mb", runs(Scenario::Backend(Backend::Rust)));
+        }
+        let opt_outs = self.opt_outs();
+        for (field, keys) in [
+            (
+                "compile_errors",
+                self.compile_errors
+                    .iter()
+                    .flat_map(|m| m.keys())
+                    .collect::<Vec<_>>(),
+            ),
+            ("opt-out", opt_outs.keys().collect()),
         ] {
-            for backend in map.iter().flat_map(|m| m.keys()) {
+            for backend in keys {
                 need(
                     &format!("{field}.{backend}"),
                     Scenario::backend(backend).is_some_and(runs),
                 );
             }
         }
+        // niri's rule opt-outs are not in `opt_outs`; they still need the niri route.
+        if self.niri.is_some() {
+            need("niri", runs(Scenario::Backend(Backend::Niri)));
+        }
         if self.args.is_some() {
-            need("args", runs(Scenario::Eval) || either);
+            need("args", runs(Scenario::Eval) || any_backend);
         }
         if self.permissions.is_some() {
             need("permissions", runs(Scenario::Eval));
@@ -409,7 +464,7 @@ impl Case {
     fn validate_scenarios(&self) -> Result<(), String> {
         let scenarios = self.scenarios();
         if scenarios.is_empty() {
-            if self.differential.is_some() {
+            if self.differential.is_some() || self.differential_program.is_some() {
                 // Component differentials are selfhost requirements; see `selfhost`.
                 return Ok(());
             }
@@ -443,7 +498,61 @@ impl Case {
     }
 
     fn is_tote(&self) -> bool {
-        self.tote.is_some() || self.files_tote.is_some()
+        self.tote.is_some()
+            || self.files_tote.is_some()
+            || self.check_tote.is_some()
+            || self.run_tote.is_some()
+    }
+
+    /// Whether the case's program is read separated and extracted. A Tauto
+    /// program that runs, or that a backend compiles, is read as `tauto run` reads it, on the evaluator
+    /// and on every backend alike: checked, then extracted, so that a
+    /// function of the kernel's (`Nat::le` of `std::nat`, `Nat::sub_ge`'s
+    /// proof argument) is not read as a program. So is one whose extraction
+    /// the case asserts. `extract = false` opts out, for a case that reads
+    /// the program as it is written; a program that reads a Nib file, a
+    /// tote, and one whose `checks` expect a rejection (nothing checked to
+    /// extract), are read as before unless `extract = true` asks.
+    pub fn extracts(&self) -> bool {
+        if let Some(extract) = self.extract {
+            return extract;
+        }
+        if self.is_tote() {
+            return false;
+        }
+        // A case that expects a declaration to be rejected has no checked
+        // program to extract: the full check would reject the source before
+        // the case's own verdict (the kernel's) is read.
+        let rejects = |want: &String| want.starts_with("error: ");
+        if self.checks.iter().flat_map(BTreeMap::values).any(rejects)
+            || self.checks_all.iter().any(rejects)
+        {
+            return false;
+        }
+        let tauto_file = |p: &str| p.ends_with(".taut") || p.ends_with(".tauto");
+        let program = match (&self.files, &self.source) {
+            (Some(files), _) => {
+                tauto_file(self.entry.as_deref().unwrap_or("main.nib"))
+                    && files.keys().all(|p| !p.ends_with(".nib"))
+            }
+            (None, Some(source)) => !source.language.is_other("path") || tauto_file(source.as_str()),
+            (None, None) => false,
+        };
+        let runs = self.tests.is_some()
+            || self.stdout.is_some()
+            || self.stderr.is_some()
+            || self.exit.is_some()
+            || self.probe_drops.is_some()
+            || self.run_error.is_some()
+            || self.build.is_some()
+            || self.compile_errors.is_some()
+            || self.differential.is_some()
+            || self.differential_program.is_some();
+        let reads_extraction = self.extracted_nib.is_some()
+            || self.extracted_text.is_some()
+            || self.extracted_lacks.is_some()
+            || self.extract_source == Some(true);
+        program && (runs || reads_extraction)
     }
 
     pub fn load_for_compilation(&self, case_path: &Path) -> Result<CompilationInput, String> {
@@ -451,7 +560,10 @@ impl Case {
             return tauto::program::load_tote_for_build(&resolve_path(tote, case_path)).map(
                 |loaded| CompilationInput {
                     loaded,
-                    javascript_exports: vec![],
+                    exports: None,
+                    export_names: Default::default(),
+                    export_order: Vec::new(),
+                    entry: None,
                     _scratch: None,
                 },
             );
@@ -462,15 +574,28 @@ impl Case {
             if let Some(tote) = &self.files_tote {
                 let root = dir.0.join(super::relative_case_path(tote)?);
                 let manifest = tauto::manifest::read(&root)?;
-                let mut javascript_host = manifest.javascript.clone();
-                javascript_host.exports.clear();
-                if manifest.rust != Default::default() || javascript_host != Default::default() {
+                if manifest.rust != Default::default() || manifest.javascript != Default::default() {
                     return Err("files_tote backend host configuration needs a retained host fixture or external tote; it is not replaced by defaults".into());
                 }
                 let loaded = tauto::program::load_tote_for_build(&root)?;
+                let selection = match &manifest.exports {
+                    Some(list) => Some(tauto_nibcheck::lower::select_exports(
+                        &loaded,
+                        list,
+                        &tauto::program::tote_dirs(&root)?,
+                        None,
+                    )?),
+                    None => None,
+                };
+                let export_names =
+                    selection.as_ref().map(|s| s.public.clone()).unwrap_or_default();
+                let export_order = selection.as_ref().map(|s| s.order.clone()).unwrap_or_default();
                 return Ok(CompilationInput {
                     loaded,
-                    javascript_exports: manifest.javascript.exports,
+                    exports: selection.map(|s| s.names),
+                    export_names,
+                    export_order,
+                    entry: None,
                     _scratch: Some(dir),
                 });
             }
@@ -503,25 +628,39 @@ impl Case {
             own.push('\n');
             own.push_str(&text);
             std::fs::write(&entry, own).map_err(|e| e.to_string())?;
-            text.push_str(&format!("import {:?}\n", entry.to_string_lossy()));
-            std::fs::write(&wrapper, text).map_err(|e| e.to_string())?;
-            wrapper
+            // The statements a top level runs are the entry's alone: the
+            // source is the entry itself, not a file a wrapper imports.
+            let _ = wrapper;
+            entry
         } else {
             entry
         };
-        let loaded = load_case_entry(
-            &entry,
-            self.extract.unwrap_or(false),
-            self.extract_source.unwrap_or(false),
-        )?;
+        // A build that exports keeps the functions it names, as `tauto build --export` does.
+        let exporting = self
+            .nir
+            .as_ref()
+            .and_then(|n| n.export.as_ref())
+            .filter(|_| self.extracts() && !self.extract_source.unwrap_or(false));
+        let loaded = match exporting {
+            Some(added) => tauto::program::load_extracted_exporting(&entry, added)?,
+            None => load_case_entry(
+                &entry,
+                self.extracts(),
+                self.extract_source.unwrap_or(false),
+                false,
+            )?,
+        };
         Ok(CompilationInput {
             loaded,
-            javascript_exports: vec![],
+            exports: None,
+            export_names: Default::default(),
+            export_order: Vec::new(),
+            entry: Some(entry),
             _scratch: Some(dir),
         })
     }
     pub fn compilation_source(&self, case_path: &Path) -> Result<String, String> {
-        if self.extract.unwrap_or(false) || self.is_tote() {
+        if self.extracts() || self.is_tote() {
             let loaded = self.load_for_compilation(case_path)?;
             return Ok(tauto::surface::print::print_stmts(
                 &loaded.loaded.program.stmts,
@@ -576,7 +715,7 @@ impl Case {
     pub fn from_document(doc: &EureDocument, id: NodeId) -> Result<Self, String> {
         let expectations: Expectations = doc.parse(id).map_err(|e: ParseError| e.to_string())?;
         let case = Self {
-            unimplemented: expectations.unimplemented.as_ref().is_some_and(|m| m.0),
+            unimplemented: expectations.eval.is_some(),
             expectations,
         };
         if id != doc.get_root_id() && (case.cases.is_some() || case.fixtures.is_some()) {
@@ -586,11 +725,15 @@ impl Case {
         let _description = &case.description;
         case.validate()?;
         case.validate_scenarios()?;
+        if case.nir.as_ref().is_some_and(|n| n.source.is_some()) && case.asserts_besides_nir() {
+            // No program is behind a package written as text.
+            return Err("nir.source is not combined with expectations of a program".into());
+        }
         Ok(case)
     }
     fn validate(&self) -> Result<(), String> {
-        if self.extract_source == Some(true) && self.extract != Some(true) {
-            return Err("extract_source requires extract = true".into());
+        if self.extract_source == Some(true) && !self.extracts() {
+            return Err("extract_source requires extraction".into());
         }
         if self.format.is_some() && self.format_error.is_some() {
             return Err("format and format_error are mutually exclusive".into());
@@ -602,42 +745,13 @@ impl Case {
         {
             return Err("format_error needs a nonempty message".into());
         }
-        if let Some(backends) = &self.backends {
-            if backends.is_empty()
-                || backends
-                    .iter()
-                    .any(|b| !["rust", "javascript", "vm"].contains(&b.as_str()))
-            {
-                return Err("backends requires rust and/or javascript".into());
-            }
-            let distinct: std::collections::BTreeSet<_> = backends.iter().collect();
-            if distinct.len() != backends.len() {
-                return Err("backends cannot contain duplicates".into());
-            }
-        }
-        // Each backend counts steps its own way, so a count names its backend.
-        if self.rust_budget_steps.is_some()
-            && self
-                .backends
-                .as_ref()
-                .is_some_and(|b| !b.iter().any(|b| b == "rust"))
-        {
-            return Err("rust_budget_steps is excluded by backends".into());
-        }
         if let Some(errors) = &self.compile_errors {
             if errors.is_empty() {
                 return Err("compile_errors cannot be empty".into());
             }
             for (backend, error) in errors {
-                if !["rust", "javascript", "vm"].contains(&backend.as_str()) {
+                if !["rust", "javascript", "vm", "llvm", "niri"].contains(&backend.as_str()) {
                     return Err(format!("unknown compilation backend {backend:?}"));
-                }
-                if self
-                    .backends
-                    .as_ref()
-                    .is_some_and(|bs| !bs.contains(backend))
-                {
-                    return Err(format!("compile_errors.{backend} is excluded by backends"));
                 }
                 let Some((stage, message)) = error.split_once(": ") else {
                     return Err("compile_errors requires a failure stage and message".into());
@@ -649,32 +763,76 @@ impl Case {
                 }
             }
         }
-        if let Some(limits) = &self.backend_known_failure {
-            if limits.is_empty() {
-                return Err("backend_known_failure cannot be empty".into());
+        // The evaluator's failure is its own message, with no stage.
+        if let Some(o) = &self.eval {
+            match (&o.unimplemented, &o.bug) {
+                (Some(w), None) | (None, Some(w)) if !w.trim().is_empty() => {}
+                _ => return Err("eval needs exactly one nonempty unimplemented or bug".into()),
             }
-            for (backend, want) in limits {
-                if !["rust", "javascript", "vm"].contains(&backend.as_str()) {
-                    return Err("unknown backend_known_failure backend".into());
-                }
-                if self
-                    .backends
-                    .as_ref()
-                    .is_some_and(|bs| !bs.contains(backend))
-                {
+        }
+        // niri may name the ownership rule a case breaks (`UseAfterMove: …`,
+        // `Leak: …`, `split: …`) or, like the other backends, a stage
+        // (`output: …`, `generate: …`, …). The NIR check keeps `what: why`.
+        for (name, o) in [("niri", &self.niri), ("nir_wf", &self.nir_wf)] {
+            let Some(o) = o else { continue };
+            let want = match (&o.unimplemented, &o.bug) {
+                (Some(w), None) | (None, Some(w)) => w,
+                _ => {
                     return Err(format!(
-                        "backend_known_failure.{backend} is excluded by backends"
+                        "{name} needs exactly one of unimplemented and bug, as `what: why`"
                     ));
                 }
+            };
+            if name == "niri" && stage_opt_out(want) {
+                // Validated with the other backends below.
+                continue;
+            }
+            if !want
+                .split_once(": ")
+                .is_some_and(|(k, m)| !k.is_empty() && !m.trim().is_empty())
+            {
+                return Err(format!(
+                    "{name} needs exactly one of unimplemented and bug, as `what: why`"
+                ));
+            }
+        }
+        for (backend, o) in [
+            ("rust", &self.rust),
+            ("javascript", &self.javascript),
+            ("vm", &self.vm),
+            ("llvm", &self.llvm),
+            ("niri", &self.niri),
+        ] {
+            let Some(o) = o else { continue };
+            let want = match (&o.unimplemented, &o.bug) {
+                (Some(w), None) | (None, Some(w)) => w,
+                _ => {
+                    return Err(format!(
+                        "{backend} needs exactly one of unimplemented and bug"
+                    ));
+                }
+            };
+            if backend == "niri" && !stage_opt_out(want) {
+                continue;
+            }
+            {
                 let Some((stage, message)) = want.split_once(": ") else {
-                    return Err("backend_known_failure needs stage: message".into());
+                    return Err(format!("{backend} opt-out needs stage: message"));
                 };
-                if !["front", "unsupported", "generate", "build", "runtime"].contains(&stage)
+                if ![
+                    "front",
+                    "unsupported",
+                    "generate",
+                    "build",
+                    "runtime",
+                    "output",
+                ]
+                .contains(&stage)
                     || message.trim().is_empty()
                 {
-                    return Err(
-                        "backend_known_failure needs a precise stage and nonempty message".into(),
-                    );
+                    return Err(format!(
+                        "{backend} opt-out needs a precise stage and nonempty message"
+                    ));
                 }
                 if self
                     .compile_errors
@@ -683,22 +841,20 @@ impl Case {
                 {
                     return Err("a backend cannot expect both a compilation rejection and an unimplemented behavior".into());
                 }
-                if stage == "runtime"
-                    && self.shows.is_none()
-                    && self.rust_shows.is_none()
-                    && self.javascript_shows.is_none()
+                if (stage == "runtime" || stage == "output")
                     && self.stdout.is_none()
                     && self.stderr.is_none()
                     && self.exit.is_none()
                     && self.run_error.is_none()
-                    && self.rust_error.is_none()
-                    && self.javascript_error.is_none()
                 {
                     return Err(
                         "a runtime known failure requires the intended runtime assertion".into(),
                     );
                 }
             }
+        }
+        if self.component_rejects.is_some() && self.differential.is_none() {
+            return Err("component_rejects requires a differential component".into());
         }
         if let Some(differential) = &self.differential {
             if ![
@@ -710,8 +866,12 @@ impl Case {
                 "fmt",
                 "kernel",
                 "elaborator",
+                "elaborator-modules",
                 "rustgen",
                 "macros",
+                "macro-module-quotes",
+                "macro-sealed-expansion",
+                "synread",
                 "grammar",
                 "text",
                 "unicode",
@@ -719,10 +879,20 @@ impl Case {
                 "smoke",
                 "bootstrap_graph",
                 "implementation_audit",
+                "extract",
             ]
             .contains(&differential.as_str())
             {
                 return Err("unknown differential route".into());
+            }
+        }
+        if let Some(route) = &self.differential_program {
+            if route != "elaborator"
+                || self.differential.is_some()
+                || self.files.is_none()
+                || (self.entry.is_none() && self.files_tote.is_none())
+            {
+                return Err("differential_program requires elaborator and a files tree with entry or files_tote".into());
             }
         }
         let selfhost = self.selfhost_entry.is_some()
@@ -777,10 +947,16 @@ impl Case {
         if usize::from(self.source.is_some())
             + usize::from(self.files.is_some())
             + usize::from(self.tote.is_some())
+            + usize::from(self.nir.as_ref().is_some_and(|n| n.source.is_some()))
             + usize::from(tags)
             != 1
         {
-            return Err("a case needs exactly one of source, files, tote, or a/b".into());
+            return Err(
+                "a case needs exactly one of source, files, tote, nir.source, or a/b".into(),
+            );
+        }
+        if let Some(nir) = &self.nir {
+            nir.validate()?;
         }
         if tags {
             if self.a.is_none() || self.b.is_none() || self.equal.is_none() {
@@ -803,39 +979,42 @@ impl Case {
                 || self.lint.is_some()
                 || self.tote_warnings.is_some()
                 || self.tote_errors.is_some()
+                || self.check_errors.is_some()
+                || self.externs.is_some()
                 || self.inferred_rows.is_some()
-                || self.backends.is_some()
                 || self.compile_errors.is_some()
-                || self.backend_known_failure.is_some()
-                || self.javascript_shows.is_some()
-                || self.javascript_error.is_some()
+                || self.javascript.is_some()
+                || self.vm.is_some()
                 || self.extract.is_some()
                 || self.differential.is_some()
+                || self.differential_program.is_some()
                 || self.lin.is_some()
                 || (self.checks.is_some() || self.evals.is_some())
                 || (self.checks_all.is_some() || self.declarations.is_some())
                 || self.diagnostics.is_some()
                 || self.holes.is_some()
-                || self.shows.is_some()
                 || self.tests.is_some()
                 || self.stdout.is_some()
                 || self.stderr.is_some()
                 || self.exit.is_some()
                 || self.run_error.is_some()
-                || self.drops.is_some()
                 || self.probe_drops.is_some()
                 || self.budget.is_some()
                 || self.rust_budget_steps.is_some()
+                || self.rust_stack_mb.is_some()
                 || self.args.is_some()
                 || self.macro_error.is_some()
                 || self.load_error.is_some()
                 || self.expands.is_some()
                 || self.proofs.is_some()
-                || self.hovers.is_some()
+                || self.hovers.is_some() || self.import_fixes.is_some() || self.row_hole_fixes.is_some()
                 || self.extracted_nib.is_some()
+                || self.extracted_text.is_some()
+                || self.extracted_lacks.is_some()
+            || self.extracted_text.is_some()
+            || self.extracted_lacks.is_some()
                 || self.trace.is_some()
-                || self.rust_shows.is_some()
-                || self.rust_error.is_some()
+                || self.macro_warnings.is_some()
                 || self.build.is_some()
                 || self.rust.is_some())
         {
@@ -850,6 +1029,60 @@ impl Case {
             {
                 return Err("files_tote requires files and supplies its entry/imports from the manifest; parses is not supported".into());
             }
+            if self.check_tote.is_some()
+                || self.run_tote.is_some()
+                || self.workspace_check.is_some()
+            {
+                return Err(
+                    "files_tote cannot be combined with check_tote, run_tote, or workspace_check"
+                        .into(),
+                );
+            }
+        }
+        let workspace_select = [
+            self.check_tote.is_some(),
+            self.run_tote.is_some(),
+            self.workspace_check == Some(true),
+        ]
+        .into_iter()
+        .filter(|x| *x)
+        .count();
+        if workspace_select > 1 {
+            return Err("check_tote, run_tote, and workspace_check are mutually exclusive".into());
+        }
+        if self.check_tote.is_some() || self.run_tote.is_some() {
+            // Values such as `./app` go to `tote_flag_dir` so path refusal is
+            // checked by the product (`load_error`), not by the case format.
+            if self.files.is_none()
+                || self.entry.is_some()
+                || self.imports.is_some()
+                || self.parses.is_some()
+            {
+                return Err(
+                    "check_tote/run_tote requires files and supplies the member from the files root"
+                        .into(),
+                );
+            }
+        }
+        if self.workspace_check == Some(true) {
+            if self.files.is_none()
+                || self.entry.is_some()
+                || self.imports.is_some()
+                || self.parses.is_some()
+            {
+                return Err(
+                    "workspace_check requires files at a workspace root and supplies member checks"
+                        .into(),
+                );
+            }
+            if self.stdout.is_some()
+                || self.stderr.is_some()
+                || self.exit.is_some()
+                || self.run_error.is_some()
+                || self.tests.is_some()
+            {
+                return Err("workspace_check does not run a program".into());
+            }
         }
         if let Some(tote) = &self.tote {
             if !tote.language.is_other("path") {
@@ -862,10 +1095,10 @@ impl Case {
         if self.source.is_none()
             && self.files.is_none()
             && self.tote.is_none()
-            && (self.rust_shows.is_some()
-                || self.rust_error.is_some()
-                || self.build.is_some()
-                || self.rust.is_some())
+            && (self.build.is_some()
+                || self.rust.is_some()
+                || self.javascript.is_some()
+                || self.vm.is_some())
         {
             return Err("Rust backend assertions require source, files, or tote".into());
         }
@@ -902,6 +1135,30 @@ impl Case {
         }
         if self.files.as_ref().is_some_and(BTreeMap::is_empty) {
             return Err("files cannot be empty".into());
+        }
+        if self
+            .files
+            .as_ref()
+            .is_some_and(|files| files.values().any(|t| t.language.is_other("real") && t.as_str().is_empty()))
+        {
+            return Err("files real`…` needs a path".into());
+        }
+        if self
+            .source
+            .as_ref()
+            .is_some_and(|s| s.language.is_other("real"))
+            || self
+                .tote
+                .as_ref()
+                .is_some_and(|t| t.language.is_other("real"))
+            || self
+                .imports
+                .as_ref()
+                .is_some_and(|imports| imports.iter().any(|p| p.language.is_other("real")))
+        {
+            return Err(
+                "real`…` is only for files values; use path`…` for source, tote, and imports".into(),
+            );
         }
         if self.checks.as_ref().is_some_and(BTreeMap::is_empty) {
             return Err("checks needs at least one declaration assertion".into());
@@ -958,21 +1215,16 @@ impl Case {
                 return Err("build expects ok or error: <message>".into());
             }
         }
-        if let Some(rust) = &self.rust {
-            if !["skip: budget", "skip: decimal", "skip: eval-only"].contains(&rust.as_str()) {
-                return Err("rust expects skip: budget, skip: decimal or skip: eval-only".into());
-            }
-        }
-        let runtime = self.shows.is_some()
-            || self.tests.is_some()
+        let runtime = self.tests.is_some()
             || self.stdout.is_some()
             || self.stderr.is_some()
-            || self.exit.is_some()
-            || self.drops.is_some()
-            || self.probe_drops.is_some();
+            || self.exit.is_some();
+        // A failed run still drops the probes it made, so `probe_drops` may
+        // be written next to `run_error`.
         if runtime && self.run_error.is_some() {
             return Err("run_error cannot be combined with successful runtime assertions".into());
         }
+        let runtime = runtime || self.probe_drops.is_some();
         if self.budget.is_some() && !runtime && self.run_error.is_none() {
             return Err("budget requires a runtime assertion".into());
         }
@@ -981,29 +1233,33 @@ impl Case {
         {
             return Err("permissions and links require files and a runtime assertion".into());
         }
-        if self.args.is_some()
-            && !runtime
-            && self.run_error.is_none()
-            && self.rust_shows.is_none()
-            && self.javascript_shows.is_none()
-        {
+        if self.args.is_some() && !runtime && self.run_error.is_none() {
             return Err("args requires a runtime assertion".into());
         }
         if let Some(expected) = &self.extracted_nib {
-            if !self.extract.unwrap_or(false) {
-                return Err("extracted_nib requires extract = true".into());
+            if !self.extracts() {
+                return Err("extracted_nib requires extraction".into());
             }
             if expected.is_empty() || expected.keys().any(|name| name.trim().is_empty()) {
                 return Err("extracted_nib requires nonempty declaration names".into());
             }
         }
+        if (self.extracted_text.is_some() || self.extracted_lacks.is_some())
+            && !self.extracts()
+        {
+            return Err("extracted_text and extracted_lacks require extraction".into());
+        }
         let load_assertions = self.macro_error.is_some()
             || self.load_error.is_some()
             || self.expands.is_some()
             || self.proofs.is_some()
-            || self.hovers.is_some()
+            || self.hovers.is_some() || self.import_fixes.is_some() || self.row_hole_fixes.is_some()
             || self.extracted_nib.is_some()
-            || self.trace.is_some();
+            || self.extracted_text.is_some()
+            || self.extracted_lacks.is_some()
+            || self.trace.is_some()
+            || self.macro_warnings.is_some()
+            || self.check_report.is_some();
         if load_assertions
             && self.files.is_none()
             && self.tote.is_none()
@@ -1028,11 +1284,14 @@ impl Case {
                 || self.macro_error.is_some()
                 || self.expands.is_some()
                 || self.proofs.is_some()
-                || self.hovers.is_some()
+                || self.hovers.is_some() || self.import_fixes.is_some() || self.row_hole_fixes.is_some()
                 || self.extracted_nib.is_some()
+                || self.extracted_text.is_some()
+                || self.extracted_lacks.is_some()
+            || self.extracted_text.is_some()
+            || self.extracted_lacks.is_some()
                 || self.trace.is_some()
-                || self.rust_shows.is_some()
-                || self.rust_error.is_some()
+                || self.macro_warnings.is_some()
                 || self.build.is_some())
         {
             return Err(
@@ -1040,39 +1299,7 @@ impl Case {
                     .into(),
             );
         }
-        if !(tags
-            || runtime
-            || load_assertions
-            || self.run_error.is_some()
-            || self.parses.is_some()
-            || self.types.is_some()
-            || self.rows.is_some()
-            || self.lin.is_some()
-            || (self.checks.is_some() || self.evals.is_some())
-            || (self.checks_all.is_some() || self.declarations.is_some())
-            || self.diagnostics.is_some()
-            || self.holes.is_some()
-            || self.rust_shows.is_some()
-            || self.rust_error.is_some()
-            || self.build.is_some())
-            && self.compile_errors.is_none()
-            && self.backend_known_failure.is_none()
-            && self.javascript_shows.is_none()
-            && self.javascript_error.is_none()
-            && self.differential.is_none()
-            && self.inferred_types.is_none()
-            && self.inferred_kinds.is_none()
-            && self.format.is_none()
-            && self.format_error.is_none()
-            && self.format_literals.is_none()
-            && self.editor_tokens.is_none()
-            && self.lint.is_none()
-            && self.tote_warnings.is_none()
-            && self.tote_errors.is_none()
-            && self.inferred_rows.is_none()
-            && self.rows_javascript.is_none()
-            && self.fixes.is_none()
-        {
+        if !self.asserts_besides_nir() && self.nir.is_none() {
             return Err("a case needs at least one supported assertion".into());
         }
         if self.fixes.is_some() {
@@ -1086,7 +1313,69 @@ impl Case {
         Ok(())
     }
 
+    /// Whether the case checks anything other than `nir`.
+    fn asserts_besides_nir(&self) -> bool {
+        let tags = self.a.is_some() || self.b.is_some();
+        let runtime = self.tests.is_some()
+            || self.stdout.is_some()
+            || self.stderr.is_some()
+            || self.exit.is_some()
+            || self.probe_drops.is_some();
+        let load_assertions = self.macro_error.is_some()
+            || self.load_error.is_some()
+            || self.expands.is_some()
+            || self.proofs.is_some()
+            || self.hovers.is_some() || self.import_fixes.is_some() || self.row_hole_fixes.is_some()
+            || self.extracted_nib.is_some()
+            || self.extracted_text.is_some()
+            || self.extracted_lacks.is_some()
+            || self.trace.is_some()
+            || self.macro_warnings.is_some()
+            || self.check_report.is_some();
+        !(!(tags
+            || runtime
+            || load_assertions
+            || self.run_error.is_some()
+            || self.parses.is_some()
+            || self.types.is_some()
+            || self.rows.is_some()
+            || self.lin.is_some()
+            || (self.checks.is_some() || self.evals.is_some())
+            || (self.checks_all.is_some() || self.declarations.is_some())
+            || self.diagnostics.is_some()
+            || self.holes.is_some()
+            || self.build.is_some())
+            && self.compile_errors.is_none()
+            && self.opt_outs().is_empty()
+            && self.differential.is_none()
+            && self.differential_program.is_none()
+            && self.inferred_types.is_none()
+            && self.inferred_kinds.is_none()
+            && self.format.is_none()
+            && self.format_error.is_none()
+            && self.format_literals.is_none()
+            && self.editor_tokens.is_none()
+            && self.lint.is_none()
+            && self.tote_warnings.is_none()
+            && self.tote_errors.is_none()
+            && self.check_errors.is_none()
+            && self.externs.is_none()
+            && self.inferred_rows.is_none()
+            && self.host_origins.is_none()
+            && self.rows_javascript.is_none()
+            && self.fixes.is_none())
+    }
+
+    /// With `lang`, the messages the case reads are in that language.
     pub fn run(&self, case_path: &Path) -> Result<Stage, String> {
+        match &self.lang {
+            Some(lang) => tauto_messages::in_language(lang, || self.run_here(case_path))
+                .ok_or_else(|| format!("lang: no messages in {lang:?}"))?,
+            None => self.run_here(case_path),
+        }
+    }
+
+    fn run_here(&self, case_path: &Path) -> Result<Stage, String> {
         if let (Some(a), Some(b), Some(equal)) = (&self.a, &self.b, self.equal) {
             if (tauto::tags::TagSet::new(a.clone()) == tauto::tags::TagSet::new(b.clone())) != equal
             {
@@ -1094,28 +1383,134 @@ impl Case {
             }
             return Ok(Stage::Done);
         }
+        if let Some(nir) = &self.nir {
+            nir.run(self, case_path)?;
+            if !self.asserts_besides_nir() {
+                return Ok(Stage::Done);
+            }
+        }
         let mut scratch = None;
+        let mut warm = None;
         let (source, entry) = if let Some(tote) = &self.tote {
             (None, Some(resolve_path(tote, case_path)))
         } else if let Some(files) = &self.files {
             let dir = Scratch::new()?;
             prepare_files(files, case_path, &dir.0)?;
             prepare_links(self.links.as_ref(), &dir.0)?;
-            let entry = dir.0.join(super::relative_case_path(
-                self.files_tote
-                    .as_deref()
-                    .or(self.entry.as_deref())
-                    .unwrap_or("main.nib"),
-            )?);
+            if self.workspace_check == Some(true) {
+                let root = dir.0.clone();
+                scratch = Some(dir);
+                let result = (|| -> Result<(), String> {
+                    let members = tauto::workspace::member_dirs(&root).map_err(|e| e.to_string())?;
+                    let report =
+                        tauto::report::check_totes_report(&members).map_err(|e| e.to_string())?;
+                    if let Some(wants) = &self.tote_errors {
+                        let got: Vec<String> = report
+                            .report
+                            .entries
+                            .iter()
+                            .filter_map(|e| match &e.entry.verdict {
+                                Verdict::Failed(d) => Some(d.message.to_string()),
+                                _ => None,
+                            })
+                            .collect();
+                        compare("tote_errors count", &got.len(), &wants.len())?;
+                        for (got, want) in got.iter().zip(wants) {
+                            if !got.contains(want.as_str()) {
+                                return Err(format!("tote_errors: expected {want:?} in {got:?}"));
+                            }
+                        }
+                    } else if report.report.entries.iter().any(|e| {
+                        matches!(e.entry.verdict, Verdict::Failed(_))
+                    }) {
+                        return Err(format!(
+                            "workspace_check failed: {}",
+                            report
+                                .report
+                                .entries
+                                .iter()
+                                .filter_map(|e| match &e.entry.verdict {
+                                    Verdict::Failed(d) => Some(d.message.to_string()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        ));
+                    }
+                    if let Some(wants) = &self.tote_warnings {
+                        let got: Vec<String> = report
+                            .report
+                            .warnings
+                            .iter()
+                            .map(|w| w.warning.message.to_string())
+                            .collect();
+                        compare("tote_warnings count", &got.len(), &wants.len())?;
+                        for (got, want) in got.iter().zip(wants) {
+                            if !got.contains(want.as_str()) {
+                                return Err(format!("tote_warnings: expected {want:?} in {got:?}"));
+                            }
+                        }
+                    }
+                    Ok(())
+                })();
+                if let Some(want) = &self.load_error {
+                    return match result {
+                        Err(e) if e.contains(want) => Ok(Stage::Done),
+                        other => Err(format!(
+                            "load_error: expected {want:?}, got {}",
+                            match other {
+                                Ok(()) => "success".into(),
+                                Err(e) => e,
+                            }
+                        )),
+                    };
+                }
+                result?;
+                return Ok(Stage::Done);
+            }
+            let member = self.check_tote.as_ref().or(self.run_tote.as_ref());
+            let entry = if let Some(name) = member {
+                match tauto::workspace::tote_flag_dir(&dir.0, name) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        let err = e.to_string();
+                        if let Some(want) = &self.load_error {
+                            if err.contains(want) {
+                                return Ok(Stage::Done);
+                            }
+                            return Err(format!("load_error: expected {want:?}, got {err}"));
+                        }
+                        return Err(err);
+                    }
+                }
+            } else {
+                dir.0.join(super::relative_case_path(
+                    self.files_tote
+                        .as_deref()
+                        .or(self.entry.as_deref())
+                        .unwrap_or("main.nib"),
+                )?)
+            };
             scratch = Some(dir);
             (None, Some(entry))
         } else {
             let source = self.source.as_ref().unwrap();
             if source.language.is_other("path") {
                 (None, Some(resolve_path(source, case_path)))
-            } else if self.imports.is_some() || self.extract.unwrap_or(false) {
+            } else if self.imports.is_some()
+                || self.extracts()
+                || self.checked_before.is_some()
+            {
                 let dir = Scratch::new()?;
                 let path = dir.0.join("main.taut");
+                // `checked_before`: each program is checked in this file first, by the
+                // same compiler, which keeps what it read as a playground or an
+                // editor does; the case's own program is checked after them.
+                for before in self.checked_before.iter().flatten() {
+                    warm.get_or_insert_with(Warm::on);
+                    std::fs::write(&path, before.as_str()).map_err(|e| e.to_string())?;
+                    tauto::check::check_file(&path).map_err(|e| format!("checked_before: {e}"))?;
+                }
                 std::fs::write(&path, source.as_str()).map_err(|e| e.to_string())?;
                 scratch = Some(dir);
                 (None, Some(path))
@@ -1149,10 +1544,11 @@ impl Case {
             own.push('\n');
             own.push_str(&text);
             std::fs::write(&logical, own).map_err(|e| e.to_string())?;
-            text.push_str(&format!("import {:?}\n", logical.to_string_lossy()));
-            std::fs::write(&wrapper, text).map_err(|e| e.to_string())?;
+            // The statements a top level runs are the entry's alone: the
+            // source is the entry itself, not a file a wrapper imports.
+            let _ = wrapper;
             import_scratch = Some(dir);
-            Some(wrapper)
+            Some(logical)
         } else {
             entry.clone()
         };
@@ -1233,7 +1629,11 @@ impl Case {
             compare("editor_tokens", &got, want)?;
         }
         if let Some(wants) = &self.lint {
-            let got = tauto::lint::lint(text.as_deref().ok_or("lint requires a readable source")?)?;
+            let source = text.as_deref().ok_or("lint requires a readable source")?;
+            let got = match entry.as_deref() {
+                Some(path) => tauto::lint::lint_path(path, source)?,
+                None => tauto::lint::lint(source)?,
+            };
             compare("lint count", &got.len(), &wants.len())?;
             for (got, want) in got.iter().zip(wants) {
                 if !got.message.to_string().starts_with(want) {
@@ -1283,6 +1683,43 @@ impl Case {
                 }
             }
         }
+        if let Some(wants) = &self.check_errors {
+            let path = entry
+                .as_ref()
+                .filter(|_| self.files.is_some() && !self.is_tote())
+                .ok_or("check_errors requires files without files_tote")?;
+            let got: Vec<String> = tauto::report::check_report(path, None)?
+                .entries
+                .iter()
+                .filter_map(|e| match &e.entry.verdict {
+                    Verdict::Failed(d) => Some(d.message.to_string()),
+                    _ => None,
+                })
+                .collect();
+            compare("check_errors count", &got.len(), &wants.len())?;
+            for (got, want) in got.iter().zip(wants) {
+                if !got.contains(want.as_str()) {
+                    return Err(format!("check_errors: expected {want:?} in {got:?}"));
+                }
+            }
+        }
+        if let Some(wants) = &self.externs {
+            let path = entry
+                .as_ref()
+                .filter(|_| self.files.is_some() && !self.is_tote())
+                .ok_or("externs requires files without files_tote")?;
+            let dir = path
+                .parent()
+                .and_then(|d| d.canonicalize().ok())
+                .map(|d| format!("{}/", d.display()))
+                .unwrap_or_default();
+            let got: Vec<String> = tauto::report::check_report(path, None)?
+                .externs()
+                .into_iter()
+                .map(|e| e.replace(&dir, ""))
+                .collect();
+            compare("externs", &got, wants)?;
+        }
         if let Some(expected) = self.parses {
             let text = text
                 .as_deref()
@@ -1303,6 +1740,9 @@ impl Case {
                     || self.lint.is_some()
                     || self.tote_warnings.is_some()
                     || self.tote_errors.is_some()
+                    || self.nir.is_some()
+                    || self.check_errors.is_some()
+                    || self.externs.is_some()
                 {
                     Stage::Done
                 } else {
@@ -1350,6 +1790,16 @@ impl Case {
                         return Err(format!("hovers: expected {want:?} in {:?}", hover.contents));
                     }
                 }
+                for lack in view.lacks.iter().flatten() {
+                    if hover.contents.contains(lack.as_str()) {
+                        return Err(format!("hovers: {lack:?} is in {:?}", hover.contents));
+                    }
+                }
+                if view.span == Some(true) {
+                    let end = offset + at.len();
+                    let got = (hover.span.start as usize, hover.span.end as usize);
+                    compare("hovers span", &got, &(offset, end))?;
+                }
                 if let Some(name) = &view.proof {
                     let target = path.parent().unwrap().join(
                         view.proof_file
@@ -1382,6 +1832,72 @@ impl Case {
                         &Some(hover),
                     )?;
                 }
+            }
+        }
+        if let Some(views) = &self.import_fixes {
+            let path = entry.as_ref().ok_or("import_fixes requires files")?;
+            let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            let choices = tauto_analyzer::editor::import_choices(path, &|_| None)?;
+            for view in views {
+                let at = view.at.as_deref().ok_or("import_fixes requires at")?;
+                let offset = text
+                    .match_indices(at)
+                    .nth(view.occurrence.unwrap_or(0))
+                    .ok_or("import_fixes at not found")?
+                    .0;
+                let edits = choices
+                    .iter()
+                    .find(|c| c.start == offset && c.end == offset + at.len())
+                    .map(|c| c.edits.as_slice())
+                    .unwrap_or_default();
+                let got: Vec<String> = edits
+                    .iter()
+                    .map(|e| {
+                        let mut edited = text.clone();
+                        edited.replace_range(e.start..e.end, &e.text);
+                        edited
+                    })
+                    .collect();
+                let want: Vec<String> = view
+                    .fixed_sources
+                    .iter()
+                    .flatten()
+                    .map(|t| t.as_str().to_string())
+                    .collect();
+                compare("import_fixes", &got, &want)?;
+            }
+        }
+        if let Some(views) = &self.row_hole_fixes {
+            let path = entry.as_ref().ok_or("row_hole_fixes requires files")?;
+            let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            let choices = tauto_analyzer::editor::row_hole_fixes(path, &|_| None);
+            for view in views {
+                let at = view.at.as_deref().ok_or("row_hole_fixes requires at")?;
+                let offset = text
+                    .match_indices(at)
+                    .nth(view.occurrence.unwrap_or(0))
+                    .ok_or("row_hole_fixes at not found")?
+                    .0;
+                let edits = choices
+                    .iter()
+                    .find(|c| c.start == offset && c.end == offset + at.len())
+                    .map(|c| c.edits.as_slice())
+                    .unwrap_or_default();
+                let got: Vec<String> = edits
+                    .iter()
+                    .map(|e| {
+                        let mut edited = text.clone();
+                        edited.replace_range(e.start..e.end, &e.text);
+                        edited
+                    })
+                    .collect();
+                let want: Vec<String> = view
+                    .fixed_sources
+                    .iter()
+                    .flatten()
+                    .map(|t| t.as_str().to_string())
+                    .collect();
+                compare("row_hole_fixes", &got, &want)?;
             }
         }
         if let Some(views) = &self.proofs {
@@ -1436,8 +1952,9 @@ impl Case {
             } else {
                 load_case_entry(
                     entry,
-                    self.extract.unwrap_or(false),
+                    self.extracts(),
                     self.extract_source.unwrap_or(false),
+                    self.rows.is_some() || self.inferred_rows.is_some(),
                 )
             };
             // A manifest's `check` section that does not hold is an error of loading.
@@ -1486,6 +2003,10 @@ impl Case {
                     return Err(format!("macro_error: expected {want:?}, got {errors:?}"));
                 }
             } else if !errors.is_empty()
+                // A program whose classes did not expand carries the type
+                // errors the class-aware check found: they are the check's,
+                // read by `types`, `run_error` and the backends' errors.
+                && tauto::types::unexpanded_errors(&l.program).is_none()
                 && self.diagnostics.is_none()
                 && self.checks.is_none()
                 && self.checks_all.is_none()
@@ -1495,9 +2016,22 @@ impl Case {
             if let Some(expected) = &self.extracted_nib {
                 compare_extracted_nib(&l.program.stmts, expected)?;
             }
+            if self.extracted_text.is_some() || self.extracted_lacks.is_some() {
+                let text = tauto::extract::extracted_source(&l)?;
+                for want in self.extracted_text.iter().flatten() {
+                    if !text.contains(want.as_str()) {
+                        return Err(format!("extracted_text: {want:?} is not in the extraction:\n{text}"));
+                    }
+                }
+                for lacks in self.extracted_lacks.iter().flatten() {
+                    if text.contains(lacks.as_str()) {
+                        return Err(format!("extracted_lacks: {lacks:?} is in the extraction:\n{text}"));
+                    }
+                }
+            }
             if let Some(want) = &self.expands {
                 let printed = tauto::surface::print::print_stmts(
-                    l.per_file
+                    l.kernel_files
                         .get(
                             l.files
                                 .iter()
@@ -1511,6 +2045,8 @@ impl Case {
                         )
                         .ok_or("no entry statements")?,
                 );
+                // What the macros made, before the classes are expanded: the `Debug` argument
+                // of a `show` and the `Debug` of a struct are not the macros' to write.
                 // The printer's output is the canonical form: it is compared as it is, not formatted.
                 let got = printed;
                 compare("expands", &got.trim(), &want.trim())?;
@@ -1525,6 +2061,30 @@ impl Case {
                     want,
                 )?;
             }
+            if let Some(want) = &self.macro_warnings {
+                compare(
+                    "macro_warnings",
+                    &l.warnings
+                        .iter()
+                        .map(|(message, _)| message.to_string())
+                        .collect::<Vec<_>>(),
+                    want,
+                )?;
+            }
+            if let Some(want) = &self.check_report {
+                let entry = load_entry
+                    .as_ref()
+                    .ok_or("check_report requires files or source = path`...`")?;
+                let report = tauto::report::check_report(entry, None).map_err(|m| m.to_string())?;
+                let mut text = report.text();
+                for p in report.problems() {
+                    text.push_str(&p.message);
+                    text.push('\n');
+                }
+                if !text.contains(want) || text.contains("«byte") {
+                    return Err(format!("check_report: expected {want:?} in {text:?}"));
+                }
+            }
         }
         let diagnostic_stage = |stage: &str| {
             self.diagnostics.as_ref().is_some_and(|ds| {
@@ -1536,10 +2096,22 @@ impl Case {
             || self.inferred_types.is_some()
             || self.inferred_kinds.is_some()
             || diagnostic_stage("types"))
-        .then(|| tauto::types::check_program(&program));
+        .then(|| match &loaded {
+            // The statements an imported file's top level would run are
+            // checked too, though they never run.
+            Some(l) => tauto::types::check_program(&l.program_with_imports()),
+            None => tauto::types::check_program(&program),
+        });
         let rows =
-            (self.rows.is_some() || self.inferred_rows.is_some() || diagnostic_stage("rows"))
-                .then(|| tauto::rows::check_program_rows(&program));
+            (self.rows.is_some()
+                || self.inferred_rows.is_some()
+                || self.host_origins.is_some()
+                || diagnostic_stage("rows"))
+                .then(|| match &loaded {
+                    // As `tauto check` reads it: with what checked extraction showed total.
+                    Some(l) => l.check_rows(tauto::rows::Target::Rust),
+                    None => tauto::rows::check_program_rows(&program),
+                });
         let rows_javascript = self
             .rows_javascript
             .as_ref()
@@ -1621,6 +2193,17 @@ impl Case {
                     want,
                 )?;
             }
+        }
+        if let Some(wants) = &self.host_origins {
+            let Some(l) = &loaded else {
+                return Err("host_origins needs a loaded program".into());
+            };
+            let got: BTreeMap<String, Vec<String>> = l
+                .host_origins(rows.as_ref().unwrap())
+                .into_iter()
+                .map(|(e, o)| (e, o.into_iter().collect()))
+                .collect();
+            compare("host_origins", &got, wants)?;
         }
         let lin = if self.lin.is_some()
             || self
@@ -1740,6 +2323,9 @@ impl Case {
             let file = entry.clone().unwrap_or_else(|| PathBuf::from("main.taut"));
             macro_rules! collect {
                 ($stage:literal, $errors:expr) => {
+                    collect!($stage, $errors, |_| None)
+                };
+                ($stage:literal, $errors:expr, $fix:expr) => {
                     if wants_stage($stage) {
                         for e in $errors {
                             let (file, span) = localize(&loaded, &file, e.span);
@@ -1749,7 +2335,7 @@ impl Case {
                                 file,
                                 message: e.message.to_string(),
                                 span: Some(span),
-                                fix: None,
+                                fix: $fix(e),
                             });
                         }
                     }
@@ -1759,9 +2345,28 @@ impl Case {
                 "types",
                 types.as_ref().map(|r| r.errors.as_slice()).unwrap_or(&[])
             );
+            // The edit that writes a missing effect in a row is placed in its file, as `check`
+            // places it.
             collect!(
                 "rows",
-                rows.as_ref().map(|r| r.errors.as_slice()).unwrap_or(&[])
+                rows.as_ref().map(|r| r.errors.as_slice()).unwrap_or(&[]),
+                |e: &tauto::rows::RowDiagnostic| {
+                    let m = e.missing.as_ref()?;
+                    match &loaded {
+                        Some(loaded) => {
+                            tauto::report::missing_effect_fix(loaded, m).map(|(_, f)| f)
+                        }
+                        None => {
+                            let module = file.file_stem().and_then(|s| s.to_str());
+                            tauto::report::missing_effect_edit(
+                                source.as_deref()?,
+                                m.after,
+                                module,
+                                m,
+                            )
+                        }
+                    }
+                }
             );
             collect!("lin", &lin);
             compare("diagnostic count", &actual.len(), &wants.len())?;
@@ -1801,16 +2406,14 @@ impl Case {
                 compare("hole context", &context, want.context.as_ref().unwrap())?;
             }
         }
-        let runtime = self.shows.is_some()
-            || self.tests.is_some()
+        let runtime = self.tests.is_some()
             || self.stdout.is_some()
             || self.stderr.is_some()
             || self.exit.is_some()
-            || self.drops.is_some()
             || self.probe_drops.is_some()
             || self.run_error.is_some();
         if runtime {
-            let budget = self.budget.unwrap_or(tauto::eval::DEFAULT_BUDGET);
+            let budget = self.budget.unwrap_or(tauto::exec::DEFAULT_BUDGET);
             // `{dir}` in the arguments and the permissions is the directory
             // that holds the case's files.
             let dir = scratch
@@ -1827,33 +2430,42 @@ impl Case {
                     .collect()
             };
             let args = placed(&self.args);
-            let permissions = tauto::eval::Permissions::from_args(&placed(&self.permissions))?.0;
-            let run = |checked| {
-                let dirs = loaded
-                    .as_ref()
-                    .map(|loaded| {
-                        loaded
-                            .files
-                            .iter()
-                            .filter_map(|f| f.path.parent().map(Path::to_path_buf))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                tauto::syntax::with_search_dirs(dirs, || {
-                    tauto::eval::run_program_with(
-                        &program,
-                        budget,
-                        tauto::eval::RunOptions {
-                            check_ownership: checked,
-                            probes: true,
-                            args: args.clone(),
-                            permissions: permissions.clone(),
-                            ..Default::default()
-                        },
-                    )
-                })
+            let permissions = tauto::exec::Permissions::from_args(&placed(&self.permissions))?.0;
+            // A case given as text runs as the one file it is, through the
+            // loader `tauto run` uses: what the file does not import it does
+            // not see.
+            let inline = match (&loaded, &source) {
+                (None, Some(text)) => {
+                    let entry = Path::new("/main.taut");
+                    Some(tauto::program::load_with_source(entry, &|path: &Path| {
+                        (path == entry).then(|| Ok(text.clone()))
+                    })?)
+                }
+                _ => None,
             };
-            let result = run(false);
+            let run_loaded = loaded
+                .as_ref()
+                .or(inline.as_ref())
+                .ok_or("no program to run")?;
+            let run = || {
+                let options = tauto::exec::RunOptions {
+                    args: args.clone(),
+                    permissions: permissions.clone(),
+                };
+                // A loaded program runs as `tauto run` runs it, with the
+                // extraction evidence its loader kept: a function the kernel
+                // accepted as total does not perform `div`.
+                // A case that names its tests runs for them: the bodies of
+                // the `test` entries are called, not the `main`.
+                if self.tests.is_some() {
+                    tauto_rt::entry::begin(tauto_rt::entry::Mode::Test(
+                        tauto_rt::entry::Select::All,
+                    ));
+                }
+                tauto::exec::run_loaded_with(run_loaded, budget, options)
+            };
+            let result = run();
+            tauto_rt::entry::finish();
             if let Some(want) = &self.run_error {
                 match result {
                     Err(e) if e.to_string().contains(want) => {}
@@ -1866,16 +2478,6 @@ impl Case {
                     return Err(format!("program exited with {exit}"));
                 }
                 compare("exit", &exit, &self.exit.unwrap_or(0))?;
-                if let Some(want) = &self.shows {
-                    compare(
-                        "shows",
-                        &got.outputs
-                            .iter()
-                            .map(|(n, v)| format!("{n} = {v}"))
-                            .collect::<Vec<_>>(),
-                        want,
-                    )?;
-                }
                 if let Some(want) = &self.tests {
                     let failed: Vec<String> = got
                         .tests
@@ -1894,47 +2496,30 @@ impl Case {
                 if let Some(want) = &self.stderr {
                     compare("stderr", &got.stderr, want)?;
                 }
-                let checked = run(true).map_err(|e| format!("with --check-ownership: {e}"))?;
-                compare("with --check-ownership", &checked.outputs, &got.outputs)?;
-                compare(
-                    "stdout with --check-ownership",
-                    &checked.stdout,
-                    &got.stdout,
-                )?;
-                compare(
-                    "stderr with --check-ownership",
-                    &checked.stderr,
-                    &got.stderr,
-                )?;
-                compare("exit with --check-ownership", &checked.exit, &got.exit)?;
-                if let Some(want) = &self.drops {
-                    compare("drops", &checked.drops, want)?;
-                }
                 if let Some(want) = &self.probe_drops {
-                    let got: Vec<String> = checked
-                        .drops
-                        .iter()
-                        .filter_map(|d| d.strip_prefix("probe:").map(str::to_string))
-                        .collect();
-                    compare("probe_drops", &got, want)?;
+                    compare("probe_drops", &got.probe_drops, want)?;
                 }
                 if let Some(source) = &source {
                     let dir = Scratch::new()?;
                     let path = dir.0.join("main.nib");
                     std::fs::write(&path, source).map_err(|e| e.to_string())?;
                     let loaded = tauto::program::load(&path)?;
-                    let file_got = tauto::eval::run_program_with(
-                        &loaded.program,
+                    if self.tests.is_some() {
+                        tauto_rt::entry::begin(tauto_rt::entry::Mode::Test(
+                            tauto_rt::entry::Select::All,
+                        ));
+                    }
+                    let file_got = tauto::exec::run_loaded_with(
+                        &loaded,
                         budget,
-                        tauto::eval::RunOptions {
+                        tauto::exec::RunOptions {
                             args: args.clone(),
                             permissions: permissions.clone(),
-                            probes: true,
-                            ..Default::default()
                         },
                     )
-                    .map_err(|e| e.to_string())?;
-                    compare("as a file", &file_got, &got)?;
+                    .map_err(|e| e.to_string());
+                    tauto_rt::entry::finish();
+                    compare("as a file", &file_got?, &got)?;
                 }
             }
         }
@@ -1971,8 +2556,18 @@ impl Case {
                 } else {
                     if found.len() != 1 {
                         return Err(format!(
-                            "checks.{name}: expected one declaration, found {}; qualify with file::name or name#occurrence when ambiguous",
-                            found.len()
+                            "checks.{name}: expected one declaration, found {}; qualify with file::name or name#occurrence when ambiguous (failed: {})",
+                            found.len(),
+                            entries
+                                .iter()
+                                .filter(|e| matches!(e.entry.verdict, Verdict::Failed(_)))
+                                .map(|e| format!(
+                                    "{}::{}",
+                                    e.file.display(),
+                                    tauto::surface::qualify::written(&e.entry.name)
+                                ))
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         ));
                     }
                     found[0]
@@ -2133,33 +2728,49 @@ pub(super) fn compilation_with_imports(
 }
 
 struct Scratch(PathBuf);
+
+/// A compiler that keeps what it read for the next program, while a case with
+/// `checked_before` runs; the worker's next case starts without it.
+struct Warm;
+impl Warm {
+    fn on() -> Self {
+        tauto::program::keep_expansions(true);
+        Warm
+    }
+}
+impl Drop for Warm {
+    fn drop(&mut self) {
+        tauto::program::keep_expansions(false);
+    }
+}
 fn load_case_entry(
     entry: &Path,
     extract: bool,
     source: bool,
+    for_check: bool,
 ) -> Result<tauto::program::Loaded, String> {
     if !extract {
+        // `for_check`: the program is read as `tauto check` reads it for its effects, with the
+        // standard library's functions extracted into it; read as written they are not found
+        // and the effects stop at a type error. A program that does not extract (it uses an
+        // axiom) is read as written, as the check does.
+        if for_check && entry.extension().is_some_and(|e| e == "taut" || e == "tauto") {
+            if let Ok(loaded) = tauto::program::load_extracted_for_check(entry) {
+                return Ok(loaded);
+            }
+        }
         return tauto::program::load(entry);
     }
-    let dir = Scratch::new()?;
-    let entry = entry.canonicalize().map_err(|e| e.to_string())?;
-    // The tote's only source imports the entry, which stays where it is.
-    std::fs::create_dir_all(dir.0.join("src")).map_err(|e| e.to_string())?;
-    std::fs::write(
-        dir.0.join("src/main.taut"),
-        format!("import {:?}\n", entry.to_string_lossy()),
-    )
-    .map_err(|e| e.to_string())?;
-    std::fs::write(
-        dir.0.join("Tauto.eure"),
-        "package { name = \"case\"\nversion = \"0.1.0\" }",
-    )
-    .map_err(|e| e.to_string())?;
+    // The entry is the program `tauto check` and `tauto run` read: its own
+    // functions are checked and compiled whether or not anything calls them.
+    // (Reading it through a scratch tote that imports it made it an imported
+    // file, whose unused functions extraction leaves out, so a function
+    // with a use error nobody called passed every check.)
     if source {
-        tauto::program::load_texts(tauto::program::tote_texts(&dir.0)?)
-    } else {
-        tauto::program::load_tote_for_build(&dir.0)
+        let entry = entry.canonicalize().map_err(|e| e.to_string())?;
+        return tauto::program::load_texts(tauto::program::entry_texts(&entry)?);
     }
+    tauto::program::load_extracted(entry)
 }
 impl Scratch {
     fn new() -> Result<Self, String> {
@@ -2192,7 +2803,7 @@ fn prepare_files(
     dir: &Path,
 ) -> Result<(), String> {
     let root = super::ROOT.with(|r| r.borrow().clone());
-    let tables = root.join("macro/.tauto-syntax");
+    let tables = root.join(".tauto-syntax");
     #[cfg(unix)]
     if tables.exists() {
         std::os::unix::fs::symlink(
@@ -2203,6 +2814,21 @@ fn prepare_files(
     }
     for (path, text) in files {
         let target = dir.join(super::relative_case_path(path)?);
+        std::fs::create_dir_all(target.parent().ok_or("file has no parent")?)
+            .map_err(|e| e.to_string())?;
+        // `real`…`: the repository file itself, linked in place so a check that
+        // reads by path (standard-library ownership, `std` tote membership)
+        // sees the real path, not a copy in the scratch tree.
+        if text.language.is_other("real") {
+            let real = resolve_path(text, case_path)
+                .canonicalize()
+                .map_err(|e| format!("{}: {e}", text.as_str()))?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&real, &target).map_err(|e| e.to_string())?;
+            #[cfg(not(unix))]
+            return Err(format!("files real`…` needs a unix host: {}", target.display()));
+            continue;
+        }
         let mut text = source_text(text, case_path)?;
         while let Some(at) = text.find("{{par:") {
             let end = text[at..].find("}}").ok_or("unclosed {{par:")? + at;
@@ -2224,8 +2850,6 @@ fn prepare_files(
             rest = &rest[end + 2..];
         }
         bytes.extend_from_slice(rest.as_bytes());
-        std::fs::create_dir_all(target.parent().ok_or("file has no parent")?)
-            .map_err(|e| e.to_string())?;
         std::fs::write(target, bytes).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -2580,6 +3204,262 @@ fn check_fixes(want: &FixRun, dir: &Path, entry: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Compares two texts apart from the space around them. The message holds
+/// the text as it is, for the case to be written from it.
+fn compare_text(label: &str, got: &str, want: &str) -> Result<(), String> {
+    if got.trim() == want.trim() {
+        return Ok(());
+    }
+    Err(format!(
+        "{label}:\n--- expected\n{}\n--- got\n{}\n---",
+        want.trim(),
+        got.trim()
+    ))
+}
+
+impl NirRun {
+    fn validate(&self) -> Result<(), String> {
+        if let Some(target) = &self.target {
+            if !["rust", "javascript", "llvm"].contains(&target.as_str()) {
+                return Err("nir.target is rust, javascript or llvm".into());
+            }
+            if self.source.is_some() {
+                return Err(
+                    "nir.target says what a program is compiled for; nir.source is not compiled"
+                        .into(),
+                );
+            }
+        }
+        if self.library.is_some() && (self.source.is_some() || self.target.is_some()) {
+            return Err("nir.library compiles a program for rust as a library".into());
+        }
+        for pass in self.passes.iter().flatten() {
+            if tauto_nir::pass::Pass::named(pass).is_none() {
+                let known: Vec<&str> = tauto_nir::pass::Pass::ALL
+                    .iter()
+                    .map(|p| p.name())
+                    .collect();
+                return Err(format!(
+                    "nir.passes: unknown pass {pass:?}; the passes are {}",
+                    known.join(", ")
+                ));
+            }
+        }
+        if self.error.as_ref().is_some_and(|e| e.trim().is_empty()) {
+            return Err("nir.error needs a nonempty message".into());
+        }
+        let output = self.fns.is_some()
+            || self.blocks.is_some()
+            || self.datas.is_some()
+            || self.evidence.is_some()
+            || self.exports.is_some()
+            || self.package.is_some();
+        if self.error.is_some() && output {
+            return Err(
+                "nir.error is not combined with nir.fns, nir.blocks, nir.datas, nir.evidence, nir.exports or nir.package"
+                    .into(),
+            );
+        }
+        if self.error.is_none() && !output {
+            return Err("nir needs fns, datas, evidence, exports, package or error".into());
+        }
+        if self
+            .fns
+            .as_ref()
+            .is_some_and(|fns| fns.is_empty() || fns.keys().any(|k| k.trim().is_empty()))
+        {
+            return Err("nir.fns requires nonempty function names".into());
+        }
+        Ok(())
+    }
+
+    /// The package the case starts from: `nir.source` read as text, or the
+    /// case's program compiled.
+    fn input(&self, case: &Case, case_path: &Path) -> Result<tauto_nir::Package, String> {
+        if let Some(text) = &self.source {
+            let text = text.as_str();
+            let package = tauto_nir::text::parse(text).map_err(|e| {
+                let at = (e.span.start as usize).min(text.len());
+                let line = text[..at].matches('\n').count() + 1;
+                format!("nir.source, line {line}: {}", e.message)
+            })?;
+            // The text is written the one way the printer writes it.
+            let printed =
+                tauto_nir::text::print(&package).map_err(|e| format!("nir.source: {e}"))?;
+            compare_text("nir.source is not as the printer writes it", &printed, text)?;
+            return Ok(package);
+        }
+        let target = match self.target.as_deref() {
+            Some("javascript") => tauto_nir::Target::JavaScript,
+            Some("llvm") => tauto_nir::Target::Llvm,
+            _ => tauto_nir::Target::Rust,
+        };
+        let library = self.library == Some(true);
+        let inline = case
+            .source
+            .as_ref()
+            .filter(|s| !s.language.is_other("path") && case.imports.is_none());
+        let compiled = if let Some(source) = inline {
+            match target {
+                tauto_nir::Target::JavaScript => tauto::nir::compile_javascript(source.as_str()),
+                _ => tauto::nir::compile_with(source.as_str(), library),
+            }
+        } else {
+            let input = case.load_for_compilation(case_path)?;
+            // A tote's `exports` are the roots a host calls, as `tauto build` reads them;
+            // a file entry reads those of the tote that holds it, with `nir.export`
+            // as `--export`.
+            let (exports, export_names, export_order) = match (&input.exports, &input.entry) {
+                (None, Some(entry)) => {
+                    match tauto::program::select_file_exports(&input.loaded, entry, self.export.as_deref().unwrap_or(&[]))? {
+                        Some(s) => (Some(s.names), s.public, s.order),
+                        None => (None, Default::default(), Vec::new()),
+                    }
+                }
+                (exports, _) => (exports.clone(), input.export_names.clone(), input.export_order.clone()),
+            };
+            // `tauto build --backend llvm` writes each export under the name a
+            // host finds it by.
+            tauto_nibcheck::lower::compile_loaded_entries_with_observer(
+                &input.loaded,
+                library || exports.is_some(),
+                target,
+                exports.as_ref(),
+                |_| {},
+            )
+            .map(|mut package| {
+                if target == tauto_nir::Target::Llvm {
+                    tauto_nibcheck::lower::name_exports(&export_names, &export_order, &mut package.exports);
+                }
+                package
+            })
+        };
+        compiled.map_err(|e| format!("nir: the program does not compile: {e}"))
+    }
+
+    fn run(&self, case: &Case, case_path: &Path) -> Result<(), String> {
+        let mut package = match (self.input(case, case_path), &self.error) {
+            (Ok(package), _) => package,
+            (Err(got), Some(want)) if got.contains(want.as_str()) => return Ok(()),
+            (Err(got), _) => return Err(got),
+        };
+        for name in self.passes.iter().flatten() {
+            let pass = tauto_nir::pass::Pass::named(name).expect("validated");
+            match (pass.run(&mut package), &self.error) {
+                (Ok(()), _) => {}
+                (Err(got), Some(want)) if got.contains(want.as_str()) => return Ok(()),
+                (Err(got), Some(want)) => {
+                    return Err(format!("nir.error: expected {want:?}, {name} says {got:?}"));
+                }
+                (Err(got), None) => return Err(format!("nir.passes: {name}: {got}")),
+            }
+        }
+        if let Some(want) = &self.error {
+            return Err(format!(
+                "nir.error: expected {want:?}, and every pass succeeded"
+            ));
+        }
+        let mut errors = Vec::new();
+        for (selector, want) in self.fns.iter().flatten() {
+            let found: Vec<&tauto_nir::FnInst> = package
+                .fns
+                .iter()
+                .filter(|f| {
+                    f.source.as_str() == selector || format!("{}@{}", f.source, f.id) == *selector
+                })
+                .collect();
+            let [f] = found[..] else {
+                let all: Vec<String> = package
+                    .fns
+                    .iter()
+                    .map(|f| format!("{}@{}", f.source, f.id))
+                    .collect();
+                errors.push(format!(
+                    "nir.fns: {selector:?} selects {} functions, expected exactly one of {}",
+                    found.len(),
+                    all.join(", ")
+                ));
+                continue;
+            };
+            let got = tauto_nir::text::print_fn(&package, f)?;
+            if let Err(e) = compare_text(&format!("nir.fns.{selector}"), &got, want) {
+                errors.push(e);
+            }
+        }
+        for (selector, want) in self.blocks.iter().flatten() {
+            let found: Vec<&tauto_nir::FnInst> = package
+                .fns
+                .iter()
+                .filter(|f| {
+                    f.source.as_str() == selector || format!("{}@{}", f.source, f.id) == *selector
+                })
+                .collect();
+            let [f] = found[..] else {
+                errors.push(format!(
+                    "nir.blocks: {selector:?} selects {} functions, expected exactly one",
+                    found.len()
+                ));
+                continue;
+            };
+            // The blocks are made from A-normal form: the case asks for the
+            // `anf` pass (and `ownership` for the drops).
+            let bf = tauto_nir::blocks::lower_body(&f.body, f.tier);
+            let got = tauto_nir::blocks::print(&package, f, &bf)?;
+            if let Err(e) = compare_text(&format!("nir.blocks.{selector}"), &got, want) {
+                errors.push(e);
+                continue;
+            }
+            // The text reads back as the blocks it was written from.
+            let (head, back) = tauto_nir::text::parse_blocks(&package, &got)
+                .map_err(|e| format!("nir.blocks.{selector}: {}", e.message))?;
+            tauto_nir::blocks::same(&bf, &back)
+                .map_err(|e| format!("nir.blocks.{selector}: {e}"))?;
+            let again = tauto_nir::blocks::print(&package, &head, &back)?;
+            if again != got {
+                errors.push(format!("nir.blocks.{selector}: read back, it prints differently"));
+            }
+        }
+        for (name, want) in self.datas.iter().flatten() {
+            let Some(d) = package.datas.iter().find(|d| d.name.as_str() == name) else {
+                let all: Vec<&str> = package.datas.iter().map(|d| d.name.as_str()).collect();
+                errors.push(format!(
+                    "nir.datas: no data type {name:?}; the data types are {}",
+                    all.join(", ")
+                ));
+                continue;
+            };
+            let got = tauto_nir::text::print_data(&package, d);
+            if let Err(e) = compare_text(&format!("nir.datas.{name}"), &got, want) {
+                errors.push(e);
+            }
+        }
+        if let Some(want) = &self.evidence {
+            let got = tauto_nir::text::print_evidence(&package)?;
+            if let Err(e) = compare_text("nir.evidence", &got, want) {
+                errors.push(e);
+            }
+        }
+        if let Some(want) = &self.exports {
+            let printed = tauto_nir::text::print(&package)?;
+            let got: Vec<&str> = printed.lines().filter(|l| l.starts_with("export ")).collect();
+            if let Err(e) = compare_text("nir.exports", &got.join("\n"), want) {
+                errors.push(e);
+            }
+        }
+        if let Some(want) = &self.package {
+            let got = tauto_nir::text::print(&package)?;
+            if let Err(e) = compare_text("nir.package", &got, want) {
+                errors.push(e);
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("\n"))
+        }
+    }
+}
+
 /// Compare declarations from the actual extracted program, preserving resolved
 /// names and the canonical printer's syntax. A short selector must be unique.
 fn compare_extracted_nib(
@@ -2592,7 +3472,7 @@ fn compare_extracted_nib(
             match stmt {
                 Stmt::Fn(f) => out.push((&f.name, stmt)),
                 Stmt::Struct(d) | Stmt::Enum(d) => out.push((&d.name, stmt)),
-                Stmt::Module { items, .. } | Stmt::Mutual { items, .. } => declarations(items, out),
+                Stmt::Mutual { items, .. } => declarations(items, out),
                 _ => {}
             }
         }

@@ -1,0 +1,216 @@
+import "ir.taut"
+import "names.taut"
+import "tmpl.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+
+// One function being written: its blocks in order, the slots of its frame
+// apart at the top, and fresh names.
+pub(open) struct BBody {
+  // The slots of the frame, the last made first.
+  allocas: List(llvm::Instr::I),
+  // The blocks that have their last instruction, the last first.
+  done: List(llvm::Block::I),
+  // The block being written, its instructions the last first.
+  label: LlLabel,
+  instrs: List(llvm::Instr::I),
+  next: Nat,
+  // Whether the block being written has no last instruction yet.
+  open: Bool
+}
+
+pub fn b_set<A>(slot: &mut A, value: A): Unit {
+  *slot := value
+}
+
+pub fn b_new(): BBody {
+  BBody { allocas: Nil, done: Nil, label: ll_start(), instrs: Nil, next: 0, open: true }
+}
+
+pub fn b_next(b: &mut BBody): Nat {
+  let n := b.next + 1
+  b_set(&mut b.next, n)
+  n
+}
+
+pub fn b_tmp(b: &mut BBody): LlLocal { ll_tmp(b_next(&mut b)) }
+
+pub fn b_label(b: &mut BBody): LlLabel { ll_label(b_next(&mut b)) }
+
+// Code after a block's last instruction (what follows a `return`) is never
+// run: it goes in a block of its own that nothing jumps to.
+pub fn b_reopen(b: &mut BBody): Unit {
+  if b.open {
+    ()
+  } else {
+    let dead := b_label(&mut b)
+    b_set(&mut b.label, dead)
+    b_set(&mut b.instrs, Nil)
+    b_set(&mut b.open, true)
+  }
+}
+
+// Writes an instruction.
+pub fn b_ins(b: &mut BBody, i: llvm::Instr::I): Unit {
+  b_reopen(&mut b)
+  b_set(&mut b.instrs, Cons(i, b.instrs))
+}
+
+// Writes a block's last instruction.
+pub fn b_end(b: &mut BBody, t: llvm::Term::I): Unit {
+  b_reopen(&mut b)
+  b_set(
+    &mut b.done,
+    Cons(llvm::Block::I::Mk(ll_label_def(b.label), text_list_reverse(b.instrs), t), b.done)
+  )
+  b_set(&mut b.open, false)
+}
+
+pub fn b_br(b: &mut BBody, l: LlLabel): Unit {
+  b_end(&mut b, ll!(`br label $l`))
+}
+
+pub fn b_condbr(b: &mut BBody, c: llvm::Value::I, yes: LlLabel, no: LlLabel): Unit {
+  b_end(&mut b, ll!(`br i1 $c, label $yes, label $no`))
+}
+
+// Starts the block `l`; the block before it goes on into it.
+pub fn b_start(b: &mut BBody, l: LlLabel): Unit {
+  if b.open { b_br(&mut b, l) } else { () }
+  b_set(&mut b.label, l)
+  b_set(&mut b.instrs, Nil)
+  b_set(&mut b.open, true)
+}
+
+pub fn b_slot(b: &mut BBody, rhs: llvm::Rhs::I): llvm::Value::I {
+  let p := b_tmp(&mut b)
+  b_set(
+    &mut b.allocas,
+    Cons(llvm::Instr::I::Def_I(llvm::Def::I::Mk(ll_local_text(p), rhs)), b.allocas)
+  )
+  ll_value(p)
+}
+
+// A slot of the frame of `words` words, and its address.
+pub fn b_alloca(b: &mut BBody, words: Nat): llvm::Value::I {
+  let n := ll_int(if words == 0 { 1 } else { words })
+  b_slot(&mut b, ll!(`alloca [$n x i64]`))
+}
+
+// A slot of the frame for a text being built.
+pub fn b_alloca_buf(b: &mut BBody): llvm::Value::I {
+  b_slot(&mut b, ll!(`alloca %Buf`))
+}
+
+// The address `words` words after `p`.
+pub fn b_gep(b: &mut BBody, p: llvm::Value::I, words: Nat): llvm::Value::I {
+  if words == 0 {
+    p
+  } else {
+    let n := ll_word(words)
+    b_def(&mut b, ll!(`getelementptr i64, ptr $p, i64 $n`))
+  }
+}
+
+pub fn b_load_word(b: &mut BBody, p: llvm::Value::I): llvm::Value::I {
+  b_def(&mut b, ll!(`load i64, ptr $p`))
+}
+
+pub fn b_store_word(b: &mut BBody, v: llvm::Value::I, p: llvm::Value::I): Unit {
+  b_ins(&mut b, ll!(`store i64 $v, ptr $p`))
+}
+
+// The `words` words from the word `at` of the value at `p`.
+pub fn b_load(b: &mut BBody, p: llvm::Value::I, at: Nat, words: Nat): List(llvm::Value::I) {
+  if words == 0 {
+    Nil
+  } else {
+    let q := b_gep(&mut b, p, at)
+    let v := b_load_word(&mut b, q)
+    Cons(v, b_load(&mut b, p, at + 1, words - 1))
+  }
+}
+
+pub fn b_store(b: &mut BBody, p: llvm::Value::I, at: Nat, vals: List(llvm::Value::I)): Unit {
+  match vals {
+    Nil => ()
+    Cons(v, rest) => {
+      let q := b_gep(&mut b, p, at)
+      b_store_word(&mut b, v, q)
+      b_store(&mut b, p, at + 1, rest)
+    }
+  }
+}
+
+// The address a word holds.
+pub fn b_ptr(b: &mut BBody, word: llvm::Value::I): llvm::Value::I {
+  b_def(&mut b, ll!(`inttoptr i64 $word to ptr`))
+}
+
+// An address as a word.
+pub fn b_word(b: &mut BBody, p: llvm::Value::I): llvm::Value::I {
+  b_def(&mut b, ll!(`ptrtoint ptr $p to i64`))
+}
+
+// A word that is a `Bool`, as a condition.
+pub fn b_cond(b: &mut BBody, word: llvm::Value::I): llvm::Value::I {
+  b_def(&mut b, ll!(`icmp ne i64 $word, 0`))
+}
+
+// A condition as a `Bool`'s word.
+pub fn b_bool(b: &mut BBody, c: llvm::Value::I): llvm::Value::I {
+  b_def(&mut b, ll!(`zext i1 $c to i64`))
+}
+
+// The call an operation is, when it is one.
+pub fn b_call_of(rhs: llvm::Rhs::I): Option(llvm::Call::I) {
+  match rhs {
+    Call_I(c) => Some(c)
+    Alloca_I(^x) => None
+    Load_I(^x) => None
+    Gep_I(^x) => None
+    Bin_I(^x) => None
+    Icmp_I(^x) => None
+    Cast_I(^x) => None
+    ExtractValue_I(^x) => None
+    InsertValue_I(^x) => None
+  }
+}
+
+// An operation as an instruction that names its value.
+pub fn b_named(name: LlLocal, rhs: llvm::Rhs::I): llvm::Instr::I {
+  llvm::Instr::I::Def_I(llvm::Def::I::Mk(ll_local_text(name), rhs))
+}
+
+// Writes an operation that gives a value, and names the value.
+pub fn b_def(b: &mut BBody, rhs: llvm::Rhs::I): llvm::Value::I {
+  let t := b_tmp(&mut b)
+  b_ins(&mut b, b_named(t, rhs))
+  ll_value(t)
+}
+
+// Writes an operation for what it does, not for a value: a call that gives
+// nothing is written as it is.
+pub fn b_run(b: &mut BBody, rhs: llvm::Rhs::I): Unit {
+  match b_call_of(rhs) {
+    Some(c) => b_ins(&mut b, llvm::Instr::I::Call_I(c))
+    None => {
+      let ^defined := b_def(&mut b, rhs)
+      ()
+    }
+  }
+}
+
+// The function's blocks: the block of the frame's slots, then what was
+// written.
+pub(open) struct BBlocks { entry: llvm::Block::I, rest: List(llvm::Block::I) }
+
+pub fn b_finish(b: BBody): BBlocks {
+  let start := ll_start()
+  let enter := ll!(`br label $start`)
+  BBlocks {
+    entry: llvm::Block::I::Mk(ll_label_def(ll_entry()), text_list_reverse(b.allocas), enter),
+    rest: text_list_reverse(b.done)
+  }
+}

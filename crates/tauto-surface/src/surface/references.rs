@@ -51,6 +51,14 @@ fn function(d: &mut FnDecl, f: &mut Visit<'_>) {
     if let Some(row) = &mut d.effects {
         names(row, f);
     }
+    if let Some(entries) = &mut d.written_effects {
+        for entry in entries {
+            f(&mut entry.name);
+            if let Some(members) = &mut entry.members {
+                names(members, f);
+            }
+        }
+    }
     constraints(&mut d.where_, f);
     optional(&mut d.decreasing_by, f);
     term(&mut d.body, f);
@@ -93,7 +101,9 @@ pub fn statement(s: &mut Stmt, f: &mut Visit<'_>) {
             optional(ty, f);
             term(value, f);
         }
-        Stmt::Assign { name, place, value } => {
+        Stmt::Assign {
+            name, place, value, ..
+        } => {
             f(name);
             optional(place, f);
             term(value, f);
@@ -138,6 +148,8 @@ pub fn statement(s: &mut Stmt, f: &mut Visit<'_>) {
             fns,
             instances,
             types,
+            structs,
+            enums,
             ..
         } => {
             for d in fns {
@@ -150,11 +162,18 @@ pub fn statement(s: &mut Stmt, f: &mut Visit<'_>) {
             for d in types {
                 data(d, f);
             }
+            for d in structs {
+                data(d, f);
+            }
+            for d in enums {
+                data(d, f);
+            }
         }
         Stmt::Class(c) => {
             f(&mut c.name);
             f(&mut c.param);
             telescope(&mut c.parameters, f);
+            constraints(&mut c.parents, f);
             for d in &mut c.methods {
                 function(d, f);
             }
@@ -185,14 +204,25 @@ pub fn statement(s: &mut Stmt, f: &mut Visit<'_>) {
             term(condition, f);
             term(body, f);
         }
-        Stmt::Return(value) => optional(value, f),
+        Stmt::For {
+            pattern: p,
+            source,
+            body,
+        } => {
+            pattern(p, f);
+            term(source, f);
+            term(body, f);
+        }
+        Stmt::Loop { body } => term(body, f),
+        Stmt::Break(value) | Stmt::Return(value) => optional(value, f),
+        Stmt::Continue => {}
         Stmt::Expr(t) | Stmt::Called { call: t, .. } => term(t, f),
         Stmt::Syntax { uses, .. } => {
             for use_ in uses {
                 f(&mut use_.function);
             }
         }
-        Stmt::Import { .. } | Stmt::Macro { .. } | Stmt::Other(..) => {}
+        Stmt::Reexport { .. } | Stmt::Import { .. } | Stmt::Macro { .. } | Stmt::Other(..) => {}
     }
 }
 
@@ -200,7 +230,7 @@ pub fn statement(s: &mut Stmt, f: &mut Visit<'_>) {
 /// deliberately not identifiers.
 pub fn pattern(p: &mut Pattern, f: &mut Visit<'_>) {
     match p {
-        Pattern::Bind(n) => f(n),
+        Pattern::Bind { name: n, .. } => f(n),
         Pattern::Ctor { name, args } => {
             f(name);
             for arg in args {
@@ -213,10 +243,9 @@ pub fn pattern(p: &mut Pattern, f: &mut Visit<'_>) {
                 pattern(p, f);
             }
         }
-        Pattern::Tuple(items) => {
-            for p in items {
-                pattern(p, f);
-            }
+        Pattern::Typed { name, ty, .. } => {
+            term(ty, f);
+            f(name);
         }
         Pattern::Wild
         | Pattern::Int(_)
@@ -255,7 +284,8 @@ pub fn term(mut t: &mut SurfaceTerm, f: &mut Visit<'_>) {
             params,
             result,
             effects,
-        } => {
+                ..
+            } => {
             for (n, ty) in params {
                 if let Some(n) = n {
                     f(n);
@@ -271,7 +301,8 @@ pub fn term(mut t: &mut SurfaceTerm, f: &mut Visit<'_>) {
             binder,
             domain,
             body,
-        } => {
+                ..
+            } => {
             f(binder);
             term(domain, f);
             term(body, f);
@@ -280,14 +311,15 @@ pub fn term(mut t: &mut SurfaceTerm, f: &mut Visit<'_>) {
             params,
             body,
             types,
-        } => {
+                ..
+            } => {
             names(params, f);
             for ty in types.iter_mut().flatten() {
                 term(ty, f);
             }
             term(body, f);
         }
-        TermKind::Union(items) | TermKind::Product(items) | TermKind::Tuple(items) => {
+        TermKind::Union(items) => {
             for t in items {
                 term(t, f);
             }
@@ -340,7 +372,8 @@ pub fn term(mut t: &mut SurfaceTerm, f: &mut Visit<'_>) {
                         cont,
                         guard,
                         body,
-                    } => {
+                ..
+            } => {
                         f(effect);
                         names(&mut instance.forall, f);
                         for a in &mut instance.args {
@@ -367,7 +400,8 @@ pub fn term(mut t: &mut SurfaceTerm, f: &mut Visit<'_>) {
             result,
             binder,
             arms,
-        } => {
+                ..
+            } => {
             term(scrutinee, f);
             if let Some(t) = result {
                 term(t, f);
@@ -430,6 +464,7 @@ mod tests {
                 name: local.clone(),
                 place: Some(SurfaceTerm::var(&local, at)),
                 value: SurfaceTerm::var(&b, at),
+                deref: None,
             }]),
             at,
         );
@@ -444,12 +479,13 @@ mod tests {
                     },
                     patterns: vec![Pattern::Record {
                         name: a.clone(),
-                        fields: vec![("same".into(), Pattern::Bind(local.clone()))],
+                        fields: vec![("same".into(), Pattern::Bind { name: local.clone(), unused: None })],
                     }],
                     cont: None,
                     guard: None,
                     body,
-                }],
+                cont_unused: None
+            }],
             },
             at,
         );

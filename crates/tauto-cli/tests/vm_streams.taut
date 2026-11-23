@@ -1,32 +1,44 @@
-import std::prelude::Os
-import std::prelude::Par
-import std::prelude::Shared
+import std::builtin::os
+import std::builtin::par
+import std::prelude::collections
 
 // An accept waits in a task while the main task connects and writes; the
 // task reads what was written.
-fn serve(l: TcpListener): Result(Bytes, IoError) ! {tcp_accept, tcp_read, tcp_close} {
+fn serve(l: TcpListener): Result(Bytes, IoError) ! {tcp_accept, tcp_read, tcp_close, tcp_unlisten} {
   let forever: Option(i64) := None
   match perform tcp_accept(l, forever) {
-    Ok(s) => {
-      let r := perform tcp_read(s, 5, forever)
-      perform tcp_close(s)
-      r
+    TcpAccepted { listener, got } => {
+      perform tcp_unlisten(TcpListener::stopper(&listener))
+      match got {
+        Ok(s) => match perform tcp_read(s, 5, forever) {
+          TcpRead { stream, got: r } => {
+            perform tcp_close(stream)
+            r
+          }
+        }
+        Err(e) => Err(e)
+      }
     }
-    Err(e) => Err(e)
   }
 }
 
 // A read waiting in a task wakes at the end of the stream when the main task
-// shuts the stream down.
-fn read_woken(s: TcpStream): Result(Bytes, IoError) ! {∀ T. spawn(T), sleep, tcp_read, tcp_shutdown, wait} {
+// shuts the stream down with its stopper.
+fn read_woken(s: TcpStream): Result(Bytes, IoError) ! {∀ T. spawn(() -> T ! {tcp_read, wait, mutex_claim, mutex_take_claimed}), sleep, tcp_read, tcp_shutdown, tcp_close, wait, mutex_new} {
   let forever: Option(i64) := None
-  let t := perform spawn(() => perform tcp_read(s, 8, forever))
+  let stop := TcpStream::stopper(&s)
+  // A task takes the stream through a cell, since what `spawn` runs is shared.
+  let cell := perform mutex_new(s)
+  let t := perform spawn(() => perform tcp_read(Mutex::take(cell), 8, forever))
   perform sleep(50)
-  match perform tcp_shutdown(s, ShutdownRead) {
-    Ok(u) => Task::join(t)
-    Err(e) => {
-      let r := Task::join(t)
-      Err(e)
+  let shut := perform tcp_shutdown(stop, ShutdownRead)
+  match Task::join(t) {
+    TcpRead { stream, got } => {
+      perform tcp_close(stream)
+      match shut {
+        Ok(u) => got
+        Err(e) => Err(e)
+      }
     }
   }
 }
@@ -34,40 +46,50 @@ fn read_woken(s: TcpStream): Result(Bytes, IoError) ! {∀ T. spawn(T), sleep, t
 let forever: Option(i64) := None
 match perform tcp_listen("127.0.0.1:0") {
   Ok(l) => {
-    let t := perform spawn(() => serve(l))
-    match perform tcp_connect(l.address, forever) {
-      Ok(c) => {
-        perform show("write", perform tcp_write(c, Bytes::of_text("hello"), forever))
-        perform show("served", Task::join(t))
-        perform tcp_close(c)
+    let at := TcpListener::address(&l)
+    let cell := perform mutex_new(l)
+    let t := perform spawn(() => serve(Mutex::take(cell)))
+    match perform tcp_connect(at, forever) {
+      Ok(c) => match perform tcp_write(c, Bytes::of_text("hello"), forever) {
+        TcpWritten { stream, result } => {
+          show(&result)
+          show(&Task::join(t))
+          perform tcp_close(stream)
+        }
       }
       Err(e) => {
-        perform show("connect", io_message(e))
-        perform show("served", Task::join(t))
+        show(&io_message(e))
+        show(&Task::join(t))
       }
-    }
-    match perform tcp_connect(l.address, forever) {
-      Ok(c) => match perform tcp_accept(l, forever) {
-        Ok(s) => {
-          perform show("read", read_woken(s))
-          perform tcp_close(c)
-        }
-        Err(e) => perform show("accept", io_message(e))
-      }
-      Err(e) => perform show("connect", io_message(e))
     }
   }
-  Err(e) => perform show("listen", io_message(e))
+  Err(e) => show(&io_message(e))
+}
+match perform tcp_listen("127.0.0.1:0") {
+  Ok(l) => match perform tcp_connect(TcpListener::address(&l), forever) {
+    Ok(c) => match perform tcp_accept(l, forever) {
+      TcpAccepted { listener, got } => {
+        match got {
+          Ok(s) => show(&read_woken(s))
+          Err(e) => show(&io_message(e))
+        }
+        perform tcp_unlisten(TcpListener::stopper(&listener))
+        perform tcp_close(c)
+      }
+    }
+    Err(e) => show(&io_message(e))
+  }
+  Err(e) => show(&io_message(e))
 }
 
 // A started program is written to, waited for and read.
 let p := Process { program: "sh", args: ["-c", "read x; printf \"$x\""], dir: "", env: [], stdin: Bytes::of_text("") }
 match perform proc_spawn(p, ProcessIo { stdin: StdioPiped, stdout: StdioPiped, stderr: StdioPiped }) {
   Ok(c) => {
-    perform show("input", perform proc_write(c, Bytes::of_text("hi\n")))
-    perform show("wait", perform proc_wait(c, forever))
-    perform show("output", perform proc_read(c, ChildStdout, 100, forever))
+    show(&(perform proc_write(c, Bytes::of_text("hi\n"))))
+    show(&(perform proc_wait(c, forever)))
+    show(&(perform proc_read(c, ChildStdout, 100, forever)))
     perform proc_close(c)
   }
-  Err(e) => perform show("spawn", io_message(e))
+  Err(e) => show(&io_message(e))
 }

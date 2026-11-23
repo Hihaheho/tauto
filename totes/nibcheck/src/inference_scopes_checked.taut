@@ -1,6 +1,8 @@
+import "../../identity/src/identity.taut"
+import "messages.taut"
 import "inference_scopes.taut"
 import "inference_calls_checked.taut"
-import std::Text
+import std::text
 import "checked_frame.taut"
 import "checker.taut"
 import "datas.taut"
@@ -10,6 +12,8 @@ import "expr_access_checked_sound.taut"
 import "handle_frame.taut"
 import "inference_base.taut"
 import "inference_base_checked.taut"
+import "inference_base_error_sound.taut"
+import "inference_base.taut"
 import "pattern_frame.taut"
 import "pattern_mutual_checked.taut"
 import "pattern_read_error_sound.taut"
@@ -17,6 +21,7 @@ import "record_error_sound.taut"
 import "record_frame.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "written_error_sound.taut"
@@ -27,15 +32,14 @@ pub theorem inference_first_handler_frame_checked(
   c: Checker,
   b: Ty,
   env: List(Local),
-  returned: Option(Pair(SurfacePattern, SurfaceTerm)),
+  returned: Option(SurfacePattern × SurfaceTerm),
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_first_handler(j, c, b, env, returned)) {
-  ⊢ CkCheckedFrame(c, inference_first_handler(j, c, b, env, returned)) from match returned {
+  match returned {
     None => checked_frame_return(c, b, ordered)
     Some(r) => inference_bind_scope_frame_checked(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (matched: Unit, c1: Checker, inner: Scope) => ck_rewrap1(
         ck_infer_in(j, c1, inference_handler_body(r), inference_scope_items(inner))
@@ -96,27 +100,25 @@ pub theorem inference_match_arms_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_match_arms(j, c, s, env, result, arms)) {
-  ⊢ CkCheckedFrame(c, inference_match_arms(j, c, s, env, result, arms)) from match arms {
+  match arms {
     Nil => checked_frame_return(c, result, ordered)
     Cons(arm, rest) => inference_bind_scope_frame_checked(
-      Unit,
-      Option(Ty),
+      <A: Unit, B: Option(Ty)>,
       c,
       (matched: Unit, c1: Checker, inner: Scope) => frame_bind(
-        Unit,
-        Option(Ty),
+        <A: Unit, B: Option(Ty)>,
         (guarded: Unit, c2: Checker) => frame_bind(
-          Ty,
-          Option(Ty),
-          (b: Ty, c3: Checker) => frame_bind(
-            Ty,
-            Option(Ty),
-            (joined: Ty, c4: Checker) => ck_rewrap1(
-              ck_match_arms_in(j, c4, rest, s, env, Some(joined))
+          <A: Unit, B: Option(Ty)>,
+          (armed: Unit, c3: Checker) => frame_bind(
+            <A: Ty, B: Option(Ty)>,
+            (b: Ty, c4: Checker) => frame_bind(
+              <A: Ty, B: Option(Ty)>,
+              (joined: Ty, c5: Checker) => ck_rewrap1(ck_match_arms_in(j, c5, rest, s, env, Some(joined))),
+              ck_join_opt(c4, result, b)
             ),
-            ck_join_opt(c3, result, b)
+            ck_infer_in(j, c3, inference_arm_body(arm), inference_scope_items(inner))
           ),
-          ck_infer_in(j, c2, inference_arm_body(arm), inference_scope_items(inner))
+          inference_set_result_hint(c2, ck_result_hint_for(inference_arm_body(arm), inference_arm_hint(c2)))
         ),
         ck_guard_in(j, c1, inference_arm_guard(arm), inference_scope_items(inner))
       ),
@@ -138,65 +140,64 @@ pub theorem inference_match_arms_frame_checked(
         ordered
       ),
       matched => c1 => inner => o_c1 => checked_frame_bind(
-        Unit,
-        Option(Ty),
+        <A: Unit, B: Option(Ty)>,
         c1,
         (guarded: Unit, c2: Checker) => frame_bind(
-          Ty,
-          Option(Ty),
-          (b: Ty, c3: Checker) => frame_bind(
-            Ty,
-            Option(Ty),
-            (joined: Ty, c4: Checker) => ck_rewrap1(
-              ck_match_arms_in(j, c4, rest, s, env, Some(joined))
+          <A: Unit, B: Option(Ty)>,
+          (armed: Unit, c3: Checker) => frame_bind(
+            <A: Ty, B: Option(Ty)>,
+            (b: Ty, c4: Checker) => frame_bind(
+              <A: Ty, B: Option(Ty)>,
+              (joined: Ty, c5: Checker) => ck_rewrap1(ck_match_arms_in(j, c5, rest, s, env, Some(joined))),
+              ck_join_opt(c4, result, b)
             ),
-            ck_join_opt(c3, result, b)
+            ck_infer_in(j, c3, inference_arm_body(arm), inference_scope_items(inner))
           ),
-          ck_infer_in(j, c2, inference_arm_body(arm), inference_scope_items(inner))
+          inference_set_result_hint(c2, ck_result_hint_for(inference_arm_body(arm), inference_arm_hint(c2)))
         ),
         ck_guard_in(j, c1, inference_arm_guard(arm), inference_scope_items(inner)),
-        inference_use_ck_guard_in_checked(
-          j,
-          c1,
-          inference_arm_guard(arm),
-          inference_scope_items(inner),
-          o_c1,
-          ih
-        ),
+        inference_use_ck_guard_in_checked(j, c1, inference_arm_guard(arm), inference_scope_items(inner), o_c1, ih),
         guarded => c2 => o_c2 => checked_frame_bind(
-          Ty,
-          Option(Ty),
+          <A: Unit, B: Option(Ty)>,
           c2,
-          (b: Ty, c3: Checker) => frame_bind(
-            Ty,
-            Option(Ty),
-            (joined: Ty, c4: Checker) => ck_rewrap1(
-              ck_match_arms_in(j, c4, rest, s, env, Some(joined))
+          (armed: Unit, c3: Checker) => frame_bind(
+            <A: Ty, B: Option(Ty)>,
+            (b: Ty, c4: Checker) => frame_bind(
+              <A: Ty, B: Option(Ty)>,
+              (joined: Ty, c5: Checker) => ck_rewrap1(ck_match_arms_in(j, c5, rest, s, env, Some(joined))),
+              ck_join_opt(c4, result, b)
             ),
-            ck_join_opt(c3, result, b)
+            ck_infer_in(j, c3, inference_arm_body(arm), inference_scope_items(inner))
           ),
-          ck_infer_in(j, c2, inference_arm_body(arm), inference_scope_items(inner)),
-          inference_use_ck_infer_in_checked(
-            j,
+          inference_set_result_hint(c2, ck_result_hint_for(inference_arm_body(arm), inference_arm_hint(c2))),
+          checked_frame_read(
             c2,
-            inference_arm_body(arm),
-            inference_scope_items(inner),
-            o_c2,
-            ih
+            inference_set_result_hint(c2, ck_result_hint_for(inference_arm_body(arm), inference_arm_hint(c2))),
+            inference_set_result_hint_frame(c2, ck_result_hint_for(inference_arm_body(arm), inference_arm_hint(c2))),
+            inference_set_result_hint_frame_errors(c2, ck_result_hint_for(inference_arm_body(arm), inference_arm_hint(c2))),
+            o_c2
           ),
-          b => c3 => o_c3 => checked_frame_bind(
-            Ty,
-            Option(Ty),
+          armed => c3 => o_c3 => checked_frame_bind(
+            <A: Ty, B: Option(Ty)>,
             c3,
-            (joined: Ty, c4: Checker) => ck_rewrap1(
-              ck_match_arms_in(j, c4, rest, s, env, Some(joined))
+            (b: Ty, c4: Checker) => frame_bind(
+              <A: Ty, B: Option(Ty)>,
+              (joined: Ty, c5: Checker) => ck_rewrap1(ck_match_arms_in(j, c5, rest, s, env, Some(joined))),
+              ck_join_opt(c4, result, b)
             ),
-            ck_join_opt(c3, result, b),
-            ck_join_opt_run_frame_checked(c3, result, b, o_c3),
-            joined => c4 => o_c4 => checked_frame_rewrap(
+            ck_infer_in(j, c3, inference_arm_body(arm), inference_scope_items(inner)),
+            inference_use_ck_infer_in_checked(j, c3, inference_arm_body(arm), inference_scope_items(inner), o_c3, ih),
+            b => c4 => o_c4 => checked_frame_bind(
+              <A: Ty, B: Option(Ty)>,
               c4,
-              ck_match_arms_in(j, c4, rest, s, env, Some(joined)),
-              inference_use_ck_match_arms_in_checked(j, c4, rest, s, env, Some(joined), o_c4, ih)
+              (joined: Ty, c5: Checker) => ck_rewrap1(ck_match_arms_in(j, c5, rest, s, env, Some(joined))),
+              ck_join_opt(c4, result, b),
+              ck_join_opt_run_frame_checked(c4, result, b, o_c4),
+              joined => c5 => o_c5 => checked_frame_rewrap(
+                c5,
+                ck_match_arms_in(j, c5, rest, s, env, Some(joined)),
+                inference_use_ck_match_arms_in_checked(j, c5, rest, s, env, Some(joined), o_c5, ih)
+              )
             )
           )
         )
@@ -233,22 +234,19 @@ pub theorem inference_record_values_frame_checked(
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_record_values(j, c, name, fields, env, span, d, args, declared)) {
   checked_frame_bind(
-    List(Text),
-    Ty,
+    <A: List(Text), B: Ty>,
     c,
     (seen: List(Text), c1: Checker) => frame_bind(
-      Unit,
-      Ty,
-      (checked: Unit, c2: Checker) => mut1(TyNamed(d, args), c2),
+      <A: Unit, B: Ty>,
+      (checked: Unit, c2: Checker) => mut1(TyNamed(NameSpelled(d), args), c2),
       ck_record_missing(declared, c1, name, seen, span)
     ),
     ck_record_fields_in(j, c, name, fields, declared, env, Nil),
     inference_use_ck_record_fields_in_checked(j, c, name, fields, declared, env, Nil, ordered, ih),
     seen => c1 => o_c1 => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c1,
-      (checked: Unit, c2: Checker) => mut1(TyNamed(d, args), c2),
+      (checked: Unit, c2: Checker) => mut1(TyNamed(NameSpelled(d), args), c2),
       ck_record_missing(declared, c1, name, seen, span),
       checked_frame_read(
         c1,
@@ -257,7 +255,7 @@ pub theorem inference_record_values_frame_checked(
         ck_record_missing_frame_errors(declared, c1, name, seen, span),
         o_c1
       ),
-      checked => c2 => o_c2 => checked_frame_return(c2, TyNamed(d, args), o_c2)
+      checked => c2 => o_c2 => checked_frame_return(c2, TyNamed(NameSpelled(d), args), o_c2)
     )
   )
 }
@@ -269,29 +267,28 @@ pub theorem inference_record_ctor_frame_checked(
   fields: List(SurfaceField),
   env: List(Local),
   span: TySpan,
-  ctor: Option(Pair(Text, Nat)),
+  ctor: Option(Text × Nat),
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_record_ctor(j, c, name, fields, env, span, ctor)) {
-  ⊢ CkCheckedFrame(c, inference_record_ctor(j, c, name, fields, env, span, ctor)) from match ctor {
+  match ctor {
     None => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
-      ck_rewrap1(ck_error(c, cat2(name, " is not a struct"), span)),
+      ck_rewrap1(ck_error(c, not_a_struct_message(name), span)),
       checked_frame_read(
         c,
-        ck_rewrap1(ck_error(c, cat2(name, " is not a struct"), span)),
+        ck_rewrap1(ck_error(c, not_a_struct_message(name), span)),
         frame_rewrap(
           c,
-          ck_error(c, cat2(name, " is not a struct"), span),
-          ck_error_frame(c, cat2(name, " is not a struct"), span)
+          ck_error(c, not_a_struct_message(name), span),
+          ck_error_frame(c, not_a_struct_message(name), span)
         ),
         error_frame_rewrap(
           c,
-          ck_error(c, cat2(name, " is not a struct"), span),
-          ck_error_frame_errors(c, cat2(name, " is not a struct"), span)
+          ck_error(c, not_a_struct_message(name), span),
+          ck_error_frame_errors(c, not_a_struct_message(name), span)
         ),
         ordered
       ),
@@ -304,8 +301,7 @@ pub theorem inference_record_ctor_frame_checked(
       )
     )
     Some(dc) => checked_frame_bind(
-      List(Ty),
-      Ty,
+      <A: List(Ty), B: Ty>,
       c,
       (args: List(Ty), c1: Checker) => inference_record_values(
         j,

@@ -1,9 +1,11 @@
 import "mval.taut"
-import "syntab.taut"
-import std::Int
-import std::Float
+import "../../synrun/src/syntab.taut"
+import std::int
+import std::float
 
-// The program representation consumed by the bytecode compiler and direct evaluator.
+// The program representation consumed by the bytecode compiler and direct evaluator. It is
+// defined here and in `INPUT.md`, not by what writes it: the lowering of `tauto_nir::cps`
+// produces it, and a producer that disagrees is the one that is wrong.
 
 pub(open) inductive CVal: Type {
   CvDeclaration(slot: Nat): CVal
@@ -17,10 +19,12 @@ pub(open) inductive CVal: Type {
 
 pub(open) inductive CPat: Type {
   CpWild: CPat
-  CpBind(id: Nat, borrow: Bool): CPat
+  CpBind(id: Nat, r#borrow: Bool): CPat
   CpLit(v: CVal): CPat
   CpCtor(ctor: Nat, fields: List(CPat)): CPat
   CpProduct(members: List(CPat)): CPat
+  // A value of a union injected at `variant`, and a pattern on what was injected.
+  CpVariant(variant: Nat, p: CPat): CPat
 }
 
 // As `MOp`, of the operations the lowering writes.
@@ -31,7 +35,7 @@ pub(open) inductive CPrim: Type {
   CprCmp(c: Nat): CPrim
   CprEq(negate: Bool): CPrim
   CprConstruct(ctor: Nat, order: List(Nat)): CPrim
-  CprProduct(picks: List(Pair(Nat, Option(Nat)))): CPrim
+  CprProduct(picks: List(Nat × Option(Nat))): CPrim
   CprConcat: CPrim
   CprTextOfInt: CPrim
   CprTextLen: CPrim
@@ -55,8 +59,12 @@ pub(open) inductive Cps: Type {
   CPure(v: CVal): Cps
   CRead(id: Nat, deref: Bool): Cps
   CCall(callee: Cps, args: List(Cps), ticked: Bool): Cps
-  CTail(inst: Nat, args: List(Cps)): Cps
+  // With `ticked`, a step of the host's limit is counted before the call.
+  CTail(inst: Nat, args: List(Cps), ticked: Bool): Cps
   CBuiltin(name: Text, args: List(Cps)): Cps
+  // A call of an `extern` of the program. The machine runs it only when it binds the name
+  // (`c_bound_externs` of `compile.taut`); a name it does not bind is refused.
+  CExtern(name: Text, args: List(Cps)): Cps
   MkCPrim(op: CPrim, args: List(Cps)): Cps
   CMap(value: Cps, op: CUnary): Cps
   CBranch(cond: Cps, then: Cps, otherwise: Cps): Cps
@@ -72,7 +80,7 @@ pub(open) inductive Cps: Type {
     params: List(Nat),
     captures: List(Nat),
     borrowed: Bool,
-    refs: List(Pair(Nat, Nat))
+    refs: List(Nat × Nat)
   ): Cps
   CPerform(op: Text, quant: Nat, args: List(Cps)): Cps
   // The arms: their operations, patterns, the local each binds its continuation to
@@ -89,6 +97,10 @@ pub(open) inductive Cps: Type {
   ): Cps
   CBorrow(id: Nat, path: List(MPath), through: Bool): Cps
   CBudget(memory: Bool, steps: Cps, body: Cps): Cps
+  // A move out of the local, which leaves it empty: the value is dropped by its new owner.
+  CTake(id: Nat): Cps
+  // Drops each host value that nothing reaches any more (`host.taut`); gives `()`.
+  CSweep: Cps
 }
 
 pub(open) inductive CFn: Type {

@@ -1,6 +1,6 @@
 //! `totes/llkgen` against the tables parol made: the lookahead automata of
 //! every table file in the repository (`docs/design/macro.md`
-//! 「`tauto.par` との共通性と self-host」).
+//! 「Tauto's own grammar」).
 
 use std::path::{Path, PathBuf};
 
@@ -268,7 +268,6 @@ fn the_tote_stands_in_for_the_generator_on_standard_input() {
         let dir = root().join("crates/tauto-syntax/tests/data");
         let grammar = std::fs::read(dir.join(format!("{name}.par"))).unwrap();
         let mut child = Command::new(&bin)
-            .arg("--allow-read")
             .env("TAUTO_STEP_LIMIT", STEPS.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

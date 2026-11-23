@@ -1,30 +1,32 @@
 import "function_reference_sound.taut"
 import "inference_value_fact.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "diagnostic_sound.taut"
 import "expr_leaf_frame.taut"
 import "rules_function_reference.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 pub theorem ck_infer_term_monomorphic_sound(
   k: Nat,
   c: Checker,
-  name: Text,
+  name: SurfaceName,
   start: Nat,
   end: Nat,
   env: List(Local),
   declared: Ty,
-  ctors: List(Pair(Text, Kind)),
-  missing: env_find(env, name) = None,
+  ctors: List(Text × Kind),
+  missing: env_find(env, surface_name_text(name)) = None,
   found: Ordmap::get(
     leaf_functions(c),
-    name,
+    surface_name_text(name),
     Ordmap::compare_text
   ) = Some(SchemeMk(Nil, declared, Nil, ctors)),
   clean: DiagnosticClean(
@@ -53,9 +55,6 @@ pub theorem ck_infer_term_monomorphic_sound(
       )
     )
     Succ(j) => Eq::subst(
-      Mut1(Ty, Checker),
-      ck_lookup(c, name, env, TySpan {start: start, end: end}),
-      ck_rewrap1(ck_lookup(c, name, env, TySpan {start: start, end: end})),
       (m: Mut1(Ty, Checker)) => MonomorphicFunctionTyping(
         ck_subst_of(c),
         env,
@@ -63,7 +62,7 @@ pub theorem ck_infer_term_monomorphic_sound(
         surface_term_mk(SkVar(name), start, end),
         ck_val(m)
       ),
-      Eq::sym(ck_rewrap1_id(ck_lookup(c, name, env, TySpan {start: start, end: end}))),
+      Eq::sym(ck_rewrap1_id(ck_lookup(c, surface_name_text(name), env, TySpan {start: start, end: end}, None))),
       ck_lookup_monomorphic_sound(c, name, env, start, end, declared, ctors, missing, found)
     )
   }
@@ -71,16 +70,16 @@ pub theorem ck_infer_term_monomorphic_sound(
 pub theorem ck_infer_monomorphic_sound(
   k: Nat,
   c: Checker,
-  name: Text,
+  name: SurfaceName,
   start: Nat,
   end: Nat,
   env: List(Local),
   declared: Ty,
-  ctors: List(Pair(Text, Kind)),
-  missing: env_find(env, name) = None,
+  ctors: List(Text × Kind),
+  missing: env_find(env, surface_name_text(name)) = None,
   found: Ordmap::get(
     leaf_functions(c),
-    name,
+    surface_name_text(name),
     Ordmap::compare_text
   ) = Some(SchemeMk(Nil, declared, Nil, ctors)),
   clean: DiagnosticClean(ck_st(ck_infer_in(k, c, surface_term_mk(SkVar(name), start, end), env)))

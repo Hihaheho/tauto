@@ -1,18 +1,21 @@
 import "rules_function_reference.taut"
 import "local_lookup_sound.taut"
 import "substitute_empty_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "expr_leaf_frame.taut"
 import "rules_local.taut"
 import "rules_ty.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 pub theorem local_find_choice_absent(
   head: Local,
@@ -23,7 +26,7 @@ pub theorem local_find_choice_absent(
   missing: local_find_choice(head, rest, name, same) = None,
   ih: ∀ absent: env_find(rest, name) = None. LocalAbsent(name, rest)
 ): LocalAbsent(name, Cons(head, rest)) {
-  ⊢ LocalAbsent(name, Cons(head, rest)) from match same {
+  match same {
     true => False::elim(ck_none_ne_some(head, Eq::sym(missing)))
     false => LocalAbsentCons(
       head,
@@ -37,7 +40,7 @@ pub theorem env_find_absent(
   name: Text,
   missing: env_find(env, name) = None
 ): LocalAbsent(name, env) {
-  ⊢ LocalAbsent(name, env) from match env {
+  match env {
     Nil => LocalAbsentNil
     Cons(head, rest) => local_find_choice_absent(
       head,
@@ -55,17 +58,18 @@ pub theorem ck_lookup_function_value(
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   scheme: Scheme,
   missing: env_find(env, name) = None,
   found: Ordmap::get(leaf_functions(c), name, Ordmap::compare_text) = Some(scheme)
-): ck_lookup(c, name, env, span) = ck_instantiate_scheme(c, name, scheme, span) {
+): ck_lookup(c, name, env, span, occurrence) = ck_instantiate_scheme(c, name, scheme, span) {
   Eq::trans(
-    leaf_lookup_unf(c, name, env, span),
+    leaf_lookup_unf(c, name, env, span, occurrence),
     Eq::trans(
-      Eq::congr((local: Option(Local)) => leaf_lookup(c, name, env, span, local), missing),
+      Eq::congr((local: Option(Local)) => leaf_lookup(c, name, env, span, occurrence, local), missing),
       Eq::trans(
         Eq::congr(
-          (stored: Option(Scheme)) => leaf_lookup_function(c, name, env, span, stored),
+          (stored: Option(Scheme)) => leaf_lookup_function(c, name, env, span, occurrence, stored),
           found
         ),
         ck_rewrap1_id(ck_instantiate_scheme(c, name, scheme, span))
@@ -73,38 +77,61 @@ pub theorem ck_lookup_function_value(
     )
   )
 }
+// Recording a use that gives no generic a type leaves the checker as it was.
+pub theorem ck_record_no_use(
+  c: Checker,
+  name: Text,
+  span: TySpan
+): ck_st(ck_record_use(c, name, Nil, span)) = c {
+  match c {
+    CheckerMk(x_classes, x_instances, x_subst, x_next, x_ints, x_fns, x_effects, x_quants, x_datas, x_errors, x_ops, x_literals, x_returns, x_exceeded, x_lets, x_bounds, x_ctor_bounds, x_constructor_position, x_rigids, x_kept, x_assume, x_pending, x_constructor_uses, x_uses, x_locals, x_terms, x_closure_results, x_hint, x_result_hint, x_arm_hint, x_under_borrow, x_type_params, x_widen_products, x_steps, x_table) => Refl
+  }
+}
 pub theorem ck_instantiate_monomorphic(
   c: Checker,
   name: Text,
   declared: Ty,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   span: TySpan
 ): ck_instantiate_scheme(
   c,
   name,
   SchemeMk(Nil, declared, Nil, ctors),
   span
-) = mut1(ty_substitute(declared, Ordmap::empty()), c) { Refl }
+) = mut1(ty_substitute(declared, Ordmap::empty()), c) {
+  Eq::subst(
+    (z: Checker) => ck_instantiate_scheme(
+      c,
+      name,
+      SchemeMk(Nil, declared, Nil, ctors),
+      span
+    ) = mut1(ty_substitute(declared, Ordmap::empty()), z),
+    ck_record_no_use(c, name, span),
+    Refl
+  )
+}
 pub theorem ck_lookup_monomorphic_value(
   c: Checker,
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   declared: Ty,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   missing: env_find(env, name) = None,
   found: Ordmap::get(
     leaf_functions(c),
     name,
     Ordmap::compare_text
   ) = Some(SchemeMk(Nil, declared, Nil, ctors))
-): ck_lookup(c, name, env, span) = mut1(ty_substitute(declared, Ordmap::empty()), c) {
+): ck_lookup(c, name, env, span, occurrence) = mut1(ty_substitute(declared, Ordmap::empty()), c) {
   Eq::trans(
     ck_lookup_function_value(
       c,
       name,
       env,
       span,
+      occurrence,
       SchemeMk(Nil, declared, Nil, ctors),
       missing,
       found
@@ -114,16 +141,16 @@ pub theorem ck_lookup_monomorphic_value(
 }
 pub theorem ck_lookup_monomorphic_sound(
   c: Checker,
-  name: Text,
+  name: SurfaceName,
   env: List(Local),
   start: Nat,
   end: Nat,
   declared: Ty,
-  ctors: List(Pair(Text, Kind)),
-  missing: env_find(env, name) = None,
+  ctors: List(Text × Kind),
+  missing: env_find(env, surface_name_text(name)) = None,
   found: Ordmap::get(
     leaf_functions(c),
-    name,
+    surface_name_text(name),
     Ordmap::compare_text
   ) = Some(SchemeMk(Nil, declared, Nil, ctors))
 ): MonomorphicFunctionTyping(
@@ -131,12 +158,9 @@ pub theorem ck_lookup_monomorphic_sound(
   env,
   leaf_functions(c),
   surface_term_mk(SkVar(name), start, end),
-  ck_val(ck_lookup(c, name, env, TySpan {start: start, end: end}))
+  ck_val(ck_lookup(c, surface_name_text(name), env, TySpan {start: start, end: end}, None))
 ) {
   Eq::subst(
-    Mut1(Ty, Checker),
-    mut1(ty_substitute(declared, Ordmap::empty()), c),
-    ck_lookup(c, name, env, TySpan {start: start, end: end}),
     (m: Mut1(Ty, Checker)) => MonomorphicFunctionTyping(
       ck_subst_of(c),
       env,
@@ -147,9 +171,10 @@ pub theorem ck_lookup_monomorphic_sound(
     Eq::sym(
       ck_lookup_monomorphic_value(
         c,
-        name,
+        surface_name_text(name),
         env,
         TySpan {start: start, end: end},
+        None,
         declared,
         ctors,
         missing,
@@ -162,11 +187,11 @@ pub theorem ck_lookup_monomorphic_sound(
       ctors,
       start,
       end,
-      FunctionReference::Mk(env_find_absent(env, name, missing), found),
+      FunctionReference::Mk(env_find_absent(env, surface_name_text(name), missing), found),
       ty_substitute_empty_equal(
         declared,
         ck_subst_of(c),
-        (gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), a: Ty, b: Ty) => RigidFor(
+        (gs: List(Text × Kind), rigid: Ordmap(Text, Ty), a: Ty, b: Ty) => RigidFor(
           ck_subst_of(c),
           gs,
           rigid,

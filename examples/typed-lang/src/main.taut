@@ -2,16 +2,16 @@ import "core.taut"
 import "pipeline.taut"
 import "lower.taut"
 import "syntax.taut"
-import std::prelude::Os
-import std::prelude::Macro { SynArg, SynDiag }
-import "../../../std/Text.taut"
+import std::builtin::os
+import std::builtin::macro { SynArg, SynDiag }
+import std::text
 
 pub fn show_ty(ty: Ty): Text {
-  ⊢ Text from match ty { TNat => "Nat", TBool => "Bool" }
+  match ty { TNat => "Nat", TBool => "Bool" }
 }
 
 pub fn show_val(v: Option(Val)): Text {
-  ⊢ Text from match v {
+  match v {
     None => "stuck"
     Some(x) => ⊢ Text from match x {
       VNat(n) => Text::of_nat(n)
@@ -54,7 +54,7 @@ pub fn show_diag(d: SynDiag): Unit ! {stdout} {
   }
 }
 
-pub fn run_text(src: Text): Unit ! {Div, stdout} {
+pub fn run_text(src: Text): Unit ! {div, stdout} {
   match tl::parse(src) {
     Err(d) => {
       print("syntax error: ")
@@ -77,7 +77,7 @@ pub fn run_text(src: Text): Unit ! {Div, stdout} {
 }
 
 // Read one expression per line; errors leave the next prompt available.
-pub fn repl(): Unit ! {Div, stdin, stdout, stdout_flush} {
+pub fn repl(): Unit ! {div, stdin, stdout, stdout_flush} {
   print("> ")
   perform stdout_flush()
   match perform stdin() {
@@ -91,5 +91,7 @@ pub fn repl(): Unit ! {Div, stdin, stdout, stdout_flush} {
   }
 }
 
-print("typed-lang REPL (:quit to exit)\n")
-repl()
+perform main(() => {
+  print("typed-lang REPL (:quit to exit)\n")
+  repl()
+})

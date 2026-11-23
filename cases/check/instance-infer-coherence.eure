@@ -1,0 +1,83 @@
+description = "Ordinary instance coherence compares nested constructor patterns and normalized implicit arguments."
+
+@ cases.instance-nested-disjoint-sibling
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { LocalMk: Local }
+inductive Key: Type { KeyPair(left: Nat, right: Nat): Key }
+inductive class Read(A: Type, key: Key) { fn read(value: A): Nat }
+instance<n: Nat> Read(Local, KeyPair(n, 2)) { fn read(value: Local): Nat { 2 } }
+instance<n: Nat> Read(Local, KeyPair(n, 3)) { fn read(value: Local): Nat { 3 } }
+```
+checks_all = "ok"
+differential = "elaborator"
+
+@ cases.instance-constructor-implicit-normalization
+extract = false
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { LocalMk: Local }
+inductive Box(A: Type): Type { BoxValue(value: A): Box(A) }
+inductive class Read(A: Type, key: Box(Nat)) { fn read(value: A): Nat }
+instance Read(Local, BoxValue(1)) { fn read(value: Local): Nat { 1 } }
+instance Read(Local, BoxValue(<A: Nat>, 1)) { fn read(value: Local): Nat { 2 } }
+```
+checks_all = "ok"
+checks."input/main.taut::Read(Local, Box::BoxValue(…, 1))" = "error: already defined"
+differential = "elaborator"
+
+@ cases.instance-unused-duplicate
+extract = false
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { LocalMk: Local }
+inductive Key: Type { KeyPair(left: Nat, right: Nat): Key }
+inductive class Read(A: Type, key: Key) { fn read(value: A): Nat }
+instance Read(Local, KeyPair(1, 2)) { fn read(value: Local): Nat { 1 } }
+instance Read(Local, KeyPair(1, 2)) { fn read(value: Local): Nat { 2 } }
+```
+checks_all = "ok"
+checks."input/main.taut::Read(Local, Key::KeyPair(1, 2))" = "error: already defined"
+differential = "elaborator"
+
+@ cases.instance-multiple-constructor-implicits
+extract = false
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { LocalMk: Local }
+inductive Duo(A: Type, B: Type): Type { DuoValue(left: A, right: B): Duo(A, B) }
+inductive class Read(A: Type, key: Duo(Nat, Bool)) { fn read(value: A): Nat }
+instance Read(Local, DuoValue(<A: Nat, B: Bool>, 1, true)) { fn read(value: Local): Nat { 2 } }
+```
+checks_all = "ok"
+checks."input/main.taut::Read(Local, Duo::DuoValue(…, 1, true))" = "error: instance arguments must be first-order constructor heads, literals, or generics"
+differential = "elaborator"
+
+@ cases.instance-text-literal-constructor-duplicate
+extract = false
+imports = [path`../../std/text.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { LocalMk: Local }
+inductive class Read(A: Type, key: Text) { fn read(value: A): Nat }
+instance Read(Local, "AB") { fn read(value: Local): Nat { 1 } }
+instance Read(Local, Text::Mk(Cons(65, Cons(66, Nil)))) { fn read(value: Local): Nat { 2 } }
+```
+checks_all = "ok"
+checks."input/main.taut::Read(Local, Text::Mk(List::Cons(65, List::Cons(66, List::Nil))))" = "error: already defined"
+differential = "elaborator"
+
+@ cases.instance-text-constructor-solo
+imports = [path`../../std/text.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { LocalMk: Local }
+inductive class Read(A: Type, key: Text) { fn read(value: A): Nat }
+instance Read(Local, Text::Mk(Cons(65, Cons(66, Nil)))) { fn read(value: Local): Nat { 2 } }
+```
+checks_all = "ok"
+differential = "elaborator"

@@ -1,7 +1,7 @@
 import "written_function_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -10,11 +10,13 @@ import "diagnostic_sound.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_atomic_sound.taut"
 import "written_leaf_sound.taut"
 import "written_name_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 pub theorem written_info_arguments<env: Datas, generics: Ordmap(
   Text,
@@ -33,7 +35,7 @@ pub theorem written_info_arguments<env: Datas, generics: Ordmap(
   generics,
   partial,
   under_borrow,
-  SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
+  SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("Info")), start, end, ast_occurrence), Cons(arg, Nil)),
   ck_val(frame_app_info(c, types))
 ) {
   ⊢ WrittenKind(
@@ -41,7 +43,7 @@ pub theorem written_info_arguments<env: Datas, generics: Ordmap(
     generics,
     partial,
     under_borrow,
-    SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
+    SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("Info")), start, end, ast_occurrence), Cons(arg, Nil)),
     ck_val(frame_app_info(c, types))
   ) from match meaning {
     WrittenTermsCons(first, rest, t, ts, head, tail) => WrittenKindInfo(first, t, start, end, head)
@@ -60,17 +62,17 @@ pub theorem written_generic_arguments<env: Datas, generics: Ordmap(
   start: Nat,
   end: Nat,
   span: TySpan,
-  name: Text,
+  name: SurfaceName,
   bound: Ty,
-  not_info: (name = "Info") -> False,
-  parameter: Ordmap::get(generics, name, Ordmap::compare_text) = Some(bound)
+  not_info: (surface_name_text(name) = "Info") -> False,
+  parameter: Ordmap::get(generics, surface_name_text(name), Ordmap::compare_text) = Some(bound)
 ): WrittenKind(
   env,
   generics,
   partial,
   under_borrow,
   SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
-  ck_val(frame_app_generic(c, name, generics, span, types))
+  ck_val(frame_app_generic(c, surface_name_text(name), generics, span, types))
 ) {
   ⊢ WrittenKind(
     env,
@@ -78,24 +80,20 @@ pub theorem written_generic_arguments<env: Datas, generics: Ordmap(
     partial,
     under_borrow,
     SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
-    ck_val(frame_app_generic(c, name, generics, span, types))
+    ck_val(frame_app_generic(c, surface_name_text(name), generics, span, types))
   ) from match meaning {
     WrittenTermsCons(gs, Mode, first, rest, t, ts, head, tail) => WrittenKindGeneric(
-      env,
-      ast_occurrence,
-      gs,
-      Mode,
-      under_borrow,
+      <env: env, ast_occurrence: ast_occurrence, generics: gs, partial: Mode, under_borrow: under_borrow>,
       name,
       first,
-      ck_written_name(name, gs),
+      ck_written_name(surface_name_text(name), gs),
       t,
       bound,
       start,
       end,
       not_info,
       parameter,
-      ck_written_name_sound(name, gs),
+      ck_written_name_sound(surface_name_text(name), gs),
       head
     )
   }
@@ -106,19 +104,19 @@ pub theorem written_named_arguments(
   c: Checker,
   generics: Ordmap(Text, Ty),
   under_borrow: Bool,
-  name: Text,
+  name: SurfaceName,
   args: List(SurfaceTerm),
   types: List(Ty),
   start: Nat,
   end: Nat,
   span: TySpan,
-  not_tuple: (name = "Tuple") -> False,
-  not_info: (name = "Info") -> (list_len(args) = 1) -> False,
-  unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None,
-  slice_borrowed: (name = "Slice") -> (under_borrow = true),
+  not_pair: (surface_name_text(name) = "std::prelude::Pair") -> False,
+  not_info: (surface_name_text(name) = "Info") -> (list_len(args) = 1) -> False,
+  unbound: Ordmap::get(generics, surface_name_text(name), Ordmap::compare_text) = None,
+  slice_borrowed: (surface_name_text(name) = "Slice") -> (under_borrow = true),
   meaning: WrittenTerms(ck_datas_of(c), generics, frame_constructor_position(c), args, types),
   clean: DiagnosticClean(
-    ck_st(frame_return(TyNamed(name, types), ck_arity(c, name, list_len(types), span)))
+    ck_st(frame_return(TyNamed(NameSpelled(surface_name_text(name)), types), ck_arity(c, surface_name_text(name), list_len(types), span)))
   )
 ): WrittenKind(
   ck_datas_of(c),
@@ -126,7 +124,7 @@ pub theorem written_named_arguments(
   frame_constructor_position(c),
   under_borrow,
   SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
-  ck_val(frame_return(TyNamed(name, types), ck_arity(c, name, list_len(types), span)))
+  ck_val(frame_return(TyNamed(NameSpelled(surface_name_text(name)), types), ck_arity(c, surface_name_text(name), list_len(types), span)))
 ) {
   Eq::subst(
     (t: Ty) => WrittenKind(
@@ -137,26 +135,26 @@ pub theorem written_named_arguments(
       SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
       t
     ),
-    Eq::sym(written_return_value(TyNamed(name, types), ck_arity(c, name, list_len(types), span))),
+    Eq::sym(written_return_value(TyNamed(NameSpelled(surface_name_text(name)), types), ck_arity(c, surface_name_text(name), list_len(types), span))),
     WrittenKindNamed(
       name,
       args,
       types,
       start,
       end,
-      not_tuple,
+      not_pair,
       not_info,
       unbound,
       slice_borrowed,
       meaning,
       ck_written_arity_mode_sound(
         c,
-        name,
+        surface_name_text(name),
         types,
         span,
         Eq::subst(
           DiagnosticClean,
-          written_return_state(TyNamed(name, types), ck_arity(c, name, list_len(types), span)),
+          written_return_state(TyNamed(NameSpelled(surface_name_text(name)), types), ck_arity(c, surface_name_text(name), list_len(types), span)),
           clean
         )
       )
@@ -215,7 +213,7 @@ pub theorem written_nested_arguments(
       Eq::sym(
         written_return_value(
           TyNamed(name, List::append(first, types)),
-          ck_arity(c, name, list_len(List::append(first, types)), span)
+          ck_arity(c, surface_name_text(name), list_len(List::append(first, types)), span)
         )
       ),
       WrittenKindNested(
@@ -231,14 +229,14 @@ pub theorem written_nested_arguments(
         arguments,
         ck_written_arity_mode_sound(
           c,
-          name,
+          surface_name_text(name),
           List::append(first, types),
           span,
           Eq::subst(
             DiagnosticClean,
             written_return_state(
               TyNamed(name, List::append(first, types)),
-              ck_arity(c, name, list_len(List::append(first, types)), span)
+              ck_arity(c, surface_name_text(name), list_len(List::append(first, types)), span)
             ),
             clean
           )
@@ -252,6 +250,7 @@ pub theorem written_nested_arguments(
     TyNever => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     TyDecimal => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     TyFloat => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyFloat32 => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     TyFn(params, result, kind) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     TyUnion(members) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     TyProduct(members) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))

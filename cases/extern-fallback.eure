@@ -1,0 +1,413 @@
+// Replaceable `extern` blocks: Tauto bodies as fallback, host bindings as a
+// whole-block replacement, with a sealed representation boundary.
+
+@ cases.bodyful-fn-only-fallback
+description = "An extern block of functions with bodies runs the Tauto implementation when no host bindings are configured."
+source = ```tauto
+extern {
+  pub fn double(n: i64): i64 ! {overflow} {
+    n + n
+  }
+}
+show(&double(21))
+```
+format = ```
+extern {
+  pub fn double(n: i64): i64 ! {overflow} {
+    n + n
+  }
+}
+show(&double(21))
+```
+stdout = "42\n"
+
+@ cases.replaceable-cell-fallback
+description = "A replaceable struct and its operations use the Tauto representation when unbound."
+source = ```tauto
+extern {
+  pub struct(affine) Cell {
+    value: i64,
+  }
+
+  pub fn Cell::new(value: i64): Cell {
+    Cell { value: value }
+  }
+
+  pub fn Cell::get(c: &Cell): i64 {
+    c.value
+  }
+
+  pub fn Cell::set(c: &mut Cell, value: i64): Unit {
+    c.value := value
+  }
+}
+
+pub fn Cell::bump(c: &mut Cell): Unit ! {overflow} {
+  Cell::set(c, Cell::get(c) + 1)
+}
+
+var c := Cell::new(40)
+Cell::bump(&mut c)
+Cell::bump(&mut c)
+show(&Cell::get(&c))
+```
+stdout = "42\n"
+
+@ cases.replaceable-derived-outside
+description = "A function outside the replaceable block may call the published operations."
+source = ```tauto
+extern {
+  pub struct(affine) Cell {
+    value: i64,
+  }
+
+  pub fn Cell::new(value: i64): Cell {
+    Cell { value: value }
+  }
+
+  pub fn Cell::get(c: &Cell): i64 {
+    c.value
+  }
+}
+
+pub fn Cell::is_zero(c: &Cell): Bool {
+  Cell::get(c) == 0
+}
+
+show(&Cell::is_zero(&Cell::new(0)))
+```
+stdout = "true\n"
+
+@ cases.mix-required-and-replaceable
+description = "A block cannot mix bodiless required signatures with Tauto bodies."
+source = ```tauto
+extern {
+  type(affine) Host
+  fn make(): Host {
+    Host {}
+  }
+}
+```
+compile_errors.rust = "front: an `extern` block cannot mix"
+compile_errors.javascript = "front: an `extern` block cannot mix"
+compile_errors.vm = "front: an `extern` block cannot mix"
+
+@ cases.mix-bodiless-and-bodyful-fns
+description = "A block cannot mix bodiless and bodyful functions."
+source = ```tauto
+extern {
+  fn need_host(n: i64): i64
+  fn have_body(n: i64): i64 {
+    n
+  }
+}
+```
+compile_errors.rust = "front: an `extern` block cannot mix"
+compile_errors.javascript = "front: an `extern` block cannot mix"
+compile_errors.vm = "front: an `extern` block cannot mix"
+
+@ cases.sealed-construction-outside
+description = "Code outside a replaceable block cannot construct its type."
+entry = "main.taut"
+files."main.taut" = ```tauto
+extern {
+  pub struct(affine) Cell {
+    value: i64,
+  }
+
+  pub fn Cell::new(value: i64): Cell {
+    Cell { value: value }
+  }
+}
+
+let c := Cell { value: 1 }
+show(&0)
+```
+check_errors = ["`Cell` is a replaceable extern type"]
+compile_errors.rust = "front: `Cell` is a replaceable extern type"
+compile_errors.javascript = "front: `Cell` is a replaceable extern type"
+
+@ cases.bodiless-extern-still-requires-binding
+description = "An existing bodiless extern still needs a host binding."
+source = ```tauto
+extern {
+  fn need_host(n: i64): i64
+}
+show(&need_host(1))
+```
+compile_errors.rust = "build: need_host has no rust binding"
+javascript.unimplemented = "unsupported: host extern bindings"
+vm.unimplemented = "generate: the extern need_host, which has no binding on the machine"
+
+@ cases.sealed-field-outside
+description = "Code outside a replaceable block cannot project its fields."
+entry = "main.taut"
+files."main.taut" = ```tauto
+extern {
+  pub struct(affine) Cell {
+    value: i64,
+  }
+
+  pub fn Cell::new(value: i64): Cell {
+    Cell { value: value }
+  }
+}
+
+fn peek(c: &Cell): i64 {
+  c.value
+}
+show(&peek(&Cell::new(1)))
+```
+check_errors = ["`Cell` is a replaceable extern type"]
+compile_errors.rust = "front: `Cell` is a replaceable extern type"
+compile_errors.javascript = "front: `Cell` is a replaceable extern type"
+
+@ cases.invalid-body-still-checked
+description = "A replaceable block's Tauto body is type-checked even when a host could replace it."
+entry = "main.taut"
+files."main.taut" = ```tauto
+extern {
+  pub fn bad(): i64 {
+    true
+  }
+}
+show(&bad())
+```
+check_errors = ["Bool does not fit i64"]
+
+@ cases.replaceable-cell-javascript-host
+description = "The same Cell program runs on JavaScript with a host box representation, and on Rust/VM with the Tauto fallback."
+tote = path`../examples/extern-fallback-cell`
+stdout = "42\n"
+
+@ cases.replaceable-partial-bindings
+description = "A partial host binding set for a replaceable block is refused."
+tote = path`../examples/extern-fallback-partial`
+compile_errors.rust = "build: replaceable extern block"
+compile_errors.javascript = "build: replaceable extern block"
+
+@ cases.sealed-assign-outside
+description = "Code outside a replaceable block cannot update its fields."
+entry = "main.taut"
+files."main.taut" = ```tauto
+extern {
+  pub struct(affine) Cell {
+    value: i64,
+  }
+
+  pub fn Cell::new(value: i64): Cell {
+    Cell { value: value }
+  }
+}
+
+fn poke(c: &mut Cell): Unit {
+  c.value := 99
+}
+show(&0)
+```
+check_errors = ["`Cell` is a replaceable extern type"]
+
+@ cases.sealed-match-outside
+description = "Code outside a replaceable block cannot match on its type."
+entry = "main.taut"
+files."main.taut" = ```tauto
+extern {
+  pub struct(affine) Cell {
+    value: i64,
+  }
+
+  pub fn Cell::new(value: i64): Cell {
+    Cell { value: value }
+  }
+}
+
+fn peek(c: Cell): i64 {
+  match c {
+    Cell { value: v } => v
+  }
+}
+show(&0)
+```
+check_errors = ["`Cell` is a replaceable extern type"]
+
+@ cases.replaceable-affine-dup-refused
+description = "A replaceable body that duplicates an affine value is refused."
+source = ```tauto
+extern {
+  pub fn twice<A>(x: A): A × A {
+    #(x, x)
+  }
+}
+show(&0)
+```
+lin = "error: x is used after move"
+
+@ cases.replaceable-effect-row-checked
+description = "A replaceable body that performs outside its written row is refused."
+source = ```tauto
+effect noise(): Unit
+
+extern {
+  pub fn quiet(): Unit ! {} {
+    perform noise()
+  }
+}
+show(&0)
+```
+rows = "error: `quiet` may perform noise but its row is {}"
+
+@ cases.class-method-body-refused
+description = "A class method cannot carry a body."
+source = ```tauto
+class Test(A: Type) {
+  fn bad(a: A): A { true }
+}
+```
+compile_errors.rust = "front: a class method is a signature only"
+compile_errors.javascript = "front: a class method is a signature only"
+compile_errors.vm = "front: a class method is a signature only"
+
+@ cases.replaceable-body-as-definition
+description = "A pure replaceable body is a kernel definition, so equality proofs can use it."
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::nat
+
+extern {
+  pub fn identity(n: Nat): Nat {
+    n
+  }
+}
+
+theorem id_zero(): identity(Zero) = Zero {
+  Refl(<A: Nat, a: Zero>)
+}
+```
+check_errors = []
+
+@ cases.replaceable-prunes-fallback-only-deps
+description = "Selecting a host implementation for a replaceable member does not require bindings for callees only its Tauto fallback used."
+tote = path`../examples/extern-fallback-prune`
+stdout = "42\n"
+eval.unimplemented = "extern low: extern is not runnable: low"
+javascript.unimplemented = "unsupported: host extern bindings"
+vm.unimplemented = "generate: the extern low, which has no binding on the machine"
+
+@ cases.replaceable-keeps-handler-externs
+description = "Reachability after host selection still keeps externs used only from suspending handler arms."
+tote = path`../examples/extern-fallback-handler`
+stdout = "43\n"
+eval.unimplemented = "extern answer: extern is not runnable: answer"
+rust.unimplemented = "build: error: answer has no rust binding (add it to rust.extern in Tauto.eure)"
+vm.unimplemented = "generate: the extern answer, which has no binding on the machine"
+
+@ cases.replaceable-prunes-fallback-helper-fns
+description = "Host selection omits Tauto helpers that only the replaced fallback called, so they do not keep pruned externs."
+tote = path`../examples/extern-fallback-helper`
+stdout = "42\n"
+eval.unimplemented = "extern low: extern is not runnable: low"
+javascript.unimplemented = "unsupported: host extern bindings"
+vm.unimplemented = "generate: the extern low, which has no binding on the machine"
+
+@ cases.replaceable-prunes-fallback-only-types
+description = "Host selection does not require bindings for host types only the replaced fallback used."
+tote = path`../examples/extern-fallback-token`
+stdout = "42\n"
+eval.unimplemented = "extern mint: extern is not runnable: mint"
+javascript.unimplemented = "unsupported: host extern bindings"
+vm.unimplemented = "generate: the extern mint, which has no binding on the machine"
+
+@ cases.replaceable-prunes-fallback-wrapper-types
+description = "Host selection omits ordinary structs that only the replaced fallback used, including those that named pruned host types."
+tote = path`../examples/extern-fallback-holder`
+stdout = "42\n"
+eval.unimplemented = "extern mint: extern is not runnable: mint"
+javascript.unimplemented = "unsupported: host extern bindings"
+vm.unimplemented = "generate: the extern mint, which has no binding on the machine"
+
+@ cases.replaceable-host-repr-skips-fallback-fields
+description = "A host-selected replaceable type is a leaf for type reachability: its Tauto fields are not followed for bindings."
+tote = path`../examples/extern-fallback-host-repr`
+stdout = "42\n"
+eval.unimplemented = "extern mint: extern is not runnable: mint"
+javascript.unimplemented = "unsupported: host extern bindings"
+vm.unimplemented = "generate: the extern mint, which has no binding on the machine"
+
+@ cases.fallback-body-calls-imported-fn
+description = "A fn body inside a replaceable extern block calls a function it imports, as a fn outside the block does."
+source = ```tauto
+import std::uint { UInt }
+
+extern {
+  pub fn widen(n: Nat): UInt(64) {
+    UInt::of_nat_mod64(n)
+  }
+}
+
+pub fn widen_outside(n: Nat): UInt(64) {
+  UInt::of_nat_mod64(n)
+}
+
+show(&widen(42))
+show(&widen_outside(42))
+```
+format = ```
+import std::uint { UInt }
+
+extern {
+  pub fn widen(n: Nat): UInt(64) {
+    UInt::of_nat_mod64(n)
+  }
+}
+
+pub fn widen_outside(n: Nat): UInt(64) {
+  UInt::of_nat_mod64(n)
+}
+
+show(&widen(42))
+show(&widen_outside(42))
+```
+stdout = "42\n42\n"
+
+@ cases.fallback-body-calls-bound-class-method
+description = "A fn body inside a replaceable extern block calls a method of a class its `where` bounds, as a fn outside the block does."
+source = ```tauto
+pub class Size(A: Shared) { fn size(a: &A): i64 }
+instance Size(i64) { fn size(a: &i64): i64 { a } }
+
+extern {
+  pub fn doubled<A: Shared>(a: &A): i64 ! {overflow} where Size(A) {
+    Size::size(a) + Size::size(a)
+  }
+}
+
+pub fn doubled_outside<A: Shared>(a: &A): i64 ! {overflow} where Size(A) {
+  Size::size(a) + Size::size(a)
+}
+
+show(&doubled(&21))
+show(&doubled_outside(&21))
+```
+stdout = "42\n42\n"
+
+@ cases.fallback-body-calls-generic-class-method
+description = "A fallback body under a `where` calls a class method with generics of its own, and a struct of the block holds the result: each call gets its own copy of the body, inside the block, on every backend."
+source = ```tauto
+pub class Fold(A: Shared) { fn fold<H>(a: &A, h: H, step: &((H, i64) -> H)): H }
+instance Fold(i64) { fn fold<H>(a: &i64, h: H, step: &((H, i64) -> H)): H { step(h, a) } }
+
+extern {
+  pub struct Total { sum: i64 }
+
+  pub fn total<A: Shared>(a: &A): Total where Fold(A) {
+    Total { sum: Fold::fold(a, 0, &((h: i64, w: i64) => w)) }
+  }
+
+  pub fn sum(t: &Total): i64 {
+    t.sum
+  }
+}
+
+show(&sum(&total(&41)))
+```
+stdout = "41\n"

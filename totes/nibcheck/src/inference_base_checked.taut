@@ -2,13 +2,14 @@ import "inference_base.taut"
 import "inference_base_error_sound.taut"
 import "record_checked_sound.taut"
 import "handle_checked_sound.taut"
-import std::Text
+import std::text
 import "checked_frame.taut"
 import "checker.taut"
 import "datas.taut"
 import "pattern_scope_checked.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -117,11 +118,11 @@ pub def Inference_ck_clone_of_in_checked(
 
 pub def Inference_ck_lambda_in_checked(
   k: Nat
-): Prop := ∀ c: Checker. ∀ lam: SurfaceTerm. ∀ borrows: List(
+): Prop := ∀ c: Checker. ∀ lam: SurfaceTerm. ∀ r#borrows: List(
   Option(Bool)
 ). ∀ env: List(
   Local
-). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_lambda_in(k, c, lam, borrows, env))
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_lambda_in(k, c, lam, r#borrows, env))
 
 pub def Inference_ck_record_fields_in_checked(
   k: Nat
@@ -589,11 +590,11 @@ pub theorem inference_use_ck_lambda_in_checked(
   k: Nat,
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local),
   ordered: CkOrdered(c),
   ih: InferenceFrames_checked(k)
-): CkCheckedFrame(c, ck_lambda_in(k, c, lam, borrows, env)) {
+): CkCheckedFrame(c, ck_lambda_in(k, c, lam, r#borrows, env)) {
   And::left(
     And::right(
       And::right(
@@ -612,7 +613,7 @@ pub theorem inference_use_ck_lambda_in_checked(
         )
       )
     )
-  )(c, lam, borrows, env, ordered)
+  )(c, lam, r#borrows, env, ordered)
 }
 
 pub theorem inference_use_ck_record_fields_in_checked(
@@ -1157,7 +1158,7 @@ pub theorem inference_bind_scope_frame_checked<A: Type, B: Type>(
     next
   ). CkCheckedFrame(next, k(v, next, env))
 ): CkCheckedFrame(c, inference_bind_scope(k, m)) {
-  ⊢ CkCheckedFrame(c, inference_bind_scope(k, m)) from match m {
+  match m {
     mut2(v, next, env) => {
       let h: CkCheckedFrame(next, k(v, next, env)) := hk(v, next, env, And::left(hm))
       AndIntro(And::left(h), clean_errors => And::right(hm)(And::right(h)(clean_errors)))

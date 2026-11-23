@@ -1,17 +1,17 @@
 import "bindings.taut"
-import std::Text
+import std::text
 pub(open) inductive RustgenRecordField: Type {
   Mk(name: Text, value: RustgenValue, local: Text): RustgenRecordField
 }
 
 pub fn rustgen_record_has_name(name: Text, fields: List(RustgenRecordField)): Bool {
-  ⊢ Bool from match fields {
+  match fields {
     Nil => false
     Cons(field, rest) => name == field.name || rustgen_record_has_name(name, rest)
   }
 }
 pub fn rustgen_record_unique(fields: List(RustgenRecordField)): Bool {
-  ⊢ Bool from match fields {
+  match fields {
     Nil => true
     Cons(field, rest) => not(
       rustgen_record_has_name(field.name, rest)
@@ -20,7 +20,7 @@ pub fn rustgen_record_unique(fields: List(RustgenRecordField)): Bool {
 }
 // Bind written expressions once in their source order before field reordering.
 pub fn rustgen_record_bindings(fields: List(RustgenRecordField)): Text {
-  ⊢ Text from match fields {
+  match fields {
     Nil => ""
     Cons(field, rest) => Text::concat(
       "let ",
@@ -38,7 +38,7 @@ pub fn rustgen_record_value(
   name: Text,
   fields: List(RustgenRecordField)
 ): RustgenResult(RustgenValue) {
-  ⊢ RustgenResult(RustgenValue) from match fields {
+  match fields {
     Nil => RustgenErr("missing record field")
     Cons(field, rest) => if name == field.name {
       RustgenOk(RustgenValue { ty: field.value.ty, code: field.local })
@@ -49,7 +49,7 @@ pub fn rustgen_record_arguments(
   params: List(RustgenBinding),
   fields: List(RustgenRecordField)
 ): RustgenResult(List(RustgenValue)) {
-  ⊢ RustgenResult(List(RustgenValue)) from match params {
+  match params {
     Nil => RustgenOk(Nil)
     Cons(param, rest) => ⊢ RustgenResult(List(RustgenValue)) from match rustgen_record_value(
       param.name,

@@ -1,0 +1,40 @@
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  List::Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  List::Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  List::Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  List::Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedApply_1(f: TautoErasedValue_1, args_1: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call_1) => {
+    let count := TautoErasedLength_1(args_1)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call_1(TautoErasedConcat_1(args_1, rest))) } else if count == arity { call_1(args_1) } else { TautoErasedApply_1(call_1(TautoErasedTake_1(arity, args_1)), TautoErasedDrop_1(arity, args_1)) }
+  }
+  TautoErasedValue_1::TautoErasedUnit_1 => TautoErasedValue_1::TautoErasedUnit_1
+  _ => extract_unreachable()
+} }

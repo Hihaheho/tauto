@@ -5,13 +5,16 @@ import "instances_error_sound.taut"
 import "decl_names_error_sound.taut"
 import "data_names_error_sound.taut"
 import "field_recheck_error_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "error_frame.taut"
 import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
 import "types_run.taut"
 import "../../surface/src/surface.taut"
 
@@ -22,34 +25,41 @@ pub theorem registration_fns_after_fields_frame_errors(
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, registration_fns_after_fields(c, prelude, program, own)) {
   error_frame_bind(
-    List(SurfaceFn),
-    List(Pair(SurfaceFn, Scheme)),
+    <A: List(SurfaceFn), B: List(SurfaceFn × Scheme)>,
     c,
     (synthesized: List(SurfaceFn), c1: Checker) => frame_bind(
-      Unit,
-      List(Pair(SurfaceFn, Scheme)),
+      <A: Unit, B: List(SurfaceFn × Scheme)>,
       (ignored: Unit, c2: Checker) => frame_bind(
-        List(Pair(SurfaceFn, Scheme)),
-        List(Pair(SurfaceFn, Scheme)),
-        (fns: List(Pair(SurfaceFn, Scheme)), c3: Checker) => mut1(
-          List::append(fns, ck_synthesized_schemes(synthesized, c3)),
+        <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+        (fns: List(SurfaceFn × Scheme), c3: Checker) => mut1(
+          List::append(
+            fns,
+            List::append(
+              ck_program_replaceable_fns(program, c3),
+              ck_synthesized_schemes(synthesized, c3)
+            )
+          ),
           c3
         ),
         ck_program_decls(program, c2)
       ),
       ck_prelude_fns(prelude, c1, own)
     ),
-    ck_declare_classes(c, program),
-    ck_declare_classes_frame_errors(c, program),
+    ck_declare_all_classes(c, prelude, program),
+    ck_declare_all_classes_frame_errors(c, prelude, program),
     synthesized => c1 => error_frame_bind(
-      Unit,
-      List(Pair(SurfaceFn, Scheme)),
+      <A: Unit, B: List(SurfaceFn × Scheme)>,
       c1,
       (ignored: Unit, c2: Checker) => frame_bind(
-        List(Pair(SurfaceFn, Scheme)),
-        List(Pair(SurfaceFn, Scheme)),
-        (fns: List(Pair(SurfaceFn, Scheme)), c3: Checker) => mut1(
-          List::append(fns, ck_synthesized_schemes(synthesized, c3)),
+        <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+        (fns: List(SurfaceFn × Scheme), c3: Checker) => mut1(
+          List::append(
+            fns,
+            List::append(
+              ck_program_replaceable_fns(program, c3),
+              ck_synthesized_schemes(synthesized, c3)
+            )
+          ),
           c3
         ),
         ck_program_decls(program, c2)
@@ -57,11 +67,16 @@ pub theorem registration_fns_after_fields_frame_errors(
       ck_prelude_fns(prelude, c1, own),
       ck_prelude_fns_frame_errors(prelude, c1, own),
       ignored => c2 => error_frame_bind(
-        List(Pair(SurfaceFn, Scheme)),
-        List(Pair(SurfaceFn, Scheme)),
+        <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
         c2,
-        (fns: List(Pair(SurfaceFn, Scheme)), c3: Checker) => mut1(
-          List::append(fns, ck_synthesized_schemes(synthesized, c3)),
+        (fns: List(SurfaceFn × Scheme), c3: Checker) => mut1(
+          List::append(
+            fns,
+            List::append(
+              ck_program_replaceable_fns(program, c3),
+              ck_synthesized_schemes(synthesized, c3)
+            )
+          ),
           c3
         ),
         ck_program_decls(program, c2),
@@ -79,8 +94,7 @@ pub theorem registration_fns_after_names_frame_errors(
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, registration_fns_after_names(c, prelude, program, own)) {
   error_frame_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     c,
     (ignored: Unit, next: Checker) => registration_fns_after_fields(next, prelude, program, own),
     ck_recheck_datas(types_data_decls(program), c),
@@ -96,8 +110,7 @@ pub theorem registration_fns_after_data_names_frame_errors(
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, registration_fns_after_data_names(c, prelude, program, own)) {
   error_frame_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     c,
     (ignored: Unit, next: Checker) => registration_fns_after_names(next, prelude, program, own),
     ck_check_fn_names(c, types_function_decls(program)),
@@ -113,8 +126,7 @@ pub theorem registration_fns_frame_errors(
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, registration_fns(c, prelude, program, own)) {
   error_frame_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     c,
     (ignored: Unit, next: Checker) => registration_fns_after_data_names(
       next,
@@ -134,7 +146,7 @@ pub theorem ck_prepare_fns_frame_errors(
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, ck_prepare_fns(c, prelude, program, own)) {
   Eq::subst(
-    (z: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkErrorFrame(c, z),
+    (z: Mut1(List(SurfaceFn × Scheme), Checker)) => CkErrorFrame(c, z),
     Eq::sym(registration_fns_unf(c, prelude, program, own)),
     registration_fns_frame_errors(c, prelude, program, own)
   )

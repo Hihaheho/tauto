@@ -1,11 +1,11 @@
 import "llk.taut"
 import "../../scan/src/scan.taut"
-import std::Array
-import std::Base
-import std::Stack
+import std::array
+import std::base
+import std::stack
 
 // A parse that succeeds is a derivation by the tables' productions
-// (`docs/design/self-host.md`「llk（`totes/llk/src/derives.taut`）」). `LlkDerives(t, stack, tokens)` reads the parser's
+// (`docs/design/self-host.md`「Proofs」). `LlkDerives(t, stack, tokens)` reads the parser's
 // stack (top first) as what is still to be derived:
 //
 // * a non-terminal is replaced by the symbols of one of its productions
@@ -38,7 +38,7 @@ pub fn llk_productions_of(t: LlkTables): Array(LlkProduction) {
 }
 
 pub fn llk_onto(symbols: List(LlkSym), items: List(LlkSym)): List(LlkSym) {
-  ⊢ List(LlkSym) from match symbols {
+  match symbols {
     Nil => items
     Cons(symbol, rest) => llk_onto(rest, Cons(symbol, items))
   }
@@ -87,15 +87,15 @@ pub theorem llk_option_cases<A: Type>(
   a: (o = None) -> P(None),
   b: ∀ x: A. (o = Some(x)) -> P(Some(x))
 ): P(o) {
-  ⊢ P(o) from match o {
+  match o {
     None => a(Refl)
     Some(x) => b(x, Refl)
   }
 }
 
 pub fn llk_value(m: Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent))): LlkResult {
-  ⊢ LlkResult from match m {
-    mut2(v, a, b) => v
+  match m {
+    mut2(v, ^a, ^b) => v
   }
 }
 
@@ -103,7 +103,7 @@ pub fn llk_value(m: Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent))): LlkResult 
 pub fn llk_rewrap(
   m: Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent))
 ): Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) {
-  ⊢ Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) from match m {
+  match m {
     mut2(v, a, b) => mut2(v, a, b)
   }
 }
@@ -111,7 +111,7 @@ pub fn llk_rewrap(
 pub theorem llk_rewrap_value(
   m: Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent))
 ): llk_value(llk_rewrap(m)) = llk_value(m) {
-  ⊢ llk_value(llk_rewrap(m)) = llk_value(m) from match m {
+  match m {
     mut2(v, a, b) => Refl
   }
 }
@@ -121,13 +121,13 @@ pub fn llk_wrap1(
   s: Stack(LlkSym),
   m: Mut1(LlkResult, Stack(LlkEvent))
 ): Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) {
-  ⊢ Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) from match m {
+  match m {
     mut1(v, e) => mut2(v, s, e)
   }
 }
 
 pub theorem llk_failed_ne_parsed(x: LlkError, e: LlkFailed(x) = LlkParsed): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
@@ -136,7 +136,7 @@ pub theorem llk_failure_ne_parsed(
   expected: List(Nat),
   e: llk_failure(tokens, expected) = LlkParsed
 ): False {
-  ⊢ False from match tokens {
+  match tokens {
     Nil => llk_failed_ne_parsed(LlkError::Mk(None, expected), e)
     Cons(token, rest) => ⊢ False from match token {
       LlkTok::Mk(ty, st, en, tr) => llk_failed_ne_parsed(LlkError::Mk(Some(st), expected), e)
@@ -147,10 +147,10 @@ pub theorem llk_failure_ne_parsed(
 pub fn llk_finish_at(
   tokens: List(LlkTok),
   token: LlkTok,
-  &mut events: Stack(LlkEvent),
+  events: &mut Stack(LlkEvent),
   c: Bool
 ): LlkResult {
-  ⊢ LlkResult from match c {
+  match c {
     true => {
       llk_trivia_onto(token.trivia, &mut events)
       Stack::push(&mut events, LlkClose)
@@ -161,9 +161,9 @@ pub fn llk_finish_at(
 }
 
 pub fn llk_at_end(tokens: List(LlkTok)): Prop {
-  ⊢ Prop from match tokens {
+  match tokens {
     Nil => False
-    Cons(token, rest) => llk_type_of(token) = 0
+    Cons(token, ^rest) => llk_type_of(token) = 0
   }
 }
 
@@ -173,7 +173,7 @@ pub theorem llk_finish_sound(
   s: Stack(LlkSym),
   h: llk_value(llk_wrap1(s, llk_finish(tokens, ev))) = LlkParsed
 ): llk_at_end(tokens) {
-  ⊢ llk_at_end(tokens) from match tokens {
+  match tokens {
     Nil => False::elim(llk_failed_ne_parsed(LlkError::Mk(None, Nil), h))
     Cons(token, rest) => ⊢ llk_at_end(Cons(token, rest)) from match token {
       LlkTok::Mk(ty, st, en, tr) => Nat::eq_sound(
@@ -214,7 +214,7 @@ pub theorem llk_done_of(
   tokens: List(LlkTok),
   e: llk_at_end(tokens)
 ): LlkDerives(t, Nil, tokens) {
-  ⊢ LlkDerives(t, Nil, tokens) from match tokens {
+  match tokens {
     Nil => False::elim(e)
     Cons(token, rest) => LlkDDone(token, rest, e)
   }
@@ -225,7 +225,7 @@ pub theorem llk_end_of(
   tokens: List(LlkTok),
   e: llk_at_end(tokens)
 ): LlkDerives(t, Cons(LlkT(0), Nil), tokens) {
-  ⊢ LlkDerives(t, Cons(LlkT(0), Nil), tokens) from match tokens {
+  match tokens {
     Nil => False::elim(e)
     Cons(token, rest) => LlkDEnd(token, rest, e)
   }
@@ -237,19 +237,19 @@ pub fn llk_events_push(ev: Stack(LlkEvent), x: LlkEvent): Stack(LlkEvent) {
 
 // What a call at the end of a body with one `&mut` argument is made into.
 pub fn llk_rewrap1<A, S>(m: Mut1(A, S)): Mut1(A, S) {
-  ⊢ Mut1(A, S) from match m {
+  match m {
     mut1(v, x) => mut1(v, x)
   }
 }
 
 pub theorem llk_rewrap1_id<A: Type, S: Type>(m: Mut1(A, S)): llk_rewrap1(m) = m {
-  ⊢ llk_rewrap1(m) = m from match m {
+  match m {
     mut1(v, x) => Refl
   }
 }
 
 pub fn llk_trivia_after(trivia: List(ScanToken), ev: Stack(LlkEvent)): Stack(LlkEvent) {
-  ⊢ Stack(LlkEvent) from match trivia {
+  match trivia {
     Nil => ev
     Cons(token, rest) => llk_trivia_after(
       rest,
@@ -262,7 +262,7 @@ pub theorem llk_trivia_onto_is(
   trivia: List(ScanToken),
   ev: Stack(LlkEvent)
 ): llk_trivia_onto(trivia, ev) = mut1(Star, llk_trivia_after(trivia, ev)) {
-  ⊢ llk_trivia_onto(trivia, ev) = mut1(Star, llk_trivia_after(trivia, ev)) from match trivia {
+  match trivia {
     Nil => Refl
     Cons(token, rest) => Eq::trans(
       llk_rewrap1_id(
@@ -310,13 +310,13 @@ pub def LlkIh(
 // A terminal to match, on the tokens and on whether the next one has it.
 pub fn llk_tokens_at(
   f: Nat,
-  &t: LlkTables,
+  t: &LlkTables,
   terminal: Nat,
   tokens: List(LlkTok),
-  &mut stack: Stack(LlkSym),
-  &mut events: Stack(LlkEvent)
+  stack: &mut Stack(LlkSym),
+  events: &mut Stack(LlkEvent)
 ): LlkResult {
-  ⊢ LlkResult from match tokens {
+  match tokens {
     Nil => llk_failure(tokens, Cons(terminal, Nil))
     Cons(token, more) => ⊢ LlkResult from match token.token_type == terminal {
       true => {
@@ -331,16 +331,16 @@ pub fn llk_tokens_at(
 
 pub fn llk_term_at(
   f: Nat,
-  &t: LlkTables,
+  t: &LlkTables,
   terminal: Nat,
   tokens: List(LlkTok),
   token: LlkTok,
   more: List(LlkTok),
-  &mut stack: Stack(LlkSym),
-  &mut events: Stack(LlkEvent),
+  stack: &mut Stack(LlkSym),
+  events: &mut Stack(LlkEvent),
   c: Bool
 ): LlkResult {
-  ⊢ LlkResult from match c {
+  match c {
     true => {
       llk_trivia_onto(token.trivia, &mut events)
       Stack::push(&mut events, LlkToken(token.token_type, token.start, token.end))
@@ -359,12 +359,12 @@ pub fn llk_k_tok(
   stack: Stack(LlkSym),
   m: Mut1(Unit, Stack(LlkEvent))
 ): Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) {
-  ⊢ Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) from match m {
-    mut1(v, events) => ⊢ Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) from match Stack::push(
+  match m {
+    mut1(^v, events) => ⊢ Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) from match Stack::push(
       events,
       LlkToken(token.token_type, token.start, token.end)
     ) {
-      mut1(v2, events2) => llk_rewrap(llk_run_in(f, t, more, stack, events2))
+      mut1(^v2, events2) => llk_rewrap(llk_run_in(f, t, more, stack, events2))
     }
   }
 }
@@ -424,7 +424,7 @@ pub theorem llk_term_case(
   ih: LlkIh(f, t),
   h: llk_value(llk_tokens_at(f, t, a, tokens, Stack::Mk(below), ev)) = LlkParsed
 ): LlkDerives(t, Cons(LlkT(a), below), tokens) {
-  ⊢ LlkDerives(t, Cons(LlkT(a), below), tokens) from match tokens {
+  match tokens {
     Nil => False::elim(llk_failed_ne_parsed(LlkError::Mk(None, Cons(a, Nil)), h))
     Cons(token, more) => ⊢ LlkDerives(t, Cons(LlkT(a), below), Cons(token, more)) from match token {
       LlkTok::Mk(ty, st, en, tr) => LlkDT(
@@ -483,14 +483,14 @@ pub theorem llk_term_case(
 // the tables have under that number, and on whether it is the non-terminal's.
 pub fn llk_nt_at(
   f: Nat,
-  &t: LlkTables,
+  t: &LlkTables,
   non_terminal: Nat,
   tokens: List(LlkTok),
-  &mut stack: Stack(LlkSym),
-  &mut events: Stack(LlkEvent),
+  stack: &mut Stack(LlkSym),
+  events: &mut Stack(LlkEvent),
   o: Option(Nat)
 ): LlkResult {
-  ⊢ LlkResult from match o {
+  match o {
     None => llk_failure(tokens, Nil)
     Some(production) => ⊢ LlkResult from match Array::get(t.productions, production) {
       None => LlkFailed(LlkError { at: None, expected: Nil })
@@ -509,15 +509,15 @@ pub fn llk_nt_at(
 
 pub fn llk_prod_at(
   f: Nat,
-  &t: LlkTables,
+  t: &LlkTables,
   non_terminal: Nat,
   tokens: List(LlkTok),
   production: Nat,
-  &mut stack: Stack(LlkSym),
-  &mut events: Stack(LlkEvent),
+  stack: &mut Stack(LlkSym),
+  events: &mut Stack(LlkEvent),
   o: Option(LlkProduction)
 ): LlkResult {
-  ⊢ LlkResult from match o {
+  match o {
     None => LlkFailed(LlkError { at: None, expected: Nil })
     Some(found) => ⊢ LlkResult from match found.lhs == non_terminal {
       false => LlkFailed(LlkError { at: None, expected: Nil })
@@ -533,15 +533,15 @@ pub fn llk_prod_at(
 
 pub fn llk_lhs_at(
   f: Nat,
-  &t: LlkTables,
+  t: &LlkTables,
   tokens: List(LlkTok),
   production: Nat,
   found: LlkProduction,
-  &mut stack: Stack(LlkSym),
-  &mut events: Stack(LlkEvent),
+  stack: &mut Stack(LlkSym),
+  events: &mut Stack(LlkEvent),
   c: Bool
 ): LlkResult {
-  ⊢ LlkResult from match c {
+  match c {
     false => LlkFailed(LlkError { at: None, expected: Nil })
     true => {
       Stack::push(&mut stack, LlkE(production))
@@ -560,12 +560,12 @@ pub fn llk_k_sym(
   events: Stack(LlkEvent),
   m: Mut1(Unit, Stack(LlkSym))
 ): Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) {
-  ⊢ Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) from match m {
-    mut1(v, stack) => ⊢ Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) from match Stack::push(
+  match m {
+    mut1(^v, stack) => ⊢ Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent)) from match Stack::push(
       events,
       LlkOpen(found.lhs)
     ) {
-      mut1(v2, events2) => llk_rewrap(llk_run_in(f, t, tokens, stack, events2))
+      mut1(^v2, events2) => llk_rewrap(llk_run_in(f, t, tokens, stack, events2))
     }
   }
 }
@@ -746,7 +746,7 @@ pub theorem llk_run_sound(
   ev: Stack(LlkEvent),
   h: llk_value(llk_run_in(fuel, t, tokens, Stack::Mk(items), ev)) = LlkParsed
 ): LlkDerives(t, items, tokens) {
-  ⊢ LlkDerives(t, items, tokens) from match fuel {
+  match fuel {
     Zero => False::elim(llk_failed_ne_parsed(LlkError::Mk(None, Nil), h))
     Succ(f) => ⊢ LlkDerives(t, items, tokens) from match items {
       Nil => llk_done_of(t, tokens, llk_finish_sound(tokens, ev, Stack::Mk(Nil), h))
@@ -833,8 +833,8 @@ pub theorem llk_run_sound(
 }
 
 pub fn llk_value1(m: Mut1(LlkResult, Stack(LlkEvent))): LlkResult {
-  ⊢ LlkResult from match m {
-    mut1(v, e) => v
+  match m {
+    mut1(v, ^e) => v
   }
 }
 
@@ -842,15 +842,15 @@ pub fn llk_value1(m: Mut1(LlkResult, Stack(LlkEvent))): LlkResult {
 pub fn llk_drop(
   m: Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent))
 ): Mut1(LlkResult, Stack(LlkEvent)) {
-  ⊢ Mut1(LlkResult, Stack(LlkEvent)) from match m {
-    mut2(v, s, e) => mut1(v, e)
+  match m {
+    mut2(v, ^s, e) => mut1(v, e)
   }
 }
 
 pub theorem llk_drop_value(
   m: Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent))
 ): llk_value1(llk_drop(m)) = llk_value(m) {
-  ⊢ llk_value1(llk_drop(m)) = llk_value(m) from match m {
+  match m {
     mut2(v, s, e) => Refl
   }
 }

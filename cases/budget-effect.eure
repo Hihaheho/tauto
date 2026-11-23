@@ -1,0 +1,198 @@
+// `budget` is an operation of the host: `perform budget(n, f)` runs the
+// function `f` and the host counts its steps, so the row of whoever runs a
+// budget has `budget` (`docs/design/semantics.md`, "Budget and `div`").
+// `perform budget_memory(n, f)` counts cells, and its row has `budget_memory`.
+
+// A function that runs a budget says `budget`, and so does its caller.
+@ cases.a-function-that-runs-a-budget-has-budget-in-its-row
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+fn spin(): i64 ! {div} { while true { }
+ 0 }
+fn bounded(): i64 ! {budget} {
+  handle { perform budget(10, () => { spin() }) } with { exceeded(info), k => 7 }
+}
+fn caller(): i64 ! {budget, overflow} { bounded() + 1 }
+show(&caller())
+```
+rows = "ok"
+inferred_rows.bounded = ["budget"]
+stdout = "8\n"
+
+@ cases.a-memory-budget-has-budget-memory-in-its-row
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+enum L { Nil, Cons(i64, L) }
+fn build(n: i64, acc: L): L ! {div, overflow} {
+  if n == 0 { acc } else { build(n - 1, Cons(n, acc)) }
+}
+fn bounded(): i64 ! {budget_memory, div, overflow} {
+  handle { perform budget_memory(5, () => { match build(100, Nil) { Nil => 0, Cons(x, _) => x } }) } with {
+    exceeded(info), k => 7
+  }
+}
+show(&bounded())
+```
+rows = "ok"
+inferred_rows.bounded = ["div", "budget_memory", "overflow"]
+stdout = "7\n"
+
+@ cases.a-budget-without-budget-in-the-row-is-reported
+source = ```tauto
+fn spin(): i64 ! {div} { while true { }
+ 0 }
+fn bounded(): i64 {
+  handle { perform budget(10, () => { spin() }) } with { exceeded(info), k => 7 }
+}
+```
+rows = "error: `bounded` may perform budget but its row is {}"
+
+@ cases.a-caller-of-a-budget-without-budget-in-the-row-is-reported
+source = ```tauto
+fn spin(): i64 ! {div} { while true { }
+ 0 }
+fn bounded(): i64 ! {budget} {
+  handle { perform budget(10, () => { spin() }) } with { exceeded(info), k => 7 }
+}
+fn caller(): i64 { bounded() }
+```
+rows = "error: `caller` may perform budget but its row is {}"
+
+// A function value that runs a budget is not a function without effects.
+@ cases.a-function-value-that-runs-a-budget-needs-budget-in-its-type
+source = ```tauto
+fn spin(): i64 ! {div} { while true { }
+ 0 }
+fn apply(f: () -> i64): i64 { f() }
+let r := apply(() => handle { perform budget(10, () => { spin() }) } with { exceeded(info), k => 7 })
+```
+rows = "error: a function value may perform budget but its type permits {}"
+
+// The body is a function of no parameter: one written in place, or a value.
+@ cases.a-budget-runs-a-function-value
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```tauto
+fn descend(n: i64): i64 ! {div, overflow} {
+  if n > 0 { descend(n - 1) + 1 } else { 0 }
+}
+fn go(f: () -> i64 ! {div, overflow}): i64 ! {budget, overflow} {
+  handle { perform budget(100, f) } with { exceeded(info), k => -1 }
+}
+show(&go(() => descend(4)))
+show(&(handle { perform budget(100, () => descend(3)) } with { exceeded(info), k => -1 }))
+```
+stdout = ```
+4
+3
+```
+
+// What the body performs is performed where the budget is written: the
+// handlers around the budget answer it.
+@ cases.a-budget-body-reaches-the-handlers-around-it
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect ask(): i64
+fn run(): i64 ! {budget, overflow} {
+  handle { perform budget(100, () => { perform ask() + 1 }) } with {
+    ask(), k => k(41)
+    exceeded(info), k => 0
+  }
+}
+show(&run())
+```
+stdout = "42\n"
+
+// A task may run a budget: the host answers `budget` there as at the top level.
+@ cases.a-task-runs-a-budget
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+import std::builtin::par
+
+fn spin(): i64 ! {div} { while true { }
+ 0 }
+let t := perform spawn(() => handle { perform budget(10, () => { spin() }) } with { exceeded(info), k => 7 })
+show(&Task::join(t))
+```
+stdout = "7\n"
+
+// Both limits are two budgets, one in the body of the other.
+@ cases.a-budget-of-steps-around-a-budget-of-memory
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+fn spin(): i64 ! {div} { while true { }
+ 0 }
+fn bounded(): i64 ! {budget, budget_memory} {
+  handle { perform budget(10, () => perform budget_memory(100, () => { spin() })) } with { exceeded(info), k => 7 }
+}
+show(&bounded())
+```
+rows = "ok"
+inferred_rows.bounded = ["budget", "budget_memory"]
+stdout = "7\n"
+
+// The host answers a budget, as it answers `wait`: no `handle` has an arm for it.
+@ cases.no-arm-answers-budget
+source = ```tauto
+fn f(): i64 ! {budget} {
+  handle { perform budget(10, () => { 1 }) } with { budget(a, b), k => 7 }
+}
+```
+types = "error: `budget` is answered by the host that runs the program: no `handle` has an arm for it"
+
+// A budget takes the count and the function, and nothing else.
+@ cases.a-budget-takes-a-count-and-a-function
+source = "let d := perform budget(() => { 7 })"
+types = "error: `perform budget(n, f)` takes the most steps and the function of no parameter to run"
+
+// `steps: n` in a call is `steps` at the type `n`, so the form with labels
+// is not a budget.
+@ cases.a-budget-has-no-labels
+source = "let d := handle { perform budget(steps: 3, () => { 7 }) } with { exceeded(info), k => 0 }"
+types = "error: `perform budget(n, f)` takes the most steps and the function of no parameter to run"
+
+// The form before `budget` was an operation.
+@ cases.a-budget-is-performed
+parses = false
+source = "let d := handle { budget(steps: 3) { 7 } } with { exceeded(info), k => 0 }"
+
+// `budget` is a name but before a declaration's budget, so a program may
+// name its own things `budget`.
+@ cases.budget-is-a-name
+source = ```tauto
+fn budget(n: i64): i64 { n }
+fn f(): i64 budget 1000 { budget(3) }
+show(&f())
+```
+stdout = "3\n"
+
+// The host's budget is the library's operation, known by the declaration a
+// name resolves to and not by its spelling: a program's own `effect budget`
+// is an effect of the program, performed and answered as any other, though
+// spelled as the host's.
+@ cases.a-programs-own-budget-effect-is-not-the-hosts
+source = ```tauto
+effect budget(n: i64, f: () -> i64): i64
+fn go(): i64 ! {budget} { perform budget(3, () => 1) }
+show(&handle { go() } with { budget(n, f), k => k(n + 40) })
+```
+rows = "ok"
+inferred_rows.go = ["budget"]
+stdout = "43\n"
+
+// The host does not answer a program's own `budget` at the top level.
+@ cases.a-programs-own-budget-effect-is-not-answered-by-the-host
+source = ```tauto
+effect budget(n: i64, f: () -> i64): i64
+fn go(): i64 ! {budget} { perform budget(3, () => 1) }
+show(&go())
+```
+rows = "error: unhandled effect budget at the top level"
+
+// A program's own `budget_memory` neither.
+@ cases.a-programs-own-budget-memory-effect-is-not-the-hosts
+source = ```tauto
+effect budget_memory(n: i64): i64
+fn go(): i64 ! {budget_memory} { perform budget_memory(2) }
+show(&handle { go() } with { budget_memory(n), k => k(n * 3) })
+```
+stdout = "6\n"

@@ -1,7 +1,6 @@
-import std::Base
-import std::Data
-import std::prelude::Shared
-import std::prelude::Par
+import std::base
+import std::data
+import std::builtin::par
 import "codec.taut"
 import "flow.taut"
 
@@ -13,9 +12,9 @@ import "flow.taut"
 // as the same (early cutoff).
 pub struct Query(T: Shared) {
   key: Text,
-  run: (Db) -> T ! {halt, Div},
+  run: (Db) -> T ! {halt, div, overflow, ref_get, ref_new, ref_set},
   codec: Codec(T),
-  same: (T, T) -> Bool ! {Div}
+  same: (T, T) -> Bool ! {div}
 }
 
 // The query `name` with encoded arguments `args`. Two outputs are the same when they encode
@@ -23,9 +22,9 @@ pub struct Query(T: Shared) {
 pub fn make_query<T: Shared>(
   name: Text,
   args: List(Text),
-  run: (Db) -> T ! {halt, Div},
+  run: (Db) -> T ! {halt, div, overflow, ref_get, ref_new, ref_set},
   c: Codec(T)
-): Query(T) ! {Div} {
+): Query(T) ! {div} {
   Query {
     key: query_key(name, args),
     run: run,
@@ -38,10 +37,10 @@ pub fn make_query<T: Shared>(
 pub fn make_query_eq<T: Shared>(
   name: Text,
   args: List(Text),
-  run: (Db) -> T ! {halt, Div},
+  run: (Db) -> T ! {halt, div, overflow, ref_get, ref_new, ref_set},
   c: Codec(T),
-  same: (T, T) -> Bool ! {Div}
-): Query(T) ! {Div} {
+  same: (T, T) -> Bool ! {div}
+): Query(T) ! {div} {
   Query { key: query_key(name, args), run: run, codec: c, same: same }
 }
 
@@ -68,16 +67,16 @@ fn runner_of<T: Shared>(q: Query(T)): Runner {
 pub struct AssetKind(K: Shared, T: Shared) {
   name: Text,
   key_codec: Codec(K),
-  identity: (K) -> Text ! {Div},
+  identity: (K) -> Text ! {div},
   codec: Codec(T),
-  same: (T, T) -> Bool ! {Div}
+  same: (T, T) -> Bool ! {div}
 }
 
 pub fn make_asset_kind<K: Shared, T: Shared>(
   name: Text,
   kc: Codec(K),
   c: Codec(T),
-  same: (T, T) -> Bool ! {Div}
+  same: (T, T) -> Bool ! {div}
 ): AssetKind(K, T) {
   AssetKind { name: name, key_codec: kc, identity: (k: K) => encode(kc, k), codec: c, same: same }
 }
@@ -87,14 +86,14 @@ pub fn make_asset_kind<K: Shared, T: Shared>(
 pub fn make_asset_kind_keyed<K: Shared, T: Shared>(
   name: Text,
   kc: Codec(K),
-  identity: (K) -> Text ! {Div},
+  identity: (K) -> Text ! {div},
   c: Codec(T),
-  same: (T, T) -> Bool ! {Div}
+  same: (T, T) -> Bool ! {div}
 ): AssetKind(K, T) {
   AssetKind { name: name, key_codec: kc, identity: identity, codec: c, same: same }
 }
 
-fn same_text<T: Shared>(c: Codec(T), same: (T, T) -> Bool ! {Div}): (Text, Text) -> Bool ! {Div} {
+fn same_text<T: Shared>(c: Codec(T), same: (T, T) -> Bool ! {div}): (Text, Text) -> Bool ! {div} {
   (a: Text, b: Text) => match decode(c, a) {
     None => false
     Some(x) => match decode(c, b) {
@@ -104,7 +103,7 @@ fn same_text<T: Shared>(c: Codec(T), same: (T, T) -> Bool ! {Div}): (Text, Text)
   }
 }
 
-fn kind_key<K: Shared, T: Shared>(rt: Runtime, a: AssetKind(K, T), k: K): Text ! {Div} {
+fn kind_key<K: Shared, T: Shared>(rt: Runtime, a: AssetKind(K, T), k: K): Text ! {div, ref_get, ref_set} {
   note_kind(rt, a.name, same_text(a.codec, a.same))
   let key := (a.identity)(k)
   note_spelling(rt, a.name, key, encode(a.key_codec, k))
@@ -113,7 +112,7 @@ fn kind_key<K: Shared, T: Shared>(rt: Runtime, a: AssetKind(K, T), k: K): Text !
 
 // ---- inside a query ---------------------------------------------------------------------
 
-fn decode_all<K: Shared>(c: Codec(K), ts: List(Text)): List(K) ! {Div} {
+fn decode_all<K: Shared>(c: Codec(K), ts: List(Text)): List(K) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => match decode(c, t) {
@@ -125,71 +124,69 @@ fn decode_all<K: Shared>(c: Codec(K), ts: List(Text)): List(K) ! {Div} {
 
 // The functions a query calls with its `Db`: `Db::query(db, q)`, `Db::try(db, q)`,
 // `Db::asset(db, a, k)`, and so on.
-module Db {
-  // The output of `q`. An error of `q` ends this query with the same error.
-  pub fn query<T: Shared>(db: Db, q: Query(T)): T ! {halt, Div} {
-    match db_query(db, q.key, runner_of(q)) {
-      Ok(t) => match decode(q.codec, t) {
+// The output of `q`. An error of `q` ends this query with the same error.
+pub fn Db::query<T: Shared>(db: Db, q: Query(T)): T ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  match db_query(db, q.key, runner_of(q)) {
+    Ok(t) => match decode(q.codec, t) {
+      Some(x) => x
+      None => db_fail(db, concat("query-flow: cannot read the output of ", q.key))
+    }
+    Err(e) => db_fail(db, e)
+  }
+}
+
+// The output of `q`, or the error it ended with.
+pub fn Db::try<T: Shared>(db: Db, q: Query(T)): Result(T, Text) ! {halt, div, overflow, ref_get, ref_new, ref_set} {
+  match db_query(db, q.key, runner_of(q)) {
+    Ok(t) => match decode(q.codec, t) {
+      Some(x) => Ok(x)
+      None => Err(concat("query-flow: cannot read the output of ", q.key))
+    }
+    Err(e) => Err(e)
+  }
+}
+
+// The asset `k` of kind `a`. While it is loading the query stops and `run` answers
+// `Suspended`; an asset resolved to an error ends the query with it.
+pub fn Db::asset<K: Shared, T: Shared>(db: Db, a: AssetKind(K, T), k: K): T ! {halt, div, overflow, ref_get, ref_new, ref_set} {
+  match db_asset(db, a.name, (a.identity)(k), encode(a.key_codec, k), true) {
+    None => db_cancel(db)
+    Some(r) => match r {
+      Ok(t) => match decode(a.codec, t) {
         Some(x) => x
-        None => db_fail(db, concat("query-flow: cannot read the output of ", q.key))
+        None => db_fail(db, concat("query-flow: cannot read the asset ", a.name))
       }
       Err(e) => db_fail(db, e)
     }
   }
-
-  // The output of `q`, or the error it ended with.
-  pub fn try<T: Shared>(db: Db, q: Query(T)): Result(T, Text) ! {halt, Div} {
-    match db_query(db, q.key, runner_of(q)) {
-      Ok(t) => match decode(q.codec, t) {
-        Some(x) => Ok(x)
-        None => Err(concat("query-flow: cannot read the output of ", q.key))
-      }
-      Err(e) => Err(e)
-    }
-  }
-
-  // The asset `k` of kind `a`. While it is loading the query stops and `run` answers
-  // `Suspended`; an asset resolved to an error ends the query with it.
-  pub fn asset<K: Shared, T: Shared>(db: Db, a: AssetKind(K, T), k: K): T ! {halt, Div} {
-    match db_asset(db, a.name, (a.identity)(k), encode(a.key_codec, k), true) {
-      None => db_cancel(db)
-      Some(r) => match r {
-        Ok(t) => match decode(a.codec, t) {
-          Some(x) => x
-          None => db_fail(db, concat("query-flow: cannot read the asset ", a.name))
-        }
-        Err(e) => db_fail(db, e)
-      }
-    }
-  }
-
-  // The asset `k`, or `None` while it is loading: the query goes on, and is computed again when
-  // the asset is resolved (`asset_state`).
-  pub fn asset_state<K: Shared, T: Shared>(
-    db: Db,
-    a: AssetKind(K, T),
-    k: K
-  ): Option(T) ! {halt, Div} {
-    match db_asset(db, a.name, (a.identity)(k), encode(a.key_codec, k), false) {
-      None => None
-      Some(r) => match r {
-        Ok(t) => decode(a.codec, t)
-        Err(e) => db_fail(db, e)
-      }
-    }
-  }
-
-  // The keys of kind `a` in the runtime; the query is computed again when one is added or removed.
-  pub fn list_asset_keys<K: Shared, T: Shared>(db: Db, a: AssetKind(K, T)): List(K) ! {halt, Div} {
-    decode_all(a.key_codec, db_keys(db, a.name))
-  }
-
-  // Ends this query with the error `e`, which is cached like an output.
-  pub fn fail<T: Shared>(db: Db, e: Text): T ! {halt} { db_fail(db, e) }
-
-  // Ends this query without a result; nothing is cached.
-  pub fn cancel<T: Shared>(db: Db): T ! {halt} { db_cancel(db) }
 }
+
+// The asset `k`, or `None` while it is loading: the query goes on, and is computed again when
+// the asset is resolved (`asset_state`).
+pub fn Db::asset_state<K: Shared, T: Shared>(
+  db: Db,
+  a: AssetKind(K, T),
+  k: K
+): Option(T) ! {halt, div, overflow, ref_get, ref_new, ref_set} {
+  match db_asset(db, a.name, (a.identity)(k), encode(a.key_codec, k), false) {
+    None => None
+    Some(r) => match r {
+      Ok(t) => decode(a.codec, t)
+      Err(e) => db_fail(db, e)
+    }
+  }
+}
+
+// The keys of kind `a` in the runtime; the query is computed again when one is added or removed.
+pub fn Db::list_asset_keys<K: Shared, T: Shared>(db: Db, a: AssetKind(K, T)): List(K) ! {halt, div, overflow, ref_get, ref_new, ref_set} {
+  decode_all(a.key_codec, db_keys(db, a.name))
+}
+
+// Ends this query with the error `e`, which is cached like an output.
+pub fn Db::fail<T: Shared>(db: Db, e: Text): T ! {halt, ref_get, ref_new, ref_set} { db_fail(db, e) }
+
+// Ends this query without a result; nothing is cached.
+pub fn Db::cancel<T: Shared>(db: Db): T ! {halt, ref_get, ref_new, ref_set} { db_cancel(db) }
 
 // ---- from outside -----------------------------------------------------------------------
 
@@ -208,9 +205,9 @@ pub(open) enum Answer(T: Shared) {
 }
 
 // An answer and the revision at which the result last changed.
-pub struct Poll(T: Shared) { answer: Answer(T), revision: Nat }
+pub(open) struct Poll(T: Shared) { answer: Answer(T), revision: Nat }
 
-fn answer_of<T: Shared>(c: Codec(T), a: Asked): Answer(T) ! {Div} {
+fn answer_of<T: Shared>(c: Codec(T), a: Asked): Answer(T) ! {div} {
   match a {
     AskOutput(t) => match decode(c, t) {
       Some(x) => Value(x)
@@ -224,29 +221,29 @@ fn answer_of<T: Shared>(c: Codec(T), a: Asked): Answer(T) ! {Div} {
   }
 }
 
-pub fn run<T: Shared>(rt: Runtime, q: Query(T)): Answer(T) ! {Div} {
+pub fn run<T: Shared>(rt: Runtime, q: Query(T)): Answer(T) ! {div, overflow, ref_get, ref_new, ref_set} {
   poll(rt, q).answer
 }
 
 // The answer of `q` with the revision at which its result last changed, for subscribers that
 // only want to hear about changes.
-pub fn poll<T: Shared>(rt: Runtime, q: Query(T)): Poll(T) ! {Div} {
+pub fn poll<T: Shared>(rt: Runtime, q: Query(T)): Poll(T) ! {div, overflow, ref_get, ref_new, ref_set} {
   match ask(rt, q.key, runner_of(q)) {
     #(a, r) => Poll { answer: answer_of(q.codec, a), revision: r }
   }
 }
 
 // When the cached result of `q` last changed; `None` before it ran.
-pub fn changed_at<T: Shared>(rt: Runtime, q: Query(T)): Option(Nat) { changed_at_key(rt, q.key) }
+pub fn changed_at<T: Shared>(rt: Runtime, q: Query(T)): Option(Nat) ! {ref_get} { changed_at_key(rt, q.key) }
 
 // `q` and what read it are computed again when next asked for.
-pub fn invalidate<T: Shared>(rt: Runtime, q: Query(T)): Unit ! {Div} { invalidate_key(rt, q.key) }
+pub fn invalidate<T: Shared>(rt: Runtime, q: Query(T)): Unit ! {div, overflow, ref_get, ref_set} { invalidate_key(rt, q.key) }
 
 // Forgets `q`.
-pub fn remove_query<T: Shared>(rt: Runtime, q: Query(T)): Unit ! {Div} { remove_key(rt, q.key) }
+pub fn remove_query<T: Shared>(rt: Runtime, q: Query(T)): Unit ! {div, overflow, ref_get, ref_set} { remove_key(rt, q.key) }
 
 // Forgets `q` only when nothing reads it; whether it did.
-pub fn remove_query_if_unused<T: Shared>(rt: Runtime, q: Query(T)): Bool ! {Div} {
+pub fn remove_query_if_unused<T: Shared>(rt: Runtime, q: Query(T)): Bool ! {div, ref_get, ref_set} {
   remove_if_unused(rt, q.key)
 }
 
@@ -256,8 +253,8 @@ pub fn remove_query_if_unused<T: Shared>(rt: Runtime, q: Query(T)): Bool ! {Div}
 pub fn register_asset_locator<K: Shared, T: Shared>(
   rt: Runtime,
   a: AssetKind(K, T),
-  f: (Db, K) -> LocateResult(T) ! {halt, Div}
-): Unit ! {Div} {
+  f: (Db, K) -> LocateResult(T) ! {halt, div, overflow, ref_get, ref_new, ref_set}
+): Unit ! {div, ref_get, ref_set} {
   let kc := a.key_codec
   let c := a.codec
   set_locator(
@@ -287,7 +284,7 @@ pub fn resolve_asset<K: Shared, T: Shared>(
   k: K,
   v: T,
   d: Durability
-): Unit ! {Div} {
+): Unit ! {div, overflow, ref_get, ref_set} {
   resolve_key(rt, kind_key(rt, a, k), Loaded(encode(a.codec, v)), d)
 }
 
@@ -298,24 +295,24 @@ pub fn resolve_asset_error<K: Shared, T: Shared>(
   k: K,
   e: Text,
   d: Durability
-): Unit ! {Div} {
+): Unit ! {div, overflow, ref_get, ref_set} {
   resolve_key(rt, kind_key(rt, a, k), LoadFailed(e), d)
 }
 
-pub fn invalidate_asset<K: Shared, T: Shared>(rt: Runtime, a: AssetKind(K, T), k: K): Unit ! {Div} {
+pub fn invalidate_asset<K: Shared, T: Shared>(rt: Runtime, a: AssetKind(K, T), k: K): Unit ! {div, overflow, ref_get, ref_set} {
   invalidate_asset_key(rt, kind_key(rt, a, k))
 }
 
-pub fn remove_asset<K: Shared, T: Shared>(rt: Runtime, a: AssetKind(K, T), k: K): Unit ! {Div} {
+pub fn remove_asset<K: Shared, T: Shared>(rt: Runtime, a: AssetKind(K, T), k: K): Unit ! {div, overflow, ref_get, ref_set} {
   remove_asset_key(rt, kind_key(rt, a, k))
 }
 
 // An asset a query read while it was loading.
 pub struct PendingAsset { kind: Text, key: Text }
 
-pub fn pending_assets(rt: Runtime): List(PendingAsset) ! {Div} { pending_of(rt, pending_keys(rt)) }
+pub fn pending_assets(rt: Runtime): List(PendingAsset) ! {div, ref_get} { pending_of(rt, pending_keys(rt)) }
 
-fn pending_of(rt: Runtime, ks: List(Text)): List(PendingAsset) ! {Div} {
+fn pending_of(rt: Runtime, ks: List(Text)): List(PendingAsset) ! {div, ref_get} {
   match ks {
     Nil => Nil
     Cons(k, t) => match asset_spelled(rt, k) {
@@ -328,14 +325,14 @@ fn pending_of(rt: Runtime, ks: List(Text)): List(PendingAsset) ! {Div} {
 }
 
 // The pending assets of kind `a`, as keys.
-pub fn pending_assets_of<K: Shared, T: Shared>(rt: Runtime, a: AssetKind(K, T)): List(K) ! {Div} {
+pub fn pending_assets_of<K: Shared, T: Shared>(rt: Runtime, a: AssetKind(K, T)): List(K) ! {div, ref_get} {
   pending_keys_of(a, pending_assets(rt))
 }
 
 fn pending_keys_of<K: Shared, T: Shared>(
   a: AssetKind(K, T),
   ps: List(PendingAsset)
-): List(K) ! {Div} {
+): List(K) ! {div} {
   match ps {
     Nil => Nil
     Cons(p, t) => if p.kind == a.name {
@@ -345,4 +342,29 @@ fn pending_keys_of<K: Shared, T: Shared>(
       }
     } else { pending_keys_of(a, t) }
   }
+}
+
+// Registers how to make the query named `name` from its encoded arguments, so that a
+// query of that name read from disk (`load`) is computed again when what it read
+// changed, and keeps what reads it when its output comes out the same. Without it such a
+// query cannot be computed in this process and counts as changed.
+pub fn register_query<T: Shared>(
+  rt: Runtime,
+  name: Text,
+  make: (List(Text)) -> Option(Query(T)) ! {div}
+): Unit ! {ref_get, ref_set} {
+  register_runner_maker(rt, name, (args: List(Text)) => match make(args) {
+    None => None
+    Some(q) => Some(runner_of(q))
+  })
+}
+
+// The same, with `make` reading each argument with `field_or_fail`: what `@query!` writes
+// in `Q::register`. Arguments that do not read make no query.
+pub fn register_query_fields<T: Shared>(
+  rt: Runtime,
+  name: Text,
+  make: (List(Text)) -> Query(T) ! {bad_field, div}
+): Unit ! {ref_get, ref_set} {
+  register_query(rt, name, (args: List(Text)) => from_fields(args, make))
 }

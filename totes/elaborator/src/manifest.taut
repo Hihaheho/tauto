@@ -1,0 +1,125 @@
+import "../../eure/src/value.taut"
+import "../../eure/src/eure.taut"
+import "../../text/src/text.taut"
+import "include.taut"
+import std::text
+import std::base
+import std::builtin::os
+
+// The dependencies a tote's `Tauto.eure` names, as `import dep::module`
+// reads them: each `name { path = "../dir" }` is `name` and the directory
+// `path` from the manifest's directory. A version dependency has no
+// directory here and is left out.
+pub fn elab_manifest_deps(dir: Text, doc: Node): List(Text × Text) {
+  match doc {
+    Node::Mk(Vmap(entries), ^ext) => elab_manifest_section(dir, entries)
+    _ => Nil
+  }
+}
+
+pub fn elab_manifest_section(dir: Text, entries: List(Key × Node)): List(Text × Text) {
+  match entries {
+    Nil => Nil
+    Cons(#(key, node), rest) => ⊢ List(Text × Text) from match key {
+      Kstr(name) => if name == "dependencies" {
+        match node {
+          Node::Mk(Vmap(deps), ^ext) => elab_manifest_paths(dir, deps)
+          _ => Nil
+        }
+      } else { elab_manifest_section(dir, rest) }
+      _ => elab_manifest_section(dir, rest)
+    }
+  }
+}
+
+pub fn elab_manifest_paths(dir: Text, deps: List(Key × Node)): List(Text × Text) {
+  match deps {
+    Nil => Nil
+    Cons(#(key, node), rest) => {
+      let more := elab_manifest_paths(dir, rest)
+      ⊢ List(Text × Text) from match key {
+        Kstr(name) => match node {
+          Node::Mk(Vmap(fields), ^ext) => match elab_manifest_path_of(fields) {
+            Some(p) => Cons(#(name, Text::concat(dir, p)), more)
+            None => more
+          }
+          _ => more
+        }
+        _ => more
+      }
+    }
+  }
+}
+
+pub fn elab_manifest_path_of(fields: List(Key × Node)): Option(Text) {
+  match fields {
+    Nil => None
+    Cons(#(key, node), rest) => ⊢ Option(Text) from match key {
+      Kstr(name) => if name == "path" {
+        match node {
+          Node::Mk(Vtext(^lang, t), ^ext) => Some(t)
+          _ => None
+        }
+      } else { elab_manifest_path_of(rest) }
+      _ => elab_manifest_path_of(rest)
+    }
+  }
+}
+
+// The directory of `path`, with its `/`, or "" when it has none.
+pub fn elab_dir_of(path: Text): Text {
+  elab_dir_in(Text::len(path) + 1, path, 0, 0)
+}
+
+pub fn elab_dir_in(k: Nat, path: Text, at: Nat, cut: Nat): Text {
+  match k {
+    Zero => Text::slice_or_empty(path, 0, cut)
+    Succ(j) => ⊢ Text from match text_find(path, "/", at) {
+      None => Text::slice_or_empty(path, 0, cut)
+      Some(p) => elab_dir_in(j, path, p + 1, p + 1)
+    }
+  }
+}
+
+// The directory above `dir` (which ends in `/`), or "" at the top.
+pub fn elab_dir_above(dir: Text): Text {
+  elab_dir_of(Text::slice_or_empty(dir, 0, Text::len(dir) - 1))
+}
+
+// The dependencies of the tote that holds `dir`: its nearest `Tauto.eure`
+// at or above it, as the host finds a tote's root. None when there is none.
+pub fn elab_tote_deps(k: Nat, dir: Text): Option(List(Text × Text)) ! {fs_read} {
+  match k {
+    Zero => None
+    Succ(j) => match read_file(Text::concat(dir, "Tauto.eure")) {
+      Ok(src) => match parse_doc(src) {
+        Some(doc) => Some(elab_manifest_deps(dir, doc))
+        None => None
+      }
+      Err(^m) => if dir == "" { None } else { elab_tote_deps(j, elab_dir_above(dir)) }
+    }
+  }
+}
+
+pub fn elab_tote_root(k: Nat, dir: Text): Option(Text) ! {fs_read} {
+  match k {
+    Zero => None
+    Succ(j) => match read_file(Text::concat(dir, "Tauto.eure")) {
+      Ok(^src) => Some(dir)
+      Err(^message) => if dir == "" { None } else { elab_tote_root(j, elab_dir_above(dir)) }
+    }
+  }
+}
+
+pub fn elab_owner_root(path: Text, library: Text): Text ! {fs_canonicalize, fs_read} {
+  let real := ic_canonical(path)
+  let std_root := if library == "" { "" } else { ic_canonical(library) }
+  if std_root != "" && text_starts_with(real, Text::concat(std_root, "/"), 0) {
+    Text::concat("#std:", std_root)
+  } else {
+    ⊢ Text from match elab_tote_root(Text::len(real) + 1, elab_dir_of(real)) {
+      Some(root) => root
+      None => real
+    }
+  }
+}

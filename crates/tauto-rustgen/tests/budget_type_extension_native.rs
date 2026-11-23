@@ -11,36 +11,36 @@ fn source_source() -> &'static str {
 effect stop(total: u64): Never resume 0
 extern {
   fn native_owned(value: Text): Text
-  fn native_borrowed(&value: Text): Text
-  fn native_option(&value: Text, present: Bool): Option(Text)
+  fn native_borrowed(value: &Text): Text
+  fn native_option(value: &Text, present: Bool): Option(Text)
 }
-fn text_owned_loop(value: Text): Text ! {Div} {
+fn text_owned_loop(value: Text): Text ! {div, overflow} {
   var index := 0
   while index < 3 { index := index + 1 }
   native_owned(value)
 }
-fn text_borrowed_loop(value: Text): Text ! {Div} {
+fn text_borrowed_loop(value: Text): Text ! {div, overflow} {
   var index := 0
   while index < 3 { index := index + 1 }
   native_borrowed(&value)
 }
-fn text_option_loop(value: Text, present: Bool): Option(Text) ! {Div} {
+fn text_option_loop(value: Text, present: Bool): Option(Text) ! {div, overflow} {
   var index := 0
   while index < 3 { index := index + 1 }
   native_option(&value, present)
 }
-fn linger<T>(value: T, size: i64): T ! {Div} {
+fn linger<T>(value: T, size: i64): T ! {div, overflow} {
   var index := 0
   while index < size { index := index + 1 }
   value
 }
-fn linger_list<T: Shared>(items: List(T), size: i64): List(T) ! {Div} {
+fn linger_list<T: Shared>(items: List(T), size: i64): List(T) ! {div, overflow} {
   var index := 0
   while index < size { index := index + 1 }
   items
 }
 fn offset(value: u64): u64 { value + 1 }
-fn repeat(&read: (u64) -> u64): u64 ! {Div} {
+fn repeat(read: &((u64) -> u64)): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < 3 {
@@ -49,7 +49,7 @@ fn repeat(&read: (u64) -> u64): u64 ! {Div} {
   }
   total
 }
-fn repeat_owned(read: (u64) -> u64): u64 ! {Div} {
+fn repeat_owned(read: (u64) -> u64): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < 3 {
@@ -58,67 +58,67 @@ fn repeat_owned(read: (u64) -> u64): u64 ! {Div} {
   }
   total
 }
-fn text_owned_run(steps: i64): Text {
-  handle { budget(steps: steps) { text_owned_loop(concat("a", "b")) } } with {
-    exceeded(info), k => "exhausted"
+fn text_owned_run(steps: u64): Text ! {budget} {
+  handle { perform budget(steps, () => { text_owned_loop(concat("a", "b")) }) } with {
+    exceeded(info), k => "exhausted", overflow() => "exhausted"
   }
 }
-fn text_borrowed_run(steps: i64): Text {
-  handle { budget(steps: steps) { text_borrowed_loop(concat("a", "b")) } } with {
-    exceeded(info), k => "exhausted"
+fn text_borrowed_run(steps: u64): Text ! {budget} {
+  handle { perform budget(steps, () => { text_borrowed_loop(concat("a", "b")) }) } with {
+    exceeded(info), k => "exhausted", overflow() => "exhausted"
   }
 }
-fn text_option_run(steps: i64, present: Bool): Option(Text) {
-  handle { budget(steps: steps) { text_option_loop(concat("a", "b"), present) } } with {
-    exceeded(info), k => None
+fn text_option_run(steps: u64, present: Bool): Option(Text) ! {budget} {
+  handle { perform budget(steps, () => { text_option_loop(concat("a", "b"), present) }) } with {
+    exceeded(info), k => None, overflow() => None
   }
 }
-fn scalar_run(steps: i64): i64 {
-  handle { budget(steps: steps) { linger(42, 3) } } with {
-    exceeded(info), k => -1
+fn scalar_run(steps: u64): i64 ! {budget} {
+  handle { perform budget(steps, () => { linger(42, 3) }) } with {
+    exceeded(info), k => -1, overflow() => -1
   }
 }
-fn list_run(steps: i64): u64 {
-  handle { budget(steps: steps) {
+fn list_run(steps: u64): u64 ! {budget} {
+  handle { perform budget(steps, () => {
     match linger_list(Cons("ab", Nil), 3) {
       Nil => 0
       Cons(item, tail) => Text::len(item)
     }
-  } } with { exceeded(info), k => 0 }
+  }) } with { exceeded(info), k => 0, overflow() => 0 }
 }
-fn borrowed_named_run(steps: i64): u64 {
-  handle { budget(steps: steps) { repeat(&offset) } } with {
-    exceeded(info), k => 0
+fn borrowed_named_run(steps: u64): u64 ! {budget} {
+  handle { perform budget(steps, () => { repeat(&offset) }) } with {
+    exceeded(info), k => 0, overflow() => 0
   }
 }
-fn borrowed_literal_run(steps: i64): u64 {
-  handle { budget(steps: steps) { repeat(&(value) => offset(value)) } } with {
-    exceeded(info), k => 0
+fn borrowed_literal_run(steps: u64): u64 ! {budget} {
+  handle { perform budget(steps, () => { repeat((value) => offset(value)) }) } with {
+    exceeded(info), k => 0, overflow() => 0
   }
 }
-fn alias_named_run(steps: i64): u64 {
-  handle { budget(steps: steps) {
+fn alias_named_run(steps: u64): u64 ! {budget} {
+  handle { perform budget(steps, () => {
     let local_read := offset
     repeat(&local_read)
-  } } with { exceeded(info), k => 0 }
+  }) } with { exceeded(info), k => 0, overflow() => 0 }
 }
-fn alias_literal_run(steps: i64): u64 {
-  handle { budget(steps: steps) {
+fn alias_literal_run(steps: u64): u64 ! {budget} {
+  handle { perform budget(steps, () => {
     let local_read := (value: u64) => value + 1
     repeat(&local_read)
-  } } with { exceeded(info), k => 0 }
+  }) } with { exceeded(info), k => 0, overflow() => 0 }
 }
-fn owned_named_run(steps: i64): u64 {
-  handle { budget(steps: steps) { repeat_owned(offset) } } with {
-    exceeded(info), k => 0
+fn owned_named_run(steps: u64): u64 ! {budget} {
+  handle { perform budget(steps, () => { repeat_owned(offset) }) } with {
+    exceeded(info), k => 0, overflow() => 0
   }
 }
-fn error_run(steps: i64, divisor: i64): i64 {
-  handle { budget(steps: steps) { div(linger(12, 1), divisor) } } with {
-    exceeded(info), k => -1
+fn error_run(steps: u64, divisor: i64): i64 ! {budget} {
+  handle { perform budget(steps, () => { div(linger(12, 1), divisor) }) } with {
+    exceeded(info), k => -1, overflow() => -1
   }
 }
-fn scan(&read: (Text) -> u64, items: List(Text), abort_at: u64): u64 ! {Div, stop} {
+fn scan(read: &((Text) -> u64), items: List(Text), abort_at: u64): u64 ! {div, overflow, stop} {
   var index: u64 := 0
   var total: u64 := 0
   var rest := items
@@ -135,16 +135,16 @@ fn scan(&read: (Text) -> u64, items: List(Text), abort_at: u64): u64 ! {Div, sto
   }
   total
 }
-fn composed_run(steps: i64, abort_at: u64): Result(u64, Text) {
-  handle { budget(steps: steps) {
+fn composed_run(steps: u64, abort_at: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(steps, () => {
     let local_read := (value: Text) => match native_option(&value, true) {
       None => 0
       Some(result) => Text::len(result)
     }
     Ok(scan(&local_read, linger_list(Cons("a", Cons("bb", Nil)), 1), abort_at))
-  } } with {
+  }) } with {
     stop(total) => Ok(total)
-    exceeded(info), k => Err("exhausted")
+    exceeded(info), k => Err("exhausted"), overflow() => Err("exhausted")
   }
 }
 "#
@@ -225,7 +225,7 @@ fn snapshot() -> Snapshot {
         requests: std::mem::take(&mut *REQUESTS.lock().unwrap()),
     }
 }
-fn check(name: &str, steps: i64, base: Snapshot, qualified: Snapshot, ordinary_fast: bool) {
+fn check(name: &str, steps: u64, base: Snapshot, qualified: Snapshot, ordinary_fast: bool) {
     assert_eq!(base.fast > 0, EXPECT_FAST && ordinary_fast, "{name}: {base:?}");
     assert_eq!(qualified.fast > 0, EXPECT_FAST, "{name}: {qualified:?}");
     assert_eq!(base.future > 0, !EXPECT_FAST || !ordinary_fast, "{name}: {base:?}");
@@ -389,7 +389,7 @@ pub static REQUESTS: std::sync::Mutex<Vec<(u32, u32, u32, u64)>> = std::sync::Mu
 
 #[test]
 fn concrete_trusted_boundaries_execute_both_generated_paths() {
-    let package = tauto_nir::compile_with(source_source(), true).unwrap();
+    let mut package = tauto::nir::compile_with(source_source(), true).unwrap();
     let entries = ENTRIES
         .iter()
         .map(|(name, _)| format!("{name}_trusted = \"{name}_run\"\n"))
@@ -404,7 +404,7 @@ fn concrete_trusted_boundaries_execute_both_generated_paths() {
 }}"#
     );
     let manifest = tauto::manifest::parse(&manifest_text, Path::new("Tauto.eure")).unwrap();
-    let bindings = Bindings::resolve(&package, Some(&manifest), None).unwrap();
+    let bindings = Bindings::resolve(&mut package, Some(&manifest), None).unwrap();
     let sources = Sources {
         file: "type-boundaries.taut",
         text: source_source(),

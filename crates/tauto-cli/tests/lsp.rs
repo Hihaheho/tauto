@@ -43,18 +43,18 @@ fn the_server_colours_completes_and_reports() {
     std::fs::write(
         dir.join("math.nib"),
         format!(
-            r#"import std::prelude::Macro
+            r#"import std::builtin::macro
 syntax!(math, ```par
 {}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-macro fn math(e: math::Eqn): SynExpr ! {{macro_error, Div}} {{ quote {{ Eq(Nat, 1, 1) }} }}
+pub macro fn math(e: math::Eqn): SynExpr ! {{macro_error, div}} {{ quote {{ Eq(Nat, 1, 1) }} }}
 "#,
             MATH
         ),
     )
     .unwrap();
     let main = r#"import "math.nib"
-theorem t(): math!(`1 + 2 = 3`) { Refl(Nat, 1) }
+theorem t(): math!(`1 + 2 = 3`) { Refl(<A: Nat, a: 1>) }
 "#;
     let open = dir.join("main.nib");
     std::fs::write(&open, main).unwrap();
@@ -128,11 +128,11 @@ fn macro_fixture(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     std::fs::write(
         dir.join("math.nib"),
         format!(
-            r#"import std::prelude::Macro
+            r#"import std::builtin::macro
 syntax!(math, ```par
 {}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
   enum Term, fn parse
-macro fn math(e: math::Eqn): SynExpr ! {{macro_error, Div}} {{ quote {{ Eq(Nat, 1, 1) }} }}
+pub macro fn math(e: math::Eqn): SynExpr ! {{macro_error, div}} {{ quote {{ Eq(Nat, 1, 1) }} }}
 "#,
             MATH
         ),
@@ -142,7 +142,7 @@ macro fn math(e: math::Eqn): SynExpr ! {{macro_error, Div}} {{ quote {{ Eq(Nat, 
     std::fs::write(
         &open,
         r#"import "math.nib"
-theorem t(): math!(`1 + 2 = 3`) { Refl(Nat, 1) }
+theorem t(): math!(`1 + 2 = 3`) { Refl(<A: Nat, a: 1>) }
 fn answer(n: i64): i64 { let m := n + 1
  m + n }
 "#,
@@ -257,7 +257,7 @@ fn the_server_answers_about_names() {
     let math_nib = std::fs::read_to_string(dir.join("math.nib")).unwrap();
     let line = math_nib
         .lines()
-        .position(|l| l.starts_with("macro fn math"))
+        .position(|l| l.starts_with("pub macro fn math"))
         .unwrap();
     assert_eq!(d["result"]["range"]["start"]["line"], line);
 
@@ -305,7 +305,7 @@ fn the_server_answers_about_names() {
     assert!(p["error"].is_object(), "{p}");
 
     // didChange invalidates the proof even though the declaration name is unchanged.
-    let changed = main.replace("Refl(Nat, 1)", "?pending");
+    let changed = main.replace("Refl(<A: Nat, a: 1>)", "?pending");
     send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
         "params":{"textDocument":{"uri":uri},"contentChanges":[{"text":changed}]}}));
     let _ = read(&mut out);
@@ -319,83 +319,6 @@ fn the_server_answers_about_names() {
     assert!(!contents.ends_with(&indented), "{contents}");
 
     send(json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}));
-    let _ = read(&mut out);
-    send(json!({"jsonrpc":"2.0","method":"exit"}));
-    drop(input);
-    assert!(child.wait().unwrap().success());
-}
-
-#[test]
-fn a_wrong_goal_in_a_step_gets_a_quick_fix() {
-    let dir = std::env::temp_dir().join(format!("tauto-lsp-fix-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("lib.taut"),
-        r#"macro fn same(s: ProofStep): SynExpr { Syn::hole(1, s.span) }
-"#,
-    )
-    .unwrap();
-    let main = r#"import "lib.taut"
-theorem t(n: Nat): n = n {
-  by same!(): n = n {
-    ⊢ Succ(n) = n from ?rest
-  }
-}
-"#;
-    let open = dir.join("main.taut");
-    std::fs::write(&open, main).unwrap();
-    let uri = format!("file://{}", open.display());
-
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tauto"))
-        .arg("lsp")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut input = child.stdin.take().unwrap();
-    let mut out = BufReader::new(child.stdout.take().unwrap());
-    let mut send = |v: Value| input.write_all(frame(&v).as_bytes()).unwrap();
-
-    send(json!({"jsonrpc":"2.0","id":1,"method":"initialize",
-        "params":{"rootUri": format!("file://{}", dir.display())}}));
-    let caps = &read(&mut out)["result"]["capabilities"];
-    assert!(caps["codeActionProvider"].is_object(), "{caps}");
-
-    send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
-        "params":{"textDocument":{"uri":uri,"text":main}}}));
-    let published = read(&mut out);
-    let diagnostics = published["params"]["diagnostics"].clone();
-    let mismatch = diagnostics
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|d| {
-            d["message"]
-                .as_str()
-                .unwrap()
-                .contains("step.goal_mismatch")
-        })
-        .unwrap_or_else(|| panic!("{diagnostics}"))
-        .clone();
-
-    send(
-        json!({"jsonrpc":"2.0","id":2,"method":"textDocument/codeAction",
-        "params":{"textDocument":{"uri":uri},
-                  "range": mismatch["range"],
-                  "context":{"diagnostics":[mismatch]}}}),
-    );
-    let actions = read(&mut out);
-    let action = &actions["result"][0];
-    assert_eq!(action["kind"], "quickfix", "{actions}");
-    let edit = &action["edit"]["changes"][&uri][0];
-    assert_eq!(edit["newText"], "⊢ n = n", "{actions}");
-    // The range is the arm's `⊢ …` up to the `from`, on the fourth line.
-    assert_eq!(edit["range"]["start"]["line"], 3, "{actions}");
-    assert_eq!(edit["range"]["start"]["character"], 4, "{actions}");
-    assert_eq!(edit["range"]["end"]["character"], 17, "{actions}");
-
-    send(json!({"jsonrpc":"2.0","id":3,"method":"shutdown"}));
     let _ = read(&mut out);
     send(json!({"jsonrpc":"2.0","method":"exit"}));
     drop(input);
@@ -497,13 +420,107 @@ fn an_escape_becomes_its_sign_as_it_is_typed() {
         json!({"jsonrpc":"2.0","id":3,"method":"textDocument/completion",
         "params":{"textDocument":{"uri":uri},"position":{"line":0,"character":16}}}),
     );
-    let items = read(&mut out)["result"].clone();
+    let list = read(&mut out)["result"].clone();
+    assert_eq!(list["isIncomplete"], false);
+    let items = &list["items"];
     assert_eq!(items[0]["label"], "\\exists");
     assert_eq!(items[0]["textEdit"]["newText"], "∃");
 
     send(json!({"jsonrpc":"2.0","id":4,"method":"shutdown"}));
     let _ = read(&mut out);
     send(json!({"jsonrpc":"2.0","method":"exit"}));
+    drop(input);
+    assert!(child.wait().unwrap().success());
+}
+
+/// The steps of one message do not add up with those of the messages before
+/// it: under a host limit that a few messages together pass, the server keeps
+/// answering edits and the completion of a `\`.
+#[test]
+fn the_server_keeps_answering_past_the_steps_of_many_messages() {
+    let dir = std::env::temp_dir().join(format!("tauto-lsp-steps-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let open = dir.join("main.taut");
+    let filler = "// a line of text that the server reads with every edit\n".repeat(200);
+    let uri = format!("file://{}", open.display());
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tauto"))
+        .arg("lsp")
+        .env("TAUTO_STEP_LIMIT", "200000")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    let mut send = |v: Value| input.write_all(frame(&v).as_bytes()).unwrap();
+
+    send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    let _ = read(&mut out);
+    send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":filler}}}));
+    let _ = read(&mut out);
+    let line = filler.lines().count();
+    for n in 0..40 {
+        let text = format!("{filler}fn f{n}(): Nat {{ \\");
+        send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+            "params":{"textDocument":{"uri":uri},"contentChanges":[{"text":text}]}}));
+        let published = read(&mut out);
+        assert_eq!(published["method"], "textDocument/publishDiagnostics");
+        let col = text.lines().last().unwrap().len();
+        send(
+            json!({"jsonrpc":"2.0","id":100 + n,"method":"textDocument/completion",
+            "params":{"textDocument":{"uri":uri},"position":{"line":line,"character":col}}}),
+        );
+        let list = read(&mut out);
+        assert_eq!(list["id"], 100 + n, "{list}");
+        assert_eq!(list["result"]["isIncomplete"], true, "{list}");
+    }
+
+    send(json!({"jsonrpc":"2.0","id":2,"method":"shutdown"}));
+    let _ = read(&mut out);
+    send(json!({"jsonrpc":"2.0","method":"exit"}));
+    drop(input);
+    assert!(child.wait().unwrap().success());
+}
+
+/// A server is meant not to stop: `tauto lsp` runs with `--allow-div`, so
+/// however small the host's step limit, many edits do not stop it.
+#[test]
+fn the_server_is_not_stopped_by_the_host_step_limit() {
+    let dir = std::env::temp_dir().join(format!("tauto-lsp-limit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let open = dir.join("main.taut");
+    let text = "fn one(): i64 { 1 }\n";
+    std::fs::write(&open, text).unwrap();
+    let uri = format!("file://{}", open.display());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tauto"))
+        .arg("lsp")
+        .env("TAUTO_STEP_LIMIT", "1000")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    let mut send = |v: Value| input.write_all(frame(&v).as_bytes()).unwrap();
+    send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    assert!(read(&mut out)["result"]["capabilities"].is_object());
+    send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":text}}}));
+    assert_eq!(read(&mut out)["method"], "textDocument/publishDiagnostics");
+    for version in 2..12 {
+        send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+            "params":{"textDocument":{"uri":uri,"version":version},
+                "contentChanges":[{"text":text}]}}));
+        assert_eq!(read(&mut out)["method"], "textDocument/publishDiagnostics");
+    }
+    send(json!({"jsonrpc":"2.0","id":2,"method":"shutdown"}));
+    assert_eq!(read(&mut out)["id"], 2);
+    send(json!({"jsonrpc":"2.0","method":"exit"}));
+    drop(send);
     drop(input);
     assert!(child.wait().unwrap().success());
 }

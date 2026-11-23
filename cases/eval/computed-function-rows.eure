@@ -1,0 +1,96 @@
+// A function value that an expression computes (a branch, a match, a call
+// to a local function or to a function value, a record's field) carries the
+// row that row checking found for it. The backends hold and specialize it by
+// that row, as they do a lambda written in place.
+
+@ cases.a-branch-chooses-the-callback
+source = ```nib
+effect ask(): i64
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+fn f(): i64 ! {ask, overflow} { perform ask() + 1 }
+fn g(): i64 ! {ask, overflow} { perform ask() + 2 }
+fn pick(c: Bool): i64 ! {ask, overflow} { apply(if c { f } else { g }) }
+let r := handle { pick(true) + pick(false) * 10 } with {
+  ask(), k => k(40)
+  return value => value
+}
+show(&r)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = "461\n"
+
+@ cases.a-match-chooses-the-callback
+source = ```nib
+effect ask(): i64
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+fn run(n: i64): i64 ! {ask, overflow} {
+  apply(match n {
+    0 => () => perform ask(),
+    m => () => perform ask() * m,
+  })
+}
+let r := handle { run(0) + run(3) } with {
+  ask(), k => k(5)
+  return value => value
+}
+show(&r)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = "20\n"
+
+@ cases.a-local-function-returns-the-callback
+source = ```nib
+effect ask(): nat
+fn apply<!e>(callback: () -> nat ! e): nat ! e { callback() }
+fn run(): nat ! {ask} {
+  fn make(): () -> nat ! {ask} { () => perform ask() + 1 }
+  apply(make())
+}
+let r := handle { run() } with {
+  ask(), k => k(41)
+  return value => value
+}
+show(&r)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = "42\n"
+
+@ cases.a-function-value-returns-the-callback
+source = ```nib
+effect ask(): nat
+fn apply<!e>(callback: () -> nat ! e): nat ! e { callback() }
+fn run(make: () -> (() -> nat ! {ask})): nat ! {ask} { apply(make()) }
+let r := handle { run(() => () => perform ask() * 2) } with {
+  ask(), k => k(21)
+  return value => value
+}
+show(&r)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = "42\n"
+
+@ cases.a-branch-bound-by-a-let-is-called
+source = ```nib
+effect ask(): i64
+fn run(c: Bool): i64 ! {ask, overflow} {
+  let h := if c { () => perform ask() } else { () => perform ask() + 1 }
+  h()
+}
+let r := handle { run(true) + run(false) } with {
+  ask(), k => k(10)
+  return value => value
+}
+show(&r)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = "21\n"

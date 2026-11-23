@@ -1,0 +1,54 @@
+// `let(stack) x := e` places `x` in the frame's slot, with no allocation made
+// for it: the type has a size known in the frame and does not hold itself.
+
+@ cases.stack-integer
+description = "An integer is placed in the frame."
+source = ```nib
+let(stack) n := 1 + 2
+n
+```
+types = "ok"
+
+@ cases.stack-small-struct
+description = "A struct of integers is placed in the frame."
+source = ```nib
+struct P { x: i64, y: i64 }
+let(stack) p := P { x: 1, y: 2 }
+p.x + p.y
+```
+types = "ok"
+
+@ cases.stack-recursive-type
+description = "A type that holds itself is not placed in the frame without an allocation."
+source = ```nib
+let(stack) l: List(i64) := Cons(1, Nil)
+l
+```
+types = "error: `let(stack) l` has the type List(i64), which holds itself; its value is not placed in the frame without an allocation"
+
+@ cases.stack-type-parameter
+description = "A type parameter's size is not known in the frame."
+source = ```nib
+fn keep<T>(x: T): T {
+  let(stack) y := x
+  y
+}
+keep(1)
+```
+types = "error: `let(stack) y` has the type T, which holds the type parameter `T`; its size is not known in the frame"
+
+@ cases.stack-var
+description = "Only a `let` is written with `stack`."
+source = ```nib
+var(stack) n := 1
+n
+```
+types = "error: `n` is a `var`; only a `let` is written with `stack`"
+
+@ cases.stack-unknown-word
+description = "The parentheses of `let` take `stack` only."
+source = ```nib
+let(heap) n := 1
+n
+```
+types = "error: `heap` is not a property of `let`; only `let(stack)` is written"

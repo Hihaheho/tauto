@@ -1,7 +1,7 @@
 # algebra
 
 型クラスの探索を使わず、演算と法則を明示的に渡す代数の基盤。
-`src/Monoid.taut`、`src/Hom.taut`、`src/Group.taut` を必要に応じて import する。
+`src/monoid.taut`、`src/hom.taut`、`src/group.taut` を必要に応じて import する。
 
 - `AlgebraEq(u, A, a, b)` は数値宇宙に特殊化できる帰納的な等式。
   置換・対称律・推移律・合同を持ち、宇宙 0 では標準の `Eq` と相互変換できる。
@@ -19,13 +19,13 @@
 
 ## 整数と有理数の明示的な同値関係
 
-`src/Integer.taut` は論理上の `Nat` の対 `(positive, negative)` から整数を構成する。
+`src/integer.taut` は論理上の `Nat` の対 `(positive, negative)` から整数を構成する。
 `IntegerEq` は交差した和の等式。共通の自然数を両成分に加えた代表や
 `(n, n)` のゼロ代表を同一視するが、代表そのものの `Eq` は変えない。
 加法・符号反転・減法・乗法は同値関係を保ち、加法の群法則、乗法の結合・可換・単位・
 ゼロ法則、分配法則を持つ。`integer_of_nat` は単射で加法・乗法を保つ。
 
-`src/Rational.taut` は整数の分子と、非零証明を伴う自然数の分母を持つ。
+`src/rational.taut` は整数の分子と、非零証明を伴う自然数の分母を持つ。
 `RationalEq` は整数の同値関係による交差積の等式。既約分数や標準形を要求しない。
 推移律では分母が非零であることから消去律を使う。
 整数からの写像は同値関係の意味で単射で、加法・乗法を保つ。
@@ -34,7 +34,7 @@
 逆数法則・逆数の一意性・除算の消去法則と、四則演算の代表独立性が証明される。
 非零性も同値な代表へ移せる。非零証明の選び方に関係なく逆数は同値となる。
 
-`src/Setoid.taut` の `AlgebraSetoid` は型と関係に対する反射・対称・推移律の証拠。
+`src/setoid.taut` の `AlgebraSetoid` は型と関係に対する反射・対称・推移律の証拠。
 これらは宇宙 0 の明示的な setoid であり、ネイティブ商型ではない。
 `AlgebraMonoid` や `AlgebraHom` が使う `AlgebraEq` と異なる関係なので、
 生の代表をそれらの構造へ暗黙に登録しない。集合論的商、順序、最大公約数による正規化、
@@ -55,7 +55,7 @@
 外延性を除くモジュールと例は公理なしで検査される。型クラス、カーネル、
 標準ライブラリの等式や変換規則を変更しない。
 
-`src/Extensionality.taut` だけは `std.Quot` の `funext` を import し、
+`src/extensionality.taut` だけは `std.Quot` の `funext` を import し、
 宇宙 0 の準同型の写像について、各点の等式から関数の等式を導く。
 この定理の検査結果には `funext` が使う公理 `Quot::sound` が記録される。高い宇宙の関数外延性、
 準同型の束全体の等式、証明の同一視を仮定しない。
@@ -69,17 +69,17 @@ AlgebraEq を使うモノイド・群の層は、商型・setoid・古典公理�
 
 ## 有限和・行列・線形写像
 
-`src/Semiring.taut` は同じ carrier `R: Type` 上の加法・乗法モノイド値を
+`src/semiring.taut` は同じ carrier `R: Type` 上の加法・乗法モノイド値を
 `AlgebraSemiring` の添字に取る。演算を複製せず、加法の交換律、左右の分配律、
 零元の吸収律を明示する。乗法の交換律は要求しない。
 
-`src/Finite.taut` の `AlgebraFin(n)` は範囲内の添字。`AlgebraFin(0)` に
+`src/finite.taut` の `AlgebraFin(n)` は範囲内の添字。`AlgebraFin(0)` に
 構成子はなく、添字や行列の形を実行時の unchecked access で補わない。
 `AlgebraVector(R, n)` は有限添字から値への関数で、`algebra_sum` は寸法に
 関する構造再帰。点ごとの等式の保存、零ベクトルの和、和の加法性、左右の
 乗法との分配、二重有限和の交換を帰納法で証明する。
 
-`src/Matrix.taut` は任意の有限行・列数を持つ行列を関数として表す。
+`src/matrix.taut` は任意の有限行・列数を持つ行列を関数として表す。
 零の寸法も扱う。加法、右スカラー倍、行列積、対角単位行列、ベクトルへの作用を
 定義し、積の結合律、左右単位律、積の作用と作用の合成の一致を証明する。
 行列は密な配列ではなく、与えた関数を評価する表現。計算量や配列への最適化は
@@ -90,7 +90,7 @@ AlgebraEq を使うモノイド・群の層は、商型・setoid・古典公理�
 作用がスカラー倍を保存する。行列自体の右スカラー倍が常に線形写像の右スカラー倍を
 与えるとは主張しない。
 
-`src/Linear.taut` の `AlgebraLinear` は、写像と始域・終域の寸法を添字とする
+`src/linear.taut` の `AlgebraLinear` は、写像と始域・終域の寸法を添字とする
 法則の証明。入力の点ごとの等しさ、零、加法、右スカラー倍の保存を要求する。
 行列の作用がこの契約を満たすこと、恒等写像と合成が契約を満たすことを証明する。
 合成は第一引数の写像を先に適用する。左右単位律と結合律は各入力・各座標の等式。
@@ -115,12 +115,12 @@ AlgebraEq を使うモノイド・群の層は、商型・setoid・古典公理�
 
 ## 代表元の同値関係と有限行列の接続
 
-`src/RelationSemiring.taut` の `AlgebraRelationSemiring` は carrier・同値関係・
+`src/relation_semiring.taut` の `AlgebraRelationSemiring` は carrier・同値関係・
 零元・単位元・加法・乗法を明示的な引数に取る。`AlgebraSetoid` の証拠と、
-両演算の合同性、半環の法則を保持する。`src/RationalSemiring.taut` は既存の
+両演算の合同性、半環の法則を保持する。`src/rational_semiring.taut` は既存の
 有理数演算と `RationalEq` の定理からこの証拠を構築し、別の有理数表現や演算を作らない。
 
-`src/RelationMatrix.taut` は `AlgebraFin`・`AlgebraVector`・`AlgebraMatrix` と同じ
+`src/relation_matrix.taut` は `AlgebraFin`・`AlgebraVector`・`AlgebraMatrix` と同じ
 形の型を使う。有限和、行列の作用、行列積は零元と演算を受け取って計算する。
 `AlgebraVectorRelated` と `AlgebraMatrixRelated` は各座標での関係。
 有限和、作用、積について、入力代表を同値な代表に替えても結果が同値であることを

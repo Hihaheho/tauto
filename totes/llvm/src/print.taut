@@ -1,0 +1,425 @@
+// The text of a module: one item per paragraph, one instruction per line.
+// `llvm::parse` reads back what this writes.
+import "ir.taut"
+import std::text
+import std::std
+import std::base
+
+mutual {
+  fn p_ty(t: llvm::Ty::I): Text {
+    match t {
+      Void_I(s) => s
+      IntTy_I(s) => s
+      Ptr_I(s) => s
+      ArrayTy_I(a) => p_array(a)
+      StructTy_I(s) => p_struct(s)
+      Named_I(n) => p_named(n)
+    }
+  }
+  fn p_array(a: llvm::ArrayTy::I): Text {
+    match a {
+      Mk(n, t) => Text::concat_all(["[", p_int_of(n), " x ", p_ty(t), "]"])
+    }
+  }
+  fn p_struct(s: llvm::StructTy::I): Text {
+    match s {
+      Mk(t, rest) => Text::concat_all(["{ ", p_ty(t), p_struct_rest(rest), " }"])
+    }
+  }
+  fn p_struct_rest(xs: List(llvm::StructTy_Rep1::I)): Text {
+    match xs {
+      Nil => ""
+      Cons(x, rest) => Text::concat_all([", ", p_struct_one(x), p_struct_rest(rest)])
+    }
+  }
+  fn p_struct_one(x: llvm::StructTy_Rep1::I): Text {
+    match x {
+      Mk(t) => p_ty(t)
+    }
+  }
+  fn p_named(n: llvm::Named::I): Text {
+    match n {
+      Mk(l) => l
+    }
+  }
+}
+
+fn p_value(v: llvm::Value::I): Text {
+  match v {
+    Local_I(s) => s
+    Global_I(s) => s
+    Int_I(s) => s
+    Null_I(s) => s
+    True_I(s) => s
+    False_I(s) => s
+    Poison_I(s) => s
+    Zero_I(s) => s
+  }
+}
+
+fn p_ty_value(tv: llvm::TyValue::I): Text {
+  Text::concat_all([p_ty(tv.f_ty), " ", p_value(tv.f_value)])
+}
+
+fn p_flag(o: Option(Text)): Text {
+  match o {
+    None => ""
+    Some(s) => concat(s, " ")
+  }
+}
+
+fn p_trailing(o: Option(Text)): Text {
+  match o {
+    None => ""
+    Some(s) => concat(" ", s)
+  }
+}
+
+fn p_param_ty(p: llvm::ParamTy::I): Text {
+  match p {
+    Ty_I(t) => p_ty(t)
+    Ellipsis_I(s) => s
+  }
+}
+
+fn p_param_tys_rest(xs: List(llvm::ParamTys_Rep1::I)): Text {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => Text::concat_all([", ", p_param_ty(x.f_param_ty), p_param_tys_rest(rest)])
+  }
+}
+
+fn p_param_tys(p: llvm::ParamTys::I): Text {
+  match p.f_opt {
+    None => ""
+    Some(o) => concat(p_param_ty(o.f_param_ty), p_param_tys_rest(o.f_rep))
+  }
+}
+
+fn p_param(p: llvm::Param::I): Text {
+  Text::concat_all([p_ty(p.f_ty), " ", p.f_local])
+}
+
+fn p_params_rest(xs: List(llvm::Params_Rep1::I)): Text {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => Text::concat_all([", ", p_param(x.f_param), p_params_rest(rest)])
+  }
+}
+
+fn p_params(p: llvm::Params::I): Text {
+  match p.f_opt {
+    None => ""
+    Some(o) => concat(p_param(o.f_param), p_params_rest(o.f_rep))
+  }
+}
+
+fn p_args_rest(xs: List(llvm::Args_Rep1::I)): Text {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => Text::concat_all([", ", p_ty_value(x.f_ty_value), p_args_rest(rest)])
+  }
+}
+
+fn p_args(a: llvm::Args::I): Text {
+  match a.f_opt {
+    None => ""
+    Some(o) => concat(p_ty_value(o.f_ty_value), p_args_rest(o.f_rep))
+  }
+}
+
+fn p_args_of(a: llvm::ArgsOf::I): Text {
+  match a {
+    Args_I(x) => p_args(x)
+  }
+}
+
+fn p_callee(c: llvm::Callee::I): Text {
+  match c {
+    Global_I(s) => s
+    Asm_I(a) => Text::concat_all(["asm sideeffect ", a.f_str, ", ", a.f_str_2])
+  }
+}
+
+fn p_int_of(i: llvm::IntOf::I): Text {
+  match i {
+    Int_I(s) => s
+  }
+}
+
+fn p_label_ref(l: llvm::LabelRef::I): Text {
+  match l {
+    Local_I(s) => s
+  }
+}
+
+fn p_call(c: llvm::Call::I): Text {
+  let sig := match c.f_sig {
+    None => ""
+    Some(s) => Text::concat_all(["(", p_param_tys(s.f_param_tys), ") "])
+  }
+  Text::concat_all(
+    [
+      "call ",
+      p_flag(c.f_fast_cc),
+      p_ty(c.f_ty),
+      " ",
+      sig,
+      p_callee(c.f_callee),
+      "(",
+      p_args_of(c.f_args_of),
+      ")"
+    ]
+  )
+}
+
+fn p_indices(xs: List(llvm::Gep_Rep1::I)): Text {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => Text::concat_all([", ", p_ty_value(x.f_ty_value), p_indices(rest)])
+  }
+}
+
+fn p_bin_op(o: llvm::BinOp::I): Text {
+  match o {
+    OpAdd_I(s) => s
+    OpSub_I(s) => s
+    OpMul_I(s) => s
+    OpShl_I(s) => s
+    OpLshr_I(s) => s
+    OpAnd_I(s) => s
+    OpOr_I(s) => s
+    OpXor_I(s) => s
+    OpSdiv_I(s) => s
+    OpUdiv_I(s) => s
+    OpSrem_I(s) => s
+    OpUrem_I(s) => s
+  }
+}
+
+fn p_pred(o: llvm::Pred::I): Text {
+  match o {
+    PredEq_I(s) => s
+    PredNe_I(s) => s
+    PredSlt_I(s) => s
+    PredSgt_I(s) => s
+    PredSle_I(s) => s
+    PredSge_I(s) => s
+    PredUlt_I(s) => s
+    PredUgt_I(s) => s
+    PredUle_I(s) => s
+    PredUge_I(s) => s
+  }
+}
+
+fn p_cast_op(o: llvm::CastOp::I): Text {
+  match o {
+    OpTrunc_I(s) => s
+    OpZext_I(s) => s
+    OpSext_I(s) => s
+    OpIntToPtr_I(s) => s
+    OpPtrToInt_I(s) => s
+  }
+}
+
+fn p_rhs(r: llvm::Rhs::I): Text {
+  match r {
+    Alloca_I(a) => concat("alloca ", p_ty(a.f_ty))
+    Load_I(l) => Text::concat_all(["load ", p_ty(l.f_ty), ", ptr ", p_value(l.f_value)])
+    Gep_I(g) => Text::concat_all(
+      ["getelementptr ", p_ty(g.f_ty), ", ptr ", p_value(g.f_value), p_indices(g.f_rep)]
+    )
+    Bin_I(b) => Text::concat_all(
+      [p_bin_op(b.f_bin_op), " ", p_ty(b.f_ty), " ", p_value(b.f_value), ", ", p_value(b.f_value_2)]
+    )
+    Icmp_I(c) => Text::concat_all(
+      [
+        "icmp ",
+        p_pred(c.f_pred),
+        " ",
+        p_ty(c.f_ty),
+        " ",
+        p_value(c.f_value),
+        ", ",
+        p_value(c.f_value_2)
+      ]
+    )
+    Cast_I(c) => Text::concat_all(
+      [p_cast_op(c.f_cast_op), " ", p_ty(c.f_ty), " ", p_value(c.f_value), " to ", p_ty(c.f_ty_2)]
+    )
+    Call_I(c) => p_call(c)
+    ExtractValue_I(e) => Text::concat_all(
+      ["extractvalue ", p_ty(e.f_ty), " ", p_value(e.f_value), ", ", p_int_of(e.f_int_of)]
+    )
+    InsertValue_I(i) => Text::concat_all(
+      [
+        "insertvalue ",
+        p_ty(i.f_ty),
+        " ",
+        p_value(i.f_value),
+        ", ",
+        p_ty(i.f_ty_2),
+        " ",
+        p_value(i.f_value_2),
+        ", ",
+        p_int_of(i.f_int_of)
+      ]
+    )
+  }
+}
+
+fn p_instr(i: llvm::Instr::I): Text {
+  match i {
+    Def_I(d) => Text::concat_all([d.f_local, " = ", p_rhs(d.f_rhs)])
+    Store_I(s) => Text::concat_all(
+      ["store ", p_ty(s.f_ty), " ", p_value(s.f_value), ", ptr ", p_value(s.f_value_2)]
+    )
+    Call_I(c) => p_call(c)
+  }
+}
+
+fn p_instrs(xs: List(llvm::Instr::I)): Text {
+  match xs {
+    Nil => ""
+    Cons(i, rest) => Text::concat_all(["  ", p_instr(i), "\n", p_instrs(rest)])
+  }
+}
+
+fn p_cases(xs: List(llvm::Case::I)): Text {
+  match xs {
+    Nil => ""
+    Cons(c, rest) => Text::concat_all(
+      [
+        "    ",
+        p_ty(c.f_ty),
+        " ",
+        p_value(c.f_value),
+        ", label ",
+        p_label_ref(c.f_label_ref),
+        "\n",
+        p_cases(rest)
+      ]
+    )
+  }
+}
+
+fn p_cases_of(o: Option(llvm::CasesOf::I)): Text {
+  match o {
+    None => ""
+    Some(c) => match c {
+      Cases_I(x) => p_cases(Cons(x.f_case, x.f_case_2))
+    }
+  }
+}
+
+fn p_term(t: llvm::Term::I): Text {
+  match t {
+    Ret_I(r) => match r.f_value {
+      None => concat("ret ", p_ty(r.f_ty))
+      Some(v) => Text::concat_all(["ret ", p_ty(r.f_ty), " ", p_value(v)])
+    }
+    Br_I(b) => concat("br label ", p_label_ref(b.f_label_ref))
+    CondBr_I(c) => Text::concat_all(
+      [
+        "br ",
+        p_ty(c.f_ty),
+        " ",
+        p_value(c.f_value),
+        ", label ",
+        p_label_ref(c.f_label_ref),
+        ", label ",
+        p_label_ref(c.f_label_ref_2)
+      ]
+    )
+    Switch_I(s) => Text::concat_all(
+      [
+        "switch ",
+        p_ty(s.f_ty),
+        " ",
+        p_value(s.f_value),
+        ", label ",
+        p_label_ref(s.f_label_ref),
+        " [\n",
+        p_cases_of(s.f_cases_of),
+        "  ]"
+      ]
+    )
+    Unreachable_I(s) => s
+  }
+}
+
+fn p_block(b: llvm::Block::I): Text {
+  Text::concat_all([b.f_label_def, "\n", p_instrs(b.f_instr), "  ", p_term(b.f_term), "\n"])
+}
+
+fn p_blocks(xs: List(llvm::Block::I)): Text {
+  match xs {
+    Nil => ""
+    Cons(b, rest) => concat(p_block(b), p_blocks(rest))
+  }
+}
+
+fn p_item(i: llvm::Item::I): Text {
+  match i {
+    Declare_I(d) => Text::concat_all(
+      [
+        "declare ",
+        p_ty(d.f_ty),
+        " ",
+        d.f_global,
+        "(",
+        p_param_tys(d.f_param_tys),
+        ")",
+        p_trailing(d.f_no_return),
+        "\n"
+      ]
+    )
+    TypeDef_I(t) => Text::concat_all([t.f_local, " = type ", p_ty(t.f_ty), "\n"])
+    Constant_I(c) => Text::concat_all(
+      [c.f_global, " = private unnamed_addr constant ", p_ty(c.f_ty), " ", c.f_c_string, "\n"]
+    )
+    Boxed_I(c) => Text::concat_all(
+      [
+        c.f_global,
+        " = private unnamed_addr constant ",
+        p_ty(c.f_ty),
+        " ",
+        c.f_c_string,
+        ", align ",
+        p_int_of(c.f_int_of),
+        "\n"
+      ]
+    )
+    Variable_I(v) => Text::concat_all(
+      [v.f_global, " = internal global ", p_ty(v.f_ty), " ", p_value(v.f_value), "\n"]
+    )
+    Define_I(d) => Text::concat_all(
+      [
+        "define ",
+        p_flag(d.f_internal),
+        p_flag(d.f_fast_cc),
+        p_ty(d.f_ty),
+        " ",
+        d.f_global,
+        "(",
+        p_params(d.f_params),
+        ")",
+        p_trailing(d.f_no_return),
+        p_trailing(d.f_naked),
+        " {\n",
+        p_block(d.f_block),
+        p_blocks(d.f_block_2),
+        "}\n"
+      ]
+    )
+  }
+}
+
+fn p_items(xs: List(llvm::Item::I)): Text {
+  match xs {
+    Nil => ""
+    Cons(i, rest) => Text::concat_all([p_item(i), "\n", p_items(rest)])
+  }
+}
+
+pub fn llvm_print(m: llvm::Module::I): Text { p_items(m.f_item) }

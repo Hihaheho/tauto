@@ -1,8 +1,8 @@
 import "declaration_kind_sound.taut"
 import "diagnostic_lists.taut"
 import "../../surface/src/surface.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "diagnostic_sound.taut"
@@ -12,13 +12,14 @@ import "summary_sound.taut"
 import "summary_state.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 
 pub theorem declaration_parameters_eq(
   gs: List(Text),
   map: Ordmap(Text, Ty)
 ): ck_param_generics(gs, KindCopy, map) = declaration_parameters(gs, map) {
-  ⊢ ck_param_generics(gs, KindCopy, map) = declaration_parameters(gs, map) from match gs {
+  match gs {
     Nil => Refl
     Cons(g, rest) => declaration_parameters_eq(
       rest,
@@ -82,10 +83,9 @@ pub theorem ck_finish_stmt_accepts(
   s: SurfaceStmt,
   clean: DiagnosticClean(ck_st(ck_finish_stmt(c, s)))
 ): And(DeclarationStatement(c, s), ck_finish_stmt(c, s) = mut1(Star, c)) {
-  ⊢ And(DeclarationStatement(c, s), ck_finish_stmt(c, s) = mut1(Star, c)) from match s {
-    StLet(n, ty, v, b, m) => AndIntro(Trivial, Refl)
-    StVar(n, ty, v, b) => AndIntro(Trivial, Refl)
-    StModule(n, ss, start, end) => AndIntro(Trivial, Refl)
+  match s {
+    StLet(n, ty, v, b, m, unused, st_stack) => AndIntro(Trivial, Refl)
+    StVar(n, ty, v, b, unused, st_stack) => AndIntro(Trivial, Refl)
     StAssign(n, n_place, v) => AndIntro(Trivial, Refl)
     StCalled(n_generates, v) => AndIntro(Trivial, Refl)
     StFn(f) => AndIntro(Trivial, Refl)
@@ -95,13 +95,19 @@ pub theorem ck_finish_stmt_accepts(
     StImport(path, start, end) => AndIntro(Trivial, Refl)
     StInductive(i) => AndIntro(Trivial, Refl)
     StEffect(e) => AndIntro(Trivial, Refl)
-    StExtern(abi, fs, start, end) => AndIntro(Trivial, Refl)
+    StExtern(fs, instances, types, structs, enums, start, end) => AndIntro(Trivial, Refl)
     StClass(cl) => AndIntro(Trivial, Refl)
     StInstance(i) => AndIntro(Trivial, Refl)
     StWhile(cond, body) => AndIntro(Trivial, Refl)
     StReturn(v) => AndIntro(Trivial, Refl)
     StExpr(v) => AndIntro(Trivial, Refl)
     StOther(what, start, end) => AndIntro(Trivial, Refl)
+    StLoop(st_body, start, end) => AndIntro(Trivial, Refl)
+    StModule(mod_name, mod_vis, mod_items, start, end) => AndIntro(Trivial, Refl)
+    StReexport(re_path, re_names, re_spans, start, end) => AndIntro(Trivial, Refl)
+    StFor(for_pat, for_src, st_body, start, end) => AndIntro(Trivial, Refl)
+    StBreak(st_value, start, end) => AndIntro(Trivial, Refl)
+    StContinue(start, end) => AndIntro(Trivial, Refl)
     StMacro(n, f, start, end) => AndIntro(Trivial, Refl)
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => AndIntro(Trivial, Refl)
     StSyntax(n, grammar, start, end) => AndIntro(Trivial, Refl)
@@ -122,7 +128,7 @@ pub theorem ck_finish_stmts_accepts(
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_finish_stmts(ss, c)))
 ): DiagnosticItemsResult(DeclarationStatement, ss, c, ck_finish_stmts(ss, c)) {
-  ⊢ DiagnosticItemsResult(DeclarationStatement, ss, c, ck_finish_stmts(ss, c)) from match ss {
+  match ss {
     Nil => AndIntro(DiagnosticItemsNil, Refl)
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => DiagnosticItemsResult(DeclarationStatement, Cons(s, rest), c, m),
@@ -150,7 +156,7 @@ pub theorem declaration_items_program(
   ss: List(SurfaceStmt),
   checked: DiagnosticItems(SurfaceStmt, DeclarationStatement, c, ss)
 ): ProgramDataKinds(ck_datas_of(c), ss) {
-  ⊢ ProgramDataKinds(ck_datas_of(c), ss) from match checked {
+  match checked {
     DiagnosticItemsNil => ProgramDataKindsNil
     DiagnosticItemsCons(s, rest, head, tail) => ProgramDataKindsCons(
       head,
@@ -184,7 +190,7 @@ pub theorem declaration_finish_datas_kind(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
 ): ProgramDataKinds(ck_datas_of(ck_st(summary_finish_datas_k(program, m))), program) {
-  ⊢ ProgramDataKinds(ck_datas_of(ck_st(summary_finish_datas_k(program, m))), program) from match m {
+  match m {
     mut1(v, next) => {
       let prepared: Checker := summary_replace(next, datas_summarize(ck_datas_of(next)))
       let unwrapped: ck_rewrap1(

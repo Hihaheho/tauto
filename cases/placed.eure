@@ -1,0 +1,115 @@
+// Where a value goes is chosen by the type that holds it (the decided design
+// in `docs/design/ownership.md`): `Placed(T)` is placed by the effect `place(T)`
+// and keeps the borrow of its place, `RcPlaced(T)` by `rc_place(T)` and borrows
+// nothing. Each is built only by its `new`; the types have no effect, and each
+// reads as what it holds (`coerce`).
+
+@ cases.rc-placed-under-heap-runs-on-every-backend
+llvm.unimplemented = "generate: the LLVM backend does not write a `RcPlace` yet"
+description = "Values put with `RcPlaced::new` under `RcPlaced::heap` run the same on each backend."
+source = ```nib
+import std::builtin::region { RcPlaced, RcPlace, rc_place }
+
+struct Node { v: u64 }
+enum Tree { Leaf, Branch(RcPlaced(Tree), u64, RcPlaced(Tree)) }
+fn size(t: &Tree): u64 ! {overflow} {
+  match t { Leaf => 0, Branch(l, v, r) => size(&l) + 1 + size(&r) }
+}
+fn build(n: u64): Tree ! {rc_place(Tree), overflow} {
+  if n == 0 { Leaf } else { Branch(RcPlaced::new(build(n - 1)), n, RcPlaced::new(Leaf)) }
+}
+fn one(): RcPlaced(Node) ! {rc_place(Node)} { RcPlaced::new(Node { v: 3 }) }
+let a := RcPlaced::heap(() => one())
+let t := RcPlaced::heap(() => build(4))
+show(&a.v)
+show(&size(&t))
+```
+stdout = ```
+3
+4
+```
+
+@ cases.placed-in-a-scoped-region-runs-on-every-backend
+llvm.unimplemented = "generate: the LLVM backend does not write a `Region` yet"
+description = "A value put in a scoped region with `Placed::new` is read inside the handle on each backend."
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Placed, Place, place }
+
+struct Node { v: u64 }
+fn one(): Placed(Node) ! {place(Node)} { Placed::new(Node { v: 4 }) }
+let r := Bump::new(64, 64)
+let s := handle {
+  let n := one()
+  n.v
+} with {
+  place<Node>(), k => k(Region::place(&r))
+}
+show(&s)
+```
+stdout = "4\n"
+
+@ cases.a-plain-value-does-not-fit-a-placed-type
+description = "A `T` where `RcPlaced(T)` is expected is an ordinary type error: write `RcPlaced::new(x)`."
+source = ```nib
+import std::builtin::region { RcPlaced }
+
+struct Node { v: u64 }
+struct Holder { n: RcPlaced(Node) }
+let h := Holder { n: Node { v: 3 } }
+```
+types = "error: field `n`: Node does not fit RcPlaced(Node)"
+
+@ cases.placing-left-at-the-top-level-is-an-error
+description = "`RcPlaced::new(x)` with no handler leaves `rc_place(T)` unhandled."
+source = ```nib
+import std::builtin::region { RcPlaced }
+
+struct Node { v: u64 }
+let a := RcPlaced::new(Node { v: 3 })
+```
+rows = "error: unhandled effect rc_place(Node) at the top level"
+
+@ cases.a-placement-arm-must-resume
+description = "An arm of `rc_place` only answers a place: it must be `k(e)`."
+source = ```nib
+import std::builtin::region { RcPlaced, RcPlace, rc_place }
+
+struct Node { v: u64 }
+fn one(): RcPlaced(Node) ! {rc_place(Node)} { RcPlaced::new(Node { v: 3 }) }
+let a := handle { one().v } with { rc_place<Node>(), k => 1 }
+```
+rows = "error: an arm of `rc_place` only answers where the value goes: write its body as `k(e)`, where `e` performs nothing"
+
+@ cases.only-new-builds-a-placed-value
+description = "`RcPlaced(T)` is an ordinary struct of the prelude without `pub(open)`: outside it, only `RcPlaced::new` builds one."
+source = ```nib
+import std::builtin::region { RcPlaced }
+
+struct Node { v: u64 }
+let a := RcPlaced { value: Node { v: 1 } }
+```
+types = "error: `RcPlaced` is a constructor of `RcPlaced`, which the prelude declares without `pub(open)`: outside that file the type is abstract; use the functions it makes public"
+
+@ cases.a-recursive-placed-type-is-built-and-read
+llvm.unimplemented = "generate: the LLVM backend does not write a `Region` yet"
+description = "A type that holds itself through `Placed` is built under `place` and read in a scoped region."
+// The view check unfolds the type once: `Tree` holds what `Placed(Tree)`
+// holds, which is `Tree` again.
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Placed, Place, place }
+
+enum Tree { Leaf, Branch(Placed(Tree), u64) }
+fn two(): Tree ! {place(Tree)} { Branch(Placed::new(Leaf), 1) }
+fn top(t: &Tree): u64 { match t { Leaf => 0, Branch(_, v) => v } }
+let r := Bump::new(64, 64)
+let s := handle {
+  let t := two()
+  top(&t)
+} with {
+  place<Tree>(), k => k(Region::place(&r))
+}
+show(&s)
+```
+stdout = "1\n"

@@ -7,7 +7,9 @@
 
 rustgen-binding-not-rust = error: the Rust { $rust } at { $at } is not Rust ({ $error })
 rustgen-type-no-binding = error: { $name } has no rust binding (add it to rust.types in Tauto.eure)
+rustgen-type-ambiguous = error: rust.types { $name } at { $at } names more than one extern type ({ $candidates }); write the full name of the one it binds
 rustgen-extern-no-binding = error: { $name } has no rust binding (add it to rust.extern in Tauto.eure)
+rustgen-extern-waits = error: extern { $name } performs wait, which the rust backend cannot bind yet (a binding answers at once)
 rustgen-unknown-host-contract = { $at }: unknown nonresuming host contract { $contract }
 rustgen-contract-unknown-extern = { $at }: nonresuming contract names unknown extern { $name }
 rustgen-invalid-facade-name = { $at }: invalid Rust nonresuming facade name { $name }
@@ -38,6 +40,10 @@ rustgen-extern-type-not-send =
     {"  "}A value that is not Send + Sync stays on the host: keep it there, behind a direct effect that takes an id (affine) instead of the value.
 rustgen-write-failed = { $dir }: { $error }
 rustgen-cannot-run-cargo = cannot run cargo: { $error }
+rustgen-lock-out-of-date = error: Cargo.lock is out of date; run tauto build --update-lock
+rustgen-lock-failed =
+    error: cannot resolve Cargo.lock:
+    { $stderr }
 rustgen-rustc-rejected =
     internal error: rustc rejected the generated code (a bug in the generator; the source is in { $dir }):
     { $stderr }
@@ -78,10 +84,10 @@ rustgen-budget-handler-of = handler of { $function }
 rustgen-budget-analysis-limit = the call graph exceeds the bounded concrete-context proof
 rustgen-budget-concurrent-observer = shared values may be observed by another thread while suspended state is retained
 rustgen-budget-multishot = multi-shot control retains the Future path
-rustgen-budget-handler-shape = the handler must have exactly one Exceeded arm and no direct operations
-rustgen-budget-exceeded-not-total = Exceeded must have an unconditional total arm with the budget's Info payload
-rustgen-budget-continuation-used = the Exceeded continuation is used or cannot be proven discarded
-rustgen-budget-abort-not-locally-total = { $op } can escape to an unproven outer observer; a local unconditional total abort arm is required
+rustgen-budget-handler-shape = the handler must have exactly one exceeded arm and no direct operations
+rustgen-budget-exceeded-not-total = exceeded must have an unconditional total arm with the budget's Info payload
+rustgen-budget-continuation-used = the exceeded continuation is used or cannot be proven discarded
+rustgen-budget-abort-not-locally-total = { $op } can escape with a payload whose drop may be observed by the host; a local unconditional total abort arm is required
 rustgen-budget-unproven-payload = handler payload may invoke an implicit host Clone or Drop
 rustgen-budget-observable-handler = the handler interval is not proven closed to host lifetime observers
 rustgen-budget-unproven-lifetime-value = value of type { $ty } has an unproven destruction or borrow lifetime

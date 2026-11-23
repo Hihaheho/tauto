@@ -1,0 +1,162 @@
+// Holes and start symbols of an `inductive_syntax!` (`docs/design/macro.md`「Holes and start
+// symbols」). A `{{par:NAME}}` is the grammar in `grammars/NAME.par`; its tables are in
+// `.tauto-syntax`, made by `scripts/generate-syntax-fixtures.taut`.
+
+// `one` takes a `Value`, the second start symbol, so its argument is one value. A hole is a
+// macro argument's: `Value::I` has no constructor for it.
+@ cases.a-macro-takes-the-second-start-symbol-and-a-hole
+files."ir.taut" = ````tauto
+import std::builtin::macro { SynExpr, Syn, macro_error }
+import std::text { Text }
+
+inductive_syntax!(ir, ```par
+{{par:ir_holes}}```) =>
+  struct Block, enum Value, fn parse, inductive Block::I, inductive Value::I, fn Block::to_i,
+  fn Value::to_i, fn Value_list::to_i
+
+pub macro fn one(v: ir::Value): SynExpr ! {macro_error, div} {
+  match v {
+    Hole(e) => e
+    Num(t) => Syn::nat(t)
+  }
+}
+````
+files."main.taut" = ````tauto
+import "ir.taut" { ir, one }
+
+theorem a_hole(n: Nat): one!(`$n`) = n { Refl }
+theorem a_number(): Eq(Nat, one!(`7`), 7) { Refl }
+
+// `Value::I` has no constructor for a hole: one arm covers it.
+fn digits(v: ir::Value::I): Text {
+  match v {
+    Num_I(t) => t
+  }
+}
+
+// `to_i` is `None` on a tree that holds a hole.
+fn proof_tree(b: ir::Block): Option(ir::Block::I) {
+  ir::Block::to_i(b)
+}
+````
+entry = "main.taut"
+checks.a_hole = "ok"
+checks.a_number = "ok"
+
+// The same with LALR(1) tables: the second start symbol's tables have states of their own.
+@ cases.an-lalr-grammar-takes-the-second-start-symbol-and-a-hole
+files."ir.taut" = ````tauto
+import std::builtin::macro { SynExpr, Syn, macro_error }
+import std::text { Text }
+
+inductive_syntax!(ir, ```par
+{{par:ir_holes_lalr}}```) =>
+  struct Block, enum Value, fn parse, inductive Block::I, inductive Value::I, fn Block::to_i,
+  fn Value::to_i, fn Value_list::to_i
+
+pub macro fn one(v: ir::Value): SynExpr ! {macro_error, div} {
+  match v {
+    Hole(e) => e
+    Num(t) => Syn::nat(t)
+  }
+}
+````
+files."main.taut" = ````tauto
+import "ir.taut" { ir, one }
+
+theorem a_hole(n: Nat): one!(`$n`) = n { Refl }
+theorem a_number(): Eq(Nat, one!(`7`), 7) { Refl }
+
+// `Value::I` has no constructor for a hole: one arm covers it.
+fn digits(v: ir::Value::I): Text {
+  match v {
+    Num_I(t) => t
+  }
+}
+
+// `to_i` is `None` on a tree that holds a hole.
+fn proof_tree(b: ir::Block): Option(ir::Block::I) {
+  ir::Block::to_i(b)
+}
+````
+entry = "main.taut"
+checks.a_hole = "ok"
+checks.a_number = "ok"
+
+// Text read at run time has no holes: `parse` reads `$x` as no text of the language.
+@ cases.parse-reads-no-hole
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Syn::parse` yet"
+entry = "main.taut"
+files."main.taut" = ````tauto
+syntax!(ir, ```par
+{{par:ir_holes}}```) => struct Block, enum Value, fn parse
+
+fn read(t: Text): Text {
+  match ir::parse(t) {
+    Ok(b) => "a block"
+    Err(_) => "not ir"
+  }
+}
+
+show(&read("1 2"))
+show(&read("1 $x"))
+````
+stdout = ```
+"a block"
+"not ir"
+```
+
+// A hole stands for the non-terminal it is an alternative of: inside a sequence it would be
+// a field the proof side's types could not hold.
+@ cases.a-hole-inside-a-sequence-is-refused
+files."main.taut" = ````tauto
+
+inductive_syntax!(bad, ```par
+{{par:misplaced_hole}}```) => struct Block
+````
+entry = "main.taut"
+macro_error = "in `Block`, a hole (`TautoExpr`) is not a whole alternative"
+
+// Alternatives of the same name in two enums: `Callee`'s one alternative that is not a hole is
+// `Global`, as is one of `Value`'s. `Callee::I` has the one constructor `Global_I`, and the
+// function of each enum makes its own type's `Global_I`.
+@ cases.alternatives-of-the-same-name-in-two-enums
+files."ir.taut" = ````tauto
+import std::builtin::macro { SynExpr, Syn, macro_error }
+import std::text { Text }
+
+inductive_syntax!(ir, ```par
+{{par:ir_shared_names}}```) =>
+  struct Prog, enum Callee, enum Value, struct Count, fn parse, inductive Prog::I,
+  inductive Callee::I, inductive Value::I, inductive Count::I, fn Prog::to_i, fn Callee::to_i,
+  fn Value::to_i, fn Count::to_i
+
+pub macro fn one(v: ir::Value): SynExpr ! {macro_error, div} {
+  match v {
+    Hole(e) => e
+    Int(t) => Syn::nat(t)
+    Local(t) => Syn::nat(t)
+    Global(t) => Syn::nat(t)
+  }
+}
+````
+files."main.taut" = ````tauto
+import "ir.taut" { ir, Callee, one }
+import std::text { Text }
+
+theorem a_hole(n: Nat): one!(`$n`) = n { Refl }
+theorem a_number(): Eq(Nat, one!(`7`), 7) { Refl }
+
+fn name(c: ir::Callee::I): Text {
+  match c {
+    Global_I(t) => t
+  }
+}
+
+fn callee_tree(c: ir::Callee): Option(ir::Callee::I) {
+  ir::Callee::to_i(c)
+}
+````
+entry = "main.taut"
+checks.a_hole = "ok"
+checks.a_number = "ok"

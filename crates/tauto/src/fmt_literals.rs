@@ -1,7 +1,7 @@
 //! `tauto fmt` inside the text of a syntax: a literal of a syntax that registers a `fmt` function
 //! (`syntax s … with fmt f = …`) is laid out by that function, and so is the body of a fenced block
 //! (```` ```s ````) in a comment. Both are found in the syntax tree of the file alone
-//! ([`crate::surface::lexical`] and [`crate::surface::fence`]), wherever they are: in ordinary
+//! ([`tauto_parse::lexical`] and [`crate::surface::fence`]), wherever they are: in ordinary
 //! code, in a `quote`, in a macro, in a function nothing uses, and in code that does not check or
 //! expand. Only when one of them could be laid out is the program read, for the functions and
 //! the grammars. Everything else in the file, and the literals of the other syntaxes, are left to
@@ -15,8 +15,9 @@ use tauto_message::{Message, msg};
 use crate::fmt::WIDTH;
 use crate::registered::Library;
 use crate::surface::fence::{Fence, fences};
-use crate::surface::{LitForm, LitSite, Stmt, lexical};
+use crate::surface::{LitForm, LitSite, Stmt};
 use crate::syntax::Role;
+use tauto_parse::lexical;
 
 type TablesOf = HashMap<String, std::sync::Arc<tauto_syntax::Tables>>;
 
@@ -102,7 +103,7 @@ fn laid_out(
     // The syntaxes that name a `fmt` function, whether or not the declaration could be read.
     let mut declared = Vec::new();
     for file in &loaded.files {
-        if let Ok(program) = crate::surface::parse_program_unresolved_at(&file.text, file.base) {
+        if let Ok(program) = tauto_parse::parse_program_unresolved_at(&file.text, file.base) {
             grammars(&program.stmts, &mut declared);
         }
     }
@@ -355,7 +356,8 @@ fn resolve_literal_names(
     lex: &mut crate::surface::Lexical,
     edits: &mut Vec<(usize, usize, String)>,
 ) {
-    use crate::surface::{TermKind, parse_program_unresolved_at, walk};
+    use crate::surface::{TermKind, walk};
+    use tauto_parse::parse_program_unresolved_at;
     let canonical = crate::program::canonical_path(path);
     let files: Vec<_> = loaded
         .files
@@ -433,7 +435,8 @@ fn resolve_literal_names(
 }
 
 fn resolved_macro_key(source: &str, resolved: &[Option<String>]) -> Option<String> {
-    use crate::surface::{TermKind, parse_program_unresolved_at, walk};
+    use crate::surface::{TermKind, walk};
+    use tauto_parse::parse_program_unresolved_at;
     let mut program = parse_program_unresolved_at(source, 0).ok()?;
     let mut index = 0;
     for stmt in &mut program.stmts {

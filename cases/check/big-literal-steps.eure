@@ -1,0 +1,20 @@
+// A long literal is typed in steps that grow with its length, not with its
+// square: each `Cons` of a Text literal reads the tail typed before it as one
+// atom, also where the literal is a match's scrutinee. Without that, the
+// declaration below takes about 3,000,000 steps; with it, under 40,000.
+
+@ cases.a-long-text-literal-in-a-match-scrutinee-is-checked-in-linear-steps
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::text
+fn key_in(name: List(Nat), t: Text): Bool { true }
+fn p(name: List(Nat)): Bool budget 200_000 {
+  ⊢ Bool from match key_in(name, "abcdefg0 abcdefg1 abcdefg2 abcdefg3 abcdefg4 abcdefg5 abcdefg6 abcdefg7 abcdefg8 abcdefg9 abcdefg10 abcdefg11 abcdefg12 abcdefg13 abcdefg14 abcdefg15 abcdefg16 abcdefg17 abcdefg18 abcdefg19 abcdefg20 abcdefg21 abcdefg22 abcdefg23 abcdefg24 abcdefg25 abcdefg26 abcdefg27 abcdefg28 abcdefg29 abcdefg30 abcdefg31 abcdefg32 abcdefg33 abcdefg34 abcdefg35 abcdefg36 abcdefg37 abcdefg38 abcdefg39 abcdefg40 abcdefg41 abcdefg42 abcdefg43 abcdefg44 abcdefg45 abcdefg46 abcdefg47 abcdefg48 abcdefg49 abcdefg50 abcdefg51 abcdefg52 abcdefg53 abcdefg54 abcdefg55 abcdefg56 abcdefg57 abcdefg58 abcdefg59 abcdefg60 abcdefg61 abcdefg62 abcdefg63 abcdefg64 abcdefg65 abcdefg66 abcdefg67 abcdefg68 abcdefg69 abcdefg70 abcdefg71 abcdefg72 abcdefg73 abcdefg74 abcdefg75 abcdefg76 abcdefg77 abcdefg78 abcdefg79 abcdefg80 abcdefg81 abcdefg82 abcdefg83 abcdefg84 abcdefg85 abcdefg86 abcdefg87 abcdefg88 abcdefg89 abcdefg90 abcdefg91 abcdefg92 abcdefg93 abcdefg94 abcdefg95 abcdefg96 abcdefg97 abcdefg98 abcdefg99") {
+    true => true
+    false => false
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::p" = "ok"

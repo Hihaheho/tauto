@@ -1,5 +1,5 @@
 import "record_frame.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "checker_frame.taut"
 import "datas.taut"
@@ -7,6 +7,7 @@ import "datas_frame.taut"
 import "pattern_scope.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -111,9 +112,9 @@ pub def Inference_ck_clone_of_in(
 
 pub def Inference_ck_lambda_in(
   k: Nat
-): Prop := ∀ c: Checker. ∀ lam: SurfaceTerm. ∀ borrows: List(
+): Prop := ∀ c: Checker. ∀ lam: SurfaceTerm. ∀ r#borrows: List(
   Option(Bool)
-). ∀ env: List(Local). ∀ ordered: CkOrdered(c). CkRunFrame(c, ck_lambda_in(k, c, lam, borrows, env))
+). ∀ env: List(Local). ∀ ordered: CkOrdered(c). CkRunFrame(c, ck_lambda_in(k, c, lam, r#borrows, env))
 
 pub def Inference_ck_record_fields_in(
   k: Nat
@@ -581,11 +582,11 @@ pub theorem inference_use_ck_lambda_in(
   k: Nat,
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local),
   ordered: CkOrdered(c),
   ih: InferenceFrames(k)
-): CkRunFrame(c, ck_lambda_in(k, c, lam, borrows, env)) {
+): CkRunFrame(c, ck_lambda_in(k, c, lam, r#borrows, env)) {
   And::left(
     And::right(
       And::right(
@@ -604,7 +605,7 @@ pub theorem inference_use_ck_lambda_in(
         )
       )
     )
-  )(c, lam, borrows, env, ordered)
+  )(c, lam, r#borrows, env, ordered)
 }
 
 pub theorem inference_use_ck_record_fields_in(
@@ -1141,15 +1142,33 @@ pub theorem inference_use_ck_handle_body_in(
 }
 
 pub fn inference_hint(c: Checker): Option(Ty) { c.hint }
-pub fn inference_set_hint(&mut c: Checker, value: Option(Ty)): Unit { set_to(&mut c.hint, value) }
+pub fn inference_set_hint(c: &mut Checker, value: Option(Ty)): Unit { set_to(&mut c.hint, value) }
 pub theorem inference_set_hint_frame(
   c: Checker,
   value: Option(Ty)
 ): CkReadFrame(c, inference_set_hint(c, value)) { Refl }
 
+pub fn inference_result_hint(c: Checker): Option(Ty) { c.result_hint }
+pub fn inference_set_result_hint(c: &mut Checker, value: Option(Ty)): Unit {
+  set_to(&mut c.result_hint, value)
+}
+pub theorem inference_set_result_hint_frame(
+  c: Checker,
+  value: Option(Ty)
+): CkReadFrame(c, inference_set_result_hint(c, value)) { Refl }
+
+pub fn inference_arm_hint(c: Checker): Option(Ty) { c.arm_hint }
+pub fn inference_set_arm_hint(c: &mut Checker, value: Option(Ty)): Unit {
+  set_to(&mut c.arm_hint, value)
+}
+pub theorem inference_set_arm_hint_frame(
+  c: Checker,
+  value: Option(Ty)
+): CkReadFrame(c, inference_set_arm_hint(c, value)) { Refl }
+
 pub fn inference_returns(c: Checker): List(Ty) { c.returns }
 pub fn inference_set_returns(
-  &mut c: Checker,
+  c: &mut Checker,
   value: List(Ty)
 ): Unit { set_to(&mut c.returns, value) }
 pub theorem inference_set_returns_frame(
@@ -1157,19 +1176,19 @@ pub theorem inference_set_returns_frame(
   value: List(Ty)
 ): CkReadFrame(c, inference_set_returns(c, value)) { Refl }
 
-pub fn inference_assume(c: Checker): List(Pair(Text, Text)) { c.assume }
+pub fn inference_assume(c: Checker): List(Text × Text) { c.assume }
 pub fn inference_set_assume(
-  &mut c: Checker,
-  value: List(Pair(Text, Text))
+  c: &mut Checker,
+  value: List(Text × Text)
 ): Unit { set_to(&mut c.assume, value) }
 pub theorem inference_set_assume_frame(
   c: Checker,
-  value: List(Pair(Text, Text))
+  value: List(Text × Text)
 ): CkReadFrame(c, inference_set_assume(c, value)) { Refl }
 
 pub fn inference_exceeded(c: Checker): List(Ty) { c.exceeded }
 pub fn inference_set_exceeded(
-  &mut c: Checker,
+  c: &mut Checker,
   value: List(Ty)
 ): Unit { set_to(&mut c.exceeded, value) }
 pub theorem inference_set_exceeded_frame(
@@ -1184,30 +1203,31 @@ pub fn inference_fn_params(f: SurfaceFn): List(Text) { f.params }
 pub fn inference_arm_body(a: SurfaceArm): SurfaceTerm { a.body }
 pub fn inference_arm_pattern(a: SurfaceArm): SurfacePattern { a.pattern }
 pub fn inference_arm_guard(a: SurfaceArm): Option(SurfaceTerm) { a.guard }
-pub fn inference_pair_ty(p: Pair(Ty, TySpan)): Ty { p.fst }
-pub fn inference_pair_span(p: Pair(Ty, TySpan)): TySpan { p.snd }
-pub fn inference_handler_pattern(p: Pair(SurfacePattern, SurfaceTerm)): SurfacePattern { p.fst }
-pub fn inference_handler_body(p: Pair(SurfacePattern, SurfaceTerm)): SurfaceTerm { p.snd }
+pub fn inference_pair_ty(p: Ty × TySpan): Ty { p.fst }
+pub fn inference_pair_span(p: Ty × TySpan): TySpan { p.snd }
+pub fn inference_handler_pattern(p: SurfacePattern × SurfaceTerm): SurfacePattern { p.fst }
+pub fn inference_handler_body(p: SurfacePattern × SurfaceTerm): SurfaceTerm { p.snd }
 pub fn inference_handler_params(p: ArmSig): List(Ty) { p.params }
 pub fn inference_handler_answer(p: ArmSig): Ty { p.answer }
 pub fn inference_handler_rigid(p: ArmSig): List(Text) { p.rigid }
 pub fn inference_handler_names(p: ArmSig): List(TypeName) { p.bound }
-pub fn inference_record_closure(&mut c: Checker, t: Ty, body: SurfaceTerm): Unit {
+pub fn inference_record_closure(c: &mut Checker, t: Ty, body: SurfaceTerm, cap: TyCaptures): Unit {
   set_to(
     &mut c.closure_results,
-    Cons(TyClosure { ty: t, start: body.start, end: body.end }, c.closure_results)
+    Cons(TyClosure { ty: t, start: body.start, end: body.end, cap: cap }, c.closure_results)
   )
 }
 pub theorem inference_record_closure_frame(
   c: Checker,
   t: Ty,
-  body: SurfaceTerm
-): CkReadFrame(c, inference_record_closure(c, t, body)) { Refl }
+  body: SurfaceTerm,
+  cap: TyCaptures
+): CkReadFrame(c, inference_record_closure(c, t, body, cap)) { Refl }
 pub fn inference_bind_scope<A, B>(
   k: (A, Checker, Scope) -> Mut1(B, Checker),
   m: Mut2(A, Checker, Scope)
 ): Mut1(B, Checker) {
-  ⊢ Mut1(B, Checker) from match m { mut2(v, c, env) => k(v, c, env) }
+  match m { mut2(v, c, env) => k(v, c, env) }
 }
 pub theorem inference_bind_scope_frame<A: Type, B: Type>(
   c: Checker,
@@ -1218,7 +1238,7 @@ pub theorem inference_bind_scope_frame<A: Type, B: Type>(
     next
   ). CkRunFrame(next, k(v, next, env))
 ): CkRunFrame(c, inference_bind_scope(k, m)) {
-  ⊢ CkRunFrame(c, inference_bind_scope(k, m)) from match m {
+  match m {
     mut2(v, next, env) => {
       let h: CkRunFrame(next, k(v, next, env)) := hk(v, next, env, And::left(hm))
       AndIntro(And::left(h), Eq::trans(And::right(h), And::right(hm)))

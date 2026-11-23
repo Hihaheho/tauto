@@ -1,0 +1,16 @@
+fn spaces(t: Text, i: u64, found: List(Option(u64))): List(Option(u64)) ! {div, overflow} {
+    match Text::byte(t, i) {
+        None => found,
+        Some(b) => spaces(t, i + 1, Cons(if b == 32 { Some(i) } else { None }, found))
+    }
+}
+fn count<A>(l: &List(A)): i64 ! {div, overflow} {
+    match l { Nil => 0, Cons(h, rest) => 1 + count(&rest) }
+}
+var t := ""
+var n := 0
+while n < 500 { t := concat(t, "a b "); n := n + 1 }
+let found := spaces(t, 0, Nil)
+// A generic function runs in direct form under a caller that is in it.
+fn total(l: &List(Option(u64))): i64 ! {div, overflow} { count(&l) }
+show(&total(&found))

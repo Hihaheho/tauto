@@ -113,9 +113,11 @@ impl Mirror {
     /// Fetches the commit `source.reference` names now, and gives its ID.
     pub fn fetch_head(&self, source: &GitSource) -> Result<Rev, String> {
         let mut c = git(Some(&self.dir));
-        c.args(["fetch", "--quiet", "--no-tags", "--depth=1", "--"])
-            .arg(&source.url)
-            .arg(&source.reference);
+        c.args(["fetch", "--quiet", "--no-tags", "--depth=1"]);
+        if source.sparse {
+            c.arg("--filter=blob:none");
+        }
+        c.arg("--").arg(&source.url).arg(&source.reference);
         run(c, &say!("totebag-fetching", source = source.to_string()))?;
         let mut c = git(Some(&self.dir));
         c.args(["rev-parse", "--verify", "FETCH_HEAD^{commit}"]);
@@ -168,9 +170,11 @@ impl Mirror {
             return Ok(());
         }
         let mut c = git(Some(&self.dir));
-        c.args(["fetch", "--quiet", "--no-tags", "--depth=1", "--"])
-            .arg(&source.url)
-            .arg(rev.hex());
+        c.args(["fetch", "--quiet", "--no-tags", "--depth=1"]);
+        if source.sparse {
+            c.arg("--filter=blob:none");
+        }
+        c.arg("--").arg(&source.url).arg(rev.hex());
         let by_id = run(
             c,
             &say!(
@@ -183,9 +187,11 @@ impl Mirror {
             return Ok(());
         }
         let mut c = git(Some(&self.dir));
-        c.args(["fetch", "--quiet", "--no-tags", "--"])
-            .arg(&source.url)
-            .arg(&source.reference);
+        c.args(["fetch", "--quiet", "--no-tags"]);
+        if source.sparse {
+            c.arg("--filter=blob:none");
+        }
+        c.arg("--").arg(&source.url).arg(&source.reference);
         run(c, &say!("totebag-fetching", source = source.to_string()))?;
         if self.has_commit(rev) {
             return Ok(());
@@ -207,10 +213,14 @@ impl Mirror {
 
     /// The files of the commit `rev`: the whole repository, not only the
     /// tote's directory, so that its paths to other totes in the same
-    /// repository stay inside what was fetched.
-    pub fn tree(&self, rev: &Rev) -> Result<Tree, String> {
+    /// repository stay inside what was fetched. When `source` is sparse,
+    /// only the files under its `dir`, with their paths in the repository.
+    pub fn tree(&self, rev: &Rev, source: &GitSource) -> Result<Tree, String> {
         let mut c = git(Some(&self.dir));
         c.args(["ls-tree", "-r", "-z", "--full-tree", rev.hex()]);
+        if source.sparse {
+            c.arg("--").arg(format!("{}/", source.dir));
+        }
         let listing = run(c, "git ls-tree")?;
         let mut entries = Vec::new();
         for record in listing.split(|b| *b == 0).filter(|r| !r.is_empty()) {
@@ -254,6 +264,9 @@ impl Mirror {
                 max = crate::source::MAX_FILES
             ));
         }
+        if source.sparse {
+            self.have_blobs(source, rev, entries.iter().map(|(_, _, oid)| oid.as_str()))?;
+        }
         let blobs = self.blobs(entries.iter().map(|(_, _, oid)| oid.as_str()))?;
         if blobs.len() != entries.len() {
             return Err(say!("totebag-cat-file-blob-missing"));
@@ -268,6 +281,79 @@ impl Mirror {
             })
             .collect();
         Tree::new(files)
+    }
+
+    /// Makes sure the blobs `oids` are here. A sparse fetch left them on the
+    /// server: they are asked for by ID, and when the server does not give
+    /// objects by ID, the commit is fetched again with everything in it.
+    fn have_blobs<'a>(
+        &self,
+        source: &GitSource,
+        rev: &Rev,
+        oids: impl Iterator<Item = &'a str>,
+    ) -> Result<(), String> {
+        let mut missing = self.missing(rev, oids)?;
+        if missing.is_empty() {
+            return Ok(());
+        }
+        missing.sort();
+        missing.dedup();
+        let mut failed = None;
+        for chunk in missing.chunks(256) {
+            let mut c = git(Some(&self.dir));
+            c.args(["fetch", "--quiet", "--no-tags", "--"])
+                .arg(&source.url)
+                .args(chunk);
+            if let Err(e) = run(
+                c,
+                &say!("totebag-fetching-files", source = source.to_string()),
+            ) {
+                failed = Some(e);
+                break;
+            }
+        }
+        if failed.is_some() {
+            let mut c = git(Some(&self.dir));
+            c.args([
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--depth=1",
+                "--refetch",
+                "--",
+            ])
+            .arg(&source.url)
+            .arg(rev.hex());
+            run(c, &say!("totebag-fetching", source = source.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Those of the objects `oids` that the commit `rev` reaches and that are
+    /// not here. A sparse repository is a partial clone, which would fetch an
+    /// object one at a time when it is asked for; `rev-list --missing=print`
+    /// only says which are not here.
+    fn missing<'a>(
+        &self,
+        rev: &Rev,
+        oids: impl Iterator<Item = &'a str>,
+    ) -> Result<Vec<String>, String> {
+        let wanted: std::collections::BTreeSet<&str> = oids.collect();
+        let mut c = git(Some(&self.dir));
+        c.args([
+            "rev-list",
+            "--objects",
+            "--missing=print",
+            "--no-object-names",
+            rev.hex(),
+        ]);
+        let out = run(c, "git rev-list")?;
+        Ok(String::from_utf8_lossy(&out)
+            .lines()
+            .filter_map(|l| l.strip_prefix('?'))
+            .filter(|oid| wanted.contains(oid))
+            .map(str::to_string)
+            .collect())
     }
 
     /// The payload of the commit `rev`, checked to hash to `rev`.

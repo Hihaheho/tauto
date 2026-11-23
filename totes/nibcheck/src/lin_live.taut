@@ -1,0 +1,719 @@
+import "../../surface/src/surface.taut"
+import std::base
+import std::list
+import std::map
+import std::text
+import "checker.taut"
+import "datas.taut"
+import "freevars.taut"
+import "../../identity/src/identity.taut"
+
+// Where a binding is live (`live.rs` of `lin.rs`): from a point, the program
+// may still read it before a whole write replaces its value
+// (`docs/design/ownership.md`「凍結は最後の使用で解ける」). The use check asks
+// this for a binding that holds a borrow: the owner stays frozen only while it
+// is live.
+//
+// The walk goes backwards over one body, in the reverse of the order the use
+// check walks in, and records the names live right after each term and
+// statement, by span. It is by name and errs on the side of live: a name bound
+// again inside counts as the outer one; only a `let` or `var`, and a whole
+// write of a name bound only by `var`, end a life; a closure reads what it
+// captures where it is written and wherever its name is read, and inside its
+// body all of that is live throughout; what a handler's arms read is live
+// throughout its body and the other way round; a loop is walked until its sets
+// stay. A point with no record has every name live.
+
+// The names live after each point: by the span's start, then its end.
+pub(open) inductive LiveMap: Type {
+  LiveMapMk(after: Ordmap(Nat, List(Nat × List(Text)))): LiveMap
+}
+
+pub(open) inductive LiveW: Type {
+  LiveWMk(
+    after: Ordmap(Nat, List(Nat × List(Text))),
+    // Live everywhere in what is walked now: a closure's body, an arm, a
+    // handled body.
+    extra: List(Text),
+    // A closure's name, with what it captures.
+    closures: Ordmap(Text, List(Text)),
+    // Bound only by `var`: a whole write ends their life.
+    killable: List(Text)
+  ): LiveW
+}
+
+pub fn live_add(xs: List(Text), n: Text): List(Text) {
+  if list_has_text(xs, n) { xs } else { Cons(n, xs) }
+}
+
+pub fn live_union(a: List(Text), b: List(Text)): List(Text) {
+  match b {
+    Nil => a
+    Cons(x, rest) => live_union(live_add(a, x), rest)
+  }
+}
+
+pub fn live_remove(xs: List(Text), n: Text): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if x == n { live_remove(rest, n) } else { Cons(x, live_remove(rest, n)) }
+  }
+}
+
+pub fn live_subset(a: List(Text), b: List(Text)): Bool {
+  match a {
+    Nil => true
+    Cons(x, rest) => list_has_text(b, x) && live_subset(rest, b)
+  }
+}
+
+pub fn live_keep_in(xs: List(Text), within: List(Text)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if list_has_text(within, x) {
+      Cons(x, live_keep_in(rest, within))
+    } else {
+      live_keep_in(rest, within)
+    }
+  }
+}
+
+pub fn live_entry_add(
+  es: List(Nat × List(Text)),
+  end: Nat,
+  names: List(Text)
+): List(Nat × List(Text)) {
+  match es {
+    Nil => Cons(#(end, names), Nil)
+    Cons(e, rest) => if Nat::eq(e.fst, end) {
+      Cons(#(end, live_union(e.snd, names)), rest)
+    } else {
+      Cons(e, live_entry_add(rest, end, names))
+    }
+  }
+}
+
+pub fn live_record(w: &mut LiveW, start: Nat, end: Nat, out: List(Text)): Unit {
+  let names := live_union(out, w.extra)
+  let es: List(Nat × List(Text)) := ⊢ List(Nat × List(Text)) from match Ordmap::get(w.after, start, Ordmap::compare_nat) {
+    Some(xs) => xs
+    None => Nil
+  }
+  set_to(&mut w.after, Ordmap::insert(w.after, start, live_entry_add(es, end, names), Ordmap::compare_nat))
+}
+
+mutual {
+  // Reading `n`: it, and what it captures when it is a closure.
+  pub fn live_gen(k: Nat, w: LiveW, n: Text, live: List(Text)): List(Text) {
+    match k {
+      Zero => live
+      Succ(j) => if list_has_text(live, n) {
+        live
+      } else {
+        ⊢ List(Text) from match Ordmap::get(w.closures, n, Ordmap::compare_text) {
+          Some(caps) => live_gen_each(j, w, caps, Cons(n, live))
+          None => Cons(n, live)
+        }
+      }
+    }
+  }
+
+  pub fn live_gen_each(k: Nat, w: LiveW, ns: List(Text), live: List(Text)): List(Text) {
+    match k {
+      Zero => live
+      Succ(j) => ⊢ List(Text) from match ns {
+        Nil => live
+        Cons(n, rest) => live_gen_each(j, w, rest, live_gen(j, w, n, live))
+      }
+    }
+  }
+}
+
+pub fn live_set_extra(w: &mut LiveW, extra: List(Text)): Unit {
+  set_to(&mut w.extra, extra)
+}
+
+// Whether `name` may be read after `span`: `None` when nothing is recorded
+// there.
+pub fn live_after(m: LiveMap, span: TySpan, name: Text): Option(Bool) {
+  match Ordmap::get(m.after, span.start, Ordmap::compare_nat) {
+    None => None
+    Some(es) => live_after_in(es, span.end, name)
+  }
+}
+
+pub fn live_after_in(es: List(Nat × List(Text)), end: Nat, name: Text): Option(Bool) {
+  match es {
+    Nil => None
+    Cons(e, rest) => if Nat::eq(e.fst, end) {
+      Some(list_has_text(e.snd, name))
+    } else {
+      live_after_in(rest, end, name)
+    }
+  }
+}
+
+// The names a body binds: by `var`, any other way, and the closures with what
+// they capture.
+pub(open) inductive LiveBinders: Type {
+  LiveBindersMk(vars: List(Text), others: List(Text), closures: Ordmap(Text, List(Text))): LiveBinders
+}
+
+pub fn live_is_closure(t: SurfaceTerm): Bool {
+  match t.kind {
+    SkLam(^ps, ^b, ^ts, _) => true
+    SkBorrowLam(^bs, ^l) => true
+    _ => false
+  }
+}
+
+pub fn live_fn_captures(f: SurfaceFn): List(Text) {
+  live_remove(
+    free_vars(SurfaceTermIndexedMk(SkLam(f.params, f.body, Nil, Nil), f.start, f.end, None)),
+    f.name
+  )
+}
+
+pub fn live_binders_stmt(b: LiveBinders, s: SurfaceStmt): LiveBinders {
+  match s {
+    StLet(name, ^ty, value, ^r#borrow, ^bm, ^unused, ^st_stack) => LiveBindersMk(
+      b.vars,
+      Cons(name, b.others),
+      if live_is_closure(value) {
+        Ordmap::insert(b.closures, name, free_vars(value), Ordmap::compare_text)
+      } else {
+        b.closures
+      }
+    )
+    StVar(name, ^ty, ^value, ^vb, ^unused, ^st_stack) => LiveBindersMk(Cons(name, b.vars), b.others, b.closures)
+    StFn(f) => LiveBindersMk(
+      b.vars,
+      Cons(f.name, List::append(f.params, b.others)),
+      Ordmap::insert(b.closures, f.name, live_fn_captures(f), Ordmap::compare_text)
+    )
+    _ => b
+  }
+}
+
+pub fn live_binders_stmts(b: LiveBinders, ss: List(SurfaceStmt)): LiveBinders {
+  match ss {
+    Nil => b
+    Cons(s, rest) => live_binders_stmts(live_binders_stmt(b, s), rest)
+  }
+}
+
+pub fn live_binders_handler(b: LiveBinders, h: SurfaceHandler): LiveBinders {
+  match h {
+    HdReturn(p, ^body) => LiveBindersMk(b.vars, pattern_names(p, b.others), b.closures)
+    HdOperation(^op, ^binds, ^types, patterns, r#resume, _, ^guard, ^body) => LiveBindersMk(
+      b.vars,
+      List::append(
+        ⊢ List(Text) from match r#resume {
+          Some(n) => Cons(n, Nil)
+          None => Nil
+        },
+        pattern_names_each(patterns, b.others)
+      ),
+      b.closures
+    )
+  }
+}
+
+pub fn live_binders_handlers(b: LiveBinders, hs: List(SurfaceHandler)): LiveBinders {
+  match hs {
+    Nil => b
+    Cons(h, rest) => live_binders_handlers(live_binders_handler(b, h), rest)
+  }
+}
+
+pub fn live_binders_arms(b: LiveBinders, arms: List(SurfaceArm)): LiveBinders {
+  match arms {
+    Nil => b
+    Cons(a, rest) => live_binders_arms(
+      LiveBindersMk(b.vars, pattern_names(a.pattern, b.others), b.closures),
+      rest
+    )
+  }
+}
+
+// The binders of one subterm (the subterms of the body are each visited).
+pub fn live_binders_term(b: LiveBinders, t: SurfaceTerm): LiveBinders {
+  match t.kind {
+    SkLam(ps, ^body, ^ts, _) => LiveBindersMk(b.vars, List::append(ps, b.others), b.closures)
+    SkBlock(ss) => live_binders_stmts(b, ss)
+    SkMatch(^s, ^motive, arms, ^hb, _) => live_binders_arms(b, arms)
+    SkHandle(^body, hs) => live_binders_handlers(b, hs)
+    _ => b
+  }
+}
+
+pub fn live_binders_terms(b: LiveBinders, ts: List(SurfaceTerm)): LiveBinders {
+  match ts {
+    Nil => b
+    Cons(t, rest) => live_binders_terms(live_binders_term(b, t), rest)
+  }
+}
+
+
+pub fn live_killable(vars: List(Text), others: List(Text)): List(Text) {
+  match vars {
+    Nil => Nil
+    Cons(v, rest) => if list_has_text(others, v) {
+      live_killable(rest, others)
+    } else {
+      Cons(v, live_killable(rest, others))
+    }
+  }
+}
+
+pub fn live_new(b: LiveBinders): LiveW {
+  LiveWMk(Ordmap::empty(), Nil, b.closures, live_killable(b.vars, b.others))
+}
+
+pub fn live_finish(w: LiveW): LiveMap {
+  LiveMapMk(w.after)
+}
+
+pub fn live_block_bound(ss: List(SurfaceStmt), acc: List(Text)): List(Text) {
+  match ss {
+    Nil => acc
+    Cons(s, rest) => live_block_bound(
+      rest,
+      ⊢ List(Text) from match s {
+        StLet(name, ^ty, ^value, ^r#borrow, ^bm, ^unused, ^st_stack) => Cons(name, acc)
+        StVar(name, ^ty, ^value, ^vb, ^unused, ^st_stack) => Cons(name, acc)
+        StFn(f) => Cons(f.name, acc)
+        _ => acc
+      }
+    )
+  }
+}
+
+pub fn live_handler_body(h: SurfaceHandler): SurfaceTerm {
+  match h {
+    HdReturn(^p, body) => body
+    HdOperation(^op, ^binds, ^types, ^patterns, ^r#resume, _, ^guard, body) => body
+  }
+}
+
+pub fn live_handler_guard(h: SurfaceHandler): Option(SurfaceTerm) {
+  match h {
+    HdReturn(^p, ^body) => None
+    HdOperation(^op, ^binds, ^types, ^patterns, ^r#resume, _, guard, ^body) => guard
+  }
+}
+
+mutual {
+  // The names live before `t`, given those live after it.
+  pub fn live_term(k: Nat, w: &mut LiveW, t: SurfaceTerm, out: List(Text)): List(Text) {
+    match k {
+      Zero => out
+      Succ(j) => {
+        live_record(&mut w, t.start, t.end, out)
+        live_kind(j, &mut w, t, out)
+      }
+    }
+  }
+
+  pub fn live_kind(k: Nat, w: &mut LiveW, t: SurfaceTerm, out: List(Text)): List(Text) {
+    match k {
+      Zero => out
+      Succ(j) => ⊢ List(Text) from match t.kind {
+        SkVar(n) => live_gen(j, w, surface_name_text(n), out)
+        SkApp(f, args) => {
+          let hoisted4 := live_each(j, &mut w, args, out)
+          live_term(j, &mut w, f, hoisted4)
+        }
+        SkLam(^ps, body, ^ts, _) => live_closure(j, &mut w, t, body, out)
+        SkBorrowLam(^bs, lam) => ⊢ List(Text) from match lam.kind {
+          SkLam(^ps, body, ^ts, _) => {
+            live_record(&mut w, lam.start, lam.end, out)
+            live_closure(j, &mut w, t, body, out)
+          }
+          _ => out
+        }
+        SkIf(cond, th, el) => {
+          let a := live_term(j, &mut w, th, out)
+          let b := ⊢ List(Text) from match el {
+            Some(e) => live_term(j, &mut w, e, out)
+            None => out
+          }
+          live_term(j, &mut w, cond, live_union(a, b))
+        }
+        SkBlock(ss) => live_stmts(j, &mut w, ss, out)
+        SkMatch(s, ^motive, arms, ^hb, _) => {
+          let a := ⊢ List(Text) from match arms {
+            Nil => out
+            Cons(^x, ^rest) => live_arms(j, &mut w, arms, out, Nil)
+          }
+          live_term(j, &mut w, s, a)
+        }
+        SkHandle(body, hs) => live_handle(j, &mut w, body, hs, out)
+        SkField(base, ^name) => live_term(j, &mut w, base, out)
+        SkTagged(^tag, x) => live_term(j, &mut w, x, out)
+        SkBorrow(^m, ^m_orig, x) => live_term(j, &mut w, x, out)
+        SkUnion(ms) => live_each(j, &mut w, ms, out)
+        SkRecord(^name, fs) => live_fields(j, &mut w, fs, out)
+        SkPerform(^op, args) => live_each(j, &mut w, args, out)
+        SkBudget(^memory, amount, body) => {
+          let hoisted3 := live_term(j, &mut w, body, out)
+          live_term(j, &mut w, amount, hoisted3)
+        }
+        _ => out
+      }
+    }
+  }
+
+  // The terms evaluated in order: the last first.
+  pub fn live_each(k: Nat, w: &mut LiveW, ts: List(SurfaceTerm), out: List(Text)): List(Text) {
+    match k {
+      Zero => out
+      Succ(j) => ⊢ List(Text) from match ts {
+        Nil => out
+        Cons(t, rest) => {
+          let hoisted2 := live_each(j, &mut w, rest, out)
+          live_term(j, &mut w, t, hoisted2)
+        }
+      }
+    }
+  }
+
+  pub fn live_fields(k: Nat, w: &mut LiveW, fs: List(SurfaceField), out: List(Text)): List(Text) {
+    match k {
+      Zero => out
+      Succ(j) => ⊢ List(Text) from match fs {
+        Nil => out
+        Cons(f, rest) => {
+          let hoisted1 := live_fields(j, &mut w, rest, out)
+          live_term(j, &mut w, f.value, hoisted1)
+        }
+      }
+    }
+  }
+
+  // A closure reads what it captures where it is written; inside its body
+  // that, and what is live after it, is live throughout.
+  pub fn live_closure(
+    k: Nat,
+    w: &mut LiveW,
+    t: SurfaceTerm,
+    body: SurfaceTerm,
+    out: List(Text)
+  ): List(Text) {
+    match k {
+      Zero => out
+      Succ(j) => {
+        let live := live_gen_each(j, w, free_vars(t), out)
+        live_throughout(j, &mut w, live, body)
+        live
+      }
+    }
+  }
+
+  // Walks `body` with `inside` live throughout it.
+  pub fn live_throughout(k: Nat, w: &mut LiveW, inside: List(Text), body: SurfaceTerm): List(Text) {
+    match k {
+      Zero => inside
+      Succ(j) => {
+        let outer := w.extra
+        let extra := live_union(outer, inside)
+        live_set_extra(&mut w, extra)
+        let live_in := live_term(j, &mut w, body, extra)
+        live_set_extra(&mut w, outer)
+        live_in
+      }
+    }
+  }
+
+  pub fn live_arms(
+    k: Nat,
+    w: &mut LiveW,
+    arms: List(SurfaceArm),
+    out: List(Text),
+    acc: List(Text)
+  ): List(Text) {
+    match k {
+      Zero => acc
+      Succ(j) => ⊢ List(Text) from match arms {
+        Nil => acc
+        Cons(a, rest) => {
+          let l := live_term(j, &mut w, a.body, out)
+          let g := ⊢ List(Text) from match a.guard {
+            Some(x) => live_term(j, &mut w, x, l)
+            None => l
+          }
+          live_arms(j, &mut w, rest, out, live_union(acc, g))
+        }
+      }
+    }
+  }
+
+  // What the body reads anywhere is live in the arms (`k` resumes it), and
+  // what the arms read is live anywhere in the body (each `perform` may run
+  // one).
+  pub fn live_handle(
+    k: Nat,
+    w: &mut LiveW,
+    body: SurfaceTerm,
+    hs: List(SurfaceHandler),
+    out: List(Text)
+  ): List(Text) {
+    match k {
+      Zero => out
+      Succ(j) => {
+        let body_reads := live_gen_each(j, w, free_vars(body), Nil)
+        let in_arms := live_union(out, body_reads)
+        let arm_reads := live_handlers(j, &mut w, hs, in_arms, Nil)
+        let outer := w.extra
+        let extra := live_union(outer, arm_reads)
+        live_set_extra(&mut w, extra)
+        let live_in := live_term(j, &mut w, body, live_union(out, extra))
+        live_set_extra(&mut w, outer)
+        live_in
+      }
+    }
+  }
+
+  pub fn live_handlers(
+    k: Nat,
+    w: &mut LiveW,
+    hs: List(SurfaceHandler),
+    inside: List(Text),
+    acc: List(Text)
+  ): List(Text) {
+    match k {
+      Zero => acc
+      Succ(j) => ⊢ List(Text) from match hs {
+        Nil => acc
+        Cons(h, rest) => {
+          let outer := w.extra
+          let extra := live_union(outer, inside)
+          live_set_extra(&mut w, extra)
+          let l := live_term(j, &mut w, live_handler_body(h), extra)
+          let g := ⊢ List(Text) from match live_handler_guard(h) {
+            Some(x) => live_term(j, &mut w, x, l)
+            None => l
+          }
+          live_set_extra(&mut w, outer)
+          live_handlers(j, &mut w, rest, inside, live_union(acc, g))
+        }
+      }
+    }
+  }
+
+  // The statements of a block. A name the block binds is its own: one live
+  // after the block is the outer binding, which the block does not end.
+  pub fn live_stmts(k: Nat, w: &mut LiveW, ss: List(SurfaceStmt), out: List(Text)): List(Text) {
+    match k {
+      Zero => out
+      Succ(j) => {
+        let live := live_stmts_rev(j, &mut w, ss, out, false)
+        live_union(live, live_keep_in(live_block_bound(ss, Nil), out))
+      }
+    }
+  }
+
+  // The program's own statements, without the functions it declares at the
+  // top (each is a body of its own).
+  pub fn live_stmts_rev(
+    k: Nat,
+    w: &mut LiveW,
+    ss: List(SurfaceStmt),
+    out: List(Text),
+    root: Bool
+  ): List(Text) {
+    match k {
+      Zero => out
+      Succ(j) => ⊢ List(Text) from match ss {
+        Nil => out
+        Cons(s, rest) => {
+          let after := live_stmts_rev(j, &mut w, rest, out, root)
+          ⊢ List(Text) from match s {
+            StFn(^f) => if root { after } else { live_stmt(j, &mut w, s, after) }
+            _ => live_stmt(j, &mut w, s, after)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn live_stmt(k: Nat, w: &mut LiveW, s: SurfaceStmt, out: List(Text)): List(Text) {
+    match k {
+      Zero => out
+      Succ(j) => {
+        let sp := stmt_span_of(s)
+        live_record(&mut w, sp.start, sp.end, out)
+        ⊢ List(Text) from match s {
+          StLet(name, ^ty, value, ^r#borrow, ^bm, ^unused, ^st_stack) => live_term(j, &mut w, value, live_remove(out, name))
+          StVar(name, ^ty, value, ^vb, ^unused, ^st_stack) => live_term(j, &mut w, value, live_remove(out, name))
+          StAssign(name, place, value) => {
+            let after := ⊢ List(Text) from match place {
+              // `x.f := e` writes into the value: it reads `x`.
+              Some(p) => live_term(j, &mut w, p, live_gen(j, w, name, out))
+              None => if list_has_text(w.killable, name) {
+                live_remove(out, name)
+              } else {
+                live_gen(j, w, name, out)
+              }
+            }
+            live_term(j, &mut w, value, after)
+          }
+          StFn(f) => {
+            let caps := ⊢ List(Text) from match Ordmap::get(w.closures, f.name, Ordmap::compare_text) {
+              Some(xs) => xs
+              None => Nil
+            }
+            let live := live_gen_each(j, w, caps, live_remove(out, f.name))
+            live_throughout(j, &mut w, live, f.body)
+            live
+          }
+          StWhile(cond, body) => live_while(j, &mut w, cond, body, out, out)
+          StReturn(e) => ⊢ List(Text) from match e {
+            Some(x) => live_term(j, &mut w, x, Nil)
+            None => Nil
+          }
+          StExpr(e) => live_term(j, &mut w, e, out)
+          _ => out
+        }
+      }
+    }
+  }
+
+  // Before the condition: what is live after the loop, and what the body
+  // reads before it comes back, until that stays.
+  pub fn live_while(
+    k: Nat,
+    w: &mut LiveW,
+    cond: SurfaceTerm,
+    body: SurfaceTerm,
+    out: List(Text),
+    head: List(Text)
+  ): List(Text) {
+    match k {
+      Zero => head
+      Succ(j) => {
+        let before_body := live_term(j, &mut w, body, head)
+        let before_cond := live_term(j, &mut w, cond, live_union(out, before_body))
+        if live_subset(before_cond, head) {
+          head
+        } else {
+          live_while(j, &mut w, cond, body, out, live_union(head, before_cond))
+        }
+      }
+    }
+  }
+}
+
+pub fn stmt_span_of(s: SurfaceStmt): TySpan {
+  match s {
+    StLet(^n, ^ty, value, ^b, ^bm, ^unused, ^st_stack) => span_of(value)
+    StVar(^n, ^ty, value, ^vb, ^unused, ^st_stack) => span_of(value)
+    StAssign(^n, ^n_place, value) => span_of(value)
+    StFn(f) => TySpan { start: f.start, end: f.end }
+    StWhile(^c, body) => span_of(body)
+    StReturn(e) => ⊢ TySpan from match e {
+      Some(x) => span_of(x)
+      None => TySpan { start: 0, end: 0 }
+    }
+    StExpr(e) => span_of(e)
+    StStruct(d) => TySpan { start: d.start, end: d.end }
+    StEnum(d) => TySpan { start: d.start, end: d.end }
+    StExtern(^fns, ^instances, ^types, ^structs, ^enums, a, b) => TySpan { start: a, end: b }
+    StOther(^n, a, b) => TySpan { start: a, end: b }
+    StMacro(^m1, ^m2, a, b) => TySpan { start: a, end: b }
+    StSyntax(^m1, ^m2, a, b) => TySpan { start: a, end: b }
+    _ => TySpan { start: 0, end: 0 }
+  }
+}
+
+// Whether a term borrows anything written (`&x`, a closure with a borrowed
+// parameter): without one no binding holds a borrow, and no freeze asks where a
+// binding is live.
+pub fn live_any_borrow(ts: List(SurfaceTerm)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => ⊢ Bool from match t.kind {
+      SkBorrow(^m, ^m_orig, ^x) => true
+      SkBorrowLam(^bs, ^l) => true
+      _ => live_any_borrow(rest)
+    }
+  }
+}
+
+pub fn live_any_some(bs: List(Option(Bool))): Bool {
+  match bs {
+    Nil => false
+    Cons(b, rest) => ⊢ Bool from match b {
+      Some(^m) => true
+      None => live_any_some(rest)
+    }
+  }
+}
+
+// The liveness of a function's body, when anything in it may hold a borrow.
+pub fn live_of_fn(k: Nat, f: SurfaceFn): LiveMap {
+  let terms := subterms(f.body, Nil)
+  if live_any_some(f.r#borrows) || live_any_borrow(terms) {
+    live_of_body(k, f.params, f.body)
+  } else {
+    LiveMapMk(Ordmap::empty())
+  }
+}
+
+// The liveness of a function's body: nothing is live after it.
+pub fn live_of_body(k: Nat, params: List(Text), body: SurfaceTerm): LiveMap {
+  let b := live_binders_terms(LiveBindersMk(Nil, params, Ordmap::empty()), subterms(body, Nil))
+  var w: LiveW := live_new(b)
+  let live_in := live_term(k, &mut w, body, Nil)
+  live_finish(w)
+}
+
+// The liveness of the program's own statements.
+pub fn live_of_program(k: Nat, stmts: List(SurfaceStmt)): LiveMap {
+  if live_any_borrow(live_root_subterms(stmts, Nil)) {
+    live_of_program_walk(k, stmts)
+  } else {
+    LiveMapMk(Ordmap::empty())
+  }
+}
+
+// The statements that are not function declarations: what the top level binds
+// is what its own statements bind, not the parameters of its functions.
+pub fn live_non_fn_stmts(ss: List(SurfaceStmt)): List(SurfaceStmt) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+      StFn(^f) => live_non_fn_stmts(rest)
+      _ => Cons(s, live_non_fn_stmts(rest))
+    }
+  }
+}
+
+pub fn live_of_program_walk(k: Nat, stmts: List(SurfaceStmt)): LiveMap {
+  let top := live_binders_stmts(LiveBindersMk(Nil, Nil, Ordmap::empty()), live_non_fn_stmts(stmts))
+  let b := live_binders_terms(top, live_root_subterms(stmts, Nil))
+  var w: LiveW := live_new(b)
+  let live_in := live_stmts_rev(k, &mut w, stmts, Nil, true)
+  live_finish(w)
+}
+
+// The subterms of the program's own statements, without the top functions'.
+pub fn live_root_subterms(ss: List(SurfaceStmt), acc: List(SurfaceTerm)): List(SurfaceTerm) {
+  match ss {
+    Nil => acc
+    Cons(s, rest) => live_root_subterms(
+      rest,
+      ⊢ List(SurfaceTerm) from match s {
+        StFn(^f) => acc
+        _ => subterms_stmt(s, acc)
+      }
+    )
+  }
+}
+
+pub fn live_rest(ms: List(LiveMap)): List(LiveMap) {
+  match ms {
+    Nil => Nil
+    Cons(^m, rest) => rest
+  }
+}

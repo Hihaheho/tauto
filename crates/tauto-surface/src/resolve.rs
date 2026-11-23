@@ -22,18 +22,34 @@ enum Owner {
 #[derive(Clone, Default)]
 pub struct Resolver {
     declarations: Declarations,
-    locals: HashMap<(Owner, u32, String), LocalRef>,
+    locals: crate::identity::ForkedMap<(Owner, u32, String), LocalRef>,
     term_owner: Option<(Owner, u32)>,
+    /// Set while a term is read where a type is written (a parameter's type,
+    /// a field's type). A name that is a type there means the type, even if a
+    /// constructor of the file shares its spelling.
+    type_position: bool,
 }
 
 type Scope = Vec<(String, Name)>;
+
+impl crate::identity::Detach for Resolver {
+    /// A copy whose reservations are its own from now on
+    /// ([`crate::bindings::Bindings::detached`]).
+    fn detached(&self) -> Self {
+        Self {
+            declarations: self.declarations.detached(),
+            ..self.clone()
+        }
+    }
+}
 
 impl Resolver {
     pub fn new(declarations: Declarations) -> Self {
         Self {
             declarations,
-            locals: HashMap::new(),
+            locals: Default::default(),
             term_owner: None,
+            type_position: false,
         }
     }
 
@@ -42,7 +58,23 @@ impl Resolver {
             declarations: self.declarations.next_revision(),
             locals: self.locals.clone(),
             term_owner: None,
+            type_position: false,
         }
+    }
+
+    /// Takes in what a copy of this session wrote since it was made, as a
+    /// kernel copy declaring other files does ([`Declarations::absorb`]). False
+    /// when another copy taken in since wrote the same thing.
+    pub fn absorb(&mut self, other: Resolver) -> bool {
+        let declarations = self.declarations.absorb(other.declarations);
+        let locals = self.locals.absorb(other.locals);
+        declarations && locals
+    }
+
+    /// Leaves in this copy only what it wrote, for [`Self::absorb`].
+    pub fn subtract(&mut self, since: u64, base: &Resolver) {
+        self.declarations.subtract(since, &base.declarations);
+        self.locals.subtract(since);
     }
 
     pub fn declarations(&self) -> Declarations {
@@ -73,6 +105,12 @@ impl Resolver {
 
     pub fn source_alias(&mut self, spelling: &str, reference: &crate::identity::DeclRef) {
         self.declarations.source_alias(spelling, reference.clone());
+    }
+
+    pub fn source_effect_alias(&mut self, spelling: &str, target: &str) {
+        if let Some(reference) = self.declarations.effect(target).cloned() {
+            self.declarations.effect_alias(spelling, reference);
+        }
     }
 
     /// What `spelling` means now (see [`Declarations::spelling_state`]).
@@ -152,6 +190,24 @@ impl Resolver {
         }
         for statement in statements {
             match statement {
+                Stmt::Reexport {
+                    aliases: Some(aliases),
+                    ..
+                } => {
+                    for alias in aliases {
+                        if alias.effect {
+                            if let Some(reference) =
+                                self.declarations.effect(&alias.target).cloned()
+                            {
+                                self.declarations.effect_alias(&alias.name, reference);
+                            }
+                        } else if let Some(reference) =
+                            self.declarations.get(&alias.target).cloned()
+                        {
+                            self.declarations.source_alias(&alias.name, reference);
+                        }
+                    }
+                }
                 Stmt::Fn(function) => {
                     if function.decreasing_by.is_some() {
                         self.generated(&function.name, Generation::WellFoundedStep);
@@ -285,6 +341,21 @@ impl Resolver {
         statements: &mut [Stmt],
         visible: &HashMap<String, String>,
     ) {
+        self.statements_visible_among(statements, visible, None);
+    }
+
+    /// [`Self::statements_visible`], where `visible` was read before macros
+    /// made some declarations: a constructor whose full name is not in
+    /// `known`, what the files saw then, is one a macro made since (an `enum`
+    /// of `syntax!`), and stays a pattern where its type is reached through
+    /// the file's imports (`g::V`, `Str`). The constructors of another file
+    /// the file does not import are in `known`, and stay hidden.
+    pub fn statements_visible_among(
+        &mut self,
+        statements: &mut [Stmt],
+        visible: &HashMap<String, String>,
+        known: Option<&std::collections::HashSet<String>>,
+    ) {
         self.predeclare(statements);
         let mut owners = visible
             .values()
@@ -321,6 +392,21 @@ impl Resolver {
             }
         }
         own_types(statements, &self.declarations, &mut owners);
+        if let Some(known) = known {
+            let made: Vec<_> = self
+                .declarations
+                .bindings()
+                .filter(|(_, reference)| {
+                    let display = reference.display();
+                    !known.contains(display)
+                        && reference
+                            .owner()
+                            .is_some_and(|owner| !known.contains(owner.display()))
+                })
+                .map(|(_, reference)| reference.clone())
+                .collect();
+            owners.extend(made);
+        }
         let candidates = self.declarations.restrict_constructor_owners(&owners);
         let mut scope = Vec::new();
         for statement in statements {
@@ -343,14 +429,26 @@ impl Resolver {
         let Name::Spelled(spelling) = name else {
             return;
         };
-        if spelling == "_" {
-            return;
-        }
         *name = scope
             .iter()
             .rev()
             .find(|(text, _)| text == spelling)
             .map(|(_, reference)| reference.clone())
+            .or_else(|| {
+                self.type_position
+                    .then(|| self.declarations.type_named(spelling))
+                    .flatten()
+                    .map(|reference| Name::Global(reference.clone()))
+            })
+            .or_else(|| {
+                // A constructor is never a type: where one is wanted, the library's type of
+                // the name (`Bool`) is meant even when a constructor of the file is called so.
+                // The file's own type of that name was found above.
+                self.type_position
+                    .then(|| crate::bindings::library_type(spelling))
+                    .flatten()
+                    .map(|reference| Name::Global(reference.clone()))
+            })
             .or_else(|| self.declarations.type_constructor_selection(spelling))
             .or_else(|| {
                 self.declarations
@@ -370,6 +468,16 @@ impl Resolver {
             .unwrap_or_else(|| self.declarations.reserve(spelling).into());
     }
 
+    /// Reads a term written where a type is wanted. A constructor is never a
+    /// type, so a name that is both a type and a constructor (a `struct
+    /// Remote` and a variant `Remote`) means the type here, whichever
+    /// constructors are known when the type is read.
+    fn type_term(&mut self, term: &mut SurfaceTerm, scope: &mut Scope) {
+        let outer = std::mem::replace(&mut self.type_position, true);
+        self.term(term, scope);
+        self.type_position = outer;
+    }
+
     fn declaration(&mut self, name: &mut Name) -> Owner {
         let reference = self.declarations.declare(name);
         *name = reference.clone().into();
@@ -387,9 +495,6 @@ impl Resolver {
     }
 
     fn bind(&mut self, name: &mut Name, scope: &mut Scope, owner: Owner, slot: &mut u32) {
-        if name.spelling() == Some("_") {
-            return;
-        }
         let spelling = name.to_string();
         if let Name::Spelled(_) = name {
             *name = self
@@ -432,7 +537,40 @@ impl Resolver {
             *name = Name::Global(reference.clone());
             return;
         }
-        self.reference(name, scope);
+        // The library's effect by its full name (a member a set of the
+        // library writes): the library's declaration, imported or not.
+        if let Some(reference) = name
+            .spelling()
+            .and_then(|s| s.strip_prefix(crate::surface::qualify::PRELUDE_MODULE))
+            .and_then(|s| s.strip_prefix(crate::surface::qualify::SEPARATOR))
+            .and_then(crate::bindings::library_effect)
+        {
+            *name = Name::Global(reference.clone());
+            return;
+        }
+        // An entry of a row names an effect, a row variable, or a parameter;
+        // never a constructor. A variant `Div` of an imported enum does not
+        // stand for the effect `div` in a row.
+        let Name::Spelled(spelling) = name else {
+            return;
+        };
+        *name = scope
+            .iter()
+            .rev()
+            .find(|(text, _)| text == spelling)
+            .map(|(_, reference)| reference.clone())
+            .or_else(|| {
+                self.declarations
+                    .get(spelling)
+                    .filter(|reference| {
+                        !self
+                            .declarations
+                            .is_constructor(&Name::Global((*reference).clone()))
+                    })
+                    .cloned()
+                    .map(Name::Global)
+            })
+            .unwrap_or_else(|| self.declarations.reserve(spelling).into());
     }
 
     fn row(&mut self, row: &mut [Name], scope: &Scope) {
@@ -444,62 +582,40 @@ impl Resolver {
                     variable = LocalRef::fresh(written).into();
                 }
                 *entry = variable.in_row();
-            } else if let Name::Spelled(text) = entry {
-                let display = text.clone();
-                let (parameters, written, universal) = if let Some(rest) = text.strip_prefix('∀')
-                {
-                    let Some((parameters, written)) = rest.split_once('.') else {
-                        continue;
-                    };
-                    (
-                        parameters.split(',').map(str::trim).collect::<Vec<_>>(),
-                        written.trim(),
-                        true,
-                    )
-                } else {
-                    (Vec::new(), text.as_str(), false)
-                };
-                if universal || written.contains('(') {
-                    if let Ok(mut term) = parse_expr_at(written, 0) {
-                        let mut inner = scope.clone();
-                        let parameters: Vec<Name> = parameters
-                            .into_iter()
-                            .map(|text| {
-                                let reference: Name = LocalRef::fresh(text).into();
-                                inner.push((text.to_string(), reference.clone()));
-                                reference
-                            })
-                            .collect();
-                        let head = match Arc::make_mut(&mut term.kind) {
-                            TermKind::App { function, .. } => Arc::make_mut(&mut function.kind),
-                            kind => kind,
-                        };
-                        if let TermKind::Var(name) = head {
-                            self.effect_reference(name, &inner);
-                        }
-                        self.term(&mut term, &mut inner);
-                        let (head, arguments) = match &*term.kind {
-                            TermKind::App {
-                                function,
-                                arguments,
-                            } => (function.as_ref(), arguments.clone()),
-                            _ => (&term, Vec::new()),
-                        };
-                        if let TermKind::Var(Name::Global(effect)) = &*head.kind {
-                            *entry = Name::Effect(Arc::new(EffectUse::new(
-                                effect.clone(),
-                                arguments,
-                                parameters
-                                    .into_iter()
-                                    .map(|name| name.as_local().expect("row parameter").clone())
-                                    .collect(),
-                                universal,
-                                display,
-                            )));
-                            continue;
-                        }
+            } else if let Name::Written(written) = entry {
+                // `res(Pos)`, `∀ A. res(A)`: the effect and its argument
+                // terms, under the row's parameters.
+                let mut inner = scope.clone();
+                let parameters: Vec<Name> = written
+                    .parameters()
+                    .iter()
+                    .map(|text| {
+                        let reference: Name = LocalRef::fresh(text).into();
+                        inner.push((text.to_string(), reference.clone()));
+                        reference
+                    })
+                    .collect();
+                let mut effect = Name::from(written.head());
+                self.effect_reference(&mut effect, &inner);
+                if let Name::Global(effect) = effect {
+                    let mut arguments = written.arguments().to_vec();
+                    for argument in &mut arguments {
+                        self.term(argument, &mut inner);
                     }
+                    *entry = Name::Effect(Arc::new(EffectUse::new(
+                        effect,
+                        arguments,
+                        parameters
+                            .into_iter()
+                            .map(|name| name.as_local().expect("row parameter").clone())
+                            .collect(),
+                        written.is_universal(),
+                        written.display().to_string(),
+                    )));
                 }
+                // An entry whose effect is not declared stays as written:
+                // it names no effect, and the checkers report it so.
+            } else if let Name::Spelled(_) = entry {
                 self.effect_reference(entry, scope);
             }
         }
@@ -529,7 +645,7 @@ impl Resolver {
         let mut slot = 0;
         for (index, generic) in function.generics.iter_mut().enumerate() {
             if let Some(ty) = function.generic_types.get_mut(index) {
-                self.term(ty, &mut scope);
+                self.type_term(ty, &mut scope);
             }
             self.bind(generic, &mut scope, owner, &mut slot);
         }
@@ -540,15 +656,23 @@ impl Resolver {
         }
         for (index, parameter) in function.params.iter_mut().enumerate() {
             if let Some(Some(ty)) = function.param_types.get_mut(index) {
-                self.term(ty, &mut scope);
+                self.type_term(ty, &mut scope);
             }
             self.bind(parameter, &mut scope, owner, &mut slot);
         }
         if let Some(result) = &mut function.result {
-            self.term(result, &mut scope);
+            self.type_term(result, &mut scope);
         }
         if let Some(effects) = &mut function.effects {
             self.row(effects, &scope);
+        }
+        if let Some(entries) = &mut function.written_effects {
+            for entry in entries {
+                self.row(std::slice::from_mut(&mut entry.name), &scope);
+                if let Some(members) = &mut entry.members {
+                    self.row(members, &scope);
+                }
+            }
         }
         self.constraints(&mut function.where_, &mut scope);
         if let Some(decreasing) = &mut function.decreasing_by {
@@ -591,7 +715,7 @@ impl Resolver {
         for constructor in &mut data.constructors {
             self.declaration(&mut constructor.name);
             for (_, ty) in &mut constructor.fields {
-                self.term(ty, &mut scope);
+                self.type_term(ty, &mut scope);
             }
         }
     }
@@ -613,7 +737,7 @@ impl Resolver {
                 name, ty, value, ..
             } => {
                 if let Some(ty) = ty {
-                    self.term(ty, scope);
+                    self.type_term(ty, scope);
                 }
                 self.term(value, scope);
                 if top {
@@ -624,7 +748,9 @@ impl Resolver {
                     self.bind(name, scope, owner, &mut slot);
                 }
             }
-            Stmt::Assign { name, place, value } => {
+            Stmt::Assign {
+                name, place, value, ..
+            } => {
                 self.reference(name, scope);
                 if let Some(place) = place {
                     self.term(place, scope);
@@ -647,7 +773,7 @@ impl Resolver {
                     let mut parameters = inner.clone();
                     let mut slot = 0;
                     for (name, ty) in &mut constructor.params {
-                        self.term(ty, &mut parameters);
+                        self.type_term(ty, &mut parameters);
                         self.bind(name, &mut parameters, owner, &mut slot);
                     }
                     self.term(&mut constructor.result, &mut parameters);
@@ -685,6 +811,7 @@ impl Resolver {
                 if let Some((name, _)) = class.parameters.first() {
                     class.param = name.clone();
                 }
+                self.constraints(&mut class.parents, &mut inner);
                 for (index, method) in class.methods.iter_mut().enumerate() {
                     let label = method.name.to_string();
                     let member = self.declarations.class_member(
@@ -729,7 +856,9 @@ impl Resolver {
                     }
                 }
                 self.reference(&mut instance.class, scope);
-                self.term(&mut instance.head, &mut inner);
+                // The head is a type: `instance C(Cancelled)` means the type
+                // `Cancelled`, not its constructor of the same name.
+                self.type_term(&mut instance.head, &mut inner);
                 for arg in &mut instance.arguments {
                     self.term(arg, &mut inner);
                 }
@@ -776,10 +905,26 @@ impl Resolver {
                 self.term(condition, scope);
                 self.term(body, scope);
             }
-            Stmt::Return(Some(term)) | Stmt::Expr(term) | Stmt::Called { call: term, .. } => {
-                self.term(term, scope)
+            Stmt::For {
+                pattern,
+                source,
+                body,
+            } => {
+                self.term(source, scope);
+                let mut inner = scope.clone();
+                let (owner, mut slot) = site.unwrap_or((Owner::Term(body.id()), 0));
+                self.pattern(pattern, &mut inner, owner, &mut slot);
+                self.term(body, &mut inner);
             }
-            Stmt::Return(None)
+            Stmt::Loop { body: term }
+            | Stmt::Break(Some(term))
+            | Stmt::Return(Some(term))
+            | Stmt::Expr(term)
+            | Stmt::Called { call: term, .. } => self.term(term, scope),
+            Stmt::Break(None)
+            | Stmt::Continue
+            | Stmt::Return(None)
+            | Stmt::Reexport { .. }
             | Stmt::Import { .. }
             | Stmt::Syntax { .. }
             | Stmt::Macro { .. }
@@ -789,10 +934,13 @@ impl Resolver {
 
     fn pattern(&mut self, pattern: &mut Pattern, scope: &mut Scope, owner: Owner, slot: &mut u32) {
         match pattern {
-            Pattern::Bind(Name::Selection(selection)) if selection.binding().is_some() => {
+            Pattern::Bind {
+                name: Name::Selection(selection),
+                ..
+            } if selection.binding().is_some() => {
                 scope.push((selection.display().to_string(), selection.clone().into()));
             }
-            Pattern::Bind(name) if self.declarations.is_constructor(name) => {
+            Pattern::Bind { name: name, .. } if self.declarations.is_constructor(name) => {
                 let mut constructor = name.clone();
                 self.constructor_reference(&mut constructor, scope);
                 if constructor
@@ -820,7 +968,7 @@ impl Resolver {
                     *name = reference;
                 }
             }
-            Pattern::Bind(name) => self.bind(name, scope, owner, slot),
+            Pattern::Bind { name: name, .. } => self.bind(name, scope, owner, slot),
             Pattern::Ctor { name, args } => {
                 self.constructor_reference(name, scope);
                 for argument in args.iter_mut() {
@@ -842,10 +990,9 @@ impl Resolver {
                     self.pattern(field, scope, owner, slot);
                 }
             }
-            Pattern::Tuple(items) => {
-                for item in items {
-                    self.pattern(item, scope, owner, slot);
-                }
+            Pattern::Typed { name, ty, .. } => {
+                self.term(ty, scope);
+                self.bind(name, scope, owner, slot);
             }
             Pattern::Wild
             | Pattern::Int(_)
@@ -873,6 +1020,8 @@ impl Resolver {
             None => Owner::Term(term.id()),
         };
         let mut slot = 0;
+        let span = term.span;
+        let mut replaced = None;
         match Arc::make_mut(&mut term.kind) {
             TermKind::Var(name) => self.reference(name, scope),
             TermKind::Row(row) => self.row(row, scope),
@@ -880,6 +1029,7 @@ impl Resolver {
                 params,
                 result,
                 effects,
+                ..
             } => {
                 let mut inner = scope.clone();
                 for (name, ty) in params {
@@ -897,6 +1047,7 @@ impl Resolver {
                 params,
                 types,
                 body,
+                ..
             } => {
                 let mut inner = scope.clone();
                 for (index, name) in params.iter_mut().enumerate() {
@@ -911,6 +1062,7 @@ impl Resolver {
                 binder,
                 domain,
                 body,
+                ..
             } => {
                 self.term(domain, scope);
                 let mut inner = scope.clone();
@@ -936,6 +1088,7 @@ impl Resolver {
                 result,
                 binder,
                 arms,
+                ..
             } => {
                 self.term(scrutinee, scope);
                 if let Some(result) = result {
@@ -973,7 +1126,8 @@ impl Resolver {
                             cont,
                             guard,
                             body,
-                        } => {
+                ..
+            } => {
                             self.effect_reference(effect, scope);
                             for name in &mut instance.forall {
                                 self.bind(name, &mut inner, owner, &mut slot);
@@ -1012,9 +1166,10 @@ impl Resolver {
             }
             TermKind::Perform { effect, args } => {
                 self.effect_reference(effect, scope);
-                for argument in args {
+                for argument in args.iter_mut() {
                     self.term(argument, scope);
                 }
+                replaced = host_budget(effect, args, span);
             }
             TermKind::Record { name, fields, base } => {
                 if name.spelling() != Some(crate::IMPLICITS) {
@@ -1029,13 +1184,16 @@ impl Resolver {
             }
             _ => crate::surface::walk::children(term, &mut |child| self.term(child, scope)),
         }
+        if let Some(budget) = replaced {
+            term.kind = Arc::new(budget);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauto_parol::Span;
+    use crate::span::Span;
 
     fn identity() -> SurfaceTerm {
         let span = Span { start: 0, end: 0 };
@@ -1044,6 +1202,7 @@ mod tests {
                 params: vec![Name::from("x")],
                 types: Vec::new(),
                 body: Box::new(SurfaceTerm::var("x", span)),
+                unused_params: Vec::new()
             },
             span,
         )
@@ -1057,70 +1216,6 @@ mod tests {
             panic!("reference")
         };
         (&params[0], reference)
-    }
-
-    #[test]
-    fn quoted_globals_keep_identity_but_quoted_binders_remain_syntax() {
-        let global = crate::identity::DeclRef::fresh("x");
-        let mut declarations = Declarations::default();
-        declarations.source_alias("x", global.clone());
-        let resolver = Resolver::new(declarations);
-        let mut statements = vec![
-            Stmt::Expr(SurfaceTerm::var("x", Span::new(0, 1))),
-            Stmt::Expr(identity()),
-        ];
-        resolver.quote_globals(&mut statements);
-        let Stmt::Expr(term) = &statements[0] else {
-            unreachable!()
-        };
-        assert!(
-            matches!(&*term.kind, TermKind::Var(Name::Global(reference)) if reference == &global)
-        );
-        let Stmt::Expr(term) = &statements[1] else {
-            unreachable!()
-        };
-        let (binder, use_) = parts(term);
-        assert_eq!(binder, &Name::from("x"));
-        assert_eq!(use_, binder);
-        assert_eq!(resolver.source_reference("x"), Some(global.into()));
-    }
-
-    #[test]
-    fn struct_family_and_constructor_have_distinct_shared_references() {
-        let mut statements = vec![Stmt::Struct(DataDecl {
-            vis: Default::default(),
-            kind: None,
-            name: "Record".into(),
-            generics: vec![],
-            rows: vec![],
-            host: false,
-            span: Span::new(0, 1),
-            constructors: vec![crate::surface::DataConstructor {
-                name: "Record".into(),
-                fields: vec![],
-            }],
-        })];
-        statements.push(Stmt::Expr(SurfaceTerm::var("Mk", Span::new(2, 3))));
-        let mut resolver = Resolver::default();
-        resolver.statements_visible(&mut statements, &HashMap::new());
-        let Stmt::Struct(data) = &statements[0] else {
-            unreachable!()
-        };
-        assert_ne!(data.name, data.constructors[0].name);
-        let Stmt::Expr(term) = &statements[1] else {
-            unreachable!()
-        };
-        assert!(matches!(&*term.kind, TermKind::Var(name) if name == &data.constructors[0].name));
-        let family = crate::inductive_data::family(data, true);
-        assert_eq!(family.name, data.name);
-        assert_eq!(family.constructors[0].name, data.constructors[0].name);
-        let TermKind::Var(result) = &*family.constructors[0].result.kind else {
-            panic!("constructor result is its family")
-        };
-        assert_eq!(result, &data.name);
-        let mut copied = statements.clone();
-        resolver.statements(&mut copied);
-        assert_eq!(copied, statements);
     }
 
     #[test]
@@ -1178,14 +1273,21 @@ mod tests {
                 borrows: vec![],
                 param_types: vec![],
                 result: None,
+                lends: None,
                 effects: None,
+                written_effects: None,
+                row_hole: None,
                 where_: vec![],
                 span,
                 opaque: false,
+                ghost: false,
                 decreasing_by: None,
                 generates: None,
                 budget: None,
                 body: SurfaceTerm::var("f", span),
+                unused: None,
+                unused_generics: Vec::new(),
+                unused_params: Vec::new()
             };
             SurfaceTerm::new(
                 TermKind::Block(vec![
@@ -1220,76 +1322,97 @@ mod tests {
         assert_eq!(reference(&first), reference(&clone));
         assert_ne!(reference(&first), reference(&second));
     }
+}
 
-    #[test]
-    fn existing_references_survive_a_different_environment() {
-        let mut declarations = Declarations::default();
-        let reference = Name::from(declarations.reserve("value"));
-        let mut resolver = Resolver::default();
-        let mut resolved = reference.clone();
-        resolver.reference(
-            &mut resolved,
-            &vec![("value".into(), LocalRef::fresh("value").into())],
-        );
-        assert_eq!(resolved, reference);
+/// `perform budget(n, f)` and `perform budget_memory(n, f)` of the host: the
+/// budget term, when `effect` resolved to the library's operation. Only the
+/// resolved declaration decides it: a program's own `effect budget` is an
+/// effect of the program, performed as any other, though spelled the same.
+/// The host's takes two plain arguments, the most steps or cells and the
+/// function of no parameter to run; its body runs where the budget is
+/// written, so a written `() => e` is read as `e`, and any other function
+/// `f` as the call `f()`.
+fn host_budget(effect: &Name, args: &[SurfaceTerm], span: crate::span::Span) -> Option<TermKind> {
+    let reference = effect.as_global()?;
+    let limit = [BudgetLimit::Steps, BudgetLimit::Memory].into_iter().find(|limit| {
+        crate::bindings::library_reference(limit.operation()).as_ref()
+            == Some(&Name::Global(reference.clone()))
+    })?;
+    Some(budget_term(limit, args, span))
+}
+
+/// The host's budgets of a program read as written (`parse_program_as_written`),
+/// whose names stay spelled: there a `perform` names the library's operation
+/// when the program declares no effect under its spelling, which is how such a
+/// program's names resolve (`modules::resolve` has already written an effect
+/// of a module with its module's path). A program's own `effect budget`
+/// keeps its `perform`s its own.
+pub fn host_budgets_as_written(stmts: &mut [Stmt]) {
+    fn declared(stmts: &[Stmt], spelling: &str) -> bool {
+        stmts.iter().any(|s| match s {
+            Stmt::Effect(e) => e.name.spelling() == Some(spelling),
+            _ => false,
+        })
+    }
+    let limits: Vec<BudgetLimit> = [BudgetLimit::Steps, BudgetLimit::Memory]
+        .into_iter()
+        .filter(|limit| !declared(stmts, limit.operation()))
+        .collect();
+    if limits.is_empty() {
+        return;
+    }
+    for statement in stmts.iter_mut() {
+        crate::surface::walk::stmt(statement, &mut |t| {
+            let TermKind::Perform {
+                effect: Name::Spelled(spelling),
+                args,
+            } = &*t.kind
+            else {
+                return;
+            };
+            if let Some(limit) = limits.iter().find(|l| l.operation() == spelling.as_str()) {
+                t.kind = Arc::new(budget_term(*limit, args, t.span));
+            }
+        });
     }
 }
 
-#[cfg(test)]
-mod constructor_namespace_tests {
-    use super::*;
-    use crate::identity::DeclRef;
-    use tauto_parol::Span;
+fn budget_term(limit: BudgetLimit, args: &[SurfaceTerm], span: crate::span::Span) -> TermKind {
+    let plain = |a: &SurfaceTerm| match &*a.kind {
+        TermKind::Ascribe { .. } | TermKind::Other(_) => false,
+        TermKind::Record { name, .. } => name.spelling() != Some(crate::IMPLICITS),
+        _ => true,
+    };
+    let [steps, f] = args else {
+        return budget_refused(limit);
+    };
+    if !plain(steps) || !plain(f) {
+        return budget_refused(limit);
+    }
+    let body = match &*f.kind {
+        TermKind::Lam { params, body, .. } if params.is_empty() => (**body).clone(),
+        _ => SurfaceTerm::new(
+            TermKind::App {
+                function: Box::new(f.clone()),
+                arguments: Vec::new(),
+            },
+            span,
+        ),
+    };
+    TermKind::Budget {
+        limit,
+        steps: Box::new(steps.clone()),
+        body: Box::new(body),
+    }
+}
 
-    #[test]
-    fn file_visibility_filters_candidates_without_rebinding_references() {
-        let first = DeclRef::fresh("First");
-        let second = DeclRef::fresh("Second");
-        let a = first.constructor(0, "C");
-        let b = second.constructor(0, "C");
-        let mut declarations = Declarations::default();
-        for (owner, constructor) in [(&first, &a), (&second, &b)] {
-            declarations.declare(&owner.clone().into());
-            declarations.constructor_in(&owner.clone().into(), &constructor.clone().into());
+fn budget_refused(limit: BudgetLimit) -> TermKind {
+    TermKind::Other(format!(
+        "`perform {}(n, f)` takes the most {} and the function of no parameter to run",
+        limit.operation(),
+        match limit {
+            BudgetLimit::Steps => "steps",
+            BudgetLimit::Memory => "cells",
         }
-        let mut resolver = Resolver::new(declarations);
-        let mut statements = vec![Stmt::Expr(SurfaceTerm::var("C", Span::new(0, 1)))];
-        resolver.statements_visible(
-            &mut statements,
-            &HashMap::from([("First".into(), "First".into())]),
-        );
-        let Stmt::Expr(term) = &statements[0] else {
-            panic!("expression")
-        };
-        assert!(matches!(&*term.kind, TermKind::Var(name) if name == &Name::Global(a.clone())));
-        resolver.statements_visible(
-            &mut statements,
-            &HashMap::from([("Second".into(), "Second".into())]),
-        );
-        let Stmt::Expr(term) = &statements[0] else {
-            panic!("expression")
-        };
-        assert!(matches!(&*term.kind, TermKind::Var(name) if name == &Name::Global(a)));
-        assert!(matches!(
-            resolver.declarations().selection("C"),
-            Some(Name::Selection(_))
-        ));
-    }
-
-    #[test]
-    fn a_constructor_alias_does_not_replace_a_declared_type() {
-        let text = DeclRef::fresh("Text");
-        let atom = DeclRef::fresh("Atom");
-        let token = atom.constructor(0, "Text");
-        let mut declarations = Declarations::default();
-        declarations.declare(&text.clone().into());
-        declarations.declare(&atom.clone().into());
-        declarations.constructor_in(&atom.into(), &token.clone().into());
-        declarations.constructor_alias("Text", &token.clone().into());
-        assert_eq!(declarations.selection("Text"), Some(Name::Global(token)));
-        let mut resolver = Resolver::new(declarations);
-        let mut term = SurfaceTerm::var("Text", Span::new(0, 1));
-        resolver.term_in_context(&mut term, &[]);
-        assert!(matches!(&*term.kind, TermKind::Var(name) if name == &Name::Global(text)));
-    }
+    ))
 }

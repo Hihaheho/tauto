@@ -6,43 +6,41 @@
 // record are read the same way.
 
 @ cases.joined-row-parameter-of-arguments
-backends = ["rust", "javascript"]
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
-struct Answer(!e) { run: () -> i64 ! {Div} ∪ e }
+struct Answer(!e) { run: () -> i64 ! {div} ∪ e }
 
-fn loud(): i64 ! {Div, stdout} {
+fn loud(): i64 ! {div, stdout} {
   perform stdout("loud ")
   1
 }
 
-fn quiet(): i64 ! {Div} { 2 }
+fn quiet(): i64 ! {div} { 2 }
 
-fn make<!e>(f: () -> i64 ! {Div} ∪ e): Answer(e) { Answer { run: () => f() } }
+fn make<!e>(f: () -> i64 ! {div} ∪ e): Answer(e) { Answer { run: () => f() } }
 
-fn both<!e>(a: Answer(e), b: Answer(e)): i64 ! {Div} ∪ e { (a.run)() + (b.run)() }
+fn both<!e>(a: Answer(e), b: Answer(e)): i64 ! {div, overflow} ∪ e { (a.run)() + (b.run)() }
 
-perform show("lq", both(make(loud), make(quiet)))
-perform show("ql", both(make(quiet), make(loud)))
+show(&both(make(loud), make(quiet)))
+show(&both(make(quiet), make(loud)))
 ```
-stdout = "loud loud "
-shows = ["lq = 3", "ql = 3"]
+stdout = "loud 3
+loud 3
+"
 
 // The answers of a server: a list of resources and a list of functions in one
 // record, each made by a function from what it runs. One that performs a host
-// effect and one that performs nothing but `Div` share the record's row.
+// effect and one that performs nothing but `div` share the record's row.
 @ cases.joined-row-parameter-of-record-fields
-backends = ["rust", "javascript"]
 source = ```tauto
-import std::prelude::Os
-import std::prelude::Shared
+import std::builtin::os
 
 struct Res(B: Type) { key: Text, show: (b: B) -> Text }
-struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {Div} ∪ e }
+struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {div} ∪ e }
 struct App(R: Shared, !e) { page: R, resources: List(Answer(e)), functions: List(Answer(e)) }
 
-fn loading<B, !e>(r: Res(B), run: () -> Result(B, Text) ! {Div} ∪ e): Answer(e) {
+fn loading<B, !e>(r: Res(B), run: () -> Result(B, Text) ! {div} ∪ e): Answer(e) {
   let show := r.show
   Answer { name: r.key, run: (arg: Text) => match run() {
     Ok(b) => Ok(show(b))
@@ -50,7 +48,7 @@ fn loading<B, !e>(r: Res(B), run: () -> Result(B, Text) ! {Div} ∪ e): Answer(e
   } }
 }
 
-fn answer<!e>(l: List(Answer(e)), name: Text): Text ! {Div} ∪ e {
+fn answer<!e>(l: List(Answer(e)), name: Text): Text ! {div} ∪ e {
   match l {
     Nil => "none"
     Cons(a, rest) => if a.name == name {
@@ -62,53 +60,54 @@ fn answer<!e>(l: List(Answer(e)), name: Text): Text ! {Div} ∪ e {
   }
 }
 
-fn run_app<R: Shared, !e>(a: App(R, e)): Text ! {Div} ∪ e {
+fn run_app<R: Shared, !e>(a: App(R, e)): Text ! {div} ∪ e {
   concat(answer(a.resources, "motto"), concat(" ", answer(a.functions, "count")))
 }
 
-fn motto_now(): Result(Text, Text) ! {Div, stdout} {
+fn motto_now(): Result(Text, Text) ! {div, stdout} {
   perform stdout("reading ")
   Ok("motto")
 }
 
-fn count_now(): Result(i64, Text) ! {Div} { Ok(3) }
+fn count_now(): Result(i64, Text) ! {div} { Ok(3) }
 
-perform show("r", run_app(App {
+show(&run_app(App {
   page: 1,
   resources: Cons(loading(Res { key: "motto", show: (t: Text) => t }, motto_now), Nil),
   functions: Cons(loading(Res { key: "count", show: (n: i64) => Text::of_i64(n) }, count_now), Nil)
 }))
 ```
-stdout = "reading "
-shows = ["r = \"motto 3\""]
+stdout = "reading \"motto 3\"
+"
 
 // The joined row is still the caller's to handle.
 @ cases.joined-row-parameter-is-still-handled
 source = ```tauto
-struct Answer(!e) { run: () -> i64 ! {Div} ∪ e }
-fn loud(): i64 ! {Div, stdout} {
+import std::builtin::os
+struct Answer(!e) { run: () -> i64 ! {div} ∪ e }
+fn loud(): i64 ! {div, stdout} {
   perform stdout("loud ")
   1
 }
-fn quiet(): i64 ! {Div} { 2 }
-fn make<!e>(f: () -> i64 ! {Div} ∪ e): Answer(e) { Answer { run: () => f() } }
-fn both<!e>(a: Answer(e), b: Answer(e)): i64 ! {Div} ∪ e { (a.run)() + (b.run)() }
-fn silent(): i64 ! {Div} { both(make(quiet), make(loud)) }
-perform show("s", silent())
+fn quiet(): i64 ! {div} { 2 }
+fn make<!e>(f: () -> i64 ! {div} ∪ e): Answer(e) { Answer { run: () => f() } }
+fn both<!e>(a: Answer(e), b: Answer(e)): i64 ! {div, overflow} ∪ e { (a.run)() + (b.run)() }
+fn silent(): i64 ! {div, overflow} { both(make(quiet), make(loud)) }
+show(&silent())
 ```
-rows = "error: `silent` may perform stdout but its row is {Div}"
+rows = "error: `silent` may perform stdout but its row is {div, overflow}"
 
 // A row the context writes out wins over the arguments, and an argument that
 // performs more than it is rejected where it is given.
 @ cases.joined-row-parameter-written-by-the-context
 source = ```tauto
-struct Answer(!e) { run: () -> i64 ! {Div} ∪ e }
-fn loud(): i64 ! {Div, stdout} {
+struct Answer(!e) { run: () -> i64 ! {div} ∪ e }
+fn loud(): i64 ! {div, stdout} {
   perform stdout("loud ")
   1
 }
-fn make<!e>(f: () -> i64 ! {Div} ∪ e): Answer(e) { Answer { run: () => f() } }
-fn run_quiet(a: Answer(!{})): i64 ! {Div} { (a.run)() }
-perform show("q", run_quiet(make(loud)))
+fn make<!e>(f: () -> i64 ! {div} ∪ e): Answer(e) { Answer { run: () => f() } }
+fn run_quiet(a: Answer(!{})): i64 ! {div} { (a.run)() }
+show(&run_quiet(make(loud)))
 ```
-rows = "error: a function value may perform stdout but its type permits {Div}"
+rows = "error: a function value may perform stdout but its type permits {div}"

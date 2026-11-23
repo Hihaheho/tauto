@@ -1,12 +1,12 @@
 import "compiler.taut"
-import std::prelude::Os
+import std::builtin::os
 
-pub fn show_stack(r: Option(List(nat))): Unit {
+pub fn show_stack(r: Option(List(nat))): Unit ! {stdout} {
   match r {
     None => print("stack underflow\n")
     Some(st) => match st {
       Nil => print("empty\n")
-      Cons(top, rest) => {
+      Cons(top, ^rest) => {
         print(Text::of_nat(top))
         print("\n")
       }
@@ -14,7 +14,9 @@ pub fn show_stack(r: Option(List(nat))): Unit {
   }
 }
 
-let e := EMul(EAdd(ELit(2), ELit(3)), EAdd(ELit(4), ELit(5)))
-show_stack(run_code(compile_expr(e), Nil))
-show_stack(run_code(compile_expr(fold_expr(e)), Nil))
-show_stack(run_code(Cons(IAdd, Nil), Nil))
+perform main(() => {
+  let e := EMul(EAdd(ELit(2), ELit(3)), EAdd(ELit(4), ELit(5)))
+  show_stack(run_code(compile_expr(e), Nil))
+  show_stack(run_code(compile_expr(fold_expr(e)), Nil))
+  show_stack(run_code(Cons(IAdd, Nil), Nil))
+})

@@ -2,7 +2,7 @@
 //! as the constructor calls that build the syntax they hold, with the
 //! values after `$` put in. The checkers see only those calls.
 
-use tauto_parol::Span;
+use crate::span::Span;
 
 use super::node::Node;
 use super::syn::Lift;

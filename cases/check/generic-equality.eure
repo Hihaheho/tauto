@@ -1,0 +1,128 @@
+// `a == b` on a type variable calls the `beq` of the `where`: `DecEq::beq` under a
+// `where DecEq(A)`, `PartialEq::beq` under a `where PartialEq(A)`. A call on a type
+// that lists its decidable equality is given the instance made from its `beq`.
+@ cases.equality-on-a-type-variable-calls-the-beq-of-the-where-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Color: Type => fn Color::beq, theorem Color::beq_refl, theorem Color::beq_sound, theorem Color::deq {
+  Red: Color
+  Green: Color
+}
+
+fn same<A>(a: A, b: A): Bool where DecEq(A) {
+  a == b
+}
+
+fn differ<A>(a: A, b: A): Bool where PartialEq(A) {
+  a != b
+}
+
+fn contains<A>(xs: List(A), x: A): Bool where DecEq(A) {
+  ⊢ Bool from match xs {
+    Nil => false
+    Cons(y, ys) => if y == x { true } else { contains(ys, x) }
+  }
+}
+
+theorem same_sound<A>(a: A, b: A, h: same(a, b) = true): a = b where DecEq(A) {
+  DecEq::beq_sound(a, b, h)
+}
+
+theorem color_same(): same(Red, Red) = true {
+  Refl
+}
+
+theorem list_same(): same(Cons(Green, Nil), Cons(Green, Nil)) = true {
+  Refl
+}
+
+theorem nat_differ(): differ(1, 2) = true {
+  Refl
+}
+
+theorem found(): contains(Cons(Red, Cons(Green, Nil)), Green) = true {
+  Refl
+}
+
+fn same_lists<A>(xs: List(A), ys: List(A)): Bool where DecEq(A) {
+  xs == ys
+}
+
+theorem lists_same(): same_lists(Cons(Red, Nil), Cons(Red, Nil)) = true {
+  Refl
+}
+```
+
+checks_all = "ok"
+
+// `DecEq(A)` gives `PartialEq(A)`, with its laws, without a superclass.
+@ cases.dec-eq-gives-partial-eq-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn differ<A>(a: A, b: A): Bool where PartialEq(A) {
+  a != b
+}
+
+fn differ_dec<A>(a: A, b: A): Bool where DecEq(A) {
+  differ(a, b)
+}
+
+theorem close_symm<A>(a: A, b: A, h: PartialEq::beq(a, b) = true): PartialEq::beq(b, a) = true where PartialEq(A) {
+  PartialEq::symm(a, b, h)
+}
+
+theorem dec_close_symm<A>(a: A, b: A, h: PartialEq::beq(a, b) = true): PartialEq::beq(b, a) = true where DecEq(A) {
+  close_symm(a, b, h)
+}
+
+theorem differ_dec_nat(): differ_dec(1, 2) = true {
+  Refl
+}
+```
+
+checks_all = "ok"
+
+@ cases.equality-on-a-type-variable-needs-a-where-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn same<A>(a: A, b: A): Bool {
+  a == b
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::same" = "error: "
+@ cases.equality-on-a-type-variable-needs-a-where-0.diagnostics[]
+file = "input/main.taut"
+name = "same"
+message = "`==` needs PartialEq(A): add `where PartialEq(A)`, or `where DecEq(A)` to prove from `==`"
+span = "«a == b»"
+
+// The instances come from the structure of the type: a file does not write one.
+@ cases.an-instance-of-dec-eq-is-not-written-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Two: Type {
+  One: Two
+  Other: Two
+}
+
+instance DecEq(Two) {
+  fn beq(a: Two, b: Two): Bool {
+    true
+  }
+  theorem beq_refl(a: Two): DecEq::beq(a, a) = true {
+    Refl
+  }
+  theorem beq_sound(a: Two, b: Two, h: DecEq::beq(a, b) = true): a = b {
+    ?h
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::DecEq(Two)" = "error: "
+@ cases.an-instance-of-dec-eq-is-not-written-0.diagnostics[]
+file = "input/main.taut"
+name = "DecEq(Two)"
+message = "`DecEq` is structural and has no instances to write: its instance comes from the structure of the type"

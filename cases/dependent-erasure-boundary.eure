@@ -1,13 +1,14 @@
 description = "Extraction of indexed and refined values to nominal opaque Nib boundaries, including definitionally equal contracts and rejection of forged or mismatched values."
 
 @ cases.same-contract-roundtrip
+llvm.unimplemented = "generate: the LLVM backend does not write a guard on a `match` that takes its value apart yet"
 files_tote = "app"
 extract = true
 files."app/Tauto.eure" = 'package { name = "app"
 version = "0.1.0" }'
 files."app/src/lib.taut" = ```tauto
-import std::Nat
-import std::Refined
+import std::nat
+import std::refined
 
 pub(open) inductive Vec(A: Type): (Nat) -> Type {
   Nil: Vec(A, Zero)
@@ -49,26 +50,31 @@ pub fn optional_positive(xs: Option(Refined(Nat, Pos))): Nat {
 ```
 files."app/src/main.taut" = ```tauto
 import "lib.taut"
-perform show("head", head_one(one(10)))
-perform show("alias", head_alias(one(11)))
-match check_positive(7) {
-  None => perform show("missing", 0)
-  Some(p) => {
-    perform show("pred", predecessor(p))
-    perform show("read", read_positive(p))
+perform main(() => {
+  show(&head_one(one(10)))
+  show(&head_alias(one(11)))
+  match check_positive(7) {
+    None => show(&0)
+    Some(p) => {
+      show(&predecessor(p))
+      show(&read_positive(p))
+    }
   }
-}
-match check_positive(0) {
-  None => perform show("rejected", true)
-  Some(p) => perform show("value", read_positive(p))
-}
+  match check_positive(0) {
+    None => show(&true)
+    Some(p) => show(&read_positive(p))
+  }
+})
 ```
-shows = ["head = 10", "alias = 11", "pred = 6", "read = 7", "rejected = true"]
-backends = ["rust", "javascript"]
-rust_shows = ["head = 10", "alias = 11", "pred = 6", "read = 7", "rejected = true"]
-javascript_shows = ["head = 10", "alias = 11", "pred = 6", "read = 7", "rejected = true"]
+stdout = ```
+10
+11
+6
+7
+true
+```
 extracted_nib.check_positive = ```nib
-pub fn check_positive(n: nat): Option(TautoErasedOpaque28_1) { TautoErasedUnpack6_1(TautoErasedFn1_1(TautoErasedValue_1::TautoErasedNat_1(n))) }
+pub fn check_positive(n: nat): Option(TautoErasedOpaque28_1) { TautoErasedUnpack14_1(TautoErasedFn1_1(TautoErasedValue_1::TautoErasedNat_1(n))) }
 ```
 extracted_nib.head_one = ```nib
 pub fn head_one(v: TautoErasedOpaque30_1): nat { TautoErasedGetNat_1(TautoErasedFn15_1(v.value)) }
@@ -83,8 +89,8 @@ extract = true
 files."app/Tauto.eure" = 'package { name = "app"
 version = "0.1.0" }'
 files."app/src/lib.taut" = ```tauto
-import std::Nat
-import std::Refined
+import std::nat
+import std::refined
 
 pub(open) inductive Vec(A: Type): (Nat) -> Type {
   Nil: Vec(A, Zero)
@@ -126,7 +132,9 @@ pub fn optional_positive(xs: Option(Refined(Nat, Pos))): Nat {
 ```
 files."app/src/main.taut" = ```tauto
 import "lib.taut"
-perform show("bad", head_one(empty()))
+perform main(() => {
+  show(&head_one(empty()))
+})
 ```
 types = "error: does not fit"
 
@@ -136,8 +144,8 @@ extract = true
 files."app/Tauto.eure" = 'package { name = "app"
 version = "0.1.0" }'
 files."app/src/lib.taut" = ```tauto
-import std::Nat
-import std::Refined
+import std::nat
+import std::refined
 
 pub(open) inductive Vec(A: Type): (Nat) -> Type {
   Nil: Vec(A, Zero)
@@ -179,7 +187,9 @@ pub fn optional_positive(xs: Option(Refined(Nat, Pos))): Nat {
 ```
 files."app/src/main.taut" = ```tauto
 import "lib.taut"
-perform show("bad", predecessor(zero_only()))
+perform main(() => {
+  show(&predecessor(zero_only()))
+})
 ```
 types = "error: does not fit"
 
@@ -189,8 +199,8 @@ extract = true
 files."app/Tauto.eure" = 'package { name = "app"
 version = "0.1.0" }'
 files."app/src/lib.taut" = ```tauto
-import std::Nat
-import std::Refined
+import std::nat
+import std::refined
 
 pub(open) inductive Vec(A: Type): (Nat) -> Type {
   Nil: Vec(A, Zero)
@@ -232,7 +242,9 @@ pub fn optional_positive(xs: Option(Refined(Nat, Pos))): Nat {
 ```
 files."app/src/main.taut" = ```tauto
 import "lib.taut"
-let forged := Vec::Nil
+perform main(() => {
+  let forged := Vec::Nil
+})
 ```
 load_error = "code the kernel does not check"
 
@@ -242,8 +254,8 @@ extract = true
 files."app/Tauto.eure" = 'package { name = "app"
 version = "0.1.0" }'
 files."app/src/lib.taut" = ```tauto
-import std::Nat
-import std::Refined
+import std::nat
+import std::refined
 
 pub(open) inductive Vec(A: Type): (Nat) -> Type {
   Nil: Vec(A, Zero)
@@ -285,10 +297,69 @@ pub fn optional_positive(xs: Option(Refined(Nat, Pos))): Nat {
 ```
 files."app/src/main.taut" = ```tauto
 import "lib.taut"
-let value := one(1)
-perform show("bad", value.value)
+perform main(() => {
+  let value := one(1)
+  show(&value.value)
+})
 ```
 macro_error = "outside that file the type is abstract"
+
+@ cases.projection-in-closure
+files_tote = "app"
+extract = true
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+files."app/src/lib.taut" = ```tauto
+import std::nat
+import std::refined
+
+pub(open) inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+pub fn empty(): Vec(Nat, 0) { Nil }
+pub fn one(x: Nat): Vec(Nat, 1) { Cons(0, x, Nil) }
+pub fn head_one(v: Vec(Nat, 1)): Nat {
+  ⊢ Nat from match v { Cons(k, x, xs) => x }
+}
+pub fn OneVec(): Type { Vec(Nat, Succ(Zero)) }
+pub fn head_alias(v: OneVec()): Nat { head_one(v) }
+
+pub fn is_pos(n: Nat): Bool {
+  ⊢ Bool from match n {
+    Zero => false
+    Succ(k) => true
+  }
+}
+pub fn Pos(n: Nat): Prop { is_pos(n) = true }
+pub fn check_positive(n: Nat): Option(Refined(Nat, Pos)) { refine_by(is_pos, n) }
+pub fn zero_only(): Refined(Nat, y => y = 0) { Refined::Mk(0, Refl) }
+fn pos_pred(n: Nat, h: Pos(n)): Nat {
+  ⊢ Nat from match n {
+    Zero => ⊢ Nat from match h {}
+    Succ(k) => k
+  }
+}
+pub fn predecessor(p: Refined(Nat, Pos)): Nat {
+  ⊢ Nat from match p { Mk(v, h) => pos_pred(v, h) }
+}
+pub fn read_positive(p: Refined(Nat, y => is_pos(y) = true)): Nat { p.val }
+pub fn optional_positive(xs: Option(Refined(Nat, Pos))): Nat {
+  ⊢ Nat from match xs {
+    None => 0
+    Some(p) => predecessor(p)
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import "lib.taut"
+perform main(() => {
+  let value := one(1)
+  show(&value.value)
+})
+```
+macro_error = "outside that file the type is abstract"
+
 
 @ cases.pattern
 files_tote = "app"
@@ -296,8 +367,8 @@ extract = true
 files."app/Tauto.eure" = 'package { name = "app"
 version = "0.1.0" }'
 files."app/src/lib.taut" = ```tauto
-import std::Nat
-import std::Refined
+import std::nat
+import std::refined
 
 pub(open) inductive Vec(A: Type): (Nat) -> Type {
   Nil: Vec(A, Zero)
@@ -339,8 +410,10 @@ pub fn optional_positive(xs: Option(Refined(Nat, Pos))): Nat {
 ```
 files."app/src/main.taut" = ```tauto
 import "lib.taut"
-let value := one(1)
-match value { Vec::Cons(n, x, xs) => perform show("bad", x) }
+perform main(() => {
+  let value := one(1)
+  match value { Vec::Cons(n, x, xs) => show(&x) }
+})
 ```
 load_error = "an opaque dependent value cannot be matched outside checked code"
 
@@ -350,8 +423,8 @@ extract = true
 files."app/Tauto.eure" = 'package { name = "app"
 version = "0.1.0" }'
 files."app/src/lib.taut" = ```tauto
-import std::Nat
-import std::Refined
+import std::nat
+import std::refined
 
 pub(open) inductive Vec(A: Type): (Nat) -> Type {
   Nil: Vec(A, Zero)
@@ -394,7 +467,9 @@ pub fn optional_positive(xs: Option(Refined(Nat, Pos))): Nat {
 files."app/src/main.taut" = ```tauto
 import "lib.taut"
 fn apply<A>(f: (A) -> nat, x: A): nat { f(x) }
-perform show("bad", apply(predecessor, zero_only()))
+perform main(() => {
+  show(&apply(predecessor, zero_only()))
+})
 ```
 types = "error: does not fit"
 
@@ -404,8 +479,8 @@ extract = true
 files."app/Tauto.eure" = 'package { name = "app"
 version = "0.1.0" }'
 files."app/src/lib.taut" = ```tauto
-import std::Nat
-import std::Refined
+import std::nat
+import std::refined
 
 pub(open) inductive Vec(A: Type): (Nat) -> Type {
   Nil: Vec(A, Zero)
@@ -447,7 +522,9 @@ pub fn optional_positive(xs: Option(Refined(Nat, Pos))): Nat {
 ```
 files."app/src/main.taut" = ```tauto
 import "lib.taut"
-perform show("bad", optional_positive(Some(zero_only())))
+perform main(() => {
+  show(&optional_positive(Some(zero_only())))
+})
 ```
 types = "error: does not fit"
 
@@ -457,8 +534,8 @@ extract = true
 files."app/Tauto.eure" = 'package { name = "app"
 version = "0.1.0" }'
 files."app/src/lib.taut" = ```tauto
-import std::Nat
-import std::Refined
+import std::nat
+import std::refined
 
 pub(open) inductive Vec(A: Type): (Nat) -> Type {
   Nil: Vec(A, Zero)
@@ -500,7 +577,9 @@ pub fn optional_positive(xs: Option(Refined(Nat, Pos))): Nat {
 ```
 files."app/src/main.taut" = ```tauto
 import "lib.taut"
-let value := TautoErasedNat_1(0)
+perform main(() => {
+  let value := TautoErasedNat_1(0)
+})
 ```
 run_error = "`TautoErasedNat_1` is not defined"
 compile_errors.rust = "front: TautoErasedNat_1 is not defined"

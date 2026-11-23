@@ -1,0 +1,294 @@
+import "surface.taut"
+import "../../text/src/text.taut"
+import std::base
+import std::text
+
+// The modules of a program flattened into the declarations its checkers read.
+// The reader keeps `module name { … }` as `StModule`, as written; here each
+// module is the statement `#enter path` before its members and `#leave` after
+// them. A member takes the module's path (`path::f`, or `path::#f` when it is
+// private), a public member is listed by `#module-export written target`, and
+// an effect has its visibility in `#effect-mode target visibility`. A private
+// module at the top of a file has the path `#private::name`, and one inside a
+// module `parent::name` or, when private, `parent::#name`. `pub import m.{a}`
+// is `#alias a target` with the target `m::a` is exported as, or an error when
+// `m::a` is not exported.
+
+// The visibility of a module's member as `#effect-mode` writes it.
+pub fn surface_module_visibility(v: SurfaceVis): Text {
+  match v {
+    VisPrivate => "private"
+    VisPub => "pub"
+    VisOpen => "open"
+    VisHandle => "handle"
+  }
+}
+
+pub fn surface_vis_is_private(v: SurfaceVis): Bool {
+  match v {
+    VisPrivate => true
+    _ => false
+  }
+}
+
+pub fn surface_vis_is_pub(v: SurfaceVis): Bool {
+  match v {
+    VisPub => true
+    _ => false
+  }
+}
+
+pub fn surface_vis_is_handle(v: SurfaceVis): Bool {
+  match v {
+    VisHandle => true
+    _ => false
+  }
+}
+
+// The words written before a declaration for its visibility, with a space
+// after them; nothing for a statement that has no visibility.
+pub fn surface_written_visibility(v: SurfaceVis): Text {
+  match v {
+    VisPrivate => ""
+    VisPub => "pub "
+    VisOpen => "pub(open) "
+    VisHandle => "pub(handle) "
+  }
+}
+
+// The visibility a statement is declared with, when it declares a name.
+pub fn surface_stmt_visibility(s: SurfaceStmt): Option(SurfaceVis) {
+  match s {
+    StFn(f) => Some(f.visibility)
+    StTheorem(t) => Some(t.visibility)
+    StDef(t) => Some(t.visibility)
+    StInductive(i) => Some(i.visibility)
+    StStruct(d) => Some(d.visibility)
+    StEnum(d) => Some(d.visibility)
+    StEffect(e) => Some(e.visibility)
+    StModule(^name, vis, ^items, ^start, ^end) => Some(vis)
+    StClass(c) => Some(c.visibility)
+    StAttributed(^name, ^arg, ^generates, stmt) => surface_stmt_visibility(stmt)
+    _ => None
+  }
+}
+
+// `s` declared with the visibility `v`, where it declares a name; its span stays.
+pub fn surface_with_visibility(s: SurfaceStmt, v: SurfaceVis): SurfaceStmt {
+  match s {
+    StFn(SurfaceFnMk(name, generics, bounds, params, r#borrows, param_types, result, effects, wheres, start, end, body, lends, generic_types, bound_starts, ^visibility, row_hole, unused, unused_generics, unused_params)) => StFn(
+      SurfaceFnMk(name, generics, bounds, params, r#borrows, param_types, result, effects, wheres, start, end, body, lends, generic_types, bound_starts, v, row_hole, unused, unused_generics, unused_params)
+    )
+    StTheorem(SurfaceTheoremMk(name, implicit, params, ty, body, start, end, unused, unused_params, ^visibility)) => StTheorem(
+      SurfaceTheoremMk(name, implicit, params, ty, body, start, end, unused, unused_params, v)
+    )
+    StDef(SurfaceTheoremMk(name, implicit, params, ty, body, start, end, unused, unused_params, ^visibility)) => StDef(
+      SurfaceTheoremMk(name, implicit, params, ty, body, start, end, unused, unused_params, v)
+    )
+    StInductive(SurfaceInductiveMk(name, params, sort, constructors, start, end, ^visibility)) => StInductive(
+      SurfaceInductiveMk(name, params, sort, constructors, start, end, v)
+    )
+    StStruct(SurfaceDataMk(kind, name, generics, constructors, start, end, coerce_level, coerce_field, ^visibility, unused_generics, rows)) => StStruct(
+      SurfaceDataMk(kind, name, generics, constructors, start, end, coerce_level, coerce_field, v, unused_generics, rows)
+    )
+    StEnum(SurfaceDataMk(kind, name, generics, constructors, start, end, coerce_level, coerce_field, ^visibility, unused_generics, rows)) => StEnum(
+      SurfaceDataMk(kind, name, generics, constructors, start, end, coerce_level, coerce_field, v, unused_generics, rows)
+    )
+    StEffect(SurfaceEffectMk(name, generics, params, result, r#resume, start, end, set, unused_generics, bounds, ^visibility, rows)) => StEffect(
+      SurfaceEffectMk(name, generics, params, result, r#resume, start, end, set, unused_generics, bounds, v, rows)
+    )
+    StClass(SurfaceClassMk(name, param, arity, bound, methods, laws, start, end, parameters, proof_side, parents, unused_parameters, ^visibility)) => StClass(
+      SurfaceClassMk(name, param, arity, bound, methods, laws, start, end, parameters, proof_side, parents, unused_parameters, v)
+    )
+    StModule(name, ^visibility, items, start, end) => StModule(name, v, items, start, end)
+    StAttributed(name, arg, generates, stmt) => StAttributed(name, arg, generates, surface_with_visibility(stmt, v))
+    _ => s
+  }
+}
+
+// Where a statement starts and ends, for a statement a module cannot hold.
+pub fn surface_stmt_span(s: SurfaceStmt): SurfaceSpan {
+  match s {
+    StFn(f) => SurfaceSpan { start: f.start, end: f.end }
+    StTheorem(t) => SurfaceSpan { start: t.start, end: t.end }
+    StDef(t) => SurfaceSpan { start: t.start, end: t.end }
+    StMutual(^items, start, end) => SurfaceSpan { start: start, end: end }
+    StModule(^name, ^vis, ^items, start, end) => SurfaceSpan { start: start, end: end }
+    StReexport(^path, ^names, ^spans, start, end) => SurfaceSpan { start: start, end: end }
+    StImport(^path, start, end) => SurfaceSpan { start: start, end: end }
+    StInductive(i) => SurfaceSpan { start: i.start, end: i.end }
+    StEffect(e) => SurfaceSpan { start: e.start, end: e.end }
+    StStruct(d) => SurfaceSpan { start: d.start, end: d.end }
+    StEnum(d) => SurfaceSpan { start: d.start, end: d.end }
+    StExtern(^fns, ^instances, ^types, ^structs, ^enums, start, end) => SurfaceSpan { start: start, end: end }
+    StClass(c) => SurfaceSpan { start: c.start, end: c.end }
+    StInstance(i) => SurfaceSpan { start: i.start, end: i.end }
+    StLoop(^body, start, end) => SurfaceSpan { start: start, end: end }
+    StFor(^pattern, ^source, ^body, start, end) => SurfaceSpan { start: start, end: end }
+    StBreak(^value, start, end) => SurfaceSpan { start: start, end: end }
+    StContinue(start, end) => SurfaceSpan { start: start, end: end }
+    StOther(^what, start, end) => SurfaceSpan { start: start, end: end }
+    StMacro(^name, ^function, start, end) => SurfaceSpan { start: start, end: end }
+    StSyntax(^name, ^grammar, start, end) => SurfaceSpan { start: start, end: end }
+    StAttributed(^name, ^arg, ^generates, stmt) => surface_stmt_span(stmt)
+    StLet(^name, ^ty, value, ^b, ^m, ^unused, ^stack) => SurfaceSpan { start: value.start, end: value.end }
+    StVar(^name, ^ty, value, ^b, ^unused, ^stack) => SurfaceSpan { start: value.start, end: value.end }
+    StAssign(^name, ^place, value) => SurfaceSpan { start: value.start, end: value.end }
+    StCalled(^generates, call) => SurfaceSpan { start: call.start, end: call.end }
+    StWhile(cond, body) => SurfaceSpan { start: cond.start, end: body.end }
+    StReturn(^value) => SurfaceSpan { start: 0, end: 0 }
+    StExpr(value) => SurfaceSpan { start: value.start, end: value.end }
+  }
+}
+
+// `#reexport alias target` for each name `pub import module.{…}` declares again.
+pub fn surface_reexport_items(module_name: Text, alias_prefix: Text, names: List(Text), at: SurfaceSpan): List(SurfaceStmt) {
+  match names {
+    Nil => Nil
+    Cons(name, rest) => Cons(
+      StOther(Text::concat_all(["#reexport ", alias_prefix, name, " ", module_name, "::", name]), at.start, at.end),
+      surface_reexport_items(module_name, alias_prefix, rest, at)
+    )
+  }
+}
+
+mutual {
+  // A module's statements: `#enter path`, the members, `#leave`.
+  pub fn surface_flatten_module(
+    path: Text,
+    source_name: Text,
+    items: List(SurfaceStmt),
+    start: Nat,
+    end: Nat
+  ): List(SurfaceStmt) {
+    Cons(
+      StOther(Text::concat("#enter ", path), start, end),
+      List::append(surface_flatten_members(path, source_name, items), [StOther("#leave", end, end)])
+    )
+  }
+
+  // The members of the module `module_name`, written `source_name` in the source.
+  pub fn surface_flatten_members(module_name: Text, source_name: Text, items: List(SurfaceStmt)): List(SurfaceStmt) {
+    match items {
+      Nil => Nil
+      Cons(item, rest) => List::append(
+        surface_flatten_member(module_name, source_name, item),
+        surface_flatten_members(module_name, source_name, rest)
+      )
+    }
+  }
+
+  pub fn surface_flatten_member(module_name: Text, source_name: Text, item: SurfaceStmt): List(SurfaceStmt) {
+    match item {
+      StModule(name, vis, members, start, end) => surface_flatten_module(
+        Text::concat_all([module_name, if surface_vis_is_pub(vis) { "::" } else { "::#" }, name]),
+        Text::concat_all([source_name, "::", name]),
+        members,
+        start,
+        end
+      )
+      StReexport(path, names, ^spans, start, end) => surface_reexport_items(
+        Text::concat_all([source_name, "::", path]),
+        Text::concat(module_name, "::"),
+        names,
+        SurfaceSpan { start: start, end: end }
+      )
+      StFn(f) => {
+        let visibility := surface_module_visibility(f.visibility)
+        let target := Text::concat_all([module_name, if visibility == "private" { "::#" } else { "::" }, f.name])
+        let named := StFn(SurfaceFnMk(target, f.generics, f.bounds, f.params, f.r#borrows, f.param_types, f.result, f.effects, f.wheres, f.start, f.end, f.body, f.lends, f.generic_types, f.bound_starts, f.visibility, f.row_hole, f.unused, f.unused_generics, f.unused_params))
+        if visibility == "private" { [named] } else {
+          [StOther(Text::concat_all(["#module-export ", source_name, "::", f.name, " ", target]), f.start, f.end), named]
+        }
+      }
+      StEffect(e) => {
+        let visibility := surface_module_visibility(e.visibility)
+        let target := Text::concat_all([module_name, if visibility == "private" { "::#" } else { "::" }, e.name])
+        let named := StEffect(SurfaceEffectMk(target, e.generics, e.params, e.result, e.r#resume, e.start, e.end, e.set, e.unused_generics, e.bounds, e.visibility, e.rows))
+        let mode := StOther(Text::concat_all(["#effect-mode ", target, " ", visibility]), e.start, e.end)
+        if visibility == "private" { [mode, named] } else {
+          [mode, StOther(Text::concat_all(["#module-export ", source_name, "::", e.name, " ", target]), e.start, e.end), named]
+        }
+      }
+      StOther(what, start, end) => [StOther(what, start, end)]
+      _ => {
+        let at := surface_stmt_span(item)
+        [StOther("unsupported module member", at.start, at.end)]
+      }
+    }
+  }
+}
+
+// The top of a file: its modules flattened. `pub(handle)` before a statement
+// outside a module reads as `pub(handle)`, which no statement there takes.
+pub fn surface_flatten_top(stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => List::append(
+      ⊢ List(SurfaceStmt) from match s {
+        StModule(name, vis, members, start, end) => surface_flatten_module(
+          if surface_vis_is_pub(vis) { name } else { Text::concat("#private::", name) },
+          name,
+          members,
+          start,
+          end
+        )
+        StReexport(path, names, ^spans, start, end) => surface_reexport_items(path, "", names, SurfaceSpan { start: start, end: end })
+        StEffect(e) => if surface_vis_is_handle(e.visibility) { [StOther("pub(handle)", e.start, e.end)] } else { [s] }
+        StOther(what, start, end) => if what == "pub(handle) before a statement that declares nothing" {
+          [StOther("pub(handle)", start, end)]
+        } else { [s] }
+        _ => [s]
+      },
+      surface_flatten_top(rest)
+    )
+  }
+}
+
+fn surface_export_target(stmts: List(SurfaceStmt), name: Text): Option(Text) {
+  match stmts {
+    Nil => None
+    Cons(s, rest) => match s {
+      StOther(what, ^start, ^end) => match text_split(what, " ") {
+        Cons(tag, Cons(written, Cons(target, Nil))) => if tag == "#module-export" && written == name {
+          Some(target)
+        } else { surface_export_target(rest, name) }
+        _ => surface_export_target(rest, name)
+      }
+      _ => surface_export_target(rest, name)
+    }
+  }
+}
+
+fn surface_finish_reexports(stmts: List(SurfaceStmt), all: List(SurfaceStmt)): List(SurfaceStmt) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => {
+      let following := surface_finish_reexports(rest, all)
+      match s {
+        StOther(what, start, end) => match text_split(what, " ") {
+          Cons(tag, Cons(name, Cons(target, Nil))) => if tag == "#module-export" {
+            following
+          } else if tag == "#reexport" {
+            match surface_export_target(all, target) {
+              None => Cons(StOther(Text::concat("cannot re-export ", target), start, end), following)
+              Some(canonical) => Cons(StOther(Text::concat_all(["#alias ", name, " ", canonical]), start, end), following)
+            }
+          } else { Cons(s, following) }
+          _ => Cons(s, following)
+        }
+        _ => Cons(s, following)
+      }
+    }
+  }
+}
+
+pub fn surface_resolve_reexports(stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  surface_finish_reexports(stmts, stmts)
+}
+
+// The statements of a program as its checkers read them: the modules
+// flattened and each re-export resolved to what it names.
+pub fn surface_flatten_modules(stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  surface_resolve_reexports(surface_flatten_top(stmts))
+}

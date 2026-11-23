@@ -1,0 +1,100 @@
+description = "A proof-side class is a record the kernel already has: its instances are functions, `where C(T)` is a record parameter after the generics, and the record a call needs is found, never written."
+
+@ cases.instance-with-where-and-implicit-record
+source = ```tauto
+pub inductive class Ord2(A: Type) {
+  fn cmp(a: &A, b: &A): Ordering
+  theorem refl<a: A>(): Ord2::cmp(a, a) = Equal
+}
+
+instance Ord2(Bool) {
+  fn cmp(a: &Bool, b: &Bool): Ordering { Equal }
+  theorem refl<a: Bool>(): Ord2::cmp(a, a) = Equal { Refl }
+}
+
+instance<A> Ord2(Option(A)) where Ord2(A) {
+  fn cmp(a: &Option(A), b: &Option(A)): Ordering { Equal }
+  theorem refl<a: Option(A)>(): Ord2::cmp(a, a) = Equal { Refl }
+}
+
+pub fn same<K>(a: &K, b: &K): Bool where Ord2(K) {
+  match Ord2::cmp(a, b) {
+    Equal => true
+    Less => false
+    Greater => false
+  }
+}
+
+pub fn use_it(a: Option(Bool), b: Option(Bool)): Bool { same(a, b) }
+
+theorem law_use<K>(x: K): Ord2::cmp(x, x) = Equal where Ord2(K) { Ord2::refl() }
+```
+checks.use_it = "ok"
+checks.law_use = "checked"
+differential = "elaborator"
+
+@ cases.instance-method-recurses-through-its-instance
+source = ```tauto
+inductive class Ord3(A: Type) {
+  fn cmp(a: &A, b: &A): Bool
+}
+
+instance Ord3(Bool) {
+  fn cmp(a: &Bool, b: &Bool): Bool { true }
+}
+
+instance<A> Ord3(List(A)) where Ord3(A) {
+  fn cmp(xs: &List(A), ys: &List(A)): Bool {
+    match xs {
+      Nil => true
+      Cons(x, xs2) => ⊢ Bool from match ys {
+        Nil => false
+        Cons(y, ys2) => Ord3::cmp(&xs2, &ys2)
+      }
+    }
+  }
+}
+```
+differential = "elaborator"
+
+@ cases.std-order-found-for-option-list-and-product
+files."main.nib" = ```tauto
+import std::builtin::ord
+import std::ord
+
+fn key_pick(o: Ordering): Bool {
+  match o {
+    Equal => true
+    Less => false
+    Greater => false
+  }
+}
+
+pub fn key_eq<K: Shared>(a: &K, b: &K): Bool where Ord(K) {
+  key_pick(Ord::compare(a, b))
+}
+
+pub theorem key_eq_refl<K: Shared>(k: K): key_eq(&k, &k) = true where Ord(K) {
+  Eq::congr((o: Ordering) => key_pick(o), ord_eq_equal(k, k, Refl))
+}
+
+fn use_opt(a: Option(Nat), b: Option(Nat)): Bool { key_eq(&a, &b) }
+fn use_list(a: List(Nat), b: List(Nat)): Bool { key_eq(&a, &b) }
+fn use_prod(a: (Nat × Nat), b: (Nat × Nat)): Bool { key_eq(&a, &b) }
+```
+checks.key_eq_refl = "checked"
+differential = "elaborator"
+
+@ cases.a-law-of-a-class-is-called-with-explicit-arguments
+source = ```tauto
+inductive class Holder(A: Type) {
+  fn get(a: &A): Nat
+  theorem same(a: &A): Holder::get(a) = Holder::get(a)
+}
+
+theorem law_alone<A: Type>(a: &A): Holder::get(a) = Holder::get(a) where Holder(A) {
+  Holder::same(a)
+}
+```
+checks.law_alone = "checked"
+differential = "elaborator"

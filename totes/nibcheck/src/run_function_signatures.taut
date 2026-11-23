@@ -1,9 +1,9 @@
 import "prepare_signature_sources.taut"
 import "report_data_body_sound.taut"
 import "run_accepted_data_property.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -28,11 +28,11 @@ import "../../surface/src/surface.taut"
 pub theorem prepared_source_elaborates<env: Datas, program: List(
   SurfaceStmt
 ), schemes: List(
-  Pair(SurfaceFn, Scheme)
+  (SurfaceFn × Scheme)
 )>(
   prepared: PreparedSourceSignatures(env, program, schemes)
 ): SourceFunctionsElaborated(env, program) {
-  ⊢ SourceFunctionsElaborated(env, program) from match prepared {
+  match prepared {
     Mk(own, generated, combined, sources, derived) => SourceFunctionsElaborated::Mk(
       own,
       sources,
@@ -56,11 +56,9 @@ pub theorem run_after_datas_signatures(
   let accepted: DiagnosticClean(
     ck_st(ck_prepare_fns(c, prelude, program, own))
   ) := accepted_checked_bind_fact(
-    List(Pair(SurfaceFn, Scheme)),
-    Unit,
-    DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own))),
+    <A: List(SurfaceFn × Scheme), B: Unit, P: DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own)))>,
     ck_prepare_fns(c, prelude, program, own),
-    (fns: List(Pair(SurfaceFn, Scheme)), next: Checker) => names_function_body(next, program, fns),
+    (fns: List(SurfaceFn × Scheme), next: Checker) => names_function_body(next, program, fns),
     frame_subst_ordered(
       c,
       ck_prepare_fns(c, prelude, program, own),
@@ -92,7 +90,7 @@ pub theorem run_after_data_result_signatures(
   normal: ∀ accepted: DiagnosticClean(ck_st(m)). CkNormal(ck_st(m)),
   clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m)))
 ): SourceSignatureState(program, run_after_data_result(prelude, program, own, m)) {
-  ⊢ SourceSignatureState(program, run_after_data_result(prelude, program, own, m)) from match m {
+  match m {
     mut1(ignored, next) => run_after_datas_signatures(
       next,
       prelude,
@@ -114,7 +112,7 @@ pub theorem run_after_builtins_signatures(
   normal: CkNormal(ck_st(m)),
   clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m)))
 ): SourceSignatureState(program, run_after_builtins(prelude, program, m)) {
-  ⊢ SourceSignatureState(program, run_after_builtins(prelude, program, m)) from match m {
+  match m {
     mut1(ignored, next) => run_after_data_result_signatures(
       prelude,
       program,
@@ -181,7 +179,7 @@ pub theorem run_module_function_signatures(
   normal: CkNormal(ck_st(m)),
   clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m))
 ): SourceSignatureReport(program, run_after_module_errors(prelude, program, m)) {
-  ⊢ SourceSignatureReport(program, run_after_module_errors(prelude, program, m)) from match m {
+  match m {
     mut1(ignored, next) => accepted_data_report(
       (env: Datas) => SourceFunctionsElaborated(env, program),
       ck_run(next, prelude, program),

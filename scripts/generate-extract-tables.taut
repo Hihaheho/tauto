@@ -1,0 +1,32 @@
+// Writes totes/extract/src/tables/*.txt from the host: the names the library
+// takes, the helpers, what the host maps `std/` onto and the runtime of lowered
+// data. Run it after a change to the library bindings or to `tauto extract`.
+// With --check, writes nothing and fails if a file is out of date.
+//   tauto gen-extract-tables [--check]
+import "lib/sh.taut" { sh_process, sh_root, sh_run }
+import std::builtin::os { argv, exit }
+import std::base { List }
+
+let root := sh_root()
+perform exit(
+  sh_run(
+    sh_process(
+      "cargo",
+      List::append(
+        [
+          "run",
+          "--locked",
+          "-q",
+          "--manifest-path",
+          "tools/selfhost-harness/Cargo.toml",
+          "--bin",
+          "write-extract-tables",
+          "--"
+        ],
+        perform argv()
+      ),
+      root,
+      []
+    )
+  )
+)

@@ -1,10 +1,12 @@
-import std::Base
-import std::prelude::Affine
-import std::prelude::Shared
+import std::base
 import text::text
 
 // JSON values (RFC 8259) and their text. A number is kept as the text it was
-// written as. Positions are UTF-8 bytes. Loops run over positions, so a long
+// written as, and only text of the RFC 8259 number grammar is read as one:
+// `-? (0 | [1-9][0-9]*) (. [0-9]+)? ([eE] [+-]? [0-9]+)?`. `json_number` makes
+// a `JNum` from text of that grammar, and `json_write` writes a `JNum` whose
+// text is not of it as `null`, so the output is JSON whatever `JNum` holds.
+// Positions are UTF-8 bytes. Loops run over positions, so a long
 // string or array does not deepen the stack; only nesting does.
 
 pub(open) enum Json {
@@ -19,7 +21,7 @@ pub(open) enum Json {
 // --- Reading fields -------------------------------------------------------
 
 // The value of the first field `key` of an object; `None` for anything else.
-pub fn json_get(v: Json, key: Text): Option(Json) {
+pub fn json_get(v: Json, key: Text): Option(Json) ! {div} {
   match v {
     JObj(fields) => {
       var rest := fields
@@ -47,7 +49,7 @@ pub fn json_get(v: Json, key: Text): Option(Json) {
 }
 
 // The field at the path `keys` of `v`.
-pub fn json_at(v: Json, keys: List(Text)): Option(Json) {
+pub fn json_at(v: Json, keys: List(Text)): Option(Json) ! {div} {
   match keys {
     Nil => Some(v)
     Cons(k, rest) => match json_get(v, k) {
@@ -96,7 +98,7 @@ fn jfail<A>(at: u64, message: Text): Result(A, JsonError) {
   Err(JsonError { at: at, message: message })
 }
 
-fn skip_ws(t: Text, at: u64): u64 {
+fn skip_ws(t: Text, at: u64): u64 ! {div, overflow} {
   var i := at
   var running := true
   while running {
@@ -111,7 +113,7 @@ fn skip_ws(t: Text, at: u64): u64 {
 }
 
 // The value of the whole text `t`, with only white space around it.
-pub fn json_parse(t: Text): Result(Json, JsonError) {
+pub fn json_parse(t: Text): Result(Json, JsonError) ! {div, overflow} {
   match parse_value(t, skip_ws(t, 0)) {
     Err(e) => Err(e)
     Ok(#(v, next)) => {
@@ -125,7 +127,7 @@ pub fn json_parse(t: Text): Result(Json, JsonError) {
   }
 }
 
-fn literal(t: Text, at: u64, word: Text, v: Json): Result(Json × u64, JsonError) {
+fn literal(t: Text, at: u64, word: Text, v: Json): Result(Json × u64, JsonError) ! {overflow} {
   match Text::slice(t, at, at + Text::len(word)) {
     Some(w) => if text_same(w, word) {
       Ok(#(v, at + Text::len(word)))
@@ -136,7 +138,7 @@ fn literal(t: Text, at: u64, word: Text, v: Json): Result(Json × u64, JsonError
   }
 }
 
-fn parse_value(t: Text, at: u64): Result(Json × u64, JsonError) {
+fn parse_value(t: Text, at: u64): Result(Json × u64, JsonError) ! {div, overflow} {
   let b := jbyte(t, at)
   if at >= Text::len(t) {
     jfail(at, "unexpected end")
@@ -160,19 +162,83 @@ fn parse_value(t: Text, at: u64): Result(Json × u64, JsonError) {
   }
 }
 
-fn is_number_byte(b: u64): Bool {
-  (b >= 48 && b <= 57) || b == 45 || b == 43 || b == 46 || b == 101 || b == 69
+fn is_digit(b: u64): Bool {
+  b >= 48 && b <= 57
 }
 
-fn parse_number(t: Text, at: u64): Result(Json × u64, JsonError) {
+fn digits_end(t: Text, at: u64): u64 ! {div, overflow} {
   var i := at
-  while i < Text::len(t) && is_number_byte(jbyte(t, i)) {
+  while i < Text::len(t) && is_digit(jbyte(t, i)) {
     i := i + 1
   }
-  if i == at {
-    jfail(at, "unexpected character")
+  i
+}
+
+// The position after the number that starts at `at`, by the grammar of RFC
+// 8259: an optional `-`, an integer part without a leading zero, an optional
+// fraction with at least one digit, an optional exponent with at least one digit.
+fn number_end(t: Text, at: u64): Option(u64) ! {div, overflow} {
+  let start := if jbyte(t, at) == 45 {
+    at + 1
   } else {
-    Ok(#(JNum(lk_text_slice(t, at, i)), i))
+    at
+  }
+  let first := jbyte(t, start)
+  if first == 48 || (first >= 49 && first <= 57) {
+    let int_end := if first == 48 {
+      start + 1
+    } else {
+      digits_end(t, start)
+    }
+    let frac_end := if jbyte(t, int_end) == 46 {
+      digits_end(t, int_end + 1)
+    } else {
+      int_end
+    }
+    if jbyte(t, int_end) == 46 && frac_end == int_end + 1 {
+      None
+    } else if jbyte(t, frac_end) == 101 || jbyte(t, frac_end) == 69 {
+      let sign := jbyte(t, frac_end + 1)
+      let exp_start := if sign == 43 || sign == 45 {
+        frac_end + 2
+      } else {
+        frac_end + 1
+      }
+      let exp_end := digits_end(t, exp_start)
+      if exp_end == exp_start {
+        None
+      } else {
+        Some(exp_end)
+      }
+    } else {
+      Some(frac_end)
+    }
+  } else {
+    None
+  }
+}
+
+// Whether the whole of `n` is a number of RFC 8259.
+pub fn is_json_number(n: Text): Bool ! {div, overflow} {
+  match number_end(n, 0) {
+    Some(e) => e == Text::len(n)
+    None => false
+  }
+}
+
+// `JNum(n)` when `n` is a number of RFC 8259, `None` otherwise.
+pub fn json_number(n: Text): Option(Json) ! {div, overflow} {
+  if is_json_number(n) {
+    Some(JNum(n))
+  } else {
+    None
+  }
+}
+
+fn parse_number(t: Text, at: u64): Result(Json × u64, JsonError) ! {div, overflow} {
+  match number_end(t, at) {
+    None => jfail(at, "bad number")
+    Some(end) => Ok(#(JNum(lk_text_slice(t, at, end)), end))
   }
 }
 
@@ -183,7 +249,7 @@ pub fn lk_text_slice(t: Text, start: u64, end: u64): Text {
   }
 }
 
-fn hex_digit(b: u64): Option(u64) {
+fn hex_digit(b: u64): Option(u64) ! {overflow} {
   if b >= 48 && b <= 57 {
     Some(b - 48)
   } else if b >= 97 && b <= 102 {
@@ -196,7 +262,7 @@ fn hex_digit(b: u64): Option(u64) {
 }
 
 // The four hex digits at `at`.
-fn hex4(t: Text, at: u64): Option(u64) {
+fn hex4(t: Text, at: u64): Option(u64) ! {div, overflow} {
   var n: u64 := 0
   var i: u64 := 0
   var ok := true
@@ -220,7 +286,7 @@ fn hex4(t: Text, at: u64): Option(u64) {
 
 // A string's contents after its opening quote: the text and the position
 // after the closing quote.
-fn parse_string(t: Text, at: u64): Result(Text × u64, JsonError) {
+fn parse_string(t: Text, at: u64): Result(Text × u64, JsonError) ! {div, overflow} {
   var b := Buf::new()
   var start := at
   var i := at
@@ -307,7 +373,7 @@ fn parse_string(t: Text, at: u64): Result(Text × u64, JsonError) {
   }
 }
 
-fn parse_array(t: Text, at: u64): Result(Json × u64, JsonError) {
+fn parse_array(t: Text, at: u64): Result(Json × u64, JsonError) ! {div, overflow} {
   var items: List(Json) := Nil
   var i := skip_ws(t, at)
   var result: Option(Result(Json × u64, JsonError)) := None
@@ -339,7 +405,7 @@ fn parse_array(t: Text, at: u64): Result(Json × u64, JsonError) {
   }
 }
 
-fn parse_object(t: Text, at: u64): Result(Json × u64, JsonError) {
+fn parse_object(t: Text, at: u64): Result(Json × u64, JsonError) ! {div, overflow} {
   var fields: List(Text × Json) := Nil
   var i := skip_ws(t, at)
   var result: Option(Result(Json × u64, JsonError)) := None
@@ -390,17 +456,17 @@ fn parse_object(t: Text, at: u64): Result(Json × u64, JsonError) {
 
 // --- Writing --------------------------------------------------------------
 
-pub fn json_text(v: Json): Text {
+pub fn json_text(v: Json): Text ! {div, overflow} {
   var b := Buf::new()
   json_write(&mut b, v)
   Text::of(b)
 }
 
-fn hex_char(n: u64): Text {
+fn hex_char(n: u64): Text ! {overflow} {
   lk_text_slice("0123456789abcdef", n, n + 1)
 }
 
-pub fn json_write_string(&mut b: Buf, s: Text): Unit {
+pub fn json_write_string(b: &mut Buf, s: Text): Unit ! {div, overflow} {
   Buf::push(&mut b, &"\"")
   var start: u64 := 0
   var i: u64 := 0
@@ -430,7 +496,7 @@ pub fn json_write_string(&mut b: Buf, s: Text): Unit {
   Buf::push(&mut b, &"\"")
 }
 
-pub fn json_write(&mut b: Buf, v: Json): Unit {
+pub fn json_write(b: &mut Buf, v: Json): Unit ! {div, overflow} {
   match v {
     JNull => Buf::push(&mut b, &"null")
     JBool(x) => if x {
@@ -438,7 +504,11 @@ pub fn json_write(&mut b: Buf, v: Json): Unit {
     } else {
       Buf::push(&mut b, &"false")
     }
-    JNum(n) => Buf::push(&mut b, &n)
+    JNum(n) => if is_json_number(n) {
+      Buf::push(&mut b, &n)
+    } else {
+      Buf::push(&mut b, &"null")
+    }
     JStr(s) => json_write_string(&mut b, s)
     JArr(items) => {
       Buf::push(&mut b, &"[")
@@ -498,6 +568,6 @@ pub fn text_same(a: Text, b: Text): Bool {
 fn pending<A>(o: Option(A)): Bool {
   match o {
     None => true
-    Some(x) => false
+    Some(^x) => false
   }
 }

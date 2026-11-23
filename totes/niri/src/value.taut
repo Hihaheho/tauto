@@ -1,0 +1,437 @@
+import "../../nir/src/model.taut"
+import std::text
+import std::float
+import std::base
+import std::map
+
+// Values and their tokens (crates/tauto-niri/src/value.rs).
+//
+// The data is an immutable tree; who owns it is told by tokens, kept apart
+// from the data. What the Rust machine shares by `Rc` is kept in a store of
+// the machine and named by its place there: a frame, a shared cell, a
+// continuation.
+
+pub(open) enum TState {
+  TLive
+  TDropped
+  // Taken by a builtin, an operator, or a pattern that split it.
+  TConsumed
+}
+
+pub(open) struct Token { state: TState, is_linear: Bool }
+
+// A slot of a frame: a local by its id, or the value of a `&(e)`.
+pub fn key_local(id: Nat): Nat { id }
+
+pub fn key_temp(id: Nat): Nat { 1000000000000 + id }
+
+pub fn key_is_local(k: Nat): Bool { k < 1000000000000 }
+
+pub(open) enum Root {
+  RSlot(u64, Nat)
+  RCell(u64)
+  // The place another borrow names.
+  RVia(PlaceRef)
+}
+
+// A place: a slot or a shared cell, then field positions.
+pub(open) struct PlaceRef { root: Root, path: List(NFieldRef) }
+
+pub(open) enum FnVal {
+  FInst(Nat)
+  // The closure and its environment.
+  FClosure(NClosure, u64)
+}
+
+pub(open) enum Answer {
+  // `k(v)`: the budget's value is `v`.
+  AValue(Val)
+  // `info.more(m)`; `None` for `info.unbounded()`.
+  AMore(Option(Nat))
+}
+
+pub(open) enum Val {
+  VUnit
+  VBool(Bool)
+  VFloat(Float)
+  // An integer: whether it is below zero, its size, and its token.
+  VInt(Bool, Nat, Option(u64))
+  VText(Text, Option(u64))
+  VShown(Text, Option(u64))
+  VData(NCtorRef, List(Val), Option(u64))
+  VInject(Nat, Val)
+  VFn(FnVal, Option(u64))
+  VRef(PlaceRef)
+  // A shared `var`: one cell held by the function and its closures.
+  VCell(u64)
+  // A `Vec` (or, with `true`, an `Array`): its items in order.
+  VSeq(Ordmap(Nat, Val), Option(u64), Bool)
+  // `Slots`: the state, the mark of a vacant slot, the capacity, the marks, the slots (a
+  // slot that holds no value is `VMoved`) and the token.
+  VSlots(Val, Val, Nat, Ordmap(Nat, Val), Ordmap(Nat, Val), Option(u64))
+  VBuf(Text, Option(u64))
+  // A `Ref`: one cell that every copy shares.
+  VShared(u64, Option(u64))
+  // The `info` of an `exceeded` arm.
+  VInfo
+  VAnswer(Answer)
+  // A continuation an arm is given.
+  VCont(u64)
+  // A part moved out of a place.
+  VMoved
+}
+
+pub(open) enum Slot {
+  SOwned(Text, Val)
+  // The same slot of another frame.
+  SAlias(u64, Nat)
+}
+
+pub(open) struct Frame { slots: Ordmap(Nat, Slot), dead: Bool, closure: Bool }
+
+pub fn frame_empty(): Frame { Frame { slots: Ordmap::empty(), dead: false, closure: false } }
+
+pub fn v_tok(v: Val): Option(u64) {
+  match v {
+    VInt(^n, ^m, t) => t
+    VText(^s, t) => t
+    VShown(^s, t) => t
+    VFn(^f, t) => t
+    VSeq(^xs, t, ^a) => t
+    VSlots(^st, ^vac, ^cap, ^ms, ^xs, t) => t
+    VBuf(^s, t) => t
+    VShared(^c, t) => t
+    VData(^c, ^fs, t) => t
+    VUnit => None
+    VBool(^b) => None
+    VFloat(^b) => None
+    VInject(^i, ^x) => None
+    VRef(^p) => None
+    VCell(^c) => None
+    VInfo => None
+    VAnswer(^a) => None
+    VCont(^k) => None
+    VMoved => None
+  }
+}
+
+pub fn v_kind(v: Val): Text {
+  match v {
+    VUnit => "unit"
+    VBool(^b) => "bool"
+    VFloat(^b) => "float"
+    VInt(^n, ^m, ^t) => "int"
+    VText(^s, ^t) => "text"
+    VShown(^s, ^t) => "shown"
+    VData(^c, ^fs, ^t) => "data"
+    VInject(^i, ^x) => "union"
+    VFn(^f, ^t) => "function"
+    VRef(^p) => "borrow"
+    VCell(^c) => "shared var"
+    VCont(^k) => "continuation"
+    VInfo => "budget info"
+    VAnswer(^a) => "budget answer"
+    VSeq(^xs, ^t, a) => if a { "Array" } else { "Vec" }
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => "Slots"
+    VBuf(^s, ^t) => "Buf"
+    VShared(^c, ^t) => "Ref"
+    VMoved => "moved"
+  }
+}
+
+// The tokens of a value, its own first, not entering a closure's
+// environment or a shared cell.
+pub fn v_tokens(v: Val, acc: List(u64)): List(u64) ! {div} {
+  let inner := match v {
+    VData(^c, fs, ^t) => v_tokens_all(fs, acc)
+    VInject(^i, x) => v_tokens(x, acc)
+    VAnswer(a) => match a {
+      AValue(x) => v_tokens(x, acc)
+      AMore(^n) => acc
+    }
+    VSeq(xs, ^t, ^a) => v_tokens_all(seq_list(xs), acc)
+    VSlots(st, ^vac, ^cap, ^ms, xs, ^t) => v_tokens_all(Cons(st, slots_held(xs)), acc)
+    VUnit => acc
+    VBool(^b) => acc
+    VFloat(^b) => acc
+    VInt(^n, ^m, ^t) => acc
+    VText(^s, ^t) => acc
+    VShown(^s, ^t) => acc
+    VFn(^f, ^t) => acc
+    VRef(^p) => acc
+    VCell(^c) => acc
+    VBuf(^s, ^t) => acc
+    VShared(^c, ^t) => acc
+    VInfo => acc
+    VCont(^k) => acc
+    VMoved => acc
+  }
+  match v_tok(v) {
+    Some(t) => Cons(t, inner)
+    None => inner
+  }
+}
+
+pub fn v_tokens_all(xs: List(Val), acc: List(u64)): List(u64) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(x, rest) => v_tokens(x, v_tokens_all(rest, acc))
+  }
+}
+
+// Whether it carries a token.
+pub fn v_owns_token(v: Val): Bool ! {div} {
+  match v_tok(v) {
+    Some(^t) => true
+    None => match v {
+      VData(^c, fs, ^t) => v_any_owns(fs)
+      VInject(^i, x) => v_owns_token(x)
+      VAnswer(a) => match a {
+        AValue(x) => v_owns_token(x)
+        AMore(^n) => false
+      }
+      VSeq(xs, ^t, ^a) => v_any_owns(seq_list(xs))
+      VSlots(st, ^vac, ^cap, ^ms, xs, ^t) => v_any_owns(Cons(st, slots_held(xs)))
+      VUnit => false
+      VBool(^b) => false
+      VFloat(^b) => false
+      VInt(^n, ^m, ^t) => false
+      VText(^s, ^t) => false
+      VShown(^s, ^t) => false
+      VFn(^f, ^t) => false
+      VRef(^p) => false
+      VCell(^c) => false
+      VBuf(^s, ^t) => false
+      VShared(^c, ^t) => false
+      VInfo => false
+      VCont(^k) => false
+      VMoved => false
+    }
+  }
+}
+
+pub fn v_any_owns(xs: List(Val)): Bool ! {div} {
+  match xs {
+    Nil => false
+    Cons(x, rest) => v_owns_token(x) || v_any_owns(rest)
+  }
+}
+
+// Whether a part was moved out.
+pub fn v_moved_part(v: Val): Bool ! {div} {
+  match v {
+    VMoved => true
+    VData(^c, fs, ^t) => v_any_moved(fs)
+    VInject(^i, x) => v_moved_part(x)
+    VSeq(xs, ^t, ^a) => v_any_moved(seq_list(xs))
+    VSlots(st, ^vac, ^cap, ^ms, ^xs, ^t) => v_moved_part(st)
+    VUnit => false
+    VBool(^b) => false
+    VFloat(^b) => false
+    VInt(^n, ^m, ^t) => false
+    VText(^s, ^t) => false
+    VShown(^s, ^t) => false
+    VFn(^f, ^t) => false
+    VRef(^p) => false
+    VCell(^c) => false
+    VBuf(^s, ^t) => false
+    VShared(^c, ^t) => false
+    VInfo => false
+    VAnswer(^a) => false
+    VCont(^k) => false
+  }
+}
+
+pub fn v_any_moved(xs: List(Val)): Bool ! {div} {
+  match xs {
+    Nil => false
+    Cons(x, rest) => v_moved_part(x) || v_any_moved(rest)
+  }
+}
+
+// The value with no tokens: a copy of something that owns nothing.
+pub fn v_strip(v: Val): Val {
+  match v {
+    VInt(n, m, ^t) => VInt(n, m, None)
+    VText(s, ^t) => VText(s, None)
+    VShown(s, ^t) => VShown(s, None)
+    VFn(f, ^t) => VFn(f, None)
+    VInject(i, x) => VInject(i, v_strip(x))
+    VData(c, fs, ^t) => VData(c, v_strip_all(fs), None)
+    VUnit => v
+    VBool(^b) => v
+    VFloat(^b) => v
+    VRef(^p) => v
+    VCell(^c) => v
+    VSeq(^xs, ^t, ^a) => v
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => v
+    VBuf(^s, ^t) => v
+    VShared(^c, ^t) => v
+    VInfo => v
+    VAnswer(^a) => v
+    VCont(^k) => v
+    VMoved => v
+  }
+}
+
+pub fn v_strip_all(xs: List(Val)): List(Val) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(v_strip(x), v_strip_all(rest))
+  }
+}
+
+pub fn v_nat(n: Nat): Val { VInt(false, n, None) }
+
+// ---- lists ----
+
+pub fn l_nth<A: Shared>(xs: List(A), i: Nat): Option(A) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if i == 0 { Some(x) } else { l_nth(rest, i - 1) }
+  }
+}
+
+pub fn l_set<A: Shared>(xs: List(A), i: Nat, v: A): List(A) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if i == 0 { Cons(v, rest) } else { Cons(x, l_set(rest, i - 1, v)) }
+  }
+}
+
+pub fn l_len<A: Shared>(xs: List(A)): Nat {
+  match xs {
+    Nil => 0
+    Cons(^x, rest) => l_len(rest) + 1
+  }
+}
+
+pub fn l_append<A: Shared>(xs: List(A), ys: List(A)): List(A) {
+  match xs {
+    Nil => ys
+    Cons(x, rest) => Cons(x, l_append(rest, ys))
+  }
+}
+
+pub fn l_rev_onto<A: Shared>(xs: List(A), acc: List(A)): List(A) {
+  match xs {
+    Nil => acc
+    Cons(x, rest) => l_rev_onto(rest, Cons(x, acc))
+  }
+}
+
+pub fn l_rev<A: Shared>(xs: List(A)): List(A) { l_rev_onto(xs, Nil) }
+
+pub fn l_take<A: Shared>(xs: List(A), n: Nat): List(A) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if n == 0 { Nil } else { Cons(x, l_take(rest, n - 1)) }
+  }
+}
+
+pub fn l_drop<A: Shared>(xs: List(A), n: Nat): List(A) {
+  match xs {
+    Nil => Nil
+    Cons(^x, rest) => if n == 0 { xs } else { l_drop(rest, n - 1) }
+  }
+}
+
+pub fn l_snoc<A: Shared>(xs: List(A), x: A): List(A) { l_append(xs, [x]) }
+
+pub fn nat_has(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || nat_has(rest, x)
+  }
+}
+
+pub fn text_has(xs: List(Text), x: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || text_has(rest, x)
+  }
+}
+
+// ---- the items of a `Vec` or an `Array`, by their place ----
+
+// The values a slot run holds: a slot that holds none is `VMoved`.
+pub fn slots_held(xs: Ordmap(Nat, Val)): List(Val) { slots_keep(seq_list(xs)) }
+
+pub fn slots_keep(xs: List(Val)): List(Val) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match x {
+      VMoved => slots_keep(rest)
+      _ => Cons(x, slots_keep(rest))
+    }
+  }
+}
+
+// `n` more slots of `d`, from the position `at`.
+pub fn slots_fill(s: Ordmap(Nat, Val), at: Nat, n: Nat, d: Val): Ordmap(Nat, Val) {
+  match n {
+    Zero => s
+    Succ(k) => slots_fill(seq_set(s, at, d), Succ(at), k, d)
+  }
+}
+
+pub fn seq_len(s: Ordmap(Nat, Val)): Nat { Ordmap::size(s) }
+
+pub fn seq_get(s: Ordmap(Nat, Val), i: Nat): Option(Val) { Ordmap::get(s, i, Ordmap::compare_nat) }
+
+pub fn seq_set(s: Ordmap(Nat, Val), i: Nat, v: Val): Ordmap(Nat, Val) { Ordmap::insert(s, i, v, Ordmap::compare_nat) }
+
+pub fn seq_push(s: Ordmap(Nat, Val), v: Val): Ordmap(Nat, Val) { seq_set(s, Ordmap::size(s), v) }
+
+pub fn seq_list(s: Ordmap(Nat, Val)): List(Val) { seq_values(Ordmap::entries(s)) }
+
+pub fn seq_values(es: List(Nat × Val)): List(Val) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => match e {
+      #(^i, x) => Cons(x, seq_values(rest))
+    }
+  }
+}
+
+pub fn seq_of(xs: List(Val)): Ordmap(Nat, Val) { seq_onto(Ordmap::empty(), xs) }
+
+pub fn seq_onto(s: Ordmap(Nat, Val), xs: List(Val)): Ordmap(Nat, Val) {
+  match xs {
+    Nil => s
+    Cons(x, rest) => seq_onto(seq_push(s, x), rest)
+  }
+}
+
+// The first `n` items.
+pub fn seq_take(s: Ordmap(Nat, Val), n: Nat): Ordmap(Nat, Val) ! {div, overflow} {
+  var r := s
+  while Ordmap::size(r) > n {
+    r := Ordmap::remove(r, Ordmap::size(r) - 1, Ordmap::compare_nat)
+  }
+  r
+}
+
+pub fn v_float(v: Val): Option(Float) {
+  match v {
+    VFloat(x) => Some(x)
+    VUnit => None
+    VBool(^b) => None
+    VInt(^n, ^m, ^t) => None
+    VText(^s, ^t) => None
+    VShown(^s, ^t) => None
+    VData(^c, ^fs, ^t) => None
+    VInject(^i, ^x) => None
+    VFn(^f, ^t) => None
+    VRef(^p) => None
+    VCell(^c) => None
+    VSeq(^xs, ^t, ^a) => None
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => None
+    VBuf(^s, ^t) => None
+    VShared(^c, ^t) => None
+    VInfo => None
+    VAnswer(^a) => None
+    VCont(^k) => None
+    VMoved => None
+  }
+}

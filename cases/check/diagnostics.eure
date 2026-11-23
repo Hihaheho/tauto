@@ -5,7 +5,7 @@ diagnostics = [{ stage => "types", file => "dep.taut", message => "", span => "l
 
 @ cases.a-wrong-step-goal-offers-the-edit-of-the-written-arm
 files."lib.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub macro fn same(s: ProofStep): SynExpr { Syn::hole(1, s.span) }
 ```
@@ -66,7 +66,7 @@ load_error = "this `let` has `=` but no `:=`"
 
 @ cases.an-implicit-argument-that-cannot-be-inferred-points-at-its-call
 description = "`miiii` is a `let` name; the error points at the call that could not infer `x`, not at the value bound to the name"
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 pub(open) inductive 記号: Type {
@@ -111,3 +111,121 @@ fn main(): i64 {
 }
 ```
 diagnostics = [{ stage => "types", file => "main.taut", message => "a record type `{ … }` is not a value: write a record without a name as `#{ … }`" }]
+
+@ cases.a-file-that-only-imports-fails-with-an-unused-imported-function-that-does-not-check
+description = "`tauto check FILE` checks what FILE imports whether or not FILE uses it: a file whose imports do not check does not check."
+entry = "main.taut"
+files."lib.taut" = `pub fn g(): u64 { "a" }`
+files."main.taut" = `import "lib.taut"`
+check_errors = ["Text does not fit u64"]
+
+@ cases.a-file-that-only-imports-fails-with-an-imported-parameter-that-does-not-read
+entry = "main.taut"
+files."lib.taut" = `pub fn f(&x: u64): u64 { x }`
+files."main.taut" = `import "lib.taut"`
+check_errors = ["`&x: T` is not a parameter"]
+
+@ cases.a-file-of-a-tote-that-only-imports-fails-with-what-it-imports
+entry = "src/main.taut"
+files."Tauto.eure" = ```eure
+package {
+  name = "imports-only"
+  version = "0.1.0"
+}
+```
+files."src/lib.taut" = `pub fn g(): u64 { "a" }`
+files."src/main.taut" = `import "lib.taut"`
+check_errors = ["Text does not fit u64"]
+
+@ cases.a-file-that-only-imports-what-checks-checks
+entry = "main.taut"
+files."lib.taut" = `pub fn g(): u64 { 1 }`
+files."main.taut" = `import "lib.taut"`
+check_errors = []
+
+@ cases.a-prefix-bang-says-negation-is-not
+description = "`!b` is not a negation: `!` follows a macro's name or starts an effect row, and the error points to `not(b)` instead of an unexpected token"
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(b: Bool): Bool {
+  !b
+}
+```
+load_error = "2:3: `!` is not a prefix operator"
+
+@ cases.a-prefix-bang-on-a-call-in-an-argument-says-negation-is-not
+description = "`g(!h(b))` reads `!h` as a row argument and used to stop at the `(`: the error names the `!`"
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(b: Bool): Bool {
+  g(!h(b))
+}
+```
+load_error = "`!` is not a prefix operator"
+
+@ cases.a-text-result-of-a-nat-function-is-a-type-error
+description = "The kernel reads the signature `(): Nat` but not a body with a text literal (no `import std::text`), so the body is executable code and Nib checks it: the text does not fit `Nat`"
+entry = "main.taut"
+files."main.taut" = `fn f(): Nat { "x" }`
+diagnostics = [{ stage => "types", file => "main.taut", message => "", span => "fn f(): Nat { «\"x\"» }" }]
+
+@ cases.a-text-operand-under-a-nat-signature-is-a-type-error
+entry = "main.taut"
+files."main.taut" = `fn f(n: Nat): Nat { 1 + "x" }`
+diagnostics = [{ stage => "types", file => "main.taut", message => "" }, { stage => "types", file => "main.taut", message => "" }]
+
+// Safe by Default: `tauto check` says ok only for a file whose program loads, as `tauto run` loads it.
+@ cases.a-file-whose-program-does-not-load-does-not-check
+description = "A function whose result borrows with no borrowed parameter is rejected when the program loads; `tauto check` reports it rather than saying ok."
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Tok { n: u64 }
+fn f(): &Tok { f() }
+```
+check_errors = ["-> &Tok needs a borrowed parameter"]
+
+@ cases.an-effect-that-answers-with-a-borrow-of-affine-data-checks
+description = "An effect may answer with a borrow (`Option(&Tok)`): the handle that answers with it keeps what it borrows alive, which the linearity check already tracks."
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::os
+import std::builtin::os
+
+struct(affine) Tok { n: u64 }
+effect peek(): Option(&Tok) resume 1
+
+fn seen(): u64 ! {peek} {
+  match perform peek() {
+    Some(t) => t.n,
+    None => 0,
+  }
+}
+
+let t := Tok { n: 7 }
+let n := handle { seen() } with { peek(), k => k(Some(&t)) }
+if n == 7 { perform stdout("seven") } else { perform stdout("other") }
+```
+check_errors = []
+
+// The Rust backend writes the handler's closure `'static`, so a handler that
+// answers with a borrow of a local (`k(Some(&t))`) is not generated yet.
+@ cases.an-effect-that-answers-with-a-borrow-of-affine-data-runs
+source = ```tauto
+import std::os
+import std::builtin::os
+
+struct(affine) Tok { n: u64 }
+effect peek(): Option(&Tok) resume 1
+
+fn seen(): Unit ! {peek, stdout} {
+  match perform peek() {
+    Some(_) => perform stdout("some"),
+    None => perform stdout("none"),
+  }
+}
+
+let t := Tok { n: 7 }
+handle { seen() } with { peek(), k => k(Some(&t)) }
+```
+stdout = "some"
+rust.unimplemented = "build: rustc rejected the generated code"

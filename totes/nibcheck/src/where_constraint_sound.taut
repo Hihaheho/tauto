@@ -2,8 +2,8 @@ import "where_generic_sound.taut"
 import "where_class_sound.taut"
 import "where_fresh_sound.taut"
 import "signature_error_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "decl_names_sound.taut"
@@ -12,14 +12,15 @@ import "rules_where.taut"
 import "signature_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub theorem where_duplicate_sound(
   c: Checker,
   source: SurfaceConstraint,
-  generics: List(Pair(Text, Kind)),
-  previous: List(Pair(Text, Text)),
+  generics: List(Text × Kind),
+  previous: List(Text × Text),
   name: Text,
   r#class: WhereClass(where_classes(c), where_source_class(source)),
   generic: WhereGenericTerm(generics, where_source_type(source), name),
@@ -49,15 +50,36 @@ pub theorem where_duplicate_sound(
     )
   }
 }
+// The type of a constraint with indices is a term no generic names, so a
+// generic found for the type the checker reads is one for the written type.
+pub theorem constraint_single_generic(
+  source: SurfaceConstraint,
+  generics: List(Text × Kind),
+  name: Text,
+  found: constraint_generic(constraint_single_type(source), generics) = Some(name)
+): constraint_generic(where_source_type(source), generics) = Some(name) {
+  ⊢ (constraint_generic(where_source_type(source), generics) = Some(name)) from match source {
+    SurfaceConstraintMk(cls, ty, start, end, arguments) => ⊢ (
+      constraint_generic(
+        where_source_type(SurfaceConstraintMk(cls, ty, start, end, arguments)),
+        generics
+      ) = Some(name)
+    ) from match arguments {
+      Nil => found
+      Cons(index, rest) => False::elim(ck_none_ne_some(name, found))
+    }
+  }
+}
+
 pub theorem where_generic_constraint_sound(
   c: Checker,
   source: SurfaceConstraint,
-  generics: List(Pair(Text, Kind)),
+  generics: List(Text × Kind),
   function: Text,
-  previous: List(Pair(Text, Text)),
+  previous: List(Text × Text),
   r#class: WhereClass(where_classes(c), where_source_class(source)),
   named: Option(Text),
-  found: constraint_generic(where_source_type(source), generics) = named,
+  found: constraint_generic(constraint_single_type(source), generics) = named,
   clean: DiagnosticClean(ck_st(signature_pred_generic(c, source, function, previous, named)))
 ): WhereConstraint(
   where_classes(c),
@@ -81,7 +103,12 @@ pub theorem where_generic_constraint_sound(
       previous,
       name,
       r#class,
-      constraint_generic_sound(where_source_type(source), generics, name, found),
+      constraint_generic_sound(
+        where_source_type(source),
+        generics,
+        name,
+        constraint_single_generic(source, generics, name, found)
+      ),
       preds_have(previous, where_source_class(source), name),
       Refl,
       clean
@@ -91,9 +118,9 @@ pub theorem where_generic_constraint_sound(
 pub theorem where_missing_constraint_sound(
   c: Checker,
   source: SurfaceConstraint,
-  generics: List(Pair(Text, Kind)),
+  generics: List(Text × Kind),
   function: Text,
-  previous: List(Pair(Text, Text)),
+  previous: List(Text × Text),
   missing: Bool,
   tested: signature_class_missing(c, source) = missing,
   clean: DiagnosticClean(
@@ -129,7 +156,7 @@ pub theorem where_missing_constraint_sound(
         Refl,
         tested
       ),
-      constraint_generic(where_source_type(source), generics),
+      constraint_generic(constraint_single_type(source), generics),
       Refl,
       clean
     )
@@ -138,9 +165,9 @@ pub theorem where_missing_constraint_sound(
 pub theorem ck_where_pred_sound(
   c: Checker,
   source: SurfaceConstraint,
-  generics: List(Pair(Text, Kind)),
+  generics: List(Text × Kind),
   function: Text,
-  previous: List(Pair(Text, Text)),
+  previous: List(Text × Text),
   clean: DiagnosticClean(ck_st(ck_where_pred(c, source, generics, function, previous)))
 ): WhereConstraint(
   where_classes(c),
@@ -150,7 +177,7 @@ pub theorem ck_where_pred_sound(
   ck_val(ck_where_pred(c, source, generics, function, previous))
 ) {
   Eq::subst(
-    (m: Mut1(List(Pair(Text, Text)), Checker)) => WhereConstraint(
+    (m: Mut1(List(Text × Text), Checker)) => WhereConstraint(
       where_classes(c),
       generics,
       source,
@@ -167,7 +194,7 @@ pub theorem ck_where_pred_sound(
       signature_class_missing(c, source),
       Refl,
       Eq::subst(
-        (m: Mut1(List(Pair(Text, Text)), Checker)) => DiagnosticClean(ck_st(m)),
+        (m: Mut1(List(Text × Text), Checker)) => DiagnosticClean(ck_st(m)),
         signature_pred_unf(c, source, generics, function, previous),
         clean
       )

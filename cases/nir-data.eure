@@ -1,0 +1,44 @@
+// The data types of a package: which fields are stored behind an
+// indirection.
+
+@ cases.a-large-field-of-a-shared-data-is-stored-behind-an-indirection
+source = ```tauto
+struct Big { a: Text, b: Text, c: Text, d: Text }
+struct Small { a: Text, b: Text }
+enum Step { Next(Big, Small), Done }
+fn step(s: Step): Step ! {} { s }
+```
+nir.library = true
+nir.datas.Step = ```nir
+data shared enum Step clone {
+  Step::Next(shared Big, Small),
+  Step::Done,
+}
+```
+nir.datas.Big = ```nir
+data shared struct Big clone as "Big" {
+  Big::Mk(a: Text, b: Text, c: Text, d: Text),
+}
+```
+
+@ cases.a-field-of-its-own-type-is-stored-behind-an-indirection
+source = ```tauto
+
+enum Chain { End, Link(u64, Chain) }
+enum(affine) Owned { Stop, More(u64, Owned) }
+fn chain(c: Chain): Chain { c }
+fn owned(o: Owned): Owned { o }
+```
+nir.library = true
+nir.datas.Chain = ```nir
+data shared enum Chain clone {
+  Chain::End,
+  Chain::Link(u64, shared Chain),
+}
+```
+nir.datas.Owned = ```nir
+data affine enum Owned clone {
+  Owned::Stop,
+  Owned::More(u64, unique Owned),
+}
+```

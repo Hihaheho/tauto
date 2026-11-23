@@ -1,0 +1,131 @@
+// Writes the tables of the grammars in crates/tauto/tests/syntax_fixtures/*.par
+// and cases/macro/grammars/*.par as <sha256>.tables to
+// crates/tauto/tests/syntax_fixtures/.tauto-syntax and cases/.tauto-syntax (read by the files of
+// cases/macro and cases/fixtures alike),
+// with the tote totes/llkgen. With --check, fails if a table is out of date,
+// missing or left over.
+//   tauto gen-syntax-fixtures [--check]
+//
+// The generator is the tote totes/syntaxgen, which runs totes/llkgen (it
+// reads a grammar on standard input).
+// It is compiled into `tauto` (`tauto --tote-main syntaxgen`), so the
+// `tauto` this checkout builds runs it, so no separate release build of the
+// tote is needed.
+import "lib/sh.taut" {
+  sh_arg1,
+  sh_built_tauto,
+  sh_member,
+  sh_root,
+  sh_other_starts,
+  sh_read,
+  sh_sha256,
+  sh_syntaxgen,
+  sh_syntaxgen_start,
+  sh_text,
+  sh_table
+}
+import std::builtin::os { eprint, exit, fs_create_dir, fs_list_dir, fs_remove }
+import std::text { Text }
+import std::text_ops { Text }
+import std::list { List }
+
+let root := sh_root()
+let script := "gen-syntax-fixtures"
+let tauto := sh_built_tauto(root)
+let check := sh_arg1() == "--check"
+
+// The names in `dir` that end with `suffix` and do not start with a dot, as
+// the glob `dir/*suffix` lists them.
+fn listed(dir: Text, suffix: Text): List(Text) ! {fs_list_dir} {
+  match perform fs_list_dir(dir) {
+    Ok(names) => List::filter(
+      (n) => Text::ends_with(n, suffix) && not(Text::starts_with(n, ".")),
+      names
+    )
+    Err(_) => []
+  }
+}
+
+var stale := false
+var dirs := [
+  #("crates/tauto/tests/syntax_fixtures", "crates/tauto/tests/syntax_fixtures/.tauto-syntax"),
+  #("cases/macro/grammars", "cases/.tauto-syntax")
+]
+while dirs != Nil {
+  match dirs {
+    Nil => #()
+    Cons(#(dir, tables), more) => {
+      dirs := more
+      let tables_dir := Text::concat_all([root, "/", tables])
+      if check { #() } else { let ^created := perform fs_create_dir(tables_dir) }
+      var expected: List(Text) := []
+      var pars := listed(Text::concat_all([root, "/", dir]), ".par")
+      while pars != Nil {
+        match pars {
+          Nil => #()
+          Cons(par, rest) => {
+            pars := rest
+            let grammar := Text::concat_all([root, "/", dir, "/", par])
+            let name := Text::concat(sh_sha256(grammar), ".tables")
+            expected := Cons(name, expected)
+            let label := Text::concat_all([tables, "/", name])
+            let table := sh_syntaxgen(tauto, grammar)
+            if sh_table(
+              check,
+              Text::concat_all([tables_dir, "/", name]),
+              table,
+              label,
+              script
+            ) { #() } else { stale := true }
+            // `%start A, B`: the tables for `B` are `<sha256>.B.tables`.
+            var others := sh_other_starts(sh_text(sh_read(grammar)))
+            while others != Nil {
+              match others {
+                Nil => #()
+                Cons(start, more) => {
+                  others := more
+                  let other := Text::concat_all([sh_sha256(grammar), ".", start, ".tables"])
+                  expected := Cons(other, expected)
+                  if sh_table(
+                    check,
+                    Text::concat_all([tables_dir, "/", other]),
+                    sh_syntaxgen_start(tauto, grammar, start),
+                    Text::concat_all([tables, "/", other]),
+                    script
+                  ) { #() } else { stale := true }
+                }
+              }
+            }
+          }
+        }
+      }
+      var present := listed(tables_dir, ".tables")
+      while present != Nil {
+        match present {
+          Nil => #()
+          Cons(table, rest) => {
+            present := rest
+            if sh_member(table, expected) { #() } else if check {
+              eprint(
+                Text::concat_all(
+                  [
+                    tables,
+                    "/",
+                    table,
+                    " has no grammar; run: tauto ",
+                    script,
+                    "\n"
+                  ]
+                )
+              )
+              stale := true
+            } else {
+              let ^removed := perform fs_remove(Text::concat_all([tables_dir, "/", table]))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+perform exit(if stale { 1 } else { 0 })

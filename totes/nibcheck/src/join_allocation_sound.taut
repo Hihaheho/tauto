@@ -1,11 +1,12 @@
 import "fits_allocation_sound.taut"
 import "join_sound.taut"
-import std::Base
+import std::base
 import "allocation_normalization.taut"
 import "allocation_resolution.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "unify_allocation_poly.taut"
@@ -14,7 +15,7 @@ import "unify_allocation_steps.taut"
 import "unify_sound.taut"
 
 pub fn OptionTypeAllocated(limit: Nat, value: Option(Ty)): Prop {
-  ⊢ Prop from match value { None => True
+  match value { None => True
     Some(ty) => TypeAllocated(limit, ty) }
 }
 pub def JoinAllocation(
@@ -53,7 +54,7 @@ pub theorem join_alloc_borrow_result(
   first: AllocationRun(c, m),
   bounded: TypeAllocated(ck_next_of(c), x)
 ): JoinOptionAllocation(c, ck_jb_k(x, m)) {
-  ⊢ JoinOptionAllocation(c, ck_jb_k(x, m)) from match m {
+  match m {
     mut1(flag, next) => ⊢ JoinOptionAllocation(c, ck_jb_k(x, mut1(flag, next))) from match flag {
       false => AndIntro(first, Trivial)
       true => AndIntro(
@@ -78,7 +79,7 @@ pub theorem join_alloc_second_choice(
   x_bound: TypeAllocated(ck_next_of(c), x),
   flag: Bool
 ): JoinOptionAllocation(c, ck_jb2y(c, a, x, flag)) {
-  ⊢ JoinOptionAllocation(c, ck_jb2y(c, a, x, flag)) from match flag {
+  match flag {
     false => join_allocation_none(c, state)
     true => join_alloc_borrow_result(
       c,
@@ -98,7 +99,7 @@ pub theorem join_alloc_second(
   a_bound: TypeAllocated(ck_next_of(c), a),
   b_bound: TypeAllocated(ck_next_of(c), b)
 ): JoinOptionAllocation(c, ck_join_borrowed_second(c, a, b)) {
-  ⊢ JoinOptionAllocation(c, ck_join_borrowed_second(c, a, b)) from match b {
+  match b {
     TyInt(width) => join_allocation_none(c, state)
     TyBool => join_allocation_none(c, state)
     TyText => join_allocation_none(c, state)
@@ -106,6 +107,7 @@ pub theorem join_alloc_second(
     TyNever => join_allocation_none(c, state)
     TyDecimal => join_allocation_none(c, state)
     TyFloat => join_allocation_none(c, state)
+    TyFloat32 => join_allocation_none(c, state)
     TyParam(name, kind) => join_allocation_none(c, state)
     TyVar(index) => join_allocation_none(c, state)
     TyFn(params, result, kind) => join_allocation_none(c, state)
@@ -139,7 +141,7 @@ pub theorem join_alloc_first_choice(
   b_bound: TypeAllocated(ck_next_of(c), b),
   flag: Bool
 ): JoinOptionAllocation(c, ck_jb1y(c, x, mutable, b, flag)) {
-  ⊢ JoinOptionAllocation(c, ck_jb1y(c, x, mutable, b, flag)) from match flag {
+  match flag {
     true => join_alloc_borrow_result(
       c,
       x,
@@ -163,7 +165,7 @@ pub theorem ck_join_borrowed_allocation(
   a_bound: TypeAllocated(ck_next_of(c), a),
   b_bound: TypeAllocated(ck_next_of(c), b)
 ): JoinOptionAllocation(c, ck_join_borrowed(c, a, b)) {
-  ⊢ JoinOptionAllocation(c, ck_join_borrowed(c, a, b)) from match a {
+  match a {
     TyInt(width) => join_option_rewrap(
       c,
       ck_join_borrowed_second(c, TyInt(width), b),
@@ -198,6 +200,11 @@ pub theorem ck_join_borrowed_allocation(
       c,
       ck_join_borrowed_second(c, TyFloat, b),
       join_alloc_second(c, TyFloat, b, ordered, state, a_bound, b_bound)
+    )
+    TyFloat32 => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyFloat32, b),
+      join_alloc_second(c, TyFloat32, b, ordered, state, a_bound, b_bound)
     )
     TyParam(name, kind) => join_option_rewrap(
       c,
@@ -271,7 +278,7 @@ pub theorem join_alloc_union_result(
   a_bound: TypeAllocated(ck_next_of(c), a),
   b_bound: TypeAllocated(ck_next_of(c), b)
 ): JoinAllocation(c, ck_join_e2(a, b, m)) {
-  ⊢ JoinAllocation(c, ck_join_e2(a, b, m)) from match m {
+  match m {
     mut1(option, next) => ⊢ JoinAllocation(c, ck_join_e2(a, b, mut1(option, next))) from match option {
       Some(ty) => first
       None => AndIntro(
@@ -309,7 +316,7 @@ pub theorem join_alloc_e1z(
   b_bound: TypeAllocated(ck_next_of(c), b),
   flag: Bool
 ): JoinAllocation(c, ck_join_e1z(c, a, b, flag)) {
-  ⊢ JoinAllocation(c, ck_join_e1z(c, a, b, flag)) from match flag {
+  match flag {
     true => join_allocation_return(c, b, state, b_bound)
     false => join_alloc_union_result(
       c,
@@ -332,7 +339,7 @@ pub theorem join_alloc_e1y(
   b_bound: TypeAllocated(ck_next_of(c), b),
   flag: Bool
 ): JoinAllocation(c, ck_join_e1y(c, a, b, flag)) {
-  ⊢ JoinAllocation(c, ck_join_e1y(c, a, b, flag)) from match flag {
+  match flag {
     true => join_allocation_return(c, a, state, a_bound)
     false => join_alloc_e1z(c, a, b, ordered, state, a_bound, b_bound, ty_is_never(a))
   }
@@ -376,7 +383,7 @@ pub theorem join_alloc_after(
   a_bound: TypeAllocated(ck_next_of(c), a),
   b_bound: TypeAllocated(ck_next_of(c), b)
 ): JoinAllocation(c, ck_join_k(a, b, m)) {
-  ⊢ JoinAllocation(c, ck_join_k(a, b, m)) from match m {
+  match m {
     mut1(flag, next) => ⊢ JoinAllocation(c, ck_join_k(a, b, mut1(flag, next))) from match flag {
       true => AndIntro(
         first,
@@ -415,7 +422,7 @@ pub theorem join_alloc_my(
   b_bound: TypeAllocated(ck_next_of(c), b),
   flag: Bool
 ): AllocationRun(c, ck_join_my(c, a, b, flag)) {
-  ⊢ AllocationRun(c, ck_join_my(c, a, b, flag)) from match flag {
+  match flag {
     false => AndIntro(Refl, state)
     true => allocation_run_rewrap(
       c,

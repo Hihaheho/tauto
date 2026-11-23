@@ -46,7 +46,7 @@ types = "ok"
 source = ```nib
 enum Left { Same(i64) }
 enum Right { Same(Text) }
-fn read(&value: Left): i64 ! {} { match value { Same(n) => n } }
+fn read(value: &Left): i64 ! {} { match value { Same(n) => n } }
 ```
 types = "ok"
 
@@ -100,8 +100,8 @@ types = "error: does not cover every value"
 
 @ cases.selected-linear-field-drop
 source = ```nib
-linear struct Token {}
-linear enum Left { Same(Token) }
+struct(linear) Token {}
+enum(linear) Left { Same(Token) }
 enum Right { Same(i64) }
 fn discard(value: Left): Unit ! {} { match value { Same(_) => #() } }
 ```
@@ -110,8 +110,8 @@ lin = "error: `_` drops a linear Token"
 
 @ cases.unselected-linear-field-does-not-drop
 source = ```nib
-linear struct Token {}
-linear enum Left { Same(Token) }
+struct(linear) Token {}
+enum(linear) Left { Same(Token) }
 enum Right { Same(i64) }
 fn discard(value: Right): Unit ! {} { match value { Same(_) => #() } }
 ```
@@ -124,6 +124,22 @@ enum Pair { Mk(i64, i64) }
 fn fst(p: Pair): i64 ! {} { match p { mk(a, b) => a } }
 ```
 types = "error: `mk` is not a constructor; did you mean `main::Pair::Mk`?"
+
+@ cases.misspelled-constructor-compares-lowercased-characters
+source = ```nib
+enum Saison { Été(i64), Hiver(i64) }
+fn f(s: Saison): i64 ! {} { match s { été(a) => a, Hiver(b) => b } }
+```
+types = "error: `été` is not a constructor; did you mean `Saison::Été`?"
+
+// The Kelvin sign `K` (U+212A, three bytes) lowers to `k`: counted in
+// characters `kab` is `Kab` lowered; counted in bytes it is three apart.
+@ cases.misspelled-constructor-counts-characters-not-bytes
+source = ```nib
+enum Scale { Kab(i64), Other(i64) }
+fn f(s: Scale): i64 ! {} { match s { kab(a) => a, Other(b) => b } }
+```
+types = "error: `kab` is not a constructor; did you mean `Scale::Kab`?"
 
 @ cases.name-near-no-constructor-has-no-hint
 source = ```nib
@@ -138,12 +154,10 @@ enum Left { Same(i64) }
 enum Right { Same }
 fn read(value: Left): Left ! {} { match value { Same => Same } }
 let value: Left := read(Same(7))
-match value { Same(number) => perform show("number", number) }
+match value { Same(number) => show(&number) }
 ```
 types = "ok"
-shows = ["number = 7"]
-rust_shows = ["number = 7"]
-javascript_shows = ["number = 7"]
+stdout = "7\n"
 
 @ cases.mixed-arity-binders-in-separate-arms-have-distinct-identities
 source = ```nib
@@ -153,12 +167,10 @@ fn read(first: Left, second: Left): Left ! {} {
   match first { Same => { let saved := Same; match second { Same => saved } } }
 }
 let value: Left := read(Same(7), Same(9))
-match value { Same(number) => perform show("number", number) }
+match value { Same(number) => show(&number) }
 ```
 types = "ok"
-shows = ["number = 7"]
-rust_shows = ["number = 7"]
-javascript_shows = ["number = 7"]
+stdout = "7\n"
 
 @ cases.a-nullary-constructor-beside-a-nonreturning-arm-retains-its-type
 source = ```nib
@@ -173,14 +185,20 @@ fn choose(items: List(u64), stop: Bool): List(u64) ! {fail} {
 types = "ok"
 
 @ cases.extracted-zero-pattern-retains-its-constructor-reference
-extract = true
-backends = ["rust", "javascript", "vm"]
 source = ```tauto
 fn count(n: Nat): Nat {
   ⊢ Nat from match n { Zero => 0, Succ(rest) => Succ(count(rest)) }
 }
-perform show("count", count(3))
+show(&count(3))
 ```
-shows = ["count = 3"]
-rust_shows = ["count = 3"]
-javascript_shows = ["count = 3"]
+stdout = "3\n"
+
+// A constructor is never a type: where a type is wanted, a name means the
+// type even when a constructor of the file is called so.
+@ cases.type-position-names-the-type
+source = ```nib
+enum Sym { Bool, Unit }
+fn flip(b: Bool): Bool ! {} { b }
+fn nothing(u: Unit): Unit ! {} { u }
+```
+types = "ok"

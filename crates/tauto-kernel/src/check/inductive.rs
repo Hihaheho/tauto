@@ -29,7 +29,7 @@ use tauto_surface::identity::Generation;
 use tauto_message::msg;
 use tauto_parol::Span;
 
-use super::{Ctx, Diagnostic, Kernel, Sort, T, Verdict, describe, err, occurs, pi, sort_of};
+use super::{Ctx, Diagnostic, Kernel, Sort, T, Verdict, describe, err, lam, occurs, pi, sort_of};
 use crate::surface::{InductiveDecl, Stmt, TermKind};
 
 #[derive(Debug, Clone)]
@@ -400,10 +400,7 @@ impl Kernel {
                             d.span,
                         );
                     }
-                    // Positivity and nesting read the type as the kernel does, a product
-                    // as its `Pair`; the field itself keeps the product as it is written.
-                    let lowered = self.kernel_products(&d);
-                    let internal = self.nest_type(&lowered, &mut nest)?;
+                    let internal = self.nest_type(&d, &mut nest)?;
                     self.positive(&nest.names, &internal)?;
                     inner.push((n.clone(), d.clone()));
                     args.push((n.clone(), d));
@@ -521,8 +518,7 @@ impl Kernel {
                     }
                     let fresh = self.fresh_name(n);
                     renames.push((n.clone(), fresh.clone()));
-                    let lowered = self.kernel_products(&d);
-                    let internal = self.nest_type(&lowered, &mut nest)?;
+                    let internal = self.nest_type(&d, &mut nest)?;
                     self.positive(&nest.names, &internal)?;
                     args.push((fresh, d));
                     internals.push(internal);
@@ -596,11 +592,11 @@ impl Kernel {
             .zip(&family_tys)
             .map(|(d, ty)| super::core::FamSpec {
                 name: d.name.clone(),
-                ty: self.kernel_products(ty),
+                ty: ty.clone(),
                 ctors: types
                     .iter()
                     .filter(|(_, _, f, _, _)| *f == d.name)
-                    .map(|(c, t, ..)| (c.clone(), self.kernel_products(t)))
+                    .map(|(c, t, ..)| (c.clone(), t.clone()))
                     .collect(),
             })
             .collect();
@@ -642,6 +638,14 @@ impl Kernel {
                 self.recs.insert(name, fams[k].name.clone());
             }
         }
+        // A family of a group with others gets its own cases (`cases_of`).
+        let cases: Vec<(Name, T, T, usize)> = if large && fams.len() > 1 {
+            (0..fams.len())
+                .filter_map(|k| self.cases_of(&fams, k))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let eligible: Vec<Name> = if out != Sort::Prop {
             fams.iter()
                 .filter(|f| f.ind.alias.is_none() && f.ind.indices == 0)
@@ -655,6 +659,9 @@ impl Kernel {
         }
         for family in eligible {
             self.no_confusion(&family);
+        }
+        for (name, ty, value, nparams) in cases {
+            self.add_cases(&name, ty, value, nparams);
         }
         // Types declared before `Eq` get theirs once it exists.
         if names.len() == 1 && tauto_surface::bindings::is_library(&names[0], "Eq") {
@@ -878,6 +885,112 @@ impl Kernel {
         pi_all(&first.params, pi_all(&motives, pi_all(&minors, tail)))
     }
 
+    /// `J@cases` for the member `k` of a group with others: `J::rec` with
+    /// the motives of the other members trivial and its minors of the
+    /// constructors of `J` only, without their induction hypotheses,
+    ///
+    /// `J@cases(p⃗, P, m⃗, t) = J::rec(p⃗, …, P, …, …, (a⃗ ⇒ h⃗ ⇒ m_j(a⃗)), …, t)`.
+    ///
+    /// A `match` that recurses into nothing is this, not the recursor of the
+    /// whole group: the recursor takes a minor for each constructor of each
+    /// member, with a binder for each of its fields and hypotheses, and a
+    /// `match` on a member of a large group written in each arm of another
+    /// is the size of the whole group again in each arm. Only a member
+    /// without indices and written as itself (not a nested occurrence) has
+    /// one. It is a definition: the core checks it, and it unfolds to the
+    /// recursor.
+    fn cases_of(&mut self, fams: &[Fam], k: usize) -> Option<(Name, T, T, usize)> {
+        let unit = tauto_surface::bindings::library_name("Unit");
+        let star = tauto_surface::bindings::library_name("Star");
+        let fam = &fams[k];
+        if fam.head.is_some()
+            || !fam.indices.is_empty()
+            || fam.ind.alias.is_some()
+            || !self.globals.contains_key(&unit)
+            || !self.globals.contains_key(&star)
+        {
+            return None;
+        }
+        let name = self.resolver.generated(&fam.name, Generation::Cases);
+        if self.globals.contains_key(&name) {
+            return None;
+        }
+        let rec = self.resolver.generated(&fam.name, Generation::Recursion);
+        let params = fams[0].ind.params.clone();
+        let pvars: Vec<T> = params.iter().map(|(n, _)| var(n)).collect();
+        let this = app(var(&fam.name), pvars.clone());
+        let motive = Name::from("P'cases");
+        let major = Name::from("t'cases");
+        let type1 = var(tauto_surface::bindings::library_name("Type1"));
+        let minor = |j: usize| Name::from(format!("m'cases{j}"));
+        let mut minor_tys = Vec::new();
+        for (j, c) in fam.ind.ctors.iter().enumerate() {
+            let avars: Vec<T> = c.args.iter().map(|(n, _)| var(n)).collect();
+            let built = app(var(&c.name), [pvars.clone(), avars].concat());
+            minor_tys.push((minor(j), pi_all(&c.args, app(var(&motive), vec![built]))));
+        }
+        let ty = pi_all(
+            &params,
+            pi(
+                &motive,
+                pi("t'", this.clone(), type1),
+                pi_all(
+                    &minor_tys,
+                    pi(&major, this, app(var(&motive), vec![var(&major)])),
+                ),
+            ),
+        );
+        let mut args = pvars;
+        for (f, other) in fams.iter().enumerate() {
+            if f == k {
+                args.push(var(&motive));
+                continue;
+            }
+            let mut m = var(&unit);
+            for _ in 0..=other.indices.len() {
+                m = lam(&self.fresh_name("_"), m);
+            }
+            args.push(m);
+        }
+        for (f, other) in fams.iter().enumerate() {
+            for (j, c) in other.ind.ctors.iter().enumerate() {
+                let fields: Vec<Name> = c.args.iter().map(|_| self.fresh_name("a")).collect();
+                let ihs: Vec<Name> = c.recs.iter().map(|_| self.fresh_name("h")).collect();
+                let body = if f == k {
+                    app(var(&minor(j)), fields.iter().map(var).collect())
+                } else {
+                    var(&star)
+                };
+                let body = ihs.iter().rev().fold(body, |acc, n| lam(n, acc));
+                args.push(fields.iter().rev().fold(body, |acc, n| lam(n, acc)));
+            }
+        }
+        args.push(var(&major));
+        let mut binders: Vec<Name> = params.iter().map(|(n, _)| n.clone()).collect();
+        binders.push(motive);
+        binders.extend((0..fam.ind.ctors.len()).map(minor));
+        binders.push(major);
+        let value = binders
+            .iter()
+            .rev()
+            .fold(app(var(&rec), args), |acc, n| lam(n, acc));
+        Some((name, ty, value, params.len()))
+    }
+
+    /// Checks and adds `J@cases` (`cases_of`); a family for which it does
+    /// not check has none, and its `match`es take the recursor.
+    fn add_cases(&mut self, name: &Name, ty: T, value: T, nparams: usize) {
+        let ok = self.expect_type(&Vec::new(), &ty).is_ok()
+            && self.check(&Vec::new(), &value, &ty).is_ok()
+            && self.core.add_decl(name, &ty, Some(&value), true).is_ok();
+        if !ok {
+            self.globals.remove(name);
+            return;
+        }
+        self.add(name, ty, Some(value), BTreeSet::new());
+        self.set_implicit(name, nparams);
+    }
+
     pub(super) fn family_is_prop(&self, family: &Name) -> bool {
         let Some(g) = self.globals.get(family) else {
             return false;
@@ -891,14 +1004,22 @@ impl Kernel {
 
     /// Simultaneous substitution of `names` by `actual`.
     pub(super) fn instantiate(&mut self, t: &T, names: &[Name], actual: &[T]) -> T {
-        let fresh: Vec<Name> = names.iter().map(|n| self.fresh_name(n)).collect();
-        let mut out = t.clone();
-        for (n, f) in names.iter().zip(&fresh) {
-            out = self.subst(&out, n, &var(f));
+        // One walk of `t` for all the names (`subst_all`), not two for each:
+        // a value put in is not walked again, so the names it mentions stay
+        // its own, as the renaming to fresh names first kept them. A name
+        // given twice is replaced by its first value; a name with no value
+        // is renamed apart, as before.
+        let mut pairs: Vec<(Name, T)> = Vec::with_capacity(names.len());
+        for (i, n) in names.iter().enumerate() {
+            if pairs.iter().any(|(m, _)| m == n) {
+                continue;
+            }
+            let value = match actual.get(i) {
+                Some(a) => a.clone(),
+                None => var(&self.fresh_name(n)),
+            };
+            pairs.push((n.clone(), value));
         }
-        for (f, a) in fresh.iter().zip(actual) {
-            out = self.subst(&out, f, a);
-        }
-        out
+        self.subst_all(t, pairs)
     }
 }

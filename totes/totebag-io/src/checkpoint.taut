@@ -1,0 +1,277 @@
+import "source.taut"
+import "git.taut"
+import "cache.taut"
+import "strict.taut"
+import "ledger.taut"
+import sha256::sha256
+import totebag::spec
+import std::base
+import std::text
+
+// The history of an index (`crates/totebag/src/index/checkpoint.rs`): a
+// line of commits from a root with no parent, each adding the batch in its
+// `observations.eure`. A checkpoint's digest fixes the whole prefix up to
+// it:
+//
+//   P(c) = 0x00                          at the root
+//        = 0x01 || raw32(H(parent(c)))   otherwise
+//   H(c) = SHA256("tauto-index-checkpoint-v1\0" || P(c)
+//                 || frame(GitRevision(c)) || frame(commit payload)
+//                 || frame(Index.eure blob) || frame(observations.eure blob))
+//
+// Every object read is hashed again by Git and compared with its ID; the
+// two files are read as blobs of mode 100644.
+
+pub fn tb_max_history(): u64 { 100000 }
+
+pub(open) struct TbCheckpoint {
+  rev: Text,
+  // `sha256:<hex>`.
+  digest: Text,
+  batch: TbBatch,
+}
+
+pub(open) struct TbHistory {
+  config: TbConfig,
+  config_bytes: Bytes,
+  // Root first.
+  checkpoints: List(TbCheckpoint),
+}
+
+pub fn tb_hex_value(c: u64): u64 {
+  if c >= 97 { c - 87 } else { c - 48 }
+}
+
+// Lowercase hex as its bytes.
+pub fn tb_hex_bytes(hex: Text): Bytes {
+  let b := Bytes::of_text(hex)
+  let n := Bytes::len(b)
+  var out: List(u8) := Nil
+  var i := n
+  while i >= 2 {
+    out := Cons(U8::of_u64(tb_hex_value(tb_byte_at(b, i - 2)) * 16 + tb_hex_value(tb_byte_at(b, i - 1))), out)
+    i := i - 2
+  }
+  Bytes::of_list(out)
+}
+
+pub fn tb_byte1(x: u64): Bytes {
+  Bytes::of_list(Cons(U8::of_u64(x), Nil))
+}
+
+// The digest of a checkpoint whose parent's digest is `parent`.
+pub fn tb_checkpoint_digest(parent: Option(Text), rev: Text, payload: Bytes, config: Bytes, batch: Bytes): Text {
+  let head := Bytes::concat(Bytes::of_text("tauto-index-checkpoint-v1"), tb_byte1(0))
+  let p := match parent {
+    None => tb_byte1(0)
+    Some(d) => Bytes::concat(tb_byte1(1), tb_hex_bytes(tb_id_hex(d)))
+  }
+  let r := Bytes::of_text(rev)
+  Text::concat("sha256:", sha256_hex([head, p, tb_u64be(Bytes::len(r)), r, tb_u64be(Bytes::len(payload)), payload, tb_u64be(Bytes::len(config)), config, tb_u64be(Bytes::len(batch)), batch]))
+}
+
+// The text of a commit's header up to its first empty line: its tree and
+// its parents.
+pub fn tb_commit_header(payload: Bytes): Option(Text) × List(Text) {
+  var tree: Option(Text) := None
+  var parents: List(Text) := Nil
+  var rest := tb_split(payload, 10)
+  var going := true
+  while going {
+    match rest {
+      Cons(line, more) => {
+        if line == "" {
+          going := false
+        } else {
+          if tb_starts(line, "tree ") {
+            tree := Some(tb_after(line, 5))
+          } else {
+            if tb_starts(line, "parent ") {
+              parents := Cons(tb_after(line, 7), parents)
+            }
+          }
+          rest := more
+        }
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  #(tree, tb_rev_texts_cp(parents, Nil))
+}
+
+pub fn tb_rev_texts_cp(l: List(Text), acc: List(Text)): List(Text) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => tb_rev_texts_cp(rest, Cons(x, acc))
+  }
+}
+
+pub fn tb_after(t: Text, k: u64): Text {
+  let b := Bytes::of_text(t)
+  tb_piece(b, k, Bytes::len(b))
+}
+
+// The blob `name` at the root of `tree`, of mode 100644.
+pub fn tb_root_blob(dir: Text, tree: Text, name: Text, max: u64): Result(Bytes, Text) {
+  match tb_root_entry(dir, tree, name) {
+    Ok(Some(e)) => if e.fst == "100644" { tb_blob(dir, e.snd, max) } else { Err("totebag-root-not-regular") }
+    Ok(None) => Err("totebag-has-no")
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_bytes_same(a: Bytes, b: Bytes): Bool {
+  let n := Bytes::len(a)
+  if n != Bytes::len(b) {
+    return false
+  }
+  var i: u64 := 0
+  while i < n {
+    if tb_byte_at(a, i) != tb_byte_at(b, i) {
+      return false
+    }
+    i := i + 1
+  }
+  true
+}
+
+// The history that ends at `head`, read from the mirror at `dir`: every
+// commit back to the root, each with at most one parent, `Index.eure` the
+// same throughout, the root's batch numbered 0 and empty.
+pub fn tb_history(dir: Text, head: Text): Result(TbHistory, Text) {
+  // Head first: each commit's rev, tree and payload.
+  var line: List(Text × (Text × Bytes)) := Nil
+  var count: u64 := 0
+  var at := head
+  var going := true
+  while going {
+    if count >= tb_max_history() {
+      return Err("totebag-history-too-long")
+    }
+    let payload := match tb_commit(dir, at) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+    let h := tb_commit_header(payload)
+    let tree := match h.fst {
+      Some(t) => t
+      None => {
+        return Err("totebag-commit-no-tree")
+      }
+    }
+    line := Cons(#(at, #(tree, payload)), line)
+    count := count + 1
+    match h.snd {
+      Nil => {
+        going := false
+      }
+      Cons(p, Nil) => match tb_rev_from_git(p) {
+        Ok(r) => {
+          at := r
+        }
+        Err(e) => {
+          return Err(e)
+        }
+      }
+      Cons(_, Cons(_, _)) => {
+        return Err("totebag-history-merge")
+      }
+    }
+  }
+  // `line` is now root first.
+  let root := match line {
+    Cons(c, _) => c
+    Nil => {
+      return Err("totebag-history-merge")
+    }
+  }
+  let config_bytes := match tb_root_blob(dir, root.snd.fst, tb_config_file(), tb_max_config()) {
+    Ok(b) => b
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let config := match tb_config(config_bytes) {
+    Ok(c) => c
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if config.git_object_format != tb_rev_format(head) {
+    return Err("totebag-object-format-differs")
+  }
+  var checkpoints: List(TbCheckpoint) := Nil
+  var parent: Option(Text) := None
+  var rest := line
+  going := true
+  while going {
+    match rest {
+      Cons(c, more) => {
+        let this_config := match tb_root_blob(dir, c.snd.fst, tb_config_file(), tb_max_config()) {
+          Ok(b) => b
+          Err(e) => {
+            return Err(e)
+          }
+        }
+        if not(tb_bytes_same(this_config, config_bytes)) {
+          return Err("totebag-config-changed")
+        }
+        let batch_bytes := match tb_root_blob(dir, c.snd.fst, tb_batch_file(), tb_max_batch()) {
+          Ok(b) => b
+          Err(e) => {
+            return Err(e)
+          }
+        }
+        let batch := match tb_batch(batch_bytes, config.git_object_format) {
+          Ok(b) => b
+          Err(e) => {
+            return Err(Text::concat("totebag-at-rev ", e))
+          }
+        }
+        match parent {
+          None => {
+            let empty := match batch.events {
+              Nil => true
+              Cons(_, _) => false
+            }
+            if batch.sequence != 0 || not(empty) {
+              return Err("totebag-root-not-empty")
+            }
+          }
+          Some(_) => #()
+        }
+        let d := tb_checkpoint_digest(parent, c.fst, c.snd.snd, config_bytes, batch_bytes)
+        checkpoints := Cons(TbCheckpoint { rev: c.fst, digest: d, batch: batch }, checkpoints)
+        parent := Some(d)
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(TbHistory { config: config, config_bytes: config_bytes, checkpoints: tb_rev_checkpoints(checkpoints, Nil) })
+}
+
+pub fn tb_rev_checkpoints(l: List(TbCheckpoint), acc: List(TbCheckpoint)): List(TbCheckpoint) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => tb_rev_checkpoints(rest, Cons(x, acc))
+  }
+}
+
+// The index's ID: the digest of its root checkpoint.
+pub fn tb_history_id(h: TbHistory): Text {
+  match h.checkpoints {
+    Cons(c, _) => c.digest
+    Nil => ""
+  }
+}
+
+pub fn tb_config_id(h: TbHistory): Text {
+  Text::concat("sha256:", sha256_hex([h.config_bytes]))
+}

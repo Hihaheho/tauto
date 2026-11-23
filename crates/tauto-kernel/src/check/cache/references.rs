@@ -4,42 +4,113 @@ use crate::surface::{Name, Stmt, SurfaceTerm};
 use std::collections::{HashMap, HashSet};
 use tauto_surface::identity::LocalRef;
 
-#[derive(Clone)]
-pub(super) struct References {
+/// The slots of an environment: its names in their order, shared by every
+/// key made in that environment.
+pub(super) struct Base {
     names: Vec<Name>,
     slots: HashMap<Name, usize>,
+    spellings: HashSet<String>,
+}
+
+#[derive(Clone)]
+pub(super) struct References {
+    base: std::sync::Arc<Base>,
+    /// Names of the key's own statements that the environment does not
+    /// have, in their order, after the environment's slots.
+    extra: Vec<Name>,
+    extra_slots: HashMap<Name, usize>,
     source_locals: Vec<Name>,
 }
-impl References {
+
+/// The names in their order, or none when two have the same spelling or one
+/// is not global: such an environment is checked without a persistent cache.
+fn ordered(names: impl IntoIterator<Item = Name>) -> Option<Vec<Name>> {
+    let mut names: Vec<_> = names
+        .into_iter()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    names.sort_by(|a, b| a.as_str().cmp(b.as_str()).then(a.cmp(b)));
+    // Displays order slots; they do not identify references.
+    if names
+        .windows(2)
+        .any(|pair| pair[0].as_str() == pair[1].as_str())
+    {
+        return None;
+    }
+    if names.iter().any(|n| !matches!(n, Name::Global(_))) {
+        return None;
+    }
+    Some(names)
+}
+
+impl Base {
     pub(super) fn new(names: impl IntoIterator<Item = Name>) -> Option<Self> {
-        let mut names: Vec<_> = names
-            .into_iter()
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        names.sort_by(|a, b| a.as_str().cmp(b.as_str()).then(a.cmp(b)));
-        // Displays order slots; they do not identify references. An environment
-        // without a unique ordering is checked without a persistent cache.
-        if names
-            .windows(2)
-            .any(|pair| pair[0].as_str() == pair[1].as_str())
-        {
-            return None;
-        }
-        if names.iter().any(|n| !matches!(n, Name::Global(_))) {
-            return None;
-        }
+        let names = ordered(names)?;
         let slots = names
             .iter()
             .cloned()
             .enumerate()
             .map(|(i, n)| (n, i))
             .collect();
+        let spellings = names.iter().map(|n| n.as_str().to_string()).collect();
         Some(Self {
             names,
             slots,
+            spellings,
+        })
+    }
+    pub(super) fn names(&self) -> &[Name] {
+        &self.names
+    }
+    pub(super) fn slot(&self, name: &Name) -> Option<usize> {
+        self.slots.get(name).copied()
+    }
+}
+
+impl References {
+    pub(super) fn new(names: impl IntoIterator<Item = Name>) -> Option<Self> {
+        Some(Self::on(std::sync::Arc::new(Base::new(names)?)))
+    }
+    /// The environment's slots and nothing more.
+    pub(super) fn on(base: std::sync::Arc<Base>) -> Self {
+        Self {
+            base,
+            extra: Vec::new(),
+            extra_slots: HashMap::new(),
+            source_locals: Vec::new(),
+        }
+    }
+    /// The environment's slots, then the names it does not have, in their
+    /// order; none as for [`Base::new`], counting the environment's names.
+    pub(super) fn extended(
+        base: std::sync::Arc<Base>,
+        names: impl IntoIterator<Item = Name>,
+    ) -> Option<Self> {
+        let extra = ordered(names.into_iter().filter(|n| !base.slots.contains_key(n)))?;
+        if extra.iter().any(|n| base.spellings.contains(n.as_str())) {
+            return None;
+        }
+        let extra_slots = extra
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, n)| (n, base.names.len() + i))
+            .collect();
+        Some(Self {
+            base,
+            extra,
+            extra_slots,
             source_locals: Vec::new(),
         })
+    }
+    /// The environment's names.
+    pub(super) fn base_names(&self) -> &[Name] {
+        self.base.names()
+    }
+    /// The names after the environment's.
+    pub(super) fn extra(&self) -> &[Name] {
+        &self.extra
     }
     pub(super) fn with_source(mut self, statements: &[Stmt]) -> Self {
         let mut seen = HashSet::new();
@@ -59,14 +130,16 @@ impl References {
         }
         self
     }
-    pub(super) fn names(&self) -> &[Name] {
-        &self.names
-    }
     pub(super) fn slot(&self, name: &Name) -> Option<usize> {
-        self.slots.get(name).copied()
+        self.base
+            .slot(name)
+            .or_else(|| self.extra_slots.get(name).copied())
     }
     pub(super) fn reference(&self, slot: usize) -> Option<Name> {
-        self.names.get(slot).cloned()
+        match slot.checked_sub(self.base.names.len()) {
+            None => self.base.names.get(slot).cloned(),
+            Some(i) => self.extra.get(i).cloned(),
+        }
     }
     pub(super) fn encode(&self) -> Encoder<'_> {
         Encoder {
@@ -141,7 +214,7 @@ impl Encoder<'_> {
                     None => token,
                 }
             }
-            Name::Effect(_) => {
+            Name::Effect(_) | Name::Written(_) => {
                 self.complete = false;
                 return;
             }
@@ -185,10 +258,13 @@ impl Decoder<'_> {
                 .locals
                 .entry(slot)
                 .or_insert_with(|| LocalRef::fresh(&display).into());
-            if stable(name.as_str()) != display {
-                return None;
+            if stable(name.as_str()) == display {
+                return Some(name.clone());
             }
-            return Some(name.clone());
+            // One binding may be displayed otherwise at another occurrence
+            // (a selection's binding, a renamed copy); its identity is the
+            // slot's.
+            return Some(name.as_local()?.with_display(display).into());
         }
         if let Some(text) = token.strip_prefix("s:") {
             return Some(unhex(text)?.into());
@@ -234,9 +310,7 @@ impl Decoder<'_> {
                 // The checker binds some names by spelling (the `t'` of a
                 // match motive), so a recorded term may hold them; they come
                 // back exactly as they were checked.
-                Some(next @ (Name::Global(_) | Name::Local(_) | Name::Spelled(_))) => {
-                    *name = next
-                }
+                Some(next @ (Name::Global(_) | Name::Local(_) | Name::Spelled(_))) => *name = next,
                 _ => self.complete = false,
             }
         });
@@ -281,6 +355,7 @@ mod tests {
 
     #[test]
     fn a_reference_slot_relinks_without_a_name_lookup() {
+        tauto_parse::install();
         let first: Name = DeclRef::fresh("decl").into();
         let second: Name = DeclRef::fresh("decl").into();
         let before = References::new([first.clone()]).unwrap();
@@ -294,12 +369,14 @@ mod tests {
 
     #[test]
     fn cached_source_locals_link_to_the_current_source_binding() {
+        tauto_parse::install();
         let source = |name: &Name| {
             Stmt::Expr(SurfaceTerm::new(
                 TermKind::Lam {
                     params: vec![name.clone()],
                     types: Vec::new(),
                     body: Box::new(SurfaceTerm::var(name, Default::default())),
+                    unused_params: Vec::new(),
                 },
                 Default::default(),
             ))
@@ -319,6 +396,7 @@ mod tests {
 
     #[test]
     fn lexical_slots_preserve_distinct_equal_display_binders() {
+        tauto_parse::install();
         let outer: Name = LocalRef::fresh("x").into();
         let inner: Name = LocalRef::fresh("x").into();
         let span = Default::default();
@@ -327,6 +405,7 @@ mod tests {
                 params: vec![outer, inner],
                 types: Vec::new(),
                 body: Box::new(SurfaceTerm::var("unused", span)),
+                unused_params: Vec::new(),
             },
             span,
         );
@@ -338,6 +417,7 @@ mod tests {
                 params: params.clone(),
                 types: Vec::new(),
                 body: Box::new(SurfaceTerm::var(&params[0], span)),
+                unused_params: Vec::new(),
             },
             span,
         );
@@ -354,6 +434,7 @@ mod tests {
 
     #[test]
     fn unknown_slots_and_forged_tokens_are_not_cached_references() {
+        tauto_parse::install();
         let table = References::new([DeclRef::fresh("g0").into()]).unwrap();
         assert!(table.decode().token("g1").is_none());
         assert!(
@@ -372,6 +453,7 @@ mod tests {
 
     #[test]
     fn generated_counters_do_not_reach_keys() {
+        tauto_parse::install();
         assert_eq!(stable("ih'158589"), "ih'");
         assert_eq!(stable("_'4829"), "_'");
         assert_eq!(stable("t'"), "t'");

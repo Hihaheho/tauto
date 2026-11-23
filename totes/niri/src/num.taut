@@ -1,0 +1,65 @@
+import std::text
+import std::base
+import std::uint
+
+// Integers of any size, as a sign and a size: what the machine computes
+// (an `i128` in crates/tauto-niri, with a `Nat` past it).
+
+pub(open) struct Int { neg: Bool, mag: Nat }
+
+pub fn int_of(neg: Bool, mag: Nat): Int { Int { neg: neg && mag != 0, mag: mag } }
+
+pub fn int_neg(a: Int): Int { int_of(not(a.neg), a.mag) }
+
+pub fn int_add(a: Int, b: Int): Int {
+  if a.neg == b.neg {
+    int_of(a.neg, a.mag + b.mag)
+  } else if a.mag >= b.mag {
+    int_of(a.neg, a.mag - b.mag)
+  } else {
+    int_of(b.neg, b.mag - a.mag)
+  }
+}
+
+pub fn int_sub(a: Int, b: Int): Int { int_add(a, int_neg(b)) }
+
+pub fn int_mul(a: Int, b: Int): Int { int_of(a.neg != b.neg, a.mag * b.mag) }
+
+pub fn int_eq(a: Int, b: Int): Bool { a.neg == b.neg && a.mag == b.mag }
+
+pub fn int_lt(a: Int, b: Int): Bool {
+  if a.neg && not(b.neg) {
+    true
+  } else if not(a.neg) && b.neg {
+    false
+  } else if a.neg {
+    a.mag > b.mag
+  } else {
+    a.mag < b.mag
+  }
+}
+
+pub fn int_text(a: Int): Text {
+  if a.neg { Text::concat("-", Text::of_nat(a.mag)) } else { Text::of_nat(a.mag) }
+}
+
+pub fn pow2(n: Nat): Nat ! {div} {
+  var r: Nat := 1
+  var i: Nat := 0
+  while i < n {
+    r := r * 2
+    i := i + 1
+  }
+  r
+}
+
+// Whether it fits in an `i128`.
+pub fn int_fits_i128(a: Int): Bool ! {div} {
+  if a.neg { a.mag <= pow2(127) } else { a.mag < pow2(127) }
+}
+
+// The quotient and remainder of `i128` division: toward zero, the
+// remainder with the sign of the dividend.
+pub fn int_div(a: Int, b: Int): Int ! {divzero} { int_of(a.neg != b.neg, Nat::div(a.mag, b.mag)) }
+
+pub fn int_rem(a: Int, b: Int): Int ! {divzero} { int_of(a.neg, Nat::rem(a.mag, b.mag)) }

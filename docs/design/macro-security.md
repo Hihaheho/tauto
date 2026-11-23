@@ -1,174 +1,142 @@
-# tauto のマクロ：脅威モデル、信頼境界、実行の制限
+# Macro threat model
 
-[`macro.md`](macro.md) の設計を、攻撃者の側から書き直したもの。
+The design of [`macro.md`](macro.md), seen from the attacker's side.
 
----
+## Assets
 
-## 守るもの
-
-| 資産 | 意味 | 壊れたときに起きること |
+| | Asset | If broken |
 |---|---|---|
-| A1. 論理の健全性 | 受理された証明が正しく、受理されたプログラムの型・効果・所有権が正しい | 偽の定理、実行時の所有権の破壊 |
-| A2. ホスト | `tauto` を走らせた計算機のファイル、ネットワーク、環境変数、プロセス、時刻 | 情報の持ち出し、改ざん |
-| A3. 可用性 | 検査が有限の時間と記憶で終わる | 検査の停止、CI の占有 |
-| A4. 再現性 | 同じ入力から同じ展開・同じ判定 | キャッシュの汚染、環境で変わるビルド |
-| A5. 見える意味 | 読み手が、マクロが何を足したかを確かめられる | 隠れた公理、隠れた振る舞い |
-| A6. 生成物の完全性 | コミットした文法の表と型が、書かれた文法から作られたもの | 文法の見た目と違う解析 |
+| A1 | Soundness: accepted proofs are true; accepted programs' types, effects and ownership are right | false theorems, ownership corruption |
+| A2 | The host running `tauto`: files, network, environment, processes, clock | exfiltration, tampering |
+| A3 | Availability: checking terminates in bounded time and memory | hung checks, occupied CI |
+| A4 | Reproducibility: same input, same expansion and verdict | cache poisoning, environment-dependent builds |
+| A5 | Visible meaning: readers can see what a macro added | hidden axioms or behaviour |
+| A6 | Generated tables and types come from the written grammar | parsing unlike the grammar |
 
-## 攻撃者と脅威
+## Threats
 
-| 番号 | 攻撃者・状況 | 脅威 | 対策（節） |
+| | Attacker | Threat | Defence |
 |---|---|---|---|
-| T1 | 依存する tote の作者（悪意、または乗っ取られた） | マクロ関数でファイルを読む・書く、ネットワークに出る、環境変数を読む | 行の制限（`macro.md`「マクロ関数の行」）、標準エフェクトに答えないホスト（「マクロのホストの標準エフェクト」） |
-| T2 | 同上 | 出力に公理・`extern` を混ぜて、偽の定理を通す、または信頼の一覧を増やす | 出力の禁止（`macro.md`「展開の出力に許さないもの」）、カーネルの再検査（A1） |
-| T3 | 同上 | 無限ループ・巨大な出力・記憶の消費で検査を止める | 予算（「実行の制限」） |
-| T4 | DSL の文字列の書き手（他人や AI が書いたファイル） | 解析器の不具合を突く（深い入れ子、巨大な入力） | 駆動部のスタックの上限、入力の大きさの上限（「実行の制限」）、Rust の安全なコードだけの駆動部 |
-| T5 | 共有キャッシュに書ける者 | 偽の展開の結果をキャッシュに置く | キャッシュは手元だけ（「キャッシュ」）。共有するなら内容の指紋で検証（OQ-10） |
-| T6 | リポジトリに書ける者 | 文法と合わない表をコミットする | 表は文法の指紋を持つ。CI の `tauto syntax gen --check`（「生成物（文法の表と型）」） |
-| T7 | 表の生成器の供給網 | 表の生成器が乗っ取られる | 生成器（`totes/llkgen`）は生成のときだけ動き、tauto の本体に入らない。出力は再生成で確かめる（「生成物（文法の表と型）」） |
-| T8 | マクロの作者 | 出力が利用者の名前を奪う、利用者の名前に化ける | 衛生（`macro.md`「衛生（スコープ集合）」）。捕獲は明示の API だけで、`trace` と lint が示す |
-| T9 | マクロの作者 | 実行時に危険なことをするコードを生成する | **防がない**（それは生成されたプログラムの振る舞いで、手で書いた同じプログラムと同じ扱い）。`expand` で読めるようにする（A5） |
-| T10 | AI のエージェント | 証明を型付きマクロで生成して、読めない証明を `std/` に入れる | lint の規則 `typed-macro-in-proof`・`macro-capture` で禁止できる。`std/` と `meta/` では有効（`macro.md`「依存型とカーネルの断片」） |
+| T1 | malicious or compromised dependency author | macro reads or writes files, network, environment | restricted rows; the macro host answers no standard effect |
+| T2 | same | output smuggles axioms or `extern`s | forbidden in output; kernels recheck |
+| T3 | same | loops, huge output, memory exhaustion | budgets |
+| T4 | author of DSL text | exploit the parser (deep nesting, huge input) | stack and input limits; safe-Rust driver |
+| T5 | writer of a shared cache | plant expansion results | caches are local only |
+| T6 | repository writer | commit tables that don't match the grammar | tables carry the grammar hash; CI runs `tauto syntax gen --check` |
+| T7 | table generator supply chain | compromised generator | `totes/llkgen` runs only at generation, outside the compiler; output is regenerated and compared |
+| T8 | macro author | output captures or impersonates user names | hygiene; capture only through explicit API, shown by `trace` and lint |
+| T9 | macro author | generated code does dangerous things at runtime | **not defended**: it is a program like hand-written code; `expand` shows it |
+| T10 | AI agent | unreadable proofs via typed macros in `std/` | lints `typed-macro-in-proof` and `macro-capture`, on for `std/` and `meta/` |
 
-## 信頼境界
+## Trust boundaries
 
-### 部品ごとの信頼
-
-```text
-                ┌───────────────────────── 信頼する（A1）─────────────────────────┐
-                │ check.rs + check/core.rs（カーネル）  types.rs・rows.rs・lin.rs   │
-                └─────────────────────────────▲────────────────────────────────────┘
-                                              │ 展開・変換の後のプログラム（構文だけ）
-┌──────────── 信頼する（A2・A3・A4）────────────┐
-│ マクロのホスト：eval.rs + 予算             │
-└──────────────▲───────────────────────────────┘
-               │ 値（型付き AST、Judgement、構文）
-┌──────────── 信頼しない ───────────────┐   ┌──── A1 には信頼しない／A6 に信頼する ────┐
-│ マクロ関数（利用者・依存の tote）       │   │ 文法の表と駆動部（crates/tauto-syntax）  │
-└────────────────────────────────────────┘   └──────────────▲──────────────────────────┘
-                                                            │ 生成物（コミット）
-                                           ┌──── 生成のときだけ ────┐
-                                           │ totes/llkgen（tote）    │（参照の表と同じ出力）
-                                           └─────────────────────────┘
-```
-
-| 部品 | 何について信頼するか | 誤っていたら |
+| Component | Trusted for | If wrong |
 |---|---|---|
-| カーネル（`check.rs`、`check/core.rs`） | A1（証明・型） | マクロのないプログラムと同じ（マクロで変わらない）。二つの独立な検査器が両方受理したものだけ |
-| `types.rs`・`rows.rs`・`lin.rs` | A1（実行されるコードの型・行・所有権） | マクロのないプログラムと同じ。Rust バックエンドでは rustc がもう一度確かめる（`rust-backend.md`「要約」） |
-| マクロのホスト（評価器 + 予算） | A2・A3・A4 | ホストへの侵入、検査の停止。**ここがマクロのために新しく信頼する唯一の部品** |
-| 文法の表・駆動部 | A6（解析が文法の通り） | 解析の誤り。出力は再検査されるので A1 は壊れない。意図と違う意味になりうる |
-| 表の生成器（`totes/llkgen`） | 生成のときの A6 | 誤った表。再生成と差分で見つける |
-| マクロ関数 | 何も信頼しない | 診断になるか、検査で拒否される |
-| `extern "rust"` の署名 | 公理と同じ（`ownership.md`「`extern`」） | マクロのないプログラムと同じ。マクロは `extern` を生成できない |
+| Kernels (`check.rs`, `check/core.rs`) | A1 for proofs | as without macros; both independent checkers must accept |
+| `types.rs`, `rows.rs`, `lin.rs` | A1 for executed code | as without macros; rustc rechecks Rust output |
+| Macro host (`tauto-macro-vm` and budgets) | A2, A3, A4 | intrusion or hangs. **The only component newly trusted for macros** |
+| Grammar tables and driver (`crates/tauto-syntax`) | A6 | misparsing; output is rechecked, so A1 holds |
+| `totes/llkgen` | A6 at generation | wrong tables, caught by regeneration |
+| Macro functions | nothing | diagnostics or rejection |
+| `extern "rust"` signatures | like axioms | as without macros; macros cannot generate `extern` |
 
-### マクロのホストの標準エフェクト
+### The macro host
 
-マクロ関数を走らせる評価器は、ホストが答える標準エフェクト（`host-effects.md`：`stdout`、`fs_read`、`net`、時刻、乱数、環境変数など）に答えない。
+The macro host answers no standard effect
+([`host-effects.md`](host-effects.md)).
 
-- 型：マクロ関数の行は `{macro_error, macro_warn, elab, Div}` の部分集合で（`macro.md`「マクロ関数の行」）、
-  構文に登録する `fmt`・`tokens` の関数の行は `Div` と `macro_error` だけ（`macro.md`「構文に付ける関数（`with`）」）。
-  ホストが答える builtin は prelude の `extern` に行つきで宣言され（`Os::read_file ... ! {fs_read}`）、利用者のコードは呼べないので、
-  閉包を通る呼び出しも含めて、行がホストに触れるかを言う。
-- 実行：行の検査を抜けて標準エフェクトが実行されても、ホストは答えずエラーにする。ホストが答える builtin（`Os::*`）を呼んでもエラー
-  `macro.not_allowed_builtin`。
-- 呼べる builtin はほかに絞らない。`Ref`・`Atomic` など、呼びの中で作った値にしか触れないものも使える。
-  ハッシュ表は評価器の中で **挿入順の列** として持っている（`ResKind::Map` は `Vec` の項目、`HashMap::into_vec` は挿入順）ので、順序がホストに依存しない。
+- Types: macro function rows are subsets of `{macro_error, macro_warn, elab, div, budget, budget_memory}`
+  (the macro host counts a `budget`, one implementation, so an expansion does not depend on a backend);
+  `fmt`/`tokens` functions registered on syntax have `div`, `divzero`, `overflow` and `macro_error`
+  only. Host builtins are prelude `extern`s declared with rows
+  (`Os::read_file ... ! {fs_read}`), so rows account for every path to the host,
+  closures included. Registration rejects untraceable effects
+  (`macro.unchecked_effect`) and effects outside the allowed set (`macro.row`).
+- Runtime: a standard effect that slips through is not answered; calling an
+  `Os::*` builtin is `macro.not_allowed_builtin`. Other builtins (`Ref`,
+  `Atomic`, …) touch only values made in the call. Hash maps iterate in
+  insertion order, independent of the host.
+- Untyped macros run on the same host with the same limits.
 
-型なしマクロ（`macro.md`「型なしマクロ」）も同じホストで走る。入力が式の構文の値であることのほかに違いはなく、行の制限・
-予算はすべて同じ。
+Audit points for the macro host: every `builtin` arm touching host
+resources is an `Os::*` with an effect in its row; hash order never affects
+values, output or step counts; float arithmetic is deterministic (no fused
+operations); panics become diagnostics (`catch_unwind`); no recursion on the
+Rust stack.
 
-### 読み込み `include_text!`
+### `include_text!`
 
-`include_text!("path")`（`macro.md`「組み込みの読み込み `include_text!`」）は、ホストのファイルを読む唯一の言語の
-形だが、マクロではなく、マクロのホストの権限を広げない。
+`include_text!("path")` is the only language form that reads host files, and
+it is not a macro.
 
-- **何を読めるか**：呼び出しを書いたファイルの tote（最も近い `Tauto.eure` のあるディレクトリ。どの tote にも入らない
-  ファイルはそのディレクトリ）の中のファイルだけ。パスは書いたファイルからの相対パスで、絶対パス、`..` で外に出る
-  パス、外を指すシンボリックリンク（解決した実際のパスで確かめる）はエラー。中身は UTF-8 でなければならない。
-  読むのは書いたバイト列そのもので、ほかに読むもの（環境変数、時刻、ディレクトリの一覧）はない。
-- **誰が読むか**：読み込み（`crates/tauto/src/program/include.rs`）が、ファイルに **書かれた** 呼び出しだけを、マクロの展開の
-  前に置き換える。マクロ関数は呼べない：出力に現れた `include_text!` は展開が拒否する（`macro.include_text`）。
-  だから依存する tote のマクロ（T1）は、これで利用者のファイルを読めない。依存する tote が自分のファイルに書いた
-  呼び出しは、その tote の中を読むだけで、手で同じリテラルを書いたのと同じ（A5：`tauto macro expand` で見える）。
-- **なぜ決定的か（A4）**：結果はパスの文字列と、tote の中のファイルの中身だけで決まる。その中身は宣言のリテラルになるので、
-  証明のキャッシュの鍵と増分の検査の指紋に入り、ファイルが変われば検査し直す。キャッシュに残った古い結果が
-  使われることはない。`tauto-build` は読んだファイルを `rerun-if-changed` に出す。
-- **A1**：カーネルはリテラルしか見ず、規則は増えない。
+- It reads only files of the calling file's tote (the nearest `Tauto.eure`'s
+  directory, or the file's directory outside totes) and the directories its
+  manifest lists in `package.include-from`, relative to the calling file. A
+  listed directory counts only inside the workspace (the outermost directory
+  above the tote that holds a `Tauto.eure`), so a tote fetched from elsewhere
+  cannot reach files outside itself. Absolute paths, escaping `..` and
+  symlinks resolving outside are errors; contents must be UTF-8.
+- The loader (`crates/tauto/src/program/include.rs`) replaces only calls
+  *written* in files, before expansion; one in macro output is
+  `macro.include_text`. So a dependency's macro cannot read user files.
+- The result depends only on the path and the file, which becomes a literal in
+  cache keys and fingerprints; `tauto-build` emits `rerun-if-changed`.
 
-### 行の検査
+### Other paths that run code
 
-`! {}`（効果の行が空）は、関数がホストに触れないことを言う：ホストが答える builtin は行を持つ宣言で、利用者のコードは呼べず、
-行は閉包を通る呼び出しも含めて関数の効果を言う。マクロを登録するとき（`macro.md`「`macro` 宣言（登録）と呼び出し `NAME!(…)`」）、
-行に追えない効果（`?…`）があれば `macro.unchecked_effect`、許す効果の外があれば `macro.row`。
-行は停止と資源を言わない（`Div` を許す）ので、それは予算が止める。新しい builtin がホストに触れるなら、
-prelude の宣言の行に効果として書く。
-
-### 評価器の監査項目
-
-- 評価器の `fn builtin` の各腕について、ホストの資源（ファイル、プロセス、時刻、乱数、環境変数、スレッド）に
-  触れるものは `Os::*` で、その宣言の行に効果があること。
-- ハッシュ表の順序（`HashMap` の走査）が値・出力・ステップの数に影響しないこと（評価器の `globals`・`live` は引くだけで、走査しない）。
-- `Float` の演算が決定的であること（Rust の `f64` の四則は IEEE 754 で決定的。`mul_add` などの融合演算を使わない）。
-- パニックしないこと（パニックはホストの中断として扱い、診断に変える。`catch_unwind` で包む）。
-- 再帰の深さ：評価器が Rust のスタックで再帰しないこと（継続を値で持つ設計であることを確かめる）。
-
-### Rust の FFI・外部の生成器・`build.rs`・proc-macro との区別
-
-| 経路 | 走るもの | 権限 | マクロとの関係 |
+| Path | Runs | Authority | Relation to macros |
 |---|---|---|---|
-| tauto のマクロ | Nib の関数を **評価器で解釈** | 標準エフェクトに答えない | この文書の対象 |
-| `extern "rust"` | 生成した Rust のコードからの呼び出し（実行時） | プログラムの実行時の権限 | マクロは `extern` を生成できない。マクロの実行中に Rust の関数は呼ばれない |
-| `tauto bind`（`rust-backend.md`「`tauto bind`」） | rustdoc の JSON から宣言を生成 | 開発者がコマンドとして走らせる | マクロではない。生成物はコミットし、レビューする |
-| `tauto-build`（`build.rs` から、`rust-backend.md`「`tauto-build`（Rust のプロジェクトから使う）」） | tauto のコンパイラ全体（マクロの展開を含む） | Cargo のビルドの権限 | コンパイラのプロセスは `build.rs` の権限を持つが、マクロ関数はその中の評価器で動き、行の制限に縛られ、標準エフェクトには答えられない。評価器に穴があれば `build.rs` の権限まで届くので、「評価器の監査項目」の監査が要る |
-| Rust の proc-macro | ネイティブのコードをコンパイラのプロセスに読み込む | コンパイラのプロセスのすべて | tauto は **マクロのためにネイティブのコードを読み込まない**。表の生成器（`totes/llkgen`）もコンパイラのプロセスに入れず、生成のときだけの別のプロセス |
-| `tauto syntax gen` | `totes/llkgen`（Nib で書いた生成器。出力はコミットした参照の表と一字一句同じ） | 開発者がコマンドとして走らせる | 生成物は文法の指紋つきでコミット。検査のときには走らない |
+| tauto macros | Nib run on the bytecode machine of `tauto-vm` | no standard effects | this document |
+| `extern "rust"` | generated Rust at runtime | the program's | macros cannot generate externs; no Rust runs during expansion |
+| `tauto bind` | declarations from rustdoc JSON | developer command | output is committed and reviewed |
+| `tauto-build` from `build.rs` | the whole compiler | Cargo build | macros are still confined to the macro host; a hole in it would reach `build.rs` authority, hence the audit |
+| Rust proc-macros | native code in the compiler | everything | tauto never loads native code for macros |
+| `tauto syntax gen` | `totes/llkgen` | developer command | committed with grammar hash; never runs during checking |
 
-## 決定性
+## Determinism
 
-- マクロの実行の入力：マクロ関数とそれが届く宣言（展開・検査後の正規形）、引数の値、凍結した環境、予算の設定。
-  これ以外の情報源（時刻、乱数、ファイル、環境変数、スレッド、ハッシュの順序、アドレス）に依存しない。
-- 展開のスコープの番号は位置から決まる（`macro.md`「衛生（スコープ集合）」の 10）。名前の通し番号（`x#k`）も展開の順で決まる。
-- 予算の超過の位置は評価器の版に依存しうる。だから **予算の近くで成否が分かれるマクロは、評価器の版を変えると
-  結果が変わりうる**。キャッシュの鍵に評価器の版を入れ、`trace` に使ったステップを出す。
-  上限に近い（90% 以上）呼び出しには警告 `macro.budget_near`。
+Expansion depends only on the macro function and what it reaches (normalized),
+its argument values, the frozen environment and budget settings; never on time,
+randomness, files, environment, threads, hash order or addresses. Scope numbers
+come from positions and fresh names from expansion order. Where a budget runs
+out may depend on the version of the machine, which is part of the cache key;
+`trace` reports steps.
 
-## 実行の制限
+## Limits
 
-`macro.md`「停止と資源」の表を正とする。ここでは攻撃に対する意味を書く。
+The values are in [`macro.md`](macro.md).
 
-| 制限 | 防ぐもの | 備考 |
-|---|---|---|
-| ステップ（呼び出しごと、ファイルごと） | 無限ループ、巨大な計算 | 評価器のステップの数え方は実装が決める |
-| 深さ | 自分を呼ぶ展開の無限の連鎖 | 連鎖を診断に出す |
-| 出力の節点の数 | 巨大な出力による検査器の停止 | 下ろす前に数える |
-| 評価器の確保 | 記憶の消費 | 評価器の確保の数え上げ（`macro-implementation.md`「評価器（`eval.rs`）」） |
-| DSL の文字列の大きさ | 解析器の消費 | 一つの構文リテラルの中身（行内・区切りつき・塊のどれでも）が 1 MiB（2²⁰ バイト）まで。超えたら `macro.input_too_large` |
-| 解析のスタックの深さ | 深い入れ子 | 10⁴。駆動部はスタックを値で持ち、Rust の再帰をしない |
-| 実時間 | 評価器の数え方の穴 | 既定 60 秒、ホストの中断（`Interrupted`）。決定性はないので、超えたら **エラーであって結果ではない**（キャッシュしない） |
+| Limit | Prevents |
+|---|---|
+| steps per call and per file | loops, huge computations |
+| depth | infinite self-expanding chains (reported) |
+| output node count | checker overload (counted before lowering) |
+| machine allocation | memory exhaustion |
+| DSL input size: 1 MiB per syntax literal (`macro.input_too_large`) | parser exhaustion |
+| parser stack depth 10⁴ (driver keeps its stack as data) | deep nesting |
+| wall clock, 60 s default (`Interrupted`) | holes in step accounting; an error, never cached |
 
-失敗・予算の超過は **診断** で返し、検査は止まらずに次の宣言へ進む（その宣言と、それに依存する宣言は失敗）。
+Failures are diagnostics: checking continues, and the declaration and its
+dependents fail.
 
-## キャッシュ
+These limits bound what runs while checking. A parse the program runs on its
+own data (a syntax's `parse` called at run time) has no input or stack limit:
+the text is the program's input, not code the checker reads.
 
-- 置き場所は tote の `target/tauto/macro-cache/`（手元だけ）。鍵は `macro.md`「キャッシュと決定性」、値は出力の構文の値と、記録（ステップ、捕獲）。
-- 読むとき、値の指紋を確かめる。壊れていれば捨てて走らせ直す。
-- **共有のキャッシュは入れない**（T5）。入れるなら、鍵と値の対を署名するか、検査の側で
-  「キャッシュから読んだ出力も再検査される」ことに頼る（A1 は再検査で守られるが、A5 は守られない）。OQ-10。
+## Cache and generated files
 
-## 生成物（文法の表と型）
+- The macro cache is local (`target/tauto/macro-cache/`), keyed as in
+  [`macro.md`](macro.md), storing output and records (steps, captures), and
+  fingerprint-checked on read. A shared cache would need signed entries;
+  rechecking protects A1 but not A5.
+- `tauto syntax gen` runs `totes/syntaxgen` (calling `totes/llkgen`) and writes
+  `.tauto-syntax/<sha256>.tables` holding the grammar's SHA-256, the generator
+  format version, the tables and type generation data. `tauto check` verifies
+  only the hash; CI regenerates and compares byte for byte. Never edit tables
+  by hand.
 
-- `tauto syntax gen` が `totes/syntaxgen`（`totes/llkgen` を呼ぶ）をビルドして走らせ、tote の `.tauto-syntax/<sha256>.tables` に書く（`macro-implementation.md`「`totes/llkgen` と表のファイル」）。
-- 表は (a) 文法の文字列の SHA-256、(b) 生成器の版（表の書き方を決める版。`totes/llkgen` は参照の表に書かれた版の書き方に一致するように書いてある）、
-  (c) 表の本体、(d) 型の生成規則の情報 を持つ。
-- `tauto check` は (a) が文法と一致することだけを確かめる（表の正しさは確かめない）。
-- CI は `tauto syntax gen --check` で作り直して一字一句比べる。合わなければ失敗（T6・T7）。
-- 表を手で直さない。
+## Visibility (A5)
 
-## 見える意味（A5）
-
-- `tauto check` の報告は、公理と `extern` の一覧に加えて、**展開の一覧**（マクロの名前、位置、捕獲の有無、
-  証明を生成したか）を出す。
-- `tauto macro expand --write` で展開を書き戻せる。
-- 証明の中の型付きマクロの呼び出し は言語としては許し、lint の規則 `typed-macro-in-proof` で禁止できる。
-  `std/` と `meta/` はこの規則と、捕獲の規則 `macro-capture` を有効にする（`macro.md`「依存型とカーネルの断片」）。
+`tauto check` reports, besides axioms and externs, the list of expansions
+(macro, position, capture, whether it produced proofs).
+`tauto macro expand --write` writes expansions back.

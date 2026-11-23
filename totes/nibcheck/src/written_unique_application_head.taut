@@ -1,0 +1,53 @@
+import "written_unique_base.taut"
+import "written_unique_info.taut"
+import "written_unique_cases.taut"
+import std::base
+import std::map
+import std::text
+import "datas.taut"
+import "rules_written.taut"
+import "rules_written_name.taut"
+import "ty.taut"
+import "unify_sound.taut"
+import "written_value_base.taut"
+import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
+
+
+pub theorem written_unique_named<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, r#borrow: Bool, name: SurfaceName, args: List(
+  SurfaceTerm
+), start: Nat, end: Nat, other: Ty>(
+  ast_occurrence: Option(TermOccurrence),
+  meaning: WrittenKind(
+    env,
+    generics,
+    partial,
+    r#borrow,
+    SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
+    other
+  ),
+  types: List(Ty),
+  not_pair: (surface_name_text(name) = "std::prelude::Pair") -> False,
+  not_info: (surface_name_text(name) = "Info") -> (list_len(args) = 1) -> False,
+  unbound: Ordmap::get(generics, surface_name_text(name), Ordmap::compare_text) = None,
+  ih: WrittenTermsUnique(generics, partial, args, types)
+): TyNamed(NameSpelled(surface_name_text(name)), types) = other {
+  match meaning {
+    WrittenKindProduct(ctor_ast_occurrence, gs, Mode, borrowing, parts, values, begin, finish, Two, meanings) => False::elim(
+      not_pair(Refl)
+    )
+    WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, first, value, begin, finish, argument) => False::elim(
+      not_info(Refl, Refl)
+    )
+    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, spelling, terms, values, begin, finish, other_not_pair, other_not_info, other_unbound, SliceBorrowed, arguments, arity) => Eq::congr(
+      (ts: List(Ty)) => TyNamed(NameSpelled(surface_name_text(spelling)), ts),
+      ih(env, values, arguments)
+    )
+    WrittenKindGeneric(ctor_ast_occurrence, gs, Mode, borrowing, spelling, first, head, value, bound, begin, finish, other_not_info, Parameter, constructor, argument) => False::elim(
+      ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), Parameter))
+    )
+  }
+}

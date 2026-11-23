@@ -1,0 +1,350 @@
+import "index.taut"
+import "navigate.taut"
+import "../../unicode/src/unicode.taut"
+import "../../syntax/src/syntax.taut"
+import "../../text/src/text.taut"
+import std::base
+import std::map
+import std::text
+
+// The index of a file as text, one fact a line, in the form
+// `tools/selfhost-harness/tests/analyzer.rs` writes the Rust index in.
+// In a text, `\` is written `\\` and a line feed `\n`.
+
+
+pub fn an_dump_escape(t: Text): Text {
+  let bs := text_backslash()
+  let doubled := text_join(text_split(t, bs), Text::concat(bs, bs))
+  text_join(text_split(doubled, text_newline()), Text::concat(bs, "n"))
+}
+
+pub fn an_dump_nat(n: Nat): Text {
+  Text::of_nat(n)
+}
+
+pub fn an_dump_span(s: CstSpan): Text {
+  Text::concat_all([an_dump_nat(s.start), "-", an_dump_nat(s.end)])
+}
+
+pub fn an_dump_id(d: AnId): Text {
+  Text::concat_all([an_dump_nat(d.file), ":", an_dump_nat(d.index)])
+}
+
+pub fn an_dump_bool(b: Bool): Text {
+  if b { "true" } else { "false" }
+}
+
+pub fn an_dump_opt_nat(n: Option(Nat)): Text {
+  match n {
+    None => "-"
+    Some(x) => an_dump_nat(x)
+  }
+}
+
+pub fn an_dump_opt_text(t: Option(Text)): Text {
+  match t {
+    None => "-"
+    Some(x) => an_dump_escape(x)
+  }
+}
+
+pub fn an_dump_line(parts: List(Text)): Text {
+  Text::concat_all(an_append(parts, [text_newline()]))
+}
+
+pub fn an_dump_spans(ss: List(CstSpan)): List(Text) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => Cons(" ", Cons(an_dump_span(s), an_dump_spans(rest)))
+  }
+}
+
+pub fn an_dump_nats(ns: List(Nat)): List(Text) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(" ", Cons(an_dump_nat(n), an_dump_nats(rest)))
+  }
+}
+
+pub fn an_dump_def(i: Nat, d: AnDef): Text {
+  Text::concat_all([
+    an_dump_line(["def ", an_dump_nat(i)]),
+    an_dump_line(["  name ", an_dump_escape(d.name)]),
+    an_dump_line(["  kind ", d.kind]),
+    an_dump_line(Cons("  spans", an_dump_spans(d.spans))),
+    an_dump_line(["  sig ", an_dump_escape(d.signature)]),
+    an_dump_line(["  declared ", an_dump_opt_text(d.declared)]),
+    an_dump_line(["  exported ", an_dump_bool(d.exported)]),
+    an_dump_line(["  site ", an_dump_opt_nat(d.site)]),
+    an_dump_line(["  parent ", an_dump_opt_nat(d.parent)]),
+    an_dump_line(Cons("  members", an_dump_nats(d.members))),
+    an_dump_line(["  pinned ", an_dump_opt_text(d.pinned)])
+  ])
+}
+
+pub fn an_dump_defs(f: AnFile, i: Nat, fuel: Nat): List(Text) {
+  match fuel {
+    Zero => Nil
+    Succ(k) => if i >= f.count { Nil } else { Cons(an_dump_def(i, an_file_def(f, i)), an_dump_defs(f, i + 1, k)) }
+  }
+}
+
+pub fn an_dump_imports(xs: List(Text × Bool)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match x {
+      #(path, is_module) => Cons(
+        an_dump_line(["import ", an_dump_bool(is_module), " ", an_dump_escape(path)]),
+        an_dump_imports(rest)
+      )
+    }
+  }
+}
+
+pub fn an_dump_refs(rs: List(AnRef)): List(Text) {
+  match rs {
+    Nil => Nil
+    Cons(r, rest) => Cons(
+      an_dump_line(["ref ", an_dump_span(r.span), " ", an_dump_id(r.target), " ", an_dump_bool(r.approximate)]),
+      an_dump_refs(rest)
+    )
+  }
+}
+
+pub fn an_dump_words(what: Text, ws: List(AnWord)): List(Text) {
+  match ws {
+    Nil => Nil
+    Cons(w, rest) => Cons(
+      an_dump_line([what, " ", an_dump_span(w.span), " ", an_dump_escape(w.word)]),
+      an_dump_words(what, rest)
+    )
+  }
+}
+
+pub fn an_dump_span_lines(what: Text, ss: List(CstSpan)): List(Text) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => Cons(an_dump_line([what, " ", an_dump_span(s)]), an_dump_span_lines(what, rest))
+  }
+}
+
+pub fn an_dump_theorems(ts: List(CstSpan × Nat)): List(Text) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => match t {
+      #(s, d) => Cons(an_dump_line(["theorem ", an_dump_span(s), " ", an_dump_nat(d)]), an_dump_theorems(rest))
+    }
+  }
+}
+
+pub fn an_dump_toplevel(es: List(Text × AnId)): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => match e {
+      #(name, d) => Cons(
+        an_dump_line(["toplevel ", an_dump_escape(name), " ", an_dump_id(d)]),
+        an_dump_toplevel(rest)
+      )
+    }
+  }
+}
+
+pub fn an_dump_file(id: Nat, f: AnFile): Text {
+  let head := an_dump_line(["== ", an_dump_nat(id)])
+  if f.broken {
+    Text::concat_all([head, an_dump_line(["error"])])
+  } else {
+    Text::concat_all(
+      Cons(
+        head,
+        an_append(
+          an_dump_imports(f.imports),
+          an_append(
+            an_dump_defs(f, 0, f.count),
+            an_append(
+              an_dump_refs(f.refs),
+              an_append(
+                an_dump_words("unresolved", f.unresolved),
+                an_append(
+                  an_dump_words("opaque", f.opaque_words),
+                  an_append(
+                    an_dump_span_lines("top", f.tops),
+                    an_append(
+                      an_dump_span_lines("macro", f.macros),
+                      an_append(
+                        an_dump_theorems(f.theorems),
+                        Cons(
+                          an_dump_line(Cons("closure", an_dump_nats(f.closure))),
+                          an_dump_toplevel(Ordmap::entries(f.toplevel))
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+// --- Navigation ---------------------------------------------------------------
+
+pub fn an_dump_place(w: AnWorld, file: Nat, span: CstSpan): Text {
+  Text::concat_all([an_base_name(an_file_or_empty(w, file).path), " ", an_dump_span(span)])
+}
+
+pub fn an_dump_colours(cs: List(CstSpan × Text)): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => match c {
+      #(s, colour) => Cons(an_dump_line(["colour ", an_dump_span(s), " ", colour]), an_dump_colours(rest))
+    }
+  }
+}
+
+pub fn an_dump_places(w: AnWorld, ps: List(AnPlace)): List(Text) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(" ", Cons(an_dump_place(w, p.file, p.span), an_dump_places(w, rest)))
+  }
+}
+
+pub fn an_dump_edits(w: AnWorld, es: List(AnEdit)): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(" ", Cons(an_dump_place(w, e.file, e.span), Cons(" ", Cons(an_dump_escape(e.text), an_dump_edits(w, rest)))))
+  }
+}
+
+pub fn an_dump_at(t: &SyntaxTables, classes: UnicodeClasses, w: AnWorld, file: Nat, name: Text, at: Nat): Text ! {overflow} {
+  let defined: Text := match an_definition(w, file, at) {
+    None => "-"
+    Some(p) => an_dump_place(w, p.file, p.span)
+  }
+  let hover: Text := match an_hover(w, file, at) {
+    None => "-"
+    Some(h) => match h {
+      #(s, md) => Text::concat_all([an_dump_span(s), " ", an_dump_escape(md)])
+    }
+  }
+  let prepare: Text := match an_prepare_rename(w, file, at) {
+    AnRefused(^why) => "error"
+    AnOk(p) => match p {
+      #(s, old) => Text::concat_all([an_dump_span(s), " ", an_dump_escape(old)])
+    }
+  }
+  let rename: List(Text) := match an_rename(&t, classes, w, file, at, name, Nil) {
+    AnRefused(^why) => [" error"]
+    AnOk(es) => an_dump_edits(w, es)
+  }
+  Text::concat_all([
+    an_dump_line(["at ", an_dump_nat(at)]),
+    an_dump_line(["  def ", defined]),
+    an_dump_line(["  hover ", hover]),
+    an_dump_line(Cons("  refs", an_dump_places(w, an_references(w, file, at, true)))),
+    an_dump_line(["  prepare ", prepare]),
+    an_dump_line(Cons("  rename", rename))
+  ])
+}
+
+pub fn an_dump_ats(t: &SyntaxTables, classes: UnicodeClasses, w: AnWorld, file: Nat, name: Text, ats: List(Nat)): List(Text) ! {overflow} {
+  match ats {
+    Nil => Nil
+    Cons(at, rest) => Cons(an_dump_at(&t, classes, w, file, name, at), an_dump_ats(&t, classes, w, file, name, rest))
+  }
+}
+
+pub fn an_dump_positions(text: Text, ats: List(Nat)): List(Text) {
+  match ats {
+    Nil => Nil
+    Cons(at, rest) => if at < Text::len(text) && Text::byte_value(text, at) >= 128 && Text::byte_value(text, at) < 192 {
+      // Inside a character: not a position.
+      an_dump_positions(text, rest)
+    } else {
+      an_dump_position(text, at, an_dump_positions(text, rest))
+    }
+  }
+}
+
+pub fn an_dump_position(text: Text, at: Nat, more: List(Text)): List(Text) {
+  match an_position_of(text, at) {
+      #(line, col) => Cons(
+        an_dump_line(["position ", an_dump_nat(at), " ", an_dump_nat(line), " ", an_dump_nat(col), " ", an_dump_nat(an_offset_of(text, line, col))]),
+        more
+      )
+  }
+}
+
+pub fn an_span_starts(ss: List(CstSpan)): List(Nat) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => Cons(s.start, an_span_starts(rest))
+  }
+}
+
+pub fn an_def_starts(ds: List(Nat × AnDef)): List(Nat) {
+  match ds {
+    Nil => Nil
+    Cons(e, rest) => match e {
+      #(^i, d) => an_append(an_span_starts(d.spans), an_def_starts(rest))
+    }
+  }
+}
+
+pub fn an_ref_starts(rs: List(AnRef)): List(Nat) {
+  match rs {
+    Nil => Nil
+    Cons(r, rest) => Cons(r.span.start, an_ref_starts(rest))
+  }
+}
+
+pub fn an_word_starts(ws: List(AnWord)): List(Nat) {
+  match ws {
+    Nil => Nil
+    Cons(x, rest) => Cons(x.span.start, an_word_starts(rest))
+  }
+}
+
+pub fn an_theorem_starts(ts: List(CstSpan × Nat)): List(Nat) {
+  match ts {
+    Nil => Nil
+    Cons(x, rest) => match x {
+      #(s, ^d) => Cons(s.start, an_theorem_starts(rest))
+    }
+  }
+}
+
+pub fn an_unique(xs: List(Nat)): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match rest {
+      Nil => [x]
+      Cons(y, ^more) => if x == y { an_unique(rest) } else { Cons(x, an_unique(rest)) }
+    }
+  }
+}
+
+// Where a name is written in the file: the starts of its declarations, uses,
+// unresolved names, macro calls and theorem keywords, in order.
+pub fn an_name_starts(f: AnFile): List(Nat) {
+  an_unique(an_sort_nats(an_append(an_def_starts(Ordmap::entries(f.defs)), an_append(an_ref_starts(f.refs), an_append(an_word_starts(f.unresolved), an_append(an_span_starts(f.macros), an_theorem_starts(f.theorems)))))))
+}
+
+// What an editor is told about the file `file`: the colour of each name,
+// then for each place a name starts its declaration, hover, uses, and a
+// rename to `name`, then the position of each byte offset.
+pub fn an_dump_navigate(t: &SyntaxTables, classes: UnicodeClasses, w: AnWorld, file: Nat, name: Text): Text ! {overflow} {
+  let f := an_file_or_empty(w, file)
+  Text::concat_all(
+    an_append(
+      an_dump_colours(an_name_colours(w, file)),
+      an_append(
+        an_dump_ats(&t, classes, w, file, name, an_name_starts(f)),
+        an_dump_positions(f.text, an_range(0, Text::len(f.text) + 1))
+      )
+    )
+  )
+}

@@ -1,0 +1,40 @@
+fn fill(v: &mut Vec(u64), n: u64): u64 ! {div, overflow} {
+  if n == 0 {
+    0
+  } else {
+    Vec::push(&mut v, n)
+    match Vec::get_mut(&mut v, 0) { Some(at) => { *at := at + 1 }, None => #() }
+    1 + fill(&mut v, n - 1)
+  }
+}
+
+fn count(c: &mut u64, n: u64): u64 ! {div, overflow} {
+  if n == 0 { 0 } else { *c := c + 1; 1 + count(&mut c, n - 1) }
+}
+
+fn churn(v: &mut Vec(u64), n: u64): u64 ! {div, overflow} {
+  if n == 0 {
+    0
+  } else {
+    Vec::clear(&mut v)
+    Vec::push(&mut v, n)
+    Vec::push(&mut v, n)
+    Vec::truncate(&mut v, 1)
+    1 + churn(&mut v, n - 1)
+  }
+}
+
+var v: Vec(u64) := Vec::new()
+Vec::push(&mut v, 5)
+show(&fill(&mut v, 30000))
+show(&Vec::len(&v))
+show(&(match Vec::get(&v, 0) { Some(x) => x, None => 0 }))
+var c: u64 := 3
+show(&count(&mut c, 30000))
+show(&c)
+var w: Vec(u64) := Vec::new()
+Vec::push(&mut w, 1)
+Vec::push(&mut w, 2)
+show(&churn(&mut w, 30000))
+show(&Vec::len(&w))
+show(&(match Vec::get(&w, 0) { Some(x) => x, None => 0 }))

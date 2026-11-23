@@ -64,7 +64,7 @@
 
 ```sh
 cargo run --locked -p tauto-cli --bin tauto -- check --tote examples/stack-check --fresh
-cargo run --locked -p tauto-cli --bin tauto -- run --backend eval --tote examples/stack-check
+cargo run --locked -p tauto-cli --bin tauto -- run --tote examples/stack-check
 cargo run --locked -p tauto-cli --bin tauto -- test cases/check/stack-check.eure
 cargo test --locked -p tauto-test-suite --test backends -- rust check/stack-check
 cargo test --locked -p tauto-test-suite --test backends -- javascript check/stack-check

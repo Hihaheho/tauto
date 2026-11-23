@@ -30,6 +30,15 @@ pub struct Declared {
     pub digest: String,
 }
 
+impl tauto_surface::identity::Detach for Checker {
+    /// A copy whose name reservations are its own ([`Kernel::detached`]).
+    fn detached(&self) -> Self {
+        Self {
+            kernel: self.kernel.detached(),
+        }
+    }
+}
+
 impl Checker {
     /// The prelude's constants and nothing else. With `proof_cache`, proofs
     /// checked before are taken from the proof cache as `check_file` takes
@@ -47,7 +56,7 @@ impl Checker {
     /// What the syntax macros wrote their output as, for the
     /// messages about it.
     pub fn show_syntax(&mut self, shown: HashMap<u32, String>) {
-        self.kernel.shown = shown;
+        self.kernel.shown = shown.into();
     }
 
     /// [`Kernel::source_alias`].

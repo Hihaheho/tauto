@@ -1,27 +1,44 @@
 // A lexical capture keeps the defining activation across calls and resumptions.
 @ cases.borrowed-recursive-capture
-backends = ["rust", "javascript"]
 source = ```nib
 fn pure_helper(): Unit { #() }
-fn plain(n: i64, &previous: () -> i64): i64 ! {Div} {
+fn plain(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
   var x := n
   if n == 0 { previous() } else { plain(n - 1, () => x) }
 }
-fn with_helper(n: i64, &previous: () -> i64): i64 ! {Div} {
+fn with_helper(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
   var x := n
   if n == 0 { previous() } else { with_helper(n - 1, () => { pure_helper(); x }) }
 }
-perform show("plain", plain(1, () => 99))
-perform show("with_helper", with_helper(1, () => 99))
+show(&plain(1, () => 99))
+show(&with_helper(1, () => 99))
 ```
-shows = ["plain = 1", "with_helper = 1"]
+stdout = ```
+1
+1
+```
+nir.fns.plain = ```nir
+fn plain@2(n#4: i64, fnref previous#5: &fn() -> i64 shared S): i64 A = {
+  var x#6 := copy n#4;
+  if eq(copy n#4, 0i64) then previous#5(): i64 else plain@2(sub<i64>(copy n#4, 1i64), closure borrowed() -> i64 as fn() -> i64 copy S => copy x#6) tier A tick host: i64
+}
+```
+nir.fns.with_helper = ```nir
+fn with_helper@4(n#8: i64, fnref previous#9: &fn() -> i64 shared S): i64 A = {
+  var x#10 := copy n#8;
+  if eq(copy n#8, 0i64) then previous#9(): i64 else with_helper@4(sub<i64>(copy n#8, 1i64), closure borrowed() -> i64 as fn() -> i64 copy S => {
+    pure_helper@6(): Unit;
+    copy x#10
+  }) tier A tick host: i64
+}
+```
 
 @ cases.resumed-boundary-capture
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect pause(): Unit resume ω
 fn pure_helper(): Unit { #() }
-fn resumed_plain(n: i64, &previous: () -> i64): i64 ! {Div} {
+fn resumed_plain(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
   let x := n
   if n == 0 { previous() } else {
     handle { perform pause(); x } with {
@@ -29,7 +46,7 @@ fn resumed_plain(n: i64, &previous: () -> i64): i64 ! {Div} {
     }
   }
 }
-fn resumed_with_helper(n: i64, &previous: () -> i64): i64 ! {Div} {
+fn resumed_with_helper(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
   let x := n
   if n == 0 { previous() } else {
     handle { perform pause(); pure_helper(); x } with {
@@ -37,18 +54,44 @@ fn resumed_with_helper(n: i64, &previous: () -> i64): i64 ! {Div} {
     }
   }
 }
-perform show("resumed_plain", resumed_plain(1, () => 99))
-perform show("resumed_with_helper", resumed_with_helper(1, () => 99))
+show(&resumed_plain(1, () => 99))
+show(&resumed_with_helper(1, () => 99))
 ```
-shows = ["resumed_plain = 1", "resumed_with_helper = 1"]
+stdout = ```
+1
+1
+```
+nir.fns.resumed_plain = ```nir
+fn resumed_plain@2(n#4: i64, fnref previous#5: &fn() -> i64 shared S): i64 A = {
+  let x#6 := copy n#4;
+  if eq(copy n#4, 0i64) then previous#5(): i64 else handle 1 M m kept detached captures(x#6, n#4) do {
+    perform pause() resume ω instance() -> Unit legacy: Unit;
+    copy x#6
+  } with {
+    suspend pause() params() answer Unit k k#7 instance() -> Unit legacy => resumed_plain@2(sub<i64>(copy n#4, 1i64), closure borrowed() -> i64 as fn() -> i64 shared S => resume k#7(()): i64) tier A tick host: i64,
+  }: i64
+}
+```
+nir.fns.resumed_with_helper = ```nir
+fn resumed_with_helper@4(n#9: i64, fnref previous#10: &fn() -> i64 shared S): i64 A = {
+  let x#11 := copy n#9;
+  if eq(copy n#9, 0i64) then previous#10(): i64 else handle 2 M m kept detached captures(x#11, n#9) do {
+    perform pause() resume ω instance() -> Unit legacy: Unit;
+    pure_helper@6(): Unit;
+    copy x#11
+  } with {
+    suspend pause() params() answer Unit k k#12 instance() -> Unit legacy => resumed_with_helper@4(sub<i64>(copy n#9, 1i64), closure borrowed() -> i64 as fn() -> i64 shared S => resume k#12(()): i64) tier A tick host: i64,
+  }: i64
+}
+```
 
 @ cases.resumed-operation-arm-capture
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect pause(): Unit resume ω
 effect read(): i64 resume 1
 fn pure_helper(): Unit { #() }
-fn resumed_arm(n: i64, &previous: () -> i64): i64 ! {Div} {
+fn resumed_arm(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
   let x := n
   if n == 0 { previous() } else {
     handle { perform pause(); perform read() } with {
@@ -57,16 +100,31 @@ fn resumed_arm(n: i64, &previous: () -> i64): i64 ! {Div} {
     }
   }
 }
-perform show("arm", resumed_arm(1, () => 99))
+show(&resumed_arm(1, () => 99))
 ```
-shows = ["arm = 1"]
+stdout = "1\n"
+nir.fns.resumed_arm = ```nir
+fn resumed_arm@2(n#4: i64, fnref previous#5: &fn() -> i64 shared S): i64 A = {
+  let x#6 := copy n#4;
+  if eq(copy n#4, 0i64) then previous#5(): i64 else handle 1 M m kept detached captures(n#4, x#6) do {
+    perform pause() resume ω instance() -> Unit legacy: Unit;
+    perform read() direct detached instance() -> i64 legacy: i64
+  } with {
+    direct read() params() answer Unit instance() -> i64 legacy => {
+      pure_helper@5(): Unit;
+      copy x#6
+    },
+    suspend pause() params() answer Unit k k#7 instance() -> Unit legacy => resumed_arm@2(sub<i64>(copy n#4, 1i64), closure borrowed() -> i64 as fn() -> i64 shared S => resume k#7(()): i64) tier A tick host: i64,
+  }: i64
+}
+```
 
 @ cases.resumed-return-arm-capture
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect pause(): Unit resume ω
 fn pure_helper(): Unit { #() }
-fn resumed_return(n: i64, &previous: () -> i64): i64 ! {Div} {
+fn resumed_return(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
   let x := n
   if n == 0 { previous() } else {
     handle { perform pause(); 7 } with {
@@ -75,15 +133,29 @@ fn resumed_return(n: i64, &previous: () -> i64): i64 ! {Div} {
     }
   }
 }
-perform show("return", resumed_return(1, () => 99))
+show(&resumed_return(1, () => 99))
 ```
-shows = ["return = 1"]
+stdout = "1\n"
+nir.fns.resumed_return = ```nir
+fn resumed_return@2(n#4: i64, fnref previous#5: &fn() -> i64 shared S): i64 A = {
+  let x#6 := copy n#4;
+  if eq(copy n#4, 0i64) then previous#5(): i64 else handle 1 M m kept detached captures(n#4, x#6) do {
+    perform pause() resume ω instance() -> Unit legacy: Unit;
+    7i64
+  } with {
+    return value#8: i64 => {
+      pure_helper@5(): Unit;
+      copy x#6
+    },
+    suspend pause() params() answer Unit k k#7 instance() -> Unit legacy => resumed_return@2(sub<i64>(copy n#4, 1i64), closure borrowed() -> i64 as fn() -> i64 shared S => resume k#7(()): i64) tier A tick host: i64,
+  }: i64
+}
+```
 
 @ cases.mutable-continuation-cannot-escape-arm
-backends = ["rust", "javascript"]
 source = ```nib
 effect pause(): Unit resume ω
-fn resumed_mutable(n: i64, &previous: () -> i64): i64 ! {Div} {
+fn resumed_mutable(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
   var x := n
   if n == 0 { previous() } else {
     handle { perform pause(); x } with {
@@ -91,7 +163,7 @@ fn resumed_mutable(n: i64, &previous: () -> i64): i64 ! {Div} {
     }
   }
 }
-perform show("mutable", resumed_mutable(1, () => 99))
+show(&resumed_mutable(1, () => 99))
 ```
 lin = "error: k shares var x, so it may only be called in its arm"
 compile_errors.rust = "front: k shares var x, so it may only be called in its arm"
@@ -100,44 +172,121 @@ compile_errors.javascript = "front: k shares var x, so it may only be called in 
 // A top-level function passed by name to a borrowed callback parameter
 // behaves as the same function written as a closure.
 @ cases.function-name-as-borrowed-suspending-callback
-backends = ["rust", "javascript"]
 source = ```nib
 effect tick(): i64 resume 1
-fn with_tick<T, !e>(&body: () -> T ! {tick} ∪ e): T ! e {
+fn with_tick<T, !e>(body: &(() -> T ! {tick} ∪ e)): T ! e {
   handle { body() } with {
     tick(), k => k(5)
   }
 }
-fn movement(): i64 ! {tick} { perform tick() + 1 }
-perform show("named", with_tick(movement))
-perform show("closure", with_tick(() => movement()))
+fn movement(): i64 ! {tick, overflow} { perform tick() + 1 }
+show(&with_tick(movement))
+show(&with_tick(() => movement()))
 ```
-shows = ["named = 6", "closure = 6"]
+stdout = ```
+6
+6
+```
+nir.fns.with_tick = ```nir
+fn with_tick@2<'T: Static>(fnref body#4: &fn() -> 'T shared A): 'T A = handle 1 A do body#4() tier A: 'T with {
+  direct tick() params() answer Unit instance() -> i64 legacy => 5i64,
+}: 'T
+```
+nir.fns.movement = ```nir
+fn movement@3(): i64 A = add<i64>(perform tick() direct instance() -> i64 legacy: i64, 1i64)
+```
+
+// The same, with an arm that computes after it resumes: the operation
+// suspends, and is not answered in place.
+@ cases.function-name-as-borrowed-suspending-callback-that-suspends
+llvm.unimplemented = "generate: the LLVM backend does not write a function value that may stop yet"
+source = ```nib
+effect tick(): i64 resume 1
+fn with_tick<T, !e>(body: &(() -> T ! {tick} ∪ e)): T ! e {
+  handle { body() } with {
+    tick(), k => {
+      let r := k(5)
+      r
+    }
+  }
+}
+fn movement(): i64 ! {tick, overflow} { perform tick() + 1 }
+show(&with_tick(movement))
+show(&with_tick(() => movement()))
+```
+stdout = ```
+6
+6
+```
+nir.fns.with_tick = ```nir
+fn with_tick@2<'T: Static>(fnref body#4: &fn() -> 'T shared O): 'T A = handle 1 O do body#4() tier O: 'T with {
+  suspend tick() params() answer i64 k k#5 instance() -> i64 legacy => {
+    let r#6 := resume k#5(5i64): 'T;
+    move r#6
+  },
+}: 'T
+```
+nir.fns.movement = ```nir
+fn movement@3(): i64 O = add<i64>(perform tick() resume 1 instance() -> i64 legacy: i64, 1i64)
+```
 
 // A function item whose parameter has a larger row than the callback the
 // caller hands it accepts that callback, since a parameter is contravariant
 // in its effects; the backend lifts the callback to the parameter's tier.
 @ cases.function-name-with-higher-tier-parameter
-backends = ["rust", "javascript"]
 source = ```tauto
 effect ask(): i64
 fn apply2<!h>(run: (() -> i64 ! {}) -> i64 ! h): i64 ! h { run(() => 1) }
-fn wants(k: () -> i64 ! {ask}): i64 ! {ask} { k() + perform ask() }
-fn asked(): i64 ! {ask} { apply2(wants) }
-perform show("lifted", handle { asked() } with {
+fn wants(k: () -> i64 ! {ask}): i64 ! {ask, overflow} { k() + perform ask() }
+fn asked(): i64 ! {ask, overflow} { apply2(wants) }
+show(&(handle { asked() } with {
   ask(), k => k(10)
   return v => v
-})
+}))
 ```
-shows = ["lifted = 11"]
+stdout = "11\n"
+nir.fns.apply2 = ```nir
+fn apply2@5(run#7: fn(fn() -> i64 shared S) -> i64 shared A): i64 A = run#7(closure pure() -> i64 as fn() -> i64 copy S => 1i64) tier A: i64
+```
+nir.fns.wants = ```nir
+fn wants@6(k#8: fn() -> i64 shared S): i64 A = add<i64>(k#8(): i64, perform ask() direct instance() -> i64 legacy: i64)
+```
+nir.fns.asked = ```nir
+fn asked@2(): i64 A = apply2@5(wants@6: fn(fn() -> i64 shared S) -> i64 shared A) tier A: i64
+```
+
+// The same, with an arm that computes after it resumes: the operation
+// suspends, and is not answered in place.
+@ cases.function-name-with-higher-tier-parameter-that-suspends
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect ask(): i64
+fn apply2<!h>(run: (() -> i64 ! {}) -> i64 ! h): i64 ! h { run(() => 1) }
+fn wants(k: () -> i64 ! {ask}): i64 ! {ask, overflow} { k() + perform ask() }
+fn asked(): i64 ! {ask, overflow} { apply2(wants) }
+show(&(handle { asked() } with {
+  ask(), k => k(10) + 0
+  return v => v
+}))
+```
+stdout = "11\n"
+nir.fns.apply2 = ```nir
+fn apply2@5(run#8: fn(fn() -> i64 shared S) -> i64 shared O): i64 O = run#8(closure pure() -> i64 as fn() -> i64 copy S => 1i64) tier O: i64
+```
+nir.fns.wants = ```nir
+fn wants@6(k#9: fn() -> i64 shared O): i64 O = add<i64>(k#9() tier O: i64, perform ask() resume <=1 instance() -> i64 legacy: i64)
+```
+nir.fns.asked = ```nir
+fn asked@2(): i64 O = apply2@5(wants@6: fn(fn() -> i64 shared S) -> i64 shared O) tier O: i64
+```
 
 // A function item lent with `&` to a borrowed parameter whose row has a
 // handler is called in that parameter's tier, as the item lent without `&` is.
 @ cases.borrowed-fn-item-explicit-ref
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a function value that may stop yet"
 source = ```tauto
 effect tick(): i64
-fn run<T>(start: i64, &body: () -> T ! {tick}): Pair(T, i64) ! {Div} {
+fn run<T>(start: i64, body: &(() -> T ! {tick})): (T × i64) ! {div, overflow} {
   var n := start
   let v := handle { body() } with {
     tick(), k => {
@@ -145,20 +294,89 @@ fn run<T>(start: i64, &body: () -> T ! {tick}): Pair(T, i64) ! {Div} {
       k(n)
     }
   }
-  Pair { fst: v, snd: n }
+  #(v, n)
 }
 fn session(): i64 ! {tick} {
   let a := perform tick()
   perform tick()
 }
-perform show("borrowed", run(0, &session).fst)
-perform show("owned", run(0, session).fst)
+show(&(run(0, &session).fst))
+show(&(run(0, session).fst))
 ```
-shows = ["borrowed = 2", "owned = 2"]
+stdout = ```
+2
+2
+```
+nir.fns.run = ```nir
+fn run@2<'T: Static>(start#4: i64, fnref body#5: &fn() -> 'T shared O): Pair('T, i64) A = {
+  var sharedvar_copy n#6 := copy start#4;
+  let v#8 := handle 1 O captures(n#6) clones(n#6) do body#5() tier O: 'T with {
+    suspend tick() params() answer i64 k k#7 instance() -> i64 legacy => {
+      set n#6 := add<i64>(copy n#6, 1i64);
+      resume k#7(copy n#6): 'T
+    },
+  }: 'T;
+  Pair::Mk(fst = move v#8, snd = copy n#6): Pair('T, i64)
+}
+```
+nir.fns.session = ```nir
+fn session@3(): i64 O = {
+  let a#9 := perform tick() resume <=1 instance() -> i64 legacy: i64;
+  perform tick() resume <=1 instance() -> i64 legacy: i64
+}
+```
+
+// The same, with an arm that computes after it resumes: the operation
+// suspends, and is not answered in place.
+@ cases.borrowed-fn-item-explicit-ref-that-suspends
+llvm.unimplemented = "generate: the LLVM backend does not write a function value that may stop yet"
+source = ```tauto
+effect tick(): i64
+fn run<T>(start: i64, body: &(() -> T ! {tick})): (T × i64) ! {div, overflow} {
+  var n := start
+  let v := handle { body() } with {
+    tick(), k => {
+      n := n + 1
+      let r := k(n)
+      r
+    }
+  }
+  #(v, n)
+}
+fn session(): i64 ! {tick} {
+  let a := perform tick()
+  perform tick()
+}
+show(&(run(0, &session).fst))
+show(&(run(0, session).fst))
+```
+stdout = ```
+2
+2
+```
+nir.fns.run = ```nir
+fn run@2<'T: Static>(start#4: i64, fnref body#5: &fn() -> 'T shared O): Pair('T, i64) A = {
+  var sharedvar_copy n#6 := copy start#4;
+  let v#9 := handle 1 O captures(n#6) clones(n#6) do body#5() tier O: 'T with {
+    suspend tick() params() answer i64 k k#7 instance() -> i64 legacy => {
+      set n#6 := add<i64>(copy n#6, 1i64);
+      let r#8 := resume k#7(copy n#6): 'T;
+      move r#8
+    },
+  }: 'T;
+  Pair::Mk(fst = move v#9, snd = copy n#6): Pair('T, i64)
+}
+```
+nir.fns.session = ```nir
+fn session@3(): i64 O = {
+  let a#10 := perform tick() resume <=1 instance() -> i64 legacy: i64;
+  perform tick() resume <=1 instance() -> i64 legacy: i64
+}
+```
 
 // A closure that matches on a captured var and assigns it in an arm.
 @ cases.captured-var-assigned-in-match-arm
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `var` shared with a closure yet"
 source = ```nib
 fn pop_twice(): i64 {
   var stack := Cons(1, Cons(2, Cons(3, Nil)))
@@ -172,47 +390,116 @@ fn pop_twice(): i64 {
   pop()
   match stack { Nil => 0, Cons(o, _) => o }
 }
-perform show("left", pop_twice())
+show(&pop_twice())
 ```
-shows = ["left = 3"]
+stdout = "3\n"
+nir.fns.pop_twice = ```nir
+fn pop_twice@2(): i64 S = {
+  var sharedvar stack#4 := List::Cons(1i64, List::Cons(2i64, List::Cons(3i64, List::Nil: List(i64)): List(i64)): List(i64)): List(i64);
+  let pop#6 := closure() -> Unit as fn() -> Unit copy S clones(stack#4) => match clone stack#4 {
+    List::Nil => (),
+    List::Cons(_, rest#5: List(i64)) => {
+      set stack#4 := clone rest#5;
+    },
+  };
+  pop#6(): Unit;
+  pop#6(): Unit;
+  match clone stack#4 {
+    List::Nil => 0i64,
+    List::Cons(o#7: i64, _) => copy o#7,
+  }
+}
+```
 
 // A borrowing closure that calls an owned function that suspends borrows the
 // function, and each call of the closure calls it again.
 @ cases.borrowing-closure-calls-owned-suspending-fn
-backends = ["rust", "javascript", "vm"]
 source = ```nib
-import std::prelude::Par
-fn call<T, !e>(&body: () -> T ! e): T ! e { body() }
-fn twice<!e>(&body: () -> u64 ! e): u64 ! e { body() + body() }
+import std::builtin::par
+fn call<T, !e>(body: &(() -> T ! e)): T ! e { body() }
+fn twice<!e>(body: &(() -> nat ! e)): nat ! e { body() + body() }
 fn render(draw: () -> Text ! {wait}): Text ! {wait} { call(() => draw()) }
-fn render_twice(draw: () -> u64 ! {wait}): u64 ! {wait} { twice(() => draw()) }
-perform show("html", render(() => "ok"))
-perform show("twice", render_twice(() => 21))
+fn render_twice(draw: () -> nat ! {wait}): nat ! {wait} { twice(() => draw()) }
+show(&render(() => "ok"))
+show(&render_twice(() => 21))
 ```
-shows = ["html = \"ok\"", "twice = 42"]
+stdout = ```
+"ok"
+42
+```
+nir.fns.call = ```nir
+fn call@7<'T>(fnref body#11: &fn() -> 'T shared O): 'T O = body#11() tier O: 'T
+```
+nir.fns.twice = ```nir
+fn twice@8(fnref body#12: &fn() -> nat shared O): nat O = add<nat>(body#12() tier O: nat, body#12() tier O: nat)
+```
+nir.fns.render = ```nir
+fn render@2(draw#4: fn() -> Text shared O): Text O = call@7<Text>(closure borrowed() -> Text as fn() -> Text shared O refs(ref draw#5 = &draw#4) => draw#5() tier O: Text) tier O: Text
+```
+nir.fns.render_twice = ```nir
+fn render_twice@4(draw#7: fn() -> nat shared O): nat O = twice@8(closure borrowed() -> nat as fn() -> nat shared O refs(ref draw#8 = &draw#7) => draw#8() tier O: nat) tier O: nat
+```
 
 // A handler with a direct arm, around a body that suspends, answers with a
 // local of the handling function. The direct arm reads the local itself; the
 // handler of the suspending body keeps a clone of its own.
 @ cases.direct-arm-local-around-suspending-body
-backends = ["rust", "javascript", "vm"]
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Par { wait, Ref, Semaphore }
-shared struct Rt { next: Ref(i64), gate: Semaphore }
+import std::builtin::par { wait, Ref, Semaphore, ref_new, ref_get, mutex_new, mutex_claim, mutex_take_claimed, mutex_put }
+struct(shared) Rt { next: Ref(i64), gate: Semaphore }
 effect ask(): Rt direct
-fn run<T, !e>(&body: () -> T ! {ask} ∪ e): T ! {Div, wait} ∪ e {
-  let r := Rt { next: Ref::new(1), gate: Semaphore::new(1) }
+fn run<T, !e>(body: &(() -> T ! {ask} ∪ e)): T ! {div, wait, ref_new, mutex_new, mutex_claim, mutex_take_claimed} ∪ e {
+  let r := Rt { next: perform ref_new(1), gate: Semaphore::new(1) }
   handle { body() } with {
     ask(), k => k(r)
     return v => v
   }
 }
-fn read(): i64 ! {ask, wait} {
+fn read(): i64 ! {ask, wait, ref_get, mutex_claim, mutex_take_claimed, mutex_put} {
   let r := perform ask()
   Semaphore::acquire(r.gate)
   Semaphore::release(r.gate)
-  Ref::get(r.next)
+  perform ref_get(r.next)
 }
-perform show("s", run(() => read()))
+show(&run(() => read()))
 ```
-shows = ["s = 1"]
+stdout = "1\n"
+nir.fns.run = ```nir
+fn run@2<'T: Static>(fnref body#12: &fn() -> 'T shared O): 'T O = {
+  let r#13 := Rt::Mk(next = perform ref_new(1i64) direct instance<i64>(i64) -> std Ref(i64) legacy: std Ref(i64), gate = Semaphore::new@6(1u64): Semaphore): Rt;
+  handle 1 O captures(r#13) clones(r#13) do body#12() tier O: 'T with {
+    return v#14: 'T => move v#14,
+    direct ask() params() answer Unit instance() -> Rt legacy => clone r#13,
+  }: 'T
+}
+```
+nir.fns.read = ```nir
+fn read@3(): i64 O = {
+  let r#15 := perform ask() direct instance() -> Rt legacy: Rt;
+  Semaphore::acquire@7(clone r#15.gate: Semaphore) tier O: Unit;
+  Semaphore::release@8(clone r#15.gate: Semaphore) tier O: Unit;
+  perform ref_get(clone r#15.next: std Ref(i64)) direct instance<i64>(std Ref(i64)) -> i64 legacy: i64
+}
+```
+
+// A borrowing closure that captures a `&mut` parameter writes through that
+// borrow: each call pushes onto the caller's vector, on every backend.
+@ cases.borrowing-closure-writes-through-mut-param
+source = ```nib
+fn apply(f: &(() -> Unit ! {})): Unit ! {} { f(); f() }
+fn fill(v: &mut Vec(i64)): Unit ! {} { apply(() => Vec::push(v, 1)) }
+fn fill_local(v: &mut Vec(i64)): Unit ! {} {
+  let f := () => Vec::push(v, 2)
+  f()
+  f()
+}
+fn go(): u64 ! {} {
+  var v := Vec::new()
+  fill(&mut v)
+  fill_local(&mut v)
+  Vec::len(&v)
+}
+show(&go())
+```
+stdout = "4\n"

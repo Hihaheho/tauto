@@ -1,13 +1,17 @@
+import "../../identity/src/identity.taut"
+import "coerce.taut"
+import "messages.taut"
 import "expr_access_frame.taut"
 import "operator_frame.taut"
 import "binding_error_sound.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "error_frame.taut"
 import "expr_checks_error_sound.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "written_error_sound.taut"
@@ -20,7 +24,7 @@ pub theorem access_info_unbounded_frame_errors(
   h: Ty,
   unbounded: Bool
 ): CkErrorFrame(c, access_info_unbounded(c, term, name, h, unbounded)) {
-  ⊢ CkErrorFrame(c, access_info_unbounded(c, term, name, h, unbounded)) from match unbounded {
+  match unbounded {
     true => (clean_errors => clean_errors)
     false => error_frame_rewrap(
       c,
@@ -37,7 +41,7 @@ pub theorem access_info_frame_errors(
   h: Ty,
   more: Bool
 ): CkErrorFrame(c, access_info(c, term, name, h, more)) {
-  ⊢ CkErrorFrame(c, access_info(c, term, name, h, more)) from match more {
+  match more {
     true => (clean_errors => clean_errors)
     false => access_info_unbounded_frame_errors(c, term, name, h, Text::eq(name, "unbounded"))
   }
@@ -46,9 +50,9 @@ pub theorem access_info_frame_errors(
 pub theorem access_borrow_frame_errors(
   c: Checker,
   t: Ty,
-  borrow: Bool
-): CkErrorFrame(c, access_borrow(c, t, borrow)) {
-  ⊢ CkErrorFrame(c, access_borrow(c, t, borrow)) from match borrow {
+  r#borrow: Bool
+): CkErrorFrame(c, access_borrow(c, t, r#borrow)) {
+  match r#borrow {
     true => (clean_errors => clean_errors)
     false => (clean_errors => clean_errors)
   }
@@ -62,17 +66,34 @@ pub theorem access_found_frame_errors(
   borrowed: Bool,
   found: Option(Ty)
 ): CkErrorFrame(c, access_found(c, term, name, d, borrowed, found)) {
-  ⊢ CkErrorFrame(c, access_found(c, term, name, d, borrowed, found)) from match found {
+  match found {
     None => error_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
-      ck_error(c, cat4(d, " has no field `", name, "`"), span_of(term)),
-      ck_error_frame_errors(c, cat4(d, " has no field `", name, "`"), span_of(term)),
+      ck_error(c, no_field_message(d, name), span_of(term)),
+      ck_error_frame_errors(c, no_field_message(d, name), span_of(term)),
       ignored => c1 => error_frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame_errors(c1))
     )
     Some(t) => access_borrow_frame_errors(c, t, Bool::and(borrowed, not(kind_dup(ck_kind(c, t)))))
+  }
+}
+
+pub theorem access_product_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  original: Ty,
+  borrowed: Bool,
+  found: Option(Ty)
+): CkErrorFrame(c, access_product(c, term, name, original, borrowed, found)) {
+  match found {
+    Some(t) => access_borrow_frame_errors(c, t, Bool::and(borrowed, not(kind_dup(ck_kind(c, t)))))
+    None => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
   }
 }
 
@@ -85,7 +106,7 @@ pub theorem access_struct_frame_errors(
   borrowed: Bool,
   structural: Bool
 ): CkErrorFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) {
-  ⊢ CkErrorFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) from match structural {
+  match structural {
     true => access_found_frame_errors(
       c,
       term,
@@ -96,8 +117,8 @@ pub theorem access_struct_frame_errors(
     )
     false => error_frame_rewrap(
       c,
-      ck_field_missing(c, term, TyNamed(d, args), name),
-      ck_field_missing_frame_errors(c, term, TyNamed(d, args), name)
+      ck_field_missing(c, term, TyNamed(NameSpelled(d), args), name),
+      ck_field_missing_frame_errors(c, term, TyNamed(NameSpelled(d), args), name)
     )
   }
 }
@@ -110,7 +131,7 @@ pub theorem access_field_frame_errors(
   borrowed: Bool,
   t: Ty
 ): CkErrorFrame(c, access_field(c, term, name, original, borrowed, t)) {
-  ⊢ CkErrorFrame(c, access_field(c, term, name, original, borrowed, t)) from match t {
+  match t {
     TyInt(pat_w) => error_frame_rewrap(
       c,
       ck_field_missing(c, term, original, name),
@@ -146,6 +167,11 @@ pub theorem access_field_frame_errors(
       ck_field_missing(c, term, original, name),
       ck_field_missing_frame_errors(c, term, original, name)
     )
+    TyFloat32 => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
     TyFn(pat_params, pat_result, pat_kind) => error_frame_rewrap(
       c,
       ck_field_missing(c, term, original, name),
@@ -156,10 +182,13 @@ pub theorem access_field_frame_errors(
       ck_field_missing(c, term, original, name),
       ck_field_missing_frame_errors(c, term, original, name)
     )
-    TyProduct(pat_members) => error_frame_rewrap(
+    TyProduct(pat_members) => access_product_frame_errors(
       c,
-      ck_field_missing(c, term, original, name),
-      ck_field_missing_frame_errors(c, term, original, name)
+      term,
+      name,
+      original,
+      borrowed,
+      product_field_type(pat_members, name)
     )
     TyTagged(pat_tags, pat_inner) => error_frame_rewrap(
       c,
@@ -170,10 +199,10 @@ pub theorem access_field_frame_errors(
       c,
       term,
       name,
-      d,
+      surface_name_text(d),
       args,
       borrowed,
-      data_is_struct(ck_datas_of(c), d)
+      data_is_struct(ck_datas_of(c), surface_name_text(d))
     )
     TyParam(pat_name, pat_bound) => error_frame_rewrap(
       c,
@@ -229,3 +258,45 @@ pub theorem access_record_term_frame_errors(
   function: SurfaceTerm,
   inst: Ty
 ): CkErrorFrame(c, access_record_term(c, function, inst)) { (clean_errors => clean_errors) }
+
+pub theorem field_through_with_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  read: CoerceRead,
+  refused: Option(Text)
+): CkErrorFrame(c, field_through_with(c, term, read, refused)) {
+  match refused {
+    Some(m) => error_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, m, span_of(term)),
+      ck_error_frame_errors(c, m, span_of(term)),
+      ignored => c1 => error_frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame_errors(c1))
+    )
+    None => error_frame_rewrap(
+      c,
+      ck_field_of(c, term, coerce_read_base(read), coerce_read_field(read)),
+      ck_field_of_frame_errors(c, term, coerce_read_base(read), coerce_read_field(read))
+    )
+  }
+}
+
+pub theorem ck_field_through_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  place: Text,
+  b: Ty,
+  name: Text
+): CkErrorFrame(c, ck_field_through(c, term, place, b, name)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(field_through_unf(c, term, place, b, name)),
+    field_through_with_frame_errors(
+      c,
+      term,
+      ck_coerce_read(c, place, b, name),
+      coerce_read_refused(ck_coerce_read(c, place, b, name))
+    )
+  )
+}

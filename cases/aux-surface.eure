@@ -77,16 +77,16 @@ differential = "surface"
 
 @ cases.tests_effects_after_a_function_type
 source = ```tauto
-fn f(x: (i64) -> Bool ! {Div, ask}): i64 { 0 }
+fn f(x: (i64) -> Bool ! {div, ask}): i64 { 0 }
 ```
 parses = true
 differential = "surface"
 
 @ cases.modules_arguments_do_not_hide_names_in_the_next_function
 source = ```tauto
-module M { fn f(): i64 { 1 }
-fn g(f: i64): i64 { f }
-fn h(): i64 { f() } }
+ fn M::f(): i64 { 1 }
+fn M::g(f: i64): i64 { f }
+fn M::h(): i64 { M::f() }
 ```
 types = "ok"
 rows = "ok"
@@ -95,62 +95,62 @@ differential = "surface"
 
 @ cases.module_scope_1
 source = ```tauto
-module M { fn f(): i64 { 1 }
-fn g(): i64 { let f := f()
-f } }
+ fn M::f(): i64 { 1 }
+fn M::g(): i64 { let f := M::f()
+f }
 ```
 parses = true
 differential = "surface"
 
 @ cases.module_scope_2
 source = ```tauto
-module M { fn f(): i64 { 1 }
-fn g(): i64 { var f := f()
-f } }
+ fn M::f(): i64 { 1 }
+fn M::g(): i64 { var f := M::f()
+f }
 ```
 parses = true
 differential = "surface"
 
 @ cases.module_scope_3
 source = ```tauto
-module M { fn f(): i64 { 1 }
-fn g(): i64 { let callback := (f) => f()
-f() } }
+ fn M::f(): i64 { 1 }
+fn M::g(): i64 { let callback := (f) => f()
+f() }
 ```
 parses = true
 differential = "surface"
 
 @ cases.module_scope_4
 source = ```tauto
-module M { fn f(): i64 { 1 }
-fn g(): i64 { { let f := 2
+ fn M::f(): i64 { 1 }
+fn M::g(): i64 { { let f := 2
 f }
-f() } }
+f() }
 ```
 parses = true
 differential = "surface"
 
 @ cases.module_scope_5
 source = ```tauto
-module M { fn f(): i64 { 1 }
-fn g(): i64 { match Some(2) { Some(f) if f == 2 => f
-None => f() } } }
+ fn M::f(): i64 { 1 }
+fn M::g(): i64 { match Some(2) { Some(M::f) if M::f == 2 => M::f
+None => M::f() } }
 ```
 parses = true
 differential = "surface"
 
 @ cases.module_scope_6
 source = ```tauto
-module M { fn f(): i64 { 1 }
-fn g(): i64 { handle { 2 } with { return f => f } } }
+ fn M::f(): i64 { 1 }
+fn M::g(): i64 { handle { 2 } with { return f => f } }
 ```
 parses = true
 differential = "surface"
 
 @ cases.module_scope_7
 source = ```tauto
-module M { fn f(): i64 { 1 }
-fn g(): i64 { handle { perform ask() } with { ask(), f => f(42) } } }
+ fn M::f(): i64 { 1 }
+fn M::g(): i64 { handle { perform ask() } with { ask(), f => f(42) } }
 ```
 parses = true
 differential = "surface"
@@ -159,6 +159,14 @@ differential = "surface"
 source = ```tauto
 effect cur<!e>(): Unit
 fn f(): Unit { handle { perform cur() } with { cur<!{out}>(), k => k(#()) } }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_a_perform_names_its_type_arguments
+source = ```tauto
+effect take<T>(n: i64): T
+fn f(): Text ! {take(Text)} { perform take(<T: Text>, 1) }
 ```
 parses = true
 differential = "surface"

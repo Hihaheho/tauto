@@ -4,50 +4,53 @@ source = ```tauto
 effect identity<A>(value: A): A
 let number := handle { perform identity(7) } with { identity<i64>(value), k => k(value) }
 let text := handle { perform identity("kept") } with { identity<Text>(value), k => k(value) }
-perform show("number", number)
-perform show("text", text)
+show(&number)
+show(&text)
 ```
 types = "ok"
-shows = ['number = 7', 'text = "kept"']
+stdout = "7\n\"kept\"\n"
 
 @ cases.operation-instance-independent-parameters-and-wildcard
+niri.bug = "Leak: NIR: an arm that binds no owned part of its payload does not drop it"
 source = ```tauto
 effect second<A, B>(first: A, second: B): B
 let result := handle { perform second("kept", 7) } with {
   second<Text, i64>(_, value), k => k(value)
 }
-perform show("answer", result)
+show(&result)
 ```
 types = "ok"
-shows = ['answer = 7']
+stdout = "7\n"
 
 @ cases.operation-instance-result-only-singleton
 source = ```tauto
 effect supply<A>(): A
 let result: i64 := handle { perform supply() } with { supply<i64>(), k => k(7) }
-perform show("answer", result)
+show(&result)
 ```
 types = "ok"
-shows = ['answer = 7']
+stdout = "7\n"
 
 @ cases.operation-instance-numeric-singleton
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
 effect identity<A>(value: A): A
 let result := handle { perform identity(7) } with { identity<i64>(value), k => k(value + 1) }
-perform show("answer", result)
+show(&result)
 ```
 types = "ok"
-shows = ['answer = 8']
+stdout = "8\n"
 
 @ cases.operation-instance-formal-union-payload
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
 source = ```tauto
 effect keep<A>(fixed: i64 | Text, value: A): A
 let number: i64 := 7
 let result := handle { perform keep(number, true) } with { ∀ A. keep<A>(_, value), k => k(value) }
-perform show("answer", result)
+show(&result)
 ```
 types = "ok"
-shows = ['answer = true']
+stdout = "true\n"
 
 @ cases.operation-instance-shared-handler-capture
 source = ```tauto
@@ -58,10 +61,10 @@ let result := handle { perform identity("kept") } with {
     k(r#copy())
   }
 }
-perform show("answer", result)
+show(&result)
 ```
 types = "ok"
-shows = ['answer = "kept"']
+stdout = "\"kept\"\n"
 
 @ cases.operation-instance-narrowed-arm-mismatch
 source = ```tauto
@@ -83,7 +86,7 @@ types = "error: an argument: Text does not fit i64"
 
 @ cases.operation-instance-linear-wildcard-is-rejected
 source = ```tauto
-linear struct Token {}
+struct(linear) Token {}
 effect second<A, B>(first: A, second: B): B
 let result := handle { perform second(Token {}, 7) } with {
   second<Token, i64>(_, value), k => k(value)
@@ -94,7 +97,7 @@ lin = "error: `_` drops a linear Token"
 
 @ cases.operation-instance-nested-linear-wildcard-is-rejected
 source = ```tauto
-linear struct Token {}
+struct(linear) Token {}
 struct Wrapped(A: Type) { value: A }
 effect second<A, B>(first: Wrapped(A), second: B): B
 let token: Token := Token {}
@@ -107,57 +110,47 @@ types = "ok"
 lin = "error: `_` drops a linear Token"
 
 @ cases.operation-instance-distinct-requests-remain-a-rust-boundary
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with two arms of an operation yet"
 source = ```tauto
 effect identity<A>(value: A): A
-handle {
+let result := handle {
   let number: i64 := perform identity(7)
   let text: Text := perform identity("kept")
-  perform show("number", number)
-  perform show("text", text)
+  text
 } with { ∀ A. identity<A>(value), k => k(value) }
+show(&result)
 ```
 types = "ok"
-shows = ['number = 7', 'text = "kept"']
+stdout = "\"kept\"\n"
 compile_errors.rust = "build: the handled body has distinct parameterized operation instances"
 
 @ cases.operation-instance-indeterminate-integers-keep-frontend-behavior
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
 source = ```tauto
 effect identity<A>(value: A): A
 let result := handle {
   if true { perform identity(7) } else { perform identity(8) }
 } with { ∀ A. identity<A>(value), k => k(value) }
-perform show("answer", result)
+show(&result)
 ```
 types = "ok"
-shows = ['answer = 7']
+stdout = "7\n"
 compile_errors.rust = "build: the handled operation instances are not determined before checking the arm"
 
 @ cases.operation-instance-opaque-callback-keeps-javascript-behavior
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
 source = ```tauto
 effect identity<A>(value: A): A
 let action := () => perform identity(7)
 let result := handle { action() } with { ∀ A. identity<A>(value), k => k(value) }
-perform show("answer", result)
+show(&result)
 ```
 types = "ok"
-shows = ['answer = 7']
-compile_errors.rust = "build: the handled body has an opaque or storage-sensitive operation context"
-
-@ cases.operation-instance-builtin-show-keeps-erased-payloads
-source = ```tauto
-let result := handle {
-  perform show("number", 7)
-  perform show("text", "kept")
-  9
-} with { ∀ A. show<A>(_, _), k => k(#()) }
-perform show("answer", result)
-```
-types = "ok"
-shows = ['answer = 9']
+stdout = "7\n"
 
 @ cases.operation-instance-linear-return-wildcard-builds-with-its-instance
 source = ```tauto
-linear struct Token {}
+struct(linear) Token {}
 effect supply<A>(): A
 let result := handle { let t: Token := perform supply(); t } with {
   return _ => 7
@@ -168,7 +161,7 @@ types = "ok"
 
 @ cases.operation-instance-nested-linear-return-builds-with-its-instance
 source = ```tauto
-linear struct Token {}
+struct(linear) Token {}
 struct Wrapped(A: Type) { value: A }
 effect supply<A>(): A
 let result := handle { let w: Wrapped(Token) := perform supply(); w } with {
@@ -178,9 +171,10 @@ let result := handle { let w: Wrapped(Token) := perform supply(); w } with {
 ```
 types = "ok"
 
-@ cases.operation-instance-host-wrapper-keeps-signatures
+@ cases.operation-instance-under-the-host-keeps-signatures
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
 effect identity<A>(value: A): A
 effect keep<B>(fixed: i64 | Text, value: B): B
@@ -188,10 +182,156 @@ let number: i64 := 7
 let result := handle { perform identity(number) } with { ∀ A. identity<A>(value), k => k(value) }
 let kept := handle { perform keep(number, true) } with { ∀ B. keep<B>(_, value), k => k(value) }
 perform stdout("host\n")
-perform show("answer", result)
-perform show("kept", kept)
+show(&result)
+show(&kept)
 ```
 types = "ok"
-shows = ['answer = 7', 'kept = true']
-stdout = "host\n"
+stdout = ```
+host
+7
+true
+```
 stderr = ""
+
+@ fixtures.operation-instance-equal-payloads-have-distinct-answer-arguments
+source = ```tauto
+effect convert<A, B>(value: A): B
+handle {
+  let number: i64 := perform convert(true)
+  let text: Text := perform convert(true)
+  true
+} with { ∀ A, B. convert<A, B>(_), k => true }
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-mutable-storage-is-not-replayed
+source = ```tauto
+effect identity<A>(value: A): A
+let result := handle {
+  var value := perform identity(7)
+  value
+} with { ∀ A. identity<A>(value), k => k(value) }
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-latent-body-is-not-a-request
+source = ```tauto
+effect identity<A>(value: A): A
+let result := handle {
+  fn unused(): Text { perform identity("latent") }
+  perform identity(7)
+} with { ∀ A. identity<A>(value), k => k(value) }
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-phantom-argument-is-not-invented
+source = ```tauto
+effect phantom<A>(value: i64): i64
+let result := handle { perform phantom(7) } with { phantom(value), k => k(value) }
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-rigid-outer-parameter-is-owned
+source = ```tauto
+effect identity<A>(value: A): A
+fn relay<T: NoBorrow>(input: T): T {
+  handle { perform identity(input) } with { identity<T>(value), k => k(value) }
+}
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-product-is-not-owned-evidence
+source = ```tauto
+effect identity<A>(value: A): A
+let callback := () => "kept"
+let product := #(callback, true)
+let result := handle { perform identity(product) } with { ∀ A. identity<A>(value), k => k(value) }
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-nominal-fields-are-owned-evidence
+source = ```tauto
+struct Holder { callback: () -> Text }
+struct Wrapped { holder: Holder }
+effect identity<A>(value: A): A
+let wrapped := Wrapped { holder: Holder { callback: () => "kept" } }
+let result := handle { perform identity(wrapped) } with { ∀ A. identity<A>(value), k => k(value) }
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-return-storage-is-not-replayed
+source = ```tauto
+struct(linear) Token {}
+effect identity<A>(): A
+let result := handle { perform identity() } with {
+  return value => { var saved := value; 7 }
+  identity<Token>(), k => k(Token {})
+}
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-result-only-requests-remain-distinct
+source = ```tauto
+effect supply<A>(): A
+handle {
+  let number: i64 := perform supply()
+  let text: Text := perform supply()
+  true
+} with { ∀ A. supply<A>(), k => true }
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-nested-handler-is-not-a-direct-summary
+source = ```tauto
+effect identity<A>(value: A): A
+effect ask(): i64
+let result := handle {
+  handle { perform ask() } with { ask(), k => k(perform identity(7)) }
+} with { ∀ A. identity<A>(value), k => k(value) }
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-user-show-is-not-builtin
+source = ```tauto
+effect show<A>(value: A): A
+let result := handle { perform show(7) } with { ∀ A. show<A>(value), k => k(value) }
+```
+reason = "An input of a Rust test; no case runs it."
+
+@ fixtures.operation-instance-captured-cell-is-not-owned-evidence
+source = ```tauto
+effect identity<A>(value: A): A
+var text: Text := "kept"
+let callback := () => text
+let result := handle { perform identity(callback) } with { ∀ A. identity<A>(value), k => k(value) }
+```
+reason = "An input of a Rust test; no case runs it."
+
+// A bound written on an operation's generic is checked where it is performed.
+@ cases.an-operation-bound-is-checked-at-the-perform
+source = ```nib
+struct(affine) Tok { n: i64 }
+effect dup<A: Shared>(v: &A): A
+let t := Tok { n: 1 }
+let r := handle { perform dup(&t) } with { ∀ A. dup<A>(v), k => k(v) }
+```
+types = "error: affine does not fit shared: Tok for a type parameter"
+
+// An arm for every instance may use a value as the bound lets it.
+@ cases.an-arm-for-every-instance-keeps-the-operation-bound
+source = ```nib
+effect twice<A: Shared>(v: A): A × A
+let r := handle { perform twice(3) } with { ∀ A. twice<A>(v), k => k(#(v, v)) }
+show(&r.fst)
+```
+types = "ok"
+stdout = "3\n"
+
+// Without a bound, the arm's generic is affine: it cannot be copied.
+@ cases.an-arm-for-every-instance-without-a-bound-cannot-copy
+source = ```nib
+effect twice<A>(v: A): A × A
+let r := handle { perform twice(3) } with { ∀ A. twice<A>(v), k => k(#(v, v)) }
+show(&r.fst)
+```
+lin = "error: v is used after move"

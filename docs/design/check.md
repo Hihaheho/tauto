@@ -1,54 +1,40 @@
-# `tauto check` の出力
+# `tauto check` output
 
-`tauto check [FILE|DIR] [--json] [--verbose] [--summary]` は、ファイルか tote を検査して、
-見つけた問題を人が読む形で書く。
+`tauto check [FILE|DIR] [--json] [--verbose] [--summary]`.
 
-## 対象
+- No path: the tote of the working directory. A directory: that tote (same as
+  `--tote DIR`): its `sources` and other Tauto files in it; dependencies and
+  imports are shown only when failed or incomplete. A file: it and its imports.
 
-- パスを書かなければ、作業ディレクトリの tote（`Tauto.eure` のあるディレクトリ）を検査する。
-- ディレクトリを書けば、その tote を検査する（`--tote DIR` と同じ対象）。tote の `sources` と、
-  tote の中のほかの Tauto ファイル（証明や例）が対象で、依存とインポートしたファイルは、
-  検査に落ちたものと未完成のものだけを書く。
-- ファイルを書けば、そのファイルとそれがインポートするものを検査する。
+## Snippets
 
-## 出力
+Each problem is one annotated source snippet, separated by blank lines; if
+every declaration passes, the last line is `ok`.
 
-問題ごとに、注釈つきのソースの断片を一つ書き、二つの間に空行を置く。すべての宣言が検査を
-通れば、最後に `ok` の一行を書く。宣言の数や公理の一覧は書かない。
+1. Header `kind: message`, kind one of `error`, `incomplete` (holes `?h` and
+   uses of incomplete declarations) and `warning[CODE]` (unused bindings,
+   unused effects in rows, struct fields never read
+   (`unused_field`), or unreachable code). An unused-marker `^` on a
+   row effect that is performed is shown as `error` (`unused_marker_used`).
+2. `--> path:line:col`, path relative to the working directory, column in
+   characters.
+3. The line with a `N |` gutter and `^` carets; failed declarations add
+   ``in `name` ``. Whole-program errors (type, effect, ownership) have no label.
+4. Notes ` = …`: `goal: ⊢ T` for holes, `help: …` for diagnostics with a fix.
 
-一つの断片は次の部分からなる。
+A multi-line span shows its first and last lines, the middle line if there is
+exactly one, else `...`. Carets are measured in terminal columns (tab = 4,
+wide characters and emoji = 2, control and combining = 0). A declaration that
+fails only because a declaration it uses failed is not shown. Colour is used
+on a terminal unless `NO_COLOR` is set.
 
-1. 見出し `種別: メッセージ`。種別は `error`（検査に落ちた宣言）、`incomplete`（穴 `?h` と、
-   未完成の宣言を使う宣言）、`warning[CODE]`（使われないコードと実行されないコード）のどれか。
-   メッセージが複数行なら、二行目からは見出しの下にそのまま続く。
-2. 場所 `--> パス:行:列`。パスは作業ディレクトリからの相対で、列は文字で数える。
-3. 場所の行と、その左の行番号の溝（`N |`）、場所の下のキャレット `^`。検査に落ちた宣言では、
-   キャレットの後ろにラベル ``in `宣言名` `` が付く。プログラム全体の誤り（型・効果・所有の検査）は
-   どの宣言にも属さないので、ラベルを付けない。
-4. 注記 ` = …`。穴には `goal: ⊢ 型`、修正の編集を持つ診断には `help: …` を書く。
+Snippets are rendered by the tote `totes/snippet`, compiled into `tauto` by
+`crates/tauto-cli-totes`.
 
-場所が複数行にわたるときは、最初の行と最後の行を書き、その間の行が一行ならそれも書き、
-二行以上なら `...` で省く。最初の行ではキャレットを場所の始めから行末まで、最後の行では
-行頭の空白の後ろから場所の終わりまで引く。空の場所には `^` を一つ引く。場所を持たない
-問題（未完成の宣言の使用）は、見出しとパスと注記だけを書く。
+## Other forms
 
-キャレットの位置は端末での幅で数える。タブは空白四つとして書いて四桁、東アジアの全角・
-広い文字と絵文字は二桁、制御文字と結合文字は幅を持たない。
+- `--summary`: `FAILED`/`INCOMPLETE` lines, counts and the axioms used.
+- `--verbose`: one line per declaration, imports included.
+- `--json`: machine-readable, independent of the above.
 
-宣言が検査に落ちた理由が、使っている別の宣言が落ちたことだけなら、その宣言は書かない
-（落ちた宣言のほうが直す場所を示す）。落ちた宣言がそれだけのときは書く。
-
-出力が端末で、環境変数 `NO_COLOR` がなければ、ANSI のエスケープで色を付ける（`error` は赤、
-ほかの種別は黄、溝は青）。端末でなければ色を付けない。
-
-断片を組み立てるのは tote `totes/snippet` で、`crates/tauto-cli-totes` がビルドのときに Rust に
-して `tauto` に入れる。tote の `tests/` に、色なしの出力の試験がある。
-
-## ほかの形
-
-- `--summary` は、問題の一覧（`FAILED`・`INCOMPLETE` の行）と、検査を通った・落ちた・未完成の
-  宣言の数、使った公理の一覧を一行に書く。tote では宣言の数を書く。
-- `--verbose` は、インポートしたファイルの宣言も含め、宣言ごとに一行を書く。
-- `--json` は機械が読む形で、この文書の出力とは独立している。
-
-終了コードは、すべて通れば 0、穴だけが残れば 3、検査に落ちた宣言があれば 1。
+Exit status: 0 all pass, 3 only holes remain, 1 a declaration failed.

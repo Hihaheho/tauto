@@ -4,11 +4,11 @@ import "../../syntax/src/syntax.taut"
 import "../../text/src/text.taut"
 import "../../unicode/src/classes.taut"
 import "../../unicode/src/unicode.taut"
-import std::Base
-import std::Text
-import std::Sort
-import std::List
-import std::prelude::Os
+import std::base
+import std::text
+import std::sort
+import std::list
+import std::builtin::os
 
 // `doc OUT ROOT TITLE PATH…`: reads the files `PATH…` under the directory
 // `ROOT`, and the files under it they import, and writes their pages and
@@ -23,7 +23,7 @@ pub fn doc_under(dir: Text, path: Text): Text {
 
 // The files `todo` and the ones they import, read from under `root`; each
 // file once. `status` becomes 1 when one cannot be read.
-pub fn doc_read_all(&t: SyntaxTables, classes: UnicodeClasses, root: Text, todo: List(Text), &mut status: i32): List(DocFile) ! {fs_read, stderr, Div} {
+pub fn doc_read_all(t: &SyntaxTables, classes: UnicodeClasses, root: Text, todo: List(Text), status: &mut i32): List(DocFile) ! {div, fs_read, overflow, stderr} {
   var done := Nil
   var seen := Nil
   var queue := todo
@@ -42,7 +42,7 @@ pub fn doc_read_all(&t: SyntaxTables, classes: UnicodeClasses, root: Text, todo:
           match read_file(doc_under(root, path)) {
             Err(e) => {
               eprint(doc_concat(Cons(path, Cons(": ", Cons(e, Cons("\n", Nil))))))
-              status := 1
+              *status := 1
             }
             Ok(source) => {
               let f := doc_read(t, classes, path, source)
@@ -57,41 +57,41 @@ pub fn doc_read_all(&t: SyntaxTables, classes: UnicodeClasses, root: Text, todo:
   done
 }
 
-pub fn doc_path_cmp(a: DocFile, b: DocFile): Ordering {
+pub fn doc_path_cmp(a: &DocFile, b: &DocFile): Ordering {
   doc_text_cmp(a.path, b.path)
 }
 
-pub fn doc_write(path: Text, contents: Text, &mut status: i32): Unit ! {fs_write, stderr} {
+pub fn doc_write(path: Text, contents: Text, status: &mut i32): Unit ! {fs_write, stderr} {
   match write_file(path, contents) {
-    Ok(u) => #()
+    Ok(^u) => #()
     Err(e) => {
       eprint(doc_concat(Cons(path, Cons(": ", Cons(e, Cons("\n", Nil))))))
-      status := 1
+      *status := 1
     }
   }
 }
 
-pub fn doc_make_dirs(out: Text, path: Text, &mut status: i32): Unit ! {fs_create_dir, stderr} {
+pub fn doc_make_dirs(out: Text, path: Text, status: &mut i32): Unit ! {fs_create_dir, overflow, stderr} {
   match doc_dir_parts(path) {
     Nil => #()
-    Cons(d, r) => {
+    Cons(^d, ^r) => {
       let dir := doc_under(out, text_join(doc_dir_parts(path), "/"))
       match perform fs_create_dir(dir) {
-        Ok(u) => #()
+        Ok(^u) => #()
         Err(e) => {
           eprint(doc_concat(Cons(dir, Cons(": ", Cons(io_message(e), Cons("\n", Nil))))))
-          status := 1
+          *status := 1
         }
       }
     }
   }
 }
 
-pub fn doc_command(&t: SyntaxTables, classes: UnicodeClasses, args: List(Text)): i32 ! {fs_read, fs_write, fs_create_dir, stderr, Div} {
+pub fn doc_command(t: &SyntaxTables, classes: UnicodeClasses, args: List(Text)): i32 ! {div, fs_create_dir, fs_read, fs_write, overflow, stderr} {
   match args {
     Cons(out, Cons(root, Cons(title, items))) => {
-      let paths := List::filter((a: Text) => not(doc_is_dsl_arg(a)), items)
-      let dsl := List::map(doc_dsl_arg, List::filter(doc_is_dsl_arg, items))
+      let paths := List::filter((a) => not(doc_is_dsl_arg(a)), items)
+      let dsl := List::map(doc_dsl_arg, List::filter((x) => doc_is_dsl_arg(x), items))
       var status := 0
       let files := List::sort(doc_path_cmp, doc_read_all(t, classes, root, paths, &mut status))
       var rest := files
@@ -118,17 +118,19 @@ pub fn doc_command(&t: SyntaxTables, classes: UnicodeClasses, args: List(Text)):
   }
 }
 
-match syntax_tables() {
-  None => {
-    eprint("the tables of the syntax are damaged\n")
-    perform exit(2)
-  }
-  Some(tables) => {
-    let code := doc_command(tables, unicode_classes(), perform argv())
-    if code != 0 {
-      perform exit(code)
-    } else {
-      #()
+perform main(() => {
+  match syntax_tables() {
+    None => {
+      eprint("the tables of the syntax are damaged\n")
+      perform exit(2)
+    }
+    Some(tables) => {
+      let code := doc_command(tables, unicode_classes(), perform argv())
+      if code != 0 {
+        perform exit(code)
+      } else {
+        #()
+      }
     }
   }
-}
+})

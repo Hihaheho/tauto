@@ -7,7 +7,7 @@ init-help =
     The directory name uses lowercase ASCII letters, digits and -, starting with a letter.
     No dependencies, version control, or tools are invoked.
 init-created = Created { $path }
-init-run-hint = Run from that directory with: tauto run --tote .
+init-run-hint = Run from that directory with: tauto run .
 init-failed = tauto init: { $error }
 init-not-plain-directory = { $path } is not a plain directory
 init-bad-path = PATH must be nonempty and cannot contain ..

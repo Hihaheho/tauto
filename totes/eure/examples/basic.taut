@@ -1,0 +1,129 @@
+import "../src/value.taut"
+import "../src/write.taut"
+import "../src/eure.taut"
+
+// Reading and writing, checked by computing.
+
+theorem reads_bindings(): parse("name = \"tauto\"\nversion = 3\n") = Ok(map_node(Cons(entry("name", str_node("tauto")), Cons(entry("version", nat_node(3)), Nil)))) {
+  Refl
+}
+
+// Dotted paths, sections, `[]`, text bindings, code blocks and extensions.
+theorem reads_paths(): parse(
+    "a.b = 1\n// comment\nnote: some text  \n@ items[]\nx = 1\n@ items[]\nx = 2\n@ c { $kind = `k` }\n"
+  ) = Ok(
+    map_node(
+      Cons(
+        entry("a", map_node(Cons(entry("b", nat_node(1)), Nil))),
+        Cons(
+          entry("note", str_node("some text")),
+          Cons(
+            entry(
+              "items",
+              leaf(
+                Varr(
+                  Cons(
+                    map_node(Cons(entry("x", nat_node(1)), Nil)),
+                    Cons(map_node(Cons(entry("x", nat_node(2)), Nil)), Nil)
+                  )
+                )
+              )
+            ),
+            Cons(
+              entry(
+                "c",
+                Node::Mk(Vmap(Nil), Cons(#("kind", leaf(Vtext(Implicit, "k"))), Nil))
+              ),
+              Nil
+            )
+          )
+        )
+      )
+    )
+  ) {
+  Refl
+}
+
+// Strings: escapes, `\u{…}`, literal strings and `\` joining.
+theorem reads_strings(): parse("s = \"a\\tb\\u{e9}\" \\ 'c\\d'\n") = Ok(map_node(Cons(entry("s", str_node("a\tbéc\\d")), Nil))) {
+  Refl
+}
+
+// The spaces before the closing backticks are taken off every line.
+theorem reads_code_block(): parse("code = ```rust\n    fn f() {}\n\n      x\n    ```\n") = Ok(map_node(Cons(entry("code", leaf(Vtext(Named("rust"), "fn f() {}\n\n  x\n"))), Nil))) {
+  Refl
+}
+
+// A second value for the same path is an error, at the binding.
+theorem rejects_rebinding(): parse("a = 1\na = 2\n") = Err(#(6, "a path that has no value yet")) {
+  Refl
+}
+
+theorem rejects_unclosed(): parse("a = [1,") = Err(#(7, "a value")) {
+  Refl
+}
+fn sample(): Node {
+  map_node(
+    Cons(
+      entry("name", str_node("a \"b\"\n")),
+      Cons(
+        entry("n", Node::Mk(Vint(true, 12), Nil)),
+        Cons(
+          entry("d", leaf(Vdec(false, 250, true, 2))),
+          Cons(
+            entry(
+              "list",
+              leaf(
+                Varr(
+                  Cons(
+                    nat_node(1),
+                    Cons(leaf(Vbool(true)), Cons(leaf(Vnull), Cons(leaf(Vhole(Some("todo"))), Nil)))
+                  )
+                )
+              )
+            ),
+            Cons(
+              entry("tup", leaf(Vtup(Cons(nat_node(1), Cons(str_node("x"), Nil))))),
+              Cons(
+                entry(
+                  "sub",
+                  Node::Mk(
+                    Vmap(
+                      Cons(
+                        entry("k-1", nat_node(1)),
+                        Cons(
+                          #(Kstr("needs quote"), leaf(Vtext(Implicit, "x + 1"))),
+                          Nil
+                        )
+                      )
+                    ),
+                    Cons(#("variant", str_node("v")), Nil)
+                  )
+                ),
+                Cons(
+                  entry("code", leaf(Vtext(Named("rust"), "fn main() {}\n  `x`\n"))),
+                  Cons(
+                    #(Ktup(
+                      Cons(Knum(false, 1), Cons(Kstr("a"), Nil))
+                    ), Node::Mk(Vint(false, 5), Cons(#("e", nat_node(0)), Nil))),
+                    Cons(
+                      entry(
+                        "arr",
+                        leaf(Varr(Cons(map_node(Cons(entry("x", nat_node(1)), Nil)), Nil)))
+                      ),
+                      Cons(entry("empty", map_node(Nil)), Nil)
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+// How a document is written.
+theorem writes_sample(): to_text(sample()) = "name = \"a \\\"b\\\"\\n\"\nn = -12\nd = 250e-2\nlist = [1, true, null, !todo]\ntup = (1, \"x\")\nsub {\n  k-1 = 1\n  \"needs quote\" = `x + 1`\n  $variant = \"v\"\n}\ncode = ```rust\nfn main() {}\n  `x`\n```\n(1, \"a\") = { = 5, $e => 0, }\narr = [{ x => 1, }]\nempty {\n}\n" { Refl }
+// What is written reads back as the same document.
+theorem sample_round_trip(): parse(to_text(sample())) = Ok(sample()) { Refl }

@@ -1,13 +1,14 @@
 import "rules_written_atomic.taut"
 import "rules_written_binders.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "datas.taut"
 import "rules_data_kind.taut"
 import "rules_written_name.taut"
 import "ty.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 // Elaboration of written type syntax. A constructor position permits partial
 // application; the caller must separately establish the constructor's kind.
@@ -68,24 +69,33 @@ mutual {
       Text,
       Ty
     ), partial: Bool, under_borrow: Bool>(
-      name: Text,
+      name: SurfaceName,
       t: Ty,
-      meaning: WrittenNameType(env, generics, name, partial, t)
+      not_star: (surface_name_text(name) = "std::prelude::Star") -> False,
+      meaning: WrittenNameType(env, generics, surface_name_text(name), partial, t)
     ): WrittenKind(env, generics, partial, under_borrow, SkVar(name), t)
-    WrittenKindUnit<ast_occurrence: Option(
-      TermOccurrence
-    ), generics: Ordmap(
+    // `()`, the unit.
+    WrittenKindUnit<generics: Ordmap(
       Text,
       Ty
-    ), partial: Bool, under_borrow: Bool>(
-      start: Nat,
-      end: Nat
-    ): WrittenKind(
+    ), partial: Bool, under_borrow: Bool>: WrittenKind(
       env,
       generics,
       partial,
       under_borrow,
-      SkApp(SurfaceTermIndexedMk(SkVar("Tuple"), start, end, ast_occurrence), Nil),
+      SkVar(NameSpelled("std::prelude::Star")),
+      TyUnit
+    )
+    // An effect row given to a row parameter: the unit type, as `types.rs` reads it.
+    WrittenKindRow<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(es: List(RowEntry)): WrittenKind(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SkRow(es),
       TyUnit
     )
     WrittenKindInfo<ast_occurrence: Option(
@@ -104,7 +114,7 @@ mutual {
       generics,
       partial,
       under_borrow,
-      SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
+      SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("Info")), start, end, ast_occurrence), Cons(arg, Nil)),
       TyInfo(t)
     )
     WrittenKindNamed<ast_occurrence: Option(
@@ -113,24 +123,24 @@ mutual {
       Text,
       Ty
     ), partial: Bool, under_borrow: Bool>(
-      name: Text,
+      name: SurfaceName,
       args: List(SurfaceTerm),
       types: List(Ty),
       start: Nat,
       end: Nat,
-      not_tuple: (name = "Tuple") -> False,
-      not_info: (name = "Info") -> (list_len(args) = 1) -> False,
-      unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None,
-      slice_borrowed: (name = "Slice") -> (under_borrow = true),
+      not_pair: (surface_name_text(name) = "std::prelude::Pair") -> False,
+      not_info: (surface_name_text(name) = "Info") -> (list_len(args) = 1) -> False,
+      unbound: Ordmap::get(generics, surface_name_text(name), Ordmap::compare_text) = None,
+      slice_borrowed: (surface_name_text(name) = "Slice") -> (under_borrow = true),
       arguments: WrittenTerms(env, generics, partial, args, types),
-      arity: WrittenArity(env, name, types, partial)
+      arity: WrittenArity(env, surface_name_text(name), types, partial)
     ): WrittenKind(
       env,
       generics,
       partial,
       under_borrow,
       SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
-      TyNamed(name, types)
+      TyNamed(NameSpelled(surface_name_text(name)), types)
     )
     WrittenKindGeneric<ast_occurrence: Option(
       TermOccurrence
@@ -138,16 +148,16 @@ mutual {
       Text,
       Ty
     ), partial: Bool, under_borrow: Bool>(
-      name: Text,
+      name: SurfaceName,
       arg: SurfaceTerm,
       head: Ty,
       t: Ty,
       bound: Ty,
       start: Nat,
       end: Nat,
-      not_info: (name = "Info") -> False,
-      parameter: Ordmap::get(generics, name, Ordmap::compare_text) = Some(bound),
-      constructor: WrittenTypeName(generics, name, head),
+      not_info: (surface_name_text(name) = "Info") -> False,
+      parameter: Ordmap::get(generics, surface_name_text(name), Ordmap::compare_text) = Some(bound),
+      constructor: WrittenTypeName(generics, surface_name_text(name), head),
       argument: WrittenTerm(env, generics, partial, false, arg, t)
     ): WrittenKind(
       env,
@@ -168,7 +178,7 @@ mutual {
       args: List(SurfaceTerm),
       start: Nat,
       end: Nat,
-      name: Text,
+      name: SurfaceName,
       first: List(Ty),
       last: List(Ty),
       constructor: WrittenTerm(
@@ -180,7 +190,7 @@ mutual {
         TyNamed(name, first)
       ),
       arguments: WrittenTerms(env, generics, partial, args, last),
-      arity: WrittenArity(env, name, List::append(first, last), partial)
+      arity: WrittenArity(env, surface_name_text(name), List::append(first, last), partial)
     ): WrittenKind(
       env,
       generics,
@@ -195,8 +205,8 @@ mutual {
     ), partial: Bool, under_borrow: Bool>(
       params: List(SurfaceParam),
       result: SurfaceTerm,
-      effects: Option(List(Text)),
-      binders: List(Pair(Text, Kind)),
+      effects: Option(List(RowEntry)),
+      binders: List(Text × Kind),
       remaining: List(SurfaceParam),
       inner: Ordmap(Text, Ty),
       arguments: List(Ty),
@@ -233,6 +243,7 @@ mutual {
       Ty
     ), partial: Bool, under_borrow: Bool>(
       mutable: Bool,
+      mutable_orig: Bool,
       body: SurfaceTerm,
       t: Ty,
       meaning: WrittenTerm(env, generics, partial, true, body, t)
@@ -241,7 +252,7 @@ mutual {
       generics,
       partial,
       under_borrow,
-      SkBorrow(mutable, body),
+      SkBorrow(mutable, mutable_orig, body),
       TyBorrow(t, mutable)
     )
     WrittenKindUnion<generics: Ordmap(
@@ -252,14 +263,27 @@ mutual {
       types: List(Ty),
       meanings: WrittenTerms(env, generics, partial, parts, types)
     ): WrittenKind(env, generics, partial, under_borrow, SkUnion(parts), ty_union(types))
-    WrittenKindProduct<generics: Ordmap(
+    // `A × B`: the prelude's `Pair` of two members.
+    WrittenKindProduct<ast_occurrence: Option(
+      TermOccurrence
+    ), generics: Ordmap(
       Text,
       Ty
     ), partial: Bool, under_borrow: Bool>(
       parts: List(SurfaceTerm),
       types: List(Ty),
+      start: Nat,
+      end: Nat,
+      two: list_len(parts) = 2,
       meanings: WrittenTerms(env, generics, partial, parts, types)
-    ): WrittenKind(env, generics, partial, under_borrow, SkProduct(parts), ty_product(types))
+    ): WrittenKind(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("std::prelude::Pair")), start, end, ast_occurrence), parts),
+      ty_product(types)
+    )
     WrittenKindTagged<generics: Ordmap(
       Text,
       Ty
@@ -309,6 +333,7 @@ mutual {
     ), partial: Bool>(
       name: Option(Text),
       ty: SurfaceTerm,
+      unused: Option(SurfaceSpan),
       rest: List(SurfaceParam),
       t: Ty,
       types: List(Ty),
@@ -318,7 +343,7 @@ mutual {
       env,
       generics,
       partial,
-      Cons(SurfaceParamMk(name, ty), rest),
+      Cons(SurfaceParamMk(name, ty, unused), rest),
       Cons(t, types)
     )
   }

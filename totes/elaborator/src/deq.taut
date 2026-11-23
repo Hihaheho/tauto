@@ -1,0 +1,606 @@
+// The decidable equality of an inductive family, written as text and read as
+// any declaration is: `F::beq`, `F::beq_refl`, `F::beq_sound` and `F::deq`.
+// `a == b` on a type applied to types calls `F::beq` with the equalities of
+// the arguments.
+//
+// For `F(P⃗)` whose constructors have fields of the type of a parameter, `Nat`,
+// `Bool`, `F` itself or another family that has these already, with
+// `e_P: (P, P) -> Bool` comparing the values of each parameter:
+//   * `F::beq(e⃗, a, b)`, by `match` on both: the fields one by one, joined by
+//     `Bool::and`; two constructors that differ are `false`;
+//   * `F::beq_refl` and `F::beq_sound`, where `r_P` says `e_P` is reflexive and
+//     `s_P` that `true` means equal;
+//   * `F::deq`: the two together as an `Iff`.
+import "../../surface/src/surface.taut"
+import "../../kernel/src/kernel.taut"
+import "../../kernel/src/data.taut"
+import "../../kernel/src/term.taut"
+import "../../syntax/src/syntax.taut"
+import "elaborate.taut"
+import "program.taut"
+import "prelude.taut"
+import std::list
+import std::text
+import std::base
+
+// The type of a field, as far as an equality is made of it.
+pub(open) inductive DqTy: Type {
+  DqNat: DqTy
+  DqBool: DqTy
+  DqParam(i: Nat): DqTy
+  DqFam(name: Text, args: List(DqTy)): DqTy
+  DqBad: DqTy
+}
+
+// `t` as the type of the field after `depth` binders, of which the first
+// `np` are the parameters (the binders after them are earlier fields).
+mutual {
+pub fn dq_type(k: Nat, t: KernelTerm, np: Nat, fields: Nat): DqTy {
+  match k {
+    Zero => DqBad
+    Succ(j) => ⊢ DqTy from match t {
+      KernelConst(n) => if n == "Nat" { DqNat } else if n == "Bool" { DqBool } else { DqFam(n, Nil) }
+      KernelBVar(i) => if i < fields { DqBad } else if i - fields < np { DqParam(np - 1 - (i - fields)) } else { DqBad }
+      KernelApp(^f, ^a, ^d) => ⊢ DqTy from match dq_spine(t, Nil) {
+        Some(sp) => ⊢ DqTy from match sp.fst {
+          KernelConst(n) => DqFam(n, dq_types(j, sp.snd, np, fields))
+          _ => DqBad
+        }
+        None => DqBad
+      }
+      _ => DqBad
+    }
+  }
+}
+
+pub fn dq_types(k: Nat, ts: List(KernelTerm), np: Nat, fields: Nat): List(DqTy) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(DqTy) from match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(dq_type(j, t, np, fields), dq_types(j, rest, np, fields))
+    }
+  }
+}
+}
+
+pub fn dq_spine(t: KernelTerm, acc: List(KernelTerm)): Option(KernelTerm × List(KernelTerm)) {
+  match t {
+    KernelApp(f, a, ^d) => dq_spine(f, Cons(a, acc))
+    _ => Some(#(t, acc))
+  }
+}
+
+// The field types of a constructor whose type is `Π params. Π fields. F params`.
+pub fn dq_fields(t: KernelTerm, np: Nat, i: Nat, n: Nat): List(DqTy) {
+  match n {
+    Zero => Nil
+    Succ(m) => ⊢ List(DqTy) from match t {
+      KernelPi(d, c, ^data) => Cons(dq_type(32, d, np, i), dq_fields(c, np, i + 1, m))
+      _ => Cons(DqBad, Nil)
+    }
+  }
+}
+
+pub fn dq_drop_pis(t: KernelTerm, n: Nat): KernelTerm {
+  match n {
+    Zero => t
+    Succ(m) => ⊢ KernelTerm from match t {
+      KernelPi(^d, c, ^data) => dq_drop_pis(c, m)
+      _ => t
+    }
+  }
+}
+
+pub(open) inductive DqCtor: Type {
+  DqCtorMk(name: Text, fields: List(DqTy)): DqCtor
+}
+
+pub fn dq_ctors(core: KernelCore, info: KernelIndInfo, cs: List(KernelCtorInfo)): Option(List(DqCtor)) {
+  match cs {
+    Nil => Some(Nil)
+    Cons(c, rest) => ⊢ Option(List(DqCtor)) from match kernel_global_get(core, c.name) {
+      None => None
+      Some(g) => ⊢ Option(List(DqCtor)) from match dq_ctors(core, info, rest) {
+        None => None
+        Some(more) => Some(Cons(DqCtorMk(c.name, dq_fields(dq_drop_pis(g.ty, info.params), info.params, 0, c.nargs)), more))
+      }
+    }
+  }
+}
+
+// The number of parameters of a family that has a decision, the one being
+// made included.
+pub fn dq_known(core: KernelCore, family: Text, name: Text, params: Nat): Option(Nat) {
+  if name == family { Some(params) } else {
+    ⊢ Option(Nat) from match kernel_global_get(core, Text::concat(name, "::beq_sound")) {
+      None => None
+      Some(^g) => ⊢ Option(Nat) from match kernel_ind_get(core, name) {
+        None => None
+        Some(i) => Some(i.params)
+      }
+    }
+  }
+}
+
+mutual {
+pub fn dq_supported(k: Nat, core: KernelCore, family: Text, params: Nat, ty: DqTy): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match ty {
+      DqNat => true
+      DqBool => true
+      DqParam(^i) => true
+      DqFam(n, args) => ⊢ Bool from match dq_known(core, family, n, params) {
+        None => false
+        Some(m) => m == List::length(args) && dq_all_supported(j, core, family, params, args)
+      }
+      DqBad => false
+    }
+  }
+}
+
+pub fn dq_all_supported(k: Nat, core: KernelCore, family: Text, params: Nat, tys: List(DqTy)): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match tys {
+      Nil => true
+      Cons(t, rest) => dq_supported(j, core, family, params, t) && dq_all_supported(j, core, family, params, rest)
+    }
+  }
+}
+}
+
+pub fn dq_ctors_supported(core: KernelCore, family: Text, params: Nat, cs: List(DqCtor)): Bool {
+  match cs {
+    Nil => true
+    Cons(c, rest) => dq_all_supported(32, core, family, params, c.fields) && dq_ctors_supported(core, family, params, rest)
+  }
+}
+
+pub fn dq_join(xs: List(Text), sep: Text): Text {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => ⊢ Text from match rest {
+      Nil => x
+      _ => Text::concat_all([x, sep, dq_join(rest, sep)])
+    }
+  }
+}
+
+pub fn dq_param_name(i: Nat): Text { Text::concat("P", Text::of_nat(i)) }
+
+// `ty` as written.
+mutual {
+pub fn dq_describe(k: Nat, ty: DqTy): Text {
+  match k {
+    Zero => "?"
+    Succ(j) => ⊢ Text from match ty {
+      DqNat => "Nat"
+      DqBool => "Bool"
+      DqParam(i) => dq_param_name(i)
+      DqFam(n, args) => ⊢ Text from match args {
+        Nil => n
+        _ => Text::concat_all([n, "(", dq_join(dq_describe_all(j, args), ", "), ")"])
+      }
+      DqBad => "?"
+    }
+  }
+}
+
+pub fn dq_describe_all(k: Nat, tys: List(DqTy)): List(Text) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(Text) from match tys {
+      Nil => Nil
+      Cons(t, rest) => Cons(dq_describe(j, t), dq_describe_all(j, rest))
+    }
+  }
+}
+}
+
+mutual {
+pub fn dq_eqs(k: Nat, args: List(DqTy)): List(Text) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(Text) from match args {
+      Nil => Nil
+      Cons(a, rest) => Cons(dq_eq_of(j, a), dq_eqs(j, rest))
+    }
+  }
+}
+
+pub fn dq_refls(k: Nat, args: List(DqTy)): List(Text) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(Text) from match args {
+      Nil => Nil
+      Cons(a, rest) => Cons(dq_refl_of(j, a), dq_refls(j, rest))
+    }
+  }
+}
+
+pub fn dq_sounds(k: Nat, args: List(DqTy)): List(Text) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(Text) from match args {
+      Nil => Nil
+      Cons(a, rest) => Cons(dq_sound_of(j, a), dq_sounds(j, rest))
+    }
+  }
+}
+
+pub fn dq_eq_of(k: Nat, ty: DqTy): Text {
+  match k {
+    Zero => ""
+    Succ(j) => ⊢ Text from match ty {
+      DqFam(n, args) => ⊢ Text from match args {
+        Nil => Text::concat(n, "::beq")
+        _ => {
+          let t := dq_desc(ty)
+          Text::concat_all(["(u: ", t, ", v: ", t, ") => ", dq_call_eq(j, ty, "u", "v")])
+        }
+      }
+      DqNat => "Nat::eq"
+      DqBool => "Bool::eq"
+      DqParam(i) => Text::concat("e_", dq_param_name(i))
+      DqBad => ""
+    }
+  }
+}
+
+pub fn dq_refl_of(k: Nat, ty: DqTy): Text {
+  match k {
+    Zero => ""
+    Succ(j) => ⊢ Text from match ty {
+      DqFam(n, args) => ⊢ Text from match args {
+        Nil => Text::concat(n, "::beq_refl")
+        _ => Text::concat_all(["(u: ", dq_desc(ty), ") => ", dq_call_refl(j, ty, "u")])
+      }
+      DqNat => "Nat::eq_refl"
+      DqBool => "Bool::eq_refl"
+      DqParam(i) => Text::concat("r_", dq_param_name(i))
+      DqBad => ""
+    }
+  }
+}
+
+pub fn dq_sound_of(k: Nat, ty: DqTy): Text {
+  match k {
+    Zero => ""
+    Succ(j) => ⊢ Text from match ty {
+      DqFam(n, args) => ⊢ Text from match args {
+        Nil => Text::concat(n, "::beq_sound")
+        _ => {
+          let t := dq_desc(ty)
+          Text::concat_all(["(u: ", t, ", v: ", t, ", h: Eq(Bool, ", dq_call_eq(j, ty, "u", "v"), ", true)) => ", dq_call_sound(j, ty, "u", "v", "h")])
+        }
+      }
+      DqNat => "Nat::eq_sound"
+      DqBool => "Bool::eq_sound"
+      DqParam(i) => Text::concat("s_", dq_param_name(i))
+      DqBad => ""
+    }
+  }
+}
+
+pub fn dq_call_eq(k: Nat, ty: DqTy, x: Text, y: Text): Text {
+  match k {
+    Zero => ""
+    Succ(j) => ⊢ Text from match ty {
+      DqFam(n, args) => Text::concat_all([n, "::beq(", dq_join(List::append(dq_eqs(j, args), [x, y]), ", "), ")"])
+      _ => Text::concat_all([dq_eq_of(j, ty), "(", x, ", ", y, ")"])
+    }
+  }
+}
+
+pub fn dq_call_refl(k: Nat, ty: DqTy, x: Text): Text {
+  match k {
+    Zero => ""
+    Succ(j) => ⊢ Text from match ty {
+      DqFam(n, args) => Text::concat_all([n, "::beq_refl(", dq_join(List::append(dq_eqs(j, args), List::append(dq_refls(j, args), [x])), ", "), ")"])
+      _ => Text::concat_all([dq_refl_of(j, ty), "(", x, ")"])
+    }
+  }
+}
+
+pub fn dq_call_sound(k: Nat, ty: DqTy, x: Text, y: Text, h: Text): Text {
+  match k {
+    Zero => ""
+    Succ(j) => ⊢ Text from match ty {
+      DqFam(n, args) => Text::concat_all([n, "::beq_sound(", dq_join(List::append(dq_eqs(j, args), List::append(dq_sounds(j, args), [x, y, h])), ", "), ")"])
+      _ => Text::concat_all([dq_sound_of(j, ty), "(", x, ", ", y, ", ", h, ")"])
+    }
+  }
+}
+}
+
+pub fn dq_desc(ty: DqTy): Text { dq_describe(32, ty) }
+pub fn dq_ceq(ty: DqTy, x: Text, y: Text): Text { dq_call_eq(32, ty, x, y) }
+pub fn dq_crefl(ty: DqTy, x: Text): Text { dq_call_refl(32, ty, x) }
+pub fn dq_csound(ty: DqTy, x: Text, y: Text, h: Text): Text { dq_call_sound(32, ty, x, y, h) }
+
+// `c(x1, …, xn)`, as a term or a pattern.
+pub fn dq_pattern(c: DqCtor, tag: Text): Text {
+  match c.fields {
+    Nil => c.name
+    _ => Text::concat_all([c.name, "(", dq_join(dq_vars(tag, 1, List::length(c.fields)), ", "), ")"])
+  }
+}
+
+pub fn dq_vars(tag: Text, i: Nat, n: Nat): List(Text) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(Text::concat(tag, Text::of_nat(i)), dq_vars(tag, i + 1, m))
+  }
+}
+
+pub fn dq_nth(tys: List(DqTy), i: Nat): DqTy {
+  match tys {
+    Nil => DqBad
+    Cons(t, rest) => match i {
+      Zero => t
+      Succ(m) => dq_nth(rest, m)
+    }
+  }
+}
+
+// The comparisons of the fields of `x…` with those of `y…`, joined by
+// `Bool::and`, from the field `pos`.
+pub fn dq_conjunction(tys: List(DqTy), pos: Nat, x: Text, y: Text): Text {
+  dq_conj(List::length(tys), tys, pos, x, y)
+}
+
+pub fn dq_conj(k: Nat, tys: List(DqTy), pos: Nat, x: Text, y: Text): Text {
+  match k {
+    Zero => "true"
+    Succ(j) => {
+      let n := List::length(tys)
+      let at := (i: Nat) => dq_ceq(dq_nth(tys, i), Text::concat(x, Text::of_nat(i + 1)), Text::concat(y, Text::of_nat(i + 1)))
+      if pos >= n { "true" } else if pos + 1 == n { at(pos) } else {
+        Text::concat_all(["Bool::and(", at(pos), ", ", dq_conj(j, tys, pos + 1, x, y), ")"])
+      }
+    }
+  }
+}
+
+pub fn dq_refl_proof(tys: List(DqTy), pos: Nat): Text {
+  dq_refl_steps(List::length(tys), tys, pos)
+}
+
+pub fn dq_refl_steps(k: Nat, tys: List(DqTy), pos: Nat): Text {
+  match k {
+    Zero => "Refl"
+    Succ(j) => {
+      let n := List::length(tys)
+      let refl := (i: Nat) => dq_crefl(dq_nth(tys, i), Text::concat("x", Text::of_nat(i + 1)))
+      if pos >= n { "Refl" } else if pos + 1 == n { refl(pos) } else {
+        let xi := Text::concat("x", Text::of_nat(pos + 1))
+        Text::concat_all(["Bool::and_intro(", dq_ceq(dq_nth(tys, pos), xi, xi), ", ", dq_conjunction(tys, pos + 1, "x", "x"), ", ", refl(pos), ", ", dq_refl_steps(j, tys, pos + 1), ")"])
+      }
+    }
+  }
+}
+
+// `c` applied to the variable named by `name_of` for each field.
+pub fn dq_ctor_with(c: DqCtor, name_of: (Nat) -> Text, i: Nat, n: Nat): Text {
+  Text::concat_all([c.name, "(", dq_join(dq_ctor_args(name_of, i, n), ", "), ")"])
+}
+
+pub fn dq_ctor_args(name_of: (Nat) -> Text, i: Nat, n: Nat): List(Text) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(name_of(i), dq_ctor_args(name_of, i + 1, m))
+  }
+}
+
+// The proofs that field `i` compares equal, from `h`.
+pub fn dq_lets(tys: List(DqTy), i: Nat, n: Nat, h: Text): List(Text) {
+  dq_lets_k(n, tys, i, n, h)
+}
+
+pub fn dq_lets_k(k: Nat, tys: List(DqTy), i: Nat, n: Nat, h: Text): List(Text) {
+  match k {
+    Zero => Nil
+    Succ(m) => if i >= n { Nil } else if i + 1 == n { Cons(h, Nil) } else {
+      let p := dq_ceq(dq_nth(tys, i), Text::concat("x", Text::of_nat(i + 1)), Text::concat("y", Text::of_nat(i + 1)))
+      let q := dq_conjunction(tys, i + 1, "x", "y")
+      Cons(
+        Text::concat_all(["And::left(Bool::and_split(", p, ", ", q, ", ", h, "))"]),
+        dq_lets_k(m, tys, i + 1, n, Text::concat_all(["And::right(Bool::and_split(", p, ", ", q, ", ", h, "))"]))
+      )
+    }
+  }
+}
+
+pub fn dq_nth_text(xs: List(Text), i: Nat): Text {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => match i {
+      Zero => x
+      Succ(m) => dq_nth_text(rest, m)
+    }
+  }
+}
+
+// `Eq(I, c(x…), c(y…))` from `h`, the conjunction of the comparisons.
+pub fn dq_sound_proof(this: Text, c: DqCtor): Text {
+  let tys := c.fields
+  let n := List::length(tys)
+  if n == 0 { "Refl" } else {
+    let lets := dq_lets(tys, 0, n, "h")
+    let source := dq_ctor_with(c, (k: Nat) => Text::concat("x", Text::of_nat(k + 1)), 0, n)
+    dq_sound_steps(n, this, c, tys, lets, source, n, 0, Text::concat_all(["Refl(<A: ", this, ", a: ", source, ">)"]))
+  }
+}
+
+pub fn dq_sound_steps(k: Nat, this: Text, c: DqCtor, tys: List(DqTy), lets: List(Text), source: Text, n: Nat, i: Nat, proof: Text): Text {
+  match k {
+    Zero => proof
+    Succ(j) => if i >= n { proof } else {
+      let ty := dq_desc(dq_nth(tys, i))
+      let motive := dq_ctor_with(c, (q: Nat) => if q < i { Text::concat("y", Text::of_nat(q + 1)) } else if q == i { "z" } else { Text::concat("x", Text::of_nat(q + 1)) }, 0, n)
+      let a := Text::of_nat(i + 1)
+      dq_sound_steps(j, this, c, tys, lets, source, n, i + 1, Text::concat_all([
+        "Eq::subst(<A: ", ty, ", a: x", a, ", b: y", a, ">, (z: ", ty, ") => Eq(", this, ", ", source, ", ", motive, "), ",
+        dq_csound(dq_nth(tys, i), Text::concat("x", a), Text::concat("y", a), dq_nth_text(lets, i)), ", ", proof, ")"
+      ]))
+    }
+  }
+}
+
+pub fn dq_beq_rows(g: List(DqCtor), cs: List(DqCtor), c: DqCtor, j: Nat, k: Nat): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(d, rest) => Cons(
+      Text::concat_all(["      ", dq_pattern(d, "y"), " => ", if j == k { dq_conjunction(c.fields, 0, "x", "y") } else { "false" }]),
+      dq_beq_rows(g, rest, c, j, k + 1)
+    )
+  }
+}
+
+pub fn dq_beq_arms(all: List(DqCtor), cs: List(DqCtor), j: Nat): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => List::append(
+      Cons(Text::concat_all(["    ", dq_pattern(c, "x"), " => ⊢ Bool from match b {"]), dq_beq_rows(all, all, c, j, 0)),
+      Cons("    }", dq_beq_arms(all, rest, j + 1))
+    )
+  }
+}
+
+pub fn dq_refl_arms(cs: List(DqCtor)): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(Text::concat_all(["    ", dq_pattern(c, "x"), " => ", dq_refl_proof(c.fields, 0)]), dq_refl_arms(rest))
+  }
+}
+
+pub fn dq_sound_rows(this: Text, all: List(DqCtor), c: DqCtor, j: Nat, k: Nat): List(Text) {
+  match all {
+    Nil => Nil
+    Cons(d, rest) => Cons(
+      Text::concat_all(["      ", dq_pattern(d, "y"), " => ", if j == k { dq_sound_proof(this, c) } else { "False::elim(false_ne_true(h))" }]),
+      dq_sound_rows(this, rest, c, j, k + 1)
+    )
+  }
+}
+
+pub fn dq_sound_arms(this: Text, all: List(DqCtor), cs: List(DqCtor), j: Nat): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => List::append(
+      Cons(Text::concat_all(["    ", dq_pattern(c, "x"), " => ⊢ Eq(", this, ", ", dq_pattern(c, "x"), ", b) from match b {"]), dq_sound_rows(this, all, c, j, 0)),
+      Cons("    }", dq_sound_arms(this, all, rest, j + 1))
+    )
+  }
+}
+
+pub fn dq_names(prefix: Text, n: Nat): List(Text) {
+  dq_names_from(prefix, 0, n)
+}
+
+pub fn dq_names_from(prefix: Text, i: Nat, n: Nat): List(Text) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(Text::concat(prefix, dq_param_name(i)), dq_names_from(prefix, i + 1, m))
+  }
+}
+
+pub fn dq_binders(prefix: Text, n: Nat, shape: (Text) -> Text): List(Text) {
+  dq_binders_from(prefix, 0, n, shape)
+}
+
+pub fn dq_binders_from(prefix: Text, i: Nat, n: Nat, shape: (Text) -> Text): List(Text) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(Text::concat_all([prefix, dq_param_name(i), ": ", shape(dq_param_name(i))]), dq_binders_from(prefix, i + 1, m, shape))
+  }
+}
+
+// The text of the four declarations of the family, in its modules.
+pub fn dq_generate(family: Text, np: Nat, cs: List(DqCtor)): Text {
+  let params := dq_names("", np)
+  let this := if np == 0 { family } else { Text::concat_all([family, "(", dq_join(params, ", "), ")"]) }
+  let generics := if np == 0 { "" } else { Text::concat_all(["<", dq_join(params, ", "), ">"]) }
+  let typed := if np == 0 { "" } else { Text::concat_all(["<", dq_join(dq_binders("", np, (p: Text) => "Type"), ", "), ">"]) }
+  let e_params := dq_binders("e_", np, (p: Text) => Text::concat_all(["(", p, ", ", p, ") -> Bool"]))
+  let r_params := dq_binders("r_", np, (p: Text) => Text::concat_all(["∀ u: ", p, ". Eq(Bool, e_", p, "(u, u), true)"]))
+  let s_params := dq_binders("s_", np, (p: Text) => Text::concat_all(["∀ u: ", p, ". ∀ v: ", p, ". (e_", p, "(u, v) = true) -> Eq(", p, ", u, v)"]))
+  let e_names := dq_names("e_", np)
+  let r_names := dq_names("r_", np)
+  let s_names := dq_names("s_", np)
+  let beq := Text::concat(family, "::beq")
+  let call_beq := (a: Text, b: Text) => Text::concat_all([beq, "(", dq_join(List::append(e_names, [a, b]), ", "), ")"])
+  let beq_text := Text::concat_all([
+    "fn ", family, "::beq", generics, "(", dq_join(List::append(e_params, [Text::concat("a: ", this), Text::concat("b: ", this)]), ", "), "): Bool {\n",
+    "  ⊢ Bool from match a {\n", dq_join(dq_beq_arms(cs, cs, 0), "\n"), "\n  }\n}\n"
+  ])
+  let refl_text := Text::concat_all([
+    "theorem ", family, "::beq_refl", typed, "(", dq_join(List::append(e_params, List::append(r_params, [Text::concat("a: ", this)])), ", "), "): Eq(Bool, ", call_beq("a", "a"), ", true) {\n",
+    "  ⊢ Eq(Bool, ", call_beq("a", "a"), ", true) from match a {\n", dq_join(dq_refl_arms(cs), "\n"), "\n  }\n}\n"
+  ])
+  let sound_text := Text::concat_all([
+    "theorem ", family, "::beq_sound", typed, "(", dq_join(List::append(e_params, List::append(s_params, [Text::concat("a: ", this), Text::concat("b: ", this), Text::concat_all(["h: Eq(Bool, ", call_beq("a", "b"), ", true)"])])), ", "), "): (a = b) {\n",
+    "  ⊢ Eq(", this, ", a, b) from match a {\n", dq_join(dq_sound_arms(this, cs, cs, 0), "\n"), "\n  }\n}\n"
+  ])
+  let deq_text := Text::concat_all([
+    "theorem ", family, "::deq", typed, "(", dq_join(List::append(e_params, List::append(s_params, List::append(r_params, [Text::concat("a: ", this), Text::concat("b: ", this)]))), ", "), "): Iff(Eq(Bool, ", call_beq("a", "b"), ", true), a = b) {\n",
+    "  IffIntro(\n    (h: Eq(Bool, ", call_beq("a", "b"), ", true)) => ", beq, "_sound(", dq_join(List::append(e_names, List::append(s_names, ["a", "b", "h"])), ", "), "),\n",
+    "    (e: a = b) => Eq::subst(<A: ", this, ", a: a, b: b>, (z: ", this, ") => Eq(Bool, ", call_beq("a", "z"), ", true), e, ", beq, "_refl(", dq_join(List::append(e_names, List::append(r_names, ["a"])), ", "), "))\n  )\n}\n"
+  ])
+  Text::concat_all([beq_text, "\n", refl_text, "\n", sound_text, "\n", deq_text])
+}
+
+// The four declarations of `family` when it has a decision procedure.
+pub fn dq_text(core: KernelCore, family: Text): Option(Text) {
+  match kernel_ind_get(core, family) {
+    None => None
+    Some(info) => if info.indices != 0 || List::length(info.group) != 1 || elab_has_alias(info) { None } else {
+      ⊢ Option(Text) from match dq_ctors(core, info, info.constructors) {
+        None => None
+        Some(cs) => match cs {
+          Nil => None
+          _ => if dq_ctors_supported(core, family, info.params, cs) { Some(dq_generate(family, info.params, cs)) } else { None }
+        }
+      }
+    }
+  }
+}
+
+// Declares the equality of each family in turn that has none yet; a family
+// that cannot get one is left as it is. What it leaves is marked in the
+// bindings, as any library declaration the elaborator cannot read.
+pub fn dq_derive(k: Nat, core: &mut KernelCore, tables: SyntaxTables, families: List(Text), imps: List(ElabBinding)): List(ElabBinding) ! {div} {
+  match families {
+    Nil => imps
+    Cons(f, rest) => ⊢ List(ElabBinding) from match kernel_global_get(core, Text::concat(f, "::beq")) {
+      Some(^g) => dq_derive(k, &mut core, tables, rest, imps)
+      None => ⊢ List(ElabBinding) from match dq_text(core, f) {
+        None => dq_derive(k, &mut core, tables, rest, imps)
+        Some(text) => ⊢ List(ElabBinding) from match elab_library_stmts(tables, text) {
+          None => dq_derive(k, &mut core, tables, rest, elab_unread_here(Text::concat(f, "::beq"), "the generated equality cannot be read", imps))
+          Some(stmts) => {
+            let declared := elab_declare_library(k, &mut core, stmts, imps)
+            dq_derive(k, &mut core, tables, rest, declared)
+          }
+        }
+      }
+    }
+  }
+}
+
+// The prelude's families `==` reads by their derived equality.
+pub fn dq_families(): List(Text) {
+  ["Unit", "Option", "List", "Pair", "Ordering", "Result"]
+}
+
+pub fn dq_instance_count(core: KernelCore, families: List(Text)): Nat {
+  match families {
+    Nil => 0
+    Cons(family, rest) => ⊢ Nat from match kernel_global_get(core, Text::concat(family, "::beq")) {
+      None => dq_instance_count(core, rest)
+      Some(^global) => 2 + dq_instance_count(core, rest)
+    }
+  }
+}

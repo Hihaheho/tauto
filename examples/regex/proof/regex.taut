@@ -1,4 +1,4 @@
-import "../../../std/Base.taut"
+import std::base
 import "../src/regex.taut"
 
 // What the matcher does, proved. No program imports this file; `tauto check`
@@ -39,7 +39,7 @@ pub theorem append_nil_left(
   t: List(Nat),
   e: List::append(s, t) = Nil
 ): s = Nil {
-  ⊢ s = Nil from match s {
+  match s {
     Nil => Refl
     Cons(h, tl) => ⊢ Cons(h, tl) = Nil from match e {
     }
@@ -51,7 +51,7 @@ pub theorem append_nil_right(
   t: List(Nat),
   e: List::append(s, t) = Nil
 ): t = Nil {
-  ⊢ t = Nil from match s {
+  match s {
     Nil => e
     Cons(h, tl) => ⊢ t = Nil from match e {
     }
@@ -59,7 +59,7 @@ pub theorem append_nil_right(
 }
 
 pub theorem bool_or_true_right(a: Bool): Bool::or(a, true) = true {
-  ⊢ Bool::or(a, true) = true from match a {
+  match a {
     false => Refl
     true => Refl
   }
@@ -71,7 +71,7 @@ pub theorem bool_subst(P: (Bool) -> Prop, a: Bool, b: Bool, e: a = b, p: P(a)): 
 }
 
 pub theorem bool_or_inv(x: Bool, y: Bool, h: Bool::or(x, y) = true): x = true ∨ y = true {
-  ⊢ x = true ∨ y = true from match x {
+  match x {
     false => OrInr(h)
     true => OrInl(Refl)
   }
@@ -82,14 +82,14 @@ pub theorem bool_and_inv(
   y: Bool,
   h: Bool::and(x, y) = true
 ): x = true ∧ y = true {
-  ⊢ x = true ∧ y = true from match x {
+  match x {
     false => False::elim(false_ne_true(h))
     true => AndIntro(Refl, h)
   }
 }
 
 pub theorem nullable_sound(r: Re, h: re_nullable(r) = true): Matches(r, Nil) {
-  ⊢ Matches(r, Nil) from match r {
+  match r {
     REmpty => False::elim(false_ne_true(h))
     REps => MEps
     RChr(c) => False::elim(false_ne_true(h))
@@ -106,7 +106,7 @@ pub theorem nullable_sound(r: Re, h: re_nullable(r) = true): Matches(r, Nil) {
 }
 
 pub theorem nullable_complete(r: Re, h: Matches(r, Nil)): re_nullable(r) = true {
-  ⊢ re_nullable(r) = true from match r {
+  match r {
     REmpty => ⊢ false = true from match h {
     }
     REps => Refl
@@ -164,12 +164,12 @@ pub theorem seq_cons(
 }
 
 pub theorem no_match(s: List(Nat), h: Matches(REmpty, s)): False {
-  ⊢ False from match h {
+  match h {
   }
 }
 
 pub theorem eps_match(s: List(Nat), h: Matches(REps, s)): s = Nil {
-  ⊢ s = Nil from match h {
+  match h {
     MEps => Refl
   }
 }
@@ -273,7 +273,7 @@ pub theorem deriv_sound(
   s: List(Nat),
   h: Matches(re_deriv(c, r), s)
 ): Matches(r, Cons(c, s)) {
-  ⊢ Matches(r, Cons(c, s)) from match r {
+  match r {
     REmpty => ⊢ Matches(REmpty, Cons(c, s)) from match h {
     }
     REps => ⊢ Matches(REps, Cons(c, s)) from match h {
@@ -361,7 +361,7 @@ pub theorem deriv_chr_same(c: Nat): Matches(re_deriv(c, RChr(c)), Nil) {
 }
 
 pub theorem chr_word(d: Nat, w: List(Nat), h: Matches(RChr(d), w)): Cons(d, Nil) = w {
-  ⊢ Cons(d, Nil) = w from match h {
+  match h {
     MChr(d2) => Refl
   }
 }
@@ -372,7 +372,7 @@ pub theorem deriv_complete(
   s: List(Nat),
   h: Matches(r, Cons(c, s))
 ): Matches(re_deriv(c, r), s) {
-  ⊢ Matches(re_deriv(c, r), s) from match r {
+  match r {
     REmpty => ⊢ Matches(REmpty, s) from match h {
     }
     REps => ⊢ Matches(REmpty, s) from match h {
@@ -409,14 +409,14 @@ pub theorem deriv_complete(
 }
 
 pub theorem re_match_sound(w: List(Nat), r: Re, h: re_match(w, r) = true): Matches(r, w) {
-  ⊢ Matches(r, w) from match w {
+  match w {
     Nil => nullable_sound(r, h)
     Cons(c, rest) => deriv_sound(r, c, rest, re_match_sound(rest, re_deriv(c, r), h))
   }
 }
 
 pub theorem re_match_complete(w: List(Nat), r: Re, h: Matches(r, w)): re_match(w, r) = true {
-  ⊢ re_match(w, r) = true from match w {
+  match w {
     Nil => nullable_complete(r, h)
     Cons(c, rest) => re_match_complete(rest, re_deriv(c, r), deriv_complete(r, c, rest, h))
   }

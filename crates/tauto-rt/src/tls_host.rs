@@ -1,4 +1,4 @@
-//! TLS over the byte streams of `tcp_*` (`tls_*` in `std/prelude/Os.taut`),
+//! TLS over the byte streams of `tcp_*` (`tls_*` in `std/builtin/os.taut`),
 //! answered with [`crate::tls`] when the `tls` feature is on. A session is a
 //! number into a table of this process, like a stream of [`crate::tcp`]:
 //! `tls_accept` and `tls_connect` take the stream's socket out of that table,
@@ -64,6 +64,14 @@ mod without_tls {
         absent()
     }
 
+    pub fn os_tls_send(
+        _id: u64,
+        _bytes: Bytes,
+        _deadline: Option<i64>,
+    ) -> Result<Option<u64>, Text> {
+        absent()
+    }
+
     pub fn os_tls_shutdown(_id: u64, _how: u64) -> Result<(), Text> {
         absent()
     }
@@ -90,6 +98,9 @@ mod with_tls {
     const READ_SLICE: Duration = Duration::from_millis(10);
 
     struct Session {
+        /// Dropped before the sockets, so its registration with the
+        /// reactor's poller ends while the descriptor is still `ctl`'s.
+        ready: tcp::Ready,
         tls: Mutex<TlsStream<Socket>>,
         /// Another handle to the socket, to shut it down without waiting for
         /// a read or write that holds the session.
@@ -187,6 +198,7 @@ mod with_tls {
             table.sessions.insert(
                 id,
                 Arc::new(Session {
+                    ready: tcp::Ready::default(),
                     tls: Mutex::new(t),
                     ctl,
                     read_shut: AtomicBool::new(false),
@@ -366,7 +378,117 @@ mod with_tls {
                 return Ok(None);
             }
         }
-        Ok(Some(()))
+        // What an earlier `os_tls_send` left is sent too.
+        flush(&mut t, &s, deadline)
+    }
+
+    /// The socket as a writer that does not wait: a full socket is
+    /// `WouldBlock`.
+    struct NoWait<'a>(&'a Socket);
+
+    impl Write for NoWait<'_> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            tcp::send_now(self.0, buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Sends the session's records that wait, as far as the socket takes
+    /// them now: whether none is left.
+    fn flush_now(t: &mut TlsStream<Socket>) -> Result<bool, Text> {
+        while t.conn.wants_write() {
+            match t.conn.write_tls(&mut NoWait(&t.sock)) {
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::WouldBlock => return Ok(false),
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(failed(e)),
+            }
+        }
+        Ok(true)
+    }
+
+    /// Takes what of `bytes` the session takes now and sends what the
+    /// socket takes, without waiting: how many of `bytes` it took. It takes
+    /// none while records of an earlier send still wait. With no bytes, it
+    /// sends what waits and answers 0 once nothing is left, else 1.
+    /// `Ok(None)` when nothing could go and `deadline` has passed. A host
+    /// that waits on the poller (`exec::os_tls_ready`) sends a long write a
+    /// piece at a time this way, so the write holds no thread.
+    pub fn os_tls_send_vec(
+        id: u64,
+        bytes: &[u8],
+        deadline: Option<i64>,
+    ) -> Result<Option<u64>, Text> {
+        let s = session(id)?;
+        let mut t = lock(&s);
+        if s.closed.load(Ordering::Acquire) {
+            return Err(Text::from("the stream was closed"));
+        }
+        let passed = left(deadline).is_some_and(|d| d.is_zero());
+        let sent = flush_now(&mut t)?;
+        if bytes.is_empty() {
+            return Ok(match (sent, passed) {
+                (true, _) => Some(0),
+                (false, true) => None,
+                (false, false) => Some(1),
+            });
+        }
+        if !sent {
+            return Ok(if passed { None } else { Some(0) });
+        }
+        let n = t.conn.writer().write(bytes).map_err(failed)?;
+        flush_now(&mut t)?;
+        Ok(Some(n as u64))
+    }
+
+    pub fn os_tls_send(id: u64, bytes: Bytes, deadline: Option<i64>) -> Result<Option<u64>, Text> {
+        os_tls_send_vec(id, &bytes, deadline)
+    }
+
+    #[cfg(all(unix, feature = "reactor"))]
+    impl tcp::Watched for Session {
+        fn ready(&self) -> &tcp::Ready {
+            &self.ready
+        }
+        fn descriptor(&self) -> std::os::fd::BorrowedFd<'_> {
+            use std::os::fd::AsFd;
+            match &self.ctl {
+                Socket::Tcp(c) => c.as_fd(),
+                Socket::Unix(c) => c.as_fd(),
+            }
+        }
+        fn closed(&self) -> bool {
+            self.closed.load(Ordering::Acquire) || self.read_shut.load(Ordering::Acquire)
+        }
+        /// A read does not wait when the session already holds decrypted
+        /// bytes or the peer's close, though the socket has nothing new.
+        fn now(&self, write: bool) -> bool {
+            if write {
+                return tcp::polled(self.descriptor(), true);
+            }
+            // A session another task holds is read soon after.
+            let Ok(mut t) = self.tls.try_lock() else {
+                return true;
+            };
+            match t.conn.process_new_packets() {
+                Ok(state) if state.plaintext_bytes_to_read() > 0 || state.peer_has_closed() => true,
+                Ok(_) => {
+                    drop(t);
+                    tcp::polled(self.descriptor(), false)
+                }
+                Err(_) => true,
+            }
+        }
+    }
+
+    /// The wait of `exec::os_tls_ready` on the session `id`. `None` when no
+    /// session has the number: the operation that follows says so.
+    #[cfg(all(unix, feature = "reactor"))]
+    pub(crate) fn ready(id: u64, write: bool, deadline: Option<i64>) -> Option<tcp::Wait> {
+        let s = with(|t| t.sessions.get(&id).cloned())?;
+        Some(tcp::wait(s, write, deadline, false))
     }
 
     pub fn os_tls_read(id: u64, max: u64, deadline: Option<i64>) -> Result<Option<Bytes>, Text> {
@@ -384,6 +506,7 @@ mod with_tls {
         let s = session(id)?;
         if how != 1 {
             s.read_shut.store(true, Ordering::Release);
+            s.ready.wake();
         }
         if how != 0 {
             let mut t = lock(&s);
@@ -416,6 +539,7 @@ mod with_tls {
             let _ = t.sock.flush();
         }
         s.closed.store(true, Ordering::Release);
+        s.ready.wake();
         let _ = s.ctl.shutdown(Shutdown::Both);
     }
 
@@ -424,6 +548,7 @@ mod with_tls {
     pub fn drop_sessions() {
         for (_, s) in with(|t| std::mem::take(&mut t.sessions)) {
             s.closed.store(true, Ordering::Release);
+            s.ready.wake();
             let _ = s.ctl.shutdown(Shutdown::Both);
         }
     }

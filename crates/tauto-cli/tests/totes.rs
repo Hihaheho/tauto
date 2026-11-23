@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tauto::eval::{RunOptions, run_program_with};
+use tauto::exec::{RunOptions, run_loaded_with};
 use tauto::program::{Loaded, load_tote};
 
 fn dir(name: &str) -> PathBuf {
@@ -36,7 +36,7 @@ fn tote(root: &Path, name: &str, dependencies: &[&str], files: &[(&str, &str)]) 
 }
 
 fn run(loaded: &Loaded) -> Result<Vec<String>, String> {
-    let outcome = run_program_with(&loaded.program, 1_000_000, RunOptions::default())
+    let outcome = run_loaded_with(&loaded, 1_000_000, RunOptions::default())
         .map_err(|e| e.to_string())?;
     Ok(outcome
         .outputs
@@ -56,8 +56,8 @@ fn names(loaded: &Loaded) -> Vec<String> {
 #[test]
 fn a_tote_runs_its_main() {
     let root = dir("main");
-    let a = tote(&root, "a", &[], &[("main.taut", r#"perform show("x", 1)"#)]);
-    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["x = 1"]);
+    let a = tote(&root, "a", &[], &[("main.taut", r#"show(&1)"#)]);
+    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["1"]);
 }
 
 #[test]
@@ -76,10 +76,10 @@ fn a_tote_uses_its_dependency() {
         &[(
             "main.taut",
             r#"import a::a
-perform show("x", a_one() + 1)"#,
+show(&(a_one() + 1))"#,
         )],
     );
-    assert_eq!(run(&load_tote(&b).unwrap()).unwrap(), ["x = 2"]);
+    assert_eq!(run(&load_tote(&b).unwrap()).unwrap(), ["2"]);
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn a_dependency_keeps_the_prelude_constructor_its_dependent_declares_too() {
         &[(
             "lib.taut",
             "pub fn two(): Nat { match Some(2) { Some(n) => n, None => 0 } }\n\n\
-             pub fn three(): Nat {\n  let o := Some(3)\n  perform show(\"lib\", 0)\n  match o { Some(n) => n, None => 0 }\n}\n",
+             pub fn three(): Nat {\n  let o := Some(3)\n  show(&0)\n  match o { Some(n) => n, None => 0 }\n}\n",
         )],
     );
     let app = tote(
@@ -106,14 +106,14 @@ fn a_dependency_keeps_the_prelude_constructor_its_dependent_declares_too() {
             "main.taut",
             "import lib::lib\n\nenum Piece { Whole(Nat), Some }\n\n\
              fn tag(p: Piece): Nat { match p { Whole(n) => n, Some => 7 } }\n\n\
-             perform show(\"two\", two())\n\
-             perform show(\"three\", three())\n\
-             perform show(\"tag\", tag(Some))\n",
+             show(&two())\n\
+             show(&three())\n\
+             show(&tag(Some))\n",
         )],
     );
     assert_eq!(
         run(&load_tote(&app).unwrap()).unwrap(),
-        ["two = 2", "lib = 0", "three = 3", "tag = 7"]
+        ["2", "0", "3", "7"]
     );
 }
 
@@ -126,7 +126,7 @@ fn a_dependencys_main_is_not_read() {
         &[],
         &[
             ("a.taut", r#"pub fn a_one(): i64 { 1 }"#),
-            ("main.taut", r#"perform show("a", 0)"#),
+            ("main.taut", r#"show(&0)"#),
         ],
     );
     let b = tote(
@@ -136,11 +136,11 @@ fn a_dependencys_main_is_not_read() {
         &[(
             "main.taut",
             r#"import a::a
-perform show("b", a_one())"#,
+show(&a_one())"#,
         )],
     );
     let loaded = load_tote(&b).unwrap();
-    assert_eq!(run(&loaded).unwrap(), ["b = 1"]);
+    assert_eq!(run(&loaded).unwrap(), ["1"]);
     assert_eq!(names(&loaded), ["a.taut", "main.taut"]);
 }
 
@@ -161,7 +161,7 @@ fn a_tote_that_is_not_listed_is_not_seen() {
         &[(
             "main.taut",
             r#"import a::a
-perform show("x", a_one())"#,
+show(&a_one())"#,
         )],
     );
     let err = load_tote(&c).err().unwrap();
@@ -182,7 +182,7 @@ fn totes_that_depend_on_each_other_are_an_error() {
 }
 
 #[test]
-fn the_name_is_the_directorys() {
+fn the_name_is_the_manifests() {
     let root = dir("name");
     let x = tote(&root, "x", &[], &[]);
     fs::write(
@@ -190,12 +190,8 @@ fn the_name_is_the_directorys() {
         "package {\n  name = \"y\"\n  version = \"0.1.0\"\n}\n",
     )
     .unwrap();
-    let err = load_tote(&x).err().unwrap();
-    assert!(err.contains("is named y"), "{err}");
-    assert!(err.starts_with("the tote in "), "{err}");
-    // The message says what to change.
-    assert!(err.contains("rename the directory to y"), "{err}");
-    assert!(err.contains("`name = \"x\"`"), "{err}");
+    // A directory named other than its package is still that package.
+    load_tote(&x).unwrap();
 }
 
 #[test]
@@ -217,11 +213,11 @@ fn an_unknown_key_is_an_error() {
 #[test]
 fn the_rust_section_is_ignored() {
     let root = dir("rust");
-    let a = tote(&root, "a", &[], &[("main.taut", r#"perform show("x", 1)"#)]);
+    let a = tote(&root, "a", &[], &[("main.taut", r#"show(&1)"#)]);
     let mut manifest = fs::read_to_string(a.join("Tauto.eure")).unwrap();
     manifest.push_str("\nrust {\n  bridge = \"bridge\"\n}\n");
     fs::write(a.join("Tauto.eure"), manifest).unwrap();
-    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["x = 1"]);
+    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["1"]);
 }
 
 #[test]
@@ -254,7 +250,7 @@ fn files_are_read_in_path_order_with_main_last() {
                 "main.taut",
                 r#"import "a.taut"
 import "b.taut"
-perform show("x", a_one() + b_one())"#,
+show(&(a_one() + b_one()))"#,
             ),
         ],
     );
@@ -281,7 +277,7 @@ fn dependencies_are_visited_in_name_order() {
         &root,
         "a",
         &["z", "m"],
-        &[("main.taut", r#"perform show("x", 1)"#)],
+        &[("main.taut", r#"show(&1)"#)],
     );
     assert_eq!(
         names(&load_tote(&a).unwrap()),
@@ -292,15 +288,26 @@ fn dependencies_are_visited_in_name_order() {
 #[test]
 fn the_cli_runs_a_tote() {
     let root = dir("cli");
-    let a = tote(&root, "a", &[], &[("main.taut", r#"perform show("x", 1)"#)]);
+    let a = tote(
+        &root,
+        "a",
+        &[],
+        &[("main.taut", r#"perform main(() => show(&1))"#)],
+    );
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_tauto"))
         // The messages below are the English ones, whatever the language here.
         .env("TAUTO_LANG", "en")
-        .args(["run", "--tote", a.to_str().unwrap()])
+        .current_dir(&a)
+        .args(["run", "."])
         .output()
         .unwrap();
-    assert!(out.status.success());
-    assert_eq!(String::from_utf8(out.stdout).unwrap(), "x = 1\n");
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "1\n");
     let empty = tote(
         &root,
         "empty",
@@ -310,7 +317,8 @@ fn the_cli_runs_a_tote() {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_tauto"))
         // The messages below are the English ones, whatever the language here.
         .env("TAUTO_LANG", "en")
-        .args(["run", "--tote", empty.to_str().unwrap()])
+        .current_dir(&empty)
+        .args(["run", "."])
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -333,12 +341,12 @@ fn implementation_proof_and_effects_share_one_module() {
             r#"
 fn identity(n: Nat): Nat { n }
 theorem identity_zero(): identity(Zero) = Zero { Refl }
-fn print_it(n: Nat): Unit { perform show("n", n) }
+fn print_it(n: Nat): Unit { show(&n) }
 print_it(identity(2))
 "#,
         )],
     );
-    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["n = 2"]);
+    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["2"]);
 }
 
 #[test]
@@ -356,7 +364,7 @@ theorem bad(): external_value() = Zero { Refl }"#,
         let root = dir(name);
         let text = format!(
             r#"{}
-perform show("ok", 1)
+show(&1)
 "#,
             proof
         );
@@ -368,7 +376,7 @@ perform show("ok", 1)
 #[test]
 fn native_extension_is_rejected_in_tote_sources() {
     let root = dir("extension");
-    let a = tote(&root, "a", &[], &[("main.nib", r#"perform show("x", 1)"#)]);
+    let a = tote(&root, "a", &[], &[("main.nib", r#"show(&1)"#)]);
     assert!(load_tote(&a).err().unwrap().contains("must use .taut"));
 }
 
@@ -384,11 +392,11 @@ fn a_bound_name_does_not_turn_a_proof_function_into_runtime_code() {
             r#"
 fn Predicate(n: Nat): Prop { ((map: Nat) => map = map)(n) }
 theorem good(): Predicate(Zero) { Refl }
-perform show("ok", 1)
+show(&1)
 "#,
         )],
     );
-    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["ok = 1"]);
+    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["1"]);
 }
 
 #[test]
@@ -402,11 +410,11 @@ fn native_text_functions_need_no_proof_library_import() {
             "main.taut",
             r#"
 fn greeting(): Text { "hello" }
-perform show("text", greeting())
+show(&greeting())
 "#,
         )],
     );
-    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["text = \"hello\""]);
+    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["\"hello\""]);
 }
 
 #[test]
@@ -420,7 +428,7 @@ fn native_extension_cannot_be_imported_into_a_tote() {
         &[(
             "main.taut",
             r#"import "../../legacy.nib"
-perform show("x", value())"#,
+show(&value())"#,
         )],
     );
     assert!(load_tote(&a).err().unwrap().contains("must use .taut"));
@@ -431,16 +439,20 @@ fn both_source_extensions_run_as_tote_entries() {
     for extension in ["taut", "tauto"] {
         let root = dir(&format!("entry-{extension}"));
         let source = format!("main.{extension}");
-        let a = tote(&root, "a", &[], &[(&source, r#"perform show("x", 7)"#)]);
+        let a = tote(
+            &root,
+            "a",
+            &[],
+            &[(&source, r#"perform main(() => show(&7))"#)],
+        );
         // The default `src` accepts both extensions.
         for manifest in ["package { name = \"a\" }"] {
             fs::write(a.join("Tauto.eure"), manifest).unwrap();
-            assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["x = 7"]);
             let out = std::process::Command::new(env!("CARGO_BIN_EXE_tauto"))
                 // The messages below are the English ones, whatever the language here.
                 .env("TAUTO_LANG", "en")
-                .args(["run", "--tote"])
-                .arg(&a)
+                .current_dir(&a)
+                .args(["run", "."])
                 .output()
                 .unwrap();
             assert!(
@@ -448,7 +460,7 @@ fn both_source_extensions_run_as_tote_entries() {
                 "{}",
                 String::from_utf8_lossy(&out.stderr)
             );
-            assert_eq!(String::from_utf8(out.stdout).unwrap(), "x = 7\n");
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), "7\n");
         }
     }
 }
@@ -470,7 +482,7 @@ fn mixed_source_extensions_preserve_imports_and_skip_dependency_entries() {
                 r#"import "proof.tauto"
 pub fn value(): i64 { 9 }"#,
             ),
-            ("main.tauto", r#"perform show("dependency", 0)"#),
+            ("main.tauto", r#"show(&0)"#),
         ],
     );
     let app = tote(
@@ -481,7 +493,7 @@ pub fn value(): i64 { 9 }"#,
             (
                 "main.taut",
                 r#"import "helper.tauto"
-perform show("value", helper())"#,
+show(&helper())"#,
             ),
             (
                 "helper.tauto",
@@ -492,7 +504,7 @@ pub fn helper(): i64 { value() }"#,
         ],
     );
     let loaded = load_tote(&app).unwrap();
-    assert_eq!(run(&loaded).unwrap(), ["value = 9"]);
+    assert_eq!(run(&loaded).unwrap(), ["9"]);
     let files = tauto::program::package_source_files(&app).unwrap();
     assert_eq!(files.len(), 2);
     let bundle = tauto::program::tote_inputs(&app).unwrap();
@@ -524,7 +536,7 @@ fn a_dependencys_extern_needs_the_projects_trust() {
         &root,
         "b",
         &["a"],
-        &[("main.taut", "import a::a\n\nperform show(\"x\", one())\n")],
+        &[("main.taut", "import a::a\n\nshow(&one())\n")],
     );
     let refused = load_tote(&b).err().expect("an untrusted extern is refused");
     assert!(
@@ -538,7 +550,7 @@ fn a_dependencys_extern_needs_the_projects_trust() {
     let mut text = fs::read_to_string(&manifest).unwrap();
     text.push_str("\ntrust {\n  extern = [\"a\"]\n}\n");
     fs::write(&manifest, text).unwrap();
-    assert_eq!(run(&load_tote(&b).unwrap()).unwrap(), ["x = 1"]);
+    assert_eq!(run(&load_tote(&b).unwrap()).unwrap(), ["1"]);
 }
 
 /// The project's own externs are its author's, and need no trust.
@@ -551,10 +563,10 @@ fn the_projects_own_extern_needs_no_trust() {
         &[],
         &[(
             "main.taut",
-            "extern {\n  fn leak(url: Text): Text\n}\n\nperform show(\"x\", 1)\n",
+            "extern {\n  fn leak(url: Text): Text\n}\n\nshow(&1)\n",
         )],
     );
-    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["x = 1"]);
+    assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["1"]);
 }
 
 /// A tote's externs are its own: another tote calls the functions it writes
@@ -579,7 +591,7 @@ fn an_extern_is_called_only_inside_its_tote() {
         &["a"],
         &[(
             "main.taut",
-            "import a::a\n\nfn get(): Text { fetch(\"x\") }\n\nperform show(\"x\", one())\n",
+            "import a::a\n\nfn get(): Text { fetch(\"x\") }\n\nshow(&one())\n",
         )],
     );
     let manifest = b.join("Tauto.eure");
@@ -591,11 +603,11 @@ fn an_extern_is_called_only_inside_its_tote() {
         "{:?}",
         loaded.program.errors
     );
-    assert_eq!(run(&loaded).unwrap(), ["x = 1"]);
+    assert_eq!(run(&loaded).unwrap(), ["1"]);
 
     fs::write(
         b.join("src/main.taut"),
-        "import a::a\n\nfn get(): Text { leak(\"x\") }\n\nperform show(\"x\", one())\n",
+        "import a::a\n\nfn get(): Text { leak(\"x\") }\n\nshow(&one())\n",
     )
     .unwrap();
     let errors = match load_tote(&b) {
@@ -610,7 +622,7 @@ fn an_extern_is_called_only_inside_its_tote() {
     // A local of the same name is not the extern.
     fs::write(
         b.join("src/main.taut"),
-        "import a::a\n\nfn get(leak: u64): u64 { leak }\n\nperform show(\"x\", one())\n",
+        "import a::a\n\nfn get(leak: u64): u64 { leak }\n\nshow(&one())\n",
     )
     .unwrap();
     let loaded = load_tote(&b).unwrap();

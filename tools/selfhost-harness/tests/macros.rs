@@ -7,9 +7,16 @@ use std::collections::HashSet;
 
 use selfhost_harness::{assert_same_dump, corpus, materialize, run_tote_native};
 use tauto::macros::scope::resolve_with;
-use tauto::surface::{
-    Program, Stmt, dump::dump_program, parse_program_unresolved_at as parse_program_at,
-};
+use tauto::surface::{Program, Stmt, dump::dump_program};
+use tauto_parse::parse_program_unresolved_at;
+
+/// The program as the tote reads it: modules left as written, and the host's
+/// `perform budget(n, f)` read as a budget (`surface_program_as_written`).
+fn parse_program_at(source: &str, base: u32) -> Result<Program, String> {
+    let mut p = parse_program_unresolved_at(source, base)?;
+    tauto::resolve::host_budgets_as_written(&mut p.stmts);
+    Ok(p)
+}
 
 const STEPS: u64 = 200_000_000_000;
 const SEP: &str = "__m";
@@ -21,7 +28,7 @@ fn ctors(stmts: &[Stmt], out: &mut HashSet<String>) {
                 out.extend(d.constructors.iter().map(|c| c.name.to_string()))
             }
             Stmt::Inductive(d) => out.extend(d.constructors.iter().map(|c| c.name.to_string())),
-            Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => ctors(items, out),
+            Stmt::Mutual { items, .. } => ctors(items, out),
             _ => {}
         }
     }
@@ -77,7 +84,6 @@ const WORDS: &[&str] = &[
     "shared",
     "affine",
     "linear",
-    "view",
     "resume",
     "direct",
     "mut",
@@ -190,15 +196,17 @@ fn rewritten(source: &str, dollar: bool) -> String {
 }
 
 fn compare(label: &str, inputs: Vec<(String, String)>) {
-    let m = materialize(label, &inputs);
-    let out = run_tote_native("macros", &m.paths, STEPS);
-    assert_eq!(out.error, None);
-    assert_eq!(out.stderr, "");
-    let mut rust = String::new();
-    for (path, (_, source)) in m.paths.iter().zip(&inputs) {
-        rust.push_str(&format!("== {path}\n{}", expected(source)));
-    }
-    assert_same_dump("macros", &rust, &out.stdout);
+    tauto_test_suite::with_deep_stack(|| {
+        let m = materialize(label, &inputs);
+        let out = run_tote_native("macros", &m.paths, STEPS);
+        assert_eq!(out.error, None);
+        assert_eq!(out.stderr, "");
+        let mut rust = String::new();
+        for (path, (_, source)) in m.paths.iter().zip(&inputs) {
+            rust.push_str(&format!("== {path}\n{}", expected(source)));
+        }
+        assert_same_dump("macros", &rust, &out.stdout);
+    })
 }
 
 fn part(label: &str, n: usize, of: usize) {
@@ -211,56 +219,9 @@ fn part(label: &str, n: usize, of: usize) {
     compare(label, inputs);
 }
 
-/// Programs written to show each rule.
+/// The cases marked `differential = "macros"` in `cases/`.
 fn cases() -> Vec<(String, String)> {
-    [
-        // A name of the expansion meets the binder of the same expansion.
-        r#"fn f(x__m1: Nat): Nat { let y__m1 := x__m1
- y__m1 }"#,
-        // The caller's `x` is not the expansion's.
-        r#"fn f(x: Nat): Nat { let t__m1 := x
- t__m1 }"#,
-        // A global of the expansion must not be taken by a local of the caller.
-        r#"fn g(a: Nat): Nat { a }
-fn f(g: Nat): Nat { g__m1(g) }"#,
-        // A declaration of the expansion, used by it.
-        r#"fn helper__m1(a: Nat): Nat { a }
-fn f(a: Nat): Nat { helper__m1(a) }"#,
-        r#"struct P__m1 { x: Nat }
-fn f(p: P__m1): Nat { p.x }"#,
-        r#"enum E__m1 { A__m1, B__m1(Nat) }
-fn f(e: E__m1): Nat { match e { A__m1 => 1, B__m1(n__m1) => n__m1 } }"#,
-        r#"enum E { A, B(Nat) }
-fn f(e: E): Nat { match e { A => 1, B(n) => n } }"#,
-        r#"enum E { A__m1, B }
-fn f(e: E): Nat { match e { A__m1 => 1, B => 2 } }"#,
-        r#"theorem t__m1(a__m1: Nat): a__m1 == a__m1 { Refl }"#,
-        r#"fn f(n: Nat): Nat { let r := (x__m1, y__m1) => x__m1
- r(n, n) }"#,
-        r#"fn f(n: Nat): Nat { if n == 0 { let a__m1 := 1
- a__m1 } else { let a__m1 := 2
- a__m1 } }"#,
-        r#"mutual { fn a__m1(): Nat { b__m1() }
- fn b__m1(): Nat { 1 } }"#,
-        r#"module m { fn a__m1(): Nat { 1 }
- fn b(): Nat { a__m1() } }"#,
-        r#"effect Ask__m1(): Nat
-fn f(): Nat { perform Ask__m1() }"#,
-        r#"inductive Nat2__m1: Type { Z__m1: Nat2__m1
- S__m1(n__m1: Nat2__m1): Nat2__m1 }"#,
-        r#"fn f(n: Nat): Nat { var a__m1 := n
- a__m1 := a__m1
- a__m1 }"#,
-        r#"fn f(n: Nat): Nat { let g__m1 := n
- let g := n
- g__m1 }"#,
-        r#"fn f(g: Nat): Nat { let h := g__m2
- g__m1 }"#,
-    ]
-    .iter()
-    .enumerate()
-    .map(|(i, s)| (format!("case{i}"), s.to_string()))
-    .collect()
+    selfhost_harness::differential("macros")
 }
 
 #[test]
@@ -310,7 +271,7 @@ fn has_literal(n: &tauto::macros::Node) -> bool {
         }
         Node::List(v) => v.iter().any(has_literal),
         Node::Option(Some(x)) => has_literal(x),
-        Node::Product(members) => members.iter().any(|(_, value)| has_literal(value)),
+        Node::Pair(p) => has_literal(&p.0) || has_literal(&p.1),
         _ => false,
     }
 }
@@ -457,17 +418,20 @@ fn compare_with(
     flag: &str,
     expected_lift: fn(&str) -> String,
 ) {
-    let m = materialize(label, &inputs);
-    let mut args = vec![flag.to_string()];
-    args.extend(m.paths.iter().cloned());
-    let out = run_tote_native("macros", &args, STEPS);
-    assert_eq!(out.error, None);
-    assert_eq!(out.stderr, "");
-    let mut rust = String::new();
-    for (path, (_, source)) in m.paths.iter().zip(&inputs) {
-        rust.push_str(&format!("== {path}\n{}", expected_lift(source)));
-    }
-    assert_same_dump(flag, &rust, &out.stdout);
+    // The Rust side reads and lifts the deepest files of the corpus.
+    tauto_test_suite::with_deep_stack(|| {
+        let m = materialize(label, &inputs);
+        let mut args = vec![flag.to_string()];
+        args.extend(m.paths.iter().cloned());
+        let out = run_tote_native("macros", &args, STEPS);
+        assert_eq!(out.error, None);
+        assert_eq!(out.stderr, "");
+        let mut rust = String::new();
+        for (path, (_, source)) in m.paths.iter().zip(&inputs) {
+            rust.push_str(&format!("== {path}\n{}", expected_lift(source)));
+        }
+        assert_same_dump(flag, &rust, &out.stdout);
+    })
 }
 
 fn lift_part(label: &str, n: usize, of: usize) {
@@ -557,17 +521,19 @@ fn expected_quote(source: &str, stmts: bool) -> String {
 
 fn compare_quote(label: &str, inputs: Vec<(String, String)>, stmts: bool) {
     let flag = if stmts { "--quote-stmts" } else { "--quote" };
-    let m = materialize(label, &inputs);
-    let mut args = vec![flag.to_string()];
-    args.extend(m.paths.iter().cloned());
-    let out = run_tote_native("macros", &args, STEPS);
-    assert_eq!(out.error, None);
-    assert_eq!(out.stderr, "");
-    let mut rust = String::new();
-    for (path, (_, source)) in m.paths.iter().zip(&inputs) {
-        rust.push_str(&format!("== {path}\n{}", expected_quote(source, stmts)));
-    }
-    assert_same_dump(flag, &rust, &out.stdout);
+    tauto_test_suite::with_deep_stack(|| {
+        let m = materialize(label, &inputs);
+        let mut args = vec![flag.to_string()];
+        args.extend(m.paths.iter().cloned());
+        let out = run_tote_native("macros", &args, STEPS);
+        assert_eq!(out.error, None);
+        assert_eq!(out.stderr, "");
+        let mut rust = String::new();
+        for (path, (_, source)) in m.paths.iter().zip(&inputs) {
+            rust.push_str(&format!("== {path}\n{}", expected_quote(source, stmts)));
+        }
+        assert_same_dump(flag, &rust, &out.stdout);
+    })
 }
 
 /// Bodies of a `quote`, with the places a value is put in.
@@ -603,6 +569,60 @@ x"#,
 fn quote_matches_the_cases() {
     compare_quote("quote-cases", quote_cases(), false);
     compare_quote("quote-stmts-cases", quote_cases(), true);
+}
+
+#[test]
+fn quote_modules_as_statement_values() {
+    compare_quote(
+        "quote-module-stmts",
+        selfhost_harness::differential("macro-module-quotes"),
+        true,
+    );
+}
+
+#[test]
+fn lower_modules_and_remove_the_expansion_scope() {
+    compare_with(
+        "reflip-module-stmts",
+        selfhost_harness::differential("macro-module-quotes"),
+        "--reflip-module-stmts",
+        expected_reflip,
+    );
+}
+
+#[test]
+fn sealed_effect_cases_expand_with_a_scoped_module_and_public_aliases() {
+    let mut cases = std::collections::BTreeMap::<String, Vec<(String, String)>>::new();
+    for (path, source) in selfhost_harness::differential("macro-sealed-expansion") {
+        let (case, file) = path.rsplit_once('/').unwrap();
+        cases.entry(case.to_owned()).or_default().push((file.to_owned(), source));
+    }
+    assert_eq!(cases.len(), 4);
+    for (case, mut files) in cases {
+        files.sort_by_key(|(file, _)| match file.as_str() {
+            "macro.nib" => 0,
+            "lib.nib" => 1,
+            "main.nib" => 2,
+            _ => panic!("{case}: unexpected source {file}"),
+        });
+        let scratch = materialize("sealed-macro-expansion", &files);
+        let mut args = vec!["--expand-modules".to_owned()];
+        args.extend(scratch.paths.iter().cloned());
+        let out = run_tote_native("macros", &args, STEPS);
+        assert_eq!(out.error, None, "{case}");
+        assert_eq!(out.exit, Some(0), "{case}: {}", out.stderr);
+        assert!(!out.stdout.lines().any(|line| line.starts_with("error ")), "{case}: {}", out.stdout);
+        for expected in [
+            "kind #enter sealed#1",
+            "name sealed#1::#a_sealed",
+            "kind #effect-mode sealed#1::a handle",
+            "kind #alias a sealed#1::a",
+            "kind #alias perform_a sealed#1::perform_a",
+        ] {
+            assert!(out.stdout.contains(expected), "{case}: missing {expected}: {}", out.stdout);
+        }
+        assert!(!out.stdout.contains("kind #alias a_sealed "), "{case}");
+    }
 }
 
 #[test]

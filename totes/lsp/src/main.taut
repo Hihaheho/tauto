@@ -1,7 +1,6 @@
-import std::Base
-import std::prelude::Affine
-import std::prelude::Shared
-import std::prelude::Os
+import std::base
+import std::builtin::os
+import std::builtin::par
 import json::json
 import text::text
 import query_flow::flow
@@ -13,39 +12,75 @@ import "../src/queries.taut"
 // `Content-Length`) and keeps the session (initialize, shutdown, exit); what
 // a file says is asked of the analysis (`analysis.taut`).
 
-fn main(): Unit ! {stdin, stdin_bytes, stdout, stdout_flush, stderr, Div} {
+fn main(): Unit ! {budget, div, overflow, stderr, stdin, stdin_bytes, stdout, stdout_flush, ref_new, ref_get, ref_set} {
   let rt := new_runtime()
   var shut_down := false
   var running := true
   while running {
-    match read_message() {
-      None => {
+    // Each message is read and parsed, and each answer written, within a
+    // budget of its own: a message whose steps run out is given up alone
+    // while the server goes on. The server as a whole is meant not to stop,
+    // so `tauto lsp` runs it without the host's step limit (`--allow-div`). The queries that make
+    // the answers run outside any budget, as the Rust backend cannot yet run
+    // their callbacks under one.
+    match read_budgeted() {
+      Ended => {
         running := false
       }
-      Some(body) => match json_parse(body) {
-        Err(e) => send(error_reply(JNull, "-32700", concat("parse error: ", e.message)))
-        Ok(m) => match json_str(json_get(m, "method")) {
-          None => match json_get(m, "id") {
-            // A response to a request of the server: it sends none.
-            Some(id) => #()
-            None => send(error_reply(JNull, "-32600", "invalid request"))
-          }
-          Some(method) => if text_same(method, "exit") {
-            if shut_down {
-              #()
-            } else {
-              perform stderr("lsp: exit before shutdown\n")
-            }
-            running := false
-          } else if text_same(method, "shutdown") {
-            shut_down := true
-            reply(json_get(m, "id"), JNull)
+      GaveUp => perform stderr("lsp: gave up reading a message after its step budget\n")
+      Read(m) => match json_str(json_get(m, "method")) {
+        None => match json_get(m, "id") {
+          // A response to a request of the server: it sends none.
+          Some(^id) => #()
+          None => send(error_reply(JNull, "-32600", "invalid request"))
+        }
+        Some(method) => if text_same(method, "exit") {
+          if shut_down {
+            #()
           } else {
-            on_message(rt, method, json_get(m, "id"), json_get(m, "params"))
+            perform stderr("lsp: exit before shutdown\n")
           }
+          running := false
+        } else if text_same(method, "shutdown") {
+          shut_down := true
+          reply(json_get(m, "id"), JNull)
+        } else {
+          on_message(rt, method, json_get(m, "id"), json_get(m, "params"))
         }
       }
+      Unreadable(e) => send(error_reply(JNull, "-32700", concat("parse error: ", e)))
     }
+  }
+}
+
+// The steps one message may take to be read, and one answer to be parsed or
+// written.
+fn message_steps(): u64 {
+  10000000
+}
+
+// A message as `read_budgeted` gives it.
+enum Incoming {
+  Ended,
+  GaveUp,
+  Read(Json),
+  Unreadable(Text),
+}
+
+// The next message, read and parsed within its own budget.
+fn read_budgeted(): Incoming ! {budget, div, overflow, stdin, stdin_bytes} {
+  handle {
+    perform budget(message_steps(), () => {
+      match read_message() {
+        None => Ended
+        Some(body) => match json_parse(body) {
+          Ok(m) => Read(m)
+          Err(e) => Unreadable(e.message)
+        }
+      }
+    })
+  } with {
+    exceeded(^info), k => k(GaveUp)
   }
 }
 
@@ -53,7 +88,7 @@ fn main(): Unit ! {stdin, stdin_bytes, stdout, stdout_flush, stderr, Div} {
 
 // The header lines up to the empty one, then as many bytes of body as
 // `Content-Length` says. `None` at the end of the input.
-fn read_message(): Option(Text) ! {stdin, stdin_bytes, Div} {
+fn read_message(): Option(Text) ! {div, overflow, stdin, stdin_bytes} {
   var length: Option(Nat) := Some(0)
   var ended := false
   var reading := true
@@ -90,7 +125,7 @@ fn lk_rest(t: Text, start: u64): Text {
   }
 }
 
-fn text_trim(t: Text): Text {
+fn text_trim(t: Text): Text ! {div, overflow} {
   var start: u64 := 0
   var end := Text::len(t)
   while start < end && byte_is(t, start, 32) {
@@ -105,7 +140,7 @@ fn text_trim(t: Text): Text {
   }
 }
 
-fn strip_cr(t: Text): Text {
+fn strip_cr(t: Text): Text ! {overflow} {
   if Text::len(t) > 0 && byte_is(t, Text::len(t) - 1, 13) {
     lk_text_slice(t, 0, Text::len(t) - 1)
   } else {
@@ -113,7 +148,7 @@ fn strip_cr(t: Text): Text {
   }
 }
 
-fn read_body(want: u64): Bytes ! {stdin_bytes, Div} {
+fn read_body(want: u64): Bytes ! {div, overflow, stdin_bytes} {
   var got := Bytes::of_text("")
   var reading := true
   while reading && Bytes::len(got) < want {
@@ -127,7 +162,23 @@ fn read_body(want: u64): Bytes ! {stdin_bytes, Div} {
   got
 }
 
-fn send(v: Json): Unit ! {stdout, stdout_flush, Div} {
+fn send(v: Json): Unit ! {budget, stdout, stdout_flush, div, overflow} {
+  let sent := handle {
+    perform budget(message_steps(), () => {
+      send_now(v)
+      true
+    })
+  } with {
+    exceeded(^info), k => k(false)
+  }
+  if sent {
+    #()
+  } else {
+    send_now(error_reply(JNull, "-32803", "gave up writing an answer after its step budget"))
+  }
+}
+
+fn send_now(v: Json): Unit ! {div, overflow, stdout, stdout_flush} {
   let body := json_text(v)
   var b := Buf::new()
   Buf::push(&mut b, &"Content-Length: ")
@@ -147,14 +198,14 @@ fn error_reply(id: Json, code: Text, message: Text): Json {
 }
 
 // Answers a request; a notification (no id) gets no answer.
-fn reply(id: Option(Json), result: Json): Unit ! {stdout, stdout_flush, Div} {
+fn reply(id: Option(Json), result: Json): Unit ! {budget, stdout, stdout_flush, div, overflow} {
   match id {
     None => #()
     Some(i) => send(JObj([#("jsonrpc", JStr("2.0")), #("id", i), #("result", result)]))
   }
 }
 
-fn publish(uri: Text, diagnostics: Json): Unit ! {stdout, stdout_flush, Div} {
+fn publish(uri: Text, diagnostics: Json): Unit ! {budget, stdout, stdout_flush, div, overflow} {
   send(JObj([
     #("jsonrpc", JStr("2.0")),
     #("method", JStr("textDocument/publishDiagnostics")),
@@ -162,17 +213,25 @@ fn publish(uri: Text, diagnostics: Json): Unit ! {stdout, stdout_flush, Div} {
   ]))
 }
 
-fn parse_or_null(t: Text): Json {
-  match json_parse(t) {
-    Ok(v) => v
-    Err(e) => JNull
+// The JSON `t` is, within its own budget; `null` when it is not JSON or its
+// budget runs out.
+fn parse_or_null(t: Text): Json ! {budget, overflow} {
+  handle {
+    perform budget(message_steps(), () => {
+      match json_parse(t) {
+        Ok(v) => v
+        Err(^e) => JNull
+      }
+    })
+  } with {
+    exceeded(^info), k => k(JNull)
   }
 }
 
 // --- What the server does -------------------------------------------------
 
 // What the server can do, as `initialize` answers.
-fn capabilities(): Json {
+fn capabilities(): Json ! {budget, overflow} {
   JObj([
     #("capabilities", JObj([
       #("textDocumentSync", JNum("1")),
@@ -210,7 +269,7 @@ fn opt_text(t: Option(Text)): Text {
   }
 }
 
-fn on_message(rt: Runtime, method: Text, id: Option(Json), params: Option(Json)): Unit ! {stdout, stdout_flush, Div} {
+fn on_message(rt: Runtime, method: Text, id: Option(Json), params: Option(Json)): Unit ! {budget, div, overflow, stdout, stdout_flush, ref_get, ref_new, ref_set} {
   let p := match params {
     None => JNull
     Some(x) => x
@@ -218,7 +277,7 @@ fn on_message(rt: Runtime, method: Text, id: Option(Json), params: Option(Json))
   let uri := opt_text(json_str(json_at(p, ["textDocument", "uri"])))
   if text_same(method, "initialize") {
     let root := match json_arr(json_get(p, "workspaceFolders")) {
-      Cons(f, rest) => json_str(json_get(f, "uri"))
+      Cons(f, ^rest) => json_str(json_get(f, "uri"))
       Nil => json_str(json_get(p, "rootUri"))
     }
     set_root(opt_text(root))
@@ -234,7 +293,7 @@ fn on_message(rt: Runtime, method: Text, id: Option(Json), params: Option(Json))
   } else if text_same(method, "textDocument/didChange") {
     // The server asks for whole texts (`textDocumentSync` 1).
     match json_arr(json_get(p, "contentChanges")) {
-      Cons(first, rest) => match json_str(json_get(first, "text")) {
+      Cons(first, ^rest) => match json_str(json_get(first, "text")) {
         None => #()
         Some(text) => {
         open_text(rt, uri, text)
@@ -270,4 +329,6 @@ fn byte_is(t: Text, i: u64, b: u64): Bool {
   }
 }
 
-main()
+perform main(() => {
+  main()
+})

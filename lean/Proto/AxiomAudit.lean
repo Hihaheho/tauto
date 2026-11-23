@@ -21,8 +21,15 @@ part of the default `lake build` target; run it after the build with
 -- Nib
 #print axioms Proto.Nib.type_safety
 #print axioms Proto.Nib.preservation
-#print axioms Proto.Nib.borrow_safety
+#print axioms Proto.Nib.lin_preservation
+#print axioms Proto.Nib.captured_noOwned
+#print axioms Proto.Nib.halts
 -- Ownership analysis
 #print axioms Analysis.analysis_sound
 -- Macros
 #print axioms Proto.Macro.plug_typing
+-- A freeze ends at the last use
+#print axioms Proto.Nib.sink_same
+#print axioms Proto.Nib.float_ite_same
+#print axioms Proto.Nib.move_let_same
+#print axioms Proto.Nib.EffectLend.many_ok_shared

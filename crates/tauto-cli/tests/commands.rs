@@ -34,6 +34,8 @@ fn tauto(dir: &Path, args: &[&str]) -> Output {
         .current_dir(dir)
         // The messages below are the English ones, whatever the language here.
         .env("TAUTO_LANG", "en")
+        // Approvals are kept beside the case, not in the user's home.
+        .env("TAUTO_HOME", dir.join(".tauto-home"))
         .args(args)
         .output()
         .unwrap()
@@ -69,7 +71,7 @@ fn greet(root: &Path) -> PathBuf {
         &[
             (
                 "src/greet.taut",
-                r#"import std::prelude::Shared
+                r#"import std::prelude::collections
 
 pub fn greeting(name: Text): Text {
   concat("hi ", name)
@@ -78,8 +80,8 @@ pub fn greeting(name: Text): Text {
             ),
             (
                 "cmd/hi.taut",
-                r#"import std::prelude::Os
-import std::prelude::Shared
+                r#"import std::builtin::os
+import std::prelude::collections
 import "../src/greet.taut"
 
 fn each_name(names: List(Text)): Unit ! {stdout} {
@@ -97,8 +99,8 @@ each_name(perform argv())
             ),
             (
                 "cmd/cat.taut",
-                r#"import std::prelude::Os
-import std::prelude::Shared
+                r#"import std::builtin::os
+import std::prelude::collections
 
 match perform argv() {
   Cons(path, _) => match read_file(path) {
@@ -130,9 +132,35 @@ fn a_dependencys_command_runs_with_all_its_arguments() {
     greet(&r);
     let app = tote(&r, "app", &depends(&["greet"]), &[]);
     // `--offline` and `--help` after the name are the command's.
-    let out = tauto(&app.join("src"), &["hi", "Ryo", "--offline", "--help"]);
+    let out = tauto(&app.join("src"), &["hi", "World", "--offline", "--help"]);
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(stdout(&out), "hi Ryo\nhi --offline\nhi --help\n");
+    assert_eq!(stdout(&out), "hi World\nhi --offline\nhi --help\n");
+}
+
+/// `tauto NAME` is granted from the project's `trust`, so a `trust` not
+/// approved before runs nothing: without a terminal to ask at, the run does
+/// not start until `--approve-trust` approves it.
+#[test]
+fn a_command_runs_only_on_an_approved_trust() {
+    let r = root("gate");
+    greet(&r);
+    let grant = "trust {\n  commands {\n    cat {\n      tote = \"greet\"\n      read = [\"data\"]\n    }\n  }\n}\n";
+    let app = tote(
+        &r,
+        "app",
+        &format!("{}{grant}", depends(&["greet"])),
+        &[("data/a.txt", "inside\n")],
+    );
+    let out = tauto(&app, &["cat", "data/a.txt"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(stderr(&out).contains("--approve-trust"), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("inside"));
+    let out = tauto(&app, &["--approve-trust", "cat", "data/a.txt"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "inside\n");
+    // Approved once, the same trust asks nothing.
+    let out = tauto(&app, &["cat", "data/a.txt"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
 
 #[test]
@@ -146,7 +174,7 @@ fn the_host_denies_a_command_what_the_project_does_not_grant() {
         &[("data/a.txt", "inside\n")],
     );
     fs::write(r.join("outside.txt"), "outside\n").unwrap();
-    let out = tauto(&app, &["cat", "data/a.txt"]);
+    let out = tauto(&app, &["--approve-trust", "cat", "data/a.txt"]);
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
     assert!(
@@ -158,7 +186,10 @@ fn the_host_denies_a_command_what_the_project_does_not_grant() {
     assert!(err.contains("tote = \"greet\""), "{err}");
     assert!(err.contains("read = [\"PATH\"]"), "{err}");
     // A flag widens nothing: it is the command's argument.
-    let out = tauto(&app, &["cat", "--allow-read", "data/a.txt"]);
+    let out = tauto(
+        &app,
+        &["--approve-trust", "cat", "--allow-read", "data/a.txt"],
+    );
     assert_eq!(out.status.code(), Some(1));
 
     let grant = "trust {\n  commands {\n    cat {\n      tote = \"greet\"\n      read = [\"data\"]\n    }\n  }\n}\n";
@@ -169,10 +200,13 @@ fn the_host_denies_a_command_what_the_project_does_not_grant() {
         &[("data/a.txt", "inside\n")],
     );
     // The granted path is the project's, wherever the command runs from.
-    let out = tauto(&app.join("src"), &["cat", "../data/a.txt"]);
+    let out = tauto(
+        &app.join("src"),
+        &["--approve-trust", "cat", "../data/a.txt"],
+    );
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out), "inside\n");
-    let out = tauto(&app, &["cat", "../outside.txt"]);
+    let out = tauto(&app, &["--approve-trust", "cat", "../outside.txt"]);
     assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
     assert!(stderr(&out).contains("does not cover"), "{}", stderr(&out));
 }
@@ -183,7 +217,7 @@ fn a_grant_is_for_one_totes_command() {
     greet(&r);
     let grant = "trust {\n  commands {\n    cat {\n      tote = \"other\"\n      read = true\n    }\n  }\n}\n";
     let app = tote(&r, "app", &format!("{}{grant}", depends(&["greet"])), &[]);
-    let out = tauto(&app, &["cat", "Tauto.eure"]);
+    let out = tauto(&app, &["--approve-trust", "cat", "Tauto.eure"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(
         stderr(&out).contains("trust.commands.cat in Tauto.eure is for the tote other, which gives no command cat (greet does)"),
@@ -209,7 +243,7 @@ fn a_dependencys_externs_need_the_projects_trust() {
             ),
             (
                 "cmd/leak.taut",
-                r#"import std::prelude::Os
+                r#"import std::builtin::os
 import "../src/ext.taut"
 
 print(leak("x"))
@@ -237,7 +271,7 @@ fn two_totes_giving_one_name_are_chosen_between() {
         "commands {\n  hi {\n    main = \"cmd/hi.taut\"\n    about = \"Another hi\"\n  }\n}\n",
         &[(
             "cmd/hi.taut",
-            r#"import std::prelude::Os
+            r#"import std::builtin::os
 
 print("other\n")
 "#,
@@ -263,7 +297,7 @@ print("other\n")
         &format!("{}{chosen}", depends(&["greet", "other"])),
         &[],
     );
-    let out = tauto(&app, &["hi", "x"]);
+    let out = tauto(&app, &["--approve-trust", "hi", "x"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out), "other\n");
 }
@@ -284,7 +318,7 @@ fn the_projects_own_command_runs_and_wins() {
         ),
         &[(
             "cmd/hi.taut",
-            r#"import std::prelude::Os
+            r#"import std::builtin::os
 
 print("other\n")
 "#,
@@ -319,7 +353,7 @@ fn a_built_in_name_is_never_a_totes_command() {
         "commands {\n  test {\n    main = \"cmd/test.taut\"\n    about = \"Would be tauto test\"\n  }\n}\n",
         &[(
             "cmd/test.taut",
-            r#"import std::prelude::Os
+            r#"import std::builtin::os
 
 print("other\n")
 "#,
@@ -363,23 +397,23 @@ fn help_audit_and_add_show_the_commands() {
 fn check_reads_each_command_as_it_runs() {
     let r = root("check");
     let greet = greet(&r);
-    let out = tauto(&greet, &["check", "--tote", "."]);
+    let out = tauto(&greet, &["check", "."]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     fs::write(
         greet.join("cmd/hi.taut"),
-        r#"import std::prelude::Os
+        r#"import std::builtin::os
 import "../src/greet.taut"
 print(greeting(1))
 "#,
     )
     .unwrap();
-    let out = tauto(&greet, &["check", "--tote", "."]);
+    let out = tauto(&greet, &["check", "."]);
     assert_eq!(out.status.code(), Some(1));
     assert!(stdout(&out).contains("cmd/hi.taut:3:"), "{}", stdout(&out));
     // A main among the sources would be read by every dependent.
     let inside = GREET.replace("cmd/hi.taut", "src/greet.taut");
     tote(&r, "greet", &inside, &[]);
-    let out = tauto(&greet, &["check", "--tote", "."]);
+    let out = tauto(&greet, &["check", "."]);
     assert_eq!(out.status.code(), Some(1));
     assert!(
         stderr(&out).contains("which is one of its sources"),

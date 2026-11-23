@@ -9,7 +9,7 @@ The import restrictions below apply to a single source file;
 [source bundles](BUNDLES.md) provide explicit-file imports and source-reader
 substitution of literal `include_text!` calls.
 
-`rustgen` reads source with `totes/syntax` and `totes/surface`, checks its
+`rustgen` reads source with `totes/syntax` and `totes/parse` into `totes/surface`, checks its
 supported language, and emits Rust on standard output. Input translation does
 not call the Rust elaborator or code generator. Building `rustgen` itself still
 uses the Rust compiler: this is not a complete compiler bootstrap.
@@ -91,13 +91,13 @@ rigid generic parameters reject. The capture restriction applies to every
 visible local, including unused locals; it does not change ordinary generic
 functions' Rust bounds. Lambda parameter shadowing and duplicates reject.
 
-The executable `Nat` representation is bounded `u64`, matching the existing
+The executable `Nat` representation is bounded `u64`, matching the
 extraction backend (`crates/tauto/src/extract.rs`); it is not the kernel's
 unbounded mathematical natural number. Addition, multiplication and successor
 trap on overflow. Literal spelling is conservatively limited to nonnegative
 decimal values at most `i64::MAX`; larger values, direct `i64::MIN` spelling and
 division/remainder reject. Arithmetic calls the checked `tauto_rt` helpers.
-Function-call budget ticks are not step-count-equivalent to the existing
+Function-call budget ticks are not step-count-equivalent to the extraction
 backend. Deep values may exhaust the native stack, including during destruction.
 
 ## Compiler-source acceptance

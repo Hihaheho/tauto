@@ -1,4 +1,4 @@
-//! What extraction (`tauto::extract`, `docs/design/self-host.md`「extraction（`crates/tauto/src/extract.rs`）」) needs from the
+//! What extraction (`tauto::extract`, `docs/design/self-host.md`「Extraction」) needs from the
 //! kernel: for every declaration that checked, which of its parameters are
 //! types, which are proofs and which are values, and for every inductive
 //! family whether it is a proposition. Extraction keeps the values only.
@@ -30,6 +30,9 @@ pub enum Role {
 pub struct Signature {
     pub params: Vec<Role>,
     pub implicit: usize,
+    /// The names the parameters are written under in `f(<x: v>)`, one for
+    /// each parameter of the telescope.
+    pub names: Vec<String>,
     pub result: Role,
 }
 
@@ -96,6 +99,18 @@ pub struct FieldSite {
     pub family: Name,
 }
 
+/// The members a source ascription `(e: T)` takes out of a product: `e`'s type
+/// is a product of `members` members (`Pair` nested to the right), and the
+/// value is the members at `taken`, in that order, put together as a product.
+/// An ascription that leaves the value as it is has no site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AscriptionSite {
+    pub occurrence: crate::surface::TermId,
+    pub span: tauto_parol::Span,
+    pub members: usize,
+    pub taken: Vec<usize>,
+}
+
 /// Implicit slots inserted into a source application by elaboration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApplicationSite {
@@ -129,6 +144,9 @@ pub struct Checked {
     pub local_types: HashMap<Name, BoundaryType>,
     /// Executable declarations excluded from the proof environment.
     pub runtime: HashSet<Name>,
+    /// The `ghost fn`s: read by the kernel, never extracted, and refused where executable code
+    /// reaches them.
+    pub ghosts: HashSet<Name>,
     pub files: Vec<PathBuf>,
     pub entries: Vec<FileEntry>,
     pub signatures: HashMap<Name, Signature>,
@@ -151,16 +169,82 @@ pub struct Checked {
     pub derived: Vec<(Name, Vec<crate::surface::Stmt>)>,
     pub ctor_sites: Vec<CtorSite>,
     pub field_sites: Vec<FieldSite>,
+    pub ascription_sites: Vec<AscriptionSite>,
     pub application_sites: Vec<ApplicationSite>,
+    /// `application_sites` by occurrence, built on first use (see [`Checked::sites_at`]).
+    site_index: std::sync::OnceLock<HashMap<crate::surface::TermId, Vec<usize>>>,
+    /// Each constructor with the family that lists it, built on first use
+    /// (see [`Checked::family_of_ctor`]).
+    ctor_index: std::sync::OnceLock<HashMap<Name, Name>>,
+    /// Each record constructor with its record family, built on first use
+    /// (see [`Checked::record_of_ctor`]).
+    record_index: std::sync::OnceLock<HashMap<Name, Name>>,
 }
 
 impl Checked {
+    /// The application sites of `occurrence`, in the order they were recorded.
+    /// Extraction asks for the sites of each call it writes, so they are found
+    /// by occurrence instead of by a scan of every site of the program.
+    pub fn sites_at(
+        &self,
+        occurrence: crate::surface::TermId,
+    ) -> impl Iterator<Item = &ApplicationSite> {
+        let index = self.site_index.get_or_init(|| {
+            let mut index: HashMap<crate::surface::TermId, Vec<usize>> = HashMap::new();
+            for (i, site) in self.application_sites.iter().enumerate() {
+                index.entry(site.occurrence).or_default().push(i);
+            }
+            index
+        });
+        index
+            .get(&occurrence)
+            .into_iter()
+            .flatten()
+            .map(|&i| &self.application_sites[i])
+    }
+
+    /// The family that lists `ctor` as a constructor, with its name.
+    pub fn family_of_ctor(&self, ctor: &Name) -> Option<(&Name, &Family)> {
+        let index = self.ctor_index.get_or_init(|| {
+            let mut index = HashMap::new();
+            for (name, family) in &self.families {
+                for c in &family.ctors {
+                    index.entry(c.clone()).or_insert_with(|| name.clone());
+                }
+            }
+            index
+        });
+        let name = index.get(ctor)?;
+        self.families.get_key_value(name)
+    }
+
+    /// The record family whose constructor is `ctor`, with the constructor and the field names
+    /// `records` holds for it.
+    pub fn record_of_ctor(&self, ctor: &Name) -> Option<(&Name, &(Name, Vec<Name>))> {
+        let index = self.record_index.get_or_init(|| {
+            let mut index = HashMap::new();
+            for (family, (c, _)) in &self.records {
+                index.entry(c.clone()).or_insert_with(|| family.clone());
+            }
+            index
+        });
+        self.records.get_key_value(index.get(ctor)?)
+    }
+
+    /// Whether `name` is a constructor of some family.
+    pub fn is_ctor(&self, name: &Name) -> bool {
+        self.family_of_ctor(name).is_some()
+    }
+
     /// The role telescope of a source call, without compiler-inserted row
     /// evidence. Core elaborated calls continue to use `signatures` directly.
     pub fn source_call_signature(&self, name: &Name) -> Option<Signature> {
         let mut signature = self.signatures.get(name)?.clone();
         if let Some(slots) = self.row_parameter_slots.get(name) {
             signature.params.drain(slots.clone());
+            if slots.end <= signature.names.len() {
+                signature.names.drain(slots.clone());
+            }
             signature.implicit = signature.implicit.saturating_sub(slots.len());
         }
         Some(signature)
@@ -189,15 +273,17 @@ pub fn checked_entries(
         .chain(derived.iter().cloned())
         .chain(out.iter().map(|e| e.entry.name.clone()))
         .collect::<Vec<_>>();
-    let checked = |name: &Name| {
-        prelude_names.iter().any(|n| n == name)
-            || derived.iter().any(|n| n == name)
-            || out.iter().any(|e| {
-                e.entry.name == *name && matches!(e.entry.verdict, Verdict::Checked { .. })
-            })
-    };
+    let checked: HashSet<&Name> = prelude_names
+        .iter()
+        .chain(&derived)
+        .chain(
+            out.iter()
+                .filter(|e| matches!(e.entry.verdict, Verdict::Checked { .. }))
+                .map(|e| &e.entry.name),
+        )
+        .collect();
     for name in names {
-        if !checked(&name) {
+        if !checked.contains(&name) {
             continue;
         }
         if let Some(ty) = kernel.globals.get(&name).map(|g| g.ty.clone())
@@ -284,6 +370,9 @@ pub fn checked_entries(
         let mut effects: Vec<_> = kernel.effects.sigs.keys().cloned().collect();
         effects.sort_by(|a, b| a.as_str().cmp(b.as_str()).then(a.cmp(b)));
         for name in effects {
+            if kernel.effects.has_type_params(&name) {
+                continue;
+            }
             let Some(g) = kernel.globals.get(&super::effects::args_name(&name)) else {
                 continue;
             };
@@ -344,8 +433,9 @@ pub fn checked_entries(
         arities,
         boundary_types,
         effect_types,
-        effect_resumes: kernel.effects.resumes.clone(),
+        effect_resumes: (*kernel.effects.resumes).clone(),
         runtime: HashSet::new(),
+        ghosts: HashSet::new(),
         files,
         entries: out,
         signatures,
@@ -357,7 +447,8 @@ pub fn checked_entries(
         classes: kernel.classes.class_names(),
         ctor_sites: std::mem::take(&mut kernel.ctor_sites),
         field_sites: std::mem::take(&mut kernel.field_sites),
-        class_members: kernel.classes.member_owners.clone(),
+        ascription_sites: std::mem::take(&mut kernel.ascription_sites),
+        class_members: (*kernel.classes.member_owners).clone(),
         instance_methods: kernel
             .classes
             .direct_members
@@ -374,6 +465,9 @@ pub fn checked_entries(
             })
             .collect(),
         application_sites: std::mem::take(&mut kernel.application_sites),
+        site_index: std::sync::OnceLock::new(),
+        ctor_index: std::sync::OnceLock::new(),
+        record_index: std::sync::OnceLock::new(),
     }
 }
 
@@ -408,6 +502,7 @@ impl Kernel {
                         params: params[1..].to_vec(),
                         result: result.clone(),
                         effects: None,
+                        unused: Vec::new(),
                     },
                     w.span,
                 )
@@ -424,10 +519,30 @@ impl Kernel {
         if ctx.iter().any(|(n, _)| super::occurs(ty, n)) || self.role(ctx, ty) != Role::Value {
             return None;
         }
-        let id = match identities
+        // The types met so far are pairwise not convertible (a type is added only when none is),
+        // so at most one is convertible to `ty`: a type that is the same term is that one, found
+        // without asking the checker about each of them. Only a type that is not is compared with
+        // each (`TAUTO_VERIFY_IDENTITIES` makes the two ways meet).
+        let verify = std::env::var_os("TAUTO_VERIFY_IDENTITIES").is_some();
+        let same = identities
             .iter()
-            .position(|other| self.conv(&Vec::new(), ty, other))
-        {
+            .position(|other| crate::surface::same_term_structure(ty, other));
+        let found = match same {
+            Some(_) if !verify => same,
+            _ => {
+                let found = identities
+                    .iter()
+                    .position(|other| self.conv(&Vec::new(), ty, other));
+                if verify && same.is_some() {
+                    assert_eq!(
+                        found, same,
+                        "a boundary type convertible to an earlier one that is not the same term"
+                    );
+                }
+                found
+            }
+        };
+        let id = match found {
             Some(id) => id,
             None => {
                 let id = identities.len();
@@ -465,6 +580,7 @@ impl Kernel {
     fn signature_of(&mut self, ty: &T) -> Signature {
         let mut ctx: Ctx = Vec::new();
         let mut params = Vec::new();
+        let mut names = Vec::new();
         let mut t = ty.clone();
         loop {
             let w = self.whnf(&ctx, &t);
@@ -475,6 +591,12 @@ impl Kernel {
                 break;
             };
             let (n, d) = &ps[0];
+            // A renamed binder reads `R'12`: the name written is before the `'`.
+            let shown = n.as_ref().map(|n| n.to_string()).unwrap_or_default();
+            names.push(match shown.rsplit_once('\'') {
+                Some((base, k)) if k.chars().all(|c| c.is_ascii_digit()) => base.to_string(),
+                _ => shown,
+            });
             // The record of a class (`check/classes.rs`) is the `where` of
             // the extracted function, not a parameter.
             if n.as_ref().is_some_and(super::classes::is_dict) {
@@ -490,6 +612,7 @@ impl Kernel {
                         params: ps[1..].to_vec(),
                         result: result.clone(),
                         effects: None,
+                        unused: Vec::new(),
                     },
                     w.span,
                 )
@@ -501,6 +624,7 @@ impl Kernel {
         Signature {
             params,
             implicit: 0,
+            names,
             result,
         }
     }
@@ -527,6 +651,7 @@ impl Kernel {
                         params: params[1..].to_vec(),
                         result: result.clone(),
                         effects: None,
+                        unused: Vec::new(),
                     },
                     w.span,
                 )

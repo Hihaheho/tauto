@@ -1,17 +1,20 @@
+import std::builtin::os { stdout, stdout_flush }
 import "../bind/serde_json.taut"
 
-pub fn main() {
+pub fn main() ! {stdout, stdout_flush} {
   match serde_json::from_str(&"[1, 2, 3]") {
     Ok(v) => {
-      perform show("object", Value::is_object(&v))
-      perform show("array", Value::is_array(&v))
-      perform show("text", Value::to_text(&v))
+      show(&Value::is_object(&v))
+      show(&Value::is_array(&v))
+      show(&Value::to_text(&v))
     }
-    Err(e) => perform show("bad", JsonError::to_text(&e))
+    Err(e) => show(&JsonError::to_text(&e))
   }
   match serde_json::from_str(&"{") {
-    Ok(v) => perform show("unexpected", Value::is_null(&v))
-    Err(e) => perform show("eof", JsonError::is_eof(&e))
+    Ok(v) => show(&Value::is_null(&v))
+    Err(e) => show(&JsonError::is_eof(&e))
   }
 }
-main()
+perform main(() => {
+  main()
+})

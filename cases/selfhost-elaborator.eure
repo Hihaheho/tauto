@@ -1,5 +1,54 @@
 // Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
 
+@ cases.elaborator-infer-from-owned-type
+source = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 3 }
+}
+fn use(value: Local): Nat {
+  let result := Choose::choose(value)
+  result
+}
+```
+differential = "elaborator"
+
+@ cases.elaborator-infer-from-conflict
+source = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A { fn choose(value: Local): Nat { 3 } }
+instance Choose(Local, Bool) infer from A { fn choose(value: Local): Bool { true } }
+```
+differential = "elaborator"
+
+@ cases.elaborator-infer-from-unicode-parameter
+source = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(入力: Type, 出力: Type) { fn choose(value: 入力): 出力 }
+instance Choose(Local, Nat) infer from 入力 { fn choose(value: Local): Nat { 3 } }
+fn use(value: Local): Nat {
+  let result := Choose::choose(value)
+  result
+}
+```
+differential = "elaborator"
+
+@ cases.elaborator-infer-after-plain-instance
+source = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Plain(A: Type) { fn value(value: A): Nat }
+instance Plain(Local) { fn value(value: Local): Nat { 2 } }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A { fn choose(value: Local): Nat { 3 } }
+fn use(value: Local): Nat {
+  let result := Choose::choose(value)
+  result
+}
+```
+differential = "elaborator"
+
 // explicit_proofs_elaborate_to_the_same_nameless_terms
 @ cases.explicit-proofs-elaborate-to-the-same-nameless-terms-001
 source = ```tauto
@@ -104,6 +153,7 @@ source = ```tauto
 theorem bad(A: Prop): A { ?missing }
 ```
 differential = "elaborator"
+component_rejects = true
 
 // ill_typed_or_unsupported_source_never_emits_a_declaration
 @ cases.ill-typed-or-unsupported-source-never-emits-a-declaration-016
@@ -132,6 +182,7 @@ source = ```tauto
 theorem bad(A: Type): (A) -> A ! {} { x => x }
 ```
 differential = "elaborator"
+component_rejects = true
 
 // ill_typed_or_unsupported_source_never_emits_a_declaration
 @ cases.ill-typed-or-unsupported-source-never-emits-a-declaration-020
@@ -147,6 +198,7 @@ source = ```tauto
 theorem id(A: Prop, a: A): A { a }
 ```
 differential = "elaborator"
+component_rejects = true
 
 // ill_typed_or_unsupported_source_never_emits_a_declaration
 @ cases.ill-typed-or-unsupported-source-never-emits-a-declaration-022
@@ -206,5 +258,930 @@ differential = "elaborator"
 source = ```tauto
 def the(a: Bool): Bool := a
 theorem used(): Bool { the(true) }
+```
+differential = "elaborator"
+
+// A shared borrow is the value it borrows to the kernel, in a type and in a term.
+@ cases.a-shared-borrow-elaborates-as-its-value-031
+source = ```tauto
+theorem borrowed(A: Type, a: &A): A { a }
+theorem lent(A: Type, a: A): A { borrowed(A, &a) }
+```
+differential = "elaborator"
+
+// A value, an operation, a bound answer.
+@ cases.effects-read-a-value-an-operation-and-a-bound-answer-032
+source = ```tauto
+effect ask(): Nat
+fn g(n: Nat): Nat ! {ask} { perform ask() }
+fn f(n: Nat): Nat ! {ask} {
+  let x := perform ask()
+  x
+}
+```
+differential = "elaborator"
+
+// Rows in the order the effects were declared; a call lifted into a larger row.
+@ cases.rows-follow-the-order-of-declaration-and-calls-are-lifted-033
+source = ```tauto
+effect zed(): Nat
+effect abc(): Nat
+effect tell(n: Nat): Unit
+fn g(n: Nat): Nat ! {zed, abc} {
+  let x := perform abc()
+  perform zed()
+}
+fn one(n: Nat): Nat ! {abc} {
+  let a := perform abc()
+  a
+}
+fn two(n: Nat): Nat ! {abc, tell} {
+  let a := one(n)
+  perform tell(a)
+  perform abc()
+}
+```
+differential = "elaborator"
+
+// `match` and `if` with effects in the arms, a recursive call, a generic function.
+@ cases.match-if-recursion-and-generics-read-with-effects-034
+source = ```tauto
+effect ask(): Nat
+fn m(n: Nat): Nat ! {ask} {
+  match n {
+    Zero => perform ask()
+    Succ(k) => k
+  }
+}
+fn i(b: Bool): Nat ! {ask} {
+  if b { perform ask() } else { 0 }
+}
+fn rec(n: Nat): Nat ! {ask} {
+  match n {
+    Zero => perform ask()
+    Succ(k) => rec(k)
+  }
+}
+fn gen<A>(a: A): A ! {ask} {
+  let x := perform ask()
+  a
+}
+```
+differential = "elaborator"
+
+// `handle`: a handler that leaves effects, one that leaves none, with and without `return`.
+@ cases.handle-reads-partial-nested-and-complete-handlers-035
+source = ```tauto
+effect ask(): Nat
+effect tell(n: Nat): Unit
+fn two(n: Nat): Nat ! {ask, tell} {
+  let a := perform ask()
+  perform tell(a)
+  perform ask()
+}
+fn partial(n: Nat): Nat ! {tell} {
+  handle { two(n) } with {
+    ask(), k => k(7)
+  }
+}
+fn full(n: Nat): Nat {
+  handle { two(n) } with {
+    ask(), k => k(7)
+    tell(x), k => k(#())
+    return v => v
+  }
+}
+fn nested(n: Nat): Nat ! {tell} {
+  handle {
+    handle { two(n) } with {
+      ask(), k => k(1)
+    }
+  } with {
+    tell(m), k => k(#())
+  }
+}
+```
+differential = "elaborator"
+
+// An effectful argument and an effectful scrutinee, an arm that performs.
+@ cases.effectful-arguments-and-scrutinees-and-performing-arms-036
+source = ```tauto
+effect ask(): Nat
+effect tell(n: Nat): Unit
+fn scrut(n: Nat): Nat ! {ask} {
+  match perform ask() {
+    Zero => 1
+    Succ(k) => k
+  }
+}
+fn outer(n: Nat): Nat ! {tell} {
+  handle { perform ask() } with {
+    ask(), k => {
+      perform tell(3)
+      k(1)
+    }
+  }
+}
+```
+differential = "elaborator"
+
+// A row with an effect that is not read, a function that uses an undeclared name.
+@ cases.rows-the-host-cannot-read-are-skipped-037
+source = ```tauto
+effect ask(): Nat
+fn a(n: Nat): Nat ! {ask, div} { n }
+fn b(n: Nat): Nat ! {ask} { Nat::add(perform ask(), n) }
+fn c(n: Nat): Nat ! {ask} { b(n) }
+fn d(n: Nat): Nat { n }
+```
+differential = "elaborator"
+
+// An effect whose answer runs: it is declared, not read.
+@ cases.an-effect-whose-answer-runs-is-skipped-038
+source = ```tauto
+effect tick(): i64
+fn a(n: Nat): Nat ! {tick} { n }
+```
+differential = "elaborator"
+
+// One instance, performed without writing it.
+@ cases.one-instance-of-a-generic-effect-is-performed-without-writing-it-039
+source = ```tauto
+effect get<A>(): A
+fn g(n: Nat): Nat ! {get(Nat)} { perform get() }
+```
+differential = "elaborator"
+
+// Two effects, each at an instance, and a bound answer.
+@ cases.two-generic-effects-each-at-an-instance-040
+source = ```tauto
+effect get<A>(): A
+effect put<A>(a: A): Unit
+fn k(n: Nat): Nat ! {get(Nat), put(Nat)} {
+  let x := perform get()
+  perform put(x)
+  x
+}
+```
+differential = "elaborator"
+
+// A generic function whose row names its generic.
+@ cases.a-generic-function-names-its-generic-in-its-row-041
+source = ```tauto
+effect get<A>(): A
+fn h<A>(a: A): A ! {get(A)} { perform get() }
+```
+differential = "elaborator"
+
+// Handlers that write the instance they answer.
+@ cases.handlers-write-the-instance-they-answer-042
+source = ```tauto
+effect get<A>(): A
+fn g(n: Nat): Nat ! {get(Nat)} { perform get() }
+fn h(n: Nat): Nat {
+  handle { g(n) } with {
+    get<Nat>(), k => k(7)
+  }
+}
+fn two(n: Nat): Bool {
+  handle { perform get() } with {
+    get<Bool>(), k => k(true)
+  }
+}
+```
+differential = "elaborator"
+
+// An instance next to a plain effect, left in the row by a handler.
+@ cases.an-instance-next-to-a-plain-effect-043
+source = ```tauto
+effect get<A>(): A
+effect tell(n: Nat): Unit
+fn g(n: Nat): Nat ! {get(Nat), tell} {
+  let x := perform get()
+  perform tell(x)
+  x
+}
+fn p(n: Nat): Nat ! {tell} {
+  handle { g(n) } with {
+    get<Nat>(), k => k(1)
+  }
+}
+```
+differential = "elaborator"
+
+// Recursion, `return`, and a generic function called at its own type.
+@ cases.recursion-return-and-a-generic-call-044
+source = ```tauto
+effect get<A>(): A
+effect tell(n: Nat): Unit
+fn a(n: Nat): Nat ! {get(Nat), tell} {
+  let x := perform get()
+  perform tell(x)
+  x
+}
+fn rec(n: Nat): Nat ! {get(Nat), tell} {
+  match n {
+    Zero => perform get()
+    Succ(k) => rec(k)
+  }
+}
+fn ret(n: Nat): Nat {
+  handle { rec(n) } with {
+    get<Nat>(), k => k(2)
+    tell(m), k => k(#())
+    return v => v
+  }
+}
+fn gen<A>(a: A): A ! {get(A)} {
+  let x := perform get()
+  x
+}
+fn callgen(n: Nat): Nat ! {get(Nat)} {
+  gen(n)
+}
+```
+differential = "elaborator"
+
+// Effects with several generics; a call whose instance the row lacks and an arm the host cannot read are skipped as the host skips them.
+@ cases.effects-with-several-generics-045
+source = ```tauto
+effect put<A>(a: A): Unit
+effect pair<A, B>(a: A, b: B): A
+fn p(n: Nat): Unit ! {put(Nat)} { perform put(n) }
+fn q(n: Nat, b: Bool): Nat ! {pair(Nat, Bool)} { perform pair(n, b) }
+fn r(n: Nat): Nat {
+  handle { q(n, true) } with {
+    pair<Nat, Bool>(x, y), k => k(x)
+  }
+}
+fn s(n: Nat): Unit {
+  handle { p(n) } with {
+    put<Nat>(x), k => k(#())
+    return v => v
+  }
+}
+fn gen<A>(a: A): Unit ! {put(A)} { perform put(a) }
+fn user(n: Nat): Unit ! {put(Nat)} { gen(n) }
+fn user2(b: Bool): Unit ! {put(Nat)} { gen(b) }
+```
+differential = "elaborator"
+
+// A handler arm that calls its continuation twice in a row is rejected, as the host rejects it.
+@ cases.an-arm-calling-its-continuation-twice-is-rejected-046
+source = ```tauto
+effect ask(): Nat
+fn f(n: Nat): Nat {
+  handle { perform ask() } with {
+    ask(), k => {
+      let a := k(1)
+      k(a)
+    }
+  }
+}
+```
+differential = "elaborator"
+
+// An arm that calls its continuation twice in a row after another call is rejected.
+@ cases.an-arm-calling-its-continuation-twice-after-another-call-is-rejected-047
+source = ```tauto
+effect ask(): Nat
+fn f(n: Nat): Nat {
+  handle { perform ask() } with {
+    ask(), k => {
+      let a := k(1)
+      let b := k(2)
+      b
+    }
+  }
+}
+```
+differential = "elaborator"
+
+// An effect declared `resume 0` rejects an arm that calls its continuation once.
+@ cases.resume-0-rejects-a-call-048
+source = ```tauto
+effect ask(): Nat resume 0
+fn f(n: Nat): Nat {
+  handle { perform ask() } with {
+    ask(), k => k(1)
+  }
+}
+```
+differential = "elaborator"
+
+// Calls on different branches count once, as the host counts them.
+@ cases.calls-on-branches-count-once-049
+source = ```tauto
+effect ask(): Nat
+fn f(n: Nat): Nat {
+  handle { perform ask() } with {
+    ask(), k => if true { k(1) } else { k(2) }
+  }
+}
+```
+differential = "elaborator"
+
+// `resume ω` allows any number of calls.
+@ cases.resume-omega-allows-any-calls-050
+source = ```tauto
+effect ask(): Nat resume ω
+fn f(n: Nat): Nat {
+  handle { perform ask() } with {
+    ask(), k => {
+      let a := k(1)
+      k(a)
+    }
+  }
+}
+```
+differential = "elaborator"
+
+// `resume 0` allows an arm that does not call its continuation.
+@ cases.resume-0-allows-no-call-051
+source = ```tauto
+effect ask(): Nat resume 0
+fn f(n: Nat): Nat {
+  handle { perform ask() } with {
+    ask(), k => 7
+  }
+}
+```
+differential = "elaborator"
+
+// One call is within the default `resume`.
+@ cases.one-call-is-within-the-default-resume-052
+source = ```tauto
+effect ask(): Nat
+fn f(n: Nat): Nat {
+  handle { perform ask() } with {
+    ask(), k => k(1)
+  }
+}
+```
+differential = "elaborator"
+
+// An arm for an effect that is read through its encoding.
+@ cases.an-arm-for-an-effect-read-through-its-encoding-053
+source = ```tauto
+effect stopped(): Nat
+fn h(): Nat {
+  handle { perform stopped() } with {
+    stopped(), k => 0
+  }
+}
+```
+differential = "elaborator"
+
+// A row variable alone or after effects is the operations and answers of the effects it stands for; a call passes the caller's others.
+@ cases.a-row-variable-is-two-parameters-054
+source = ```tauto
+effect ask(): Nat
+fn a1<!e>(n: Nat): Nat ! e { n }
+fn a2<!e>(n: Nat): Nat ! {ask} ∪ e { perform ask() }
+fn a3(n: Nat): Nat ! {ask} { a1(n) }
+```
+differential = "elaborator"
+
+// A row variable through calls, a plain callee in a row with a variable, a call from a row without one.
+@ cases.a-row-variable-through-calls-and-skips-055
+source = ```tauto
+effect ask(): Nat
+effect tell(n: Nat): Unit
+fn b1<!e>(n: Nat): Nat ! {ask} ∪ e { perform ask() }
+fn b2<!e>(n: Nat): Nat ! {ask, tell} ∪ e {
+  let x := b1(n)
+  perform tell(x)
+  x
+}
+fn b3(n: Nat): Nat ! {ask, tell} { b2(n) }
+fn b4(n: Nat): Nat ! {tell} { n }
+fn b5<!e>(n: Nat): Nat ! {tell} ∪ e { b4(n) }
+fn b6(n: Nat): Nat ! {ask} { b1(n) }
+fn b7(n: Nat): Nat { n }
+```
+differential = "elaborator"
+
+// A handler in a function with a row variable and a call of one inside a handler.
+@ cases.a-row-variable-with-a-handler-056
+source = ```tauto
+effect ask(): Nat
+fn c3<!e>(n: Nat): Nat ! e { n }
+fn c4(n: Nat): Nat {
+  handle { c3(n) } with {
+    ask(), k => k(1)
+    return x => x
+  }
+}
+fn c5<!e>(n: Nat): Nat ! e {
+  handle { perform ask() } with {
+    ask(), k => k(1)
+    return x => x
+  }
+}
+```
+differential = "elaborator"
+
+// `==` on `List`, `Option`, `Result`, `Ordering` and pairs is the derived `F::beq`, with the function that compares each argument.
+@ cases.equality-by-type-reads-the-derived-beq-054
+source = ```tauto
+fn g(x: Option(Nat), y: Option(Nat)): Bool { x == y }
+fn h(x: Ordering, y: Ordering): Bool { x != y }
+fn l(x: List(Nat), y: List(Nat)): Bool { x == y }
+fn ll(x: List(List(Bool)), y: List(List(Bool))): Bool { x == y }
+fn r(x: Result(Nat, Bool), y: Result(Nat, Bool)): Bool { x == y }
+fn p(x: Nat × Bool, y: Nat × Bool): Bool { x == y }
+theorem s(a: List(Nat), b: List(Nat), h: List::beq(Nat::eq, a, b) = true): a = b { List::beq_sound(Nat::eq, Nat::eq_sound, a, b, h) }
+```
+differential = "elaborator"
+
+// A match on a part nested in a family generalizes the hypotheses over it, by the nested member's recursor.
+@ cases.a-match-on-a-nested-part-with-dependents-055
+source = ```tauto
+pub(open) inductive Tr: Type {
+  Node(n: Nat, kids: List(Tr)): Tr
+}
+fn kn(ts: List(Tr), a: Nat): Option(Nat) {
+  match ts {
+    Nil => None
+    Cons(c, rest) => match c {
+      Node(n, ks) => match n == a {
+        true => Some(0)
+        false => match kn(rest, a) {
+          None => None
+          Some(k) => Some(Succ(k))
+        }
+      }
+    }
+  }
+}
+theorem ks(ts: List(Tr), a: Nat, j: Nat, e: kn(ts, a) = Some(j)): j = j {
+  match ts {
+    Nil => Refl
+    Cons(c, rest) => Refl
+  }
+}
+```
+differential = "elaborator"
+
+// A parameter that is a function with effects: its row as a local, a named function or a λ passed for it, a row variable shared with the callback.
+@ cases.a-callback-with-a-row-is-a-function-to-comp-057
+source = ```tauto
+effect ask(): Nat
+fn app1(f: (Nat) -> Nat ! {ask}, n: Nat): Nat ! {ask} { f(n) }
+fn app2<!e>(f: (Nat) -> Nat ! e, n: Nat): Nat ! e { f(n) }
+fn tw(n: Nat): Nat ! {ask} { perform ask() }
+fn u1(n: Nat): Nat ! {ask} { app1(tw, n) }
+fn u2(n: Nat): Nat ! {ask} { app2(tw, n) }
+fn u3(n: Nat): Nat ! {ask} { app2((x) => x, n) }
+fn u4(n: Nat): Nat ! {ask} { app2((x) => perform ask(), n) }
+```
+differential = "elaborator"
+
+// Thunks, a callee that handles its callback's effect, and λs read in the callee's row from rows with and without effects.
+@ cases.callbacks-that-a-function-handles-or-passes-on-058
+source = ```tauto
+effect ask(): Nat
+effect tell(n: Nat): Unit
+fn thunk(f: () -> Nat ! {ask}): Nat ! {ask} { f() }
+fn twice(f: () -> Nat ! {ask}): Nat ! {ask} {
+  let a := f()
+  a + f()
+}
+fn run<!e>(f: () -> Nat ! {ask} ∪ e): Nat ! e {
+  handle { f() } with {
+    ask(), k => k(1)
+  }
+}
+fn pure_user(): Nat { run(() => perform ask()) }
+fn user(): Nat ! {tell} { run(() => perform ask()) }
+fn user2(): Nat ! {tell} { run(() => { perform tell(1); perform ask() }) }
+fn gen<!e>(f: (Nat) -> Nat ! e, n: Nat): Nat ! e { f(f(n)) }
+fn t1(n: Nat): Nat ! {ask} { perform ask() }
+fn user3(n: Nat): Nat ! {ask} { gen(t1, n) }
+fn user4(n: Nat): Nat { gen((x) => x, n) }
+fn user5(n: Nat): Nat ! {ask, tell} { gen((x) => perform ask(), n) }
+```
+differential = "elaborator"
+
+// An arm `∀ A. get<A>(…)` for every instance is not read, the host skips the function; an arm's `∀` on an effect without type generics is ignored.
+@ cases.arms-for-every-instance-are-skipped-059
+source = ```tauto
+effect get<A>(): A
+effect ask(): Nat
+fn g(n: Nat): Nat ! {get(Nat)} { perform get() }
+fn a(n: Nat): Nat {
+  handle { perform ask() } with {
+    ∀ A. ask(), k => k(1)
+  }
+}
+fn b(n: Nat): Nat {
+  handle { g(n) } with {
+    ∀ A. get<A>(), k => k(1)
+  }
+}
+fn c(n: Nat): Nat {
+  handle { g(n) } with {
+    get<Nat, Nat>(), k => k(1)
+  }
+}
+fn d(n: Nat): Nat ! {ask} {
+  handle { g(n) } with {
+    ∀ A. get<A>(), k => k(1)
+  }
+}
+```
+differential = "elaborator"
+
+// A hypothesis an arm rebinds is generalized once, where it was declared, in a match on an equation.
+@ cases.an-arm-hypothesis-shadows-the-one-it-replaces-056
+source = ```tauto
+fn checked<T: Type>(c: Option(Nat), x: T): Option(T) {
+  match c {
+    None => Some(x)
+    Some(p) => Some(x)
+  }
+}
+theorem cv<T: Type>(c: Option(Nat), x: T, g: T, e: checked(c, x) = Some(g)): x = g {
+  match c {
+    None => ⊢ x = g from match e {
+      Refl => Refl
+    }
+    Some(p) => ⊢ x = g from match e {
+      Refl => Refl
+    }
+  }
+}
+```
+differential = "elaborator"
+
+// A row with two instances of one effect: the host orders them by the declaration of their types, `Nat`, `Bool` and `Unit` before the program's own types, which follow in the order they are declared; so does the tote.
+@ cases.instances-of-one-effect-are-ordered-by-their-types-060
+source = ```tauto
+effect get<A>(): A
+effect put<A>(a: A): Unit
+inductive A: Type { MkA: A }
+inductive B: Type { MkB: B }
+fn r1(n: Nat): Nat ! {get(Nat), get(Bool)} { n }
+fn r2(n: Nat): Nat ! {get(B), get(A)} { n }
+fn r3(n: Nat): Nat ! {get(A), get(Unit), get(Nat)} { n }
+fn r4(n: Nat): Nat ! {put(B), get(A), get(Bool)} { n }
+fn r5(n: Nat): Nat ! {get(Bool), put(Nat), get(Nat)} { n }
+fn r6(n: Nat): Nat ! {get(Nat), get(Bool)} { r1(n) }
+fn r7(n: Nat): Nat ! {get(B), get(A), get(Nat)} { r2(n) }
+```
+differential = "elaborator"
+
+// A handler takes one instance out of a row with two, and a `perform` is ambiguous between them.
+@ cases.handlers-and-performs-with-two-instances-061
+source = ```tauto
+effect get<A>(): A
+inductive A: Type { MkA: A }
+fn g2(n: Nat): Nat ! {get(Nat), get(Bool)} { n }
+fn h1(n: Nat): Nat ! {get(Bool)} {
+  handle { g2(n) } with {
+    get<Nat>(), k => k(1)
+  }
+}
+fn h2(n: Nat): Nat ! {get(Nat)} {
+  handle { g2(n) } with {
+    get<Bool>(), k => k(true)
+  }
+}
+fn h3(n: Nat): Nat ! {get(A), get(Nat)} {
+  handle { g2(n) } with {
+    get<Bool>(), k => k(true)
+  }
+}
+fn both(n: Nat): Nat ! {get(Nat), get(Bool)} {
+  let b := perform get()
+  n
+}
+```
+differential = "elaborator"
+// A record's constructor, fields and record patterns.
+@ cases.records-fields-and-record-patterns-read-as-the-host-reads-them-057
+source = ```tauto
+inductive P: Type {
+  Mk(a: Nat, b: Bool): P
+}
+fn mk(n: Nat): P { P { b: true, a: n } }
+fn geta(p: P): Nat { p.a }
+fn pa(p: P): Nat { match p { P { a, b } => a } }
+fn pb(p: P): Nat { match p { P { b: _, a: x } => x } }
+```
+differential = "elaborator"
+
+// A `let` with a written type is `the` of that type; one without stands for its value.
+@ cases.a-let-with-a-written-type-stands-for-the-of-that-type-059
+source = ```tauto
+fn f(n: Nat): Nat {
+  let h: Nat := Succ(n)
+  Succ(h)
+}
+fn g(n: Nat): Nat {
+  let h := Succ(n)
+  Succ(h)
+}
+```
+differential = "elaborator"
+
+// A `let` of a lambda or a matched value is substituted.
+@ cases.a-let-without-a-type-stands-for-its-value-060
+source = ```tauto
+fn f(n: Nat): Nat {
+  let g := (x: Nat) => Succ(x)
+  g(n)
+}
+fn h(n: Nat): Nat {
+  let m := Succ(n)
+  match m {
+    Zero => 0
+    Succ(k) => k
+  }
+}
+```
+differential = "elaborator"
+
+// A recursion whose calls write an implicit the matched type lacks generalizes it.
+@ cases.a-recursion-writing-an-implicit-the-matched-type-lacks-058
+source = ```tauto
+import std::text
+pub(open) inductive P(T: Type): Type {
+  Good(v: T): P(T)
+  Bad(n: Nat): P(T)
+}
+fn f<T>(i: Nat, conv: (Text) -> Option(T), vs: List(Text)): P(List(T)) {
+  match vs {
+    Nil => Good(Nil)
+    Cons(t, rest) => match conv(t) {
+      None => Bad(i)
+      Some(x) => match f(<T: T>, i, conv, rest) {
+        Good(xs) => Good(Cons(x, xs))
+        Bad(p) => Bad(p)
+      }
+    }
+  }
+}
+```
+differential = "elaborator"
+
+// A recursion generalizes the hypotheses that depend on the matched list.
+@ cases.a-recursion-over-a-dependent-hypothesis-061
+source = ```tauto
+import std::base
+import std::nat
+import std::list
+fn inl(k: Nat, l: List(Nat)): Bool {
+  match l {
+    Nil => false
+    Cons(x, r) => Bool::or(Nat::eq(x, k), inl(k, r))
+  }
+}
+fn dp(x: Nat, r: List(Nat), b: Bool): List(Nat) {
+  match b {
+    true => r
+    false => Cons(x, r)
+  }
+}
+fn dk(vs: List(Nat), k: Nat): List(Nat) {
+  match vs {
+    Nil => Nil
+    Cons(x, t) => dp(x, dk(t, k), Nat::eq(x, k))
+  }
+}
+theorem dac(y: Nat, r: List(Nat), k: Nat, ih: (inl(k, r) = false) -> dk(r, k) = r, h: Nat::eq(y, k) = false ∧ inl(k, r) = false): dk(Cons(y, r), k) = Cons(y, r) {
+  Eq::trans(
+    Eq::congr((b: Bool) => dp(y, dk(r, k), b), And::left(h)),
+    Eq::congr((l: List(Nat)) => Cons(y, l), ih(And::right(h)))
+  )
+}
+theorem da(t: List(Nat), k: Nat, e: inl(k, t) = false): dk(t, k) = t {
+  match t {
+    Nil => Refl
+    Cons(y, r) => dac(y, r, k, (hr: inl(k, r) = false) => da(r, k, hr), Bool::or_false_split(Nat::eq(y, k), inl(k, r), e))
+  }
+}
+```
+differential = "elaborator"
+
+// A borrowing lambda is the lambda by value.
+@ cases.a-borrowing-lambda-is-the-lambda-by-value-062
+source = ```tauto
+import std::list
+pub fn kin(k: &Nat, l: &List(Nat)): Bool {
+  List::any((x: &Nat) => x == k, l)
+}
+```
+differential = "elaborator"
+
+// A user family named `Vec` is told apart from the runtime `Vec` by its file, and what uses it is declared.
+@ cases.a-family-named-like-a-runtime-type-keeps-its-uses-063
+source = ```tauto
+inductive Vec: Type {
+  Mk(n: Nat): Vec
+}
+fn f(v: Vec): Nat { 0 }
+```
+differential = "elaborator"
+
+@ cases.reuse-a-parent-law-in-a-generic-proof
+source = ```tauto
+inductive class Parent(A: Type) {
+  fn apply(x: A): A
+  theorem identity(x: A): Parent::apply(x) = x
+}
+inductive class Child(A: Type) where Parent(A) {
+  fn get(x: A): A
+}
+theorem inherited<A>(x: A): Parent::apply(x) = x where Child(A) {
+  Parent::identity(x)
+}
+```
+differential = "elaborator"
+
+@ cases.module-function-reexport-uses-the-original-declaration
+source = ```tauto
+pub module api {
+  pub fn answer(): Nat { 7 }
+}
+pub import api { answer }
+theorem same(): api::answer() = answer() { Refl }
+```
+differential = "elaborator"
+
+@ cases.module-effect-reexport-uses-the-original-operation
+source = ```tauto
+pub module api {
+  pub(open) effect ask(): Nat
+}
+pub import api { ask }
+fn both(): Nat {
+  handle {
+    let first := perform api::ask()
+    let second := perform ask()
+    first + second
+  } with {
+    ask(), k => k(6)
+    return value => value
+  }
+}
+```
+differential = "elaborator"
+
+@ cases.nested-module-function-reexport-uses-the-original-declaration
+source = ```tauto
+pub module api {
+  pub module inner {
+    pub fn answer(): Nat { 7 }
+  }
+  pub import inner { answer }
+  pub fn local(): Nat { answer() }
+}
+theorem same(): api::inner::answer() = api::answer() { Refl }
+theorem same_local(): api::local() = api::inner::answer() { Refl }
+```
+differential = "elaborator-modules"
+
+@ cases.nested-module-effect-reexport-uses-the-original-operation
+source = ```tauto
+pub module api {
+  pub module inner {
+    pub(open) effect ask(): Nat
+  }
+  pub import inner { ask }
+}
+fn both(): Nat {
+  handle {
+    let first := perform api::inner::ask()
+    let second := perform api::ask()
+    first + second
+  } with {
+    api::ask(), k => k(6)
+    return value => value
+  }
+}
+```
+differential = "elaborator-modules"
+
+// `&mut` parameters and `var`s: the function returns its value with the states' last values, as the host reads it.
+
+@ cases.a-call-lending-a-borrow-returns-the-callee-state-064
+source = ```tauto
+fn inc(n: &mut Nat): Nat { *n := n + 1; n }
+fn twice(n: &mut Nat): Nat { inc(&mut n); inc(&mut n) }
+```
+differential = "elaborator"
+
+@ cases.an-if-changing-a-var-returns-the-whole-state-065
+source = ```tauto
+fn f(a: Nat, b: Bool): Nat { var x: Nat := a; if b { x := x + 1 } else { x := x + 2 }; x }
+```
+differential = "elaborator"
+
+@ cases.a-match-changing-a-borrow-returns-the-whole-state-066
+source = ```tauto
+fn g(o: Option(Nat), n: &mut Nat): Nat {
+  match o {
+    None => {
+      *n := 0
+      0
+    }
+    Some(v) => {
+      *n := v
+      v
+    }
+  }
+}
+```
+differential = "elaborator"
+
+@ cases.several-borrows-are-threaded-by-name-067
+source = ```tauto
+fn h(a: &mut Nat, b: &mut Nat): Nat { *a := a + b; *b := a; a + b }
+fn sw(a: &mut Nat, b: &mut Nat): Nat { let t := a; *a := b; *b := t; 0 }
+```
+differential = "elaborator"
+
+@ cases.vars-and-a-condition-068
+source = ```tauto
+fn p(a: Nat): Nat { var x: Nat := a; var y: Nat := 0; x := x + 1; y := x + x; y }
+fn q(a: &mut Nat, b: Nat): Nat { if b == 0 { *a := 1; 1 } else { 2 } }
+```
+differential = "elaborator"
+
+@ cases.an-empty-else-keeps-the-state-069
+source = ```tauto
+fn r(a: &mut Nat, b: Bool): Nat { if b { *a := 1 } else { }; *a := a + 1; a }
+```
+differential = "elaborator"
+
+@ cases.calls-lending-borrows-in-arguments-070
+source = ```tauto
+fn inc(n: &mut Nat): Nat { *n := n + 1; n }
+fn two(a: &mut Nat, b: &mut Nat): Nat { inc(&mut a) + inc(&mut b) }
+fn three(a: &mut Nat): Nat { let x := inc(&mut a); let y := inc(&mut a); x + y + a }
+```
+differential = "elaborator"
+
+@ cases.a-record-borrow-is-assigned-whole-071
+source = ```tauto
+inductive P: Type {
+  Mk(a: Nat, b: Nat): P
+}
+fn setp(p: &mut P, n: Nat): Nat { *p := P::Mk(n, n); n }
+fn nest(a: Nat): Nat { var s: Nat := a; var t: Nat := 0; if a == 0 { s := 1; t := 2 } else { t := s }; s + t }
+```
+differential = "elaborator"
+
+// A `match` on a product of variables is the case tree of matches on them, so that a call on a
+// field of a component is a structural recursion (`structural-recursion-tuple-scrutinee`).
+@ cases.elaborator-recursion-through-a-tuple-scrutinee
+source = ```tauto
+inductive T: Type {
+  Leaf: T
+  Node(l: T, r: T): T
+}
+fn both(a: T, b: T): Bool {
+  match #(a, b) {
+    #(Node(l, _), Node(r, _)) => both(l, r)
+    _ => true
+  }
+}
+fn all3(a: T, b: T, c: T): Bool {
+  match #(a, b, c) {
+    #(Node(x, _), Node(y, _), Node(z, _)) => all3(x, y, z)
+    #(Leaf, Leaf, Leaf) => true
+    _ => false
+  }
+}
+```
+differential = "elaborator"
+
+// A field one arm binds by name and another writes `_` for is given a fresh name in the case
+// tree, and the written name stands for it: a recursive call on that name is structural.
+@ cases.elaborator-recursion-through-a-pattern-alias
+source = ```tauto
+inductive T: Type {
+  Leaf: T
+  Node(l: T, r: T): T
+}
+fn both(a: T, b: T): Bool {
+  match #(a, b) {
+    #(Node(l, _), Node(r, _)) => both(l, r)
+    #(Leaf, Leaf) => true
+    #(Leaf, Node(_, _)) => true
+    #(Node(_, _), Leaf) => true
+  }
+}
+fn two(a: T, b: T): Bool {
+  match a {
+    Node(x, Leaf) => match b {
+      Node(y, _) => two(x, y)
+      Leaf => true
+    }
+    Node(_, Node(_, _)) => true
+    Leaf => false
+  }
+}
 ```
 differential = "elaborator"

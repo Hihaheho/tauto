@@ -1,22 +1,26 @@
 import "inference_lists.taut"
+import "inference_base.taut"
 import "diagnostic_sound.taut"
 import "checker.taut"
 import "datas_frame.taut"
 import "expr_access_frame.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn inference_record_after(term: SurfaceTerm, m: Mut1(Ty, Checker)): Mut1(Ty, Checker) {
   frame_bind(
-    Ty,
-    Ty,
+    <A: Ty, B: Ty>,
     (ty: Ty, next: Checker) => frame_bind(
-      Unit,
-      Ty,
-      (ignored: Unit, last: Checker) => mut1(ty, last),
-      access_record_term(next, term, ty)
+      <A: Unit, B: Ty>,
+      (cleared: Unit, after: Checker) => frame_bind(
+        <A: Unit, B: Ty>,
+        (ignored: Unit, last: Checker) => mut1(ty, last),
+        access_record_term(after, term, ty)
+      ),
+      inference_set_result_hint(next, None)
     ),
     m
   )
@@ -28,7 +32,7 @@ pub theorem inference_record_after_sound(
   derived: ∀ accepted: DiagnosticClean(ck_st(m)). p(ck_val(m)),
   clean: DiagnosticClean(ck_st(inference_record_after(term, m)))
 ): p(ck_val(inference_record_after(term, m))) {
-  ⊢ p(ck_val(inference_record_after(term, m))) from match m {
+  match m {
     mut1(ty, next) => derived(clean)
   }
 }
@@ -43,7 +47,7 @@ pub theorem ck_infer_value_fact(
   ). p(ck_val(ck_infer_term_in(fuel, c, term, env))),
   clean: DiagnosticClean(ck_st(ck_infer_in(k, c, term, env)))
 ): p(ck_val(ck_infer_in(k, c, term, env))) {
-  ⊢ p(ck_val(ck_infer_in(k, c, term, env))) from match k {
+  match k {
     Zero => False::elim(
       diagnostic_error_impossible(
         c,

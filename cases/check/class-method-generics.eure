@@ -1,10 +1,10 @@
 description = "Class method telescopes are checked as polymorphic dictionary fields."
 
 @ cases.method-type-parameter
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+inductive class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
 instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
 fn value(): Nat { Identity::apply(0, 7) }
 theorem computes(): Eq(Nat, value(), 7) { Refl }
@@ -12,22 +12,22 @@ theorem computes(): Eq(Nat, value(), 7) { Refl }
 checks_all = "ok"
 
 @ cases.method-term-parameter
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 inductive Tagged(n: Nat): Type { Mk: Tagged(n) }
-class Read(A: Type) { fn read<n: Nat>(owner: A, value: Tagged(n)): Nat }
+inductive class Read(A: Type) { fn read<n: Nat>(owner: A, value: Tagged(n)): Nat }
 instance Read(Nat) { fn read<index: Nat>(owner: Nat, value: Tagged(index)): Nat { index } }
-fn value(): Nat { Read::read(0, Tagged::Mk(7)) }
+fn value(): Nat { Read::read(0, Tagged::Mk(<n: 7>)) }
 theorem computes(): Eq(Nat, value(), 7) { Refl }
 ```
 checks_all = "ok"
 
 @ cases.generic-method-through-dictionary
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+inductive class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
 instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
 fn apply<A, B>(owner: A, value: B): B where Identity(A) { Identity::apply(owner, value) }
 fn value(): Nat { apply(0, 7) }
@@ -36,10 +36,10 @@ theorem computes(): Eq(Nat, value(), 7) { Refl }
 checks_all = "ok"
 
 @ cases.renamed-method-binders-with-inherited-annotations
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+inductive class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
 instance Identity(Nat) { fn apply<C>(receiver, item) { item } }
 fn value(): Nat { Identity::apply(0, 7) }
 theorem computes(): Eq(Nat, value(), 7) { Refl }
@@ -47,10 +47,10 @@ theorem computes(): Eq(Nat, value(), 7) { Refl }
 checks_all = "ok"
 
 @ cases.multiple-instantiations-through-one-dictionary
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+inductive class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
 instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
 fn both<A>(owner: A): Nat where Identity(A) {
   let first: Nat := Identity::apply(owner, 7)
@@ -62,54 +62,54 @@ theorem computes(): Eq(Nat, both(0), 7) { Refl }
 checks_all = "ok"
 
 @ cases.method-generic-count-must-match
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+inductive class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
 instance Identity(Nat) { fn apply(owner: Nat, value: Nat): Nat { value } }
 ```
 checks."input/main.taut::Identity(Nat)" = "error: has 0 parameters, but the class has 1"
 
 @ cases.method-generic-domain-must-match
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Read(A: Type) { fn read<n: Nat>(owner: A): Nat }
+inductive class Read(A: Type) { fn read<n: Nat>(owner: A): Nat }
 instance Read(Nat) { fn read<n: Bool>(owner: Nat): Nat { 0 } }
 ```
 checks."input/main.taut::Read::read@Nat" = "ok"
 checks."input/main.taut::Read::inst@Nat" = "error: type mismatch"
 
 @ cases.effectful-instance-is-not-made-pure
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
-instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B !{Div} { value } }
+inductive class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B !{div} { value } }
 ```
 checks."input/main.taut::Identity(Nat)" = "error: has generics"
 
-@ cases.method-row-generics-stay-out-of-checked-dictionaries
-imports = [path`../../std/Base.taut`]
+@ cases.method-row-generics-are-refused-in-an-inductive-class
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Keep(A: Type) { fn keep<!e>(owner: A): A }
+inductive class Keep(A: Type) { fn keep<!e>(owner: A): A }
 ```
-checks."input/main.taut::Keep" = "skipped"
+checks."input/main.taut::Keep" = "error: not a class of the proof language: `keep` has generics"
 
-@ cases.method-ownership-bounds-stay-out-of-checked-dictionaries
-imports = [path`../../std/Base.taut`]
+@ cases.method-ownership-bounds-are-refused-in-an-inductive-class
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Keep(A: Type) { fn keep<B: Shared>(owner: A, value: B): B }
+inductive class Keep(A: Type) { fn keep<B: Shared>(owner: A, value: B): B }
 ```
-checks."input/main.taut::Keep" = "skipped"
+checks."input/main.taut::Keep" = "error: not a class of the proof language: `keep` has generics"
 
 @ cases.pure-law-can-instantiate-method-local-type
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Identity(A: Type) {
+inductive class Identity(A: Type) {
   fn apply<B>(owner: A, value: B): B
   theorem identity<B>(owner: A, value: B): Identity::apply(owner, value) = value
 }
@@ -120,3 +120,65 @@ instance Identity(Nat) {
 theorem computes(): Eq(Nat, Identity::apply(0, 7), 7) { Identity::identity(0, 7) }
 ```
 checks_all = "ok"
+
+@ cases.borrowed-parameters-on-a-generic-method-are-read-as-their-values
+imports = [path`../../std/base.taut`, path`../../std/uint.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive class Key(K: Type) {
+  fn eq(a: &K, b: &K): Bool
+  fn feed<H>(a: &K, h: H, step: &((H, UInt(64)) -> H)): H
+  theorem feed_const<a: K, H: Type, s: H, step: (H, UInt(64)) -> H>(): Key::feed(a, s, step) = s
+}
+instance Key(Nat) {
+  fn eq(a: &Nat, b: &Nat): Bool { true }
+  fn feed<H>(a: &Nat, h: H, step: &((H, UInt(64)) -> H)): H { h }
+  theorem feed_const<a: Nat, H: Type, s: H, step: (H, UInt(64)) -> H>(): Key::feed(a, s, step) = s { Refl }
+}
+fn fed(a: Nat, h: Nat): Nat { Key::feed(&a, h, &((x: Nat, w: UInt(64)) => x)) }
+theorem computes(): Eq(Nat, fed(1, 7), 7) { Refl }
+```
+checks_all = "ok"
+
+@ cases.method-where-in-an-inductive-class
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive class Mix(H: Type) { fn put(h: H, w: Nat): H }
+inductive class Key(K: Type) {
+  fn digest<H>(a: &K, h: H): H where Mix(H)
+}
+instance Mix(Nat) { fn put(h: Nat, w: Nat): Nat { w } }
+instance Key(Nat) {
+  fn digest<H>(a: &Nat, h: H): H where Mix(H) { Mix::put(h, a) }
+}
+fn digest_of(a: Nat): Nat { Key::digest(&a, 0) }
+theorem computes(): Eq(Nat, digest_of(5), 5) { Refl }
+```
+checks_all = "ok"
+
+@ cases.theorem-about-a-method-with-where
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive class Mix(H: Type) { fn put(h: H, w: Nat): H }
+inductive class Key(K: Type) {
+  fn digest<H>(a: &K, h: H): H where Mix(H)
+}
+instance Mix(Nat) { fn put(h: Nat, w: Nat): Nat { w } }
+instance Key(Nat) {
+  fn digest<H>(a: &Nat, h: H): H where Mix(H) { Mix::put(h, a) }
+}
+theorem stays<H: Type>(s: H): Key::digest(3, s) = Key::digest(3, s) where Mix(H) { Refl }
+```
+checks_all = "ok"
+
+@ cases.instance-must-repeat-the-method-where
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive class Mix(H: Type) { fn put(h: H, w: Nat): H }
+inductive class Key(K: Type) { fn digest<H>(a: &K, h: H): H where Mix(H) }
+instance Key(Nat) { fn digest<H>(a: &Nat, h: H): H { h } }
+```
+checks."input/main.taut::Key(Nat)" = "error: has 2 parameters, but the class has 3"

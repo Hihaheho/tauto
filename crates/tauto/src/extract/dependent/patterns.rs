@@ -8,6 +8,30 @@ fn selected(site: &CtorSite, written: &Name) -> bool {
 }
 
 impl Eraser<'_> {
+    /// The constructor a pattern's name was resolved to when the checker
+    /// left no site for it (a library function lowered on demand): a
+    /// selection whose candidates hold exactly one constructor. A name that
+    /// also binds (`binding`) still means the constructor when one is in
+    /// scope, as the kernel reads it.
+    fn selected_ctor(&self, written: &Name) -> Option<Name> {
+        let Name::Selection(selection) = written else {
+            return None;
+        };
+        let mut found = selection
+            .candidates()
+            .iter()
+            .map(|reference| Name::Global(reference.clone()))
+            .filter(|name| {
+                self.checked.signatures.contains_key(name)
+                    && self
+                        .checked
+                        .families
+                        .values()
+                        .any(|f| f.ctors.contains(name))
+            });
+        let first = found.next()?;
+        found.next().is_none().then_some(first)
+    }
     pub(super) fn prop(&self, t: &SurfaceTerm) -> bool {
         match &*t.kind {
             TermKind::Var(n) => {
@@ -31,7 +55,7 @@ impl Eraser<'_> {
         }
         let proof_match = arms.iter().any(|arm| {
             let written = match &arm.pattern {
-                Pattern::Bind(n) | Pattern::Ctor { name: n, .. } => n,
+                Pattern::Bind { name: n, .. } | Pattern::Ctor { name: n, .. } => n,
                 _ => return false,
             };
             let name = self
@@ -60,6 +84,7 @@ impl Eraser<'_> {
         let mut out = Vec::new();
         let mut rows = Vec::new();
         let mut nested_tests = false;
+        let mut catch_all = false;
         for arm in arms {
             let notes: Vec<_> = self
                 .checked
@@ -91,6 +116,18 @@ impl Eraser<'_> {
             };
             let body = format!("{{\n{}\n}}", binds.join("\n"));
             nested_tests |= !tests.is_empty() && !p.starts_with(&format!("{NAT}("));
+            // An arm that takes every value (`_`, or a name that binds) ends
+            // the match: no fall-through arm goes after it.
+            catch_all |= tests.is_empty()
+                && match &arm.pattern {
+                    Pattern::Wild => true,
+                    Pattern::Bind { name: n, .. } => {
+                        p == self.symbol(n)
+                            && !self.checked.signatures.contains_key(n)
+                            && self.selected_ctor(n).is_none()
+                    }
+                    _ => false,
+                };
             out.push(format!("{p}{guard} => {body}"));
             rows.push((p, tests, body));
         }
@@ -113,7 +150,9 @@ impl Eraser<'_> {
             }
             return Ok(format!("{{ let {subject} := {value}\n{rest} }}"));
         }
-        out.push("_ => extract_unreachable()".into());
+        if !catch_all {
+            out.push("_ => extract_unreachable()".into());
+        }
         Ok(format!(
             "{{ let {subject} := {value}\nmatch {subject} {{\n{}\n}} }}",
             out.join("\n")
@@ -128,16 +167,21 @@ impl Eraser<'_> {
         tests: &mut Vec<String>,
         binds: &mut Vec<String>,
     ) -> Result<String, Message> {
+        // `@a p` is `p` on the labelled value: the label is not represented.
+        if let Some((_, inner)) = p.label() {
+            return self.pattern(inner, notes, at, locals, tests, binds);
+        }
         let (written, args) = match p {
             Pattern::Wild => return Ok("_".into()),
-            Pattern::Bind(n)
+            Pattern::Bind { name: n, .. }
                 if !self.checked.signatures.contains_key(n)
-                    && !notes.get(*at).is_some_and(|s| selected(s, n)) =>
+                    && !notes.get(*at).is_some_and(|s| selected(s, n))
+                    && self.selected_ctor(n).is_none() =>
             {
                 locals.insert(n.clone());
                 return Ok(self.symbol(n));
             }
-            Pattern::Bind(n) => (n, &[][..]),
+            Pattern::Bind { name: n, .. } => (n, &[][..]),
             Pattern::Ctor { name, args } => (name, args.as_slice()),
             Pattern::Bool(b) => return Ok(format!("{BOOL}({b})")),
             Pattern::Int(n) => return Ok(format!("{NAT}({n})")),
@@ -148,6 +192,8 @@ impl Eraser<'_> {
         {
             *at += 1;
             site.resolved.clone()
+        } else if let Some(ctor) = self.selected_ctor(written) {
+            ctor
         } else {
             written.clone()
         };
@@ -163,8 +209,25 @@ impl Eraser<'_> {
             }
             Some("true" | "True") => return Ok(format!("{BOOL}(true)")),
             Some("false" | "False") => return Ok(format!("{BOOL}(false)")),
-            Some("I64::Mk") => {
-                let [Pattern::Bind(value), _] = args else {
+            Some("Text::Mk") => {
+                let n = self.fresh("Text");
+                match args {
+                    [Pattern::Wild] => {}
+                    [Pattern::Bind { name: bytes, .. }] => {
+                        let (pack, _) = self.text_bytes_bridge()?;
+                        locals.insert(bytes.clone());
+                        binds.push(format!(
+                            "let {} := {}",
+                            self.symbol(bytes),
+                            pack.replace("$v", &format!("extract_text_bytes({n})"))
+                        ));
+                    }
+                    _ => return Err(msg!("tauto-extract-a-match-on-text-binds")),
+                }
+                return Ok(format!("TautoErasedText#r0({n})"));
+            }
+            Some("SInt::Mk") => {
+                let [Pattern::Bind { name: value, .. }, _] = args else {
                     return Err(
                         "dependent extraction: signed integer pattern requires a value binder"
                             .into(),
@@ -188,6 +251,8 @@ impl Eraser<'_> {
             .signatures
             .get(&name)
             .ok_or_else(|| format!("dependent extraction: pattern {name}"))?;
+        let args = Self::named_implicits(sig, args);
+        let args = args.as_slice();
         let roles = &sig.params[sig.params.len() - args.len()..];
         for (pattern, role) in args.iter().zip(roles) {
             if *role != Role::Value {
@@ -211,6 +276,40 @@ impl Eraser<'_> {
             format!("{c}({})", fields.join(", "))
         })
     }
+    /// `C<n: m>(…)`: the implicit arguments named in a constructor pattern
+    /// come first, as one record of the internal name `IMPLICITS`. Each goes
+    /// to the parameter of its name, so the pattern is positional from the
+    /// first named parameter on; a parameter in between that is not named
+    /// is not bound.
+    fn named_implicits(sig: &crate::check::Signature, args: &[Pattern]) -> Vec<Pattern> {
+        let Some((Pattern::Record { name, fields }, rest)) = args.split_first() else {
+            return args.to_vec();
+        };
+        if name.spelling() != Some(tauto_surface::IMPLICITS) {
+            return args.to_vec();
+        }
+        let end = sig.params.len().saturating_sub(rest.len());
+        let named: Vec<_> = fields
+            .iter()
+            .filter_map(|(field, pattern)| {
+                sig.names[..end.min(sig.names.len())]
+                    .iter()
+                    .rposition(|n| n == field)
+                    .map(|at| (at, pattern))
+            })
+            .collect();
+        let start = named.iter().map(|(at, _)| *at).min().unwrap_or(end);
+        let mut out: Vec<Pattern> = (start..end)
+            .map(|at| {
+                named
+                    .iter()
+                    .find(|(i, _)| *i == at)
+                    .map_or(Pattern::Wild, |(_, p)| (*p).clone())
+            })
+            .collect();
+        out.extend(rest.iter().cloned());
+        out
+    }
     pub(super) fn nat_tail(
         &mut self,
         pattern: &Pattern,
@@ -223,7 +322,7 @@ impl Eraser<'_> {
         depth: usize,
     ) -> Result<(), Message> {
         let name = match pattern {
-            Pattern::Bind(n) | Pattern::Ctor { name: n, .. } => Some(n),
+            Pattern::Bind { name: n, .. } | Pattern::Ctor { name: n, .. } => Some(n),
             _ => None,
         };
         let resolved = name.map(|n| {
@@ -251,7 +350,7 @@ impl Eraser<'_> {
                 tests.push(format!("{value} == ({n} + {depth})"));
                 Ok(())
             }
-            (None, Pattern::Bind(n)) => {
+            (None, Pattern::Bind { name: n, .. }) => {
                 tests.push(if depth == 1 {
                     format!("{value} > 0")
                 } else {

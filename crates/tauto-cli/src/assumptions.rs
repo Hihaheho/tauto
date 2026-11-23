@@ -37,7 +37,20 @@ pub fn command(args: &[String]) -> ExitCode {
         }
     };
     let own = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let graph = Graph::of(&report, &own);
+    let graph = match Graph::of(&report, &own) {
+        Ok(graph) => graph,
+        Err((file, error)) => {
+            eprintln!(
+                "{}",
+                i18n::t!(
+                    "assumptions-unread",
+                    path = file.display().to_string(),
+                    error = error
+                )
+            );
+            return ExitCode::FAILURE;
+        }
+    };
     let mut rows = Vec::new();
     for e in &report.entries {
         if e.file != own || only.is_some_and(|n| n != e.entry.name.as_str()) {
@@ -177,53 +190,96 @@ struct Graph {
 }
 
 impl Graph {
-    fn of(report: &Report, own: &Path) -> Graph {
+    /// A file of the report that cannot be read is an error, not a file
+    /// that trusts nothing.
+    fn of(report: &Report, own: &Path) -> Result<Graph, (std::path::PathBuf, String)> {
         let mut graph = Graph {
             mentions: BTreeMap::new(),
             externs: BTreeSet::new(),
             own: Vec::new(),
         };
         for (path, source) in report.files() {
-            if let Ok(mut program) = parse_program(source) {
-                for stmt in &mut program.stmts {
-                    graph.add(stmt, path == own);
+            // What a macro makes is read as the check read it, expanded.
+            let mut stmts = match report.expanded(path) {
+                Some(stmts) => stmts.to_vec(),
+                None => {
+                    parse_program(source)
+                        .map_err(|e| (path.to_path_buf(), e.to_string()))?
+                        .stmts
                 }
+            };
+            // The functions of this file are read by the kernel as written, and
+            // the compiler replaces each by a builtin the kernel does not
+            // check: the host's implementation is assumed, as an
+            // `extern` function's is.
+            let swapped =
+                path == Path::new(tauto::stdlib::ROOT).join(tauto::extract::SWAPPED_FILE);
+            for stmt in &mut stmts {
+                graph.add(stmt, path == own, swapped);
             }
         }
-        graph
+        Ok(graph)
     }
 
-    fn add(&mut self, stmt: &mut Stmt, own: bool) {
+    /// Every declaration a statement makes, wherever it is nested, with the
+    /// names its terms mention. A name is anything a term may reach a
+    /// declaration by: a variable, and a field or method name, since a
+    /// method is called through one. Reading more names than are used only
+    /// lists an extern that is not reached; reading fewer would hide one.
+    fn add(&mut self, stmt: &mut Stmt, own: bool, swapped: bool) {
         let name = match stmt {
             Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
                 for s in items {
-                    self.add(s, own);
+                    self.add(s, own, swapped);
                 }
                 return;
             }
+            Stmt::Attributed { stmt, .. } => return self.add(stmt, own, swapped),
             Stmt::Extern { fns, .. } => {
                 self.externs.extend(fns.iter().map(|f| f.name.to_string()));
+                return;
+            }
+            Stmt::Instance(i) => {
+                for m in &mut i.methods {
+                    let name = m.name.to_string();
+                    let mut f = Stmt::Fn(m.clone());
+                    let names = mentioned(&mut f);
+                    self.mentions
+                        .entry(base(&name).to_string())
+                        .or_default()
+                        .extend(names);
+                }
                 return;
             }
             Stmt::Fn(f) => {
                 if own {
                     self.own.push(f.name.to_string());
                 }
-                f.name.clone()
+                let short = base(&f.name.to_string()).to_string();
+                if swapped && tauto::extract::SWAPPED_FNS.contains(&short.as_str()) {
+                    self.externs.insert(short);
+                }
+                f.name.to_string()
             }
-            Stmt::Theorem(t) | Stmt::Def(t) => t.name.clone(),
+            Stmt::Theorem(t) | Stmt::Def(t) => t.name.to_string(),
             _ => return,
         };
-        let mut names = BTreeSet::new();
-        walk::stmt(stmt, &mut |t: &mut SurfaceTerm| {
-            if let TermKind::Var(n) = &*t.kind {
-                names.insert(base(n).to_string());
-            }
-        });
+        let names = mentioned(stmt);
         self.mentions
-            .entry(name.to_string())
+            .entry(base(&name).to_string())
             .or_default()
             .extend(names);
+    }
+
+    /// The `extern` that `n` names, written in full (`std::slots_store::Slots::new`)
+    /// or not.
+    fn extern_named(&self, n: &str) -> Option<&str> {
+        self.externs.get(n).map(String::as_str).or_else(|| {
+            self.externs
+                .iter()
+                .find(|e| n.strip_suffix(e.as_str()).is_some_and(|p| p.ends_with("::")))
+                .map(String::as_str)
+        })
     }
 
     /// The `extern` functions `name` reaches through the declarations it
@@ -237,8 +293,8 @@ impl Graph {
             if !seen.insert(n.clone()) {
                 continue;
             }
-            if self.externs.contains(&n) {
-                found.insert(n.clone());
+            if let Some(e) = self.extern_named(&n) {
+                found.insert(e.to_string());
             }
             if let Some(m) = self.mentions.get(&n) {
                 todo.extend(m.iter().cloned());
@@ -246,6 +302,20 @@ impl Graph {
         }
         found.into_iter().collect()
     }
+}
+
+fn mentioned(stmt: &mut Stmt) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    walk::stmt(stmt, &mut |t: &mut SurfaceTerm| match &*t.kind {
+        TermKind::Var(n) => {
+            names.insert(base(n).to_string());
+        }
+        TermKind::Field { name, .. } => {
+            names.insert(base(name).to_string());
+        }
+        _ => {}
+    });
+    names
 }
 
 fn base(name: &str) -> &str {

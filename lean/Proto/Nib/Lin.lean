@@ -1,9 +1,9 @@
 import Proto.Nib.Kind
 
 /-!
-# The use check (`docs/design/ownership.md`「種・再開量・トークン・CFL（`Kind.lean`、`Lin.lean`、`Own.lean`）」)
+# The use check (`docs/design/ownership.md`「Kinds, counts, tokens, CFL (`Kind.lean`, `Lin.lean`, `Own.lean`)」)
 
-`Lin os sg S Γ C t` says that `t` uses what it owns as its kinds allow. It
+`Lin os sg Γ C t` says that `t` uses what it owns as its kinds allow. It
 is a separate judgment beside `HasType`: the typing is not changed, and the
 few rules that need a type (the kind of what a binder binds, the row of
 what runs while something is held) ask for a typing.
@@ -40,16 +40,14 @@ once.
 
 namespace Proto.Nib
 
-/-- A variable or a place in the state: what a term may own. -/
+/-- A variable: what a term may own. -/
 inductive Item where
   | var (i : Nat)
-  | loc (l : Nat)
   deriving DecidableEq
 
 /-- The atom under `n` more binders. -/
 def Item.up (n : Nat) : Item → Item
   | .var i => .var (i + n)
-  | .loc l => .loc l
 
 @[simp] theorem Item.up_zero (a : Item) : a.up 0 = a := by cases a <;> rfl
 
@@ -72,12 +70,12 @@ mutual
     | .lam ps b => b.occ (a.up ps.length)
     | .app f args => f.occ a + Tms.occ a args
     | .ite c t f => c.occ a + max (t.occ a) (f.occ a)
-    | .cell _ t => t.occ a
-    | .fresh _ t => t.occ a
+    | .scope _ i b => i.occ a + b.occ (a.up 1)
+    | .llam ps b => b.occ (a.up ps.length)
     | .get t => t.occ a
     | .set c v => c.occ a + v.occ a
-    | .brw _ => 0
-    | .mbrw _ => 0
+    | .brw _ _ => 0
+    | .mbrw _ _ => 0
     | .field _ b => b.occ a
     | .write b v => b.occ a + v.occ a
     | .ref _ _ _ => 0
@@ -87,8 +85,7 @@ mutual
     | .perform _ args => Tms.occ a args
     | .handle b none cs => b.occ a + Clauses.occ a cs
     | .handle b (some r) cs => b.occ a + r.occ (a.up 1) + Clauses.occ a cs
-    | .loc l => if a = .loc l then 1 else 0
-    | .run _ _ _ b => b.occ a
+    | .run _ _ _ _ b => b.occ a
     | .info _ _ b => b.occ a
     | .select _ vs k cs => Tms.occ a vs + k.occ a + Clauses.occ a cs
 
@@ -121,12 +118,12 @@ mutual
     | .lam ps b => b.occLo (a.up ps.length)
     | .app f args => f.occLo a + Tms.occLo a args
     | .ite c t f => c.occLo a + min (t.occLo a) (f.occLo a)
-    | .cell _ t => t.occLo a
-    | .fresh _ t => t.occLo a
+    | .scope _ i b => i.occLo a + b.occLo (a.up 1)
+    | .llam ps b => b.occLo (a.up ps.length)
     | .get t => t.occLo a
     | .set c v => c.occLo a + v.occLo a
-    | .brw _ => 0
-    | .mbrw _ => 0
+    | .brw _ _ => 0
+    | .mbrw _ _ => 0
     | .field _ b => b.occLo a
     | .write b v => b.occLo a + v.occLo a
     | .ref _ _ _ => 0
@@ -136,8 +133,7 @@ mutual
     | .perform _ args => Tms.occLo a args
     | .handle b none cs => b.occLo a + Clauses.occLo a cs
     | .handle b (some r) cs => b.occLo a + r.occLo (a.up 1) + Clauses.occLo a cs
-    | .loc l => if a = .loc l then 1 else 0
-    | .run _ _ _ b => b.occLo a
+    | .run _ _ _ _ b => b.occLo a
     | .info _ _ b => b.occLo a
     | .select _ vs k cs => Tms.occLo a vs + k.occLo a + Clauses.occLo a cs
 
@@ -154,23 +150,50 @@ mutual
     | c :: cs => c.occLo a + Clauses.occLo a cs
 end
 
+theorem Tm.brwAt_value (t : Tm) (π : List Nat) : Value (t.brwAt π) := by
+  cases t <;> first | exact Value.brw | exact Value.unit
+
+theorem Tm.mbrwAt_value (t : Tm) (π : List Nat) : Value (t.mbrwAt π) := by
+  cases t <;> first | exact Value.mbrw | exact Value.unit
+
+/-- A value stays one under any substitution: a borrow of what is not a
+variable is `unit`. -/
+theorem Value.subst_any {v} (σ : Nat → Tm) (h : Value v) : Value (v.subst σ) := by
+  induction h with
+  | con _ ih =>
+      simp only [Tm.subst]
+      exact .con (fun w hw => by obtain ⟨w0, hw0, rfl⟩ := List.mem_map.mp hw; exact ih w0 hw0)
+  | brw => simp only [Tm.subst]; exact Tm.brwAt_value _ _
+  | mbrw => simp only [Tm.subst]; exact Tm.mbrwAt_value _ _
+  | _ => simp [Tm.subst] <;> constructor
+
+@[simp] theorem Tm.occ_brwAt (t : Tm) (π : List Nat) (a : Item) : (t.brwAt π).occ a = 0 := by
+  cases t <;> simp [Tm.brwAt, Tm.occ]
+
+@[simp] theorem Tm.occ_mbrwAt (t : Tm) (π : List Nat) (a : Item) : (t.mbrwAt π).occ a = 0 := by
+  cases t <;> simp [Tm.mbrwAt, Tm.occ]
+
+@[simp] theorem Tm.occLo_brwAt (t : Tm) (π : List Nat) (a : Item) : (t.brwAt π).occLo a = 0 := by
+  cases t <;> simp [Tm.brwAt, Tm.occLo]
+
+@[simp] theorem Tm.occLo_mbrwAt (t : Tm) (π : List Nat) (a : Item) : (t.mbrwAt π).occLo a = 0 := by
+  cases t <;> simp [Tm.mbrwAt, Tm.occLo]
+
 /-- The flags of the variables: `some lin` for a continuation, called only,
 exactly once when `lin`; `none` for a variable whose type gives its kind. -/
 abbrev Flags := List (Option Bool)
 
 /-- What `a` is owned: a variable whose flag is a continuation's or whose
-type is not duplicable, or an owned value's place (its type in `S` is not
-duplicable). -/
-def Owned (os : OwnSig) (S Γ : Ctx) (C : Flags) : Item → Prop
+type is not duplicable. -/
+def Owned (os : OwnSig) (Γ : Ctx) (C : Flags) : Item → Prop
   | .var i => (C.getD i none).isSome ∨ ∃ A, Γ[i]? = some A ∧ ¬ (A.kind os).dup
-  | .loc l => ∃ A, S[l]? = some A ∧ ¬ (A.kind os).dup
 
 /-- `t` uses nothing owned from outside `n` binders around it. -/
-def NoOwnedUnder (os : OwnSig) (S Γ : Ctx) (C : Flags) (n : Nat) (t : Tm) : Prop :=
-  ∀ a, Owned os S Γ C a → t.occ (a.up n) = 0
+def NoOwnedUnder (os : OwnSig) (Γ : Ctx) (C : Flags) (n : Nat) (t : Tm) : Prop :=
+  ∀ a, Owned os Γ C a → t.occ (a.up n) = 0
 
 /-- `t` uses nothing owned. -/
-def NoOwned (os : OwnSig) (S Γ : Ctx) (C : Flags) (t : Tm) : Prop := NoOwnedUnder os S Γ C 0 t
+def NoOwned (os : OwnSig) (Γ : Ctx) (C : Flags) (t : Tm) : Prop := NoOwnedUnder os Γ C 0 t
 
 /-- Variable `j` is used as its kind allows. -/
 def UseOk (os : OwnSig) (Γ : Ctx) (C : Flags) (j : Nat) (t : Tm) : Prop :=
@@ -192,55 +215,54 @@ def contFlag : Quant → Option Bool
   | .omega => none
 
 /-- `t` performs nothing that resumes `ω`. -/
-def Quiet (os : OwnSig) (sg : Sig) (S Γ : Ctx) (t : Tm) : Prop :=
-  ∃ A ρ, HasType sg S Γ t A ρ ∧ ¬ Row.quants os ρ .omega
+def Quiet (os : OwnSig) (sg : Sig) (Γ : Ctx) (t : Tm) : Prop :=
+  ∃ A ρ, HasType sg Γ t A ρ ∧ ¬ Row.quants os ρ .omega
 
 /-- A value held while something to its right runs: its type is
 duplicable and not a mutable borrow (a copy of the suspended state would
 alias it), and it is not a function that owns something or a
 continuation. -/
-def Held (os : OwnSig) (sg : Sig) (S Γ : Ctx) (C : Flags) (t : Tm) : Prop :=
-  (∃ A ρ, HasType sg S Γ t A ρ ∧ (A.kind os).dup ∧ ¬ A.Mv) ∧
-    (∀ ps b, t = .lam ps b → NoOwned os S Γ C t) ∧ (∀ i, t = .var i → ¬ Owned os S Γ C (.var i))
+def Held (os : OwnSig) (sg : Sig) (Γ : Ctx) (C : Flags) (t : Tm) : Prop :=
+  (∃ A ρ, HasType sg Γ t A ρ ∧ (A.kind os).dup ∧ ¬ A.Mv) ∧
+    (∀ ps b, t = .lam ps b → NoOwned os Γ C t) ∧ (∀ i, t = .var i → ¬ Owned os Γ C (.var i))
 
 /-- Control-flow linearity for parts that run left to right: while part `i`
 runs, the parts to its left are values held and the parts to its right
 code held. If part `i` may perform what resumes `ω`, they are duplicable. A
 part that is a value does not run. -/
-def Spread (os : OwnSig) (sg : Sig) (S Γ : Ctx) (C : Flags) (cs : List Tm) : Prop :=
-  ∀ (i : Nat) c, cs[i]? = some c → Value c ∨ Quiet os sg S Γ c ∨
-    ((∀ (j : Nat) d, j < i → cs[j]? = some d → Held os sg S Γ C d) ∧
-      (∀ (j : Nat) d, i < j → cs[j]? = some d → NoOwned os S Γ C d))
+def Spread (os : OwnSig) (sg : Sig) (Γ : Ctx) (C : Flags) (cs : List Tm) : Prop :=
+  ∀ (i : Nat) c, cs[i]? = some c → Value c ∨ Quiet os sg Γ c ∨
+    ((∀ (j : Nat) d, j < i → cs[j]? = some d → Held os sg Γ C d) ∧
+      (∀ (j : Nat) d, i < j → cs[j]? = some d → NoOwned os Γ C d))
 
 /-! ### The second rule: what is linear lives across nothing that may not
 resume once (used when `os.strict`) -/
 
-/-- What `a` is linear: a continuation that resumes exactly once, a variable
-of a linear type, or the place of a linear value. -/
-def LinOwned (os : OwnSig) (S Γ : Ctx) (C : Flags) : Item → Prop
+/-- What `a` is linear: a continuation that resumes exactly once, or a
+variable of a linear type. -/
+def LinOwned (os : OwnSig) (Γ : Ctx) (C : Flags) : Item → Prop
   | .var i => C.getD i none = some true ∨ ∃ A, Γ[i]? = some A ∧ A.kind os = .linear
-  | .loc l => ∃ A, S[l]? = some A ∧ A.kind os = .linear
 
 /-- `t` uses nothing linear from outside `n` binders around it. -/
-def NoLinUnder (os : OwnSig) (S Γ : Ctx) (C : Flags) (n : Nat) (t : Tm) : Prop :=
-  ∀ a, LinOwned os S Γ C a → t.occ (a.up n) = 0
+def NoLinUnder (os : OwnSig) (Γ : Ctx) (C : Flags) (n : Nat) (t : Tm) : Prop :=
+  ∀ a, LinOwned os Γ C a → t.occ (a.up n) = 0
 
-def NoLin (os : OwnSig) (S Γ : Ctx) (C : Flags) (t : Tm) : Prop := NoLinUnder os S Γ C 0 t
+def NoLin (os : OwnSig) (Γ : Ctx) (C : Flags) (t : Tm) : Prop := NoLinUnder os Γ C 0 t
 
 /-- `t` performs nothing that may resume other than once. -/
-def Firm (os : OwnSig) (sg : Sig) (S Γ : Ctx) (t : Tm) : Prop :=
-  ∃ A ρ, HasType sg S Γ t A ρ ∧ ∀ q, Row.quants os ρ q → q = .one
+def Firm (os : OwnSig) (sg : Sig) (Γ : Ctx) (t : Tm) : Prop :=
+  ∃ A ρ, HasType sg Γ t A ρ ∧ ∀ q, Row.quants os ρ q → q = .one
 
 /-- A value held while something that is not firm runs: not linear. -/
-def HeldL (os : OwnSig) (sg : Sig) (S Γ : Ctx) (C : Flags) (t : Tm) : Prop :=
-  (∃ A ρ, HasType sg S Γ t A ρ ∧ A.kind os ≠ .linear) ∧
-    (∀ ps b, t = .lam ps b → NoLin os S Γ C t) ∧ (∀ i, t = .var i → ¬ LinOwned os S Γ C (.var i))
+def HeldL (os : OwnSig) (sg : Sig) (Γ : Ctx) (C : Flags) (t : Tm) : Prop :=
+  (∃ A ρ, HasType sg Γ t A ρ ∧ A.kind os ≠ .linear) ∧
+    (∀ ps b, t = .lam ps b → NoLin os Γ C t) ∧ (∀ i, t = .var i → ¬ LinOwned os Γ C (.var i))
 
 /-- The second rule for parts that run left to right. -/
-def SpreadL (os : OwnSig) (sg : Sig) (S Γ : Ctx) (C : Flags) (cs : List Tm) : Prop :=
-  ∀ (i : Nat) c, cs[i]? = some c → Value c ∨ Firm os sg S Γ c ∨
-    ((∀ (j : Nat) d, j < i → cs[j]? = some d → HeldL os sg S Γ C d) ∧
-      (∀ (j : Nat) d, i < j → cs[j]? = some d → NoLin os S Γ C d))
+def SpreadL (os : OwnSig) (sg : Sig) (Γ : Ctx) (C : Flags) (cs : List Tm) : Prop :=
+  ∀ (i : Nat) c, cs[i]? = some c → Value c ∨ Firm os sg Γ c ∨
+    ((∀ (j : Nat) d, j < i → cs[j]? = some d → HeldL os sg Γ C d) ∧
+      (∀ (j : Nat) d, i < j → cs[j]? = some d → NoLin os Γ C d))
 
 mutual
   /-- A pattern drops nothing linear: `_` only where the type is not
@@ -251,172 +273,175 @@ mutual
     | int {w n A} : PatKeep os sg (.int w n) A
     | bool {b A} : PatKeep os sg (.bool b) A
     | text {s A} : PatKeep os sg (.text s) A
-    | con {c ps A d args cs F} : Holds (.data d args) A → Owns d args A → sg.data d = some cs →
+    | con {c ps A d args cs F} : Holds (.data d args) A → sg.data d = some cs →
         cs[c]? = some F → PatsKeep os sg ps (fieldsOf F args) → PatKeep os sg (.con d c ps) A
+    | narrow {hs A} : PatKeep os sg (.narrow hs) A
 
   inductive PatsKeep (os : OwnSig) (sg : Sig) : List Pat → List Ty → Prop where
     | nil : PatsKeep os sg [] []
     | cons {p ps A As} : PatKeep os sg p A → PatsKeep os sg ps As → PatsKeep os sg (p :: ps) (A :: As)
 end
 
-/-- A place a borrow names: a variable, or a place in the state. -/
-def Place (t : Tm) : Prop := (∃ i, t = .var i) ∨ (∃ l, t = .loc l)
-
-theorem Place.ren {t : Tm} (ξ : Nat → Nat) : Place t → Place (t.ren ξ)
-  | .inl ⟨i, e⟩ => .inl ⟨ξ i, by subst e; simp [Tm.ren]⟩
-  | .inr ⟨l, e⟩ => .inr ⟨l, by subst e; simp [Tm.ren]⟩
-
-theorem Place.inst {t : Tm} (θ : Inst) : Place t → Place (t.inst θ)
-  | .inl ⟨i, e⟩ => .inl ⟨i, by subst e; simp [Tm.inst]⟩
-  | .inr ⟨l, e⟩ => .inr ⟨l, by subst e; simp [Tm.inst]⟩
-
 /-- The flags of what a binder of the types `ps` binds: by their types. -/
 def Flags.byType (ps : List Ty) : Flags := ps.map (fun _ => none)
 
 mutual
-  inductive Lin (os : OwnSig) (sg : Sig) : Ctx → Ctx → Flags → Tm → Prop where
-    | var {S Γ C i A} : Γ[i]? = some A → C.getD i none = none → Lin os sg S Γ C (.var i)
-    | int {S Γ C w n} : Lin os sg S Γ C (.int w n)
-    | bool {S Γ C b} : Lin os sg S Γ C (.bool b)
-    | unit {S Γ C} : Lin os sg S Γ C .unit
-    | text {S Γ C s} : Lin os sg S Γ C (.text s)
-    | dec {S Γ C q} : Lin os sg S Γ C (.dec q)
-    | flt {S Γ C f} : Lin os sg S Γ C (.flt f)
-    | flt32 {S Γ C f} : Lin os sg S Γ C (.flt32 f)
-    | prim {S Γ C p T ρ} : (os.strict = true → p ≠ .budget ∧ p ≠ .more ∧ p ≠ .unbounded) →
-        Lin os sg S Γ C (.prim p T ρ)
+  inductive Lin (os : OwnSig) (sg : Sig) : Ctx → Flags → Tm → Prop where
+    | var {Γ C i A} : Γ[i]? = some A → C.getD i none = none → Lin os sg Γ C (.var i)
+    | int {Γ C w n} : Lin os sg Γ C (.int w n)
+    | bool {Γ C b} : Lin os sg Γ C (.bool b)
+    | unit {Γ C} : Lin os sg Γ C .unit
+    | text {Γ C s} : Lin os sg Γ C (.text s)
+    | dec {Γ C q} : Lin os sg Γ C (.dec q)
+    | flt {Γ C f} : Lin os sg Γ C (.flt f)
+    | flt32 {Γ C f} : Lin os sg Γ C (.flt32 f)
+    | prim {Γ C p T ρ} : (os.strict = true → p ≠ .budget ∧ p ≠ .more ∧ p ≠ .unbounded ∧ p ≠ .budgetDrop) →
+        Lin os sg Γ C (.prim p T ρ)
     /-- A function value captures nothing owned. -/
-    | lam {S Γ C ps b} :
-        Lin os sg S (ps ++ Γ) (Flags.byType ps ++ C) b →
+    | lam {Γ C ps b} :
+        Lin os sg (ps ++ Γ) (Flags.byType ps ++ C) b →
         (∀ j, j < ps.length → UseOk os (ps ++ Γ) (Flags.byType ps ++ C) j b) →
-        NoOwned os S Γ C (.lam ps b) →
-        Lin os sg S Γ C (.lam ps b)
+        NoOwned os Γ C (.lam ps b) →
+        Lin os sg Γ C (.lam ps b)
+    /-- A local function value captures nothing owned either: it may be
+    called more than once. -/
+    | llam {Γ C ps b} :
+        Lin os sg (ps ++ Γ) (Flags.byType ps ++ C) b →
+        (∀ j, j < ps.length → UseOk os (ps ++ Γ) (Flags.byType ps ++ C) j b) →
+        NoOwned os Γ C (.llam ps b) →
+        Lin os sg Γ C (.llam ps b)
     /-- A call of a value. -/
-    | app {S Γ C f args} :
-        Lin os sg S Γ C f → Lins os sg S Γ C args → Spread os sg S Γ C (f :: args) →
-        (os.strict = true → SpreadL os sg S Γ C (f :: args)) →
-        Lin os sg S Γ C (.app f args)
+    | app {Γ C f args} :
+        Lin os sg Γ C f → Lins os sg Γ C args → Spread os sg Γ C (f :: args) →
+        (os.strict = true → SpreadL os sg Γ C (f :: args)) →
+        Lin os sg Γ C (.app f args)
     /-- A call of a function written in place (a block): it may use what it
     likes. -/
-    | block {S Γ C ps b args} :
-        Lin os sg S (ps ++ Γ) (Flags.byType ps ++ C) b →
+    | block {Γ C ps b args} :
+        Lin os sg (ps ++ Γ) (Flags.byType ps ++ C) b →
         (∀ j, j < ps.length → UseOk os (ps ++ Γ) (Flags.byType ps ++ C) j b) →
-        Lins os sg S Γ C args → Spread os sg S Γ C (.lam ps b :: args) →
-        (os.strict = true → SpreadL os sg S Γ C (.lam ps b :: args)) →
-        Lin os sg S Γ C (.app (.lam ps b) args)
+        Lins os sg Γ C args → Spread os sg Γ C (.lam ps b :: args) →
+        (os.strict = true → SpreadL os sg Γ C (.lam ps b :: args)) →
+        Lin os sg Γ C (.app (.lam ps b) args)
+    /-- A call of a local function written in place: a resumed
+    continuation. -/
+    | lblock {Γ C ps b args} :
+        Lin os sg (ps ++ Γ) (Flags.byType ps ++ C) b →
+        (∀ j, j < ps.length → UseOk os (ps ++ Γ) (Flags.byType ps ++ C) j b) →
+        Lins os sg Γ C args → Spread os sg Γ C (.llam ps b :: args) →
+        (os.strict = true → SpreadL os sg Γ C (.llam ps b :: args)) →
+        Lin os sg Γ C (.app (.llam ps b) args)
     /-- A call of a continuation variable. -/
-    | resume {S Γ C i lin A args} :
+    | resume {Γ C i lin A args} :
         C.getD i none = some lin → Γ[i]? = some A →
-        Lins os sg S Γ C args → Spread os sg S Γ C (.var i :: args) →
-        (os.strict = true → SpreadL os sg S Γ C (.var i :: args)) →
-        Lin os sg S Γ C (.app (.var i) args)
-    | ite {S Γ C c t f} :
-        Lin os sg S Γ C c → Lin os sg S Γ C t → Lin os sg S Γ C f →
-        (Quiet os sg S Γ c ∨ (NoOwned os S Γ C t ∧ NoOwned os S Γ C f)) →
-        (os.strict = true → Firm os sg S Γ c ∨ (NoLin os S Γ C t ∧ NoLin os S Γ C f)) →
-        Lin os sg S Γ C (.ite c t f)
-    /-- A `var` holds a duplicable value. -/
-    | cell {S Γ C A t} : Lin os sg S Γ C t → (A.kind os).dup → Lin os sg S Γ C (.cell A t)
-    | fresh {S Γ C A t} : Lin os sg S Γ C t → Lin os sg S Γ C (.fresh A t)
-    | get {S Γ C c} : Lin os sg S Γ C c → Lin os sg S Γ C (.get c)
-    | set {S Γ C c v} :
-        Lin os sg S Γ C c → Lin os sg S Γ C v → Spread os sg S Γ C [c, v] →
-        (os.strict = true → SpreadL os sg S Γ C [c, v] ∧
-          ∃ A ρ, HasType sg S Γ c (.cell A) ρ ∧ A.kind os ≠ .linear) →
-        Lin os sg S Γ C (.set c v)
+        Lins os sg Γ C args → Spread os sg Γ C (.var i :: args) →
+        (os.strict = true → SpreadL os sg Γ C (.var i :: args)) →
+        Lin os sg Γ C (.app (.var i) args)
+    | ite {Γ C c t f} :
+        Lin os sg Γ C c → Lin os sg Γ C t → Lin os sg Γ C f →
+        (Quiet os sg Γ c ∨ (NoOwned os Γ C t ∧ NoOwned os Γ C f)) →
+        (os.strict = true → Firm os sg Γ c ∨ (NoLin os Γ C t ∧ NoLin os Γ C f)) →
+        Lin os sg Γ C (.ite c t f)
+    /-- A `var` holds a duplicable value. The body is code held while
+    `init` runs. -/
+    | scope {Γ C A i b} :
+        Lin os sg Γ C i → (A.kind os).dup →
+        Lin os sg (.place A :: Γ) (none :: C) b →
+        (Value i ∨ Quiet os sg Γ i ∨ NoOwnedUnder os Γ C 1 b) →
+        (os.strict = true → Value i ∨ Firm os sg Γ i ∨ NoLinUnder os Γ C 1 b) →
+        Lin os sg Γ C (.scope A i b)
+    | get {Γ C i A} : Γ[i]? = some (.place A) → Lin os sg Γ C (.get (.var i))
+    | set {Γ C i v A} : Γ[i]? = some (.place A) → Lin os sg Γ C v →
+        (os.strict = true → A.kind os ≠ .linear) →
+        Lin os sg Γ C (.set (.var i) v)
     /-- A borrow of a place: it does not use the place. -/
-    | brw {S Γ C t A ρ} : Lin os sg S Γ C t → HasType sg S Γ t (.cell A) ρ → Place t →
-        Lin os sg S Γ C (.brw t)
-    | mbrw {S Γ C t A ρ} : Lin os sg S Γ C t → HasType sg S Γ t (.cell A) ρ → Place t →
-        Lin os sg S Γ C (.mbrw t)
+    | brw {Γ C n π A} : Γ[n]? = some (.place A) → Lin os sg Γ C (.brw n π)
+    | mbrw {Γ C n π A} : Γ[n]? = some (.place A) → Lin os sg Γ C (.mbrw n π)
     /-- A field read through a shared borrow copies it: its type is
     duplicable. -/
-    | field {S Γ C i b d args F B ρ} :
-        Lin os sg S Γ C b → sg.data d = some [F] → F[i]? = some B →
-        HasType sg S Γ b (.brw (.data d args)) ρ → ((B.inst (instOf args [])).kind os).dup →
-        Lin os sg S Γ C (.field i b)
+    | field {Γ C i b d args F B ρ} :
+        Lin os sg Γ C b → sg.data d = some [F] → F[i]? = some B →
+        HasType sg Γ b (.brw (.data d args)) ρ → ((B.inst (instOf args [])).kind os).dup →
+        Lin os sg Γ C (.field i b)
     /-- A write through a borrow drops what the place held, as `set` does. -/
-    | write {S Γ C b v} :
-        Lin os sg S Γ C b → Lin os sg S Γ C v → Spread os sg S Γ C [b, v] →
-        (os.strict = true → SpreadL os sg S Γ C [b, v] ∧
-          ∃ A ρ, HasType sg S Γ b (.mbrw A) ρ ∧ A.kind os ≠ .linear) →
-        Lin os sg S Γ C (.write b v)
+    | write {Γ C b v} :
+        Lin os sg Γ C b → Lin os sg Γ C v → Spread os sg Γ C [b, v] →
+        (os.strict = true → SpreadL os sg Γ C [b, v] ∧
+          ∃ A ρ, HasType sg Γ b (.mbrw A) ρ ∧ A.kind os ≠ .linear) →
+        Lin os sg Γ C (.write b v)
     /-- A generic function at types and rows within its variables' bounds. -/
-    | ref {S Γ C d ts rs} : Inst.Fits os (instOf ts rs) → Lin os sg S Γ C (.ref d ts rs)
-    | tag {S Γ C a t} : Lin os sg S Γ C t → Lin os sg S Γ C (.tag a t)
-    | con {S Γ C d args c fs} :
-        Lins os sg S Γ C fs → Spread os sg S Γ C fs → (os.strict = true → SpreadL os sg S Γ C fs) →
-        Lin os sg S Γ C (.con d args c fs)
-    | proj {S Γ C i t} : Lin os sg S Γ C t → Lin os sg S Γ C (.proj i t)
-    | perform {S Γ C e args} :
-        Lins os sg S Γ C args → Spread os sg S Γ C args → (os.strict = true → SpreadL os sg S Γ C args) →
-        Lin os sg S Γ C (.perform e args)
-    | handle {S Γ C b cls T ρ} :
-        Lin os sg S Γ C b →
-        HasType sg S Γ (.handle b none cls) T ρ →
-        (∀ c, c ∈ cls → LinClause os sg S Γ C T ρ c) →
-        Lin os sg S Γ C (.handle b none cls)
+    | ref {Γ C d ts rs} : Inst.Fits os (instOf ts rs) → Lin os sg Γ C (.ref d ts rs)
+    | tag {Γ C a t} : Lin os sg Γ C t → Lin os sg Γ C (.tag a t)
+    | con {Γ C d args c fs} :
+        Lins os sg Γ C fs → Spread os sg Γ C fs → (os.strict = true → SpreadL os sg Γ C fs) →
+        Lin os sg Γ C (.con d args c fs)
+    | proj {Γ C i t} : Lin os sg Γ C t → Lin os sg Γ C (.proj i t)
+    | perform {Γ C e args} :
+        Lins os sg Γ C args → Spread os sg Γ C args → (os.strict = true → SpreadL os sg Γ C args) →
+        Lin os sg Γ C (.perform e args)
+    | handle {Γ C b cls T ρ} :
+        Lin os sg Γ C b →
+        HasType sg Γ (.handle b none cls) T ρ →
+        (∀ c, c ∈ cls → LinClause os sg Γ C T ρ c) →
+        Lin os sg Γ C (.handle b none cls)
     /-- The `return` arm runs after the body: what it owns lives across the
     body. -/
-    | handleRet {S Γ C b r cls B ρb T ρ} :
-        Lin os sg S Γ C b →
-        HasType sg S Γ b B ρb →
-        Lin os sg S (B :: Γ) (none :: C) r →
+    | handleRet {Γ C b r cls B ρb T ρ} :
+        Lin os sg Γ C b →
+        HasType sg Γ b B ρb →
+        Lin os sg (B :: Γ) (none :: C) r →
         UseOk os (B :: Γ) (none :: C) 0 r →
-        (Quiet os sg S Γ b ∨ NoOwnedUnder os S Γ C 1 r) →
-        (os.strict = true → Firm os sg S Γ b ∨ NoLinUnder os S Γ C 1 r) →
-        HasType sg S Γ (.handle b (some r) cls) T ρ →
-        (∀ c, c ∈ cls → LinClause os sg S Γ C T ρ c) →
-        Lin os sg S Γ C (.handle b (some r) cls)
-    | loc {S Γ C l A} : S[l]? = some A → Lin os sg S Γ C (.loc l)
-    | run {S Γ C n T ρ b} : Lin os sg S Γ C b → os.strict = false → Lin os sg S Γ C (.run n T ρ b)
-    | info {S Γ C T ρ b} : Lin os sg S Γ C b → os.strict = false → Lin os sg S Γ C (.info T ρ b)
+        (Quiet os sg Γ b ∨ NoOwnedUnder os Γ C 1 r) →
+        (os.strict = true → Firm os sg Γ b ∨ NoLinUnder os Γ C 1 r) →
+        HasType sg Γ (.handle b (some r) cls) T ρ →
+        (∀ c, c ∈ cls → LinClause os sg Γ C T ρ c) →
+        Lin os sg Γ C (.handle b (some r) cls)
+    | run {Γ C d n T ρ b} : Lin os sg Γ C b → os.strict = false → Lin os sg Γ C (.run d n T ρ b)
+    | info {Γ C T ρ b} : Lin os sg Γ C b → os.strict = false → Lin os sg Γ C (.info T ρ b)
     /-- The arms tried for `perform e(vs)`, with its continuation `k`: owned
     only if `e` resumes at most once. -/
-    | select {S Γ C e vs k cls R kb T ρ} :
-        Lins os sg S Γ C vs →
-        k = .lam [R] kb →
-        Lin os sg S (R :: Γ) (none :: C) kb →
+    | select {Γ C e vs k cls R kb T ρ} :
+        Lins os sg Γ C vs →
+        k = .llam [R] kb →
+        Lin os sg (R :: Γ) (none :: C) kb →
         UseOk os (R :: Γ) (none :: C) 0 kb →
-        (os.quant e = .omega → NoOwned os S Γ C k) →
-        (os.strict = true → os.quant e ≠ .one → NoLin os S Γ C k) →
-        HasType sg S Γ (.select e vs k cls) T ρ →
-        (∀ c, c ∈ cls → LinClause os sg S Γ C T ρ c) →
-        Lin os sg S Γ C (.select e vs k cls)
+        (os.quant e = .omega → NoOwned os Γ C k) →
+        (os.strict = true → os.quant e ≠ .one → NoLin os Γ C k) →
+        HasType sg Γ (.select e vs k cls) T ρ →
+        (∀ c, c ∈ cls → LinClause os sg Γ C T ρ c) →
+        Lin os sg Γ C (.select e vs k cls)
 
-  inductive Lins (os : OwnSig) (sg : Sig) : Ctx → Ctx → Flags → List Tm → Prop where
-    | nil {S Γ C} : Lins os sg S Γ C []
-    | cons {S Γ C t ts} : Lin os sg S Γ C t → Lins os sg S Γ C ts → Lins os sg S Γ C (t :: ts)
+  inductive Lins (os : OwnSig) (sg : Sig) : Ctx → Flags → List Tm → Prop where
+    | nil {Γ C} : Lins os sg Γ C []
+    | cons {Γ C t ts} : Lin os sg Γ C t → Lins os sg Γ C ts → Lins os sg Γ C (t :: ts)
 
   /-- An arm for `e`: its patterns are for the operation's values and then
   `k`, bound (`.bind`) or not (`.wild`). What they bind is used as its kind
   allows; the guard uses nothing owned; the arm uses nothing owned from
   outside. -/
-  inductive LinClause (os : OwnSig) (sg : Sig) : Ctx → Ctx → Flags → Ty → Row → Clause → Prop where
-    | mk {S Γ C T ρ e pv pk g b ps R Δ Δk Ck} :
+  inductive LinClause (os : OwnSig) (sg : Sig) : Ctx → Flags → Ty → Row → Clause → Prop where
+    | mk {Γ C T ρ e pv pk g b ps R Δ Δk Ck} :
         sg.op e = some (ps, R) →
         PatsOk sg pv ps Δ →
-        ((pk = .bind ∧ Δk = [.fn [R] T ρ] ∧ Ck = [contFlag (os.quant e)]) ∨
+        ((pk = .bind ∧ Δk = [.lfn [R] T ρ] ∧ Ck = [contFlag (os.quant e)]) ∨
           (pk = .wild ∧ Δk = [] ∧ Ck = [])) →
-        Lin os sg S (Δ ++ Δk ++ Γ) (Flags.byType Δ ++ Ck ++ C) b →
+        Lin os sg (Δ ++ Δk ++ Γ) (Flags.byType Δ ++ Ck ++ C) b →
         (∀ j, j < Pat.count (pv ++ [pk]) → UseOk os (Δ ++ Δk ++ Γ) (Flags.byType Δ ++ Ck ++ C) j b) →
-        (∀ g', g = some g' → Lin os sg S (Δ ++ Δk ++ Γ) (Flags.byType Δ ++ Ck ++ C) g') →
-        (∀ g', g = some g' → NoOwned os S (Δ ++ Δk ++ Γ) (Flags.byType Δ ++ Ck ++ C) g') →
-        NoOwnedUnder os S Γ C (Pat.count (pv ++ [pk])) b →
-        (∀ g', g = some g' → NoOwnedUnder os S Γ C (Pat.count (pv ++ [pk])) g') →
+        (∀ g', g = some g' → Lin os sg (Δ ++ Δk ++ Γ) (Flags.byType Δ ++ Ck ++ C) g') →
+        (∀ g', g = some g' → NoOwned os (Δ ++ Δk ++ Γ) (Flags.byType Δ ++ Ck ++ C) g') →
+        NoOwnedUnder os Γ C (Pat.count (pv ++ [pk])) b →
+        (∀ g', g = some g' → NoOwnedUnder os Γ C (Pat.count (pv ++ [pk])) g') →
         (os.strict = true → PatsKeep os sg pv ps ∧ (pk = .wild → os.quant e ≠ .one)) →
-        LinClause os sg S Γ C T ρ (.mk e (pv ++ [pk]) g b)
+        LinClause os sg Γ C T ρ (.mk e (pv ++ [pk]) g b)
 end
 
 /-- The definitions' bodies pass the use check. -/
 def DefsLin (os : OwnSig) (sg : Sig) : Prop :=
-  ∀ d A b, sg.defs d = some (A, b) → Lin os sg [] [] [] b
+  ∀ d A b, sg.defs d = some (A, b) → Lin os sg [] [] b
 
 
 
 /-! ## Counting uses: renaming -/
-
-@[simp] theorem Item.up_loc (l n : Nat) : (Item.loc l).up n = .loc l := rfl
 
 @[simp] theorem Item.up_var (i n : Nat) : (Item.var i).up n = .var (i + n) := rfl
 
@@ -453,62 +478,6 @@ theorem upRN_inj {ξ : Nat → Nat} (hξ : ∀ a b, ξ a = ξ b → a = b) (n : 
     rw [hξ _ _ this]
 
 mutual
-  theorem Tm.occ_ren_loc (l : Nat) : ∀ (t : Tm) (ξ : Nat → Nat), (t.ren ξ).occ (.loc l) = t.occ (.loc l)
-    | .var _, _ => by simp [Tm.ren, Tm.occ]
-    | .int _ _, _ => by simp [Tm.ren, Tm.occ]
-    | .bool _, _ => by simp [Tm.ren, Tm.occ]
-    | .unit, _ => by simp [Tm.ren, Tm.occ]
-    | .text _, _ => by simp [Tm.ren, Tm.occ]
-    | .dec _, _ => by simp [Tm.ren, Tm.occ]
-    | .flt _, _ => by simp [Tm.ren, Tm.occ]
-    | .flt32 _, _ => by simp [Tm.ren, Tm.occ]
-    | .prim _ _ _, _ => by simp [Tm.ren, Tm.occ]
-    | .lam ps b, ξ => by simp only [Tm.ren, Tm.occ, Item.up_loc]; exact Tm.occ_ren_loc l b _
-    | .app f args, ξ => by simp only [Tm.ren, Tm.occ]; rw [Tm.occ_ren_loc l f, Tms.occ_ren_loc l args]
-    | .ite c t f, ξ => by
-        simp only [Tm.ren, Tm.occ]; rw [Tm.occ_ren_loc l c, Tm.occ_ren_loc l t, Tm.occ_ren_loc l f]
-    | .cell _ t, ξ => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_loc l t _
-    | .fresh _ t, ξ => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_loc l t _
-    | .get t, ξ => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_loc l t _
-    | .brw _, ξ => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, ξ => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .field _ t, ξ => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_loc l t _
-    | .set c v, ξ => by simp only [Tm.ren, Tm.occ]; rw [Tm.occ_ren_loc l c, Tm.occ_ren_loc l v]
-    | .write c v, ξ => by simp only [Tm.ren, Tm.occ]; rw [Tm.occ_ren_loc l c, Tm.occ_ren_loc l v]
-    | .ref _ _ _, _ => by simp [Tm.ren, Tm.occ]
-    | .tag _ t, ξ => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_loc l t _
-    | .con _ _ _ fs, ξ => by simp only [Tm.ren, Tm.occ]; exact Tms.occ_ren_loc l fs _
-    | .proj _ t, ξ => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_loc l t _
-    | .perform _ args, ξ => by simp only [Tm.ren, Tm.occ]; exact Tms.occ_ren_loc l args _
-    | .handle b none cs, ξ => by
-        simp only [Tm.ren, Tm.occ]; rw [Tm.occ_ren_loc l b, Clauses.occ_ren_loc l cs]
-    | .handle b (some r) cs, ξ => by
-        simp only [Tm.ren, Tm.occ, Item.up_loc]
-        rw [Tm.occ_ren_loc l b, Tm.occ_ren_loc l r, Clauses.occ_ren_loc l cs]
-    | .loc _, _ => by simp [Tm.ren, Tm.occ]
-    | .run _ _ _ b, ξ => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_loc l b _
-    | .info _ _ b, ξ => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_loc l b _
-    | .select _ vs k cs, ξ => by
-        simp only [Tm.ren, Tm.occ]; rw [Tms.occ_ren_loc l vs, Tm.occ_ren_loc l k, Clauses.occ_ren_loc l cs]
-
-  theorem Tms.occ_ren_loc (l : Nat) : ∀ (ts : List Tm) (ξ : Nat → Nat),
-      Tms.occ (.loc l) (ts.map (·.ren ξ)) = Tms.occ (.loc l) ts
-    | [], _ => rfl
-    | t :: ts, ξ => by simp only [List.map_cons, Tms.occ]; rw [Tm.occ_ren_loc l t, Tms.occ_ren_loc l ts]
-
-  theorem Clause.occ_ren_loc (l : Nat) : ∀ (c : Clause) (ξ : Nat → Nat), (c.ren ξ).occ (.loc l) = c.occ (.loc l)
-    | .mk _ _ none b, ξ => by simp only [Clause.ren, Clause.occ, Item.up_loc]; exact Tm.occ_ren_loc l b _
-    | .mk _ _ (some g) b, ξ => by
-        simp only [Clause.ren, Clause.occ, Item.up_loc]; rw [Tm.occ_ren_loc l g, Tm.occ_ren_loc l b]
-
-  theorem Clauses.occ_ren_loc (l : Nat) : ∀ (cs : List Clause) (ξ : Nat → Nat),
-      Clauses.occ (.loc l) (cs.map (·.ren ξ)) = Clauses.occ (.loc l) cs
-    | [], _ => rfl
-    | c :: cs, ξ => by
-        simp only [List.map_cons, Clauses.occ]; rw [Clause.occ_ren_loc l c, Clauses.occ_ren_loc l cs]
-end
-
-mutual
   theorem Tm.occ_ren_inj : ∀ (t : Tm) (ξ : Nat → Nat), (∀ a b, ξ a = ξ b → a = b) →
       ∀ i, (t.ren ξ).occ (.var (ξ i)) = t.occ (.var i)
     | .var k, ξ, hξ, i => by
@@ -533,11 +502,18 @@ mutual
         simp only [Tm.ren, Tm.occ]; rw [Tm.occ_ren_inj f ξ hξ, Tms.occ_ren_inj args ξ hξ]
     | .ite c t f, ξ, hξ, i => by
         simp only [Tm.ren, Tm.occ]; rw [Tm.occ_ren_inj c ξ hξ, Tm.occ_ren_inj t ξ hξ, Tm.occ_ren_inj f ξ hξ]
-    | .cell _ t, ξ, hξ, i => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_inj t ξ hξ i
-    | .fresh _ t, ξ, hξ, i => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_inj t ξ hξ i
+    | .scope _ x b, ξ, hξ, i => by
+        simp only [Tm.ren, Tm.occ, Item.up_var]
+        rw [Tm.occ_ren_inj x ξ hξ]
+        have h1 : ξ i + 1 = upR ξ (i + 1) := rfl
+        rw [h1, Tm.occ_ren_inj b (upR ξ) (upRN_inj hξ 1)]
+    | .llam ps b, ξ, hξ, i => by
+        simp only [Tm.ren, Tm.occ, Item.up_var]
+        rw [← upRN_add ps.length ξ i]
+        exact Tm.occ_ren_inj b _ (upRN_inj hξ ps.length) _
     | .get t, ξ, hξ, i => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_inj t ξ hξ i
-    | .brw _, ξ, hξ, i => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, ξ, hξ, i => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .brw _ _, ξ, hξ, i => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .mbrw _ _, ξ, hξ, i => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
     | .field _ t, ξ, hξ, i => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_inj t ξ hξ i
     | .set c v, ξ, hξ, i => by simp only [Tm.ren, Tm.occ]; rw [Tm.occ_ren_inj c ξ hξ, Tm.occ_ren_inj v ξ hξ]
     | .write c v, ξ, hξ, i => by simp only [Tm.ren, Tm.occ]; rw [Tm.occ_ren_inj c ξ hξ, Tm.occ_ren_inj v ξ hξ]
@@ -553,8 +529,7 @@ mutual
         rw [Tm.occ_ren_inj b ξ hξ, Clauses.occ_ren_inj cs ξ hξ]
         have h1 : ξ i + 1 = upR ξ (i + 1) := rfl
         rw [h1, Tm.occ_ren_inj r (upR ξ) (upRN_inj hξ 1)]
-    | .loc _, _, _, _ => by simp [Tm.ren, Tm.occ]
-    | .run _ _ _ b, ξ, hξ, i => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_inj b ξ hξ i
+    | .run _ _ _ _ b, ξ, hξ, i => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_inj b ξ hξ i
     | .info _ _ b, ξ, hξ, i => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_inj b ξ hξ i
     | .select _ vs k cs, ξ, hξ, i => by
         simp only [Tm.ren, Tm.occ]
@@ -585,62 +560,6 @@ mutual
 end
 
 mutual
-  theorem Tm.occLo_ren_loc (l : Nat) : ∀ (t : Tm) (ξ : Nat → Nat), (t.ren ξ).occLo (.loc l) = t.occLo (.loc l)
-    | .var _, _ => by simp [Tm.ren, Tm.occLo]
-    | .int _ _, _ => by simp [Tm.ren, Tm.occLo]
-    | .bool _, _ => by simp [Tm.ren, Tm.occLo]
-    | .unit, _ => by simp [Tm.ren, Tm.occLo]
-    | .text _, _ => by simp [Tm.ren, Tm.occLo]
-    | .dec _, _ => by simp [Tm.ren, Tm.occLo]
-    | .flt _, _ => by simp [Tm.ren, Tm.occLo]
-    | .flt32 _, _ => by simp [Tm.ren, Tm.occLo]
-    | .prim _ _ _, _ => by simp [Tm.ren, Tm.occLo]
-    | .lam ps b, ξ => by simp only [Tm.ren, Tm.occLo, Item.up_loc]; exact Tm.occLo_ren_loc l b _
-    | .app f args, ξ => by simp only [Tm.ren, Tm.occLo]; rw [Tm.occLo_ren_loc l f, Tms.occLo_ren_loc l args]
-    | .ite c t f, ξ => by
-        simp only [Tm.ren, Tm.occLo]; rw [Tm.occLo_ren_loc l c, Tm.occLo_ren_loc l t, Tm.occLo_ren_loc l f]
-    | .cell _ t, ξ => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_loc l t _
-    | .fresh _ t, ξ => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_loc l t _
-    | .get t, ξ => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_loc l t _
-    | .brw _, ξ => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, ξ => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .field _ t, ξ => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_loc l t _
-    | .set c v, ξ => by simp only [Tm.ren, Tm.occLo]; rw [Tm.occLo_ren_loc l c, Tm.occLo_ren_loc l v]
-    | .write c v, ξ => by simp only [Tm.ren, Tm.occLo]; rw [Tm.occLo_ren_loc l c, Tm.occLo_ren_loc l v]
-    | .ref _ _ _, _ => by simp [Tm.ren, Tm.occLo]
-    | .tag _ t, ξ => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_loc l t _
-    | .con _ _ _ fs, ξ => by simp only [Tm.ren, Tm.occLo]; exact Tms.occLo_ren_loc l fs _
-    | .proj _ t, ξ => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_loc l t _
-    | .perform _ args, ξ => by simp only [Tm.ren, Tm.occLo]; exact Tms.occLo_ren_loc l args _
-    | .handle b none cs, ξ => by
-        simp only [Tm.ren, Tm.occLo]; rw [Tm.occLo_ren_loc l b, Clauses.occLo_ren_loc l cs]
-    | .handle b (some r) cs, ξ => by
-        simp only [Tm.ren, Tm.occLo, Item.up_loc]
-        rw [Tm.occLo_ren_loc l b, Tm.occLo_ren_loc l r, Clauses.occLo_ren_loc l cs]
-    | .loc _, _ => by simp [Tm.ren, Tm.occLo]
-    | .run _ _ _ b, ξ => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_loc l b _
-    | .info _ _ b, ξ => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_loc l b _
-    | .select _ vs k cs, ξ => by
-        simp only [Tm.ren, Tm.occLo]; rw [Tms.occLo_ren_loc l vs, Tm.occLo_ren_loc l k, Clauses.occLo_ren_loc l cs]
-
-  theorem Tms.occLo_ren_loc (l : Nat) : ∀ (ts : List Tm) (ξ : Nat → Nat),
-      Tms.occLo (.loc l) (ts.map (·.ren ξ)) = Tms.occLo (.loc l) ts
-    | [], _ => rfl
-    | t :: ts, ξ => by simp only [List.map_cons, Tms.occLo]; rw [Tm.occLo_ren_loc l t, Tms.occLo_ren_loc l ts]
-
-  theorem Clause.occLo_ren_loc (l : Nat) : ∀ (c : Clause) (ξ : Nat → Nat), (c.ren ξ).occLo (.loc l) = c.occLo (.loc l)
-    | .mk _ _ none b, ξ => by simp only [Clause.ren, Clause.occLo, Item.up_loc]; exact Tm.occLo_ren_loc l b _
-    | .mk _ _ (some g) b, ξ => by
-        simp only [Clause.ren, Clause.occLo, Item.up_loc]; rw [Tm.occLo_ren_loc l g, Tm.occLo_ren_loc l b]
-
-  theorem Clauses.occLo_ren_loc (l : Nat) : ∀ (cs : List Clause) (ξ : Nat → Nat),
-      Clauses.occLo (.loc l) (cs.map (·.ren ξ)) = Clauses.occLo (.loc l) cs
-    | [], _ => rfl
-    | c :: cs, ξ => by
-        simp only [List.map_cons, Clauses.occLo]; rw [Clause.occLo_ren_loc l c, Clauses.occLo_ren_loc l cs]
-end
-
-mutual
   theorem Tm.occLo_ren_inj : ∀ (t : Tm) (ξ : Nat → Nat), (∀ a b, ξ a = ξ b → a = b) →
       ∀ i, (t.ren ξ).occLo (.var (ξ i)) = t.occLo (.var i)
     | .var k, ξ, hξ, i => by
@@ -665,11 +584,18 @@ mutual
         simp only [Tm.ren, Tm.occLo]; rw [Tm.occLo_ren_inj f ξ hξ, Tms.occLo_ren_inj args ξ hξ]
     | .ite c t f, ξ, hξ, i => by
         simp only [Tm.ren, Tm.occLo]; rw [Tm.occLo_ren_inj c ξ hξ, Tm.occLo_ren_inj t ξ hξ, Tm.occLo_ren_inj f ξ hξ]
-    | .cell _ t, ξ, hξ, i => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_inj t ξ hξ i
-    | .fresh _ t, ξ, hξ, i => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_inj t ξ hξ i
+    | .scope _ x b, ξ, hξ, i => by
+        simp only [Tm.ren, Tm.occLo, Item.up_var]
+        rw [Tm.occLo_ren_inj x ξ hξ]
+        have h1 : ξ i + 1 = upR ξ (i + 1) := rfl
+        rw [h1, Tm.occLo_ren_inj b (upR ξ) (upRN_inj hξ 1)]
+    | .llam ps b, ξ, hξ, i => by
+        simp only [Tm.ren, Tm.occLo, Item.up_var]
+        rw [← upRN_add ps.length ξ i]
+        exact Tm.occLo_ren_inj b _ (upRN_inj hξ ps.length) _
     | .get t, ξ, hξ, i => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_inj t ξ hξ i
-    | .brw _, ξ, hξ, i => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, ξ, hξ, i => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .brw _ _, ξ, hξ, i => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .mbrw _ _, ξ, hξ, i => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
     | .field _ t, ξ, hξ, i => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_inj t ξ hξ i
     | .set c v, ξ, hξ, i => by simp only [Tm.ren, Tm.occLo]; rw [Tm.occLo_ren_inj c ξ hξ, Tm.occLo_ren_inj v ξ hξ]
     | .write c v, ξ, hξ, i => by simp only [Tm.ren, Tm.occLo]; rw [Tm.occLo_ren_inj c ξ hξ, Tm.occLo_ren_inj v ξ hξ]
@@ -685,8 +611,7 @@ mutual
         rw [Tm.occLo_ren_inj b ξ hξ, Clauses.occLo_ren_inj cs ξ hξ]
         have h1 : ξ i + 1 = upR ξ (i + 1) := rfl
         rw [h1, Tm.occLo_ren_inj r (upR ξ) (upRN_inj hξ 1)]
-    | .loc _, _, _, _ => by simp [Tm.ren, Tm.occLo]
-    | .run _ _ _ b, ξ, hξ, i => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_inj b ξ hξ i
+    | .run _ _ _ _ b, ξ, hξ, i => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_inj b ξ hξ i
     | .info _ _ b, ξ, hξ, i => by simp only [Tm.ren, Tm.occLo]; exact Tm.occLo_ren_inj b ξ hξ i
     | .select _ vs k cs, ξ, hξ, i => by
         simp only [Tm.ren, Tm.occLo]
@@ -747,11 +672,24 @@ mutual
         simp only [Tm.ren, Tm.occ]
         rw [Tm.occ_ren_zero c ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega), Tm.occ_ren_zero t ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega),
           Tm.occ_ren_zero f ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega)]; rfl
-    | .cell _ t, ξ, j, h => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_zero t ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega)
-    | .fresh _ t, ξ, j, h => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_zero t ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega)
+    | .scope _ x b, ξ, j, h => by
+        simp only [Tm.ren, Tm.occ, Item.up_var]
+        rw [Tm.occ_ren_zero x ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega)]
+        rw [Tm.occ_ren_zero b (upR ξ) (j + 1) (fun k hk => ?_)]
+        cases k with
+        | zero => simp [upR] at hk
+        | succ i =>
+            simp only [upR] at hk
+            have := h i (by omega); simp only [Tm.occ, Item.up_var] at this; omega
+    | .llam ps b, ξ, j, h => by
+        simp only [Tm.ren, Tm.occ, Item.up_var]
+        refine Tm.occ_ren_zero b _ _ (fun k hk => ?_)
+        rcases upRN_cases ps.length ξ k with ⟨hl, e⟩ | ⟨i, rfl, e⟩
+        · omega
+        · have := h i (by omega); simpa [Tm.occ] using this
     | .get t, ξ, j, h => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_zero t ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega)
-    | .brw _, ξ, j, h => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, ξ, j, h => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .brw _ _, ξ, j, h => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .mbrw _ _, ξ, j, h => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
     | .field _ t, ξ, j, h => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_zero t ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega)
     | .set c v, ξ, j, h => by
         simp only [Tm.ren, Tm.occ]
@@ -777,8 +715,7 @@ mutual
         | succ i =>
             simp only [upR] at hk
             have := h i (by omega); simp only [Tm.occ, Item.up_var] at this; omega
-    | .loc _, _, _, _ => by simp [Tm.ren, Tm.occ]
-    | .run _ _ _ b, ξ, j, h => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_zero b ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega)
+    | .run _ _ _ _ b, ξ, j, h => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_zero b ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega)
     | .info _ _ b, ξ, j, h => by simp only [Tm.ren, Tm.occ]; exact Tm.occ_ren_zero b ξ j (fun k hk => by have := h k hk; simp only [Tm.occ] at this; omega)
     | .select _ vs k cs, ξ, j, h => by
         simp only [Tm.ren, Tm.occ]
@@ -867,11 +804,15 @@ mutual
     | .ite c t f, σ, j, h => by
         simp only [Tm.subst, Tm.occ]
         rw [Tm.occ_subst_var c σ j h, Tm.occ_subst_var t σ j h, Tm.occ_subst_var f σ j h]
-    | .cell _ t, σ, j, h => by simp only [Tm.subst, Tm.occ]; exact Tm.occ_subst_var t σ j h
-    | .fresh _ t, σ, j, h => by simp only [Tm.subst, Tm.occ]; exact Tm.occ_subst_var t σ j h
+    | .scope _ x b, σ, j, h => by
+        simp only [Tm.subst, Tm.occ, Item.up_var]
+        rw [Tm.occ_subst_var x σ j h, Tm.occ_subst_var b _ _ (up_occ_var h)]
+    | .llam ps b, σ, j, h => by
+        simp only [Tm.subst, Tm.occ, Item.up_var]
+        exact Tm.occ_subst_var b _ _ (upN_occ_var h ps.length)
     | .get t, σ, j, h => by simp only [Tm.subst, Tm.occ]; exact Tm.occ_subst_var t σ j h
-    | .brw _, σ, j, h => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, σ, j, h => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .brw _ _, σ, j, h => by simp [Tm.subst, Tm.occ, Tm.occLo]
+    | .mbrw _ _, σ, j, h => by simp [Tm.subst, Tm.occ, Tm.occLo]
     | .field _ t, σ, j, h => by simp only [Tm.subst, Tm.occ]; exact Tm.occ_subst_var t σ j h
     | .set c v, σ, j, h => by
         simp only [Tm.subst, Tm.occ]; rw [Tm.occ_subst_var c σ j h, Tm.occ_subst_var v σ j h]
@@ -887,8 +828,7 @@ mutual
     | .handle b (some r) cs, σ, j, h => by
         simp only [Tm.subst, Tm.occ, Item.up_var]
         rw [Tm.occ_subst_var b σ j h, Clauses.occ_subst_var cs σ j h, Tm.occ_subst_var r _ _ (up_occ_var h)]
-    | .loc _, _, _, _ => by simp [Tm.subst, Tm.occ]
-    | .run _ _ _ b, σ, j, h => by simp only [Tm.subst, Tm.occ]; exact Tm.occ_subst_var b σ j h
+    | .run _ _ _ _ b, σ, j, h => by simp only [Tm.subst, Tm.occ]; exact Tm.occ_subst_var b σ j h
     | .info _ _ b, σ, j, h => by simp only [Tm.subst, Tm.occ]; exact Tm.occ_subst_var b σ j h
     | .select _ vs k cs, σ, j, h => by
         simp only [Tm.subst, Tm.occ]
@@ -960,11 +900,15 @@ mutual
     | .ite c t f, σ, j, h => by
         simp only [Tm.subst, Tm.occLo]
         rw [Tm.occLo_subst_var c σ j h, Tm.occLo_subst_var t σ j h, Tm.occLo_subst_var f σ j h]
-    | .cell _ t, σ, j, h => by simp only [Tm.subst, Tm.occLo]; exact Tm.occLo_subst_var t σ j h
-    | .fresh _ t, σ, j, h => by simp only [Tm.subst, Tm.occLo]; exact Tm.occLo_subst_var t σ j h
+    | .scope _ x b, σ, j, h => by
+        simp only [Tm.subst, Tm.occLo, Item.up_var]
+        rw [Tm.occLo_subst_var x σ j h, Tm.occLo_subst_var b _ _ (up_occLo_var h)]
+    | .llam ps b, σ, j, h => by
+        simp only [Tm.subst, Tm.occLo, Item.up_var]
+        exact Tm.occLo_subst_var b _ _ (upN_occLo_var h ps.length)
     | .get t, σ, j, h => by simp only [Tm.subst, Tm.occLo]; exact Tm.occLo_subst_var t σ j h
-    | .brw _, σ, j, h => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, σ, j, h => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .brw _ _, σ, j, h => by simp [Tm.subst, Tm.occ, Tm.occLo]
+    | .mbrw _ _, σ, j, h => by simp [Tm.subst, Tm.occ, Tm.occLo]
     | .field _ t, σ, j, h => by simp only [Tm.subst, Tm.occLo]; exact Tm.occLo_subst_var t σ j h
     | .set c v, σ, j, h => by
         simp only [Tm.subst, Tm.occLo]; rw [Tm.occLo_subst_var c σ j h, Tm.occLo_subst_var v σ j h]
@@ -980,8 +924,7 @@ mutual
     | .handle b (some r) cs, σ, j, h => by
         simp only [Tm.subst, Tm.occLo, Item.up_var]
         rw [Tm.occLo_subst_var b σ j h, Clauses.occLo_subst_var cs σ j h, Tm.occLo_subst_var r _ _ (up_occLo_var h)]
-    | .loc _, _, _, _ => by simp [Tm.subst, Tm.occLo]
-    | .run _ _ _ b, σ, j, h => by simp only [Tm.subst, Tm.occLo]; exact Tm.occLo_subst_var b σ j h
+    | .run _ _ _ _ b, σ, j, h => by simp only [Tm.subst, Tm.occLo]; exact Tm.occLo_subst_var b σ j h
     | .info _ _ b, σ, j, h => by simp only [Tm.subst, Tm.occLo]; exact Tm.occLo_subst_var b σ j h
     | .select _ vs k cs, σ, j, h => by
         simp only [Tm.subst, Tm.occLo]
@@ -1011,20 +954,13 @@ end
 
 /-! ## Counting uses: what a substitution brings -/
 
-theorem Item.up_eq_loc {a : Item} {n l : Nat} (h : a.up n = .loc l) : a = .loc l := by
-  cases a with
-  | var i => simp [Item.up] at h
-  | loc m => simpa [Item.up] using h
-
 theorem Tm.occ_ren_succ_up (t : Tm) (a : Item) : (t.ren Nat.succ).occ (a.up 1) = t.occ a := by
   cases a with
   | var j => exact Tm.occ_ren_inj t Nat.succ (fun a b h => Nat.succ.inj h) j
-  | loc l => exact Tm.occ_ren_loc l t Nat.succ
 
 theorem up_ne_var_lt {a : Item} {n k : Nat} (h : k < n) : (Tm.var k).occ (a.up n) = 0 := by
   cases a with
   | var j => simp only [Item.up, Tm.occ, Item.var.injEq]; split <;> omega
-  | loc l => simp [Item.up, Tm.occ]
 
 /-- Under `n` binders, a substitution puts nothing with `a` for a variable
 that `Q` names, if it puts nothing with `a` outside them. -/
@@ -1043,422 +979,160 @@ mutual
   /-- A substitution brings no `a` into a term without `a` if it puts nothing
   with `a` for the variables used. -/
   theorem Tm.occ_subst_zero : ∀ (t : Tm) (σ : Nat → Tm) (a : Item),
-      (∀ l, a = .loc l → t.occ a = 0) → (∀ i, t.occ (.var i) ≠ 0 → (σ i).occ a = 0) →
+      (∀ i, t.occ (.var i) ≠ 0 → (σ i).occ a = 0) →
       (t.subst σ).occ a = 0
-    | .int _ _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
-    | .bool _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
-    | .unit, _, _, _, _ => by simp [Tm.subst, Tm.occ]
-    | .text _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
-    | .dec _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
-    | .flt _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
-    | .flt32 _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
-    | .prim _ _ _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
-    | .ref _ _ _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
-    | .var k, σ, a, hl, hv => by
+    | .int _ _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .bool _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .unit, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .text _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .dec _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .flt _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .flt32 _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .prim _ _ _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .ref _ _ _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .var k, σ, a, hv => by
         simp only [Tm.subst]
         by_cases h : (Tm.var k).occ (.var k) = 0
         · simp [Tm.occ] at h
         · exact hv k h
-    | .loc m, σ, a, hl, hv => by
-        simp only [Tm.subst]
-        cases a with
-        | var j => simp [Tm.occ]
-        | loc l => exact hl l rfl
-    | .lam ps b, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero b (upN ps.length σ) (a.up ps.length) (fun l e => by have e' := Item.up_eq_loc e; subst e'; have := hl l rfl; simp only [Tm.occ, Tms.occ, Clauses.occ, Item.up_loc] at this ⊢; omega) (upN_zero ps.length σ a (fun k => b.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ, Item.up_var]; omega))))
-    | .app f args, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero f σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tms.occ_subst_zero args σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
-    | .ite c t f, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero c σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tm.occ_subst_zero t σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tm.occ_subst_zero f σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]; rfl
-    | .cell _ t, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero t σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
-    | .fresh _ t, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero t σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
-    | .tag _ t, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero t σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
-    | .proj _ t, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero t σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
-    | .get t, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero t σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
-    | .brw _, σ, a, hl, hv => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, σ, a, hl, hv => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .field _ t, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero t σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
-    | .set c v, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero c σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tm.occ_subst_zero v σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
-    | .write c v, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero c σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tm.occ_subst_zero v σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
-    | .con _ _ _ fs, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tms.occ_subst_zero fs σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
-    | .perform _ args, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tms.occ_subst_zero args σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
-    | .handle b none cs, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero b σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Clauses.occ_subst_zero cs σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
-    | .handle b (some r) cs, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero b σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Clauses.occ_subst_zero cs σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), show up σ = upN 1 σ from rfl, (Tm.occ_subst_zero r (upN 1 σ) (a.up 1) (fun l e => by have e' := Item.up_eq_loc e; subst e'; have := hl l rfl; simp only [Tm.occ, Tms.occ, Clauses.occ, Item.up_loc] at this ⊢; omega) (upN_zero 1 σ a (fun k => r.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ, Item.up_var]; omega))))]
-    | .run _ _ _ b, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero b σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
-    | .info _ _ b, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero b σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
-    | .select _ vs k cs, σ, a, hl, hv => by
-        simp only [Tm.subst, Tm.occ]; rw [(Tms.occ_subst_zero vs σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tm.occ_subst_zero k σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Clauses.occ_subst_zero cs σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
+    | .lam ps b, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero b (upN ps.length σ) (a.up ps.length) (upN_zero ps.length σ a (fun k => b.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ, Item.up_var]; omega))))
+    | .app f args, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero f σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tms.occ_subst_zero args σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
+    | .ite c t f, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero c σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tm.occ_subst_zero t σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tm.occ_subst_zero f σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]; rfl
+    | .scope _ x b, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero x σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), show up σ = upN 1 σ from rfl, (Tm.occ_subst_zero b (upN 1 σ) (a.up 1) (upN_zero 1 σ a (fun k => b.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ, Item.up_var]; omega))))]
+    | .llam ps b, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero b (upN ps.length σ) (a.up ps.length) (upN_zero ps.length σ a (fun k => b.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ, Item.up_var]; omega))))
+    | .tag _ t, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero t σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
+    | .proj _ t, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero t σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
+    | .get t, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero t σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
+    | .brw _ _, σ, a, hv => by simp [Tm.subst, Tm.occ, Tm.occLo]
+    | .mbrw _ _, σ, a, hv => by simp [Tm.subst, Tm.occ, Tm.occLo]
+    | .field _ t, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero t σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
+    | .set c v, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero c σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tm.occ_subst_zero v σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
+    | .write c v, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero c σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tm.occ_subst_zero v σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
+    | .con _ _ _ fs, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; exact (Tms.occ_subst_zero fs σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
+    | .perform _ args, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; exact (Tms.occ_subst_zero args σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
+    | .handle b none cs, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero b σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Clauses.occ_subst_zero cs σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
+    | .handle b (some r) cs, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; rw [(Tm.occ_subst_zero b σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Clauses.occ_subst_zero cs σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), show up σ = upN 1 σ from rfl, (Tm.occ_subst_zero r (upN 1 σ) (a.up 1) (upN_zero 1 σ a (fun k => r.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ, Item.up_var]; omega))))]
+    | .run _ _ _ _ b, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero b σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
+    | .info _ _ b, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; exact (Tm.occ_subst_zero b σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))
+    | .select _ vs k cs, σ, a, hv => by
+        simp only [Tm.subst, Tm.occ]; rw [(Tms.occ_subst_zero vs σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tm.occ_subst_zero k σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Clauses.occ_subst_zero cs σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
 
   theorem Tms.occ_subst_zero : ∀ (ts : List Tm) (σ : Nat → Tm) (a : Item),
-      (∀ l, a = .loc l → Tms.occ a ts = 0) → (∀ i, Tms.occ (.var i) ts ≠ 0 → (σ i).occ a = 0) →
+      (∀ i, Tms.occ (.var i) ts ≠ 0 → (σ i).occ a = 0) →
       Tms.occ a (ts.map (·.subst σ)) = 0
-    | [], _, _, _, _ => rfl
-    | t :: ts, σ, a, hl, hv => by
-        simp only [List.map_cons, Tms.occ]; rw [(Tm.occ_subst_zero t σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tms.occ_subst_zero ts σ a (fun l e => by have := hl l e; simp only [Tm.occ, Tms.occ, Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
+    | [], _, _, _ => rfl
+    | t :: ts, σ, a, hv => by
+        simp only [List.map_cons, Tms.occ]; rw [(Tm.occ_subst_zero t σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega))), (Tms.occ_subst_zero ts σ a (fun i hi => hv i (by simp only [Tm.occ, Tms.occ, Clauses.occ]; omega)))]
 
   theorem Clause.occ_subst_zero : ∀ (c : Clause) (σ : Nat → Tm) (a : Item),
-      (∀ l, a = .loc l → Clause.occ a c = 0) → (∀ i, Clause.occ (.var i) c ≠ 0 → (σ i).occ a = 0) →
+      (∀ i, Clause.occ (.var i) c ≠ 0 → (σ i).occ a = 0) →
       (c.subst σ).occ a = 0
-    | .mk _ ps none b, σ, a, hl, hv => by
-        simp only [Clause.subst, Clause.occ]; exact (Tm.occ_subst_zero b (upN (Pat.count ps) σ) (a.up (Pat.count ps)) (fun l e => by have e' := Item.up_eq_loc e; subst e'; have := hl l rfl; simp only [Clause.occ, Tm.occ, Item.up_loc] at this ⊢; omega) (upN_zero (Pat.count ps) σ a (fun k => b.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Clause.occ, Tm.occ, Item.up_var]; omega))))
-    | .mk _ ps (some g) b, σ, a, hl, hv => by
-        simp only [Clause.subst, Clause.occ]; rw [(Tm.occ_subst_zero g (upN (Pat.count ps) σ) (a.up (Pat.count ps)) (fun l e => by have e' := Item.up_eq_loc e; subst e'; have := hl l rfl; simp only [Clause.occ, Tm.occ, Item.up_loc] at this ⊢; omega) (upN_zero (Pat.count ps) σ a (fun k => g.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Clause.occ, Tm.occ, Item.up_var]; omega)))), (Tm.occ_subst_zero b (upN (Pat.count ps) σ) (a.up (Pat.count ps)) (fun l e => by have e' := Item.up_eq_loc e; subst e'; have := hl l rfl; simp only [Clause.occ, Tm.occ, Item.up_loc] at this ⊢; omega) (upN_zero (Pat.count ps) σ a (fun k => b.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Clause.occ, Tm.occ, Item.up_var]; omega))))]
+    | .mk _ ps none b, σ, a, hv => by
+        simp only [Clause.subst, Clause.occ]; exact (Tm.occ_subst_zero b (upN (Pat.count ps) σ) (a.up (Pat.count ps)) (upN_zero (Pat.count ps) σ a (fun k => b.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Clause.occ, Tm.occ, Item.up_var]; omega))))
+    | .mk _ ps (some g) b, σ, a, hv => by
+        simp only [Clause.subst, Clause.occ]; rw [(Tm.occ_subst_zero g (upN (Pat.count ps) σ) (a.up (Pat.count ps)) (upN_zero (Pat.count ps) σ a (fun k => g.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Clause.occ, Tm.occ, Item.up_var]; omega)))), (Tm.occ_subst_zero b (upN (Pat.count ps) σ) (a.up (Pat.count ps)) (upN_zero (Pat.count ps) σ a (fun k => b.occ (.var k) ≠ 0) (fun i hi => hv i (by simp only [Clause.occ, Tm.occ, Item.up_var]; omega))))]
 
   theorem Clauses.occ_subst_zero : ∀ (cs : List Clause) (σ : Nat → Tm) (a : Item),
-      (∀ l, a = .loc l → Clauses.occ a cs = 0) → (∀ i, Clauses.occ (.var i) cs ≠ 0 → (σ i).occ a = 0) →
+      (∀ i, Clauses.occ (.var i) cs ≠ 0 → (σ i).occ a = 0) →
       Clauses.occ a (cs.map (·.subst σ)) = 0
-    | [], _, _, _, _ => rfl
-    | c :: cs, σ, a, hl, hv => by
-        simp only [List.map_cons, Clauses.occ]; rw [(Clause.occ_subst_zero c σ a (fun l e => by have := hl l e; simp only [Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Clauses.occ]; omega))), (Clauses.occ_subst_zero cs σ a (fun l e => by have := hl l e; simp only [Clauses.occ] at this; omega) (fun i hi => hv i (by simp only [Clauses.occ]; omega)))]
-end
-
-/-! ## What the use check sees: the places of the state -/
-
-theorem Tms.occ_eq_zero {a : Item} : ∀ {ts : List Tm}, (∀ t ∈ ts, t.occ a = 0) → Tms.occ a ts = 0
-  | [], _ => rfl
-  | t :: ts, h => by
-      simp only [Tms.occ]
-      rw [h t List.mem_cons_self, Tms.occ_eq_zero (fun u hu => h u (List.mem_cons_of_mem _ hu))]
-
-theorem Clauses.occ_eq_zero {a : Item} : ∀ {cs : List Clause}, (∀ c ∈ cs, c.occ a = 0) → Clauses.occ a cs = 0
-  | [], _ => rfl
-  | c :: cs, h => by
-      simp only [Clauses.occ]
-      rw [h c List.mem_cons_self, Clauses.occ_eq_zero (fun u hu => h u (List.mem_cons_of_mem _ hu))]
-
-mutual
-  /-- A term that passes the use check names only places of the state. -/
-  theorem Lin.noHigh {os sg S Γ C t} (h : Lin os sg S Γ C t) :
-      ∀ l, S.length ≤ l → t.occ (.loc l) = 0 := by
-    intro l hl
-    match h with
-    | .var _ _ => simp [Tm.occ]
-    | .int | .bool | .unit | .text | .dec | .flt | .flt32 | .prim _ => simp [Tm.occ]
-    | .lam hb _ _ => simp only [Tm.occ, Item.up_loc]; exact hb.noHigh l hl
-    | .app hf ha _ _ => simp only [Tm.occ]; rw [hf.noHigh l hl, ha.noHigh l hl]
-    | .block hb _ ha _ _ =>
-        simp only [Tm.occ, Item.up_loc]; rw [hb.noHigh l hl, ha.noHigh l hl]
-    | .resume _ _ ha _ _ => simp only [Tm.occ]; rw [ha.noHigh l hl]; simp
-    | .ite hc ht hf _ _ => simp only [Tm.occ]; rw [hc.noHigh l hl, ht.noHigh l hl, hf.noHigh l hl]; rfl
-    | .cell ht _ => simp only [Tm.occ]; exact ht.noHigh l hl
-    | .fresh ht => simp only [Tm.occ]; exact ht.noHigh l hl
-    | .get ht => simp only [Tm.occ]; exact ht.noHigh l hl
-    | .set hc hv _ _ => simp only [Tm.occ]; rw [hc.noHigh l hl, hv.noHigh l hl]
-    | .brw _ _ _ | .mbrw _ _ _ => simp [Tm.occ]
-    | .field hb _ _ _ _ => simp only [Tm.occ]; exact hb.noHigh l hl
-    | .write hb hv _ _ => simp only [Tm.occ]; rw [hb.noHigh l hl, hv.noHigh l hl]
-    | .ref _ => simp [Tm.occ]
-    | .tag ht => simp only [Tm.occ]; exact ht.noHigh l hl
-    | .con hf _ _ => simp only [Tm.occ]; exact hf.noHigh l hl
-    | .proj ht => simp only [Tm.occ]; exact ht.noHigh l hl
-    | .perform ha _ _ => simp only [Tm.occ]; exact ha.noHigh l hl
-    | .handle hb _ hc =>
-        simp only [Tm.occ]
-        rw [hb.noHigh l hl, Clauses.occ_eq_zero (fun c m => (hc c m).noHigh l hl)]
-    | .handleRet hb _ hr _ _ _ _ hc =>
-        simp only [Tm.occ, Item.up_loc]
-        rw [hb.noHigh l hl, hr.noHigh l hl, Clauses.occ_eq_zero (fun c m => (hc c m).noHigh l hl)]
-    | .loc hS =>
-        simp only [Tm.occ, Item.loc.injEq]
-        have := (List.getElem?_eq_some_iff.mp hS).1
-        split <;> omega
-    | .run hb _ => simp only [Tm.occ]; exact hb.noHigh l hl
-    | .info hb _ => simp only [Tm.occ]; exact hb.noHigh l hl
-    | .select hv rfl hk _ _ _ _ hc =>
-        simp only [Tm.occ, Item.up_loc]
-        rw [hv.noHigh l hl, hk.noHigh l hl, Clauses.occ_eq_zero (fun c m => (hc c m).noHigh l hl)]
-
-  theorem Lins.noHigh {os sg S Γ C ts} (h : Lins os sg S Γ C ts) :
-      ∀ l, S.length ≤ l → Tms.occ (.loc l) ts = 0 := by
-    intro l hl
-    match h with
-    | .nil => rfl
-    | .cons ht hs => simp only [Tms.occ]; rw [ht.noHigh l hl, hs.noHigh l hl]
-
-  theorem LinClause.noHigh {os sg S Γ C T ρ c} (h : LinClause os sg S Γ C T ρ c) :
-      ∀ l, S.length ≤ l → c.occ (.loc l) = 0 := by
-    intro l hl
-    match h with
-    | .mk (g := none) _ _ _ hb _ _ _ _ _ _ => simp only [Clause.occ, Item.up_loc]; exact hb.noHigh l hl
-    | .mk (g := some g) _ _ _ hb _ hg _ _ _ _ =>
-        simp only [Clause.occ, Item.up_loc]; rw [(hg g rfl).noHigh l hl, hb.noHigh l hl]
-end
-
-/-! ## The use check in a bigger state -/
-
-theorem Ext.get_lt {S S' : Ctx} (h : Ext S S') {l : Nat} {A : Ty} (hl : S'[l]? = some A)
-    (hlt : l < S.length) : S[l]? = some A := by
-  obtain ⟨S₂, rfl⟩ := h
-  rwa [List.getElem?_append_left hlt] at hl
-
-theorem Owned.ext {os S S' Γ C a} (x : Ext S S') (h : Owned os S' Γ C a)
-    (hl : ∀ l, a = .loc l → l < S.length) : Owned os S Γ C a := by
-  cases a with
-  | var i => exact h
-  | loc l => obtain ⟨A, hA, hk⟩ := h; exact ⟨A, x.get_lt hA (hl l rfl), hk⟩
-
-theorem NoOwnedUnder.ext {os S S' Γ C n t} (x : Ext S S') (h : NoOwnedUnder os S Γ C n t)
-    (hh : ∀ l, S.length ≤ l → t.occ (.loc l) = 0) : NoOwnedUnder os S' Γ C n t := by
-  intro a ha
-  cases a with
-  | var i => exact h _ ha
-  | loc l =>
-      by_cases hl : l < S.length
-      · exact h _ (Owned.ext x ha (fun l' e => by cases e; exact hl))
-      · simp only [Item.up_loc]; exact hh l (by omega)
-
-theorem NoOwned.ext {os S S' Γ C t} (x : Ext S S') (h : NoOwned os S Γ C t)
-    (hh : ∀ l, S.length ≤ l → t.occ (.loc l) = 0) : NoOwned os S' Γ C t :=
-  NoOwnedUnder.ext x h hh
-
-theorem Quiet.ext {os sg S S' Γ t} (x : Ext S S') (h : Quiet os sg S Γ t) : Quiet os sg S' Γ t := by
-  obtain ⟨A, ρ, ht, hq⟩ := h; exact ⟨A, ρ, ht.ext x, hq⟩
-
-theorem Held.ext {os sg S S' Γ C t} (x : Ext S S') (h : Held os sg S Γ C t)
-    (hh : ∀ l, S.length ≤ l → t.occ (.loc l) = 0) : Held os sg S' Γ C t := by
-  obtain ⟨⟨A, ρ, ht, hk⟩, hl, hv⟩ := h
-  exact ⟨⟨A, ρ, ht.ext x, hk⟩, fun ps b e => (hl ps b e).ext x hh, hv⟩
-
-theorem Spread.ext {os sg S S' Γ C cs} (x : Ext S S') (h : Spread os sg S Γ C cs)
-    (hh : ∀ c ∈ cs, ∀ l, S.length ≤ l → c.occ (.loc l) = 0) : Spread os sg S' Γ C cs := by
-  intro i c hc
-  rcases h i c hc with hv | hq | ⟨hl, hr⟩
-  · exact Or.inl hv
-  · exact Or.inr (Or.inl (hq.ext x))
-  · refine Or.inr (Or.inr ⟨fun j d hj hd => ?_, fun j d hj hd => ?_⟩)
-    · exact (hl j d hj hd).ext x (hh d (List.mem_of_getElem? hd))
-    · exact (hr j d hj hd).ext x (hh d (List.mem_of_getElem? hd))
-
-theorem LinOwned.ext {os S S' Γ C a} (x : Ext S S') (h : LinOwned os S' Γ C a)
-    (hl : ∀ l, a = .loc l → l < S.length) : LinOwned os S Γ C a := by
-  cases a with
-  | var i => exact h
-  | loc l => obtain ⟨A, hA, hk⟩ := h; exact ⟨A, x.get_lt hA (hl l rfl), hk⟩
-
-theorem NoLinUnder.ext {os S S' Γ C n t} (x : Ext S S') (h : NoLinUnder os S Γ C n t)
-    (hh : ∀ l, S.length ≤ l → t.occ (.loc l) = 0) : NoLinUnder os S' Γ C n t := by
-  intro a ha
-  cases a with
-  | var i => exact h _ ha
-  | loc l =>
-      by_cases hl : l < S.length
-      · exact h _ (LinOwned.ext x ha (fun l' e => by cases e; exact hl))
-      · simp only [Item.up_loc]; exact hh l (by omega)
-
-theorem NoLin.ext {os S S' Γ C t} (x : Ext S S') (h : NoLin os S Γ C t)
-    (hh : ∀ l, S.length ≤ l → t.occ (.loc l) = 0) : NoLin os S' Γ C t :=
-  NoLinUnder.ext x h hh
-
-theorem Firm.ext {os sg S S' Γ t} (x : Ext S S') (h : Firm os sg S Γ t) : Firm os sg S' Γ t := by
-  obtain ⟨A, ρ, ht, hq⟩ := h; exact ⟨A, ρ, ht.ext x, hq⟩
-
-theorem HeldL.ext {os sg S S' Γ C t} (x : Ext S S') (h : HeldL os sg S Γ C t)
-    (hh : ∀ l, S.length ≤ l → t.occ (.loc l) = 0) : HeldL os sg S' Γ C t := by
-  obtain ⟨⟨A, ρ, ht, hk⟩, hl, hv⟩ := h
-  exact ⟨⟨A, ρ, ht.ext x, hk⟩, fun ps b e => (hl ps b e).ext x hh, hv⟩
-
-theorem SpreadL.ext {os sg S S' Γ C cs} (x : Ext S S') (h : SpreadL os sg S Γ C cs)
-    (hh : ∀ c ∈ cs, ∀ l, S.length ≤ l → c.occ (.loc l) = 0) : SpreadL os sg S' Γ C cs := by
-  intro i c hc
-  rcases h i c hc with hv | hq | ⟨hl, hr⟩
-  · exact Or.inl hv
-  · exact Or.inr (Or.inl (hq.ext x))
-  · refine Or.inr (Or.inr ⟨fun j d hj hd => ?_, fun j d hj hd => ?_⟩)
-    · exact (hl j d hj hd).ext x (hh d (List.mem_of_getElem? hd))
-    · exact (hr j d hj hd).ext x (hh d (List.mem_of_getElem? hd))
-
-theorem Lins.noHigh_mem {os sg S Γ C ts} (h : Lins os sg S Γ C ts) :
-    ∀ t ∈ ts, ∀ l, S.length ≤ l → t.occ (.loc l) = 0 := by
-  intro t ht l hl
-  have := h.noHigh l hl
-  induction ts with
-  | nil => cases ht
-  | cons u us ih =>
-      simp only [Tms.occ] at this
-      rcases List.mem_cons.mp ht with rfl | ht
-      · omega
-      · cases h with | cons _ hs => exact ih hs ht (by omega)
-
-theorem Lin.noHigh_cons {os sg S Γ C t ts} (h : Lin os sg S Γ C t) (hs : Lins os sg S Γ C ts) :
-    ∀ c ∈ t :: ts, ∀ l, S.length ≤ l → c.occ (.loc l) = 0 :=
-  (Lins.cons h hs).noHigh_mem
-
-mutual
-  theorem Lin.ext {os sg S Γ C t} (h : Lin os sg S Γ C t) :
-      ∀ {S'}, Ext S S' → Lin os sg S' Γ C t := by
-    intro S' x
-    match h with
-    | .var h1 h2 => exact .var h1 h2
-    | .int => exact .int
-    | .bool => exact .bool
-    | .unit => exact .unit
-    | .text => exact .text
-    | .dec => exact .dec
-    | .flt => exact .flt
-    | .flt32 => exact .flt32
-    | .prim hp => exact .prim hp
-    | .lam hb hu hn =>
-        exact .lam (hb.ext x) hu (hn.ext x (fun l hl => by simp only [Tm.occ, Item.up_loc]; exact hb.noHigh l hl))
-    | .app hf ha hs hsL =>
-        exact .app (hf.ext x) (ha.ext x) (hs.ext x (hf.noHigh_cons ha))
-          (fun e => (hsL e).ext x (hf.noHigh_cons ha))
-    | .block (ps := ps) (b := b) (args := args) hb hu ha hs hsL =>
-        have hh : ∀ c ∈ Tm.lam ps b :: args, ∀ l, S.length ≤ l → c.occ (.loc l) = 0 := by
-          intro c hc l hl
-          rcases List.mem_cons.mp hc with rfl | hc
-          · simp only [Tm.occ, Item.up_loc]; exact hb.noHigh l hl
-          · exact ha.noHigh_mem c hc l hl
-        exact .block (hb.ext x) hu (ha.ext x) (hs.ext x hh) (fun e => (hsL e).ext x hh)
-    | .resume (i := i) (args := args) h1 h2 ha hs hsL =>
-        have hh : ∀ c ∈ Tm.var i :: args, ∀ l, S.length ≤ l → c.occ (.loc l) = 0 := by
-          intro c hc l hl
-          rcases List.mem_cons.mp hc with rfl | hc
-          · simp [Tm.occ]
-          · exact ha.noHigh_mem c hc l hl
-        exact .resume h1 h2 (ha.ext x) (hs.ext x hh) (fun e => (hsL e).ext x hh)
-    | .ite hc ht hf hq hqL =>
-        refine .ite (hc.ext x) (ht.ext x) (hf.ext x) ?_ ?_
-        · rcases hq with hq | ⟨h1, h2⟩
-          · exact Or.inl (hq.ext x)
-          · exact Or.inr ⟨h1.ext x ht.noHigh, h2.ext x hf.noHigh⟩
-        · intro e
-          rcases hqL e with hq | ⟨h1, h2⟩
-          · exact Or.inl (hq.ext x)
-          · exact Or.inr ⟨h1.ext x ht.noHigh, h2.ext x hf.noHigh⟩
-    | .cell ht hk => exact .cell (ht.ext x) hk
-    | .fresh ht => exact .fresh (ht.ext x)
-    | .get ht => exact .get (ht.ext x)
-    | .set hc hv hs hsL =>
-        have hh := hc.noHigh_cons (.cons hv .nil)
-        refine .set (hc.ext x) (hv.ext x) (hs.ext x hh) (fun e => ⟨(hsL e).1.ext x hh, ?_⟩)
-        obtain ⟨A, ρ, hA, hk⟩ := (hsL e).2
-        exact ⟨A, ρ, hA.ext x, hk⟩
-    | .brw ht hA hp => exact .brw (ht.ext x) (hA.ext x) hp
-    | .mbrw ht hA hp => exact .mbrw (ht.ext x) (hA.ext x) hp
-    | .field hb hd hi hA hk => exact .field (hb.ext x) hd hi (hA.ext x) hk
-    | .write hc hv hs hsL =>
-        have hh := hc.noHigh_cons (.cons hv .nil)
-        refine .write (hc.ext x) (hv.ext x) (hs.ext x hh) (fun e => ⟨(hsL e).1.ext x hh, ?_⟩)
-        obtain ⟨A, ρ, hA, hk⟩ := (hsL e).2
-        exact ⟨A, ρ, hA.ext x, hk⟩
-    | .ref hf => exact .ref hf
-    | .tag ht => exact .tag (ht.ext x)
-    | .con hf hs hsL => exact .con (hf.ext x) (hs.ext x hf.noHigh_mem) (fun e => (hsL e).ext x hf.noHigh_mem)
-    | .proj ht => exact .proj (ht.ext x)
-    | .perform ha hs hsL =>
-        exact .perform (ha.ext x) (hs.ext x ha.noHigh_mem) (fun e => (hsL e).ext x ha.noHigh_mem)
-    | .handle hb ht hc => exact .handle (hb.ext x) (ht.ext x) (fun c m => (hc c m).ext x)
-    | .handleRet hb hbt hr hu hq hqL ht hc =>
-        refine .handleRet (hb.ext x) (hbt.ext x) (hr.ext x) hu ?_ ?_ (ht.ext x) (fun c m => (hc c m).ext x)
-        · rcases hq with hq | hq
-          · exact Or.inl (hq.ext x)
-          · exact Or.inr (hq.ext x (fun l hl => by simpa using hr.noHigh l hl))
-        · intro e
-          rcases hqL e with hq | hq
-          · exact Or.inl (hq.ext x)
-          · exact Or.inr (hq.ext x (fun l hl => by simpa using hr.noHigh l hl))
-    | .loc hS => exact .loc (x.get hS)
-    | .run hb hs => exact .run (hb.ext x) hs
-    | .info hb hs => exact .info (hb.ext x) hs
-    | .select (k := k) hv hk hkb hu hω hωL ht hc =>
-        have hh : ∀ l, S.length ≤ l → k.occ (.loc l) = 0 := by
-          subst hk; intro l hl; simp only [Tm.occ, Item.up_loc]; exact hkb.noHigh l hl
-        exact .select (hv.ext x) hk (hkb.ext x) hu (fun e => (hω e).ext x hh) (fun e q => (hωL e q).ext x hh)
-          (ht.ext x) (fun c m => (hc c m).ext x)
-
-  theorem Lins.ext {os sg S Γ C ts} (h : Lins os sg S Γ C ts) :
-      ∀ {S'}, Ext S S' → Lins os sg S' Γ C ts := by
-    intro S' x
-    match h with
-    | .nil => exact .nil
-    | .cons ht hs => exact .cons (ht.ext x) (hs.ext x)
-
-  theorem LinClause.ext {os sg S Γ C T ρ c} (h : LinClause os sg S Γ C T ρ c) :
-      ∀ {S'}, Ext S S' → LinClause os sg S' Γ C T ρ c := by
-    intro S' x
-    match h with
-    | .mk he hp hk hb hu hg hgn hn hgo hkp =>
-        refine .mk he hp hk (hb.ext x) hu (fun g e => (hg g e).ext x) (fun g e => (hgn g e).ext x ?_)
-          (hn.ext x (fun l hl => by simpa using hb.noHigh l hl)) (fun g e => (hgo g e).ext x ?_) hkp
-        · exact (hg g e).noHigh
-        · intro l hl; simpa using (hg g e).noHigh l hl
+    | [], _, _, _ => rfl
+    | c :: cs, σ, a, hv => by
+        simp only [List.map_cons, Clauses.occ]; rw [(Clause.occ_subst_zero c σ a (fun i hi => hv i (by simp only [Clauses.occ]; omega))), (Clauses.occ_subst_zero cs σ a (fun i hi => hv i (by simp only [Clauses.occ]; omega)))]
 end
 
 /-! ## The use check under a renaming -/
 
 /-- `ξ` maps the variables of `Γ` one to one to variables of `Γ'` with the
 same types and flags, and every variable of `Γ'` it reaches is one of them. -/
-def RenLin (ξ : Nat → Nat) (Γ : Ctx) (C : Flags) (Γ' : Ctx) (C' : Flags) : Prop :=
-  (∀ a b, ξ a = ξ b → a = b) ∧ ∀ i, Γ'[ξ i]? = Γ[i]? ∧ C'.getD (ξ i) none = C.getD i none
+def RenLin (os : OwnSig) (ξ : Nat → Nat) (Γ : Ctx) (C : Flags) (Γ' : Ctx) (C' : Flags) : Prop :=
+  (∀ a b, ξ a = ξ b → a = b) ∧ (∀ i A, Γ[i]? = some A → Γ'[ξ i]? = some A) ∧
+    (∀ i, C'.getD (ξ i) none = C.getD i none) ∧
+    (∀ i, Owned os Γ' C' (.var (ξ i)) → Owned os Γ C (.var i)) ∧
+    (∀ i, LinOwned os Γ' C' (.var (ξ i)) → LinOwned os Γ C (.var i))
 
-theorem RenLin.renOk {ξ Γ C Γ' C'} (h : RenLin ξ Γ C Γ' C') : RenOk ξ Γ Γ' := by
-  intro i A hi; rw [(h.2 i).1]; exact hi
+theorem RenLin.renOk {os ξ Γ C Γ' C'} (h : RenLin os ξ Γ C Γ' C') : RenOk ξ Γ Γ' := by
+  intro i A hi _; exact h.2.1 i A hi
 
-theorem RenLin.up {ξ Γ C Γ' C'} (h : RenLin ξ Γ C Γ' C') (A : Ty) (f : Option Bool) :
-    RenLin (upR ξ) (A :: Γ) (f :: C) (A :: Γ') (f :: C') := by
-  refine ⟨upRN_inj h.1 1, fun i => ?_⟩
-  cases i with
-  | zero => simp [upR]
-  | succ i => simp only [upR, List.getElem?_cons_succ, List.getD_cons_succ]; exact h.2 i
+theorem RenLin.up {os ξ Γ C Γ' C'} (h : RenLin os ξ Γ C Γ' C') (A : Ty) (f : Option Bool) :
+    RenLin os (upR ξ) (A :: Γ) (f :: C) (A :: Γ') (f :: C') := by
+  refine ⟨upRN_inj h.1 1, fun i B hi => ?_, fun i => ?_, fun i ho => ?_, fun i ho => ?_⟩
+  · cases i with
+    | zero => simpa [upR] using hi
+    | succ i => simpa [upR] using h.2.1 i B (by simpa using hi)
+  · cases i with
+    | zero => simp [upR]
+    | succ i => simpa [upR] using h.2.2.1 i
+  · cases i with
+    | zero => simpa [upR, Owned] using ho
+    | succ i =>
+        have := h.2.2.2.1 i (by simpa [upR, Owned] using ho)
+        simpa [Owned] using this
+  · cases i with
+    | zero => simpa [upR, LinOwned] using ho
+    | succ i =>
+        have := h.2.2.2.2 i (by simpa [upR, LinOwned] using ho)
+        simpa [LinOwned] using this
 
-theorem RenLin.upN {ξ Γ C Γ' C'} (h : RenLin ξ Γ C Γ' C') :
+theorem RenLin.upN {os ξ Γ C Γ' C'} (h : RenLin os ξ Γ C Γ' C') :
     ∀ (Θ : Ctx) (F : Flags), F.length = Θ.length →
-      RenLin (upRN Θ.length ξ) (Θ ++ Γ) (F ++ C) (Θ ++ Γ') (F ++ C')
+      RenLin os (upRN Θ.length ξ) (Θ ++ Γ) (F ++ C) (Θ ++ Γ') (F ++ C')
   | [], [], _ => by simpa [upRN] using h
   | A :: Θ, f :: F, e => by
       simpa [upRN] using (RenLin.upN h Θ F (by simpa using e)).up A f
   | [], _ :: _, e => by simp at e
   | _ :: _, [], e => by simp at e
 
-theorem RenLin.succ (Γ : Ctx) (C : Flags) (A : Ty) (f : Option Bool) :
-    RenLin Nat.succ Γ C (A :: Γ) (f :: C) :=
-  ⟨fun a b h => Nat.succ.inj h, fun i => by simp⟩
+theorem RenLin.succ (os : OwnSig) (Γ : Ctx) (C : Flags) (A : Ty) (f : Option Bool) :
+    RenLin os Nat.succ Γ C (A :: Γ) (f :: C) :=
+  ⟨fun a b h => Nat.succ.inj h, fun i B hi => by simpa using hi, fun i => by simp,
+    fun i ho => by simpa [Owned] using ho, fun i ho => by simpa [LinOwned] using ho⟩
 
-theorem Owned.ren_var {os S ξ Γ C Γ' C'} (h : RenLin ξ Γ C Γ' C') (i : Nat) :
-    Owned os S Γ' C' (.var (ξ i)) ↔ Owned os S Γ C (.var i) := by
-  simp only [Owned, (h.2 i).1, (h.2 i).2]
+theorem Owned.ren_back {os ξ Γ C Γ' C'} (h : RenLin os ξ Γ C Γ' C') (i : Nat) :
+    Owned os Γ' C' (.var (ξ i)) → Owned os Γ C (.var i) := h.2.2.2.1 i
 
-theorem NoOwnedUnder.ren {os S ξ Γ C Γ' C' n t} (h : RenLin ξ Γ C Γ' C')
-    (hn : NoOwnedUnder os S Γ C n t) : NoOwnedUnder os S Γ' C' n (t.ren (upRN n ξ)) := by
+theorem NoOwnedUnder.ren {os ξ Γ C Γ' C' n t} (h : RenLin os ξ Γ C Γ' C')
+    (hn : NoOwnedUnder os Γ C n t) : NoOwnedUnder os Γ' C' n (t.ren (upRN n ξ)) := by
   intro a ha
   cases a with
-  | loc l => simp only [Item.up_loc]; rw [Tm.occ_ren_loc]; exact hn (.loc l) ha
   | var j =>
       simp only [Item.up_var]
       by_cases hj : ∃ i, ξ i = j
       · obtain ⟨i, rfl⟩ := hj
         rw [← upRN_add n ξ i, Tm.occ_ren_inj t _ (upRN_inj h.1 n)]
-        simpa using hn (.var i) ((Owned.ren_var h i).mp ha)
+        simpa using hn (.var i) (Owned.ren_back h i ha)
       · apply Tm.occ_ren_zero
         intro k hk
         rcases upRN_cases n ξ k with ⟨hlt, e⟩ | ⟨i, rfl, e⟩
         · omega
         · exact absurd ⟨i, by omega⟩ hj
 
-theorem NoOwned.ren {os S ξ Γ C Γ' C' t} (h : RenLin ξ Γ C Γ' C')
-    (hn : NoOwned os S Γ C t) : NoOwned os S Γ' C' (t.ren ξ) :=
+theorem NoOwned.ren {os ξ Γ C Γ' C' t} (h : RenLin os ξ Γ C Γ' C')
+    (hn : NoOwned os Γ C t) : NoOwned os Γ' C' (t.ren ξ) :=
   NoOwnedUnder.ren (n := 0) h hn
 
-theorem Quiet.ren {os sg S ξ Γ C Γ' C' t} (h : RenLin ξ Γ C Γ' C') (hq : Quiet os sg S Γ t) :
-    Quiet os sg S Γ' (t.ren ξ) := by
+theorem Quiet.ren {os sg ξ Γ C Γ' C' t} (h : RenLin os ξ Γ C Γ' C') (hq : Quiet os sg Γ t) :
+    Quiet os sg Γ' (t.ren ξ) := by
   obtain ⟨A, ρ, ht, hn⟩ := hq; exact ⟨A, ρ, ht.ren h.renOk, hn⟩
 
-theorem Held.ren {os sg S ξ Γ C Γ' C' t} (h : RenLin ξ Γ C Γ' C') (hh : Held os sg S Γ C t) :
-    Held os sg S Γ' C' (t.ren ξ) := by
+theorem Held.ren {os sg ξ Γ C Γ' C' t} (h : RenLin os ξ Γ C Γ' C') (hh : Held os sg Γ C t) :
+    Held os sg Γ' C' (t.ren ξ) := by
   obtain ⟨⟨A, ρ, ht, hk⟩, hl, hv⟩ := hh
   refine ⟨⟨A, ρ, ht.ren h.renOk, hk⟩, fun ps b e => ?_, fun i e => ?_⟩
   · cases t with
@@ -1468,12 +1142,12 @@ theorem Held.ren {os sg S ξ Γ C Γ' C' t} (h : RenLin ξ Γ C Γ' C') (hh : He
   · cases t with
     | var k =>
         simp only [Tm.ren, Tm.var.injEq] at e; subst e
-        rw [Owned.ren_var h]; exact hv k rfl
+        exact fun ho => hv k rfl (Owned.ren_back h k ho)
     | handle b r cs => cases r <;> simp [Tm.ren, renRet] at e
     | _ => simp [Tm.ren] at e
 
-theorem Spread.ren {os sg S ξ Γ C Γ' C' cs} (h : RenLin ξ Γ C Γ' C') (hs : Spread os sg S Γ C cs) :
-    Spread os sg S Γ' C' (cs.map (·.ren ξ)) := by
+theorem Spread.ren {os sg ξ Γ C Γ' C' cs} (h : RenLin os ξ Γ C Γ' C') (hs : Spread os sg Γ C cs) :
+    Spread os sg Γ' C' (cs.map (·.ren ξ)) := by
   intro i c hc
   rw [List.getElem?_map] at hc
   obtain ⟨c0, hc0, rfl⟩ := Option.map_eq_some_iff.mp hc
@@ -1488,37 +1162,35 @@ theorem Spread.ren {os sg S ξ Γ C Γ' C' cs} (h : RenLin ξ Γ C Γ' C') (hs :
       obtain ⟨d0, hd0, rfl⟩ := Option.map_eq_some_iff.mp hd
       exact NoOwned.ren h (hr j d0 hj hd0)
 
-theorem LinOwned.ren_var {os S ξ Γ C Γ' C'} (h : RenLin ξ Γ C Γ' C') (i : Nat) :
-    LinOwned os S Γ' C' (.var (ξ i)) ↔ LinOwned os S Γ C (.var i) := by
-  simp only [LinOwned, (h.2 i).1, (h.2 i).2]
+theorem LinOwned.ren_back {os ξ Γ C Γ' C'} (h : RenLin os ξ Γ C Γ' C') (i : Nat) :
+    LinOwned os Γ' C' (.var (ξ i)) → LinOwned os Γ C (.var i) := h.2.2.2.2 i
 
-theorem NoLinUnder.ren {os S ξ Γ C Γ' C' n t} (h : RenLin ξ Γ C Γ' C')
-    (hn : NoLinUnder os S Γ C n t) : NoLinUnder os S Γ' C' n (t.ren (upRN n ξ)) := by
+theorem NoLinUnder.ren {os ξ Γ C Γ' C' n t} (h : RenLin os ξ Γ C Γ' C')
+    (hn : NoLinUnder os Γ C n t) : NoLinUnder os Γ' C' n (t.ren (upRN n ξ)) := by
   intro a ha
   cases a with
-  | loc l => simp only [Item.up_loc]; rw [Tm.occ_ren_loc]; exact hn (.loc l) ha
   | var j =>
       simp only [Item.up_var]
       by_cases hj : ∃ i, ξ i = j
       · obtain ⟨i, rfl⟩ := hj
         rw [← upRN_add n ξ i, Tm.occ_ren_inj t _ (upRN_inj h.1 n)]
-        simpa using hn (.var i) ((LinOwned.ren_var h i).mp ha)
+        simpa using hn (.var i) (LinOwned.ren_back h i ha)
       · apply Tm.occ_ren_zero
         intro k hk
         rcases upRN_cases n ξ k with ⟨hlt, e⟩ | ⟨i, rfl, e⟩
         · omega
         · exact absurd ⟨i, by omega⟩ hj
 
-theorem NoLin.ren {os S ξ Γ C Γ' C' t} (h : RenLin ξ Γ C Γ' C')
-    (hn : NoLin os S Γ C t) : NoLin os S Γ' C' (t.ren ξ) :=
+theorem NoLin.ren {os ξ Γ C Γ' C' t} (h : RenLin os ξ Γ C Γ' C')
+    (hn : NoLin os Γ C t) : NoLin os Γ' C' (t.ren ξ) :=
   NoLinUnder.ren (n := 0) h hn
 
-theorem Firm.ren {os sg S ξ Γ C Γ' C' t} (h : RenLin ξ Γ C Γ' C') (hq : Firm os sg S Γ t) :
-    Firm os sg S Γ' (t.ren ξ) := by
+theorem Firm.ren {os sg ξ Γ C Γ' C' t} (h : RenLin os ξ Γ C Γ' C') (hq : Firm os sg Γ t) :
+    Firm os sg Γ' (t.ren ξ) := by
   obtain ⟨A, ρ, ht, hn⟩ := hq; exact ⟨A, ρ, ht.ren h.renOk, hn⟩
 
-theorem HeldL.ren {os sg S ξ Γ C Γ' C' t} (h : RenLin ξ Γ C Γ' C') (hh : HeldL os sg S Γ C t) :
-    HeldL os sg S Γ' C' (t.ren ξ) := by
+theorem HeldL.ren {os sg ξ Γ C Γ' C' t} (h : RenLin os ξ Γ C Γ' C') (hh : HeldL os sg Γ C t) :
+    HeldL os sg Γ' C' (t.ren ξ) := by
   obtain ⟨⟨A, ρ, ht, hk⟩, hl, hv⟩ := hh
   refine ⟨⟨A, ρ, ht.ren h.renOk, hk⟩, fun ps b e => ?_, fun i e => ?_⟩
   · cases t with
@@ -1528,12 +1200,12 @@ theorem HeldL.ren {os sg S ξ Γ C Γ' C' t} (h : RenLin ξ Γ C Γ' C') (hh : H
   · cases t with
     | var k =>
         simp only [Tm.ren, Tm.var.injEq] at e; subst e
-        rw [LinOwned.ren_var h]; exact hv k rfl
+        exact fun ho => hv k rfl (LinOwned.ren_back h k ho)
     | handle b r cs => cases r <;> simp [Tm.ren, renRet] at e
     | _ => simp [Tm.ren] at e
 
-theorem SpreadL.ren {os sg S ξ Γ C Γ' C' cs} (h : RenLin ξ Γ C Γ' C') (hs : SpreadL os sg S Γ C cs) :
-    SpreadL os sg S Γ' C' (cs.map (·.ren ξ)) := by
+theorem SpreadL.ren {os sg ξ Γ C Γ' C' cs} (h : RenLin os ξ Γ C Γ' C') (hs : SpreadL os sg Γ C cs) :
+    SpreadL os sg Γ' C' (cs.map (·.ren ξ)) := by
   intro i c hc
   rw [List.getElem?_map] at hc
   obtain ⟨c0, hc0, rfl⟩ := Option.map_eq_some_iff.mp hc
@@ -1553,10 +1225,12 @@ theorem UseOk.congr {os Γ C Γ' C' j t t'} (hΓ : Γ'[j]? = Γ[j]?) (hC : C'.ge
     (h : UseOk os Γ C j t) : UseOk os Γ' C' j t' := by
   unfold UseOk at h ⊢; simp only [hC, ho, hl, hΓ]; exact h
 
-theorem UseOk.ren {os ζ Γ C Γ' C' j t} (h : RenLin ζ Γ C Γ' C') (hj : ζ j = j)
-    (hu : UseOk os Γ C j t) : UseOk os Γ' C' j (t.ren ζ) := by
-  have e := h.2 j; rw [hj] at e
-  refine UseOk.congr e.1 e.2 ?_ ?_ hu
+theorem UseOk.ren {os ζ Γ C Γ' C' j t} (h : RenLin os ζ Γ C Γ' C') (hj : ζ j = j)
+    (hl : j < Γ.length) (hu : UseOk os Γ C j t) : UseOk os Γ' C' j (t.ren ζ) := by
+  have e1 : Γ'[j]? = Γ[j]? := by
+    have := h.2.1 j Γ[j] (by simp [hl]); rw [hj] at this; rw [this]; simp [hl]
+  have e2 := h.2.2.1 j; rw [hj] at e2
+  refine UseOk.congr e1 e2 ?_ ?_ hu
   · have := Tm.occ_ren_inj t ζ h.1 j; rwa [hj] at this
   · have := Tm.occLo_ren_inj t ζ h.1 j; rwa [hj] at this
 
@@ -1567,7 +1241,7 @@ theorem Pat.count_append : ∀ (xs ys : List Pat), Pat.count (xs ++ ys) = Pat.co
 /-- The binders of an arm: what its patterns bind, and `k`. -/
 theorem LinClause.len {sg pv ps Δ pk R T ρ} {Δk : Ctx} {Ck : Flags} {f : Option Bool}
     (hp : PatsOk sg pv ps Δ)
-    (hk : (pk = .bind ∧ Δk = [.fn [R] T ρ] ∧ Ck = [f]) ∨ (pk = .wild ∧ Δk = [] ∧ Ck = [])) :
+    (hk : (pk = .bind ∧ Δk = [.lfn [R] T ρ] ∧ Ck = [f]) ∨ (pk = .wild ∧ Δk = [] ∧ Ck = [])) :
     (Δ ++ Δk).length = Pat.count (pv ++ [pk]) ∧ (Flags.byType Δ ++ Ck).length = (Δ ++ Δk).length := by
   rw [Pat.count_append, ← hp.length]
   rcases hk with ⟨rfl, rfl, rfl⟩ | ⟨rfl, rfl, rfl⟩ <;> simp [Pat.count, Pat.binds, Flags.byType]
@@ -1576,12 +1250,12 @@ theorem Flags.byType_length (ps : List Ty) : (Flags.byType ps).length = ps.lengt
   simp [Flags.byType]
 
 mutual
-  theorem Lin.ren {os sg S Γ C t} (h : Lin os sg S Γ C t) :
-      ∀ {ξ Γ' C'}, RenLin ξ Γ C Γ' C' → Lin os sg S Γ' C' (t.ren ξ) := by
+  theorem Lin.ren {os sg Γ C t} (h : Lin os sg Γ C t) :
+      ∀ {ξ Γ' C'}, RenLin os ξ Γ C Γ' C' → Lin os sg Γ' C' (t.ren ξ) := by
     intro ξ Γ' C' r
     match h with
     | .var h1 h2 =>
-        rw [Tm.ren]; exact .var (by rw [(r.2 _).1]; exact h1) (by rw [(r.2 _).2]; exact h2)
+        rw [Tm.ren]; exact .var (r.2.1 _ _ h1) (by rw [r.2.2.1]; exact h2)
     | .int => rw [Tm.ren]; exact .int
     | .bool => rw [Tm.ren]; exact .bool
     | .unit => rw [Tm.ren]; exact .unit
@@ -1593,7 +1267,7 @@ mutual
     | .lam (ps := ps) hb hu hn =>
         have r' := r.upN ps (Flags.byType ps) (Flags.byType_length ps)
         rw [Tm.ren]
-        refine .lam (hb.ren r') (fun j hj => UseOk.ren r' (upRN_lt _ _ _ hj) (hu j hj)) ?_
+        refine .lam (hb.ren r') (fun j hj => UseOk.ren r' (upRN_lt _ _ _ hj) (by simp; omega) (hu j hj)) ?_
         have := NoOwned.ren r hn; rwa [Tm.ren] at this
     | .app hf ha hs hsL =>
         rw [Tm.ren]
@@ -1602,12 +1276,23 @@ mutual
     | .block (ps := ps) hb hu ha hs hsL =>
         have r' := r.upN ps (Flags.byType ps) (Flags.byType_length ps)
         simp only [Tm.ren]
-        exact .block (hb.ren r') (fun j hj => UseOk.ren r' (upRN_lt _ _ _ hj) (hu j hj)) (ha.ren r)
+        exact .block (hb.ren r') (fun j hj => UseOk.ren r' (upRN_lt _ _ _ hj) (by simp; omega) (hu j hj)) (ha.ren r)
+          (by simpa only [List.map_cons, Tm.ren] using hs.ren r)
+          (fun e => by simpa only [List.map_cons, Tm.ren] using (hsL e).ren r)
+    | .llam (ps := ps) hb hu hn =>
+        have r' := r.upN ps (Flags.byType ps) (Flags.byType_length ps)
+        rw [Tm.ren]
+        refine .llam (hb.ren r') (fun j hj => UseOk.ren r' (upRN_lt _ _ _ hj) (by simp; omega) (hu j hj)) ?_
+        have := NoOwned.ren r hn; rwa [Tm.ren] at this
+    | .lblock (ps := ps) hb hu ha hs hsL =>
+        have r' := r.upN ps (Flags.byType ps) (Flags.byType_length ps)
+        simp only [Tm.ren]
+        exact .lblock (hb.ren r') (fun j hj => UseOk.ren r' (upRN_lt _ _ _ hj) (by simp; omega) (hu j hj)) (ha.ren r)
           (by simpa only [List.map_cons, Tm.ren] using hs.ren r)
           (fun e => by simpa only [List.map_cons, Tm.ren] using (hsL e).ren r)
     | .resume h1 h2 ha hs hsL =>
         simp only [Tm.ren]
-        exact .resume (by rw [(r.2 _).2]; exact h1) (by rw [(r.2 _).1]; exact h2) (ha.ren r)
+        exact .resume (by rw [r.2.2.1]; exact h1) (r.2.1 _ _ h2) (ha.ren r)
           (by simpa only [List.map_cons, Tm.ren] using hs.ren r)
           (fun e => by simpa only [List.map_cons, Tm.ren] using (hsL e).ren r)
     | .ite hc ht hf hq hqL =>
@@ -1615,17 +1300,15 @@ mutual
         exact .ite (hc.ren r) (ht.ren r) (hf.ren r)
           (hq.imp (Quiet.ren r) (fun ⟨a, b⟩ => ⟨NoOwned.ren r a, NoOwned.ren r b⟩))
           (fun e => (hqL e).imp (Firm.ren r) (fun ⟨a, b⟩ => ⟨NoLin.ren r a, NoLin.ren r b⟩))
-    | .cell ht hk => rw [Tm.ren]; exact .cell (ht.ren r) hk
-    | .fresh ht => rw [Tm.ren]; exact .fresh (ht.ren r)
-    | .get ht => rw [Tm.ren]; exact .get (ht.ren r)
-    | .set hc hv hs hsL =>
+    | .scope (A := A) hi hk hb hq hqL =>
         rw [Tm.ren]
-        refine .set (hc.ren r) (hv.ren r) (by simpa only [List.map_cons, List.map_nil] using hs.ren r)
-          (fun e => ⟨by simpa only [List.map_cons, List.map_nil] using (hsL e).1.ren r, ?_⟩)
-        obtain ⟨A, ρ, hA, hk⟩ := (hsL e).2
-        exact ⟨A, ρ, hA.ren r.renOk, hk⟩
-    | .brw ht hA hp => rw [Tm.ren]; exact .brw (ht.ren r) (hA.ren r.renOk) (hp.ren ξ)
-    | .mbrw ht hA hp => rw [Tm.ren]; exact .mbrw (ht.ren r) (hA.ren r.renOk) (hp.ren ξ)
+        exact .scope (hi.ren r) hk (hb.ren (r.up (.place A) none))
+          (hq.imp (fun hv => hv.ren ξ) (Or.imp (Quiet.ren r) (NoOwnedUnder.ren (n := 1) r)))
+          (fun e => (hqL e).imp (fun hv => hv.ren ξ) (Or.imp (Firm.ren r) (NoLinUnder.ren (n := 1) r)))
+    | .get hi => rw [Tm.ren, Tm.ren]; exact .get (r.2.1 _ _ hi)
+    | .set hi hv hk => rw [Tm.ren, Tm.ren]; exact .set (r.2.1 _ _ hi) (hv.ren r) hk
+    | .brw hi => rw [Tm.ren]; exact .brw (r.2.1 _ _ hi)
+    | .mbrw hi => rw [Tm.ren]; exact .mbrw (r.2.1 _ _ hi)
     | .field hb hd hi hA hk => rw [Tm.ren]; exact .field (hb.ren r) hd hi (hA.ren r.renOk) hk
     | .write hc hv hs hsL =>
         rw [Tm.ren]
@@ -1648,34 +1331,33 @@ mutual
         have ht' := ht.ren r.renOk
         simp only [Tm.ren_handle, renRet] at ht' ⊢
         refine .handleRet (hb.ren r) (hbt.ren r.renOk) (hr.ren (r.up B none))
-          (UseOk.ren (r.up B none) rfl hu) (hq.imp (Quiet.ren r) (NoOwnedUnder.ren (n := 1) r))
+          (UseOk.ren (r.up B none) rfl (by simp) hu) (hq.imp (Quiet.ren r) (NoOwnedUnder.ren (n := 1) r))
           (fun e => (hqL e).imp (Firm.ren r) (NoLinUnder.ren (n := 1) r)) ht'
           (fun c m => ?_)
         obtain ⟨c0, m0, rfl⟩ := List.mem_map.mp m
         exact (hc c0 m0).ren r
-    | .loc hS => rw [Tm.ren]; exact .loc hS
     | .run hb hs => rw [Tm.ren]; exact .run (hb.ren r) hs
     | .info hb hs => rw [Tm.ren]; exact .info (hb.ren r) hs
     | .select (R := R) (kb := kb) hv hk hkb hu hω hωL ht hc =>
         have ht' := ht.ren r.renOk
         subst hk
         simp only [Tm.ren] at ht' ⊢
-        refine .select (hv.ren r) rfl (hkb.ren (r.up R none)) (UseOk.ren (r.up R none) rfl hu)
+        refine .select (hv.ren r) rfl (hkb.ren (r.up R none)) (UseOk.ren (r.up R none) rfl (by simp) hu)
           (fun e => ?_) (fun e q => ?_) ht' (fun c m => ?_)
         · have := NoOwned.ren r (hω e); simpa only [Tm.ren] using this
         · have := NoLin.ren r (hωL e q); simpa only [Tm.ren] using this
         · obtain ⟨c0, m0, rfl⟩ := List.mem_map.mp m
           exact (hc c0 m0).ren r
 
-  theorem Lins.ren {os sg S Γ C ts} (h : Lins os sg S Γ C ts) :
-      ∀ {ξ Γ' C'}, RenLin ξ Γ C Γ' C' → Lins os sg S Γ' C' (ts.map (·.ren ξ)) := by
+  theorem Lins.ren {os sg Γ C ts} (h : Lins os sg Γ C ts) :
+      ∀ {ξ Γ' C'}, RenLin os ξ Γ C Γ' C' → Lins os sg Γ' C' (ts.map (·.ren ξ)) := by
     intro ξ Γ' C' r
     match h with
     | .nil => exact .nil
     | .cons ht hs => exact .cons (ht.ren r) (hs.ren r)
 
-  theorem LinClause.ren {os sg S Γ C T ρ c} (h : LinClause os sg S Γ C T ρ c) :
-      ∀ {ξ Γ' C'}, RenLin ξ Γ C Γ' C' → LinClause os sg S Γ' C' T ρ (c.ren ξ) := by
+  theorem LinClause.ren {os sg Γ C T ρ c} (h : LinClause os sg Γ C T ρ c) :
+      ∀ {ξ Γ' C'}, RenLin os ξ Γ C Γ' C' → LinClause os sg Γ' C' T ρ (c.ren ξ) := by
     intro ξ Γ' C' r
     match h with
     | .mk (Δ := Δ) (Δk := Δk) (Ck := Ck) (g := none) he hp hk hb hu _ _ hn _ hkp =>
@@ -1683,7 +1365,7 @@ mutual
         have r0 := r.upN (Δ ++ Δk) (Flags.byType Δ ++ Ck) hl2
         rw [hl1] at r0
         simp only [Clause.ren]
-        exact .mk he hp hk (hb.ren r0) (fun j hj => UseOk.ren r0 (upRN_lt _ _ _ hj) (hu j hj))
+        exact .mk he hp hk (hb.ren r0) (fun j hj => UseOk.ren r0 (upRN_lt _ _ _ hj) (by simp only [List.length_append] at hl1 ⊢; omega) (hu j hj))
           (fun _ e => by cases e) (fun _ e => by cases e) (hn.ren r) (fun _ e => by cases e) hkp
     | .mk (Δ := Δ) (Δk := Δk) (Ck := Ck) (g := some g0) he hp hk hb hu hg hgn hn hgo hkp =>
         obtain ⟨hl1, hl2⟩ := LinClause.len hp hk
@@ -1693,7 +1375,7 @@ mutual
         have h1 := (hg g0 rfl).ren r0
         have h2 := NoOwned.ren r0 (hgn g0 rfl)
         have h3 := (hgo g0 rfl).ren r
-        exact .mk he hp hk (hb.ren r0) (fun j hj => UseOk.ren r0 (upRN_lt _ _ _ hj) (hu j hj))
+        exact .mk he hp hk (hb.ren r0) (fun j hj => UseOk.ren r0 (upRN_lt _ _ _ hj) (by simp only [List.length_append] at hl1 ⊢; omega) (hu j hj))
           (fun g' e => by cases e; exact h1) (fun g' e => by cases e; exact h2) (hn.ren r)
           (fun g' e => by cases e; exact h3) hkp
 end
@@ -1711,25 +1393,24 @@ mutual
     | .prim _ _ _, _ => by simp [Tm.occLo, Tm.occ]
     | .ref _ _ _, _ => by simp [Tm.occLo, Tm.occ]
     | .var _, _ => by simp [Tm.occLo, Tm.occ]
-    | .loc _, _ => by simp [Tm.occLo, Tm.occ]
     | .lam ps b, a => by
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ b (a.up ps.length); omega
     | .app f args, a => by
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ f a; have h1 := Tms.occLo_le_occ args a; omega
     | .ite x t f, a => by
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ x a; have h1 := Tm.occLo_le_occ t a; have h2 := Tm.occLo_le_occ f a; omega
-    | .cell _ t, a => by
-        simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ t a; omega
-    | .fresh _ t, a => by
-        simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ t a; omega
+    | .scope _ x b, a => by
+        simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ x a; have h1 := Tm.occLo_le_occ b (a.up 1); omega
+    | .llam ps b, a => by
+        simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ b (a.up ps.length); omega
     | .tag _ t, a => by
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ t a; omega
     | .proj _ t, a => by
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ t a; omega
     | .get t, a => by
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ t a; omega
-    | .brw _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .brw _ _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .mbrw _ _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
     | .field _ t, a => by
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ t a; omega
     | .set x v, a => by
@@ -1744,7 +1425,7 @@ mutual
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ b a; have h1 := Clauses.occLo_le_occ cs a; omega
     | .handle b (some r) cs, a => by
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ b a; have h1 := Tm.occLo_le_occ r (a.up 1); have h2 := Clauses.occLo_le_occ cs a; omega
-    | .run _ _ _ b, a => by
+    | .run _ _ _ _ b, a => by
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ b a; omega
     | .info _ _ b, a => by
         simp only [Tm.occLo, Tm.occ]; have h0 := Tm.occLo_le_occ b a; omega
@@ -1771,8 +1452,8 @@ end
 
 /-! ## The use check under a substitution -/
 
-theorem NoOwned.var_not_owned {os S Γ C j} (h : NoOwned os S Γ C (.var j)) :
-    ¬ Owned os S Γ C (.var j) := by
+theorem NoOwned.var_not_owned {os Γ C j} (h : NoOwned os Γ C (.var j)) :
+    ¬ Owned os Γ C (.var j) := by
   intro ho; have := h _ ho; simp [Tm.occ] at this
 
 /-- What `σ` puts for the variables of `Γ`: for a variable whose type gives
@@ -1780,19 +1461,19 @@ its kind, a term that passes the use check and is a variable or a value
 (so a borrow of a variable stays a borrow of a place); for a variable that is not
 owned, a term that uses nothing owned; for a continuation, a continuation
 variable or a function of one parameter, called in place. -/
-def SubstLin (os : OwnSig) (sg : Sig) (S : Ctx) (σ : Nat → Tm) (Γ : Ctx) (C : Flags)
+def SubstLin (os : OwnSig) (sg : Sig) (σ : Nat → Tm) (Γ : Ctx) (C : Flags)
     (Γ' : Ctx) (C' : Flags) : Prop :=
   ∀ i, (C.getD i none = none → ∀ A, Γ[i]? = some A →
-      Lin os sg S Γ' C' (σ i) ∧ ((∃ j, σ i = .var j) ∨ Value (σ i))) ∧
-    (¬ Owned os S Γ C (.var i) → NoOwned os S Γ' C' (σ i)) ∧
+      Lin os sg Γ' C' (σ i) ∧ ((∃ j, σ i = .var j) ∨ Value (σ i))) ∧
+    (¬ Owned os Γ C (.var i) → NoOwned os Γ' C' (σ i)) ∧
     (∀ lin, C.getD i none = some lin →
       (∃ j lin' B, σ i = .var j ∧ C'.getD j none = some lin' ∧ Γ'[j]? = some B) ∨
-      (∃ R kb, σ i = .lam [R] kb ∧ Lin os sg S (R :: Γ') (none :: C') kb ∧
+      (∃ R kb, σ i = .llam [R] kb ∧ Lin os sg (R :: Γ') (none :: C') kb ∧
         UseOk os (R :: Γ') (none :: C') 0 kb)) ∧
-    (os.strict = true → ¬ LinOwned os S Γ C (.var i) → NoLin os S Γ' C' (σ i))
+    (os.strict = true → ¬ LinOwned os Γ C (.var i) → NoLin os Γ' C' (σ i))
 
-theorem SubstLin.up {os sg S σ Γ C Γ' C'} (h : SubstLin os sg S σ Γ C Γ' C') (A : Ty)
-    (f : Option Bool) : SubstLin os sg S (Nib.up σ) (A :: Γ) (f :: C) (A :: Γ') (f :: C') := by
+theorem SubstLin.up {os sg σ Γ C Γ' C'} (h : SubstLin os sg σ Γ C Γ' C') (A : Ty)
+    (f : Option Bool) : SubstLin os sg (Nib.up σ) (A :: Γ) (f :: C) (A :: Γ') (f :: C') := by
   intro i
   cases i with
   | zero =>
@@ -1801,7 +1482,6 @@ theorem SubstLin.up {os sg S σ Γ C Γ' C'} (h : SubstLin os sg S σ Γ C Γ' C
         exact ⟨.var (A := A) (by simp) (by simp [hf]), .inl ⟨0, rfl⟩⟩
       · intro a ha
         cases a with
-        | loc l => simp [Nib.up, Tm.occ]
         | var j =>
             cases j with
             | zero => exact absurd (by simpa [Owned] using ha) (by simpa [Owned] using ho)
@@ -1810,14 +1490,13 @@ theorem SubstLin.up {os sg S σ Γ C Γ' C'} (h : SubstLin os sg S σ Γ C Γ' C
         exact Or.inl ⟨0, lin, A, rfl, by simp [hf], rfl⟩
       · intro a ha
         cases a with
-        | loc l => simp [Nib.up, Tm.occ]
         | var j =>
             cases j with
             | zero => exact absurd (by simpa [LinOwned] using ha) (by simpa [LinOwned] using ho)
             | succ j => simp [Nib.up, Tm.occ]
   | succ i =>
       obtain ⟨h1, h2, h3, h4⟩ := h i
-      have r := RenLin.succ Γ' C' A f
+      have r := RenLin.succ os Γ' C' A f
       refine ⟨fun hf B hB => ?_, fun ho => ?_, fun lin hf => ?_, fun hs ho => ?_⟩
       · obtain ⟨hl, hp⟩ := h1 (by simpa using hf) B (by simpa using hB)
         refine ⟨hl.ren r, ?_⟩
@@ -1829,44 +1508,43 @@ theorem SubstLin.up {os sg S σ Γ C Γ' C'} (h : SubstLin os sg S σ Γ C Γ' C
         · exact Or.inl ⟨j + 1, lin', B, by simp [Nib.up, e, Tm.ren], by simpa using hj, by simpa using hB⟩
         · refine Or.inr ⟨R, kb.ren (upR Nat.succ), by simp [Nib.up, e, Tm.ren, upRN], ?_, ?_⟩
           · exact hkb.ren (r.up R none)
-          · exact UseOk.ren (r.up R none) rfl hu
+          · exact UseOk.ren (r.up R none) rfl (by simp) hu
       · exact NoLin.ren r (h4 hs (by simpa [LinOwned] using ho))
 
-theorem SubstLin.upN {os sg S σ Γ C Γ' C'} (h : SubstLin os sg S σ Γ C Γ' C') :
+theorem SubstLin.upN {os sg σ Γ C Γ' C'} (h : SubstLin os sg σ Γ C Γ' C') :
     ∀ (Θ : Ctx) (F : Flags), F.length = Θ.length →
-      SubstLin os sg S (Nib.upN Θ.length σ) (Θ ++ Γ) (F ++ C) (Θ ++ Γ') (F ++ C')
+      SubstLin os sg (Nib.upN Θ.length σ) (Θ ++ Γ) (F ++ C) (Θ ++ Γ') (F ++ C')
   | [], [], _ => by simpa [Nib.upN] using h
   | A :: Θ, f :: F, e => by simpa [Nib.upN] using (SubstLin.upN h Θ F (by simpa using e)).up A f
   | [], _ :: _, e => by simp at e
   | _ :: _, [], e => by simp at e
 
-theorem NoOwnedUnder.subst {os sg S σ Γ C Γ' C' n t} (h : SubstLin os sg S σ Γ C Γ' C')
-    (hn : NoOwnedUnder os S Γ C n t) : NoOwnedUnder os S Γ' C' n (t.subst (upN n σ)) := by
+theorem NoOwnedUnder.subst {os sg σ Γ C Γ' C' n t} (h : SubstLin os sg σ Γ C Γ' C')
+    (hn : NoOwnedUnder os Γ C n t) : NoOwnedUnder os Γ' C' n (t.subst (upN n σ)) := by
   intro a ha
   apply Tm.occ_subst_zero
-  · intro l e
-    have e' := Item.up_eq_loc e; subst e'
-    exact hn (.loc l) ha
-  · exact upN_zero n σ a (fun k => t.occ (.var k) ≠ 0) (fun i hi => by
-      have ho : ¬ Owned os S Γ C (.var i) := fun ho => hi (by simpa using hn (.var i) ho)
+  exact upN_zero n σ a (fun k => t.occ (.var k) ≠ 0) (fun i hi => by
+      have ho : ¬ Owned os Γ C (.var i) := fun ho => hi (by simpa using hn (.var i) ho)
       simpa using (h i).2.1 ho a ha)
 
-theorem NoOwned.subst {os sg S σ Γ C Γ' C' t} (h : SubstLin os sg S σ Γ C Γ' C')
-    (hn : NoOwned os S Γ C t) : NoOwned os S Γ' C' (t.subst σ) :=
+theorem NoOwned.subst {os sg σ Γ C Γ' C' t} (h : SubstLin os sg σ Γ C Γ' C')
+    (hn : NoOwned os Γ C t) : NoOwned os Γ' C' (t.subst σ) :=
   NoOwnedUnder.subst (n := 0) h hn
 
-theorem Quiet.subst {os sg S σ Γ Γ' t} (h : SubstOk sg S σ Γ Γ') (hq : Quiet os sg S Γ t) :
-    Quiet os sg S Γ' (t.subst σ) := by
+theorem Quiet.subst {os sg σ Γ Γ' t} (h : SubstOk sg σ Γ Γ') (hq : Quiet os sg Γ t) :
+    Quiet os sg Γ' (t.subst σ) := by
   obtain ⟨A, ρ, ht, hn⟩ := hq; exact ⟨A, ρ, ht.subst h, hn⟩
 
-theorem Held.subst {os sg S σ Γ C Γ' C' t} (h : SubstLin os sg S σ Γ C Γ' C')
-    (hσ : SubstOk sg S σ Γ Γ') (hh : Held os sg S Γ C t) : Held os sg S Γ' C' (t.subst σ) := by
+theorem Held.subst {os sg σ Γ C Γ' C' t} (h : SubstLin os sg σ Γ C Γ' C')
+    (hσ : SubstOk sg σ Γ Γ') (hh : Held os sg Γ C t) : Held os sg Γ' C' (t.subst σ) := by
   obtain ⟨⟨A, ρ, ht, hk⟩, hl, hv⟩ := hh
   refine ⟨⟨A, ρ, ht.subst hσ, hk⟩, fun ps b e => ?_, fun j e => ?_⟩
   · cases t with
     | lam qs c => exact NoOwned.subst h (hl qs c rfl)
     | var i => rw [Tm.subst]; exact (h i).2.1 (hv i rfl)
     | handle b r cs => cases r <;> simp [Tm.subst] at e
+    | brw n π => simp only [Tm.subst] at e; generalize σ n = u at e; cases u <;> simp [Tm.brwAt] at e
+    | mbrw n π => simp only [Tm.subst] at e; generalize σ n = u at e; cases u <;> simp [Tm.mbrwAt] at e
     | _ => simp [Tm.subst] at e
   · cases t with
     | var i =>
@@ -1874,16 +1552,18 @@ theorem Held.subst {os sg S σ Γ C Γ' C' t} (h : SubstLin os sg S σ Γ C Γ' 
         have := (h i).2.1 (hv i rfl); rw [e] at this
         exact NoOwned.var_not_owned this
     | handle b r cs => cases r <;> simp [Tm.subst] at e
+    | brw n π => simp only [Tm.subst] at e; generalize σ n = u at e; cases u <;> simp [Tm.brwAt] at e
+    | mbrw n π => simp only [Tm.subst] at e; generalize σ n = u at e; cases u <;> simp [Tm.mbrwAt] at e
     | _ => simp [Tm.subst] at e
 
-theorem Spread.subst {os sg S σ Γ C Γ' C' cs} (h : SubstLin os sg S σ Γ C Γ' C')
-    (hσ : SubstOk sg S σ Γ Γ') (hs : Spread os sg S Γ C cs) :
-    Spread os sg S Γ' C' (cs.map (·.subst σ)) := by
+theorem Spread.subst {os sg σ Γ C Γ' C' cs} (h : SubstLin os sg σ Γ C Γ' C')
+    (hσ : SubstOk sg σ Γ Γ') (hs : Spread os sg Γ C cs) :
+    Spread os sg Γ' C' (cs.map (·.subst σ)) := by
   intro i c hc
   rw [List.getElem?_map] at hc
   obtain ⟨c0, hc0, rfl⟩ := Option.map_eq_some_iff.mp hc
   rcases hs i c0 hc0 with hv | hq | ⟨hl, hr⟩
-  · exact Or.inl (hv.subst σ)
+  · exact Or.inl (hv.subst_any σ)
   · exact Or.inr (Or.inl (hq.subst hσ))
   · refine Or.inr (Or.inr ⟨fun j d hj hd => ?_, fun j d hj hd => ?_⟩)
     · rw [List.getElem?_map] at hd
@@ -1893,39 +1573,38 @@ theorem Spread.subst {os sg S σ Γ C Γ' C' cs} (h : SubstLin os sg S σ Γ C �
       obtain ⟨d0, hd0, rfl⟩ := Option.map_eq_some_iff.mp hd
       exact NoOwned.subst h (hr j d0 hj hd0)
 
-theorem NoLinUnder.subst {os sg S σ Γ C Γ' C' n t} (h : SubstLin os sg S σ Γ C Γ' C')
-    (hs : os.strict = true) (hn : NoLinUnder os S Γ C n t) :
-    NoLinUnder os S Γ' C' n (t.subst (upN n σ)) := by
+theorem NoLinUnder.subst {os sg σ Γ C Γ' C' n t} (h : SubstLin os sg σ Γ C Γ' C')
+    (hs : os.strict = true) (hn : NoLinUnder os Γ C n t) :
+    NoLinUnder os Γ' C' n (t.subst (upN n σ)) := by
   intro a ha
   apply Tm.occ_subst_zero
-  · intro l e
-    have e' := Item.up_eq_loc e; subst e'
-    exact hn (.loc l) ha
-  · exact upN_zero n σ a (fun k => t.occ (.var k) ≠ 0) (fun i hi => by
-      have ho : ¬ LinOwned os S Γ C (.var i) := fun ho => hi (by simpa using hn (.var i) ho)
+  exact upN_zero n σ a (fun k => t.occ (.var k) ≠ 0) (fun i hi => by
+      have ho : ¬ LinOwned os Γ C (.var i) := fun ho => hi (by simpa using hn (.var i) ho)
       simpa using (h i).2.2.2 hs ho a ha)
 
-theorem NoLin.subst {os sg S σ Γ C Γ' C' t} (h : SubstLin os sg S σ Γ C Γ' C')
-    (hs : os.strict = true) (hn : NoLin os S Γ C t) : NoLin os S Γ' C' (t.subst σ) :=
+theorem NoLin.subst {os sg σ Γ C Γ' C' t} (h : SubstLin os sg σ Γ C Γ' C')
+    (hs : os.strict = true) (hn : NoLin os Γ C t) : NoLin os Γ' C' (t.subst σ) :=
   NoLinUnder.subst (n := 0) h hs hn
 
-theorem NoLin.var_not_lin {os S Γ C j} (h : NoLin os S Γ C (.var j)) :
-    ¬ LinOwned os S Γ C (.var j) := by
+theorem NoLin.var_not_lin {os Γ C j} (h : NoLin os Γ C (.var j)) :
+    ¬ LinOwned os Γ C (.var j) := by
   intro ho; have := h _ ho; simp [Tm.occ] at this
 
-theorem Firm.subst {os sg S σ Γ Γ' t} (h : SubstOk sg S σ Γ Γ') (hq : Firm os sg S Γ t) :
-    Firm os sg S Γ' (t.subst σ) := by
+theorem Firm.subst {os sg σ Γ Γ' t} (h : SubstOk sg σ Γ Γ') (hq : Firm os sg Γ t) :
+    Firm os sg Γ' (t.subst σ) := by
   obtain ⟨A, ρ, ht, hn⟩ := hq; exact ⟨A, ρ, ht.subst h, hn⟩
 
-theorem HeldL.subst {os sg S σ Γ C Γ' C' t} (h : SubstLin os sg S σ Γ C Γ' C')
-    (hs : os.strict = true) (hσ : SubstOk sg S σ Γ Γ') (hh : HeldL os sg S Γ C t) :
-    HeldL os sg S Γ' C' (t.subst σ) := by
+theorem HeldL.subst {os sg σ Γ C Γ' C' t} (h : SubstLin os sg σ Γ C Γ' C')
+    (hs : os.strict = true) (hσ : SubstOk sg σ Γ Γ') (hh : HeldL os sg Γ C t) :
+    HeldL os sg Γ' C' (t.subst σ) := by
   obtain ⟨⟨A, ρ, ht, hk⟩, hl, hv⟩ := hh
   refine ⟨⟨A, ρ, ht.subst hσ, hk⟩, fun ps b e => ?_, fun j e => ?_⟩
   · cases t with
     | lam qs c => exact NoLin.subst h hs (hl qs c rfl)
     | var i => rw [Tm.subst]; exact (h i).2.2.2 hs (hv i rfl)
     | handle b r cs => cases r <;> simp [Tm.subst] at e
+    | brw n π => simp only [Tm.subst] at e; generalize σ n = u at e; cases u <;> simp [Tm.brwAt] at e
+    | mbrw n π => simp only [Tm.subst] at e; generalize σ n = u at e; cases u <;> simp [Tm.mbrwAt] at e
     | _ => simp [Tm.subst] at e
   · cases t with
     | var i =>
@@ -1933,16 +1612,18 @@ theorem HeldL.subst {os sg S σ Γ C Γ' C' t} (h : SubstLin os sg S σ Γ C Γ'
         have := (h i).2.2.2 hs (hv i rfl); rw [e] at this
         exact NoLin.var_not_lin this
     | handle b r cs => cases r <;> simp [Tm.subst] at e
+    | brw n π => simp only [Tm.subst] at e; generalize σ n = u at e; cases u <;> simp [Tm.brwAt] at e
+    | mbrw n π => simp only [Tm.subst] at e; generalize σ n = u at e; cases u <;> simp [Tm.mbrwAt] at e
     | _ => simp [Tm.subst] at e
 
-theorem SpreadL.subst {os sg S σ Γ C Γ' C' cs} (h : SubstLin os sg S σ Γ C Γ' C')
-    (hst : os.strict = true) (hσ : SubstOk sg S σ Γ Γ') (hs : SpreadL os sg S Γ C cs) :
-    SpreadL os sg S Γ' C' (cs.map (·.subst σ)) := by
+theorem SpreadL.subst {os sg σ Γ C Γ' C' cs} (h : SubstLin os sg σ Γ C Γ' C')
+    (hst : os.strict = true) (hσ : SubstOk sg σ Γ Γ') (hs : SpreadL os sg Γ C cs) :
+    SpreadL os sg Γ' C' (cs.map (·.subst σ)) := by
   intro i c hc
   rw [List.getElem?_map] at hc
   obtain ⟨c0, hc0, rfl⟩ := Option.map_eq_some_iff.mp hc
   rcases hs i c0 hc0 with hv | hq | ⟨hl, hr⟩
-  · exact Or.inl (hv.subst σ)
+  · exact Or.inl (hv.subst_any σ)
   · exact Or.inr (Or.inl (hq.subst hσ))
   · refine Or.inr (Or.inr ⟨fun j d hj hd => ?_, fun j d hj hd => ?_⟩)
     · rw [List.getElem?_map] at hd
@@ -1997,22 +1678,6 @@ theorem getD_append_lt {F C C' : Flags} {j : Nat} (h : j < F.length) :
     (F ++ C').getD j none = (F ++ C).getD j none := by
   simp [List.getD_eq_getElem?_getD, List.getElem?_append_left h]
 
-/-- A borrowed place stays a place when values are put for variables. -/
-theorem Place.subst {os sg S σ Γ C Γ' C' t A ρ} (r : SubstLin os sg S σ Γ C Γ' C')
-    (s : SubstOk sg S σ Γ Γ') (ht : Lin os sg S Γ C t) (hA : HasType sg S Γ t (.cell A) ρ)
-    (hp : Place t) : Place (t.subst σ) := by
-  rcases hp with ⟨i, rfl⟩ | ⟨l, rfl⟩
-  · cases ht with
-    | var h1 h2 =>
-        rw [Tm.subst]
-        rcases ((r i).1 h2 _ h1).2 with ⟨j, e⟩ | hv
-        · exact .inl ⟨j, e⟩
-        · have hA' := hA.subst s
-          rw [Tm.subst] at hA'
-          obtain ⟨l, e, -⟩ := hv.cell_inv hA'
-          exact .inr ⟨l, e⟩
-  · exact .inr ⟨l, by simp [Tm.subst]⟩
-
 theorem UseOk.subst_low {os Θ Γ Γ' F C C' n j t σ} (hn : Θ.length = n) (hF : F.length = n) (hj : j < n)
     (hu : UseOk os (Θ ++ Γ) (F ++ C) j t) : UseOk os (Θ ++ Γ') (F ++ C') j (t.subst (upN n σ)) := by
   refine UseOk.congr ?_ (getD_append_lt (by omega)) (Tm.occ_subst_var t _ j (upN_occ_low n σ j hj))
@@ -2020,9 +1685,9 @@ theorem UseOk.subst_low {os Θ Γ Γ' F C C' n j t σ} (hn : Θ.length = n) (hF 
   rw [List.getElem?_append_left (by omega), List.getElem?_append_left (by omega)]
 
 mutual
-  theorem Lin.subst {os sg S Γ C t} (h : Lin os sg S Γ C t) :
-      ∀ {σ Γ' C'}, SubstLin os sg S σ Γ C Γ' C' → SubstOk sg S σ Γ Γ' →
-        Lin os sg S Γ' C' (t.subst σ) := by
+  theorem Lin.subst {os sg Γ C t} (h : Lin os sg Γ C t) :
+      ∀ {σ Γ' C'}, SubstLin os sg σ Γ C Γ' C' → SubstOk sg σ Γ Γ' →
+        Lin os sg Γ' C' (t.subst σ) := by
     intro σ Γ' C' r s
     match h with
     | .var (i := i) (A := A) h1 h2 => rw [Tm.subst]; exact ((r i).1 h2 A h1).1
@@ -2039,6 +1704,17 @@ mutual
         rw [Tm.subst]
         refine .lam (hb.subst r' (s.upN ps)) (fun j hj => UseOk.subst_low rfl (Flags.byType_length ps) hj (hu j hj)) ?_
         have := NoOwned.subst r hn; rwa [Tm.subst] at this
+    | .llam (ps := ps) hb hu hn =>
+        have r' := r.upN ps (Flags.byType ps) (Flags.byType_length ps)
+        rw [Tm.subst]
+        refine .llam (hb.subst r' (s.upN ps)) (fun j hj => UseOk.subst_low rfl (Flags.byType_length ps) hj (hu j hj)) ?_
+        have := NoOwned.subst r hn; rwa [Tm.subst] at this
+    | .lblock (ps := ps) hb hu ha hs hsL =>
+        have r' := r.upN ps (Flags.byType ps) (Flags.byType_length ps)
+        simp only [Tm.subst]
+        exact .lblock (hb.subst r' (s.upN ps)) (fun j hj => UseOk.subst_low rfl (Flags.byType_length ps) hj (hu j hj))
+          (ha.subst r s) (by simpa only [List.map_cons, Tm.subst] using hs.subst r s)
+          (fun e => by simpa only [List.map_cons, Tm.subst] using (hsL e).subst r e s)
     | .app hf ha hs hsL =>
         rw [Tm.subst]
         exact .app (hf.subst r s) (ha.subst r s) (by simpa only [List.map_cons] using hs.subst r s)
@@ -2051,14 +1727,14 @@ mutual
           (fun e => by simpa only [List.map_cons, Tm.subst] using (hsL e).subst r e s)
     | .resume (i := i) (lin := lin) (args := args) h1 h2 ha hs hsL =>
         have hs' := hs.subst r s
-        have hsL' : os.strict = true → SpreadL os sg S Γ' C' ((Tm.var i).subst σ :: args.map (·.subst σ)) :=
+        have hsL' : os.strict = true → SpreadL os sg Γ' C' ((Tm.var i).subst σ :: args.map (·.subst σ)) :=
           fun e => by simpa only [List.map_cons] using (hsL e).subst r e s
         simp only [List.map_cons, Tm.subst] at hs' hsL'
         simp only [Tm.subst]
         rcases (r i).2.2.1 lin h1 with ⟨j, lin', B, e, hj, hB⟩ | ⟨R, kb, e, hkb, hu⟩
         · rw [e] at hs' hsL' ⊢; exact .resume hj hB (ha.subst r s) hs' hsL'
         · rw [e] at hs' hsL' ⊢
-          exact .block hkb (fun j hj => by
+          exact .lblock hkb (fun j hj => by
             have : j = 0 := by simpa using hj
             subst this; exact hu) (ha.subst r s) hs' hsL'
     | .ite hc ht hf hq hqL =>
@@ -2066,20 +1742,23 @@ mutual
         exact .ite (hc.subst r s) (ht.subst r s) (hf.subst r s)
           (hq.imp (Quiet.subst s) (fun ⟨a, b⟩ => ⟨NoOwned.subst r a, NoOwned.subst r b⟩))
           (fun e => (hqL e).imp (Firm.subst s) (fun ⟨a, b⟩ => ⟨NoLin.subst r e a, NoLin.subst r e b⟩))
-    | .cell ht hk => rw [Tm.subst]; exact .cell (ht.subst r s) hk
-    | .fresh ht => rw [Tm.subst]; exact .fresh (ht.subst r s)
-    | .get ht => rw [Tm.subst]; exact .get (ht.subst r s)
-    | .set hc hv hs hsL =>
+    | .scope (A := A) hi hk hb hq hqL =>
         rw [Tm.subst]
-        exact .set (hc.subst r s) (hv.subst r s)
-          (by simpa only [List.map_cons, List.map_nil] using hs.subst r s)
-          (fun e => by
-            obtain ⟨h1, A, ρ, hA, hk⟩ := hsL e
-            exact ⟨by simpa only [List.map_cons, List.map_nil] using h1.subst r e s, A, ρ, hA.subst s, hk⟩)
-    | .brw ht hA hp =>
-        rw [Tm.subst]; exact .brw (ht.subst r s) (hA.subst s) (hp.subst r s ht hA)
-    | .mbrw ht hA hp =>
-        rw [Tm.subst]; exact .mbrw (ht.subst r s) (hA.subst s) (hp.subst r s ht hA)
+        exact .scope (hi.subst r s) hk (hb.subst (r.up (.place A) none) (s.up (.place A)))
+          (hq.imp (fun hv => hv.subst_any σ) (Or.imp (Quiet.subst s) (NoOwnedUnder.subst (n := 1) r)))
+          (fun e => (hqL e).imp (fun hv => hv.subst_any σ) (Or.imp (Firm.subst s) (NoLinUnder.subst (n := 1) r e)))
+    | .get (A := A) hi =>
+        obtain ⟨j, e, hj⟩ := (s _ _ hi).2 A rfl
+        simp only [Tm.subst, e]; exact .get hj
+    | .set (A := A) hi hv hk =>
+        obtain ⟨j, e, hj⟩ := (s _ _ hi).2 A rfl
+        simp only [Tm.subst, e]; exact .set hj (hv.subst r s) hk
+    | .brw (A := A) hi =>
+        obtain ⟨j, e, hj⟩ := (s _ _ hi).2 A rfl
+        simp only [Tm.subst, e, Tm.brwAt]; exact .brw hj
+    | .mbrw (A := A) hi =>
+        obtain ⟨j, e, hj⟩ := (s _ _ hi).2 A rfl
+        simp only [Tm.subst, e, Tm.mbrwAt]; exact .mbrw hj
     | .field hb hd hi hA hk => rw [Tm.subst]; exact .field (hb.subst r s) hd hi (hA.subst s) hk
     | .write hc hv hs hsL =>
         rw [Tm.subst]
@@ -2108,7 +1787,6 @@ mutual
           (fun e => (hqL e).imp (Firm.subst s) (NoLinUnder.subst (n := 1) r e)) ht' (fun c m => ?_)
         obtain ⟨c0, m0, rfl⟩ := List.mem_map.mp m
         exact (hc c0 m0).subst r s
-    | .loc hS => rw [Tm.subst]; exact .loc hS
     | .run hb hst => rw [Tm.subst]; exact .run (hb.subst r s) hst
     | .info hb hst => rw [Tm.subst]; exact .info (hb.subst r s) hst
     | .select (R := R) (kb := kb) hv hk hkb hu hω hωL ht hc =>
@@ -2123,17 +1801,17 @@ mutual
         · obtain ⟨c0, m0, rfl⟩ := List.mem_map.mp m
           exact (hc c0 m0).subst r s
 
-  theorem Lins.subst {os sg S Γ C ts} (h : Lins os sg S Γ C ts) :
-      ∀ {σ Γ' C'}, SubstLin os sg S σ Γ C Γ' C' → SubstOk sg S σ Γ Γ' →
-        Lins os sg S Γ' C' (ts.map (·.subst σ)) := by
+  theorem Lins.subst {os sg Γ C ts} (h : Lins os sg Γ C ts) :
+      ∀ {σ Γ' C'}, SubstLin os sg σ Γ C Γ' C' → SubstOk sg σ Γ Γ' →
+        Lins os sg Γ' C' (ts.map (·.subst σ)) := by
     intro σ Γ' C' r s
     match h with
     | .nil => exact .nil
     | .cons ht hs => exact .cons (ht.subst r s) (hs.subst r s)
 
-  theorem LinClause.subst {os sg S Γ C T ρ c} (h : LinClause os sg S Γ C T ρ c) :
-      ∀ {σ Γ' C'}, SubstLin os sg S σ Γ C Γ' C' → SubstOk sg S σ Γ Γ' →
-        LinClause os sg S Γ' C' T ρ (c.subst σ) := by
+  theorem LinClause.subst {os sg Γ C T ρ c} (h : LinClause os sg Γ C T ρ c) :
+      ∀ {σ Γ' C'}, SubstLin os sg σ Γ C Γ' C' → SubstOk sg σ Γ Γ' →
+        LinClause os sg Γ' C' T ρ (c.subst σ) := by
     intro σ Γ' C' r s
     match h with
     | .mk (Δ := Δ) (Δk := Δk) (Ck := Ck) (g := none) he hp hk hb hu _ _ hn _ hkp =>
@@ -2174,25 +1852,24 @@ mutual
     | .prim _ _ _, _ => by simp [Tm.inst, Tm.occ]
     | .ref _ _ _, _ => by simp [Tm.inst, Tm.occ]
     | .var _, _ => by simp [Tm.inst, Tm.occ]
-    | .loc _, _ => by simp [Tm.inst, Tm.occ]
     | .lam ps b, a => by
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ b]
     | .app f args, a => by
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ f, Tms.occ_inst θ args]
     | .ite x t f, a => by
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ x, Tm.occ_inst θ t, Tm.occ_inst θ f]
-    | .cell _ t, a => by
-        simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ t]
-    | .fresh _ t, a => by
-        simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ t]
+    | .scope _ x b, a => by
+        simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ x, Tm.occ_inst θ b]
+    | .llam ps b, a => by
+        simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ b]
     | .tag _ t, a => by
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ t]
     | .proj _ t, a => by
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ t]
     | .get t, a => by
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ t]
-    | .brw _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .brw _ _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .mbrw _ _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
     | .field _ t, a => by
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ t]
     | .set x v, a => by
@@ -2207,7 +1884,7 @@ mutual
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ b, Clauses.occ_inst θ cs]
     | .handle b (some r) cs, a => by
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ b, Tm.occ_inst θ r, Clauses.occ_inst θ cs]
-    | .run _ _ _ b, a => by
+    | .run _ _ _ _ b, a => by
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ b]
     | .info _ _ b, a => by
         simp only [Tm.inst, Tm.occ, List.length_map]; rw [Tm.occ_inst θ b]
@@ -2240,25 +1917,24 @@ mutual
     | .prim _ _ _, _ => by simp [Tm.inst, Tm.occLo]
     | .ref _ _ _, _ => by simp [Tm.inst, Tm.occLo]
     | .var _, _ => by simp [Tm.inst, Tm.occLo]
-    | .loc _, _ => by simp [Tm.inst, Tm.occLo]
     | .lam ps b, a => by
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ b]
     | .app f args, a => by
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ f, Tms.occLo_inst θ args]
     | .ite x t f, a => by
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ x, Tm.occLo_inst θ t, Tm.occLo_inst θ f]
-    | .cell _ t, a => by
-        simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ t]
-    | .fresh _ t, a => by
-        simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ t]
+    | .scope _ x b, a => by
+        simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ x, Tm.occLo_inst θ b]
+    | .llam ps b, a => by
+        simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ b]
     | .tag _ t, a => by
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ t]
     | .proj _ t, a => by
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ t]
     | .get t, a => by
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ t]
-    | .brw _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
-    | .mbrw _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .brw _ _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
+    | .mbrw _ _, a => by simp_all [Tm.ren, Tm.subst, Tm.inst, Tm.occ, Tm.occLo]
     | .field _ t, a => by
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ t]
     | .set x v, a => by
@@ -2273,7 +1949,7 @@ mutual
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ b, Clauses.occLo_inst θ cs]
     | .handle b (some r) cs, a => by
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ b, Tm.occLo_inst θ r, Clauses.occLo_inst θ cs]
-    | .run _ _ _ b, a => by
+    | .run _ _ _ _ b, a => by
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ b]
     | .info _ _ b, a => by
         simp only [Tm.inst, Tm.occLo, List.length_map]; rw [Tm.occLo_inst θ b]
@@ -2314,8 +1990,8 @@ theorem Kind.dup_inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {A : Ty}
     ((A.inst θ).kind os).dup :=
   Kind.dup_of_le (Ty.kind_inst os hθ.1 A) h
 
-theorem Owned.of_inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {S Γ C a}
-    (h : Owned os (S.map (·.inst θ)) (Γ.map (·.inst θ)) C a) : Owned os S Γ C a := by
+theorem Owned.of_inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {Γ C a}
+    (h : Owned os (Γ.map (·.inst θ)) C a) : Owned os Γ C a := by
   cases a with
   | var i =>
       rcases h with h | ⟨A, hA, hk⟩
@@ -2323,32 +1999,27 @@ theorem Owned.of_inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {S Γ C 
       · simp only [List.getElem?_map, Option.map_eq_some_iff] at hA
         obtain ⟨B, hB, rfl⟩ := hA
         exact Or.inr ⟨B, hB, fun hd => hk (Kind.dup_inst hθ hd)⟩
-  | loc l =>
-      obtain ⟨A, hA, hk⟩ := h
-      simp only [List.getElem?_map, Option.map_eq_some_iff] at hA
-      obtain ⟨B, hB, rfl⟩ := hA
-      exact ⟨B, hB, fun hd => hk (Kind.dup_inst hθ hd)⟩
 
-theorem NoOwnedUnder.inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {S Γ C n t}
-    (h : NoOwnedUnder os S Γ C n t) :
-    NoOwnedUnder os (S.map (·.inst θ)) (Γ.map (·.inst θ)) C n (t.inst θ) := by
+theorem NoOwnedUnder.inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {Γ C n t}
+    (h : NoOwnedUnder os Γ C n t) :
+    NoOwnedUnder os (Γ.map (·.inst θ)) C n (t.inst θ) := by
   intro a ha; rw [Tm.occ_inst]; exact h a (Owned.of_inst hθ ha)
 
-theorem NoOwned.inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {S Γ C t}
-    (h : NoOwned os S Γ C t) : NoOwned os (S.map (·.inst θ)) (Γ.map (·.inst θ)) C (t.inst θ) :=
+theorem NoOwned.inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {Γ C t}
+    (h : NoOwned os Γ C t) : NoOwned os (Γ.map (·.inst θ)) C (t.inst θ) :=
   NoOwnedUnder.inst hθ h
 
-theorem Quiet.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ)
-    (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {S Γ t} (h : Quiet os sg S Γ t) :
-    Quiet os sg (S.map (·.inst θ)) (Γ.map (·.inst θ)) (t.inst θ) := by
+theorem Quiet.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ) (hp : ∀ i, Portable sg (θ.ty i))
+    (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {Γ t} (h : Quiet os sg Γ t) :
+    Quiet os sg (Γ.map (·.inst θ)) (t.inst θ) := by
   obtain ⟨A, ρ, ht, hn⟩ := h
-  exact ⟨_, _, ht.inst hs θ, fun h' => hn (Row.quants_inst hθ hq h')⟩
+  exact ⟨_, _, ht.inst hs θ hp, fun h' => hn (Row.quants_inst hθ hq h')⟩
 
-theorem Held.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ)
-    {S Γ C t} (h : Held os sg S Γ C t) :
-    Held os sg (S.map (·.inst θ)) (Γ.map (·.inst θ)) C (t.inst θ) := by
+theorem Held.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ) (hp : ∀ i, Portable sg (θ.ty i))
+    {Γ C t} (h : Held os sg Γ C t) :
+    Held os sg (Γ.map (·.inst θ)) C (t.inst θ) := by
   obtain ⟨⟨A, ρ, ht, hk⟩, hl, hv⟩ := h
-  refine ⟨⟨_, _, ht.inst hs θ, Kind.dup_inst hθ hk.1, fun hm => hk.2 ((Ty.mv_inst hθ.2.2 _).mp hm)⟩, fun ps b e => ?_, fun j e => ?_⟩
+  refine ⟨⟨_, _, ht.inst hs θ hp, Kind.dup_inst hθ hk.1, fun hm => hk.2 ((Ty.mv_inst hθ.2.2.1 _).mp hm)⟩, fun ps b e => ?_, fun j e => ?_⟩
   · cases t with
     | lam qs c => exact NoOwned.inst hθ (hl qs c rfl)
     | handle b r cs => cases r <;> simp [Tm.inst] at e
@@ -2360,25 +2031,25 @@ theorem Held.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : In
     | handle b r cs => cases r <;> simp [Tm.inst] at e
     | _ => simp [Tm.inst] at e
 
-theorem Spread.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ)
-    (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {S Γ C cs} (h : Spread os sg S Γ C cs) :
-    Spread os sg (S.map (·.inst θ)) (Γ.map (·.inst θ)) C (cs.map (·.inst θ)) := by
+theorem Spread.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ) (hp : ∀ i, Portable sg (θ.ty i))
+    (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {Γ C cs} (h : Spread os sg Γ C cs) :
+    Spread os sg (Γ.map (·.inst θ)) C (cs.map (·.inst θ)) := by
   intro i c hc
   rw [List.getElem?_map] at hc
   obtain ⟨c0, hc0, rfl⟩ := Option.map_eq_some_iff.mp hc
   rcases h i c0 hc0 with hv | hq' | ⟨hl, hr⟩
   · exact Or.inl (hv.inst θ)
-  · exact Or.inr (Or.inl (hq'.inst hs hθ hq))
+  · exact Or.inr (Or.inl (hq'.inst hs hθ hp hq))
   · refine Or.inr (Or.inr ⟨fun j d hj hd => ?_, fun j d hj hd => ?_⟩)
     · rw [List.getElem?_map] at hd
       obtain ⟨d0, hd0, rfl⟩ := Option.map_eq_some_iff.mp hd
-      exact (hl j d0 hj hd0).inst hs hθ
+      exact (hl j d0 hj hd0).inst hs hθ hp
     · rw [List.getElem?_map] at hd
       obtain ⟨d0, hd0, rfl⟩ := Option.map_eq_some_iff.mp hd
       exact NoOwned.inst hθ (hr j d0 hj hd0)
 
-theorem LinOwned.of_inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {S Γ C a}
-    (h : LinOwned os (S.map (·.inst θ)) (Γ.map (·.inst θ)) C a) : LinOwned os S Γ C a := by
+theorem LinOwned.of_inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {Γ C a}
+    (h : LinOwned os (Γ.map (·.inst θ)) C a) : LinOwned os Γ C a := by
   cases a with
   | var i =>
       rcases h with h | ⟨A, hA, hk⟩
@@ -2386,36 +2057,31 @@ theorem LinOwned.of_inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {S Γ
       · simp only [List.getElem?_map, Option.map_eq_some_iff] at hA
         obtain ⟨B, hB, rfl⟩ := hA
         exact Or.inr ⟨B, hB, Kind.eq_of_le_linear (Ty.kind_inst os hθ.1 B) hk⟩
-  | loc l =>
-      obtain ⟨A, hA, hk⟩ := h
-      simp only [List.getElem?_map, Option.map_eq_some_iff] at hA
-      obtain ⟨B, hB, rfl⟩ := hA
-      exact ⟨B, hB, Kind.eq_of_le_linear (Ty.kind_inst os hθ.1 B) hk⟩
 
 theorem Kind.not_linear_inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {A : Ty}
     (h : A.kind os ≠ .linear) : (A.inst θ).kind os ≠ .linear :=
   fun hl => h (Kind.eq_of_le_linear (Ty.kind_inst os hθ.1 A) hl)
 
-theorem NoLinUnder.inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {S Γ C n t}
-    (h : NoLinUnder os S Γ C n t) :
-    NoLinUnder os (S.map (·.inst θ)) (Γ.map (·.inst θ)) C n (t.inst θ) := by
+theorem NoLinUnder.inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {Γ C n t}
+    (h : NoLinUnder os Γ C n t) :
+    NoLinUnder os (Γ.map (·.inst θ)) C n (t.inst θ) := by
   intro a ha; rw [Tm.occ_inst]; exact h a (LinOwned.of_inst hθ ha)
 
-theorem NoLin.inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {S Γ C t}
-    (h : NoLin os S Γ C t) : NoLin os (S.map (·.inst θ)) (Γ.map (·.inst θ)) C (t.inst θ) :=
+theorem NoLin.inst {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ) {Γ C t}
+    (h : NoLin os Γ C t) : NoLin os (Γ.map (·.inst θ)) C (t.inst θ) :=
   NoLinUnder.inst hθ h
 
-theorem Firm.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ)
-    (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {S Γ t} (h : Firm os sg S Γ t) :
-    Firm os sg (S.map (·.inst θ)) (Γ.map (·.inst θ)) (t.inst θ) := by
+theorem Firm.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ) (hp : ∀ i, Portable sg (θ.ty i))
+    (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {Γ t} (h : Firm os sg Γ t) :
+    Firm os sg (Γ.map (·.inst θ)) (t.inst θ) := by
   obtain ⟨A, ρ, ht, hn⟩ := h
-  exact ⟨_, _, ht.inst hs θ, fun q h' => hn q (Row.quants_inst hθ hq h')⟩
+  exact ⟨_, _, ht.inst hs θ hp, fun q h' => hn q (Row.quants_inst hθ hq h')⟩
 
-theorem HeldL.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ)
-    {S Γ C t} (h : HeldL os sg S Γ C t) :
-    HeldL os sg (S.map (·.inst θ)) (Γ.map (·.inst θ)) C (t.inst θ) := by
+theorem HeldL.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ) (hp : ∀ i, Portable sg (θ.ty i))
+    {Γ C t} (h : HeldL os sg Γ C t) :
+    HeldL os sg (Γ.map (·.inst θ)) C (t.inst θ) := by
   obtain ⟨⟨A, ρ, ht, hk⟩, hl, hv⟩ := h
-  refine ⟨⟨_, _, ht.inst hs θ, Kind.not_linear_inst hθ hk⟩, fun ps b e => ?_, fun j e => ?_⟩
+  refine ⟨⟨_, _, ht.inst hs θ hp, Kind.not_linear_inst hθ hk⟩, fun ps b e => ?_, fun j e => ?_⟩
   · cases t with
     | lam qs c => exact NoLin.inst hθ (hl qs c rfl)
     | handle b r cs => cases r <;> simp [Tm.inst] at e
@@ -2427,19 +2093,19 @@ theorem HeldL.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : I
     | handle b r cs => cases r <;> simp [Tm.inst] at e
     | _ => simp [Tm.inst] at e
 
-theorem SpreadL.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ)
-    (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {S Γ C cs} (h : SpreadL os sg S Γ C cs) :
-    SpreadL os sg (S.map (·.inst θ)) (Γ.map (·.inst θ)) C (cs.map (·.inst θ)) := by
+theorem SpreadL.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ) (hp : ∀ i, Portable sg (θ.ty i))
+    (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {Γ C cs} (h : SpreadL os sg Γ C cs) :
+    SpreadL os sg (Γ.map (·.inst θ)) C (cs.map (·.inst θ)) := by
   intro i c hc
   rw [List.getElem?_map] at hc
   obtain ⟨c0, hc0, rfl⟩ := Option.map_eq_some_iff.mp hc
   rcases h i c0 hc0 with hv | hq' | ⟨hl, hr⟩
   · exact Or.inl (hv.inst θ)
-  · exact Or.inr (Or.inl (hq'.inst hs hθ hq))
+  · exact Or.inr (Or.inl (hq'.inst hs hθ hp hq))
   · refine Or.inr (Or.inr ⟨fun j d hj hd => ?_, fun j d hj hd => ?_⟩)
     · rw [List.getElem?_map] at hd
       obtain ⟨d0, hd0, rfl⟩ := Option.map_eq_some_iff.mp hd
-      exact (hl j d0 hj hd0).inst hs hθ
+      exact (hl j d0 hj hd0).inst hs hθ hp
     · rw [List.getElem?_map] at hd
       obtain ⟨d0, hd0, rfl⟩ := Option.map_eq_some_iff.mp hd
       exact NoLin.inst hθ (hr j d0 hj hd0)
@@ -2453,12 +2119,13 @@ mutual
     | .int => exact .int
     | .bool => exact .bool
     | .text => exact .text
-    | .con hh ho hd hc hps =>
+    | .con hh hd hc hps =>
         have hps' := hps.inst hθ
         rw [fieldsOf_inst] at hps'
         have hh' := hh.inst θ
         simp only [Ty.inst] at hh'
-        exact .con hh' (ho.inst θ) hd hc hps'
+        exact .con hh' hd hc hps'
+    | .narrow => exact .narrow
 
   theorem PatsKeep.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hθ : Inst.Fits os θ) {ps As}
       (h : PatsKeep os sg ps As) : PatsKeep os sg ps (As.map (·.inst θ)) := by
@@ -2488,7 +2155,7 @@ theorem Inst.Fits.instOf {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ)
     (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {ts : List Ty} {rs : List Row}
     (h : Inst.Fits os (instOf ts rs)) :
     Inst.Fits os (instOf (ts.map (·.inst θ)) (rs.map (Row.inst θ))) := by
-  refine ⟨fun i => ?_, fun i q hr => ?_, fun i => ?_⟩
+  refine ⟨fun i => ?_, fun i q hr => ?_, fun i => ?_, fun i hp => ?_⟩
   · show ((ts.map (fun T : Ty => T.inst θ)).getD i Ty.never).kind os ≤ _
     have := h.1 i
     change (ts.getD i Ty.never).kind os ≤ _ at this
@@ -2510,7 +2177,7 @@ theorem Inst.Fits.instOf {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ)
         simp only [Option.map_some, Option.getD_some] at hr ⊢
         exact Row.quants_inst hθ hq hr
   · show ¬ ((ts.map (fun T : Ty => T.inst θ)).getD i Ty.never).Mv
-    have := h.2.2 i
+    have := h.2.2.1 i
     change ¬ (ts.getD i Ty.never).Mv at this
     simp only [List.getD_eq_getElem?_getD, List.getElem?_map] at this ⊢
     cases e : ts[i]? with
@@ -2518,16 +2185,26 @@ theorem Inst.Fits.instOf {os : OwnSig} {θ : Inst} (hθ : Inst.Fits os θ)
     | some T =>
         rw [e] at this
         simp only [Option.map_some, Option.getD_some] at this ⊢
-        rw [Ty.mv_inst hθ.2.2 T]; exact this
+        rw [Ty.mv_inst hθ.2.2.1 T]; exact this
+  · show ¬ ((ts.map (fun T : Ty => T.inst θ)).getD i Ty.never).Bv os
+    have := h.2.2.2 i hp
+    change ¬ (ts.getD i Ty.never).Bv os at this
+    simp only [List.getD_eq_getElem?_getD, List.getElem?_map] at this ⊢
+    cases e : ts[i]? with
+    | none => simp [Ty.Bv]
+    | some T =>
+        rw [e] at this
+        simp only [Option.map_some, Option.getD_some] at this ⊢
+        exact fun hb => this (Ty.Bv.inst hθ.2.2.2 hb)
 
 theorem Flags.byType_map (θ : Inst) (ps : List Ty) :
     Flags.byType (ps.map (·.inst θ)) = Flags.byType ps := by
   simp [Flags.byType]
 
 mutual
-  theorem Lin.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ)
-      (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {S Γ C t} (h : Lin os sg S Γ C t) :
-      Lin os sg (S.map (·.inst θ)) (Γ.map (·.inst θ)) C (t.inst θ) := by
+  theorem Lin.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ) (hp : ∀ i, Portable sg (θ.ty i))
+      (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {Γ C t} (h : Lin os sg Γ C t) :
+      Lin os sg (Γ.map (·.inst θ)) C (t.inst θ) := by
     match h with
     | .var (A := A) h1 h2 => rw [Tm.inst]; exact .var (A := A.inst θ) (by simp [h1]) h2
     | .int => rw [Tm.inst]; exact .int
@@ -2537,130 +2214,136 @@ mutual
     | .dec => rw [Tm.inst]; exact .dec
     | .flt => rw [Tm.inst]; exact .flt
     | .flt32 => rw [Tm.inst]; exact .flt32
-    | .prim hp => rw [Tm.inst]; exact .prim hp
+    | .prim hpr => rw [Tm.inst]; exact .prim hpr
     | .lam (ps := ps) hb hu hn =>
-        have hb' := hb.inst hs hθ hq
+        have hb' := hb.inst hs hθ hp hq
         rw [List.map_append, ← Flags.byType_map θ ps] at hb'
         rw [Tm.inst]
         refine .lam hb' (fun j hj => ?_) ?_
         · have := (hu j (by simpa using hj)).inst hθ
           rwa [List.map_append, ← Flags.byType_map θ ps] at this
         · have := NoOwned.inst hθ hn; rwa [Tm.inst] at this
-    | .app hf ha hs' hsL =>
+    | .llam (ps := ps) hb hu hn =>
+        have hb' := hb.inst hs hθ hp hq
+        rw [List.map_append, ← Flags.byType_map θ ps] at hb'
         rw [Tm.inst]
-        exact .app (hf.inst hs hθ hq) (ha.inst hs hθ hq)
-          (by simpa only [List.map_cons] using hs'.inst hs hθ hq)
-          (fun e => by simpa only [List.map_cons] using (hsL e).inst hs hθ hq)
-    | .block (ps := ps) hb hu ha hs' hsL =>
-        have hb' := hb.inst hs hθ hq
+        refine .llam hb' (fun j hj => ?_) ?_
+        · have := (hu j (by simpa using hj)).inst hθ
+          rwa [List.map_append, ← Flags.byType_map θ ps] at this
+        · have := NoOwned.inst hθ hn; rwa [Tm.inst] at this
+    | .lblock (ps := ps) hb hu ha hs' hsL =>
+        have hb' := hb.inst hs hθ hp hq
         rw [List.map_append, ← Flags.byType_map θ ps] at hb'
         simp only [Tm.inst]
-        refine .block hb' (fun j hj => ?_) (ha.inst hs hθ hq)
-          (by simpa only [List.map_cons, Tm.inst] using hs'.inst hs hθ hq)
-          (fun e => by simpa only [List.map_cons, Tm.inst] using (hsL e).inst hs hθ hq)
+        refine .lblock hb' (fun j hj => ?_) (ha.inst hs hθ hp hq)
+          (by simpa only [List.map_cons, Tm.inst] using hs'.inst hs hθ hp hq)
+          (fun e => by simpa only [List.map_cons, Tm.inst] using (hsL e).inst hs hθ hp hq)
+        have := (hu j (by simpa using hj)).inst hθ
+        rwa [List.map_append, ← Flags.byType_map θ ps] at this
+    | .app hf ha hs' hsL =>
+        rw [Tm.inst]
+        exact .app (hf.inst hs hθ hp hq) (ha.inst hs hθ hp hq)
+          (by simpa only [List.map_cons] using hs'.inst hs hθ hp hq)
+          (fun e => by simpa only [List.map_cons] using (hsL e).inst hs hθ hp hq)
+    | .block (ps := ps) hb hu ha hs' hsL =>
+        have hb' := hb.inst hs hθ hp hq
+        rw [List.map_append, ← Flags.byType_map θ ps] at hb'
+        simp only [Tm.inst]
+        refine .block hb' (fun j hj => ?_) (ha.inst hs hθ hp hq)
+          (by simpa only [List.map_cons, Tm.inst] using hs'.inst hs hθ hp hq)
+          (fun e => by simpa only [List.map_cons, Tm.inst] using (hsL e).inst hs hθ hp hq)
         have := (hu j (by simpa using hj)).inst hθ
         rwa [List.map_append, ← Flags.byType_map θ ps] at this
     | .resume (A := A) h1 h2 ha hs' hsL =>
         simp only [Tm.inst]
-        exact .resume (A := A.inst θ) h1 (by simp [h2]) (ha.inst hs hθ hq)
-          (by simpa only [List.map_cons, Tm.inst] using hs'.inst hs hθ hq)
-          (fun e => by simpa only [List.map_cons, Tm.inst] using (hsL e).inst hs hθ hq)
+        exact .resume (A := A.inst θ) h1 (by simp [h2]) (ha.inst hs hθ hp hq)
+          (by simpa only [List.map_cons, Tm.inst] using hs'.inst hs hθ hp hq)
+          (fun e => by simpa only [List.map_cons, Tm.inst] using (hsL e).inst hs hθ hp hq)
     | .ite hc ht hf hq' hqL =>
         rw [Tm.inst]
-        exact .ite (hc.inst hs hθ hq) (ht.inst hs hθ hq) (hf.inst hs hθ hq)
-          (hq'.imp (Quiet.inst hs hθ hq) (fun ⟨a, b⟩ => ⟨NoOwned.inst hθ a, NoOwned.inst hθ b⟩))
-          (fun e => (hqL e).imp (Firm.inst hs hθ hq) (fun ⟨a, b⟩ => ⟨NoLin.inst hθ a, NoLin.inst hθ b⟩))
-    | .cell ht hk => rw [Tm.inst]; exact .cell (ht.inst hs hθ hq) (Kind.dup_inst hθ hk)
-    | .fresh ht => rw [Tm.inst]; exact .fresh (ht.inst hs hθ hq)
-    | .get ht => rw [Tm.inst]; exact .get (ht.inst hs hθ hq)
-    | .set hc hv hs' hsL =>
+        exact .ite (hc.inst hs hθ hp hq) (ht.inst hs hθ hp hq) (hf.inst hs hθ hp hq)
+          (hq'.imp (Quiet.inst hs hθ hp hq) (fun ⟨a, b⟩ => ⟨NoOwned.inst hθ a, NoOwned.inst hθ b⟩))
+          (fun e => (hqL e).imp (Firm.inst hs hθ hp hq) (fun ⟨a, b⟩ => ⟨NoLin.inst hθ a, NoLin.inst hθ b⟩))
+    | .scope (A := A) hi hk hb hq' hqL =>
         rw [Tm.inst]
-        exact .set (hc.inst hs hθ hq) (hv.inst hs hθ hq)
-          (by simpa only [List.map_cons, List.map_nil] using hs'.inst hs hθ hq)
-          (fun e => by
-            obtain ⟨h1, A, ρ, hA, hk⟩ := hsL e
-            have hA' := hA.inst hs θ
-            simp only [Ty.inst] at hA'
-            exact ⟨by simpa only [List.map_cons, List.map_nil] using h1.inst hs hθ hq, _, _, hA',
-              Kind.not_linear_inst hθ hk⟩)
-    | .brw ht hA hp =>
-        rw [Tm.inst]
-        have hA' := hA.inst hs θ
-        simp only [Ty.inst] at hA'
-        exact .brw (ht.inst hs hθ hq) hA' (hp.inst θ)
-    | .mbrw ht hA hp =>
-        rw [Tm.inst]
-        have hA' := hA.inst hs θ
-        simp only [Ty.inst] at hA'
-        exact .mbrw (ht.inst hs hθ hq) hA' (hp.inst θ)
+        exact .scope (hi.inst hs hθ hp hq) (Kind.dup_inst hθ hk)
+          (by simpa [Ty.inst] using hb.inst hs hθ hp hq)
+          (hq'.imp (fun hv => hv.inst θ) (Or.imp (Quiet.inst hs hθ hp hq) (NoOwnedUnder.inst hθ)))
+          (fun e => (hqL e).imp (fun hv => hv.inst θ) (Or.imp (Firm.inst hs hθ hp hq) (NoLinUnder.inst hθ)))
+    | .get (A := A) hi => simp only [Tm.inst]; exact .get (A := A.inst θ) (by simp [hi, Ty.inst])
+    | .set (A := A) hi hv hk =>
+        simp only [Tm.inst]
+        exact .set (A := A.inst θ) (by simp [hi, Ty.inst]) (hv.inst hs hθ hp hq)
+          (fun e => Kind.not_linear_inst hθ (hk e))
+    | .brw (A := A) hi => simp only [Tm.inst]; exact .brw (A := A.inst θ) (by simp [hi, Ty.inst])
+    | .mbrw (A := A) hi => simp only [Tm.inst]; exact .mbrw (A := A.inst θ) (by simp [hi, Ty.inst])
     | .field hb hd hi hA hk =>
         rw [Tm.inst]
-        have hA' := hA.inst hs θ
+        have hA' := hA.inst hs θ hp
         simp only [Ty.inst] at hA'
         have hk' := Kind.dup_inst hθ hk
         rw [Ty.inst_instOf] at hk'
-        exact .field (hb.inst hs hθ hq) hd hi hA' hk'
+        exact .field (hb.inst hs hθ hp hq) hd hi hA' hk'
     | .write hc hv hs' hsL =>
         rw [Tm.inst]
-        exact .write (hc.inst hs hθ hq) (hv.inst hs hθ hq)
-          (by simpa only [List.map_cons, List.map_nil] using hs'.inst hs hθ hq)
+        exact .write (hc.inst hs hθ hp hq) (hv.inst hs hθ hp hq)
+          (by simpa only [List.map_cons, List.map_nil] using hs'.inst hs hθ hp hq)
           (fun e => by
             obtain ⟨h1, A, ρ, hA, hk⟩ := hsL e
-            have hA' := hA.inst hs θ
+            have hA' := hA.inst hs θ hp
             simp only [Ty.inst] at hA'
-            exact ⟨by simpa only [List.map_cons, List.map_nil] using h1.inst hs hθ hq, _, _, hA',
+            exact ⟨by simpa only [List.map_cons, List.map_nil] using h1.inst hs hθ hp hq, _, _, hA',
               Kind.not_linear_inst hθ hk⟩)
     | .ref hf => rw [Tm.inst]; exact .ref (Inst.Fits.instOf hθ hq hf)
-    | .tag ht => rw [Tm.inst]; exact .tag (ht.inst hs hθ hq)
+    | .tag ht => rw [Tm.inst]; exact .tag (ht.inst hs hθ hp hq)
     | .con hf hs' hsL =>
-        rw [Tm.inst]; exact .con (hf.inst hs hθ hq) (hs'.inst hs hθ hq) (fun e => (hsL e).inst hs hθ hq)
-    | .proj ht => rw [Tm.inst]; exact .proj (ht.inst hs hθ hq)
+        rw [Tm.inst]; exact .con (hf.inst hs hθ hp hq) (hs'.inst hs hθ hp hq) (fun e => (hsL e).inst hs hθ hp hq)
+    | .proj ht => rw [Tm.inst]; exact .proj (ht.inst hs hθ hp hq)
     | .perform ha hs' hsL =>
-        rw [Tm.inst]; exact .perform (ha.inst hs hθ hq) (hs'.inst hs hθ hq) (fun e => (hsL e).inst hs hθ hq)
+        rw [Tm.inst]; exact .perform (ha.inst hs hθ hp hq) (hs'.inst hs hθ hp hq) (fun e => (hsL e).inst hs hθ hp hq)
     | .handle hb ht hc =>
-        have ht' := ht.inst hs θ
+        have ht' := ht.inst hs θ hp
         simp only [Tm.inst] at ht' ⊢
-        refine .handle (hb.inst hs hθ hq) ht' (fun c m => ?_)
+        refine .handle (hb.inst hs hθ hp hq) ht' (fun c m => ?_)
         obtain ⟨c0, m0, rfl⟩ := List.mem_map.mp m
-        exact (hc c0 m0).inst hs hθ hq
+        exact (hc c0 m0).inst hs hθ hp hq
     | .handleRet (B := B) hb hbt hr hu hq' hqL ht hc =>
-        have ht' := ht.inst hs θ
+        have ht' := ht.inst hs θ hp
         simp only [Tm.inst] at ht' ⊢
-        refine .handleRet (hb.inst hs hθ hq) (hbt.inst hs θ) (by simpa using hr.inst hs hθ hq)
+        refine .handleRet (hb.inst hs hθ hp hq) (hbt.inst hs θ hp) (by simpa using hr.inst hs hθ hp hq)
           (by simpa using hu.inst hθ)
-          (hq'.imp (Quiet.inst hs hθ hq) (NoOwnedUnder.inst hθ))
-          (fun e => (hqL e).imp (Firm.inst hs hθ hq) (NoLinUnder.inst hθ)) ht' (fun c m => ?_)
+          (hq'.imp (Quiet.inst hs hθ hp hq) (NoOwnedUnder.inst hθ))
+          (fun e => (hqL e).imp (Firm.inst hs hθ hp hq) (NoLinUnder.inst hθ)) ht' (fun c m => ?_)
         obtain ⟨c0, m0, rfl⟩ := List.mem_map.mp m
-        exact (hc c0 m0).inst hs hθ hq
-    | .loc (A := A) hS => rw [Tm.inst]; exact .loc (A := A.inst θ) (by simp [hS])
-    | .run hb hst => rw [Tm.inst]; exact .run (hb.inst hs hθ hq) hst
-    | .info hb hst => rw [Tm.inst]; exact .info (hb.inst hs hθ hq) hst
+        exact (hc c0 m0).inst hs hθ hp hq
+    | .run hb hst => rw [Tm.inst]; exact .run (hb.inst hs hθ hp hq) hst
+    | .info hb hst => rw [Tm.inst]; exact .info (hb.inst hs hθ hp hq) hst
     | .select (e := e) (R := R) (kb := kb) hv hk hkb hu hω hωL ht hc =>
-        have ht' := ht.inst hs θ
+        have ht' := ht.inst hs θ hp
         subst hk
         simp only [Tm.inst] at ht' ⊢
-        refine .select (R := R.inst θ) (kb := kb.inst θ) (hv.inst hs hθ hq) (by simp)
-          (by simpa using hkb.inst hs hθ hq)
+        refine .select (R := R.inst θ) (kb := kb.inst θ) (hv.inst hs hθ hp hq) (by simp)
+          (by simpa using hkb.inst hs hθ hp hq)
           (by simpa using hu.inst hθ) (fun e' => ?_) (fun e' q => ?_) ht' (fun c m => ?_)
         · have := NoOwned.inst hθ (hω (by rw [← hq θ e]; exact e')); simpa only [Tm.inst] using this
         · have := NoLin.inst hθ (hωL e' (by rw [← hq θ e]; exact q)); simpa only [Tm.inst] using this
         · obtain ⟨c0, m0, rfl⟩ := List.mem_map.mp m
-          exact (hc c0 m0).inst hs hθ hq
+          exact (hc c0 m0).inst hs hθ hp hq
 
-  theorem Lins.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ)
-      (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {S Γ C ts} (h : Lins os sg S Γ C ts) :
-      Lins os sg (S.map (·.inst θ)) (Γ.map (·.inst θ)) C (ts.map (·.inst θ)) := by
+  theorem Lins.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ) (hp : ∀ i, Portable sg (θ.ty i))
+      (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {Γ C ts} (h : Lins os sg Γ C ts) :
+      Lins os sg (Γ.map (·.inst θ)) C (ts.map (·.inst θ)) := by
     match h with
     | .nil => exact .nil
-    | .cons ht hs' => exact .cons (ht.inst hs hθ hq) (hs'.inst hs hθ hq)
+    | .cons ht hs' => exact .cons (ht.inst hs hθ hp hq) (hs'.inst hs hθ hp hq)
 
-  theorem LinClause.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ)
-      (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {S Γ C T ρ c}
-      (h : LinClause os sg S Γ C T ρ c) :
-      LinClause os sg (S.map (·.inst θ)) (Γ.map (·.inst θ)) C (T.inst θ) (Row.inst θ ρ) (c.inst θ) := by
+  theorem LinClause.inst {os : OwnSig} {sg : Sig} {θ : Inst} (hs : SigOk sg) (hθ : Inst.Fits os θ) (hp : ∀ i, Portable sg (θ.ty i))
+      (hq : ∀ θ e, os.quant (e.inst1 θ) = os.quant e) {Γ C T ρ c}
+      (h : LinClause os sg Γ C T ρ c) :
+      LinClause os sg (Γ.map (·.inst θ)) C (T.inst θ) (Row.inst θ ρ) (c.inst θ) := by
     match h with
-    | .mk (e := e) (pk := pk) (Δ := Δ) (Δk := Δk) (Ck := Ck) (g := none) (R := R) he hp hk hb hu _ _ hn _ hkp =>
-        have hk' : (pk = .bind ∧ Δk.map (·.inst θ) = [.fn [R.inst θ] (T.inst θ) (Row.inst θ ρ)] ∧
+    | .mk (e := e) (pk := pk) (Δ := Δ) (Δk := Δk) (Ck := Ck) (g := none) (R := R) he hpo hk hb hu _ _ hn _ hkp =>
+        have hk' : (pk = .bind ∧ Δk.map (·.inst θ) = [.lfn [R.inst θ] (T.inst θ) (Row.inst θ ρ)] ∧
             Ck = [contFlag (os.quant (e.inst1 θ))]) ∨ (pk = .wild ∧ Δk.map (·.inst θ) = [] ∧ Ck = []) := by
           rcases hk with ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩
           · refine Or.inl ⟨h1, ?_, by rw [hq]; exact h3⟩
@@ -2668,15 +2351,15 @@ mutual
           · exact Or.inr ⟨h1, by simp [h2], h3⟩
         have conv : (Δ ++ Δk ++ Γ).map (·.inst θ) = Δ.map (·.inst θ) ++ Δk.map (·.inst θ) ++ Γ.map (·.inst θ) := by
           simp
-        have hb' := hb.inst hs hθ hq
+        have hb' := hb.inst hs hθ hp hq
         rw [conv, ← Flags.byType_map θ Δ] at hb'
         simp only [Clause.inst]
-        exact .mk (hs.2 θ _ _ _ he) (PatsOk.inst θ hp) hk' hb' (fun j hj => by
+        exact .mk (hs.2 θ _ _ _ he) (PatsOk.inst θ hpo) hk' hb' (fun j hj => by
             have := (hu j hj).inst hθ; rwa [conv, ← Flags.byType_map θ Δ] at this)
           (fun _ e => by cases e) (fun _ e => by cases e) (hn.inst hθ) (fun _ e => by cases e)
           (fun e' => ⟨((hkp e').1).inst hθ, fun hw => by rw [hq]; exact (hkp e').2 hw⟩)
-    | .mk (e := e) (pk := pk) (Δ := Δ) (Δk := Δk) (Ck := Ck) (g := some g0) (R := R) he hp hk hb hu hg hgn hn hgo hkp =>
-        have hk' : (pk = .bind ∧ Δk.map (·.inst θ) = [.fn [R.inst θ] (T.inst θ) (Row.inst θ ρ)] ∧
+    | .mk (e := e) (pk := pk) (Δ := Δ) (Δk := Δk) (Ck := Ck) (g := some g0) (R := R) he hpo hk hb hu hg hgn hn hgo hkp =>
+        have hk' : (pk = .bind ∧ Δk.map (·.inst θ) = [.lfn [R.inst θ] (T.inst θ) (Row.inst θ ρ)] ∧
             Ck = [contFlag (os.quant (e.inst1 θ))]) ∨ (pk = .wild ∧ Δk.map (·.inst θ) = [] ∧ Ck = []) := by
           rcases hk with ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩
           · refine Or.inl ⟨h1, ?_, by rw [hq]; exact h3⟩
@@ -2684,15 +2367,15 @@ mutual
           · exact Or.inr ⟨h1, by simp [h2], h3⟩
         have conv : (Δ ++ Δk ++ Γ).map (·.inst θ) = Δ.map (·.inst θ) ++ Δk.map (·.inst θ) ++ Γ.map (·.inst θ) := by
           simp
-        have hb' := hb.inst hs hθ hq
+        have hb' := hb.inst hs hθ hp hq
         rw [conv, ← Flags.byType_map θ Δ] at hb'
         simp only [Clause.inst]
-        have h1 := (hg g0 rfl).inst hs hθ hq
+        have h1 := (hg g0 rfl).inst hs hθ hp hq
         rw [conv, ← Flags.byType_map θ Δ] at h1
         have h2 := NoOwned.inst hθ (hgn g0 rfl)
         rw [conv, ← Flags.byType_map θ Δ] at h2
         have h3 := (hgo g0 rfl).inst hθ
-        exact .mk (hs.2 θ _ _ _ he) (PatsOk.inst θ hp) hk' hb' (fun j hj => by
+        exact .mk (hs.2 θ _ _ _ he) (PatsOk.inst θ hpo) hk' hb' (fun j hj => by
             have := (hu j hj).inst hθ; rwa [conv, ← Flags.byType_map θ Δ] at this)
           (fun g' e => by cases e; exact h1) (fun g' e => by cases e; exact h2) (hn.inst hθ)
           (fun g' e => by cases e; exact h3)

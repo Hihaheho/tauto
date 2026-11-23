@@ -1,5 +1,5 @@
 @ cases.a-name-declared-further-on-is-checked-first-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn early(n: Nat): Nat { late(n) }
@@ -15,7 +15,7 @@ checks."input/main.taut::early_zero" = "ok"
 checks."input/main.taut::late" = "ok"
 
 @ cases.declarations-that-use-each-other-outside-mutual-say-so-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn early(n: Nat): Nat { late(n) }
@@ -44,10 +44,10 @@ message = "uses `early`, which did not check"
 span = "«early(n)»"
 
 @ cases.a-struct-used-in-a-proof-says-to-declare-an-inductive-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-struct Pt { x: Nat }
+struct Pt { x: Float }
 
 theorem pt_refl(p: Pt): Zero = Zero { Refl }
 ```
@@ -83,7 +83,7 @@ message = "uses `get_skip`, which did not check"
 span = "{ «get_skip»("
 
 @ cases.a-use-of-a-failed-mutual-theorem-says-so-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 def P<A: Type>(a: A, n: Nat): Prop := n = n
@@ -128,7 +128,7 @@ message = "uses `ev`, which did not check"
 span = "«theorem use_ev(n: Nat): P(n, n) { ev(n) }»"
 
 @ cases.a-function-that-runs-as-written-says-why-in-a-proof-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn t(): Text { "hi" }
@@ -142,12 +142,12 @@ checks."input/main.taut::t_refl" = "error: "
 @ cases.a-function-that-runs-as-written-says-why-in-a-proof-0.diagnostics[]
 file = "input/main.taut"
 name = "t_refl"
-message = "`t` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text`, which runs as written: it is a built-in of the prelude; it is in the standard library: `import std::Text`; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
+message = "`t` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text`, which runs as written: it is a built-in of the prelude; it is in the standard library: `import std::text`; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
 span = "«t»() ="
 @ cases.a-function-that-runs-as-written-says-why-in-a-proof-0.diagnostics[]
 file = "input/main.taut"
 name = "t_refl"
-message = "`t` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text`, which runs as written: it is a built-in of the prelude; it is in the standard library: `import std::Text`; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
+message = "`t` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text`, which runs as written: it is a built-in of the prelude; it is in the standard library: `import std::text`; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
 span = "= «t»()"
 
 @ cases.a-function-of-a-file-without-the-import-means-the-builtin-0
@@ -156,7 +156,7 @@ files."input/lib.taut" = ```tauto
 pub fn show_path(n: Nat): Text { Text::of_nat(n) }
 ```
 files."input/main.taut" = ```tauto
-import std::Text
+import std::text
 import "lib.taut"
 
 theorem shown(): show_path(42) = "42" { Refl(Text, "42") }
@@ -174,14 +174,14 @@ checks."input/main.taut::shown" = "error: "
 @ cases.a-function-of-a-file-without-the-import-means-the-builtin-0.diagnostics[]
 file = "input/main.taut"
 name = "shown"
-message = "`show_path` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text::of_nat`, which runs as written: it is a built-in of the prelude; it is in the standard library: `import std::Text`; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
+message = "`show_path` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text`, which its file does not import; it is in the standard library: `import std::text`; a proof uses only what the kernel checked"
 span = "«show_path»"
 
 @ cases.a-proof-states-facts-about-a-program-enum-and-struct-0
 description = "an `inductive enum` and an `inductive struct` are inductive families of the same shape, so the functions over them are checked and a proof can use them"
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-import std::Text
+import std::text
 
 inductive enum Route {
   Home
@@ -227,7 +227,7 @@ checks."input/main.taut::about_back" = "ok"
 checks."input/main.taut::link_home" = "ok"
 
 @ cases.an-enum-without-inductive-runs-as-written-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 enum Id {
@@ -247,3 +247,23 @@ file = "input/main.taut"
 name = "same_refl"
 message = "`same` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Id`, which runs as written: it is an `enum`, not one of the kernel's types; write `inductive enum` for the proofs to see it; a proof uses only what the kernel checked"
 span = ": «same»("
+
+// A type that nothing declares in a function's signature is undefined, as a
+// name in a body is: it is not a type that only executable code has.
+@ cases.a-type-nothing-declares-in-a-signature-is-not-defined
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn same(c: Char): Char { c }
+```
+check_errors = ["`Char` is not defined"]
+
+// A name spelled like a keyword is shown as it is written, `r#direct`, where a
+// message says a declaration did not check.
+@ cases.a-failed-declaration-named-like-a-keyword-is-shown-with-r-hash
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn r#direct(): Nat { y }
+
+fn user(): Nat { r#direct() + z }
+```
+check_errors = ["`y` is not defined", "uses `r#direct`, which did not check"]

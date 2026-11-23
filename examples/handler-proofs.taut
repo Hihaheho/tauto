@@ -1,6 +1,6 @@
-import std::Base
-import std::List
-import std::Nat
+import std::base
+import std::list
+import std::nat
 
 // Functions with effects, and the handlers that run them, used in theorems as
 // they are written. `tauto check` reads each as a tree of operations and
@@ -42,7 +42,7 @@ pub theorem count_from_step(
 }
 
 pub theorem count_from_is(n: Nat, start: Nat): count_from(n, start) = Nat::add(start, n) {
-  ⊢ count_from(n, start) = Nat::add(start, n) from match n {
+  match n {
     Zero => Refl
     Succ(m) => Eq::trans(count_from_is(m, Succ(start)), Nat::add_succ_left(start, m))
   }
@@ -71,14 +71,14 @@ pub(open) inductive Resource: Type {
 }
 
 pub fn begin(r: Resource): Resource {
-  ⊢ Resource from match r {
+  match r {
     Mk(g, v) => Resource::Mk(Succ(g), v)
   }
 }
 
 // A completion is shown only when it answers the newest read.
 pub fn complete(r: Resource, token: Nat, value: Nat): Resource {
-  ⊢ Resource from match r {
+  match r {
     Mk(g, v) => ⊢ Resource from match Nat::eq(g, token) {
       true => Resource::Mk(g, value)
       false => Resource::Mk(g, v)
@@ -87,14 +87,14 @@ pub fn complete(r: Resource, token: Nat, value: Nat): Resource {
 }
 
 pub fn generation(r: Resource): Nat {
-  ⊢ Nat from match r {
-    Mk(g, v) => g
+  match r {
+    Mk(g, ^v) => g
   }
 }
 
 pub fn displayed(r: Resource): Nat {
-  ⊢ Nat from match r {
-    Mk(g, v) => v
+  match r {
+    Mk(^g, v) => v
   }
 }
 

@@ -1,4 +1,5 @@
-use tauto_nir::{ExprKind, Repr, Ty, Use, compile_with};
+use tauto::nir::compile_with;
+use tauto_nir::{ExprKind, Repr, Ty, Use};
 
 fn data(name: &str, args: Vec<Ty>) -> Ty {
     Ty::Data(name.into(), args)
@@ -100,13 +101,13 @@ fn read(value: Outer): List(u64) { value.inner.values }"#,
         (
             r#"struct Inner { values: List(u64) }
 struct Outer { inner: Inner }
-fn read(&value: Outer): List(u64) { value.inner.values }"#,
+fn read(value: &Outer): List(u64) { value.inner.values }"#,
             Some(Repr::Ref),
         ),
         (
             r#"struct Inner { values: List(u64) }
 struct Outer { inner: Inner }
-fn read(&mut value: Outer): List(u64) { value.inner.values }"#,
+fn read(value: &mut Outer): List(u64) { value.inner.values }"#,
             Some(Repr::RefMut),
         ),
     ] {
@@ -119,7 +120,7 @@ fn read(&mut value: Outer): List(u64) { value.inner.values }"#,
     }
     let source = r#"struct Inner { values: List(u64) }
 struct Outer { inner: Inner }
-fn read(value: Pair(Outer, u64)): List(u64) { value.fst.inner.values }"#;
+fn read(value: Outer × u64): List(u64) { value.fst.inner.values }"#;
     let pair = Ty::Pair(
         Box::new(outer.clone()),
         Box::new(Ty::Int(tauto_nir::Width::U64)),
@@ -131,7 +132,7 @@ fn read(value: Pair(Outer, u64)): List(u64) { value.fst.inner.values }"#;
         true,
     );
     let source = r#"struct Inner { values: List(u64) }
-struct Outer { pair: Pair(Inner, u64) }
+struct Outer { pair: Inner × u64 }
 fn read(value: Outer): List(u64) { value.pair.fst.values }"#;
     let pair = Ty::Pair(
         Box::new(inner.clone()),
@@ -147,10 +148,10 @@ fn read(value: Outer): List(u64) { value.pair.fst.values }"#;
 
 #[test]
 fn generic_projection_types_retain_the_helper_type_parameter() {
-    let source = r#"shared struct Inner(A: Shared) { values: List(A) }
-shared struct Outer(B: Shared) { inner: Inner(B) }
-shared struct Wrapper(C: Shared) { outer: Outer(C) }
-fn read<T: Shared>(&value: Wrapper(T)): List(T) { value.outer.inner.values }
+    let source = r#"struct(shared) Inner(A: Shared) { values: List(A) }
+struct(shared) Outer(B: Shared) { inner: Inner(B) }
+struct(shared) Wrapper(C: Shared) { outer: Outer(C) }
+fn read<T: Shared>(value: &Wrapper(T)): List(T) { value.outer.inner.values }
 fn run(value: Wrapper(u64)): List(u64) { read(&value) }"#;
     let parameter = Ty::Param("T".into());
     check(

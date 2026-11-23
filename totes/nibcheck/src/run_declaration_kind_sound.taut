@@ -2,9 +2,9 @@ import "run_data_invariant_sound.taut"
 import "run_after_datas_checked.taut"
 import "declaration_program_sound.taut"
 import "finish_error_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -16,6 +16,7 @@ import "registration_ordered.taut"
 import "rules_data_kind.taut"
 import "run_summary.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -29,7 +30,7 @@ pub theorem registration_finish_after_kind(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_finish_after(program, m)))
 ): ProgramDataStateKinds(program, registration_finish_after(program, m)) {
-  ⊢ ProgramDataStateKinds(program, registration_finish_after(program, m)) from match m {
+  match m {
     mut1(v, next) => Eq::subst(
       (result: Mut1(Unit, Checker)) => ProgramDataStateKinds(program, result),
       Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
@@ -50,7 +51,7 @@ pub theorem registration_program_after_kind(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
 ): ProgramDataStateKinds(program, registration_program_after(program, m)) {
-  ⊢ ProgramDataStateKinds(program, registration_program_after(program, m)) from match m {
+  match m {
     mut1(v, next) => registration_finish_after_kind(program, ck_program_data(program, next), clean)
   }
 }
@@ -84,7 +85,7 @@ pub theorem run_after_data_result_kind(
   prepared: ∀ clean: DiagnosticClean(ck_st(m)). ProgramDataStateKinds(program, m),
   clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m)))
 ): ProgramDataStateKinds(program, run_after_data_result(prelude, program, own, m)) {
-  ⊢ ProgramDataStateKinds(program, run_after_data_result(prelude, program, own, m)) from match m {
+  match m {
     mut1(v, next) => {
       let before: DiagnosticClean(
         next
@@ -105,7 +106,7 @@ pub theorem run_after_builtins_kind(
   ordered: CkOrdered(ck_st(m)),
   clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m)))
 ): ProgramDataStateKinds(program, run_after_builtins(prelude, program, m)) {
-  ⊢ ProgramDataStateKinds(program, run_after_builtins(prelude, program, m)) from match m {
+  match m {
     mut1(v, next) => run_after_data_result_kind(
       prelude,
       program,
@@ -175,7 +176,7 @@ pub theorem run_after_module_errors_kind(
   decls: CkDatasOrdered(ck_st(m)),
   clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m))
 ): ProgramDataReportKinds(program, run_after_module_errors(prelude, program, m)) {
-  ⊢ ProgramDataReportKinds(program, run_after_module_errors(prelude, program, m)) from match m {
+  match m {
     mut1(v, next) => run_finish_after_kind(
       program,
       ck_run(next, prelude, program),

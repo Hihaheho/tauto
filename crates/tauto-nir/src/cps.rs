@@ -30,10 +30,11 @@ pub enum Cps {
         ticked: bool,
     },
     /// A call of the function itself in return position, which reuses the
-    /// current frame.
+    /// current frame. `ticked` counts a step of the host's limit first.
     TailSelfCall {
         inst: InstId,
         args: Vec<Cps>,
+        ticked: bool,
     },
     External {
         name: Name,
@@ -104,10 +105,12 @@ pub enum Cps {
         id: u32,
         path: Vec<PathStep>,
         through_borrow: bool,
+        /// `&mut`: the borrow may write the place.
+        mutable: bool,
     },
     Budget {
         id: u32,
-        /// `budget(memory: n)`: `steps` is a count of cells.
+        /// `perform budget_memory(n, f)`: `steps` is a count of cells.
         memory: bool,
         steps: Box<Cps>,
         body: Box<Cps>,
@@ -201,10 +204,12 @@ pub enum Unary {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CpsPat {
     Wild,
-    /// `borrow` when the binding is a borrow; `owned` when it owns the value.
+    /// `borrow` when the binding is a borrow; `mutable` when that borrow is
+    /// `&mut`; `owned` when it owns the value.
     Bind {
         id: u32,
         borrow: bool,
+        mutable: bool,
         owned: bool,
     },
     Literal(Value),
@@ -212,6 +217,12 @@ pub enum CpsPat {
         ctor: Name,
         fields: Vec<CpsPat>,
         data: Name,
+    },
+    /// What was injected into the union `union` at `variant`.
+    Variant {
+        union: UnionId,
+        variant: usize,
+        pat: Box<CpsPat>,
     },
 }
 
@@ -252,8 +263,8 @@ pub struct Closure {
 }
 
 /// A function's body. `restart` lowers its calls marked `recur` (`tail.rs`)
-/// that count no fuel to `TailSelfCall`; the caller decides that they may
-/// discard the frame.
+/// that count no fuel or a step of the host's limit to `TailSelfCall`; the
+/// caller decides that they may discard the frame.
 pub fn lower(pkg: &Package, f: &FnInst, restart: bool) -> Result<Cps, String> {
     let (locals, continuations) = local_types(f);
     Lower {
@@ -277,7 +288,7 @@ fn pure(v: Value) -> Cps {
 
 struct Lower<'a> {
     pkg: &'a Package,
-    locals: BTreeMap<u32, (Storage, Ty)>,
+    locals: BTreeMap<u32, (Storage, Option<Ty>)>,
     continuations: BTreeSet<u32>,
     restart: bool,
 }
@@ -312,18 +323,34 @@ impl Lower<'_> {
             ExprKind::Call(c) => {
                 let args = self.args(&c.args)?;
                 if let Callee::Inst(inst) = c.callee
+                    && self
+                        .pkg
+                        .externs
+                        .iter()
+                        .any(|e| e.name.as_str() == self.pkg.fns[inst].source.as_str())
+                {
+                    return Ok(Cps::External {
+                        name: self.pkg.fns[inst].source.clone(),
+                        args,
+                    });
+                }
+                if let Callee::Inst(inst) = c.callee
                     && self.restart
                     && c.recur
-                    && c.tick == Tick::None
+                    && c.tick != Tick::Budget
                 {
-                    return Ok(Cps::TailSelfCall { inst, args });
+                    return Ok(Cps::TailSelfCall {
+                        inst,
+                        args,
+                        ticked: c.tick == Tick::Host,
+                    });
                 }
                 let callee = match &c.callee {
                     Callee::Inst(i) => pure(Value::Fn(*i)),
                     Callee::Local(l) => {
                         let consumes = if l.storage() == Storage::Owned {
                             match self.locals.get(&l.id) {
-                                Some((_, Ty::Fn(f))) => !f.kind.dup(),
+                                Some((_, Some(Ty::Fn(f)))) => !f.kind.dup(),
                                 _ => {
                                     return unsupported(msg!(
                                         "nir-a-local-call-without-a-function"
@@ -382,16 +409,12 @@ impl Lower<'_> {
                     ticked: c.tick != Tick::None,
                 }
             }
-            ExprKind::Arith { op, args, .. } if e.ty == Ty::Float => Cps::Prim {
-                op: Prim::FloatArith(*op),
-                args: self.args(args)?,
-            },
-            ExprKind::Arith { op, args, .. } if e.ty == Ty::Float32 => Cps::Prim {
-                op: Prim::Float32Arith(*op),
-                args: self.args(args)?,
-            },
-            ExprKind::Arith { op, args, width } => Cps::Prim {
-                op: Prim::Arith(*op, *width),
+            ExprKind::Arith { op, args, num } => Cps::Prim {
+                op: match num {
+                    Num::Int(width) => Prim::Arith(*op, *width),
+                    Num::Float => Prim::FloatArith(*op),
+                    Num::Float32 => Prim::Float32Arith(*op),
+                },
                 args: self.args(args)?,
             },
             ExprKind::Cmp { op, args } => Cps::Prim {
@@ -532,6 +555,7 @@ impl Lower<'_> {
                 id: p.local.id,
                 path: path(&p.path),
                 through_borrow: p.local.storage().is_borrow(),
+                mutable: matches!(e.kind, ExprKind::RefMut(_)),
             },
             ExprKind::TempRef(v) => self.map(
                 v,
@@ -608,8 +632,14 @@ impl Lower<'_> {
                     }
                     return unsupported(msg!("nir-a-closure-capture-without-a-local"));
                 };
-                if *storage == Storage::Owned && !copy_type(self.pkg, ty, 128)? {
-                    moves.push(*id);
+                if *storage == Storage::Owned {
+                    // A name a closure is lent has no type written here.
+                    let Some(ty) = ty else {
+                        return unsupported(msg!("nir-a-closure-capture-without-a-resolved"));
+                    };
+                    if !copy_type(self.pkg, ty, 128)? {
+                        moves.push(*id);
+                    }
                 }
             }
         }
@@ -653,6 +683,7 @@ impl Lower<'_> {
                     id: local.id,
                     path: Vec::new(),
                     through_borrow: false,
+                    mutable: m.arms.iter().any(|a| binds_mut(&a.pat)),
                 };
             }
         }
@@ -736,12 +767,23 @@ impl Lower<'_> {
     }
 }
 
+/// Whether `p` binds a `&mut`.
+fn binds_mut(p: &Pat) -> bool {
+    match p {
+        Pat::Bind(l, _) => l.storage() == Storage::BorrowMut,
+        Pat::Ctor { fields, .. } => fields.iter().any(binds_mut),
+        Pat::Variant { pat, .. } => binds_mut(pat),
+        _ => false,
+    }
+}
+
 fn pattern(p: &Pat) -> CpsPat {
     match p {
         Pat::Wild => CpsPat::Wild,
         Pat::Bind(l, _) => CpsPat::Bind {
             id: l.id,
             borrow: matches!(l.storage(), Storage::Borrow | Storage::BorrowMut),
+            mutable: l.storage() == Storage::BorrowMut,
             owned: l.storage() == Storage::Owned,
         },
         Pat::Int(n) | Pat::Nat(n) => CpsPat::Literal(Value::Int(i128::from(*n))),
@@ -751,6 +793,15 @@ fn pattern(p: &Pat) -> CpsPat {
             ctor: ctor.name.clone(),
             fields: fields.iter().map(pattern).collect(),
             data: data_owner(&ctor.data),
+        },
+        Pat::Variant {
+            union,
+            variant,
+            pat,
+        } => CpsPat::Variant {
+            union: *union,
+            variant: *variant,
+            pat: Box::new(pattern(pat)),
         },
     }
 }
@@ -769,19 +820,22 @@ fn path(fields: &[FieldRef]) -> Vec<PathStep> {
 pub fn data_owner(data: &DataRef) -> Name {
     match data {
         DataRef::Gen(n) => n.clone(),
-        DataRef::Option => tauto::bindings::library_name("Option"),
-        DataRef::Result => tauto::bindings::library_name("Result"),
-        DataRef::Pair => tauto::bindings::library_name("Pair"),
+        DataRef::Option => tauto_surface::bindings::library_name("Option"),
+        DataRef::Result => tauto_surface::bindings::library_name("Result"),
+        DataRef::Pair => tauto_surface::bindings::library_name("Pair"),
     }
 }
 
 // Types belong to bindings, not to an individual read after dereferencing or
 // coercion. Specializations may reuse local identities in different functions.
-fn local_types(function: &FnInst) -> (BTreeMap<u32, (Storage, Ty)>, BTreeSet<u32>) {
+fn local_types(function: &FnInst) -> (BTreeMap<u32, (Storage, Option<Ty>)>, BTreeSet<u32>) {
     let mut out = BTreeMap::new();
     let mut continuations = BTreeSet::new();
     for param in &function.params {
-        out.insert(param.local.id, (param.local.storage(), param.ty.clone()));
+        out.insert(
+            param.local.id,
+            (param.local.storage(), Some(param.ty.clone())),
+        );
     }
     expression_bindings(&function.body, &mut out, &mut continuations);
     (out, continuations)
@@ -789,19 +843,20 @@ fn local_types(function: &FnInst) -> (BTreeMap<u32, (Storage, Ty)>, BTreeSet<u32
 
 fn expression_bindings(
     expr: &Expr,
-    out: &mut BTreeMap<u32, (Storage, Ty)>,
+    out: &mut BTreeMap<u32, (Storage, Option<Ty>)>,
     continuations: &mut BTreeSet<u32>,
 ) {
-    fn pattern(pat: &Pat, out: &mut BTreeMap<u32, (Storage, Ty)>) {
+    fn pattern(pat: &Pat, out: &mut BTreeMap<u32, (Storage, Option<Ty>)>) {
         match pat {
             Pat::Bind(local, ty) => {
-                out.insert(local.id, (local.storage(), ty.clone()));
+                out.insert(local.id, (local.storage(), Some(ty.clone())));
             }
             Pat::Ctor { fields, .. } => {
                 for field in fields {
                     pattern(field, out);
                 }
             }
+            Pat::Variant { pat, .. } => pattern(pat, out),
             _ => {}
         }
     }
@@ -809,16 +864,16 @@ fn expression_bindings(
         ExprKind::Block(block) => {
             for stmt in &block.stmts {
                 if let Stmt::Let { local, ty, .. } | Stmt::Var { local, ty, .. } = stmt {
-                    out.insert(local.id, (local.storage(), ty.clone()));
+                    out.insert(local.id, (local.storage(), Some(ty.clone())));
                 }
             }
         }
         ExprKind::Closure(closure) => {
             for (local, ty) in &closure.params {
-                out.insert(local.id, (local.storage(), ty.clone()));
+                out.insert(local.id, (local.storage(), Some(ty.clone())));
             }
             for reference in &closure.refs {
-                out.insert(reference.inner.id, (reference.inner.storage(), Ty::Infer));
+                out.insert(reference.inner.id, (reference.inner.storage(), None));
             }
         }
         ExprKind::Match(node) => {
@@ -889,7 +944,6 @@ fn copy_type(pkg: &Package, ty: &Ty, fuel: usize) -> R<bool> {
             }
             Ok(true)
         }
-        Ty::Infer => unsupported(msg!("nir-a-closure-capture-without-a-resolved")),
         _ => Ok(false),
     }
 }

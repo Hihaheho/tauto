@@ -1,0 +1,1930 @@
+import "syntax.taut"
+import "model.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::map
+import std::builtin::macro
+
+// A package from its tree (`nir::parse`), as `docs/design/nir-text.md` reads
+// the text: a type that is not written is the one the spelling shows, a local
+// is used as it was bound, a constructor is the one a data type above
+// declares.
+
+// How a local was bound.
+pub struct RBound { repr: NRepr, ty: Option(NTy) }
+
+pub struct RState {
+  bound: Ordmap(Nat, RBound),
+  datas: List(NData),
+  ops: List(Text),
+  // What in the text is not a package: the first such thing.
+  error: Option(Text)
+}
+
+pub fn r_set<A>(slot: &mut A, value: A): Unit {
+  *slot := value
+}
+
+pub fn r_fail(st: &mut RState, what: Text): Unit {
+  match st.error {
+    Some(^e) => ()
+    None => r_set(&mut st.error, Some(what))
+  }
+}
+
+// The text between the quotes of a string as the printer writes one. `mode`
+// is 0 in plain text, 1 after a backslash, 2 after `\\u` and 3 in the digits
+// of `\\u{…}`, whose value so far is `code`.
+pub fn r_unescape(cs: List(Nat), mode: Nat, code: Nat): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => if mode == 0 {
+      if c == 92 { r_unescape(rest, 1, 0) } else {
+        Cons(text_code_point(c), r_unescape(rest, 0, 0))
+      }
+    } else if mode == 1 {
+      if c == 110 {
+        Cons(text_code_point(10), r_unescape(rest, 0, 0))
+      } else if c == 114 {
+        Cons(text_code_point(13), r_unescape(rest, 0, 0))
+      } else if c == 116 {
+        Cons(text_code_point(9), r_unescape(rest, 0, 0))
+      } else if c == 48 {
+        Cons(text_code_point(0), r_unescape(rest, 0, 0))
+      } else if c == 117 {
+        r_unescape(rest, 2, 0)
+      } else {
+        Cons(text_code_point(c), r_unescape(rest, 0, 0))
+      }
+    } else if mode == 2 {
+      r_unescape(rest, 3, 0)
+    } else if c == 125 {
+      Cons(text_code_point(code), r_unescape(rest, 0, 0))
+    } else {
+      let d := if c >= 97 { c - 87 } else if c >= 65 { c - 55 } else { c - 48 }
+      r_unescape(rest, 3, code * 16 + d)
+    }
+  }
+}
+
+// The content of `"…"` (`skip` is 1) or `$"…"` (`skip` is 2).
+pub fn r_string(t: Text, skip: Nat): Text {
+  let inner := Text::slice_or_empty(t, skip, Text::len(t) - 1)
+  Text::concat_all(r_unescape(text_code_points(inner), 0, 0))
+}
+
+pub fn r_spelling(t: Text): Text {
+  if text_starts_with(t, "$", 0) { r_string(t, 2) } else { t }
+}
+
+pub fn r_name(n: nir::Name): Text {
+  match n {
+    Word(t) => t.text
+    Quoted(t) => r_string(t.text, 2)
+    KwDeclarations(t) => t.text
+    KwSyntax(t) => t.text
+    KwSha(t) => t.text
+    KwResult(t) => t.text
+    KwTables(t) => t.text
+    KwData(t) => t.text
+    KwConstructors(t) => t.text
+    KwOp(t) => t.text
+    KwTop(t) => t.text
+    KwExport(t) => t.text
+    KwRow(t) => t.text
+    KwForeignRow(t) => t.text
+    KwPureBorrowCallbacks(t) => t.text
+    KwSync(t) => t.text
+    KwPermissions(t) => t.text
+    KwUnsupported(t) => t.text
+    KwEvidence(t) => t.text
+    KwDirect(t) => t.text
+    KwOmega(t) => t.text
+    KwStruct(t) => t.text
+    KwEnum(t) => t.text
+    KwLinear(t) => t.text
+    KwView(t) => t.text
+    KwHost(t) => t.text
+    KwWaits(t) => t.text
+    KwLends(t) => t.text
+    KwFnRegion(t) => t.text
+    KwStack(t) => t.text
+    KwDo(t) => t.text
+    KwTick(t) => t.text
+    KwByRef(t) => t.text
+    KwPartial(t) => t.text
+    KwThen(t) => t.text
+    KwElse(t) => t.text
+    KwTier(t) => t.text
+    KwRecur(t) => t.text
+    KwUnwind(t) => t.text
+    KwRead(t) => t.text
+    KwBorrowed(t) => t.text
+    KwPure(t) => t.text
+    KwAs(t) => t.text
+    KwClones(t) => t.text
+    KwRefs(t) => t.text
+    KwOwnedRefs(t) => t.text
+    KwDetached(t) => t.text
+    KwInstance(t) => t.text
+    KwCaptures(t) => t.text
+    KwWith(t) => t.text
+    KwParams(t) => t.text
+    KwAnswer(t) => t.text
+    KwK(t) => t.text
+    KwInstantiated(t) => t.text
+    KwKept(t) => t.text
+    KwHostRet(t) => t.text
+    KwM(t) => t.text
+    KwMemory(t) => t.text
+    KwAbort(t) => t.text
+    KwSuspend(t) => t.text
+    KwAffine(t) => t.text
+    KwTierS(t) => t.text
+    KwTierA(t) => t.text
+    KwTierO(t) => t.text
+    KwTierM(t) => t.text
+    KwPlain(t) => t.text
+    KwSharedvar(t) => t.text
+    KwSharedvarCopy(t) => t.text
+    KwBorrowclosure(t) => t.text
+    KwFnref(t) => t.text
+  }
+}
+
+pub fn r_ctor_name(n: nir::CtorName): Text {
+  match n {
+    Word(t) => t.text
+    Quoted(t) => r_string(t.text, 2)
+  }
+}
+
+pub fn r_digits(bs: List(Nat), acc: Nat): Nat {
+  match bs {
+    Nil => acc
+    Cons(b, rest) => if b >= 48 && b <= 57 { r_digits(rest, acc * 10 + (b - 48)) } else { acc }
+  }
+}
+
+pub fn r_nat(t: Text): Nat { r_digits(Text::bytes(t), 0) }
+
+pub fn r_negative(t: Text): Bool { text_starts_with(t, "-", 0) }
+
+// The size of a number written with or without `-`.
+pub fn r_size(t: Text): Nat {
+  if r_negative(t) { r_nat(Text::slice_or_empty(t, 1, Text::len(t))) } else { r_nat(t) }
+}
+
+pub fn r_suffix_at(bs: List(Nat), at: Nat): Nat {
+  match bs {
+    Nil => at
+    Cons(b, rest) => if (b >= 48 && b <= 57) || b == 45 { r_suffix_at(rest, at + 1) } else { at }
+  }
+}
+
+// The word written right after a number.
+pub fn r_suffix(t: Text): Text {
+  Text::slice_or_empty(t, r_suffix_at(Text::bytes(t), 0), Text::len(t))
+}
+
+pub fn r_last_mark(bs: List(Nat), mark: Nat, at: Nat, found: Nat): Nat {
+  match bs {
+    Nil => found
+    Cons(b, rest) => r_last_mark(rest, mark, at + 1, if b == mark { at } else { found })
+  }
+}
+
+// `name#id` or `name@id` as its name and id; `mark` is the byte between.
+pub fn r_marked(t: Text, mark: Nat): Text × Nat {
+  let at := r_last_mark(Text::bytes(t), mark, 0, 0)
+  #(
+    r_spelling(Text::slice_or_empty(t, 0, at)),
+    r_nat(Text::slice_or_empty(t, at + 1, Text::len(t)))
+  )
+}
+
+pub fn r_width(word: Text): Option(NWidth) {
+  if word == "i32" {
+    Some(NW32)
+  } else if word == "i64" {
+    Some(NW64)
+  } else if word == "u8" {
+    Some(NU8)
+  } else if word == "u32" {
+    Some(NU32)
+  } else if word == "u64" {
+    Some(NU64)
+  } else if word == "uhost" {
+    Some(NHost)
+  } else if word == "nat" {
+    Some(NNat)
+  } else if word == "i8" {
+    Some(NW8)
+  } else if word == "i16" {
+    Some(NW16)
+  } else if word == "u16" {
+    Some(NU16)
+  } else {
+    None
+  }
+}
+
+pub fn r_indirect(i: Option(nir::Indirect)): NIndirect {
+  match i {
+    None => NDirect
+    Some(x) => match x {
+      KwShared(^t) => NShared
+      KwUnique(^t) => NUnique
+    }
+  }
+}
+
+pub fn r_ty(t: nir::Ty): NTy ! {div} {
+  match t {
+    RefTy(r) => match r.kw_mut {
+      Some(^m) => NRefMut(r_ty(r.ty))
+      None => NRef(r_ty(r.ty))
+    }
+    TyParam(p) => NParam(r_name(p.name))
+    Prim(p) => match p {
+      WU8(^k) => NInt(NU8)
+      WU16(^k) => NInt(NU16)
+      WI8(^k) => NInt(NW8)
+      WI16(^k) => NInt(NW16)
+      WU32(^k) => NInt(NU32)
+      WU64(^k) => NInt(NU64)
+      WUHost(^k) => NInt(NHost)
+      WI32(^k) => NInt(NW32)
+      WI64(^k) => NInt(NW64)
+      WNat(^k) => NInt(NNat)
+      WBool(^k) => NBool
+      WText(^k) => NText
+      WUnit(^k) => NUnit
+      WNever(^k) => NNever
+      WFloat(^k) => NFloat
+      WFloat32(^k) => NFloat32
+      WBuf(^k) => NBuf
+      WShown(^k) => NShown
+    }
+    Unary(u) => {
+      let inner := r_ty(u.ty)
+      match u.unary_word {
+        WVec(^k) => NVec(inner)
+        WArray(^k) => NArray(inner)
+        WSlice(^k) => NSlice(inner)
+        WOption(^k) => NOption(inner)
+        WInfo(^k) => NInfo(inner)
+        WBudgetAnswer(^k) => NBudgetAnswer(inner)
+      }
+    }
+    Binary(b) => {
+      let first := r_ty(b.ty)
+      let second := r_ty(b.ty_2)
+      match b.binary_word {
+        WResult(^k) => NResult(first, second)
+        WPair(^k) => NPair(first, second)
+      }
+    }
+    SharedVarTy(s) => match s.copy_mark {
+      Some(^c) => NSharedVar(true, r_ty(s.ty))
+      None => NSharedVar(false, r_ty(s.ty))
+    }
+    StdTy(s) => match s.ty_args {
+      Some(a) => NStd(r_name(s.name), r_tys(a.tys))
+      None => NStd(r_name(s.name), Nil)
+    }
+    UnionTy(u) => NUnion(r_nat(u.num.text))
+    FnTyOf(f) => r_fn_ty(f.fn_ty)
+    DataTy(d) => match d.ty_args {
+      Some(a) => NData(r_name(d.name), r_tys(a.tys))
+      None => NData(r_name(d.name), Nil)
+    }
+  }
+}
+
+pub fn r_fn_ty(f: nir::FnTy): NTy ! {div} {
+  NFn(r_tys(f.tys), r_ty(f.ty), r_kind_word(f.kind), r_tier_word(f.tier))
+}
+
+pub fn r_tys_rest(xs: List(nir::Tys_Rep1)): List(NTy) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_ty(x.ty), r_tys_rest(rest))
+  }
+}
+
+pub fn r_tys(ts: nir::Tys): List(NTy) ! {div} {
+  match ts.opt {
+    None => Nil
+    Some(o) => Cons(r_ty(o.ty), r_tys_rest(o.rep))
+  }
+}
+
+pub fn r_repr(r: nir::Repr): NRepr {
+  match r {
+    KwRef(^k) => NRefRepr
+    KwRefmut(^k) => NRefMutRepr
+    KwPlain(^k) => NPlain
+    KwSharedvar(^k) => NSharedVarRepr
+    KwSharedvarCopy(^k) => NSharedVarCopy
+    KwBorrowclosure(^k) => NBorrowClosure
+    KwFnref(^k) => NFnRef
+  }
+}
+
+// A local where it is bound: plain unless a representation is written.
+pub fn r_binding(b: nir::Binding): NLocal {
+  match r_marked(b.local.text, 35) {
+    #(name, id) => NLocal {
+      id: id,
+      name: name,
+      repr: match b.repr {
+        Some(r) => r_repr(r)
+        None => NPlain
+      }
+    }
+  }
+}
+
+pub fn r_bind(st: &mut RState, l: NLocal, ty: Option(NTy)): Unit {
+  r_set(
+    &mut st.bound,
+    Ordmap::insert(st.bound, l.id, RBound { repr: l.repr, ty: ty }, Ordmap::compare_nat)
+  )
+}
+
+// A local where it is used: as it was bound unless a representation is written.
+pub fn r_local(st: &mut RState, u: nir::LocalUse): NLocal {
+  match r_marked(u.local.text, 35) {
+    #(name, id) => match u.repr {
+      Some(r) => NLocal { id: id, name: name, repr: r_repr(r) }
+      None => match Ordmap::get(st.bound, id, Ordmap::compare_nat) {
+        Some(b) => NLocal { id: id, name: name, repr: b.repr }
+        None => {
+          r_fail(
+            &mut st,
+            Text::concat_all(
+              ["the local ", name, " is not bound before: its representation is written"]
+            )
+          )
+          NLocal { id: id, name: name, repr: NPlain }
+        }
+      }
+    }
+  }
+}
+
+pub fn r_local_ty(repr: NRepr, ty: NTy): NTy {
+  let through := match n_borrowed(ty) {
+    Some(t) => t
+    None => ty
+  }
+  match repr {
+    NRefRepr => through
+    NRefMutRepr => through
+    NFnRef => through
+    NPlain => ty
+    NSharedVarRepr => ty
+    NSharedVarCopy => ty
+    NBorrowClosure => ty
+  }
+}
+
+// The type a use of a local shows.
+pub fn r_bound_ty(st: &mut RState, l: NLocal): Option(NTy) {
+  match Ordmap::get(st.bound, l.id, Ordmap::compare_nat) {
+    None => None
+    Some(b) => match b.ty {
+      None => None
+      Some(t) => Some(r_local_ty(b.repr, t))
+    }
+  }
+}
+
+pub fn r_bound_ty_or_fail(st: &mut RState, l: NLocal): NTy {
+  match r_bound_ty(&mut st, l) {
+    Some(t) => t
+    None => {
+      r_fail(&mut st, Text::concat_all(["the local ", l.name, " is bound without a type"]))
+      NUnit
+    }
+  }
+}
+
+pub fn r_step(s: nir::Step): NFieldRef {
+  NFieldRef {
+    name: r_name(s.name),
+    index: match s.index {
+      Some(i) => Some(r_nat(i.num.text))
+      None => None
+    },
+    indirect: r_indirect(s.indirect)
+  }
+}
+
+pub fn r_steps(xs: List(nir::Step)): List(NFieldRef) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_step(x), r_steps(rest))
+  }
+}
+
+pub fn r_place(st: &mut RState, p: nir::Place): NPlaceOf ! {div} {
+  match p {
+    LocalUse(u) => {
+      let l := r_local(&mut st, u)
+      let ty := r_bound_ty_or_fail(&mut st, l)
+      NPlaceOf { local: l, path: Nil, ty: ty }
+    }
+    Path(q) => {
+      let l := r_local(&mut st, q.local_use)
+      NPlaceOf { local: l, path: r_steps(q.step), ty: r_ty(q.ty) }
+    }
+  }
+}
+
+
+pub fn r_tier(t: nir::Tier): NTier {
+  match t {
+    KwTierS(^k) => NTierS
+    KwTierA(^k) => NTierA
+    KwTierO(^k) => NTierO
+    KwTierM(^k) => NTierM
+  }
+}
+
+pub fn r_tier_word(t: nir::Tier): Text {
+  match t {
+    KwTierS(k) => k.text
+    KwTierA(k) => k.text
+    KwTierO(k) => k.text
+    KwTierM(k) => k.text
+  }
+}
+
+pub fn r_kind_word(k: nir::Kind): Text {
+  match k {
+    KwCopy(t) => t.text
+    KwShared(t) => t.text
+    KwAffine(t) => t.text
+    KwLinear(t) => t.text
+  }
+}
+
+pub fn r_kind(k: nir::Kind): NKindWord {
+  match k {
+    KwCopy(^t) => NKCopy
+    KwShared(^t) => NKShared
+    KwAffine(^t) => NKAffine
+    KwLinear(^t) => NKLinear
+  }
+}
+
+pub fn r_quant(st: &mut RState, q: nir::Quant): NQuant {
+  match q {
+    KwDirect(^t) => NQDirect
+    ResumeCount(r) => match r.resumes {
+      AtMost(^a) => NQAtMostOne
+      KwOmega(^t) => NQMany
+      Num(n) => if r_nat(n.text) == 0 {
+        NQZero
+      } else if r_nat(n.text) == 1 {
+        NQOne
+      } else {
+        r_fail(&mut st, "an operation resumes 0, <=1, 1 or ω times")
+        NQMany
+      }
+    }
+  }
+}
+
+pub fn r_tick(t: Option(nir::Tick)): NTick {
+  match t {
+    None => NTickNone
+    Some(k) => match k.tick_of {
+      KwHost(^h) => NTickHost
+      KwBudget(^b) => NTickBudget
+    }
+  }
+}
+
+pub fn r_find_ctor(data: Text, d: NData, cs: List(NCtor), name: Text, at: Nat): Option(NCtorRef) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if c.name == name {
+      Some(NCtorRef {
+        data: NDataGen(data),
+        name: name,
+        index: at,
+        labels: r_labels(c.fields),
+        indirect: r_field_indirects(c.fields),
+        is_linear: d.is_linear,
+        nullary: match c.fields {
+          Nil => not(d.is_struct)
+          Cons(^f, ^more) => false
+        }
+      })
+    } else {
+      r_find_ctor(data, d, rest, name, at + 1)
+    }
+  }
+}
+
+pub fn r_labels(fs: List(NField)): List(Option(Text)) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(f.name, r_labels(rest))
+  }
+}
+
+pub fn r_field_indirects(fs: List(NField)): List(NIndirect) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(f.indirect, r_field_indirects(rest))
+  }
+}
+
+pub fn r_declared_ctor(ds: List(NData), name: Text): Option(NCtorRef) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => match r_find_ctor(d.name, d, d.ctors, name, 0) {
+      Some(c) => Some(c)
+      None => r_declared_ctor(rest, name)
+    }
+  }
+}
+
+pub fn r_library_ref(data: NDataRef, name: Text, index: Nat, labels: List(Option(Text))): NCtorRef {
+  NCtorRef {
+    data: data,
+    name: name,
+    index: index,
+    labels: labels,
+    indirect: r_directs(labels),
+    is_linear: false,
+    nullary: match labels {
+      Nil => true
+      Cons(^l, ^rest) => false
+    }
+  }
+}
+
+pub fn r_directs(xs: List(Option(Text))): List(NIndirect) {
+  match xs {
+    Nil => Nil
+    Cons(^x, rest) => Cons(NDirect, r_directs(rest))
+  }
+}
+
+pub fn r_library_ctor(name: Text): Option(NCtorRef) {
+  if name == "Option::None" {
+    Some(r_library_ref(NDataOption, name, 0, Nil))
+  } else if name == "Option::Some" {
+    Some(r_library_ref(NDataOption, name, 1, [None]))
+  } else if name == "Result::Ok" {
+    Some(r_library_ref(NDataResult, name, 0, [None]))
+  } else if name == "Result::Err" {
+    Some(r_library_ref(NDataResult, name, 1, [None]))
+  } else if name == "Pair::Mk" {
+    Some(r_library_ref(NDataPair, name, 0, [Some("fst"), Some("snd")]))
+  } else {
+    None
+  }
+}
+
+pub fn r_ctor(st: &mut RState, n: nir::CtorName): NCtorRef {
+  let name := r_ctor_name(n)
+  match r_declared_ctor(st.datas, name) {
+    Some(c) => c
+    None => match r_library_ctor(name) {
+      Some(c) => c
+      None => {
+        r_fail(&mut st, Text::concat_all(["no data type above declares the constructor ", name]))
+        r_library_ref(NDataGen(name), name, 0, Nil)
+      }
+    }
+  }
+}
+
+pub fn r_op_at(ops: List(Text), name: Text, at: Nat): Option(Nat) {
+  match ops {
+    Nil => None
+    Cons(o, rest) => if o == name { Some(at) } else { r_op_at(rest, name, at + 1) }
+  }
+}
+
+pub fn r_op(st: &mut RState, n: nir::Name): Nat {
+  let name := r_name(n)
+  match r_op_at(st.ops, name, 0) {
+    Some(op) => op
+    None => {
+      r_fail(&mut st, Text::concat_all(["no operation is named ", name]))
+      0
+    }
+  }
+}
+
+pub fn r_inst(t: SynToken): Nat {
+  match r_marked(t.text, 64) {
+    #(^name, id) => id
+  }
+}
+
+// An expression whose type may still be missing: one that neither writes its
+// type nor shows it.
+pub struct RDraft { kind: NKind, ty: Option(NTy) }
+
+pub fn r_shown(kind: NKind, ty: NTy): RDraft { RDraft { kind: kind, ty: Some(ty) } }
+
+pub fn r_need(st: &mut RState, d: RDraft): NExpr {
+  match d.ty {
+    Some(t) => NExpr { kind: d.kind, ty: t }
+    None => {
+      r_fail(&mut st, "the expression does not show its type: write it as `(e: T)`")
+      NExpr { kind: d.kind, ty: NUnit }
+    }
+  }
+}
+
+pub fn r_expr(st: &mut RState, e: nir::Expr): NExpr ! {div} {
+  let d := r_draft(&mut st, e)
+  r_need(&mut st, d)
+}
+
+pub fn r_draft(st: &mut RState, e: nir::Expr): RDraft ! {div} {
+  match e {
+    Closed(c) => r_closed(&mut st, c)
+    Open(o) => r_open(&mut st, o)
+  }
+}
+
+pub fn r_closed_expr(st: &mut RState, c: nir::Closed): NExpr ! {div} {
+  let d := r_closed(&mut st, c)
+  r_need(&mut st, d)
+}
+
+pub fn r_open_expr(st: &mut RState, o: nir::Open): NExpr ! {div} {
+  let d := r_open(&mut st, o)
+  r_need(&mut st, d)
+}
+
+// What a closure's head says, with the body still to read.
+pub struct RHead {
+  borrowed: Bool,
+  pure: Bool,
+  params: List(NParam),
+  ret: NTy,
+  fn_ty: NTy,
+  clones: List(NLocal),
+  refs: List(NCapturedRef),
+  owned_refs: List(NLocal)
+}
+
+pub fn r_head_params_rest(st: &mut RState, xs: List(nir::ClosureHead_Rep1)): List(NParam) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let p := r_param(&mut st, x.param)
+      Cons(p, r_head_params_rest(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_locals_rest(st: &mut RState, xs: List(nir::Locals_Rep1)): List(NLocal) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let l := r_local(&mut st, x.local_use)
+      Cons(l, r_locals_rest(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_locals(st: &mut RState, ls: nir::Locals): List(NLocal) {
+  match ls.opt {
+    None => Nil
+    Some(o) => {
+      let l := r_local(&mut st, o.local_use)
+      Cons(l, r_locals_rest(&mut st, o.rep))
+    }
+  }
+}
+
+pub fn r_captured(st: &mut RState, c: nir::CapturedRef): NCapturedRef {
+  let inner := r_binding(c.binding)
+  r_bind(&mut st, inner, None)
+  let outer := r_local(&mut st, c.local_use)
+  NCapturedRef { inner: inner, outer: outer, mutable: r_flag(c.kw_mut) }
+}
+
+pub fn r_captured_rest(st: &mut RState, xs: List(nir::Refs_Rep1)): List(NCapturedRef) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let c := r_captured(&mut st, x.captured_ref)
+      Cons(c, r_captured_rest(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_head(st: &mut RState, h: nir::ClosureHead): RHead ! {div} {
+  let params := match h.opt {
+    None => Nil
+    Some(o) => {
+      let p := r_param(&mut st, o.param)
+      Cons(p, r_head_params_rest(&mut st, o.rep))
+    }
+  }
+  let clones := match h.clones {
+    None => Nil
+    Some(c) => r_locals(&mut st, c.locals)
+  }
+  let refs := match h.refs {
+    None => Nil
+    Some(r) => match r.opt {
+      None => Nil
+      Some(o) => {
+        let c := r_captured(&mut st, o.captured_ref)
+        Cons(c, r_captured_rest(&mut st, o.rep))
+      }
+    }
+  }
+  let owned_refs := match h.owned_refs {
+    None => Nil
+    Some(o) => r_locals(&mut st, o.locals)
+  }
+  RHead {
+    borrowed: r_flag(h.kw_borrowed),
+    pure: r_flag(h.kw_pure),
+    params: params,
+    ret: r_ty(h.ty),
+    fn_ty: r_fn_ty(h.fn_ty),
+    clones: clones,
+    refs: refs,
+    owned_refs: owned_refs
+  }
+}
+
+pub fn r_closure(h: RHead, body: NExpr): RDraft {
+  r_shown(
+    NClosureOf(NClosure {
+      borrowed: h.borrowed,
+      pure: h.pure,
+      params: h.params,
+      ret: h.ret,
+      fn_ty: h.fn_ty,
+      clones: h.clones,
+      refs: h.refs,
+      owned_refs: h.owned_refs,
+      body: body
+    }),
+    h.fn_ty
+  )
+}
+
+pub fn r_open(st: &mut RState, o: nir::Open): RDraft ! {div} {
+  match o {
+    IfThen(i) => {
+      let c := r_expr(&mut st, i.expr)
+      let t := r_expr(&mut st, i.expr_2)
+      r_shown(NIf(c, t, None), t.ty)
+    }
+    IfElseOpen(i) => {
+      let c := r_expr(&mut st, i.expr)
+      let t := r_closed_expr(&mut st, i.closed)
+      let other := r_open_expr(&mut st, i.open)
+      r_shown(NIf(c, t, Some(other)), t.ty)
+    }
+    ClosureOpen(c) => {
+      let h := r_head(&mut st, c.closure_head)
+      let body := r_open_expr(&mut st, c.open)
+      r_closure(h, body)
+    }
+  }
+}
+
+pub fn r_paren(st: &mut RState, p: nir::Paren): NExpr ! {div} {
+  let d := r_draft(&mut st, p.expr)
+  match p.written {
+    Some(w) => NExpr { kind: d.kind, ty: r_ty(w.ty) }
+    None => r_need(&mut st, d)
+  }
+}
+
+pub fn r_read_how(r: Option(nir::ReadAs), field: NFieldRef): NIndirect {
+  match r {
+    None => field.indirect
+    Some(a) => match a.read_how {
+      KwDirect(^t) => NDirect
+      KwShared(^t) => NShared
+      KwUnique(^t) => NUnique
+    }
+  }
+}
+
+pub fn r_field(st: &mut RState, base: NExpr, how: NUse, ft: nir::FieldTail): RDraft ! {div} {
+  let field := r_step(ft.step)
+  r_shown(NFieldOf(base, field, how, r_read_how(ft.read_as, field)), r_ty(ft.ty))
+}
+
+pub fn r_args_rest(st: &mut RState, xs: List(nir::Args_Rep1)): List(NExpr) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let e := r_expr(&mut st, x.expr)
+      Cons(e, r_args_rest(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_args(st: &mut RState, a: nir::Args): List(NExpr) ! {div} {
+  match a.opt {
+    None => Nil
+    Some(o) => {
+      let e := r_expr(&mut st, o.expr)
+      Cons(e, r_args_rest(&mut st, o.rep))
+    }
+  }
+}
+
+pub fn r_targs(t: Option(nir::TArgs)): List(NTy) ! {div} {
+  match t {
+    None => Nil
+    Some(a) => r_tys(a.tys)
+  }
+}
+
+pub fn r_unwind(st: &mut RState, u: Option(nir::Unwind)): List(NStmt) ! {div} {
+  match u {
+    None => Nil
+    Some(w) => r_unwind_stmts(&mut st, w.rep)
+  }
+}
+
+pub fn r_unwind_stmts(st: &mut RState, xs: List(nir::Unwind_Rep1)): List(NStmt) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let s := r_stmt(&mut st, x.stmt)
+      Cons(s, r_unwind_stmts(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_call(st: &mut RState, callee: NCallee, ct: nir::CallTail): RDraft ! {div} {
+  let targs := r_targs(ct.t_args)
+  let args := r_args(&mut st, ct.args)
+  let tier := match ct.tier_of {
+    None => NTierS
+    Some(t) => r_tier(t.tier)
+  }
+  let tick := r_tick(ct.tick)
+  let unwind := r_unwind(&mut st, ct.unwind)
+  r_shown(
+    NCallOf(NCall {
+      callee: callee,
+      targs: targs,
+      args: args,
+      tier: tier,
+      tick: tick,
+      recur: r_flag(ct.kw_recur),
+      unwind: unwind
+    }),
+    r_ty(ct.ty)
+  )
+}
+
+pub fn r_use(h: nir::How): NUse {
+  match h {
+    KwMove(^k) => NMove
+    KwCopy(^k) => NCopy
+    KwClone(^k) => NClone
+  }
+}
+
+pub fn r_read(st: &mut RState, l: NLocal, how: NUse): RDraft {
+  RDraft { kind: NRead(l, how), ty: r_bound_ty(&mut st, l) }
+}
+
+pub fn r_read_place(st: &mut RState, l: NLocal): NExpr {
+  let ty := r_bound_ty_or_fail(&mut st, l)
+  NExpr { kind: NRead(l, NPlace), ty: ty }
+}
+
+pub fn r_deref(st: &mut RState, d: nir::DerefOf, how: NUse): RDraft ! {div} {
+  let value := r_expr(&mut st, d.expr)
+  r_shown(NDeref(value, how), r_ty(d.ty))
+}
+
+pub fn r_ctor_arg(st: &mut RState, a: nir::CtorArg): NArg ! {div} {
+  match a {
+    LabelledArg(l) => {
+      let value := r_expr(&mut st, l.expr)
+      NArg { label: Some(r_name(l.name)), value: value }
+    }
+    Expr(e) => {
+      let value := r_expr(&mut st, e)
+      NArg { label: None, value: value }
+    }
+  }
+}
+
+pub fn r_ctor_args_rest(st: &mut RState, xs: List(nir::CtorExpr_Rep1)): List(NArg) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let a := r_ctor_arg(&mut st, x.ctor_arg)
+      Cons(a, r_ctor_args_rest(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_ctor_args(st: &mut RState, o: Option(nir::CtorExpr_Opt1)): List(NArg) ! {div} {
+  match o {
+    None => Nil
+    Some(p) => match p.opt {
+      None => Nil
+      Some(q) => {
+        let a := r_ctor_arg(&mut st, q.ctor_arg)
+        Cons(a, r_ctor_args_rest(&mut st, q.rep))
+      }
+    }
+  }
+}
+
+pub fn r_num_ty(n: nir::NumTy): NTy {
+  match n {
+    WU8(^k) => NInt(NU8)
+    WU16(^k) => NInt(NU16)
+    WI8(^k) => NInt(NW8)
+    WI16(^k) => NInt(NW16)
+    WU32(^k) => NInt(NU32)
+    WU64(^k) => NInt(NU64)
+    WUHost(^k) => NInt(NHost)
+    WI32(^k) => NInt(NW32)
+    WI64(^k) => NInt(NW64)
+    WNat(^k) => NInt(NNat)
+    WFloat(^k) => NFloat
+    WFloat32(^k) => NFloat32
+  }
+}
+
+pub fn r_pats_rest(st: &mut RState, xs: List(nir::Pats_Rep1)): List(NPat) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let p := r_pat(&mut st, x.pat)
+      Cons(p, r_pats_rest(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_pats(st: &mut RState, ps: nir::Pats): List(NPat) ! {div} {
+  match ps.opt {
+    None => Nil
+    Some(o) => {
+      let p := r_pat(&mut st, o.pat)
+      Cons(p, r_pats_rest(&mut st, o.rep))
+    }
+  }
+}
+
+pub fn r_pat(st: &mut RState, p: nir::Pat): NPat ! {div} {
+  match p {
+    Bind(b) => {
+      let l := r_binding(b.binding)
+      let ty := r_ty(b.ty)
+      r_bind(&mut st, l, Some(ty))
+      NBind(l, ty)
+    }
+    Wild(^w) => NWild
+    Boolean(b) => match b {
+      KwTrue(^k) => NBoolPat(true)
+      KwFalse(^k) => NBoolPat(false)
+    }
+    Str(s) => NTextPat(r_string(s.text, 1))
+    Num(n) => NIntPat(r_negative(n.text), r_size(n.text))
+    NumSuffixed(n) => {
+      if r_suffix(n.text) == "nat" {
+        ()
+      } else {
+        r_fail(&mut st, "a number in a pattern is plain or `nat`")
+      }
+      NNatPat(r_size(n.text))
+    }
+    CtorPat(c) => {
+      let ctor := r_ctor(&mut st, c.ctor_name)
+      match c.opt {
+        None => NCtorPat(ctor, Nil)
+        Some(o) => NCtorPat(ctor, r_pats(&mut st, o.pats))
+      }
+    }
+    InjectPat(i) => NInjectPat(r_nat(i.num.text), r_nat(i.num_2.text), r_pat(&mut st, i.pat))
+  }
+}
+
+pub fn r_guard(st: &mut RState, g: Option(nir::Guard)): Option(NExpr) ! {div} {
+  match g {
+    None => None
+    Some(x) => Some(r_expr(&mut st, x.expr))
+  }
+}
+
+pub fn r_arms(st: &mut RState, xs: List(nir::Arm)): List(NArm) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let pat := r_pat(&mut st, a.pat)
+      let guard := r_guard(&mut st, a.guard)
+      let body := r_expr(&mut st, a.expr)
+      Cons(NArm { pat: pat, guard: guard, body: body }, r_arms(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_first_ty(arms: List(NArm)): Option(NTy) {
+  match arms {
+    Nil => None
+    Cons(a, ^rest) => Some(a.body.ty)
+  }
+}
+
+pub fn r_instance(i: Option(nir::Instance)): Option(NInstance) ! {div} {
+  match i {
+    None => None
+    Some(x) => Some(NInstance {
+      type_args: r_targs(x.t_args),
+      params: r_tys(x.tys),
+      answer: r_ty(x.ty),
+      admission: match x.admission {
+        Name(n) => r_name(n)
+        KwUnique(t) => t.text
+      }
+    })
+  }
+}
+
+pub fn r_arm_kind(k: nir::ArmKind): NArmKind {
+  match k {
+    KwDirect(^t) => NArmDirect
+    KwAbort(^t) => NArmAbort
+    KwSuspend(^t) => NArmSuspend
+  }
+}
+
+pub fn r_op_arm(st: &mut RState, a: nir::OpArm): NOpArm ! {div} {
+  let op := r_op(&mut st, a.name)
+  let pats := r_pats(&mut st, a.pats)
+  let k := match a.cont {
+    None => None
+    Some(c) => {
+      let l := r_binding(c.binding)
+      r_bind(&mut st, l, None)
+      Some(l)
+    }
+  }
+  let guard := r_guard(&mut st, a.guard)
+  let body := r_expr(&mut st, a.expr)
+  NOpArm {
+    kind: r_arm_kind(a.arm_kind),
+    op: op,
+    pats: pats,
+    params: r_tys(a.tys),
+    k_ans: r_ty(a.ty),
+    k: k,
+    inst: r_instance(a.instance_field),
+    instantiated: r_flag(a.kw_instantiated),
+    guard: guard,
+    body: body
+  }
+}
+
+// The arms of a `handle`: the `return` arm, and the others in order.
+pub fn r_handle_arms(
+  st: &mut RState,
+  xs: List(nir::HandleArm),
+  ret: Option(NReturnArm),
+  arms: List(NOpArm)
+): Option(NReturnArm) × List(NOpArm) ! {div} {
+  match xs {
+    Nil => #(ret, text_list_reverse(arms))
+    Cons(x, rest) => match x {
+      ReturnArm(r) => {
+        let pat := r_pat(&mut st, r.pat)
+        let body := r_expr(&mut st, r.expr)
+        r_handle_arms(&mut st, rest, Some(NReturnArm { pat: pat, body: body }), arms)
+      }
+      OpArm(o) => {
+        let a := r_op_arm(&mut st, o)
+        r_handle_arms(&mut st, rest, ret, Cons(a, arms))
+      }
+    }
+  }
+}
+
+pub fn r_handle(st: &mut RState, h: nir::Handle): RDraft ! {div} {
+  let host_ret := match h.host_ret {
+    None => None
+    Some(t) => Some(r_ty(t.ty))
+  }
+  let captures := match h.captures {
+    None => Nil
+    Some(c) => r_locals(&mut st, c.locals)
+  }
+  let clones := match h.clones {
+    None => Nil
+    Some(c) => r_locals(&mut st, c.locals)
+  }
+  let body := r_expr(&mut st, h.expr)
+  let body_ty := match h.body_as {
+    None => body.ty
+    Some(b) => r_ty(b.ty)
+  }
+  match r_handle_arms(&mut st, h.handle_arm, None, Nil) {
+    #(ret, arms) => {
+      let result := r_ty(h.ty)
+      r_shown(
+        NHandleOf(NHandle {
+          id: r_nat(h.num.text),
+          body_tier: r_tier(h.tier),
+          m: r_flag(h.kw_m),
+          kept: r_flag(h.kw_kept),
+          detached: r_flag(h.kw_detached),
+          host_ret: host_ret,
+          captures: captures,
+          clones: clones,
+          body: body,
+          body_ty: body_ty,
+          ret: ret,
+          arms: arms,
+          result: result
+        }),
+        result
+      )
+    }
+  }
+}
+
+pub fn r_closed(st: &mut RState, c: nir::Closed): RDraft ! {div} {
+  match c {
+    IfElse(i) => {
+      let cond := r_expr(&mut st, i.expr)
+      let t := r_closed_expr(&mut st, i.closed)
+      let other := r_closed_expr(&mut st, i.closed_2)
+      r_shown(NIf(cond, t, Some(other)), t.ty)
+    }
+    Closure(f) => {
+      let h := r_head(&mut st, f.closure_head)
+      let body := r_closed_expr(&mut st, f.closed)
+      r_closure(h, body)
+    }
+    Unit(^u) => r_shown(NUnitLit, NUnit)
+    Group(g) => {
+      let inner := r_paren(&mut st, g.paren)
+      match g.after {
+        None => r_shown(inner.kind, inner.ty)
+        Some(a) => match a {
+          FieldTail(ft) => r_field(&mut st, inner, NPlace, ft)
+          CallTail(ct) => r_call(&mut st, NCallValue(inner), ct)
+        }
+      }
+    }
+    Block(b) => {
+      let blk := r_block(&mut st, b)
+      let ty := match blk.tail {
+        Some(t) => t.ty
+        None => NUnit
+      }
+      r_shown(NBlockOf(blk), ty)
+    }
+    Borrow(b) => {
+      let p := r_place(&mut st, b.place)
+      match b.kw_mut {
+        Some(^m) => r_shown(NBorrowMut(p), NRefMut(p.ty))
+        None => r_shown(NBorrow(p), NRef(p.ty))
+      }
+    }
+    Num(n) => RDraft { kind: NIntLit(r_negative(n.text), r_size(n.text)), ty: None }
+    NumSuffixed(n) => match r_width(r_suffix(n.text)) {
+      Some(w) => r_shown(NIntLit(r_negative(n.text), r_size(n.text)), NInt(w))
+      None => {
+        r_fail(&mut st, "expected a width after the number")
+        r_shown(NUnitLit, NUnit)
+      }
+    }
+    Float(f) => r_shown(NFloatLit(f.text), NFloat)
+    Str(s) => r_shown(NTextLit(r_string(s.text, 1)), NText)
+    FnValue(f) => r_shown(NFnValue(r_inst(f.inst), r_targs(f.t_args)), r_ty(f.ty))
+    InstCall(i) => r_call(&mut st, NCallInst(r_inst(i.inst)), i.call_tail)
+    LocalExpr(x) => {
+      let l := r_local(&mut st, x.local_use)
+      match x.after {
+        None => r_read(&mut st, l, NPlace)
+        Some(a) => match a {
+          FieldTail(ft) => {
+            let base := r_read_place(&mut st, l)
+            r_field(&mut st, base, NPlace, ft)
+          }
+          CallTail(ct) => r_call(&mut st, NCallLocal(l), ct)
+        }
+      }
+    }
+    Used(u) => {
+      let how := r_use(u.how)
+      match u.used_of {
+        LocalField(lf) => {
+          let l := r_local(&mut st, lf.local_use)
+          match lf.field_tail {
+            None => r_read(&mut st, l, how)
+            Some(ft) => {
+              let base := r_read_place(&mut st, l)
+              r_field(&mut st, base, how, ft)
+            }
+          }
+        }
+        ParenField(pf) => {
+          let base := r_paren(&mut st, pf.paren)
+          r_field(&mut st, base, how, pf.field_tail)
+        }
+        DerefOf(d) => r_deref(&mut st, d, how)
+      }
+    }
+    Deref(d) => r_deref(&mut st, d.deref_of, NPlace)
+    CtorExpr(x) => {
+      let ctor := r_ctor(&mut st, x.ctor_name)
+      let args := r_ctor_args(&mut st, x.opt)
+      r_shown(NCtorOf(ctor, args), r_ty(x.ty))
+    }
+    Arith(a) => {
+      let args := r_args(&mut st, a.args)
+      let op := match a.arith_op {
+        OpAdd(^k) => NAdd
+        OpSub(^k) => NSub
+        OpMul(^k) => NMul
+        OpNeg(^k) => NNeg
+        OpDiv(^k) => NDivide
+      }
+      let num := r_num_ty(a.num_ty)
+      r_shown(NArithOf(op, num, args), num)
+    }
+    Cmp(x) => {
+      let args := r_args(&mut st, x.args)
+      let op := match x.cmp_op {
+        KwLt(^k) => NLt
+        KwGt(^k) => NGt
+        KwLe(^k) => NLe
+        KwGe(^k) => NGe
+      }
+      r_shown(NCmpOf(op, args), NBool)
+    }
+    Eq(x) => {
+      let args := r_args(&mut st, x.args)
+      match x.eq_op {
+        KwEq(^k) => r_shown(NEqOf(false, args), NBool)
+        KwNe(^k) => r_shown(NEqOf(true, args), NBool)
+      }
+    }
+    Not(n) => {
+      let a := r_expr(&mut st, n.expr)
+      r_shown(NNot(a), NBool)
+    }
+    Logic(l) => {
+      let a := r_expr(&mut st, l.expr)
+      let b := r_expr(&mut st, l.expr_2)
+      match l.logic_op {
+        KwAnd(^k) => r_shown(NAnd(a, b), NBool)
+        KwOr(^k) => r_shown(NOr(a, b), NBool)
+      }
+    }
+    Boolean(b) => match b {
+      KwTrue(^k) => r_shown(NBoolLit(true), NBool)
+      KwFalse(^k) => r_shown(NBoolLit(false), NBool)
+    }
+    Nan(^k) => r_shown(NFloatLit("nan"), NFloat)
+    Inf(^k) => r_shown(NFloatLit("inf"), NFloat)
+    NegInf(^k) => r_shown(NFloatLit("-inf"), NFloat)
+    Declaration(d) => r_shown(NDeclaration(r_nat(d.num.text)), r_ty(d.ty))
+    ExternCall(x) => r_call(&mut st, NCallExtern(r_name(x.name)), x.call_tail)
+    BuiltinCall(x) => r_call(&mut st, NCallBuiltin(r_name(x.name)), x.call_tail)
+    Resume(x) => {
+      let l := r_local(&mut st, x.local_use)
+      r_call(&mut st, NCallCont(l), x.call_tail)
+    }
+    Match(m) => {
+      let scrut := r_expr(&mut st, m.expr)
+      let arms := r_arms(&mut st, m.arm)
+      RDraft {
+        kind: NMatchOf(NMatch {
+          scrut: scrut,
+          by_ref: r_flag(m.kw_by_ref),
+          exhaustive: not(r_flag(m.kw_partial)),
+          arms: arms
+        }),
+        ty: r_first_ty(arms)
+      }
+    }
+    Perform(p) => {
+      let op := r_op(&mut st, p.name)
+      let args := r_args(&mut st, p.args)
+      let quant := r_quant(&mut st, p.quant)
+      let unwind := r_unwind(&mut st, p.unwind)
+      let result := r_ty(p.ty)
+      r_shown(
+        NPerformOf(NPerform {
+          op: op,
+          args: args,
+          quant: quant,
+          detached: r_flag(p.kw_detached),
+          inst: r_instance(p.instance_field),
+          unwind: unwind,
+          result: result
+        }),
+        result
+      )
+    }
+    Handle(h) => r_handle(&mut st, h)
+    Inject(i) => {
+      let value := r_expr(&mut st, i.expr)
+      let u := r_nat(i.num.text)
+      r_shown(NInject(u, r_nat(i.num_2.text), value), NUnion(u))
+    }
+    Remap(r) => {
+      let to := r_ty(r.ty)
+      let value := r_expr(&mut st, r.expr)
+      r_shown(NRemap(r_nat(r.num.text), to, value), to)
+    }
+    TempRef(t) => {
+      let a := r_expr(&mut st, t.expr)
+      r_shown(NTempRef(a), NRef(a.ty))
+    }
+    ShownOf(s) => {
+      let a := r_expr(&mut st, s.expr)
+      r_shown(NShownOf(a), NShown)
+    }
+    Budget(b) => {
+      let steps := r_expr(&mut st, b.expr)
+      let body := r_expr(&mut st, b.expr_2)
+      r_shown(
+        NBudgetOf(NBudget {
+          id: r_nat(b.num.text),
+          memory: r_flag(b.kw_memory),
+          m: r_flag(b.kw_m),
+          steps: steps,
+          body: body
+        }),
+        body.ty
+      )
+    }
+    Unreachable(u) => {
+      let a := r_expr(&mut st, u.expr)
+      r_shown(NUnreachable(a), r_ty(u.ty))
+    }
+    FnCast(f) => {
+      let a := r_expr(&mut st, f.expr)
+      r_shown(NFnCast(a), r_ty(f.ty))
+    }
+  }
+}
+
+pub fn r_binding_init(
+  st: &mut RState,
+  b: nir::Binding,
+  written: Option(nir::Written),
+  e: nir::Expr
+): NLocal × NTy × NExpr ! {div} {
+  let l := r_binding(b)
+  let init := r_expr(&mut st, e)
+  let ty := match written {
+    Some(w) => r_ty(w.ty)
+    None => init.ty
+  }
+  r_bind(&mut st, l, Some(ty))
+  #(l, ty, init)
+}
+
+pub fn r_stmt(st: &mut RState, s: nir::Stmt): NStmt ! {div} {
+  match s {
+    Let(l) => match r_binding_init(&mut st, l.binding, l.written, l.expr) {
+      #(local, ty, init) => NLet(local, ty, init, r_flag(l.kw_stack))
+    }
+    Var(v) => match r_binding_init(&mut st, v.binding, v.written, v.expr) {
+      #(local, ty, init) => NVar(local, ty, init)
+    }
+    Set(x) => {
+      let target := r_place(&mut st, x.place)
+      let value := r_expr(&mut st, x.expr)
+      NAssign(target, value)
+    }
+    While(w) => {
+      let cond := r_expr(&mut st, w.expr)
+      let tick := r_tick(w.tick)
+      let body := r_block(&mut st, w.block)
+      NWhile(cond, body, tick)
+    }
+    Return(r) => match r.expr {
+      None => NReturn(None)
+      Some(e) => NReturn(Some(r_expr(&mut st, e)))
+    }
+    Expr(e) => NExprStmt(r_expr(&mut st, e))
+  }
+}
+
+pub fn r_stmts(st: &mut RState, xs: List(nir::Block_Rep1)): List(NStmt) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let s := r_stmt(&mut st, x.stmt)
+      Cons(s, r_stmts(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_block(st: &mut RState, b: nir::Block): NBlock ! {div} {
+  let stmts := r_stmts(&mut st, b.rep)
+  match b.expr {
+    None => NBlock { stmts: stmts, tail: None }
+    Some(e) => NBlock { stmts: stmts, tail: Some(r_expr(&mut st, e)) }
+  }
+}
+
+pub fn r_field_def(f: nir::Field): NField ! {div} {
+  match f.field_of {
+    Labelled(l) => NField {
+      name: Some(r_name(l.name)),
+      ty: r_ty(l.ty),
+      indirect: r_indirect(f.indirect)
+    }
+    Ty(t) => NField { name: None, ty: r_ty(t), indirect: r_indirect(f.indirect) }
+  }
+}
+
+pub fn r_field_defs_rest(xs: List(nir::Ctor_Rep1)): List(NField) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_field_def(x.field), r_field_defs_rest(rest))
+  }
+}
+
+pub fn r_ctor_def(c: nir::Ctor): NCtor ! {div} {
+  NCtor {
+    name: r_name(c.name),
+    fields: match c.opt {
+      None => Nil
+      Some(o) => match o.opt {
+        None => Nil
+        Some(p) => Cons(r_field_def(p.field), r_field_defs_rest(p.rep))
+      }
+    }
+  }
+}
+
+pub fn r_ctor_defs(xs: List(nir::Ctor)): List(NCtor) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_ctor_def(x), r_ctor_defs(rest))
+  }
+}
+
+pub fn r_generics_rest(xs: List(nir::Generics_Rep1)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_name(x.ty_param.name), r_generics_rest(rest))
+  }
+}
+
+pub fn r_generics(g: nir::Generics): List(Text) {
+  match g.opt {
+    None => Nil
+    Some(o) => match o.opt {
+      None => Nil
+      Some(p) => Cons(r_name(p.ty_param.name), r_generics_rest(p.rep))
+    }
+  }
+}
+
+pub fn r_flag(o: Option(SynToken)): Bool {
+  match o {
+    Some(^t) => true
+    None => false
+  }
+}
+
+pub fn r_data(d: nir::Data): NData ! {div} {
+  NData {
+    name: r_name(d.name),
+    generics: r_generics(d.generics),
+    kind: r_kind(d.kind),
+    is_struct: match d.data_form {
+      KwStruct(^k) => true
+      KwEnum(^k) => false
+    },
+    is_clone: r_flag(d.kw_clone),
+    is_copy: r_flag(d.kw_copy),
+    is_linear: r_flag(d.kw_linear),
+    is_view: r_flag(d.kw_view),
+    is_host: r_flag(d.kw_host),
+    shown: match d.data_shown {
+      Some(s) => r_string(s.str.text, 1)
+      None => ""
+    },
+    ctors: r_ctor_defs(d.ctor)
+  }
+}
+
+pub fn r_param(st: &mut RState, p: nir::Param): NParam ! {div} {
+  let l := r_binding(p.binding)
+  let ty := r_ty(p.ty)
+  r_bind(&mut st, l, Some(ty))
+  NParam { local: l, ty: ty }
+}
+
+pub fn r_params_rest(st: &mut RState, xs: List(nir::Function_Rep2)): List(NParam) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let p := r_param(&mut st, x.param)
+      Cons(p, r_params_rest(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_bounds(xs: List(nir::Generic_Rep1)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_name(x.name), r_bounds(rest))
+  }
+}
+
+pub fn r_generic(g: nir::Generic): NGeneric {
+  NGeneric {
+    name: r_name(g.ty_param.name),
+    bounds: match g.opt {
+      None => Nil
+      Some(o) => Cons(r_name(o.name), r_bounds(o.rep))
+    }
+  }
+}
+
+pub fn r_fn_generics_rest(xs: List(nir::Function_Rep1)): List(NGeneric) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_generic(x.generic), r_fn_generics_rest(rest))
+  }
+}
+
+pub fn r_boolean(b: nir::Boolean): Bool {
+  match b {
+    KwTrue(^k) => true
+    KwFalse(^k) => false
+  }
+}
+
+pub fn r_lends(l: Option(nir::Lends)): Option(List(Bool)) {
+  match l {
+    None => None
+    Some(x) => match x.opt {
+      None => Some(Nil)
+      Some(o) => Some(Cons(r_boolean(o.boolean), r_lends_rest(o.rep)))
+    }
+  }
+}
+
+pub fn r_lends_rest(xs: List(nir::Lends_Rep1)): List(Bool) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_boolean(x.boolean), r_lends_rest(rest))
+  }
+}
+
+pub fn r_function(st: &mut RState, f: nir::Function): NFn ! {div} {
+  let generics := match f.opt {
+    None => Nil
+    Some(o) => match o.opt {
+      None => Nil
+      Some(p) => Cons(r_generic(p.generic), r_fn_generics_rest(p.rep))
+    }
+  }
+  let params := match f.opt_2 {
+    None => Nil
+    Some(o) => {
+      let p := r_param(&mut st, o.param)
+      Cons(p, r_params_rest(&mut st, o.rep))
+    }
+  }
+  let body := r_expr(&mut st, f.expr)
+  match r_marked(f.inst.text, 64) {
+    #(name, id) => NFn {
+      id: id,
+      source: name,
+      generics: generics,
+      params: params,
+      ret: r_ty(f.ty),
+      tier: r_tier(f.tier),
+      lends: r_lends(f.lends),
+      fn_region: r_flag(f.kw_fn_region),
+      body: body
+    }
+  }
+}
+
+pub fn r_snoc<A>(xs: List(A), x: A): List(A) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, r_snoc(rest, x))
+  }
+}
+
+pub fn r_names_rest(xs: List(nir::Names_Rep1)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_name(x.name), r_names_rest(rest))
+  }
+}
+
+pub fn r_names(n: nir::Names): List(Text) {
+  match n.opt {
+    None => Nil
+    Some(o) => Cons(r_name(o.name), r_names_rest(o.rep))
+  }
+}
+
+pub fn r_strs_rest(xs: List(nir::Strs_Rep1)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_string(x.str.text, 1), r_strs_rest(rest))
+  }
+}
+
+pub fn r_strs(s: nir::Strs): List(Text) {
+  match s.opt {
+    None => Nil
+    Some(o) => Cons(r_string(o.str.text, 1), r_strs_rest(o.rep))
+  }
+}
+
+pub fn r_nums_rest(xs: List(nir::Nums_Rep1)): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_nat(x.num.text), r_nums_rest(rest))
+  }
+}
+
+pub fn r_nums(s: nir::Nums): List(Nat) {
+  match s.opt {
+    None => Nil
+    Some(o) => Cons(r_nat(o.num.text), r_nums_rest(o.rep))
+  }
+}
+
+pub fn r_op_names(st: &mut RState, n: nir::Names): List(Nat) { r_op_list(&mut st, r_names(n)) }
+
+pub fn r_op_list(st: &mut RState, xs: List(Text)): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let op := match r_op_at(st.ops, x, 0) {
+        Some(o) => o
+        None => {
+          r_fail(&mut st, Text::concat_all(["no operation is named ", x]))
+          0
+        }
+      }
+      Cons(op, r_op_list(&mut st, rest))
+    }
+  }
+}
+
+pub fn r_message_args_rest(xs: List(nir::Message_Rep1)): List(NMessageArg) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_message_arg(x.message_arg), r_message_args_rest(rest))
+  }
+}
+
+pub fn r_message_arg(a: nir::MessageArg): NMessageArg ! {div} {
+  NMessageArg {
+    key: r_string(a.str.text, 1),
+    value: match a.message_value {
+      Num(n) => NMsgNum(n.text)
+      Str(s) => NMsgText(r_string(s.text, 1))
+      Message(m) => NMsgOf(r_message(m))
+    }
+  }
+}
+
+pub fn r_message(m: nir::Message): NMessage ! {div} {
+  NMessage {
+    id: r_string(m.str.text, 1),
+    args: match m.opt {
+      None => Nil
+      Some(o) => Cons(r_message_arg(o.message_arg), r_message_args_rest(o.rep))
+    }
+  }
+}
+
+pub fn r_extern_param(p: nir::ExternParam): NExternParam ! {div} {
+  NExternParam {
+    name: r_name(p.name),
+    ty: r_ty(p.ty),
+    pass: match p.pass {
+      None => NPassValue
+      Some(x) => match x {
+        KwRef(^k) => NPassRef
+        KwRefmut(^k) => NPassRefMut
+      }
+    }
+  }
+}
+
+pub fn r_extern_params_rest(xs: List(nir::Extern_Rep1)): List(NExternParam) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_extern_param(x.extern_param), r_extern_params_rest(rest))
+  }
+}
+
+pub fn r_extern(e: nir::Extern): NExtern ! {div} {
+  NExtern {
+    name: r_name(e.name),
+    generics: r_generics(e.generics),
+    params: match e.opt {
+      None => Nil
+      Some(o) => Cons(r_extern_param(o.extern_param), r_extern_params_rest(o.rep))
+    },
+    ret: r_ty(e.ty),
+    lends: r_lends(e.lends),
+    waits: r_flag(e.kw_waits)
+  }
+}
+
+pub fn r_data_binding(b: nir::DataBinding): NSyntaxData {
+  NSyntaxData { label: r_string(b.str.text, 1), name: r_name(b.name) }
+}
+
+pub fn r_ctor_binding(b: nir::CtorBinding): NSyntaxCtor {
+  NSyntaxCtor {
+    data: r_string(b.str.text, 1),
+    ctor: r_string(b.str_2.text, 1),
+    name: r_name(b.name)
+  }
+}
+
+pub fn r_data_bindings_rest(xs: List(nir::SyntaxParser_Rep1)): List(NSyntaxData) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_data_binding(x.data_binding), r_data_bindings_rest(rest))
+  }
+}
+
+pub fn r_ctor_bindings_rest(xs: List(nir::SyntaxParser_Rep2)): List(NSyntaxCtor) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(r_ctor_binding(x.ctor_binding), r_ctor_bindings_rest(rest))
+  }
+}
+
+pub fn r_syntax_parser(s: nir::SyntaxParser): NSyntaxParser ! {div} {
+  NSyntaxParser {
+    name: r_string(s.str.text, 1),
+    sha: r_string(s.str_2.text, 1),
+    result: r_ty(s.ty),
+    tables: r_string(s.str_3.text, 1),
+    datas: match s.opt {
+      None => Nil
+      Some(o) => Cons(r_data_binding(o.data_binding), r_data_bindings_rest(o.rep))
+    },
+    ctors: match s.opt_2 {
+      None => Nil
+      Some(o) => Cons(r_ctor_binding(o.ctor_binding), r_ctor_bindings_rest(o.rep))
+    }
+  }
+}
+
+pub fn r_item(st: &mut RState, pkg: &mut NPackage, x: nir::Item): Unit ! {div} {
+  match x {
+    Declarations(d) => r_set(&mut pkg.declarations, r_names(d.names))
+    SyntaxParser(s) => r_set(&mut pkg.syntax_parsers, Cons(r_syntax_parser(s), pkg.syntax_parsers))
+    Data(d) => {
+      let data := r_data(d)
+      r_set(&mut st.datas, r_snoc(st.datas, data))
+      r_set(&mut pkg.datas, Cons(data, pkg.datas))
+    }
+    Union(u) => r_set(
+      &mut pkg.unions,
+      Cons(
+        NUnionDef { id: r_nat(u.num.text), kind: r_kind(u.kind), members: r_tys(u.tys) },
+        pkg.unions
+      )
+    )
+    Op(o) => {
+      let name := r_name(o.name)
+      r_set(&mut st.ops, r_snoc(st.ops, name))
+      let quant := r_quant(&mut st, o.quant)
+      let op := NOp {
+        id: r_nat(o.num.text),
+        name: name,
+        generics: r_generics(o.generics),
+        params: r_tys(o.tys),
+        result: r_ty(o.ty),
+        quant: quant
+      }
+      r_set(&mut pkg.ops, Cons(op, pkg.ops))
+    }
+    Extern(e) => r_set(&mut pkg.externs, Cons(r_extern(e), pkg.externs))
+    Function(f) => {
+      let made := r_function(&mut st, f)
+      r_set(&mut pkg.fns, Cons(made, pkg.fns))
+    }
+    Top(t) => r_set(&mut pkg.top, Some(r_inst(t.inst)))
+    Export(e) => {
+      let ex := NExport {
+        name: r_string(e.str.text, 1),
+        inst: r_inst(e.inst),
+        row: r_strs(e.strs),
+        foreign_row: r_strs(e.strs_2),
+        pure_borrow_callbacks: r_nums(e.nums)
+      }
+      r_set(&mut pkg.exports, Cons(ex, pkg.exports))
+    }
+    Sync(^s) => r_set(&mut pkg.sync, true)
+    Permissions(p) => r_set(&mut pkg.permissions, r_strs(p.strs))
+    Unsupported(u) => r_set(&mut pkg.unsupported, Some(r_message(u.message)))
+    Evidence(e) => match e.evidence_of {
+      EvidenceOp(o) => {
+        let op := r_op(&mut st, o.name)
+        let ev := NEvidenceOp { op: op, params: r_tys(o.tys), answer: r_ty(o.ty) }
+        r_set(&mut pkg.evidence_ops, Cons(ev, pkg.evidence_ops))
+      }
+      EvidenceFn(f) => {
+        let ops := r_op_names(&mut st, f.names)
+        r_set(&mut pkg.evidence_fns, Cons(NEvidenceFn { inst: r_inst(f.inst), ops: ops }, pkg.evidence_fns))
+      }
+      EvidenceHandle(h) => {
+        let ops := r_op_names(&mut st, h.names)
+        let ev := NEvidenceHandle { id: r_nat(h.num.text), ops: ops }
+        r_set(&mut pkg.evidence_handles, Cons(ev, pkg.evidence_handles))
+      }
+    }
+  }
+}
+
+// The items, each list in reverse.
+pub fn r_items(st: &mut RState, pkg: &mut NPackage, xs: List(nir::Item)): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      r_item(&mut st, &mut pkg, x)
+      r_items(&mut st, &mut pkg, rest)
+    }
+  }
+}
+
+pub fn n_package_empty(): NPackage {
+  NPackage {
+    declarations: Nil,
+    syntax_parsers: Nil,
+    datas: Nil,
+    unions: Nil,
+    ops: Nil,
+    externs: Nil,
+    fns: Nil,
+    top: None,
+    exports: Nil,
+    sync: false,
+    permissions: Nil,
+    unsupported: None,
+    evidence_ops: Nil,
+    evidence_fns: Nil,
+    evidence_handles: Nil,
+    block_fns: Nil
+  }
+}
+
+// The package a tree stands for, or what in it is not one.
+pub fn nir_read(tree: nir::Package): Result(NPackage, Text) ! {div} {
+  var st := RState { bound: Ordmap::empty(), datas: Nil, ops: Nil, error: None }
+  var pkg := n_package_empty()
+  r_items(&mut st, &mut pkg, tree.item)
+  match st.error {
+    Some(e) => Err(e)
+    None => Ok(NPackage {
+      declarations: pkg.declarations,
+      syntax_parsers: text_list_reverse(pkg.syntax_parsers),
+      datas: text_list_reverse(pkg.datas),
+      unions: text_list_reverse(pkg.unions),
+      ops: text_list_reverse(pkg.ops),
+      externs: text_list_reverse(pkg.externs),
+      fns: text_list_reverse(pkg.fns),
+      top: pkg.top,
+      exports: text_list_reverse(pkg.exports),
+      sync: pkg.sync,
+      permissions: pkg.permissions,
+      unsupported: pkg.unsupported,
+      evidence_ops: text_list_reverse(pkg.evidence_ops),
+      evidence_fns: text_list_reverse(pkg.evidence_fns),
+      evidence_handles: text_list_reverse(pkg.evidence_handles),
+      block_fns: text_list_reverse(pkg.block_fns)
+    })
+  }
+}

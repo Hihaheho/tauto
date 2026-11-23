@@ -1,0 +1,27 @@
+description = "An entry of an effect row names an effect: a variant of the same spelling in an imported file does not hide it."
+
+// The enum a `syntax!` makes for a rule (`ArithOp: 'div' | …`) has a variant
+// `Div`; so does any imported enum. A row's `div` is still the effect `div`,
+// and the function `div(n, 2)` the file calls beside it is another namespace's
+// name: an effect and a function of one spelling do not clash.
+@ cases.an-imported-variant-does-not-hide-an-effect-in-a-row
+entry = "main.taut"
+files."lib.taut" = ```tauto
+pub enum ArithOp { Div, Add }
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+import std::builtin::os
+fn half(n: u64): u64 ! {div, stdout} { div(n, 2) }
+show(&half(6))
+```
+stdout = "3\n"
+
+@ cases.a-variant-of-the-same-file-does-not-hide-an-effect-in-a-row
+source = ```tauto
+import std::builtin::os
+enum ArithOp { Div, Add }
+fn half(n: u64): u64 ! {div, stdout} { div(n, 2) }
+show(&half(6))
+```
+stdout = "3\n"

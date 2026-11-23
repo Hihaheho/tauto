@@ -1,0 +1,22 @@
+import "../../src/eure.taut"
+import "../../src/write.taut"
+import "../../src/value.taut"
+
+// A document whose root is not a map is written `= v` and reads back, checked by computing.
+
+theorem root_value(): parse("= 1\n") = Ok(nat_node(1)) {
+  Refl
+}
+
+theorem root_value_back(): parse(to_text(nat_node(1))) = Ok(nat_node(1)) {
+  Refl
+}
+
+theorem root_array_back(): parse(to_text(leaf(Varr(Cons(nat_node(1), Cons(str_node("a"), Nil)))))) = Ok(leaf(Varr(Cons(nat_node(1), Cons(str_node("a"), Nil))))) {
+  Refl
+}
+
+// A root value with an extension: `= v` and then `$x = w`.
+theorem root_with_extension(): parse("= true\n$x = 2\n") = Ok(Node::Mk(Vbool(true), Cons(#("x", nat_node(2)), Nil))) {
+  Refl
+}

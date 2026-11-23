@@ -2,7 +2,7 @@
 
 @ cases.borrow-does-not-move
 source = ```nib
-fn len(&v: Vec(i64)): u64 { Vec::len(&v) }
+fn len(v: &Vec(i64)): u64 { Vec::len(&v) }
 var v := Vec::new()
 Vec::push(&mut v, 1)
 let a := len(&v)
@@ -19,17 +19,65 @@ types = "error: v is not a var"
 
 @ cases.mut-and-shared-in-one-call
 source = ```nib
-fn f(&mut a: Vec(i64), &b: Vec(i64)): Unit { Vec::push(&mut a, 1) }
+fn f(a: &mut Vec(i64), b: &Vec(i64)): Unit { Vec::push(&mut a, 1) }
 var v := Vec::new()
 Vec::push(&mut v, 1)
 f(&mut v, &v)
 ```
 lin = "error: v is borrowed twice in one call"
 
+@ cases.shared-and-nested-mut-in-one-call
+source = ```nib
+fn get(a: &Vec(i64)): u64 { Vec::len(&a) }
+fn grow(a: &mut Vec(i64)): u64 {
+  Vec::push(&mut a, 1)
+  Vec::len(&a)
+}
+fn add(a: &Vec(i64), n: u64): u64 { if n == 0 { get(&a) } else { n } }
+var w := Vec::new()
+let x := add(&w, grow(&mut w))
+```
+lin = "error: w is borrowed again inside an argument while an earlier argument of the call around still borrows it"
+
+@ cases.mut-and-nested-mut-in-one-call
+source = ```nib
+fn grow(a: &mut Vec(i64)): u64 {
+  Vec::push(&mut a, 1)
+  Vec::len(&a)
+}
+fn add(a: &mut Vec(i64), n: u64): u64 { n }
+var w := Vec::new()
+let x := add(&mut w, grow(&mut w))
+```
+lin = "ok"
+
+@ cases.nested-mut-before-shared-in-one-call
+source = ```nib
+fn get(a: &Vec(i64)): u64 { Vec::len(&a) }
+fn grow(a: &mut Vec(i64)): u64 {
+  Vec::push(&mut a, 1)
+  Vec::len(&a)
+}
+fn add(n: u64, a: &Vec(i64)): u64 { if n == 0 { get(&a) } else { n } }
+var w := Vec::new()
+let x := add(grow(&mut w), &w)
+```
+lin = "ok"
+
+@ cases.shared-and-nested-shared-in-one-call
+source = ```nib
+fn get(a: &Vec(i64)): u64 { Vec::len(&a) }
+fn add(a: &Vec(i64), n: u64): u64 { if n == 0 { get(&a) } else { n } }
+var w := Vec::new()
+Vec::push(&mut w, 1)
+let x := add(&w, get(&w))
+```
+lin = "ok"
+
 @ cases.disjoint-fields-may-both-be-mut
 source = ```nib
 struct P { a: Vec(i64), b: Vec(i64) }
-fn f(&mut x: Vec(i64), &mut y: Vec(i64)): Unit { Vec::push(&mut x, 1) }
+fn f(x: &mut Vec(i64), y: &mut Vec(i64)): Unit { Vec::push(&mut x, 1) }
 var p := P { a: Vec::new(), b: Vec::new() }
 f(&mut p.a, &mut p.b)
 ```
@@ -37,24 +85,35 @@ lin = "ok"
 
 @ cases.move-and-borrow-in-one-call
 source = ```nib
-fn g(a: Vec(i64), &b: Vec(i64)): Unit { }
+fn g(a: Vec(i64), b: &Vec(i64)): Unit { }
 var v := Vec::new()
 Vec::push(&mut v, 1)
 g(v, &v)
 ```
 lin = "error: v is borrowed after move"
 
-@ cases.borrow-cannot-be-stored
+@ cases.let-binds-borrow
 source = ```nib
+
 var v := Vec::new()
 Vec::push(&mut v, 1)
 let r := &v
+show(&Vec::len(&r))
 ```
-types = "error: a borrow cannot be stored"
+stdout = "1\n"
 
-@ cases.borrow-cannot-be-field
+@ cases.let-borrow-freezes-owner
+source = ```nib
+var v := Vec::new()
+let r := &v
+Vec::push(&mut v, 1)
+let used_later := &r
+```
+lin = "error: v is frozen by r"
+
+@ cases.borrow-can-be-field
 source = "struct S { r: &Vec(i64) }"
-types = "error: a borrow cannot be a field"
+lin = "ok"
 
 @ cases.borrow-cannot-be-effect-argument
 source = ```nib
@@ -69,12 +128,12 @@ lin = "error: a borrow cannot be an effect argument"
 
 @ cases.let-borrow-freezes
 source = ```nib
-affine struct F {}
-fn size(&f: F): i64 { 1 }
+struct(affine) F {}
+fn size(f: &F): i64 { 1 }
 var v := Vec::new()
 Vec::push(&mut v, F {})
 let r := handle {
-  let &p := Vec::index(&v, 0)
+  let p := Vec::index(&v, 0)
   Vec::push(&mut v, F {})
   size(&p)
 } with {
@@ -85,13 +144,13 @@ lin = "error: v is frozen by p"
 
 @ cases.freeze-ends-with-block
 source = ```nib
-affine struct F {}
-fn size(&f: F): i64 { 1 }
+struct(affine) F {}
+fn size(f: &F): i64 { 1 }
 var v := Vec::new()
 Vec::push(&mut v, F {})
 let r := handle {
   let n := {
-    let &p := Vec::index(&v, 0)
+    let p := Vec::index(&v, 0)
     size(&p)
   }
   Vec::push(&mut v, F {})
@@ -102,9 +161,11 @@ let r := handle {
 ```
 lin = "ok"
 
-@ cases.borrow-of-dup-is-value
+// `&A` of a duplicable `A` is a borrow: an unannotated `let` keeps it, so
+// the owner stays frozen while it is used.
+@ cases.borrow-of-dup-kept-by-let-freezes
 source = ```nib
-fn first(&v: Vec(i64)): &i64 ! {out_of_bounds} { Vec::index(&v, 0) }
+fn first(v: &Vec(i64)): &i64 ! {out_of_bounds} { Vec::index(&v, 0) }
 var v := Vec::new()
 Vec::push(&mut v, 1)
 let r := handle {
@@ -115,19 +176,36 @@ let r := handle {
   out_of_bounds() => 0
 }
 ```
+lin = "error: v is frozen by n"
+
+// Where an `A` is wanted, the borrow is copied (`&A → A`) and frees the owner.
+@ cases.borrow-of-dup-copied-where-value-wanted
+source = ```nib
+fn first(v: &Vec(i64)): &i64 ! {out_of_bounds} { Vec::index(&v, 0) }
+var v := Vec::new()
+Vec::push(&mut v, 1)
+let r := handle {
+  let n: i64 := first(&v)
+  Vec::push(&mut v, n)
+  n
+} with {
+  out_of_bounds() => 0
+}
+```
 lin = "ok"
 
 @ cases.returned-borrow-derives-from-args
 source = ```nib
-affine struct F {}
-fn pick(&a: Vec(F), &b: Vec(F)): &F ! {out_of_bounds} { Vec::index(a, 0) }
+struct(affine) F {}
+fn pick(a: &Vec(F), b: &Vec(F)): &F ! {out_of_bounds} { Vec::index(a, 0) }
 var p := Vec::new()
 var q := Vec::new()
 Vec::push(&mut p, F {})
 Vec::push(&mut q, F {})
 let r := handle {
-  let &x := pick(&p, &q)
+  let x := pick(&p, &q)
   Vec::push(&mut q, F {})
+  let used_later := &x
   0
 } with {
   out_of_bounds() => 0
@@ -137,22 +215,22 @@ lin = "error: q is frozen by x"
 
 @ cases.borrow-returning-needs-borrow-arg
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 fn mk(): &F { F {} }
 ```
 types = "error: -> &F needs a borrowed parameter"
 
 @ cases.closure-returning-borrow
 source = ```nib
-affine struct F {}
-let g := (&v: Vec(F)) => Vec::index(v, 0)
+struct(affine) F {}
+let g := (v: &Vec(F)) => Vec::index(v, 0)
 ```
 types = "error: a closure cannot return a borrow"
 
 @ cases.match-on-borrow-binds-borrows
 source = ```nib
-affine enum Expr { Num(i64), Add(Expr, Expr) }
-fn eval(&e: Expr): i64 {
+enum(affine) Expr { Num(i64), Add(Expr, Expr) }
+fn eval(e: &Expr): i64 {
   match e {
     Num(n) => n
     Add(l, r) => eval(l) + eval(r)
@@ -163,7 +241,7 @@ lin = "ok"
 
 @ cases.match-consumes-owner
 source = ```nib
-affine enum Expr { Num(i64), Add(Expr, Expr) }
+enum(affine) Expr { Num(i64), Add(Expr, Expr) }
 fn s(e: Expr): Expr {
   match e {
     Add(Num(0), r) => r
@@ -175,7 +253,7 @@ lin = "error: e is used after move"
 
 @ cases.match-rebinds-owner
 source = ```nib
-affine enum Expr { Num(i64), Add(Expr, Expr) }
+enum(affine) Expr { Num(i64), Add(Expr, Expr) }
 fn s(e: Expr): Expr {
   match e {
     Add(Num(0), r) => r
@@ -187,9 +265,9 @@ lin = "ok"
 
 @ cases.borrow-closure-passed-to-borrow-param
 source = ```nib
-affine struct File {}
+struct(affine) File {}
 fn open(): File { File {} }
-fn write_line(&mut f: File, row: Text): Unit { }
+fn write_line(f: &mut File, row: Text): Unit { }
 var f := open()
 each(Cons("a", Cons("b", Nil)), (row) => write_line(&mut f, row))
 ```
@@ -197,20 +275,20 @@ lin = "ok"
 
 @ cases.borrow-closure-stored
 source = ```nib
-affine struct File {}
+struct(affine) File {}
 fn open(): File { File {} }
-fn write_line(&mut f: File, row: Text): Unit { }
+fn write_line(f: &mut File, row: Text): Unit { }
 var f := open()
 let g := (s) => write_line(&mut f, s)
-let h := Pair { fst: g, snd: 1 }
+let h := #(g, 1)
 ```
 lin = "error: g borrows f and cannot be stored"
 
 @ cases.var-move-out-in-straight-line
 source = ```nib
-affine struct Socket {}
+struct(affine) Socket {}
 fn connect(): Socket { Socket {} }
-fn write(&mut s: Socket): Unit { }
+fn write(s: &mut Socket): Unit { }
 fn shutdown(s: Socket): Unit { }
 var s := connect()
 write(&mut s)
@@ -220,7 +298,7 @@ lin = "ok"
 
 @ cases.var-move-out-in-closure
 source = ```nib
-affine struct Socket {}
+struct(affine) Socket {}
 fn connect(): Socket { Socket {} }
 fn shutdown(s: Socket): Unit { }
 var s := connect()
@@ -230,7 +308,7 @@ lin = "error: s is a var and cannot be moved out of a closure"
 
 @ cases.var-reassign-after-move
 source = ```nib
-affine struct Socket {}
+struct(affine) Socket {}
 fn connect(): Socket { Socket {} }
 fn shutdown(s: Socket): Unit { }
 var s := connect()
@@ -242,7 +320,7 @@ lin = "ok"
 
 @ cases.var-used-after-move
 source = ```nib
-affine struct Socket {}
+struct(affine) Socket {}
 fn connect(): Socket { Socket {} }
 fn shutdown(s: Socket): Unit { }
 var s := connect()
@@ -253,30 +331,125 @@ lin = "error: s is used after move"
 
 @ cases.linear-var-rejected
 source = ```nib
-linear struct H {}
+struct(linear) H {}
 var h := H {}
 ```
 types = "error: a var cannot hold a linear value"
 
 @ cases.replace-moves-out-of-mut
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 fn fresh(): F { F {} }
-fn f(&mut x: F): F { replace(&mut x, fresh()) }
+fn f(x: &mut F): F { replace(&mut x, fresh()) }
 ```
 lin = "ok"
 
 @ cases.affine-field-by-value
+description = "An affine field moves out of an owned value, as in Rust: the rest is dropped with it."
 source = ```nib
-affine struct F {}
-struct W { f: F }
+struct(affine) F {}
+struct W { f: F, g: F }
 fn f(s: W): F { s.f }
 ```
-lin = "error: s.f is affine; destructure s"
+lin = "ok"
+
+@ cases.other-field-after-a-field-moved-out
+source = ```nib
+struct(affine) F {}
+struct W { f: F, g: F }
+fn both(s: W): F × F { #(s.f, s.g) }
+```
+lin = "ok"
+
+@ cases.field-moved-out-twice
+source = ```nib
+struct(affine) F {}
+struct W { f: F, g: F }
+fn twice(s: W): F × F { #(s.f, s.f) }
+```
+lin = "error: s.f is used after move"
+
+@ cases.whole-after-a-field-moved-out
+source = ```nib
+struct(affine) F {}
+struct W { f: F, g: F }
+fn keep(w: W): W { w }
+fn whole(s: W): W {
+  let x := s.f
+  keep(s)
+}
+```
+lin = "error: s is used after move"
+
+@ cases.other-field-borrowed-after-a-field-moved-out
+source = ```nib
+struct(affine) F { n: i64 }
+struct W { f: F, g: F }
+fn size(x: &F): i64 { x.n }
+fn other(s: W): i64 {
+  let x := s.f
+  size(&s.g)
+}
+```
+lin = "ok"
+
+@ cases.linear-field-is-moved-out
+description = "A struct linear only for its fields gives them out one by one, as a pattern would."
+source = ```nib
+struct(linear) L {}
+struct W { l: L }
+fn f(s: W): L { s.l }
+```
+lin = "ok"
+
+@ cases.each-linear-field-moved-out
+source = ```nib
+struct(linear) L {}
+struct W { a: L, b: L }
+fn both(s: W): W { let a := s.a
+let b := s.b
+W { a: b, b: a } }
+```
+lin = "ok"
+
+@ cases.a-linear-field-left-is-not-used
+description = "What is left of a value partly moved is still to be used where it is linear."
+source = ```nib
+struct(linear) L {}
+struct W { a: L, b: L }
+fn f(s: W): L { s.a }
+```
+lin = "error: s.b is not used"
+
+@ cases.a-nested-linear-field-left-is-not-used
+source = ```nib
+struct(linear) L {}
+struct I { a: L, b: L }
+struct W { i: I, c: L }
+fn f(s: W): I { I { a: s.i.a, b: s.c } }
+```
+lin = "error: s.i.b is not used"
+
+@ cases.a-declared-linear-struct-is-taken-apart
+description = "A struct declared linear stands for more than its fields: it is taken apart with a pattern."
+source = ```nib
+struct(linear) L {}
+struct(linear) W { l: L }
+fn f(s: W): L { s.l }
+```
+lin = "error: s.l is linear; destructure s"
+
+@ cases.a-linear-field-moved-twice
+source = ```nib
+struct(linear) L {}
+struct W { a: L, b: L }
+fn f(s: W): W { W { a: s.a, b: s.a } }
+```
+lin = "error: s.a is used after move"
 
 @ cases.moved-inside-a-loop
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 fn consume(f: F): Unit { }
 let f := F {}
 var i := 0
@@ -285,13 +458,67 @@ while i < 3 {
   i := i + 1
 }
 ```
-lin = "error: f is moved inside a loop"
+lin = "error: f is moved inside a loop and not assigned again before the loop repeats"
+
+@ cases.var-moved-and-assigned-in-a-loop
+source = ```nib
+enum(affine) L { Nil, Cons(F, L) }
+struct(affine) F {}
+var xs := L::Nil
+var i := 0
+while i < 3 {
+  xs := L::Cons(F {}, xs)
+  i := i + 1
+}
+let ys := xs
+```
+lin = "ok"
+
+@ cases.var-moved-in-a-loop-assigned-on-one-path
+source = ```nib
+struct(affine) F {}
+fn consume(f: F): Unit { }
+var f := F {}
+var i := 0
+while i < 3 {
+  consume(f)
+  if i == 1 { f := F {} }
+  i := i + 1
+}
+```
+lin = "error: f is moved inside a loop and not assigned again before the loop repeats"
+
+@ cases.var-moved-in-a-loop-condition-assigned-in-body
+source = ```nib
+struct(affine) F {}
+fn done(f: F): Bool { false }
+var f := F {}
+while done(f) {
+  f := F {}
+}
+```
+lin = "ok"
+
+@ cases.var-moved-in-a-loop-used-after
+source = ```nib
+struct(affine) F {}
+fn consume(f: F): Unit { }
+var f := F {}
+var i := 0
+while i < 3 {
+  consume(f)
+  f := F {}
+  i := i + 1
+}
+consume(f)
+```
+lin = "ok"
 
 @ cases.continuation-with-borrow-escapes
 source = ```nib
 effect choose(): Bool
-affine enum R { Done(u64), More(affine (Bool) -> R ! {}) }
-fn pick(&v: Vec(i64), b: Bool): u64 { Vec::len(&v) }
+enum(affine) R { Done(u64), More(affine (Bool) -> R ! {}) }
+fn pick(v: &Vec(i64), b: Bool): u64 { Vec::len(&v) }
 fn mk(): R ! {} {
   var v := Vec::new()
   Vec::push(&mut v, 1)
@@ -304,7 +531,7 @@ fn mk(): R ! {} {
 lin = "error: k holds a borrow of v, so it may only be called in its arm"
 
 // A closure that captures a `var` shares its cell, whatever the content, so
-// it borrows (`docs/design/ownership.md`「`let` と `var`」「借用閉包」): it is lent to a `&f` parameter
+// it borrows (`docs/design/ownership.md`「`let` and `var`」「借用閉包」): it is lent to a `&f` parameter
 // or called in place, and never kept, returned or sent.
 
 @ cases.var-closure-returned
@@ -321,7 +548,7 @@ lin = "error: this closure borrows n and cannot be stored"
 source = ```nib
 var n := 0
 let f := () => { n := n + 1 }
-let h := Pair { fst: f, snd: 1 }
+let h := #(f, 1)
 ```
 lin = "error: f borrows n and cannot be stored"
 
@@ -374,7 +601,7 @@ lin = "ok"
 @ cases.k-shares-a-var-of-an-arm
 source = ```nib
 effect choose(): Bool
-affine enum R { Done(i64), More(affine (Bool) -> R ! {}) }
+enum(affine) R { Done(i64), More(affine (Bool) -> R ! {}) }
 fn top(): R ! {} {
   var count := 0
   handle { if perform choose() { 1 } else { 2 } } with {
@@ -391,7 +618,7 @@ lin = "error: k shares var count, so it may only be called in its arm"
 @ cases.k-shares-a-var-of-the-body
 source = ```nib
 effect choose(): Bool
-affine enum R { Done(i64), More(affine (Bool) -> R ! {}) }
+enum(affine) R { Done(i64), More(affine (Bool) -> R ! {}) }
 fn top(): R ! {} {
   handle {
     var i := 0
@@ -424,7 +651,7 @@ lin = "ok"
 @ cases.field-assignment-needs-var-or-mut-borrow
 source = ```nib
 struct P { x: i64 }
-fn set(&p: P): Unit { p.x := 3 }
+fn set(p: &P): Unit { p.x := 3 }
 ```
 types = "error: `p.x` assigns a field of a `var` or a `&mut` parameter"
 
@@ -447,10 +674,10 @@ lin = "error: q is used after move"
 
 @ cases.a-var-in-a-function-value-of-the-arm-is-not-shared-with-k
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
 effect pause(): Unit
-affine enum S { Done, More(affine (Unit) -> S ! {}) }
+enum(affine) S { Done, More(affine (Unit) -> S ! {}) }
 fn top(): S ! {} {
   handle { perform pause(); Done } with {
     pause(), k => {
@@ -469,7 +696,7 @@ lin = "ok"
 @ cases.a-var-the-arm-declares-outside-a-function-value-still-pins-k
 source = ```nib
 effect pause(): Unit
-affine enum S { Done, More(affine (Unit) -> S ! {}) }
+enum(affine) S { Done, More(affine (Unit) -> S ! {}) }
 fn top(): S ! {} {
   handle { perform pause(); Done } with {
     pause(), k => {
@@ -481,3 +708,14 @@ fn top(): S ! {} {
 }
 ```
 lin = "error: k shares var n, so it may only be called in its arm"
+
+@ cases.field-moved-out-runs
+description = "The field moved out is the value's; the rest is dropped with the value."
+source = ```nib
+struct(affine) F { n: i64 }
+struct W { f: F, g: F }
+fn first(s: W): F { s.f }
+let w := W { f: F { n: 1 }, g: F { n: 2 } }
+show(&(first(w).n))
+```
+stdout = "1\n"

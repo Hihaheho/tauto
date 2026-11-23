@@ -1,8 +1,8 @@
 import "data_shape_sound.taut"
 import "run_prepared_data_fact.taut"
 import "../../surface/src/surface.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_registration.taut"
 import "diagnostic_report.taut"
@@ -12,33 +12,39 @@ import "prepare_data_body_sound.taut"
 import "program_data_body_sound.taut"
 import "rules_data_shape.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
 pub fn DataStmtViewShape(stmt: SurfaceStmt): Prop {
-  ⊢ Prop from match stmt {
-    StLet(name, ty, value, borrow, mutable) => True
-    StVar(name, ty, value, borrow) => True
-    StModule(name, stmts, start, end) => True
-    StAssign(name, name_place, value) => True
-    StCalled(name_generates, value) => True
-    StFn(f) => True
-    StTheorem(t) => True
-    StDef(t) => True
-    StMutual(stmts, start, end) => True
-    StImport(path, start, end) => True
-    StInductive(i) => True
-    StEffect(e) => True
-    StExtern(abi, fns, start, end) => True
-    StClass(klass) => True
-    StInstance(i) => True
-    StWhile(cond, body) => True
-    StReturn(value) => True
-    StExpr(value) => True
-    StOther(what, start, end) => True
-    StMacro(name, function, start, end) => True
-    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => True
-    StSyntax(name, grammar, start, end) => True
+  match stmt {
+    StLet(^name, ^ty, ^value, ^r#borrow, ^mutable, ^unused, ^st_stack) => True
+    StVar(^name, ^ty, ^value, ^r#borrow, ^unused, ^st_stack) => True
+    StAssign(^name, ^name_place, ^value) => True
+    StCalled(^name_generates, ^value) => True
+    StFn(^f) => True
+    StTheorem(^t) => True
+    StDef(^t) => True
+    StMutual(^stmts, ^start, ^end) => True
+    StImport(^path, ^start, ^end) => True
+    StInductive(^i) => True
+    StEffect(^e) => True
+    StExtern(^fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => True
+    StClass(^klass) => True
+    StInstance(^i) => True
+    StWhile(^cond, ^body) => True
+    StReturn(^value) => True
+    StExpr(^value) => True
+    StOther(^what, ^start, ^end) => True
+    StLoop(^st_body, ^start, ^end) => True
+    StModule(^mod_name, ^mod_vis, ^mod_items, ^start, ^end) => True
+    StReexport(^re_path, ^re_names, ^re_spans, ^start, ^end) => True
+    StFor(^for_pat, ^for_src, ^st_body, ^start, ^end) => True
+    StBreak(^st_value, ^start, ^end) => True
+    StContinue(^start, ^end) => True
+    StMacro(^name, ^function, ^start, ^end) => True
+    StAttributed(^attr_name, ^attr_arg, ^attr_generates, ^attr_stmt) => True
+    StSyntax(^name, ^grammar, ^start, ^end) => True
     StStruct(d) => DataViewShape(surface_data_is_view(d), true, registration_ctors(d))
     StEnum(d) => DataViewShape(surface_data_is_view(d), false, registration_ctors(d))
   }
@@ -57,10 +63,9 @@ pub theorem ck_program_data_one_view_shape(
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_program_data_one(c, stmt)))
 ): DataStmtViewShape(stmt) {
-  ⊢ DataStmtViewShape(stmt) from match stmt {
-    StLet(name, ty, value, borrow, mutable) => Trivial
-    StVar(name, ty, value, borrow) => Trivial
-    StModule(name, stmts, start, end) => Trivial
+  match stmt {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => Trivial
+    StVar(name, ty, value, r#borrow, unused, st_stack) => Trivial
     StAssign(name, name_place, value) => Trivial
     StCalled(name_generates, value) => Trivial
     StFn(f) => Trivial
@@ -70,13 +75,19 @@ pub theorem ck_program_data_one_view_shape(
     StImport(path, start, end) => Trivial
     StInductive(i) => Trivial
     StEffect(e) => Trivial
-    StExtern(abi, fns, start, end) => Trivial
+    StExtern(fns, instances, types, structs, enums, start, end) => Trivial
     StClass(klass) => Trivial
     StInstance(i) => Trivial
     StWhile(cond, body) => Trivial
     StReturn(value) => Trivial
     StExpr(value) => Trivial
     StOther(what, start, end) => Trivial
+    StLoop(st_body, start, end) => Trivial
+    StModule(mod_name, mod_vis, mod_items, start, end) => Trivial
+    StReexport(re_path, re_names, re_spans, start, end) => Trivial
+    StFor(for_pat, for_src, st_body, start, end) => Trivial
+    StBreak(st_value, start, end) => Trivial
+    StContinue(start, end) => Trivial
     StMacro(name, function, start, end) => Trivial
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Trivial
     StSyntax(name, grammar, start, end) => Trivial
@@ -116,7 +127,7 @@ pub theorem program_view_tail<P: Prop>(
   ih: ∀ next: Checker. ∀ clean: DiagnosticClean(ck_st(ck_program_data(rest, next))). P,
   clean: DiagnosticClean(ck_st(body_program_after(rest, m)))
 ): P {
-  ⊢ P from match m {
+  match m {
     mut1(ignored, next) => ih(next, recheck_clean_unwrap(ck_program_data(rest, next), clean))
   }
 }
@@ -125,7 +136,7 @@ pub theorem ck_program_data_view_shapes(
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_program_data(stmts, c)))
 ): ProgramViewShapes(stmts) {
-  ⊢ ProgramViewShapes(stmts) from match stmts {
+  match stmts {
     Nil => ProgramViewShapesNil
     Cons(Stmt, rest) => {
       let accepted: DiagnosticClean(
@@ -144,7 +155,7 @@ pub theorem ck_program_data_view_shapes(
           body_prefix_clean(rest, ck_program_data_one(c, Stmt), accepted)
         ),
         program_view_tail(
-          ProgramViewShapes(rest),
+          <P: ProgramViewShapes(rest)>,
           rest,
           ck_program_data_one(c, Stmt),
           next => next_clean => ck_program_data_view_shapes(rest, next, next_clean),
@@ -159,7 +170,7 @@ pub theorem program_view_after(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
 ): ProgramViewShapes(program) {
-  ⊢ ProgramViewShapes(program) from match m {
+  match m {
     mut1(ignored, next) => ck_program_data_view_shapes(
       program,
       next,
@@ -191,7 +202,7 @@ pub theorem types_check_view_shapes(
   clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
 ): ProgramViewShapes(program) {
   types_check_prepared_data_fact(
-    ProgramViewShapes(program),
+    <P: ProgramViewShapes(program)>,
     prelude,
     program,
     errors,

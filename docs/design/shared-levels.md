@@ -1,214 +1,173 @@
-# 強参照循環の防止（shared のレベル）
+# No strong reference cycles
 
-Tauto の値の強参照グラフに循環ができないことを、可変ストレージのレベルと捕捉情報
-（capture row）の静的検査で保証する設計です。
+A static check, on by default, guarantees that the strong reference graph of
+Tauto values never has a cycle. The checker and an abstract model are proved;
+the translation from Nib to the model's constraints and its correspondence
+with the runtimes are not.
 
-検査器と抽象モデルの証明があります。Nib から制約への翻訳と実行系との対応は
-証明されていません。保証の範囲は「実装と証明の所在」の節に記します。
-正の順序は [`ownership.md`](ownership.md) と同じで、実装（`crates/`）が正ではありません。
+## Guarantees
 
----
+- **G1, acyclicity**: from a proper initial state, using only checked
+  operations, no reachable state has a strong cycle.
+- **G2, collection**: with correct reference counts on a finite managed heap,
+  completed releases and no resurrection, nothing unreachable from roots
+  survives because of a cycle.
 
-## 保証すること
+G1, G2 and correspondence with generated code are separate obligations; G1
+alone does not mean binaries never leak. Out of scope: semantic leaks (caches
+holding garbage), memory bounds, termination, RSS, unverified externs,
+counter overflow. G2's model has no `Weak`.
 
-- **G1：強参照グラフの非循環性。** 初期状態が適切で、検査対象の操作だけを行うなら、到達する
-  どの状態にも強参照の循環がない。
-- **G2：参照カウントによる回収。** 有限の管理ヒープで参照数が正しく管理され、解放処理が完了し、
-  デストラクタによる復活がないなら、強参照のルートから到達できないペイロードが強循環のために
-  残ることはない。
+## Principles
 
-G1 と G2、さらに生成された実装との対応は別々の義務で、別々に証明する。G1 だけで
-「実行バイナリにメモリーリークがない」とは言わない。
+- Memory levels are separate from kinds, universes and lifetimes; the kernel is
+  unchanged.
+- Users never manage level numbers; the checker infers them.
+- Immutable data needs no annotations and long immutable lists are fine, but
+  strong references to mutable storage through immutable containers and
+  closures are tracked.
+- Levels never change on aliasing, calls or multi-shot resumption.
+- Unsupported syntax, unknown externs and unknown captures are rejected;
+  `Unknown` is not the empty capture row.
 
-**対象外：** 不要な値をグローバルキャッシュなどが保持する意味的リーク、メモリー使用量の上限、
-任意のプログラムの停止、OS が観測する RSS の減少、未検証の外部コード、参照数のオーバーフロー。
-`Weak` があると値の破棄と割当領域の解放が一致しなくなるので、回収モデル（G2）は Weak を含まない。
+## Model
 
-## 設計の原則
+The **frontier** of a value is the set of mutable storage reached by following
+strong references through immutable nodes and stopping at the first mutable
+one. Mutable storage is anything whose strong targets can change after
+publication (cells, `Ref`, mutable containers, `Mutex` holding pointers,
+runtime mutable slots); numeric-only storage has no targets. A rule looking only
+at cell-free parts misses `cell c → immutable list → closure → cell c`.
 
-1. メモリーのレベルは、種（`copy / shared / affine / linear`）・型宇宙・lifetime と別の情報にする。
-   `Kind` の格子にはレベルを混ぜず、カーネルの規則は変えない。
-2. 利用者に絶対的なレベルの番号を管理させない。扱うのはレベル名と大小関係で、整数の割当は
-   検査器の内部と証明にだけ使う。
-3. 不変データにはノードごとのレベル注釈を要求しない。長い不変リストを制限しない。一方、不変の
-   コンテナや閉包を通した可変ストレージへの強参照は、捕捉情報として落とさない。
-4. 既存のオブジェクトのレベルは、別名参照・関数呼び出し・多重再開のたびに付け替えない。
-5. 未対応の構文・未知の extern・未知の捕捉情報は「安全」と判定せず、拒否する。`Unknown` は
-   空の capture row ではない。
+The proof heap has per-allocation IDs, immutable/mutable nodes, a logical
+creation order `birth`, a `level` per mutable node, and counted edges:
 
-## first-mutable frontier
+- **I**: an edge between immutable nodes `u → v` has `birth(v) < birth(u)`.
+  Immutable objects are built from existing initialized ones; self-reference,
+  back-patched recursive closures and in-place updates get no exception.
+- **II**: a nonempty path from mutable `a` to mutable `b` through immutable
+  nodes has `level(a) < level(b)`.
 
-値から強参照をたどり、不変ノードは通り抜けて、最初に到達した可変ストレージで止める。止まった
-可変ストレージの集合をその値の **frontier** と呼ぶ。可変ストレージの中身には入らない。セルの
-レベルと内容の契約が固定なので、中身が書き換わっても外側の値の frontier は変わらない。
+**Theorem**: I and II imply no strong cycle (a cycle without mutable nodes
+would decrease `birth`; with them, levels increase strictly around it).
 
-可変ストレージは、公開後に強参照先を変更できるものすべて（セル、`Ref`、可変コンテナ、
-ポインターを含む `Mutex`、実行系の可変スロット）。数値しか入らない可変領域は強参照先を持たないので
-該当しない。
-
-次は循環になる。可変セルを含まない部分だけを見る規則では見逃す。
-
-```text
-可変セル c → 不変リスト → 閉包 → 可変セル c
-```
-
-## ヒープの不変条件
-
-証明用のヒープは、割当ごとの論理 ID、ノードの分類（不変／可変）、論理的な生成順 `birth`、可変
-ノードのレベル `level`、強参照の個数つきの辺を持つ。`birth` は実アドレスではない。
-
-- **I：不変ノード間の辺。** 不変ノード `u` から不変ノード `v` への強参照があれば
-  `birth(v) < birth(u)`。不変オブジェクトは初期化済みの既存オブジェクトから作り、構築途中の
-  強参照を外へ公開しない。自己参照の初期化、再帰閉包のバックパッチ、初期化後の in-place 更新を、
-  この規則の暗黙の例外にしない。
-- **II：可変ノード間の区間。** 可変ノード `a` から可変ノード `b` への、内部がすべて不変の
-  非空の強参照経路があれば `level(a) < level(b)`。同じレベルの可変ノードをこの区間で結ぶことも
-  禁止する。独立したセルが同じレベルを持つのは構わない。
-
-**定理（非循環性）。** I と II が成り立つヒープに強参照の循環はない。
-循環に可変ノードがなければ、一周して `birth` が真に減ることになり矛盾する。可変ノードがあれば、
-可変ノードの間を不変ノード列で区切り、各区間でレベルが真に増えるので、一周して `l < l` になり矛盾する。
-
-## 静的な情報
-
-| 値・型 | frontier の上界 |
+| Value | Frontier bound |
 |---|---|
-| 整数・真偽値・可変参照を含まない Text | `∅` |
-| 可変セル `Cell<α, T>` への強参照 | `{α}`（セルの内部では止まる） |
-| 不変の Pair・struct・enum | 保持するフィールドの和 |
-| 不変の List・Array | 要素型の capture row |
-| 閉包 | 実際に保持する捕捉環境の和 |
-| 保存された継続・停止した budget | 保持するフレーム・値・ハンドラ環境の和 |
-| `Weak` | `∅`（指す先の情報は別に持つ） |
-| 未確認の extern・型消去 | `Unknown`（`∅` ではない） |
+| integers, booleans, Text | `∅` |
+| reference to `Cell<α, T>` | `{α}` |
+| immutable products, structs, enums | union of fields |
+| immutable `List`, `Array` | element capture row |
+| `&rc T` | the frontier of `T` |
+| closure | union of what it actually captures |
+| saved continuation, suspended budget | frames, values and handler environments held |
+| `Weak` | `∅` |
+| unchecked extern, type erasure | `Unknown` |
 
-可変ストレージは、固定のレベル `α` と内容の capture row の上界 `κ` を持ち、`α ≺ κ`
-（`κ` のどの要素よりも `α` が小さい）を満たす。書き込み `write(c, v)` は、型の適合に加えて
-`captures(v) ⊆ κ(c)` と `α(c) ≺ captures(v)` を確認する。代入だけでなく、フィールド書き込み、
-`replace`、`swap`、コンテナへの挿入、`Ref` や `Mutex` の更新、`&mut` 経由の書き込みも同じ契約を通る。
-
-`var x` を捕まえる閉包は、`x` の現在の内容ではなくセルそのものを捕捉する。
+Storage has a fixed level `α` and content bound `κ` with `α ≺ κ`. Every write
+(assignment, field write, `replace`, `swap`, insertion, `Ref`/`Mutex`
+updates, writes through `&mut`) checks `captures(v) ⊆ κ(c)` and
+`α(c) ≺ captures(v)`. A closure capturing `var x` captures the cell:
 
 ```text
 var f = () => 0
-f := () => f()      // 閉包は {level(f_cell)} を持つ。f_cell に戻すので α ≺ α を要求して拒否
+f := () => f()      // the closure holds {level(f_cell)}; storing it needs α ≺ α: rejected
 ```
 
-明示的な関数再帰は禁止しない。ただし、再帰を実装するために実行系の内部で強参照の循環
-（自己参照の `Rc` など）を作っているなら、ソースが安全でも G1 は成立しない。局所再帰を含めて
-実行系を監査する。
+Function recursion is fine, but runtimes must not implement it with strong
+cycles internally (e.g. self-referencing `Rc`); runtimes are audited for this.
 
-## 検査器（`crates/tauto-nibcheck/src/cycle/analysis.rs`）
+## The checker (`crates/tauto-nibcheck/src/cycle/analysis.rs`)
 
-型検査と使用の検査（`lin`）が通ったプログラムに、既定でかかる。`lin::check` の最後に走るので、
-評価器・NIR・マクロのすべての入口で効く。
+It runs at the end of `lin::check`, so on every entry (NIR, macros).
 
-- 現行の Nib では、`var` を捕まえた閉包は借用閉包で保存できない。したがって第一級の可変ストレージは
-  `Ref`・`Mutex`・`Vec`・`HashMap` と host の状態だけで、循環はこれらを経由してしか作れない。
-- 可変ストレージを作る構文上の箇所（`var`、`Ref::new`・`Mutex::new`・`Vec::new`・`HashMap::new` の
-  呼び出し、host 関数ごとの状態）を一つの **サイト** とする。サイトは、そこで実行時に作られる
-  すべてのストレージを表す。
-- 値は、それが保持しうる原子（ストレージへの強参照、借用された場所、閉包、`Unknown`）の集合に
-  平坦化する。構造体・リスト・閉包の環境の中の位置は区別しない（精度を落とすが健全性は落とさない）。
-  集合はプログラム全体（prelude を含む）の包含制約の最小解で、高階の呼び出しは閉包の集合を通して解く。
-- 総称関数（型引数を持つトップレベルの関数）は、名前で直接呼ぶ箇所ごとに本体を新しい節点で
-  読み直す。総称の本体は型引数の値の中を見られないので、一つの写しを共有すると、たとえば
-  `Mutex::lock` に渡されるすべての `Mutex` の中身が混ざる。写しは同じ本体なので、その呼び出しが
-  作りうる値とストレージをすべて作る。写しの途中で同じ関数を呼ぶとき（再帰）、関数を値として
-  使うとき、写しが 4096 個を超えたときは、共有の写しを読む。
-- 型の分かっている項の値からは、その型が保持しえない種類のストレージを除く。`HashMap(K, V)` 型の
-  値は、何と平坦化で混ざっても `Ref` ではない。種類は、型をストレージと閉包の手前までたどって
-  出会う `Ref`・`Mutex`・`Vec`・`HashMap` で、関数型・型引数・知らない型に出会えば除かない。
-  サイトの種類は作った extern（`Ref::new`・`Mutex::new`・`Vec::new`・`HashMap::new`）で決まり、
-  `var` と host の状態は除かない。`HashMap::into_vec` は中身を受け継ぐ新しい `Vec` のサイトとする。
-  これが健全なのは型検査が通っているからで、下の Lean の証明（制約の言語）の外にある。
-- 各サイトについて、中身から不変値と閉包を通って最初に届くサイトの集合（frontier）を求め、
-  サイト間のグラフに循環があれば拒否する。循環がなければ、その位相順序がレベルになる
-  （`sites_acyclic_implies_acyclic`）。
-- 同じサイトのストレージ同士をつなぐ構造（`Ref` の連結リストなど）は、実行時に非循環でも拒否される。
-- `Unknown` が frontier に入ればエラーにする。`Unknown` になるのは、検査器が読まない構文や
-  知らない名前などである。
-- 腕の継続 `k` は閉包として扱い、その環境は次の和とする。
-  - 本体のフレームが保持するもの：本体で評価する値と束縛するすべての名前。
-  - 本体から呼ぶ関数・閉包のフレーム：各関数に、引数・局所変数・評価途中の値と、そこから呼ぶ
-    関数のフレームを持つ節点を作り、呼び出しの解決と一緒に解く。
-    ただし、呼び出しの効果の行（row）が具体的で、継続を保持する腕（`k` を値として残す腕）を持つ
-    効果を含まない呼び出し（**終わった呼び出し**）のフレームは保持しない。そうした呼び出しは、
-    保持される継続が捕まえるときにはスタックにいない。行変数・`?` を含む呼び出しと、関数値を
-    通した呼び出し（新しいフレーム節点を作る）は保持する。継続を保持する腕は
-    `lin::keeps_continuation` で決める。行の検査に誤りがあるプログラムでは、すべての呼び出しを
-    保持する。Lean では `lean/Proto/Nib/KeptFrames.lean`（`running_call_performs`・
-    `capture_covered`）が、捕まえた継続のスタック上のフレームは捕まえた効果を行に持つ呼び出しで
-    あることを、小さな意味論で示す。
-  - 循環の診断は、どのストレージがどの閉包・継続を通して自分を保持するかを位置つきで示す
-    （`holds continuation <位置> which holds <サイト>`）。
-  - `handle` の位置で見えるすべての束縛：評価器のフレームは環境全体を保持し、再開はハンドラを
-    付け直すので、腕が使う外の束縛もここに含まれる。
+- Closures capturing `var` are borrowing and cannot be stored, so first-class
+  storage is `Ref`, `Mutex`, `Vec`, `Slots` and host state.
+- A **site** is a syntactic place creating storage (`var`,
+  `perform ref_new`, `perform mutex_new`, calls of `Vec::new` and
+  `Slots::new`, each host function's state) and stands for all storage created there.
+- Values are flattened to sets of atoms (storage references, borrowed places,
+  closures, `Unknown`), ignoring positions in lists, enums and closure
+  environments. Struct literals keep fields apart (`u.lift` holds only what
+  `lift` holds) until destructured, written through a place (`&mut x.f`) or
+  passed to an untyped extern or host. Sets are the least solution of inclusion
+  constraints over the whole program, prelude included; higher-order calls are
+  solved through closure sets.
+- Generic top-level functions are re-read per direct call (otherwise every
+  `Mutex` passed to `Mutex::lock` would mix); recursion, use as a value, or more
+  than 4096 copies fall back to a shared copy.
+- A typed term's value drops storage kinds its type cannot hold (a
+  `Vec(A)` is never a `Ref`), found by walking the type to the first
+  `Ref`/`Mutex`/`Vec`/`Slots`, stopping (keeping everything) at function
+  types, type parameters and unknown types. Site kinds come from the creating
+  extern; `var` and host state are never dropped. This relies on type checking, outside the
+  Lean proof.
+- Each site's frontier gives a graph over sites; a cycle is rejected, otherwise
+  its topological order is the level assignment
+  (`sites_acyclic_implies_acyclic`). Structures linking storage of one site
+  (e.g. a `Ref` linked list) are rejected even when acyclic at runtime.
+  `Unknown` in a frontier is an error.
+- A handler's continuation `k` is a closure whose environment is: everything the
+  body evaluates and binds; the frames of functions and closures called from it
+  (nodes solved with call resolution), except **finished calls**, whose row is
+  concrete and contains no effect with an arm keeping `k`
+  (`lin::keeps_continuation`), since they are off the stack when `k` is
+  captured; and every binding visible at the `handle`. Calls with row
+  variables, `?` or through function values are kept; with row errors, all
+  are. `lean/Proto/Nib/KeptFrames.lean` (`running_call_performs`,
+  `capture_covered`) shows captured frames belong to calls whose rows contain
+  the captured effect.
+- Hence programs storing continuations in storage are rejected only when truly
+  cyclic, e.g. an arm storing `k` in storage the handler can see. External
+  generators return `k` from the arm and store it outside the `handle`
+  (`cases/lin/kept_continuations.eure`). Diagnostics show the chain
+  (`holds continuation <pos> which holds <site>`).
+- Prelude externs are classified as allocate, store, load, load `&mut`,
+  convert or flatten. A host `extern` has one state per function that holds
+  whatever it receives and may return it.
+- Runtimes capture only used variables (NIR, backends),
+  since holding whole scopes would create unchecked edges. Continuations are
+  delimited by their `handle`; the Rust backend's tier M
+  (`crates/tauto-rt/src/cps.rs` `Resume`) does not hold the `handle`'s result
+  destination or outer handlers ([`rust-backend.md`](rust-backend.md)).
+- `Weak(A)` (`Weak::of(r: Ref(A))`, `Weak::get(w) -> Option(Ref(A))`) is a weak
+  atom, not an edge; a `Ref` taken out and stored is checked as usual. When
+  `Weak::get` turns `None` is backend-defined: after the last strong reference
+  on the Rust backend and Rust VM; whenever GC runs on
+  JavaScript (`WeakRef`); never on `totes/vm`, whose heap never frees. Without
+  cycles, leaving it to GC cannot leak.
+- `totes/nibcheck/src/cycle.taut` is the same analysis, self-hosted.
 
-  したがって、継続を値として返し、`Ref`・`Mutex`・`Vec` などに入れるプログラムは、本当に循環する
-  とき（本体・ハンドラ・`handle` のスコープが、`k` を入れるストレージを保持するとき）だけ拒否される。
-  腕の中で、腕から見えるストレージに `k` を入れると、ハンドラがそのストレージを保持するので循環になる。
-  外から進める生成器は、腕が `k` を値として返し、`handle` の外のコードが保存する形で書く
-  （`cases/lin/kept_continuations.eure`）。
-- prelude の extern は、割当・格納・取り出し・`&mut` の取り出し・変換・平坦化のどれかに分類する。
-  `extern` で宣言された host 関数は、関数ごとに一つの状態を持ち、受け取った値をそこに保持し、
-  そこから返しうるとみなす。
-- 評価器の閉包は自由変数の束縛だけを保持する。NIR と各 backend も使う局所変数だけを捕捉する。
-  スコープ全体を保持すると、検査が見ない辺ができるからである。
-- 実行系の継続は `handle` までで区切られ、その外を保持しない。Rust backend の M 層
-  （`crates/tauto-rt/src/cps.rs` の `Resume`）は、腕を実行するハンドラについて、`handle` の値の
-  行き先と外側のハンドラを保持しない（保持すると、保存した継続がプログラムの残りを生かす）。値として保存される継続は Rust backend でも M 層で書き、`handle` の外の
-  ハンドラを持たない（「値として保存される継続」、`docs/design/rust-backend.md`）。
-- `Weak(A)`（`Weak::of(r: Ref(A))`、`Weak::get(w) -> Option(Ref(A))`）は辺にならない。解析では
-  `Ref` のサイトへの弱参照という原子で、frontier は弱参照を数えず、`Weak::get` で強参照に戻る。
-  したがって、取り出した `Ref` を保存すれば普通の辺として検査される。
-- `Weak::get` が `None` になる時点は backend が決める。参照を数える評価器と Rust backend では
-  最後の強参照が消えたとき（Rust backend では最後の使用のあと）、JS backend は GC に任せて
-  `WeakRef` を使うので、回収されるまで `Some` を返しうる。循環がないので、JS で GC に任せても
-  リークはしない。
-  VM backend も同じ立場を取る。Rust 版（`crates/tauto-vm`）は `Rc` の弱参照で、最後の強参照が
-  消えたときに `None` を返す。Tauto 版（`totes/vm`）のヒープはセルを解放しないので、
-  `Weak::get` は常に `Some` を返す（GC がまだ走っていない JS と同じ）。
-- self-host の検査器（`totes/nibcheck/src/cycle.taut`）は同じ解析で、使用の検査が通ったときに走る。
+## Proofs
 
-## 実装と証明の所在
+- `lean/Proto/Cycle.lean`: `heap_invariant_implies_acyclic`;
+  `sites_acyclic_implies_acyclic` (assuming segments map to site edges).
+- `lean/Proto/Collect.lean`: `drain_keeps_reachable`, `drain_collects` (G2).
+- `lean/Proto/Analysis.lean`: `analysis_sound`. For the inclusion constraint
+  language (copy, join, allocate, store, load, `Weak`, collect), solutions
+  cover all reachable states and an acyclic site graph means no strong cycle.
+  That the Nib translation loses no runtime copy is not proved, nor the
+  correspondence of `KeptFrames` with `analysis.rs`.
+- Solver: `crates/tauto-nibcheck/src/cycle/solve.rs`.
 
-- Lean：グラフの非循環性定理は `lean/Proto/Cycle.lean` の `heap_invariant_implies_acyclic`。
-  サイトへの抽象化は `sites_acyclic_implies_acyclic` で、セグメントがサイトの辺に写ることは仮定する。
-- Lean：参照カウントによる回収（G2）は `lean/Proto/Collect.lean` の `drain_keeps_reachable`・`drain_collects`。
-- Lean：検査器の健全性（解析が実行時の辺を覆うこと）は `lean/Proto/Analysis.lean` の `analysis_sound`。
-  包含制約の言語（コピー・結合・割当・格納・取り出し・`Weak`・回収）について、制約の解が到達しうる
-  すべての状態を覆い、サイトのグラフが非循環なら強参照の循環がないことを示す。Nib から制約への翻訳が
-  実行時のコピーを漏らさないことは証明していない。
-- Lean：終わった呼び出しのフレームを継続の環境から外す規則の根拠は `lean/Proto/Nib/KeptFrames.lean`。
-  実行中の呼び出しが捕まえられるなら、その効果はその呼び出しの行にある（`running_call_performs`）。
-  この定理と `analysis.rs` の規則の対応は翻訳の一部で、証明していない。
-- レベル・capture row のソルバーは `crates/tauto-nibcheck/src/cycle/solve.rs`。検査器は既定で有効。
-- 実行系（評価器・NIR・backend）は使う変数だけを捕捉する。
-- self-host の検査器は `totes/nibcheck/src/cycle.taut`。小さなプログラムで Rust と出力の一致を確かめる。
-- Tauto と Lean の共通回収モデルは `meta/Memory.taut`・`lean/Proto/Memory.lean`（「Tauto と Lean の共通回収モデル」）。
-- `Weak` は評価器・Rust・JS・VM にある。弱参照は G1・G2 のグラフの辺に入らない。
+### Shared collection model (`meta/memory.taut`, `lean/Proto/Memory.lean`)
 
-## Tauto と Lean の共通回収モデル
+The same axiom-free statements in both languages:
 
-`meta/Memory.taut` と `lean/Proto/Memory.lean` は、同じ命題をそれぞれの言語で証明します。
-両方の証明は公理を使いません。
+- `abstract_acyclic_implies_acyclic`: if every strong edge maps to an abstract
+  edge, abstract acyclicity implies concrete acyclicity (edge coverage is an
+  explicit premise).
+- `drain_preserves_reach`, `drain_reflects_reach`: freeing only zero-count
+  values preserves and reflects reachability from roots.
+- `ranked_drain_exact`: with a rank increasing along every edge, draining until
+  every survivor has a root or a live holder leaves exactly the previously
+  reachable values; `drain_exact` uses well-founded incoming edges instead.
 
-- `abstract_acyclic_implies_acyclic`：各強参照の辺が抽象グラフの辺に写るなら、抽象グラフの
-  非循環性から具体グラフの非循環性が従います。辺を漏らさないことは明示の前提です。
-- `drain_preserves_reach`・`drain_reflects_reach`：参照数ゼロの値だけを解放する列は、
-  ルートからの到達可能性を保存し、到達可能な値を作り出しません。
-- `ranked_drain_exact`：すべての辺で増える自然数の順位を持ち、各生存値がルートまたは
-  生存する保持元を持つところまで回収したなら、生存値は回収前の到達可能な値と一致します。
-  `drain_exact` は順位の代わりに、入ってくる辺の整礎性を使います。
+Roots and edges are fixed during collection; "zero count" means no root and
+no live holder. Counters, release side effects and weak bookkeeping are not
+modelled; the drain and its termination are premises (existence for finite
+acyclic heaps is `drain_collects`).
 
-回収中はルートと辺を固定し、生存集合だけを縮めます。参照数ゼロは、ルートも生存する
-保持元もないこととして定義します。実装の数値カウンタ、解放時の副作用、弱参照の管理領域は
-モデル化しません。回収列とその終端条件は定理の引数であり、終端する回収列の存在をこの共通
-モデルでは証明していません。有限非循環ヒープでその存在を示す証明は `lean/Proto/Collect.lean`
-の `drain_collects` にあります。共通モデルは Nib の翻訳や backend の正しさの証明を代替しません。
+## Undecided
 
-## 未決定
-
-- Nib から制約への翻訳の正しさを Lean で示すための意味論の範囲。
-- extern の契約の書き方。
+- The semantics needed to prove the Nib-to-constraint translation in Lean.
+- How extern contracts are written.

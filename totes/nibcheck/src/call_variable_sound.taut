@@ -1,3 +1,4 @@
+import "messages.taut"
 import "call_sound.taut"
 import "application_frame.taut"
 import "argument_sound.taut"
@@ -5,17 +6,20 @@ import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_sound.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "rules_call.taut"
+import "rules_coerce.taut"
 import "rules_ty.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub theorem argument_types_refl(c: Checker, args: List(Ty)): ArgumentTypes(c, args, args) {
-  ⊢ ArgumentTypes(c, args, args) from match args {
-    Nil => TysubNil
-    Cons(a, rest) => TysubCons(sub_of_eq(c, a, a, TyeqRefl(a)), argument_types_refl(c, rest))
+  match args {
+    Nil => ArgFitNil
+    Cons(a, rest) => ArgFitSub(sub_of_eq(c, a, a, TyeqRefl(a)), argument_types_refl(c, rest))
   }
 }
 pub def CallUnified(
@@ -33,7 +37,7 @@ pub fn call_after_unify(
 ): Mut1(Ty, Checker) {
   call_return_result(
     result,
-    frame_error_if(c, "cannot infer a function type for this call", span_of(function), not(matched))
+    frame_error_if(c, cannot_infer_function_type_message(), span_of(function), not(matched))
   )
 }
 pub theorem call_after_unify_sound(
@@ -48,7 +52,7 @@ pub theorem call_after_unify_sound(
   equal: CallUnified(next, f, args, result, matched),
   clean: DiagnosticClean(ck_st(call_after_unify(next, function, result, matched)))
 ): CallResult(c, f, args, call_after_unify(next, function, result, matched)) {
-  ⊢ CallResult(c, f, args, call_after_unify(next, function, result, matched)) from match matched {
+  match matched {
     true => AndIntro(
       grows,
       CallConvert(equal(Refl), CallFunction(KindShared, argument_types_refl(next, args)))
@@ -56,7 +60,7 @@ pub theorem call_after_unify_sound(
     false => False::elim(
       diagnostic_error_impossible(
         next,
-        "cannot infer a function type for this call",
+        cannot_infer_function_type_message(),
         span_of(function),
         clean
       )
@@ -69,8 +73,7 @@ pub fn call_unifying_result(
   m: Mut1(Bool, Checker)
 ): Mut1(Ty, Checker) {
   frame_bind(
-    Bool,
-    Ty,
+    <A: Bool, B: Ty>,
     (matched: Bool, next: Checker) => call_after_unify(next, function, result, matched),
     m
   )
@@ -86,7 +89,7 @@ pub theorem call_unifying_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(call_unifying_result(function, result, m)))
 ): CallResult(c, f, args, call_unifying_result(function, result, m)) {
-  ⊢ CallResult(c, f, args, call_unifying_result(function, result, m)) from match m {
+  match m {
     mut1(matched, next) => call_after_unify_sound(
       c,
       next,
@@ -111,8 +114,7 @@ pub fn call_fresh_result(
   m: Mut1(Ty, Checker)
 ): Mut1(Ty, Checker) {
   frame_bind(
-    Ty,
-    Ty,
+    <A: Ty, B: Ty>,
     (result: Ty, next: Checker) => call_unifying_result(
       function,
       result,
@@ -130,7 +132,7 @@ pub theorem call_fresh_sound(
   grows: Grows(c, ck_st(m)),
   clean: DiagnosticClean(ck_st(call_fresh_result(function, f, args, m)))
 ): CallResult(c, f, args, call_fresh_result(function, f, args, m)) {
-  ⊢ CallResult(c, f, args, call_fresh_result(function, f, args, m)) from match m {
+  match m {
     mut1(result, next) => {
       let h: CallResult(
         next,

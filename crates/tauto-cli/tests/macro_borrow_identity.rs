@@ -43,25 +43,25 @@ fn nested_repeated_and_generic_quoted_borrows_agree_in_all_backends() {
     f.write(
         "support/src/lib.tauto",
         &r#"
-import std::prelude::Classes
-import std::prelude::Macro
+import std::builtin::classes
+import std::builtin::macro
 
-pub(open) enum Item { Item(Text) }
-pub fn inspect(item: Item): u64 { match item { Item(text) => Text::len(text) } }
+pub(open) enum Item { Entry(Text) }
+pub fn inspect(item: Item): u64 { match item { Entry(text) => Text::len(text) } }
 pub fn forward(item: Item, read: () -> Text): u64 { inspect(item) + Text::len(read()) }
 pub macro fn example(expr: SynExpr): SynExpr {
     let read := quote { { let value := $expr; ToText::to_text(&value) } }
-    quote { forward(Item("hello"), () => $read) }
+    quote { forward(Entry("hello"), () => $read) }
 }
 pub macro fn named(expr: SynExpr): SynExpr {
     let read := quote { { let value := $expr; ToText::to_text(&value) } }
-    quote { { let item := Item("hello"); forward(item, () => $read) } }
+    quote { { let item := Entry("hello"); forward(item, () => $read) } }
 }
-pub macro fn twice(expr: SynExpr): SynExpr { quote { Pair { fst: $expr, snd: $expr } } }
-pub fn identity<A: Shared>(&value: A): A { value }
+pub macro fn twice(expr: SynExpr): SynExpr { quote { #($expr, $expr) } }
+pub fn identity<A: Shared>(value: &A): A { value }
 pub macro fn generic_example(expr: SynExpr): SynExpr {
     let read := quote { { let value := $expr; let r#copy := identity(&value); ToText::to_text(&r#copy) } }
-    quote { forward(Item("hello"), () => $read) }
+    quote { forward(Entry("hello"), () => $read) }
 }
 pub macro fn keep(code: Judgement): SynExpr { Judgement::term(code) }
 "#.to_string(),
@@ -69,36 +69,36 @@ pub macro fn keep(code: Judgement): SynExpr { Judgement::term(code) }
     f.write(
         "app/src/main.tauto",
         &r#"
-import std::prelude::Classes
+import std::builtin::classes
 import support::lib
 
-perform show("direct", example!("hello"))
-perform show("repeated", example!("world"))
-perform show("nested", example!(example!("hello")))
+show(&(example!("hello")))
+show(&(example!("world")))
+show(&(example!(example!("hello"))))
 let pair := twice!(example!("hello"))
-perform show("duplicated", pair.fst + pair.snd)
-perform show("integer", example!(7))
-perform show("generic", generic_example!("hello"))
-perform show("named", named!("hello"))
-perform show("typed", keep!(example!("hello")))
+show(&(pair.fst + pair.snd))
+show(&(example!(7)))
+show(&(generic_example!("hello")))
+show(&(named!("hello")))
+show(&(keep!(example!("hello"))))
 let typed_pair := twice!(keep!(example!("hello")))
-perform show("typed_duplicated", typed_pair.fst + typed_pair.snd)
+show(&(typed_pair.fst + typed_pair.snd))
 "#
         .to_string(),
     );
-    let expected = "direct = 10\nrepeated = 10\nnested = 7\nduplicated = 20\ninteger = 6\ngeneric = 10\nnamed = 10\ntyped = 10\ntyped_duplicated = 20\n";
+    let expected = "10\n10\n7\n20\n6\n10\n10\n10\n20\n";
     let loaded = tauto_build::tote_program(&f.0.join("app")).unwrap();
     let reference =
-        tauto::eval::run_program_with(&loaded.program, 1_000_000, Default::default()).unwrap();
+        tauto::exec::run_loaded_with(&loaded, 1_000_000, Default::default()).unwrap();
     let reference = reference
         .outputs
         .iter()
         .map(|(name, value)| format!("{name} = {value}\n"))
         .collect::<String>();
     assert_eq!(reference, expected);
-    for javascript in [false, true] {
+    for target in [tauto_nir::Target::Rust, tauto_nir::Target::JavaScript] {
         let package =
-            tauto_nir::compile_loaded_with_observer(&loaded, false, javascript, |_| {}).unwrap();
+            tauto_nibcheck::lower::compile_loaded_with_observer(&loaded, false, target, |_| {}).unwrap();
         let mut forward = 0;
         for function in &package.fns {
             function.body.walk(&mut |expr| {

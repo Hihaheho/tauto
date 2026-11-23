@@ -1,8 +1,8 @@
 import "written_allocation_names.taut"
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Text
+import std::map
+import std::map_laws
+import std::map_text
+import std::text
 import "allocation_generic_map.taut"
 import "allocation_normalization.taut"
 import "allocation_rigid_map.taut"
@@ -15,7 +15,9 @@ import "rules_written.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "written_sound.taut"
 import "../../surface/src/surface.taut"
@@ -24,12 +26,12 @@ mutual {
   pub theorem written_term_allocated<env: Datas, generics: Ordmap(
     Text,
     Ty
-  ), partial: Bool, borrow: Bool, term: SurfaceTerm, ty: Ty>(
-    meaning: WrittenTerm(env, generics, partial, borrow, term, ty),
+  ), partial: Bool, r#borrow: Bool, term: SurfaceTerm, ty: Ty>(
+    meaning: WrittenTerm(env, generics, partial, r#borrow, term, ty),
     limit: Nat,
     bounded: RigidMapAllocation(limit, generics)
   ): TypeAllocated(limit, ty) {
-    ⊢ TypeAllocated(limit, ty) from match meaning {
+    match meaning {
       Mk(ctor_ast_occurrence, gs, Mode, borrowing, sk, value, start, end, inner) => written_kind_allocated(
         inner,
         limit,
@@ -39,24 +41,25 @@ mutual {
   pub theorem written_kind_allocated<env: Datas, generics: Ordmap(
     Text,
     Ty
-  ), partial: Bool, borrow: Bool, sk: SurfaceKind, ty: Ty>(
-    meaning: WrittenKind(env, generics, partial, borrow, sk, ty),
+  ), partial: Bool, r#borrow: Bool, sk: SurfaceKind, ty: Ty>(
+    meaning: WrittenKind(env, generics, partial, r#borrow, sk, ty),
     limit: Nat,
     bounded: RigidMapAllocation(limit, generics)
   ): TypeAllocated(limit, ty) {
-    ⊢ TypeAllocated(limit, ty) from match meaning {
-      WrittenKindName(gs, Mode, borrowing, name, value, Named) => written_name_type_allocated(
+    match meaning {
+      WrittenKindName(gs, Mode, borrowing, name, value, NotStar, Named) => written_name_type_allocated(
         Named,
         limit,
         And::right(bounded)
       )
-      WrittenKindUnit(ctor_ast_occurrence, gs, Mode, borrowing, start, end) => Trivial
+      WrittenKindUnit(gs, Mode, borrowing) => Trivial
+      WrittenKindRow(gs, Mode, borrowing, es) => Trivial
       WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, arg, value, start, end, argument) => written_term_allocated(
         argument,
         limit,
         bounded
       )
-      WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, name, args, types, start, end, NotTuple, not_info, unbound, SliceBorrowed, arguments, arity) => written_terms_allocated(
+      WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, name, args, types, start, end, NotPair, not_info, unbound, SliceBorrowed, arguments, arity) => written_terms_allocated(
         arguments,
         limit,
         bounded
@@ -96,7 +99,7 @@ mutual {
         limit,
         bounded
       )
-      WrittenKindBorrow(gs, Mode, borrowing, mutable, body, value, inner) => written_term_allocated(
+      WrittenKindBorrow(gs, Mode, borrowing, mutable, mutable_orig, body, value, inner) => written_term_allocated(
         inner,
         limit,
         bounded
@@ -106,7 +109,7 @@ mutual {
         limit,
         written_terms_allocated(Meanings, limit, bounded)
       )
-      WrittenKindProduct(gs, mode, borrowing, parts, types, meanings) => allocated_product(
+      WrittenKindProduct(ctor_ast_occurrence, gs, mode, borrowing, parts, types, start, end, Two, meanings) => allocated_product(
         types,
         limit,
         written_terms_allocated(meanings, limit, bounded)
@@ -130,7 +133,7 @@ mutual {
     limit: Nat,
     bounded: RigidMapAllocation(limit, generics)
   ): TypeListAllocated(limit, types) {
-    ⊢ TypeListAllocated(limit, types) from match meaning {
+    match meaning {
       WrittenTermsNil(gs, Mode) => Trivial
       WrittenTermsCons(gs, Mode, first, rest, t, ts, head, tail) => AndIntro(
         written_term_allocated(head, limit, bounded),
@@ -149,9 +152,9 @@ mutual {
     limit: Nat,
     bounded: RigidMapAllocation(limit, generics)
   ): TypeListAllocated(limit, types) {
-    ⊢ TypeListAllocated(limit, types) from match meaning {
+    match meaning {
       WrittenParametersNil(gs, Mode) => Trivial
-      WrittenParametersCons(gs, Mode, name, term, rest, t, ts, head, tail) => AndIntro(
+      WrittenParametersCons(gs, Mode, name, term, unused, rest, t, ts, head, tail) => AndIntro(
         written_term_allocated(head, limit, bounded),
         written_parameters_allocated(tail, limit, bounded)
       ) }
@@ -166,12 +169,7 @@ pub theorem ck_written_type_allocated(
   clean: DiagnosticClean(ck_st(ck_written(c, term, generics)))
 ): TypeAllocated(limit, ck_val(ck_written(c, term, generics))) {
   written_term_allocated(
-    ck_datas_of(c),
-    generics,
-    frame_constructor_position(c),
-    frame_under_borrow(c),
-    term,
-    ck_val(ck_written(c, term, generics)),
+    <env: ck_datas_of(c), generics: generics, partial: frame_constructor_position(c), r#borrow: frame_under_borrow(c), term: term, ty: ck_val(ck_written(c, term, generics))>,
     ck_written_sound(c, term, generics, clean),
     limit,
     bounded
@@ -183,7 +181,7 @@ pub theorem type_scope_allocated(
   limit: Nat,
   xs: List(TypeName)
 ): RigidMapAllocation(limit, type_scope(xs)) {
-  ⊢ RigidMapAllocation(limit, type_scope(xs)) from match xs {
+  match xs {
     Nil => AndIntro(Trivial, generic_map_allocation_empty(limit))
     Cons(x, rest) => ⊢ RigidMapAllocation(limit, type_scope(Cons(x, rest))) from match x {
       TypeNameMk(name, param, kind) => AndIntro(

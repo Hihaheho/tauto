@@ -72,8 +72,31 @@ pub fn install() {
 }
 
 pub fn text(m: &Message) -> String {
-    let chosen = CHOSEN.read().ok().and_then(|c| *c);
+    let chosen = OVERRIDE
+        .with(|o| o.get())
+        .unwrap_or_else(|| CHOSEN.read().ok().and_then(|c| *c));
     write(chosen, m)
+}
+
+thread_local! {
+    /// The language of [`in_language`] on this thread, over the chosen one.
+    static OVERRIDE: std::cell::Cell<Option<Option<usize>>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with the messages written on this thread in the language of
+/// `setting`, whatever [`set_language`] chose: for a test that runs beside
+/// others in another language. Returns None for a language without messages.
+pub fn in_language<R>(setting: &str, f: impl FnOnce() -> R) -> Option<R> {
+    let index = primary(setting).and_then(|p| LOCALES.iter().position(|(t, _)| *t == p))?;
+    let outer = OVERRIDE.with(|o| o.replace(Some(Some(index).filter(|&i| i != 0))));
+    struct Restore(Option<Option<usize>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            OVERRIDE.with(|o| o.set(self.0));
+        }
+    }
+    let _restore = Restore(outer);
+    Some(f())
 }
 
 pub fn english(m: &Message) -> String {
@@ -291,6 +314,16 @@ mod tests {
             current == text,
             "src/fluent.rs is out of date: run `cargo run -p tauto-messages-gen`"
         );
+    }
+
+    /// A compiled program carries its step-limit message itself
+    /// (`tauto_rt::messages`), in the words of `eval-step-limit`.
+    #[test]
+    fn compiled_programs_say_the_step_limit_as_the_toolchain_does() {
+        let m = msg!("eval-step-limit");
+        let ja = LOCALES.iter().position(|(t, _)| *t == "ja").unwrap();
+        assert_eq!(write_here(None, &m), tauto_rt::messages::STEP_LIMIT);
+        assert_eq!(write_here(Some(ja), &m), tauto_rt::messages::STEP_LIMIT_JA);
     }
 
     #[test]

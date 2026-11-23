@@ -1,0 +1,71 @@
+@ cases.a-detached-task-that-fails-leaves-the-others-running
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+source = ```tauto
+import std::builtin::par
+
+fn boom(n: i64): i64 ! {divzero} { div(10, n) }
+
+Task::detach(perform spawn(() => boom(0)))
+let t := perform spawn(() => 1 + 1)
+show(&Task::join(t))
+show(&3)
+```
+stdout = ```
+2
+3
+```
+
+@ cases.joining-a-task-that-failed-fails-there
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+source = ```tauto
+import std::builtin::par
+
+fn boom(n: i64): i64 ! {divzero} { div(10, n) }
+
+let t := perform spawn(() => boom(0))
+show(&1)
+show(&Task::join(t))
+```
+run_error = "division by zero"
+
+@ cases.a-mutex-whose-holder-failed-is-poisoned
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+source = ```tauto
+import std::builtin::par
+
+fn boom(n: i64): i64 ! {divzero} { div(10, n) }
+
+let m: Mutex(i64) := perform mutex_new(0)
+let locked: Channel(Unit) := Channel::new(1)
+Task::detach(perform spawn(() => {
+  let v := Mutex::take(m)
+  Channel::send(locked, #())
+  perform mutex_put(m, v + boom(0))
+}))
+Channel::recv(locked)
+let v := Mutex::take(m)
+show(&v)
+```
+run_error = "poisoned"
+
+@ cases.a-mutex-whose-guard-was-held-by-a-failed-task-is-poisoned
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+source = ```tauto
+import std::indexed_map { IndexedMap }
+import std::builtin::par
+
+fn boom(n: u64): u64 ! {divzero} { div(10, n) }
+
+let table: Mutex(IndexedMap(u64, u64)) := perform mutex_new(IndexedMap::new())
+let locked: Channel(Unit) := Channel::new(1)
+Task::detach(perform spawn(() => {
+  var guard := Mutex::lock(table)
+  Channel::send(locked, #())
+  IndexedMap::insert(MutexGuard::get_mut(&mut guard), (1: u64), boom(0))
+  #()
+}))
+Channel::recv(locked)
+let guard := Mutex::lock(table)
+show(&1)
+```
+run_error = "poisoned"

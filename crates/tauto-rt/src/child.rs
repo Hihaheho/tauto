@@ -1,5 +1,5 @@
 //! Programs the run starts and goes on with while they run (`proc_spawn` and
-//! its companions in `std/prelude/Os.taut`): a table of children by number,
+//! its companions in `std/builtin/os.taut`): a table of children by number,
 //! as `tcp` keeps streams. Reading takes a deadline, a value of
 //! `monotonic_clock`; a wait whose deadline passes first answers `None`.
 
@@ -107,6 +107,8 @@ pub fn os_child_spawn_vec(
         .stdin(stdio(m_in, true))
         .stdout(stdio(m_out, false))
         .stderr(stdio(m_err, false));
+    // The program's whole environment is `env`.
+    command.env_clear();
     for pair in env.chunks(2) {
         if let [k, v] = pair {
             command.env(k.to_string(), v.to_string());

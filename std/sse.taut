@@ -1,0 +1,299 @@
+import "base.taut" { List }
+import "bytes.taut" { Bytes, UInt }
+import "uint.taut" { UInt }
+import std::prelude::std { List, Option }
+
+// Server-sent events (`text/event-stream`) as a decoder that takes the
+// bytes of a response a piece at a time, wherever the pieces are cut. Its
+// state goes one byte at a time, so feeding two pieces is feeding their
+// concatenation (`Sse::feed_concat`): no cut, not even one between the CR
+// and the LF of a line end, changes the events.
+//
+// The lines end at LF, CR or CRLF. An empty line ends an event. A line
+// that starts with `:` is a comment. Otherwise the line is a field: the
+// name up to the first `:`, the value after it without one leading space
+// (the whole line is the name, with an empty value, when it has no `:`).
+// `data` adds the value and a LF to the event's data, `event` names the
+// event, `id` sets the last event id unless the value holds a NUL; other
+// fields, `retry` among them, are left out. An event with no `data` line
+// is not given, and its data loses the last LF. The last event id stays
+// from one event to the next.
+
+// An event: its name (empty for the default, `message`), its data and the
+// last event id.
+pub(open) inductive Event: Type {
+  Mk(name: Bytes, data: Bytes, id: Bytes): Event
+}
+
+// The decoder: the line so far and the event so far (its name, its data
+// with a LF after each `data` line, whether it has one, and the last event
+// id), each last byte first; whether the last byte was a CR, so that a LF
+// right after it ends no second line; and the events decoded, last first.
+pub(open) inductive Decoder: Type {
+  Mk(
+    line: List(UInt(8)),
+    cr: Bool,
+    name: List(UInt(8)),
+    data: List(UInt(8)),
+    has_data: Bool,
+    id: List(UInt(8)),
+    out: List(Event)
+  ): Decoder
+}
+
+pub fn Event::name(e: Event): Bytes {
+  match e {
+    Mk(n, _, _) => n
+  }
+}
+
+pub fn Event::data(e: Event): Bytes {
+  match e {
+    Mk(_, d, _) => d
+  }
+}
+
+pub fn Event::id(e: Event): Bytes {
+  match e {
+    Mk(_, _, i) => i
+  }
+}
+
+pub fn Sse::new(): Decoder {
+  Decoder::Mk(Nil, false, Nil, Nil, false, Nil, Nil)
+}
+
+fn Sse::is(b: UInt(8), n: Nat): Bool {
+  Nat::eq(UInt::val8(b), n)
+}
+
+// Whether the bytes are those of `t`.
+fn Sse::named(l: List(UInt(8)), t: Text): Bool {
+  Bytes::eq(Bytes::of_list(l), Bytes::of_text(t))
+}
+
+fn Sse::has_nul(l: List(UInt(8))): Bool {
+  match l {
+    Nil => false
+    Cons(h, t) => Sse::is(h, 0) || Sse::has_nul(t)
+  }
+}
+
+// The bytes before the first `:`, and those after it; `None` when there
+// is none.
+fn Sse::split_colon(l: List(UInt(8))): Option(List(UInt(8)) × List(UInt(8))) {
+  match l {
+    Nil => None
+    Cons(h, t) => ⊢ Option(List(UInt(8)) × List(UInt(8))) from match Sse::is(h, 58) {
+      true => Some(#(Nil, t))
+      false => ⊢ Option(List(UInt(8)) × List(UInt(8))) from match Sse::split_colon(t) {
+        None => None
+        Some(p) => ⊢ Option(List(UInt(8)) × List(UInt(8))) from match p {
+          #(before, after) => Some(#(Cons(h, before), after))
+        }
+      }
+    }
+  }
+}
+
+fn Sse::drop_space(l: List(UInt(8))): List(UInt(8)) {
+  match l {
+    Nil => Nil
+    Cons(h, t) => ⊢ List(UInt(8)) from match Sse::is(h, 32) { true => t, false => l }
+  }
+}
+
+fn Sse::drop_one(l: List(UInt(8))): List(UInt(8)) {
+  match l {
+    Nil => Nil
+    Cons(_, t) => t
+  }
+}
+
+// The event so far, given: its data without the last LF.
+fn Sse::dispatch(d: Decoder): Decoder {
+  match d {
+    Mk(line, cr, name, data, has_data, id, out) => ⊢ Decoder from match has_data {
+      false => Decoder::Mk(line, cr, Nil, Nil, false, id, out)
+      true => Decoder::Mk(
+        line,
+        cr,
+        Nil,
+        Nil,
+        false,
+        id,
+        Cons(
+          Event::Mk(
+            Bytes::of_list(List::reverse(name)),
+            Bytes::of_list(List::reverse(Sse::drop_one(data))),
+            Bytes::of_list(List::reverse(id))
+          ),
+          out
+        )
+      )
+    }
+  }
+}
+
+fn Sse::field(d: Decoder, key: List(UInt(8)), value: List(UInt(8))): Decoder {
+  match d {
+    Mk(line, cr, name, data, has_data, id, out) => ⊢ Decoder from match Sse::named(key, "data") {
+      true => Decoder::Mk(
+        line,
+        cr,
+        name,
+        Cons(UInt::of_byte8(10), List::reverse_onto(value, data)),
+        true,
+        id,
+        out
+      )
+      false => ⊢ Decoder from match Sse::named(key, "event") {
+        true => Decoder::Mk(line, cr, List::reverse(value), data, has_data, id, out)
+        false => ⊢ Decoder from match Sse::named(key, "id") {
+          true => ⊢ Decoder from match Sse::has_nul(value) {
+            true => d
+            false => Decoder::Mk(line, cr, name, data, has_data, List::reverse(value), out)
+          }
+          false => d
+        }
+      }
+    }
+  }
+}
+
+// A whole line, in order, to a decoder whose line is empty.
+fn Sse::whole_line(d: Decoder, l: List(UInt(8))): Decoder {
+  match l {
+    Nil => Sse::dispatch(d)
+    Cons(h, _) => ⊢ Decoder from match Sse::is(h, 58) {
+      true => d
+      false => ⊢ Decoder from match Sse::split_colon(l) {
+        None => Sse::field(d, l, Nil)
+        Some(p) => ⊢ Decoder from match p {
+          #(key, value) => Sse::field(d, key, Sse::drop_space(value))
+        }
+      }
+    }
+  }
+}
+
+pub fn Sse::byte(d: Decoder, b: UInt(8)): Decoder {
+  match d {
+    Mk(line, cr, name, data, has_data, id, out) => ⊢ Decoder from match Sse::is(b, 10) {
+      true => ⊢ Decoder from match cr {
+        true => Decoder::Mk(line, false, name, data, has_data, id, out)
+        false => Sse::whole_line(
+          Decoder::Mk(Nil, false, name, data, has_data, id, out),
+          List::reverse(line)
+        )
+      }
+      false => ⊢ Decoder from match Sse::is(b, 13) {
+        true => Sse::whole_line(
+          Decoder::Mk(Nil, true, name, data, has_data, id, out),
+          List::reverse(line)
+        )
+        false => Decoder::Mk(Cons(b, line), false, name, data, has_data, id, out)
+      }
+    }
+  }
+}
+
+pub fn Sse::run(d: Decoder, l: List(UInt(8))): Decoder {
+  match l {
+    Nil => d
+    Cons(h, t) => Sse::run(Sse::byte(d, h), t)
+  }
+}
+
+// The decoder after a piece of the stream.
+pub fn Sse::feed(d: Decoder, piece: Bytes): Decoder {
+  Sse::run(d, Bytes::to_list(piece))
+}
+
+pub fn Sse::feed_all(d: Decoder, pieces: List(Bytes)): Decoder {
+  match pieces {
+    Nil => d
+    Cons(p, rest) => Sse::feed_all(Sse::feed(d, p), rest)
+  }
+}
+
+// The events decoded so far, in order.
+pub fn Sse::events(d: Decoder): List(Event) {
+  match d {
+    Mk(_, _, _, _, _, _, out) => List::reverse(out)
+  }
+}
+
+// The decoder without the events decoded so far: a program that reads a
+// stream takes `events` after each piece, then goes on with this.
+pub fn Sse::rest(d: Decoder): Decoder {
+  match d {
+    Mk(line, cr, name, data, has_data, id, _) => Decoder::Mk(
+      line,
+      cr,
+      name,
+      data,
+      has_data,
+      id,
+      Nil
+    )
+  }
+}
+
+pub fn Sse::concat_all(pieces: List(Bytes)): Bytes {
+  match pieces {
+    Nil => Bytes::of_list(Nil)
+    Cons(p, rest) => Bytes::concat(p, Sse::concat_all(rest))
+  }
+}
+
+pub theorem Sse::run_append(
+  d: Decoder,
+  a: List(UInt(8)),
+  b: List(UInt(8))
+): Sse::run(Sse::run(d, a), b) = Sse::run(d, List::append(a, b)) {
+  match a {
+    Nil => Refl
+    Cons(h, t) => Sse::run_append(Sse::byte(d, h), t, b)
+  }
+}
+
+// Feeding two pieces is feeding the bytes of both at once.
+pub theorem Sse::feed_concat(
+  d: Decoder,
+  a: Bytes,
+  b: Bytes
+): Sse::feed(Sse::feed(d, a), b) = Sse::feed(d, Bytes::concat(a, b)) {
+  Sse::run_append(d, Bytes::to_list(a), Bytes::to_list(b))
+}
+
+// However the stream is cut into pieces, the decoder ends as after the
+// whole of it.
+pub theorem Sse::feed_all_concat(
+  d: Decoder,
+  pieces: List(Bytes)
+): Sse::feed_all(d, pieces) = Sse::feed(d, Sse::concat_all(pieces)) {
+  match pieces {
+    Nil => Refl
+    Cons(p, rest) => Eq::trans(
+      Sse::feed_all_concat(Sse::feed(d, p), rest),
+      Sse::feed_concat(d, p, Sse::concat_all(rest))
+    )
+  }
+}
+
+// A CRLF cut between its CR and its LF still ends one line, not two.
+pub theorem Sse::crlf_cut(): Sse::events(
+  Sse::feed_all(Sse::new(), Cons(Bytes::of_text("data: a\r"), Cons(Bytes::of_text("\n\r\n"), Nil)))
+) = Cons(Event::Mk(Bytes::of_text(""), Bytes::of_text("a"), Bytes::of_text("")), Nil) {
+  Refl
+}
+
+pub theorem Sse::fields_and_comments(): Sse::events(
+  Sse::feed(Sse::new(), Bytes::of_text("event: up\ndata: 1\ndata:2\nid: 7\n\n: note\ndata\n\n"))
+) = Cons(
+  Event::Mk(Bytes::of_text("up"), Bytes::of_text("1\n2"), Bytes::of_text("7")),
+  Cons(Event::Mk(Bytes::of_text(""), Bytes::of_text(""), Bytes::of_text("7")), Nil)
+) {
+  Refl
+}

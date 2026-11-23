@@ -1,0 +1,152 @@
+import "mutable_effects.taut" { Program, lower, lowering_safe, source_safe, target_safe }
+import "mutable_permissions.taut" {
+  Active,
+  Body,
+  BodySafe,
+  Count,
+  Fits,
+  Kind,
+  Loan,
+  Permissions,
+  Suspension,
+  Uses,
+  actual_calls,
+  body_count_sound,
+  mutable
+}
+import std::prelude::std { List }
+import std::row { Mem }
+
+// Payload owns the state; the loan list owns the logical authorities. Valid
+// interprets paths, generations and live regions in the particular payload.
+pub(open) inductive World(S: Type): Type {
+  WorldOf(payload: S, active: List(Loan), owned: List(Kind)): World(S)
+}
+pub ghost fn payload<S: Type>(world: World(S)): S {
+  match world { WorldOf(data, loans, values) => data }
+}
+pub ghost fn active<S: Type>(world: World(S)): List(Loan) {
+  match world { WorldOf(data, loans, values) => loans }
+}
+pub ghost fn owned<S: Type>(world: World(S)): List(Kind) {
+  match world { WorldOf(data, loans, values) => values }
+}
+pub def WorldValid(S: Type, valid: (S, Loan) -> Prop, world: World(S)): Prop :=
+Permissions(
+  active(world)
+) ∧ ∀ loan: Loan. (Active(loan, active(world))) -> valid(payload(world), loan)
+
+pub ghost fn grant<S: Type>(world: World(S), loan: Loan): World(S) {
+  WorldOf(payload(world), Cons(loan, active(world)), owned(world))
+}
+pub theorem grant_preserves<S: Type>(
+  valid: (S, Loan) -> Prop,
+  world: World(S),
+  loan: Loan,
+  before: WorldValid(S, valid, world),
+  fits: Fits(loan, active(world)),
+  live: valid(payload(world), loan)
+): WorldValid(S, valid, grant(world, loan)) {
+  AndIntro(AndIntro(fits, And::left(before)), other => member => match member {
+    MemHere(rest) => live
+    MemThere(head, rest, inside) => And::right(before)(other, inside)
+  })
+}
+
+// A frame condition is an explicit obligation on a payload update. For list
+// elements, CellFrame plus preservation of open regions discharges validity;
+// permission to change a value is a separate ownership obligation.
+pub theorem frame_preserves<S: Type>(
+  valid: (S, Loan) -> Prop,
+  before: S,
+  after: S,
+  loans: List(Loan),
+  values: List(Kind),
+  initial: WorldValid(S, valid, WorldOf(before, loans, values)),
+  frame: ∀ loan: Loan. (Active(loan, loans)) -> (valid(before, loan)) -> valid(after, loan)
+): WorldValid(S, valid, WorldOf(after, loans, values)) {
+  AndIntro(
+    And::left(initial),
+    loan => member => frame(loan, member, And::right(initial)(loan, member))
+  )
+}
+
+pub ghost fn can_suspend<S: Type, Op: Type>(
+  count: (Op) -> Count,
+  mutable_result: (Op) -> Bool,
+  borrowed_arguments: (Op) -> Bool,
+  op: Op,
+  world: World(S)
+): Prop {
+  (
+    borrowed_arguments(op) = false
+  ) ∧ Suspension(count(op), active(world), owned(world), mutable_result(op))
+}
+
+// transfer describes the permitted handler changes and borrowed-answer
+// provenance. source_safe checks every internal state change as well as every
+// transfer, so an arbitrary Save is not justified merely by being representable.
+pub theorem checked_lowering<S: Type, Op: Type, Res: (Op) -> Type, R: Type>(
+  code: Program(World(S), Op, Res, R),
+  initial: World(S),
+  valid: (S, Loan) -> Prop,
+  count: (Op) -> Count,
+  mutable_result: (Op) -> Bool,
+  borrowed_arguments: (Op) -> Bool,
+  transfer: ∀ op: Op. (World(S)) -> (Res(op)) -> (World(S)) -> Prop,
+  update: (World(S), World(S)) -> Prop,
+  post: (R, World(S)) -> Prop,
+  checked: source_safe(
+    code,
+    initial,
+    WorldValid(S, valid),
+    update,
+    (op, world) => can_suspend(count, mutable_result, borrowed_arguments, op, world),
+    transfer,
+    post
+  )
+): target_safe(
+  lower(code, initial),
+  WorldValid(S, valid),
+  update,
+  (op, world) => can_suspend(count, mutable_result, borrowed_arguments, op, world),
+  transfer,
+  post
+) {
+  lowering_safe(
+    code,
+    initial,
+    WorldValid(S, valid),
+    update,
+    (op, world) => can_suspend(count, mutable_result, borrowed_arguments, op, world),
+    transfer,
+    post,
+    checked
+  )
+}
+
+// A handler's count is checked against its body, including data-dependent
+// branches after resume. Captures and borrowed-continuation escape are checked
+// by ArmSafe; neither follows merely from this count theorem.
+pub theorem checked_handler_count<A: Type, B: Type, C: Type>(
+  body: Body(A, B, C),
+  continuation: (A) -> B,
+  count: Count,
+  checked: BodySafe(count, 0, body)
+): Uses(count, actual_calls(body, continuation, 0)) {
+  body_count_sound(body, continuation, count, 0, checked)
+}
+
+pub def MayRead(S: Type, world: World(S), loan: Loan): Prop := Active(loan, active(world))
+pub theorem active_reference_valid<S: Type>(
+  valid: (S, Loan) -> Prop,
+  world: World(S),
+  loan: Loan,
+  checked: WorldValid(S, valid, world),
+  authority: MayRead(S, world, loan)
+): valid(payload(world), loan) {
+  And::right(checked)(loan, authority)
+}
+
+pub def MayWrite(S: Type, world: World(S), loan: Loan): Prop :=
+MayRead(S, world, loan) ∧ (mutable(loan) = true)

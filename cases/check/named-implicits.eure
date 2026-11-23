@@ -2,7 +2,7 @@
 // The names are the generics' names; a value is a postfix expression.
 
 @ cases.named-implicits-fix-the-generics
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 pub(open) inductive enum 記号 { M, I, U }
@@ -42,7 +42,7 @@ theorem 演算は括弧の中(): 導出可能([M, I, I, I, I, U]) {
 checks_all = "ok"
 
 @ cases.named-implicit-unknown-name
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 pub(open) inductive enum 記号 { M, I, U }
@@ -70,7 +70,7 @@ theorem T(): 導出可能([M, I, I, I, I, U]) {
 checks."T" = "error: has no implicit parameter `z`"
 
 @ cases.named-implicit-written-twice
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 pub(open) inductive enum 記号 { M, I, U }
@@ -98,7 +98,7 @@ theorem T(): 導出可能([M, I, I, I, I, U]) {
 checks."T" = "error: the implicit argument `x` is written twice"
 
 @ cases.named-implicit-checked-against-the-call
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 pub(open) inductive enum 記号 { M, I, U }
@@ -126,7 +126,7 @@ theorem T(): 導出可能([M, I, I, I, I, U]) {
 checks."T" = "error: type mismatch"
 
 @ cases.named-implicits-write-every-explicit-argument
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 pub(open) inductive enum 記号 { M, I, U }
@@ -152,7 +152,7 @@ theorem T(): 導出可能([M, I, I, I, I, U]) {
 checks."T" = "error: writes all 1 explicit arguments"
 
 @ cases.named-implicits-need-implicit-parameters
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 pub(open) inductive enum 記号 { M, I, U }
@@ -178,7 +178,7 @@ checks."g" = "error: implicit arguments are written by name only"
 
 // A call written in the source does not pass implicit arguments by position.
 @ cases.positional-implicits-are-an-error-in-source
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 pub(open) inductive enum 記号 { M, I, U }
@@ -208,7 +208,7 @@ checks."T" = "error: implicit arguments are written by name"
 // A call that a recursion through a λ moves under new names keeps its named
 // arguments pointing at the same variables.
 @ cases.named-implicits-follow-renamed-variables
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 pub(open) inductive R(a: Nat, b: Nat): Type {
@@ -229,7 +229,7 @@ checks_all = "ok"
 
 // A recursive call under a match names its implicit arguments as any call does.
 @ cases.named-implicits-in-a-recursive-call
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 pub fn s<R: Type>(r: R, n: Nat): R {
@@ -238,5 +238,44 @@ pub fn s<R: Type>(r: R, n: Nat): R {
     Succ(k) => s(<R: R>, r, k)
   }
 }
+```
+checks_all = "ok"
+
+// The value of an implicit argument written by name may read a field.
+@ cases.a-named-implicit-argument-reads-a-field
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive struct Url { query: Nat, path: Nat }
+theorem q(t: Url): t.query = t.query { Refl(<A: Nat, a: t.query>) }
+theorem wrong(t: Url): t.query = t.path { Refl(<A: Nat, a: t.query>) }
+```
+checks.q = "ok"
+checks.wrong = "error: type mismatch"
+
+// The levels of a level-polymorphic declaration are written by position after
+// the implicit arguments named, or by name among them.
+@ cases.named-implicit-arguments-come-before-levels-written-by-position
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive UBox(u: Level, A: Type(u)): Type(u) { Ubox(value: A): UBox(u, A) }
+theorem positional(): UBox(2, Type1) { Ubox(<A: Type1>, 2, Type) }
+theorem named(): UBox(2, Type1) { Ubox(<u: 2, A: Type1>, Type) }
+theorem wrong(): UBox(2, Type1) { Ubox(<A: Nat>, 2, Type) }
+```
+checks.positional = "ok"
+checks.named = "ok"
+checks.wrong = "error: type mismatch"
+
+// A generic applied to a generic (`F(A)`) is inferred from its argument by
+// the head and the arguments of the argument's type.
+@ cases.higher-kinded-generic-inferred-from-argument
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn same<F: (Shared) -> Shared, A: Shared>(x: F(A)): F(A) { x }
+theorem same_is<F: (Shared) -> Shared, A: Shared>(x: F(A)): same(x) = x { Refl }
+fn same_list(x: List(Nat)): List(Nat) { same(x) }
+theorem same_list_is(x: List(Nat)): same(x) = x { Refl }
 ```
 checks_all = "ok"

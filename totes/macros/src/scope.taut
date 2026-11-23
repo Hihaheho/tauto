@@ -9,9 +9,10 @@
 // does not take it. The order in which numbers are handed out is the order of
 // the Rust walk, step for step.
 import "../../surface/src/surface.taut"
+import "../../surface/src/modules.taut"
 import "../../text/src/text.taut"
-import std::Text
-import std::prelude::Affine
+import "../../identity/src/identity.taut"
+import std::text
 
 pub(open) struct RsBinder { plain: Text, marks: Text, unique: Text, id: u64 }
 
@@ -49,23 +50,23 @@ pub fn rs_cat3(a: Text, b: Text, c: Text): Text {
   Text::concat_all(Cons(a, Cons(b, Cons(c, Nil))))
 }
 
-pub fn rs_next(&mut st: RsState, which: u64): u64 {
+pub fn rs_next(st: &mut RsState, which: u64): u64 ! {overflow} {
   var out: u64 := 0
   match Vec::get_mut(&mut st.nums, which) {
     Some(slot) => {
       out := slot
-      slot := slot + 1
+      *slot := slot + 1
     }
     None => #()
   }
   out
 }
 
-pub fn rs_has_num(&v: Vec(u64), x: u64): Bool {
+pub fn rs_has_num(v: &Vec(u64), x: u64): Bool ! {div, out_of_bounds, overflow} {
   var i: u64 := 0
   var found := false
   while i < Vec::len(&v) && not(found) {
-    let &y := Vec::index(&v, i)
+    let y := Vec::index(&v, i)
     if y == x {
       found := true
     }
@@ -81,7 +82,7 @@ pub fn rs_has_text(xs: List(Text), x: Text): Bool {
   }
 }
 
-pub fn rs_bind(&mut st: RsState, name: Text): Text {
+pub fn rs_bind(st: &mut RsState, name: Text): Text ! {div, out_of_bounds, overflow} {
   let s := rs_split(st.sep, name)
   let id := rs_next(&mut st, 0)
   var unique := s.plain
@@ -96,12 +97,12 @@ pub fn rs_bind(&mut st: RsState, name: Text): Text {
   unique
 }
 
-pub fn rs_env_find(&env: Vec(RsBinder), plain: Text, marks: Text): Option(Text) {
+pub fn rs_env_find(env: &Vec(RsBinder), plain: Text, marks: Text): Option(Text) ! {div, out_of_bounds, overflow} {
   var i := Vec::len(&env)
   var out: Option(Text) := None
   while i > 0 && rs_is_none(out) {
     i := i - 1
-    let &b := Vec::index(&env, i)
+    let b := Vec::index(&env, i)
     if b.plain == plain && b.marks == marks {
       out := Some(b.unique)
     }
@@ -112,15 +113,15 @@ pub fn rs_env_find(&env: Vec(RsBinder), plain: Text, marks: Text): Option(Text) 
 pub fn rs_is_none(o: Option(Text)): Bool {
   match o {
     None => true
-    Some(x) => false
+    Some(^x) => false
   }
 }
 
-pub fn rs_global_find(&gs: Vec(RsGlobal), plain: Text, marks: Text): Option(Text) {
+pub fn rs_global_find(gs: &Vec(RsGlobal), plain: Text, marks: Text): Option(Text) ! {div, out_of_bounds, overflow} {
   var i: u64 := 0
   var out: Option(Text) := None
   while i < Vec::len(&gs) {
-    let &g := Vec::index(&gs, i)
+    let g := Vec::index(&gs, i)
     if g.plain == plain && g.marks == marks {
       out := Some(g.unique)
     }
@@ -129,10 +130,10 @@ pub fn rs_global_find(&gs: Vec(RsGlobal), plain: Text, marks: Text): Option(Text
   out
 }
 
-pub fn rs_capture(&mut st: RsState, plain: Text): Unit {
+pub fn rs_capture(st: &mut RsState, plain: Text): Unit ! {div, out_of_bounds, overflow} {
   var i: u64 := 0
   while i < Vec::len(&st.env) {
-    let &b := Vec::index(&st.env, i)
+    let b := Vec::index(&st.env, i)
     let id := b.id
     let take := b.plain == plain && std::prelude::Text::len(b.marks) == 0
     if take {
@@ -144,7 +145,7 @@ pub fn rs_capture(&mut st: RsState, plain: Text): Unit {
   }
 }
 
-pub fn rs_reference_one(&mut st: RsState, plain: Text, marks: Text): Text {
+pub fn rs_reference_one(st: &mut RsState, plain: Text, marks: Text): Text ! {div, out_of_bounds, overflow} {
   match rs_env_find(&st.env, plain, marks) {
     Some(u) => u
     None => if std::prelude::Text::len(marks) > 0 {
@@ -161,31 +162,31 @@ pub fn rs_reference_one(&mut st: RsState, plain: Text, marks: Text): Text {
   }
 }
 
-pub fn rs_reference(&mut st: RsState, name: Text): Text {
+pub fn rs_reference(st: &mut RsState, name: Text): Text ! {div, out_of_bounds, overflow} {
   let s := rs_split(st.sep, name)
-  match text_find(s.plain, ".", 0) {
+  match text_find(s.plain, "::", 0) {
     Some(i) => {
       let head := rs_reference_one(&mut st, Text::slice_or_empty(s.plain, 0, i), s.marks)
       rs_cat3(
         head,
-        ".",
-        Text::slice_or_empty(s.plain, i + 1, Nat::of_u64(std::prelude::Text::len(s.plain)))
+        "::",
+        Text::slice_or_empty(s.plain, i + 2, Nat::of_u64(std::prelude::Text::len(s.plain)))
       )
     }
     None => rs_reference_one(&mut st, s.plain, s.marks)
   }
 }
 
-pub fn rs_mark(&st: RsState): u64 {
+pub fn rs_mark(st: &RsState): u64 {
   Vec::len(&st.env)
 }
 
-pub fn rs_pop(&mut st: RsState, mark: u64): Unit {
+pub fn rs_pop(st: &mut RsState, mark: u64): Unit {
   Vec::truncate(&mut st.env, mark)
 }
 
 // A declaration an expansion made takes a name of its own.
-pub fn rs_declare(&mut st: RsState, name: Text): Text {
+pub fn rs_declare(st: &mut RsState, name: Text): Text ! {overflow} {
   let s := rs_split(st.sep, name)
   if std::prelude::Text::len(s.marks) > 0 {
     let n := rs_next(&mut st, 1) + 1
@@ -197,7 +198,7 @@ pub fn rs_declare(&mut st: RsState, name: Text): Text {
   }
 }
 
-pub fn rs_declare_ctors(&mut st: RsState, cs: List(SurfaceDataCtor)): List(SurfaceDataCtor) {
+pub fn rs_declare_ctors(st: &mut RsState, cs: List(SurfaceDataCtor)): List(SurfaceDataCtor) ! {overflow} {
   match cs {
     Nil => Nil
     Cons(c, rest) => {
@@ -207,7 +208,7 @@ pub fn rs_declare_ctors(&mut st: RsState, cs: List(SurfaceDataCtor)): List(Surfa
   }
 }
 
-pub fn rs_declare_data(&mut st: RsState, d: SurfaceData): SurfaceData {
+pub fn rs_declare_data(st: &mut RsState, d: SurfaceData): SurfaceData ! {overflow} {
   let name := rs_declare(&mut st, d.name)
   let cs := rs_declare_ctors(&mut st, d.constructors)
   SurfaceData {
@@ -216,12 +217,17 @@ pub fn rs_declare_data(&mut st: RsState, d: SurfaceData): SurfaceData {
     generics: d.generics,
     constructors: cs,
     start: d.start,
-    end: d.end
+    end: d.end,
+    coerce_level: d.coerce_level,
+    coerce_field: d.coerce_field,
+    visibility: d.visibility,
+    unused_generics: d.unused_generics,
+    rows: d.rows
   }
 }
 
 // Declarations an expansion made at the top, and in `mutual` and `module`.
-pub fn rs_collect(&mut st: RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) {
+pub fn rs_collect(st: &mut RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, overflow} {
   match xs {
     Nil => Nil
     Cons(s, rest) => {
@@ -231,7 +237,7 @@ pub fn rs_collect(&mut st: RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) {
   }
 }
 
-pub fn rs_collect_one(&mut st: RsState, s: SurfaceStmt): SurfaceStmt {
+pub fn rs_collect_one(st: &mut RsState, s: SurfaceStmt): SurfaceStmt ! {div, overflow} {
   match s {
     StFn(f) => {
       let name := rs_declare(&mut st, f.name)
@@ -240,7 +246,7 @@ pub fn rs_collect_one(&mut st: RsState, s: SurfaceStmt): SurfaceStmt {
         generics: f.generics,
         bounds: f.bounds,
         params: f.params,
-        borrows: f.borrows,
+        r#borrows: f.r#borrows,
         param_types: f.param_types,
         result: f.result,
         effects: f.effects,
@@ -248,8 +254,15 @@ pub fn rs_collect_one(&mut st: RsState, s: SurfaceStmt): SurfaceStmt {
         start: f.start,
         end: f.end,
         body: f.body,
-        generic_types: f.generic_types
-      })
+        lends: f.lends,
+        generic_types: f.generic_types,
+        bound_starts: f.bound_starts,
+        visibility: f.visibility,
+        row_hole: f.row_hole,
+    unused: f.unused,
+    unused_generics: f.unused_generics,
+    unused_params: f.unused_params
+  })
     }
     StTheorem(d) => StTheorem(rs_declare_theorem(&mut st, d))
     StDef(d) => StDef(rs_declare_theorem(&mut st, d))
@@ -258,6 +271,7 @@ pub fn rs_collect_one(&mut st: RsState, s: SurfaceStmt): SurfaceStmt {
     StEffect(e) => {
       let name := rs_declare(&mut st, e.name)
       StEffect(SurfaceEffect {
+        visibility: e.visibility,
         name: name,
         generics: e.generics,
         params: e.params,
@@ -265,7 +279,10 @@ pub fn rs_collect_one(&mut st: RsState, s: SurfaceStmt): SurfaceStmt {
         r#resume: e.r#resume,
         start: e.start,
         end: e.end,
-        set: e.set
+        set: e.set,
+        unused_generics: e.unused_generics,
+        bounds: e.bounds,
+        rows: e.rows
       })
     }
     StInductive(d) => {
@@ -276,34 +293,50 @@ pub fn rs_collect_one(&mut st: RsState, s: SurfaceStmt): SurfaceStmt {
         sort: d.sort,
         constructors: d.constructors,
         start: d.start,
-        end: d.end
+        end: d.end,
+        visibility: d.visibility
       })
     }
     StMutual(items, a, b) => StMutual(rs_collect(&mut st, items), a, b)
-    StModule(name, items, a, b) => StModule(name, rs_collect(&mut st, items), a, b)
+    StModule(name, vis, items, a, b) => {
+      let qualified := rs_module_name(&mut st, name)
+      StModule(qualified, vis, rs_collect(&mut st, items), a, b)
+    }
     other => other
   }
 }
 
-pub fn rs_declare_theorem(&mut st: RsState, d: SurfaceTheorem): SurfaceTheorem {
+fn rs_module_name(st: &mut RsState, written: Text): Text {
+  let name := rs_split(st.sep, written)
+  if name.marks == "" { name.plain } else {
+    let unique := rs_cat3(name.plain, "#", name.marks)
+    Vec::push(&mut st.globals, RsGlobal { plain: name.plain, marks: name.marks, unique: unique })
+    unique
+  }
+}
+
+pub fn rs_declare_theorem(st: &mut RsState, d: SurfaceTheorem): SurfaceTheorem ! {overflow} {
   let name := rs_declare(&mut st, d.name)
   SurfaceTheorem {
+    visibility: d.visibility,
     name: name,
     implicit: d.implicit,
     params: d.params,
     ty: d.ty,
     body: d.body,
     start: d.start,
-    end: d.end
+    end: d.end,
+    unused: d.unused,
+    unused_params: d.unused_params
   }
 }
 
-pub fn rs_top(&mut st: RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) {
+pub fn rs_top(st: &mut RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
   let declared := rs_collect(&mut st, xs)
   rs_stmt_list(&mut st, declared)
 }
 
-pub fn rs_stmt_list(&mut st: RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) {
+pub fn rs_stmt_list(st: &mut RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(s, rest) => {
@@ -314,21 +347,21 @@ pub fn rs_stmt_list(&mut st: RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) 
 }
 
 // The statements of a block: its binders end with it.
-pub fn rs_block(&mut st: RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) {
+pub fn rs_block(st: &mut RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
   let mark := rs_mark(&st)
   let out := rs_stmt_list(&mut st, xs)
   rs_pop(&mut st, mark)
   out
 }
 
-pub fn rs_opt(&mut st: RsState, t: Option(SurfaceTerm)): Option(SurfaceTerm) {
+pub fn rs_opt(st: &mut RsState, t: Option(SurfaceTerm)): Option(SurfaceTerm) ! {div, out_of_bounds, overflow} {
   match t {
     None => None
     Some(x) => Some(rs_term(&mut st, x))
   }
 }
 
-pub fn rs_terms(&mut st: RsState, xs: List(SurfaceTerm)): List(SurfaceTerm) {
+pub fn rs_terms(st: &mut RsState, xs: List(SurfaceTerm)): List(SurfaceTerm) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(x, rest) => {
@@ -338,30 +371,51 @@ pub fn rs_terms(&mut st: RsState, xs: List(SurfaceTerm)): List(SurfaceTerm) {
   }
 }
 
-pub fn rs_stmt(&mut st: RsState, s: SurfaceStmt): SurfaceStmt {
-  match s {
-    StLet(name, ty, value, a, b) => {
-      let ty2 := rs_opt(&mut st, ty)
-      let value2 := rs_term(&mut st, value)
-      let name2 := rs_bind(&mut st, name)
-      StLet(name2, ty2, value2, a, b)
+fn rs_assignment_place(place: SurfaceTerm, name: Text): SurfaceTerm {
+  match place.kind {
+    SkApp(head, args) => match surface_deref_inner(head, args) {
+      Some(inner) => match inner.kind {
+        SkVar(^written) => {
+          let start := place.end - Nat::of_u64(std::prelude::Text::len(name))
+          let target := surface_term_mk(SkVar(NameSpelled(name)), start, place.end)
+          surface_term_mk(SkApp(head, [target]), place.start, place.end)
+        }
+        _ => place
+      }
+      None => place
     }
-    StVar(name, ty, value, a) => {
+    _ => place
+  }
+}
+
+pub fn rs_stmt(st: &mut RsState, s: SurfaceStmt): SurfaceStmt ! {div, out_of_bounds, overflow} {
+  match s {
+    StLet(name, ty, value, a, b, unused, st_stack) => {
       let ty2 := rs_opt(&mut st, ty)
       let value2 := rs_term(&mut st, value)
       let name2 := rs_bind(&mut st, name)
-      StVar(name2, ty2, value2, a)
+      StLet(name2, ty2, value2, a, b, unused, st_stack)
+    }
+    StVar(name, ty, value, a, unused, st_stack) => {
+      let ty2 := rs_opt(&mut st, ty)
+      let value2 := rs_term(&mut st, value)
+      let name2 := rs_bind(&mut st, name)
+      StVar(name2, ty2, value2, a, unused, st_stack)
     }
     StAssign(name, place, value) => {
-      let place2 := match place {
-        Some(p) => Some(rs_term(&mut st, p))
-        None => None
-      }
       let value2 := rs_term(&mut st, value)
       let name2 := rs_reference(&mut st, name)
-      StAssign(name2, place2, value2)
+      let target := match place {
+        None => None
+        Some(written) => Some(rs_assignment_place(written, name2))
+      }
+      StAssign(name2, target, value2)
     }
     StCalled(generates, call) => StCalled(generates, rs_term(&mut st, call))
+    StAttributed(name, arg, generates, inner) => {
+      let arg2 := rs_term(&mut st, arg)
+      StAttributed(name, arg2, generates, rs_stmt(&mut st, inner))
+    }
     StFn(f) => StFn(rs_fn(&mut st, f))
     StTheorem(d) => StTheorem(rs_theorem(&mut st, d))
     StDef(d) => StDef(rs_theorem(&mut st, d))
@@ -376,20 +430,34 @@ pub fn rs_stmt(&mut st: RsState, s: SurfaceStmt): SurfaceStmt {
     StEnum(d) => StEnum(rs_data(&mut st, d))
     StEffect(e) => StEffect(rs_effect(&mut st, e))
     StMutual(items, a, b) => StMutual(rs_stmt_list(&mut st, items), a, b)
-    StModule(name, items, a, b) => StModule(name, rs_stmt_list(&mut st, items), a, b)
+    StModule(name, vis, items, a, b) => StModule(name, vis, rs_stmt_list(&mut st, items), a, b)
+    StReexport(path, names, spans, a, b) => {
+      let module_name := rs_reference(&mut st, path)
+      StReexport(module_name, rs_reexport_names(&mut st, names), spans, a, b)
+    }
     StInductive(d) => StInductive(rs_inductive(&mut st, d))
     other => other
   }
 }
 
+fn rs_reexport_names(st: &mut RsState, names: List(Text)): List(Text) ! {div, out_of_bounds, overflow} {
+  match names {
+    Nil => Nil
+    Cons(name, rest) => {
+      let qualified := rs_reference(&mut st, name)
+      Cons(qualified, rs_reexport_names(&mut st, rest))
+    }
+  }
+}
+
 // Each parameter's type (when it has one) is read before the parameter binds.
 pub fn rs_params(
-  &mut st: RsState,
+  st: &mut RsState,
   names: List(Text),
   types: List(Option(SurfaceTerm))
-): Pair(List(Text), List(Option(SurfaceTerm))) {
+): List(Text) × List(Option(SurfaceTerm)) ! {div, out_of_bounds, overflow} {
   match names {
-    Nil => Pair { fst: Nil, snd: types }
+    Nil => #(Nil, types)
     Cons(n, rest) => {
       var ty: Option(Option(SurfaceTerm)) := None
       var more: List(Option(SurfaceTerm)) := Nil
@@ -402,44 +470,67 @@ pub fn rs_params(
       }
       let bound := rs_bind(&mut st, n)
       let tail := rs_params(&mut st, rest, more)
-      Pair {
-        fst: Cons(bound, tail.fst),
-        snd: match ty {
+      #(Cons(bound, tail.fst), match ty {
           None => tail.snd
           Some(t) => Cons(t, tail.snd)
-        }
-      }
+        })
     }
   }
 }
 
-pub fn rs_fn(&mut st: RsState, f: SurfaceFn): SurfaceFn {
+pub fn rs_fn(st: &mut RsState, f: SurfaceFn): SurfaceFn ! {div, out_of_bounds, overflow} {
   let name := rs_reference(&mut st, f.name)
   let mark := rs_mark(&st)
-  let gs := rs_named(&mut st, surface_generic_named(f.generics, f.generic_types))
   let ps := rs_params(&mut st, f.params, f.param_types)
   let result := rs_opt(&mut st, f.result)
+  let wheres := rs_constraints(&mut st, f.wheres)
   let body := rs_term(&mut st, f.body)
   rs_pop(&mut st, mark)
   SurfaceFn {
     name: name,
-    generics: surface_named_names(gs),
+    generics: f.generics,
     bounds: f.bounds,
     params: ps.fst,
-    borrows: f.borrows,
+    r#borrows: f.r#borrows,
     param_types: ps.snd,
     result: result,
     effects: f.effects,
-    wheres: f.wheres,
+    wheres: wheres,
     start: f.start,
     end: f.end,
     body: body,
-    generic_types: surface_named_types(gs)
+    lends: f.lends,
+    generic_types: f.generic_types,
+    bound_starts: f.bound_starts,
+    visibility: f.visibility,
+    row_hole: f.row_hole,
+    unused: f.unused,
+    unused_generics: f.unused_generics,
+    unused_params: f.unused_params
+  }
+}
+
+// The `where` constraints of a fn read its generics, as its parameter types do.
+pub fn rs_constraints(st: &mut RsState, xs: List(SurfaceConstraint)): List(SurfaceConstraint) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let ty := rs_term(&mut st, c.ty)
+      let arguments := rs_terms(&mut st, c.arguments)
+      let head := SurfaceConstraint {
+        r#class: c.r#class,
+        ty: ty,
+        start: c.start,
+        end: c.end,
+        arguments: arguments
+      }
+      Cons(head, rs_constraints(&mut st, rest))
+    }
   }
 }
 
 // Types of parameters that bind in turn: each is read, then its name binds.
-pub fn rs_named(&mut st: RsState, xs: List(SurfaceNamed)): List(SurfaceNamed) {
+pub fn rs_named(st: &mut RsState, xs: List(SurfaceNamed)): List(SurfaceNamed) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(p, rest) => {
@@ -450,7 +541,7 @@ pub fn rs_named(&mut st: RsState, xs: List(SurfaceNamed)): List(SurfaceNamed) {
   }
 }
 
-pub fn rs_theorem(&mut st: RsState, d: SurfaceTheorem): SurfaceTheorem {
+pub fn rs_theorem(st: &mut RsState, d: SurfaceTheorem): SurfaceTheorem ! {div, out_of_bounds, overflow} {
   let name := rs_reference(&mut st, d.name)
   let mark := rs_mark(&st)
   let params := rs_named(&mut st, d.params)
@@ -458,17 +549,20 @@ pub fn rs_theorem(&mut st: RsState, d: SurfaceTheorem): SurfaceTheorem {
   let body := rs_opt(&mut st, d.body)
   rs_pop(&mut st, mark)
   SurfaceTheorem {
+    visibility: d.visibility,
     name: name,
     implicit: d.implicit,
     params: params,
     ty: ty,
     body: body,
     start: d.start,
-    end: d.end
+    end: d.end,
+    unused: d.unused,
+    unused_params: d.unused_params
   }
 }
 
-pub fn rs_data_fields(&mut st: RsState, xs: List(SurfaceDataField)): List(SurfaceDataField) {
+pub fn rs_data_fields(st: &mut RsState, xs: List(SurfaceDataField)): List(SurfaceDataField) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(f, rest) => {
@@ -478,7 +572,7 @@ pub fn rs_data_fields(&mut st: RsState, xs: List(SurfaceDataField)): List(Surfac
   }
 }
 
-pub fn rs_data_ctors(&mut st: RsState, xs: List(SurfaceDataCtor)): List(SurfaceDataCtor) {
+pub fn rs_data_ctors(st: &mut RsState, xs: List(SurfaceDataCtor)): List(SurfaceDataCtor) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(c, rest) => {
@@ -489,7 +583,7 @@ pub fn rs_data_ctors(&mut st: RsState, xs: List(SurfaceDataCtor)): List(SurfaceD
   }
 }
 
-pub fn rs_data(&mut st: RsState, d: SurfaceData): SurfaceData {
+pub fn rs_data(st: &mut RsState, d: SurfaceData): SurfaceData ! {div, out_of_bounds, overflow} {
   let name := rs_reference(&mut st, d.name)
   let cs := rs_data_ctors(&mut st, d.constructors)
   SurfaceData {
@@ -498,11 +592,16 @@ pub fn rs_data(&mut st: RsState, d: SurfaceData): SurfaceData {
     generics: d.generics,
     constructors: cs,
     start: d.start,
-    end: d.end
+    end: d.end,
+    coerce_level: d.coerce_level,
+    coerce_field: d.coerce_field,
+    visibility: d.visibility,
+    unused_generics: d.unused_generics,
+    rows: d.rows
   }
 }
 
-pub fn rs_opts(&mut st: RsState, xs: List(Option(SurfaceTerm))): List(Option(SurfaceTerm)) {
+pub fn rs_opts(st: &mut RsState, xs: List(Option(SurfaceTerm))): List(Option(SurfaceTerm)) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(x, rest) => {
@@ -512,11 +611,12 @@ pub fn rs_opts(&mut st: RsState, xs: List(Option(SurfaceTerm))): List(Option(Sur
   }
 }
 
-pub fn rs_effect(&mut st: RsState, e: SurfaceEffect): SurfaceEffect {
+pub fn rs_effect(st: &mut RsState, e: SurfaceEffect): SurfaceEffect ! {div, out_of_bounds, overflow} {
   let name := rs_reference(&mut st, e.name)
   let params := rs_opts(&mut st, e.params)
   let result := rs_opt(&mut st, e.result)
   SurfaceEffect {
+    visibility: e.visibility,
     name: name,
     generics: e.generics,
     params: params,
@@ -524,11 +624,14 @@ pub fn rs_effect(&mut st: RsState, e: SurfaceEffect): SurfaceEffect {
     r#resume: e.r#resume,
     start: e.start,
     end: e.end,
-    set: e.set
+    set: e.set,
+    unused_generics: e.unused_generics,
+    bounds: e.bounds,
+    rows: e.rows
   }
 }
 
-pub fn rs_ind_ctors(&mut st: RsState, xs: List(SurfaceCtor)): List(SurfaceCtor) {
+pub fn rs_ind_ctors(st: &mut RsState, xs: List(SurfaceCtor)): List(SurfaceCtor) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(c, rest) => {
@@ -545,7 +648,7 @@ pub fn rs_ind_ctors(&mut st: RsState, xs: List(SurfaceCtor)): List(SurfaceCtor) 
   }
 }
 
-pub fn rs_inductive(&mut st: RsState, d: SurfaceInductive): SurfaceInductive {
+pub fn rs_inductive(st: &mut RsState, d: SurfaceInductive): SurfaceInductive ! {div, out_of_bounds, overflow} {
   let name := rs_reference(&mut st, d.name)
   let mark := rs_mark(&st)
   let params := rs_named(&mut st, d.params)
@@ -558,11 +661,12 @@ pub fn rs_inductive(&mut st: RsState, d: SurfaceInductive): SurfaceInductive {
     sort: sort,
     constructors: cs,
     start: d.start,
-    end: d.end
+    end: d.end,
+    visibility: d.visibility
   }
 }
 
-pub fn rs_patterns(&mut st: RsState, xs: List(SurfacePattern)): List(SurfacePattern) {
+pub fn rs_patterns(st: &mut RsState, xs: List(SurfacePattern)): List(SurfacePattern) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(p, rest) => {
@@ -573,9 +677,9 @@ pub fn rs_patterns(&mut st: RsState, xs: List(SurfacePattern)): List(SurfacePatt
 }
 
 pub fn rs_pattern_fields(
-  &mut st: RsState,
+  st: &mut RsState,
   xs: List(SurfacePatternField)
-): List(SurfacePatternField) {
+): List(SurfacePatternField) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(f, rest) => {
@@ -585,36 +689,42 @@ pub fn rs_pattern_fields(
   }
 }
 
-pub fn rs_pattern(&mut st: RsState, p: SurfacePattern): SurfacePattern {
+pub fn rs_pattern(st: &mut RsState, p: SurfacePattern): SurfacePattern ! {div, out_of_bounds, overflow} {
   match p {
-    PtBind(n) => {
+    PtBind(n, unused) => {
       let s := rs_split(st.sep, n)
       if rs_has_text(st.ctors, s.plain) {
-        PtBind(rs_reference(&mut st, n))
+        PtBind(rs_reference(&mut st, n), unused)
       } else {
-        PtBind(rs_bind(&mut st, n))
+        PtBind(rs_bind(&mut st, n), unused)
       }
     }
     PtCtor(name, args) => {
-      let name2 := rs_reference(&mut st, name)
-      PtCtor(name2, rs_patterns(&mut st, args))
+      let written := surface_name_text(name)
+      // `@a p`: a label, which names no declaration.
+      let name2 := if Text::slice_or_empty(written, 0, 1) == "@" { written } else { rs_reference(&mut st, written) }
+      PtCtor(NameSpelled(name2), rs_patterns(&mut st, args))
     }
     PtRecord(name, fields) => {
       let name2 := rs_reference(&mut st, name)
       PtRecord(name2, rs_pattern_fields(&mut st, fields))
     }
+    PtTyped(name, ty, unused) => {
+      let ty2 := rs_term(&mut st, ty)
+      PtTyped(rs_bind(&mut st, name), ty2, unused)
+    }
     other => other
   }
 }
 
-pub fn rs_binder(&mut st: RsState, b: Option(Text)): Option(Text) {
+pub fn rs_binder(st: &mut RsState, b: Option(Text)): Option(Text) ! {div, out_of_bounds, overflow} {
   match b {
     None => None
     Some(h) => Some(rs_bind(&mut st, h))
   }
 }
 
-pub fn rs_arms(&mut st: RsState, xs: List(SurfaceArm)): List(SurfaceArm) {
+pub fn rs_arms(st: &mut RsState, xs: List(SurfaceArm)): List(SurfaceArm) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(a, rest) => {
@@ -632,7 +742,7 @@ pub fn rs_arms(&mut st: RsState, xs: List(SurfaceArm)): List(SurfaceArm) {
   }
 }
 
-pub fn rs_step_binders(&mut st: RsState, xs: List(SurfaceField)): List(SurfaceField) {
+pub fn rs_step_binders(st: &mut RsState, xs: List(SurfaceField)): List(SurfaceField) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(f, rest) => {
@@ -643,7 +753,7 @@ pub fn rs_step_binders(&mut st: RsState, xs: List(SurfaceField)): List(SurfaceFi
   }
 }
 
-pub fn rs_step_arms(&mut st: RsState, xs: List(SurfaceStepArm)): List(SurfaceStepArm) {
+pub fn rs_step_arms(st: &mut RsState, xs: List(SurfaceStepArm)): List(SurfaceStepArm) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(a, rest) => {
@@ -654,6 +764,7 @@ pub fn rs_step_arms(&mut st: RsState, xs: List(SurfaceStepArm)): List(SurfaceSte
       rs_pop(&mut st, mark)
       let arm := SurfaceStepArm {
         binders: binders,
+        unused_binders: a.unused_binders,
         goal: goal,
         body: body,
         start: a.start,
@@ -664,7 +775,7 @@ pub fn rs_step_arms(&mut st: RsState, xs: List(SurfaceStepArm)): List(SurfaceSte
   }
 }
 
-pub fn rs_handler(&mut st: RsState, h: SurfaceHandler): SurfaceHandler {
+pub fn rs_handler(st: &mut RsState, h: SurfaceHandler): SurfaceHandler ! {div, out_of_bounds, overflow} {
   let mark := rs_mark(&st)
   let out := match h {
     HdReturn(p, body) => {
@@ -672,7 +783,7 @@ pub fn rs_handler(&mut st: RsState, h: SurfaceHandler): SurfaceHandler {
       let body2 := rs_term(&mut st, body)
       HdReturn(p2, body2)
     }
-    HdOperation(eff, hfa, hty, patterns, cont, guard, body) => {
+    HdOperation(eff, hfa, hty, patterns, cont, cont_unused, guard, body) => {
       let eff2 := rs_reference(&mut st, eff)
       let patterns2 := rs_patterns(&mut st, patterns)
       let cont2 := match cont {
@@ -681,14 +792,14 @@ pub fn rs_handler(&mut st: RsState, h: SurfaceHandler): SurfaceHandler {
       }
       let guard2 := rs_opt(&mut st, guard)
       let body2 := rs_term(&mut st, body)
-      HdOperation(eff2, hfa, hty, patterns2, cont2, guard2, body2)
+      HdOperation(eff2, hfa, hty, patterns2, cont2, cont_unused, guard2, body2)
     }
   }
   rs_pop(&mut st, mark)
   out
 }
 
-pub fn rs_handlers(&mut st: RsState, xs: List(SurfaceHandler)): List(SurfaceHandler) {
+pub fn rs_handlers(st: &mut RsState, xs: List(SurfaceHandler)): List(SurfaceHandler) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(h, rest) => {
@@ -698,7 +809,7 @@ pub fn rs_handlers(&mut st: RsState, xs: List(SurfaceHandler)): List(SurfaceHand
   }
 }
 
-pub fn rs_pi_params(&mut st: RsState, xs: List(SurfaceParam)): List(SurfaceParam) {
+pub fn rs_pi_params(st: &mut RsState, xs: List(SurfaceParam)): List(SurfaceParam) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(p, rest) => {
@@ -707,12 +818,12 @@ pub fn rs_pi_params(&mut st: RsState, xs: List(SurfaceParam)): List(SurfaceParam
         None => None
         Some(n) => Some(rs_bind(&mut st, n))
       }
-      Cons(SurfaceParam { name: name, ty: ty }, rs_pi_params(&mut st, rest))
+      Cons(SurfaceParam { name: name, ty: ty, unused: p.unused }, rs_pi_params(&mut st, rest))
     }
   }
 }
 
-pub fn rs_binds(&mut st: RsState, xs: List(Text)): List(Text) {
+pub fn rs_binds(st: &mut RsState, xs: List(Text)): List(Text) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(x, rest) => {
@@ -722,7 +833,7 @@ pub fn rs_binds(&mut st: RsState, xs: List(Text)): List(Text) {
   }
 }
 
-pub fn rs_fields(&mut st: RsState, xs: List(SurfaceField)): List(SurfaceField) {
+pub fn rs_fields(st: &mut RsState, xs: List(SurfaceField)): List(SurfaceField) ! {div, out_of_bounds, overflow} {
   match xs {
     Nil => Nil
     Cons(f, rest) => {
@@ -732,13 +843,13 @@ pub fn rs_fields(&mut st: RsState, xs: List(SurfaceField)): List(SurfaceField) {
   }
 }
 
-pub fn rs_term(&mut st: RsState, t: SurfaceTerm): SurfaceTerm {
+pub fn rs_term(st: &mut RsState, t: SurfaceTerm): SurfaceTerm ! {div, out_of_bounds, overflow} {
   SurfaceTerm { occurrence: None, kind: rs_kind(&mut st, t.kind), start: t.start, end: t.end }
 }
 
-pub fn rs_kind(&mut st: RsState, k: SurfaceKind): SurfaceKind {
+pub fn rs_kind(st: &mut RsState, k: SurfaceKind): SurfaceKind ! {div, out_of_bounds, overflow} {
   match k {
-    SkVar(n) => SkVar(rs_reference(&mut st, n))
+    SkVar(n) => SkVar(NameSpelled(rs_reference(&mut st, surface_name_text(n))))
     SkMacroCall(name, arg) => SkMacroCall(name, rs_term(&mut st, arg))
     SkSplice(arg) => SkSplice(rs_term(&mut st, arg))
     SkApp(f, args) => {
@@ -752,26 +863,30 @@ pub fn rs_kind(&mut st: RsState, k: SurfaceKind): SurfaceKind {
       rs_pop(&mut st, mark)
       SkPi(params2, result2, effects)
     }
-    SkExists(binder, domain, body) => {
+    SkExists(binder, domain, body, unused) => {
       let domain2 := rs_term(&mut st, domain)
       let mark := rs_mark(&st)
       let binder2 := rs_bind(&mut st, binder)
       let body2 := rs_term(&mut st, body)
       rs_pop(&mut st, mark)
-      SkExists(binder2, domain2, body2)
+      SkExists(binder2, domain2, body2, unused)
     }
-    SkLam(params, body) => {
+    SkLam(params, body, types, unused) => {
+      let types2 := rs_opts(&mut st, types)
       let mark := rs_mark(&st)
       let params2 := rs_binds(&mut st, params)
       let body2 := rs_term(&mut st, body)
       rs_pop(&mut st, mark)
-      SkLam(params2, body2)
+      SkLam(params2, body2, types2, unused)
     }
     SkBorrowLam(modes, lam) => SkBorrowLam(modes, rs_term(&mut st, lam))
     SkUnion(items) => SkUnion(rs_terms(&mut st, items))
-    SkProduct(items) => SkProduct(rs_terms(&mut st, items))
     SkTagged(tag, term) => SkTagged(tag, rs_term(&mut st, term))
-    SkBorrow(m, term) => SkBorrow(m, rs_term(&mut st, term))
+    SkAscribe(value, ty) => {
+      let value2 := rs_term(&mut st, value)
+      SkAscribe(value2, rs_term(&mut st, ty))
+    }
+    SkBorrow(m, m_orig, term) => SkBorrow(m, m_orig, rs_term(&mut st, term))
     SkFnKind(kind, ty) => SkFnKind(kind, rs_term(&mut st, ty))
     SkIf(c, a, b) => {
       let c2 := rs_term(&mut st, c)
@@ -779,10 +894,6 @@ pub fn rs_kind(&mut st: RsState, k: SurfaceKind): SurfaceKind {
       SkIf(c2, a2, rs_opt(&mut st, b))
     }
     SkField(base, name) => SkField(rs_term(&mut st, base), name)
-    SkProject(base, ty) => {
-      let base2 := rs_term(&mut st, base)
-      SkProject(base2, rs_term(&mut st, ty))
-    }
     SkBlock(stmts) => SkBlock(rs_block(&mut st, stmts))
     SkPerform(eff, args) => {
       let eff2 := rs_reference(&mut st, eff)
@@ -796,14 +907,14 @@ pub fn rs_kind(&mut st: RsState, k: SurfaceKind): SurfaceKind {
       let steps2 := rs_term(&mut st, steps)
       SkBudget(memory, steps2, rs_term(&mut st, body))
     }
-    SkMatch(scrutinee, result, arms, binder) => {
+    SkMatch(scrutinee, result, arms, binder, binder_unused) => {
       let s2 := rs_term(&mut st, scrutinee)
       let r2 := rs_opt(&mut st, result)
       let mark := rs_mark(&st)
       let b2 := rs_binder(&mut st, binder)
       let arms2 := rs_arms(&mut st, arms)
       rs_pop(&mut st, mark)
-      SkMatch(s2, r2, arms2, b2)
+      SkMatch(s2, r2, arms2, b2, binder_unused)
     }
     SkRecord(name, fields) => {
       let name2 := rs_reference(&mut st, name)
@@ -836,7 +947,7 @@ pub fn rs_state(ctors: List(Text), sep: Text, rename: Vec(u64)): RsState {
 
 // The constructors `ctors` may be named bare in a pattern; `sep` is what
 // stands between a name and its scopes.
-pub fn rs_resolve(stmts: List(SurfaceStmt), ctors: List(Text), sep: Text): List(SurfaceStmt) {
+pub fn rs_resolve(stmts: List(SurfaceStmt), ctors: List(Text), sep: Text): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
   var first := rs_state(ctors, sep, Vec::new())
   let probe := rs_top(&mut first, stmts)
   if Vec::len(&first.captured) == 0 {
@@ -845,7 +956,7 @@ pub fn rs_resolve(stmts: List(SurfaceStmt), ctors: List(Text), sep: Text): List(
     var rename: Vec(u64) := Vec::new()
     var i: u64 := 0
     while i < Vec::len(&first.captured) {
-      let &x := Vec::index(&first.captured, i)
+      let x := Vec::index(&first.captured, i)
       Vec::push(&mut rename, x)
       i := i + 1
     }

@@ -8,7 +8,7 @@ recursion. Without more rules, five ways to recur are typed without `Div`
 (`Examples.lean`, at the end), so a row without `Div` would not mean the
 program stops. These rules see them:
 
-1. **`var`** (`DivClosed`, in the rule for `var`): every function type in
+1. **`var`** (`DivClosed`, in the rule for `scope`): every function type in
    what a `var` holds has `Div` in its row, and it holds no type variable.
    A function kept in a `var` may call what the `var` holds; a call of it
    then performs `Div`.
@@ -28,7 +28,7 @@ program stops. These rules see them:
    so a function made inside one that runs another budget would otherwise
    loop with no `Div` in its type.
 
-Rules 1 and 5 are part of the typing (`HasType.cell`, `HasType.prim`); type
+Rules 1 and 5 are part of the typing (`HasType.scope`, `HasType.prim`); type
 safety holds with them (`Safety.lean`). Rules 2–4 are about the
 declarations. That a program whose row has no `Div` stops is proved
 (`Halt.lean`, `Good.lean`, `Unfold.lean`), for finitely many `struct`s and
@@ -39,11 +39,10 @@ namespace Proto.Nib
 
 /-! ## Rule 1: `var` -/
 
-/-- A `var` holds what `DivClosed` allows, whatever type it is given. -/
-theorem HasType.cell_divClosed {sg S Γ B t A ρ} (h : HasType sg S Γ (.cell B t) (.cell A) ρ) :
-    DivClosed sg A := by
-  obtain ⟨X, ρ0, ⟨rfl, -, hd⟩, -, c⟩ := h.head
-  cases c.eq trivial trivial (fun h => h)
+/-- A `var` holds what `DivClosed` allows. -/
+theorem HasType.scope_divClosed {sg Γ B i b A ρ} (h : HasType sg Γ (.scope B i b) A ρ) :
+    DivClosed sg B := by
+  obtain ⟨X, ρ0, ⟨-, -, -, hd, -⟩, -, -⟩ := h.head
   exact hd
 
 /-! ## Rule 2: definitions -/
@@ -63,9 +62,14 @@ noncomputable def Sig.upTo (sg : Sig) (d : Nat) : Sig :=
 /-- Each definition is a value of its declared type, seeing the other
 definitions as `Sig.upTo` says. -/
 def DefsOrdered (sg : Sig) : Prop :=
-  ∀ d A b, sg.defs d = some (A, b) → Value b ∧ HasType (sg.upTo d) [] [] b A []
+  ∀ d A b, sg.defs d = some (A, b) → Value b ∧ HasType (sg.upTo d) [] b A []
 
 /-! ## Rule 3: operations -/
+
+/-- `A` holds a function, first-class or local, of parameters `qs`, result
+`B` and row `ρ`. -/
+def FnReach (sg : Sig) (A : Ty) (qs : List Ty) (B : Ty) (ρ : Row) : Prop :=
+  Reach sg A (.fn qs B ρ) ∨ Reach sg A (.lfn qs B ρ)
 
 /-- The operations are in a well-founded order `r`: a function in the
 parameters or the result of `e` performs only operations before `e`, or has
@@ -73,7 +77,7 @@ parameters or the result of `e` performs only operations before `e`, or has
 def EffOk (sg : Sig) : Prop :=
   ∃ r : Eff → Eff → Prop, WellFounded r ∧
     ∀ e ps R, sg.op e = some (ps, R) → ∀ A, A ∈ R :: ps → ∀ qs B ρ,
-      Reach sg A (.fn qs B ρ) → divEff ∈ ρ ∨ ∀ e', e' ∈ ρ → r e' e
+      FnReach sg A qs B ρ → divEff ∈ ρ ∨ ∀ e', e' ∈ ρ → r e' e
 
 /-- Nothing is before itself in a well-founded order. -/
 theorem wf_not_self {α} {r : α → α → Prop} (h : WellFounded r) (a : α) : ¬ r a a :=
@@ -89,7 +93,7 @@ parameter or in an effect of its row, has `Div` in its row. The fields are
 looked into as declared, over `d`'s type variables: what is put for them
 (`Option(D -> i64)`) is checked where it is declared. -/
 def DataOk (sg : Sig) : Prop :=
-  ∀ d cs F A qs B ρ, sg.data d = some cs → F ∈ cs → A ∈ F → Reach sg A (.fn qs B ρ) →
+  ∀ d cs F A qs B ρ, sg.data d = some cs → F ∈ cs → A ∈ F → FnReach sg A qs B ρ →
     ((∃ q ∈ qs, Mentions sg d q) ∨
       ∃ d' eargs, Eff.mk d' eargs ∈ ρ ∧ ∃ x ∈ eargs, Mentions sg d x) →
     divEff ∈ ρ
@@ -104,7 +108,8 @@ mutual
   def Ty.size : Ty → Nat
     | .fn ps r ρ => 1 + Tys.size ps + r.size + Effs.size ρ
     | .union ts => 1 + Tys.size ts
-    | .cell A => 1 + A.size
+    | .place A => 1 + A.size
+    | .lfn ps r ρ => 1 + Tys.size ps + r.size + Effs.size ρ
     | .brw A => 1 + A.size
     | .mbrw A => 1 + A.size
     | .info T ρ => 1 + T.size + Effs.size ρ

@@ -1,0 +1,100 @@
+import "../../identity/src/identity.taut"
+import "rules_ty.taut"
+import std::base
+import std::map
+import std::text
+import "datas.taut"
+import "ty.taut"
+
+// The typing rule of a struct read through its `coerce` fields
+// (`docs/design/ownership.md`「Coercing structs (`coerce`)」): a value of
+// a struct `W` whose `coerce` field has type `T` is accepted where `T` is,
+// `&W` where `&T` is and `&mut W` where `&mut T` is, through as many
+// `coerce` fields as it takes. How far each field lends (`coerce`,
+// `coerce(mut)`, `coerce(owned)`) is the ownership's to check, and the
+// checker reports it where it reads.
+
+// One step: `x` is the struct `d(args)`, which declares a `coerce` field, and
+// `y` is that field's type.
+pub(open) inductive CoerceStepType(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  datas: Datas
+): (Ty, Ty) -> Prop {
+  CoerceStepTypeMk<x: Ty, y: Ty>(
+    d: SurfaceName,
+    args: List(Ty),
+    k: DataCoerce,
+    f: DataField,
+    named: TyEq(s, ok, x, TyNamed(d, args)),
+    declared: datas_coerce(datas, surface_name_text(d)) = Some(k),
+    field: coerce_field_at(datas_fields(datas, surface_name_text(d), 0, args), data_coerce_index(k)) = Some(f),
+    ty: TyEq(s, ok, data_field_ty(f), y)
+  ): CoerceStepType(s, ok, datas, x, y)
+}
+
+// `x` read through one or more `coerce` fields as a type that fits `want`.
+pub(open) inductive CoerceReachType(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup: (Ty) -> Prop,
+  datas: Datas
+): (Ty, Ty) -> Prop {
+  ReachHere<x: Ty, y: Ty, want: Ty>(
+    step: CoerceStepType(s, ok, datas, x, y),
+    fits: TySub(s, ok, inst, dup, y, want)
+  ): CoerceReachType(s, ok, inst, dup, datas, x, want)
+  ReachThrough<x: Ty, y: Ty, want: Ty>(
+    step: CoerceStepType(s, ok, datas, x, y),
+    rest: CoerceReachType(s, ok, inst, dup, datas, y, want)
+  ): CoerceReachType(s, ok, inst, dup, datas, x, want)
+}
+
+// `a` accepted as `b` through `coerce` fields: as the value, or as a borrow
+// of it (a `&` is not read as a `&mut`).
+pub(open) inductive CoerceType(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup: (Ty) -> Prop,
+  datas: Datas
+): (Ty, Ty) -> Prop {
+  CoerceValue<a: Ty, b: Ty>(
+    source: Ty,
+    want: Ty,
+    left: TyEq(s, ok, a, source),
+    right: TyEq(s, ok, b, want),
+    reach: CoerceReachType(s, ok, inst, dup, datas, source, want)
+  ): CoerceType(s, ok, inst, dup, datas, a, b)
+  CoerceLent<a: Ty, b: Ty>(
+    source: Ty,
+    want: Ty,
+    lent: Bool,
+    wanted: Bool,
+    left: TyEq(s, ok, a, TyBorrow(source, lent)),
+    right: TyEq(s, ok, b, TyBorrow(want, wanted)),
+    allowed: Bool::or(lent, not(wanted)) = true,
+    reach: CoerceReachType(s, ok, inst, dup, datas, source, want)
+  ): CoerceType(s, ok, inst, dup, datas, a, b)
+}
+
+// An argument is accepted where its parameter's type is a type it fits, or
+// one it is read as through `coerce` fields.
+pub(open) inductive ArgFitList(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup: (Ty) -> Prop,
+  datas: Datas
+): (List(Ty), List(Ty)) -> Prop {
+  ArgFitNil: ArgFitList(s, ok, inst, dup, datas, Nil, Nil)
+  ArgFitSub<x: Ty, y: Ty, xs: List(Ty), ys: List(Ty)>(
+    h: TySub(s, ok, inst, dup, x, y),
+    rest: ArgFitList(s, ok, inst, dup, datas, xs, ys)
+  ): ArgFitList(s, ok, inst, dup, datas, Cons(x, xs), Cons(y, ys))
+  ArgFitCoerce<x: Ty, y: Ty, xs: List(Ty), ys: List(Ty)>(
+    h: CoerceType(s, ok, inst, dup, datas, x, y),
+    rest: ArgFitList(s, ok, inst, dup, datas, xs, ys)
+  ): ArgFitList(s, ok, inst, dup, datas, Cons(x, xs), Cons(y, ys))
+}

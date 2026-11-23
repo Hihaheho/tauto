@@ -1,0 +1,77 @@
+// Functions with effects that take `&mut` and `&`, used in theorems as they
+// are written. A `&mut` parameter is read as a value passed back with the
+// result (`Mut1(R, C)`), a lent field `&mut p.y` as that field passed back
+// and put in `p` again, and `&p` as the value `p`: the ownership checker
+// guarantees nothing else names what is lent while it is lent.
+
+effect tick(): Nat
+
+inductive struct Pt { x: Nat, y: Nat }
+
+// ---- a counter lent to each tick ---------------------------------------------
+
+fn bump(c: &mut Nat): Nat ! {tick} {
+  let n := perform tick()
+  *c := c + n
+  n
+}
+
+fn twice(start: Nat): Nat ! {tick} {
+  var c: Nat := start
+  let a := bump(&mut c)
+  let b := bump(&mut c)
+  c + a + b
+}
+
+fn run(start: Nat): Nat {
+  handle { twice(start) } with {
+    tick(), k => k(1)
+  }
+}
+
+theorem run_five(): run(5) = 9 { Refl }
+
+// ---- a point whose fields are assigned and lent --------------------------------
+
+fn nudge(p: &mut Pt): Nat ! {tick} {
+  let n := perform tick()
+  p.x := p.x + n
+  bump(&mut p.y)
+}
+
+fn moved(p: Pt): Pt {
+  handle { match nudge(p) { mut1(^v, q) => q } } with {
+    tick(), k => k(2)
+  }
+}
+
+theorem x_moved(): moved(Pt { x: 0, y: 1 }).x = 2 { Refl }
+theorem y_moved(): moved(Pt { x: 0, y: 1 }).y = 3 { Refl }
+
+// ---- a point lent shared --------------------------------------------------------
+
+fn sum(p: &Pt): Nat ! {tick} {
+  let n := perform tick()
+  p.x + p.y + n
+}
+
+fn total(p: Pt): Nat {
+  handle { sum(&p) } with {
+    tick(), k => k(1)
+  }
+}
+
+theorem total_is(): total(Pt { x: 2, y: 3 }) = 6 { Refl }
+
+// ---- a type with a kind, given to the kernel without `inductive` ---------------
+
+struct(affine) Tok { n: Nat }
+
+fn step(t: &mut Tok): Nat {
+  t.n := t.n + 1
+  t.n
+}
+
+fn tok(n: Nat): Tok { Tok { n: n } }
+
+theorem step_two(): step(tok(1)) = mut1(2, tok(2)) { Refl }

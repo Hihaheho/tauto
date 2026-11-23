@@ -55,4 +55,7 @@ impl Elaboration for Elaborator {
     fn type_of(&self, name: &crate::surface::Name) -> Option<SurfaceTerm> {
         Elaborator::type_of(self, name)
     }
+    fn implicit_names(&self, name: &crate::surface::Name) -> Option<Vec<String>> {
+        Elaborator::implicit_names(self, name)
+    }
 }

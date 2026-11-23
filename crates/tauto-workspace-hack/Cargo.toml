@@ -1,0 +1,23 @@
+[package]
+name = "tauto-workspace-hack"
+version = "0.1.0"
+edition = "2024"
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Turns on, in every build, the features of a few dependencies that only some builds turn on, so that build scripts and the tauto command share one compilation of the compiler"
+
+# The build scripts of the tauto-cli-tote-* crates link the compiler (the
+# `tauto` crate and what it depends on), and so does the `tauto` command. Cargo
+# resolves the features of build-script dependencies apart from the others, and
+# where a dependency ends up with different features on the two sides it, and
+# every crate above it up to `tauto`, is compiled twice. `tauto` depends on this
+# crate, which asks for the union, so both sides agree. Check with
+# `cargo build -p tauto-cli -Zunstable-options --unit-graph`: no library of the
+# workspace should appear twice.
+[dependencies]
+fnv = { version = "1", features = ["default", "std"] }
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
+rustc-hash = { version = "2", features = ["default", "std"] }
+serde_core = { version = "1", features = ["rc", "result", "std"] }
+smallvec = { version = "1", features = ["const_generics", "const_new", "union"] }

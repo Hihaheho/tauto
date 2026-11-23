@@ -1,8 +1,8 @@
 import "program_body_recheck_sound.taut"
 import "prepare_error_sound.taut"
-import std::Map
-import std::Row
-import std::Text
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "data_names_sound.taut"
 import "datas.taut"
@@ -21,10 +21,9 @@ pub fn body_bind_registration_fns_after_names(
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool),
   m: Mut1(Unit, Checker)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     (ignored: Unit, next: Checker) => registration_fns_after_names(next, prelude, program, own),
     m
   )
@@ -35,10 +34,9 @@ pub fn body_bind_registration_fns_after_data_names(
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool),
   m: Mut1(Unit, Checker)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     (ignored: Unit, next: Checker) => registration_fns_after_data_names(
       next,
       prelude,
@@ -110,8 +108,7 @@ pub theorem body_after_names_checked(
     ordinary,
     position,
     written_bind_input_clean(
-      Unit,
-      List(Pair(SurfaceFn, Scheme)),
+      <A: Unit, B: List(SurfaceFn × Scheme)>,
       ck_recheck_datas(types_data_decls(program), c),
       (ignored: Unit, next: Checker) => registration_fns_after_fields(next, prelude, program, own),
       ignored => next => registration_fns_after_fields_frame_errors(next, prelude, program, own),
@@ -134,8 +131,7 @@ pub theorem body_after_data_names_checked(
   let first_clean: DiagnosticClean(
     ck_st(ck_check_fn_names(c, types_function_decls(program)))
   ) := written_bind_input_clean(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     ck_check_fn_names(c, types_function_decls(program)),
     (ignored: Unit, next: Checker) => registration_fns_after_names(next, prelude, program, own),
     ignored => next => registration_fns_after_names_frame_errors(next, prelude, program, own),
@@ -175,8 +171,7 @@ pub theorem body_fns_checked(
   let first_clean: DiagnosticClean(
     ck_st(ck_check_data_names(c, types_data_decls(program)))
   ) := written_bind_input_clean(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     ck_check_data_names(c, types_data_decls(program)),
     (ignored: Unit, next: Checker) => registration_fns_after_data_names(
       next,
@@ -232,7 +227,7 @@ pub theorem ck_prepare_fns_body(
       ordinary,
       position,
       Eq::subst(
-        (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => DiagnosticClean(ck_st(m)),
+        (m: Mut1(List(SurfaceFn × Scheme), Checker)) => DiagnosticClean(ck_st(m)),
         registration_fns_unf(c, prelude, program, own),
         clean
       )

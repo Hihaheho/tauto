@@ -1,0 +1,686 @@
+import "../src/decimal.taut"
+import "../src/read.taut"
+import "../src/value.taut"
+import std::base
+import std::data
+import std::list
+import std::text
+import std::text_ops
+import "../src/write.taut"
+
+// Numbers: reading what the writer put for an integer, an integer key or a decimal gives the same
+// number back, when the bytes after it do not go on with the number.
+
+// Whether the first byte of `l` passes `p`.
+pub fn head_passes(p: (Nat) -> Bool, l: List(Nat)): Bool {
+  match l {
+    Nil => false
+    Cons(c, ^t) => p(c)
+  }
+}
+
+// ---- spans -------------------------------------------------------------------------
+
+// `span` takes exactly the bytes that pass, up to the first that does not.
+pub theorem span_append(
+  p: (Nat) -> Bool,
+  l: List(Nat),
+  r: List(Nat),
+  hl: all_p(p, l) = true,
+  hr: head_passes(p, r) = false
+): span(p, List::append(l, r)) = #(@taken l, @rest r) {
+  match l {
+    Nil => match r {
+      Nil => Refl
+      Cons(
+        c,
+        t
+      ) => Eq::subst(
+        Bool,
+        false,
+        p(c),
+        (y: Bool) => Eq(@taken List(Nat) × @rest List(Nat), ⊢ @taken List(Nat) × @rest List(Nat) from match y {
+          true => span_cons(c, span(p, t))
+          false => #(@taken Nil, @rest Cons(c, t))
+        }, #(@taken Nil, @rest Cons(c, t))),
+        Eq::sym(hr),
+        Refl
+      )
+    }
+    Cons(
+      c,
+      t
+    ) => Eq::subst(
+      Bool,
+      true,
+      p(c),
+      (y: Bool) => Eq(@taken List(Nat) × @rest List(Nat), ⊢ @taken List(Nat) × @rest List(Nat) from match y {
+        true => span_cons(c, span(p, List::append(t, r)))
+        false => #(@taken Nil, @rest Cons(c, List::append(t, r)))
+      }, #(@taken Cons(c, t), @rest r)),
+      Eq::sym(And::left(Bool::and_split(p(c), all_p(p, t), hl))),
+      Eq::congr(
+        (q: @taken List(Nat) × @rest List(Nat)) => span_cons(c, q),
+        span_append(p, t, r, And::right(Bool::and_split(p(c), all_p(p, t), hl)), hr)
+      )
+    )
+  }
+}
+
+// ---- digits --------------------------------------------------------------------------
+
+theorem digits_all_dou(
+  l: List(Nat),
+  h: all_digits(l) = true
+): all_p(is_digit_or_underscore, l) = true {
+  match l {
+    Nil => Refl
+    Cons(d, t) => Bool::and_intro(
+      is_digit_or_underscore(d),
+      all_p(is_digit_or_underscore, t),
+      Eq::congr(
+        ⟦Bool::or(□, Nat::eq(d, 95))⟧,
+        And::left(Bool::and_split(is_digit(d), all_digits(t), h))
+      ),
+      digits_all_dou(t, And::right(Bool::and_split(is_digit(d), all_digits(t), h)))
+    )
+  }
+}
+
+theorem filter_digits(
+  l: List(Nat),
+  h: all_digits(l) = true
+): List::filter((c: Nat) => is_digit(c), l) = l {
+  match l {
+    Nil => Refl
+    Cons(
+      d,
+      t
+    ) => Eq::subst(
+      Bool,
+      true,
+      is_digit(d),
+      (y: Bool) => Eq(List(Nat), ⊢ List(Nat) from match y {
+        false => List::filter((c: Nat) => is_digit(c), t)
+        true => Cons(d, List::filter((c: Nat) => is_digit(c), t))
+      }, Cons(d, t)),
+      Eq::sym(And::left(Bool::and_split(is_digit(d), all_digits(t), h))),
+      Eq::congr(
+        ⟦Cons(d, □)⟧,
+        filter_digits(t, And::right(Bool::and_split(is_digit(d), all_digits(t), h)))
+      )
+    )
+  }
+}
+
+pub theorem digit_value_digits(n: Nat): digit_value(digits(n)) = n {
+  Eq::trans(
+    Eq::congr(
+      ⟦dec_value(0, □)⟧,
+      filter_digits(digits(n), digits_all_digits(Succ(n), n))
+    ),
+    digits_value(Succ(n), n, lt_succ_self(n))
+  )
+}
+
+pub fn is_cons(l: List(Nat)): Bool {
+  match l {
+    Nil => false
+    Cons(^c, ^t) => true
+  }
+}
+
+theorem digits_onto_cons(
+  f: Nat,
+  n: Nat,
+  x: Nat,
+  a: List(Nat)
+): is_cons(Nat::digits(f, n, Cons(x, a))) = true {
+  Eq::subst(
+    <A: List(Nat),
+    a: List::append(Nat::digits(f, n, Nil), Cons(x, a)),
+    b: Nat::digits(f, n, Cons(x, a))>,
+    (z: List(Nat)) => is_cons(z) = true,
+    Eq::sym(digits_acc(f, n, Cons(x, a))),
+    append_cons_is_cons(Nat::digits(f, n, Nil), x, a)
+  )
+}
+
+theorem append_cons_is_cons(
+  l: List(Nat),
+  x: Nat,
+  a: List(Nat)
+): is_cons(List::append(l, Cons(x, a))) = true {
+  match l {
+    Nil => Refl
+    Cons(c, t) => Refl
+  }
+}
+
+pub theorem digits_is_cons(n: Nat): is_cons(digits(n)) = true {
+  Bool::cases(
+    (y: Bool) => is_cons(⊢ List(Nat) from match y {
+      true => Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)
+      false => Nat::digits(n, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))
+    }) = true,
+    Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0),
+    (e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = false) => digits_onto_cons(
+      n,
+      Nat::div_nz(n, 10, Nat::succ_ne_zero(9)),
+      Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48),
+      Nil
+    ),
+    (e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = true) => Refl
+  )
+}
+
+// A digit is not `c` when `c` is not a digit.
+pub theorem digit_ne(
+  c: Nat,
+  d: Nat,
+  hc: is_digit(c) = false,
+  hd: is_digit(d) = true
+): Nat::eq(c, d) = false {
+  Bool::cases(
+    (y: Bool) => y = false,
+    Nat::eq(c, d),
+    (e: Nat::eq(c, d) = false) => Refl,
+    (e: Nat::eq(c, d) = true) => False::elim(
+      true_ne_false(
+        Eq::trans(
+          Eq::sym(hd),
+          Eq::subst(<A: Nat, a: c, b: d>, (z: Nat) => is_digit(z) = false, Nat::eq_sound(c, d, e), hc)
+        )
+      )
+    )
+  )
+}
+
+// ---- integers ------------------------------------------------------------------------
+
+// `l` after the sign that `neg` asks for.
+pub fn signed(neg: Bool, l: List(Nat)): List(Nat) {
+  match neg {
+    true => Cons(45, l)
+    false => l
+  }
+}
+
+pub theorem sign_of_signed(
+  neg: Bool,
+  d: Nat,
+  t: List(Nat),
+  hd: is_digit(d) = true
+): read_sign(signed(neg, Cons(d, t))) = #(neg, Cons(d, t)) {
+  match neg {
+    true => Refl
+    false => Eq::subst(
+      Bool,
+      false,
+      Nat::eq(45, d),
+      (y: Bool) => Eq(Bool × List(Nat), match y {
+        true => #(true, List::tail(Cons(d, t)))
+        false => match Nat::eq(43, d) {
+          true => #(false, List::tail(Cons(d, t)))
+          false => #(false, Cons(d, t))
+        }
+      }, #(false, Cons(d, t))),
+      Eq::sym(digit_ne(45, d, Refl, hd)),
+      Eq::subst(
+        Bool,
+        false,
+        Nat::eq(43, d),
+        (y: Bool) => Eq(Bool × List(Nat), match y {
+          true => #(false, List::tail(Cons(d, t)))
+          false => #(false, Cons(d, t))
+        }, #(false, Cons(d, t))),
+        Eq::sym(digit_ne(43, d, Refl, hd)),
+        Refl
+      )
+    )
+  }
+}
+
+// `read_int` once the sign has been read.
+fn int_after(l: List(Nat), s: Bool × List(Nat)): Rd(Bool × Nat) {
+  match sign_rest(s) {
+    Nil => RdErr(l, "an integer")
+    Cons(c, ^t) => match is_digit(c) {
+      true => MkRd(
+        #(sign_negative(s), digit_value((span(is_digit_or_underscore, sign_rest(s)): @taken List(Nat)))),
+        (span(is_digit_or_underscore, sign_rest(s)): @rest List(Nat))
+      )
+      false => RdErr(l, "an integer")
+    }
+  }
+}
+
+fn int_of_span(neg: Bool, q: @taken List(Nat) × @rest List(Nat)): Rd(Bool × Nat) {
+  MkRd(#(neg, digit_value((q: @taken List(Nat)))), (q: @rest List(Nat)))
+}
+
+// Digits `l`, then bytes that do not go on with the number, are read as the number of `l`.
+pub theorem read_int_lead(
+  neg: Bool,
+  l: List(Nat),
+  r: List(Nat),
+  hl: all_digits(l) = true,
+  hc: is_cons(l) = true,
+  hr: head_passes(is_digit_or_underscore, r) = false
+): read_int(signed(neg, List::append(l, r))) = MkRd(#(neg, digit_value(l)), r) {
+  match l {
+    Nil => False::elim(false_ne_true(hc))
+    Cons(
+      d,
+      t
+    ) => Eq::trans(
+      Eq::congr(
+        ⟦int_after(signed(neg, Cons(d, List::append(t, r))), □)⟧,
+        sign_of_signed(neg, d, List::append(t, r), And::left(Bool::and_split(is_digit(d), all_digits(t), hl)))
+      ),
+      Eq::subst(
+        Bool,
+        true,
+        is_digit(d),
+        (y: Bool) => Eq(Rd(Bool × Nat), match y {
+          true => int_of_span(neg, span(is_digit_or_underscore, Cons(d, List::append(t, r))))
+          false => RdErr(signed(neg, Cons(d, List::append(t, r))), "an integer")
+        }, MkRd(#(neg, digit_value(Cons(d, t))), r)),
+        Eq::sym(And::left(Bool::and_split(is_digit(d), all_digits(t), hl))),
+        Eq::congr(
+          (q: @taken List(Nat) × @rest List(Nat)) => int_of_span(neg, q),
+          span_append(is_digit_or_underscore, Cons(d, t), r, digits_all_dou(Cons(d, t), hl), hr)
+        )
+      )
+    )
+  }
+}
+
+pub theorem put_signed(
+  neg: Bool,
+  n: Nat,
+  r: List(Nat)
+): put_int(neg, n, r) = signed(neg, List::append(digits(n), r)) {
+  match neg {
+    true => Refl
+    false => Refl
+  }
+}
+
+// An integer is read back from what `put_int` writes for it.
+theorem read_put_int(
+  neg: Bool,
+  n: Nat,
+  r: List(Nat),
+  hr: head_passes(is_digit_or_underscore, r) = false
+): read_int(put_int(neg, n, r)) = MkRd(#(neg, n), r) {
+  Eq::trans(
+    Eq::congr(⟦read_int(□)⟧, put_signed(neg, n, r)),
+    Eq::trans(
+      read_int_lead(neg, digits(n), r, digits_all_digits(Succ(n), n), digits_is_cons(n), hr),
+      Eq::congr(⟦MkRd(#(neg, □), r)⟧, digit_value_digits(n))
+    )
+  )
+}
+
+// ---- numbers in values -----------------------------------------------------------------
+
+fn suffixed(r: List(Nat)): Bool {
+  Bool::or(Text::starts_with(Text::Mk(r), "f32"), Text::starts_with(Text::Mk(r), "f64"))
+}
+
+// Whether `r` would go on with a number written before it: a digit or `_`, a fraction, an
+// exponent or a suffix.
+pub fn number_goes_on(r: List(Nat)): Bool {
+  Bool::or(
+    head_passes(is_digit_or_underscore, r),
+    Bool::or(Bool::and(head_is(46, r), starts_digit(List::tail(r))), Bool::or(is_e(r), suffixed(r)))
+  )
+}
+
+fn goes_on_rest(r: List(Nat)): Bool {
+  Bool::or(Bool::and(head_is(46, r), starts_digit(List::tail(r))), Bool::or(is_e(r), suffixed(r)))
+}
+
+theorem goes_on_digit(
+  r: List(Nat),
+  h: number_goes_on(r) = false
+): head_passes(is_digit_or_underscore, r) = false {
+  And::left(Bool::or_false_split(head_passes(is_digit_or_underscore, r), goes_on_rest(r), h))
+}
+
+theorem goes_on_after(r: List(Nat), h: number_goes_on(r) = false): goes_on_rest(r) = false {
+  And::right(Bool::or_false_split(head_passes(is_digit_or_underscore, r), goes_on_rest(r), h))
+}
+
+theorem goes_on_dot(
+  r: List(Nat),
+  h: number_goes_on(r) = false
+): Bool::and(head_is(46, r), starts_digit(List::tail(r))) = false {
+  And::left(
+    Bool::or_false_split(
+      Bool::and(head_is(46, r), starts_digit(List::tail(r))),
+      Bool::or(is_e(r), suffixed(r)),
+      goes_on_after(r, h)
+    )
+  )
+}
+
+theorem goes_on_e2(
+  r: List(Nat),
+  h: number_goes_on(r) = false
+): Bool::or(is_e(r), suffixed(r)) = false {
+  And::right(
+    Bool::or_false_split(
+      Bool::and(head_is(46, r), starts_digit(List::tail(r))),
+      Bool::or(is_e(r), suffixed(r)),
+      goes_on_after(r, h)
+    )
+  )
+}
+
+theorem goes_on_e(r: List(Nat), h: number_goes_on(r) = false): is_e(r) = false {
+  And::left(Bool::or_false_split(is_e(r), suffixed(r), goes_on_e2(r, h)))
+}
+
+theorem goes_on_suffix(r: List(Nat), h: number_goes_on(r) = false): suffixed(r) = false {
+  And::right(Bool::or_false_split(is_e(r), suffixed(r), goes_on_e2(r, h)))
+}
+
+// `read_number` once the sign and the digits before any `.` have been read.
+fn number_from(neg: Bool, whole: @taken List(Nat) × @rest List(Nat)): Rd(Value) {
+  no_suffix(
+    match Bool::and(head_is(46, (whole: @rest List(Nat))), starts_digit(List::tail((whole: @rest List(Nat))))) {
+      true => read_frac(neg, (whole: @taken List(Nat)), span(is_digit, List::tail((whole: @rest List(Nat)))))
+      false => match is_e((whole: @rest List(Nat))) {
+        true => read_exp(neg, (whole: @taken List(Nat)), Nil, List::tail((whole: @rest List(Nat))))
+        false => MkRd(Vint(neg, digit_value((whole: @taken List(Nat)))), (whole: @rest List(Nat)))
+      }
+    }
+  )
+}
+
+fn number_signed(s: Bool × List(Nat)): Rd(Value) {
+  number_from(sign_negative(s), span(is_digit_or_underscore, sign_rest(s)))
+}
+
+theorem no_suffix_plain(
+  v: Value,
+  r: List(Nat),
+  h: suffixed(r) = false
+): no_suffix(MkRd(v, r)) = MkRd(v, r) {
+  Eq::subst(
+    Bool,
+    false,
+    suffixed(r),
+    (y: Bool) => Eq(Rd(Value), match y {
+      true => RdErr(r, "a number without `f32` or `f64`: binary floating point is not read")
+      false => MkRd(v, r)
+    }, MkRd(v, r)),
+    Eq::sym(h),
+    Refl
+  )
+}
+
+// The digits `l` and the bytes `r` that do not go on with the number.
+theorem number_int_end(
+  neg: Bool,
+  l: List(Nat),
+  r: List(Nat),
+  h: number_goes_on(r) = false
+): number_from(neg, #(@taken l, @rest r)) = MkRd(Vint(neg, digit_value(l)), r) {
+  Eq::trans(
+    Eq::congr(
+      (y: Bool) => no_suffix(match y {
+        true => read_frac(neg, l, span(is_digit, List::tail(r)))
+        false => match is_e(r) {
+          true => read_exp(neg, l, Nil, List::tail(r))
+          false => MkRd(Vint(neg, digit_value(l)), r)
+        }
+      }),
+      goes_on_dot(r, h)
+    ),
+    Eq::trans(
+      Eq::congr(
+        (y: Bool) => no_suffix(match y {
+          true => read_exp(neg, l, Nil, List::tail(r))
+          false => MkRd(Vint(neg, digit_value(l)), r)
+        }),
+        goes_on_e(r, h)
+      ),
+      no_suffix_plain(
+        Vint(neg, digit_value(l)),
+        r,
+        goes_on_suffix(r, h)
+      )
+    )
+  )
+}
+
+theorem number_int_lead(
+  neg: Bool,
+  l: List(Nat),
+  r: List(Nat),
+  hl: all_digits(l) = true,
+  hc: is_cons(l) = true,
+  hr: number_goes_on(r) = false
+): read_number(signed(neg, List::append(l, r))) = MkRd(Vint(neg, digit_value(l)), r) {
+  match l {
+    Nil => False::elim(false_ne_true(hc))
+    Cons(d, t) => Eq::trans(
+      Eq::congr(
+        ⟦number_signed(□)⟧,
+        sign_of_signed(
+          neg,
+          d,
+          List::append(t, r),
+          And::left(Bool::and_split(is_digit(d), all_digits(t), hl))
+        )
+      ),
+      Eq::trans(
+        Eq::congr(
+          (q: @taken List(Nat) × @rest List(Nat)) => number_from(neg, q),
+          span_append(
+            is_digit_or_underscore,
+            Cons(d, t),
+            r,
+            digits_all_dou(Cons(d, t), hl),
+            goes_on_digit(r, hr)
+          )
+        ),
+        number_int_end(neg, Cons(d, t), r, hr)
+      )
+    )
+  }
+}
+
+// An integer value is read back from what the writer puts for it.
+pub theorem read_put_vint(
+  neg: Bool,
+  n: Nat,
+  r: List(Nat),
+  hr: number_goes_on(r) = false
+): read_number(put_scalar(Vint(neg, n), r)) = MkRd(Vint(neg, n), r) {
+  Eq::trans(
+    Eq::congr(⟦read_number(□)⟧, put_signed(neg, n, r)),
+    Eq::trans(
+      number_int_lead(neg, digits(n), r, digits_all_digits(Succ(n), n), digits_is_cons(n), hr),
+      Eq::congr(⟦MkRd(Vint(neg, □), r)⟧, digit_value_digits(n))
+    )
+  )
+}
+
+theorem head_not_digit(
+  r: List(Nat),
+  h: head_passes(is_digit_or_underscore, r) = false
+): head_passes(is_digit, r) = false {
+  match r {
+    Nil => Refl
+    Cons(c, t) => And::left(Bool::or_false_split(is_digit(c), Nat::eq(c, 95), h))
+  }
+}
+
+// `read_exp` once the sign of the exponent has been read.
+fn exp_signed(neg: Bool, whole: List(Nat), l: List(Nat), s: Bool × List(Nat)): Rd(Value) {
+  exp_spanned(neg, whole, sign_negative(s), l, span(is_digit, sign_rest(s)))
+}
+
+fn exp_spanned(
+  neg: Bool,
+  whole: List(Nat),
+  eneg: Bool,
+  l: List(Nat),
+  ds: @taken List(Nat) × @rest List(Nat)
+): Rd(Value) {
+  match span_taken(ds) {
+    Nil => RdErr(l, "the digits of the exponent")
+    Cons(^c, ^t) => MkRd(dec_of(neg, whole, Nil, eneg, digit_value((ds: @taken List(Nat)))), (ds: @rest List(Nat)))
+  }
+}
+
+// The digits `m` of an exponent, then bytes that do not go on with the number.
+theorem exp_lead(
+  neg: Bool,
+  whole: List(Nat),
+  eneg: Bool,
+  m: List(Nat),
+  r: List(Nat),
+  hm: all_digits(m) = true,
+  hc: is_cons(m) = true,
+  hr: number_goes_on(r) = false
+): no_suffix(read_exp(neg, whole, Nil, signed(eneg, List::append(m, r)))) = MkRd(dec_of(neg, whole, Nil, eneg, digit_value(m)), r) {
+  match m {
+    Nil => False::elim(false_ne_true(hc))
+    Cons(d, t) => Eq::trans(
+      Eq::congr(
+        ⟦no_suffix(
+          exp_signed(neg, whole, signed(eneg, Cons(d, List::append(t, r))), □)
+        )⟧,
+        sign_of_signed(
+          eneg,
+          d,
+          List::append(t, r),
+          And::left(Bool::and_split(is_digit(d), all_digits(t), hm))
+        )
+      ),
+      Eq::trans(
+        Eq::congr(
+          (q: @taken List(Nat) × @rest List(Nat)) => no_suffix(
+            exp_spanned(neg, whole, eneg, signed(eneg, Cons(d, List::append(t, r))), q)
+          ),
+          span_append(is_digit, Cons(d, t), r, hm, head_not_digit(r, goes_on_digit(r, hr)))
+        ),
+        no_suffix_plain(
+          dec_of(neg, whole, Nil, eneg, digit_value(Cons(d, t))),
+          r,
+          goes_on_suffix(r, hr)
+        )
+      )
+    )
+  }
+}
+
+theorem number_dec_lead(
+  neg: Bool,
+  l: List(Nat),
+  x: List(Nat),
+  hl: all_digits(l) = true,
+  hc: is_cons(l) = true
+): read_number(signed(neg, List::append(l, Cons(101, x)))) = no_suffix(read_exp(neg, l, Nil, x)) {
+  match l {
+    Nil => False::elim(false_ne_true(hc))
+    Cons(d, t) => Eq::trans(
+      Eq::congr(
+        ⟦number_signed(□)⟧,
+        sign_of_signed(
+          neg,
+          d,
+          List::append(t, Cons(101, x)),
+          And::left(Bool::and_split(is_digit(d), all_digits(t), hl))
+        )
+      ),
+      Eq::congr(
+        (q: @taken List(Nat) × @rest List(Nat)) => number_from(neg, q),
+        span_append(
+          is_digit_or_underscore,
+          Cons(d, t),
+          Cons(101, x),
+          digits_all_dou(Cons(d, t), hl),
+          Refl
+        )
+      )
+    )
+  }
+}
+
+theorem dec_of_exp(
+  neg: Bool,
+  mant: Nat,
+  eneg: Bool,
+  e: Nat
+): dec_of(neg, digits(mant), Nil, eneg, e) = Vdec(neg, mant, eneg, e) {
+  Eq::trans(
+    Eq::congr(
+      ⟦Vdec(neg, digit_value(□), number_negative(signed_sub(eneg, e, 0)), number_magnitude(signed_sub(eneg, e, 0)))⟧,
+      List::append_nil(digits(mant))
+    ),
+    Eq::trans(
+      Eq::congr(
+        ⟦Vdec(neg, □, number_negative(signed_sub(eneg, e, 0)), number_magnitude(signed_sub(eneg, e, 0)))⟧,
+        digit_value_digits(mant)
+      ),
+      ⊢ Vdec(neg, mant, number_negative(signed_sub(eneg, e, 0)), number_magnitude(signed_sub(eneg, e, 0))) = Vdec(neg, mant, eneg, e) from match eneg {
+        true => Refl
+        false => Refl
+      }
+    )
+  )
+}
+
+// A decimal value is read back from what the writer puts for it.
+pub theorem read_put_vdec(
+  neg: Bool,
+  mant: Nat,
+  eneg: Bool,
+  e: Nat,
+  r: List(Nat),
+  hr: number_goes_on(r) = false
+): read_number(put_scalar(Vdec(neg, mant, eneg, e), r)) = MkRd(Vdec(neg, mant, eneg, e), r) {
+  Eq::trans(
+    Eq::congr(⟦read_number(□)⟧, put_signed(neg, mant, put_exp(eneg, e, r))),
+    Eq::trans(
+      number_dec_lead(
+        neg,
+        digits(mant),
+        put_int(eneg, e, r),
+        digits_all_digits(Succ(mant), mant),
+        digits_is_cons(mant)
+      ),
+      Eq::trans(
+        Eq::congr(
+          ⟦no_suffix(read_exp(neg, digits(mant), Nil, □))⟧,
+          put_signed(eneg, e, r)
+        ),
+        Eq::trans(
+          exp_lead(
+            neg,
+            digits(mant),
+            eneg,
+            digits(e),
+            r,
+            digits_all_digits(Succ(e), e),
+            digits_is_cons(e),
+            hr
+          ),
+          Eq::trans(
+            Eq::congr(
+              ⟦MkRd(dec_of(neg, digits(mant), Nil, eneg, □), r)⟧,
+              digit_value_digits(e)
+            ),
+            Eq::congr(⟦MkRd(□, r)⟧, dec_of_exp(neg, mant, eneg, e))
+          )
+        )
+      )
+    )
+  )
+}

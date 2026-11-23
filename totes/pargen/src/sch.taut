@@ -3,9 +3,7 @@ import "emit.taut"
 import "model.taut"
 import "par.taut"
 import "scn.taut"
-import std::Text
-import std::prelude::Shared
-import std::prelude::Affine
+import std::text
 
 pub(open) enum FTy {
   FTok
@@ -53,35 +51,35 @@ pub(open) struct SCx {
   counters: Vec(SCnt)
 }
 
-pub fn sg_prod(g: SGr, p: u64): MProd {
+pub fn sg_prod(g: SGr, p: u64): MProd ! {fail(Text)} {
   match Array::get(g.prods, p) {
     Some(x) => x
     None => par_die("a production is lost")
   }
 }
 
-pub fn sg_nt(g: SGr, n: u64): Text {
+pub fn sg_nt(g: SGr, n: u64): Text ! {fail(Text)} {
   match Array::get(g.nts, n) {
     Some(x) => x
     None => par_die("a non-terminal is lost")
   }
 }
 
-pub fn sg_kind(g: SGr, n: u64): u64 {
+pub fn sg_kind(g: SGr, n: u64): u64 ! {fail(Text)} {
   match Array::get(g.kinds, n) {
     Some(x) => x
     None => par_die("a non-terminal is lost")
   }
 }
 
-pub fn sg_term(g: SGr, t: u64): Text {
+pub fn sg_term(g: SGr, t: u64): Text ! {fail(Text)} {
   match Array::get(g.terms, t) {
     Some(x) => x
     None => par_die("a terminal is lost")
   }
 }
 
-pub fn sg_prods_of(g: SGr, n: u64): List(u64) {
+pub fn sg_prods_of(g: SGr, n: u64): List(u64) ! {div, fail(Text), overflow} {
   var out: List(u64) := Nil
   var p := Array::len(g.prods)
   while p > 0 {
@@ -93,7 +91,7 @@ pub fn sg_prods_of(g: SGr, n: u64): List(u64) {
   out
 }
 
-pub fn sg_snake(name: Text): Text {
+pub fn sg_snake(name: Text): Text ! {div, overflow} {
   var b := Buf::new()
   var at: u64 := 0
   var i: u64 := 0
@@ -116,7 +114,7 @@ pub fn sg_snake(name: Text): Text {
   text_lower_ascii(Text::of(b))
 }
 
-pub fn text_lower_ascii(t: Text): Text {
+pub fn text_lower_ascii(t: Text): Text ! {div, overflow} {
   var b := Buf::new()
   var at: u64 := 0
   while at < std::prelude::Text::len(t) {
@@ -136,34 +134,34 @@ pub fn text_lower_ascii(t: Text): Text {
   Text::of(b)
 }
 
-pub fn sg_types_get(&v: Vec(STy), i: u64): STy {
-  let &x := Vec::index(&v, i)
+pub fn sg_types_get(v: &Vec(STy), i: u64): STy ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn sg_set_type(&mut v: Vec(STy), i: u64, x: STy): Unit {
+pub fn sg_set_type(v: &mut Vec(STy), i: u64, x: STy): Unit {
   match Vec::get_mut(&mut v, i) {
-    Some(slot) => {
-      slot := x
+    Some(^slot) => {
+      *slot := x
     }
     None => #()
   }
 }
 
-pub fn sg_set_pt(&mut v: Vec(SPt), p: u64, ty: i64, ctor: u64): Unit {
+pub fn sg_set_pt(v: &mut Vec(SPt), p: u64, ty: i64, ctor: u64): Unit {
   match Vec::get_mut(&mut v, p) {
-    Some(slot) => {
-      slot := SPt { ty: ty, ctor: ctor }
+    Some(^slot) => {
+      *slot := SPt { ty: ty, ctor: ctor }
     }
     None => #()
   }
 }
 
-pub fn sg_made_find(&v: Vec(SMade), nt: u64): Option(FTy) {
+pub fn sg_made_find(v: &Vec(SMade), nt: u64): Option(FTy) ! {div, out_of_bounds, overflow} {
   var i: u64 := 0
   var found: Option(FTy) := None
   while i < Vec::len(&v) {
-    let &e := Vec::index(&v, i)
+    let e := Vec::index(&v, i)
     if e.nt == nt {
       found := Some(e.ty)
     }
@@ -174,18 +172,18 @@ pub fn sg_made_find(&v: Vec(SMade), nt: u64): Option(FTy) {
 
 // A fresh name for a type made inside `owner`: the owner's name, `_`, `kind`
 // and the next number for that owner and kind.
-pub fn sg_numbered(g: SGr, &mut cx: SCx, owner: u64, kind: Text): Text {
+pub fn sg_numbered(g: SGr, cx: &mut SCx, owner: u64, kind: Text): Text ! {div, fail(Text), out_of_bounds, overflow} {
   var n: u64 := 1
   var i: u64 := 0
   var seen := false
   while i < Vec::len(&cx.counters) {
-    let &e := Vec::index(&cx.counters, i)
+    let e := Vec::index(&cx.counters, i)
     if e.owner == owner && e.kind == kind {
       n := e.n + 1
       seen := true
       match Vec::get_mut(&mut cx.counters, i) {
-        Some(slot) => {
-          slot := SCnt { owner: owner, kind: kind, n: n }
+        Some(^slot) => {
+          *slot := SCnt { owner: owner, kind: kind, n: n }
         }
         None => #()
       }
@@ -198,33 +196,33 @@ pub fn sg_numbered(g: SGr, &mut cx: SCx, owner: u64, kind: Text): Text {
   Text::concat_all(Cons(sg_nt(g, owner), Cons("_", Cons(kind, Cons(Text::of_u64(n), Nil)))))
 }
 
-pub fn sg_is_expr(g: SGr, m: u64): Bool {
+pub fn sg_is_expr(g: SGr, m: u64): Bool ! {fail(Text)} {
   sg_nt(g, m) == "TautoExpr"
 }
 
 // The type of a token non-terminal is an expression for `TautoExpr` itself or
 // a direct alias whose first production contains only `TautoExpr`; otherwise a token.
-pub fn sg_token_ty(g: SGr, n: u64): FTy {
+pub fn sg_token_ty(g: SGr, n: u64): FTy ! {div, fail(Text), overflow} {
   var alias := false
   match sg_prods_of(g, n) {
-    Cons(p, rest) => match sg_prod(g, p).rhs {
+    Cons(p, ^rest) => match sg_prod(g, p).rhs {
       Cons(s, Nil) => match s {
-        MN(k) => {
+        MN(k, ^c) => {
           alias := sg_is_expr(g, k)
         }
-        MT(t, c) => #()
+        MT(^t, ^c) => #()
       }
-      other => #()
+      ^other => #()
     }
     Nil => #()
   }
   if sg_is_expr(g, n) || alias { FExpr } else { FTok }
 }
 
-pub fn sg_sym_name(g: SGr, s: MSym): Text {
+pub fn sg_sym_name(g: SGr, s: MSym): Text ! {fail(Text)} {
   match s {
-    MT(t, clipped) => sg_term(g, t)
-    MN(m) => {
+    MT(t, ^clipped) => sg_term(g, t)
+    MN(m, ^c) => {
       let k := sg_kind(g, m)
       if k == 2 {
         "Rep"
@@ -251,7 +249,7 @@ pub fn sg_snoc_field(xs: List(SField), x: SField): List(SField) {
 pub fn sg_field_base(base: Text): Text {
   if base == "" || base == "_" {
     "field"
-  } else if base == "span" || base == "theorem" || base == "def" || base == "import" || base == "mutual" || base == "axiom" || base == "inductive" || base == "forall" || base == "exists" || base == "decreasing_by" || base == "as" || base == "by" || base == "let" || base == "var" || base == "fn" || base == "return" || base == "while" || base == "loop" || base == "break" || base == "continue" || base == "if" || base == "else" || base == "match" || base == "struct" || base == "enum" || base == "effect" || base == "handle" || base == "with" || base == "perform" || base == "budget" || base == "copy" || base == "shared" || base == "affine" || base == "linear" || base == "view" || base == "resume" || base == "direct" || base == "mut" || base == "module" || base == "where" || base == "class" || base == "instance" || base == "extern" || base == "true" || base == "false" || base == "syntax" || base == "macro" || base == "quote" {
+  } else if base == "span" || base == "theorem" || base == "def" || base == "import" || base == "mutual" || base == "axiom" || base == "inductive" || base == "forall" || base == "exists" || base == "decreasing_by" || base == "as" || base == "by" || base == "let" || base == "var" || base == "fn" || base == "return" || base == "while" || base == "loop" || base == "break" || base == "continue" || base == "if" || base == "else" || base == "match" || base == "struct" || base == "enum" || base == "effect" || base == "handle" || base == "with" || base == "perform" || base == "budget" || base == "copy" || base == "shared" || base == "affine" || base == "linear" || base == "borrow" || base == "resume" || base == "direct" || base == "mut" || base == "module" || base == "where" || base == "class" || base == "instance" || base == "infer" || base == "extern" || base == "true" || base == "false" || base == "syntax" || base == "macro" || base == "quote" {
     Text::concat_all(Cons(base, Cons("_field", Nil)))
   } else {
     base
@@ -267,7 +265,7 @@ pub fn sg_field_used(xs: List(SField), name: Text): Bool {
 
 // Choose the first unused spelling, not the count of matching prefixes:
 // grammar symbols can themselves end in numeric suffixes.
-pub fn sg_fresh_field(xs: List(SField), base: Text): Text {
+pub fn sg_fresh_field(xs: List(SField), base: Text): Text ! {div, overflow} {
   var name := base
   var n: u64 := 2
   while sg_field_used(xs, name) {
@@ -285,7 +283,7 @@ pub fn sg_drop_last(xs: List(MSym)): List(MSym) {
     Nil => Nil
     Cons(x, rest) => match rest {
       Nil => Nil
-      more => Cons(x, sg_drop_last(rest))
+      ^more => Cons(x, sg_drop_last(rest))
     }
   }
 }
@@ -293,11 +291,11 @@ pub fn sg_drop_last(xs: List(MSym)): List(MSym) {
 pub fn sg_drop_first(xs: List(MSym)): List(MSym) {
   match xs {
     Nil => Nil
-    Cons(x, rest) => rest
+    Cons(^x, rest) => rest
   }
 }
 
-pub fn sg_items(g: SGr, m: u64): SItems {
+pub fn sg_items(g: SGr, m: u64): SItems ! {div, fail(Text), overflow} {
   var found: Option(u64) := None
   var ps := sg_prods_of(g, m)
   var running := true
@@ -333,18 +331,18 @@ pub fn sg_items(g: SGr, m: u64): SItems {
 
 // The name of a field of a repetition or option: the snake-case name of the
 // one terminal or struct or token non-terminal it holds, else `fallback`.
-pub fn sg_inner_name(g: SGr, m: u64, fallback: Text): Text {
+pub fn sg_inner_name(g: SGr, m: u64, fallback: Text): Text ! {div, fail(Text), overflow} {
   let items := sg_items(g, m)
   match items.rhs {
     Cons(s, Nil) => match s {
-      MT(t, c) => sg_snake(sg_term(g, t))
-      MN(k) => if sg_kind(g, k) == 0 || sg_kind(g, k) == 1 {
+      MT(t, ^c) => sg_snake(sg_term(g, t))
+      MN(k, c) => if not(c) && (sg_kind(g, k) == 0 || sg_kind(g, k) == 1) {
         sg_snake(sg_nt(g, k))
       } else {
         fallback
       }
     }
-    other => fallback
+    ^other => fallback
   }
 }
 
@@ -362,9 +360,9 @@ pub fn sg_snoc_ctor(xs: List(SCtor), x: SCtor): List(SCtor) {
   }
 }
 
-// The fields of a right side: a clipped terminal has none; a name used twice
+// The fields of a right side: a clipped symbol has none; a name used twice
 // gets `_2`, `_3`, ….
-pub fn sg_fields(g: SGr, &mut cx: SCx, owner: u64, rhs: List(MSym)): List(SField) {
+pub fn sg_fields(g: SGr, cx: &mut SCx, owner: u64, rhs: List(MSym)): List(SField) ! {div, fail(Text), out_of_bounds, overflow} {
   var out: List(SField) := Nil
   var rest := rhs
   var running := true
@@ -383,7 +381,9 @@ pub fn sg_fields(g: SGr, &mut cx: SCx, owner: u64, rhs: List(MSym)): List(SField
           } else {
             base := sg_snake(sg_term(g, t))
           }
-          MN(m) => {
+          MN(m, c) => if c {
+            skip := true
+          } else {
             let k := sg_kind(g, m)
             if k == 1 {
               base := sg_snake(sg_nt(g, m))
@@ -414,7 +414,7 @@ pub fn sg_fields(g: SGr, &mut cx: SCx, owner: u64, rhs: List(MSym)): List(SField
   out
 }
 
-pub fn sg_generated(g: SGr, &mut cx: SCx, owner: u64, m: u64): FTy {
+pub fn sg_generated(g: SGr, cx: &mut SCx, owner: u64, m: u64): FTy ! {div, fail(Text), out_of_bounds, overflow} {
   match sg_made_find(&cx.made, m) {
     Some(t) => t
     None => {
@@ -426,12 +426,14 @@ pub fn sg_generated(g: SGr, &mut cx: SCx, owner: u64, m: u64): FTy {
         let items := sg_items(g, m)
         match items.rhs {
           Cons(s, Nil) => match s {
-            MT(t, clipped) => if clipped {
+            MT(^t, clipped) => if clipped {
               sg_generated_struct(g, &mut cx, owner, m, items)
             } else {
               FTok
             }
-            MN(k) => {
+            MN(k, c) => if c {
+              sg_generated_struct(g, &mut cx, owner, m, items)
+            } else {
               let kk := sg_kind(g, k)
               if kk == 1 {
                 sg_token_ty(g, k)
@@ -446,7 +448,7 @@ pub fn sg_generated(g: SGr, &mut cx: SCx, owner: u64, m: u64): FTy {
               }
             }
           }
-          other => sg_generated_struct(g, &mut cx, owner, m, items)
+          ^other => sg_generated_struct(g, &mut cx, owner, m, items)
         }
       }
       Vec::push(&mut cx.made, SMade { nt: m, ty: t })
@@ -455,7 +457,7 @@ pub fn sg_generated(g: SGr, &mut cx: SCx, owner: u64, m: u64): FTy {
   }
 }
 
-pub fn sg_generated_struct(g: SGr, &mut cx: SCx, owner: u64, m: u64, items: SItems): FTy {
+pub fn sg_generated_struct(g: SGr, cx: &mut SCx, owner: u64, m: u64, items: SItems): FTy ! {div, fail(Text), out_of_bounds, overflow} {
   let name := sg_numbered(g, &mut cx, owner, if sg_kind(g, m) == 2 { "Rep" } else { "Opt" })
   let idx := Vec::len(&cx.types)
   Vec::push(&mut cx.types, TyStruct(name, items.prod, Nil))
@@ -466,7 +468,7 @@ pub fn sg_generated_struct(g: SGr, &mut cx: SCx, owner: u64, m: u64, items: SIte
 }
 
 // The type of a non-terminal: a struct for one production, an enum for several.
-pub fn sg_alternatives(g: SGr, &mut cx: SCx, owner: u64, name: Text, prods: List(u64)): u64 {
+pub fn sg_alternatives(g: SGr, cx: &mut SCx, owner: u64, name: Text, prods: List(u64)): u64 ! {div, fail(Text), out_of_bounds, overflow} {
   let idx := Vec::len(&cx.types)
   match prods {
     Cons(p0, Nil) => {
@@ -475,7 +477,7 @@ pub fn sg_alternatives(g: SGr, &mut cx: SCx, owner: u64, name: Text, prods: List
       sg_set_type(&mut cx.types, idx, TyStruct(name, p0, fields))
       sg_set_pt(&mut cx.ptype, p0, I64::of_u64(idx), 0)
     }
-    other => {
+    ^other => {
       Vec::push(&mut cx.types, TyEnum(name, Nil))
       var ctors: List(SCtor) := Nil
       var i: u64 := 0
@@ -493,16 +495,16 @@ pub fn sg_alternatives(g: SGr, &mut cx: SCx, owner: u64, name: Text, prods: List
             var single := false
             match rhs {
               Cons(s, Nil) => match s {
-                MN(m) => if sg_kind(g, m) == 0 || sg_kind(g, m) == 1 {
+                MN(m, c) => if not(c) && (sg_kind(g, m) == 0 || sg_kind(g, m) == 1) {
                   single := true
                   cname := sg_nt(g, m)
                   pay := PaySingle(
                     if sg_kind(g, m) == 1 { sg_token_ty(g, m) } else { FNamed(sg_nt(g, m)) }
                   )
                 }
-                MT(t, c) => #()
+                MT(^t, ^c) => #()
               }
-              others => #()
+              ^others => #()
             }
             if not(single) {
               var joined := ""
@@ -543,13 +545,13 @@ pub fn sg_alternatives(g: SGr, &mut cx: SCx, owner: u64, name: Text, prods: List
 
 // The type of a non-terminal that has one of its own (a struct non-terminal,
 // or a start symbol that is a token).
-pub fn sg_declared(g: SGr, &mut cx: SCx, n: u64): Unit {
+pub fn sg_declared(g: SGr, cx: &mut SCx, n: u64): Unit ! {div, fail(Text), out_of_bounds, overflow} {
   let name := sg_nt(g, n)
   let prods := sg_prods_of(g, n)
   if sg_kind(g, n) == 1 {
     // The start symbol is a token: the input type needs a struct (token).
     match prods {
-      Cons(p0, rest) => {
+      Cons(p0, ^rest) => {
         let idx := Vec::len(&cx.types)
         Vec::push(&mut cx.types, TyStruct(name, p0, Cons(SField { name: "token", ty: FTok }, Nil)))
         sg_set_pt(&mut cx.ptype, p0, I64::of_u64(idx), 0)
@@ -566,7 +568,7 @@ pub fn sg_declared(g: SGr, &mut cx: SCx, n: u64): Unit {
 // and constructor.
 pub(open) struct SSchema { types: Vec(STy), ptype: Vec(SPt) }
 
-pub fn sg_build(m: MModel): SSchema {
+pub fn sg_build(m: MModel): SSchema ! {div, fail(Text), out_of_bounds, overflow} {
   let g := SGr {
     prods: Array::of_list(m.prods)
     nts: Array::of_list(m.nts)
@@ -590,16 +592,16 @@ pub fn sg_build(m: MModel): SSchema {
     n := n + 1
   }
   match cx {
-    SCx { types: ts, ptype: pt, made: md, counters: cn } => SSchema { types: ts, ptype: pt }
+    SCx { types: ts, ptype: pt, made: ^md, counters: ^cn } => SSchema { types: ts, ptype: pt }
   }
 }
 
-pub fn sg_pt_get(&v: Vec(SPt), i: u64): SPt {
-  let &x := Vec::index(&v, i)
+pub fn sg_pt_get(v: &Vec(SPt), i: u64): SPt ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn sg_prod_types_line(&s: SSchema): Text {
+pub fn sg_prod_types_line(s: &SSchema): Text ! {div, out_of_bounds, overflow} {
   var words: List(Text) := Nil
   var i := Vec::len(&s.ptype)
   while i > 0 {
@@ -610,7 +612,7 @@ pub fn sg_prod_types_line(&s: SSchema): Text {
   em_line("prod_types", Vec::len(&s.ptype), words)
 }
 
-pub fn sg_push_fty(&mut b: Buf, t: FTy): Unit {
+pub fn sg_push_fty(b: &mut Buf, t: FTy): Unit {
   match t {
     FTok => Buf::push(&mut b, &" K")
     FExpr => Buf::push(&mut b, &" E")
@@ -629,21 +631,21 @@ pub fn sg_push_fty(&mut b: Buf, t: FTy): Unit {
   }
 }
 
-pub fn sg_len_fields(xs: List(SField)): u64 {
+pub fn sg_len_fields(xs: List(SField)): u64 ! {overflow} {
   match xs {
     Nil => 0
-    Cons(x, rest) => 1 + sg_len_fields(rest)
+    Cons(^x, rest) => 1 + sg_len_fields(rest)
   }
 }
 
-pub fn sg_len_ctors(xs: List(SCtor)): u64 {
+pub fn sg_len_ctors(xs: List(SCtor)): u64 ! {overflow} {
   match xs {
     Nil => 0
-    Cons(x, rest) => 1 + sg_len_ctors(rest)
+    Cons(^x, rest) => 1 + sg_len_ctors(rest)
   }
 }
 
-pub fn sg_push_record(&mut b: Buf, fields: List(SField)): Unit {
+pub fn sg_push_record(b: &mut Buf, fields: List(SField)): Unit ! {div, overflow} {
   Buf::push(&mut b, &" ")
   Buf::push(&mut b, &Text::of_u64(sg_len_fields(fields)))
   var rest := fields
@@ -663,7 +665,7 @@ pub fn sg_push_record(&mut b: Buf, fields: List(SField)): Unit {
   }
 }
 
-pub fn sg_schema_line(&s: SSchema): Text {
+pub fn sg_schema_line(s: &SSchema): Text ! {div, out_of_bounds, overflow} {
   var b := Buf::new()
   var i: u64 := 0
   while i < Vec::len(&s.types) {

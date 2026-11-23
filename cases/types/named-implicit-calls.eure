@@ -1,0 +1,37 @@
+// `f(<A: T>)` on a top-level function names a generic of the function.
+
+@ cases.named-implicit-for-a-generic-only-in-where
+source = ```nib
+class Named(A: Shared) { fn tag(a: &A): Text }
+struct Circle { r: nat }
+instance Named(Circle) { fn tag(a: &Circle): Text { "circle" } }
+fn name_of<A: Shared>(): Text where Named(A) { "named" }
+show(&name_of(<A: Circle>))
+```
+types = "ok"
+stdout = "\"named\"\n"
+differential = "types"
+
+@ cases.named-implicit-for-a-generic-in-the-type
+source = ```nib
+fn none<A: Shared>(): Option(A) { None }
+let x: Option(nat) := none(<A: nat>)
+```
+types = "ok"
+differential = "types"
+
+@ cases.named-implicit-disagreeing-with-the-expected-type
+source = ```nib
+fn none<A: Shared>(): Option(A) { None }
+let x: Option(Bool) := none(<A: nat>)
+```
+types = "error: `x`: Option(nat) does not fit Option(Bool)"
+differential = "types"
+
+@ cases.named-implicit-that-is-no-generic
+source = ```nib
+fn none<A: Shared>(): Option(A) { None }
+let x: Option(nat) := none(<B: nat>)
+```
+types = "error: the function has no type argument named `B`"
+differential = "types"

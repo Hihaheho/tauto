@@ -1,0 +1,1142 @@
+import "counts.taut"
+import "../src/decimal.taut"
+import "../src/read.taut"
+import "../src/syntax.taut"
+import "../src/value.taut"
+import "../src/write.taut"
+import "numbers.taut"
+import "strings.taut"
+import std::base
+import std::list
+import std::text
+import "doc.taut"
+import "keys.taut"
+import "mono.taut"
+
+// Values that hold no other value: reading what `put_scalar` wrote gives the value back, when a
+// byte that ends a value follows it.
+
+// ---- bytes that end a value --------------------------------------------------------------------
+
+theorem or_right(a: Bool, b: Bool, h: Bool::or(a, b) = true, ha: a = false): b = true {
+  Eq::subst(<A: Bool, a: a, b: false>, (y: Bool) => Bool::or(y, b) = true, ha, h)
+}
+
+pub theorem eq_case(
+  p: (Nat) -> Bool,
+  c: Nat,
+  k: Nat,
+  e: Nat::eq(c, k) = true,
+  hk: p(k) = true
+): p(c) = true {
+  Eq::subst(<A: Nat, a: k, b: c>, (z: Nat) => p(z) = true, Eq::sym(Nat::eq_sound(c, k, e)), hk)
+}
+
+// What holds for the four bytes that end a value holds for any of them.
+theorem stop_prop(
+  p: (Nat) -> Bool,
+  c: Nat,
+  h: stop_byte(c) = true,
+  h10: p(10) = true,
+  h41: p(41) = true,
+  h44: p(44) = true,
+  h93: p(93) = true
+): p(c) = true {
+  Bool::cases(
+    (y: Bool) => Bool::or(y, Bool::or(Nat::eq(c, 41), Bool::or(Nat::eq(c, 44), Nat::eq(c, 93)))) = true -> p(c) = true,
+    Nat::eq(c, 10),
+    (e10: Nat::eq(c, 10) = false) => (
+      h1: Bool::or(false, Bool::or(Nat::eq(c, 41), Bool::or(Nat::eq(c, 44), Nat::eq(c, 93)))) = true
+    ) => Bool::cases(
+      (y: Bool) => Bool::or(y, Bool::or(Nat::eq(c, 44), Nat::eq(c, 93))) = true -> p(c) = true,
+      Nat::eq(c, 41),
+      (e41: Nat::eq(c, 41) = false) => (
+        h2: Bool::or(false, Bool::or(Nat::eq(c, 44), Nat::eq(c, 93))) = true
+      ) => Bool::cases(
+        (y: Bool) => Bool::or(y, Nat::eq(c, 93)) = true -> p(c) = true,
+        Nat::eq(c, 44),
+        (e44: Nat::eq(c, 44) = false) => (h3: Bool::or(false, Nat::eq(c, 93)) = true) => eq_case(
+          p,
+          c,
+          93,
+          h3,
+          h93
+        ),
+        (e44: Nat::eq(c, 44) = true) => (h3: true = true) => eq_case(p, c, 44, e44, h44)
+      )(h2),
+      (e41: Nat::eq(c, 41) = true) => (h2: true = true) => eq_case(p, c, 41, e41, h41)
+    )(h1),
+    (e10: Nat::eq(c, 10) = true) => (h1: true = true) => eq_case(p, c, 10, e10, h10)
+  )(h)
+}
+
+theorem stops_byte(
+  c: Nat,
+  t: List(Nat),
+  h: stops(Cons(c, t)) = true
+): stop_byte(c) = true {
+  And::left(Bool::and_split(stop_byte(c), not(head_is(92, skip(Cons(c, t)))), h))
+}
+
+theorem stops_join(x: List(Nat), h: stops(x) = true): head_is(92, skip(x)) = false {
+  match x {
+    Nil => False::elim(false_ne_true(h))
+    Cons(c, t) => Bool::not_true(
+      head_is(92, skip(Cons(c, t))),
+      And::right(Bool::and_split(stop_byte(c), not(head_is(92, skip(Cons(c, t)))), h))
+    )
+  }
+}
+
+// `p` fails on the first byte of what follows a value, when it fails on the four bytes.
+theorem stops_not(
+  p: (Nat) -> Bool,
+  x: List(Nat),
+  h: stops(x) = true,
+  h10: p(10) = false,
+  h41: p(41) = false,
+  h44: p(44) = false,
+  h93: p(93) = false
+): head_passes(p, x) = false {
+  match x {
+    Nil => Refl
+    Cons(c, t) => Bool::not_true(
+      p(c),
+      stop_prop(
+        (z: Nat) => not(p(z)),
+        c,
+        stops_byte(c, t, h),
+        Eq::congr(not, h10),
+        Eq::congr(not, h41),
+        Eq::congr(not, h44),
+        Eq::congr(not, h93)
+      )
+    )
+  }
+}
+
+theorem stops_name(x: List(Nat), h: stops(x) = true): head_passes(ident_char, x) = false {
+  stops_not(ident_char, x, h, Refl, Refl, Refl, Refl)
+}
+
+theorem stops_tick(
+  x: List(Nat),
+  h: stops(x) = true
+): head_passes((c: Nat) => Nat::eq(c, 96), x) = false {
+  stops_not((c: Nat) => Nat::eq(c, 96), x, h, Refl, Refl, Refl, Refl)
+}
+
+theorem stops_number(x: List(Nat), h: stops(x) = true): number_goes_on(x) = false {
+  match x {
+    Nil => False::elim(false_ne_true(h))
+    Cons(c, t) => Bool::not_true(
+      number_goes_on(Cons(c, t)),
+      stop_prop(
+        (z: Nat) => not(number_goes_on(Cons(z, t))),
+        c,
+        stops_byte(c, t, h),
+        Refl,
+        Refl,
+        Refl,
+        Refl
+      )
+    )
+  }
+}
+
+theorem head_is_passes(
+  c: Nat,
+  x: List(Nat),
+  h: head_passes((z: Nat) => Nat::eq(z, c), x) = false
+): head_is(c, x) = false {
+  match x {
+    Nil => Refl
+    Cons(d, t) => Eq::trans(nat_eq_comm(c, d), h)
+  }
+}
+
+pub theorem nat_eq_comm(a: Nat, b: Nat): Nat::eq(a, b) = Nat::eq(b, a) {
+  match a {
+    Zero => match b {
+      Zero => Refl
+      Succ(b2) => Refl
+    }
+    Succ(a2) => match b {
+      Zero => Refl
+      Succ(b2) => nat_eq_comm(a2, b2)
+    }
+  }
+}
+
+// ---- the first tests of `read_value` and `read_scalar` --------------------------------------------
+
+fn rv_tested(c: Nat, t: List(Nat), g: Nat, a91: Bool, a40: Bool, a123: Bool, a35: Bool): Rd(Expr) {
+  match a91 {
+    true => rd_map((xs: List(Expr)) => Earr(xs), read_items(g, 93, skip(t)))
+    false => ⊢ Rd(Expr) from match a40 {
+      true => rd_map((xs: List(Expr)) => Etup(xs), read_items(g, 41, skip(t)))
+      false => ⊢ Rd(Expr) from match a123 {
+        true => read_object(g, skip(t))
+        false => ⊢ Rd(Expr) from match a35 {
+          true => RdErr(Cons(c, t), "a value (sets `#{…}` are not read)")
+          false => rd_map((v: Value) => Escalar(v), read_scalar(Cons(c, t)))
+        }
+      }
+    }
+  }
+}
+
+theorem rv_is_tested(
+  c: Nat,
+  t: List(Nat),
+  g: Nat
+): read_value(Succ(g), Cons(c, t)) = rv_tested(
+    c,
+    t,
+    g,
+    Nat::eq(c, 91),
+    Nat::eq(c, 40),
+    Nat::eq(c, 123),
+    Bool::and(Nat::eq(c, 35), head_is(123, t))
+  ) {
+  Refl
+}
+
+fn rs_tested(c: Nat, t: List(Nat), str: Bool, bang: Bool, tick: Bool, num: Bool): Rd(Value) {
+  match str {
+    true => rd_map(
+      (bs: List(Nat)) => Vtext(Plaintext, Text::Mk(bs)),
+      read_strings(Cons(0, Cons(c, t)), Cons(c, t))
+    )
+    false => ⊢ Rd(Value) from match bang {
+      true => read_hole(t)
+      false => ⊢ Rd(Value) from match tick {
+        true => match Nat::le(3, count_ticks(Cons(c, t))) {
+          true => match Nat::le(count_ticks(Cons(c, t)), 6) {
+            true => read_code_block(
+              count_ticks(Cons(c, t)),
+              List::drop(count_ticks(Cons(c, t)), Cons(c, t))
+            )
+            false => RdErr(Cons(c, t), "at most six backticks")
+          }
+          false => rd_map((bs: List(Nat)) => Vtext(Implicit, Text::Mk(bs)), read_inline_code(t))
+        }
+        false => match num {
+          true => read_number(Cons(c, t))
+          false => read_word(Cons(c, t))
+        }
+      }
+    }
+  }
+}
+
+theorem rs_is_tested(
+  c: Nat,
+  t: List(Nat)
+): read_scalar(Cons(c, t)) = rs_tested(
+    c,
+    t,
+    starts_string(Cons(c, t)),
+    Nat::eq(c, 33),
+    Nat::eq(c, 96),
+    starts_number(Cons(c, t))
+  ) {
+  Refl
+}
+
+fn num_or_word(l: List(Nat), y: Bool): Rd(Value) {
+  match y {
+    true => read_number(l)
+    false => read_word(l)
+  }
+}
+
+// A value whose first byte passes `p`, a test that fails on every byte the readers look for
+// first, is read as a number or as a word.
+theorem plain_value(
+  p: (Nat) -> Bool,
+  c: Nat,
+  t: List(Nat),
+  g: Nat,
+  hc: p(c) = true,
+  h91: p(91) = false,
+  h40: p(40) = false,
+  h123: p(123) = false,
+  h35: p(35) = false,
+  h34: p(34) = false,
+  h39: p(39) = false,
+  h33: p(33) = false,
+  h96: p(96) = false
+): read_value(Succ(g), Cons(c, t)) = rd_map((v: Value) => Escalar(v), num_or_word(Cons(c, t), starts_number(Cons(c, t)))) {
+  Eq::trans(
+    rv_is_tested(c, t, g),
+    Eq::trans(
+      Eq::congr(
+        ⟦rv_tested(
+          c,
+          t,
+          g,
+          □,
+          Nat::eq(c, 40),
+          Nat::eq(c, 123),
+          Bool::and(Nat::eq(c, 35), head_is(123, t))
+        )⟧,
+        ne_of_test(p, c, 91, hc, h91)
+      ),
+      Eq::trans(
+        Eq::congr(
+          ⟦rv_tested(
+            c,
+            t,
+            g,
+            false,
+            □,
+            Nat::eq(c, 123),
+            Bool::and(Nat::eq(c, 35), head_is(123, t))
+          )⟧,
+          ne_of_test(p, c, 40, hc, h40)
+        ),
+        Eq::trans(
+          Eq::congr(
+            ⟦rv_tested(c, t, g, false, false, □, Bool::and(Nat::eq(c, 35), head_is(123, t)))⟧,
+            ne_of_test(p, c, 123, hc, h123)
+          ),
+          Eq::trans(
+            Eq::congr(
+              ⟦rv_tested(c, t, g, false, false, false, Bool::and(□, head_is(123, t)))⟧,
+              ne_of_test(p, c, 35, hc, h35)
+            ),
+            Eq::congr(
+              (x: Rd(Value)) => rd_map((v: Value) => Escalar(v), x),
+              Eq::trans(
+                rs_is_tested(c, t),
+                Eq::trans(
+                  Eq::congr(
+                    ⟦rs_tested(
+                      c,
+                      t,
+                      □,
+                      Nat::eq(c, 33),
+                      Nat::eq(c, 96),
+                      starts_number(Cons(c, t))
+                    )⟧,
+                    Eq::trans(
+                      Eq::congr(⟦Bool::or(□, Nat::eq(39, c))⟧, ne_of_test_l(p, c, 34, hc, h34)),
+                      ne_of_test_l(p, c, 39, hc, h39)
+                    )
+                  ),
+                  Eq::trans(
+                    Eq::congr(
+                      ⟦rs_tested(c, t, false, □, Nat::eq(c, 96), starts_number(Cons(c, t)))⟧,
+                      ne_of_test(p, c, 33, hc, h33)
+                    ),
+                    Eq::congr(
+                      ⟦rs_tested(c, t, false, false, □, starts_number(Cons(c, t)))⟧,
+                      ne_of_test(p, c, 96, hc, h96)
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+fn esc(): (Value) -> Expr {
+  (v: Value) => Escalar(v)
+}
+
+// ---- holes ------------------------------------------------------------------------------
+
+theorem read_hole_stop(
+  x: List(Nat),
+  h: head_passes(ident_start, x) = false
+): read_hole(x) = MkRd(Vhole(None), x) {
+  match x {
+    Nil => Refl
+    Cons(
+      c,
+      t
+    ) => Eq::subst(
+      Bool,
+      false,
+      ident_start(c),
+      (y: Bool) => Eq(Rd(Value), ⊢ Rd(Value) from match y {
+        true => MkRd(Vhole(Some(Text::Mk((span(ident_char, Cons(c, t)): @taken List(Nat))))), (span(ident_char, Cons(c, t)): @rest List(Nat)))
+        false => MkRd(Vhole(None), Cons(c, t))
+      }, MkRd(Vhole(None), Cons(c, t))),
+      Eq::sym(h),
+      Refl
+    )
+  }
+}
+
+theorem read_hole_name(
+  bs: List(Nat),
+  x: List(Nat),
+  h: is_ident(bs) = true,
+  hx: head_passes(ident_char, x) = false
+): read_hole(List::append(bs, x)) = MkRd(Vhole(Some(Text::Mk(bs))), x) {
+  match bs {
+    Nil => False::elim(false_ne_true(h))
+    Cons(
+      c,
+      t
+    ) => Eq::subst(
+      Bool,
+      true,
+      ident_start(c),
+      (y: Bool) => Eq(Rd(Value), ⊢ Rd(Value) from match y {
+        true => MkRd(
+          Vhole(Some(Text::Mk((span(ident_char, Cons(c, List::append(t, x))): @taken List(Nat))))),
+          (span(ident_char, Cons(c, List::append(t, x))): @rest List(Nat))
+        )
+        false => MkRd(Vhole(None), Cons(c, List::append(t, x)))
+      }, MkRd(Vhole(Some(Text::Mk(Cons(c, t)))), x)),
+      Eq::sym(And::left(Bool::and_split(ident_start(c), List::all(ident_char, t), h))),
+      Eq::congr(
+        (q: @taken List(Nat) × @rest List(Nat)) => MkRd(Vhole(Some(Text::Mk((q: @taken List(Nat))))), (q: @rest List(Nat))),
+        span_append(
+          ident_char,
+          Cons(c, t),
+          x,
+          Bool::and_intro(
+            ident_char(c),
+            all_p(ident_char, t),
+            start_is_char(c, And::left(Bool::and_split(ident_start(c), List::all(ident_char, t), h))),
+            Eq::trans(all_p_list_all(ident_char, t), And::right(Bool::and_split(ident_start(c), List::all(ident_char, t), h)))
+          ),
+          hx
+        )
+      )
+    )
+  }
+}
+
+theorem hole_back(
+  lb: Option(Text),
+  x: List(Nat),
+  g: Nat,
+  hw: label_ok(lb) = true,
+  hx: stops(x) = true
+): read_value(Succ(g), put_scalar(Vhole(lb), x)) = MkRd(Escalar(Vhole(lb)), x) {
+  match lb {
+    None => Eq::congr(
+      ⟦rd_map(esc(), □)⟧,
+      read_hole_stop(x, stops_not(ident_start, x, hx, Refl, Refl, Refl, Refl))
+    )
+    Some(t) => match t {
+      Mk(bs) => Eq::congr(
+        ⟦rd_map(esc(), □)⟧,
+        read_hole_name(bs, x, hw, stops_name(x, hx))
+      )
+    }
+  }
+}
+
+// ---- words -------------------------------------------------------------------------------------
+
+fn word_k(l: List(Nat)): (List(Nat), List(Nat)) -> Rd(Value) {
+  (w: List(Nat), r: List(Nat)) => match head_is(96, r) {
+    true => rd_map((c: List(Nat)) => Vtext(lang_of(w), Text::Mk(c)), read_inline_code(List::tail(r)))
+    false => word_of(w, r, l)
+  }
+}
+
+fn word_of(w: List(Nat), r: List(Nat), l: List(Nat)): Rd(Value) {
+  match Text::eq(Text::Mk(w), "true") {
+    true => MkRd(Vbool(true), r)
+    false => match Text::eq(Text::Mk(w), "false") {
+      true => MkRd(Vbool(false), r)
+      false => match Text::eq(Text::Mk(w), "null") {
+        true => MkRd(Vnull, r)
+        false => RdErr(l, "a value (`inf` and `nan` are not read)")
+      }
+    }
+  }
+}
+
+theorem read_word_k(l: List(Nat)): read_word(l) = rd_then(read_ident(l), word_k(l)) {
+  Refl
+}
+
+// A name `Cons(c, t)` followed by bytes that cannot go on with it is read as that name.
+pub theorem read_ident_name(
+  c: Nat,
+  t: List(Nat),
+  x: List(Nat),
+  hc: ident_start(c) = true,
+  ht: all_p(ident_char, t) = true,
+  hx: head_passes(ident_char, x) = false
+): read_ident(Cons(c, List::append(t, x))) = MkRd(Cons(c, t), x) {
+  Eq::subst(
+    Bool,
+    true,
+    ident_start(c),
+    (y: Bool) => Eq(Rd(List(Nat)), match y {
+      true => MkRd((span(ident_char, Cons(c, List::append(t, x))): @taken List(Nat)), (span(ident_char, Cons(c, List::append(t, x))): @rest List(Nat)))
+      false => RdErr(Cons(c, List::append(t, x)), "a name")
+    }, MkRd(Cons(c, t), x)),
+    Eq::sym(hc),
+    Eq::congr(
+      (q: @taken List(Nat) × @rest List(Nat)) => MkRd((q: @taken List(Nat)), (q: @rest List(Nat))),
+      span_append(ident_char, Cons(c, t), x, Bool::and_intro(ident_char(c), all_p(ident_char, t), start_is_char(c, hc), ht), hx)
+    )
+  )
+}
+
+theorem word_back(
+  c: Nat,
+  t: List(Nat),
+  x: List(Nat),
+  hc: ident_start(c) = true,
+  ht: all_p(ident_char, t) = true,
+  hx: head_passes(ident_char, x) = false,
+  h96: head_is(96, x) = false
+): read_word(Cons(c, List::append(t, x))) = word_of(Cons(c, t), x, Cons(c, List::append(t, x))) {
+  Eq::trans(
+    Eq::congr(
+      (q: Rd(List(Nat))) => rd_then(q, word_k(Cons(c, List::append(t, x)))),
+      read_ident_name(c, t, x, hc, ht, hx)
+    ),
+    Eq::subst(
+      Bool,
+      false,
+      head_is(96, x),
+      (y: Bool) => Eq(Rd(Value), match y {
+        true => rd_map((d: List(Nat)) => Vtext(lang_of(Cons(c, t)), Text::Mk(d)), read_inline_code(List::tail(x)))
+        false => word_of(Cons(c, t), x, Cons(c, List::append(t, x)))
+      }, word_of(Cons(c, t), x, Cons(c, List::append(t, x)))),
+      Eq::sym(h96),
+      Refl
+    )
+  )
+}
+
+theorem stops_96(x: List(Nat), h: stops(x) = true): head_is(96, x) = false {
+  head_is_passes(96, x, stops_tick(x, h))
+}
+
+theorem null_back(
+  x: List(Nat),
+  g: Nat,
+  hx: stops(x) = true
+): read_value(Succ(g), put_scalar(Vnull, x)) = MkRd(Escalar(Vnull), x) {
+  Eq::congr(
+    ⟦rd_map(esc(), □)⟧,
+    word_back(
+      110,
+      Cons(117, Cons(108, Cons(108, Nil))),
+      x,
+      Refl,
+      Refl,
+      stops_name(x, hx),
+      stops_96(x, hx)
+    )
+  )
+}
+
+theorem bool_back(
+  b: Bool,
+  x: List(Nat),
+  g: Nat,
+  hx: stops(x) = true
+): read_value(Succ(g), put_scalar(Vbool(b), x)) = MkRd(Escalar(Vbool(b)), x) {
+  match b {
+    true => Eq::congr(
+      ⟦rd_map(esc(), □)⟧,
+      word_back(
+        116,
+        Cons(114, Cons(117, Cons(101, Nil))),
+        x,
+        Refl,
+        Refl,
+        stops_name(x, hx),
+        stops_96(x, hx)
+      )
+    )
+    false => Eq::congr(
+      ⟦rd_map(esc(), □)⟧,
+      word_back(
+        102,
+        Cons(97, Cons(108, Cons(115, Cons(101, Nil)))),
+        x,
+        Refl,
+        Refl,
+        stops_name(x, hx),
+        stops_96(x, hx)
+      )
+    )
+  }
+}
+
+// ---- numbers -----------------------------------------------------------------------------------
+
+theorem starts_num_signed(
+  neg: Bool,
+  d: Nat,
+  t: List(Nat),
+  hd: is_digit(d) = true
+): starts_number(signed(neg, Cons(d, t))) = true {
+  Eq::trans(
+    Eq::congr(⟦starts_after_sign(□)⟧, sign_of_signed(neg, d, t, hd)),
+    hd
+  )
+}
+
+theorem value_num_prefix(
+  neg: Bool,
+  d: Nat,
+  t: List(Nat),
+  g: Nat,
+  hd: is_digit(d) = true
+): read_value(Succ(g), signed(neg, Cons(d, t))) = rd_map(esc(), num_or_word(signed(neg, Cons(d, t)), starts_number(signed(neg, Cons(d, t))))) {
+  match neg {
+    true => Refl
+    false => plain_value(
+      is_digit,
+      d,
+      t,
+      g,
+      hd,
+      Refl,
+      Refl,
+      Refl,
+      Refl,
+      Refl,
+      Refl,
+      Refl,
+      Refl
+    )
+  }
+}
+
+theorem num_value(
+  neg: Bool,
+  l: List(Nat),
+  y: List(Nat),
+  g: Nat,
+  hl: all_digits(l) = true,
+  hc: is_cons(l) = true
+): read_value(Succ(g), signed(neg, List::append(l, y))) = rd_map(esc(), read_number(signed(neg, List::append(l, y)))) {
+  match l {
+    Nil => False::elim(false_ne_true(hc))
+    Cons(d, t) => Eq::trans(
+      value_num_prefix(
+        neg,
+        d,
+        List::append(t, y),
+        g,
+        And::left(Bool::and_split(is_digit(d), all_digits(t), hl))
+      ),
+      Eq::congr(
+        ⟦rd_map(esc(), num_or_word(signed(neg, Cons(d, List::append(t, y))), □))⟧,
+        starts_num_signed(
+          neg,
+          d,
+          List::append(t, y),
+          And::left(Bool::and_split(is_digit(d), all_digits(t), hl))
+        )
+      )
+    )
+  }
+}
+
+theorem int_back(
+  neg: Bool,
+  n: Nat,
+  x: List(Nat),
+  g: Nat,
+  hx: stops(x) = true
+): read_value(Succ(g), put_scalar(Vint(neg, n), x)) = MkRd(Escalar(Vint(neg, n)), x) {
+  Eq::trans(
+    Eq::congr(⟦read_value(Succ(g), □)⟧, put_signed(neg, n, x)),
+    Eq::trans(
+      num_value(neg, digits(n), x, g, digits_all_digits(Succ(n), n), digits_is_cons(n)),
+      Eq::congr(
+        ⟦rd_map(esc(), □)⟧,
+        Eq::trans(
+          Eq::sym(Eq::congr(⟦read_number(□)⟧, put_signed(neg, n, x))),
+          read_put_vint(neg, n, x, stops_number(x, hx))
+        )
+      )
+    )
+  )
+}
+
+theorem dec_back(
+  neg: Bool,
+  mant: Nat,
+  eneg: Bool,
+  e: Nat,
+  x: List(Nat),
+  g: Nat,
+  hx: stops(x) = true
+): read_value(Succ(g), put_scalar(Vdec(neg, mant, eneg, e), x)) = MkRd(Escalar(Vdec(neg, mant, eneg, e)), x) {
+  Eq::trans(
+    Eq::congr(⟦read_value(Succ(g), □)⟧, put_signed(neg, mant, put_exp(eneg, e, x))),
+    Eq::trans(
+      num_value(
+        neg,
+        digits(mant),
+        put_exp(eneg, e, x),
+        g,
+        digits_all_digits(Succ(mant), mant),
+        digits_is_cons(mant)
+      ),
+      Eq::congr(
+        ⟦rd_map(esc(), □)⟧,
+        Eq::trans(
+          Eq::sym(
+            Eq::congr(⟦read_number(□)⟧, put_signed(neg, mant, put_exp(eneg, e, x)))
+          ),
+          read_put_vdec(neg, mant, eneg, e, x, stops_number(x, hx))
+        )
+      )
+    )
+  )
+}
+
+// ---- strings -----------------------------------------------------------------------------------
+
+fn strings_k(g: List(Nat)): (List(Nat), List(Nat)) -> Rd(List(Nat)) {
+  (bs: List(Nat), r: List(Nat)) => match head_is(92, skip(r)) {
+    true => rd_map(
+      (more: List(Nat)) => List::append(bs, more),
+      read_strings(g, skip(List::tail(skip(r))))
+    )
+    false => MkRd(bs, r)
+  }
+}
+
+fn str_lam(): (List(Nat)) -> Value {
+  (bs: List(Nat)) => Vtext(Plaintext, Text::Mk(bs))
+}
+
+theorem string_back(
+  t: Text,
+  x: List(Nat),
+  g: Nat,
+  hx: stops(x) = true
+): read_value(Succ(g), put_scalar(Vtext(Plaintext, t), x)) = MkRd(Escalar(Vtext(Plaintext, t)), x) {
+  match t {
+    Text::Mk(
+      bs
+    ) => Eq::trans(
+      Eq::congr(
+        (q: Rd(List(Nat))) => rd_map(esc(), rd_map(str_lam(), rd_then(q, strings_k(put_string(Text::Mk(bs), x))))),
+        read_put_string(Text::Mk(bs), x)
+      ),
+      Eq::subst(
+        Bool,
+        false,
+        head_is(92, skip(x)),
+        (y: Bool) => rd_map(esc(), rd_map(str_lam(), match y {
+          true => rd_map((more: List(Nat)) => List::append(bs, more), read_strings(put_string(Text::Mk(bs), x), skip(List::tail(skip(x)))))
+          false => MkRd(bs, x)
+        })) = MkRd(Escalar(Vtext(Plaintext, Text::Mk(bs))), x),
+        Eq::sym(stops_join(x, hx)),
+        Refl
+      )
+    )
+  }
+}
+
+// ---- code ----------------------------------------------------------------------------------
+
+fn tick(): (Nat) -> Bool {
+  (c: Nat) => Nat::eq(c, 96)
+}
+
+fn inline_ok(c: Nat): Bool {
+  not(Bool::or(Nat::eq(c, 96), Bool::or(Nat::eq(c, 10), Nat::eq(c, 13))))
+}
+
+theorem fits_head(
+  c: Nat,
+  t: List(Nat),
+  h: fits_inline(Cons(c, t)) = true
+): inline_ok(c) = true {
+  And::left(Bool::and_split(inline_ok(c), fits_inline(t), h))
+}
+
+theorem fits_tail(
+  c: Nat,
+  t: List(Nat),
+  h: fits_inline(Cons(c, t)) = true
+): fits_inline(t) = true {
+  And::right(Bool::and_split(inline_ok(c), fits_inline(t), h))
+}
+
+pub theorem or_no_l(a: Bool, b: Bool, h: Bool::or(a, b) = false): a = false {
+  match a {
+    false => Refl
+    true => False::elim(true_ne_false(h))
+  }
+}
+
+pub theorem or_no_r(a: Bool, b: Bool, h: Bool::or(a, b) = false): b = false {
+  match a {
+    false => h
+    true => False::elim(true_ne_false(h))
+  }
+}
+
+theorem inline_not_tick(c: Nat, h: inline_ok(c) = true): Nat::eq(c, 96) = false {
+  or_no_l(
+    Nat::eq(c, 96),
+    Bool::or(Nat::eq(c, 10), Nat::eq(c, 13)),
+    Bool::not_true(Bool::or(Nat::eq(c, 96), Bool::or(Nat::eq(c, 10), Nat::eq(c, 13))), h)
+  )
+}
+
+theorem inline_not_break(
+  c: Nat,
+  h: inline_ok(c) = true
+): Bool::or(Nat::eq(c, 10), Nat::eq(c, 13)) = false {
+  or_no_r(
+    Nat::eq(c, 96),
+    Bool::or(Nat::eq(c, 10), Nat::eq(c, 13)),
+    Bool::not_true(Bool::or(Nat::eq(c, 96), Bool::or(Nat::eq(c, 10), Nat::eq(c, 13))), h)
+  )
+}
+
+theorem read_inline_back(
+  bs: List(Nat),
+  x: List(Nat),
+  h: fits_inline(bs) = true
+): read_inline_code(List::append(bs, Cons(96, x))) = MkRd(bs, x) {
+  match bs {
+    Nil => Refl
+    Cons(
+      c,
+      t
+    ) => Eq::subst(
+      Bool,
+      false,
+      Nat::eq(c, 96),
+      (y: Bool) => Eq(Rd(List(Nat)), match y {
+        true => MkRd(Nil, List::append(t, Cons(96, x)))
+        false => match Bool::or(Nat::eq(c, 10), Nat::eq(c, 13)) {
+          true => RdErr(Cons(c, List::append(t, Cons(96, x))), "a backtick before the end of the line")
+          false => rd_map((more: List(Nat)) => Cons(c, more), read_inline_code(List::append(t, Cons(96, x))))
+        }
+      }, MkRd(Cons(c, t), x)),
+      Eq::sym(inline_not_tick(c, fits_head(c, t, h))),
+      Eq::subst(
+        Bool,
+        false,
+        Bool::or(Nat::eq(c, 10), Nat::eq(c, 13)),
+        (y: Bool) => Eq(Rd(List(Nat)), match y {
+          true => RdErr(Cons(c, List::append(t, Cons(96, x))), "a backtick before the end of the line")
+          false => rd_map((more: List(Nat)) => Cons(c, more), read_inline_code(List::append(t, Cons(96, x))))
+        }, MkRd(Cons(c, t), x)),
+        Eq::sym(inline_not_break(c, fits_head(c, t, h))),
+        Eq::congr(
+          (q: Rd(List(Nat))) => rd_map((more: List(Nat)) => Cons(c, more), q),
+          read_inline_back(t, x, fits_tail(c, t, h))
+        )
+      )
+    )
+  }
+}
+
+theorem ticks_low_len(
+  bs: List(Nat),
+  x: List(Nat),
+  h: fits_inline(bs) = true,
+  hx: head_passes(tick(), x) = false
+): Nat::le(3, List::length(span_taken(span((c: Nat) => Nat::eq(c, 96), Cons(96, List::append(bs, Cons(96, x))))))) = false {
+  match bs {
+    Nil => Eq::congr(
+      (q: @taken List(Nat) × @rest List(Nat)) => Nat::le(3, List::length(Cons(96, Cons(96, (q: @taken List(Nat)))))),
+      span_append(tick(), Nil, x, Refl, hx)
+    )
+    Cons(
+      c,
+      t
+    ) => Eq::subst(
+      Bool,
+      false,
+      Nat::eq(c, 96),
+      (y: Bool) => Nat::le(3, List::length(span_taken(span_cons(96, ⊢ @taken List(Nat) × @rest List(Nat) from match y {
+        true => #(@taken Cons(c, (span(tick(), List::append(t, Cons(96, x))): @taken List(Nat))), @rest (span(tick(), List::append(t, Cons(96, x))): @rest List(Nat)))
+        false => #(@taken Nil, @rest Cons(c, List::append(t, Cons(96, x))))
+      })))) = false,
+      Eq::sym(inline_not_tick(c, fits_head(c, t, h))),
+      Refl
+    )
+  }
+}
+
+// Inline code starts with one or two backticks, never three.
+theorem ticks_low(
+  bs: List(Nat),
+  x: List(Nat),
+  h: fits_inline(bs) = true,
+  hx: head_passes(tick(), x) = false
+): Nat::le(3, count_ticks(Cons(96, List::append(bs, Cons(96, x))))) = false {
+  ticks_low_len(bs, x, h, hx)
+}
+
+fn code_lam(w: List(Nat)): (List(Nat)) -> Value {
+  (c: List(Nat)) => Vtext(lang_of(w), Text::Mk(c))
+}
+
+fn implicit_lam(): (List(Nat)) -> Value {
+  (bs: List(Nat)) => Vtext(Implicit, Text::Mk(bs))
+}
+
+theorem implicit_body(
+  bs: List(Nat),
+  x: List(Nat),
+  g: Nat,
+  h: fits_inline(bs) = true,
+  hx: stops(x) = true
+): read_value(Succ(g), Cons(96, List::append(bs, Cons(96, x)))) = MkRd(Escalar(Vtext(Implicit, Text::Mk(bs))), x) {
+  Eq::subst(
+    Bool,
+    false,
+    Nat::le(3, count_ticks(Cons(96, List::append(bs, Cons(96, x))))),
+    (y: Bool) => rd_map(esc(), match y {
+      true => match Nat::le(count_ticks(Cons(96, List::append(bs, Cons(96, x)))), 6) {
+        true => read_code_block(
+          count_ticks(Cons(96, List::append(bs, Cons(96, x)))),
+          List::drop(count_ticks(Cons(96, List::append(bs, Cons(96, x)))), Cons(96, List::append(bs, Cons(96, x))))
+        )
+        false => RdErr(Cons(96, List::append(bs, Cons(96, x))), "at most six backticks")
+      }
+      false => rd_map(implicit_lam(), read_inline_code(List::append(bs, Cons(96, x))))
+    }) = MkRd(Escalar(Vtext(Implicit, Text::Mk(bs))), x),
+    Eq::sym(ticks_low(bs, x, h, stops_tick(x, hx))),
+    Eq::congr((q: Rd(List(Nat))) => rd_map(esc(), rd_map(implicit_lam(), q)), read_inline_back(bs, x, h))
+  )
+}
+
+pub fn code_put(l: Lang, t: Text, x: List(Nat), y: Bool): List(Nat) {
+  match y {
+    true => List::append(lang_name(l), Cons(96, put_text(t, Cons(96, x))))
+    false => put_block(l, Text::bytes(t), x)
+  }
+}
+
+theorem implicit_back(
+  t: Text,
+  x: List(Nat),
+  g: Nat,
+  h: fits_inline(Text::bytes(t)) = true,
+  hx: stops(x) = true
+): read_value(Succ(g), put_scalar(Vtext(Implicit, t), x)) = MkRd(Escalar(Vtext(Implicit, t)), x) {
+  match t {
+    Mk(bs) => Eq::subst(
+      Bool,
+      true,
+      fits_inline(bs),
+      (y: Bool) => read_value(Succ(g), code_put(Implicit, Text::Mk(bs), x, y)) = MkRd(Escalar(Vtext(Implicit, Text::Mk(bs))), x),
+      Eq::sym(h),
+      implicit_body(bs, x, g, h, hx)
+    )
+  }
+}
+
+theorem lang_of_named(
+  c: Nat,
+  t: List(Nat),
+  h: Text::eq(Text::Mk(Cons(c, t)), "plaintext") = false
+): lang_of(Cons(c, t)) = Named(Text::Mk(Cons(c, t))) {
+  Eq::subst(
+    Bool,
+    false,
+    Text::eq(Text::Mk(Cons(c, t)), "plaintext"),
+    (y: Bool) => Eq(Lang, ⊢ Lang from match y {
+      true => Plaintext
+      false => Named(Text::Mk(Cons(c, t)))
+    }, Named(Text::Mk(Cons(c, t)))),
+    Eq::sym(h),
+    Refl
+  )
+}
+
+theorem named_body(
+  c: Nat,
+  nt: List(Nat),
+  bs: List(Nat),
+  x: List(Nat),
+  g: Nat,
+  hn: is_ident(Cons(c, nt)) = true,
+  hp: Text::eq(Text::Mk(Cons(c, nt)), "plaintext") = false,
+  h: fits_inline(bs) = true,
+  hx: stops(x) = true
+): read_value(Succ(g), Cons(c, List::append(nt, Cons(96, List::append(bs, Cons(96, x)))))) = MkRd(Escalar(Vtext(Named(Text::Mk(Cons(c, nt))), Text::Mk(bs))), x) {
+  Eq::trans(
+    plain_value(
+      ident_start,
+      c,
+      List::append(nt, Cons(96, List::append(bs, Cons(96, x)))),
+      g,
+      And::left(Bool::and_split(ident_start(c), List::all(ident_char, nt), hn)),
+      Refl,
+      Refl,
+      Refl,
+      Refl,
+      Refl,
+      Refl,
+      Refl,
+      Refl
+    ),
+    Eq::trans(
+      Eq::congr(
+        ⟦rd_map(
+          esc(),
+          num_or_word(Cons(c, List::append(nt, Cons(96, List::append(bs, Cons(96, x))))), □)
+        )⟧,
+        Eq::trans(
+          Eq::congr(
+            ⟦starts_after_sign(□)⟧,
+            sign_plain(
+              c,
+              List::append(nt, Cons(96, List::append(bs, Cons(96, x)))),
+              ne_of_test_l(
+                ident_start,
+                c,
+                45,
+                And::left(Bool::and_split(ident_start(c), List::all(ident_char, nt), hn)),
+                Refl
+              ),
+              ne_of_test_l(
+                ident_start,
+                c,
+                43,
+                And::left(Bool::and_split(ident_start(c), List::all(ident_char, nt), hn)),
+                Refl
+              )
+            )
+          ),
+          not_digit_of_start(
+            c,
+            And::left(Bool::and_split(ident_start(c), List::all(ident_char, nt), hn))
+          )
+        )
+      ),
+      Eq::trans(
+        Eq::congr(
+          (q: Rd(List(Nat))) => rd_map(
+            esc(),
+            rd_then(q, word_k(Cons(c, List::append(nt, Cons(96, List::append(bs, Cons(96, x)))))))
+          ),
+          read_ident_name(
+            c,
+            nt,
+            Cons(96, List::append(bs, Cons(96, x))),
+            And::left(Bool::and_split(ident_start(c), List::all(ident_char, nt), hn)),
+            Eq::trans(
+              all_p_list_all(ident_char, nt),
+              And::right(Bool::and_split(ident_start(c), List::all(ident_char, nt), hn))
+            ),
+            Refl
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (q: Rd(List(Nat))) => rd_map(esc(), rd_map(code_lam(Cons(c, nt)), q)),
+            read_inline_back(bs, x, h)
+          ),
+          Eq::congr(⟦MkRd(Escalar(Vtext(□, Text::Mk(bs))), x)⟧, lang_of_named(c, nt, hp))
+        )
+      )
+    )
+  )
+}
+
+theorem named_back(
+  n: Text,
+  t: Text,
+  x: List(Nat),
+  g: Nat,
+  hl: lang_ok(Named(n)) = true,
+  h: fits_inline(Text::bytes(t)) = true,
+  hx: stops(x) = true
+): read_value(Succ(g), put_scalar(Vtext(Named(n), t), x)) = MkRd(Escalar(Vtext(Named(n), t)), x) {
+  match n {
+    Mk(ns) => match ns {
+      Nil => False::elim(
+        false_ne_true(
+          And::left(Bool::and_split(is_ident(Nil), not(Text::eq(Text::Mk(Nil), "plaintext")), hl))
+        )
+      )
+      Cons(c, nt) => match t {
+        Mk(bs) => Eq::subst(
+          Bool,
+          true,
+          fits_inline(bs),
+          (y: Bool) => read_value(Succ(g), code_put(Named(Text::Mk(Cons(c, nt))), Text::Mk(bs), x, y)) = MkRd(Escalar(Vtext(Named(Text::Mk(Cons(c, nt))), Text::Mk(bs))), x),
+          Eq::sym(h),
+          named_body(
+            c,
+            nt,
+            bs,
+            x,
+            g,
+            And::left(
+              Bool::and_split(
+                is_ident(Cons(c, nt)),
+                not(Text::eq(Text::Mk(Cons(c, nt)), "plaintext")),
+                hl
+              )
+            ),
+            Bool::not_true(
+              Text::eq(Text::Mk(Cons(c, nt)), "plaintext"),
+              And::right(
+                Bool::and_split(
+                  is_ident(Cons(c, nt)),
+                  not(Text::eq(Text::Mk(Cons(c, nt)), "plaintext")),
+                  hl
+                )
+              )
+            ),
+            h,
+            hx
+          )
+        )
+      }
+    }
+  }
+}
+
+// ---- every scalar ----------------------------------------------------------------------------
+
+pub theorem scalar_back(
+  v: Value,
+  x: List(Nat),
+  g: Nat,
+  hs: is_scalar(v) = true,
+  hw: wf_value(v) = true,
+  hx: stops(x) = true
+): read_value(Succ(g), put_scalar(v, x)) = MkRd(Escalar(v), x) {
+  match v {
+    Vhole(lb) => hole_back(lb, x, g, hw, hx)
+    Vnull => null_back(x, g, hx)
+    Vbool(b) => bool_back(b, x, g, hx)
+    Vint(neg, n) => int_back(neg, n, x, g, hx)
+    Vdec(neg, mant, eneg, e) => dec_back(neg, mant, eneg, e, x, g, hx)
+    Vtext(lg, t) => match lg {
+      Plaintext => string_back(t, x, g, hx)
+      Implicit => implicit_back(t, x, g, hw, hx)
+      Named(n) => named_back(
+        n,
+        t,
+        x,
+        g,
+        And::left(Bool::and_split(lang_ok(Named(n)), fits_inline(Text::bytes(t)), hw)),
+        And::right(Bool::and_split(lang_ok(Named(n)), fits_inline(Text::bytes(t)), hw)),
+        hx
+      )
+    }
+    Varr(xs) => False::elim(false_ne_true(hs))
+    Vtup(xs) => False::elim(false_ne_true(hs))
+    Vmap(es) => False::elim(false_ne_true(hs))
+  }
+}

@@ -1,0 +1,321 @@
+import "mutable_conditions.taut" {
+  World,
+  WorldValid,
+  can_suspend,
+  checked_lowering,
+  grant_preserves
+}
+import "mutable_state.taut" { Pair, first, second }
+import "mutable_effects.taut" {
+  Program,
+  load,
+  lower,
+  lowering_safe,
+  request,
+  save,
+  source_safe,
+  target_safe
+}
+import "mutable_container.taut" {
+  Cell,
+  ElementRef,
+  ValidCell,
+  element_preserves_validity,
+  elements,
+  inside,
+  lookup,
+  replacement_reads,
+  reshape,
+  reshape_invalidates,
+  set_element
+}
+import "mutable_permissions.taut" {
+  ArmSafe,
+  Body,
+  BodySafe,
+  Count,
+  Kind,
+  Loan,
+  ReborrowStart,
+  Returnable,
+  Suspension,
+  actual_calls,
+  path,
+  root
+}
+import std::prelude::std { List, Option }
+import std::row { Mem }
+
+// Distinct answer types include a borrow descriptor. Its permission and
+// provenance are checked by the transfer contract, not by copying the value.
+pub(open) inductive Operation: Type { Number: Operation, Decision: Operation, Provide: Operation }
+pub ghost fn Response(op: Operation): Type {
+  match op { Number => Nat, Decision => Bool, Provide => ElementRef }
+}
+pub ghost fn multiplicity(op: Operation): Count {
+  match op { Number => Once, Decision => AtMost, Provide => Once }
+}
+pub ghost fn borrowed_result(op: Operation): Bool {
+  match op { Number => false, Decision => false, Provide => true }
+}
+
+pub ghost fn hetero(): Program(Nat, Operation, Response, Bool) {
+  request(Number, n => save(n, request(Decision, b => CompPure(b))))
+}
+pub theorem heterogeneous_answers(before: Nat): lower(hetero(), before) =
+CompOp(
+  PairOf(Number, before),
+  (number: Pair(Nat, Nat)) => CompOp(
+    PairOf(Decision, first(number)),
+    (choice: Pair(Bool, Nat)) => CompPure(PairOf(first(choice), second(choice)))
+  )
+) { Refl }
+
+pub ghost fn receive_borrow(): Program(Nat, Operation, Response, ElementRef) {
+  request(Provide, ref => CompPure(ref))
+}
+pub theorem borrowed_answer(before: Nat): lower(receive_borrow(), before) =
+CompOp(
+  PairOf(Provide, before),
+  (answer: Pair(ElementRef, Nat)) => CompPure(PairOf(first(answer), second(answer)))
+) { Refl }
+
+pub ghost fn open_region(r: Nat): Prop { True }
+pub ghost fn sample(): Cell(Nat) { Owned(0, 0, true, Cons(10, Cons(20, Nil))) }
+pub theorem sample_valid(): ValidCell(Nat, sample(), open_region, 0, 1) {
+  AndIntro(Refl, AndIntro(Refl, AndIntro(Trivial, Refl)))
+}
+pub theorem element_write(): lookup(elements(set_element(sample(), 1, 99)), 1) = Some(99) { Refl }
+pub theorem sibling_unchanged(): lookup(
+  elements(set_element(sample(), 1, 99)),
+  0
+) = Some(10) { Refl }
+pub theorem shrinking_removes_index(): inside(
+  elements(reshape(sample(), Cons(10, Nil))),
+  1
+) = false { Refl }
+pub theorem same_length_stale(
+  h: ValidCell(Nat, reshape(sample(), Cons(30, Cons(40, Nil))), open_region, 0, 1)
+): False {
+  reshape_invalidates(sample(), Cons(30, Cons(40, Nil)), open_region, 1, h)
+}
+// Inserting before a live index changes its referent even when it stays in bounds.
+pub theorem range_alone_is_insufficient(): lookup(
+  elements(reshape(sample(), Cons(5, Cons(10, Cons(20, Nil))))),
+  1
+) = Some(10) { Refl }
+
+pub ghost fn overwrite(i: Nat, value: Nat): Program(Cell(Nat), Operation, Response, Unit) {
+  load(cell => save(set_element(cell, i, value), CompPure(Star)))
+}
+pub ghost fn valid_at(g: Nat, i: Nat, cell: Cell(Nat)): Prop {
+  ValidCell(Nat, cell, open_region, g, i)
+}
+pub ghost fn write_at(i: Nat, value: Nat, before: Cell(Nat), after: Cell(Nat)): Prop {
+  after = set_element(before, i, value)
+}
+pub ghost fn no_suspend(op: Operation, cell: Cell(Nat)): Prop { False }
+pub ghost fn no_reply(
+  op: Operation,
+  before: Cell(Nat),
+  answer: Response(op),
+  after: Cell(Nat)
+): Prop { False }
+pub ghost fn written(i: Nat, value: Nat, unit: Unit, cell: Cell(Nat)): Prop {
+  lookup(elements(cell), i) = Some(value)
+}
+pub theorem overwrite_source(
+  g: Nat,
+  i: Nat,
+  value: Nat,
+  cell: Cell(Nat),
+  h: ValidCell(Nat, cell, open_region, g, i)
+): source_safe(
+  overwrite(i, value),
+  cell,
+  valid_at(g, i),
+  write_at(i, value),
+  no_suspend,
+  no_reply,
+  written(i, value)
+) {
+  let final_valid: ValidCell(Nat, set_element(cell, i, value), open_region, g, i) :=
+  element_preserves_validity(cell, open_region, g, i, i, value, h)
+  let final_value: lookup(elements(set_element(cell, i, value)), i) = Some(value) := match cell {
+    Owned(epoch, r, live, xs) => replacement_reads(
+      xs,
+      i,
+      value,
+      And::right(And::right(And::right(h)))
+    )
+  }
+  AndIntro(h, AndIntro(h, AndIntro(Refl, AndIntro(final_valid, final_value))))
+}
+pub theorem overwrite_target(
+  g: Nat,
+  i: Nat,
+  value: Nat,
+  cell: Cell(Nat),
+  h: ValidCell(Nat, cell, open_region, g, i)
+): target_safe(
+  lower(overwrite(i, value), cell),
+  valid_at(g, i),
+  write_at(i, value),
+  no_suspend,
+  no_reply,
+  written(i, value)
+) {
+  lowering_safe(
+    overwrite(i, value),
+    cell,
+    valid_at(g, i),
+    write_at(i, value),
+    no_suspend,
+    no_reply,
+    written(i, value),
+    overwrite_source(g, i, value, cell, h)
+  )
+}
+
+pub ghost fn parent(): Loan { LoanOf(0, 0, Nil, true) }
+pub ghost fn child(): Loan { LoanOf(1, 0, Cons(1, Nil), true) }
+pub theorem reborrow_allowed(): ReborrowStart(parent(), child(), Nil) {
+  AndIntro(
+    AndIntro(Trivial, Trivial),
+    AndIntro(
+      AndIntro(Refl, AndIntro(Refl, h => Refl)),
+      AndIntro(e => Nat::noconf(False, 1, 0, e), Trivial)
+    )
+  )
+}
+pub theorem once_with_linear_and_mutable(): Suspension(
+  Once,
+  Cons(child(), Nil),
+  Cons(Linear, Nil),
+  false
+) {
+  AndIntro(AndIntro(Trivial, Trivial), AndIntro(AndIntro(Trivial, Trivial), Trivial))
+}
+pub theorem at_most_with_mutable(): Suspension(AtMost, Cons(child(), Nil), Nil, false) {
+  AndIntro(AndIntro(Trivial, Trivial), AndIntro(Trivial, Trivial))
+}
+pub theorem many_after_release(): Suspension(Many, Nil, Cons(Dup, Nil), false) {
+  AndIntro(Trivial, AndIntro(AndIntro(Trivial, Trivial), Refl))
+}
+pub theorem many_shared(): Suspension(
+  Many,
+  Cons(LoanOf(1, 0, Cons(1, Nil), false), Nil),
+  Nil,
+  false
+) {
+  AndIntro(AndIntro(Trivial, Trivial), AndIntro(Trivial, Refl))
+}
+pub theorem caller_owned_return(): Returnable(
+  child(),
+  Cons(0, Nil),
+  loan => (
+    root(loan) = 0
+  ) ∧ (path(loan) = Cons(1, Nil)) ∧ ValidCell(Nat, sample(), open_region, 0, 1)
+) {
+  AndIntro(MemHere(Nil), AndIntro(Refl, AndIntro(Refl, sample_valid())))
+}
+
+pub ghost fn once_body(): Body(Nat, Bool, Nat) { Resume(5, result => Finish(7)) }
+pub theorem once_body_checked(): BodySafe(Once, 0, once_body()) { AndIntro(Refl, result => Refl) }
+pub ghost fn twice_body(): Body(
+  Nat,
+  Bool,
+  Nat
+) { Resume(5, first_result => Resume(6, second_result => Finish(7))) }
+pub theorem twice_body_count(k: (Nat) -> Bool): actual_calls(twice_body(), k, 0) = 2 { Refl }
+pub theorem many_body_checked(): BodySafe(
+  Many,
+  0,
+  twice_body()
+) { AndIntro(Trivial, a => AndIntro(Trivial, b => Trivial)) }
+pub ghost fn branching_body(): Body(Nat, Bool, Nat) {
+  Resume(5, answer => match answer { false => Finish(7), true => Resume(6, ignored => Finish(8)) })
+}
+pub theorem branch_can_call_twice(): actual_calls(branching_body(), n => true, 0) = 2 { Refl }
+pub theorem branch_can_call_once(): actual_calls(branching_body(), n => false, 0) = 1 { Refl }
+pub theorem aborting_affine_arm(): ArmSafe(Never, Cons(Affine, Nil), Nil, false, 0, true, false) {
+  AndIntro(AndIntro(Trivial, Trivial), AndIntro(Trivial, AndIntro(Trivial, AndIntro(Refl, Refl))))
+}
+
+// One complete instantiation: a live mutable element loan crosses a Bool-
+// answering effect. The handler cannot change the frozen world; the source
+// and translated tree are checked under the same ownership/lifetime predicate.
+pub ghost fn loan_valid(cell: Cell(Nat), loan: Loan): Prop {
+  (root(loan) = 0) ∧ (path(loan) = Cons(1, Nil)) ∧ ValidCell(Nat, cell, open_region, 0, 1)
+}
+pub ghost fn borrowed_world(): World(Cell(Nat)) { WorldOf(sample(), Cons(child(), Nil), Nil) }
+pub theorem empty_world_valid(
+  cell: Cell(Nat)
+): WorldValid(Cell(Nat), loan_valid, WorldOf(cell, Nil, Nil)) {
+  AndIntro(Trivial, loan => member => match member {})
+}
+pub theorem borrowed_world_valid(): WorldValid(Cell(Nat), loan_valid, borrowed_world()) {
+  grant_preserves(
+    loan_valid,
+    WorldOf(sample(), Nil, Nil),
+    child(),
+    empty_world_valid(sample()),
+    Trivial,
+    AndIntro(Refl, AndIntro(Refl, sample_valid()))
+  )
+}
+pub ghost fn frozen_transfer(
+  op: Operation,
+  before: World(Cell(Nat)),
+  answer: Response(op),
+  after: World(Cell(Nat))
+): Prop {
+  after = before
+}
+pub ghost fn no_update(before: World(Cell(Nat)), after: World(Cell(Nat))): Prop { False }
+pub ghost fn unit_post(unit: Unit, world: World(Cell(Nat))): Prop { True }
+pub ghost fn borrowed_arguments(op: Operation): Bool { false }
+pub ghost fn wait_with_loan(): Program(World(Cell(Nat)), Operation, Response, Unit) {
+  request(Decision, answer => CompPure(Star))
+}
+pub theorem wait_source(): source_safe(
+  wait_with_loan(),
+  borrowed_world(),
+  WorldValid(Cell(Nat), loan_valid),
+  no_update,
+  (op, world) => can_suspend(multiplicity, borrowed_result, borrowed_arguments, op, world),
+  frozen_transfer,
+  unit_post
+) {
+  AndIntro(
+    borrowed_world_valid(),
+    AndIntro(
+      AndIntro(Refl, at_most_with_mutable()),
+      answer => after => same => AndIntro(
+        Eq::subst(WorldValid(Cell(Nat), loan_valid), Eq::sym(same), borrowed_world_valid()),
+        Trivial
+      )
+    )
+  )
+}
+pub theorem wait_target(): target_safe(
+  lower(wait_with_loan(), borrowed_world()),
+  WorldValid(Cell(Nat), loan_valid),
+  no_update,
+  (op, world) => can_suspend(multiplicity, borrowed_result, borrowed_arguments, op, world),
+  frozen_transfer,
+  unit_post
+) {
+  checked_lowering(
+    wait_with_loan(),
+    borrowed_world(),
+    loan_valid,
+    multiplicity,
+    borrowed_result,
+    borrowed_arguments,
+    frozen_transfer,
+    no_update,
+    unit_post,
+    wait_source()
+  )
+}

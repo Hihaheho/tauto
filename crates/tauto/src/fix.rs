@@ -231,7 +231,7 @@ pub fn apply(text: &str, edits: &[Edit]) -> Option<String> {
 pub fn fix(path: &Path) -> Result<Outcome, Message> {
     // Each round reads the program again with one file changed: what the
     // files before it expanded to is kept between the rounds.
-    let _kept = KeepExpansions::on();
+    let _kept = crate::program::KeepExpansions::on();
     // The files edited are those of the tote of `path`, or, outside a tote, those
     // under its directory: a dependency is not edited.
     let entry = crate::program::canonical_path(path);
@@ -561,7 +561,7 @@ fn no_worse(before: &State, after: &Result<State, Message>) -> bool {
 /// tried alone, and one that brings an error is taken back and not made again (an import that
 /// is needed after all stays). The rounds end when no edit is left to make.
 pub fn fix_lints(path: &Path, titles: &[&str]) -> Result<Outcome, Message> {
-    let _kept = KeepExpansions::on();
+    let _kept = crate::program::KeepExpansions::on();
     let here = crate::program::canonical_path(path);
     let text = std::fs::read_to_string(&here).map_err(|e| {
         msg!(
@@ -636,22 +636,4 @@ pub fn fix_lints(path: &Path, titles: &[&str]) -> Result<Outcome, Message> {
         errors_before,
         errors_after: state.count(),
     })
-}
-
-/// Keeps what the program's files expanded to between the checks of one fix,
-/// and restores the thread's setting afterwards.
-struct KeepExpansions(bool);
-
-impl KeepExpansions {
-    fn on() -> Self {
-        let before = crate::program::keeps_expansions();
-        crate::program::keep_expansions(true);
-        KeepExpansions(before)
-    }
-}
-
-impl Drop for KeepExpansions {
-    fn drop(&mut self) {
-        crate::program::keep_expansions(self.0);
-    }
 }

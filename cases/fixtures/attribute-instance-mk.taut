@@ -1,0 +1,50 @@
+import std::builtin::macro
+
+pub(open) class Size(A: Type) { fn size(a: A): Nat }
+pub(open) class Label(A: Type) { fn label(a: A): Nat }
+
+// `@sized!(0) => instance Size` gives the struct under it a `Size` of 7.
+pub macro fn sized(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StStruct(d) => {
+      let n := d.name
+      let m := Syn::ident_like(d.name, "size")
+      quote stmts {
+        instance Size($n) { fn $m(a: $n): Nat { 7 } }
+      }
+    }
+    _ => Syn::error(Syn::call_span(), "not a struct")
+  }
+}
+
+// `@labelled!(0) => instance Label` gives it a `Label` of 5.
+pub macro fn labelled(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StStruct(d) => {
+      let n := d.name
+      let m := Syn::ident_like(d.name, "label")
+      quote stmts {
+        instance Label($n) { fn $m(a: $n): Nat { 5 } }
+      }
+    }
+    _ => Syn::error(Syn::call_span(), "not a struct")
+  }
+}
+
+// `@keep!(0) => replace fn zero` rebuilds the function as it is.
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  [s]
+}
+
+// `@twin!(0) => fn zerotwin` makes a function besides the one under it.
+pub macro fn twin(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StFn(f) => {
+      let a := Syn::ident_like(f.name, "zerotwin")
+      quote stmts {
+        fn $a(): Nat { 0 }
+      }
+    }
+    _ => Syn::error(Syn::call_span(), "not a fn")
+  }
+}

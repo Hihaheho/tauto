@@ -1,0 +1,327 @@
+import std::prelude::std { List }
+import std::row { Mem }
+
+// Logical capabilities describe liveness at an operation, not the physical
+// duplication of immutable proof terms. An active mutable capability is unique;
+// a parent capability is suspended while its reborrow is active.
+pub(open) inductive Kind: Type {
+  Dup: Kind,
+  Shared: Kind,
+  Affine: Kind,
+  Linear: Kind,
+  Mutable: Kind
+}
+pub(open) inductive Count: Type { Never: Count, AtMost: Count, Once: Count, Many: Count }
+
+pub ghost fn LiveAcross(count: Count, kind: Kind): Prop {
+  match count {
+    Never => match kind {
+      Dup => True,
+      Shared => True,
+      Affine => True,
+      Linear => False,
+      Mutable => True
+    }
+    AtMost => match kind {
+      Dup => True,
+      Shared => True,
+      Affine => True,
+      Linear => False,
+      Mutable => True
+    }
+    Once => True
+    Many => match kind {
+      Dup => True,
+      Shared => True,
+      Affine => False,
+      Linear => False,
+      Mutable => False
+    }
+  }
+}
+pub ghost fn LiveList(count: Count, live: List(Kind)): Prop {
+  match live { Nil => True, Cons(kind, rest) => LiveAcross(count, kind) ∧ LiveList(count, rest) }
+}
+pub ghost fn Uses(count: Count, calls: Nat): Prop {
+  match count {
+    Never => calls = 0
+    AtMost => (calls = 0) ∨ (calls = 1)
+    Once => calls = 1
+    Many => True
+  }
+}
+pub ghost fn AnswerAllowed(count: Count, mutable_answer: Bool): Prop {
+  match count {
+    Never => True
+    AtMost => True
+    Once => True
+    Many => mutable_answer = false
+  }
+}
+pub ghost fn InPlace(borrows_outside: Bool, escapes: Bool): Prop {
+  match borrows_outside { false => True, true => escapes = false }
+}
+pub def ArmSafe(
+  count: Count,
+  live: List(Kind),
+  captures: List(Kind),
+  mutable_answer: Bool,
+  calls: Nat,
+  borrows_outside: Bool,
+  escapes: Bool
+): Prop :=
+LiveList(count, live) ∧ LiveList(Many, captures) ∧ AnswerAllowed(count, mutable_answer) ∧
+Uses(count, calls) ∧ InPlace(borrows_outside, escapes)
+
+pub theorem many_no_mutable(h: LiveAcross(Many, Mutable)): False { h }
+pub theorem many_no_affine(h: LiveAcross(Many, Affine)): False { h }
+pub theorem abort_no_linear(h: LiveAcross(Never, Linear)): False { h }
+pub theorem at_most_no_linear(h: LiveAcross(AtMost, Linear)): False { h }
+pub theorem many_no_mutable_answer(h: AnswerAllowed(Many, true)): False { true_ne_false(h) }
+pub theorem borrowed_continuation_stays(h: InPlace(true, true)): False { true_ne_false(h) }
+pub theorem once_not_aborted(h: Uses(Once, 0)): False { Nat::noconf(False, 0, 1, h) }
+pub theorem affine_not_resumed_twice(h: Uses(AtMost, 2)): False {
+  match h {
+    OrInl(zero) => Nat::noconf(False, 2, 0, zero)
+    OrInr(one) => Nat::noconf(False, 2, 1, one, e => Nat::noconf(False, 1, 0, e))
+  }
+}
+
+pub ghost fn prefix(xs: List(Nat), ys: List(Nat)): Bool {
+  match xs {
+    Nil => true
+    Cons(x, rest) => match ys {
+      Nil => false
+      Cons(y, tail) => Nat::eq(x, y) && prefix(rest, tail)
+    }
+  }
+}
+pub theorem prefix_self(xs: List(Nat)): prefix(xs, xs) = true {
+  match xs {
+    Nil => Refl
+    Cons(x, rest) => Bool::and_intro(
+      Nat::eq(x, x),
+      prefix(rest, rest),
+      Nat::eq_refl(x),
+      prefix_self(rest)
+    )
+  }
+}
+pub def Disjoint(a: List(Nat), b: List(Nat)): Prop :=
+(prefix(a, b) = false) ∧ (prefix(b, a) = false)
+
+pub(open) inductive Loan: Type {
+  LoanOf(token: Nat, root: Nat, path: List(Nat), mutable: Bool): Loan
+}
+pub ghost fn token(loan: Loan): Nat { match loan { LoanOf(t, r, p, m) => t } }
+pub ghost fn root(loan: Loan): Nat { match loan { LoanOf(t, r, p, m) => r } }
+pub ghost fn path(loan: Loan): List(Nat) { match loan { LoanOf(t, r, p, m) => p } }
+pub ghost fn mutable(loan: Loan): Bool { match loan { LoanOf(t, r, p, m) => m } }
+
+pub def Compatible(a: Loan, b: Loan): Prop :=
+(¬(root(a) = root(b))) ∨ ((mutable(a) = false) ∧ (mutable(b) = false)) ∨ Disjoint(path(a), path(b))
+pub ghost fn Fits(loan: Loan, active: List(Loan)): Prop {
+  match active {
+    Nil => True
+    Cons(other, rest) => (¬(token(loan) = token(other))) ∧ Compatible(loan, other) ∧ Fits(
+      loan,
+      rest
+    )
+  }
+}
+pub ghost fn Permissions(active: List(Loan)): Prop {
+  match active { Nil => True, Cons(loan, rest) => Fits(loan, rest) ∧ Permissions(rest) }
+}
+pub def Active(loan: Loan, active: List(Loan)): Prop := Mem(Loan, loan, active)
+pub def Unborrowed(owner: Nat, active: List(Loan)): Prop :=
+∀ loan: Loan. (Active(loan, active)) -> ¬(root(loan) = owner)
+
+pub theorem borrowed_owner_cannot_move<loan: Loan, active: List(Loan)>(
+  using: Active(loan, active),
+  moving: Unborrowed(root(loan), active)
+): False { moving(loan, using, Refl) }
+
+pub theorem same_mutable_place_conflicts(
+  t1: Nat,
+  t2: Nat,
+  r: Nat,
+  p: List(Nat),
+  h: Compatible(LoanOf(t1, r, p, true), LoanOf(t2, r, p, true))
+): False {
+  match h {
+    OrInl(different) => different(Refl)
+    OrInr(rest) => match rest {
+      OrInl(readonly) => true_ne_false(And::left(readonly))
+      OrInr(apart) => true_ne_false(Eq::trans(Eq::sym(prefix_self(p)), And::left(apart)))
+    }
+  }
+}
+
+// Acquisition checks permission compatibility and validity separately. A
+// release removes authority even though a proof-level descriptor can be copied.
+pub theorem acquire(
+  loan: Loan,
+  active: List(Loan),
+  fits: Fits(loan, active),
+  valid: Permissions(active)
+): Permissions(Cons(loan, active)) { AndIntro(fits, valid) }
+
+// The parent is kept outside the active list. Finishing a reborrow returns
+// authority only after the child has been removed and the parent fits again.
+pub def Reborrow(parent: Loan, child: Loan): Prop :=
+(root(child) = root(parent)) ∧ (prefix(path(parent), path(child)) = true) ∧
+((mutable(child) = true) -> (mutable(parent) = true))
+pub def ReborrowStart(parent: Loan, child: Loan, others: List(Loan)): Prop :=
+Permissions(
+  Cons(parent, others)
+) ∧ Reborrow(parent, child) ∧ (¬(token(child) = token(parent))) ∧ Fits(child, others)
+pub theorem reborrow_permissions(
+  parent: Loan,
+  child: Loan,
+  others: List(Loan),
+  h: ReborrowStart(parent, child, others)
+): Permissions(Cons(child, others)) {
+  AndIntro(And::right(And::right(And::right(h))), And::right(And::left(h)))
+}
+pub theorem reborrow_restore(
+  parent: Loan,
+  child: Loan,
+  others: List(Loan),
+  h: ReborrowStart(parent, child, others)
+): Permissions(Cons(parent, others)) { And::left(h) }
+
+// A returned loan must derive from an admitted input/handler root and remain
+// valid in the caller's live regions. Local owners cannot be smuggled out.
+pub def Returnable(loan: Loan, sources: List(Nat), caller_valid: (Loan) -> Prop): Prop :=
+Mem(Nat, root(loan), sources) ∧ caller_valid(loan)
+pub theorem local_cannot_escape(
+  loan: Loan,
+  sources: List(Nat),
+  caller_valid: (Loan) -> Prop,
+  local: (Mem(Nat, root(loan), sources)) -> False,
+  returned: Returnable(loan, sources, caller_valid)
+): False { local(And::left(returned)) }
+
+// Handler bodies can branch on a resumption's result. Count safety quantifies
+// over every such result, rather than trusting a claimed number of calls.
+pub(open) inductive Body(A: Type, B: Type, C: Type): Type {
+  Finish(value: C): Body(A, B, C)
+  Resume(answer: A, next: (B) -> Body(A, B, C)): Body(A, B, C)
+}
+pub ghost fn MayResume(count: Count, used: Nat): Prop {
+  match count { Never => False, AtMost => used = 0, Once => used = 0, Many => True }
+}
+pub ghost fn BodySafe<A: Type, B: Type, C: Type>(
+  count: Count,
+  used: Nat,
+  body: Body(A, B, C)
+): Prop {
+  match body {
+    Finish(value) => Uses(count, used)
+    Resume(answer, next) => MayResume(
+      count,
+      used
+    ) ∧ ∀ result: B. BodySafe(count, Succ(used), next(result))
+  }
+}
+pub ghost fn actual_calls<A: Type, B: Type, C: Type>(
+  body: Body(A, B, C),
+  k: (A) -> B,
+  used: Nat
+): Nat {
+  match body {
+    Finish(value) => used
+    Resume(answer, next) => actual_calls(next(k(answer)), k, Succ(used))
+  }
+}
+pub ghost fn run_body<A: Type, B: Type, C: Type>(body: Body(A, B, C), k: (A) -> B): C {
+  match body {
+    Finish(value) => value
+    Resume(answer, next) => run_body(next(k(answer)), k)
+  }
+}
+pub theorem body_count_sound<A: Type, B: Type, C: Type>(
+  body: Body(A, B, C),
+  k: (A) -> B,
+  count: Count,
+  used: Nat,
+  h: BodySafe(count, used, body)
+): Uses(count, actual_calls(body, k, used)) {
+  match body {
+    Finish(value) => h
+    Resume(answer, next) => body_count_sound(
+      next(k(answer)),
+      k,
+      count,
+      Succ(used),
+      And::right(h)(k(answer))
+    )
+  }
+}
+
+// Mutable loans themselves contribute to the liveness check. A caller cannot
+// make a multi-shot suspension safe by omitting them from its owned-value list.
+pub ghost fn LiveLoans(count: Count, active: List(Loan)): Prop {
+  match active {
+    Nil => True
+    Cons(loan, rest) => (
+      match mutable(loan) { false => LiveAcross(count, Shared), true => LiveAcross(count, Mutable) }
+    ) ∧ LiveLoans(count, rest)
+  }
+}
+pub def Suspension(
+  count: Count,
+  active: List(Loan),
+  owned: List(Kind),
+  mutable_answer: Bool
+): Prop :=
+LiveLoans(count, active) ∧ LiveList(count, owned) ∧ AnswerAllowed(count, mutable_answer)
+
+pub(open) inductive Ownership: Type {
+  Available: Ownership,
+  Transferred: Ownership,
+  Destroyed: Ownership
+}
+pub(open) inductive OwnershipStep: (Kind, Ownership, Ownership) -> Prop {
+  Move(kind: Kind): OwnershipStep(kind, Available, Transferred)
+  Drop(kind: Kind, allowed: LiveAcross(Never, kind)): OwnershipStep(kind, Available, Destroyed)
+}
+pub def Usable(status: Ownership): Prop := status = Available
+pub theorem moved_unusable(h: Usable(Transferred)): False {
+  Ownership::noconf(False, Transferred, Available, h)
+}
+pub theorem destroyed_unusable(h: Usable(Destroyed)): False {
+  Ownership::noconf(False, Destroyed, Available, h)
+}
+pub theorem linear_not_dropped(h: OwnershipStep(Linear, Available, Destroyed)): False {
+  match h { Drop(kind, allowed) => ⊢ False from allowed }
+}
+pub theorem no_second_move(
+  kind: Kind,
+  next: Ownership,
+  h: OwnershipStep(kind, Transferred, next)
+): False {
+  match h {}
+}
+
+pub theorem fits_excludes<loan: Loan, others: List(Loan)>(
+  member: Active(loan, others),
+  fits: Fits(loan, others)
+): False {
+  match member {
+    MemHere(rest) => ⊢ False from And::left(fits)(Refl)
+    MemThere(head, rest, inside) => ⊢ False from fits_excludes(inside, And::right(And::right(fits)))
+  }
+}
+pub theorem reborrow_parent_suspended(
+  parent: Loan,
+  child: Loan,
+  others: List(Loan),
+  using_parent: Active(parent, Cons(child, others)),
+  started: ReborrowStart(parent, child, others)
+): False {
+  match using_parent {
+    MemHere(rest) => And::left(And::right(And::right(started)))(Refl)
+    MemThere(head, rest, member) => fits_excludes(member, And::left(And::left(started)))
+  }
+}

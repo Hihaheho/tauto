@@ -145,6 +145,7 @@ fn target(tote: &Path, args: &mut Vec<String>, with_git: bool) -> Result<Target,
                 url,
                 reference,
                 dir: String::new(),
+                sparse: false,
                 project: Some(project.clone()),
             };
             source.check()?;

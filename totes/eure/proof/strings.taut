@@ -1,0 +1,350 @@
+import "counts.taut"
+import "../src/read.taut"
+import std::base
+import std::nat
+import std::text
+import "../src/write.taut"
+
+// Strings: reading what `put_string` wrote gives the bytes back, for every text.
+
+fn str_rest(g: List(Nat)): (List(Nat)) -> Rd(List(Nat)) {
+  (u: List(Nat)) => read_str_body(g, u)
+}
+
+// What reading one more byte `c` gives.
+fn str_more(c: Nat, g: List(Nat), rest: List(Nat)): Rd(List(Nat)) {
+  rd_map((more: List(Nat)) => Cons(c, more), read_str_body(g, rest))
+}
+
+// A byte that is neither `"` nor `\` is read as itself.
+theorem read_plain_byte(
+  c: Nat,
+  fb: Nat,
+  g: List(Nat),
+  rest: List(Nat),
+  h34: Nat::eq(c, 34) = false,
+  h92: Nat::eq(c, 92) = false
+): read_str_body(Cons(fb, g), Cons(c, rest)) = str_more(c, g, rest) {
+  Eq::subst(
+    <A: Bool,
+    a: false,
+    b: Nat::eq(c, 92)>,
+    (
+      y: Bool
+    ) => str_byte(c, rest, Nat::eq(c, 34), y, str_rest(g)) = str_more(c, g, rest),
+    Eq::sym(h92),
+    Eq::subst(
+      <A: Bool,
+      a: false,
+      b: Nat::eq(c, 34)>,
+      (y: Bool) => str_byte(c, rest, y, false, str_rest(g)) = str_more(c, g, rest),
+      Eq::sym(h34),
+      Refl
+    )
+  )
+}
+
+// A byte that `escape_byte` writes as `\x`: what reading gives for `b` it gives for `c = b`.
+theorem read_escaped(
+  c: Nat,
+  b: Nat,
+  g: List(Nat),
+  rest: List(Nat),
+  l: Rd(List(Nat)),
+  h: Nat::eq(c, b) = true,
+  hb: l = str_more(b, g, rest)
+): l = str_more(c, g, rest) {
+  Eq::subst(
+    <A: Nat,
+    a: b,
+    b: c>,
+    (z: Nat) => l = str_more(z, g, rest),
+    Eq::sym(Nat::eq_sound(c, b, h)),
+    hb
+  )
+}
+
+fn esc_goal(
+  c: Nat,
+  fb: Nat,
+  g: List(Nat),
+  rest: List(Nat),
+  q: Bool,
+  s: Bool,
+  lf: Bool,
+  cr: Bool,
+  tab: Bool,
+  nul: Bool
+): Prop {
+  read_str_body(Cons(fb, g), Escape::tested(c, rest, q, s, lf, cr, tab, nul)) = str_more(c, g, rest)
+}
+
+// Every byte is read back from what `escape_byte` writes for it.
+theorem read_escape_byte(
+  c: Nat,
+  fb: Nat,
+  g: List(Nat),
+  rest: List(Nat)
+): read_str_body(Cons(fb, g), escape_byte(c, rest)) = str_more(c, g, rest) {
+  Bool::cases(
+    (
+      q: Bool
+    ) => esc_goal(
+      c,
+      fb,
+      g,
+      rest,
+      q,
+      Nat::eq(c, 92),
+      Nat::eq(c, 10),
+      Nat::eq(c, 13),
+      Nat::eq(c, 9),
+      Nat::eq(c, 0)
+    ),
+    Nat::eq(c, 34),
+    (
+      h34: Nat::eq(c, 34) = false
+    ) => Bool::cases(
+      (
+        s: Bool
+      ) => esc_goal(c, fb, g, rest, false, s, Nat::eq(c, 10), Nat::eq(c, 13), Nat::eq(c, 9), Nat::eq(c, 0)),
+      Nat::eq(c, 92),
+      (
+        h92: Nat::eq(c, 92) = false
+      ) => Bool::cases(
+        (lf: Bool) => esc_goal(c, fb, g, rest, false, false, lf, Nat::eq(c, 13), Nat::eq(c, 9), Nat::eq(c, 0)),
+        Nat::eq(c, 10),
+        (
+          h10: Nat::eq(c, 10) = false
+        ) => Bool::cases(
+          (cr: Bool) => esc_goal(c, fb, g, rest, false, false, false, cr, Nat::eq(c, 9), Nat::eq(c, 0)),
+          Nat::eq(c, 13),
+          (
+            h13: Nat::eq(c, 13) = false
+          ) => Bool::cases(
+            (tab: Bool) => esc_goal(c, fb, g, rest, false, false, false, false, tab, Nat::eq(c, 0)),
+            Nat::eq(c, 9),
+            (
+              h9: Nat::eq(c, 9) = false
+            ) => Bool::cases(
+              (nul: Bool) => esc_goal(c, fb, g, rest, false, false, false, false, false, nul),
+              Nat::eq(c, 0),
+              (h0: Nat::eq(c, 0) = false) => read_plain_byte(c, fb, g, rest, h34, h92),
+              (
+                h0: Nat::eq(c, 0) = true
+              ) => read_escaped(
+                c,
+                0,
+                g,
+                rest,
+                read_str_body(Cons(fb, g), Escape::tested(c, rest, false, false, false, false, false, true)),
+                h0,
+                Refl
+              )
+            ),
+            (
+              h9: Nat::eq(c, 9) = true
+            ) => read_escaped(
+              c,
+              9,
+              g,
+              rest,
+              read_str_body(Cons(fb, g), Escape::tested(c, rest, false, false, false, false, true, Nat::eq(c, 0))),
+              h9,
+              Refl
+            )
+          ),
+          (
+            h13: Nat::eq(c, 13) = true
+          ) => read_escaped(
+            c,
+            13,
+            g,
+            rest,
+            read_str_body(
+              Cons(fb, g),
+              Escape::tested(c, rest, false, false, false, true, Nat::eq(c, 9), Nat::eq(c, 0))
+            ),
+            h13,
+            Refl
+          )
+        ),
+        (
+          h10: Nat::eq(c, 10) = true
+        ) => read_escaped(
+          c,
+          10,
+          g,
+          rest,
+          read_str_body(
+            Cons(fb, g),
+            Escape::tested(c, rest, false, false, true, Nat::eq(c, 13), Nat::eq(c, 9), Nat::eq(c, 0))
+          ),
+          h10,
+          Refl
+        )
+      ),
+      (
+        h92: Nat::eq(c, 92) = true
+      ) => read_escaped(
+        c,
+        92,
+        g,
+        rest,
+        read_str_body(
+          Cons(fb, g),
+          Escape::tested(c, rest, false, true, Nat::eq(c, 10), Nat::eq(c, 13), Nat::eq(c, 9), Nat::eq(c, 0))
+        ),
+        h92,
+        Refl
+      )
+    ),
+    (
+      h34: Nat::eq(c, 34) = true
+    ) => read_escaped(
+      c,
+      34,
+      g,
+      rest,
+      read_str_body(
+        Cons(fb, g),
+        Escape::tested(
+          c,
+          rest,
+          true,
+          Nat::eq(c, 92),
+          Nat::eq(c, 10),
+          Nat::eq(c, 13),
+          Nat::eq(c, 9),
+          Nat::eq(c, 0)
+        )
+      ),
+      h34,
+      Refl
+    )
+  )
+}
+
+// ---- lengths -------------------------------------------------------------------------
+
+theorem Escape::tested_longer(
+  c: Nat,
+  x: List(Nat),
+  q: Bool,
+  s: Bool,
+  lf: Bool,
+  cr: Bool,
+  tab: Bool,
+  nul: Bool
+): Nat::le(Succ(List::length(x)), List::length(Escape::tested(c, x, q, s, lf, cr, tab, nul))) = true {
+  match q {
+    true => Nat::le_succ(List::length(x))
+    false => ⊢ Nat::le(Succ(List::length(x)), List::length(Escape::tested(c, x, false, s, lf, cr, tab, nul))) = true from match s {
+      true => Nat::le_succ(List::length(x))
+      false => ⊢ Nat::le(Succ(List::length(x)), List::length(Escape::tested(c, x, false, false, lf, cr, tab, nul))) = true from match lf {
+        true => Nat::le_succ(List::length(x))
+        false => ⊢ Nat::le(Succ(List::length(x)), List::length(Escape::tested(c, x, false, false, false, cr, tab, nul))) = true from match cr {
+          true => Nat::le_succ(List::length(x))
+          false => ⊢ Nat::le(
+              Succ(List::length(x)),
+              List::length(Escape::tested(c, x, false, false, false, false, tab, nul))
+            ) = true from match tab {
+            true => Nat::le_succ(List::length(x))
+            false => ⊢ Nat::le(
+                Succ(List::length(x)),
+                List::length(Escape::tested(c, x, false, false, false, false, false, nul))
+              ) = true from match nul {
+              true => Nat::le_succ(List::length(x))
+              false => Nat::le_refl(List::length(x))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Escaping never makes bytes fewer.
+theorem Escape::longer(
+  bs: List(Nat),
+  r: List(Nat)
+): Nat::le(List::length(bs), List::length(escape_bytes(bs, r))) = true {
+  match bs {
+    Nil => Nat::le_zero(List::length(r))
+    Cons(
+      c,
+      t
+    ) => Nat::le_trans(
+      Succ(List::length(t)),
+      Succ(List::length(escape_bytes(t, r))),
+      List::length(escape_byte(c, escape_bytes(t, r))),
+      Escape::longer(t, r),
+      Escape::tested_longer(
+        c,
+        escape_bytes(t, r),
+        Nat::eq(c, 34),
+        Nat::eq(c, 92),
+        Nat::eq(c, 10),
+        Nat::eq(c, 13),
+        Nat::eq(c, 9),
+        Nat::eq(c, 0)
+      )
+    )
+  }
+}
+
+// ---- strings -------------------------------------------------------------------------
+
+theorem no_fuel<P: Prop>(n: Nat, h: Nat::le(Succ(n), Zero) = true): P {
+  False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(n)), h)))
+}
+
+// With fuel for every byte and the closing `"`, the escaped bytes are read back.
+theorem read_str_escape(
+  bs: List(Nat),
+  r: List(Nat),
+  f: List(Nat),
+  h: Nat::le(Succ(List::length(bs)), List::length(f)) = true
+): read_str_body(f, escape_bytes(bs, Cons(34, r))) = MkRd(bs, r) {
+  match bs {
+    Nil => ⊢ read_str_body(f, Cons(34, r)) = MkRd(Nil, r) from match f {
+      Nil => no_fuel(Zero, h)
+      Cons(fb, g) => Refl
+    }
+    Cons(
+      c,
+      t
+    ) => ⊢ read_str_body(f, escape_bytes(Cons(c, t), Cons(34, r))) = MkRd(Cons(c, t), r) from match f {
+      Nil => no_fuel(Succ(List::length(t)), h)
+      Cons(
+        fb,
+        g
+      ) => Eq::trans(
+        read_escape_byte(c, fb, g, escape_bytes(t, Cons(34, r))),
+        Eq::subst(
+          Rd(List(Nat)),
+          MkRd(t, r),
+          read_str_body(g, escape_bytes(t, Cons(34, r))),
+          (
+            x: Rd(List(Nat))
+          ) => rd_map((more: List(Nat)) => Cons(c, more), x) = MkRd(Cons(c, t), r),
+          Eq::sym(read_str_escape(t, r, g, h)),
+          Refl
+        )
+      )
+    }
+  }
+}
+
+// `read_string` reads back what `put_string` wrote, whatever follows it.
+pub theorem read_put_string(
+  t: Text,
+  r: List(Nat)
+): read_string(put_string(t, r)) = MkRd(Text::bytes(t), r) {
+  read_str_escape(
+    Text::bytes(t),
+    r,
+    Cons(0, escape_bytes(Text::bytes(t), Cons(34, r))),
+    Escape::longer(Text::bytes(t), Cons(34, r))
+  )
+}

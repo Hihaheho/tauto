@@ -1,0 +1,431 @@
+// A focused run is development feedback, not the final verification gate.
+//   tauto gate focused <nextest selection and arguments>
+//   tauto gate full
+// Run it from inside the checkout (a Tauto script does not know its own
+// path); the checkout is the directory that holds this script.
+import "lib/sh.taut" {
+  sh_capture,
+  sh_chomp,
+  sh_die,
+  sh_env,
+  sh_exists,
+  sh_io,
+  sh_member,
+  sh_must,
+  sh_ok,
+  sh_process,
+  sh_root,
+  sh_run,
+  sh_status,
+  sh_text
+}
+import std::builtin::os {
+  Child,
+  Process,
+  argv,
+  eprint,
+  exit,
+  fs_canonicalize,
+  fs_list_dir,
+  fs_read_bytes,
+  fs_read_link,
+  fs_remove,
+  fs_stat,
+  fs_write,
+  io_message,
+  proc_close,
+  proc_spawn,
+  proc_wait
+}
+import std::prelude::collections { Bytes }
+import std::text { Text }
+import std::text_ops { Text }
+import std::base { List }
+import std::list { List }
+
+let usage := "usage: tauto gate focused <nextest selection and arguments> | full"
+let checkout := sh_root()
+let args := perform argv()
+let rest := match args {
+  Cons("focused", more) => {
+    if more == Nil {
+      sh_die(2, "usage: tauto gate focused <nextest selection and arguments>")
+    } else { #() }
+    more
+  }
+  Cons("full", more) => {
+    if more == Nil { #() } else { sh_die(2, "The full gate accepts no filters or skip arguments.") }
+    more
+  }
+  other => {
+    sh_die(2, usage)
+    []
+  }
+}
+let focused := match args {
+  Cons("focused", _) => true
+  other => false
+}
+
+fn fail(message: Text): Unit ! {exit, stderr} {
+  sh_die(2, message)
+}
+
+// Whether `t` has exactly `n` bytes.
+fn bytes_are(t: Text, n: Nat): Bool {
+  Text::len(t) == n
+}
+
+// The focused arguments go to Cargo as they are, so the ones that would
+// choose another target directory, manifest, or configuration are refused.
+fn guard(argument: Text): Bool {
+  if argument == "--" { false } else {
+    let refused := sh_member(
+      argument,
+      ["--target-dir", "--manifest-path", "--config", "-m", "-C"]
+    ) ||
+    Text::starts_with(argument, "--target-dir=") ||
+    Text::starts_with(argument, "--manifest-path=") ||
+    Text::starts_with(argument, "--config=")
+    if refused {
+      fail("Select focused packages with -p; use the guarded directory environment overrides, not Cargo directory/config arguments.")
+    } else if Text::starts_with(
+      argument,
+      "--"
+    ) || argument == "-vv" || (Text::starts_with(argument, "-") && bytes_are(argument, 2)) {
+      #()
+    } else if Text::starts_with(argument, "-") && Text::len(argument) > 1 {
+      fail("Use separate short-option values or long options; clustered short options can override checkout identity.")
+    } else { #() }
+    true
+  }
+}
+
+if focused {
+  var left := rest
+  var going := true
+  while going {
+    match left {
+      Nil => { going := false }
+      Cons(argument, more) => {
+        going := guard(argument)
+        left := more
+      }
+    }
+  }
+} else { #() }
+
+// An exact user override is accepted only for an empty or same-checkout cache.
+// A complete marker is installed atomically; unknown existing data is untouched.
+fn claim_directory(checkout: Text, given: Text): Text {
+  if sh_ok(sh_process("mkdir", ["-p", "--", given], "", [])) { #() } else {
+    fail(Text::concat("Cannot create build directory: ", given))
+  }
+  let directory := match perform fs_canonicalize(given) {
+    Ok(d) => d
+    Err(_) => {
+      fail(Text::concat("Cannot resolve build directory: ", given))
+      given
+    }
+  }
+  let owner := Text::concat(directory, "/.tauto-checkout")
+  let linked := match perform fs_read_link(owner) {
+    Ok(Some(_)) => true
+    _ => false
+  }
+  if linked { fail(Text::concat("Refusing a symlink checkout marker: ", owner)) } else { #() }
+  if sh_exists(owner) { #() } else {
+    if sh_ok(sh_process("test", ["-r", directory, "-a", "-x", directory], "", [])) { #() } else {
+      fail(Text::concat("Cannot inspect build directory: ", directory))
+    }
+    let entries := match perform fs_list_dir(directory) {
+      Ok(names) => names
+      Err(_) => []
+    }
+    if entries != Nil && not(sh_exists(owner)) {
+      fail(
+        Text::concat_all(
+          [
+            "Unowned nonempty build directory preserved: ",
+            directory,
+            ". Unset CARGO_TARGET_DIR/CARGO_BUILD_BUILD_DIR before selecting an empty TAUTO_TEST_CACHE_ROOT, or choose an empty exact directory."
+          ]
+        )
+      )
+    } else { #() }
+    let made := sh_capture(
+      sh_process("mktemp", [Text::concat(directory, "/.tauto-owner.XXXXXXXX")], "", [])
+    )
+    if sh_status(made.status) == 0 { #() } else {
+      fail(Text::concat("Cannot prepare checkout marker: ", directory))
+    }
+    let temporary := sh_chomp(sh_text(made.stdout))
+    match perform fs_write(temporary, checkout) {
+      Ok(_) => #()
+      Err(_) => fail(Text::concat("Cannot write checkout marker: ", temporary))
+    }
+    // A hard link installs the marker whole, or not at all when another
+    // run installed one first; std has no effect that makes one.
+    let ^ok := sh_ok(sh_process("ln", ["--", temporary, owner], "", []))
+    let ^removed := perform fs_remove(temporary)
+  }
+  let ordinary := match perform fs_read_link(owner) {
+    Ok(None) => match perform fs_stat(owner) {
+      Ok(Some(s)) => match s.kind { IsFile => true, _ => false }
+      _ => false
+    }
+    _ => false
+  }
+  if ordinary { #() } else {
+    fail(Text::concat("Checkout marker is not an ordinary file: ", owner))
+  }
+  let same := match perform fs_read_bytes(owner) {
+    Ok(b) => Bytes::eq(b, Bytes::of_text(checkout))
+    Err(_) => false
+  }
+  if same { #() } else {
+    fail(
+      Text::concat_all(
+        [
+          "Build directory belongs to another checkout: ",
+          directory,
+          ". Choose a distinct cache namespace or empty exact directory; existing contents are preserved."
+        ]
+      )
+    )
+  }
+  directory
+}
+
+// An environment variable, "" when it is not set.
+fn var_or_empty(name: Text): Text {
+  match sh_env(name) {
+    Some(v) => v
+    None => ""
+  }
+}
+
+let cache_root := var_or_empty("TAUTO_TEST_CACHE_ROOT")
+let target_override := var_or_empty("CARGO_TARGET_DIR")
+let build_override := var_or_empty("CARGO_BUILD_BUILD_DIR")
+let target := if cache_root != "" {
+  if target_override == "" && build_override == "" { #() } else {
+    fail("Choose TAUTO_TEST_CACHE_ROOT or exact Cargo directory overrides, not both.")
+  }
+  // Keeping the full canonical path avoids ambiguous shortened checkout names.
+  Text::concat_all(
+    [cache_root, "/checkouts/", Text::slice_or_empty(checkout, 1, Text::len(checkout))]
+  )
+} else if target_override != "" { target_override } else { Text::concat(checkout, "/target") }
+let target_dir := claim_directory(checkout, target)
+let build_given := if build_override != "" { build_override } else { target_dir }
+if Text::contains(build_given, "{") || Text::contains(build_given, "}") {
+  fail("Use a concrete CARGO_BUILD_BUILD_DIR, not a path template.")
+} else { #() }
+let build := claim_directory(checkout, build_given)
+
+// `t` with each byte `b` written as `sep`.
+fn replace(t: Text, b: Nat, sep: Text): Text {
+  Text::join(sep, Text::split_on(t, b))
+}
+// A fixed inherited build directory defeats a child's own target isolation.
+// Apply the outer override as Cargo configuration, not a child environment
+// value: every Cargo runs under `env -u CARGO_BUILD_BUILD_DIR`, since a
+// `Process` can add variables but not take one away.
+let build_toml := replace(
+  replace(
+    replace(
+      replace(replace(replace(replace(build, 92, "\\\\"), 34, "\\\""), 10, "\\n"), 13, "\\r"),
+      9,
+      "\\t"
+    ),
+    8,
+    "\\b"
+  ),
+  12,
+  "\\f"
+)
+let build_config := Text::concat_all(["build.build-dir=\"", build_toml, "\""])
+
+fn cargo(checkout: Text, target_dir: Text, args: List(Text)): Process {
+  sh_process(
+    "env",
+    Cons("-u", Cons("CARGO_BUILD_BUILD_DIR", Cons("cargo", args))),
+    checkout,
+    [#("CARGO_TARGET_DIR", target_dir)]
+  )
+}
+
+if focused {
+  eprint("Focused tests only; run `tauto gate full` before final verification.\n")
+  perform exit(
+    sh_run(
+      cargo(
+        checkout,
+        target_dir,
+        List::append(["nextest", "run", "--config", build_config, "--locked"], rest)
+      )
+    )
+  )
+} else { #() }
+
+sh_must(
+  cargo(
+    checkout,
+    target_dir,
+    [
+      "nextest",
+      "run",
+      "--config",
+      build_config,
+      "--locked",
+      "--workspace",
+      "--exclude",
+      "selfhost-harness"
+    ]
+  )
+)
+sh_must(
+  cargo(
+    checkout,
+    target_dir,
+    ["--config", build_config, "build", "--locked", "-p", "tauto-cli", "--bin", "tauto"]
+  )
+)
+
+// The selfhost harness's tests build the totes natively and run long, so the
+// workspace run above excludes them: build them here so that a change that
+// breaks the harness fails the gate.
+sh_must(
+  cargo(
+    checkout,
+    target_dir,
+    [
+      "nextest",
+      "run",
+      "--config",
+      build_config,
+      "--locked",
+      "--manifest-path",
+      "tools/selfhost-harness/Cargo.toml",
+      "--no-run"
+    ]
+  )
+)
+
+// `dir/*.taut`, relative to the checkout, in byte order.
+fn sources(checkout: Text, dir: Text): List(Text) {
+  match perform fs_list_dir(Text::concat_all([checkout, "/", dir])) {
+    Ok(names) => map(
+      List::filter((n) => Text::ends_with(n, ".taut") && not(Text::starts_with(n, ".")), names),
+      (n) => Text::concat_all([dir, "/", n])
+    )
+    Err(e) => {
+      sh_die(1, Text::concat_all(["Cannot list ", dir, ": ", io_message(e)]))
+      []
+    }
+  }
+}
+let standard := sources(checkout, "std")
+let models := sources(checkout, "meta")
+let top := List::append(standard, models)
+let library := List::append(List::append(standard, sources(checkout, "std/prelude")), models)
+
+// Each top-level library file is checked by its own process, eight at a
+// time, as `xargs -n1 -P8` ran them; any failure fails the gate with
+// xargs's status 123, after the running checks end.
+var waiting := top
+var running: List(Child) := []
+var failed := false
+var going := true
+while going {
+  if List::length(running) < 8 && waiting != Nil {
+    match waiting {
+      Nil => #()
+      Cons(file, more) => {
+        waiting := more
+        let p := cargo(
+          checkout,
+          target_dir,
+          [
+            "--config",
+            build_config,
+            "run",
+            "-q",
+            "--locked",
+            "-p",
+            "tauto-cli",
+            "--bin",
+            "tauto",
+            "--",
+            "check",
+            file
+          ]
+        )
+        match perform proc_spawn(p, sh_io()) {
+          Ok(c) => { running := List::append(running, [c]) }
+          Err(e) => {
+            eprint(Text::concat(io_message(e), "\n"))
+            failed := true
+          }
+        }
+      }
+    }
+  } else {
+    match running {
+      Nil => { going := false }
+      Cons(c, more) => {
+        running := more
+        match perform proc_wait(c, None) {
+          Ok(Some(0)) => #()
+          other => { failed := true }
+        }
+        perform proc_close(c)
+      }
+    }
+  }
+}
+if failed { perform exit(123) } else { #() }
+sh_must(
+  cargo(
+    checkout,
+    target_dir,
+    List::append(
+      [
+        "--config",
+        build_config,
+        "run",
+        "--locked",
+        "-p",
+        "tauto-cli",
+        "--bin",
+        "tauto",
+        "--",
+        "lint"
+      ],
+      library
+    )
+  )
+)
+sh_must(
+  cargo(
+    checkout,
+    target_dir,
+    List::append(
+      [
+        "--config",
+        build_config,
+        "run",
+        "--locked",
+        "-p",
+        "tauto-cli",
+        "--bin",
+        "tauto",
+        "--",
+        "fmt",
+        "--check"
+      ],
+      library
+    )
+  )
+)

@@ -12,13 +12,13 @@ fn matrix_proofs_detect_mutations_of_the_actual_operations() {
     tauto_messages::install();
     for (before, after, failed) in [
         (
-            "column => algebra_op(0, R, multiplication)(matrix(row, column), values(column))",
-            "column => algebra_op(0, R, multiplication)(values(column), matrix(row, column))",
+            "column => algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), values(column))",
+            "column => algebra_op(<u: 0, A: R>, multiplication)(values(column), matrix(row, column))",
             "algebra_matrix_apply_scale",
         ),
         (
-            "index => algebra_op(0, R, multiplication)(left(row, index), right(index, column))",
-            "index => algebra_op(0, R, multiplication)(right(index, column), left(row, index))",
+            "index => algebra_op(<u: 0, A: R>, multiplication)(left(row, index), right(index, column))",
+            "index => algebra_op(<u: 0, A: R>, multiplication)(right(index, column), left(row, index))",
             "algebra_matrix_product_apply",
         ),
     ] {
@@ -28,14 +28,14 @@ fn matrix_proofs_detect_mutations_of_the_actual_operations() {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        for name in ["Equality", "Monoid", "Semiring", "Finite", "Matrix"] {
+        for name in ["equality", "monoid", "semiring", "finite", "matrix"] {
             std::fs::copy(
                 root().join(format!("totes/algebra/src/{name}.taut")),
                 dir.join(format!("{name}.taut")),
             )
             .unwrap();
         }
-        let path = dir.join("Matrix.taut");
+        let path = dir.join("matrix.taut");
         let source = std::fs::read_to_string(&path).unwrap();
         let (operations, proofs) = source
             .split_once("theorem algebra_matrix_apply_congr")
@@ -76,7 +76,7 @@ fn equality_adapter_rejects_a_congruent_but_wrong_product_operation() {
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let original = root().join("totes/algebra/src/RelationMatrix.taut");
+    let original = root().join("totes/algebra/src/relation_matrix.taut");
     let source = std::fs::read_to_string(original)
         .unwrap()
         .lines()
@@ -103,7 +103,7 @@ fn equality_adapter_rejects_a_congruent_but_wrong_product_operation() {
             "index => add(left(row, index), right(index, column))"
         )
     );
-    let file = dir.join("RelationMatrix.taut");
+    let file = dir.join("relation_matrix.taut");
     std::fs::write(&file, changed).unwrap();
     let entries = check_file(&file).expect("mutated implementation still parses");
     std::fs::remove_dir_all(dir).unwrap();

@@ -45,7 +45,7 @@ fn the_tables_are_not_stale() {
     let problems = selfhost_harness::stale(&selfhost_harness::syntax_table_files());
     assert!(
         problems.is_empty(),
-        "{problems:?}: run `bash scripts/generate-syntax-tables.sh`"
+        "{problems:?}: run `tauto gen-syntax-tables`"
     );
 }
 

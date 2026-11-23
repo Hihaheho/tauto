@@ -205,6 +205,23 @@ fn apply<A, B>(x: A, f: (A) -> B ! {e}): B ! {e} { f(x) }
 fn h(): (i64) -> i64 ! {ask} ∪ e { x => x }
 ```
 
+@ cases.multiline-effect-rows
+description = "A row literal may span lines and end with a comma"
+parses = true
+source = ```nib
+fn burn(): Unit ! {
+  query(Flames),
+  query(Kindling),
+  entity_not_found,
+  component_not_found,
+  component_already_exists,
+  insert(Burning),
+  update(Health),
+} {
+  #()
+}
+```
+
 @ cases.tags
 parses = true
 source = ```nib
@@ -213,23 +230,23 @@ let v := @price 3
 
 @ cases.a-budget
 parses = true
-source = "let r := budget(steps: 100) { 1 + 2 }"
+source = "let r := perform budget(100, () => { 1 + 2 })"
 
 @ cases.a-memory-budget
 parses = true
-source = "let r := budget(memory: 100) { 1 + 2 }"
+source = "let r := perform budget_memory(100, () => { 1 + 2 })"
 
 @ cases.a-budget-of-steps-and-memory
 parses = true
-source = "let r := budget(steps: 100, memory: 50) { 1 + 2 }"
+source = "let r := perform budget(100, () => perform budget_memory(50, () => { 1 + 2 }))"
 
 @ cases.kinds-on-declarations
 parses = true
 source = ```nib
-affine struct File {}
-linear struct Handshake { step: i64 }
-copy struct Point { x: i64, y: i64 }
-shared enum Tree(A: Type) { Leaf, Node(Tree(A), A, Tree(A)) }
+struct(affine) File {}
+struct(linear) Handshake { step: i64 }
+struct(copy) Point { x: i64, y: i64 }
+enum(shared) Tree(A: Type) { Leaf, Node(Tree(A), A, Tree(A)) }
 ```
 
 @ cases.the-kind-of-a-function-type
@@ -252,16 +269,16 @@ effect pick(): i64 resume <=1
 @ cases.borrowed-parameters-and-results
 parses = true
 source = ```nib
-fn len(&v: Vec(i64)): u64 { Vec::len(&v) }
-fn push(&mut v: Vec(i64), x: i64): Unit { Vec::push(&mut v, x) }
-fn first(&v: Vec(File)): &File { Vec::index(&v, 0) }
+fn len(v: &Vec(i64)): u64 { Vec::len(&v) }
+fn push(v: &mut Vec(i64), x: i64): Unit { Vec::push(&mut v, x) }
+fn first(v: &Vec(File)): &File { Vec::index(&v, 0) }
 ```
 
 @ cases.let-of-a-borrow
 parses = true
 source = ```nib
-fn f(&v: Vec(File)): i64 {
-  let &x := Vec::index(&v, 0)
+fn f(v: &Vec(File)): i64 {
+  let x := Vec::index(&v, 0)
   0
 }
 ```
@@ -271,7 +288,7 @@ parses = true
 source = ```nib
 fn twice<A: Shared>(x: A): Pair(A, A) { pair(x, x) }
 fn keep<A: Linear>(x: A): A { x }
-fn with_file<A, !e: <=1>(path: Text, &body: (&f: File) -> A ! e): A ! e { body(&f) }
+fn with_file<A, !e: <=1>(path: Text, body: &((f: &File) -> A ! e)): A ! e { body(&f) }
 ```
 
 @ cases.kinds-are-universe-names
@@ -284,10 +301,10 @@ struct Handlers(!e: <=1, A: Shared) { on_key: (k: A) -> i64 ! e }
 @ cases.an-extern-block
 parses = true
 source = ```nib
-affine struct File {}
-affine struct IoError {}
+struct(affine) File {}
+struct(affine) IoError {}
 extern {
-  fn file_open(&path: Text): Result(File, IoError)
+  fn file_open(path: &Text): Result(File, IoError)
   fn file_close(f: File): Unit
 }
 ```
@@ -296,7 +313,7 @@ build = "error: has no rust binding"
 @ cases.match-on-a-borrow
 parses = true
 source = ```nib
-fn size(&e: Expr): i64 {
+fn size(e: &Expr): i64 {
   match &e {
     Num(n) => 1
     Add(l, r) => size(&l) + size(&r)
@@ -324,7 +341,7 @@ effect get(): i64 direct
 parses = true
 source = ```nib
 let r#direct := 1
-fn use_it<!e: direct>(&f: () -> Unit ! e): Unit ! e { f() }
+fn use_it<!e: direct>(f: &(() -> Unit ! e)): Unit ! e { f() }
 let again := r#direct + 1
 ```
 
@@ -372,23 +389,23 @@ r#where + 1
 parses = true
 source = ```nib
 fn max<A: Shared>(a: A, b: A): A where Ord(A) { a }
-fn get<K, V>(&m: Map(K, V), &k: K): V ! {missing} where DecEq(K), Hash(K) { m }
+fn get<K, V>(m: &Map(K, V), k: &K): V ! {missing} where DecEq(K), Hash(K) { m }
 ```
 
 @ cases.where-in-extern
 parses = true
 source = ```nib
 extern {
-  fn lookup<K>(&k: K): i64 where DecEq(K)
+  fn lookup<K>(k: &K): i64 where DecEq(K)
 }
 ```
 
 @ cases.a-result-type-with-operators
 parses = true
 source = ```nib
-fn pair(a: i64, b: Text): i64 × Text ! {Div} { a }
+fn pair(a: i64, b: Text): i64 × Text ! {div} { a }
 fn plain(): i64 { 0 }
-fn unit(): Unit ! {Div} { #() }
+fn unit(): Unit ! {div} { #() }
 ```
 
 @ cases.an-effect-operation-has-its-parameters-in-parentheses
@@ -406,9 +423,9 @@ parses = true
 source = ```nib
 enum Option(A: Type) { None, Some(A) }
 struct Pair(A: Type, B: Type) { fst: A, snd: B }
-affine struct Box(A: Linear) { value: A }
+struct(affine) Box(A: Linear) { value: A }
 class Ord(A: Linear) {
-  fn compare(&a: A, &b: A): Ordering
+  fn compare(a: &A, b: &A): Ordering
 }
 ```
 

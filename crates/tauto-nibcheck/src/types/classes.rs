@@ -3,6 +3,7 @@
 
 use crate::surface::Name;
 use std::collections::{HashMap, HashSet};
+use tauto_message::msg;
 
 use super::{Checker, Kind, Param, ParamId, STRUCTURAL, Scheme, Ty};
 use crate::surface::walk;
@@ -21,9 +22,73 @@ pub(super) struct ClassInfo {
 
 pub(super) struct InstanceInfo {
     pub generics: Vec<(Param, Kind)>,
-    pub head: Ty,
-    /// The `where` of the instance: a class and the generic it constrains.
-    pub preds: Vec<(Name, Param)>,
+    /// Every class type argument, in order (`C(H₀, H₁, …)`).
+    pub heads: Vec<Ty>,
+    /// The `where` of the instance: a class and the generics it constrains.
+    pub preds: Vec<(Name, Vec<Param>)>,
+}
+
+/// Whether a class parameter domain is a native Nib type (or type former), not a value index.
+fn is_type_class_param(ty: &SurfaceTerm, class_bound: Option<&str>, first: bool) -> bool {
+    matches!(&*ty.kind, TermKind::Var(name) if name.as_str() == "Type")
+        || (first && class_bound.is_some_and(|bound| Kind::parse_ctor(bound).is_some()))
+}
+
+/// Variables for the class parameters after the first: `C(A, B, C)`'s `B`, `C`.
+fn class_tail_vars(
+    parameters: &[(Name, SurfaceTerm)],
+    span: tauto_parol::Span,
+) -> Vec<SurfaceTerm> {
+    parameters
+        .iter()
+        .skip(1)
+        .map(|(name, _)| SurfaceTerm::new(TermKind::Var(name.clone()), span))
+        .collect()
+}
+
+/// Instance table key: one constructor, or every constructor joined when the class has several type arguments.
+fn instance_heads_key(heads: &[Ty], resolved: bool) -> Option<Name> {
+    let ctors: Option<Vec<Name>> = heads.iter().map(|t| constructor(t, resolved)).collect();
+    let ctors = ctors?;
+    if ctors.len() == 1 {
+        Some(ctors.into_iter().next().unwrap())
+    } else {
+        Some(Name::from(
+            ctors
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join("@"),
+        ))
+    }
+}
+
+/// A type-shaped instance argument (not a value index such as `1` or `"one"`).
+/// `_` in a partial application is read as [`TermKind::Other`] `"Wild"`.
+fn is_type_instance_arg(t: &SurfaceTerm) -> bool {
+    match &*t.kind {
+        TermKind::Var(_) | TermKind::Hole(_) => true,
+        TermKind::Other(msg) if msg == "Wild" => true,
+        TermKind::App {
+            function,
+            arguments,
+        } => {
+            matches!(&*function.kind, TermKind::Var(_))
+                && arguments.iter().all(is_type_instance_arg)
+        }
+        TermKind::Pi {
+            params,
+            result,
+            effects: None,
+            ..
+        } => {
+            params
+                .iter()
+                .all(|(n, p)| n.is_none() && is_type_instance_arg(p))
+                && is_type_instance_arg(result)
+        }
+        _ => false,
+    }
 }
 
 /// `C::m@H`: the function an instance of `C` for `H` gives `m`.
@@ -44,6 +109,9 @@ pub(super) fn instance_fn(class: &ClassDecl, method: &str, head: &Name) -> Name 
     match (member.as_global(), head.as_global()) {
         (Some(member), Some(head)) => member
             .specialize(&format!("head:{:?}", head.id()), format!("{member}@{head}"))
+            .into(),
+        (Some(member), None) if is_fn_head(head) => member
+            .specialize(&format!("head:{head}"), format!("{member}@{head}"))
             .into(),
         _ => format!("{member}@{head}").into(),
     }
@@ -75,6 +143,69 @@ pub(super) fn replace(t: &SurfaceTerm, name: &Name, with: &SurfaceTerm) -> Surfa
     t
 }
 
+/// A type of the class's signature as the instance reads it: each class
+/// parameter replaced by the instance argument in that place, and a method
+/// that is not executable applied to its arguments (`C::child_type(env)`) the
+/// type the instance gives it (`Browser`). The body of such a method uses no
+/// parameter (`nibcheck-type-method-uses-value`), so the arguments do not
+/// change it.
+pub(super) fn instance_type(t: &SurfaceTerm, decl: &ClassDecl, i: &InstanceDecl) -> SurfaceTerm {
+    let types: Vec<(Name, SurfaceTerm)> = decl
+        .methods
+        .iter()
+        .filter(|m| !super::type_functions::executable(m))
+        .filter_map(|m| {
+            let given = i.methods.iter().find(|g| g.name == m.name)?;
+            Some((member_fn(decl, &m.name), given.body.clone()))
+        })
+        .collect();
+    fn go(t: &mut SurfaceTerm, types: &[(Name, SurfaceTerm)]) {
+        let head = match &*t.kind {
+            TermKind::App { function, .. } => function.as_ref(),
+            _ => &*t,
+        };
+        if let TermKind::Var(n) = &*head.kind
+            && let Some((_, body)) = types.iter().find(|(m, _)| m == n)
+        {
+            *t = block_value(body);
+            return;
+        }
+        walk::children(t, &mut |c| go(c, types));
+    }
+    let args: Vec<&SurfaceTerm> = std::iter::once(&i.head).chain(&i.arguments).collect();
+    let mut t = t.clone();
+    for ((name, _), arg) in decl.parameters.iter().zip(args) {
+        t = replace(&t, name, arg);
+    }
+    go(&mut t, &types);
+    t
+}
+
+/// A constraint a class method writes, at the instance's head.
+fn instance_constraint(c: &Constraint, decl: &ClassDecl, i: &InstanceDecl) -> Constraint {
+    Constraint {
+        class: c.class.clone(),
+        ty: instance_type(&c.ty, decl, i),
+        arguments: c
+            .arguments
+            .iter()
+            .map(|a| instance_type(a, decl, i))
+            .collect(),
+        span: c.span,
+    }
+}
+
+/// `{ Browser }`, a body, as the term it gives.
+fn block_value(body: &SurfaceTerm) -> SurfaceTerm {
+    match &*body.kind {
+        TermKind::Block(stmts) => match stmts.as_slice() {
+            [crate::surface::Stmt::Expr(e)] => block_value(e),
+            _ => body.clone(),
+        },
+        _ => body.clone(),
+    }
+}
+
 /// The type constructor at the head of a type, as the instance table keys it.
 fn constructor(t: &Ty, resolved: bool) -> Option<Name> {
     let builtin = |name: &str| {
@@ -86,11 +217,74 @@ fn constructor(t: &Ty, resolved: bool) -> Option<Name> {
     };
     match t {
         Ty::Named(n, _) => Some(n.clone()),
+        Ty::Fn(ps, _, _) => Some(fn_head(ps.len())),
         Ty::Int(_) | Ty::Bool | Ty::Text | Ty::Float | Ty::Float32 | Ty::Decimal | Ty::Unit => {
             Some(builtin(&t.to_string()))
         }
         _ => None,
     }
+}
+
+/// The head of the instances for functions of `arity` parameters: the
+/// function type itself, keyed by its number of parameters. The spelling is
+/// one no declaration can have.
+pub(super) fn fn_head(arity: usize) -> Name {
+    let holes = vec!["_"; arity].join(", ");
+    Name::from(format!("({holes}) -> _"))
+}
+
+fn is_fn_head(head: &Name) -> bool {
+    head.as_global().is_none() && head.as_str().ends_with(") -> _")
+}
+
+pub(super) fn head_constructor(t: &Ty, resolved: bool) -> Option<Name> {
+    constructor(t, resolved)
+}
+
+/// A class method's type, its arguments read by their types: in
+/// `fn child_env(env: &mut Env): &mut C::child_type(env)`, `C::child_type(env)`
+/// is `C::child_type(Env)`, which an instance for `Env` gives.
+fn by_types(t: &SurfaceTerm, decl: &ClassDecl, f: &FnDecl) -> SurfaceTerm {
+    let types: Vec<Name> = decl
+        .methods
+        .iter()
+        .filter(|m| !super::type_functions::executable(m))
+        .map(|m| member_fn(decl, &m.name))
+        .collect();
+    let mut t = t.clone();
+    walk::term(&mut t, &mut |t| {
+        let TermKind::App {
+            function,
+            arguments,
+        } = &*t.kind
+        else {
+            return;
+        };
+        if !matches!(&*function.kind, TermKind::Var(n) if types.contains(n)) {
+            return;
+        }
+        let arguments: Vec<SurfaceTerm> = arguments
+            .iter()
+            .map(|a| match &*a.kind {
+                TermKind::Var(x) => f
+                    .params
+                    .iter()
+                    .position(|p| p == x)
+                    .and_then(|i| f.param_types.get(i).cloned().flatten())
+                    .unwrap_or_else(|| a.clone()),
+                _ => a.clone(),
+            })
+            .collect();
+        let function = function.clone();
+        *t = t.with_kind(
+            TermKind::App {
+                function,
+                arguments,
+            },
+            t.span,
+        );
+    });
+    t
 }
 
 impl Checker {
@@ -137,7 +331,10 @@ impl Checker {
             if let Stmt::Struct(d) | Stmt::Enum(d) = s
                 && self.classes.get(&d.name).is_some_and(|c| c.in_prelude)
             {
-                self.error(format!("{} is already a class", d.name), d.span);
+                self.error(
+                    msg!("nibcheck-class-already-class", name = d.name.to_string()),
+                    d.span,
+                );
             }
         }
         // The methods, now that every class is known.
@@ -171,44 +368,58 @@ impl Checker {
         own_types: &HashSet<&Name>,
     ) -> bool {
         if STRUCTURAL.contains(&c.name.as_str()) {
-            self.error(format!("{} is built in", c.name), c.span);
+            self.error(
+                msg!("nibcheck-class-built-in", name = c.name.to_string()),
+                c.span,
+            );
             return false;
         }
         if self.classes.contains_key(&c.name) {
-            self.error(format!("class {} is declared twice", c.name), c.span);
+            self.error(
+                msg!("nibcheck-class-declared-twice", name = c.name.to_string()),
+                c.span,
+            );
             return false;
         }
         if !in_prelude && own_types.contains(&c.name) {
-            self.error(format!("{} is already a type", c.name), c.span);
-            return false;
-        }
-        if c.parameters.first().is_some_and(|(_, ty)| {
-            !matches!(&*ty.kind, TermKind::Var(name) if name.as_str() == "Type")
-                && !c
-                    .bound
-                    .as_deref()
-                    .is_some_and(|bound| Kind::parse_ctor(bound).is_some())
-        }) {
             self.error(
-                "value-indexed classes require checked dictionary extraction",
+                msg!("nibcheck-class-already-type", name = c.name.to_string()),
                 c.span,
             );
             return false;
         }
-        if c.arity != 1 {
-            self.error(
-                format!("class {} takes one parameter, not {}", c.name, c.arity),
-                c.span,
-            );
+        // Native Nib keeps type (and type-former) parameters only. A value
+        // index needs checked dictionary extraction first.
+        if c.arity == 0
+            || c.parameters
+                .iter()
+                .enumerate()
+                .any(|(i, (_, ty))| !is_type_class_param(ty, c.bound.as_deref(), i == 0))
+        {
+            self.error(msg!("nibcheck-value-indexed-classes"), c.span);
             return false;
         }
-        let (bound, arg) = match c.bound.as_deref() {
+        // `NoBorrow` is a bound of a function's type parameter; a class
+        // parameter does not take it. Said once here, the class stays
+        // declared without it so its uses read as uses of a class.
+        let written = c.bound.as_deref().map(super::without_no_borrow);
+        if let Some((_, true)) = written {
+            self.error(
+                msg!(
+                    "nibcheck-class-parameter-no-borrow",
+                    class = c.name.to_string()
+                ),
+                c.span,
+            );
+        }
+        let bound = written.map(|(b, _)| b).unwrap_or(c.bound.clone());
+        let (bound, arg) = match bound.as_deref() {
             None => (Kind::Affine, None),
             Some(b) => match (Kind::parse(b), Kind::parse_ctor(b)) {
                 (Some(k), _) => (k, None),
                 (None, Some((arg, result))) => (result, Some(arg)),
                 _ => {
-                    self.error(format!("{b} is not a kind"), c.span);
+                    self.error(msg!("nibcheck-not-a-kind", name = b.to_string()), c.span);
                     return false;
                 }
             },
@@ -216,26 +427,12 @@ impl Checker {
         let mut seen = HashSet::new();
         for m in &c.methods {
             if !seen.insert(m.name.as_str()) {
-                self.error(format!("{}::{} is declared twice", c.name, m.name), m.span);
-            }
-            if !m.where_.is_empty() {
                 self.error(
-                    format!(
-                        "{}.{} has no where: write it outside the class",
-                        c.name, m.name
+                    msg!(
+                        "nibcheck-class-member-declared-twice",
+                        class = c.name.to_string(),
+                        name = m.name.to_string()
                     ),
-                    m.span,
-                );
-            }
-            let mentioned = m
-                .param_types
-                .iter()
-                .flatten()
-                .any(|t| mentions(t, &c.param))
-                || m.result.as_ref().is_some_and(|r| mentions(r, &c.param));
-            if !mentioned {
-                self.error(
-                    format!("{}::{} does not mention {}", c.name, m.name, c.param),
                     m.span,
                 );
             }
@@ -246,9 +443,10 @@ impl Checker {
             for m in &c.methods {
                 if m.effects.as_ref().is_some_and(|e| !e.is_empty()) {
                     self.error(
-                        format!(
-                            "{}::{} performs effects, so {} cannot have laws",
-                            c.name, m.name, c.name
+                        msg!(
+                            "nibcheck-class-method-performs-effects",
+                            class = c.name.to_string(),
+                            name = m.name.to_string()
                         ),
                         m.span,
                     );
@@ -258,7 +456,14 @@ impl Checker {
         let mut laws = HashSet::new();
         for l in &c.laws {
             if !laws.insert(l.name.as_str()) {
-                self.error(format!("{}::{} is declared twice", c.name, l.name), l.span);
+                self.error(
+                    msg!(
+                        "nibcheck-class-member-declared-twice",
+                        class = c.name.to_string(),
+                        name = l.name.to_string()
+                    ),
+                    l.span,
+                );
             }
         }
         self.classes.insert(
@@ -273,37 +478,115 @@ impl Checker {
         true
     }
 
-    /// `C::m`: a function over the class's parameter that asks for the class.
+    /// The classes the `where` of `method` leads to, back to `class`: the
+    /// methods passed on the way, `C::m -> D::n -> C`, or `None` when no
+    /// `where` leads back.
+    fn where_cycle(&self, class: &ClassDecl, method: &FnDecl) -> Option<Vec<String>> {
+        fn walk(
+            checker: &Checker,
+            target: &Name,
+            from: &FnDecl,
+            owner: &Name,
+            path: &mut Vec<String>,
+            seen: &mut HashSet<Name>,
+        ) -> bool {
+            path.push(format!("{owner}::{}", from.name));
+            for w in &from.where_ {
+                if &w.class == target {
+                    path.push(target.to_string());
+                    return true;
+                }
+                if !seen.insert(w.class.clone()) {
+                    continue;
+                }
+                let Some(asked) = checker.classes.get(&w.class) else {
+                    continue;
+                };
+                for held in &asked.decl.methods {
+                    if walk(checker, target, held, &w.class, path, seen) {
+                        return true;
+                    }
+                }
+            }
+            path.pop();
+            false
+        }
+        let mut path = Vec::new();
+        walk(
+            self,
+            &class.name,
+            method,
+            &class.name,
+            &mut path,
+            &mut HashSet::new(),
+        )
+        .then_some(path)
+    }
+
+    /// `C::m`: a function over the class's parameters that asks for the class.
     fn declare_methods(&mut self, c: &ClassDecl) {
         let bound = self.classes[&c.name].bound;
+        let arg = self.classes[&c.name].arg;
         for m in &c.methods {
+            // The evidence a method asks for is a dictionary in the type of
+            // the class's own, so the classes traced through method `where`s
+            // cannot lead back to the class: the dictionary type is finite.
+            if let Some(path) = self.where_cycle(c, m) {
+                self.error(
+                    msg!(
+                        "nibcheck-class-method-where-cycle",
+                        path = path.join(" -> ")
+                    ),
+                    m.span,
+                );
+            }
             let mut f = m.clone();
             f.name = member_fn(c, &m.name);
+            for i in 0..f.param_types.len() {
+                if let Some(t) = &f.param_types[i] {
+                    f.param_types[i] = Some(by_types(t, c, m));
+                }
+            }
+            f.result = f.result.as_ref().map(|r| by_types(r, c, m));
             f.bounds.resize(f.generics.len(), None);
             let mut generic_types: Vec<_> = f
                 .generic_parameters()
                 .into_iter()
                 .map(|(_, ty)| ty)
                 .collect();
-            generic_types.insert(0, SurfaceTerm::var("Type", m.span));
-            f.generic_types = generic_types;
-            f.generics.insert(0, c.param.clone());
-            if !f.rows.is_empty() {
-                f.rows.insert(0, false);
+            // Every class parameter leads, in order, then the method's own.
+            for (i, (name, ty)) in c.parameters.iter().enumerate().rev() {
+                let (param_bound, param_arg) = if i == 0 {
+                    (bound, arg)
+                } else if matches!(&*ty.kind, TermKind::Var(n) if n.as_str() == "Type") {
+                    (Kind::Affine, None)
+                } else {
+                    (bound, None)
+                };
+                generic_types.insert(0, SurfaceTerm::var("Type", m.span));
+                f.generics.insert(0, name.clone());
+                if !f.rows.is_empty() {
+                    f.rows.insert(0, false);
+                }
+                f.bounds.insert(
+                    0,
+                    Some(match param_arg {
+                        Some(a) => format!("({a})->{param_bound}").into(),
+                        None => param_bound.to_string().into(),
+                    }),
+                );
             }
-            f.bounds.insert(
+            f.generic_types = generic_types;
+            // The class's own constraint comes first; the method's follow.
+            f.where_.insert(
                 0,
-                Some(match self.classes[&c.name].arg {
-                    Some(arg) => format!("({arg})->{bound}").into(),
-                    None => bound.to_string().into(),
-                }),
+                Constraint {
+                    class: c.name.clone(),
+                    ty: SurfaceTerm::new(TermKind::Var(c.param.clone()), m.span),
+                    arguments: class_tail_vars(&c.parameters, m.span),
+                    span: m.span,
+                },
             );
-            f.where_ = vec![Constraint {
-                class: c.name.clone(),
-                ty: SurfaceTerm::new(TermKind::Var(c.param.clone()), m.span),
-                arguments: Vec::new(),
-                span: m.span,
-            }];
             let scheme = self.signature(&f);
             self.fns.insert(f.name.clone(), scheme);
         }
@@ -317,25 +600,41 @@ impl Checker {
         own_types: &HashSet<&Name>,
         synthesized: &mut Vec<FnDecl>,
     ) {
-        if !i.arguments.is_empty() {
-            self.error(
-                "value-indexed class instances require checked dictionary extraction",
-                i.span,
-            );
-            return;
-        }
         if STRUCTURAL.contains(&i.class.as_str()) {
             self.error(
-                format!("{} is structural and has no instances to write", i.class),
+                msg!(
+                    "nibcheck-class-structural-no-instances",
+                    name = i.class.to_string()
+                ),
                 i.span,
             );
             return;
         }
         let Some(class) = self.classes.get(&i.class) else {
-            self.error(format!("{} is not a class", i.class), i.span);
+            self.error(
+                msg!("nibcheck-not-a-class", name = i.class.to_string()),
+                i.span,
+            );
             return;
         };
         let (decl, bound, arg) = (class.decl.clone(), class.bound, class.arg);
+        let class_args: Vec<&SurfaceTerm> = std::iter::once(&i.head).chain(&i.arguments).collect();
+        if class_args.len() != decl.parameters.len() {
+            self.error(
+                msg!(
+                    "nibcheck-class-argument-arity",
+                    name = i.class.to_string(),
+                    expected = decl.parameters.len().to_string(),
+                    count = class_args.len().to_string()
+                ),
+                i.span,
+            );
+            return;
+        }
+        if class_args.iter().any(|a| !is_type_instance_arg(a)) {
+            self.error(msg!("nibcheck-value-indexed-instances"), i.span);
+            return;
+        }
         let mut generics: Vec<(Param, Kind)> = Vec::new();
         let mut map: HashMap<Name, Ty> = HashMap::new();
         for (n, g) in i.generics.iter().enumerate() {
@@ -360,6 +659,14 @@ impl Checker {
         // The head: a type with no arguments, or a type constructor applied
         // to distinct generics.
         let shape_ok = match &*i.head.kind {
+            // The product of two distinct generics, `A × B`.
+            TermKind::App { .. } if let Some(members) = i.head.product_type_members() => {
+                match members.as_slice() {
+                    [a, b] => matches!((&*a.kind, &*b.kind), (TermKind::Var(x), TermKind::Var(y))
+                    if x != y && i.generics.contains(x) && i.generics.contains(y)),
+                    _ => false,
+                }
+            }
             TermKind::Var(v) => !i.generics.contains(v),
             TermKind::App {
                 function,
@@ -371,33 +678,61 @@ impl Checker {
                             && !arguments[..n].iter().any(|b| b.kind == a.kind))
                     })
             }
-            // The product of two distinct generics, `A × B`.
-            TermKind::Product(members) => match members.as_slice() {
-                [a, b] => matches!((&*a.kind, &*b.kind), (TermKind::Var(x), TermKind::Var(y))
-                    if x != y && i.generics.contains(x) && i.generics.contains(y)),
-                _ => false,
-            },
+            // A function type over distinct generics, `(A, B) -> R`, with no
+            // names, borrows or effects written.
+            TermKind::Pi {
+                params,
+                result,
+                effects: None,
+                ..
+            } => {
+                let mut all: Vec<&SurfaceTerm> = params
+                    .iter()
+                    .map(|(n, p)| (n.is_none()).then_some(p))
+                    .collect::<Option<_>>()
+                    .unwrap_or_default();
+                all.push(result);
+                all.len() == params.len() + 1
+                    && all.iter().enumerate().all(|(n, a)| {
+                        matches!(&*a.kind, TermKind::Var(g) if i.generics.contains(g)
+                            && !all[..n].iter().any(|b| b.kind == a.kind))
+                    })
+            }
             _ => false,
         };
         if !shape_ok {
             self.error(
-                "an instance head applies a type to distinct generics",
+                msg!("nibcheck-instance-head-distinct-generics"),
                 i.head.span,
             );
             return;
         }
         for (g, _) in &generics {
-            if !mentions(&i.head, &g.name) {
-                self.error(format!("{g} does not appear in the head"), i.head.span);
+            if !class_args.iter().any(|a| mentions(a, &g.name)) {
+                self.error(
+                    msg!("nibcheck-generic-not-in-head", name = g.to_string()),
+                    i.head.span,
+                );
                 return;
             }
         }
         self.constructor_position = true;
-        let head = self.written(&i.head, &map);
+        let mut heads: Vec<Ty> = Vec::new();
+        for a in &class_args {
+            heads.push(self.written(a, &map));
+        }
         self.constructor_position = false;
+        let head = heads[0].clone();
         let Some(ctor) = constructor(&head, i.class.is_resolved()) else {
             self.error(
-                "an instance head applies a type to distinct generics",
+                msg!("nibcheck-instance-head-distinct-generics"),
+                i.head.span,
+            );
+            return;
+        };
+        let Some(key_ctor) = instance_heads_key(&heads, i.class.is_resolved()) else {
+            self.error(
+                msg!("nibcheck-instance-head-distinct-generics"),
                 i.head.span,
             );
             return;
@@ -418,9 +753,13 @@ impl Checker {
                 let k = self.datas.kind(&made);
                 if !k.fits(bound) {
                     self.error(
-                        format!(
-                            "{} takes constructors from {arg} to {bound}, and {shown} is {k}",
-                            i.class
+                        msg!(
+                            "nibcheck-constructor-kind-mismatch",
+                            what = i.class.to_string(),
+                            arg = arg.to_string(),
+                            result = bound.to_string(),
+                            shown = shown.to_string(),
+                            kind = k.to_string()
                         ),
                         i.span,
                     );
@@ -430,9 +769,10 @@ impl Checker {
             (Some(_), _) => {
                 let shown = self.shown(&head);
                 self.error(
-                    format!(
-                        "{} takes a type constructor with one argument missing, and {shown} is not one",
-                        i.class
+                    msg!(
+                        "nibcheck-instance-needs-constructor",
+                        class = i.class.to_string(),
+                        shown = shown.to_string()
                     ),
                     i.span,
                 );
@@ -441,80 +781,160 @@ impl Checker {
             (None, Some(m)) if m > 0 => {
                 let n = constructor(&head, i.class.is_resolved()).unwrap_or_default();
                 let want = self.datas.decls[&n].generics.len();
-                self.error(format!("{n} takes {want} arguments"), i.head.span);
+                self.error(
+                    msg!(
+                        "nibcheck-takes-arguments",
+                        name = n.to_string(),
+                        count = want.to_string()
+                    ),
+                    i.head.span,
+                );
                 return;
             }
             (None, _) => {
-                let shown = self.shown(&head);
-                let k = self.datas.kind(&head);
-                if !k.fits(bound) {
-                    self.error(
-                        format!("{} takes types up to {bound}, and {shown} is {k}", i.class),
-                        i.span,
-                    );
-                    return;
+                for (n, h) in heads.iter().enumerate() {
+                    let shown = self.shown(h);
+                    let k = self.datas.kind(h);
+                    if !k.fits(bound) {
+                        self.error(
+                            msg!(
+                                "nibcheck-instance-type-kind",
+                                class = i.class.to_string(),
+                                bound = bound.to_string(),
+                                shown = shown.to_string(),
+                                kind = k.to_string()
+                            ),
+                            if n == 0 {
+                                i.span
+                            } else {
+                                i.arguments[n - 1].span
+                            },
+                        );
+                        return;
+                    }
                 }
             }
         }
-        let shown = self.shown(&head);
-        if !in_prelude && !own_classes.contains(&i.class) && !own_types.contains(&ctor) {
+        let shown = heads
+            .iter()
+            .map(|h| self.shown(h).to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let owned_ctor = heads
+            .iter()
+            .any(|h| constructor(h, i.class.is_resolved()).is_some_and(|c| own_types.contains(&c)));
+        if !in_prelude && !own_classes.contains(&i.class) && !owned_ctor {
             self.error(
-                format!(
-                    "{}({ctor}) must be in the tote of {} or of {ctor}",
-                    i.class, i.class
+                msg!(
+                    "nibcheck-instance-orphan",
+                    class = i.class.to_string(),
+                    ctor = ctor.to_string()
                 ),
                 i.span,
             );
             return;
         }
-        let key = (i.class.clone(), ctor.clone());
+        let key = (i.class.clone(), key_ctor.clone());
         if self.instances.contains_key(&key) {
             self.error(
-                format!("{} already has an instance for {ctor}", i.class),
+                msg!(
+                    "nibcheck-instance-duplicate",
+                    class = i.class.to_string(),
+                    ctor = key_ctor.to_string()
+                ),
                 i.span,
             );
             return;
         }
-        let mut preds: Vec<(Name, Param)> = Vec::new();
+        let mut preds: Vec<(Name, Vec<Param>)> = Vec::new();
         for c in &i.where_ {
-            if !c.arguments.is_empty() {
+            let asked = self.classes.get(&c.class).map(|info| info.decl.arity);
+            let args: Vec<&SurfaceTerm> = std::iter::once(&c.ty).chain(&c.arguments).collect();
+            if let Some(arity) = asked
+                && args.len() != arity
+            {
                 self.error(
-                    "value-indexed constraints require checked dictionary extraction",
+                    msg!(
+                        "nibcheck-class-argument-arity",
+                        name = c.class.to_string(),
+                        expected = arity.to_string(),
+                        count = args.len().to_string()
+                    ),
                     c.span,
                 );
                 continue;
             }
-            if !STRUCTURAL.contains(&c.class.as_str()) && !self.classes.contains_key(&c.class) {
-                self.error(format!("{} is not a class", c.class), c.span);
+            if asked.is_none() && !STRUCTURAL.contains(&c.class.as_str()) && !c.arguments.is_empty()
+            {
+                self.error(msg!("nibcheck-value-indexed-constraints"), c.span);
                 continue;
             }
-            match &*c.ty.kind {
-                TermKind::Var(g) if i.generics.contains(g) => {
-                    let p = (
-                        c.class.clone(),
-                        generics
-                            .iter()
-                            .find(|(p, _)| &p.name == g)
-                            .unwrap()
-                            .0
-                            .clone(),
-                    );
-                    if preds.contains(&p) {
-                        self.error(format!("{}({g}) is written twice", c.class), c.span);
-                    } else {
-                        preds.push(p);
+            if !STRUCTURAL.contains(&c.class.as_str()) && !self.classes.contains_key(&c.class) {
+                self.error(
+                    msg!("nibcheck-not-a-class", name = c.class.to_string()),
+                    c.span,
+                );
+                continue;
+            }
+            let mut params = Vec::new();
+            let mut ok = true;
+            for a in &args {
+                match &*a.kind {
+                    TermKind::Var(g) if i.generics.contains(g) => {
+                        params.push(
+                            generics
+                                .iter()
+                                .find(|(p, _)| &p.name == g)
+                                .unwrap()
+                                .0
+                                .clone(),
+                        );
+                    }
+                    _ => {
+                        self.error(msg!("nibcheck-where-only-generics-of-instance"), c.span);
+                        ok = false;
+                        break;
                     }
                 }
-                _ => self.error("where constrains only generics of the instance", c.span),
+            }
+            if !ok {
+                continue;
+            }
+            let p = (c.class.clone(), params);
+            if preds.iter().any(|(cls, ps)| cls == &p.0 && ps == &p.1) {
+                self.error(
+                    msg!(
+                        "nibcheck-predicate-written-twice",
+                        class = c.class.to_string(),
+                        argument = args
+                            .iter()
+                            .map(|a| match &*a.kind {
+                                TermKind::Var(g) => g.to_string(),
+                                _ => "?".into(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    c.span,
+                );
+            } else {
+                preds.push(p);
             }
         }
         let mut written = HashSet::new();
         for l in &i.laws {
             if !decl.laws.iter().any(|expected| expected.name == l.name) {
-                self.error(format!("{} has no law {}", i.class, l.name), l.span);
+                self.error(
+                    msg!(
+                        "nibcheck-instance-no-law",
+                        class = i.class.to_string(),
+                        name = l.name.to_string()
+                    ),
+                    l.span,
+                );
             } else if !written.insert(l.name.as_str()) {
                 self.error(
-                    format!("the law {} of the instance is written twice", l.name),
+                    msg!("nibcheck-instance-law-twice", name = l.name.to_string()),
                     l.span,
                 );
             }
@@ -524,16 +944,43 @@ impl Checker {
         for expected in &decl.methods {
             let Some(m) = i.methods.iter().find(|m| m.name == expected.name) else {
                 self.error(
-                    format!(
-                        "the instance {}({shown}) does not define {}",
-                        i.class, expected.name
+                    msg!(
+                        "nibcheck-instance-missing-method",
+                        class = i.class.to_string(),
+                        ty = shown.to_string(),
+                        name = expected.name.to_string()
                     ),
                     i.span,
                 );
                 continue;
             };
+            // A method that is not executable (`type_functions::executable`)
+            // is not run: its body is a type, which the signatures of the
+            // other methods read in its place (`same_signature`).
+            if !super::type_functions::executable(expected) {
+                if let Some(param) = m.params.iter().find(|p| mentions(&m.body, p)) {
+                    self.error(
+                        msg!(
+                            "nibcheck-type-method-uses-value",
+                            name = m.name.to_string(),
+                            param = param.to_string()
+                        ),
+                        m.span,
+                    );
+                } else {
+                    // The body is a type over the instance's generics, read
+                    // as a native type function's body is
+                    // (`type_functions.rs`).
+                    let given = self.written(&block_value(&m.body), &map);
+                    self.type_methods.insert(
+                        (member_fn(&decl, &m.name), key_ctor.clone()),
+                        (head.clone(), given),
+                    );
+                }
+                continue;
+            }
             let mut f = m.clone();
-            f.name = instance_fn(&decl, &m.name, &ctor);
+            f.name = instance_fn(&decl, &m.name, &key_ctor);
             f.bounds.resize(f.generics.len(), None);
             let mut bounds = i.bounds.clone();
             bounds.resize(i.generics.len(), None);
@@ -553,44 +1000,56 @@ impl Checker {
             generic_types.extend(f.generic_parameters().into_iter().map(|(_, ty)| ty));
             f.generic_types = generic_types;
             f.generics.splice(0..0, i.generics.iter().cloned());
-            f.where_ = i.where_.clone();
+            f.where_ = i
+                .where_
+                .iter()
+                .cloned()
+                .chain(m.where_.iter().cloned())
+                .collect();
             let scheme = self.signature(&f);
-            self.same_signature(i, &f, &scheme, expected, &decl.param, &shown);
+            self.same_signature(i, &f, &scheme, expected, &decl, &shown);
             self.fns.insert(f.name.clone(), scheme);
             synthesized.push(f);
         }
         for m in &i.methods {
             if !decl.methods.iter().any(|x| x.name == m.name) {
-                self.error(format!("{} has no method {}", i.class, m.name), m.span);
+                self.error(
+                    msg!(
+                        "nibcheck-no-method",
+                        owner = i.class.to_string(),
+                        name = m.name.to_string()
+                    ),
+                    m.span,
+                );
             }
         }
         self.instances.insert(
             key,
             InstanceInfo {
                 generics,
-                head,
+                heads,
                 preds,
             },
         );
     }
 
-    /// The instance's method has the class's signature, the head in the
-    /// place of the parameter.
+    /// The instance's method has the class's signature, the heads in the
+    /// place of the class parameters.
     fn same_signature(
         &mut self,
         i: &InstanceDecl,
         got: &FnDecl,
         scheme: &Scheme,
         expected: &FnDecl,
-        param: &Name,
-        head: &Ty,
+        decl: &ClassDecl,
+        head: &str,
     ) {
         let mut want = expected.clone();
         for t in want.param_types.iter_mut().flatten() {
-            *t = replace(t, param, &i.head);
+            *t = instance_type(t, decl, i);
         }
         if let Some(r) = &mut want.result {
-            *r = replace(r, param, &i.head);
+            *r = instance_type(r, decl, i);
         }
         want.name = got.name.clone();
         // Compare both signatures over the binders of this method declaration.
@@ -614,9 +1073,19 @@ impl Checker {
         generic_types.extend(want.generic_parameters().into_iter().map(|(_, ty)| ty));
         want.generic_types = generic_types;
         want.generics.splice(0..0, i.generics.iter().cloned());
-        want.where_ = i.where_.clone();
+        want.where_ = i
+            .where_
+            .iter()
+            .cloned()
+            .chain(
+                expected
+                    .where_
+                    .iter()
+                    .map(|c| instance_constraint(c, decl, i)),
+            )
+            .collect();
         let wanted = self.signature_in(&want, scheme.owner.clone());
-        if wanted.ty != scheme.ty || got.borrows != want.borrows {
+        if wanted.ty != scheme.ty || wanted.preds != scheme.preds || got.borrows != want.borrows {
             let params: Vec<String> = want
                 .params
                 .iter()
@@ -634,15 +1103,16 @@ impl Checker {
                             .unwrap_or_default(),
                         _ => String::new(),
                     };
-                    format!("{borrow}{p}: {ty}")
+                    format!("{p}: {borrow}{ty}")
                 })
                 .collect();
             self.error(
-                format!(
-                    "{}.{} of {head} takes {}",
-                    i.class,
-                    expected.name,
-                    params.join(", ")
+                msg!(
+                    "nibcheck-instance-method-parameters",
+                    class = i.class.to_string(),
+                    name = expected.name.to_string(),
+                    head = head.to_string(),
+                    parameters = params.join(", ")
                 ),
                 got.span,
             );
@@ -659,63 +1129,140 @@ pub(crate) enum Unresolved {
 }
 
 impl Checker {
-    /// The evidence for `class(t)`: an assumption for
-    /// a type parameter, otherwise the instance for the head of the type,
-    /// with the evidence for its `where` at the types the head was matched
-    /// to. Nothing here makes a type: an unknown type is left as an error.
+    /// The evidence for `class(t₀, t₁, …)`: an assumption for type
+    /// parameters, otherwise the instance for the heads of the types, with
+    /// the evidence for its `where` at the types the heads were matched to.
+    /// Nothing here makes a type: an unknown type is left as an error.
     pub(super) fn resolve_class(
         &self,
         class: &Name,
-        t: &Ty,
-        assume: &[(Name, Param)],
+        tys: &[Ty],
+        assume: &[(Name, Vec<Param>)],
     ) -> Result<super::Ev, Unresolved> {
         use super::Ev;
-        let t = match self.resolve(t) {
-            Ty::Tagged(_, t) | Ty::Borrow(t, _) => *t,
-            t => t,
+        let tys: Vec<Ty> = tys
+            .iter()
+            .map(|t| match self.resolve(t) {
+                Ty::Tagged(_, t) | Ty::Borrow(t, _) => *t,
+                t => t,
+            })
+            .collect();
+        let shown = || {
+            tys.iter()
+                .map(|t| self.shown(t).to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
         };
-        let shown = || self.shown(&t).to_string();
-        if let Ty::Param(n, _) = &t {
-            return if assume.iter().any(|(c, g)| c == class && g == n) {
-                Ok(Ev::Assume(class.clone(), n.clone()))
-            } else {
-                Err(Unresolved::Assumption(shown()))
-            };
+        if tys.iter().all(|t| matches!(t, Ty::Param(..))) {
+            if let Some((_, params)) = assume.iter().find(|(c, ps)| {
+                c == class
+                    && ps.len() == tys.len()
+                    && ps
+                        .iter()
+                        .zip(&tys)
+                        .all(|(p, t)| matches!(t, Ty::Param(n, _) if n == p))
+            }) {
+                return Ok(Ev::Assume(class.clone(), params.clone()));
+            }
+            return Err(Unresolved::Assumption(shown()));
         }
-        if matches!(t, Ty::Var(_)) {
+        if tys.iter().any(|t| matches!(t, Ty::Var(_))) {
             return Err(Unresolved::Undetermined);
         }
+        let Some(t) = tys.first() else {
+            return Err(Unresolved::NoInstance(shown()));
+        };
+        // A union shows the member it holds: the `match` of `Debug(A | B)`
+        // has a typed arm for each member, so each needs a head of its own
+        // (`docs/design/debug.md`).
+        if let (Ty::Union(members), true) = (t, tys.len() == 1)
+            && super::debug::is_debug_class(class)
+        {
+            let mut arms = Vec::new();
+            for m in members {
+                let m = self.resolve(m);
+                let headed = match &m {
+                    Ty::Int(_)
+                    | Ty::Bool
+                    | Ty::Text
+                    | Ty::Unit
+                    | Ty::Decimal
+                    | Ty::Float
+                    | Ty::Float32 => true,
+                    Ty::Named(..) => true,
+                    _ => false,
+                };
+                if !headed {
+                    return Err(if self.has_vars(&m) {
+                        Unresolved::Undetermined
+                    } else {
+                        Unresolved::NoInstance(shown())
+                    });
+                }
+                let ev = self.resolve_class(class, &[m.clone()], assume)?;
+                arms.push((m, ev));
+            }
+            return Ok(Ev::Union(class.clone(), arms));
+        }
         if STRUCTURAL.contains(&class.as_str()) {
-            return if self.datas.structural(class, &t, assume) {
+            return if tys.len() == 1
+                && self
+                    .datas
+                    .structural(class, &self.settled(t), &flatten_assume(assume))
+            {
                 Ok(Ev::Structural)
             } else {
                 Err(Unresolved::NoInstance(shown()))
             };
         }
-        let Some(ctor) = constructor(&t, class.is_resolved()) else {
+        let resolved = class.is_resolved();
+        let Some(key_ctor) = instance_heads_key(&tys, resolved) else {
             return Err(Unresolved::NoInstance(shown()));
         };
         // A `Pair` is the instance's whichever way it is named: `A × B` is the prelude's.
-        let ctor = if super::is_pair_name(&ctor) {
+        let key_ctor = if tys.len() == 1 && super::is_pair_name(&key_ctor) {
             self.pair_name()
         } else {
-            ctor
+            key_ctor
         };
-        let Some(instance) = self.instances.get(&(class.clone(), ctor.clone())) else {
-            return Err(if self.has_vars(&t) {
+        let Some(instance) = self.instances.get(&(class.clone(), key_ctor.clone())) else {
+            return Err(if tys.iter().any(|t| self.has_vars(t)) {
                 Unresolved::Undetermined
             } else {
                 Unresolved::NoInstance(shown())
             });
         };
-        // The head is the constructor over distinct generics, so each
+        // Each head is the constructor over distinct generics, so each
         // argument of `t` is what one generic stands for.
         let mut found: HashMap<&ParamId, Ty> = HashMap::new();
-        if let (Ty::Named(_, params), Ty::Named(_, args)) = (&instance.head, &t) {
+        fn bind<'a>(found: &mut HashMap<&'a ParamId, Ty>, params: &'a [Ty], args: &[Ty]) {
             for (p, a) in params.iter().zip(args) {
                 if let Ty::Param(g, _) = p {
                     found.insert(g.id(), a.clone());
                 }
+            }
+        }
+        for (inst_ty, got_ty) in instance.heads.iter().zip(&tys) {
+            match (inst_ty, got_ty) {
+                (Ty::Named(_, params), Ty::Named(_, args)) => bind(&mut found, params, args),
+                // A function instance takes a function of its kind whose
+                // parameters are owned; a borrowed parameter is not a type a
+                // generic stands for.
+                (Ty::Fn(params, result, head_kind), Ty::Fn(args, got, kind)) => {
+                    let args: Vec<Ty> = args.iter().map(|a| self.resolve(a)).collect();
+                    if !(kind == head_kind || (kind.dup() && head_kind.dup()))
+                        || args.iter().any(|a| matches!(a, Ty::Borrow(..)))
+                    {
+                        return Err(Unresolved::NoInstance(shown()));
+                    }
+                    bind(&mut found, params, &args);
+                    bind(
+                        &mut found,
+                        std::slice::from_ref(&**result),
+                        &[self.resolve(got)],
+                    );
+                }
+                _ => {}
             }
         }
         let args: Vec<Ty> = instance
@@ -724,10 +1271,21 @@ impl Checker {
             .map(|(g, _)| found.get(g.id()).cloned().unwrap_or(Ty::Unit))
             .collect();
         let mut subs = Vec::new();
-        for (d, g) in &instance.preds {
-            let u = found.get(g.id()).cloned().unwrap_or(Ty::Unit);
-            subs.push(self.resolve_class(d, &u, assume)?);
+        for (d, gs) in &instance.preds {
+            let us: Vec<Ty> = gs
+                .iter()
+                .map(|g| found.get(g.id()).cloned().unwrap_or(Ty::Unit))
+                .collect();
+            subs.push(self.resolve_class(d, &us, assume)?);
         }
-        Ok(Ev::Inst(class.clone(), ctor, args, subs))
+        Ok(Ev::Inst(class.clone(), key_ctor, args, subs))
     }
+}
+
+/// Structural predicates still match a single generic; flatten multi-arg assumes to their first.
+fn flatten_assume(assume: &[(Name, Vec<Param>)]) -> Vec<(Name, Param)> {
+    assume
+        .iter()
+        .filter_map(|(c, ps)| Some((c.clone(), ps.first()?.clone())))
+        .collect()
 }

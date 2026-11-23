@@ -1,5 +1,5 @@
 //! The functions a `syntax` registers with `with fmt f, tokens g`
-//! (`docs/design/macro.md`「構文に付ける関数（`with`）」): what lays out a literal's text
+//! (`docs/design/macro.md`「Functions attached to a syntax (`with`)」): what lays out a literal's text
 //! and what an editor colours it as. They run in the program they are written in, with the
 //! limits of a macro, answer no host effect, and read the text as tokens or as the lossless tree.
 
@@ -8,12 +8,12 @@ use tauto_message::{Message, msg};
 
 use tauto_syntax::{Cst, Event, Limits, ParseError, Tables, build_cst, parse};
 
-use crate::eval::{Host, call_bound_function};
 use crate::macros::{Node, Options};
 use crate::rows::{RowReport, check_program_rows};
 use crate::surface::Program;
 use crate::syntax::{Registration, Role};
 use crate::types::{Ty, TypeReport, check_program};
+use tauto_macro::macros::runner::Host;
 use tauto_parol::Span;
 
 /// The colours an editor's legend lists, in order: what a `SynHighlight` names one of.
@@ -78,28 +78,24 @@ pub struct Library<'p> {
     unbound: Vec<(Registration, Message)>,
 }
 
-/// The checked executable representation of registered functions that use proof-language types.
+/// The executable program the registered functions run in, made as a macro's is.
 pub(crate) fn executable(
     program: &Program,
     registrations: &[Registration],
     standard: &std::collections::HashSet<Name>,
 ) -> Option<Program> {
-    if registrations.is_empty() || standard.is_empty() || !program.errors.is_empty() {
+    if registrations.is_empty() || !program.errors.is_empty() {
         return None;
     }
-    let report = check_program(program).with_prelude_for(program);
-    let rows = check_program_rows(program);
-    if registrations
-        .iter()
-        .all(|r| bind(program, &report, &rows, r).is_ok())
-    {
-        return None;
-    }
+    // The functions are taken from the executable prefix, as a macro's
+    // are: the machine compiles what it is given, classes and all.
     let stmts = crate::extract::executable_prefix(&program.stmts, standard).ok()?;
-    Some(Program {
+    // What the program the functions run in has that does not check is not theirs (a proof's
+    // helper in the kernel's language), as in the library of a macro's functions.
+    Some(tauto_macro::macros::expand::leave_out_unchecked(Program {
         stmts,
         errors: Vec::new(),
-    })
+    }))
 }
 
 pub fn validate(program: &Program, registrations: &[Registration]) -> Vec<(Message, Span)> {
@@ -112,7 +108,13 @@ pub fn validate(program: &Program, registrations: &[Registration]) -> Vec<(Messa
     }
     let report = check_program(program);
     if !report.errors.is_empty() {
-        return Vec::new();
+        // A program the functions cannot run in is not one whose rows were checked: say so
+        // rather than leave the registered functions' effects unchecked.
+        return report
+            .errors
+            .into_iter()
+            .map(|e| (e.message, e.span))
+            .collect();
     }
     let report = report.with_prelude_for(&program);
     let rows = check_program_rows(program);
@@ -226,9 +228,9 @@ fn bind(
             if crate::host::HOST_EFFECTS.contains(&e.as_str()) {
                 return Err(head(msg!("tauto-reg-host-effect", effect = e.as_str())));
             }
-            if !["Div", "macro_error"]
+            if !["div", "divzero", "overflow", "macro_error"]
                 .iter()
-                .any(|name| crate::bindings::is_library(e, name))
+                .any(|name| crate::bindings::is_library_effect(e, name))
             {
                 return Err(head(msg!("tauto-reg-effect", effect = e.as_str())));
             }
@@ -324,7 +326,7 @@ impl<'p> Library<'p> {
     fn call(&self, bound: &Bound, args: &[Node]) -> Result<Node, Message> {
         let limits = Options::default();
         let mut host = Host::new(limits.call_steps, limits.allocations);
-        match call_bound_function(
+        match crate::macros::expand::runner().call(
             &self.program,
             &self.report,
             &bound.function,

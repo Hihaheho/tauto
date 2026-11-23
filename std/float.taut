@@ -1,0 +1,609 @@
+import "base.taut" { Nat }
+import "int.taut" { Int }
+import "sint.taut" { SInt }
+import "text.taut" { Text }
+import "uint.taut" { Nat, UInt }
+import std::prelude::std { Option }
+
+// `Float` (IEEE 754 binary64) as the proofs see it: its 64 bits. Extraction
+// maps `Float` onto Nib's `Float` and the functions marked "Mapped" onto its
+// operators and builtins (`docs/design/float.md`); their definitions here
+// say, bit for bit, what those compute, so a proof about them holds of the
+// program that runs.
+//
+// The definitions decode the bits into a sign, a whole number `m` and an
+// exponent, compute the exact result with whole numbers, and round it to
+// the nearest `Float`, ties to even, as IEEE 754 does. Every number they
+// compute stays below `2^128`, so the kernel computes them at once.
+//
+// NaN has many bit patterns, and IEEE 754 does not say which one an
+// operation gives. `Float::raw` and `Float::bits` give `0x7FF8000000000000`
+// for every NaN, here and at run time, and nothing else reads the bits, so
+// no program can tell one NaN from another.
+//
+// The functions IEEE 754 does not round exactly (`Float::exp`, `Float::ln`,
+// `Float::sin`, …) and `Text::of_float`, `Float::of_text` are axioms: a proof
+// may call them but knows nothing of their values.
+
+pub(open) inductive Float: Type {
+  Mk(bits: UInt(64)): Float
+}
+
+// The `Float` whose bits are `n` (modulo `2^64`). A literal `1.5` in a
+// proof is `Float::of_raw` of its bits.
+pub fn Float::of_raw(n: Nat): Float {
+  Float::Mk(UInt::of_nat_mod64(n))
+}
+
+// 1 for a negative sign, 0 otherwise.
+pub fn Float::sign_of(n: Nat): Nat {
+  Nat::div_nz(n, 9223372036854775808, Nat::ne_zero(9223372036854775808, Refl))
+}
+
+pub fn Float::expo_of(n: Nat): Nat {
+  Nat::rem_nz(
+    Nat::div_nz(n, 4503599627370496, Nat::ne_zero(4503599627370496, Refl)),
+    2048,
+    Nat::ne_zero(2048, Refl)
+  )
+}
+
+pub fn Float::frac_of(n: Nat): Nat {
+  Nat::rem_nz(n, 4503599627370496, Nat::ne_zero(4503599627370496, Refl))
+}
+
+pub fn Float::mag_of(n: Nat): Nat {
+  Nat::rem_nz(n, 9223372036854775808, Nat::ne_zero(9223372036854775808, Refl))
+}
+
+pub fn Float::nan_of(n: Nat): Bool {
+  Float::expo_of(n) == 2047 && not(Float::frac_of(n) == 0)
+}
+
+pub fn Float::inf_of(n: Nat): Bool {
+  Float::expo_of(n) == 2047 && Float::frac_of(n) == 0
+}
+
+// A finite `Float` is `m * 2^(e - 4000)` with `m < 2^53`: `Float::m_of` and
+// `Float::e_of` give `m` and `e`. The offset 4000 keeps every exponent below
+// a whole number (the smallest, of a subnormal, is `2926 - 4000`).
+pub fn Float::m_of(n: Nat): Nat {
+  match Float::expo_of(n) == 0 {
+    true => Float::frac_of(n)
+    false => Float::frac_of(n) + 4503599627370496
+  }
+}
+
+pub fn Float::e_of(n: Nat): Nat {
+  match Float::expo_of(n) == 0 {
+    true => 2926
+    false => Float::expo_of(n) + 2925
+  }
+}
+
+pub fn Float::nan_raw(): Nat {
+  9221120237041090560
+}
+
+pub fn Float::inf_raw(s: Nat): Nat {
+  s * 9223372036854775808 + 9218868437227405312
+}
+
+pub fn Float::zero_raw(s: Nat): Nat {
+  s * 9223372036854775808
+}
+
+// The number of binary digits of `n`, counting down from `fuel`.
+pub fn Float::bitlen(fuel: Nat, n: Nat): Nat {
+  match fuel {
+    Zero => 0
+    Succ(j) => ⊢ Nat from match n == 0 {
+      true => 0
+      false => Succ(Float::bitlen(j, Nat::div_nz(n, 2, Nat::ne_zero(2, Refl))))
+    }
+  }
+}
+
+pub fn Float::len(n: Nat): Nat {
+  Float::bitlen(130, n)
+}
+
+// Mapped: the bits of `x` as a number, with the bits `0x7FF8000000000000`
+// for every NaN. Every function below reads a `Float` through this one, so
+// none of them sees which NaN it is.
+pub fn Float::raw(x: Float): Nat {
+  match x {
+    Mk(b) => ⊢ Nat from match Float::nan_of(UInt::val64(b)) {
+      true => Float::nan_raw()
+      false => UInt::val64(b)
+    }
+  }
+}
+
+// The bits of `m * 2^(t - 4000)` with sign `s`, for `m <= 2^53` and
+// `t >= 2926`, or an infinity when it is too large. `t - 2926` is the
+// exponent field less one, and `m` adds the hidden bit, so one sum writes
+// a normal, a subnormal and a carry out of rounding alike.
+pub fn Float::encode(s: Nat, m: Nat, t: Nat): Nat {
+  match (t - 2926) * 4503599627370496 + m < 9218868437227405312 {
+    true => Float::zero_raw(s) + ((t - 2926) * 4503599627370496 + m)
+    false => Float::inf_raw(s)
+  }
+}
+
+// `m * 2^(t - k - 4000)` with `k` binary digits dropped from `m`, rounded
+// to the nearest, ties to even.
+pub fn Float::round_shift(s: Nat, m: Nat, t: Nat, k: Nat): Nat {
+  match k < 125 {
+    false => Float::zero_raw(s)
+    true => Float::round_at(
+      s,
+      Nat::div_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)),
+      Nat::rem_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)),
+      Nat::pow2(k),
+      t
+    )
+  }
+}
+
+pub fn Float::round_at(s: Nat, q: Nat, r: Nat, p: Nat, t: Nat): Nat {
+  Float::encode(
+    s,
+    q + Float::round_up(
+      Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) < r,
+      r == Nat::div_nz(
+        p,
+        2,
+        Nat::ne_zero(2, Refl)
+      ) && Nat::rem_nz(q, 2, Nat::ne_zero(2, Refl)) == 1
+    ),
+    t
+  )
+}
+
+// 1 to round up: above the half, or at the half of an odd `q`.
+pub fn Float::round_up(above: Bool, tie_odd: Bool): Nat {
+  match above {
+    true => 1
+    false => ⊢ Nat from match tie_odd { true => 1, false => 0 }
+  }
+}
+
+// The nearest `Float` to `m * 2^(e - 4000)` with sign `s`, for `e >= 1800`
+// and `m < 2^120`. When an operation's result is not exact, it passes an
+// `m` with a last digit of 1 standing for the part below, and at least two
+// digits more than the result keeps, so that the rounding is the same.
+pub fn Float::pack(s: Nat, m: Nat, e: Nat): Nat {
+  match m == 0 {
+    true => Float::zero_raw(s)
+    false => Float::pack_at(s, m, e, Nat::max(e + Float::len(m) - 53, 2926))
+  }
+}
+
+pub fn Float::pack_at(s: Nat, m: Nat, e: Nat, t: Nat): Nat {
+  match t <= e {
+    true => Float::encode(s, m * Nat::pow2(e - t), t)
+    false => Float::round_shift(s, m, t, t - e)
+  }
+}
+
+// `a + b` of two finite ones, `a` the one with the larger exponent. When
+// the other is far below, it only decides which way to round: it is replaced
+// by 1 (or 0 for a zero) in the place 62 digits below `a`'s.
+pub fn Float::add_ordered(sa: Nat, ma: Nat, ea: Nat, sb: Nat, mb: Nat, eb: Nat): Nat {
+  match ea - eb <= 60 {
+    true => Float::combine(sa, ma * Nat::pow2(ea - eb), sb, mb, eb)
+    false => Float::combine(sa, ma * 4611686018427387904, sb, Nat::min(mb, 1), ea - 62)
+  }
+}
+
+// `±a ± b`, both scaled by `2^(e - 4000)`. An exact zero is `+0` unless
+// both are negative.
+pub fn Float::combine(sa: Nat, a: Nat, sb: Nat, b: Nat, e: Nat): Nat {
+  match sa == sb {
+    true => Float::pack(sa, a + b, e)
+    false => ⊢ Nat from match b < a {
+      true => Float::pack(sa, a - b, e)
+      false => ⊢ Nat from match a < b {
+        true => Float::pack(sb, b - a, e)
+        false => 0
+      }
+    }
+  }
+}
+
+pub fn Float::add_raw(a: Nat, b: Nat): Nat {
+  match Float::nan_of(a) || Float::nan_of(b) {
+    true => Float::nan_raw()
+    false => ⊢ Nat from match Float::inf_of(a) {
+      true => ⊢ Nat from match Float::inf_of(b) && not(Float::sign_of(a) == Float::sign_of(b)) {
+        true => Float::nan_raw()
+        false => a
+      }
+      false => ⊢ Nat from match Float::inf_of(b) {
+        true => b
+        false => ⊢ Nat from match Float::e_of(b) <= Float::e_of(a) {
+          true => Float::add_ordered(Float::sign_of(a), Float::m_of(a), Float::e_of(a), Float::sign_of(b), Float::m_of(b), Float::e_of(b))
+          false => Float::add_ordered(Float::sign_of(b), Float::m_of(b), Float::e_of(b), Float::sign_of(a), Float::m_of(a), Float::e_of(a))
+        }
+      }
+    }
+  }
+}
+
+pub fn Float::neg_raw(a: Nat): Nat {
+  match Float::nan_of(a) {
+    true => Float::nan_raw()
+    false => ⊢ Nat from match Float::sign_of(a) == 0 {
+      true => a + 9223372036854775808
+      false => a - 9223372036854775808
+    }
+  }
+}
+
+pub fn Float::xor(a: Nat, b: Nat): Nat {
+  Nat::rem_nz(Float::sign_of(a) + Float::sign_of(b), 2, Nat::ne_zero(2, Refl))
+}
+
+pub fn Float::is_zero_raw(a: Nat): Bool {
+  Float::mag_of(a) == 0
+}
+
+pub fn Float::mul_raw(a: Nat, b: Nat): Nat {
+  match Float::nan_of(a) || Float::nan_of(b) {
+    true => Float::nan_raw()
+    false => ⊢ Nat from match Float::inf_of(a) || Float::inf_of(b) {
+      true => ⊢ Nat from match Float::is_zero_raw(a) || Float::is_zero_raw(b) {
+        true => Float::nan_raw()
+        false => Float::inf_raw(Float::xor(a, b))
+      }
+      false => Float::pack(Float::xor(a, b), Float::m_of(a) * Float::m_of(b), Float::e_of(a) + Float::e_of(b) - 4000)
+    }
+  }
+}
+
+// `m` moved up to 53 digits, and the exponent down by as much.
+pub fn Float::norm_m(m: Nat): Nat {
+  m * Nat::pow2(53 - Float::len(m))
+}
+
+pub fn Float::norm_e(m: Nat, e: Nat): Nat {
+  e - (53 - Float::len(m))
+}
+
+// `a / b` of two finite ones, `b` not zero: 62 digits of the quotient, and
+// a last one for a remainder. A `nb` of 0 (never passed) gives NaN.
+pub fn Float::div_finite(s: Nat, na: Nat, ea: Nat, nb: Nat, eb: Nat): Nat {
+  match nb == 0 eqn h {
+    true => Float::nan_raw()
+    false => Float::pack(
+      s,
+      2 * Nat::div_nz(na * 4611686018427387904, nb, Nat::ne_zero(nb, h)) + (⊢ Nat from match Nat::rem_nz(na * 4611686018427387904, nb, Nat::ne_zero(nb, h)) == 0 {
+        true => 0
+        false => 1
+      }),
+      ea + 3937 - eb
+    )
+  }
+}
+
+// `a / b`. A zero `b` gives NaN here; `Float::div` does not take one.
+pub fn Float::div_raw(a: Nat, b: Nat): Nat {
+  match Float::nan_of(a) || Float::nan_of(b) || Float::is_zero_raw(b) {
+    true => Float::nan_raw()
+    false => ⊢ Nat from match Float::inf_of(a) {
+      true => ⊢ Nat from match Float::inf_of(b) {
+        true => Float::nan_raw()
+        false => Float::inf_raw(Float::xor(a, b))
+      }
+      false => ⊢ Nat from match Float::inf_of(b) {
+        true => Float::zero_raw(Float::xor(a, b))
+        false => Float::div_finite(
+          Float::xor(a, b),
+          Float::norm_m(Float::m_of(a)),
+          Float::norm_e(Float::m_of(a), Float::e_of(a)),
+          Float::norm_m(Float::m_of(b)),
+          Float::norm_e(Float::m_of(b), Float::e_of(b))
+        )
+      }
+    }
+  }
+}
+
+// The largest `r` with `r * r <= n`, for `n < 2^120`: one binary digit at a
+// time from `2^(fuel - 1)` down.
+pub fn Float::isqrt(fuel: Nat, n: Nat, r: Nat): Nat {
+  match fuel {
+    Zero => r
+    Succ(j) => ⊢ Nat from match (r + Nat::pow2(j)) * (r + Nat::pow2(j)) <= n {
+      true => Float::isqrt(j, n, r + Nat::pow2(j))
+      false => Float::isqrt(j, n, r)
+    }
+  }
+}
+
+// The square root of `m * 2^(e - 4000 - k)`, with `e - k` even: `m * 2^k`
+// has a root of 58 or 59 digits, and a last one for what is left.
+pub fn Float::sqrt_at(m: Nat, e: Nat, k: Nat): Nat {
+  Float::sqrt_root(
+    m * Nat::pow2(k),
+    Float::isqrt(60, m * Nat::pow2(k), 0),
+    Nat::div_nz(e - k, 2, Nat::ne_zero(2, Refl)) + 1999
+  )
+}
+
+pub fn Float::sqrt_root(n: Nat, r: Nat, e: Nat): Nat {
+  Float::pack(
+    0,
+    2 * r + (⊢ Nat from match r * r == n {
+      true => 0
+      false => 1
+    }),
+    e
+  )
+}
+
+pub fn Float::sqrt_raw(a: Nat): Nat {
+  match Float::nan_of(a) || Float::is_zero_raw(a) {
+    true => ⊢ Nat from match Float::nan_of(a) {
+      true => Float::nan_raw()
+      false => a
+    }
+    false => ⊢ Nat from match Float::sign_of(a) == 1 {
+      true => Float::nan_raw()
+      false => ⊢ Nat from match Float::inf_of(a) {
+        true => a
+        false => Float::sqrt_at(
+          Float::norm_m(Float::m_of(a)),
+          Float::norm_e(Float::m_of(a), Float::e_of(a)),
+          64 + Nat::rem_nz(Float::norm_e(Float::m_of(a), Float::e_of(a)), 2, Nat::ne_zero(2, Refl))
+        )
+      }
+    }
+  }
+}
+
+// Where a `Float` that is not NaN lies on the line: `2^63` for both zeros,
+// above for positive ones, below for negative ones.
+pub fn Float::place(a: Nat): Nat {
+  match Float::sign_of(a) == 0 {
+    true => 9223372036854775808 + Float::mag_of(a)
+    false => 9223372036854775808 - Float::mag_of(a)
+  }
+}
+
+// How a fraction is dropped: 0 towards zero, 1 down, 2 up, 3 to the nearest
+// with halves away from zero.
+pub fn Float::whole_raw(how: Nat, a: Nat): Nat {
+  match Float::nan_of(a) || Float::inf_of(a) {
+    true => ⊢ Nat from match Float::nan_of(a) {
+      true => Float::nan_raw()
+      false => a
+    }
+    false => ⊢ Nat from match 4000 <= Float::e_of(a) {
+      true => a
+      false => ⊢ Nat from match 4000 - Float::e_of(a) < 54 {
+        true => Float::whole_at(
+          how,
+          Float::sign_of(a),
+          Nat::div_nz(Float::m_of(a), Nat::pow2(4000 - Float::e_of(a)), Nat::pow2_ne_zero(4000 - Float::e_of(a))),
+          Nat::rem_nz(Float::m_of(a), Nat::pow2(4000 - Float::e_of(a)), Nat::pow2_ne_zero(4000 - Float::e_of(a))),
+          Nat::pow2(4000 - Float::e_of(a))
+        )
+        // Below 1/2 in magnitude, and not zero unless `m` is.
+        false => Float::whole_at(how, Float::sign_of(a), 0, Float::m_of(a), Nat::pow2(54))
+      }
+    }
+  }
+}
+
+// Integer part `q` and the rest `r` of `p` (a power of two).
+pub fn Float::whole_at(how: Nat, s: Nat, q: Nat, r: Nat, p: Nat): Nat {
+  Float::pack(s, Float::whole_up(how, s, q, r, p), 4000)
+}
+
+pub fn Float::whole_up(how: Nat, s: Nat, q: Nat, r: Nat, p: Nat): Nat {
+  match r == 0 {
+    true => q
+    false => ⊢ Nat from match how == 0 {
+      true => q
+      false => ⊢ Nat from match how == 1 {
+        true => q + s
+        false => ⊢ Nat from match how == 2 {
+          true => q + (1 - s)
+          false => ⊢ Nat from match Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) <= r {
+            true => Succ(q)
+            false => q
+          }
+        }
+      }
+    }
+  }
+}
+
+// Mapped: the bits of `x`; every NaN has the bits `0x7FF8000000000000`.
+pub fn Float::bits(x: Float): UInt(64) {
+  UInt::of_nat_mod64(Float::raw(x))
+}
+
+// Mapped: the `Float` with bits `b`.
+pub fn Float::of_bits(b: UInt(64)): Float {
+  Float::Mk(b)
+}
+
+// Mapped: `a + b`.
+pub fn Float::add(a: Float, b: Float): Float {
+  Float::of_raw(Float::add_raw(Float::raw(a), Float::raw(b)))
+}
+
+// Mapped: `a - b`.
+pub fn Float::sub(a: Float, b: Float): Float {
+  Float::of_raw(Float::add_raw(Float::raw(a), Float::neg_raw(Float::raw(b))))
+}
+
+// Mapped: `a * b`.
+pub fn Float::mul(a: Float, b: Float): Float {
+  Float::of_raw(Float::mul_raw(Float::raw(a), Float::raw(b)))
+}
+
+// Mapped: `-a`.
+pub fn Float::neg(a: Float): Float {
+  Float::of_raw(Float::neg_raw(Float::raw(a)))
+}
+
+// Whether `x` is `0.0` or `-0.0`.
+pub fn Float::is_zero(x: Float): Bool {
+  Float::is_zero_raw(Float::raw(x))
+}
+
+// Mapped: `a / b`, which `h` says divides by something other than zero.
+pub fn Float::div(a: Float, b: Float, h: Float::is_zero(b) = false): Float {
+  Float::of_raw(Float::div_raw(Float::raw(a), Float::raw(b)))
+}
+
+// Mapped: `Some(a / b)`, or `None` when `b` is zero.
+pub fn Float::checked_div(a: Float, b: Float): Option(Float) {
+  match Float::is_zero(b) {
+    true => None
+    false => Some(Float::of_raw(Float::div_raw(Float::raw(a), Float::raw(b))))
+  }
+}
+
+// Mapped: whether `x` is NaN.
+pub fn Float::is_nan(x: Float): Bool {
+  Float::nan_of(Float::raw(x))
+}
+
+// Whether `x` is an infinity, either sign.
+pub fn Float::is_infinite(x: Float): Bool {
+  Float::inf_of(Float::raw(x))
+}
+
+// Mapped: `a == b`: false when either is NaN, true for `0.0 == -0.0`.
+pub fn Float::eq(a: Float, b: Float): Bool {
+  match Float::is_nan(a) || Float::is_nan(b) {
+    true => false
+    false => Float::place(Float::raw(a)) == Float::place(Float::raw(b))
+  }
+}
+
+// Mapped: `a < b`: false when either is NaN.
+pub fn Float::lt(a: Float, b: Float): Bool {
+  match Float::is_nan(a) || Float::is_nan(b) {
+    true => false
+    false => Float::place(Float::raw(a)) < Float::place(Float::raw(b))
+  }
+}
+
+// Mapped: `a <= b`: false when either is NaN.
+pub fn Float::le(a: Float, b: Float): Bool {
+  match Float::is_nan(a) || Float::is_nan(b) {
+    true => false
+    false => Float::place(Float::raw(a)) <= Float::place(Float::raw(b))
+  }
+}
+
+// Mapped: `|x|`.
+pub fn Float::abs(x: Float): Float {
+  match Float::is_nan(x) {
+    true => Float::of_raw(Float::nan_raw())
+    false => Float::of_raw(Float::mag_of(Float::raw(x)))
+  }
+}
+
+// Mapped: the square root, rounded to the nearest; NaN below zero, and
+// `-0.0` of `-0.0`.
+pub fn Float::sqrt(x: Float): Float {
+  Float::of_raw(Float::sqrt_raw(Float::raw(x)))
+}
+
+// Mapped: the integer part, towards zero.
+pub fn Float::trunc(x: Float): Float {
+  Float::of_raw(Float::whole_raw(0, Float::raw(x)))
+}
+
+// Mapped: the largest integer not above `x`.
+pub fn Float::floor(x: Float): Float {
+  Float::of_raw(Float::whole_raw(1, Float::raw(x)))
+}
+
+// Mapped: the smallest integer not below `x`.
+pub fn Float::ceil(x: Float): Float {
+  Float::of_raw(Float::whole_raw(2, Float::raw(x)))
+}
+
+// Mapped: the nearest integer, halves away from zero.
+pub fn Float::round(x: Float): Float {
+  Float::of_raw(Float::whole_raw(3, Float::raw(x)))
+}
+
+// Mapped: the nearest `Float` to `n`, ties to even.
+pub fn Float::of_i64(n: SInt(64)): Float {
+  match SInt::val64(n) {
+    IntOfNat(k) => Float::of_raw(Float::pack(0, k, 4000))
+    IntNegSucc(k) => Float::of_raw(Float::pack(1, Succ(k), 4000))
+  }
+}
+
+// The integer part of a finite `x` with sign `s`, `m` and `e`, as an `Int`;
+// `None` when it is at `2^64` or beyond.
+pub fn Float::int_part(s: Nat, m: Nat, e: Nat): Option(Int) {
+  match 4000 <= e {
+    true => ⊢ Option(Int) from match e - 4000 < 64 {
+      true => Some(Float::signed(s, m * Nat::pow2(e - 4000)))
+      false => None
+    }
+    false => ⊢ Option(Int) from match 4000 - e < 54 {
+      true => Some(Float::signed(s, Nat::div_nz(m, Nat::pow2(4000 - e), Nat::pow2_ne_zero(4000 - e))))
+      false => Some(IntOfNat(0))
+    }
+  }
+}
+
+pub fn Float::signed(s: Nat, k: Nat): Int {
+  match s == 0 {
+    true => IntOfNat(k)
+    false => Int::neg(IntOfNat(k))
+  }
+}
+
+// Mapped. Their results are the runtime's (`crates/tauto-rt/src/float_math.rs`),
+// the same on every backend; a proof that uses one depends on its axiom.
+pub axiom Float::cbrt(x: Float): Float
+pub axiom Float::exp(x: Float): Float
+pub axiom Float::ln(x: Float): Float
+pub axiom Float::log2(x: Float): Float
+pub axiom Float::log10(x: Float): Float
+pub axiom Float::pow(x: Float, y: Float): Float
+pub axiom Float::sin(x: Float): Float
+pub axiom Float::cos(x: Float): Float
+pub axiom Float::tan(x: Float): Float
+pub axiom Float::asin(x: Float): Float
+pub axiom Float::acos(x: Float): Float
+pub axiom Float::atan(x: Float): Float
+pub axiom Float::atan2(y: Float, x: Float): Float
+pub axiom Float::sinh(x: Float): Float
+pub axiom Float::cosh(x: Float): Float
+pub axiom Float::tanh(x: Float): Float
+
+// Mapped: the nearest `Float` of a number written as a literal is.
+pub axiom Float::of_text(t: Text): Option(Float)
+
+// Mapped: the integer part of `x`, towards zero, or `None` for NaN, an
+// infinity or a part outside `i64`.
+pub fn SInt::of_float_checked64(x: Float): Option(SInt(64)) {
+  match Float::is_nan(x) || Float::is_infinite(x) {
+    true => None
+    false => ⊢ Option(SInt(64)) from match Float::int_part(
+      Float::sign_of(Float::raw(x)),
+      Float::m_of(Float::raw(x)),
+      Float::e_of(Float::raw(x))
+    ) {
+      None => None
+      Some(v) => SInt::of_int64(v)
+    }
+  }
+}
+
+// Mapped: the shortest digits that read back as `x`, without an exponent.
+pub axiom Text::of_float(x: Float): Text

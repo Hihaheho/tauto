@@ -1,0 +1,1036 @@
+import "extract.taut"
+import "names.taut"
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
+import std::text
+import std::map
+import std::base
+
+// Extraction of a program whose data carries constraints: a family in `Type`
+// with indices, and every family and function that refers to one, as the
+// host lowers them. Each value is a `TautoErasedValue`; a constructor is one
+// of its variants, numbered as the host numbers it; a function takes and
+// returns values, its types and proofs dropped. Anything else is an error.
+
+pub(open) inductive ErLocal: Type {
+  Mk(name: Text, erased: Bool): ErLocal
+}
+
+pub(open) inductive ErState: Type {
+  Mk(
+    next: Nat,
+    names: Ordmap(Text, Text),
+    emitted: Ordmap(Text, Unit),
+    // Each constructor used: its variant and how many values it holds.
+    ctors: Ordmap(Text, (Text × Nat)),
+    // The definitions, the last made first.
+    defs: List(Text),
+    decls: List(SurfaceFn)
+  ): ErState
+}
+
+pub fn er_set<A>(slot: &mut A, value: A): Unit {
+  *slot := value
+}
+
+pub fn er_value(): Text { "TautoErasedValue_1" }
+
+pub fn er_unit(): Text { er_variant("TautoErasedUnit_1") }
+
+// A variant as the host writes it: under the sum.
+pub fn er_variant(v: Text): Text { Text::concat_all([er_value(), "::", v]) }
+
+pub fn er_fresh(st: &mut ErState, suffix: Text): Text {
+  let n := Succ(st.next)
+  er_set(&mut st.next, n)
+  Text::concat_all(["TautoErased", suffix, Text::of_nat(n), "_1"])
+}
+
+pub fn er_name(st: &mut ErState, name: Text): Text {
+  match Ordmap::get(st.names, name, Ordmap::compare_text) {
+    Some(g) => g
+    None => {
+      let g := er_fresh(&mut st, "Fn")
+      er_set(&mut st.names, Ordmap::insert(st.names, name, g, Ordmap::compare_text))
+      g
+    }
+  }
+}
+
+pub fn er_values(rs: List(ExRole)): Nat {
+  match rs {
+    Nil => 0
+    Cons(r, rest) => ⊢ Nat from match r {
+      RValue => Succ(er_values(rest))
+      _ => er_values(rest)
+    }
+  }
+}
+
+pub fn er_ctor(st: &mut ErState, c: ExCtor): Text {
+  match Ordmap::get(st.ctors, c.name, Ordmap::compare_text) {
+    Some(v) => er_variant(v.fst)
+    None => {
+      let v := er_fresh(&mut st, "Ctor")
+      er_set(&mut st.ctors, Ordmap::insert(st.ctors, c.name, #(v, er_values(c.roles)), Ordmap::compare_text))
+      er_variant(v)
+    }
+  }
+}
+
+pub fn er_local_get(ls: List(ErLocal), name: Text): Option(ErLocal) {
+  match ls {
+    Nil => None
+    Cons(l, rest) => if l.name == name { Some(l) } else { er_local_get(rest, name) }
+  }
+}
+
+pub fn er_decl_get(ds: List(SurfaceFn), name: Text): Option(SurfaceFn) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => if d.name == name { Some(d) } else { er_decl_get(rest, name) }
+  }
+}
+
+// The constructor a name stands for. A name more than one family's
+// constructors have is an error, never read as a binder.
+pub fn er_ctor_named(env: ExEnv, name: Text): ExResult(Option((ExFamily × ExCtor))) {
+  // The prelude's constructors are written as they are, never lowered.
+  match ex_not_prelude(ex_ctors_named(env.families, name)) {
+    Nil => ExOk(None)
+    Cons(only, Nil) => ExOk(Some(only))
+    _ => ExErr(Text::concat("an ambiguous constructor in dependent extraction: ", name))
+  }
+}
+
+pub fn er_values_of(xs: List(Text), rs: List(ExRole)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => ⊢ List(Text) from match rs {
+      Nil => Nil
+      Cons(r, more) => ⊢ List(Text) from match r {
+        RValue => Cons(x, er_values_of(rest, more))
+        _ => er_values_of(rest, more)
+      }
+    }
+  }
+}
+
+pub fn er_generics(n: Nat): List(ExRole) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(RGeneric, er_generics(m))
+  }
+}
+
+pub fn er_closure(st: &mut ErState, xs: List(Text), body: Text): Text {
+  let args := er_fresh(&mut st, "Args")
+  let pattern := er_cons_pattern(xs)
+  Text::concat_all([
+    er_variant("TautoErasedFunction_1("), Text::of_nat(List::length(xs)), ", (", args, ": List(", er_value(), ")) => match ", args,
+    " { ", pattern, " => ", body, text_newline(), " _ => extract_unreachable() })"
+  ])
+}
+
+pub fn er_slots(st: &mut ErState, rs: List(ExRole)): List(Text) {
+  match rs {
+    Nil => Nil
+    Cons(^r, rest) => {
+      let s := er_fresh(&mut st, "Arg")
+      Cons(s, er_slots(&mut st, rest))
+    }
+  }
+}
+
+// Whether a type is a proposition: its head a family in `Prop`, `Prop` or `=`.
+pub fn er_prop(k: Nat, env: ExEnv, t: SurfaceTerm): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match t.kind {
+      SkVar(n) => if surface_name_text(n) == "Prop" || surface_name_text(n) == "=" || surface_name_text(n) == "Eq" { true } else {
+        ⊢ Bool from match ex_family_get(env.families, surface_name_text(n)) {
+          Some(f) => f.prop
+          None => false
+        }
+      }
+      SkApp(h, ^args) => er_prop(j, env, h)
+      SkPi(^ps, r, ^e) => er_prop(j, env, r)
+      _ => false
+    }
+  }
+}
+
+mutual {
+pub fn er_pattern_names(k: Nat, p: SurfacePattern): List(Text) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(Text) from match p {
+      PtBind(n, _) => Cons(n, Nil)
+      PtCtor(^n, args) => er_patterns_names(j, args)
+      _ => Nil
+    }
+  }
+}
+pub fn er_patterns_names(k: Nat, ps: List(SurfacePattern)): List(Text) {
+    match k {
+      Zero => Nil
+      Succ(kk) => {
+      ⊢ List(Text) from match ps {
+        Nil => Nil
+        Cons(p, rest) => List::append(er_pattern_names(kk, p), er_patterns_names(kk, rest))
+      }
+    }
+  }
+}
+}
+
+pub fn er_erased(names: List(Text), ls: List(ErLocal)): List(ErLocal) {
+  match names {
+    Nil => ls
+    Cons(n, rest) => er_erased(rest, Cons(ErLocal::Mk(n, true), ls))
+  }
+}
+
+pub fn er_kept(args: List(SurfaceTerm), rs: List(ExRole)): List(SurfaceTerm) {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => ⊢ List(SurfaceTerm) from match rs {
+      Nil => Nil
+      Cons(r, more) => ⊢ List(SurfaceTerm) from match r {
+        RValue => Cons(a, er_kept(rest, more))
+        _ => er_kept(rest, more)
+      }
+    }
+  }
+}
+
+pub fn er_call_text(f: Text, values: List(Text)): Text { Text::concat_all([f, "(", ex_join(values, ", "), ")"]) }
+
+pub fn er_ctor_text(c: Text, values: List(Text)): Text {
+  match values {
+    Nil => c
+    _ => er_call_text(c, values)
+  }
+}
+
+pub fn er_drop<A>(xs: List(A), n: Nat): List(A) {
+  match n {
+    Zero => xs
+    Succ(m) => ⊢ List(A) from match xs {
+      Nil => Nil
+      Cons(^x, rest) => er_drop(rest, m)
+    }
+  }
+}
+
+mutual {
+  pub fn er_expr(k: Nat, env: ExEnv, st: &mut ErState, ls: List(ErLocal), t: SurfaceTerm): ExResult(Text) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult(Text) from match t.kind {
+        SkNat(digits) => ExOk(Text::concat_all([er_variant("TautoErasedNat_1"), "(", digits, ")"]))
+        SkBool(b) => ExOk(er_variant(if b { "TautoErasedBool_1(true)" } else { "TautoErasedBool_1(false)" }))
+        SkVar(n) => ⊢ ExResult(Text) from match er_local_get(ls, surface_name_text(n)) {
+          Some(l) => if l.erased { ExOk(er_unit()) } else { ExOk(surface_name_text(n)) }
+          None => er_global(j, env, &mut st, ls, surface_name_text(n), Nil, false)
+        }
+        SkApp(head, args) => ⊢ ExResult(Text) from match head.kind {
+          SkVar(n) => ⊢ ExResult(Text) from match er_local_get(ls, surface_name_text(n)) {
+            None => er_global(j, env, &mut st, ls, surface_name_text(n), args, true)
+            Some(^l) => er_apply(j, env, &mut st, ls, head, args)
+          }
+          _ => er_apply(j, env, &mut st, ls, head, args)
+        }
+        SkPi(^ps, ^r, ^e) => ExOk(er_unit())
+        SkLam(params, body, _, _) => {
+          let inner := er_value_locals(params, ls)
+          ⊢ ExResult(Text) from match er_expr(j, env, &mut st, inner, body) {
+            ExErr(m) => ExErr(m)
+            ExOk(b) => ExOk(er_closure(&mut st, params, b))
+          }
+        }
+        SkBlock(stmts) => ⊢ ExResult(Text) from match er_block(j, env, &mut st, ls, stmts) {
+          ExErr(m) => ExErr(m)
+          ExOk(out) => ExOk(Text::concat_all(["{", text_newline(), ex_join(out, text_newline()), text_newline(), "}"]))
+        }
+        SkMatch(scrutinee, ^motive, arms, binder, _) => ⊢ ExResult(Text) from match binder {
+          Some(^b) => ExErr("a match binder is unsupported")
+          None => er_match(j, env, &mut st, ls, scrutinee, arms)
+        }
+        _ => ExErr("a term dependent extraction does not read")
+      }
+    }
+  }
+
+  pub fn er_exprs(k: Nat, env: ExEnv, st: &mut ErState, ls: List(ErLocal), ts: List(SurfaceTerm)): ExResult(List(Text)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult(List(Text)) from match ts {
+        Nil => ExOk(Nil)
+        Cons(t, rest) => ⊢ ExResult(List(Text)) from match er_expr(j, env, &mut st, ls, t) {
+          ExErr(m) => ExErr(m)
+          ExOk(v) => ⊢ ExResult(List(Text)) from match er_exprs(j, env, &mut st, ls, rest) {
+            ExErr(m) => ExErr(m)
+            ExOk(vs) => ExOk(Cons(v, vs))
+          }
+        }
+      }
+    }
+  }
+
+  // A call of a computed function: its arguments in a list.
+  pub fn er_apply(k: Nat, env: ExEnv, st: &mut ErState, ls: List(ErLocal), head: SurfaceTerm, args: List(SurfaceTerm)): ExResult(Text) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(kk) => {
+        ⊢ ExResult(Text) from match er_expr(kk, env, &mut st, ls, head) {
+          ExErr(m) => ExErr(m)
+          ExOk(f) => ⊢ ExResult(Text) from match er_exprs(kk, env, &mut st, ls, args) {
+            ExErr(m) => ExErr(m)
+            ExOk(vs) => ExOk(Text::concat_all(["TautoErasedApply_1(", f, ", ", er_cons_pattern(vs), ")"]))
+          }
+        }
+      }
+    }
+  }
+
+  // A name of the program: a family or a sort is no value; a function or a
+  // constructor is called with its values, or made a closure unapplied.
+  pub fn er_global(k: Nat, env: ExEnv, st: &mut ErState, ls: List(ErLocal), n: Text, written: List(SurfaceTerm), applied: Bool): ExResult(Text) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(kk) => {
+        let args := ex_explicit(written)
+        let family := ⊢ Bool from match ex_family_get(env.families, n) {
+          Some(^f) => true
+          None => false
+        }
+        if family || ex_is_sort(n) || n == "Prop" || n == "=" || n == "Eq" { ExOk(er_unit()) } else {
+          ⊢ ExResult(Text) from match ex_fn_get(env.fns, n) {
+            Some(f) => if ex_not(applied) && List::length(f.roles) != 0 {
+              let slots := er_slots(&mut st, f.roles)
+              ⊢ ExResult(Text) from match er_function(kk, env, &mut st, n) {
+                ExErr(m) => ExErr(m)
+                ExOk(g) => ExOk(er_closure(&mut st, slots, er_call_text(g, er_values_of(slots, f.roles))))
+              }
+            } else {
+              if List::length(args) != List::length(f.roles) { ExErr("a partial application is unsupported in dependent extraction") } else {
+                ⊢ ExResult(Text) from match er_exprs(kk, env, &mut st, ls, er_kept(args, f.roles)) {
+                  ExErr(m) => ExErr(m)
+                  ExOk(vs) => ⊢ ExResult(Text) from match er_function(kk, env, &mut st, n) {
+                    ExErr(m) => ExErr(m)
+                    ExOk(g) => ExOk(er_call_text(g, vs))
+                  }
+                }
+              }
+            }
+            None => ⊢ ExResult(Text) from match er_ctor_named(env, n) {
+              ExErr(m) => ExErr(m)
+              ExOk(None) => ExErr(Text::concat("a name dependent extraction does not read: ", n))
+              ExOk(Some(fc)) => if fc.fst.prop { ExOk(er_unit()) } else {
+                let rs := fc.snd.roles
+                let params := List::length(fc.fst.params)
+                if ex_not(applied) && er_values(rs) != 0 {
+                  let slots := er_slots(&mut st, List::append(er_generics(params), rs))
+                  let c := er_ctor(&mut st, fc.snd)
+                  ExOk(er_closure(&mut st, slots, er_ctor_text(c, er_values_of(er_drop(slots, params), rs))))
+                } else {
+                  let fields: List(SurfaceTerm) := if List::length(args) == List::length(rs) + params { er_drop(args, params) } else { args }
+                  if List::length(fields) != List::length(rs) { ExErr("a constructor must be given all its fields") } else {
+                    ⊢ ExResult(Text) from match er_exprs(kk, env, &mut st, ls, er_kept(fields, rs)) {
+                      ExErr(m) => ExErr(m)
+                      ExOk(vs) => ExOk(er_ctor_text(er_ctor(&mut st, fc.snd), vs))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // A function lowered once, its definition made after its body.
+  pub fn er_function(k: Nat, env: ExEnv, st: &mut ErState, name: Text): ExResult(Text) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(kk) => {
+        let g := er_name(&mut st, name)
+        ⊢ ExResult(Text) from match Ordmap::get(st.emitted, name, Ordmap::compare_text) {
+          Some(^u) => ExOk(g)
+          None => {
+            er_set(&mut st.emitted, Ordmap::insert(st.emitted, name, #(), Ordmap::compare_text))
+            ⊢ ExResult(Text) from match er_decl_get(st.decls, name) {
+              None => ExErr(Text::concat("dependent extraction has no body for ", name))
+              Some(d) => ⊢ ExResult(Text) from match ex_fn_get(env.fns, name) {
+                None => ExErr(Text::concat("dependent extraction has no signature for ", name))
+                Some(f) => {
+                  let ls := er_param_locals(d.params, f.roles, Nil)
+                  let params := er_typed(er_values_of(d.params, f.roles))
+                  ⊢ ExResult(Text) from match er_expr(kk, env, &mut st, ls, d.body) {
+                    ExErr(m) => ExErr(m)
+                    ExOk(body) => {
+                      let made := Text::concat_all(["fn ", g, "(", ex_join(params, ", "), "): ", er_value(), " ", er_braced(body), text_newline()])
+                      er_set(&mut st.defs, Cons(made, st.defs))
+                      ExOk(g)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn er_block(k: Nat, env: ExEnv, st: &mut ErState, ls: List(ErLocal), stmts: List(SurfaceStmt)): ExResult(List(Text)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult(List(Text)) from match stmts {
+        Nil => ExOk(Nil)
+        Cons(s, rest) => ⊢ ExResult(List(Text)) from match s {
+          StExpr(e) => ⊢ ExResult(List(Text)) from match er_expr(j, env, &mut st, ls, e) {
+            ExErr(m) => ExErr(m)
+            ExOk(v) => ⊢ ExResult(List(Text)) from match er_block(j, env, &mut st, ls, rest) {
+              ExErr(m) => ExErr(m)
+              ExOk(more) => ExOk(Cons(v, more))
+            }
+          }
+          StLet(name, ty, value, r#borrow, mutable, ^unused, ^st_stack) => if r#borrow || mutable { ExErr("a borrowed or mutable `let` is unsupported") } else {
+            let proof := ⊢ Bool from match ty {
+              None => false
+              Some(t) => er_prop(j, env, t)
+            }
+            if proof { er_block(j, env, &mut st, Cons(ErLocal::Mk(name, true), ls), rest) } else {
+              ⊢ ExResult(List(Text)) from match er_expr(j, env, &mut st, ls, value) {
+                ExErr(m) => ExErr(m)
+                ExOk(v) => ⊢ ExResult(List(Text)) from match er_block(j, env, &mut st, Cons(ErLocal::Mk(name, false), ls), rest) {
+                  ExErr(m) => ExErr(m)
+                  ExOk(more) => ExOk(Cons(Text::concat_all(["let ", name, ": ", er_value(), " := ", v]), more))
+                }
+              }
+            }
+          }
+          _ => ExErr("a statement dependent extraction does not read")
+        }
+      }
+    }
+  }
+
+  pub fn er_match(k: Nat, env: ExEnv, st: &mut ErState, ls: List(ErLocal), s: SurfaceTerm, arms: List(SurfaceArm)): ExResult(Text) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(kk) => {
+        ⊢ ExResult(Text) from match arms {
+          Nil => ExOk("extract_unreachable()")
+          _ => ⊢ ExResult(Text) from match er_proof_arms(env, arms) {
+            ExErr(m) => ExErr(m)
+            // A match on a proof: its one arm, its binders dropped.
+            ExOk(true) => ⊢ ExResult(Text) from match arms {
+              Cons(a, Nil) => er_expr(kk, env, &mut st, er_erased(er_pattern_names(kk, a.pattern), ls), a.body)
+              _ => ExErr("a match on a proof with other than one arm is unsupported")
+            }
+            ExOk(false) => ⊢ ExResult(Text) from match er_expr(kk, env, &mut st, ls, s) {
+              ExErr(m) => ExErr(m)
+              ExOk(value) => {
+                let subject := er_fresh(&mut st, "Subject")
+                ⊢ ExResult(Text) from match er_arms(kk, env, &mut st, ls, arms) {
+                  ExErr(m) => ExErr(m)
+                  ExOk(out) => ExOk(Text::concat_all([
+                    "{ let ", subject, " := ", value, text_newline(), "match ", subject, " {", text_newline(),
+                    ex_join(List::append(out, Cons("_ => extract_unreachable()", Nil)), text_newline()), text_newline(), "} }"
+                  ]))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn er_arms(k: Nat, env: ExEnv, st: &mut ErState, ls: List(ErLocal), arms: List(SurfaceArm)): ExResult(List(Text)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult(List(Text)) from match arms {
+        Nil => ExOk(Nil)
+        Cons(a, rest) => ⊢ ExResult(List(Text)) from match a.guard {
+          Some(^g) => ExErr("a guard is unsupported in dependent extraction")
+          None => ⊢ ExResult(List(Text)) from match er_pattern(j, env, &mut st, ls, a.pattern) {
+            ExErr(m) => ExErr(m)
+            ExOk(p) => ⊢ ExResult(List(Text)) from match er_expr(j, env, &mut st, p.snd, a.body) {
+              ExErr(m) => ExErr(m)
+              ExOk(body) => ⊢ ExResult(List(Text)) from match er_arms(j, env, &mut st, ls, rest) {
+                ExErr(m) => ExErr(m)
+                ExOk(more) => ExOk(Cons(Text::concat_all([p.fst, " => ", body]), more))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // A pattern: its fields read first, then its constructor numbered.
+  pub fn er_pattern(k: Nat, env: ExEnv, st: &mut ErState, ls: List(ErLocal), p: SurfacePattern): ExResult((Text × List(ErLocal))) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((Text × List(ErLocal))) from match p {
+        PtWild => ExOk(#("_", ls))
+        PtBool(b) => ExOk(#(er_variant(if b { "TautoErasedBool_1(true)" } else { "TautoErasedBool_1(false)" }), ls))
+        PtBind(n, _) => ⊢ ExResult((Text × List(ErLocal))) from match er_ctor_named(env, n) {
+          ExErr(m) => ExErr(m)
+          ExOk(None) => ExOk(#(n, Cons(ErLocal::Mk(n, false), ls)))
+          ExOk(Some(fc)) => er_ctor_pattern(j, env, &mut st, ls, fc.snd, Nil)
+        }
+        PtCtor(n, args) => ⊢ ExResult((Text × List(ErLocal))) from match er_ctor_named(env, surface_name_text(n)) {
+          ExErr(m) => ExErr(m)
+          ExOk(None) => ExErr(Text::concat("a constructor dependent extraction does not read: ", surface_name_text(n)))
+          ExOk(Some(fc)) => er_ctor_pattern(j, env, &mut st, ls, fc.snd, args)
+        }
+        _ => ExErr("a pattern dependent extraction does not read")
+      }
+    }
+  }
+
+  pub fn er_ctor_pattern(k: Nat, env: ExEnv, st: &mut ErState, ls: List(ErLocal), c: ExCtor, args: List(SurfacePattern)): ExResult((Text × List(ErLocal))) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(kk) => {
+        if List::length(args) != List::length(c.roles) { ExErr("a constructor pattern must bind all its fields") } else {
+          let erased := er_erased(er_patterns_names(kk, er_dropped(args, c.roles)), ls)
+          ⊢ ExResult((Text × List(ErLocal))) from match er_patterns(kk, env, &mut st, erased, er_kept_patterns(args, c.roles)) {
+            ExErr(m) => ExErr(m)
+            ExOk(r) => ExOk(#(er_ctor_text(er_ctor(&mut st, c), r.fst), r.snd))
+          }
+        }
+      }
+    }
+  }
+
+  pub fn er_patterns(k: Nat, env: ExEnv, st: &mut ErState, ls: List(ErLocal), ps: List(SurfacePattern)): ExResult((List(Text) × List(ErLocal))) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((List(Text) × List(ErLocal))) from match ps {
+        Nil => ExOk(#(Nil, ls))
+        Cons(p, rest) => ⊢ ExResult((List(Text) × List(ErLocal))) from match er_pattern(j, env, &mut st, ls, p) {
+          ExErr(m) => ExErr(m)
+          ExOk(r) => ⊢ ExResult((List(Text) × List(ErLocal))) from match er_patterns(j, env, &mut st, r.snd, rest) {
+            ExErr(m) => ExErr(m)
+            ExOk(more) => ExOk(#(Cons(r.fst, more.fst), more.snd))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn er_param_locals(ns: List(Text), rs: List(ExRole), ls: List(ErLocal)): List(ErLocal) {
+  match ns {
+    Nil => ls
+    Cons(n, rest) => ⊢ List(ErLocal) from match rs {
+      Nil => ls
+      Cons(r, more) => ⊢ List(ErLocal) from match r {
+        RValue => er_param_locals(rest, more, Cons(ErLocal::Mk(n, false), ls))
+        _ => er_param_locals(rest, more, Cons(ErLocal::Mk(n, true), ls))
+      }
+    }
+  }
+}
+
+pub fn er_kept_patterns(ps: List(SurfacePattern), rs: List(ExRole)): List(SurfacePattern) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => ⊢ List(SurfacePattern) from match rs {
+      Nil => Nil
+      Cons(r, more) => ⊢ List(SurfacePattern) from match r {
+        RValue => Cons(p, er_kept_patterns(rest, more))
+        _ => er_kept_patterns(rest, more)
+      }
+    }
+  }
+}
+
+pub fn er_dropped(ps: List(SurfacePattern), rs: List(ExRole)): List(SurfacePattern) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => ⊢ List(SurfacePattern) from match rs {
+      Nil => Nil
+      Cons(r, more) => ⊢ List(SurfacePattern) from match r {
+        RValue => er_dropped(rest, more)
+        _ => Cons(p, er_dropped(rest, more))
+      }
+    }
+  }
+}
+
+// Whether an arm matches a constructor of a family in `Prop`.
+pub fn er_proof_arms(env: ExEnv, arms: List(SurfaceArm)): ExResult(Bool) {
+  match arms {
+    Nil => ExOk(false)
+    Cons(a, rest) => {
+      let written := ⊢ Option(Text) from match a.pattern {
+        PtBind(n, _) => Some(n)
+        PtCtor(n, ^args) => Some(surface_name_text(n))
+        _ => None
+      }
+      ⊢ ExResult(Bool) from match written {
+        None => er_proof_arms(env, rest)
+        Some(n) => ⊢ ExResult(Bool) from match er_ctor_named(env, n) {
+          ExErr(m) => ExErr(m)
+          ExOk(Some(fc)) => if fc.fst.prop { ExOk(true) } else { er_proof_arms(env, rest) }
+          ExOk(None) => er_proof_arms(env, rest)
+        }
+      }
+    }
+  }
+}
+
+mutual {
+pub fn er_subterms_all(k: Nat, ts: List(SurfaceTerm)): List(SurfaceTerm) {
+    match k {
+      Zero => Nil
+      Succ(kk) => {
+      ⊢ List(SurfaceTerm) from match ts {
+        Nil => Nil
+        Cons(t, rest) => List::append(er_subterms(kk, t), er_subterms_all(kk, rest))
+      }
+    }
+  }
+}
+pub fn er_stmts_subterms(k: Nat, ss: List(SurfaceStmt)): List(SurfaceTerm) {
+    match k {
+      Zero => Nil
+      Succ(kk) => {
+      ⊢ List(SurfaceTerm) from match ss {
+        Nil => Nil
+        Cons(s, rest) => List::append(er_stmt_subterms(kk, s), er_stmts_subterms(kk, rest))
+      }
+    }
+  }
+}
+pub fn er_stmt_subterms(k: Nat, s: SurfaceStmt): List(SurfaceTerm) {
+    match k {
+      Zero => Nil
+      Succ(kk) => {
+      ⊢ List(SurfaceTerm) from match s {
+        StExpr(e) => er_subterms(kk, e)
+        StLet(^n, ty, v, ^b, ^m, ^unused, ^st_stack) => List::append(⊢ List(SurfaceTerm) from match ty {
+          None => Nil
+          Some(t) => er_subterms(kk, t)
+        }, er_subterms(kk, v))
+        _ => Nil
+      }
+    }
+  }
+}
+// Every subterm of a term the lowering looks into.
+pub fn er_subterms(k: Nat, t: SurfaceTerm): List(SurfaceTerm) {
+  match k {
+    Zero => Nil
+    Succ(j) => Cons(t, ⊢ List(SurfaceTerm) from match t.kind {
+      SkApp(h, args) => List::append(er_subterms(j, h), er_subterms_all(j, args))
+      SkPi(ps, r, ^e) => List::append(er_subterms_all(j, er_param_tys(ps)), er_subterms(j, r))
+      SkLam(^ps, b, _, _) => er_subterms(j, b)
+      SkBlock(stmts) => er_stmts_subterms(j, stmts)
+      SkMatch(s, ^motive, arms, ^binder, _) => List::append(er_subterms(j, s), er_subterms_all(j, er_arm_bodies(arms)))
+      SkIf(c, a, o) => List::append(er_subterms(j, c), List::append(er_subterms(j, a), ⊢ List(SurfaceTerm) from match o {
+        None => Nil
+        Some(b) => er_subterms(j, b)
+      }))
+      SkField(v, ^n) => er_subterms(j, v)
+      _ => Nil
+    })
+  }
+}
+
+
+}
+
+pub fn er_names(ts: List(SurfaceTerm)): List(Text) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => ⊢ List(Text) from match t.kind {
+      SkVar(n) => Cons(surface_name_text(n), er_names(rest))
+      _ => er_names(rest)
+    }
+  }
+}
+
+pub fn er_options(ts: List(Option(SurfaceTerm))): List(SurfaceTerm) {
+  match ts {
+    Nil => Nil
+    Cons(o, rest) => ⊢ List(SurfaceTerm) from match o {
+      None => er_options(rest)
+      Some(t) => Cons(t, er_options(rest))
+    }
+  }
+}
+
+// The terms of a function: its parameters' types, its result and its body.
+pub fn er_fn_terms(k: Nat, d: SurfaceFn): List(SurfaceTerm) {
+  let rs := ⊢ List(SurfaceTerm) from match d.result {
+    None => Nil
+    Some(r) => Cons(r, Nil)
+  }
+  er_subterms_all(k, List::append(er_options(d.param_types), Cons(d.body, rs)))
+}
+
+pub fn er_has(ns: List(Text), n: Text): Bool {
+  match ns {
+    Nil => false
+    Cons(m, rest) => m == n || er_has(rest, n)
+  }
+}
+
+pub fn er_any(ns: List(Text), set: List(Text)): Bool {
+  match ns {
+    Nil => false
+    Cons(n, rest) => er_has(set, n) || er_any(rest, set)
+  }
+}
+
+pub fn er_family_decls(stmts: List(SurfaceStmt)): List(SurfaceInductive) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceInductive) from match s {
+      StInductive(i) => Cons(i, er_family_decls(rest))
+      _ => er_family_decls(rest)
+    }
+  }
+}
+
+pub fn er_fn_decls(stmts: List(SurfaceStmt)): List(SurfaceFn) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceFn) from match s {
+      StFn(f) => Cons(f, er_fn_decls(rest))
+      _ => er_fn_decls(rest)
+    }
+  }
+}
+
+// A family in `Type` with indices: its sort a function type ending in `Type`.
+pub fn er_indexed(env: ExEnv, i: SurfaceInductive): Bool {
+  match i.sort.kind {
+    SkPi(^ps, ^r, ^e) => ⊢ Bool from match ex_family_get(env.families, i.name) {
+      Some(f) => ex_not(f.prop)
+      None => false
+    }
+    _ => false
+  }
+}
+
+pub fn er_ctor_refs(k: Nat, i: SurfaceInductive): List(Text) {
+  er_names(er_subterms_all(k, er_ctor_field_types(i.constructors)))
+}
+
+// The constrained families: the indexed ones, and each whose constructors
+// refer to one, until none is added.
+pub fn er_constrained(k: Nat, env: ExEnv, is: List(SurfaceInductive), set: List(Text)): List(Text) {
+  match k {
+    Zero => set
+    Succ(j) => {
+      let added := er_added_families(env, is, set)
+      ⊢ List(Text) from match added {
+        Nil => set
+        _ => er_constrained(j, env, is, List::append(set, added))
+      }
+    }
+  }
+}
+
+// The functions that refer to a constrained family or to such a function,
+// until none is added.
+pub fn er_affected(k: Nat, env: ExEnv, ds: List(SurfaceFn), set: List(Text)): List(Text) {
+  match k {
+    Zero => set
+    Succ(j) => {
+      let added := er_added_fns(env, ds, set)
+      ⊢ List(Text) from match added {
+        Nil => set
+        _ => er_affected(j, env, ds, List::append(set, added))
+      }
+    }
+  }
+}
+
+// A function the host lowers for a reason not read here is an error: a
+// parameter of a function type over types or proofs, or a call of itself at
+// a type that is not a name.
+pub fn er_unread(env: ExEnv, d: SurfaceFn): Option(Text) {
+  let roles := ⊢ List(ExRole) from match ex_fn_get(env.fns, d.name) {
+    Some(f) => f.roles
+    None => Nil
+  }
+  if er_callable(env, er_options(d.param_types)) { Some(Text::concat("a parameter of a function type over types or proofs is unsupported: ", d.name)) } else {
+    if er_self_at_type(d.name, roles, er_fn_terms(env.fuel, d)) { Some(Text::concat("a recursive call at a type that is not a name is unsupported: ", d.name)) } else { None }
+  }
+}
+
+pub fn er_has_pi(ts: List(SurfaceTerm)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => ⊢ Bool from match t.kind {
+      SkPi(^ps, ^r, ^e) => true
+      _ => er_has_pi(rest)
+    }
+  }
+}
+
+pub fn er_erased_domain(env: ExEnv, ns: List(Text)): Bool {
+  match ns {
+    Nil => false
+    Cons(n, rest) => if ex_is_sort(n) || n == "Prop" || n == "=" || n == "Eq" { true } else {
+      ⊢ Bool from match ex_family_get(env.families, n) {
+        Some(f) => f.prop || er_erased_domain(env, rest)
+        None => er_erased_domain(env, rest)
+      }
+    }
+  }
+}
+
+pub fn er_callable(env: ExEnv, tys: List(SurfaceTerm)): Bool {
+  match tys {
+    Nil => false
+    Cons(t, rest) => {
+      let sub := er_subterms(env.fuel, t)
+      (er_has_pi(sub) && er_erased_domain(env, er_names(sub))) || er_callable(env, rest)
+    }
+  }
+}
+
+pub fn er_self_at_type(name: Text, roles: List(ExRole), ts: List(SurfaceTerm)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => {
+      let here := ⊢ Bool from match t.kind {
+        SkApp(h, args) => ⊢ Bool from match h.kind {
+          SkVar(n) => surface_name_text(n) == name && List::length(args) == List::length(roles) && er_type_arg(args, roles)
+          _ => false
+        }
+        _ => false
+      }
+      here || er_self_at_type(name, roles, rest)
+    }
+  }
+}
+
+pub fn er_type_arg(args: List(SurfaceTerm), rs: List(ExRole)): Bool {
+  match args {
+    Nil => false
+    Cons(a, rest) => ⊢ Bool from match rs {
+      Nil => false
+      Cons(r, more) => ⊢ Bool from match r {
+        RGeneric => ⊢ Bool from match a.kind {
+          SkVar(^n) => er_type_arg(rest, more)
+          _ => true
+        }
+        _ => er_type_arg(rest, more)
+      }
+    }
+  }
+}
+
+pub fn er_runtime(): Text {
+  concat("", include_text!("tables/erased-runtime.txt"))
+}
+
+pub fn er_variant_line(e: (Text × (Text × Nat))): Text {
+  let v := e.snd
+  if v.snd == 0 { Text::concat("  ", v.fst) } else {
+    Text::concat_all(["  ", v.fst, "(", ex_join(er_repeat(v.snd, er_value()), ", "), ")"])
+  }
+}
+
+// A root function whose parameters are all values is written outside with a
+// wrapper of the host's, which is not written here.
+pub fn er_wrapped(env: ExEnv, constrained: List(Text), d: SurfaceFn): Bool {
+  match ex_fn_get(env.fns, d.name) {
+    Some(f) => List::length(f.roles) == er_values(f.roles)
+    None => false
+  }
+}
+
+// The lowered part of a program: `None` when no family is constrained.
+pub fn er_program(env: ExEnv, stmts: List(SurfaceStmt)): ExResult(Option((Text × List(Text)))) {
+  let is := er_family_decls(stmts)
+  let ds := er_fn_decls(stmts)
+  let constrained := er_constrained(List::length(is) + 1, env, is, Nil)
+  ⊢ ExResult(Option((Text × List(Text)))) from match constrained {
+    Nil => ExOk(None)
+    _ => {
+      let affected := er_affected(List::length(ds) + 1, env, ds, constrained)
+      let seeds := er_named_fns(ds, affected)
+      ⊢ ExResult(Option((Text × List(Text)))) from match er_first_unread(env, constrained, seeds) {
+        Some(m) => ExErr(m)
+        None => {
+          let ordered := er_keys(Ordmap::entries(er_name_set(seeds, Ordmap::empty())))
+          var st := ErState::Mk(0, Ordmap::empty(), Ordmap::empty(), Ordmap::empty(), Nil, ds)
+          ⊢ ExResult(Option((Text × List(Text)))) from match er_functions(env, &mut st, ordered) {
+            ExErr(m) => ExErr(m)
+            ExOk(^u) => {
+              let variants := er_variant_lines(Ordmap::entries(st.ctors))
+              let nl := text_newline()
+              let text := Text::concat_all([
+                "enum(shared) ", er_value(), " {", nl,
+                "  TautoErasedNat_1(nat)", nl,
+                "  TautoErasedBool_1(Bool)", nl,
+                "  TautoErasedI64_1(i64)", nl,
+                "  TautoErasedText_1(Text)", nl,
+                "  TautoErasedUnit_1", nl,
+                "  TautoErasedFunction_1(nat, (List(", er_value(), ")) -> ", er_value(), " ! {div})", nl,
+                ex_join(List::append(variants, Cons("}", Nil)), nl), nl,
+                er_runtime(),
+                Text::concat_all(text_list_reverse(st.defs))
+              ])
+              ExOk(Some(#(text, List::append(constrained, affected))))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn er_functions(env: ExEnv, st: &mut ErState, names: List(Text)): ExResult(Unit) {
+  match names {
+    Nil => ExOk(#())
+    Cons(n, rest) => ⊢ ExResult(Unit) from match er_function(env.fuel, env, &mut st, n) {
+      ExErr(m) => ExErr(m)
+      ExOk(^g) => er_functions(env, &mut st, rest)
+    }
+  }
+}
+
+pub fn er_cons_pattern(xs: List(Text)): Text {
+  match xs {
+    Nil => "List::Nil"
+    Cons(x, rest) => Text::concat_all(["List::Cons(", x, ", ", er_cons_pattern(rest), ")"])
+  }
+}
+
+
+pub fn er_value_locals(ns: List(Text), ls: List(ErLocal)): List(ErLocal) {
+  match ns {
+    Nil => ls
+    Cons(n, rest) => Cons(ErLocal::Mk(n, false), er_value_locals(rest, ls))
+  }
+}
+
+pub fn er_typed(ns: List(Text)): List(Text) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(Text::concat_all([n, ": ", er_value()]), er_typed(rest))
+  }
+}
+
+
+pub fn er_param_tys(ps: List(SurfaceParam)): List(SurfaceTerm) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.ty, er_param_tys(rest))
+  }
+}
+
+pub fn er_arm_bodies(arms: List(SurfaceArm)): List(SurfaceTerm) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => Cons(a.body, er_arm_bodies(rest))
+  }
+}
+
+
+pub fn er_ctor_field_types(cs: List(SurfaceCtor)): List(SurfaceTerm) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => List::append(ex_named_types_of(c.params), er_ctor_field_types(rest))
+  }
+}
+
+pub fn ex_named_types_of(ns: List(SurfaceNamed)): List(SurfaceTerm) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(n.ty, ex_named_types_of(rest))
+  }
+}
+
+pub fn er_added_families(env: ExEnv, is: List(SurfaceInductive), set: List(Text)): List(Text) {
+  match is {
+    Nil => Nil
+    Cons(i, rest) => if ex_not(er_has(set, i.name)) && (er_indexed(env, i) || er_any(er_ctor_refs(env.fuel, i), set)) {
+      Cons(i.name, er_added_families(env, rest, set))
+    } else { er_added_families(env, rest, set) }
+  }
+}
+
+pub fn er_added_fns(env: ExEnv, ds: List(SurfaceFn), set: List(Text)): List(Text) {
+  match ds {
+    Nil => Nil
+    Cons(d, rest) => if ex_not(er_has(set, d.name)) && er_any(er_names(er_fn_terms(env.fuel, d)), set) {
+      Cons(d.name, er_added_fns(env, rest, set))
+    } else { er_added_fns(env, rest, set) }
+  }
+}
+
+pub fn er_repeat(n: Nat, t: Text): List(Text) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(t, er_repeat(m, t))
+  }
+}
+
+pub fn er_heads(ts: List(SurfaceTerm)): List(Text) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => ⊢ List(Text) from match ex_head(t) {
+      Some(h) => Cons(h.fst, er_heads(rest))
+      None => er_heads(rest)
+    }
+  }
+}
+
+pub fn er_named_fns(ds: List(SurfaceFn), names: List(Text)): List(SurfaceFn) {
+  match ds {
+    Nil => Nil
+    Cons(d, rest) => if er_has(names, d.name) { Cons(d, er_named_fns(rest, names)) } else { er_named_fns(rest, names) }
+  }
+}
+
+pub fn er_first_unread(env: ExEnv, constrained: List(Text), ds: List(SurfaceFn)): Option(Text) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => ⊢ Option(Text) from match er_unread(env, d) {
+      Some(m) => Some(m)
+      None => if er_wrapped(env, constrained, d) { Some(Text::concat("a function called from outside lowered data is unsupported: ", d.name)) } else { er_first_unread(env, constrained, rest) }
+    }
+  }
+}
+
+pub fn er_name_set(ds: List(SurfaceFn), m: Ordmap(Text, Unit)): Ordmap(Text, Unit) {
+  match ds {
+    Nil => m
+    Cons(d, rest) => er_name_set(rest, Ordmap::insert(m, d.name, #(), Ordmap::compare_text))
+  }
+}
+
+pub fn er_keys(es: List((Text × Unit))): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(e.fst, er_keys(rest))
+  }
+}
+
+pub fn er_variant_lines(es: List((Text × (Text × Nat)))): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(er_variant_line(e), er_variant_lines(rest))
+  }
+}
+
+pub fn er_braced(t: Text): Text {
+  if text_starts_with(t, "{", 0) { t } else { Text::concat_all(["{ ", t, " }"]) }
+}

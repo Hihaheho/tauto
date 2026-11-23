@@ -154,6 +154,11 @@ pub enum Pat {
         ctor: u32,
         fields: Vec<Pat>,
     },
+    /// A value of a union injected at `variant`, and `pat` on what was injected.
+    Variant {
+        variant: u32,
+        pat: Box<Pat>,
+    },
 }
 
 pub struct ClosureT {
@@ -347,7 +352,7 @@ pub fn compile(pkg: &Package) -> Rs<Program> {
     );
     p.ctor(
         &tauto_nir::library_name("Pair"),
-        &tauto_nir::library_name("Pair"),
+        &tauto_nir::library_name("Pair::Mk"),
         &[Some("fst"), Some("snd")],
         true,
     );
@@ -562,9 +567,13 @@ impl Compiler<'_> {
                     ticked: false,
                 });
             }
-            Cps::TailSelfCall { inst, args } => {
+            Cps::TailSelfCall { inst, args, ticked } => {
                 self.konst(Value::Fn(*inst as u32));
                 let argc = self.all(args)?;
+                if *ticked {
+                    self.ops.push(Op::Tick);
+                    self.ops.push(Op::TickAnswer);
+                }
                 self.ops.push(Op::TailSelf {
                     inst: *inst as u32,
                     argc,
@@ -584,8 +593,10 @@ impl Compiler<'_> {
                 });
             }
             Cps::Builtin { name, args } => {
-                if !crate::builtins::NAMES.contains(&name.as_str())
+                if !crate::ct::is_ct(name)
+                    && !crate::builtins::NAMES.contains(&name.as_str())
                     && !crate::hostcall::NAMES.contains(&name.as_str())
+                    && !crate::builtins::HOST_NAMES.contains(&name.as_str())
                 {
                     return Err(format!("the builtin {name}"));
                 }
@@ -705,8 +716,14 @@ impl Compiler<'_> {
                 }
                 // What the scope defined and holds a host value is dropped
                 // last defined first, after the value of the scope is made.
+                // A program that makes host values (an extern) drops every
+                // local so, as the machine written in Tauto does
+                // (`wire.rs`): a host value's drop is observable.
+                let hosts = !self.p.externs.is_empty();
                 for e in es.iter().rev() {
-                    if let Cps::Define { id, drop: true, .. } = e {
+                    if let Cps::Define { id, drop, .. } = e
+                        && (*drop || hosts)
+                    {
                         let (slot, _) = self.slot(*id);
                         self.ops.push(Op::Clear { slot });
                     }
@@ -781,10 +798,26 @@ impl Compiler<'_> {
                 });
             }
             Cps::Handle { body, arms, ret } => self.handle(body, arms, ret.as_deref())?,
+            // As `wire::write` does: a `&` borrow of a whole borrowed local reads it.
+            Cps::BorrowPlace {
+                id,
+                path,
+                through_borrow: true,
+                mutable: false,
+            } if path.is_empty() => {
+                let (slot, indirect) = self.slot(*id);
+                self.ops.push(Op::Load {
+                    slot,
+                    deref: true,
+                    take: false,
+                    indirect,
+                });
+            }
             Cps::BorrowPlace {
                 id,
                 path,
                 through_borrow,
+                ..
             } => {
                 let (slot, indirect) = self.slot(*id);
                 let path = self.path(path);
@@ -861,9 +894,15 @@ impl Compiler<'_> {
     fn pat_of(&mut self, p: &CpsPat) -> Pat {
         match p {
             CpsPat::Wild => Pat::Wild,
-            CpsPat::Bind { id, borrow, .. } => Pat::Bind {
+            // As `wire::write` does: a `&` binding holds the value.
+            CpsPat::Bind {
+                id,
+                borrow,
+                mutable,
+                ..
+            } => Pat::Bind {
                 slot: self.own(*id),
-                borrow: *borrow,
+                borrow: *borrow && *mutable,
             },
             CpsPat::Literal(v) => Pat::Literal(match v {
                 cps::Value::Unit => Value::Unit,
@@ -879,6 +918,10 @@ impl Compiler<'_> {
             CpsPat::Ctor { ctor, fields, data } => Pat::Ctor {
                 ctor: self.p.ctor_id(data, ctor),
                 fields: fields.iter().map(|f| self.pat_of(f)).collect(),
+            },
+            CpsPat::Variant { variant, pat, .. } => Pat::Variant {
+                variant: *variant as u32,
+                pat: Box::new(self.pat_of(pat)),
             },
         }
     }
@@ -1040,6 +1083,7 @@ mod identity_tests {
 
     #[test]
     fn equal_display_operations_have_distinct_runtime_symbols() {
+        tauto_parse::install();
         let mut program = Program::default();
         let left = Name::from(DeclRef::fresh("show"));
         let right = Name::from(DeclRef::fresh("show"));

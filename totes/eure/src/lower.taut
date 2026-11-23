@@ -1,0 +1,483 @@
+import std::base
+import std::data
+import std::text
+import "value.taut"
+import std::list
+import "syntax.taut"
+
+// Lowering: following the paths of the statements to build the document.
+//
+// A path is followed from the node of the section it is in. A step to a key, an extension or an
+// index that is not there yet makes it, holding a blank node (see `blank`); `[]` makes a
+// new item at the end of an array. A binding gives a value to a node that has none. Walking into
+// a node with no value makes it a map, an array or a tuple, as the step asks.
+
+// A step of a path once `[]` is known to be a number.
+pub(open) inductive Step: Type {
+  Cfield(k: Key): Step
+  Cext(name: Text): Step
+  Cidx(i: Nat): Step
+  Ctidx(i: Nat): Step
+}
+
+// A node that a path made and nothing has filled yet. It is a hole with the empty label, which the
+// reader never gives (a label is a name), so that a written `!` is a value like any other and
+// cannot be filled again. `unblank` makes what is left of them `!` at the end.
+pub fn blank(): Node {
+  Node::Mk(Vhole(Some("")), Nil)
+}
+
+pub fn is_blank(n: Node): Bool {
+  match node_value(n) {
+    Vhole(l) => ⊢ Bool from match l {
+      None => false
+      Some(x) => Text::eq(x, "")
+    }
+    Vnull => false
+    Vbool(^b) => false
+    Vint(^s, ^m) => false
+    Vdec(^s, ^m, ^es, ^e) => false
+    Vtext(^l, ^t) => false
+    Varr(^xs) => false
+    Vtup(^xs) => false
+    Vmap(^es) => false
+  }
+}
+
+// A node that is still blank when the document is done (one that only has extensions) is `!`.
+mutual {
+  pub fn unblank(n: Node): Node {
+    match n {
+      Mk(v, ext) => Node::Mk(unblank_v(v), unblank_exts(ext))
+    }
+  }
+  pub fn unblank_v(v: Value): Value {
+    match v {
+      Vhole(l) => ⊢ Value from match l {
+        None => v
+        Some(x) => ⊢ Value from match Text::eq(x, "") {
+          true => Vhole(None)
+          false => v
+        }
+      }
+      Vnull => v
+      Vbool(^b) => v
+      Vint(^s, ^m) => v
+      Vdec(^s, ^m, ^es, ^e) => v
+      Vtext(^lg, ^t) => v
+      Varr(xs) => Varr(unblank_items(xs))
+      Vtup(xs) => Vtup(unblank_items(xs))
+      Vmap(es) => Vmap(unblank_entries(es))
+    }
+  }
+  pub fn unblank_items(xs: List(Node)): List(Node) {
+    match xs {
+      Nil => Nil
+      Cons(x, t) => Cons(unblank(x), unblank_items(t))
+    }
+  }
+  pub fn unblank_entries(es: List(Key × Node)): List(Key × Node) {
+    match es {
+      Nil => Nil
+      Cons(e, t) => Cons(unblank_entry(e), unblank_entries(t))
+    }
+  }
+  pub fn unblank_entry(e: Key × Node): Key × Node {
+    match e {
+      #(k, n) => #(k, unblank(n))
+    }
+  }
+  pub fn unblank_exts(es: List(Text × Node)): List(Text × Node) {
+    match es {
+      Nil => Nil
+      Cons(e, t) => Cons(unblank_ext(e), unblank_exts(t))
+    }
+  }
+  pub fn unblank_ext(e: Text × Node): Text × Node {
+    match e {
+      #(k, n) => #(k, unblank(n))
+    }
+  }
+}
+
+// ---- association lists and item lists ----------------------------------------------------
+
+pub fn assoc_has<K, V>(eq: (&K, &K) -> Bool, k: &K, l: List(K × V)): Bool {
+  Option::is_some(assoc_find(eq, k, l))
+}
+
+// `assoc_has(key_eq, k, l)` and `assoc_set(key_eq, k, v, l)`, with `key_eq` called rather than passed.
+pub fn key_has(k: Key, l: List(Key × Node)): Bool {
+  Option::is_some(key_find(k, l))
+}
+
+pub fn key_set(k: Key, v: Node, l: List(Key × Node)): List(Key × Node) {
+  match l {
+    Nil => Nil
+    Cons(p, t) => ⊢ List(Key × Node) from match key_eq((match p { #(key, ^value) => key }), k) {
+      true => Cons(#(k, v), t)
+      false => Cons(p, key_set(k, v, t))
+    }
+  }
+}
+
+pub fn assoc_set<K, V>(eq: (&K, &K) -> Bool, k: K, v: V, l: List(K × V)): List(K × V) {
+  match l {
+    Nil => Nil
+    Cons(#(key, value), t) => ⊢ List(K × V) from match eq(&key, &k) {
+      true => Cons(#(k, v), t)
+      false => Cons(#(key, value), assoc_set(eq, k, v, t))
+    }
+  }
+}
+
+fn list_set<A>(l: List(A), i: Nat, x: A): List(A) {
+  match l {
+    Nil => Nil
+    Cons(h, t) => ⊢ List(A) from match i {
+      Zero => Cons(x, t)
+      Succ(j) => Cons(h, list_set(t, j, x))
+    }
+  }
+}
+
+pub fn snoc<A>(l: List(A), x: A): List(A) {
+  List::append(l, Cons(x, Nil))
+}
+
+// An item at `i`: the items as they are when `i` is inside, one more blank at the end when `i`
+// is the length, and nothing past that.
+fn items_reach(xs: List(Node), i: Nat): Option(List(Node)) {
+  match Nat::lt(i, List::length(xs)) {
+    true => Some(xs)
+    false => ⊢ Option(List(Node)) from match Nat::eq(i, List::length(xs)) {
+      true => Some(snoc(xs, blank()))
+      false => None
+    }
+  }
+}
+
+// ---- steps ----------------------------------------------------------------------
+
+pub fn with_value(n: Node, v: Value): Node {
+  Node::Mk(v, node_ext(n))
+}
+
+pub fn reach_field(n: Node, k: Key): Result(Node, Nat × Text) {
+  match node_value(n) {
+    Vmap(es) => ⊢ Result(Node, Nat × Text) from match key_has(k, es) {
+      true => Ok(n)
+      false => Ok(with_value(n, Vmap(snoc(es, #(k, blank())))))
+    }
+    Vhole(^l) => ⊢ Result(Node, Nat × Text) from match is_blank(n) {
+      true => Ok(with_value(n, Vmap(Cons(#(k, blank()), Nil))))
+      false => Err(#(0, "a key under a hole"))
+    }
+    Vnull => Err(#(0, "a key under a value that is not a map"))
+    Vbool(^b) => Err(#(0, "a key under a value that is not a map"))
+    Vint(^s, ^m) => Err(#(0, "a key under a value that is not a map"))
+    Vdec(^s, ^m, ^es, ^e) => Err(#(0, "a key under a value that is not a map"))
+    Vtext(^l, ^t) => Err(#(0, "a key under a value that is not a map"))
+    Varr(^xs) => Err(#(0, "a key under a value that is not a map"))
+    Vtup(^xs) => Err(#(0, "a key under a value that is not a map"))
+  }
+}
+
+fn fresh_items(n: Node, i: Nat, tuple: Bool): Result(Node, Nat × Text) {
+  match items_reach(Nil, i) {
+    None => Err(#(0, "an index no further than one past the last item"))
+    Some(fresh) => ⊢ Result(Node, Nat × Text) from match tuple {
+      true => Ok(with_value(n, Vtup(fresh)))
+      false => Ok(with_value(n, Varr(fresh)))
+    }
+  }
+}
+
+fn reach_items(n: Node, i: Nat, tuple: Bool): Result(Node, Nat × Text) {
+  match node_value(n) {
+    Varr(xs) => ⊢ Result(Node, Nat × Text) from match tuple {
+      true => Err(#(0, "a tuple index under a value that is not a tuple"))
+      false => ⊢ Result(Node, Nat × Text) from match items_reach(xs, i) {
+        None => Err(#(0, "an index no further than one past the last item"))
+        Some(ys) => Ok(with_value(n, Varr(ys)))
+      }
+    }
+    Vtup(xs) => ⊢ Result(Node, Nat × Text) from match tuple {
+      true => ⊢ Result(Node, Nat × Text) from match items_reach(xs, i) {
+        None => Err(#(0, "an index no further than one past the last element"))
+        Some(ys) => Ok(with_value(n, Vtup(ys)))
+      }
+      false => Err(#(0, "an array index under a value that is not an array"))
+    }
+    Vhole(^l) => ⊢ Result(Node, Nat × Text) from match is_blank(n) {
+      true => fresh_items(n, i, tuple)
+      false => Err(#(0, "an index under a hole"))
+    }
+    Vnull => Err(#(0, "an index under a value that is not an array or a tuple"))
+    Vbool(^b) => Err(#(0, "an index under a value that is not an array or a tuple"))
+    Vint(^s, ^m) => Err(#(0, "an index under a value that is not an array or a tuple"))
+    Vdec(^s, ^m, ^es, ^e) => Err(#(0, "an index under a value that is not an array or a tuple"))
+    Vtext(^l, ^t) => Err(#(0, "an index under a value that is not an array or a tuple"))
+    Vmap(^es) => Err(#(0, "an index under a value that is not an array or a tuple"))
+  }
+}
+
+// The node with the child that `s` names made if it was not there.
+pub fn reach(n: Node, s: Step): Result(Node, Nat × Text) {
+  match s {
+    Cfield(k) => reach_field(n, k)
+    Cext(name) => ⊢ Result(Node, Nat × Text) from match assoc_has(Text::eq, name, node_ext(n)) {
+      true => Ok(n)
+      false => Ok(Node::Mk(node_value(n), snoc(node_ext(n), #(name, blank()))))
+    }
+    Cidx(i) => reach_items(n, i, false)
+    Ctidx(i) => reach_items(n, i, true)
+  }
+}
+
+pub fn child(n: Node, s: Step): Option(Node) {
+  match s {
+    Cfield(k) => get(n, k)
+    Cext(name) => ext(n, name)
+    Cidx(i) => Option::bind(as_items(n), (xs: List(Node)) => List::nth(xs, i))
+    Ctidx(i) => ⊢ Option(Node) from match node_value(n) {
+      Vtup(xs) => List::nth(xs, i)
+      Vhole(^l) => None
+      Vnull => None
+      Vbool(^b) => None
+      Vint(^sg, ^m) => None
+      Vdec(^sg, ^m, ^es, ^e) => None
+      Vtext(^l, ^t) => None
+      Varr(^xs) => None
+      Vmap(^es) => None
+    }
+  }
+}
+
+pub fn set_child(n: Node, s: Step, c: Node): Node {
+  match s {
+    Cfield(k) => ⊢ Node from match node_value(n) {
+      Vmap(es) => with_value(n, Vmap(key_set(k, c, es)))
+      Vhole(^l) => n
+      Vnull => n
+      Vbool(^b) => n
+      Vint(^sg, ^m) => n
+      Vdec(^sg, ^m, ^es, ^e) => n
+      Vtext(^l, ^t) => n
+      Varr(^xs) => n
+      Vtup(^xs) => n
+    }
+    Cext(name) => Node::Mk(node_value(n), assoc_set(Text::eq, name, c, node_ext(n)))
+    Cidx(i) => ⊢ Node from match node_value(n) {
+      Varr(xs) => with_value(n, Varr(list_set(xs, i, c)))
+      Vhole(^l) => n
+      Vnull => n
+      Vbool(^b) => n
+      Vint(^sg, ^m) => n
+      Vdec(^sg, ^m, ^es, ^e) => n
+      Vtext(^l, ^t) => n
+      Vtup(^xs) => n
+      Vmap(^es) => n
+    }
+    Ctidx(i) => ⊢ Node from match node_value(n) {
+      Vtup(xs) => with_value(n, Vtup(list_set(xs, i, c)))
+      Vhole(^l) => n
+      Vnull => n
+      Vbool(^b) => n
+      Vint(^sg, ^m) => n
+      Vdec(^sg, ^m, ^es, ^e) => n
+      Vtext(^l, ^t) => n
+      Varr(^xs) => n
+      Vmap(^es) => n
+    }
+  }
+}
+
+pub fn low_then<A, B>(r: Result(A, Nat × Text), k: (A) -> Result(B, Nat × Text)): Result(B, Nat × Text) {
+  match r {
+    Ok(a) => k(a)
+    Err(#(at, what)) => Err(#(at, what))
+  }
+}
+
+pub fn low_at<A>(at: List(Nat), r: Result(A, Nat × Text)): Result(A, Nat × Text) {
+  match r {
+    Ok(a) => Ok(a)
+    Err(#(^x, what)) => Err(#(List::length(at), what))
+  }
+}
+
+// Changes the node at the end of `steps` with `f`; every step must already be there.
+pub fn modify(n: Node, steps: List(Step), f: (Node) -> Result(Node, Nat × Text)): Result(Node, Nat × Text) {
+  match steps {
+    Nil => f(n)
+    Cons(s, rest) => ⊢ Result(Node, Nat × Text) from match child(n, s) {
+      None => Err(#(0, "a path that is there"))
+      Some(c) => low_then(modify(c, rest, f), (c2: Node) => Ok(set_child(n, s, c2)))
+    }
+  }
+}
+
+fn node_at(n: Node, steps: List(Step)): Option(Node) {
+  match steps {
+    Nil => Some(n)
+    Cons(s, rest) => Option::bind(child(n, s), (c: Node) => node_at(c, rest))
+  }
+}
+
+// The number of items of an array, or of elements of a tuple; 0 for a node with no value yet.
+fn item_count(n: Option(Node)): Nat {
+  match n {
+    None => 0
+    Some(m) => ⊢ Nat from match node_value(m) {
+      Varr(xs) => List::length(xs)
+      Vtup(xs) => List::length(xs)
+      Vhole(^l) => 0
+      Vnull => 0
+      Vbool(^b) => 0
+      Vint(^sg, ^k) => 0
+      Vdec(^sg, ^k, ^es, ^e) => 0
+      Vtext(^l, ^t) => 0
+      Vmap(^es) => 0
+    }
+  }
+}
+
+pub fn step_of(doc: Node, base: List(Step), s: Seg): Step {
+  match s {
+    Skey(k) => Cfield(k)
+    Sext(name) => Cext(name)
+    Sindex(i) => ⊢ Step from match i {
+      None => Cidx(item_count(node_at(doc, base)))
+      Some(j) => Cidx(j)
+    }
+    Stupidx(j) => Ctidx(j)
+  }
+}
+
+// Follows `segs` from `base`, making what is missing: the document and the steps reached.
+pub fn resolve(doc: Node, base: List(Step), segs: List(Seg)): Result(Node × List(Step), Nat × Text) {
+  match segs {
+    Nil => Ok(#(doc, base))
+    Cons(
+      s,
+      rest
+    ) => low_then(
+      modify(doc, base, (n: Node) => reach(n, step_of(doc, base, s))),
+      (d2: Node) => resolve(d2, snoc(base, step_of(doc, base, s)), rest)
+    )
+  }
+}
+
+// A value given to a node that has none; the node keeps its extensions.
+pub fn fill(v: Node, n: Node): Result(Node, Nat × Text) {
+  match is_blank(n) {
+    true => Ok(Node::Mk(node_value(v), List::append(node_ext(n), node_ext(v))))
+    false => Err(#(0, "a path that has no value yet"))
+  }
+}
+
+pub fn assign(doc: Node, base: List(Step), path: List(Seg), v: Node): Result(Node, Nat × Text) {
+  low_then(
+    resolve(doc, base, path),
+    (p: Node × List(Step)) => modify(resolved_node(p), resolved_path(p), (n: Node) => fill(v, n))
+  )
+}
+
+// A node that a block or a section leaves with no value is an empty map.
+pub fn map_if_blank(n: Node): Result(Node, Nat × Text) {
+  match is_blank(n) {
+    true => Ok(with_value(n, Vmap(Nil)))
+    false => Ok(n)
+  }
+}
+
+// ---- values and statements -----------------------------------------------------------------
+
+mutual {
+  pub fn lower_expr(e: Expr): Result(Node, Nat × Text) {
+    match e {
+      Escalar(v) => Ok(leaf(v))
+      Earr(xs) => ⊢ Result(Node, Nat × Text) from match lower_items(xs) {
+        Ok(ns) => Ok(leaf(Varr(ns)))
+        Err(#(at, what)) => Err(#(at, what))
+      }
+      Etup(xs) => ⊢ Result(Node, Nat × Text) from match lower_items(xs) {
+        Ok(ns) => Ok(leaf(Vtup(ns)))
+        Err(#(at, what)) => Err(#(at, what))
+      }
+      Eobj(bs) => lower_binds(bs, blank())
+    }
+  }
+  pub fn lower_items(xs: List(Expr)): Result(List(Node), Nat × Text) {
+    match xs {
+      Nil => Ok(Nil)
+      Cons(x, rest) => ⊢ Result(List(Node), Nat × Text) from match lower_expr(x) {
+        Ok(n) => ⊢ Result(List(Node), Nat × Text) from match lower_items(rest) {
+          Ok(ns) => Ok(Cons(n, ns))
+          Err(#(at, what)) => Err(#(at, what))
+        }
+        Err(#(at, what)) => Err(#(at, what))
+      }
+    }
+  }
+  // The entries of an object, bound in `n`. An object with no entries is an empty map.
+  pub fn lower_binds(bs: List(List(Seg) × Expr), n: Node): Result(Node, Nat × Text) {
+    match bs {
+      Nil => ⊢ Result(Node, Nat × Text) from match is_blank(n) {
+        true => Ok(with_value(n, Vmap(Nil)))
+        false => Ok(n)
+      }
+      Cons(b, rest) => ⊢ Result(Node, Nat × Text) from match lower_bind(b, n) {
+        Ok(n2) => lower_binds(rest, n2)
+        Err(#(at, what)) => Err(#(at, what))
+      }
+    }
+  }
+  pub fn lower_bind(b: List(Seg) × Expr, n: Node): Result(Node, Nat × Text) {
+    match b {
+      #(path, x) => ⊢ Result(Node, Nat × Text) from match lower_expr(x) {
+        Ok(v) => assign(n, Nil, path, v)
+        Err(#(at, what)) => Err(#(at, what))
+      }
+    }
+  }
+}
+
+mutual {
+  pub fn lower_stmt(s: Stmt, doc: Node, base: List(Step)): Result(Node, Nat × Text) {
+    match s {
+      Bind(at, path, e) => ⊢ Result(Node, Nat × Text) from match lower_expr(e) {
+        Ok(v) => low_at(at, assign(doc, base, path, v))
+        Err(#(^x, what)) => Err(#(List::length(at), what))
+      }
+      Nest(at, path, body) => ⊢ Result(Node, Nat × Text) from match low_at(at, resolve(doc, base, path)) {
+        Ok(p) => ⊢ Result(Node, Nat × Text) from match lower_stmts(body, resolved_node(p), resolved_path(p)) {
+          Ok(d2) => modify(d2, resolved_path(p), map_if_blank)
+          Err(#(x, what)) => Err(#(x, what))
+        }
+        Err(#(x, what)) => Err(#(x, what))
+      }
+    }
+  }
+  pub fn lower_stmts(ss: List(Stmt), doc: Node, base: List(Step)): Result(Node, Nat × Text) {
+    match ss {
+      Nil => Ok(doc)
+      Cons(s, rest) => ⊢ Result(Node, Nat × Text) from match lower_stmt(s, doc, base) {
+        Ok(d2) => lower_stmts(rest, d2, base)
+        Err(#(at, what)) => Err(#(at, what))
+      }
+    }
+  }
+}
+
+// The document of a list of statements. The root is a map unless `= v` gives it a value.
+pub fn lower(ss: List(Stmt)): Result(Node, Nat × Text) {
+  low_then(
+    lower_stmts(ss, blank(), Nil),
+    (d: Node) => low_then(map_if_blank(d), (m: Node) => Ok(unblank(m)))
+  )
+}
+
+pub fn resolved_node(p: Node × List(Step)): Node { match p { #(node,^path) => node } }
+pub fn resolved_path(p: Node × List(Step)): List(Step) { match p { #(^node,path) => path } }

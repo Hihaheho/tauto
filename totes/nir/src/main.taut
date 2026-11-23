@@ -1,0 +1,87 @@
+// The shell of the NIR reader.
+//
+//   nir print FILE...   each FILE is a package as NIR text
+//   nir blocks FILE...  the same, with each function in block form
+//
+// Each answer follows a line `== FILE`: the package read from the file and
+// printed again (`nir_print`), or one line that says why it is not a package.
+import "syntax.taut"
+import "model.taut"
+import "read.taut"
+import "print.taut"
+import "blocks.taut"
+import "print_blocks.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::builtin::os
+
+pub fn nir_line(parts: List(Text)): Unit ! {stdout} {
+  print(Text::concat_all(parts))
+  print(text_newline())
+}
+
+pub fn nir_print_text(source: Text): Text ! {div, overflow} {
+  match nir::parse(source) {
+    Err(d) => Text::concat_all(["not NIR text: ", d.message, text_newline()])
+    Ok(tree) => match nir_read(tree) {
+      Err(e) => Text::concat_all(["not NIR text: ", e, text_newline()])
+      Ok(pkg) => nir_print(pkg)
+    }
+  }
+}
+
+// Each function of the package as blocks (`blocks.taut`), each followed by a
+// line.
+pub fn nir_blocks_fns(pkg: NPackage, fns: List(NFn)): List(Text) ! {div, overflow} {
+  match fns {
+    Nil => Nil
+    Cons(f, rest) => Cons(
+      nir_print_blocks(pkg, b_lower_fn(f)),
+      Cons(text_newline(), nir_blocks_fns(pkg, rest))
+    )
+  }
+}
+
+pub fn nir_blocks_text(source: Text): Text ! {div, overflow} {
+  match nir::parse(source) {
+    Err(d) => Text::concat_all(["not NIR text: ", d.message, text_newline()])
+    Ok(tree) => match nir_read(tree) {
+      Err(e) => Text::concat_all(["not NIR text: ", e, text_newline()])
+      Ok(pkg) => Text::concat_all(nir_blocks_fns(pkg, pkg.fns))
+    }
+  }
+}
+
+pub fn nir_main_each(paths: List(Text), blocks: Bool): Unit ! {div, fs_read, overflow, stdout} {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      nir_line(["== ", path])
+      match read_file(path) {
+        Err(e) => nir_line(["cannot read: ", e])
+        Ok(source) => print(if blocks { nir_blocks_text(source) } else { nir_print_text(source) })
+      }
+      nir_main_each(rest, blocks)
+    }
+  }
+}
+
+pub fn nir_main(args: List(Text)): Unit ! {div, fs_read, overflow, stderr, stdout} {
+  match args {
+    Cons(mode, paths) => if mode == "print" {
+      nir_main_each(paths, false)
+    } else {
+      if mode == "blocks" {
+        nir_main_each(paths, true)
+      } else {
+        eprint("usage: nir print|blocks FILE...")
+      }
+    }
+    Nil => eprint("usage: nir print|blocks FILE...")
+  }
+}
+
+perform main(() => {
+  nir_main(perform argv())
+})

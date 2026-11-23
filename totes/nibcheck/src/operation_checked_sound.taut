@@ -1,12 +1,14 @@
+import "coerce_sound.taut"
 import "checker_frame.taut"
 import "checked_frame.taut"
 import "written_error_sound.taut"
-import std::Map
-import std::MapLaws
-import std::Text
+import std::map
+import std::map_laws
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "join_sound.taut"
 import "ty.taut"
 import "unify_sound.taut"
@@ -78,18 +80,23 @@ pub theorem run_expect_after_frame_checked(
   fits: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, run_expect_after(c, a, b, span, what, fits)) {
-  checked_frame_read(
-    c,
-    run_expect_after(c, a, b, span, what, fits),
-    frame_error_if_ok(c, ck_expect_message(ck_shown(c, a), ck_shown(c, b), what), span, not(fits)),
-    frame_error_if_ok_errors(
+  match fits {
+    true => checked_frame_return(c, Star, ordered)
+    false => checked_frame_bind(
+      <A: Option(CoerceFound), B: Unit>,
       c,
-      ck_expect_message(ck_shown(c, a), ck_shown(c, b), what),
-      span,
-      not(fits)
-    ),
-    ordered
-  )
+      (found: Option(CoerceFound), next: Checker) => run_expect_refused(next, a, b, span, what, found),
+      ck_coerce_fit(c, a, b),
+      checked_frame_grows(c, ck_coerce_fit(c, a, b), ck_coerce_fit_grows(c, a, b, ordered)),
+      found => next => onext => checked_frame_read(
+        next,
+        run_expect_refused(next, a, b, span, what, found),
+        frame_error_if_ok(next, coerce_refusal(next, a, b, what, found), span, coerce_refused(next, found)),
+        frame_error_if_ok_errors(next, coerce_refusal(next, a, b, what, found), span, coerce_refused(next, found)),
+        onext
+      )
+    )
+  }
 }
 pub theorem ck_expect_run_frame_checked(
   c: Checker,
@@ -103,8 +110,7 @@ pub theorem ck_expect_run_frame_checked(
     (z: Mut1(Unit, Checker)) => CkCheckedFrame(c, z),
     Eq::sym(run_expect_unf(c, a, b, span, what)),
     checked_frame_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       c,
       (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
       ck_fits_wide(c, a, b),

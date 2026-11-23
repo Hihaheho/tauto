@@ -35,6 +35,9 @@ pub enum ParseError {
     Limit(&'static str),
 }
 
+/// Bounds on a parse. The default ones bound a parse the tools run while
+/// checking a program (a syntax macro's input), where the text is the program's
+/// own source; a parse the program runs on its own data takes [`Limits::none`].
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     pub max_input: usize,
@@ -50,22 +53,55 @@ impl Default for Limits {
     }
 }
 
+impl Limits {
+    /// No bound: the parse is as long as its text and as deep as its grammar
+    /// makes it, and fails only for what the text is.
+    pub fn none() -> Self {
+        Limits {
+            max_input: usize::MAX,
+            max_stack: usize::MAX,
+        }
+    }
+}
+
 enum Item {
     Sym(Sym),
     Close,
 }
 
-/// Parse `text`; every position in the result has `base` added.
+/// Parse `text`; every position in the result has `base` added. A hole (`TautoExpr`) is read:
+/// this is how a macro argument is read.
 pub fn parse(
     tables: &Tables,
     text: &str,
     base: u32,
     limits: &Limits,
 ) -> Result<Vec<Event>, ParseError> {
+    parse_with(tables, text, base, limits, true)
+}
+
+/// Parse `text` as the program reads it at run time: a hole is no text of the language, so
+/// `$` where a hole would be is a lexical error.
+pub fn parse_text_only(
+    tables: &Tables,
+    text: &str,
+    base: u32,
+    limits: &Limits,
+) -> Result<Vec<Event>, ParseError> {
+    parse_with(tables, text, base, limits, false)
+}
+
+fn parse_with(
+    tables: &Tables,
+    text: &str,
+    base: u32,
+    limits: &Limits,
+    holes: bool,
+) -> Result<Vec<Event>, ParseError> {
     if text.len() > limits.max_input {
         return Err(ParseError::Limit("the input is longer than the limit"));
     }
-    let tokens = scan(tables, text, base).map_err(ParseError::Lex)?;
+    let tokens = scan(tables, text, base, holes).map_err(ParseError::Lex)?;
     let seen: Vec<usize> = (0..tokens.len())
         .filter(|&i| !tables.is_skipped(tokens[i].terminal))
         .collect();

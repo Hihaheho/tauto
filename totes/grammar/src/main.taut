@@ -1,14 +1,15 @@
-import std::prelude::Os
+import std::builtin::os
+import "grammar.taut"
 
-pub fn grammar_parse_files(paths: List(Text)): Unit {
+pub fn grammar_parse_files(paths: List(std::prelude::Text)): Unit ! {fs_read, stderr, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
       match read_file(path) {
         Err(read_error) => eprint(read_error)
-        Ok(source) => match tauto.parse(source) {
-          Ok(tree) => print("ok")
-          Err(diagnostic) => print("error")
+        Ok(source) => match tauto::parse(source) {
+          Ok(^tree) => print("ok")
+          Err(^diagnostic) => print("error")
         }
       }
       match Text::of_code_point(10) {
@@ -20,4 +21,6 @@ pub fn grammar_parse_files(paths: List(Text)): Unit {
   }
 }
 
-grammar_parse_files(perform argv())
+perform main(() => {
+  grammar_parse_files(perform argv())
+})

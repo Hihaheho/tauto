@@ -14,6 +14,8 @@ macro_rules! say {
     };
 }
 
+mod symbols;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -81,7 +83,7 @@ pub fn lsp_set_text(uri: &str, text: &str) -> bool {
 pub fn lsp_diagnostics(uri: &str) -> String {
     with(|s| {
         let text = s.texts.get(uri).cloned().unwrap_or_default();
-        Value::Array(diagnostics(&s.workspace, uri, &text)).to_string()
+        Value::Array(diagnostics(&s.workspace, &s.texts, uri, &text)).to_string()
     })
 }
 
@@ -112,7 +114,7 @@ pub fn lsp_request(method: &str, uri: &str, params: &str) -> String {
                 let data = s.texts.get(uri).map_or(Vec::new(), |t| semantic(uri, t));
                 Ok(json!({"data": data}))
             }
-            "textDocument/codeAction" => Ok(json!(code_actions(uri, &params))),
+            "textDocument/codeAction" => Ok(json!(code_actions(uri, &s.texts, &params))),
             "textDocument/onTypeFormatting" => {
                 let edits = s.texts.get(uri).map_or(Vec::new(), |t| {
                     let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
@@ -123,12 +125,12 @@ pub fn lsp_request(method: &str, uri: &str, params: &str) -> String {
                 Ok(json!(edits))
             }
             "textDocument/completion" => {
-                let items = s.texts.get(uri).map_or(Vec::new(), |t| {
+                let items = s.texts.get(uri).map_or(json!([]), |t| {
                     let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
                     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
                     completion(uri, t, line, col)
                 });
-                Ok(json!(items))
+                Ok(items)
             }
             "textDocument/hover"
             | "textDocument/definition"
@@ -187,8 +189,13 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| s.to_string())
 }
 
-fn diagnostics(workspace: &tauto_analyzer::Workspace, uri: &str, text: &str) -> Vec<Value> {
-    let mut out = check_diagnostics(workspace, uri, text);
+fn diagnostics(
+    workspace: &tauto_analyzer::Workspace,
+    texts: &HashMap<String, String>,
+    uri: &str,
+    text: &str,
+) -> Vec<Value> {
+    let mut out = check_diagnostics(workspace, texts, uri, text);
     // A syntax whose registered colours could not be used is a warning at its literal.
     if let Ok((_, notes)) = tauto_analyzer::editor::dsl_tokens(&path_of(uri), text) {
         for note in notes {
@@ -202,7 +209,12 @@ fn diagnostics(workspace: &tauto_analyzer::Workspace, uri: &str, text: &str) -> 
     out
 }
 
-fn check_diagnostics(workspace: &tauto_analyzer::Workspace, uri: &str, text: &str) -> Vec<Value> {
+fn check_diagnostics(
+    workspace: &tauto_analyzer::Workspace,
+    texts: &HashMap<String, String>,
+    uri: &str,
+    text: &str,
+) -> Vec<Value> {
     let path = path_of(uri);
     let report = workspace.report(&path);
     let at = |line: usize, col: usize, message: &str| {
@@ -230,8 +242,14 @@ fn check_diagnostics(workspace: &tauto_analyzer::Workspace, uri: &str, text: &st
     };
     let own = path.canonicalize().unwrap_or(path);
     let rendered: Value = serde_json::from_str(&report.json().render()).unwrap_or(Value::Null);
+    let missing = missing_effects(texts, &own, text);
     let mut out = Vec::new();
-    for e in rendered["errors"].as_array().into_iter().flatten() {
+    for e in rendered["errors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(missing["errors"].as_array().into_iter().flatten())
+    {
         let file = PathBuf::from(e["file"].as_str().unwrap_or(""));
         if file.canonicalize().unwrap_or(file) != own {
             continue;
@@ -261,12 +279,38 @@ fn check_diagnostics(workspace: &tauto_analyzer::Workspace, uri: &str, text: &st
     out
 }
 
-/// The quick fixes of the diagnostics the client sent back: each one's edit.
-fn code_actions(uri: &str, params: &Value) -> Vec<Value> {
-    params["context"]["diagnostics"]
+/// The effects the functions of the file at `own` (canonical, its text `text`) perform and
+/// their written rows leave out, as the JSON of a report: the kernel's check that the
+/// workspace makes does not read the rows, which `tauto check` reads after it.
+fn missing_effects(texts: &HashMap<String, String>, own: &Path, text: &str) -> Value {
+    let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let source = |p: &Path| {
+        let p = canonical(p);
+        texts
+            .iter()
+            .find(|(u, _)| canonical(&path_of(u)) == p)
+            .map(|(_, t)| Ok(t.clone()))
+    };
+    let mut entries = tauto::report::missing_effects_with_source(own, &source);
+    entries.extend(tauto::report::row_holes_with_source(own, &source));
+    if entries.is_empty() {
+        return Value::Null;
+    }
+    let sources = std::collections::BTreeMap::from([(own.to_path_buf(), text.to_string())]);
+    let report = tauto::report::Report::from_parts(entries, Vec::new(), sources);
+    serde_json::from_str(&report.json().render()).unwrap_or(Value::Null)
+}
+
+/// The quick fixes of the diagnostics the client sent back: each one's edit, and, for a name
+/// the file uses without importing it, an import of each file that declares it.
+fn code_actions(uri: &str, texts: &HashMap<String, String>, params: &Value) -> Vec<Value> {
+    let diagnostics: Vec<&Value> = params["context"]["diagnostics"]
         .as_array()
         .into_iter()
         .flatten()
+        .collect();
+    let mut out: Vec<Value> = diagnostics
+        .iter()
         .filter(|d| d["data"]["range"].is_object())
         .map(|d| {
             let fix = &d["data"];
@@ -277,7 +321,53 @@ fn code_actions(uri: &str, params: &Value) -> Vec<Value> {
                 "edit": {"changes": {uri: [{"range": fix["range"], "newText": fix["text"]}]}},
             })
         })
-        .collect()
+        .collect();
+    let unfixed: Vec<&&Value> = diagnostics
+        .iter()
+        .filter(|d| !d["data"]["range"].is_object())
+        .collect();
+    if unfixed.is_empty() {
+        return out;
+    }
+    let Some(text) = texts.get(uri) else {
+        return out;
+    };
+    let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let source = |p: &Path| {
+        let p = canonical(p);
+        texts
+            .iter()
+            .find(|(u, _)| canonical(&path_of(u)) == p)
+            .map(|(_, t)| Ok(t.clone()))
+    };
+    let choices = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tauto_analyzer::editor::import_choices(&path_of(uri), &source)
+    }))
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default();
+    let range = |start: usize, end: usize| {
+        let (line, col) = position_of(text, start);
+        let (end_line, end_col) = position_of(text, end);
+        json!({"start": {"line": line, "character": col},
+               "end": {"line": end_line, "character": end_col}})
+    };
+    for choice in choices {
+        let (line, col) = position_of(text, choice.start);
+        let at = json!({"line": line, "character": col});
+        for d in unfixed.iter().filter(|d| d["range"]["start"] == at) {
+            for edit in &choice.edits {
+                out.push(json!({
+                    "title": edit.title,
+                    "kind": "quickfix",
+                    "diagnostics": [d],
+                    "edit": {"changes": {uri: [{"range": range(edit.start, edit.end),
+                                                "newText": edit.text}]}},
+                }));
+            }
+        }
+    }
+    out
 }
 
 fn semantic(uri: &str, text: &str) -> Vec<u32> {
@@ -315,34 +405,48 @@ fn semantic(uri: &str, text: &str) -> Vec<u32> {
     data
 }
 
-fn completion(uri: &str, text: &str, line: usize, col: usize) -> Vec<Value> {
+/// What `textDocument/completion` answers at (`line`, `col`): after a `\\`, at most
+/// `ESCAPE_COMPLETIONS` signs, as a list the editor asks for again as more of the name is
+/// written when there are more; elsewhere what the grammar of a syntax literal wants there.
+fn completion(uri: &str, text: &str, line: usize, col: usize) -> Value {
     let offset = offset_of(text, line, col);
     if let Some(start) = escape_start(text, offset) {
-        return escape_completion(text, start, offset);
+        let mut items = escape_completion(text, start, offset);
+        let more = items.len() > ESCAPE_COMPLETIONS;
+        items.truncate(ESCAPE_COMPLETIONS);
+        return json!({"isIncomplete": more, "items": items});
     }
-    tauto_analyzer::editor::dsl_completion(&path_of(uri), text, offset)
+    let items: Vec<Value> = tauto_analyzer::editor::dsl_completion(&path_of(uri), text, offset)
         .unwrap_or_default()
         .into_iter()
         .map(|t| json!({"label": t, "kind": 14}))
-        .collect()
+        .collect();
+    json!(items)
 }
+
+/// The most signs one completion after a `\\` lists: every answer is read and written again
+/// by the server, so a short list keeps typing a name quick.
+const ESCAPE_COMPLETIONS: usize = 100;
 
 /// The characters after which an escape just written (`\\forall`) becomes its sign (`∀`),
 /// as `documentOnTypeFormattingProvider` names them: the first, then the rest.
 pub const ESCAPE_TRIGGERS: [&str; 11] = [" ", "\t", "(", ")", "[", "]", "{", "}", ",", ".", ":"];
 
-/// Where the escape that ends at `end` begins: the byte offset of its `\\`, followed only by
-/// ASCII letters up to `end`. `None` when there is none, or when the line before it is a comment
+/// Where the escape that ends at `end` begins: the byte offset of its `\\`, followed by an
+/// ASCII letter and then only ASCII letters and digits up to `end`. `None` when there is none, or when the line before it is a comment
 /// or within a text literal, as far as the line alone tells.
 fn escape_start(text: &str, end: usize) -> Option<usize> {
     let before = text.get(..end)?;
     let name_len = before
         .bytes()
         .rev()
-        .take_while(|b| b.is_ascii_alphabetic())
+        .take_while(|b| b.is_ascii_alphanumeric())
         .count();
     let start = end - name_len;
-    if start == 0 || before.as_bytes()[start - 1] != b'\\' {
+    if start == 0
+        || before.as_bytes()[start - 1] != b'\\'
+        || before.as_bytes().get(start).is_some_and(u8::is_ascii_digit)
+    {
         return None;
     }
     let start = start - 1;
@@ -364,21 +468,22 @@ fn escape_on_type(text: &str, line: usize, col: usize, ch: &str) -> Option<Value
         return None;
     }
     let start = escape_start(text, end)?;
-    let (_, sign) = tauto::fmt::ESCAPES
-        .iter()
-        .find(|(name, _)| *name == &text[start + 1..end])?;
+    let sign = symbols::sign_of(&text[start + 1..end])?;
     Some(json!({"range": range(text, start, end), "newText": sign}))
 }
 
 /// The signs whose escapes begin with what is written from `start` (a `\\`) to `end`, each
-/// replacing it.
+/// replacing it: the escapes of the syntax and the short names first, then the names read from
+/// Unicode.
 fn escape_completion(text: &str, start: usize, end: usize) -> Vec<Value> {
     let written = &text[start + 1..end];
-    tauto::fmt::ESCAPES
+    symbols::symbols()
         .iter()
-        .filter(|(name, _)| name.starts_with(written))
-        .map(|(name, sign)| {
+        .enumerate()
+        .filter(|(_, (name, _))| name.starts_with(written))
+        .map(|(i, (name, sign))| {
             json!({
+                "sortText": format!("{}{i:05}", if symbols::is_short(i) { 'a' } else { 'b' }),
                 "label": format!("\\{name}"),
                 "kind": 21,
                 "detail": sign,
@@ -544,7 +649,10 @@ impl Names<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_completion, escape_on_type, escape_start, path_of, uri_of};
+    use super::{
+        ESCAPE_COMPLETIONS, completion, escape_completion, escape_on_type, escape_start, path_of,
+        uri_of,
+    };
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -580,12 +688,47 @@ mod tests {
     fn escapes_complete_from_their_backslash() {
         let text = "a \\l";
         assert_eq!(escape_start(text, text.len()), Some(2));
-        let labels: Vec<_> = escape_completion(text, 2, text.len())
+        let items = escape_completion(text, 2, text.len());
+        let labels: Vec<_> = items.iter().map(|i| i["label"].as_str().unwrap()).collect();
+        assert_eq!(labels[..3], ["\\land", "\\lor", "\\llbracket"]);
+        assert_eq!(items[0]["textEdit"]["newText"], "∧");
+        assert!(labels.contains(&"\\lessthanorequalto"));
+        let mut sorted: Vec<_> = items
             .iter()
-            .map(|i| i["label"].as_str().unwrap().to_string())
+            .map(|i| i["sortText"].as_str().unwrap())
             .collect();
-        assert_eq!(labels, ["\\land", "\\lor", "\\llbracket"]);
-        assert_eq!(escape_completion(text, 2, text.len())[0]["textEdit"]["newText"], "∧");
+        sorted.sort();
+        assert_eq!(sorted[0], items[0]["sortText"]);
+    }
+
+    #[test]
+    fn a_short_escape_completes_to_a_short_list_asked_again() {
+        let list = completion("file:///a.taut", "\\", 0, 1);
+        assert_eq!(list["isIncomplete"], true);
+        assert_eq!(list["items"].as_array().unwrap().len(), ESCAPE_COMPLETIONS);
+        let list = completion("file:///a.taut", "\\llbr", 0, 5);
+        assert_eq!(list["isIncomplete"], false);
+        assert_eq!(list["items"][0]["textEdit"]["newText"], "⟦");
+    }
+
+    #[test]
+    fn signs_outside_the_syntax_have_escapes_too() {
+        for (written, sign) in [
+            ("\\to ", "→"),
+            ("\\alpha ", "α"),
+            ("\\Delta ", "Δ"),
+            ("\\bbN ", "ℕ"),
+            ("\\bf1 ", "𝟏"),
+            ("\\le ", "≤"),
+            ("\\rightwardsarrow ", "→"),
+            ("\\circledtimes ", "⊗"),
+            ("\\forall ", "∀"),
+        ] {
+            let col = written.chars().count();
+            let edit = escape_on_type(written, 0, col, " ").unwrap();
+            assert_eq!(edit["newText"], sign, "{written}");
+        }
+        assert!(escape_start("\\1x", 3).is_none());
     }
 
     #[test]

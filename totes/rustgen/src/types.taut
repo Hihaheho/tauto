@@ -1,3 +1,5 @@
+import std::text
+
 pub(open) inductive RustgenType: Type {
   RustgenNumber(id: Text, value: Nat): RustgenType
   RustgenNat: RustgenType
@@ -11,95 +13,103 @@ pub(open) inductive RustgenType: Type {
   RustgenVar(name: Text): RustgenType
 }
 
+// `A × B` and `#(a, b)`: the prelude's `Pair` and `Pair::Mk`, by the full names the
+// surface reads them as (`surface_pair_name`).
+pub fn rustgen_product_name(): Text { "std::prelude::Pair" }
+pub fn rustgen_product_ctor_name(): Text { "std::prelude::Pair::Mk" }
+pub fn rustgen_product_type(first: RustgenType, second: RustgenType): RustgenType {
+  RustgenApply(rustgen_product_name(), Cons(first, Cons(second, Nil)))
+}
+
 pub fn rustgen_type_tag(t: RustgenType): Nat {
-  ⊢ Nat from match t {
-    RustgenCallable(params, result) => 9
-    RustgenNumber(id, value) => 8
+  match t {
+    RustgenCallable(^params, ^result) => 9
+    RustgenNumber(^id, ^value) => 8
     RustgenInt => 0
     RustgenBool => 1
     RustgenText => 2
-    RustgenNamed(n) => 3
-    RustgenApply(n, args) => 4
-    RustgenVar(n) => 5
+    RustgenNamed(^n) => 3
+    RustgenApply(^n, ^args) => 4
+    RustgenVar(^n) => 5
     RustgenNat => 6
-    RustgenMeta(n) => 7
+    RustgenMeta(^n) => 7
   }
 }
 pub fn rustgen_type_label(t: RustgenType): Text {
-  ⊢ Text from match t {
-    RustgenCallable(params, result) => ""
-    RustgenNumber(id, value) => ""
+  match t {
+    RustgenCallable(^params, ^result) => ""
+    RustgenNumber(^id, ^value) => ""
     RustgenInt => ""
     RustgenBool => ""
     RustgenText => ""
     RustgenNamed(n) => n
-    RustgenApply(n, args) => n
+    RustgenApply(n, ^args) => n
     RustgenVar(n) => n
     RustgenNat => ""
     RustgenMeta(n) => n
   }
 }
 pub fn rustgen_type_args(t: RustgenType): List(RustgenType) {
-  ⊢ List(RustgenType) from match t {
+  match t {
     RustgenCallable(params, result) => Cons(result, params)
-    RustgenNumber(id, value) => Nil
+    RustgenNumber(^id, ^value) => Nil
     RustgenInt => Nil
     RustgenBool => Nil
     RustgenText => Nil
-    RustgenNamed(n) => Nil
-    RustgenApply(n, args) => args
-    RustgenVar(n) => Nil
+    RustgenNamed(^n) => Nil
+    RustgenApply(^n, args) => args
+    RustgenVar(^n) => Nil
     RustgenNat => Nil
-    RustgenMeta(n) => Nil
+    RustgenMeta(^n) => Nil
   }
 }
 // Structural equality includes the identity and magnitude of unresolved literals.
 // Numeric compatibility and inference are handled by rustgen_unify.
 pub fn rustgen_same_number(id: Text, value: Nat, b: RustgenType): Bool {
-  ⊢ Bool from match b {
+  match b {
     RustgenNumber(other, magnitude) => id == other && value == magnitude
-    RustgenCallable(params, result) => false
-    RustgenApply(name, args) => false
+    RustgenCallable(^params, ^result) => false
+    RustgenApply(^name, ^args) => false
     RustgenInt => false
     RustgenBool => false
     RustgenText => false
     RustgenNat => false
-    RustgenNamed(name) => false
-    RustgenVar(name) => false
-    RustgenMeta(name) => false
+    RustgenNamed(^name) => false
+    RustgenVar(^name) => false
+    RustgenMeta(^name) => false
   }
 }
 pub fn rustgen_callable_parameters(ty: RustgenType): List(RustgenType) {
-  ⊢ List(RustgenType) from match ty {
-    RustgenCallable(params, result) => params
-    RustgenNumber(id, value) => Nil
-    RustgenMeta(name) => Nil
+  match ty {
+    RustgenCallable(params, ^result) => params
+    RustgenNumber(^id, ^value) => Nil
+    RustgenMeta(^name) => Nil
     RustgenInt => Nil
     RustgenNat => Nil
     RustgenBool => Nil
     RustgenText => Nil
-    RustgenNamed(name) => Nil
-    RustgenApply(name, args) => Nil
-    RustgenVar(name) => Nil
+    RustgenNamed(^name) => Nil
+    RustgenApply(^name, ^args) => Nil
+    RustgenVar(^name) => Nil
   }
 }
 pub fn rustgen_callable_result(ty: RustgenType): RustgenType {
-  ⊢ RustgenType from match ty {
-    RustgenCallable(params, result) => result
-    RustgenNumber(id, value) => ty
-    RustgenMeta(name) => ty
+  match ty {
+    RustgenCallable(^params, result) => result
+    RustgenNumber(^id, ^value) => ty
+    RustgenMeta(^name) => ty
     RustgenInt => ty
     RustgenNat => ty
     RustgenBool => ty
     RustgenText => ty
-    RustgenNamed(name) => ty
-    RustgenApply(name, args) => ty
-    RustgenVar(name) => ty
+    RustgenNamed(^name) => ty
+    RustgenApply(^name, ^args) => ty
+    RustgenVar(^name) => ty
   }
 }
 mutual {
   pub fn rustgen_same(a: RustgenType, b: RustgenType): Bool {
-    ⊢ Bool from match a {
+    match a {
       RustgenApply(name, args) => rustgen_type_tag(
         b
       ) == 4 && name == rustgen_type_label(b) && rustgen_sames(args, rustgen_type_args(b))
@@ -120,10 +130,10 @@ mutual {
     }
   }
   pub fn rustgen_sames(xs: List(RustgenType), ys: List(RustgenType)): Bool {
-    ⊢ Bool from match xs {
+    match xs {
       Nil => ⊢ Bool from match ys {
         Nil => true
-        Cons(y, more) => false
+        Cons(^y, ^more) => false
       }
       Cons(x, rest) => ⊢ Bool from match ys {
         Nil => false
@@ -134,16 +144,16 @@ mutual {
 }
 
 pub fn rustgen_scalar_name(ty: RustgenType): Text {
-  ⊢ Text from match ty {
-    RustgenCallable(params, result) => ""
-    RustgenNumber(id, value) => "_"
+  match ty {
+    RustgenCallable(^params, ^result) => ""
+    RustgenNumber(^id, ^value) => "_"
     RustgenNat => "u64"
-    RustgenMeta(n) => "_"
+    RustgenMeta(^n) => "_"
     RustgenInt => "i64"
     RustgenBool => "bool"
     RustgenText => "String"
     RustgenNamed(name) => name
-    RustgenApply(name, args) => name
+    RustgenApply(name, ^args) => name
     RustgenVar(name) => name
   }
 }

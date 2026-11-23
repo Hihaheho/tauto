@@ -1,6 +1,7 @@
 //! `Float` (IEEE 754 binary64): its literals, its `/`, how it is shown, and
-//! the functions of `std/prelude/Num.taut`, shared with the evaluator
-//! (`crates/tauto-eval/src/eval.rs`) so that the two compute the same bits.
+//! the functions of `std/prelude/num.taut`, shared by the bytecode machine
+//! (`crates/tauto-vm`) and the compiled programs so that they compute the
+//! same bits.
 //! The JavaScript backend has its own copy (`crates/tauto-jsgen/src/float.js`).
 
 use crate::{Loc, Text, error, float_math, messages};

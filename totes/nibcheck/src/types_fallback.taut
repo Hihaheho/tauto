@@ -1,0 +1,121 @@
+import std::base
+import std::text
+import "../../surface/src/surface.taut"
+import "classes_expand.taut"
+import "datas.taut"
+import "freevars.taut"
+import "../../identity/src/identity.taut"
+
+// What `types/expand.rs` asks of a program before it reads the report of the
+// expanded prelude: whether the program declares a class, an instance or a
+// constraint, or uses a class or a constrained function of the prelude. Such a
+// program that does not check against the expanded prelude is read against
+// the prelude as written.
+
+pub fn fallback_constrained(ws: List(SurfaceConstraint)): Bool {
+  match ws {
+    Nil => false
+    Cons(w, rest) => if class_is_structural(w.r#class) { fallback_constrained(rest) } else { true }
+  }
+}
+
+pub fn fallback_methods(cls: Text, ms: List(SurfaceFn), out: List(Text)): List(Text) {
+  match ms {
+    Nil => out
+    Cons(m, rest) => fallback_methods(
+      cls,
+      rest,
+      Cons(Text::concat_all(Cons(cls, Cons("::", Cons(m.name, Nil)))), Cons(Text::concat_all(Cons(cls, Cons(".", Cons(m.name, Nil)))), out))
+    )
+  }
+}
+
+pub fn fallback_constrained_fns(fs: List(SurfaceFn), out: List(Text)): List(Text) {
+  match fs {
+    Nil => out
+    Cons(f, rest) => if fallback_constrained(f.wheres) {
+      fallback_constrained_fns(rest, Cons(f.name, out))
+    } else { fallback_constrained_fns(rest, out) }
+  }
+}
+
+// The prelude's classes, the functions of their methods, and its constrained functions.
+pub struct FallbackNames {
+  classes: List(Text),
+  methods: List(Text),
+  fns: List(Text)
+}
+
+pub fn fallback_names(ss: List(SurfaceStmt), acc: FallbackNames): FallbackNames {
+  match ss {
+    Nil => acc
+    Cons(s, rest) => fallback_names(
+      rest,
+      match s {
+        StClass(c) => FallbackNames {
+          classes: Cons(c.name, acc.classes),
+          methods: fallback_methods(c.name, c.methods, acc.methods),
+          fns: acc.fns
+        }
+        StFn(f) => FallbackNames {
+          classes: acc.classes,
+          methods: acc.methods,
+          fns: fallback_constrained_fns(Cons(f, Nil), acc.fns)
+        }
+        StExtern(fs, ^instances, ^types, ^structs, ^enums, ^start, ^end) => FallbackNames {
+          classes: acc.classes,
+          methods: acc.methods,
+          fns: fallback_constrained_fns(fs, acc.fns)
+        }
+        _ => acc
+      }
+    )
+  }
+}
+
+pub fn fallback_own_fns(ss: List(SurfaceStmt)): List(Text) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => match s {
+      StFn(f) => Cons(f.name, fallback_own_fns(rest))
+      _ => fallback_own_fns(rest)
+    }
+  }
+}
+
+pub fn fallback_declares(ss: List(SurfaceStmt), names: FallbackNames): Bool {
+  match ss {
+    Nil => false
+    Cons(s, rest) => match s {
+      StClass(^c) => true
+      StInstance(^i) => true
+      StFn(f) => fallback_constrained(f.wheres) || fallback_declares(rest, names)
+      StStruct(d) => text_list_has(names.classes, d.name) || fallback_declares(rest, names)
+      StEnum(d) => text_list_has(names.classes, d.name) || fallback_declares(rest, names)
+      _ => fallback_declares(rest, names)
+    }
+  }
+}
+
+pub fn fallback_uses(ts: List(SurfaceTerm), names: FallbackNames, own: List(Text)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => match t.kind {
+      SkVar(n) => (text_list_has(names.fns, surface_name_text(n)) && not(text_list_has(own, surface_name_text(n)))) ||
+        text_list_has(names.methods, surface_name_text(n)) ||
+        fallback_uses(rest, names, own)
+      SkField(base, ^field) => match base.kind {
+        SkVar(cls) => text_list_has(names.classes, surface_name_text(cls)) || fallback_uses(rest, names, own)
+        _ => fallback_uses(rest, names, own)
+      }
+      _ => fallback_uses(rest, names, own)
+    }
+  }
+}
+
+// `uses_classes` of `types/expand.rs`, against the prelude as written.
+pub fn types_uses_classes(source: List(SurfaceStmt), program: List(SurfaceStmt)): Bool {
+  let names := fallback_names(source, FallbackNames { classes: Nil, methods: Nil, fns: Nil })
+  fallback_declares(program, names) ||
+    fallback_uses(subterms_stmts(program, Nil), names, fallback_own_fns(program))
+}

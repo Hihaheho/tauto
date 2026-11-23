@@ -1,0 +1,1127 @@
+import std::base
+import std::data
+import "value.taut"
+import std::list
+import std::text_ops
+import std::text
+import "syntax.taut"
+import "decimal.taut"
+
+// Reading Eure text into statements (`syntax.taut`). The reader works on the UTF-8 bytes. Every
+// reader that calls itself takes fuel, spends one unit on each call and is given more fuel than
+// the text has bytes, so it is structurally recursive and stops on any input.
+
+// What a reader gives: a value and the bytes after it, or the bytes where it stopped and what it
+// expected there.
+pub(open) inductive Rd(A: Type): Type {
+  MkRd(a: A, rest: List(Nat)): Rd(A)
+  RdErr(rest: List(Nat), what: Text): Rd(A)
+}
+
+pub fn rd_then<A, B>(r: Rd(A), k: (A, List(Nat)) -> Rd(B)): Rd(B) {
+  match r {
+    MkRd(a, rest) => k(a, rest)
+    RdErr(rest, what) => RdErr(rest, what)
+  }
+}
+
+pub fn rd_map<A, B>(f: (A) -> B, r: Rd(A)): Rd(B) {
+  rd_then(r, (a: A, rest: List(Nat)) => MkRd(f(a), rest))
+}
+
+// ---- bytes ----------------------------------------------------------------------
+
+pub fn head_is(c: Nat, l: List(Nat)): Bool {
+  match l {
+    Nil => false
+    Cons(d, ^t) => Nat::eq(c, d)
+  }
+}
+
+pub fn byte_in(c: Nat, lo: Nat, hi: Nat): Bool {
+  Bool::and(Nat::le(lo, c), Nat::le(c, hi))
+}
+
+// The first byte of an identifier: a letter, `_`, or any byte of a character outside ASCII.
+pub fn ident_start(c: Nat): Bool {
+  Bool::or(byte_in(c, 65, 90), Bool::or(byte_in(c, 97, 122), Bool::or(Nat::eq(c, 95), Nat::le(128, c))))
+}
+
+// The other bytes of an identifier: also digits and `-`.
+pub fn ident_char(c: Nat): Bool {
+  Bool::or(ident_start(c), Bool::or(is_digit(c), Nat::eq(c, 45)))
+}
+
+// `c` put in front of the bytes taken by a span. A separate function so that `span` calls itself
+// once per byte: naming the inner span twice reads it twice at every byte, which is exponential.
+pub fn span_cons(c: Nat, q: @taken List(Nat) × @rest List(Nat)): @taken List(Nat) × @rest List(Nat) {
+  #(@taken Cons(c, (q: @taken List(Nat))), @rest (q: @rest List(Nat)))
+}
+
+// The bytes at the front of `l` that pass `p`, and the rest.
+pub fn span(p: (Nat) -> Bool, l: List(Nat)): @taken List(Nat) × @rest List(Nat) {
+  match l {
+    Nil => #(@taken Nil, @rest Nil)
+    Cons(c, t) => match p(c) {
+      true => span_cons(c, span(p, t))
+      false => #(@taken Nil, @rest l)
+    }
+  }
+}
+
+fn is_space(c: Nat): Bool {
+  Bool::or(Nat::eq(c, 32), Nat::eq(c, 9))
+}
+
+pub fn is_ws(c: Nat): Bool {
+  Bool::or(is_space(c), Bool::or(Nat::eq(c, 10), Nat::eq(c, 13)))
+}
+
+// Skips white space, line breaks and comments. Each byte is looked at once, and every call is on
+// a strictly shorter tail of the text, so this needs no fuel.
+mutual {
+  pub fn skip_ws(l: List(Nat)): List(Nat) {
+    match l {
+      Nil => Nil
+      Cons(c, t) => match is_ws(c) {
+        true => skip_ws(t)
+        false => match Nat::eq(c, 47) {
+          true => skip_slash(c, t)
+          false => l
+        }
+      }
+    }
+  }
+  // After a `/`, which is `c`: a comment, or the `/` itself.
+  pub fn skip_slash(c: Nat, l: List(Nat)): List(Nat) {
+    match l {
+      Nil => Cons(c, l)
+      Cons(d, u) => match Nat::eq(d, 47) {
+        true => skip_in_line(u)
+        false => match Nat::eq(d, 42) {
+          true => skip_in_block(u)
+          false => Cons(c, l)
+        }
+      }
+    }
+  }
+  // Inside a `//` comment: up to and past the line break, then more white space.
+  pub fn skip_in_line(l: List(Nat)): List(Nat) {
+    match l {
+      Nil => Nil
+      Cons(c, t) => match Nat::eq(c, 10) {
+        true => skip_ws(t)
+        false => skip_in_line(t)
+      }
+    }
+  }
+  // Inside a `/* … */` comment, after a `*`: `/` ends the comment.
+  pub fn skip_star(l: List(Nat)): List(Nat) {
+    match l {
+      Nil => Nil
+      Cons(d, u) => match Nat::eq(d, 47) {
+        true => skip_ws(u)
+        false => match Nat::eq(d, 42) {
+          true => skip_star(u)
+          false => skip_in_block(u)
+        }
+      }
+    }
+  }
+  // Inside a `/* … */` comment: up to and past `*/`, then more white space.
+  pub fn skip_in_block(l: List(Nat)): List(Nat) {
+    match l {
+      Nil => Nil
+      Cons(c, t) => match Nat::eq(c, 42) {
+        true => skip_star(t)
+        false => skip_in_block(t)
+      }
+    }
+  }
+}
+
+pub fn skip(l: List(Nat)): List(Nat) {
+  skip_ws(l)
+}
+
+// Skips spaces and tabs, staying on the line.
+fn skip_spaces(l: List(Nat)): List(Nat) {
+  (span(is_space, l): @rest List(Nat))
+}
+
+fn expect(c: Nat, what: Text, l: List(Nat)): Rd(Bool) {
+  match l {
+    Nil => RdErr(l, what)
+    Cons(d, t) => match Nat::eq(c, d) {
+      true => MkRd(true, t)
+      false => RdErr(l, what)
+    }
+  }
+}
+
+// ---- strings ----------------------------------------------------------------------
+
+fn hex_value(c: Nat): Option(Nat) {
+  match is_digit(c) {
+    true => Some(Nat::sub(c, 48))
+    false => match byte_in(c, 97, 102) {
+      true => Some(Nat::sub(c, 87))
+      false => match byte_in(c, 65, 70) {
+        true => Some(Nat::sub(c, 55))
+        false => None
+      }
+    }
+  }
+}
+
+// The hex digits of `\u{…}` up to `}`, read into `acc`.
+fn read_hex(acc: Nat, n: Nat, l: List(Nat)): Rd(Nat) {
+  match l {
+    Nil => RdErr(l, "`}` to close the escape")
+    Cons(c, t) => match Nat::eq(c, 125) {
+      true => match Nat::eq(n, 0) {
+        true => RdErr(l, "a hex digit")
+        false => MkRd(acc, t)
+      }
+      false => match Bool::or(Nat::eq(c, 95), Nat::eq(c, 45)) {
+        true => read_hex(acc, n, t)
+        false => ⊢ Rd(Nat) from match hex_value(c) {
+          None => RdErr(l, "a hex digit or `}`")
+          Some(v) => match Nat::lt(5, n) {
+            true => RdErr(l, "at most six hex digits")
+            false => read_hex(Nat::add(Nat::mul(acc, 16), v), Succ(n), t)
+          }
+        }
+      }
+    }
+  }
+}
+
+// What follows `\u{`: a code point, encoded.
+fn read_unicode(l: List(Nat)): Rd(List(Nat)) {
+  rd_then(
+    read_hex(0, 0, l),
+    (
+      c: Nat,
+      rest: List(Nat)
+    ) => match Text::of_code_point(c) {
+      None => RdErr(l, "a Unicode scalar value")
+      Some(t) => MkRd(Text::bytes(t), rest)
+    }
+  )
+}
+
+// The byte of a one-letter escape.
+fn short_escape(c: Nat): Option(Nat) {
+  match Nat::eq(c, 92) {
+    true => Some(92)
+    false => match Nat::eq(c, 34) {
+      true => Some(34)
+      false => match Nat::eq(c, 39) {
+        true => Some(39)
+        false => match Nat::eq(c, 110) {
+          true => Some(10)
+          false => match Nat::eq(c, 114) {
+            true => Some(13)
+            false => match Nat::eq(c, 116) {
+              true => Some(9)
+              false => match Nat::eq(c, 48) {
+                true => Some(0)
+                false => None
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// After `\` in a string: the escaped bytes, then `k` reads the rest of the string.
+fn str_escape(t: List(Nat), k: (List(Nat)) -> Rd(List(Nat))): Rd(List(Nat)) {
+  match t {
+    Nil => RdErr(t, "an escape")
+    Cons(e, u) => ⊢ Rd(List(Nat)) from match Bool::and(Nat::eq(e, 117), head_is(123, u)) {
+      true => rd_then(
+        read_unicode(List::tail(u)),
+        (bs: List(Nat), r: List(Nat)) => rd_map((more: List(Nat)) => List::append(bs, more), k(r))
+      )
+      false => ⊢ Rd(List(Nat)) from match short_escape(e) {
+        None => RdErr(t, "an escape: one of \\ \" ' n r t 0 u{…}")
+        Some(b) => rd_map((more: List(Nat)) => Cons(b, more), k(u))
+      }
+    }
+  }
+}
+
+// One byte `c` of a string, followed by `t`; `quote` and `slash` say whether `c` is `"` or `\`.
+pub fn str_byte(
+  c: Nat,
+  t: List(Nat),
+  r#quote: Bool,
+  slash: Bool,
+  k: (List(Nat)) -> Rd(List(Nat))
+): Rd(List(Nat)) {
+  match r#quote {
+    true => MkRd(Nil, t)
+    false => ⊢ Rd(List(Nat)) from match slash {
+      true => str_escape(t, k)
+      false => rd_map((more: List(Nat)) => Cons(c, more), k(t))
+    }
+  }
+}
+
+// The bytes of a `"…"` string whose `"` has been read, up to and past the closing `"`, with the
+// escapes `\\ \" \' \n \r \t \0 \u{…}` replaced. The fuel `f`, here and in the other readers that
+// take a list as fuel, is one step for each of its elements: a caller passes the text itself (with
+// one more element in front) instead of counting its length, so a read costs only the bytes it reads.
+pub fn read_str_body(f: List(Nat), l: List(Nat)): Rd(List(Nat)) {
+  match f {
+    Nil => RdErr(l, "a shorter string")
+    Cons(^fb, g) => ⊢ Rd(List(Nat)) from match l {
+      Nil => RdErr(l, "`\"` to close the string")
+      Cons(
+        c,
+        t
+      ) => str_byte(c, t, Nat::eq(c, 34), Nat::eq(c, 92), (u: List(Nat)) => read_str_body(g, u))
+    }
+  }
+}
+
+// The bytes of a `'…'` string whose `'` has been read; nothing is escaped.
+fn read_lit_body(l: List(Nat)): Rd(List(Nat)) {
+  match l {
+    Nil => RdErr(l, "`'` to close the string")
+    Cons(c, t) => match Nat::eq(c, 39) {
+      true => MkRd(Nil, t)
+      false => rd_map((more: List(Nat)) => Cons(c, more), read_lit_body(t))
+    }
+  }
+}
+
+// A string, `"…"` or `'…'`.
+pub fn read_string(l: List(Nat)): Rd(List(Nat)) {
+  match l {
+    Nil => RdErr(l, "a string")
+    Cons(c, t) => match Nat::eq(c, 34) {
+      true => read_str_body(Cons(0, t), t)
+      false => match Nat::eq(c, 39) {
+        true => read_lit_body(t)
+        false => RdErr(l, "a string")
+      }
+    }
+  }
+}
+
+pub fn starts_string(l: List(Nat)): Bool {
+  Bool::or(head_is(34, l), head_is(39, l))
+}
+
+// Strings joined with `\`: `"a" \ "b"` is `"ab"`.
+pub fn read_strings(f: List(Nat), l: List(Nat)): Rd(List(Nat)) {
+  match f {
+    Nil => RdErr(l, "fewer strings")
+    Cons(^fb, g) => rd_then(
+      read_string(l),
+      (
+        bs: List(Nat),
+        r: List(Nat)
+      ) => match head_is(92, skip(r)) {
+ true => rd_map((more: List(Nat)) => List::append(bs, more), read_strings(g, skip(List::tail(skip(r)))))
+ false => MkRd(bs, r)
+}
+    )
+  }
+}
+
+// ---- code --------------------------------------------------------------------------
+
+pub fn lang_of(name: List(Nat)): Lang {
+  match name {
+    Nil => Implicit
+    Cons(^c, ^t) => match Text::eq(Text::Mk(name), "plaintext") {
+      true => Plaintext
+      false => Named(Text::Mk(name))
+    }
+  }
+}
+
+// Inline code whose language and first backtick have been read, up to the closing backtick.
+pub fn read_inline_code(l: List(Nat)): Rd(List(Nat)) {
+  match l {
+    Nil => RdErr(l, "a backtick to close the code")
+    Cons(c, t) => match Nat::eq(c, 96) {
+      true => MkRd(Nil, t)
+      false => match Bool::or(Nat::eq(c, 10), Nat::eq(c, 13)) {
+        true => RdErr(l, "a backtick before the end of the line")
+        false => rd_map((more: List(Nat)) => Cons(c, more), read_inline_code(t))
+      }
+    }
+  }
+}
+
+// The length of the `@taken` part of a `span`.
+pub fn taken_length(q: @taken List(Nat) × @rest List(Nat)): Nat {
+  let t: @taken List(Nat) := q
+  let u: List(Nat) := t
+  List::length(u)
+}
+
+pub fn count_ticks(l: List(Nat)): Nat {
+  List::length(span_taken(span((c: Nat) => Nat::eq(c, 96), l)))
+}
+
+// Keep block scanning first-order and concrete so JavaScript can run it directly.
+// Generic list combinators otherwise retain a continuation for every input byte.
+fn block_ticks(l: List(Nat)): Nat {
+  match l {
+    Nil => 0
+    Cons(c, t) => if Nat::eq(c, 96) { Succ(block_ticks(t)) } else { 0 }
+  }
+}
+fn block_reverse(l: List(Nat), acc: List(Nat)): List(Nat) {
+  match l {
+    Nil => acc
+    Cons(c, t) => block_reverse(t, Cons(c, acc))
+  }
+}
+fn block_drop(n: Nat, l: List(Nat)): List(Nat) {
+  match n {
+    Zero => l
+    Succ(k) => ⊢ List(Nat) from match l {
+      Nil => Nil
+      Cons(^c, t) => block_drop(k, t)
+    }
+  }
+}
+fn read_block_acc(n: Nat, l: List(Nat), acc: List(Nat)): Rd(List(Nat)) {
+  match l {
+    Nil => RdErr(l, "backticks to close the code block")
+    Cons(c, t) => match Bool::and(Nat::eq(c, 96), Nat::le(n, block_ticks(l))) {
+      true => MkRd(block_reverse(acc, Nil), block_drop(n, l))
+      false => read_block_acc(n, t, Cons(c, acc))
+    }
+  }
+}
+
+// The content of a code block up to `n` backticks in a row.
+fn read_block_body(n: Nat, l: List(Nat)): Rd(List(Nat)) {
+  read_block_acc(n, l, Nil)
+}
+
+fn all_spaces(l: List(Nat)): Bool {
+  List::all((c: Nat) => Nat::eq(c, 32), l)
+}
+
+fn all_ws(l: List(Nat)): Bool {
+  List::all(is_ws, l)
+}
+
+fn last_line(l: List(Nat)): List(Nat) {
+  List::reverse((span((c: Nat) => not(Nat::eq(c, 10)), List::reverse(l)): @taken List(Nat)))
+}
+
+fn has_newline(l: List(Nat)): Bool {
+  List::any((c: Nat) => Nat::eq(c, 10), l)
+}
+
+fn ends_with_newline(l: List(Nat)): Bool {
+  match List::last(l) {
+    None => false
+    Some(c) => Nat::eq(c, 10)
+  }
+}
+
+fn text_of_split_bytes(p: List(Nat) × List(List(Nat))): List(List(Nat)) {
+  match p { #(first,rest) => Cons(first,rest) }
+}
+
+// The lines of a block, as `str::lines` counts them: a last empty line after a line break is not
+// a line.
+fn block_lines(l: List(Nat)): List(List(Nat)) {
+  match l {
+    Nil => Nil
+    Cons(^c, ^t) => match ends_with_newline(l) {
+      true => text_of_split_bytes(Bytes::split(List::reverse(List::tail(List::reverse(l))), 10))
+      false => text_of_split_bytes(Bytes::split(l, 10))
+    }
+  }
+}
+
+// One line with `base` spaces taken off the front, and a line break.
+fn dedent_line(base: Nat, line: List(Nat)): Option(List(Nat)) {
+  match all_ws(line) {
+    true => Some(Cons(10, Nil))
+    false => match Nat::le(base, List::length(span_taken(span((c: Nat) => Nat::eq(c, 32), line)))) {
+      true => Some(List::append(List::drop(base, line), Cons(10, Nil)))
+      false => None
+    }
+  }
+}
+
+fn dedent_lines(base: Nat, ls: List(List(Nat))): Option(List(Nat)) {
+  match ls {
+    Nil => Some(Nil)
+    Cons(
+      line,
+      rest
+    ) => Option::bind(
+      dedent_line(base, line),
+      (a: List(Nat)) => Option::map((b: List(Nat)) => List::append(a, b), dedent_lines(base, rest))
+    )
+  }
+}
+
+// The text of a code block: the spaces before the closing backticks are the indentation of the
+// block, and are taken off every line that is not blank. Every line ends with a line break.
+fn dedent(content: List(Nat)): Option(List(Nat)) {
+  let base: Nat := match Bool::and(has_newline(content), all_spaces(last_line(content))) {
+    true => List::length(last_line(content))
+    false => 0
+  }
+  let lines: List(List(Nat)) := block_lines(content)
+  let kept: List(
+    List(Nat)
+  ) := match Bool::and(
+    Nat::lt(0, base),
+    Bool::and(not(ends_with_newline(content)), Nat::lt(1, List::length(lines)))
+  ) {
+    true => List::take(Nat::sub(List::length(lines), 1), lines)
+    false => lines
+  }
+  dedent_lines(base, kept)
+}
+
+fn code_text(name: List(Nat), body: List(Nat), r: List(Nat), l: List(Nat)): Rd(Value) {
+  match dedent(body) {
+    None => RdErr(
+      l,
+      "every line of the code block indented at least as far as its closing backticks"
+    )
+    Some(t) => MkRd(Vtext(lang_of(name), Text::Mk(t)), r)
+  }
+}
+
+fn code_after_lang(n: Nat, name: List(Nat), after: List(Nat), l: List(Nat)): Rd(Value) {
+  match head_is(10, after) {
+    true => rd_then(
+      read_block_body(n, List::tail(after)),
+      (body: List(Nat), r: List(Nat)) => code_text(name, body, r, l)
+    )
+    false => RdErr(after, "a line break after the language of the code block")
+  }
+}
+
+// A code block whose opening backticks (`n` of them, three to six) have been read.
+pub fn read_code_block(n: Nat, l: List(Nat)): Rd(Value) {
+  code_after_lang(n, (span(ident_char, l): @taken List(Nat)), skip_spaces((span(ident_char, l): @rest List(Nat))), l)
+}
+
+// ---- numbers -----------------------------------------------------------------------
+
+pub fn digit_value(l: List(Nat)): Nat {
+  dec_value(0, List::filter((c: Nat) => is_digit(c), l))
+}
+
+pub fn is_digit_or_underscore(c: Nat): Bool {
+  Bool::or(is_digit(c), Nat::eq(c, 95))
+}
+
+// A sign: `true` for `-`, and the bytes after it.
+pub fn read_sign(l: List(Nat)): Bool × List(Nat) {
+  match head_is(45, l) {
+    true => #(true, List::tail(l))
+    false => match head_is(43, l) {
+      true => #(false, List::tail(l))
+      false => #(false, l)
+    }
+  }
+}
+
+pub fn starts_number(l: List(Nat)): Bool {
+  match sign_rest(read_sign(l)) {
+    Nil => false
+    Cons(c, ^t) => is_digit(c)
+  }
+}
+
+// An integer: a sign, a digit, then digits and `_`.
+pub fn read_int(l: List(Nat)): Rd(Bool × Nat) {
+  let s: Bool × List(Nat) := read_sign(l)
+  ⊢ Rd(Bool × Nat) from match sign_rest(s) {
+    Nil => RdErr(l, "an integer")
+    Cons(c, ^t) => match is_digit(c) {
+      true => MkRd(
+        #(sign_negative(s), digit_value((span(is_digit_or_underscore, sign_rest(s)): @taken List(Nat)))),
+        (span(is_digit_or_underscore, sign_rest(s)): @rest List(Nat))
+      )
+      false => RdErr(l, "an integer")
+    }
+  }
+}
+
+// `a - b` as a sign and a magnitude.
+pub fn signed_sub(aneg: Bool, a: Nat, b: Nat): Bool × Nat {
+  match aneg {
+    true => #(true, Nat::add(a, b))
+    false => match Nat::le(b, a) {
+      true => #(false, Nat::sub(a, b))
+      false => #(true, Nat::sub(b, a))
+    }
+  }
+}
+
+pub fn dec_of(neg: Bool, whole: List(Nat), frac: List(Nat), eneg: Bool, e: Nat): Value {
+  let ex: Bool × Nat := signed_sub(eneg, e, List::length(frac))
+  Vdec(neg, digit_value(List::append(whole, frac)), number_negative(ex), number_magnitude(ex))
+}
+
+// The exponent after `e` or `E`.
+pub fn read_exp(neg: Bool, whole: List(Nat), frac: List(Nat), l: List(Nat)): Rd(Value) {
+  let s: Bool × List(Nat) := read_sign(l)
+  let ds: @taken List(Nat) × @rest List(Nat) := span(is_digit, sign_rest(s))
+  ⊢ Rd(Value) from match span_taken(ds) {
+    Nil => RdErr(l, "the digits of the exponent")
+    Cons(^c, ^t) => MkRd(dec_of(neg, whole, frac, sign_negative(s), digit_value((ds: @taken List(Nat)))), (ds: @rest List(Nat)))
+  }
+}
+
+pub fn is_e(l: List(Nat)): Bool {
+  Bool::or(head_is(101, l), head_is(69, l))
+}
+
+pub fn no_suffix(r: Rd(Value)): Rd(Value) {
+  match r {
+    MkRd(
+      ^v,
+      rest
+    ) => match Bool::or(Text::starts_with(Text::Mk(rest), "f32"), Text::starts_with(Text::Mk(rest), "f64")) {
+      true => RdErr(rest, "a number without `f32` or `f64`: binary floating point is not read")
+      false => r
+    }
+    RdErr(^rest, ^what) => r
+  }
+}
+
+pub fn starts_digit(l: List(Nat)): Bool {
+  match l {
+    Nil => false
+    Cons(c, ^t) => is_digit(c)
+  }
+}
+
+pub fn read_frac(neg: Bool, whole: List(Nat), frac: @taken List(Nat) × @rest List(Nat)): Rd(Value) {
+  match is_e((frac: @rest List(Nat))) {
+    true => read_exp(neg, whole, (frac: @taken List(Nat)), List::tail((frac: @rest List(Nat))))
+    false => MkRd(dec_of(neg, whole, (frac: @taken List(Nat)), false, 0), (frac: @rest List(Nat)))
+  }
+}
+
+// A number: an integer, or a decimal with a fraction `.d…` or an exponent `e…`.
+pub fn read_number(l: List(Nat)): Rd(Value) {
+  let s: Bool × List(Nat) := read_sign(l)
+  let whole: @taken List(Nat) × @rest List(Nat) := span(is_digit_or_underscore, sign_rest(s))
+  let r: List(Nat) := (whole: @rest List(Nat))
+  no_suffix(
+    match Bool::and(head_is(46, r), starts_digit(List::tail(r))) {
+ true => read_frac(sign_negative(s), (whole: @taken List(Nat)), span(is_digit, List::tail(r)))
+ false => match is_e(r) {
+ true => read_exp(sign_negative(s), (whole: @taken List(Nat)), Nil, List::tail(r))
+ false => MkRd(Vint(sign_negative(s), digit_value((whole: @taken List(Nat)))), r)
+}
+}
+  )
+}
+
+// ---- words -------------------------------------------------------------------------
+
+pub fn read_ident(l: List(Nat)): Rd(List(Nat)) {
+  match l {
+    Nil => RdErr(l, "a name")
+    Cons(c, ^t) => match ident_start(c) {
+      true => MkRd((span(ident_char, l): @taken List(Nat)), (span(ident_char, l): @rest List(Nat)))
+      false => RdErr(l, "a name")
+    }
+  }
+}
+
+// `!` has been read: an optional label.
+pub fn read_hole(l: List(Nat)): Rd(Value) {
+  match l {
+    Nil => MkRd(Vhole(None), l)
+    Cons(c, ^t) => match ident_start(c) {
+      true => MkRd(Vhole(Some(Text::Mk((span(ident_char, l): @taken List(Nat))))), (span(ident_char, l): @rest List(Nat)))
+      false => MkRd(Vhole(None), l)
+    }
+  }
+}
+
+// A word in a value: `true`, `false`, `null`, or the language of inline code (`` rust`…` ``).
+pub fn read_word(l: List(Nat)): Rd(Value) {
+  rd_then(
+    read_ident(l),
+    (
+      w: List(Nat),
+      r: List(Nat)
+    ) => match head_is(96, r) {
+ true => rd_map((c: List(Nat)) => Vtext(lang_of(w), Text::Mk(c)), read_inline_code(List::tail(r)))
+ false => match Text::eq(Text::Mk(w), "true") {
+ true => MkRd(Vbool(true), r)
+ false => match Text::eq(Text::Mk(w), "false") {
+ true => MkRd(Vbool(false), r)
+ false => match Text::eq(Text::Mk(w), "null") {
+ true => MkRd(Vnull, r)
+ false => RdErr(l, "a value (`inf` and `nan` are not read)")
+}
+}
+}
+}
+  )
+}
+
+// A value that holds no other value.
+pub fn read_scalar(l: List(Nat)): Rd(Value) {
+  match l {
+    Nil => RdErr(l, "a value")
+    Cons(c, t) => match starts_string(l) {
+      true => rd_map(
+        (bs: List(Nat)) => Vtext(Plaintext, Text::Mk(bs)),
+        read_strings(Cons(0, l), l)
+      )
+      false => match Nat::eq(c, 33) {
+        true => read_hole(t)
+        false => match Nat::eq(c, 96) {
+          true => match Nat::le(3, count_ticks(l)) {
+            true => match Nat::le(count_ticks(l), 6) {
+              true => read_code_block(count_ticks(l), List::drop(count_ticks(l), l))
+              false => RdErr(l, "at most six backticks")
+            }
+            false => rd_map((bs: List(Nat)) => Vtext(Implicit, Text::Mk(bs)), read_inline_code(t))
+          }
+          false => match starts_number(l) {
+            true => read_number(l)
+            false => read_word(l)
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- keys --------------------------------------------------------------------------
+
+// `true` and `false` in a tuple key are the strings they are spelled with, as they are in a path.
+fn Key::word(w: List(Nat), r: List(Nat), l: List(Nat)): Rd(Key) {
+  match Bool::or(Text::eq(Text::Mk(w), "true"), Text::eq(Text::Mk(w), "false")) {
+    true => MkRd(Kstr(Text::Mk(w)), r)
+    false => RdErr(l, "an integer, a boolean, a string or a tuple")
+  }
+}
+
+fn Key::scalar(l: List(Nat)): Rd(Key) {
+  match starts_string(l) {
+    true => rd_map((bs: List(Nat)) => Kstr(Text::Mk(bs)), read_string(l))
+    false => ⊢ Rd(Key) from match starts_number(l) {
+      true => rd_map((p: Bool × Nat) => Knum(number_negative(p), number_magnitude(p)), read_int(l))
+      false => rd_then(read_ident(l), (w: List(Nat), r: List(Nat)) => Key::word(w, r, l))
+    }
+  }
+}
+
+// The values a tuple key holds: integers, booleans, strings and tuples.
+mutual {
+  fn read_key_value(f: List(Nat), l: List(Nat)): Rd(Key) {
+    match f {
+      Nil => RdErr(l, "a shallower key")
+      Cons(^fb, g) => ⊢ Rd(Key) from match head_is(40, l) {
+        true => rd_map((ks: List(Key)) => Ktup(ks), read_key_items(g, skip(List::tail(l))))
+        false => Key::scalar(l)
+      }
+    }
+  }
+  // The items of a tuple key whose `(` has been read, up to and past `)`.
+  fn read_key_items(f: List(Nat), l: List(Nat)): Rd(List(Key)) {
+    match f {
+      Nil => RdErr(l, "a shorter tuple")
+      Cons(^fb, g) => ⊢ Rd(List(Key)) from match head_is(41, l) {
+        true => MkRd(Nil, List::tail(l))
+        false => ⊢ Rd(List(Key)) from match read_key_value(g, l) {
+          MkRd(k, r) => rd_map((ks: List(Key)) => Cons(k, ks), read_key_more(g, skip(r)))
+          RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+        }
+      }
+    }
+  }
+  // After an item of a tuple key: `,` and more items, or `)`.
+  fn read_key_more(f: List(Nat), l: List(Nat)): Rd(List(Key)) {
+    match f {
+      Nil => RdErr(l, "a shorter tuple")
+      Cons(^fb, g) => ⊢ Rd(List(Key)) from match head_is(44, l) {
+        true => read_key_items(g, skip(List::tail(l)))
+        false => ⊢ Rd(List(Key)) from match expect(41, "`,` or `)`", l) {
+          MkRd(^u, r) => MkRd(Nil, r)
+          RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+        }
+      }
+    }
+  }
+}
+
+pub fn read_key_tuple(l: List(Nat)): Rd(Key) {
+  read_key_value(Cons(0, l), l)
+}
+
+// `[]` or `[n]`, whose `[` has been read.
+pub fn read_marker(l: List(Nat)): Rd(Seg) {
+  match head_is(93, skip(l)) {
+    true => MkRd(Sindex(None), List::tail(skip(l)))
+    false => rd_then(
+      read_int(skip(l)),
+      (
+        p: Bool × Nat,
+        r: List(Nat)
+      ) => match number_negative(p) {
+ true => RdErr(l, "an index that is not negative")
+ false => rd_then(expect(93, "`]`", skip(r)), (u: Bool, r2: List(Nat)) => MkRd(Sindex(Some(number_magnitude(p))), r2))
+}
+    )
+  }
+}
+
+// One step of a path.
+pub fn read_seg(l: List(Nat)): Rd(Seg) {
+  match l {
+    Nil => RdErr(l, "a key")
+    Cons(c, t) => match Nat::eq(c, 36) {
+      true => rd_map((w: List(Nat)) => Sext(Text::Mk(w)), read_ident(t))
+      false => match Nat::eq(c, 91) {
+        true => read_marker(t)
+        false => match Nat::eq(c, 35) {
+          true => rd_then(
+            read_int(t),
+            (p: Bool × Nat, r: List(Nat)) => match number_negative(p) {
+ true => RdErr(t, "a tuple index that is not negative")
+ false => MkRd(Stupidx(number_magnitude(p)), r)
+}
+          )
+          false => match Nat::eq(c, 40) {
+            true => rd_map((k: Key) => Skey(k), read_key_tuple(l))
+            false => match starts_string(l) {
+              true => rd_map((bs: List(Nat)) => Skey(Kstr(Text::Mk(bs))), read_string(l))
+              false => match starts_number(l) {
+                true => rd_map(
+                  (p: Bool × Nat) => Skey(Knum(number_negative(p), number_magnitude(p))),
+                  read_int(l)
+                )
+                false => rd_map((w: List(Nat)) => Skey(Kstr(Text::Mk(w))), read_ident(l))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The rest of a path: `.key` and `[…]` steps.
+pub fn read_path_tail(f: List(Nat), l: List(Nat)): Rd(List(Seg)) {
+  match f {
+    Nil => RdErr(l, "a shorter path")
+    Cons(^fb, g) => match head_is(46, skip(l)) {
+      true => rd_then(
+        read_seg(skip(List::tail(skip(l)))),
+        (s: Seg, r: List(Nat)) => rd_map((ss: List(Seg)) => Cons(s, ss), read_path_tail(g, r))
+      )
+      false => match head_is(91, skip(l)) {
+        true => rd_then(
+          read_marker(List::tail(skip(l))),
+          (s: Seg, r: List(Nat)) => rd_map((ss: List(Seg)) => Cons(s, ss), read_path_tail(g, r))
+        )
+        false => MkRd(Nil, l)
+      }
+    }
+  }
+}
+
+pub fn read_path(l: List(Nat)): Rd(List(Seg)) {
+  rd_then(
+    read_seg(l),
+    (
+      s: Seg,
+      r: List(Nat)
+    ) => rd_map((ss: List(Seg)) => Cons(s, ss), read_path_tail(Cons(0, r), r))
+  )
+}
+
+// ---- values ------------------------------------------------------------------------
+
+// Past a `,` that may end an entry.
+pub fn after_comma(l: List(Nat)): List(Nat) {
+  match head_is(44, skip(l)) {
+    true => skip(List::tail(skip(l)))
+    false => skip(l)
+  }
+}
+
+mutual {
+  pub fn read_value(f: Nat, l: List(Nat)): Rd(Expr) {
+    match f {
+      Zero => RdErr(l, "a shallower value")
+      Succ(g) => ⊢ Rd(Expr) from match l {
+        Nil => RdErr(l, "a value")
+        Cons(c, t) => ⊢ Rd(Expr) from match Nat::eq(c, 91) {
+          true => rd_map((xs: List(Expr)) => Earr(xs), read_items(g, 93, skip(t)))
+          false => ⊢ Rd(Expr) from match Nat::eq(c, 40) {
+            true => rd_map((xs: List(Expr)) => Etup(xs), read_items(g, 41, skip(t)))
+            false => ⊢ Rd(Expr) from match Nat::eq(c, 123) {
+              true => read_object(g, skip(t))
+              false => ⊢ Rd(Expr) from match Bool::and(Nat::eq(c, 35), head_is(123, t)) {
+                true => RdErr(l, "a value (sets `#{…}` are not read)")
+                false => rd_map((v: Value) => Escalar(v), read_scalar(l))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  // Values separated by `,`, up to and past `close`; a `,` may end the list.
+  pub fn read_items(f: Nat, close: Nat, l: List(Nat)): Rd(List(Expr)) {
+    match f {
+      Zero => RdErr(l, "fewer items")
+      Succ(g) => ⊢ Rd(List(Expr)) from match head_is(close, l) {
+        true => MkRd(Nil, List::tail(l))
+        false => ⊢ Rd(List(Expr)) from match read_value(g, l) {
+          MkRd(e, r) => rd_map((es: List(Expr)) => Cons(e, es), read_items_more(g, close, skip(r)))
+          RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+        }
+      }
+    }
+  }
+  // After an item: `,` and more items, or `close`.
+  pub fn read_items_more(f: Nat, close: Nat, l: List(Nat)): Rd(List(Expr)) {
+    match f {
+      Zero => RdErr(l, "fewer items")
+      Succ(g) => ⊢ Rd(List(Expr)) from match head_is(44, l) {
+        true => read_items(g, close, skip(List::tail(l)))
+        false => ⊢ Rd(List(Expr)) from match head_is(close, l) {
+          true => MkRd(Nil, List::tail(l))
+          false => RdErr(l, "`,` or the end of the list")
+        }
+      }
+    }
+  }
+  // An object whose `{` has been read: an optional `= v`, then `path => v` entries.
+  pub fn read_object(f: Nat, l: List(Nat)): Rd(Expr) {
+    match f {
+      Zero => RdErr(l, "a shallower value")
+      Succ(g) => ⊢ Rd(Expr) from match head_is(61, l) {
+        true => ⊢ Rd(Expr) from match read_value(g, skip(List::tail(l))) {
+          MkRd(
+            e,
+            r
+          ) => rd_map(
+            (bs: List(List(Seg) × Expr)) => Eobj(Cons(#(Nil(<A: Seg>), e), bs)),
+            read_entries(g, after_comma(r))
+          )
+          RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+        }
+        false => rd_map((bs: List(List(Seg) × Expr)) => Eobj(bs), read_entries(g, l))
+      }
+    }
+  }
+  // `path => v` entries separated by `,`, up to and past `}`.
+  pub fn read_entries(f: Nat, l: List(Nat)): Rd(List(List(Seg) × Expr)) {
+    match f {
+      Zero => RdErr(l, "fewer entries")
+      Succ(g) => ⊢ Rd(List(List(Seg) × Expr)) from match head_is(125, l) {
+        true => MkRd(Nil, List::tail(l))
+        false => ⊢ Rd(List(List(Seg) × Expr)) from match read_path(l) {
+          MkRd(p, r) => read_entry(g, p, skip(r))
+          RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+        }
+      }
+    }
+  }
+  // `=> v` after the path of an entry, and the entries after it.
+  pub fn read_entry(f: Nat, p: List(Seg), l: List(Nat)): Rd(List(List(Seg) × Expr)) {
+    match f {
+      Zero => RdErr(l, "fewer entries")
+      Succ(
+        g
+      ) => ⊢ Rd(List(List(Seg) × Expr)) from match Bool::and(
+        head_is(61, l),
+        head_is(62, List::tail(l))
+      ) {
+        true => ⊢ Rd(List(List(Seg) × Expr)) from match read_value(g, skip(List::drop(2, l))) {
+          MkRd(
+            e,
+            r
+          ) => rd_map(
+            (bs: List(List(Seg) × Expr)) => Cons(#(p, e), bs),
+            read_entries(g, after_comma(r))
+          )
+          RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+        }
+        false => RdErr(l, "`=>`")
+      }
+    }
+  }
+}
+
+// ---- statements ----------------------------------------------------------------------
+
+// The text of `: …` up to the end of the line, without the spaces around it.
+fn read_text_line(l: List(Nat)): Rd(Expr) {
+  let line: @taken List(Nat) × @rest List(Nat) := span((c: Nat) => not(Bool::or(Nat::eq(c, 10), Nat::eq(c, 13))), skip_spaces(l))
+  MkRd(
+    Escalar(
+      Vtext(Plaintext, Text::Mk(List::reverse((span(is_space, List::reverse((line: @taken List(Nat)))): @rest List(Nat)))))
+    ),
+    (line: @rest List(Nat))
+  )
+}
+
+mutual {
+  // Statements up to the end of the text (`close` is `false`) or up to and past `}`.
+  pub fn read_stmts(f: Nat, close: Bool, l: List(Nat)): Rd(List(Stmt)) {
+    read_stmts_at(f, close, l, skip(l))
+  }
+  // `read_stmts` once `skip` has been applied to the text: the text itself is only used when the
+  // fuel is out, so a proof that two texts skip to the same bytes reads the same statements.
+  pub fn read_stmts_at(f: Nat, close: Bool, l: List(Nat), s: List(Nat)): Rd(List(Stmt)) {
+    match f {
+      Zero => RdErr(l, "fewer statements")
+      Succ(g) => ⊢ Rd(List(Stmt)) from match s {
+        Nil => ⊢ Rd(List(Stmt)) from match close {
+          true => RdErr(Nil, "`}`")
+          false => MkRd(Nil, Nil)
+        }
+        Cons(c, t) => ⊢ Rd(List(Stmt)) from match Nat::eq(c, 125) {
+          true => ⊢ Rd(List(Stmt)) from match close {
+            true => MkRd(Nil, t)
+            false => RdErr(s, "a binding or a section")
+          }
+          false => ⊢ Rd(List(Stmt)) from match Nat::eq(c, 64) {
+            true => read_section(g, close, skip(t))
+            false => ⊢ Rd(List(Stmt)) from match read_binding(g, s) {
+              MkRd(st, r) => rd_map((ss: List(Stmt)) => Cons(st, ss), read_stmts(g, close, r))
+              RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+            }
+          }
+        }
+      }
+    }
+  }
+  // A binding: `path = v`, `path: Text::Mk`, `path { … }`, `= v` or `: Text::Mk`.
+  pub fn read_binding(f: Nat, l: List(Nat)): Rd(Stmt) {
+    match f {
+      Zero => RdErr(l, "a shallower binding")
+      Succ(g) => ⊢ Rd(Stmt) from match Bool::or(head_is(61, l), head_is(58, l)) {
+        true => read_rhs(g, l, Nil, l)
+        false => ⊢ Rd(Stmt) from match read_path(l) {
+          MkRd(p, r) => read_rhs(g, l, p, skip(r))
+          RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+        }
+      }
+    }
+  }
+  pub fn read_rhs(f: Nat, at: List(Nat), p: List(Seg), l: List(Nat)): Rd(Stmt) {
+    match f {
+      Zero => RdErr(l, "a shallower binding")
+      Succ(g) => ⊢ Rd(Stmt) from match head_is(61, l) {
+        true => rd_map((e: Expr) => Bind(at, p, e), read_value(g, skip(List::tail(l))))
+        false => ⊢ Rd(Stmt) from match head_is(58, l) {
+          true => rd_map((e: Expr) => Bind(at, p, e), read_text_line(List::tail(l)))
+          false => ⊢ Rd(Stmt) from match head_is(123, l) {
+            true => rd_map((ss: List(Stmt)) => Nest(at, p, ss), read_stmts(g, true, List::tail(l)))
+            false => RdErr(l, "`=`, `:` or `{`")
+          }
+        }
+      }
+    }
+  }
+  // A section whose `@` has been read, and everything after it.
+  pub fn read_section(f: Nat, close: Bool, l: List(Nat)): Rd(List(Stmt)) {
+    match f {
+      Zero => RdErr(l, "fewer sections")
+      Succ(g) => ⊢ Rd(List(Stmt)) from match read_path(l) {
+        MkRd(p, r) => read_section_body(g, close, l, p, skip(r))
+        RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+      }
+    }
+  }
+  fn read_section_body(f: Nat, close: Bool, at: List(Nat), p: List(Seg), l: List(Nat)): Rd(List(Stmt)) {
+    match f {
+      Zero => RdErr(l, "fewer sections")
+      Succ(g) => ⊢ Rd(List(Stmt)) from match head_is(123, l) {
+        true => ⊢ Rd(List(Stmt)) from match read_stmts(g, true, List::tail(l)) {
+          MkRd(
+            body,
+            r
+          ) => rd_map((ss: List(Stmt)) => Cons(Nest(at, p, body), ss), read_after_flat(g, close, skip(r)))
+          RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+        }
+        false => ⊢ Rd(List(Stmt)) from match read_flat(g, l) {
+          MkRd(
+            body,
+            r
+          ) => rd_map((ss: List(Stmt)) => Cons(Nest(at, p, body), ss), read_after_flat(g, close, r))
+          RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+        }
+      }
+    }
+  }
+  // The bindings of a section without braces: up to the next `@`, `}` or the end. The first may
+  // be `= v` or `: Text::Mk`, the value of the section's node.
+  fn read_flat(f: Nat, l: List(Nat)): Rd(List(Stmt)) {
+    match f {
+      Zero => RdErr(l, "fewer bindings")
+      Succ(g) => ⊢ Rd(List(Stmt)) from match skip(l) {
+        Nil => MkRd(Nil, Nil)
+        Cons(c, ^t) => ⊢ Rd(List(Stmt)) from match Bool::or(Nat::eq(c, 64), Nat::eq(c, 125)) {
+          true => MkRd(Nil, skip(l))
+          false => ⊢ Rd(List(Stmt)) from match read_binding(g, skip(l)) {
+            MkRd(s, r) => rd_map((ss: List(Stmt)) => Cons(s, ss), read_flat(g, r))
+            RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+          }
+        }
+      }
+    }
+  }
+  // After a section: more sections, or the `}` or end that closes them. A binding after a
+  // section is not read, as eure-reader does not read one.
+  fn read_after_flat(f: Nat, close: Bool, l: List(Nat)): Rd(List(Stmt)) {
+    match f {
+      Zero => RdErr(l, "fewer sections")
+      Succ(g) => ⊢ Rd(List(Stmt)) from match l {
+        Nil => ⊢ Rd(List(Stmt)) from match close {
+          true => RdErr(Nil, "`}`")
+          false => MkRd(Nil, Nil)
+        }
+        Cons(c, t) => ⊢ Rd(List(Stmt)) from match Nat::eq(c, 64) {
+          true => read_section(g, close, skip(t))
+          false => ⊢ Rd(List(Stmt)) from match close {
+            true => MkRd(Nil, t)
+            false => RdErr(l, "a section")
+          }
+        }
+      }
+    }
+  }
+}
+
+// Reads a whole text. Errors say how many bytes into the text they are.
+pub fn read_eure(t: Text): Rd(List(Stmt)) {
+  read_stmts(Nat::mul(4, Succ(Text::len(t))), false, Text::bytes(t))
+}
+
+// Give generic consumers the unlabelled list explicitly.
+pub fn span_taken(p: @taken List(Nat) × @rest List(Nat)): List(Nat) {
+  match p { #(@taken xs, @rest ^rest) => xs }
+}
+
+pub fn sign_negative(p: Bool × List(Nat)): Bool { match p { #(negative,^rest) => negative } }
+pub fn sign_rest(p: Bool × List(Nat)): List(Nat) { match p { #(^negative,rest) => rest } }
+pub fn number_negative(p: Bool × Nat): Bool { match p { #(negative,^n) => negative } }
+pub fn number_magnitude(p: Bool × Nat): Nat { match p { #(^negative,n) => n } }

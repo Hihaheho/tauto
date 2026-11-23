@@ -1,0 +1,252 @@
+// An `import` at the head of the body of a `fn`, `theorem` or `def` brings its names to that
+// body only (`docs/design/visibility.md`「Scope」).
+
+@ cases.a-function-uses-what-its-body-imports
+files."words.nib" = ```nib
+pub fn word(): Text { "body" }
+```
+files."main.nib" = ```nib
+fn pick(): Text {
+  import "words.nib"
+  word()
+}
+show(&pick())
+```
+stdout = ```
+"body"
+```
+
+// The whole body sees the import: its closures and the functions declared in it.
+@ cases.a-body-import-reaches-closures-and-nested-functions
+files."words.nib" = ```nib
+pub fn word(): Text { "w" }
+```
+files."main.nib" = ```nib
+fn twice(): Text {
+  import "words.nib"
+  let again := () => word()
+  fn inner(): Text { word() }
+  concat(again(), inner())
+}
+show(&twice())
+```
+stdout = ```
+"ww"
+```
+
+@ cases.another-declaration-of-the-file-does-not-see-a-body-import
+files."words.nib" = ```nib
+pub fn word(): Text { "body" }
+```
+files."main.nib" = ```nib
+fn pick(): Text {
+  import "words.nib"
+  word()
+}
+fn other(): Text { word() }
+```
+checks.other = 'error: `word` is declared by `words`, which this file does not import'
+
+@ cases.the-signature-does-not-see-a-body-import
+files."types.nib" = ```nib
+pub(open) struct(shared) Greeting { text: Text }
+```
+files."main.nib" = ```nib
+fn read(g: Greeting): Text {
+  import "types.nib"
+  g.text
+}
+```
+checks.read = 'error: `Greeting` is declared by `types`, which this file does not import'
+
+@ cases.a-name-a-file-import-and-a-body-import-bring-is-ambiguous
+files."a.nib" = ```nib
+pub fn value(): i64 { 1 }
+```
+files."b.nib" = ```nib
+pub fn value(): i64 { 2 }
+```
+files."main.nib" = ```nib
+import "a.nib"
+fn pick(): i64 {
+  import "b.nib"
+  value()
+}
+```
+checks.pick = 'error: `value` is ambiguous: it is declared as `a::value` and `b::value`; write the full name'
+
+// Outside the body the file-level import alone is seen, and the name is not ambiguous.
+@ cases.a-name-a-body-import-also-brings-is-the-file-imports-elsewhere
+files."a.nib" = ```nib
+pub fn value(): i64 { 1 }
+```
+files."b.nib" = ```nib
+pub fn value(): i64 { 2 }
+```
+files."main.nib" = ```nib
+import "a.nib"
+fn pick(): i64 {
+  import "b.nib"
+  b::value()
+}
+show(&value())
+show(&pick())
+```
+stdout = ```
+1
+2
+```
+
+@ cases.a-name-the-file-declares-and-a-body-import-brings-is-ambiguous
+files."b.nib" = ```nib
+pub fn value(): i64 { 2 }
+```
+files."main.nib" = ```nib
+fn value(): i64 { 1 }
+fn pick(): i64 {
+  import "b.nib"
+  value()
+}
+```
+checks.pick = 'error: `value` is ambiguous: it is declared as `main::value` and `b::value`; write the full name'
+
+// The same file imported at the top and in a body is one declaration.
+@ cases.a-file-imported-at-the-top-and-in-a-body-brings-one-declaration
+files."a.nib" = ```nib
+pub fn value(): i64 { 1 }
+```
+files."main.nib" = ```nib
+import "a.nib"
+fn pick(): i64 {
+  import "a.nib"
+  value()
+}
+show(&pick())
+```
+stdout = "1\n"
+
+@ cases.an-import-after-another-statement-of-a-body-is-an-error
+files."a.nib" = ```nib
+pub fn value(): i64 { 1 }
+```
+files."main.nib" = ```nib
+fn pick(): i64 {
+  let x := 1
+  import "a.nib"
+  x
+}
+```
+checks.pick = "error: `import` is written at the top of a file or at the head of the body of a `fn`, `macro fn`, `theorem` or `def` written there, before the body's other statements"
+
+@ cases.an-import-in-a-closure-is-an-error
+files."a.nib" = ```nib
+pub fn value(): i64 { 1 }
+```
+files."main.nib" = ```nib
+fn pick(): i64 {
+  let get := () => {
+    import "a.nib"
+    1
+  }
+  get()
+}
+```
+checks.pick = "error: `import` is written at the top of a file or at the head of the body of a `fn`, `macro fn`, `theorem` or `def` written there"
+
+@ cases.an-import-in-a-module-block-is-an-error
+files."a.nib" = ```nib
+pub fn value(): i64 { 1 }
+```
+files."main.nib" = ```nib
+module m {
+  import "a.nib"
+  pub fn get(): i64 { 0 }
+}
+```
+check_errors = ["`import` is written at the top of a file or at the head of the body of a `fn`, `macro fn`, `theorem` or `def` written there"]
+
+@ cases.a-theorem-and-a-def-use-what-their-bodies-import
+files."lemmas.taut" = ```tauto
+pub theorem add_zero(n: Nat): n + 0 = n { Refl }
+pub def Count(): Type := Nat
+```
+files."main.taut" = ```tauto
+theorem right_zero(n: Nat): n + 0 = n {
+  import "lemmas.taut"
+  add_zero(n)
+}
+def Total(): Type := {
+  import "lemmas.taut"
+  Count
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+
+@ cases.a-theorem-of-the-file-does-not-see-another-theorems-body-import
+files."lemmas.taut" = ```tauto
+pub theorem add_zero(n: Nat): n + 0 = n { Refl }
+```
+files."main.taut" = ```tauto
+theorem right_zero(n: Nat): n + 0 = n {
+  import "lemmas.taut"
+  add_zero(n)
+}
+theorem again(n: Nat): n + 0 = n { add_zero(n) }
+```
+entry = "main.taut"
+checks.again = 'error: `add_zero` is declared by `lemmas`, which this file does not import'
+
+@ cases.a-body-import-with-a-list-brings-what-it-lists
+files."words.nib" = ```nib
+pub fn word(): Text { "w" }
+pub fn other(): Text { "o" }
+```
+files."main.nib" = ```nib
+fn pick(): Text {
+  import "words.nib" { word }
+  other()
+}
+```
+checks.pick = 'error: `other` comes through `import "words.nib"`, whose list does not write it; write `other` in its list'
+
+@ cases.a-listed-name-a-body-does-not-use-is-a-warning
+files_tote = "app"
+tote_warnings = ['`other` is in the list of `import "words.taut"`, but this file does not use it']
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/words.taut" = ```tauto
+pub fn word(): Text { "w" }
+pub fn other(): Text { "o" }
+```
+files."app/src/main.taut" = ```tauto
+pub fn pick(): Text {
+  import "words.taut" { word, other }
+  word()
+}
+```
+
+@ cases.a-body-import-without-a-list-is-found-by-the-lint
+source = ```tauto
+fn f(): Nat {
+  import std::text
+  0
+}
+```
+lint = ["import-list: `import std::text` writes no list of the names it brings; `tauto lint --fix` writes it"]
+
+// The self-hosted elaborator reads the files a body imports and elaborates the body
+// without its imports, as the host does.
+@ cases.a-theorem-body-import-elaborates-as-the-host-does
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lemmas.taut" = ```tauto
+pub theorem add_zero(n: Nat): n + 0 = n { Refl }
+```
+files."app/src/main.taut" = ```tauto
+theorem right_zero(n: Nat): n + 0 = n {
+  import "lemmas.taut"
+  add_zero(n)
+}
+```

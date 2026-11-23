@@ -10,12 +10,12 @@ pub theorem ck_top_let_frame_errors(
   c: Checker,
   s: SurfaceStmt,
   env: Scope
-): CkErrorFrame(c, ck_top_let(c, s, env)) { ⊢ CkErrorFrame(c, ck_top_let(c, s, env)) from match s {
-    StLet(name, ty, value, borrow, bm) => ⊢ CkErrorFrame(c, ck_top_let(c, StLet(name, ty, value, borrow, bm), env)) from match env { ScopeMk(items) => ⊢ CkErrorFrame(c, ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))) from match items { Nil => (
+): CkErrorFrame(c, ck_top_let(c, s, env)) { match s {
+    StLet(name, ty, value, r#borrow, bm, unused, st_stack) => ⊢ CkErrorFrame(c, ck_top_let(c, StLet(name, ty, value, r#borrow, bm, unused, st_stack), env)) from match env { ScopeMk(items) => ⊢ CkErrorFrame(c, ck_top_let(c, StLet(name, ty, value, r#borrow, bm, unused, st_stack), ScopeMk(items))) from match items { Nil => (
       clean_errors => clean_errors
     )
         Cons(l, older) => (clean_errors => clean_errors) } }
-    StVar(name, ty, value, vb) => (clean_errors => clean_errors)
+    StVar(name, ty, value, vb, unused, st_stack) => (clean_errors => clean_errors)
     StAssign(name, name_place, value) => (clean_errors => clean_errors)
     StCalled(name_generates, value) => (clean_errors => clean_errors)
     StFn(f) => (clean_errors => clean_errors)
@@ -23,7 +23,6 @@ pub theorem ck_top_let_frame_errors(
     StWhile(condition, body) => (clean_errors => clean_errors)
     StReturn(e) => (clean_errors => clean_errors)
     StExpr(e) => (clean_errors => clean_errors)
-    StModule(pat_name, pat_stmts, pat_start, pat_end) => (clean_errors => clean_errors)
     StTheorem(pat_t) => (clean_errors => clean_errors)
     StDef(pat_t) => (clean_errors => clean_errors)
     StMutual(pat_stmts, pat_start, pat_end) => (clean_errors => clean_errors)
@@ -31,11 +30,17 @@ pub theorem ck_top_let_frame_errors(
     StInductive(pat_i) => (clean_errors => clean_errors)
     StStruct(pat_d) => (clean_errors => clean_errors)
     StEnum(pat_d) => (clean_errors => clean_errors)
-    StExtern(pat_abi, pat_fns, pat_start, pat_end) => (clean_errors => clean_errors)
+    StExtern(pat_fns, pat_instances, pat_types, pat_structs, pat_enums, pat_start, pat_end) => (clean_errors => clean_errors)
     StClass(pat_c) => (clean_errors => clean_errors)
     StInstance(pat_i) => (clean_errors => clean_errors)
     StMacro(pat_name, pat_function, pat_start, pat_end) => (clean_errors => clean_errors)
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => (clean_errors => clean_errors)
     StSyntax(pat_name, pat_grammar, pat_start, pat_end) => (clean_errors => clean_errors)
     StOther(what, start, end) => (clean_errors => clean_errors)
+    StLoop(st_body, start, end) => (clean_errors => clean_errors)
+    StModule(mod_name, mod_vis, mod_items, start, end) => (clean_errors => clean_errors)
+    StReexport(re_path, re_names, re_spans, start, end) => (clean_errors => clean_errors)
+    StFor(for_pat, for_src, st_body, start, end) => (clean_errors => clean_errors)
+    StBreak(st_value, start, end) => (clean_errors => clean_errors)
+    StContinue(start, end) => (clean_errors => clean_errors)
   } }

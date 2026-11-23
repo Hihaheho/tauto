@@ -1,0 +1,875 @@
+import "counts.taut"
+import "../src/decimal.taut"
+import "../src/lower.taut"
+import "../src/read.taut"
+import "../src/syntax.taut"
+import "../src/value.taut"
+import "../src/write.taut"
+import "doc.taut"
+import "keys.taut"
+import "mono.taut"
+import "numbers.taut"
+import std::base
+import std::list
+import std::text
+import "scalars.taut"
+
+// The first byte of what the writer puts for a node, an entry or an extension is not white
+// space, not `/`, and none of the bytes the readers stop at: `}`, `=`, `]`, `)` and `,`.
+
+fn bad_t(
+  a32: Bool,
+  a9: Bool,
+  a10: Bool,
+  a13: Bool,
+  a47: Bool,
+  a125: Bool,
+  a61: Bool,
+  a93: Bool,
+  a41: Bool,
+  a44: Bool
+): Bool {
+  Bool::or(
+    Bool::or(Bool::or(a32, a9), Bool::or(a10, a13)),
+    Bool::or(a47, Bool::or(a125, Bool::or(a61, Bool::or(a93, Bool::or(a41, a44)))))
+  )
+}
+
+pub fn bad_head(c: Nat): Bool {
+  Bool::or(
+    is_ws(c),
+    Bool::or(
+      Nat::eq(c, 47),
+      Bool::or(
+        Nat::eq(c, 125),
+        Bool::or(Nat::eq(c, 61), Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44))))
+      )
+    )
+  )
+}
+
+pub fn plain(l: List(Nat)): Bool {
+  match l {
+    Nil => false
+    Cons(c, ^t) => not(bad_head(c))
+  }
+}
+
+theorem bad_is_tested(
+  c: Nat
+): bad_head(c) = bad_t(
+    Nat::eq(c, 32),
+    Nat::eq(c, 9),
+    Nat::eq(c, 10),
+    Nat::eq(c, 13),
+    Nat::eq(c, 47),
+    Nat::eq(c, 125),
+    Nat::eq(c, 61),
+    Nat::eq(c, 93),
+    Nat::eq(c, 41),
+    Nat::eq(c, 44)
+  ) {
+  Refl
+}
+
+// A byte that passes `p`, a test that fails on all ten bytes, is a plain first byte.
+theorem plain_by(
+  p: (Nat) -> Bool,
+  c: Nat,
+  t: List(Nat),
+  hc: p(c) = true,
+  h32: p(32) = false,
+  h9: p(9) = false,
+  h10: p(10) = false,
+  h13: p(13) = false,
+  h47: p(47) = false,
+  h125: p(125) = false,
+  h61: p(61) = false,
+  h93: p(93) = false,
+  h41: p(41) = false,
+  h44: p(44) = false
+): plain(Cons(c, t)) = true {
+  Eq::congr(
+    not,
+    Eq::trans(
+      bad_is_tested(c),
+      Eq::trans(
+        Eq::congr(
+          ⟦bad_t(
+            □,
+            Nat::eq(c, 9),
+            Nat::eq(c, 10),
+            Nat::eq(c, 13),
+            Nat::eq(c, 47),
+            Nat::eq(c, 125),
+            Nat::eq(c, 61),
+            Nat::eq(c, 93),
+            Nat::eq(c, 41),
+            Nat::eq(c, 44)
+          )⟧,
+          ne_of_test(p, c, 32, hc, h32)
+        ),
+        Eq::trans(
+          Eq::congr(
+            ⟦bad_t(
+              false,
+              □,
+              Nat::eq(c, 10),
+              Nat::eq(c, 13),
+              Nat::eq(c, 47),
+              Nat::eq(c, 125),
+              Nat::eq(c, 61),
+              Nat::eq(c, 93),
+              Nat::eq(c, 41),
+              Nat::eq(c, 44)
+            )⟧,
+            ne_of_test(p, c, 9, hc, h9)
+          ),
+          Eq::trans(
+            Eq::congr(
+              ⟦bad_t(
+                false,
+                false,
+                □,
+                Nat::eq(c, 13),
+                Nat::eq(c, 47),
+                Nat::eq(c, 125),
+                Nat::eq(c, 61),
+                Nat::eq(c, 93),
+                Nat::eq(c, 41),
+                Nat::eq(c, 44)
+              )⟧,
+              ne_of_test(p, c, 10, hc, h10)
+            ),
+            Eq::trans(
+              Eq::congr(
+                ⟦bad_t(
+                  false,
+                  false,
+                  false,
+                  □,
+                  Nat::eq(c, 47),
+                  Nat::eq(c, 125),
+                  Nat::eq(c, 61),
+                  Nat::eq(c, 93),
+                  Nat::eq(c, 41),
+                  Nat::eq(c, 44)
+                )⟧,
+                ne_of_test(p, c, 13, hc, h13)
+              ),
+              Eq::trans(
+                Eq::congr(
+                  ⟦bad_t(
+                    false,
+                    false,
+                    false,
+                    false,
+                    □,
+                    Nat::eq(c, 125),
+                    Nat::eq(c, 61),
+                    Nat::eq(c, 93),
+                    Nat::eq(c, 41),
+                    Nat::eq(c, 44)
+                  )⟧,
+                  ne_of_test(p, c, 47, hc, h47)
+                ),
+                Eq::trans(
+                  Eq::congr(
+                    ⟦bad_t(
+                      false,
+                      false,
+                      false,
+                      false,
+                      false,
+                      □,
+                      Nat::eq(c, 61),
+                      Nat::eq(c, 93),
+                      Nat::eq(c, 41),
+                      Nat::eq(c, 44)
+                    )⟧,
+                    ne_of_test(p, c, 125, hc, h125)
+                  ),
+                  Eq::trans(
+                    Eq::congr(
+                      ⟦bad_t(
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        □,
+                        Nat::eq(c, 93),
+                        Nat::eq(c, 41),
+                        Nat::eq(c, 44)
+                      )⟧,
+                      ne_of_test(p, c, 61, hc, h61)
+                    ),
+                    Eq::trans(
+                      Eq::congr(
+                        ⟦bad_t(
+                          false,
+                          false,
+                          false,
+                          false,
+                          false,
+                          false,
+                          false,
+                          □,
+                          Nat::eq(c, 41),
+                          Nat::eq(c, 44)
+                        )⟧,
+                        ne_of_test(p, c, 93, hc, h93)
+                      ),
+                      Eq::trans(
+                        Eq::congr(
+                          ⟦bad_t(false, false, false, false, false, false, false, false, □, Nat::eq(c, 44))⟧,
+                          ne_of_test(p, c, 41, hc, h41)
+                        ),
+                        Eq::congr(
+                          ⟦bad_t(false, false, false, false, false, false, false, false, false, □)⟧,
+                          ne_of_test(p, c, 44, hc, h44)
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+theorem plain_digit(
+  d: Nat,
+  t: List(Nat),
+  h: is_digit(d) = true
+): plain(Cons(d, t)) = true {
+  plain_by(
+    is_digit,
+    d,
+    t,
+    h,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl
+  )
+}
+
+theorem plain_start(
+  c: Nat,
+  t: List(Nat),
+  h: ident_start(c) = true
+): plain(Cons(c, t)) = true {
+  plain_by(
+    ident_start,
+    c,
+    t,
+    h,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl,
+    Refl
+  )
+}
+
+theorem bad_no(c: Nat, t: List(Nat), h: plain(Cons(c, t)) = true): bad_head(c) = false {
+  Bool::not_true(bad_head(c), h)
+}
+
+// ---- skipping nothing ----------------------------------------------------------------------
+
+fn sw_tested(c: Nat, t: List(Nat), ws: Bool, sl: Bool): List(Nat) {
+  match ws {
+    true => skip_ws(t)
+    false => match sl {
+      true => skip_slash(c, t)
+      false => Cons(c, t)
+    }
+  }
+}
+
+pub theorem skip_plain(l: List(Nat), h: plain(l) = true): skip(l) = l {
+  match l {
+    Nil => False::elim(false_ne_true(h))
+    Cons(c, t) => Eq::trans(
+      Eq::congr(
+        ⟦sw_tested(c, t, □, Nat::eq(c, 47))⟧,
+        or_no_l(
+          is_ws(c),
+          Bool::or(
+              Nat::eq(c, 47),
+              Bool::or(
+                Nat::eq(c, 125),
+                Bool::or(Nat::eq(c, 61), Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44))))
+              )
+            ),
+          bad_no(c, t, h)
+        )
+      ),
+      Eq::congr(
+        ⟦sw_tested(c, t, false, □)⟧,
+        or_no_l(
+          Nat::eq(c, 47),
+          Bool::or(
+            Nat::eq(c, 125),
+            Bool::or(Nat::eq(c, 61), Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44))))
+          ),
+          or_no_r(is_ws(c), Bool::or(
+              Nat::eq(c, 47),
+              Bool::or(
+                Nat::eq(c, 125),
+                Bool::or(Nat::eq(c, 61), Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44))))
+              )
+            ), bad_no(c, t, h))
+        )
+      )
+    )
+  }
+}
+
+theorem skip_space(l: List(Nat), h: plain(l) = true): skip(Cons(32, l)) = l {
+  skip_plain(l, h)
+}
+
+// The first byte is none of the ten: in particular it is not `k`.
+pub theorem plain_not(
+  k: Nat,
+  l: List(Nat),
+  h: plain(l) = true,
+  hk: bad_head(k) = true
+): head_is(k, l) = false {
+  match l {
+    Nil => Refl
+    Cons(c, t) => ne_of_test_l((z: Nat) => not(bad_head(z)), c, k, h, Eq::congr(not, hk))
+  }
+}
+
+// ---- what the writer puts first -----------------------------------------------------------
+
+theorem signed_plain(
+  neg: Bool,
+  l: List(Nat),
+  y: List(Nat),
+  hl: all_digits(l) = true,
+  hc: is_cons(l) = true
+): plain(signed(neg, List::append(l, y))) = true {
+  match l {
+    Nil => False::elim(false_ne_true(hc))
+    Cons(d, t) => match neg {
+      true => Refl
+      false => plain_digit(
+        d,
+        List::append(t, y),
+        And::left(Bool::and_split(is_digit(d), all_digits(t), hl))
+      )
+    }
+  }
+}
+
+theorem int_plain(neg: Bool, n: Nat, y: List(Nat)): plain(put_int(neg, n, y)) = true {
+  Eq::trans(
+    Eq::congr(plain, put_signed(neg, n, y)),
+    signed_plain(neg, digits(n), y, digits_all_digits(Succ(n), n), digits_is_cons(n))
+  )
+}
+
+theorem code_plain(
+  l: Lang,
+  t: Text,
+  x: List(Nat),
+  h: text_ok(l, t) = true,
+  hn: Nat::eq(0, 0) = true
+): plain(put_scalar_text(l, t, x)) = true {
+  match l {
+    Plaintext => Refl
+    Implicit => Eq::subst(
+      Bool,
+      true,
+      fits_inline(Text::bytes(t)),
+      (y: Bool) => plain(code_put(Implicit, t, x, y)) = true,
+      Eq::sym(h),
+      Refl
+    )
+    Named(n) => match n {
+      Mk(ns) => match ns {
+        Nil => False::elim(
+          false_ne_true(
+            And::left(
+              Bool::and_split(
+                is_ident(Nil),
+                not(Text::eq(Text::Mk(Nil), "plaintext")),
+                And::left(Bool::and_split(lang_ok(Named(Text::Mk(Nil))), fits_inline(Text::bytes(t)), h))
+              )
+            )
+          )
+        )
+        Cons(c, nt) => Eq::subst(
+          Bool,
+          true,
+          fits_inline(Text::bytes(t)),
+          (y: Bool) => plain(code_put(Named(Text::Mk(Cons(c, nt))), t, x, y)) = true,
+          Eq::sym(
+            And::right(
+              Bool::and_split(lang_ok(Named(Text::Mk(Cons(c, nt)))), fits_inline(Text::bytes(t)), h)
+            )
+          ),
+          plain_start(
+            c,
+            List::append(nt, Cons(96, put_text(t, Cons(96, x)))),
+            And::left(
+              Bool::and_split(
+                ident_start(c),
+                List::all(ident_char, nt),
+                And::left(
+                  Bool::and_split(
+                    is_ident(Cons(c, nt)),
+                    not(Text::eq(Text::Mk(Cons(c, nt)), "plaintext")),
+                    And::left(
+                      Bool::and_split(lang_ok(Named(Text::Mk(Cons(c, nt)))), fits_inline(Text::bytes(t)), h)
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      }
+    }
+  }
+}
+
+pub theorem scalar_plain(
+  v: Value,
+  x: List(Nat),
+  hs: is_scalar(v) = true,
+  hw: wf_value(v) = true
+): plain(put_scalar(v, x)) = true {
+  match v {
+    Vhole(lb) => match lb {
+      None => Refl
+      Some(t) => Refl
+    }
+    Vnull => Refl
+    Vbool(b) => match b {
+      true => Refl
+      false => Refl
+    }
+    Vint(neg, n) => int_plain(neg, n, x)
+    Vdec(neg, mant, eneg, e) => int_plain(neg, mant, put_exp(eneg, e, x))
+    Vtext(lg, t) => code_plain(lg, t, x, hw, Refl)
+    Varr(xs) => False::elim(false_ne_true(hs))
+    Vtup(xs) => False::elim(false_ne_true(hs))
+    Vmap(es) => False::elim(false_ne_true(hs))
+  }
+}
+
+theorem nonmap_plain(
+  v: Value,
+  x: List(Nat),
+  hm: is_map(v) = false,
+  hw: wf_value(v) = true
+): plain(put_v(v, false, x)) = true {
+  match v {
+    Vmap(es) => False::elim(true_ne_false(hm))
+    Varr(xs) => Refl
+    Vtup(xs) => Refl
+    Vhole(lb) => scalar_plain(Vhole(lb), x, Refl, hw)
+    Vnull => scalar_plain(Vnull, x, Refl, hw)
+    Vbool(b) => scalar_plain(Vbool(b), x, Refl, hw)
+    Vint(sg, k) => scalar_plain(Vint(sg, k), x, Refl, hw)
+    Vdec(sg, k, es, e) => scalar_plain(Vdec(sg, k, es, e), x, Refl, hw)
+    Vtext(lg, t) => scalar_plain(Vtext(lg, t), x, Refl, hw)
+  }
+}
+
+pub theorem node_plain(
+  n: Node,
+  r: List(Nat),
+  hw: wf_node(n) = true
+): plain(put_node(n, r)) = true {
+  match n {
+    Mk(v, ext) => match v {
+      Vmap(es) => Refl
+      Varr(xs) => match ext {
+        Nil => Refl
+        Cons(e, et) => Refl
+      }
+      Vtup(xs) => match ext {
+        Nil => Refl
+        Cons(e, et) => Refl
+      }
+      Vhole(lb) => match ext {
+        Nil => scalar_plain(
+          Vhole(lb),
+          r,
+          Refl,
+          And::left(Bool::and_split(wf_value(Vhole(lb)), wf_exts(Nil, Nil), hw))
+        )
+        Cons(e, et) => Refl
+      }
+      Vnull => match ext {
+        Nil => Refl
+        Cons(e, et) => Refl
+      }
+      Vbool(b) => match ext {
+        Nil => scalar_plain(Vbool(b), r, Refl, Refl)
+        Cons(e, et) => Refl
+      }
+      Vint(sg, k) => match ext {
+        Nil => int_plain(sg, k, r)
+        Cons(e, et) => Refl
+      }
+      Vdec(sg, k, es, x) => match ext {
+        Nil => int_plain(sg, k, put_exp(es, x, r))
+        Cons(e, et) => Refl
+      }
+      Vtext(lg, t) => match ext {
+        Nil => code_plain(
+          lg,
+          t,
+          r,
+          And::left(Bool::and_split(wf_value(Vtext(lg, t)), wf_exts(Nil, Nil), hw)),
+          Refl
+        )
+        Cons(e, et) => Refl
+      }
+    }
+  }
+}
+
+pub theorem Key::plain_put(
+  k: Key,
+  y: List(Nat),
+  hk: Key::ok(k) = true
+): plain(put_key(k, y)) = true {
+  match k {
+    Kstr(t) => match t {
+      Mk(bs) => Bool::cases(
+        (z: Bool) => plain(⊢ List(Nat) from match z {
+          true => put_text(Text::Mk(bs), y)
+          false => put_string(Text::Mk(bs), y)
+        }) = true,
+        is_ident(bs),
+        (e: is_ident(bs) = false) => Refl,
+        (e: is_ident(bs) = true) => ident_plain(bs, y, e)
+      )
+    }
+    Knum(neg, n) => int_plain(neg, n, y)
+    Ktup(ks) => False::elim(false_ne_true(hk))
+  }
+}
+
+theorem ident_plain(
+  bs: List(Nat),
+  y: List(Nat),
+  h: is_ident(bs) = true
+): plain(List::append(bs, y)) = true {
+  match bs {
+    Nil => False::elim(false_ne_true(h))
+    Cons(c, t) => plain_start(
+      c,
+      List::append(t, y),
+      And::left(Bool::and_split(ident_start(c), List::all(ident_char, t), h))
+    )
+  }
+}
+
+theorem entries_plain(
+  es: List(Key × Node),
+  p: List(Key × Node),
+  r: List(Nat),
+  hr: plain(r) = true,
+  hw: wf_entries(es, p) = true
+): plain(put_entries(es, r)) = true {
+  match es {
+    Nil => hr
+    Cons(e, t) => match e {
+      #(k, n) => Key::plain_put(
+        k,
+        Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, put_entries(t, r)))))))),
+        And::left(
+          Bool::and_split(
+            Key::ok(k),
+            Bool::and(not(assoc_has(key_eq, k, p)), wf_node(n)),
+            And::left(
+              Bool::and_split(
+                wf_entry(#(k, n), p),
+                wf_entries(t, snoc(p, #(k, n))),
+                hw
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+}
+
+theorem exts_plain(
+  es: List(Text × Node),
+  r: List(Nat),
+  hr: plain(r) = true
+): plain(put_exts(es, r)) = true {
+  match es {
+    Nil => hr
+    Cons(e, t) => match e {
+      #(k, n) => Refl
+    }
+  }
+}
+
+// ---- paths of one step ------------------------------------------------------------------
+
+fn path_k(): (Seg, List(Nat)) -> Rd(List(Seg)) {
+  (s: Seg, r: List(Nat)) => rd_map(
+    (ss: List(Seg)) => Cons(s, ss),
+    read_path_tail(Cons(0, r), r)
+  )
+}
+
+pub theorem path_of_seg(
+  l: List(Nat),
+  s: Seg,
+  y: List(Nat),
+  hs: read_seg(l) = MkRd(s, y),
+  hy: read_path_tail(Cons(0, y), y) = MkRd(Nil, y)
+): read_path(l) = MkRd(Cons(s, Nil), y) {
+  Eq::trans(
+    Eq::congr(⟦rd_then(□, path_k())⟧, hs),
+    Eq::congr((q: Rd(List(Seg))) => rd_map((ss: List(Seg)) => Cons(s, ss), q), hy)
+  )
+}
+
+pub theorem Seg::put_key_back(
+  k: Key,
+  y: List(Nat),
+  hk: Key::ok(k) = true,
+  hy: head_passes(ident_char, y) = false
+): read_seg(put_key(k, y)) = MkRd(Skey(k), y) {
+  match k {
+    Kstr(t) => read_seg_put_str(t, y, hy)
+    Knum(neg, n) => read_seg_put_num(neg, n, y, hy)
+    Ktup(ks) => False::elim(false_ne_true(hk))
+  }
+}
+
+pub theorem Seg::put_ext(
+  name: Text,
+  y: List(Nat),
+  hn: is_ident(Text::bytes(name)) = true,
+  hy: head_passes(ident_char, y) = false
+): read_seg(put_ext_key(name, y)) = MkRd(Sext(name), y) {
+  match name {
+    Mk(bs) => match bs {
+      Nil => False::elim(false_ne_true(hn))
+      Cons(c, t) => Eq::congr(
+        (q: Rd(List(Nat))) => rd_map((w: List(Nat)) => Sext(Text::Mk(w)), q),
+        read_ident_name(
+          c,
+          t,
+          y,
+          And::left(Bool::and_split(ident_start(c), List::all(ident_char, t), hn)),
+          Eq::trans(
+            all_p_list_all(ident_char, t),
+            And::right(Bool::and_split(ident_start(c), List::all(ident_char, t), hn))
+          ),
+          hy
+        )
+      )
+    }
+  }
+}
+
+// ---- bytes `skip` and `read_object` stop at ------------------------------------------------------
+
+pub fn solid(l: List(Nat)): Bool {
+  match l {
+    Nil => false
+    Cons(c, ^t) => not(Bool::or(is_ws(c), Bool::or(Nat::eq(c, 47), Nat::eq(c, 61))))
+  }
+}
+
+pub theorem solid_of_plain(l: List(Nat), h: plain(l) = true): solid(l) = true {
+  match l {
+    Nil => False::elim(false_ne_true(h))
+    Cons(c, t) => Eq::trans(
+      Eq::congr(
+        ⟦not(Bool::or(□, Bool::or(Nat::eq(c, 47), Nat::eq(c, 61))))⟧,
+        or_no_l(
+          is_ws(c),
+          Bool::or(
+            Nat::eq(c, 47),
+            Bool::or(
+              Nat::eq(c, 125),
+              Bool::or(Nat::eq(c, 61), Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44))))
+            )
+          ),
+          bad_no(c, t, h)
+        )
+      ),
+      Eq::trans(
+        Eq::congr(
+          ⟦not(Bool::or(false, Bool::or(□, Nat::eq(c, 61))))⟧,
+          or_no_l(
+            Nat::eq(c, 47),
+            Bool::or(
+              Nat::eq(c, 125),
+              Bool::or(Nat::eq(c, 61), Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44))))
+            ),
+            or_no_r(
+              is_ws(c),
+              Bool::or(
+                Nat::eq(c, 47),
+                Bool::or(
+                  Nat::eq(c, 125),
+                  Bool::or(Nat::eq(c, 61), Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44))))
+                )
+              ),
+              bad_no(c, t, h)
+            )
+          )
+        ),
+        Eq::congr(
+          ⟦not(Bool::or(false, Bool::or(false, □)))⟧,
+          or_no_l(
+            Nat::eq(c, 61),
+            Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44))),
+            or_no_r(
+              Nat::eq(c, 125),
+              Bool::or(Nat::eq(c, 61), Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44)))),
+              or_no_r(
+                Nat::eq(c, 47),
+                Bool::or(
+                  Nat::eq(c, 125),
+                  Bool::or(Nat::eq(c, 61), Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44))))
+                ),
+                or_no_r(
+                  is_ws(c),
+                  Bool::or(
+                    Nat::eq(c, 47),
+                    Bool::or(
+                      Nat::eq(c, 125),
+                      Bool::or(
+                        Nat::eq(c, 61),
+                        Bool::or(Nat::eq(c, 93), Bool::or(Nat::eq(c, 41), Nat::eq(c, 44)))
+                      )
+                    )
+                  ),
+                  bad_no(c, t, h)
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+theorem solid_parts(
+  c: Nat,
+  t: List(Nat),
+  h: solid(Cons(c, t)) = true
+): Bool::or(is_ws(c), Bool::or(Nat::eq(c, 47), Nat::eq(c, 61))) = false {
+  Bool::not_true(Bool::or(is_ws(c), Bool::or(Nat::eq(c, 47), Nat::eq(c, 61))), h)
+}
+
+pub theorem skip_solid(l: List(Nat), h: solid(l) = true): skip(l) = l {
+  match l {
+    Nil => False::elim(false_ne_true(h))
+    Cons(c, t) => Eq::trans(
+      Eq::congr(
+        ⟦sw_tested(c, t, □, Nat::eq(c, 47))⟧,
+        or_no_l(is_ws(c), Bool::or(Nat::eq(c, 47), Nat::eq(c, 61)), solid_parts(c, t, h))
+      ),
+      Eq::congr(
+        ⟦sw_tested(c, t, false, □)⟧,
+        or_no_l(
+          Nat::eq(c, 47),
+          Nat::eq(c, 61),
+          or_no_r(is_ws(c), Bool::or(Nat::eq(c, 47), Nat::eq(c, 61)), solid_parts(c, t, h))
+        )
+      )
+    )
+  }
+}
+
+pub theorem solid_not_eq(l: List(Nat), h: solid(l) = true): head_is(61, l) = false {
+  match l {
+    Nil => Refl
+    Cons(c, t) => Eq::trans(
+      nat_eq_comm(61, c),
+      or_no_r(
+        Nat::eq(c, 47),
+        Nat::eq(c, 61),
+        or_no_r(is_ws(c), Bool::or(Nat::eq(c, 47), Nat::eq(c, 61)), solid_parts(c, t, h))
+      )
+    )
+  }
+}
+
+pub theorem exts_solid(
+  es: List(Text × Node),
+  r: List(Nat)
+): solid(put_exts(es, Cons(125, r))) = true {
+  match es {
+    Nil => Refl
+    Cons(e, t) => match e {
+      #(k, n) => Refl
+    }
+  }
+}
+
+pub theorem entries_solid(
+  es: List(Key × Node),
+  p: List(Key × Node),
+  r: List(Nat),
+  hr: solid(r) = true,
+  hw: wf_entries(es, p) = true
+): solid(put_entries(es, r)) = true {
+  match es {
+    Nil => hr
+    Cons(e, t) => match e {
+      #(k, n) => solid_of_plain(
+        put_entries(Cons(#(k, n), t), r),
+        Key::plain_put(
+          k,
+          Cons(
+            32,
+            Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, put_entries(t, r)))))))
+          ),
+          And::left(
+            Bool::and_split(
+              Key::ok(k),
+              Bool::and(not(assoc_has(key_eq, k, p)), wf_node(n)),
+              And::left(
+                Bool::and_split(
+                  wf_entry(#(k, n), p),
+                  wf_entries(t, snoc(p, #(k, n))),
+                  hw
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+}

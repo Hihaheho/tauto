@@ -1,0 +1,214 @@
+import "extract.taut"
+import "decl.taut"
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
+import "names.taut"
+import std::map
+import std::text
+import std::base
+
+// Which functions of the standard library a program reaches: the host writes
+// the ones that are not mapped onto Nib, with what they call in turn, before
+// the program's own declarations.
+
+pub fn re_has(xs: List(Text), x: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || re_has(rest, x)
+  }
+}
+
+mutual {
+  // The names a term mentions.
+  pub fn re_term(k: Nat, t: SurfaceTerm): List(Text) {
+    match k {
+      Zero => Nil
+      Succ(j) => ⊢ List(Text) from match t.kind {
+        SkVar(n) => Cons(surface_name_text(n), Nil)
+        SkApp(head, args) => List::append(re_term(j, head), re_terms(j, args))
+        SkLam(^params, body, ^types, _) => re_term(j, body)
+        SkBorrowLam(^lent, lam) => re_term(j, lam)
+        SkIf(c, th, el) => List::append(re_term(j, c), List::append(re_term(j, th), re_opt(j, el)))
+        SkField(v, ^name) => re_term(j, v)
+        SkAscribe(v, ^ty) => re_term(j, v)
+        SkBorrow(^mutable, ^mutable_orig, v) => re_term(j, v)
+        SkBlock(stmts) => re_stmts(j, stmts)
+        SkMatch(scrutinee, ^motive, arms, ^binder, _) => List::append(re_term(j, scrutinee), re_arms(j, arms))
+        _ => Nil
+      }
+    }
+  }
+
+  pub fn re_opt(k: Nat, t: Option(SurfaceTerm)): List(Text) {
+    match k {
+      Zero => Nil
+      Succ(j) => ⊢ List(Text) from match t {
+        None => Nil
+        Some(x) => re_term(j, x)
+      }
+    }
+  }
+
+  pub fn re_terms(k: Nat, ts: List(SurfaceTerm)): List(Text) {
+    match k {
+      Zero => Nil
+      Succ(j) => ⊢ List(Text) from match ts {
+        Nil => Nil
+        Cons(t, rest) => List::append(re_term(j, t), re_terms(j, rest))
+      }
+    }
+  }
+
+  pub fn re_arms(k: Nat, arms: List(SurfaceArm)): List(Text) {
+    match k {
+      Zero => Nil
+      Succ(j) => ⊢ List(Text) from match arms {
+        Nil => Nil
+        Cons(a, rest) => List::append(re_opt(j, a.guard), List::append(re_term(j, a.body), re_arms(j, rest)))
+      }
+    }
+  }
+
+  pub fn re_stmts(k: Nat, stmts: List(SurfaceStmt)): List(Text) {
+    match k {
+      Zero => Nil
+      Succ(j) => ⊢ List(Text) from match stmts {
+        Nil => Nil
+        Cons(s, rest) => ⊢ List(Text) from match s {
+          StLet(^name, ^ty, value, ^r#borrow, ^mutable, ^unused, ^stack) => List::append(re_term(j, value), re_stmts(j, rest))
+          StExpr(v) => List::append(re_term(j, v), re_stmts(j, rest))
+          _ => re_stmts(j, rest)
+        }
+      }
+    }
+  }
+}
+
+// The functions of `stmts` (modules flattened, each named by its path).
+pub fn re_fns(stmts: List(SurfaceStmt)): List(SurfaceFn) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceFn) from match s {
+      StFn(f) => Cons(f, re_fns(rest))
+      _ => re_fns(rest)
+    }
+  }
+}
+
+// What every function that is not in `pool` mentions.
+pub fn re_roots(k: Nat, fns: List(SurfaceFn)): List(Text) {
+  match fns {
+    Nil => Nil
+    Cons(f, rest) => List::append(re_siblings(ex_drop_leaf(f.name), re_term(k, f.body)), re_roots(k, rest))
+  }
+}
+
+// The functions of `pool` that `needed` names, and what those name in turn,
+// until nothing more is reached.
+pub fn re_reach(k: Nat, fuel: Nat, mapped: Ordmap(Text, Text), pool: List(SurfaceFn), needed: List(Text), chosen: List(Text)): List(Text) {
+  match k {
+    Zero => chosen
+    Succ(j) => ⊢ List(Text) from match re_next(pool, mapped, needed, chosen) {
+      None => chosen
+      Some(f) => re_reach(j, fuel, mapped, pool, if re_self_named(mapped, f.name) { needed } else { List::append(re_siblings(ex_drop_leaf(f.name), re_term(fuel, f.body)), needed) }, Cons(f.name, chosen))
+    }
+  }
+}
+
+// What a function of a module mentions, also as a sibling in that module.
+pub fn re_siblings(prefix: Text, names: List(Text)): List(Text) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => if prefix == "" { names } else { Cons(n, Cons(ex_qualify_name(prefix, n), re_siblings(prefix, rest))) }
+  }
+}
+
+// The host also writes the declaration of a function its template names
+// itself, `Text::of_nat($0)`: the declaration is reached as an unmapped one.
+pub fn re_self_named(mapped: Ordmap(Text, Text), name: Text): Bool {
+  match ex_mapped_get(mapped, name) {
+    None => false
+    Some(m) => m == Text::concat_all([name, "($0)"])
+  }
+}
+
+pub fn re_unmapped(mapped: Ordmap(Text, Text), name: Text): Bool {
+  match ex_mapped_get(mapped, name) {
+    None => true
+    Some(m) => m == Text::concat_all([name, "($0)"])
+  }
+}
+
+// A function of the pool that is needed, not mapped and not chosen yet.
+pub fn re_next(pool: List(SurfaceFn), mapped: Ordmap(Text, Text), needed: List(Text), chosen: List(Text)): Option(SurfaceFn) {
+  match pool {
+    Nil => None
+    Cons(f, rest) => if re_has(needed, f.name) && ex_not(re_has(chosen, f.name)) && re_unmapped(mapped, f.name) { Some(f) } else { re_next(rest, mapped, needed, chosen) }
+  }
+}
+
+// The declarations of the library's modules that are functions in `chosen`,
+// in the order written; a module with none is dropped.
+pub fn re_keep(k: Nat, chosen: List(Text), prefix: Text, stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(SurfaceStmt) from match stmts {
+      Nil => Nil
+      Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+        StFn(f) => if re_has(chosen, ex_in_module(prefix, f.name)) { Cons(s, re_keep(j, chosen, prefix, rest)) } else { re_keep(j, chosen, prefix, rest) }
+        _ => re_keep(j, chosen, prefix, rest)
+      }
+    }
+  }
+}
+
+// The declarations of imported files, the functions of them only when `chosen`
+// names them: the host leaves out what nothing of the program reaches.
+pub fn re_filter(k: Nat, chosen: List(Text), prefix: Text, stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(SurfaceStmt) from match stmts {
+      Nil => Nil
+      Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+        StFn(f) => if re_has(chosen, ex_in_module(prefix, f.name)) { Cons(s, re_filter(j, chosen, prefix, rest)) } else { re_filter(j, chosen, prefix, rest) }
+        _ => Cons(s, re_filter(j, chosen, prefix, rest))
+      }
+    }
+  }
+}
+
+// The functions of the library and of the imported files that the program's own
+// reach.
+pub fn re_chosen(fuel: Nat, mapped: Ordmap(Text, Text), library: List(SurfaceStmt), imports: List(SurfaceStmt), program: List(SurfaceStmt)): List(Text) {
+  let flat := ex_flatten(fuel, library)
+  let flat_imports := ex_flatten(fuel, imports)
+  let pool := List::append(re_fns(ex_unmodule(fuel, ex_modules(fuel, "", flat))), re_fns(ex_unmodule(fuel, ex_modules(fuel, "", flat_imports))))
+  let own := re_fns(ex_unmodule(fuel, ex_modules(fuel, "", ex_flatten(fuel, program))))
+  re_reach(List::length(pool) + 1, fuel, mapped, pool, re_roots(fuel, own), Nil)
+}
+
+// The library's declarations a program reaches, to write before it.
+pub fn re_library(fuel: Nat, mapped: Ordmap(Text, Text), library: List(SurfaceStmt), imports: List(SurfaceStmt), program: List(SurfaceStmt)): List(SurfaceStmt) {
+  re_keep(fuel, re_chosen(fuel, mapped, library, imports, program), "", ex_flatten(fuel, library))
+}
+
+// The imported files' declarations a program reaches, to write before it.
+pub fn re_imports(fuel: Nat, mapped: Ordmap(Text, Text), library: List(SurfaceStmt), imports: List(SurfaceStmt), program: List(SurfaceStmt)): List(SurfaceStmt) {
+  re_filter(fuel, re_chosen(fuel, mapped, library, imports, program), "", ex_flatten(fuel, imports))
+}
+
+// Whether the library's declarations include a family of this name: the host
+// writes the helpers of texts once its `Text` is loaded.
+pub fn re_declares(k: Nat, stmts: List(SurfaceStmt), name: Text): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match stmts {
+      Nil => false
+      Cons(s, rest) => ⊢ Bool from match s {
+        StInductive(i) => i.name == name || re_declares(j, rest, name)
+        _ => re_declares(j, rest, name)
+      }
+    }
+  }
+}

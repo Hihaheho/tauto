@@ -3,7 +3,8 @@ import "../../vm/src/builtins.taut"
 import "../../vm/src/cps.taut"
 import "../../vm/src/mval.taut"
 import "../../vm/src/operations.taut"
-import std::Base
+import std::base
+import std::array
 
 // Exhaustion and unsupported control constructs are not successful evaluations.
 pub(open) inductive EResult(A: Type): Type {
@@ -17,15 +18,15 @@ pub fn e_primitive_out(out: MOut): EResult(MVal) {
   match out {
     MoutVal(v, cx2) => ErValue(v, cx2)
     MoutErr(message) => ErError(message)
-    MoutExit(code) => ErError("internal: a primitive requested exit")
-    MoutAsk(name, values, cx2) => ErError("internal: a primitive requested the host")
-    MoutPerform(performed) => ErError("internal: a primitive performed an effect")
-    MoutSpawn(fnval, pid, cx2) => ErError("internal: a primitive spawned a task")
-    MoutYield(pid, cx2) => ErError("internal: a primitive yielded")
+    MoutExit(^code) => ErError("internal: a primitive requested exit")
+    MoutAsk(^name, ^values, ^cx2) => ErError("internal: a primitive requested the host")
+    MoutPerform(^performed, ^pcx) => ErError("internal: a primitive performed an effect")
+    MoutSpawn(^fnval, ^pid, ^cx2) => ErError("internal: a primitive spawned a task")
+    MoutYield(^pid, ^cx2) => ErError("internal: a primitive yielded")
   }
 }
 
-pub fn e_operation(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): EResult(MVal) {
+pub fn e_operation(ctors: Array(MCtor), cx: MCx, op: MOp, args: List(MVal)): EResult(MVal) {
   if Nat::eq(m_op_arity(op), List::length(args)) {
     e_primitive_out(m_op(ctors, cx, op, args))
   } else {
@@ -34,9 +35,9 @@ pub fn e_operation(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): ERes
 }
 
 pub fn e_read(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
-  env: List(Pair(Nat, EBinding)),
+  env: List(Nat × EBinding),
   id: Nat,
   deref: Bool
 ): EResult(MVal) {
@@ -64,8 +65,8 @@ mutual {
   // Fuel bounds evaluation depth; it is separate from a source program's budget.
   pub fn e_eval(
     fuel: Nat,
-    ctors: List(MCtor),
-    env: List(Pair(Nat, EBinding)),
+    ctors: Array(MCtor),
+    env: List(Nat × EBinding),
     e: Cps,
     cx: MCx
   ): EResult(MVal) {
@@ -92,27 +93,30 @@ mutual {
           (v: MVal, cx2: MCx) => e_branch(f, ctors, env, v, then, otherwise, cx2)
         )
         CSeq(items) => e_sequence(f, ctors, env, items, cx)
-        CCall(callee, args, ticked) => ErUnsupported("call")
-        CTail(inst, args) => ErUnsupported("tail call")
-        CBuiltin(name, args) => ErUnsupported("builtin")
-        CDefine(id, r#shared, drop, init) => ErUnsupported("definition")
-        CAssign(id, path, through, value) => ErUnsupported("assignment")
-        CWhile(cond, body, ticked) => ErUnsupported("while")
-        CReturn(value) => ErUnsupported("return")
-        CMatch(scrut, pats, guards, bodies) => ErUnsupported("match")
-        CClosure(body, params, captures, borrowed, refs) => ErUnsupported("closure")
-        CPerform(op, quant, args) => ErUnsupported("perform")
-        CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => ErUnsupported("handle")
-        CBorrow(id, path, through) => ErUnsupported("borrow")
-        CBudget(memory, steps, body) => ErUnsupported("budget")
+        CCall(^callee, ^args, ^ticked) => ErUnsupported("call")
+        CTail(^inst, ^args, ^ticked) => ErUnsupported("tail call")
+        CBuiltin(^name, ^args) => ErUnsupported("builtin")
+        CExtern(^name, ^args) => ErUnsupported("extern")
+        CDefine(^id, ^r#shared, ^drop, ^init) => ErUnsupported("definition")
+        CAssign(^id, ^path, ^through, ^value) => ErUnsupported("assignment")
+        CWhile(^cond, ^body, ^ticked) => ErUnsupported("while")
+        CReturn(^value) => ErUnsupported("return")
+        CMatch(^scrut, ^pats, ^guards, ^bodies) => ErUnsupported("match")
+        CClosure(^body, ^params, ^captures, ^borrowed, ^refs) => ErUnsupported("closure")
+        CPerform(^op, ^quant, ^args) => ErUnsupported("perform")
+        CHandle(^body, ^ops, ^pats, ^ks, ^bodies, ^rpats, ^rguards, ^rbodies) => ErUnsupported("handle")
+        CBorrow(^id, ^path, ^through) => ErUnsupported("borrow")
+        CTake(^id) => ErUnsupported("take")
+        CSweep => ErUnsupported("sweep")
+        CBudget(^memory, ^steps, ^body) => ErUnsupported("budget")
       }
     }
   }
 
   pub fn e_branch(
     fuel: Nat,
-    ctors: List(MCtor),
-    env: List(Pair(Nat, EBinding)),
+    ctors: Array(MCtor),
+    env: List(Nat × EBinding),
     value: MVal,
     then: Cps,
     otherwise: Cps,
@@ -129,8 +133,8 @@ mutual {
 
   pub fn e_args(
     fuel: Nat,
-    ctors: List(MCtor),
-    env: List(Pair(Nat, EBinding)),
+    ctors: Array(MCtor),
+    env: List(Nat × EBinding),
     es: List(Cps),
     cx: MCx
   ): EResult(List(MVal)) {
@@ -151,8 +155,8 @@ mutual {
 
   pub fn e_sequence(
     fuel: Nat,
-    ctors: List(MCtor),
-    env: List(Pair(Nat, EBinding)),
+    ctors: Array(MCtor),
+    env: List(Nat × EBinding),
     es: List(Cps),
     cx: MCx
   ): EResult(MVal) {

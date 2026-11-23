@@ -17,7 +17,7 @@ pub fn lg_min(a: u64, b: u64): u64 {
   if a < b { a } else { b }
 }
 
-pub fn lg_append(xs: List(u64), ys: List(u64)): List(u64) {
+pub fn lg_append(xs: List(u64), ys: List(u64)): List(u64) ! {div} {
   lg_rev_onto(lg_rev(xs), ys)
 }
 
@@ -26,7 +26,7 @@ pub fn lg_last(xs: List(u64)): Option(u64) {
     Nil => None
     Cons(x, rest) => match rest {
       Nil => Some(x)
-      Cons(y, more) => lg_last(rest)
+      Cons(^y, ^more) => lg_last(rest)
     }
   }
 }
@@ -34,11 +34,11 @@ pub fn lg_last(xs: List(u64)): Option(u64) {
 pub fn lg_head_is(xs: List(u64), v: u64): Bool {
   match xs {
     Nil => false
-    Cons(x, rest) => x == v
+    Cons(x, ^rest) => x == v
   }
 }
 
-pub fn lg_list_eq(xs: List(u64), ys: List(u64)): Bool {
+pub fn lg_list_eq(xs: List(u64), ys: List(u64)): Bool ! {div} {
   var a := xs
   var b := ys
   var same := true
@@ -48,7 +48,7 @@ pub fn lg_list_eq(xs: List(u64), ys: List(u64)): Bool {
       Nil => {
         same := match b {
           Nil => true
-          Cons(y, more) => false
+          Cons(^y, ^more) => false
         }
         running := false
       }
@@ -70,7 +70,7 @@ pub fn lg_list_eq(xs: List(u64), ys: List(u64)): Bool {
   same
 }
 
-pub fn lg_disjoint(xs: List(u64), ys: List(u64)): Bool {
+pub fn lg_disjoint(xs: List(u64), ys: List(u64)): Bool ! {div} {
   var a := xs
   var b := ys
   var free := true
@@ -98,7 +98,7 @@ pub fn lg_disjoint(xs: List(u64), ys: List(u64)): Bool {
   free
 }
 
-pub fn lg_unpack(packed: u64, n: u64): List(u64) {
+pub fn lg_unpack(packed: u64, n: u64): List(u64) ! {overflow} {
   if n == 0 {
     Nil
   } else {
@@ -106,14 +106,14 @@ pub fn lg_unpack(packed: u64, n: u64): List(u64) {
   }
 }
 
-pub fn lg_pack(xs: List(u64), unit: u64): u64 {
+pub fn lg_pack(xs: List(u64), unit: u64): u64 ! {overflow} {
   match xs {
     Nil => 0
     Cons(x, rest) => x * unit + lg_pack(rest, unit * 256)
   }
 }
 
-pub fn kt_make(complete: Bool, terms: List(u64), k: u64): u64 {
+pub fn kt_make(complete: Bool, terms: List(u64), k: u64): u64 ! {div, overflow} {
   let c: u64 := if complete { 1 } else { 0 }
   ((c * 8 + lg_len(terms)) * 4294967296 + lg_pack(terms, 1)) * 8 + k
 }
@@ -130,7 +130,7 @@ pub fn kt_len(key: u64): u64 {
   mod(div(key, 34359738368), 8)
 }
 
-pub fn kt_terms(key: u64): List(u64) {
+pub fn kt_terms(key: u64): List(u64) ! {overflow} {
   lg_unpack(mod(div(key, 8), 4294967296), kt_len(key))
 }
 
@@ -140,14 +140,14 @@ pub fn lg_is_eps(ts: List(u64)): Bool {
     Nil => false
     Cons(x, rest) => match rest {
       Nil => x == 255
-      Cons(y, more) => false
+      Cons(^y, ^more) => false
     }
   }
 }
 
 // Whether the terminals are complete for `k`: not the epsilon, and `k` long
 // or ending with terminal 0 (the end of the input).
-pub fn lg_terms_complete(ts: List(u64), k: u64): Bool {
+pub fn lg_terms_complete(ts: List(u64), k: u64): Bool ! {div, overflow} {
   not(lg_is_eps(ts)) && (lg_len(ts) >= k || match lg_last(ts) {
     Some(t) => t == 0
     None => false
@@ -155,7 +155,7 @@ pub fn lg_terms_complete(ts: List(u64), k: u64): Bool {
 }
 
 // `a` followed by `b`, cut at `k` terminals; a complete `a` stays as it is.
-pub fn lg_terms_concat(a: List(u64), b: List(u64), k: u64): List(u64) {
+pub fn lg_terms_concat(a: List(u64), b: List(u64), k: u64): List(u64) ! {div, overflow} {
   let nb := lg_len(b)
   if lg_is_eps(b) || nb == 0 {
     a
@@ -175,7 +175,7 @@ pub fn lg_terms_concat(a: List(u64), b: List(u64), k: u64): List(u64) {
   }
 }
 
-pub fn kt_concat(a: u64, b: u64, k: u64): u64 {
+pub fn kt_concat(a: u64, b: u64, k: u64): u64 ! {div, overflow} {
   if kt_complete(a) {
     kt_make(true, kt_terms(a), lg_min(kt_len(a), k))
   } else {
@@ -184,7 +184,7 @@ pub fn kt_concat(a: u64, b: u64, k: u64): u64 {
   }
 }
 
-pub fn kt_is_eps(key: u64): Bool {
+pub fn kt_is_eps(key: u64): Bool ! {overflow} {
   not(kt_complete(key)) && lg_is_eps(kt_terms(key))
 }
 
@@ -197,21 +197,21 @@ pub fn lg_set_empty(k: u64): LgSet {
   LgSet { tuples: Nil, k: k, done: false }
 }
 
-pub fn lg_set_eps(k: u64): LgSet {
+pub fn lg_set_eps(k: u64): LgSet ! {div, overflow} {
   LgSet { tuples: Cons(kt_make(false, Cons(255, Nil), k), Nil), k: k, done: false }
 }
 
-pub fn lg_set_end(k: u64): LgSet {
+pub fn lg_set_end(k: u64): LgSet ! {div, overflow} {
   LgSet { tuples: Cons(kt_make(true, Cons(0, Nil), k), Nil), k: k, done: true }
 }
 
-pub fn lg_set_of(run: List(u64), k: u64): LgSet {
+pub fn lg_set_of(run: List(u64), k: u64): LgSet ! {div, overflow} {
   let ts := lg_take(run, k)
   let c := lg_terms_complete(ts, k)
   LgSet { tuples: Cons(kt_make(c, ts, k), Nil), k: k, done: c }
 }
 
-pub fn lg_all_complete(xs: List(u64)): Bool {
+pub fn lg_all_complete(xs: List(u64)): Bool ! {div} {
   var rest := xs
   var all := true
   var running := true
@@ -231,13 +231,13 @@ pub fn lg_all_complete(xs: List(u64)): Bool {
   all
 }
 
-pub fn lg_set_k(s: LgSet, k: u64): LgSet {
+pub fn lg_set_k(s: LgSet, k: u64): LgSet ! {div} {
   LgSet { tuples: s.tuples, k: k, done: lg_all_complete(s.tuples) }
 }
 
 // Each tuple of `s` followed by each of `other`, cut at `k`; a set already
 // complete stays as it is.
-pub fn lg_set_concat(s: LgSet, other: LgSet, k: u64): LgSet {
+pub fn lg_set_concat(s: LgSet, other: LgSet, k: u64): LgSet ! {div, overflow} {
   if s.done {
     s
   } else {
@@ -278,7 +278,7 @@ pub fn lg_set_concat(s: LgSet, other: LgSet, k: u64): LgSet {
 }
 
 // The union; the flag stays unless an incomplete tuple was added.
-pub fn lg_set_union(s: LgSet, other: LgSet): LgSet {
+pub fn lg_set_union(s: LgSet, other: LgSet): LgSet ! {div, overflow} {
   let all := lg_union(s.tuples, other.tuples)
   let grew := lg_len(all) != lg_len(s.tuples)
   var added_incomplete := false
@@ -315,10 +315,10 @@ pub fn lg_member(xs: List(u64), v: u64): Bool {
   }
 }
 
-pub fn lg_set_append(s: LgSet, other: LgSet): LgSet {
+pub fn lg_set_append(s: LgSet, other: LgSet): LgSet ! {div} {
   LgSet { tuples: lg_union(s.tuples, other.tuples), k: s.k, done: s.done }
 }
 
-pub fn lg_set_eq(a: LgSet, b: LgSet): Bool {
+pub fn lg_set_eq(a: LgSet, b: LgSet): Bool ! {div} {
   a.k == b.k && a.done == b.done && lg_list_eq(a.tuples, b.tuples)
 }

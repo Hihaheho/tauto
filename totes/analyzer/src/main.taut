@@ -1,0 +1,108 @@
+import "index.taut"
+import "dump.taut"
+import "navigate.taut"
+import "../../syntax/src/syntax.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/classes.taut"
+import "../../unicode/src/unicode.taut"
+import std::text
+import std::builtin::os
+
+// `analyzer PRELUDE KERNEL_PRELUDE FILE…` prints the index of the two
+// preludes and of each file, in order (the differential test's input,
+// `docs/design/self-host.md`). A file written `PATH=2,3` imports the files 2
+// and 3; the preludes are 0 and 1, the first file 2. With `--navigate NAME`
+// first, it prints instead what an editor is told about the names of the
+// last file (`an_dump_navigate`), renaming to `NAME`.
+
+pub fn an_main_imports(spec: Text): Text × List(Nat) {
+  match text_find(spec, "=", 0) {
+    None => #(spec, Nil)
+    Some(at) => #(
+      Text::slice_or_empty(spec, 0, at),
+      text_number_list(Text::slice_or_empty(spec, at + 1, Text::len(spec)))
+    )
+  }
+}
+
+pub fn an_main_load(t: &SyntaxTables, classes: UnicodeClasses, w: AnWorld, specs: List(Text), dump: Bool): AnWorld ! {fs_read, overflow, stderr, stdout} {
+  match specs {
+    Nil => w
+    Cons(spec, rest) => match an_main_imports(spec) {
+      #(path, imports) => match read_file(path) {
+        Err(e) => {
+          eprint(Text::concat_all(["cannot read: ", e]))
+          w
+        }
+        Ok(source) => match an_add(&t, classes, w, path, source, imports) {
+          #(next, id) => {
+            if dump {
+              match an_world_file(next, id) {
+                None => #()
+                Some(f) => print(an_dump_file(id, f))
+              }
+            }
+            an_main_load(&t, classes, next, rest, dump)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn an_main_dump_world(w: AnWorld, id: Nat): Unit ! {stdout} {
+  match an_world_file(w, id) {
+    None => #()
+    Some(f) => print(an_dump_file(id, f))
+  }
+}
+
+pub fn an_main_run(t: &SyntaxTables, prelude: Text, kernel: Text, files: List(Text), rename_to: Option(Text)): Unit ! {fs_read, overflow, stderr, stdout} {
+  match read_file(prelude) {
+    Err(e) => eprint(e)
+    Ok(p) => match read_file(kernel) {
+      Err(e) => eprint(e)
+      Ok(k) => {
+        let classes := unicode_classes()
+        let w := an_world(&t, classes, p, k)
+        match rename_to {
+          None => {
+            an_main_dump_world(w, 0)
+            an_main_dump_world(w, 1)
+            let ^loaded := an_main_load(&t, classes, w, files, true)
+          }
+          Some(name) => {
+            let all := an_main_load(&t, classes, w, files, false)
+            print(an_dump_navigate(&t, classes, all, all.count - 1, name))
+          }
+        }
+      }
+    }
+  }
+}
+
+perform main(() => {
+  match syntax_tables() {
+    None => eprint("the tables of the syntax are damaged")
+    Some(t) => match perform argv() {
+      Cons(flag, after) => if flag == "--navigate" {
+        match after {
+          Cons(name, rest) => match rest {
+            Cons(prelude, more) => match more {
+              Cons(kernel, files) => an_main_run(&t, prelude, kernel, files, Some(name))
+              Nil => eprint("usage: analyzer --navigate NAME PRELUDE KERNEL_PRELUDE FILE…")
+            }
+            Nil => eprint("usage: analyzer --navigate NAME PRELUDE KERNEL_PRELUDE FILE…")
+          }
+          Nil => eprint("usage: analyzer --navigate NAME PRELUDE KERNEL_PRELUDE FILE…")
+        }
+      } else {
+        match after {
+          Cons(kernel, files) => an_main_run(&t, flag, kernel, files, None)
+          Nil => eprint("usage: analyzer PRELUDE KERNEL_PRELUDE FILE…")
+        }
+      }
+      Nil => eprint("usage: analyzer PRELUDE KERNEL_PRELUDE FILE…")
+    }
+  }
+})

@@ -1,0 +1,42 @@
+// `inductive struct(affine)` and `inductive enum(affine)`: a type the proofs see
+// that the program may not copy.
+
+@ cases.inductive-affine-struct-is-a-kernel-type
+description = "An `inductive struct(affine)` is a family to the kernel, as an `inductive struct` is."
+source = ```tauto
+inductive struct(affine) Slot { n: Nat }
+fn get(s: Slot): Nat { s.n }
+theorem get_mk(n: Nat): get(Slot { n: n }) = n { Refl }
+```
+checks."get_mk" = "ok"
+
+@ cases.inductive-affine-struct-is-not-copied
+description = "An `inductive struct(affine)` is affine to the program: a use after a move is an error."
+source = ```nib
+inductive struct(affine) Slot { n: u64 }
+fn take(s: Slot): u64 { s.n }
+let s := Slot { n: 1 }
+let a := take(s)
+let b := take(s)
+```
+lin = "error: s is used after move"
+
+@ cases.inductive-affine-struct-runs
+description = "An `inductive struct(affine)` runs as the `struct(affine)` it writes."
+source = ```tauto
+inductive struct(affine) Slot { n: Nat }
+fn take(s: Slot): Nat { s.n }
+show(&take(Slot { n: 3 }))
+```
+stdout = "3\n"
+
+@ cases.inductive-affine-enum-is-not-copied
+description = "An `inductive enum(affine)` is affine to the program, as an `enum(affine)` is."
+source = ```nib
+inductive enum(affine) Token { One(u64), Two }
+fn take(t: Token): u64 { match t { One(n) => n, Two => 2 } }
+let t := Two
+let a := take(t)
+let b := take(t)
+```
+lin = "error: t is used after move"

@@ -1,0 +1,431 @@
+import std::text
+import std::row
+import std::base
+import "../../surface/src/surface.taut"
+import "freevars.taut"
+import "direct.taut"
+import "rules_rows.taut"
+import "kind_sound.taut"
+import "unify_sound.taut"
+import "../../identity/src/identity.taut"
+
+// `direct.taut` against `DirectTail` of `rules_rows.taut`: when the check of
+// a direct operation's arm passes, the arm ends, on every path, in one call
+// `k(e)`, and `k` is nowhere else.
+
+// ---- `subterms` keeps what it is given -------------------------------------
+
+mutual {
+  pub theorem subterms_keeps(t: SurfaceTerm, acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms(t, acc)) {
+    match t {
+      SurfaceTermIndexedMk(k, start, end, occ) => subterms_kind_keeps(
+        k,
+        Cons(SurfaceTermIndexedMk(k, start, end, occ), acc),
+        x,
+        MemThere(SurfaceTermIndexedMk(k, start, end, occ), acc, m)
+      )
+    }
+  }
+
+  pub theorem subterms_kind_keeps(k: SurfaceKind, acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_kind(k, acc)) {
+    match k {
+      SkApp(f, args) => subterms_each_keeps(args, subterms(f, acc), x, subterms_keeps(f, acc, x, m))
+      SkLam(params, body, types, _) => subterms_keeps(body, acc, x, m)
+      SkBorrowLam(bs, lam) => subterms_keeps(lam, acc, x, m)
+      SkField(base, name) => subterms_keeps(base, acc, x, m)
+      SkTagged(tag, v) => subterms_keeps(v, acc, x, m)
+      SkBorrow(mu, mu_orig, v) => subterms_keeps(v, acc, x, m)
+      SkRecord(name, fields) => subterms_fields_keeps(fields, acc, x, m)
+      SkIf(c, th, el) => subterms_opt_keeps(el, subterms(th, subterms(c, acc)), x, subterms_keeps(th, subterms(c, acc), x, subterms_keeps(c, acc, x, m)))
+      SkPerform(eff, args) => subterms_each_keeps(args, acc, x, m)
+      SkBudget(mem, steps, body) => subterms_keeps(body, subterms(steps, acc), x, subterms_keeps(steps, acc, x, m))
+      SkBlock(stmts) => subterms_stmts_keeps(stmts, acc, x, m)
+      SkHandle(body, handlers) => subterms_handlers_keeps(handlers, subterms(body, acc), x, subterms_keeps(body, acc, x, m))
+      SkMatch(s, motive, arms, hb, _) => subterms_arms_keeps(arms, subterms(s, acc), x, subterms_keeps(s, acc, x, m))
+      _ => m
+    }
+  }
+
+  pub theorem subterms_each_keeps(ts: List(SurfaceTerm), acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_each(ts, acc)) {
+    match ts {
+      Nil => m
+      Cons(t, rest) => subterms_each_keeps(rest, subterms(t, acc), x, subterms_keeps(t, acc, x, m))
+    }
+  }
+
+  pub theorem subterms_opt_keeps(t: Option(SurfaceTerm), acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_opt(t, acc)) {
+    match t {
+      None => m
+      Some(v) => subterms_keeps(v, acc, x, m)
+    }
+  }
+
+  pub theorem subterms_fields_keeps(fs: List(SurfaceField), acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_fields(fs, acc)) {
+    match fs {
+      Nil => m
+      Cons(f, rest) => subterms_fields_keeps(rest, subterms_field(f, acc), x, subterms_field_keeps(f, acc, x, m))
+    }
+  }
+
+  pub theorem subterms_field_keeps(f: SurfaceField, acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_field(f, acc)) {
+    match f {
+      SurfaceFieldMk(name, value) => subterms_keeps(value, acc, x, m)
+    }
+  }
+
+  pub theorem subterms_stmts_keeps(ss: List(SurfaceStmt), acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_stmts(ss, acc)) {
+    match ss {
+      Nil => m
+      Cons(s, rest) => subterms_stmts_keeps(rest, subterms_stmt(s, acc), x, subterms_stmt_keeps(s, acc, x, m))
+    }
+  }
+
+  pub theorem subterms_stmt_keeps(s: SurfaceStmt, acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_stmt(s, acc)) {
+    match s {
+      StFn(f) => subterms_fn_keeps(f, acc, x, m)
+      StLet(name, ty, value, b, bm, unused, st_stack) => subterms_keeps(value, acc, x, m)
+      StVar(name, ty, value, vb, unused, st_stack) => subterms_keeps(value, acc, x, m)
+      StAssign(name, place, value) => subterms_keeps(value, acc, x, m)
+      StExpr(e) => subterms_keeps(e, acc, x, m)
+      StReturn(e) => subterms_opt_keeps(e, acc, x, m)
+      StWhile(c, body) => subterms_keeps(body, subterms(c, acc), x, subterms_keeps(c, acc, x, m))
+      _ => m
+    }
+  }
+
+  pub theorem subterms_fn_keeps(f: SurfaceFn, acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_fn(f, acc)) {
+    match f {
+      SurfaceFnMk(name, generics, bounds, params, bs, types, result, effects, wheres, start, end, body, lends, generic_types, bound_starts, visibility, row_hole, slot_unused, slot_unused_generics, slot_unused_params) => subterms_keeps(body, acc, x, m)
+    }
+  }
+
+  pub theorem subterms_handlers_keeps(hs: List(SurfaceHandler), acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_handlers(hs, acc)) {
+    match hs {
+      Nil => m
+      Cons(h, rest) => subterms_handlers_keeps(rest, subterms_handler(h, acc), x, subterms_handler_keeps(h, acc, x, m))
+    }
+  }
+
+  pub theorem subterms_handler_keeps(h: SurfaceHandler, acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_handler(h, acc)) {
+    match h {
+      HdReturn(p, body) => subterms_keeps(body, acc, x, m)
+      HdOperation(eff, hfa, hty, patterns, cont, _, guard, body) => subterms_opt_keeps(guard, subterms(body, acc), x, subterms_keeps(body, acc, x, m))
+    }
+  }
+
+  pub theorem subterms_arms_keeps(arms: List(SurfaceArm), acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_arms(arms, acc)) {
+    match arms {
+      Nil => m
+      Cons(arm, rest) => subterms_arms_keeps(rest, subterms_arm(arm, acc), x, subterms_arm_keeps(arm, acc, x, m))
+    }
+  }
+
+  pub theorem subterms_arm_keeps(arm: SurfaceArm, acc: List(SurfaceTerm), x: SurfaceTerm, m: Mem(SurfaceTerm, x, acc)): Mem(SurfaceTerm, x, subterms_arm(arm, acc)) {
+    match arm {
+      SurfaceArmMk(pattern, guard, goal, body) => subterms_keeps(body, subterms_opt(guard, acc), x, subterms_opt_keeps(guard, acc, x, m))
+    }
+  }
+}
+
+pub theorem subterm_self_listed(u: SurfaceTerm, acc: List(SurfaceTerm)): Mem(SurfaceTerm, u, subterms(u, acc)) {
+  match u {
+    SurfaceTermIndexedMk(k, start, end, occ) => subterms_kind_keeps(
+      k,
+      Cons(SurfaceTermIndexedMk(k, start, end, occ), acc),
+      SurfaceTermIndexedMk(k, start, end, occ),
+      MemHere(acc)
+    )
+  }
+}
+
+
+// ---- what is inside a term is listed by `subterms` --------------------------
+
+mutual {
+  pub theorem subterm_listed(u: SurfaceTerm, t: SurfaceTerm, acc: List(SurfaceTerm), h: SubtermOf(u, t)): Mem(SurfaceTerm, u, subterms(t, acc)) {
+    match h {
+      SubtermSelf => subterm_self_listed(u, acc)
+      SubtermInside(k, start, end, occ, inside) => subterm_kind_listed(u, k, Cons(SurfaceTermIndexedMk(k, start, end, occ), acc), inside)
+    }
+  }
+
+  pub theorem subterm_kind_listed(u: SurfaceTerm, k: SurfaceKind, acc: List(SurfaceTerm), h: SubtermKind(u, k)): Mem(SurfaceTerm, u, subterms_kind(k, acc)) {
+    match h {
+      InApp(f, args, at) => subterms_each_keeps(args, subterms(f, acc), u, subterm_listed(u, f, acc, at))
+      InAppArg(f, args, at) => subterm_any_listed(u, args, subterms(f, acc), at)
+      InLam(ps, body, types, unused, at) => subterm_listed(u, body, acc, at)
+      InBorrowLam(bs, lam, at) => subterm_listed(u, lam, acc, at)
+      InField(x, n, at) => subterm_listed(u, x, acc, at)
+      InTagged(tag, x, at) => subterm_listed(u, x, acc, at)
+      InBorrow(m, m_orig, x, at) => subterm_listed(u, x, acc, at)
+      InRecord(n, fs, at) => subterm_fields_listed(u, fs, acc, at)
+      InIfCond(c, th, el, at) => subterms_opt_keeps(el, subterms(th, subterms(c, acc)), u, subterms_keeps(th, subterms(c, acc), u, subterm_listed(u, c, acc, at)))
+      InIfThen(c, th, el, at) => subterms_opt_keeps(el, subterms(th, subterms(c, acc)), u, subterm_listed(u, th, subterms(c, acc), at))
+      InIfElse(c, th, el, at) => subterm_listed(u, el, subterms(th, subterms(c, acc)), at)
+      InPerform(op, args, at) => subterm_any_listed(u, args, acc, at)
+      InBudgetAmount(m, a, b, at) => subterms_keeps(b, subterms(a, acc), u, subterm_listed(u, a, acc, at))
+      InBudgetBody(m, a, b, at) => subterm_listed(u, b, subterms(a, acc), at)
+      InBlock(ss, at) => subterm_stmts_listed(u, ss, acc, at)
+      InHandleBody(b, hs, at) => subterms_handlers_keeps(hs, subterms(b, acc), u, subterm_listed(u, b, acc, at))
+      InHandler(b, hs, at) => subterm_handlers_listed(u, hs, subterms(b, acc), at)
+      InMatchScrutinee(s, m, arms, hb, unused, at) => subterms_arms_keeps(arms, subterms(s, acc), u, subterm_listed(u, s, acc, at))
+      InMatchArm(s, m, arms, hb, unused, at) => subterm_arms_listed(u, arms, subterms(s, acc), at)
+    }
+  }
+
+  pub theorem subterm_any_listed(u: SurfaceTerm, ts: List(SurfaceTerm), acc: List(SurfaceTerm), h: SubtermAny(u, ts)): Mem(SurfaceTerm, u, subterms_each(ts, acc)) {
+    match h {
+      AnyHere(t, rest, at) => subterms_each_keeps(rest, subterms(t, acc), u, subterm_listed(u, t, acc, at))
+      AnyLater(t, rest, at) => subterm_any_listed(u, rest, subterms(t, acc), at)
+    }
+  }
+
+  pub theorem subterm_fields_listed(u: SurfaceTerm, fs: List(SurfaceField), acc: List(SurfaceTerm), h: SubtermFields(u, fs)): Mem(SurfaceTerm, u, subterms_fields(fs, acc)) {
+    match h {
+      FieldsHere(n, v, rest, at) => subterms_fields_keeps(rest, subterms(v, acc), u, subterm_listed(u, v, acc, at))
+      FieldsLater(f, rest, at) => subterm_fields_listed(u, rest, subterms_field(f, acc), at)
+    }
+  }
+
+  pub theorem subterm_stmts_listed(u: SurfaceTerm, ss: List(SurfaceStmt), acc: List(SurfaceTerm), h: SubtermStmts(u, ss)): Mem(SurfaceTerm, u, subterms_stmts(ss, acc)) {
+    match h {
+      StmtsHere(s, rest, at) => subterms_stmts_keeps(rest, subterms_stmt(s, acc), u, subterm_stmt_listed(u, s, acc, at))
+      StmtsLater(s, rest, at) => subterm_stmts_listed(u, rest, subterms_stmt(s, acc), at)
+    }
+  }
+
+  pub theorem subterm_stmt_listed(u: SurfaceTerm, s: SurfaceStmt, acc: List(SurfaceTerm), h: SubtermStmt(u, s)): Mem(SurfaceTerm, u, subterms_stmt(s, acc)) {
+    match h {
+      InLet(n, ty, v, b, m, at, unused, st) => subterm_listed(u, v, acc, at)
+      InVar(n, ty, v, b, at, unused, st) => subterm_listed(u, v, acc, at)
+      InAssign(n, p, v, at) => subterm_listed(u, v, acc, at)
+      InExpr(e, at) => subterm_listed(u, e, acc, at)
+      InReturn(e, at) => subterm_listed(u, e, acc, at)
+      InWhileCond(c, b, at) => subterms_keeps(b, subterms(c, acc), u, subterm_listed(u, c, acc, at))
+      InWhileBody(c, b, at) => subterm_listed(u, b, subterms(c, acc), at)
+    }
+  }
+
+  pub theorem subterm_handlers_listed(u: SurfaceTerm, hs: List(SurfaceHandler), acc: List(SurfaceTerm), h: SubtermHandlers(u, hs)): Mem(SurfaceTerm, u, subterms_handlers(hs, acc)) {
+    match h {
+      HandlersHere(x, rest, at) => subterms_handlers_keeps(rest, subterms_handler(x, acc), u, subterm_handler_listed(u, x, acc, at))
+      HandlersLater(x, rest, at) => subterm_handlers_listed(u, rest, subterms_handler(x, acc), at)
+    }
+  }
+
+  pub theorem subterm_handler_listed(u: SurfaceTerm, x: SurfaceHandler, acc: List(SurfaceTerm), h: SubtermHandler(u, x)): Mem(SurfaceTerm, u, subterms_handler(x, acc)) {
+    match h {
+      InReturnArm(p, b, at) => subterm_listed(u, b, acc, at)
+      InOperationBody(op, bs, ts, ps, k, cu, g, b, at) => subterms_opt_keeps(g, subterms(b, acc), u, subterm_listed(u, b, acc, at))
+      InOperationGuard(op, bs, ts, ps, k, cu, g, b, at) => subterm_listed(u, g, subterms(b, acc), at)
+    }
+  }
+
+  pub theorem subterm_arms_listed(u: SurfaceTerm, arms: List(SurfaceArm), acc: List(SurfaceTerm), h: SubtermArms(u, arms)): Mem(SurfaceTerm, u, subterms_arms(arms, acc)) {
+    match h {
+      ArmsHere(p, g, goal, b, rest, at) => subterms_arms_keeps(rest, subterms_arm(SurfaceArmMk(p, g, goal, b), acc), u, subterm_listed(u, b, subterms_opt(g, acc), at))
+      ArmsGuard(p, g, goal, b, rest, at) => subterms_arms_keeps(rest, subterms_arm(SurfaceArmMk(p, Some(g), goal, b), acc), u, subterms_keeps(b, subterms(g, acc), u, subterm_listed(u, g, acc, at)))
+      ArmsLater(a, rest, at) => subterm_arms_listed(u, rest, subterms_arm(a, acc), at)
+    }
+  }
+}
+
+// ---- a mention the check does not see is not there ---------------------------
+
+pub theorem dir_any_mentions_member(ts: List(SurfaceTerm), name: Text, u: SurfaceTerm, m: Mem(SurfaceTerm, u, ts), none: dir_any_mentions(ts, name) = false): dir_here_mentions(u, name) = false {
+  match m {
+    MemHere(rest) => And::left(Bool::or_false_split(dir_here_mentions(u, name), dir_any_mentions(rest, name), none))
+    MemThere(b, rest, m2) => dir_any_mentions_member(rest, name, u, m2, And::right(Bool::or_false_split(dir_here_mentions(b, name), dir_any_mentions(rest, name), none)))
+  }
+}
+
+pub theorem dir_assigns_member(stmts: List(SurfaceStmt), name: Text, place: Option(SurfaceTerm), value: SurfaceTerm, m: Mem(SurfaceStmt, StAssign(name, place, value), stmts)): dir_assigns(stmts, name) = true {
+  match m {
+    MemHere(rest) => Bool::or_true_left(name == name, dir_assigns(rest, name), text_eq_refl(name))
+    MemThere(b, rest, m2) => dir_assigns_later(b, rest, name, dir_assigns_member(rest, name, place, value, m2))
+  }
+}
+
+pub theorem dir_assigns_later(b: SurfaceStmt, rest: List(SurfaceStmt), name: Text, later: dir_assigns(rest, name) = true): dir_assigns(Cons(b, rest), name) = true {
+  match b {
+    StAssign(n, p, v) => Bool::or_true_right(n == name, dir_assigns(rest, name), later)
+    _ => later
+  }
+}
+
+pub theorem dir_bool_absurd<C: Prop>(b: Bool, yes: b = true, no: b = false): C {
+  False::elim(false_ne_true(Eq::trans(Eq::sym(no), yes)))
+}
+
+pub theorem dir_mentions_absent(t: SurfaceTerm, name: Text, none: dir_mentions(t, name) = false, occurs: NameOccurs(name, t)): False {
+  match occurs {
+    OccursName(oc, start, end, n, same, at) => dir_bool_absurd(
+      dir_here_mentions(SurfaceTermIndexedMk(SkVar(n), start, end, oc), name),
+      Eq::subst((z: Text) => Text::eq(z, name) = true, Eq::sym(same), text_eq_refl(name)),
+      dir_any_mentions_member(subterms(t, Nil), name, SurfaceTermIndexedMk(SkVar(n), start, end, oc), subterm_listed(SurfaceTermIndexedMk(SkVar(n), start, end, oc), t, Nil, at), none)
+    )
+    OccursAssign(oc, stmts, start, end, place, value, at, assigns) => dir_bool_absurd(
+      dir_here_mentions(SurfaceTermIndexedMk(SkBlock(stmts), start, end, oc), name),
+      dir_assigns_member(stmts, name, place, value, assigns),
+      dir_any_mentions_member(subterms(t, Nil), name, SurfaceTermIndexedMk(SkBlock(stmts), start, end, oc), subterm_listed(SurfaceTermIndexedMk(SkBlock(stmts), start, end, oc), t, Nil, at), none)
+    )
+  }
+}
+
+// The block of one statement, which `dir_stmt_mentions` reads.
+pub fn dir_stmt_block(s: SurfaceStmt): SurfaceTerm {
+  SurfaceTerm { occurrence: None, kind: SkBlock(Cons(s, Nil)), start: 0, end: 0 }
+}
+
+pub theorem dir_stmt_mentions_absent(s: SurfaceStmt, name: Text, none: dir_stmt_mentions(s, name) = false, occurs: OccursStmt(name, s)): False {
+  match occurs {
+    OccursStmtName(oc, start, end, n, same, at) => dir_bool_absurd(
+      dir_here_mentions(SurfaceTermIndexedMk(SkVar(n), start, end, oc), name),
+      Eq::subst((z: Text) => Text::eq(z, name) = true, Eq::sym(same), text_eq_refl(name)),
+      dir_any_mentions_member(subterms(dir_stmt_block(s), Nil), name, SurfaceTermIndexedMk(SkVar(n), start, end, oc), subterm_stmt_listed(SurfaceTermIndexedMk(SkVar(n), start, end, oc), s, Cons(dir_stmt_block(s), Nil), at), none)
+    )
+    OccursStmtBlock(oc, stmts, start, end, place, value, at, assigns) => dir_bool_absurd(
+      dir_here_mentions(SurfaceTermIndexedMk(SkBlock(stmts), start, end, oc), name),
+      dir_assigns_member(stmts, name, place, value, assigns),
+      dir_any_mentions_member(subterms(dir_stmt_block(s), Nil), name, SurfaceTermIndexedMk(SkBlock(stmts), start, end, oc), subterm_stmt_listed(SurfaceTermIndexedMk(SkBlock(stmts), start, end, oc), s, Cons(dir_stmt_block(s), Nil), at), none)
+    )
+    OccursStmtAssign(place, value, same) => dir_bool_absurd(
+      dir_here_mentions(dir_stmt_block(s), name),
+      Eq::subst((x: SurfaceStmt) => dir_assigns(Cons(x, Nil), name) = true, Eq::sym(same), dir_assigns_member(Cons(StAssign(name, place, value), Nil), name, place, value, MemHere(Nil))),
+      dir_any_mentions_member(subterms(dir_stmt_block(s), Nil), name, dir_stmt_block(s), subterm_self_listed(dir_stmt_block(s), Nil), none)
+    )
+  }
+}
+
+// ---- the check of a direct arm gives `DirectTail` ----------------------------
+
+pub theorem dir_fresh_of(t: SurfaceTerm, k: Text, h: not(dir_mentions(t, k)) = true): (NameOccurs(k, t)) -> False {
+  occurs => dir_mentions_absent(t, k, Bool::not_true(dir_mentions(t, k), h), occurs)
+}
+
+pub theorem dir_stmt_fresh_of(s: SurfaceStmt, k: Text, h: not(dir_stmt_mentions(s, k)) = true): (OccursStmt(k, s)) -> False {
+  occurs => dir_stmt_mentions_absent(s, k, Bool::not_true(dir_stmt_mentions(s, k), h), occurs)
+}
+
+pub theorem dir_guard_fresh(g: Option(SurfaceTerm), k: Text, h: dir_guard_ok(g, k) = true): (OccursOpt(k, g)) -> False {
+  match g {
+    None => occurs => ⊢ False from match occurs {
+    }
+    Some(x) => occurs => ⊢ False from match occurs {
+      OccursSome(t, o) => dir_fresh_of(x, k, h)(o)
+    }
+  }
+}
+
+pub theorem dir_call_args_sound(n: SurfaceName, fs: Nat, fe: Nat, fo: Option(TermOccurrence), args: List(SurfaceTerm), k: Text, start: Nat, end: Nat, oc: Option(TermOccurrence), same: surface_name_text(n) = k, h: dir_is_call(SurfaceTermIndexedMk(SkVar(n), fs, fe, fo), args, k) = true): DirectTail(k, SurfaceTermIndexedMk(SkApp(SurfaceTermIndexedMk(SkVar(n), fs, fe, fo), args), start, end, oc)) {
+  match args {
+    Nil => dir_bool_absurd(false, Bool::and_true_right(surface_name_text(n) == k, false, h), Refl)
+    Cons(a, more) => ⊢ DirectTail(k, SurfaceTermIndexedMk(SkApp(SurfaceTermIndexedMk(SkVar(n), fs, fe, fo), Cons(a, more)), start, end, oc)) from match more {
+      Nil => DirectCall(fo, oc, a, fs, fe, start, end, n, same, dir_fresh_of(a, k, Bool::and_true_right(surface_name_text(n) == k, not(dir_mentions(a, k)), h)))
+      Cons(x, y) => dir_bool_absurd(false, Bool::and_true_right(surface_name_text(n) == k, false, h), Refl)
+    }
+  }
+}
+
+pub theorem dir_call_sound(f: SurfaceTerm, args: List(SurfaceTerm), k: Text, start: Nat, end: Nat, oc: Option(TermOccurrence), h: dir_is_call(f, args, k) = true): DirectTail(k, SurfaceTermIndexedMk(SkApp(f, args), start, end, oc)) {
+  match f {
+    SurfaceTermIndexedMk(fk, fs, fe, fo) => dir_call_kind_sound(fk, fs, fe, fo, args, k, start, end, oc, h)
+  }
+}
+
+pub theorem dir_call_kind_sound(fk: SurfaceKind, fs: Nat, fe: Nat, fo: Option(TermOccurrence), args: List(SurfaceTerm), k: Text, start: Nat, end: Nat, oc: Option(TermOccurrence), h: dir_is_call(SurfaceTermIndexedMk(fk, fs, fe, fo), args, k) = true): DirectTail(k, SurfaceTermIndexedMk(SkApp(SurfaceTermIndexedMk(fk, fs, fe, fo), args), start, end, oc)) {
+  match fk {
+    SkVar(n) => dir_call_args_sound(n, fs, fe, fo, args, k, start, end, oc, text_eq_sound(surface_name_text(n), k, Bool::and_true_left(surface_name_text(n) == k, dir_call_rest(args, k), h)), h)
+    _ => dir_bool_absurd(false, h, Refl)
+  }
+}
+
+// The statements of a block after the first: the last is a tail form, and
+// the first does not mention `k` when more follow.
+pub theorem dir_block_cons(
+  rest: List(SurfaceStmt),
+  s: SurfaceStmt,
+  k: Text,
+  h: dir_block_tail(Cons(s, rest), k) = true,
+  more: (dir_block_tail(rest, k) = true) -> DirectStmtsTail(k, rest),
+  last: (dir_last_tail(s, k) = true) -> DirectStmtsTail(k, Cons(s, Nil))
+): DirectStmtsTail(k, Cons(s, rest)) {
+  match rest {
+    Nil => last(h)
+    Cons(x, y) => DirectBefore(
+      s, x, y,
+      dir_stmt_fresh_of(s, k, Bool::and_true_left(not(dir_stmt_mentions(s, k)), dir_block_tail(Cons(x, y), k), h)),
+      more(Bool::and_true_right(not(dir_stmt_mentions(s, k)), dir_block_tail(Cons(x, y), k), h))
+    )
+  }
+}
+
+mutual {
+  pub theorem dir_is_tail_sound(body: SurfaceTerm, k: Text, h: dir_is_tail(body, k) = true): DirectTail(k, body) {
+    match body {
+      SurfaceTermIndexedMk(sk, start, end, oc) => dir_kind_tail_sound(sk, start, end, oc, k, h)
+    }
+  }
+
+  pub theorem dir_kind_tail_sound(sk: SurfaceKind, start: Nat, end: Nat, oc: Option(TermOccurrence), k: Text, h: dir_kind_tail(sk, k) = true): DirectTail(k, SurfaceTermIndexedMk(sk, start, end, oc)) {
+    match sk {
+      SkApp(f, args) => dir_call_sound(f, args, k, start, end, oc, h)
+      SkBlock(stmts) => DirectBlock(oc, stmts, start, end, dir_block_tail_sound(stmts, k, h))
+      SkIf(c, th, el) => DirectIf(
+        oc, c, th, el, start, end,
+        dir_fresh_of(c, k, Bool::and_true_left(not(dir_mentions(c, k)), dir_is_tail(th, k), Bool::and_true_left(not(dir_mentions(c, k)) && dir_is_tail(th, k), dir_else_tail(el, k), h))),
+        dir_is_tail_sound(th, k, Bool::and_true_right(not(dir_mentions(c, k)), dir_is_tail(th, k), Bool::and_true_left(not(dir_mentions(c, k)) && dir_is_tail(th, k), dir_else_tail(el, k), h))),
+        dir_else_tail_sound(el, k, Bool::and_true_right(not(dir_mentions(c, k)) && dir_is_tail(th, k), dir_else_tail(el, k), h))
+      )
+      SkMatch(s, mk, arms, hb, mu) => DirectMatch(
+        oc, s, mk, arms, hb, mu, start, end,
+        dir_fresh_of(s, k, Bool::and_true_left(not(dir_mentions(s, k)), dir_arms_tail(arms, k), h)),
+        dir_arms_tail_sound(arms, k, Bool::and_true_right(not(dir_mentions(s, k)), dir_arms_tail(arms, k), h))
+      )
+      _ => dir_bool_absurd(false, h, Refl)
+    }
+  }
+
+  pub theorem dir_else_tail_sound(el: Option(SurfaceTerm), k: Text, h: dir_else_tail(el, k) = true): DirectElse(k, el) {
+    match el {
+      None => dir_bool_absurd(false, h, Refl)
+      Some(x) => DirectElseSome(x, dir_is_tail_sound(x, k, h))
+    }
+  }
+
+  pub theorem dir_block_tail_sound(stmts: List(SurfaceStmt), k: Text, h: dir_block_tail(stmts, k) = true): DirectStmtsTail(k, stmts) {
+    match stmts {
+      Nil => dir_bool_absurd(false, h, Refl)
+      Cons(s, rest) => dir_block_cons(rest, s, k, h, hr => dir_block_tail_sound(rest, k, hr), hl => dir_last_tail_sound(s, k, hl))
+    }
+  }
+
+  pub theorem dir_last_tail_sound(s: SurfaceStmt, k: Text, h: dir_last_tail(s, k) = true): DirectStmtsTail(k, Cons(s, Nil)) {
+    match s {
+      StExpr(e) => DirectLast(e, dir_is_tail_sound(e, k, h))
+      _ => dir_bool_absurd(false, h, Refl)
+    }
+  }
+
+  pub theorem dir_arms_tail_sound(arms: List(SurfaceArm), k: Text, h: dir_arms_tail(arms, k) = true): DirectArmsTail(k, arms) {
+    match arms {
+      Nil => DirectArmsNil
+      Cons(arm, rest) => dir_arm_tail_sound(
+        arm, rest, k,
+        Bool::and_true_left(dir_arm_tail(arm, k), dir_arms_tail(rest, k), h),
+        dir_arms_tail_sound(rest, k, Bool::and_true_right(dir_arm_tail(arm, k), dir_arms_tail(rest, k), h))
+      )
+    }
+  }
+
+  pub theorem dir_arm_tail_sound(arm: SurfaceArm, rest: List(SurfaceArm), k: Text, h: dir_arm_tail(arm, k) = true, more: DirectArmsTail(k, rest)): DirectArmsTail(k, Cons(arm, rest)) {
+    match arm {
+      SurfaceArmMk(p, g, goal, b) => DirectArmsCons(
+        p, g, goal, b, rest,
+        dir_guard_fresh(g, k, Bool::and_true_left(dir_guard_ok(g, k), dir_is_tail(b, k), h)),
+        dir_is_tail_sound(b, k, Bool::and_true_right(dir_guard_ok(g, k), dir_is_tail(b, k), h)),
+        more
+      )
+    }
+  }
+}

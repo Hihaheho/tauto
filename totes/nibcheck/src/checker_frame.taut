@@ -1,10 +1,12 @@
+import "coerce_sound.taut"
 import "prepare_sound.taut"
-import std::Map
-import std::MapLaws
-import std::Text
+import std::map
+import std::map_laws
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "join_sound.taut"
 import "kind_sound.taut"
 import "summary_state.taut"
@@ -51,7 +53,7 @@ pub theorem run_frame_bind<A: Type, B: Type>(
   hm: CkRunFrame(c, m),
   hk: ∀ v: A. ∀ next: Checker. ∀ ordered: CkOrdered(next). CkRunFrame(next, k(v, next))
 ): CkRunFrame(c, frame_bind(k, m)) {
-  ⊢ CkRunFrame(c, frame_bind(k, m)) from match m {
+  match m {
     mut1(v, next) => {
       let h: CkRunFrame(next, k(v, next)) := hk(v, next, And::left(hm))
       AndIntro(And::left(h), Eq::trans(And::right(h), And::right(hm)))
@@ -141,7 +143,25 @@ pub fn run_expect_after(
   what: Text,
   fits: Bool
 ): Mut1(Unit, Checker) {
-  frame_error_if(c, ck_expect_message(ck_shown(c, a), ck_shown(c, b), what), span, not(fits))
+  match not(fits) {
+    true => frame_bind(
+      <A: Option(CoerceFound), B: Unit>,
+      (found: Option(CoerceFound), next: Checker) => run_expect_refused(next, a, b, span, what, found),
+      ck_coerce_fit(c, a, b)
+    )
+    false => mut1(Star, c)
+  }
+}
+// What `ck_expect` reports after reading `a` through `coerce` fields.
+pub fn run_expect_refused(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  found: Option(CoerceFound)
+): Mut1(Unit, Checker) {
+  frame_error_if(c, coerce_refusal(c, a, b, what, found), span, coerce_refused(c, found))
 }
 pub theorem run_expect_after_frame(
   c: Checker,
@@ -152,17 +172,26 @@ pub theorem run_expect_after_frame(
   fits: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, run_expect_after(c, a, b, span, what, fits)) {
-  run_frame_read(
-    c,
-    run_expect_after(c, a, b, span, what, fits),
-    frame_error_if_ok(c, ck_expect_message(ck_shown(c, a), ck_shown(c, b), what), span, not(fits)),
-    ordered
-  )
+  match fits {
+    true => run_frame_return(c, Star, ordered)
+    false => run_frame_bind(
+      <A: Option(CoerceFound), B: Unit>,
+      c,
+      (found: Option(CoerceFound), next: Checker) => run_expect_refused(next, a, b, span, what, found),
+      ck_coerce_fit(c, a, b),
+      run_frame_grows(c, ck_coerce_fit(c, a, b), ck_coerce_fit_grows(c, a, b, ordered)),
+      found => next => onext => run_frame_read(
+        next,
+        run_expect_refused(next, a, b, span, what, found),
+        frame_error_if_ok(next, coerce_refusal(next, a, b, what, found), span, coerce_refused(next, found)),
+        onext
+      )
+    )
+  }
 }
 pub fn run_expect(c: Checker, a: Ty, b: Ty, span: TySpan, what: Text): Mut1(Unit, Checker) {
   frame_bind(
-    Bool,
-    Unit,
+    <A: Bool, B: Unit>,
     (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
     ck_fits_wide(c, a, b)
   )
@@ -186,8 +215,7 @@ pub theorem ck_expect_run_frame(
     (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
     Eq::sym(run_expect_unf(c, a, b, span, what)),
     run_frame_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       c,
       (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
       ck_fits_wide(c, a, b),

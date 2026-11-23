@@ -16,6 +16,7 @@ impl Options {
         Options {
             threads: m.rust.executor.as_deref() == Some("threads"),
             stack_mb: m.rust.stack_mb,
+            main_thread: m.rust.main_thread,
             dependencies: m
                 .rust
                 .dependencies
@@ -28,6 +29,7 @@ impl Options {
                     dir.join(b).display().to_string(),
                 )
             }),
+            baked_permissions: None,
         }
     }
 }
@@ -40,10 +42,18 @@ pub struct Options {
     pub threads: bool,
     /// `rust.stack-mb`: the stack the generated `main` asks for, in MiB.
     pub stack_mb: Option<u32>,
+    /// `rust.main-thread`: the generated `main` runs the program on the
+    /// process's main thread.
+    pub main_thread: bool,
     /// `rust.dependencies`: `(name, Cargo.toml value)`.
     pub dependencies: Vec<(String, String)>,
     /// The bridge crate: its name and the path of its directory.
     pub bridge: Option<(String, String)>,
+    /// The permissions the program is built with (`--allow-*` flags), fixed
+    /// in the binary: it then reads no `--allow-*` of its own and gives its
+    /// whole command line to the program. `None` for a crate that is run by
+    /// whoever starts it with the flags (the test harnesses).
+    pub baked_permissions: Option<Vec<String>>,
 }
 
 /// The targets other than the host's that a generated crate builds for:
@@ -68,6 +78,36 @@ pub enum BuildEvent {
     Write,
     Written(WriteStats),
     NativeCompile,
+    /// There was no `Cargo.lock` beside `Tauto.eure`, so one was made there.
+    LockCreated,
+}
+
+/// The tote's own lockfile, which pins what a Cargo build resolves.
+#[derive(Clone, Debug)]
+pub struct Lock {
+    /// `Cargo.lock` beside `Tauto.eure`; `Tauto.Cargo.lock` when a `Cargo.toml`
+    /// sits there too, for then `Cargo.lock` is that crate's (`Lock::beside`).
+    pub file: std::path::PathBuf,
+    /// Resolve again (`cargo update`) and write the result back to `file`.
+    pub update: bool,
+}
+
+impl Lock {
+    /// The lock of the tote whose `Tauto.eure` is in `tote`. A `Cargo.lock`
+    /// beside a `Cargo.toml` belongs to the crate that `Cargo.toml` makes, not
+    /// to the tote, so the tote then keeps its lock in `Tauto.Cargo.lock`
+    /// and never reads or writes the crate's.
+    pub fn beside(tote: &std::path::Path, update: bool) -> Lock {
+        let name = if tote.join("Cargo.toml").exists() {
+            "Tauto.Cargo.lock"
+        } else {
+            "Cargo.lock"
+        };
+        Lock {
+            file: tote.join(name),
+            update,
+        }
+    }
 }
 
 impl Workspace {
@@ -95,43 +135,12 @@ impl Workspace {
     }
 }
 
-macro_rules! rt_files {
-    ($($name:literal),* $(,)?) => {
-        &[$(
-            (concat!("tauto-rt/src/", $name), include_str!(concat!("../../tauto-rt/src/", $name))),
-        )*]
-    };
-}
+/// tauto's git repository, which a bridge crate names to depend on tauto-rt.
+pub const TAUTO_GIT: &str = "https://github.com/Hihaheho/tauto";
 
-const RT: &[(&str, &str)] = rt_files!(
-    "a.rs",
-    "budget.rs",
-    "budget_contract.rs",
-    "child.rs",
-    "cps.rs",
-    "ct.rs",
-    "ev.rs",
-    "exec.rs",
-    "float.rs",
-    "float_math.rs",
-    "host.rs",
-    "int.rs",
-    "lib.rs",
-    "link.rs",
-    "messages.rs",
-    "nat.rs",
-    "o.rs",
-    "permissions.rs",
-    "probe.rs",
-    "reactor.rs",
-    "show.rs",
-    "shutdown.rs",
-    "signal.rs",
-    "stdlib.rs",
-    "tcp.rs",
-    "tls.rs",
-    "tls_host.rs"
-);
+/// Every `.rs` file under `src` of tauto-rt, tauto-identity and
+/// tauto-rt-signal, listed by `build.rs` from the directories themselves.
+const BUNDLED: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/bundled_sources.rs"));
 
 const RT_CARGO: &str = "\
 [package]
@@ -157,11 +166,19 @@ rustls-platform-verifier = { version = \"=0.7.1\", optional = true }
 getrandom = \"=0.3.4\"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = \"=1.1.2\", default-features = false, features = [\"std\", \"fs\"] }
+rustix = { version = \"=1.1.2\", default-features = false, features = [\"std\", \"fs\", \"event\", \"net\"] }
 
 [target.'cfg(not(target_family = \"wasm\"))'.dependencies]
-tokio = { version = \"=1.53.3\", optional = true, default-features = false, features = [\"rt\", \"time\", \"sync\"] }
+tokio = { version = \"=1.53.3\", optional = true, default-features = false, features = [\"rt\", \"time\", \"sync\", \"net\"] }
 ";
+
+/// Where a generated release binary allocates with jemalloc: not on wasm,
+/// and not with MSVC, where jemalloc does not build.
+/// The `tikv-jemallocator` version a generated crate pins. A tote's committed
+/// `Cargo.lock` has to hold this exact version (`tests/tote_locks.rs`).
+pub const JEMALLOC_VERSION: &str = "0.6.1";
+
+const JEMALLOC_CFG: &str = "all(not(target_family = \"wasm\"), not(target_env = \"msvc\"))";
 
 pub fn workspace(
     name: &str,
@@ -210,9 +227,15 @@ pub fn workspace(
     // opt-level 0 and rebuilds quickly after an edit, while tauto-rt, built
     // once into the target directory, does not run unoptimized. Its
     // debug-assertions, and with them the drop bomb, stay on.
+    // A bridge crate that uses tauto-rt depends on it from tauto's git
+    // repository; the patch makes that the embedded tauto-rt, so the program
+    // and the bridge share one runtime (one main thread, one set of statics).
     let cargo = format!(
         "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
-         [dependencies]\n{deps}\n[workspace]\n\n\
+         [dependencies]\n{deps}\n\
+         [target.'cfg({JEMALLOC_CFG})'.dependencies]\n\
+         tikv-jemallocator = \"={JEMALLOC_VERSION}\"\n\n[workspace]\n\n\
+         [patch.\"{TAUTO_GIT}\"]\ntauto-rt = {{ path = \"tauto-rt\" }}\n\n\
          [profile.dev.package.tauto-rt]\nopt-level = 3\n\n\
          [profile.release]\npanic = \"unwind\"\nlto = \"thin\"\n"
     );
@@ -224,27 +247,55 @@ pub fn workspace(
             quote!(tauto_rt::set_default_stack_mb(#mb);)
         })
         .unwrap_or_default();
+    let stack = if opts.main_thread {
+        quote!(#stack tauto_rt::set_run_on_main_thread();)
+    } else {
+        stack
+    };
+    let run = match &opts.baked_permissions {
+        Some(_) => quote!(tauto_rt::run_main_baked(include_str!("permissions.txt"), #ident::run)),
+        None => quote!(tauto_rt::run_main(#ident::run)),
+    };
     let main = if reactor {
         quote!(
             fn main() -> std::process::ExitCode {
                 #stack
                 tauto_rt::reactor::install();
-                tauto_rt::run_main(#ident::run)
+                #run
             }
         )
     } else {
         quote!(
             fn main() -> std::process::ExitCode {
                 #stack
-                tauto_rt::run_main(#ident::run)
+                #run
             }
         )
     };
+    // A release binary allocates with jemalloc where it builds; a debug
+    // build keeps the system allocator, so it stays a direct rustc build.
+    let cfg: proc_macro2::TokenStream = format!("all(not(debug_assertions), {JEMALLOC_CFG})")
+        .parse()
+        .expect("cfg");
+    let main = quote!(
+        #[cfg(#cfg)]
+        #[global_allocator]
+        static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+        #main
+    );
     let main = render(main);
     let mut files = vec![
         ("Cargo.toml".to_string(), cargo),
+        (".cargo/config.toml".to_string(), cargo_config()),
         ("src/lib.rs".to_string(), lib),
         ("src/main.rs".to_string(), main),
+        (
+            "src/permissions.txt".to_string(),
+            opts.baked_permissions
+                .as_ref()
+                .map(|flags| flags.join("\n"))
+                .unwrap_or_default(),
+        ),
         ("tauto-rt/Cargo.toml".to_string(), RT_CARGO.to_string()),
         (
             "tauto-identity/Cargo.toml".into(),
@@ -252,20 +303,12 @@ pub fn workspace(
                 .into(),
         ),
         (
-            "tauto-identity/src/lib.rs".into(),
-            include_str!("../../tauto-identity/src/lib.rs").into(),
-        ),
-        (
             "tauto-rt-signal/Cargo.toml".into(),
             "[package]\nname = \"tauto-rt-signal\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[target.'cfg(unix)'.dependencies]\nlibc = \"=0.2.190\"\n"
                 .into(),
         ),
-        (
-            "tauto-rt-signal/src/lib.rs".into(),
-            include_str!("../../tauto-rt-signal/src/lib.rs").into(),
-        ),
     ];
-    for (p, t) in RT {
+    for (p, t) in BUNDLED {
         files.push((p.to_string(), t.to_string()));
     }
     Workspace { files }
@@ -331,13 +374,16 @@ impl Workspace {
         target_dir: &std::path::Path,
         release: bool,
     ) -> Result<std::path::PathBuf, String> {
-        self.build_with_observer(name, dir, target_dir, release, None, |_| {})
+        self.build_with_observer(name, dir, target_dir, release, None, None, |_| {})
     }
 
     /// As `build`, notifying an observer at the write and Cargo boundaries.
     /// `Written` describes generated source reuse, not Cargo's artifact cache.
     /// `target` is a Rust target triple other than the host's, one of
     /// [`WASM_TARGETS`]; the path returned is then the `.wasm` module.
+    /// With `lock`, a Cargo build resolves exactly what the tote's
+    /// `Cargo.lock` says (`--locked`), making that file first if it is missing.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_with_observer(
         &self,
         name: &str,
@@ -345,6 +391,7 @@ impl Workspace {
         target_dir: &std::path::Path,
         release: bool,
         target: Option<&str>,
+        lock: Option<&Lock>,
         mut observe: impl FnMut(BuildEvent),
     ) -> Result<std::path::PathBuf, String> {
         observe(BuildEvent::Write);
@@ -360,6 +407,7 @@ impl Workspace {
         observe(BuildEvent::NativeCompile);
         if !release
             && target.is_none()
+            && !lock.is_some_and(|lock| lock.update)
             && let Some(features) = self.rt_features_alone()
         {
             match self.build_direct(name, dir, target_dir, &features) {
@@ -368,8 +416,19 @@ impl Workspace {
                 Err(crate::direct::Failed::Fallback) => {}
             }
         }
-        let mut cmd =
-            std::process::Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+        cooldown_enforced()?;
+        match lock {
+            Some(lock) => {
+                if self.sync_lock(dir, target_dir, lock)? {
+                    observe(BuildEvent::LockCreated);
+                }
+            }
+            // No tote: the workspace keeps its own lock, resolved once under
+            // the cooldown, so the build below still runs `--locked`.
+            None => ensure_lock(&dir.join("Cargo.toml"), target_dir)?,
+        }
+        let locked = true;
+        let mut cmd = cargo_command();
         cmd.arg("build")
             .arg("--quiet")
             .arg("--manifest-path")
@@ -378,6 +437,9 @@ impl Workspace {
             .env("CARGO_BUILD_BUILD_DIR", target_dir)
             .env("CARGO_TERM_COLOR", "never");
         offline_if_requested(&mut cmd);
+        if locked {
+            cmd.arg("--locked");
+        }
         if release {
             cmd.arg("--release");
         }
@@ -388,7 +450,19 @@ impl Workspace {
             .output()
             .map_err(|e| msg!("rustgen-cannot-run-cargo", error = e.to_string()).to_string())?;
         if !out.status.success() {
-            return Err(self.rejected(&String::from_utf8_lossy(&out.stderr), dir));
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if locked && lock_out_of_date(&stderr) {
+                if lock.is_none() {
+                    // The workspace's own lock is stale (its manifest
+                    // changed): resolve it afresh and build once more.
+                    let _ = std::fs::remove_file(dir.join("Cargo.lock"));
+                    return self.build_with_observer(
+                        name, dir, target_dir, release, target, lock, observe,
+                    );
+                }
+                return Err(msg!("rustgen-lock-out-of-date").to_string());
+            }
+            return Err(self.rejected(&stderr, dir));
         }
         let profile = if release { "release" } else { "debug" };
         Ok(match target {
@@ -402,6 +476,64 @@ impl Workspace {
 }
 
 impl Workspace {
+    /// Puts the tote's `Cargo.lock` in the workspace, or makes it there
+    /// (`generate-lockfile`, or `update` when asked) and writes it back to the
+    /// tote. True when the tote had no lock and now has one.
+    fn sync_lock(
+        &self,
+        dir: &std::path::Path,
+        target_dir: &std::path::Path,
+        lock: &Lock,
+    ) -> Result<bool, String> {
+        let inner = dir.join("Cargo.lock");
+        let io = |path: &std::path::Path, e: std::io::Error| {
+            msg!(
+                "rustgen-write-failed",
+                dir = path.display().to_string(),
+                error = e.to_string()
+            )
+            .to_string()
+        };
+        let existed = lock.file.exists();
+        if existed {
+            let text = std::fs::read(&lock.file).map_err(|e| io(&lock.file, e))?;
+            if std::fs::read(&inner).ok().as_deref() != Some(&text[..]) {
+                std::fs::write(&inner, &text).map_err(|e| io(&inner, e))?;
+            }
+            if !lock.update {
+                return Ok(false);
+            }
+        } else if inner.exists() {
+            // A lock from an earlier build is not the tote's: resolve afresh.
+            std::fs::remove_file(&inner).map_err(|e| io(&inner, e))?;
+        }
+        let mut cmd = cargo_command();
+        cmd.arg(if existed {
+            "update"
+        } else {
+            "generate-lockfile"
+        })
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(dir.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", target_dir)
+        .env("CARGO_TERM_COLOR", "never");
+        offline_if_requested(&mut cmd);
+        let out = cmd
+            .output()
+            .map_err(|e| msg!("rustgen-cannot-run-cargo", error = e.to_string()).to_string())?;
+        if !out.status.success() {
+            return Err(msg!(
+                "rustgen-lock-failed",
+                stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string()
+            )
+            .to_string());
+        }
+        let text = std::fs::read(&inner).map_err(|e| io(&inner, e))?;
+        std::fs::write(&lock.file, text).map_err(|e| io(&lock.file, e))?;
+        Ok(!existed)
+    }
+
     pub(crate) fn rejected(&self, stderr: &str, dir: &std::path::Path) -> String {
         if let Some(e) = self.extern_type_error(stderr) {
             return e;
@@ -416,6 +548,125 @@ impl Workspace {
         )
         .to_string()
     }
+}
+
+/// Cargo for a generated crate. Its lock is resolved with the supply-chain
+/// cooldown of this repository's `.cargo/config.toml`: a crate version, the
+/// runtime's dependencies and theirs alike, is taken only once it has been
+/// published for 14 days. The generated crate lives outside the repository,
+/// so the cooldown is given to Cargo here rather than found in a config file.
+pub(crate) fn cargo_command() -> std::process::Command {
+    let mut cmd =
+        std::process::Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+    // Only Cargo 1.100 or later enforces the cooldown; older Cargo ignores
+    // the keys. A `cargo` found through rustup runs this repository's pinned
+    // toolchain.
+    if std::env::var_os("CARGO").is_none() {
+        cmd.env("RUSTUP_TOOLCHAIN", toolchain());
+    }
+    cmd.env("CARGO_REGISTRY_GLOBAL_MIN_PUBLISH_AGE", MIN_PUBLISH_AGE)
+        .env("CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE", "deny");
+    cmd
+}
+
+/// Refuses to resolve with a Cargo that ignores the publish-age cooldown:
+/// only Cargo 1.100 or later enforces it, and an older one would take a
+/// crate version published a moment ago without saying so.
+pub(crate) fn cooldown_enforced() -> Result<(), String> {
+    static CHECKED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    CHECKED
+        .get_or_init(|| {
+            let out = cargo_command()
+                .arg("-V")
+                .output()
+                .map_err(|e| format!("could not run Cargo: {e}"))?;
+            let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if out.status.success() && enforces_cooldown(&version) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Cargo `{version}` does not enforce the 14-day publish-age cooldown on \
+                     crate versions; a generated crate is built only with Cargo 1.100 or later \
+                     (`{}`, through rustup, or such a `CARGO`)",
+                    toolchain()
+                ))
+            }
+        })
+        .clone()
+}
+
+/// Whether `cargo -V` names Cargo 1.100 or later, the first to enforce the
+/// publish-age keys.
+fn enforces_cooldown(version: &str) -> bool {
+    let mut parts = version
+        .strip_prefix("cargo ")
+        .unwrap_or("")
+        .split(['.', '-', ' ']);
+    let major = parts.next().and_then(|p| p.parse::<u32>().ok());
+    let minor = parts.next().and_then(|p| p.parse::<u32>().ok());
+    matches!((major, minor), (Some(m), Some(n)) if m > 1 || (m == 1 && n >= 100))
+}
+
+pub(crate) const MIN_PUBLISH_AGE: &str = "14 days";
+
+/// The generated crate's `.cargo/config.toml`. Tauto gives the cooldown to
+/// the Cargo it runs itself (`cargo_command`); this file holds the same
+/// cooldown for a Cargo someone runs by hand in the generated crate.
+fn cargo_config() -> String {
+    format!(
+        "# Supply-chain cooldown: refuse crate versions published less than\n\
+         # {MIN_PUBLISH_AGE} ago when resolving.\n\
+         [registry]\n\
+         global-min-publish-age = \"{MIN_PUBLISH_AGE}\"\n\
+         \n\
+         [resolver]\n\
+         incompatible-publish-age = \"deny\"\n"
+    )
+}
+
+/// The channel of this repository's `rust-toolchain.toml`.
+pub(crate) fn toolchain() -> &'static str {
+    include_str!("../../../rust-toolchain.toml")
+        .lines()
+        .find_map(|l| l.strip_prefix("channel = \""))
+        .and_then(|l| l.strip_suffix('"'))
+        .expect("rust-toolchain.toml names a channel")
+}
+
+/// Makes `Cargo.lock` beside `manifest` when there is none, resolving with the
+/// publish-age cooldown, so that a build can run with `--locked`.
+pub(crate) fn ensure_lock(
+    manifest: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> Result<(), String> {
+    if manifest.with_file_name("Cargo.lock").exists() {
+        return Ok(());
+    }
+    let mut cmd = cargo_command();
+    cmd.arg("generate-lockfile")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(manifest)
+        .env("CARGO_TARGET_DIR", target_dir)
+        .env("CARGO_TERM_COLOR", "never");
+    offline_if_requested(&mut cmd);
+    let out = cmd
+        .output()
+        .map_err(|e| msg!("rustgen-cannot-run-cargo", error = e.to_string()).to_string())?;
+    if !out.status.success() {
+        return Err(msg!(
+            "rustgen-lock-failed",
+            stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string()
+        )
+        .to_string());
+    }
+    Ok(())
+}
+
+/// Whether Cargo refused a `--locked` build because the lock no longer
+/// matches the manifest.
+fn lock_out_of_date(stderr: &str) -> bool {
+    stderr.contains("--locked") && stderr.contains("lock file")
 }
 
 /// Makes a Cargo build of a generated crate fail at once, with Cargo's own
@@ -511,5 +762,43 @@ mod crate_ident_tests {
     fn a_keyword_tote_is_reached_as_a_raw_identifier() {
         assert_eq!(crate_ident("gen").to_string(), "r#gen");
         assert_eq!(crate_ident("highlight").to_string(), "highlight");
+    }
+}
+
+#[cfg(test)]
+mod bundled_tests {
+    use super::BUNDLED;
+
+    #[test]
+    fn generated_crates_resolve_with_a_cargo_that_enforces_the_cooldown() {
+        assert!(super::enforces_cooldown(&format!(
+            "cargo {}.0",
+            super::toolchain()
+        )));
+        assert!(super::enforces_cooldown("cargo 1.100.0 (abc 2026-11-01)"));
+        assert!(super::enforces_cooldown(
+            "cargo 1.101.0-nightly (f3865b2a4 2026-09-29)"
+        ));
+        assert!(!super::enforces_cooldown("cargo 1.99.0 (abc 2026-09-01)"));
+        assert!(!super::enforces_cooldown(""));
+    }
+
+    /// Every module a bundled crate declares must be bundled with it, or a
+    /// generated workspace fails with "file not found for module".
+    #[test]
+    fn bundled_crates_carry_every_source_file() {
+        for (dir, names) in [
+            ("tauto-rt", ["lib.rs", "clock.rs", "show.rs"].as_slice()),
+            ("tauto-identity", ["lib.rs", "forked.rs"].as_slice()),
+            ("tauto-rt-signal", ["lib.rs"].as_slice()),
+        ] {
+            for name in names {
+                let path = format!("{dir}/src/{name}");
+                assert!(
+                    BUNDLED.iter().any(|(p, _)| *p == path),
+                    "{path} is not bundled"
+                );
+            }
+        }
     }
 }

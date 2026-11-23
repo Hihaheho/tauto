@@ -1,0 +1,1563 @@
+import std::mode { mode }
+import "renaming.taut" { upR }
+import std::prelude::std { List }
+
+// The dependent core of the Rust kernel, as in lean/Proto/Kernel/: terms, renaming
+// and substitution, one-step reduction and conversion, weak-head normalization
+// that returns the conversion it performed, the declarative typing `KTyping`,
+// and a type checker for it written in tauto. The checker is sound by
+// construction: what it accepts comes with a `KTyping` derivation.
+
+pub(open) inductive KTm: Type {
+  Kvar(i: Nat): KTm
+  Ksort(n: Nat): KTm
+  Kpi(A: KTm, B: KTm): KTm
+  Klam(b: KTm): KTm
+  Kapp(f: KTm, a: KTm): KTm
+  Knat: KTm
+  Kzero: KTm
+  Ksucc(n: KTm): KTm
+  KnatRec(P: KTm, z: KTm, s: KTm, n: KTm): KTm
+}
+
+pub fn Kren(t: KTm, xi: (Nat) -> Nat): KTm {
+  match t {
+    Kvar(i) => Kvar(xi(i))
+    Ksort(n) => Ksort(n)
+    Kpi(A, B) => Kpi(Kren(A, xi), Kren(B, upR(xi)))
+    Klam(b) => Klam(Kren(b, upR(xi)))
+    Kapp(f, a) => Kapp(Kren(f, xi), Kren(a, xi))
+    Knat => Knat
+    Kzero => Kzero
+    Ksucc(n) => Ksucc(Kren(n, xi))
+    KnatRec(P, z, s, n) => KnatRec(Kren(P, xi), Kren(z, xi), Kren(s, xi), Kren(n, xi))
+  }
+}
+
+pub fn Kup(sigma: (Nat) -> KTm, n: Nat): KTm {
+  match n {
+    Zero => Kvar(Zero)
+    Succ(m) => Kren(sigma(m), Succ)
+  }
+}
+
+pub fn Ksubst(t: KTm, sigma: (Nat) -> KTm): KTm {
+  match t {
+    Kvar(i) => sigma(i)
+    Ksort(n) => Ksort(n)
+    Kpi(A, B) => Kpi(Ksubst(A, sigma), Ksubst(B, Kup(sigma)))
+    Klam(b) => Klam(Ksubst(b, Kup(sigma)))
+    Kapp(f, a) => Kapp(Ksubst(f, sigma), Ksubst(a, sigma))
+    Knat => Knat
+    Kzero => Kzero
+    Ksucc(n) => Ksucc(Ksubst(n, sigma))
+    KnatRec(P, z, s, n) => KnatRec(
+      Ksubst(P, sigma),
+      Ksubst(z, sigma),
+      Ksubst(s, sigma),
+      Ksubst(n, sigma)
+    )
+  }
+}
+
+pub fn Ksingle(a: KTm, n: Nat): KTm {
+  match n {
+    Zero => a
+    Succ(m) => Kvar(m)
+  }
+}
+
+pub fn Kinst(b: KTm, a: KTm): KTm { Ksubst(b, Ksingle(a)) }
+
+pub fn Klift(t: KTm): KTm { Kren(t, Succ) }
+
+pub fn stepTy(P: KTm): KTm {
+  Kpi(Knat, Kpi(Kapp(Klift(P), Kvar(0)), Kapp(Klift(Klift(P)), Ksucc(Kvar(1)))))
+}
+
+pub theorem inst_beta(): Kinst(Kvar(0), Kzero) = Kzero { Refl }
+
+pub theorem lift_var(): Klift(Kvar(3)) = Kvar(4) { Refl }
+
+pub(open) inductive Red1: (KTm, KTm) -> Prop {
+  R1Beta(b: KTm, a: KTm): Red1(Kapp(Klam(b), a), Kinst(b, a))
+  R1IotaZ(P: KTm, z: KTm, s: KTm): Red1(KnatRec(P, z, s, Kzero), z)
+  R1IotaS(
+    P: KTm,
+    z: KTm,
+    s: KTm,
+    n: KTm
+  ): Red1(KnatRec(P, z, s, Ksucc(n)), Kapp(Kapp(s, n), KnatRec(P, z, s, n)))
+  R1PiL<A: KTm, A2: KTm>(B: KTm, r: Red1(A, A2)): Red1(Kpi(A, B), Kpi(A2, B))
+  R1PiR(A: KTm, B: KTm, B2: KTm, r: Red1(B, B2)): Red1(Kpi(A, B), Kpi(A, B2))
+  R1Lam<b: KTm, b2: KTm>(r: Red1(b, b2)): Red1(Klam(b), Klam(b2))
+  R1AppL<f: KTm, f2: KTm>(a: KTm, r: Red1(f, f2)): Red1(Kapp(f, a), Kapp(f2, a))
+  R1AppR(f: KTm, a: KTm, a2: KTm, r: Red1(a, a2)): Red1(Kapp(f, a), Kapp(f, a2))
+  R1Succ<n: KTm, n2: KTm>(r: Red1(n, n2)): Red1(Ksucc(n), Ksucc(n2))
+  R1RecP<P: KTm, P2: KTm>(
+    z: KTm,
+    s: KTm,
+    n: KTm,
+    r: Red1(P, P2)
+  ): Red1(KnatRec(P, z, s, n), KnatRec(P2, z, s, n))
+  R1RecZ(
+    P: KTm,
+    z: KTm,
+    z2: KTm,
+    s: KTm,
+    n: KTm,
+    r: Red1(z, z2)
+  ): Red1(KnatRec(P, z, s, n), KnatRec(P, z2, s, n))
+  R1RecS(
+    P: KTm,
+    z: KTm,
+    s: KTm,
+    s2: KTm,
+    n: KTm,
+    r: Red1(s, s2)
+  ): Red1(KnatRec(P, z, s, n), KnatRec(P, z, s2, n))
+  R1RecN(
+    P: KTm,
+    z: KTm,
+    s: KTm,
+    n: KTm,
+    n2: KTm,
+    r: Red1(n, n2)
+  ): Red1(KnatRec(P, z, s, n), KnatRec(P, z, s, n2))
+}
+
+// Conversion is the equivalence closure of one-step reduction. (In Lean it is
+// joinability; confluence makes the two the same relation.)
+pub(open) inductive KConv: (KTm, KTm) -> Prop {
+  CvStep<a: KTm, b: KTm>(r: Red1(a, b)): KConv(a, b)
+  CvRefl(a: KTm): KConv(a, a)
+  CvSymm<a: KTm, b: KTm>(h: KConv(a, b)): KConv(b, a)
+  CvTrans<a: KTm, b: KTm, c: KTm>(h1: KConv(a, b), h2: KConv(b, c)): KConv(a, c)
+}
+
+pub theorem cv_map(
+  F: (KTm) -> KTm,
+  hF: ∀ x: KTm, y: KTm. (Red1(x, y)) -> Red1(F(x), F(y)),
+  a: KTm,
+  b: KTm,
+  h: KConv(a, b)
+): KConv(F(a), F(b)) {
+  match h {
+    CvStep(a1, b1, r) => ⊢ KConv(F(a1), F(b1)) from CvStep(hF(a1, b1, r))
+    CvRefl(a1) => ⊢ KConv(F(a1), F(a1)) from CvRefl(F(a1))
+    CvSymm(a1, b1, h1) => ⊢ KConv(F(b1), F(a1)) from CvSymm(cv_map(F, hF, a1, b1, h1))
+    CvTrans(a1, b1, c1, h1, h2) => ⊢ KConv(
+      F(a1),
+      F(c1)
+    ) from CvTrans(cv_map(F, hF, a1, b1, h1), cv_map(F, hF, b1, c1, h2))
+  }
+}
+
+pub theorem cv_pi<A: KTm, A2: KTm, B: KTm, B2: KTm>(
+  h1: KConv(A, A2),
+  h2: KConv(B, B2)
+): KConv(Kpi(A, B), Kpi(A2, B2)) {
+  CvTrans(
+    cv_map(x => Kpi(x, B), a => b => r => R1PiL(B, r), A, A2, h1),
+    cv_map(x => Kpi(A2, x), a => b => r => R1PiR(A2, a, b, r), B, B2, h2)
+  )
+}
+
+pub theorem cv_lam<b: KTm, b2: KTm>(h: KConv(b, b2)): KConv(Klam(b), Klam(b2)) {
+  cv_map(x => Klam(x), a => c => r => R1Lam(r), b, b2, h)
+}
+
+pub theorem cv_app<f: KTm, f2: KTm, a: KTm, a2: KTm>(
+  h1: KConv(f, f2),
+  h2: KConv(a, a2)
+): KConv(Kapp(f, a), Kapp(f2, a2)) {
+  CvTrans(
+    cv_map(x => Kapp(x, a), u => v => r => R1AppL(a, r), f, f2, h1),
+    cv_map(x => Kapp(f2, x), u => v => r => R1AppR(f2, u, v, r), a, a2, h2)
+  )
+}
+
+pub theorem cv_succ<n: KTm, n2: KTm>(h: KConv(n, n2)): KConv(Ksucc(n), Ksucc(n2)) {
+  cv_map(x => Ksucc(x), a => c => r => R1Succ(r), n, n2, h)
+}
+
+pub theorem cv_natRec<P: KTm, P2: KTm, z: KTm, z2: KTm, s: KTm, s2: KTm, n: KTm, n2: KTm>(
+  hP: KConv(P, P2),
+  hz: KConv(z, z2),
+  hs: KConv(s, s2),
+  hn: KConv(n, n2)
+): KConv(KnatRec(P, z, s, n), KnatRec(P2, z2, s2, n2)) {
+  CvTrans(
+    cv_map(x => KnatRec(x, z, s, n), u => v => r => R1RecP(z, s, n, r), P, P2, hP),
+    CvTrans(
+      cv_map(x => KnatRec(P2, x, s, n), u => v => r => R1RecZ(P2, u, v, s, n, r), z, z2, hz),
+      CvTrans(
+        cv_map(x => KnatRec(P2, z2, x, n), u => v => r => R1RecS(P2, z2, u, v, n, r), s, s2, hs),
+        cv_map(x => KnatRec(P2, z2, s2, x), u => v => r => R1RecN(P2, z2, s2, u, v, r), n, n2, hn)
+      )
+    )
+  )
+}
+
+pub(open) inductive StepR(t: KTm): Type {
+  Stuck: StepR(t)
+  Stepped<t2: KTm>(r: Red1(t, t2)): StepR(t)
+}
+
+pub fn lam_or_stuck(f: KTm, a: KTm): StepR(Kapp(f, a)) {
+  match f {
+    Kvar(i) => Stuck(<t: Kapp(Kvar(i), a)>)
+    Ksort(n) => Stuck(<t: Kapp(Ksort(n), a)>)
+    Kpi(A, B) => Stuck(<t: Kapp(Kpi(A, B), a)>)
+    Klam(b) => Stepped(R1Beta(b, a))
+    Kapp(g, c) => Stuck(<t: Kapp(Kapp(g, c), a)>)
+    Knat => Stuck(<t: Kapp(Knat, a)>)
+    Kzero => Stuck(<t: Kapp(Kzero, a)>)
+    Ksucc(n) => Stuck(<t: Kapp(Ksucc(n), a)>)
+    KnatRec(P, z, s, n) => Stuck(<t: Kapp(KnatRec(P, z, s, n), a)>)
+  }
+}
+
+pub fn app_step(f: KTm, a: KTm, r: StepR(f)): StepR(Kapp(f, a)) {
+  match r {
+    Stuck => lam_or_stuck(f, a)
+    Stepped(^f2, rr) => Stepped(R1AppL(a, rr))
+  }
+}
+
+pub fn rec_cong(P: KTm, z: KTm, s: KTm, n: KTm, r: StepR(n)): StepR(KnatRec(P, z, s, n)) {
+  match r {
+    Stuck => Stuck(<t: KnatRec(P, z, s, n)>)
+    Stepped(n2, rr) => Stepped(R1RecN(P, z, s, n, n2, rr))
+  }
+}
+
+pub fn rec_step(P: KTm, z: KTm, s: KTm, n: KTm, r: StepR(n)): StepR(KnatRec(P, z, s, n)) {
+  match n {
+    Kvar(i) => Stuck(<t: KnatRec(P, z, s, Kvar(i))>)
+    Ksort(m) => Stuck(<t: KnatRec(P, z, s, Ksort(m))>)
+    Kpi(A, B) => Stuck(<t: KnatRec(P, z, s, Kpi(A, B))>)
+    Klam(b) => Stuck(<t: KnatRec(P, z, s, Klam(b))>)
+    Kapp(g, c) => rec_cong(P, z, s, Kapp(g, c), r)
+    Knat => Stuck(<t: KnatRec(P, z, s, Knat)>)
+    Kzero => Stepped(R1IotaZ(P, z, s))
+    Ksucc(m) => Stepped(R1IotaS(P, z, s, m))
+    KnatRec(P1, z1, s1, n1) => rec_cong(P, z, s, KnatRec(P1, z1, s1, n1), r)
+  }
+}
+
+pub fn hstepR(t: KTm): StepR(t) {
+  match t {
+    Kvar(i) => Stuck(<t: Kvar(i)>)
+    Ksort(n) => Stuck(<t: Ksort(n)>)
+    Kpi(A, B) => Stuck(<t: Kpi(A, B)>)
+    Klam(b) => Stuck(<t: Klam(b)>)
+    Kapp(f, a) => app_step(f, a, hstepR(f))
+    Knat => Stuck(<t: Knat>)
+    Kzero => Stuck(<t: Kzero>)
+    Ksucc(n) => Stuck(<t: Ksucc(n)>)
+    KnatRec(P, z, s, n) => rec_step(P, z, s, n, hstepR(n))
+  }
+}
+
+pub(open) inductive WhnfR(t: KTm): Type {
+  Wh<t2: KTm>(h: KConv(t, t2)): WhnfR(t)
+}
+
+pub fn whnf_cont(t: KTm, t2: KTm, rr: Red1(t, t2), w: WhnfR(t2)): WhnfR(t) {
+  match w {
+    Wh(^t3, h) => Wh(CvTrans(CvStep(rr), h))
+  }
+}
+
+pub fn whnf_go(t: KTm, r: StepR(t), rec: ∀ u: KTm. WhnfR(u)): WhnfR(t) {
+  match r {
+    Stuck => Wh(CvRefl(t))
+    Stepped(t2, rr) => whnf_cont(t, t2, rr, rec(t2))
+  }
+}
+
+// Weak-head normal form within `fuel` steps; the result carries the conversion.
+pub fn whnf(fuel: Nat, t: KTm): WhnfR(t) {
+  match fuel {
+    Zero => Wh(CvRefl(t))
+    Succ(k) => whnf_go(t, hstepR(t), u => whnf(k, u))
+  }
+}
+
+pub fn whnf_result(t: KTm, w: WhnfR(t)): KTm {
+  match w {
+    Wh(t2, ^h) => t2
+  }
+}
+
+pub theorem whnf_computes(): whnf_result(
+  Kapp(Klam(Kvar(0)), Kzero),
+  whnf(5, Kapp(Klam(Kvar(0)), Kzero))
+) = Kzero { Refl }
+
+pub(open) inductive NatEqR(i: Nat, j: Nat): Type {
+  Neq(h: i = j): NatEqR(i, j)
+  Nne: NatEqR(i, j)
+}
+
+pub fn nat_eq_succ(i: Nat, j: Nat, r: NatEqR(i, j)): NatEqR(Succ(i), Succ(j)) {
+  match r {
+    Neq(h) => Neq(Eq::congr(Succ, h))
+    Nne => Nne(<i: Succ(i), j: Succ(j)>)
+  }
+}
+
+pub fn nat_eq_dec(i: Nat, j: Nat): NatEqR(i, j) {
+  match i {
+    Zero => ⊢ NatEqR(Zero, j) from match j {
+      Zero => Neq(Refl)
+      Succ(m) => Nne(<i: Zero, j: Succ(m)>)
+    }
+    Succ(k) => ⊢ NatEqR(Succ(k), j) from match j {
+      Zero => Nne(<i: Succ(k), j: Zero>)
+      Succ(m) => nat_eq_succ(k, m, nat_eq_dec(k, m))
+    }
+  }
+}
+
+// `nle(n, m)` decides `NLe(n, m)` with its proof, read from the rules.
+@mode!(`nle(rec n, in m) -> LeR { LeYes | LeNo }`) => inductive LeR, fn nle
+pub(open) inductive NLe: (Nat, Nat) -> Prop {
+  LeZero(m: Nat): NLe(Zero, m)
+  LeSucc<n: Nat, m: Nat>(h: NLe(n, m)): NLe(Succ(n), Succ(m))
+}
+
+pub(open) inductive ConvR(a: KTm, b: KTm): Type {
+  CvYes(h: KConv(a, b)): ConvR(a, b)
+  CvNo: ConvR(a, b)
+}
+
+pub theorem cv_var<i: Nat, j: Nat>(h: i = j): KConv(Kvar(i), Kvar(j)) {
+  match h {
+    Refl => CvRefl(Kvar(i))
+  }
+}
+
+pub theorem cv_sort<i: Nat, j: Nat>(h: i = j): KConv(Ksort(i), Ksort(j)) {
+  match h {
+    Refl => CvRefl(Ksort(i))
+  }
+}
+
+pub fn cmp_var(i: Nat, j: Nat, r: NatEqR(i, j)): ConvR(Kvar(i), Kvar(j)) {
+  match r {
+    Neq(h) => CvYes(cv_var(h))
+    Nne => CvNo(<a: Kvar(i), b: Kvar(j)>)
+  }
+}
+
+pub fn cmp_sort(i: Nat, j: Nat, r: NatEqR(i, j)): ConvR(Ksort(i), Ksort(j)) {
+  match r {
+    Neq(h) => CvYes(cv_sort(h))
+    Nne => CvNo(<a: Ksort(i), b: Ksort(j)>)
+  }
+}
+
+pub fn cmp_pi(
+  A: KTm,
+  A2: KTm,
+  B: KTm,
+  B2: KTm,
+  r1: ConvR(A, A2),
+  r2: ConvR(B, B2)
+): ConvR(Kpi(A, B), Kpi(A2, B2)) {
+  match r1 {
+    CvYes(h1) => ⊢ ConvR(Kpi(A, B), Kpi(A2, B2)) from match r2 {
+      CvYes(h2) => CvYes(cv_pi(h1, h2))
+      CvNo => CvNo(<a: Kpi(A, B), b: Kpi(A2, B2)>)
+    }
+    CvNo => CvNo(<a: Kpi(A, B), b: Kpi(A2, B2)>)
+  }
+}
+
+pub fn cmp_lam(b: KTm, b2: KTm, r: ConvR(b, b2)): ConvR(Klam(b), Klam(b2)) {
+  match r {
+    CvYes(h) => CvYes(cv_lam(h))
+    CvNo => CvNo(<a: Klam(b), b: Klam(b2)>)
+  }
+}
+
+pub fn cmp_app(
+  f: KTm,
+  f2: KTm,
+  a: KTm,
+  a2: KTm,
+  r1: ConvR(f, f2),
+  r2: ConvR(a, a2)
+): ConvR(Kapp(f, a), Kapp(f2, a2)) {
+  match r1 {
+    CvYes(h1) => ⊢ ConvR(Kapp(f, a), Kapp(f2, a2)) from match r2 {
+      CvYes(h2) => CvYes(cv_app(h1, h2))
+      CvNo => CvNo(<a: Kapp(f, a), b: Kapp(f2, a2)>)
+    }
+    CvNo => CvNo(<a: Kapp(f, a), b: Kapp(f2, a2)>)
+  }
+}
+
+pub fn cmp_succ(n: KTm, n2: KTm, r: ConvR(n, n2)): ConvR(Ksucc(n), Ksucc(n2)) {
+  match r {
+    CvYes(h) => CvYes(cv_succ(h))
+    CvNo => CvNo(<a: Ksucc(n), b: Ksucc(n2)>)
+  }
+}
+
+pub fn cmp_rec2(
+  P: KTm,
+  P2: KTm,
+  z: KTm,
+  z2: KTm,
+  s: KTm,
+  s2: KTm,
+  n: KTm,
+  n2: KTm,
+  r3: ConvR(s, s2),
+  r4: ConvR(n, n2),
+  h1: KConv(P, P2),
+  h2: KConv(z, z2)
+): ConvR(KnatRec(P, z, s, n), KnatRec(P2, z2, s2, n2)) {
+  match r3 {
+    CvYes(h3) => ⊢ ConvR(KnatRec(P, z, s, n), KnatRec(P2, z2, s2, n2)) from match r4 {
+      CvYes(h4) => CvYes(cv_natRec(h1, h2, h3, h4))
+      CvNo => CvNo(<a: KnatRec(P, z, s, n), b: KnatRec(P2, z2, s2, n2)>)
+    }
+    CvNo => CvNo(<a: KnatRec(P, z, s, n), b: KnatRec(P2, z2, s2, n2)>)
+  }
+}
+
+pub fn cmp_rec1(
+  P: KTm,
+  P2: KTm,
+  z: KTm,
+  z2: KTm,
+  s: KTm,
+  s2: KTm,
+  n: KTm,
+  n2: KTm,
+  r2: ConvR(z, z2),
+  r3: ConvR(s, s2),
+  r4: ConvR(n, n2),
+  h1: KConv(P, P2)
+): ConvR(KnatRec(P, z, s, n), KnatRec(P2, z2, s2, n2)) {
+  match r2 {
+    CvYes(h2) => cmp_rec2(P, P2, z, z2, s, s2, n, n2, r3, r4, h1, h2)
+    CvNo => CvNo(<a: KnatRec(P, z, s, n), b: KnatRec(P2, z2, s2, n2)>)
+  }
+}
+
+pub fn cmp_rec(
+  P: KTm,
+  P2: KTm,
+  z: KTm,
+  z2: KTm,
+  s: KTm,
+  s2: KTm,
+  n: KTm,
+  n2: KTm,
+  r1: ConvR(P, P2),
+  r2: ConvR(z, z2),
+  r3: ConvR(s, s2),
+  r4: ConvR(n, n2)
+): ConvR(KnatRec(P, z, s, n), KnatRec(P2, z2, s2, n2)) {
+  match r1 {
+    CvYes(h1) => cmp_rec1(P, P2, z, z2, s, s2, n, n2, r2, r3, r4, h1)
+    CvNo => CvNo(<a: KnatRec(P, z, s, n), b: KnatRec(P2, z2, s2, n2)>)
+  }
+}
+
+pub fn cmp_go(x0: KTm, y0: KTm, rec: ∀ x: KTm, y: KTm. ConvR(x, y)): ConvR(x0, y0) {
+  match x0 {
+    Kvar(i) => ⊢ ConvR(Kvar(i), y0) from match y0 {
+      Kvar(i2) => cmp_var(i, i2, nat_eq_dec(i, i2))
+      Ksort(n2) => CvNo(<a: Kvar(i), b: Ksort(n2)>)
+      Kpi(A2, B2) => CvNo(<a: Kvar(i), b: Kpi(A2, B2)>)
+      Klam(b2) => CvNo(<a: Kvar(i), b: Klam(b2)>)
+      Kapp(f2, a2) => CvNo(<a: Kvar(i), b: Kapp(f2, a2)>)
+      Knat => CvNo(<a: Kvar(i), b: Knat>)
+      Kzero => CvNo(<a: Kvar(i), b: Kzero>)
+      Ksucc(n2) => CvNo(<a: Kvar(i), b: Ksucc(n2)>)
+      KnatRec(P2, z2, s2, n2) => CvNo(<a: Kvar(i), b: KnatRec(P2, z2, s2, n2)>)
+    }
+    Ksort(n) => ⊢ ConvR(Ksort(n), y0) from match y0 {
+      Kvar(i2) => CvNo(<a: Ksort(n), b: Kvar(i2)>)
+      Ksort(n2) => cmp_sort(n, n2, nat_eq_dec(n, n2))
+      Kpi(A2, B2) => CvNo(<a: Ksort(n), b: Kpi(A2, B2)>)
+      Klam(b2) => CvNo(<a: Ksort(n), b: Klam(b2)>)
+      Kapp(f2, a2) => CvNo(<a: Ksort(n), b: Kapp(f2, a2)>)
+      Knat => CvNo(<a: Ksort(n), b: Knat>)
+      Kzero => CvNo(<a: Ksort(n), b: Kzero>)
+      Ksucc(n2) => CvNo(<a: Ksort(n), b: Ksucc(n2)>)
+      KnatRec(P2, z2, s2, n2) => CvNo(<a: Ksort(n), b: KnatRec(P2, z2, s2, n2)>)
+    }
+    Kpi(A, B) => ⊢ ConvR(Kpi(A, B), y0) from match y0 {
+      Kvar(i2) => CvNo(<a: Kpi(A, B), b: Kvar(i2)>)
+      Ksort(n2) => CvNo(<a: Kpi(A, B), b: Ksort(n2)>)
+      Kpi(A2, B2) => cmp_pi(A, A2, B, B2, rec(A, A2), rec(B, B2))
+      Klam(b2) => CvNo(<a: Kpi(A, B), b: Klam(b2)>)
+      Kapp(f2, a2) => CvNo(<a: Kpi(A, B), b: Kapp(f2, a2)>)
+      Knat => CvNo(<a: Kpi(A, B), b: Knat>)
+      Kzero => CvNo(<a: Kpi(A, B), b: Kzero>)
+      Ksucc(n2) => CvNo(<a: Kpi(A, B), b: Ksucc(n2)>)
+      KnatRec(P2, z2, s2, n2) => CvNo(<a: Kpi(A, B), b: KnatRec(P2, z2, s2, n2)>)
+    }
+    Klam(b) => ⊢ ConvR(Klam(b), y0) from match y0 {
+      Kvar(i2) => CvNo(<a: Klam(b), b: Kvar(i2)>)
+      Ksort(n2) => CvNo(<a: Klam(b), b: Ksort(n2)>)
+      Kpi(A2, B2) => CvNo(<a: Klam(b), b: Kpi(A2, B2)>)
+      Klam(b2) => cmp_lam(b, b2, rec(b, b2))
+      Kapp(f2, a2) => CvNo(<a: Klam(b), b: Kapp(f2, a2)>)
+      Knat => CvNo(<a: Klam(b), b: Knat>)
+      Kzero => CvNo(<a: Klam(b), b: Kzero>)
+      Ksucc(n2) => CvNo(<a: Klam(b), b: Ksucc(n2)>)
+      KnatRec(P2, z2, s2, n2) => CvNo(<a: Klam(b), b: KnatRec(P2, z2, s2, n2)>)
+    }
+    Kapp(f, a) => ⊢ ConvR(Kapp(f, a), y0) from match y0 {
+      Kvar(i2) => CvNo(<a: Kapp(f, a), b: Kvar(i2)>)
+      Ksort(n2) => CvNo(<a: Kapp(f, a), b: Ksort(n2)>)
+      Kpi(A2, B2) => CvNo(<a: Kapp(f, a), b: Kpi(A2, B2)>)
+      Klam(b2) => CvNo(<a: Kapp(f, a), b: Klam(b2)>)
+      Kapp(f2, a2) => cmp_app(f, f2, a, a2, rec(f, f2), rec(a, a2))
+      Knat => CvNo(<a: Kapp(f, a), b: Knat>)
+      Kzero => CvNo(<a: Kapp(f, a), b: Kzero>)
+      Ksucc(n2) => CvNo(<a: Kapp(f, a), b: Ksucc(n2)>)
+      KnatRec(P2, z2, s2, n2) => CvNo(<a: Kapp(f, a), b: KnatRec(P2, z2, s2, n2)>)
+    }
+    Knat => ⊢ ConvR(Knat, y0) from match y0 {
+      Kvar(i2) => CvNo(<a: Knat, b: Kvar(i2)>)
+      Ksort(n2) => CvNo(<a: Knat, b: Ksort(n2)>)
+      Kpi(A2, B2) => CvNo(<a: Knat, b: Kpi(A2, B2)>)
+      Klam(b2) => CvNo(<a: Knat, b: Klam(b2)>)
+      Kapp(f2, a2) => CvNo(<a: Knat, b: Kapp(f2, a2)>)
+      Knat => CvYes(CvRefl(Knat))
+      Kzero => CvNo(<a: Knat, b: Kzero>)
+      Ksucc(n2) => CvNo(<a: Knat, b: Ksucc(n2)>)
+      KnatRec(P2, z2, s2, n2) => CvNo(<a: Knat, b: KnatRec(P2, z2, s2, n2)>)
+    }
+    Kzero => ⊢ ConvR(Kzero, y0) from match y0 {
+      Kvar(i2) => CvNo(<a: Kzero, b: Kvar(i2)>)
+      Ksort(n2) => CvNo(<a: Kzero, b: Ksort(n2)>)
+      Kpi(A2, B2) => CvNo(<a: Kzero, b: Kpi(A2, B2)>)
+      Klam(b2) => CvNo(<a: Kzero, b: Klam(b2)>)
+      Kapp(f2, a2) => CvNo(<a: Kzero, b: Kapp(f2, a2)>)
+      Knat => CvNo(<a: Kzero, b: Knat>)
+      Kzero => CvYes(CvRefl(Kzero))
+      Ksucc(n2) => CvNo(<a: Kzero, b: Ksucc(n2)>)
+      KnatRec(P2, z2, s2, n2) => CvNo(<a: Kzero, b: KnatRec(P2, z2, s2, n2)>)
+    }
+    Ksucc(n) => ⊢ ConvR(Ksucc(n), y0) from match y0 {
+      Kvar(i2) => CvNo(<a: Ksucc(n), b: Kvar(i2)>)
+      Ksort(n2) => CvNo(<a: Ksucc(n), b: Ksort(n2)>)
+      Kpi(A2, B2) => CvNo(<a: Ksucc(n), b: Kpi(A2, B2)>)
+      Klam(b2) => CvNo(<a: Ksucc(n), b: Klam(b2)>)
+      Kapp(f2, a2) => CvNo(<a: Ksucc(n), b: Kapp(f2, a2)>)
+      Knat => CvNo(<a: Ksucc(n), b: Knat>)
+      Kzero => CvNo(<a: Ksucc(n), b: Kzero>)
+      Ksucc(n2) => cmp_succ(n, n2, rec(n, n2))
+      KnatRec(P2, z2, s2, n2) => CvNo(<a: Ksucc(n), b: KnatRec(P2, z2, s2, n2)>)
+    }
+    KnatRec(P, z, s, n) => ⊢ ConvR(KnatRec(P, z, s, n), y0) from match y0 {
+      Kvar(i2) => CvNo(<a: KnatRec(P, z, s, n), b: Kvar(i2)>)
+      Ksort(n2) => CvNo(<a: KnatRec(P, z, s, n), b: Ksort(n2)>)
+      Kpi(A2, B2) => CvNo(<a: KnatRec(P, z, s, n), b: Kpi(A2, B2)>)
+      Klam(b2) => CvNo(<a: KnatRec(P, z, s, n), b: Klam(b2)>)
+      Kapp(f2, a2) => CvNo(<a: KnatRec(P, z, s, n), b: Kapp(f2, a2)>)
+      Knat => CvNo(<a: KnatRec(P, z, s, n), b: Knat>)
+      Kzero => CvNo(<a: KnatRec(P, z, s, n), b: Kzero>)
+      Ksucc(n2) => CvNo(<a: KnatRec(P, z, s, n), b: Ksucc(n2)>)
+      KnatRec(P2, z2, s2, n2) => cmp_rec(
+        P,
+        P2,
+        z,
+        z2,
+        s,
+        s2,
+        n,
+        n2,
+        rec(P, P2),
+        rec(z, z2),
+        rec(s, s2),
+        rec(n, n2)
+      )
+    }
+  }
+}
+
+pub fn conv_fin(
+  a: KTm,
+  b: KTm,
+  a2: KTm,
+  b2: KTm,
+  ha: KConv(a, a2),
+  hb: KConv(b, b2),
+  r: ConvR(a2, b2)
+): ConvR(a, b) {
+  match r {
+    CvYes(h) => CvYes(CvTrans(ha, CvTrans(h, CvSymm(hb))))
+    CvNo => CvNo(<a: a, b: b>)
+  }
+}
+
+pub fn conv_go2(
+  a: KTm,
+  b: KTm,
+  a2: KTm,
+  ha: KConv(a, a2),
+  wb: WhnfR(b),
+  rec: ∀ x: KTm, y: KTm. ConvR(x, y)
+): ConvR(a, b) {
+  match wb {
+    Wh(b2, hb) => conv_fin(a, b, a2, b2, ha, hb, cmp_go(a2, b2, rec))
+  }
+}
+
+pub fn conv_go(
+  a: KTm,
+  b: KTm,
+  wa: WhnfR(a),
+  wb: WhnfR(b),
+  rec: ∀ x: KTm, y: KTm. ConvR(x, y)
+): ConvR(a, b) {
+  match wa {
+    Wh(a2, ha) => conv_go2(a, b, a2, ha, wb, rec)
+  }
+}
+
+pub fn conv(fuel: Nat, a: KTm, b: KTm): ConvR(a, b) {
+  match fuel {
+    Zero => CvNo(<a: a, b: b>)
+    Succ(k) => conv_go(a, b, whnf(k, a), whnf(k, b), x => y => conv(k, x, y))
+  }
+}
+
+pub fn conv_true(a: KTm, b: KTm, r: ConvR(a, b)): Nat {
+  match r {
+    CvYes(^h) => 1
+    CvNo => 0
+  }
+}
+
+pub theorem conv_beta(): conv_true(
+  Kapp(Klam(Kvar(0)), Kzero),
+  Kzero,
+  conv(10, Kapp(Klam(Kvar(0)), Kzero), Kzero)
+) = 1 { Refl }
+
+pub theorem conv_not(): conv_true(Kzero, Ksucc(Kzero), conv(10, Kzero, Ksucc(Kzero))) = 0 { Refl }
+
+// plus 1 1 by the eliminator is 2: natRec P zero-case (Ksucc Kzero) (n ih => Ksucc ih) (Ksucc Kzero)
+pub theorem conv_rec(): conv_true(
+  KnatRec(Klam(Knat), Ksucc(Kzero), Klam(Klam(Ksucc(Kvar(0)))), Ksucc(Kzero)),
+  Ksucc(Ksucc(Kzero)),
+  conv(
+    30,
+    KnatRec(Klam(Knat), Ksucc(Kzero), Klam(Klam(Ksucc(Kvar(0)))), Ksucc(Kzero)),
+    Ksucc(Ksucc(Kzero))
+  )
+) = 1 { Refl }
+
+pub fn nmax(a: Nat, b: Nat): Nat {
+  match a {
+    Zero => b
+    Succ(a1) => ⊢ Nat from match b {
+      Zero => Succ(a1)
+      Succ(b1) => Succ(nmax(a1, b1))
+    }
+  }
+}
+
+pub fn imax(s1: Nat, s2: Nat): Nat {
+  match s2 {
+    Zero => Zero
+    Succ(k) => nmax(s1, Succ(k))
+  }
+}
+
+// `look(G, i)` finds the type of the variable `i` with its proof, read from the rules.
+@mode!(`look(rec G, in i, out A) -> LookR { Found | NoLook }`) => inductive LookR, fn look
+pub(open) inductive KLook: (List(KTm), Nat, KTm) -> Prop {
+  LkZero(G: List(KTm), A: KTm): KLook(Cons(A, G), Zero, Klift(A))
+  LkSucc<G: List(KTm)>(
+    B: KTm,
+    i: Nat,
+    A: KTm,
+    h: KLook(G, i, A)
+  ): KLook(Cons(B, G), Succ(i), Klift(A))
+}
+
+pub(open) inductive KSub: (KTm, KTm) -> Prop {
+  SbConv<A: KTm, B: KTm>(h: KConv(A, B)): KSub(A, B)
+  SbSort<A: KTm, B: KTm, n: Nat, m: Nat>(
+    c1: KConv(A, Ksort(n)),
+    c2: KConv(B, Ksort(m)),
+    l: NLe(n, m)
+  ): KSub(A, B)
+  SbPi<A: KTm, B: KTm, A1: KTm, B1: KTm, A2: KTm, B2: KTm>(
+    c1: KConv(A, Kpi(A1, B1)),
+    c2: KConv(B, Kpi(A2, B2)),
+    d: KConv(A1, A2),
+    s: KSub(B1, B2)
+  ): KSub(A, B)
+}
+
+pub(open) inductive KTyping: (List(KTm), KTm, KTm) -> Prop {
+  TyVar<G: List(KTm), i: Nat, A: KTm>(h: KLook(G, i, A)): KTyping(G, Kvar(i), A)
+  TySort(G: List(KTm), n: Nat): KTyping(G, Ksort(n), Ksort(Succ(n)))
+  TyPi<G: List(KTm), A: KTm, B: KTm, s1: Nat, s2: Nat>(
+    hA: KTyping(G, A, Ksort(s1)),
+    hB: KTyping(Cons(A, G), B, Ksort(s2))
+  ): KTyping(G, Kpi(A, B), Ksort(imax(s1, s2)))
+  TyLam<G: List(KTm), A: KTm, B: KTm, b: KTm, s: Nat>(
+    hA: KTyping(G, A, Ksort(s)),
+    hb: KTyping(Cons(A, G), b, B)
+  ): KTyping(G, Klam(b), Kpi(A, B))
+  TyApp<G: List(KTm), f: KTm, a: KTm, A: KTm, B: KTm>(
+    hf: KTyping(G, f, Kpi(A, B)),
+    ha: KTyping(G, a, A)
+  ): KTyping(G, Kapp(f, a), Kinst(B, a))
+  TySub<G: List(KTm), t: KTm, A: KTm, B: KTm, s: Nat>(
+    h: KTyping(G, t, A),
+    hB: KTyping(G, B, Ksort(s)),
+    sb: KSub(A, B)
+  ): KTyping(G, t, B)
+  TyNat(G: List(KTm)): KTyping(G, Knat, Ksort(1))
+  TyZero(G: List(KTm)): KTyping(G, Kzero, Knat)
+  TySucc<G: List(KTm), n: KTm>(h: KTyping(G, n, Knat)): KTyping(G, Ksucc(n), Knat)
+  TyRec<G: List(KTm), P: KTm, z: KTm, s2: KTm, n: KTm, s: Nat>(
+    hP: KTyping(G, P, Kpi(Knat, Ksort(s))),
+    hz: KTyping(G, z, Kapp(P, Kzero)),
+    hs: KTyping(G, s2, stepTy(P)),
+    hn: KTyping(G, n, Knat)
+  ): KTyping(G, KnatRec(P, z, s2, n), Kapp(P, n))
+}
+
+pub(open) inductive SubR(A: KTm, B: KTm): Type {
+  Subyes(h: KSub(A, B)): SubR(A, B)
+  Subno: SubR(A, B)
+}
+
+pub fn sub_fallback(A: KTm, B: KTm, r: ConvR(A, B)): SubR(A, B) {
+  match r {
+    CvYes(h) => Subyes(SbConv(h))
+    CvNo => Subno(<A: A, B: B>)
+  }
+}
+
+pub fn sub_sort(
+  A: KTm,
+  B: KTm,
+  n: Nat,
+  m: Nat,
+  ha: KConv(A, Ksort(n)),
+  hb: KConv(B, Ksort(m)),
+  r: LeR(n, m),
+  full: ConvR(A, B)
+): SubR(A, B) {
+  match r {
+    LeYes(l) => Subyes(SbSort(ha, hb, l))
+    LeNo(^refute) => sub_fallback(A, B, full)
+  }
+}
+
+pub fn sub_pi2(
+  A: KTm,
+  B: KTm,
+  A1: KTm,
+  B1: KTm,
+  A2: KTm,
+  B2: KTm,
+  ha: KConv(A, Kpi(A1, B1)),
+  hb: KConv(B, Kpi(A2, B2)),
+  d: KConv(A1, A2),
+  rc: SubR(B1, B2),
+  full: ConvR(A, B)
+): SubR(A, B) {
+  match rc {
+    Subyes(s) => Subyes(SbPi(ha, hb, d, s))
+    Subno => sub_fallback(A, B, full)
+  }
+}
+
+pub fn sub_pi(
+  A: KTm,
+  B: KTm,
+  A1: KTm,
+  B1: KTm,
+  A2: KTm,
+  B2: KTm,
+  ha: KConv(A, Kpi(A1, B1)),
+  hb: KConv(B, Kpi(A2, B2)),
+  rd: ConvR(A1, A2),
+  rc: SubR(B1, B2),
+  full: ConvR(A, B)
+): SubR(A, B) {
+  match rd {
+    CvYes(d) => sub_pi2(A, B, A1, B1, A2, B2, ha, hb, d, rc, full)
+    CvNo => sub_fallback(A, B, full)
+  }
+}
+
+pub fn sub_sortb(
+  A: KTm,
+  B: KTm,
+  n: Nat,
+  B2: KTm,
+  ha: KConv(A, Ksort(n)),
+  hb: KConv(B, B2),
+  full: ConvR(A, B)
+): SubR(A, B) {
+  match B2 {
+    Kvar(^i) => sub_fallback(A, B, full)
+    Ksort(m) => sub_sort(A, B, n, m, ha, hb, nle(n, m), full)
+    Kpi(^A1, ^B1) => sub_fallback(A, B, full)
+    Klam(^b) => sub_fallback(A, B, full)
+    Kapp(^f, ^a) => sub_fallback(A, B, full)
+    Knat => sub_fallback(A, B, full)
+    Kzero => sub_fallback(A, B, full)
+    Ksucc(^n) => sub_fallback(A, B, full)
+    KnatRec(^P, ^z, ^s, ^n) => sub_fallback(A, B, full)
+  }
+}
+
+pub fn sub_pib(
+  A: KTm,
+  B: KTm,
+  A1: KTm,
+  B1: KTm,
+  B2: KTm,
+  ha: KConv(A, Kpi(A1, B1)),
+  hb: KConv(B, B2),
+  full: ConvR(A, B),
+  cvr: ∀ x: KTm, y: KTm. SubR(x, y),
+  cdv: ∀ x: KTm, y: KTm. ConvR(x, y)
+): SubR(A, B) {
+  match B2 {
+    Kvar(^i) => sub_fallback(A, B, full)
+    Ksort(^n) => sub_fallback(A, B, full)
+    Kpi(A3, B3) => sub_pi(A, B, A1, B1, A3, B3, ha, hb, cdv(A1, A3), cvr(B1, B3), full)
+    Klam(^b) => sub_fallback(A, B, full)
+    Kapp(^f, ^a) => sub_fallback(A, B, full)
+    Knat => sub_fallback(A, B, full)
+    Kzero => sub_fallback(A, B, full)
+    Ksucc(^n) => sub_fallback(A, B, full)
+    KnatRec(^P, ^z, ^s, ^n) => sub_fallback(A, B, full)
+  }
+}
+
+pub fn sub_pair(
+  A: KTm,
+  B: KTm,
+  A2: KTm,
+  B2: KTm,
+  ha: KConv(A, A2),
+  hb: KConv(B, B2),
+  full: ConvR(A, B),
+  cvr: ∀ x: KTm, y: KTm. SubR(x, y),
+  cdv: ∀ x: KTm, y: KTm. ConvR(x, y)
+): SubR(A, B) {
+  match A2 {
+    Kvar(^i) => sub_fallback(A, B, full)
+    Ksort(n) => sub_sortb(A, B, n, B2, ha, hb, full)
+    Kpi(A1, B1) => sub_pib(A, B, A1, B1, B2, ha, hb, full, cvr, cdv)
+    Klam(^b) => sub_fallback(A, B, full)
+    Kapp(^f, ^a) => sub_fallback(A, B, full)
+    Knat => sub_fallback(A, B, full)
+    Kzero => sub_fallback(A, B, full)
+    Ksucc(^n) => sub_fallback(A, B, full)
+    KnatRec(^P, ^z, ^s, ^n) => sub_fallback(A, B, full)
+  }
+}
+
+pub fn sub_top2(
+  A: KTm,
+  B: KTm,
+  A2: KTm,
+  ha: KConv(A, A2),
+  wb: WhnfR(B),
+  full: ConvR(A, B),
+  cvr: ∀ x: KTm, y: KTm. SubR(x, y),
+  cdv: ∀ x: KTm, y: KTm. ConvR(x, y)
+): SubR(A, B) {
+  match wb {
+    Wh(B2, hb) => sub_pair(A, B, A2, B2, ha, hb, full, cvr, cdv)
+  }
+}
+
+pub fn sub_top(
+  A: KTm,
+  B: KTm,
+  wa: WhnfR(A),
+  wb: WhnfR(B),
+  full: ConvR(A, B),
+  cvr: ∀ x: KTm, y: KTm. SubR(x, y),
+  cdv: ∀ x: KTm, y: KTm. ConvR(x, y)
+): SubR(A, B) {
+  match wa {
+    Wh(A2, ha) => sub_top2(A, B, A2, ha, wb, full, cvr, cdv)
+  }
+}
+
+pub fn subtype(fuel: Nat, A: KTm, B: KTm): SubR(A, B) {
+  match fuel {
+    Zero => Subno(<A: A, B: B>)
+    Succ(k) => sub_top(
+      A,
+      B,
+      whnf(k, A),
+      whnf(k, B),
+      conv(k, A, B),
+      x => y => subtype(k, x, y),
+      x => y => conv(k, x, y)
+    )
+  }
+}
+
+pub fn sub_true(A: KTm, B: KTm, r: SubR(A, B)): Nat {
+  match r {
+    Subyes(^h) => 1
+    Subno => 0
+  }
+}
+
+pub theorem sub_sorts(): sub_true(Ksort(0), Ksort(1), subtype(10, Ksort(0), Ksort(1))) = 1 { Refl }
+
+// ---- the checker: infer and check in one fuel-bounded function ------------------
+
+pub(open) inductive Job: Type {
+  Jinfer(G: List(KTm), t: KTm): Job
+  Jcheck(G: List(KTm), t: KTm, A: KTm): Job
+}
+
+pub(open) inductive Out: (Job) -> Type {
+  OInf<G: List(KTm), t: KTm, A: KTm>(h: KTyping(G, t, A)): Out(Jinfer(G, t))
+  OChk<G: List(KTm), t: KTm, A: KTm>(h: KTyping(G, t, A)): Out(Jcheck(G, t, A))
+  OFail(j: Job): Out(j)
+}
+
+pub(open) inductive InferR(G: List(KTm), t: KTm): Type {
+  Inf<A: KTm>(h: KTyping(G, t, A)): InferR(G, t)
+  InfFail: InferR(G, t)
+}
+
+pub(open) inductive CheckR(G: List(KTm), t: KTm, A: KTm): Type {
+  Chk(h: KTyping(G, t, A)): CheckR(G, t, A)
+  ChkFail: CheckR(G, t, A)
+}
+
+pub(open) inductive SortR(G: List(KTm), A: KTm): Type {
+  Srt<s: Nat>(h: KTyping(G, A, Ksort(s))): SortR(G, A)
+  SrtFail: SortR(G, A)
+}
+
+pub(open) inductive PiR(G: List(KTm), f: KTm): Type {
+  Pir<A: KTm, B: KTm>(h: KTyping(G, f, Kpi(A, B))): PiR(G, f)
+  PirFail: PiR(G, f)
+}
+
+pub fn get_inf(G: List(KTm), t: KTm, r: Out(Jinfer(G, t))): InferR(G, t) {
+  match r {
+    OInf(^G1, ^t1, ^A, h) => ⊢ InferR(G, t) from Inf(h)
+    OFail(^j) => ⊢ InferR(G, t) from InfFail(<G: G, t: t>)
+  }
+}
+
+pub fn get_chk(G: List(KTm), t: KTm, A: KTm, r: Out(Jcheck(G, t, A))): CheckR(G, t, A) {
+  match r {
+    OChk<G: ^G2, t: ^t4, A: ^A5>(h) => ⊢ CheckR(G, t, A) from Chk(h)
+    OFail(^j) => ⊢ CheckR(G, t, A) from ChkFail(<G: G, t: t, A: A>)
+  }
+}
+
+pub fn sort_fin3(
+  G: List(KTm),
+  A: KTm,
+  T: KTm,
+  h: KTyping(G, A, T),
+  T2: KTm,
+  hT: KConv(T, T2)
+): SortR(G, A) {
+  match T2 {
+    Kvar(^i) => SrtFail(<G: G, A: A>)
+    Ksort(s) => Srt(TySub(h, TySort(G, s), SbConv(hT)))
+    Kpi(^A1, ^B1) => SrtFail(<G: G, A: A>)
+    Klam(^b) => SrtFail(<G: G, A: A>)
+    Kapp(^f, ^a) => SrtFail(<G: G, A: A>)
+    Knat => SrtFail(<G: G, A: A>)
+    Kzero => SrtFail(<G: G, A: A>)
+    Ksucc(^n) => SrtFail(<G: G, A: A>)
+    KnatRec(^P, ^z, ^s, ^n) => SrtFail(<G: G, A: A>)
+  }
+}
+
+pub fn sort_fin2(G: List(KTm), A: KTm, T: KTm, h: KTyping(G, A, T), w: WhnfR(T)): SortR(G, A) {
+  match w {
+    Wh(T2, hT) => sort_fin3(G, A, T, h, T2, hT)
+  }
+}
+
+pub fn sort_fin(G: List(KTm), A: KTm, r: InferR(G, A), wk: ∀ T: KTm. WhnfR(T)): SortR(G, A) {
+  match r {
+    Inf(T, h) => sort_fin2(G, A, T, h, wk(T))
+    InfFail => SrtFail(<G: G, A: A>)
+  }
+}
+
+pub fn sort_of(k: Nat, G: List(KTm), A: KTm, rec: ∀ j: Job. Out(j)): SortR(G, A) {
+  sort_fin(G, A, get_inf(G, A, rec(Jinfer(G, A))), T => whnf(k, T))
+}
+
+pub fn pi_fin4(
+  G: List(KTm),
+  f: KTm,
+  T: KTm,
+  A: KTm,
+  B: KTm,
+  h: KTyping(G, f, T),
+  hT: KConv(T, Kpi(A, B)),
+  rs: SortR(G, Kpi(A, B))
+): PiR(G, f) {
+  match rs {
+    Srt<s: ^s6>(hs) => Pir(TySub(h, hs, SbConv(hT)))
+    SrtFail => PirFail(<G: G, f: f>)
+  }
+}
+
+pub fn pi_fin3(
+  G: List(KTm),
+  f: KTm,
+  T: KTm,
+  h: KTyping(G, f, T),
+  T2: KTm,
+  hT: KConv(T, T2),
+  srtk: ∀ A: KTm, B: KTm. SortR(G, Kpi(A, B))
+): PiR(G, f) {
+  match T2 {
+    Kvar(^i) => PirFail(<G: G, f: f>)
+    Ksort(^n) => PirFail(<G: G, f: f>)
+    Kpi(A, B) => pi_fin4(G, f, T, A, B, h, hT, srtk(A, B))
+    Klam(^b) => PirFail(<G: G, f: f>)
+    Kapp(^f1, ^a1) => PirFail(<G: G, f: f>)
+    Knat => PirFail(<G: G, f: f>)
+    Kzero => PirFail(<G: G, f: f>)
+    Ksucc(^n) => PirFail(<G: G, f: f>)
+    KnatRec(^P, ^z, ^s, ^n) => PirFail(<G: G, f: f>)
+  }
+}
+
+pub fn pi_fin2(
+  G: List(KTm),
+  f: KTm,
+  T: KTm,
+  h: KTyping(G, f, T),
+  w: WhnfR(T),
+  srtk: ∀ A: KTm, B: KTm. SortR(G, Kpi(A, B))
+): PiR(G, f) {
+  match w {
+    Wh(T2, hT) => pi_fin3(G, f, T, h, T2, hT, srtk)
+  }
+}
+
+pub fn pi_fin(
+  G: List(KTm),
+  f: KTm,
+  r: InferR(G, f),
+  wk: ∀ T: KTm. WhnfR(T),
+  srtk: ∀ A: KTm, B: KTm. SortR(G, Kpi(A, B))
+): PiR(G, f) {
+  match r {
+    Inf(T, h) => pi_fin2(G, f, T, h, wk(T), srtk)
+    InfFail => PirFail(<G: G, f: f>)
+  }
+}
+
+pub fn pi_of(k: Nat, G: List(KTm), f: KTm, rec: ∀ j: Job. Out(j)): PiR(G, f) {
+  pi_fin(
+    G,
+    f,
+    get_inf(G, f, rec(Jinfer(G, f))),
+    T => whnf(k, T),
+    A => B => sort_of(k, G, Kpi(A, B), rec)
+  )
+}
+
+pub fn var_case(G: List(KTm), i: Nat, r: LookR(G, i)): Out(Jinfer(G, Kvar(i))) {
+  match r {
+    Found(^A, h, ^unique) => OInf(TyVar(h))
+    NoLook(^refute) => OFail(Jinfer(G, Kvar(i)))
+  }
+}
+
+pub fn pi_case2(
+  G: List(KTm),
+  A: KTm,
+  B: KTm,
+  s1: Nat,
+  hA: KTyping(G, A, Ksort(s1)),
+  rb: SortR(Cons(<A: KTm>, A, G), B)
+): Out(Jinfer(G, Kpi(A, B))) {
+  match rb {
+    Srt<s: ^s7>(hB) => OInf(TyPi(hA, hB))
+    SrtFail => OFail(Jinfer(G, Kpi(A, B)))
+  }
+}
+
+pub fn pi_case(
+  G: List(KTm),
+  A: KTm,
+  B: KTm,
+  ra: SortR(G, A),
+  rb: SortR(Cons(<A: KTm>, A, G), B)
+): Out(Jinfer(G, Kpi(A, B))) {
+  match ra {
+    Srt(s1, hA) => pi_case2(G, A, B, s1, hA, rb)
+    SrtFail => OFail(Jinfer(G, Kpi(A, B)))
+  }
+}
+
+pub fn app_fin(
+  G: List(KTm),
+  f: KTm,
+  a: KTm,
+  A: KTm,
+  B: KTm,
+  hf: KTyping(G, f, Kpi(A, B)),
+  rc: CheckR(G, a, A)
+): Out(Jinfer(G, Kapp(f, a))) {
+  match rc {
+    Chk(ha) => OInf(TyApp(hf, ha))
+    ChkFail => OFail(Jinfer(G, Kapp(f, a)))
+  }
+}
+
+pub fn app_case(
+  G: List(KTm),
+  f: KTm,
+  a: KTm,
+  rp: PiR(G, f),
+  chk2: ∀ A: KTm. CheckR(G, a, A)
+): Out(Jinfer(G, Kapp(f, a))) {
+  match rp {
+    Pir(A, B, hf) => app_fin(G, f, a, A, B, hf, chk2(A))
+    PirFail => OFail(Jinfer(G, Kapp(f, a)))
+  }
+}
+
+pub fn succ_case(G: List(KTm), n: KTm, rc: CheckR(G, n, Knat)): Out(Jinfer(G, Ksucc(n))) {
+  match rc {
+    Chk(h) => OInf(TySucc(h))
+    ChkFail => OFail(Jinfer(G, Ksucc(n)))
+  }
+}
+
+pub fn rec_fin4(
+  G: List(KTm),
+  P: KTm,
+  z: KTm,
+  s2: KTm,
+  n: KTm,
+  s: Nat,
+  hP: KTyping(G, P, Kpi(Knat, Ksort(s))),
+  hz: KTyping(G, z, Kapp(P, Kzero)),
+  hs: KTyping(G, s2, stepTy(P)),
+  cn: CheckR(G, n, Knat)
+): Out(Jinfer(G, KnatRec(P, z, s2, n))) {
+  match cn {
+    Chk(hn) => OInf(TyRec(hP, hz, hs, hn))
+    ChkFail => OFail(Jinfer(G, KnatRec(P, z, s2, n)))
+  }
+}
+
+pub fn rec_fin3(
+  G: List(KTm),
+  P: KTm,
+  z: KTm,
+  s2: KTm,
+  n: KTm,
+  s: Nat,
+  hP: KTyping(G, P, Kpi(Knat, Ksort(s))),
+  hz: KTyping(G, z, Kapp(P, Kzero)),
+  cs: CheckR(G, s2, stepTy(P)),
+  cn: CheckR(G, n, Knat)
+): Out(Jinfer(G, KnatRec(P, z, s2, n))) {
+  match cs {
+    Chk(hs) => rec_fin4(G, P, z, s2, n, s, hP, hz, hs, cn)
+    ChkFail => OFail(Jinfer(G, KnatRec(P, z, s2, n)))
+  }
+}
+
+pub fn rec_fin2(
+  G: List(KTm),
+  P: KTm,
+  z: KTm,
+  s2: KTm,
+  n: KTm,
+  s: Nat,
+  hP: KTyping(G, P, Kpi(Knat, Ksort(s))),
+  cz: CheckR(G, z, Kapp(P, Kzero)),
+  cs: CheckR(G, s2, stepTy(P)),
+  cn: CheckR(G, n, Knat)
+): Out(Jinfer(G, KnatRec(P, z, s2, n))) {
+  match cz {
+    Chk(hz) => rec_fin3(G, P, z, s2, n, s, hP, hz, cs, cn)
+    ChkFail => OFail(Jinfer(G, KnatRec(P, z, s2, n)))
+  }
+}
+
+pub fn rec_fin(
+  G: List(KTm),
+  P: KTm,
+  z: KTm,
+  s2: KTm,
+  n: KTm,
+  rm: CheckR(G, P, Kpi(Knat, Ksort(2))),
+  cz: CheckR(G, z, Kapp(P, Kzero)),
+  cs: CheckR(G, s2, stepTy(P)),
+  cn: CheckR(G, n, Knat)
+): Out(Jinfer(G, KnatRec(P, z, s2, n))) {
+  match rm {
+    Chk(hP) => rec_fin2(G, P, z, s2, n, 2, hP, cz, cs, cn)
+    ChkFail => OFail(Jinfer(G, KnatRec(P, z, s2, n)))
+  }
+}
+
+// a beta-redex (\x. b) a is typed by inferring a, then b under it
+pub fn redex_fin(
+  G: List(KTm),
+  b: KTm,
+  a: KTm,
+  A: KTm,
+  ha: KTyping(G, a, A),
+  rs: SortR(G, A),
+  ib: InferR(Cons(<A: KTm>, A, G), b)
+): Out(Jinfer(G, Kapp(Klam(b), a))) {
+  match rs {
+    Srt(^s, hA) => ⊢ Out(Jinfer(G, Kapp(Klam(b), a))) from match ib {
+      Inf<A: ^A8>(hb) => OInf(TyApp(TyLam(hA, hb), ha))
+      InfFail => OFail(Jinfer(G, Kapp(Klam(b), a)))
+    }
+    SrtFail => OFail(Jinfer(G, Kapp(Klam(b), a)))
+  }
+}
+
+pub fn redex_case(
+  G: List(KTm),
+  b: KTm,
+  a: KTm,
+  ra: InferR(G, a),
+  srk: ∀ A: KTm. SortR(G, A),
+  ibk: ∀ A: KTm. InferR(Cons(<A: KTm>, A, G), b)
+): Out(Jinfer(G, Kapp(Klam(b), a))) {
+  match ra {
+    Inf(A, ha) => redex_fin(G, b, a, A, ha, srk(A), ibk(A))
+    InfFail => OFail(Jinfer(G, Kapp(Klam(b), a)))
+  }
+}
+
+pub fn app_dispatch(
+  k: Nat,
+  G: List(KTm),
+  f: KTm,
+  a: KTm,
+  rec: ∀ j: Job. Out(j)
+): Out(Jinfer(G, Kapp(f, a))) {
+  match f {
+    Kvar(i1) => app_case(
+      G,
+      Kvar(i1),
+      a,
+      pi_of(k, G, Kvar(i1), rec),
+      x => get_chk(G, a, x, rec(Jcheck(G, a, x)))
+    )
+    Ksort(n1) => app_case(
+      G,
+      Ksort(n1),
+      a,
+      pi_of(k, G, Ksort(n1), rec),
+      x => get_chk(G, a, x, rec(Jcheck(G, a, x)))
+    )
+    Kpi(A1, B1) => app_case(
+      G,
+      Kpi(A1, B1),
+      a,
+      pi_of(k, G, Kpi(A1, B1), rec),
+      x => get_chk(G, a, x, rec(Jcheck(G, a, x)))
+    )
+    Klam(b1) => redex_case(
+      G,
+      b1,
+      a,
+      get_inf(G, a, rec(Jinfer(G, a))),
+      x => sort_of(k, G, x, rec),
+      x => get_inf(Cons(<A: KTm>, x, G), b1, rec(Jinfer(Cons(<A: KTm>, x, G), b1)))
+    )
+    Kapp(f1, a1) => app_case(
+      G,
+      Kapp(f1, a1),
+      a,
+      pi_of(k, G, Kapp(f1, a1), rec),
+      x => get_chk(G, a, x, rec(Jcheck(G, a, x)))
+    )
+    Knat => app_case(
+      G,
+      Knat,
+      a,
+      pi_of(k, G, Knat, rec),
+      x => get_chk(G, a, x, rec(Jcheck(G, a, x)))
+    )
+    Kzero => app_case(
+      G,
+      Kzero,
+      a,
+      pi_of(k, G, Kzero, rec),
+      x => get_chk(G, a, x, rec(Jcheck(G, a, x)))
+    )
+    Ksucc(n1) => app_case(
+      G,
+      Ksucc(n1),
+      a,
+      pi_of(k, G, Ksucc(n1), rec),
+      x => get_chk(G, a, x, rec(Jcheck(G, a, x)))
+    )
+    KnatRec(P1, z1, s1, n1) => app_case(
+      G,
+      KnatRec(P1, z1, s1, n1),
+      a,
+      pi_of(k, G, KnatRec(P1, z1, s1, n1), rec),
+      x => get_chk(G, a, x, rec(Jcheck(G, a, x)))
+    )
+  }
+}
+
+pub fn infer_case(k: Nat, G: List(KTm), t: KTm, rec: ∀ j: Job. Out(j)): Out(Jinfer(G, t)) {
+  match t {
+    Kvar(i) => var_case(G, i, look(G, i))
+    Ksort(n) => OInf(TySort(G, n))
+    Kpi(A, B) => pi_case(G, A, B, sort_of(k, G, A, rec), sort_of(k, Cons(<A: KTm>, A, G), B, rec))
+    Klam(b) => OFail(Jinfer(G, Klam(b)))
+    Kapp(f, a) => app_dispatch(k, G, f, a, rec)
+    Knat => OInf(TyNat(G))
+    Kzero => OInf(TyZero(G))
+    Ksucc(n) => succ_case(G, n, get_chk(G, n, Knat, rec(Jcheck(G, n, Knat))))
+    KnatRec(P, z, s, n) => rec_fin(
+      G,
+      P,
+      z,
+      s,
+      n,
+      get_chk(G, P, Kpi(Knat, Ksort(2)), rec(Jcheck(G, P, Kpi(Knat, Ksort(2))))),
+      get_chk(G, z, Kapp(P, Kzero), rec(Jcheck(G, z, Kapp(P, Kzero)))),
+      get_chk(G, s, stepTy(P), rec(Jcheck(G, s, stepTy(P)))),
+      get_chk(G, n, Knat, rec(Jcheck(G, n, Knat)))
+    )
+  }
+}
+
+pub fn ck_fin3(
+  G: List(KTm),
+  t: KTm,
+  A: KTm,
+  T: KTm,
+  h: KTyping(G, t, T),
+  sb: KSub(T, A),
+  rs: SortR(G, A)
+): Out(Jcheck(G, t, A)) {
+  match rs {
+    Srt<s: ^s9>(hs) => OChk(TySub(h, hs, sb))
+    SrtFail => OFail(Jcheck(G, t, A))
+  }
+}
+
+pub fn ck_fin2(
+  G: List(KTm),
+  t: KTm,
+  A: KTm,
+  T: KTm,
+  h: KTyping(G, t, T),
+  rsub: SubR(T, A),
+  rs: SortR(G, A)
+): Out(Jcheck(G, t, A)) {
+  match rsub {
+    Subyes(sb) => ck_fin3(G, t, A, T, h, sb, rs)
+    Subno => OFail(Jcheck(G, t, A))
+  }
+}
+
+pub fn ck_fin(
+  G: List(KTm),
+  t: KTm,
+  A: KTm,
+  ri: InferR(G, t),
+  subk: ∀ T: KTm. SubR(T, A),
+  rs: SortR(G, A)
+): Out(Jcheck(G, t, A)) {
+  match ri {
+    Inf(T, h) => ck_fin2(G, t, A, T, h, subk(T), rs)
+    InfFail => OFail(Jcheck(G, t, A))
+  }
+}
+
+pub fn check_gen(
+  k: Nat,
+  G: List(KTm),
+  t: KTm,
+  A: KTm,
+  rec: ∀ j: Job. Out(j)
+): Out(Jcheck(G, t, A)) {
+  ck_fin(G, t, A, get_inf(G, t, rec(Jinfer(G, t))), x => subtype(k, x, A), sort_of(k, G, A, rec))
+}
+
+pub fn lam_fin3(
+  G: List(KTm),
+  b: KTm,
+  A: KTm,
+  X: KTm,
+  B1: KTm,
+  hA: KConv(A, Kpi(X, B1)),
+  rsA: SortR(G, A),
+  rX: SortR(G, X),
+  rb: CheckR(Cons(<A: KTm>, X, G), b, B1)
+): Out(Jcheck(G, Klam(b), A)) {
+  match rsA {
+    Srt(^s, hs) => ⊢ Out(Jcheck(G, Klam(b), A)) from match rX {
+      Srt(^s2, hX) => ⊢ Out(Jcheck(G, Klam(b), A)) from match rb {
+        Chk(hb) => OChk(TySub(TyLam(hX, hb), hs, SbConv(CvSymm(hA))))
+        ChkFail => OFail(Jcheck(G, Klam(b), A))
+      }
+      SrtFail => OFail(Jcheck(G, Klam(b), A))
+    }
+    SrtFail => OFail(Jcheck(G, Klam(b), A))
+  }
+}
+
+pub fn lam_fin2(
+  G: List(KTm),
+  b: KTm,
+  A: KTm,
+  A2: KTm,
+  hA: KConv(A, A2),
+  rsA: SortR(G, A),
+  kX: ∀ X: KTm. SortR(G, X),
+  kb: ∀ X: KTm, B1: KTm. CheckR(Cons(<A: KTm>, X, G), b, B1)
+): Out(Jcheck(G, Klam(b), A)) {
+  match A2 {
+    Kvar(^i) => OFail(Jcheck(G, Klam(b), A))
+    Ksort(^n) => OFail(Jcheck(G, Klam(b), A))
+    Kpi(X, B1) => lam_fin3(G, b, A, X, B1, hA, rsA, kX(X), kb(X, B1))
+    Klam(^b1) => OFail(Jcheck(G, Klam(b), A))
+    Kapp(^f, ^a) => OFail(Jcheck(G, Klam(b), A))
+    Knat => OFail(Jcheck(G, Klam(b), A))
+    Kzero => OFail(Jcheck(G, Klam(b), A))
+    Ksucc(^n) => OFail(Jcheck(G, Klam(b), A))
+    KnatRec(^P, ^z, ^s, ^n) => OFail(Jcheck(G, Klam(b), A))
+  }
+}
+
+pub fn lam_fin(
+  G: List(KTm),
+  b: KTm,
+  A: KTm,
+  w: WhnfR(A),
+  rsA: SortR(G, A),
+  kX: ∀ X: KTm. SortR(G, X),
+  kb: ∀ X: KTm, B1: KTm. CheckR(Cons(<A: KTm>, X, G), b, B1)
+): Out(Jcheck(G, Klam(b), A)) {
+  match w {
+    Wh(A2, hA) => lam_fin2(G, b, A, A2, hA, rsA, kX, kb)
+  }
+}
+
+pub fn lam_case(
+  k: Nat,
+  G: List(KTm),
+  b: KTm,
+  A: KTm,
+  rec: ∀ j: Job. Out(j)
+): Out(Jcheck(G, Klam(b), A)) {
+  lam_fin(
+    G,
+    b,
+    A,
+    whnf(k, A),
+    sort_of(k, G, A, rec),
+    x => sort_of(k, G, x, rec),
+    x => y => get_chk(Cons(<A: KTm>, x, G), b, y, rec(Jcheck(Cons(<A: KTm>, x, G), b, y)))
+  )
+}
+
+pub fn check_case(
+  k: Nat,
+  G: List(KTm),
+  t: KTm,
+  A: KTm,
+  rec: ∀ j: Job. Out(j)
+): Out(Jcheck(G, t, A)) {
+  match t {
+    Kvar(i) => check_gen(k, G, Kvar(i), A, rec)
+    Ksort(n) => check_gen(k, G, Ksort(n), A, rec)
+    Kpi(A1, B1) => check_gen(k, G, Kpi(A1, B1), A, rec)
+    Klam(b) => lam_case(k, G, b, A, rec)
+    Kapp(f, a) => check_gen(k, G, Kapp(f, a), A, rec)
+    Knat => check_gen(k, G, Knat, A, rec)
+    Kzero => check_gen(k, G, Kzero, A, rec)
+    Ksucc(n) => check_gen(k, G, Ksucc(n), A, rec)
+    KnatRec(P, z, s, n) => check_gen(k, G, KnatRec(P, z, s, n), A, rec)
+  }
+}
+
+// The checker: a job, a fuel, and either a typing derivation or a failure.
+pub fn tc(fuel: Nat, j: Job): Out(j) {
+  match fuel {
+    Zero => OFail(j)
+    Succ(k) => ⊢ Out(j) from match j {
+      Jinfer(G, t) => infer_case(k, G, t, jj => tc(k, jj))
+      Jcheck(G, t, A) => check_case(k, G, t, A, jj => tc(k, jj))
+    }
+  }
+}
+
+pub fn accepted(j: Job, r: Out(j)): Nat {
+  match r {
+    OInf<G: ^G10, t: ^t11, A: ^A12>(^h) => ⊢ Nat from 1
+    OChk<G: ^G13, t: ^t14, A: ^A15>(^h) => ⊢ Nat from 1
+    OFail(^j1) => ⊢ Nat from 0
+  }
+}
+
+pub fn check_ok(t: KTm, A: KTm): Nat {
+  accepted(Jcheck(Nil(<A: KTm>), t, A), tc(40, Jcheck(Nil(<A: KTm>), t, A)))
+}
+
+pub fn infer_ok(t: KTm): Nat {
+  accepted(Jinfer(Nil(<A: KTm>), t), tc(40, Jinfer(Nil(<A: KTm>), t)))
+}
+
+pub theorem Tc::identity(): check_ok(Klam(Kvar(0)), Kpi(Knat, Knat)) = 1 { Refl }
+
+pub theorem Tc::successor(): check_ok(Klam(Ksucc(Kvar(0))), Kpi(Knat, Knat)) = 1 { Refl }
+
+pub theorem Tc::wrong_codomain(): check_ok(Klam(Kvar(0)), Kpi(Knat, Ksort(1))) = 0 { Refl }
+
+pub theorem Tc::polymorphic_identity(): check_ok(
+  Klam(Klam(Kvar(0))),
+  Kpi(Ksort(1), Kpi(Kvar(0), Kvar(1)))
+) = 1 { Refl }
+
+pub theorem Tc::not_a_function(): infer_ok(Kapp(Kzero, Kzero)) = 0 { Refl }
+
+pub theorem Tc::nat_is_a_type(): infer_ok(Knat) = 1 { Refl }
+
+pub theorem Tc::pi_is_a_type(): check_ok(Kpi(Knat, Knat), Ksort(1)) = 1 { Refl }
+
+pub theorem Tc::application(): infer_ok(Kapp(Klam(Ksucc(Kvar(0))), Kzero)) = 1 { Refl }
+
+pub fn plusTm(): KTm {
+  KnatRec(Klam(Knat), Ksucc(Kzero), Klam(Klam(Ksucc(Kvar(0)))), Ksucc(Kzero))
+}
+
+pub theorem Tc::recursor(): infer_ok(plusTm()) = 1 { Refl }
+
+pub theorem Tc::recursor_wrong_step(): infer_ok(KnatRec(Klam(Knat), Kzero, Kzero, Kzero)) = 0 { Refl }

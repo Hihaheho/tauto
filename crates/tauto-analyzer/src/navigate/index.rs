@@ -116,6 +116,17 @@ pub struct Ref {
     pub approximate: bool,
 }
 
+/// A name written in a macro's `=>` list. `span` is the identifier as written
+/// (`left` in `=> fn left`); `kind` is the word before it (`fn`, `class`,
+/// `instance`); `call` is the `name!(…)` that makes the declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedName {
+    pub span: Span,
+    pub kind: String,
+    pub name: String,
+    pub call: Span,
+}
+
 #[derive(Debug, Default)]
 pub struct FileIndex {
     pub path: Option<PathBuf>,
@@ -130,6 +141,8 @@ pub struct FileIndex {
     pub top_stmts: Vec<Span>,
     /// The `name!(…)` calls, whole.
     pub macro_calls: Vec<Span>,
+    /// Identifiers a macro lists after `=>` (`=> fn left`), each with the call that makes it.
+    pub generated_names: Vec<GeneratedName>,
     /// The theorem keyword and the declaration it introduces (hover only).
     pub theorem_keywords: Vec<(Span, usize)>,
     /// The files this one sees, itself last: its imports, transitively.
@@ -199,7 +212,7 @@ fn preludes() -> &'static [FileIndex; 2] {
                 vec![0],
             ),
         ] {
-            let index = world.build(id, None, text, &parse(text), closure);
+            let index = world.build(id, None, text, &parse(text), closure, HashMap::new());
             world.files.push(index);
         }
         let second = world.files.pop().unwrap_or_default();
@@ -266,6 +279,7 @@ impl<'a> World<'a> {
         };
         let cst = parse(&text);
         let mut imports = Vec::new();
+        let mut body_imports = HashMap::new();
         if let Some(root) = cst.cst.root() {
             let mut paths = Vec::new();
             find_imports(&cst.cst, &text, root, &mut paths);
@@ -277,21 +291,91 @@ impl<'a> World<'a> {
                     imports.push(id);
                 }
             }
+            // An import at the head of a declaration's body: its names are seen in that
+            // body only.
+            let mut bodies = Vec::new();
+            find_body_imports(&cst.cst, &text, root, &mut bodies);
+            for (at, paths) in bodies {
+                let mut ids = Vec::new();
+                for (rel, module) in paths {
+                    let Ok(target) = tauto::stdlib::import_target(&path, &rel, module) else {
+                        continue;
+                    };
+                    if let Some(id) = self.load(&target) {
+                        ids.push(id);
+                    }
+                }
+                body_imports.insert(at, ids);
+            }
         }
+        let id = self.add_parsed(path.clone(), &text, &cst, &imports, &body_imports);
+        self.building.remove(&path);
+        Some(id)
+    }
+
+    /// Indexes `text` as the file at `path` importing the files `imports`
+    /// (ids of files already read), without reading anything; the file's id.
+    pub fn add(&mut self, path: &Path, text: &str, imports: &[usize]) -> usize {
+        self.add_parsed(
+            canonical(path),
+            text,
+            &parse(text),
+            imports,
+            &HashMap::new(),
+        )
+    }
+
+    fn add_parsed(
+        &mut self,
+        path: PathBuf,
+        text: &str,
+        cst: &tauto_parol::Parsed,
+        imports: &[usize],
+        body_imports: &HashMap<u32, Vec<usize>>,
+    ) -> usize {
         let id = self.base + self.files.len();
         let mut closure = vec![0, 1];
-        for i in imports {
+        for &i in imports {
             for c in self.file(i).closure.clone() {
                 if !closure.contains(&c) {
                     closure.push(c);
                 }
             }
         }
-        let index = self.build(id, Some(path.clone()), &text, &cst, closure);
-        self.building.remove(&path);
+        // What each body that imports at its head sees besides the file: the
+        // declarations of the files it imports, by name.
+        let bodies = body_imports
+            .iter()
+            .map(|(at, ids)| {
+                let mut seen = HashMap::new();
+                for &i in ids {
+                    for c in self.file(i).closure.clone() {
+                        if closure.contains(&c) {
+                            continue;
+                        }
+                        for (name, def) in &self.file(c).toplevel {
+                            seen.insert(name.clone(), *def);
+                        }
+                    }
+                }
+                (*at, seen)
+            })
+            .collect();
+        let index = self.build(id, Some(path.clone()), text, cst, closure, bodies);
         self.by_path.insert(path, id);
         self.files.push(index);
-        Some(id)
+        id
+    }
+
+    /// The paths a text's `import` statements name: a path and `false`, or a
+    /// module (`std::list`) and `true`.
+    pub fn imports_of(text: &str) -> Vec<(String, bool)> {
+        let cst = parse(text);
+        let mut paths = Vec::new();
+        if let Some(root) = cst.cst.root() {
+            find_imports(&cst.cst, text, root, &mut paths);
+        }
+        paths
     }
 
     fn build(
@@ -301,6 +385,7 @@ impl<'a> World<'a> {
         text: &str,
         parsed: &tauto_parol::Parsed,
         mut closure: Vec<usize>,
+        bodies: HashMap<u32, HashMap<String, DefId>>,
     ) -> FileIndex {
         let mut globals = HashMap::new();
         for &f in &closure {
@@ -335,6 +420,7 @@ impl<'a> World<'a> {
             globals,
             node_def: HashMap::new(),
             quoting: 0,
+            bodies,
         };
         w.idx.broken = !parsed.errors.is_empty();
         w.idx.path = path;
@@ -345,6 +431,63 @@ impl<'a> World<'a> {
         closure.push(id);
         w.idx.closure = closure;
         w.idx
+    }
+}
+
+/// The imports at the head of the bodies of the top-level `fn`, `macro fn`,
+/// `theorem` and `def` declarations: where each body starts, and what it imports.
+fn find_body_imports(cst: &Cst, src: &str, id: NodeId, out: &mut Vec<(u32, Vec<(String, bool)>)>) {
+    for c in cst.children(id) {
+        match cst.non_terminal(c) {
+            Some(Nt::FnDecl | Nt::TheoremDecl | Nt::DefDecl | Nt::MacroFnDecl) => {
+                if let Some(block) = first_block(cst, c) {
+                    let mut paths = Vec::new();
+                    find_imports(cst, src, block, &mut paths);
+                    if !paths.is_empty() {
+                        out.push((cst.span(block).start, paths));
+                    }
+                }
+            }
+            Some(Nt::Root | Nt::Stmts | Nt::StmtsTail | Nt::Stmt | Nt::OtherStmt | Nt::Program) => {
+                find_body_imports(cst, src, c, out)
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The body of a declaration: the block of a `fn` or `theorem`, the block a `def`'s
+/// value is written as.
+fn first_block(cst: &Cst, id: NodeId) -> Option<NodeId> {
+    let kids: Vec<NodeId> = cst.children(id);
+    match cst.non_terminal(id) {
+        Some(Nt::MacroFnDecl) => kids
+            .into_iter()
+            .find(|c| cst.non_terminal(*c) == Some(Nt::FnDecl))
+            .and_then(|f| first_block(cst, f)),
+        Some(Nt::DefDecl) => {
+            let value = *kids.last()?;
+            block_within(cst, value)
+        }
+        _ => kids
+            .into_iter()
+            .find(|c| cst.non_terminal(*c) == Some(Nt::Block)),
+    }
+}
+
+/// The first block along the leftmost path down from `id`: the block a value is.
+fn block_within(cst: &Cst, id: NodeId) -> Option<NodeId> {
+    if cst.non_terminal(id) == Some(Nt::Block) {
+        return Some(id);
+    }
+    let only: Vec<NodeId> = cst
+        .children(id)
+        .into_iter()
+        .filter(|c| cst.non_terminal(*c).is_some())
+        .collect();
+    match only.as_slice() {
+        [one] => block_within(cst, *one),
+        _ => None,
     }
 }
 
@@ -364,7 +507,7 @@ fn find_imports(cst: &Cst, src: &str, id: NodeId, out: &mut Vec<(String, bool)>)
                         _ => {}
                     }
                 }
-                // `import std::List`, as the loader spells it.
+                // `import std::list`, as the loader spells it.
                 if !names.is_empty() {
                     out.push((names.join("::"), true));
                 }
@@ -390,6 +533,9 @@ struct Walk<'w, 'a> {
     node_def: HashMap<NodeId, usize>,
     /// Inside a `quote`: names are not resolved.
     quoting: u32,
+    /// By where its body starts, what a declaration that imports at the head of its
+    /// body sees besides the file's globals.
+    bodies: HashMap<u32, HashMap<String, DefId>>,
 }
 
 const KEYWORDS: &[&str] = &[
@@ -420,6 +566,7 @@ const KEYWORDS: &[&str] = &[
     "false",
     "decreasing_by",
     "opaque",
+    "ghost",
     "eqn",
 ];
 
@@ -531,7 +678,8 @@ impl Walk<'_, '_> {
         for c in self.kids(id) {
             match self.nt(c) {
                 Some(Nt::Ident) => return self.ident(c),
-                Some(Nt::FnName) => return self.name_of(c),
+                // `FnName` and `BindName` wrap the `Ident` (a `^` before it is not the name).
+                Some(Nt::FnName | Nt::BindName) => return self.name_of(c),
                 _ => {}
             }
         }
@@ -788,7 +936,11 @@ impl Walk<'_, '_> {
 
     /// The statements of a block in the current frame.
     fn stmts_in_frame(&mut self, stmts: NodeId) {
-        let nodes = self.stmt_nodes(stmts);
+        let raw = self.list(stmts, Nt::Stmt, Nt::StmtsTail);
+        for n in &raw {
+            self.note_generates(*n);
+        }
+        let nodes: Vec<NodeId> = raw.into_iter().map(|s| self.inner(s)).collect();
         for n in &nodes {
             self.hoist(*n);
         }
@@ -797,7 +949,166 @@ impl Walk<'_, '_> {
         }
     }
 
+    /// Names a statement lists after `=>` on a macro call: `mk!(0) => fn left, fn right`
+    /// and `@ann!(0) => fn extra` on the line before a declaration.
+    fn note_generates(&mut self, stmt: NodeId) {
+        self.note_leading(stmt);
+    }
+
+    fn note_leading(&mut self, id: NodeId) {
+        for c in self.kids(id) {
+            match self.nt(c) {
+                Some(Nt::Attribute) => self.note_attribute(c),
+                Some(Nt::OtherStmt | Nt::ExprStmt) => self.note_body(c),
+                Some(Nt::StmtList | Nt::StmtOpt) => self.note_leading(c),
+                _ => {}
+            }
+        }
+    }
+
+    fn note_body(&mut self, id: NodeId) {
+        match self.nt(id) {
+            Some(Nt::OtherStmt) => {
+                for c in self.kids(id) {
+                    self.note_body(c);
+                }
+            }
+            Some(Nt::ExprStmt) => {
+                for e in self.all(id, Nt::Expr) {
+                    self.note_expr(e);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn note_attribute(&mut self, attr: NodeId) {
+        let Some(call) = self.first(attr, Nt::MacroCall) else {
+            return;
+        };
+        self.scan_call_exprs(call);
+        let Some(list) = self.first(attr, Nt::AttrGenerates) else {
+            return;
+        };
+        let mut gens = Vec::new();
+        self.collect_generated(list, &mut gens);
+        // The expansion is stored at the attribute, which begins at `@`.
+        // The call node begins at the macro's name, after that `@`.
+        let call = self.cst.span(attr);
+        for g in gens {
+            self.note_one_generated(g, call);
+        }
+    }
+
+    /// `call => fn a, theorem b` written as an expression. A macro call inside an
+    /// argument is its own expression, so its list is not this call's.
+    fn note_expr(&mut self, expr: NodeId) {
+        let mut calls = Vec::new();
+        let mut gens = Vec::new();
+        self.collect_generated_call(expr, &mut calls, &mut gens);
+        let Some(call) = calls
+            .iter()
+            .map(|c| self.cst.span(*c))
+            .min_by_key(|s| s.start)
+        else {
+            return;
+        };
+        for g in gens {
+            self.note_one_generated(g, call);
+        }
+    }
+
+    fn collect_generated_call(
+        &mut self,
+        id: NodeId,
+        calls: &mut Vec<NodeId>,
+        gens: &mut Vec<NodeId>,
+    ) {
+        for c in self.kids(id) {
+            match self.nt(c) {
+                Some(Nt::MacroCall) => {
+                    calls.push(c);
+                    self.scan_call_exprs(c);
+                }
+                Some(Nt::Generated) => gens.push(c),
+                Some(Nt::Expr) => self.note_expr(c),
+                Some(_) => self.collect_generated_call(c, calls, gens),
+                None => {}
+            }
+        }
+    }
+
+    fn scan_call_exprs(&mut self, id: NodeId) {
+        for c in self.kids(id) {
+            match self.nt(c) {
+                Some(Nt::Expr) => self.note_expr(c),
+                Some(_) => self.scan_call_exprs(c),
+                None => {}
+            }
+        }
+    }
+
+    fn collect_generated(&self, id: NodeId, out: &mut Vec<NodeId>) {
+        for c in self.kids(id) {
+            if self.nt(c) == Some(Nt::Generated) {
+                out.push(c);
+            } else if self.nt(c).is_some() {
+                self.collect_generated(c, out);
+            }
+        }
+    }
+
+    fn note_one_generated(&mut self, generated: NodeId, call: Span) {
+        let Some(kind_node) = self.first(generated, Nt::GeneratedKind) else {
+            return;
+        };
+        let Some((_, kind_span)) = self.cst.token(kind_node) else {
+            return;
+        };
+        let kind = self.text(kind_span).to_string();
+        let Some(ident) = self.first(generated, Nt::Ident) else {
+            return;
+        };
+        let Some((name, span)) = self.ident(ident) else {
+            return;
+        };
+        if kind.is_empty() || name.is_empty() {
+            return;
+        }
+        self.idx.generated_names.push(GeneratedName {
+            span,
+            kind,
+            name,
+            call,
+        });
+    }
+
+    /// The body of a declaration: where it imports at its head, it sees what those
+    /// imports bring besides the file's globals. A name both bring as different
+    /// declarations is ambiguous, and names none.
     fn block(&mut self, block: NodeId) {
+        let at = self.cst.span(block).start;
+        let Some(seen) = self.bodies.remove(&at) else {
+            return self.plain_block(block);
+        };
+        let before = self.globals.clone();
+        for (name, def) in seen {
+            match self.globals.get(&name) {
+                Some(d) if *d != def => {
+                    self.globals.remove(&name);
+                }
+                Some(_) => {}
+                None if before.contains_key(&name) => {}
+                None => {
+                    self.globals.insert(name, def);
+                }
+            }
+        }
+        self.plain_block(block);
+        self.globals = before;
+    }
+
+    fn plain_block(&mut self, block: NodeId) {
         self.frames.push(HashMap::new());
         if let Some(stmts) = self.first(block, Nt::Stmts) {
             self.stmts_in_frame(stmts);
@@ -877,14 +1188,6 @@ impl Walk<'_, '_> {
         let d = self.new_def(name, kind, span, sig);
         self.node_def.insert(n, d);
         d
-    }
-
-    fn hoist_simple(&mut self, n: NodeId, kind: Kind, stop: &[Nt]) {
-        if let Some((name, span)) = self.name_of(n) {
-            let sig = self.header(n, stop);
-            let d = self.def_once(n, &name, kind, span, sig);
-            self.declare(&name, d);
-        }
     }
 
     fn hoist_callable(&mut self, n: NodeId, kind: Kind, stop: &[Nt]) -> Option<usize> {
@@ -1087,6 +1390,12 @@ impl Walk<'_, '_> {
     fn stmt(&mut self, n: NodeId) {
         let Some(kind) = self.nt(n) else { return };
         match kind {
+            Nt::LetDecl
+                if self.first(n, Nt::LetPattern).is_some()
+                    || self.first(n, Nt::PatternArgs).is_some() =>
+            {
+                self.let_pat_decl(n)
+            }
             Nt::LetDecl | Nt::VarDecl => self.let_decl(n),
             Nt::FnDecl | Nt::ExternFn => self.callable(n, None),
             Nt::TheoremDecl | Nt::AxiomDecl | Nt::DefDecl | Nt::LawDecl => self.callable(n, None),
@@ -1152,6 +1461,22 @@ impl Walk<'_, '_> {
         }
     }
 
+    /// `let C(a, b) := v`: what the pattern binds is visible after it, as the
+    /// arm of the `match` it is.
+    fn let_pat_decl(&mut self, n: NodeId) {
+        if let Some(t) = self.ty(n) {
+            self.walk(t);
+        }
+        let value = self.first(n, Nt::Expr);
+        if let Some(v) = value {
+            self.walk(v);
+        }
+        let site = value.map(|v| self.cst.span(v).start);
+        if self.first(n, Nt::LetPattern).is_none() {
+            self.path_pattern(n, site);
+        }
+    }
+
     /// A function, theorem, definition or law: its generics and parameters
     /// are visible to the rest of the signature and to the body.
     /// `instance_of` is the class when this is a method an instance gives.
@@ -1193,7 +1518,7 @@ impl Walk<'_, '_> {
             if let Some(kind) = self.first(gen_, Nt::GenericKind)
                 && !matches!(
                     self.text(self.cst.span(kind)).trim(),
-                    "shared" | "linear" | "affine" | "copy" | "view"
+                    "shared" | "linear" | "affine" | "copy"
                 )
             {
                 self.walk(kind);
@@ -1389,14 +1714,6 @@ impl Walk<'_, '_> {
             }
             Nt::MatchExpr => self.match_expr(n),
             Nt::HandleExpr => self.handle(n),
-            Nt::BudgetExpr => {
-                // `budget(steps: n) { … }`: `steps` is a word of the form.
-                for c in self.kids(n) {
-                    if matches!(self.nt(c), Some(Nt::Expr | Nt::Block)) {
-                        self.walk(c);
-                    }
-                }
-            }
             Nt::MacroCall => self.macro_call(n),
             Nt::QuoteExpr => self.quote(n),
             Nt::SyntaxLit => self.syntax_lit(n),
@@ -1684,7 +2001,7 @@ impl Walk<'_, '_> {
         }
     }
 
-    /// The parameters of `(x: A, &y: B) -> C`: opens the scope of the names; the caller closes it.
+    /// The parameters of `(x: A, y: &B) -> C`: opens the scope of the names; the caller closes it.
     fn arrow_params(&mut self, paren: NodeId) {
         self.frames.push(HashMap::new());
         for item in self.all(paren, Nt::Item) {
@@ -1734,7 +2051,8 @@ impl Walk<'_, '_> {
         for c in self.kids(arm) {
             match self.nt(c) {
                 Some(Nt::Pattern) => self.pattern(c, site),
-                Some(Nt::Cond | Nt::ArmBody) => self.walk(c),
+                // The type of `y: T =>` names types, not what the arm binds.
+                Some(Nt::Cond | Nt::ArmBody | Nt::ArmType) => self.walk(c),
                 _ => {}
             }
         }
@@ -1919,7 +2237,14 @@ impl Walk<'_, '_> {
                     let span = Span::new(whole.start, whole.end - 1);
                     self.reference(span, &name);
                 }
-                Some(Nt::Expr) => self.walk(c),
+                Some(Nt::Expr | Nt::SyntaxLit) => self.walk(c),
+                Some(Nt::MacroCallGroup) => {
+                    for g in self.kids(c) {
+                        if matches!(self.nt(g), Some(Nt::Expr | Nt::SyntaxLit)) {
+                            self.walk(g);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -1940,7 +2265,7 @@ impl Walk<'_, '_> {
         let skipped = (text.len() - lead.len()) as u32;
         let name: String = lead
             .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .take_while(|c| tauto_parol::unicode::is_ident_continue(*c))
             .collect();
         if !name.is_empty()
             && let Some(d) = self.lookup(&format!("syntax {name}"))
@@ -2031,7 +2356,7 @@ impl Walk<'_, '_> {
 
 /// The identifier-like words of a text.
 pub fn words(text: &str) -> impl Iterator<Item = &str> {
-    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+    text.split(|c: char| !tauto_parol::unicode::is_ident_continue(c))
         .filter(|w| !w.is_empty())
 }
 
@@ -2040,7 +2365,7 @@ fn words_at(text: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     let mut start = None;
     for (i, c) in text.char_indices() {
-        let word = c.is_alphanumeric() || c == '_';
+        let word = tauto_parol::unicode::is_ident_continue(c);
         match (word, start) {
             (true, None) => start = Some(i),
             (false, Some(s)) => {

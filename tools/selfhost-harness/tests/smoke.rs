@@ -72,7 +72,7 @@ fn the_corpus_has_each_kind_of_input_once() {
     let has = |prefix: &str| corpus.iter().any(|(n, _)| n.starts_with(prefix));
     assert!(has("std/"));
     assert!(has("meta/"));
-    assert!(has("std/prelude/Std.taut"));
+    assert!(has("std/prelude/std.taut"));
     assert!(has("cases/eval/basics.eure#"));
     assert!(has("cases/check/proofs.eure#"));
     // The files of the language come before the cases.

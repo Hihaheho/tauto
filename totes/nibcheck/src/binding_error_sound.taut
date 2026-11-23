@@ -1,13 +1,16 @@
+import "messages.taut"
 import "binding_frame.taut"
 import "application_frame.taut"
 import "argument_error_sound.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "error_frame.taut"
 import "expr_checks_error_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "written_error_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -18,17 +21,17 @@ pub theorem binding_let_mode_frame_errors(
   value: SurfaceTerm,
   bm: Bool
 ): CkErrorFrame(c, binding_let_mode(c, name, resolved, value, bm)) {
-  ⊢ CkErrorFrame(c, binding_let_mode(c, name, resolved, value, bm)) from match bm {
+  match bm {
     true => error_frame_rewrap(
       c,
       ck_error(
         c,
-        cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
+        let_mut_borrow_binds_return_message(name),
         span_of(value)
       ),
       ck_error_frame_errors(
         c,
-        cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
+        let_mut_borrow_binds_return_message(name),
         span_of(value)
       )
     )
@@ -36,12 +39,12 @@ pub theorem binding_let_mode_frame_errors(
       c,
       ck_error(
         c,
-        cat3("`let &", name, "` binds what a function returns as `-> &A`"),
+        let_borrow_binds_return_message(name),
         span_of(value)
       ),
       ck_error_frame_errors(
         c,
-        cat3("`let &", name, "` binds what a function returns as `-> &A`"),
+        let_borrow_binds_return_message(name),
         span_of(value)
       )
     )
@@ -54,12 +57,12 @@ pub theorem binding_let_view_frame_errors(
   bm: Bool,
   resolved: Ty,
   value: SurfaceTerm,
-  r#view: Bool
-): CkErrorFrame(c, binding_let_view(c, name, bm, resolved, value, r#view)) {
-  ⊢ CkErrorFrame(c, binding_let_view(c, name, bm, resolved, value, r#view)) from match r#view {
+  view: Bool
+): CkErrorFrame(c, binding_let_view(c, name, bm, resolved, value, view)) {
+  match view {
     true => frame_error_if_ok_errors(
       c,
-      cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
+      let_mut_borrow_binds_return_message(name),
       span_of(value),
       Bool::and(bm, not(ck_has_mut_borrow(c, resolved)))
     )
@@ -70,15 +73,15 @@ pub theorem binding_let_view_frame_errors(
 pub theorem ck_let_borrow_frame_errors(
   c: Checker,
   name: Text,
-  r#view: Bool,
+  view: Bool,
   bm: Bool,
   resolved: Ty,
   value: SurfaceTerm
-): CkErrorFrame(c, ck_let_borrow(c, name, r#view, bm, resolved, value)) {
+): CkErrorFrame(c, ck_let_borrow(c, name, view, bm, resolved, value)) {
   Eq::subst(
     (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
-    Eq::sym(binding_let_borrow_unf(c, name, r#view, bm, resolved, value)),
-    binding_let_view_frame_errors(c, name, bm, resolved, value, r#view)
+    Eq::sym(binding_let_borrow_unf(c, name, view, bm, resolved, value)),
+    binding_let_view_frame_errors(c, name, bm, resolved, value, view)
   )
 }
 
@@ -89,18 +92,10 @@ pub theorem binding_stored_borrow_frame_errors(
   resolved: Ty,
   value: SurfaceTerm,
   p: Ty,
-  borrow: Bool
-): CkErrorFrame(c, binding_stored_borrow(c, name, t, resolved, value, p, borrow)) {
-  ⊢ CkErrorFrame(c, binding_stored_borrow(c, name, t, resolved, value, p, borrow)) from match borrow {
-    true => error_frame_bind(
-      Unit,
-      Ty,
-      c,
-      (ignored: Unit, c1: Checker) => mut1(t, c1),
-      ck_stored_borrow(c, name, resolved, value),
-      ck_stored_borrow_frame_errors(c, name, resolved, value),
-      ignored => c1 => (clean_errors => clean_errors)
-    )
+  r#borrow: Bool
+): CkErrorFrame(c, binding_stored_borrow(c, name, t, resolved, value, p, r#borrow)) {
+  match r#borrow {
+    true => (clean_errors => clean_errors)
     false => (clean_errors => clean_errors)
   }
 }
@@ -113,16 +108,8 @@ pub theorem binding_stored_found_frame_errors(
   value: SurfaceTerm,
   found: Option(Ty)
 ): CkErrorFrame(c, binding_stored_found(c, name, t, resolved, value, found)) {
-  ⊢ CkErrorFrame(c, binding_stored_found(c, name, t, resolved, value, found)) from match found {
-    None => error_frame_bind(
-      Unit,
-      Ty,
-      c,
-      (ignored: Unit, c1: Checker) => mut1(t, c1),
-      ck_stored_borrow(c, name, resolved, value),
-      ck_stored_borrow_frame_errors(c, name, resolved, value),
-      ignored => c1 => (clean_errors => clean_errors)
-    )
+  match found {
+    None => (clean_errors => clean_errors)
     Some(p) => binding_stored_borrow_frame_errors(
       c,
       name,
@@ -143,7 +130,7 @@ pub theorem binding_stored_frame_errors(
   value: SurfaceTerm,
   stored: Bool
 ): CkErrorFrame(c, binding_stored(c, name, t, resolved, value, stored)) {
-  ⊢ CkErrorFrame(c, binding_stored(c, name, t, resolved, value, stored)) from match stored {
+  match stored {
     true => binding_stored_found_frame_errors(
       c,
       name,
@@ -175,32 +162,14 @@ pub theorem binding_var_view_frame_errors(
   c: Checker,
   name: Text,
   resolved: Ty,
-  value: SurfaceTerm,
-  r#view: Bool
-): CkErrorFrame(c, binding_var_view(c, name, resolved, value, r#view)) {
-  ⊢ CkErrorFrame(c, binding_var_view(c, name, resolved, value, r#view)) from match r#view {
-    true => error_frame_rewrap(
+  value: SurfaceTerm
+): CkErrorFrame(c, binding_var_view(c, name, resolved, value)) {
+  frame_error_if_ok_errors(
       c,
-      ck_error(c, cat3("a borrow cannot be stored in `var ", name, "`"), span_of(value)),
-      ck_error_frame_errors(
-        c,
-        cat3("a borrow cannot be stored in `var ", name, "`"),
-        span_of(value)
-      )
-    )
-    false => frame_error_if_ok_errors(
-      c,
-      cat5(
-        "a var cannot hold a linear value: `",
-        name,
-        "` is ",
-        ty_show(ck_shown(c, resolved)),
-        ""
-      ),
+      var_holds_linear_message(name, ty_show(ck_shown(c, resolved))),
       span_of(value),
       kind_eq(ck_kind(c, resolved), KindLinear)
     )
-  }
 }
 
 pub theorem binding_var_mode_frame_errors(
@@ -210,14 +179,14 @@ pub theorem binding_var_mode_frame_errors(
   value: SurfaceTerm,
   vb: Bool
 ): CkErrorFrame(c, binding_var_mode(c, name, resolved, value, vb)) {
-  ⊢ CkErrorFrame(c, binding_var_mode(c, name, resolved, value, vb)) from match vb {
+  match vb {
     true => frame_error_if_ok_errors(
       c,
-      cat3("`var &", name, "` binds what a function returns as a view"),
+      var_borrow_binds_view_message(name),
       span_of(value),
       not(ck_is_view(c, resolved))
     )
-    false => binding_var_view_frame_errors(c, name, resolved, value, ck_is_view(c, resolved))
+    false => binding_var_view_frame_errors(c, name, resolved, value)
   }
 }
 

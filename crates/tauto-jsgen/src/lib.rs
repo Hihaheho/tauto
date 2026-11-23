@@ -5,73 +5,16 @@ use tauto_nir::*;
 pub const NODE_OPTIONS: &str = include_str!("node_options.js");
 mod borrowed_returns;
 
-/// The functions of `Float` and `Float32` (`std/prelude/Num.taut`): pure, and computed by
+/// The functions of `Float` and `Float32` (`std/prelude/num.taut`): pure, and computed by
 /// `pureBuiltin` (`builtins.js`) with `float.js`.
-pub(crate) const FLOAT_BUILTINS: &[&str] = &[
-    "Float::of_i64",
-    "I64::of_float",
-    "Float::of_text",
-    "Text::of_float",
-    "Float::bits",
-    "Float::of_bits",
-    "Float::is_nan",
-    "Float::abs",
-    "Float::floor",
-    "Float::ceil",
-    "Float::trunc",
-    "Float::round",
-    "Float::sqrt",
-    "Float::cbrt",
-    "Float::exp",
-    "Float::ln",
-    "Float::log2",
-    "Float::log10",
-    "Float::pow",
-    "Float::sin",
-    "Float::cos",
-    "Float::tan",
-    "Float::asin",
-    "Float::acos",
-    "Float::atan",
-    "Float::atan2",
-    "Float::sinh",
-    "Float::cosh",
-    "Float::tanh",
-    "Float32::of_float",
-    "Float::of_float32",
-    "Float32::bits",
-    "Float32::of_bits",
-    "Float32::is_nan",
-    "Float32::abs",
-    "Float32::floor",
-    "Float32::ceil",
-    "Float32::trunc",
-    "Float32::round",
-    "Float32::sqrt",
-    "Float32::cbrt",
-    "Float32::exp",
-    "Float32::ln",
-    "Float32::log2",
-    "Float32::log10",
-    "Float32::pow",
-    "Float32::sin",
-    "Float32::cos",
-    "Float32::tan",
-    "Float32::asin",
-    "Float32::acos",
-    "Float32::atan",
-    "Float32::atan2",
-    "Float32::sinh",
-    "Float32::cosh",
-    "Float32::tanh",
-];
+pub(crate) use tauto_nir::builtins::FLOAT as FLOAT_BUILTINS;
 mod chunks;
 mod cps;
 mod declarations;
 mod direct;
 mod shake;
 mod syntax;
-mod tail_calls;
+mod synvalue;
 pub use cps::{Modules, Options, generate, generate_modules, generate_with};
 pub use declarations::{generate_declarations, generate_declarations_with};
 type R<T> = Result<T, String>;
@@ -85,10 +28,14 @@ fn bounds(w: Width) -> String {
     let (min, max) = match w {
         // A `nat` has no largest value.
         Width::Nat => return "0n,Infinity".into(),
+        Width::W8 => (i8::MIN as i128, i8::MAX as i128),
+        Width::W16 => (i16::MIN as i128, i16::MAX as i128),
+        Width::U16 => (0, u16::MAX as i128),
         Width::W32 => (i32::MIN as i128, i32::MAX as i128),
         Width::W64 => (i64::MIN as i128, i64::MAX as i128),
         Width::U8 => (0, u8::MAX as i128),
-        Width::U32 => (0, u32::MAX as i128),
+        // `uhost` is the 32-bit word of JavaScript (`docs/design/host-effects.md`).
+        Width::U32 | Width::Host => (0, u32::MAX as i128),
         Width::U64 => (0, u64::MAX as i128),
     };
     format!("{min}n,{max}n")
@@ -170,6 +117,7 @@ mod identity_tests {
             linear: false,
             view: false,
             host: false,
+            shown: String::new(),
         };
         let first = Name::Global(tauto::identity::DeclRef::fresh("Shape"));
         let second = Name::Global(tauto::identity::DeclRef::fresh("Shape"));
@@ -206,4 +154,11 @@ mod identity_tests {
             "Pair"
         );
     }
+}
+
+/// The tables the Tauto backend (`totes/jsgen`) keeps a copy of.
+pub mod tables {
+    pub use crate::cps::BUILTINS;
+    pub use crate::declarations::PRELUDE;
+    pub use crate::syntax::{RUNTIME as SYNTAX_RUNTIME, synrun_constructor, synrun_script};
 }

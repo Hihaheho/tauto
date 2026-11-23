@@ -1,0 +1,1474 @@
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import "names.taut"
+import "walk.taut"
+import "cps.taut"
+import std::text
+import std::base
+import std::indexed_map { IndexedMap }
+
+// A function body in continuation-passing style (`tauto_nir::cps::lower`),
+// with what the printer needs of the package decided here: the symbols of
+// constructors and operations, the builtins the runtime has, the parsers.
+
+pub(open) struct JlLocal { storage: Nat, ty: Option(NTy) }
+
+pub(open) struct JlState {
+  pkg: NPackage,
+  spellings: List(Text),
+  locals: IndexedMap(Nat, JlLocal),
+  continuations: IndexedMap(Nat, Bool),
+  restart: Bool,
+  // The first thing the lowering does not write (`cps::lower`'s error).
+  error: Option(Text),
+  // The first thing the printer does not write.
+  print_error: Option(Text)
+}
+
+pub fn jl_fail(st: &mut JlState, what: Text): Unit {
+  match st.error {
+    Some(^e) => ()
+    None => { st.error := Some(what) }
+  }
+}
+
+pub fn jl_print_fail(st: &mut JlState, what: Text): Unit {
+  match st.print_error {
+    Some(^e) => ()
+    None => { st.print_error := Some(js_unsupported(what)) }
+  }
+}
+
+pub fn jl_pure(v: JsValue): JsCps { JcPure(v) }
+
+// --- What a body binds -----------------------------------------------------
+
+pub fn jl_bind_pattern(locals: &mut IndexedMap(Nat, JlLocal), p: NPat): Unit {
+  match p {
+    NBind(l, t) => { IndexedMap::insert(locals, l.id, JlLocal { storage: js_storage(l.repr), ty: Some(t) }); () }
+    NCtorPat(^c, fields) => jl_bind_patterns(locals, fields)
+    NInjectPat(^u, ^k, q) => jl_bind_pattern(locals, q)
+    NWild => ()
+    NIntPat(^s, ^n) => ()
+    NNatPat(^n) => ()
+    NBoolPat(^b) => ()
+    NTextPat(^t) => ()
+  }
+}
+
+pub fn jl_bind_patterns(locals: &mut IndexedMap(Nat, JlLocal), ps: List(NPat)): Unit {
+  match ps {
+    Nil => ()
+    Cons(p, rest) => {
+      jl_bind_pattern(locals, p)
+      jl_bind_patterns(locals, rest)
+    }
+  }
+}
+
+pub fn jl_bind_stmts(locals: &mut IndexedMap(Nat, JlLocal), ss: List(NStmt)): Unit {
+  match ss {
+    Nil => ()
+    Cons(s, rest) => {
+      match s {
+        NLet(l, t, ^init, ^stack) => { IndexedMap::insert(locals, l.id, JlLocal { storage: js_storage(l.repr), ty: Some(t) }); () }
+        NVar(l, t, ^init) => { IndexedMap::insert(locals, l.id, JlLocal { storage: js_storage(l.repr), ty: Some(t) }); () }
+        NAssign(^p, ^v) => ()
+        NExprStmt(^x) => ()
+        NWhile(^c, ^b, ^t) => ()
+        NReturn(^v) => ()
+      }
+      jl_bind_stmts(locals, rest)
+    }
+  }
+}
+
+pub fn jl_bind_params(locals: &mut IndexedMap(Nat, JlLocal), ps: List(NParam)): Unit {
+  match ps {
+    Nil => ()
+    Cons(p, rest) => {
+      IndexedMap::insert(locals, p.local.id, JlLocal { storage: js_storage(p.local.repr), ty: Some(p.ty) })
+      jl_bind_params(locals, rest)
+    }
+  }
+}
+
+pub fn jl_bind_refs(locals: &mut IndexedMap(Nat, JlLocal), rs: List(NCapturedRef)): Unit {
+  match rs {
+    Nil => ()
+    Cons(r, rest) => {
+      IndexedMap::insert(locals, r.inner.id, JlLocal { storage: js_storage(r.inner.repr), ty: None })
+      jl_bind_refs(locals, rest)
+    }
+  }
+}
+
+pub fn jl_bind_arms(locals: &mut IndexedMap(Nat, JlLocal), arms: List(NArm)): Unit {
+  match arms {
+    Nil => ()
+    Cons(a, rest) => {
+      jl_bind_pattern(locals, a.pat)
+      jl_bind_arms(locals, rest)
+    }
+  }
+}
+
+pub fn jl_bind_op_arms(locals: &mut IndexedMap(Nat, JlLocal), conts: &mut IndexedMap(Nat, Bool), arms: List(NOpArm)): Unit {
+  match arms {
+    Nil => ()
+    Cons(a, rest) => {
+      jl_bind_patterns(locals, a.pats)
+      match a.k {
+        Some(k) => { IndexedMap::insert(conts, k.id, true); () }
+        None => ()
+      }
+      jl_bind_op_arms(locals, conts, rest)
+    }
+  }
+}
+
+// The locals `e` binds and the continuations its arms are given
+// (`expression_bindings`).
+pub fn jl_bindings(locals: &mut IndexedMap(Nat, JlLocal), conts: &mut IndexedMap(Nat, Bool), e: NExpr): Unit ! {div} {
+  jl_bindings_each(locals, conts, jw_all(e, true))
+}
+
+pub fn jl_bindings_each(locals: &mut IndexedMap(Nat, JlLocal), conts: &mut IndexedMap(Nat, Bool), es: List(NExpr)): Unit {
+  match es {
+    Nil => ()
+    Cons(x, rest) => {
+      match x.kind {
+        NBlockOf(b) => jl_bind_stmts(locals, b.stmts)
+        NClosureOf(c) => {
+          jl_bind_params(locals, c.params)
+          jl_bind_refs(locals, c.refs)
+        }
+        NMatchOf(m) => jl_bind_arms(locals, m.arms)
+        NHandleOf(h) => {
+          match h.ret {
+            Some(r) => jl_bind_pattern(locals, r.pat)
+            None => ()
+          }
+          jl_bind_op_arms(locals, conts, h.arms)
+        }
+        NUnitLit => ()
+        NIntLit(^s, ^n) => ()
+        NBoolLit(^b) => ()
+        NFloatLit(^t) => ()
+        NTextLit(^t) => ()
+        NDeclaration(^n) => ()
+        NFnValue(^i, ^ts) => ()
+        NBudgetOf(^b) => ()
+        NInject(^u, ^m, ^v) => ()
+        NRemap(^u, ^t, ^v) => ()
+        NFnCast(^v) => ()
+        NRead(^l, ^h) => ()
+        NBorrow(^p) => ()
+        NBorrowMut(^p) => ()
+        NTempRef(^v) => ()
+        NDeref(^v, ^h) => ()
+        NFieldOf(^b, ^f, ^h, ^i) => ()
+        NArithOf(^o, ^t, ^a) => ()
+        NCmpOf(^o, ^a) => ()
+        NEqOf(^n, ^a) => ()
+        NNot(^v) => ()
+        NAnd(^a, ^b) => ()
+        NOr(^a, ^b) => ()
+        NIf(^c, ^t, ^o) => ()
+        NCtorOf(^c, ^a) => ()
+        NCallOf(^c) => ()
+        NShownOf(^v) => ()
+        NPerformOf(^p) => ()
+        NUnreachable(^v) => ()
+      }
+      jl_bindings_each(locals, conts, rest)
+    }
+  }
+}
+
+// --- What a body names -----------------------------------------------------
+
+pub fn jl_insert_sorted(xs: List(Nat), x: Nat): List(Nat) {
+  match xs {
+    Nil => [x]
+    Cons(y, rest) => if x == y { xs } else if x < y { Cons(x, xs) } else { Cons(y, jl_insert_sorted(rest, x)) }
+  }
+}
+
+pub fn jl_insert_locals(set: List(Nat), ls: List(NLocal)): List(Nat) {
+  match ls {
+    Nil => set
+    Cons(l, rest) => jl_insert_locals(jl_insert_sorted(set, l.id), rest)
+  }
+}
+
+pub fn jl_insert_ref_outers(set: List(Nat), rs: List(NCapturedRef)): List(Nat) {
+  match rs {
+    Nil => set
+    Cons(r, rest) => jl_insert_ref_outers(jl_insert_sorted(set, r.outer.id), rest)
+  }
+}
+
+pub fn jl_insert_assigned(set: List(Nat), ss: List(NStmt)): List(Nat) {
+  match ss {
+    Nil => set
+    Cons(s, rest) => jl_insert_assigned(match s {
+      NAssign(p, ^v) => jl_insert_sorted(set, p.local.id)
+      NLet(^l, ^t, ^i, ^st) => set
+      NVar(^l, ^t, ^i) => set
+      NExprStmt(^x) => set
+      NWhile(^c, ^b, ^t) => set
+      NReturn(^v) => set
+    }, rest)
+  }
+}
+
+// The locals `e` reads, borrows, calls or assigns, ascending
+// (`referenced_locals`).
+pub fn jl_referenced(e: NExpr): List(Nat) ! {div} { jl_referenced_each(Nil, jw_all(e, true)) }
+
+pub fn jl_referenced_each(set: List(Nat), es: List(NExpr)): List(Nat) {
+  match es {
+    Nil => set
+    Cons(x, rest) => jl_referenced_each(match x.kind {
+      NBorrow(p) => jl_insert_sorted(set, p.local.id)
+      NBorrowMut(p) => jl_insert_sorted(set, p.local.id)
+      NRead(l, ^h) => jl_insert_sorted(set, l.id)
+      NCallOf(c) => match c.callee {
+        NCallLocal(l) => jl_insert_sorted(set, l.id)
+        NCallCont(l) => jl_insert_sorted(set, l.id)
+        NCallInst(^i) => set
+        NCallBuiltin(^n) => set
+        NCallExtern(^n) => set
+        NCallValue(^v) => set
+      }
+      NClosureOf(c) => jl_insert_ref_outers(jl_insert_locals(set, c.clones), c.refs)
+      NBlockOf(b) => jl_insert_assigned(set, b.stmts)
+      NUnitLit => set
+      NIntLit(^s, ^n) => set
+      NBoolLit(^b) => set
+      NFloatLit(^t) => set
+      NTextLit(^t) => set
+      NDeclaration(^n) => set
+      NFnValue(^i, ^ts) => set
+      NHandleOf(^h) => set
+      NBudgetOf(^b) => set
+      NInject(^u, ^m, ^v) => set
+      NRemap(^u, ^t, ^v) => set
+      NFnCast(^v) => set
+      NTempRef(^v) => set
+      NDeref(^v, ^h) => set
+      NFieldOf(^b, ^f, ^h, ^i) => set
+      NArithOf(^o, ^t, ^a) => set
+      NCmpOf(^o, ^a) => set
+      NEqOf(^n, ^a) => set
+      NNot(^v) => set
+      NAnd(^a, ^b) => set
+      NOr(^a, ^b) => set
+      NIf(^c, ^t, ^o) => set
+      NCtorOf(^c, ^a) => set
+      NMatchOf(^m) => set
+      NShownOf(^v) => set
+      NPerformOf(^p) => set
+      NUnreachable(^v) => set
+    }, rest)
+  }
+}
+
+pub fn jl_active(m: &IndexedMap(Text, Bool), k: Text): Bool {
+  match IndexedMap::get(m, &k) {
+    Some(b) => b
+    None => false
+  }
+}
+
+pub fn jl_bound(m: &IndexedMap(Nat, JlLocal), k: Nat): Bool {
+  match IndexedMap::get(m, &k) {
+    Some(^b) => true
+    None => false
+  }
+}
+
+pub fn jl_cont(m: &IndexedMap(Nat, Bool), k: Nat): Bool {
+  match IndexedMap::get(m, &k) {
+    Some(^b) => true
+    None => false
+  }
+}
+
+// --- Types -----------------------------------------------------------------
+
+pub fn jl_fn_kind(t: NTy): Option(Text) {
+  match t {
+    NFn(^ps, ^r, kind, ^tier) => Some(kind)
+    NInt(^w) => None
+    NBool => None
+    NText => None
+    NUnit => None
+    NNever => None
+    NFloat => None
+    NFloat32 => None
+    NBuf => None
+    NShown => None
+    NVec(^a) => None
+    NArray(^a) => None
+    NSlice(^a) => None
+    NOption(^a) => None
+    NInfo(^a) => None
+    NBudgetAnswer(^a) => None
+    NResult(^a, ^b) => None
+    NPair(^a, ^b) => None
+    NSharedVar(^c, ^a) => None
+    NStd(^n, ^a) => None
+    NUnion(^n) => None
+    NRef(^a) => None
+    NRefMut(^a) => None
+    NData(^n, ^a) => None
+    NParam(^n) => None
+  }
+}
+
+// A field a constructor's value may retain (`retainable_field`).
+pub fn jl_retainable(t: NTy): Bool {
+  match t {
+    NRef(^a) => false
+    NRefMut(^a) => false
+    NSlice(^a) => false
+    NFn(^ps, ^r, kind, ^tier) => js_kind_dup(kind)
+    NInt(^w) => true
+    NBool => true
+    NText => true
+    NUnit => true
+    NNever => true
+    NFloat => true
+    NFloat32 => true
+    NBuf => true
+    NShown => true
+    NVec(^a) => true
+    NArray(^a) => true
+    NOption(^a) => true
+    NInfo(^a) => true
+    NBudgetAnswer(^a) => true
+    NResult(^a, ^b) => true
+    NPair(^a, ^b) => true
+    NSharedVar(^c, ^a) => true
+    NStd(^n, ^a) => true
+    NUnion(^n) => true
+    NData(^n, ^a) => true
+    NParam(^n) => true
+  }
+}
+
+pub fn jl_retainable_args(xs: List(NArg)): Bool {
+  match xs {
+    Nil => true
+    Cons(a, rest) => jl_retainable(a.value.ty) && jl_retainable_args(rest)
+  }
+}
+
+pub fn jl_copy_types(st: &mut JlState, ts: List(NTy), fuel: Nat): Bool ! {div, overflow} {
+  match ts {
+    Nil => true
+    Cons(t, rest) => if jl_copy_type(st, t, fuel) { jl_copy_types(st, rest, fuel) } else { false }
+  }
+}
+
+// Whether a capture of this type is a copy (`copy_type`).
+pub fn jl_copy_type(st: &mut JlState, t: NTy, fuel: Nat): Bool ! {div, overflow} {
+  if fuel == 0 {
+    jl_fail(st, "a closure capture type exceeds the nesting limit")
+    false
+  } else {
+    match t {
+      NInt(^w) => true
+      NBool => true
+      NUnit => true
+      NNever => true
+      NFloat => true
+      NFloat32 => true
+      NRef(^a) => true
+      NOption(a) => jl_copy_type(st, a, fuel - 1)
+      NPair(a, b) => jl_copy_type(st, a, fuel - 1) && jl_copy_type(st, b, fuel - 1)
+      NResult(a, b) => jl_copy_type(st, a, fuel - 1) && jl_copy_type(st, b, fuel - 1)
+      NData(n, args) => match js_find_data(st.pkg.datas, n) {
+        None => {
+          jl_fail(st, "a closure capture with an unknown data type")
+          false
+        }
+        Some(d) => if d.is_copy { jl_copy_types(st, args, fuel - 1) } else { false }
+      }
+      NUnion(id) => match js_find_union(st.pkg.unions, id) {
+        None => {
+          jl_fail(st, "a closure capture with an unknown union type")
+          false
+        }
+        Some(u) => jl_copy_types(st, u.members, fuel - 1)
+      }
+      NText => false
+      NBuf => false
+      NShown => false
+      NVec(^a) => false
+      NArray(^a) => false
+      NSlice(^a) => false
+      NInfo(^a) => false
+      NBudgetAnswer(^a) => false
+      NSharedVar(^c, ^a) => false
+      NStd(^n, ^a) => false
+      NFn(^p, ^r, ^k, ^x) => false
+      NRefMut(^a) => false
+      NParam(^n) => false
+    }
+  }
+}
+
+// Whether a value of the type may hold a borrow the host must be told of
+// (`borrowed_returns::needs_export`).
+pub fn jl_needs_export(pkg: NPackage, t: NTy): Bool ! {div, overflow} {
+  var active: IndexedMap(Text, Bool) := IndexedMap::new()
+  jl_export_visit(pkg, t, Nil, &mut active, 128)
+}
+
+pub fn jl_export_any(pkg: NPackage, ts: List(NTy), safe: List(Text), active: &mut IndexedMap(Text, Bool), fuel: Nat): Bool ! {div, overflow} {
+  match ts {
+    Nil => false
+    Cons(t, rest) => if jl_export_visit(pkg, t, safe, active, fuel) { true } else { jl_export_any(pkg, rest, safe, active, fuel) }
+  }
+}
+
+pub fn jl_export_fields(pkg: NPackage, cs: List(NCtor), safe: List(Text), active: &mut IndexedMap(Text, Bool), fuel: Nat): Bool ! {div, overflow} {
+  match cs {
+    Nil => false
+    Cons(c, rest) => if jl_export_any(pkg, jl_field_types(c.fields), safe, active, fuel) { true } else { jl_export_fields(pkg, rest, safe, active, fuel) }
+  }
+}
+
+pub fn jl_field_types(fs: List(NField)): List(NTy) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(f.ty, jl_field_types(rest))
+  }
+}
+
+pub fn jl_export_visit(pkg: NPackage, t: NTy, safe: List(Text), active: &mut IndexedMap(Text, Bool), fuel: Nat): Bool ! {div, overflow} {
+  if fuel == 0 {
+    true
+  } else {
+    match t {
+      NInt(^w) => false
+      NBool => false
+      NText => false
+      NUnit => false
+      NNever => false
+      NFloat => false
+      NFloat32 => false
+      NBuf => false
+      NShown => false
+      NRef(^a) => true
+      NRefMut(^a) => true
+      NSlice(^a) => true
+      NStd(^n, ^a) => true
+      NFn(^p, ^r, ^k, ^x) => true
+      NParam(n) => not(js_contains_text(safe, n))
+      NVec(a) => jl_export_visit(pkg, a, safe, active, fuel - 1)
+      NArray(a) => jl_export_visit(pkg, a, safe, active, fuel - 1)
+      NOption(a) => jl_export_visit(pkg, a, safe, active, fuel - 1)
+      NSharedVar(^c, a) => jl_export_visit(pkg, a, safe, active, fuel - 1)
+      NInfo(a) => jl_export_visit(pkg, a, safe, active, fuel - 1)
+      NBudgetAnswer(a) => jl_export_visit(pkg, a, safe, active, fuel - 1)
+      NResult(a, b) => jl_export_visit(pkg, a, safe, active, fuel - 1) || jl_export_visit(pkg, b, safe, active, fuel - 1)
+      NPair(a, b) => jl_export_visit(pkg, a, safe, active, fuel - 1) || jl_export_visit(pkg, b, safe, active, fuel - 1)
+      NData(name, args) => if jl_export_any(pkg, args, safe, active, fuel - 1) {
+        true
+      } else {
+        match js_find_data(pkg.datas, name) {
+          None => true
+          Some(d) => if d.is_view || List::length(d.ctors) == 0 || List::length(d.generics) != List::length(args) {
+            true
+          } else {
+            let key := concat("data:", name)
+            if jl_active(active, key) {
+              false
+            } else {
+              IndexedMap::insert(active, key, true)
+              jl_export_fields(pkg, d.ctors, d.generics, active, fuel - 1)
+            }
+          }
+        }
+      }
+      NUnion(id) => match js_find_union(pkg.unions, id) {
+        None => true
+        Some(u) => {
+          let key := concat("union:", Text::of_nat(id))
+          if jl_active(active, key) {
+            false
+          } else {
+            IndexedMap::insert(active, key, true)
+            let r := jl_export_any(pkg, u.members, safe, active, fuel - 1)
+            IndexedMap::insert(active, key, false)
+            r
+          }
+        }
+      }
+    }
+  }
+}
+
+// --- Lowering --------------------------------------------------------------
+
+pub fn jl_quant(q: NQuant): Text {
+  match q {
+    NQDirect => "direct"
+    NQZero => "zero"
+    NQAtMostOne => "optional"
+    NQOne => "one"
+    NQMany => "many"
+  }
+}
+
+pub fn jl_pattern(sp: List(Text), ds: List(NData), p: NPat): JsPat {
+  match p {
+    NWild => JpWild
+    NBind(l, ^t) => {
+      let s := js_storage(l.repr)
+      JpBind(l.id, s == 2 || s == 3, s == 0)
+    }
+    NIntPat(neg, n) => JpLiteral(JvInt(neg, n))
+    NNatPat(n) => JpLiteral(JvInt(false, n))
+    NBoolPat(b) => JpLiteral(JvBool(b))
+    NTextPat(t) => JpLiteral(JvText(t))
+    NCtorPat(c, fields) => JpCtor(js_ref_tag(sp, ds, c), jl_patterns(sp, ds, fields), js_ref_owner(sp, ds, c))
+    NInjectPat(^u, k, q) => JpVariant(k, jl_pattern(sp, ds, q))
+  }
+}
+
+pub fn jl_patterns(sp: List(Text), ds: List(NData), ps: List(NPat)): List(JsPat) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(jl_pattern(sp, ds, p), jl_patterns(sp, ds, rest))
+  }
+}
+
+pub fn jl_path(fs: List(NFieldRef)): List(JsStep) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(match f.index {
+      Some(n) => JsIndex(n)
+      None => JsName(f.name)
+    }, jl_path(rest))
+  }
+}
+
+pub fn jl_exprs(st: &mut JlState, es: List(NExpr)): List(JsCps) ! {div, overflow} {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => {
+      let x := jl_expr(st, e)
+      Cons(x, jl_exprs(st, rest))
+    }
+  }
+}
+
+pub fn jl_map(st: &mut JlState, v: NExpr, op: JsUnary): JsCps ! {div, overflow} {
+  JcMap(jl_expr(st, v), op)
+}
+
+pub fn jl_guard(st: &mut JlState, g: Option(NExpr)): JsCps ! {div, overflow} {
+  match g {
+    Some(e) => jl_expr(st, e)
+    None => JcPure(JvBool(true))
+  }
+}
+
+pub fn jl_is_external(c: JsCps): Bool {
+  match c {
+    JcExternal(^n, ^a) => true
+    JcPure(^v) => false
+    JcRead(^a, ^b, ^c2, ^d) => false
+    JcCall(^a, ^b, ^c2) => false
+    JcTailSelf(^a, ^b, ^c2) => false
+    JcBuiltin(^a, ^b) => false
+    JcPrim(^a, ^b) => false
+    JcMap(^a, ^b) => false
+    JcBranch(^a, ^b, ^c2) => false
+    JcSequence(^a) => false
+    JcDefine(^a, ^b, ^c2, ^d) => false
+    JcAssign(^a, ^b, ^c2, ^d) => false
+    JcWhile(^a, ^b, ^c2) => false
+    JcReturn(^a) => false
+    JcMatch(^a, ^b) => false
+    JcClosure(^a) => false
+    JcPerform(^a, ^b, ^c2) => false
+    JcHandle(^a, ^b, ^c2) => false
+    JcBorrow(^a, ^b, ^c2, ^d) => false
+    JcBudget(^a, ^b, ^c2, ^d) => false
+  }
+}
+
+pub fn jl_label_position(args: List(NArg), label: Text, at: Nat): Option(Nat) {
+  match args {
+    Nil => None
+    Cons(a, rest) => match a.label {
+      Some(l) => if l == label { Some(at) } else { jl_label_position(rest, label, at + 1) }
+      None => jl_label_position(rest, label, at + 1)
+    }
+  }
+}
+
+// The argument that fills each of the constructor's fields.
+pub fn jl_order(labels: List(Option(Text)), args: List(NArg), i: Nat): List(Nat) {
+  match labels {
+    Nil => Nil
+    Cons(l, rest) => Cons(match l {
+      Some(n) => match jl_label_position(args, n, 0) {
+        Some(j) => j
+        None => i
+      }
+      None => i
+    }, jl_order(rest, args, i + 1))
+  }
+}
+
+pub fn jl_arg_labels(args: List(NArg)): List(Option(Text)) {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => Cons(a.label, jl_arg_labels(rest))
+  }
+}
+
+pub fn jl_arg_values(args: List(NArg)): List(NExpr) {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => Cons(a.value, jl_arg_values(rest))
+  }
+}
+
+pub fn jl_nth_expr(es: List(NExpr), i: Nat): Option(NExpr) ! {overflow} {
+  match es {
+    Nil => None
+    Cons(e, rest) => if i == 0 { Some(e) } else { jl_nth_expr(rest, i - 1) }
+  }
+}
+
+pub fn jl_text_lit(e: Option(NExpr)): Option(Text) {
+  match e {
+    None => None
+    Some(x) => match x.kind {
+      NTextLit(t) => Some(t)
+      NUnitLit => None
+      NIntLit(^s, ^n) => None
+      NBoolLit(^b) => None
+      NFloatLit(^t) => None
+      NDeclaration(^n) => None
+      NFnValue(^i, ^ts) => None
+      NClosureOf(^c) => None
+      NHandleOf(^h) => None
+      NBudgetOf(^b) => None
+      NInject(^u, ^m, ^v) => None
+      NRemap(^u, ^t, ^v) => None
+      NFnCast(^v) => None
+      NRead(^l, ^h) => None
+      NBorrow(^p) => None
+      NBorrowMut(^p) => None
+      NTempRef(^v) => None
+      NDeref(^v, ^h) => None
+      NFieldOf(^b, ^f, ^h, ^i) => None
+      NArithOf(^o, ^t, ^a) => None
+      NCmpOf(^o, ^a) => None
+      NEqOf(^n, ^a) => None
+      NNot(^v) => None
+      NAnd(^a, ^b) => None
+      NOr(^a, ^b) => None
+      NIf(^c, ^t, ^o) => None
+      NBlockOf(^b) => None
+      NCtorOf(^c, ^a) => None
+      NMatchOf(^m) => None
+      NCallOf(^c) => None
+      NShownOf(^v) => None
+      NPerformOf(^p) => None
+      NUnreachable(^v) => None
+    }
+  }
+}
+
+pub fn jl_parser_index(ps: List(NSyntaxParser), name: Text, sha: Text, t: NTy, at: Nat): Option(Nat) ! {div} {
+  match ps {
+    Nil => None
+    Cons(p, rest) => if p.name == name && p.sha == sha && n_ty_eq(p.result, t) { Some(at) } else { jl_parser_index(rest, name, sha, t, at + 1) }
+  }
+}
+
+pub fn jl_is_shown(t: NTy): Bool {
+  match t {
+    NShown => true
+    NInt(^w) => false
+    NBool => false
+    NText => false
+    NUnit => false
+    NNever => false
+    NFloat => false
+    NFloat32 => false
+    NBuf => false
+    NVec(^a) => false
+    NArray(^a) => false
+    NSlice(^a) => false
+    NOption(^a) => false
+    NInfo(^a) => false
+    NBudgetAnswer(^a) => false
+    NResult(^a, ^b) => false
+    NPair(^a, ^b) => false
+    NSharedVar(^c, ^a) => false
+    NStd(^n, ^a) => false
+    NUnion(^n) => false
+    NFn(^p, ^r, ^k, ^x) => false
+    NRef(^a) => false
+    NRefMut(^a) => false
+    NData(^n, ^a) => false
+    NParam(^n) => false
+  }
+}
+
+pub fn jl_is_ref(t: NTy): Bool {
+  match n_borrowed(t) {
+    None => false
+    Some(^a) => match t {
+      NRef(^x) => true
+      NRefMut(^x) => false
+      NInt(^w) => false
+      NBool => false
+      NText => false
+      NUnit => false
+      NNever => false
+      NFloat => false
+      NFloat32 => false
+      NBuf => false
+      NShown => false
+      NVec(^x) => false
+      NArray(^x) => false
+      NSlice(^x) => false
+      NOption(^x) => false
+      NInfo(^x) => false
+      NBudgetAnswer(^x) => false
+      NResult(^x, ^y) => false
+      NPair(^x, ^y) => false
+      NSharedVar(^c, ^x) => false
+      NStd(^n, ^x) => false
+      NUnion(^n) => false
+      NFn(^p, ^r, ^k, ^x) => false
+      NData(^n, ^x) => false
+      NParam(^n) => false
+    }
+  }
+}
+
+pub fn jl_union_of(t: NTy): Option(Nat) {
+  match t {
+    NUnion(id) => Some(id)
+    NInt(^w) => None
+    NBool => None
+    NText => None
+    NUnit => None
+    NNever => None
+    NFloat => None
+    NFloat32 => None
+    NBuf => None
+    NShown => None
+    NVec(^a) => None
+    NArray(^a) => None
+    NSlice(^a) => None
+    NOption(^a) => None
+    NInfo(^a) => None
+    NBudgetAnswer(^a) => None
+    NResult(^a, ^b) => None
+    NPair(^a, ^b) => None
+    NSharedVar(^c, ^a) => None
+    NStd(^n, ^a) => None
+    NFn(^p, ^r, ^k, ^x) => None
+    NRef(^a) => None
+    NRefMut(^a) => None
+    NData(^n, ^a) => None
+    NParam(^n) => None
+  }
+}
+
+pub fn jl_ty_position(ts: List(NTy), t: NTy, at: Nat): Option(Nat) ! {div} {
+  match ts {
+    Nil => None
+    Cons(x, rest) => if n_ty_eq(x, t) { Some(at) } else { jl_ty_position(rest, t, at + 1) }
+  }
+}
+
+pub fn jl_remap_table(source: List(NTy), to: List(NTy), known: Bool): List(Option(Nat)) ! {div} {
+  match source {
+    Nil => Nil
+    Cons(m, rest) => Cons(if known { jl_ty_position(to, m, 0) } else { None }, jl_remap_table(rest, to, known))
+  }
+}
+
+pub fn jl_union_members(st: &mut JlState, id: Nat): List(NTy) {
+  match js_find_union(st.pkg.unions, id) {
+    Some(u) => u.members
+    None => Nil
+  }
+}
+
+pub fn jl_builtin_known(name: Text): Bool {
+  js_contains_text(jl_builtins(), name) || js_contains_text(jl_float_builtins(), name)
+}
+
+pub fn jl_builtins(): List(Text) { text_lines(include_text!("tables/builtins.txt")) }
+
+pub fn jl_float_builtins(): List(Text) { text_lines(include_text!("tables/float-builtins.txt")) }
+
+pub fn jl_builtin(st: &mut JlState, name: Text, args: List(JsCps), t: NTy): JsCps ! {div, overflow} {
+  if name == "concat" {
+    JcPrim(JpExpr("vs.join('')"), args)
+  } else if name == "Text::of_i64" || name == "Text::of_u64" || name == "Text::of_nat" {
+    JcPrim(JpExpr("String(vs[0])"), args)
+  } else if name == "Text::len" {
+    JcPrim(JpExpr("BigInt(textBytes(unref(vs[0])).length)"), args)
+  } else if name == "Text::compare" {
+    JcPrim(JpExpr("compare(unref(vs[0]),unref(vs[1]))"), args)
+  } else if name == "div" || name == "mod" {
+    match n_int_width(t) {
+      None => {
+        jl_fail(st, "non-integer division")
+        JcPure(JvUnit)
+      }
+      Some(w) => JcPrim(JpExpr(Text::concat_all(["divide(", js_quote(name), ",vs,", js_bounds(w), ")"])), args)
+    }
+  } else {
+    if text_starts_with(name, "Ct::", 0) {
+      jl_print_fail(st, "secret words, which it cannot run in constant time")
+    } else if not(jl_builtin_known(name)) {
+      jl_print_fail(st, concat("builtin ", name))
+    }
+    JcBuiltin(name, args)
+  }
+}
+
+pub fn jl_arith(op: NArith, num: NTy): Option(Text) {
+  match num {
+    NFloat => Some(match op {
+      NAdd => "vs[0]+vs[1]"
+      NSub => "vs[0]-vs[1]"
+      NMul => "vs[0]*vs[1]"
+      NNeg => "-vs[0]"
+      NDivide => "floatDiv(vs[0],vs[1])"
+    })
+    NFloat32 => Some(match op {
+      NAdd => "Math.fround(vs[0]+vs[1])"
+      NSub => "Math.fround(vs[0]-vs[1])"
+      NMul => "Math.fround(vs[0]*vs[1])"
+      NNeg => "-vs[0]"
+      NDivide => "float32Div(vs[0],vs[1])"
+    })
+    NInt(^w) => None
+    NBool => None
+    NText => None
+    NUnit => None
+    NNever => None
+    NBuf => None
+    NShown => None
+    NVec(^a) => None
+    NArray(^a) => None
+    NSlice(^a) => None
+    NOption(^a) => None
+    NInfo(^a) => None
+    NBudgetAnswer(^a) => None
+    NResult(^a, ^b) => None
+    NPair(^a, ^b) => None
+    NSharedVar(^c, ^a) => None
+    NStd(^n, ^a) => None
+    NUnion(^n) => None
+    NFn(^p, ^r, ^k, ^x) => None
+    NRef(^a) => None
+    NRefMut(^a) => None
+    NData(^n, ^a) => None
+    NParam(^n) => None
+  }
+}
+
+pub fn jl_int_arith(st: &mut JlState, op: NArith, w: NWidth, args: List(JsCps)): JsCps {
+  let value := match op {
+    NAdd => Some("vs[0]+vs[1]")
+    NSub => Some("vs[0]-vs[1]")
+    NMul => Some("vs[0]*vs[1]")
+    NNeg => Some("-vs[0]")
+    NDivide => None
+  }
+  match value {
+    Some(v) => JcPrim(JpChecked(v, js_bounds(w)), args)
+    None => {
+      jl_print_fail(st, "`/` of an integer")
+      JcPure(JvUnit)
+    }
+  }
+}
+
+pub fn jl_lookup(st: &mut JlState, id: Nat): Option(JlLocal) {
+  match IndexedMap::get(&st.locals, &id) {
+    Some(l) => Some(l)
+    None => None
+  }
+}
+
+pub fn jl_call(st: &mut JlState, c: NCall, t: NTy): JsCps ! {div, overflow} {
+  let args := jl_exprs(st, c.args)
+  match c.callee {
+    NCallInst(inst) => if st.restart && c.recur && not(n_tick_budget(c.tick)) {
+      JcTailSelf(inst, args, jl_tick_host(c.tick))
+    } else {
+      JcCall(JcPure(JvFn(inst)), args, jl_ticked(c.tick))
+    }
+    NCallLocal(l) => {
+      let consumes := if js_owned(l) {
+        match jl_lookup(st, l.id) {
+          Some(b) => match b.ty {
+            Some(ty) => match jl_fn_kind(ty) {
+              Some(k) => not(js_kind_dup(k))
+              None => {
+                jl_fail(st, "a local call without a function type")
+                false
+              }
+            }
+            None => {
+              jl_fail(st, "a local call without a function type")
+              false
+            }
+          }
+          None => {
+            jl_fail(st, "a local call without a function type")
+            false
+          }
+        }
+      } else {
+        false
+      }
+      JcCall(JcRead(l.id, false, not(consumes), consumes), args, jl_ticked(c.tick))
+    }
+    NCallCont(l) => JcCall(JcRead(l.id, false, true, false), args, jl_ticked(c.tick))
+    NCallValue(v) => {
+      let callee := jl_expr(st, v)
+      JcCall(callee, args, jl_ticked(c.tick))
+    }
+    NCallExtern(n) => JcExternal(n, args)
+    NCallBuiltin(n) => if n == "Syn::same_declaration" {
+      JcPrim(JpExpr("equal(vs[0],vs[1])"), args)
+    } else if n == "Syn::parse" {
+      match jl_text_lit(jl_nth_expr(c.args, 0)) {
+        None => {
+          jl_fail(st, "Syn::parse without a literal syntax")
+          JcPure(JvUnit)
+        }
+        Some(name) => match jl_text_lit(jl_nth_expr(c.args, 1)) {
+          None => {
+            jl_fail(st, "Syn::parse without a literal syntax")
+            JcPure(JvUnit)
+          }
+          Some(sha) => {
+            let rest := match jl_nth_expr(c.args, 2) {
+              Some(e) => [jl_expr(st, e)]
+              None => Nil
+            }
+            match jl_parser_index(st.pkg.syntax_parsers, name, sha, t, 0) {
+              Some(i) => JcPrim(JpSynParse(i), rest)
+              None => {
+                jl_print_fail(st, "Syn::parse without its tables")
+                JcPure(JvUnit)
+              }
+            }
+          }
+        }
+      }
+    } else {
+      jl_builtin(st, n, args, t)
+    }
+  }
+}
+
+pub fn jl_ticked(t: NTick): Bool {
+  match t {
+    NTickNone => false
+    NTickHost => true
+    NTickBudget => true
+  }
+}
+
+pub fn jl_tick_host(t: NTick): Bool {
+  match t {
+    NTickNone => false
+    NTickHost => true
+    NTickBudget => false
+  }
+}
+
+pub fn jl_how_moves(h: NUse): Bool {
+  match h {
+    NMove => true
+    NCopy => false
+    NClone => false
+    NPlace => false
+  }
+}
+
+pub fn jl_how_copies(h: NUse): Bool {
+  match h {
+    NMove => false
+    NCopy => true
+    NClone => true
+    NPlace => false
+  }
+}
+
+pub fn jl_how_place(h: NUse): Bool {
+  match h {
+    NMove => false
+    NCopy => false
+    NClone => false
+    NPlace => true
+  }
+}
+
+pub fn jl_binds_mut(p: NPat): Bool {
+  match p {
+    NBind(l, ^t) => js_storage(l.repr) == 3
+    NCtorPat(^c, fields) => jl_any_binds_mut(fields)
+    NInjectPat(^u, ^k, q) => jl_binds_mut(q)
+    NWild => false
+    NIntPat(^s, ^n) => false
+    NNatPat(^n) => false
+    NBoolPat(^b) => false
+    NTextPat(^t) => false
+  }
+}
+
+pub fn jl_any_binds_mut(ps: List(NPat)): Bool {
+  match ps {
+    Nil => false
+    Cons(p, rest) => jl_binds_mut(p) || jl_any_binds_mut(rest)
+  }
+}
+
+pub fn jl_arms_bind_mut(arms: List(NArm)): Bool {
+  match arms {
+    Nil => false
+    Cons(a, rest) => jl_binds_mut(a.pat) || jl_arms_bind_mut(rest)
+  }
+}
+
+pub fn jl_arm_exprs(arms: List(NArm)): List(NExpr) { jw_arms(arms) }
+
+pub fn jl_referenced_many(es: List(NExpr), set: List(Nat)): List(Nat) ! {div} {
+  match es {
+    Nil => set
+    Cons(e, rest) => jl_referenced_many(rest, jl_referenced_each(set, jw_all(e, true)))
+  }
+}
+
+pub fn jl_scrutinee(st: &mut JlState, m: NMatch): JsCps ! {div, overflow} {
+  let scrut := jl_expr(st, m.scrut)
+  match m.scrut.kind {
+    NRead(l, how) => if jl_how_moves(how) && js_owned(l) && js_contains_nat(jl_referenced_many(jl_arm_exprs(m.arms), Nil), l.id) {
+      JcBorrow(l.id, Nil, false, jl_arms_bind_mut(m.arms))
+    } else {
+      scrut
+    }
+    NUnitLit => scrut
+    NIntLit(^s, ^n) => scrut
+    NBoolLit(^b) => scrut
+    NFloatLit(^t) => scrut
+    NTextLit(^t) => scrut
+    NDeclaration(^n) => scrut
+    NFnValue(^i, ^ts) => scrut
+    NClosureOf(^c) => scrut
+    NHandleOf(^h) => scrut
+    NBudgetOf(^b) => scrut
+    NInject(^u, ^x, ^v) => scrut
+    NRemap(^u, ^t, ^v) => scrut
+    NFnCast(^v) => scrut
+    NBorrow(^p) => scrut
+    NBorrowMut(^p) => scrut
+    NTempRef(^v) => scrut
+    NDeref(^v, ^h) => scrut
+    NFieldOf(^b, ^f, ^h, ^i) => scrut
+    NArithOf(^o, ^t, ^a) => scrut
+    NCmpOf(^o, ^a) => scrut
+    NEqOf(^n, ^a) => scrut
+    NNot(^v) => scrut
+    NAnd(^a, ^b) => scrut
+    NOr(^a, ^b) => scrut
+    NIf(^c, ^t, ^o) => scrut
+    NBlockOf(^b) => scrut
+    NCtorOf(^c, ^a) => scrut
+    NMatchOf(^x) => scrut
+    NCallOf(^c) => scrut
+    NShownOf(^v) => scrut
+    NPerformOf(^p) => scrut
+    NUnreachable(^v) => scrut
+  }
+}
+
+pub fn jl_arms(st: &mut JlState, arms: List(NArm)): List(JsArm) ! {div, overflow} {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => {
+      let g := jl_guard(st, a.guard)
+      let b := jl_expr(st, a.body)
+      Cons(JsArm { pat: jl_pattern(st.spellings, st.pkg.datas, a.pat), guard: g, body: b }, jl_arms(st, rest))
+    }
+  }
+}
+
+pub fn jl_op_arms(st: &mut JlState, arms: List(NOpArm)): List(JsHandlerArm) ! {div, overflow} {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => {
+      let g := jl_guard(st, a.guard)
+      let b := jl_expr(st, a.body)
+      let op := js_op_name(st.pkg.ops, a.op)
+      Cons(JsHandlerArm {
+        op: op,
+        pats: jl_patterns(st.spellings, st.pkg.datas, a.pats),
+        k: match a.k {
+          Some(k) => Some(k.id)
+          None => None
+        },
+        guard: g,
+        body: b
+      }, jl_op_arms(st, rest))
+    }
+  }
+}
+
+pub fn jl_param_ids(ps: List(NParam)): List(Nat) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.local.id, jl_param_ids(rest))
+  }
+}
+
+pub fn jl_param_owned(ps: List(NParam)): List(Bool) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(js_owned(p.local), jl_param_owned(rest))
+  }
+}
+
+pub fn jl_ref_inners(rs: List(NCapturedRef)): List(Nat) {
+  match rs {
+    Nil => Nil
+    Cons(r, rest) => Cons(r.inner.id, jl_ref_inners(rest))
+  }
+}
+
+pub fn jl_ref_pairs(rs: List(NCapturedRef)): List(Nat × Nat) {
+  match rs {
+    Nil => Nil
+    Cons(r, rest) => Cons(#(r.inner.id, r.outer.id), jl_ref_pairs(rest))
+  }
+}
+
+pub fn jl_local_ids(ls: List(NLocal)): List(Nat) {
+  match ls {
+    Nil => Nil
+    Cons(l, rest) => Cons(l.id, jl_local_ids(rest))
+  }
+}
+
+// The captures a closure takes: what it names that it does not bind itself.
+pub fn jl_captures(ids: List(Nat), bound: &IndexedMap(Nat, JlLocal), conts: &IndexedMap(Nat, Bool), params: List(Nat), inners: List(Nat)): List(Nat) {
+  match ids {
+    Nil => Nil
+    Cons(id, rest) => if jl_bound(bound, id) || jl_cont(conts, id) || js_contains_nat(params, id) || js_contains_nat(inners, id) {
+      jl_captures(rest, bound, conts, params, inners)
+    } else {
+      Cons(id, jl_captures(rest, bound, conts, params, inners))
+    }
+  }
+}
+
+pub fn jl_moves(st: &mut JlState, ids: List(Nat), clones: List(Nat), inners: List(Nat)): List(Nat) ! {div, overflow} {
+  match ids {
+    Nil => Nil
+    Cons(id, rest) => if js_contains_nat(clones, id) || jl_cont(&st.continuations, id) {
+      jl_moves(st, rest, clones, inners)
+    } else {
+      match jl_lookup(st, id) {
+        None => if js_contains_nat(inners, id) {
+          jl_moves(st, rest, clones, inners)
+        } else {
+          jl_fail(st, "a closure capture without a local type")
+          Nil
+        }
+        Some(b) => if b.storage == 0 {
+          match b.ty {
+            None => {
+              jl_fail(st, "a closure capture without a resolved type")
+              Nil
+            }
+            Some(t) => if jl_copy_type(st, t, 128) {
+              jl_moves(st, rest, clones, inners)
+            } else {
+              Cons(id, jl_moves(st, rest, clones, inners))
+            }
+          }
+        } else {
+          jl_moves(st, rest, clones, inners)
+        }
+      }
+    }
+  }
+}
+
+pub fn jl_closure(st: &mut JlState, c: NClosure): JsCps ! {div, overflow} {
+  let params := jl_param_ids(c.params)
+  let inners := jl_ref_inners(c.refs)
+  var bound: IndexedMap(Nat, JlLocal) := IndexedMap::new()
+  var conts: IndexedMap(Nat, Bool) := IndexedMap::new()
+  jl_bindings(&mut bound, &mut conts, c.body)
+  let ids := jl_captures(jl_referenced(c.body), &bound, &conts, params, inners)
+  let moves := if c.borrowed { Nil } else { jl_moves(st, ids, jl_local_ids(c.clones), inners) }
+  let body := jl_expr(st, c.body)
+  let once := not(c.borrowed) && match jl_fn_kind(c.fn_ty) {
+    Some(k) => not(js_kind_dup(k))
+    None => true
+  }
+  JcClosure(JsClosure {
+    body: body,
+    params: params,
+    captures: ids,
+    borrowed: c.borrowed,
+    refs: jl_ref_pairs(c.refs),
+    export_borrows: jl_needs_export(st.pkg, c.ret),
+    owned: jl_param_owned(c.params),
+    moves: moves,
+    once: once,
+    owned_refs: jl_local_ids(c.owned_refs)
+  })
+}
+
+pub fn jl_stmts(st: &mut JlState, ss: List(NStmt)): List(JsCps) ! {div, overflow} {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => {
+      let x := match s {
+        NLet(l, ^t, init, ^stack) => {
+          let v := jl_expr(st, init)
+          JcDefine(l.id, js_storage(l.repr) == 1, v, js_owned(l))
+        }
+        NVar(l, ^t, init) => {
+          let v := jl_expr(st, init)
+          JcDefine(l.id, js_storage(l.repr) == 1, v, false)
+        }
+        NAssign(p, v) => {
+          let x := jl_expr(st, v)
+          JcAssign(p.local.id, jl_path(p.path), js_is_borrow(p.local), x)
+        }
+        NExprStmt(e) => jl_expr(st, e)
+        NWhile(c, body, tick) => {
+          let cond := jl_expr(st, c)
+          let b := jl_block(st, body)
+          JcWhile(cond, b, jl_ticked(tick))
+        }
+        NReturn(v) => JcReturn(match v {
+          Some(e) => jl_expr(st, e)
+          None => JcPure(JvUnit)
+        })
+      }
+      Cons(x, jl_stmts(st, rest))
+    }
+  }
+}
+
+pub fn jl_block(st: &mut JlState, b: NBlock): JsCps ! {div, overflow} {
+  let es := jl_stmts(st, b.stmts)
+  let tail := match b.tail {
+    Some(e) => jl_expr(st, e)
+    None => JcPure(JvUnit)
+  }
+  JcSequence(List::append(es, [tail]))
+}
+
+pub fn jl_expr(st: &mut JlState, e: NExpr): JsCps ! {div, overflow} {
+  match e.kind {
+    NUnitLit => JcPure(JvUnit)
+    NIntLit(neg, n) => JcPure(JvInt(neg, n))
+    NFloatLit(t) => JcPure(JvFloat(js_float_text(t)))
+    NBoolLit(b) => JcPure(JvBool(b))
+    NDeclaration(slot) => JcPure(JvDeclaration(slot))
+    NTextLit(t) => JcPure(JvText(t))
+    NRead(l, how) => JcRead(
+      l.id,
+      js_is_borrow(l) && not(jl_how_moves(how) || jl_how_place(how)),
+      jl_how_copies(how),
+      jl_how_moves(how) && js_owned(l)
+    )
+    NFnValue(inst, ^ts) => JcPure(JvFn(inst))
+    NCallOf(c) => jl_call(st, c, e.ty)
+    NArithOf(op, num, args) => {
+      let xs := jl_exprs(st, args)
+      match jl_arith(op, num) {
+        Some(v) => JcPrim(JpFloat(v), xs)
+        None => match n_int_width(num) {
+          Some(w) => jl_int_arith(st, op, w, xs)
+          None => JcPrim(JpExpr("null"), xs)
+        }
+      }
+    }
+    NCmpOf(op, args) => JcPrim(JpExpr(match op {
+      NLt => "vs[0] < vs[1]"
+      NGt => "vs[0] > vs[1]"
+      NLe => "vs[0] <= vs[1]"
+      NGe => "vs[0] >= vs[1]"
+    }), jl_exprs(st, args))
+    NEqOf(negate, args) => JcPrim(JpExpr(if negate { "!equal(vs[0],vs[1])" } else { "equal(vs[0],vs[1])" }), jl_exprs(st, args))
+    NNot(v) => jl_map(st, v, JuNot)
+    NAnd(a, b) => {
+      let x := jl_expr(st, a)
+      let y := jl_expr(st, b)
+      JcBranch(x, y, JcPure(JvBool(false)))
+    }
+    NOr(a, b) => {
+      let x := jl_expr(st, a)
+      let y := jl_expr(st, b)
+      JcBranch(x, JcPure(JvBool(true)), y)
+    }
+    NIf(c, t, o) => {
+      let x := jl_expr(st, c)
+      let y := jl_expr(st, t)
+      let z := match o {
+        Some(e2) => jl_expr(st, e2)
+        None => JcPure(JvUnit)
+      }
+      JcBranch(x, y, z)
+    }
+    NBlockOf(b) => jl_block(st, b)
+    NCtorOf(c, fields) => {
+      let args := jl_exprs(st, jl_arg_values(fields))
+      let is_struct := match c.data {
+        NDataPair => true
+        NDataGen(n) => js_is_struct_data(st.pkg.datas, n)
+        NDataOption => false
+        NDataResult => false
+      }
+      JcPrim(JpConstruct(
+        js_ref_tag(st.spellings, st.pkg.datas, c),
+        jl_arg_labels(fields),
+        jl_order(c.labels, fields, 0),
+        is_struct,
+        js_ref_owner(st.spellings, st.pkg.datas, c),
+        jl_retainable_args(fields)
+      ), args)
+    }
+    NFieldOf(base, f, ^how, ^ind) => jl_map(st, base, JuField(f.name, f.index))
+    NMatchOf(m) => {
+      let arms := jl_arms(st, m.arms)
+      let scrut := jl_scrutinee(st, m)
+      JcMatch(scrut, arms)
+    }
+    NClosureOf(c) => jl_closure(st, c)
+    NPerformOf(p) => JcPerform(js_op_name(st.pkg.ops, p.op), jl_quant(p.quant), jl_exprs(st, p.args))
+    NHandleOf(h) => {
+      let arms := jl_op_arms(st, h.arms)
+      let ret := match h.ret {
+        Some(r) => Some(JsArm { pat: jl_pattern(st.spellings, st.pkg.datas, r.pat), guard: JcPure(JvBool(true)), body: jl_expr(st, r.body) })
+        None => None
+      }
+      let body := jl_expr(st, h.body)
+      JcHandle(body, arms, ret)
+    }
+    NShownOf(v) => if jl_is_shown(v.ty) { jl_expr(st, v) } else { jl_map(st, v, JuShown) }
+    NFnCast(v) => jl_expr(st, v)
+    NUnreachable(v) => jl_expr(st, v)
+    NBorrow(p) => JcBorrow(p.local.id, jl_path(p.path), js_is_borrow(p.local), false)
+    NBorrowMut(p) => JcBorrow(p.local.id, jl_path(p.path), js_is_borrow(p.local), true)
+    NTempRef(v) => jl_map(st, v, JuTempRef(jl_is_ref(e.ty)))
+    NDeref(v, how) => {
+      let x := jl_expr(st, v)
+      JcMap(x, JuDeref(jl_how_copies(how), jl_is_external(x)))
+    }
+    NInject(u, variant, v) => jl_map(st, v, JuInject(u, variant))
+    NRemap(source, to, v) => {
+      let target := jl_union_of(to)
+      let members := jl_union_members(st, source)
+      let table := match target {
+        Some(id) => jl_remap_table(members, jl_union_members(st, id), true)
+        None => jl_remap_table(members, Nil, false)
+      }
+      jl_map(st, v, JuRemap(target, table))
+    }
+    NBudgetOf(b) => {
+      let steps := jl_expr(st, b.steps)
+      let body := jl_expr(st, b.body)
+      JcBudget(b.id, b.memory, steps, body)
+    }
+  }
+}
+
+// Whether a call of `f` in `f` is marked `recur` (`tauto_nir::recurs`).
+pub fn jl_recurs(body: NExpr): Bool ! {div} { jl_any_recur(jw_all(body, false)) }
+
+pub fn jl_any_recur(es: List(NExpr)): Bool {
+  match es {
+    Nil => false
+    Cons(e, rest) => match e.kind {
+      NCallOf(c) => c.recur || jl_any_recur(rest)
+      NUnitLit => jl_any_recur(rest)
+      NIntLit(^s, ^n) => jl_any_recur(rest)
+      NBoolLit(^b) => jl_any_recur(rest)
+      NFloatLit(^t) => jl_any_recur(rest)
+      NTextLit(^t) => jl_any_recur(rest)
+      NDeclaration(^n) => jl_any_recur(rest)
+      NFnValue(^i, ^ts) => jl_any_recur(rest)
+      NClosureOf(^c) => jl_any_recur(rest)
+      NHandleOf(^h) => jl_any_recur(rest)
+      NBudgetOf(^b) => jl_any_recur(rest)
+      NInject(^u, ^m, ^v) => jl_any_recur(rest)
+      NRemap(^u, ^t, ^v) => jl_any_recur(rest)
+      NFnCast(^v) => jl_any_recur(rest)
+      NRead(^l, ^h) => jl_any_recur(rest)
+      NBorrow(^p) => jl_any_recur(rest)
+      NBorrowMut(^p) => jl_any_recur(rest)
+      NTempRef(^v) => jl_any_recur(rest)
+      NDeref(^v, ^h) => jl_any_recur(rest)
+      NFieldOf(^b, ^f, ^h, ^i) => jl_any_recur(rest)
+      NArithOf(^o, ^t, ^a) => jl_any_recur(rest)
+      NCmpOf(^o, ^a) => jl_any_recur(rest)
+      NEqOf(^n, ^a) => jl_any_recur(rest)
+      NNot(^v) => jl_any_recur(rest)
+      NAnd(^a, ^b) => jl_any_recur(rest)
+      NOr(^a, ^b) => jl_any_recur(rest)
+      NIf(^c, ^t, ^o) => jl_any_recur(rest)
+      NBlockOf(^b) => jl_any_recur(rest)
+      NCtorOf(^c, ^a) => jl_any_recur(rest)
+      NMatchOf(^m) => jl_any_recur(rest)
+      NShownOf(^v) => jl_any_recur(rest)
+      NPerformOf(^p) => jl_any_recur(rest)
+      NUnreachable(^v) => jl_any_recur(rest)
+    }
+  }
+}
+
+// The body of `f` in continuation form, or what it does not write: first
+// what the lowering refuses, then what the printer does.
+pub fn jl_lower(pkg: NPackage, f: NFn, restart: Bool): Result(JsCps, Text) ! {div, overflow} {
+  var st := JlState {
+    pkg: pkg,
+    spellings: js_library_spellings(),
+    locals: IndexedMap::new(),
+    continuations: IndexedMap::new(),
+    restart: restart,
+    error: None,
+    print_error: None
+  }
+  jl_bind_params(&mut st.locals, f.params)
+  jl_bindings(&mut st.locals, &mut st.continuations, f.body)
+  let body := jl_expr(&mut st, f.body)
+  match st.error {
+    Some(e) => Err(js_unsupported(e))
+    None => match st.print_error {
+      Some(e) => Err(e)
+      None => Ok(body)
+    }
+  }
+}

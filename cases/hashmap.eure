@@ -1,0 +1,71 @@
+description = "`std::hashmap::HashMap`: a hash map on the slots table, keyed by `Key`, seeded by the run."
+
+@ cases.hashmap-insert-replace-get-remove
+description = "An insert replaces the entry of an equal key and gives it back; `get` and `remove` find it."
+source = ```tauto
+import std::builtin::os { hash_seed, HashSeed }
+import std::hashmap { HashMap }
+import std::prelude::std { Option }
+
+fn demo(): Nat ! {hash_seed} {
+  var m: HashMap(Nat, Nat) := HashMap::new()
+  let ^_a := HashMap::insert(&mut m, 7, 42)
+  let ^_b := HashMap::insert(&mut m, 9, 5)
+  let r := HashMap::insert(&mut m, 7, 100)
+  let replaced: Nat := match r { #(Some(#(k, v)), _) => v, #(None, _) => 0 }
+  let got: Nat := match HashMap::get(&m, &7) { None => 0, Some(v) => v }
+  let gone: Nat := match HashMap::remove(&mut m, &9) { None => 0, Some(#(k, v)) => v }
+  replaced * 1000000 + got * 1000 + gone * 10 + HashMap::len(&m)
+}
+show(&handle { demo() } with { hash_seed(), k => k(HashSeed { k0: 5, k1: 6 }) })
+```
+stdout = "42100051\n"
+
+@ cases.hashmap-grows-and-keeps-every-entry
+description = "Forty inserts pass the first capacities; every entry is still found afterwards."
+source = ```tauto
+import std::builtin::os { hash_seed, HashSeed }
+import std::hashmap { HashMap }
+import std::prelude::std { Option }
+
+fn fill(m: &mut HashMap(Nat, Nat), n: Nat): Nat {
+  match n {
+    Zero => 0
+    Succ(p) => {
+      let ^_r := HashMap::insert(&mut m, p, p * 3)
+      fill(&mut m, p)
+    }
+  }
+}
+
+fn sum(m: &HashMap(Nat, Nat), n: Nat): Nat {
+  match n {
+    Zero => 0
+    Succ(p) => (match HashMap::get(&m, &p) { None => 1000000, Some(v) => v }) + sum(&m, p)
+  }
+}
+
+fn demo(): Nat × Nat ! {hash_seed} {
+  var m: HashMap(Nat, Nat) := HashMap::new()
+  let ^_f := fill(&mut m, 40)
+  #(HashMap::len(&m), sum(&m, 40))
+}
+show(&handle { demo() } with { hash_seed(), k => k(HashSeed { k0: 1, k1: 2 }) })
+```
+stdout = "#(40, 2340)\n"
+
+@ cases.debug-shows-every-entry
+description = "`Debug` of a `HashMap` prints each entry once, in the order the map walks them."
+source = ```tauto
+import std::builtin::os { hash_seed, HashSeed, print }
+import std::hashmap { HashMap }
+import std::prelude::debug { Debug }
+
+fn demo(): Text ! {hash_seed} {
+  var m: HashMap(Nat, Nat) := HashMap::new()
+  let ^_a := HashMap::insert(&mut m, 7, 42)
+  Debug::debug(&m)
+}
+print(handle { demo() } with { hash_seed(), k => k(HashSeed { k0: 5, k1: 6 }) })
+```
+stdout = "HashMap[7 => 42]"

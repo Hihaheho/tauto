@@ -11,8 +11,13 @@ fn module(name: &str) -> Result<String, String> {
         .entry(name.to_string())
         .or_insert_with(|| {
             let loaded = tauto::program::load_tote_for_build(&root().join("totes").join(name))?;
-            let package = tauto_nir::compile_loaded_with_observer(&loaded, false, true, |_| {})
-                .map_err(|e| format!("selfhost JavaScript compilation: {e}"))?;
+            let package = tauto_nibcheck::lower::compile_loaded_with_observer(
+                &loaded,
+                false,
+                tauto_nir::Target::JavaScript,
+                |_| {},
+            )
+            .map_err(|e| format!("selfhost JavaScript compilation: {e}"))?;
             if !package.externs.is_empty() {
                 return Err("selfhost JavaScript requires explicit extern bindings".into());
             }

@@ -76,7 +76,39 @@ pub fn harness_tests(tests: impl FnOnce() -> Vec<String>) -> Harness {
     Harness::Run { positional, exact }
 }
 
+/// How long a whole run of a test binary may take before it is stopped as a
+/// failure: `TAUTO_TEST_TIMEOUT_SECS` (0 turns it off), else 30 minutes. A
+/// runner other than `cargo nextest` (which kills a test after five minutes,
+/// `.config/nextest.toml`) has no limit of its own, so a hung case would
+/// stall `cargo test` for ever. The limit is for the whole binary, so a full
+/// `cargo test` of every case still fits.
+fn run_time_limit() -> Option<std::time::Duration> {
+    let secs = std::env::var("TAUTO_TEST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|n| n.trim().parse::<u64>().ok())
+        .unwrap_or(30 * 60);
+    (secs > 0).then(|| std::time::Duration::from_secs(secs))
+}
+
+/// Exits with status 124 (as `timeout` does) once the run has used its time.
+fn start_watchdog() {
+    let Some(limit) = run_time_limit() else {
+        return;
+    };
+    let _ = std::thread::Builder::new()
+        .name("run time limit".into())
+        .spawn(move || {
+            std::thread::sleep(limit);
+            eprintln!(
+                "FAIL: the test run did not finish in {}s; set TAUTO_TEST_TIMEOUT_SECS to change the limit",
+                limit.as_secs()
+            );
+            std::process::exit(124);
+        });
+}
+
 pub fn with_deep_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    start_watchdog();
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(256 << 20)
@@ -85,6 +117,19 @@ pub fn with_deep_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     })
+}
+
+/// Turns on, for this worker thread, the reuse an editor makes of what the
+/// files read before (`docs/design/analysis-cache.md`): the cases a worker
+/// compiles one after another read the same standard library and syntaxes.
+/// The reuse does not change what a program reads as;
+/// `TAUTO_TEST_KEEP_EXPANSIONS=0` turns it off, so that a run without it can
+/// be compared with one with it. The worker's stack is deep, as reading on
+/// the caller's thread needs.
+fn keep_expansions_in_workers() {
+    if std::env::var_os("TAUTO_TEST_KEEP_EXPANSIONS").is_none_or(|v| v != "0") {
+        tauto::program::keep_expansions(true);
+    }
 }
 
 /// How many cases run at once: `TAUTO_TEST_THREADS`, else the machine's
@@ -118,11 +163,21 @@ pub fn parallel_map<T: Sync, R: Send, S>(
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
                     .spawn_scoped(scope, move || {
+                        keep_expansions_in_workers();
                         let mut state = make(w);
                         loop {
                             let i = next.fetch_add(1, Ordering::Relaxed);
                             let Some(item) = items.get(i) else { break };
-                            let r = f(&mut state, i, item);
+                            let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                                || f(&mut state, i, item),
+                            )) {
+                                Ok(r) => r,
+                                Err(panic) => {
+                                    // What the worker kept may be half made.
+                                    tauto::program::keep_expansions(false);
+                                    std::panic::resume_unwind(panic)
+                                }
+                            };
                             out.lock().unwrap()[i] = Some(r);
                         }
                     })
@@ -145,11 +200,11 @@ pub fn parallel_map<T: Sync, R: Send, S>(
 pub enum Outcome {
     Passed,
     Failed(String),
-    /// Marked `unimplemented` and failing, as expected.
+    /// Marked `eval.unimplemented` or `eval.bug` and failing, as expected.
     Todo,
     /// Nothing for the evaluator to check: only backend runners observe it.
     BackendOnly,
-    /// Marked `unimplemented`, yet passing: the mark is stale.
+    /// Marked `eval.unimplemented` or `eval.bug`, yet passing: the mark is stale.
     UnexpectedPass,
 }
 
@@ -184,7 +239,8 @@ pub fn capabilities(root: &Path) -> Result<Vec<CaseCapabilities>, String> {
         let doc = eure_reader::parse_to_document(&text, &path).map_err(|e| e.to_string())?;
         let named = case_nodes(&doc, name.rsplit('/').next().unwrap_or(&name))?;
         for (id, node) in named {
-            let parsed = case::Case::from_document(&doc, node)?;
+            let parsed = case::Case::from_document(&doc, node)
+                .map_err(|e| format!("{name}: {e}"))?;
             let NodeValue::Map(fields) = &doc.node(node).content else {
                 unreachable!()
             };
@@ -197,6 +253,9 @@ pub fn capabilities(root: &Path) -> Result<Vec<CaseCapabilities>, String> {
                         "files",
                         "tote",
                         "files_tote",
+                        "check_tote",
+                        "run_tote",
+                        "workspace_check",
                         "entry",
                         "imports",
                         "extract",
@@ -204,7 +263,6 @@ pub fn capabilities(root: &Path) -> Result<Vec<CaseCapabilities>, String> {
                         "scenarios",
                         "cases",
                         "fixtures",
-                        "backends",
                     ]
                     .contains(&k.as_str())
                 })
@@ -213,16 +271,17 @@ pub fn capabilities(root: &Path) -> Result<Vec<CaseCapabilities>, String> {
                 .iter()
                 .filter(|k| {
                     ![
-                        "rust_shows",
-                        "rust_error",
-                        "javascript_shows",
-                        "javascript_error",
                         "build",
                         "rust",
+                        "javascript",
+                        "vm",
+                        "llvm",
                         "compile_errors",
-                        "backend_known_failure",
                         "differential",
-                        "unimplemented",
+                        "differential_program",
+                        "eval",
+                        "niri",
+                        "nir_wf",
                         "selfhost_entry",
                         "selfhost_stdout",
                         "selfhost_compile_error",
@@ -243,23 +302,17 @@ pub fn capabilities(root: &Path) -> Result<Vec<CaseCapabilities>, String> {
                 },
             );
             for backend in ["rust", "javascript"] {
-                let selected = parsed
-                    .backends
-                    .as_ref()
-                    .is_none_or(|bs| bs.iter().any(|b| b == backend));
+                let opt_outs = parsed.opt_outs();
                 let compile = parsed
                     .compile_errors
                     .as_ref()
                     .and_then(|es| es.get(backend));
-                let known = parsed
-                    .backend_known_failure
-                    .as_ref()
-                    .and_then(|es| es.get(backend));
+                let known = opt_outs.get(backend);
                 let runs = Scenario::backend(backend).is_some_and(|b| scenarios.contains(&b));
-                let mut route = if !selected {
-                    "excluded by explicit selection".to_string()
-                } else if let Some(want) = known {
-                    format!("known failure, execute and match; never a pass: {want}")
+                let mut route = if let Some(want) = known {
+                    format!(
+                        "opted out, execute and match; never a pass, execute and match; never a pass: {want}"
+                    )
                 } else if let Some(want) = compile {
                     format!("expected compilation rejection: {want}")
                 } else if !runs {
@@ -269,17 +322,11 @@ pub fn capabilities(root: &Path) -> Result<Vec<CaseCapabilities>, String> {
                 } else {
                     "available compile acceptance; execution required".into()
                 };
-                if backend == "rust" && parsed.rust.is_some() {
-                    route = format!("declared uncovered: {}", parsed.rust.as_deref().unwrap());
-                }
-                if parsed.drops.is_some() {
-                    route.push_str("; drops require evaluator instrumentation");
-                }
-                if parsed.budget.is_some() {
-                    route.push_str("; evaluator fuel is not native step accounting");
-                }
                 routes.insert(format!("bootstrap-{backend}"), route);
-                let selfhost = match &parsed.differential {
+                let selfhost = if parsed.differential_program.as_deref() == Some("elaborator") {
+                    "whole-tote elaborator differential; the selfhost harness compares acceptance and declarations".into()
+                } else {
+                    match &parsed.differential {
                     Some(_) if parsed.selfhost_entry.is_some() => format!(
                         "explicit Tauto compiler entry/output/error contract; compiler execution and {backend} target generation both require observation; bootstrap generation is not this route"
                     ),
@@ -309,6 +356,7 @@ pub fn capabilities(root: &Path) -> Result<Vec<CaseCapabilities>, String> {
                             .into()
                     }
                     None => "no selfhost adapter for this assertion".into(),
+                    }
                 };
                 routes.insert(format!("selfhost-{backend}"), selfhost);
             }
@@ -504,7 +552,7 @@ fn case_nodes(
     let fixtures = validate_fixtures(&doc)?;
     // The top-level case (when the file has `a`), then `@ cases.<name>`.
     let mut named = Vec::new();
-    if ["a", "source", "files", "tote"]
+    if ["a", "source", "files", "tote", "nir"]
         .iter()
         .any(|key| top.get_node_id(&(*key).into()).is_some())
     {
@@ -572,47 +620,63 @@ fn run_file(
 }
 
 /// What a case asks of the Rust backend: the
-/// expectations of the evaluator (`shows`, `run_error`), which the backend
-/// must agree with, and the ones only the backend has (`rust_shows`,
-/// `rust_error`, `build`).
+/// expectations of the evaluator (`stdout`, `run_error`), which the backend
+/// must agree with, and the ones only the Rust backend has (`build`).
+/// The answer of the case host to one extern. An extern that gives `owner`
+/// returns a resource of that struct (its `value` field is `value`) whose release
+/// is a probe drop; `answers` is `now` (the default), `later` (a Promise), `rejects`
+/// or `throws` (with `error`); `drops_at_call` is the number of probes dropped
+/// when the extern is called.
+#[derive(Debug, Clone, Default)]
+pub struct HostSpec {
+    pub owner: Option<String>,
+    pub value: Option<i64>,
+    pub answers: Option<String>,
+    pub error: Option<String>,
+    pub drops_at_call: Option<usize>,
+}
+
 pub struct RustCase {
     pub name: String,
     pub source: String,
     /// An external source keeps its imports relative to this file.
     pub source_path: Option<PathBuf>,
     pub imports: Vec<PathBuf>,
-    pub shows: Option<Vec<String>>,
     pub run_error: Option<String>,
-    /// Replaces `shows` for the backend when the two differ.
-    pub rust_shows: Option<Vec<String>>,
-    pub rust_error: Option<String>,
     /// `"ok"`, or `"error: <part of the message>"`: whether the generated
     /// crate builds.
     pub build: Option<String>,
-    /// `"skip: <reason>"`: the backend does not run this case (`budget`,
-    /// `decimal`, `eval-only`).
-    pub rust: Option<String>,
-    /// Marked `unimplemented` for the evaluator.
-    pub unimplemented: bool,
+    /// The `test` entries the run calls, in order, instead of `main`.
+    pub tests: Option<Vec<String>>,
     pub stdout: Option<String>,
     pub stderr: Option<String>,
     pub exit: Option<i32>,
     pub budget: Option<u64>,
     /// Steps the Rust run took at budgets' fuel checks, as its runtime counts.
     pub rust_budget_steps: Option<u64>,
+    /// The stack of the Rust program's threads in MiB, as a tote's
+    /// `rust.stack-mb` sets it: a case that shows a recursion runs in
+    /// constant stack takes a small one, so that a depth the other backends
+    /// run in seconds is still past what the stack holds as frames.
+    pub rust_stack_mb: Option<u64>,
     pub args: Vec<String>,
     /// The host's permission flags (`--allow-env`, …) the run is given.
     pub permissions: Vec<String>,
-    pub drops: Option<Vec<String>>,
     /// The names of the case host's probes, in the order they are dropped.
     pub probe_drops: Option<Vec<String>>,
-    pub backends: Option<Vec<String>>,
+    /// What the case host answers to the program's externs, by name.
+    pub host: std::collections::BTreeMap<String, HostSpec>,
     pub compile_errors: std::collections::BTreeMap<String, String>,
     pub differential: Option<String>,
     pub extract: bool,
-    pub backend_known_failure: std::collections::BTreeMap<String, String>,
-    pub javascript_shows: Option<Vec<String>>,
-    pub javascript_error: Option<String>,
+    /// The backends that fail this case today (`<backend>.unimplemented` or
+    /// `<backend>.bug`), each with its `stage: message`.
+    pub opt_outs: std::collections::BTreeMap<String, String>,
+    /// `niri.…`: the rule niri finds the case breaks today, as `<kind>: why`
+    /// (`split: why` when run as continuations it ends otherwise).
+    pub niri: Option<String>,
+    /// `nir_wf.…`: the NIR check's finding today, as `<function> <rule>: why`.
+    pub nir_wf: Option<String>,
     pub tote: Option<PathBuf>,
     pub scenarios: std::collections::BTreeSet<Scenario>,
     pub assertions: Vec<String>,
@@ -648,13 +712,19 @@ impl RustCase {
     }
 
     /// Compile checked file inputs without flattening away extraction evidence.
-    pub fn compile(&self, backend: &str) -> Result<tauto_nir::Package, tauto_nir::CompileError> {
+    /// Whether the case is a directory of files and not the `source` alone.
+    pub fn has_input(&self) -> bool {
+        self.input.is_some()
+    }
+
+    pub fn compile(&self, backend: &str) -> Result<tauto_nir::Package, tauto_nibcheck::lower::CompileError> {
         let mut package = self.compile_any(backend)?;
+        anf_for_differential_runs(&mut package);
         // The machine runs the JavaScript backend's lowering.
-        if backend == "rust"
+        if (backend == "rust" || backend == "llvm")
             && let Some(u) = package.rust_unsupported.take()
         {
-            return Err(tauto_nir::CompileError::Unsupported(u));
+            return Err(tauto_nibcheck::lower::CompileError::Unsupported(u));
         }
         Ok(package)
     }
@@ -665,20 +735,26 @@ impl RustCase {
     pub fn compile_with_files(
         &self,
         backend: &str,
-    ) -> Result<(tauto_nir::Package, Option<String>, CaseFiles), tauto_nir::CompileError> {
+    ) -> Result<(tauto_nir::Package, Option<String>, CaseFiles), tauto_nibcheck::lower::CompileError> {
         if self.input.is_none() {
             return Ok((self.compile(backend)?, None, CaseFiles(None)));
         }
-        let (case, path) = self.input_case().map_err(tauto_nir::CompileError::Front)?;
+        let (case, path) = self.input_case().map_err(tauto_nibcheck::lower::CompileError::Front)?;
         let input = case
             .load_for_compilation(path)
-            .map_err(tauto_nir::CompileError::Front)?;
-        let package = tauto_nir::compile_loaded_with_observer(
+            .map_err(tauto_nibcheck::lower::CompileError::Front)?;
+        let mut package = tauto_nibcheck::lower::compile_loaded_with_observer(
             &input.loaded,
             false,
-            backend == "javascript" || backend == "vm",
+            backend_target(if backend == "vm" { "javascript" } else { backend }),
             |_| {},
         )?;
+        anf_for_differential_runs(&mut package);
+        if (backend == "rust" || backend == "llvm")
+            && let Some(u) = package.rust_unsupported.take()
+        {
+            return Err(tauto_nibcheck::lower::CompileError::Unsupported(u));
+        }
         let dir = input
             .files_dir()
             .and_then(|d| d.canonicalize().ok())
@@ -686,33 +762,144 @@ impl RustCase {
         Ok((package, dir, input.into_files()))
     }
 
-    fn compile_any(&self, backend: &str) -> Result<tauto_nir::Package, tauto_nir::CompileError> {
+    /// As `compile` for each backend in turn (`rust` or `javascript`), with
+    /// the case read and its types checked once.
+    pub fn compile_backends(
+        &self,
+        backends: &[&str],
+    ) -> Vec<Result<tauto_nir::Package, tauto_nibcheck::lower::CompileError>> {
+        let target = |backend: &str| {
+            if backend == "javascript" {
+                tauto_nir::Target::JavaScript
+            } else {
+                tauto_nir::Target::Rust
+            }
+        };
+        let compiled = if self.input.is_some() {
+            let loaded = self
+                .input_case()
+                .and_then(|(case, path)| case.load_for_compilation(path));
+            match loaded {
+                Err(e) => backends
+                    .iter()
+                    .map(|_| Err(tauto_nibcheck::lower::CompileError::Front(e.clone())))
+                    .collect(),
+                Ok(loaded) => {
+                    let entries = loaded.exports.clone().unwrap_or_default();
+                    let requests: Vec<_> = backends
+                        .iter()
+                        .map(|&backend| tauto_nibcheck::lower::TargetRequest {
+                            target: target(backend),
+                            lib: backend == "javascript" && loaded.exports.as_ref().is_some_and(|e| !e.is_empty()),
+                            entries: (backend == "javascript").then_some(&entries),
+                        })
+                        .collect();
+                    tauto_nibcheck::lower::compile_loaded_targets(&loaded.loaded, &requests)
+                }
+            }
+        } else if let Some(path) = &self.source_path {
+            match tauto::program::load(path) {
+                Err(e) => backends
+                    .iter()
+                    .map(|_| Err(tauto_nibcheck::lower::CompileError::Front(e.clone())))
+                    .collect(),
+                Ok(loaded) => match loaded.program.errors.first() {
+                    Some((error, _)) => backends
+                        .iter()
+                        .map(|_| Err(tauto_nibcheck::lower::CompileError::Front(error.to_string())))
+                        .collect(),
+                    None => {
+                        let requests: Vec<_> = backends
+                            .iter()
+                            .map(|&b| tauto_nibcheck::lower::TargetRequest {
+                                target: target(b),
+                                lib: false,
+                                entries: None,
+                            })
+                            .collect();
+                        tauto_nibcheck::lower::compile_loaded_targets(&loaded, &requests)
+                    }
+                },
+            }
+        } else {
+            match self.compilation_source() {
+                Err(e) => backends
+                    .iter()
+                    .map(|_| Err(tauto_nibcheck::lower::CompileError::Front(e.clone())))
+                    .collect(),
+                Ok(source) => {
+                    let targets: Vec<_> = backends.iter().map(|&b| target(b)).collect();
+                    tauto::nir::compile_targets(&source, &targets)
+                }
+            }
+        };
+        compiled
+            .into_iter()
+            .zip(backends)
+            .map(|(package, &backend)| {
+                let mut package = package?;
+                anf_for_differential_runs(&mut package);
+                if (backend == "rust" || backend == "llvm")
+                    && let Some(u) = package.rust_unsupported.take()
+                {
+                    return Err(tauto_nibcheck::lower::CompileError::Unsupported(u));
+                }
+                Ok(package)
+            })
+            .collect()
+    }
+
+    /// The source `compile` compiles, when the case is that source alone:
+    /// two such cases with the same source compile to the same packages.
+    pub fn compiled_source(&self) -> Option<String> {
+        if self.input.is_some() {
+            return None;
+        }
+        self.compilation_source().ok().map(|s| s.into_owned())
+    }
+
+    fn compile_any(&self, backend: &str) -> Result<tauto_nir::Package, tauto_nibcheck::lower::CompileError> {
         let backend = if backend == "vm" {
             "javascript"
         } else {
             backend
         };
         if self.input.is_some() {
-            let (case, path) = self.input_case().map_err(tauto_nir::CompileError::Front)?;
+            let (case, path) = self.input_case().map_err(tauto_nibcheck::lower::CompileError::Front)?;
             let loaded = case
                 .load_for_compilation(path)
-                .map_err(tauto_nir::CompileError::Front)?;
-            let entries = loaded.javascript_exports.iter().cloned().collect();
-            tauto_nir::compile_loaded_entries_with_observer(
+                .map_err(tauto_nibcheck::lower::CompileError::Front)?;
+            let entries = loaded.exports.clone().unwrap_or_default();
+            tauto_nibcheck::lower::compile_loaded_entries_with_observer(
                 &loaded.loaded,
-                backend == "javascript" && !loaded.javascript_exports.is_empty(),
-                backend == "javascript",
+                backend == "javascript" && loaded.exports.as_ref().is_some_and(|e| !e.is_empty()),
+                backend_target(backend),
                 (backend == "javascript").then_some(&entries),
+                |_| {},
+            )
+        } else if let Some(path) = &self.source_path {
+            // The file is compiled as the file it is, with its own imports,
+            // not as its printed text.
+            let loaded = tauto::program::load(path).map_err(tauto_nibcheck::lower::CompileError::Front)?;
+            if let Some((error, _)) = loaded.program.errors.first() {
+                return Err(tauto_nibcheck::lower::CompileError::Front(error.to_string()));
+            }
+            tauto_nibcheck::lower::compile_loaded_with_observer(
+                &loaded,
+                false,
+                backend_target(backend),
                 |_| {},
             )
         } else {
             let source = self
                 .compilation_source()
-                .map_err(tauto_nir::CompileError::Front)?;
+                .map_err(tauto_nibcheck::lower::CompileError::Front)?;
             if backend == "javascript" {
-                tauto_nir::compile_javascript(&source)
+                tauto::nir::compile_javascript(&source)
+            } else if backend == "llvm" {
+                tauto::nir::compile_llvm(&source)
             } else {
-                tauto_nir::compile(&source)
+                tauto::nir::compile(&source)
             }
         }
     }
@@ -736,11 +923,7 @@ impl RustCase {
 
     /// An explicit route is a requirement, never an automatic unsupported skip.
     pub fn explicit_backend(&self, backend: &str) -> bool {
-        self.backends
-            .as_ref()
-            .is_some_and(|bs| bs.iter().any(|b| b == backend))
-            || self.compile_errors.contains_key(backend)
-            || self.backend_known_failure.contains_key(backend)
+        self.compile_errors.contains_key(backend) || self.opt_outs.contains_key(backend)
     }
 
     pub fn selects_backend(&self, backend: &str) -> bool {
@@ -748,29 +931,24 @@ impl RustCase {
     }
 
     pub fn expects_runtime(&self) -> bool {
-        self.shows.is_some()
-            || self.rust_shows.is_some()
-            || self.run_error.is_some()
-            || self.rust_error.is_some()
+        self.run_error.is_some()
             || self.stdout.is_some()
             || self.stderr.is_some()
             || self.exit.is_some()
-            || self.javascript_shows.is_some()
-            || self.javascript_error.is_some()
             || self.probe_drops.is_some()
     }
 
+    /// What a backend runner cannot check of the case; nothing at present.
     pub fn assertion_gaps(&self) -> Vec<&'static str> {
-        let mut gaps = Vec::new();
-        if self.drops.is_some() {
-            gaps.push(
-                "drops: evaluator ownership instrumentation has no native observation adapter",
-            );
-        }
-        if self.budget.is_some() {
-            gaps.push("budget: evaluator instruction fuel is not native step accounting");
-        }
-        gaps
+        Vec::new()
+    }
+
+    /// An opt-out other than `output: …`, which the run is checked against
+    /// instead of the case's output.
+    pub fn runtime_opt_out(&self, backend: &str) -> bool {
+        self.opt_outs
+            .get(backend)
+            .is_some_and(|w| !w.starts_with("output: "))
     }
 
     pub fn check_limitation(
@@ -779,7 +957,7 @@ impl RustCase {
         stage: &str,
         message: &str,
     ) -> Result<bool, String> {
-        let Some(want) = self.backend_known_failure.get(backend) else {
+        let Some(want) = self.opt_outs.get(backend) else {
             return Ok(false);
         };
         let (expected_stage, expected_message) =
@@ -816,8 +994,8 @@ impl RustCase {
     }
 
     pub fn check_compiled(&self, backend: &str) -> Result<(), String> {
-        if let Some(want) = self.backend_known_failure.get(backend) {
-            if !want.starts_with("runtime: ") {
+        if let Some(want) = self.opt_outs.get(backend) {
+            if !want.starts_with("runtime: ") && !want.starts_with("output: ") {
                 return Err(format!(
                     "{backend}: known failure {want:?} unexpectedly compiled; remove the stale limitation"
                 ));
@@ -832,46 +1010,42 @@ impl RustCase {
         }
     }
 
-    /// Compare the distinct observable streams, not an amalgamated stdout.
+    /// Compare the run with the case. `Ok(Some(_))` is a declared
+    /// `output: <part of the mismatch>` opt-out that still happens.
     pub fn check_output(
         &self,
         backend: &str,
-        shows: &[String],
+        stdout: &str,
+        stderr: &str,
+        exit: Option<i32>,
+    ) -> Result<Option<String>, String> {
+        let Some(want) = self.opt_outs.get(backend) else {
+            return self.compare_output(stdout, stderr, exit).map(|()| None);
+        };
+        if let Some(part) = want.strip_prefix("output: ") {
+            return match self.compare_output(stdout, stderr, exit) {
+                Ok(()) => Err(format!(
+                    "{backend}: opt-out {want:?} no longer happens; remove it"
+                )),
+                Err(e) if e.contains(part) => Ok(Some(e)),
+                Err(e) => Err(format!("{backend}: expected opt-out {want:?}, got {e}")),
+            };
+        }
+        Err(if exit == Some(0) {
+            format!("{backend}: opt-out {want:?} no longer happens; remove it")
+        } else {
+            format!("{backend}: opt-out {want:?} must be reported as uncovered, not an output pass")
+        })
+    }
+
+    /// Compare the distinct observable streams, not an amalgamated stdout.
+    fn compare_output(
+        &self,
         stdout: &str,
         stderr: &str,
         exit: Option<i32>,
     ) -> Result<(), String> {
-        if let Some(want) = self.backend_known_failure.get(backend) {
-            return Err(if exit == Some(0) {
-                format!(
-                    "{backend}: known failure {want:?} unexpectedly succeeded; remove the stale limitation"
-                )
-            } else {
-                format!(
-                    "{backend}: known failure {want:?} must be reported as uncovered, not an output pass"
-                )
-            });
-        }
-        let error = if backend == "javascript" && self.javascript_shows.is_some() {
-            // An explicit JS success contract overrides inherited native/evaluator
-            // failures. An explicit JS error can still require pre-error shows.
-            self.javascript_error.as_ref()
-        } else if backend == "javascript" {
-            self.javascript_error
-                .as_ref()
-                .or(self.rust_error.as_ref())
-                .or(self.run_error.as_ref())
-        } else {
-            self.rust_error.as_ref().or(self.run_error.as_ref())
-        };
-        let expected_shows = if backend == "javascript" {
-            self.javascript_shows
-                .as_ref()
-                .or(self.rust_shows.as_ref())
-                .or(self.shows.as_ref())
-        } else {
-            self.rust_shows.as_ref().or(self.shows.as_ref())
-        };
+        let error = self.run_error.as_ref();
         if let Some(want) = error {
             if exit == Some(0) || !stderr.contains(want) {
                 return Err(format!(
@@ -893,20 +1067,6 @@ impl RustCase {
                     return Err(format!("exit: expected {want}, got {exit:?}"));
                 }
             }
-            // A backend error replaces the evaluator's successful shows, but
-            // backend-specific pre-error observations are still assertions.
-            let before_error = if backend == "javascript" {
-                self.javascript_shows.as_ref().or(self.rust_shows.as_ref())
-            } else {
-                self.rust_shows.as_ref()
-            };
-            if let Some(want) = before_error {
-                if shows != want {
-                    return Err(format!(
-                        "shows before error: expected {want:?}, got {shows:?}"
-                    ));
-                }
-            }
             return Ok(());
         }
         if exit != Some(self.exit.unwrap_or(0)) {
@@ -914,11 +1074,6 @@ impl RustCase {
                 "exit: expected {}, got {exit:?}; stderr: {stderr}",
                 self.exit.unwrap_or(0)
             ));
-        }
-        if let Some(want) = expected_shows {
-            if shows != want {
-                return Err(format!("shows: expected {want:?}, got {shows:?}"));
-            }
         }
         if let Some(want) = &self.stdout {
             if stdout != want {
@@ -952,12 +1107,18 @@ pub fn rust_cases(root: &Path) -> Result<Vec<RustCase>, String> {
         let doc = eure_reader::parse_to_document(&text, &name).map_err(|e| e.to_string())?;
         let named = case_nodes(&doc, name.rsplit('/').next().unwrap_or(&name))?;
         for (case, id) in named {
-            let parsed = case::Case::from_document(&doc, id)?;
+            let parsed = case::Case::from_document(&doc, id)
+                .map_err(|e| format!("{name}/{case}: {e}"))?;
             if parsed.source.is_none() && parsed.files.is_none() && parsed.tote.is_none() {
                 continue;
             }
             // A load failure is a front-end assertion, not a compilation input.
             if parsed.load_error.is_some() {
+                continue;
+            }
+            // A case that names its tests runs the bodies of its `test`
+            // entries, which only the evaluator does; a backend runs `main`.
+            if parsed.tests.is_some() {
                 continue;
             }
             let source = parsed
@@ -978,6 +1139,9 @@ pub fn rust_cases(root: &Path) -> Result<Vec<RustCase>, String> {
                         "files",
                         "tote",
                         "files_tote",
+                        "check_tote",
+                        "run_tote",
+                        "workspace_check",
                         "entry",
                         "imports",
                         "description",
@@ -1006,38 +1170,50 @@ pub fn rust_cases(root: &Path) -> Result<Vec<RustCase>, String> {
                             .collect()
                     })
                     .unwrap_or_default(),
-                shows: parsed.shows.clone(),
                 run_error: parsed.run_error.clone(),
-                rust_shows: parsed.rust_shows.clone(),
-                rust_error: parsed.rust_error.clone(),
                 build: parsed.build.clone(),
-                rust: parsed.rust.clone(),
-                unimplemented: parsed.unimplemented,
+                tests: parsed.tests.clone(),
                 stdout: parsed.stdout.clone(),
                 stderr: parsed.stderr.clone(),
                 exit: parsed.exit,
                 budget: parsed.budget,
                 rust_budget_steps: parsed.rust_budget_steps,
-                drops: parsed.drops.clone(),
+                rust_stack_mb: parsed.rust_stack_mb,
                 probe_drops: parsed.probe_drops.clone(),
+                host: parsed
+                    .host
+                    .iter()
+                    .flatten()
+                    .map(|(name, h)| {
+                        (
+                            name.clone(),
+                            HostSpec {
+                                owner: h.owner.clone(),
+                                value: h.value,
+                                answers: h.answers.clone(),
+                                error: h.error.clone(),
+                                drops_at_call: h.drops_at_call,
+                            },
+                        )
+                    })
+                    .collect(),
                 args: parsed.args.clone().unwrap_or_default(),
                 permissions: parsed.permissions.clone().unwrap_or_default(),
-                backends: parsed.backends.clone(),
                 compile_errors: parsed.compile_errors.clone().unwrap_or_default(),
                 differential: parsed.differential.clone(),
                 scenarios: parsed.scenarios(),
                 assertions,
-                extract: parsed.extract.unwrap_or(false),
-                backend_known_failure: parsed.backend_known_failure.clone().unwrap_or_default(),
-                javascript_shows: parsed.javascript_shows.clone(),
-                javascript_error: parsed.javascript_error.clone(),
+                extract: parsed.extracts(),
+                opt_outs: parsed.opt_outs(),
+                niri: parsed.nir_opt_outs().0,
+                nir_wf: parsed.nir_opt_outs().1,
                 tote: parsed
                     .tote
                     .as_ref()
                     .map(|p| path.parent().unwrap().join(p.as_str())),
                 input: (parsed.files.is_some()
                     || parsed.tote.is_some()
-                    || parsed.extract.unwrap_or(false))
+                    || parsed.extracts())
                 .then(|| (path.clone(), case.clone())),
             });
         }
@@ -1049,8 +1225,23 @@ pub fn rust_cases(root: &Path) -> Result<Vec<RustCase>, String> {
 fn scratch_dir() -> Result<PathBuf, String> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
+    // A file's check policy is the `Tauto.eure` of the nearest directory above
+    // it, so a case written under one would be judged by that manifest's
+    // `check.axioms` and `check.slow` instead of its own.
+    let base = std::env::temp_dir();
+    if let Some(manifest) = base
+        .ancestors()
+        .map(|dir| dir.join("Tauto.eure"))
+        .find(|f| f.is_file())
+    {
+        return Err(format!(
+            "the temporary directory {} is under {}, whose check policy every case would read; set TMPDIR to a directory outside any tote",
+            base.display(),
+            manifest.display()
+        ));
+    }
     for _ in 0..1000 {
-        let path = std::env::temp_dir().join(format!(
+        let path = base.join(format!(
             "tauto-cases-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -1084,4 +1275,37 @@ fn relative_case_path(path: &str) -> Result<&Path, String> {
         return Err("case files cannot replace the shared syntax tables".into());
     }
     Ok(parsed)
+}
+
+/// With `TAUTO_TEST_ANF` set, every case runs on its package in A-normal
+/// form: running the suite with and without it checks that the pass keeps
+/// what each backend prints.
+fn anf_for_differential_runs(package: &mut tauto_nir::Package) {
+    if std::env::var_os("TAUTO_TEST_ANF").is_some() {
+        tauto_nir::anf::normalize(package);
+    }
+    // With `TAUTO_TEST_OWNERSHIP` set, the drops of every case are written
+    // and checked (on a copy: no backend reads them yet), and a function
+    // where a value is not consumed once on every path stops the run.
+    if std::env::var_os("TAUTO_TEST_OWNERSHIP").is_some() {
+        let mut copy = package.clone();
+        tauto_nir::anf::normalize(&mut copy);
+        tauto_nir::ownership::insert(&mut copy);
+        for f in &copy.fns {
+            if let Err(e) = tauto_nir::ownership::check(f) {
+                panic!("ownership: {}: {e}", f.source);
+            }
+            // The points of every function are found.
+            let _ = tauto_nir::effects::points(f);
+        }
+    }
+}
+
+/// The target a backend named in a case is compiled for.
+fn backend_target(backend: &str) -> tauto_nir::Target {
+    match backend {
+        "javascript" => tauto_nir::Target::JavaScript,
+        "llvm" => tauto_nir::Target::Llvm,
+        _ => tauto_nir::Target::Rust,
+    }
 }

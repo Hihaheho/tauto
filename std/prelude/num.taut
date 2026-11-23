@@ -1,0 +1,161 @@
+// A result that does not exist in its type: a difference of `Nat`s below zero, or
+// a result of a fixed width that does not fit it. What the operators `-` on `Nat`
+// and `+`, `-`, `*` on a fixed width perform then; `checked_*` gives the result
+// as an `Option`, and each has a form that takes a proof that it fits.
+pub(open) effect overflow(): Never resume 0
+
+// A division by 0: what `/` on `Float`, `Nat::div`, `Int::tdiv`, `U8::div`, …
+// perform when the divisor is 0. Each also has a form without the effect that
+// takes a proof that the divisor is not 0 (`Float::div`, `Nat::div_nz`, …).
+pub(open) effect divzero(): Never resume 0
+
+// Explicit changes of an integer's width (`docs/design/self-host.md`). A number
+// that does not fit is the run error "the number is too large".
+
+extern {
+  pub fn I64::of_i8(n: i8): i64
+  pub fn I64::of_i16(n: i16): i64
+  pub fn I64::of_i32(n: i32): i64
+  pub fn I64::of_u64(n: u64): i64
+  pub fn I64::of_float(x: Float): i64
+}
+
+extern {
+  pub fn I32::of_i64(n: i64): i32
+  pub fn I16::of_i64(n: i64): i16
+  pub fn I8::of_i64(n: i64): i8
+}
+
+// The operations of `uhost` whose proof is in the Tauto side: the result fits,
+// so each is one machine operation with no check. `a + b`, `a - b` and `a * b`
+// of two `uhost`s are the host's effects (`std/builtin/os.taut`).
+extern {
+  pub fn UHost::succ_below(a: uhost): uhost
+  pub fn UHost::pred_nz(a: uhost): uhost
+  pub fn UHost::add_within(a: uhost, b: uhost): uhost
+  pub fn UHost::sub(a: uhost, b: uhost): uhost
+  pub fn UHost::of_u64_below(x: u64): uhost
+}
+
+extern {
+  pub fn U64::of_i64(n: i64): u64
+  pub fn U64::of_u32(n: u32): u64
+  pub fn U64::of_u8(n: u8): u64
+  pub fn U64::of_u16(n: u16): u64
+  pub fn U64::of_uhost(n: uhost): u64
+  pub fn U64::of_nat(n: nat): u64
+  pub fn U64::and(a: u64, b: u64): u64
+  pub fn U64::or(a: u64, b: u64): u64
+  pub fn U64::xor(a: u64, b: u64): u64
+  pub fn U64::shl(a: u64, s: u64): u64
+  pub fn U64::shr(a: u64, s: u64): u64
+  pub fn U64::rotl(a: u64, s: u64): u64
+  pub fn U64::rotr(a: u64, s: u64): u64
+  // `a + b`, `a - b` and `a * b` modulo `2^64`. `+`, `-` and `*` on `u64`
+  // perform `overflow` when the result does not fit; these say the wrap in
+  // their name and are total, so they leave no `overflow` in a row. Each
+  // backend computes them as the machine's wrapping arithmetic.
+  pub fn U64::wrapping_add(a: u64, b: u64): u64
+  pub fn U64::wrapping_sub(a: u64, b: u64): u64
+  pub fn U64::wrapping_mul(a: u64, b: u64): u64
+}
+
+extern {
+  pub fn U32::of_u64(n: u64): u32
+  // The bits of a word: and, or, exclusive or, and shifts and rotations by
+  // `s` modulo the width (`docs/design/self-host.md`).
+  pub fn U32::and(a: u32, b: u32): u32
+  pub fn U32::or(a: u32, b: u32): u32
+  pub fn U32::xor(a: u32, b: u32): u32
+  pub fn U32::shl(a: u32, s: u64): u32
+  pub fn U32::shr(a: u32, s: u64): u32
+  pub fn U32::rotl(a: u32, s: u64): u32
+  pub fn U32::rotr(a: u32, s: u64): u32
+}
+
+extern {
+  pub fn U8::of_u64(n: u64): u8
+  pub fn U16::of_u64(n: u64): u16
+}
+
+extern {
+  pub fn Nat::of_u64(n: u64): nat
+}
+
+// `Float` (IEEE 754 binary64, `docs/design/float.md`). Every backend computes
+// the same bits: the functions that are not exact in IEEE 754 (`Float::sin`,
+// `Float::ln`, `Float::pow`, …) are the runtime's own, not the platform's.
+// `Float::of_text` reads a number as a literal writes one (with an optional
+// `-`), and `Text::of_float` writes the shortest digits that read back as the
+// same `Float`, without an exponent (`0.1`, `1`, `-0`, `NaN`, `inf`).
+// `I64::of_float` takes the integer part; NaN, an infinity or a part outside
+// `i64` is the run error "the number is too large".
+extern {
+  pub fn Float::of_i64(n: i64): Float
+  pub fn Float::of_text(t: Text): Option(Float)
+  pub fn Float::bits(x: Float): u64
+  pub fn Float::of_bits(b: u64): Float
+  pub fn Float::is_nan(x: Float): Bool
+  pub fn Float::abs(x: Float): Float
+  pub fn Float::floor(x: Float): Float
+  pub fn Float::ceil(x: Float): Float
+  pub fn Float::trunc(x: Float): Float
+  pub fn Float::round(x: Float): Float
+  pub fn Float::sqrt(x: Float): Float
+  pub fn Float::cbrt(x: Float): Float
+  pub fn Float::exp(x: Float): Float
+  pub fn Float::ln(x: Float): Float
+  pub fn Float::log2(x: Float): Float
+  pub fn Float::log10(x: Float): Float
+  pub fn Float::pow(x: Float, y: Float): Float
+  pub fn Float::sin(x: Float): Float
+  pub fn Float::cos(x: Float): Float
+  pub fn Float::tan(x: Float): Float
+  pub fn Float::asin(x: Float): Float
+  pub fn Float::acos(x: Float): Float
+  pub fn Float::atan(x: Float): Float
+  pub fn Float::atan2(y: Float, x: Float): Float
+  pub fn Float::sinh(x: Float): Float
+  pub fn Float::cosh(x: Float): Float
+  pub fn Float::tanh(x: Float): Float
+  pub fn Float::of_float32(x: Float32): Float
+}
+
+extern {
+  pub fn Text::of_float(x: Float): Text
+}
+
+// `Float32` (IEEE 754 binary32, `docs/design/float.md`). It has no literal:
+// `Float32::of_float(0.1)` is the `Float32` nearest to the `Float` `0.1`.
+// `+ - * /`, the comparisons and `Float32::sqrt` are IEEE 754's; the other
+// functions are the `Float` one of the same number, rounded to the nearest
+// `Float32`, so every backend computes the same bits. `show` writes the
+// digits of the same number as a `Float`.
+extern {
+  pub fn Float32::of_float(x: Float): Float32
+  pub fn Float32::bits(x: Float32): u32
+  pub fn Float32::of_bits(b: u32): Float32
+  pub fn Float32::is_nan(x: Float32): Bool
+  pub fn Float32::abs(x: Float32): Float32
+  pub fn Float32::floor(x: Float32): Float32
+  pub fn Float32::ceil(x: Float32): Float32
+  pub fn Float32::trunc(x: Float32): Float32
+  pub fn Float32::round(x: Float32): Float32
+  pub fn Float32::sqrt(x: Float32): Float32
+  pub fn Float32::cbrt(x: Float32): Float32
+  pub fn Float32::exp(x: Float32): Float32
+  pub fn Float32::ln(x: Float32): Float32
+  pub fn Float32::log2(x: Float32): Float32
+  pub fn Float32::log10(x: Float32): Float32
+  pub fn Float32::pow(x: Float32, y: Float32): Float32
+  pub fn Float32::sin(x: Float32): Float32
+  pub fn Float32::cos(x: Float32): Float32
+  pub fn Float32::tan(x: Float32): Float32
+  pub fn Float32::asin(x: Float32): Float32
+  pub fn Float32::acos(x: Float32): Float32
+  pub fn Float32::atan(x: Float32): Float32
+  pub fn Float32::atan2(y: Float32, x: Float32): Float32
+  pub fn Float32::sinh(x: Float32): Float32
+  pub fn Float32::cosh(x: Float32): Float32
+  pub fn Float32::tanh(x: Float32): Float32
+}

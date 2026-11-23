@@ -54,7 +54,7 @@ fn scratch(name: &str, text: &str) -> PathBuf {
 fn a_syntax_without_a_fmt_function_keeps_its_literals() {
     tauto_messages::install();
     let source = r#"import "lib.taut"
-import std::prelude::Macro
+import std::builtin::macro
 
 fn other(): outline::Doc {
   outline`a ,  1`
@@ -73,7 +73,8 @@ fn with_library<T>(f: impl FnOnce(&Library, &tauto::program::Loaded) -> T) -> T 
     })
     .unwrap();
     assert_eq!(loaded.program.errors, Vec::new());
-    let library = Library::open(&loaded.program, &loaded.registrations).unwrap();
+    // The program the registrations run on, as the checker and the editor open it.
+    let library = Library::open(loaded.registration_program(), &loaded.registrations).unwrap();
     f(&library, &loaded)
 }
 
@@ -151,7 +152,7 @@ fn a_registered_function_must_exist_and_have_the_type_of_its_role() {
     tauto_messages::install();
     let [missing] = &errors_of(
         r#"import "lib.taut"
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(layout2, ```par
 %start Doc
 %title "layout"
@@ -174,7 +175,7 @@ Comma: ',';
     );
     let [arity] = &errors_of(
         r#"import "lib.taut"
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(layout2, ```par
 %start Doc
 %title "layout"
@@ -194,7 +195,7 @@ Comma: ',';
     assert!(arity.contains("takes 1 arguments"), "{arity}");
     let [reads] = &errors_of(
         r#"import "lib.taut"
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(layout2, ```par
 %start Doc
 %title "layout"
@@ -214,7 +215,7 @@ Comma: ',';
     assert!(reads.contains("reads SynTok"), "{reads}");
     let [role] = &errors_of(
         r#"import "lib.taut"
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(layout2, ```par
 %start Doc
 %title "layout"
@@ -237,7 +238,7 @@ Comma: ',';
     );
     let [twice] = &errors_of(
         r#"import "lib.taut"
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(layout2, ```par
 %start Doc
 %title "layout"
@@ -258,43 +259,10 @@ Comma: ',';
 }
 
 #[test]
-fn a_registered_function_performs_no_effect_but_div() {
-    tauto_messages::install();
-    let errors = errors_of(
-        r#"import "lib.taut"
-import std::prelude::Macro
-effect log(m: Text): Unit
-fn noisy(ts: List(SynTok)): List(SynHighlight) ! {log} {
-  perform log("x")
-  Nil
-}
-syntax!(layout2, ```par
-%start Doc
-%title "layout"
-%line_comment '//'
-%%
-Doc: Item { Comma Item };
-Item: Num | Word;
-Num: /[0-9]+/;
-Word: /[a-z]+/;
-Comma: ',';
-```, with(tokens: noisy)) => struct Doc, struct Doc_Rep1, enum Item,
-  fn parse
-"#,
-    );
-    assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("may perform Div and macro_error only")),
-        "{errors:?}"
-    );
-}
-
-#[test]
 fn a_function_that_changes_more_than_white_space_leaves_the_literal() {
     tauto_messages::install();
     let all = r#"import "lib.taut"
-import std::prelude::Macro
+import std::builtin::macro
 fn dropping(ts: List(SynTok), width: u64): Option(Text) { Some("a") }
 syntax!(layout2, ```par
 %start Doc

@@ -1,0 +1,251 @@
+import std::prelude::std { List, Option }
+
+// An index names an element only while its owner's identity and generation
+// remain live. Structural replacement increments the generation; a length
+// check alone cannot detect that the same index now names a different element.
+pub ghost fn size<A: Type>(xs: List(A)): Nat {
+  match xs { Nil => 0, Cons(x, rest) => Succ(size(rest)) }
+}
+pub ghost fn inside<A: Type>(xs: List(A), i: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => match i { Zero => true, Succ(j) => inside(rest, j) }
+  }
+}
+pub ghost fn lookup<A: Type>(xs: List(A), i: Nat): Option(A) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => match i { Zero => Some(x), Succ(j) => lookup(rest, j) }
+  }
+}
+pub ghost fn replace<A: Type>(xs: List(A), i: Nat, value: A): List(A) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match i {
+      Zero => Cons(value, rest)
+      Succ(j) => Cons(x, replace(rest, j, value))
+    }
+  }
+}
+
+pub theorem replacement_size<A: Type>(
+  xs: List(A),
+  i: Nat,
+  value: A
+): size(replace(xs, i, value)) = size(xs) {
+  match xs {
+    Nil => Refl
+    Cons(x, rest) => match i {
+      Zero => Refl
+      Succ(j) => Eq::congr(Succ, replacement_size(rest, j, value))
+    }
+  }
+}
+pub theorem replacement_inside<A: Type>(
+  xs: List(A),
+  i: Nat,
+  value: A,
+  j: Nat
+): inside(replace(xs, i, value), j) = inside(xs, j) {
+  match xs {
+    Nil => Refl
+    Cons(x, rest) => match i {
+      Zero => Refl
+      Succ(k) => match j {
+        Zero => Refl
+        Succ(l) => replacement_inside(rest, k, value, l)
+      }
+    }
+  }
+}
+pub theorem replacement_reads<A: Type>(
+  xs: List(A),
+  i: Nat,
+  value: A,
+  valid: inside(xs, i) = true
+): lookup(replace(xs, i, value), i) = Some(value) {
+  match xs {
+    Nil => False::elim(false_ne_true(valid))
+    Cons(x, rest) => match i {
+      Zero => Refl
+      Succ(j) => replacement_reads(rest, j, value, valid)
+    }
+  }
+}
+pub theorem replacement_frame<A: Type>(
+  xs: List(A),
+  i: Nat,
+  value: A,
+  j: Nat,
+  distinct: (i = j) -> False
+): lookup(replace(xs, i, value), j) = lookup(xs, j) {
+  match xs {
+    Nil => Refl
+    Cons(x, rest) => match i {
+      Zero => match j { Zero => False::elim(distinct(Refl)), Succ(l) => Refl }
+      Succ(k) => match j {
+        Zero => Refl
+        Succ(l) => replacement_frame(rest, k, value, l, e => distinct(Eq::congr(Succ, e)))
+      }
+    }
+  }
+}
+
+pub(open) inductive Cell(A: Type): Type {
+  Owned(generation: Nat, region: Nat, alive: Bool, elements: List(A)): Cell(A)
+}
+pub ghost fn generation<A: Type>(cell: Cell(A)): Nat {
+  match cell { Owned(g, region, alive, xs) => g }
+}
+pub ghost fn region<A: Type>(cell: Cell(A)): Nat {
+  match cell { Owned(g, r, alive, xs) => r }
+}
+pub ghost fn alive<A: Type>(cell: Cell(A)): Bool {
+  match cell { Owned(g, r, live, xs) => live }
+}
+pub ghost fn elements<A: Type>(cell: Cell(A)): List(A) {
+  match cell { Owned(g, r, live, xs) => xs }
+}
+
+pub(open) inductive ElementRef: Type {
+  Ref(owner: Nat, generation: Nat, index: Nat): ElementRef
+}
+pub ghost fn owner(ref: ElementRef): Nat { match ref { Ref(root, g, i) => root } }
+pub ghost fn stamp(ref: ElementRef): Nat { match ref { Ref(root, g, i) => g } }
+pub ghost fn index(ref: ElementRef): Nat { match ref { Ref(root, g, i) => i } }
+
+pub def ValidCell(A: Type, cell: Cell(A), open: (Nat) -> Prop, g: Nat, i: Nat): Prop :=
+(
+  alive(cell) = true
+) ∧ (generation(cell) = g) ∧ open(region(cell)) ∧ (inside(elements(cell), i) = true)
+pub def ValidRef(A: Type, heap: (Nat) -> Cell(A), open: (Nat) -> Prop, ref: ElementRef): Prop :=
+ValidCell(A, heap(owner(ref)), open, stamp(ref), index(ref))
+
+pub ghost fn set_element<A: Type>(cell: Cell(A), i: Nat, value: A): Cell(A) {
+  match cell { Owned(g, r, live, xs) => Owned(g, r, live, replace(xs, i, value)) }
+}
+
+// No element is removed, relocated or given a different owner by this write.
+pub theorem element_preserves_validity<A: Type>(
+  cell: Cell(A),
+  open: (Nat) -> Prop,
+  g: Nat,
+  i: Nat,
+  j: Nat,
+  value: A,
+  valid: ValidCell(A, cell, open, g, j)
+): ValidCell(A, set_element(cell, i, value), open, g, j) {
+  match cell {
+    Owned(epoch, r, live, xs) => AndIntro(
+      And::left(valid),
+      AndIntro(
+        And::left(And::right(valid)),
+        AndIntro(
+          And::left(And::right(And::right(valid))),
+          Eq::trans(replacement_inside(xs, i, value, j), And::right(And::right(And::right(valid))))
+        )
+      )
+    )
+  }
+}
+
+// A handler or unrelated write may change other cells, but each live loan
+// keeps its owner, generation, region and index domain. Values may change only
+// through the permission policy of mutable_permissions.taut.
+pub def CellFrame(A: Type, before: Cell(A), after: Cell(A)): Prop :=
+(alive(after) = alive(before)) ∧ (generation(after) = generation(before)) ∧
+(
+  region(after) = region(before)
+) ∧ (∀ i: Nat. inside(elements(after), i) = inside(elements(before), i))
+
+pub theorem frame_preserves_validity<A: Type>(
+  before: Cell(A),
+  after: Cell(A),
+  open: (Nat) -> Prop,
+  g: Nat,
+  i: Nat,
+  frame: CellFrame(A, before, after),
+  valid: ValidCell(A, before, open, g, i)
+): ValidCell(A, after, open, g, i) {
+  AndIntro(
+    Eq::trans(And::left(frame), And::left(valid)),
+    AndIntro(
+      Eq::trans(And::left(And::right(frame)), And::left(And::right(valid))),
+      AndIntro(
+        Eq::subst(
+          open,
+          Eq::sym(And::left(And::right(And::right(frame)))),
+          And::left(And::right(And::right(valid)))
+        ),
+        Eq::trans(
+          And::right(And::right(And::right(frame)))(i),
+          And::right(And::right(And::right(valid)))
+        )
+      )
+    )
+  )
+}
+
+pub ghost fn reshape<A: Type>(cell: Cell(A), xs: List(A)): Cell(A) {
+  match cell { Owned(g, r, live, old) => Owned(Succ(g), r, live, xs) }
+}
+pub ghost fn close<A: Type>(cell: Cell(A)): Cell(A) {
+  match cell { Owned(g, r, live, xs) => Owned(g, r, false, xs) }
+}
+pub theorem closed_invalid<A: Type>(
+  cell: Cell(A),
+  open: (Nat) -> Prop,
+  g: Nat,
+  i: Nat,
+  valid: ValidCell(A, close(cell), open, g, i)
+): False {
+  match cell { Owned(epoch, r, live, xs) => false_ne_true(And::left(valid)) }
+}
+pub theorem region_closed_invalid<A: Type>(
+  cell: Cell(A),
+  open: (Nat) -> Prop,
+  g: Nat,
+  i: Nat,
+  closed: (open(region(cell))) -> False,
+  valid: ValidCell(A, cell, open, g, i)
+): False {
+  closed(And::left(And::right(And::right(valid))))
+}
+
+pub theorem replacement_commutes<A: Type>(
+  xs: List(A),
+  i: Nat,
+  a: A,
+  j: Nat,
+  b: A,
+  distinct: (i = j) -> False
+): replace(replace(xs, i, a), j, b) = replace(replace(xs, j, b), i, a) {
+  match xs {
+    Nil => Refl
+    Cons(x, rest) => match i {
+      Zero => match j { Zero => False::elim(distinct(Refl)), Succ(l) => Refl }
+      Succ(k) => match j {
+        Zero => Refl
+        Succ(l) => Eq::congr(
+          tail => Cons(x, tail),
+          replacement_commutes(rest, k, a, l, b, e => distinct(Eq::congr(Succ, e)))
+        )
+      }
+    }
+  }
+}
+pub theorem successor_not_self(n: Nat, h: Succ(n) = n): False {
+  match n {
+    Zero => Nat::noconf(False, 1, 0, h)
+    Succ(k) => Nat::noconf(False, Succ(Succ(k)), Succ(k), h, e => successor_not_self(k, e))
+  }
+}
+pub theorem reshape_invalidates<A: Type>(
+  cell: Cell(A),
+  xs: List(A),
+  open: (Nat) -> Prop,
+  i: Nat,
+  valid: ValidCell(A, reshape(cell, xs), open, generation(cell), i)
+): False {
+  match cell { Owned(g, r, live, old) => successor_not_self(g, And::left(And::right(valid))) }
+}

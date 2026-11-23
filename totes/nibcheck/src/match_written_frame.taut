@@ -1,0 +1,790 @@
+// The written types of a `match` keep the checker's frame: what the
+// checker reads is unchanged, its order is kept, and an error it adds is
+// reported (`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」).
+
+import "types_decl_head.taut"
+import std::base
+import std::list
+import std::text
+import "checked_frame.taut"
+import "checker.taut"
+import "checker_frame.taut"
+import "datas_frame.taut"
+import "error_frame.taut"
+import "match_written.taut"
+import "messages.taut"
+import "operation_checked_sound.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
+import "written_error_sound.taut"
+import "../../surface/src/surface.taut"
+
+// ----- the written type of one `match` or arm -----
+
+pub fn leaf_match_type(c: Checker, t: SurfaceTerm, named: Option(Text)): Mut1(Option(Ty), Checker) {
+  match named {
+    Some(n) => frame_bind(
+      <A: Unit, B: Option(Ty)>,
+      (reported: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(c, match_depends_on_value_message(n), span_of(t))
+    )
+    None => frame_bind(
+      <A: Ty, B: Option(Ty)>,
+      (w: Ty, c1: Checker) => mut1(Some(w), c1),
+      ck_written(c, t, type_scope(ck_type_params_of(c)))
+    )
+  }
+}
+
+pub theorem leaf_match_type_unf(
+  c: Checker,
+  t: SurfaceTerm,
+  env: List(Local)
+): ck_match_type(c, t, env) = leaf_match_type(c, t, type_local_named(t, env)) { Refl }
+
+pub theorem leaf_match_type_frame(
+  c: Checker,
+  t: SurfaceTerm,
+  named: Option(Text)
+): CkReadFrame(c, leaf_match_type(c, t, named)) {
+  match named {
+    Some(n) => frame_bind_ok(
+      <A: Unit, B: Option(Ty)>,
+      c,
+      (reported: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(c, match_depends_on_value_message(n), span_of(t)),
+      ck_error_frame(c, match_depends_on_value_message(n), span_of(t)),
+      reported => c1 => Refl
+    )
+    None => frame_bind_ok(
+      <A: Ty, B: Option(Ty)>,
+      c,
+      (w: Ty, c1: Checker) => mut1(Some(w), c1),
+      ck_written(c, t, type_scope(ck_type_params_of(c))),
+      ck_written_frame(c, t, type_scope(ck_type_params_of(c))),
+      w => c1 => Refl
+    )
+  }
+}
+
+pub theorem leaf_match_type_frame_errors(
+  c: Checker,
+  t: SurfaceTerm,
+  named: Option(Text)
+): CkErrorFrame(c, leaf_match_type(c, t, named)) {
+  match named {
+    Some(n) => error_frame_bind(
+      <A: Unit, B: Option(Ty)>,
+      c,
+      (reported: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(c, match_depends_on_value_message(n), span_of(t)),
+      ck_error_frame_errors(c, match_depends_on_value_message(n), span_of(t)),
+      reported => c1 => error_frame_return(c1, None)
+    )
+    None => error_frame_bind(
+      <A: Ty, B: Option(Ty)>,
+      c,
+      (w: Ty, c1: Checker) => mut1(Some(w), c1),
+      ck_written(c, t, type_scope(ck_type_params_of(c))),
+      ck_written_frame_errors(c, t, type_scope(ck_type_params_of(c))),
+      w => c1 => error_frame_return(c1, Some(w))
+    )
+  }
+}
+
+pub theorem ck_match_type_frame(
+  c: Checker,
+  t: SurfaceTerm,
+  env: List(Local)
+): CkReadFrame(c, ck_match_type(c, t, env)) {
+  Eq::subst(
+    (z: Mut1(Option(Ty), Checker)) => CkReadFrame(c, z),
+    Eq::sym(leaf_match_type_unf(c, t, env)),
+    leaf_match_type_frame(c, t, type_local_named(t, env))
+  )
+}
+
+pub theorem ck_match_type_frame_errors(
+  c: Checker,
+  t: SurfaceTerm,
+  env: List(Local)
+): CkErrorFrame(c, ck_match_type(c, t, env)) {
+  Eq::subst(
+    (z: Mut1(Option(Ty), Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_match_type_unf(c, t, env)),
+    leaf_match_type_frame_errors(c, t, type_local_named(t, env))
+  )
+}
+
+pub theorem ck_match_type_opt_frame(
+  c: Checker,
+  t: Option(SurfaceTerm),
+  env: List(Local)
+): CkReadFrame(c, ck_match_type_opt(c, t, env)) {
+  match t {
+    None => Refl
+    Some(w) => frame_rewrap(c, ck_match_type(c, w, env), ck_match_type_frame(c, w, env))
+  }
+}
+
+pub theorem ck_match_type_opt_frame_errors(
+  c: Checker,
+  t: Option(SurfaceTerm),
+  env: List(Local)
+): CkErrorFrame(c, ck_match_type_opt(c, t, env)) {
+  match t {
+    None => error_frame_return(c, None)
+    Some(w) => error_frame_rewrap(
+      c,
+      ck_match_type(c, w, env),
+      ck_match_type_frame_errors(c, w, env)
+    )
+  }
+}
+
+// ----- the goals of the arms -----
+
+pub fn leaf_arm_goals_cons(
+  c: Checker,
+  arm: SurfaceArm,
+  rest: List(SurfaceArm),
+  env: List(Local)
+): Mut1(List(Option(Ty)), Checker) {
+  frame_bind(
+    <A: Option(Ty), B: List(Option(Ty))>,
+    (g: Option(Ty), c1: Checker) => frame_bind(
+      <A: List(Option(Ty)), B: List(Option(Ty))>,
+      (gs: List(Option(Ty)), c2: Checker) => mut1(Cons(g, gs), c2),
+      ck_arm_goals(c1, rest, env)
+    ),
+    ck_match_type_opt(c, arm.goal, env)
+  )
+}
+
+pub theorem leaf_arm_goals_cons_unf(
+  c: Checker,
+  arm: SurfaceArm,
+  rest: List(SurfaceArm),
+  env: List(Local)
+): ck_arm_goals(c, Cons(arm, rest), env) = leaf_arm_goals_cons(c, arm, rest, env) { Refl }
+
+pub theorem ck_arm_goals_frame(
+  c: Checker,
+  arms: List(SurfaceArm),
+  env: List(Local)
+): CkReadFrame(c, ck_arm_goals(c, arms, env)) {
+  match arms {
+    Nil => Refl
+    Cons(arm, rest) => Eq::subst(
+      (z: Mut1(List(Option(Ty)), Checker)) => CkReadFrame(c, z),
+      Eq::sym(leaf_arm_goals_cons_unf(c, arm, rest, env)),
+      frame_bind_ok(
+        <A: Option(Ty), B: List(Option(Ty))>,
+        c,
+        (g: Option(Ty), c1: Checker) => frame_bind(
+          <A: List(Option(Ty)), B: List(Option(Ty))>,
+          (gs: List(Option(Ty)), c2: Checker) => mut1(Cons(g, gs), c2),
+          ck_arm_goals(c1, rest, env)
+        ),
+        ck_match_type_opt(c, arm.goal, env),
+        ck_match_type_opt_frame(c, arm.goal, env),
+        g => c1 => frame_bind_ok(
+          <A: List(Option(Ty)), B: List(Option(Ty))>,
+          c1,
+          (gs: List(Option(Ty)), c2: Checker) => mut1(Cons(g, gs), c2),
+          ck_arm_goals(c1, rest, env),
+          ck_arm_goals_frame(c1, rest, env),
+          gs => c2 => Refl
+        )
+      )
+    )
+  }
+}
+
+pub theorem ck_arm_goals_frame_errors(
+  c: Checker,
+  arms: List(SurfaceArm),
+  env: List(Local)
+): CkErrorFrame(c, ck_arm_goals(c, arms, env)) {
+  match arms {
+    Nil => error_frame_return(c, Nil)
+    Cons(arm, rest) => Eq::subst(
+      (z: Mut1(List(Option(Ty)), Checker)) => CkErrorFrame(c, z),
+      Eq::sym(leaf_arm_goals_cons_unf(c, arm, rest, env)),
+      error_frame_bind(
+        <A: Option(Ty), B: List(Option(Ty))>,
+        c,
+        (g: Option(Ty), c1: Checker) => frame_bind(
+          <A: List(Option(Ty)), B: List(Option(Ty))>,
+          (gs: List(Option(Ty)), c2: Checker) => mut1(Cons(g, gs), c2),
+          ck_arm_goals(c1, rest, env)
+        ),
+        ck_match_type_opt(c, arm.goal, env),
+        ck_match_type_opt_frame_errors(c, arm.goal, env),
+        g => c1 => error_frame_bind(
+          <A: List(Option(Ty)), B: List(Option(Ty))>,
+          c1,
+          (gs: List(Option(Ty)), c2: Checker) => mut1(Cons(g, gs), c2),
+          ck_arm_goals(c1, rest, env),
+          ck_arm_goals_frame_errors(c1, rest, env),
+          gs => c2 => error_frame_return(c2, Cons(g, gs))
+        )
+      )
+    )
+  }
+}
+
+// ----- a goal against the type of the whole -----
+
+pub fn leaf_goal_fit(
+  c: Checker,
+  want: Option(Ty),
+  head: Option(Ty),
+  goal: Option(SurfaceTerm)
+): Mut1(Unit, Checker) {
+  match want {
+    None => mut1((), c)
+    Some(w) => ⊢ Mut1(Unit, Checker) from match head {
+      None => mut1((), c)
+      Some(g) => ⊢ Mut1(Unit, Checker) from match goal {
+        None => mut1((), c)
+        Some(written) => ck_rewrap1(ck_expect(c, g, w, span_of(written), what_arm_goal_message()))
+      }
+    }
+  }
+}
+
+pub fn leaf_goals_fit_cons(
+  c: Checker,
+  goals: List(Option(Ty)),
+  arm: SurfaceArm,
+  rest: List(SurfaceArm),
+  want: Option(Ty)
+): Mut1(Unit, Checker) {
+  frame_bind(
+    <A: Unit, B: Unit>,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_arm_goals_fit(c1, List::tail(goals), rest, want)),
+    leaf_goal_fit(c, want, goal_head(goals), arm.goal)
+  )
+}
+
+pub theorem leaf_goals_fit_cons_unf(
+  c: Checker,
+  goals: List(Option(Ty)),
+  arm: SurfaceArm,
+  rest: List(SurfaceArm),
+  want: Option(Ty)
+): ck_arm_goals_fit(
+  c,
+  goals,
+  Cons(arm, rest),
+  want
+) = leaf_goals_fit_cons(c, goals, arm, rest, want) { Refl }
+
+pub theorem leaf_goal_fit_run_frame(
+  c: Checker,
+  want: Option(Ty),
+  head: Option(Ty),
+  goal: Option(SurfaceTerm),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, leaf_goal_fit(c, want, head, goal)) {
+  match want {
+    None => run_frame_return(c, (), ordered)
+    Some(w) => ⊢ CkRunFrame(c, leaf_goal_fit(c, Some(w), head, goal)) from match head {
+      None => run_frame_return(c, (), ordered)
+      Some(g) => ⊢ CkRunFrame(c, leaf_goal_fit(c, Some(w), Some(g), goal)) from match goal {
+        None => run_frame_return(c, (), ordered)
+        Some(written) => run_frame_rewrap(
+          c,
+          ck_expect(c, g, w, span_of(written), what_arm_goal_message()),
+          ck_expect_run_frame(c, g, w, span_of(written), what_arm_goal_message(), ordered)
+        )
+      }
+    }
+  }
+}
+
+pub theorem leaf_goal_fit_run_frame_checked(
+  c: Checker,
+  want: Option(Ty),
+  head: Option(Ty),
+  goal: Option(SurfaceTerm),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, leaf_goal_fit(c, want, head, goal)) {
+  match want {
+    None => checked_frame_return(c, (), ordered)
+    Some(w) => ⊢ CkCheckedFrame(c, leaf_goal_fit(c, Some(w), head, goal)) from match head {
+      None => checked_frame_return(c, (), ordered)
+      Some(g) => ⊢ CkCheckedFrame(c, leaf_goal_fit(c, Some(w), Some(g), goal)) from match goal {
+        None => checked_frame_return(c, (), ordered)
+        Some(written) => checked_frame_rewrap(
+          c,
+          ck_expect(c, g, w, span_of(written), what_arm_goal_message()),
+          ck_expect_run_frame_checked(c, g, w, span_of(written), what_arm_goal_message(), ordered)
+        )
+      }
+    }
+  }
+}
+
+pub theorem ck_arm_goals_fit_run_frame(
+  c: Checker,
+  goals: List(Option(Ty)),
+  arms: List(SurfaceArm),
+  want: Option(Ty),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_arm_goals_fit(c, goals, arms, want)) {
+  match arms {
+    Nil => run_frame_return(c, (), ordered)
+    Cons(arm, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+      Eq::sym(leaf_goals_fit_cons_unf(c, goals, arm, rest, want)),
+      run_frame_bind(
+        <A: Unit, B: Unit>,
+        c,
+        (ignored: Unit, c1: Checker) => ck_rewrap1(
+          ck_arm_goals_fit(c1, List::tail(goals), rest, want)
+        ),
+        leaf_goal_fit(c, want, goal_head(goals), arm.goal),
+        leaf_goal_fit_run_frame(c, want, goal_head(goals), arm.goal, ordered),
+        ignored => c1 => o_c1 => run_frame_rewrap(
+          c1,
+          ck_arm_goals_fit(c1, List::tail(goals), rest, want),
+          ck_arm_goals_fit_run_frame(c1, List::tail(goals), rest, want, o_c1)
+        )
+      )
+    )
+  }
+}
+
+pub theorem ck_arm_goals_fit_run_frame_checked(
+  c: Checker,
+  goals: List(Option(Ty)),
+  arms: List(SurfaceArm),
+  want: Option(Ty),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_arm_goals_fit(c, goals, arms, want)) {
+  match arms {
+    Nil => checked_frame_return(c, (), ordered)
+    Cons(arm, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkCheckedFrame(c, z),
+      Eq::sym(leaf_goals_fit_cons_unf(c, goals, arm, rest, want)),
+      checked_frame_bind(
+        <A: Unit, B: Unit>,
+        c,
+        (ignored: Unit, c1: Checker) => ck_rewrap1(
+          ck_arm_goals_fit(c1, List::tail(goals), rest, want)
+        ),
+        leaf_goal_fit(c, want, goal_head(goals), arm.goal),
+        leaf_goal_fit_run_frame_checked(c, want, goal_head(goals), arm.goal, ordered),
+        ignored => c1 => o_c1 => checked_frame_rewrap(
+          c1,
+          ck_arm_goals_fit(c1, List::tail(goals), rest, want),
+          ck_arm_goals_fit_run_frame_checked(c1, List::tail(goals), rest, want, o_c1)
+        )
+      )
+    )
+  }
+}
+
+// ----- a body against its goal -----
+
+pub fn leaf_body_fit(
+  c: Checker,
+  head: Option(Ty),
+  found: Option(Ty),
+  body: SurfaceTerm
+): Mut1(Unit, Checker) {
+  match head {
+    None => mut1((), c)
+    Some(g) => ⊢ Mut1(Unit, Checker) from match found {
+      None => mut1((), c)
+      Some(b) => ck_rewrap1(ck_expect(c, b, g, span_of(body), what_arm_body_message()))
+    }
+  }
+}
+
+pub fn leaf_bodies_fit_cons(
+  c: Checker,
+  goals: List(Option(Ty)),
+  arm: SurfaceArm,
+  rest: List(SurfaceArm)
+): Mut1(Unit, Checker) {
+  frame_bind(
+    <A: Unit, B: Unit>,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_arm_bodies_fit(c1, List::tail(goals), rest)),
+    leaf_body_fit(c, goal_head(goals), terms_find(c.terms, term_at_of(arm.body)), arm.body)
+  )
+}
+
+pub theorem leaf_bodies_fit_cons_unf(
+  c: Checker,
+  goals: List(Option(Ty)),
+  arm: SurfaceArm,
+  rest: List(SurfaceArm)
+): ck_arm_bodies_fit(c, goals, Cons(arm, rest)) = leaf_bodies_fit_cons(c, goals, arm, rest) { Refl }
+
+pub theorem leaf_body_fit_run_frame(
+  c: Checker,
+  head: Option(Ty),
+  found: Option(Ty),
+  body: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, leaf_body_fit(c, head, found, body)) {
+  match head {
+    None => run_frame_return(c, (), ordered)
+    Some(g) => ⊢ CkRunFrame(c, leaf_body_fit(c, Some(g), found, body)) from match found {
+      None => run_frame_return(c, (), ordered)
+      Some(b) => run_frame_rewrap(
+        c,
+        ck_expect(c, b, g, span_of(body), what_arm_body_message()),
+        ck_expect_run_frame(c, b, g, span_of(body), what_arm_body_message(), ordered)
+      )
+    }
+  }
+}
+
+pub theorem leaf_body_fit_run_frame_checked(
+  c: Checker,
+  head: Option(Ty),
+  found: Option(Ty),
+  body: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, leaf_body_fit(c, head, found, body)) {
+  match head {
+    None => checked_frame_return(c, (), ordered)
+    Some(g) => ⊢ CkCheckedFrame(c, leaf_body_fit(c, Some(g), found, body)) from match found {
+      None => checked_frame_return(c, (), ordered)
+      Some(b) => checked_frame_rewrap(
+        c,
+        ck_expect(c, b, g, span_of(body), what_arm_body_message()),
+        ck_expect_run_frame_checked(c, b, g, span_of(body), what_arm_body_message(), ordered)
+      )
+    }
+  }
+}
+
+pub theorem ck_arm_bodies_fit_run_frame(
+  c: Checker,
+  goals: List(Option(Ty)),
+  arms: List(SurfaceArm),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_arm_bodies_fit(c, goals, arms)) {
+  match arms {
+    Nil => run_frame_return(c, (), ordered)
+    Cons(arm, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+      Eq::sym(leaf_bodies_fit_cons_unf(c, goals, arm, rest)),
+      run_frame_bind(
+        <A: Unit, B: Unit>,
+        c,
+        (ignored: Unit, c1: Checker) => ck_rewrap1(ck_arm_bodies_fit(c1, List::tail(goals), rest)),
+        leaf_body_fit(c, goal_head(goals), terms_find(c.terms, term_at_of(arm.body)), arm.body),
+        leaf_body_fit_run_frame(
+          c,
+          goal_head(goals),
+          terms_find(c.terms, term_at_of(arm.body)),
+          arm.body,
+          ordered
+        ),
+        ignored => c1 => o_c1 => run_frame_rewrap(
+          c1,
+          ck_arm_bodies_fit(c1, List::tail(goals), rest),
+          ck_arm_bodies_fit_run_frame(c1, List::tail(goals), rest, o_c1)
+        )
+      )
+    )
+  }
+}
+
+pub theorem ck_arm_bodies_fit_run_frame_checked(
+  c: Checker,
+  goals: List(Option(Ty)),
+  arms: List(SurfaceArm),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_arm_bodies_fit(c, goals, arms)) {
+  match arms {
+    Nil => checked_frame_return(c, (), ordered)
+    Cons(arm, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkCheckedFrame(c, z),
+      Eq::sym(leaf_bodies_fit_cons_unf(c, goals, arm, rest)),
+      checked_frame_bind(
+        <A: Unit, B: Unit>,
+        c,
+        (ignored: Unit, c1: Checker) => ck_rewrap1(ck_arm_bodies_fit(c1, List::tail(goals), rest)),
+        leaf_body_fit(c, goal_head(goals), terms_find(c.terms, term_at_of(arm.body)), arm.body),
+        leaf_body_fit_run_frame_checked(
+          c,
+          goal_head(goals),
+          terms_find(c.terms, term_at_of(arm.body)),
+          arm.body,
+          ordered
+        ),
+        ignored => c1 => o_c1 => checked_frame_rewrap(
+          c1,
+          ck_arm_bodies_fit(c1, List::tail(goals), rest),
+          ck_arm_bodies_fit_run_frame_checked(c1, List::tail(goals), rest, o_c1)
+        )
+      )
+    )
+  }
+}
+
+// ----- before and after the arms -----
+
+pub fn leaf_match_before(
+  c: Checker,
+  motive: Option(SurfaceTerm),
+  arms: List(SurfaceArm),
+  env: List(Local)
+): Mut1(Option(Ty) × List(Option(Ty)), Checker) {
+  frame_bind(
+    <A: Option(Ty), B: Option(Ty) × List(Option(Ty))>,
+    (want: Option(Ty), c1: Checker) => frame_bind(
+      <A: List(Option(Ty)), B: Option(Ty) × List(Option(Ty))>,
+      (goals: List(Option(Ty)), c2: Checker) => frame_bind(
+        <A: Unit, B: Option(Ty) × List(Option(Ty))>,
+        (fitted: Unit, c3: Checker) => mut1(#(want, goals), c3),
+        ck_arm_goals_fit(c2, goals, arms, want)
+      ),
+      ck_arm_goals(c1, arms, env)
+    ),
+    ck_match_type_opt(c, motive, env)
+  )
+}
+
+pub theorem leaf_match_before_unf(
+  c: Checker,
+  motive: Option(SurfaceTerm),
+  arms: List(SurfaceArm),
+  env: List(Local)
+): ck_match_before(c, motive, arms, env) = leaf_match_before(c, motive, arms, env) { Refl }
+
+pub theorem ck_match_before_run_frame(
+  c: Checker,
+  motive: Option(SurfaceTerm),
+  arms: List(SurfaceArm),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_match_before(c, motive, arms, env)) {
+  Eq::subst(
+    (z: Mut1(Option(Ty) × List(Option(Ty)), Checker)) => CkRunFrame(c, z),
+    Eq::sym(leaf_match_before_unf(c, motive, arms, env)),
+    run_frame_bind(
+      <A: Option(Ty), B: Option(Ty) × List(Option(Ty))>,
+      c,
+      (want: Option(Ty), c1: Checker) => frame_bind(
+        <A: List(Option(Ty)), B: Option(Ty) × List(Option(Ty))>,
+        (goals: List(Option(Ty)), c2: Checker) => frame_bind(
+          <A: Unit, B: Option(Ty) × List(Option(Ty))>,
+          (fitted: Unit, c3: Checker) => mut1(#(want, goals), c3),
+          ck_arm_goals_fit(c2, goals, arms, want)
+        ),
+        ck_arm_goals(c1, arms, env)
+      ),
+      ck_match_type_opt(c, motive, env),
+      run_frame_read(
+        c,
+        ck_match_type_opt(c, motive, env),
+        ck_match_type_opt_frame(c, motive, env),
+        ordered
+      ),
+      want => c1 => o_c1 => run_frame_bind(
+        <A: List(Option(Ty)), B: Option(Ty) × List(Option(Ty))>,
+        c1,
+        (goals: List(Option(Ty)), c2: Checker) => frame_bind(
+          <A: Unit, B: Option(Ty) × List(Option(Ty))>,
+          (fitted: Unit, c3: Checker) => mut1(#(want, goals), c3),
+          ck_arm_goals_fit(c2, goals, arms, want)
+        ),
+        ck_arm_goals(c1, arms, env),
+        run_frame_read(c1, ck_arm_goals(c1, arms, env), ck_arm_goals_frame(c1, arms, env), o_c1),
+        goals => c2 => o_c2 => run_frame_bind(
+          <A: Unit, B: Option(Ty) × List(Option(Ty))>,
+          c2,
+          (fitted: Unit, c3: Checker) => mut1(#(want, goals), c3),
+          ck_arm_goals_fit(c2, goals, arms, want),
+          ck_arm_goals_fit_run_frame(c2, goals, arms, want, o_c2),
+          fitted => c3 => o_c3 => run_frame_return(c3, #(want, goals), o_c3)
+        )
+      )
+    )
+  )
+}
+
+pub theorem ck_match_before_run_frame_checked(
+  c: Checker,
+  motive: Option(SurfaceTerm),
+  arms: List(SurfaceArm),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_match_before(c, motive, arms, env)) {
+  Eq::subst(
+    (z: Mut1(Option(Ty) × List(Option(Ty)), Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(leaf_match_before_unf(c, motive, arms, env)),
+    checked_frame_bind(
+      <A: Option(Ty), B: Option(Ty) × List(Option(Ty))>,
+      c,
+      (want: Option(Ty), c1: Checker) => frame_bind(
+        <A: List(Option(Ty)), B: Option(Ty) × List(Option(Ty))>,
+        (goals: List(Option(Ty)), c2: Checker) => frame_bind(
+          <A: Unit, B: Option(Ty) × List(Option(Ty))>,
+          (fitted: Unit, c3: Checker) => mut1(#(want, goals), c3),
+          ck_arm_goals_fit(c2, goals, arms, want)
+        ),
+        ck_arm_goals(c1, arms, env)
+      ),
+      ck_match_type_opt(c, motive, env),
+      checked_frame_read(
+        c,
+        ck_match_type_opt(c, motive, env),
+        ck_match_type_opt_frame(c, motive, env),
+        ck_match_type_opt_frame_errors(c, motive, env),
+        ordered
+      ),
+      want => c1 => o_c1 => checked_frame_bind(
+        <A: List(Option(Ty)), B: Option(Ty) × List(Option(Ty))>,
+        c1,
+        (goals: List(Option(Ty)), c2: Checker) => frame_bind(
+          <A: Unit, B: Option(Ty) × List(Option(Ty))>,
+          (fitted: Unit, c3: Checker) => mut1(#(want, goals), c3),
+          ck_arm_goals_fit(c2, goals, arms, want)
+        ),
+        ck_arm_goals(c1, arms, env),
+        checked_frame_read(
+          c1,
+          ck_arm_goals(c1, arms, env),
+          ck_arm_goals_frame(c1, arms, env),
+          ck_arm_goals_frame_errors(c1, arms, env),
+          o_c1
+        ),
+        goals => c2 => o_c2 => checked_frame_bind(
+          <A: Unit, B: Option(Ty) × List(Option(Ty))>,
+          c2,
+          (fitted: Unit, c3: Checker) => mut1(#(want, goals), c3),
+          ck_arm_goals_fit(c2, goals, arms, want),
+          ck_arm_goals_fit_run_frame_checked(c2, goals, arms, want, o_c2),
+          fitted => c3 => o_c3 => checked_frame_return(c3, #(want, goals), o_c3)
+        )
+      )
+    )
+  )
+}
+
+pub fn leaf_match_answer(c: Checker, fst: Option(Ty), got: Ty, span: TySpan): Mut1(Ty, Checker) {
+  match fst {
+    None => mut1(got, c)
+    Some(w) => frame_bind(
+      <A: Unit, B: Ty>,
+      (ignored: Unit, c1: Checker) => mut1(w, c1),
+      ck_expect(c, got, w, span, what_match_result_message())
+    )
+  }
+}
+
+pub fn leaf_match_after(
+  c: Checker,
+  before: Option(Ty) × List(Option(Ty)),
+  arms: List(SurfaceArm),
+  got: Ty,
+  span: TySpan
+): Mut1(Ty, Checker) {
+  frame_bind(
+    <A: Unit, B: Ty>,
+    (ignored: Unit, c1: Checker) => leaf_match_answer(c1, before.fst, got, span),
+    ck_arm_bodies_fit(c, before.snd, arms)
+  )
+}
+
+pub theorem leaf_match_after_unf(
+  c: Checker,
+  before: Option(Ty) × List(Option(Ty)),
+  arms: List(SurfaceArm),
+  got: Ty,
+  span: TySpan
+): ck_match_after(c, before, arms, got, span) = leaf_match_after(c, before, arms, got, span) { Refl }
+
+pub theorem leaf_match_answer_run_frame(
+  c: Checker,
+  fst: Option(Ty),
+  got: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, leaf_match_answer(c, fst, got, span)) {
+  match fst {
+    None => run_frame_return(c, got, ordered)
+    Some(w) => run_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(w, c1),
+      ck_expect(c, got, w, span, what_match_result_message()),
+      ck_expect_run_frame(c, got, w, span, what_match_result_message(), ordered),
+      ignored => c1 => o_c1 => run_frame_return(c1, w, o_c1)
+    )
+  }
+}
+
+pub theorem leaf_match_answer_run_frame_checked(
+  c: Checker,
+  fst: Option(Ty),
+  got: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, leaf_match_answer(c, fst, got, span)) {
+  match fst {
+    None => checked_frame_return(c, got, ordered)
+    Some(w) => checked_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(w, c1),
+      ck_expect(c, got, w, span, what_match_result_message()),
+      ck_expect_run_frame_checked(c, got, w, span, what_match_result_message(), ordered),
+      ignored => c1 => o_c1 => checked_frame_return(c1, w, o_c1)
+    )
+  }
+}
+
+pub theorem ck_match_after_run_frame(
+  c: Checker,
+  before: Option(Ty) × List(Option(Ty)),
+  arms: List(SurfaceArm),
+  got: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_match_after(c, before, arms, got, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(leaf_match_after_unf(c, before, arms, got, span)),
+    run_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => leaf_match_answer(c1, before.fst, got, span),
+      ck_arm_bodies_fit(c, before.snd, arms),
+      ck_arm_bodies_fit_run_frame(c, before.snd, arms, ordered),
+      ignored => c1 => o_c1 => leaf_match_answer_run_frame(c1, before.fst, got, span, o_c1)
+    )
+  )
+}
+
+pub theorem ck_match_after_run_frame_checked(
+  c: Checker,
+  before: Option(Ty) × List(Option(Ty)),
+  arms: List(SurfaceArm),
+  got: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_match_after(c, before, arms, got, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(leaf_match_after_unf(c, before, arms, got, span)),
+    checked_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => leaf_match_answer(c1, before.fst, got, span),
+      ck_arm_bodies_fit(c, before.snd, arms),
+      ck_arm_bodies_fit_run_frame_checked(c, before.snd, arms, ordered),
+      ignored => c1 => o_c1 => leaf_match_answer_run_frame_checked(c1, before.fst, got, span, o_c1)
+    )
+  )
+}

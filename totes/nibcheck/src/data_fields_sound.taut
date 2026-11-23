@@ -1,9 +1,10 @@
+import "messages.taut"
 import "rules_data_fields.taut"
 import "written_sound.taut"
 import "data_fields_context_sound.taut"
 import "registration_error_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -13,6 +14,7 @@ import "error_frame.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_app_branch_sound.taut"
 import "written_composite_sound.taut"
@@ -61,11 +63,9 @@ pub fn data_fields_after(
   m: Mut1(Ty, Checker)
 ): Mut1(List(DataField), Checker) {
   frame_bind(
-    Ty,
-    List(DataField),
+    <A: Ty, B: List(DataField)>,
     (t: Ty, next: Checker) => written_map(
-      List(DataField),
-      List(DataField),
+      <A: List(DataField), B: List(DataField)>,
       (types: List(DataField)) => Cons(DataFieldMk(name, t), types),
       ck_data_fields(rest, next, generics)
     ),
@@ -114,8 +114,7 @@ pub theorem data_fields_after_sound(
       let tail_clean: DiagnosticClean(
         ck_st(ck_data_fields(rest, next, generics))
       ) := written_map_clean(
-        List(DataField),
-        List(DataField),
+        <A: List(DataField), B: List(DataField)>,
         (types: List(DataField)) => Cons(DataFieldMk(name, t), types),
         ck_data_fields(rest, next, generics),
         clean
@@ -130,8 +129,7 @@ pub theorem data_fields_after_sound(
         ),
         Eq::sym(
           written_map_value(
-            List(DataField),
-            List(DataField),
+            <A: List(DataField), B: List(DataField)>,
             (types: List(DataField)) => Cons(DataFieldMk(name, t), types),
             ck_data_fields(rest, next, generics)
           )
@@ -168,12 +166,10 @@ pub theorem data_fields_after_errors(
 ): CkErrorFrame(c, data_fields_after(name, rest, generics, m)) {
   clean => before(
     written_bind_input_clean(
-      Ty,
-      List(DataField),
+      <A: Ty, B: List(DataField)>,
       m,
       (t: Ty, next: Checker) => written_map(
-        List(DataField),
-        List(DataField),
+        <A: List(DataField), B: List(DataField)>,
         (types: List(DataField)) => Cons(DataFieldMk(name, t), types),
         ck_data_fields(rest, next, generics)
       ),
@@ -182,8 +178,7 @@ pub theorem data_fields_after_errors(
         next,
         generics,
         written_map_clean(
-          List(DataField),
-          List(DataField),
+          <A: List(DataField), B: List(DataField)>,
           (types: List(DataField)) => Cons(DataFieldMk(name, t), types),
           ck_data_fields(rest, next, generics),
           tail_clean
@@ -194,62 +189,6 @@ pub theorem data_fields_after_errors(
   )
 }
 
-pub fn data_fields_checked(
-  name: Option(Text),
-  body: SurfaceTerm,
-  rest: List(SurfaceDataField),
-  c: Checker,
-  generics: Ordmap(Text, Ty),
-  condition: Bool
-): Mut1(List(DataField), Checker) {
-  frame_bind(
-    Unit,
-    List(DataField),
-    (ignored: Unit, next: Checker) => data_fields_after(
-      name,
-      rest,
-      generics,
-      ck_written(next, body, generics)
-    ),
-    frame_error_if(c, "a borrow cannot be a field", span_of(body), condition)
-  )
-}
-pub theorem data_fields_checked_allowed(
-  name: Option(Text),
-  body: SurfaceTerm,
-  rest: List(SurfaceDataField),
-  c: Checker,
-  generics: Ordmap(Text, Ty),
-  condition: Bool,
-  clean: DiagnosticClean(ck_st(data_fields_checked(name, body, rest, c, generics, condition)))
-): condition = false {
-  written_error_if_false(
-    c,
-    "a borrow cannot be a field",
-    span_of(body),
-    condition,
-    written_bind_input_clean(
-      Unit,
-      List(DataField),
-      frame_error_if(c, "a borrow cannot be a field", span_of(body), condition),
-      (ignored: Unit, next: Checker) => data_fields_after(
-        name,
-        rest,
-        generics,
-        ck_written(next, body, generics)
-      ),
-      ignored => next => data_fields_after_errors(
-        next,
-        name,
-        rest,
-        generics,
-        ck_written(next, body, generics),
-        ck_written_frame_errors(next, body, generics)
-      ),
-      clean
-    )
-  )
-}
 pub theorem ck_written_reset(
   c: Checker,
   term: SurfaceTerm,
@@ -293,55 +232,26 @@ pub theorem data_fields_cons_elaborates(
     Cons(field, rest),
     ck_val(registration_fields_cons(field, rest, c, generics))
   ) from match field {
-    SurfaceDataFieldMk(name, body) => {
-      let allowed: term_has_borrow(
-        body
-      ) = false := data_fields_checked_allowed(
-        name,
-        body,
-        rest,
+    SurfaceDataFieldMk(name, body) => data_fields_after_sound(
+      c,
+      name,
+      body,
+      rest,
+      generics,
+      ck_written(c, body, generics),
+      ck_written_frame(c, body, generics),
+      ck_written_reset(c, body, generics),
+      inner_clean => written_term_ordinary(
         c,
         generics,
-        term_has_borrow(body),
-        clean
-      )
-      Eq::subst(
-        (b: Bool) => WrittenDataFields(
-          ck_datas_of(c),
-          generics,
-          frame_constructor_position(c),
-          Cons(SurfaceDataFieldMk(name, body), rest),
-          ck_val(data_fields_checked(name, body, rest, c, generics, b))
-        ),
-        Eq::sym(allowed),
-        data_fields_after_sound(
-          c,
-          name,
-          body,
-          rest,
-          generics,
-          ck_written(c, body, generics),
-          ck_written_frame(c, body, generics),
-          ck_written_reset(c, body, generics),
-          inner_clean => written_term_ordinary(
-            c,
-            generics,
-            body,
-            ck_val(ck_written(c, body, generics)),
-            ordinary,
-            ck_written_sound(c, body, generics, inner_clean)
-          ),
-          ih,
-          Eq::subst(
-            (b: Bool) => DiagnosticClean(
-              ck_st(data_fields_checked(name, body, rest, c, generics, b))
-            ),
-            allowed,
-            clean
-          )
-        )
-      )
-    }
+        body,
+        ck_val(ck_written(c, body, generics)),
+        ordinary,
+        ck_written_sound(c, body, generics, inner_clean)
+      ),
+      ih,
+      clean
+    )
   }
 }
 pub theorem ck_data_fields_sound(
@@ -366,7 +276,7 @@ pub theorem ck_data_fields_sound(
   ) from match fields {
     Nil => WrittenDataFieldsNil
     Cons(field, rest) => written_transfer(
-      List(DataField),
+      <A: List(DataField)>,
       (types: List(DataField)) => WrittenDataFields(
         ck_datas_of(c),
         generics,

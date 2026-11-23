@@ -1,8 +1,8 @@
 import "spec.taut"
 import "text.taut"
 import "../../url/src/bytes.taut"
-import std::Base
-import std::Text
+import std::base
+import std::text
 
 // The paths of a source tree: relative, with `/` between plain components.
 
@@ -18,12 +18,12 @@ pub(open) inductive TbPathProblem: Type {
 
 // A control character in UTF-8: C0, DEL, or C1 (`C2 80` to `C2 9F`).
 pub fn tb_control(l: List(Nat)): Bool {
-  ⊢ Bool from match l {
+  match l {
     Nil => false
     Cons(b, t) => Bool::or(Nat::lt(b, 32), Bool::or(Nat::eq(b, 127), Bool::or(
       Bool::and(Nat::eq(b, 194), ⊢ Bool from match t {
         Nil => false
-        Cons(c, u) => Bool::and(Nat::le(128, c), Nat::le(c, 159))
+        Cons(c, ^u) => Bool::and(Nat::le(128, c), Nat::le(c, 159))
       }),
       tb_control(t)
     )))
@@ -35,7 +35,7 @@ pub fn tb_path_component_bad(c: List(Nat)): Bool {
 }
 
 pub fn tb_path(p: List(Nat)): Option(TbPathProblem) {
-  ⊢ Option(TbPathProblem) from match Bool::and(not(is_empty(p)), tb_at_most(4096, p)) {
+  match Bool::and(not(is_empty(p)), tb_at_most(4096, p)) {
     false => Some(PathLength)
     true => ⊢ Option(TbPathProblem) from match Bool::or(tb_has_byte(92, p), tb_control(p)) {
       true => Some(PathCharacters)
@@ -70,20 +70,20 @@ pub(open) inductive TbTreeProblem: Type {
 }
 
 pub fn tb_folded(p: TbTreePath): Text {
-  ⊢ Text from match p {
-    MkTreePath(path, folded) => folded
+  match p {
+    MkTreePath(^path, folded) => folded
   }
 }
 
 pub fn tb_path_of(p: TbTreePath): Text {
-  ⊢ Text from match p {
-    MkTreePath(path, folded) => path
+  match p {
+    MkTreePath(path, ^folded) => path
   }
 }
 
 // The first path before `p` that is the same file.
 pub fn tb_clash(p: TbTreePath, seen: List(TbTreePath)): Option(TbTreeProblem) {
-  ⊢ Option(TbTreeProblem) from match seen {
+  match seen {
     Nil => None
     Cons(q, rest) => ⊢ Option(TbTreeProblem) from match Text::eq(tb_folded(q), tb_folded(p)) {
       false => tb_clash(p, rest)
@@ -96,7 +96,7 @@ pub fn tb_clash(p: TbTreePath, seen: List(TbTreePath)): Option(TbTreeProblem) {
 }
 
 pub fn tb_clashes(ps: List(TbTreePath), seen: List(TbTreePath)): Option(TbTreeProblem) {
-  ⊢ Option(TbTreeProblem) from match ps {
+  match ps {
     Nil => None
     Cons(p, rest) => ⊢ Option(TbTreeProblem) from match tb_clash(p, seen) {
       Some(problem) => Some(problem)
@@ -107,7 +107,7 @@ pub fn tb_clashes(ps: List(TbTreePath), seen: List(TbTreePath)): Option(TbTreePr
 
 // The directories `p` goes through, folded: `a`, `a/b` for `a/b/c`.
 pub fn tb_dirs_of(l: List(Nat), at: List(Nat)): List(List(Nat)) {
-  ⊢ List(List(Nat)) from match l {
+  match l {
     Nil => Nil
     Cons(b, t) => ⊢ List(List(Nat)) from match Nat::eq(b, 47) {
       true => Cons(List::reverse(at), tb_dirs_of(t, Cons(b, at)))
@@ -117,7 +117,7 @@ pub fn tb_dirs_of(l: List(Nat), at: List(Nat)): List(List(Nat)) {
 }
 
 pub fn tb_file_at(d: List(Nat), all: List(TbTreePath)): Option(TbTreePath) {
-  ⊢ Option(TbTreePath) from match all {
+  match all {
     Nil => None
     Cons(q, rest) => ⊢ Option(TbTreePath) from match bytes_eq(Text::bytes(tb_folded(q)), d) {
       true => Some(q)
@@ -131,7 +131,7 @@ pub fn tb_file_on_way(
   dirs: List(List(Nat)),
   all: List(TbTreePath)
 ): Option(TbTreeProblem) {
-  ⊢ Option(TbTreeProblem) from match dirs {
+  match dirs {
     Nil => None
     Cons(d, rest) => ⊢ Option(TbTreeProblem) from match tb_file_at(d, all) {
       Some(file) => Some(FileAndDirectory(tb_path_of(file), tb_path_of(p)))
@@ -141,7 +141,7 @@ pub fn tb_file_on_way(
 }
 
 pub fn tb_files_on_way(ps: List(TbTreePath), all: List(TbTreePath)): Option(TbTreeProblem) {
-  ⊢ Option(TbTreeProblem) from match ps {
+  match ps {
     Nil => None
     Cons(p, rest) => ⊢ Option(TbTreeProblem) from match tb_file_on_way(
       p,
@@ -157,7 +157,7 @@ pub fn tb_files_on_way(ps: List(TbTreePath), all: List(TbTreePath)): Option(TbTr
 // Whether the paths of a tree, each already a checked path, make a tree:
 // no two are one file without case, and no file is also a directory.
 pub fn tb_check_tree(ps: List(TbTreePath)): Option(TbTreeProblem) {
-  ⊢ Option(TbTreeProblem) from match tb_clashes(ps, Nil) {
+  match tb_clashes(ps, Nil) {
     Some(problem) => Some(problem)
     None => tb_files_on_way(ps, ps)
   }

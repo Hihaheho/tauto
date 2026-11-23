@@ -1,0 +1,416 @@
+import "surface.taut"
+import std::base
+import std::map
+import std::text
+import std::text_ops
+import "../../text/src/text.taut"
+
+// Replaceable `extern` blocks: membership, mixing rules, and sealed
+// representation boundaries. Port of `crates/tauto-surface/src/surface/extern_blocks.rs`.
+
+pub fn extern_fn_has_body(f: SurfaceFn): Bool {
+  match f.body.kind {
+    SkOther(^what) => false
+    _ => true
+  }
+}
+
+fn extern_list_empty<A>(xs: List(A)): Bool {
+  match xs {
+    Nil => true
+    Cons(^x, ^rest) => false
+  }
+}
+
+pub fn extern_is_replaceable(
+  fns: List(SurfaceFn),
+  instances: List(SurfaceConstraint),
+  types: List(SurfaceData),
+  structs: List(SurfaceData),
+  enums: List(SurfaceData)
+): Bool {
+  if not(extern_list_empty(instances)) || not(extern_list_empty(types)) {
+    false
+  } else {
+    if not(extern_list_empty(structs)) || not(extern_list_empty(enums)) {
+      extern_fns_all_have_body(fns)
+    } else {
+      not(extern_list_empty(fns)) && extern_fns_all_have_body(fns)
+    }
+  }
+}
+
+fn extern_fns_all_have_body(fns: List(SurfaceFn)): Bool {
+  match fns {
+    Nil => true
+    Cons(f, rest) => extern_fn_has_body(f) && extern_fns_all_have_body(rest)
+  }
+}
+
+fn extern_name_sort_insert(name: Text, names: List(Text)): List(Text) {
+  match names {
+    Nil => Cons(name, Nil)
+    Cons(n, rest) => ⊢ List(Text) from match Text::ordering(name, n) {
+      Less => Cons(name, names)
+      _ => Cons(n, extern_name_sort_insert(name, rest))
+    }
+  }
+}
+
+fn extern_sort_names(names: List(Text)): List(Text) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => extern_name_sort_insert(n, extern_sort_names(rest))
+  }
+}
+
+fn extern_join_names(names: List(Text)): Text {
+  match names {
+    Nil => ""
+    Cons(n, rest) => ⊢ Text from match rest {
+      Nil => n
+      Cons(^x, ^xs) => Text::concat(n, Text::concat("\0", extern_join_names(rest)))
+    }
+  }
+}
+
+fn extern_fn_names(fns: List(SurfaceFn), acc: List(Text)): List(Text) {
+  match fns {
+    Nil => acc
+    Cons(f, rest) => extern_fn_names(rest, Cons(f.name, acc))
+  }
+}
+
+fn extern_data_names(datas: List(SurfaceData), acc: List(Text)): List(Text) {
+  match datas {
+    Nil => acc
+    Cons(d, rest) => extern_data_names(rest, Cons(d.name, acc))
+  }
+}
+
+/// Stable identity of one `extern` block: sorted member spellings joined by `\0`.
+pub fn extern_block_id(
+  fns: List(SurfaceFn),
+  types: List(SurfaceData),
+  structs: List(SurfaceData),
+  enums: List(SurfaceData)
+): Text {
+  extern_join_names(
+    extern_sort_names(
+      extern_fn_names(
+        fns,
+        extern_data_names(types, extern_data_names(structs, extern_data_names(enums, Nil)))
+      )
+    )
+  )
+}
+
+fn extern_has_bodyful(fns: List(SurfaceFn)): Bool {
+  match fns {
+    Nil => false
+    Cons(f, rest) => extern_fn_has_body(f) || extern_has_bodyful(rest)
+  }
+}
+
+fn extern_has_bodiless(fns: List(SurfaceFn)): Bool {
+  match fns {
+    Nil => false
+    Cons(f, rest) => not(extern_fn_has_body(f)) || extern_has_bodiless(rest)
+  }
+}
+
+/// One validate diagnostic: message text in the dump form, and its span.
+pub(open) inductive ExternDiag: Type {
+  ExternDiagMk(message: Text, start: Nat, end: Nat): ExternDiag
+}
+
+fn extern_msg_name(id: Text, name: Text): Text {
+  Text::concat_all(
+    Cons(id, Cons("(name: \"", Cons(name, Cons("\")", Nil))))
+  )
+}
+
+fn extern_diag(message: Text, start: Nat, end: Nat): ExternDiag {
+  ExternDiag { message: message, start: start, end: end }
+}
+
+fn extern_open_replaceable_errors(datas: List(SurfaceData), acc: List(ExternDiag)): List(ExternDiag) {
+  match datas {
+    Nil => acc
+    Cons(d, rest) => {
+      let next := ⊢ List(ExternDiag) from match d.visibility {
+        VisOpen => Cons(
+          extern_diag(extern_msg_name("surface-extern-open-replaceable", d.name), d.start, d.end),
+          acc
+        )
+        _ => acc
+      }
+      let next2 := ⊢ List(ExternDiag) from match d.kind {
+        Some(k) => if k == "inductive" {
+          Cons(
+            extern_diag(extern_msg_name("surface-extern-inductive-data", d.name), d.start, d.end),
+            next
+          )
+        } else {
+          next
+        }
+        None => next
+      }
+      extern_open_replaceable_errors(rest, next2)
+    }
+  }
+}
+
+// Whether a constructor named `c` has the name of the type `ty`, as its last
+// segment when the type is written with a module path.
+fn data_ctor_named_as_type(ty: Text, c: Text): Bool {
+  Text::eq(ty, c) || (Nat::lt(Text::len(c) + 1, Text::len(ty)) &&
+    text_starts_with(ty, Text::concat("::", c), Nat::sub(Text::len(ty), Text::len(c) + 2)))
+}
+
+// The first such constructor's name, which is the last segment of the type's.
+fn data_first_ctor_named_as_type(ty: Text, cs: List(SurfaceDataCtor)): Option(Text) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if data_ctor_named_as_type(ty, c.name) {
+      Some(c.name)
+    } else {
+      data_first_ctor_named_as_type(ty, rest)
+    }
+  }
+}
+
+// A variant of an `enum` named as the `enum` itself (`enum A { A }`): types and
+// constructors share one namespace, so the kernel would refuse the family. A
+// `struct` is not asked: its one constructor is named by the type.
+fn enum_ctor_named_as_type_errors(datas: List(SurfaceData), acc: List(ExternDiag)): List(ExternDiag) {
+  match datas {
+    Nil => acc
+    Cons(d, rest) => enum_ctor_named_as_type_errors(
+      rest,
+      ⊢ List(ExternDiag) from match data_first_ctor_named_as_type(d.name, d.constructors) {
+        Some(leaf) => Cons(
+          extern_diag(extern_msg_name("surface-ctor-type-name", leaf), d.start, d.end),
+          acc
+        )
+        None => acc
+      }
+    )
+  }
+}
+
+/// Diagnostics for mixing required and replaceable members, inductive data,
+/// and `pub(open)` on a sealed replaceable type.
+pub fn validate_extern_blocks(stmts: List(SurfaceStmt)): List(ExternDiag) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => List::append(validate_extern_stmt(s), validate_extern_blocks(rest))
+  }
+}
+
+fn validate_extern_stmt(s: SurfaceStmt): List(ExternDiag) {
+  match s {
+    StExtern(fns, instances, types, structs, enums, start, end) => {
+      let replaceable_side := extern_has_bodyful(fns) || not(extern_list_empty(structs)) ||
+        not(extern_list_empty(enums))
+      let required_side := extern_has_bodiless(fns) || not(extern_list_empty(types)) ||
+        not(extern_list_empty(instances))
+      let mix := if replaceable_side && required_side {
+        Cons(extern_diag("surface-extern-mix-required-replaceable", start, end), Nil)
+      } else {
+        Nil
+      }
+      List::append(
+        enum_ctor_named_as_type_errors(enums, Nil),
+        List::append(
+          mix,
+          List::append(
+            extern_open_replaceable_errors(structs, Nil),
+            extern_open_replaceable_errors(enums, Nil)
+          )
+        )
+      )
+    }
+    StEnum(d) => enum_ctor_named_as_type_errors(Cons(d, Nil), Nil)
+    _ => Nil
+  }
+}
+
+pub fn replaceable_extern_fns(
+  fns: List(SurfaceFn),
+  instances: List(SurfaceConstraint),
+  types: List(SurfaceData),
+  structs: List(SurfaceData),
+  enums: List(SurfaceData)
+): List(SurfaceFn) {
+  if extern_is_replaceable(fns, instances, types, structs, enums) {
+    fns
+  } else {
+    Nil
+  }
+}
+
+/// One `extern { … }` after reading: required (host-only) or replaceable.
+pub(open) inductive ExternBlock: Type {
+  ExternBlockMk(
+    id: Text,
+    replaceable: Bool,
+    start: Nat,
+    end: Nat,
+    fn_names: List(Text),
+    type_names: List(Text),
+    data_names: List(Text)
+  ): ExternBlock
+}
+
+/// Index of every `extern` block in a program's statements.
+pub(open) inductive ExternBlocks: Type {
+  ExternBlocksMk(
+    blocks: List(ExternBlock),
+    fn_block: Ordmap(Text, Nat),
+    data_block: Ordmap(Text, Nat)
+  ): ExternBlocks
+}
+
+pub fn extern_blocks_empty(): ExternBlocks {
+  ExternBlocks {
+    blocks: Nil,
+    fn_block: Ordmap::empty(),
+    data_block: Ordmap::empty()
+  }
+}
+
+fn extern_insert_names(
+  names: List(Text),
+  index: Nat,
+  m: Ordmap(Text, Nat)
+): Ordmap(Text, Nat) {
+  match names {
+    Nil => m
+    Cons(n, rest) => extern_insert_names(
+      rest,
+      index,
+      Ordmap::insert(m, n, index, Ordmap::compare_text)
+    )
+  }
+}
+
+fn extern_blocks_push(
+  out: ExternBlocks,
+  fns: List(SurfaceFn),
+  instances: List(SurfaceConstraint),
+  types: List(SurfaceData),
+  structs: List(SurfaceData),
+  enums: List(SurfaceData),
+  start: Nat,
+  end: Nat
+): ExternBlocks {
+  let replaceable := extern_is_replaceable(fns, instances, types, structs, enums)
+  let id := extern_block_id(fns, types, structs, enums)
+  let index := List::length(out.blocks)
+  let fn_names := List::reverse(extern_fn_names(fns, Nil))
+  let type_names := List::reverse(extern_data_names(types, Nil))
+  let data_names := List::reverse(
+    extern_data_names(enums, extern_data_names(structs, Nil))
+  )
+  ExternBlocks {
+    blocks: List::append(
+      out.blocks,
+      Cons(
+        ExternBlock {
+          id: id,
+          replaceable: replaceable,
+          start: start,
+          end: end,
+          fn_names: fn_names,
+          type_names: type_names,
+          data_names: data_names
+        },
+        Nil
+      )
+    ),
+    fn_block: extern_insert_names(fn_names, index, out.fn_block),
+    data_block: extern_insert_names(
+      data_names,
+      index,
+      extern_insert_names(type_names, index, out.data_block)
+    )
+  }
+}
+
+mutual {
+  fn extern_blocks_collect_one(s: SurfaceStmt, out: ExternBlocks): ExternBlocks {
+    match s {
+      StExtern(fns, instances, types, structs, enums, start, end) => extern_blocks_push(
+        out,
+        fns,
+        instances,
+        types,
+        structs,
+        enums,
+        start,
+        end
+      )
+      StMutual(items, ^start, ^end) => extern_blocks_collect_go(items, out)
+      StAttributed(^name, ^arg, ^generates, inner) => extern_blocks_collect_one(inner, out)
+      _ => out
+    }
+  }
+
+  fn extern_blocks_collect_go(stmts: List(SurfaceStmt), out: ExternBlocks): ExternBlocks {
+    match stmts {
+      Nil => out
+      Cons(s, rest) => extern_blocks_collect_go(rest, extern_blocks_collect_one(s, out))
+    }
+  }
+}
+
+pub fn extern_blocks_collect(stmts: List(SurfaceStmt)): ExternBlocks {
+  extern_blocks_collect_go(stmts, extern_blocks_empty())
+}
+
+fn extern_block_at(blocks: List(ExternBlock), i: Nat): Option(ExternBlock) {
+  match blocks {
+    Nil => None
+    Cons(b, rest) => ⊢ Option(ExternBlock) from match i {
+      Zero => Some(b)
+      Succ(j) => extern_block_at(rest, j)
+    }
+  }
+}
+
+pub fn extern_replaceable_data(blocks: ExternBlocks, name: Text): Option(ExternBlock) {
+  match Ordmap::get(blocks.data_block, name, Ordmap::compare_text) {
+    None => None
+    Some(i) => ⊢ Option(ExternBlock) from match extern_block_at(blocks.blocks, i) {
+      None => None
+      Some(b) => if b.replaceable {
+        Some(b)
+      } else {
+        None
+      }
+    }
+  }
+}
+
+pub fn extern_block_of_fn(blocks: ExternBlocks, name: Text): Option(ExternBlock) {
+  match Ordmap::get(blocks.fn_block, name, Ordmap::compare_text) {
+    None => None
+    Some(i) => extern_block_at(blocks.blocks, i)
+  }
+}
+
+/// Whether `accessor` (a function name) may touch the representation of
+/// `data`. Outside a replaceable block, nobody may; inside, only members.
+pub fn may_access_repr(blocks: ExternBlocks, data: Text, accessor: Option(Text)): Bool {
+  match extern_replaceable_data(blocks, data) {
+    None => true
+    Some(block) => ⊢ Bool from match accessor {
+      None => false
+      Some(a) => ⊢ Bool from match extern_block_of_fn(blocks, a) {
+        None => false
+        Some(b) => b.id == block.id
+      }
+    }
+  }
+}

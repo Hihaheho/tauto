@@ -18,6 +18,30 @@ pub trait Host {
         let _ = (index, args);
         Err("the machine has no host binding for this extern function".into())
     }
+    /// Answers builtin `name` before the machine does: `None` leaves it to
+    /// the machine. A macro host answers the builtins of expansion
+    /// (`Syn::global`, `Elab::*` …) here, and refuses the system's.
+    fn builtin(
+        &mut self,
+        program: &crate::Program,
+        name: &str,
+        args: &[Value],
+    ) -> Option<crate::value::R<Value>> {
+        let _ = (program, name, args);
+        None
+    }
+    /// Answers operation `op` that no handler of the program handles:
+    /// `None` leaves it unhandled. A macro host answers `macro_error` and
+    /// `macro_warn` here.
+    fn operation(
+        &mut self,
+        program: &crate::Program,
+        op: &str,
+        args: &[Value],
+    ) -> Option<crate::value::R<Value>> {
+        let _ = (program, op, args);
+        None
+    }
 }
 
 /// The process's: what the program writes goes to its standard streams.

@@ -3,7 +3,7 @@ import "program_data_header_sound.taut"
 import "program_data_context_sound.taut"
 import "program_data_error_sound.taut"
 import "../../surface/src/surface.taut"
-import std::Row
+import std::row
 import "checker.taut"
 import "data_body_metadata_sound.taut"
 import "data_metadata_sound.taut"
@@ -20,6 +20,7 @@ import "rules_data_body.taut"
 import "rules_decls.taut"
 import "summary_sound.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "written_app_branch_sound.taut"
@@ -28,8 +29,7 @@ import "written_list_sound.taut"
 
 pub fn body_program_after(rest: List(SurfaceStmt), m: Mut1(Unit, Checker)): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
     m
   )
@@ -42,7 +42,7 @@ pub theorem body_after_prefix(
   present: DataBodyRegistered(ck_datas_of(ck_st(m)), source),
   no_name: NoDeclarationName(registration_name(source), rest)
 ): DataBodyRegistered(ck_datas_of(ck_st(body_program_after(rest, m))), source) {
-  ⊢ DataBodyRegistered(ck_datas_of(ck_st(body_program_after(rest, m))), source) from match m {
+  match m {
     mut1(ignored, next) => body_registered_lookup(
       present,
       ck_datas_of(ck_st(ck_rewrap1(ck_program_data(rest, next)))),
@@ -75,8 +75,7 @@ pub theorem body_prefix_clean(
   clean: DiagnosticClean(ck_st(body_program_after(rest, m)))
 ): DiagnosticClean(ck_st(m)) {
   written_bind_input_clean(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     m,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
     ignored => next => error_frame_rewrap(
@@ -187,7 +186,7 @@ pub theorem body_tail_after(
   ih: RegisterBodies(rest),
   clean: DiagnosticClean(ck_st(body_program_after(rest, m)))
 ): DataBodyRegistered(ck_datas_of(ck_st(body_program_after(rest, m))), source) {
-  ⊢ DataBodyRegistered(ck_datas_of(ck_st(body_program_after(rest, m))), source) from match m {
+  match m {
     mut1(ignored, next) => Eq::subst(
       (result: Mut1(Unit, Checker)) => DataBodyRegistered(ck_datas_of(ck_st(result)), source),
       Eq::sym(ck_rewrap1_id(ck_program_data(rest, next))),
@@ -293,7 +292,7 @@ pub theorem ck_program_data_bodies(
   fresh: UniqueDataNames(types_data_decls(stmts)),
   clean: DiagnosticClean(ck_st(ck_program_data(stmts, c)))
 ): DataBodyRegistered(ck_datas_of(ck_st(ck_program_data(stmts, c))), source) {
-  ⊢ DataBodyRegistered(ck_datas_of(ck_st(ck_program_data(stmts, c))), source) from match stmts {
+  match stmts {
     Nil => ⊢ DataBodyRegistered(ck_datas_of(ck_st(ck_program_data(Nil, c))), source) from match declared {
     }
     Cons(stmt, rest) => Eq::subst(

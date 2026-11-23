@@ -1,9 +1,9 @@
 import "registration_header_sound.taut"
 import "data_names_membership_sound.taut"
 import "../../surface/src/surface.taut"
-import std::Map
-import std::Row
-import std::Text
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "data_metadata_sound.taut"
 import "datas.taut"
@@ -17,6 +17,7 @@ import "rules_data_header.taut"
 import "rules_decls.taut"
 import "summary_sound.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
@@ -31,8 +32,7 @@ pub theorem header_after_prefix(
   ck_datas_of(
     ck_st(
       frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
         m
       )
@@ -44,8 +44,7 @@ pub theorem header_after_prefix(
     ck_datas_of(
       ck_st(
         frame_bind(
-          Unit,
-          Unit,
+          <A: Unit, B: Unit>,
           (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
           m
         )
@@ -144,8 +143,7 @@ pub theorem header_tail(
   ck_datas_of(
     ck_st(
       frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(tail, next)),
         ck_program_data_one(c, stmt)
       )
@@ -154,8 +152,7 @@ pub theorem header_tail(
   decl
 ) {
   registration_bind_header(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     decl,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(tail, next)),
     ck_program_data_one(c, stmt),
@@ -187,8 +184,7 @@ pub theorem header_cons(
   ck_datas_of(
     ck_st(
       frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
         ck_program_data_one(c, s)
       )
@@ -200,8 +196,7 @@ pub theorem header_cons(
     ck_datas_of(
       ck_st(
         frame_bind(
-          Unit,
-          Unit,
+          <A: Unit, B: Unit>,
           (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
           ck_program_data_one(c, s)
         )
@@ -258,7 +253,7 @@ pub theorem ck_program_data_headers(
   declared: DeclaresData(ss, d),
   fresh: UniqueDataNames(types_data_decls(ss))
 ): DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(ss, c))), d) {
-  ⊢ DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(ss, c))), d) from match ss {
+  match ss {
     Nil => ⊢ DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(Nil, c))), d) from match declared {
     }
     Cons(s, rest) => Eq::subst(
@@ -312,7 +307,7 @@ pub theorem registration_finish_after_header(
   ordered: CkDatasOrdered(ck_st(m)),
   present: DataHeaderMatches(ck_datas_of(ck_st(m)), d)
 ): DataHeaderMatches(ck_datas_of(ck_st(registration_finish_after(program, m))), d) {
-  ⊢ DataHeaderMatches(ck_datas_of(ck_st(registration_finish_after(program, m))), d) from match m {
+  match m {
     mut1(ignored, next) => Eq::subst(
       (z: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(z)), d),
       Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
@@ -329,7 +324,7 @@ pub theorem registration_program_after_header(
   declared: DeclaresData(program, d),
   fresh: UniqueDataNames(types_data_decls(program))
 ): DataHeaderMatches(ck_datas_of(ck_st(registration_program_after(program, m))), d) {
-  ⊢ DataHeaderMatches(ck_datas_of(ck_st(registration_program_after(program, m))), d) from match m {
+  match m {
     mut1(ignored, next) => registration_finish_after_header(
       program,
       d,

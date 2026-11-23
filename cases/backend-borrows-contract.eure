@@ -1,0 +1,19 @@
+// `borrows(m)` on a function written in Tauto: the generated code gives the
+// parameters named and the result one lifetime and the others their own, so
+// an argument that is not named may go away while the result lives.
+
+@ cases.unlisted-argument-moves-while-the-result-lives
+source = ```tauto
+
+struct(affine) F { n: i64 }
+struct(affine) K { i: i64 }
+fn pick(a: &F, k: &K): &F borrows(a) { a }
+fn size(f: &F): i64 { f.n }
+fn drop_k(k: K): i64 { k.i }
+let a := F { n: 4 }
+let k := K { i: 1 }
+let r := pick(&a, &k)
+let gone := drop_k(k)
+show(&(size(&r) + gone))
+```
+stdout = "5\n"

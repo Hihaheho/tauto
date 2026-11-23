@@ -10,11 +10,10 @@ checks.answer = "ok"
 @ cases.zero_argument_nat_closure_runs
 source = ```tauto
 fn answer(): Nat { let value: () -> Nat := () => 42; value() }
-perform show("result", answer())
+show(&answer())
 ```
-imports = [path`../std/Text.taut`]
-extract = true
-shows = ["result = 42"]
+imports = [path`../std/text.taut`]
+stdout = "42\n"
 
 @ cases.multiple_parameter_nat_closure
 source = ```tauto
@@ -22,7 +21,7 @@ fn answer(): Nat {
   let add: (Nat, Nat) -> Nat := (left, right) => left + right
   add(20, 22)
 }
-theorem answer_value(): answer() = 42 { Refl(Nat, 42) }
+theorem answer_value(): answer() = 42 { Refl(<A: Nat, a: 42>) }
 ```
 checks.answer = "ok"
 checks.answer_value = "ok"
@@ -45,7 +44,7 @@ checks.answer = "error: mismatch"
 @ cases.zero_argument_nat_closure_value
 source = ```tauto
 fn answer(): Nat { let value: () -> Nat := () => 42; value() }
-theorem answer_value(): answer() = 42 { Refl(Nat, 42) }
+theorem answer_value(): answer() = 42 { Refl(<A: Nat, a: 42>) }
 ```
 checks.answer = "ok"
 checks.answer_value = "ok"

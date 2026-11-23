@@ -5,15 +5,18 @@
 macro-coded = { $code }: { $message }
 macro-reserved = { $name } is the reader's own `{ $name }!`; a macro cannot take its name
 macro-duplicate = macro { $name } is declared twice
+macro-private = macro { $name } is not declared `pub`, so only its own file uses it; write `pub macro fn` to let other files call it
 macro-dollar-outside-quote = $ is written only inside quote
 macro-kind-statements = this macro makes statements, and is called where a statement is written
 macro-replace-word = `{ $word }` before `{ $kind } { $name }`: an attribute that changes its declaration writes `replace` first
 macro-the-declaration = the declaration
 macro-replace-other = `replace { $kind } { $name }` names a declaration the attribute is not written before; it is before { $decl }
-macro-generates-attribute-kinds = an attribute macro makes only fn, theorem, def, inductive, struct and enum declarations
+macro-generates-attribute-kinds = an attribute macro makes only fn, theorem, def, inductive, struct, enum, class and instance declarations
+macro-replace-twice = `replace { $kind } { $name }`: only one attribute of a declaration says `replace`
 macro-replace-not-made = the attribute says `replace { $kind } { $name }`, and the macro did not make it
 macro-replace-unsaid = the macro makes `{ $kind } { $name }`, the declaration it is given: an attribute that changes its declaration says so with `=> replace { $kind } { $name }`
 macro-attribute-list-mismatch = the attribute's list does not match what the macro made
+macro-attribute-not-run = `@{ $name }!` was not run: { $decl } it is given does not check with what is before it, and a macro reads only a declaration that checks: { $message }
 macro-call-list-mismatch = the list of what the call makes does not match what it made
 
 # The function of a macro.
@@ -25,7 +28,7 @@ macro-function-not-start = `{ $function }` takes { $ty }, which is not the tree 
 macro-function-not-tree = `{ $function }` takes { $ty }, which is not the tree of a syntax
 macro-function-result = `{ $function }` makes { $ty }; a macro makes a SynExpr or a List(SynStmt)
 macro-unchecked-effect = `{ $function }` performs an effect that cannot be followed ({ $effect })
-macro-row-effect = the function of a macro may perform macro_error, macro_warn, elab and Div, and `{ $function }` performs { $effect }
+macro-row-effect = the function of a macro may perform macro_error, macro_warn, elab, div, budget, budget_memory and the operations on a `Ref`, and `{ $function }` performs { $effect }
 macro-row-reached = `{ $function }` reaches { $path }, whose row does not check: { $why }
 
 # Why a function was left out of the library a macro runs in.
@@ -75,8 +78,10 @@ macro-code-no-type = `{ $name }` has no type
 macro-proof-rejected = the proof the macro made is rejected: { $message }
 macro-proof-incomplete = the proof the macro made is not complete
 macro-dependent-use = the output has the type the call had but is not definitionally equal to it, and a type below depends on that equality ({ $message })
+macro-not-run-input-does-not-check = `{ $name }!` did not run: the declaration around it does not check, and a typed macro runs only on what checks
 macro-output-rejected = what the macro made is not accepted: { $message }
 macro-output-rejected-plain = what the macro made is not accepted
+macro-placed-timed-out = `{ $name }!` did not run, so its place is still empty: { $message }
 macro-proved-shape = a Proved has a term and a proof
 macro-proved-where = a Proved is for a function or a theorem
 macro-proof-no-type = the expression has no type

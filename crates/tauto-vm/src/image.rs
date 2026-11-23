@@ -309,6 +309,10 @@ fn width(w: Width) -> u64 {
         Width::U32 => 3,
         Width::U64 => 4,
         Width::Nat => 5,
+        Width::Host => 6,
+        Width::W8 => 7,
+        Width::W16 => 8,
+        Width::U16 => 9,
     }
 }
 
@@ -320,6 +324,10 @@ fn width_of(n: u64) -> Rs<Width> {
         3 => Width::U32,
         4 => Width::U64,
         5 => Width::Nat,
+        6 => Width::Host,
+        7 => Width::W8,
+        8 => Width::W16,
+        9 => Width::U16,
         _ => return Err(format!("width {n}")),
     })
 }
@@ -439,10 +447,6 @@ impl W {
                 self.u(2);
                 self.len(*i);
             }
-            Step::Entry(i) => {
-                self.u(3);
-                self.len(*i);
-            }
         }
     }
     fn pat(&mut self, p: &Pat) -> Rs<()> {
@@ -464,6 +468,11 @@ impl W {
                 for f in fields {
                     self.pat(f)?;
                 }
+            }
+            Pat::Variant { variant, pat } => {
+                self.u(4);
+                self.u(*variant as u64);
+                self.pat(pat)?;
             }
         }
         Ok(())
@@ -751,7 +760,6 @@ impl<'a> R<'a> {
             0 => Step::Index(self.len()?),
             1 => Step::Name(Rc::from(self.str()?)),
             2 => Step::Item(self.len()?),
-            3 => Step::Entry(self.len()?),
             n => return Err(format!("step {n}")),
         })
     }
@@ -766,6 +774,10 @@ impl<'a> R<'a> {
             3 => Pat::Ctor {
                 ctor: self.u32()?,
                 fields: self.many(R::pat)?,
+            },
+            4 => Pat::Variant {
+                variant: self.u32()?,
+                pat: Box::new(self.pat()?),
             },
             n => return Err(format!("pattern {n}")),
         })

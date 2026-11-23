@@ -1,0 +1,356 @@
+// A value that holds a borrow freezes its owner only while it is live: while
+// the code after it may still read it before a whole write replaces it
+// (`docs/design/ownership.md`「凍結は最後の使用で解ける」). A value whose type
+// has an opaque view in it (`type(affine, borrow)`) may use what it borrows
+// when it is dropped, so it lives to the end of its scope. `F` is an affine
+// struct, so that the freeze is the point.
+
+@ cases.holder-dead-after-last-use-frees-owner
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn show_h(h: &Holder): i64 { h.r.n }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+let h := Holder { r: &a }
+show_h(&h)
+take(a)
+```
+lin = "ok"
+
+@ cases.holder-used-later-keeps-owner-frozen
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn show_h(h: &Holder): i64 { h.r.n }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+let h := Holder { r: &a }
+take(a)
+show_h(&h)
+```
+lin = "error: a is frozen by h"
+
+@ cases.var-holder-overwritten-frees-owner
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn peek(o: &Option(&F)): i64 { 1 }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+var o := Some(&a)
+peek(&o)
+o := None
+take(a)
+```
+lin = "ok"
+
+@ cases.var-holder-overwritten-before-next-read-frees-owner
+description = "Between the move and the write, nothing reads `o`: the read after the write reads the new value."
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn peek(o: &Option(&F)): i64 { 1 }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+var o := Some(&a)
+peek(&o)
+take(a)
+o := None
+peek(&o)
+```
+lin = "ok"
+
+@ cases.var-holder-read-in-next-iteration-keeps-frozen
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn peek(o: &Option(&F)): i64 { 1 }
+var v := Vec::new()
+Vec::push(&mut v, F { n: 1 })
+var cur := Vec::get(&v, 0)
+var i := 0
+while i < 2 {
+  peek(&cur)
+  Vec::push(&mut v, F { n: 2 })
+  i := i + 1
+}
+```
+lin = "error: v is frozen by cur"
+
+@ cases.var-holder-last-read-before-loop-frees-owner
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn peek(o: &Option(&F)): i64 { 1 }
+var v := Vec::new()
+Vec::push(&mut v, F { n: 1 })
+let cur := Vec::get(&v, 0)
+peek(&cur)
+var i := 0
+while i < 2 {
+  Vec::push(&mut v, F { n: 2 })
+  i := i + 1
+}
+```
+lin = "ok"
+
+@ cases.holder-live-in-one-arm-only
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn show_h(h: &Holder): i64 { h.r.n }
+fn take(f: F): i64 { f.n }
+fn pick(c: Bool): i64 {
+  let a := F { n: 1 }
+  let h := Holder { r: &a }
+  if c {
+    take(a)
+  } else {
+    show_h(&h)
+  }
+}
+pick(true)
+```
+lin = "ok"
+
+@ cases.holder-live-in-other-arm-after-move-keeps-frozen
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn show_h(h: &Holder): i64 { h.r.n }
+fn take(f: F): i64 { f.n }
+fn pick(c: Bool): i64 {
+  let a := F { n: 1 }
+  let h := Holder { r: &a }
+  if c {
+    take(a)
+  } else {
+    0
+  }
+  show_h(&h)
+}
+pick(true)
+```
+lin = "error: a is frozen by h"
+
+@ cases.holder-captured-by-closure-stays-live
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+let r := &a
+let c := () => r.n
+take(a)
+```
+lin = "error: a is frozen by r"
+
+@ cases.holder-live-across-perform
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn show_h(h: &Holder): i64 { h.r.n }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+let h := Holder { r: &a }
+show(&1)
+take(a)
+show_h(&h)
+```
+lin = "error: a is frozen by h"
+
+@ cases.holder-dead-across-perform-frees-owner
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn show_h(h: &Holder): i64 { h.r.n }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+let h := Holder { r: &a }
+show_h(&h)
+show(&1)
+take(a)
+```
+lin = "ok"
+
+@ cases.holder-with-drop-lives-to-scope-end
+source = ```nib
+
+struct(affine) F {}
+extern {
+  type(affine, borrow) Guard
+  fn lock(v: &Vec(F)): Guard
+  fn peek(g: &Guard): i64
+}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let g := lock(&v)
+peek(&g)
+let w := v
+```
+lin = "error: v is frozen by g"
+
+@ cases.borrow-param-dead-after-last-use
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn twice(v: &mut Vec(F)): i64 {
+  let first := Vec::get(v, 0)
+  let n := match first {
+    Some(f) => size(&f)
+    None => 0
+  }
+  Vec::push(v, F { n: n })
+  n
+}
+var v := Vec::new()
+twice(&mut v)
+```
+lin = "ok"
+
+@ cases.owner-scope-ends-while-holder-dead-is-ok
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn peek(o: &Option(&F)): i64 { 1 }
+var o := None
+{
+  let a := F { n: 1 }
+  o := Some(&a)
+  peek(&o)
+}
+```
+lin = "ok"
+
+@ cases.owner-scope-ends-while-holder-live-is-error
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn peek(o: &Option(&F)): i64 { 1 }
+var o := None
+{
+  let a := F { n: 1 }
+  o := Some(&a)
+}
+peek(&o)
+```
+lin = "error: a does not live as long as o"
+
+@ cases.var-holder-assigned-before-next-read-frees-owner
+description = "The write at the end of the turn replaces `cur` before the next turn reads it."
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn peek(o: &Option(&F)): i64 { 1 }
+var v := Vec::new()
+Vec::push(&mut v, F { n: 1 })
+var cur := Vec::get(&v, 0)
+var i := 0
+while i < 2 {
+  peek(&cur)
+  cur := None
+  Vec::push(&mut v, F { n: 2 })
+  cur := Vec::get(&v, 0)
+  i := i + 1
+}
+```
+lin = "ok"
+
+@ cases.holder-dead-in-both-arms-frees-owner
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn size(h: &Holder): i64 { h.r.n }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+let h := Holder { r: &a }
+let n := if true { size(&h) } else { 0 }
+show(&(n + take(a)))
+```
+stdout = "2\n"
+
+@ cases.holder-read-through-another-holder-keeps-frozen
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn size(f: Option(&F)): i64 { match f { Some(f) => f.n, None => 0 } }
+var v := Vec::new()
+Vec::push(&mut v, F { n: 1 })
+let o := Vec::get(&v, 0)
+let p := #(o, 1)
+Vec::push(&mut v, F { n: 2 })
+let q := p
+```
+lin = "error: v is frozen by p"
+
+@ cases.mut-borrow-counts-as-read
+description = "`&mut h` reads `h`: what `h` borrows stays frozen up to it."
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F, k: i64 }
+fn bump(h: &mut Holder): i64 { 1 }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+var h := Holder { r: &a, k: 0 }
+let m := take(a)
+bump(&mut h)
+```
+lin = "error: a is frozen by h"
+
+@ cases.holder-moved-into-let-frees-owner-after-new-holder
+description = "`let g := h` moves the holder `h`: `g` holds what `h` borrowed, and the freeze follows `g` (`LastUse.move_let_same`)."
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct(affine) Holder { r: &F }
+fn show_h(h: &Holder): i64 { h.r.n }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+let h := Holder { r: &a }
+let g := h
+show_h(&g)
+take(a)
+```
+lin = "ok"
+
+@ cases.holder-moved-into-let-keeps-owner-frozen-while-new-holder-live
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct(affine) Holder { r: &F }
+fn show_h(h: &Holder): i64 { h.r.n }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+let h := Holder { r: &a }
+let g := h
+take(a)
+show_h(&g)
+```
+lin = "error: a is frozen by g"
+
+@ cases.holder-moved-into-call-result-keeps-owner-frozen
+description = "A holder moved into a call whose result holds a borrow: the result freezes what the holder borrowed while it is live."
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct(affine) Holder { r: &F }
+fn keep(h: Holder): Holder { h }
+fn show_h(h: &Holder): i64 { h.r.n }
+fn take(f: F): i64 { f.n }
+let a := F { n: 1 }
+let h := Holder { r: &a }
+let g := keep(h)
+take(a)
+show_h(&g)
+```
+lin = "error: a is frozen by g"

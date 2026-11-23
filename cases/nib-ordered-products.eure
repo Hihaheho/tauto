@@ -25,25 +25,26 @@ fn second(p: i64 × Bool): Bool {
     #(x, y) => y
   }
 }
-perform show("first", first(#(1, true)))
-perform show("second", second(#(1, true)))
+show(&first(#(1, true)))
+show(&second(#(1, true)))
 ```
 types = "ok"
-shows = ["first = 1", "second = true"]
-backends = ["rust", "javascript", "vm"]
+stdout = ```
+1
+true
+```
 
 @ cases.members-of-one-type-are-bound-by-position
 source = ```tauto
-fn sub(p: i64 × i64): i64 {
+fn sub(p: i64 × i64): i64 ! {overflow} {
   match p {
     #(a, b) => a - b
   }
 }
-perform show("sub", sub(#(5, 2)))
+show(&sub(#(5, 2)))
 ```
 types = "ok"
-shows = ["sub = 3"]
-backends = ["rust", "javascript", "vm"]
+stdout = "3\n"
 
 @ cases.a-closed-product-is-rearranged-at-an-argument
 source = ```tauto
@@ -53,11 +54,10 @@ fn take(p: Bool × i64): i64 {
   }
 }
 fn give(p: i64 × Bool): i64 { take(p) }
-perform show("give", give(#(7, true)))
+show(&give(#(7, true)))
 ```
 types = "ok"
-shows = ["give = 7"]
-backends = ["rust", "javascript", "vm"]
+stdout = "7\n"
 
 @ cases.a-closed-product-is-rearranged-at-a-result
 source = ```tauto
@@ -67,11 +67,10 @@ fn flag(p: Bool × i64): Bool {
     #(b, n) => b
   }
 }
-perform show("flag", flag(swap(#(7, true))))
+show(&flag(swap(#(7, true))))
 ```
 types = "ok"
-shows = ["flag = true"]
-backends = ["rust", "javascript", "vm"]
+stdout = "true\n"
 
 @ cases.a-generic-product-is-rearranged-by-exact-types
 source = ```tauto
@@ -102,6 +101,7 @@ types = "error: two members of a product have the type i64"
 // `A × B × C` is `A × (B × C)`: a generic product whose last member is a generic takes a longer
 // product, the last generic standing for the product of the rest, and gives one back.
 @ cases.the-last-generic-of-a-product-takes-the-rest
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a constructor of a type with none yet"
 source = ```tauto
 fn rest<A: Copy, B>(p: A × B): B {
   match p {
@@ -115,14 +115,47 @@ fn first<A, B: Copy>(p: A × B): A {
 }
 fn pair<A, B>(a: A, b: B): A × B { #(a, b) }
 let r: i64 × Bool := rest(#(1, 2, true))
-perform show("rest", r)
-perform show("first", first(#(7, true, 3)))
+show(&r)
+show(&first(#(7, true, 3)))
 let p: i64 × i64 × Bool := pair(1, #(2, true))
 match p {
-  #(x, y, z) => perform show("middle", y)
+  #(x, y, z) => show(&y)
 }
 ```
 types = "ok"
 inferred_types.r = "i64 × Bool"
-shows = ["rest = #(2, true)", "first = 7", "middle = 2"]
-backends = ["rust", "javascript"]
+stdout = ```
+#(2, true)
+7
+2
+```
+
+// `(p: @a T)` takes the member `@a T` of a product; where `T` is itself a product, the
+// result has two members although the member picked is one, and a further ascription
+// to `T` takes the label off it.
+@ cases.a-labelled-product-member-is-picked-whole
+source = ```tauto
+fn pair(): @message (i64 × i64) × @rest i64 { #(@message #(1, 2), @rest 3) }
+let p := pair()
+match ((p: @message (i64 × i64)): i64 × i64) {
+  #(a, b) => show(&b)
+}
+match (p: @message (i64 × i64)) {
+  #(a, b) => show(&a)
+}
+```
+types = "ok"
+stdout = ```
+2
+1
+```
+
+@ cases.members-of-a-product-with-equal-types-are-not-picked-by-type
+source = ```tauto
+fn pair(): @message (i64 × i64) × @rest i64 { #(@message #(1, 2), @rest 3) }
+let p := pair()
+match (p: i64 × i64) {
+  #(a, b) => show(&a)
+}
+```
+types = "error: two members of a product have the type i64"

@@ -1,7 +1,6 @@
-import std::Base
-import std::List
-import std::prelude::Shared
-import std::prelude::Par
+import std::base
+import std::list
+import std::builtin::par
 import query_flow::codec
 import query_flow::flow
 import query_flow::api
@@ -19,7 +18,7 @@ fn Source(): AssetKind(Text, Text) {
   make_asset_kind("Source", Codec::of_text(), Codec::of_text(), (a: Text, b: Text) => a == b)
 }
 
-fn read_all(db: Db): Unit ! {halt, Div} {
+fn read_all(db: Db): Unit ! {halt, div, overflow, ref_get, ref_new, ref_set} {
   var rest := Db::list_asset_keys(db, Source())
   var running := true
   while running {
@@ -36,25 +35,25 @@ fn read_all(db: Db): Unit ! {halt, Div} {
 }
 
 // The diagnostics of the file at `uri`, a JSON array.
-@query!(Diagnostics) => fn Diagnostics
-fn diagnostics_q(db: Db, uri: Text): Text ! {halt, Div} {
+@query!(Diagnostics) => fn Diagnostics, fn Diagnostics::register
+fn diagnostics_q(db: Db, uri: Text): Text ! {halt, div, overflow, ref_get, ref_new, ref_set} {
   read_all(db)
   diagnostics(uri)
 }
 
 // The answer to the request `method` about `uri` with `params` (JSON).
-@query!(Reply) => fn Reply
-fn answer_q(db: Db, method: Text, uri: Text, params: Text): Text ! {halt, Div} {
+@query!(Reply) => fn Reply, fn Reply::register
+fn answer_q(db: Db, method: Text, uri: Text, params: Text): Text ! {halt, div, overflow, ref_get, ref_new, ref_set} {
   read_all(db)
   request(method, uri, params)
 }
 
-pub fn open_text(rt: Runtime, uri: Text, text: Text): Unit ! {Div} {
+pub fn open_text(rt: Runtime, uri: Text, text: Text): Unit ! {div, overflow, ref_get, ref_set} {
   set_text(uri, text)
   resolve_asset(rt, Source(), uri, text, Volatile)
 }
 
-pub fn close_text(rt: Runtime, uri: Text): Unit ! {Div} {
+pub fn close_text(rt: Runtime, uri: Text): Unit ! {div, overflow, ref_get, ref_set} {
   close(uri)
   remove_asset(rt, Source(), uri)
 }
@@ -62,25 +61,25 @@ pub fn close_text(rt: Runtime, uri: Text): Unit ! {Div} {
 fn answer_text(a: Answer(Text)): Text {
   match a {
     Value(v) => v
-    Error(e) => "{}"
+    Error(^e) => "{}"
     Suspended => "{}"
-    Cycle(ks) => "{}"
+    Cycle(^ks) => "{}"
     Cancelled => "{}"
-    DependenciesRemoved(ks) => "{}"
+    DependenciesRemoved(^ks) => "{}"
   }
 }
 
-pub fn ask_diagnostics(rt: Runtime, uri: Text): Text ! {Div} {
+pub fn ask_diagnostics(rt: Runtime, uri: Text): Text ! {div, overflow, ref_get, ref_new, ref_set} {
   match run(rt, Diagnostics(uri)) {
     Value(v) => v
-    Error(e) => "[]"
+    Error(^e) => "[]"
     Suspended => "[]"
-    Cycle(ks) => "[]"
+    Cycle(^ks) => "[]"
     Cancelled => "[]"
-    DependenciesRemoved(ks) => "[]"
+    DependenciesRemoved(^ks) => "[]"
   }
 }
 
-pub fn ask_reply(rt: Runtime, method: Text, uri: Text, params: Text): Text ! {Div} {
+pub fn ask_reply(rt: Runtime, method: Text, uri: Text, params: Text): Text ! {div, overflow, ref_get, ref_new, ref_set} {
   answer_text(run(rt, Reply(method, uri, params)))
 }

@@ -179,6 +179,7 @@ fn shrink(base: &Kernel, case: Case, kind: &str) -> Case {
 
 #[test]
 fn the_two_checkers_agree() {
+    tauto_parse::install();
     with_stack(two_checkers_agree);
 }
 

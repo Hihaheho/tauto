@@ -1,0 +1,63 @@
+// A shared field holding a new empty container keeps the callable contract of
+// its element type: what is put in it is checked against the contract, and
+// reading it back is read at that contract.
+
+@ cases.shared-field-holding-new-empty-container-keeps-callable-contract
+source = ```nib
+import std::builtin::par { Ref, ref_new, ref_get, ref_set }
+effect boom(): () resume 1
+struct(shared) Rt { cell: Ref(List(() -> () ! {Show})) }
+fn add(r: Rt, f: () -> () ! {Show}): () ! {ref_get, ref_set} { perform ref_set(r.cell, Cons(f, perform ref_get(r.cell))) }
+fn run(r: Rt): () ! {Show, ref_get} {
+  match perform ref_get(r.cell) {
+    Nil => ()
+    Cons(f, t) => f()
+  }
+}
+fn main(): () ! {Show, ref_new, ref_get, ref_set} {
+  let r := Rt { cell: perform ref_new(Nil) }
+  add(r, () => show(&1))
+  run(r)
+}
+```
+types = "ok"
+rows = "ok"
+
+@ cases.shared-field-callable-contract-rejects-an-effect-set-into-the-field
+source = ```nib
+import std::builtin::par { Ref, ref_new, ref_get, ref_set }
+effect boom(): () resume 1
+struct(shared) Rt { cell: Ref(List(() -> () ! {Show})) }
+fn run(r: Rt): () ! {Show, ref_get} {
+  match perform ref_get(r.cell) {
+    Nil => ()
+    Cons(f, t) => f()
+  }
+}
+fn main(): () ! {Show, ref_new, ref_get, ref_set} {
+  let r := Rt { cell: perform ref_new(Nil) }
+  perform ref_set(r.cell, Cons(() => perform boom(), Nil))
+  run(r)
+}
+```
+types = "ok"
+rows = "error: a function value may perform boom but its type permits {stdout, stdout_flush}"
+
+@ cases.shared-field-callable-contract-rejects-an-effect-in-the-initial-container
+source = ```nib
+import std::builtin::par { Ref, ref_new, ref_get, ref_set }
+effect boom(): () resume 1
+struct(shared) Rt { cell: Ref(List(() -> () ! {Show})) }
+fn run(r: Rt): () ! {Show, ref_get} {
+  match perform ref_get(r.cell) {
+    Nil => ()
+    Cons(f, t) => f()
+  }
+}
+fn main(): () ! {Show, ref_new, ref_get, ref_set} {
+  let r := Rt { cell: perform ref_new(Cons(() => perform boom(), Nil)) }
+  run(r)
+}
+```
+types = "ok"
+rows = "error: a function value may perform boom but its type permits {stdout, stdout_flush}"

@@ -2,13 +2,16 @@
 // `rs_resolve`, with `__m` as the separator between a name and its scopes
 // (the differential test's input, `tools/selfhost-harness/tests/macros.rs`), or
 // `error` when the file is not a program.
-import std::Text
-import std::prelude::Os
-import std::prelude::Affine
+import std::text
+import std::base
+import std::builtin::os
 
 import "../../surface/src/surface.taut"
+import "../../surface/src/modules.taut"
+import "../../parse/src/parse.taut"
 import "lift.taut"
 import "lower.taut"
+import "expand.taut"
 import "node.taut"
 import "scope.taut"
 import "../../syntax/src/syntax.taut"
@@ -17,7 +20,7 @@ import "../../unicode/src/classes.taut"
 import "../../unicode/src/unicode.taut"
 import surface::dump
 
-pub fn mc_ctors(xs: List(SurfaceStmt)): List(Text) ! {Div} {
+pub fn mc_ctors(xs: List(SurfaceStmt)): List(Text) ! {div} {
   match xs {
     Nil => Nil
     Cons(s, rest) => mc_append(mc_ctors_of(s), mc_ctors(rest))
@@ -45,26 +48,26 @@ pub fn mc_ind_names(cs: List(SurfaceCtor)): List(Text) {
   }
 }
 
-pub fn mc_ctors_of(s: SurfaceStmt): List(Text) {
+pub fn mc_ctors_of(s: SurfaceStmt): List(Text) ! {div} {
   match s {
     StStruct(d) => mc_data_names(d.constructors)
     StEnum(d) => mc_data_names(d.constructors)
     StInductive(d) => mc_ind_names(d.constructors)
-    StMutual(items, a, b) => mc_ctors(items)
-    StModule(name, items, a, b) => mc_ctors(items)
-    other => Nil
+    StMutual(items, ^a, ^b) => mc_ctors(items)
+    StModule(^name, ^vis, items, ^a, ^b) => mc_ctors(items)
+    ^other => Nil
   }
 }
 
-pub fn mc_each(&t: SyntaxTables, classes: UnicodeClasses, paths: List(Text)): Unit {
+pub fn mc_each(t: &SyntaxTables, classes: UnicodeClasses, paths: List(Text)): Unit ! {div, fs_read, out_of_bounds, overflow, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
       print(Text::concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
       match read_file(path) {
         Err(e) => print(Text::concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
-        Ok(source) => match surface_parse_program(t, classes, source, 0) {
-          Some(stmts) => print(surface_dump(rs_resolve(stmts, mc_ctors(stmts), "__m")))
+        Ok(source) => match mc_read_program(t, classes, source) {
+          Some(stmts) => print(mc_dump(rs_resolve(stmts, mc_ctors(stmts), "__m")))
           None => print(Text::concat_all(Cons("error", Cons(text_newline(), Nil))))
         }
       }
@@ -74,11 +77,11 @@ pub fn mc_each(&t: SyntaxTables, classes: UnicodeClasses, paths: List(Text)): Un
 }
 
 // The spans given out, `id:start:end` each.
-pub fn mc_issued(&xs: Vec(LfIss)): Text {
+pub fn mc_issued(xs: &Vec(LfIss)): Text ! {div, out_of_bounds, overflow} {
   var out := "spans"
   var i: u64 := 0
   while i < Vec::len(&xs) {
-    let &x := Vec::index(&xs, i)
+    let x := Vec::index(&xs, i)
     out := Text::concat_all(
       Cons(
         out,
@@ -99,7 +102,7 @@ pub fn mc_issued(&xs: Vec(LfIss)): Text {
 // For each statement of the program: `ok` and the value `Lift` makes of it
 // with the scopes 3 and 7, `skip` when it holds a macro call on a literal, or
 // `err`.
-pub fn mc_lift_stmts(xs: List(SurfaceStmt), lower: Bool, atoms: List(LfAtom), tabled: Bool): Unit {
+pub fn mc_lift_stmts(xs: List(SurfaceStmt), lower: Bool, atoms: List(LfAtom), tabled: Bool): Unit ! {div, out_of_bounds, overflow, stdout} {
   match xs {
     Nil => #()
     Cons(s, rest) => {
@@ -113,7 +116,7 @@ pub fn mc_lift_stmts(xs: List(SurfaceStmt), lower: Bool, atoms: List(LfAtom), ta
       var lit := false
       var i: u64 := 0
       while i < Vec::len(&errs.errs) {
-        let &e := Vec::index(&errs.errs, i)
+        let e := Vec::index(&errs.errs, i)
         if e == "lit" {
           lit := true
         } else {
@@ -133,7 +136,7 @@ pub fn mc_lift_stmts(xs: List(SurfaceStmt), lower: Bool, atoms: List(LfAtom), ta
         } else {
           print(
             Text::concat_all(
-              Cons("ok", Cons(text_newline(), Cons(surface_dump(Cons(out, Nil)), Nil)))
+              Cons("ok", Cons(text_newline(), Cons(mc_dump(Cons(out, Nil)), Nil)))
             )
           )
         }
@@ -149,20 +152,20 @@ pub fn mc_lift_stmts(xs: List(SurfaceStmt), lower: Bool, atoms: List(LfAtom), ta
 }
 
 pub fn mc_lift_each(
-  &t: SyntaxTables,
+  t: &SyntaxTables,
   classes: UnicodeClasses,
   paths: List(Text),
   lower: Bool,
   atoms: List(LfAtom),
   tabled: Bool
-): Unit {
+): Unit ! {div, fs_read, out_of_bounds, overflow, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
       print(Text::concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
       match read_file(path) {
         Err(e) => print(Text::concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
-        Ok(source) => match surface_parse_program(t, classes, source, 0) {
+        Ok(source) => match mc_read_program(t, classes, source) {
           Some(stmts) => mc_lift_stmts(stmts, lower, atoms, tabled)
           None => print("error\n")
         }
@@ -172,19 +175,50 @@ pub fn mc_lift_each(
   }
 }
 
+fn mc_has_module(stmts: List(SurfaceStmt)): Bool {
+  match stmts {
+    Nil => false
+    Cons(statement, rest) => match statement {
+      StOther(what, ^start, ^end) => text_starts_with(what, "#enter ", 0) || mc_has_module(rest)
+      _ => mc_has_module(rest)
+    }
+  }
+}
+
+fn mc_read_program(t: &SyntaxTables, classes: UnicodeClasses, source: Text): Option(List(SurfaceStmt)) ! {div} {
+  match surface_parse_program(t, classes, source, 0) {
+    None => None
+    Some(stmts) => if mc_has_module(stmts) {
+      surface_parse_quote_body(t, classes, source)
+    } else { Some(stmts) }
+  }
+}
+
+fn mc_dump(stmts: List(SurfaceStmt)): Text ! {div} {
+  let heading := sdump_counted(0, "Program", List::length(stmts), Nil)
+  Text::concat_all(List::reverse(mc_dump_stmts(stmts, 1, heading)))
+}
+
+fn mc_dump_stmts(stmts: List(SurfaceStmt), depth: Nat, out: List(Text)): List(Text) ! {div} {
+  match stmts {
+    Nil => out
+    Cons(statement, rest) => mc_dump_stmts(rest, depth, sdump_stmt(statement, depth, out))
+  }
+}
+
 pub fn mc_quote_each(
-  &t: SyntaxTables,
+  t: &SyntaxTables,
   classes: UnicodeClasses,
   stmts: Bool,
   paths: List(Text)
-): Unit {
+): Unit ! {div, fs_read, out_of_bounds, overflow, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
       print(Text::concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
       match read_file(path) {
         Err(e) => print(Text::concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
-        Ok(source) => match surface_parse_program(t, classes, source, 0) {
+        Ok(source) => match surface_parse_quote_body(t, classes, source) {
           Some(body) => {
             var errs: LfSt := lf_st_new(false)
             let term := lf_desugar(
@@ -209,7 +243,7 @@ pub fn mc_quote_each(
 
 // Each statement lifted with the scopes 3 and 7, lowered with the scope 5, and
 // read again with that scope flipped back (`Syn::expand`): the value of that.
-pub fn mc_reflip_stmts(xs: List(SurfaceStmt)): Unit {
+pub fn mc_reflip_stmts(xs: List(SurfaceStmt)): Unit ! {div, out_of_bounds, overflow, stdout} {
   match xs {
     Nil => #()
     Cons(s, rest) => {
@@ -223,7 +257,7 @@ pub fn mc_reflip_stmts(xs: List(SurfaceStmt)): Unit {
       var lit := false
       var i: u64 := 0
       while i < Vec::len(&errs.errs) {
-        let &e := Vec::index(&errs.errs, i)
+        let e := Vec::index(&errs.errs, i)
         if e == "lit" {
           lit := true
         } else {
@@ -259,19 +293,21 @@ pub fn mc_reflip_stmts(xs: List(SurfaceStmt)): Unit {
   }
 }
 
-pub fn mc_reflip_each(&t: SyntaxTables, classes: UnicodeClasses, paths: List(Text)): Unit {
+pub fn mc_reflip_each(t: &SyntaxTables, classes: UnicodeClasses, paths: List(Text), quoted: Bool): Unit ! {div, fs_read, out_of_bounds, overflow, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
       print(Text::concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
       match read_file(path) {
         Err(e) => print(Text::concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
-        Ok(source) => match surface_parse_program(t, classes, source, 0) {
+        Ok(source) => match (if quoted {
+          surface_parse_quote_body(t, classes, source)
+        } else { mc_read_program(t, classes, source) }) {
           Some(stmts) => mc_reflip_stmts(stmts)
           None => print("error\n")
         }
       }
-      mc_reflip_each(t, classes, rest)
+      mc_reflip_each(t, classes, rest, quoted)
     }
   }
 }
@@ -286,29 +322,79 @@ pub fn mc_atoms(): List(LfAtom) {
   )
 }
 
-// Every index is below the length it was read with; a slip there says so
-// and stops rather than reading past the end.
-handle {
-  match syntax_tables() {
-    None => eprint("the tables of the syntax are damaged")
-    Some(t) => match perform argv() {
-      Cons("--lift", paths) => mc_lift_each(t, unicode_classes(), paths, false, Nil, false)
-      Cons("--lower", paths) => mc_lift_each(t, unicode_classes(), paths, true, Nil, false)
-      Cons("--lift-atoms", paths) => mc_lift_each(
-        t,
-        unicode_classes(),
-        paths,
-        false,
-        mc_atoms(),
-        false
-      )
-      Cons("--reflip", paths) => mc_reflip_each(t, unicode_classes(), paths)
-      Cons("--lift-spans", paths) => mc_lift_each(t, unicode_classes(), paths, false, Nil, true)
-      Cons("--quote", paths) => mc_quote_each(t, unicode_classes(), false, paths)
-      Cons("--quote-stmts", paths) => mc_quote_each(t, unicode_classes(), true, paths)
-      paths => mc_each(t, unicode_classes(), paths)
+// `--expand FILE…`: the files in order, as one program, each with its macros
+// expanded (`expand.taut`): `== FILE`, the dump of the file after expansion,
+// then `error CODE START END` for each error, in the order they were found.
+pub fn mc_expand_files(t: &SyntaxTables, classes: UnicodeClasses, st: &mut ExState, done: List(SurfaceStmt), paths: List(Text), modules: Bool): Unit ! {div, fs_read, out_of_bounds, overflow, stdout} {
+  match paths {
+    Nil => {
+      var value_index: u64 := 0
+      while value_index < Vec::len(&st.values) {
+        print(nd_wire(Vec::index(&st.values, value_index)))
+        value_index := value_index + 1
+      }
+      var i: u64 := 0
+      while i < Vec::len(&st.errs) {
+        print(Text::concat_all(["error ", Vec::index(&st.errs, i), text_newline()]))
+        i := i + 1
+      }
+    }
+    Cons(path, rest) => {
+      if not(st.capture_values) { print(Text::concat_all(["== ", path, text_newline()])) } else { #() }
+      match read_file(path) {
+        Err(e) => print(Text::concat_all(["cannot read: ", e, text_newline()]))
+        Ok(source) => match surface_parse_program(t, classes, source, 0) {
+          Some(stmts) => {
+            let out := if modules { ex_module_file(&mut st, stmts) } else { ex_file(&mut st, done, stmts) }
+            if not(st.capture_values) { print(surface_dump(out)) } else { #() }
+            mc_expand_files(t, classes, &mut st, List::append(done, out), rest, modules)
+          }
+          None => print(Text::concat_all(Cons("error", Cons(text_newline(), Nil))))
+        }
+      }
     }
   }
-} with {
-  out_of_bounds() => eprint("an index went past the end of a vector")
 }
+
+// Every index is below the length it was read with; a slip there says so
+// and stops rather than reading past the end.
+perform main(() => {
+  handle {
+    match syntax_tables() {
+      None => eprint("the tables of the syntax are damaged")
+      Some(t) => match perform argv() {
+        Cons("--lift", paths) => mc_lift_each(t, unicode_classes(), paths, false, Nil, false)
+        Cons("--lower", paths) => mc_lift_each(t, unicode_classes(), paths, true, Nil, false)
+        Cons("--lift-atoms", paths) => mc_lift_each(
+          t,
+          unicode_classes(),
+          paths,
+          false,
+          mc_atoms(),
+          false
+        )
+        Cons("--expand", paths) => {
+          var st := ex_state()
+          mc_expand_files(t, unicode_classes(), &mut st, Nil, paths, false)
+        }
+        Cons("--expand-modules", paths) => {
+          var st := ex_state()
+          mc_expand_files(t, unicode_classes(), &mut st, Nil, paths, true)
+        }
+        Cons("--statement-values", paths) => {
+          var st := ex_state()
+          st.capture_values := true
+          mc_expand_files(t, unicode_classes(), &mut st, Nil, paths, true)
+        }
+        Cons("--reflip", paths) => mc_reflip_each(t, unicode_classes(), paths, false)
+        Cons("--reflip-module-stmts", paths) => mc_reflip_each(t, unicode_classes(), paths, true)
+        Cons("--lift-spans", paths) => mc_lift_each(t, unicode_classes(), paths, false, Nil, true)
+        Cons("--quote", paths) => mc_quote_each(t, unicode_classes(), false, paths)
+        Cons("--quote-stmts", paths) => mc_quote_each(t, unicode_classes(), true, paths)
+        paths => mc_each(t, unicode_classes(), paths)
+      }
+    }
+  } with {
+    out_of_bounds() => eprint("an index went past the end of a vector")
+  }
+})

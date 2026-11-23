@@ -1,6 +1,6 @@
 //! How long a first check, an unchanged check and an edit of the last
 //! declaration take, compared with an in-process batch check of the same file:
-//! `cargo run --release -p tauto-analyzer --example edit_latency -- std/MapLaws.taut`
+//! `cargo run --release -p tauto-analyzer --example edit_latency -- std/map_laws.taut`
 
 use std::path::PathBuf;
 use std::time::Instant;

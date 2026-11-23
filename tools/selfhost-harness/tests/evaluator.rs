@@ -17,7 +17,13 @@ fn small() -> Vec<(String, String)> {
     inputs
 }
 
+/// One comparison at a time in a process: each holds an interpreter run of a
+/// whole tote, which is gigabytes (`cargo test` runs the tests of a binary on
+/// threads; nextest's `evaluator-memory` group does the same across processes).
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn same(label: &str, tote: &str, flag: Option<&str>, with_prelude: bool) {
+    let _only = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut all = Vec::new();
     if with_prelude {
         all.push(("prelude".to_string(), tauto::nibstd::PRELUDE.to_string()));

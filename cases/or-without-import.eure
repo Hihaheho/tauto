@@ -1,0 +1,27 @@
+// `a || b` is core syntax, as `a && b` is: a file that writes it reads the
+// function it means (`Bool::or` of `std/base.taut`) with no import of its own,
+// so the program checks, runs and compiles where `&&` does.
+@ cases.or-is-read-without-an-import
+source = ```tauto
+fn either(a: Bool, b: Bool): Bool { a || b }
+
+fn any<A>(p: (&A) -> Bool, l: &List(A)): Bool {
+  match l {
+    Nil => false
+    Cons(h, t) => p(h) || any(p, t)
+  }
+}
+
+show(&either(false, true))
+show(&any((x: &u64) => x == 2, &[1, 2, 3]))
+```
+stdout = "true\ntrue\n"
+
+@ cases.or-and-and-mixed-in-parentheses-are-read-without-an-import
+source = ```tauto
+fn f(a: Bool, b: Bool, c: Bool): Bool { (a && b) || c }
+
+show(&f(false, false, true))
+show(&f(true, false, false))
+```
+stdout = "true\nfalse\n"

@@ -1,10 +1,9 @@
 // Rust and JavaScript drop long recursive values without using stack
 // space in proportion to the number of cells.
 @ cases.a-long-list-from-bytes-is-dropped
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
 source = ```tauto
-import std::prelude::Os
-import std::prelude::Shared
+import std::builtin::os
 
 var b := Bytes::of_text("a")
 var i: u64 := 0
@@ -23,8 +22,9 @@ exit = 0
 
 // Both backends drop a long chain of a program-defined recursive type.
 @ cases.a-long-chain-of-a-program-type-is-dropped
-backends = ["rust", "javascript"]
-scenarios = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
+stdout = "98\n"
+scenarios = ["eval", "rust", "javascript", "vm", "llvm", "niri"]
 source = ```tauto
 enum Chain {
   End
@@ -45,8 +45,26 @@ while i < 19 {
   i := i + 1
 }
 match chain(Bytes::to_list(b), End) {
-  End => perform show("last", 0)
-  Link(x, rest) => perform show("last", Nat::of_u64(U64::of_u8(x)))
+  End => show(&0)
+  Link(x, rest) => show(&Nat::of_u64(U64::of_u8(x)))
 }
 ```
-rust_shows = ["last = 98"]
+
+// JavaScript compares two long lists with `==` without using stack space in
+// proportion to their length.
+@ cases.long-lists-are-compared
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
+source = ```tauto
+import std::builtin::os
+
+var b := Bytes::of_text("a")
+var i: u64 := 0
+while i < 20 {
+  b := Bytes::concat(b, b)
+  i := i + 1
+}
+if Bytes::to_list(b) == Bytes::to_list(b) { print("same") } else { print("differ") }
+```
+stdout = "same"
+stderr = ""
+exit = 0

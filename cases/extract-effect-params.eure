@@ -1,8 +1,7 @@
 description = "An effect declared in the proof language keeps its parameter names when it is extracted, so the extracted program reads back."
 
 @ cases.named-effect-params-run
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 effect ask(key: Nat, bonus: Nat): Nat
 fn use_it(): Nat ! {ask} { perform ask(1, 2) }
@@ -11,13 +10,12 @@ fn answer(): Nat {
     ask(k, b), r => r(Nat::add(k, b))
   }
 }
-perform show("v", answer())
+show(&answer())
 ```
-shows = ["v = 3"]
+stdout = "3\n"
 
 @ cases.applied-type-effect-param-run
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 effect disk_append(cells: List(Nat)): Unit
 effect disk_load(): List(Nat)
@@ -37,13 +35,12 @@ fn answer(): Nat {
     disk_load(), r => r(Cons(3, Cons(4, Cons(5, Nil))))
   }
 }
-perform show("v", answer())
+show(&answer())
 ```
-shows = ["v = 3"]
+stdout = "3\n"
 
 @ cases.inductive-effect-param-run
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 inductive Cells: Type { Mk(cs: List(Nat)): Cells }
 effect disk_append(c: Cells): Unit
@@ -56,6 +53,6 @@ fn answer(): Nat {
     disk_append(c), r => r(#())
   }
 }
-perform show("v", answer())
+show(&answer())
 ```
-shows = ["v = 1"]
+stdout = "1\n"

@@ -31,7 +31,7 @@
 //!   returns passes through the accumulator.
 
 use crate::{
-    Arith, Block, CallNode, Callee, Expr, ExprKind, FnInst, Local, Package, Param, Repr, Stmt,
+    Arith, Block, CallNode, Callee, Expr, ExprKind, FnInst, Local, Num, Package, Param, Repr, Stmt,
     Tick, Tier, Ty, Use, Width,
 };
 
@@ -83,6 +83,7 @@ pub fn introduce(pkg: &mut Package, fresh: &mut dyn FnMut(&str, Repr) -> Local) 
                 targs,
                 tick: Tick::None,
                 recur: false,
+                unwind: Vec::new(),
                 span: f.span,
             })),
             ty: f.ret.clone(),
@@ -94,9 +95,10 @@ pub fn introduce(pkg: &mut Package, fresh: &mut dyn FnMut(&str, Repr) -> Local) 
             ty: Ty::Int(Width::Nat),
         });
         let inner = FnInst {
+            fn_region: false,
+            lends: None,
             id: new_id,
             source: f.source.clone(),
-            rust_name: format!("{}__acc", f.rust_name),
             tier: f.tier,
             generics: f.generics.clone(),
             params,
@@ -176,7 +178,7 @@ impl Shape {
         let ExprKind::Arith {
             op: Arith::Add,
             args,
-            width: Width::Nat,
+            num: Num::Int(Width::Nat),
         } = &e.kind
         else {
             return None;
@@ -257,7 +259,7 @@ impl Shape {
                 ExprKind::Arith {
                     op: Arith::Add,
                     args: vec![read(acc, e.span), k],
-                    width: Width::Nat,
+                    num: Num::Int(Width::Nat),
                 },
                 e.span,
             ));
@@ -301,7 +303,7 @@ impl Shape {
             ExprKind::Arith {
                 op: Arith::Add,
                 args: vec![read(acc, span), v],
-                width: Width::Nat,
+                num: Num::Int(Width::Nat),
             },
             span,
         );

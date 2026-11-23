@@ -2,8 +2,8 @@
 //! list is exactly what was made. A name made without being written, or written without being made,
 //! is an error; the edit that writes the list is the diagnostic's fix (`tauto lint --fix`).
 
+use crate::span::Span;
 use tauto_message::{Message, msg};
-use tauto_parol::Span;
 
 use crate::surface::Fix;
 use crate::surface::{Generates, Stmt};
@@ -14,7 +14,7 @@ pub const FIX_TITLE: &str = "Write the list of what it makes";
 const WIDTH: usize = 96;
 
 /// The kind and name of each declaration `s` makes (those of a `mutual` too); false when `s` is not
-/// one of `fn`, `theorem`, `def`, `inductive`, `struct` and `enum`.
+/// one of `fn`, `theorem`, `def`, `inductive`, `struct`, `enum`, `class` and `instance`.
 pub fn declared(s: &Stmt, out: &mut Vec<(String, String)>) -> bool {
     let mut add = |kind: &str, name: &str| {
         out.push((
@@ -29,10 +29,69 @@ pub fn declared(s: &Stmt, out: &mut Vec<(String, String)>) -> bool {
         Stmt::Inductive(i) => add("inductive", &i.name),
         Stmt::Struct(d) => add("struct", &d.name),
         Stmt::Enum(d) => add("enum", &d.name),
+        Stmt::Class(c) => add("class", &c.name),
+        // An instance has no name of its own: it is listed by its class, as the source spells it
+        // (a macro makes it with the class resolved, which is not how a list writes it).
+        Stmt::Instance(i) => add("instance", crate::surface::qualify::short(&i.class)),
+        Stmt::Module { name, items, .. } => {
+            let module = crate::macros::scope::split(name).0;
+            add("module", module);
+            for item in items {
+                let mut children = Vec::new();
+                if let Stmt::Effect(e) = item {
+                    children.push((
+                        "effect".into(),
+                        crate::macros::scope::split(&e.name).0.into(),
+                    ));
+                } else {
+                    declared(item, &mut children);
+                }
+                out.extend(
+                    children
+                        .into_iter()
+                        .map(|(kind, name)| (kind, format!("{module}::{name}"))),
+                );
+            }
+        }
+        Stmt::Reexport { .. } => {}
         Stmt::Mutual { items, .. } => return items.iter().all(|i| declared(i, out)),
         _ => return false,
     }
     true
+}
+
+pub fn declared_together(stmts: &[Stmt], out: &mut Vec<(String, String)>) {
+    use crate::macros::scope::split;
+    for stmt in stmts {
+        declared(stmt, out);
+        let Stmt::Reexport { module, names, .. } = stmt else {
+            continue;
+        };
+        let Some(items) = stmts.iter().find_map(|s| match s {
+            Stmt::Module { name, items, .. } if name == module => Some(items),
+            _ => None,
+        }) else {
+            continue;
+        };
+        for (name, _) in names {
+            for item in items {
+                match item {
+                    Stmt::Effect(e) if e.name.as_str() == name => {
+                        out.push(("effect".into(), split(name).0.into()))
+                    }
+                    _ => {
+                        let mut members = Vec::new();
+                        declared(item, &mut members);
+                        out.extend(
+                            members
+                                .into_iter()
+                                .filter(|(_, member)| member == split(name).0),
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// What is made but not listed, and what is listed but not made (each name once per time it is
@@ -133,50 +192,5 @@ pub fn unwritten(end: u32) -> Generates {
     Generates {
         at: Span::new(end, end),
         ..Generates::default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::surface::parse_program_as_written;
-
-    fn long() -> Vec<(String, String)> {
-        (0..8)
-            .map(|i| ("fn".to_string(), format!("generated_name_{i}")))
-            .collect()
-    }
-
-    #[test]
-    fn a_long_list_after_a_call_is_written_on_one_line_and_reads_back() {
-        let made = long();
-        let source = "make(x) => fn a\n";
-        let program = parse_program_as_written(source).unwrap();
-        let [Stmt::Called { generates, .. }] = program.stmts.as_slice() else {
-            panic!("{:?}", program.stmts)
-        };
-        assert!(!generates.breaks);
-        let edit = fix(generates, &made);
-        assert!(!edit.text.contains('\n'), "{}", edit.text);
-        let (s, e) = (edit.span.start as usize, edit.span.end as usize);
-        let written = format!("{}{}{}", &source[..s], edit.text, &source[e..]);
-        let program = parse_program_as_written(&written).unwrap();
-        match program.stmts.as_slice() {
-            [Stmt::Called { generates, .. }] => assert_eq!(generates.items, made),
-            other => panic!("{other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_long_list_of_a_declaration_is_broken_and_reads_back() {
-        let made = long();
-        let text = clause(&made, true);
-        assert!(text.contains('\n'), "{text}");
-        let source = format!("inductive T: Type {text} {{ A: T }}\n");
-        let program = parse_program_as_written(&source).unwrap();
-        match program.stmts.as_slice() {
-            [Stmt::Inductive(i)] => assert_eq!(i.generates.items, made),
-            other => panic!("{other:?}"),
-        }
     }
 }

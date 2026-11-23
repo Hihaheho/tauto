@@ -11,7 +11,7 @@ fn counts_the_declarations_holes_and_axioms() {
     .unwrap();
     std::fs::write(
         dir.join("b.taut"),
-        "extern {\n  fn shout(&t: Text): Text\n}\ntheorem t(P: Prop, p: P): P {\n  ?h\n}\n",
+        "extern {\n  fn shout(t: &Text): Text\n}\ntheorem t(P: Prop, p: P): P {\n  ?h\n}\n",
     )
     .unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_tauto"))

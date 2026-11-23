@@ -5,28 +5,28 @@
 
 @ cases.a-row-index-is-read-from-the-types-the-row-around-and-the-arguments
 source = ```nib
-import std::prelude::Par { Ref }
-struct Tree(!e) { handlers: Ref(List(() -> Unit ! e)), add: (h: () -> Unit ! e) -> Unit }
+import std::builtin::par { Ref, ref_new, ref_get, ref_set }
+struct Tree(!e) { handlers: Ref(List(() -> Unit ! e)), add: (h: () -> Unit ! e) -> Unit ! {ref_get, ref_set} }
 effect cur_ui<!e>(): Tree(e) direct
 effect ctx<A>(): A direct
 
 fn current<!e>(): Tree(e) ! {cur_ui(e)} { perform cur_ui() }
-fn on<!e>(h: () -> Unit ! e): Unit ! {cur_ui(e)} { let t := current(); (t.add)(h) }
+fn on<!e>(h: () -> Unit ! e): Unit ! {cur_ui(e), ref_get, ref_set} { let t := current(); (t.add)(h) }
 fn with_ui<A, !e, !f>(t: Tree(e), body: () -> A ! {cur_ui(e)} ∪ f): A ! f {
   handle { body() } with {
     cur_ui(), k => k(t)
     return v => v
   }
 }
-fn provide_ui<A: Shared, T, !e, !f>(value: A, body: () -> T ! {cur_ui(!{ctx(A)} ∪ e), ctx(A)} ∪ f): T ! {cur_ui(e)} ∪ f {
+fn provide_ui<A: Shared, T, !e, !f>(value: A, body: () -> T ! {cur_ui(!{ctx(A)} ∪ e), ctx(A)} ∪ f): T ! {cur_ui(e), ref_new, ref_get, ref_set} ∪ f {
   let parent := current()
-  let child := Tree { handlers: Ref::new(Nil), add: h => (parent.add)(() => run_with(value, h)) }
+  let child := Tree { handlers: perform ref_new(Nil), add: h => (parent.add)(() => run_with(value, h)) }
   run_with(value, () => with_ui(child, body))
 }
-fn comp<!e>(): Unit ! {cur_ui(e)} ∪ e {
+fn comp<!e>(): Unit ! {cur_ui(e), ref_get, ref_set} ∪ e {
   on(() => { #() })
 }
-fn comp2(): Unit ! {cur_ui(!{ctx(Text)}), ctx(Text)} {
+fn comp2(): Unit ! {cur_ui(!{ctx(Text)}), ctx(Text), ref_get, ref_set} {
   on(() => { let s: Text := perform ctx(); #() })
 }
 fn run_with<A, T, !f>(value: A, body: () -> T ! {ctx(A)} ∪ f): T ! f {
@@ -35,9 +35,9 @@ fn run_with<A, T, !f>(value: A, body: () -> T ! {ctx(A)} ∪ f): T ! f {
     return v => v
   }
 }
-fn main(): Unit {
-  let hs: Ref(List(() -> Unit)) := Ref::new(Nil)
-  let root: Tree(!{}) := Tree { handlers: hs, add: h => Ref::set(hs, Cons(h, Ref::get(hs))) }
+fn main(): Unit ! {ref_new, ref_get, ref_set} {
+  let hs: Ref(List(() -> Unit)) := perform ref_new(Nil)
+  let root: Tree(!{}) := Tree { handlers: hs, add: h => perform ref_set(hs, Cons(h, perform ref_get(hs))) }
   with_ui(root, () => provide_ui("hi", () => { comp(); comp2() }))
 }
 ```

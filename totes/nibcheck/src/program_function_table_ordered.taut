@@ -1,12 +1,13 @@
 import "function_table_registration.taut"
 import "effect_function_table_frame.taut"
 import "../../surface/src/surface.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "signature_frame.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
@@ -22,7 +23,7 @@ pub theorem signature_prelude_if_ordered(
   f: SurfaceFn,
   take: Bool
 ): CkFnsStep(c, signature_prelude_if(c, f, take)) {
-  ⊢ CkFnsStep(c, signature_prelude_if(c, f, take)) from match take {
+  match take {
     true => fnt_step_return_after(c, Star, ck_add_fn(c, f), ck_add_fn_ordered(c, f))
     false => ordered => ordered
   }
@@ -36,8 +37,7 @@ pub theorem signature_prelude_fns_each_cons_ordered(
   ih: ∀ next: Checker. CkFnsStep(next, ck_prelude_fns_each(rest, next, own))
 ): CkFnsStep(c, signature_prelude_fns_each_cons(f, rest, c, own)) {
   fnt_step_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns_each(rest, c1, own)),
     signature_prelude_if(c, f, not(types_is_own(own, signature_name(f)))),
@@ -51,7 +51,7 @@ pub theorem ck_prelude_fns_each_ordered(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkFnsStep(c, ck_prelude_fns_each(fs, c, own)) {
-  ⊢ CkFnsStep(c, ck_prelude_fns_each(fs, c, own)) from match fs {
+  match fs {
     Nil => ordered => ordered
     Cons(f, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
@@ -74,8 +74,7 @@ pub theorem signature_extern_fns_cons_ordered(
   ih: ∀ next: Checker. CkFnsStep(next, ck_extern_fns(rest, next))
 ): CkFnsStep(c, signature_extern_fns_cons(f, rest, c)) {
   fnt_step_bind(
-    Scheme,
-    Unit,
+    <A: Scheme, B: Unit>,
     c,
     (ignored: Scheme, c1: Checker) => ck_rewrap1(ck_extern_fns(rest, c1)),
     ck_add_fn(c, f),
@@ -88,7 +87,7 @@ pub theorem ck_extern_fns_ordered(
   fs: List(SurfaceFn),
   c: Checker
 ): CkFnsStep(c, ck_extern_fns(fs, c)) {
-  ⊢ CkFnsStep(c, ck_extern_fns(fs, c)) from match fs {
+  match fs {
     Nil => ordered => ordered
     Cons(f, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
@@ -103,10 +102,9 @@ pub theorem ck_prelude_fns_one_ordered(
   s: SurfaceStmt,
   own: Ordmap(Text, Bool)
 ): CkFnsStep(c, ck_prelude_fns_one(c, s, own)) {
-  ⊢ CkFnsStep(c, ck_prelude_fns_one(c, s, own)) from match s {
-    StLet(name, ty, value, borrow, mutable) => ordered => ordered
-    StVar(name, ty, value, borrow) => ordered => ordered
-    StModule(name, stmts, start, end) => ordered => ordered
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => ordered => ordered
+    StVar(name, ty, value, r#borrow, unused, st_stack) => ordered => ordered
     StAssign(name, name_place, value) => ordered => ordered
     StCalled(name_generates, value) => ordered => ordered
     StFn(f) => Eq::subst(
@@ -126,9 +124,9 @@ pub theorem ck_prelude_fns_one_ordered(
     StEffect(e) => ordered => ordered
     StStruct(d) => ordered => ordered
     StEnum(d) => ordered => ordered
-    StExtern(abi, fns, start, end) => Eq::subst(
+    StExtern(fns, instances, types, structs, enums, start, end) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
-      Eq::sym(signature_prelude_fns_one_StExtern_unf(abi, fns, start, end, c, own)),
+      Eq::sym(signature_prelude_fns_one_StExtern_unf(fns, instances, types, structs, enums, start, end, c, own)),
       fnt_step_rewrap(c, ck_prelude_fns_each(fns, c, own), ck_prelude_fns_each_ordered(fns, c, own))
     )
     StClass(c) => ordered => ordered
@@ -137,6 +135,12 @@ pub theorem ck_prelude_fns_one_ordered(
     StReturn(value) => ordered => ordered
     StExpr(value) => ordered => ordered
     StOther(what, start, end) => ordered => ordered
+    StLoop(st_body, start, end) => ordered => ordered
+    StModule(mod_name, mod_vis, mod_items, start, end) => ordered => ordered
+    StReexport(re_path, re_names, re_spans, start, end) => ordered => ordered
+    StFor(for_pat, for_src, st_body, start, end) => ordered => ordered
+    StBreak(st_value, start, end) => ordered => ordered
+    StContinue(start, end) => ordered => ordered
     StMacro(name, function, start, end) => ordered => ordered
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordered => ordered
     StSyntax(name, grammar, start, end) => ordered => ordered
@@ -147,20 +151,18 @@ pub theorem ck_program_decl_ordered(
   c: Checker,
   s: SurfaceStmt
 ): CkFnsStep(c, ck_program_decl(c, s)) {
-  ⊢ CkFnsStep(c, ck_program_decl(c, s)) from match s {
-    StLet(name, ty, value, borrow, mutable) => ordered => ordered
-    StVar(name, ty, value, borrow) => ordered => ordered
-    StModule(name, stmts, start, end) => ordered => ordered
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => ordered => ordered
+    StVar(name, ty, value, r#borrow, unused, st_stack) => ordered => ordered
     StAssign(name, name_place, value) => ordered => ordered
     StCalled(name_generates, value) => ordered => ordered
     StFn(f) => Eq::subst(
-      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkFnsStep(c, z),
+      (z: Mut1(Option(SurfaceFn × Scheme), Checker)) => CkFnsStep(c, z),
       Eq::sym(signature_program_decl_StFn_unf(f, c)),
       fnt_step_bind(
-        Scheme,
-        Option(Pair(SurfaceFn, Scheme)),
+        <A: Scheme, B: Option(SurfaceFn × Scheme)>,
         c,
-        (scheme: Scheme, c1: Checker) => mut1(Some(Pair { fst: f, snd: scheme }), c1),
+        (scheme: Scheme, c1: Checker) => mut1(Some(#(f, scheme)), c1),
         ck_add_fn(c, f),
         ck_add_fn_ordered(c, f),
         scheme => c1 => ordered => ordered
@@ -172,11 +174,10 @@ pub theorem ck_program_decl_ordered(
     StImport(path, start, end) => ordered => ordered
     StInductive(i) => ordered => ordered
     StEffect(e) => Eq::subst(
-      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkFnsStep(c, z),
+      (z: Mut1(Option(SurfaceFn × Scheme), Checker)) => CkFnsStep(c, z),
       Eq::sym(signature_program_decl_StEffect_unf(e, c)),
       fnt_step_bind(
-        Unit,
-        Option(Pair(SurfaceFn, Scheme)),
+        <A: Unit, B: Option(SurfaceFn × Scheme)>,
         c,
         (ignored: Unit, c1: Checker) => mut1(None, c1),
         ck_declare_effect(c, e),
@@ -186,12 +187,11 @@ pub theorem ck_program_decl_ordered(
     )
     StStruct(d) => ordered => ordered
     StEnum(d) => ordered => ordered
-    StExtern(abi, fns, start, end) => Eq::subst(
-      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkFnsStep(c, z),
-      Eq::sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+    StExtern(fns, instances, types, structs, enums, start, end) => Eq::subst(
+      (z: Mut1(Option(SurfaceFn × Scheme), Checker)) => CkFnsStep(c, z),
+      Eq::sym(signature_program_decl_StExtern_unf(fns, instances, types, structs, enums, start, end, c)),
       fnt_step_bind(
-        Unit,
-        Option(Pair(SurfaceFn, Scheme)),
+        <A: Unit, B: Option(SurfaceFn × Scheme)>,
         c,
         (ignored: Unit, c1: Checker) => mut1(None, c1),
         ck_extern_fns(fns, c),
@@ -205,6 +205,12 @@ pub theorem ck_program_decl_ordered(
     StReturn(value) => ordered => ordered
     StExpr(value) => ordered => ordered
     StOther(what, start, end) => ordered => ordered
+    StLoop(st_body, start, end) => ordered => ordered
+    StModule(mod_name, mod_vis, mod_items, start, end) => ordered => ordered
+    StReexport(re_path, re_names, re_spans, start, end) => ordered => ordered
+    StFor(for_pat, for_src, st_body, start, end) => ordered => ordered
+    StBreak(st_value, start, end) => ordered => ordered
+    StContinue(start, end) => ordered => ordered
     StMacro(name, function, start, end) => ordered => ordered
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordered => ordered
     StSyntax(name, grammar, start, end) => ordered => ordered
@@ -219,8 +225,7 @@ pub theorem signature_prelude_fns_cons_ordered(
   ih: ∀ next: Checker. CkFnsStep(next, ck_prelude_fns(rest, next, own))
 ): CkFnsStep(c, signature_prelude_fns_cons(s, rest, c, own)) {
   fnt_step_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (head: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns(rest, c1, own)),
     ck_prelude_fns_one(c, s, own),
@@ -234,7 +239,7 @@ pub theorem ck_prelude_fns_ordered(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkFnsStep(c, ck_prelude_fns(ss, c, own)) {
-  ⊢ CkFnsStep(c, ck_prelude_fns(ss, c, own)) from match ss {
+  match ss {
     Nil => ordered => ordered
     Cons(s, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
@@ -257,22 +262,19 @@ pub theorem signature_program_decls_cons_ordered(
   ih: ∀ next: Checker. CkFnsStep(next, ck_program_decls(rest, next))
 ): CkFnsStep(c, signature_program_decls_cons(s, rest, c)) {
   fnt_step_bind(
-    Option(Pair(SurfaceFn, Scheme)),
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Option(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
     c,
-    (head: Option(Pair(SurfaceFn, Scheme)), c1: Checker) => frame_bind(
-      List(Pair(SurfaceFn, Scheme)),
-      List(Pair(SurfaceFn, Scheme)),
-      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+    (head: Option(SurfaceFn × Scheme), c1: Checker) => frame_bind(
+      <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+      (tail: List(SurfaceFn × Scheme), c2: Checker) => mut1(opt_cons(head, tail), c2),
       ck_program_decls(rest, c1)
     ),
     ck_program_decl(c, s),
     ck_program_decl_ordered(c, s),
     head => c1 => fnt_step_bind(
-      List(Pair(SurfaceFn, Scheme)),
-      List(Pair(SurfaceFn, Scheme)),
+      <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
       c1,
-      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+      (tail: List(SurfaceFn × Scheme), c2: Checker) => mut1(opt_cons(head, tail), c2),
       ck_program_decls(rest, c1),
       ih(c1),
       tail => c2 => ordered => ordered
@@ -284,10 +286,10 @@ pub theorem ck_program_decls_ordered(
   ss: List(SurfaceStmt),
   c: Checker
 ): CkFnsStep(c, ck_program_decls(ss, c)) {
-  ⊢ CkFnsStep(c, ck_program_decls(ss, c)) from match ss {
+  match ss {
     Nil => ordered => ordered
     Cons(s, rest) => Eq::subst(
-      (z: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkFnsStep(c, z),
+      (z: Mut1(List(SurfaceFn × Scheme), Checker)) => CkFnsStep(c, z),
       Eq::sym(signature_program_decls_cons_unf(s, rest, c)),
       signature_program_decls_cons_ordered(s, rest, c, next => ck_program_decls_ordered(rest, next))
     )

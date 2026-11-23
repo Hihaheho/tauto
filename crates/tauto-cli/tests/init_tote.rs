@@ -227,8 +227,8 @@ fn a_tote_made_by_the_command_checks_and_runs() {
     );
     let run = Command::new(env!("CARGO_BIN_EXE_tauto"))
         .current_dir(temp.0.join("hello-world"))
-        .args(["run", "--tote", "."])
+        .args(["run", "."])
         .output()
         .unwrap();
-    assert!(String::from_utf8_lossy(&run.stdout).contains("42"));
+    assert!(String::from_utf8_lossy(&run.stdout).contains("hello"));
 }

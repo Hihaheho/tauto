@@ -2,7 +2,7 @@
 
 @ cases.clone-structural
 source = ```nib
-affine enum Expr { Lit(Buf), Add(Expr, Expr) }
+enum(affine) Expr { Lit(Buf), Add(Expr, Expr) }
 let e := Add(Lit(Buf::of("a")), Lit(Buf::of("b")))
 let e2 := clone(&e)
 ```
@@ -10,7 +10,7 @@ lin = "ok"
 
 @ cases.clone-of-opaque-rejected
 source = ```nib
-affine struct File {}
+struct(affine) File {}
 let f := File {}
 let g := clone(&f)
 ```
@@ -18,7 +18,7 @@ types = "error: File has no clone"
 
 @ cases.clone-of-linear-rejected
 source = ```nib
-linear struct H {}
+struct(linear) H {}
 let h := H {}
 let g := clone(&h)
 ```
@@ -26,20 +26,559 @@ types = "error: H is linear"
 
 @ cases.drop-order-observed
 source = ```nib
-affine struct A {}
-affine struct B {}
+struct(affine) A {}
+struct(affine) B {}
 let a := A {}
 let b := B {}
 ```
-drops = ["B", "A"]
+nir.passes = ["anf", "ownership"]
+nir.package = ```nir
+data shared enum List<'A> clone {
+  List::Nil,
+  List::Cons('A, shared List('A)),
+}
+
+data copy enum Ordering clone copy {
+  Ordering::Less,
+  Ordering::Equal,
+  Ordering::Greater,
+}
+
+data shared struct Diagnostic clone as "Diagnostic" {
+  Diagnostic::Mk(severity: Text, code: Text, line: u64, col: u64, end_line: u64, end_col: u64, message: Text),
+}
+
+data shared struct Map<'K, 'V> clone as "Map" {
+  Map::Mk(entries: List(Pair('K, 'V))),
+}
+
+data shared enum IoError clone {
+  IoError::Denied(Text),
+  IoError::Failed(Text),
+  IoError::TimedOut,
+}
+
+data copy enum FileKind clone copy {
+  FileKind::IsFile,
+  FileKind::IsDir,
+  FileKind::IsOther,
+}
+
+data copy struct FileStat clone copy as "FileStat" {
+  FileStat::Mk(kind: FileKind, size: u64, modified_ms: u64, executable: Bool),
+}
+
+data shared struct Process clone as "Process" {
+  Process::Mk(program: Text, args: List(Text), dir: Text, env: List(Pair(Text, Text)), stdin: std Bytes),
+}
+
+data shared struct ProcessOutput clone as "ProcessOutput" {
+  ProcessOutput::Mk(status: Option(u64), stdout: std Bytes, stderr: Text),
+}
+
+data copy struct Child clone copy as "Child" {
+  Child::Mk(id: u64),
+}
+
+data copy struct FileLock clone copy as "FileLock" {
+  FileLock::Mk(id: u64),
+}
+
+data copy enum Stdio clone copy {
+  Stdio::StdioPiped,
+  Stdio::StdioInherit,
+}
+
+data copy struct ProcessIo clone copy as "ProcessIo" {
+  ProcessIo::Mk(stdin: Stdio, stdout: Stdio, stderr: Stdio),
+}
+
+data copy enum ChildStream clone copy {
+  ChildStream::ChildStdout,
+  ChildStream::ChildStderr,
+}
+
+data shared struct Request clone as "Request" {
+  Request::Mk(method: Text, url: Text, headers: List(Pair(Text, Text)), body: std Bytes),
+}
+
+data shared struct Response clone as "Response" {
+  Response::Mk(status: u64, headers: List(Pair(Text, Text)), body: std Bytes),
+}
+
+data shared struct RequestHead clone as "RequestHead" {
+  RequestHead::Mk(method: Text, url: Text, headers: List(Pair(Text, Text))),
+}
+
+data shared struct ResponseHead clone as "ResponseHead" {
+  ResponseHead::Mk(status: u64, headers: List(Pair(Text, Text))),
+}
+
+data affine struct RequestBody as "RequestBody" {
+  RequestBody::Mk(id: u64),
+}
+
+data affine struct ResponseBody as "ResponseBody" {
+  ResponseBody::Mk(id: u64),
+}
+
+data affine struct Opened as "Opened" {
+  Opened::Mk(head: ResponseHead, body: ResponseBody),
+}
+
+data affine enum Finished {
+  Finished::Responded(Opened),
+  Finished::Unanswered(RequestBody),
+  Finished::NoResponse(IoError),
+}
+
+data affine struct Written as "Written" {
+  Written::Mk(body: RequestBody, result: Result(Unit, IoError)),
+}
+
+data affine struct Piece as "Piece" {
+  Piece::Mk(body: ResponseBody, got: Result(std Bytes, IoError)),
+}
+
+data affine struct TcpListener as "TcpListener" {
+  TcpListener::Mk(id: u64, address: Text),
+}
+
+data affine struct TcpStream as "TcpStream" {
+  TcpStream::Mk(id: u64, local: Text, peer: Text),
+}
+
+data copy struct TcpStopper clone copy as "TcpStopper" {
+  TcpStopper::Mk(id: u64),
+}
+
+data copy struct ListenStopper clone copy as "ListenStopper" {
+  ListenStopper::Mk(id: u64),
+}
+
+data affine struct TcpAccepted as "TcpAccepted" {
+  TcpAccepted::Mk(listener: TcpListener, got: Result(TcpStream, IoError)),
+}
+
+data affine struct TcpRead as "TcpRead" {
+  TcpRead::Mk(stream: TcpStream, got: Result(std Bytes, IoError)),
+}
+
+data affine struct TcpWritten as "TcpWritten" {
+  TcpWritten::Mk(stream: TcpStream, result: Result(Unit, IoError)),
+}
+
+data copy enum Shutdown clone copy {
+  Shutdown::ShutdownRead,
+  Shutdown::ShutdownWrite,
+  Shutdown::ShutdownBoth,
+}
+
+data shared struct TlsCert clone as "TlsCert" {
+  TlsCert::Mk(names: List(Text), chain: std Bytes, key: std Secret(std Bytes)),
+}
+
+data shared struct TlsServer clone as "TlsServer" {
+  TlsServer::Mk(certs: List(TlsCert), alpn: List(Text), client_roots: Option(std Bytes)),
+}
+
+data shared enum TlsRoots clone {
+  TlsRoots::SystemRoots,
+  TlsRoots::SystemRootsAnd(std Bytes),
+  TlsRoots::OnlyRoots(std Bytes),
+}
+
+data shared struct TlsClientCert clone as "TlsClientCert" {
+  TlsClientCert::Mk(chain: std Bytes, key: std Secret(std Bytes)),
+}
+
+data shared struct TlsClient clone as "TlsClient" {
+  TlsClient::Mk(server_name: Text, roots: TlsRoots, client_cert: Option(TlsClientCert), alpn: List(Text)),
+}
+
+data affine struct TlsStream as "TlsStream" {
+  TlsStream::Mk(id: u64, alpn: Option(Text), server_name: Option(Text), peer_certificate: Option(std Bytes)),
+}
+
+data copy struct TlsStopper clone copy as "TlsStopper" {
+  TlsStopper::Mk(id: u64),
+}
+
+data affine struct TlsRead as "TlsRead" {
+  TlsRead::Mk(stream: TlsStream, got: Result(std Bytes, IoError)),
+}
+
+data affine struct TlsWritten as "TlsWritten" {
+  TlsWritten::Mk(stream: TlsStream, result: Result(Unit, IoError)),
+}
+
+data copy enum Width clone copy {
+  Width::W32,
+  Width::W64,
+}
+
+data copy struct HashSeed clone copy as "HashSeed" {
+  HashSeed::Mk(k0: u64, k1: u64),
+}
+
+data shared struct Judgement::Use clone as "Judgement::Use" {
+  Judgement::Use::Mk(atom: u64, how: Text),
+}
+
+data shared struct Cancellation clone as "Cancellation" {
+  Cancellation::Mk(source: std CancelSource),
+}
+
+data shared struct CancelToken clone as "CancelToken" {
+  CancelToken::Mk(signal: std Signal),
+}
+
+data affine struct Pending<'A> as "Pending" {
+  Pending::Mk(holds: fn() -> 'A shared S),
+}
+
+data linear struct Task<'A> linear as "Task" {
+  Task::Mk(result: std Pending('A)),
+}
+
+data linear enum Polled<'A> linear {
+  Polled::Finished('A),
+  Polled::Running(Task('A)),
+}
+
+data shared struct Mutex<'A> clone as "Mutex" {
+  Mutex::Mk(holds: fn() -> 'A shared S),
+}
+
+data affine struct MutexGuard<'A> as "MutexGuard" {
+  MutexGuard::Mk(holds: fn() -> 'A shared S),
+}
+
+data shared struct Semaphore clone as "Semaphore" {
+  Semaphore::Mk(count: std Mutex(u64), gate: std Mutex(Unit)),
+}
+
+data shared struct Channel<'A> clone as "Channel" {
+  Channel::Mk(queue: std Mutex(Fifo('A)), slots: Semaphore, items: Semaphore),
+}
+
+data affine enum Received<'A> {
+  Received::Arrived('A),
+  Received::Closed,
+  Received::NotYet,
+}
+
+data affine struct Fifo<'A> clone as "Fifo" {
+  Fifo::Mk(front: Vec('A), back: Vec('A), closed: Bool),
+}
+
+data affine struct Placed<'T> clone view as "Placed" {
+  Placed::Mk(value: 'T, at: std Place('T)),
+}
+
+data shared struct RcPlaced<'T> clone as "RcPlaced" {
+  RcPlaced::Mk(value: 'T, at: std RcPlace('T)),
+}
+
+data affine struct A as "A" {
+  A::Mk,
+}
+
+data affine struct B as "B" {
+  B::Mk,
+}
+
+fn $"<top>"@0(): Unit S = {
+  let a#1 := A::Mk: A;
+  let b#2 := B::Mk: B;
+  builtin drop(move b#2): Unit;
+  builtin drop(move a#1): Unit;
+}
+
+top $"<top>"@0
+```
 
 @ cases.a-moved-value-is-dropped-by-its-new-owner
 source = ```nib
-affine struct A {}
-affine struct B {}
+struct(affine) A {}
+struct(affine) B {}
 fn keep(a: A): Unit { }
 let a := A {}
 let b := B {}
 keep(a)
 ```
-drops = ["A", "B"]
+nir.passes = ["anf", "ownership"]
+nir.package = ```nir
+data shared enum List<'A> clone {
+  List::Nil,
+  List::Cons('A, shared List('A)),
+}
+
+data copy enum Ordering clone copy {
+  Ordering::Less,
+  Ordering::Equal,
+  Ordering::Greater,
+}
+
+data shared struct Diagnostic clone as "Diagnostic" {
+  Diagnostic::Mk(severity: Text, code: Text, line: u64, col: u64, end_line: u64, end_col: u64, message: Text),
+}
+
+data shared struct Map<'K, 'V> clone as "Map" {
+  Map::Mk(entries: List(Pair('K, 'V))),
+}
+
+data shared enum IoError clone {
+  IoError::Denied(Text),
+  IoError::Failed(Text),
+  IoError::TimedOut,
+}
+
+data copy enum FileKind clone copy {
+  FileKind::IsFile,
+  FileKind::IsDir,
+  FileKind::IsOther,
+}
+
+data copy struct FileStat clone copy as "FileStat" {
+  FileStat::Mk(kind: FileKind, size: u64, modified_ms: u64, executable: Bool),
+}
+
+data shared struct Process clone as "Process" {
+  Process::Mk(program: Text, args: List(Text), dir: Text, env: List(Pair(Text, Text)), stdin: std Bytes),
+}
+
+data shared struct ProcessOutput clone as "ProcessOutput" {
+  ProcessOutput::Mk(status: Option(u64), stdout: std Bytes, stderr: Text),
+}
+
+data copy struct Child clone copy as "Child" {
+  Child::Mk(id: u64),
+}
+
+data copy struct FileLock clone copy as "FileLock" {
+  FileLock::Mk(id: u64),
+}
+
+data copy enum Stdio clone copy {
+  Stdio::StdioPiped,
+  Stdio::StdioInherit,
+}
+
+data copy struct ProcessIo clone copy as "ProcessIo" {
+  ProcessIo::Mk(stdin: Stdio, stdout: Stdio, stderr: Stdio),
+}
+
+data copy enum ChildStream clone copy {
+  ChildStream::ChildStdout,
+  ChildStream::ChildStderr,
+}
+
+data shared struct Request clone as "Request" {
+  Request::Mk(method: Text, url: Text, headers: List(Pair(Text, Text)), body: std Bytes),
+}
+
+data shared struct Response clone as "Response" {
+  Response::Mk(status: u64, headers: List(Pair(Text, Text)), body: std Bytes),
+}
+
+data shared struct RequestHead clone as "RequestHead" {
+  RequestHead::Mk(method: Text, url: Text, headers: List(Pair(Text, Text))),
+}
+
+data shared struct ResponseHead clone as "ResponseHead" {
+  ResponseHead::Mk(status: u64, headers: List(Pair(Text, Text))),
+}
+
+data affine struct RequestBody as "RequestBody" {
+  RequestBody::Mk(id: u64),
+}
+
+data affine struct ResponseBody as "ResponseBody" {
+  ResponseBody::Mk(id: u64),
+}
+
+data affine struct Opened as "Opened" {
+  Opened::Mk(head: ResponseHead, body: ResponseBody),
+}
+
+data affine enum Finished {
+  Finished::Responded(Opened),
+  Finished::Unanswered(RequestBody),
+  Finished::NoResponse(IoError),
+}
+
+data affine struct Written as "Written" {
+  Written::Mk(body: RequestBody, result: Result(Unit, IoError)),
+}
+
+data affine struct Piece as "Piece" {
+  Piece::Mk(body: ResponseBody, got: Result(std Bytes, IoError)),
+}
+
+data affine struct TcpListener as "TcpListener" {
+  TcpListener::Mk(id: u64, address: Text),
+}
+
+data affine struct TcpStream as "TcpStream" {
+  TcpStream::Mk(id: u64, local: Text, peer: Text),
+}
+
+data copy struct TcpStopper clone copy as "TcpStopper" {
+  TcpStopper::Mk(id: u64),
+}
+
+data copy struct ListenStopper clone copy as "ListenStopper" {
+  ListenStopper::Mk(id: u64),
+}
+
+data affine struct TcpAccepted as "TcpAccepted" {
+  TcpAccepted::Mk(listener: TcpListener, got: Result(TcpStream, IoError)),
+}
+
+data affine struct TcpRead as "TcpRead" {
+  TcpRead::Mk(stream: TcpStream, got: Result(std Bytes, IoError)),
+}
+
+data affine struct TcpWritten as "TcpWritten" {
+  TcpWritten::Mk(stream: TcpStream, result: Result(Unit, IoError)),
+}
+
+data copy enum Shutdown clone copy {
+  Shutdown::ShutdownRead,
+  Shutdown::ShutdownWrite,
+  Shutdown::ShutdownBoth,
+}
+
+data shared struct TlsCert clone as "TlsCert" {
+  TlsCert::Mk(names: List(Text), chain: std Bytes, key: std Secret(std Bytes)),
+}
+
+data shared struct TlsServer clone as "TlsServer" {
+  TlsServer::Mk(certs: List(TlsCert), alpn: List(Text), client_roots: Option(std Bytes)),
+}
+
+data shared enum TlsRoots clone {
+  TlsRoots::SystemRoots,
+  TlsRoots::SystemRootsAnd(std Bytes),
+  TlsRoots::OnlyRoots(std Bytes),
+}
+
+data shared struct TlsClientCert clone as "TlsClientCert" {
+  TlsClientCert::Mk(chain: std Bytes, key: std Secret(std Bytes)),
+}
+
+data shared struct TlsClient clone as "TlsClient" {
+  TlsClient::Mk(server_name: Text, roots: TlsRoots, client_cert: Option(TlsClientCert), alpn: List(Text)),
+}
+
+data affine struct TlsStream as "TlsStream" {
+  TlsStream::Mk(id: u64, alpn: Option(Text), server_name: Option(Text), peer_certificate: Option(std Bytes)),
+}
+
+data copy struct TlsStopper clone copy as "TlsStopper" {
+  TlsStopper::Mk(id: u64),
+}
+
+data affine struct TlsRead as "TlsRead" {
+  TlsRead::Mk(stream: TlsStream, got: Result(std Bytes, IoError)),
+}
+
+data affine struct TlsWritten as "TlsWritten" {
+  TlsWritten::Mk(stream: TlsStream, result: Result(Unit, IoError)),
+}
+
+data copy enum Width clone copy {
+  Width::W32,
+  Width::W64,
+}
+
+data copy struct HashSeed clone copy as "HashSeed" {
+  HashSeed::Mk(k0: u64, k1: u64),
+}
+
+data shared struct Judgement::Use clone as "Judgement::Use" {
+  Judgement::Use::Mk(atom: u64, how: Text),
+}
+
+data shared struct Cancellation clone as "Cancellation" {
+  Cancellation::Mk(source: std CancelSource),
+}
+
+data shared struct CancelToken clone as "CancelToken" {
+  CancelToken::Mk(signal: std Signal),
+}
+
+data affine struct Pending<'A> as "Pending" {
+  Pending::Mk(holds: fn() -> 'A shared S),
+}
+
+data linear struct Task<'A> linear as "Task" {
+  Task::Mk(result: std Pending('A)),
+}
+
+data linear enum Polled<'A> linear {
+  Polled::Finished('A),
+  Polled::Running(Task('A)),
+}
+
+data shared struct Mutex<'A> clone as "Mutex" {
+  Mutex::Mk(holds: fn() -> 'A shared S),
+}
+
+data affine struct MutexGuard<'A> as "MutexGuard" {
+  MutexGuard::Mk(holds: fn() -> 'A shared S),
+}
+
+data shared struct Semaphore clone as "Semaphore" {
+  Semaphore::Mk(count: std Mutex(u64), gate: std Mutex(Unit)),
+}
+
+data shared struct Channel<'A> clone as "Channel" {
+  Channel::Mk(queue: std Mutex(Fifo('A)), slots: Semaphore, items: Semaphore),
+}
+
+data affine enum Received<'A> {
+  Received::Arrived('A),
+  Received::Closed,
+  Received::NotYet,
+}
+
+data affine struct Fifo<'A> clone as "Fifo" {
+  Fifo::Mk(front: Vec('A), back: Vec('A), closed: Bool),
+}
+
+data affine struct Placed<'T> clone view as "Placed" {
+  Placed::Mk(value: 'T, at: std Place('T)),
+}
+
+data shared struct RcPlaced<'T> clone as "RcPlaced" {
+  RcPlaced::Mk(value: 'T, at: std RcPlace('T)),
+}
+
+data affine struct A as "A" {
+  A::Mk,
+}
+
+data affine struct B as "B" {
+  B::Mk,
+}
+
+fn $"<top>"@0(): Unit S = {
+  let a#1 := A::Mk: A;
+  let b#2 := B::Mk: B;
+  {
+    let dropped_after#4294967295 := keep@1(move a#1): Unit;
+    builtin drop(move b#2): Unit;
+    move dropped_after#4294967295
+  }
+}
+
+fn keep@1(a#3: A): Unit S = {
+  let dropped_after#4294967294 := {};
+  builtin drop(move a#3): Unit;
+  move dropped_after#4294967294
+}
+
+top $"<top>"@0
+```

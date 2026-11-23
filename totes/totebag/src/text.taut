@@ -1,10 +1,10 @@
 import "../../url/src/parse.taut"
 import "../../url/src/bytes.taut"
-import std::Text
-import std::Base
+import std::text
+import std::base
 
 pub fn tb_strip(p: List(Nat), l: List(Nat)): Option(List(Nat)) {
-  ⊢ Option(List(Nat)) from match p {
+  match p {
     Nil => Some(l)
     Cons(x, ps) => ⊢ Option(List(Nat)) from match l {
       Nil => None
@@ -17,9 +17,9 @@ pub fn tb_strip(p: List(Nat), l: List(Nat)): Option(List(Nat)) {
 }
 
 pub fn tb_begins(p: List(Nat), l: List(Nat)): Bool {
-  ⊢ Bool from match tb_strip(p, l) {
+  match tb_strip(p, l) {
     None => false
-    Some(rest) => true
+    Some(^rest) => true
   }
 }
 
@@ -28,21 +28,21 @@ pub fn tb_ends(p: List(Nat), l: List(Nat)): Bool {
 }
 
 pub fn tb_infix(p: List(Nat), l: List(Nat)): Bool {
-  ⊢ Bool from match l {
+  match l {
     Nil => is_empty(p)
-    Cons(b, t) => Bool::or(tb_begins(p, l), tb_infix(p, t))
+    Cons(^b, t) => Bool::or(tb_begins(p, l), tb_infix(p, t))
   }
 }
 
 pub fn tb_has_byte(c: Nat, l: List(Nat)): Bool {
-  ⊢ Bool from match l {
+  match l {
     Nil => false
     Cons(b, t) => Bool::or(Nat::eq(b, c), tb_has_byte(c, t))
   }
 }
 
 pub fn tb_some_piece(p: (List(Nat)) -> Bool, ps: List(List(Nat))): Bool {
-  ⊢ Bool from match ps {
+  match ps {
     Nil => false
     Cons(x, rest) => Bool::or(p(x), tb_some_piece(p, rest))
   }

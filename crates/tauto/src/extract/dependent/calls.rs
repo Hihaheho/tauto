@@ -29,11 +29,14 @@ impl Applications {
         }
         out
     }
+    /// The same arguments, their binders read as the same where they stand
+    /// at the same place: a site checked twice (an instance's method body,
+    /// say) records `(b: Body) -> Text` with a fresh `b` each time.
     fn same(a: &[SurfaceTerm], b: &[SurfaceTerm]) -> bool {
         a.len() == b.len()
             && a.iter()
                 .zip(b)
-                .all(|(a, b)| crate::surface::same_term_structure(a, b))
+                .all(|(a, b)| tauto_kernel::check::same_up_to_binders(a, b))
     }
     fn inserted(
         &self,
@@ -132,8 +135,46 @@ impl Eraser<'_> {
         {
             return Ok(ERASED.into());
         }
+        if (self.checked.signatures.get(name).is_none()
+            || (self.templates.has_def(name) && !self.functions.contains_key(name)))
+            && let Some(lowered) = self.level_call(name, args, locals, source, applied)?
+        {
+            return Ok(lowered);
+        }
+        let args = crate::extract::explicit_args(args);
         let builtin = self.std.of(name).unwrap_or("");
-        if matches!(builtin, "+" | "-" | "*" | "==" | "<" | "<=" | ">" | ">=") {
+        // The operators by the spelling the surface gives them: a name the
+        // std table does not map (`&&`, `||`, ...) is still an operator.
+        let builtin = [
+            "+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "!",
+        ]
+        .into_iter()
+        .find(|op| *op == builtin || tauto_surface::bindings::is_library(name, op))
+        .unwrap_or(builtin);
+        if matches!(builtin, "&&" | "||") {
+            let values = args
+                .iter()
+                .map(|a| {
+                    self.expr(a, locals)
+                        .map(|s| format!("TautoErasedGetBool#r0({s})"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let [a, b] = values.as_slice() else {
+                return Err("dependent extraction: binary operation arity".into());
+            };
+            return Ok(format!("{BOOL}({a} {builtin} {b})"));
+        }
+        if builtin == "!" {
+            let [a] = args else {
+                return Err("dependent extraction: unary operation arity".into());
+            };
+            let a = self.expr(a, locals)?;
+            return Ok(format!("{BOOL}(!TautoErasedGetBool#r0({a}))"));
+        }
+        if matches!(
+            builtin,
+            "+" | "-" | "*" | "/" | "%" | "==" | "!=" | "<" | "<=" | ">" | ">="
+        ) {
             let values = args
                 .iter()
                 .map(|a| {
@@ -144,14 +185,15 @@ impl Eraser<'_> {
             let [a, b] = values.as_slice() else {
                 return Err("dependent extraction: binary operation arity".into());
             };
-            let op = if builtin == "-" {
-                format!("extract_nat_sub({a}, {b})")
-            } else {
-                format!("({a} {builtin} {b})")
+            let op = match builtin {
+                "-" => format!("extract_nat_sub({a}, {b})"),
+                "/" => format!("extract_nat_div({a}, {b})"),
+                "%" => format!("extract_nat_mod({a}, {b})"),
+                _ => format!("({a} {builtin} {b})"),
             };
             return Ok(format!(
                 "{}({op})",
-                if matches!(builtin, "+" | "-" | "*") {
+                if matches!(builtin, "+" | "-" | "*" | "/" | "%") {
                     NAT
                 } else {
                     BOOL
@@ -242,7 +284,14 @@ impl Eraser<'_> {
             (Some("Succ"), [n]) => return Ok(format!("{NAT}(TautoErasedGetNat#r0({n}) + 1)")),
             (Some("true" | "True"), []) => return Ok(format!("{BOOL}(true)")),
             (Some("false" | "False"), []) => return Ok(format!("{BOOL}(false)")),
-            (Some("I64::Mk"), [value]) => {
+            (Some("Text::Mk"), [bytes]) => {
+                let (_, unpack) = self.text_bytes_bridge()?;
+                return Ok(format!(
+                    "TautoErasedText#r0(extract_text_of_bytes({}))",
+                    unpack.replace("$v", bytes)
+                ));
+            }
+            (Some("SInt::Mk"), [value]) => {
                 let (_, _, unpack) = self.integer_bridge()?;
                 return Ok(format!(
                     "TautoErasedI64#r0(extract_i64_of_fitting({}))",
@@ -299,7 +348,7 @@ impl Eraser<'_> {
         }
         fn pattern(p: &Pattern, bound: &mut HashSet<Name>) {
             match p {
-                Pattern::Bind(n) => {
+                Pattern::Bind { name: n, .. } => {
                     bound.insert(n.clone());
                 }
                 Pattern::Ctor { args, .. } => {
@@ -334,6 +383,17 @@ impl Eraser<'_> {
                                 free(value, &bound, out);
                                 bound.insert(name.clone());
                             }
+                            Stmt::Assign {
+                                name,
+                                place,
+                                value,
+                                ..
+                            } => {
+                                free(value, &bound, out);
+                                if place.is_none() && !bound.contains(name) {
+                                    out.insert(name.clone());
+                                }
+                            }
                             Stmt::Expr(t) => free(t, &bound, out),
                             _ => {}
                         }
@@ -358,7 +418,7 @@ impl Eraser<'_> {
             }
         }
         let (readable, renamed) = legal_names(body);
-        let mut parsed = crate::surface::parse_expr_at(&readable, 0)?;
+        let mut parsed = tauto_parse::parse_expr_at(&readable, 0)?;
         self.references.term(&mut parsed);
         let original: HashMap<_, _> = renamed.into_iter().map(|(from, to)| (to, from)).collect();
         crate::surface::references::term(&mut parsed, &mut |name| {
@@ -375,6 +435,12 @@ impl Eraser<'_> {
             .into_iter()
             .filter_map(|name| match scope.bindings.get(&name) {
                 Some(Binding::Value) => Some((name, VALUE.to_string())),
+                Some(Binding::Borrow { mutable: true }) => {
+                    Some((name, format!("&mut {VALUE}")))
+                }
+                Some(Binding::Borrow { mutable: false }) => {
+                    Some((name, format!("&{VALUE}")))
+                }
                 Some(Binding::Mutable { ty, .. }) => Some((name, format!("Ref({ty})"))),
                 _ => None,
             })

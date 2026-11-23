@@ -1,24 +1,26 @@
 import "instantiation_allocation_bind.taut"
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Nat
-import std::Text
+import std::map
+import std::map_laws
+import std::map_text
+import std::nat
+import std::text
 import "allocation_generic_map.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "datas_frame.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "instance_allocation_sound.taut"
 import "instantiation_frame.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 
 pub def InstantiationAllocationIH(
-  rest: List(Pair(Text, Kind)),
-  ctors: List(Pair(Text, Kind)),
+  rest: List(Text × Kind),
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan
 ): Prop := ∀ next: Checker. ∀ map: Ordmap(
@@ -34,10 +36,10 @@ pub def InstantiationAllocationIH(
   map
 ). InstanceAllocation(next, ck_instantiate_map_ctors(rest, next, ctors, name, span, map))
 pub theorem instantiation_cons_allocation(
-  g: Pair(Text, Kind),
-  rest: List(Pair(Text, Kind)),
+  g: Text × Kind,
+  rest: List(Text × Kind),
   c: Checker,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan,
   map: Ordmap(Text, Ty),
@@ -49,8 +51,7 @@ pub theorem instantiation_cons_allocation(
   map_allocation_fresh_bind(
     c,
     (value: Ty, next: Checker) => frame_bind(
-      Unit,
-      Ordmap(Text, Ty),
+      <A: Unit, B: Ordmap(Text, Ty)>,
       (ignored: Unit, last: Checker) => ck_rewrap1(
         ck_instantiate_map_ctors(
           rest,
@@ -65,7 +66,7 @@ pub theorem instantiation_cons_allocation(
     ),
     state,
     value => next => advanced => current => bounded => map_allocation_bind(
-      Unit,
+      <A: Unit>,
       next,
       (ignored: Unit, last: Checker) => ck_rewrap1(
         ck_instantiate_map_ctors(
@@ -130,9 +131,9 @@ pub theorem instantiation_cons_allocation(
   )
 }
 pub theorem ck_instantiate_map_ctors_allocation(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan,
   map: Ordmap(Text, Ty),
@@ -140,7 +141,7 @@ pub theorem ck_instantiate_map_ctors_allocation(
   ordered: Ordmap::ordered(map, Ordmap::compare_text),
   values: GenericMapAllocated(ck_next_of(c), map)
 ): InstanceAllocation(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
-  ⊢ InstanceAllocation(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) from match gs {
+  match gs {
     Nil => AndIntro(Nat::le_refl(ck_next_of(c)), AndIntro(state, AndIntro(ordered, values)))
     Cons(g, rest) => Eq::subst(
       (result: Mut1(Ordmap(Text, Ty), Checker)) => InstanceAllocation(c, result),
@@ -172,7 +173,7 @@ pub theorem ck_instantiate_map_ctors_allocation(
   }
 }
 pub theorem ck_instantiate_map_allocation(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
   span: TySpan,
   map: Ordmap(Text, Ty),

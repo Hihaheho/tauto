@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 fn macros_source() -> &'static str {
-    r#"import std::prelude::Macro
+    r#"import std::builtin::macro
 
 pub macro fn passthrough(input: SynExpr): SynExpr { input }"#
 }
@@ -56,7 +56,7 @@ impl Fixture {
             "{}",
             String::from_utf8_lossy(&result.stderr)
         );
-        assert_eq!(String::from_utf8(result.stdout).unwrap(), "value = 2\n");
+        assert_eq!(String::from_utf8(result.stdout).unwrap(), "2\n");
         let (_, generated, _) = tauto_build::generate(&dir.join("Tauto.eure"), None).unwrap();
         assert!(generated.contains("pub mod generated"));
     }
@@ -90,7 +90,7 @@ fn imported_macro_builds_in_both_backends_and_executes() {
         f.write(
             "src/main.taut",
             r#"import "z_macros.taut"
-perform show("value", passthrough!(2))
+show(&(passthrough!(2)))
 "#,
         );
         let reference = Command::new(env!("CARGO_BIN_EXE_tauto"))
@@ -103,7 +103,7 @@ perform show("value", passthrough!(2))
             "{}",
             String::from_utf8_lossy(&reference.stderr)
         );
-        assert_eq!(String::from_utf8(reference.stdout).unwrap(), "value = 2\n");
+        assert_eq!(String::from_utf8(reference.stdout).unwrap(), "2\n");
         f.succeeds(&f.0);
     }
 }
@@ -128,7 +128,7 @@ pub fn answer(): i64 { passthrough!(2) }
     f.write(
         "app/src/main.taut",
         r#"import "helper.taut"
-perform show("value", answer())
+show(&answer())
 "#,
     );
     f.succeeds(&f.0.join("app"));
@@ -143,7 +143,7 @@ fn same_file_macros_import_cycles_and_expansion_errors_are_rejected() {
         "src/main.taut",
         &format!(
             r#"{}
-perform show("value", passthrough!(2))
+show(&(passthrough!(2)))
 "#,
             macros
         ),
@@ -163,7 +163,7 @@ perform show("value", passthrough!(2))
     f.write(
         "src/main.taut",
         r#"import "z_macros.taut"
-perform show("value", unknown_macro!(2))
+show(&(unknown_macro!(2)))
 "#,
     );
     f.write("src/z_macros.taut", macros_source());
@@ -180,7 +180,7 @@ fn macro_generated_errors_point_to_the_calling_file() {
         "src/main.taut",
         r#"import "z_macros.taut"
 
-perform show("value", passthrough!(missing_value))
+show(&(passthrough!(missing_value)))
 "#,
     );
     f.rejects(&f.0, "main.taut:3:");
@@ -195,7 +195,7 @@ fn file_offsets_and_generated_rust_locations_follow_macro_origins() {
     f.write(
         "src/main.taut",
         r#"import "z_macros.taut"
-perform show("value", passthrough!(1 + 1))
+show(&(passthrough!(1 + 1)))
 "#,
     );
     let loaded = tauto_build::tote_program(&f.0).unwrap();
@@ -212,7 +212,9 @@ perform show("value", passthrough!(1 + 1))
         );
     }
     assert!(loaded.locate(tauto::surface::PRELUDE_BASE).is_none());
-    let package = tauto_nir::compile_loaded_with_observer(&loaded, false, false, |_| {}).unwrap();
+    let package =
+        tauto_nibcheck::lower::compile_loaded_with_observer(&loaded, false, tauto_nir::Target::Rust, |_| {})
+            .unwrap();
     let mut generated = 0;
     for function in &package.fns {
         function.body.walk(&mut |expr| {
@@ -255,7 +257,7 @@ fn imported_macro_keeps_relative_include_text_inputs() {
     f.write(
         "src/main.taut",
         r#"import "helpers/macros.taut"
-perform show("value", passthrough!(Text::len(include_text!("assets/value.txt"))))
+show(&(passthrough!(Text::len(include_text!("assets/value.txt")))))
 "#,
     );
     f.succeeds(&f.0);

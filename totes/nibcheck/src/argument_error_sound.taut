@@ -1,13 +1,15 @@
 import "argument_frame.taut"
 import "expr_checks_error_sound.taut"
-import std::List
-import std::Text
+import std::list
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "error_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "written_error_sound.taut"
 
@@ -15,27 +17,24 @@ pub theorem argument_lambda_cons_frame_errors(
   p: Text,
   rest: List(Text),
   c: Checker,
-  borrows: List(Option(Bool)),
-  ih: ∀ next: Checker. CkErrorFrame(next, ck_lambda_params(rest, next, List::tail(borrows)))
-): CkErrorFrame(c, argument_lambda_cons(p, rest, c, borrows)) {
+  r#borrows: List(Option(Bool)),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_lambda_params(rest, next, List::tail(r#borrows)))
+): CkErrorFrame(c, argument_lambda_cons(p, rest, c, r#borrows)) {
   error_frame_bind(
-    Ty,
-    List(Ty),
+    <A: Ty, B: List(Ty)>,
     c,
     (t: Ty, c1: Checker) => frame_bind(
-      List(Ty),
-      List(Ty),
-      (tl: List(Ty), c2: Checker) => mut1(Cons(field_under(t, list_head_or_none(borrows)), tl), c2),
-      ck_lambda_params(rest, c1, List::tail(borrows))
+      <A: List(Ty), B: List(Ty)>,
+      (tl: List(Ty), c2: Checker) => mut1(Cons(field_under(t, list_head_or_none(r#borrows)), tl), c2),
+      ck_lambda_params(rest, c1, List::tail(r#borrows))
     ),
     ck_fresh(c),
     ck_fresh_frame_errors(c),
     t => c1 => error_frame_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       c1,
-      (tl: List(Ty), c2: Checker) => mut1(Cons(field_under(t, list_head_or_none(borrows)), tl), c2),
-      ck_lambda_params(rest, c1, List::tail(borrows)),
+      (tl: List(Ty), c2: Checker) => mut1(Cons(field_under(t, list_head_or_none(r#borrows)), tl), c2),
+      ck_lambda_params(rest, c1, List::tail(r#borrows)),
       ih(c1),
       tl => c2 => (clean_errors => clean_errors)
     )
@@ -45,19 +44,19 @@ pub theorem argument_lambda_cons_frame_errors(
 pub theorem ck_lambda_params_frame_errors(
   ps: List(Text),
   c: Checker,
-  borrows: List(Option(Bool))
-): CkErrorFrame(c, ck_lambda_params(ps, c, borrows)) {
-  ⊢ CkErrorFrame(c, ck_lambda_params(ps, c, borrows)) from match ps {
+  r#borrows: List(Option(Bool))
+): CkErrorFrame(c, ck_lambda_params(ps, c, r#borrows)) {
+  match ps {
     Nil => (clean_errors => clean_errors)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),
-      Eq::sym(argument_lambda_cons_unf(p, rest, c, borrows)),
+      Eq::sym(argument_lambda_cons_unf(p, rest, c, r#borrows)),
       argument_lambda_cons_frame_errors(
         p,
         rest,
         c,
-        borrows,
-        next => ck_lambda_params_frame_errors(rest, next, List::tail(borrows))
+        r#borrows,
+        next => ck_lambda_params_frame_errors(rest, next, List::tail(r#borrows))
       )
     )
   }

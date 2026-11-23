@@ -1,12 +1,13 @@
 import "unify_allocation_app.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "allocation_poly_map.taut"
 import "allocation_rigid_state.taut"
 import "allocation_state.taut"
 import "binding_counter.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "unify_allocation_sequence.taut"
@@ -19,7 +20,7 @@ pub fn allocation_guard(
   fallback: Bool,
   flag: Bool
 ): Mut1(Bool, Checker) {
-  ⊢ Mut1(Bool, Checker) from match flag { false => mut1(fallback, c)
+  match flag { false => mut1(fallback, c)
     true => chosen }
 }
 pub theorem allocation_guard_ok(
@@ -30,21 +31,21 @@ pub theorem allocation_guard_ok(
   h: AllocationRun(c, chosen),
   flag: Bool
 ): AllocationRun(c, allocation_guard(c, chosen, fallback, flag)) {
-  ⊢ AllocationRun(c, allocation_guard(c, chosen, fallback, flag)) from match flag {
+  match flag {
     false => AndIntro(Refl, state)
     true => h
   }
 }
-pub fn allocation_view_counter(r#view: Pair(Nat, Ordmap(Nat, Ty))): Nat { r#view.fst }
+pub fn allocation_view_counter(view: Nat × Ordmap(Nat, Ty)): Nat { view.fst }
 pub theorem ck_rigid_counter(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker
 ): CounterUnchanged(c, ck_rigid(gs, c)) {
   Eq::congr(allocation_view_counter, ck_rigid_allocation_state(gs, c))
 }
 pub theorem ck_keep_allocation_run(
   c: Checker,
-  ga: List(Pair(Text, Kind)),
+  ga: List(Text × Kind),
   rigid: Ordmap(Text, Ty),
   a: Ty,
   b: Ty,
@@ -68,9 +69,9 @@ pub theorem allocated_poly_after(
   fuel: Nat,
   hu: UnifyAllocated(fuel),
   c: Checker,
-  ga: List(Pair(Text, Kind)),
+  ga: List(Text × Kind),
   ta: Ty,
-  gb: List(Pair(Text, Kind)),
+  gb: List(Text × Kind),
   tb: Ty,
   m: Mut1(Ordmap(Text, Ty), Checker),
   same: CounterUnchanged(c, m),
@@ -79,7 +80,7 @@ pub theorem allocated_poly_after(
   left: TypeAllocated(ck_next_of(ck_st(m)), ty_substitute(ta, ck_val(m))),
   right: TypeAllocated(ck_next_of(ck_st(m)), ty_substitute(tb, ty_poly_map(gb, ga, ck_val(m))))
 ): AllocationRun(c, ck_poly_k(fuel, ga, ta, gb, tb, m)) {
-  ⊢ AllocationRun(c, ck_poly_k(fuel, ga, ta, gb, tb, m)) from match m {
+  match m {
     mut1(rigid, next) => allocation_run_start(
       c,
       next,
@@ -134,9 +135,9 @@ pub theorem allocated_poly_call(
   fuel: Nat,
   hu: UnifyAllocated(fuel),
   c: Checker,
-  ga: List(Pair(Text, Kind)),
+  ga: List(Text × Kind),
   ta: Ty,
-  gb: List(Pair(Text, Kind)),
+  gb: List(Text × Kind),
   tb: Ty,
   ordered: CkOrdered(c),
   state: CheckerAllocation(c),

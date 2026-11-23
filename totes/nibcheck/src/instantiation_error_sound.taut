@@ -1,34 +1,35 @@
 import "pattern_read_error_sound.taut"
 import "instantiation_frame.taut"
 import "written_error_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "error_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 
 pub theorem instantiation_bound_frame_errors(
   c: Checker,
-  g: Pair(Text, Kind),
+  g: Text × Kind,
   v: Ty,
   name: Text,
   span: TySpan,
   arg: Option(Kind)
 ): CkErrorFrame(c, instantiation_bound(c, g, v, name, span, arg)) {
-  ⊢ CkErrorFrame(c, instantiation_bound(c, g, v, name, span, arg)) from match arg { Some(k) => (
+  match arg { Some(k) => (
     clean_errors => clean_errors
   )
     None => (clean_errors => clean_errors) }
 }
 
 pub theorem instantiation_cons_frame_errors(
-  g: Pair(Text, Kind),
-  rest: List(Pair(Text, Kind)),
+  g: Text × Kind,
+  rest: List(Text × Kind),
   c: Checker,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan,
   map: Ordmap(Text, Ty),
@@ -38,12 +39,10 @@ pub theorem instantiation_cons_frame_errors(
   ). CkErrorFrame(next, ck_instantiate_map_ctors(rest, next, ctors, name, span, more))
 ): CkErrorFrame(c, instantiation_cons(g, rest, c, ctors, name, span, map)) {
   error_frame_bind(
-    Ty,
-    Ordmap(Text, Ty),
+    <A: Ty, B: Ordmap(Text, Ty)>,
     c,
     (v: Ty, c1: Checker) => frame_bind(
-      Unit,
-      Ordmap(Text, Ty),
+      <A: Unit, B: Ordmap(Text, Ty)>,
       (ignored: Unit, c2: Checker) => ck_rewrap1(
         ck_instantiate_map_ctors(
           rest,
@@ -59,8 +58,7 @@ pub theorem instantiation_cons_frame_errors(
     ck_fresh(c),
     ck_fresh_frame_errors(c),
     v => c1 => error_frame_bind(
-      Unit,
-      Ordmap(Text, Ty),
+      <A: Unit, B: Ordmap(Text, Ty)>,
       c1,
       (ignored: Unit, c2: Checker) => ck_rewrap1(
         ck_instantiate_map_ctors(
@@ -98,14 +96,14 @@ pub theorem instantiation_cons_frame_errors(
 }
 
 pub theorem ck_instantiate_map_ctors_frame_errors(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan,
   map: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
-  ⊢ CkErrorFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) from match gs {
+  match gs {
     Nil => (clean_errors => clean_errors)
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => CkErrorFrame(c, z),
@@ -124,7 +122,7 @@ pub theorem ck_instantiate_map_ctors_frame_errors(
   }
 }
 pub theorem ck_instantiate_map_frame_errors(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
   span: TySpan,
   map: Ordmap(Text, Ty)
@@ -145,12 +143,12 @@ pub theorem ck_pend_frame_errors(
 
 pub theorem instantiation_pred_frame_errors(
   c: Checker,
-  p: Pair(Text, Text),
+  p: Text × Text,
   what: Text,
   span: TySpan,
   found: Option(Ty)
 ): CkErrorFrame(c, instantiation_pred(c, p, what, span, found)) {
-  ⊢ CkErrorFrame(c, instantiation_pred(c, p, what, span, found)) from match found {
+  match found {
     None => (clean_errors => clean_errors)
     Some(t) => error_frame_rewrap(
       c,
@@ -161,8 +159,8 @@ pub theorem instantiation_pred_frame_errors(
 }
 
 pub theorem instantiation_preds_cons_frame_errors(
-  p: Pair(Text, Text),
-  rest: List(Pair(Text, Text)),
+  p: Text × Text,
+  rest: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
@@ -170,8 +168,7 @@ pub theorem instantiation_preds_cons_frame_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_pend_preds(rest, next, map, what, span))
 ): CkErrorFrame(c, instantiation_preds_cons(p, rest, c, map, what, span)) {
   error_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_pend_preds(rest, c1, map, what, span)),
     instantiation_pred(
@@ -193,13 +190,13 @@ pub theorem instantiation_preds_cons_frame_errors(
 }
 
 pub theorem ck_pend_preds_frame_errors(
-  ps: List(Pair(Text, Text)),
+  ps: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan
 ): CkErrorFrame(c, ck_pend_preds(ps, c, map, what, span)) {
-  ⊢ CkErrorFrame(c, ck_pend_preds(ps, c, map, what, span)) from match ps {
+  match ps {
     Nil => (clean_errors => clean_errors)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
@@ -228,8 +225,7 @@ pub theorem instantiation_named_cons_frame_errors(
   ). CkErrorFrame(next, ck_instantiate_named_map(rest, next, more))
 ): CkErrorFrame(c, instantiation_named_cons(g, rest, c, map)) {
   error_frame_bind(
-    Ty,
-    Ordmap(Text, Ty),
+    <A: Ty, B: Ordmap(Text, Ty)>,
     c,
     (v: Ty, c1: Checker) => ck_rewrap1(
       ck_instantiate_named_map(rest, c1, Ordmap::insert(map, g, v, Ordmap::compare_text))
@@ -249,7 +245,7 @@ pub theorem ck_instantiate_named_map_frame_errors(
   c: Checker,
   map: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_instantiate_named_map(gs, c, map)) {
-  ⊢ CkErrorFrame(c, ck_instantiate_named_map(gs, c, map)) from match gs {
+  match gs {
     Nil => (clean_errors => clean_errors)
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => CkErrorFrame(c, z),
@@ -267,13 +263,12 @@ pub theorem ck_instantiate_named_map_frame_errors(
 
 pub theorem instantiation_ck_instantiate_frame_errors(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   t: Ty,
   span: TySpan
 ): CkErrorFrame(c, instantiation_ck_instantiate(c, gs, t, span)) {
   error_frame_bind(
-    Ordmap(Text, Ty),
-    Ty,
+    <A: Ordmap(Text, Ty), B: Ty>,
     c,
     (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
     ck_instantiate_map(gs, c, span, Ordmap::empty()),
@@ -284,7 +279,7 @@ pub theorem instantiation_ck_instantiate_frame_errors(
 
 pub theorem ck_instantiate_frame_errors(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   t: Ty,
   span: TySpan
 ): CkErrorFrame(c, ck_instantiate(c, gs, t, span)) {
@@ -301,8 +296,7 @@ pub theorem instantiation_ck_instantiate_named_frame_errors(
   t: Ty
 ): CkErrorFrame(c, instantiation_ck_instantiate_named(c, gs, t)) {
   error_frame_bind(
-    Ordmap(Text, Ty),
-    Ty,
+    <A: Ordmap(Text, Ty), B: Ty>,
     c,
     (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
     ck_instantiate_named_map(gs, c, Ordmap::empty()),
@@ -330,13 +324,11 @@ pub theorem instantiation_scheme_frame_errors(
   span: TySpan
 ): CkErrorFrame(c, instantiation_scheme(c, name, s, span)) {
   error_frame_bind(
-    Ordmap(Text, Ty),
-    Ty,
+    <A: Ordmap(Text, Ty), B: Ty>,
     c,
     (map: Ordmap(Text, Ty), c1: Checker) => frame_bind(
-      Unit,
-      Ty,
-      (ignored: Unit, c2: Checker) => mut1(ty_substitute(instantiation_scheme_ty(s), map), c2),
+      <A: Unit, B: Ty>,
+      (ignored: Unit, c2: Checker) => instantiation_scheme_done(c2, name, s, span, map),
       ck_pend_preds(instantiation_scheme_preds(s), c1, map, name, span)
     ),
     ck_instantiate_map_ctors(
@@ -356,10 +348,9 @@ pub theorem instantiation_scheme_frame_errors(
       Ordmap::empty()
     ),
     map => c1 => error_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c1,
-      (ignored: Unit, c2: Checker) => mut1(ty_substitute(instantiation_scheme_ty(s), map), c2),
+      (ignored: Unit, c2: Checker) => instantiation_scheme_done(c2, name, s, span, map),
       ck_pend_preds(instantiation_scheme_preds(s), c1, map, name, span),
       ck_pend_preds_frame_errors(instantiation_scheme_preds(s), c1, map, name, span),
       ignored => c2 => (clean_errors => clean_errors)

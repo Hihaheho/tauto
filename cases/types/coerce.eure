@@ -1,0 +1,275 @@
+// `coerce` before one field of a struct lets the struct be read as that
+// field's type (`docs/design/ownership.md`「Coercing structs (`coerce`)」).
+// `coerce` lends `&W` as `&T`, `coerce(mut)` also `&mut W` as `&mut T`,
+// `coerce(owned)` also gives `W` as `T`. `w.x` reads the field of what `w`
+// coerces to; `w.W::f` names the struct's own field.
+
+@ cases.coerce-reads-fields
+description = "`w.a` reads the field of the coerced-to `P`; `w.W::tag` reads `W`'s own field."
+source = ```nib
+import std::builtin::os
+struct(affine) P { a: i64, b: i64 }
+struct W { coerce inner: P, tag: i64 }
+let w := W { inner: P { a: 1, b: 2 }, tag: 10 }
+show(&(w.a + w.b + w.W::tag))
+```
+types = "ok"
+lin = "ok"
+stdout = "13\n"
+
+@ cases.coerce-passes-as-ref
+description = "`&w` is passed where `&P` is expected."
+source = ```nib
+import std::builtin::os
+struct(affine) P { a: i64, b: i64 }
+struct W { coerce inner: P, tag: i64 }
+fn total(p: &P): i64 ! {overflow} { p.a + p.b }
+let w := W { inner: P { a: 3, b: 4 }, tag: 0 }
+show(&total(&w))
+```
+types = "ok"
+lin = "ok"
+stdout = "7\n"
+
+@ cases.coerce-ref-cannot-pass-as-mut
+description = "A plain `coerce` does not lend `&mut W` as `&mut P`."
+source = ```nib
+struct(affine) P { a: i64, b: i64 }
+struct W { coerce inner: P, tag: i64 }
+fn bump(p: &mut P) { p.a := p.a + 1 }
+var w := W { inner: P { a: 3, b: 4 }, tag: 0 }
+bump(&mut w)
+```
+types = "error: `W` coerces to `P` only by `&`; write `coerce(mut)` to lend it as `&mut`"
+
+@ cases.coerce-ref-cannot-assign-field
+description = "A plain `coerce` does not let `w.a := e` write through it."
+source = ```nib
+struct(affine) P { a: i64, b: i64 }
+struct W { coerce inner: P, tag: i64 }
+var w := W { inner: P { a: 3, b: 4 }, tag: 0 }
+w.a := 5
+```
+types = "error: `W` coerces to `P` only by `&`; write `coerce(mut)` to assign its fields"
+
+@ cases.coerce-mut-assigns-field
+description = "`coerce(mut)` lends `&mut M` as `&mut P` and lets `m.a := e` write the field of `P`."
+source = ```nib
+import std::builtin::os
+struct(affine) P { a: i64, b: i64 }
+struct M { coerce(mut) inner: P, tag: i64 }
+fn bump(p: &mut P) ! {overflow} { p.a := p.a + 1 }
+var m := M { inner: P { a: 3, b: 4 }, tag: 0 }
+m.a := 5
+bump(&mut m)
+show(&m.a)
+```
+types = "ok"
+lin = "ok"
+stdout = "6\n"
+
+@ cases.coerce-mut-cannot-move-out
+description = "`coerce(mut)` does not give an `M` as a `P`."
+source = ```nib
+struct(affine) P { a: i64, b: i64 }
+struct M { coerce(mut) inner: P, tag: i64 }
+fn take(p: P): i64 { p.a }
+let m := M { inner: P { a: 3, b: 4 }, tag: 0 }
+take(m)
+```
+types = "error: `M` coerces to `P` only by `&` and `&mut`; write `coerce(owned)` to move it out"
+
+@ cases.coerce-owned-moves-out
+description = "`coerce(owned)` gives an `O` as a `P`: the value moves out of its field."
+source = ```nib
+import std::builtin::os
+struct(affine) P { a: i64, b: i64 }
+struct O { coerce(owned) inner: P, tag: i64 }
+fn take(p: P): i64 ! {overflow} { p.a + p.b }
+let o := O { inner: P { a: 3, b: 4 }, tag: 0 }
+show(&take(o))
+```
+types = "ok"
+lin = "ok"
+stdout = "7\n"
+
+@ cases.coerce-never-wraps-implicitly
+description = "A `P` is not read as a `W`: only `W { ... }` makes one."
+source = ```nib
+struct(affine) P { a: i64, b: i64 }
+struct W { coerce inner: P, tag: i64 }
+fn f(w: &W): i64 { w.a }
+let p := P { a: 1, b: 2 }
+f(&p)
+```
+types = "error: an argument: &P does not fit &W"
+
+@ cases.coerce-ref-of-duplicable-needs-owned
+description = "For a duplicable `D`, `&WD` as `&D` would copy `D` out, so it needs `coerce(owned)`; reading `wd.a` needs only `coerce`."
+source = ```nib
+struct D { a: i64 }
+struct WD { coerce inner: D, tag: i64 }
+fn get(d: &D): i64 { d.a }
+let wd := WD { inner: D { a: 1 }, tag: 0 }
+let read := wd.a
+get(&wd)
+```
+types = "error: `&WD` cannot be passed as `&D`: `D` is duplicable, so this needs `coerce(owned)`"
+
+@ cases.coerce-not-through-type-variable
+description = "Where a type variable stands, `W` stays `W`: `keep(w)` is a `W`, whose own field `k.W::tag` it has."
+source = ```nib
+import std::builtin::os
+struct(affine) P { a: i64, b: i64 }
+struct(affine) W { coerce(owned) inner: P, tag: i64 }
+fn keep<A>(x: A): A { x }
+let w := W { inner: P { a: 1, b: 2 }, tag: 5 }
+let k := keep(w)
+show(&(k.W::tag))
+```
+types = "ok"
+stdout = "5\n"
+
+@ cases.coerce-own-field-needs-qualified-name
+description = "`w.tag` reads a field of `P`, which has none: `W`'s own field is written `w.W::tag`."
+source = ```nib
+struct(affine) P { a: i64, b: i64 }
+struct W { coerce inner: P, tag: i64 }
+let w := W { inner: P { a: 1, b: 2 }, tag: 0 }
+w.tag
+```
+types = "error: `tag` is a field of `W`; write `w.W::tag`"
+
+@ cases.coerce-qualified-field-needs-open-outside-file
+description = "Outside its file, `w.W::tag` needs `W` to be `pub(open)`; `w.a` reads through the coercion."
+files."lib.taut" = ```tauto
+pub(open) struct(affine) P { a: i64, b: i64 }
+pub struct W { coerce inner: P, tag: i64 }
+pub fn make(): W { W { inner: P { a: 1, b: 2 }, tag: 0 } }
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+fn through(w: &W): i64 { w.a }
+fn own(w: &W): i64 { w.W::tag }
+```
+macro_error = "`W::tag` is a field of `W`, which the file `lib` declares without `pub(open)`: outside that file the type is abstract; use the functions it makes public"
+
+@ cases.coerce-chain-reads-innermost
+description = "`Outer` coerces to `Mid`, which coerces to `P`: `o.a` reads `P`'s field."
+source = ```nib
+import std::builtin::os
+struct(affine) P { a: i64, b: i64 }
+struct Mid { coerce(mut) inner: P, y: i64 }
+struct Outer { coerce(mut) mid: Mid, x: i64 }
+fn total(p: &P): i64 ! {overflow} { p.a + p.b }
+fn middle(m: &Mid): i64 { m.Mid::y }
+let o := Outer { mid: Mid { inner: P { a: 1, b: 2 }, y: 20 }, x: 300 }
+show(&(o.a + total(&o) + middle(&o) + o.Outer::x))
+```
+types = "ok"
+lin = "ok"
+stdout = "324\n"
+
+@ cases.coerce-chain-level-is-narrowest
+description = "Through `coerce(mut)` and then `coerce`, `&mut Outer` is not lent as `&mut P`."
+source = ```nib
+struct(affine) P { a: i64, b: i64 }
+struct Mid { coerce inner: P, y: i64 }
+struct Outer { coerce(mut) mid: Mid, x: i64 }
+fn bump(p: &mut P) { p.a := p.a + 1 }
+var o := Outer { mid: Mid { inner: P { a: 1, b: 2 }, y: 20 }, x: 300 }
+bump(&mut o)
+```
+types = "error: `Outer` coerces to `P` only by `&`; write `coerce(mut)` to lend it as `&mut`"
+
+@ cases.coerce-chain-names-middle-type
+description = "A field of a type in the middle of the chain is named with that type: `o.Mid::y`."
+source = ```nib
+import std::builtin::os
+struct(affine) P { a: i64, b: i64 }
+struct Mid { coerce inner: P, y: i64 }
+struct Outer { coerce mid: Mid, x: i64 }
+let o := Outer { mid: Mid { inner: P { a: 1, b: 2 }, y: 20 }, x: 300 }
+show(&(o.Mid::y))
+```
+types = "ok"
+stdout = "20\n"
+
+@ cases.coerce-two-fields-is-error
+description = "A struct has at most one `coerce` field, so the way it coerces is one."
+files."main.nib" = ```nib
+struct(affine) P { a: i64, b: i64 }
+struct W { coerce first: P, coerce second: P }
+```
+load_error = "a struct has at most one `coerce` field"
+
+@ cases.coerce-on-an-enum-constructor-is-error
+description = "`coerce` stands before a field of a struct only."
+files."main.nib" = ```nib
+struct(affine) P { a: i64, b: i64 }
+enum E { One { coerce p: P }, Two }
+```
+load_error = "`coerce` is written before a field of a `struct`"
+
+@ cases.coerce-borrow-freezes-path
+description = "`&w` passed as `&P` borrows `w.inner`: moving `w` while the borrow lives is an error, as for `&w.W::inner`."
+source = ```nib
+struct(affine) P { a: i64, b: i64 }
+struct(affine) W { coerce(owned) inner: P, tag: i64 }
+fn hold(p: &P): &P { p }
+fn take(w: W): i64 { w.W::tag }
+let w := W { inner: P { a: 1, b: 2 }, tag: 0 }
+let r := hold(&w)
+take(w)
+r.a
+```
+types = "ok"
+lin = "error: w is frozen by r"
+
+@ cases.coerce-kernel-reads-a-projection
+description = "The kernel reads `w.n` through the `coerce` field as the projection `w.inner.n`."
+files."main.taut" = ```tauto
+struct Q { n: Nat }
+struct WQ { coerce(owned) inner: Q, k: Nat }
+fn get(w: WQ): Nat { w.n }
+fn whole(w: WQ): Q { w }
+```
+entry = "main.taut"
+checks_all = "ok"
+
+@ cases.coerce-match-reads-the-coerced-type
+description = "`match &w` with patterns of `Slot` reads `w` as the `Slot` it coerces to; the pattern `W { … }` reads `W` itself."
+source = ```nib
+import std::builtin::os
+enum(affine) Slot { Full(i64), Empty }
+struct W { coerce held: Slot, tag: i64 }
+let w := W { held: Full(4), tag: 1 }
+let got := match &w {
+  Full(x) => x
+  Empty => 0
+}
+let own := match &w {
+  W { held: _, tag } => tag
+}
+show(&(got + own))
+```
+types = "ok"
+lin = "ok"
+stdout = "5\n"
+
+@ cases.coerce-reads-through-a-struct-of-another-file
+description = "A `coerce` field declared in another file coerces there too: `w.a` and `&w` as `&P`."
+files."lib.taut" = ```tauto
+pub(open) struct(affine) P { a: i64, b: i64 }
+pub struct Box(T: Type) { coerce(owned) value: T, tag: i64 }
+pub fn boxed(p: P): Box(P) { Box { value: p, tag: 0 } }
+```
+files."main.nib" = ```nib
+import "lib.taut"
+import std::builtin::os
+fn total(p: &P): i64 ! {overflow} { p.a + p.b }
+let w := boxed(P { a: 3, b: 4 })
+show(&(w.a + total(&w)))
+```
+types = "ok"
+stdout = "10\n"

@@ -1,9 +1,10 @@
+import "messages.taut"
 import "cycle.taut"
 import "../../surface/src/surface.taut"
-import std::Base
-import std::List
-import std::Map
-import std::Text
+import std::base
+import std::list
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "freevars.taut"
@@ -11,1459 +12,73 @@ import "lin_arms.taut"
 import "lin_flow.taut"
 import "lin_state.taut"
 import "rows.taut"
+import "rows_verify.taut"
+import "rows_base.taut"
 import "ty.taut"
 import "types_run.taut"
 import "../../text/src/text.taut"
+import "lin_live.taut"
+import "lin_value_head.taut"
+import "../../identity/src/identity.taut"
 
-// Expressions and statements (`value`, `field`, `app`, `lend`, `access`,
-// `closure`, `block`, `stmt`, `match_expr`, `handle`, `function` of `lin.rs`):
-// one group, which walks the program on fuel enough for its extent.
+// Continued from `lin_value_head.taut`.
 
-pub fn lin_is_lambda(t: SurfaceTerm): Bool {
-  ⊢ Bool from match t.kind {
-    SkLam(ps, b) => true
-    SkBorrowLam(bs, l) => true
-    _ => false
+pub fn lin_check_all(c: &mut Lin, program: List(SurfaceStmt)): List(LinError) {
+  set_to(&mut c.lends, lin_lends_of(program, c.lends))
+  set_to(&mut c.lends_effects, lin_lends_named(program, c.lends_effects))
+  set_to(&mut c.generic_borrows, lin_generic_borrows_of(program, c.generic_borrows))
+  set_to(&mut c.parametric, lin_parametric_of(program, c.parametric))
+  lin_check_fns_in(c.steps, &mut c, program)
+  lin_push_frame(&mut c, frame_default())
+  set_to(&mut c.live, Cons(live_of_program(c.steps, program), c.live))
+  lin_block_in(c.steps, &mut c, program, true)
+  lin_pop_frame(&mut c)
+  List::reverse(c.errors)
+}
+
+// The effect each integer or float operator of `terms` performs when its
+// result does not exist (`operator_effect` of `rows.rs`), by where the operator
+// is: fixed-width `+`, `-`, `*` perform `overflow`; unbounded `nat` does not.
+pub fn lin_ops_of(types: TypeReport, terms: List(SurfaceTerm), acc: Ordmap(RowSpan, Text)): Ordmap(RowSpan, Text) {
+  match terms {
+    Nil => acc
+    Cons(t, rest) => lin_ops_of(types, rest, ⊢ Ordmap(RowSpan, Text) from match t.kind {
+      SkApp(function, arguments) => ⊢ Ordmap(RowSpan, Text) from match function.kind {
+        SkVar(n) => ⊢ Ordmap(RowSpan, Text) from match lin_operator_effect(types, t, surface_name_text(n), arguments) {
+          Some(op_effect) => Ordmap::insert(acc, RowSpan { start: t.start, end: t.end }, op_effect, rows_compare_span)
+          None => acc
+        }
+        _ => acc
+      }
+      _ => acc
+    })
   }
 }
 
-pub fn lin_is_var(t: SurfaceTerm): Bool {
-  ⊢ Bool from match t.kind {
-    SkVar(n) => true
-    _ => false
-  }
-}
-
-pub fn lin_term_is_dup(c: Lin, t: SurfaceTerm): Bool {
-  ⊢ Bool from match lin_term_type(c, t) {
-    Some(ty) => class_is_dup(lin_class_of(c, Some(ty)).fst)
+pub fn lin_operator_effect(types: TypeReport, t: SurfaceTerm, op: Text, arguments: List(SurfaceTerm)): Option(Text) {
+  let width: Option(Width) := Ordmap::get(types.widths, term_at_of(t), term_at_compare)
+  let fits: Bool := match width {
+    Some(w) => lin_literal_fits(w, op, arguments)
     None => false
   }
-}
-
-// `x` is a borrow here: `&p`, or a name bound to a borrow that is not of a
-// duplicable value.
-pub fn lin_is_borrow(c: Lin, t: SurfaceTerm): Bool {
-  ⊢ Bool from match t.kind {
-    SkBorrow(m, term) => not(lin_term_is_dup(c, term))
-    SkVar(n) => ⊢ Bool from match lin_find(c, n) {
-      Some(i) => mode_is_borrow(lin_get(c, i).mode) && not(class_is_dup(lin_get(c, i).r#class))
-      None => false
+  if fits {
+    None
+  } else if op == "div" || op == "mod" {
+    if lin_nonzero_divisor(arguments) { None } else { Some("divzero") }
+  } else if op == "-" || op == "+" || op == "*" {
+    match width {
+      Some(w) => if lin_width_is_nat(w) { None } else { Some("overflow") }
+      None => None
     }
-    _ => false
-  }
-}
-
-// A `let` of a closure that borrows keeps what it borrows.
-pub fn lin_let_closure(b: Binding, pos: LinPos): Option(Pair(List(Text), Bool)) {
-  if pos_is_let(pos) {
-    ⊢ Option(Pair(List(Text), Bool)) from match b.mode {
-      ModeBorrowClosure(names, m) => Some(Pair { fst: names, snd: m })
+  } else if op == "/" {
+    match Ordmap::get(types.terms, term_at_of(t), term_at_compare) {
+      Some(TyFloat) => Some("divzero")
+      Some(TyFloat32) => Some("divzero")
       _ => None
     }
   } else {
     None
   }
-}
-
-pub fn lin_value_at(
-  &mut c: Lin,
-  t: SurfaceTerm,
-  i: Nat,
-  b: Binding,
-  pos: LinPos
-): Option(Pair(List(Text), Bool)) {
-  ⊢ Option(Pair(List(Text), Bool)) from match lin_let_closure(b, pos) {
-    Some(nm) => {
-      lin_read(&mut c, i, span_of(t))
-      Some(nm)
-    }
-    None => {
-      if (
-        pos_is_result(pos) && lin_frame(c).returns_borrow && mode_is_borrow(b.mode)
-      ) || (pos_is_drop(pos) && class_is_dup(b.r#class)) {
-        lin_read(&mut c, i, span_of(t))
-      } else {
-        lin_take(&mut c, i, span_of(t))
-      }
-      None
-    }
-  }
-}
-
-pub fn lin_value_var(
-  &mut c: Lin,
-  t: SurfaceTerm,
-  name: Text,
-  pos: LinPos
-): Option(Pair(List(Text), Bool)) {
-  ⊢ Option(Pair(List(Text), Bool)) from match lin_find(c, name) {
-    None => None
-    Some(i) => lin_value_at(&mut c, t, i, lin_get(c, i), pos)
-  }
-}
-
-// Stopped, a budget's body goes to the `exceeded` arm as `info`, a value that
-// may outlive what the body borrows.
-pub fn lin_budget_lent(&mut c: Lin, body: SurfaceTerm): Unit {
-  ⊢ Unit from match lin_lent_outside(c, body, Nil) {
-    Some(lent) => lin_error(
-      &mut c,
-      cat2(lent, " is borrowed in a budget, whose stopped body may outlive it"),
-      span_of(body)
-    )
-    None => #()
-  }
-}
-
-pub fn lin_base_is_info(c: Lin, base: SurfaceTerm): Bool {
-  ⊢ Bool from match lin_term_type(c, base) {
-    Some(ty) => ⊢ Bool from match ty_unborrowed(ty) {
-      TyInfo(x) => true
-      _ => false
-    }
-    None => false
-  }
-}
-
-// `x.f.g` whose root is bound: a duplicable field is copied; an affine one
-// cannot be taken out of an owned value, and one of a borrow is a borrow.
-pub fn lin_field_place(
-  &mut c: Lin,
-  t: SurfaceTerm,
-  p: Pair(Text, List(Text)),
-  r#class: LinClass,
-  pos: LinPos
-): Unit {
-  ⊢ Unit from match lin_find(c, p.fst) {
-    None => #()
-    Some(i) => {
-      lin_read(&mut c, i, span_of(t))
-      let borrowed: Bool := mode_is_borrow(lin_get(c, i).mode)
-      if not(class_is_dup(r#class)) && not(c.dead) {
-        if borrowed {
-          if not(pos_is_result(pos) && lin_frame(c).returns_borrow) {
-            lin_error(
-              &mut c,
-              cat2(text_join(p.snd, "."), " is borrowed and cannot be moved"),
-              span_of(t)
-            )
-          }
-        } else {
-          lin_error(
-            &mut c,
-            cat4(text_join(p.snd, "."), " is ", class_word(r#class), cat2("; destructure ", p.fst)),
-            span_of(t)
-          )
-        }
-      }
-    }
-  }
-}
-
-// A name bound to a closure that borrows: lent to a `&f` parameter all the same.
-pub fn lin_is_borrow_closure_var(c: Lin, t: SurfaceTerm): Bool {
-  ⊢ Bool from match t.kind {
-    SkVar(n) => ⊢ Bool from match lin_find(c, n) {
-      Some(i) => ⊢ Bool from match lin_get(c, i).mode {
-        ModeBorrowClosure(names, m) => true
-        _ => false
-      }
-      None => false
-    }
-    _ => false
-  }
-}
-
-pub fn lin_borrow_mode(c: Lin, p: Ty, a: SurfaceTerm, b: Option(Bool)): Option(Bool) {
-  ⊢ Option(Bool) from match p {
-    TyBorrow(inner, m) => if lin_is_lambda(
-      a
-    ) || lin_is_borrow_closure_var(c, a) || not(class_is_dup(lin_kind(c, inner))) {
-      Some(m)
-    } else {
-      b
-    }
-    _ => b
-  }
-}
-
-// For each argument `none` (a value) or `some(mutable)` (the parameter borrows).
-pub fn lin_borrows_of(
-  borrows: List(Option(Bool)),
-  c: Lin,
-  ps: List(Ty),
-  arguments: List(SurfaceTerm)
-): List(Option(Bool)) {
-  ⊢ List(Option(Bool)) from match borrows {
-    Nil => Nil
-    Cons(b, rest) => ⊢ List(Option(Bool)) from match ps {
-      Nil => Cons(b, rest)
-      Cons(p, more) => ⊢ List(Option(Bool)) from match arguments {
-        Nil => Cons(b, rest)
-        Cons(a, atail) => Cons(lin_borrow_mode(c, p, a, b), lin_borrows_of(rest, c, more, atail))
-      }
-    }
-  }
-}
-
-pub fn none_list(n: Nat): List(Option(Bool)) {
-  ⊢ List(Option(Bool)) from match n {
-    Zero => Nil
-    Succ(m) => Cons(None, none_list(m))
-  }
-}
-
-pub fn some_false_list(n: Nat): List(Option(Bool)) {
-  ⊢ List(Option(Bool)) from match n {
-    Zero => Nil
-    Succ(m) => Cons(Some(false), some_false_list(m))
-  }
-}
-
-pub fn lin_local_callee(c: Lin, function: SurfaceTerm): Option(Nat) {
-  ⊢ Option(Nat) from match function.kind {
-    SkVar(name) => lin_find(c, name)
-    _ => None
-  }
-}
-
-pub fn option_nat_is_none(o: Option(Nat)): Bool {
-  ⊢ Bool from match o {
-    Some(i) => false
-    None => true
-  }
-}
-
-// `clone(x)` of the prelude borrows its operand, and `==` and `!=` read
-// theirs.
-pub fn lin_is_clone(c: Lin, function: SurfaceTerm): Bool {
-  ⊢ Bool from match function.kind {
-    SkVar(name) => if name == "clone" || name == "==" || name == "!=" {
-      option_nat_is_none(lin_find(c, name))
-    } else {
-      false
-    }
-    _ => false
-  }
-}
-
-pub fn lin_call_borrows(
-  c: Lin,
-  function: SurfaceTerm,
-  arguments: List(SurfaceTerm)
-): List(Option(Bool)) {
-  let n: Nat := list_len(arguments)
-  let base: List(
-    Option(Bool)
-  ) := if lin_is_clone(c, function) { some_false_list(n) } else { none_list(n) }
-  ⊢ List(Option(Bool)) from match lin_term_type(c, function) {
-    Some(ft) => ⊢ List(Option(Bool)) from match ty_unborrowed(ft) {
-      TyFn(ps, r, kind) => lin_borrows_of(base, c, ps, arguments)
-      _ => base
-    }
-    None => base
-  }
-}
-
-// Calling a bound callee: an affine function is used; a borrowed one or a
-// closure that borrows is read.
-pub fn lin_use_callee(&mut c: Lin, i: Nat, span: TySpan): Unit {
-  let b: Binding := lin_get(c, i)
-  if class_is_dup(b.r#class) || mode_borrows(b.mode) {
-    lin_read(&mut c, i, span)
-  } else {
-    lin_take(&mut c, i, span)
-  }
-}
-
-pub fn borrow_head(bs: List(Option(Bool))): Option(Bool) {
-  ⊢ Option(Bool) from match bs {
-    Nil => None
-    Cons(o, rest) => o
-  }
-}
-
-pub fn use_is_move(u: LinUse): Bool {
-  ⊢ Bool from match u {
-    UseMove => true
-    _ => false
-  }
-}
-
-pub fn lin_use_of(mutable: Bool): LinUse {
-  if mutable { UseMut } else { UseShared }
-}
-
-pub fn path_has_prefix(prefix: List(Text), path: List(Text)): Bool {
-  ⊢ Bool from match prefix {
-    Nil => true
-    Cons(p, prest) => ⊢ Bool from match path {
-      Nil => false
-      Cons(q, qrest) => if p == q { path_has_prefix(prest, qrest) } else { false }
-    }
-  }
-}
-
-// What a place one call lent or moved before says about using it `how` now:
-// `rest` when the two may go together.
-pub fn access_clash(prev: LinUse, how: LinUse, name: Text, rest: Option(Text)): Option(Text) {
-  ⊢ Option(Text) from match prev {
-    UseMove => ⊢ Option(Text) from match how {
-      UseMove => rest
-      UseShared => Some(cat2(name, " is borrowed after move"))
-      UseMut => Some(cat2(name, " is borrowed after move"))
-    }
-    UseShared => ⊢ Option(Text) from match how {
-      UseMove => Some(cat2(name, " is moved while it is borrowed in the same call"))
-      UseShared => rest
-      UseMut => Some(cat2(name, " is borrowed twice in one call"))
-    }
-    UseMut => ⊢ Option(Text) from match how {
-      UseMove => Some(cat2(name, " is moved while it is borrowed in the same call"))
-      UseShared => Some(cat2(name, " is borrowed twice in one call"))
-      UseMut => Some(cat2(name, " is borrowed twice in one call"))
-    }
-  }
-}
-
-pub fn access_overlap(
-  prevs: List(Access),
-  root: Nat,
-  path: List(Text),
-  how: LinUse,
-  name: Text
-): Option(Text) {
-  ⊢ Option(Text) from match prevs {
-    Nil => None
-    Cons(prev, rest) => if Nat::eq(
-      prev.root,
-      root
-    ) && (path_has_prefix(path, prev.path) || path_has_prefix(prev.path, path)) {
-      access_clash(prev.how, how, name, access_overlap(rest, root, path, how, name))
-    } else {
-      access_overlap(rest, root, path, how, name)
-    }
-  }
-}
-
-pub fn lin_access(
-  &mut c: Lin,
-  accesses: List(Access),
-  root: Nat,
-  path: List(Text),
-  how: LinUse,
-  span: TySpan
-): List(Access) {
-  let b: Binding := lin_get(c, root)
-  if class_is_dup(b.r#class) && use_is_move(how) {
-    accesses
-  } else {
-    ⊢ List(Access) from match access_overlap(accesses, root, path, how, b.name) {
-      Some(message) => {
-        lin_error(&mut c, message, span)
-        accesses
-      }
-      None => List::append(accesses, Cons(AccessMk(root, path, how), Nil))
-    }
-  }
-}
-
-pub fn lin_move_access(&mut c: Lin, accesses: List(Access), a: SurfaceTerm): List(Access) {
-  ⊢ List(Access) from match lin_place(a) {
-    Some(p) => ⊢ List(Access) from match lin_find(c, p.fst) {
-      Some(i) => lin_access(&mut c, accesses, i, p.snd, UseMove, span_of(a))
-      None => accesses
-    }
-    None => accesses
-  }
-}
-
-pub fn lin_ty_class(c: Lin, ty: Ty): LinClass {
-  ⊢ LinClass from match ty {
-    TyBorrow(x, m) => ClassDup
-    _ => lin_kind(c, ty)
-  }
-}
-
-pub fn lin_arg_class(c: Lin, a: SurfaceTerm): LinClass {
-  ⊢ LinClass from match lin_term_type(c, a) {
-    None => ClassDup
-    Some(ty) => lin_ty_class(c, ty)
-  }
-}
-
-pub fn lin_arg_name(a: SurfaceTerm): Text {
-  ⊢ Text from match a.kind {
-    SkVar(nm) => nm
-    _ => "an argument before it"
-  }
-}
-
-// A value moved into a call waits there while the later arguments run.
-pub fn lin_hold_arg(&mut c: Lin, a: SurfaceTerm): Unit {
-  let r#class: LinClass := lin_arg_class(c, a)
-  if not(class_is_dup(r#class)) {
-    let i: Nat := lin_push_binding(&mut c, lin_arg_name(a), r#class, ModeOwned)
-    lin_put(&mut c, i, binding_with_held(lin_get(c, i), true))
-  }
-}
-
-// The class of a callee the call moves: an owned local that is not
-// duplicable, or a value other than a name or a closure written in place.
-pub fn lin_moved_callee_class(c: Lin, function: SurfaceTerm): Option(LinClass) {
-  ⊢ Option(LinClass) from match lin_local_callee(c, function) {
-    Some(i) => {
-      let b: Binding := lin_get(c, i)
-      if class_is_dup(b.r#class) || mode_borrows(b.mode) { None } else { Some(b.r#class) }
-    }
-    None => ⊢ Option(LinClass) from match function.kind {
-      SkVar(name) => None
-      SkLam(ps, body) => None
-      SkBorrowLam(bs, lam) => None
-      _ => {
-        let r#class: LinClass := lin_arg_class(c, function)
-        if class_is_dup(r#class) { None } else { Some(r#class) }
-      }
-    }
-  }
-}
-
-// A callee moved into the call waits there while the arguments run: a
-// continuation `k(spin(3))` is live across what `spin` performs, as in
-// `let m = spin(3); k(m)`.
-pub fn lin_hold_callee(&mut c: Lin, function: SurfaceTerm, callee: Option(LinClass)): Unit {
-  ⊢ Unit from match callee {
-    None => #()
-    Some(r#class) => {
-      let name: Text := ⊢ Text from match function.kind {
-        SkVar(nm) => nm
-        _ => "the function called"
-      }
-      let i: Nat := lin_push_binding(&mut c, name, r#class, ModeOwned)
-      lin_put(&mut c, i, binding_with_held(lin_get(c, i), true))
-    }
-  }
-}
-
-// Lending a name bound to a borrow lends what it borrows.
-pub fn lin_lend_mutable(mode: LinMode, a: SurfaceTerm, mutable0: Bool): Bool {
-  ⊢ Bool from match mode {
-    ModeBorrow(m) => if lin_is_var(a) { m } else { mutable0 }
-    _ => mutable0
-  }
-}
-
-pub fn lin_lend_binding(
-  &mut c: Lin,
-  a: SurfaceTerm,
-  p: Pair(Text, List(Text)),
-  i: Nat,
-  mutable0: Bool,
-  accesses: List(Access),
-  collect: Bool
-): List(Access) {
-  let captured: Bool := lin_captured_by_arm(&mut c, i, span_of(a))
-  let b: Binding := lin_get(c, i)
-  let mutable: Bool := lin_lend_mutable(b.mode, a, mutable0)
-  if captured {
-    accesses
-  } else if binding_owns(b) && not(state_is_owned(b.state)) {
-    lin_error(&mut c, cat2(p.fst, " is borrowed after move"), span_of(a))
-    accesses
-  } else {
-    ⊢ List(Access) from match lin_frozen_by(c, i, mutable) {
-      Some(r#by) => {
-        lin_error(&mut c, lin_frozen_text(p.fst, r#by), span_of(a))
-        accesses
-      }
-      None => {
-        let acc: List(
-          Access
-        ) := lin_access(&mut c, accesses, i, p.snd, lin_use_of(mutable), span_of(a))
-        if collect {
-          set_to(&mut c.lent, List::append(c.lent, Cons(Pair { fst: i, snd: mutable }, Nil)))
-        }
-        acc
-      }
-    }
-  }
-}
-
-pub fn text_without(xs: List(Text), x: Text): List(Text) {
-  ⊢ List(Text) from match xs {
-    Nil => Nil
-    Cons(y, rest) => if y == x { text_without(rest, x) } else { Cons(y, text_without(rest, x)) }
-  }
-}
-
-pub(open) inductive Captured: Type {
-  CapturedMk(name: Text, r#class: LinClass, mode: LinMode): Captured
-}
-
-pub(open) inductive Capture: Type {
-  CaptureMk(borrowed: List(Text), any_mut: Bool, captured: List(Captured)): Capture
-}
-
-pub fn capture_add(cap: Capture, borrowed: List(Text), m: Bool, x: Captured): Capture {
-  CaptureMk(
-    List::append(cap.borrowed, borrowed),
-    cap.any_mut || m,
-    List::append(cap.captured, Cons(x, Nil))
-  )
-}
-
-// A `var` a closure captures is borrowed, unless an arm may not capture it.
-pub fn lin_capture_var(&mut c: Lin, i: Nat, b: Binding, body: SurfaceTerm, cap: Capture): Capture {
-  let captured: Bool := lin_captured_by_arm(&mut c, i, span_of(body))
-  if captured {
-    cap
-  } else {
-    capture_add(cap, Cons(b.name, Nil), true, CapturedMk(b.name, b.r#class, ModeVarInClosure))
-  }
-}
-
-pub fn lin_capture_binding(
-  &mut c: Lin,
-  i: Nat,
-  b: Binding,
-  body: SurfaceTerm,
-  cap: Capture
-): Capture {
-  if class_is_dup(b.r#class) {
-    // A `var`'s cell is shared with the closure whatever its content: the
-    // closure borrows it.
-    ⊢ Capture from match b.mode {
-      ModeVar => lin_capture_var(&mut c, i, b, body, cap)
-      ModeVarInClosure => lin_capture_var(&mut c, i, b, body, cap)
-      ModeOwned => capture_add(cap, Nil, false, CapturedMk(b.name, ClassDup, b.mode))
-      ModeBorrow(m) => capture_add(cap, Nil, false, CapturedMk(b.name, ClassDup, b.mode))
-      ModeBorrowClosure(names, m) => capture_add(
-        cap,
-        Nil,
-        false,
-        CapturedMk(b.name, ClassDup, b.mode)
-      )
-    }
-  } else {
-    ⊢ Capture from match b.mode {
-      ModeOwned => {
-        lin_take(&mut c, i, span_of(body))
-        capture_add(cap, Nil, false, CapturedMk(b.name, b.r#class, ModeOwned))
-      }
-      ModeVar => lin_capture_var(&mut c, i, b, body, cap)
-      ModeVarInClosure => lin_capture_var(&mut c, i, b, body, cap)
-      ModeBorrow(m) => {
-        let captured: Bool := lin_captured_by_arm(&mut c, i, span_of(body))
-        if captured {
-          cap
-        } else {
-          capture_add(cap, Cons(b.name, Nil), m, CapturedMk(b.name, b.r#class, ModeBorrow(m)))
-        }
-      }
-      ModeBorrowClosure(names, m) => capture_add(
-        cap,
-        names,
-        m,
-        CapturedMk(b.name, b.r#class, b.mode)
-      )
-    }
-  }
-}
-
-pub fn lin_capture_one(&mut c: Lin, name: Text, body: SurfaceTerm, cap: Capture): Capture {
-  ⊢ Capture from match lin_find(c, name) {
-    None => cap
-    Some(i) => lin_capture_binding(&mut c, i, lin_get(c, i), body, cap)
-  }
-}
-
-// What a closure captures: it moves the owned bindings, and borrows the
-// borrowed ones and the `var`s.
-pub fn lin_capture_scan(free: List(Text), &mut c: Lin, body: SurfaceTerm, cap: Capture): Capture {
-  ⊢ Capture from match free {
-    Nil => cap
-    Cons(name, rest) => {
-      let next: Capture := lin_capture_one(&mut c, name, body, cap)
-      lin_capture_scan(rest, &mut c, body, next)
-    }
-  }
-}
-
-pub fn lin_push_captured(ts: List(Captured), &mut c: Lin): Unit {
-  ⊢ Unit from match ts {
-    Nil => #()
-    Cons(x, rest) => {
-      let i: Nat := lin_push_binding(&mut c, x.name, x.r#class, x.mode)
-      lin_push_captured(rest, &mut c)
-    }
-  }
-}
-
-pub fn capture_result(cap: Capture): Option(Pair(List(Text), Bool)) {
-  ⊢ Option(Pair(List(Text), Bool)) from match cap.borrowed {
-    Nil => None
-    Cons(x, rest) => Some(Pair { fst: cap.borrowed, snd: cap.any_mut })
-  }
-}
-
-// What a function's or a closure's body sets aside of the walk around it.
-pub(open) inductive LinSaved: Type {
-  LinSavedMk(dead: Bool, arm_floor: Option(Nat), arm_direct: Option(Pair(Nat, Text))): LinSaved
-}
-
-pub fn lin_enter_body(&mut c: Lin, f: Frame): LinSaved {
-  lin_push_frame(&mut c, f)
-  let saved: LinSaved := LinSavedMk(c.dead, c.arm_floor, c.arm_direct)
-  set_to(&mut c.dead, false)
-  set_to(&mut c.arm_floor, None)
-  set_to(&mut c.arm_direct, None)
-  saved
-}
-
-// A captured owned value the body does not use is dropped with the closure; a
-// linear one must be used.
-pub fn lin_leave_body(&mut c: Lin, saved: LinSaved, mark: Nat, span: TySpan): Unit {
-  lin_pop_to(&mut c, mark, span)
-  lin_pop_frame(&mut c)
-  set_to(&mut c.dead, saved.dead)
-  set_to(&mut c.arm_floor, saved.arm_floor)
-  set_to(&mut c.arm_direct, saved.arm_direct)
-}
-
-pub fn rest_is_nil(ss: List(SurfaceStmt)): Bool {
-  ⊢ Bool from match ss {
-    Nil => true
-    Cons(s, rest) => false
-  }
-}
-
-pub fn pos_last(last: Bool): LinPos {
-  if last { PosResult } else { PosDrop }
-}
-
-pub fn lin_let_borrows(
-  &mut c: Lin,
-  name: Text,
-  value: SurfaceTerm,
-  lent: List(Pair(Nat, Bool))
-): Unit {
-  let i: Nat := lin_push(&mut c, name, value.start, false)
-  if not(class_is_dup(lin_get(c, i).r#class)) {
-    lin_freeze_all(lent, &mut c, i)
-  }
-}
-
-pub fn closure_binding(b: Binding): Binding {
-  if class_is_dup(b.r#class) { binding_with_class(b, ClassAffine) } else { b }
-}
-
-pub fn lin_let_value(
-  &mut c: Lin,
-  name: Text,
-  value: SurfaceTerm,
-  borrows: Option(Pair(List(Text), Bool))
-): Unit {
-  let i: Nat := lin_push(&mut c, name, value.start, false)
-  ⊢ Unit from match borrows {
-    Some(nm) => lin_put(
-      &mut c,
-      i,
-      closure_binding(binding_with_mode(lin_get(c, i), ModeBorrowClosure(nm.fst, nm.snd)))
-    )
-    None => #()
-  }
-}
-
-pub fn lin_fn_borrows(&mut c: Lin, f: SurfaceFn, borrows: Option(Pair(List(Text), Bool))): Unit {
-  let i: Nat := lin_push(&mut c, f.name, f.body.start, false)
-  ⊢ Unit from match borrows {
-    Some(nm) => lin_put(
-      &mut c,
-      i,
-      closure_binding(binding_with_mode(lin_get(c, i), ModeBorrowClosure(nm.fst, nm.snd)))
-    )
-    None => #()
-  }
-}
-
-pub fn lin_assign_state(&mut c: Lin, i: Nat): Unit {
-  ⊢ Unit from match lin_get(c, i).mode {
-    ModeVar => lin_set_state(&mut c, i, BsOwned)
-    ModeVarInClosure => lin_set_state(&mut c, i, BsOwned)
-    _ => #()
-  }
-}
-
-pub fn lin_assign(&mut c: Lin, name: Text, value: SurfaceTerm): Unit {
-  ⊢ Unit from match lin_find(c, name) {
-    None => #()
-    Some(i) => {
-      let captured: Bool := lin_captured_by_arm(&mut c, i, span_of(value))
-      if not(captured) {
-        ⊢ Unit from match lin_frozen_by(c, i, true) {
-          Some(r#by) => lin_error(&mut c, lin_frozen_text(name, r#by), span_of(value))
-          None => #()
-        }
-        lin_assign_state(&mut c, i)
-      }
-    }
-  }
-}
-
-mutual {
-  // Walks `t`, whose value is taken as `pos` says. A closure that borrows
-  // returns what it borrows, for a `let` to record.
-  pub fn lin_value_in(
-    k: Nat,
-    &mut c: Lin,
-    t: SurfaceTerm,
-    pos: LinPos
-  ): Option(Pair(List(Text), Bool)) {
-    ⊢ Option(Pair(List(Text), Bool)) from match k {
-      Zero => None
-      Succ(j) => if c.dead {
-        None
-      } else {
-        if 0 < lin_frame(c).budgets {
-          lin_event(&mut c, rowset_one("exceeded"), span_of(t))
-        }
-        lin_value_kind_in(j, &mut c, t, pos)
-      }
-    }
-  }
-
-  pub fn lin_drop_in(k: Nat, &mut c: Lin, t: SurfaceTerm, pos: LinPos): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match lin_value_in(j, &mut c, t, pos) {
-        Some(nm) => #()
-        None => #()
-      }
-    }
-  }
-
-  pub fn lin_opt_drop_in(k: Nat, &mut c: Lin, t: Option(SurfaceTerm), pos: LinPos): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match t {
-        Some(x) => lin_drop_in(j, &mut c, x, pos)
-        None => #()
-      }
-    }
-  }
-
-  pub fn lin_value_kind_in(
-    k: Nat,
-    &mut c: Lin,
-    t: SurfaceTerm,
-    pos: LinPos
-  ): Option(Pair(List(Text), Bool)) {
-    ⊢ Option(Pair(List(Text), Bool)) from match k {
-      Zero => None
-      Succ(j) => ⊢ Option(Pair(List(Text), Bool)) from match t.kind {
-        SkVar(name) => lin_value_var(&mut c, t, name, pos)
-        SkField(base, name) => {
-          lin_field_in(j, &mut c, t, base, pos)
-          None
-        }
-        SkBorrow(m, term) => {
-          if lin_term_is_dup(c, term) {
-            lin_drop_in(j, &mut c, term, PosDrop)
-          } else {
-            lin_error(&mut c, "a borrow can only be lent to a borrowed parameter", span_of(t))
-          }
-          None
-        }
-        SkLam(ps, body) => lin_value_closure_in(j, &mut c, t, pos)
-        SkBorrowLam(bs, lam) => lin_value_closure_in(j, &mut c, t, pos)
-        SkApp(function, arguments) => {
-          lin_app_in(j, &mut c, t, function, arguments, false)
-          None
-        }
-        SkPerform(eff, args) => {
-          lin_perform_args_in(j, &mut c, args)
-          lin_call_event(&mut c, t)
-          None
-        }
-        SkRecord(name, fields) => {
-          lin_record_fields_in(j, &mut c, fields)
-          None
-        }
-        SkIf(condition, th, el) => {
-          lin_drop_in(j, &mut c, condition, PosDrop)
-          let start: Option(List(LinState)) := lin_snapshot(c)
-          lin_drop_in(j, &mut c, th, pos)
-          let a: Option(List(LinState)) := lin_snapshot(c)
-          lin_restore(&mut c, start)
-          lin_opt_drop_in(j, &mut c, el, pos)
-          let b: Option(List(LinState)) := lin_snapshot(c)
-          lin_merge(&mut c, Cons(a, Cons(b, Nil)), span_of(t))
-          None
-        }
-        SkBlock(stmts) => {
-          lin_block_in(j, &mut c, stmts, false)
-          None
-        }
-        SkMatch(scrutinee, mk, arms, hb) => {
-          lin_match_expr_in(j, &mut c, t, scrutinee, arms, pos)
-          None
-        }
-        SkHandle(body, handlers) => {
-          lin_handle_in(j, &mut c, body, handlers, pos)
-          None
-        }
-        SkBudget(steps_memory, steps, body) => {
-          lin_drop_in(j, &mut c, steps, PosDrop)
-          lin_budget_lent(&mut c, body)
-          lin_frame_budgets_add(&mut c)
-          lin_drop_in(j, &mut c, body, pos)
-          lin_frame_budgets_sub(&mut c)
-          None
-        }
-        SkTagged(tag, term) => {
-          lin_drop_in(j, &mut c, term, pos)
-          None
-        }
-        _ => None
-      }
-    }
-  }
-
-  pub fn lin_value_closure_in(
-    k: Nat,
-    &mut c: Lin,
-    t: SurfaceTerm,
-    pos: LinPos
-  ): Option(Pair(List(Text), Bool)) {
-    ⊢ Option(Pair(List(Text), Bool)) from match k {
-      Zero => None
-      Succ(j) => ⊢ Option(Pair(List(Text), Bool)) from match lin_closure_in(j, &mut c, t) {
-        None => None
-        Some(nm) => if pos_is_let(pos) {
-          Some(nm)
-        } else {
-          lin_error(
-            &mut c,
-            cat3("this closure borrows ", text_join(nm.fst, ", "), " and cannot be stored"),
-            span_of(t)
-          )
-          None
-        }
-      }
-    }
-  }
-
-  pub fn lin_perform_args_in(k: Nat, &mut c: Lin, args: List(SurfaceTerm)): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match args {
-        Nil => #()
-        Cons(a, rest) => {
-          if lin_is_borrow(c, a) {
-            lin_error(&mut c, "a borrow cannot be an effect argument", span_of(a))
-          } else {
-            lin_drop_in(j, &mut c, a, PosMove)
-          }
-          lin_perform_args_in(j, &mut c, rest)
-        }
-      }
-    }
-  }
-
-  pub fn lin_record_fields_in(k: Nat, &mut c: Lin, fs: List(SurfaceField)): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match fs {
-        Nil => #()
-        Cons(f, rest) => {
-          lin_drop_in(j, &mut c, f.value, PosMove)
-          lin_record_fields_in(j, &mut c, rest)
-        }
-      }
-    }
-  }
-
-  // `base.name`: `info.more`, `info.unbounded` use `info`; a place is checked
-  // as one; anything else is walked.
-  pub fn lin_field_in(k: Nat, &mut c: Lin, t: SurfaceTerm, base: SurfaceTerm, pos: LinPos): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => if lin_base_is_info(c, base) {
-        lin_drop_in(j, &mut c, base, PosMove)
-      } else {
-        ⊢ Unit from match lin_place(t) {
-          Some(p) => lin_field_place(&mut c, t, p, lin_class_of(c, lin_term_type(c, t)).fst, pos)
-          None => lin_drop_in(j, &mut c, base, PosMove)
-        }
-      }
-    }
-  }
-
-  // A call. When `collect` is set (a `let &x = f(…)`), the roots of what the
-  // call borrows are added to `lent`.
-  pub fn lin_app_in(
-    k: Nat,
-    &mut c: Lin,
-    t: SurfaceTerm,
-    function: SurfaceTerm,
-    arguments: List(SurfaceTerm),
-    collect: Bool
-  ): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => {
-        let borrows: List(Option(Bool)) := lin_call_borrows(c, function, arguments)
-        let held: Nat := c.count
-        let callee: Option(LinClass) := lin_moved_callee_class(c, function)
-        lin_callee_in(j, &mut c, function)
-        lin_hold_callee(&mut c, function, callee)
-        let accesses: List(Access) := lin_app_args_in(j, &mut c, arguments, borrows, Nil, collect)
-        lin_truncate(&mut c, held)
-        lin_call_event(&mut c, t)
-      }
-    }
-  }
-
-  // The callee: calling an affine function uses it; a closure written in
-  // place may borrow.
-  pub fn lin_callee_in(k: Nat, &mut c: Lin, function: SurfaceTerm): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match lin_local_callee(c, function) {
-        Some(i) => lin_use_callee(&mut c, i, span_of(function))
-        None => ⊢ Unit from match function.kind {
-          SkVar(name) => #()
-          SkLam(ps, body) => lin_closure_drop_in(j, &mut c, function)
-          SkBorrowLam(bs, lam) => lin_closure_drop_in(j, &mut c, function)
-          _ => lin_drop_in(j, &mut c, function, PosMove)
-        }
-      }
-    }
-  }
-
-  pub fn lin_closure_drop_in(k: Nat, &mut c: Lin, t: SurfaceTerm): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match lin_closure_in(j, &mut c, t) {
-        Some(nm) => #()
-        None => #()
-      }
-    }
-  }
-
-  pub fn lin_app_args_in(
-    k: Nat,
-    &mut c: Lin,
-    arguments: List(SurfaceTerm),
-    borrows: List(Option(Bool)),
-    accesses: List(Access),
-    collect: Bool
-  ): List(Access) {
-    ⊢ List(Access) from match k {
-      Zero => accesses
-      Succ(j) => ⊢ List(Access) from match arguments {
-        Nil => accesses
-        Cons(a, rest) => ⊢ List(Access) from match borrow_head(borrows) {
-          Some(m) => {
-            let acc: List(Access) := lin_lend_in(j, &mut c, a, accesses, collect)
-            lin_app_args_in(j, &mut c, rest, List::tail(borrows), acc, collect)
-          }
-          None => if lin_is_borrow(c, a) && not(lin_is_var(a)) {
-            lin_error(&mut c, "a borrow can only be lent to a borrowed parameter", span_of(a))
-            lin_app_args_in(j, &mut c, rest, List::tail(borrows), accesses, collect)
-          } else {
-            let acc: List(Access) := lin_move_access(&mut c, accesses, a)
-            lin_drop_in(j, &mut c, a, PosMove)
-            lin_hold_arg(&mut c, a)
-            lin_app_args_in(j, &mut c, rest, List::tail(borrows), acc, collect)
-          }
-        }
-      }
-    }
-  }
-
-  // An argument for a borrowed parameter: `&p`, `&mut p`, a borrowed name, a
-  // closure written in place, or a temporary.
-  pub fn lin_lend_in(
-    k: Nat,
-    &mut c: Lin,
-    a: SurfaceTerm,
-    accesses: List(Access),
-    collect: Bool
-  ): List(Access) {
-    ⊢ List(Access) from match k {
-      Zero => accesses
-      Succ(j) => ⊢ List(Access) from match a.kind {
-        SkBorrow(mutable, term) => lin_lend_place_in(j, &mut c, a, term, mutable, accesses, collect)
-        SkVar(n) => lin_lend_place_in(j, &mut c, a, a, false, accesses, collect)
-        SkLam(ps, body) => {
-          lin_closure_drop_in(j, &mut c, a)
-          accesses
-        }
-        SkBorrowLam(bs, lam) => {
-          lin_closure_drop_in(j, &mut c, a)
-          accesses
-        }
-        _ => {
-          lin_drop_in(j, &mut c, a, PosDrop)
-          accesses
-        }
-      }
-    }
-  }
-
-  pub fn lin_lend_place_in(
-    k: Nat,
-    &mut c: Lin,
-    a: SurfaceTerm,
-    target: SurfaceTerm,
-    mutable0: Bool,
-    accesses: List(Access),
-    collect: Bool
-  ): List(Access) {
-    ⊢ List(Access) from match k {
-      Zero => accesses
-      Succ(j) => ⊢ List(Access) from match lin_place(target) {
-        None => {
-          lin_drop_in(j, &mut c, target, PosDrop)
-          accesses
-        }
-        Some(p) => ⊢ List(Access) from match lin_find(c, p.fst) {
-          None => accesses
-          Some(i) => lin_lend_binding(&mut c, a, p, i, mutable0, accesses, collect)
-        }
-      }
-    }
-  }
-
-  pub fn lin_call_lending_in(k: Nat, &mut c: Lin, value: SurfaceTerm): List(Pair(Nat, Bool)) {
-    ⊢ List(Pair(Nat, Bool)) from match k {
-      Zero => Nil
-      Succ(j) => {
-        let saved: List(Pair(Nat, Bool)) := c.lent
-        set_to(&mut c.lent, Nil)
-        lin_lending_call_in(j, &mut c, value)
-        let lent: List(Pair(Nat, Bool)) := c.lent
-        set_to(&mut c.lent, saved)
-        lent
-      }
-    }
-  }
-
-  pub fn lin_lending_call_in(k: Nat, &mut c: Lin, value: SurfaceTerm): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match value.kind {
-        SkApp(function, arguments) => lin_app_in(j, &mut c, value, function, arguments, true)
-        _ => lin_drop_in(j, &mut c, value, PosMove)
-      }
-    }
-  }
-
-  // A closure: of the bindings it captures, it copies the duplicable ones,
-  // moves the other owned ones, and borrows the other borrowed ones and every
-  // `var` whatever its content (`lin_capture_binding`), which makes it a
-  // closure that borrows. Its body is checked as a function's. Returns what it
-  // borrows, when it does.
-  pub fn lin_closure_in(k: Nat, &mut c: Lin, t: SurfaceTerm): Option(Pair(List(Text), Bool)) {
-    ⊢ Option(Pair(List(Text), Bool)) from match k {
-      Zero => None
-      Succ(j) => ⊢ Option(Pair(List(Text), Bool)) from match t.kind {
-        SkBorrowLam(borrows, l) => lin_closure_lam_in(j, &mut c, l)
-        _ => lin_closure_lam_in(j, &mut c, t)
-      }
-    }
-  }
-
-  pub fn lin_closure_lam_in(k: Nat, &mut c: Lin, lam: SurfaceTerm): Option(Pair(List(Text), Bool)) {
-    ⊢ Option(Pair(List(Text), Bool)) from match k {
-      Zero => None
-      Succ(j) => ⊢ Option(Pair(List(Text), Bool)) from match lam.kind {
-        SkLam(params, body) => lin_capture_and_check_in(j, &mut c, free_vars(lam), params, body)
-        _ => None
-      }
-    }
-  }
-
-  pub fn lin_closure_fn_in(k: Nat, &mut c: Lin, f: SurfaceFn): Option(Pair(List(Text), Bool)) {
-    ⊢ Option(Pair(List(Text), Bool)) from match k {
-      Zero => None
-      Succ(j) => lin_capture_and_check_in(
-        j,
-        &mut c,
-        text_without(free_vars(surface_term_mk(SkLam(f.params, f.body), f.start, f.end)), f.name),
-        f.params,
-        f.body
-      )
-    }
-  }
-
-  pub fn lin_capture_and_check_in(
-    k: Nat,
-    &mut c: Lin,
-    free: List(Text),
-    params: List(Text),
-    body: SurfaceTerm
-  ): Option(Pair(List(Text), Bool)) {
-    ⊢ Option(Pair(List(Text), Bool)) from match k {
-      Zero => None
-      Succ(j) => {
-        let cap: Capture := lin_capture_scan(free, &mut c, body, CaptureMk(Nil, false, Nil))
-        // The body, as a function's: what it captured is its own.
-        let mark: Nat := c.count
-        let frame: Frame := FrameMk(
-          mark,
-          Nil,
-          0,
-          0,
-          lin_frame(c).bounded,
-          lin_frame(c).direct_bounded,
-          false
-        )
-        let saved: LinSaved := lin_enter_body(&mut c, frame)
-        lin_push_captured(cap.captured, &mut c)
-        lin_push_params(params, &mut c, body.start)
-        lin_drop_in(j, &mut c, body, PosResult)
-        lin_leave_body(&mut c, saved, mark, span_of(body))
-        capture_result(cap)
-      }
-    }
-  }
-
-  pub fn lin_function_in(k: Nat, &mut c: Lin, f: SurfaceFn): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => {
-        let mark: Nat := c.count
-        let frame: Frame := FrameMk(
-          mark,
-          Nil,
-          0,
-          0,
-          lin_bounded(f.generics, f.bounds),
-          rows_direct_generics(f.generics, f.bounds),
-          fn_returns_borrow(f)
-        )
-        let saved: LinSaved := lin_enter_body(&mut c, frame)
-        lin_push_params(f.params, &mut c, f.body.start)
-        lin_drop_in(j, &mut c, f.body, PosResult)
-        lin_leave_body(&mut c, saved, mark, span_of(f.body))
-      }
-    }
-  }
-
-  // The statements of a block, in a scope of their own.
-  pub fn lin_block_in(k: Nat, &mut c: Lin, stmts: List(SurfaceStmt), root: Bool): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => {
-        let mark: Nat := c.count
-        lin_block_stmts_in(j, &mut c, stmts, root)
-        lin_pop_to(&mut c, mark, last_stmt_span(stmts))
-      }
-    }
-  }
-
-  pub fn lin_block_stmts_in(k: Nat, &mut c: Lin, ss: List(SurfaceStmt), root: Bool): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match ss {
-        Nil => #()
-        Cons(s, rest) => if not(c.dead) {
-          lin_stmt_in(j, &mut c, s, root, rest_is_nil(rest))
-          lin_block_stmts_in(j, &mut c, rest, root)
-        }
-      }
-    }
-  }
-
-  pub fn lin_stmt_in(k: Nat, &mut c: Lin, s: SurfaceStmt, root: Bool, last: Bool): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match s {
-        StLet(name, ty, value, borrow, bm) => if borrow {
-          let lent: List(Pair(Nat, Bool)) := lin_call_lending_in(j, &mut c, value)
-          lin_let_borrows(&mut c, name, value, lent)
-        } else {
-          let borrows: Option(Pair(List(Text), Bool)) := lin_value_in(j, &mut c, value, PosLet)
-          lin_let_value(&mut c, name, value, borrows)
-        }
-        StVar(name, ty, value, vb) => {
-          lin_drop_in(j, &mut c, value, PosMove)
-          lin_push_unit(&mut c, name, value.start, true)
-        }
-        StAssign(name, name_place, value) => {
-          lin_drop_in(j, &mut c, value, PosMove)
-          lin_assign(&mut c, name, value)
-        }
-        StFn(f) => if not(root) {
-          let borrows: Option(Pair(List(Text), Bool)) := lin_closure_fn_in(j, &mut c, f)
-          lin_fn_borrows(&mut c, f, borrows)
-        }
-        StWhile(condition, body) => {
-          lin_event(&mut c, rowset_one("Div"), span_of(condition))
-          lin_frame_loops_add(&mut c)
-          lin_drop_in(j, &mut c, condition, PosDrop)
-          let before: Option(List(LinState)) := lin_snapshot(c)
-          lin_drop_in(j, &mut c, body, PosDrop)
-          lin_frame_loops_sub(&mut c)
-          let after: Option(List(LinState)) := lin_snapshot(c)
-          lin_merge(&mut c, Cons(before, Cons(after, Nil)), span_of(condition))
-        }
-        StReturn(e) => {
-          lin_opt_drop_in(j, &mut c, e, PosResult)
-          lin_leave_function(&mut c, opt_span(e))
-        }
-        StExpr(e) => lin_drop_in(j, &mut c, e, pos_last(last))
-        _ => #()
-      }
-    }
-  }
-
-  pub fn lin_match_expr_in(
-    k: Nat,
-    &mut c: Lin,
-    t: SurfaceTerm,
-    scrutinee: SurfaceTerm,
-    arms: List(SurfaceArm),
-    pos: LinPos
-  ): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => {
-        let lent: List(Pair(Nat, Bool)) := lin_scrutinee_in(j, &mut c, scrutinee)
-        let start: Option(List(LinState)) := lin_snapshot(c)
-        let ty: Option(Ty) := lin_term_type(c, scrutinee)
-        let paths: List(
-          Option(List(LinState))
-        ) := lin_match_arms_in(j, &mut c, arms, start, ty, pos, lent)
-        lin_merge(&mut c, paths, span_of(t))
-      }
-    }
-  }
-
-  // `match &v`, or a borrowed name: the arms' names borrow.
-  pub fn lin_scrutinee_in(k: Nat, &mut c: Lin, scrutinee: SurfaceTerm): List(Pair(Nat, Bool)) {
-    ⊢ List(Pair(Nat, Bool)) from match k {
-      Zero => Nil
-      Succ(j) => ⊢ List(Pair(Nat, Bool)) from match lin_borrowed_place(c, scrutinee) {
-        Some(i) => {
-          lin_read(&mut c, i, span_of(scrutinee))
-          Nil
-        }
-        None => ⊢ List(Pair(Nat, Bool)) from match scrutinee.kind {
-          SkBorrow(m, term) => {
-            ⊢ Unit from match lin_place_found(c, term) {
-              Some(i) => lin_read(&mut c, i, span_of(scrutinee))
-              None => lin_drop_in(j, &mut c, term, PosDrop)
-            }
-            Nil
-          }
-          SkApp(f, args) => if lin_is_view_call(c, scrutinee) {
-            lin_call_lending_in(j, &mut c, scrutinee)
-          } else {
-            lin_drop_in(j, &mut c, scrutinee, PosMove)
-            Nil
-          }
-          _ => {
-            lin_drop_in(j, &mut c, scrutinee, PosMove)
-            Nil
-          }
-        }
-      }
-    }
-  }
-
-  pub fn lin_match_arms_in(
-    k: Nat,
-    &mut c: Lin,
-    arms: List(SurfaceArm),
-    start: Option(List(LinState)),
-    ty: Option(Ty),
-    pos: LinPos,
-    lent: List(Pair(Nat, Bool))
-  ): List(Option(List(LinState))) {
-    ⊢ List(Option(List(LinState))) from match k {
-      Zero => Nil
-      Succ(j) => ⊢ List(Option(List(LinState))) from match arms {
-        Nil => Nil
-        Cons(arm, rest) => {
-          lin_restore(&mut c, start)
-          let mark: Nat := c.count
-          lin_dropped(&mut c, arm.pattern, ty, span_of(arm.body))
-          lin_push_arm_names(pattern_names_ordered(arm.pattern), &mut c, arm.body.start, lent)
-          lin_opt_drop_in(j, &mut c, arm.guard, PosDrop)
-          lin_drop_in(j, &mut c, arm.body, pos)
-          lin_pop_to(&mut c, mark, span_of(arm.body))
-          let snap: Option(List(LinState)) := lin_snapshot(c)
-          let tl: List(
-            Option(List(LinState))
-          ) := lin_match_arms_in(j, &mut c, rest, start, ty, pos, lent)
-          Cons(snap, tl)
-        }
-      }
-    }
-  }
-
-  pub fn lin_handle_in(
-    k: Nat,
-    &mut c: Lin,
-    body: SurfaceTerm,
-    handlers: List(SurfaceHandler),
-    pos: LinPos
-  ): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => {
-        let start: Nat := c.count
-        // The bindings from outside that the body uses (not only borrows) live
-        // across it too: a continuation captures the rest of the body, uses of
-        // them included.
-        let body_uses: List(Nat) := indexes_below(lin_find_each(used_vars(body), c, Nil), start)
-        let scan: HandleScan := lin_handle_scan(
-          handlers,
-          c,
-          HandleScanMk(Ordmap::empty(), body_uses)
-        )
-        // A continuation runs the rest of the body and then the `return` arm:
-        // a borrow from outside that either takes, or a `var` in them, pins
-        // the continuations (`lin_pin`).
-        lin_pin(&mut c, body, handlers)
-        let before: Option(List(LinState)) := lin_snapshot(c)
-        let handles: List(
-          HandleCtx
-        ) := Cons(HandleCtxMk(start, scan.answers, scan.return_uses), lin_frame(c).handles)
-        lin_frame_handles(&mut c, handles)
-        // A direct arm borrows what it uses from outside, for as long as the
-        // handle runs.
-        let outer_len: Nat := c.count
-        lin_lend_to_direct_arms(handlers, &mut c)
-        lin_drop_in(j, &mut c, body, PosMove)
-        lin_pop_to(&mut c, outer_len, span_of(body))
-        let outer: List(HandleCtx) := List::tail(lin_frame(c).handles)
-        lin_frame_handles(&mut c, outer)
-        // The `return` arm runs after the body, outside the handle.
-        lin_return_arms_in(j, &mut c, handlers, pos)
-        let after: Option(List(LinState)) := lin_snapshot(c)
-        // The operation arms run outside the handle, any number of times: they
-        // may capture only duplicable bindings.
-        lin_operation_arms_in(j, &mut c, handlers, before, start, pos)
-        lin_restore(&mut c, after)
-      }
-    }
-  }
-
-  pub fn lin_return_arms_in(k: Nat, &mut c: Lin, hs: List(SurfaceHandler), pos: LinPos): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match hs {
-        Nil => #()
-        Cons(h, rest) => {
-          lin_return_arm_in(j, &mut c, h, pos)
-          lin_return_arms_in(j, &mut c, rest, pos)
-        }
-      }
-    }
-  }
-
-  pub fn lin_return_arm_in(k: Nat, &mut c: Lin, h: SurfaceHandler, pos: LinPos): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match h {
-        HdReturn(pattern, body) => {
-          let mark: Nat := c.count
-          lin_push_names(pattern_names_ordered(pattern), &mut c, body.start)
-          lin_drop_in(j, &mut c, body, pos)
-          lin_pop_to(&mut c, mark, span_of(body))
-        }
-        HdOperation(eff, hfa, hty, patterns, cont, guard, body) => #()
-      }
-    }
-  }
-
-  pub fn lin_operation_arms_in(
-    k: Nat,
-    &mut c: Lin,
-    hs: List(SurfaceHandler),
-    before: Option(List(LinState)),
-    start: Nat,
-    pos: LinPos
-  ): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match hs {
-        Nil => #()
-        Cons(h, rest) => {
-          lin_operation_arm_in(j, &mut c, h, before, start, pos)
-          lin_operation_arms_in(j, &mut c, rest, before, start, pos)
-        }
-      }
-    }
-  }
-
-  pub fn lin_operation_arm_in(
-    k: Nat,
-    &mut c: Lin,
-    h: SurfaceHandler,
-    before: Option(List(LinState)),
-    start: Nat,
-    pos: LinPos
-  ): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match h {
-        HdReturn(pattern, body) => #()
-        HdOperation(eff, hfa, hty, patterns, cont, guard, body) => {
-          lin_restore(&mut c, before)
-          let outer_floor: Option(Nat) := c.arm_floor
-          lin_enter_arm(&mut c, eff, start)
-          let mark: Nat := c.count
-          lin_push_names(
-            List::append(patterns_names_ordered(patterns), cont_names(cont)),
-            &mut c,
-            body.start
-          )
-          lin_opt_drop_in(j, &mut c, guard, PosDrop)
-          lin_drop_in(j, &mut c, body, pos)
-          lin_pop_to(&mut c, mark, span_of(body))
-          set_to(&mut c.arm_floor, outer_floor)
-          set_to(&mut c.arm_direct, None)
-        }
-      }
-    }
-  }
-
-  pub fn lin_check_fns_in(k: Nat, &mut c: Lin, ss: List(SurfaceStmt)): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match ss {
-        Nil => #()
-        Cons(s, rest) => {
-          lin_check_fn_in(j, &mut c, s)
-          lin_check_fns_in(j, &mut c, rest)
-        }
-      }
-    }
-  }
-
-  pub fn lin_check_fn_in(k: Nat, &mut c: Lin, s: SurfaceStmt): Unit {
-    ⊢ Unit from match k {
-      Zero => #()
-      Succ(j) => ⊢ Unit from match s {
-        StFn(f) => lin_function_in(j, &mut c, f)
-        _ => #()
-      }
-    }
-  }
-}
-
-pub fn lin_check_all(&mut c: Lin, program: List(SurfaceStmt)): List(LinError) {
-  lin_check_fns_in(c.steps, &mut c, program)
-  lin_push_frame(&mut c, frame_default())
-  lin_block_in(c.steps, &mut c, program, true)
-  lin_pop_frame(&mut c)
-  List::reverse(c.errors)
 }
 
 // The use check of a program whose types check.
@@ -1474,13 +89,18 @@ pub fn lin_check(types: TypeReport, rows: RowReport, program: List(SurfaceStmt))
 
 // The use check, then the cycle check when it passes.
 pub fn lin_and_cycles(
+  pre: RowsPrelude,
   types: TypeReport,
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt)
 ): List(LinError) {
-  let rows := rows_check(prelude, program)
+  let ops := lin_ops_of(types, subterms_stmts(program, Nil), Ordmap::empty())
+  let rows := rows_check_with(pre, ops, prelude, program)
   ⊢ List(LinError) from match lin_check(types, rows, program) {
-    Nil => cycle_check(types, rows, prelude, program)
+    // Which calls are settled is read from the rows the analysis gives: a
+    // function of the prelude that the verifier does not cover leaves them as
+    // they are (`settled_calls` of the Rust check reads the same).
+    Nil => cycle_check(types, rows_check_env(rows_env_with_ops(rows_env(prelude, program), ops), program), prelude, program)
     Cons(e, rest) => Cons(e, rest)
   }
 }
@@ -1491,16 +111,212 @@ pub fn lin_run(
   program: List(SurfaceStmt),
   module_errors: List(TypeError)
 ): Option(Text) {
-  lin_run_report(types_check(prelude, program, module_errors), prelude, program)
+  lin_run_report(rows_prelude(prelude), types_check(prelude, program, module_errors), prelude, program)
 }
 
 pub fn lin_run_report(
+  pre: RowsPrelude,
   types: TypeReport,
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt)
 ): Option(Text) {
-  ⊢ Option(Text) from match types.errors {
-    Cons(e, rest) => None
-    Nil => Some(Text::concat_all(lin_dump_errors(lin_and_cycles(types, prelude, program))))
+  match types.errors {
+    Cons(^e, ^rest) => None
+    Nil => Some(Text::concat_all(lin_dump_errors(lin_and_cycles(pre, types, prelude, program))))
+  }
+}
+
+// The functions declared with no `where`, by name.
+pub fn lin_parametric_of(
+  stmts: List(SurfaceStmt),
+  acc: Ordmap(Text, LinParametric)
+): Ordmap(Text, LinParametric) {
+  match stmts {
+    Nil => acc
+    Cons(st, rest) => lin_parametric_of(rest, ⊢ Ordmap(Text, LinParametric) from match st {
+      StFn(f) => lin_parametric_fn(f, acc)
+      StExtern(fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => lin_parametric_fns(fns, acc)
+      _ => acc
+    })
+  }
+}
+
+pub fn lin_parametric_fns(
+  fns: List(SurfaceFn),
+  acc: Ordmap(Text, LinParametric)
+): Ordmap(Text, LinParametric) {
+  match fns {
+    Nil => acc
+    Cons(f, rest) => lin_parametric_fns(rest, lin_parametric_fn(f, acc))
+  }
+}
+
+pub fn lin_parametric_fn(f: SurfaceFn, acc: Ordmap(Text, LinParametric)): Ordmap(Text, LinParametric) {
+  match f.wheres {
+    Nil => Ordmap::insert(
+      acc,
+      f.name,
+      LinParametric { generics: f.generics, effects: f.effects, r#borrows: f.r#borrows, types: f.param_types },
+      Ordmap::compare_text
+    )
+    Cons(^w, ^more) => acc
+  }
+}
+
+// For each function, whether each parameter is a borrow of one of its type
+// parameters (`x: &A`).
+pub fn lin_generic_borrows_of(
+  stmts: List(SurfaceStmt),
+  acc: Ordmap(Text, List(Bool))
+): Ordmap(Text, List(Bool)) {
+  match stmts {
+    Nil => acc
+    Cons(st, rest) => lin_generic_borrows_of(rest, ⊢ Ordmap(Text, List(Bool)) from match st {
+      StFn(f) => lin_generic_borrows_fn(f, acc)
+      StExtern(fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => lin_generic_borrows_fns(fns, acc)
+      _ => acc
+    })
+  }
+}
+
+pub fn lin_generic_borrows_fns(
+  fns: List(SurfaceFn),
+  acc: Ordmap(Text, List(Bool))
+): Ordmap(Text, List(Bool)) {
+  match fns {
+    Nil => acc
+    Cons(f, rest) => lin_generic_borrows_fns(rest, lin_generic_borrows_fn(f, acc))
+  }
+}
+
+pub fn lin_generic_borrows_fn(f: SurfaceFn, acc: Ordmap(Text, List(Bool))): Ordmap(Text, List(Bool)) {
+  match f.generics {
+    Nil => acc
+    Cons(^g, ^more) => Ordmap::insert(
+      acc,
+      f.name,
+      generic_borrow_flags(f.r#borrows, f.param_types, f.generics),
+      Ordmap::compare_text
+    )
+  }
+}
+
+pub fn generic_borrow_flags(
+  r#borrows: List(Option(Bool)),
+  types: List(Option(SurfaceTerm)),
+  generics: List(Text)
+): List(Bool) {
+  match types {
+    Nil => Nil
+    Cons(t, rest) => Cons(
+      generic_borrow_flag(borrow_head(r#borrows), t, generics),
+      generic_borrow_flags(List::tail(r#borrows), rest, generics)
+    )
+  }
+}
+
+pub fn generic_borrow_flag(r#borrow: Option(Bool), t: Option(SurfaceTerm), generics: List(Text)): Bool {
+  match t {
+    None => false
+    Some(ty) => ⊢ Bool from match ty.kind {
+      SkBorrow(^m, ^m_orig, inner) => ⊢ Bool from match inner.kind {
+        SkVar(n) => text_list_has(generics, surface_name_text(n))
+        _ => false
+      }
+      SkVar(n) => ⊢ Bool from match r#borrow {
+        Some(^m) => text_list_has(generics, surface_name_text(n))
+        None => false
+      }
+      _ => false
+    }
+  }
+}
+
+// `borrows(…)`: for each function that writes it, whether its result may
+// borrow each parameter (`borrows(p.a)` names `p`).
+pub fn lin_lends_of(stmts: List(SurfaceStmt), acc: Ordmap(Text, List(Option(List(List(Text)))))): Ordmap(Text, List(Option(List(List(Text))))) {
+  match stmts {
+    Nil => acc
+    Cons(st, rest) => lin_lends_of(rest, ⊢ Ordmap(Text, List(Option(List(List(Text))))) from match st {
+      StFn(f) => lin_lends_fn(f, acc)
+      StExtern(fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => lin_lends_fns(fns, acc)
+      _ => acc
+    })
+  }
+}
+
+pub fn lin_lends_fns(fns: List(SurfaceFn), acc: Ordmap(Text, List(Option(List(List(Text)))))): Ordmap(Text, List(Option(List(List(Text))))) {
+  match fns {
+    Nil => acc
+    Cons(f, rest) => lin_lends_fns(rest, lin_lends_fn(f, acc))
+  }
+}
+
+pub fn lin_lends_fn(f: SurfaceFn, acc: Ordmap(Text, List(Option(List(List(Text)))))): Ordmap(Text, List(Option(List(List(Text))))) {
+  match f.lends {
+    Some(ls) => Ordmap::insert(acc, f.name, lends_paths(f.params, ls), Ordmap::compare_text)
+    None => acc
+  }
+}
+
+pub fn lends_paths(params: List(Text), ls: List(Text)): List(Option(List(List(Text)))) {
+  match params {
+    Nil => Nil
+    Cons(p, rest) => Cons(
+      ⊢ Option(List(List(Text))) from match lends_param_paths(ls, p) {
+        Nil => None
+        Cons(first, more) => Some(Cons(first, more))
+      },
+      lends_paths(rest, ls)
+    )
+  }
+}
+
+// The fields after `p` of each entry of `borrows(…)` rooted at `p`.
+pub fn lends_param_paths(ls: List(Text), p: Text): List(List(Text)) {
+  match ls {
+    Nil => Nil
+    Cons(l, rest) => ⊢ List(List(Text)) from match text_split(l, ".") {
+      Cons(r, fields) => if r == p {
+        Cons(fields, lends_param_paths(rest, p))
+      } else {
+        lends_param_paths(rest, p)
+      }
+      Nil => lends_param_paths(rest, p)
+    }
+  }
+}
+
+pub fn lends_root(l: Text): Text {
+  match text_split(l, ".") {
+    Cons(r, ^rest) => r
+    Nil => l
+  }
+}
+
+// `borrows(…)`: for each function that writes it, what it names (an operation
+// of the row among them).
+pub fn lin_lends_named(stmts: List(SurfaceStmt), acc: Ordmap(Text, List(Text))): Ordmap(Text, List(Text)) {
+  match stmts {
+    Nil => acc
+    Cons(st, rest) => lin_lends_named(rest, ⊢ Ordmap(Text, List(Text)) from match st {
+      StFn(f) => lin_lends_named_fn(f, acc)
+      StExtern(fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => lin_lends_named_fns(fns, acc)
+      _ => acc
+    })
+  }
+}
+
+pub fn lin_lends_named_fns(fns: List(SurfaceFn), acc: Ordmap(Text, List(Text))): Ordmap(Text, List(Text)) {
+  match fns {
+    Nil => acc
+    Cons(f, rest) => lin_lends_named_fns(rest, lin_lends_named_fn(f, acc))
+  }
+}
+
+pub fn lin_lends_named_fn(f: SurfaceFn, acc: Ordmap(Text, List(Text))): Ordmap(Text, List(Text)) {
+  match f.lends {
+    Some(ls) => Ordmap::insert(acc, f.name, ls, Ordmap::compare_text)
+    None => acc
   }
 }

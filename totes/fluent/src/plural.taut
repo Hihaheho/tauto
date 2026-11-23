@@ -1,5 +1,5 @@
 // Contains the plural rules of Unicode CLDR (Unicode License v3); see NOTICE.
-import std::Base
+import std::base
 
 // CLDR plural categories of whole numbers, for the languages listed in `plural`. A language not
 // listed has the rules of CLDR's root locale: every number is `other`.
@@ -14,7 +14,7 @@ pub(open) inductive Category: Type {
 }
 
 pub fn category_name(c: Category): List(Nat) {
-  ⊢ List(Nat) from match c {
+  match c {
     CZero => Cons(122, Cons(101, Cons(114, Cons(111, Nil))))
     COne => Cons(111, Cons(110, Cons(101, Nil)))
     CTwo => Cons(116, Cons(119, Cons(111, Nil)))
@@ -63,14 +63,14 @@ pub fn ends_in_one(n: Nat): Bool {
 }
 
 pub fn one_or_other(one: Bool): Category {
-  ⊢ Category from match one {
+  match one {
     true => COne
     false => COther
   }
 }
 
 pub fn slavic(one: Bool, few: Bool): Category {
-  ⊢ Category from match one {
+  match one {
     true => COne
     false => ⊢ Category from match few {
       true => CFew
@@ -80,7 +80,7 @@ pub fn slavic(one: Bool, few: Bool): Category {
 }
 
 pub fn is_other(c: Category): Bool {
-  ⊢ Bool from match c {
+  match c {
     CZero => false
     COne => false
     CTwo => false
@@ -91,7 +91,7 @@ pub fn is_other(c: Category): Bool {
 }
 
 pub fn rule_category(r: Rule, n: Nat): Category {
-  ⊢ Category from match r {
+  match r {
     ROther => COther
     ROne => one_or_other(Nat::eq(n, 1))
     RZeroOne => ⊢ Category from match Nat::le(n, 1) {
@@ -137,7 +137,7 @@ pub fn rule_category(r: Rule, n: Nat): Category {
 
 // The language of a locale: the letters before `-` or `_`, in lower case.
 pub fn language(s: List(Nat)): List(Nat) {
-  ⊢ List(Nat) from match s {
+  match s {
     Nil => Nil
     Cons(c, t) => ⊢ List(Nat) from match Bool::and(Nat::le(65, c), Nat::le(c, 90)) {
       true => Cons(Nat::add(c, 32), language(t))
@@ -154,12 +154,12 @@ pub fn two(a: Nat, b: Nat): List(Nat) {
 }
 
 pub fn lang_is(l: List(Nat), a: Nat, b: Nat): Bool {
-  ⊢ Bool from match l {
+  match l {
     Nil => false
     Cons(c, t) => ⊢ Bool from match t {
       Nil => false
       Cons(d, u) => ⊢ Bool from match u {
-        Cons(e, v) => false
+        Cons(^e, ^v) => false
         Nil => Bool::and(Nat::eq(c, a), Nat::eq(d, b))
       }
     }
@@ -167,13 +167,13 @@ pub fn lang_is(l: List(Nat), a: Nat, b: Nat): Bool {
 }
 
 pub fn lang_in(l: List(Nat), codes: List(List(Nat))): Bool {
-  ⊢ Bool from match codes {
+  match codes {
     Nil => false
     Cons(code, rest) => ⊢ Bool from match code {
       Nil => lang_in(l, rest)
       Cons(a, t) => ⊢ Bool from match t {
         Nil => lang_in(l, rest)
-        Cons(b, u) => Bool::or(lang_is(l, a, b), lang_in(l, rest))
+        Cons(b, ^u) => Bool::or(lang_is(l, a, b), lang_in(l, rest))
       }
     }
   }
@@ -266,7 +266,7 @@ pub fn czech_langs(): List(List(Nat)) {
 }
 
 pub fn rule_of_language(l: List(Nat)): Rule {
-  ⊢ Rule from match lang_in(l, one_langs()) {
+  match lang_in(l, one_langs()) {
     true => ROne
     false => ⊢ Rule from match lang_in(l, zero_one_langs()) {
       true => RZeroOne

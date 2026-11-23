@@ -151,6 +151,7 @@ mod tests {
 
     #[test]
     fn numbers_compare_as_numbers() {
+        tauto_parse::install();
         assert!(Level::konst(1).le(&Level::konst(3)));
         assert!(!Level::konst(3).le(&Level::konst(1)));
         assert_eq!(Level::konst(2).succ().unwrap(), Level::konst(3));
@@ -158,6 +159,7 @@ mod tests {
 
     #[test]
     fn a_variable_is_below_what_it_is_raised_to() {
+        tauto_parse::install();
         assert!(u().le(&u().succ().unwrap()));
         assert!(!u().succ().unwrap().le(&u()));
         assert!(u().le(&u().join(&v())));
@@ -170,6 +172,7 @@ mod tests {
 
     #[test]
     fn the_normal_form_is_one_value() {
+        tauto_parse::install();
         assert_eq!(u().join(&v()), v().join(&u()));
         assert_eq!(u().join(&u().succ().unwrap()), u().succ().unwrap());
         assert_eq!(
@@ -185,6 +188,7 @@ mod tests {
 
     #[test]
     fn substituting_a_level() {
+        tauto_parse::install();
         let map = BTreeMap::from([(Name::from("u"), v().succ().unwrap())]);
         assert_eq!(
             u().succ().unwrap().subst(&map).unwrap(),
@@ -198,6 +202,7 @@ mod tests {
     }
     #[test]
     fn level_arithmetic_rejects_overflow() {
+        tauto_parse::install();
         let top = Level::konst(u32::MAX);
         assert_eq!(Level::konst(u32::MAX - 1).succ(), Some(top.clone()));
         assert_eq!(top.succ(), None);

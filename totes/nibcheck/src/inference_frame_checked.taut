@@ -1,6 +1,6 @@
 import "inference_frame.taut"
 import "inference_terms_checked.taut"
-import std::Text
+import std::text
 import "checked_frame.taut"
 import "checker.taut"
 import "datas.taut"
@@ -22,6 +22,7 @@ import "inference_terms.taut"
 import "pattern_scope_checked.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -133,7 +134,7 @@ pub theorem inference_successor_ck_returned_in_checked(
   ih: InferenceFrames_checked(j)
 ): Inference_ck_returned_in_checked(Succ(j)) {
   c => e => env => ordered => Eq::subst(
-    (z: Mut1(Pair(Ty, TySpan), Checker)) => CkCheckedFrame(c, z),
+    (z: Mut1(Ty × TySpan, Checker)) => CkCheckedFrame(c, z),
     Eq::sym(inference_unf_ck_returned_in(j, c, e, env)),
     inference_step_ck_returned_in_frame_checked(j, c, e, env, ih, ordered)
   )
@@ -251,7 +252,7 @@ pub theorem inference_successor_ck_clone_of_in_checked(
   )
 }
 pub theorem inference_zero_ck_lambda_in_checked(): Inference_ck_lambda_in_checked(Zero) {
-  c => lam => borrows => env => ordered => AndIntro(
+  c => lam => r#borrows => env => ordered => AndIntro(
     ordered,
     (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
   )
@@ -260,10 +261,10 @@ pub theorem inference_successor_ck_lambda_in_checked(
   j: Nat,
   ih: InferenceFrames_checked(j)
 ): Inference_ck_lambda_in_checked(Succ(j)) {
-  c => lam => borrows => env => ordered => Eq::subst(
+  c => lam => r#borrows => env => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => CkCheckedFrame(c, z),
-    Eq::sym(inference_unf_ck_lambda_in(j, c, lam, borrows, env)),
-    inference_step_ck_lambda_in_frame_checked(j, c, lam, borrows, env, ih, ordered)
+    Eq::sym(inference_unf_ck_lambda_in(j, c, lam, r#borrows, env)),
+    inference_step_ck_lambda_in_frame_checked(j, c, lam, r#borrows, env, ih, ordered)
   )
 }
 pub theorem inference_zero_ck_record_fields_in_checked(): Inference_ck_record_fields_in_checked(
@@ -543,7 +544,7 @@ pub theorem inference_successor_ck_handle_body_in_checked(
   )
 }
 pub theorem inference_frames_checked(k: Nat): InferenceFrames_checked(k) {
-  ⊢ InferenceFrames_checked(k) from match k {
+  match k {
     Zero => AndIntro(
       inference_zero_ck_infer_in_checked(),
       AndIntro(
@@ -932,11 +933,11 @@ pub theorem ck_lambda_in_frame_checked(
   k: Nat,
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local),
   ordered: CkOrdered(c)
-): CkCheckedFrame(c, ck_lambda_in(k, c, lam, borrows, env)) {
-  inference_use_ck_lambda_in_checked(k, c, lam, borrows, env, ordered, inference_frames_checked(k))
+): CkCheckedFrame(c, ck_lambda_in(k, c, lam, r#borrows, env)) {
+  inference_use_ck_lambda_in_checked(k, c, lam, r#borrows, env, ordered, inference_frames_checked(k))
 }
 
 pub theorem ck_record_fields_in_frame_checked(

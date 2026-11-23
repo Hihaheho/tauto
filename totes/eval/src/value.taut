@@ -1,3 +1,4 @@
+import std::array
 import "../../vm/src/cps.taut"
 import "../../vm/src/operations.taut"
 import "../../vm/src/mval.taut"
@@ -20,11 +21,11 @@ pub(open) inductive EBinding: Type {
   EbCell(cell: Nat): EBinding
 }
 
-pub fn e_lookup(env: List(Pair(Nat, EBinding)), id: Nat): Option(EBinding) {
+pub fn e_lookup(env: List(Nat × EBinding), id: Nat): Option(EBinding) {
   match env {
     Nil => None
     Cons(entry, rest) => ⊢ Option(EBinding) from match entry {
-      Pair { fst: key, snd: value } => if Nat::eq(key, id) {
+      #(key, value) => if Nat::eq(key, id) {
         Some(value)
       } else {
         e_lookup(rest, id)
@@ -40,7 +41,7 @@ pub fn e_binding(cx: MCx, b: EBinding): MVal {
   }
 }
 
-pub fn e_deref(ctors: List(MCtor), cx: MCx, deref: Bool, v: MVal): MVal {
+pub fn e_deref(ctors: Array(MCtor), cx: MCx, deref: Bool, v: MVal): MVal {
   match deref {
     false => v
     true => m_get(ctors, cx, v)

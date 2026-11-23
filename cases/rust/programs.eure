@@ -8,20 +8,20 @@ enum Shape { Circle(i64), Rect(i64, i64), Empty }
 struct P { x: i64, y: i64 }
 struct Unit {}
 enum Tree { Leaf, Node(Tree, i64, Tree) }
-fn area(s: Shape): i64 {
+fn area(s: Shape): i64 ! {overflow} {
   match s {
     Circle(r) => 3 * r * r
     Rect(w, h) => w * h
     Empty => 0
   }
 }
-fn sum(t: Tree): i64 {
+fn sum(t: Tree): i64 ! {overflow} {
   match t {
     Leaf => 0
     Node(l, v, r) => sum(l) + v + sum(r)
   }
 }
-fn depth(t: &Tree): i64 {
+fn depth(t: &Tree): i64 ! {overflow} {
   match t {
     Leaf => 0
     Node(l, v, r) => {
@@ -31,82 +31,85 @@ fn depth(t: &Tree): i64 {
     }
   }
 }
-perform show("a", area(Circle(2)))
-perform show("b", area(Rect(3, 4)))
-perform show("c", Empty)
-perform show("p", P { x: 1, y: 2 })
-perform show("u", Unit {})
+show(&area(Circle(2)))
+show(&area(Rect(3, 4)))
+show(&Empty)
+show(&(P { x: 1, y: 2 }))
+show(&(Unit {}))
 let t := Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))
-perform show("t", t)
-perform show("d", depth(&t))
-perform show("s", sum(t))
-perform show("o", Some(3))
-perform show("n", None)
-perform show("r", Ok(1))
-perform show("pair", Pair { fst: 1, snd: "x" })
-perform show("b", true)
-perform show("unit", Tuple())
+show(&t)
+show(&depth(&t))
+show(&sum(t))
+show(&Some(3))
+let none: Option(i64) := None
+show(&none)
+let ok: Result(i64, Text) := Ok(1)
+show(&ok)
+show(&(#(1, "x")))
+show(&true)
+show(&(#()))
 ```
-shows = [
-  "a = 12",
-  "b = 12",
-  "c = Empty",
-  "p = P { x: 1, y: 2 }",
-  "u = Unit {}",
-  "t = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))",
-  "d = 2",
-  "s = 6",
-  "o = Some(3)",
-  "n = None",
-  "r = Ok(1)",
-  "pair = Pair { fst: 1, snd: \"x\" }",
-  "b = true",
-  "unit = ()",
-]
+stdout = ```
+12
+12
+Empty
+P { x: 1, y: 2 }
+main::Unit
+Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))
+2
+6
+Some(3)
+None
+Ok(1)
+#(1, "x")
+true
+()
+```
 
 @ cases.lists-closures-loops
 source = ```nib
-fn map(xs: List(i64), f: (i64) -> i64): List(i64) {
+fn map(xs: List(nat), f: (nat) -> nat): List(nat) {
   match xs {
     Nil => Nil
     Cons(h, t) => Cons(f(h), map(t, f))
   }
 }
-fn len(xs: &List(i64)): i64 {
+fn len(xs: &List(nat)): nat {
   match xs {
     Nil => 0
     Cons(h, t) => 1 + len(t)
   }
 }
-fn adder(n: i64): (i64) -> i64 { (x) => x + n }
+fn adder(n: nat): (nat) -> nat { (x) => x + n }
 let xs := Cons(1, Cons(2, Cons(3, Nil)))
 let ys := map(xs, adder(10))
-perform show("ys", ys)
-perform show("len", len(&ys))
-perform show("xs", xs)
+show(&ys)
+show(&len(&ys))
+show(&xs)
 var total := 0
 var i := 0
 while i < 5 {
   total := total + i
   i := i + 1
 }
-perform show("total", total)
+show(&total)
 let f := adder(1)
-perform show("f", f(f(1)))
+show(&f(f(1)))
 ```
-rust_shows = [
-  "ys = Cons(11, Cons(12, Cons(13, Nil)))",
-  "len = 3",
-  "xs = Cons(1, Cons(2, Cons(3, Nil)))",
-  "total = 10",
-  "f = 3",
-]
+stdout = ```
+[11, 12, 13]
+3
+[1, 2, 3]
+10
+3
+```
 
 @ cases.direct-handlers
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
 effect get(): i64 direct
 effect put(n: i64): Unit direct
-fn counter(): i64 ! {get, put} {
+fn counter(): i64 ! {get, put, overflow} {
   perform put(perform get() + 1)
   perform get()
 }
@@ -114,45 +117,39 @@ let r := handle { counter() } with {
   get(), k => k(41)
   put(n), k => k(#())
 }
-perform show("r", r)
-let s := handle {
-  perform show("inner", 1)
-  2
-} with {
-  ∀ A. show<A>(name, v), k => {
-    perform show("wrapped", name)
-    k(#())
-  }
-}
-perform show("s", s)
+show(&r)
+show(&1)
+let s := 2
+show(&s)
 effect stop(): Never resume 0
 fn guard(n: i64): i64 ! {stop} { if n > 3 { perform stop() } else { n } }
 let t := handle { guard(2) + guard(10) } with {
   stop() => 99
   return v => v + 1000
 }
-perform show("t", t)
+show(&t)
 let u := handle { guard(1) } with {
   stop() => 99
   return v => v + 1000
 }
-perform show("u", u)
+show(&u)
 ```
-shows = [
-  "r = 41",
-  "wrapped = \"inner\"",
-  "s = 2",
-  "t = 99",
-  "u = 1001",
-]
+stdout = ```
+41
+1
+2
+99
+1001
+```
 
 @ cases.generics-and-patterns
+llvm.unimplemented = "generate: the LLVM backend does not write a `var` shared with a closure yet"
 source = ```nib
 fn id<A>(x: A): A { x }
-fn pair<A, B>(a: A, b: B): Pair(A, B) { Pair { fst: a, snd: b } }
-fn apply<A, B>(f: (A) -> B, x: A): B { f(x) }
-fn compose<A, B, C>(f: (A) -> B, g: (B) -> C): (A) -> C { (x) => g(f(x)) }
-fn fold<A, B>(xs: List(A), z: B, f: (B, A) -> B): B {
+fn pair<A, B>(a: A, b: B): A × B { #(a, b) }
+fn apply<A, B>(f: (A) -> B ! {overflow}, x: A): B ! {overflow} { f(x) }
+fn compose<A, B, C>(f: (A) -> B ! {overflow}, g: (B) -> C ! {overflow}): (A) -> C ! {overflow} { (x) => g(f(x)) }
+fn fold<A, B>(xs: List(A), z: B, f: (B, A) -> B ! {overflow}): B ! {overflow} {
   match xs {
     Nil => z
     Cons(h, t) => fold(t, f(z, h), f)
@@ -173,52 +170,53 @@ fn greet(s: Text): i64 {
     other => 0
   }
 }
-perform show("id", id(5))
-perform show("idt", id("t"))
-perform show("pair", pair(1, "a"))
-perform show("apply", apply((x) => x * 2, 21))
+show(&id(5))
+show(&id("t"))
+show(&pair(1, "a"))
+show(&apply((x) => x * 2, 21))
 let h := compose((x) => x + 1, (y) => y * 10)
-perform show("compose", h(4))
-perform show("fold", fold(Cons(1, Cons(2, Cons(3, Nil))), 0, (a, b) => a + b))
-perform show("c0", classify(0))
-perform show("c1", classify(1))
-perform show("c-", classify(0 - 5))
-perform show("c9", classify(9))
-perform show("g1", greet("hi"))
-perform show("g2", greet("bye"))
-perform show("g3", greet("x"))
+show(&h(4))
+show(&fold(Cons(1, Cons(2, Cons(3, Nil))), 0, (a, b) => a + b))
+show(&classify(0))
+show(&classify(1))
+show(&classify(0 - 5))
+show(&classify(9))
+show(&greet("hi"))
+show(&greet("bye"))
+show(&greet("x"))
 var n := 0
 let bump := () => { n := n + 1 }
 bump()
 bump()
-perform show("n", n)
+show(&n)
 ```
-rust_shows = [
-  "id = 5",
-  "idt = \"t\"",
-  "pair = Pair { fst: 1, snd: \"a\" }",
-  "apply = 42",
-  "compose = 50",
-  "fold = 6",
-  "c0 = \"zero\"",
-  "c1 = \"one\"",
-  "c- = \"neg\"",
-  "c9 = \"many\"",
-  "g1 = 1",
-  "g2 = 2",
-  "g3 = 0",
-  "n = 2",
-]
+stdout = ```
+5
+"t"
+#(1, "a")
+42
+50
+6
+"zero"
+"one"
+"neg"
+"many"
+1
+2
+0
+2
+```
 
 @ cases.vec-buf-map
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-fn show_all(&v: Vec(i64)): i64 ! {out_of_bounds, Div} {
+fn show_all(v: &Vec(i64)): i64 ! {out_of_bounds, div, overflow} {
   var i: u64 := 0
   var s := 0
   while i < Vec::len(&v) {
-    let &x := Vec::index(&v, i)
+    let x := Vec::index(&v, i)
     s := s + x
     i := i + 1
   }
@@ -227,50 +225,49 @@ fn show_all(&v: Vec(i64)): i64 ! {out_of_bounds, Div} {
 var items := Vec::new()
 Vec::push(&mut items, 5)
 Vec::push(&mut items, 7)
-perform show("sum", handle { show_all(&items) } with { out_of_bounds() => 0 })
-perform show("items", items)
+show(&(handle { show_all(&items) } with { out_of_bounds() => 0 }))
+show(&items)
 var b := Buf::new()
 Buf::push(&mut b, "ab")
 Buf::push(&mut b, "cd")
 let t := Text::of(b)
-perform show("t", t)
-var m := HashMap::new()
-HashMap::insert(&mut m, "a", 1)
-HashMap::insert(&mut m, "b", 2)
-let r := handle { HashMap::index(&m, "b") } with { missing() => 0 }
-perform show("r", r)
-let miss := handle { HashMap::index(&m, "zz") } with { missing() => 0 - 1 }
-perform show("miss", miss)
-perform show("m", m)
+show(&t)
+var m := IndexedMap::new()
+IndexedMap::insert(&mut m, "a", 1)
+IndexedMap::insert(&mut m, "b", 2)
+let r := match IndexedMap::get(&m, "b") { Some(x) => x, None => 0 }
+show(&r)
+let miss := match IndexedMap::get(&m, "zz") { Some(x) => x, None => 0 - 1 }
+show(&miss)
+show(&m)
 ```
-shows = [
-  "sum = 12",
-  "items = Vec[5, 7]",
-  "t = \"abcd\"",
-  "r = 2",
-  "miss = -1",
-  "m = HashMap{\"a\": 1, \"b\": 2}",
-]
+stdout = ```
+12
+Vec[5, 7]
+"abcd"
+2
+-1
+IndexedMap["a" => 1, "b" => 2]
+```
 
 @ cases.a-struct-may-hold-a-hashmap
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-affine struct Index { map: HashMap(u64, u64) }
-var ix := Index { map: HashMap::new() }
-match HashMap::insert(&mut ix.map, 1, 2) {
-  Some(old) => #()
-  None => #()
+struct(affine) Index { map: IndexedMap(u64, u64) }
+var ix := Index { map: IndexedMap::new() }
+match IndexedMap::insert(&mut ix.map, 1, 2) {
+  #(Some(old), _) => #()
+  #(None, _) => #()
 }
-perform show("found", match HashMap::get(&ix.map, &1) { Some(v) => v, None => 0 })
+show(&(match IndexedMap::get(&ix.map, &1) { Some(v) => v, None => 0 }))
 ```
-shows = [
-  "found = 2",
-]
+stdout = "2\n"
 
 @ cases.linear-and-borrowed-enums
+llvm.unimplemented = "generate: the LLVM backend does not write a `linear` type yet"
 source = ```nib
-linear struct Handle { id: i64 }
+struct(linear) Handle { id: i64 }
 fn open(n: i64): Handle { Handle { id: n } }
 fn close(h: Handle): i64 {
   match h {
@@ -278,71 +275,74 @@ fn close(h: Handle): i64 {
   }
 }
 let h := open(3)
-perform show("closed", close(h))
-affine struct Box2 { v: i64 }
+show(&close(h))
+struct(affine) Box2 { v: i64 }
 fn unbox(b: Box2): i64 { match b { Box2 { v } => v } }
-perform show("u", unbox(Box2 { v: 8 }))
+show(&unbox(Box2 { v: 8 }))
 enum E { A(i64), B(Text) }
 fn f(e: &E): i64 { match e { A(n) => n, B(t) => 0 } }
 let e := A(4)
-perform show("f", f(&e))
-perform show("f2", f(&B("z")))
+show(&f(&e))
+show(&f(&B("z")))
 ```
-shows = [
-  "closed = 3",
-  "u = 8",
-  "f = 4",
-  "f2 = 0",
-]
+stdout = ```
+3
+8
+4
+0
+```
 
 @ cases.fail-raise-catch-and-forwarding
+llvm.unimplemented = "generate: the LLVM backend does not write the standard effect `divzero` yet"
 source = ```nib
-fn safe_div(a: i64, b: i64): Result(i64, Text) {
+fn safe_div(a: i64, b: i64): Result(i64, Text) ! {divzero} {
   if b == 0 { Err("div0") } else { Ok(div(a, b)) }
 }
-fn compute(a: i64, b: i64): i64 ! {fail(Text)} {
+fn compute(a: i64, b: i64): i64 ! {fail(Text), overflow, divzero} {
   raise(safe_div(a, b)) + 1
 }
-let ok := catch(() => compute(10, 2))
-let bad := catch(() => compute(1, 0))
-perform show("ok", ok)
-perform show("bad", bad)
+let ok: Result(i64, Text) := catch(() => compute(10, 2))
+let bad: Result(i64, Text) := catch(() => compute(1, 0))
+show(&ok)
+show(&bad)
 fn first(r: Result(i64, Text)): i64 {
   match r { Ok(v) => v, Err(e) => 0 }
 }
-perform show("first", first(ok))
-let nested := catch(() => {
+show(&first(ok))
+let nested: Result(i64, Text) := catch(() => {
   let a := raise(safe_div(8, 2))
   let b := raise(safe_div(a, 0))
   a + b
 })
-perform show("nested", nested)
+show(&nested)
 effect warn(m: Text): Unit direct
 fn work(): i64 ! {warn} {
   perform warn("one")
   perform warn("two")
   5
 }
-let w := handle { handle { work() } with { warn(m), k => { perform show("inner", m); k(#()) } } } with { warn(m), k => k(#()) }
-perform show("w", w)
-let w2 := handle { handle { work() } with { warn(m), k => { perform warn(m); k(#()) } } } with { warn(m), k => { perform show("outer", m); k(#()) } }
-perform show("w2", w2)
+let w := handle { handle { work() } with { warn(m), k => { show(&m); k(#()) } } } with { warn(m), k => k(#()) }
+show(&w)
+let w2 := handle { handle { work() } with { warn(m), k => { perform warn(m); k(#()) } } } with { warn(m), k => { show(&m); k(#()) } }
+show(&w2)
 ```
-shows = [
-  "ok = Ok(6)",
-  "bad = Err(\"div0\")",
-  "first = 6",
-  "nested = Err(\"div0\")",
-  "inner = \"one\"",
-  "inner = \"two\"",
-  "w = 5",
-  "outer = \"one\"",
-  "outer = \"two\"",
-  "w2 = 5",
-]
+stdout = ```
+Ok(6)
+Err("div0")
+6
+Err("div0")
+"one"
+"two"
+5
+"one"
+"two"
+5
+```
 
 @ cases.a-union-from-a-handler
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
 source = ```nib
+import std::builtin::os { stdout, stdout_flush }
 effect stop(): Never resume 0
 fn f(n: i64): (i64 | Text) ! {stop} {
   if n > 2 { perform stop() } else { n }
@@ -352,40 +352,48 @@ fn g(n: i64): (i64 | Text) {
     stop() => "none"
   }
 }
-perform show("a", g(1))
-perform show("b", g(5))
+fn say(v: i64 | Text): Unit ! {stdout, stdout_flush} {
+  match v {
+    t: Text => show(&t)
+    n: i64 => show(&n)
+  }
+}
+say(g(1))
+say(g(5))
 fn h(x: i64 | Text): Text {
   match x {
     n => "other"
   }
 }
 ```
-shows = [
-  "a = 1",
-  "b = \"none\"",
-]
+stdout = ```
+1
+"none"
+```
 
 @ cases.a-handler-answers-each-ask
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect ask(n: i64): i64
-fn total(): i64 ! {ask} {
+fn total(): i64 ! {ask, overflow} {
   perform ask(1) + perform ask(2) + perform ask(3)
 }
 let r := handle { total() } with {
   ask(n), k => k(n * 10)
   return v => v + 100
 }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 160"]
+stdout = "160\n"
 
 @ cases.a-resuming-arm-passes-a-field-to-a-reading-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 // `count` only reads its list, so the backend passes it by reference; the
 // call in the arm that resumes must pass a reference too.
 source = ```nib
 struct Bag { items: List(i64), n: i64 }
 effect give(b: Bag): i64
-fn count(xs: List(i64)): i64 {
+fn count(xs: List(i64)): i64 ! {overflow} {
   match xs {
     Nil => 0
     Cons(_, t) => 1 + count(t)
@@ -394,15 +402,16 @@ fn count(xs: List(i64)): i64 {
 let r := handle { perform give(Bag { items: Cons(1, Cons(2, Nil)), n: 3 }) } with {
   give(b), k => k(count(b.items) + b.n)
 }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 5"]
+stdout = "5\n"
 
 @ cases.an-arm-wraps-k-and-counts
+llvm.unimplemented = "generate: the LLVM backend does not write a `var` shared with a closure yet"
 source = ```nib
 effect ask(n: i64): i64
 effect log(t: Text): Unit direct
-fn total(): i64 ! {ask, log} {
+fn total(): i64 ! {ask, log, overflow} {
   perform log("start")
   let a := perform ask(1)
   perform log("mid")
@@ -415,18 +424,24 @@ let r := handle { total() } with {
     count := count + 1
     k(n * 10) + 1
   }
-  log(t), k => k(perform show("log", t))
+  log(t), k => k(show(&t))
 }
-perform show("r", r)
-perform show("count", count)
+show(&r)
+show(&count)
 ```
-shows = ["log = \"start\"", "log = \"mid\"", "r = 32", "count = 2"]
+stdout = ```
+"start"
+"mid"
+32
+2
+```
 
 @ cases.a-state-handler-passes-k-in-a-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect get(): i64
 effect put(s: i64): Unit
-fn incr(): i64 ! {get, put} {
+fn incr(): i64 ! {get, put, overflow} {
   let s := perform get()
   perform put(s + 1)
   let t := perform get()
@@ -438,11 +453,12 @@ let run := handle { incr() } with {
   put(s2), k => (s) => k(#())(s2)
   return v => (s) => v
 }
-perform show("state", run(5))
+show(&run(5))
 ```
-shows = ["state = 16"]
+stdout = "16\n"
 
 @ cases.a-resume-zero-effect-through-a-handler
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
 effect ask(n: i64): i64
 effect fail(m: Text): Never resume 0
@@ -457,21 +473,24 @@ let r := handle {
 } with {
   fail(m) => 0 - 1
 }
-perform show("r", r)
+show(&r)
 let r2 := handle { f(1) + f(2) } with {
   ask(n), k => k(n * 10)
   fail(m) => 0 - 1
 }
-perform show("r2", r2)
+show(&r2)
 ```
-shows = ["r = -1", "r2 = 30"]
+stdout = ```
+-1
+30
+```
 
 @ cases.a-borrow-in-a-function-that-suspends
+llvm.unimplemented = "generate: the LLVM backend does not write a `var` shared with a closure yet"
 source = ```nib
-import std::prelude::Affine
 
 effect yield(n: i64): Unit resume <=1
-fn gen(&v: Vec(i64)): Unit ! {yield, Div} {
+fn gen(v: &Vec(i64)): Unit ! {yield, div, overflow} {
   var i := 0
   while i < Vec::len(&v) {
     handle {
@@ -482,7 +501,7 @@ fn gen(&v: Vec(i64)): Unit ! {yield, Div} {
     i := i + 1
   }
 }
-fn sum_all(&v: Vec(i64)): i64 ! {Div} {
+fn sum_all(v: &Vec(i64)): i64 ! {div, overflow} {
   var total := 0
   handle { gen(&v) } with {
     yield(n), k => {
@@ -496,14 +515,15 @@ var v := Vec::new()
 Vec::push(&mut v, 3)
 Vec::push(&mut v, 4)
 Vec::push(&mut v, 5)
-perform show("sum", sum_all(&v))
+show(&sum_all(&v))
 ```
-shows = ["sum = 12"]
+stdout = "12\n"
 
 @ cases.an-arm-that-drops-k
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect stop(n: i64): Never resume <=1
-fn search(n: i64): i64 ! {stop, Div} {
+fn search(n: i64): i64 ! {stop, div, overflow} {
   var i := 0
   while i < n {
     if i * i > 50 { perform stop(i) }
@@ -514,19 +534,22 @@ fn search(n: i64): i64 ! {stop, Div} {
 let r := handle { search(100) } with {
   stop(n), k => n * 1000
 }
-perform show("r", r)
+show(&r)
 let r2 := handle { search(5) } with {
   stop(n), k => n * 1000
 }
-perform show("r2", r2)
+show(&r2)
 ```
-shows = ["r = 8000", "r2 = -1"]
+stdout = ```
+8000
+-1
+```
 
 @ cases.handlers-nest
 source = ```nib
 effect tick(): i64 resume <=1
 fn step(): i64 ! {tick} { perform tick() }
-fn run(): i64 ! {tick} {
+fn run(): i64 ! {tick, overflow} {
   let a := handle { step() + step() } with {
     tick(), k => k(1)
     return v => v * 2
@@ -536,9 +559,9 @@ fn run(): i64 ! {tick} {
 let r := handle { run() } with {
   tick(), k => k(100)
 }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 104"]
+stdout = "104\n"
 
 @ cases.a-text-answer
 source = ```nib
@@ -552,11 +575,13 @@ let m := handle { greet() } with {
   ask(), k => k("bob")
 }
 match m {
-  Hello(n) => perform show("hello", n)
-  Bye => perform show("bye", 0)
+  Hello(n) => show(&n)
+  Bye => show(&0)
 }
 ```
-shows = ["hello = \"bob\""]
+stdout = ```
+"bob"
+```
 
 @ cases.a-generic-function-that-suspends
 source = ```nib
@@ -568,18 +593,22 @@ fn pick<A>(x: A, n: i64): A ! {ask} {
 let r := handle { pick(5, 1) + pick(7, 2) } with {
   ask(n), k => k(n)
 }
-perform show("r", r)
+show(&r)
 let t := handle { pick("hi", 1) } with {
   ask(n), k => k(n)
 }
-perform show("t", t)
+show(&t)
 ```
-shows = ["r = 12", "t = \"hi\""]
+stdout = ```
+12
+"hi"
+```
 
 @ cases.an-affine-value-is-dropped-with-k
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect ask(n: i64): i64
-affine struct Tok {}
+struct(affine) Tok {}
 fn use_tok(t: Tok): Unit { }
 fn work(): i64 ! {ask} {
   let t := Tok {}
@@ -590,23 +619,27 @@ fn work(): i64 ! {ask} {
 let r := handle { work() } with {
   ask(n), k => k(n + 1)
 }
-perform show("r", r)
+show(&r)
 let r2 := handle { work() } with {
   ask(n), k => 77
 }
-perform show("r2", r2)
+show(&r2)
 ```
-shows = ["r = 2", "r2 = 77"]
+stdout = ```
+2
+77
+```
 
 @ cases.a-handler-in-a-function-that-suspends
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect ask(n: i64): i64
-fn work(n: i64): i64 ! {ask} {
+fn work(n: i64): i64 ! {ask, overflow} {
   handle { perform ask(n) * 2 } with {
     ask(m), k => k(m + 1000)
   }
 }
-fn outer(): i64 ! {ask} {
+fn outer(): i64 ! {ask, overflow} {
   let x := work(1)
   let y := perform ask(5)
   x + y
@@ -614,142 +647,162 @@ fn outer(): i64 ! {ask} {
 let r := handle { outer() } with {
   ask(n), k => k(n)
 }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 2007"]
+stdout = "2007\n"
 
 @ cases.resume-1-and-resume-0-handlers
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
-effect ask(n: i64): i64 resume 1
+effect ask(n: nat): nat resume 1
 effect fail(m: Text): Never resume 0
-fn work(): i64 ! {ask, fail} {
+fn work(): nat ! {ask, fail} {
   let a := perform ask(1)
   if a > 5 { perform fail("too big") } else { a }
 }
 let r := handle {
   handle { work() } with {
-    fail(m) => 0 - 1
+    fail(m) => 7
   }
 } with {
   ask(n), k => k(n * 9)
 }
-perform show("r", r)
-fn safe(): i64 {
+show(&r)
+fn safe(): nat {
   handle { work() } with {
     ask(n), k => k(n)
-    fail(m) => 0 - 2
+    fail(m) => 8
   }
 }
-perform show("safe", safe())
+show(&safe())
 ```
-shows = ["r = -1", "safe = 1"]
+stdout = ```
+7
+1
+```
 
 @ cases.a-budget-with-a-value
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-fn spin(): i64 {
+fn spin(): i64 ! {div} {
   while true { }
   0
 }
-let d := handle { budget(steps: 50) { spin() } } with {
+let d := handle { perform budget(50, () => { spin() }) } with {
   exceeded(info), k => k(0 - 1)
 }
-perform show("d", d)
+show(&d)
 ```
-shows = ["d = -1"]
+stdout = "-1\n"
 
 @ cases.more-steps-and-a-show-once
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-fn count(n: i64): i64 {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
 let d := handle {
-  budget(steps: 40) {
-    perform show("start", 0)
+  perform budget(40, () => {
+    show(&0)
     count(100)
-  }
+  })
 } with {
   exceeded(info), k => info.more(40)
 }
-perform show("d", d)
+show(&d)
 ```
-shows = ["start = 0", "d = 100"]
+stdout = ```
+0
+100
+```
 
 @ cases.unbounded-continues
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-fn count(n: i64): i64 {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-let d := handle { budget(steps: 10) { count(1000) } } with {
+let d := handle { perform budget(10, () => { count(1000) }) } with {
   exceeded(info), k => info.unbounded()
 }
-perform show("d", d)
+show(&d)
 ```
-shows = ["d = 1000"]
+stdout = "1000\n"
 
 @ cases.an-arm-counts-the-stops
+llvm.unimplemented = "generate: the LLVM backend does not write a `var` shared with a closure yet"
 source = ```nib
-fn count(n: i64): i64 {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
 var stops := 0
-let d := handle { budget(steps: 50) { count(100) } } with {
+let d := handle { perform budget(50, () => { count(100) }) } with {
   exceeded(info), k => {
     stops := stops + 1
     info.more(50)
   }
 }
-perform show("d", d)
-perform show("stopped", stops > 0)
+show(&d)
+show(&(stops > 0))
 ```
-shows = ["d = 100", "stopped = true"]
+stdout = ```
+100
+true
+```
 
 @ cases.recursion-under-a-budget
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-fn fib(n: i64): i64 ! {Div} {
+fn fib(n: i64): i64 ! {div, overflow} {
   if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
 }
-let d := handle { budget(steps: 100) { fib(25) } } with {
+let d := handle { perform budget(100, () => { fib(25) }) } with {
   exceeded(info), k => k(0 - 7)
 }
-perform show("d", d)
-let e := handle { budget(steps: 10000000) { fib(10) } } with {
+show(&d)
+let e := handle { perform budget(10000000, () => { fib(10) }) } with {
   exceeded(info), k => k(0 - 7)
 }
-perform show("e", e)
+show(&e)
 ```
-shows = ["d = -7", "e = 55"]
+stdout = ```
+-7
+55
+```
 
 @ cases.budgets-nest
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-fn loopn(n: i64): i64 {
+fn loopn(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn inner(): i64 ! {Exceeded} {
-  budget(steps: 20) { loopn(1000) }
+fn inner(): i64 ! {budget, exceeded, overflow} {
+  perform budget(20, () => { loopn(1000) })
 }
 let r := handle {
-  handle { budget(steps: 100000) { inner() } } with {
+  handle { perform budget(100000, () => { inner() }) } with {
     exceeded(info), k => info.more(10)
   }
 } with {
   exceeded(info), k => k(0 - 5)
 }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 1000"]
+stdout = "1000\n"
 
 @ cases.a-budget-over-a-suspending-body
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect ask(): i64
-fn work(n: i64): i64 ! {ask, Div} {
+fn work(n: i64): i64 ! {ask, div, overflow} {
   var i := 0
   var s := 0
   while i < n {
@@ -759,22 +812,23 @@ fn work(n: i64): i64 ! {ask, Div} {
   s
 }
 let r := handle {
-  handle { budget(steps: 30) { work(100) } } with {
+  handle { perform budget(30, () => { work(100) }) } with {
     exceeded(info), k => info.more(30)
   }
 } with {
   ask(), k => k(2)
 }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 200"]
+stdout = "200\n"
 
 @ cases.m-nondeterminism-loops-and-recursion
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
 effect fail(): Never resume 0
 
-fn pick(n: i64): i64 ! {choose, Div} {
+fn pick(n: i64): i64 ! {choose, div, overflow} {
   var acc := 0
   var i := 0
   while i < n {
@@ -785,7 +839,7 @@ fn pick(n: i64): i64 ! {choose, Div} {
   acc
 }
 
-fn rec(n: i64): i64 ! {choose, Div} {
+fn rec(n: i64): i64 ! {choose, div, overflow} {
   if n <= 0 { 0 } else {
     let b := perform choose()
     (if b { n } else { 0 }) + rec(n - 1)
@@ -795,17 +849,17 @@ fn rec(n: i64): i64 ! {choose, Div} {
 let all := handle { pick(3) } with {
   choose(), k => k(true) + k(false)
 }
-perform show("all", all)
+show(&all)
 
 let r := handle { rec(4) } with {
   choose(), k => k(true) + k(false)
 }
-perform show("r", r)
+show(&r)
 
 let first := handle { rec(3) } with {
   choose(), k => k(true)
 }
-perform show("first", first)
+show(&first)
 
 let two := handle {
   handle { perform choose() } with {
@@ -815,17 +869,23 @@ let two := handle {
 } with {
   choose(), k => k(true)
 }
-perform show("two", two)
+show(&two)
 ```
-shows = ["all = 12", "r = 80", "first = 6", "two = false"]
+stdout = ```
+12
+80
+6
+false
+```
 
 @ cases.m-with-one-shot-and-abort-effects
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
 effect ask(): i64 resume ω
 effect tick(n: i64): Unit resume 1
 effect fail(e: Text): Never resume 0
 
-fn work(n: i64): i64 ! {ask, tick, fail} {
+fn work(n: i64): i64 ! {ask, tick, fail, overflow} {
   perform tick(n)
   let a := perform ask()
   if a > 100 { perform fail("too big") }
@@ -835,15 +895,15 @@ fn work(n: i64): i64 ! {ask, tick, fail} {
 
 let r := handle {
   handle { work(1) + work(2) } with {
-    tick(n), k => { perform show("tick", n)
+    tick(n), k => { show(&n)
       k(#()) }
   }
 } with {
   ask(), k => k(10) + k(20)
-  fail(e) => { perform show("fail", e)
+  fail(e) => { show(&e)
     0 }
 }
-perform show("r", r)
+show(&r)
 
 let s := handle {
   handle { work(5) } with {
@@ -853,18 +913,31 @@ let s := handle {
   ask(), k => k(200) + k(1)
   fail(e) => 1000
 }
-perform show("s", s)
+show(&s)
 ```
-shows = ["tick = 1", "tick = 10", "tick = 2", "tick = 10", "tick = 20", "tick = 20", "tick = 2", "tick = 10", "tick = 20", "r = 132", "s = 1006"]
+stdout = ```
+1
+10
+2
+10
+20
+20
+2
+10
+20
+132
+1006
+```
 
 @ cases.m-data-and-return-arm
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
 effect fail(e: Text): Never resume 0
 enum L { Nil, Cons(i64, L) }
 struct P { x: i64, y: Text }
 
-fn gen(n: i64): L ! {choose, Div} {
+fn gen(n: i64): L ! {choose, div, overflow} {
   if n <= 0 { Nil } else {
     let b := perform choose()
     let rest := gen(n - 1)
@@ -872,14 +945,14 @@ fn gen(n: i64): L ! {choose, Div} {
   }
 }
 
-fn len(xs: L): i64 {
+fn len(xs: L): i64 ! {overflow} {
   match xs {
     Nil => 0
     Cons(_, t) => 1 + len(t)
   }
 }
 
-fn sum(xs: L): i64 {
+fn sum(xs: L): i64 ! {overflow} {
   match xs {
     Nil => 0
     Cons(h, t) => h + sum(t)
@@ -889,15 +962,15 @@ fn sum(xs: L): i64 {
 let total := handle { len(gen(3)) } with {
   choose(), k => k(true) + k(false)
 }
-perform show("total", total)
+show(&total)
 
 let s := handle { sum(gen(4)) } with {
   choose(), k => k(true) + k(false)
   return v => v * 2
 }
-perform show("s", s)
+show(&s)
 
-fn pp(n: i64): P ! {choose} {
+fn pp(n: i64): P ! {choose, overflow} {
   let b := perform choose()
   P { x: if b { n } else { 0 - n }, y: "p" }
 }
@@ -908,7 +981,7 @@ let q := handle {
 } with {
   choose(), k => k(true) + k(false)
 }
-perform show("q", q)
+show(&q)
 
 let t := handle {
   let b := perform choose()
@@ -917,7 +990,7 @@ let t := handle {
   choose(), k => k(true) + k(false)
   fail(e) => 100
 }
-perform show("t", t)
+show(&t)
 
 let u := handle {
   let b := perform choose()
@@ -926,23 +999,30 @@ let u := handle {
 } with {
   choose(), k => k(true) + k(false)
 }
-perform show("u", u)
+show(&u)
 ```
-shows = ["total = 12", "s = 160", "q = 0", "t = 105", "u = 121"]
+stdout = ```
+12
+160
+0
+105
+121
+```
 
 @ cases.m-inside-a-and-o-functions
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
 effect choose(): Bool resume ω
 effect fail(e: Text): Never resume 0
 effect get(): i64 resume 1
 
-fn early(n: i64): i64 ! {choose} {
+fn early(n: i64): i64 ! {choose, overflow} {
   let b := perform choose()
   if b { return n }
   n * 100
 }
 
-fn inA(n: i64): i64 ! {fail} {
+fn inA(n: i64): i64 ! {fail, overflow} {
   let r := handle { early(n) + early(n + 1) } with {
     choose(), k => k(true) + k(false)
   }
@@ -950,7 +1030,7 @@ fn inA(n: i64): i64 ! {fail} {
   r
 }
 
-fn inO(n: i64): i64 ! {get} {
+fn inO(n: i64): i64 ! {get, overflow} {
   let r := handle { early(n) + perform get() } with {
     choose(), k => k(true) + k(false)
   }
@@ -958,26 +1038,21 @@ fn inO(n: i64): i64 ! {get} {
 }
 
 let a := handle { inA(1) } with { fail(e) => 0 - 1 }
-perform show("a", a)
+show(&a)
 let a2 := handle { inA(50) } with { fail(e) => 0 - 1 }
-perform show("a2", a2)
+show(&a2)
 let o := handle { inO(2) } with { get(), k => k(7) }
-perform show("o", o)
+show(&o)
 
 let d := handle {
-  handle {
-    let x := perform choose()
-    perform show("x", x)
-    x
-  } with {
-    ∀ A. show<A>(l, s), k => { k(#()) }
-  }
+  let x := perform choose()
+  x
 } with {
   choose(), k => if k(true) { k(false) } else { false }
 }
-perform show("d", d)
+show(&d)
 
-fn count(n: i64): i64 ! {choose, Div} {
+fn count(n: i64): i64 ! {choose, div, overflow} {
   var i := 0
   var c := 0
   while i < n {
@@ -989,116 +1064,138 @@ fn count(n: i64): i64 ! {choose, Div} {
 let w := handle { count(4) } with {
   choose(), k => k(true) + k(false)
 }
-perform show("w", w)
+show(&w)
 ```
-shows = ["a = 606", "a2 = -1", "o = 223", "d = false", "w = 20"]
+stdout = ```
+606
+-1
+223
+false
+32
+```
 
 @ cases.m-closure-through-a-row-variable
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
 fn apply<!e>(f: () -> i64 ! e): i64 ! e { f() }
 let r := handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
   choose(), k => k(true) + k(false)
 }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 3"]
+stdout = "3\n"
 
 @ cases.m-closures-called-twice
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): Bool resume ω
 fn apply<!e>(f: () -> i64 ! e): i64 ! e { f() }
 fn twice<!e>(f: (i64) -> i64 ! e, x: i64): i64 ! e { f(f(x)) }
-fn mk(n: i64): i64 ! {choose} {
+fn mk(n: i64): i64 ! {choose, overflow} {
   twice(x => if perform choose() { x + n } else { x * 2 }, 1)
 }
 let r := handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
   choose(), k => k(true) + k(false)
 }
-perform show("r", r)
+show(&r)
 let s := handle { mk(10) } with {
   choose(), k => k(true) + k(false)
 }
-perform show("s", s)
+show(&s)
 let p := handle { twice(x => x + 1, 5) } with {
   choose(), k => k(true) + k(false)
 }
-perform show("p", p)
+show(&p)
 ```
-shows = ["r = 3", "s = 59", "p = 7"]
+stdout = ```
+3
+59
+7
+```
 
 @ cases.views-vec-get-and-get-mut
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
 var v := Vec::new()
 Vec::push(&mut v, 1)
 Vec::push(&mut v, 2)
 match Vec::get(&v, 1) {
-  Some(x) => perform show("x", x)
+  Some(x) => show(&x)
   None => #()
 }
 match Vec::get_mut(&mut v, 0) {
-  Some(x) => { x := 7 }
+  Some(x) => { *x := 7 }
   None => #()
 }
 match Vec::get(&v, 0) {
-  Some(x) => perform show("y", x)
+  Some(x) => show(&x)
   None => #()
 }
-var m := HashMap::new()
-HashMap::insert(&mut m, "a", 1)
-match HashMap::get(&m, &"a") {
-  Some(x) => perform show("m", x)
+var m := IndexedMap::new()
+IndexedMap::insert(&mut m, "a", 1)
+match IndexedMap::get(&m, &"a") {
+  Some(x) => show(&x)
   None => #()
 }
 ```
-shows = ["x = 2", "y = 7", "m = 1"]
+stdout = ```
+2
+7
+1
+```
 
 @ cases.arrays-are-shared-and-read-by-index
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Array::of_list` yet"
 source = ```nib
-import std::prelude::Shared
 
 fn second<A: Shared>(a: Array(A)): Option(A) {
   Array::get(a, 1)
 }
 let a := Array::of_list(Cons("x", Cons("y", Cons("z", Nil))))
 let b := a
-perform show("len", Array::len(a))
-perform show("second", second(b))
-perform show("past", Array::get(a, 3))
-perform show("list", Array::to_list(a))
+show(&Array::len(a))
+show(&second(b))
+show(&Array::get(a, 3))
+show(&Array::to_list(a))
 ```
-shows = ["len = 3", "second = Some(\"y\")", "past = None", "list = Cons(\"x\", Cons(\"y\", Cons(\"z\", Nil)))"]
+stdout = ```
+3
+Some("y")
+None
+["x", "y", "z"]
+```
 
 @ cases.modules-qualified-and-inner-names
 source = ```nib
-module M {
-  fn one(): i64 { 1 }
-  fn two(): i64 { one() + one() }
-  module N { fn three(): i64 { two() + one() } }
-}
-perform show("a", M::two())
-perform show("b", M::N::three())
+fn M::one(): i64 { 1 }
+fn M::two(): i64 ! {overflow} { M::one() + M::one() }
+fn M::N::three(): i64 ! {overflow} { M::two() + M::one() }
+show(&M::two())
+show(&M::N::three())
 ```
-shows = ["a = 2", "b = 3"]
+stdout = ```
+2
+3
+```
 
 @ cases.a-program-list-shadows-the-prelude-list
 source = ```nib
 enum List { Nil, Cons(i64, List) }
-fn sum(xs: List): i64 {
+fn sum(xs: List): i64 ! {overflow} {
   match xs {
     Nil => 0
     Cons(x, r) => x + sum(r)
   }
 }
-perform show("s", sum(Cons(1, Cons(2, Nil))))
+show(&sum(Cons(1, Cons(2, Nil))))
 ```
-shows = ["s = 3"]
+stdout = "3\n"
 
 @ cases.a-program-option-and-list-are-not-the-prelude-ones
 source = ```nib
-import std::prelude::Classes
+import std::builtin::classes
 
 enum List { Nil, Cons(i64, List) }
 enum Option(A: Type) { None, Some(A) }
@@ -1108,15 +1205,19 @@ fn first(xs: List): Option(i64) {
     Cons(x, r) => Some(x)
   }
 }
-perform show("l", Cons(1, Nil))
-perform show("f", first(Cons(1, Nil)))
-perform show("j", join(std::prelude::Cons(1, std::prelude::Cons(2, std::prelude::Nil)), ","))
+show(&Cons(1, Nil))
+show(&first(Cons(1, Nil)))
+show(&join(std::prelude::Cons(1, std::prelude::Cons(2, std::prelude::Nil)), ","))
 ```
-shows = ["l = Cons(1, Nil)", "f = Some(1)", "j = \"1,2\""]
+stdout = ```
+Cons(1, Nil)
+Some(1)
+"1,2"
+```
 
 @ cases.cons-onto-a-var-list
 source = ```nib
-fn build(n: i64): List(i64) {
+fn build(n: i64): List(i64) ! {div, overflow} {
   var xs: List(i64) := Nil
   var i := 0
   while i < n {
@@ -1125,37 +1226,37 @@ fn build(n: i64): List(i64) {
   }
   xs
 }
-fn len(xs: List(i64)): i64 {
+fn len(xs: List(i64)): i64 ! {overflow} {
   match xs {
     Nil => 0
     Cons(x, r) => 1 + len(r)
   }
 }
-perform show("len", len(build(5)))
+show(&len(build(5)))
 ```
-shows = ["len = 5"]
+stdout = "5\n"
 
 @ cases.a-local-function-that-mentions-nothing-outside
 source = ```nib
-fn outer(x: i64): i64 {
-  fn go(n: i64): i64 { div(n * (n + 1), 2) }
+fn outer(x: i64): i64 ! {overflow} {
+  fn go(n: i64): i64 ! {overflow} { div(n * (n + 1), 2) }
   go(x)
 }
-perform show("sum", outer(4))
+show(&outer(4))
 ```
-shows = ["sum = 10"]
+stdout = "10\n"
 
 @ cases.a-pattern-inside-a-recursive-field
 source = ```nib
 enum Tree { Leaf, Node(Tree, i64, Tree) }
-fn by_value(t: Tree): i64 {
+fn by_value(t: Tree): i64 ! {overflow} {
   match t {
     Node(Node(a, x, b), y, Leaf) => x + y
     Node(Leaf, y, _) => y
     _ => 0
   }
 }
-fn deep(t: &Tree): i64 {
+fn deep(t: &Tree): i64 ! {overflow} {
   match t {
     Node(Node(Node(_, z, _), x, _), y, _) => z * 100 + x * 10 + y
     Node(Node(_, x, r), y, _) => x * 10 + y
@@ -1165,90 +1266,98 @@ fn deep(t: &Tree): i64 {
 }
 let small := Node(Node(Leaf, 1, Leaf), 2, Leaf)
 let big := Node(Node(Node(Leaf, 3, Leaf), 1, Leaf), 2, Leaf)
-perform show("value", by_value(small))
-perform show("deep3", deep(&big))
-perform show("deep2", deep(&small))
-perform show("leaf", deep(&Leaf))
+show(&by_value(small))
+show(&deep(&big))
+show(&deep(&small))
+show(&deep(&Leaf))
 ```
-shows = ["value = 3", "deep3 = 312", "deep2 = 12", "leaf = 0"]
+stdout = ```
+3
+312
+12
+0
+```
 
 @ cases.a-guard-reads-a-name-from-a-recursive-field
 source = ```nib
 enum Tree { Leaf, Node(Tree, i64, Tree) }
-fn sum(t: &Tree): i64 {
+fn sum(t: &Tree): i64 ! {overflow} {
   match t {
     Leaf => 0
     Node(l, v, r) => sum(l) + v + sum(r)
   }
 }
-fn heavy_left(t: &Tree): i64 {
+fn heavy_left(t: &Tree): i64 ! {overflow} {
   match t {
     Node(l, y, _) if sum(l) > 0 => y
     _ => 0
   }
 }
 let t := Node(Node(Leaf, 1, Leaf), 2, Leaf)
-perform show("heavy", heavy_left(&t))
-perform show("none", heavy_left(&Node(Leaf, 5, Leaf)))
+show(&heavy_left(&t))
+show(&heavy_left(&Node(Leaf, 5, Leaf)))
 ```
-shows = ["heavy = 2", "none = 0"]
+stdout = ```
+2
+0
+```
 
 @ cases.a-closure-that-performs-a-resume-once-effect
 source = ```nib
-effect ask(n: i64): i64 resume 1
-fn twice(f: (i64) -> i64 ! {ask}, x: i64): i64 ! {ask} { f(f(x)) }
-fn go(base: i64, label: Text): i64 ! {ask} {
-  let g := (y: i64) => perform ask(y + base)
+effect ask(n: nat): nat resume 1
+fn twice(f: (nat) -> nat ! {ask}, x: nat): nat ! {ask} { f(f(x)) }
+fn go(base: nat, label: Text): nat ! {ask} {
+  let g := (y: nat) => perform ask(y + base)
   let a := twice(g, 1)
   a + g(2)
 }
 let r := handle { go(5, "x") } with { ask(n), k => k(n + 1) }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 21"]
+stdout = "21\n"
 
 @ cases.a-shared-closure-is-used-twice
 source = ```nib
-fn twice(f: (i64) -> i64, x: i64): i64 { f(f(x)) }
-fn go(base: i64): i64 {
-  let g := (y: i64) => y + base
+fn twice(f: (nat) -> nat, x: nat): nat { f(f(x)) }
+fn go(base: nat): nat {
+  let g := (y: nat) => y + base
   let a := twice(g, 1)
   a + g(2)
 }
-perform show("r", go(5))
+show(&go(5))
 ```
-shows = ["r = 18"]
+stdout = "18\n"
 
 @ cases.a-borrowing-closure-performs-an-effect-across-an-await
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Nat::of_u64` yet"
 source = ```nib
-import std::prelude::Affine
 
-effect ask(n: i64): i64 resume 1
-fn run(xs: Vec(i64), scale: i64): Vec(i64) ! {ask} {
+effect ask(n: nat): nat resume 1
+fn run(xs: Vec(nat), scale: nat): Vec(nat) ! {ask, overflow} {
   var total := Vec::new()
   let tag := 7
-  Vec::each(&xs, (&x: i64) => { let n := perform ask(x * scale); Vec::push(&mut total, n + tag) })
+  Vec::each(&xs, (x: &nat) => { let n := perform ask(x * scale); Vec::push(&mut total, n + tag) })
   total
 }
-fn apply(&f: (i64) -> i64 ! {ask}, x: i64): i64 ! {ask} { f(f(x)) }
-fn go(): i64 ! {ask} {
+fn apply(f: &((nat) -> nat ! {ask, overflow}), x: nat): nat ! {ask, overflow} { f(f(x)) }
+fn go(): nat ! {ask, overflow} {
   var xs := Vec::new()
   Vec::push(&mut xs, 1)
   Vec::push(&mut xs, 2)
   Vec::push(&mut xs, 3)
   let t := run(xs, 2)
   let base := 100
-  let r := apply((y: i64) => perform ask(y + base), 1)
-  r + I64::of_u64(Vec::len(&t))
+  let r := apply((y: nat) => perform ask(y + base), 1)
+  r + Nat::of_u64(Vec::len(&t))
 }
 let r := handle { go() } with { ask(n), k => k(n * 10) }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 11103"]
+stdout = "11103\n"
 
 @ cases.walk-a-list-with-a-running-flag
 source = ```nib
-fn count(xs: List(i64)): i64 {
+fn count(xs: List(i64)): i64 ! {div, overflow} {
   var rest := xs
   var n := 0
   var running := true
@@ -1265,35 +1374,38 @@ fn count(xs: List(i64)): i64 {
   }
   n
 }
-fn build(n: i64): List(i64) { if n == 0 { Nil } else { Cons(n, build(n - 1)) } }
+fn build(n: i64): List(i64) ! {div, overflow} { if n == 0 { Nil } else { Cons(n, build(n - 1)) } }
 let xs := build(100)
-perform show("n", count(xs))
-perform show("again", count(xs))
+show(&count(xs))
+show(&count(xs))
 ```
-shows = ["n = 5050", "again = 5050"]
+stdout = ```
+5050
+5050
+```
 
 @ cases.a-local-fn-captures-a-parameter
 source = ```nib
-fn go(base: i64): i64 {
-  fn add(x: i64): i64 { x + base }
+fn go(base: i64): i64 ! {overflow} {
+  fn add(x: i64): i64 ! {overflow} { x + base }
   add(1) + add(2)
 }
-perform show("r", go(10))
+show(&go(10))
 ```
-shows = ["r = 23"]
+stdout = "23\n"
 
 @ cases.a-borrowing-closure-assigns-a-var
+llvm.unimplemented = "generate: the LLVM backend does not write a closure whose body moves what it captured yet"
 source = ```nib
-import std::prelude::Affine
 
-effect ask(n: i64): i64 resume 1
-fn run(xs: Vec(i64)): i64 ! {ask} {
+effect ask(n: nat): nat resume 1
+fn run(xs: Vec(nat)): nat ! {ask, overflow} {
   var total := 0
-  Vec::each(&xs, (&x: i64) => { let n := perform ask(x)
+  Vec::each(&xs, (x: &nat) => { let n := perform ask(x)
     total := total + n })
   total
 }
-fn go(): i64 ! {ask} {
+fn go(): nat ! {ask, overflow} {
   var xs := Vec::new()
   Vec::push(&mut xs, 1)
   Vec::push(&mut xs, 2)
@@ -1301,45 +1413,45 @@ fn go(): i64 ! {ask} {
   run(xs)
 }
 let r := handle { go() } with { ask(n), k => k(n * 10) }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 60"]
+stdout = "60\n"
 
 @ cases.a-borrowing-closure-assigns-without-reading
+llvm.unimplemented = "generate: the LLVM backend does not write a closure whose body moves what it captured yet"
 source = ```nib
-import std::prelude::Affine
 
-effect ask(n: i64): i64 resume 1
-fn run(xs: Vec(i64)): i64 ! {ask} {
+effect ask(n: nat): nat resume 1
+fn run(xs: Vec(nat)): nat ! {ask, overflow} {
   var last := 0
   var seen := false
-  Vec::each(&xs, (&x: i64) => { last := perform ask(x)
+  Vec::each(&xs, (x: &nat) => { last := perform ask(x)
     seen := true })
-  if seen { last } else { 0 - 1 }
+  if seen { last } else { 0 }
 }
-fn go(): i64 ! {ask} {
+fn go(): nat ! {ask, overflow} {
   var xs := Vec::new()
   Vec::push(&mut xs, 1)
   Vec::push(&mut xs, 2)
   run(xs)
 }
 let r := handle { go() } with { ask(n), k => k(n + 40) }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 42"]
+stdout = "42\n"
 
 @ cases.a-borrowing-closure-calls-a-captured-function
+llvm.unimplemented = "generate: the LLVM backend does not write a closure whose body moves what it captured yet"
 source = ```nib
-import std::prelude::Affine
 
-effect ask(n: i64): i64 resume 1
-fn run(xs: Vec(i64), f: (i64) -> i64): i64 ! {ask} {
+effect ask(n: nat): nat resume 1
+fn run(xs: Vec(nat), f: (nat) -> nat): nat ! {ask} {
   var total := 0
-  Vec::each(&xs, (&x: i64) => { let n := perform ask(f(x))
+  Vec::each(&xs, (x: &nat) => { let n := perform ask(f(x))
     total := total + n })
   total
 }
-fn go(): i64 ! {ask} {
+fn go(): nat ! {ask} {
   var xs := Vec::new()
   Vec::push(&mut xs, 1)
   Vec::push(&mut xs, 2)
@@ -1348,79 +1460,84 @@ fn go(): i64 ! {ask} {
   run(xs, (y) => y * k)
 }
 let r := handle { go() } with { ask(n), k => k(n + 1) }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 603"]
+stdout = "603\n"
 
 @ cases.a-borrowing-closure-calls-a-borrowed-function
+llvm.unimplemented = "generate: the LLVM backend does not write a closure whose body moves what it captured yet"
 source = ```nib
-import std::prelude::Affine
 
-effect ask(n: i64): i64 resume 1
-fn run(xs: Vec(i64), &f: (i64) -> i64 ! {ask}): i64 ! {ask} {
+effect ask(n: nat): nat resume 1
+fn run(xs: Vec(nat), f: &((nat) -> nat ! {ask})): nat ! {ask, overflow} {
   var total := 0
-  Vec::each(&xs, (&x: i64) => { total := total + f(x) })
+  Vec::each(&xs, (x: &nat) => { total := total + f(x) })
   total
 }
-fn go(): i64 ! {ask} {
+fn go(): nat ! {ask, overflow} {
   var xs := Vec::new()
   Vec::push(&mut xs, 1)
   Vec::push(&mut xs, 2)
   run(xs, (y) => perform ask(y))
 }
 let r := handle { go() } with { ask(n), k => k(n + 5) }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 13"]
+stdout = "13\n"
 
 @ cases.a-divergent-callback-inside-a-multi-shot-handler
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-effect ask(n: i64): i64 resume ω
-fn twice(&f: (i64) -> i64 ! {Div}, x: i64): i64 { f(f(x)) }
-fn f2(): i64 {
+effect ask(n: nat): nat resume ω
+fn twice(f: &((nat) -> nat ! {div}), x: nat): nat ! {div} { f(f(x)) }
+fn f2(): nat ! {budget, div} {
   handle {
-    perform ask(1) + (handle { budget(steps: 45) { twice((l) => l + 1, 33) } } with {
+    perform ask(1) + (handle { perform budget(45, () => { twice((l) => l + 1, 33) }) } with {
       exceeded(info), k => info.unbounded()
     })
   } with { ask(n), k => k(n) }
 }
-perform show("v", f2())
+show(&f2())
 ```
-shows = ["v = 36"]
+stdout = "36\n"
 
 @ cases.a-divergent-callback-runs-out-inside-a-multi-shot-handler
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
-effect ask(n: i64): i64 resume ω
-fn count(n: i64): i64 {
+effect ask(n: nat): nat resume ω
+fn count(n: nat): nat ! {div} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn twice(&f: (i64) -> i64 ! {Div}, x: i64): i64 { f(f(x)) }
-fn more(): i64 {
+fn twice(f: &((nat) -> nat ! {div}), x: nat): nat ! {div} { f(f(x)) }
+fn more(): nat ! {budget} {
   handle {
-    perform ask(1) + (handle { budget(steps: 10) { twice((l) => count(l + 20), 0) } } with {
+    perform ask(1) + (handle { perform budget(10, () => { twice((l) => count(l + 20), 0) }) } with {
       exceeded(info), k => info.more(10)
     })
   } with { ask(n), k => k(n) }
 }
-fn stop(): i64 {
+fn stop(): nat ! {budget} {
   handle {
-    perform ask(1) + (handle { budget(steps: 10) { twice((l) => count(l + 20), 0) } } with {
+    perform ask(1) + (handle { perform budget(10, () => { twice((l) => count(l + 20), 0) }) } with {
       exceeded(info), k => k(100)
     })
   } with { ask(n), k => k(n) }
 }
-perform show("more", more())
-perform show("stop", stop())
+show(&more())
+show(&stop())
 ```
-shows = ["more = 41", "stop = 101"]
+stdout = ```
+41
+101
+```
 
 @ cases.a-local-fn-assigns-a-captured-var
 source = ```nib
-fn go(n: i64): i64 {
+fn go(n: i64): i64 ! {overflow} {
   var total := 0
-  fn bump(r#by: i64): i64 {
+  fn bump(r#by: i64): i64 ! {overflow} {
     total := total + r#by
     total
   }
@@ -1428,56 +1545,62 @@ fn go(n: i64): i64 {
   let b := bump(n * 2)
   total + a + b
 }
-perform show("r", go(5))
+show(&go(5))
 ```
-shows = ["r = 35"]
+stdout = "35\n"
 
 @ cases.a-local-fn-reads-a-text-and-a-vec
 source = ```nib
-import std::prelude::Affine
+import std::builtin::os { stdout, stdout_flush }
 
-fn go(label: Text): i64 {
+fn go(label: Text): i64 ! {stdout, stdout_flush} {
   var xs := Vec::new()
   Vec::push(&mut xs, 4)
   Vec::push(&mut xs, 5)
-  fn describe(k: i64): Text {
+  fn describe(k: i64): Text ! {stdout, stdout_flush} {
     let n := Vec::len(&xs)
-    perform show("seen", n)
+    show(&n)
     label
   }
   let a := describe(1)
   Vec::push(&mut xs, 6)
   let b := describe(2)
-  perform show("a", a)
-  perform show("b", b)
+  show(&a)
+  show(&b)
   I64::of_u64(Vec::len(&xs))
 }
-perform show("r", go("x"))
+show(&go("x"))
 ```
-shows = ["seen = 2", "seen = 3", "a = \"x\"", "b = \"x\"", "r = 3"]
+stdout = ```
+2
+3
+"x"
+"x"
+3
+```
 
 @ cases.local-fns-call-each-other-with-captures
 source = ```nib
-fn go(base: i64): i64 {
+fn go(base: i64): i64 ! {overflow} {
   var calls := 0
-  fn leaf(x: i64): i64 {
+  fn leaf(x: i64): i64 ! {overflow} {
     calls := calls + 1
     x + base
   }
-  fn twice(x: i64): i64 { leaf(leaf(x)) }
+  fn twice(x: i64): i64 ! {overflow} { leaf(leaf(x)) }
   let r := twice(1)
   r * 100 + calls
 }
-perform show("r", go(10))
+show(&go(10))
 ```
-shows = ["r = 2102"]
+stdout = "2102\n"
 
 @ cases.a-local-fn-performs-an-effect
 source = ```nib
-effect ask(n: i64): i64 resume 1
-fn go(base: i64): i64 ! {ask} {
+effect ask(n: nat): nat resume 1
+fn go(base: nat): nat ! {ask, overflow} {
   var seen := 0
-  fn query(x: i64): i64 ! {ask} {
+  fn query(x: nat): nat ! {ask, overflow} {
     seen := seen + 1
     perform ask(x + base)
   }
@@ -1486,77 +1609,77 @@ fn go(base: i64): i64 ! {ask} {
   a + b + seen
 }
 let r := handle { go(100) } with { ask(n), k => k(n * 2) }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 408"]
+stdout = "408\n"
 
 @ cases.a-borrowing-closure-calls-a-local-fn-that-captures
+llvm.unimplemented = "generate: the LLVM backend does not write a closure whose body moves what it captured yet"
 source = ```nib
-import std::prelude::Affine
 
-effect ask(n: i64): i64 resume 1
-fn run(xs: Vec(i64), scale: i64): i64 ! {ask} {
+effect ask(n: nat): nat resume 1
+fn run(xs: Vec(nat), scale: nat): nat ! {ask, overflow} {
   var total := 0
-  fn add(x: i64): i64 { x * scale }
-  Vec::each(&xs, (&x: i64) => { total := total + perform ask(add(x)) })
+  fn add(x: nat): nat { x * scale }
+  Vec::each(&xs, (x: &nat) => { total := total + perform ask(add(x)) })
   total
 }
-fn go(): i64 ! {ask} {
+fn go(): nat ! {ask, overflow} {
   var xs := Vec::new()
   Vec::push(&mut xs, 1)
   Vec::push(&mut xs, 2)
   run(xs, 3)
 }
 let r := handle { go() } with { ask(n), k => k(n + 1) }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 11"]
+stdout = "11\n"
 
 @ cases.a-local-fn-in-a-closure-body
 source = ```nib
-fn go(base: i64): i64 {
+fn go(base: i64): i64 ! {overflow} {
   let f := (k: i64) => {
-    fn inner(x: i64): i64 { x + k + base }
+    fn inner(x: i64): i64 ! {overflow} { x + k + base }
     inner(1)
   }
   f(10) + f(20)
 }
-perform show("r", go(100))
+show(&go(100))
 ```
-shows = ["r = 232"]
+stdout = "232\n"
 
 @ cases.a-local-fn-that-captures-is-passed-as-a-value
 source = ```nib
-fn apply(f: (i64) -> i64, x: i64): i64 { f(x) }
-fn go(base: i64): i64 {
-  fn add(x: i64): i64 { x + base }
+fn apply(f: (nat) -> nat, x: nat): nat { f(x) }
+fn go(base: nat): nat {
+  fn add(x: nat): nat { x + base }
   apply(add, 1) + apply(add, 2)
 }
-perform show("r", go(10))
+show(&go(10))
 ```
-shows = ["r = 23"]
+stdout = "23\n"
 
 @ cases.a-local-fn-that-captures-is-returned
 source = ```nib
-fn make(base: i64): (i64) -> i64 {
-  fn add(x: i64): i64 { x + base }
+fn make(base: nat): (nat) -> nat {
+  fn add(x: nat): nat { x + base }
   add
 }
 let f := make(10)
-perform show("r", f(1) + f(2))
+show(&(f(1) + f(2)))
 ```
-shows = ["r = 23"]
+stdout = "23\n"
 
 @ cases.an-escaping-closure-calls-a-local-fn-that-captures
 source = ```nib
-fn make(base: i64): (i64) -> i64 {
-  fn add(x: i64): i64 { x + base }
+fn make(base: nat): (nat) -> nat {
+  fn add(x: nat): nat { x + base }
   (y) => add(y) * 2
 }
 let f := make(10)
-perform show("r", f(1) + f(2))
+show(&(f(1) + f(2)))
 ```
-shows = ["r = 46"]
+stdout = "46\n"
 
 @ cases.a-local-fn-that-captures-a-text-is-passed-as-a-value
 source = ```nib
@@ -1565,89 +1688,89 @@ fn go(label: Text): Text {
   fn show_it(x: i64): Text { label }
   apply(show_it, 1)
 }
-perform show("r", go("hi"))
+show(&go("hi"))
 ```
-shows = ["r = \"hi\""]
+stdout = ```
+"hi"
+```
 
 @ cases.a-local-fn-that-performs-an-effect-is-passed-as-a-value
 source = ```nib
-effect ask(n: i64): i64 resume 1
-fn apply(f: (i64) -> i64 ! {ask}, x: i64): i64 ! {ask} { f(x) }
-fn go(base: i64): i64 ! {ask} {
-  fn query(x: i64): i64 ! {ask} { perform ask(x + base) }
+effect ask(n: nat): nat resume 1
+fn apply(f: (nat) -> nat ! {ask}, x: nat): nat ! {ask} { f(x) }
+fn go(base: nat): nat ! {ask} {
+  fn query(x: nat): nat ! {ask} { perform ask(x + base) }
   apply(query, 1) + apply(query, 2)
 }
 let r := handle { go(100) } with { ask(n), k => k(n * 2) }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 406"]
+stdout = "406\n"
 
 @ cases.a-local-fn-that-captures-another-is-passed-as-a-value
 source = ```nib
-fn apply(f: (i64) -> i64, x: i64): i64 { f(x) }
-fn go(base: i64, scale: i64): i64 {
-  fn add(x: i64): i64 { x + base }
-  fn both(x: i64): i64 { add(x) * scale }
+fn apply(f: (nat) -> nat, x: nat): nat { f(x) }
+fn go(base: nat, scale: nat): nat {
+  fn add(x: nat): nat { x + base }
+  fn both(x: nat): nat { add(x) * scale }
   apply(both, 1) + apply(both, 2)
 }
-perform show("r", go(10, 3))
+show(&go(10, 3))
 ```
-shows = ["r = 69"]
+stdout = "69\n"
 
 @ cases.a-local-fn-that-captures-a-vec-is-passed-as-a-borrowed-function
 source = ```nib
-import std::prelude::Affine
 
-fn apply(&f: (i64) -> i64, x: i64): i64 { let y := f(x)
+fn apply(f: &((i64) -> i64 ! {overflow}), x: i64): i64 ! {overflow} { let y := f(x)
   f(y) }
-fn go(k: i64, xs: Vec(i64)): i64 {
-  fn pick(i: i64): i64 { i + I64::of_u64(Vec::len(&xs)) + k }
+fn go(k: i64, xs: Vec(i64)): i64 ! {overflow} {
+  fn pick(i: i64): i64 ! {overflow} { i + I64::of_u64(Vec::len(&xs)) + k }
   apply(pick, 1) + apply(pick, 2)
 }
 var xs := Vec::new()
 Vec::push(&mut xs, 4)
 Vec::push(&mut xs, 5)
-perform show("r", go(10, xs))
+show(&go(10, xs))
 ```
-shows = ["r = 51"]
+stdout = "51\n"
 
 @ cases.a-local-fn-that-assigns-a-var-is-passed-as-a-borrowed-function
 source = ```nib
-fn apply(&f: (i64) -> i64, x: i64): i64 { let y := f(x)
+fn apply(f: &((nat) -> nat), x: nat): nat { let y := f(x)
   f(y) }
-fn go(): i64 {
+fn go(): nat {
   var total := 0
-  fn bump(r#by: i64): i64 {
+  fn bump(r#by: nat): nat {
     total := total + r#by
     total
   }
   let a := apply(bump, 1)
   a * 100 + total
 }
-perform show("r", go())
+show(&go())
 ```
-shows = ["r = 202"]
+stdout = "202\n"
 
 @ cases.a-local-fn-that-borrows-a-parameter-is-passed-as-a-value
 source = ```nib
-import std::prelude::Affine
 
-fn apply(f: (&Vec(i64)) -> i64, v: Vec(i64)): i64 { f(&v) }
-fn go(k: i64): i64 {
-  fn total(&xs: Vec(i64)): i64 { I64::of_u64(Vec::len(&xs)) + k }
+fn apply(f: (&Vec(i64)) -> i64 ! {overflow}, v: Vec(i64)): i64 ! {overflow} { f(&v) }
+fn go(k: i64): i64 ! {overflow} {
+  fn total(xs: &Vec(i64)): i64 ! {overflow} { I64::of_u64(Vec::len(&xs)) + k }
   var v := Vec::new()
   Vec::push(&mut v, 1)
   apply(total, v)
 }
-perform show("r", go(10))
+show(&go(10))
 ```
-shows = ["r = 11"]
+stdout = "11\n"
 
 @ cases.a-local-fn-that-loops-is-passed-as-a-value
 source = ```nib
-fn apply(f: (i64) -> i64 ! {Div}, x: i64): i64 ! {Div} { f(x) }
-fn go(step: i64): i64 ! {Div} {
-  fn count(n: i64): i64 ! {Div} {
+fn apply(f: (nat) -> nat ! {div}, x: nat): nat ! {div} { f(x) }
+fn go(step: nat): nat ! {div} {
+  fn count(n: nat): nat ! {div} {
     var i := 0
     var s := 0
     while i < n {
@@ -1658,63 +1781,69 @@ fn go(step: i64): i64 ! {Div} {
   }
   apply(count, 4)
 }
-perform show("r", go(3))
+show(&go(3))
 ```
-shows = ["r = 12"]
+stdout = "12\n"
 
 @ cases.a-var-closure-called-in-place
+llvm.unimplemented = "generate: the LLVM backend does not write a `var` shared with a closure yet"
 source = ```nib
 var total := 0
 let add := (x) => { total := total + x }
 add(5)
 add(6)
-perform show("total", total)
+show(&total)
 ```
-rust_shows = ["total = 11"]
+stdout = "11\n"
 
 @ cases.tasks-share-an-atomic-and-a-mutex
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Par
+import std::builtin::par
 
-fn bump(a: Atomic, n: u64): u64 {
+fn bump(a: Atomic, n: u64): u64 ! {div, overflow, atomic_fetch_add} {
   var i: u64 := 0
   while i < n {
-    let before := Atomic::fetch_add(a, 1)
+    let before := perform atomic_fetch_add(a, 1)
     i := i + 1
   }
   n
 }
-let total := Atomic::new(0)
-let m := Mutex::new(Vec::new())
+let total := perform atomic_new(0)
+let m := perform mutex_new(Vec::new())
 let r := {
   let a := perform spawn(() => bump(total, 1000))
   let b := perform spawn(() => bump(total, 2000))
   let c := perform spawn(() => {
     {
       var g := Mutex::lock(m)
-      let &mut v := MutexGuard::get_mut(&mut g)
+      let v := MutexGuard::get_mut(&mut g)
       Vec::push(&mut v, 1)
     }
     3
   })
-  Task::join(a) + Task::join(b) + Task::join(c)
+  U64::wrapping_add(U64::wrapping_add(Task::join(a), Task::join(b)), Task::join(c))
 }
 let n := {
   let g := Mutex::lock(m)
-  let &v := MutexGuard::get(&g)
+  let v := MutexGuard::get(&g)
   Vec::len(&v)
 }
-perform show("r", r)
-perform show("total", Atomic::load(total))
-perform show("n", n)
+show(&r)
+show(&perform atomic_load(total))
+show(&n)
 ```
-shows = ["r = 3003", "total = 3000", "n = 1"]
+stdout = ```
+3003
+3000
+1
+```
 
 @ cases.a-task-uses-a-name-its-match-arm-bound
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `pending_spawn` yet"
 source = ```nib
-import std::prelude::Os
-import std::prelude::Par
+import std::builtin::os
+import std::builtin::par
 
 let r: Result(Text, Text) := Ok("hello")
 match r {
@@ -1724,35 +1853,41 @@ match r {
       perform sleep(1)
       Task::join(t)
     }
-    perform show("n", n)
+    show(&n)
   }
-  Err(e) => perform show("e", e)
+  Err(e) => show(&e)
 }
 ```
-shows = ["n = 5"]
+stdout = "5\n"
 
 @ cases.spawn-all-runs-any-number-of-tasks
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
-fn bump(a: Atomic, n: u64): u64 {
-  var i: u64 := 0
+fn bump(a: Atomic, n: nat): nat ! {div, atomic_fetch_add} {
+  var i: nat := 0
   while i < n {
-    let before := Atomic::fetch_add(a, 1)
+    let before := perform atomic_fetch_add(a, 1)
     i := i + 1
   }
   n
 }
-let total := Atomic::new(0)
+let total := perform atomic_new(0)
 let xs := spawn_all([() => bump(total, 1000), () => bump(total, 2000), () => bump(total, 3000)])
-perform show("xs", xs)
-perform show("total", Atomic::load(total))
+show(&xs)
+show(&perform atomic_load(total))
 ```
-shows = ["xs = Cons(1000, Cons(2000, Cons(3000, Nil)))", "total = 6000"]
+stdout = ```
+[1000, 2000, 3000]
+6000
+```
 
 @ cases.a-bounded-channel-holds-back-a-faster-sender
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-fn produce(ch: Channel(u64), n: u64): u64 {
+import std::builtin::par
+fn produce(ch: Channel(u64), n: u64): u64 ! {div, overflow, wait, mutex_claim, mutex_put, mutex_take_claimed} {
   var i: u64 := 0
   while i < n {
     i := i + 1
@@ -1761,7 +1896,7 @@ fn produce(ch: Channel(u64), n: u64): u64 {
   Channel::close(ch)
   n
 }
-fn consume(ch: Channel(u64)): u64 {
+fn consume(ch: Channel(u64)): u64 ! {div, overflow, wait, mutex_claim, mutex_put, mutex_take_claimed} {
   var sum: u64 := 0
   var open := true
   while open {
@@ -1778,43 +1913,43 @@ let r := {
   let u := perform spawn(() => consume(ch))
   Task::join(t) + Task::join(u)
 }
-perform show("r", r)
+show(&r)
 ```
 // The evaluator runs a body at its `spawn`, so the sender would wait on a
 // full channel before the receiver starts.
-rust_shows = ["r = 5150"]
-javascript_shows = ["r = 5150"]
+stdout = "5150\n"
 
 @ cases.a-semaphore-bounds-the-tasks-inside
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
-fn guarded(s: Semaphore, inside: Mutex(u64), most: Mutex(u64)): u64 {
+fn guarded(s: Semaphore, inside: Mutex(u64), most: Mutex(u64)): u64 ! {div, overflow, wait, mutex_claim, mutex_put, mutex_take_claimed} {
   Semaphore::acquire(s)
   let now := {
     var g := Mutex::lock(inside)
-    let &mut n := MutexGuard::get_mut(&mut g)
-    n := n + 1
+    let n := MutexGuard::get_mut(&mut g)
+    *n := n + 1
     n + 0
   }
   {
     var g := Mutex::lock(most)
-    let &mut m := MutexGuard::get_mut(&mut g)
-    if now > m { m := now } else { #() }
+    let m := MutexGuard::get_mut(&mut g)
+    if now > m { *m := now } else { #() }
   }
   var i: u64 := 0
   while i < 1000 { i := i + 1 }
   {
     var g := Mutex::lock(inside)
-    let &mut n := MutexGuard::get_mut(&mut g)
-    n := n - 1
+    let n := MutexGuard::get_mut(&mut g)
+    *n := n - 1
   }
   Semaphore::release(s)
   1
 }
 let s := Semaphore::new(2)
-let inside := Mutex::new(0)
-let most := Mutex::new(0)
+let inside := perform mutex_new(0)
+let most := perform mutex_new(0)
 let xs := {
   let a := perform spawn(() => guarded(s, inside, most))
   let b := perform spawn(() => guarded(s, inside, most))
@@ -1824,88 +1959,104 @@ let xs := {
   let f := perform spawn(() => guarded(s, inside, most))
   [Task::join(a), Task::join(b), Task::join(c), Task::join(d), Task::join(e), Task::join(f)]
 }
-perform show("xs", xs)
+show(&xs)
 let ok := {
   let g := Mutex::lock(most)
-  let &m := MutexGuard::get(&g)
+  let m := MutexGuard::get(&g)
   m <= 2
 }
-perform show("at most two", ok)
+show(&ok)
 ```
-shows = ["xs = Cons(1, Cons(1, Cons(1, Cons(1, Cons(1, Cons(1, Nil))))))", "at most two = true"]
+stdout = ```
+[1, 1, 1, 1, 1, 1]
+true
+```
 
 // Each task sleeps, and the host goes on with the others meanwhile: on the
-// reactor the tasks share a few threads (`docs/design/host-effects.md`「時間のかかる答え」).
+// reactor the tasks share a few threads (`docs/design/host-effects.md`「Slow answers」).
 @ cases.many-tasks-sleep-at-once
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Os
-import std::prelude::Par
+import std::builtin::os
+import std::builtin::par
 
-fn start(n: u64, done: Atomic): List(Task(u64)) ! {∀ T. spawn(T), sleep} {
+fn start(n: u64, done: Atomic): List(Task(u64)) ! {∀ T. spawn(() -> T ! {sleep, atomic_fetch_add}), sleep, overflow} {
   if n == 0 {
     Nil
   } else {
+    let rest := start(n - 1, done)
     let t := perform spawn(() => {
       perform sleep(1)
-      let before := Atomic::fetch_add(done, 1)
+      let before := perform atomic_fetch_add(done, 1)
       n
     })
-    Cons(t, start(n - 1, done))
+    Cons(t, rest)
   }
 }
-fn sum(ts: List(Task(u64))): u64 ! {wait} {
+fn sum(ts: List(Task(u64))): u64 ! {wait, overflow} {
   match ts {
     Nil => 0
     Cons(t, rest) => {
       let v := Task::join(t)
-      v + sum(rest)
+      U64::wrapping_add(v, sum(rest))
     }
   }
 }
-let done := Atomic::new(0)
+let done := perform atomic_new(0)
 let total := sum(start(2000, done))
-perform show("total", total)
-perform show("done", Atomic::load(done))
+show(&total)
+show(&perform atomic_load(done))
 ```
-shows = ["total = 2001000", "done = 2000"]
+stdout = ```
+2001000
+2000
+```
 
 // The bodies of `spawn_all` and `par` may wait for each other.
 @ cases.spawn-all-bodies-take-turns-at-a-mutex
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Os
-import std::prelude::Par
+import std::builtin::os
+import std::builtin::par
 
-let m := Mutex::new(0)
-fn add(m: Mutex(u64), n: u64): u64 ! {wait} {
+let m := perform mutex_new(0)
+fn add(m: Mutex(nat), n: nat): nat ! {wait, mutex_claim, mutex_put, mutex_take_claimed} {
   let v := Mutex::take(m)
-  Mutex::put(m, v + n)
+  perform mutex_put(m, v + n)
   n
 }
 let r := spawn_all(Cons(() => add(m, 1), Cons(() => add(m, 2), Cons(() => add(m, 3), Nil))))
 let p := par(() => add(m, 10), () => add(m, 20))
-perform show("r", r)
-perform show("p", p.fst + p.snd)
-perform show("m", Mutex::take(m))
+show(&r)
+show(&(p.fst + p.snd))
+show(&Mutex::take(m))
 ```
-shows = ["r = Cons(1, Cons(2, Cons(3, Nil)))", "p = 30", "m = 36"]
+stdout = ```
+[1, 2, 3]
+30
+36
+```
 
 // `rust.executor = "threads"`: a thread for each task, whose waits block it.
 // The evaluator runs each task to its end at its `spawn`, where the consumer
 // would wait for values the producer has not sent yet.
 @ cases.tasks-on-threads-wait-for-each-other
+llvm.unimplemented = "generate: the LLVM backend does not write a `Mutex` yet"
 tote = path`../../examples/rust/threads`
-backends = ["rust"]
-rust_shows = ["r = 5150", "slept = true"]
+stdout = ```
+5150
+true
+```
 
 @ cases.task-poll-waits-for-nothing
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `pending_spawn` yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
-fn wait(t: Task(u64), polls: u64): u64 ! {Div} {
+fn wait(t: Task(u64), polls: u64): u64 ! {div, overflow} {
   match Task::poll(t) {
     Finished(v) => v
-    Running(t) => wait(t, polls + 1)
+    Running(t) => wait(t, U64::wrapping_add(polls, 1))
   }
 }
 let r := {
@@ -1916,9 +2067,67 @@ let r := {
   })
   wait(t, 0)
 }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 10000"]
+stdout = "10000\n"
+
+// A task starts tasks of its own; a wait with a deadline gives up once it
+// passes, and leaves the line it stood in.
+@ cases.a-task-spawns-and-timed-waits-give-up-at-the-deadline
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+source = ```nib
+import std::builtin::os
+import std::builtin::par
+
+fn received(r: Received(u64)): u64 {
+  match r {
+    Arrived(v) => v
+    Closed => 1
+    NotYet => 2
+  }
+}
+let soon := perform monotonic_clock() + 1000000
+let ch := Channel::new(1)
+let empty := received(Channel::recv_until(ch, soon))
+Channel::send(ch, 7)
+let got := received(Channel::recv_until(ch, soon))
+Channel::close(ch)
+let closed := received(Channel::recv_until(ch, soon))
+let deadline := perform monotonic_clock() + 1000000000
+let t := perform spawn(() => {
+  let inner := perform spawn(() => 40)
+  Task::join(inner) + 2
+})
+let joined := match Task::join_until(t, deadline) {
+  Finished(v) => v
+  Running(t) => {
+    Task::detach(t)
+    0
+  }
+}
+let m := perform mutex_new(5)
+let held := Mutex::take(m)
+let late := match Mutex::take_until(m, perform monotonic_clock() + 1000000) {
+  Some(v) => v
+  None => 0
+}
+perform mutex_put(m, held + 1)
+let s := Semaphore::new(1)
+let first := Semaphore::acquire_until(s, perform monotonic_clock() + 1000000)
+let second := Semaphore::acquire_until(s, perform monotonic_clock() + 1000000)
+show(&([empty, got, closed]))
+show(&joined)
+show(&late)
+show(&Mutex::take(m))
+show(&(#(first, second)))
+```
+stdout = ```
+[2, 7, 1]
+42
+0
+6
+#(true, false)
+```
 
 @ cases.a-function-that-only-reads-a-tree-takes-it-by-reference
 source = ```nib
@@ -1935,7 +2144,7 @@ fn has(t: Tree, x: i64): i64 {
     Node(l, v, r) => if x == v { 1 } else if x < v { has(l, x) } else { has(r, x) }
   }
 }
-fn size(t: Tree): i64 {
+fn size(t: Tree): i64 ! {overflow} {
   match t {
     Leaf => 0
     Node(l, v, r) => size(l) + 1 + size(r)
@@ -1947,7 +2156,7 @@ fn left(t: Tree): Tree {
     Node(l, v, r) => l
   }
 }
-fn pair(a: Tree, b: Tree): i64 { size(a) * 10 + size(b) }
+fn pair(a: Tree, b: Tree): i64 ! {overflow} { size(a) * 10 + size(b) }
 fn root(t: Tree): i64 {
   match t {
     Leaf => 0
@@ -1956,105 +2165,128 @@ fn root(t: Tree): i64 {
 }
 let t := insert(insert(insert(insert(Leaf, 5), 2), 8), 3)
 let u := t
-perform show("has3", has(t, 3))
-perform show("has4", has(t, 4))
-perform show("size", size(t))
-perform show("same twice", pair(t, t))
-perform show("size of left", size(left(t)))
-perform show("shared", size(u) + size(t))
-perform show("temp", size(insert(t, 9)))
-perform show("root", root(t) + root(left(t)))
+show(&has(t, 3))
+show(&has(t, 4))
+show(&size(t))
+show(&pair(t, t))
+show(&size(left(t)))
+show(&(size(u) + size(t)))
+show(&size(insert(t, 9)))
+show(&(root(t) + root(left(t))))
 ```
-shows = ["has3 = 1", "has4 = 0", "size = 4", "same twice = 44", "size of left = 2", "shared = 8", "temp = 5", "root = 7"]
+stdout = ```
+1
+0
+4
+44
+2
+8
+5
+7
+```
 
 @ cases.a-struct-that-holds-a-ref
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
-shared struct Slot(T: Shared) { id: i64, cell: Ref(T) }
-let s := Slot { id: 1, cell: Ref::new(5) }
+struct(shared) Slot(T: Shared) { id: i64, cell: Ref(T) }
+let s := Slot { id: 1, cell: perform ref_new(5) }
 let t := s
-Ref::set(t.cell, 7)
-perform show("id", s.id)
-perform show("cell", Ref::get(s.cell))
+perform ref_set(t.cell, 7)
+show(&s.id)
+show(&perform ref_get(s.cell))
 ```
-shows = ["id = 1", "cell = 7"]
+stdout = ```
+1
+7
+```
 
 @ cases.a-closure-that-does-not-suspend-passed-where-one-may
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
 effect ask(): i64 resume <=1
-struct Job { owner: i64, run: () -> Unit ! {ask, Div} }
-fn call(f: () -> Unit ! {ask, Div}): Unit ! {ask, Div} {
+struct Job { owner: i64, run: () -> Unit ! {ask, div} }
+fn call(f: () -> Unit ! {ask, div, ref_set}): Unit ! {ask, div, ref_set} {
   f()
 }
 fn keep(owner: i64): Job ! {ask} {
   Job { owner: perform ask(), run: () => { let n := perform ask() } }
 }
-fn go(log: Ref(i64)): Unit ! {ask, Div} {
-  call(() => Ref::set(log, 7))
+fn go(log: Ref(i64)): Unit ! {ask, div, overflow, ref_get, ref_set} {
+  call(() => perform ref_set(log, 7))
   let j := keep(1)
   let f := j.run
   f()
-  Ref::set(log, Ref::get(log) + j.owner)
+  perform ref_set(log, perform ref_get(log) + j.owner)
 }
-let log := Ref::new(0)
+let log := perform ref_new(0)
 handle { go(log) } with {
   ask(), k => k(3)
 }
-perform show("log", Ref::get(log))
+show(&perform ref_get(log))
 ```
-shows = ["log = 10"]
+stdout = "10\n"
 
 @ cases.a-memory-budget-stops-allocation
-description = "budget(memory: n) counts the cells its body allocates; a body that allocates more performs exceeded"
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+description = "budget_memory(n, f) counts the cells its body allocates; a body that allocates more performs exceeded"
 source = ```nib
 enum L { Nil, Cons(i64, L) }
-fn build(n: i64, acc: L): L ! {Div} {
+fn build(n: i64, acc: L): L ! {div, overflow} {
   if n == 0 { acc } else { build(n - 1, Cons(n, acc)) }
 }
-fn len(l: L): i64 ! {Div} {
+fn len(l: L): i64 ! {div, overflow} {
   match l { Nil => 0, Cons(_, t) => 1 + len(t) }
 }
-let d := handle { budget(steps: 1000000, memory: 50) { len(build(1000, Nil)) } } with {
+let d := handle { perform budget(1000000, () => perform budget_memory(50, () => { len(build(1000, Nil)) })) } with {
   exceeded(info), k => k(0 - 1)
 }
-perform show("d", d)
-let e := handle { budget(memory: 50) { len(build(10, Nil)) } } with {
+show(&d)
+let e := handle { perform budget_memory(50, () => { len(build(10, Nil)) }) } with {
   exceeded(info), k => k(0 - 1)
 }
-perform show("e", e)
+show(&e)
 ```
-shows = ["d = -1", "e = 10"]
+stdout = ```
+-1
+10
+```
 
 @ cases.more-memory-resumes-the-body
+llvm.unimplemented = "generate: the LLVM backend does not write a `var` shared with a closure yet"
 description = "info.more(m) gives a stopped memory budget m more cells"
 source = ```nib
 enum L { Nil, Cons(i64, L) }
-fn build(n: i64, acc: L): L ! {Div} {
+fn build(n: i64, acc: L): L ! {div, overflow} {
   if n == 0 { acc } else { build(n - 1, Cons(n, acc)) }
 }
-fn len(l: L): i64 ! {Div} {
+fn len(l: L): i64 ! {div, overflow} {
   match l { Nil => 0, Cons(_, t) => 1 + len(t) }
 }
 var stops := 0
-let f := handle { budget(memory: 50) { len(build(100, Nil)) } } with {
+let f := handle { perform budget_memory(50, () => { len(build(100, Nil)) }) } with {
   exceeded(info), k => {
     stops := stops + 1
     info.more(50)
   }
 }
-perform show("f", f)
-perform show("stopped", stops > 0)
+show(&f)
+show(&(stops > 0))
 ```
-shows = ["f = 100", "stopped = true"]
+stdout = ```
+100
+true
+```
 
-// Secret words (`std/prelude/Secret.taut`): a secret shows as `Secret`, and
+// Secret words (`std/builtin/secret.taut`): a secret shows as `Secret`, and
 // the content leaves only through `expose`.
 @ cases.secret-words
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `U64::of_nat` yet"
 source = ```nib
-import std::prelude::Secret
+import std::builtin::secret
 
 let k := secret(U64::of_nat(200))
 let m := secret(U64::of_nat(55))
@@ -2062,33 +2294,42 @@ let y := Ct::u64_select(Ct::u64_lt(m, k), Ct::u64_add(k, m), m)
 let wrap := Ct::u32_add(secret(U32::of_u64(4294967295)), secret(U32::of_u64(2)))
 let byte := Ct::u8_xor(secret(U8::of_u64(240)), secret(U8::of_u64(15)))
 let both := Ct::bool_and(Ct::u8_eq(byte, secret(U8::of_u64(255))), Ct::bool_not(Ct::u64_eq(k, m)))
-perform show("y", expose(y))
-perform show("wrap", expose(wrap))
-perform show("byte", expose(byte))
-perform show("both", expose(both))
-perform show("hidden", y)
+show(&expose(y))
+show(&expose(wrap))
+show(&expose(byte))
+show(&expose(both))
+show(&y)
 ```
-shows = ["y = 255", "wrap = 1", "byte = 255", "both = true", "hidden = Secret"]
+stdout = ```
+255
+1
+255
+true
+Secret { .. }
+```
 compile_errors.javascript = "generate: secret words, which it cannot run in constant time"
-backend_known_failure.vm = "unsupported: the builtin Ct::bool_and"
+compile_errors.vm = "generate: secret words, which it cannot run in constant time"
 
 // A secret that is only carried, not computed on, runs on every backend.
 @ cases.a-carried-secret-runs-everywhere
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
 source = ```nib
-import std::prelude::Secret
-import std::prelude::Shared
+import std::builtin::secret
 
 let k := secret(Bytes::of_text("key"))
-perform show("hidden", k)
-perform show("len", Bytes::len(expose(k)))
+show(&k)
+show(&Bytes::len(expose(k)))
 ```
-shows = ["hidden = Secret", "len = 3"]
+stdout = ```
+Secret { .. }
+3
+```
 
 @ cases.row-generic-only-in-data-argument
 description = "A generic given only to a data type's row parameter (`App(R, e)`) is erased from the function's Rust generics, as it is from the data type, so a call from a closure leaves no Rust type parameter to infer"
 source = ```nib
 enum Route { Home, About }
-shared struct App(R: Shared, !e) {
+struct(shared) App(R: Shared, !e) {
   hooks: List(() -> i64 ! e),
   score: (R) -> i64
 }
@@ -2099,24 +2340,24 @@ fn run_app<R: Shared, !e>(a: App(R, e), r: R, g: ((R) -> i64, R) -> i64): i64 ! 
 }
 fn score(r: Route): i64 { match r { Home => 1, About => 2 } }
 let a: App(Route, !{}) := App { hooks: Nil, score: score }
-perform show("v", run_app(a, About, apply_to))
+show(&run_app(a, About, apply_to))
 ```
-shows = ["v = 2"]
+stdout = "2\n"
 
 @ cases.a-closure-lent-in-parentheses-is-lent-as-the-closure-alone
 source = ```nib
-fn lend<A, !e>(&body: () -> A ! {Div} ∪ e): A ! {Div} ∪ e {
+fn lend<A, !e>(body: &(() -> A ! {div} ∪ e)): A ! {div} ∪ e {
   body()
 }
 let n := lend(&(() => 2))
-perform show("n", n)
+show(&n)
 ```
-shows = ["n = 2"]
+stdout = "2\n"
 
 @ cases.a-named-closure-is-lent-at-the-tier-its-body-gave-it
 source = ```nib
 effect tick(): u64 resume <=1
-fn lend<A, !e>(&body: () -> A ! {tick} ∪ e): A ! {Div} ∪ e {
+fn lend<A, !e>(body: &(() -> A ! {tick} ∪ e)): A ! {div} ∪ e {
   handle { body() } with {
     tick(), k => k(1)
     return v => v
@@ -2126,9 +2367,9 @@ fn work(): u64 ! {tick} {
   perform tick()
 }
 let body := () => work() + 1
-perform show("n", lend(&body))
+show(&lend(&body))
 ```
-shows = ["n = 2"]
+stdout = "2\n"
 
 @ cases.a-nested-pattern-tests-boxed-fields-in-order
 source = ```nib
@@ -2142,9 +2383,53 @@ fn kind(n: Node): Text {
     Tok(t) => t
   }
 }
-perform show("hit", kind(Group("(", ItemsOf(NodesOf(Tok("x"), NoNodes), NoItems), ")")))
-perform show("lit", kind(Group("(", ItemsOf(NodesOf(Tok("y"), NoNodes), NoItems), ")")))
-perform show("more", kind(Group("(", ItemsOf(NodesOf(Tok("x"), NodesOf(Tok("x"), NoNodes)), NoItems), ")")))
-perform show("tok", kind(Tok("t")))
+show(&kind(Group("(", ItemsOf(NodesOf(Tok("x"), NoNodes), NoItems), ")")))
+show(&kind(Group("(", ItemsOf(NodesOf(Tok("y"), NoNodes), NoItems), ")")))
+show(&kind(Group("(", ItemsOf(NodesOf(Tok("x"), NodesOf(Tok("x"), NoNodes)), NoItems), ")")))
+show(&kind(Tok("t")))
 ```
-shows = ["hit = \"(\"", "lit = \")\"", "more = \")\"", "tok = \"t\""]
+stdout = ```
+"("
+")"
+")"
+"t"
+```
+
+@ cases.a-shared-struct-holds-an-affine-value-in-a-mutex
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+// A `Mutex` is a shared handle whatever it holds: a struct with a
+// `Mutex(IndexedMap(u64, Option(Body)))` field is shared even when `Body` is
+// affine, and the Rust backend copies the handle without cloning the content.
+source = ```nib
+import std::indexed_map { IndexedMap }
+import std::builtin::par
+
+struct(affine) Body { n: i64 }
+struct Net { requests: Mutex(IndexedMap(u64, Option(Body))) }
+fn put(net: Net, k: u64, n: i64): Unit ! {wait, mutex_claim} {
+  var g := Mutex::lock(net.requests)
+  let m := MutexGuard::get_mut(&mut g)
+  let old := IndexedMap::insert(&mut m, k, Some(Body { n: n }))
+}
+fn read(net: Net, k: u64): i64 ! {wait, mutex_claim} {
+  let g := Mutex::lock(net.requests)
+  let m := MutexGuard::get(&g)
+  match IndexedMap::get(&m, k) {
+    Some(Some(b)) => b.n
+    _ => 0
+  }
+}
+let net := Net { requests: perform mutex_new(IndexedMap::new()) }
+put(net, 1, 10)
+put(net, 2, 20)
+show(&(read(net, 1) + read(net, 2)))
+```
+stdout = "30\n"
+
+// `rust.main-thread = true`: `main` runs on the process's main thread, not on
+// a thread of its own. The other backends run the program there anyway, and
+// the extern's fallback says so.
+@ cases.main-thread-runs-the-program-on-the-main-thread
+tote = path`../../examples/rust/main-thread`
+javascript.unimplemented = "unsupported: host extern bindings"
+stdout = "true\n"

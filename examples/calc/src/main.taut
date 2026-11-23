@@ -1,14 +1,14 @@
 import "calc.taut"
 import "../../compiler/src/compiler.taut"
-import std::prelude::Os
-import std::prelude::Macro { SynArg, SynDiag }
+import std::builtin::os
+import std::builtin::macro { SynArg, SynDiag }
 
-pub fn show_stack(r: Option(List(nat))): Unit {
+pub fn show_stack(r: Option(List(nat))): Unit ! {stdout} {
   match r {
     None => print("stack underflow\n")
     Some(st) => match st {
       Nil => print("empty\n")
-      Cons(top, rest) => {
+      Cons(top, ^rest) => {
         print(Text::of_nat(top))
         print("\n")
       }
@@ -50,7 +50,7 @@ pub fn show_diag(d: SynDiag): Unit ! {stdout} {
   }
 }
 
-pub fn calc_main(src: Text): Unit ! {Div, stdout} {
+pub fn calc_main(src: Text): Unit ! {div, stdout} {
   print(src)
   print(" => ")
   match arith::parse(src) {
@@ -65,6 +65,8 @@ pub fn calc_main(src: Text): Unit ! {Div, stdout} {
   }
 }
 
-calc_main("(2 + 3) * (4 + 5)")
-calc_main("1 + 2 * 3")
-calc_main("2 + * 3")
+perform main(() => {
+  calc_main("(2 + 3) * (4 + 5)")
+  calc_main("1 + 2 * 3")
+  calc_main("2 + * 3")
+})

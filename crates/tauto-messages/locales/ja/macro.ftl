@@ -5,15 +5,18 @@
 macro-coded = { $code }: { $message }
 macro-reserved = { $name } は読み込みが処理する `{ $name }!` である。マクロはこの名前を取れない
 macro-duplicate = マクロ { $name } が二度宣言されている
+macro-private = マクロ { $name } は `pub` で宣言されていないので、使えるのは宣言したファイルだけである。ほかのファイルから呼ぶには `pub macro fn` と書く
 macro-dollar-outside-quote = $ は quote の中にだけ書く
 macro-kind-statements = このマクロは文を作るが、文を書く場所で呼ばれていない
 macro-replace-word = `{ $kind } { $name }` の前に `{ $word }` がある。宣言を変える属性は先頭に `replace` と書く
 macro-the-declaration = その宣言
 macro-replace-other = `replace { $kind } { $name }` は属性が前に書かれていない宣言を指している。属性は { $decl } の前にある
-macro-generates-attribute-kinds = 属性マクロが作るのは fn、theorem、def、inductive、struct、enum の宣言だけである
+macro-generates-attribute-kinds = 属性マクロが作るのは fn、theorem、def、inductive、struct、enum、class、instance の宣言だけである
+macro-replace-twice = `replace { $kind } { $name }`: 一つの宣言で `replace` と書ける属性は一つだけである
 macro-replace-not-made = 属性は `replace { $kind } { $name }` と言うが、マクロはそれを作らなかった
 macro-replace-unsaid = マクロは与えられた宣言 `{ $kind } { $name }` を作っている。宣言を変える属性は `=> replace { $kind } { $name }` と書く
 macro-attribute-list-mismatch = 属性の一覧がマクロの作ったものと合わない
+macro-attribute-not-run = `@{ $name }!` を実行しなかった: 渡された{ $decl }が前にあるものとともに検査を通らない。マクロは検査を通る宣言だけを読む: { $message }
 macro-call-list-mismatch = 呼び出しが作るものの一覧が実際に作ったものと合わない
 
 # The function of a macro.
@@ -25,7 +28,7 @@ macro-function-not-start = `{ $function }` は { $ty } を取るが、これは 
 macro-function-not-tree = `{ $function }` は { $ty } を取るが、これは syntax の木ではない
 macro-function-result = `{ $function }` は { $ty } を作る。マクロが作るのは SynExpr か List(SynStmt) である
 macro-unchecked-effect = `{ $function }` は追跡できないエフェクトを行う ({ $effect })
-macro-row-effect = マクロの関数が行えるのは macro_error、macro_warn、elab、Div だが、`{ $function }` は { $effect } を行う
+macro-row-effect = マクロの関数が行えるのは macro_error、macro_warn、elab、div、budget、budget_memory と `Ref` の操作だが、`{ $function }` は { $effect } を行う
 macro-row-reached = `{ $function }` は { $path } に到達するが、その row は検査を通らない: { $why }
 
 # Why a function was left out of the library a macro runs in.
@@ -75,8 +78,10 @@ macro-code-no-type = `{ $name }` に型がない
 macro-proof-rejected = マクロが作った証明が却下された: { $message }
 macro-proof-incomplete = マクロが作った証明が完全でない
 macro-dependent-use = 出力は呼び出しと同じ型を持つが定義的に等しくなく、下の型がその等しさに依存している ({ $message })
+macro-not-run-input-does-not-check = `{ $name }!` は実行されなかった: これを含む宣言が検査を通らず、型付きマクロは検査を通ったものにだけ実行される
 macro-output-rejected = マクロが作ったものが受け入れられない: { $message }
 macro-output-rejected-plain = マクロが作ったものが受け入れられない
+macro-placed-timed-out = `{ $name }!` は実行されず、その場所は空のままだ: { $message }
 macro-proved-shape = Proved には項と証明がある
 macro-proved-where = Proved は関数か定理のためのものである
 macro-proof-no-type = 式に型がない

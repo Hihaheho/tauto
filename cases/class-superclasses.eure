@@ -1,0 +1,128 @@
+description = "A child bound supplies the parent bound on the same type in proofs and programs."
+
+@ cases.reuse-parent-laws-and-operations
+source = ```tauto
+inductive class Monoid(A: Type) {
+  fn mul(a: A, b: A): A
+  theorem assoc(a: A, b: A, c: A): Monoid::mul(Monoid::mul(a, b), c) = Monoid::mul(a, Monoid::mul(b, c))
+}
+inductive class Group(A: Type) where Monoid(A) {
+  fn inv(x: A): A
+}
+
+fn square<A: Shared>(x: A): A where Monoid(A) { Monoid::mul(x, x) }
+
+theorem mul_assoc<A>(a: A, b: A, c: A): Monoid::mul(Monoid::mul(a, b), c) = Monoid::mul(a, Monoid::mul(b, c)) where Monoid(A) {
+  Monoid::assoc(a, b, c)
+}
+
+fn inverse_square<A: Shared>(x: A): A where Group(A) { square(Group::inv(x)) }
+
+theorem group_assoc<A>(a: A, b: A, c: A): Monoid::mul(Monoid::mul(a, b), c) = Monoid::mul(a, Monoid::mul(b, c)) where Group(A) {
+  mul_assoc(a, b, c)
+}
+
+fn xor(a: Bool, b: Bool): Bool { match a { true => not(b), false => b } }
+
+instance Monoid(Bool) {
+  fn mul(a: Bool, b: Bool): Bool { xor(a, b) }
+  theorem assoc(a: Bool, b: Bool, c: Bool): xor(xor(a, b), c) = xor(a, xor(b, c)) {
+    match a {
+      true => match b {
+        true => match c { true => Refl, false => Refl },
+        false => Refl
+      },
+      false => Refl
+    }
+  }
+}
+instance Group(Bool) {
+  fn inv(x: Bool): Bool { x }
+}
+
+theorem square_computes(): inverse_square(true) = false { Refl }
+
+show(&inverse_square(true))
+```
+checks_all = "ok"
+stdout = "false\n"
+
+@ cases.explicit-parent-and-inherited-parent-share-the-bound
+source = ```tauto
+class Parent(A: Shared) { fn step(x: A): A }
+class Child(A: Shared) where Parent(A) { fn get(x: A): A }
+instance Parent(Bool) { fn step(x: Bool): Bool { not(x) } }
+instance Child(Bool) { fn get(x: Bool): Bool { x } }
+fn via_child<A: Shared>(x: A): A where Child(A) { Parent::step(Child::get(x)) }
+fn via_both<A: Shared>(x: A): A where Parent(A), Child(A) { via_child(x) }
+show(&via_both(true))
+```
+stdout = "false\n"
+
+@ cases.transitive-parent-across-an-import
+entry = "main.taut"
+files."hierarchy.taut" = ```tauto
+pub(open) class Root(A: Shared) { fn flip(x: A): A }
+pub(open) class Middle(A: Shared) where Root(A) { fn mid(x: A): A }
+pub(open) class Child(A: Shared) where Middle(A) { fn leaf(x: A): A }
+instance Root(Bool) { fn flip(x: Bool): Bool { not(x) } }
+instance Middle(Bool) { fn mid(x: Bool): Bool { x } }
+instance Child(Bool) { fn leaf(x: Bool): Bool { x } }
+```
+files."main.taut" = ```tauto
+import "hierarchy.taut"
+fn demo<A: Shared>(x: A): A where Child(A) { Root::flip(Middle::mid(Child::leaf(x))) }
+show(&demo(true))
+```
+stdout = "false\n"
+
+@ cases.parent-argument-must-be-the-child-parameter
+entry = "main.taut"
+files."main.taut" = ```tauto
+class Parent(A: Shared) { fn step(x: A): A }
+class Child(A: Shared) where Parent(Bool) { fn get(x: A): A }
+```
+macro_error = "the parent class must take the child's single type parameter"
+
+@ cases.single-parent
+entry = "main.taut"
+files."main.taut" = ```tauto
+class P(A: Shared) { fn p(x: A): A }
+class Q(A: Shared) { fn q(x: A): A }
+class C(A: Shared) where P(A), Q(A) { fn c(x: A): A }
+```
+macro_error = "a class may declare only one parent class"
+
+@ cases.parent-cycle
+entry = "main.taut"
+files."main.taut" = ```tauto
+class C(A: Shared) where D(A) { fn c(x: A): A }
+class D(A: Shared) where C(A) { fn d(x: A): A }
+```
+macro_error = "form a cycle"
+
+@ cases.parent-clause-in-the-surface-tree
+source = ```tauto
+class Parent(A: Shared) { fn step(x: A): A }
+class Child(A: Shared) where Parent(A) { fn get(x: A): A }
+```
+differential = "surface"
+
+@ cases.a-child-bound-also-needs-the-parent-at-the-call
+entry = "main.taut"
+files."main.taut" = ```tauto
+class Parent(A: Shared) { fn step(x: A): A }
+class Child(A: Shared) where Parent(A) { fn get(x: A): A }
+instance Child(Bool) { fn get(x: Bool): Bool { x } }
+fn via_child<A: Shared>(x: A): A where Child(A) { Parent::step(x) }
+show(&via_child(true))
+```
+types = "error: no instance Parent(Bool)"
+
+@ cases.parent-parameter-is-a-type
+entry = "main.taut"
+files."main.taut" = ```tauto
+inductive class Parent(key: Nat) { fn get(): Nat }
+inductive class Child(key: Nat) where Parent(key) { fn read(): Nat }
+```
+macro_error = "the parent class must take the child's single type parameter"

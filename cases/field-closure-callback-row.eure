@@ -1,0 +1,71 @@
+// A closure written for a field takes its parameters at the rows the data
+// writes on them (`lift: (part: () -> i64 ! e) -> …`). A parameter passed on
+// as a callback to a function with a row variable has that row, and the
+// call specializes the variable from it. This is how `provide` of a UI
+// library wraps the parts a `Ui` lifts in the context it provides.
+
+@ cases.field-closure-passes-its-parameter-as-a-callback
+source = ```tauto
+effect ask(): nat
+
+struct Lift(!e) {
+  lift: (part: () -> nat ! e) -> nat
+}
+
+fn with_ask<!e>(value: nat, body: () -> nat ! {ask} ∪ e): nat ! e {
+  handle { body() } with {
+    ask(), k => k(value)
+    return v => v
+  }
+}
+
+fn wrap<!e>(value: nat, l: Lift(e)): Lift(e) {
+  Lift { lift: part => (l.lift)(() => with_ask(value, part)) }
+}
+
+let base: Lift(!{}) := Lift { lift: part => part() + 1 }
+let w: Lift(!{}) := wrap(5, base)
+show(&((w.lift)(() => 41)))
+```
+stdout = "42\n"
+
+// The data carries a row of the O tier there: the field's function takes
+// its parameter at that tier too, given by the row written on the name the
+// call takes (`Lift(!{log})`).
+@ cases.field-closure-passes-a-suspending-parameter-as-a-callback
+source = ```tauto
+import std::builtin::os
+
+effect log(m: Text): Unit resume 1
+
+struct Lift(!e) {
+  lift: (part: () -> nat ! {div} ∪ e) -> nat ! {div} ∪ e
+}
+
+fn twice<!e>(body: () -> nat ! {div} ∪ e): nat ! {div} ∪ e {
+  body() + body()
+}
+
+fn doubled<!e>(l: Lift(e)): Lift(e) {
+  Lift { lift: part => (l.lift)(() => twice(part)) }
+}
+
+fn logged(): nat ! {div, log} {
+  perform log("x")
+  1
+}
+
+let r := handle {
+  let base: Lift(!{log}) := Lift { lift: part => part() }
+  let d := doubled(base)
+  (d.lift)(logged)
+} with {
+  log(m), k => {
+    perform stdout(m)
+    k(#())
+  }
+  return v => v
+}
+show(&r)
+```
+stdout = "xx2\n"

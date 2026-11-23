@@ -1,4 +1,4 @@
-//! `shutdown_token` (`std/prelude/Os.taut`): a request to end the run from
+//! `shutdown_token` (`std/builtin/os.taut`): a request to end the run from
 //! outside (SIGINT, SIGTERM) raises the signals the program asked for.
 //!
 //! The first `register` installs the handlers. A handler only sets a flag
@@ -38,6 +38,9 @@ mod registry {
     pub fn any() -> bool {
         SIGNALS.with(|r| !r.borrow().is_empty())
     }
+    pub fn remove(s: &Signal) {
+        SIGNALS.with(|r| r.borrow_mut().retain(|x| !x.same(s)));
+    }
 }
 
 #[cfg(feature = "sync")]
@@ -48,13 +51,25 @@ mod registry {
     static SIGNALS: Mutex<Vec<Signal>> = Mutex::new(Vec::new());
 
     pub fn push(s: Signal) {
-        SIGNALS.lock().unwrap_or_else(PoisonError::into_inner).push(s);
+        SIGNALS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(s);
     }
     pub fn take() -> Vec<Signal> {
         std::mem::take(&mut *SIGNALS.lock().unwrap_or_else(PoisonError::into_inner))
     }
     pub fn any() -> bool {
-        !SIGNALS.lock().unwrap_or_else(PoisonError::into_inner).is_empty()
+        !SIGNALS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
+    }
+    pub fn remove(s: &Signal) {
+        SIGNALS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|x| !x.same(s));
     }
 }
 
@@ -115,6 +130,12 @@ fn drain() {
             s.raise();
         }
     }
+}
+
+/// Stops raising `s` on a request: its run has ended, and a later run
+/// in the same process must not wait for it.
+pub fn forget(s: &Signal) {
+    registry::remove(s);
 }
 
 /// Whether a request to end the run would raise a signal still waiting for one.

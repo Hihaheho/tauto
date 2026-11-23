@@ -1,9 +1,27 @@
-# 解析の結果を使い回す
+# Analysis reuse in the editor
 
-エディタのサーバー（`tauto lsp`）は、ファイルが開かれ編集されるたびに、そのファイルのプログラム
-（そのファイルと、それが import するすべてのファイル）を読み、マクロを展開し、構文リテラルを色分けする。
-import されるファイルは編集のあいだ変わらないことが多いので、一つのスレッドの中で、前に読んだものを
-入力が同じであるかぎり使い回す。この文書は、何を使い回し、どの入力が同じであれば使い回してよいかを定める。
+`tauto lsp` reloads the open file's program (the file and all its imports),
+expands macros and colours syntax literals on every edit. Within a thread that
+asks for it (`tauto::program::keep_expansions`; the LSP does, one-shot commands
+do not), results are reused while their inputs are unchanged. Reuse never
+changes results.
+
+- **Parsing** is keyed by text and start position; entries unused for the last
+  few loads are dropped.
+- **Macro expansion** proceeds file by file. The state before the last file is
+  kept with the form each earlier file was given (its statements with
+  positions, what its short names mean, its module, its time budget). A later
+  program whose leading files match continues from the longest matching state,
+  so editing only the open file re-expands only it. Syntax tables are loaded
+  once per grammar hash; a state where a table was missing is not kept.
+- **Tokens** are kept with the path, text and program inputs: the files read
+  (in import order) and their texts, each `Tauto.eure` lookup and its result,
+  and `include_text!` files. A request with the same path and text returns them
+  if the inputs collected again are equal.
+- **Registered `tokens` functions** run in the program of the file that
+  registers them. When that file precedes the open file, the library of
+  preceding files is kept, keyed by their inputs; when it is the open file,
+  nothing is kept.
 
 ## `tauto highlight`
 
@@ -11,72 +29,16 @@ import されるファイルは編集のあいだ変わらないことが多い�
 tauto highlight [--tokens] [--timings] [--repeat N [--edit]] FILE
 ```
 
-`tauto lsp` が `textDocument/semanticTokens/full` に答えるのと同じトークン
-（`tauto_analyzer::editor::dsl_tokens`）でファイルを色分けして、端末の色で書き出す。
+Prints the tokens `tauto lsp` returns for `semanticTokens/full`
+(`tauto_analyzer::editor::dsl_tokens`) in terminal colours. `--tokens` prints
+`line:col kind text` per token (the case format `editor_tokens`). `--timings`
+prints per-phase times to stderr (`read`, `parse`, `expand`, `names`,
+`colour`, plus `parse`/`expand`/`resolve`/`classes` of the library running
+registered functions), measured by `tauto::phases`. `--repeat N` repeats the
+request in one process with reuse; `--edit` appends a newline each time after
+the first.
 
-- `--tokens` は色の代わりに、トークンを一行に一つ `行:列 種類 テキスト` で書く（行と列は 1 から、
-  列は文字で数える）。ケースの `editor_tokens` と同じ形である。
-- `--timings` は段階ごとにかかった時間を標準エラーに書く。段階は、ファイルの順序を決める読み込み
-  （`read`）、構文解析（`parse`）、マクロの展開（`expand`）、補間の名前の色（`names`）、
-  登録された関数による色分け（`colour`）である。登録された関数を動かすプログラムを読むときは、
-  その読み込みの段階（`parse`、`expand`、名前の解決 `resolve`、クラスの展開と登録の検査 `classes`）も
-  `colour` の前に並ぶ。
-- `--repeat N` は同じ要求を一つのプロセスで N 回繰り返し、サーバーと同じく前に読んだものを使い回す。
-  `--edit` は二回目から、要求のたびにテキストの末尾に改行を一つ足す（開いているファイルだけを編集した
-  ときの要求になる）。
+## Undecided
 
-## 使い回すもの
-
-使い回しは、スレッドが求めたときだけ働く（`tauto::program::keep_expansions`）。`tauto lsp` は求め、
-一度だけ読むコマンドは求めない。使い回したかどうかで結果は変わらない。
-
-### 構文解析
-
-テキストとその開始位置からプログラムを読んだ結果を、その二つを鍵にして使い回す。読む結果はこの二つだけで
-決まる。プログラムを読むたびに数を数え、最近の数回の読み込みで使われなかったものは捨てる。
-
-### マクロの展開
-
-マクロの展開はファイルを順に進み、ファイルごとに、前のファイルまでの展開が残した状態
-（宣言された構文とマクロ、展開済みの文、マクロを動かすライブラリ、診断）に足していく。プログラムの
-最後のファイルを展開する前の状態を、最初からそこまでの各ファイルが展開に与えられた形とともに残す。
-与えられた形は、ファイルの文（位置を含むので、プログラムの中の同じ場所にあること）、そのファイルの
-短い名前が指すもの、そのファイルのモジュール、そのファイルの展開にかけてよい時間である。
-
-次に読むプログラムの最初のファイルたちが、残した状態のファイルたちと同じ形で与えられれば、展開は
-その状態から続ける。いくつも残っていれば、もっとも多くのファイルが一致するものを使う。開いている
-ファイルは import するファイルより後に読まれるので、それだけを編集したときは、そのファイルだけを
-展開し直す。
-
-構文の表は文法のハッシュを鍵にスレッドの中で一度だけ読まれ、その後は同じものが使われる。見つから
-なかった表は次にまた探されるので、展開の途中で表が見つからなかったときは状態を残さない。
-
-### トークン
-
-ファイルのトークンを、パスとテキスト、およびプログラムの入力とともに残す。入力は次のものである。
-
-- プログラムが読むファイルとそのテキスト（import をたどった順序。たどり方は毎回やり直す）
-- 各ファイルの上で `Tauto.eure` を探した場所と、そこにあったテキスト（ないことも含む）
-- `include_text!` が読むファイルとそのテキスト
-
-同じパスとテキストの要求が来たとき、入力を今の形で集め直し、残したものと等しければトークンを
-そのまま返す。
-
-### 登録された関数のライブラリ
-
-構文に登録された `tokens` 関数は、それを登録したファイルのプログラムで動く。登録が開いている
-ファイルより前のファイルにあれば、関数は前のファイルたちのプログラム（開いているファイルを除いた
-もの）で動かす。このライブラリを、そのファイルたちの入力（上と同じもの）を鍵に残す。開いている
-ファイルが編集されても鍵は変わらない。登録が開いているファイルにあれば、そのファイルのプログラム
-全体で動かし、残さない。
-
-## 段階の時間
-
-段階の時間は、`tauto::phases::recorded` の中でだけ時計を読む。印（`tauto::phases::mark`）は、
-その前の印からの時間をその段階のものとして数える。
-
-## 未決定
-
-- プロセスをまたぐ使い回し（`tauto-cache` の内容アドレスの保存を `tauto check`・`tauto lsp`・
-  コンパイラで共有する）。鍵には、ファイルのテキストのハッシュ、tauto の版、構文の表の内容の
-  ハッシュ、上の入力のすべてを含める必要がある。
+- Reuse across processes through `tauto-cache`, keyed by file hashes, tauto
+  version, syntax table hashes and the inputs above.

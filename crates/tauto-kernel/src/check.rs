@@ -13,6 +13,9 @@
 
 use crate::surface::Name;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+use tauto_identity::{ForkedMap, ForkedSet};
+use tauto_surface::identity::Kept;
 
 use tauto_parol::Span;
 
@@ -33,33 +36,47 @@ pub use core::selfhost;
 use core::{Ask, Failed, Failure, Met, Typed};
 mod deq;
 mod derivation;
+pub use classes::numeral_head;
 pub use derivation::{Derivation, InferenceRule, ProofInspector, ProofReduction};
 #[cfg(test)]
 mod differential;
 mod effects;
+mod fork;
+pub use fork::{ForkMark, Logs};
 mod implicit;
 mod incremental;
 mod inductive;
 mod level;
+mod machine;
 mod macro_checker;
 mod matching;
 pub use macro_checker::KernelChecker;
+pub use matching::same_up_to_binders;
 mod mutable;
 mod nested;
 mod noconf;
+mod num;
 mod opaque;
 mod order;
 mod resumes;
 mod roles;
 pub use roles::checked_entries;
+
+/// The positions in `stmts` of the statements as the kernel reads them: every declaration
+/// before the first statement that uses it, the order otherwise as written.
+pub fn dependency_positions(stmts: &[Stmt]) -> Vec<usize> {
+    order::dependency_positions(stmts)
+}
 mod steps;
 mod sugar;
 mod universe;
+pub use universe::{level_constructor_instance, level_instance};
 mod wf;
 
 pub use incremental::{Checker, Declared, chain_state, fingerprint};
 pub use roles::{
-    ApplicationSite, BoundaryType, Checked, CtorSite, Family, FieldSite, Role, Signature,
+    ApplicationSite, AscriptionSite, BoundaryType, Checked, CtorSite, Family, FieldSite, Role,
+    Signature,
 };
 pub use sugar::{Records, guard_chain, record_sugar};
 
@@ -70,8 +87,12 @@ const PRELUDE_NAT: &str = include_str!("prelude_nat.taut");
 /// What a generated decidable equality uses (`check/deq.rs`), read after
 /// `prelude_nat.taut`.
 const PRELUDE_DEQ: &str = include_str!("prelude_deq.taut");
+/// The classes `PartialEq` and `DecEq` that `a == b` on a type variable calls,
+/// with their instances for `Nat` and `Bool`; read after `prelude_deq.taut`.
+/// Programs do not read it: for them the two are structural predicates.
+const PRELUDE_EQ: &str = include_str!("prelude_eq.taut");
 
-/// The data of the library prelude (`std/prelude/Std.taut`) that the
+/// The data of the library prelude (`std/prelude/std.taut`) that the
 /// proofs see too, as families.
 const SHARED_WITH_PRELUDE: &[&str] = &["Option", "List", "Pair", "Ordering", "Result"];
 
@@ -81,7 +102,7 @@ const SHARED_WITH_PRELUDE: &[&str] = &["Option", "List", "Pair", "Ordering", "Re
 /// struct's one constructor is [`struct_constructor`]); `prelude_nat.taut`;
 /// `prelude_deq.taut`;
 /// and the whole of
-/// `std/prelude/Ord.taut`, the class `Ord` with the instances whose laws
+/// `std/builtin/ord.taut`, the class `Ord` with the instances whose laws
 /// the kernel proves. Each is declared once, and programs read the same
 /// declarations. Every declaration here is checked by both kernels and
 /// none is an axiom but [`QUOT_SOUND`] ([`declare_prelude`]).
@@ -102,19 +123,17 @@ fn prelude_error(base: u32, path: &'static str, text: &'static str) -> impl Fn(S
 /// takes the statements one at a time ([`Checker`]) takes them in this order,
 /// so that it decides what checking them together decides.
 pub fn checking_order(stmts: &[Stmt]) -> Vec<usize> {
-    let mut lowered = stmts.to_vec();
-    for s in &mut lowered {
-        tauto_surface::surface::qualify::lower_tuples(s, "Pair");
-    }
-    order::dependency_positions(&lowered)
+    order::dependency_positions(stmts)
 }
 
 pub fn kernel_prelude() -> Result<Program, String> {
-    let mut program = crate::surface::parse_program_unresolved_at(PRELUDE, 0).map_err(
-        prelude_error(0, "crates/tauto-kernel/src/prelude.taut", PRELUDE),
-    )?;
-    let library = crate::surface::parse_program_as_written(crate::nibstd::STD)
-        .map_err(prelude_error(0, "std/prelude/Std.taut", crate::nibstd::STD))?;
+    let mut program = crate::surface::parse_builtin_at(PRELUDE, 0).map_err(prelude_error(
+        0,
+        "crates/tauto-kernel/src/prelude.taut",
+        PRELUDE,
+    ))?;
+    let library = crate::surface::parse_builtin_as_written_at(crate::nibstd::STD, 0)
+        .map_err(prelude_error(0, "std/prelude/std.taut", crate::nibstd::STD))?;
     for stmt in &library.stmts {
         match stmt {
             Stmt::Enum(d) if SHARED_WITH_PRELUDE.contains(&d.name.as_str()) => {
@@ -128,35 +147,35 @@ pub fn kernel_prelude() -> Result<Program, String> {
             _ => {}
         }
     }
-    let nat = crate::surface::parse_program_unresolved_at(
-        PRELUDE_NAT,
-        crate::surface::PRELUDE_BASE + (1 << 29),
-    )
-    .map_err(prelude_error(
-        crate::surface::PRELUDE_BASE + (1 << 29),
-        "crates/tauto-kernel/src/prelude_nat.taut",
-        PRELUDE_NAT,
-    ))?;
+    let nat =
+        crate::surface::parse_builtin_at(PRELUDE_NAT, crate::surface::PRELUDE_BASE + (1 << 29))
+            .map_err(prelude_error(
+                crate::surface::PRELUDE_BASE + (1 << 29),
+                "crates/tauto-kernel/src/prelude_nat.taut",
+                PRELUDE_NAT,
+            ))?;
     program.stmts.extend(nat.stmts);
-    let deq = crate::surface::parse_program_unresolved_at(
-        PRELUDE_DEQ,
-        crate::surface::PRELUDE_BASE + (1 << 28),
-    )
-    .map_err(prelude_error(
-        crate::surface::PRELUDE_BASE + (1 << 28),
-        "crates/tauto-kernel/src/prelude_deq.taut",
-        PRELUDE_DEQ,
-    ))?;
+    let deq =
+        crate::surface::parse_builtin_at(PRELUDE_DEQ, crate::surface::PRELUDE_BASE + (1 << 28))
+            .map_err(prelude_error(
+                crate::surface::PRELUDE_BASE + (1 << 28),
+                "crates/tauto-kernel/src/prelude_deq.taut",
+                PRELUDE_DEQ,
+            ))?;
     program.stmts.extend(deq.stmts);
-    let ord = crate::surface::parse_program_unresolved_at(
-        crate::nibstd::ORD,
-        crate::surface::PRELUDE_BASE,
-    )
-    .map_err(prelude_error(
-        crate::surface::PRELUDE_BASE,
-        "std/prelude/Ord.taut",
-        crate::nibstd::ORD,
-    ))?;
+    let eq = crate::surface::parse_builtin_at(PRELUDE_EQ, crate::surface::PRELUDE_BASE + (1 << 27))
+        .map_err(prelude_error(
+            crate::surface::PRELUDE_BASE + (1 << 27),
+            "crates/tauto-kernel/src/prelude_eq.taut",
+            PRELUDE_EQ,
+        ))?;
+    program.stmts.extend(eq.stmts);
+    let ord = crate::surface::parse_builtin_at(crate::nibstd::ORD, crate::surface::PRELUDE_BASE)
+        .map_err(prelude_error(
+            crate::surface::PRELUDE_BASE,
+            "std/builtin/ord.taut",
+            crate::nibstd::ORD,
+        ))?;
     program.stmts.extend(ord.stmts);
     // Read as a program's files are: `#(a, b)`, `A × B` and the names of the prelude.
     tauto_surface::surface::qualify::lower_prelude_sugar(&mut program.stmts);
@@ -175,22 +194,32 @@ pub use tauto_surface::inductive_data::struct_constructor;
 /// quotient. Every declaration that uses it lists it among its axioms.
 pub const QUOT_SOUND: &str = "Quot::sound";
 
+/// The prelude's declarations without a body that are not axioms: the
+/// quotient's constants, which the kernel computes (`prelude.taut`). Every
+/// other declaration without a body is an axiom, in the prelude too.
+const QUOT_CONSTANTS: [&str; 4] = ["Quot", "Quot::mk", "Quot::lift", "Quot::ind"];
+
 /// Makes `kernel`, a new one, the kernel with its prelude declared: the
 /// names the prelude declared, or what went wrong. Every declaration must
 /// check, and none may be an axiom other than [`QUOT_SOUND`] or incomplete,
 /// so that nothing else the proofs may use is trusted. The prelude is checked once in a thread, and each
 /// kernel starts from a copy of that one.
 pub fn declare_prelude(kernel: &mut Kernel) -> Result<Vec<Name>, String> {
-    type Declared = Result<(Kernel, Vec<Name>), String>;
+    type Declared = Result<(Kept<Kernel>, Vec<Name>), String>;
     thread_local! {
         static DECLARED: std::cell::OnceCell<Declared> = const { std::cell::OnceCell::new() };
     }
-    let (declared, names) = DECLARED.with(|cell| cell.get_or_init(declare_prelude_once).clone())?;
+    let (declared, names) = DECLARED.with(|cell| {
+        cell.get_or_init(declare_prelude_once)
+            .as_ref()
+            .map(|(k, n)| (k.get(), n.clone()))
+            .map_err(Clone::clone)
+    })?;
     *kernel = declared;
     Ok(names)
 }
 
-fn declare_prelude_once() -> Result<(Kernel, Vec<Name>), String> {
+fn declare_prelude_once() -> Result<(Kept<Kernel>, Vec<Name>), String> {
     let mut kernel = Kernel::new();
     let prelude = kernel_prelude()?;
     let mut names = Vec::new();
@@ -208,7 +237,7 @@ fn declare_prelude_once() -> Result<(Kernel, Vec<Name>), String> {
             other => return Err(format!("prelude: {}: {other:?}", entry.name)),
         }
     }
-    Ok((kernel, names))
+    Ok((Kept::new(&kernel), names))
 }
 
 /// A program's `enum` or `struct` (`is_struct`) read as the inductive family
@@ -248,6 +277,21 @@ fn says(m: &Message, ids: &[&str]) -> bool {
         || m.args
             .iter()
             .any(|(_, v)| matches!(v, Value::Message(inner) if says(inner, ids)))
+}
+
+/// The name a message says is not defined, when it says that in the plain way
+/// (not as an executable that the kernel does not read).
+fn plain_undefined_name(m: &Message) -> Option<String> {
+    if matches!(m.id.as_ref(), "kernel-not-defined" | "kernel-not-defined-hint") {
+        return m.args.iter().find_map(|(k, v)| match v {
+            Value::Text(t) if k.as_ref() == "name" => Some(t.clone()),
+            _ => None,
+        });
+    }
+    m.args.iter().find_map(|(_, v)| match v {
+        Value::Message(inner) => plain_undefined_name(inner),
+        _ => None,
+    })
 }
 
 const NOT_DEFINED: &[&str] = &[
@@ -302,21 +346,66 @@ struct FileLimit {
     deadline: crate::clock::Instant,
 }
 
+/// What the members of a mutual group share, worked out once for all of them.
+///
+/// Compiling a group gives each member the same eliminator applied to the
+/// same motives and minor premises, the arms of every member: the terms are
+/// the same nodes in each. Shaping and elaborating them again for each member
+/// makes the group's cost the square of its size, so a node met before is
+/// shaped as before (`shape`), and one elaborated before against the same type,
+/// with the names of the context it mentions of the same types, is what its
+/// elaboration gave (`elab`), with the sites it noted noted again. For that the
+/// members are compiled with their parameters under the names of the slots
+/// they share (`compile_group_aligned`). Nothing here is trusted: each member
+/// is still checked whole by the core (`check_body`, `add_decl`).
+#[derive(Default)]
+struct GroupShared {
+    /// By the node shaped, kept so that its address is not used again: the node
+    /// and what shaping it gave.
+    shaped: HashMap<usize, (T, T)>,
+    /// The addresses of what `shaped` gave.
+    from_shape: HashSet<usize>,
+    /// By a node `shaped` gave: what elaborating it gave.
+    elaborated: HashMap<usize, Vec<SharedElab>>,
+}
+
+struct SharedElab {
+    expected: Option<T>,
+    /// The names of the context the part mentions, with their types there.
+    mentioned: Vec<(Name, T)>,
+    value: T,
+    ctor_sites: Vec<CtorSite>,
+    application_sites: Vec<ApplicationSite>,
+}
+
 #[derive(Clone)]
 pub struct Kernel {
     resolver: tauto_surface::resolve::Resolver,
-    globals: HashMap<Name, Global>,
+    /// The types the core gave the globals asked about as the heads of
+    /// applications (`plain_app`), for the declaration being checked, with
+    /// the global's own type they were found for. Such a type does not
+    /// depend on the context it is asked in: a global's type has no local
+    /// variable in it.
+    head_types: HashMap<Name, (T, T)>,
+    /// What [`implicit::TermFacts`] found of the terms of the declaration
+    /// being checked.
+    term_facts: implicit::TermFacts,
+    globals: cache::Versioned<Name, Global>,
     /// Functions skipped as not terms of the kernel: a function that uses one
     /// is skipped too, not failed.
-    skipped: HashSet<Name>,
+    skipped: ForkedSet<Name>,
     /// The names declared by `fn` without effects: one without parameters
     /// of its own is called with `()`, never named bare.
-    fns: HashSet<Name>,
-    inds: HashMap<Name, inductive::Ind>,
+    fns: ForkedSet<Name>,
+    /// Functions that lend an item from a source (`borrows(…)`, or a result
+    /// that carries `&` / `&mut`): a caller's `&mut` argument is not turned
+    /// into a Mut'k out-parameter for them.
+    item_lends: ForkedSet<Name>,
+    inds: cache::Versioned<Name, inductive::Ind>,
     /// Constructor name → (family, index).
-    ctors: HashMap<Name, (Name, usize)>,
+    ctors: ForkedMap<Name, (Name, usize)>,
     /// Eliminator name → family.
-    recs: HashMap<Name, Name>,
+    recs: ForkedMap<Name, Name>,
     fresh: usize,
     /// Binders of the arrow types a match in a type is written under
     /// ([`Self::elaborate_type`]). A match does not generalize over one its
@@ -331,7 +420,7 @@ pub struct Kernel {
     projecting: usize,
     /// Names the program declares that the kernel may not have yet: why a
     /// use of one is not defined (declared further on, or a `struct`).
-    ahead: HashMap<Name, Ahead>,
+    ahead: ForkedMap<Name, Ahead>,
     /// The functions being defined by a `match`, with their types: a
     /// `match` on a call of one of them can be typed before the call becomes
     /// an induction hypothesis.
@@ -350,37 +439,49 @@ pub struct Kernel {
     /// The `let`s around each hole, outermost first, by the hole's name and place: the
     /// name and the value it was replaced with (`expand_lets`). The hole's
     /// context shows them as variables.
-    hole_lets: HashMap<(String, Span), Vec<(Name, T)>>,
+    hole_lets: ForkedMap<(String, Span), Vec<(Name, T)>>,
     /// Proofs checked before (`check/cache.rs`); none unless checking files.
     cache: Option<cache::Cache>,
     /// The terms the bodies elaborated to, by declaration, when asked for
     /// (`record_elaborated`).
     elaborated: Option<Vec<(Name, T)>>,
     derivations: Option<Vec<(Name, Derivation)>>,
-    derivation_names: HashSet<Name>,
+    derivation_names: ForkedSet<Name>,
     /// What a syntax macro's output was written as, by the span of its root node.
-    shown: HashMap<u32, String>,
+    shown: ForkedMap<u32, String>,
     /// The decidable equalities of the types declared so far are generated
     /// (`check/deq.rs`).
     deq_started: bool,
+    /// Instances of `PartialEq` and `DecEq` may be declared: only the prelude's and the ones a
+    /// decidable equality generates (`check/deq.rs`); no file writes them.
+    structural_instances: bool,
+    inference_owners: Option<HashSet<Name>>,
     /// For each `opaque fn f`, by the name of its equation `f::eq`: `f`, sealed
     /// once the equation is checked (`check/opaque.rs`).
-    seal_after: HashMap<Name, Name>,
+    seal_after: ForkedMap<Name, Name>,
     /// The inductives that list their decidable equality (`=> fn T::beq, …`), and, for one that
     /// could not be made, why.
-    deq_listed: HashMap<Name, crate::surface::Generates>,
-    deq_why: HashMap<Name, Message>,
+    deq_listed: ForkedMap<Name, crate::surface::Generates>,
+    deq_why: ForkedMap<Name, Message>,
     /// The declarations generated for a decidable equality, by the family that lists them, as
     /// they checked: extraction writes them after the family, as if they were in its file.
     pub derived: Vec<(Name, Vec<crate::surface::Stmt>)>,
     /// Whether to note the constructors that patterns' short names are read as
     /// (`record_ctor_sites`), and what was noted.
     record_sites: bool,
+    /// While the members of a mutual group are elaborated: the parts they
+    /// share, shaped and elaborated once (`GroupShared`).
+    group_shared: Option<Arc<Mutex<GroupShared>>>,
     ctor_sites: Vec<CtorSite>,
     field_sites: Vec<FieldSite>,
-    ctor_site_origins: HashMap<crate::surface::TermId, Vec<crate::surface::TermId>>,
+    ascription_sites: Vec<AscriptionSite>,
+    /// The fields (`x.f`) of the declaration being checked as written, by
+    /// where they stand: a field is elaborated to a match, and a message shows
+    /// the field the program wrote, not that match.
+    written_fields: HashMap<tauto_parol::Span, String>,
+    ctor_site_origins: fork::Layered<crate::surface::TermId, Vec<crate::surface::TermId>>,
     application_sites: Vec<ApplicationSite>,
-    application_heads: HashMap<crate::surface::TermId, Name>,
+    application_heads: fork::Layered<crate::surface::TermId, Name>,
     /// The classes and instances of the proof language (`check/classes.rs`).
     classes: classes::Registry,
     source_classes: classes::Registry,
@@ -388,8 +489,8 @@ pub struct Kernel {
     class_expansions: Vec<(Stmt, Vec<Stmt>)>,
     /// The level-polymorphic declarations and the instances made of them
     /// (`check/universe.rs`).
-    templates: HashMap<Name, universe::Template>,
-    level_instances: HashSet<Name>,
+    templates: ForkedMap<Name, universe::Template>,
+    level_instances: ForkedSet<Name>,
     level_depth: usize,
     /// How long one declaration may take (`Kernel::set_timeout`).
     timeout: Option<std::time::Duration>,
@@ -402,11 +503,21 @@ pub struct Kernel {
     /// (`Kernel::set_step_limit`).
     step_limit: Option<u64>,
     /// The declarations given their own limit on the steps (`Kernel::set_budget`).
-    budgets: HashMap<Name, u64>,
+    budgets: ForkedMap<Name, u64>,
     /// Why nothing more is checked: a declaration ran out of time.
     gave_up: Option<Message>,
     from_cache: bool,
     timings: Vec<Timing>,
+    /// The state families (`MutK`, `check/mutable.rs`) this kernel declared
+    /// since it was copied (`Kernel::fork_of`): every copy that needs one
+    /// declares it, so copies taken in side by side would each write it.
+    declared_states: Vec<usize>,
+    /// The constant of each text literal declared so far, by the constructor
+    /// of `Text` it is made with (`Kernel::declare_text_literals`).
+    text_literals: std::sync::Arc<HashMap<(Name, String), Name>>,
+    /// The constants of `text_literals`: the kernel's own, which a term the
+    /// kernel hands back names bare, as it names any constant.
+    text_literal_names: std::sync::Arc<std::collections::HashSet<Name>>,
     /// The effects and the functions with effects read in proofs
     /// (`check/effects.rs`).
     effects: effects::Effects,
@@ -425,11 +536,16 @@ pub struct Timing {
     pub cached: bool,
 }
 
+/// A name as a message shows it: written as a file writes it (`r#direct`).
+fn shown<T: ToString>(n: T) -> String {
+    tauto_surface::surface::qualify::written(&n.to_string())
+}
+
 /// The name a statement declares, when it declares one.
 /// `d`, found in a declaration that uses `n`, which did not check: the
 /// failure of `n` comes first, since `d` may only follow from it.
 fn after_failed(n: &str, mut d: Diagnostic) -> Diagnostic {
-    d.message = msg!("kernel-uses-failed-then", name = n, message = d.message);
+    d.message = msg!("kernel-uses-failed-then", name = shown(n), message = d.message);
     d
 }
 
@@ -475,85 +591,302 @@ fn declared_name(stmt: &Stmt) -> Option<Name> {
 /// (`order::dependency_order`), so a declaration that uses one written after
 /// it in the prefix checks here as it does there.
 fn declare_prefix(prefix: &[Stmt]) -> Result<Kernel, String> {
+    declare_prefix_with_owners(prefix, &[])
+}
+
+fn declare_prefix_with_owners(prefix: &[Stmt], owners: &[HashSet<Name>]) -> Result<Kernel, String> {
+    declare_prefix_among(prefix, owners, &[])
+}
+
+/// [`declare_prefix_with_owners`] for `prefix`, a part of `whole` that holds what a declaration
+/// of the program after `whole` needs (`order::needed`). The kernel it gives may also hold other
+/// declarations of `whole`: it checks that declaration as one with `prefix` alone does
+/// (`declare_prefix_untimed`).
+fn declare_prefix_among(
+    prefix: &[Stmt],
+    owners: &[HashSet<Name>],
+    whole: &[Stmt],
+) -> Result<Kernel, String> {
+    let mut kernel = outside_file_limit(|| declare_prefix_untimed(prefix, owners, whole))?;
+    kernel.file_limit = PREFIX_LIMITS.with(|l| l.borrow().1.clone());
+    Ok(kernel)
+}
+
+/// Runs `f`, work that is not the file's own (declaring again what is
+/// before it, so a macro can ask about it), without its time counting
+/// against the file: the file's deadline (`Kernel::set_file_limit`) moves
+/// back by as long as `f` takes. Each declaration `f` makes still has its
+/// own limit (`Kernel::set_timeout`). Nested calls move it once. The time
+/// is kept apart from the deadline (`FileLimit::deadline`), so a kernel
+/// made before `f` (a prefix kept to check several versions of a step)
+/// sees the deadline moved too.
+pub fn outside_file_limit<T>(f: impl FnOnce() -> T) -> T {
+    thread_local! {
+        static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+    let started = crate::clock::Instant::now();
+    DEPTH.with(|d| d.set(d.get() + 1));
+    let out = f();
+    let outermost = DEPTH.with(|d| {
+        d.set(d.get() - 1);
+        d.get() == 0
+    });
+    if outermost {
+        let spent = started.elapsed();
+        EXCLUDED.with(|e| e.set(e.get() + spent));
+    }
+    out
+}
+
+/// A statement of a prefix as a kept kernel declared it: the statement, what it is with its
+/// local variables numbered in the order they appear (`shape_of`), and the owners its inference
+/// was given. Two prefixes bound apart give the same statement local variables of different
+/// identities; it declares the same, so it is the same statement here.
+#[derive(Clone)]
+struct Key {
+    stmt: Stmt,
+    shape: String,
+    owners: Option<HashSet<Name>>,
+}
+
+impl Key {
+    fn new(stmt: &Stmt, owners: Option<HashSet<Name>>) -> Self {
+        Key {
+            stmt: stmt.clone(),
+            shape: shape_of(stmt),
+            owners,
+        }
+    }
+}
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Self) -> bool {
+        self.shape == other.shape && self.owners == other.owners
+    }
+}
+
+/// The statement written out in full, with each local variable's identity replaced by the
+/// order of its first appearance: two statements have the same shape exactly when they are the
+/// same up to a renaming of their local variables, one to one.
+fn shape_of(stmt: &Stmt) -> String {
+    const LOCAL: &str = "LocalRef(";
+    let text = format!("{stmt:?}");
+    let mut out = String::with_capacity(text.len());
+    let mut numbers: HashMap<&str, usize> = HashMap::new();
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find(LOCAL) {
+        let start = at + LOCAL.len();
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        // `LocalRef(name#id)`: the name may hold `#`, the id is the digits after the last one.
+        let Some(close) = rest.find(')') else { break };
+        let inside = &rest[..close];
+        match inside.rfind('#') {
+            Some(hash) if inside[hash + 1..].bytes().all(|b| b.is_ascii_digit()) => {
+                let next = numbers.len();
+                let n = *numbers.entry(&inside[hash + 1..]).or_insert(next);
+                out.push_str(&inside[..hash]);
+                out.push('#');
+                out.push_str(&n.to_string());
+            }
+            _ => out.push_str(inside),
+        }
+        rest = &rest[close..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn declare_prefix_untimed(
+    prefix: &[Stmt],
+    owners: &[HashSet<Name>],
+    whole: &[Stmt],
+) -> Result<Kernel, String> {
     const KEPT: usize = 8;
-    let ordered = order::dependency_order(prefix);
+    if !owners.is_empty() && owners.len() != prefix.len() {
+        return Err("macro prefix ownership does not match its declarations".into());
+    }
+    let positions = order::dependency_positions(prefix);
+    let ordered: Vec<_> = positions.iter().map(|&i| prefix[i].clone()).collect();
+    let ordered_owners: Vec<_> = if owners.is_empty() {
+        Vec::new()
+    } else {
+        positions.iter().map(|&i| owners[i].clone()).collect()
+    };
     let prefix = &ordered[..];
+    // What each statement is declared with besides itself: the tote that owns it, whose
+    // instances its inference may use (`Kernel::set_inference_owners`). A kept kernel serves
+    // only a prefix whose statements it declared with the same owners, so the prefixes of
+    // a macro's checks in a program of several totes are kept like those of one tote.
+    let keys: Vec<Key> = prefix
+        .iter()
+        .enumerate()
+        .map(|(i, s)| Key::new(s, ordered_owners.get(i).cloned()))
+        .collect();
     thread_local! {
         /// The statements declared, in the order declared, the kernel after
-        /// them, and whether none of them failed. Most recently used last.
-        static KEPT_KERNELS: std::cell::RefCell<Vec<(Vec<Stmt>, Kernel, bool)>> =
+        /// them, and which of them failed. Most recently used last.
+        static KEPT_KERNELS: std::cell::RefCell<Vec<(Vec<Key>, Kept<Kernel>, Vec<usize>)>> =
             const { std::cell::RefCell::new(Vec::new()) };
     }
-    /// Which statements of `prefix` are the kept ones `kept`, when `kept` are
-    /// some of them in the same order, and whether every statement of `prefix`
-    /// before the last of them is one of them.
-    fn contained(kept: &[Stmt], prefix: &[Stmt]) -> Option<(Vec<bool>, bool)> {
+    /// A long run of statements declared in one call also leaves a kernel
+    /// every `CHECKPOINT` statements, and the last of them is kept. The prefixes of two files share the
+    /// statements of the program before them and differ in the few each
+    /// file declares itself: the kernel after the whole prefix of one file
+    /// does not serve the next (it holds statements the next one's prefix
+    /// lacks), and without a kernel part of the way the next would declare
+    /// the whole program again.
+    const CHECKPOINT: usize = 512;
+    thread_local! {
+        /// The checkpoints, apart from the kernels after whole prefixes so
+        /// that the files after the one that made them do not push them out.
+        static CHECKPOINTS: std::cell::RefCell<Vec<(Vec<Key>, Kept<Kernel>, Vec<usize>)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    const KEPT_CHECKPOINTS: usize = 2;
+    /// Which statements of `prefix` are the kept ones `kept`, and whether every statement of
+    /// `prefix` before the last of them is one of them; the kept ones that are not in `prefix`
+    /// must be declarations of `whole`, and when there are any the second is false. A kept
+    /// statement is looked up by the names it declares.
+    fn contained(
+        kept: &[Key],
+        prefix: &[Key],
+        at: &HashMap<Name, Vec<usize>>,
+        whole: &HashMap<Name, Vec<usize>>,
+        whole_stmts: &[Stmt],
+    ) -> Option<(Vec<bool>, bool)> {
         let mut taken = vec![false; prefix.len()];
+        let mut in_order = true;
+        let mut extra = false;
         let mut next = 0;
-        for (i, stmt) in prefix.iter().enumerate() {
-            if next < kept.len() && kept[next] == *stmt {
-                taken[i] = true;
-                next += 1;
+        for k in kept {
+            let names = order::defines(&k.stmt);
+            let found = match names.first() {
+                Some(n) => at
+                    .get(n)
+                    .and_then(|is| is.iter().copied().find(|&i| prefix[i] == *k)),
+                None => prefix.iter().position(|p| p == k),
+            };
+            match found {
+                Some(i) => {
+                    if i < next {
+                        in_order = false;
+                    }
+                    next = i + 1;
+                    taken[i] = true;
+                }
+                None => {
+                    let in_whole = match names.first() {
+                        Some(n) => whole.get(n).is_some_and(|is| {
+                            is.iter().any(|&i| shape_of(&whole_stmts[i]) == k.shape)
+                        }),
+                        None => false,
+                    };
+                    if !in_whole {
+                        return None;
+                    }
+                    extra = true;
+                }
             }
-        }
-        if next < kept.len() {
-            return None;
         }
         let last = taken.iter().rposition(|t| *t).map_or(0, |i| i + 1);
-        let initial = taken[..last].iter().all(|t| *t);
+        let initial = !extra && in_order && taken[..last].iter().all(|t| *t);
         Some((taken, initial))
     }
-    // A kept kernel serves when its statements are some of `prefix` in the
-    // same order, and either they are an initial segment of it or none of them
-    // failed: a statement that failed might have used one that `prefix` places
-    // before it, and one that did not fail used only what was declared.
-    let last = KEPT_KERNELS.with(|cell| {
-        let mut kept = cell.borrow_mut();
-        let mut best: Option<(usize, Vec<bool>)> = None;
-        for (i, (stmts, _, clean)) in kept.iter().enumerate() {
-            if stmts.len() > prefix.len() {
-                continue;
-            }
-            let Some((taken, initial)) = contained(stmts, prefix) else {
-                continue;
-            };
-            if !(initial || *clean) {
-                continue;
-            }
-            if best
-                .as_ref()
-                .is_none_or(|(b, _)| kept[*b].0.len() < stmts.len())
-            {
-                best = Some((i, taken));
+    let index = |stmts: &mut dyn Iterator<Item = &Stmt>| {
+        let mut at: HashMap<Name, Vec<usize>> = HashMap::new();
+        for (i, s) in stmts.enumerate() {
+            if let Some(n) = order::defines(s).into_iter().next() {
+                at.entry(n).or_default().push(i);
             }
         }
-        let (at, taken) = best?;
+        at
+    };
+    let at = index(&mut keys.iter().map(|k| &k.stmt));
+    let whole_at = index(&mut whole.iter());
+    // A kept kernel serves when its statements are some of `prefix`, with perhaps other
+    // declarations of `whole`, and either they are an initial segment of it in the same order,
+    // or none of the kept statements of `prefix` that failed mentions one of `prefix` the kernel
+    // lacks. A statement that did not fail used only what was declared, and the one that is
+    // checked with the kernel mentions no declaration it does not need, so the others of
+    // `whole` are not seen by it. One that failed might have used one the kernel lacks.
+    let search = |kept: &mut Vec<(Vec<Key>, Kept<Kernel>, Vec<usize>)>| {
+        let mut best: Option<(usize, Vec<bool>, usize)> = None;
+        for (i, (stmts, _, failed)) in kept.iter().enumerate() {
+            if whole.is_empty() && stmts.len() > keys.len() {
+                continue;
+            }
+            let Some((taken, initial)) = contained(stmts, &keys, &at, &whole_at, whole) else {
+                continue;
+            };
+            let count = taken.iter().filter(|t| **t).count();
+            if best.as_ref().is_some_and(|(_, _, c)| *c >= count) {
+                continue;
+            }
+            if !initial && !failed.is_empty() {
+                let missing: Vec<&Stmt> = keys
+                    .iter()
+                    .zip(&taken)
+                    .filter(|(_, t)| !**t)
+                    .map(|(k, _)| &k.stmt)
+                    .collect();
+                let users: Vec<&Stmt> = failed.iter().map(|&f| &stmts[f].stmt).collect();
+                if order::may_use(&users, &missing, prefix) {
+                    continue;
+                }
+            }
+            best = Some((i, taken, count));
+        }
+        let (at, taken, _) = best?;
         let entry = kept.remove(at);
-        let found = (entry.0.clone(), entry.1.clone(), entry.2, taken);
+        let found = (entry.0.clone(), entry.1.get(), entry.2.clone(), taken);
         kept.push(entry);
         Some(found)
-    });
-    let (mut declared, mut kernel, mut clean, taken) = match last {
-        Some((declared, kernel, clean, taken)) => (declared, kernel, clean, Some(taken)),
+    };
+    let last = KEPT_KERNELS
+        .with(|cell| search(&mut cell.borrow_mut()))
+        .or_else(|| CHECKPOINTS.with(|cell| search(&mut cell.borrow_mut())));
+    let (mut declared, mut kernel, mut failed, taken) = match last {
+        Some((declared, kernel, failed, taken)) => (declared, kernel, failed, Some(taken)),
         None => {
             let mut kernel = Kernel::new();
             declare_prelude(&mut kernel)?;
-            (Vec::new(), kernel, true, None)
+            (Vec::new(), kernel, Vec::new(), None)
         }
     };
     let kept_already = taken.as_ref().is_some_and(|t| t.iter().all(|x| *x));
-    let (timeout, file_limit) = PREFIX_LIMITS.with(|l| l.borrow().clone());
+    let timeout = PREFIX_LIMITS.with(|l| l.borrow().0);
     kernel.timeout = timeout;
-    kernel.file_limit = file_limit;
+    // The prefix is not this file's work (`outside_file_limit`).
+    kernel.file_limit = None;
     kernel.gave_up = None;
     // The theorems of a prefix are declared by their statements: whatever
     // uses them reads the statement, and the proofs are checked where the
     // theorems are, in the check of the whole file.
     kernel.statement_only = true;
+    fn keep(entry: (Vec<Key>, Kept<Kernel>, Vec<usize>)) {
+        KEPT_KERNELS.with(|cell| {
+            let mut kept = cell.borrow_mut();
+            if kept.len() == KEPT {
+                kept.remove(0);
+            }
+            kept.push(entry);
+        });
+    }
+    /// The kernel as a later prefix resumes it: the limits are set again
+    /// when it is taken.
+    fn checkpoint_of(kernel: &Kernel) -> Kept<Kernel> {
+        let mut copy = kernel.clone();
+        copy.statement_only = false;
+        Kept::new(&copy)
+    }
+    let mut fresh = 0usize;
+    let mut checkpoint = None;
     for (i, stmt) in prefix.iter().enumerate() {
         if taken.as_ref().is_some_and(|t| t[i]) {
             continue;
         }
+        kernel.set_inference_owners(ordered_owners.get(i).cloned());
         let entries = kernel.declare(
             &Program {
                 stmts: vec![stmt.clone()],
@@ -576,21 +909,46 @@ fn declare_prefix(prefix: &[Stmt]) -> Result<Kernel, String> {
             .iter()
             .any(|e| matches!(e.verdict, Verdict::Failed(_)))
         {
-            clean = false;
+            failed.push(declared.len());
         }
-        declared.push(stmt.clone());
+        declared.push(keys[i].clone());
+        fresh += 1;
+        if fresh % CHECKPOINT == 0 {
+            checkpoint = Some((declared.clone(), checkpoint_of(&kernel), failed.clone()));
+        }
     }
     kernel.statement_only = false;
-    if !kept_already {
-        KEPT_KERNELS.with(|cell| {
+    // Only the last checkpoint is kept: it is the one nearest to where the
+    // next file's prefix leaves this one.
+    if let Some(entry) = checkpoint
+        && entry.0.len() < declared.len()
+    {
+        CHECKPOINTS.with(|cell| {
             let mut kept = cell.borrow_mut();
-            if kept.len() == KEPT {
+            if kept.len() == KEPT_CHECKPOINTS {
                 kept.remove(0);
             }
-            kept.push((declared, kernel.clone(), clean));
+            kept.push(entry);
         });
     }
+    if !kept_already {
+        keep((declared, Kept::new(&kernel), failed));
+    }
     Ok(kernel)
+}
+
+thread_local! {
+    /// How long work outside the file has taken since the file's limit was
+    /// set (`outside_file_limit`); the file's deadline is this much later.
+    static EXCLUDED: std::cell::Cell<std::time::Duration> =
+        const { std::cell::Cell::new(std::time::Duration::ZERO) };
+}
+
+impl FileLimit {
+    /// When the file's time is up, after the work outside it.
+    fn deadline(&self) -> crate::clock::Instant {
+        self.deadline + EXCLUDED.with(|e| e.get())
+    }
 }
 
 thread_local! {
@@ -606,7 +964,32 @@ pub fn used_later(decl: &Stmt, later: &[Stmt]) -> Vec<Stmt> {
 }
 
 pub fn check_in(prefix: &[Stmt], decl: &Stmt) -> Result<Vec<Entry>, String> {
-    let mut kernel = declare_prefix(prefix)?;
+    check_in_with_owners(prefix, decl, None, &[])
+}
+
+pub fn check_in_with_owners(
+    prefix: &[Stmt],
+    decl: &Stmt,
+    owners: Option<&HashSet<Name>>,
+    prefix_owners: &[HashSet<Name>],
+) -> Result<Vec<Entry>, String> {
+    // Only what `decl` can depend on is declared (`order::needed`): the
+    // program before a macro's declaration is most of the program.
+    if !prefix_owners.is_empty() && prefix_owners.len() != prefix.len() {
+        return Err("macro prefix ownership does not match its declarations".into());
+    }
+    let positions = order::needed_positions(decl, prefix);
+    let needed: Vec<_> = positions.iter().map(|&i| prefix[i].clone()).collect();
+    let needed_owners: Vec<_> = if prefix_owners.is_empty() {
+        Vec::new()
+    } else {
+        positions
+            .iter()
+            .map(|&i| prefix_owners[i].clone())
+            .collect()
+    };
+    let mut kernel = declare_prefix_among(&needed, &needed_owners, prefix)?;
+    kernel.set_inference_owners(owners.cloned());
     let one = Program {
         stmts: vec![decl.clone()],
         errors: Vec::new(),
@@ -621,7 +1004,11 @@ pub struct Prefixed(Kernel);
 
 impl Prefixed {
     pub fn new(prefix: &[Stmt]) -> Result<Self, String> {
-        Ok(Prefixed(declare_prefix(prefix)?))
+        Self::new_with_owners(prefix, &[])
+    }
+
+    pub fn new_with_owners(prefix: &[Stmt], owners: &[HashSet<Name>]) -> Result<Self, String> {
+        Ok(Prefixed(declare_prefix_with_owners(prefix, owners)?))
     }
 
     /// What the kernel says of `decl`, the last entry when it makes several.
@@ -648,7 +1035,16 @@ pub fn goal_of(
     decl: &TheoremDecl,
     term: &SurfaceTerm,
 ) -> Result<(Vec<(Name, SurfaceTerm)>, SurfaceTerm), String> {
-    let mut kernel = declare_prefix(prefix)?;
+    goal_of_with_owners(prefix, decl, term, &[])
+}
+
+pub fn goal_of_with_owners(
+    prefix: &[Stmt],
+    decl: &TheoremDecl,
+    term: &SurfaceTerm,
+    owners: &[HashSet<Name>],
+) -> Result<(Vec<(Name, SurfaceTerm)>, SurfaceTerm), String> {
+    let mut kernel = declare_prefix_with_owners(prefix, owners)?;
     let rendered = |d: Diagnostic| d.message.to_string();
     let mut declaration = [Stmt::Theorem(decl.clone())];
     kernel.resolver.statements(&mut declaration);
@@ -689,6 +1085,19 @@ pub fn eval_term(
     Ok((kernel.without_implicit(&value), ty))
 }
 
+impl tauto_surface::identity::Detach for Kernel {
+    /// A copy whose name reservations are its own from now on: a kernel kept
+    /// for later checks is kept and handed out this way, so names one program
+    /// reserves (its types, and with them the display of their constructors)
+    /// are never found by another.
+    fn detached(&self) -> Self {
+        Self {
+            resolver: self.resolver.detached(),
+            ..self.clone()
+        }
+    }
+}
+
 impl Kernel {
     /// Whether `g` names a function without parameters of its own, which is
     /// called with `()` and never named bare. Names with `@` are the
@@ -696,6 +1105,7 @@ impl Kernel {
     pub(crate) fn nullary_fn(&self, ctx: &Ctx, g: &Name) -> bool {
         !is_local(ctx, g)
             && !g.contains('@')
+            && !self.text_literal_names.contains(g)
             && self.fns.contains(g)
             && self
                 .globals
@@ -704,15 +1114,21 @@ impl Kernel {
     }
 
     /// `t` with each function without parameters called with `()`, as it is
-    /// written: the kernel reads `f()` as the constant `f`, and what it
-    /// hands back to a macro is read again as written.
-    fn calls_written(&self, t: &T) -> T {
-        self.calls_written_in(&Vec::new(), t)
+    /// written (the kernel reads `f()` as the constant `f`), and each call's
+    /// implicit arguments given by name
+    /// (`f(<A: Nat>, x)`), as the source writes them: what the kernel hands a
+    /// macro is read again as written, and a call written is checked so.
+    fn written_for_macro(&self, t: &T) -> T {
+        self.written_in(&Vec::new(), t, true)
     }
 
     /// `calls_written` under the locals `ctx`, which keep their names.
     pub(crate) fn calls_written_in(&self, ctx: &Ctx, t: &T) -> T {
-        fn go(k: &Kernel, ctx: &Ctx, t: &mut T) {
+        self.written_in(ctx, t, false)
+    }
+
+    fn written_in(&self, ctx: &Ctx, t: &T, by_name: bool) -> T {
+        fn go(k: &Kernel, ctx: &Ctx, t: &mut T, by_name: bool) {
             match &*t.kind {
                 TermKind::Var(g) if k.nullary_fn(ctx, g) => {
                     *t = t.with_kind(
@@ -724,16 +1140,71 @@ impl Kernel {
                     );
                 }
                 TermKind::App { function, .. } if matches!(&*function.kind, TermKind::Var(_)) => {
+                    let names = match &*function.kind {
+                        TermKind::Var(g) if by_name => k.implicits_to_name(ctx, g),
+                        _ => None,
+                    };
                     if let TermKind::App { arguments, .. } = std::sync::Arc::make_mut(&mut t.kind) {
-                        arguments.iter_mut().for_each(|a| go(k, ctx, a));
+                        arguments.iter_mut().for_each(|a| go(k, ctx, a, by_name));
+                        // The implicit arguments by name, `f(<A: Nat>, x)`, as the
+                        // source writes them: a call read again is checked as written.
+                        if let Some(names) = names
+                            && arguments.len() >= names.len()
+                            && !matches!(arguments.first().map(|a| &*a.kind),
+                                Some(TermKind::Record { name, .. }) if name.spelling() == Some(tauto_surface::IMPLICITS))
+                        {
+                            let rest = arguments.split_off(names.len());
+                            let fields = names.into_iter().zip(std::mem::take(arguments)).collect();
+                            let record = T::new(
+                                TermKind::Record {
+                                    name: tauto_surface::IMPLICITS.into(),
+                                    fields,
+                                    base: None,
+                                },
+                                t.span,
+                            );
+                            arguments.push(record);
+                            arguments.extend(rest);
+                        }
                     }
                 }
-                _ => crate::surface::walk::children(t, &mut |c| go(k, ctx, c)),
+                _ => crate::surface::walk::children(t, &mut |c| go(k, ctx, c, by_name)),
             }
         }
         let mut t = t.clone();
-        go(self, ctx, &mut t);
+        go(self, ctx, &mut t, by_name);
         t
+    }
+
+    /// The names of the implicit parameters of the global `g`, when a call of it
+    /// written out gives them by name: none for a local, a name of the checker's
+    /// own, a declaration without implicit parameters, or one that also takes a
+    /// class's record (found, not written).
+    fn implicits_to_name(&self, ctx: &Ctx, g: &Name) -> Option<Vec<String>> {
+        if is_local(ctx, g) || g.contains(['@', '\'']) {
+            return None;
+        }
+        let x = self.globals.get(g)?;
+        if x.implicit == 0 || implicit::dict_count(&x.ty, x.implicit) > 0 {
+            return None;
+        }
+        let mut names = Vec::new();
+        let mut ty = &x.ty;
+        while names.len() < x.implicit {
+            let TermKind::Pi { params, result, .. } = &*ty.kind else {
+                return None;
+            };
+            for (n, _) in params {
+                names.push(n.as_ref()?.as_str().to_string());
+            }
+            ty = result;
+        }
+        names.truncate(x.implicit);
+        // A name the checker made (`_`, a renamed binder) is not one to write.
+        names
+            .iter()
+            .all(|n| !n.is_empty() && n != "_" && !n.contains(['\'', '@']))
+            .then_some(names)
     }
 
     /// `t` with each `Eq(T, a, b)` written `a = b`, as a goal is shown and
@@ -802,7 +1273,15 @@ pub struct Elaborator {
 
 impl Elaborator {
     pub fn new(prefix: &[Stmt], context: &[(Name, SurfaceTerm)]) -> Result<Self, String> {
-        let mut kernel = declare_prefix(prefix)?;
+        Self::new_with_owners(prefix, context, &[])
+    }
+
+    pub fn new_with_owners(
+        prefix: &[Stmt],
+        context: &[(Name, SurfaceTerm)],
+        owners: &[HashSet<Name>],
+    ) -> Result<Self, String> {
+        let mut kernel = declare_prefix_with_owners(prefix, owners)?;
         let mut ctx: Ctx = Vec::new();
         for (n, d) in context {
             let mut d = d.clone();
@@ -821,6 +1300,16 @@ impl Elaborator {
 
     /// The term with its implicit arguments written out, and its type.
     pub fn infer(&mut self, t: &SurfaceTerm) -> Result<(SurfaceTerm, SurfaceTerm), String> {
+        let (e, ty) = self.infer_kernel(t)?;
+        Ok((
+            self.kernel.written_for_macro(&e),
+            self.kernel.written_for_macro(&ty),
+        ))
+    }
+
+    /// `infer` as the kernel holds the term and its type, every argument
+    /// written out: what the kernel compares and reduces.
+    fn infer_kernel(&mut self, t: &SurfaceTerm) -> Result<(SurfaceTerm, SurfaceTerm), String> {
         let mut t = t.clone();
         self.kernel.resolver.term_in_context(
             &mut t,
@@ -839,14 +1328,11 @@ impl Elaborator {
             .kernel
             .infer(&self.ctx, &e)
             .map_err(|e| e.message.to_string())?;
-        Ok((
-            self.kernel.calls_written(&e),
-            self.kernel.calls_written(&ty),
-        ))
+        Ok((e, ty))
     }
 
     pub fn check(&mut self, t: &SurfaceTerm, ty: &SurfaceTerm) -> Result<SurfaceTerm, String> {
-        let (ty, _) = self.infer(ty)?;
+        let (ty, _) = self.infer_kernel(ty)?;
         let mut t = t.clone();
         self.kernel.resolver.term_in_context(
             &mut t,
@@ -868,31 +1354,53 @@ impl Elaborator {
         if !self.kernel.conv(&self.ctx, &found, &ty) {
             return Err(self.kernel.mismatch(&self.ctx, &ty, &found).to_string());
         }
-        Ok(self.kernel.calls_written(&e))
+        Ok(self.kernel.written_for_macro(&e))
     }
 
     pub fn defeq(&mut self, a: &SurfaceTerm, b: &SurfaceTerm) -> Result<bool, String> {
-        let (a, _) = self.infer(a)?;
-        let (b, _) = self.infer(b)?;
+        let (a, _) = self.infer_kernel(a)?;
+        let (b, _) = self.infer_kernel(b)?;
         Ok(self.kernel.conv(&self.ctx, &a, &b))
     }
 
     pub fn whnf(&mut self, t: &SurfaceTerm) -> Result<SurfaceTerm, String> {
-        let (e, _) = self.infer(t)?;
+        let (e, _) = self.infer_kernel(t)?;
         let e = self.kernel.whnf(&self.ctx, &e);
-        Ok(self.kernel.calls_written(&e))
+        Ok(self.kernel.written_for_macro(&e))
     }
 
     /// The type of a declaration before the one in hand, or of a variable of
     /// the context.
     pub fn type_of(&self, name: &Name) -> Option<SurfaceTerm> {
         if let Some((_, t)) = self.ctx.iter().rev().find(|(n, _)| n == name) {
-            return Some(self.kernel.calls_written(t));
+            return Some(self.kernel.written_for_macro(t));
         }
         self.kernel
             .globals
             .get(name)
-            .map(|g| self.kernel.calls_written(&g.ty))
+            .map(|g| self.kernel.written_for_macro(&g.ty))
+    }
+
+    /// The names of the implicit parameters of the global `name`, in order,
+    /// as a call gives them by name (`f(<x: v>)`).
+    pub fn implicit_names(&self, name: &Name) -> Option<Vec<String>> {
+        let g = self.kernel.globals.get(name)?;
+        let mut names = Vec::new();
+        let mut ty = &g.ty;
+        while names.len() < g.implicit {
+            let TermKind::Pi { params, result, .. } = &*ty.kind else {
+                return None;
+            };
+            for (n, _) in params {
+                names.push(
+                    n.as_ref()
+                        .map_or_else(|| "_".to_string(), |n| n.as_str().to_string()),
+                );
+            }
+            ty = result;
+        }
+        names.truncate(g.implicit);
+        Some(names)
     }
 }
 
@@ -1043,6 +1551,14 @@ impl Kernel {
         self.record_sites = true;
     }
 
+    /// Declares theorems with proofs by their statements only, as the
+    /// declarations before a macro call are (`declare_prefix`): for a kernel
+    /// whose declarations only decide what a macro may run, while the proofs
+    /// are checked where the theorems are, in the check of the whole file.
+    pub fn set_statement_only(&mut self, on: bool) {
+        self.statement_only = on;
+    }
+
     pub fn use_cache(&mut self) {
         self.cache = cache::Cache::from_env();
     }
@@ -1065,6 +1581,7 @@ impl Kernel {
             deadline: crate::clock::Instant::now() + limit,
         });
         PREFIX_LIMITS.with(|l| l.borrow_mut().1 = self.file_limit.clone());
+        EXCLUDED.with(|e| e.set(std::time::Duration::ZERO));
     }
 
     /// Gives up on a declaration whose check takes more than `limit` steps of
@@ -1080,12 +1597,17 @@ impl Kernel {
         self.budgets.insert(name.clone(), steps);
     }
 
+    /// Whether a declaration ran out of time, so that nothing more is checked.
+    pub fn gave_up(&self) -> bool {
+        self.gave_up.is_some()
+    }
+
     pub fn timings(&self) -> &[Timing] {
         &self.timings
     }
 
     pub fn show_syntax(&mut self, shown: HashMap<u32, String>) {
-        self.shown = shown;
+        self.shown = shown.into();
     }
 
     pub fn new() -> Self {
@@ -1093,55 +1615,66 @@ impl Kernel {
             resolver: tauto_surface::resolve::Resolver::new(
                 tauto_surface::bindings::library_bindings(),
             ),
-            globals: HashMap::new(),
-            skipped: HashSet::new(),
-            fns: HashSet::new(),
-            inds: HashMap::new(),
-            ctors: HashMap::new(),
-            recs: HashMap::new(),
+            globals: Default::default(),
+            skipped: Default::default(),
+            fns: Default::default(),
+            item_lends: Default::default(),
+            inds: Default::default(),
+            ctors: Default::default(),
+            recs: Default::default(),
             fresh: 0,
+            head_types: Default::default(),
+            term_facts: Default::default(),
             arrow_binders: Vec::new(),
-            metas: HashMap::new(),
+            metas: Default::default(),
             current: None,
             projecting: 0,
-            ahead: HashMap::new(),
+            ahead: Default::default(),
             defining: Vec::new(),
             defining_implicit: Vec::new(),
             deep: None,
             matched: Vec::new(),
             core: core::Core::new(),
             holes: Vec::new(),
-            hole_lets: HashMap::new(),
+            hole_lets: Default::default(),
             cache: None,
             elaborated: None,
             derivations: None,
-            derivation_names: HashSet::new(),
-            shown: HashMap::new(),
+            derivation_names: Default::default(),
+            shown: Default::default(),
             deq_started: false,
-            seal_after: HashMap::new(),
-            deq_listed: HashMap::new(),
-            deq_why: HashMap::new(),
+            structural_instances: false,
+            inference_owners: None,
+            seal_after: Default::default(),
+            deq_listed: Default::default(),
+            deq_why: Default::default(),
             derived: Vec::new(),
             record_sites: false,
+            group_shared: None,
             ctor_sites: Vec::new(),
             field_sites: Vec::new(),
-            ctor_site_origins: HashMap::new(),
+            ascription_sites: Vec::new(),
+            written_fields: HashMap::new(),
+            ctor_site_origins: Default::default(),
             application_sites: Vec::new(),
-            application_heads: HashMap::new(),
+            application_heads: Default::default(),
             classes: Default::default(),
             source_classes: Default::default(),
             class_expansions: Vec::new(),
-            templates: HashMap::new(),
+            templates: Default::default(),
             level_instances: Default::default(),
             level_depth: 0,
             timeout: None,
             file_limit: None,
             statement_only: false,
             step_limit: Some(core::DEFAULT_STEP_LIMIT),
-            budgets: HashMap::new(),
+            budgets: Default::default(),
             gave_up: None,
             from_cache: false,
             timings: Vec::new(),
+            declared_states: Vec::new(),
+            text_literals: Default::default(),
+            text_literal_names: Default::default(),
             effects: Default::default(),
         };
         let sp = Span::new(0, 0);
@@ -1181,6 +1714,81 @@ impl Kernel {
 
     /// A source environment can name an already allocated declaration.
     /// This neither accepts that declaration nor rewrites resolved terms.
+    /// Declares a constant for each text literal of `stmts` that has none yet,
+    /// once `Text` is declared: the literal is then read as that constant,
+    /// one name, and not as its bytes, which a term shows again in each copy
+    /// of a goal made from it (a match on the value it is in copies it into
+    /// each arm). The constant's value is the bytes, as a literal was before,
+    /// so what the kernel checks is the same. A kernel copied to declare a
+    /// file (`Kernel::fork_of`) is given the constants first, so that no two
+    /// copies declare one.
+    pub fn declare_text_literals(&mut self, stmts: &[Stmt]) {
+        let Some(ctor) = self.text_constructor() else {
+            return;
+        };
+        let Some(reference) = ctor.as_global().cloned() else {
+            return;
+        };
+        let Some(text) = self.resolver.source_reference("Text") else {
+            return;
+        };
+        let mut found: Vec<String> = Vec::new();
+        for stmt in stmts {
+            let mut stmt = stmt.clone();
+            crate::surface::walk::stmt(&mut stmt, &mut |t| {
+                if let TermKind::Text(s) = &*t.kind
+                    && !self.text_literals.contains_key(&(ctor.clone(), s.clone()))
+                    && !found.contains(s)
+                {
+                    found.push(s.clone());
+                }
+            });
+        }
+        for s in found {
+            let name: Name = tauto_surface::bindings::text_literal(&reference, &s).into();
+            let span = tauto_parol::Span::new(0, 0);
+            let stmt = Stmt::Fn(crate::surface::FnDecl {
+                lends: None,
+                budget: None,
+                vis: Default::default(),
+                generates: None,
+                opaque: false,
+                ghost: false,
+                decreasing_by: None,
+                name: name.clone(),
+                generic_types: Vec::new(),
+                generics: Vec::new(),
+                rows: Vec::new(),
+                bounds: Vec::new(),
+                bound_spans: Vec::new(),
+                params: Vec::new(),
+                borrows: Vec::new(),
+                param_types: Vec::new(),
+                result: Some(T::var(&text, span)),
+                effects: None,
+                written_effects: None,
+                row_hole: None,
+                where_: Vec::new(),
+                span,
+                body: T::new(TermKind::Text(s.clone()), span),
+                unused: None,
+                unused_generics: Vec::new(),
+                unused_params: Vec::new(),
+            });
+            let entries = self.declare(
+                &Program {
+                    stmts: vec![stmt],
+                    errors: Vec::new(),
+                },
+                false,
+            );
+            if entries.iter().all(|e| !e.failed()) && self.globals.contains_key(&name) {
+                std::sync::Arc::make_mut(&mut self.text_literal_names).insert(name.clone());
+                std::sync::Arc::make_mut(&mut self.text_literals).insert((ctor.clone(), s), name);
+            }
+        }
+    }
+
     pub fn source_alias(&mut self, spelling: &str, reference: &tauto_surface::identity::DeclRef) {
         self.resolver.source_alias(spelling, reference);
     }
@@ -1189,17 +1797,17 @@ impl Kernel {
         self.resolver.global(name)
     }
 
+    pub fn set_inference_owners(&mut self, owners: Option<HashSet<Name>>) {
+        self.inference_owners = owners;
+    }
+
     pub fn declare_program(&mut self, program: &Program) -> Vec<Entry> {
         self.declare(program, false)
     }
 
     pub(crate) fn declare(&mut self, program: &Program, builtin: bool) -> Vec<Entry> {
         let mut entries = Vec::new();
-        // `#(a, b)` is the prelude's `Pair` here: the kernel has no product of its own.
         let mut lowered = program.stmts.clone();
-        for s in &mut lowered {
-            tauto_surface::surface::qualify::lower_tuples(s, "Pair");
-        }
         if builtin {
             tauto_surface::resolve::Resolver::new(
                 tauto_surface::bindings::library_definition_bindings(),
@@ -1215,15 +1823,16 @@ impl Kernel {
                         && let TermKind::Var(name) = &*function.kind
                     {
                         self.application_heads
-                            .entry(term.id())
-                            .or_insert_with(|| name.clone());
+                            .or_insert_with(term.id(), || name.clone());
                     }
                 });
             }
         }
         let stmts = order::dependency_order(&lowered);
         self.classes = self.source_classes.clone();
+        self.structural_instances = builtin;
         let stmts = self.class_pass(&stmts, &mut entries);
+        self.structural_instances = false;
         let stmts = self.opaque_pass(&stmts, &mut entries);
         let stmts = self.wf_pass(&stmts, &mut entries);
         let stmts = self.level_pass(&stmts, &mut entries);
@@ -1245,6 +1854,7 @@ impl Kernel {
             }
         }
         let mut stmts = self.effect_pass(&stmts);
+        entries.append(&mut self.effects.failed);
         if builtin {
             tauto_surface::resolve::Resolver::new(
                 tauto_surface::bindings::library_definition_bindings(),
@@ -1259,7 +1869,7 @@ impl Kernel {
                 // Still a `struct` or `enum`: it could not be the `inductive`
                 // it says it is (`tauto_surface::inductive_data`).
                 Stmt::Struct(d) | Stmt::Enum(d)
-                    if d.kind.as_deref() == Some(tauto_surface::inductive_data::KIND) =>
+                    if tauto_surface::inductive_data::is_inductive(d) =>
                 {
                     let problems =
                         tauto_surface::inductive_data::problems(d, matches!(stmt, Stmt::Struct(_)));
@@ -1299,16 +1909,21 @@ impl Kernel {
                 continue;
             }
             if let Some(limit) = &self.file_limit
-                && crate::clock::Instant::now() >= limit.deadline
+                && crate::clock::Instant::now() >= limit.deadline()
             {
                 // The time of the file is up before this declaration starts.
                 let message = msg!(
-                    "kernel-file-time-limit",
+                    "kernel-file-time-limit-before",
                     file = limit.file.as_str(),
                     seconds = limit.limit.as_secs_f64().to_string()
                 );
                 if let Some(name) = declared_name(stmt) {
-                    self.gave_up = Some(msg!("kernel-ran-out-of-time", name = (&name).to_string()));
+                    self.gave_up = Some(msg!(
+                        "kernel-file-ran-out",
+                        file = limit.file.as_str(),
+                        seconds = limit.limit.as_secs_f64().to_string(),
+                        name = (&name).to_string()
+                    ));
                     entries.push(Entry {
                         verdict: Verdict::Failed(Diagnostic::new(message, None)),
                         name,
@@ -1345,13 +1960,13 @@ impl Kernel {
             let declaration_deadline = self.timeout.map(|limit| started + limit);
             // The time of the file is up first when its deadline is the earlier.
             let by_file = match (&self.file_limit, declaration_deadline) {
-                (Some(f), Some(d)) => f.deadline <= d,
+                (Some(f), Some(d)) => f.deadline() <= d,
                 (Some(_), None) => true,
                 _ => false,
             };
             let deadline = match (&self.file_limit, declaration_deadline) {
-                (Some(f), Some(d)) => Some(f.deadline.min(d)),
-                (Some(f), None) => Some(f.deadline),
+                (Some(f), Some(d)) => Some(f.deadline().min(d)),
+                (Some(f), None) => Some(f.deadline()),
                 (None, d) => d,
             };
             self.core.start_budget(limit, deadline);
@@ -1366,7 +1981,7 @@ impl Kernel {
                 // level is not used, even where it would check.
                 entries.push(Entry {
                     verdict: Verdict::Failed(Diagnostic::new(
-                        msg!("kernel-uses-failed", name = owner.to_string()),
+                        msg!("kernel-uses-failed", name = shown(owner)),
                         None,
                     )),
                     name,
@@ -1416,7 +2031,8 @@ impl Kernel {
                     msg!(
                         "kernel-file-time-limit",
                         file = f.file.as_str(),
-                        seconds = f.limit.as_secs_f64().to_string()
+                        seconds = f.limit.as_secs_f64().to_string(),
+                        spent = format!("{:.1}", elapsed.as_secs_f64())
                     )
                 } else if spent.top.is_empty() {
                     msg!("kernel-gave-up", seconds = limit)
@@ -1431,16 +2047,25 @@ impl Kernel {
                     e.verdict = Verdict::Failed(Diagnostic::new(message.clone(), None));
                 }
                 if let Some(e) = entries.get(before) {
-                    self.gave_up = Some(msg!("kernel-ran-out-of-time", name = e.name.to_string()));
+                    self.gave_up = Some(match self.file_limit.as_ref().filter(|_| by_file) {
+                        // The file's time ran out, not the declaration's own.
+                        Some(f) => msg!(
+                            "kernel-file-ran-out",
+                            file = f.file.as_str(),
+                            seconds = f.limit.as_secs_f64().to_string(),
+                            name = e.name.to_string()
+                        ),
+                        None => msg!("kernel-ran-out-of-time", name = e.name.to_string()),
+                    });
                 }
             }
-            if let Some(op) = &spent.past_u128 {
+            if let Some(op) = &spent.past_limit {
                 // A failure there may be the number left as it is: say so, where
                 // the comparison that needed it was.
                 for e in &mut entries[before..] {
                     if let Verdict::Failed(d) = &mut e.verdict {
                         d.message = msg!(
-                            "kernel-past-u128",
+                            "kernel-past-numeral-limit",
                             message = d.message.clone(),
                             op = op.as_str()
                         );
@@ -1462,6 +2087,11 @@ impl Kernel {
     }
 
     fn declare_one(&mut self, stmt: &Stmt, builtin: bool, entries: &mut Vec<Entry>) {
+        self.head_types.clear();
+        self.written_fields.clear();
+        self.term_facts = Default::default();
+        self.core.known.clear();
+        self.core.binders_checked.clear();
         // The equation of an `opaque fn` is checked with the function
         // unfolding; after it, the function no longer unfolds.
         if let Stmt::Theorem(t) = stmt
@@ -1586,37 +2216,33 @@ impl Kernel {
         } else {
             self.proof_key(t)
         };
-        // The cache keeps the globals the proof names, not their axioms: a
-        // global's interface is its statement, so one that became an axiom
-        // (or stopped being one) leaves the key as it was, and its axioms
-        // are taken as they are now.
-        if let Some(key) = &key
-            && let Some(uses) = self.cache.as_ref().and_then(|c| c.get(key))
-            && let Some(axioms) = self.axioms_of(&uses)
-        {
-            self.from_cache = true;
-            return self.theorem_checked_before(t, axioms);
+        // The cache keeps the term the proof elaborated to; on a hit the core
+        // checks it as it checks any other term, and the axioms are those of
+        // the term (`check/cache.rs`). What the cache holds is never trusted.
+        let before = key.as_ref().and_then(|k| {
+            let mut terms = self.cache.as_ref()?.get_terms(k, t.span)?;
+            (terms.len() == 1).then(|| terms.pop()).flatten()
+        });
+        let mut hit = before.is_some();
+        let (mut verdict, mut term) = if hit {
+            self.theorem_term_from(t, builtin, before)
+        } else {
+            self.theorem_term(t, builtin)
+        };
+        if hit && term.is_none() {
+            // What the cache held does not check: it is elaborated again.
+            hit = false;
+            self.globals.remove(&t.name);
+            (verdict, term) = self.theorem_term(t, builtin);
         }
-        let (verdict, term) = self.theorem_term(t, builtin);
-        if let (Some(key), Verdict::Checked { .. }, Some(term), Some(cache)) =
-            (&key, &verdict, &term, &self.cache)
+        self.from_cache = hit;
+        if let (Some(key), Verdict::Checked { .. }, Some(term), Some(cache), false) =
+            (&key, &verdict, &term, &self.cache, hit)
             && !self.core.budget_out()
         {
-            let mut uses = BTreeSet::new();
-            self.collect_globals(term, &mut uses);
-            cache.put(key, &uses);
+            cache.put_terms(key, &[term]);
         }
         verdict
-    }
-
-    /// The axioms the globals `uses` rely on now, or none when one of them is
-    /// no longer a global.
-    fn axioms_of(&self, uses: &BTreeSet<Name>) -> Option<BTreeSet<Name>> {
-        let mut axioms = BTreeSet::new();
-        for n in uses {
-            axioms.extend(self.globals.get(n)?.axioms.iter().cloned());
-        }
-        Some(axioms)
     }
 
     /// A theorem whose proof checked before (`check/cache.rs`): its statement
@@ -1660,7 +2286,7 @@ impl Kernel {
 
     /// `theorem_term`, with the term the body elaborated to before
     /// (`check/cache.rs`) when there is one: it is not elaborated again, and
-    /// the core takes it as checked, checking only the statement.
+    /// the core checks it as it checks any other term.
     fn theorem_term_from(
         &mut self,
         t: &TheoremDecl,
@@ -1692,11 +2318,17 @@ impl Kernel {
         };
         let mut axioms = BTreeSet::new();
         let mut checked = None;
-        // The body is one this checker checked before (`check/cache.rs`).
-        let mut cached = false;
         match &t.body {
             None => {
-                if !builtin || tauto_surface::bindings::is_library(&t.name, QUOT_SOUND) {
+                // A declaration without a body is an axiom, in the prelude
+                // too, so that `declare_prelude` refuses one written there by
+                // mistake. Only the quotient's constants are not: the kernel
+                // computes them, and nothing else is exempt.
+                let constant = builtin
+                    && QUOT_CONSTANTS
+                        .iter()
+                        .any(|c| tauto_surface::bindings::is_library(&t.name, c));
+                if !constant {
                     axioms.insert(t.name.clone());
                 }
             }
@@ -1704,14 +2336,15 @@ impl Kernel {
                 self.current = Some(t.name.clone());
                 let proof = (|| {
                     if let Some(lam) = before {
-                        cached = true;
                         return Ok(lam);
                     }
                     let body = &self.expand_lets(body)?;
                     let (shaped, result) = self.shaped_signature(&t.params, &t.ty)?;
+                    let body = &self.unascribe_param_scrutinee(&shaped, body);
+                    let body = &self.split_product_matches(&t.name, body);
                     let body = &match &t.decreasing_by {
-                        Some(y) => self.structural_on(&shaped, body, y)?,
-                        None => body.clone(),
+                        Some(y) => self.structural_on(&shaped, body, y, true)?,
+                        None => self.lift_nested_match(&t.name, &shaped, body),
                     };
                     let mut compiled =
                         self.compile_match(Some(&t.name), t.implicit, &shaped, &result, body)?;
@@ -1730,7 +2363,7 @@ impl Kernel {
                 self.current = None;
                 let proof = match proof {
                     Ok(lam) => match self.uses_failed(&lam) {
-                        Some(n) => err(msg!("kernel-uses-failed", name = (n).to_string()), t.span),
+                        Some(n) => err(msg!("kernel-uses-failed", name = shown(n)), t.span),
                         None => Ok(lam),
                     },
                     // The same when the proof does not check: what it says is
@@ -1764,7 +2397,7 @@ impl Kernel {
             self.set_params(&t.name, t.params.len());
             return (
                 Verdict::Failed(Diagnostic::new(
-                    msg!("kernel-uses-failed", name = (n).to_string()),
+                    msg!("kernel-uses-failed", name = shown(n)),
                     Some(t.span),
                 )),
                 None,
@@ -1789,13 +2422,9 @@ impl Kernel {
             self.set_params(&t.name, t.params.len());
             return (Verdict::Incomplete { holes, uses }, None);
         }
-        let added = if cached {
-            self.core
-                .add_decl_checked_before(&t.name, &statement, checked.as_ref(), false)
-        } else {
-            self.core
-                .add_decl(&t.name, &statement, checked.as_ref(), false)
-        };
+        let added = self
+            .core
+            .add_decl(&t.name, &statement, checked.as_ref(), false);
         if let Err(m) = added {
             self.add_failed(&t.name, statement);
             self.set_implicit(&t.name, t.implicit);
@@ -2050,7 +2679,10 @@ impl Kernel {
             .iter()
             .map(|f| {
                 (0..plain.len())
-                    .filter(|&j| mentions(&f.body, &names[j]))
+                    // By name anywhere, as `reaches` above: a call written with the
+                    // function's global name is not a free variable, and a cycle
+                    // missed here would be written out without end.
+                    .filter(|&j| names_anywhere(&f.body, &names[j]))
                     .collect()
             })
             .collect();
@@ -2082,7 +2714,7 @@ impl Kernel {
                     if let Some(n) = names.iter().find(|n| mentions(&body, n)) {
                         return Err(msg!(
                             "kernel-mutual-plain-partial",
-                            name = (n).to_string(),
+                            name = shown(n),
                             user = (&f.name).to_string()
                         ));
                     }
@@ -2326,9 +2958,11 @@ impl Kernel {
         let mark = self.ctor_sites.len();
         let app_mark = self.application_sites.len();
         let field_mark = self.field_sites.len();
+        let ascription_mark = self.ascription_sites.len();
         let mut cached_sites = None;
         let mut cached_apps = None;
         let mut cached_fields = None;
+        let mut cached_ascriptions = None;
         let before = key.as_ref().and_then(|k| {
             let cache = self.cache.as_ref()?;
             let terms = cache.get_terms(k, span)?;
@@ -2336,6 +2970,7 @@ impl Kernel {
                 cached_sites = Some(cache.get_sites(k, base)?);
                 cached_apps = Some(cache.get_applications(k, base)?);
                 cached_fields = Some(cache.get_fields(k, base)?);
+                cached_ascriptions = Some(cache.get_ascriptions(k, base)?);
             }
             (terms.len() == decls.len()).then_some(terms)
         });
@@ -2353,16 +2988,16 @@ impl Kernel {
                 statements.push(statement);
                 shaped.push(self.shaped_signature(params, result)?);
             }
-            // Checked before by this checker (`check/cache.rs`): the core
-            // takes it as checked, as a theorem's proof is.
+            // Elaborated before by this checker (`check/cache.rs`): the
+            // core checks the terms, as it checks any other.
             if let Some(lams) = before {
                 for (st, lam) in statements.iter().zip(&lams) {
                     if let Some(n) = self.uses_failed(lam).or_else(|| self.uses_failed(st)) {
-                        return err(msg!("kernel-uses-failed", name = (n).to_string()), span);
+                        return err(msg!("kernel-uses-failed", name = shown(n)), span);
                     }
                 }
                 for ((name, ..), (st, lam)) in decls.iter().zip(statements.iter().zip(&lams)) {
-                    if let Err(m) = self.core.add_decl_checked_before(name, st, Some(lam), true) {
+                    if let Err(m) = self.core.add_decl(name, st, Some(lam), true) {
                         for (other, ..) in &decls {
                             self.core.forget(other);
                         }
@@ -2390,14 +3025,25 @@ impl Kernel {
                     },
                 )
                 .collect();
-            let compiled = self.compile_group(&specs)?;
+            // The members keep the names of the parameter slots they share,
+            // so that the minor premises are the same nodes in each.
+            let (compiled, aliases) = self.compile_group_aligned(&specs)?;
             let mut lams = Vec::new();
-            for (((name, _, params, _, _), c), statement) in
-                decls.iter().zip(&compiled).zip(&statements)
+            let shared = (compiled.len() > 1).then(|| Arc::new(Mutex::new(GroupShared::default())));
+            for ((((name, _, params, _, _), c), statement), aliases) in
+                decls.iter().zip(&compiled).zip(&statements).zip(&aliases)
             {
-                let lam = self.lambda_of(params, c)?;
-                let lam = self.shape(&lam)?;
-                let lam = self.elab(&Vec::new(), &lam, Some(statement))?;
+                let params: Vec<(Name, T)> = params
+                    .iter()
+                    .map(|(n, ty)| (aliases.get(n).unwrap_or(n).clone(), ty.clone()))
+                    .collect();
+                let lam = self.lambda_of(&params, c)?;
+                self.group_shared = shared.clone();
+                let lam = self
+                    .shape(&lam)
+                    .and_then(|lam| self.elab(&Vec::new(), &lam, Some(statement)));
+                self.group_shared = None;
+                let lam = lam?;
                 self.check_body(name, &lam, statement)?;
                 if !self.holes.is_empty() {
                     return err(msg!("kernel-mutual-hole"), span);
@@ -2406,7 +3052,7 @@ impl Kernel {
                     .uses_failed(&lam)
                     .or_else(|| self.uses_failed(statement))
                 {
-                    return err(msg!("kernel-uses-failed", name = (n).to_string()), span);
+                    return err(msg!("kernel-uses-failed", name = shown(n)), span);
                 }
                 lams.push(lam);
             }
@@ -2474,6 +3120,7 @@ impl Kernel {
                         cache.put_sites(key, &self.ctor_sites[mark..], base);
                         cache.put_applications(key, &self.application_sites[app_mark..], base);
                         cache.put_fields(key, &self.field_sites[field_mark..], base);
+                        cache.put_ascriptions(key, &self.ascription_sites[ascription_mark..], base);
                     }
                 }
                 if hit && let Some(sites) = cached_sites {
@@ -2481,6 +3128,8 @@ impl Kernel {
                     self.application_sites
                         .extend(cached_apps.unwrap_or_default());
                     self.field_sites.extend(cached_fields.unwrap_or_default());
+                    self.ascription_sites
+                        .extend(cached_ascriptions.unwrap_or_default());
                 }
                 let mut out = Vec::new();
                 for ((name, implicit, params, ..), (st, lam)) in
@@ -2562,7 +3211,7 @@ impl Kernel {
                 }
             });
             if let Some(n) = uses {
-                verdict = Verdict::Skipped(msg!("kernel-uses-skipped", name = n));
+                verdict = Verdict::Skipped(msg!("kernel-uses-skipped", name = shown(n)));
             }
         }
         if let Verdict::Skipped(_) = verdict {
@@ -2628,6 +3277,8 @@ impl Kernel {
             body: Some(f.body.clone()),
             decreasing_by: f.decreasing_by.clone().filter(|y| names_param(f, y)),
             span: f.body.span,
+            unused: None,
+            unused_params: Vec::new(),
         };
         // A value that nothing uses is not executable code: it is never run
         // and its type is never checked, so a body with one is refused
@@ -2654,6 +3305,14 @@ impl Kernel {
         if let Err(d) = signature
             && says(&d.message, NOT_DEFINED)
         {
+            // A name that nothing declares is not one that only executable code
+            // has (`i64`, a type of the library): it is undefined, as it is in a body.
+            if refused.is_none()
+                && let Some(name) = plain_undefined_name(&d.message)
+                && tauto_surface::bindings::library_reference(&name).is_none()
+            {
+                return Verdict::Failed(d);
+            }
             return Verdict::Skipped(msg!("kernel-type-not-kernel"));
         }
         if let Some(d) = refused {
@@ -2666,9 +3325,11 @@ impl Kernel {
         let mark = self.ctor_sites.len();
         let app_mark = self.application_sites.len();
         let field_mark = self.field_sites.len();
+        let ascription_mark = self.ascription_sites.len();
         let mut cached_sites = None;
         let mut cached_apps = None;
         let mut cached_fields = None;
+        let mut cached_ascriptions = None;
         let before = key.as_ref().and_then(|k| {
             let cache = self.cache.as_ref()?;
             let mut terms = cache.get_terms(k, f.body.span)?;
@@ -2676,6 +3337,7 @@ impl Kernel {
                 cached_sites = Some(cache.get_sites(k, base)?);
                 cached_apps = Some(cache.get_applications(k, base)?);
                 cached_fields = Some(cache.get_fields(k, base)?);
+                cached_ascriptions = Some(cache.get_ascriptions(k, base)?);
             }
             (terms.len() == 1).then(|| terms.pop()).flatten()
         });
@@ -2695,6 +3357,7 @@ impl Kernel {
                 cache.put_sites(key, &self.ctor_sites[mark..], base);
                 cache.put_applications(key, &self.application_sites[app_mark..], base);
                 cache.put_fields(key, &self.field_sites[field_mark..], base);
+                cache.put_ascriptions(key, &self.ascription_sites[ascription_mark..], base);
             }
         }
         if hit
@@ -2705,6 +3368,8 @@ impl Kernel {
             self.application_sites
                 .extend(cached_apps.unwrap_or_default());
             self.field_sites.extend(cached_fields.unwrap_or_default());
+            self.ascription_sites
+                .extend(cached_ascriptions.unwrap_or_default());
         }
         if let Some(lam) = checked
             && self.core.set_value(&f.name, &lam).is_ok()
@@ -2722,7 +3387,7 @@ impl Kernel {
         let result = self.shape(value).and_then(|v| {
             let ty = self.infer(&Vec::new(), &v)?;
             if let Some(n) = self.uses_failed(&v) {
-                return err(msg!("kernel-uses-failed", name = (n).to_string()), v.span);
+                return err(msg!("kernel-uses-failed", name = shown(n)), v.span);
             }
             if let Err(m) = self.core.add_constant(name, &v) {
                 return Err(core_rejects(name, m, v.span));
@@ -2870,6 +3535,7 @@ impl Kernel {
                 params,
                 result,
                 effects,
+                ..
             } if has_match_in_type(t) => {
                 let mut inner = ctx.to_vec();
                 let mut out = Vec::new();
@@ -2895,6 +3561,7 @@ impl Kernel {
                         params: out,
                         result: Box::new(result?),
                         effects: effects.clone(),
+                        unused: Vec::new(),
                     },
                     t.span,
                 ))
@@ -2952,6 +3619,27 @@ impl Kernel {
     /// Curries multi-parameter binders and rejects syntax the kernel does
     /// not read.
     fn shape(&self, t: &T) -> Result<T, Diagnostic> {
+        let Some(shared) = &self.group_shared else {
+            return self.shape_node(t);
+        };
+        // Only a node held elsewhere too can be met again.
+        if Arc::strong_count(&t.kind) == 1 {
+            return self.shape_node(t);
+        }
+        let key = Arc::as_ptr(&t.kind) as *const () as usize;
+        if let Some((_, s)) = shared.lock().unwrap().shaped.get(&key) {
+            return Ok(s.clone());
+        }
+        let s = self.shape_node(t)?;
+        let mut memo = shared.lock().unwrap();
+        memo.from_shape
+            .insert(Arc::as_ptr(&s.kind) as *const () as usize);
+        memo.shaped.insert(key, (t.clone(), s.clone()));
+        drop(memo);
+        Ok(s)
+    }
+
+    fn shape_node(&self, t: &T) -> Result<T, Diagnostic> {
         let sp = t.span;
         Ok(match &*t.kind {
             TermKind::Var(_) | TermKind::Nat(_) | TermKind::Bool(_) | TermKind::Hole(_) => {
@@ -2972,6 +3660,7 @@ impl Kernel {
                 params,
                 body,
                 types,
+                ..
             } => {
                 let mut acc = self.shape(body)?;
                 for (i, n) in params.iter().enumerate().rev() {
@@ -2986,6 +3675,7 @@ impl Kernel {
                             params: vec![n.clone()],
                             body: Box::new(acc),
                             types: ty,
+                            unused_params: Vec::new(),
                         },
                         sp,
                     );
@@ -2997,6 +3687,7 @@ impl Kernel {
                 binder,
                 domain,
                 body,
+                ..
             } => T::new(
                 TermKind::App {
                     function: Box::new(T::var(
@@ -3010,6 +3701,7 @@ impl Kernel {
                                 params: vec![binder.clone()],
                                 body: Box::new(self.shape(body)?),
                                 types: vec![Some(self.shape(domain)?)],
+                                unused_params: Vec::new(),
                             },
                             sp,
                         ),
@@ -3019,21 +3711,34 @@ impl Kernel {
             ),
             // `f(<x: v>, h)`: the implicit arguments named, which the
             // elaborator places by the generics' names.
-            TermKind::Record { name, fields, base: None }
-                if name.spelling() == Some(tauto_surface::IMPLICITS) =>
-            {
-                T::new(
-                    TermKind::Record {
-                        name: name.clone(),
-                        fields: fields
-                            .iter()
-                            .map(|(f, v)| Ok((f.clone(), self.shape(v)?)))
-                            .collect::<Result<_, Diagnostic>>()?,
-                        base: None,
-                    },
-                    sp,
-                )
+            TermKind::Record {
+                name,
+                fields,
+                base: None,
+            } if name.spelling() == Some(tauto_surface::IMPLICITS) => T::new(
+                TermKind::Record {
+                    name: name.clone(),
+                    fields: fields
+                        .iter()
+                        .map(|(f, v)| Ok((f.clone(), self.shape(v)?)))
+                        .collect::<Result<_, Diagnostic>>()?,
+                    base: None,
+                },
+                sp,
+            ),
+            // A borrow, `&T` / `&mut T` in a type and `&x` / `&mut x` in a
+            // term, is the value it borrows to the kernel: ownership is
+            // checked in the Nib layer. `&mut` matches `&` so exclusive
+            // iterator methods can carry progress proofs. A λ with a `&mut`
+            // parameter stays out of kernel terms (the mutable rewrite
+            // handles those functions).
+            TermKind::Borrow { term, .. } => self.shape(term)?,
+            TermKind::BorrowLam { borrows, lam } if !borrows.contains(&Some(true)) => {
+                self.shape(lam)?
             }
+            // Function kinds (`affine`, `linear`, …) are surface ownership; the
+            // kernel reads the function type they wrap. Nib checks the kind.
+            TermKind::FnKind { ty, .. } => self.shape(ty)?,
             TermKind::Match { .. } => {
                 return err(msg!("kernel-not-kernel-term-match"), sp);
             }
@@ -3118,6 +3823,11 @@ impl Kernel {
             }
             // In a loop along the last arguments (`map_applications`).
             TermKind::App { .. } => t.map_applications(true, |a| self.expand_lets(a))?,
+            // A λ with shared-borrow parameters is the λ itself to the kernel
+            // (as in `shape`), so the `let`s around it reach its body.
+            TermKind::BorrowLam { borrows, lam } if !borrows.contains(&Some(true)) => {
+                self.expand_lets(lam)?
+            }
             TermKind::Lam {
                 params,
                 body,
@@ -3131,6 +3841,7 @@ impl Kernel {
                         .iter()
                         .map(|ty| ty.as_ref().map(|ty| self.expand_lets(ty)).transpose())
                         .collect::<Result<_, _>>()?,
+                    unused_params: Vec::new(),
                 },
                 sp,
             ),
@@ -3139,6 +3850,7 @@ impl Kernel {
                 result,
                 binder,
                 arms,
+                ..
             } => T::new(
                 TermKind::Match {
                     binder: binder.clone(),
@@ -3158,6 +3870,7 @@ impl Kernel {
                             })
                         })
                         .collect::<Result<_, Diagnostic>>()?,
+                    binder_unused: None,
                 },
                 sp,
             ),
@@ -3181,22 +3894,40 @@ impl Kernel {
     }
 
     fn subst(&mut self, t: &T, x: &Name, v: &T) -> T {
-        let names = FreeNames::of(v);
-        self.subst_in(t, x, v, &names, &mut HashMap::new())
+        self.subst_all(t, vec![(x.clone(), v.clone())])
+    }
+
+    /// `t` with the values of `subs` put in at once.
+    fn subst_with(&mut self, t: &T, subs: &Subs) -> T {
+        if subs.is_empty() {
+            return t.clone();
+        }
+        self.subst_in(t, subs, &mut HashMap::new())
+            .unwrap_or_else(|| t.clone())
+    }
+
+    /// `t` with each value of `pairs` for its name at once: one walk of `t`
+    /// where substituting them one after another walks it once for each.
+    /// The names are distinct and no value mentions another's name, so the
+    /// order does not matter.
+    pub(super) fn subst_all(&mut self, t: &T, pairs: Vec<(Name, T)>) -> T {
+        if pairs.is_empty() {
+            return t.clone();
+        }
+        let subs = Subs::new(pairs);
+        self.subst_in(t, &subs, &mut HashMap::new())
             .unwrap_or_else(|| t.clone())
     }
 
     /// `t` with `v` for `x`, or `None` when `t` does not change: an unchanged
     /// part is shared with `t`, not copied. `names` are the free names of `v`,
     /// which a binder would capture.
-    fn subst_in(
-        &mut self,
-        t: &T,
-        x: &Name,
-        v: &T,
-        names: &FreeNames,
-        memo: &mut SubstMemo,
-    ) -> Option<T> {
+    fn subst_in(&mut self, t: &T, s: &Subs, memo: &mut SubstMemo) -> Option<T> {
+        // A node no other term shares is reached once, through its only
+        // parent: only shared nodes are worth remembering.
+        if std::sync::Arc::strong_count(&t.kind) == 1 {
+            return self.subst_node(t, s, memo);
+        }
         let key = (
             std::sync::Arc::as_ptr(&t.kind) as usize,
             t.id(),
@@ -3206,27 +3937,20 @@ impl Kernel {
         if let Some((_, result)) = memo.get(&key) {
             return result.clone();
         }
-        let result = self.subst_node(t, x, v, names, memo);
+        let result = self.subst_node(t, s, memo);
         // Retaining the input prevents pointer reuse by temporary binder bodies.
         memo.insert(key, (t.clone(), result.clone()));
         result
     }
 
-    fn subst_node(
-        &mut self,
-        t: &T,
-        x: &Name,
-        v: &T,
-        names: &FreeNames,
-        memo: &mut SubstMemo,
-    ) -> Option<T> {
+    fn subst_node(&mut self, t: &T, s: &Subs, memo: &mut SubstMemo) -> Option<T> {
         let sp = t.span;
         let replaced = match &*t.kind {
-            TermKind::Var(n) if n == x => {
+            TermKind::Var(n) if s.get(n).is_some() => {
+                let v = s.get(n).unwrap_or(t);
                 if self.record_sites {
                     self.ctor_site_origins
-                        .entry(v.id())
-                        .or_insert_with(|| vec![v.id()]);
+                        .or_insert_with(v.id(), || vec![v.id()]);
                 }
                 Some(v.clone())
             }
@@ -3234,10 +3958,10 @@ impl Kernel {
                 function,
                 arguments,
             } => {
-                let f = self.subst_in(function, x, v, names, memo);
+                let f = self.subst_in(function, s, memo);
                 let args: Vec<Option<T>> = arguments
                     .iter()
-                    .map(|a| self.subst_in(a, x, v, names, memo))
+                    .map(|a| self.subst_in(a, s, memo))
                     .collect();
                 if f.is_none() && args.iter().all(Option::is_none) {
                     return None;
@@ -3254,12 +3978,19 @@ impl Kernel {
                     sp,
                 );
                 // A call the source wrote stays one after the substitution.
-                Some(if t.is_written_call() { out.written_call() } else { out })
+                Some(if t.is_macro_call() {
+                    out.macro_call()
+                } else if t.is_written_call() {
+                    out.written_call()
+                } else {
+                    out
+                })
             }
             TermKind::Pi {
                 params,
                 result,
                 effects,
+                ..
             } => {
                 let (n, d) = &params[0];
                 let plain = params.len() == 1 && n.is_some() && effects.is_none();
@@ -3272,13 +4003,14 @@ impl Kernel {
                             params: params[1..].to_vec(),
                             result: result.clone(),
                             effects: effects.clone(),
+                            unused: Vec::new(),
                         },
                         sp,
                     )
                 });
                 let result = rest.as_ref().unwrap_or(&**result);
-                let d2 = self.subst_in(d, x, v, names, memo);
-                let r2 = self.under_binder(&name, result, x, v, names, memo);
+                let d2 = self.subst_in(d, s, memo);
+                let r2 = self.under_binder(&name, result, s, memo);
                 if plain && d2.is_none() && r2.is_none() {
                     return None;
                 }
@@ -3294,7 +4026,23 @@ impl Kernel {
                 params,
                 body,
                 types,
+                ..
             } => {
+                // `() => e` binds nothing: the substitution goes straight
+                // into the body (there is no first parameter to shadow or
+                // rename).
+                if params.is_empty() {
+                    let new = self.subst_in(body, s, memo)?;
+                    return Some(T::new(
+                        TermKind::Lam {
+                            params: Vec::new(),
+                            body: Box::new(new),
+                            types: types.clone(),
+                            unused_params: Vec::new(),
+                        },
+                        sp,
+                    ));
+                }
                 // `(a, b) => e` is `a => b => e`: the rest of the parameters
                 // (and the types written on them) are under the first one's
                 // binder.
@@ -3304,6 +4052,7 @@ impl Kernel {
                             params: params[1..].to_vec(),
                             body: body.clone(),
                             types: types.get(1..).unwrap_or_default().to_vec(),
+                            unused_params: Vec::new(),
                         },
                         sp,
                     )
@@ -3314,10 +4063,10 @@ impl Kernel {
                 // mention `x` is still changed when its written type does,
                 // or the type would be checked against a renamed context.
                 let written = match types.first() {
-                    Some(Some(ty)) => Some(self.subst_in(ty, x, v, names, memo)),
+                    Some(Some(ty)) => Some(self.subst_in(ty, s, memo)),
                     _ => None,
                 };
-                let under = self.under_binder(&params[0], body, x, v, names, memo);
+                let under = self.under_binder(&params[0], body, s, memo);
                 if under.is_none() && !matches!(written, Some(Some(_))) && params.len() == 1 {
                     return None;
                 }
@@ -3331,6 +4080,7 @@ impl Kernel {
                         params: vec![name],
                         body: Box::new(body),
                         types: written,
+                        unused_params: Vec::new(),
                     },
                     sp,
                 ))
@@ -3340,6 +4090,7 @@ impl Kernel {
                 result,
                 binder,
                 arms,
+                ..
             } => {
                 let arms: Vec<(bool, crate::surface::MatchArm)> = arms
                     .iter()
@@ -3349,18 +4100,35 @@ impl Kernel {
                         let mut bound = Vec::new();
                         pattern_binders(&arm.pattern, &mut bound);
                         bound.retain(|b| !self.ctors.contains_key(b));
-                        if bound.iter().chain(binder).any(|b| b == x)
-                            || binder.as_ref().is_some_and(|b| names.contains(b))
-                        {
-                            // Shadowed, or the match's own binder captures:
-                            // leave the arm alone.
+                        if binder.as_ref().is_some_and(|b| s.captures(b)) {
+                            // The match's own binder captures: leave the arm
+                            // alone.
                             return (false, arm.clone());
                         }
+                        // A name the arm binds is shadowed there.
+                        let shadowed: Vec<Name> = bound
+                            .iter()
+                            .chain(binder)
+                            .filter(|b| s.get(b).is_some())
+                            .cloned()
+                            .collect();
+                        let narrowed = (!shadowed.is_empty()).then(|| s.without(&shadowed));
+                        let s = match &narrowed {
+                            Some(n) if n.is_empty() => return (false, arm.clone()),
+                            Some(n) => n,
+                            None => s,
+                        };
+                        let mut fresh_memo = SubstMemo::new();
+                        let memo = if narrowed.is_some() {
+                            &mut fresh_memo
+                        } else {
+                            &mut *memo
+                        };
                         // A binder of the arm that would capture a free name
                         // of `v` is renamed in the arm first.
                         let original = arm;
                         let mut arm = arm.clone();
-                        for b in bound.iter().filter(|b| names.contains(b)) {
+                        for b in bound.iter().filter(|b| s.captures(b)) {
                             let b2 = self.fresh_name(b);
                             let to = T::var(&b2, arm.body.span);
                             rename_pattern_binder(&mut arm.pattern, b, &b2);
@@ -3369,15 +4137,9 @@ impl Kernel {
                             arm.goal = arm.goal.map(|g| self.subst(&g, b, &to));
                         }
                         let arm = &arm;
-                        let goal = arm
-                            .goal
-                            .as_ref()
-                            .map(|g| self.subst_in(g, x, v, names, memo));
-                        let guard = arm
-                            .guard
-                            .as_ref()
-                            .map(|g| self.subst_in(g, x, v, names, memo));
-                        let body = self.subst_in(&arm.body, x, v, names, memo);
+                        let goal = arm.goal.as_ref().map(|g| self.subst_in(g, s, memo));
+                        let guard = arm.guard.as_ref().map(|g| self.subst_in(g, s, memo));
+                        let body = self.subst_in(&arm.body, s, memo);
                         let changed = goal.as_ref().is_some_and(Option::is_some)
                             || guard.as_ref().is_some_and(Option::is_some)
                             || body.is_some();
@@ -3401,8 +4163,8 @@ impl Kernel {
                         )
                     })
                     .collect();
-                let scrutinee2 = self.subst_in(scrutinee, x, v, names, memo);
-                let result2 = result.as_ref().map(|r| self.subst_in(r, x, v, names, memo));
+                let scrutinee2 = self.subst_in(scrutinee, s, memo);
+                let result2 = result.as_ref().map(|r| self.subst_in(r, s, memo));
                 if scrutinee2.is_none()
                     && !result2.as_ref().is_some_and(Option::is_some)
                     && arms.iter().all(|(changed, _)| !changed)
@@ -3418,12 +4180,13 @@ impl Kernel {
                             (r, _) => r.clone(),
                         },
                         arms: arms.into_iter().map(|(_, arm)| arm).collect(),
+                        binder_unused: None,
                     },
                     sp,
                 ))
             }
             TermKind::Field { base, name } => {
-                let b = self.subst_in(base, x, v, names, memo)?;
+                let b = self.subst_in(base, s, memo)?;
                 Some(T::new(
                     TermKind::Field {
                         base: Box::new(b),
@@ -3435,8 +4198,8 @@ impl Kernel {
             // A type ascription `(e: T)` binds nothing: both the term and the
             // type are read, so a name used only there is still used.
             TermKind::Ascribe { term, ty } => {
-                let t2 = self.subst_in(term, x, v, names, memo);
-                let ty2 = self.subst_in(ty, x, v, names, memo);
+                let t2 = self.subst_in(term, s, memo);
+                let ty2 = self.subst_in(ty, s, memo);
                 if t2.is_none() && ty2.is_none() {
                     return None;
                 }
@@ -3457,7 +4220,7 @@ impl Kernel {
             } if name.spelling() == Some(tauto_surface::IMPLICITS) => {
                 let new: Vec<Option<T>> = fields
                     .iter()
-                    .map(|(_, value)| self.subst_in(value, x, v, names, memo))
+                    .map(|(_, value)| self.subst_in(value, s, memo))
                     .collect();
                 if new.iter().all(Option::is_none) {
                     return None;
@@ -3475,7 +4238,35 @@ impl Kernel {
                     sp,
                 ))
             }
-            _ => None,
+            // What `shape` leaves for the core to reject, and the leaves:
+            // nothing to substitute that this reads.
+            // A `Record` with a `base` is written out before the kernel reads it.
+            TermKind::Var(_)
+            | TermKind::Record { .. }
+            | TermKind::Declaration(_)
+            | TermKind::Nat(_)
+            | TermKind::Float(_)
+            | TermKind::Text(_)
+            | TermKind::Bool(_)
+            | TermKind::Row(_)
+            | TermKind::Exists { .. }
+            | TermKind::Union(_)
+            | TermKind::Tagged { .. }
+            | TermKind::If { .. }
+            | TermKind::Block(_)
+            | TermKind::Perform { .. }
+            | TermKind::Handle { .. }
+            | TermKind::Budget { .. }
+            | TermKind::Hole(_)
+            | TermKind::Borrow { .. }
+            | TermKind::FnKind { .. }
+            | TermKind::BorrowLam { .. }
+            | TermKind::SyntaxLit(_)
+            | TermKind::MacroCall { .. }
+            | TermKind::Quote { .. }
+            | TermKind::Step(_)
+            | TermKind::Splice(_)
+            | TermKind::Other(_) => None,
         };
         if let Some(replaced) = &replaced {
             self.retain_ctor_site_origin(t, replaced);
@@ -3487,12 +4278,19 @@ impl Kernel {
         if !self.record_sites || original.id() == transformed.id() {
             return;
         }
-        let origins = self
+        // Most transformed terms are new and most originals are written: their
+        // one origin is put in without searching the list.
+        let origins = match self.ctor_site_origins.get(&original.id()) {
+            Some(origins) => origins.clone(),
+            None => vec![original.id()],
+        };
+        let recorded = self
             .ctor_site_origins
-            .get(&original.id())
-            .cloned()
-            .unwrap_or_else(|| vec![original.id()]);
-        let recorded = self.ctor_site_origins.entry(transformed.id()).or_default();
+            .or_insert_with(transformed.id(), Vec::new);
+        if recorded.is_empty() {
+            *recorded = origins;
+            return;
+        }
         for origin in origins {
             if !recorded.contains(&origin) {
                 recorded.push(origin);
@@ -3506,23 +4304,24 @@ impl Kernel {
         &mut self,
         n: &Name,
         body: &T,
-        x: &Name,
-        v: &T,
-        names: &FreeNames,
+        s: &Subs,
         memo: &mut SubstMemo,
     ) -> Option<(Name, T)> {
-        if n == x {
-            return None;
+        if s.get(n).is_some() {
+            // Shadowed below `n`: the other names are still put in.
+            let narrowed = s.without(std::slice::from_ref(n));
+            if narrowed.is_empty() {
+                return None;
+            }
+            return self.under_binder(n, body, &narrowed, &mut SubstMemo::new());
         }
-        if names.contains(n) {
+        if s.captures(n) {
             let n2 = self.fresh_name(n);
             let renamed = self.subst(body, n, &T::var(&n2, body.span));
-            let body = self
-                .subst_in(&renamed, x, v, names, memo)
-                .unwrap_or(renamed);
+            let body = self.subst_in(&renamed, s, memo).unwrap_or(renamed);
             Some((n2, body))
         } else {
-            Some((n.clone(), self.subst_in(body, x, v, names, memo)?))
+            Some((n.clone(), self.subst_in(body, s, memo)?))
         }
     }
 
@@ -3572,10 +4371,7 @@ impl Kernel {
         }
     }
 
-    /// `t` in weak head normal form, as the core reduces it.
-    /// `t` in weak head normal form, stopping at a product `Prod(A, B)`: the checker tells a
-    /// product from a `Pair` written by its name, and only the core sees the `Pair` a product
-    /// is ([`Kernel::whnf_pair`] unfolds it).
+    /// `t` in weak head normal form, stopping at a product `Pair(A, B)`.
     fn whnf(&mut self, ctx: &Ctx, t: &T) -> T {
         if self.product_parts(t).is_some() {
             return t.clone();
@@ -3587,7 +4383,7 @@ impl Kernel {
         self.core.whnf_in(ctx, t)
     }
 
-    /// `t` in weak head normal form, a product unfolded to its `Pair`.
+    /// `t` in weak head normal form, as the core reduces it.
     fn whnf_pair(&mut self, ctx: &Ctx, t: &T) -> T {
         self.core.whnf_in(ctx, t)
     }
@@ -3794,7 +4590,7 @@ impl Kernel {
 
     /// `t` typed by the core, the holes it met recorded.
     fn ask_core(&mut self, ctx: &Ctx, t: &T, ask: Ask<'_>) -> Result<Typed, Diagnostic> {
-        kernel_binders(t)?;
+        kernel_binders(t, &mut self.core.binders_checked)?;
         let current = self.current.clone();
         let avoid: Vec<&str> = current.as_deref().into_iter().collect();
         let globals = &self.globals;
@@ -3866,11 +4662,11 @@ impl Kernel {
         }
         let (goal, context) = self.tidy_hole(goal, context);
         // A step's macro compares the goal with the one written.
-        let goal = Self::eqs_written(&self.calls_written(&goal));
+        let goal = Self::eqs_written(&self.written_for_macro(&goal));
         let context = context
             .into_iter()
             .map(|(n, t)| {
-                let t = Self::eqs_written(&self.calls_written(&t));
+                let t = Self::eqs_written(&self.written_for_macro(&t));
                 (n, t)
             })
             .collect();
@@ -3969,19 +4765,19 @@ impl Kernel {
     fn unread_name(&self, n: &Name) -> Message {
         match self.ahead.get(n) {
             _ if self.globals.contains_key(n) => {
-                msg!("kernel-not-defined", name = (n).to_string())
+                msg!("kernel-not-defined", name = shown(n))
             }
             Some(Ahead::Later) => {
-                msg!("kernel-not-defined-yet", name = (n).to_string())
+                msg!("kernel-not-defined-yet", name = shown(n))
             }
-            Some(Ahead::Failed) => msg!("kernel-uses-failed", name = (n).to_string()),
+            Some(Ahead::Failed) => msg!("kernel-uses-failed", name = shown(n)),
             Some(Ahead::Struct) => {
-                msg!("kernel-not-defined-struct", name = (n).to_string())
+                msg!("kernel-not-defined-struct", name = shown(n))
             }
             Some(Ahead::Skipped(why)) => {
                 msg!(
                     "kernel-uses-skipped-why",
-                    name = (n).to_string(),
+                    name = shown(n),
                     why = why.clone()
                 )
             }
@@ -3991,10 +4787,10 @@ impl Kernel {
             None => match self.respelled_ctor(n) {
                 Some(hint) => msg!(
                     "kernel-not-defined-hint",
-                    name = (n).to_string(),
+                    name = shown(n),
                     hint = hint
                 ),
-                None => msg!("kernel-not-defined", name = (n).to_string()),
+                None => msg!("kernel-not-defined", name = shown(n)),
             },
         }
     }
@@ -4046,7 +4842,7 @@ impl Kernel {
                         msg!("kernel-unit-value-as-type")
                     }
                     TermKind::Var(n) if self.current.as_ref() == Some(n) => {
-                        msg!("kernel-calls-itself", name = (n).to_string())
+                        msg!("kernel-calls-itself", name = shown(n))
                     }
                     TermKind::Var(n) => self.unread_name(n),
                     TermKind::Hole(name) => msg!("kernel-hole-type-unknown", name = name),
@@ -4162,6 +4958,7 @@ impl Kernel {
                 params,
                 result,
                 effects,
+                ..
             } => {
                 let params = params
                     .iter()
@@ -4172,6 +4969,7 @@ impl Kernel {
                         params,
                         result: Box::new(self.beta(result)),
                         effects: effects.clone(),
+                        unused: Vec::new(),
                     },
                     t.span,
                 )
@@ -4186,6 +4984,7 @@ impl Kernel {
                     params: params.clone(),
                     body: Box::new(self.beta(body)),
                     types: types.clone(),
+                    unused_params: Vec::new(),
                 },
                 t.span,
             ),
@@ -4224,6 +5023,7 @@ impl Kernel {
                 argument: None,
             })),
             fix: None,
+            help: None,
             also: Vec::new(),
         }
     }
@@ -4485,7 +5285,13 @@ fn has_match_in_type(t: &T) -> bool {
         TermKind::Exists { domain, body, .. } => {
             has_match_in_type(domain) || has_match_in_type(body)
         }
-        _ => false,
+        // Any other term (a union, a product, a tagged term, ...): what is
+        // inside it.
+        _ => {
+            let mut found = false;
+            crate::surface::walk::visit_children(t, &mut |c| found = found || has_match_in_type(c));
+            found
+        }
     }
 }
 
@@ -4496,6 +5302,7 @@ fn pi(name: impl Into<Name>, domain: T, result: T) -> T {
             params: vec![(Some(name.into()), domain)],
             result: Box::new(result),
             effects: None,
+            unused: Vec::new(),
         },
         span,
     )
@@ -4508,6 +5315,7 @@ fn lam(name: impl Into<Name>, body: T) -> T {
             params: vec![name.into()],
             body: Box::new(body),
             types: Vec::new(),
+            unused_params: Vec::new(),
         },
         span,
     )
@@ -4517,11 +5325,14 @@ fn lam(name: impl Into<Name>, body: T) -> T {
 fn pattern_binders(p: &crate::surface::Pattern, out: &mut Vec<Name>) {
     use crate::surface::Pattern;
     match p {
-        Pattern::Bind(n) => out.push(n.clone()),
+        Pattern::Bind { name: n, .. } | Pattern::Typed { name: n, .. } => out.push(n.clone()),
         Pattern::Ctor { args, .. } => args.iter().for_each(|a| pattern_binders(a, out)),
         Pattern::Record { fields, .. } => fields.iter().for_each(|(_, a)| pattern_binders(a, out)),
-        Pattern::Tuple(items) => items.iter().for_each(|a| pattern_binders(a, out)),
-        _ => {}
+        Pattern::Wild
+        | Pattern::Int(_)
+        | Pattern::Bool(_)
+        | Pattern::Text(_)
+        | Pattern::Other(_) => {}
     }
 }
 
@@ -4529,17 +5340,22 @@ fn pattern_binders(p: &crate::surface::Pattern, out: &mut Vec<Name>) {
 fn rename_pattern_binder(p: &mut crate::surface::Pattern, from: &Name, to: &Name) {
     use crate::surface::Pattern;
     match p {
-        Pattern::Bind(n) if n == from => *n = to.clone(),
+        Pattern::Bind { name: n, .. } | Pattern::Typed { name: n, .. } if n == from => {
+            *n = to.clone()
+        }
         Pattern::Ctor { args, .. } => args
             .iter_mut()
             .for_each(|a| rename_pattern_binder(a, from, to)),
         Pattern::Record { fields, .. } => fields
             .iter_mut()
             .for_each(|(_, a)| rename_pattern_binder(a, from, to)),
-        Pattern::Tuple(items) => items
-            .iter_mut()
-            .for_each(|a| rename_pattern_binder(a, from, to)),
-        _ => {}
+        Pattern::Bind { .. }
+        | Pattern::Typed { .. }
+        | Pattern::Wild
+        | Pattern::Int(_)
+        | Pattern::Bool(_)
+        | Pattern::Text(_)
+        | Pattern::Other(_) => {}
     }
 }
 
@@ -4558,13 +5374,26 @@ fn core_rejects(name: &str, m: Message, span: Span) -> Diagnostic {
 /// The kernel reads curried binders only (`shape` makes them so).
 /// What the core reads of a term is what the kernel's binders are: each
 /// binds one name, and none is named as a sort.
-fn kernel_binders(t: &T) -> Result<(), Diagnostic> {
+fn kernel_binders(t: &T, checked: &mut HashMap<usize, T>) -> Result<(), Diagnostic> {
     let sort = |n: &str, sp| {
         if sort_named(n).is_some() {
             return err(msg!("kernel-sort-names-variable", name = n), sp);
         }
         Ok(())
     };
+    if !matches!(
+        &*t.kind,
+        TermKind::Pi { .. } | TermKind::Lam { .. } | TermKind::App { .. }
+    ) {
+        return Ok(());
+    }
+    let key = std::sync::Arc::as_ptr(&t.kind) as *const () as usize;
+    if checked
+        .get(&key)
+        .is_some_and(|was| std::sync::Arc::ptr_eq(&was.kind, &t.kind))
+    {
+        return Ok(());
+    }
     match &*t.kind {
         TermKind::Pi { params, result, .. } => {
             let [(n, d)] = params.as_slice() else {
@@ -4573,19 +5402,56 @@ fn kernel_binders(t: &T) -> Result<(), Diagnostic> {
             if let Some(n) = n {
                 sort(n, t.span)?;
             }
-            kernel_binders(d)?;
-            kernel_binders(result)
+            kernel_binders(d, checked)?;
+            kernel_binders(result, checked)?;
         }
         TermKind::Lam { params, body, .. } => {
             let [n] = params.as_slice() else {
                 return err(msg!("kernel-binder-one-name"), t.span);
             };
             sort(n, t.span)?;
-            kernel_binders(body)
+            kernel_binders(body, checked)?;
         }
-        TermKind::App { .. } => t.try_applications(|part, _| kernel_binders(part)),
-        _ => Ok(()),
+        // Along the spine of last arguments in a loop, as
+        // `try_applications` goes, each call of it kept: a list literal is a
+        // call per element, and the next walk of a call of it stops where
+        // this one went.
+        _ => {
+            let mut seen = Vec::new();
+            let mut next = Some(t);
+            while let Some(app) = next.take() {
+                if checked
+                    .get(&(std::sync::Arc::as_ptr(&app.kind) as *const () as usize))
+                    .is_some_and(|was| std::sync::Arc::ptr_eq(&was.kind, &app.kind))
+                {
+                    break;
+                }
+                let TermKind::App {
+                    function,
+                    arguments,
+                } = &*app.kind
+                else {
+                    kernel_binders(app, checked)?;
+                    break;
+                };
+                kernel_binders(function, checked)?;
+                for a in &arguments[..arguments.len().saturating_sub(1)] {
+                    kernel_binders(a, checked)?;
+                }
+                seen.push(app);
+                next = arguments.last();
+            }
+            for app in seen {
+                checked.insert(
+                    std::sync::Arc::as_ptr(&app.kind) as *const () as usize,
+                    app.clone(),
+                );
+            }
+            return Ok(());
+        }
     }
+    checked.insert(key, t.clone());
+    Ok(())
 }
 
 /// The subterm of `t` at the path `at` of a [`Failure`]: a term, and how
@@ -4690,10 +5556,12 @@ fn visit_vars(t: &T, f: &mut impl FnMut(&Name)) {
             }
             // A product type (`SynIdent × SynExpr`), a union and a labelled
             // member mention the types they are made of.
-            TermKind::Product(items) | TermKind::Union(items) | TermKind::Tuple(items) => {
-                items.iter().for_each(|i| go(i, bound, f))
-            }
+            TermKind::Union(items) => items.iter().for_each(|i| go(i, bound, f)),
             TermKind::Tagged { term, .. } => go(term, bound, f),
+            // A borrow (`&T`) and a function's kind (`affine (…) -> R`) mention
+            // the type they are of.
+            TermKind::Borrow { term, .. } => go(term, bound, f),
+            TermKind::FnKind { ty, .. } => go(ty, bound, f),
             _ => {}
         }
     }
@@ -4712,31 +5580,105 @@ fn is_local(ctx: &Ctx, name: &Name) -> bool {
 /// The free names of a term, collected the first time a binder asks
 /// whether it would capture one. A substitution that meets no binder (an
 /// argument put into a long chain of applications) does not walk the value.
-struct FreeNames<'a> {
-    of: &'a T,
-    names: std::cell::OnceCell<HashSet<Name>>,
+/// Names and the values put in for them, with the free names of the values,
+/// which a binder would capture.
+struct Subs {
+    pairs: Vec<(Name, T)>,
+    /// The position of each name in `pairs`, where there are enough of them
+    /// that looking one up at each variable of the walk by comparing it with
+    /// every name costs more than the table (a long chain of `let`s).
+    index: Option<HashMap<Name, usize>>,
+    free: std::cell::OnceCell<HashSet<Name>>,
 }
 
-impl<'a> FreeNames<'a> {
-    fn of(of: &'a T) -> Self {
-        FreeNames {
-            of,
-            names: std::cell::OnceCell::new(),
+impl Subs {
+    fn new(pairs: Vec<(Name, T)>) -> Self {
+        let index = (pairs.len() > 8).then(|| {
+            let mut index = HashMap::with_capacity(pairs.len());
+            for (i, (x, _)) in pairs.iter().enumerate() {
+                index.entry(x.clone()).or_insert(i);
+            }
+            index
+        });
+        Subs {
+            pairs,
+            index,
+            free: std::cell::OnceCell::new(),
         }
     }
-
-    fn contains(&self, n: &Name) -> bool {
-        self.names
+    fn get(&self, n: &Name) -> Option<&T> {
+        match &self.index {
+            Some(index) => index.get(n).map(|&i| &self.pairs[i].1),
+            None => self.pairs.iter().find(|(x, _)| x == n).map(|(_, v)| v),
+        }
+    }
+    fn captures(&self, n: &Name) -> bool {
+        self.free
             .get_or_init(|| {
                 let mut names = HashSet::new();
-                free_names(self.of, &mut Vec::new(), &mut names);
+                for (_, v) in &self.pairs {
+                    free_names(v, &mut Vec::new(), &mut names);
+                }
                 names
             })
             .contains(n)
     }
+    fn without(&self, names: &[Name]) -> Subs {
+        Subs::new(
+            self.pairs
+                .iter()
+                .filter(|(x, _)| !names.contains(x))
+                .cloned()
+                .collect(),
+        )
+    }
+    fn is_empty(&self) -> bool {
+        self.pairs.is_empty()
+    }
+
+    /// No values yet, to which values waiting to be put in at once are added
+    /// one at a time ([`Subs::push`]): the table and the free names grow with
+    /// each, not made again for each term the values are put into.
+    fn waiting() -> Self {
+        let subs = Subs {
+            pairs: Vec::new(),
+            index: Some(HashMap::new()),
+            free: std::cell::OnceCell::new(),
+        };
+        let _ = subs.free.set(HashSet::new());
+        subs
+    }
+
+    /// Adds `v` for `x`, `free` its free names, to values made by
+    /// [`Subs::waiting`].
+    fn push(&mut self, x: Name, v: T, free: &HashSet<Name>) {
+        let i = self.pairs.len();
+        self.index
+            .as_mut()
+            .expect("made waiting")
+            .entry(x.clone())
+            .or_insert(i);
+        self.pairs.push((x, v));
+        self.free
+            .get_mut()
+            .expect("made waiting")
+            .extend(free.iter().cloned());
+    }
+
+    /// Whether these values may wait below a binder `n` and then be put in at
+    /// once: `n` is none of their names and captures no free name of a value.
+    fn defers_under(&self, n: Option<&Name>) -> bool {
+        let Some(n) = n else {
+            return true;
+        };
+        if n.spelling() == Some("_") {
+            return false;
+        }
+        self.get(n).is_none() && !self.captures(n)
+    }
 }
 
-fn free_names(t: &T, bound: &mut Vec<Name>, out: &mut HashSet<Name>) {
+pub(super) fn free_names(t: &T, bound: &mut Vec<Name>, out: &mut HashSet<Name>) {
     match &*t.kind {
         TermKind::Var(n) => {
             if !bound.iter().any(|b| b == n) {
@@ -4811,17 +5753,23 @@ fn occurs(t: &T, x: &Name) -> bool {
         }
         TermKind::Field { base, .. } => occurs(base, x),
         TermKind::Ascribe { term, ty } => occurs(term, x) || occurs(ty, x),
-        _ => false,
+        // Any other term: a name in a part of it occurs, binders aside, so
+        // a clash is renamed away rather than missed.
+        _ => {
+            let mut found = false;
+            crate::surface::walk::visit_children(t, &mut |c| found = found || occurs(c, x));
+            found
+        }
     }
 }
 
 fn kind_name(kind: &TermKind) -> &'static str {
     match kind {
         TermKind::Text(_) => "text",
-        // A literal is read only once `std/Float.taut` is imported (`sugar.rs`).
+        // A literal is read only once `std/float.taut` is imported (`sugar.rs`).
         TermKind::Float(_) => {
             "a Float literal (a Float literal is read as a kernel term only after `Float` is \
-             declared, and only when it is finite; add `import std::Float`)"
+             declared, and only when it is finite; add `import std::float`)"
         }
         TermKind::Exists { .. } => "∃",
         TermKind::Union(_) => "union",
@@ -4834,7 +5782,8 @@ fn kind_name(kind: &TermKind) -> &'static str {
         TermKind::Budget { .. } => "budget",
         TermKind::Match { .. } => "match",
         TermKind::Record { .. } => "record",
-        TermKind::Tuple(_) => "tuple",
+        TermKind::Borrow { mutable: true, .. } => "`&mut` borrow",
+        TermKind::BorrowLam { .. } => "λ with a `&mut` parameter",
         _ => "this syntax",
     }
 }
@@ -4858,10 +5807,22 @@ pub fn describe(t: &T) -> String {
     describe_in(t, &mut ShownNames::default(), 0)
 }
 
+/// `t` as a message shows it, with each field a program wrote (`written`, by
+/// where it stands) shown as written and not as the match it is elaborated to.
+pub(crate) fn describe_written(t: &T, written: &HashMap<tauto_parol::Span, String>) -> String {
+    let mut shown = ShownNames {
+        written: written.clone(),
+        ..Default::default()
+    };
+    describe_in(t, &mut shown, 0)
+}
+
 #[derive(Default)]
 struct ShownNames {
     names: HashMap<Name, String>,
     counts: HashMap<String, usize>,
+    /// Fields as written, by where they stand.
+    written: HashMap<tauto_parol::Span, String>,
 }
 
 /// How tightly an operator `describe` shows binds: a larger number binds
@@ -4895,6 +5856,13 @@ fn describe_in(t: &T, shown: &mut ShownNames, outer: u8) -> String {
         s
     };
     let paren = |yes: bool, s: String| if yes { format!("({s})") } else { s };
+    // A field the program wrote stands where it was written, whatever it was
+    // elaborated to.
+    if !matches!(&*t.kind, TermKind::Var(_))
+        && let Some(w) = shown.written.get(&t.span)
+    {
+        return w.clone();
+    }
     match &*t.kind {
         TermKind::Var(n) => name(n, shown),
         TermKind::Nat(n) => n.clone(),
@@ -4934,6 +5902,11 @@ fn describe_in(t: &T, shown: &mut ShownNames, outer: u8) -> String {
                 format!("{f}({})", args.join(", "))
             }
         },
+        // A function type with no parameters, `() -> R`.
+        TermKind::Pi { params, result, .. } if params.is_empty() => paren(
+            outer > 0,
+            format!("() -> {}", describe_in(result, shown, 0)),
+        ),
         TermKind::Pi { params, result, .. } => {
             let s = match &params[0].0 {
                 // `(P) -> False` as a program writes it, `¬P`.
@@ -4956,6 +5929,9 @@ fn describe_in(t: &T, shown: &mut ShownNames, outer: u8) -> String {
             };
             paren(outer > 0, s)
         }
+        TermKind::Lam { params, body, .. } if params.is_empty() => {
+            paren(outer > 0, format!("() => {}", describe_in(body, shown, 0)))
+        }
         TermKind::Lam { params, body, .. } => {
             let x = name(&params[0], shown);
             paren(outer > 0, format!("{x} => {}", describe_in(body, shown, 0)))
@@ -4971,6 +5947,7 @@ mod tests {
 
     #[test]
     fn generated_names_are_distinguished_by_identity_when_described() {
+        tauto_parse::install();
         let span = Span::new(0, 1);
         let first = Name::from(tauto_surface::identity::LocalRef::fresh("x'1"));
         let second = Name::from(tauto_surface::identity::LocalRef::fresh("x'1"));
@@ -4992,6 +5969,7 @@ mod tests {
 
     #[test]
     fn substitution_preserves_shared_nodes_and_shadowed_binders() {
+        tauto_parse::install();
         let span = Span::new(1, 2);
         let x: Name = tauto_surface::identity::LocalRef::fresh("x").into();
         let y: Name = tauto_surface::identity::LocalRef::fresh("y").into();
@@ -5038,6 +6016,7 @@ mod tests {
                     .collect(),
                 result: Box::new(result),
                 effects: None,
+                unused: Vec::new(),
             },
             Default::default(),
         )
@@ -5049,6 +6028,7 @@ mod tests {
                 params: params.iter().map(|name| (*name).into()).collect(),
                 body: Box::new(body),
                 types: Vec::new(),
+                unused_params: Vec::new(),
             },
             Default::default(),
         )
@@ -5056,6 +6036,7 @@ mod tests {
 
     #[test]
     fn free_vars_sees_the_members_of_a_product() {
+        tauto_parse::install();
         let v = |n: &str| T::var(n, Default::default());
         let tagged = T::new(
             TermKind::Tagged {
@@ -5064,19 +6045,23 @@ mod tests {
             },
             Default::default(),
         );
-        let product = T::new(
-            TermKind::Product(vec![v("SynIdent"), tagged]),
-            Default::default(),
-        );
+        let product = T::pair_type(v("SynIdent"), tagged, Default::default());
         let ty = T::app("List", vec![product], Default::default());
+        // The reader's `Pair`, which `×` is, is named too.
         assert_eq!(
             free_vars(&ty),
-            ["List", "SynIdent", "SynExpr"].map(Name::from)
+            [
+                Name::from("List"),
+                tauto_surface::bindings::pair_reference().clone().into(),
+                Name::from("SynIdent"),
+                Name::from("SynExpr"),
+            ]
         );
     }
 
     #[test]
     fn describe_keeps_the_parentheses_operators_need() {
+        tauto_parse::install();
         let v = |n: &str| T::var(n, Default::default());
         let op = |o: &str, a: T, b: T| T::app(o, vec![a, b], Default::default());
         let cases = [
@@ -5112,8 +6097,92 @@ mod tests {
         }
     }
 
+    /// A list of `n` calls `Cons(x, …)` ending in `last`, with each tail.
+    fn cons_list(n: usize, last: T) -> Vec<T> {
+        let mut tails = vec![last];
+        for i in 0..n {
+            let tail = tails.last().unwrap().clone();
+            tails.push(T::app(
+                "Cons",
+                vec![T::var(format!("x{i}").as_str(), Default::default()), tail],
+                Default::default(),
+            ));
+        }
+        tails
+    }
+
+    #[test]
+    fn term_facts_read_the_tails_found_before_as_walking_gives_them() {
+        tauto_parse::install();
+        let hole = T::new(TermKind::Hole("h".into()), Default::default());
+        let equal = T::new(
+            TermKind::App {
+                function: Box::new(T::new(
+                    TermKind::Var(tauto_surface::bindings::library_name("==")),
+                    Default::default(),
+                )),
+                arguments: vec![
+                    T::var("a", Default::default()),
+                    T::var("b", Default::default()),
+                ],
+            },
+            Default::default(),
+        );
+        for last in [T::var("Nil", Default::default()), hole, equal] {
+            let tails = cons_list(40, last);
+            let mut facts = implicit::TermFacts::default();
+            // Inner tails first, as elaborating a list meets them, then
+            // every one again over what was kept.
+            for _ in 0..2 {
+                for t in &tails {
+                    assert_eq!(facts.has_hole(t), has_hole(t));
+                    assert_eq!(facts.has_match(t), matching::has_match(t));
+                    assert_eq!(facts.has_meta(t), implicit::has_meta(t));
+                    let mut names = HashSet::new();
+                    free_names(t, &mut Vec::new(), &mut names);
+                    assert_eq!(facts.free_names(t), names);
+                }
+            }
+            // A binder over a tail kept: the names it binds are not free.
+            let whole = tails.last().unwrap();
+            let bound = named_lambda(&["x3"], whole.clone());
+            let mut names = HashSet::new();
+            free_names(&bound, &mut Vec::new(), &mut names);
+            assert!(!names.contains(&Name::from("x3")));
+            assert_eq!(facts.free_names(&bound), names);
+        }
+    }
+
+    #[test]
+    fn kernel_binders_reads_a_kept_tail_and_still_refuses_below_a_new_call() {
+        tauto_parse::install();
+        let mut checked = HashMap::new();
+        let tails = cons_list(40, T::var("Nil", Default::default()));
+        for t in &tails {
+            kernel_binders(t, &mut checked).unwrap();
+        }
+        // A lambda of two names is no kernel binder, also on top of a list
+        // checked before.
+        let two = T::new(
+            TermKind::Lam {
+                params: vec!["a".into(), "b".into()],
+                body: Box::new(T::var("a", Default::default())),
+                types: vec![None, None],
+                unused_params: Vec::new(),
+            },
+            Default::default(),
+        );
+        let on_top = T::app(
+            "Cons",
+            vec![two, tails.last().unwrap().clone()],
+            Default::default(),
+        );
+        assert!(kernel_binders(&on_top, &mut checked).is_err());
+    }
+
     #[test]
     fn named_binder_traversal_empty_binders_keep_free_names() {
+        tauto_parse::install();
         let value = T::var("outside", Default::default());
         for term in [named_pi(&[], value.clone()), named_lambda(&[], value)] {
             let mut bound = vec!["existing".into()];
@@ -5128,6 +6197,7 @@ mod tests {
 
     #[test]
     fn named_binder_traversal_dependent_domains_are_sequential() {
+        tauto_parse::install();
         let term = named_pi(
             &[("A", "Type"), ("value", "A"), ("", "Outside")],
             T::app(
@@ -5159,6 +6229,7 @@ mod tests {
 
     #[test]
     fn named_binder_traversal_lambda_shadowing_restores_outer_scope() {
+        tauto_parse::install();
         let term = named_lambda(
             &["first", "second", "existing"],
             named_pi(
@@ -5179,6 +6250,7 @@ mod tests {
 
     #[test]
     fn hole_context_retains_the_supplied_local_reference() {
+        tauto_parse::install();
         let span = Default::default();
         let parameter: Name = tauto_surface::identity::LocalRef::fresh("P").into();
         let proposition: Name = tauto_surface::identity::DeclRef::of_sort(
@@ -5195,6 +6267,8 @@ mod tests {
             budget: None,
             vis: Default::default(),
             decreasing_by: None,
+            unused: None,
+            unused_params: Vec::new(),
         });
         for _ in 0..2 {
             let entries = Kernel::new().declare_program(&Program {
@@ -5220,6 +6294,7 @@ mod tests {
 
     #[test]
     fn overflowing_level_expressions_are_not_sorts() {
+        tauto_parse::install();
         let span = Span { start: 0, end: 0 };
         let nat = |n: &str| T::new(TermKind::Nat(n.into()), span);
         let plus = |a: T, n: &str| {
@@ -5237,12 +6312,13 @@ mod tests {
 
     #[test]
     fn mismatch_shows_the_differing_part_computed() {
+        tauto_parse::install();
         let source = "inductive Seq(A: Type): Type {
   Nil: Seq(A)
   Cons(h: A, t: Seq(A)): Seq(A)
 }
-fn pad(n: Nat): Seq(Nat) { Nat::rec(k => Seq(Nat), Nil(Nat), k => ih => Cons(Nat, 0, ih), n) }
-theorem t(): Cons(Nat, 1, pad(2)) = Cons(Nat, 1, Nil(Nat)) { Refl(Seq(Nat), Cons(Nat, 1, pad(2))) }";
+fn pad(n: Nat): Seq(Nat) { Nat::rec(k => Seq(Nat), Nil(<A: Nat>), k => ih => Cons(<A: Nat>, 0, ih), n) }
+theorem t(): Cons(<A: Nat>, 1, pad(2)) = Cons(<A: Nat>, 1, Nil(<A: Nat>)) { Refl(<A: Seq(Nat), a: Cons(<A: Nat>, 1, pad(2))>) }";
         match verdict(source, "t") {
             Verdict::Failed(d) => {
                 assert!(
@@ -5264,6 +6340,7 @@ theorem t(): Cons(Nat, 1, pad(2)) = Cons(Nat, 1, Nil(Nat)) { Refl(Seq(Nat), Cons
 
     #[test]
     fn the_kernel_prelude_is_checked_and_assumes_only_quot_sound() {
+        tauto_parse::install();
         let mut kernel = Kernel::new();
         let names = declare_prelude(&mut kernel).unwrap();
         for name in [
@@ -5286,6 +6363,7 @@ theorem t(): Cons(Nat, 1, pad(2)) = Cons(Nat, 1, Nil(Nat)) { Refl(Seq(Nat), Cons
     /// sequence: without sharing, `grow(k)` would be reduced 2^k times.
     #[test]
     fn an_argument_used_twice_is_reduced_once() {
+        tauto_parse::install();
         // How many steps the kernel takes is its own business, so the source is here.
         let src = r#"inductive Seq: Type {
   Stop: Seq
@@ -5340,12 +6418,13 @@ theorem t(): grow(16) = More(1, More(2, More(3, Stop))) { Refl }"#;
 
     #[test]
     fn a_text_literal_without_text_names_the_missing_import() {
+        tauto_parse::install();
         let src = "theorem t(): Eq(Nat, 0, 0) { the(Nat, \"a\") }";
         match verdict(src, "t") {
             Verdict::Failed(d) => {
-                assert!(d.message.to_string().contains("import std::Text"), "{d}")
+                assert!(d.message.to_string().contains("import std::text"), "{d}")
             }
-            Verdict::Skipped(why) => assert!(why.to_string().contains("import std::Text"), "{why}"),
+            Verdict::Skipped(why) => assert!(why.to_string().contains("import std::text"), "{why}"),
             other => panic!("{other:?}"),
         }
     }
@@ -5393,12 +6472,10 @@ pub(crate) fn names_param(f: &FnDecl, y: &T) -> bool {
 
 /// Whether `t` has a hole `?h` in it.
 fn has_hole(t: &T) -> bool {
-    let mut found = false;
-    let mut t = t.clone();
-    crate::surface::walk::term(&mut t, &mut |s| {
-        found |= matches!(&*s.kind, TermKind::Hole(_))
-    });
-    found
+    // Read where it stands (`walk::visit`): it is asked of each call at each
+    // level of a nested one, and the walk that rewrites terms copies each node
+    // of a shared term it enters.
+    !crate::surface::walk::visit(t, &mut |s| !matches!(&*s.kind, TermKind::Hole(_)))
 }
 
 /// The names of the holes `?h` in `t`.
@@ -5416,7 +6493,10 @@ fn holes_in(t: &T) -> Vec<(String, Span)> {
 /// Whether `expand_lets` refused a block for a value that nothing uses (an
 /// unused `let`, a discarded statement), whose type would never be checked.
 fn never_checked(d: &Diagnostic) -> bool {
-    says(&d.message, &["kernel-statement-discarded", "kernel-let-unused"])
+    says(
+        &d.message,
+        &["kernel-statement-discarded", "kernel-let-unused"],
+    )
 }
 
 /// Whether `n` is written anywhere in `t`, under any binder and inside any
@@ -5444,16 +6524,16 @@ fn expand_numeral(t: T) -> T {
         return t;
     };
     let span = t.span;
-    match n.parse::<u128>() {
-        Ok(0) => T::var(&tauto_surface::bindings::library_name("Zero"), span),
-        Ok(k) => T::new(
+    match num::Num::parse(n) {
+        Some(num::Num::ZERO) => T::var(&tauto_surface::bindings::library_name("Zero"), span),
+        Some(k) => T::new(
             TermKind::App {
                 function: Box::new(T::var(&tauto_surface::bindings::library_name("Succ"), span)),
-                arguments: vec![T::new(TermKind::Nat((k - 1).to_string()), span)],
+                arguments: vec![T::new(TermKind::Nat((k - num::Num::ONE).to_string()), span)],
             },
             span,
         ),
-        Err(_) => t,
+        None => t,
     }
 }
 

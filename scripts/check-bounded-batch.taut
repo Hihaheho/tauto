@@ -1,0 +1,213 @@
+// A focused example check, not the workspace's full verification gate.
+//   tauto check-bounded-batch
+import "lib/sh.taut" {
+  sh_bytes,
+  sh_die,
+  sh_env,
+  sh_executable,
+  sh_has,
+  sh_must,
+  sh_none,
+  sh_output,
+  sh_process,
+  sh_read,
+  sh_root,
+  sh_write
+}
+import std::builtin::os { EnvVars, Process, environ, monotonic_clock, print }
+import std::prelude::collections { Bytes }
+import std::text { Text }
+import std::text_ops { Text }
+
+let root := sh_root()
+let given := match sh_env("TAUTO_BIN") {
+  Some(b) => b
+  None => "target/debug/tauto"
+}
+let cli := if Text::starts_with(given, "/") { given } else { Text::concat_all([root, "/", given]) }
+if sh_executable(cli) { #() } else {
+  sh_die(2, "Build tauto first, or set TAUTO_BIN to its executable.")
+}
+if sh_has("node") { #() } else { sh_die(2, "Node is required for the JavaScript check.") }
+let tmp := match sh_env("TMPDIR") {
+  Some(t) => if t == "" { "/tmp" } else { t }
+  None => "/tmp"
+}
+let output := sh_output(
+  sh_process("mktemp", ["-d", Text::concat(tmp, "/tauto-bounded-batch.XXXXXXXX")], "", [])
+)
+// Keep the source bundle and measurements for inspection, including on failure.
+print(Text::concat_all(["Evidence directory: ", output, "\n"]))
+let env := [#("TAUTO_LANG", "en"), #("TAUTO_CACHE", "off")]
+let main_copy := Text::concat(output, "/main.taut")
+let eure_copy := Text::concat(output, "/Tauto.eure")
+sh_write(main_copy, sh_read(Text::concat(root, "/examples/bounded-batch/src/main.taut")))
+sh_write(eure_copy, sh_read(Text::concat(root, "/examples/bounded-batch/Tauto.eure")))
+
+// Whole seconds since `start`, as the shell's `SECONDS` counts them.
+fn seconds(start: i64): i64 ! {monotonic_clock, overflow} {
+  div(perform monotonic_clock() - start, 1000000000)
+}
+let start := perform monotonic_clock()
+var timings := ""
+
+// Runs `cli` with `args` in `dir`, writes its standard output to `file`
+// under the evidence directory, and records how many seconds it took.
+fn step(
+  start: i64,
+  timings: Text,
+  cli: Text,
+  env: List(Text × Text),
+  output: Text,
+  dir: Text,
+  label: Text,
+  args: List(Text),
+  file: Text
+): Text ! {environ, exit} {
+  let started := seconds(start)
+  let out := sh_bytes(
+    Process {
+      program: cli,
+      args: args,
+      dir: dir,
+      env: EnvVars::set(perform environ(), env),
+      stdin: sh_none()
+    }
+  )
+  sh_write(Text::concat_all([output, "/", file]), out)
+  let line := Text::concat_all([label, "\t", Text::of_i64(seconds(start) - started), "\n"])
+  let all := Text::concat(timings, line)
+  sh_write(Text::concat(output, "/seconds.tsv"), Bytes::of_text(all))
+  all
+}
+
+let batch := "examples/bounded-batch/src/batch.taut"
+timings := step(
+  start,
+  timings,
+  cli,
+  env,
+  output,
+  root,
+  "proof",
+  ["check", batch, "--fresh", "--summary"],
+  "check.txt"
+)
+timings := step(
+  start,
+  timings,
+  cli,
+  env,
+  output,
+  root,
+  "bundle",
+  ["trust", "bundle", ".", batch],
+  "source-bundle.json"
+)
+// Verify from a directory without repository sources. The bundle is source-only.
+timings := step(
+  start,
+  timings,
+  cli,
+  env,
+  output,
+  output,
+  "replay",
+  ["trust", "verify", "source-bundle.json", "--axiom-free"],
+  "verify.json"
+)
+timings := step(
+  start,
+  timings,
+  cli,
+  env,
+  output,
+  root,
+  "rust",
+  ["run", "--backend", "rust", "examples/bounded-batch"],
+  "rust.stdout"
+)
+timings := step(
+  start,
+  timings,
+  cli,
+  env,
+  output,
+  root,
+  "javascript",
+  ["run", "--backend", "javascript", "examples/bounded-batch"],
+  "javascript.stdout"
+)
+timings := step(
+  start,
+  timings,
+  cli,
+  env,
+  output,
+  root,
+  "vm",
+  ["run", "--backend", "vm", "examples/bounded-batch"],
+  "vm.stdout"
+)
+fn same(output: Text, a: Text, b: Text): Unit {
+  sh_must(
+    sh_process(
+      "diff",
+      ["-u", Text::concat_all([output, "/", a]), Text::concat_all([output, "/", b])],
+      "",
+      []
+    )
+  )
+}
+same(output, "vm.stdout", "rust.stdout")
+same(output, "vm.stdout", "javascript.stdout")
+// Independent expected values for the concrete scenario, also asserted by the case runner.
+sh_write(
+  Text::concat(output, "/expected.stdout"),
+  Bytes::of_text(
+    Text::concat_all(
+      [
+        "[7, 7]\n",
+        "[9]\n",
+        "[9]\n",
+        "[]\n",
+        "[]\n",
+        "[7, 7, 9]\n",
+        "[7, 7, 9]\n",
+        "[]\n",
+        "[]\n",
+        "[]\n"
+      ]
+    )
+  )
+)
+same(output, "expected.stdout", "vm.stdout")
+// Refuse a run whose checked source, driver, or manifest changed while checking.
+timings := step(
+  start,
+  timings,
+  cli,
+  env,
+  output,
+  root,
+  "source_unchanged",
+  ["trust", "bundle", ".", batch],
+  "source-bundle-after.json"
+)
+sh_must(
+  sh_process(
+    "cmp",
+    [
+      Text::concat(output, "/source-bundle.json"),
+      Text::concat(output, "/source-bundle-after.json")
+    ],
+    "",
+    []
+  )
+)
+sh_must(sh_process("cmp", [main_copy, "examples/bounded-batch/src/main.taut"], root, []))
+sh_must(sh_process("cmp", [eure_copy, "examples/bounded-batch/Tauto.eure"], root, []))
+print("Checked proofs, axiom-free source replay, and three matching executions.\n")
+print("This is regression evidence for extraction and backends, not a proof of them.\n")
+print(timings)
+print(Text::concat_all(["Total seconds: ", Text::of_i64(seconds(start)), "\n"]))

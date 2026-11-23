@@ -545,7 +545,7 @@ const floatMath=(()=>{
 })();
 // `/` of `Float`: by zero (either sign), the run-time error.
 function floatDiv(a,b){
-    if(b===0)throw new Error('division by zero');
+    if(b===0)throw new OpFail('divzero','division by zero');
     return a/b;
 }
 // The digits the Rust backend's `Display` writes: the shortest decimal that
@@ -634,7 +634,7 @@ function floatBuiltin(name,vs){
 // and `sqrt` of two such, rounded once more by `Math.fround`, are IEEE 754's
 // binary32 results (the binary64 result is never a double-rounding tie).
 function float32Div(a,b){
-    if(b===0)throw new Error('division by zero');
+    if(b===0)throw new OpFail('divzero','division by zero');
     return Math.fround(a/b);
 }
 function float32Builtin(name,vs){

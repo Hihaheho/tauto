@@ -1,0 +1,68 @@
+import std::base
+import std::nat
+import std::uint
+import "uhost.taut"
+
+// Names a type in a method's arguments. A method that mentions only one of the
+// class's two parameters cannot be resolved (`cannot infer the type that
+// `Occupancy` is needed for`), so each such method takes one of these.
+pub(open) inductive Proxy(T: Type): Type {
+  Mk: Proxy(T)
+}
+
+// Which slots are filled. `S` is the whole state, a few words; `M` is the
+// small copy value kept beside each slot, which the policy sees one at a time.
+// Memory is not touched here: the kernel checks it.
+pub(open) inductive class Occupancy(S: Type, M: Type) {
+  fn empty(cap: UHost, pm: Proxy(M)): S
+  // The mark of a new slot.
+  fn vacant(ps: Proxy(S), pm: Proxy(M)): M
+  fn cap(s: S, pm: Proxy(M)): UHost
+  // Whether slot `i`, whose mark is `m`, is filled.
+  fn used(s: S, i: UHost, m: M): Bool
+  // Fill slot `i`, changing its mark from `old` to `new`.
+  fn put(s: S, i: UHost, old: M, new: M): Option(S)
+  // Empty slot `i`, changing its mark from `old` to `new`.
+  fn take(s: S, i: UHost, old: M, new: M): Option(S)
+  // Change the capacity.
+  fn recap(s: S, cap: UHost, pm: Proxy(M)): Option(S)
+  // Whether the slots from `lo` up to (not including) `hi` are all filled.
+  fn full(s: S, lo: UHost, hi: UHost, pm: Proxy(M)): Bool
+
+  theorem empty_free<c: UHost, i: UHost, pm: Proxy(M), ps: Proxy(S)>(): Occupancy::used(the(S, Occupancy::empty(c, pm)), i, the(M, Occupancy::vacant(ps, pm))) = false
+  theorem empty_cap<c: UHost, pm: Proxy(M), ps: Proxy(S)>(): Occupancy::cap(the(S, Occupancy::empty(c, pm)), pm) = c
+  theorem used_below<s: S, i: UHost, m: M, pm: Proxy(M), ps: Proxy(S)>(u: Occupancy::used(s, i, m) = true): UHost::lt(i, Occupancy::cap(s, pm)) = true
+
+  theorem put_fresh<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(h: Occupancy::put(s, i, old, new) = Some(t)): Occupancy::used(s, i, old) = false
+  theorem put_same<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(h: Occupancy::put(s, i, old, new) = Some(t)): Occupancy::used(t, i, new) = true
+  theorem put_other<s: S, i: UHost, old: M, new: M, t: S, j: UHost, m: M, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::put(s, i, old, new) = Some(t),
+    ne: UHost::eq(i, j) = false
+  ): Occupancy::used(t, j, m) = Occupancy::used(s, j, m)
+  theorem put_cap<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(h: Occupancy::put(s, i, old, new) = Some(t)): Occupancy::cap(t, pm) = Occupancy::cap(s, pm)
+
+  theorem take_live<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(h: Occupancy::take(s, i, old, new) = Some(t)): Occupancy::used(s, i, old) = true
+  theorem take_same<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(h: Occupancy::take(s, i, old, new) = Some(t)): Occupancy::used(t, i, new) = false
+  theorem take_other<s: S, i: UHost, old: M, new: M, t: S, j: UHost, m: M, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::take(s, i, old, new) = Some(t),
+    ne: UHost::eq(i, j) = false
+  ): Occupancy::used(t, j, m) = Occupancy::used(s, j, m)
+  theorem take_cap<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(h: Occupancy::take(s, i, old, new) = Some(t)): Occupancy::cap(t, pm) = Occupancy::cap(s, pm)
+
+  // A new capacity keeps what the old slots held, and the new slots are empty.
+  theorem recap_keeps<s: S, c: UHost, t: S, i: UHost, m: M, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::recap(s, c, pm) = Some(t),
+    old: UHost::lt(i, Occupancy::cap(s, pm)) = true
+  ): Occupancy::used(t, i, m) = Occupancy::used(s, i, m)
+  theorem recap_fresh<s: S, c: UHost, t: S, i: UHost, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::recap(s, c, pm) = Some(t),
+    new: UHost::le(Occupancy::cap(s, pm), i) = true
+  ): Occupancy::used(t, i, the(M, Occupancy::vacant(ps, pm))) = false
+  theorem recap_cap<s: S, c: UHost, t: S, pm: Proxy(M), ps: Proxy(S)>(h: Occupancy::recap(s, c, pm) = Some(t)): Occupancy::cap(t, pm) = c
+
+  theorem full_used<s: S, a: UHost, b: UHost, i: UHost, m: M, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::full(s, a, b, pm) = true,
+    lo: UHost::le(a, i) = true,
+    hi: UHost::lt(i, b) = true
+  ): Occupancy::used(s, i, m) = true
+}

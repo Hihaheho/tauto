@@ -1,4 +1,4 @@
-//! `std/Float.taut` says what Nib's `Float` computes: the kernel's values
+//! `std/float.taut` says what Nib's `Float` computes: the kernel's values
 //! of its definitions are the hardware's, and a program the kernel checked
 //! runs alike on every backend.
 use std::{
@@ -12,10 +12,21 @@ fn root() -> PathBuf {
 }
 
 fn run(args: &[&str], path: &Path, target: &Path) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
-        .args(args)
-        .arg(path)
+    // The approval of the repository's trusted commands is kept in a home of its own.
+    let home = std::env::temp_dir().join(format!("tauto-float-home-{}", std::process::id()));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tauto"));
+    if args.iter().any(|a| *a == "--tote") {
+        let args: Vec<&str> = args.iter().copied().filter(|a| *a != "--tote").collect();
+        command.current_dir(path).args(&args).arg(".");
+    } else {
+        command.args(args).arg(path);
+    }
+    if args.first() == Some(&"run") {
+        command.arg("--approve-trust");
+    }
+    let out = command
         .env("TAUTO_TARGET_DIR", target)
+        .env("TAUTO_HOME", home)
         .output()
         .unwrap();
     assert!(
@@ -32,17 +43,17 @@ fn float_example_runs_alike_on_every_backend() {
     let example = root().join("examples/float");
     let target = std::env::temp_dir().join(format!("tauto-float-{}", std::process::id()));
     let expected = "\
-hypot = 5
-hypot_tiny = 0
-tenths = false
-mean_none = None
-mean = Some(1.5)
-units = Some(-3)
-units_nan = None
-units_large = None
-nan_bits = 9221120237041090560
-neg_nan_bits = 9221120237041090560
-growth = 1.6487212707001282
+5
+0
+false
+None
+Some(1.5)
+Some(-3)
+None
+None
+9221120237041090560
+9221120237041090560
+1.6487212707001282
 ";
     assert_eq!(run(&["run", "--tote"], &example, &target), expected);
     assert_eq!(
@@ -125,7 +136,7 @@ fn the_kernel_computes_what_the_hardware_does() {
     let dir = std::env::temp_dir().join(format!("tauto-float-model-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut src = String::from(
-        "import std::Float\nimport std::UInt\n\n\
+        "import std::float\nimport std::uint\n\n\
          fn raw(n: Nat): Float {\n  Float::of_raw(n)\n}\n\n\
          fn bits(x: Float): Nat {\n  U64::val(Float::bits(x))\n}\n\n",
     );
@@ -196,7 +207,7 @@ fn pick_moderate(r: &mut Xorshift) -> f64 {
     if r.next() % 2 == 0 { -x } else { x }
 }
 
-/// `std/FloatReal.taut`: each operation gives the rounding of the exact
+/// `std/float_real.taut`: each operation gives the rounding of the exact
 /// result of the numbers it is given, and rounding a `Float`'s number gives
 /// the `Float` back.
 #[test]
@@ -204,7 +215,7 @@ fn operations_round_the_exact_result() {
     let dir = std::env::temp_dir().join(format!("tauto-float-real-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut src = String::from(
-        "import std::Float\nimport std::FloatReal\nimport std::Rat\n\n\
+        "import std::float\nimport std::float_real\nimport std::rat\n\n\
          fn raw(n: Nat): Float {\n  Float::of_raw(n)\n}\n\n\
          fn val(n: Nat): Rat {\n  ⊢ Rat from match Float::val(raw(n)) {\n    None => Rat::of_nat(0)\n    Some(r) => r\n  }\n}\n\n",
     );
@@ -240,19 +251,19 @@ fn float32_example_runs_alike_on_every_backend() {
     let example = root().join("examples/float32");
     let target = std::env::temp_dir().join(format!("tauto-float32-{}", std::process::id()));
     let expected = "\
-dot2 = 5
-tenths = true
-tenth = 0.10000000149011612
-tenth_bits = 1036831949
-ratio_none = None
-ratio = Some(0.3333333432674408)
-overflow = inf
-nan_bits = 2143289344
-exp = 2.7182817459106445
+5
+true
+0.10000000149011612
+1036831949
+None
+Some(0.3333333432674408)
+inf
+2143289344
+2.7182817459106445
 ";
     assert_eq!(run(&["run", "--tote"], &example, &target), expected);
     assert_eq!(
-        run(&["run", "--backend", "eval", "--tote"], &example, &target),
+        run(&["run", "--backend", "vm", "--tote"], &example, &target),
         expected
     );
     assert_eq!(
@@ -270,7 +281,7 @@ fn canonical32(x: f32) -> u32 {
     if x.is_nan() { 0x7FC0_0000 } else { x.to_bits() }
 }
 
-/// `std/Float32.taut` computes what the hardware's `f32` does, and
+/// `std/float32.taut` computes what the hardware's `f32` does, and
 /// `Float32::of_rat` rounds a number as `f32` arithmetic rounds its exact
 /// result.
 #[test]
@@ -278,7 +289,7 @@ fn the_kernel_computes_what_the_hardware_does_in_float32() {
     let dir = std::env::temp_dir().join(format!("tauto-float32-model-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut src = String::from(
-        "import std::Float\nimport std::Float32\nimport std::FloatReal\nimport std::Rat\n\n\
+        "import std::float\nimport std::float32\nimport std::float_real\nimport std::rat\n\n\
          fn raw(n: Nat): Float32 {\n  Float32::of_raw(n)\n}\n\n\
          fn wide(n: Nat): Float {\n  Float::of_raw(n)\n}\n\n\
          fn val(n: Nat): Rat {\n  ⊢ Rat from match Float32::val(raw(n)) {\n    None => Rat::of_nat(0)\n    Some(r) => r\n  }\n}\n\n",

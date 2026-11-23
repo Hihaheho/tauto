@@ -2,19 +2,19 @@ import "check.taut"
 import "data.taut"
 import "level.taut"
 import "term.taut"
-import std::List
-import std::Map
-import std::Text
-import std::Base
+import std::list
+import std::map
+import std::text
+import std::base
 
 pub(open) inductive KernelRec: Type {
-  Mk(arg: Nat, ys: List(Pair(Nat, KernelTerm)), family: Nat, indices: List(KernelTerm)): KernelRec
+  Mk(arg: Nat, ys: List(Nat × KernelTerm), family: Nat, indices: List(KernelTerm)): KernelRec
 }
 
 pub(open) inductive KernelCtor: Type {
   Mk(
     name: Text,
-    arguments: List(Pair(Nat, KernelTerm)),
+    arguments: List(Nat × KernelTerm),
     result_indices: List(KernelTerm),
     recursive: List(KernelRec)
   ): KernelCtor
@@ -25,30 +25,30 @@ pub(open) inductive KernelMember: Type {
     name: Text,
     index_tel: KernelTerm,
     indices: Nat,
-    alias: Option(Pair(Text, List(KernelTerm))),
+    alias: Option(Text × List(KernelTerm)),
     constructors: List(KernelCtor)
   ): KernelMember
 }
 
 pub fn kernel_list_map_Pair_Nat_KernelTerm_KernelTerm(
-  f: (Pair(Nat, KernelTerm)) -> KernelTerm,
-  xs: List(Pair(Nat, KernelTerm))
+  f: (Nat × KernelTerm) -> KernelTerm,
+  xs: List(Nat × KernelTerm)
 ): List(KernelTerm) { List::map(f, xs) }
 
 pub fn kernel_list_map_Pair_Nat_KernelTerm_Nat(
-  f: (Pair(Nat, KernelTerm)) -> Nat,
-  xs: List(Pair(Nat, KernelTerm))
+  f: (Nat × KernelTerm) -> Nat,
+  xs: List(Nat × KernelTerm)
 ): List(Nat) { List::map(f, xs) }
 
 pub fn kernel_list_any_KernelTerm_Bool(
   f: (KernelTerm) -> Bool,
   xs: List(KernelTerm)
-): Bool { List::any(f, xs) }
+): Bool { List::any((x) => f(x), xs) }
 
 pub fn kernel_list_all_KernelFamily_Bool(
   f: (KernelFamily) -> Bool,
   xs: List(KernelFamily)
-): Bool { List::all(f, xs) }
+): Bool { List::all((x) => f(x), xs) }
 
 pub fn kernel_list_map_KernelFamily_Text(
   f: (KernelFamily) -> Text,
@@ -65,19 +65,19 @@ pub fn kernel_list_map_KernelCtor_KernelCtorInfo(
   xs: List(KernelCtor)
 ): List(KernelCtorInfo) { List::map(f, xs) }
 
-pub fn kernel_atoms(xs: List(Pair(Nat, KernelTerm))): List(KernelTerm) {
+pub fn kernel_atoms(xs: List(Nat × KernelTerm)): List(KernelTerm) {
   kernel_list_map_Pair_Nat_KernelTerm_KernelTerm(
-    (x: Pair(Nat, KernelTerm)) => KernelFVar(x.fst),
+    (x: Nat × KernelTerm) => KernelFVar(x.fst),
     xs
   )
 }
 
-pub fn kernel_atom_ids(xs: List(Pair(Nat, KernelTerm))): List(Nat) {
-  kernel_list_map_Pair_Nat_KernelTerm_Nat((x: Pair(Nat, KernelTerm)) => x.fst, xs)
+pub fn kernel_atom_ids(xs: List(Nat × KernelTerm)): List(Nat) {
+  kernel_list_map_Pair_Nat_KernelTerm_Nat((x: Nat × KernelTerm) => x.fst, xs)
 }
 
 pub fn kernel_set_at<A>(xs: List(A), index: Nat, value: A): List(A) {
-  ⊢ List(A) from match xs {
+  match xs {
     Nil => Nil
     Cons(x, rest) => ⊢ List(A) from match index {
       Zero => Cons(value, rest)
@@ -87,7 +87,7 @@ pub fn kernel_set_at<A>(xs: List(A), index: Nat, value: A): List(A) {
 }
 
 pub fn kernel_index_of(names: List(Text), name: Text): Option(Nat) {
-  ⊢ Option(Nat) from match names {
+  match names {
     Nil => None
     Cons(n, rest) => if n == name { Some(0) } else {
       ⊢ Option(Nat) from match kernel_index_of(rest, name) {
@@ -98,22 +98,22 @@ pub fn kernel_index_of(names: List(Text), name: Text): Option(Nat) {
 }
 
 pub fn kernel_mentions_any(ts: List(KernelTerm), names: List(Text)): Bool {
-  ⊢ Bool from match ts {
+  match ts {
     Nil => false
     Cons(t, rest) => kernel_mentions_const(t, names) || kernel_mentions_any(rest, names)
   }
 }
 
 pub fn kernel_positive(group: List(Text), d: KernelTerm): Bool {
-  ⊢ Bool from match d {
-    KernelPi(a, b, n) => not(kernel_mentions_const(a, group)) && kernel_positive(group, b)
-    KernelBVar(i) => true
-    KernelFVar(x) => true
-    KernelSortTerm(s) => true
-    KernelConst(n) => true
-    KernelLam(body, n) => not(kernel_mentions_const(body, group))
-    KernelLit(v) => true
-    KernelApp(f, a, n) => if not(kernel_mentions_const(d, group)) { true } else {
+  match d {
+    KernelPi(a, b, ^n) => not(kernel_mentions_const(a, group)) && kernel_positive(group, b)
+    KernelBVar(^i) => true
+    KernelFVar(^x) => true
+    KernelSortTerm(^s) => true
+    KernelConst(^n) => true
+    KernelLam(body, ^n) => not(kernel_mentions_const(body, group))
+    KernelLit(^v) => true
+    KernelApp(^f, ^a, ^n) => if not(kernel_mentions_const(d, group)) { true } else {
       let sp := kernel_spine(d)
       ⊢ Bool from match kernel_as_const(sp.fst) {
         None => false
@@ -133,7 +133,7 @@ pub fn kernel_positive(group: List(Text), d: KernelTerm): Bool {
 }
 
 pub fn kernel_shared_params(n: Nat, a: KernelTerm, b: KernelTerm): Bool {
-  ⊢ Bool from match n {
+  match n {
     Zero => true
     Succ(j) => ⊢ Bool from match kernel_as_pi_named(a) {
       None => false
@@ -149,7 +149,7 @@ pub fn kernel_shared_params(n: Nat, a: KernelTerm, b: KernelTerm): Bool {
 }
 
 pub fn kernel_instantiate_params_in(params: List(KernelTerm), t: KernelTerm): Option(KernelTerm) {
-  ⊢ Option(KernelTerm) from match params {
+  match params {
     Nil => Some(t)
     Cons(p, rest) => ⊢ Option(KernelTerm) from match kernel_as_pi_named(t) {
       None => None
@@ -189,11 +189,11 @@ pub fn kernel_finish_ctor(ci: KernelCtor, params: List(Nat)): KernelCtorInfo {
 pub fn kernel_finish_members(
   members: List(KernelMember),
   group: List(Text),
-  params: List(Pair(Nat, KernelTerm)),
+  params: List(Nat × KernelTerm),
   out: KernelSort,
   pos: Nat
 ): List(KernelIndInfo) {
-  ⊢ List(KernelIndInfo) from match members {
+  match members {
     Nil => Nil
     Cons(m, rest) => {
       let k_like: Option(
@@ -234,20 +234,20 @@ pub fn kernel_finish_members(
 mutual {
   pub fn kernel_open_n(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     n: Nat,
     t: KernelTerm
-  ): Option(Pair(List(Pair(Nat, KernelTerm)), KernelTerm)) {
-    ⊢ Option(Pair(List(Pair(Nat, KernelTerm)), KernelTerm)) from match k {
+  ): Option(List(Nat × KernelTerm) × KernelTerm) {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
-      Succ(j) => ⊢ Option(Pair(List(Pair(Nat, KernelTerm)), KernelTerm)) from match n {
-        Zero => Some(Pair { fst: Nil, snd: t })
-        Succ(m) => ⊢ Option(Pair(List(Pair(Nat, KernelTerm)), KernelTerm)) from match kernel_as_pi_named(t) {
+      Succ(j) => ⊢ Option(List(Nat × KernelTerm) × KernelTerm) from match n {
+        Zero => Some(#(Nil, t))
+        Succ(m) => ⊢ Option(List(Nat × KernelTerm) × KernelTerm) from match kernel_as_pi_named(t) {
           None => None
           Some(#(@domain domain, @codomain codomain)) => {
             let atom := kernel_fresh(&mut c, domain)
-            ⊢ Option(Pair(List(Pair(Nat, KernelTerm)), KernelTerm)) from match kernel_open_n(
+            ⊢ Option(List(Nat × KernelTerm) × KernelTerm) from match kernel_open_n(
               j,
               &mut c,
               m,
@@ -256,7 +256,7 @@ mutual {
               None => None
 
               Some(tail) => Some(
-                Pair { fst: Cons(Pair { fst: atom, snd: domain }, tail.fst), snd: tail.snd }
+                #(Cons(#(atom, domain), tail.fst), tail.snd)
               )
             }
           }
@@ -267,25 +267,25 @@ mutual {
 
   pub fn kernel_open_all(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     t: KernelTerm
-  ): Pair(List(Pair(Nat, KernelTerm)), KernelTerm) {
-    ⊢ Pair(List(Pair(Nat, KernelTerm)), KernelTerm) from match k {
+  ): List(Nat × KernelTerm) × KernelTerm {
+    ⊢ (List(Nat × KernelTerm) × KernelTerm) from match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
-        Pair { fst: Nil, snd: t } }
-      Succ(j) => ⊢ Pair(List(Pair(Nat, KernelTerm)), KernelTerm) from match kernel_as_pi_named(t) {
-        None => Pair { fst: Nil, snd: t }
+        #(Nil, t) }
+      Succ(j) => ⊢ (List(Nat × KernelTerm) × KernelTerm) from match kernel_as_pi_named(t) {
+        None => #(Nil, t)
         Some(#(@domain domain, @codomain codomain)) => {
           let atom := kernel_fresh(&mut c, domain)
           let tail := kernel_open_all(j, &mut c, kernel_inst(codomain, KernelFVar(atom)))
-          Pair { fst: Cons(Pair { fst: atom, snd: domain }, tail.fst), snd: tail.snd }
+          #(Cons(#(atom, domain), tail.fst), tail.snd)
         }
       }
     }
   }
 
-  pub fn kernel_add_families(k: Nat, &mut c: KernelCore, specs: List(KernelFamily)): Bool {
-    ⊢ Bool from match k {
+  pub fn kernel_add_families(k: Nat, c: &mut KernelCore, specs: List(KernelFamily)): Bool {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         false }
       Succ(j) => ⊢ Bool from match specs {
@@ -293,7 +293,7 @@ mutual {
         Cons(f, rest) => if kernel_fresh_name(c, f.name) && kernel_term_valid(f.ty, 0) {
           ⊢ Bool from match kernel_infer_sort(j, &mut c, f.ty) {
             None => false
-            Some(s) => {
+            Some(^s) => {
               kernel_put_global(&mut c, f.name, f.ty, None)
               kernel_add_families(j, &mut c, rest)
             }
@@ -305,12 +305,12 @@ mutual {
 
   pub fn kernel_read_members(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     specs: List(KernelFamily),
     params: List(KernelTerm),
     out: KernelSort
   ): Option(List(KernelMember)) {
-    ⊢ Option(List(KernelMember)) from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
       Succ(j) => ⊢ Option(List(KernelMember)) from match specs {
@@ -337,11 +337,11 @@ mutual {
 
   pub fn kernel_ctor_params(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     t: KernelTerm,
-    params: List(Pair(Nat, KernelTerm))
+    params: List(Nat × KernelTerm)
   ): Option(KernelTerm) {
-    ⊢ Option(KernelTerm) from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
       Succ(j) => ⊢ Option(KernelTerm) from match params {
@@ -363,11 +363,11 @@ mutual {
 
   pub fn kernel_ctor_universes(
     k: Nat,
-    &mut c: KernelCore,
-    args: List(Pair(Nat, KernelTerm)),
+    c: &mut KernelCore,
+    args: List(Nat × KernelTerm),
     out: KernelSort
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         false }
       Succ(j) => ⊢ Bool from match args {
@@ -385,15 +385,15 @@ mutual {
 
   pub fn kernel_read_ctors(
     k: Nat,
-    &mut c: KernelCore,
-    specs: List(Pair(Text, KernelTerm)),
-    &mut taken: List(Text),
-    params: List(Pair(Nat, KernelTerm)),
+    c: &mut KernelCore,
+    specs: List(Text × KernelTerm),
+    taken: &mut List(Text),
+    params: List(Nat × KernelTerm),
     member: KernelMember,
     group: List(Text),
     out: KernelSort
   ): Option(List(KernelCtor)) {
-    ⊢ Option(List(KernelCtor)) from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
       Succ(j) => ⊢ Option(List(KernelCtor)) from match specs {
@@ -403,11 +403,11 @@ mutual {
           c,
           spec.fst
         ) && not(List::contains(Text::eq, spec.fst, taken)) && kernel_term_valid(spec.snd, 0) {
-          taken := Cons(spec.fst, taken)
+          *taken := Cons(spec.fst, taken)
           ⊢ Option(List(KernelCtor)) from match kernel_infer_sort(j, &mut c, spec.snd) {
             None => None
 
-            Some(s) => ⊢ Option(List(KernelCtor)) from match kernel_ctor_params(
+            Some(^s) => ⊢ Option(List(KernelCtor)) from match kernel_ctor_params(
               j,
               &mut c,
               spec.snd,
@@ -462,15 +462,15 @@ mutual {
 
   pub fn kernel_read_all_ctors(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     specs: List(KernelFamily),
     members: List(KernelMember),
-    &mut taken: List(Text),
-    params: List(Pair(Nat, KernelTerm)),
+    taken: &mut List(Text),
+    params: List(Nat × KernelTerm),
     group: List(Text),
     out: KernelSort
   ): Option(List(KernelMember)) {
-    ⊢ Option(List(KernelMember)) from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
       Succ(j) => ⊢ Option(List(KernelMember)) from match specs {
@@ -513,13 +513,13 @@ mutual {
 
   pub fn kernel_nest(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     d: KernelTerm,
     np: Nat,
-    &mut group: List(Text),
-    &mut aliases: List(Pair(Text, List(KernelTerm)))
+    group: &mut List(Text),
+    aliases: &mut List(Text × List(KernelTerm))
   ): Option(KernelTerm) {
-    ⊢ Option(KernelTerm) from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
       Succ(j) => ⊢ Option(KernelTerm) from match kernel_as_pi_named(d) {
@@ -551,7 +551,7 @@ mutual {
                 ind.group
               ) != 1 || List::length(
                 sp.snd
-              ) != ind.params || not(List::all(kernel_closed, sp.snd)) { None } else {
+              ) != ind.params || not(List::all((x) => kernel_closed(x), sp.snd)) { None } else {
                 ⊢ Option(KernelTerm) from match kernel_alias_index(j, aliases, name, sp.snd) {
                   Some(i) => ⊢ Option(KernelTerm) from match List::nth(
                     group,
@@ -571,8 +571,8 @@ mutual {
                       )
                     )
                     if kernel_fresh_name(c, member) {
-                      group := List::append(group, Cons(member, Nil))
-                      aliases := List::append(aliases, Cons(Pair { fst: name, snd: sp.snd }, Nil))
+                      *group := List::append(group, Cons(member, Nil))
+                      *aliases := List::append(aliases, Cons(#(name, sp.snd), Nil))
                       Some(KernelConst(member))
                     } else { None }
                   }
@@ -587,11 +587,11 @@ mutual {
 
   pub fn kernel_alias_index(
     k: Nat,
-    aliases: List(Pair(Text, List(KernelTerm))),
+    aliases: List(Text × List(KernelTerm)),
     name: Text,
     args: List(KernelTerm)
   ): Option(Nat) {
-    ⊢ Option(Nat) from match k {
+    match k {
       Zero => None
       Succ(j) => ⊢ Option(Nat) from match aliases {
         Nil => None
@@ -606,14 +606,14 @@ mutual {
 
   pub fn kernel_recursive(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     group: List(Text),
     members: List(KernelMember),
     pvars: List(KernelTerm),
     arg: Nat,
     d: KernelTerm
   ): Option(Option(KernelRec)) {
-    ⊢ Option(Option(KernelRec)) from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
       Succ(j) => {
@@ -629,7 +629,7 @@ mutual {
                 None => 0
                 Some(m) => ⊢ Nat from match m.alias {
                   None => List::length(pvars)
-                  Some(a) => 0 }
+                  Some(^a) => 0 }
               }
               let ni := ⊢ Nat from match member {
                 None => 0
@@ -648,16 +648,16 @@ mutual {
 
   pub fn kernel_process_args(
     k: Nat,
-    &mut c: KernelCore,
-    args: List(Pair(Nat, KernelTerm)),
+    c: &mut KernelCore,
+    args: List(Nat × KernelTerm),
     at: Nat,
     np: Nat,
     members: List(KernelMember),
     pvars: List(KernelTerm),
-    &mut group: List(Text),
-    &mut aliases: List(Pair(Text, List(KernelTerm)))
+    group: &mut List(Text),
+    aliases: &mut List(Text × List(KernelTerm))
   ): Option(List(KernelRec)) {
-    ⊢ Option(List(KernelRec)) from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
       Succ(j) => ⊢ Option(List(KernelRec)) from match args {
@@ -709,15 +709,15 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_process_ctors(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     ctors: List(KernelCtor),
     np: Nat,
     members: List(KernelMember),
     pvars: List(KernelTerm),
-    &mut group: List(Text),
-    &mut aliases: List(Pair(Text, List(KernelTerm)))
+    group: &mut List(Text),
+    aliases: &mut List(Text × List(KernelTerm))
   ): Option(List(KernelCtor)) {
-    ⊢ Option(List(KernelCtor)) from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
       Succ(j) => ⊢ Option(List(KernelCtor)) from match ctors {
@@ -756,11 +756,11 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_nested_ctors(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     cs: List(KernelCtorInfo),
     args: List(KernelTerm)
   ): Option(List(KernelCtor)) {
-    ⊢ Option(List(KernelCtor)) from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
       Succ(j) => ⊢ Option(List(KernelCtor)) from match cs {
@@ -784,14 +784,14 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_grow_members(
     k: Nat,
-    &mut c: KernelCore,
-    &mut members: List(KernelMember),
+    c: &mut KernelCore,
+    members: &mut List(KernelMember),
     group: List(Text),
-    aliases: List(Pair(Text, List(KernelTerm))),
+    aliases: List(Text × List(KernelTerm)),
     original: Nat,
     out: KernelSort
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         false }
       Succ(j) => if List::length(members) < List::length(group) {
@@ -804,7 +804,7 @@ Some(rec) => Cons(rec, rs) })
               Some(cs) => ⊢ Bool from match List::nth(group, List::length(members)) {
                 None => false
                 Some(name) => {
-                  members := List::append(
+                  *members := List::append(
                     members,
                     Cons(KernelMember::Mk(name, KernelSortTerm(out), 0, Some(alias), cs), Nil)
                   )
@@ -820,17 +820,17 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_process_members(
     k: Nat,
-    &mut c: KernelCore,
-    &mut members: List(KernelMember),
-    &mut group: List(Text),
-    &mut aliases: List(Pair(Text, List(KernelTerm))),
+    c: &mut KernelCore,
+    members: &mut List(KernelMember),
+    group: &mut List(Text),
+    aliases: &mut List(Text × List(KernelTerm)),
     at: Nat,
     original: Nat,
     np: Nat,
     pvars: List(KernelTerm),
     out: KernelSort
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         false }
       Succ(j) => ⊢ Bool from match List::nth(members, at) {
@@ -848,7 +848,7 @@ Some(rec) => Cons(rec, rs) })
         ) {
           None => false
           Some(cs) => {
-            members := kernel_set_at(
+            *members := kernel_set_at(
               members,
               at,
               KernelMember::Mk(m.name, m.index_tel, m.indices, m.alias, cs)
@@ -875,11 +875,11 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_large_args(
     k: Nat,
-    &mut c: KernelCore,
-    args: List(Pair(Nat, KernelTerm)),
+    c: &mut KernelCore,
+    args: List(Nat × KernelTerm),
     indices: List(KernelTerm)
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         false }
       Succ(j) => ⊢ Bool from match args {
@@ -898,8 +898,8 @@ Some(rec) => Cons(rec, rs) })
     }
   }
 
-  pub fn kernel_large(k: Nat, &mut c: KernelCore, ms: List(KernelMember), out: KernelSort): Bool {
-    ⊢ Bool from match k {
+  pub fn kernel_large(k: Nat, c: &mut KernelCore, ms: List(KernelMember), out: KernelSort): Bool {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         false }
       Succ(j) => if not(kernel_sort_eq(out, KernelProp)) { true } else {
@@ -923,13 +923,13 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_register_ctors(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     cs: List(KernelCtor),
     family: Text,
     pos: Nat,
-    params: List(Pair(Nat, KernelTerm))
+    params: List(Nat × KernelTerm)
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         false }
       Succ(j) => ⊢ Bool from match cs {
@@ -943,7 +943,7 @@ Some(rec) => Cons(rec, rs) })
           kernel_put_global(&mut c, ci.name, ty, None)
           kernel_set_to(
             &mut c.constructors,
-            Ordmap::insert(c.constructors, ci.name, Pair { fst: family, snd: pos }, kernel_text_cmp)
+            Ordmap::insert(c.constructors, ci.name, #(family, pos), kernel_text_cmp)
           )
           kernel_register_ctors(j, &mut c, rest, family, Succ(pos), params)
         }
@@ -953,11 +953,11 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_register_members(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     ms: List(KernelMember),
-    params: List(Pair(Nat, KernelTerm))
+    params: List(Nat × KernelTerm)
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         false }
       Succ(j) => ⊢ Bool from match ms {
@@ -977,13 +977,13 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_over_major(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     m: KernelMember,
     pvars: List(KernelTerm),
     motive: Option(KernelTerm),
     ms: KernelSort
   ): KernelTerm {
-    ⊢ KernelTerm from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         KernelBVar(0) }
       Succ(j) => {
@@ -1005,20 +1005,20 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_motives(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     members: List(KernelMember),
     pvars: List(KernelTerm),
     ms: KernelSort
-  ): List(Pair(Nat, KernelTerm)) {
-    ⊢ List(Pair(Nat, KernelTerm)) from match k {
+  ): List(Nat × KernelTerm) {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         Nil }
-      Succ(j) => ⊢ List(Pair(Nat, KernelTerm)) from match members {
+      Succ(j) => ⊢ List(Nat × KernelTerm) from match members {
         Nil => Nil
         Cons(m, rest) => {
           let ty := kernel_over_major(j, &mut c, m, pvars, None, ms)
           let atom := kernel_fresh(&mut c, ty)
-          Cons(Pair { fst: atom, snd: ty }, kernel_motives(j, &mut c, rest, pvars, ms))
+          Cons(#(atom, ty), kernel_motives(j, &mut c, rest, pvars, ms))
         }
       }
     }
@@ -1026,15 +1026,15 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_minor_ihs(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     rs: List(KernelRec),
     ci: KernelCtor,
     mvars: List(KernelTerm)
-  ): List(Pair(Nat, KernelTerm)) {
-    ⊢ List(Pair(Nat, KernelTerm)) from match k {
+  ): List(Nat × KernelTerm) {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         Nil }
-      Succ(j) => ⊢ List(Pair(Nat, KernelTerm)) from match rs {
+      Succ(j) => ⊢ List(Nat × KernelTerm) from match rs {
         Nil => Nil
         Cons(r, rest) => {
           let arg := ⊢ KernelTerm from match List::nth(ci.arguments, r.arg) {
@@ -1049,7 +1049,7 @@ Some(rec) => Cons(rec, rs) })
             )
           )
           let atom := kernel_fresh(&mut c, ih)
-          Cons(Pair { fst: atom, snd: ih }, kernel_minor_ihs(j, &mut c, rest, ci, mvars))
+          Cons(#(atom, ih), kernel_minor_ihs(j, &mut c, rest, ci, mvars))
         }
       }
     }
@@ -1057,17 +1057,17 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_minors_ctors(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     cs: List(KernelCtor),
     m: KernelMember,
     fi: Nat,
     pvars: List(KernelTerm),
     mvars: List(KernelTerm)
-  ): List(Pair(Nat, KernelTerm)) {
-    ⊢ List(Pair(Nat, KernelTerm)) from match k {
+  ): List(Nat × KernelTerm) {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         Nil }
-      Succ(j) => ⊢ List(Pair(Nat, KernelTerm)) from match cs {
+      Succ(j) => ⊢ List(Nat × KernelTerm) from match cs {
         Nil => Nil
         Cons(ci, rest) => {
           let cparams := ⊢ List(KernelTerm) from match m.alias {
@@ -1085,7 +1085,7 @@ Some(rec) => Cons(rec, rs) })
           let ty := kernel_bind_pis(ci.arguments, kernel_bind_pis(ihs, result))
           let atom := kernel_fresh(&mut c, ty)
           Cons(
-            Pair { fst: atom, snd: ty },
+            #(atom, ty),
             kernel_minors_ctors(j, &mut c, rest, m, fi, pvars, mvars)
           )
         }
@@ -1095,16 +1095,16 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_minors(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     members: List(KernelMember),
     fi: Nat,
     pvars: List(KernelTerm),
     mvars: List(KernelTerm)
-  ): List(Pair(Nat, KernelTerm)) {
-    ⊢ List(Pair(Nat, KernelTerm)) from match k {
+  ): List(Nat × KernelTerm) {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         Nil }
-      Succ(j) => ⊢ List(Pair(Nat, KernelTerm)) from match members {
+      Succ(j) => ⊢ List(Nat × KernelTerm) from match members {
         Nil => Nil
         Cons(m, rest) => {
           let cs := kernel_minors_ctors(j, &mut c, m.constructors, m, fi, pvars, mvars)
@@ -1116,13 +1116,13 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_eliminator(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     members: List(KernelMember),
-    params: List(Pair(Nat, KernelTerm)),
+    params: List(Nat × KernelTerm),
     index: Nat,
     ms: KernelSort
   ): Option(KernelTerm) {
-    ⊢ Option(KernelTerm) from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         None }
       Succ(j) => ⊢ Option(KernelTerm) from match List::nth(members, index) {
@@ -1141,15 +1141,15 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_register_elims(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     all: List(KernelMember),
     todo: List(KernelMember),
-    params: List(Pair(Nat, KernelTerm)),
+    params: List(Nat × KernelTerm),
     at: Nat,
     ms: KernelSort,
-    &mut pending: List(Pair(Text, KernelTerm))
+    pending: &mut List(Text × KernelTerm)
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         false }
       Succ(j) => ⊢ Bool from match todo {
@@ -1163,8 +1163,8 @@ Some(rec) => Cons(rec, rs) })
               Some(ty) => if kernel_closed(ty) {
                 ⊢ Bool from match kernel_infer_sort(j, &mut c, ty) {
                   None => false
-                  Some(s) => {
-                    pending := Cons(Pair { fst: name, snd: ty }, pending)
+                  Some(^s) => {
+                    *pending := Cons(#(name, ty), pending)
                     kernel_set_to(
                       &mut c.eliminators,
                       Ordmap::insert(c.eliminators, name, m.name, kernel_text_cmp)
@@ -1182,12 +1182,12 @@ Some(rec) => Cons(rec, rs) })
 
   pub fn kernel_inductive_inner(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     specs: List(KernelFamily),
     np: Nat,
     out: KernelSort
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => { kernel_set_to(&mut c.exhausted, true)
         false }
       Succ(j) => ⊢ Bool from match specs {
@@ -1229,7 +1229,7 @@ Some(rec) => Cons(rec, rs) })
                   Some(with_ctors) => {
                     var members: List(KernelMember) := with_ctors
                     var group: List(Text) := names
-                    var aliases: List(Pair(Text, List(KernelTerm))) := Nil
+                    var aliases: List(Text × List(KernelTerm)) := Nil
                     if kernel_process_members(
                       j,
                       &mut c,
@@ -1251,7 +1251,7 @@ Some(rec) => Cons(rec, rs) })
                         List::take(List::length(specs), members),
                         opened.fst
                       ) {
-                        var pending: List(Pair(Text, KernelTerm)) := Nil
+                        var pending: List(Text × KernelTerm) := Nil
                         let small_ok := kernel_register_elims(
                           j,
                           &mut c,
@@ -1298,20 +1298,20 @@ Some(rec) => Cons(rec, rs) })
 }
 
 // Only the terminal universe of a motive changes; its dependent telescope is preserved.
-pub fn kernel_motive_at(k: Nat, &mut c: KernelCore, t: KernelTerm, level: Nat): Option(KernelTerm) {
-  ⊢ Option(KernelTerm) from match k {
+pub fn kernel_motive_at(k: Nat, c: &mut KernelCore, t: KernelTerm, level: Nat): Option(KernelTerm) {
+  match k {
     Zero => {
       kernel_set_to(&mut c.exhausted, true)
       None
     }
     Succ(j) => ⊢ Option(KernelTerm) from match t {
-      KernelPi(a, b, n) => ⊢ Option(KernelTerm) from match kernel_motive_at(j, &mut c, b, level) {
+      KernelPi(a, b, ^n) => ⊢ Option(KernelTerm) from match kernel_motive_at(j, &mut c, b, level) {
         None => None
         Some(body) => Some(kernel_pi(a, body))
       }
       KernelSortTerm(s) => ⊢ Option(KernelTerm) from match s {
         KernelProp => None
-        KernelType(old) => Some(KernelSortTerm(KernelType(KernelLevel::Mk(level, Nil))))
+        KernelType(^old) => Some(KernelSortTerm(KernelType(KernelLevel::Mk(level, Nil))))
       }
       _ => None
     }
@@ -1320,20 +1320,20 @@ pub fn kernel_motive_at(k: Nat, &mut c: KernelCore, t: KernelTerm, level: Nat): 
 
 pub fn kernel_recursor_type_at(
   k: Nat,
-  &mut c: KernelCore,
+  c: &mut KernelCore,
   t: KernelTerm,
   skip: Nat,
   motives: Nat,
   level: Nat
 ): Option(KernelTerm) {
-  ⊢ Option(KernelTerm) from match k {
+  match k {
     Zero => {
       kernel_set_to(&mut c.exhausted, true)
       None
     }
     Succ(j) => if skip == 0 && motives == 0 { Some(t) } else {
       ⊢ Option(KernelTerm) from match t {
-        KernelPi(a, b, n) => if skip == 0 {
+        KernelPi(a, b, ^n) => if skip == 0 {
           ⊢ Option(KernelTerm) from match kernel_motive_at(j, &mut c, a, level) {
             None => None
             Some(domain) => ⊢ Option(KernelTerm) from match kernel_recursor_type_at(
@@ -1369,13 +1369,13 @@ pub fn kernel_recursor_type_at(
 
 pub fn kernel_recursor_members(
   k: Nat,
-  &mut c: KernelCore,
+  c: &mut KernelCore,
   members: List(Text),
   params: Nat,
   motives: Nat,
   level: Nat
 ): Bool {
-  ⊢ Bool from match k {
+  match k {
     Zero => { kernel_set_to(&mut c.exhausted, true)
       false }
     Succ(j) => ⊢ Bool from match members {
@@ -1409,7 +1409,7 @@ pub fn kernel_recursor_members(
                     None => false
                     Some(ty) => ⊢ Bool from match kernel_infer_sort(j, &mut c, ty) {
                       None => false
-                      Some(s) => {
+                      Some(^s) => {
                         kernel_put_global(&mut c, name, ty, None)
                         kernel_set_to(
                           &mut c.eliminators,
@@ -1429,7 +1429,7 @@ pub fn kernel_recursor_members(
   }
 }
 
-pub fn kernel_recursor_at(k: Nat, &mut c: KernelCore, family: Text, level: Nat): Bool {
+pub fn kernel_recursor_at(k: Nat, c: &mut KernelCore, family: Text, level: Nat): Bool {
   if level <= 65535 {
     ⊢ Bool from match kernel_ind_get(c, family) {
       None => false
@@ -1449,7 +1449,7 @@ pub fn kernel_recursor_at(k: Nat, &mut c: KernelCore, family: Text, level: Nat):
   } else { false }
 }
 
-pub fn kernel_put_pending(&mut c: KernelCore, pending: List(Pair(Text, KernelTerm))): Unit {
+pub fn kernel_put_pending(c: &mut KernelCore, pending: List(Text × KernelTerm)): Unit {
   match pending {
     Nil => #()
     Cons(p, rest) => {
@@ -1459,7 +1459,7 @@ pub fn kernel_put_pending(&mut c: KernelCore, pending: List(Pair(Text, KernelTer
   }
 }
 
-pub fn kernel_put_inductives(&mut c: KernelCore, infos: List(KernelIndInfo)): Unit {
+pub fn kernel_put_inductives(c: &mut KernelCore, infos: List(KernelIndInfo)): Unit {
   match infos {
     Nil => #()
     Cons(i, rest) => {
@@ -1478,12 +1478,12 @@ pub fn kernel_member_names(ms: List(KernelMember), suffix: Text): List(Text) {
 
 // Each eliminator of the group made with `suffix` goes on with the
 // eliminators of the group in order (`kernel_iota_ihs`).
-pub fn kernel_put_targets(&mut c: KernelCore, ms: List(KernelMember), suffix: Text): Unit {
+pub fn kernel_put_targets(c: &mut KernelCore, ms: List(KernelMember), suffix: Text): Unit {
   let names := kernel_member_names(ms, suffix)
   kernel_put_targets_of(&mut c, names, names)
 }
 
-pub fn kernel_put_targets_of(&mut c: KernelCore, todo: List(Text), names: List(Text)): Unit {
+pub fn kernel_put_targets_of(c: &mut KernelCore, todo: List(Text), names: List(Text)): Unit {
   match todo {
     Nil => #()
     Cons(n, rest) => {

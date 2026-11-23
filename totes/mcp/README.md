@@ -1,260 +1,130 @@
-# Tauto MCP Server
+# mcp
 
-A Model Context Protocol (MCP) server implementation written entirely in Tauto, providing AI coding agents with direct access to Tauto's proof workflow.
+A Model Context Protocol (MCP) server over standard input and output, written
+in Tauto. It gives an AI agent the step-by-step proof commands of `tauto`
+(`check`, `goals`, `try`, `suggest`, `library`) as MCP tools, so the agent can read
+the goal at a hole, try a term in it and see the checker's verdict, without
+scraping terminal text. Each tool runs the `tauto` command of the same name with
+`--json` and returns its output; the server decides nothing about proofs itself.
 
-## Purpose
+The commands and their output are described in the `tauto` section of the root
+`README.md` and, for `suggest`, in `docs/design/lemma-search.md`. The effects the
+server uses (`stdin`, `stdout`, `stdout_flush`, `proc_run`) and the `run`
+permission they need are those of `docs/design/host-effects.md`. There is no
+design document of the server itself. It speaks MCP specification version
+`2024-11-05` and JSON-RPC 2.0; the specifications are the reference for the
+protocol.
 
-This MCP server enables AI coding agents (Claude Code, Cursor, etc.) to interact with Tauto's proof system, allowing them to:
-- Check Tauto files and report axioms used
-- Inspect proof goals at holes
-- Try filling holes with expressions
-- Get suggestions for terms that fit holes
-- Query the library of available constants
+| Source | What it holds |
+| --- | --- |
+| `src/main.taut` | The loop: read a line from standard input, answer it on standard output |
+| `src/jsonrpc.taut` | JSON-RPC 2.0 requests, responses, ids and error codes |
+| `src/mcp.taut` | The MCP layer: `initialize`, `ping`, `tools/list`, `tools/call`, and one function per tool |
 
-This is a key component of Tauto's mission: "A minimal language for AI to build and prove correct software."
+JSON is read and written by the `json` tote (`totes/json`); the server has no
+other dependency (`Tauto.eure` also names `text`).
 
-## Architecture
+## Tools
 
-The implementation follows Tauto's design principles:
-- **No external dependencies**: Implements JSON-RPC 2.0 and MCP from scratch
-- **Explicit effects**: Uses Tauto's effect system (`stdin`, `stdout`, `proc_run`) for all I/O
-- **Type-safe**: Full dependent types ensure correctness
-- **Minimal**: Four focused modules (the `json` tote and three files in `src/`), with ~1000 lines in `src/`
+Every tool needs `file`, the path to a `.taut` file, read from the server's
+working directory when relative. The server starts `tauto` with that argument list:
 
-### Modules
+| Tool | Arguments | Runs |
+| --- | --- | --- |
+| `tauto_check` | `file` | `tauto check --json FILE` |
+| `tauto_goals` | `file`, `hole` (optional) | `tauto goals --json [--hole NAME] FILE` |
+| `tauto_try` | `file`, `hole`, `expr` | `tauto try --json --hole NAME --with EXPR FILE` |
+| `tauto_suggest` | `file`, `hole`, `limit` (optional) | `tauto suggest --json --hole NAME [--limit N] FILE` |
+| `tauto_library` | `file` | `tauto library --json FILE` |
 
-1. **json** tote (`totes/json`): JSON parser and writer
-   - Hand-written recursive descent parser
-   - Supports all JSON types: null, boolean, number, string, array, object
-   - Handles escape sequences and whitespace
-   - Round-trip property: `parse(serialize(x)) = x` for valid JSON
+`hole` is a hole name without the `?`. `tauto_try` checks the file with `expr` in the
+hole and does not write it. An empty string counts as a missing argument. A `limit`
+that is not a number is ignored. A `tools/call` request must carry `arguments`, even
+an empty object.
 
-2. **jsonrpc.taut**: JSON-RPC 2.0 protocol implementation
-   - Request/response/notification handling
-   - Error code mapping
-   - ID matching (ensures responses match requests)
+The result is `{"content": [{"type": "text", "text": ...}]}`, where the text is the
+JSON the command printed. The exit status of `tauto` is not looked at: `check` exits
+with 3 when only holes are left and its JSON is still returned. A command that
+writes anything to standard error, or whose output is not JSON, is answered with
+error `-32005` carrying that text. Failures are errors of the response, not results
+marked `isError`.
 
-3. **mcp.taut**: MCP protocol layer
-   - Capability negotiation (`initialize`/`initialized` handshake)
-   - Tool discovery (`tools/list`)
-   - Tool execution (`tools/call`)
-   - Wraps Tauto CLI commands with proper JSON I/O
+## Use
 
-4. **main.taut**: Stdio transport
-   - Newline-delimited JSON-RPC over stdin/stdout
-   - State management across requests
-   - Error handling and recovery
+The server is a program, run by `tauto run`. It starts `tauto` by name (`proc_run`)
+and hands it its own environment (`environ`), so it needs the `run` and `env`
+permissions, which the host denies by default (`docs/design/host-effects.md`),
+and nothing else. `tauto run` asks for them at
+the start:
 
-## Tools Exposed
+```sh
+tauto run --backend rust totes/mcp/src/main.taut
+```
 
-### `tauto_check`
-Check a Tauto file and report axioms used.
+An MCP client that starts servers over standard input and output gives them
+no terminal to ask at, so its command allows it with `--yes`. The shape most clients accept, with the file it goes in named by the
+client's own documentation:
 
-Parameters:
-- `file` (string, required): Path to the Tauto file
+```json
+{
+  "mcpServers": {
+    "tauto": {
+      "command": "tauto",
+      "args": ["run", "--backend", "rust", "--yes", "/path/to/totes/mcp/src/main.taut"]
+    }
+  }
+}
+```
 
-Returns the JSON output from `tauto check --json FILE`.
+The relative `file` of a tool is read from the directory the client starts the
+server in.
 
-### `tauto_goals`
-Get proof goals at holes in a file.
+To try it by hand, send one session to a single process; a fresh process has not
+been initialized, and answers every other method with `-32002`:
 
-Parameters:
-- `file` (string, required): Path to the Tauto file
-- `hole` (string, optional): Name of specific hole to inspect
-
-Returns the JSON output from `tauto goals --json [--hole NAME] FILE`.
-
-### `tauto_try`
-Try filling a hole with an expression.
-
-Parameters:
-- `file` (string, required): Path to the Tauto file
-- `hole` (string, required): Name of the hole
-- `expr` (string, required): Expression to try
-
-Returns the JSON output from `tauto try --json --hole NAME --with EXPR FILE`.
-
-### `tauto_suggest`
-Suggest terms that fit a hole.
-
-Parameters:
-- `file` (string, required): Path to the Tauto file
-- `hole` (string, required): Name of the hole
-- `limit` (number, optional): Maximum suggestions to return
-
-Returns the JSON output from `tauto suggest --json --hole NAME [--limit N] FILE`.
-
-### `tauto_library`
-List available constants with their types.
-
-Parameters:
-- `file` (string, required): Path to the Tauto file
-
-Returns the JSON output from `tauto library --json FILE`.
-
-## Usage
-
-### Building
-
-```bash
+```sh
 cd totes/mcp
-tauto build src/main.taut -o mcp-server
-```
-
-### Running Standalone
-
-```bash
-./mcp-server
-```
-
-The server reads newline-delimited JSON-RPC 2.0 messages from stdin and writes responses to stdout.
-
-### MCP Configuration
-
-To register this server with Claude Desktop or Cursor, add to your MCP configuration:
-
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
-
-```json
 {
-  "mcpServers": {
-    "tauto": {
-      "command": "/path/to/tauto/totes/mcp/mcp-server"
-    }
-  }
-}
+  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"test","version":"1.0"}}}'
+  echo '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+  echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+  echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"tauto_goals","arguments":{"file":"examples/simple_proof.taut","hole":"proof"}}}'
+} | tauto run --backend rust --yes src/main.taut
 ```
 
-**Cursor** (`.cursor/mcp.json` in your project):
+`examples/simple_proof.taut` has one proved theorem and one with the hole `?proof`.
 
-```json
-{
-  "mcpServers": {
-    "tauto": {
-      "command": "/path/to/tauto/totes/mcp/mcp-server"
-    }
-  }
-}
-```
+## Protocol
 
-### Testing
+One JSON-RPC message per line, in and out. An empty line is skipped. The server
+ends when standard input does.
 
-Interactive testing:
+* `initialize` is answered with `protocolVersion` `2024-11-05` whatever the client
+  asked for, `serverInfo` (`tauto-mcp-server`, `0.1.0`) and `capabilities` of
+  `{"tools": {}}`. `clientInfo` is read and kept, and not used. `ping` is answered
+  with `{}`.
+* A request with an `id` gets exactly one response with the same `id`. A message
+  without an `id`, or whose `id` is not null, a number or a string, is a
+  notification and gets none; every notification is ignored, `initialized` and
+  `notifications/cancelled` included.
+* A line that is not JSON is answered with `-32700`, and a JSON value that is not a
+  request (no `"jsonrpc": "2.0"`, no string `method`) with `-32600`, both with a
+  null `id`.
 
-```bash
-# Initialize
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"test","version":"1.0"}}}' | ./mcp-server
+| Code | When |
+| --- | --- |
+| `-32002` | a method other than `initialize` before `initialize` |
+| `-32003` | `initialize` a second time |
+| `-32004` | `tools/call` of an unknown tool |
+| `-32005` | the command could not be started, wrote to standard error, or did not print JSON |
+| `-32006` | `tools/call` without `params` or `arguments`, or a missing `file`, `hole` or `expr` |
 
-# List tools
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | ./mcp-server
+A method the server does not know is answered with `-32601`. The codes `-32602` and
+`-32603` are defined in `src/jsonrpc.taut` and not produced.
 
-# Call a tool
-echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"tauto_check","arguments":{"file":"examples/simple_proof.taut"}}}' | ./mcp-server
-```
+## Not done
 
-## Protocol Details
-
-### JSON-RPC 2.0
-
-The server implements the JSON-RPC 2.0 specification:
-- Requests have `jsonrpc: "2.0"`, `method`, optional `params`, optional `id`
-- Responses have `jsonrpc: "2.0"`, `id` (matching request), and either `result` or `error`
-- Notifications have no `id` and receive no response
-- Error codes follow the JSON-RPC specification (-32700 to -32603 for protocol errors)
-
-### MCP Protocol
-
-The server implements MCP specification version `2024-11-05`:
-
-1. **Initialization**: Client sends `initialize` request with `clientInfo`
-2. **Capability negotiation**: Server responds with `serverInfo` and `capabilities`
-3. **Initialized notification**: Client sends `initialized` notification
-4. **Tool operations**: Client can call `tools/list` and `tools/call`
-5. **Ping**: Optional `ping` requests are supported
-
-### Error Handling
-
-The server handles errors at multiple layers:
-- **Parse errors** (-32700): Invalid JSON
-- **Invalid request** (-32600): Malformed JSON-RPC
-- **Method not found** (-32601): Unknown MCP method
-- **Invalid params** (-32602): Missing or wrong parameters
-- **Internal errors** (-32603): Unexpected failures
-- **Server errors** (-32000 to -32099): MCP-specific errors
-
-Custom error codes:
-- `-32002`: Server not initialized (called method before `initialize`)
-- `-32003`: Server already initialized (called `initialize` twice)
-- `-32004`: Tool not found
-- `-32005`: Tool execution failed (Tauto CLI error)
-- `-32006`: Invalid tool parameters
-
-## Implementation Notes
-
-### Host Effects Added
-
-This implementation uses only existing Tauto host effects:
-- `stdin()`: Read lines from standard input
-- `stdout(t)`: Write to standard output
-- `stdout_flush()`: Ensure output is delivered
-- `proc_run(p)`: Execute `tauto` CLI commands
-- `fs_read(path)`: Read files (used by Tauto CLI, not directly by server)
-
-No new host effects were added. All I/O follows Tauto's effect system, making it explicit in function signatures what each function can do.
-
-### JSON Implementation
-
-The JSON parser is a hand-written recursive descent parser with explicit state threading:
-- Tracks position for error reporting
-- Handles all JSON escape sequences except `\uXXXX` (unicode escapes)
-- Numbers are kept as text to preserve precision
-- Objects are represented as association lists (not hash maps)
-
-Known limitations:
-- Unicode escapes (`\uXXXX`) are not supported
-- No streaming parser (entire input must be in memory)
-- Object field order is preserved but not optimized for lookup
-
-### Proven Properties
-
-While this implementation does not include formal proofs, the following properties hold by construction:
-
-1. **Response ID matching**: The `handle_request_with_id` function ensures every response carries the same `id` as its request (type: `RpcId -> RpcResponse`).
-
-2. **Request-response correspondence**: Each request with an `id` produces exactly one response. Notifications (no `id`) produce no response.
-
-3. **JSON round-trip**: For valid `Json` terms, `json_parse(json_text(v))` succeeds and equals `v` (up to object field order and number formatting).
-
-4. **Effect safety**: All I/O is explicitly tracked in effect rows. Functions that don't perform I/O have no effects in their signatures.
-
-These properties could be formally stated and proven in Tauto, demonstrating the language's capability to verify protocol implementations. This would be excellent material for showcasing Tauto's AI-native design.
-
-## Future Enhancements
-
-Potential additions (not implemented in v0.1.0):
-
-- **Resources**: Expose Tauto source files as MCP resources
-- **Prompts**: Provide proof templates and tactics as MCP prompts
-- **Cancellation**: Handle `notifications/cancelled` for long-running operations
-- **Progress**: Report progress for multi-step operations
-- **Caching**: Cache parse results for repeated file access
-- **Unicode escapes**: Full JSON compliance with `\uXXXX` sequences
-- **Formal proofs**: Verify protocol properties (ID matching, round-trip, etc.)
-- **Error recovery**: More graceful handling of partial reads
-
-## Testing
-
-See `cases/mcp/` for test cases:
-- Protocol-level tests feeding scripted JSON-RPC sessions
-- End-to-end tests calling tools on example files
-- Error handling tests for malformed requests
-
-Run tests:
-
-```bash
-cargo nextest run -p tauto-test-suite -- mcp
-```
-
-## License
-
-Licensed under the same terms as Tauto (Apache-2.0 OR MIT).
+* Resources, prompts, cancellation and progress are not offered
+  (`capabilities` has `tools` only).
+* There are no proofs about the server, and no automated test: nothing under `cases/`
+  runs it. Its only check is the session above.

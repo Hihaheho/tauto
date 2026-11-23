@@ -1,7 +1,6 @@
 //! `tauto dev`: runs a program and runs it again from the start whenever one
 //! of its files changes (`docs/design/dev.md`). It runs on the machine
-//! written in Tauto, as `tauto run` does; `--backend eval` runs it on the
-//! evaluator.
+//! written in Tauto, as `tauto run` does.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,16 +9,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
-use tauto::eval::{RunError, RunOptions};
-
-use crate::{RunArgs, i18n, locate_in, parse_run_args};
+use crate::{RunArgs, i18n, parse_run_args};
 
 const POLL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
     Vm,
-    Eval,
 }
 
 pub fn command(args: &[String], backend: Backend) -> ExitCode {
@@ -77,6 +73,7 @@ pub fn command(args: &[String], backend: Backend) -> ExitCode {
             // A read or write waiting on a stream ends when it is closed.
             tauto_rt::tcp::drop_streams();
             tauto_rt::tls_host::drop_sessions();
+            tauto_rt::http::drop_exchanges();
             let _ = w.join();
         }
         eprintln!("{}", i18n::t!("dev-running-again"));
@@ -102,53 +99,16 @@ fn spawn(
     std::thread::Builder::new()
         .stack_size(256 << 20)
         .spawn(move || match run.1 {
-            Backend::Eval => run_once(&run.0, stop),
             Backend::Vm => run_once_on_vm(&run.2, stop),
         })
         .expect("a thread for the program")
-}
-
-/// Loads, checks and runs the program once: until it ends, fails or is
-/// stopped. What it prints is written as it happens.
-fn run_once(run: &RunArgs, stop: Arc<AtomicBool>) {
-    let Ok(loaded) = run.load() else {
-        return;
-    };
-    let options = RunOptions {
-        check_ownership: run.check_ownership,
-        args: run.program_args.clone(),
-        permissions: run.permissions.clone(),
-        live: true,
-        cancel: Some(stop.clone()),
-        ..RunOptions::default()
-    };
-    // Unlimited unless `--steps` is given: a server runs until a change.
-    let steps = run.steps.unwrap_or(u64::MAX);
-    match tauto::eval::run_loaded_with(&loaded, steps, options) {
-        Ok(_) if stop.load(Ordering::Relaxed) => {}
-        Ok(outcome) => match outcome.exit {
-            Some(code) if code != 0 => {
-                eprintln!("{}", i18n::t!("dev-exited", code = code.to_string()))
-            }
-            _ => eprintln!("{}", i18n::t!("dev-ended")),
-        },
-        Err(_) if stop.load(Ordering::Relaxed) => {}
-        Err(error) => {
-            let mut message = locate_in(&loaded, &run.entry(), &error.to_string());
-            if matches!(error, RunError::Interrupted) {
-                message.push(' ');
-                message.push_str(&i18n::t!("dev-interrupted", steps = steps));
-            }
-            eprintln!("{message}");
-        }
-    }
 }
 
 /// Compiles the program and runs it once on the machine: until it ends,
 /// fails or is stopped.
 fn run_once_on_vm(args: &[String], stop: Arc<AtomicBool>) {
     // Unlimited unless `--steps` is given: a server runs until a change.
-    let Ok(prepared) = crate::vm::prepare(args, u64::MAX, Some(u64::MAX)) else {
+    let Ok(prepared) = crate::vm::prepare(args, u64::MAX, Some(u64::MAX), "dev-interrupted") else {
         return;
     };
     let mut child = match &prepared {
@@ -194,7 +154,10 @@ fn run_once_on_vm(args: &[String], stop: Arc<AtomicBool>) {
 /// is in.
 fn watched_root(run: &RunArgs) -> PathBuf {
     match (&run.file, &run.tote) {
-        (_, Some(dir)) => PathBuf::from(dir),
+        (_, Some(name)) => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            tauto::workspace::tote_flag_dir(&cwd, name).unwrap_or_else(|_| PathBuf::from(name.as_str()))
+        }
         (Some(file), None) => match Path::new(file).parent() {
             Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
             _ => PathBuf::from("."),

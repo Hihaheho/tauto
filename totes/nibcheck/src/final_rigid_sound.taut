@@ -1,9 +1,9 @@
 import "rigid_sound.taut"
 import "finish_acceptance.taut"
-import std::Base
-import std::List
-import std::Map
-import std::Text
+import std::base
+import std::list
+import std::map
+import std::text
 import "checker.taut"
 import "diagnostic_lists.taut"
 import "diagnostic_report.taut"
@@ -19,7 +19,7 @@ pub theorem diagnostic_items_head<A: Type, p: (
   Checker,
   A
 ) -> Prop, c: Checker, x: A, xs: List(A)>(h: DiagnosticItems(A, p, c, Cons(x, xs))): p(c, x) {
-  ⊢ p(c, x) from match h { DiagnosticItemsCons(first, rest, head, tail) => head }
+  match h { DiagnosticItemsCons(first, rest, head, tail) => head }
 }
 pub theorem diagnostic_items_tail<A: Type, p: (
   Checker,
@@ -27,7 +27,7 @@ pub theorem diagnostic_items_tail<A: Type, p: (
 ) -> Prop, c: Checker, x: A, xs: List(
   A
 )>(h: DiagnosticItems(A, p, c, Cons(x, xs))): DiagnosticItems(A, p, c, xs) {
-  ⊢ DiagnosticItems(A, p, c, xs) from match h { DiagnosticItemsCons(first, rest, head, tail) => tail }
+  match h { DiagnosticItemsCons(first, rest, head, tail) => tail }
 }
 pub theorem diagnostic_items_reverse_onto<A: Type>(
   p: (Checker, A) -> Prop,
@@ -37,7 +37,7 @@ pub theorem diagnostic_items_reverse_onto<A: Type>(
   acc: List(A),
   tail: DiagnosticItems(A, p, c, acc)
 ): DiagnosticItems(A, p, c, List::reverse_onto(xs, acc)) {
-  ⊢ DiagnosticItems(A, p, c, List::reverse_onto(xs, acc)) from match h {
+  match h {
     DiagnosticItemsNil => tail
     DiagnosticItemsCons(x, rest, head, inside) => diagnostic_items_reverse_onto(
       p,
@@ -64,14 +64,14 @@ pub theorem diagnostic_items_unreverse<A: Type>(
 pub theorem diagnostic_kept_member(
   c: Checker,
   ks: List(TyKept),
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   rigid: Ordmap(Text, Ty),
   a: Ty,
   b: Ty,
   entry: KeptIn(ks, gs, rigid, a, b),
   checked: DiagnosticItems(TyKept, DiagnosticKept, c, ks)
 ): RigidFor(ck_subst_of(c), gs, rigid, a, b) {
-  ⊢ RigidFor(ck_subst_of(c), gs, rigid, a, b) from match entry {
+  match entry {
     KeptHere(generics, map, left, right, rest) => ck_rigid_kept_sound(
       c,
       generics,
@@ -97,7 +97,7 @@ pub theorem diagnostic_kept_member(
 }
 pub theorem final_kept_sound(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   rigid: Ordmap(Text, Ty),
   a: Ty,
   b: Ty,
@@ -131,7 +131,7 @@ pub theorem final_type_equality(
     ck_subst_of(c),
     KeptOk(ck_kept_of(c)),
     ck_subst_of(c),
-    (gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
+    (gs: List(Text × Kind), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
       ck_subst_of(c),
       gs,
       rigid,

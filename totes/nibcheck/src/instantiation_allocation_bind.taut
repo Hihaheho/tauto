@@ -1,15 +1,16 @@
 import "widen_allocation_sound.taut"
 import "instantiation_frame.taut"
-import std::Base
-import std::Map
-import std::Nat
-import std::Text
+import std::base
+import std::map
+import std::nat
+import std::text
 import "allocation_advance.taut"
 import "allocation_generic_map.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "datas_frame.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "instance_allocation_sound.taut"
 import "ty.taut"
 import "type_allocation.taut"
@@ -62,8 +63,8 @@ pub theorem map_allocation_bind<A: Type>(
     ck_next_of(c),
     ck_next_of(next)
   ) = true. ∀ state: CheckerAllocation(next). InstanceAllocation(next, k(value, next))
-): InstanceAllocation(c, frame_bind(A, Ordmap(Text, Ty), k, m)) {
-  ⊢ InstanceAllocation(c, frame_bind(A, Ordmap(Text, Ty), k, m)) from match m {
+): InstanceAllocation(c, frame_bind(<A: A, B: Ordmap(Text, Ty)>, k, m)) {
+  match m {
     mut1(value, next) => map_allocation_start(
       c,
       next,
@@ -83,7 +84,7 @@ pub theorem map_allocation_fresh_bind(
   ) = true. ∀ current: CheckerAllocation(
     next
   ). ∀ bounded: TypeAllocated(ck_next_of(next), value). InstanceAllocation(next, k(value, next))
-): InstanceAllocation(c, frame_bind(Ty, Ordmap(Text, Ty), k, ck_fresh(c))) {
+): InstanceAllocation(c, frame_bind(<A: Ty, B: Ordmap(Text, Ty)>, k, ck_fresh(c))) {
   map_allocation_start(
     c,
     ck_st(ck_fresh(c)),
@@ -100,14 +101,14 @@ pub theorem map_allocation_fresh_bind(
 }
 pub theorem instantiation_bound_allocation(
   c: Checker,
-  g: Pair(Text, Kind),
+  g: Text × Kind,
   value: Ty,
   name: Text,
   span: TySpan,
   state: CheckerAllocation(c),
   arg: Option(Kind)
 ): AllocationAdvance(c, instantiation_bound(c, g, value, name, span, arg)) {
-  ⊢ AllocationAdvance(c, instantiation_bound(c, g, value, name, span, arg)) from match arg {
+  match arg {
     None => AndIntro(Nat::le_refl(ck_next_of(c)), state)
     Some(kind) => AndIntro(Nat::le_refl(ck_next_of(c)), state)
   }

@@ -1,0 +1,208 @@
+// The general rule for an operation whose result holds a borrow (the decided
+// design of `docs/design/ownership.md`): a `perform` of it borrows what its
+// handler answers, a call whose row has it may return that, and the `handle`
+// reads the body's borrows of it as the borrows of the arm's answer `k(v)`.
+// The rule knows no name: the effects and wrappers here are the user's own.
+
+@ cases.a-body-that-keeps-only-a-count-is-ok
+llvm.unimplemented = "generate: the LLVM backend does not write a `Region` yet"
+description = "A body builds in a scoped region and returns only a number: nothing leaves the region."
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+struct Node { v: u64 }
+// A wrapper and its effect, written as a user would.
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn leaf(v: u64): Kept ! {spot} { Kept { value: Node { v: v }, at: perform spot() } }
+let r := Bump::new(64, 64)
+let s := handle {
+  let a := leaf(1)
+  let b := leaf(2)
+  a.value.v + b.value.v
+} with {
+  spot(), k => k(Region::place(&r))
+}
+show(&s)
+```
+stdout = "3\n"
+
+@ cases.a-body-that-returns-a-placed-value-is-an-error
+description = "The result of the body borrows the region, so it cannot leave the block that owns the region."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+struct Node { v: u64 }
+// A wrapper and its effect, written as a user would.
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn leaf(v: u64): Kept ! {spot} { Kept { value: Node { v: v }, at: perform spot() } }
+fn bad(): Kept {
+  let r := Bump::new(64, 64)
+  handle { leaf(1) } with { spot(), k => k(Region::place(&r)) }
+}
+```
+lin = "error: a borrow of r cannot be returned: the value borrows it through spot, whose handle answers with it"
+
+@ cases.a-body-that-returns-a-holder-of-a-placed-value-is-an-error
+description = "`Option(In(Node))` holds the borrow too."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+struct Node { v: u64 }
+// A wrapper and its effect, written as a user would.
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn leaf(v: u64): Kept ! {spot} { Kept { value: Node { v: v }, at: perform spot() } }
+fn bad(): Option(Kept) {
+  let r := Bump::new(64, 64)
+  handle { Some(leaf(1)) } with { spot(), k => k(Region::place(&r)) }
+}
+```
+lin = "error: a borrow of r cannot be returned: the value borrows it through spot, whose handle answers with it"
+
+@ cases.a-placed-value-freezes-its-region
+description = "While a placed value lives, its region cannot be moved."
+extract = true
+source = ```tauto
+import std::bump
+import std::alloc { BumpPolicy }
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+struct Node { v: u64 }
+// A wrapper and its effect, written as a user would.
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn leaf(v: u64): Kept ! {spot} { Kept { value: Node { v: v }, at: perform spot() } }
+fn keep(r: Region(BumpPolicy)): Unit { () }
+let r := Bump::new(64, 64)
+let s := handle {
+  let n := leaf(1)
+  keep(r)
+  n.value.v
+} with {
+  spot(), k => k(Region::place(&r))
+}
+```
+lin = "error: r is frozen by n"
+
+@ cases.a-placed-value-is-not-an-effect-argument
+description = "A value that borrows its region cannot be an effect's argument."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+struct Node { v: u64 }
+// A wrapper and its effect, written as a user would.
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn leaf(v: u64): Kept ! {spot} { Kept { value: Node { v: v }, at: perform spot() } }
+effect log(n: Kept): Unit
+let r := Bump::new(64, 64)
+let s := handle {
+  let n := leaf(1)
+  perform log(n)
+  1
+} with {
+  spot(), k => k(Region::place(&r))
+}
+```
+lin = "error: a borrow cannot be an effect argument"
+
+@ cases.an-rc-place-lets-the-value-leave
+llvm.unimplemented = "generate: the LLVM backend does not write a `RcPlace` yet"
+description = "An operation whose answer borrows nothing (`RcRegion::place`) lets the value leave the function."
+source = ```tauto
+import std::bump
+import std::builtin::region { RcRegion, RcPlace }
+
+struct Node { v: u64 }
+effect rc_spot(): RcPlace(Node) resume 1
+struct Counted { value: Node, at: RcPlace(Node) }
+fn ok(): Counted {
+  let r := RcBump::new(64, 64)
+  handle { Counted { value: Node { v: 5 }, at: perform rc_spot() } } with { rc_spot(), k => k(RcRegion::place(r)) }
+}
+show(&(ok().value.v))
+```
+stdout = "5\n"
+
+@ cases.a-placed-value-passes-to-a-generic-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `Region` yet"
+description = "Inside the body, a placed value may be lent to a generic function."
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+struct Node { v: u64 }
+// A wrapper and its effect, written as a user would.
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn leaf(v: u64): Kept ! {spot} { Kept { value: Node { v: v }, at: perform spot() } }
+fn id<A>(a: &A): u64 { 1 }
+let r := Bump::new(64, 64)
+let s := handle {
+  let n := leaf(1)
+  id(&n)
+} with {
+  spot(), k => k(Region::place(&r))
+}
+show(&s)
+```
+stdout = "1\n"
+
+@ cases.the-answer-stays-frozen-by-k-in-the-arm
+description = "The rest of the body that `k` holds borrows what the arm answered, so the arm cannot move it after."
+extract = true
+source = ```tauto
+import std::bump
+import std::alloc { BumpPolicy }
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+struct Node { v: u64 }
+// A wrapper and its effect, written as a user would.
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn leaf(v: u64): Kept ! {spot} { Kept { value: Node { v: v }, at: perform spot() } }
+fn keep(r: Region(BumpPolicy)): Unit { () }
+let r := Bump::new(64, 64)
+let s := handle {
+  let p := perform spot()
+  1
+} with {
+  spot(), k => {
+    let v := k(Region::place(&r))
+    keep(r)
+    v
+  }
+}
+```
+lin = "error: r is frozen by k"
+
+@ cases.an-operation-that-answers-a-borrow-resumes-at-most-once
+description = "`resume ω` with an answer that may hold a mutable borrow is rejected: two kept results could hold the same mutable loan."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+struct Node { v: u64 }
+// A wrapper and its effect, written as a user would.
+effect spot(): Place(Node) resume ω
+struct Kept { value: Node, at: Place(Node) }
+fn leaf(v: u64): Kept ! {spot} { Kept { value: Node { v: v }, at: perform spot() } }
+let r := Bump::new(64, 64)
+let s := handle {
+  let p := perform spot()
+  1
+} with {
+  spot(), k => k(Region::place(&r))
+}
+```
+lin = "error: `spot` answers a value that may hold a mutable borrow, so it resumes at most once: declare it `resume 1` or `resume <=1`"

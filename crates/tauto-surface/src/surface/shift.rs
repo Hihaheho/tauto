@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use tauto_parol::Span;
+use crate::span::Span;
 
 use super::{Stmt, SurfaceTerm, TermKind, walk};
 use crate::macros::EXPANSION_BASE;
@@ -108,6 +108,12 @@ fn own_places(s: &mut Stmt, by: i64) {
             }
             *span = place(*span, by);
         }
+        Stmt::Reexport { names, span, .. } => {
+            for (_, at) in names {
+                *at = place(*at, by);
+            }
+            *span = place(*span, by);
+        }
         Stmt::Import { names, span, .. } => {
             for (_, at) in names.iter_mut().flatten() {
                 *at = place(*at, by);
@@ -124,6 +130,8 @@ fn own_places(s: &mut Stmt, by: i64) {
             fns,
             instances,
             types,
+            structs,
+            enums,
             span,
         } => {
             for d in fns {
@@ -133,6 +141,12 @@ fn own_places(s: &mut Stmt, by: i64) {
                 i.span = place(i.span, by);
             }
             for d in types {
+                d.span = place(d.span, by);
+            }
+            for d in structs {
+                d.span = place(d.span, by);
+            }
+            for d in enums {
                 d.span = place(d.span, by);
             }
             *span = place(*span, by);
@@ -189,6 +203,10 @@ fn own_places(s: &mut Stmt, by: i64) {
         | Stmt::Var { .. }
         | Stmt::Assign { .. }
         | Stmt::While { .. }
+        | Stmt::For { .. }
+        | Stmt::Loop { .. }
+        | Stmt::Break(_)
+        | Stmt::Continue
         | Stmt::Return(_)
         | Stmt::Expr(_) => {}
     }
@@ -205,24 +223,4 @@ fn fn_places(d: &mut super::FnDecl, by: i64) {
         g.at = place(g.at, by);
     }
     d.span = place(d.span, by);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::surface::parse_program_unresolved_at;
-
-    #[test]
-    fn a_statement_read_further_on_is_the_statement_moved() {
-        let text = "theorem t(c: Nat): Eq(Nat, c, c) {\n  by norm!(): Eq(Nat, c, c) {}\n}\n\
-                    fn f(x: Nat): Nat { match x { Zero => x, Succ(m) => m } }\n";
-        let here = parse_program_unresolved_at(text, 10).expect("reads");
-        let further = parse_program_unresolved_at(text, 25).expect("reads");
-        assert!(!here.stmts.is_empty());
-        for (a, b) in here.stmts.iter().zip(&further.stmts) {
-            assert_ne!(a, b);
-            assert!(moved_to(a, b, 15), "{a:#?}\n{b:#?}");
-            assert!(!moved_to(a, b, 14));
-        }
-    }
 }

@@ -1,7 +1,7 @@
 import "rules_written.taut"
 import "written_atomic_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -11,9 +11,11 @@ import "diagnostic_sound.taut"
 import "rules_written_name.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_name_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 // A constructor-position name is elaborated before its caller checks its kind.
 pub theorem written_name_mode_sound(
@@ -51,23 +53,25 @@ pub theorem written_name_mode_sound(
 
 pub theorem ck_written_var_kind_sound(
   c: Checker,
-  name: Text,
+  name: SurfaceName,
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool,
-  clean: DiagnosticClean(ck_st(ck_written_var(c, name, generics, span)))
+  not_star: (surface_name_text(name) = "std::prelude::Star") -> False,
+  clean: DiagnosticClean(ck_st(ck_written_var(c, surface_name_text(name), generics, span)))
 ): WrittenKind(
   ck_datas_of(c),
   generics,
   frame_constructor_position(c),
   under_borrow,
   SkVar(name),
-  ck_val(ck_written_var(c, name, generics, span))
+  ck_val(ck_written_var(c, surface_name_text(name), generics, span))
 ) {
   WrittenKindName(
     name,
-    ck_val(ck_written_var(c, name, generics, span)),
-    written_name_mode_sound(c, name, generics, span, frame_constructor_position(c), Refl, clean)
+    ck_val(ck_written_var(c, surface_name_text(name), generics, span)),
+    not_star,
+    written_name_mode_sound(c, surface_name_text(name), generics, span, frame_constructor_position(c), Refl, clean)
   )
 }
 
@@ -80,7 +84,7 @@ pub theorem written_arity_mode_sound(
   position: frame_constructor_position(c) = partial,
   clean: DiagnosticClean(ck_st(ck_arity(c, name, list_len(args), span)))
 ): WrittenArity(ck_datas_of(c), name, args, partial) {
-  ⊢ WrittenArity(ck_datas_of(c), name, args, partial) from match partial {
+  match partial {
     true => WrittenArityConstructor
     false => WrittenArityValue(
       data => found => ck_declared_arity_sound(c, name, args, span, data, position, found, clean)
@@ -99,7 +103,7 @@ pub theorem ck_written_arity_mode_sound(
 }
 
 pub fn written_function_kind_value(o: Option(Kind)): Kind {
-  ⊢ Kind from match o {
+  match o {
     None => KindShared
     Some(k) => k
   }
@@ -109,7 +113,7 @@ pub theorem written_function_kind_sound(
   o: Option(Kind),
   parsed: kind_parse(spelling) = o
 ): WrittenFunctionKind(spelling, written_function_kind_value(o)) {
-  ⊢ WrittenFunctionKind(spelling, written_function_kind_value(o)) from match o {
+  match o {
     None => WrittenFunctionKindDefault(parsed)
     Some(k) => MkWrittenFunctionKind(k, parsed)
   }
@@ -148,6 +152,7 @@ pub theorem ck_written_fn_kind_sound(
     TyNever => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     TyDecimal => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     TyFloat => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyFloat32 => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     TyFn(params, result, kind) => WrittenKindFunctionKind(
       spelling,
       body,

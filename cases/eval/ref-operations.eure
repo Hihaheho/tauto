@@ -1,0 +1,64 @@
+// A `Ref` is made, read and written by operations the host answers
+// (`ref_new`, `ref_get`, `ref_set`). A program may handle them itself.
+
+@ cases.the-host-answers-the-operations-on-a-ref
+source = ```nib
+import std::builtin::par
+let a := perform ref_new(1)
+perform ref_set(a, perform ref_get(a) + 10)
+show(&perform ref_get(a))
+```
+stdout = "11\n"
+
+// An arm for every instance sees each `Ref` made in the body. Only the host
+// makes one: the arm hands the request on.
+@ cases.a-handler-may-watch-the-refs-a-body-makes
+source = ```nib
+import std::builtin::par
+let n: Ref(List(Bool)) := perform ref_new(Nil)
+let r := handle {
+  let a := perform ref_new(1)
+  let b := perform ref_new(2)
+  perform ref_set(a, perform ref_get(b) + 10)
+  perform ref_get(a)
+} with {
+  ∀ A. ref_new<A>(v), k => {
+    perform ref_set(n, Cons(true, perform ref_get(n)))
+    k(perform ref_new(v))
+  }
+}
+show(&r)
+show(&perform ref_get(n))
+```
+stdout = ```
+12
+[true, true]
+```
+
+// The constructor is not the program's: a `Ref` comes from the host.
+@ cases.a-program-does-not-call-the-constructor-of-a-ref
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::par
+let a := Ref::new(1)
+```
+macro_error = "`Ref::new` is not `pub` in the standard library"
+
+// A function that makes a `Ref` says so in its row.
+@ cases.a-function-that-makes-a-ref-writes-it-in-its-row
+source = ```nib
+import std::builtin::par
+fn make(): Ref(i64) { perform ref_new(1) }
+```
+rows = "error: `make` may perform ref_new but its row is {}"
+
+// The operations on a `Ref` are named alone in a row: the host answers
+// every instance of them.
+@ cases.a-row-names-an-operation-on-a-ref-alone
+source = ```nib
+import std::builtin::par
+fn make(): Ref(i64) ! {ref_new} { perform ref_new(1) }
+fn read(r: Ref(Text)): Text ! {ref_get} { perform ref_get(r) }
+```
+rows = "ok"
+types = "ok"

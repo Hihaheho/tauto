@@ -1,30 +1,30 @@
 # examples/lambda: the simply typed lambda calculus, with proofs and no axioms
 
-Terms use de Bruijn indices (`Lib.taut`): `Ty = Tunit | Arr`, `Tm = Tvar | Lam(A, b) | App | Tstar`. Typing is an
+Terms use de Bruijn indices (`lib.taut`): `Ty = Tunit | Arr`, `Tm = Tvar | Lam(A, b) | App | Tstar`. Typing is an
 inductive family over a context (`Has` for variables, `Typing`), reduction is full beta (`Step`, also under binders),
 `Steps` is its reflexive transitive closure.
 
 Files, each importing the previous one:
 
-- `Lib.taut`: the definitions and the notation (below). `infer` and `Inferred` are made by `mode!` from the rules of
-  `Typing` (`std/Mode.taut`): `infer(t, G)` returns a type with its typing derivation and a proof of uniqueness, or a refutation of every typing derivation.
+- `lib.taut`: the definitions and the notation (below). `infer` and `Inferred` are made by `mode!` from the rules of
+  `Typing` (`std/mode.taut`): `infer(t, G)` returns a type with its typing derivation and a proof of uniqueness, or a refutation of every typing derivation.
   The answer carries its derivation, so there is no soundness theorem to prove. `lookup` and `Looked` are made the
   same way from `Has`; `ty_dec` (for the type a rule asks to be the same twice) is written by hand.
-- `Typing.taut`: weakening and substitution lemmas (`ren_typing`, `subst_typing`), inversion, `preservation`,
+- `typing.taut`: weakening and substitution lemmas (`ren_typing`, `subst_typing`), inversion, `preservation`,
   `progress` for closed terms, `type_safety` (a well-typed closed term never gets stuck).
-- `Alg.taut`: the algebra of renaming and substitution, up to pointwise equality of the maps (there is no function
+- `alg.taut`: the algebra of renaming and substitution, up to pointwise equality of the maps (there is no function
   extensionality): `ren_ren`, `ren_subst`, `subst_ren`, `subst_subst` and the two instances used for beta,
   `subst_up_single` and `subst_single_subst`.
-- `SN.taut`: strong normalization by a logical relation (`Red`, computed by recursion on the type; the candidate
+- `sn.taut`: strong normalization by a logical relation (`Red`, computed by recursion on the type; the candidate
   conditions `cr` by the same recursion; `red_beta`, the fundamental lemma `fundamental`, then `strong_normalization`).
   `SN` is an accessibility predicate; `sn_induction` is its induction principle, a structural recursion whose call is on `k(u, s)`
   for the function-typed field `k`.
-- `Examples.taut`: typing derivations, reductions (Church 2 + 2 = 4), `SN` of a closed term, and Omega, which
-  steps to itself and so has no type. `tauto check examples/lambda/Examples.taut` checks all of it.
+- `examples.taut`: typing derivations, reductions (Church 2 + 2 = 4), `SN` of a closed term, and Omega, which
+  steps to itself and so has no type. `tauto check examples/lambda/examples.taut` checks all of it.
 
 ## Notation
 
-`lc!` is a syntax macro (grammar `lc.par`, which must stay byte-for-byte equal to the `par` block of `Lib.taut`;
+`lc!` is a syntax macro (grammar `lc.par`, which must stay byte-for-byte equal to the `par` block of `lib.taut`;
 the table is `.tauto-syntax/<sha256 of lc.par>.tables`):
 
 - ``lc!(`x: unit |- fun y: unit. x : unit -> unit`)`` is `Typing(Cons(Tunit, Nil), Lam(Tunit, Tvar(Succ(Zero))), Arr(Tunit, Tunit))`.

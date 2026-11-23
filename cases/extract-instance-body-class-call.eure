@@ -1,0 +1,78 @@
+description = "A class method an instance's body calls through the instance's `where` is extracted with the implicit arguments the kernel inferred for that call."
+
+// The body's call `H::call(f(…), n)` has an argument the kernel reads as a
+// match (the ascription), so the call is elaborated as a new term: its
+// implicit arguments are those of the call written in the source.
+@ cases.a-method-called-under-the-instance-where
+imports = [path`../std/base.taut`, path`../std/text.taut`]
+source = ```tauto
+inductive class G(A: Type) {
+  fn get(n: Nat): A
+}
+instance G(Nat) {
+  fn get(n: Nat): Nat { n }
+}
+inductive class H(F: Type) {
+  fn call(f: F, n: Nat): Text
+}
+instance H(Text) {
+  fn call(f: Text, n: Nat): Text { f }
+}
+instance<A, R> H((A) -> R) where G(A), H(R) {
+  fn call(f: (A) -> R, n: Nat): Text {
+    H::call(f((G::get(n): A)), n)
+  }
+}
+fn go<F>(f: F): Text where H(F) { H::call(f, 0) }
+fn shown(n: Nat): Text { Text::of_nat(n) }
+fn text(): Text { go("hello") }
+fn function(): Text { go(shown) }
+show(&text())
+show(&function())
+```
+stdout = ```
+"hello"
+"0"
+```
+
+// The function instance's body is checked once for each instance it is
+// read at, and each time the type `(b: Text) -> Text` the call of
+// `respond_by` is given has a fresh binder `b`: the two are the same type.
+@ cases.a-call-site-recorded-with-renamed-binders
+imports = [path`../std/base.taut`, path`../std/text.taut`, path`../std/list.taut`]
+source = ```tauto
+inductive Extract(A: Type): Type {
+  Got(a: A): Extract(A)
+  Rejected(e: Text): Extract(A)
+}
+inductive Answer(S: Type): Type {
+  Mk(response: Text, state: S): Answer(S)
+}
+fn response<S>(a: Answer(S)): Text { match a { Mk(r, s) => r } }
+inductive class FromRequest(A: Type, S: Type) {
+  fn from_request(s: S, r: Text): Extract(A)
+}
+instance<S> FromRequest(Text, S) {
+  fn from_request(s: S, r: Text): Extract(Text) { Got(r) }
+}
+inductive class Handler(F: Type, S: Type) {
+  fn call(f: F, s: S, r: Text): Answer(S)
+}
+instance<S> Handler(Text, S) {
+  fn call(f: Text, s: S, r: Text): Answer(S) { Answer::Mk(f, s) }
+}
+instance<A, R, S> Handler((A) -> R, S) where FromRequest(A, S), Handler(R, S) {
+  fn call(f: (A) -> R, s: S, r: Text): Answer(S) {
+    match (FromRequest::from_request(s, r): Extract(A)) {
+      Got(a) => Handler::call(f(a), s, r)
+      Rejected(e) => Answer::Mk(e, s)
+    }
+  }
+}
+fn respond_by<F, S>(f: F, s: S, r: Text): @response Text × @state S where Handler(F, S) {
+  #(@response response(Handler::call(f, s, r)), @state s)
+}
+fn echo(b: Text): Text { b }
+fn answer(): Text { (respond_by(echo, 0, "req"): @response Text) }
+```
+extracted_nib."answer" = "pub fn answer(): Text { TautoErasedGetText_1(TautoErasedFn20_1()) }"

@@ -1,46 +1,48 @@
 import "../../surface/src/surface.taut"
 import "ty.taut"
-import std::Map
-import std::Text
+import "../../identity/src/identity.taut"
+import std::map
+import std::text
 
-pub(open) inductive WrittenKindBinder: (SurfaceParam, Pair(Text, Kind)) -> Prop {
+pub(open) inductive WrittenKindBinder: (SurfaceParam, Text × Kind) -> Prop {
   Mk<ast_occurrence: Option(
     TermOccurrence
   )>(
     name: Text,
-    spelling: Text,
+    spelling: SurfaceName,
     kind: Kind,
     start: Nat,
     end: Nat,
-    parsed: kind_parse(spelling) = Some(kind)
+    unused: Option(SurfaceSpan),
+    parsed: kind_parse(surface_name_text(spelling)) = Some(kind)
   ): WrittenKindBinder(
-    SurfaceParamMk(Some(name), SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence)),
-    Pair { fst: name, snd: kind }
+    SurfaceParamMk(Some(name), SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence), unused),
+    #(name, kind)
   )
 }
 pub(open) inductive WrittenBindersPrefix: (
   List(SurfaceParam),
-  List(Pair(Text, Kind)),
+  List(Text × Kind),
   List(SurfaceParam)
 ) -> Prop {
   WrittenBindersNil: WrittenBindersPrefix(Nil, Nil, Nil)
   WrittenBindersStop(
     first: SurfaceParam,
     rest: List(SurfaceParam),
-    ordinary: ∀ b: Pair(Text, Kind). (WrittenKindBinder(first, b)) -> False
+    ordinary: ∀ b: (Text × Kind). (WrittenKindBinder(first, b)) -> False
   ): WrittenBindersPrefix(Cons(first, rest), Nil, Cons(first, rest))
   WrittenBindersCons(
     first: SurfaceParam,
     rest: List(SurfaceParam),
-    b: Pair(Text, Kind),
-    bs: List(Pair(Text, Kind)),
+    b: Text × Kind,
+    bs: List(Text × Kind),
     suffix: List(SurfaceParam),
     head: WrittenKindBinder(first, b),
     tail: WrittenBindersPrefix(rest, bs, suffix)
   ): WrittenBindersPrefix(Cons(first, rest), Cons(b, bs), suffix)
 }
 pub(open) inductive WrittenBinderMap: (
-  List(Pair(Text, Kind)),
+  List(Text × Kind),
   Ordmap(Text, Ty),
   Ordmap(Text, Ty)
 ) -> Prop {
@@ -48,7 +50,7 @@ pub(open) inductive WrittenBinderMap: (
   WrittenBinderMapCons(
     name: Text,
     kind: Kind,
-    rest: List(Pair(Text, Kind)),
+    rest: List(Text × Kind),
     initial: Ordmap(Text, Ty),
     final: Ordmap(Text, Ty),
     tail: WrittenBinderMap(
@@ -56,14 +58,14 @@ pub(open) inductive WrittenBinderMap: (
       Ordmap::insert(initial, name, TyParam(name, kind), Ordmap::compare_text),
       final
     )
-  ): WrittenBinderMap(Cons(Pair { fst: name, snd: kind }, rest), initial, final)
+  ): WrittenBinderMap(Cons(#(name, kind), rest), initial, final)
 }
 
-pub(open) inductive WrittenPolymorphicType: (List(Pair(Text, Kind)), Ty, Ty) -> Prop {
+pub(open) inductive WrittenPolymorphicType: (List(Text × Kind), Ty, Ty) -> Prop {
   WrittenMonomorphic(body: Ty): WrittenPolymorphicType(Nil, body, body)
   WrittenPolymorphic(
-    first: Pair(Text, Kind),
-    rest: List(Pair(Text, Kind)),
+    first: Text × Kind,
+    rest: List(Text × Kind),
     body: Ty
   ): WrittenPolymorphicType(Cons(first, rest), body, TyPoly(Cons(first, rest), body))
 }

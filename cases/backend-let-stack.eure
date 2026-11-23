@@ -1,0 +1,112 @@
+// `let(stack) x := e`: the value of `x` is in the frame's slot. Each backend
+// runs it as a plain local; a continuation that holds the frame holds `x`.
+
+@ cases.stack-local-runs
+source = ```tauto
+struct P { x: i64, y: i64 }
+fn sum(p: P): i64 ! {overflow} { p.x + p.y }
+let(stack) p := P { x: 3, y: 4 }
+let(stack) n := sum(p) * 2
+show(&n)
+```
+stdout = "14\n"
+nir.fns."<top>" = ```nir
+fn $"<top>"@0(): Unit O = handle 0 O do {
+  let stack p#1 := P::Mk(x = 3i64, y = 4i64): P;
+  let stack n#2 := mul<i64>(sum@1(copy p#1) tier A: i64, 2i64);
+  show@2<i64>(&n#2, $"Debug::debug@i64"@3: fn(&i64) -> Text shared S): Unit
+} with {
+  direct stdout(t#3: Text) params(Text) answer Unit => builtin Os::print(clone t#3): Unit,
+  direct stdout_flush() params() answer Unit => builtin Os::flush(): Unit,
+}: Unit
+```
+
+@ cases.stack-local-across-an-optional-resume
+source = ```tauto
+effect ask(): i64 resume <=1
+fn run(): i64 ! {ask, overflow} {
+  let(stack) base := 100
+  let got := perform ask()
+  base + got
+}
+let n := handle { run() } with { ask(), k => k(5) }
+show(&n)
+```
+stdout = "105\n"
+nir.fns.run = ```nir
+fn run@1(): i64 A = {
+  let stack base#3 := 100i64;
+  let got#4 := perform ask() direct instance() -> i64 legacy: i64;
+  add<i64>(copy base#3, copy got#4)
+}
+```
+
+@ cases.stack-local-under-a-budget
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+fn count(n: i64): i64 ! {div, overflow} {
+  if n == 0 { 0 } else { 1 + count(n - 1) }
+}
+fn run(steps: u64): i64 ! {budget, overflow} {
+  handle { perform budget(steps, () => {
+    let(stack) start := 10
+    start + count(3)
+  }) } with { exceeded(info), k => 0 - 1 }
+}
+show(&run(1000))
+show(&run(0))
+```
+stdout = ```
+13
+-1
+```
+nir.fns.count = ```nir
+fn count@5(n#10: i64): i64 O = if eq(copy n#10, 0i64) then 0i64 else add<i64>(1i64, count@5(sub<i64>(copy n#10, 1i64)) tier O tick budget: i64)
+```
+nir.fns.run = ```nir
+fn run@2(steps#4: u64): i64 A = handle 1 O do budget 0(copy steps#4, {
+  let stack start#5 := 10i64;
+  add<i64>(copy start#5, count@5(3i64) tier O tick budget: i64)
+}) with {
+  suspend exceeded(info#6: Info(i64)) params(Info(i64)) answer BudgetAnswer(i64) k k#7 => sub<i64>(0i64, 1i64),
+}: i64
+```
+
+@ cases.stack-copy-local-across-a-multi-shot-resume
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect choose(): Bool resume ω
+let x := handle {
+  let(stack) base := 7
+  if perform choose() { base } else { base * 10 }
+} with { choose(), k => k(true) + k(false) }
+show(&x)
+```
+stdout = "77\n"
+nir.fns."<top>" = ```nir
+fn $"<top>"@0(): Unit O = handle 1 O do {
+  let x#3 := handle 0 M m do {
+    let stack base#1 := 7i64;
+    if perform choose() resume ω instance() -> Bool legacy: Bool then copy base#1 else mul<i64>(copy base#1, 10i64)
+  } with {
+    suspend choose() params() answer Bool k k#2 instance() -> Bool legacy => add<i64>(resume k#2(true): i64, resume k#2(false): i64),
+  }: i64;
+  show@1<i64>(&x#3, $"Debug::debug@i64"@2: fn(&i64) -> Text shared S): Unit
+} with {
+  direct stdout(t#4: Text) params(Text) answer Unit => builtin Os::print(clone t#4): Unit,
+  direct stdout_flush() params() answer Unit => builtin Os::flush(): Unit,
+}: Unit
+```
+
+// The checker accepts the type; lowering stores the large field of a shared
+// struct behind an indirection, so the NIR check rejects the binding.
+@ cases.stack-shared-large-field
+source = ```tauto
+
+struct(shared) Big { a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64 }
+struct(shared) Outer { big: Big }
+let(stack) o := Outer { big: Big { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9 } }
+show(&o.big.a)
+```
+compile_errors.rust = "front: `let(stack) o` is not placed without an allocation: the field Outer.big is stored behind an indirection"
+compile_errors.javascript = "front: `let(stack) o` is not placed without an allocation: the field Outer.big is stored behind an indirection"

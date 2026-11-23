@@ -1,0 +1,345 @@
+import "strict.taut"
+import "policy.taut"
+import totebag::policy
+import eure::value
+import std::base
+import std::text
+
+// The user's own policy (`crates/totebag/src/index/user.rs`): what this
+// machine requires of every project's `Trust.eure` on top of what the
+// project requires. It only adds: more observers and age witnesses, a
+// longer wait, and shorter limits.
+
+// The wait of the safe default: 14 days.
+pub fn tb_safe_min_age(): u64 { 1209600 }
+
+// A limit left out is `has_… = false`.
+pub(open) struct TbUserPolicy {
+  indexes: List(TbTrusted),
+  observers: List(TbTrusted),
+  witnesses: List(TbWitness),
+  min_age: u64,
+  has_lifetime: Bool,
+  max_checkpoint_lifetime: u64,
+  has_source_check_age: Bool,
+  max_source_check_age: u64,
+}
+
+// The safe default: nothing more than a wait of 14 days.
+pub fn tb_default_user(): TbUserPolicy {
+  TbUserPolicy { indexes: Nil, observers: Nil, witnesses: Nil, min_age: tb_safe_min_age(), has_lifetime: false, max_checkpoint_lifetime: 0, has_source_check_age: false, max_source_check_age: 0 }
+}
+
+pub fn tb_expect_user(s: Text): Result(Text, Text) { tb_expect(s, "user-policy") }
+
+pub fn tb_has_field(fs: List(Text × Node), key: Text): Bool {
+  match fs {
+    Nil => false
+    Cons(e, rest) => e.fst == key || tb_has_field(rest, key)
+  }
+}
+
+pub fn tb_user_names(fs: List(Text × Node), key: Text): Result(List(Text) × List(Text × Node), Text) {
+  if tb_has_field(fs, key) {
+    match tb_aliases(fs, key) {
+      Ok(p) => Ok(p)
+      Err(e) => Err(tb_at(e))
+    }
+  } else {
+    Ok(#(Nil, fs))
+  }
+}
+
+// A wait or limit that may be left out: whether it is there, and its value.
+pub fn tb_user_seconds(fs: List(Text × Node), key: Text): Result((Bool × u64) × List(Text × Node), Text) {
+  if tb_has_field(fs, key) {
+    match tb_field_seconds(fs, key) {
+      Ok(p) => Ok(#(#(true, p.fst), p.snd))
+      Err(e) => Err(e)
+    }
+  } else {
+    Ok(#(#(false, 0), fs))
+  }
+}
+
+pub fn tb_parse_user(bytes: Bytes): Result(TbUserPolicy, Text) {
+  let f0 := match tb_doc_fields_policy(bytes) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let fm := match tb_field_integer(f0, "format") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if fm.fst != 1 {
+    return Err(tb_at("totebag-unknown-format"))
+  }
+  let k := match tb_field_as(fm.snd, "kind", tb_expect_user) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let tr := match tb_field_as(k.snd, "track", tb_expect_closure) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let ix := tb_take(tr.snd, "indexes")
+  let index_items := match ix.fst {
+    Some(n) => match tb_strict_list(n, tb_max_items()) {
+      Ok(l) => l
+      Err(e) => {
+        return Err(tb_at(e))
+      }
+    }
+    None => Nil
+  }
+  let rq := tb_take(ix.snd, "require")
+  match tb_finish(rq.snd) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let indexes := match tb_read_indexes(index_items) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let d := tb_default_user()
+  let require := match rq.fst {
+    Some(n) => n
+    None => {
+      return Ok(TbUserPolicy { indexes: indexes, observers: d.observers, witnesses: d.witnesses, min_age: d.min_age, has_lifetime: false, max_checkpoint_lifetime: 0, has_source_check_age: false, max_source_check_age: 0 })
+    }
+  }
+  let r0 := match tb_fields(require) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let ob := match tb_user_names(r0, "observers") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let aw := match tb_user_names(ob.snd, "age_witnesses") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let observers := match tb_observers(ob.fst, indexes) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(tb_at(e))
+    }
+  }
+  let witnesses := match tb_witnesses(aw.fst, indexes) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(tb_at(e))
+    }
+  }
+  match tb_independent(tb_as_indexes(observers), tb_remote_indexes(witnesses)) {
+    Some(_) => {
+      return Err(tb_at("totebag-witness-not-independent"))
+    }
+    None => #()
+  }
+  let a := match tb_user_seconds(aw.snd, "min_age_seconds") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let l := match tb_user_seconds(a.snd, "max_checkpoint_lifetime_seconds") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let s := match tb_user_seconds(l.snd, "max_source_check_age_seconds") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if (l.fst.fst && l.fst.snd == 0) || (s.fst.fst && s.fst.snd == 0) {
+    return Err(tb_at("totebag-limits-positive"))
+  }
+  match tb_finish(s.snd) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  Ok(TbUserPolicy { indexes: indexes, observers: observers, witnesses: witnesses, min_age: if a.fst.fst { a.fst.snd } else { tb_safe_min_age() }, has_lifetime: l.fst.fst, max_checkpoint_lifetime: l.fst.snd, has_source_check_age: s.fst.fst, max_source_check_age: s.fst.snd })
+}
+
+pub fn tb_find_index(l: List(TbTrusted), index: Text): Option(TbTrusted) {
+  match l {
+    Nil => None
+    Cons(t, rest) => if t.index == index { Some(t) } else { tb_find_index(rest, index) }
+  }
+}
+
+pub fn tb_snoc_trusted(l: List(TbTrusted), t: TbTrusted): List(TbTrusted) {
+  match l {
+    Nil => Cons(t, Nil)
+    Cons(x, rest) => Cons(x, tb_snoc_trusted(rest, t))
+  }
+}
+
+pub fn tb_snoc_witness(l: List(TbWitness), w: TbWitness): List(TbWitness) {
+  match l {
+    Nil => Cons(w, Nil)
+    Cons(x, rest) => Cons(x, tb_snoc_witness(rest, w))
+  }
+}
+
+// An index both policies name is called as the project calls it.
+pub fn tb_same(indexes: List(TbTrusted), t: TbTrusted): TbTrusted {
+  match tb_find_index(indexes, t.index) {
+    Some(i) => i
+    None => t
+  }
+}
+
+pub fn tb_has_witness(l: List(TbWitness), w: TbWitness): Bool {
+  match l {
+    Nil => false
+    Cons(v, rest) => {
+      let same := match v {
+        WitnessLocal => match w {
+          WitnessLocal => true
+          WitnessRemote(_) => false
+        }
+        WitnessRemote(a) => match w {
+          WitnessLocal => false
+          WitnessRemote(b) => a.index == b.index
+        }
+      }
+      same || tb_has_witness(rest, w)
+    }
+  }
+}
+
+pub fn tb_min(a: u64, b: u64): u64 { if a < b { a } else { b } }
+pub fn tb_max(a: u64, b: u64): u64 { if a < b { b } else { a } }
+
+pub fn tb_strengthen_rule(u: TbUserPolicy, indexes: List(TbTrusted), rule: TbRule): Result(TbRule, Text) {
+  var observers := rule.observers
+  var rest := u.observers
+  var going := true
+  while going {
+    match rest {
+      Cons(o, more) => {
+        match tb_find_index(observers, o.index) {
+          Some(_) => #()
+          None => {
+            observers := tb_snoc_trusted(observers, tb_same(indexes, o))
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  var witnesses := rule.witnesses
+  var ws := u.witnesses
+  going := true
+  while going {
+    match ws {
+      Cons(w, more) => {
+        if not(tb_has_witness(witnesses, w)) {
+          let added := match w {
+            WitnessLocal => WitnessLocal
+            WitnessRemote(t) => WitnessRemote(tb_same(indexes, t))
+          }
+          witnesses := tb_snoc_witness(witnesses, added)
+        }
+        ws := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  match tb_independent(tb_as_indexes(observers), tb_remote_indexes(witnesses)) {
+    Some(_) => {
+      return Err("totebag-witness-not-independent")
+    }
+    None => #()
+  }
+  Ok(TbRule { observers: observers, witnesses: witnesses, min_age: tb_max(rule.min_age, u.min_age), max_checkpoint_lifetime: if u.has_lifetime { tb_min(u.max_checkpoint_lifetime, rule.max_checkpoint_lifetime) } else { rule.max_checkpoint_lifetime }, max_source_check_age: if u.has_source_check_age { tb_min(u.max_source_check_age, rule.max_source_check_age) } else { rule.max_source_check_age } })
+}
+
+// The project's policy with the user's added to every rule.
+pub fn tb_strengthen(u: TbUserPolicy, project: TbPolicy): Result(TbPolicy, Text) {
+  var indexes := project.indexes
+  var rest := u.indexes
+  var going := true
+  while going {
+    match rest {
+      Cons(t, more) => {
+        match tb_find_index(indexes, t.index) {
+          Some(p) => if p.url != t.url || p.reference != t.reference || p.pin_rev != t.pin_rev || p.pin_digest != t.pin_digest {
+            return Err("totebag-user-changes-index")
+          }
+          None => match tb_find_trusted(indexes, t.alias) {
+            Some(_) => {
+              return Err("totebag-user-alias-taken")
+            }
+            None => {
+              indexes := tb_snoc_trusted(indexes, t)
+            }
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  let defaults := match tb_strengthen_rule(u, indexes, project.defaults) {
+    Ok(r) => r
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var rules: List(Text × TbRule) := Nil
+  var rs := project.rules
+  going := true
+  while going {
+    match rs {
+      Cons(r, more) => {
+        match tb_strengthen_rule(u, indexes, r.snd) {
+          Ok(s) => {
+            rules := Cons(#(r.fst, s), rules)
+          }
+          Err(e) => {
+            return Err(Text::concat("totebag-rule-for ", e))
+          }
+        }
+        rs := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(TbPolicy { indexes: indexes, defaults: defaults, rules: tb_rev_rules(rules, Nil) })
+}

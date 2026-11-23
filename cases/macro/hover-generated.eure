@@ -1,0 +1,124 @@
+@ cases.a-listed-function-shows-its-own-declaration
+files."mk.nib" = ```nib
+import std::builtin::macro
+
+pub macro fn mk(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    fn left(): i64 { 1 }
+    fn right(): i64 { 2 }
+  }
+}
+
+pub macro fn ann(e: SynExpr, s: SynStmt): List(SynStmt) {
+  quote stmts {
+    fn extra(): i64 { 7 }
+  }
+}
+```
+files."main.nib" = ```nib
+import "mk.nib"
+mk!(0) => fn left, fn right
+@ann!(0) => fn extra
+fn host(): i64 { 0 }
+```
+entry = "main.nib"
+hovers = [
+  {
+    at => "left", span => true,
+    contains => ["expands to", "fn left(): i64"],
+    lacks => ["fn right"]
+  },
+  {
+    at => "right", span => true,
+    contains => ["fn right(): i64", "{ 2 }"],
+    lacks => ["fn left"]
+  },
+  {
+    at => "extra", span => true,
+    contains => ["fn extra(): i64", "{ 7 }"],
+    lacks => ["fn host"]
+  },
+  { at => "mk!", contains => ["fn left", "fn right"] }
+]
+
+@ cases.class-and-instance-of-the-same-name
+files."mk.nib" = ```nib
+import std::builtin::macro
+
+pub macro fn mk(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    class Flag(A: Type) { fn mark(a: &A): i64 }
+    instance Flag(i64) { fn mark(a: &i64): i64 { 4 } }
+  }
+}
+```
+files."main.nib" = ```nib
+import "mk.nib"
+mk!(0) => class Flag, instance Flag
+```
+entry = "main.nib"
+hovers = [
+  {
+    at => "Flag", occurrence => 0, span => true,
+    contains => ["class Flag", "fn mark(a: &A)"],
+    lacks => ["instance"]
+  },
+  {
+    at => "Flag", occurrence => 1, span => true,
+    contains => ["instance Flag", "{ 4 }"],
+    lacks => ["&A"]
+  }
+]
+
+@ cases.effect-and-reexport
+files."mk.nib" = ```nib
+import std::builtin::macro
+
+pub macro fn make(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    module sealed {
+      effect hidden(): i64
+      pub(handle) effect shown(): i64
+      pub fn run_it(): i64 ! {shown} { perform shown() }
+    }
+    pub import sealed { shown, run_it }
+  }
+}
+```
+files."main.nib" = ```nib
+import "mk.nib"
+make!(0) => module sealed, effect sealed::hidden, effect sealed::shown, fn sealed::run_it, effect shown, fn run_it
+```
+entry = "main.nib"
+hovers = [
+  {
+    at => "sealed", span => true,
+    contains => ["module sealed", "effect hidden"],
+    lacks => ["pub import"]
+  },
+  {
+    at => "sealed::hidden", span => true,
+    contains => ["effect hidden"],
+    lacks => ["run_it"]
+  },
+  {
+    at => "sealed::shown", span => true,
+    contains => ["effect shown"],
+    lacks => ["hidden"]
+  },
+  {
+    at => "sealed::run_it", span => true,
+    contains => ["fn run_it"],
+    lacks => ["hidden"]
+  },
+  {
+    at => "shown", occurrence => 1, span => true,
+    contains => ["effect shown"],
+    lacks => ["hidden"]
+  },
+  {
+    at => "run_it", occurrence => 1, span => true,
+    contains => ["fn run_it"],
+    lacks => ["hidden"]
+  }
+]

@@ -182,8 +182,16 @@ impl BundlePlan {
             for (name, dependency) in dependencies {
                 // A bundle holds the files it is given; a tote fetched from
                 // Git is not among them.
-                let tauto::manifest::Dependency::Path(path) = dependency else {
-                    return Err(io::Error::other("bundle Git dependencies are unsupported"));
+                let path = match dependency {
+                    tauto::manifest::Dependency::Path(path) => path,
+                    tauto::manifest::Dependency::Workspace => {
+                        return Err(io::Error::other(
+                            "bundle workspace dependencies are unsupported",
+                        ));
+                    }
+                    tauto::manifest::Dependency::Git(_) => {
+                        return Err(io::Error::other("bundle Git dependencies are unsupported"));
+                    }
                 };
                 visit(
                     &normalize_relative(id, &path)?,

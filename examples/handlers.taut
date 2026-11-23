@@ -1,6 +1,6 @@
 pub(open) effect ask(n: i64): i64 resume ω
 
-pub fn twice(f: (i64) -> i64, x: i64): i64 { f(f(x)) }
+pub fn twice(f: (i64) -> i64 ! {overflow}, x: i64): i64 ! {overflow} { f(f(x)) }
 
 let a := 1 + 2 * 3
 let b := twice(x => x + 10, 1)
@@ -8,11 +8,11 @@ let c := handle { perform ask(5) + 1 } with {
   ask(n), k => k(n) + k(n + 1)
   return v => v
 }
-let d := handle { budget(steps: 3) { 7 } } with {
+let d := handle { perform budget(3, () => { 7 }) } with {
   exceeded(info), k => info.more(100)
 }
 
-perform show("a", a)
-perform show("b", b)
-perform show("c", c)
-perform show("d", d)
+show(&a)
+show(&b)
+show(&c)
+show(&d)

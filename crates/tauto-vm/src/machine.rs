@@ -18,7 +18,7 @@ use crate::code::{Capture, Op, Pat, PrimOp, Program, Q, UnaryOp};
 use crate::host::Host;
 use crate::hostcall::Reply;
 use crate::value::{
-    Answer, Closure, Data, Env, Error, Pending, PendingState, Place, R, Root, Signal, Step,
+    Answer, Closure, Data, Env, Error, Path, Pending, PendingState, Place, R, Root, Signal, Step,
     TOO_LARGE, Value, equal, fail, show, temp_ref,
 };
 
@@ -95,9 +95,47 @@ pub struct Machine<'a> {
     channel: (Sender<(u64, Reply)>, Receiver<(u64, Reply)>),
     fuel: u64,
     cells: i128,
+    /// The cells the run may make in all; `None` is no limit.
+    pub max_cells: Option<i128>,
     pub host: &'a mut dyn Host,
     pub known: builtins::Known,
+    /// Each mutex whose content a task took, and where that task's result
+    /// goes: if the task fails first, the mutex is poisoned.
+    taken: Vec<(Rc<RefCell<crate::value::MutexState>>, Rc<Pending>)>,
 }
+
+thread_local! {
+    /// The signals this thread's run registered with `Os::on_shutdown`:
+    /// only these keep the run waiting for a request to end it, and they
+    /// are forgotten when the run ends, so a later run in the same process
+    /// neither waits for them nor sees them raised.
+    pub(crate) static OUTSIDE: RefCell<Vec<tauto_rt::signal::Signal>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+fn forget_outside() {
+    for s in OUTSIDE.with(|o| std::mem::take(&mut *o.borrow_mut())) {
+        tauto_rt::shutdown::forget(&s);
+    }
+}
+
+impl Drop for Machine<'_> {
+    fn drop(&mut self) {
+        forget_outside();
+    }
+}
+
+/// The failure of a run that made more cells than `Machine::max_cells`.
+pub const MEMORY_LIMIT: &str = "the run made more values than its host allows";
+
+/// The most frames of calls that nest, one inside another, that a run keeps.
+/// A recursion that does not end stops here with [`TOO_DEEP`] rather than
+/// running the host out of memory or running out its whole step limit.
+pub const MAX_FRAMES: usize = 1 << 21;
+
+/// What a run says when its calls nest deeper than [`MAX_FRAMES`]; the
+/// toolchain says it as `eval-too-deep` in the user's language.
+pub const TOO_DEEP: &str = "the calls nest too deep";
 
 fn new_env(n: u32) -> Env {
     Rc::new(RefCell::new(vec![Value::Unit; n as usize]))
@@ -119,9 +157,19 @@ impl<'a> Machine<'a> {
             channel: std::sync::mpsc::channel(),
             fuel,
             cells: 0,
+            max_cells: None,
             host,
             known: builtins::Known::new(p),
+            taken: Vec::new(),
         }
+    }
+
+    pub fn fuel_left(&self) -> u64 {
+        self.fuel
+    }
+
+    pub fn cells_made(&self) -> i128 {
+        self.cells
     }
 
     /// Calls function instance `inst` with `args`, runs every task it
@@ -130,7 +178,18 @@ impl<'a> Machine<'a> {
         self.call_value(Value::Fn(inst), args)?;
         let mut answer = None;
         loop {
-            let v = self.run(0)?;
+            let v = match self.run(0) {
+                Ok(v) => v,
+                // A runtime error in a task ends that task only.
+                Err(Error::Runtime(m)) if self.result.is_some() => {
+                    self.fail_task(m);
+                    if !self.next_task()? {
+                        return fail(messages::DEADLOCK);
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             if self.switched {
                 self.switched = false;
             } else {
@@ -155,7 +214,18 @@ impl<'a> Machine<'a> {
         self.call_value(Value::Fn(top), Vec::new())?;
         let mut top_done = false;
         loop {
-            let v = self.run(0)?;
+            let v = match self.run(0) {
+                Ok(v) => v,
+                // A runtime error in a task ends that task only.
+                Err(Error::Runtime(m)) if self.result.is_some() => {
+                    self.fail_task(m);
+                    if !self.next_task()? {
+                        return fail(messages::DEADLOCK);
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             if self.switched {
                 self.switched = false;
             } else {
@@ -171,6 +241,47 @@ impl<'a> Machine<'a> {
                 return fail(messages::DEADLOCK);
             }
         }
+    }
+
+    /// Notes that the running task took the content of `mx`.
+    pub fn took(&mut self, mx: &Rc<RefCell<crate::value::MutexState>>) {
+        self.taken.retain(|(w, _)| !Rc::ptr_eq(w, mx));
+        if let Some(p) = &self.result {
+            self.taken.push((mx.clone(), p.clone()));
+        }
+    }
+
+    /// Ends the running task with runtime error `m`: the host hears of it at
+    /// once, whoever takes its result fails with it, and the mutexes whose content it held are poisoned, waking those waiting
+    /// on them to fail.
+    fn fail_task(&mut self, m: String) {
+        let p = self.result.take().expect("a task runs");
+        let mut held = Vec::new();
+        self.taken.retain(|(mx, t)| {
+            if Rc::ptr_eq(t, &p) {
+                held.push(mx.clone());
+                false
+            } else {
+                true
+            }
+        });
+        for mx in held {
+            let mut mx = mx.borrow_mut();
+            if mx.value.is_none() {
+                mx.poisoned = true;
+                for s in mx.waiting.drain(..) {
+                    s.raise();
+                }
+            }
+        }
+        // Its guards are dropped with its frames, and give nothing back to
+        // a poisoned mutex.
+        self.frames.clear();
+        self.stack.clear();
+        self.switched = false;
+        *p.state.borrow_mut() = PendingState::Failed(m.clone());
+        p.signal.raise();
+        self.host.stderr(&format!("a task failed: {m}\n"));
     }
 
     /// Puts the running task aside, waiting for `wait` if given; with
@@ -217,7 +328,18 @@ impl<'a> Machine<'a> {
                 }
                 return Ok(true);
             }
+            // Nothing waits: neither a timer nor a request to end the run
+            // could let anything run.
+            if self.tasks.is_empty() && self.jobs.is_empty() {
+                return Ok(false);
+            }
+            // A timer that has run out raises what its task waits for: that
+            // task can run now, though none could a moment ago.
+            let timers = self.timers.len();
             self.timers.retain(|p| !p.ready());
+            if self.timers.len() < timers {
+                continue;
+            }
             let first = self
                 .timers
                 .iter()
@@ -227,7 +349,8 @@ impl<'a> Machine<'a> {
                 })
                 .min();
             // A request to end the run may still raise what a task waits for.
-            let outside = tauto_rt::shutdown::waiting();
+            tauto_rt::shutdown::poll();
+            let outside = OUTSIDE.with(|o| o.borrow().iter().any(|s| !s.is_raised()));
             let first = match (first, outside) {
                 (None, true) => {
                     Some(std::time::Instant::now() + std::time::Duration::from_millis(10))
@@ -298,12 +421,18 @@ impl<'a> Machine<'a> {
         if self.fuel == 0 {
             return fail(messages::STEP_LIMIT);
         }
+        if self.max_cells.is_some_and(|n| self.cells > n) {
+            return fail(MEMORY_LIMIT);
+        }
         self.fuel -= 1;
         Ok(())
     }
 
     /// Pushes the frame of a call; its value lands where `f` was.
     fn call_value(&mut self, f: Value, args: Vec<Value>) -> R<()> {
+        if self.frames.len() >= MAX_FRAMES && matches!(f, Value::Fn(_) | Value::Closure(_)) {
+            return fail(TOO_DEEP);
+        }
         match f {
             Value::Fn(inst) => {
                 let code = &self.p.codes[self.p.fns[inst as usize] as usize];
@@ -374,6 +503,24 @@ impl<'a> Machine<'a> {
         Ok(())
     }
 
+    /// Leaves the frames from `j` and the operands from `start`, as an arm
+    /// that does not resume leaves them: the operands are dropped last
+    /// pushed first, then each frame's locals last defined first, so that
+    /// what a host value's drop shows is the order the backends drop in.
+    fn discard(&mut self, j: usize, start: usize) {
+        for v in self.stack.split_off(start).into_iter().rev() {
+            drop(v);
+        }
+        for f in self.frames.split_off(j).into_iter().rev() {
+            if Rc::strong_count(&f.env) == 1 {
+                let slots = std::mem::take(&mut *f.env.borrow_mut());
+                for v in slots.into_iter().rev() {
+                    drop(v);
+                }
+            }
+        }
+    }
+
     fn ret(&mut self, v: Value) {
         let f = self.frames.pop().expect("a frame");
         self.stack.truncate(f.base);
@@ -433,10 +580,10 @@ impl<'a> Machine<'a> {
                 Op::Define { slot, shared } => {
                     let v = self.pop();
                     let v = if shared {
-                        Value::Ref(Rc::new(Place {
-                            root: Root::Cell(Rc::new(RefCell::new(v))),
-                            path: Vec::new(),
-                        }))
+                        Value::Ref(Rc::new(Place::new(
+                            Root::Cell(Rc::new(RefCell::new(v))),
+                            Path::default(),
+                        )))
                     } else {
                         v
                     };
@@ -454,19 +601,11 @@ impl<'a> Machine<'a> {
                     let held = env.borrow()[slot as usize].clone();
                     match held {
                         Value::Ref(inner) if through || indirect => {
-                            let mut q = Place {
-                                root: clone_root(&inner.root),
-                                path: inner.path.clone(),
-                            };
-                            q.path.extend(path.iter().cloned());
+                            let q = Place::new(clone_root(&inner.root), inner.path.extended(path));
                             q.set(v)?;
                         }
                         _ if path.is_empty() => env.borrow_mut()[slot as usize] = v,
-                        _ => Place {
-                            root: Root::Slot(env, slot),
-                            path: path.clone(),
-                        }
-                        .set(v)?,
+                        _ => Place::new(Root::Slot(env, slot), Path::of(path)).set(v)?,
                     }
                 }
                 Op::Borrow {
@@ -479,18 +618,8 @@ impl<'a> Machine<'a> {
                     let path = &p.paths[path as usize];
                     let held = env.borrow()[slot as usize].clone();
                     let place = match held {
-                        Value::Ref(inner) if indirect || through => {
-                            let mut q = Place {
-                                root: clone_root(&inner.root),
-                                path: inner.path.clone(),
-                            };
-                            q.path.extend(path.iter().cloned());
-                            q
-                        }
-                        _ => Place {
-                            root: Root::Slot(env, slot),
-                            path: path.clone(),
-                        },
+                        Value::Ref(inner) if indirect || through => inner.further(path),
+                        _ => Place::new(Root::Slot(env, slot), Path::of(path)),
                     };
                     self.stack.push(Value::Ref(Rc::new(place)));
                 }
@@ -551,6 +680,10 @@ impl<'a> Machine<'a> {
                 Op::Builtin { name, argc } => {
                     let args = self.pop_n(argc as usize);
                     let name = &p.names[name as usize];
+                    if let Some(answer) = self.host.builtin(p, name, &args) {
+                        self.stack.push(answer?);
+                        continue;
+                    }
                     match builtins::call(self, name, args)? {
                         Out::Value(v) => self.stack.push(v),
                         Out::Perform(op) => self.perform(op, Q::Zero, Vec::new())?,
@@ -581,8 +714,22 @@ impl<'a> Machine<'a> {
                 }
                 Op::Prim { prim, argc } => {
                     let args = self.pop_n(argc as usize);
-                    let v = self.prim(&p.prims[prim as usize], args)?;
-                    self.stack.push(v);
+                    let arithmetic = matches!(
+                        p.prims[prim as usize],
+                        PrimOp::Arith(..) | PrimOp::FloatArith(_) | PrimOp::Float32Arith(_)
+                    );
+                    match self.prim(&p.prims[prim as usize], args) {
+                        Ok(v) => self.stack.push(v),
+                        // An operator whose result does not exist performs
+                        // `overflow` or `divzero`, as its row says.
+                        Err(Error::Runtime(m)) if arithmetic && m == TOO_LARGE => {
+                            self.perform(Rc::from("overflow"), Q::Zero, Vec::new())?
+                        }
+                        Err(Error::Runtime(m)) if arithmetic && m == messages::DIVISION_BY_ZERO => {
+                            self.perform(Rc::from("divzero"), Q::Zero, Vec::new())?
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
                 Op::Unary(u) => {
                     let v = self.pop();
@@ -596,10 +743,10 @@ impl<'a> Machine<'a> {
                     let mut captures = Vec::with_capacity(t.captures.len() + t.refs.len());
                     for &(outer, outer_indirect, inner, how) in &t.captures {
                         let v = match how {
-                            Capture::Alias if !outer_indirect => Value::Ref(Rc::new(Place {
-                                root: Root::Slot(env.clone(), outer),
-                                path: Vec::new(),
-                            })),
+                            Capture::Alias if !outer_indirect => Value::Ref(Rc::new(Place::new(
+                                Root::Slot(env.clone(), outer),
+                                Path::default(),
+                            ))),
                             Capture::Move if !outer_indirect => std::mem::replace(
                                 &mut env.borrow_mut()[outer as usize],
                                 Value::Moved,
@@ -613,10 +760,10 @@ impl<'a> Machine<'a> {
                         let v = match held {
                             Value::Ref(_) if outer_indirect => held,
                             Value::Ref(_) => held,
-                            _ => Value::Ref(Rc::new(Place {
-                                root: Root::Slot(env.clone(), outer),
-                                path: Vec::new(),
-                            })),
+                            _ => Value::Ref(Rc::new(Place::new(
+                                Root::Slot(env.clone(), outer),
+                                Path::default(),
+                            ))),
                         };
                         captures.push((inner, v));
                     }
@@ -791,12 +938,32 @@ impl<'a> Machine<'a> {
                 }
                 true
             }
+            Pat::Variant { variant, pat } => {
+                let inner = v.get()?;
+                let Value::Inject(_, i, x) = &inner else {
+                    return Ok(false);
+                };
+                if i != variant {
+                    return Ok(false);
+                }
+                let part = match v {
+                    Value::Ref(p) => Value::Ref(Rc::new(p.child(Step::Index(0)))),
+                    _ => (**x).clone(),
+                };
+                self.matches(pat, &part, binds)?
+            }
         })
     }
 
     /// The frames of the budgets in place, innermost first.
     fn budgets(&self) -> Vec<usize> {
         let mut out = Vec::new();
+        // Only `Op::Budget` makes a budget's frame: a program with no
+        // `budget` has none, and its steps need not look down a deep
+        // recursion's frames at each tick.
+        if self.p.budgets.is_empty() {
+            return out;
+        }
         let mut j = self.frames.len();
         while j > 0 {
             j -= 1;
@@ -899,8 +1066,7 @@ impl<'a> Machine<'a> {
                     }));
                     env.borrow_mut()[k as usize] = cont;
                 }
-                self.frames.truncate(j);
-                self.stack.truncate(start);
+                self.discard(j, start);
                 self.frames.push(Frame {
                     code: arm.code,
                     pc: 0,
@@ -933,11 +1099,55 @@ impl<'a> Machine<'a> {
             self.stack.push(Value::Unit);
             return Ok(());
         }
+        // The host answers `overflow` and `divzero` that nothing handles by
+        // stopping the program with what went wrong.
+        if args.is_empty() {
+            match &*op {
+                "overflow" => return fail(TOO_LARGE),
+                "divzero" => return fail(messages::DIVISION_BY_ZERO),
+                _ => {}
+            }
+        }
+        if let Some(answer) = self.host.operation(self.p, &op, &args) {
+            self.stack.push(answer?);
+            return Ok(());
+        }
+        // A task runs outside the handler `Host::run` installs, so the
+        // operations on a `Ref`, a `Mutex` or an `Atomic` it performs are
+        // answered here by the builtin that `Host::run` answers them with.
+        if let Some(name) = storage_builtin(&op) {
+            return match builtins::call(self, name, args)? {
+                Out::Value(v) => {
+                    self.stack.push(v);
+                    Ok(())
+                }
+                _ => fail(format!(
+                    "internal: {name} answered {op} with more than a value"
+                )),
+            };
+        }
         fail(messages::nothing_handles(&op))
     }
 
     fn prim(&mut self, op: &PrimOp, args: Vec<Value>) -> R<Value> {
         Ok(match op {
+            PrimOp::Arith(a, Width::Nat)
+                if args.iter().any(|v| matches!(v.get(), Ok(Value::Nat(_))))
+                    || nat_overflows(*a, &args) =>
+            {
+                let x = args[0].as_nat()?;
+                let n = match a {
+                    Arith::Neg => return fail(TOO_LARGE),
+                    Arith::Add => x.add(&args[1].as_nat()?),
+                    Arith::Sub => match x.sub(&args[1].as_nat()?) {
+                        Some(n) => n,
+                        None => return fail(TOO_LARGE),
+                    },
+                    Arith::Mul => x.mul(&args[1].as_nat()?),
+                    Arith::Div => return fail("internal: integer `/`"),
+                };
+                Value::of_nat(n)
+            }
             PrimOp::Arith(a, w) => {
                 let x = args[0].as_int()?;
                 let n = match a {
@@ -979,6 +1189,9 @@ impl<'a> Machine<'a> {
                 let (a, b) = (args[0].get()?, args[1].get()?);
                 let ord = match (&a, &b) {
                     (Value::Int(x), Value::Int(y)) => x.partial_cmp(y),
+                    (Value::Nat(x), Value::Nat(y)) => x.partial_cmp(y),
+                    (Value::Nat(_), Value::Int(_)) => Some(std::cmp::Ordering::Greater),
+                    (Value::Int(_), Value::Nat(_)) => Some(std::cmp::Ordering::Less),
                     (Value::Float(x), Value::Float(y)) => x.partial_cmp(y),
                     (Value::Float32(x), Value::Float32(y)) => x.partial_cmp(y),
                     (Value::Text(x), Value::Text(y)) => x.partial_cmp(y),
@@ -1014,7 +1227,10 @@ impl<'a> Machine<'a> {
                 s.push_str(&b);
                 Value::Text(Rc::from(s))
             }
-            PrimOp::TextOfInt => Value::text(&args[0].as_int()?.to_string()),
+            PrimOp::TextOfInt => match args[0].get()? {
+                Value::Nat(n) => Value::text(&n.to_string()),
+                v => Value::text(&v.as_int()?.to_string()),
+            },
             PrimOp::TextLen => Value::Int(args[0].as_text()?.len() as i128),
             PrimOp::SynParse(rt) => rt.parse(&self.known, &args[0].as_text()?),
             PrimOp::TextCompare => {
@@ -1024,6 +1240,16 @@ impl<'a> Machine<'a> {
                     std::cmp::Ordering::Equal => 0,
                     std::cmp::Ordering::Greater => 1,
                 })
+            }
+            PrimOp::Divide {
+                modulo,
+                width: Width::Nat,
+            } if args.iter().any(|v| matches!(v.get(), Ok(Value::Nat(_)))) => {
+                let (a, b) = (args[0].as_nat()?, args[1].as_nat()?);
+                let Some((q, r)) = a.divmod(&b) else {
+                    return fail(messages::DIVISION_BY_ZERO);
+                };
+                Value::of_nat(if *modulo { r } else { q })
             }
             PrimOp::Divide { modulo, width } => {
                 let (a, b) = (args[0].as_int()?, args[1].as_int()?);
@@ -1073,10 +1299,10 @@ fn part_env(n: u32, site: &Env, aliases: &[crate::code::Alias]) -> Env {
             slots[inner as usize] = if outer_indirect {
                 around[outer as usize].clone()
             } else {
-                Value::Ref(Rc::new(Place {
-                    root: Root::Slot(site.clone(), outer),
-                    path: Vec::new(),
-                }))
+                Value::Ref(Rc::new(Place::new(
+                    Root::Slot(site.clone(), outer),
+                    Path::default(),
+                )))
             };
         }
     }
@@ -1101,17 +1327,36 @@ fn clone_root(r: &Root) -> Root {
     }
 }
 
+/// Whether the `nat` operation on these two `Int`s leaves `i128`, so that it
+/// is done on big numbers.
+fn nat_overflows(a: Arith, args: &[Value]) -> bool {
+    let (Ok(Value::Int(x)), Some(Ok(Value::Int(y)))) = (
+        args[0].get(),
+        args.get(1).map(Value::get).or(Some(Ok(Value::Int(0)))),
+    ) else {
+        return false;
+    };
+    match a {
+        Arith::Add => x.checked_add(y).is_none(),
+        Arith::Mul => x.checked_mul(y).is_none(),
+        _ => false,
+    }
+}
+
 /// `n` checked to the width's range.
 pub fn checked(n: Option<i128>, w: Width) -> R<i128> {
     let Some(n) = n else {
         return fail(TOO_LARGE);
     };
     let ok = match w {
+        Width::W8 => i8::try_from(n).is_ok(),
+        Width::W16 => i16::try_from(n).is_ok(),
         Width::W32 => i32::try_from(n).is_ok(),
         Width::W64 => i64::try_from(n).is_ok(),
         Width::U8 => u8::try_from(n).is_ok(),
+        Width::U16 => u16::try_from(n).is_ok(),
         Width::U32 => u32::try_from(n).is_ok(),
-        Width::U64 => u64::try_from(n).is_ok(),
+        Width::U64 | Width::Host => u64::try_from(n).is_ok(),
         Width::Nat => n >= 0,
     };
     if ok { Ok(n) } else { fail(TOO_LARGE) }
@@ -1121,4 +1366,25 @@ impl From<String> for Error {
     fn from(s: String) -> Self {
         Error::Runtime(s)
     }
+}
+
+/// The builtin that answers a storage operation, as `Host::run` answers it.
+fn storage_builtin(op: &str) -> Option<&'static str> {
+    Some(match op {
+        "ref_new" => "Ref::new",
+        "ref_get" => "Ref::get",
+        "ref_set" => "Ref::set",
+        "weak_of" => "Weak::of",
+        "weak_get" => "Weak::get",
+        "mutex_new" => "Mutex::new",
+        "mutex_claim" => "Mutex::claim",
+        "mutex_take_claimed" => "Mutex::take_claimed",
+        "mutex_put" => "Mutex::put",
+        "mutex_withdraw" => "Mutex::withdraw",
+        "atomic_new" => "Atomic::new",
+        "atomic_load" => "Atomic::load",
+        "atomic_store" => "Atomic::store",
+        "atomic_fetch_add" => "Atomic::fetch_add",
+        _ => return None,
+    })
 }

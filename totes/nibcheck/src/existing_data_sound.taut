@@ -1,8 +1,9 @@
+import "messages.taut"
 import "registration_presence_sound.taut"
 import "../../surface/src/surface.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "data_presence_sound.taut"
 import "datas.taut"
@@ -11,6 +12,7 @@ import "datas_registration.taut"
 import "summary_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
@@ -78,7 +80,7 @@ pub theorem registration_bind_existing<A: Type, B: Type>(
   hm: ExistingData(n, ck_st(m)),
   hk: ∀ v: A. ∀ next: Checker. (ExistingData(n, next)) -> ExistingData(n, ck_st(k(v, next)))
 ): ExistingData(n, ck_st(frame_bind(k, m))) {
-  ⊢ ExistingData(n, ck_st(frame_bind(k, m))) from match m {
+  match m {
     mut1(v, next) => hk(v, next, hm)
   }
 }
@@ -92,15 +94,12 @@ pub theorem registration_declare_existing(
   ordered: ExistingData(n, c)
 ): ExistingData(n, ck_st(registration_declare(c, d, is_struct, builtin))) {
   registration_bind_existing(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     n,
     (ignored: Unit, c1: Checker) => frame_bind(
-      List(DataCtor),
-      Unit,
+      <A: List(DataCtor), B: Unit>,
       (constructors: List(DataCtor), c2: Checker) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
           d,
@@ -118,7 +117,7 @@ pub theorem registration_declare_existing(
     ),
     frame_error_if(
       c,
-      "a view struct has no fields: it is an opaque type",
+      view_decl_message(is_struct),
       registration_span(d),
       Bool::and(
         surface_data_is_view(d),
@@ -130,7 +129,7 @@ pub theorem registration_declare_existing(
       c,
       frame_error_if(
         c,
-        "a view struct has no fields: it is an opaque type",
+        view_decl_message(is_struct),
         registration_span(d),
         Bool::and(
           surface_data_is_view(d),
@@ -139,7 +138,7 @@ pub theorem registration_declare_existing(
       ),
       frame_error_if_ok(
         c,
-        "a view struct has no fields: it is an opaque type",
+        view_decl_message(is_struct),
         registration_span(d),
         Bool::and(
           surface_data_is_view(d),
@@ -149,12 +148,10 @@ pub theorem registration_declare_existing(
       ordered
     ),
     ignored => c1 => o1 => registration_bind_existing(
-      List(DataCtor),
-      Unit,
+      <A: List(DataCtor), B: Unit>,
       n,
       (constructors: List(DataCtor), c2: Checker) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
           d,
@@ -185,8 +182,7 @@ pub theorem registration_declare_existing(
         o1
       ),
       constructors => c2 => o2 => registration_bind_existing(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         n,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
@@ -233,7 +229,7 @@ pub theorem registration_if_existing(
   ordered: ExistingData(n, c),
   hm: ExistingData(n, ck_st(m))
 ): ExistingData(n, ck_st(registration_if(c, m, take))) {
-  ⊢ ExistingData(n, ck_st(registration_if(c, m, take))) from match take {
+  match take {
     true => registration_rewrap_existing(n, m, hm)
     false => ordered
   }
@@ -245,10 +241,9 @@ pub theorem ck_program_data_one_existing(
   s: SurfaceStmt,
   ordered: ExistingData(n, c)
 ): ExistingData(n, ck_st(ck_program_data_one(c, s))) {
-  ⊢ ExistingData(n, ck_st(ck_program_data_one(c, s))) from match s {
-    StLet(name, ty, value, borrow, mutable) => ordered
-    StVar(name, ty, value, borrow) => ordered
-    StModule(name, stmts, start, end) => ordered
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => ordered
+    StVar(name, ty, value, r#borrow, unused, st_stack) => ordered
     StAssign(name, name_place, value) => ordered
     StCalled(name_generates, value) => ordered
     StFn(f) => ordered
@@ -276,13 +271,19 @@ pub theorem ck_program_data_one_existing(
         ck_declare_data_existing(n, c, d, false, false, ordered)
       )
     )
-    StExtern(abi, fns, start, end) => ordered
+    StExtern(fns, instances, types, structs, enums, start, end) => ordered
     StClass(c) => ordered
     StInstance(i) => ordered
     StWhile(cond, body) => ordered
     StReturn(value) => ordered
     StExpr(value) => ordered
     StOther(what, start, end) => ordered
+    StLoop(st_body, start, end) => ordered
+    StModule(mod_name, mod_vis, mod_items, start, end) => ordered
+    StReexport(re_path, re_names, re_spans, start, end) => ordered
+    StFor(for_pat, for_src, st_body, start, end) => ordered
+    StBreak(st_value, start, end) => ordered
+    StContinue(start, end) => ordered
     StMacro(name, function, start, end) => ordered
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordered
     StSyntax(name, grammar, start, end) => ordered
@@ -295,14 +296,13 @@ pub theorem ck_program_data_existing(
   c: Checker,
   ordered: ExistingData(n, c)
 ): ExistingData(n, ck_st(ck_program_data(ss, c))) {
-  ⊢ ExistingData(n, ck_st(ck_program_data(ss, c))) from match ss {
+  match ss {
     Nil => ordered
     Cons(s, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => ExistingData(n, ck_st(z)),
       Eq::sym(registration_program_unf(s, rest, c)),
       registration_bind_existing(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         n,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
         ck_program_data_one(c, s),

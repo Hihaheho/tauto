@@ -1,12 +1,13 @@
 import "fits_allocation_defs.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "allocation_advance.taut"
 import "allocation_rigid_map.taut"
 import "allocation_rigid_state.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "instance_allocation_sound.taut"
 import "ty.taut"
 import "type_allocation.taut"
@@ -18,7 +19,7 @@ pub theorem fits_alloc_poly_r_after(
   hu: FitsAllocU(fuel),
   c: Checker,
   a: Ty,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   t: Ty,
   m: Mut1(Ordmap(Text, Ty), Checker),
   first: AllocationAdvance(c, m),
@@ -26,7 +27,7 @@ pub theorem fits_alloc_poly_r_after(
   left: TypeAllocated(ck_next_of(ck_st(m)), a),
   right: TypeAllocated(ck_next_of(ck_st(m)), ty_substitute(t, ck_val(m)))
 ): AllocationAdvance(c, ck_poly_r_k(fuel, a, gs, t, m)) {
-  ⊢ AllocationAdvance(c, ck_poly_r_k(fuel, a, gs, t, m)) from match m {
+  match m {
     mut1(rigid, next) => allocation_advance_start(
       c,
       next,
@@ -55,7 +56,7 @@ pub theorem fits_alloc_poly_r(
   hu: FitsAllocU(fuel),
   c: Checker,
   a: Ty,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   t: Ty,
   ordered: CkOrdered(c),
   state: CheckerAllocation(c),
@@ -89,7 +90,7 @@ pub theorem fits_alloc_poly_l_after(
   hu: FitsAllocU(fuel),
   c: Checker,
   b: Ty,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   t: Ty,
   m: Mut1(Ordmap(Text, Ty), Checker),
   first: InstanceAllocation(c, m),
@@ -97,7 +98,7 @@ pub theorem fits_alloc_poly_l_after(
   left: TypeAllocated(ck_next_of(ck_st(m)), ty_substitute(t, ck_val(m))),
   right: TypeAllocated(ck_next_of(ck_st(m)), b)
 ): AllocationAdvance(c, ck_poly_l_k(fuel, b, gs, t, m)) {
-  ⊢ AllocationAdvance(c, ck_poly_l_k(fuel, b, gs, t, m)) from match m {
+  match m {
     mut1(map, next) => allocation_advance_rewrap(
       c,
       ck_fits_in(fuel, next, ty_substitute(t, map), b),
@@ -115,7 +116,7 @@ pub theorem fits_alloc_poly_l(
   fuel: Nat,
   hu: FitsAllocU(fuel),
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   t: Ty,
   b: Ty,
   ordered: CkOrdered(c),

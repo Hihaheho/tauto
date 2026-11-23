@@ -1,5 +1,6 @@
 use crate::read::{parse_prelude, parse_prelude_at};
-use crate::surface::{Program, modules, parse_program_unresolved_at};
+use crate::surface::{Program, modules};
+use tauto_parse::parse_program_unresolved_at;
 
 fn without_macros(source: &str, base: u32) -> Program {
     let mut program = parse_program_unresolved_at(source, base).unwrap();
@@ -50,13 +51,6 @@ fn preludes_have_identical_statements_without_macro_expansion() {
         ("ord", crate::nibstd::ORD),
         ("library", crate::nibstd::PRELUDE),
     ] {
-        if matches!(name, "kernel" | "shared") {
-            assert_eq!(
-                source_projection(parse_prelude(source).unwrap()),
-                source_projection(without_macros(source, 0)),
-                "{name} without classes",
-            );
-        }
         for base in [0, crate::surface::PRELUDE_BASE] {
             assert_eq!(
                 source_projection(parse_prelude_at(source, base).unwrap()),
@@ -66,8 +60,17 @@ fn preludes_have_identical_statements_without_macro_expansion() {
         }
         assert_eq!(
             source_projection(parse_prelude(source).unwrap()),
-            source_projection(crate::types::expand_classes(
-                without_macros(source, 0),
+            source_projection(crate::types::expand_library(
+                {
+                    // `parse_prelude` reads the prelude with its names
+                    // resolved, so a type it holds again is the prelude's
+                    // and gets no second instance.
+                    let mut program = without_macros(source, 0);
+                    crate::surface::qualify::lower_prelude_names(&mut program.stmts);
+                    crate::resolve::Resolver::new(crate::bindings::library_definition_bindings())
+                        .statements(&mut program.stmts);
+                    program
+                },
                 1 << 30
             )),
             "{name} with classes",

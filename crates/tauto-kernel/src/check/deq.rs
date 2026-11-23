@@ -44,6 +44,13 @@ const LEMMAS: &[&str] = &[
     "Nat::eq_sound",
     "Bool::eq_refl",
     "Bool::eq_sound",
+    // What the instances `DecEq(I)` and `PartialEq(I)` are of (`prelude_eq.taut`).
+    "DecEq::beq",
+    "DecEq::beq_refl",
+    "DecEq::beq_sound",
+    "PartialEq::beq",
+    "PartialEq::symm",
+    "PartialEq::trans",
 ];
 
 /// The types of fields and arguments that have a decision, and what the
@@ -279,6 +286,7 @@ impl Kernel {
                     params: vec![left, right],
                     types: vec![Some(ty.clone()), Some(ty.clone())],
                     body: Box::new(T::app(&reference, arguments, ty.span)),
+                    unused_params: Vec::new(),
                 },
                 ty.span,
             )
@@ -516,8 +524,72 @@ impl Kernel {
                 return Err(msg!("kernel-deq-no-check"));
             }
         }
+        self.decidable_instances(&template, &references);
         self.derived.push((family.clone(), made));
         Ok(())
+    }
+
+    /// The instances `DecEq(I(P⃗))` and `PartialEq(I(P⃗))` (`where DecEq(P)` for each
+    /// parameter) whose `beq` is the generated `I::beq`: what a `where DecEq(I(…))` or a
+    /// `where PartialEq(I(…))` of a call is given. Only these and the prelude's are declared;
+    /// no file writes an instance of either.
+    fn decidable_instances(&mut self, template: &Gen, references: &HashMap<String, Name>) {
+        let mut references = references.clone();
+        for name in [
+            "DecEq",
+            "PartialEq",
+            "DecEq::beq",
+            "DecEq::beq_refl",
+            "DecEq::beq_sound",
+        ] {
+            if let Some(reference) = tauto_surface::bindings::library_reference(name) {
+                references.insert(name.to_string(), reference);
+            }
+        }
+        let text = instances(template);
+        let Ok(mut program) =
+            crate::surface::parse_program_unresolved_at(&text, crate::macros::EXPANSION_BASE)
+        else {
+            return;
+        };
+        if !program.errors.is_empty() {
+            return;
+        }
+        let (statements, errors) = crate::surface::modules::resolve_in_prelude_against(
+            program.stmts,
+            references.keys().map(String::as_str),
+        );
+        if !errors.is_empty() {
+            return;
+        }
+        program.stmts = statements;
+        for statement in &mut program.stmts {
+            crate::surface::references::statement(statement, &mut |name| {
+                if let Some(reference) = name.spelling().and_then(|slot| references.get(slot)) {
+                    *name = reference.clone();
+                }
+            });
+        }
+        tauto_surface::resolve::Resolver::new(tauto_surface::bindings::library_bindings())
+            .statements(&mut program.stmts);
+        let mut entries = Vec::new();
+        self.structural_instances = true;
+        let stmts = self.class_pass(&program.stmts, &mut entries);
+        self.structural_instances = false;
+        self.classes.resolve(&mut self.resolver);
+        self.source_classes = self.classes.clone();
+        // Proof-only, like the records of any class: programs compare by structure.
+        for stmt in &stmts {
+            match stmt {
+                Stmt::Fn(f) => {
+                    self.function(f);
+                }
+                Stmt::Theorem(t) => {
+                    self.theorem(t, false);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// The families that list a decidable equality which was not made, once the library that
@@ -670,7 +742,7 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "fn beq{generics}({}): Bool {{",
+        "fn {beq}{generics}({}): Bool {{",
         with(
             &[&e_params],
             &[&format!("a: {this}"), &format!("b: {this}")]
@@ -692,11 +764,15 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
     let _ = writeln!(out, "  }}\n}}\n");
     let _ = writeln!(
         out,
-        "theorem beq_refl{typed_generics}({}): Eq(Bool, {}, true) {{",
+        "theorem {beq}_refl{typed_generics}({}): Eq(Bool, {}, true) {{",
         with(&[&e_params, &r_params], &[&format!("a: {this}")]),
         call_beq("a", "a")
     );
-    let _ = writeln!(out, "  ⊢ Eq(Bool, {}, true) from match a {{", call_beq("a", "a"));
+    let _ = writeln!(
+        out,
+        "  ⊢ Eq(Bool, {}, true) from match a {{",
+        call_beq("a", "a")
+    );
     for c in ctors {
         let _ = writeln!(
             out,
@@ -708,7 +784,7 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
     let _ = writeln!(out, "  }}\n}}\n");
     let _ = writeln!(
         out,
-        "theorem beq_sound{typed_generics}({}): (a = b) {{",
+        "theorem {beq}_sound{typed_generics}({}): (a = b) {{",
         with(
             &[&e_params, &s_params],
             &[
@@ -739,7 +815,7 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
     let _ = writeln!(out, "  }}\n}}\n");
     let _ = writeln!(
         out,
-        "theorem deq{typed_generics}({}): Iff(Eq(Bool, {}, true), a = b) {{\n  IffIntro(\n    (h: Eq(Bool, {}, true)) => {beq}_sound({}),\n    (e: a = b) => Eq::subst({this}, a, b, (z: {this}) => Eq(Bool, {}, true), e, {beq}_refl({}))\n  )\n}}",
+        "theorem {family}::deq{typed_generics}({}): Iff(Eq(Bool, {}, true), a = b) {{\n  IffIntro(\n    (h: Eq(Bool, {}, true)) => {beq}_sound({}),\n    (e: a = b) => Eq::subst(<A: {this}, a: a, b: b>, (z: {this}) => Eq(Bool, {}, true), e, {beq}_refl({}))\n  )\n}}",
         with(
             &[&e_params, &s_params, &r_params],
             &[&format!("a: {this}"), &format!("b: {this}")]
@@ -750,24 +826,74 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
         call_beq("a", "z"),
         with(&[&e_names, &r_names], &["a"]),
     );
-    in_modules(family, &out)
+    out
 }
 
-/// `text` declared in the module of `family`, so that its `fn beq` is
-/// `family::beq`: a declaration's name is one identifier, and the module a
-/// name is under is written as a `module` block (`M::T` is `module M {
-/// module T { … } }`). The text refers to the declarations by their full
-/// names, as the prelude does inside `module Nat`.
-fn in_modules(family: &str, text: &str) -> String {
-    let parts: Vec<&str> = family.split("::").collect();
+/// The text of the instances `DecEq(I(P⃗))` and `PartialEq(I(P⃗))` of the family of `g`,
+/// which call the generated `I::beq`, `I::beq_refl` and `I::beq_sound` with the methods
+/// and laws of `DecEq(P)` for each parameter `P`.
+fn instances(g: &Gen) -> String {
+    let family = g.family;
+    let params: Vec<&str> = g.params.iter().map(Name::as_str).collect();
+    let this = if params.is_empty() {
+        family.to_string()
+    } else {
+        format!("{family}({})", params.join(", "))
+    };
+    let generics = if params.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", params.join(", "))
+    };
+    let wheres = if params.is_empty() {
+        String::new()
+    } else {
+        let all: Vec<String> = params.iter().map(|p| format!("DecEq({p})")).collect();
+        format!(" where {}", all.join(", "))
+    };
+    let e: Vec<String> = params
+        .iter()
+        .map(|p| format!("(u: {p}, v: {p}) => DecEq::beq(u, v)"))
+        .collect();
+    let r: Vec<String> = params
+        .iter()
+        .map(|p| format!("(u: {p}) => DecEq::beq_refl(u)"))
+        .collect();
+    let s: Vec<String> = params
+        .iter()
+        .map(|p| {
+            format!(
+                "(u: {p}, v: {p}, h: Eq(Bool, DecEq::beq(u, v), true)) => DecEq::beq_sound(u, v, h)"
+            )
+        })
+        .collect();
+    let with = |groups: &[&[String]], rest: &[&str]| -> String {
+        let mut all: Vec<String> = groups.iter().flat_map(|g| g.iter().cloned()).collect();
+        all.extend(rest.iter().map(|s| s.to_string()));
+        all.join(", ")
+    };
+    let beq = |x: &str, y: &str| format!("{family}::beq({})", with(&[&e], &[x, y]));
+    let refl = |x: &str| format!("{family}::beq_refl({})", with(&[&e, &r], &[x]));
+    let sound =
+        |x: &str, y: &str, h: &str| format!("{family}::beq_sound({})", with(&[&e, &s], &[x, y, h]));
     let mut out = String::new();
-    for p in &parts {
-        let _ = writeln!(out, "module {p} {{");
-    }
-    out.push_str(text);
-    for _ in &parts {
-        let _ = writeln!(out, "}}");
-    }
+    let _ = writeln!(
+        out,
+        "instance{generics} DecEq({this}){wheres} {{\n  fn beq(a: {this}, b: {this}): Bool {{\n    {}\n  }}\n  theorem beq_refl(a: {this}): DecEq::beq(a, a) = true {{\n    {}\n  }}\n  theorem beq_sound(a: {this}, b: {this}, h: DecEq::beq(a, b) = true): a = b {{\n    {}\n  }}\n}}\n",
+        beq("a", "b"),
+        refl("a"),
+        sound("a", "b", "h"),
+    );
+    let _ = writeln!(
+        out,
+        "instance{generics} PartialEq({this}){wheres} {{\n  fn beq(a: {this}, b: {this}): Bool {{\n    {}\n  }}\n  theorem symm(a: {this}, b: {this}, h: PartialEq::beq(a, b) = true): PartialEq::beq(b, a) = true {{\n    Eq::subst(<A: {this}, a: a, b: b>, (z: {this}) => Eq(Bool, {}, true), {}, {})\n  }}\n  theorem trans(a: {this}, b: {this}, c: {this}, h1: PartialEq::beq(a, b) = true, h2: PartialEq::beq(b, c) = true): PartialEq::beq(a, c) = true {{\n    Eq::subst(<A: {this}, a: b, b: a>, (z: {this}) => Eq(Bool, {}, true), Eq::sym({}), h2)\n  }}\n}}",
+        beq("a", "b"),
+        beq("z", "a"),
+        sound("a", "b", "h"),
+        refl("a"),
+        beq("z", "c"),
+        sound("a", "b", "h1"),
+    );
     out
 }
 
@@ -816,7 +942,7 @@ fn sound_proof(g: &Gen, this: &str, c: &Ctor) -> String {
             h = format!("And::right(Bool::and_split({p}, {q}, {h}))");
         }
     }
-    let mut proof = format!("Refl({this}, {})", ctor(&|i| format!("x{}", i + 1)));
+    let mut proof = format!("Refl(<A: {this}, a: {}>)", ctor(&|i| format!("x{}", i + 1)));
     for i in 0..n {
         let ty = describe(tys[i]);
         let motive = ctor(&|k| {
@@ -830,7 +956,7 @@ fn sound_proof(g: &Gen, this: &str, c: &Ctor) -> String {
         });
         let source = ctor(&|k| format!("x{}", k + 1));
         proof = format!(
-            "Eq::subst({ty}, x{a}, y{a}, (z: {ty}) => Eq({this}, {source}, {motive}), {sound}, {proof})",
+            "Eq::subst(<A: {ty}, a: x{a}, b: y{a}>, (z: {ty}) => Eq({this}, {source}, {motive}), {sound}, {proof})",
             a = i + 1,
             sound = g.call_sound(
                 tys[i],

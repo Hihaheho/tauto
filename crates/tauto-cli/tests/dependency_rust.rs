@@ -45,7 +45,7 @@ rust {
     write(
         &root,
         "lib/src/lib.taut",
-        "extern {\n  fn twice(n: i64): i64\n  fn thrice(n: i64): i64\n}\n\npub fn six(n: i64): i64 {\n  twice(n) + thrice(n)\n}\n",
+        "extern {\n  fn twice(n: i64): i64\n  fn thrice(n: i64): i64\n}\n\npub fn six(n: i64): i64 ! {overflow} {\n  twice(n) + thrice(n)\n}\n",
     );
     write(&root, "lib/doubling/Cargo.toml", &cargo("doubling", ""));
     write(
@@ -91,7 +91,7 @@ trust {
     write(
         &root,
         "app/src/main.taut",
-        "import lib::lib\n\nperform show(\"six\", six(1))\n",
+        "import std::builtin::os\nimport lib::lib\n\npub fn main() ! {overflow, stdout, stdout_flush} {\n  show(&six(1))\n}\nperform main(() => {\n  main()\n})\n",
     );
     let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
         .args(["run", "--backend", "rust", "--approve-trust"])
@@ -104,7 +104,7 @@ trust {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "six = 23");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "23");
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -134,7 +134,7 @@ rust {
     write(
         &root,
         "lib/src/lib.taut",
-        "extern {\n  affine type Tally\n  fn tally_new(n: i64): Tally\n  fn tally_get(t: Tally): i64\n}\n\npub fn tally(n: i64): i64 {\n  tally_get(tally_new(n))\n}\n",
+        "extern {\n  type(affine) Tally\n  fn tally_new(n: i64): Tally\n  fn tally_get(t: Tally): i64\n}\n\npub fn tally(n: i64): i64 {\n  tally_get(tally_new(n))\n}\n",
     );
     write(&root, "lib/bridge/Cargo.toml", &cargo("lib-bridge", ""));
     write(
@@ -164,7 +164,7 @@ trust {
     write(
         &root,
         "app/src/main.taut",
-        "import lib::lib\n\nperform show(\"tally\", tally(6))\n",
+        "import std::builtin::os\nimport lib::lib\n\npub fn main() ! {stdout, stdout_flush} {\n  show(&tally(6))\n}\nperform main(() => {\n  main()\n})\n",
     );
     let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
         .args(["run", "--backend", "rust", "--approve-trust"])
@@ -177,6 +177,6 @@ trust {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "tally = 42");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
     let _ = fs::remove_dir_all(&root);
 }

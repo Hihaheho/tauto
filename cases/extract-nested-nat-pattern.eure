@@ -3,8 +3,7 @@
 // shape are one arm whose body tests the part, and the program's `match`
 // covers every value without a guard.
 @ cases.nat-under-two-constructors-deep
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 fn d(o: Option(Option(Nat))): Nat {
   match o {
@@ -15,18 +14,20 @@ fn d(o: Option(Option(Nat))): Nat {
   }
 }
 
-perform show("none", d(None))
-perform show("inner-none", d(Some(None)))
-perform show("zero", d(Some(Some(0))))
-perform show("four", d(Some(Some(4))))
+show(&d(None))
+show(&d(Some(None)))
+show(&d(Some(Some(0))))
+show(&d(Some(Some(4))))
 ```
-shows = ["none = 0", "inner-none = 2", "zero = 1", "four = 6"]
-rust_shows = ["none = 0", "inner-none = 2", "zero = 1", "four = 6"]
-javascript_shows = ["none = 0", "inner-none = 2", "zero = 1", "four = 6"]
+stdout = ```
+0
+2
+1
+6
+```
 
 @ cases.nat-under-an-option-with-a-default
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 fn f(o: Option(Nat)): Nat {
   match o {
@@ -35,17 +36,18 @@ fn f(o: Option(Nat)): Nat {
   }
 }
 
-perform show("zero", f(Some(0)))
-perform show("one", f(Some(1)))
-perform show("none", f(None))
+show(&f(Some(0)))
+show(&f(Some(1)))
+show(&f(None))
 ```
-shows = ["zero = 1", "one = 2", "none = 2"]
-rust_shows = ["zero = 1", "one = 2", "none = 2"]
-javascript_shows = ["zero = 1", "one = 2", "none = 2"]
+stdout = ```
+1
+2
+2
+```
 
 @ cases.nat-under-two-constructors
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 fn k(o: Option(Nat)): Nat {
   match o {
@@ -55,24 +57,46 @@ fn k(o: Option(Nat)): Nat {
   }
 }
 
-perform show("none", k(None))
-perform show("zero", k(Some(0)))
-perform show("four", k(Some(4)))
+show(&k(None))
+show(&k(Some(0)))
+show(&k(Some(4)))
 ```
-shows = ["none = 0", "zero = 1", "four = 8"]
-rust_shows = ["none = 0", "zero = 1", "four = 8"]
-javascript_shows = ["none = 0", "zero = 1", "four = 8"]
+stdout = ```
+0
+1
+8
+```
 
 // A constructor matched where it is built is extracted in parentheses: the record it builds is
 // not read as the arms of the `match`.
 @ cases.a-constructor-built-in-the-match-subject
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
 inductive Item: Type { Mk(value: Nat): Item }
 fn answer(): Nat { ⊢ Nat from match Item::Mk(42) { Item::Mk(value) => value } }
-perform show("value", answer())
+show(&answer())
 ```
-shows = ["value = 42"]
-rust_shows = ["value = 42"]
-javascript_shows = ["value = 42"]
+stdout = "42\n"
+
+// Two successors under a constructor test and bind the part through two
+// subtractions; each is a call of its own, so the rows check tells them apart.
+@ cases.two-successors-under-an-option
+extract = true
+imports = [path`../std/base.taut`]
+source = ```tauto
+fn g(n: Option(Nat)): Nat {
+  match n {
+    Some(Succ(Succ(k))) => k
+    _ => 30
+  }
+}
+
+show(&g(Some(5)))
+show(&g(Some(1)))
+show(&g(None))
+```
+stdout = ```
+3
+30
+30
+```

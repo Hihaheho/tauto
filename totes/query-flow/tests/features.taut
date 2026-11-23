@@ -1,6 +1,5 @@
-import std::Base
-import std::prelude::Shared
-import std::prelude::Par
+import std::base
+import std::builtin::par
 import "../src/codec.taut"
 import "../src/flow.taut"
 import "../src/api.taut"
@@ -13,72 +12,72 @@ fn Num(): AssetKind(Text, i64) {
   make_asset_kind("Num", Codec::of_text(), Codec::of_i64(), (a: i64, b: i64) => a == b)
 }
 
-@query!(Bad) => fn Bad
-fn bad(db: Db, x: i64): i64 ! {halt, Div} {
+@query!(Bad) => fn Bad, fn Bad::register
+fn bad(db: Db, x: i64): i64 ! {halt, div, overflow, ref_get, ref_new, ref_set} {
   Db::asset(db, Num(), "a")
   Db::fail(db, "bad")
 }
 
-@query!(UsesBad) => fn UsesBad
-fn uses_bad(db: Db, x: i64): i64 ! {halt, Div} { Db::query(db, Bad(x)) }
+@query!(UsesBad) => fn UsesBad, fn UsesBad::register
+fn uses_bad(db: Db, x: i64): i64 ! {div, halt, overflow, ref_get, ref_new, ref_set} { Db::query(db, Bad(x)) }
 
-@query!(CatchesBad) => fn CatchesBad
-fn catches_bad(db: Db, x: i64): i64 ! {halt, Div} {
+@query!(CatchesBad) => fn CatchesBad, fn CatchesBad::register
+fn catches_bad(db: Db, x: i64): i64 ! {halt, div, overflow, ref_get, ref_new, ref_set} {
   match Db::try(db, Bad(x)) {
     Ok(v) => v
-    Err(e) => 0 - 1
+    Err(^e) => 0 - 1
   }
 }
 
-@query!(Around) => fn Around
-fn loop_q(db: Db, x: i64): i64 ! {halt, Div} { Db::query(db, Back(x)) }
+@query!(Around) => fn Around, fn Around::register
+fn loop_q(db: Db, x: i64): i64 ! {div, halt, overflow, ref_get, ref_new, ref_set} { Db::query(db, Back(x)) }
 
-@query!(Back) => fn Back
-fn pool_q(db: Db, x: i64): i64 ! {halt, Div} { Db::query(db, Around(x)) }
+@query!(Back) => fn Back, fn Back::register
+fn pool_q(db: Db, x: i64): i64 ! {div, halt, overflow, ref_get, ref_new, ref_set} { Db::query(db, Around(x)) }
 
-@query!(PeekNum) => fn PeekNum
-fn peek_q(db: Db, name: Text): i64 ! {halt, Div} {
+@query!(PeekNum) => fn PeekNum, fn PeekNum::register
+fn peek_q(db: Db, name: Text): i64 ! {halt, div, overflow, ref_get, ref_new, ref_set} {
   match Db::asset_state(db, Num(), name) {
     None => 0 - 1
     Some(v) => v
   }
 }
 
-@query!(SumAll) => fn SumAll
-fn total(db: Db, u: Unit): i64 ! {halt, Div} { sum_of(db, Db::list_asset_keys(db, Num())) }
+@query!(SumAll) => fn SumAll, fn SumAll::register
+fn total(db: Db, u: Unit): i64 ! {halt, div, overflow, ref_get, ref_new, ref_set} { sum_of(db, Db::list_asset_keys(db, Num())) }
 
-fn sum_of(db: Db, ks: List(Text)): i64 ! {halt, Div} {
+fn sum_of(db: Db, ks: List(Text)): i64 ! {halt, div, overflow, ref_get, ref_new, ref_set} {
   match ks {
     Nil => 0
     Cons(k, t) => Db::asset(db, Num(), k) + sum_of(db, t)
   }
 }
 
-@query!(Quit) => fn Quit
-fn stop_q(db: Db, x: i64): i64 ! {halt, Div} { Db::cancel(db) }
+@query!(Quit) => fn Quit, fn Quit::register
+fn stop_q(db: Db, x: i64): i64 ! {halt, div, overflow, ref_get, ref_new, ref_set} { Db::cancel(db) }
 
-@query!(ReadNum) => fn ReadNum
-fn read_q(db: Db, name: Text): i64 ! {halt, Div} { Db::asset(db, Num(), name) }
+@query!(ReadNum) => fn ReadNum, fn ReadNum::register
+fn read_q(db: Db, name: Text): i64 ! {halt, div, overflow, ref_get, ref_new, ref_set} { Db::asset(db, Num(), name) }
 
 fn value_of(a: Answer(i64)): i64 {
   match a {
     Value(v) => v
-    Error(e) => 0 - 100
+    Error(^e) => 0 - 100
     Suspended => 0 - 200
-    Cycle(ks) => 0 - 300
+    Cycle(^ks) => 0 - 300
     Cancelled => 0 - 400
-    DependenciesRemoved(ks) => 0 - 500
+    DependenciesRemoved(^ks) => 0 - 500
   }
 }
 
 fn error_of(a: Answer(i64)): Text {
   match a {
-    Value(v) => ""
+    Value(^v) => ""
     Error(e) => e
     Suspended => ""
-    Cycle(ks) => ""
+    Cycle(^ks) => ""
     Cancelled => ""
-    DependenciesRemoved(ks) => ""
+    DependenciesRemoved(^ks) => ""
   }
 }
 
@@ -100,11 +99,11 @@ perform test("a cycle is reported", () => {
   let rt := new_runtime()
   match run(rt, Around(0)) {
     Cycle(ks) => expect(List::length(ks) == 3, "three keys")
-    Value(v) => expect(false, "value")
+    Value(^v) => expect(false, "value")
     Error(e) => expect(false, e)
     Suspended => expect(false, "suspended")
     Cancelled => expect(false, "cancelled")
-    DependenciesRemoved(ks) => expect(false, "removed")
+    DependenciesRemoved(^ks) => expect(false, "removed")
   }
 })
 
@@ -190,22 +189,22 @@ perform test("errors compare by the runtime's comparator", () => {
 })
 
 perform test("the tracer sees cache hits", () => {
-  let hits := Ref::new(0)
+  let hits: Ref(nat) := perform ref_new(0)
   let rt := build_runtime((a: Text, b: Text) => false, (e: Event) => match e {
-    CacheHit(k) => Ref::set(hits, Ref::get(hits) + 1)
-    QueryStart(k) => #()
-    Ran(k, c) => #()
-    Stopped(k) => #()
-    CycleFound(ks) => #()
-    AssetResolved(k, c) => #()
-    AssetInvalidated(k) => #()
-    QueryInvalidated(k) => #()
-    Located(k) => #()
+    CacheHit(^k) => perform ref_set(hits, perform ref_get(hits) + 1)
+    QueryStart(^k) => #()
+    Ran(^k, ^c) => #()
+    Stopped(^k) => #()
+    CycleFound(^ks) => #()
+    AssetResolved(^k, ^c) => #()
+    AssetInvalidated(^k) => #()
+    QueryInvalidated(^k) => #()
+    Located(^k) => #()
   })
   resolve_asset(rt, Num(), "a", 1, Volatile)
   run(rt, ReadNum("a"))
   run(rt, ReadNum("a"))
-  expect(Ref::get(hits) == 1, "one hit")
+  expect(perform ref_get(hits) == 1, "one hit")
 })
 
 perform test("an asset that becomes more durable still counts as changed", () => {

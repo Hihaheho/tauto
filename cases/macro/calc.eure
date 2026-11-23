@@ -1,7 +1,7 @@
-// `calc!` (`std/Calc.taut`): a chain of equalities with `$` expressions.
+// `calc!` (`std/calc.taut`): a chain of equalities with `$` expressions.
 
 @ cases.calc-macro-chains-equalities
-imports = [path`../../std/Calc.taut`, path`../../std/Base.taut`, path`../../std/Nat.taut`]
+imports = [path`../../std/calc.taut`, path`../../std/base.taut`, path`../../std/nat.taut`]
 source = ````tauto
 theorem t(a: Nat, b: Nat, c: Nat): Nat::add(Nat::add(a, b), c) = Nat::add(Nat::add(a, c), b) {
   calc!(```
@@ -21,7 +21,7 @@ checks.one = "ok"
 diagnostics = []
 
 @ cases.calc-macro-rejects-a-wrong-step
-imports = [path`../../std/Calc.taut`, path`../../std/Base.taut`, path`../../std/Nat.taut`]
+imports = [path`../../std/calc.taut`, path`../../std/base.taut`, path`../../std/nat.taut`]
 source = ````tauto
 theorem t(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(a, b) {
   calc!(```
@@ -34,7 +34,7 @@ theorem t(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(a, b) {
 checks.t = "error: "
 
 @ cases.calc-macro-rejects-mixed-relations
-imports = [path`../../std/Calc.taut`, path`../../std/Base.taut`]
+imports = [path`../../std/calc.taut`, path`../../std/base.taut`]
 source = ````tauto
 theorem t(p: Bool): p = p {
   calc!(```
@@ -48,19 +48,17 @@ macro_error = "macro.error"
 
 // A `$` expression is resolved in the scope of the module that calls the macro.
 @ cases.calc-macro-resolves-in-the-calling-module
-imports = [path`../../std/Calc.taut`, path`../../std/Base.taut`, path`../../std/Nat.taut`]
+imports = [path`../../std/calc.taut`, path`../../std/base.taut`, path`../../std/nat.taut`]
 source = ````tauto
-module Nat {
-  pub theorem plain(a: Nat, b: Nat): add(a, b) = add(b, a) {
-    Nat::add_comm(a, b)
-  }
+pub theorem Nat::plain(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  Nat::add_comm(a, b)
+}
 
-  pub theorem via_calc(a: Nat, b: Nat): add(a, b) = add(b, a) {
-    calc!(```
-      $add(a, b)
-      = $add(b, a) from $Nat::add_comm(a, b)
-      ```)
-  }
+pub theorem Nat::via_calc(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  calc!(```
+    $Nat::add(a, b)
+    = $Nat::add(b, a) from $Nat::add_comm(a, b)
+    ```)
 }
 ````
 checks."Nat::plain" = "ok"
@@ -69,7 +67,7 @@ diagnostics = []
 
 // A `$` name is read as tauto reads a name: it may go on in any letter.
 @ cases.calc-macro-reads-a-non-ascii-name
-imports = [path`../../std/Calc.taut`, path`../../std/Base.taut`]
+imports = [path`../../std/calc.taut`, path`../../std/base.taut`]
 source = ````tauto
 fn Iの数(n: Nat): Nat { n }
 
@@ -84,12 +82,12 @@ checks.t = "ok"
 diagnostics = []
 
 @ cases.calc-literals-are-laid-out-one-step-to-a-line
-files."lib/Calc.taut" = path`../../std/Calc.taut`
+files."lib/calc.taut" = path`../../std/calc.taut`
 files."lib/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables" = path`../../std/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables`
 files."lib/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables" = path`../../std/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables`
 files."lib/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables" = path`../../std/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables`
 files."main.taut" = ````tauto
-import "lib/Calc.taut"
+import "lib/calc.taut"
 
 theorem t(a: Nat, b: Nat, c: Nat): Nat::add(Nat::add(a, b), c) = Nat::add(Nat::add(a, c), b) {
   calc!(```
@@ -116,7 +114,7 @@ theorem one(n: Nat): n = n {
 ````
 entry = "main.taut"
 format_literals = ````tauto
-import "lib/Calc.taut"
+import "lib/calc.taut"
 
 theorem t(a: Nat, b: Nat, c: Nat): Nat::add(Nat::add(a, b), c) = Nat::add(Nat::add(a, c), b) {
   calc!(```
@@ -142,12 +140,12 @@ theorem one(n: Nat): n = n {
 format_literals_warnings = []
 
 @ cases.calc-literals-mixing-relations-are-laid-out-too
-files."lib/Calc.taut" = path`../../std/Calc.taut`
+files."lib/calc.taut" = path`../../std/calc.taut`
 files."lib/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables" = path`../../std/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables`
 files."lib/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables" = path`../../std/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables`
 files."lib/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables" = path`../../std/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables`
 files."main.taut" = ````tauto
-import "lib/Calc.taut"
+import "lib/calc.taut"
 
 theorem mixed(p: Prop): Iff(p, p) {
   calc!(```
@@ -160,7 +158,7 @@ theorem mixed(p: Prop): Iff(p, p) {
 ````
 entry = "main.taut"
 format_literals = ````tauto
-import "lib/Calc.taut"
+import "lib/calc.taut"
 
 theorem mixed(p: Prop): Iff(p, p) {
   calc!(```
@@ -173,12 +171,12 @@ theorem mixed(p: Prop): Iff(p, p) {
 format_literals_warnings = []
 
 @ cases.calc-highlights-relations-and-from
-files."lib/Calc.taut" = path`../../std/Calc.taut`
+files."lib/calc.taut" = path`../../std/calc.taut`
 files."lib/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables" = path`../../std/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables`
 files."lib/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables" = path`../../std/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables`
 files."lib/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables" = path`../../std/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables`
 files."main.taut" = ````tauto
-import "lib/Calc.taut"
+import "lib/calc.taut"
 
 fn sample(n: Nat): calc_syntax::Chain {
   ```calc_syntax

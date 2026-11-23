@@ -1,0 +1,424 @@
+// What the scripts in this directory share: running a program with this
+// run's standard input and output, stopping on its failure as `set -e`
+// does, capturing its output, and the checkout's root.
+import std::builtin::os {
+  ChildStream,
+  EnvVars,
+  Process,
+  ProcessIo,
+  ProcessOutput,
+  Stdio,
+  argv,
+  env,
+  environ,
+  eprint,
+  exit,
+  fs_canonicalize,
+  fs_read_bytes,
+  fs_read_link,
+  fs_stat,
+  fs_write_bytes,
+  io_message,
+  path_name,
+  path_parent,
+  proc_close,
+  proc_read,
+  proc_run,
+  proc_spawn,
+  proc_wait,
+  stderr
+}
+import std::text { Text }
+import std::text_ops { Text }
+import std::prelude::collections
+import std::prelude::num { overflow }
+import std::base
+import std::list { List }
+
+pub fn sh_none(): Bytes {
+  Bytes::of_text("")
+}
+
+pub fn sh_process(program: Text, args: List(Text), dir: Text, env: List(Text × Text)): Process ! {environ} {
+  Process { program: program, args: args, dir: dir, env: EnvVars::set(perform environ(), env), stdin: sh_none() }
+}
+
+pub fn sh_io(): ProcessIo {
+  ProcessIo { stdin: StdioInherit, stdout: StdioInherit, stderr: StdioInherit }
+}
+
+// Writes a message and a newline to standard error and ends with `code`.
+pub fn sh_die(code: i32, message: Text): Unit ! {exit, stderr} {
+  eprint(Text::concat(message, "\n"))
+  perform exit(code)
+}
+
+// The exit status a shell reports: the program's, or 1 when a signal ended
+// it or it could not start.
+pub fn sh_status(status: Option(u64)): i32 {
+  match status {
+    Some(n) => if n < 256 { I32::of_i64(I64::of_u64(n)) } else { 1 }
+    None => 1
+  }
+}
+
+// Runs `p` with this run's standard input, output and error, and gives its
+// exit status.
+pub fn sh_run(p: Process): i32 ! {proc_close, proc_spawn, proc_wait, stderr} {
+  match perform proc_spawn(p, sh_io()) {
+    Err(e) => {
+      eprint(Text::concat_all([p.program, ": ", io_message(e), "\n"]))
+      127
+    }
+    Ok(c) => {
+      let s := perform proc_wait(c, None)
+      perform proc_close(c)
+      match s {
+        Ok(status) => sh_status(status)
+        Err(e) => {
+          eprint(Text::concat_all([p.program, ": ", io_message(e), "\n"]))
+          1
+        }
+      }
+    }
+  }
+}
+
+// `sh_run`, ending this run with the program's status when it fails.
+pub fn sh_must(p: Process): Unit ! {exit, proc_close, proc_spawn, proc_wait, stderr} {
+  let code := sh_run(p)
+  if code == 0 { #() } else { perform exit(code) }
+}
+
+// Runs `p` to its end, capturing its output; ends this run when it cannot
+// start.
+pub fn sh_capture(p: Process): ProcessOutput ! {exit, proc_run, stderr} {
+  match perform proc_run(p) {
+    Ok(o) => o
+    Err(e) => {
+      sh_die(127, Text::concat_all([p.program, ": ", io_message(e)]))
+      ProcessOutput { status: None, stdout: sh_none(), stderr: "" }
+    }
+  }
+}
+
+// Bytes a program wrote, as text; ends this run when they are not UTF-8.
+pub fn sh_text(b: Bytes): Text ! {exit, stderr} {
+  match Text::of_bytes(b) {
+    Some(t) => t
+    None => {
+      sh_die(1, "a program wrote bytes that are not UTF-8")
+      ""
+    }
+  }
+}
+
+// `t` without its trailing newlines, as `$(…)` reads a program's output.
+pub fn sh_chomp(t: Text): Text ! {div, overflow} {
+  var end := std::prelude::Text::len(t)
+  while end > 0 && std::prelude::Text::byte(t, end - 1) == Some(10) {
+    end := end - 1
+  }
+  match std::prelude::Text::slice(t, 0, end) {
+    Some(s) => s
+    None => t
+  }
+}
+
+// The standard output of `p`, as `$(…)`: a failure of `p` ends this run with
+// its status, after its standard error.
+pub fn sh_output(p: Process): Text ! {div, exit, overflow, proc_run, stderr} {
+  let o := sh_capture(p)
+  let code := sh_status(o.status)
+  if code == 0 { #() } else {
+    eprint(o.stderr)
+    perform exit(code)
+  }
+  sh_chomp(sh_text(o.stdout))
+}
+
+// Whether `p` exits with status 0, its output and error discarded.
+pub fn sh_ok(p: Process): Bool ! {proc_run} {
+  match perform proc_run(p) {
+    Ok(o) => sh_status(o.status) == 0
+    Err(_) => false
+  }
+}
+
+// Whether a program named `name` is on `PATH` (`command -v`).
+pub fn sh_has(name: Text): Bool ! {environ, proc_run} {
+  sh_ok(sh_process("sh", ["-c", "command -v \"$1\" >/dev/null 2>&1", "sh", name], "", []))
+}
+
+// The current directory, with its links followed (`pwd -P`).
+pub fn sh_pwd(): Text ! {exit, fs_canonicalize, stderr} {
+  match perform fs_canonicalize(".") {
+    Ok(p) => p
+    Err(e) => {
+      sh_die(2, Text::concat("the current directory: ", io_message(e)))
+      ""
+    }
+  }
+}
+
+// An environment variable; `None` when it is not set.
+pub fn sh_env(name: Text): Option(Text) ! {env, exit, stderr} {
+  match perform env(name) {
+    Ok(v) => v
+    Err(e) => {
+      sh_die(2, Text::concat_all(["$", name, ": ", io_message(e)]))
+      None
+    }
+  }
+}
+
+// What `[[ -e path || -L path ]]` asks: whether anything, a dangling link
+// too, is at `path`.
+pub fn sh_exists(path: Text): Bool ! {fs_read_link, fs_stat} {
+  let linked := match perform fs_read_link(path) {
+    Ok(Some(_)) => true
+    _ => false
+  }
+  let found := match perform fs_stat(path) {
+    Ok(Some(_)) => true
+    _ => false
+  }
+  linked || found
+}
+
+// Whether `path` is a directory that is not a link (`[[ -d p && ! -L p ]]`).
+pub fn sh_plain_dir(path: Text): Bool ! {fs_read_link, fs_stat} {
+  match perform fs_read_link(path) {
+    Ok(None) => match perform fs_stat(path) {
+      Ok(Some(s)) => match s.kind { IsDir => true, _ => false }
+      _ => false
+    }
+    _ => false
+  }
+}
+
+// `dirname` and `basename` of a path.
+pub fn sh_dirname(path: Text): Text {
+  path_parent(path)
+}
+
+pub fn sh_basename(path: Text): Text {
+  path_name(path)
+}
+
+// The root of this checkout: the nearest directory, from the current one
+// up, that holds `scripts/lib/sh.taut`. A `tauto` command runs inside the
+// project whose `Tauto.eure` declares it, so the search starts inside it.
+pub fn sh_root(): Text ! {div, exit, fs_canonicalize, fs_read_link, fs_stat, stderr} {
+  var dir := sh_pwd()
+  var found := false
+  while not(found) && dir != "/" {
+    found := sh_exists(Text::concat(dir, "/scripts/lib/sh.taut"))
+    if found { #() } else { dir := sh_dirname(dir) }
+  }
+  if found || sh_exists("/scripts/lib/sh.taut") { #() } else {
+    sh_die(2, "run this script from inside the tauto checkout")
+  }
+  dir
+}
+
+// `[ -x path ]`.
+pub fn sh_executable(path: Text): Bool ! {environ, proc_run} {
+  sh_ok(sh_process("test", ["-x", path], "", []))
+}
+
+// `sh_run` with the program's standard output discarded (`>/dev/null`); its
+// standard error still reaches this run's.
+pub fn sh_run_quiet(p: Process): i32 ! {div, proc_close, proc_read, proc_spawn, proc_wait, stderr} {
+  let io := ProcessIo { stdin: StdioInherit, stdout: StdioPiped, stderr: StdioInherit }
+  match perform proc_spawn(p, io) {
+    Err(e) => {
+      eprint(Text::concat_all([p.program, ": ", io_message(e), "\n"]))
+      127
+    }
+    Ok(c) => {
+      var open := true
+      while open {
+        match perform proc_read(c, ChildStdout, 65536, None) {
+          Ok(b) => { open := Bytes::len(b) > 0 }
+          Err(_) => { open := false }
+        }
+      }
+      let s := perform proc_wait(c, None)
+      perform proc_close(c)
+      match s {
+        Ok(status) => sh_status(status)
+        Err(e) => {
+          eprint(Text::concat_all([p.program, ": ", io_message(e), "\n"]))
+          1
+        }
+      }
+    }
+  }
+}
+
+// Whether two files hold the same bytes (`cmp -s`).
+pub fn sh_same(a: Text, b: Text): Bool ! {fs_read_bytes} {
+  match perform fs_read_bytes(a) {
+    Ok(x) => match perform fs_read_bytes(b) {
+      Ok(y) => Bytes::eq(x, y)
+      Err(_) => false
+    }
+    Err(_) => false
+  }
+}
+
+// The standard output of `p`, as bytes, after its standard error; a
+// failure of `p` ends this run with its status.
+pub fn sh_bytes(p: Process): Bytes ! {exit, proc_run, stderr} {
+  let o := sh_capture(p)
+  eprint(o.stderr)
+  let code := sh_status(o.status)
+  if code == 0 { #() } else { perform exit(code) }
+  o.stdout
+}
+
+// Writes bytes to a file, ending this run when it cannot.
+pub fn sh_write(path: Text, b: Bytes): Unit ! {exit, fs_write_bytes, stderr} {
+  match perform fs_write_bytes(path, b) {
+    Ok(_) => #()
+    Err(e) => sh_die(1, Text::concat_all([path, ": ", io_message(e)]))
+  }
+}
+
+// The first argument, or "" (`${1:-}`).
+pub fn sh_arg1(): Text ! {argv} {
+  match perform argv() {
+    Cons(a, _) => a
+    Nil => ""
+  }
+}
+
+// The SHA-256 of a file, in hexadecimal, by `sha256sum` or `shasum -a 256`.
+pub fn sh_sha256(path: Text): Text ! {div, environ, exit, overflow, proc_run, stderr} {
+  let command := if sh_has("sha256sum") { ["sha256sum", path] } else if sh_has("shasum") {
+    ["shasum", "-a", "256", path]
+  } else {
+    sh_die(1, "sha256sum or shasum is required.")
+    []
+  }
+  match command {
+    Cons(program, args) => match Text::split_on(sh_output(sh_process(program, args, "", [])), 32) {
+      Cons(first, _) => first
+      Nil => ""
+    }
+    Nil => ""
+  }
+}
+
+// The bytes of a file, ending this run when it cannot be read.
+pub fn sh_read(path: Text): Bytes ! {exit, fs_read_bytes, stderr} {
+  match perform fs_read_bytes(path) {
+    Ok(b) => b
+    Err(e) => {
+      sh_die(1, Text::concat_all([path, ": ", io_message(e)]))
+      sh_none()
+    }
+  }
+}
+
+// The `tauto` that `cargo build -p tauto-cli` made in this checkout: the
+// `debug` directory under the `target_directory` that `cargo metadata`
+// names. Std has no JSON reader, so the field is found by its spelling, as
+// the shell script's `sed` did.
+pub fn sh_built_tauto(root: Text): Text ! {div, environ, exit, overflow, proc_close, proc_run, proc_spawn, proc_wait, stderr} {
+  sh_must(sh_process("cargo", ["build", "--locked", "--quiet", "-p", "tauto-cli"], root, []))
+  let meta := sh_output(
+    sh_process("cargo", ["metadata", "--format-version", "1", "--no-deps"], root, [])
+  )
+  let key := "\"target_directory\":\""
+  match Text::find(meta, key) {
+    None => {
+      sh_die(1, "cargo metadata names no target_directory")
+      ""
+    }
+    Some(at) => {
+      let rest := Text::slice_or_empty(meta, at + Text::len(key), Text::len(meta))
+      match Text::split_on(rest, 34) {
+        Cons(dir, _) => Text::concat(dir, "/debug/tauto")
+        Nil => ""
+      }
+    }
+  }
+}
+
+// Runs the syntax tote compiled into `tauto` on a grammar (its standard
+// input) and gives the table it writes.
+pub fn sh_syntaxgen(tauto: Text, grammar: Text): Bytes ! {environ, exit, fs_read_bytes, proc_run, stderr} {
+  sh_bytes(Process {
+    program: tauto,
+    args: ["--tote-main", "syntaxgen", "--allow-read", "--"],
+    dir: "",
+    env: EnvVars::set(perform environ(), [#("TAUTO_STEP_LIMIT", "200000000000")]),
+    stdin: sh_read(grammar)
+  })
+}
+
+// The tables of `grammar` for `start`, a start symbol of its `%start` other than the first.
+pub fn sh_syntaxgen_start(tauto: Text, grammar: Text, start: Text): Bytes ! {environ, exit, fs_read_bytes, proc_run, stderr} {
+  sh_bytes(Process {
+    program: tauto,
+    args: ["--tote-main", "syntaxgen", "--allow-read", "--", "--start", start],
+    dir: "",
+    env: EnvVars::set(perform environ(), [#("TAUTO_STEP_LIMIT", "200000000000")]),
+    stdin: sh_read(grammar)
+  })
+}
+
+// The start symbols after the first that the `%start A, B, …` of the grammar `text` names:
+// their tables are `<sha256>.B.tables`.
+pub fn sh_other_starts(text: Text): List(Text) {
+  match List::filter((l) => Text::starts_with(l, "%start"), Text::split_on(text, 10)) {
+    [] => []
+    [line, ..rest] => {
+      let names := List::map(
+        (part) => Text::join("", List::filter((w) => not(Text::is_empty(w)), Text::split_on(part, 32))),
+        Text::split_on(Text::slice_or_empty(line, 6, Text::len(line)), 44)
+      )
+      match names {
+        [] => []
+        [first, ..others] => others
+      }
+    }
+  }
+}
+
+// Writes `table` to `path`, or with `check` compares them, saying how to
+// regenerate when they differ. Whether they were the same.
+pub fn sh_table(check: Bool, path: Text, table: Bytes, label: Text, script: Text): Bool ! {exit, fs_read_bytes, fs_write_bytes, stderr} {
+  if check {
+    let same := match perform fs_read_bytes(path) {
+      Ok(b) => Bytes::eq(b, table)
+      Err(_) => false
+    }
+    if same { #() } else {
+      eprint(Text::concat_all([label, " is out of date; run: tauto ", script, "\n"]))
+    }
+    same
+  } else {
+    sh_write(path, table)
+    true
+  }
+}
+
+// Whether `x` is one of `xs`.
+pub fn sh_member(x: Text, xs: List(Text)): Bool ! {div} {
+  var rest := xs
+  var found := false
+  var more_left := true
+  while more_left {
+    match rest {
+      Nil => { more_left := false }
+      Cons(y, more) => {
+        if y == x { found := true } else { #() }
+        rest := more
+      }
+    }
+  }
+  found
+}

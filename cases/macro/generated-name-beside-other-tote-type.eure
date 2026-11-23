@@ -1,0 +1,246 @@
+// A macro makes a declaration under a type's name (`=> fn S::made`), and the file that calls
+// the macro uses it (`S::made()`). Another tote that the importer also depends on declares a
+// type of the same name `S`, so the two `S` are named apart by their full names. The call
+// `S::made()` still means the declaration the macro made, as it does for one the file writes
+// itself (`fn S::twice`): checking the importer and checking the macro's tote alone agree.
+
+@ cases.a-made-function-under-a-type-name-another-tote-also-declares
+files_tote = "app"
+tote_errors = []
+files."macros/Tauto.eure" = ```eure
+package {
+  name = "macros"
+  version = "0.1.0"
+}
+```
+files."macros/src/made.taut" = ````tauto
+import std::builtin::macro
+import std::base
+
+pub macro fn made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  let quoted := quote stmts {
+    fn made(): i64 { 7 }
+  }
+  match #(s, quoted) {
+    #(StStruct(d), Cons(StFn(f), Nil)) => [StFn(SynFn {
+      name: Syn::decl_name(d.name, concat(d.name.name, "::made")),
+      generics: f.generics, generic_types: f.generic_types, bounds: f.bounds,
+      params: f.params, r#borrows: f.r#borrows, param_types: f.param_types,
+      result: f.result, effects: f.effects, where_: f.where_, body: f.body,
+      span: d.span, unused: f.unused, unused_params: f.unused_params,
+      unused_generics: f.unused_generics,
+    })]
+    other => Syn::error(Syn::call_span(), "made! goes on a struct")
+  }
+}
+````
+files."lib/Tauto.eure" = ```eure
+package {
+  name = "lib"
+  version = "0.1.0"
+}
+
+dependencies {
+  macros { path = "../macros" }
+}
+```
+files."lib/src/shapes.taut" = ```tauto
+import macros::made { made }
+
+@made!("s") => fn S::made
+pub(open) struct S { a: i64 }
+
+pub fn S::twice(): i64 ! {overflow} { S::made() + S::made() }
+```
+files."other/Tauto.eure" = ```eure
+package {
+  name = "other"
+  version = "0.1.0"
+}
+```
+files."other/src/kinds.taut" = ```tauto
+pub(open) struct T { x: i64 }
+pub(open) struct S { x: i64 }
+```
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+
+dependencies {
+  lib { path = "../lib" }
+  other { path = "../other" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import lib::shapes { S }
+import other::kinds { T }
+
+fn f(t: T, s: S): i64 ! {overflow} { t.x + s.a + S::made() + S::twice() }
+
+perform main(() => show(&f(T { x: 1 }, S { a: 2 })))
+```
+stdout = "24\n"
+
+// The importer names only the two types (`S` from the macro's tote, `T` from the other tote that
+// also declares an `S`) and never calls the macro-made function itself. Checking it still reads
+// `lib`'s `S::twice`, which calls `S::made()`, against `lib`'s own `S`.
+@ cases.a-made-function-is-found-when-the-importer-names-only-the-types
+files_tote = "app"
+tote_errors = []
+files."macros/Tauto.eure" = ```eure
+package {
+  name = "macros"
+  version = "0.1.0"
+}
+```
+files."macros/src/made.taut" = ````tauto
+import std::builtin::macro
+import std::base
+
+pub macro fn made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  let quoted := quote stmts {
+    fn made(): i64 { 7 }
+  }
+  match #(s, quoted) {
+    #(StStruct(d), Cons(StFn(f), Nil)) => [StFn(SynFn {
+      name: Syn::decl_name(d.name, concat(d.name.name, "::made")),
+      generics: f.generics, generic_types: f.generic_types, bounds: f.bounds,
+      params: f.params, r#borrows: f.r#borrows, param_types: f.param_types,
+      result: f.result, effects: f.effects, where_: f.where_, body: f.body,
+      span: d.span, unused: f.unused, unused_params: f.unused_params,
+      unused_generics: f.unused_generics,
+    })]
+    other => Syn::error(Syn::call_span(), "made! goes on a struct")
+  }
+}
+````
+files."lib/Tauto.eure" = ```eure
+package {
+  name = "lib"
+  version = "0.1.0"
+}
+
+dependencies {
+  macros { path = "../macros" }
+}
+```
+files."lib/src/shapes.taut" = ```tauto
+import macros::made { made }
+
+@made!("s") => fn S::made
+pub(open) struct S { a: i64 }
+
+pub fn S::twice(): i64 ! {overflow} { S::made() + S::made() }
+```
+files."other/Tauto.eure" = ```eure
+package {
+  name = "other"
+  version = "0.1.0"
+}
+```
+files."other/src/kinds.taut" = ```tauto
+pub(open) struct T { x: i64 }
+pub(open) struct S { x: i64 }
+```
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+
+dependencies {
+  lib { path = "../lib" }
+  other { path = "../other" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import lib::shapes { S }
+import other::kinds { T }
+
+pub fn f(t: T, s: S): i64 ! {overflow} { t.x + s.a }
+```
+
+// A macro makes a definition whose body names the prelude's `Unit` (`def Point::kind := Unit`),
+// and a tote that depends on the macro's tote reads it. Another dependency declares types
+// named `Point` and `Unit` too. The body is read with the names of the tote the macro was
+// written in, so `Unit` there is still the prelude's.
+@ cases.a-made-definition-names-the-prelude-type-beside-other-tote-types
+files_tote = "app"
+tote_errors = []
+files."macros/Tauto.eure" = ```eure
+package {
+  name = "macros"
+  version = "0.1.0"
+}
+```
+files."macros/src/tag.taut" = ````tauto
+import std::builtin::macro
+import std::base
+
+fn kind_def(model: SynIdent, at: SynSpan): SynStmt ! {macro_error} {
+  let quoted := quote stmts {
+    def kind(): Type := Unit
+  }
+  match quoted {
+    Cons(StDef(t), Nil) => StDef(SynTheorem {
+      name: Syn::decl_name(model, concat(model.name, "::kind")),
+      implicit: t.implicit,
+      params: t.params,
+      ty: t.ty,
+      body: t.body,
+      span: at,
+      unused: t.unused,
+      unused_params: t.unused_params,
+    })
+    other => Syn::error(at, "tag! did not build a def")
+  }
+}
+
+pub macro fn tag(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StStruct(d) => [kind_def(d.name, d.span)]
+    other => Syn::error(Syn::call_span(), "tag! goes on a struct")
+  }
+}
+````
+files."macros/src/use_tag.taut" = ```tauto
+import "tag.taut" { tag }
+
+@tag!("x") => def Point::kind
+pub struct Point { x: i64 }
+
+pub fn point_kind(): Type { Point::kind() }
+```
+files."other/Tauto.eure" = ```eure
+package {
+  name = "other"
+  version = "0.1.0"
+}
+```
+files."other/src/kinds.taut" = ```tauto
+pub(open) struct Point { y: i64 }
+pub(open) struct Unit { z: i64 }
+```
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+
+dependencies {
+  macros { path = "../macros" }
+  other { path = "../other" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import macros::use_tag { point_kind }
+import other::kinds { Point }
+
+fn y(p: Point): i64 { p.y }
+def k(): Type := point_kind()
+
+perform main(() => show(&y(Point { y: 3 })))
+```
+stdout = "3\n"

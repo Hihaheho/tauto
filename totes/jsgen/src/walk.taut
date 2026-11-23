@@ -1,0 +1,151 @@
+import "../../nir/src/model.taut"
+import std::text
+import std::base
+
+// The parts of an expression that `Expr::children` visits: a `while` body
+// as a block, the arms of a `handle` but its suspending ones unless `susp`.
+pub fn jw_children(e: NExpr, susp: Bool): List(NExpr) {
+  match e.kind {
+    NCallOf(c) => match c.callee {
+      NCallValue(v) => Cons(v, c.args)
+      NCallInst(^i) => c.args
+      NCallBuiltin(^n) => c.args
+      NCallExtern(^n) => c.args
+      NCallLocal(^l) => c.args
+      NCallCont(^l) => c.args
+    }
+    NArithOf(^op, ^t, args) => args
+    NCmpOf(^op, args) => args
+    NEqOf(^n, args) => args
+    NNot(a) => [a]
+    NTempRef(a) => [a]
+    NShownOf(a) => [a]
+    NUnreachable(a) => [a]
+    NFnCast(a) => [a]
+    NAnd(a, b) => [a, b]
+    NOr(a, b) => [a, b]
+    NBudgetOf(b) => [b.steps, b.body]
+    NCtorOf(^c, fields) => jw_args(fields)
+    NFieldOf(base, ^f, ^how, ^ind) => [base]
+    NMatchOf(m) => Cons(m.scrut, jw_arms(m.arms))
+    NIf(c, t, o) => match o {
+      Some(x) => [c, t, x]
+      None => [c, t]
+    }
+    NBlockOf(b) => jw_block(b)
+    NClosureOf(c) => [c.body]
+    NPerformOf(p) => p.args
+    NHandleOf(h) => Cons(h.body, List::append(match h.ret {
+      Some(r) => [r.body]
+      None => Nil
+    }, jw_op_arms(h.arms, susp)))
+    NInject(^u, ^m, v) => [v]
+    NRemap(^u, ^t, v) => [v]
+    NDeref(v, ^how) => [v]
+    NDeclaration(^n) => Nil
+    NUnitLit => Nil
+    NIntLit(^s, ^n) => Nil
+    NFloatLit(^t) => Nil
+    NBoolLit(^b) => Nil
+    NTextLit(^t) => Nil
+    NRead(^l, ^how) => Nil
+    NFnValue(^i, ^ts) => Nil
+    NBorrow(^p) => Nil
+    NBorrowMut(^p) => Nil
+  }
+}
+
+pub fn jw_args(xs: List(NArg)): List(NExpr) {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => Cons(a.value, jw_args(rest))
+  }
+}
+
+pub fn jw_guard(g: Option(NExpr), body: NExpr, rest: List(NExpr)): List(NExpr) {
+  match g {
+    Some(x) => Cons(x, Cons(body, rest))
+    None => Cons(body, rest)
+  }
+}
+
+pub fn jw_arms(xs: List(NArm)): List(NExpr) {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => jw_guard(a.guard, a.body, jw_arms(rest))
+  }
+}
+
+pub fn jw_suspends(k: NArmKind): Bool {
+  match k {
+    NArmDirect => false
+    NArmAbort => false
+    NArmSuspend => true
+  }
+}
+
+pub fn jw_op_arms(xs: List(NOpArm), susp: Bool): List(NExpr) {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => if jw_suspends(a.kind) && not(susp) {
+      jw_op_arms(rest, susp)
+    } else {
+      jw_guard(a.guard, a.body, jw_op_arms(rest, susp))
+    }
+  }
+}
+
+pub fn jw_block(b: NBlock): List(NExpr) {
+  jw_stmts(b.stmts, match b.tail {
+    Some(t) => [t]
+    None => Nil
+  })
+}
+
+pub fn jw_stmts(ss: List(NStmt), tail: List(NExpr)): List(NExpr) {
+  match ss {
+    Nil => tail
+    Cons(s, rest) => {
+      let more := jw_stmts(rest, tail)
+      match s {
+        NLet(^l, ^t, init, ^st) => Cons(init, more)
+        NVar(^l, ^t, init) => Cons(init, more)
+        NAssign(^p, v) => Cons(v, more)
+        NExprStmt(x) => Cons(x, more)
+        NWhile(c, body, ^t) => Cons(c, Cons(NExpr { kind: NBlockOf(body), ty: NUnit }, more))
+        NReturn(v) => match v {
+          Some(x) => Cons(x, more)
+          None => more
+        }
+      }
+    }
+  }
+}
+
+// Every expression of `e`, `e` first, in the order `walk` visits them.
+pub fn jw_all(e: NExpr, susp: Bool): List(NExpr) ! {div} {
+  var out: List(NExpr) := Nil
+  var stack: Vec(NExpr) := Vec::new()
+  Vec::push(&mut stack, e)
+  var going := true
+  while going {
+    match Vec::pop(&mut stack) {
+      None => { going := false }
+      Some(x) => {
+        jw_push_reversed(&mut stack, List::reverse(jw_children(x, susp)))
+        out := Cons(x, out)
+      }
+    }
+  }
+  List::reverse(out)
+}
+
+pub fn jw_push_reversed(stack: &mut Vec(NExpr), xs: List(NExpr)): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      Vec::push(stack, x)
+      jw_push_reversed(stack, rest)
+    }
+  }
+}

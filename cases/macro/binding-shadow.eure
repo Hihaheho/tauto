@@ -3,55 +3,55 @@
 
 @ cases.a-parameter-hides-a-global-function-of-the-same-name
 files."binding-defs.taut" = ````taut
-import std::prelude::Macro
-import std::prelude::Par
+import std::builtin::macro
+import std::builtin::par
 
-fn first(): Unit {
-  let cell := Ref::new(false)
-  Ref::set(cell, true)
+fn first(): Unit ! {ref_new, ref_set} {
+  let cell := perform ref_new(false)
+  perform ref_set(cell, true)
 }
 fn choose(first: Bool, value: SynExpr): SynExpr {
   if first { value } else { quote { 0 } }
 }
-macro fn answer(value: SynExpr): SynExpr { choose(true, value) }
+pub macro fn answer(value: SynExpr): SynExpr { choose(true, value) }
 ````
 files."binding.taut" = ````taut
 import "binding-defs.taut"
-perform show("answer", answer!(42))
+show(&(answer!(42)))
 ````
 entry = "binding.taut"
-shows = ["answer = 42"]
+stdout = "42\n"
 
 @ cases.a-let-hides-a-global-function-of-the-same-name
 files."binding-defs.taut" = ````taut
-import std::prelude::Macro
-import std::prelude::Par
+import std::builtin::macro
+import std::builtin::par
 
-fn first(): Unit {
-  let cell := Ref::new(false)
-  Ref::set(cell, true)
+fn first(): Unit ! {ref_new, ref_set} {
+  let cell := perform ref_new(false)
+  perform ref_set(cell, true)
 }
-fn choose(value: SynExpr): SynExpr {
+fn choose(value: SynExpr): SynExpr ! {ref_new, ref_set} {
   let first := true
   if first { value } else { quote { 0 } }
 }
-macro fn answer(value: SynExpr): SynExpr { choose(value) }
+pub macro fn answer(value: SynExpr): SynExpr ! {ref_new, ref_set} { choose(value) }
 ````
 files."binding.taut" = ````taut
 import "binding-defs.taut"
-perform show("answer", answer!(42))
+show(&(answer!(42)))
 ````
 entry = "binding.taut"
-shows = ["answer = 42"]
+stdout = "42\n"
 
 @ cases.a-match-variable-hides-a-global-function-of-the-same-name
 files."binding-defs.taut" = ````taut
-import std::prelude::Macro
-import std::prelude::Par
+import std::builtin::macro
+import std::builtin::par
 
-fn first(): Unit {
-  let cell := Ref::new(false)
-  Ref::set(cell, true)
+fn first(): Unit ! {ref_new, ref_set} {
+  let cell := perform ref_new(false)
+  perform ref_set(cell, true)
 }
 fn choose(flag: Option(Bool), value: SynExpr): SynExpr {
   match flag {
@@ -59,33 +59,33 @@ fn choose(flag: Option(Bool), value: SynExpr): SynExpr {
     None => quote { 0 }
   }
 }
-macro fn answer(value: SynExpr): SynExpr { choose(Some(true), value) }
+pub macro fn answer(value: SynExpr): SynExpr { choose(Some(true), value) }
 ````
 files."binding.taut" = ````taut
 import "binding-defs.taut"
-perform show("answer", answer!(42))
+show(&(answer!(42)))
 ````
 entry = "binding.taut"
-shows = ["answer = 42"]
+stdout = "42\n"
 
 @ cases.a-macro-function-may-use-a-shared-cell
 files."binding-defs.taut" = ````taut
-import std::prelude::Macro
-import std::prelude::Par
+import std::builtin::macro
+import std::builtin::par
 
-fn first(): Unit {
-  let cell := Ref::new(false)
-  Ref::set(cell, true)
+fn first(): Unit ! {ref_new, ref_set} {
+  let cell := perform ref_new(false)
+  perform ref_set(cell, true)
 }
-fn choose(value: SynExpr): SynExpr {
+fn choose(value: SynExpr): SynExpr ! {ref_new, ref_set} {
   first()
   value
 }
-macro fn answer(value: SynExpr): SynExpr { choose(value) }
+pub macro fn answer(value: SynExpr): SynExpr ! {ref_new, ref_set} { choose(value) }
 ````
 files."binding.taut" = ````taut
 import "binding-defs.taut"
-perform show("answer", answer!(42))
+show(&(answer!(42)))
 ````
 entry = "binding.taut"
-shows = ["answer = 42"]
+stdout = "42\n"

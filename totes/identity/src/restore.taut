@@ -1,0 +1,55 @@
+import std::base
+import std::text
+import "identity.taut"
+
+// A text that carries the keys of resolved names (`surface_name_text`), shown
+// to a reader: each key is replaced by what the `DeclTable` shows for its id.
+// A key whose id the table does not have stays as it is. A dump of the checker
+// is such a text; the table is the only place the words of a name are read.
+
+// The number a run of digits spells, and what follows it.
+pub fn restore_digits(bs: List(Nat), acc: Nat): Nat × List(Nat) {
+  match bs {
+    Nil => #(acc, Nil)
+    Cons(d, rest) => if 47 < d && d < 58 {
+      restore_digits(rest, acc * 10 + (d - 48))
+    } else {
+      #(acc, bs)
+    }
+  }
+}
+
+// `fuel` is the number of bytes left to read: every step reads one.
+pub fn restore_bytes(fuel: Nat, t: DeclTable, bs: List(Nat)): List(Nat) {
+  match fuel {
+    Zero => bs
+    Succ(f) => match bs {
+      Nil => Nil
+      Cons(b, rest) => if b == 1 {
+        match rest {
+          Nil => bs
+          Cons(g, more) => if g == 103 {
+            match restore_digits(more, 0) {
+              #(n, after) => match decl_table_display(t, DeclIdMk(n)) {
+                Some(shown) => List::append(Text::bytes(shown), restore_bytes(f, t, after))
+                None => Cons(b, restore_bytes(f, t, rest))
+              }
+            }
+          } else {
+            Cons(b, restore_bytes(f, t, rest))
+          }
+        }
+      } else {
+        Cons(b, restore_bytes(f, t, rest))
+      }
+    }
+  }
+}
+
+pub fn restore_names(t: DeclTable, s: Text): Text {
+  Text::Mk(restore_bytes(Text::len(s), t, Text::bytes(s)))
+}
+
+pub theorem restore_names_plain(): restore_names(decl_table_empty(), "no names") = "no names" { Refl }
+
+pub theorem restore_names_one(): restore_names(decl_table_add(decl_table_empty(), "Foo"), Text::concat("a ", Text::concat(surface_name_text(NameGlobal(DeclIdMk(0))), " b"))) = "a Foo b" { Refl }

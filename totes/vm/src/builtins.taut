@@ -1,16 +1,18 @@
 import "mval.taut"
+import "host.taut"
+import "../../synrun/src/syntab.taut"
 import "seq.taut"
-import std::SInt
-import std::UInt
-import std::Int
-import std::prelude::Shared
-import std::Base
-import std::List
-import std::Bytes
-import std::Float
-import std::Float32
-import std::Text
-import std::Array
+import "../../text/src/text.taut"
+import std::sint
+import std::uint
+import std::int
+import std::base
+import std::list
+import std::bytes
+import std::float
+import std::float32
+import std::text
+import std::array
 
 // The runtime library's functions (`Cps::Builtin`), as the other backends' runtimes define
 // them. A builtin is called by its number in `m_builtin_names`. What only the host can do
@@ -21,7 +23,7 @@ pub(open) inductive MOut: Type {
   MoutVal(v: MVal, cx: MCx): MOut
   MoutErr(message: Text): MOut
   // It performs `op` with no arguments and no resumption (`out_of_bounds`, `missing`).
-  MoutPerform(op: Text): MOut
+  MoutPerform(op: Text, cx: MCx): MOut
   MoutAsk(name: Text, args: List(MVal), cx: MCx): MOut
   MoutExit(code: Int): MOut
   // Starts a task that runs `f`, whose result goes to the pending `p`.
@@ -30,6 +32,8 @@ pub(open) inductive MOut: Type {
   MoutYield(p: Nat, cx: MCx): MOut
 }
 
+// A builtin is its place in these lists. An empty name is a place no builtin holds
+// any more (the evaluator's `HashMap`), kept so that the others keep theirs.
 pub fn m_builtin_names(): List(Text) {
   Cons(
     "clone",
@@ -76,7 +80,7 @@ pub fn m_builtin_names(): List(Text) {
                                             Cons(
                                               "Vec::index",
                                               Cons(
-                                                "Vec::swap",
+                                                "Vec::swap_within",
                                                 Cons(
                                                   "Vec::into_list",
                                                   Cons(
@@ -106,17 +110,17 @@ pub fn m_builtin_names(): List(Text) {
                                                                           Cons(
                                                                             "Text::of_bytes",
                                                                             Cons(
-                                                                              "HashMap::new",
+                                                                              "",
                                                                               Cons(
-                                                                                "HashMap::insert",
+                                                                                "",
                                                                                 Cons(
-                                                                                  "HashMap::get",
+                                                                                  "",
                                                                                   Cons(
-                                                                                    "HashMap::get_mut",
+                                                                                    "",
                                                                                     Cons(
-                                                                                      "HashMap::index",
+                                                                                      "",
                                                                                       Cons(
-                                                                                        "HashMap::into_vec",
+                                                                                        "",
                                                                                         Cons(
                                                                                           "Text::byte",
                                                                                           Cons(
@@ -416,7 +420,16 @@ pub fn m_builtin_names(): List(Text) {
 }
 
 pub fn m_host_names(): List(Text) {
-  Cons("Os::on_shutdown", m_host_names_rest())
+  Cons(
+    "Os::on_shutdown",
+    Cons(
+      "Os::http_open",
+      Cons(
+        "Os::http_write",
+        Cons("Os::http_finish", Cons("Os::http_read", Cons("Os::http_close", Cons("Os::set_mode", Cons("Os::lock", Cons("Os::unlock", m_host_names_rest()))))))
+      )
+    )
+  )
 }
 
 pub fn m_host_names_rest(): List(Text) {
@@ -453,9 +466,24 @@ pub fn m_host_names_rest(): List(Text) {
                                 Cons(
                                   "Os::env",
                                   Cons(
+                                  "Os::env_names",
+                                  Cons(
                                     "Os::wall_ms",
                                     Cons(
                                       "Os::monotonic_ns",
+                                      Cons("Os::uhost_add",
+                                      Cons("Os::uhost_sub",
+                                      Cons("Os::uhost_mul",
+                                      Cons("Os::uhost_of_u64",
+                                      Cons("Os::host_bits",
+                                      Cons("Os::hash_seed_k0",
+                                      Cons("Os::hash_seed_k1",
+                                      Cons("U64::of_uhost",
+                                      Cons("UHost::succ_below",
+                                      Cons("UHost::pred_nz",
+                                      Cons("UHost::add_within",
+                                      Cons("UHost::sub",
+                                      Cons("UHost::of_u64_below",
                                       Cons(
                                         "Os::random",
                                         Cons(
@@ -463,64 +491,73 @@ pub fn m_host_names_rest(): List(Text) {
                                           Cons(
                                             "Os::status",
                                             Cons(
-                                              "Os::check",
+                                              "Os::entry",
                                               Cons(
-                                                "Os::fetch",
+                                                "Os::check",
                                                 Cons(
-                                                  "Os::resolve",
+                                                  "Os::fetch",
                                                   Cons(
-                                                    "Os::tcp_listen",
+                                                    "Os::resolve",
                                                     Cons(
-                                                      "Os::tcp_accept",
+                                                      "Os::tcp_listen",
                                                       Cons(
-                                                        "Os::tcp_connect",
+                                                        "Os::tcp_accept",
                                                         Cons(
-                                                          "Os::tcp_read",
+                                                          "Os::tcp_connect",
                                                           Cons(
-                                                            "Os::tcp_write",
+                                                            "Os::tcp_read",
                                                             Cons(
-                                                              "Os::tcp_shutdown",
+                                                              "Os::tcp_write",
                                                               Cons(
-                                                                "Os::tcp_close",
+                                                                "Os::tcp_shutdown",
                                                                 Cons(
-                                                                  "Os::tcp_unlisten",
+                                                                  "Os::tcp_close",
                                                                   Cons(
-                                                                    "Os::tls_accept",
+                                                                    "Os::tcp_unlisten",
                                                                     Cons(
-                                                                      "Os::tls_connect",
+                                                                      "Os::tls_accept",
                                                                       Cons(
-                                                                        "Os::tls_read",
+                                                                        "Os::tls_connect",
                                                                         Cons(
-                                                                          "Os::tls_write",
+                                                                          "Os::tls_read",
                                                                           Cons(
-                                                                            "Os::tls_shutdown",
+                                                                            "Os::tls_write",
                                                                             Cons(
-                                                                              "Os::tls_close",
+                                                                              "Os::tls_shutdown",
                                                                               Cons(
-                                                                                "Os::stat",
+                                                                                "Os::tls_close",
                                                                                 Cons(
-                                                                                  "Os::move_path",
+                                                                                  "Os::stat",
                                                                                   Cons(
-                                                                                    "Os::copy_file",
+                                                                                    "Os::move_path",
                                                                                     Cons(
-                                                                                      "Os::canonicalize",
+                                                                                      "Os::copy_file",
                                                                                       Cons(
-                                                                                        "Os::read_stdin",
+                                                                                        "Os::canonicalize",
                                                                                         Cons(
-                                                                                          "Os::flush",
+                                                                                          "Os::read_stdin",
                                                                                           Cons(
-                                                                                            "Os::child_spawn",
+                                                                                            "Os::flush",
                                                                                             Cons(
-                                                                                              "Os::child_read",
+                                                                                              "Os::child_spawn",
                                                                                               Cons(
-                                                                                                "Os::child_write",
+                                                                                                "Os::child_read",
                                                                                                 Cons(
-                                                                                                  "Os::child_close_stdin",
+                                                                                                  "Os::child_write",
                                                                                                   Cons(
-                                                                                                    "Os::child_wait",
+                                                                                                    "Os::child_close_stdin",
                                                                                                     Cons(
-                                                                                                      "Os::child_close",
-                                                                                                      Cons("Os::read_link", Cons("Os::write_new", Nil))
+                                                                                                      "Os::child_wait",
+                                                                                                      Cons(
+                                                                                                        "Os::child_close",
+                                                                                                        Cons(
+                                                                                                          "Os::read_link",
+                                                                                                          Cons(
+                                                                                                            "Os::write_new",
+                                                                                                            Cons("Os::tcp_send", Cons("Os::tls_send", Nil))
+                                                                                                          )
+                                                                                                        )
+                                                                                                      )
                                                                                                     )
                                                                                                   )
                                                                                                 )
@@ -570,7 +607,7 @@ pub fn m_host_names_rest(): List(Text) {
         )
       )
     )
-  )
+  )))))))))))))))
 }
 
 // Rust writes the prelude's constructors first, in this order.
@@ -597,6 +634,33 @@ pub fn m_errv(v: MVal): MVal {
   MvData(3, Cons(v, Nil))
 }
 
+// A value of a parse (`totes/synrun`), whose constructors are already the machine's.
+mutual {
+  pub fn m_of_syn(v: SynVal): MVal {
+    match v {
+      VData(c, fields) => MvData(c, m_of_syns(fields))
+      VNat(n) => MvInt(IntOfNat(n))
+      VText(t) => MvText(t)
+      VList(items) => m_list(m_of_syns(items))
+      VOpt(o) => m_of_syn_opt(o)
+    }
+  }
+
+  pub fn m_of_syns(vs: List(SynVal)): List(MVal) {
+    match vs {
+      Nil => Nil
+      Cons(v, rest) => Cons(m_of_syn(v), m_of_syns(rest))
+    }
+  }
+
+  pub fn m_of_syn_opt(o: Option(SynVal)): MVal {
+    match o {
+      None => m_none()
+      Some(x) => m_some(m_of_syn(x))
+    }
+  }
+}
+
 pub fn m_pair(a: MVal, b: MVal): MVal {
   MvData(4, Cons(a, Cons(b, Nil)))
 }
@@ -609,7 +673,7 @@ pub fn m_list(xs: List(MVal)): MVal {
 }
 
 // The items of a `List`; `fuel` bounds its length.
-pub fn m_items(fuel: Nat, ctors: List(MCtor), cx: MCx, v: MVal): List(MVal) {
+pub fn m_items(fuel: Nat, ctors: Array(MCtor), cx: MCx, v: MVal): List(MVal) {
   match fuel {
     Zero => Nil
     Succ(f) => match m_get(ctors, cx, v) {
@@ -693,13 +757,6 @@ pub fn m_as_bytes(v: MVal): Bytes {
   }
 }
 
-pub fn m_as_entries(v: MVal): List(Pair(MVal, MVal)) {
-  match v {
-    MvMap(es) => es
-    _ => Nil
-  }
-}
-
 // The bitwise operation `op` (0 and, 1 or, 2 xor) of the low `bits` bits.
 pub fn m_bitwise(bits: Nat, op: Nat, a: Nat, b: Nat): Nat {
   match bits {
@@ -733,6 +790,19 @@ pub fn m_pow2(n: Nat): Nat {
     Zero => 1
     Succ(m) => Nat::mul(2, m_pow2(m))
   }
+}
+
+// `x + y`, `x - y` and `x * y` modulo `2^64` for `op` 0, 1 and 2.
+pub fn m_wrapping(op: Nat, x: Nat, y: Nat): Nat {
+  let modulus := Nat::pow2(64)
+  let r := if Nat::eq(op, 0) {
+    Nat::add(x, y)
+  } else if Nat::eq(op, 1) {
+    Nat::sub(Nat::add(x, modulus), y)
+  } else {
+    Nat::mul(x, y)
+  }
+  Nat::rem_nz(r, modulus, Nat::pow2_ne_zero(64))
 }
 
 // `op`: 0 and, 1 or, 2 xor, 3 shl, 4 shr, 5 rotl, 6 rotr.
@@ -829,78 +899,22 @@ pub fn m_all_bytes(xs: List(MVal)): Option(List(Nat)) {
   }
 }
 
-pub fn m_find_key_general(
-  ctors: List(MCtor),
-  cx: MCx,
-  es: List(Pair(MVal, MVal)),
-  k: MVal,
-  at: Nat
-): Option(Nat) {
-  match es {
-    Nil => None
-    Cons(e, rest) => match e {
-      Pair { fst: key, snd: x } => if m_eq(ctors, cx, key, k) {
-        Some(at)
-      } else {
-        m_find_key_general(ctors, cx, rest, k, Succ(at))
-      }
-    }
-  }
-}
-
-// A text query compares text payloads without reading the heap. Other stored
-// values keep the general equality, including references and union injections.
-pub fn m_find_text_key(
-  ctors: List(MCtor),
-  cx: MCx,
-  es: List(Pair(MVal, MVal)),
-  text: Text,
-  at: Nat
-): Option(Nat) {
-  match es {
-    Nil => None
-    Cons(e, rest) => match e {
-      Pair { fst: key, snd: value } => match key {
-        MvText(stored) => if m_text_eq(stored, text) {
-          Some(at)
-        } else { m_find_text_key(ctors, cx, rest, text, Succ(at)) }
-        other => if m_eq(ctors, cx, other, MvText(text)) {
-          Some(at)
-        } else { m_find_text_key(ctors, cx, rest, text, Succ(at)) }
-      }
-    }
-  }
-}
-
-pub fn m_find_key(
-  ctors: List(MCtor),
-  cx: MCx,
-  es: List(Pair(MVal, MVal)),
-  k: MVal,
-  at: Nat
-): Option(Nat) {
-  match k {
-    MvText(text) => m_find_text_key(ctors, cx, es, text, at)
-    _ => m_find_key_general(ctors, cx, es, k, at)
-  }
-}
-
 pub fn m_val(v: MVal, cx: MCx): MOut {
   MoutVal(v, cx)
 }
 
 // A borrow of the place `v` is, or of a temporary holding it.
-pub fn m_place(cx: MCx, v: MVal): Pair(MVal, MCx) {
+pub fn m_place(cx: MCx, v: MVal): MVal × MCx {
   match v {
-    MvRef(c, path) => Pair { fst: v, snd: cx }
+    MvRef(^c, ^path) => #(v, cx)
     _ => cx_temp(cx, v)
   }
 }
 
 // Changes the value of the place `r` names with `f`, and answers `g` of the old value.
-pub fn m_update(ctors: List(MCtor), cx: MCx, r: MVal, f: (MVal) -> MVal, g: (MVal) -> MVal): MOut {
+pub fn m_update(ctors: Array(MCtor), cx: MCx, r: MVal, f: (MVal) -> MVal, g: (MVal) -> MVal): MOut {
   match m_place(cx, r) {
-    Pair { fst: place, snd: cx2 } => match place {
+    #(place, cx2) => match place {
       MvRef(cell, path) => {
         let old := m_get(ctors, cx2, place)
         MoutVal(g(old), m_put(ctors, cx2, cell, path, f(old)))
@@ -910,8 +924,16 @@ pub fn m_update(ctors: List(MCtor), cx: MCx, r: MVal, f: (MVal) -> MVal, g: (MVa
   }
 }
 
-pub fn m_item_ref(cx: MCx, r: MVal, s: MPath): Pair(MVal, MCx) {
-  m_child(cx, r, s)
+// A borrow of an item of what `r` names. A value that is not a borrow stands for a shared
+// borrow of itself (the machine reads a borrowed local's value rather than naming its place
+// again), so the item stands for a shared borrow of the item: putting the value in a new
+// cell instead would leave a cell behind at every call, and a recursion that reads one item
+// per call would grow the heap with its depth.
+pub fn m_item_ref(ctors: Array(MCtor), cx: MCx, r: MVal, s: MPath): MVal × MCx {
+  match r {
+    MvRef(^cell, ^path) => m_child(cx, r, s)
+    _ => #(m_at(ctors, r, s), cx)
+  }
 }
 
 pub fn m_checked_int(w: Nat, i: Int, cx: MCx): MOut {
@@ -922,57 +944,22 @@ pub fn m_float1(f: (Float) -> Float, a: List(MVal), cx: MCx): MOut {
   MoutVal(MvFloat(f(m_as_float(m_nth_or_unit(a, 0)))), cx)
 }
 
-pub fn m_vec_get(ctors: List(MCtor), cx: MCx, r: MVal, i: MVal, index: Bool): MOut {
+pub fn m_vec_get(ctors: Array(MCtor), cx: MCx, r: MVal, i: MVal, index: Bool): MOut {
   let n := m_items_len(m_get(ctors, cx, r))
   if Bool::and(not(m_is_neg(i)), Nat::lt(m_as_nat(i), n)) {
-    match m_item_ref(cx, r, MpathItem(m_as_nat(i))) {
-      Pair { fst: x, snd: cx2 } => MoutVal(if index { x } else { m_some(x) }, cx2)
+    match m_item_ref(ctors, cx, r, MpathItem(m_as_nat(i))) {
+      #(x, cx2) => MoutVal(if index { x } else { m_some(x) }, cx2)
     }
-  } else if index { MoutPerform("out_of_bounds") } else { MoutVal(m_none(), cx) }
+  } else if index { MoutPerform("out_of_bounds", cx) } else { MoutVal(m_none(), cx) }
 }
 
-pub fn m_map_get(ctors: List(MCtor), cx: MCx, r: MVal, k: MVal, index: Bool): MOut {
-  match m_find_key(ctors, cx, m_as_entries(m_get(ctors, cx, r)), m_get(ctors, cx, k), 0) {
-    Some(i) => match m_item_ref(cx, r, MpathEntry(i)) {
-      Pair { fst: x, snd: cx2 } => MoutVal(if index { x } else { m_some(x) }, cx2)
-    }
-    None => if index { MoutPerform("missing") } else { MoutVal(m_none(), cx) }
-  }
-}
-
-pub fn m_map_insert(ctors: List(MCtor), cx: MCx, r: MVal, k0: MVal, x: MVal): MOut {
-  let k := m_get(ctors, cx, k0)
-  let es := m_as_entries(m_get(ctors, cx, r))
-  match m_find_key(ctors, cx, es, k, 0) {
-    Some(i) => m_update(
-      ctors,
-      cx,
-      r,
-      (m: MVal) => MvMap(m_set(m_as_entries(m), i, Pair { fst: k, snd: x })),
-      (m: MVal) => match List::nth(m_as_entries(m), i) {
-        None => m_none()
-        Some(e) => match e {
-          Pair { fst: key, snd: old } => m_some(old)
-        }
-      }
-    )
-    None => m_update(
-      ctors,
-      cx,
-      r,
-      (m: MVal) => MvMap(List::append(m_as_entries(m), Cons(Pair { fst: k, snd: x }, Nil))),
-      (m: MVal) => m_none()
-    )
-  }
-}
-
-pub fn m_pending_of(cx: MCx, id: Nat): Pair(MPend, Nat) {
+pub fn m_pending_of(cx: MCx, id: Nat): MPend × Nat {
   match cx_obj(cx, id) {
     Some(o) => match o {
-      MoPending(state, signal) => Pair { fst: state, snd: signal }
-      _ => Pair { fst: MpendTaken, snd: 0 }
+      MoPending(state, signal) => #(state, signal)
+      _ => #(MpendTaken, 0)
     }
-    None => Pair { fst: MpendTaken, snd: 0 }
+    None => #(MpendTaken, 0)
   }
 }
 
@@ -981,23 +968,23 @@ pub fn m_raise(cx: MCx, s: Nat, handed: Option(MVal)): MCx {
 }
 
 // Whether the pending is ready: a timer is once the clock passes it.
-pub fn m_ready(cx: MCx, p: Nat): Pair(Bool, MCx) {
+pub fn m_ready(cx: MCx, p: Nat): Bool × MCx {
   match m_pending_of(cx, p) {
-    Pair { fst: state, snd: s } => match state {
-      MpendRunning => Pair { fst: false, snd: cx }
+    #(state, s) => match state {
+      MpendRunning => #(false, cx)
       MpendTimer(at) => if Int::le(at, cx_now(cx)) {
-        Pair { fst: true, snd: m_raise(cx_put(cx, p, MoPending(MpendReady(MvUnit), s)), s, None) }
+        #(true, m_raise(cx_put(cx, p, MoPending(MpendReady(MvUnit), s)), s, None))
       } else {
-        Pair { fst: false, snd: cx }
+        #(false, cx)
       }
-      _ => Pair { fst: true, snd: cx }
+      _ => #(true, cx)
     }
   }
 }
 
-pub fn m_new_pending(cx: MCx, state: MPend, raised: Bool): Pair(Nat, MCx) {
+pub fn m_new_pending(cx: MCx, state: MPend, raised: Bool): Nat × MCx {
   match cx_alloc(cx, MoSignal(raised, None)) {
-    Pair { fst: s, snd: cx2 } => cx_alloc(cx2, MoPending(state, s))
+    #(s, cx2) => cx_alloc(cx2, MoPending(state, s))
   }
 }
 
@@ -1006,25 +993,88 @@ pub fn m_id_of(v: MVal): Nat {
     MvPending(p) => p
     MvSignal(s) => s
     MvMutex(m) => m
-    MvShared(k, c) => c
+    MvShared(^k, c) => c
     _ => 0
   }
 }
 
-pub fn m_mutex_of(cx: MCx, id: Nat): Pair(Option(MVal), List(Nat)) {
+pub fn m_is_poisoned(cx: MCx, id: Nat): Bool {
+  match cx_obj(cx, id) {
+    Some(o) => match o { MoPoisoned => true, _ => false }
+    None => false
+  }
+}
+
+pub fn m_taker_of(cx: MCx, id: Nat): Option(Nat) {
   match cx_obj(cx, id) {
     Some(o) => match o {
-      MoMutex(value, waiting) => Pair { fst: value, snd: waiting }
-      _ => Pair { fst: None, snd: Nil }
+      MoMutex(^value, ^waiting, taker) => taker
+      _ => None
     }
-    None => Pair { fst: None, snd: Nil }
+    None => None
+  }
+}
+
+// The mutex keeps who took its content.
+pub fn m_mutex_set(cx: MCx, m: Nat, value: Option(MVal), waiting: List(Nat)): MCx {
+  cx_put(cx, m, MoMutex(value, waiting, m_taker_of(cx, m)))
+}
+
+// The running task took the content of the mutex `m` (nothing is noted on the top level).
+pub fn m_took(cx: MCx, m: Nat): MCx {
+  match cx_obj(cx, m) {
+    Some(o) => match o {
+      MoMutex(value, waiting, ^taker) => cx_put(cx, m, MoMutex(value, waiting, cx_running(cx)))
+      _ => cx
+    }
+    None => cx
+  }
+}
+
+pub fn m_raise_all(cx: MCx, ss: List(Nat)): MCx {
+  match ss {
+    Nil => cx
+    Cons(s, rest) => m_raise_all(m_raise(cx, s, None), rest)
+  }
+}
+
+// The task of the pending `pid` failed: each mutex whose content it holds, among the
+// objects below `n`, is poisoned, and the places in its line wake to fail.
+pub fn m_poison_held(cx: MCx, pid: Nat, n: Nat): MCx {
+  match n {
+    Zero => cx
+    Succ(i) => {
+      let cx2 := match cx_obj(cx, i) {
+        Some(o) => match o {
+          MoMutex(^value, waiting, taker) => match taker {
+            Some(t) => if Nat::eq(t, pid) {
+              m_raise_all(cx_put(cx, i, MoPoisoned), waiting)
+            } else { cx }
+            None => cx
+          }
+          _ => cx
+        }
+        None => cx
+      }
+      m_poison_held(cx2, pid, i)
+    }
+  }
+}
+
+pub fn m_mutex_of(cx: MCx, id: Nat): Option(MVal) × List(Nat) {
+  match cx_obj(cx, id) {
+    Some(o) => match o {
+      MoMutex(value, waiting, ^taker) => #(value, waiting)
+      _ => #(None, Nil)
+    }
+    None => #(None, Nil)
   }
 }
 
 pub fn m_handed(cx: MCx, s: Nat): Option(MVal) {
   match cx_obj(cx, s) {
     Some(o) => match o {
-      MoSignal(raised, handed) => handed
+      MoSignal(^raised, handed) => handed
       _ => None
     }
     None => None
@@ -1114,15 +1164,101 @@ pub fn m_builtin_names_float32(): List(Text) {
   )
 }
 
+// Whether `v` has the kind `k` that a builtin reads with `m_as_*` or `m_id_of`:
+// 0 any, 1 integer, 2 text, 3 vector or array, 4 bytes, 5 `Float`, 6 `Float32`,
+// 7 map, 8 a pending, signal, mutex or shared cell.
+pub fn m_has_kind(k: Nat, v: MVal): Bool {
+  match v {
+    MvInt(^i) => Nat::eq(k, 0) || Nat::eq(k, 1)
+    MvText(^t) => Nat::eq(k, 0) || Nat::eq(k, 2)
+    MvShown(^t) => Nat::eq(k, 0) || Nat::eq(k, 2)
+    MvBuf(^t) => Nat::eq(k, 0) || Nat::eq(k, 2)
+    MvVec(^xs) => Nat::eq(k, 0) || Nat::eq(k, 3)
+    MvArray(^xs) => Nat::eq(k, 0) || Nat::eq(k, 3)
+    MvBytes(^b) => Nat::eq(k, 0) || Nat::eq(k, 4)
+    MvFloat(^x) => Nat::eq(k, 0) || Nat::eq(k, 5)
+    MvFloat32(^x) => Nat::eq(k, 0) || Nat::eq(k, 6)
+    MvPending(^p) => Nat::eq(k, 0) || Nat::eq(k, 8)
+    MvSignal(^s) => Nat::eq(k, 0) || Nat::eq(k, 8)
+    MvMutex(^m) => Nat::eq(k, 0) || Nat::eq(k, 8)
+    MvShared(^s, ^c) => Nat::eq(k, 0) || Nat::eq(k, 8)
+    _ => Nat::eq(k, 0)
+  }
+}
+
+pub fn m_k1(k: Nat): List(Nat) { Cons(k, Nil) }
+
+pub fn m_k2(k: Nat, l: Nat): List(Nat) { Cons(k, Cons(l, Nil)) }
+
+pub fn m_k3(k: Nat, l: Nat, m: Nat): List(Nat) { Cons(k, Cons(l, Cons(m, Nil))) }
+
+// The kinds (of `m_has_kind`) of the arguments the `b`-th builtin reads.
+pub fn m_builtin_kinds(b: Nat): List(Nat) {
+  if Bool::or(Nat::eq(b, 3), Bool::or(Nat::eq(b, 4), Nat::eq(b, 6))) { m_k1(2) } else if Nat::eq(b, 5) { m_k2(2, 2) } else if Bool::or(Bool::and(Nat::le(8, b), Nat::le(b, 12)), Nat::eq(b, 20)) { m_k1(3) } else if Bool::or(Nat::eq(b, 16), Bool::or(Bool::and(Nat::le(17, b), Nat::le(b, 19)), Bool::or(Nat::eq(b, 21), Bool::or(Nat::eq(b, 27), Nat::eq(b, 171))))) { m_k2(3, 1) } else if Nat::eq(b, 22) { m_k3(3, 1, 1) } else if Bool::and(Nat::le(23, b), Nat::le(b, 25)) { m_k1(3) } else if Bool::or(Nat::eq(b, 29), Bool::or(Nat::eq(b, 30), Nat::eq(b, 36))) { m_k1(4) } else if Nat::eq(b, 31) { m_k2(4, 1) } else if Nat::eq(b, 32) { m_k3(4, 1, 1) } else if Bool::or(Nat::eq(b, 33), Nat::eq(b, 34)) { m_k2(4, 4) } else if Bool::or(Nat::eq(b, 35), Bool::or(Nat::eq(b, 59), Bool::or(Nat::eq(b, 86), Nat::eq(b, 114)))) { m_k1(2) } else if Nat::eq(b, 43) { m_k2(2, 1) } else if Nat::eq(b, 44) { m_k3(2, 1, 1) } else if Bool::or(Nat::eq(b, 45), Bool::or(Bool::and(Nat::le(47, b), Nat::le(b, 49)), Bool::and(Nat::le(51, b), Nat::le(b, 57)))) { m_k1(1) } else if Bool::or(Nat::eq(b, 62), Bool::or(Nat::eq(b, 113), Nat::eq(b, 130))) { m_k1(1) } else if Bool::or(Nat::eq(b, 75), Nat::eq(b, 82)) { m_k2(5, 5) } else if Bool::or(Nat::eq(b, 58), Bool::or(Bool::and(Nat::le(60, b), Nat::le(b, 85)), Nat::eq(b, 127))) { m_k1(5) } else if Nat::eq(b, 88) { m_k2(0, 1) } else if Bool::and(Nat::le(90, b), Nat::le(b, 103)) { m_k2(1, 1) } else if Bool::or(Nat::eq(b, 105), Bool::or(Nat::eq(b, 106), Bool::or(Nat::eq(b, 108), Nat::eq(b, 109)))) { m_k1(8) } else if Nat::eq(b, 110) { m_k2(8, 1) } else if Bool::or(Bool::and(Nat::le(119, b), Nat::le(b, 121)), Bool::or(Nat::eq(b, 123), Nat::eq(b, 125))) { m_k1(8) } else if Bool::or(Nat::eq(b, 124), Bool::or(Nat::eq(b, 154), Bool::or(Nat::eq(b, 162), Nat::eq(b, 165)))) { m_k2(8, 8) } else if Bool::or(Nat::eq(b, 143), Nat::eq(b, 150)) { m_k2(6, 6) } else if Bool::and(Nat::le(128, b), Nat::le(b, 153)) { m_k1(6) } else if Bool::or(Nat::eq(b, 160), Nat::eq(b, 161)) { m_k1(8) } else if Nat::eq(b, 164) { Cons(4, m_k3(1, 1, 1)) } else if Nat::eq(b, 178) { m_k1(2) } else if Bool::and(Nat::le(179, b), Nat::le(b, 181)) { m_k2(1, 1) } else { Nil }
+}
+
+// Whether each argument has the kind the builtin reads. A checked program
+// never gives it another kind, so a value of another kind stops the run with
+// the malformed-bytecode error instead of reaching the default value of
+// `m_as_int` and the other readers.
+pub fn m_kinds_ok(ctors: Array(MCtor), cx: MCx, kinds: List(Nat), a: List(MVal)): Bool {
+  match kinds {
+    Nil => true
+    Cons(k, rest) => match a {
+      Nil => false
+      Cons(x, more) => m_has_kind(k, m_get(ctors, cx, x)) && m_kinds_ok(ctors, cx, rest, more)
+    }
+  }
+}
+
 // The `b`-th builtin of `m_builtin_names` with the arguments `a`.
-pub fn m_builtin(ctors: List(MCtor), cx: MCx, b: Nat, a: List(MVal)): MOut {
+pub fn m_builtin(ctors: Array(MCtor), cx: MCx, b: Nat, a: List(MVal)): MOut {
+  if m_kinds_ok(ctors, cx, m_builtin_kinds(b), a) { m_builtin_run(ctors, cx, b, a) } else {
+    MoutErr(m_internal())
+  }
+}
+
+fn m_builtin_run(ctors: Array(MCtor), cx: MCx, b: Nat, a: List(MVal)): MOut {
   let a0 := m_nth_or_unit(a, 0)
   let a1 := m_nth_or_unit(a, 1)
   let a2 := m_nth_or_unit(a, 2)
   let v0 := m_get(ctors, cx, a0)
   let v1 := m_get(ctors, cx, a1)
   let v2 := m_get(ctors, cx, a2)
-  if Nat::le(159, b) {
+  if Nat::eq(b, 164) {
+    let v3 := m_get(ctors, cx, m_nth_or_unit(a, 3))
+    m_val(m_int(Bytes::find(m_as_bytes(v0), m_as_nat(v1), m_as_nat(v2), m_as_nat(v3))), cx)
+  } else if Nat::eq(b, 165) {
+    m_withdraw(cx, m_id_of(v0), m_id_of(v1))
+  } else if Nat::eq(b, 172) {
+    // The case host's `Probe::new` (`host.taut`).
+    match h_new(cx, m_as_text(v0)) {
+      #(v, cx2) => m_val(v, cx2)
+    }
+  } else if Nat::eq(b, 171) {
+    // `Array::set`: the same array when the index is past the end.
+    let xs := m_as_seq(v0)
+    if m_is_neg(v1) { m_val(MvArray(xs), cx) } else { m_val(MvArray(ms_put(xs, m_as_nat(v1), a2)), cx) }
+  } else if Bool::or(Nat::eq(b, 173), Nat::eq(b, 174)) {
+    // `Os::tcp_ready` and `Os::tls_ready`: there at once, answering `false`;
+    // the request that follows waits.
+    match m_new_pending(cx, MpendReady(MvBool(false)), true) {
+      #(p, cx2) => m_val(MvPending(p), cx2)
+    }
+  } else if Nat::eq(b, 178) {
+    m_val(MvText(m_escape_debug(m_as_text(v0))), cx)
+  } else if Bool::and(Nat::le(179, b), Nat::le(b, 181)) {
+    // `U64::wrapping_add`, `wrapping_sub` and `wrapping_mul`: modulo `2^64`.
+    m_val(m_int(m_wrapping(Nat::sub(b, 179), m_as_nat(v0), m_as_nat(v1))), cx)
+  } else if Nat::eq(b, 197) {
+    m_builtin_slots(ctors, cx, b, a)
+  } else if Nat::le(191, b) {
+    m_builtin_width(cx, b, v0)
+  } else if Nat::le(182, b) {
+    m_builtin_slots(ctors, cx, b, a)
+  } else if Nat::le(166, b) {
+    m_val(MvUnit, cx)
+  } else if Nat::le(159, b) {
     m_builtin_signal(cx, b, v0, v1)
   } else if Nat::lt(b, 30) {
     m_builtin_0(ctors, cx, b, a0, a1, a2, v0, v1, v2)
@@ -1137,7 +1273,7 @@ pub fn m_builtin(ctors: List(MCtor), cx: MCx, b: Nat, a: List(MVal)): MOut {
   } else if Nat::lt(b, 157) { m_builtin_guard(cx, b, v0, v1) } else { m_builtin_weak(cx, b, v0) } }
 
 pub fn m_builtin_0(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
   b: Nat,
   a0: MVal,
@@ -1197,8 +1333,8 @@ pub fn m_builtin_0(
     let n := m_items_len(v0)
     match n {
       Zero => m_val(m_none(), cx)
-      Succ(m) => match m_item_ref(cx, a0, MpathItem(m)) {
-        Pair { fst: x, snd: cx2 } => m_val(m_some(x), cx2)
+      Succ(m) => match m_item_ref(ctors, cx, a0, MpathItem(m)) {
+        #(x, cx2) => m_val(m_some(x), cx2)
       }
     }
   } else if Nat::eq(b, 21) {
@@ -1214,10 +1350,10 @@ pub fn m_builtin_0(
         cx,
         a0,
         (old: MVal) => MvVec(ms_swap(MvUnit, m_as_seq(old), m_as_nat(v1), m_as_nat(v2))),
-        (old: MVal) => MvUnit
+        (old: MVal) => MvBool(true)
       )
     } else {
-      MoutPerform("out_of_bounds")
+      m_val(MvBool(false), cx)
     }
   } else if Bool::or(Nat::eq(b, 23), Nat::eq(b, 24)) {
     m_val(m_list(m_as_items(v0)), cx)
@@ -1235,7 +1371,7 @@ pub fn m_builtin_0(
   } else if Nat::eq(b, 28) {
     match m_all_bytes(m_items(1000000000, ctors, cx, v0)) {
       None => MoutErr(m_too_large())
-      Some(bs) => m_val(MvBytes(Bytes::of_list(List::map((n: Nat) => U8::of_byte(n), bs))), cx)
+      Some(bs) => m_val(MvBytes(Bytes::of_list(List::map((n: Nat) => UInt::of_byte8(n), bs))), cx)
     }
   } else if Nat::eq(b, 29) {
     m_val(m_list(List::map((x: Nat) => m_int(x), Bytes::values(m_as_bytes(v0)))), cx)
@@ -1245,7 +1381,7 @@ pub fn m_builtin_0(
 }
 
 pub fn m_builtin_30(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
   b: Nat,
   a0: MVal,
@@ -1262,7 +1398,7 @@ pub fn m_builtin_30(
     if Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), Bytes::len(bs))) {
       m_val(m_some(m_int(match Bytes::get(bs, m_as_nat(v1)) {
         None => 0
-        Some(x) => U8::val(x)
+        Some(x) => UInt::val8(x)
       })), cx)
     } else {
       m_val(m_none(), cx)
@@ -1288,33 +1424,25 @@ pub fn m_builtin_30(
       None => m_val(m_none(), cx)
       Some(t) => m_val(m_some(MvText(t)), cx)
     }
-  } else if Nat::eq(b, 37) {
-    m_val(MvMap(Nil), cx)
-  } else if Nat::eq(b, 38) {
-    m_map_insert(ctors, cx, a0, a1, a2)
-  } else if Bool::or(Nat::eq(b, 39), Nat::eq(b, 40)) {
-    m_map_get(ctors, cx, a0, a1, false)
-  } else if Nat::eq(b, 41) {
-    m_map_get(ctors, cx, a0, a1, true)
-  } else if Nat::eq(b, 42) {
-    m_val(
-      MvVec(ms_of_list(List::map((e: Pair(MVal, MVal)) => m_pair(e.fst, e.snd), m_as_entries(v0)))),
-      cx
-    )
   } else if Nat::eq(b, 43) {
-    let bs := Text::bytes(m_as_text(v0))
-    if Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), List::length(bs))) {
-      m_val(m_some(m_int(match List::nth(bs, m_as_nat(v1)) {
-        None => 0
-        Some(x) => x
-      })), cx)
-    } else {
+    // `Text::byte` and `Text::len` run as builtins; `Text::bytes` would
+    // copy the whole text for each byte read.
+    let t := m_as_text(v0)
+    if m_is_neg(v1) {
       m_val(m_none(), cx)
+    } else {
+      match Text::byte(t, m_as_nat(v1)) {
+        None => m_val(m_none(), cx)
+        Some(x) => m_val(m_some(m_int(x)), cx)
+      }
     }
   } else if Nat::eq(b, 44) {
-    let bs := Text::bytes(m_as_text(v0))
-    if m_range_ok(v1, v2, List::length(bs)) {
-      m_val(m_text_of_utf8(m_slice(bs, m_as_nat(v1), m_as_nat(v2))), cx)
+    let t := m_as_text(v0)
+    if m_range_ok(v1, v2, Text::len(t)) {
+      match Text::slice(t, m_as_nat(v1), m_as_nat(v2)) {
+        None => m_val(m_none(), cx)
+        Some(s) => m_val(m_some(MvText(s)), cx)
+      }
     } else {
       m_val(m_none(), cx)
     }
@@ -1346,14 +1474,14 @@ pub fn m_builtin_30(
   } else if Nat::eq(b, 56) {
     m_checked_int(2, m_as_int(v0), cx)
   } else if Nat::eq(b, 57) {
-    match I64::of_int(m_as_int(v0)) {
+    match SInt::of_int64(m_as_int(v0)) {
       None => MoutErr(m_too_large())
       Some(n) => m_val(MvFloat(Float::of_i64(n)), cx)
     }
   } else if Nat::eq(b, 58) {
-    match I64::of_float_checked(m_as_float(v0)) {
+    match SInt::of_float_checked64(m_as_float(v0)) {
       None => MoutErr(m_too_large())
-      Some(n) => m_val(MvInt(I64::val(n)), cx)
+      Some(n) => m_val(MvInt(SInt::val64(n)), cx)
     }
   } else if Nat::eq(b, 59) {
     match Float::of_text(m_as_text(v0)) {
@@ -1366,7 +1494,7 @@ pub fn m_builtin_30(
 }
 
 pub fn m_builtin_60(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
   b: Nat,
   a0: MVal,
@@ -1382,9 +1510,9 @@ pub fn m_builtin_60(
   if Nat::eq(b, 60) {
     m_val(MvText(Text::of_float(a)), cx)
   } else if Nat::eq(b, 61) {
-    m_val(m_int(U64::val(Float::bits(a))), cx)
+    m_val(m_int(UInt::val64(Float::bits(a))), cx)
   } else if Nat::eq(b, 62) {
-    match U64::of_nat_checked(m_as_nat(v0)) {
+    match UInt::of_nat_checked64(m_as_nat(v0)) {
       None => MoutErr(m_too_large())
       Some(n) => if m_is_neg(v0) { MoutErr(m_too_large()) } else { fl(Float::of_bits(n)) }
     }
@@ -1426,7 +1554,7 @@ pub fn m_builtin_60(
 }
 
 pub fn m_builtin_90(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
   b: Nat,
   a0: MVal,
@@ -1443,7 +1571,7 @@ pub fn m_builtin_90(
     m_val(m_int(m_bits(bits, op, m_as_nat(v0), m_as_nat(v1))), cx)
   } else if Bool::or(Nat::eq(b, 104), Nat::eq(b, 107)) {
     match cx_alloc(cx, MoCell(v0)) {
-      Pair { fst: c, snd: cx2 } => m_val(MvShared(if Nat::eq(b, 104) { 0 } else { 1 }, c), cx2)
+      #(c, cx2) => m_val(MvShared(if Nat::eq(b, 104) { 0 } else { 1 }, c), cx2)
     }
   } else if Bool::or(Nat::eq(b, 105), Nat::eq(b, 108)) {
     m_val(cx_cell(cx, m_id_of(v0)), cx)
@@ -1476,18 +1604,19 @@ pub fn m_builtin_90(
     MoutAsk("vm_now", Nil, cx)
   } else if Bool::or(Nat::eq(b, 116), Nat::eq(b, 117)) {
     match m_new_pending(cx, MpendRunning, false) {
-      Pair { fst: p, snd: cx2 } => MoutSpawn(v0, p, cx2)
+      #(p, cx2) => MoutSpawn(v0, p, cx2)
     }
   } else if Nat::eq(b, 118) {
     match m_new_pending(cx, MpendReady(a0), true) {
-      Pair { fst: p, snd: cx2 } => m_val(MvPending(p), cx2)
+      #(p, cx2) => m_val(MvPending(p), cx2)
     }
   } else if Nat::eq(b, 119) {
     let p := m_id_of(v0)
     match m_ready(cx, p) {
-      Pair { fst: r, snd: cx2 } => match m_pending_of(cx2, p) {
-        Pair { fst: state, snd: s } => match state {
+      #(^r, cx2) => match m_pending_of(cx2, p) {
+        #(state, s) => match state {
           MpendReady(x) => m_val(x, cx_put(cx2, p, MoPending(MpendTaken, s)))
+          MpendFailed(e) => MoutErr(Text::concat("the joined task failed: ", e))
           _ => MoutErr("internal: a result taken before it was there")
         }
       }
@@ -1495,36 +1624,35 @@ pub fn m_builtin_90(
   } else if Nat::eq(b, 120) {
     let p := m_id_of(v0)
     match m_ready(cx, p) {
-      Pair { fst: r, snd: cx2 } => if r {
+      #(r, cx2) => if r {
         m_val(MvBool(true), cx2)
       } else { MoutYield(p, cx2) }
     }
   } else if Nat::eq(b, 121) {
     let p := m_id_of(v0)
     match m_ready(cx, p) {
-      Pair { fst: r, snd: cx2 } => match m_pending_of(cx2, p) {
-        Pair { fst: state, snd: s } => m_val(MvSignal(s), cx2)
+      #(^r, cx2) => match m_pending_of(cx2, p) {
+        #(^state, s) => m_val(MvSignal(s), cx2)
       }
     }
   } else if Nat::eq(b, 122) {
-    match cx_alloc(cx, MoMutex(Some(a0), Nil)) {
-      Pair { fst: m, snd: cx2 } => m_val(MvMutex(m), cx2)
+    match cx_alloc(cx, MoMutex(Some(a0), Nil, None)) {
+      #(m, cx2) => m_val(MvMutex(m), cx2)
     }
+  } else if Bool::and(Bool::and(Nat::le(123, b), Nat::le(b, 124)), m_is_poisoned(cx, m_id_of(v0))) {
+    MoutErr(m_poisoned())
   } else if Nat::eq(b, 123) {
     let m := m_id_of(v0)
     match m_mutex_of(cx, m) {
-      Pair { fst: value, snd: waiting } => match cx_alloc(cx, MoSignal(false, None)) {
-        Pair { fst: s, snd: cx2 } => match value {
+      #(value, waiting) => match cx_alloc(cx, MoSignal(false, None)) {
+        #(s, cx2) => match value {
           Some(x) => match waiting {
-            Nil => m_val(MvSignal(s), m_raise(cx_put(cx2, m, MoMutex(None, Nil)), s, Some(x)))
-            _ => m_val(
-              MvSignal(s),
-              cx_put(cx2, m, MoMutex(value, List::append(waiting, Cons(s, Nil))))
-            )
+            Nil => m_val(MvSignal(s), m_raise(m_mutex_set(cx2, m, None, Nil), s, Some(x)))
+            _ => m_val(MvSignal(s), m_mutex_set(cx2, m, value, List::append(waiting, Cons(s, Nil))))
           }
           None => m_val(
             MvSignal(s),
-            cx_put(cx2, m, MoMutex(value, List::append(waiting, Cons(s, Nil))))
+            m_mutex_set(cx2, m, value, List::append(waiting, Cons(s, Nil)))
           )
         }
       }
@@ -1533,14 +1661,17 @@ pub fn m_builtin_90(
     let s := m_id_of(v1)
     match m_handed(cx, s) {
       None => MoutErr("internal: a mutex's content taken before it was handed")
-      Some(x) => m_val(x, cx_put(cx, s, MoSignal(true, None)))
+      Some(x) => m_val(x, m_took(cx_put(cx, s, MoSignal(true, None)), m_id_of(v0)))
     }
   } else if Nat::eq(b, 125) {
     let m := m_id_of(v0)
     match m_mutex_of(cx, m) {
-      Pair { fst: value, snd: waiting } => match waiting {
-        Cons(s, rest) => m_val(MvUnit, m_raise(cx_put(cx, m, MoMutex(value, rest)), s, Some(a1)))
-        Nil => m_val(MvUnit, cx_put(cx, m, MoMutex(Some(a1), Nil)))
+      #(value, waiting) => match waiting {
+        Cons(s, rest) => m_val(
+          MvUnit,
+          m_raise(cx_put(cx, m, MoMutex(value, rest, None)), s, Some(a1))
+        )
+        Nil => m_val(MvUnit, cx_put(cx, m, MoMutex(Some(a1), Nil, None)))
       }
     }
   } else {
@@ -1553,7 +1684,7 @@ pub fn m_builtin_90(
 // `Weak::get` always answers `Some`, as a collector that has not run yet does.
 pub fn m_builtin_weak(cx: MCx, b: Nat, v0: MVal): MOut {
   match v0 {
-    MvShared(k, c) => if Nat::eq(b, 157) {
+    MvShared(^k, c) => if Nat::eq(b, 157) {
       m_val(MvShared(2, c), cx)
     } else if Nat::eq(b, 158) {
       m_val(m_some(MvShared(0, c)), cx)
@@ -1574,9 +1705,9 @@ pub fn m_builtin_float32(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
   } else if Nat::eq(b, 128) {
     m_val(MvFloat(Float::of_float32(a)), cx)
   } else if Nat::eq(b, 129) {
-    m_val(m_int(U32::val(Float32::bits(a))), cx)
+    m_val(m_int(UInt::val32(Float32::bits(a))), cx)
   } else if Nat::eq(b, 130) {
-    match U32::of_nat_checked(m_as_nat(v0)) {
+    match UInt::of_nat_checked32(m_as_nat(v0)) {
       None => MoutErr(m_too_large())
       Some(n) => if m_is_neg(v0) { MoutErr(m_too_large()) } else { fl(Float32::of_bits(n)) }
     }
@@ -1645,9 +1776,9 @@ pub fn m_builtin_names_guard(): List(Text) {
 // Hands `x` to the first place in line for the mutex, or keeps it if there is none.
 pub fn m_mutex_put(cx: MCx, m: Nat, x: MVal): MCx {
   match m_mutex_of(cx, m) {
-    Pair { fst: value, snd: waiting } => match waiting {
-      Cons(s, rest) => m_raise(cx_put(cx, m, MoMutex(value, rest)), s, Some(x))
-      Nil => cx_put(cx, m, MoMutex(Some(x), Nil))
+    #(value, waiting) => match waiting {
+      Cons(s, rest) => m_raise(cx_put(cx, m, MoMutex(value, rest, None)), s, Some(x))
+      Nil => cx_put(cx, m, MoMutex(Some(x), Nil, None))
     }
   }
 }
@@ -1673,10 +1804,10 @@ pub fn m_holds_guard(fuel: Nat, work: List(MVal), c: Nat): Bool {
     Succ(f) => match work {
       Nil => false
       Cons(v, rest) => match v {
-        MvGuard(m, d) => if Nat::eq(c, d) { true } else { m_holds_guard(f, rest, c) }
-        MvData(k, fs) => m_holds_guard(f, List::append(fs, rest), c)
+        MvGuard(^m, d) => if Nat::eq(c, d) { true } else { m_holds_guard(f, rest, c) }
+        MvData(^k, fs) => m_holds_guard(f, List::append(fs, rest), c)
         MvProduct(ms) => m_holds_guard(f, List::append(ms, rest), c)
-        MvInject(u, w, x) => m_holds_guard(f, Cons(x, rest), c)
+        MvInject(^u, ^w, x) => m_holds_guard(f, Cons(x, rest), c)
         _ => m_holds_guard(f, rest, c)
       }
     }
@@ -1689,11 +1820,9 @@ pub fn m_owned(cx: MCx, boxed: Bool, held: MVal): MVal {
   match boxed {
     false => held
     true => match held {
-      MvRef(cell, path) => match path {
-        MrPath(steps) => match steps {
-          Nil => cx_cell(cx, cell)
-          Cons(s, more) => MvUnit
-        }
+      MvRef(cell, path) => match mr_reversed(path) {
+        Nil => cx_cell(cx, cell)
+        Cons(^s, ^more) => MvUnit
       }
       _ => MvUnit
     }
@@ -1702,20 +1831,22 @@ pub fn m_owned(cx: MCx, boxed: Bool, held: MVal): MVal {
 
 // `MutexGuard::claimed` (154), `get` (155) and `get_mut` (156).
 pub fn m_builtin_guard(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
-  if Nat::eq(b, 154) {
+  if Bool::and(Nat::eq(b, 154), m_is_poisoned(cx, m_id_of(v0))) {
+    MoutErr(m_poisoned())
+  } else if Nat::eq(b, 154) {
     let s := m_id_of(v1)
     match m_handed(cx, s) {
       None => MoutErr("internal: a mutex's content taken before it was handed")
       Some(x) => match cx_alloc(cx, MoCell(x)) {
-        Pair { fst: c, snd: cx2 } => m_val(
+        #(c, cx2) => m_val(
           MvGuard(m_id_of(v0), c),
-          cx_put(cx2, s, MoSignal(true, None))
+          m_took(cx_put(cx2, s, MoSignal(true, None)), m_id_of(v0))
         )
       }
     }
   } else {
     match v0 {
-      MvGuard(m, c) => m_val(MvRef(c, MrPath(Nil)), cx)
+      MvGuard(^m, c) => m_val(MvRef(c, MrPath(Nil)), cx)
       _ => MoutErr(m_internal())
     }
   }
@@ -1726,9 +1857,160 @@ pub fn m_builtin_names_signal(): List(Text) {
     "Signal::fresh",
     Cons(
       "Signal::raise",
-      Cons("Signal::is_raised", Cons("Signal::either", Cons("Signal::listen", Nil)))
+      Cons(
+        "Signal::is_raised",
+        Cons(
+          "Signal::either",
+          Cons(
+            "Signal::listen",
+            Cons("Bytes::find", Cons("Mutex::withdraw", m_builtin_names_region()))
+          )
+        )
+      )
     )
   )
+}
+
+// The regions (166 on): every value goes on the heap, so a region keeps
+// nothing and a place says nothing (`std/builtin/region.taut`).
+pub fn m_builtin_names_region(): List(Text) {
+  Cons(
+    "Region::new",
+    Cons("Region::place", Cons("RcRegion::new", Cons("RcRegion::place", Cons("RcPlace::heap", Cons("Array::set", Cons("Probe::new", Cons("Os::tcp_ready", Cons("Os::tls_ready", Cons("", Cons("", Cons("", Cons("Text::escape_debug", Cons("U64::wrapping_add", Cons("U64::wrapping_sub", Cons("U64::wrapping_mul", Cons("Slots::new", Cons("Slots::state", Cons("Slots::mark", Cons("Slots::cap", Cons("Slots::get", Cons("Slots::get_mut", Cons("Slots::put", Cons("Slots::take", Cons("Slots::resize", m_builtin_names_width()))))))))))))))))))))))))
+  )
+}
+
+// `Slots` (182 on): `new`, `state`, `mark`, `cap`, `get`, `get_mut`, `put`, `take` and
+// `resize`; `copy` is 197. The numbers a checked program passes are below the capacity (the proof
+// arguments the program carries say so), and a slot read is one that holds a value.
+pub fn m_slots_put(old: MVal, i: Nat, m: MVal, x: MVal, t: MVal): MVal {
+  match old {
+    MvSlots(^s, vac, ms, xs) => MvSlots(t, vac, ms_put(ms, i, m), ms_put(xs, i, x))
+    _ => old
+  }
+}
+
+pub fn m_slots_take(old: MVal, i: Nat, m: MVal, t: MVal): MVal {
+  match old {
+    MvSlots(^s, vac, ms, xs) => MvSlots(t, vac, ms_put(ms, i, m), ms_put(xs, i, MvMoved))
+    _ => old
+  }
+}
+
+pub fn m_slots_resize(old: MVal, cap: Nat, m0: MVal, t: MVal): MVal {
+  match old {
+    MvSlots(^s, ^vac, ms, xs) => MvSlots(t, m0, ms_resize(ms, cap, m0), ms_resize(xs, cap, MvMoved))
+    _ => old
+  }
+}
+
+pub fn m_slots_in(v: MVal, i: Nat): Bool {
+  match v {
+    MvSlots(^s, ^vac, ^ms, xs) => Nat::lt(i, ms_len(xs))
+    _ => false
+  }
+}
+
+pub fn m_slots_held(v: MVal, i: Nat): Bool {
+  match v {
+    MvSlots(^s, ^vac, ^ms, xs) => match ms_get_or(MvMoved, xs, i) {
+      MvMoved => false
+      _ => true
+    }
+    _ => false
+  }
+}
+
+// The changes of width of `i8`, `i16` and `u16` (191 on), as `I64::of_i32`'s.
+pub fn m_builtin_names_width(): List(Text) {
+  Cons(
+    "I64::of_i8",
+    Cons("I64::of_i16", Cons("I8::of_i64", Cons("I16::of_i64", Cons("U64::of_u16", Cons("U16::of_u64", Cons("Slots::copy", Nil))))))
+  )
+}
+
+pub fn m_builtin_width(cx: MCx, b: Nat, v0: MVal): MOut {
+  if Bool::or(Nat::eq(b, 191), Nat::eq(b, 192)) {
+    m_checked_int(1, m_as_int(v0), cx)
+  } else if Nat::eq(b, 193) {
+    m_checked_int(7, m_as_int(v0), cx)
+  } else if Nat::eq(b, 194) {
+    m_checked_int(8, m_as_int(v0), cx)
+  } else if Nat::eq(b, 195) {
+    m_checked_int(4, m_as_int(v0), cx)
+  } else {
+    m_checked_int(9, m_as_int(v0), cx)
+  }
+}
+
+pub fn m_builtin_slots(ctors: Array(MCtor), cx: MCx, b: Nat, a: List(MVal)): MOut {
+  let a0 := m_nth_or_unit(a, 0)
+  let v0 := m_get(ctors, cx, a0)
+  let v1 := m_get(ctors, cx, m_nth_or_unit(a, 1))
+  let i := m_as_nat(v1)
+  if Nat::eq(b, 197) {
+    // `copy` (197): a new `Slots` of the lent range's capacity, its filled
+    // elements copied (they are `Copy`), every mark the given one.
+    match v0 {
+      MvSlots(^s, ^vac, ^ms, xs) => {
+        let m0 := m_nth_or_unit(a, 2)
+        m_val(MvSlots(m_nth_or_unit(a, 1), m0, ms_grow(ms_empty(), ms_len(xs), m0), xs), cx)
+      }
+      _ => MoutErr(m_internal())
+    }
+  } else if Nat::eq(b, 182) {
+    let vac := m_nth_or_unit(a, 2)
+    m_val(
+      MvSlots(m_nth_or_unit(a, 1), vac, ms_grow(ms_empty(), m_as_nat(v0), vac), ms_grow(ms_empty(), m_as_nat(v0), MvMoved)),
+      cx
+    )
+  } else if Nat::eq(b, 183) {
+    match v0 {
+      MvSlots(s, ^vac, ^ms, ^xs) => m_val(s, cx)
+      _ => MoutErr(m_internal())
+    }
+  } else if Nat::eq(b, 185) {
+    match v0 {
+      MvSlots(^s, ^vac, ^ms, xs) => m_val(m_int(ms_len(xs)), cx)
+      _ => MoutErr(m_internal())
+    }
+  } else if Nat::eq(b, 190) {
+    m_update(ctors, cx, a0, (old: MVal) => m_slots_resize(old, i, m_nth_or_unit(a, 2), m_nth_or_unit(a, 3)), (old: MVal) => MvUnit)
+  } else if Nat::eq(b, 184) {
+    // Total in the model: past the capacity it is the vacant mark.
+    match v0 {
+      MvSlots(^s, vac, ms, ^xs) => if Bool::or(m_is_neg(v1), not(m_slots_in(v0, i))) {
+        m_val(vac, cx)
+      } else {
+        m_val(ms_get_or(vac, ms, i), cx)
+      }
+      _ => MoutErr(m_internal())
+    }
+  } else if Bool::or(m_is_neg(v1), not(m_slots_in(v0, i))) {
+    MoutErr(m_internal())
+  } else if Bool::or(Nat::eq(b, 186), Nat::eq(b, 187)) {
+    if m_slots_held(v0, i) {
+      match m_item_ref(ctors, cx, a0, MpathItem(i)) {
+        #(x, cx2) => m_val(x, cx2)
+      }
+    } else { MoutErr(m_internal()) }
+  } else if Nat::eq(b, 188) {
+    m_update(
+      ctors,
+      cx,
+      a0,
+      (old: MVal) => m_slots_put(old, i, m_nth_or_unit(a, 2), m_nth_or_unit(a, 3), m_nth_or_unit(a, 4)),
+      (old: MVal) => MvUnit
+    )
+  } else if Bool::and(Nat::eq(b, 189), m_slots_held(v0, i)) {
+    m_update(
+      ctors,
+      cx,
+      a0,
+      (old: MVal) => m_slots_take(old, i, m_nth_or_unit(a, 2), m_nth_or_unit(a, 3)),
+      (old: MVal) => m_at_index(old, i)
+    )
+  } else { MoutErr(m_internal()) }
 }
 
 pub fn m_signal_inputs(cx: MCx, id: Nat): List(Nat) {
@@ -1744,7 +2026,7 @@ pub fn m_signal_inputs(cx: MCx, id: Nat): List(Nat) {
 pub fn m_builtin_signal(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
   if Nat::eq(b, 159) {
     match cx_alloc(cx, MoSignal(false, None)) {
-      Pair { fst: id, snd: next } => m_val(MvSignal(id), next)
+      #(id, next) => m_val(MvSignal(id), next)
     }
   } else if Nat::eq(b, 160) {
     m_val(MvUnit, m_raise(cx, m_id_of(v0), None))
@@ -1753,7 +2035,7 @@ pub fn m_builtin_signal(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
   } else if Nat::eq(b, 162) {
     let inputs := m_signal_union(m_signal_inputs(cx, m_id_of(v0)), m_signal_inputs(cx, m_id_of(v1)))
     match cx_alloc(cx, MoChoice(inputs)) {
-      Pair { fst: id, snd: next } => m_val(MvSignal(id), next)
+      #(id, next) => m_val(MvSignal(id), next)
     }
   } else if Nat::eq(b, 163) { m_val(v0, cx) } else { MoutErr(m_internal()) }
 }
@@ -1763,7 +2045,7 @@ pub fn m_signal_raised(cx: MCx, inputs: List(Nat)): Bool {
     Nil => false
     Cons(first, rest) => match cx_obj(cx, first) {
       Some(o) => match o {
-        MoSignal(raised, handed) => if raised { true } else { m_signal_raised(cx, rest) }
+        MoSignal(raised, ^handed) => if raised { true } else { m_signal_raised(cx, rest) }
         _ => m_signal_raised(cx, rest)
       }
       None => m_signal_raised(cx, rest)
@@ -1778,6 +2060,88 @@ pub fn m_signal_union(left: List(Nat), right: List(Nat)): List(Nat) {
       m_signal_union(rest, right)
     } else {
       Cons(first, m_signal_union(rest, right))
+    }
+  }
+}
+
+// `Mutex::withdraw` (165): the place `s` leaves the line of the mutex `m`,
+// with the content if it was handed there already.
+pub fn m_withdraw(cx: MCx, m: Nat, s: Nat): MOut {
+  if m_is_poisoned(cx, m) {
+    MoutErr(m_poisoned())
+  } else { match m_mutex_of(cx, m) {
+      #(value, waiting) => {
+        let cx2 := m_mutex_set(cx, m, value, m_without(waiting, s))
+        match m_handed(cx2, s) {
+          Some(x) => m_val(m_some(x), m_took(cx_put(cx2, s, MoSignal(true, None)), m))
+          None => m_val(m_none(), cx2)
+        }
+      }
+    } }
+}
+
+pub fn m_without(xs: List(Nat), x: Nat): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(first, rest) => if Nat::eq(
+      first,
+      x
+    ) { m_without(rest, x) } else { Cons(first, m_without(rest, x)) }
+  }
+}
+
+// `Text::escape_debug` (`std/prelude/text.taut`): `t` as `Debug` writes it, without the
+// quotes. The characters from U+0080 it writes as `\u{…}` are the ranges of
+// `tables/escaped.txt`, which `tauto gen-unicode-tables` writes from the Unicode data of the
+// toolchain; the table is data, and this function reads it.
+pub fn m_escape_debug(t: Text): Text {
+  let ranges := m_escaped_ranges(text_split(Text::concat("", include_text!("tables/escaped.txt")), " "))
+  Text::concat_all(List::map((c: Nat) => m_escape_char(ranges, c), text_code_points(t)))
+}
+
+pub fn m_escaped_ranges(xs: List(Text)): List(Nat × Nat) {
+  match xs {
+    Cons(a, rest) => match rest {
+      Cons(b, more) => Cons(#(m_decimal(a), m_decimal(b)), m_escaped_ranges(more))
+      Nil => Nil
+    }
+    Nil => Nil
+  }
+}
+
+pub fn m_decimal(t: Text): Nat {
+  m_decimal_of(text_code_points(t), 0)
+}
+
+pub fn m_decimal_of(ds: List(Nat), acc: Nat): Nat {
+  match ds {
+    Nil => acc
+    Cons(d, rest) => m_decimal_of(rest, Nat::add(Nat::mul(acc, 10), Nat::sub(d, 48)))
+  }
+}
+
+pub fn m_in_ranges(ranges: List(Nat × Nat), c: Nat): Bool {
+  match ranges {
+    Nil => false
+    Cons(r, rest) => if Nat::lt(c, r.fst) { false } else if Nat::le(c, r.snd) { true } else { m_in_ranges(rest, c) }
+  }
+}
+
+pub fn m_escape_char(ranges: List(Nat × Nat), c: Nat): Text {
+  if Nat::eq(c, 92) { "\\\\" } else if Nat::eq(c, 34) { "\\\"" } else if Nat::eq(c, 10) { "\\n" } else if Nat::eq(c, 13) { "\\r" } else if Nat::eq(c, 9) { "\\t" } else if Nat::eq(c, 0) { "\\0" } else if Bool::or(Nat::lt(c, 32), Nat::eq(c, 127)) || Bool::and(Nat::le(128, c), m_in_ranges(ranges, c)) {
+    Text::concat_all(Cons("\\u{", Cons(m_hex_digits(8, c, ""), Cons("}", Nil))))
+  } else {
+    text_code_point(c)
+  }
+}
+
+// `n` in lowercase hexadecimal, at most `k` more digits before `done`.
+pub fn m_hex_digits(k: Nat, n: Nat, done: Text): Text {
+  match k {
+    Zero => done
+    Succ(k2) => if Bool::and(Nat::eq(n, 0), not(Text::eq(done, ""))) { done } else {
+      let d := Nat::rem_nz(n, 16, Nat::ne_zero(16, Refl))
+      m_hex_digits(k2, Nat::div_nz(n, 16, Nat::ne_zero(16, Refl)), Text::concat(Text::slice_or_empty("0123456789abcdef", d, Nat::add(d, 1)), done))
     }
   }
 }

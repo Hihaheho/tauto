@@ -3,8 +3,8 @@
 @ cases.direct-local-call-keeps-inferred-effects
 source = ```nib
 effect ask(): Text
-fn outer(): Text {
-  fn inner(): Text { perform ask() }
+fn outer(): Text ! {ask} {
+  fn inner(): Text ! {ask} { perform ask() }
   inner()
 }
 ```
@@ -16,7 +16,7 @@ inferred_rows.outer = ["ask"]
 source = ```nib
 effect ask(): Text
 fn outer(): Text ! {} {
-  fn inner(): Text { perform ask() }
+  fn inner(): Text ! {ask} { perform ask() }
   let alias := inner
   alias()
 }
@@ -37,8 +37,8 @@ rows = "error: `inner` may perform ask"
 
 @ cases.local-recursive-alias-keeps-div
 source = ```nib
-fn outer(): i64 {
-  fn inner(n: i64): i64 {
+fn outer(): i64 ! {div} {
+  fn inner(n: i64): i64 ! {div} {
     let again := inner
     again(n)
   }
@@ -47,7 +47,7 @@ fn outer(): i64 {
 ```
 types = "ok"
 rows = "ok"
-inferred_rows.outer = ["Div"]
+inferred_rows.outer = ["div"]
 
 @ cases.local-recursive-alias-cannot-claim-pure
 source = ```nib
@@ -60,13 +60,13 @@ fn outer(): i64 {
 }
 ```
 types = "ok"
-rows = "error: `inner` may perform Div"
+rows = "error: `inner` may perform div"
 
 @ cases.local-captured-callable-keeps-effects
 source = ```nib
 effect ask(): Text
 fn outer(captured: () -> Text ! {ask}): Text ! {ask} {
-  fn inner(): Text { captured() }
+  fn inner(): Text ! {ask} { captured() }
   let alias := inner
   alias()
 }
@@ -116,7 +116,7 @@ inferred_rows.outer = []
 @ cases.captured-and-owned-same-name-rows-stay-distinct
 source = ```nib
 fn outer<!e>(captured: () -> Text ! e): Text ! e {
-  fn inner<!e>(own: () -> Text ! e): Text {
+  fn inner<!e>(own: () -> Text ! e): Text ! e {
     captured()
     own()
   }
@@ -125,14 +125,14 @@ fn outer<!e>(captured: () -> Text ! e): Text ! e {
 }
 ```
 types = "ok"
-rows = "ok"
-inferred_rows.outer = ["|e"]
+// The `e` `inner` writes is its own: what `captured` performs is not in it.
+rows = "error: `inner` may perform |e but its row is {|e}"
 
 @ cases.owned-row-instantiation-cannot-erase-captured-row
 source = ```nib
 effect ask(): Text
 fn outer<!e>(captured: () -> Text ! e): Text ! e {
-  fn inner<!e>(own: () -> Text ! e): Text {
+  fn inner<!e>(own: () -> Text ! e): Text ! e {
     captured()
     own()
   }
@@ -141,7 +141,7 @@ fn outer<!e>(captured: () -> Text ! e): Text ! e {
 fn caller(): Text ! {} { outer(() => perform ask()) }
 ```
 types = "ok"
-rows = "error: `caller` may perform ask"
+rows = "error: `inner` may perform |e but its row is {|e}"
 
 @ cases.owned-written-row-cannot-cover-same-named-capture
 source = ```nib
@@ -258,7 +258,7 @@ rows = "error: cannot follow the effects of the row variable `e`"
 
 @ cases.known-pure-integer-primitives-remain-pure
 source = ```nib
-fn outer(): i64 ! {} { div(6, 2) + mod(7, 2) }
+fn outer(): i64 ! {overflow} { div(6, 2) + mod(7, 2) }
 ```
 types = "ok"
 rows = "ok"
@@ -267,7 +267,7 @@ rows = "ok"
 source = ```nib
 effect ask(): i64
 fn outer(): i64 ! {} {
-  fn div(a: i64, b: i64): i64 { perform ask() }
+  fn div(a: i64, b: i64): i64 ! {ask} { perform ask() }
   div(6, 2)
 }
 ```
@@ -342,7 +342,7 @@ rows = "ok"
 
 @ cases.linearity-displays-owned-row-name-not-private-identity
 source = ```nib
-affine struct Token {}
+struct(affine) Token {}
 fn outer<!e: direct>(): Text ! {} {
   fn inner<!e>(callback: () -> Text ! e): Text ! e {
     let token := Token {}
@@ -364,21 +364,24 @@ types = "ok"
 rows = "error: cannot follow the effects stored in a value required by its type"
 
 @ cases.implicit-row-direct-call-keeps-suspension
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect ask(): i64
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
 let result := handle { apply(() => perform ask()) } with {
-  ask(), k => k(42)
+  // Not a tail form, so `ask` stays an operation that suspends.
+  ask(), k => { let v := k(42); v }
   return value => value
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = 42"]
+stdout = "42\n"
 
 @ cases.implicit-row-direct-call-keeps-many-resumptions
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect choose(): i64 resume ω
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
@@ -386,14 +389,15 @@ let result := handle { apply(() => perform choose()) } with {
   choose(), k => k(1) + k(2)
   return value => value
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = 3"]
+stdout = "3\n"
 
 @ cases.local-owned-row-shadows-outer-direct-bound-at-runtime
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
 effect ask(): i64
 fn outer<!e: direct>(): i64 ! {ask} {
@@ -401,17 +405,18 @@ fn outer<!e: direct>(): i64 ! {ask} {
   inner(() => perform ask())
 }
 let result := handle { outer() } with {
-  ask(), k => k(42)
+  // Not a tail form, so `ask` stays an operation that suspends.
+  ask(), k => { let v := k(42); v }
   return value => value
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = 42"]
+stdout = "42\n"
 
-@ cases.computed-callback-row-requires-backend-evidence
+@ cases.computed-callback-row-comes-from-row-checking
 source = ```nib
 effect ask(): i64
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
@@ -421,11 +426,12 @@ let result := handle {
   ask(), k => k(42)
   return value => value
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
+stdout = "42\n"
 
 @ cases.record-carried-row-specializes-from-the-call
 source = ```nib
@@ -436,7 +442,7 @@ let result := handle { apply(View { callback: () => perform ask() }) } with {
   ask(), k => k(42)
   return value => value
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
@@ -446,12 +452,12 @@ lin = "ok"
 source = ```nib
 effect ask(n: i64): i64 resume 1
 struct Handlers(!e) { on_key: (k: i64) -> i64 ! e }
-fn dispatch<!e>(&h: Handlers(e), k: i64): i64 ! e { (h.on_key)(k) }
+fn dispatch<!e>(h: &Handlers(e), k: i64): i64 ! e { (h.on_key)(k) }
 let r := handle {
-  let h := Handlers { on_key: (k) => perform ask(k) + 1 }
+  let h := Handlers { on_key: (k) => perform ask(k) }
   dispatch(&h, 3)
-} with { ask(n), k => k(n * 10) }
-perform show("r", r)
+} with { ask(n), k => k(n) }
+show(&r)
 ```
 types = "ok"
 rows = "ok"
@@ -468,7 +474,7 @@ let r := handle {
   pick(), k => k(1) + k(2)
   return v => v
 }
-perform show("r", r)
+show(&r)
 ```
 types = "ok"
 rows = "ok"
@@ -483,7 +489,7 @@ let result := handle { alias(() => perform ask()) } with {
   ask(), k => k(42)
   return value => value
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
@@ -535,7 +541,7 @@ rows = "ok"
 source = ```nib
 enum Reader { Read(Text) }
 enum Number { Read(i64) }
-fn outer(): Reader ! {Exceeded} { budget(steps: 10) { Read("ok") } }
+fn outer(): Reader ! {budget, exceeded} { perform budget(10, () => { Read("ok") }) }
 ```
 types = "ok"
 rows = "ok"
@@ -600,19 +606,19 @@ let invoke: () -> i64 ! {} := () => {
     return value => value
   }
 }
-perform show("value", invoke())
+show(&invoke())
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = 42"]
+stdout = "42\n"
 
 @ cases.borrowed-result-keeps-independent-lifetime-after-handled-callback
 source = ```nib
 effect ask(): i64
 struct Holder { text: Text }
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
-fn select(&holder: Holder): &Text ! {} {
+fn select(holder: &Holder): &Text ! {} {
   let ignored := handle { apply(() => perform ask()) } with {
     ask(), k => k(42)
     return value => value
@@ -620,38 +626,38 @@ fn select(&holder: Holder): &Text ! {} {
   &holder.text
 }
 let holder := Holder { text: "kept" }
-let &text := select(&holder)
-perform show("value", clone(text))
+let text := select(&holder)
+show(&clone(&text))
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ['value = "kept"']
+stdout = "\"kept\"\n"
 
 @ cases.borrowed-sync-callback-survives-locally-handled-suspension
 source = ```nib
 effect ask(): i64
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
-fn invoke(&callback: () -> i64 ! {}): i64 ! {} {
+fn invoke(callback: &(() -> i64 ! {})): i64 ! {overflow} {
   let handled := handle { apply(() => perform ask()) } with {
     ask(), k => k(40)
     return value => value
   }
   handled + callback()
 }
-perform show("value", invoke(() => 2))
+show(&invoke(() => 2))
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = 42"]
+stdout = "42\n"
 
 @ cases.suspending-callback-capturing-borrowed-record-copies-it
 source = ```nib
 effect ask(): i64
 struct Holder { text: Text }
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
-fn select(&holder: Holder): &Text ! {} {
+fn select(holder: &Holder): &Text ! {} {
   let ignored := handle {
     apply(() => if holder.text == "kept" { perform ask() } else { 0 })
   } with {
@@ -661,33 +667,46 @@ fn select(&holder: Holder): &Text ! {} {
   &holder.text
 }
 let holder := Holder { text: "kept" }
-let &text := select(&holder)
-perform show("value", clone(text))
+let text := select(&holder)
+show(&clone(&text))
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ['value = "kept"']
+stdout = "\"kept\"\n"
 
 @ cases.suspending-callback-capturing-borrowed-sync-callback-remains-unsupported
 source = ```nib
 effect ask(): i64
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
-fn invoke(&callback: () -> i64 ! {}): i64 ! {} {
+fn invoke(callback: &(() -> i64 ! {})): i64 ! {overflow} {
+  handle { apply(() => perform ask() + callback()) } with {
+    // Not a tail form, so `ask` stays an operation that suspends.
+    ask(), k => { let v := k(40); v }
+    return value => value
+  }
+}
+show(&invoke(() => 2))
+```
+types = "ok"
+rows = "ok"
+lin = "error: this closure borrows callback and cannot be stored"
+
+@ cases.direct-callback-capturing-borrowed-sync-callback-remains-unsupported
+source = ```nib
+effect ask(): i64 direct
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+fn invoke(callback: &(() -> i64 ! {})): i64 ! {overflow} {
   handle { apply(() => perform ask() + callback()) } with {
     ask(), k => k(40)
     return value => value
   }
 }
-perform show("value", invoke(() => 2))
+show(&invoke(() => 2))
 ```
 types = "ok"
 rows = "ok"
-lin = "ok"
-compile_errors.rust = "unsupported: a closure that may suspend and borrows what it captures"
-compile_errors.javascript = "unsupported: a closure that may suspend and borrows what it captures"
-shows = ["value = 42"]
-backend_known_failure.vm = "unsupported: a closure that may suspend and borrows what it captures"
+lin = "error: this closure borrows callback and cannot be stored"
 
 @ cases.top-level-row-diagnostic-uses-declared-name
 source = ```nib
@@ -718,12 +737,12 @@ let result := handle { apply(() => perform ask()) } with {
   ask(), k => k(40)
   return value => value
 }
-perform show("value", result + first.value + second.value)
+show(&(result + first.value + second.value))
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ["value = 42"]
+stdout = "42\n"
 
 @ cases.suspending-callback-types-do-not-shadow-user-generics
 source = ```nib
@@ -736,16 +755,16 @@ fn keep<__TautoOFn0: Shared>(value: __TautoOFn0): __TautoOFn0 ! {} {
   }
   value
 }
-perform show("value", keep("kept"))
+show(&keep("kept"))
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ['value = "kept"']
+stdout = "\"kept\"\n"
 
 @ cases.affine-suspending-callback-keeps-owned-capture
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
 source = ```nib
-import std::prelude::Affine
 
 effect ask(): i64
 fn apply_once(callback: affine () -> Text ! {ask}): Text ! {ask} { callback() }
@@ -760,9 +779,55 @@ let result := handle {
   ask(), k => k(42)
   return value => value
 }
-perform show("value", result)
+show(&result)
 ```
 types = "ok"
 rows = "ok"
 lin = "ok"
-shows = ['value = "kept"']
+stdout = "\"kept\"\n"
+
+@ cases.specialized-copy-owns-its-row-variables
+source = ```nib
+fn show<!e>(draw: () -> i64, load: () -> i64 ! e): i64 ! {overflow} ∪ e {
+  draw() + load()
+}
+fn a(): i64 { 1 }
+fn b(): i64 { 2 }
+let x := show(a, () => 10)
+let y := show(b, () => 20)
+```
+types = "ok"
+rows = "ok"
+
+@ cases.never-arm-keeps-the-value-of-its-sibling-arm
+source = ```nib
+effect stop(message: Text): Never resume 0
+struct(shared) Router { segments: (r: Text) -> Text ! {div} }
+struct(shared) App(!e) { router: Router, action: (r: Text) -> Text ! e }
+fn make(): Result(App(!{}), Text) ! {} {
+  Ok(App { router: Router { segments: (r: Text) => r }, action: (r: Text) => r })
+}
+fn path(router: Router, r: Text): Text ! {div} { (router.segments)(r) }
+fn outer(): Text ! {div, stop} {
+  let app := match make() {
+    Ok(app) => app
+    Err(why) => perform stop(why)
+  }
+  path(app.router, "/")
+}
+```
+types = "ok"
+rows = "ok"
+
+@ cases.never-arm-does-not-launder-unknown-sibling-arm
+source = ```nib
+effect stop(message: Text): Never resume 0
+fn make(value, flag: Bool): Option(() -> Text ! {}) ! {stop} {
+  match flag {
+    true => value
+    false => perform stop("no")
+  }
+}
+```
+types = "ok"
+rows = "error: cannot follow the effects stored in a value required by its type"

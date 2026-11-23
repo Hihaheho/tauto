@@ -4,7 +4,7 @@
 // types (`u64` is `U64`, `Bool` is `Bool`), and checks it as an `inductive`.
 
 @ cases.an-inductive-enum-and-struct-are-the-proofs-types
-imports = [path`../../std/Base.taut`, path`../../std/Text.taut`, path`../../std/UInt.taut`]
+imports = [path`../../std/base.taut`, path`../../std/text.taut`, path`../../std/uint.taut`, path`../../std/calc.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 inductive enum Route {
@@ -43,7 +43,7 @@ fn size<A>(t: Tree(A)): Nat {
 
 theorem home_round_trips(): route(segment(Home)) = Some(Home) { Refl }
 theorem relabel_keeps_x(p: Pt): relabel(p).x = p.x { Refl }
-theorem leaf_is_empty(): size(Leaf(Nat)) = Zero { Refl }
+theorem leaf_is_empty(): size(Leaf(<A: Nat>)) = Zero { Refl }
 ```
 
 checks_all = "ok"
@@ -71,8 +71,7 @@ checks."input/main.taut::leaf_is_empty" = "ok"
 
 // The program sees the `shared enum` and `shared struct` it wrote.
 @ cases.an-inductive-enum-and-struct-run-as-written
-extract = true
-imports = [path`../../std/Base.taut`, path`../../std/Text.taut`, path`../../std/UInt.taut`]
+imports = [path`../../std/base.taut`, path`../../std/text.taut`, path`../../std/uint.taut`]
 source = ```tauto
 inductive enum Route {
   Home
@@ -95,26 +94,32 @@ fn segment(r: Route): Text {
 
 fn relabel(p: Pt): Pt { Pt { x: p.x, label: Text::concat(p.label, "!") } }
 
-perform show("a", segment(Post(3)))
-perform show("b", relabel(Pt { x: 1, label: "q" }).label)
-perform show("c", Tag("t", true))
+show(&segment(Post(3)))
+show(&(relabel(Pt { x: 1, label: "q" }).label))
+show(&Tag("t", true))
 ```
-shows = ['a = "post"', 'b = "q!"', 'c = Tag("t", true)']
+stdout = ```
+"post"
+"q!"
+Tag("t", true)
+```
 
 @ cases.what-an-inductive-type-cannot-hold-is-an-error
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 enum Plain { P }
 inductive enum Callback { F((x: Nat) -> Nat) }
+// `i16` is `SInt(16)` to the kernel, which this file does not import.
 inductive enum Short { G(i16) }
+// `Plain` has no `inductive`, but the kernel can read it, so it is given too.
 inductive enum Wraps { K(Plain) }
 ```
 
 checks_all = "ok"
 checks."input/main.taut::Callback" = "error: "
 checks."input/main.taut::Short" = "error: "
-checks."input/main.taut::Wraps" = "error: "
+checks."input/main.taut::Wraps" = "ok"
 @ cases.what-an-inductive-type-cannot-hold-is-an-error.diagnostics[]
 file = "input/main.taut"
 name = "Callback"
@@ -122,18 +127,13 @@ message = "`inductive enum Callback`: the field `0` holds a function; a family h
 @ cases.what-an-inductive-type-cannot-hold-is-an-error.diagnostics[]
 file = "input/main.taut"
 name = "Short"
-message = "`i16` is not defined in proofs: it runs as written and is not checked by the kernel, because it is a built-in of the prelude; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
-@ cases.what-an-inductive-type-cannot-hold-is-an-error.diagnostics[]
-file = "input/main.taut"
-name = "Wraps"
-message = "`Plain` is not defined in proofs: a `struct` or an `enum` is not one of the kernel's types; write `inductive` before it (`inductive struct`, `inductive enum`) to use it here"
+message = "`SInt` is not defined; it is in the standard library: `import std::sint`"
 
 // A function the kernel checks that builds a value of an `inductive enum` is
 // extracted with the family, so that the constructor it names is defined
 // where it runs.
 @ cases.an-extracted-function-builds-an-inductive-enum
-extract = true
-imports = [path`../../std/Base.taut`, path`../../std/Text.taut`]
+imports = [path`../../std/base.taut`, path`../../std/text.taut`]
 source = ```tauto
 inductive enum Route {
   Home
@@ -158,18 +158,20 @@ fn post_of(o: Option(Nat)): Option(Route) {
   }
 }
 
-perform show("a", segment(about()))
-perform show("b", post_of(Some(3)))
+show(&segment(about()))
+show(&post_of(Some(3)))
 ```
-shows = ['a = "about"', 'b = Some(Post(3))']
+stdout = ```
+"about"
+Some(Post(3))
+```
 
 // A `pub(open)` one in another file: the importing file names its
 // constructors, and the functions over it are extracted.
 @ cases.a-pub-open-inductive-enum-of-another-file-is-extracted
-extract = true
 entry = "main.taut"
 files."routes.taut" = ```tauto
-import std::Text
+import std::text
 
 pub(open) inductive enum Route {
   Home
@@ -187,16 +189,20 @@ pub fn about(): Route { About }
 ```
 files."main.taut" = ```tauto
 import "routes.taut"
-perform show("a", segment(About))
-perform show("b", segment(about()))
-perform show("c", Home)
+show(&segment(About))
+show(&segment(about()))
+show(&Home)
 ```
-shows = ['a = "about"', 'b = "about"', 'c = Home']
+stdout = ```
+"about"
+"about"
+Home
+```
 
 // A program with a Nib file gives the kernel its `inductive struct` as a
 // family too, so `t.query` in a theorem is the field as in a source file.
 @ cases.an-inductive-struct-in-a-nib-program-has-fields
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 inductive struct Url {
@@ -206,8 +212,8 @@ inductive struct Url {
 
 fn query_of(u: Url): Nat { u.query }
 
-theorem q(t: Url): t.query = t.query { Refl(Nat, t.query) }
-theorem built(n: Nat, m: Nat): query_of(Url { query: n, path: m }) = n { Refl(Nat, n) }
+theorem q(t: Url): t.query = t.query { Refl(<A: Nat, a: t.query>) }
+theorem built(n: Nat, m: Nat): query_of(Url { query: n, path: m }) = n { Refl(<A: Nat, a: n>) }
 ```
 
 checks_all = "ok"
@@ -218,7 +224,7 @@ checks."input/main.nib::built" = "ok"
 
 // The same when the `inductive struct` is in a source file a Nib file imports.
 @ cases.an-imported-inductive-struct-in-a-nib-program-has-fields
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.nib"
 files."input/url.taut" = ```tauto
 pub(open) inductive struct Url {
@@ -239,7 +245,7 @@ checks."input/main.nib::q" = "ok"
 // A field is read from a value: `Url.query(t)` names the type, and the error
 // says to write `t.query`.
 @ cases.a-field-of-a-type-name-is-an-error
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 inductive struct Url {

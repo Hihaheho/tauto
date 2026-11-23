@@ -1,12 +1,13 @@
 import "instantiation_pending_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "inference_base.taut"
 import "instantiation_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 
 pub def InstantiationContextFrame<A: Type>(
@@ -19,10 +20,10 @@ pub theorem instantiation_context_bind<A: Type, B: Type>(
   m: Mut1(A, Checker),
   first: InstantiationContextFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. InstantiationContextFrame(next, k(value, next))
-): InstantiationContextFrame(c, frame_bind(A, B, k, m)) {
+): InstantiationContextFrame(c, frame_bind(<A: A, B: B>, k, m)) {
   ⊢ InstantiationContextFrame(
     c,
-    frame_bind(A, B, k, m)
+    frame_bind(<A: A, B: B>, k, m)
   ) from match m { mut1(value, next) => Eq::trans(tail(value, next), first) }
 }
 pub theorem instantiation_context_rewrap<A: Type>(
@@ -41,21 +42,21 @@ pub theorem instantiation_fresh_context(
 ): InstantiationContextFrame(c, ck_fresh(c)) { Refl }
 pub theorem instantiation_bound_frame_context(
   c: Checker,
-  g: Pair(Text, Kind),
+  g: Text × Kind,
   v: Ty,
   name: Text,
   span: TySpan,
   arg: Option(Kind)
 ): InstantiationContextFrame(c, instantiation_bound(c, g, v, name, span, arg)) {
-  ⊢ InstantiationContextFrame(c, instantiation_bound(c, g, v, name, span, arg)) from match arg { Some(k) => Refl
+  match arg { Some(k) => Refl
     None => Refl }
 }
 
 pub theorem instantiation_cons_frame_context(
-  g: Pair(Text, Kind),
-  rest: List(Pair(Text, Kind)),
+  g: Text × Kind,
+  rest: List(Text × Kind),
   c: Checker,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan,
   map: Ordmap(Text, Ty),
@@ -65,12 +66,10 @@ pub theorem instantiation_cons_frame_context(
   ). InstantiationContextFrame(next, ck_instantiate_map_ctors(rest, next, ctors, name, span, more))
 ): InstantiationContextFrame(c, instantiation_cons(g, rest, c, ctors, name, span, map)) {
   instantiation_context_bind(
-    Ty,
-    Ordmap(Text, Ty),
+    <A: Ty, B: Ordmap(Text, Ty)>,
     c,
     (v: Ty, c1: Checker) => frame_bind(
-      Unit,
-      Ordmap(Text, Ty),
+      <A: Unit, B: Ordmap(Text, Ty)>,
       (ignored: Unit, c2: Checker) => ck_rewrap1(
         ck_instantiate_map_ctors(
           rest,
@@ -86,8 +85,7 @@ pub theorem instantiation_cons_frame_context(
     ck_fresh(c),
     instantiation_fresh_context(c),
     v => c1 => instantiation_context_bind(
-      Unit,
-      Ordmap(Text, Ty),
+      <A: Unit, B: Ordmap(Text, Ty)>,
       c1,
       (ignored: Unit, c2: Checker) => ck_rewrap1(
         ck_instantiate_map_ctors(
@@ -125,14 +123,14 @@ pub theorem instantiation_cons_frame_context(
 }
 
 pub theorem ck_instantiate_map_ctors_frame_context(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan,
   map: Ordmap(Text, Ty)
 ): InstantiationContextFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
-  ⊢ InstantiationContextFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) from match gs {
+  match gs {
     Nil => Refl
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => InstantiationContextFrame(c, z),
@@ -151,7 +149,7 @@ pub theorem ck_instantiate_map_ctors_frame_context(
   }
 }
 pub theorem ck_instantiate_map_frame_context(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
   span: TySpan,
   map: Ordmap(Text, Ty)
@@ -172,12 +170,12 @@ pub theorem ck_pend_frame_context(
 
 pub theorem instantiation_pred_frame_context(
   c: Checker,
-  p: Pair(Text, Text),
+  p: Text × Text,
   what: Text,
   span: TySpan,
   found: Option(Ty)
 ): InstantiationContextFrame(c, instantiation_pred(c, p, what, span, found)) {
-  ⊢ InstantiationContextFrame(c, instantiation_pred(c, p, what, span, found)) from match found {
+  match found {
     None => Refl
     Some(t) => instantiation_context_rewrap(
       c,
@@ -188,8 +186,8 @@ pub theorem instantiation_pred_frame_context(
 }
 
 pub theorem instantiation_preds_cons_frame_context(
-  p: Pair(Text, Text),
-  rest: List(Pair(Text, Text)),
+  p: Text × Text,
+  rest: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
@@ -197,8 +195,7 @@ pub theorem instantiation_preds_cons_frame_context(
   ih: ∀ next: Checker. InstantiationContextFrame(next, ck_pend_preds(rest, next, map, what, span))
 ): InstantiationContextFrame(c, instantiation_preds_cons(p, rest, c, map, what, span)) {
   instantiation_context_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_pend_preds(rest, c1, map, what, span)),
     instantiation_pred(
@@ -224,13 +221,13 @@ pub theorem instantiation_preds_cons_frame_context(
 }
 
 pub theorem ck_pend_preds_frame_context(
-  ps: List(Pair(Text, Text)),
+  ps: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan
 ): InstantiationContextFrame(c, ck_pend_preds(ps, c, map, what, span)) {
-  ⊢ InstantiationContextFrame(c, ck_pend_preds(ps, c, map, what, span)) from match ps {
+  match ps {
     Nil => Refl
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => InstantiationContextFrame(c, z),
@@ -259,8 +256,7 @@ pub theorem instantiation_named_cons_frame_context(
   ). InstantiationContextFrame(next, ck_instantiate_named_map(rest, next, more))
 ): InstantiationContextFrame(c, instantiation_named_cons(g, rest, c, map)) {
   instantiation_context_bind(
-    Ty,
-    Ordmap(Text, Ty),
+    <A: Ty, B: Ordmap(Text, Ty)>,
     c,
     (v: Ty, c1: Checker) => ck_rewrap1(
       ck_instantiate_named_map(rest, c1, Ordmap::insert(map, g, v, Ordmap::compare_text))
@@ -280,7 +276,7 @@ pub theorem ck_instantiate_named_map_frame_context(
   c: Checker,
   map: Ordmap(Text, Ty)
 ): InstantiationContextFrame(c, ck_instantiate_named_map(gs, c, map)) {
-  ⊢ InstantiationContextFrame(c, ck_instantiate_named_map(gs, c, map)) from match gs {
+  match gs {
     Nil => Refl
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => InstantiationContextFrame(c, z),
@@ -298,13 +294,12 @@ pub theorem ck_instantiate_named_map_frame_context(
 
 pub theorem instantiation_ck_instantiate_frame_context(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   t: Ty,
   span: TySpan
 ): InstantiationContextFrame(c, instantiation_ck_instantiate(c, gs, t, span)) {
   instantiation_context_bind(
-    Ordmap(Text, Ty),
-    Ty,
+    <A: Ordmap(Text, Ty), B: Ty>,
     c,
     (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
     ck_instantiate_map(gs, c, span, Ordmap::empty()),
@@ -315,7 +310,7 @@ pub theorem instantiation_ck_instantiate_frame_context(
 
 pub theorem ck_instantiate_frame_context(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   t: Ty,
   span: TySpan
 ): InstantiationContextFrame(c, ck_instantiate(c, gs, t, span)) {
@@ -332,8 +327,7 @@ pub theorem instantiation_ck_instantiate_named_frame_context(
   t: Ty
 ): InstantiationContextFrame(c, instantiation_ck_instantiate_named(c, gs, t)) {
   instantiation_context_bind(
-    Ordmap(Text, Ty),
-    Ty,
+    <A: Ordmap(Text, Ty), B: Ty>,
     c,
     (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
     ck_instantiate_named_map(gs, c, Ordmap::empty()),
@@ -361,13 +355,11 @@ pub theorem instantiation_scheme_frame_context(
   span: TySpan
 ): InstantiationContextFrame(c, instantiation_scheme(c, name, s, span)) {
   instantiation_context_bind(
-    Ordmap(Text, Ty),
-    Ty,
+    <A: Ordmap(Text, Ty), B: Ty>,
     c,
     (map: Ordmap(Text, Ty), c1: Checker) => frame_bind(
-      Unit,
-      Ty,
-      (ignored: Unit, c2: Checker) => mut1(ty_substitute(instantiation_scheme_ty(s), map), c2),
+      <A: Unit, B: Ty>,
+      (ignored: Unit, c2: Checker) => instantiation_scheme_done(c2, name, s, span, map),
       ck_pend_preds(instantiation_scheme_preds(s), c1, map, name, span)
     ),
     ck_instantiate_map_ctors(
@@ -387,10 +379,9 @@ pub theorem instantiation_scheme_frame_context(
       Ordmap::empty()
     ),
     map => c1 => instantiation_context_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c1,
-      (ignored: Unit, c2: Checker) => mut1(ty_substitute(instantiation_scheme_ty(s), map), c2),
+      (ignored: Unit, c2: Checker) => instantiation_scheme_done(c2, name, s, span, map),
       ck_pend_preds(instantiation_scheme_preds(s), c1, map, name, span),
       ck_pend_preds_frame_context(instantiation_scheme_preds(s), c1, map, name, span),
       ignored => c2 => Refl

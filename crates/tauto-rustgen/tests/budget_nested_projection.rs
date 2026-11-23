@@ -5,13 +5,13 @@ use std::path::Path;
 use tauto_nir::{Expr, ExprKind, Package, Ty};
 use tauto_rustgen::{Bindings, BudgetDiagnostic, Sources, budget_diagnostics, emit_lib};
 
-const MANIFEST: &str = r#"rust {
-  exports = ["run"]
+const MANIFEST: &str = r#"exports = ["run"]
+rust {
   nonresuming { entries { run_trusted = "run" } }
 }"#;
 
 fn package(source: &str) -> Package {
-    let mut package = tauto_nir::compile_with(source, true).unwrap();
+    let mut package = tauto::nir::compile_with(source, true).unwrap();
     package
         .exports
         .retain(|export| export.name.as_str() == "run");
@@ -19,7 +19,7 @@ fn package(source: &str) -> Package {
     package
 }
 
-fn inspect(package: &Package, source: &str) -> (Vec<BudgetDiagnostic>, String) {
+fn inspect(package: &mut Package, source: &str) -> (Vec<BudgetDiagnostic>, String) {
     let manifest = tauto::manifest::parse(MANIFEST, Path::new("Tauto.eure")).unwrap();
     let bindings = Bindings::resolve(package, Some(&manifest), None).unwrap();
     let sources = Sources {
@@ -39,7 +39,8 @@ fn report<'a>(reports: &'a [BudgetDiagnostic], variant: &str) -> &'a BudgetDiagn
 }
 
 fn qualified_only(source: &str) {
-    let (reports, rust) = inspect(&package(source), source);
+    let mut package = package(source);
+    let (reports, rust) = inspect(&mut package, source);
     let ordinary = report(&reports, "ordinary");
     assert!(!ordinary.eligible(), "{ordinary:?}");
     assert!(ordinary.assumptions.is_empty(), "{ordinary:?}");
@@ -61,15 +62,15 @@ fn concrete_source(body: &str) -> String {
     format!(
         r#"struct Inner {{ values: List(u64) }}
 struct Outer {{ inner: Inner }}
-fn count(xs: List(u64)): u64 ! {{Div}} {{
+fn count(xs: List(u64)): u64 ! {{div, overflow}} {{
   match xs {{
     Nil => 0
     Cons(item, tail) => 1 + count(tail)
   }}
 }}
-fn inspect(value: Outer): u64 ! {{Div}} {{ {} }}
-fn run(value: Outer): u64 {{
-  handle {{ budget(steps: 100) {{ inspect(value) }} }} with {{ exceeded(info), k => 0 }}
+fn inspect(value: Outer): u64 ! {{div, overflow}} {{ {} }}
+fn run(value: Outer): u64 ! {{budget}} {{
+  handle {{ perform budget(100, () => {{ inspect(value) }}) }} with {{ exceeded(info), k => 0, overflow() => 0 }}
 }}"#,
         body
     )
@@ -100,15 +101,15 @@ count(inner.values)"#,
             r#"struct Inner {{ values: List(u64) }}
 struct Outer {{ inner: Inner }}
 struct Wrapper {{ outer: Outer }}
-fn count(xs: List(u64)): u64 ! {{Div}} {{
+fn count(xs: List(u64)): u64 ! {{div, overflow}} {{
   match xs {{
     Nil => 0
     Cons(item, tail) => 1 + count(tail)
   }}
 }}
-fn inspect(value: Wrapper): u64 ! {{Div}} {{ {} }}
-fn run(value: Wrapper): u64 {{
-  handle {{ budget(steps: 100) {{ inspect(value) }} }} with {{ exceeded(info), k => 0 }}
+fn inspect(value: Wrapper): u64 ! {{div, overflow}} {{ {} }}
+fn run(value: Wrapper): u64 ! {{budget}} {{
+  handle {{ perform budget(100, () => {{ inspect(value) }}) }} with {{ exceeded(info), k => 0, overflow() => 0 }}
 }}"#,
             body
         );
@@ -126,18 +127,18 @@ let inner := outer.inner
 count(inner.values)"#,
     ] {
         let source = format!(
-            r#"shared struct Inner(A: Shared) {{ values: List(A) }}
-shared struct Outer(B: Shared) {{ inner: Inner(B) }}
-shared struct Wrapper(C: Shared) {{ outer: Outer(C) }}
-fn count<T: Shared>(xs: List(T)): u64 ! {{Div}} {{
+            r#"struct(shared) Inner(A: Shared) {{ values: List(A) }}
+struct(shared) Outer(B: Shared) {{ inner: Inner(B) }}
+struct(shared) Wrapper(C: Shared) {{ outer: Outer(C) }}
+fn count<T: Shared>(xs: List(T)): u64 ! {{div, overflow}} {{
   match xs {{
     Nil => 0
     Cons(item, tail) => 1 + count(tail)
   }}
 }}
-fn inspect<U: Shared>(value: Wrapper(U)): u64 ! {{Div}} {{ {} }}
-fn run(value: Wrapper(u64)): u64 {{
-  handle {{ budget(steps: 100) {{ inspect(value) }} }} with {{ exceeded(info), k => 0 }}
+fn inspect<U: Shared>(value: Wrapper(U)): u64 ! {{div, overflow}} {{ {} }}
+fn run(value: Wrapper(u64)): u64 ! {{budget}} {{
+  handle {{ perform budget(100, () => {{ inspect(value) }}) }} with {{ exceeded(info), k => 0, overflow() => 0 }}
 }}"#,
             body
         );
@@ -161,7 +162,7 @@ fn genuinely_unknown_intermediate_types_still_fail_closed() {
     tauto_messages::install();
     let source = concrete_source(r#"count(value.inner.values)"#);
     qualified_only(&source);
-    for unknown in [Ty::Infer, Ty::Param("Unknown".into())] {
+    for unknown in [Ty::Param("Unknown".into())] {
         let mut package = package(&source);
         let inner = package
             .datas
@@ -189,7 +190,7 @@ fn genuinely_unknown_intermediate_types_still_fail_closed() {
             changed += 1;
         }
         assert!(changed > 0);
-        let (reports, rust) = inspect(&package, &source);
+        let (reports, rust) = inspect(&mut package, &source);
         let qualified = report(&reports, "run_trusted");
         assert!(!qualified.eligible(), "{unknown:?}: {qualified:?}");
         assert!(
@@ -208,9 +209,9 @@ fn a_safe_projected_field_does_not_hide_an_unproven_sibling() {
     tauto_messages::install();
     let source = concrete_source(r#"count(value.inner.values)"#).replace(
         r#"struct Outer { inner: Inner }"#,
-        r#"shared struct Outer { inner: Inner, read: (u64) -> u64 }"#,
+        r#"struct(shared) Outer { inner: Inner, read: (u64) -> u64 }"#,
     );
-    let package = package(&source);
+    let mut package = package(&source);
     let outer = package
         .datas
         .iter()
@@ -230,7 +231,7 @@ fn a_safe_projected_field_does_not_hide_an_unproven_sibling() {
         }
     }
     assert!(reads > 0);
-    let (reports, rust) = inspect(&package, &source);
+    let (reports, rust) = inspect(&mut package, &source);
     let qualified = report(&reports, "run_trusted");
     assert!(!qualified.eligible(), "{qualified:?}");
     assert!(

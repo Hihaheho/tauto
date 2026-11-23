@@ -1,4 +1,4 @@
-//! Byte streams of `--allow-net` (`tcp_*` in `std/prelude/Os.taut`): TCP,
+//! Byte streams of `--allow-net` (`tcp_*` in `std/builtin/os.taut`): TCP,
 //! and Unix domain sockets where the system has them, over the standard
 //! library. A listener or a stream is a number into a table of this process,
 //! so a task on another thread reaches the same socket.
@@ -24,9 +24,18 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 
-/// How often a waiting accept looks again for a connection, a deadline and
-/// a close.
+/// The longest a waiting accept sleeps before it looks again for a
+/// connection, a deadline and a close.
 const ACCEPT_POLL: Duration = Duration::from_millis(10);
+
+/// The first sleep of a waiting accept. Each sleep that finds no connection
+/// doubles the next, up to `ACCEPT_POLL`: a connection that comes soon after
+/// the last one waits microseconds, an idle listener wakes 100 times a second.
+const ACCEPT_FIRST_NAP: Duration = Duration::from_micros(20);
+
+/// How many connections a listener holds before the program accepts them.
+#[cfg(unix)]
+const BACKLOG: i32 = 4096;
 
 enum Listener {
     Tcp(TcpListener),
@@ -106,7 +115,10 @@ impl Write for Socket {
 pub fn take(id: u64) -> Option<Socket> {
     let opened = with(|t| t.streams.remove(&id))?;
     match Arc::try_unwrap(opened) {
-        Ok(o) => Some(o.socket),
+        Ok(Opened { ready, socket, .. }) => {
+            drop(ready);
+            Some(socket)
+        }
         Err(back) => {
             with(|t| t.streams.insert(id, back));
             None
@@ -121,6 +133,9 @@ pub fn add(socket: Socket, local: String, peer: String) -> Vec<Text> {
 }
 
 struct Opened<T> {
+    /// Dropped before the socket, so its registration with the reactor's
+    /// poller ends while the descriptor is still this socket's.
+    ready: Ready,
     socket: T,
     /// Raised by close: a wait in another task stops at its next look.
     closed: AtomicBool,
@@ -152,6 +167,7 @@ pub fn drop_streams() {
     let streams: Vec<_> = with(|t| t.streams.drain().map(|(_, s)| s).collect());
     for s in streams {
         s.closed.store(true, Ordering::Release);
+        s.ready.wake();
         let _ = shutdown(&s.socket, Shutdown::Both);
     }
 }
@@ -251,6 +267,7 @@ fn add_stream(socket: Socket, local: String, peer: String) -> Vec<Text> {
         let id = t.next;
         t.next += 1;
         let opened = Opened {
+            ready: Ready::default(),
             socket,
             closed: AtomicBool::new(false),
         };
@@ -292,6 +309,15 @@ pub fn os_tcp_listen_vec(address: Text) -> Result<Vec<Text>, Text> {
         }
         _ => return Err(Text::from(format!("cannot listen on {address}"))),
     };
+    // The standard library listens with a backlog of 128: connections that
+    // come faster than a program accepts them for a moment are dropped, and
+    // their peers try again only a second later. The system caps this
+    // longer one at its own limit (`somaxconn`).
+    #[cfg(unix)]
+    let _ = match &listener {
+        Listener::Tcp(l) => rustix::net::listen(l, BACKLOG),
+        Listener::Unix(l) => rustix::net::listen(l, BACKLOG),
+    };
     match &listener {
         Listener::Tcp(l) => l.set_nonblocking(true),
         #[cfg(unix)]
@@ -302,6 +328,7 @@ pub fn os_tcp_listen_vec(address: Text) -> Result<Vec<Text>, Text> {
         let id = t.next;
         t.next += 1;
         let opened = Opened {
+            ready: Ready::default(),
             socket: listener,
             closed: AtomicBool::new(false),
         };
@@ -320,6 +347,7 @@ pub fn os_tcp_listen_vec(address: Text) -> Result<Vec<Text>, Text> {
 pub fn os_tcp_accept_vec(listener: u64, deadline: Option<i64>) -> Result<Option<Vec<Text>>, Text> {
     let l = with(|t| t.listeners.get(&listener).cloned())
         .ok_or_else(|| Text::from(format!("no listener {listener}")))?;
+    let mut nap = ACCEPT_FIRST_NAP;
     loop {
         if l.closed.load(Ordering::Acquire) {
             return Err(Text::from("the listener was closed"));
@@ -349,8 +377,14 @@ pub fn os_tcp_accept_vec(listener: u64, deadline: Option<i64>) -> Result<Option<
             Ok((socket, local, peer)) => return Ok(Some(add_stream(socket, local, peer))),
             Err(e) if e.kind() == ErrorKind::WouldBlock => match left(deadline) {
                 Some(d) if d.is_zero() => return Ok(None),
-                Some(d) => std::thread::sleep(d.min(ACCEPT_POLL)),
-                None => std::thread::sleep(ACCEPT_POLL),
+                Some(d) => {
+                    std::thread::sleep(d.min(nap));
+                    nap = (nap * 2).min(ACCEPT_POLL);
+                }
+                None => {
+                    std::thread::sleep(nap);
+                    nap = (nap * 2).min(ACCEPT_POLL);
+                }
             },
             Err(e) if e.kind() == ErrorKind::Interrupted => {}
             Err(e) => return Err(failed(e)),
@@ -406,34 +440,51 @@ pub fn os_tcp_connect_vec(address: Text, deadline: Option<i64>) -> Result<Option
 /// takes bytes (or the end) that have already arrived, without waiting.
 pub fn os_tcp_read_vec(id: u64, max: u64, deadline: Option<i64>) -> Result<Option<Vec<u8>>, Text> {
     let s = stream(id)?;
-    let mut buf = vec![0; max.min(1 << 20) as usize];
-    if buf.is_empty() {
-        return Ok(Some(buf));
+    let size = max.min(1 << 20) as usize;
+    if size == 0 {
+        return Ok(Some(Vec::new()));
     }
+    // The bytes are read into this thread's scratch buffer, which is zeroed
+    // once, and only those that arrived are copied out.
+    READ_SCRATCH.with_borrow_mut(|scratch| {
+        if scratch.len() < size {
+            scratch.resize(size, 0);
+        }
+        read_into(&s, &mut scratch[..size], deadline).map(|got| got.map(|n| scratch[..n].to_vec()))
+    })
+}
+
+thread_local! {
+    static READ_SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The number of bytes read into `buf`, as `os_tcp_read_vec` reads them.
+fn read_into(
+    s: &Opened<Socket>,
+    buf: &mut [u8],
+    deadline: Option<i64>,
+) -> Result<Option<usize>, Text> {
     loop {
         if s.closed.load(Ordering::Acquire) {
-            return Ok(Some(Vec::new()));
+            return Ok(Some(0));
         }
         let wait = left(deadline);
         let expired = wait.is_some_and(|d| d.is_zero());
         let read = if expired {
             without_waiting(&s.socket, |socket| match socket {
-                Socket::Tcp(c) => (&*c).read(&mut buf),
+                Socket::Tcp(c) => (&*c).read(buf),
                 #[cfg(unix)]
-                Socket::Unix(c) => (&*c).read(&mut buf),
+                Socket::Unix(c) => (&*c).read(buf),
             })
         } else {
             match &s.socket {
-                Socket::Tcp(c) => c.set_read_timeout(wait).and_then(|()| (&*c).read(&mut buf)),
+                Socket::Tcp(c) => c.set_read_timeout(wait).and_then(|()| (&*c).read(buf)),
                 #[cfg(unix)]
-                Socket::Unix(c) => c.set_read_timeout(wait).and_then(|()| (&*c).read(&mut buf)),
+                Socket::Unix(c) => c.set_read_timeout(wait).and_then(|()| (&*c).read(buf)),
             }
         };
         match read {
-            Ok(n) => {
-                buf.truncate(n);
-                return Ok(Some(buf));
-            }
+            Ok(n) => return Ok(Some(n)),
             Err(e) if e.kind() == ErrorKind::Interrupted => {}
             Err(e) if timed_out(&e) => {
                 if expired {
@@ -539,6 +590,7 @@ fn shutdown(socket: &Socket, how: Shutdown) -> std::io::Result<()> {
 pub fn os_tcp_close(id: u64) {
     if let Some(s) = with(|t| t.streams.remove(&id)) {
         s.closed.store(true, Ordering::Release);
+        s.ready.wake();
         let _ = shutdown(&s.socket, Shutdown::Both);
     }
 }
@@ -548,6 +600,7 @@ pub fn os_tcp_close(id: u64) {
 pub fn os_tcp_unlisten(id: u64) {
     if let Some(l) = with(|t| t.listeners.remove(&id)) {
         l.closed.store(true, Ordering::Release);
+        l.ready.wake();
         #[cfg(unix)]
         if let Listener::Unix(u) = &l.socket {
             if let Some(p) = u
@@ -558,6 +611,294 @@ pub fn os_tcp_unlisten(id: u64) {
                 let _ = std::fs::remove_file(p);
             }
         }
+    }
+}
+
+/// What a wait on the reactor holds of a socket (`exec::os_tcp_ready`): its
+/// registration with the reactor's poller, made at the first wait, and what
+/// wakes a wait when the socket is closed.
+#[cfg(all(unix, feature = "reactor"))]
+#[derive(Default)]
+pub(crate) struct Ready {
+    fd: std::sync::OnceLock<Option<tokio::io::unix::AsyncFd<Fd>>>,
+    closed: tokio::sync::Notify,
+}
+
+#[cfg(not(all(unix, feature = "reactor")))]
+#[derive(Default)]
+pub(crate) struct Ready;
+
+impl Ready {
+    /// Ends the waits on the socket: it is closed.
+    pub(crate) fn wake(&self) {
+        #[cfg(all(unix, feature = "reactor"))]
+        self.closed.notify_waiters();
+    }
+}
+
+/// A socket's descriptor as the poller watches it; the socket owns it.
+#[cfg(all(unix, feature = "reactor"))]
+struct Fd(std::os::fd::RawFd);
+
+#[cfg(all(unix, feature = "reactor"))]
+impl std::os::fd::AsRawFd for Fd {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.0
+    }
+}
+
+/// What a wait on the poller watches: a socket, its registration, whether
+/// it is closed, and whether it can be acted on now.
+#[cfg(all(unix, feature = "reactor"))]
+pub(crate) trait Watched: Send + Sync + 'static {
+    /// The registration. It must be dropped before the socket, so that it
+    /// ends while the descriptor is still the socket's.
+    fn ready(&self) -> &Ready;
+    fn descriptor(&self) -> std::os::fd::BorrowedFd<'_>;
+    fn closed(&self) -> bool;
+    /// Whether reading (or writing) would not wait now.
+    fn now(&self, write: bool) -> bool {
+        polled(self.descriptor(), write)
+    }
+}
+
+#[cfg(all(unix, feature = "reactor"))]
+impl Watched for Opened<Socket> {
+    fn ready(&self) -> &Ready {
+        &self.ready
+    }
+    fn descriptor(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd;
+        match &self.socket {
+            Socket::Tcp(c) => c.as_fd(),
+            Socket::Unix(c) => c.as_fd(),
+        }
+    }
+    fn closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(all(unix, feature = "reactor"))]
+impl Watched for Opened<Listener> {
+    fn ready(&self) -> &Ready {
+        &self.ready
+    }
+    fn descriptor(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd;
+        match &self.socket {
+            Listener::Tcp(l) => l.as_fd(),
+            Listener::Unix(l) => l.as_fd(),
+        }
+    }
+    fn closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire) || stopping()
+    }
+}
+
+/// How often a wait on a listener looks whether `tauto dev` is reloading,
+/// which nothing on the socket tells it.
+#[cfg(all(unix, feature = "reactor"))]
+const RELOAD_LOOK: Duration = Duration::from_millis(100);
+
+/// A wait for the reactor's thread that watches sockets.
+#[cfg(all(unix, feature = "reactor"))]
+pub(crate) type Wait = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+/// The wait of `exec::os_tcp_ready` on the stream or listener `id`. `None`
+/// when no stream or listener has the number: the operation that follows
+/// says so.
+#[cfg(all(unix, feature = "reactor"))]
+pub(crate) fn ready(id: u64, write: bool, deadline: Option<i64>) -> Option<Wait> {
+    let (stream, listener) = with(|t| (t.streams.get(&id).cloned(), t.listeners.get(&id).cloned()));
+    match (stream, listener) {
+        (Some(s), _) => Some(wait(s, write, deadline, false)),
+        (None, Some(l)) => {
+            let look = with(|t| t.keep.is_some());
+            Some(wait(l, false, deadline, look))
+        }
+        (None, None) => None,
+    }
+}
+
+/// Waits on the poller until `o` can be read (or written), is closed, or
+/// `deadline` passes; with `look`, it also ends every `RELOAD_LOOK` to let
+/// the caller look again.
+#[cfg(all(unix, feature = "reactor"))]
+pub(crate) fn wait<W: Watched>(o: Arc<W>, write: bool, deadline: Option<i64>, look: bool) -> Wait {
+    let until = left(deadline).map(|d| tokio::time::Instant::now() + d);
+    Box::pin(wait_ready(o, write, until, look))
+}
+
+/// Readiness the poller reported is looked at again (`Watched::now`), since
+/// the operation that follows reads or writes the socket outside the
+/// poller's sight.
+#[cfg(all(unix, feature = "reactor"))]
+#[allow(unsafe_code)]
+async fn wait_ready<W: Watched>(
+    o: Arc<W>,
+    write: bool,
+    until: Option<tokio::time::Instant>,
+    look: bool,
+) {
+    use std::future::Future;
+    use std::task::Poll;
+    use tokio::io::Interest;
+    use tokio::io::unix::AsyncFd;
+
+    if o.now(write) {
+        return;
+    }
+    let Some(fd) = o
+        .ready()
+        .fd
+        .get_or_init(|| {
+            let fd = Fd(std::os::fd::AsRawFd::as_raw_fd(&o.descriptor()));
+            // SAFETY: the descriptor is the socket's, which `o` owns, and
+            // `Watched::ready` is dropped before the socket.
+            unsafe { AsyncFd::register_with_interest(fd, Interest::READABLE | Interest::WRITABLE) }
+                .ok()
+        })
+        .as_ref()
+    else {
+        // The poller does not take this socket: the operation waits instead.
+        return;
+    };
+    loop {
+        let closed = o.ready().closed.notified();
+        let mut closed = std::pin::pin!(closed);
+        closed.as_mut().enable();
+        if o.closed() {
+            return;
+        }
+        if until.is_some_and(|u| u <= tokio::time::Instant::now()) {
+            return;
+        }
+        let mut sleep = std::pin::pin!(async {
+            match until {
+                Some(u) => tokio::time::sleep_until(u).await,
+                None => std::future::pending().await,
+            }
+        });
+        let mut reload = std::pin::pin!(async {
+            if look {
+                tokio::time::sleep(RELOAD_LOOK).await
+            } else {
+                std::future::pending().await
+            }
+        });
+        let mut io = std::pin::pin!(async {
+            let guard = if write {
+                fd.writable().await
+            } else {
+                fd.readable().await
+            };
+            match guard {
+                Ok(mut g) => {
+                    if o.now(write) {
+                        true
+                    } else {
+                        g.clear_ready();
+                        false
+                    }
+                }
+                // The operation that follows meets the error itself.
+                Err(_) => true,
+            }
+        });
+        let done = std::future::poll_fn(|cx| {
+            if let Poll::Ready(ready) = io.as_mut().poll(cx) {
+                return Poll::Ready(ready);
+            }
+            if closed.as_mut().poll(cx).is_ready()
+                || sleep.as_mut().poll(cx).is_ready()
+                || reload.as_mut().poll(cx).is_ready()
+            {
+                return Poll::Ready(true);
+            }
+            Poll::Pending
+        })
+        .await;
+        if done {
+            return;
+        }
+    }
+}
+
+/// Sends what the stream takes now, without waiting: how many of `bytes`.
+/// `Ok(None)` when it takes none and `deadline` has passed. A host that
+/// waits on the poller (`exec::os_tcp_ready`) sends a long write a piece at
+/// a time this way, so the write holds no thread while the peer is slow.
+pub fn os_tcp_send_vec(id: u64, bytes: &[u8], deadline: Option<i64>) -> Result<Option<u64>, Text> {
+    let s = stream(id)?;
+    if bytes.is_empty() {
+        return Ok(Some(0));
+    }
+    loop {
+        if s.closed.load(Ordering::Acquire) {
+            return Err(Text::from("the stream was closed"));
+        }
+        match send_now(&s.socket, bytes) {
+            Ok(0) => return Err(Text::from("the stream takes no more bytes")),
+            Ok(n) => return Ok(Some(n as u64)),
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                return Ok(match left(deadline) {
+                    Some(d) if d.is_zero() => None,
+                    _ => Some(0),
+                });
+            }
+            Err(e) => return Err(failed(e)),
+        }
+    }
+}
+
+pub fn os_tcp_send(
+    id: u64,
+    bytes: crate::stdlib::Bytes,
+    deadline: Option<i64>,
+) -> Result<Option<u64>, Text> {
+    os_tcp_send_vec(id, &bytes, deadline)
+}
+
+/// One send that does not wait, whatever mode the socket is in.
+#[cfg(unix)]
+pub(crate) fn send_now(socket: &Socket, bytes: &[u8]) -> std::io::Result<usize> {
+    use rustix::net::{SendFlags, send};
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let flags = SendFlags::DONTWAIT | SendFlags::NOSIGNAL;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let flags = SendFlags::DONTWAIT;
+    let sent = match socket {
+        Socket::Tcp(c) => send(c, bytes, flags),
+        Socket::Unix(c) => send(c, bytes, flags),
+    };
+    sent.map_err(std::io::Error::from)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn send_now(socket: &Socket, bytes: &[u8]) -> std::io::Result<usize> {
+    without_waiting(socket, |socket| match socket {
+        Socket::Tcp(c) => (&*c).write(bytes),
+    })
+}
+
+/// Whether the socket can be read (bytes, its end, an error or a
+/// connection) or written now, as `poll` with no wait says.
+#[cfg(all(unix, feature = "reactor"))]
+pub(crate) fn polled(fd: std::os::fd::BorrowedFd<'_>, write: bool) -> bool {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    let flags = if write { PollFlags::OUT } else { PollFlags::IN };
+    let mut fds = [PollFd::new(&fd, flags)];
+    let now = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    match poll(&mut fds, Some(&now)) {
+        Ok(n) => n > 0,
+        // A failed look says ready: the operation that follows waits as
+        // before, or meets the error itself.
+        Err(_) => true,
     }
 }
 
@@ -728,6 +1069,98 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
         os_tcp_unlisten(id);
         assert!(waiter.join().unwrap());
+    }
+
+    /// A wait for bytes on an idle stream holds no thread: it waits on the
+    /// poller until bytes arrive, the deadline passes or the stream closes.
+    #[cfg(all(unix, feature = "reactor"))]
+    #[test]
+    fn ready_waits_on_the_poller() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let l = os_tcp_listen_vec(Text::from("127.0.0.1:0")).unwrap();
+        let wait =
+            |id: u64, write: bool, deadline| rt.block_on(ready(id, write, deadline).unwrap());
+        // The listener is ready once a connection comes.
+        let c = os_tcp_connect_vec(l[1].clone(), after(5000))
+            .unwrap()
+            .unwrap();
+        wait(n(&l[0]), false, after(5000));
+        let s = os_tcp_accept_vec(n(&l[0]), after(-1)).unwrap().unwrap();
+        // Nothing has arrived: the wait ends at the deadline.
+        let t = std::time::Instant::now();
+        wait(n(&s[0]), false, after(100));
+        assert!(t.elapsed() >= Duration::from_millis(50));
+        assert!(os_tcp_read_vec(n(&s[0]), 8, after(-1)).unwrap().is_none());
+        // A fresh stream has room to write.
+        wait(n(&s[0]), true, None);
+        // Bytes that arrive end the wait, and a wait after they are read
+        // waits again.
+        os_tcp_write_vec(n(&c[0]), b"hi".to_vec(), None)
+            .unwrap()
+            .unwrap();
+        wait(n(&s[0]), false, after(5000));
+        assert_eq!(os_tcp_read_vec(n(&s[0]), 8, None).unwrap().unwrap(), b"hi");
+        let t = std::time::Instant::now();
+        wait(n(&s[0]), false, after(100));
+        assert!(t.elapsed() >= Duration::from_millis(50));
+        // Closing the stream from another thread ends a wait with no deadline.
+        let id = n(&s[0]);
+        let closer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            os_tcp_close(id);
+        });
+        wait(id, false, None);
+        closer.join().unwrap();
+        assert!(ready(id, false, None).is_none());
+        os_tcp_close(n(&c[0]));
+        // Unlistening ends a wait on the listener.
+        let lid = n(&l[0]);
+        let closer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            os_tcp_unlisten(lid);
+        });
+        wait(lid, false, None);
+        closer.join().unwrap();
+    }
+
+    /// A send takes what the socket has room for and does not wait: once
+    /// the peer reads nothing more, it takes none, and none past the
+    /// deadline is `None`.
+    #[test]
+    fn a_send_takes_what_fits_without_waiting() {
+        let l = os_tcp_listen_vec(Text::from("127.0.0.1:0")).unwrap();
+        let c = os_tcp_connect_vec(l[1].clone(), after(5000))
+            .unwrap()
+            .unwrap();
+        let s = os_tcp_accept_vec(n(&l[0]), after(5000)).unwrap().unwrap();
+        let piece = vec![7u8; 1 << 20];
+        let mut sent = 0u64;
+        let full = loop {
+            match os_tcp_send_vec(n(&c[0]), &piece, None).unwrap() {
+                Some(0) => break true,
+                Some(k) => sent += k,
+                None => break false,
+            }
+            assert!(sent < 1 << 30, "the socket never filled");
+        };
+        assert!(full && sent > 0);
+        assert_eq!(os_tcp_send_vec(n(&c[0]), &piece, after(-1)).unwrap(), None);
+        assert_eq!(os_tcp_send_vec(n(&c[0]), &[], None).unwrap(), Some(0));
+        // What was sent arrives.
+        let mut got = 0u64;
+        while got < sent {
+            got += os_tcp_read_vec(n(&s[0]), 1 << 20, after(5000))
+                .unwrap()
+                .unwrap()
+                .len() as u64;
+        }
+        assert_eq!(got, sent);
+        os_tcp_close(n(&c[0]));
+        os_tcp_close(n(&s[0]));
+        os_tcp_unlisten(n(&l[0]));
     }
 
     #[cfg(unix)]

@@ -27,6 +27,11 @@ pub(crate) struct Fx {
     pub o: bool,
     /// Code of the M tier, which a memory budget may count as well.
     pub m: bool,
+    /// The body of a budget: a `return` leaves it as `Err(value)`, and the
+    /// code after the budget returns the value from the function.
+    pub budget_return: bool,
+    /// A `return` was written under `budget_return`.
+    pub returned: bool,
 }
 
 /// `v`, charging `cells` to a memory budget first where one can be in place:
@@ -50,6 +55,8 @@ impl Fx {
             targets: Vec::new(),
             o: false,
             m: false,
+            budget_return: false,
+            returned: false,
         }
     }
 
@@ -64,6 +71,8 @@ impl Fx {
             targets: Vec::new(),
             o: true,
             m: false,
+            budget_return: false,
+            returned: false,
         }
     }
 }
@@ -171,6 +180,25 @@ pub(crate) fn pass_on(tys: Vec<Rs>, first: Rs) -> (Vec<Rs>, Vec<Rs>) {
 
 impl Gen<'_> {
     /// An expression of type `!` that sends the abort `a` outward.
+    /// The abort of the library effect `name` (`overflow` or `divzero`)
+    /// where an operator's result does not exist, if the program declares the
+    /// operation and an abort can leave the code being written.
+    fn overflow_abort(&mut self, e: &Expr, name: &str, fx: &Fx) -> Option<Rs> {
+        let can_leave = fx.sync_budget || !fx.targets.is_empty() || fx.o || fx.ret_a;
+        if !can_leave {
+            return None;
+        }
+        let op = self
+            .pkg
+            .ops
+            .iter()
+            .find(|o| tauto::bindings::is_library(&o.name, name))?;
+        let opc = op_const(op);
+        let at = self.loc(e.span);
+        let payload = self.boxed_payload(&[], &[]);
+        Some(self.propagate(&quote!(Abort { op: #opc, args: #payload, at: #at }), fx))
+    }
+
     pub fn propagate(&self, a: &Rs, fx: &Fx) -> Rs {
         if fx.sync_budget {
             quote!(return Err(tauto_rt::budget::Interrupted::Abort(#a)))
@@ -182,6 +210,20 @@ impl Gen<'_> {
             quote!(return Err(#a))
         } else {
             quote!(tauto_rt::a::unhandled(#a))
+        }
+    }
+
+    /// `return v` where the code being written sits: inside the body of a
+    /// budget or a `handle` that runs as a future, the value leaves it as an
+    /// `Err` and the code around the future returns it from the function.
+    pub(crate) fn leave_with(&self, fx: &mut Fx, v: Rs) -> Rs {
+        if fx.budget_return {
+            fx.returned = true;
+            quote!(return Err(#v))
+        } else if fx.ret_a || fx.sync_budget {
+            quote!(return Ok(#v))
+        } else {
+            quote!(return #v)
         }
     }
 
@@ -220,7 +262,7 @@ impl Gen<'_> {
                     (ExprKind::Closure(c), Repr::BorrowClosure) => self.closure_raw(c, fx),
                     _ => self.expr(init, fx),
                 };
-                let annot = if ty.has_infer() || local.repr != Repr::Plain {
+                let annot = if ty.has_arm_generic() || local.repr != Repr::Plain {
                     Rs::new()
                 } else {
                     let t = self.ty(ty);
@@ -233,7 +275,7 @@ impl Gen<'_> {
             } => {
                 let x = lid(local);
                 let init_s = self.expr(init, fx);
-                let annot = if ty.has_infer() {
+                let annot = if ty.has_arm_generic() {
                     Rs::new()
                 } else {
                     let t = self.ty(ty);
@@ -295,11 +337,8 @@ impl Gen<'_> {
                     Some(v) => self.expr(v, fx),
                     None => quote!(()),
                 };
-                if fx.ret_a || fx.sync_budget {
-                    quote!(return Ok(#v);)
-                } else {
-                    quote!(return #v;)
-                }
+                let leave = self.leave_with(fx, quote!(#v));
+                quote!(#leave;)
             }
         }
     }
@@ -318,6 +357,7 @@ impl Gen<'_> {
     fn place_as(&self, p: &Place, write: bool) -> Rs {
         let x = lid(&p.local);
         let mut s = match p.local.repr {
+            Repr::Ref if self.owned_refs.contains(&p.local.id) => quote!(#x),
             Repr::Plain if self.lazy.contains(&p.local.id) => quote!((*#x)),
             Repr::Ref | Repr::RefMut | Repr::FnRef => quote!((*#x)),
             _ => quote!(#x),
@@ -326,7 +366,8 @@ impl Gen<'_> {
             let f = field_tok(field);
             s = match (write, field.indirect) {
                 (true, Indirect::Shared) => quote!((*tauto_rt::unshare(&mut #s.#f))),
-                (true, Indirect::Unique) => quote!((*#s.#f)),
+                // Read, a boxed field is its contents (`&rc T`'s box too).
+                (_, Indirect::Shared | Indirect::Unique) => quote!((*#s.#f)),
                 _ => quote!(#s.#f),
             };
         }
@@ -342,11 +383,20 @@ impl Gen<'_> {
                 Use::Place => quote!((*#x)),
             };
         }
+        if l.repr == Repr::Ref && self.owned_refs.contains(&l.id) {
+            return match how {
+                Use::Copy | Use::Clone => quote!(#x.clone()),
+                _ => quote!((&#x)),
+            };
+        }
         match (l.repr, how) {
             (Repr::Plain, Use::Clone) => quote!(#x.clone()),
             (Repr::Plain, _) => quote!(#x),
             (Repr::SharedVar(true), _) => quote!(#x.get()),
-            (Repr::SharedVar(false), _) => quote!(#x.borrow().clone()),
+            // The guard ends with the `let`, not with the enclosing
+            // statement: a later operand of the same call may suspend, and
+            // a handler that runs then may write the cell.
+            (Repr::SharedVar(false), _) => quote!({ let v = #x.borrow().clone(); v }),
             (Repr::Ref, Use::Copy) | (Repr::RefMut, Use::Copy) => quote!(*#x),
             (Repr::Ref, Use::Clone) | (Repr::RefMut, Use::Clone) => quote!(#x.clone()),
             (Repr::Ref, _) => quote!(#x),
@@ -380,6 +430,26 @@ impl Gen<'_> {
         let tier = if f.tier >= Tier::A { "_a" } else { "" };
         let conv = id(&format!("resume_{shared}{tier}"));
         quote!(tauto_rt::cps::#conv(#x.clone()))
+    }
+
+    /// `&f` / `&mut f` of a function given where the callee writes `&F` for
+    /// a type parameter `F`: a borrow of the function value itself, as the
+    /// generic code holds any other `&F`.
+    fn fn_borrow_through_param(&self, p: &Place, mutable: bool) -> Rs {
+        if p.path.is_empty() && matches!(p.local.repr, Repr::FnRef | Repr::BorrowClosure) {
+            let message = crate::tok::lit(
+                "tauto: a borrowed function cannot be lent again where a type parameter \
+                 stands for it",
+            );
+            return quote!({ compile_error!(#message) });
+        }
+        if mutable {
+            let place = self.place_mut(p);
+            quote!(&mut #place)
+        } else {
+            let place = self.place(p);
+            quote!(&#place)
+        }
     }
 
     /// `&f` / `&mut f` of a function: the `&mut dyn FnMut` the callee takes.
@@ -462,14 +532,18 @@ impl Gen<'_> {
             ExprKind::Read { local, .. } if self.conts.contains(&local.id) => {
                 self.cont_value(local, &e.ty)
             }
-            ExprKind::Read { local, .. } if fx.m && m_o_callback(local, &e.ty) => {
+            ExprKind::Read { local, .. } if fx.m && m_callback(local, &e.ty) => {
                 let x = lid(local);
                 quote!(#x.clone())
             }
             ExprKind::Read { local, how } => self.read(local, *how),
             ExprKind::FnValue { inst, targs } => self.fn_value(*inst, targs, &e.ty),
             ExprKind::Call(c) => self.call(c, e, fx),
-            ExprKind::Arith { op, args, .. } if e.ty == Ty::Float => {
+            ExprKind::Arith {
+                op,
+                args,
+                num: Num::Float,
+            } => {
                 let at = self.loc(e.span);
                 let a: Vec<Rs> = args.iter().map(|a| self.expr(a, fx)).collect();
                 match (op, a.as_slice()) {
@@ -477,11 +551,21 @@ impl Gen<'_> {
                     (Arith::Add, [a, b]) => quote!((#a + #b)),
                     (Arith::Sub, [a, b]) => quote!((#a - #b)),
                     (Arith::Mul, [a, b]) => quote!((#a * #b)),
-                    (_, [a, b]) => quote!(tauto_rt::float::float_div(#a, #b, #at)),
+                    (_, [a, b]) => match self.overflow_abort(e, "divzero", fx) {
+                        Some(abort) => quote!(match tauto_rt::float::div(#a, #b) {
+                            Some(q) => q,
+                            None => #abort,
+                        }),
+                        None => quote!(tauto_rt::float::float_div(#a, #b, #at)),
+                    },
                     _ => unreachable!("Float arithmetic with {} operands", a.len()),
                 }
             }
-            ExprKind::Arith { op, args, .. } if e.ty == Ty::Float32 => {
+            ExprKind::Arith {
+                op,
+                args,
+                num: Num::Float32,
+            } => {
                 let at = self.loc(e.span);
                 let a: Vec<Rs> = args.iter().map(|a| self.expr(a, fx)).collect();
                 match (op, a.as_slice()) {
@@ -489,25 +573,47 @@ impl Gen<'_> {
                     (Arith::Add, [a, b]) => quote!((#a + #b)),
                     (Arith::Sub, [a, b]) => quote!((#a - #b)),
                     (Arith::Mul, [a, b]) => quote!((#a * #b)),
-                    (_, [a, b]) => quote!(tauto_rt::float::float32_div(#a, #b, #at)),
+                    (_, [a, b]) => match self.overflow_abort(e, "divzero", fx) {
+                        Some(abort) => quote!(match tauto_rt::float::div32(#a, #b) {
+                            Some(q) => q,
+                            None => #abort,
+                        }),
+                        None => quote!(tauto_rt::float::float32_div(#a, #b, #at)),
+                    },
                     _ => unreachable!("Float32 arithmetic with {} operands", a.len()),
                 }
             }
-            ExprKind::Arith { op, args, width } => {
+            ExprKind::Arith {
+                op,
+                args,
+                num: Num::Int(width),
+            } => {
                 let w = int_name(*width);
                 let at = self.loc(e.span);
                 let a: Vec<Rs> = args.iter().map(|a| self.expr(a, fx)).collect();
-                let f = id(&format!(
-                    "{}_{w}",
-                    match op {
-                        Arith::Add => "add",
-                        Arith::Sub => "sub",
-                        Arith::Mul => "mul",
-                        Arith::Neg => "neg",
-                        Arith::Div => unreachable!("`/` of an integer"),
+                let name = match op {
+                    Arith::Add => "add",
+                    Arith::Sub => "sub",
+                    Arith::Mul => "mul",
+                    Arith::Neg => "neg",
+                    Arith::Div => unreachable!("`/` of an integer"),
+                };
+                // Where an abort can leave, a result that does not exist
+                // performs `overflow`; elsewhere the host's answer, stopping
+                // the program, is written in place.
+                match self.overflow_abort(e, "overflow", fx) {
+                    Some(abort) => {
+                        let f = id(&format!("checked_{name}_{w}"));
+                        quote!(match tauto_rt::int::#f(#(#a),*) {
+                            Some(v) => v,
+                            None => #abort,
+                        })
                     }
-                ));
-                quote!(tauto_rt::int::#f(#(#a),*, #at))
+                    None => {
+                        let f = id(&format!("{name}_{w}"));
+                        quote!(tauto_rt::int::#f(#(#a),*, #at))
+                    }
+                }
             }
             ExprKind::Cmp { op, args } => {
                 let a = self.expr(&args[0], fx);
@@ -541,9 +647,22 @@ impl Gen<'_> {
                 let (a, b) = (self.expr(a, fx), self.expr(b, fx));
                 quote!((#a || #b))
             }
+            ExprKind::Ctor { ctor, fields } if matches!(&ctor.data, DataRef::Gen(n) if crate::is_placed(n)) =>
+            {
+                let mut slot = |name: &str| {
+                    let (_, e) = fields
+                        .iter()
+                        .find(|(n, _)| n.as_deref() == Some(name))
+                        .expect("a `Placed` has a value and a place");
+                    self.expr(e, fx)
+                };
+                let (value, at) = (slot("value"), slot("at"));
+                let v = quote!(tauto_rt::stdlib::Placed::new(#value, #at));
+                charged(fx, cells_made(&e.kind).unwrap_or(0), v)
+            }
             ExprKind::Ctor { ctor, fields } => {
                 let v = self.ctor(ctor, fields, fx);
-                charged(fx, 1 + fields.len() as u64, v)
+                charged(fx, cells_made(&e.kind).unwrap_or(0), v)
             }
             ExprKind::Field {
                 base,
@@ -553,6 +672,11 @@ impl Gen<'_> {
             } => {
                 let b = self.field_base(base, fx);
                 let f = field_tok(field);
+                // A field moved out of a value in a region takes the value
+                // out of its block.
+                if *how == Use::Move && matches!(&base.ty, Ty::Data(n, _) if crate::is_placed(n)) {
+                    return quote!(#b.into_slot().#f);
+                }
                 let access = quote!(#b.#f);
                 match (indirect, how) {
                     (Indirect::Shared, Use::Place) => quote!((*#access)),
@@ -584,11 +708,16 @@ impl Gen<'_> {
                     return quote!(&mut *#target);
                 }
                 let s = self.closure_raw(c, fx);
-                let s = if c.borrowed { s } else { charged(fx, 1, s) };
+                let s = match cells_made(&e.kind) {
+                    Some(n) => charged(fx, n, s),
+                    None => s,
+                };
                 if c.borrowed && fx.m && c.fn_ty.tier == Tier::O {
                     // Code of the M tier holds it as a shared handle, which
                     // continuations can hold.
                     quote!(tauto_rt::cps::OCb::new(#s))
+                } else if c.borrowed && fx.m && c.fn_ty.tier < Tier::O {
+                    self.closure_m_shared(c, fx)
                 } else if c.borrowed {
                     quote!(&mut #s)
                 } else {
@@ -632,7 +761,7 @@ impl Gen<'_> {
                 quote!(match #v { #arms })
             }
             ExprKind::Ref(p) | ExprKind::RefMut(p)
-                if fx.m && p.path.is_empty() && m_o_callback(&p.local, &p.ty) =>
+                if fx.m && p.path.is_empty() && m_callback(&p.local, &p.ty) =>
             {
                 let x = lid(&p.local);
                 quote!(#x.clone())
@@ -658,6 +787,11 @@ impl Gen<'_> {
                         let f = self.fn_item_o(*inst, targs, ft);
                         return quote!(tauto_rt::cps::OCb::new(#f));
                     }
+                    if fx.m && ft.tier < Tier::O {
+                        let f = self.fn_value(*inst, targs, &inner.ty);
+                        let t = self.mcb_ty(ft);
+                        return quote!({ let f: #t = #f; f });
+                    }
                     return self.fn_item_borrow(*inst, targs, ft);
                 }
                 let s = self.expr(inner, fx);
@@ -672,6 +806,15 @@ impl Gen<'_> {
                 }
             }
             ExprKind::Deref { value, how } => {
+                // A copy of a borrowed function is the function the place
+                // holds, not the closure that lends it.
+                if let (ExprKind::Ref(p) | ExprKind::RefMut(p), Use::Clone) = (&value.kind, how)
+                    && matches!(&p.ty, Ty::Fn(f) if f.tier != Tier::O)
+                    && !(fx.m && p.path.is_empty() && m_callback(&p.local, &p.ty))
+                {
+                    let place = self.place(p);
+                    return quote!((#place).clone());
+                }
                 let v = self.expr(value, fx);
                 match how {
                     Use::Clone => quote!((*(#v)).clone()),
@@ -682,7 +825,9 @@ impl Gen<'_> {
                 let ty = v.ty.clone();
                 let is_ctor = matches!(v.kind, ExprKind::Ctor { .. });
                 let v = self.expr(v, fx);
-                if ty.has_infer() && is_ctor {
+                // A constructor whose type nothing else fixes (`None` alone):
+                // the type is written, as Rust has nothing to infer it from.
+                if (ty.has_arm_generic() || has_never(&ty)) && is_ctor {
                     self.infer_unit.set(true);
                     let t = self.ty(&ty);
                     self.infer_unit.set(false);
@@ -693,26 +838,37 @@ impl Gen<'_> {
             }
             ExprKind::Budget(b) => {
                 let steps = self.expr(&b.steps, fx);
+                let saved = std::mem::take(&mut self.evd);
                 let mut bfx = Fx::in_future();
+                bfx.budget_return = true;
                 let body = self.expr(&b.body, &mut bfx);
+                let returned = bfx.returned;
                 let at = self.loc(b.span);
                 let bid = num(b.id as u64);
-                let driver = if b.memory {
-                    quote!(tauto_rt::budget::run_memory)
-                } else {
-                    quote!(tauto_rt::budget::run)
+                let driver = match (b.memory, returned) {
+                    (true, false) => quote!(tauto_rt::budget::run_memory),
+                    (false, false) => quote!(tauto_rt::budget::run),
+                    (true, true) => quote!(tauto_rt::budget::run_memory_returning),
+                    (false, true) => quote!(tauto_rt::budget::run_returning),
                 };
-                let run = quote!(
-                    #driver(#bid, u64::try_from(#steps).unwrap_or(0), tauto_rt::o::pin(async { #body }), #at)
-                );
-                let run = if fx.nonresuming_budget == Some(b.id) {
+                let bty = self.answer_ty(&b.body.ty);
+                let run = if returned {
+                    quote!(
+                        #driver(#bid, #steps, tauto_rt::o::pin(async { Ok::<#bty, _>(#body) }), #at)
+                    )
+                } else {
+                    quote!(
+                        #driver(#bid, #steps, tauto_rt::o::pin(async { #body }), #at)
+                    )
+                };
+                let run = if !returned && fx.nonresuming_budget == Some(b.id) {
                     let mut sync_fx = Fx::new(false);
                     sync_fx.sync_budget = true;
                     sync_fx.borrow_budget = self.trusted_budget_host.is_some();
                     let sync_body = self.expr(&b.body, &mut sync_fx);
                     let ty = self.ty(&b.body.ty);
                     quote!(async {
-                        let __tauto_steps = u64::try_from(#steps).unwrap_or(0);
+                        let __tauto_steps: u64 = #steps;
                         if tauto_rt::budget::can_run_nonresuming() {
                             tauto_rt::budget::run_nonresuming(#bid, __tauto_steps, |__tauto_fuel| -> Result<#ty, tauto_rt::budget::Interrupted> { Ok(#sync_body) }, #at).await
                         } else {
@@ -722,6 +878,17 @@ impl Gen<'_> {
                 } else {
                     run
                 };
+                self.evd = saved;
+                if returned {
+                    // The body left with `return`: the function returns it.
+                    let value = if fx.o {
+                        quote!(#run.await)
+                    } else {
+                        quote!(tauto_rt::o::run_local(tauto_rt::o::pin(#run)))
+                    };
+                    let leave = self.leave_with(fx, quote!(r));
+                    return quote!(match #value { Ok(v) => v, Err(r) => #leave });
+                }
                 if fx.o {
                     quote!(#run.await)
                 } else if fx.ret_a || !fx.targets.is_empty() {
@@ -743,7 +910,8 @@ impl Gen<'_> {
                     if from.tier < ft.tier {
                         inner = self.lift_fn_value(inner, from, ft.tier);
                     }
-                    if from.kind == ft.kind {
+                    // Duplicable functions of either kind are held alike.
+                    if from.kind == ft.kind || (from.kind.dup() && ft.kind.dup()) {
                         return inner;
                     }
                 }
@@ -796,7 +964,15 @@ impl Gen<'_> {
         infer_environment: bool,
     ) -> (Rs, Rs) {
         let f = &self.pkg.fns[inst];
+        // A closure's borrowed parameters are borrowed for each call, as in
+        // the `Fn` bound it is passed to (`fn_sig`): an elided lifetime, not
+        // a lifetime of the function the closure is written in.
+        let named_refs = self.named_refs.get();
+        if ft.tier < Tier::O {
+            self.named_refs.set(false);
+        }
         let tys = ft.params.iter().map(|t| self.ty(t)).collect();
+        self.named_refs.set(named_refs);
         let environment = if infer_environment {
             quote!(ev)
         } else {
@@ -814,14 +990,24 @@ impl Gen<'_> {
             }
         }
         let (params, args) = (comma(params), comma(args));
-        let name = id(&f.rust_name);
-        let turbofish = if targs.is_empty() {
-            Rs::new()
+        let call = if self
+            .bindings
+            .externalized
+            .iter()
+            .any(|n| n.as_str() == f.source.as_str())
+        {
+            let n = field_ident(f.source.as_str());
+            quote!(externs::#n(#args))
         } else {
-            let args = comma(targs.iter().map(|t| self.ty(t)));
-            quote!(::<#args>)
+            let name = id(&self.fn_names[inst]);
+            let turbofish = if targs.is_empty() {
+                Rs::new()
+            } else {
+                let args = comma(targs.iter().map(|t| self.ty(t)));
+                quote!(::<#args>)
+            };
+            quote!(#name #turbofish(#args))
         };
-        let call = quote!(#name #turbofish(#args));
         let call = if self.has_union_result_adapter(inst, targs, &ft.ret) {
             let value = self.abi_result(quote!(__tauto_abi_result), inst, targs, &ft.ret);
             match f.tier {
@@ -848,7 +1034,7 @@ impl Gen<'_> {
     }
 
     pub(crate) fn note_fn_local(&mut self, local: &Local, ty: &Ty) {
-        if matches!(ty, Ty::Fn(_)) && !ty.has_infer() {
+        if matches!(ty, Ty::Fn(_)) && !ty.has_arm_generic() {
             self.fn_locals.insert(local.id, ty.clone());
         }
     }
@@ -912,12 +1098,18 @@ impl Gen<'_> {
                         .chain(typed)
                         .chain(std::iter::once(quote!(__tauto_k))),
                 );
+                // The function's `direct` operations go to the `direct`
+                // arms of the handlers in place first.
+                let call = quote!({
+                    let ev = &tauto_rt::cps::bridge(ev, __tauto_m, tauto_rt::cps::IN_FN_VALUE);
+                    #call
+                });
                 let body = if from.tier == Tier::S {
                     quote!(tauto_rt::cps::ret(&__tauto_k, __tauto_m, #call))
                 } else {
                     quote!(match #call {
                         Ok(v) => tauto_rt::cps::ret(&__tauto_k, __tauto_m, v),
-                        Err(a) => tauto_rt::cps::abort(__tauto_m, a),
+                        Err(a) => tauto_rt::cps::abort(ev, __tauto_m, a),
                     })
                 };
                 (params, body)
@@ -938,6 +1130,40 @@ impl Gen<'_> {
         quote!({
             let #inner = #value;
             let callback: #ty = #owner::new(move |#params| #body);
+            callback
+        })
+    }
+
+    /// A function item of the M tier as a value: it is called with the
+    /// handlers' state and the continuation the value is given, as a call
+    /// of the item by name is.
+    fn fn_item_m(&self, inst: InstId, targs: &[Ty], ft: &FnTy) -> Rs {
+        let tys = ft.params.iter().map(|t| self.ty(t)).collect();
+        let (params, mut args) = pass_on(tys, quote!(ev));
+        for (index, ty) in ft.params.iter().enumerate() {
+            args[index + 1] = self.abi_argument(args[index + 1].clone(), ty, inst, targs, index);
+        }
+        args.insert(1, quote!(__tauto_m));
+        args.push(quote!(__tauto_k));
+        let mut params = params;
+        params.insert(1, quote!(__tauto_m));
+        params.push(quote!(__tauto_k));
+        let (params, args) = (comma(params), comma(args));
+        let name = id(&self.fn_names[inst]);
+        let turbofish = if targs.is_empty() {
+            Rs::new()
+        } else {
+            let args = comma(targs.iter().map(|t| self.ty(t)));
+            quote!(::<#args>)
+        };
+        let ty = self.fn_value_ty(ft);
+        let owner = if ft.kind.dup() {
+            quote!(Rc)
+        } else {
+            quote!(Box)
+        };
+        quote!({
+            let callback: #ty = #owner::new(move |#params| #name #turbofish(#args));
             callback
         })
     }
@@ -966,7 +1192,7 @@ impl Gen<'_> {
 
     fn fn_value(&self, inst: InstId, targs: &[Ty], ty: &Ty) -> Rs {
         let Ty::Fn(ft) = ty else {
-            let name = id(&self.pkg.fns[inst].rust_name);
+            let name = id(&self.fn_names[inst]);
             if targs.is_empty() {
                 return quote!(#name);
             }
@@ -980,8 +1206,31 @@ impl Gen<'_> {
             let value = self.fn_value(inst, targs, &Ty::Fn(actual.clone()));
             return self.lift_fn_value(value, &actual, ft.tier);
         }
+        if ft.tier == Tier::M {
+            return self.fn_item_m(inst, targs, ft);
+        }
         let (params, call) = self.fn_item_call(inst, targs, ft, ft.tier == Tier::O);
-        let closure = quote!(move |#params| #call);
+        // A result that borrows from the arguments needs the result's type
+        // written, so the closure's borrow is tied to its arguments' for
+        // every lifetime the `for<'tb>` of the function type stands for.
+        let closure = if self.ties_result(ft) {
+            let ret = self.ty(&ft.ret);
+            let ret = if ft.tier >= Tier::A {
+                quote!(Result<#ret, Abort>)
+            } else {
+                ret
+            };
+            let closure = quote!(move |#params| -> #ret { #call });
+            let ty = self.fn_value_ty(ft);
+            let owner = if ft.kind.dup() {
+                quote!(Rc)
+            } else {
+                quote!(Box)
+            };
+            return quote!({ let callback: #ty = #owner::new(#closure); callback });
+        } else {
+            quote!(move |#params| #call)
+        };
         if ft.tier == Tier::O {
             let ty = self.fn_value_ty(ft);
             let owner = if ft.kind.dup() {
@@ -996,7 +1245,11 @@ impl Gen<'_> {
         }
         if ft.tier < Tier::O && self.plain_fn_ty(ft) && targs.iter().all(|t| self.plain_ty(t)) {
             // The closure holds nothing, so one `Rc` per thread serves every use.
+            // A `static` names no lifetime of the function it is in: the
+            // closure holds nothing, so it lives for `'static`.
+            let region = self.fn_region.replace(false);
             let ty = self.ty(ty);
+            self.fn_region.set(region);
             return quote!({
                 thread_local! { static F: #ty = Rc::new(#closure); }
                 F.with(Rc::clone)
@@ -1022,9 +1275,7 @@ impl Gen<'_> {
         match t {
             Ty::Int(_) | Ty::Bool | Ty::Text | Ty::Unit | Ty::Float | Ty::Float32 | Ty::Buf => true,
             Ty::Vec(a) | Ty::Array(a) | Ty::Option(a) => self.plain_ty(a),
-            Ty::Result(a, b) | Ty::Pair(a, b) | Ty::HashMap(a, b) => {
-                self.plain_ty(a) && self.plain_ty(b)
-            }
+            Ty::Result(a, b) | Ty::Pair(a, b) => self.plain_ty(a) && self.plain_ty(b),
             Ty::Data(name, args) => {
                 self.data(name).is_some_and(|d| !d.view) && args.iter().all(|a| self.plain_ty(a))
             }
@@ -1080,9 +1331,14 @@ impl Gen<'_> {
     }
 
     fn closure_o_as(&mut self, c: &ClosureNode, ty: Rs) -> Rs {
+        self.without_evd(|g| g.closure_o_as_inner(c, ty))
+    }
+
+    fn closure_o_as_inner(&mut self, c: &ClosureNode, ty: Rs) -> Rs {
         let mut fx = Fx::in_future();
         let mut params = vec![quote!(ev)];
         for (l, t) in &c.params {
+            self.note_fn_local(l, t);
             let (x, t) = (lid(l), self.ty(t));
             params.push(quote!(mut #x: #t));
         }
@@ -1178,7 +1434,57 @@ impl Gen<'_> {
         Some(quote!(#target))
     }
 
+    /// A borrowing closure of the S or A tier written in code of the M tier:
+    /// a continuation may hold it past the code that made it, so it is the
+    /// shared handle `Rc<dyn Fn…>` and owns copies of what it uses. CFL lets
+    /// only duplicable values and shared borrows live across `ω`, so a copy
+    /// reads what the borrow would.
+    fn closure_m_shared(&mut self, c: &ClosureNode, fx: &mut Fx) -> Rs {
+        if c.refs.iter().any(|r| r.mutable) {
+            let message = crate::tok::lit(
+                "tauto: a borrowing closure that writes what it captures cannot be held \
+                 by code that resumes ω",
+            );
+            return quote!({ compile_error!(#message) });
+        }
+        let outer = self.m_scope.clone();
+        // Its arguments are borrowed afresh at each call, as the handle's
+        // type says.
+        let named_refs = self.named_refs.replace(false);
+        let s = self.closure_raw(c, fx);
+        self.named_refs.set(named_refs);
+        let used = mentioned(&outer, &s);
+        let outer_clones = clone_each(used.iter().cloned());
+        let inner = clone_each_mut(used.iter().cloned());
+        let t = self.mcb_ty(&c.fn_ty);
+        let named_refs = self.named_refs.replace(false);
+        let mut params = vec![quote!(ev: &Ev<'_>)];
+        let mut args = vec![quote!(ev)];
+        for (i, (_, t)) in c.params.iter().enumerate() {
+            let x = id(&format!("__tauto_a{i}"));
+            let t = self.ty(t);
+            params.push(quote!(#x: #t));
+            args.push(quote!(#x));
+        }
+        self.named_refs.set(named_refs);
+        let (params, args) = (comma(params), comma(args));
+        // Each call borrows its own copies, as the closure written in place
+        // borrows the locals.
+        quote!({
+            #outer_clones
+            let f: #t = Rc::new(move |#params| {
+                #inner
+                (#s)(#args)
+            });
+            f
+        })
+    }
+
     pub(crate) fn closure_raw(&mut self, c: &ClosureNode, _outer: &mut Fx) -> Rs {
+        self.without_evd(|g| g.closure_raw_inner(c, _outer))
+    }
+
+    pub(crate) fn closure_raw_inner(&mut self, c: &ClosureNode, _outer: &mut Fx) -> Rs {
         if c.fn_ty.tier == Tier::M {
             return self.closure_m(c);
         }
@@ -1191,7 +1497,10 @@ impl Gen<'_> {
         }
         let mut fx = Fx::new(c.fn_ty.tier >= Tier::A);
         let mut params = vec![quote!(ev: &Ev<'_>)];
+        // A parameter of function type is read with the tier it is taken at,
+        // as a parameter of a named function is (`Gen::fn_locals`).
         for (l, t) in &c.params {
+            self.note_fn_local(l, t);
             let (x, t) = (lid(l), self.ty(t));
             params.push(quote!(#x: #t));
         }
@@ -1199,7 +1508,7 @@ impl Gen<'_> {
         let body = self.expr(&c.body, &mut fx);
         let (ret, body) = if fx.ret_a {
             (
-                if c.ret.has_infer() {
+                if c.ret.has_arm_generic() {
                     Rs::new()
                 } else {
                     let r = self.ty(&c.ret);
@@ -1209,7 +1518,7 @@ impl Gen<'_> {
             )
         } else {
             (
-                if c.ret.has_infer() {
+                if c.ret.has_arm_generic() {
                     Rs::new()
                 } else {
                     let r = self.ty(&c.ret);
@@ -1235,7 +1544,11 @@ impl Gen<'_> {
         }
         let make = quote!(#wrap(move |#params| #ret { #reborrow #body }));
         if c.pure && c.fn_ty.kind.dup() && c.fn_ty.tier < Tier::O && self.plain_fn_ty(&c.fn_ty) {
+            // A `static` names no lifetime of the function it is in; the
+            // closure holds nothing, so it lives for `'static`.
+            let region = self.fn_region.replace(false);
             let ty = self.fn_value_ty(&c.fn_ty);
+            self.fn_region.set(region);
             return quote!({
                 thread_local! { static F: #ty = #make; }
                 F.with(Rc::clone)
@@ -1251,14 +1564,7 @@ impl Gen<'_> {
     fn ctor(&mut self, c: &CtorRef, fields: &[(Option<String>, Expr)], fx: &mut Fx) -> Rs {
         let mut vals: Vec<(Option<String>, Rs)> = Vec::new();
         for (i, (name, f)) in fields.iter().enumerate() {
-            let idx = match name {
-                Some(n) => c
-                    .fields
-                    .iter()
-                    .position(|x| x.as_deref() == Some(n.as_str()))
-                    .unwrap_or(i),
-                None => i,
-            };
+            let idx = c.slot(i, name.as_deref());
             let s = match &f.kind {
                 // A field holds a function of the O tier for any handlers.
                 ExprKind::Closure(closure)
@@ -1296,7 +1602,7 @@ impl Gen<'_> {
             vals.push((name.clone(), s));
         }
         match &c.data {
-            DataRef::Option => match tauto::bindings::is_library(&c.name, "None") {
+            DataRef::Option => match c.library() == Some(LibraryCtor::None) {
                 true => quote!(None),
                 _ => {
                     let v = &vals[0].1;
@@ -1304,7 +1610,7 @@ impl Gen<'_> {
                 }
             },
             DataRef::Result => {
-                let n = id(if tauto::bindings::is_library(&c.name, "Ok") {
+                let n = id(if c.library() == Some(LibraryCtor::Ok) {
                     "Ok"
                 } else {
                     "Err"
@@ -1315,12 +1621,7 @@ impl Gen<'_> {
             DataRef::Pair => {
                 let mut slots = vec![Rs::new(); 2];
                 for (i, (n, s)) in vals.iter().enumerate() {
-                    let idx = match n.as_deref() {
-                        Some("snd") => 1,
-                        Some("fst") => 0,
-                        _ => i,
-                    };
-                    slots[idx] = s.clone();
+                    slots[c.slot(i, n.as_deref())] = s.clone();
                 }
                 let (a, b) = (&slots[0], &slots[1]);
                 quote!((#a, #b))
@@ -1397,11 +1698,21 @@ impl Gen<'_> {
             None
         };
         let borrowed_args = borrowed.as_ref().map(|(_, args)| args);
-        let mut args: Vec<Rs> = borrowed_args
-            .unwrap_or(&c.args)
-            .iter()
-            .map(|a| self.expr(a, fx))
-            .collect();
+        let mut args: Vec<Rs> = Vec::new();
+        for (index, a) in borrowed_args.unwrap_or(&c.args).iter().enumerate() {
+            let through = match (&c.callee, borrowed.is_none()) {
+                (Callee::Inst(inst), true) => {
+                    self.borrowed_fn_through_param(*inst, &c.targs, index)
+                }
+                _ => None,
+            };
+            args.push(match (through, &a.kind) {
+                (Some(_), ExprKind::Ref(p) | ExprKind::RefMut(p)) if matches!(p.ty, Ty::Fn(_)) => {
+                    self.fn_borrow_through_param(p, matches!(a.kind, ExprKind::RefMut(_)))
+                }
+                _ => self.expr(a, fx),
+            });
+        }
         // Private borrowed helpers admit only union-free argument graphs and
         // scalar results. Their borrowed signature is not the owned ABI below.
         if let Callee::Inst(inst) = c.callee
@@ -1431,7 +1742,12 @@ impl Gen<'_> {
         let mut hoisted = Rs::new();
         let is_mut = |a: &Rs| is_mut_borrow(a);
         let trivial = |a: &Rs| !has_call_or_block(a) || starts_with_mut(a);
-        if args.iter().any(is_mut) && !args.iter().all(trivial) {
+        // A budget's step is charged at the call, after its arguments are
+        // evaluated (`docs/design/semantics.md`, "Budget and `div`"): the
+        // arguments that do work are bound first, so the tick sits between
+        // them and the call.
+        let budget_tick = c.tick == Tick::Budget && !args.iter().all(trivial);
+        if (args.iter().any(is_mut) && !args.iter().all(trivial)) || budget_tick {
             for (i, a) in args.iter_mut().enumerate() {
                 if !is_mut(a) {
                     let h = id(&format!("h{i}"));
@@ -1440,19 +1756,46 @@ impl Gen<'_> {
                 }
             }
         }
-        let joined = comma(std::iter::once(quote!(ev)).chain(args.iter().cloned()));
+        // The handlers the callee is passed, which are in place here.
+        let evd: Vec<Rs> = match &c.callee {
+            Callee::Inst(i) => self
+                .pkg
+                .evidence
+                .of_fn(*i)
+                .iter()
+                .map(|op| {
+                    let n = self.evd_name(*op);
+                    quote!(#n)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let joined = comma(
+            std::iter::once(quote!(ev))
+                .chain(evd)
+                .chain(args.iter().cloned()),
+        );
         let raw = match &c.callee {
             Callee::Inst(i) => {
                 let f = &self.pkg.fns[*i];
+                if self
+                    .bindings
+                    .externalized
+                    .iter()
+                    .any(|n| n.as_str() == f.source.as_str())
+                {
+                    let n = field_ident(f.source.as_str());
+                    return quote!(externs::#n(#joined));
+                }
                 let sync = borrowed.is_some() || fx.sync_budget && c.tier == Tier::O;
                 let name = id(&if let Some((name, _)) = &borrowed {
                     name.clone()
                 } else if let Some(name) = &qualified_owned {
                     name.clone()
                 } else if sync {
-                    format!("{}_budget_sync", f.rust_name)
+                    format!("{}_budget_sync", self.fn_names[*i])
                 } else {
-                    f.rust_name.clone()
+                    self.fn_names[*i].clone()
                 });
                 let joined = if sync {
                     quote!(#joined, __tauto_fuel)
@@ -1494,6 +1837,21 @@ impl Gen<'_> {
                 };
                 quote!(({ let args = #tuple; tauto_rt::o::OFnMut::call(#f, ev, args) }))
             }
+            // A borrowed function is a `&mut dyn FnMut`: its arguments are
+            // computed before it is called, so an argument may call it too
+            // (`f(f(x))`).
+            Callee::Local(l) if matches!(l.repr, Repr::FnRef | Repr::BorrowClosure) => {
+                let x = lid(l);
+                let temps: Vec<Rs> = (0..args.len())
+                    .map(|i| {
+                        let t = id(&format!("__arg{i}"));
+                        quote!(#t)
+                    })
+                    .collect();
+                let binds = args.iter().zip(&temps).map(|(a, t)| quote!(let #t = #a;));
+                let call = comma(std::iter::once(quote!(ev)).chain(temps.iter().cloned()));
+                quote!(({ #(#binds)* #x(#call) }))
+            }
             Callee::Local(l) => {
                 let x = lid(l);
                 quote!(#x(#joined))
@@ -1501,13 +1859,17 @@ impl Gen<'_> {
             Callee::Cont(l) if self.conts.contains(&l.id) => {
                 // A `k` of the M tier called outside its arm: the rest of
                 // the body runs here, to the end of the `handle`.
+                // The value is boxed for the body, which takes it out at its
+                // own type: it is written, not inferred (`None` alone says
+                // nothing of its parameter).
                 let (x, a, r) = (lid(l), &args[0], self.ty(&e.ty));
+                let at = self.ty(&c.args[0].ty);
                 if fx.o {
-                    quote!(tauto_rt::cps::resume_o::<_, #r>(ev, &#x, #a).await)
+                    quote!(tauto_rt::cps::resume_o::<#at, #r>(ev, &#x, #a).await)
                 } else if fx.ret_a || !fx.targets.is_empty() {
-                    self.take_result(quote!(tauto_rt::cps::resume_a::<_, #r>(ev, &#x, #a)), fx)
+                    self.take_result(quote!(tauto_rt::cps::resume_a::<#at, #r>(ev, &#x, #a)), fx)
                 } else {
-                    quote!(tauto_rt::cps::resume::<_, #r>(ev, &#x, #a))
+                    quote!(tauto_rt::cps::resume::<#at, #r>(ev, &#x, #a))
                 }
             }
             Callee::Cont(l) => {
@@ -1516,13 +1878,35 @@ impl Gen<'_> {
             }
             Callee::Value(v) => {
                 let f = self.expr(v, fx);
-                quote!((#f)(#joined))
+                match &v.ty {
+                    // A function called at most once is a `Box<dyn FnOnce>`:
+                    // written as that type, a closure made in place is called
+                    // by value, so it may move what it captured.
+                    Ty::Fn(ft) if !ft.kind.dup() => {
+                        let ty = self.fn_value_ty(ft);
+                        quote!(({ let __tauto_once: #ty = #f; __tauto_once })(#joined))
+                    }
+                    _ => quote!((#f)(#joined)),
+                }
             }
         };
         let resumed = matches!(&c.callee, Callee::Cont(l) if self.conts.contains(&l.id));
         let raw = if resumed {
             raw
-        } else if matches!(c.callee, Callee::Cont(_)) && !fx.o {
+        } else if matches!(c.callee, Callee::Builtin(_)) {
+            // A builtin is a plain Rust function of the runtime: it never
+            // suspends, so it is never awaited, whatever tier its row gives
+            // the call. A builtin whose row may abort (A or above) returns
+            // `Result<_, Abort>`.
+            if c.tier >= Tier::A {
+                self.take_result(raw, fx)
+            } else {
+                raw
+            }
+        } else if matches!(c.callee, Callee::Cont(_))
+            && !fx.o
+            && !matches!(&c.callee, Callee::Cont(l) if self.ret_conts.contains(&l.id))
+        {
             // A `k` called where the `handle` has ended: the rest of the
             // body runs here, to its end.
             if fx.ret_a || !fx.targets.is_empty() {
@@ -1530,14 +1914,15 @@ impl Gen<'_> {
             } else {
                 quote!(tauto_rt::o::run_local(#raw))
             }
-        } else if matches!(c.callee, Callee::Value(_))
+        } else if matches!(c.callee, Callee::Value(_) | Callee::Local(_))
             && c.tier == Tier::O
             && !fx.o
             && !fx.sync_budget
         {
             // A function a record holds at the O tier for a suspending row
             // its row variable takes elsewhere, called where that variable
-            // takes a row that does not suspend: it runs to its end here.
+            // takes a row that does not suspend (read from the field or from
+            // a local it was put in): it runs to its end here.
             if fx.ret_a || !fx.targets.is_empty() {
                 self.take_result(quote!(tauto_rt::o::run_local_a(#raw)), fx)
             } else {
@@ -1545,6 +1930,20 @@ impl Gen<'_> {
             }
         } else if borrowed.is_some() || fx.sync_budget && c.tier == Tier::O {
             quote!(#raw?)
+        } else if matches!(&c.callee, Callee::Cont(l) if self.ret_conts.contains(&l.id)) {
+            // The handle's body can `return`: the rest of the body ends in
+            // the returned value, which leaves this function from here.
+            let value = if fx.o {
+                quote!(#raw.await)
+            } else {
+                quote!(tauto_rt::o::run_local(#raw))
+            };
+            if self.arm_returns.get() {
+                quote!(match #value { Ok(v) => v, Err(e) => return Err(e) })
+            } else {
+                let leave = self.leave_with(fx, quote!(e));
+                quote!(match #value { Ok(v) => v, Err(e) => #leave })
+            }
         } else if matches!(c.callee, Callee::Cont(_)) || c.tier == Tier::O {
             quote!(#raw.await)
         } else if c.tier == Tier::A {
@@ -1557,25 +1956,29 @@ impl Gen<'_> {
         } else {
             raw
         };
-        let raw = if hoisted.is_empty() {
-            raw
-        } else {
-            quote!({ #hoisted #raw })
-        };
-        let raw = match c.tick {
-            Tick::Host => {
-                let at = self.loc(c.span);
-                quote!({ tauto_rt::host_tick(#at); #raw })
-            }
+        let tick = match c.tick {
             Tick::Budget => {
                 let at = self.loc(c.span);
                 if fx.sync_budget {
-                    quote!({ __tauto_fuel.tick()?; #raw })
+                    quote!(__tauto_fuel.tick()?;)
                 } else {
-                    quote!({ tauto_rt::budget::tick(#at).await; #raw })
+                    quote!(tauto_rt::budget::tick(#at).await;)
                 }
             }
-            Tick::None => raw,
+            Tick::Host | Tick::None => Rs::new(),
+        };
+        // The hoisted arguments come first, then the step, then the call.
+        let raw = if hoisted.is_empty() && tick.is_empty() {
+            raw
+        } else {
+            quote!({ #hoisted #tick #raw })
+        };
+        // A host limit counts the call before its arguments run.
+        let raw = if c.tick == Tick::Host {
+            let at = self.loc(c.span);
+            quote!({ tauto_rt::host_tick(#at); #raw })
+        } else {
+            raw
         };
         raw
     }
@@ -1584,7 +1987,7 @@ impl Gen<'_> {
         let at = self.loc(c.span);
         let a = comma(args.iter().cloned());
         // The runtime function of a builtin is its module in lower case and its short name:
-        // `Vec::index` is `vec_index`.
+        // `Vec::swap_within` is `vec_swap_within`.
         let rt = match name.split_once("::") {
             Some((module, short)) => format!("{}_{short}", module.to_lowercase()),
             None => name.to_string(),
@@ -1607,6 +2010,32 @@ impl Gen<'_> {
                 let text = &args[2];
                 quote!(#f(#text))
             }
+            // A region of std's `BumpPolicy` cuts its values by bump, with
+            // the first chunk and the step the policy was made with.
+            "Region::new" | "RcRegion::new"
+                if let Ty::Data(p, _) = &c.args[0].ty
+                    && crate::is_bump_policy(p)
+                    && let Some(d) = self.data(p)
+                    && let [ctor] = &d.ctors[..]
+                    && ctor.fields.len() == 4 =>
+            {
+                let a0 = &args[0];
+                let c = self.ctor_path(p, &ctor.name, d.is_struct);
+                let pat = if ctor.fields.iter().all(|f| f.name.is_some()) {
+                    let (z, t) = (field_ident("size"), field_ident("step"));
+                    quote!(#c { #z: size, #t: step, .. })
+                } else {
+                    quote!(#c(_, size, _, step, ..))
+                };
+                let f = id(if name == "Region::new" {
+                    "region_bump"
+                } else {
+                    "rcregion_bump"
+                });
+                quote!(match #a0 {
+                    #pat => tauto_rt::stdlib::#f(&size, &step),
+                })
+            }
             "div" | "mod" => {
                 let w = match &e.ty {
                     Ty::Int(w) => int_name(*w),
@@ -1622,36 +2051,59 @@ impl Gen<'_> {
                 let a0 = &args[0];
                 quote!((#a0).clone())
             }
-            "Vec::into_list" | "words" | "Os::args" | "Os::list_dir" | "Os::stat" | "Os::read_link" | "Os::run"
-            | "Os::fetch" | "Os::resolve" | "Os::tcp_listen" | "Os::tcp_accept"
-            | "Os::tcp_connect" | "Os::child_spawn" | "Os::child_wait" | "Os::tls_accept"
-            | "Os::tls_connect" | "Array::of_list" | "Array::to_list" | "Bytes::of_list"
-            | "Bytes::to_list" | "Text::of_utf8" => {
+            "Vec::into_list" | "words" | "Os::args" | "Os::env_names" | "Os::entry"
+            | "Os::list_dir" | "Os::stat" | "Os::read_link" | "Os::run" | "Os::fetch"
+            | "Os::resolve" | "Os::http_open" | "Os::http_finish" | "Os::tcp_listen"
+            | "Os::tcp_accept" | "Os::tcp_connect" | "Os::child_spawn" | "Os::child_wait"
+            | "Os::tls_accept" | "Os::tls_connect" | "Array::of_list" | "Array::to_list"
+            | "Bytes::of_list" | "Bytes::to_list" | "Text::of_utf8" => {
                 quote!(#n(#a))
             }
             // A body that may wait is a future the host runs (`exec::OBody`).
-            "pending_spawn" => match &c.args[0].ty {
-                Ty::Fn(f) if f.tier >= Tier::O => {
-                    quote!(tauto_rt::stdlib::pending_spawn_o(ev, #a))
+            // The host calls the body once, so it takes a `Box<dyn FnOnce>`;
+            // a shared body is wrapped in one.
+            "pending_spawn" => {
+                let (o, shared) = match &c.args[0].ty {
+                    Ty::Fn(f) => (f.tier >= Tier::O, f.kind.dup()),
+                    _ => (false, true),
+                };
+                let body = if shared {
+                    quote!(Box::new({ let __body = #a; move |ev: &Ev<'_>| __body(ev) }))
+                } else {
+                    a
+                };
+                if o {
+                    quote!(tauto_rt::stdlib::pending_spawn_o(ev, #body))
+                } else {
+                    quote!(tauto_rt::stdlib::pending_spawn(ev, #body))
                 }
-                _ => quote!(tauto_rt::stdlib::pending_spawn(ev, #a)),
-            },
-            "Os::offload" => quote!(tauto_rt::stdlib::os_offload(ev, #a)),
+            }
+            // The host calls the function once: an owned one is passed as it
+            // is, a shared one is wrapped.
+            "Os::offload" => {
+                let shared = match &c.args[0].ty {
+                    Ty::Fn(f) => f.kind.dup(),
+                    _ => true,
+                };
+                if shared {
+                    quote!(tauto_rt::stdlib::os_offload(ev, Box::new({ let __f = #a; move |ev: &Ev<'_>| __f(ev) })))
+                } else {
+                    quote!(tauto_rt::stdlib::os_offload(ev, #a))
+                }
+            }
             "budget_value" => quote!(tauto_rt::budget::BudgetAnswer::Value(#a)),
             "info_more" => {
                 let (a0, a1) = (&args[0], &args[1]);
-                quote!((#a0).more(u64::try_from(#a1).unwrap_or(0)))
+                quote!((#a0).more(#a1))
             }
             "info_unbounded" => {
                 let a0 = &args[0];
                 quote!((#a0).unbounded())
             }
-            "Vec::index" | "Vec::swap" => {
-                quote!(tauto_rt::stdlib::#n(#a, #at, OP_out_of_bounds))
-            }
-            "I64::of_i32" | "I32::of_i64" | "I64::of_u64" | "U64::of_i64" | "U64::of_u32"
-            | "U32::of_u64" | "U64::of_u8" | "U8::of_u64" | "U64::of_nat" | "Os::exit"
-            | "Os::stop" => {
+            "I64::of_i8" | "I64::of_i16" | "I8::of_i64" | "I16::of_i64" | "U64::of_u16"
+            | "U16::of_u64" | "I64::of_i32" | "I32::of_i64" | "I64::of_u64" | "U64::of_i64"
+            | "U64::of_u32" | "U32::of_u64" | "U64::of_u8" | "U64::of_uhost" | "U8::of_u64"
+            | "U64::of_nat" | "Os::exit" | "Os::stop" => {
                 quote!(tauto_rt::stdlib::#n(#a, #at))
             }
             "I64::of_float" => quote!(tauto_rt::float::#n(#a, #at)),
@@ -1661,8 +2113,7 @@ impl Gen<'_> {
             {
                 quote!(tauto_rt::float::#n(#a))
             }
-            "HashMap::index" => quote!(tauto_rt::stdlib::#n(#a, #at, OP_missing)),
-            "Vec::new" | "HashMap::new" => {
+            "Vec::new" => {
                 if c.targs.is_empty() {
                     quote!(tauto_rt::stdlib::#n())
                 } else {
@@ -1676,7 +2127,11 @@ impl Gen<'_> {
 
     /// The type of an answer, `_` where Rust is to infer it.
     pub(crate) fn answer_ty(&self, t: &Ty) -> Rs {
-        if t.has_infer() { quote!(_) } else { self.ty(t) }
+        if t.has_arm_generic() {
+            quote!(_)
+        } else {
+            self.ty(t)
+        }
     }
 
     /// The boxed arguments of a `perform`, with their types written out:
@@ -1693,10 +2148,40 @@ impl Gen<'_> {
         let at = self.loc(p.span);
         let args: Vec<Rs> = p.args.iter().map(|a| self.expr(a, fx)).collect();
         let payload = self.boxed_payload(&p.args, &args);
+        let values_tuple = tuple(&args);
         match p.quant {
-            Quant::Direct => {
+            // `show` goes to the host boxed; the other `direct` operations
+            // hand their arguments and answer over unboxed (`Io`).
+            Quant::Direct if tauto::bindings::is_library(&self.pkg.ops[p.op].name, "show") => {
                 let r = self.answer_ty(&p.result);
                 quote!(tauto_rt::ev::answer::<#r>(ev.perform(#opc, #payload, #at)))
+            }
+            // Its handler is known here: called directly.
+            Quant::Direct if !p.detached && self.evd.contains(&p.op) => {
+                let n = self.evd_name(p.op);
+                quote!(#n(#values_tuple))
+            }
+            Quant::Direct => {
+                let r = self.answer_ty(&p.result);
+                let tys: Vec<Rs> = p.args.iter().map(|a| self.answer_ty(&a.ty)).collect();
+                let (ty, values) = (tuple(&tys), tuple(&args));
+                // A task runs outside `Host::run`: what it performs on a
+                // `Ref`, a `Mutex` or an `Atomic` the runtime answers as
+                // `Host::run` would.
+                match storage_answer(&self.pkg.ops[p.op].name) {
+                    Some(f) => {
+                        let f = quote::format_ident!("{}", f);
+                        let names: Vec<Rs> = (0..p.args.len())
+                            .map(|i| {
+                                let n = quote::format_ident!("a{}", i);
+                                quote!(#n)
+                            })
+                            .collect();
+                        let pat = tuple(&names);
+                        quote!(ev.perform_typed_or::<#ty, #r>(#opc, #values, #at, |#pat: #ty| tauto_rt::stdlib::#f(#(#names),*)))
+                    }
+                    None => quote!(ev.perform_typed::<#ty, #r>(#opc, #values, #at)),
+                }
             }
             Quant::AtMostOne | Quant::One => {
                 let r = self.answer_ty(&p.result);
@@ -1736,14 +2221,60 @@ impl Gen<'_> {
             _ => self.expr(&m.scrut, fx),
         };
         let scrut = cell_free_scrutinee(m, scrut);
+        if let Some(refs) = self.borrow_pair_scrutinee(m) {
+            return self.match_with(m, refs, true, fx);
+        }
         self.match_on(m, scrut, fx)
     }
 
+    /// The scrutinee `#(xs, ys)` of borrows, whose arms bind borrows of the
+    /// parts: the pair of the references themselves. A pair of copies would
+    /// hold the lists by value, where the names the arms bind are references.
+    fn borrow_pair_scrutinee(&mut self, m: &MatchNode) -> Option<Rs> {
+        let ExprKind::Ctor { ctor, fields } = &m.scrut.kind else {
+            return None;
+        };
+        if m.by_ref || !matches!(ctor.data, DataRef::Pair) || fields.len() != 2 {
+            return None;
+        }
+        let mut slots = vec![Rs::new(); 2];
+        for (i, (n, f)) in fields.iter().enumerate() {
+            let ExprKind::Read {
+                local,
+                how: Use::Copy | Use::Clone,
+            } = &f.kind
+            else {
+                return None;
+            };
+            if local.repr != Repr::Ref
+                || self.owned_refs.contains(&local.id)
+                || self.lazy.contains(&local.id)
+            {
+                return None;
+            }
+            let x = lid(local);
+            slots[ctor.slot(i, n.as_deref())] = quote!(#x);
+        }
+        let mut names = Vec::new();
+        m.arms
+            .iter()
+            .for_each(|a| collect_binds(&a.pat, &mut names));
+        if !names.iter().all(|l| l.repr == Repr::Ref) {
+            return None;
+        }
+        let (a, b) = (&slots[0], &slots[1]);
+        Some(quote!((#a, #b)))
+    }
+
     pub(crate) fn match_on(&mut self, m: &MatchNode, scrut: Rs, fx: &mut Fx) -> Rs {
+        self.match_with(m, scrut, m.by_ref, fx)
+    }
+
+    fn match_with(&mut self, m: &MatchNode, scrut: Rs, by_ref: bool, fx: &mut Fx) -> Rs {
         let mut arms = Vec::new();
         for arm in &m.arms {
             let mut out = PatOut::default();
-            let pat = self.pat(&arm.pat, m.by_ref, &mut out);
+            let pat = self.pat(&arm.pat, by_ref, &mut out);
             let mut guards = out.guards.clone();
             if let Some(g) = &arm.guard {
                 let g = self.expr(g, fx);
@@ -1818,6 +2349,15 @@ impl Gen<'_> {
                 }
                 self.ctor_pattern(ctor, subs, None)
             }
+            Pat::Variant {
+                union,
+                variant,
+                pat,
+            } => {
+                let (u, v) = (id(&format!("U{union}")), id(&format!("V{variant}")));
+                let sub = self.pat_shape(pat, conj);
+                quote!(#u::#v(#sub))
+            }
         }
     }
 
@@ -1854,7 +2394,7 @@ impl Gen<'_> {
     /// the drop bomb of a linear value that the arm defuses.
     fn ctor_pattern(&mut self, ctor: &CtorRef, subs: Vec<Rs>, bomb: Option<Ident>) -> Rs {
         match &ctor.data {
-            DataRef::Option => match tauto::bindings::is_library(&ctor.name, "None") {
+            DataRef::Option => match ctor.library() == Some(LibraryCtor::None) {
                 true => quote!(None),
                 _ => {
                     let s = &subs[0];
@@ -1862,7 +2402,7 @@ impl Gen<'_> {
                 }
             },
             DataRef::Result => {
-                let n = id(if tauto::bindings::is_library(&ctor.name, "Ok") {
+                let n = id(if ctor.library() == Some(LibraryCtor::Ok) {
                     "Ok"
                 } else {
                     "Err"
@@ -1947,13 +2487,15 @@ impl Gen<'_> {
                 let t = self.tmp("t");
                 let s = lit(s);
                 out.guards.push(quote!(tauto_rt::text_is(&#t, #s)));
-                quote!(#t)
+                // Tested only: bound by reference, so that a later arm can
+                // still use the whole scrutinee (`D(_, "Named", _) => f(c)`).
+                if by_ref { quote!(#t) } else { quote!(ref #t) }
             }
             Pat::Nat(n) => {
                 let t = self.tmp("t");
                 let n = int_lit(*n, "u64");
                 out.guards.push(quote!(tauto_rt::nat_is(&#t, #n)));
-                quote!(#t)
+                if by_ref { quote!(#t) } else { quote!(ref #t) }
             }
             Pat::Ctor { ctor, fields } => {
                 let mut subs = Vec::new();
@@ -2026,6 +2568,15 @@ impl Gen<'_> {
                 };
                 self.ctor_pattern(ctor, subs, bomb)
             }
+            Pat::Variant {
+                union,
+                variant,
+                pat,
+            } => {
+                let (u, v) = (id(&format!("U{union}")), id(&format!("V{variant}")));
+                let sub = self.pat(pat, by_ref, out);
+                quote!(#u::#v(#sub))
+            }
         }
     }
 
@@ -2039,14 +2590,22 @@ impl Gen<'_> {
         let pre = if h.direct.is_empty() {
             Rs::new()
         } else {
-            self.direct_handler(&h.direct, None)
+            self.direct_handler(&h.direct)
         };
+        let (before, pre) = self.static_handlers(h, pre);
+        let saved = self.evd.clone();
+        for op in self.pkg.evidence.of_handle(h.id) {
+            if !self.evd.contains(op) {
+                self.evd.push(*op);
+            }
+        }
         let catches = !h.aborts.is_empty();
         let label = if catches { Some(self.label()) } else { None };
         if let Some(l) = &label {
             fx.targets.push(l.clone());
         }
         let body = self.expr(&h.body, fx);
+        self.evd = saved;
         if label.is_some() {
             fx.targets.pop();
         }
@@ -2054,16 +2613,23 @@ impl Gen<'_> {
         if let Some(l) = &label {
             // The body's value, or the abort that leaves it.
             let bty = self.answer_ty(&h.body_ty);
+            // A body of type `Never` may still end in a value Rust types on
+            // its own (`perform stop(); 99`): the value is never reached.
+            let body = if h.body_ty == Ty::Never {
+                quote!({ let _ = #body; unreachable!("tauto: a body of type Never returned") })
+            } else {
+                body
+            };
             let inner = quote!(#l: { #pre Ok::<#bty, Abort>(#body) });
             let ret = self.return_arm(h, &r, fx);
             let chain = self.abort_chain(h, fx);
-            quote!(match #inner { Ok(r) => #ret, Err(mut a) => #chain })
+            quote!({ #before match #inner { Ok(r) => #ret, Err(mut a) => #chain } })
         } else if h.ret.is_some() {
             let inner = quote!({ #pre #body });
             let ret = self.return_arm(h, &r, fx);
-            quote!({ let r = #inner; #ret })
+            quote!({ #before let r = #inner; #ret })
         } else {
-            quote!({ #pre #body })
+            quote!({ #before #pre #body })
         }
     }
 
@@ -2090,6 +2656,78 @@ impl Gen<'_> {
         tuple(&ts)
     }
 
+    /// The arms of one operation, grouped by the payload type each group
+    /// takes the payload as. An arm for every instance of an operation
+    /// (`∀ T. give<T>(a)`) leaves its payload's type open, and the payload's
+    /// Rust type is known only at the `perform`: such an arm is written once
+    /// for each payload type the program performs the operation with, in its
+    /// place among the arms, so the first arm that fits still takes it.
+    pub(crate) fn arm_groups<'a>(
+        &self,
+        op: OpIndex,
+        arms: &[&'a OpArm],
+    ) -> Vec<(Vec<Ty>, Vec<&'a OpArm>)> {
+        let open = |a: &OpArm| a.params.iter().any(Ty::has_arm_generic);
+        let foreign = |ps: &[Ty]| {
+            ps.iter().any(|t| {
+                let mut found = false;
+                t.clone().each_mut(&mut |t| {
+                    if let Ty::Param(p) = t
+                        && !tauto_nir::arms::is_skolem(p)
+                        && !self.scope_generics.contains(p)
+                    {
+                        found = true;
+                    }
+                });
+                found
+            })
+        };
+        let kept: Vec<&'a OpArm> = arms
+            .iter()
+            .copied()
+            .filter(|a| !foreign(&a.params))
+            .collect();
+        if kept.is_empty() && !arms.is_empty() {
+            return Vec::new();
+        }
+        let arms: &[&'a OpArm] = &kept;
+        if !arms.iter().any(|a| open(a)) {
+            // The copies `tauto_nir::arms` wrote, one for each payload type:
+            // a group for each type, its arms in their order.
+            let mut groups: Vec<(Vec<Ty>, Vec<&'a OpArm>)> = Vec::new();
+            for a in arms {
+                match groups.iter_mut().find(|(p, _)| *p == a.params) {
+                    Some((_, g)) => g.push(a),
+                    None => groups.push((a.params.clone(), vec![*a])),
+                }
+            }
+            return groups;
+        }
+        let mut payloads: Vec<Vec<Ty>> = Vec::new();
+        for a in arms.iter().filter(|a| !open(a)) {
+            if !payloads.contains(&a.params) {
+                payloads.push(a.params.clone());
+            }
+        }
+        for f in &self.pkg.fns {
+            performed_payloads(&f.body, op, &mut payloads);
+        }
+        if payloads.is_empty() {
+            return vec![(arms[0].params.clone(), arms.to_vec())];
+        }
+        payloads
+            .into_iter()
+            .map(|p| {
+                let mine = arms
+                    .iter()
+                    .copied()
+                    .filter(|a| open(a) || a.params == p)
+                    .collect();
+                (p, mine)
+            })
+            .collect()
+    }
+
     /// `Err(a)` of a body that has `resume 0` arms: the first arm whose
     /// operation, pattern and guard fit takes the value; otherwise the
     /// abort goes on outward.
@@ -2098,7 +2736,57 @@ impl Gen<'_> {
         let mut s = Rs::new();
         for arm in &h.aborts {
             let opc = op_const(&self.pkg.ops[arm.op]);
-            let tup = self.payload_ty(&arm.params);
+            for (params, _) in self.arm_groups(arm.op, &[arm]) {
+                let tup = self.payload_ty(&params);
+                let mut out = PatOut::default();
+                let pats: Vec<Rs> = arm
+                    .pats
+                    .iter()
+                    .map(|p| self.pat(p, false, &mut out))
+                    .collect();
+                let pat = tuple(&pats);
+                let mut guards = out.guards.clone();
+                if let Some(g) = &arm.guard {
+                    let g = self.expr(g, fx);
+                    guards.push(out.user_guard(g));
+                }
+                let body = self.expr(&arm.body, fx);
+                let guard = PatOut::guard_clause(&guards);
+                let prologue = out.prologue();
+                s.extend(quote!(
+                    if a.op.id == #opc.id && a.args.is::<#tup>() {
+                        let args = *a.args.downcast::<#tup>().unwrap();
+                        match args {
+                            #pat #guard => break #l ({ #prologue #body }),
+                            other => { a.args = Box::new(other); }
+                        }
+                    }
+                ));
+            }
+        }
+        let leave = self.propagate(&quote!(a), fx);
+        quote!(#l: { #s #leave })
+    }
+
+    /// The arms of `h` that are passed on as evidence (`tauto_nir::evidence`):
+    /// each a closure over the arguments, made before the handler is pushed
+    /// so that it runs with the chain outside the `handle` (`before`), and
+    /// the local `evd_<id>` that names it, after `pre`.
+    fn static_handlers(&mut self, h: &HandleNode, pre: Rs) -> (Rs, Rs) {
+        let ops = self.pkg.evidence.of_handle(h.id).to_vec();
+        if ops.is_empty() {
+            return (Rs::new(), pre);
+        }
+        let (mut before, mut after) = (Rs::new(), Rs::new());
+        for op in ops {
+            let Some(arm) = h.direct.iter().find(|a| a.op == op) else {
+                continue;
+            };
+            let n = self.evd_name(op);
+            let f = id(&format!("{n}_arm"));
+            let (params, ret) = self.pkg.evidence.ops[&op].clone();
+            let tup = self.payload_ty(&params);
+            let r = self.ty(&ret);
             let mut out = PatOut::default();
             let pats: Vec<Rs> = arm
                 .pats
@@ -2106,30 +2794,27 @@ impl Gen<'_> {
                 .map(|p| self.pat(p, false, &mut out))
                 .collect();
             let pat = tuple(&pats);
-            let mut guards = out.guards.clone();
-            if let Some(g) = &arm.guard {
-                let g = self.expr(g, fx);
-                guards.push(out.user_guard(g));
-            }
-            let body = self.expr(&arm.body, fx);
-            let guard = PatOut::guard_clause(&guards);
+            let mut fx = Fx::new(false);
+            let b = self.expr(&arm.body, &mut fx);
+            let guard = PatOut::guard_clause(&out.guards);
             let prologue = out.prologue();
-            s.extend(quote!(
-                if a.op.id == #opc.id && a.args.is::<#tup>() {
-                    let args = *a.args.downcast::<#tup>().unwrap();
+            let at = self.loc(arm.span);
+            before.extend(quote!(
+                let #f = |args: #tup| {
+                    #[allow(unreachable_patterns)]
                     match args {
-                        #pat #guard => break #l ({ #prologue #body }),
-                        other => { a.args = Box::new(other); }
+                        #pat #guard => { let answer: #r = { #prologue #b }; answer }
+                        _ => tauto_rt::no_arm(#at),
                     }
-                }
+                };
             ));
+            after.extend(quote!(let #n = &#f;));
         }
-        let leave = self.propagate(&quote!(a), fx);
-        quote!(#l: { #s #leave })
+        (before, quote!(#pre #after))
     }
 
     /// The `let ev = …` that puts the `direct` arms of a `handle` in place.
-    pub(crate) fn direct_handler(&mut self, arms: &[OpArm], captured: Option<&[Ident]>) -> Rs {
+    pub(crate) fn direct_handler(&mut self, arms: &[OpArm]) -> Rs {
         let mut ops: Vec<usize> = Vec::new();
         for a in arms {
             if !ops.contains(&a.op) {
@@ -2144,69 +2829,80 @@ impl Gen<'_> {
         for op in &ops {
             let opc = op_const(&self.pkg.ops[*op]);
             let mine: Vec<&OpArm> = arms.iter().filter(|a| a.op == *op).collect();
-            let tup = self.payload_ty(&mine[0].params);
-            let mut tries = Rs::new();
-            for arm in mine {
-                let mut out = PatOut::default();
-                let pats: Vec<Rs> = arm
-                    .pats
-                    .iter()
-                    .map(|p| self.pat(p, false, &mut out))
-                    .collect();
-                let pat = tuple(&pats);
-                let mut fx = Fx::new(false);
-                let mut guards = out.guards.clone();
-                if let Some(g) = &arm.guard {
-                    let g = self.expr(g, &mut fx);
-                    guards.push(out.user_guard(g));
+            for (params, mine) in self.arm_groups(*op, &mine) {
+                let tup = self.payload_ty(&params);
+                let r = match mine.first() {
+                    Some(a) => self.answer_ty(&a.body.ty),
+                    None => quote!(_),
+                };
+                let mut tries = Rs::new();
+                for arm in mine {
+                    let mut out = PatOut::default();
+                    let pats: Vec<Rs> = arm
+                        .pats
+                        .iter()
+                        .map(|p| self.pat(p, false, &mut out))
+                        .collect();
+                    let pat = tuple(&pats);
+                    let mut fx = Fx::new(false);
+                    let mut guards = out.guards.clone();
+                    if let Some(g) = &arm.guard {
+                        let g = self.expr(g, &mut fx);
+                        guards.push(out.user_guard(g));
+                    }
+                    let b = self.expr(&arm.body, &mut fx);
+                    // The answer's type is written, or a constructor like
+                    // `Ok(..)` leaves a parameter open.
+                    let answer = self.answer_ty(&arm.body.ty);
+                    let guard = PatOut::guard_clause(&guards);
+                    let prologue = out.prologue();
+                    tries.extend(quote!(
+                        match args {
+                            #pat #guard => return Ok({
+                                let answer: #answer = { #prologue #b };
+                                answer
+                            }),
+                            other => { args = other; }
+                        }
+                    ));
                 }
-                let b = self.expr(&arm.body, &mut fx);
-                // The answer goes into a `Box<dyn Any>`: its type is written,
-                // or a constructor like `Ok(..)` leaves a parameter open.
-                let answer = self.answer_ty(&arm.body.ty);
-                let guard = PatOut::guard_clause(&guards);
-                let prologue = out.prologue();
-                tries.extend(quote!(
-                    match args {
-                        #pat #guard => return Ok(Box::new({
-                            let answer: #answer = { #prologue #b };
-                            answer
-                        })),
-                        other => { args = other; }
+                // The arms of the group, run on arguments of their type: by
+                // a perform that holds them unboxed (`Io<A, R>`), or boxed
+                // (`Io<Payload, Payload>`, from code of the M tier).
+                body.extend(quote!(
+                    if op == #opc.id {
+                        let mut arms = |ev: &Ev<'_>, mut args: #tup| -> Result<#r, #tup> {
+                            #tries
+                            Err(args)
+                        };
+                        if let Some(io) = io.downcast_mut::<tauto_rt::ev::Io<#tup, #r>>() {
+                            if let Some(a) = io.take_args() {
+                                match arms(ev, a) {
+                                    Ok(r) => { *io = tauto_rt::ev::Io::Answer(r); return true; }
+                                    Err(a) => { *io = tauto_rt::ev::Io::Args(a); }
+                                }
+                            }
+                        } else if let Some(io) = io.downcast_mut::<tauto_rt::ev::Io<Payload, Payload>>() {
+                            if let Some(a) = io.take_args() {
+                                match a.downcast::<#tup>() {
+                                    Ok(b) => match arms(ev, *b) {
+                                        Ok(r) => { *io = tauto_rt::ev::Io::Answer(Box::new(r)); return true; }
+                                        Err(a) => { *io = tauto_rt::ev::Io::Args(Box::new(a)); }
+                                    },
+                                    Err(a) => { *io = tauto_rt::ev::Io::Args(a); }
+                                }
+                            }
+                        }
                     }
                 ));
             }
-            body.extend(quote!(
-                if op == #opc.id {
-                    let mut args = match args.downcast::<#tup>() { Ok(b) => *b, Err(b) => return Err(b) };
-                    #tries
-                    return Err(Box::new(args));
-                }
-            ));
         }
-        match captured {
-            None => quote!(
-                let ev = &ev.push(std::rc::Rc::new(FnHandler::new(&[#ids], |ev: &Ev<'_>, op: u32, args: Payload| -> Result<Payload, Payload> {
-                    #body
-                    Err(args)
-                })));
-            ),
-            Some(names) => {
-                // Kept in the chain of a continuation: it owns what it
-                // uses, as a copy of its own each time it runs.
-                let used = mentioned(names, &body);
-                let outer = clone_each(used.iter().cloned());
-                let inner = clone_each_mut(used.iter().cloned());
-                quote!(
-                    let ev_o = { #outer ev.push(std::rc::Rc::new(FnHandler::new(&[#ids], move |ev: &Ev<'_>, op: u32, args: Payload| -> Result<Payload, Payload> {
-                        #inner
-                        #body
-                        Err(args)
-                    }))) };
-                    let ev = &ev_o;
-                )
-            }
-        }
+        quote!(
+            let ev = &ev.push(std::rc::Rc::new(FnHandler::new(&[#ids], |ev: &Ev<'_>, op: u32, io: &mut dyn std::any::Any| -> bool {
+                #body
+                false
+            })));
+        )
     }
 }
 
@@ -2265,15 +2961,36 @@ impl Gen<'_> {
     /// and calls the same handler again over what is left of it (deep). An
     /// arm that ends in `k(e)` answers and goes on in the same loop.
     fn handle_o(&mut self, h: &HandleNode, fx: &mut Fx) -> Rs {
+        self.without_evd(|g| g.handle_o_inner(h, fx))
+    }
+
+    fn handle_o_inner(&mut self, h: &HandleNode, fx: &mut Fx) -> Rs {
         let pre = if h.direct.is_empty() {
             Rs::new()
         } else {
-            self.direct_handler(&h.direct, None)
+            self.direct_handler(&h.direct)
         };
         let mut bfx = Fx::in_future();
         bfx.nonresuming_budget = self.nonresuming_budget(h);
+        bfx.budget_return = true;
         let body = self.expr(&h.body, &mut bfx);
+        // A body of type `Never` may still end in a value Rust types on its
+        // own (`perform stop(); 99`): the value is never reached.
+        let body = if h.body_ty == Ty::Never {
+            quote!({ let _ = #body; unreachable!("tauto: a body of type Never returned") })
+        } else {
+            body
+        };
+        let returned = bfx.returned;
         let r = self.answer_ty(&h.result);
+        if returned {
+            for a in h.aborts.iter().chain(&h.susp) {
+                if let Some(k) = &a.k {
+                    self.ret_conts.insert(k.id);
+                }
+            }
+        }
+        self.arm_returns.set(returned);
         let mut lfx = Fx::in_future();
         let ret = self.return_arm(h, &id("v"), &mut lfx);
         let mut ops: Vec<usize> = Vec::new();
@@ -2291,47 +3008,55 @@ impl Gen<'_> {
                 .chain(&h.susp)
                 .filter(|a| a.op == *op)
                 .collect();
-            let tup = self.payload_ty(&mine[0].params);
-            let mut tries = Rs::new();
-            for arm in mine {
-                let mut out = PatOut::default();
-                let pats: Vec<Rs> = arm
-                    .pats
-                    .iter()
-                    .map(|p| self.pat(p, false, &mut out))
-                    .collect();
-                let pat = tuple(&pats);
-                let mut guards = out.guards.clone();
-                if let Some(gd) = &arm.guard {
-                    let gd = self.expr(gd, &mut lfx);
-                    guards.push(out.user_guard(gd));
-                }
-                let guard = PatOut::guard_clause(&guards);
-                let code = self.arm_o(arm, &r, &mut lfx);
-                let prologue = out.prologue();
-                tries.extend(quote!(
-                    match a {
-                        #pat #guard => {
-                            #prologue
-                            #code
+            for (params, mine) in self.arm_groups(*op, &mine) {
+                let tup = self.payload_ty(&params);
+                let mut tries = Rs::new();
+                for arm in mine {
+                    let mut out = PatOut::default();
+                    let pats: Vec<Rs> = arm
+                        .pats
+                        .iter()
+                        .map(|p| self.pat(p, false, &mut out))
+                        .collect();
+                    let pat = tuple(&pats);
+                    let mut guards = out.guards.clone();
+                    if let Some(gd) = &arm.guard {
+                        let gd = self.expr(gd, &mut lfx);
+                        guards.push(out.user_guard(gd));
+                    }
+                    let guard = PatOut::guard_clause(&guards);
+                    let code = self.arm_o(arm, &r, &mut lfx);
+                    let prologue = out.prologue();
+                    tries.extend(quote!(
+                        match a {
+                            #pat #guard => {
+                                #prologue
+                                #code
+                            }
+                            other => { a = other; }
                         }
-                        other => { a = other; }
+                    ));
+                }
+                groups.extend(quote!(
+                    if op.id == #opc.id {
+                        match args.downcast::<#tup>() {
+                            Ok(b) => {
+                                let mut a = *b;
+                                #tries
+                                args = Box::new(a);
+                            }
+                            Err(b) => { args = b; }
+                        }
                     }
                 ));
             }
-            groups.extend(quote!(
-                if op.id == #opc.id {
-                    match args.downcast::<#tup>() {
-                        Ok(b) => {
-                            let mut a = *b;
-                            #tries
-                            args = Box::new(a);
-                        }
-                        Err(b) => { args = b; }
-                    }
-                }
-            ));
         }
+        self.arm_returns.set(false);
+        let ready = if returned {
+            quote!(match v { Err(e) => return Err(e), Ok(v) => { let r: #r = #ret; return Ok(r); } })
+        } else {
+            quote!({ let r: #r = #ret; return r; })
+        };
         let clone_outer = clone_each(h.clones.iter().map(lid));
         let handler = quote!(
             move |h, mut body| {
@@ -2341,7 +3066,7 @@ impl Gen<'_> {
                     let ev = &ev0;
                     loop {
                         match tauto_rt::o::poll_once(body.as_mut()) {
-                            Poll::Ready(v) => { let r: #r = #ret; return r; }
+                            Poll::Ready(v) => #ready,
                             Poll::Pending => match tauto_rt::o::peek() {
                                 Peek::Request(_) => {
                                     let (op, args, at) = tauto_rt::o::take_request();
@@ -2359,6 +3084,15 @@ impl Gen<'_> {
         );
         let outer = clone_each(h.clones.iter().map(lid));
         let bt = self.answer_ty(&h.body_ty);
+        let (rec_b, rec_r, body_out) = if returned {
+            (
+                quote!(Result<#bt, _>),
+                quote!(Result<#r, _>),
+                quote!(Ok::<#bt, _>(#body)),
+            )
+        } else {
+            (bt.clone(), r.clone(), body.clone())
+        };
         let run = quote!(
             {
                 // The clones move into the handler. They are made in a block
@@ -2367,11 +3101,20 @@ impl Gen<'_> {
                 let h = {
                     #outer
                     let ev0 = ev.clone();
-                    tauto_rt::o::Rec::<'_, #bt, #r>::new(#handler)
+                    tauto_rt::o::Rec::<'_, #rec_b, #rec_r>::new(#handler)
                 };
-                h.call(tauto_rt::o::pin(async { #pre #body }))
+                h.call(tauto_rt::o::pin(async { #pre #body_out }))
             }
         );
+        if returned {
+            let value = if fx.o {
+                quote!(#run.await)
+            } else {
+                quote!(tauto_rt::o::run_local(#run))
+            };
+            let leave = self.leave_with(fx, quote!(e));
+            return quote!(match #value { Ok(v) => v, Err(e) => #leave });
+        }
         if fx.o {
             quote!(#run.await)
         } else if fx.ret_a || !fx.targets.is_empty() {
@@ -2387,7 +3130,7 @@ impl Gen<'_> {
         let mut fx = Fx::in_future();
         let Some(k) = &arm.k else {
             let b = self.expr(&arm.body, &mut fx);
-            return quote!(let r: #r = #b; return r;);
+            return self.arm_return(r, b);
         };
         if let Some((stmts, ans)) = tail_k(&arm.body, k) {
             let mut s = Rs::new();
@@ -2406,16 +3149,25 @@ impl Gen<'_> {
         let b = self.expr(&arm.body, &mut fx);
         let _ = lfx;
         if !uses_local(&arm.body, k) {
-            return quote!(let r: #r = #b; return r;);
+            return self.arm_return(r, b);
         }
+        let done = self.arm_return(r, b);
         let at = self.ty(&arm.k_ans);
         let k = lid(k);
         quote!(
             let h2 = h.clone();
             let #k = move |x: #at| tauto_rt::o::pin(async move { tauto_rt::o::answer(Box::new(x)); h2.call(body).await });
-            let r: #r = #b;
-            return r;
+            #done
         )
+    }
+
+    /// The arm's value ends the handler call.
+    fn arm_return(&self, r: &Rs, b: Rs) -> Rs {
+        if self.arm_returns.get() {
+            quote!(let r: #r = #b; return Ok(r);)
+        } else {
+            quote!(let r: #r = #b; return r;)
+        }
     }
 }
 
@@ -2423,12 +3175,25 @@ pub(crate) fn collect_binds(p: &Pat, out: &mut Vec<Local>) {
     match p {
         Pat::Bind(l, _) => out.push(l.clone()),
         Pat::Ctor { fields, .. } => fields.iter().for_each(|f| collect_binds(f, out)),
+        Pat::Variant { pat, .. } => collect_binds(pat, out),
         _ => {}
     }
 }
 
 /// A borrowed function of the O tier, which code of the M tier holds as a
 /// `tauto_rt::cps::OCb`.
+/// A borrowed function that code of the M tier holds as a shared handle,
+/// which continuations can hold: `OCb` for one of the O tier, `Rc<dyn Fn…>`
+/// for one of the S or A tier.
+pub(crate) fn m_callback(l: &Local, ty: &Ty) -> bool {
+    matches!(l.repr, Repr::FnRef | Repr::BorrowClosure)
+        && match ty {
+            Ty::Ref(t) | Ty::RefMut(t) => matches!(&**t, Ty::Fn(f) if f.tier != Tier::M),
+            Ty::Fn(f) => f.tier != Tier::M,
+            _ => false,
+        }
+}
+
 pub(crate) fn m_o_callback(l: &Local, ty: &Ty) -> bool {
     matches!(l.repr, Repr::FnRef | Repr::BorrowClosure)
         && match ty {
@@ -2436,4 +3201,56 @@ pub(crate) fn m_o_callback(l: &Local, ty: &Ty) -> bool {
             Ty::Fn(f) => f.tier == Tier::O,
             _ => false,
         }
+}
+
+/// The payload types `e` performs `op` with, the arms of its handlers
+/// included.
+fn performed_payloads(e: &Expr, op: OpIndex, out: &mut Vec<Vec<Ty>>) {
+    e.walk(&mut |x| match &x.kind {
+        ExprKind::Perform(p) if p.op == op => {
+            let tys: Vec<Ty> = p.args.iter().map(|a| a.ty.clone()).collect();
+            if !tys.iter().any(Ty::has_arm_generic) && !out.contains(&tys) {
+                out.push(tys);
+            }
+        }
+        ExprKind::Handle(h) => {
+            for a in &h.susp {
+                if let Some(g) = &a.guard {
+                    performed_payloads(g, op, out);
+                }
+                performed_payloads(&a.body, op, out);
+            }
+        }
+        _ => {}
+    });
+}
+
+/// Whether the type names `Never`: a part the checker left open.
+fn has_never(t: &Ty) -> bool {
+    let mut found = false;
+    t.clone().each_mut(&mut |t| found |= matches!(t, Ty::Never));
+    found
+}
+
+/// The function of the runtime that answers a storage operation when no
+/// handler does, as `Host::run` answers it.
+fn storage_answer(name: &Name) -> Option<&'static str> {
+    [
+        "ref_new",
+        "ref_get",
+        "ref_set",
+        "weak_of",
+        "weak_get",
+        "mutex_new",
+        "mutex_claim",
+        "mutex_take_claimed",
+        "mutex_put",
+        "mutex_withdraw",
+        "atomic_new",
+        "atomic_load",
+        "atomic_store",
+        "atomic_fetch_add",
+    ]
+    .into_iter()
+    .find(|op| tauto::bindings::is_library(name, op))
 }

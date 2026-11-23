@@ -1,0 +1,1127 @@
+import std::prelude::num { overflow, divzero }
+import "int.taut" { Int }
+import "uint.taut" { Nat, Never }
+import std::prelude::std { Option }
+
+// Signed integers of a fixed width, as the proofs see them: an `Int` with a
+// proof that it is in `-2^(w-1) .. 2^(w-1)`. Extraction maps `SInt(8)`, `SInt(16)`, `SInt(32)`
+// and `SInt(64)` onto Nib's `i8`, `i16`, `i32` and `i64`, and the functions marked "Mapped" onto its
+// operators. As for the unsigned widths, the arithmetic takes a proof that
+// the result fits, decides it (`Option`), or performs `overflow`; nothing
+// wraps.
+
+// `SInt(w)`: an `Int` in `-2^(w-1) .. 2^(w-1)`. It is the one definition of
+// the signed integers of every width; `i32` and `i64` of a program are
+// `SInt(32)` and `SInt(64)`. The functions with the width in their name
+// (`SInt::add64`) are the same operations with the bounds written as
+// numbers, which is what extraction maps onto Nib's operators.
+
+// `2^(w-1)`, and 0 for the width 0, which has no values.
+pub fn SInt::bound(w: Nat): Int {
+  match w {
+    Zero => IntOfNat(0)
+    Succ(k) => IntOfNat(Nat::pow2(k))
+  }
+}
+
+pub fn SInt::fits(w: Nat, v: Int): Bool {
+  Int::le(Int::neg(SInt::bound(w)), v) && Int::lt(v, SInt::bound(w))
+}
+
+pub(open) inductive SInt(w: Nat): Type {
+  Mk(val: Int, ok: SInt::fits(w, val) = true): SInt(w)
+}
+
+pub fn SInt::val<w: Nat>(x: SInt(w)): Int {
+  match x {
+    Mk(v, h) => v
+  }
+}
+
+pub theorem SInt::ok<w: Nat>(x: SInt(w)): SInt::fits(w, SInt::val(x)) = true {
+  match x {
+    Mk(v, h) => h
+  }
+}
+
+pub fn SInt::fits8(v: Int): Bool {
+  Int::le(-128, v) && Int::lt(v, 128)
+}
+
+// `SInt::fits(8, v)` is `SInt::fits8(v)`, the bound written as numbers.
+pub theorem SInt::fits8_ok(v: Int): SInt::fits(8, v) = SInt::fits8(v) {
+  Refl
+}
+
+pub fn SInt::mk8(v: Int, h: SInt::fits8(v) = true): SInt(8) {
+  SInt::Mk(v, Eq::trans(SInt::fits8_ok(v), h))
+}
+
+// Mapped: the integer a `i8` is.
+pub fn SInt::val8(x: SInt(8)): Int {
+  SInt::val(x)
+}
+
+pub theorem SInt::ok8(x: SInt(8)): SInt::fits8(SInt::val8(x)) = true {
+  Eq::trans(Eq::sym(SInt::fits8_ok(SInt::val(x))), SInt::ok(x))
+}
+
+// Mapped: `v` as a `i8` when `o`, the decision of whether it fits, says so.
+pub fn SInt::of_decided8(v: Int, o: Bool, h: SInt::fits8(v) = o): Option(SInt(8)) {
+  match o {
+    false => None
+    true => Some(SInt::mk8(v, h))
+  }
+}
+
+pub fn SInt::of_int8(v: Int): Option(SInt(8)) {
+  SInt::of_decided8(v, SInt::fits8(v), Refl)
+}
+
+// Mapped: `a + b`, which `h` says fits.
+pub fn SInt::add8(a: SInt(8), b: SInt(8), h: SInt::fits8(Int::add(SInt::val8(a), SInt::val8(b))) = true): SInt(8) {
+  SInt::mk8(Int::add(SInt::val8(a), SInt::val8(b)), h)
+}
+
+// Mapped: `a - b`, which `h` says fits.
+pub fn SInt::sub8(a: SInt(8), b: SInt(8), h: SInt::fits8(Int::sub(SInt::val8(a), SInt::val8(b))) = true): SInt(8) {
+  SInt::mk8(Int::sub(SInt::val8(a), SInt::val8(b)), h)
+}
+
+// Mapped: `a * b`, which `h` says fits.
+pub fn SInt::mul8(a: SInt(8), b: SInt(8), h: SInt::fits8(Int::mul(SInt::val8(a), SInt::val8(b))) = true): SInt(8) {
+  SInt::mk8(Int::mul(SInt::val8(a), SInt::val8(b)), h)
+}
+
+// `a + b`, or `None` when it does not fit.
+pub fn SInt::checked_add8(a: SInt(8), b: SInt(8)): Option(SInt(8)) {
+  SInt::of_int8(Int::add(SInt::val8(a), SInt::val8(b)))
+}
+
+pub fn SInt::checked_sub8(a: SInt(8), b: SInt(8)): Option(SInt(8)) {
+  SInt::of_int8(Int::sub(SInt::val8(a), SInt::val8(b)))
+}
+
+pub fn SInt::checked_mul8(a: SInt(8), b: SInt(8)): Option(SInt(8)) {
+  SInt::of_int8(Int::mul(SInt::val8(a), SInt::val8(b)))
+}
+
+// Mapped: the comparisons.
+pub fn SInt::lt8(a: SInt(8), b: SInt(8)): Bool {
+  Int::lt(SInt::val8(a), SInt::val8(b))
+}
+
+pub fn SInt::le8(a: SInt(8), b: SInt(8)): Bool {
+  Int::le(SInt::val8(a), SInt::val8(b))
+}
+
+pub fn SInt::eq8(a: SInt(8), b: SInt(8)): Bool {
+  Int::eq(SInt::val8(a), SInt::val8(b))
+}
+
+// The value in `o`, or `overflow`.
+pub fn SInt::or_overflow8(o: Option(SInt(8))): SInt(8) ! {overflow} {
+  ⊢ SInt(8) from match o {
+    Some(x) => x
+    None => Never::elim(perform overflow())
+  }
+}
+
+pub fn SInt::add_or_overflow8(a: SInt(8), b: SInt(8)): SInt(8) ! {overflow} {
+  SInt::or_overflow8(SInt::checked_add8(a, b))
+}
+
+pub fn SInt::sub_or_overflow8(a: SInt(8), b: SInt(8)): SInt(8) ! {overflow} {
+  SInt::or_overflow8(SInt::checked_sub8(a, b))
+}
+
+pub fn SInt::mul_or_overflow8(a: SInt(8), b: SInt(8)): SInt(8) ! {overflow} {
+  SInt::or_overflow8(SInt::checked_mul8(a, b))
+}
+
+// Mapped: `-a`, which `h` says fits.
+pub fn SInt::neg8(a: SInt(8), h: SInt::fits8(Int::neg(SInt::val8(a))) = true): SInt(8) {
+  SInt::mk8(Int::neg(SInt::val8(a)), h)
+}
+
+// `-a`, or `None` when it does not fit.
+pub fn SInt::checked_neg8(a: SInt(8)): Option(SInt(8)) {
+  SInt::of_int8(Int::neg(SInt::val8(a)))
+}
+
+pub fn SInt::neg_or_overflow8(a: SInt(8)): SInt(8) ! {overflow} {
+  SInt::or_overflow8(SInt::checked_neg8(a))
+}
+
+// The divisions with no path that fails: `h` says `b` is not 0, and `hf`
+// that the result fits (`tdiv` and `fdiv` of the least value by -1 do not).
+
+pub fn SInt::tdiv_fits8(
+  a: SInt(8),
+  b: SInt(8),
+  h: ¬(SInt::val8(b) = 0),
+  hf: SInt::fits8(Int::tdiv_nz(SInt::val8(a), SInt::val8(b), h)) = true
+): SInt(8) {
+  SInt::mk8(Int::tdiv_nz(SInt::val8(a), SInt::val8(b), h), hf)
+}
+
+pub fn SInt::tmod_fits8(
+  a: SInt(8),
+  b: SInt(8),
+  h: ¬(SInt::val8(b) = 0),
+  hf: SInt::fits8(Int::tmod_nz(SInt::val8(a), SInt::val8(b), h)) = true
+): SInt(8) {
+  SInt::mk8(Int::tmod_nz(SInt::val8(a), SInt::val8(b), h), hf)
+}
+
+pub fn SInt::fdiv_fits8(
+  a: SInt(8),
+  b: SInt(8),
+  h: ¬(SInt::val8(b) = 0),
+  hf: SInt::fits8(Int::fdiv_nz(SInt::val8(a), SInt::val8(b), h)) = true
+): SInt(8) {
+  SInt::mk8(Int::fdiv_nz(SInt::val8(a), SInt::val8(b), h), hf)
+}
+
+pub fn SInt::fmod_fits8(
+  a: SInt(8),
+  b: SInt(8),
+  h: ¬(SInt::val8(b) = 0),
+  hf: SInt::fits8(Int::fmod_nz(SInt::val8(a), SInt::val8(b), h)) = true
+): SInt(8) {
+  SInt::mk8(Int::fmod_nz(SInt::val8(a), SInt::val8(b), h), hf)
+}
+
+// `a / b` rounded toward zero for a `b` that `h` says is not 0, or `None` when it does not fit.
+pub fn SInt::tdiv_nz8(a: SInt(8), b: SInt(8), h: ¬(SInt::val8(b) = 0)): Option(SInt(8)) {
+  SInt::of_int8(Int::tdiv_nz(SInt::val8(a), SInt::val8(b), h))
+}
+
+// `tdiv`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_tdiv8(a: SInt(8), b: SInt(8)): Option(SInt(8)) {
+  match Int::eq(SInt::val8(b), 0) eqn h {
+    false => SInt::tdiv_nz8(a, b, Int::ne_zero(SInt::val8(b), h))
+    true => None
+  }
+}
+
+// `a / b` rounded toward zero, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::tdiv8(a: SInt(8), b: SInt(8)): SInt(8) ! {divzero, overflow} {
+  ⊢ SInt(8) from match Int::eq(SInt::val8(b), 0) {
+    false => SInt::or_overflow8(SInt::checked_tdiv8(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// The remainder of `tdiv_nz`, with the sign of `a`, or `None` when it does not fit.
+pub fn SInt::tmod_nz8(a: SInt(8), b: SInt(8), h: ¬(SInt::val8(b) = 0)): Option(SInt(8)) {
+  SInt::of_int8(Int::tmod_nz(SInt::val8(a), SInt::val8(b), h))
+}
+
+// `tmod`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_tmod8(a: SInt(8), b: SInt(8)): Option(SInt(8)) {
+  match Int::eq(SInt::val8(b), 0) eqn h {
+    false => SInt::tmod_nz8(a, b, Int::ne_zero(SInt::val8(b), h))
+    true => None
+  }
+}
+
+// The remainder of `tdiv`, with the sign of `a`, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::tmod8(a: SInt(8), b: SInt(8)): SInt(8) ! {divzero, overflow} {
+  ⊢ SInt(8) from match Int::eq(SInt::val8(b), 0) {
+    false => SInt::or_overflow8(SInt::checked_tmod8(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// `a / b` rounded down for a `b` that `h` says is not 0, or `None` when it does not fit.
+pub fn SInt::fdiv_nz8(a: SInt(8), b: SInt(8), h: ¬(SInt::val8(b) = 0)): Option(SInt(8)) {
+  SInt::of_int8(Int::fdiv_nz(SInt::val8(a), SInt::val8(b), h))
+}
+
+// `fdiv`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_fdiv8(a: SInt(8), b: SInt(8)): Option(SInt(8)) {
+  match Int::eq(SInt::val8(b), 0) eqn h {
+    false => SInt::fdiv_nz8(a, b, Int::ne_zero(SInt::val8(b), h))
+    true => None
+  }
+}
+
+// `a / b` rounded down, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::fdiv8(a: SInt(8), b: SInt(8)): SInt(8) ! {divzero, overflow} {
+  ⊢ SInt(8) from match Int::eq(SInt::val8(b), 0) {
+    false => SInt::or_overflow8(SInt::checked_fdiv8(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// The remainder of `fdiv_nz`, with the sign of `b`, or `None` when it does not fit.
+pub fn SInt::fmod_nz8(a: SInt(8), b: SInt(8), h: ¬(SInt::val8(b) = 0)): Option(SInt(8)) {
+  SInt::of_int8(Int::fmod_nz(SInt::val8(a), SInt::val8(b), h))
+}
+
+// `fmod`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_fmod8(a: SInt(8), b: SInt(8)): Option(SInt(8)) {
+  match Int::eq(SInt::val8(b), 0) eqn h {
+    false => SInt::fmod_nz8(a, b, Int::ne_zero(SInt::val8(b), h))
+    true => None
+  }
+}
+
+// The remainder of `fdiv`, with the sign of `b`, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::fmod8(a: SInt(8), b: SInt(8)): SInt(8) ! {divzero, overflow} {
+  ⊢ SInt(8) from match Int::eq(SInt::val8(b), 0) {
+    false => SInt::or_overflow8(SInt::checked_fmod8(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// `overflow` caught as `None`.
+pub fn SInt::catch8(o: Option(SInt(8))): Option(SInt(8)) {
+  handle { Some(SInt::or_overflow8(o)) } with {
+    overflow() => None
+  }
+}
+
+pub theorem SInt::catch_is8(o: Option(SInt(8))): SInt::catch8(o) = o {
+  match o {
+    Some(x) => Refl
+    None => Refl
+  }
+}
+
+pub theorem SInt::add_val8(
+  a: SInt(8),
+  b: SInt(8),
+  h: SInt::fits8(Int::add(SInt::val8(a), SInt::val8(b))) = true
+): SInt::val8(SInt::add8(a, b, h)) = Int::add(SInt::val8(a), SInt::val8(b)) {
+  Refl
+}
+
+pub theorem SInt::sub_val8(
+  a: SInt(8),
+  b: SInt(8),
+  h: SInt::fits8(Int::sub(SInt::val8(a), SInt::val8(b))) = true
+): SInt::val8(SInt::sub8(a, b, h)) = Int::sub(SInt::val8(a), SInt::val8(b)) {
+  Refl
+}
+
+pub theorem SInt::mul_val8(
+  a: SInt(8),
+  b: SInt(8),
+  h: SInt::fits8(Int::mul(SInt::val8(a), SInt::val8(b))) = true
+): SInt::val8(SInt::mul8(a, b, h)) = Int::mul(SInt::val8(a), SInt::val8(b)) {
+  Refl
+}
+
+pub fn SInt::fits16(v: Int): Bool {
+  Int::le(-32768, v) && Int::lt(v, 32768)
+}
+
+// `SInt::fits(16, v)` is `SInt::fits16(v)`, the bound written as numbers.
+pub theorem SInt::fits16_ok(v: Int): SInt::fits(16, v) = SInt::fits16(v) {
+  Refl
+}
+
+pub fn SInt::mk16(v: Int, h: SInt::fits16(v) = true): SInt(16) {
+  SInt::Mk(v, Eq::trans(SInt::fits16_ok(v), h))
+}
+
+// Mapped: the integer a `i16` is.
+pub fn SInt::val16(x: SInt(16)): Int {
+  SInt::val(x)
+}
+
+pub theorem SInt::ok16(x: SInt(16)): SInt::fits16(SInt::val16(x)) = true {
+  Eq::trans(Eq::sym(SInt::fits16_ok(SInt::val(x))), SInt::ok(x))
+}
+
+// Mapped: `v` as a `i16` when `o`, the decision of whether it fits, says so.
+pub fn SInt::of_decided16(v: Int, o: Bool, h: SInt::fits16(v) = o): Option(SInt(16)) {
+  match o {
+    false => None
+    true => Some(SInt::mk16(v, h))
+  }
+}
+
+pub fn SInt::of_int16(v: Int): Option(SInt(16)) {
+  SInt::of_decided16(v, SInt::fits16(v), Refl)
+}
+
+// Mapped: `a + b`, which `h` says fits.
+pub fn SInt::add16(a: SInt(16), b: SInt(16), h: SInt::fits16(Int::add(SInt::val16(a), SInt::val16(b))) = true): SInt(16) {
+  SInt::mk16(Int::add(SInt::val16(a), SInt::val16(b)), h)
+}
+
+// Mapped: `a - b`, which `h` says fits.
+pub fn SInt::sub16(a: SInt(16), b: SInt(16), h: SInt::fits16(Int::sub(SInt::val16(a), SInt::val16(b))) = true): SInt(16) {
+  SInt::mk16(Int::sub(SInt::val16(a), SInt::val16(b)), h)
+}
+
+// Mapped: `a * b`, which `h` says fits.
+pub fn SInt::mul16(a: SInt(16), b: SInt(16), h: SInt::fits16(Int::mul(SInt::val16(a), SInt::val16(b))) = true): SInt(16) {
+  SInt::mk16(Int::mul(SInt::val16(a), SInt::val16(b)), h)
+}
+
+// `a + b`, or `None` when it does not fit.
+pub fn SInt::checked_add16(a: SInt(16), b: SInt(16)): Option(SInt(16)) {
+  SInt::of_int16(Int::add(SInt::val16(a), SInt::val16(b)))
+}
+
+pub fn SInt::checked_sub16(a: SInt(16), b: SInt(16)): Option(SInt(16)) {
+  SInt::of_int16(Int::sub(SInt::val16(a), SInt::val16(b)))
+}
+
+pub fn SInt::checked_mul16(a: SInt(16), b: SInt(16)): Option(SInt(16)) {
+  SInt::of_int16(Int::mul(SInt::val16(a), SInt::val16(b)))
+}
+
+// Mapped: the comparisons.
+pub fn SInt::lt16(a: SInt(16), b: SInt(16)): Bool {
+  Int::lt(SInt::val16(a), SInt::val16(b))
+}
+
+pub fn SInt::le16(a: SInt(16), b: SInt(16)): Bool {
+  Int::le(SInt::val16(a), SInt::val16(b))
+}
+
+pub fn SInt::eq16(a: SInt(16), b: SInt(16)): Bool {
+  Int::eq(SInt::val16(a), SInt::val16(b))
+}
+
+// The value in `o`, or `overflow`.
+pub fn SInt::or_overflow16(o: Option(SInt(16))): SInt(16) ! {overflow} {
+  ⊢ SInt(16) from match o {
+    Some(x) => x
+    None => Never::elim(perform overflow())
+  }
+}
+
+pub fn SInt::add_or_overflow16(a: SInt(16), b: SInt(16)): SInt(16) ! {overflow} {
+  SInt::or_overflow16(SInt::checked_add16(a, b))
+}
+
+pub fn SInt::sub_or_overflow16(a: SInt(16), b: SInt(16)): SInt(16) ! {overflow} {
+  SInt::or_overflow16(SInt::checked_sub16(a, b))
+}
+
+pub fn SInt::mul_or_overflow16(a: SInt(16), b: SInt(16)): SInt(16) ! {overflow} {
+  SInt::or_overflow16(SInt::checked_mul16(a, b))
+}
+
+// Mapped: `-a`, which `h` says fits.
+pub fn SInt::neg16(a: SInt(16), h: SInt::fits16(Int::neg(SInt::val16(a))) = true): SInt(16) {
+  SInt::mk16(Int::neg(SInt::val16(a)), h)
+}
+
+// `-a`, or `None` when it does not fit.
+pub fn SInt::checked_neg16(a: SInt(16)): Option(SInt(16)) {
+  SInt::of_int16(Int::neg(SInt::val16(a)))
+}
+
+pub fn SInt::neg_or_overflow16(a: SInt(16)): SInt(16) ! {overflow} {
+  SInt::or_overflow16(SInt::checked_neg16(a))
+}
+
+// The divisions with no path that fails: `h` says `b` is not 0, and `hf`
+// that the result fits (`tdiv` and `fdiv` of the least value by -1 do not).
+
+pub fn SInt::tdiv_fits16(
+  a: SInt(16),
+  b: SInt(16),
+  h: ¬(SInt::val16(b) = 0),
+  hf: SInt::fits16(Int::tdiv_nz(SInt::val16(a), SInt::val16(b), h)) = true
+): SInt(16) {
+  SInt::mk16(Int::tdiv_nz(SInt::val16(a), SInt::val16(b), h), hf)
+}
+
+pub fn SInt::tmod_fits16(
+  a: SInt(16),
+  b: SInt(16),
+  h: ¬(SInt::val16(b) = 0),
+  hf: SInt::fits16(Int::tmod_nz(SInt::val16(a), SInt::val16(b), h)) = true
+): SInt(16) {
+  SInt::mk16(Int::tmod_nz(SInt::val16(a), SInt::val16(b), h), hf)
+}
+
+pub fn SInt::fdiv_fits16(
+  a: SInt(16),
+  b: SInt(16),
+  h: ¬(SInt::val16(b) = 0),
+  hf: SInt::fits16(Int::fdiv_nz(SInt::val16(a), SInt::val16(b), h)) = true
+): SInt(16) {
+  SInt::mk16(Int::fdiv_nz(SInt::val16(a), SInt::val16(b), h), hf)
+}
+
+pub fn SInt::fmod_fits16(
+  a: SInt(16),
+  b: SInt(16),
+  h: ¬(SInt::val16(b) = 0),
+  hf: SInt::fits16(Int::fmod_nz(SInt::val16(a), SInt::val16(b), h)) = true
+): SInt(16) {
+  SInt::mk16(Int::fmod_nz(SInt::val16(a), SInt::val16(b), h), hf)
+}
+
+// `a / b` rounded toward zero for a `b` that `h` says is not 0, or `None` when it does not fit.
+pub fn SInt::tdiv_nz16(a: SInt(16), b: SInt(16), h: ¬(SInt::val16(b) = 0)): Option(SInt(16)) {
+  SInt::of_int16(Int::tdiv_nz(SInt::val16(a), SInt::val16(b), h))
+}
+
+// `tdiv`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_tdiv16(a: SInt(16), b: SInt(16)): Option(SInt(16)) {
+  match Int::eq(SInt::val16(b), 0) eqn h {
+    false => SInt::tdiv_nz16(a, b, Int::ne_zero(SInt::val16(b), h))
+    true => None
+  }
+}
+
+// `a / b` rounded toward zero, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::tdiv16(a: SInt(16), b: SInt(16)): SInt(16) ! {divzero, overflow} {
+  ⊢ SInt(16) from match Int::eq(SInt::val16(b), 0) {
+    false => SInt::or_overflow16(SInt::checked_tdiv16(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// The remainder of `tdiv_nz`, with the sign of `a`, or `None` when it does not fit.
+pub fn SInt::tmod_nz16(a: SInt(16), b: SInt(16), h: ¬(SInt::val16(b) = 0)): Option(SInt(16)) {
+  SInt::of_int16(Int::tmod_nz(SInt::val16(a), SInt::val16(b), h))
+}
+
+// `tmod`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_tmod16(a: SInt(16), b: SInt(16)): Option(SInt(16)) {
+  match Int::eq(SInt::val16(b), 0) eqn h {
+    false => SInt::tmod_nz16(a, b, Int::ne_zero(SInt::val16(b), h))
+    true => None
+  }
+}
+
+// The remainder of `tdiv`, with the sign of `a`, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::tmod16(a: SInt(16), b: SInt(16)): SInt(16) ! {divzero, overflow} {
+  ⊢ SInt(16) from match Int::eq(SInt::val16(b), 0) {
+    false => SInt::or_overflow16(SInt::checked_tmod16(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// `a / b` rounded down for a `b` that `h` says is not 0, or `None` when it does not fit.
+pub fn SInt::fdiv_nz16(a: SInt(16), b: SInt(16), h: ¬(SInt::val16(b) = 0)): Option(SInt(16)) {
+  SInt::of_int16(Int::fdiv_nz(SInt::val16(a), SInt::val16(b), h))
+}
+
+// `fdiv`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_fdiv16(a: SInt(16), b: SInt(16)): Option(SInt(16)) {
+  match Int::eq(SInt::val16(b), 0) eqn h {
+    false => SInt::fdiv_nz16(a, b, Int::ne_zero(SInt::val16(b), h))
+    true => None
+  }
+}
+
+// `a / b` rounded down, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::fdiv16(a: SInt(16), b: SInt(16)): SInt(16) ! {divzero, overflow} {
+  ⊢ SInt(16) from match Int::eq(SInt::val16(b), 0) {
+    false => SInt::or_overflow16(SInt::checked_fdiv16(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// The remainder of `fdiv_nz`, with the sign of `b`, or `None` when it does not fit.
+pub fn SInt::fmod_nz16(a: SInt(16), b: SInt(16), h: ¬(SInt::val16(b) = 0)): Option(SInt(16)) {
+  SInt::of_int16(Int::fmod_nz(SInt::val16(a), SInt::val16(b), h))
+}
+
+// `fmod`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_fmod16(a: SInt(16), b: SInt(16)): Option(SInt(16)) {
+  match Int::eq(SInt::val16(b), 0) eqn h {
+    false => SInt::fmod_nz16(a, b, Int::ne_zero(SInt::val16(b), h))
+    true => None
+  }
+}
+
+// The remainder of `fdiv`, with the sign of `b`, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::fmod16(a: SInt(16), b: SInt(16)): SInt(16) ! {divzero, overflow} {
+  ⊢ SInt(16) from match Int::eq(SInt::val16(b), 0) {
+    false => SInt::or_overflow16(SInt::checked_fmod16(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// `overflow` caught as `None`.
+pub fn SInt::catch16(o: Option(SInt(16))): Option(SInt(16)) {
+  handle { Some(SInt::or_overflow16(o)) } with {
+    overflow() => None
+  }
+}
+
+pub theorem SInt::catch_is16(o: Option(SInt(16))): SInt::catch16(o) = o {
+  match o {
+    Some(x) => Refl
+    None => Refl
+  }
+}
+
+pub theorem SInt::add_val16(
+  a: SInt(16),
+  b: SInt(16),
+  h: SInt::fits16(Int::add(SInt::val16(a), SInt::val16(b))) = true
+): SInt::val16(SInt::add16(a, b, h)) = Int::add(SInt::val16(a), SInt::val16(b)) {
+  Refl
+}
+
+pub theorem SInt::sub_val16(
+  a: SInt(16),
+  b: SInt(16),
+  h: SInt::fits16(Int::sub(SInt::val16(a), SInt::val16(b))) = true
+): SInt::val16(SInt::sub16(a, b, h)) = Int::sub(SInt::val16(a), SInt::val16(b)) {
+  Refl
+}
+
+pub theorem SInt::mul_val16(
+  a: SInt(16),
+  b: SInt(16),
+  h: SInt::fits16(Int::mul(SInt::val16(a), SInt::val16(b))) = true
+): SInt::val16(SInt::mul16(a, b, h)) = Int::mul(SInt::val16(a), SInt::val16(b)) {
+  Refl
+}
+
+
+pub fn SInt::fits32(v: Int): Bool {
+  Int::le(-2147483648, v) && Int::lt(v, 2147483648)
+}
+
+// `SInt::fits(32, v)` is `SInt::fits32(v)`, the bound written as numbers.
+pub theorem SInt::fits32_ok(v: Int): SInt::fits(32, v) = SInt::fits32(v) {
+  Refl
+}
+
+pub fn SInt::mk32(v: Int, h: SInt::fits32(v) = true): SInt(32) {
+  SInt::Mk(v, Eq::trans(SInt::fits32_ok(v), h))
+}
+
+// Mapped: the integer a `i32` is.
+pub fn SInt::val32(x: SInt(32)): Int {
+  SInt::val(x)
+}
+
+pub theorem SInt::ok32(x: SInt(32)): SInt::fits32(SInt::val32(x)) = true {
+  Eq::trans(Eq::sym(SInt::fits32_ok(SInt::val(x))), SInt::ok(x))
+}
+
+// Mapped: `v` as a `i32` when `o`, the decision of whether it fits, says so.
+pub fn SInt::of_decided32(v: Int, o: Bool, h: SInt::fits32(v) = o): Option(SInt(32)) {
+  match o {
+    false => None
+    true => Some(SInt::mk32(v, h))
+  }
+}
+
+pub fn SInt::of_int32(v: Int): Option(SInt(32)) {
+  SInt::of_decided32(v, SInt::fits32(v), Refl)
+}
+
+// Mapped: `a + b`, which `h` says fits.
+pub fn SInt::add32(a: SInt(32), b: SInt(32), h: SInt::fits32(Int::add(SInt::val32(a), SInt::val32(b))) = true): SInt(32) {
+  SInt::mk32(Int::add(SInt::val32(a), SInt::val32(b)), h)
+}
+
+// Mapped: `a - b`, which `h` says fits.
+pub fn SInt::sub32(a: SInt(32), b: SInt(32), h: SInt::fits32(Int::sub(SInt::val32(a), SInt::val32(b))) = true): SInt(32) {
+  SInt::mk32(Int::sub(SInt::val32(a), SInt::val32(b)), h)
+}
+
+// Mapped: `a * b`, which `h` says fits.
+pub fn SInt::mul32(a: SInt(32), b: SInt(32), h: SInt::fits32(Int::mul(SInt::val32(a), SInt::val32(b))) = true): SInt(32) {
+  SInt::mk32(Int::mul(SInt::val32(a), SInt::val32(b)), h)
+}
+
+// `a + b`, or `None` when it does not fit.
+pub fn SInt::checked_add32(a: SInt(32), b: SInt(32)): Option(SInt(32)) {
+  SInt::of_int32(Int::add(SInt::val32(a), SInt::val32(b)))
+}
+
+pub fn SInt::checked_sub32(a: SInt(32), b: SInt(32)): Option(SInt(32)) {
+  SInt::of_int32(Int::sub(SInt::val32(a), SInt::val32(b)))
+}
+
+pub fn SInt::checked_mul32(a: SInt(32), b: SInt(32)): Option(SInt(32)) {
+  SInt::of_int32(Int::mul(SInt::val32(a), SInt::val32(b)))
+}
+
+// Mapped: the comparisons.
+pub fn SInt::lt32(a: SInt(32), b: SInt(32)): Bool {
+  Int::lt(SInt::val32(a), SInt::val32(b))
+}
+
+pub fn SInt::le32(a: SInt(32), b: SInt(32)): Bool {
+  Int::le(SInt::val32(a), SInt::val32(b))
+}
+
+pub fn SInt::eq32(a: SInt(32), b: SInt(32)): Bool {
+  Int::eq(SInt::val32(a), SInt::val32(b))
+}
+
+// The value in `o`, or `overflow`.
+pub fn SInt::or_overflow32(o: Option(SInt(32))): SInt(32) ! {overflow} {
+  ⊢ SInt(32) from match o {
+    Some(x) => x
+    None => Never::elim(perform overflow())
+  }
+}
+
+pub fn SInt::add_or_overflow32(a: SInt(32), b: SInt(32)): SInt(32) ! {overflow} {
+  SInt::or_overflow32(SInt::checked_add32(a, b))
+}
+
+pub fn SInt::sub_or_overflow32(a: SInt(32), b: SInt(32)): SInt(32) ! {overflow} {
+  SInt::or_overflow32(SInt::checked_sub32(a, b))
+}
+
+pub fn SInt::mul_or_overflow32(a: SInt(32), b: SInt(32)): SInt(32) ! {overflow} {
+  SInt::or_overflow32(SInt::checked_mul32(a, b))
+}
+
+// Mapped: `-a`, which `h` says fits.
+pub fn SInt::neg32(a: SInt(32), h: SInt::fits32(Int::neg(SInt::val32(a))) = true): SInt(32) {
+  SInt::mk32(Int::neg(SInt::val32(a)), h)
+}
+
+// `-a`, or `None` when it does not fit.
+pub fn SInt::checked_neg32(a: SInt(32)): Option(SInt(32)) {
+  SInt::of_int32(Int::neg(SInt::val32(a)))
+}
+
+pub fn SInt::neg_or_overflow32(a: SInt(32)): SInt(32) ! {overflow} {
+  SInt::or_overflow32(SInt::checked_neg32(a))
+}
+
+// The divisions with no path that fails: `h` says `b` is not 0, and `hf`
+// that the result fits (`tdiv` and `fdiv` of the least value by -1 do not).
+
+pub fn SInt::tdiv_fits32(
+  a: SInt(32),
+  b: SInt(32),
+  h: ¬(SInt::val32(b) = 0),
+  hf: SInt::fits32(Int::tdiv_nz(SInt::val32(a), SInt::val32(b), h)) = true
+): SInt(32) {
+  SInt::mk32(Int::tdiv_nz(SInt::val32(a), SInt::val32(b), h), hf)
+}
+
+pub fn SInt::tmod_fits32(
+  a: SInt(32),
+  b: SInt(32),
+  h: ¬(SInt::val32(b) = 0),
+  hf: SInt::fits32(Int::tmod_nz(SInt::val32(a), SInt::val32(b), h)) = true
+): SInt(32) {
+  SInt::mk32(Int::tmod_nz(SInt::val32(a), SInt::val32(b), h), hf)
+}
+
+pub fn SInt::fdiv_fits32(
+  a: SInt(32),
+  b: SInt(32),
+  h: ¬(SInt::val32(b) = 0),
+  hf: SInt::fits32(Int::fdiv_nz(SInt::val32(a), SInt::val32(b), h)) = true
+): SInt(32) {
+  SInt::mk32(Int::fdiv_nz(SInt::val32(a), SInt::val32(b), h), hf)
+}
+
+pub fn SInt::fmod_fits32(
+  a: SInt(32),
+  b: SInt(32),
+  h: ¬(SInt::val32(b) = 0),
+  hf: SInt::fits32(Int::fmod_nz(SInt::val32(a), SInt::val32(b), h)) = true
+): SInt(32) {
+  SInt::mk32(Int::fmod_nz(SInt::val32(a), SInt::val32(b), h), hf)
+}
+
+// `a / b` rounded toward zero for a `b` that `h` says is not 0, or `None` when it does not fit.
+pub fn SInt::tdiv_nz32(a: SInt(32), b: SInt(32), h: ¬(SInt::val32(b) = 0)): Option(SInt(32)) {
+  SInt::of_int32(Int::tdiv_nz(SInt::val32(a), SInt::val32(b), h))
+}
+
+// `tdiv`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_tdiv32(a: SInt(32), b: SInt(32)): Option(SInt(32)) {
+  match Int::eq(SInt::val32(b), 0) eqn h {
+    false => SInt::tdiv_nz32(a, b, Int::ne_zero(SInt::val32(b), h))
+    true => None
+  }
+}
+
+// `a / b` rounded toward zero, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::tdiv32(a: SInt(32), b: SInt(32)): SInt(32) ! {divzero, overflow} {
+  ⊢ SInt(32) from match Int::eq(SInt::val32(b), 0) {
+    false => SInt::or_overflow32(SInt::checked_tdiv32(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// The remainder of `tdiv_nz`, with the sign of `a`, or `None` when it does not fit.
+pub fn SInt::tmod_nz32(a: SInt(32), b: SInt(32), h: ¬(SInt::val32(b) = 0)): Option(SInt(32)) {
+  SInt::of_int32(Int::tmod_nz(SInt::val32(a), SInt::val32(b), h))
+}
+
+// `tmod`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_tmod32(a: SInt(32), b: SInt(32)): Option(SInt(32)) {
+  match Int::eq(SInt::val32(b), 0) eqn h {
+    false => SInt::tmod_nz32(a, b, Int::ne_zero(SInt::val32(b), h))
+    true => None
+  }
+}
+
+// The remainder of `tdiv`, with the sign of `a`, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::tmod32(a: SInt(32), b: SInt(32)): SInt(32) ! {divzero, overflow} {
+  ⊢ SInt(32) from match Int::eq(SInt::val32(b), 0) {
+    false => SInt::or_overflow32(SInt::checked_tmod32(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// `a / b` rounded down for a `b` that `h` says is not 0, or `None` when it does not fit.
+pub fn SInt::fdiv_nz32(a: SInt(32), b: SInt(32), h: ¬(SInt::val32(b) = 0)): Option(SInt(32)) {
+  SInt::of_int32(Int::fdiv_nz(SInt::val32(a), SInt::val32(b), h))
+}
+
+// `fdiv`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_fdiv32(a: SInt(32), b: SInt(32)): Option(SInt(32)) {
+  match Int::eq(SInt::val32(b), 0) eqn h {
+    false => SInt::fdiv_nz32(a, b, Int::ne_zero(SInt::val32(b), h))
+    true => None
+  }
+}
+
+// `a / b` rounded down, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::fdiv32(a: SInt(32), b: SInt(32)): SInt(32) ! {divzero, overflow} {
+  ⊢ SInt(32) from match Int::eq(SInt::val32(b), 0) {
+    false => SInt::or_overflow32(SInt::checked_fdiv32(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// The remainder of `fdiv_nz`, with the sign of `b`, or `None` when it does not fit.
+pub fn SInt::fmod_nz32(a: SInt(32), b: SInt(32), h: ¬(SInt::val32(b) = 0)): Option(SInt(32)) {
+  SInt::of_int32(Int::fmod_nz(SInt::val32(a), SInt::val32(b), h))
+}
+
+// `fmod`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_fmod32(a: SInt(32), b: SInt(32)): Option(SInt(32)) {
+  match Int::eq(SInt::val32(b), 0) eqn h {
+    false => SInt::fmod_nz32(a, b, Int::ne_zero(SInt::val32(b), h))
+    true => None
+  }
+}
+
+// The remainder of `fdiv`, with the sign of `b`, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::fmod32(a: SInt(32), b: SInt(32)): SInt(32) ! {divzero, overflow} {
+  ⊢ SInt(32) from match Int::eq(SInt::val32(b), 0) {
+    false => SInt::or_overflow32(SInt::checked_fmod32(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// `overflow` caught as `None`.
+pub fn SInt::catch32(o: Option(SInt(32))): Option(SInt(32)) {
+  handle { Some(SInt::or_overflow32(o)) } with {
+    overflow() => None
+  }
+}
+
+pub theorem SInt::catch_is32(o: Option(SInt(32))): SInt::catch32(o) = o {
+  match o {
+    Some(x) => Refl
+    None => Refl
+  }
+}
+
+pub theorem SInt::add_val32(
+  a: SInt(32),
+  b: SInt(32),
+  h: SInt::fits32(Int::add(SInt::val32(a), SInt::val32(b))) = true
+): SInt::val32(SInt::add32(a, b, h)) = Int::add(SInt::val32(a), SInt::val32(b)) {
+  Refl
+}
+
+pub theorem SInt::sub_val32(
+  a: SInt(32),
+  b: SInt(32),
+  h: SInt::fits32(Int::sub(SInt::val32(a), SInt::val32(b))) = true
+): SInt::val32(SInt::sub32(a, b, h)) = Int::sub(SInt::val32(a), SInt::val32(b)) {
+  Refl
+}
+
+pub theorem SInt::mul_val32(
+  a: SInt(32),
+  b: SInt(32),
+  h: SInt::fits32(Int::mul(SInt::val32(a), SInt::val32(b))) = true
+): SInt::val32(SInt::mul32(a, b, h)) = Int::mul(SInt::val32(a), SInt::val32(b)) {
+  Refl
+}
+
+
+pub fn SInt::fits64(v: Int): Bool {
+  Int::le(-9223372036854775808, v) && Int::lt(v, 9223372036854775808)
+}
+
+// `SInt::fits(64, v)` is `SInt::fits64(v)`, the bound written as numbers.
+pub theorem SInt::fits64_ok(v: Int): SInt::fits(64, v) = SInt::fits64(v) {
+  Refl
+}
+
+pub fn SInt::mk64(v: Int, h: SInt::fits64(v) = true): SInt(64) {
+  SInt::Mk(v, Eq::trans(SInt::fits64_ok(v), h))
+}
+
+// Mapped: the integer a `i64` is.
+pub fn SInt::val64(x: SInt(64)): Int {
+  SInt::val(x)
+}
+
+pub theorem SInt::ok64(x: SInt(64)): SInt::fits64(SInt::val64(x)) = true {
+  Eq::trans(Eq::sym(SInt::fits64_ok(SInt::val(x))), SInt::ok(x))
+}
+
+// Mapped: `v` as a `i64` when `o`, the decision of whether it fits, says so.
+pub fn SInt::of_decided64(v: Int, o: Bool, h: SInt::fits64(v) = o): Option(SInt(64)) {
+  match o {
+    false => None
+    true => Some(SInt::mk64(v, h))
+  }
+}
+
+pub fn SInt::of_int64(v: Int): Option(SInt(64)) {
+  SInt::of_decided64(v, SInt::fits64(v), Refl)
+}
+
+// Mapped: `a + b`, which `h` says fits.
+pub fn SInt::add64(a: SInt(64), b: SInt(64), h: SInt::fits64(Int::add(SInt::val64(a), SInt::val64(b))) = true): SInt(64) {
+  SInt::mk64(Int::add(SInt::val64(a), SInt::val64(b)), h)
+}
+
+// Mapped: `a - b`, which `h` says fits.
+pub fn SInt::sub64(a: SInt(64), b: SInt(64), h: SInt::fits64(Int::sub(SInt::val64(a), SInt::val64(b))) = true): SInt(64) {
+  SInt::mk64(Int::sub(SInt::val64(a), SInt::val64(b)), h)
+}
+
+// Mapped: `a * b`, which `h` says fits.
+pub fn SInt::mul64(a: SInt(64), b: SInt(64), h: SInt::fits64(Int::mul(SInt::val64(a), SInt::val64(b))) = true): SInt(64) {
+  SInt::mk64(Int::mul(SInt::val64(a), SInt::val64(b)), h)
+}
+
+// `a + b`, or `None` when it does not fit.
+pub fn SInt::checked_add64(a: SInt(64), b: SInt(64)): Option(SInt(64)) {
+  SInt::of_int64(Int::add(SInt::val64(a), SInt::val64(b)))
+}
+
+pub fn SInt::checked_sub64(a: SInt(64), b: SInt(64)): Option(SInt(64)) {
+  SInt::of_int64(Int::sub(SInt::val64(a), SInt::val64(b)))
+}
+
+pub fn SInt::checked_mul64(a: SInt(64), b: SInt(64)): Option(SInt(64)) {
+  SInt::of_int64(Int::mul(SInt::val64(a), SInt::val64(b)))
+}
+
+// Mapped: the comparisons.
+pub fn SInt::lt64(a: SInt(64), b: SInt(64)): Bool {
+  Int::lt(SInt::val64(a), SInt::val64(b))
+}
+
+pub fn SInt::le64(a: SInt(64), b: SInt(64)): Bool {
+  Int::le(SInt::val64(a), SInt::val64(b))
+}
+
+pub fn SInt::eq64(a: SInt(64), b: SInt(64)): Bool {
+  Int::eq(SInt::val64(a), SInt::val64(b))
+}
+
+// The value in `o`, or `overflow`.
+pub fn SInt::or_overflow64(o: Option(SInt(64))): SInt(64) ! {overflow} {
+  ⊢ SInt(64) from match o {
+    Some(x) => x
+    None => Never::elim(perform overflow())
+  }
+}
+
+pub fn SInt::add_or_overflow64(a: SInt(64), b: SInt(64)): SInt(64) ! {overflow} {
+  SInt::or_overflow64(SInt::checked_add64(a, b))
+}
+
+pub fn SInt::sub_or_overflow64(a: SInt(64), b: SInt(64)): SInt(64) ! {overflow} {
+  SInt::or_overflow64(SInt::checked_sub64(a, b))
+}
+
+pub fn SInt::mul_or_overflow64(a: SInt(64), b: SInt(64)): SInt(64) ! {overflow} {
+  SInt::or_overflow64(SInt::checked_mul64(a, b))
+}
+
+// Mapped: `-a`, which `h` says fits.
+pub fn SInt::neg64(a: SInt(64), h: SInt::fits64(Int::neg(SInt::val64(a))) = true): SInt(64) {
+  SInt::mk64(Int::neg(SInt::val64(a)), h)
+}
+
+// `-a`, or `None` when it does not fit.
+pub fn SInt::checked_neg64(a: SInt(64)): Option(SInt(64)) {
+  SInt::of_int64(Int::neg(SInt::val64(a)))
+}
+
+pub fn SInt::neg_or_overflow64(a: SInt(64)): SInt(64) ! {overflow} {
+  SInt::or_overflow64(SInt::checked_neg64(a))
+}
+
+// The divisions with no path that fails: `h` says `b` is not 0, and `hf`
+// that the result fits (`tdiv` and `fdiv` of the least value by -1 do not).
+
+pub fn SInt::tdiv_fits64(
+  a: SInt(64),
+  b: SInt(64),
+  h: ¬(SInt::val64(b) = 0),
+  hf: SInt::fits64(Int::tdiv_nz(SInt::val64(a), SInt::val64(b), h)) = true
+): SInt(64) {
+  SInt::mk64(Int::tdiv_nz(SInt::val64(a), SInt::val64(b), h), hf)
+}
+
+pub fn SInt::tmod_fits64(
+  a: SInt(64),
+  b: SInt(64),
+  h: ¬(SInt::val64(b) = 0),
+  hf: SInt::fits64(Int::tmod_nz(SInt::val64(a), SInt::val64(b), h)) = true
+): SInt(64) {
+  SInt::mk64(Int::tmod_nz(SInt::val64(a), SInt::val64(b), h), hf)
+}
+
+pub fn SInt::fdiv_fits64(
+  a: SInt(64),
+  b: SInt(64),
+  h: ¬(SInt::val64(b) = 0),
+  hf: SInt::fits64(Int::fdiv_nz(SInt::val64(a), SInt::val64(b), h)) = true
+): SInt(64) {
+  SInt::mk64(Int::fdiv_nz(SInt::val64(a), SInt::val64(b), h), hf)
+}
+
+pub fn SInt::fmod_fits64(
+  a: SInt(64),
+  b: SInt(64),
+  h: ¬(SInt::val64(b) = 0),
+  hf: SInt::fits64(Int::fmod_nz(SInt::val64(a), SInt::val64(b), h)) = true
+): SInt(64) {
+  SInt::mk64(Int::fmod_nz(SInt::val64(a), SInt::val64(b), h), hf)
+}
+
+// `a / b` rounded toward zero for a `b` that `h` says is not 0, or `None` when it does not fit.
+pub fn SInt::tdiv_nz64(a: SInt(64), b: SInt(64), h: ¬(SInt::val64(b) = 0)): Option(SInt(64)) {
+  SInt::of_int64(Int::tdiv_nz(SInt::val64(a), SInt::val64(b), h))
+}
+
+// `tdiv`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_tdiv64(a: SInt(64), b: SInt(64)): Option(SInt(64)) {
+  match Int::eq(SInt::val64(b), 0) eqn h {
+    false => SInt::tdiv_nz64(a, b, Int::ne_zero(SInt::val64(b), h))
+    true => None
+  }
+}
+
+// `a / b` rounded toward zero, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::tdiv64(a: SInt(64), b: SInt(64)): SInt(64) ! {divzero, overflow} {
+  ⊢ SInt(64) from match Int::eq(SInt::val64(b), 0) {
+    false => SInt::or_overflow64(SInt::checked_tdiv64(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// The remainder of `tdiv_nz`, with the sign of `a`, or `None` when it does not fit.
+pub fn SInt::tmod_nz64(a: SInt(64), b: SInt(64), h: ¬(SInt::val64(b) = 0)): Option(SInt(64)) {
+  SInt::of_int64(Int::tmod_nz(SInt::val64(a), SInt::val64(b), h))
+}
+
+// `tmod`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_tmod64(a: SInt(64), b: SInt(64)): Option(SInt(64)) {
+  match Int::eq(SInt::val64(b), 0) eqn h {
+    false => SInt::tmod_nz64(a, b, Int::ne_zero(SInt::val64(b), h))
+    true => None
+  }
+}
+
+// The remainder of `tdiv`, with the sign of `a`, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::tmod64(a: SInt(64), b: SInt(64)): SInt(64) ! {divzero, overflow} {
+  ⊢ SInt(64) from match Int::eq(SInt::val64(b), 0) {
+    false => SInt::or_overflow64(SInt::checked_tmod64(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// `a / b` rounded down for a `b` that `h` says is not 0, or `None` when it does not fit.
+pub fn SInt::fdiv_nz64(a: SInt(64), b: SInt(64), h: ¬(SInt::val64(b) = 0)): Option(SInt(64)) {
+  SInt::of_int64(Int::fdiv_nz(SInt::val64(a), SInt::val64(b), h))
+}
+
+// `fdiv`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_fdiv64(a: SInt(64), b: SInt(64)): Option(SInt(64)) {
+  match Int::eq(SInt::val64(b), 0) eqn h {
+    false => SInt::fdiv_nz64(a, b, Int::ne_zero(SInt::val64(b), h))
+    true => None
+  }
+}
+
+// `a / b` rounded down, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::fdiv64(a: SInt(64), b: SInt(64)): SInt(64) ! {divzero, overflow} {
+  ⊢ SInt(64) from match Int::eq(SInt::val64(b), 0) {
+    false => SInt::or_overflow64(SInt::checked_fdiv64(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// The remainder of `fdiv_nz`, with the sign of `b`, or `None` when it does not fit.
+pub fn SInt::fmod_nz64(a: SInt(64), b: SInt(64), h: ¬(SInt::val64(b) = 0)): Option(SInt(64)) {
+  SInt::of_int64(Int::fmod_nz(SInt::val64(a), SInt::val64(b), h))
+}
+
+// `fmod`, or `None` when `b` is 0 or it does not fit.
+pub fn SInt::checked_fmod64(a: SInt(64), b: SInt(64)): Option(SInt(64)) {
+  match Int::eq(SInt::val64(b), 0) eqn h {
+    false => SInt::fmod_nz64(a, b, Int::ne_zero(SInt::val64(b), h))
+    true => None
+  }
+}
+
+// The remainder of `fdiv`, with the sign of `b`, `divzero` when `b` is 0, or `overflow` when it does not fit.
+pub fn SInt::fmod64(a: SInt(64), b: SInt(64)): SInt(64) ! {divzero, overflow} {
+  ⊢ SInt(64) from match Int::eq(SInt::val64(b), 0) {
+    false => SInt::or_overflow64(SInt::checked_fmod64(a, b))
+    true => Never::elim(perform divzero())
+  }
+}
+
+// `overflow` caught as `None`.
+pub fn SInt::catch64(o: Option(SInt(64))): Option(SInt(64)) {
+  handle { Some(SInt::or_overflow64(o)) } with {
+    overflow() => None
+  }
+}
+
+pub theorem SInt::catch_is64(o: Option(SInt(64))): SInt::catch64(o) = o {
+  match o {
+    Some(x) => Refl
+    None => Refl
+  }
+}
+
+pub theorem SInt::add_val64(
+  a: SInt(64),
+  b: SInt(64),
+  h: SInt::fits64(Int::add(SInt::val64(a), SInt::val64(b))) = true
+): SInt::val64(SInt::add64(a, b, h)) = Int::add(SInt::val64(a), SInt::val64(b)) {
+  Refl
+}
+
+pub theorem SInt::sub_val64(
+  a: SInt(64),
+  b: SInt(64),
+  h: SInt::fits64(Int::sub(SInt::val64(a), SInt::val64(b))) = true
+): SInt::val64(SInt::sub64(a, b, h)) = Int::sub(SInt::val64(a), SInt::val64(b)) {
+  Refl
+}
+
+pub theorem SInt::mul_val64(
+  a: SInt(64),
+  b: SInt(64),
+  h: SInt::fits64(Int::mul(SInt::val64(a), SInt::val64(b))) = true
+): SInt::val64(SInt::mul64(a, b, h)) = Int::mul(SInt::val64(a), SInt::val64(b)) {
+  Refl
+}

@@ -1,0 +1,467 @@
+import "../src/eure.taut"
+import "../src/lower.taut"
+import "../src/read.taut"
+import "../src/syntax.taut"
+import "../src/value.taut"
+import "../src/write.taut"
+import "build.taut"
+import "doc.taut"
+import "heads.taut"
+import "inline.taut"
+import "mono.taut"
+import "stmts.taut"
+import "values.taut"
+import std::text
+import std::base
+import std::nat
+import "lowstmts.taut"
+
+// The document `to_text` writes parses back to the same document, for every document
+// `wf_node` accepts.
+
+// ---- fuel ------------------------------------------------------------------------------------
+
+theorem le_four(a: Nat): le(a, Nat::mul(4, a)) {
+  match a {
+    Zero => Refl
+    Succ(k) => le_up(
+      k,
+      Succ(Succ(Nat::mul(4, k))),
+      le_up(k, Succ(Nat::mul(4, k)), le_up(k, Nat::mul(4, k), le_four(k)))
+    )
+  }
+}
+
+theorem fuel_ok(a: Nat): le(a, Nat::add(List::length(Nil(<A: Nat>)), Nat::mul(4, Succ(a)))) {
+  Eq::subst(
+    <A: Nat,
+    a: Nat::mul(4, Succ(a)),
+    b: Nat::add(0, Nat::mul(4, Succ(a)))>,
+    (z: Nat) => le(a, z),
+    Eq::sym(Nat::add_zero_left(Nat::mul(4, Succ(a)))),
+    le_up2(a, Succ(Succ(Nat::mul(4, a))), le_up2(a, Nat::mul(4, a), le_four(a)))
+  )
+}
+
+theorem fuel_ok1(a: Nat): le(Succ(a), Nat::add(List::length(Nil(<A: Nat>)), Nat::mul(4, Succ(a)))) {
+  Eq::subst(
+    <A: Nat,
+    a: Nat::mul(4, Succ(a)),
+    b: Nat::add(0, Nat::mul(4, Succ(a)))>,
+    (z: Nat) => le(Succ(a), z),
+    Eq::sym(Nat::add_zero_left(Nat::mul(4, Succ(a)))),
+    le_up2(a, Succ(Nat::mul(4, a)), le_up(a, Nat::mul(4, a), le_four(a)))
+  )
+}
+
+// ---- a document that is not a map: `= v` ---------------------------------------------------------
+
+fn rootline(w: List(Nat)): List(Nat) {
+  Cons(61, Cons(32, w))
+}
+
+theorem rl_len(
+  w: List(Nat),
+  rr: List(Nat),
+  r: List(Nat),
+  hWs: strictly(Cons(10, rr), w),
+  hrR: le(List::length(r), List::length(rr))
+): le(Succ(Succ(Succ(List::length(r)))), List::length(rootline(w))) {
+  le_tr(
+    Succ(Succ(Succ(List::length(r)))),
+    Succ(Succ(Succ(List::length(rr)))),
+    List::length(rootline(w)),
+    hrR,
+    le_tr(
+      Succ(Succ(Succ(List::length(rr)))),
+      Succ(List::length(w)),
+      List::length(rootline(w)),
+      hWs,
+      le_up(Succ(List::length(w)), Succ(List::length(w)), Nat::le_refl(Succ(List::length(w))))
+    )
+  )
+}
+
+theorem root_line(
+  w: List(Nat),
+  rr: List(Nat),
+  r: List(Nat),
+  ss: List(Stmt),
+  close: Bool,
+  en: Expr,
+  f: Nat,
+  hW: plain(w) = true,
+  hWs: strictly(Cons(10, rr), w),
+  hn: (
+    g: Nat,
+    hg: le(List::length(w), Nat::add(List::length(Cons(10, rr)), g))
+  ) -> read_value(g, w) = MkRd(en, Cons(10, rr)),
+  hrR: le(List::length(r), List::length(rr)),
+  hR: (
+    k: Nat,
+    hk: le(List::length(rr), Nat::add(List::length(r), k)),
+    hk1: le(1, k)
+  ) -> read_stmts(k, close, rr) = MkRd(ss, r),
+  hl: le(Succ(List::length(rootline(w))), Nat::add(List::length(r), f))
+): read_stmts(f, close, rootline(w)) = MkRd(Cons(Bind(rootline(w), Nil, en), ss), r) {
+  match f {
+    Zero => out_of_fuel(
+      List::length(r),
+      List::length(rootline(w)),
+      le_down(
+        Succ(List::length(r)),
+        List::length(rootline(w)),
+        le_down(Succ(Succ(List::length(r))), List::length(rootline(w)), rl_len(w, rr, r, hWs, hrR))
+      ),
+      le_down(List::length(rootline(w)), Nat::add(List::length(r), Zero), hl)
+    )
+    Succ(g) => match g {
+      Zero => False::elim(
+        no_room(
+          List::length(rootline(w)),
+          Succ(List::length(r)),
+          le_down(List::length(rootline(w)), Nat::add(List::length(r), Succ(Zero)), hl),
+          le_down(Succ(Succ(List::length(r))), List::length(rootline(w)), rl_len(w, rr, r, hWs, hrR))
+        )
+      )
+      Succ(g2) => match g2 {
+        Zero => False::elim(
+          no_room(
+            List::length(rootline(w)),
+            Succ(Succ(List::length(r))),
+            le_down(List::length(rootline(w)), Nat::add(List::length(r), Succ(Succ(Zero))), hl),
+            rl_len(w, rr, r, hWs, hrR)
+          )
+        )
+        Succ(g3) => Eq::trans(
+          Eq::congr(
+            ⟦bk(
+              Succ(Succ(g3)),
+              close
+            )(rd_map(sbind_lam(rootline(w), Nil), read_value(g3, □)))⟧,
+            skip_plain(w, hW)
+          ),
+          Eq::trans(
+            Eq::congr(
+              ⟦bk(
+                Succ(Succ(g3)),
+                close
+              )(rd_map(sbind_lam(rootline(w), Nil), □))⟧,
+              hn(
+                g3,
+                le_rest(
+                  List::length(w),
+                  List::length(r),
+                  List::length(Cons(10, rr)),
+                  g3,
+                  hl,
+                  le_up(List::length(r), List::length(rr), hrR)
+                )
+              )
+            ),
+            Eq::congr(
+              (q: Rd(List(Stmt))) => rd_map(scons(Bind(rootline(w), Nil, en)), q),
+              hR(
+                Succ(Succ(g3)),
+                le_up2(
+                  List::length(rr),
+                  Nat::add(List::length(r), g3),
+                  le_tr(
+                    List::length(rr),
+                    List::length(w),
+                    Nat::add(List::length(r), g3),
+                    le_down2(List::length(rr), List::length(w), hWs),
+                    hl
+                  )
+                ),
+                Refl
+              )
+            )
+          )
+        )
+      }
+    }
+  }
+}
+
+fn tail_x(ext: List(Text × Node)): List(Nat) {
+  put_stmt_exts(ext, 0, Nil)
+}
+
+fn value_text(v: Value, ext: List(Text × Node)): List(Nat) {
+  rootline(put_node(leaf(v), Cons(10, tail_x(ext))))
+}
+
+fn value_stmts(v: Value, ext: List(Text × Node)): List(Stmt) {
+  Cons(
+    Bind(value_text(v, ext), Nil, expr_node(leaf(v))),
+    List::append(sm_exts(ext, 0, Nil), Nil)
+  )
+}
+
+theorem exts_end(
+  ext: List(Text × Node),
+  k: Nat,
+  hw: wf_exts(ext, Nil) = true,
+  hk: le(List::length(tail_x(ext)), Nat::add(List::length(Nil(<A: Nat>)), k)),
+  hk1: le(1, k)
+): read_stmts(k, false, tail_x(ext)) = MkRd(List::append(sm_exts(ext, 0, Nil), Nil), Nil) {
+  st_exts(
+    ext,
+    Nil,
+    0,
+    Nil,
+    Nil,
+    Nil,
+    false,
+    k,
+    hw,
+    Refl,
+    Refl,
+    (
+      k3: Nat,
+      hk3: le(List::length(Nil(<A: Nat>)), Nat::add(List::length(Nil(<A: Nat>)), k3)),
+      hk31: le(1, k3)
+    ) => end_read(k3, hk31),
+    hk,
+    hk1
+  )
+}
+
+theorem leaf_wf(
+  v: Value,
+  ext: List(Text × Node),
+  hw: wf_node(Node::Mk(v, ext)) = true
+): wf_node(leaf(v)) = true {
+  Eq::congr(⟦Bool::and(□, true)⟧, And::left(Bool::and_split(wf_value(v), wf_exts(ext, Nil), hw)))
+}
+
+theorem value_read(
+  v: Value,
+  ext: List(Text × Node),
+  hw: wf_node(Node::Mk(v, ext)) = true
+): read_stmts(Nat::mul(4, Succ(List::length(value_text(v, ext)))), false, value_text(v, ext)) = MkRd(value_stmts(v, ext), Nil) {
+  root_line(
+    put_node(leaf(v), Cons(10, tail_x(ext))),
+    tail_x(ext),
+    Nil,
+    List::append(sm_exts(ext, 0, Nil), Nil),
+    false,
+    expr_node(leaf(v)),
+    Nat::mul(4, Succ(List::length(value_text(v, ext)))),
+    node_plain(leaf(v), Cons(10, tail_x(ext)), leaf_wf(v, ext, hw)),
+    put_node_strict(leaf(v), Cons(10, tail_x(ext))),
+    (
+      g: Nat,
+      hg: le(
+        List::length(put_node(leaf(v), Cons(10, tail_x(ext)))),
+        Nat::add(List::length(Cons(10, tail_x(ext))), g)
+      )
+    ) => node_back(
+      leaf(v),
+      Cons(10, tail_x(ext)),
+      g,
+      leaf_wf(v, ext, hw),
+      nl_stops(tail_x(ext), exts_nojoin(ext, 0, Nil, Refl)),
+      hg
+    ),
+    Refl,
+    (
+      k: Nat,
+      hk: le(List::length(tail_x(ext)), Nat::add(List::length(Nil(<A: Nat>)), k)),
+      hk1: le(1, k)
+    ) => exts_end(ext, k, And::right(Bool::and_split(wf_value(v), wf_exts(ext, Nil), hw)), hk, hk1),
+    fuel_ok1(List::length(value_text(v, ext)))
+  )
+}
+
+theorem keep_if_full(
+  m: Node,
+  hnb: is_blank(m) = false
+): map_if_blank(m) = Ok(m) {
+  Eq::subst(
+    Bool,
+    false,
+    is_blank(m),
+    (y: Bool) => Eq(Result(Node, Nat × Text), ⊢ Result(Node, Nat × Text) from match y {
+      true => Ok(with_value(m, Vmap(Nil)))
+      false => Ok(m)
+    }, Ok(m)),
+    Eq::sym(hnb),
+    Refl
+  )
+}
+
+fn finish(): (Node) -> Result(Node, Nat × Text) {
+  (d: Node) => low_then(map_if_blank(d), (m: Node) => Ok(unblank(m)))
+}
+
+theorem value_lower(
+  v: Value,
+  ext: List(Text × Node),
+  hw: wf_node(Node::Mk(v, ext)) = true,
+  hnb: is_blank(Node::Mk(v, ext)) = false
+): lower(value_stmts(v, ext)) = Ok(Node::Mk(v, ext)) {
+  Eq::trans(
+    Eq::congr(
+      ⟦low_then(
+        stk(
+          List::append(sm_exts(ext, 0, Nil), Nil),
+          Nil
+        )(sbind_k(value_text(v, ext), blank(), Nil, Nil)(□)),
+        finish()
+      )⟧,
+      node_lower(leaf(v), leaf_wf(v, ext, hw))
+    ),
+    Eq::trans(
+      Eq::congr(
+        ⟦low_then(□, finish())⟧,
+        lw_exts(
+          ext,
+          Nil,
+          0,
+          Nil,
+          Nil,
+          v,
+          (x: Node) => x,
+          Nil,
+          ctx_root(),
+          And::right(Bool::and_split(wf_value(v), wf_exts(ext, Nil), hw))
+        )
+      ),
+      Eq::trans(
+        Eq::congr(
+          (o: Result(Node, Nat × Text)) => low_then(o, (m: Node) => Ok(unblank(m))),
+          keep_if_full(Node::Mk(v, ext), hnb)
+        ),
+        Eq::congr(⟦Ok(□)⟧, node_unblank(Node::Mk(v, ext), hw))
+      )
+    )
+  )
+}
+
+theorem value_back(
+  v: Value,
+  ext: List(Text × Node),
+  hw: wf_node(Node::Mk(v, ext)) = true,
+  hnb: is_blank(Node::Mk(v, ext)) = false
+): parse(Text::Mk(value_text(v, ext))) = Ok(Node::Mk(v, ext)) {
+  Eq::trans(
+    Eq::congr(
+      (o: Rd(List(Stmt))) => parse_read(List::length(value_text(v, ext)), o),
+      value_read(v, ext, hw)
+    ),
+    Eq::congr(
+      ⟦parse_lowered(List::length(value_text(v, ext)), □)⟧,
+      value_lower(v, ext, hw, hnb)
+    )
+  )
+}
+
+// ---- a document that is a map: its bindings --------------------------------------------------------
+
+fn map_text(es: List(Key × Node), ext: List(Text × Node)): List(Nat) {
+  put_stmt_entries(es, 0, tail_x(ext))
+}
+
+fn map_stmts(es: List(Key × Node), ext: List(Text × Node)): List(Stmt) {
+  List::append(sm_entries(es, 0, tail_x(ext)), List::append(sm_exts(ext, 0, Nil), Nil))
+}
+
+theorem map_back(
+  es: List(Key × Node),
+  ext: List(Text × Node),
+  hw: wf_node(Node::Mk(Vmap(es), ext)) = true
+): parse(Text::Mk(map_text(es, ext))) = Ok(Node::Mk(Vmap(es), ext)) {
+  Eq::trans(
+    Eq::congr(
+      (o: Rd(List(Stmt))) => parse_read(List::length(map_text(es, ext)), o),
+      st_entries(
+        es,
+        Nil,
+        0,
+        tail_x(ext),
+        List::append(sm_exts(ext, 0, Nil), Nil),
+        Nil,
+        false,
+        Nat::mul(4, Succ(List::length(map_text(es, ext)))),
+        And::left(Bool::and_split(wf_value(Vmap(es)), wf_exts(ext, Nil), hw)),
+        exts_nojoin(ext, 0, Nil, Refl),
+        Refl,
+        (
+          k: Nat,
+          hk: le(List::length(tail_x(ext)), Nat::add(List::length(Nil(<A: Nat>)), k)),
+          hk1: le(1, k)
+        ) => exts_end(
+          ext,
+          k,
+          And::right(Bool::and_split(wf_value(Vmap(es)), wf_exts(ext, Nil), hw)),
+          hk,
+          hk1
+        ),
+        fuel_ok(List::length(map_text(es, ext))),
+        Refl
+      )
+    ),
+    Eq::congr(
+      ⟦parse_lowered(List::length(map_text(es, ext)), □)⟧,
+      Eq::trans(
+        Eq::congr(
+          ⟦low_then(□, finish())⟧,
+          Eq::trans(
+            lw_entries(
+              es,
+              Nil,
+              0,
+              tail_x(ext),
+              List::append(sm_exts(ext, 0, Nil), Nil),
+              (x: Node) => x,
+              Nil,
+              ctx_root(),
+              And::left(Bool::and_split(wf_value(Vmap(es)), wf_exts(ext, Nil), hw))
+            ),
+            lw_exts(
+              ext,
+              Nil,
+              0,
+              Nil,
+              Nil,
+              ms(es),
+              (x: Node) => x,
+              Nil,
+              ctx_root(),
+              And::right(Bool::and_split(wf_value(Vmap(es)), wf_exts(ext, Nil), hw))
+            )
+          )
+        ),
+        Eq::trans(
+          Eq::congr((o: Result(Node, Nat × Text)) => low_then(o, (m: Node) => Ok(unblank(m))), mib(es, ext)),
+          Eq::congr(⟦Ok(□)⟧, node_unblank(Node::Mk(Vmap(es), ext), hw))
+        )
+      )
+    )
+  )
+}
+
+// ---- every document ---------------------------------------------------------------------------------
+
+theorem roundtrip(n: Node, hw: wf_node(n) = true): parse(to_text(n)) = Ok(n) {
+  match n {
+    Mk(v, ext) => match v {
+      Vmap(es) => map_back(es, ext, hw)
+      Vhole(lb) => value_back(
+        Vhole(lb),
+        ext,
+        hw,
+        hole_not_blank(lb, ext, And::left(Bool::and_split(wf_value(Vhole(lb)), wf_exts(ext, Nil), hw)))
+      )
+      Vnull => value_back(Vnull, ext, hw, Refl)
+      Vbool(b) => value_back(Vbool(b), ext, hw, Refl)
+      Vint(sg, k) => value_back(Vint(sg, k), ext, hw, Refl)
+      Vdec(sg, k, es, x) => value_back(Vdec(sg, k, es, x), ext, hw, Refl)
+      Vtext(lg, t) => value_back(Vtext(lg, t), ext, hw, Refl)
+      Varr(xs) => value_back(Varr(xs), ext, hw, Refl)
+      Vtup(xs) => value_back(Vtup(xs), ext, hw, Refl)
+    }
+  }
+}

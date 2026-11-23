@@ -1,0 +1,35 @@
+description = "A projection `(e: T)` out of a product keeps the members the checker took when a class constraint sends the program through the dependent extraction."
+
+@ cases.labelled-member-of-a-constrained-call
+imports = [path`../std/nat.taut`, path`../std/text.taut`]
+source = ```tauto
+inductive class H(F: Type, S: Type) { fn call(f: F, s: S): Text }
+instance<S> H(Text, S) { fn call(f: Text, s: S): Text { f } }
+fn go<F, S>(f: F, s: S): @response Text × @state Nat where H(F, S) { #(@response "hello", @state 7) }
+fn response(): Text { (go("hello", 0): @response Text) }
+fn state(): Nat { (go("hello", 0): @state Nat) }
+show(&response())
+show(&state())
+```
+stdout = ```
+"hello"
+7
+```
+
+@ cases.members-taken-in-another-order
+imports = [path`../std/nat.taut`, path`../std/text.taut`]
+source = ```tauto
+inductive class H(F: Type) { fn call(f: F): Text }
+instance H(Text) { fn call(f: Text): Text { f } }
+fn go<F>(f: F): @a Nat × @b Text × @c Bool where H(F) { #(@a 1, @b H::call(f), @c true) }
+fn last(): Bool { (go("x"): @c Bool) }
+fn swapped(): Text {
+  match (go("x"): @c Bool × @b Text) { #(@c c, @b b) => match c { true => b, false => "no" } }
+}
+show(&last())
+show(&swapped())
+```
+stdout = ```
+true
+"x"
+```

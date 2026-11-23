@@ -1,0 +1,287 @@
+// The containers of the standard library. The persistent ones (`Map`,
+// `Array`, `Bytes`) are duplicable (ω) data; the mutable ones (`Vec`, `Buf`,
+// `Slice`) are owned (affine), used at most once, moved, and read or
+// changed through `&` and `&mut` borrows (`docs/design/ownership.md`「Standard
+// library」). The evaluator implements the `extern` functions, and their
+// signatures are trusted; the functions with a body are checked as a program's
+// own are. Conversions to persistent data consume owned containers;
+// conversions from borrowed persistent data copy them.
+
+// A persistent map; kind = join(shared, kind K, kind V).
+pub(open) struct(shared) Map(K: Type, V: Type) { entries: List(K × V) }
+
+// An array: the elements of a list, read
+// by index in O(1). `std/Array::taut` says what each function does.
+pub struct(shared) Array(A: Type) {}
+
+extern {
+  pub fn Array::of_list<A: Shared>(l: List(A)): Array(A)
+  pub fn Array::get<A: Shared>(a: Array(A), i: u64): Option(A)
+  // The array with the element at `i` replaced by `x`; the same array
+  // when `i` is past the end. Written in place when `a` is the only
+  // reference to the array.
+  pub fn Array::set<A: Shared>(a: Array(A), i: u64, x: A): Array(A)
+  pub fn Array::len<A: Shared>(a: Array(A)): u64
+  pub fn Array::to_list<A: Shared>(a: Array(A)): List(A)
+}
+
+// A read-only byte sequence. A slice shares the storage of what it is cut
+// from, so `Bytes::slice` copies nothing. `std/Bytes::taut` says what each
+// function does.
+pub(open) struct(shared) Bytes {}
+
+extern {
+  pub fn Bytes::of_list(l: List(u8)): Bytes
+  pub fn Bytes::to_list(b: Bytes): List(u8)
+  pub fn Bytes::len(b: Bytes): u64
+  pub fn Bytes::get(b: Bytes, i: u64): Option(u8)
+  // The first index from `start` before `end` whose byte is `c`; `end` when
+  // there is none.
+  pub fn Bytes::find(b: Bytes, c: u64, start: u64, end: u64): u64
+  // The bytes from `start` to `end`; `None` unless `start <= end <= len`.
+  pub fn Bytes::slice(b: Bytes, start: u64, end: u64): Option(Bytes)
+  pub fn Bytes::concat(a: Bytes, b: Bytes): Bytes
+  pub fn Bytes::eq(a: Bytes, b: Bytes): Bool
+  pub fn Bytes::of_text(t: Text): Bytes
+}
+
+// The number `t` writes in decimal: one or more digits `0`-`9` and nothing
+// else, as `Text::of_u64` writes it (leading zeros are read too). `None`
+// when `t` is not such a number or the number is `2^64` or more.
+pub fn U64::of_text(t: Text): Option(u64) {
+  match Bytes::to_list(Bytes::of_text(t)) {
+    Nil => None
+    // A number of `2^64` or more overflows `acc * 10 + d`.
+    Cons(b, rest) => handle { U64::of_digits(Cons(b, rest), 0) } with {
+      overflow() => None
+    }
+  }
+}
+
+// `acc` followed by the decimal digits `bs`.
+pub fn U64::of_digits(bs: List(u8), acc: u64): Option(u64) ! {overflow} {
+  match bs {
+    Nil => Some(acc)
+    Cons(b, rest) => {
+      let c := U64::of_u8(b)
+      if c < 48 || c > 57 {
+        None
+      } else {
+        U64::of_digits(rest, acc * 10 + (c - 48))
+      }
+    }
+  }
+}
+
+extern {
+  // The text the bytes encode; `None` unless they are well-formed UTF-8.
+  pub fn Text::of_bytes(b: Bytes): Option(Text)
+}
+
+pub fn Map::empty<K, V>(): Map(K, V) {
+  Map { entries: Nil }
+}
+
+pub fn Map::get<K: Shared, V: Shared>(m: Map(K, V), k: K): Option(V) where DecEq(K) {
+  Map::find(m.entries, k)
+}
+
+pub fn Map::find<K: Shared, V: Shared>(es: List(K × V), k: K): Option(V) where DecEq(K) {
+  match es {
+    Nil => None
+    Cons(#(key, value), rest) => if key == k { Some(value) } else {
+      Map::find(rest, k)
+    }
+  }
+}
+
+pub fn Map::insert<K: Shared, V>(m: Map(K, V), k: K, v: V): Map(K, V) where DecEq(K) {
+  match m {
+    Map { entries } => Map { entries: Cons(#(k, v), Map::without(entries, k)) }
+  }
+}
+
+pub fn Map::without<K: Shared, V>(es: List(K × V), k: K): List(K × V) where DecEq(K) {
+  match es {
+    Nil => Nil
+    Cons(#(key, value), rest) => if key == k { rest } else {
+      Cons(#(key, value), Map::without(rest, k))
+    }
+  }
+}
+
+pub fn Map::entries<K, V>(m: Map(K, V)): List(K × V) {
+  match m {
+    Map { entries } => entries
+  }
+}
+
+pub struct(affine) Buf {}
+pub struct(affine) Vec(A: Type) {}
+// Slots of `A` with a mark `M` beside each and a state `S` of the whole: the
+// memory under the tables of `std/slots.taut`. A slot holds an element exactly
+// when `std/slots.taut`'s `Occupancy` says its mark is filled; every operation
+// is told the next state and the marks it needs, and checks nothing. The
+// proofs of the kernel's model are not run.
+pub struct(affine) Slots(S: Type, M: Type, A: Type) {}
+// A run of elements, which can only be borrowed (`&Slice(A)`).
+pub struct(affine) Slice(A: Type) {}
+pub(open) effect missing(): Never resume 0
+pub(open) effect out_of_bounds(): Never resume 0
+
+extern {
+  pub fn Text::of(b: Buf): Text
+}
+
+extern {
+  // `cap` slots, each marked `m0`, in the state `s0`.
+  pub fn Slots::new<S: Copy, M: Copy, A: Linear>(cap: uhost, s0: S, m0: M): Slots(S, M, A)
+  pub fn Slots::cap<S: Copy, M: Copy, A: Linear>(r: &Slots(S, M, A)): uhost
+  pub fn Slots::state<S: Copy, M: Copy, A: Linear>(r: &Slots(S, M, A)): S
+  pub fn Slots::mark<S: Copy, M: Copy, A: Linear>(r: &Slots(S, M, A), i: uhost): M
+  // The element of a filled slot.
+  pub fn Slots::get<S: Copy, M: Copy, A: Linear>(r: &Slots(S, M, A), i: uhost): &A
+  pub fn Slots::get_mut<S: Copy, M: Copy, A: Linear>(r: &mut Slots(S, M, A), i: uhost): &mut A
+  // A new slots of the capacity of `r`, with the elements of `r` copied, every
+  // mark `m0`, in the state `s0`.
+  pub fn Slots::copy<S: Copy, M: Copy, A: Copy>(r: &Slots(S, M, A), s0: S, m0: M): Slots(S, M, A)
+  // Fills the empty slot `i` with `x`, marked `m`, and sets the state to `t`.
+  pub fn Slots::put<S: Copy, M: Copy, A: Linear>(r: &mut Slots(S, M, A), i: uhost, m: M, x: A, t: S): Unit
+  // Empties the filled slot `i`, marked `m` from then on, and sets the state to `t`.
+  pub fn Slots::take<S: Copy, M: Copy, A: Linear>(r: &mut Slots(S, M, A), i: uhost, m: M, t: S): A
+  // `cap` slots, those of `i` below the old capacity as they are, the new
+  // ones marked `m0`, in the state `t`.
+  pub fn Slots::resize<S: Copy, M: Copy, A: Linear>(r: &mut Slots(S, M, A), cap: uhost, m0: M, t: S): Unit
+}
+
+extern {
+  pub fn Buf::of(t: &Text): Buf
+  pub fn Buf::clone(b: &Buf): Buf
+}
+
+pub fn Buf::each_word<!e: <=1>(s: &Buf, f: &((w: &Buf) -> Unit ! e)): Unit ! e {
+  fold_once(words(Text::of(Buf::clone(&s))), #(), (u, w) => {
+    let b := Buf::of(&w)
+    f(&b)
+  })
+}
+
+extern {
+
+  pub fn Vec::new<A: Linear>(): Vec(A)
+  pub fn Vec::push<A: Linear>(v: &mut Vec(A), x: A): Unit
+  pub fn Vec::pop<A: Linear>(v: &mut Vec(A)): Option(A)
+  pub fn Vec::len<A: Linear>(v: &Vec(A)): u64
+  pub fn Vec::get<A: Linear>(v: &Vec(A), i: u64): Option(&A)
+  pub fn Vec::get_mut<A: Linear>(v: &mut Vec(A), i: u64): Option(&mut A)
+  pub fn Vec::last_mut<A: Linear>(v: &mut Vec(A)): Option(&mut A)
+  pub fn Vec::as_slice<A: Linear>(v: &Vec(A)): &Slice(A)
+  pub fn Vec::as_mut_slice<A: Linear>(v: &mut Vec(A)): &mut Slice(A)
+  pub fn Vec::clear<A>(v: &mut Vec(A)): Unit
+  pub fn Vec::truncate<A>(v: &mut Vec(A), n: u64): Unit
+  // Swaps the elements at `i` and `j` when both are in `v`, and says
+  // whether it did; otherwise leaves `v` as it is.
+  pub fn Vec::swap_within<A: Linear>(v: &mut Vec(A), i: u64, j: u64): Bool
+  // Every element, in order.
+  pub fn Vec::into_list<A: Linear>(v: Vec(A)): List(A)
+  // Consume the builder without constructing an intermediate list.
+  pub fn Vec::into_array<A: Shared>(v: Vec(A)): Array(A)
+}
+
+// The element at `i`; `out_of_bounds` when `v` has none there.
+pub fn Vec::index<A: Linear>(v: &Vec(A), i: u64): &A ! {out_of_bounds} {
+  match Vec::get(&v, i) {
+    Some(x) => x
+    None => perform out_of_bounds()
+  }
+}
+
+// Swaps the elements at `i` and `j`; `out_of_bounds` when either is not in
+// `v`.
+pub fn Vec::swap<A: Linear>(v: &mut Vec(A), i: u64, j: u64): Unit ! {out_of_bounds} {
+  if Vec::swap_within(&mut v, i, j) { #() } else { perform out_of_bounds() }
+}
+
+pub fn Vec::each<A: Linear, !e>(v: &Vec(A), f: &((x: &A) -> Unit ! e)): Unit ! e {
+  handle {
+    Vec::each_from(&v, &f, 0, Vec::len(&v))
+  } with {
+    out_of_bounds() => #()
+  }
+}
+
+// `f` on the `left` elements from `i` on: `left` shrinks at each call, so
+// the recursion ends without `div`.
+fn Vec::each_from<A: Linear, !e>(
+  v: &Vec(A),
+  f: &((x: &A) -> Unit ! e),
+  i: u64,
+  left: u64
+): Unit ! {div, out_of_bounds} ∪ e {
+  if left == 0 {
+    #()
+  } else {
+    let x := Vec::index(&v, i)
+    f(&x)
+    // `i < i + left <= Vec::len(&v)`, so neither step leaves `u64`.
+    Vec::each_from(
+      &v,
+      &f,
+      handle { i + 1 } with { overflow() => i },
+      handle { left - 1 } with { overflow() => 0 }
+    )
+  }
+}
+
+pub fn Vec::consume<A, !e: <=1>(v: Vec(A), f: &((x: A) -> Unit ! e)): Unit ! e {
+  List::consume(Vec::into_list(v), &f)
+}
+
+// Insertion sort in place: the elements stay in `v`, so none is held
+// across the loops.
+pub fn Vec::sort_by<A: Linear>(v: &mut Vec(A), lt: &((a: &A, b: &A) -> Bool)): Unit ! {div, overflow} {
+  var i: u64 := 1
+  while i < Vec::len(&v) {
+    var j: u64 := i
+    while 0 < j {
+      if Vec::before(&v, j, &lt) {
+        handle { Vec::swap(&mut v, j - 1, j) } with { out_of_bounds() => #() }
+        j := j - 1
+      } else {
+        j := 0
+      }
+    }
+    i := i + 1
+  }
+}
+
+pub fn Vec::before<A: Linear>(v: &Vec(A), j: u64, lt: &((a: &A, b: &A) -> Bool)): Bool ! {overflow} {
+  handle {
+    let a := Vec::index(&v, j)
+    let b := Vec::index(&v, j - 1)
+    lt(&a, &b)
+  } with {
+    out_of_bounds() => false
+  }
+}
+
+extern {
+  pub fn Slice::len<A: Linear>(s: &Slice(A)): u64
+  pub fn Slice::get<A: Linear>(s: &Slice(A), i: u64): Option(&A)
+}
+
+extern {
+
+  // The only way to move a value out of a `&mut` borrow.
+  pub fn replace<A: Linear>(x: &mut A, v: A): A
+}
+
+pub fn List::consume<A, !e: <=1>(xs: List(A), f: &((x: A) -> Unit ! e)): Unit ! e {
+  match xs {
+    Nil => #()
+    Cons(x, rest) => {
+      f(x)
+      List::consume(rest, &f)
+    }
+  }
+}

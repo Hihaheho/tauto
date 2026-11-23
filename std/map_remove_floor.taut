@@ -1,0 +1,1132 @@
+import "map_laws.taut" { Ordmap, OrdmapLaw }
+import "list.taut" { List }
+import "base.taut" { List, Ordering }
+import "map.taut" { Ordmap, OrdmapTree }
+import std::builtin::ord { greater_ne_equal, less_ne_equal }
+import std::prelude::std { List, Option, Ordering }
+
+// `Ordmap::remove` and `Ordmap::floor`, proved (`docs/design/self-host.md`), the way
+// `map_laws.taut` proves `Ordmap::insert`: the tree is read through its
+// entries in order, and each operation is one on that list.
+//
+// * `Ordmap::remove` drops the entries with the key: the entries stay
+//   sorted, the key is gone, and the other keys keep their values.
+// * `Ordmap::floor` is the last entry whose key is not after the key.
+//
+// No program imports this file; `tauto check` checks it.
+
+pub theorem Ordmap::none_ne_some<A: Type>(x: A, e: None = Some(x)): False {
+  match e {
+  }
+}
+
+pub theorem Ordmap::some_ne_none<A: Type>(x: A, e: Some(x) = None): False {
+  match e {
+  }
+}
+
+pub fn Ordmap::option_or<A: Shared>(o: Option(A), d: A): A {
+  match o {
+    None => d
+    Some(x) => x
+  }
+}
+
+pub theorem Ordmap::some_inj<A: Type>(a: A, b: A, e: Some(a) = Some(b)): a = b {
+  Eq::congr(⟦Ordmap::option_or(□, a)⟧, e)
+}
+
+pub theorem Ordmap::option_cases<A: Type>(
+  P: (Option(A)) -> Prop,
+  o: Option(A),
+  a: (o = None) -> P(None),
+  b: ∀ x: A. (o = Some(x)) -> P(Some(x))
+): P(o) {
+  match o {
+    None => a(Refl)
+    Some(x) => b(x, Refl)
+  }
+}
+
+// `es` without the entries whose key is `k`.
+pub fn Ordmap::list_remove<K: Shared, V: Shared>(
+  es: List(K × V),
+  k: K,
+  cmp: (K, K) -> Ordering
+): List(K × V) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => ⊢ List(K × V) from match e {
+      #(ek, ev) => ⊢ List(K × V) from match cmp(k, ek) {
+        Less => Cons(#(ek, ev), Ordmap::list_remove(rest, k, cmp))
+        Equal => Ordmap::list_remove(rest, k, cmp)
+        Greater => Cons(#(ek, ev), Ordmap::list_remove(rest, k, cmp))
+      }
+    }
+  }
+}
+
+pub theorem Ordmap::list_remove_skip<K: Type, V: Type>(
+  o: Ordering,
+  ne: ¬(o = Equal),
+  ek: K,
+  ev: V,
+  rest: List(K × V),
+  k: K,
+  cmp: (K, K) -> Ordering,
+  e: cmp(k, ek) = o
+): Ordmap::list_remove(Cons(#(ek, ev), rest), k, cmp) = Cons(#(ek, ev), Ordmap::list_remove(rest, k, cmp)) {
+  Ordering::cases(
+    (x: Ordering) => (⊢ List(K × V) from match x {
+      Less => Cons(#(ek, ev), Ordmap::list_remove(rest, k, cmp))
+      Equal => Ordmap::list_remove(rest, k, cmp)
+      Greater => Cons(#(ek, ev), Ordmap::list_remove(rest, k, cmp))
+    }) = Cons(#(ek, ev), Ordmap::list_remove(rest, k, cmp)),
+    cmp(k, ek),
+    (h: cmp(k, ek) = Less) => Refl,
+    (h: cmp(k, ek) = Equal) => False::elim(ne(Eq::trans(Eq::sym(e), h))),
+    (h: cmp(k, ek) = Greater) => Refl
+  )
+}
+
+pub theorem Ordmap::list_remove_equal<K: Type, V: Type>(
+  ek: K,
+  ev: V,
+  rest: List(K × V),
+  k: K,
+  cmp: (K, K) -> Ordering,
+  e: cmp(k, ek) = Equal
+): Ordmap::list_remove(Cons(#(ek, ev), rest), k, cmp) = Ordmap::list_remove(rest, k, cmp) {
+  Ordering::cases(
+    (x: Ordering) => (⊢ List(K × V) from match x {
+      Less => Cons(#(ek, ev), Ordmap::list_remove(rest, k, cmp))
+      Equal => Ordmap::list_remove(rest, k, cmp)
+      Greater => Cons(#(ek, ev), Ordmap::list_remove(rest, k, cmp))
+    }) = Ordmap::list_remove(rest, k, cmp),
+    cmp(k, ek),
+    (h: cmp(k, ek) = Less) => False::elim(less_ne_equal(Eq::trans(Eq::sym(h), e))),
+    (h: cmp(k, ek) = Equal) => Refl,
+    (h: cmp(k, ek) = Greater) => False::elim(greater_ne_equal(Eq::trans(Eq::sym(h), e)))
+  )
+}
+
+pub theorem Ordmap::list_remove_append<K: Type, V: Type>(
+  a: List(K × V),
+  b: List(K × V),
+  k: K,
+  cmp: (K, K) -> Ordering
+): Ordmap::list_remove(
+  List::append(a, b),
+  k,
+  cmp
+) = List::append(Ordmap::list_remove(a, k, cmp), Ordmap::list_remove(b, k, cmp)) {
+  ⊢ Ordmap::list_remove(
+    List::append(a, b),
+    k,
+    cmp
+  ) = List::append(Ordmap::list_remove(a, k, cmp), Ordmap::list_remove(b, k, cmp)) from match a {
+    Nil => Refl
+    Cons(x, rest) => match x {
+      #(xk, xv) => Ordering::cases(
+        (c: Ordering) => (⊢ List(K × V) from match c {
+          Less => Cons(#(xk, xv), Ordmap::list_remove(List::append(rest, b), k, cmp))
+          Equal => Ordmap::list_remove(List::append(rest, b), k, cmp)
+          Greater => Cons(#(xk, xv), Ordmap::list_remove(List::append(rest, b), k, cmp))
+        }) = List::append(⊢ List(K × V) from match c {
+          Less => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+          Equal => Ordmap::list_remove(rest, k, cmp)
+          Greater => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+        }, Ordmap::list_remove(b, k, cmp)),
+        cmp(k, xk),
+        (q: cmp(k, xk) = Less) => Eq::congr(
+          ⟦Cons(#(xk, xv), □)⟧,
+          Ordmap::list_remove_append(rest, b, k, cmp)
+        ),
+        (q: cmp(k, xk) = Equal) => Ordmap::list_remove_append(rest, b, k, cmp),
+        (q: cmp(k, xk) = Greater) => Eq::congr(
+          ⟦Cons(#(xk, xv), □)⟧,
+          Ordmap::list_remove_append(rest, b, k, cmp)
+        )
+      )
+    }
+  }
+}
+
+pub theorem Ordmap::list_remove_keys_none<K: Type, V: Type>(
+  k: K,
+  o: Ordering,
+  ne: ¬(o = Equal),
+  es: List(K × V),
+  cmp: (K, K) -> Ordering,
+  h: Ordmap::keys(es, k, o, cmp)
+): Ordmap::list_remove(es, k, cmp) = es {
+  match es {
+    Nil => Refl
+    Cons(x, rest) => match x {
+      #(xk, xv) => Eq::trans(
+        Ordmap::list_remove_skip(o, ne, xk, xv, rest, k, cmp, And::left(h)),
+        Eq::congr(⟦Cons(#(xk, xv), □)⟧, Ordmap::list_remove_keys_none(k, o, ne, rest, cmp, And::right(h)))
+      )
+    }
+  }
+}
+
+pub theorem Ordmap::keys_remove<K: Type, V: Type>(
+  es: List(K × V),
+  a: K,
+  o: Ordering,
+  k: K,
+  cmp: (K, K) -> Ordering,
+  h: Ordmap::keys(es, a, o, cmp)
+): Ordmap::keys(Ordmap::list_remove(es, k, cmp), a, o, cmp) {
+  match es {
+    Nil => Trivial
+    Cons(x, rest) => match x {
+      #(xk, xv) => Ordering::cases(
+        (c: Ordering) => Ordmap::keys(⊢ List(K × V) from match c {
+          Less => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+          Equal => Ordmap::list_remove(rest, k, cmp)
+          Greater => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+        }, a, o, cmp),
+        cmp(k, xk),
+        (q: cmp(k, xk) = Less) => AndIntro(
+          And::left(h),
+          Ordmap::keys_remove(rest, a, o, k, cmp, And::right(h))
+        ),
+        (q: cmp(k, xk) = Equal) => Ordmap::keys_remove(rest, a, o, k, cmp, And::right(h)),
+        (q: cmp(k, xk) = Greater) => AndIntro(
+          And::left(h),
+          Ordmap::keys_remove(rest, a, o, k, cmp, And::right(h))
+        )
+      )
+    }
+  }
+}
+
+pub theorem Ordmap::list_remove_sorted<K: Type, V: Type>(
+  es: List(K × V),
+  k: K,
+  cmp: (K, K) -> Ordering,
+  h: Ordmap::sorted(es, cmp)
+): Ordmap::sorted(Ordmap::list_remove(es, k, cmp), cmp) {
+  match es {
+    Nil => Trivial
+    Cons(x, rest) => match x {
+      #(xk, xv) => Ordering::cases(
+        (c: Ordering) => Ordmap::sorted(⊢ List(K × V) from match c {
+          Less => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+          Equal => Ordmap::list_remove(rest, k, cmp)
+          Greater => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+        }, cmp),
+        cmp(k, xk),
+        (q: cmp(k, xk) = Less) => AndIntro(
+          Ordmap::keys_remove(rest, xk, Less, k, cmp, And::left(h)),
+          Ordmap::list_remove_sorted(rest, k, cmp, And::right(h))
+        ),
+        (q: cmp(k, xk) = Equal) => Ordmap::list_remove_sorted(rest, k, cmp, And::right(h)),
+        (q: cmp(k, xk) = Greater) => AndIntro(
+          Ordmap::keys_remove(rest, xk, Less, k, cmp, And::left(h)),
+          Ordmap::list_remove_sorted(rest, k, cmp, And::right(h))
+        )
+      )
+    }
+  }
+}
+
+pub theorem Ordmap::list_get_remove_same<K: Type, V: Type>(
+  es: List(K × V),
+  k: K,
+  cmp: (K, K) -> Ordering
+): Ordmap::list_get(Ordmap::list_remove(es, k, cmp), k, cmp) = None {
+  match es {
+    Nil => Refl
+    Cons(x, rest) => match x {
+      #(xk, xv) => Ordering::cases(
+        (c: Ordering) => Ordmap::list_get(⊢ List(K × V) from match c {
+          Less => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+          Equal => Ordmap::list_remove(rest, k, cmp)
+          Greater => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+        }, k, cmp) = None,
+        cmp(k, xk),
+        (q: cmp(k, xk) = Less) => Eq::trans(
+          Ordmap::list_get_skip(Less, less_ne_equal, xk, xv, Ordmap::list_remove(rest, k, cmp), k, cmp, q),
+          Ordmap::list_get_remove_same(rest, k, cmp)
+        ),
+        (q: cmp(k, xk) = Equal) => Ordmap::list_get_remove_same(rest, k, cmp),
+        (q: cmp(k, xk) = Greater) => Eq::trans(
+          Ordmap::list_get_skip(
+            Greater,
+            greater_ne_equal,
+            xk,
+            xv,
+            Ordmap::list_remove(rest, k, cmp),
+            k,
+            cmp,
+            q
+          ),
+          Ordmap::list_get_remove_same(rest, k, cmp)
+        )
+      )
+    }
+  }
+}
+
+pub theorem Ordmap::list_get_remove_other<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  es: List(K × V),
+  k: K,
+  j: K,
+  o: Ordering,
+  ne: ¬(o = Equal),
+  ej: cmp(j, k) = o
+): Ordmap::list_get(Ordmap::list_remove(es, k, cmp), j, cmp) = Ordmap::list_get(es, j, cmp) {
+  match es {
+    Nil => Refl
+    Cons(x, rest) => match x {
+      #(xk, xv) => Ordering::cases(
+        (c: Ordering) => Ordmap::list_get(⊢ List(K × V) from match c {
+          Less => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+          Equal => Ordmap::list_remove(rest, k, cmp)
+          Greater => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+        }, j, cmp) = Ordmap::list_get(Cons(#(xk, xv), rest), j, cmp),
+        cmp(k, xk),
+        (q: cmp(k, xk) = Less) => Ordmap::list_get_cons_congr(
+          xk,
+          xv,
+          Ordmap::list_remove(rest, k, cmp),
+          rest,
+          j,
+          cmp,
+          Ordmap::list_get_remove_other(cmp, w, rest, k, j, o, ne, ej)
+        ),
+        (q: cmp(k, xk) = Equal) => Eq::trans(
+          Ordmap::list_get_remove_other(cmp, w, rest, k, j, o, ne, ej),
+          Eq::sym(
+            Ordmap::list_get_skip(
+              o,
+              ne,
+              xk,
+              xv,
+              rest,
+              j,
+              cmp,
+              Eq::subst((z: K) => cmp(j, z) = o, Ordmap::law_eq(cmp, w, k, xk, q), ej)
+            )
+          )
+        ),
+        (q: cmp(k, xk) = Greater) => Ordmap::list_get_cons_congr(
+          xk,
+          xv,
+          Ordmap::list_remove(rest, k, cmp),
+          rest,
+          j,
+          cmp,
+          Ordmap::list_get_remove_other(cmp, w, rest, k, j, o, ne, ej)
+        )
+      )
+    }
+  }
+}
+
+pub theorem Ordmap::tree_min_node<K: Type, V: Type>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V),
+  h: Nat,
+  e: Ordmap::tree_min(OrdmapNode(l, k, v, r, h)) = None
+): False {
+  match l {
+    OrdmapLeaf => Ordmap::some_ne_none(#(k, v), e)
+    OrdmapNode(ll, lk, lv, lr, lh) => Ordmap::tree_min_node(ll, lk, lv, lr, lh, e)
+  }
+}
+
+pub theorem Ordmap::tree_min_none<K: Type, V: Type>(
+  t: OrdmapTree(K, V),
+  e: Ordmap::tree_min(t) = None
+): Ordmap::tree_entries(t, Nil) = Nil {
+  match t {
+    OrdmapLeaf => Refl
+    OrdmapNode(l, k, v, r, h) => False::elim(Ordmap::tree_min_node(l, k, v, r, h, e))
+  }
+}
+
+pub theorem Ordmap::tree_min_some_node<K: Type, V: Type>(
+  l: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  r: OrdmapTree(K, V),
+  h: Nat,
+  mk: K,
+  mv: V,
+  e: Ordmap::tree_min(OrdmapNode(l, k, v, r, h)) = Some(#(mk, mv))
+): Ordmap::tree_entries(
+  OrdmapNode(l, k, v, r, h),
+  Nil
+) = Cons(#(mk, mv), Ordmap::tree_entries(Ordmap::tree_remove_min(OrdmapNode(l, k, v, r, h)), Nil)) {
+  ⊢ Ordmap::tree_entries(
+    OrdmapNode(l, k, v, r, h),
+    Nil
+  ) = Cons(#(mk, mv), Ordmap::tree_entries(Ordmap::tree_remove_min(OrdmapNode(l, k, v, r, h)), Nil)) from match l {
+    OrdmapLeaf => Eq::congr(⟦Cons(□, Ordmap::tree_entries(r, Nil))⟧, Ordmap::some_inj(#(k, v), #(mk, mv), e))
+    OrdmapNode(ll, lk, lv, lr, lh) => Eq::trans(
+      Ordmap::node_entries(OrdmapNode(ll, lk, lv, lr, lh), k, v, r, h),
+      Eq::trans(
+        Eq::congr(
+          ⟦List::append(□, Cons(#(k, v), Ordmap::tree_entries(r, Nil)))⟧,
+          Ordmap::tree_min_some_node(ll, lk, lv, lr, lh, mk, mv, e)
+        ),
+        Eq::congr(
+          ⟦Cons(#(mk, mv), □)⟧,
+          Eq::sym(
+            Eq::trans(
+              Ordmap::balance_entries(Ordmap::tree_remove_min(OrdmapNode(ll, lk, lv, lr, lh)), k, v, r, Nil),
+              Ordmap::entries_append(
+                Ordmap::tree_remove_min(OrdmapNode(ll, lk, lv, lr, lh)),
+                Cons(#(k, v), Ordmap::tree_entries(r, Nil))
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+pub theorem Ordmap::tree_min_some<K: Type, V: Type>(
+  t: OrdmapTree(K, V),
+  mk: K,
+  mv: V,
+  e: Ordmap::tree_min(t) = Some(#(mk, mv))
+): Ordmap::tree_entries(t, Nil) = Cons(#(mk, mv), Ordmap::tree_entries(Ordmap::tree_remove_min(t), Nil)) {
+  match t {
+    OrdmapLeaf => False::elim(Ordmap::none_ne_some(#(mk, mv), e))
+    OrdmapNode(l, k, v, r, h) => Ordmap::tree_min_some_node(l, k, v, r, h, mk, mv, e)
+  }
+}
+
+pub theorem Ordmap::pair_cases<A: Type, B: Type>(
+  P: (A × B) -> Prop,
+  x: A × B,
+  f: ∀ a: A, b: B. (x = #(a, b)) -> P(#(a, b))
+): P(x) {
+  match x {
+    #(a, b) => f(a, b, Refl)
+  }
+}
+
+pub theorem Ordmap::join_some<K: Type, V: Type>(
+  l: OrdmapTree(K, V),
+  r: OrdmapTree(K, V),
+  mk: K,
+  mv: V,
+  e: Ordmap::tree_min(r) = Some(#(mk, mv))
+): Ordmap::tree_entries(
+  Ordmap::balance(l, mk, mv, Ordmap::tree_remove_min(r)),
+  Nil
+) = List::append(Ordmap::tree_entries(l, Nil), Ordmap::tree_entries(r, Nil)) {
+  Eq::trans(
+    Ordmap::balance_entries(l, mk, mv, Ordmap::tree_remove_min(r), Nil),
+    Eq::trans(
+      Ordmap::entries_append(l, Cons(#(mk, mv), Ordmap::tree_entries(Ordmap::tree_remove_min(r), Nil))),
+      Eq::congr(⟦List::append(Ordmap::tree_entries(l, Nil), □)⟧, Eq::sym(Ordmap::tree_min_some(r, mk, mv, e)))
+    )
+  )
+}
+
+// `Ordmap::join` once the least entry of `r` is known.
+pub fn Ordmap::join_pick<K: Shared, V: Shared>(
+  l: OrdmapTree(K, V),
+  r: OrdmapTree(K, V),
+  o: Option(K × V)
+): OrdmapTree(K, V) {
+  match o {
+    None => l
+    Some(least) => ⊢ OrdmapTree(K, V) from match least {
+      #(lk, lv) => Ordmap::balance(l, lk, lv, Ordmap::tree_remove_min(r))
+    }
+  }
+}
+
+pub theorem Ordmap::join_entries<K: Type, V: Type>(
+  l: OrdmapTree(K, V),
+  r: OrdmapTree(K, V)
+): Ordmap::tree_entries(
+  Ordmap::join(l, r),
+  Nil
+) = List::append(Ordmap::tree_entries(l, Nil), Ordmap::tree_entries(r, Nil)) {
+  Ordmap::option_cases(
+    (o: Option(K × V)) => Ordmap::tree_entries(
+      Ordmap::join_pick(l, r, o),
+      Nil
+    ) = List::append(Ordmap::tree_entries(l, Nil), Ordmap::tree_entries(r, Nil)),
+    Ordmap::tree_min(r),
+    (e: Ordmap::tree_min(r) = None) => Eq::sym(
+      Eq::trans(
+        Eq::congr(⟦List::append(Ordmap::tree_entries(l, Nil), □)⟧, Ordmap::tree_min_none(r, e)),
+        List::append_nil(Ordmap::tree_entries(l, Nil))
+      )
+    ),
+    (least: K × V) => (e: Ordmap::tree_min(r) = Some(least)) => Ordmap::pair_cases(
+      (y: K × V) => Ordmap::tree_entries(
+        Ordmap::join_pick(l, r, Some(y)),
+        Nil
+      ) = List::append(Ordmap::tree_entries(l, Nil), Ordmap::tree_entries(r, Nil)),
+      least,
+      (mk: K) => (mv: V) => (ex: least = (#(mk, mv))) => Ordmap::join_some(
+        l,
+        r,
+        mk,
+        mv,
+        Eq::trans(e, Eq::congr(⟦Some(□)⟧, ex))
+      )
+    )
+  )
+}
+
+pub theorem Ordmap::tree_remove_entries<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  t: OrdmapTree(K, V),
+  k: K,
+  s: Ordmap::sorted(Ordmap::tree_entries(t, Nil), cmp)
+): Ordmap::tree_entries(Ordmap::tree_remove(t, k, cmp), Nil) = Ordmap::list_remove(Ordmap::tree_entries(t, Nil), k, cmp) {
+  ⊢ Ordmap::tree_entries(
+    Ordmap::tree_remove(t, k, cmp),
+    Nil
+  ) = Ordmap::list_remove(Ordmap::tree_entries(t, Nil), k, cmp) from match t {
+    OrdmapLeaf => Refl
+    OrdmapNode(l, nk, nv, r, h) => Eq::trans(
+      Ordering::cases(
+        (c: Ordering) => Ordmap::tree_entries(⊢ OrdmapTree(K, V) from match c {
+          Less => Ordmap::balance(Ordmap::tree_remove(l, k, cmp), nk, nv, r)
+          Equal => Ordmap::join(l, r)
+          Greater => Ordmap::balance(l, nk, nv, Ordmap::tree_remove(r, k, cmp))
+        }, Nil) = Ordmap::list_remove(List::append(Ordmap::tree_entries(l, Nil), Cons(#(nk, nv), Ordmap::tree_entries(r, Nil))), k, cmp),
+        cmp(k, nk),
+        (q: cmp(k, nk) = Less) => Eq::trans(
+          Ordmap::balance_entries(Ordmap::tree_remove(l, k, cmp), nk, nv, r, Nil),
+          Eq::trans(
+            Ordmap::entries_append(Ordmap::tree_remove(l, k, cmp), Cons(#(nk, nv), Ordmap::tree_entries(r, Nil))),
+            Eq::trans(
+              Eq::congr(
+                ⟦List::append(□, Cons(#(nk, nv), Ordmap::tree_entries(r, Nil)))⟧,
+                Ordmap::tree_remove_entries(
+                  cmp,
+                  w,
+                  l,
+                  k,
+                  And::left(And::right(Ordmap::node_split(cmp, w, l, nk, nv, r, h, s)))
+                )
+              ),
+              Eq::sym(
+                Eq::trans(
+                  Ordmap::list_remove_append(
+                    Ordmap::tree_entries(l, Nil),
+                    Cons(#(nk, nv), Ordmap::tree_entries(r, Nil)),
+                    k,
+                    cmp
+                  ),
+                  Eq::congr(
+                    ⟦List::append(Ordmap::list_remove(Ordmap::tree_entries(l, Nil), k, cmp), □)⟧,
+                    Eq::trans(
+                      Ordmap::list_remove_skip(Less, less_ne_equal, nk, nv, Ordmap::tree_entries(r, Nil), k, cmp, q),
+                      Eq::congr(
+                        ⟦Cons(#(nk, nv), □)⟧,
+                        Ordmap::list_remove_keys_none(
+                          k,
+                          Less,
+                          less_ne_equal,
+                          Ordmap::tree_entries(r, Nil),
+                          cmp,
+                          Ordmap::keys_less_trans(
+                            cmp,
+                            w,
+                            Ordmap::tree_entries(r, Nil),
+                            nk,
+                            k,
+                            q,
+                            And::left(And::right(And::right(Ordmap::node_split(cmp, w, l, nk, nv, r, h, s))))
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        ),
+        (q: cmp(k, nk) = Equal) => Eq::trans(
+          Ordmap::join_entries(l, r),
+          Eq::sym(
+            Eq::trans(
+              Ordmap::list_remove_append(
+                Ordmap::tree_entries(l, Nil),
+                Cons(#(nk, nv), Ordmap::tree_entries(r, Nil)),
+                k,
+                cmp
+              ),
+              Eq::trans(
+                Eq::congr(
+                  ⟦List::append(
+                    □,
+                    Ordmap::list_remove(Cons(#(nk, nv), Ordmap::tree_entries(r, Nil)), k, cmp)
+                  )⟧,
+                  Ordmap::list_remove_keys_none(
+                    k,
+                    Greater,
+                    greater_ne_equal,
+                    Ordmap::tree_entries(l, Nil),
+                    cmp,
+                    Ordmap::keys_eq(
+                      Ordmap::tree_entries(l, Nil),
+                      nk,
+                      k,
+                      Eq::sym(Ordmap::law_eq(cmp, w, k, nk, q)),
+                      Greater,
+                      cmp,
+                      And::left(Ordmap::node_split(cmp, w, l, nk, nv, r, h, s))
+                    )
+                  )
+                ),
+                Eq::congr(
+                  ⟦List::append(Ordmap::tree_entries(l, Nil), □)⟧,
+                  Eq::trans(
+                    Ordmap::list_remove_equal(nk, nv, Ordmap::tree_entries(r, Nil), k, cmp, q),
+                    Ordmap::list_remove_keys_none(
+                      k,
+                      Less,
+                      less_ne_equal,
+                      Ordmap::tree_entries(r, Nil),
+                      cmp,
+                      Ordmap::keys_eq(
+                        Ordmap::tree_entries(r, Nil),
+                        nk,
+                        k,
+                        Eq::sym(Ordmap::law_eq(cmp, w, k, nk, q)),
+                        Less,
+                        cmp,
+                        And::left(And::right(And::right(Ordmap::node_split(cmp, w, l, nk, nv, r, h, s))))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        ),
+        (q: cmp(k, nk) = Greater) => Eq::trans(
+          Ordmap::balance_entries(l, nk, nv, Ordmap::tree_remove(r, k, cmp), Nil),
+          Eq::trans(
+            Ordmap::entries_append(
+              l,
+              Cons(#(nk, nv), Ordmap::tree_entries(Ordmap::tree_remove(r, k, cmp), Nil))
+            ),
+            Eq::trans(
+              Eq::congr(
+                ⟦List::append(Ordmap::tree_entries(l, Nil), Cons(#(nk, nv), □))⟧,
+                Ordmap::tree_remove_entries(
+                  cmp,
+                  w,
+                  r,
+                  k,
+                  And::right(And::right(And::right(Ordmap::node_split(cmp, w, l, nk, nv, r, h, s))))
+                )
+              ),
+              Eq::sym(
+                Eq::trans(
+                  Ordmap::list_remove_append(
+                    Ordmap::tree_entries(l, Nil),
+                    Cons(#(nk, nv), Ordmap::tree_entries(r, Nil)),
+                    k,
+                    cmp
+                  ),
+                  Eq::trans(
+                    Eq::congr(
+                      ⟦List::append(
+                        □,
+                        Ordmap::list_remove(Cons(#(nk, nv), Ordmap::tree_entries(r, Nil)), k, cmp)
+                      )⟧,
+                      Ordmap::list_remove_keys_none(
+                        k,
+                        Greater,
+                        greater_ne_equal,
+                        Ordmap::tree_entries(l, Nil),
+                        cmp,
+                        Ordmap::keys_greater_trans(
+                          cmp,
+                          w,
+                          Ordmap::tree_entries(l, Nil),
+                          nk,
+                          k,
+                          q,
+                          And::left(Ordmap::node_split(cmp, w, l, nk, nv, r, h, s))
+                        )
+                      )
+                    ),
+                    Eq::congr(
+                      ⟦List::append(Ordmap::tree_entries(l, Nil), □)⟧,
+                      Ordmap::list_remove_skip(
+                        Greater,
+                        greater_ne_equal,
+                        nk,
+                        nv,
+                        Ordmap::tree_entries(r, Nil),
+                        k,
+                        cmp,
+                        q
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      ),
+      Eq::sym(
+        Eq::congr(
+          ⟦Ordmap::list_remove(□, k, cmp)⟧,
+          Ordmap::node_entries(l, nk, nv, r, h)
+        )
+      )
+    )
+  }
+}
+
+// `Ordmap::list_get` past an entry with the value `xv`, by `c`, the comparison of
+// `k` with the entry's key.
+pub fn Ordmap::list_get_step<K: Shared, V: Shared>(
+  xv: V,
+  rest: List(K × V),
+  k: K,
+  cmp: (K, K) -> Ordering,
+  c: Ordering
+): Option(V) {
+  match c {
+    Less => Ordmap::list_get(rest, k, cmp)
+    Equal => Some(xv)
+    Greater => Ordmap::list_get(rest, k, cmp)
+  }
+}
+
+pub theorem Ordmap::list_remove_get_none<K: Type, V: Type>(
+  es: List(K × V),
+  k: K,
+  cmp: (K, K) -> Ordering,
+  e: Ordmap::list_get(es, k, cmp) = None
+): Ordmap::list_remove(es, k, cmp) = es {
+  match es {
+    Nil => Refl
+    Cons(x, rest) => match x {
+      #(xk, xv) => Ordering::cases(
+        (c: Ordering) => (⊢ List(K × V) from match c {
+          Less => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+          Equal => Ordmap::list_remove(rest, k, cmp)
+          Greater => Cons(#(xk, xv), Ordmap::list_remove(rest, k, cmp))
+        }) = Cons(#(xk, xv), rest),
+        cmp(k, xk),
+        (q: cmp(k, xk) = Less) => Eq::congr(
+          ⟦Cons(#(xk, xv), □)⟧,
+          Ordmap::list_remove_get_none(
+            rest,
+            k,
+            cmp,
+            Eq::subst(
+              (c: Ordering) => Ordmap::list_get_step(xv, rest, k, cmp, c) = None,
+              q,
+              e
+            )
+          )
+        ),
+        (q: cmp(k, xk) = Equal) => False::elim(
+          Ordmap::some_ne_none(
+            xv,
+            Eq::subst(
+              (c: Ordering) => Ordmap::list_get_step(xv, rest, k, cmp, c) = None,
+              q,
+              e
+            )
+          )
+        ),
+        (q: cmp(k, xk) = Greater) => Eq::congr(
+          ⟦Cons(#(xk, xv), □)⟧,
+          Ordmap::list_remove_get_none(
+            rest,
+            k,
+            cmp,
+            Eq::subst(
+              (c: Ordering) => Ordmap::list_get_step(xv, rest, k, cmp, c) = None,
+              q,
+              e
+            )
+          )
+        )
+      )
+    }
+  }
+}
+
+pub fn Ordmap::is_some<V: Shared>(o: Option(V)): Bool {
+  match o {
+    None => false
+    Some(v) => true
+  }
+}
+
+pub theorem Ordmap::is_some_false<V: Type>(o: Option(V), e: Ordmap::is_some(o) = false): o = None {
+  match o {
+    None => Refl
+    Some(x) => False::elim(true_ne_false(e))
+  }
+}
+
+pub theorem Ordmap::contains_false<K: Type, V: Type>(
+  m: Ordmap(K, V),
+  k: K,
+  cmp: (K, K) -> Ordering,
+  e: Ordmap::contains(m, k, cmp) = false
+): Ordmap::get(m, k, cmp) = None {
+  Ordmap::is_some_false(Ordmap::get(m, k, cmp), e)
+}
+
+pub theorem Ordmap::remove_entries<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  m: Ordmap(K, V),
+  k: K,
+  s: Ordmap::ordered(m, cmp)
+): Ordmap::entries(Ordmap::remove(m, k, cmp)) = Ordmap::list_remove(Ordmap::entries(m), k, cmp) {
+  ⊢ Ordmap::entries(
+    Ordmap::remove(m, k, cmp)
+  ) = Ordmap::list_remove(Ordmap::entries(m), k, cmp) from match Ordmap::contains(m, k, cmp) eqn q {
+    true => ⊢ Ordmap::entries(
+      Ordmap::Mk(Ordmap::tree_remove(Ordmap::tree(m), k, cmp), Nat::pred(Ordmap::size(m)))
+    ) = Ordmap::list_remove(Ordmap::entries(m), k, cmp) from Ordmap::tree_remove_entries(cmp, w, Ordmap::tree(m), k, s)
+    false => ⊢ Ordmap::entries(m) = Ordmap::list_remove(
+      Ordmap::entries(m),
+      k,
+      cmp
+    ) from Eq::sym(
+      Ordmap::list_remove_get_none(
+        Ordmap::entries(m),
+        k,
+        cmp,
+        Eq::trans(Eq::sym(Ordmap::tree_get_entries(cmp, w, Ordmap::tree(m), k, s)), Ordmap::contains_false(m, k, cmp, q))
+      )
+    )
+  }
+}
+
+pub theorem Ordmap::remove_ordered<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  m: Ordmap(K, V),
+  k: K,
+  s: Ordmap::ordered(m, cmp)
+): Ordmap::ordered(Ordmap::remove(m, k, cmp), cmp) {
+  Eq::subst(
+    (z: List(K × V)) => Ordmap::sorted(z, cmp),
+    Eq::sym(Ordmap::remove_entries(cmp, w, m, k, s)),
+    Ordmap::list_remove_sorted(Ordmap::entries(m), k, cmp, s)
+  )
+}
+
+pub theorem Ordmap::get_remove_same<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  m: Ordmap(K, V),
+  k: K,
+  s: Ordmap::ordered(m, cmp)
+): Ordmap::get(Ordmap::remove(m, k, cmp), k, cmp) = None {
+  Eq::trans(
+    Ordmap::tree_get_entries(cmp, w, Ordmap::tree(Ordmap::remove(m, k, cmp)), k, Ordmap::remove_ordered(cmp, w, m, k, s)),
+    Eq::trans(
+      Eq::congr(⟦Ordmap::list_get(□, k, cmp)⟧, Ordmap::remove_entries(cmp, w, m, k, s)),
+      Ordmap::list_get_remove_same(Ordmap::entries(m), k, cmp)
+    )
+  )
+}
+
+pub theorem Ordmap::get_remove_other<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  m: Ordmap(K, V),
+  k: K,
+  j: K,
+  o: Ordering,
+  ne: ¬(o = Equal),
+  ej: cmp(j, k) = o,
+  s: Ordmap::ordered(m, cmp)
+): Ordmap::get(Ordmap::remove(m, k, cmp), j, cmp) = Ordmap::get(m, j, cmp) {
+  Eq::trans(
+    Ordmap::tree_get_entries(cmp, w, Ordmap::tree(Ordmap::remove(m, k, cmp)), j, Ordmap::remove_ordered(cmp, w, m, k, s)),
+    Eq::trans(
+      Eq::congr(⟦Ordmap::list_get(□, j, cmp)⟧, Ordmap::remove_entries(cmp, w, m, k, s)),
+      Eq::trans(
+        Ordmap::list_get_remove_other(cmp, w, Ordmap::entries(m), k, j, o, ne, ej),
+        Eq::sym(Ordmap::tree_get_entries(cmp, w, Ordmap::tree(m), j, s))
+      )
+    )
+  )
+}
+
+// The last entry of `es` whose key is not after `k`, or `best` if there is
+// none.
+pub fn Ordmap::list_floor<K: Shared, V: Shared>(
+  es: List(K × V),
+  k: K,
+  best: Option(K × V),
+  cmp: (K, K) -> Ordering
+): Option(K × V) {
+  match es {
+    Nil => best
+    Cons(e, rest) => ⊢ Option(K × V) from match e {
+      #(ek, ev) => ⊢ Option(K × V) from match cmp(k, ek) {
+        Less => Ordmap::list_floor(rest, k, best, cmp)
+        Equal => Ordmap::list_floor(rest, k, Some(#(ek, ev)), cmp)
+        Greater => Ordmap::list_floor(rest, k, Some(#(ek, ev)), cmp)
+      }
+    }
+  }
+}
+
+pub fn Ordmap::list_floor_step<K: Shared, V: Shared>(
+  ek: K,
+  ev: V,
+  rest: List(K × V),
+  k: K,
+  best: Option(K × V),
+  cmp: (K, K) -> Ordering,
+  c: Ordering
+): Option(K × V) {
+  match c {
+    Less => Ordmap::list_floor(rest, k, best, cmp)
+    Equal => Ordmap::list_floor(rest, k, Some(#(ek, ev)), cmp)
+    Greater => Ordmap::list_floor(rest, k, Some(#(ek, ev)), cmp)
+  }
+}
+
+pub theorem Ordmap::list_floor_less<K: Type, V: Type>(
+  ek: K,
+  ev: V,
+  rest: List(K × V),
+  k: K,
+  best: Option(K × V),
+  cmp: (K, K) -> Ordering,
+  e: cmp(k, ek) = Less
+): Ordmap::list_floor(Cons(#(ek, ev), rest), k, best, cmp) = Ordmap::list_floor(rest, k, best, cmp) {
+  Eq::congr(⟦Ordmap::list_floor_step(ek, ev, rest, k, best, cmp, □)⟧, e)
+}
+
+pub theorem Ordmap::list_floor_equal<K: Type, V: Type>(
+  ek: K,
+  ev: V,
+  rest: List(K × V),
+  k: K,
+  best: Option(K × V),
+  cmp: (K, K) -> Ordering,
+  e: cmp(k, ek) = Equal
+): Ordmap::list_floor(Cons(#(ek, ev), rest), k, best, cmp) = Ordmap::list_floor(rest, k, Some(#(ek, ev)), cmp) {
+  Eq::congr(⟦Ordmap::list_floor_step(ek, ev, rest, k, best, cmp, □)⟧, e)
+}
+
+pub theorem Ordmap::list_floor_greater<K: Type, V: Type>(
+  ek: K,
+  ev: V,
+  rest: List(K × V),
+  k: K,
+  best: Option(K × V),
+  cmp: (K, K) -> Ordering,
+  e: cmp(k, ek) = Greater
+): Ordmap::list_floor(Cons(#(ek, ev), rest), k, best, cmp) = Ordmap::list_floor(rest, k, Some(#(ek, ev)), cmp) {
+  Eq::congr(⟦Ordmap::list_floor_step(ek, ev, rest, k, best, cmp, □)⟧, e)
+}
+
+pub theorem Ordmap::list_floor_append<K: Type, V: Type>(
+  a: List(K × V),
+  b: List(K × V),
+  k: K,
+  best: Option(K × V),
+  cmp: (K, K) -> Ordering
+): Ordmap::list_floor(
+  List::append(a, b),
+  k,
+  best,
+  cmp
+) = Ordmap::list_floor(b, k, Ordmap::list_floor(a, k, best, cmp), cmp) {
+  ⊢ Ordmap::list_floor(
+    List::append(a, b),
+    k,
+    best,
+    cmp
+  ) = Ordmap::list_floor(b, k, Ordmap::list_floor(a, k, best, cmp), cmp) from match a {
+    Nil => Refl
+    Cons(x, rest) => match x {
+      #(xk, xv) => Ordering::cases(
+        (c: Ordering) => Ordmap::list_floor_step(
+          xk,
+          xv,
+          List::append(rest, b),
+          k,
+          best,
+          cmp,
+          c
+        ) = Ordmap::list_floor(b, k, Ordmap::list_floor_step(xk, xv, rest, k, best, cmp, c), cmp),
+        cmp(k, xk),
+        (q: cmp(k, xk) = Less) => Ordmap::list_floor_append(rest, b, k, best, cmp),
+        (q: cmp(k, xk) = Equal) => Ordmap::list_floor_append(rest, b, k, Some(#(xk, xv)), cmp),
+        (q: cmp(k, xk) = Greater) => Ordmap::list_floor_append(rest, b, k, Some(#(xk, xv)), cmp)
+      )
+    }
+  }
+}
+
+pub theorem Ordmap::list_floor_keys_less<K: Type, V: Type>(
+  es: List(K × V),
+  k: K,
+  best: Option(K × V),
+  cmp: (K, K) -> Ordering,
+  h: Ordmap::keys(es, k, Less, cmp)
+): Ordmap::list_floor(es, k, best, cmp) = best {
+  match es {
+    Nil => Refl
+    Cons(x, rest) => match x {
+      #(xk, xv) => Eq::trans(
+        Ordmap::list_floor_less(xk, xv, rest, k, best, cmp, And::left(h)),
+        Ordmap::list_floor_keys_less(rest, k, best, cmp, And::right(h))
+      )
+    }
+  }
+}
+
+pub theorem Ordmap::tree_floor_entries<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  t: OrdmapTree(K, V),
+  k: K,
+  best: Option(K × V),
+  s: Ordmap::sorted(Ordmap::tree_entries(t, Nil), cmp)
+): Ordmap::tree_floor(t, k, best, cmp) = Ordmap::list_floor(Ordmap::tree_entries(t, Nil), k, best, cmp) {
+  match t {
+    OrdmapLeaf => Refl
+    OrdmapNode(l, nk, nv, r, h) => Eq::trans(
+      Ordering::cases(
+        (c: Ordering) => (⊢ Option(K × V) from match c {
+          Less => Ordmap::tree_floor(l, k, best, cmp)
+          Equal => Some(#(nk, nv))
+          Greater => Ordmap::tree_floor(r, k, Some(#(nk, nv)), cmp)
+        }) = Ordmap::list_floor(Cons(#(nk, nv), Ordmap::tree_entries(r, Nil)), k, Ordmap::list_floor(Ordmap::tree_entries(l, Nil), k, best, cmp), cmp),
+        cmp(k, nk),
+        (q: cmp(k, nk) = Less) => Eq::trans(
+          Ordmap::tree_floor_entries(cmp, w, l, k, best, And::left(And::right(Ordmap::node_split(cmp, w, l, nk, nv, r, h, s)))),
+          Eq::sym(
+            Eq::trans(
+              Ordmap::list_floor_less(
+                nk,
+                nv,
+                Ordmap::tree_entries(r, Nil),
+                k,
+                Ordmap::list_floor(Ordmap::tree_entries(l, Nil), k, best, cmp),
+                cmp,
+                q
+              ),
+              Ordmap::list_floor_keys_less(
+                Ordmap::tree_entries(r, Nil),
+                k,
+                Ordmap::list_floor(Ordmap::tree_entries(l, Nil), k, best, cmp),
+                cmp,
+                Ordmap::keys_less_trans(
+                  cmp,
+                  w,
+                  Ordmap::tree_entries(r, Nil),
+                  nk,
+                  k,
+                  q,
+                  And::left(And::right(And::right(Ordmap::node_split(cmp, w, l, nk, nv, r, h, s))))
+                )
+              )
+            )
+          )
+        ),
+        (q: cmp(k, nk) = Equal) => Eq::sym(
+          Eq::trans(
+            Ordmap::list_floor_equal(
+              nk,
+              nv,
+              Ordmap::tree_entries(r, Nil),
+              k,
+              Ordmap::list_floor(Ordmap::tree_entries(l, Nil), k, best, cmp),
+              cmp,
+              q
+            ),
+            Ordmap::list_floor_keys_less(
+              Ordmap::tree_entries(r, Nil),
+              k,
+              Some(#(nk, nv)),
+              cmp,
+              Ordmap::keys_eq(
+                Ordmap::tree_entries(r, Nil),
+                nk,
+                k,
+                Eq::sym(Ordmap::law_eq(cmp, w, k, nk, q)),
+                Less,
+                cmp,
+                And::left(And::right(And::right(Ordmap::node_split(cmp, w, l, nk, nv, r, h, s))))
+              )
+            )
+          )
+        ),
+        (q: cmp(k, nk) = Greater) => Eq::trans(
+          Ordmap::tree_floor_entries(
+            cmp,
+            w,
+            r,
+            k,
+            Some(#(nk, nv)),
+            And::right(And::right(And::right(Ordmap::node_split(cmp, w, l, nk, nv, r, h, s))))
+          ),
+          Eq::sym(
+            Ordmap::list_floor_greater(
+              nk,
+              nv,
+              Ordmap::tree_entries(r, Nil),
+              k,
+              Ordmap::list_floor(Ordmap::tree_entries(l, Nil), k, best, cmp),
+              cmp,
+              q
+            )
+          )
+        )
+      ),
+      Eq::sym(
+        Eq::trans(
+          Eq::congr(
+            ⟦Ordmap::list_floor(□, k, best, cmp)⟧,
+            Ordmap::node_entries(l, nk, nv, r, h)
+          ),
+          Ordmap::list_floor_append(
+            Ordmap::tree_entries(l, Nil),
+            Cons(#(nk, nv), Ordmap::tree_entries(r, Nil)),
+            k,
+            best,
+            cmp
+          )
+        )
+      )
+    )
+  }
+}
+
+pub theorem Ordmap::floor_entries<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  m: Ordmap(K, V),
+  k: K,
+  s: Ordmap::ordered(m, cmp)
+): Ordmap::floor(m, k, cmp) = Ordmap::list_floor(Ordmap::entries(m), k, None, cmp) {
+  Ordmap::tree_floor_entries(cmp, w, Ordmap::tree(m), k, None, s)
+}

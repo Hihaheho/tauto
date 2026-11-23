@@ -16,6 +16,7 @@ totebag-asking-default-branch = asking { $url } for its default branch
 totebag-no-default-branch = { $url } names no default branch; choose one with --branch or --tag
 totebag-fetching = fetching { $source }
 totebag-fetching-from = fetching { $reference } from { $url }
+totebag-fetching-files = fetching the files of { $source }
 totebag-finding = finding { $name }
 totebag-reading-commit = reading the commit { $rev }
 totebag-no-commit = { $url } has no commit { $rev }
@@ -72,6 +73,8 @@ totebag-bad-source-id = { $id } is not a source ID (sha256:<64 hex>)
 
 totebag-lock-too-large = a lock is at most 4 MiB
 totebag-lock-format = format is 1
+totebag-lock-sparse = sparse is true when it is there
+totebag-sparse-needs-dir = sparse needs a dir: it fetches only that directory
 totebag-lock-no-format = no format
 totebag-lock-totes-list = totes is a list of `@ totes[]` blocks
 totebag-locked-twice = { $name } is locked twice
@@ -126,7 +129,11 @@ totebag-only-history = { $value }: the only history is "commit-batches"
 totebag-not-object-format = { $value } is not sha1 or sha256
 totebag-valid-until-early = { $file }: valid_until is not after issued_at
 totebag-after-retirement = { $what }: nothing comes after a retirement
-totebag-not-commit-of-format = { $value } is not a { $format } commit ID
+totebag-not-commit-of-format = { $value } is not { $format ->
+    [sha1] an sha1
+    [sha256] an sha256
+    *[other] a { $format }
+  } commit ID
 totebag-not-verdict = { $value } is not accept or reject
 totebag-not-event-kind = { $value } is not a kind of event
 

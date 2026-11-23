@@ -11,6 +11,15 @@ fn example(path: &str) -> PathBuf {
         .join(path)
 }
 
+/// A run of an example in this repository is a run in the project whose `Tauto.eure` trusts
+/// commands: the approval is kept in a home of its own, not in the home of whoever runs the
+/// tests, so that what the tests approve is not left there and what the user approved earlier
+/// does not decide them.
+fn isolate(command: &mut Command) {
+    let home = std::env::temp_dir().join(format!("tauto-examples-home-{}", std::process::id()));
+    command.arg("--approve-trust").env("TAUTO_HOME", home);
+}
+
 fn stdout(args: &[&str], path: &PathBuf) -> String {
     stdout_built_in(args, path, None)
 }
@@ -19,7 +28,13 @@ fn stdout(args: &[&str], path: &PathBuf) -> String {
 /// given: two runs of one package name in one directory would share a build.
 fn stdout_built_in(args: &[&str], path: &PathBuf, target_dir: Option<&PathBuf>) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_tauto"));
-    command.args(args).arg(path);
+    if args.iter().any(|a| *a == "--tote") {
+        let args: Vec<&str> = args.iter().copied().filter(|a| *a != "--tote").collect();
+        command.current_dir(path).args(&args).arg(".");
+    } else {
+        command.args(args).arg(path);
+    }
+    isolate(&mut command);
     if let Some(dir) = target_dir {
         command.env("TAUTO_TARGET_DIR", dir);
     }
@@ -46,7 +61,7 @@ fn handlers_agree_on_both_backends() {
 fn effects_agree_on_both_backends() {
     let path = example("effects.taut");
     let eval = stdout(&["run"], &path);
-    assert_eq!(eval, "ok = 42\nerr = -1\ntotal = 66\nmore = 7\n");
+    assert_eq!(eval, "42\n-1\n66\n7\n");
     assert_eq!(eval, stdout(&["run", "--backend", "rust"], &path));
 }
 
@@ -56,7 +71,7 @@ fn streams_agree_on_both_backends() {
     let eval = stdout(&["run"], &path);
     assert_eq!(
         eval,
-        "sum = 30\ncount = 10\nfirst = 9\ntaken = 60\narrived = 5\n"
+        "30\n10\n9\n60\n5\n"
     );
     assert_eq!(eval, stdout(&["run", "--backend", "rust"], &path));
 }
@@ -64,15 +79,15 @@ fn streams_agree_on_both_backends() {
 #[test]
 fn ownership_agrees_on_both_backends() {
     let path = example("ownership.taut");
-    let eval = stdout(&["run", "--check-ownership"], &path);
-    assert_eq!(eval, "first = 3\nn = 9\ntotal = 12\n");
-    assert_eq!(eval, stdout(&["run", "--backend", "rust"], &path));
+    let niri = stdout(&["run", "--check-ownership"], &path);
+    assert_eq!(niri, "3\n9\n12\n");
+    assert_eq!(niri, stdout(&["run", "--backend", "rust"], &path));
 }
 
 #[test]
 fn the_files_example_runs_with_its_bridge() {
     let rust = stdout(&["run", "--backend", "rust"], &example("rust/files"));
-    assert_eq!(rust, "shout = \"HELLO\"\ncount = 5\n");
+    assert_eq!(rust, "\"HELLO\"\n5\n");
 }
 
 #[test]
@@ -80,22 +95,14 @@ fn the_regex_demo_runs_with_its_generated_bindings() {
     let rust = stdout(&["run", "--backend", "rust"], &example("rust/regex_demo"));
     assert_eq!(
         rust,
-        "match = true\nmiss = false\nsource = \"a+b\"\nfound = \"aaab\"\nstart = 1\ngroups = 1\nshortest = Some(5)\nfrom = Some(5)\n\
-         each = \"ab\"\neach = \"aab\"\neach = \"aaab\"\n\
-         each group = 1\neach group = 1\n\
-         part = \"1\"\npart = \"2\"\npart = \"3\"\n\
-         part of two = \"1\"\npart of two = \"2aab3\"\n\
-         replace = Buf(\"<> aab\")\nreplace_all = Buf(\"<> <>\")\nreplacen = Buf(\"<> <> aaab\")\n"
+        "true\nfalse\n\"a+b\"\n\"aaab\"\n1\n1\nSome(5)\nSome(5)\n\"ab\"\n\"aab\"\n\"aaab\"\n1\n1\n\"1\"\n\"2\"\n\"3\"\n\"1\"\n\"2aab3\"\nBuf { .. }\nBuf { .. }\nBuf { .. }\n"
     );
 }
 
 #[test]
 fn the_json_demo_runs_with_its_generated_bindings() {
     let rust = stdout(&["run", "--backend", "rust"], &example("rust/json_demo"));
-    assert_eq!(
-        rust,
-        "object = false\narray = true\ntext = \"[1,2,3]\"\neof = true\n"
-    );
+    assert_eq!(rust, "false\ntrue\n\"[1,2,3]\"\ntrue\n");
 }
 
 #[test]
@@ -103,7 +110,7 @@ fn the_tasks_example_runs_on_threads() {
     let rust = stdout(&["run", "--backend", "rust"], &example("rust/tasks"));
     assert_eq!(
         rust,
-        "done = 2001\ncounter = 4000\nhits = 2000\nlogged = 1\n"
+        "2001\n4000\n2000\n1\n"
     );
 }
 
@@ -130,7 +137,7 @@ fn the_tasks_example_runs_on_tokio() {
     );
     assert_eq!(
         rust,
-        "done = 2001\ncounter = 4000\nhits = 2000\nlogged = 1\n"
+        "2001\n4000\n2000\n1\n"
     );
 }
 
@@ -168,12 +175,13 @@ pub fn counter_get(c: Counter) -> u64 {
 "#,
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tauto"));
+    command
         .args(["run", "--backend", "rust"])
         .arg(&dir)
-        .env("TAUTO_TARGET_DIR", dir.join("build"))
-        .output()
-        .unwrap();
+        .env("TAUTO_TARGET_DIR", dir.join("build"));
+    isolate(&mut command);
+    let out = command.output().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -195,16 +203,17 @@ fn well_founded_recursion_runs_as_written_on_both_backends() {
 }
 
 /// A tote that reads text with an `inductive_syntax!` and whose rules `mode!`
-/// turns into a checker runs: `std/Mode.taut`'s functions are macro code, run
+/// turns into a checker runs: `std/mode.taut`'s functions are macro code, run
 /// while the program is read, and are not part of what runs.
 #[test]
 fn typed_lang_reads_checks_and_runs_text() {
     use std::io::Write;
     use std::process::Stdio;
 
+    let typed = example("typed-lang");
     let mut child = Command::new(env!("CARGO_BIN_EXE_tauto"))
-        .args(["run", "--backend", "eval", "--tote"])
-        .arg(example("typed-lang"))
+        .current_dir(&typed)
+        .args(["run", "--backend", "vm", "."])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

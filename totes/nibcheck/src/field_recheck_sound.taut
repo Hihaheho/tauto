@@ -2,8 +2,8 @@ import "written_stability_sound.taut"
 import "data_ctors_sound.taut"
 import "field_recheck_context_sound.taut"
 import "field_recheck_error_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "data_fields_sound.taut"
 import "datas.taut"
@@ -14,6 +14,7 @@ import "rules_data_fields.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
@@ -35,8 +36,7 @@ pub fn recheck_fields_after(
   m: Mut1(Ty, Checker)
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Ty,
-    Unit,
+    <A: Ty, B: Unit>,
     (ignored: Ty, next: Checker) => ck_rewrap1(ck_recheck_fields(rest, next, generics)),
     m
   )
@@ -127,10 +127,10 @@ pub theorem ck_recheck_fields_sound<old_env: Datas, generics: Ordmap(
   position: frame_constructor_position(c) = partial,
   clean: DiagnosticClean(ck_st(ck_recheck_fields(fields, c, generics)))
 ): WrittenDataFields(ck_datas_of(c), generics, partial, fields, types) {
-  ⊢ WrittenDataFields(ck_datas_of(c), generics, partial, fields, types) from match old {
+  match old {
     WrittenDataFieldsNil => WrittenDataFieldsNil
     WrittenDataFieldsCons(name, body, rest, t, values, head, tail) => written_transfer(
-      Unit,
+      <A: Unit>,
       (ignored: Unit) => WrittenDataFields(
         ck_datas_of(c),
         generics,
@@ -195,8 +195,7 @@ pub fn recheck_ctors_after(
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_ctors(rest, next, generics)),
     m
   )
@@ -279,10 +278,10 @@ pub theorem ck_recheck_ctors_sound<old_env: Datas, generics: Ordmap(
   position: frame_constructor_position(c) = partial,
   clean: DiagnosticClean(ck_st(ck_recheck_ctors(source, c, generics)))
 ): WrittenDataCtors(ck_datas_of(c), generics, partial, source, ctors) {
-  ⊢ WrittenDataCtors(ck_datas_of(c), generics, partial, source, ctors) from match old {
+  match old {
     WrittenDataCtorsNil => WrittenDataCtorsNil
     WrittenDataCtorsCons(name, fields, rest, types, values, head, tail) => written_transfer(
-      Unit,
+      <A: Unit>,
       (ignored: Unit) => WrittenDataCtors(
         ck_datas_of(c),
         generics,
@@ -308,11 +307,7 @@ pub theorem ck_recheck_ctors_sound<old_env: Datas, generics: Ordmap(
         ordinary,
         position,
         inner_clean => ck_recheck_fields_sound(
-          old_env,
-          generics,
-          partial,
-          fields,
-          types,
+          <old_env: old_env, generics: generics, partial: partial, fields: fields, types: types>,
           head,
           c,
           ordinary,

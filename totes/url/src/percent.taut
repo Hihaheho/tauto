@@ -1,5 +1,5 @@
 import "bytes.taut"
-import std::Base
+import std::base
 
 // Percent-encoding (URL Standard, "Percent-encoded bytes"). A set is a
 // decision on bytes; a byte in the set is written `%XY` with upper-case hex
@@ -97,14 +97,14 @@ pub fn component_set(b: Nat): Bool {
 // The upper-case hex digit of a number below 16. The high digit of a byte
 // is taken modulo 16 too, so every digit written is a hex digit.
 pub fn hex_digit(d: Nat): Nat {
-  ⊢ Nat from match Nat::lt(d, 10) {
+  match Nat::lt(d, 10) {
     true => Nat::add(d, 48)
     false => Nat::add(d, 55)
   }
 }
 
 pub fn hex_value(b: Nat): Option(Nat) {
-  ⊢ Option(Nat) from match is_digit(b) {
+  match is_digit(b) {
     true => Some(Nat::sub(b, 48))
     false => ⊢ Option(Nat) from match Bool::and(Nat::le(65, b), Nat::le(b, 70)) {
       true => Some(Nat::sub(b, 55))
@@ -117,7 +117,7 @@ pub fn hex_value(b: Nat): Option(Nat) {
 }
 
 pub fn pct_byte(set: (Nat) -> Bool, b: Nat, rest: List(Nat)): List(Nat) {
-  ⊢ List(Nat) from match set(b) {
+  match set(b) {
     true => Cons(
       37,
       Cons(
@@ -132,21 +132,21 @@ pub fn pct_byte(set: (Nat) -> Bool, b: Nat, rest: List(Nat)): List(Nat) {
 }
 
 pub fn pct_encode(set: (Nat) -> Bool, l: List(Nat)): List(Nat) {
-  ⊢ List(Nat) from match l {
+  match l {
     Nil => Nil
     Cons(b, t) => pct_byte(set, b, pct_encode(set, t))
   }
 }
 
 pub fn is_hex(b: Nat): Bool {
-  ⊢ Bool from match hex_value(b) {
+  match hex_value(b) {
     None => false
-    Some(v) => true
+    Some(^v) => true
   }
 }
 
 pub fn hex_pair(h1: Nat, h2: Nat): Option(Nat) {
-  ⊢ Option(Nat) from match hex_value(h1) {
+  match hex_value(h1) {
     None => None
     Some(v1) => ⊢ Option(Nat) from match hex_value(h2) {
       None => None
@@ -169,7 +169,7 @@ pub fn pct_decode(l: List(Nat)): List(Nat) {
 }
 
 pub fn decode_from(st: Escape, l: List(Nat)): List(Nat) {
-  ⊢ List(Nat) from match l {
+  match l {
     Nil => ⊢ List(Nat) from match st {
       Plain => Nil
       Percent => Cons(37, Nil)

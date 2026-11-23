@@ -1,0 +1,479 @@
+import "model.taut"
+import "print.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::map
+
+// A function in block form as text (`nir-text.md` "Blocks"), as
+// `tauto_nir::blocks::print` writes it: the blocks in the order they are
+// numbered, then the regions with the nodes they came from, the places a
+// `match` tests a union's variant, and the bodies of the closures.
+
+pub fn pb_nat(p: &mut PState, n: Nat): Unit { p_s(&mut p, Text::of_nat(n)) }
+
+pub fn pb_block_ref(p: &mut PState, b: Nat): Unit { p_all(&mut p, ["b", Text::of_nat(b)]) }
+
+pub fn pb_region_ref(p: &mut PState, r: Nat): Unit { p_all(&mut p, ["region", Text::of_nat(r)]) }
+
+// A local where it is bound, with no memory of it kept.
+pub fn pb_binder(p: &mut PState, l: NLocal): Unit {
+  match l.repr {
+    NPlain => ()
+    NSharedVarRepr => p_all(&mut p, [p_repr_word(l.repr), " "])
+    NSharedVarCopy => p_all(&mut p, [p_repr_word(l.repr), " "])
+    NRefRepr => p_all(&mut p, [p_repr_word(l.repr), " "])
+    NRefMutRepr => p_all(&mut p, [p_repr_word(l.repr), " "])
+    NBorrowClosure => p_all(&mut p, [p_repr_word(l.repr), " "])
+    NFnRef => p_all(&mut p, [p_repr_word(l.repr), " "])
+  }
+  p_local_name(&mut p, l)
+}
+
+pub fn pb_typed_binders_rest(p: &mut PState, xs: List(NParam), first: Bool): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      pb_binder(&mut p, x.local)
+      p_s(&mut p, ": ")
+      p_ty(&mut p, x.ty)
+      pb_typed_binders_rest(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn pb_typed_binders(p: &mut PState, xs: List(NParam)): Unit ! {div} {
+  p_s(&mut p, "(")
+  pb_typed_binders_rest(&mut p, xs, true)
+  p_s(&mut p, ")")
+}
+
+pub fn pb_path_rest(p: &mut PState, xs: List(Nat), first: Bool): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      pb_nat(&mut p, x)
+      pb_path_rest(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn pb_path(p: &mut PState, xs: List(Nat)): Unit {
+  p_s(&mut p, "[")
+  pb_path_rest(&mut p, xs, true)
+  p_s(&mut p, "]")
+}
+
+// A leaf is written on its own: the locals it reads that it does not bind
+// itself are written with their representation and type.
+pub fn pb_leaf(p: &mut PState, e: NExpr): Unit ! {div, overflow} {
+  var lone := PState { pkg: p.pkg, out: Nil, indent: p.indent, bound: Ordmap::empty() }
+  p_expr(&mut lone, e)
+  p_s(&mut p, Text::concat_all(text_list_reverse(lone.out)))
+}
+
+pub fn pb_place(p: &mut PState, pl: NPlaceOf): Unit ! {div} {
+  var lone := PState { pkg: p.pkg, out: Nil, indent: p.indent, bound: Ordmap::empty() }
+  p_place(&mut lone, pl)
+  p_s(&mut p, Text::concat_all(text_list_reverse(lone.out)))
+}
+
+pub fn pb_value(p: &mut PState, v: NValue): Unit ! {div, overflow} {
+  match v {
+    NValLeaf(e) => pb_leaf(&mut p, e)
+    NValRegion(r) => p_all(&mut p, ["%", Text::of_nat(r)])
+  }
+}
+
+pub fn pb_inst(p: &mut PState, i: NInst): Unit ! {div, overflow} {
+  match i {
+    NILet(l, t, v, stack) => {
+      p_s(&mut p, if stack { "let stack " } else { "let " })
+      pb_binder(&mut p, l)
+      p_s(&mut p, ": ")
+      p_ty(&mut p, t)
+      p_s(&mut p, " := ")
+      pb_value(&mut p, v)
+    }
+    NIVar(l, t, v) => {
+      p_s(&mut p, "var ")
+      pb_binder(&mut p, l)
+      p_s(&mut p, ": ")
+      p_ty(&mut p, t)
+      p_s(&mut p, " := ")
+      pb_value(&mut p, v)
+    }
+    NISet(target, v) => {
+      p_s(&mut p, "set ")
+      pb_place(&mut p, target)
+      p_s(&mut p, " := ")
+      pb_value(&mut p, v)
+    }
+    NIEval(v) => {
+      p_s(&mut p, "eval ")
+      pb_value(&mut p, v)
+    }
+    NIBind(l, t, path, by_borrow) => {
+      p_s(&mut p, "bind ")
+      pb_binder(&mut p, l)
+      p_s(&mut p, ": ")
+      p_ty(&mut p, t)
+      p_s(&mut p, if by_borrow { " := borrow part " } else { " := part " })
+      pb_path(&mut p, path)
+    }
+    NIUnpack(path, last) => {
+      p_s(&mut p, "unpack ")
+      pb_path(&mut p, path)
+      if last { p_s(&mut p, " last") } else { () }
+    }
+    NIEnd(l) => {
+      p_s(&mut p, "end ")
+      pb_binder(&mut p, l)
+    }
+    NIRelease(path) => {
+      p_s(&mut p, "release ")
+      pb_path(&mut p, path)
+    }
+    NIOpen(r) => {
+      p_s(&mut p, "open ")
+      pb_region_ref(&mut p, r)
+    }
+    NIClose(r, v) => {
+      p_s(&mut p, "close ")
+      pb_region_ref(&mut p, r)
+      match v {
+        None => ()
+        Some(x) => {
+          p_s(&mut p, " with ")
+          pb_value(&mut p, x)
+        }
+      }
+    }
+  }
+}
+
+pub fn pb_case(p: &mut PState, c: NCase): Unit {
+  match c {
+    NCaseCtor(i, n) => p_all(&mut p, ["ctor(", Text::of_nat(i), ", ", Text::of_nat(n), ")"])
+    NCaseInt(neg, n) => p_all(&mut p, ["int(", p_signed(neg, n), ")"])
+    NCaseNat(n) => p_all(&mut p, ["nat(", Text::of_nat(n), ")"])
+    NCaseBool(b) => p_all(&mut p, ["bool(", if b { "true" } else { "false" }, ")"])
+    NCaseText(s) => p_all(&mut p, ["text(", p_debug(s), ")"])
+    NCaseVariant(i) => p_all(&mut p, ["variant(", Text::of_nat(i), ")"])
+  }
+}
+
+pub fn pb_edge(p: &mut PState, e: NEdge): Unit ! {div} {
+  p_s(
+    &mut p,
+    match e.kind {
+      NEdgeBody => "body"
+      NEdgeRet => "ret"
+      NEdgeDirect => "direct"
+      NEdgeAbort => "abort"
+      NEdgeSusp => "susp"
+    }
+  )
+  match e.op {
+    None => ()
+    Some(op) => p_all(&mut p, ["(", Text::of_nat(op), ")"])
+  }
+  p_s(&mut p, " => ")
+  pb_block_ref(&mut p, e.entry)
+  p_s(&mut p, " params")
+  pb_typed_binders(&mut p, e.params)
+  if e.refutable { p_s(&mut p, " refutable") } else { () }
+}
+
+pub fn pb_edges(p: &mut PState, es: List(NEdge)): Unit ! {div} {
+  match es {
+    Nil => ()
+    Cons(e, rest) => {
+      p_line(&mut p)
+      pb_edge(&mut p, e)
+      p_s(&mut p, ",")
+      pb_edges(&mut p, rest)
+    }
+  }
+}
+
+pub fn pb_block_list(p: &mut PState, bs: List(Nat), first: Bool): Unit {
+  match bs {
+    Nil => ()
+    Cons(b, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      pb_block_ref(&mut p, b)
+      pb_block_list(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn pb_test_cases(p: &mut PState, cs: List(NCaseArm), first: Bool): Bool {
+  match cs {
+    Nil => first
+    Cons(c, rest) => {
+      p_s(&mut p, if first { " " } else { ", " })
+      pb_case(&mut p, c.case)
+      p_s(&mut p, " => ")
+      pb_block_ref(&mut p, c.block)
+      pb_test_cases(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn pb_resumes(r: NResumes): Text {
+  match r {
+    NResNever => "never"
+    NResOnce => "once"
+    NResMany => "many"
+  }
+}
+
+pub fn pb_term(p: &mut PState, t: NTerm): Unit ! {div, overflow} {
+  match t {
+    NTJump(b, v) => {
+      p_all(&mut p, ["jump b", Text::of_nat(b), "("])
+      pb_value(&mut p, v)
+      p_s(&mut p, ")")
+    }
+    NTGoto(b) => p_all(&mut p, ["goto b", Text::of_nat(b)])
+    NTControl(r, succs, join) => {
+      p_all(&mut p, ["control region", Text::of_nat(r), " to ["])
+      pb_block_list(&mut p, succs, true)
+      p_all(&mut p, ["] join b", Text::of_nat(join)])
+    }
+    NTEnter(r, entry, join, by_ref) => {
+      p_all(&mut p, ["enter region", Text::of_nat(r), " at b", Text::of_nat(entry), " join b", Text::of_nat(join)])
+      if by_ref { p_s(&mut p, " by_ref") } else { () }
+    }
+    NTTest(path, cases, default) => {
+      p_s(&mut p, "test ")
+      pb_path(&mut p, path)
+      p_s(&mut p, " {")
+      let none := pb_test_cases(&mut p, cases, true)
+      match default {
+        None => ()
+        Some(d) => p_all(&mut p, [if none { " " } else { ", " }, "_ => b", Text::of_nat(d)])
+      }
+      p_s(&mut p, " }")
+    }
+    NTHandle(r, edges, join) => {
+      p_all(&mut p, ["handle region", Text::of_nat(r), " {"])
+      p_set(&mut p.indent, p.indent + 1)
+      pb_edges(&mut p, edges)
+      p_set(&mut p.indent, Nat::sub(p.indent, 1))
+      p_line(&mut p)
+      p_all(&mut p, ["} join b", Text::of_nat(join)])
+    }
+    NTCall(r, join, abort) => p_all(
+      &mut p,
+      ["call region", Text::of_nat(r), " to b", Text::of_nat(join), " abort b", Text::of_nat(abort)]
+    )
+    NTSuspend(r, join, abort, resumes, env) => {
+      p_all(
+        &mut p,
+        ["suspend region", Text::of_nat(r), " to b", Text::of_nat(join), " abort b", Text::of_nat(abort), " ", pb_resumes(resumes), " env"]
+      )
+      pb_typed_binders(&mut p, env)
+    }
+    NTAbort => p_s(&mut p, "abort")
+    NTBranch(v, then, els) => {
+      p_s(&mut p, "branch ")
+      pb_value(&mut p, v)
+      p_all(&mut p, [" then b", Text::of_nat(then)])
+      match els {
+        None => ()
+        Some(e) => p_all(&mut p, [" else b", Text::of_nat(e)])
+      }
+    }
+    NTUnreachable => p_s(&mut p, "unreachable")
+    NTDecline => p_s(&mut p, "decline")
+    NTReturn(v, cont) => {
+      p_s(&mut p, "return")
+      match v {
+        None => ()
+        Some(x) => {
+          p_s(&mut p, " ")
+          pb_value(&mut p, x)
+        }
+      }
+      p_all(&mut p, [" cont b", Text::of_nat(cont)])
+    }
+    NTDone(v) => {
+      p_s(&mut p, "done ")
+      pb_value(&mut p, v)
+    }
+    NTPending => p_s(&mut p, "pending")
+  }
+}
+
+pub fn pb_insts(p: &mut PState, xs: List(NInst)): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(i, rest) => {
+      p_line(&mut p)
+      pb_inst(&mut p, i)
+      p_s(&mut p, ";")
+      pb_insts(&mut p, rest)
+    }
+  }
+}
+
+pub fn pb_bblock(p: &mut PState, i: Nat, b: NBBlock): Unit ! {div, overflow} {
+  p_all(&mut p, ["b", Text::of_nat(i)])
+  pb_typed_binders(&mut p, b.params)
+  match b.takes {
+    None => ()
+    Some(t) => {
+      p_s(&mut p, " -> ")
+      p_ty(&mut p, t)
+    }
+  }
+  match b.owner {
+    None => ()
+    Some(o) => p_all(&mut p, [" owner region", Text::of_nat(o)])
+  }
+  match b.joins {
+    None => ()
+    Some(j) => p_all(&mut p, [" joins region", Text::of_nat(j)])
+  }
+  p_s(&mut p, ":")
+  p_set(&mut p.indent, p.indent + 1)
+  pb_insts(&mut p, b.insts)
+  p_line(&mut p)
+  pb_term(&mut p, b.term)
+  p_s(&mut p, ";")
+  p_set(&mut p.indent, Nat::sub(p.indent, 1))
+}
+
+pub fn pb_blocks(p: &mut PState, xs: List(NBBlock), i: Nat): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(b, rest) => {
+      p_line(&mut p)
+      pb_bblock(&mut p, i, b)
+      pb_blocks(&mut p, rest, i + 1)
+    }
+  }
+}
+
+pub fn pb_slots(p: &mut PState, xs: List(NSlot), first: Bool): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(s, rest) => {
+      if first { () } else { p_s(&mut p, ", ") }
+      match s {
+        NSlotOperand(v) => {
+          p_s(&mut p, "operand ")
+          pb_value(&mut p, v)
+        }
+        NSlotBody(b) => p_all(&mut p, ["body b", Text::of_nat(b)])
+      }
+      pb_slots(&mut p, rest, false)
+    }
+  }
+}
+
+pub fn pb_region(p: &mut PState, r: NRegion): Unit ! {div, overflow} {
+  match r.shell {
+    NShellNode(e) => {
+      p_s(&mut p, "node ")
+      pb_leaf(&mut p, e)
+    }
+    NShellBlock(t) => {
+      p_s(&mut p, "block ")
+      p_ty(&mut p, t)
+    }
+    NShellCall(e) => {
+      p_s(&mut p, "call ")
+      pb_leaf(&mut p, e)
+    }
+    NShellWhile(t) => {
+      p_s(&mut p, "while")
+      p_tick(&mut p, t)
+    }
+  }
+  p_s(&mut p, " slots(")
+  pb_slots(&mut p, r.slots, true)
+  p_s(&mut p, ")")
+}
+
+pub fn pb_regions(p: &mut PState, xs: List(Option(NRegion)), i: Nat): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(r, rest) => {
+      p_line(&mut p)
+      p_all(&mut p, ["region", Text::of_nat(i), " = "])
+      match r {
+        None => p_s(&mut p, "none")
+        Some(x) => pb_region(&mut p, x)
+      }
+      p_s(&mut p, ";")
+      pb_regions(&mut p, rest, i + 1)
+    }
+  }
+}
+
+pub fn pb_variants(p: &mut PState, xs: List(NVariantAt)): Unit {
+  match xs {
+    Nil => ()
+    Cons(v, rest) => {
+      p_line(&mut p)
+      p_all(&mut p, ["variant region", Text::of_nat(v.region), " "])
+      pb_path(&mut p, v.path)
+      p_s(&mut p, ";")
+      pb_variants(&mut p, rest)
+    }
+  }
+}
+
+pub fn pb_closures(p: &mut PState, xs: List(NBlockFn), i: Nat): Unit ! {div, overflow} {
+  match xs {
+    Nil => ()
+    Cons(c, rest) => {
+      p_line(&mut p)
+      p_all(&mut p, ["closure ", Text::of_nat(i), " {"])
+      p_set(&mut p.indent, p.indent + 1)
+      pb_block_fn(&mut p, c)
+      p_set(&mut p.indent, Nat::sub(p.indent, 1))
+      p_line(&mut p)
+      p_s(&mut p, "}")
+      pb_closures(&mut p, rest, i + 1)
+    }
+  }
+}
+
+pub fn pb_block_fn(p: &mut PState, f: NBlockFn): Unit ! {div, overflow} {
+  pb_blocks(&mut p, f.blocks, 0)
+  match f.regions {
+    Nil => ()
+    Cons(^r, ^rest) => {
+      p_line(&mut p)
+      p_s(&mut p, "regions {")
+      p_set(&mut p.indent, p.indent + 1)
+      pb_regions(&mut p, f.regions, 0)
+      p_set(&mut p.indent, Nat::sub(p.indent, 1))
+      p_line(&mut p)
+      p_s(&mut p, "}")
+    }
+  }
+  pb_variants(&mut p, f.variants)
+  p_line(&mut p)
+  p_all(&mut p, ["counts opaque ", Text::of_nat(f.opaque_count), " refutable ", Text::of_nat(f.refutable_count), ";"])
+  pb_closures(&mut p, f.closures, 0)
+}
+
+// A function in blocks as text, in a package that declares what it names.
+pub fn nir_print_blocks(pkg: NPackage, f: NFnBlocks): Text ! {div, overflow} {
+  var p := PState { pkg: pkg, out: Nil, indent: 0, bound: Ordmap::empty() }
+  p_fn_head(&mut p, f.head)
+  p_s(&mut p, " = blocks {")
+  p_set(&mut p.indent, 1)
+  pb_block_fn(&mut p, f.body)
+  p_set(&mut p.indent, 0)
+  p_line(&mut p)
+  p_s(&mut p, "}")
+  Text::concat_all(text_list_reverse(p.out))
+}

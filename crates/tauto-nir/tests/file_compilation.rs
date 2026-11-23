@@ -1,9 +1,10 @@
-use tauto_nir::{Callee, CompilePhase, ExprKind, Tick, compile_loaded_with_observer};
+use tauto_nibcheck::lower::{CompilePhase, compile_loaded_with_observer};
+use tauto_nir::{Callee, ExprKind, Tick};
 
 #[test]
 fn extracted_text_markers_do_not_certify_totality() {
     let extracted = r#"// tauto:extracted
-pub fn proved(n: i64): i64 ! {Div} { if n == 0 { 0 } else { proved(n - 1) } }
+pub fn proved(n: i64): i64 ! {div, overflow} { if n == 0 { 0 } else { proved(n - 1) } }
 // tauto:extracted-end
 "#
     .to_string();
@@ -13,18 +14,18 @@ pub fn proved(n: i64): i64 ! {Div} { if n == 0 { 0 } else { proved(n - 1) } }
         ("extracted.taut".into(), extracted),
         (
             "runtime.taut".into(),
-            r#"pub fn looping(n: i64): i64 ! {Div} { looping(n) }
-perform show("a", proved(1))
-perform show("b", looping(1))
+            r#"pub fn looping(n: i64): i64 ! {div} { looping(n) }
+show(&proved(1))
+show(&looping(1))
 "#
             .into(),
         ),
     ])
     .unwrap();
-    for javascript in [false, true] {
+    for target in [tauto_nir::Target::Rust, tauto_nir::Target::JavaScript] {
         let mut phases = Vec::new();
         let package =
-            compile_loaded_with_observer(&loaded, false, javascript, |phase| phases.push(phase))
+            compile_loaded_with_observer(&loaded, false, target, |phase| phases.push(phase))
                 .unwrap();
         assert_eq!(phases, [CompilePhase::Check, CompilePhase::Lower]);
         let mut proved = 0;

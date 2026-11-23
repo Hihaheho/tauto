@@ -1,6 +1,6 @@
 # Proof simplification
 
-`src/Simp.taut` exports the `simp_only` proof-step macro and a pure
+`src/simp.taut` exports the `simp_only` proof-step macro and a pure
 rewrite planner. It is not part of the standard tactic whitelist. See
 `examples/chain.taut` for executable proofs.
 

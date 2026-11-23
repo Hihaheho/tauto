@@ -1,0 +1,84 @@
+import "../src/lower.taut"
+import "../src/shape.taut"
+import "../src/value.taut"
+import std::base
+import std::data
+import "../src/eure.taut"
+
+// A trust policy in the shape of a tote's `Trust.eure`: read, checked against a shape and taken
+// apart, all checked by computing.
+
+fn policy_text(): Text {
+  "format = 1\nkind = \"policy\"\n@ indexes[]\nalias = \"alice\"\n@ indexes[]\nalias = \"local\"\n@ defaults\nmin_age = 60\n"
+}
+
+fn index_shape(): Shape {
+  FieldS("alias", false, TextS, FieldS("id", true, TextS, ClosedEnd))
+}
+
+fn policy_shape(): Shape {
+  FieldS(
+    "format",
+    false,
+    NatS,
+    FieldS(
+      "kind",
+      false,
+      TextS,
+      FieldS(
+        "track",
+        true,
+        TextS,
+        FieldS(
+          "indexes",
+          false,
+          ArrayS(index_shape()),
+          FieldS("defaults", true, FieldS("min_age", false, NatS, ClosedEnd), ClosedEnd)
+        )
+      )
+    )
+  )
+}
+
+fn policy(): Node {
+  Option::unwrap_or(parse_doc(policy_text()), blank())
+}
+
+theorem policy_conforms(): conforms(policy_shape(), policy()) = true {
+  Refl
+}
+
+fn index_aliases(n: Node): List(Text) {
+  match Option::bind(field(n, "indexes"), as_items) {
+    None => Nil
+    Some(
+      xs
+    ) => List::map((x: Node) => Option::unwrap_or(Option::bind(field(x, "alias"), as_text), ""), xs)
+  }
+}
+
+// Each `@ indexes[]` adds one index, in order.
+theorem policy_aliases(): index_aliases(policy()) = Cons("alice", Cons("local", Nil)) {
+  Refl
+}
+
+theorem policy_min_age(): Option::bind(at(policy(), Cons("defaults", Cons("min_age", Nil))), as_nat) = Some(60) {
+  Refl
+}
+
+// A policy with a text for `format`, a missing field and one too many.
+theorem bad_policy(): check(
+    policy_shape(),
+    Option::unwrap_or(parse_doc("format = \"1\"\n@ indexes[]\npin = true\n"), blank())
+  ) = Cons(
+    Problem::Mk("format", "an integer that is not negative"),
+    Cons(
+      Problem::Mk("kind", "this field"),
+      Cons(
+        Problem::Mk("indexes[0].alias", "this field"),
+        Cons(Problem::Mk("indexes[0].pin", "no such field"), Nil)
+      )
+    )
+  ) {
+  Refl
+}

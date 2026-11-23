@@ -1,7 +1,8 @@
+import "messages.taut"
 import "inference_terms.taut"
 import "inference_functions_checked.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "application_checked_sound.taut"
 import "argument_checked_sound.taut"
 import "checked_frame.taut"
@@ -16,15 +17,21 @@ import "expr_leaf_error_sound.taut"
 import "expr_leaf_frame.taut"
 import "inference_base.taut"
 import "inference_base_checked.taut"
+import "inference_base_error_sound.taut"
+import "inference_base.taut"
 import "inference_statements.taut"
 import "operation_checked_sound.taut"
 import "product_frame.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
+import "match_written.taut"
+import "match_written_frame.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "written_error_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 pub theorem inference_class_method_frame_checked(
   j: Nat,
@@ -45,37 +52,36 @@ pub theorem inference_class_method_frame_checked(
   ) from match found {
     true => checked_frame_read(
       c,
-      ck_rewrap1(ck_lookup(c, cat3(cn, ".", name), env, span)),
+      ck_rewrap1(ck_lookup(c, cat3(cn, "::", name), env, span, term.occurrence)),
       frame_rewrap(
         c,
-        ck_lookup(c, cat3(cn, ".", name), env, span),
-        ck_lookup_frame(c, cat3(cn, ".", name), env, span)
+        ck_lookup(c, cat3(cn, "::", name), env, span, term.occurrence),
+        ck_lookup_frame(c, cat3(cn, "::", name), env, span, term.occurrence)
       ),
       error_frame_rewrap(
         c,
-        ck_lookup(c, cat3(cn, ".", name), env, span),
-        ck_lookup_frame_errors(c, cat3(cn, ".", name), env, span)
+        ck_lookup(c, cat3(cn, "::", name), env, span, term.occurrence),
+        ck_lookup_frame_errors(c, cat3(cn, "::", name), env, span, term.occurrence)
       ),
       ordered
     )
     false => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
-      ck_rewrap1(ck_error(c, cat3(cn, " has no method ", name), span)),
+      ck_rewrap1(ck_error(c, no_method_message(cn, name), span)),
       checked_frame_read(
         c,
-        ck_rewrap1(ck_error(c, cat3(cn, " has no method ", name), span)),
+        ck_rewrap1(ck_error(c, no_method_message(cn, name), span)),
         frame_rewrap(
           c,
-          ck_error(c, cat3(cn, " has no method ", name), span),
-          ck_error_frame(c, cat3(cn, " has no method ", name), span)
+          ck_error(c, no_method_message(cn, name), span),
+          ck_error_frame(c, no_method_message(cn, name), span)
         ),
         error_frame_rewrap(
           c,
-          ck_error(c, cat3(cn, " has no method ", name), span),
-          ck_error_frame_errors(c, cat3(cn, " has no method ", name), span)
+          ck_error(c, no_method_message(cn, name), span),
+          ck_error_frame_errors(c, no_method_message(cn, name), span)
         ),
         ordered
       ),
@@ -107,20 +113,19 @@ pub theorem inference_field_base_frame_checked(
     inference_field_base(j, c, term, env, span, base, name, r#class)
   ) from match r#class {
     None => checked_frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c,
-      (b: Ty, c1: Checker) => ck_rewrap1(ck_field_of(c1, term, b, name)),
+      (b: Ty, c1: Checker) => ck_rewrap1(ck_field_through(c1, term, coerce_place(base), b, name)),
       ck_infer_in(j, c, base, env),
       inference_use_ck_infer_in_checked(j, c, base, env, ordered, ih),
       b => c1 => o_c1 => checked_frame_read(
         c1,
-        ck_rewrap1(ck_field_of(c1, term, b, name)),
-        frame_rewrap(c1, ck_field_of(c1, term, b, name), ck_field_of_frame(c1, term, b, name)),
+        ck_rewrap1(ck_field_through(c1, term, coerce_place(base), b, name)),
+        frame_rewrap(c1, ck_field_through(c1, term, coerce_place(base), b, name), ck_field_through_frame(c1, term, coerce_place(base), b, name)),
         error_frame_rewrap(
           c1,
-          ck_field_of(c1, term, b, name),
-          ck_field_of_frame_errors(c1, term, b, name)
+          ck_field_through(c1, term, coerce_place(base), b, name),
+          ck_field_through_frame_errors(c1, term, coerce_place(base), b, name)
         ),
         o_c1
       )
@@ -134,7 +139,7 @@ pub theorem inference_field_base_frame_checked(
       base,
       name,
       cn,
-      Ordmap::contains(inference_fns(c), cat3(cn, ".", name), Ordmap::compare_text),
+      Ordmap::contains(inference_fns(c), cat3(cn, "::", name), Ordmap::compare_text),
       ih,
       ordered
     )
@@ -151,15 +156,15 @@ pub theorem inference_term_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_term(j, c, term, env, span, sk)) {
-  ⊢ CkCheckedFrame(c, inference_term(j, c, term, env, span, sk)) from match sk {
+  match sk {
     SkVar(name) => checked_frame_read(
       c,
-      ck_rewrap1(ck_lookup(c, name, env, span)),
-      frame_rewrap(c, ck_lookup(c, name, env, span), ck_lookup_frame(c, name, env, span)),
+      ck_rewrap1(ck_lookup(c, surface_name_text(name), env, span, term.occurrence)),
+      frame_rewrap(c, ck_lookup(c, surface_name_text(name), env, span, term.occurrence), ck_lookup_frame(c, surface_name_text(name), env, span, term.occurrence)),
       error_frame_rewrap(
         c,
-        ck_lookup(c, name, env, span),
-        ck_lookup_frame_errors(c, name, env, span)
+        ck_lookup(c, surface_name_text(name), env, span, term.occurrence),
+        ck_lookup_frame_errors(c, surface_name_text(name), env, span, term.occurrence)
       ),
       ordered
     )
@@ -178,29 +183,28 @@ pub theorem inference_term_frame_checked(
       inference_use_ck_app_in_checked(j, c, term, function, arguments, env, ordered, ih)
     )
     SkPi(pat_params, pat_result, pat_effects) => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
       ck_rewrap1(
-        ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+        ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
       ),
       checked_frame_read(
         c,
         ck_rewrap1(
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
-          ck_error_frame(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
+          ck_error_frame(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         error_frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
           ck_error_frame_errors(
             c,
-            cat2("not supported yet: ", sk_name(inference_term_kind(term))),
+            not_supported_yet_message(sk_name(inference_term_kind(term))),
             span
           )
         ),
@@ -214,30 +218,29 @@ pub theorem inference_term_frame_checked(
         o_c1
       )
     )
-    SkExists(pat_binder, pat_domain, pat_body) => checked_frame_bind(
-      Unit,
-      Ty,
+    SkExists(pat_binder, pat_domain, pat_body, unused) => checked_frame_bind(
+      <A: Unit, B: Ty>,
       c,
       (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
       ck_rewrap1(
-        ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+        ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
       ),
       checked_frame_read(
         c,
         ck_rewrap1(
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
-          ck_error_frame(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
+          ck_error_frame(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         error_frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
           ck_error_frame_errors(
             c,
-            cat2("not supported yet: ", sk_name(inference_term_kind(term))),
+            not_supported_yet_message(sk_name(inference_term_kind(term))),
             span
           )
         ),
@@ -251,35 +254,34 @@ pub theorem inference_term_frame_checked(
         o_c1
       )
     )
-    SkLam(params, body) => checked_frame_rewrap(
+    SkLam(params, body, _, _) => checked_frame_rewrap(
       c,
       ck_lambda_in(j, c, term, Nil, env),
       inference_use_ck_lambda_in_checked(j, c, term, Nil, env, ordered, ih)
     )
     SkUnion(pat_parts) => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
       ck_rewrap1(
-        ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+        ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
       ),
       checked_frame_read(
         c,
         ck_rewrap1(
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
-          ck_error_frame(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
+          ck_error_frame(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         error_frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
           ck_error_frame_errors(
             c,
-            cat2("not supported yet: ", sk_name(inference_term_kind(term))),
+            not_supported_yet_message(sk_name(inference_term_kind(term))),
             span
           )
         ),
@@ -294,8 +296,7 @@ pub theorem inference_term_frame_checked(
       )
     )
     SkTagged(tag, x) => checked_frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c,
       (t: Ty, c1: Checker) => mut1(ty_tagged(Cons(tag, Nil), ck_resolve(c1, t)), c1),
       ck_infer_in(j, c, x, env),
@@ -307,45 +308,126 @@ pub theorem inference_term_frame_checked(
       )
     )
     SkIf(condition, th, el) => checked_frame_bind(
-      Ty,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
-      (ct: Ty, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
-        (checked: Unit, c2: Checker) => frame_bind(
-          Ty,
-          Ty,
-          (t: Ty, c3: Checker) => ck_rewrap1(ck_else_in(j, c3, t, el, env)),
-          ck_infer_in(j, c2, th, env)
+      (cleared: Unit, c1: Checker) => frame_bind(
+        <A: Ty, B: Ty>,
+        (ct: Ty, c2: Checker) => frame_bind(
+          <A: Unit, B: Ty>,
+          (checked: Unit, c3: Checker) => frame_bind(
+            <A: Unit, B: Ty>,
+            (set1: Unit, c4: Checker) => frame_bind(
+              <A: Ty, B: Ty>,
+              (t: Ty, c5: Checker) => frame_bind(
+                <A: Unit, B: Ty>,
+                (set2: Unit, c6: Checker) => ck_rewrap1(ck_else_in(j, c6, t, el, env)),
+                inference_set_result_hint(c5, ck_else_hint(el, inference_result_hint(c)))
+              ),
+              ck_infer_in(j, c4, th, env)
+            ),
+            inference_set_result_hint(c3, ck_result_hint_for(th, inference_result_hint(c)))
+          ),
+          ck_expect(c2, ct, TyBool, span_of(condition), what_if_condition_message())
         ),
-        ck_expect(c1, ct, TyBool, span_of(condition), "an `if` condition")
+        ck_infer_in(j, c1, condition, env)
       ),
-      ck_infer_in(j, c, condition, env),
-      inference_use_ck_infer_in_checked(j, c, condition, env, ordered, ih),
-      ct => c1 => o_c1 => checked_frame_bind(
-        Unit,
-        Ty,
+      inference_set_result_hint(c, None),
+      checked_frame_read(
+        c,
+        inference_set_result_hint(c, None),
+        inference_set_result_hint_frame(c, None),
+        inference_set_result_hint_frame_errors(c, None),
+        ordered
+      ),
+      cleared => c1 => o_c1 => checked_frame_bind(
+        <A: Ty, B: Ty>,
         c1,
-        (checked: Unit, c2: Checker) => frame_bind(
-          Ty,
-          Ty,
-          (t: Ty, c3: Checker) => ck_rewrap1(ck_else_in(j, c3, t, el, env)),
-          ck_infer_in(j, c2, th, env)
+        (ct: Ty, c2: Checker) => frame_bind(
+          <A: Unit, B: Ty>,
+          (checked: Unit, c3: Checker) => frame_bind(
+            <A: Unit, B: Ty>,
+            (set1: Unit, c4: Checker) => frame_bind(
+              <A: Ty, B: Ty>,
+              (t: Ty, c5: Checker) => frame_bind(
+                <A: Unit, B: Ty>,
+                (set2: Unit, c6: Checker) => ck_rewrap1(ck_else_in(j, c6, t, el, env)),
+                inference_set_result_hint(c5, ck_else_hint(el, inference_result_hint(c)))
+              ),
+              ck_infer_in(j, c4, th, env)
+            ),
+            inference_set_result_hint(c3, ck_result_hint_for(th, inference_result_hint(c)))
+          ),
+          ck_expect(c2, ct, TyBool, span_of(condition), what_if_condition_message())
         ),
-        ck_expect(c1, ct, TyBool, span_of(condition), "an `if` condition"),
-        ck_expect_run_frame_checked(c1, ct, TyBool, span_of(condition), "an `if` condition", o_c1),
-        checked => c2 => o_c2 => checked_frame_bind(
-          Ty,
-          Ty,
+        ck_infer_in(j, c1, condition, env),
+        inference_use_ck_infer_in_checked(j, c1, condition, env, o_c1, ih),
+        ct => c2 => o_c2 => checked_frame_bind(
+          <A: Unit, B: Ty>,
           c2,
-          (t: Ty, c3: Checker) => ck_rewrap1(ck_else_in(j, c3, t, el, env)),
-          ck_infer_in(j, c2, th, env),
-          inference_use_ck_infer_in_checked(j, c2, th, env, o_c2, ih),
-          t => c3 => o_c3 => checked_frame_rewrap(
+          (checked: Unit, c3: Checker) => frame_bind(
+            <A: Unit, B: Ty>,
+            (set1: Unit, c4: Checker) => frame_bind(
+              <A: Ty, B: Ty>,
+              (t: Ty, c5: Checker) => frame_bind(
+                <A: Unit, B: Ty>,
+                (set2: Unit, c6: Checker) => ck_rewrap1(ck_else_in(j, c6, t, el, env)),
+                inference_set_result_hint(c5, ck_else_hint(el, inference_result_hint(c)))
+              ),
+              ck_infer_in(j, c4, th, env)
+            ),
+            inference_set_result_hint(c3, ck_result_hint_for(th, inference_result_hint(c)))
+          ),
+          ck_expect(c2, ct, TyBool, span_of(condition), what_if_condition_message()),
+          ck_expect_run_frame_checked(c2, ct, TyBool, span_of(condition), what_if_condition_message(), o_c2),
+          checked => c3 => o_c3 => checked_frame_bind(
+            <A: Unit, B: Ty>,
             c3,
-            ck_else_in(j, c3, t, el, env),
-            inference_use_ck_else_in_checked(j, c3, t, el, env, o_c3, ih)
+            (set1: Unit, c4: Checker) => frame_bind(
+              <A: Ty, B: Ty>,
+              (t: Ty, c5: Checker) => frame_bind(
+                <A: Unit, B: Ty>,
+                (set2: Unit, c6: Checker) => ck_rewrap1(ck_else_in(j, c6, t, el, env)),
+                inference_set_result_hint(c5, ck_else_hint(el, inference_result_hint(c)))
+              ),
+              ck_infer_in(j, c4, th, env)
+            ),
+            inference_set_result_hint(c3, ck_result_hint_for(th, inference_result_hint(c))),
+            checked_frame_read(
+              c3,
+              inference_set_result_hint(c3, ck_result_hint_for(th, inference_result_hint(c))),
+              inference_set_result_hint_frame(c3, ck_result_hint_for(th, inference_result_hint(c))),
+              inference_set_result_hint_frame_errors(c3, ck_result_hint_for(th, inference_result_hint(c))),
+              o_c3
+            ),
+            set1 => c4 => o_c4 => checked_frame_bind(
+              <A: Ty, B: Ty>,
+              c4,
+              (t: Ty, c5: Checker) => frame_bind(
+                <A: Unit, B: Ty>,
+                (set2: Unit, c6: Checker) => ck_rewrap1(ck_else_in(j, c6, t, el, env)),
+                inference_set_result_hint(c5, ck_else_hint(el, inference_result_hint(c)))
+              ),
+              ck_infer_in(j, c4, th, env),
+              inference_use_ck_infer_in_checked(j, c4, th, env, o_c4, ih),
+              t => c5 => o_c5 => checked_frame_bind(
+                <A: Unit, B: Ty>,
+                c5,
+                (set2: Unit, c6: Checker) => ck_rewrap1(ck_else_in(j, c6, t, el, env)),
+                inference_set_result_hint(c5, ck_else_hint(el, inference_result_hint(c))),
+                checked_frame_read(
+                  c5,
+                  inference_set_result_hint(c5, ck_else_hint(el, inference_result_hint(c))),
+                  inference_set_result_hint_frame(c5, ck_else_hint(el, inference_result_hint(c))),
+                  inference_set_result_hint_frame_errors(c5, ck_else_hint(el, inference_result_hint(c))),
+                  o_c5
+                ),
+                set2 => c6 => o_c6 => checked_frame_rewrap(
+                  c6,
+                  ck_else_in(j, c6, t, el, env),
+                  inference_use_ck_else_in_checked(j, c6, t, el, env, o_c6, ih)
+                )
+              )
+            )
           )
         )
       )
@@ -362,18 +444,54 @@ pub theorem inference_term_frame_checked(
       ih,
       ordered
     )
-    SkBlock(stmts) => inference_bind_scope_frame_checked(
-      Ty,
-      Ty,
+    SkBlock(stmts) => checked_frame_bind(
+      <A: Unit, B: Ty>,
       c,
-      (t: Ty, c1: Checker, inner: Scope) => mut1(t, c1),
-      ck_block_in(j, c, stmts, ScopeMk(env), false, TyUnit),
-      inference_use_ck_block_in_checked(j, c, stmts, ScopeMk(env), false, TyUnit, ordered, ih),
-      t => c1 => inner => o_c1 => checked_frame_return(c1, t, o_c1)
+      (armed: Unit, c1: Checker) => inference_bind_scope(
+        <A: Ty, B: Ty>,
+        (t: Ty, c2: Checker, inner: Scope) => frame_bind(
+          <A: Unit, B: Ty>,
+          (restored: Unit, c3: Checker) => mut1(t, c3),
+          inference_set_arm_hint(c2, inference_arm_hint(c))
+        ),
+        ck_block_in(j, c1, stmts, ScopeMk(env), false, TyUnit)
+      ),
+      inference_set_arm_hint(c, inference_result_hint(c)),
+      checked_frame_read(
+        c,
+        inference_set_arm_hint(c, inference_result_hint(c)),
+        inference_set_arm_hint_frame(c, inference_result_hint(c)),
+        inference_set_arm_hint_frame_errors(c, inference_result_hint(c)),
+        ordered
+      ),
+      armed => c1 => o_c1 => inference_bind_scope_frame_checked(
+        <A: Ty, B: Ty>,
+        c1,
+        (t: Ty, c2: Checker, inner: Scope) => frame_bind(
+          <A: Unit, B: Ty>,
+          (restored: Unit, c3: Checker) => mut1(t, c3),
+          inference_set_arm_hint(c2, inference_arm_hint(c))
+        ),
+        ck_block_in(j, c1, stmts, ScopeMk(env), false, TyUnit),
+        inference_use_ck_block_in_checked(j, c1, stmts, ScopeMk(env), false, TyUnit, o_c1, ih),
+        t => c2 => inner => o_c2 => checked_frame_bind(
+          <A: Unit, B: Ty>,
+          c2,
+          (restored: Unit, c3: Checker) => mut1(t, c3),
+          inference_set_arm_hint(c2, inference_arm_hint(c)),
+          checked_frame_read(
+            c2,
+            inference_set_arm_hint(c2, inference_arm_hint(c)),
+            inference_set_arm_hint_frame(c2, inference_arm_hint(c)),
+            inference_set_arm_hint_frame_errors(c2, inference_arm_hint(c)),
+            o_c2
+          ),
+          restored => c3 => o_c3 => checked_frame_return(c3, t, o_c3)
+        )
+      )
     )
     SkPerform(eff, args) => checked_frame_bind(
-      List(Ty),
-      Ty,
+      <A: List(Ty), B: Ty>,
       c,
       (types: List(Ty), c1: Checker) => ck_rewrap1(ck_perform_of(c1, eff, types, args, span)),
       ck_infer_each_in(j, c, args, env),
@@ -390,66 +508,56 @@ pub theorem inference_term_frame_checked(
       inference_use_ck_handle_in_checked(j, c, body, handlers, env, ordered, ih)
     )
     SkBudget(steps_memory, steps, body) => checked_frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c,
       (s: Ty, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (checked: Unit, c2: Checker) => frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (t: Ty, c3: Checker) => frame_bind(
-            Unit,
-            Ty,
+            <A: Unit, B: Ty>,
             (answered: Unit, c4: Checker) => mut1(t, c4),
             ck_budget_answer(c3, t, span)
           ),
           ck_infer_in(j, c2, body, env)
         ),
-        ck_expect(c1, s, TyInt(Width64), span_of(steps), "a budget's steps")
+        ck_expect(c1, s, TyInt(WidthU64), span_of(steps), what_budget_steps_message())
       ),
       ck_infer_in(j, c, steps, env),
       inference_use_ck_infer_in_checked(j, c, steps, env, ordered, ih),
       s => c1 => o_c1 => checked_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c1,
         (checked: Unit, c2: Checker) => frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (t: Ty, c3: Checker) => frame_bind(
-            Unit,
-            Ty,
+            <A: Unit, B: Ty>,
             (answered: Unit, c4: Checker) => mut1(t, c4),
             ck_budget_answer(c3, t, span)
           ),
           ck_infer_in(j, c2, body, env)
         ),
-        ck_expect(c1, s, TyInt(Width64), span_of(steps), "a budget's steps"),
+        ck_expect(c1, s, TyInt(WidthU64), span_of(steps), what_budget_steps_message()),
         ck_expect_run_frame_checked(
           c1,
           s,
-          TyInt(Width64),
+          TyInt(WidthU64),
           span_of(steps),
-          "a budget's steps",
+          what_budget_steps_message(),
           o_c1
         ),
         checked => c2 => o_c2 => checked_frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           c2,
           (t: Ty, c3: Checker) => frame_bind(
-            Unit,
-            Ty,
+            <A: Unit, B: Ty>,
             (answered: Unit, c4: Checker) => mut1(t, c4),
             ck_budget_answer(c3, t, span)
           ),
           ck_infer_in(j, c2, body, env),
           inference_use_ck_infer_in_checked(j, c2, body, env, o_c2, ih),
           t => c3 => o_c3 => checked_frame_bind(
-            Unit,
-            Ty,
+            <A: Unit, B: Ty>,
             c3,
             (answered: Unit, c4: Checker) => mut1(t, c4),
             ck_budget_answer(c3, t, span),
@@ -459,35 +567,127 @@ pub theorem inference_term_frame_checked(
         )
       )
     )
-    SkMatch(scrutinee, motive, arms, binder) => checked_frame_rewrap(
+    SkMatch(scrutinee, motive, arms, binder, _) => checked_frame_bind(
+      <A: Option(Ty) × List(Option(Ty)), B: Ty>,
       c,
-      ck_match_expr_in(j, c, scrutinee, arms, env, span),
-      inference_use_ck_match_expr_in_checked(j, c, scrutinee, arms, env, span, ordered, ih)
+      (before: Option(Ty) × List(Option(Ty)), c1: Checker) => frame_bind(
+        <A: Unit, B: Ty>,
+        (armed: Unit, c2: Checker) => frame_bind(
+          <A: Unit, B: Ty>,
+          (cleared: Unit, c3: Checker) => frame_bind(
+            <A: Ty, B: Ty>,
+            (got: Ty, c4: Checker) => frame_bind(
+              <A: Unit, B: Ty>,
+              (restored: Unit, c5: Checker) => ck_rewrap1(ck_match_after(c5, before, arms, got, span)),
+              inference_set_arm_hint(c4, inference_arm_hint(c))
+            ),
+            ck_match_expr_in(j, c3, scrutinee, arms, env, span)
+          ),
+          inference_set_result_hint(c2, None)
+        ),
+        inference_set_arm_hint(c1, ck_hint_or_before(before, inference_result_hint(c)))
+      ),
+      ck_match_before(c, motive, arms, env),
+      ck_match_before_run_frame_checked(c, motive, arms, env, ordered),
+      before => c1 => o_c1 => checked_frame_bind(
+        <A: Unit, B: Ty>,
+        c1,
+        (armed: Unit, c2: Checker) => frame_bind(
+          <A: Unit, B: Ty>,
+          (cleared: Unit, c3: Checker) => frame_bind(
+            <A: Ty, B: Ty>,
+            (got: Ty, c4: Checker) => frame_bind(
+              <A: Unit, B: Ty>,
+              (restored: Unit, c5: Checker) => ck_rewrap1(ck_match_after(c5, before, arms, got, span)),
+              inference_set_arm_hint(c4, inference_arm_hint(c))
+            ),
+            ck_match_expr_in(j, c3, scrutinee, arms, env, span)
+          ),
+          inference_set_result_hint(c2, None)
+        ),
+        inference_set_arm_hint(c1, ck_hint_or_before(before, inference_result_hint(c))),
+        checked_frame_read(
+          c1,
+          inference_set_arm_hint(c1, ck_hint_or_before(before, inference_result_hint(c))),
+          inference_set_arm_hint_frame(c1, ck_hint_or_before(before, inference_result_hint(c))),
+          inference_set_arm_hint_frame_errors(c1, ck_hint_or_before(before, inference_result_hint(c))),
+          o_c1
+        ),
+        armed => c2 => o_c2 => checked_frame_bind(
+          <A: Unit, B: Ty>,
+          c2,
+          (cleared: Unit, c3: Checker) => frame_bind(
+            <A: Ty, B: Ty>,
+            (got: Ty, c4: Checker) => frame_bind(
+              <A: Unit, B: Ty>,
+              (restored: Unit, c5: Checker) => ck_rewrap1(ck_match_after(c5, before, arms, got, span)),
+              inference_set_arm_hint(c4, inference_arm_hint(c))
+            ),
+            ck_match_expr_in(j, c3, scrutinee, arms, env, span)
+          ),
+          inference_set_result_hint(c2, None),
+          checked_frame_read(
+            c2,
+            inference_set_result_hint(c2, None),
+            inference_set_result_hint_frame(c2, None),
+            inference_set_result_hint_frame_errors(c2, None),
+            o_c2
+          ),
+          cleared => c3 => o_c3 => checked_frame_bind(
+            <A: Ty, B: Ty>,
+            c3,
+            (got: Ty, c4: Checker) => frame_bind(
+              <A: Unit, B: Ty>,
+              (restored: Unit, c5: Checker) => ck_rewrap1(ck_match_after(c5, before, arms, got, span)),
+              inference_set_arm_hint(c4, inference_arm_hint(c))
+            ),
+            ck_match_expr_in(j, c3, scrutinee, arms, env, span),
+            inference_use_ck_match_expr_in_checked(j, c3, scrutinee, arms, env, span, o_c3, ih),
+            got => c4 => o_c4 => checked_frame_bind(
+              <A: Unit, B: Ty>,
+              c4,
+              (restored: Unit, c5: Checker) => ck_rewrap1(ck_match_after(c5, before, arms, got, span)),
+              inference_set_arm_hint(c4, inference_arm_hint(c)),
+              checked_frame_read(
+                c4,
+                inference_set_arm_hint(c4, inference_arm_hint(c)),
+                inference_set_arm_hint_frame(c4, inference_arm_hint(c)),
+                inference_set_arm_hint_frame_errors(c4, inference_arm_hint(c)),
+                o_c4
+              ),
+              restored => c5 => o_c5 => checked_frame_rewrap(
+                c5,
+                ck_match_after(c5, before, arms, got, span),
+                ck_match_after_run_frame_checked(c5, before, arms, got, span, o_c5)
+              )
+            )
+          )
+        )
+      )
     )
     SkHole(pat_name) => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
       ck_rewrap1(
-        ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+        ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
       ),
       checked_frame_read(
         c,
         ck_rewrap1(
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
-          ck_error_frame(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
+          ck_error_frame(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         error_frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
           ck_error_frame_errors(
             c,
-            cat2("not supported yet: ", sk_name(inference_term_kind(term))),
+            not_supported_yet_message(sk_name(inference_term_kind(term))),
             span
           )
         ),
@@ -506,13 +706,11 @@ pub theorem inference_term_frame_checked(
       ck_record_in(j, c, name, fields, env, span),
       inference_use_ck_record_in_checked(j, c, name, fields, env, span, ordered, ih)
     )
-    SkBorrow(mutable, inner) => checked_frame_bind(
-      Unit,
-      Ty,
+    SkBorrow(mutable, mutable_orig, inner) => checked_frame_bind(
+      <A: Unit, B: Ty>,
       c,
       (checked: Unit, c1: Checker) => frame_bind(
-        Ty,
-        Ty,
+        <A: Ty, B: Ty>,
         (t: Ty, c2: Checker) => mut1(ck_borrow_of(c2, t, mutable), c2),
         ck_infer_in(j, c1, inner, env)
       ),
@@ -525,8 +723,7 @@ pub theorem inference_term_frame_checked(
         ordered
       ),
       checked => c1 => o_c1 => checked_frame_bind(
-        Ty,
-        Ty,
+        <A: Ty, B: Ty>,
         c1,
         (t: Ty, c2: Checker) => mut1(ck_borrow_of(c2, t, mutable), c2),
         ck_infer_in(j, c1, inner, env),
@@ -535,29 +732,28 @@ pub theorem inference_term_frame_checked(
       )
     )
     SkFnKind(pat_kind, pat_ty) => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
       ck_rewrap1(
-        ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+        ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
       ),
       checked_frame_read(
         c,
         ck_rewrap1(
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
-          ck_error_frame(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
+          ck_error_frame(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         error_frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
           ck_error_frame_errors(
             c,
-            cat2("not supported yet: ", sk_name(inference_term_kind(term))),
+            not_supported_yet_message(sk_name(inference_term_kind(term))),
             span
           )
         ),
@@ -571,35 +767,70 @@ pub theorem inference_term_frame_checked(
         o_c1
       )
     )
-    SkBorrowLam(borrows, lam) => checked_frame_rewrap(
+    SkBorrowLam(r#borrows, lam) => checked_frame_rewrap(
       c,
-      ck_lambda_in(j, c, lam, borrows, env),
-      inference_use_ck_lambda_in_checked(j, c, lam, borrows, env, ordered, ih)
+      ck_lambda_in(j, c, lam, r#borrows, env),
+      inference_use_ck_lambda_in_checked(j, c, lam, r#borrows, env, ordered, ih)
     )
     SkOther(pat_what) => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
       ck_rewrap1(
-        ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+        ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
       ),
       checked_frame_read(
         c,
         ck_rewrap1(
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
-          ck_error_frame(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
+          ck_error_frame(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         error_frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
           ck_error_frame_errors(
             c,
-            cat2("not supported yet: ", sk_name(inference_term_kind(term))),
+            not_supported_yet_message(sk_name(inference_term_kind(term))),
+            span
+          )
+        ),
+        ordered
+      ),
+      reported => c1 => o_c1 => checked_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        error_frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame_errors(c1)),
+        o_c1
+      )
+    )
+    SkAscribe(pat_what, pat_what_ty) => checked_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_rewrap1(
+        ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
+      ),
+      checked_frame_read(
+        c,
+        ck_rewrap1(
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
+        ),
+        frame_rewrap(
+          c,
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
+          ck_error_frame(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
+        ),
+        error_frame_rewrap(
+          c,
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
+          ck_error_frame_errors(
+            c,
+            not_supported_yet_message(sk_name(inference_term_kind(term))),
             span
           )
         ),
@@ -614,29 +845,28 @@ pub theorem inference_term_frame_checked(
       )
     )
     SkRow(pat_what_effects) => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
       ck_rewrap1(
-        ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+        ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
       ),
       checked_frame_read(
         c,
         ck_rewrap1(
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
-          ck_error_frame(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
+          ck_error_frame(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         error_frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
           ck_error_frame_errors(
             c,
-            cat2("not supported yet: ", sk_name(inference_term_kind(term))),
+            not_supported_yet_message(sk_name(inference_term_kind(term))),
             span
           )
         ),
@@ -650,81 +880,12 @@ pub theorem inference_term_frame_checked(
         o_c1
       )
     )
-    SkFloat(pat_what) => checked_frame_bind(
-      Unit,
-      Ty,
+    SkFloat(pat_what) => checked_frame_read(
       c,
-      (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
-      ck_rewrap1(
-        ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
-      ),
-      checked_frame_read(
-        c,
-        ck_rewrap1(
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
-        ),
-        frame_rewrap(
-          c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
-          ck_error_frame(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
-        ),
-        error_frame_rewrap(
-          c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
-          ck_error_frame_errors(
-            c,
-            cat2("not supported yet: ", sk_name(inference_term_kind(term))),
-            span
-          )
-        ),
-        ordered
-      ),
-      reported => c1 => o_c1 => checked_frame_read(
-        c1,
-        ck_rewrap1(ck_fresh(c1)),
-        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
-        error_frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame_errors(c1)),
-        o_c1
-      )
-    )
-    SkProduct(members) => checked_frame_bind(
-      List(Ty),
-      Ty,
-      c,
-      (types: List(Ty), c1: Checker) => ck_rewrap1(ck_product_of(c1, types, members, span)),
-      ck_infer_each_in(j, c, members, env),
-      inference_use_ck_infer_each_in_checked(j, c, members, env, ordered, ih),
-      types => c1 => o_c1 => checked_frame_rewrap(
-        c1,
-        ck_product_of(c1, types, members, span),
-        ck_product_of_run_frame_checked(c1, types, members, span, o_c1)
-      )
-    )
-    SkProject(base, ty) => checked_frame_bind(
-      Ty,
-      Ty,
-      c,
-      (b: Ty, c1: Checker) => frame_bind(
-        Ty,
-        Ty,
-        (want: Ty, c2: Checker) => ck_rewrap1(ck_project_of(c2, b, want, span)),
-        ck_written_here(c1, ty)
-      ),
-      ck_infer_in(j, c, base, env),
-      inference_use_ck_infer_in_checked(j, c, base, env, ordered, ih),
-      b => c1 => o_c1 => checked_frame_bind(
-        Ty,
-        Ty,
-        c1,
-        (want: Ty, c2: Checker) => ck_rewrap1(ck_project_of(c2, b, want, span)),
-        ck_written_here(c1, ty),
-        ck_written_here_run_frame_checked(c1, ty, o_c1),
-        want => c2 => o_c2 => checked_frame_rewrap(
-          c2,
-          ck_project_of(c2, b, want, span),
-          ck_project_of_run_frame_checked(c2, b, want, span, o_c2)
-        )
-      )
+      ck_rewrap1(ck_float_literal(c, pat_what, span)),
+      frame_rewrap(c, ck_float_literal(c, pat_what, span), ck_float_literal_frame(c, pat_what, span)),
+      error_frame_rewrap(c, ck_float_literal(c, pat_what, span), ck_float_literal_frame_errors(c, pat_what, span)),
+      ordered
     )
     SkMacroCall(pat_name, pat_arg) => checked_frame_read(
       c,
@@ -755,29 +916,28 @@ pub theorem inference_term_frame_checked(
       ordered
     )
     SkStep(pat_tactic, pat_arg, pat_call_start, pat_call_end, pat_before, pat_arms) => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (reported: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
       ck_rewrap1(
-        ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+        ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
       ),
       checked_frame_read(
         c,
         ck_rewrap1(
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
-          ck_error_frame(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span)
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
+          ck_error_frame(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span)
         ),
         error_frame_rewrap(
           c,
-          ck_error(c, cat2("not supported yet: ", sk_name(inference_term_kind(term))), span),
+          ck_error(c, not_supported_yet_message(sk_name(inference_term_kind(term))), span),
           ck_error_frame_errors(
             c,
-            cat2("not supported yet: ", sk_name(inference_term_kind(term))),
+            not_supported_yet_message(sk_name(inference_term_kind(term))),
             span
           )
         ),

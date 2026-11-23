@@ -1,7 +1,7 @@
 import "rules_data_body.taut"
 import "field_recheck_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -9,6 +9,7 @@ import "diagnostic_sound.taut"
 import "rules_data_fields.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -17,7 +18,7 @@ pub theorem data_generic_map_sound(
   names: List(Text),
   initial: Ordmap(Text, Ty)
 ): DataGenericMap(names, initial, ck_param_generics(names, KindLinear, initial)) {
-  ⊢ DataGenericMap(names, initial, ck_param_generics(names, KindLinear, initial)) from match names {
+  match names {
     Nil => DataGenericMapNil(initial)
     Cons(name, rest) => DataGenericMapCons(
       name,
@@ -46,7 +47,7 @@ pub theorem data_generic_map_determined<names: List(
 )>(
   bindings: DataGenericMap(names, initial, final)
 ): ck_param_generics(names, KindLinear, initial) = final {
-  ⊢ ck_param_generics(names, KindLinear, initial) = final from match bindings {
+  match bindings {
     DataGenericMapNil(map) => Refl
     DataGenericMapCons(name, rest, before, after, tail) => data_generic_map_determined(tail)
   }
@@ -68,16 +69,12 @@ pub theorem data_body_recheck<source: SurfaceData, constructors: List(
     )
   )
 ): DataBodyFormed(ck_datas_of(c), source, constructors) {
-  ⊢ DataBodyFormed(ck_datas_of(c), source, constructors) from match known {
+  match known {
     Mk(old_env, generics, bindings, meaning) => DataBodyFormed::Mk(
       ck_param_generics(body_source_generics(source), KindLinear, Ordmap::empty()),
       data_generic_map_sound(body_source_generics(source), Ordmap::empty()),
       ck_recheck_ctors_sound(
-        old_env,
-        ck_param_generics(body_source_generics(source), KindLinear, Ordmap::empty()),
-        false,
-        body_source_ctors(source),
-        constructors,
+        <old_env: old_env, generics: ck_param_generics(body_source_generics(source), KindLinear, Ordmap::empty()), partial: false, source: body_source_ctors(source), ctors: constructors>,
         Eq::subst(
           (map: Ordmap(Text, Ty)) => WrittenDataCtors(
             old_env,

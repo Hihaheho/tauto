@@ -9,7 +9,17 @@ fn generate(
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("Tauto.eure"),
-        format!("package {{ name = \"exports\"\n version = \"0.1.0\" }}\nrust {{ {exports} }}\n"),
+        {
+            // `exports = [...]` is a key of the manifest; the rest is `rust`'s.
+            let (list, rust) = match exports.strip_prefix("exports = [") {
+                Some(rest) => {
+                    let end = rest.find(']').unwrap();
+                    (format!("exports = [{}]\n", &rest[..end]), rest[end + 1..].trim().to_string())
+                }
+                None => (String::new(), exports.to_string()),
+            };
+            format!("package {{ name = \"exports\"\n version = \"0.1.0\" }}\n{list}rust {{ {rust} }}\n")
+        },
     )
     .unwrap();
     std::fs::write(dir.join("src/main.taut"), source).unwrap();
@@ -19,11 +29,14 @@ fn generate(
 }
 fn source_source() -> &'static str {
     r#"
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-fn safe(steps: i64): Bool {
-  handle { budget(steps: steps) { visit(2); true } } with { exceeded(info), k => false }
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+fn safe(steps: u64): Bool ! {budget} {
+  handle { perform budget(steps, () => { visit(2); true }) } with {
+    exceeded(info), k => false
+    overflow() => false
+  }
 }
-fn unused(n: i64): i64 { n + 1 }
+fn unused(n: i64): i64 { handle { n + 1 } with { overflow() => 0 } }
 "#
 }
 #[test]
@@ -33,7 +46,7 @@ fn selection_omission_and_empty_have_distinct_contracts() {
     assert!(
         warnings
             .iter()
-            .any(|w| w.contains("visit") && w.contains("Div"))
+            .any(|w| w.contains("visit") && w.contains("div"))
     );
     assert!(legacy.contains("pub fn unused"));
     let (_, selected, warnings) =
@@ -53,9 +66,9 @@ fn selection_omission_and_empty_have_distinct_contracts() {
 fn explicit_invalid_exports_are_errors() {
     tauto_messages::install();
     for (name, setting, expected) in [
-        ("unknown", "exports = [\"typo\"]", "unknown or generic"),
-        ("duplicate", "exports = [\"safe\", \"safe\"]", "duplicate"),
-        ("effect", "exports = [\"visit\"]", "Div"),
+        ("unknown", "exports = [\"typo\"]", "not a function of the program"),
+        ("duplicate", "exports = [\"safe\", \"safe\"]", "twice"),
+        ("effect", "exports = [\"visit\"]", "div"),
     ] {
         let err = generate(name, setting, source_source()).unwrap_err();
         assert!(err.contains(expected), "{err}");
@@ -73,7 +86,7 @@ fn explicit_invalid_exports_are_errors() {
         r#"fn identity<A>(x: A): A { x }"#,
     )
     .unwrap_err();
-    assert!(err.contains("unknown or generic"), "{err}");
+    assert!(err.contains("has generics"), "{err}");
 }
 #[test]
 fn unselected_helpers_are_still_checked() {
@@ -122,7 +135,7 @@ theorem box_zero(): Valid(Some(Box::Mk(Zero)), Zero) { Refl }
 #[test]
 fn borrowed_callback_facade_is_explicit_and_effect_free() {
     tauto_messages::install();
-    let source = r#"fn apply(&f: (u64) -> u64, value: u64): u64 { f(value) }"#;
+    let source = r#"fn apply(f: &((u64) -> u64), value: u64): u64 { f(value) }"#;
     for (name, setting) in [
         ("borrowed-selected", "exports = [\"apply\"]"),
         ("borrowed-legacy", ""),
@@ -136,24 +149,25 @@ fn borrowed_callback_facade_is_explicit_and_effect_free() {
     for (name, source) in [
         (
             "borrowed-mut",
-            r#"fn apply(&mut f: (u64) -> u64, value: u64): u64 { f(value) }"#,
+            r#"fn apply(f: &mut ((u64) -> u64), value: u64): u64 { f(value) }"#,
         ),
         (
             "borrowed-effect",
-            r#"fn apply(&f: (u64) -> u64 ! {∀ A. show(A)}, value: u64): u64 { handle { f(value) } with { ∀ A. show<A>(name, text), k => k(#()) } }"#,
+            r#"effect note(): Unit
+fn apply(f: &((u64) -> u64 ! {note}), value: u64): u64 { handle { f(value) } with { note(), k => k(#()) } }"#,
         ),
         (
             "borrowed-nested-fn",
-            r#"fn apply(&f: (() -> u64) -> u64): u64 { 0 }"#,
+            r#"fn apply(f: &((() -> u64) -> u64)): u64 { 0 }"#,
         ),
         (
             "borrowed-return-fn",
-            r#"fn apply(&f: () -> (() -> u64)): u64 { 0 }"#,
+            r#"fn apply(f: &(() -> (() -> u64))): u64 { 0 }"#,
         ),
         (
             "borrowed-hidden-fn",
             r#"struct Holder { callback: () -> u64 }
-fn apply(&f: (Holder) -> u64): u64 { 0 }"#,
+fn apply(f: &((Holder) -> u64)): u64 { 0 }"#,
         ),
     ] {
         let error = generate(name, "exports = [\"apply\"]", source).unwrap_err();
@@ -167,18 +181,18 @@ fn borrowed_callbacks_cannot_supply_borrowed_or_function_results() {
     for (name, source) in [
         (
             "borrowed-result",
-            r#"fn apply(&f: (&Text) -> &Text, value: u64): u64 { value }"#,
+            r#"fn apply(f: &((&Text) -> &Text), value: u64): u64 { value }"#,
         ),
         (
             "borrowed-hidden-result",
             r#"struct Holder { callback: () -> u64 }
-fn apply(&f: () -> Holder, value: u64): u64 { value }"#,
+fn apply(f: &(() -> Holder), value: u64): u64 { value }"#,
         ),
     ] {
         let error = generate(name, "exports = [\"apply\"]", source).unwrap_err();
         assert!(error.contains("not exposed to Rust"), "{name}: {error}");
     }
-    let source = r#"fn apply(&f: (u64) -> u64): ((u64) -> u64) { (value) => f(value) }"#;
+    let source = r#"fn apply(f: &((u64) -> u64)): ((u64) -> u64) { (value) => f(value) }"#;
     let error = generate("borrowed-escape", "exports = [\"apply\"]", source).unwrap_err();
     assert!(
         error.contains("borrow") || error.contains("not exposed to Rust"),
@@ -190,8 +204,8 @@ fn apply(&f: () -> Holder, value: u64): u64 { value }"#,
 fn a_budget_cannot_export_a_callback_result() {
     tauto_messages::install();
     let source = r#"
-fn leak(&read: (u64) -> u64): ((u64) -> u64) {
-  handle { budget(steps: 1000) { (i) => read(i) } } with { exceeded(info), k => (j) => 0 }
+fn leak(read: &((u64) -> u64)): ((u64) -> u64) ! {budget} {
+  handle { perform budget(1000, () => { (i) => read(i) }) } with { exceeded(info), k => (j) => 0 }
 }
 "#;
     let error = generate("budget-return", "exports = [\"leak\"]", source).unwrap_err();
@@ -227,7 +241,7 @@ fn nonresuming_entries_reject_missing_unselected_and_unsupported_targets() {
             "contract-effect",
             "nonresuming { entries { trusted = \"visit\" } }",
             source_source(),
-            "performs Div",
+            "performs div",
         ),
         (
             "contract-owned-callback",
@@ -250,8 +264,8 @@ fn nonresuming_entries_reject_missing_unselected_and_unsupported_targets() {
 #[test]
 fn nonresuming_entries_are_additive_to_the_selected_callback_facade() {
     tauto_messages::install();
-    let source = r#"fn run(&read: (u64) -> u64, value: u64): u64 {
-      handle { budget(steps: 10) { read(value) } } with { exceeded(info), k => 0 }
+    let source = r#"fn run(read: &((u64) -> u64), value: u64): u64 ! {budget} {
+      handle { perform budget(10, () => { read(value) }) } with { exceeded(info), k => 0 }
     }"#;
     let (_, generated, warnings) = generate(
         "contract-selected",
@@ -269,11 +283,11 @@ fn nonresuming_entries_are_additive_to_the_selected_callback_facade() {
 #[test]
 fn uniffi_exports_wrap_the_facade() {
     tauto_messages::install();
-    let source = r#"import std::prelude::Affine
+    let source = r#"import std::prelude::collections
 
 fn greet(name: Text, times: i64): Text { if times > 0 { name } else { "nobody" } }
 fn first(names: Vec(Text)): Option(Text) { None }
-fn twice(n: i64): i64 { n + n }
+fn twice(n: i64): i64 { handle { n + n } with { overflow() => 0 } }
 fn keep(u: Unit): i64 { 1 }
 "#;
     let (_, text, warnings) = generate("uniffi", "uniffi = true", source).unwrap();
@@ -299,7 +313,7 @@ fn keep(u: Unit): i64 { 1 }
     assert!(!plain.contains("uniffi::export"));
     let err = generate(
         "uniffi-keep",
-        "uniffi = true\n exports = [\"keep\"]",
+        "exports = [\"keep\"] uniffi = true",
         source,
     )
     .unwrap_err();

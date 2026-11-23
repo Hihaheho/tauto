@@ -74,11 +74,26 @@ fn pages_highlight_sources_and_link_names_across_imports() {
     // Line anchors, keywords and comments.
     assert!(page.contains("id=\"L3\""), "{page}");
     assert!(page.contains("<span class=\"kw\">fn</span>"), "{page}");
+    // Names take their colours from the tokens around them, as in an editor:
+    // a function, its parameters and the types, a link keeping its colour.
+    assert!(page.contains("<span class=\"fn\">twice</span>"), "{page}");
+    assert!(
+        page.contains("<span class=\"var\">n</span>: <span class=\"ty\">i64</span>")
+            || page.contains("<span class=\"var\">n</span>: i64"),
+        "{page}"
+    );
+    assert!(
+        page.contains("><span class=\"ty\">Dot</span></a>"),
+        "{page}"
+    );
     // A call links within the file; a name from an import links to its page.
-    assert!(page.contains("<a href=\"#L3\">twice</a>"), "{page}");
-    assert!(page.contains("<a href=\"lib/shapes.taut.html#L6\">area</a>(<a href=\"lib/shapes.taut.html#L3\">Dot</a>)"), "{page}");
+    assert!(
+        page.contains("<a href=\"#L3\"><span class=\"fn\">twice</span></a>"),
+        "{page}"
+    );
+    assert!(page.contains("<a href=\"lib/shapes.taut.html#L6\"><span class=\"fn\">area</span></a>(<a href=\"lib/shapes.taut.html#L3\"><span class=\"ty\">Dot</span></a>)"), "{page}");
     // A local of the same name is not linked.
-    assert!(page.contains("twice</a>(area)"), "{page}");
+    assert!(page.contains("twice</span></a>(area)"), "{page}");
     let lib = fs::read_to_string(output.join("lib/shapes.taut.html")).unwrap();
     assert!(
         lib.contains("<span class=\"com\">// Shapes.</span>"),
@@ -104,7 +119,7 @@ fn package_discovery_obeys_sources_and_never_executes_runtime() {
     tmp.write(
         "src/main.taut",
         r#"fn twice(n: i64): i64 { n + n }
-perform show("must-not-run", 1)
+show(&1)
 "#,
     );
     tmp.write("outside.taut", "not valid source !\n");
@@ -187,7 +202,7 @@ fn pages_colour_the_tokens_inside_macros_as_an_editor_does() {
     let tmp = Temp::new();
     let main = tmp.write(
         "main.taut",
-        "import std::proof::Lang { proof }\nimport std::proof::Forms { proof_by }\n\ntheorem t(): 1 = 1 {\n  proof!(```\n    By Refl.\n  ```)\n}\n",
+        "import std::proof::lang { proof }\nimport std::proof::forms { proof_by }\n\ntheorem t(): 1 = 1 {\n  proof!(```\n    By Refl.\n  ```)\n}\n",
     );
     let output = tmp.0.join("docs");
     let out = doc(&main, &output);
@@ -195,6 +210,24 @@ fn pages_colour_the_tokens_inside_macros_as_an_editor_does() {
     let page = fs::read_to_string(output.join("main.taut.html")).unwrap();
     // The text of the macro is split: its words take the editor's classes.
     assert!(page.contains("<span class=\"kw\">By</span>"), "{page}");
+    // An operator is coloured too, as the editor colours it.
+    assert!(page.contains("<span class=\"op\">.</span>"), "{page}");
     // What no token colours is plain, not the colour of the text around it.
     assert!(!page.contains("<span class=\"str\">"), "{page}");
+}
+
+#[test]
+fn a_local_hides_a_declaration_only_where_it_is_in_scope() {
+    let tmp = Temp::new();
+    let main = tmp.write(
+        "main.taut",
+        "fn twice(n: i64): i64 { n + n }\n\nfn h(): i64 {\n  let x: i64 := {\n    let twice: i64 := 1\n    twice\n  }\n  twice(x)\n}\n",
+    );
+    let output = tmp.0.join("docs");
+    assert_code(&doc(&main, &output), 0);
+    let page = fs::read_to_string(output.join("main.taut.html")).unwrap();
+    // The block's `twice` is its local and is not linked; after the block
+    // the name is the function again.
+    assert!(page.contains("<a href=\"#L1\"><span class=\"fn\">twice</span></a>(x)"), "{page}");
+    assert_eq!(page.matches("href=\"#L1\"><span").count(), 1, "{page}");
 }

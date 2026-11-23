@@ -43,12 +43,12 @@ pub const NAMES: [&str; 6] = ["vm", "syntaxgen", "lsp", "fmtcmd", "initcmd", "do
 /// own arguments). `None` when no tote has that name.
 pub fn main(name: &str, args: Vec<String>) -> Option<ExitCode> {
     match name {
-        "vm" => Some(tauto_rt::run_main_with(args, vm::generated::run)),
-        "syntaxgen" => Some(tauto_rt::run_main_with(args, syntaxgen::generated::run)),
-        "lsp" => Some(tauto_rt::run_main_with(args, lsp::generated::run)),
-        "fmtcmd" => Some(tauto_rt::run_main_with(args, fmtcmd::generated::run)),
-        "initcmd" => Some(tauto_rt::run_main_with(args, initcmd::generated::run)),
-        "doc" => Some(tauto_rt::run_main_with(args, doc::generated::run)),
+        "vm" => Some(tauto_rt::run_main_with(args, || tauto_rt::entry::hosting(vm::generated::run))),
+        "syntaxgen" => Some(tauto_rt::run_main_with(args, || tauto_rt::entry::hosting(syntaxgen::generated::run))),
+        "lsp" => Some(tauto_rt::run_main_with(args, || tauto_rt::entry::hosting(lsp::generated::run))),
+        "fmtcmd" => Some(tauto_rt::run_main_with(args, || tauto_rt::entry::hosting(fmtcmd::generated::run))),
+        "initcmd" => Some(tauto_rt::run_main_with(args, || tauto_rt::entry::hosting(initcmd::generated::run))),
+        "doc" => Some(tauto_rt::run_main_with(args, || tauto_rt::entry::hosting(doc::generated::run))),
         _ => None,
     }
 }

@@ -254,6 +254,13 @@ theorem img_fn : ∀ ctx qs B ρ,
       simp only [img, rimg, Ty.inst]
       rw [img_fn ctx]; simp [List.map_map, Function.comp_def]
 
+theorem img_lfn : ∀ ctx qs B ρ,
+    img (.lfn qs B ρ) ctx = .lfn (qs.map (img · ctx)) (img B ctx) (rimg ρ ctx)
+  | [], qs, B, ρ => by simp [img, rimg]
+  | a :: ctx, qs, B, ρ => by
+      simp only [img, rimg, Ty.inst]
+      rw [img_lfn ctx]; simp [List.map_map, Function.comp_def]
+
 theorem img_union : ∀ ctx ts, img (.union ts) ctx = .union (ts.map (img · ctx))
   | [], ts => by simp [img]
   | a :: ctx, ts => by
@@ -270,9 +277,9 @@ theorem img_tag : ∀ ctx a T, img (.tag a T) ctx = .tag a (img T ctx)
   | [], _, _ => rfl
   | b :: ctx, a, T => by simp only [img, Ty.inst]; exact img_tag ctx a _
 
-theorem img_cell : ∀ ctx A, img (.cell A) ctx = .cell (img A ctx)
+theorem img_place : ∀ ctx A, img (.place A) ctx = .place (img A ctx)
   | [], _ => rfl
-  | b :: ctx, A => by simp only [img, Ty.inst]; exact img_cell ctx _
+  | b :: ctx, A => by simp only [img, Ty.inst]; exact img_place ctx _
 
 theorem img_brw : ∀ ctx A, img (.brw A) ctx = .brw (img A ctx)
   | [], _ => rfl
@@ -339,8 +346,10 @@ theorem img_inv {Y : Ty} {ctx} (hY : ∀ i, Y ≠ .tvar i) :
   case data d c =>
       refine ⟨fun h => ?_, fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> rw [img_data] at h <;> cases h
       exact ⟨_, rfl, rfl⟩
-  case cell A =>
-      refine ⟨fun h => ?_, fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> rw [img_cell] at h <;> cases h
+  case lfn qs B ρ =>
+      refine ⟨fun h => ?_, fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> rw [img_lfn] at h <;> cases h
+  case place A =>
+      refine ⟨fun h => ?_, fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> rw [img_place] at h <;> cases h
   case info T ρ =>
       refine ⟨fun h => ?_, fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> rw [img_info] at h <;> cases h
   case brw A =>
@@ -350,6 +359,22 @@ theorem img_inv {Y : Ty} {ctx} (hY : ∀ i, Y ≠ .tvar i) :
   all_goals
     refine ⟨fun h => ?_, fun h => ?_, fun h => ?_, fun h => ?_⟩ <;>
       rw [img_const (fun _ => by simp [Ty.inst])] at h <;> cases h
+
+/-- A state not at a type variable that stands for a local function type is one. -/
+theorem img_inv_lfn {Y : Ty} {ctx} (hY : ∀ i, Y ≠ .tvar i) {ps B ρ} (h : img Y ctx = .lfn ps B ρ) :
+    ∃ qs B' ρ', Y = .lfn qs B' ρ' ∧ ps = qs.map (img · ctx) ∧ B = img B' ctx ∧ ρ = rimg ρ' ctx := by
+  cases Y
+  case tvar i => exact absurd rfl (hY i)
+  case lfn qs B ρ => rw [img_lfn] at h; cases h; exact ⟨_, _, _, rfl, rfl, rfl, rfl⟩
+  case fn => rw [img_fn] at h; cases h
+  case union => rw [img_union] at h; cases h
+  case tag => rw [img_tag] at h; cases h
+  case data => rw [img_data] at h; cases h
+  case info => rw [img_info] at h; cases h
+  case brw => rw [img_brw] at h; cases h
+  case mbrw => rw [img_mbrw] at h; cases h
+  case place => rw [img_place] at h; cases h
+  all_goals rw [img_const (fun _ => by simp [Ty.inst])] at h; cases h
 
 end Img
 
@@ -368,6 +393,8 @@ def Lab.marked : Lab → Bool
 inductive CStep (sg : Sig) : Lab → Cfg → Cfg → Prop where
   | param {qs B ρ q ctx} : q ∈ qs → divEff ∉ ρ → CStep sg .neg (.fn qs B ρ, ctx) (q, ctx)
   | ret {qs B ρ ctx} : CStep sg .plain (.fn qs B ρ, ctx) (B, ctx)
+  | lparam {qs B ρ q ctx} : q ∈ qs → divEff ∉ ρ → CStep sg .neg (.lfn qs B ρ, ctx) (q, ctx)
+  | lret {qs B ρ ctx} : CStep sg .plain (.lfn qs B ρ, ctx) (B, ctx)
   | union {ts t ctx} : t ∈ ts → CStep sg .plain (.union ts, ctx) (t, ctx)
   | tag {a T ctx} : CStep sg .plain (.tag a T, ctx) (T, ctx)
   /-- Into a declared field, with the type arguments on top. -/
@@ -376,7 +403,8 @@ inductive CStep (sg : Sig) : Lab → Cfg → Cfg → Prop where
   /-- Back to the type argument. -/
   | pop {i a ctx} : CStep sg .plain (.tvar i, a :: ctx) (a.getD i .never, ctx)
   /-- From a function without `Div` to the types of an operation it performs. -/
-  | jump {Y ctx qs B ρ e ps R A} : img Y ctx = .fn qs B ρ → divEff ∉ ρ → e ∈ ρ →
+  | jump {Y ctx qs B ρ e ps R A} : (img Y ctx = .fn qs B ρ ∨ img Y ctx = .lfn qs B ρ) →
+      divEff ∉ ρ → e ∈ ρ →
       sg.op e = some (ps, R) → A ∈ R :: ps → CStep sg .jump (Y, ctx) (A, [])
 
 section Step
@@ -396,6 +424,10 @@ theorem CStep.kind {l c c'} (h : CStep sg l c c') (hl : l ≠ .jump) :
       have := Tys.size_le hq
       right; right; exact ⟨rfl, by simp only [Ty.size]; omega⟩
   | ret => right; right; exact ⟨rfl, by simp only [Ty.size]; omega⟩
+  | lparam hq _ =>
+      have := Tys.size_le hq
+      right; right; exact ⟨rfl, by simp only [Ty.size]; omega⟩
+  | lret => right; right; exact ⟨rfl, by simp only [Ty.size]; omega⟩
   | union ht =>
       have := Tys.size_le ht
       right; right; exact ⟨rfl, by simp only [Ty.size]; omega⟩
@@ -405,12 +437,13 @@ theorem CStep.kind {l c c'} (h : CStep sg l c c') (hl : l ≠ .jump) :
   | jump => exact absurd rfl hl
 
 theorem CStep.neg_inv {c c'} (h : CStep sg .neg c c') :
-    ∃ qs B ρ, c.1 = .fn qs B ρ ∧ c'.1 ∈ qs ∧ c'.2 = c.2 ∧ divEff ∉ ρ := by
+    ∃ qs B ρ, (c.1 = .fn qs B ρ ∨ c.1 = .lfn qs B ρ) ∧ c'.1 ∈ qs ∧ c'.2 = c.2 ∧ divEff ∉ ρ := by
   cases h with
-  | param hq hd => exact ⟨_, _, _, rfl, hq, rfl, hd⟩
+  | param hq hd => exact ⟨_, _, _, .inl rfl, hq, rfl, hd⟩
+  | lparam hq hd => exact ⟨_, _, _, .inr rfl, hq, rfl, hd⟩
 
 theorem CStep.jump_inv {c c'} (h : CStep sg .jump c c') :
-    ∃ qs B ρ e ps R A, img c.1 c.2 = .fn qs B ρ ∧ divEff ∉ ρ ∧ e ∈ ρ ∧
+    ∃ qs B ρ e ps R A, (img c.1 c.2 = .fn qs B ρ ∨ img c.1 c.2 = .lfn qs B ρ) ∧ divEff ∉ ρ ∧ e ∈ ρ ∧
       sg.op e = some (ps, R) ∧ A ∈ R :: ps ∧ c' = (A, []) := by
   cases h with
   | jump h1 h2 h3 h4 h5 => exact ⟨_, _, _, _, _, _, _, h1, h2, h3, h4, h5, rfl⟩
@@ -443,6 +476,12 @@ theorem CStep.reach {l c c'} (h : CStep sg l c c') (hl : l ≠ .jump) {pre pre' 
   | ret =>
       cases List.append_cancel_right (h1.symm.trans h2)
       rw [img_fn]; exact .ret .refl
+  | lparam hq _ =>
+      cases List.append_cancel_right (h1.symm.trans h2)
+      rw [img_lfn]; exact .lparam (List.mem_map_of_mem hq) .refl
+  | lret =>
+      cases List.append_cancel_right (h1.symm.trans h2)
+      rw [img_lfn]; exact .lret .refl
   | union ht =>
       cases List.append_cancel_right (h1.symm.trans h2)
       rw [img_union]; exact .union (List.mem_map_of_mem ht) .refl
@@ -731,10 +770,14 @@ theorem run_unbounded (hdata : DataOk sg) (hfin : DataFin sg)
   rw [h3d] at hj3G r2
   simp only [Ty.declOf] at hj3G
   subst hj3G
-  rw [hfn, img_fn] at r1
   rw [img_data] at r2
-  have := hdata _ cs F _ _ _ _ hd hF hA r1 (.inl ⟨_, List.mem_map_of_mem hq, _, r2⟩)
-  exact hdiv ((div_mem_rimg ps ρ).mp this)
+  rcases hfn with hfn | hfn
+  · rw [hfn, img_fn] at r1
+    have := hdata _ cs F _ _ _ _ hd hF hA (.inl r1) (.inl ⟨_, List.mem_map_of_mem hq, _, r2⟩)
+    exact hdiv ((div_mem_rimg ps ρ).mp this)
+  · rw [hfn, img_lfn] at r1
+    have := hdata _ cs F _ _ _ _ hd hF hA (.inr r1) (.inl ⟨_, List.mem_map_of_mem hq, _, r2⟩)
+    exact hdiv ((div_mem_rimg ps ρ).mp this)
 
 /-- Without `jump`s, the machine takes finitely many `neg` steps. -/
 theorem run_nojump (hdata : DataOk sg) (hfin : DataFin sg)
@@ -748,7 +791,7 @@ theorem run_nojump (hdata : DataOk sg) (hfin : DataFin sg)
 
 /-- A `jump` by `e`. -/
 def JumpBy (sg : Sig) (c c' : Cfg) (e : Eff) : Prop :=
-  ∃ qs B ρ ps R A, img c.1 c.2 = .fn qs B ρ ∧ divEff ∉ ρ ∧ e ∈ ρ ∧
+  ∃ qs B ρ ps R A, (img c.1 c.2 = .fn qs B ρ ∨ img c.1 c.2 = .lfn qs B ρ) ∧ divEff ∉ ρ ∧ e ∈ ρ ∧
     sg.op e = some (ps, R) ∧ A ∈ R :: ps ∧ c' = (A, [])
 
 theorem CStep.jumpBy {c c'} (h : CStep sg .jump c c') : ∃ e, JumpBy sg c c' e := by
@@ -769,7 +812,8 @@ theorem jump_desc {rr : Eff → Eff → Prop} (hE : EffBelow sg rr)
     cases l with
     | jump =>
         obtain ⟨e'', qs, B, ρ, ps'', R'', A'', hfn, hd, he'', hop'', hA'', hr''⟩ := hst.jumpBy
-        have hlt := hE e' ps' R' hop' A' hA' e'' ⟨qs, B, ρ, hfn ▸ hre, hd, he''⟩
+        have hlt := hE e' ps' R' hop' A' hA' e'' ⟨qs, B, ρ,
+          hfn.elim (fun h => .inl (h ▸ hre)) (fun h => .inr (h ▸ hre)), hd, he''⟩
         refine ⟨e'', ps'', R'', A'', .inr ?_, hop'', hA'', by rw [hr'']; exact .refl⟩
         rcases he' with rfl | h
         · exact .single hlt
@@ -782,7 +826,8 @@ theorem jump_desc {rr : Eff → Eff → Prop} (hE : EffBelow sg rr)
           (hst.reach (by simp) (List.append_nil _).symm (List.append_nil _).symm)⟩
   rintro t hst e' ⟨qs, B, ρ, -, -, -, hfn, hd, he', -, -, -⟩
   obtain ⟨e'', ps', R', A', he'', hop', hA', hre⟩ := inv t hst
-  have hlt := hE e'' ps' R' hop' A' hA' e' ⟨qs, B, ρ, hfn ▸ hre, hd, he'⟩
+  have hlt := hE e'' ps' R' hop' A' hA' e' ⟨qs, B, ρ,
+    hfn.elim (fun h => .inl (h ▸ hre)) (fun h => .inr (h ▸ hre)), hd, he'⟩
   rcases he'' with rfl | h
   · exact .single hlt
   · exact .trans (.single hlt) h
@@ -952,8 +997,8 @@ its type arguments, or a function without `Div` that performs the
 operation. -/
 def Rep (c : Cfg) : Key → Prop
   | .data d a => img c.1 c.2 = .data d a
-  | .args e => ∃ qs B ρ, img c.1 c.2 = .fn qs B ρ ∧ divEff ∉ ρ ∧ e ∈ ρ
-  | .ans e => ∃ qs B ρ, img c.1 c.2 = .fn qs B ρ ∧ divEff ∉ ρ ∧ e ∈ ρ
+  | .args e => ∃ qs B ρ, (img c.1 c.2 = .fn qs B ρ ∨ img c.1 c.2 = .lfn qs B ρ) ∧ divEff ∉ ρ ∧ e ∈ ρ
+  | .ans e => ∃ qs B ρ, (img c.1 c.2 = .fn qs B ρ ∨ img c.1 c.2 = .lfn qs B ρ) ∧ divEff ∉ ρ ∧ e ∈ ρ
 
 section Sim
 variable {sg : Sig}
@@ -998,8 +1043,24 @@ theorem Occ.sim {p X k} (h : Occ p X k) : ∀ c : Cfg, img c.1 c.2 = X →
       obtain ⟨qs, B', ρ', rfl, -, rfl, -⟩ := (img_inv hY).1 he
       obtain ⟨c', b, hw', hr, hb⟩ := ih (B', ctx) rfl
       exact ⟨c', b, by simpa [Lab.marked] using hw.trans (.step .ret hw'), hr, hb⟩
-  | args hd he => exact fun c hc => ⟨c, false, .refl, ⟨_, _, _, hc, hd, he⟩, fun h => by cases h⟩
-  | ans hd he => exact fun c hc => ⟨c, false, .refl, ⟨_, _, _, hc, hd, he⟩, fun _ => .inr rfl⟩
+  | args hd he => exact fun c hc => ⟨c, false, .refl, ⟨_, _, _, .inl hc, hd, he⟩, fun h => by cases h⟩
+  | ans hd he => exact fun c hc => ⟨c, false, .refl, ⟨_, _, _, .inl hc, hd, he⟩, fun _ => .inr rfl⟩
+  | @lparam ps B ρ q p k hd hq _ ih =>
+      intro c hc
+      obtain ⟨Y, ctx, hw, he, hY⟩ := unpop' (sg := sg) (fun _ h => by cases h) hc
+      obtain ⟨qs, B', ρ', rfl, rfl, -, rfl⟩ := img_inv_lfn hY he
+      obtain ⟨q', hq', rfl⟩ := List.mem_map.mp hq
+      have hd' : divEff ∉ ρ' := fun h => hd ((div_mem_rimg ctx ρ').mpr h)
+      obtain ⟨c', b, hw', hr, -⟩ := ih (q', ctx) rfl
+      exact ⟨c', _, hw.trans (.step (.lparam hq' hd') hw'), hr, fun _ => .inl rfl⟩
+  | lret hd _ ih =>
+      intro c hc
+      obtain ⟨Y, ctx, hw, he, hY⟩ := unpop' (sg := sg) (fun _ h => by cases h) hc
+      obtain ⟨qs, B', ρ', rfl, -, rfl, -⟩ := img_inv_lfn hY he
+      obtain ⟨c', b, hw', hr, hb⟩ := ih (B', ctx) rfl
+      exact ⟨c', b, by simpa [Lab.marked] using hw.trans (.step .lret hw'), hr, hb⟩
+  | largs hd he => exact fun c hc => ⟨c, false, .refl, ⟨_, _, _, .inr hc, hd, he⟩, fun h => by cases h⟩
+  | lans hd he => exact fun c hc => ⟨c, false, .refl, ⟨_, _, _, .inr hc, hd, he⟩, fun _ => .inr rfl⟩
   | union ht _ ih =>
       intro c hc
       obtain ⟨Y, ctx, hw, he, hY⟩ := unpop' (sg := sg) (fun _ h => by cases h) hc
@@ -1142,8 +1203,8 @@ theorem Strat.of_rules {sg : Sig} (hfin : DataFin sg) (he : EffOk sg) (hdata : D
 typing), for finitely many `struct`s and `enum`s. -/
 theorem halts_of_rules {sg : Sig} (hb : Builtins sg) (hs : SigOk sg) (hdiv : DivOk sg)
     (hfin : DataFin sg) (hbasic : ∀ d A b, sg.defs d = some (A, b) → b.Basic)
-    {t A ρ} (ht : HasType sg [] [] t A ρ) (htb : t.Basic) (hρ : divEff ∉ ρ) :
-    ∃ μ t', Steps sg [] t μ t' ∧ (Value t' ∨ Blocked t' ρ ∨ Fault t') :=
+    {t A ρ} (ht : HasType sg [] t A ρ) (htb : t.Basic) (hρ : divEff ∉ ρ) :
+    ∃ t', Steps sg t t' ∧ (Value t' ∨ Blocked t' ρ) :=
   have ⟨_, hI⟩ := (Strat.of_rules hfin hdiv.2.1 hdiv.2.2).good
   halts hI hb hs hdiv.1 hbasic ht htb hρ
 

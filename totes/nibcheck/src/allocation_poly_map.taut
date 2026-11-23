@@ -1,11 +1,11 @@
 import "allocation_rigid_map.taut"
 import "instantiation_domain_sound.taut"
-import std::Base
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Row
-import std::Text
+import std::base
+import std::map
+import std::map_laws
+import std::map_text
+import std::row
+import std::text
 import "allocation_generic_map.taut"
 import "allocation_substitution.taut"
 import "checker.taut"
@@ -15,8 +15,8 @@ import "type_allocation.taut"
 import "unify_sound.taut"
 
 pub theorem generic_names_insert_cons(
-  generic: Pair(Text, Kind),
-  rest: List(Pair(Text, Kind)),
+  generic: Text × Kind,
+  rest: List(Text × Kind),
   map: Ordmap(Text, Ty),
   value: Ty,
   ordered: Ordmap::ordered(map, Ordmap::compare_text),
@@ -49,22 +49,22 @@ pub theorem generic_names_insert_cons(
   }
 }
 pub theorem rigid_names_cons(
-  generic: Pair(Text, Kind),
-  rest: List(Pair(Text, Kind)),
+  generic: Text × Kind,
+  rest: List(Text × Kind),
   value: Ty,
   m: Mut1(Ordmap(Text, Ty), Checker),
   ordered: Ordmap::ordered(ck_val(m), Ordmap::compare_text),
   names: GenericNamesPresent(rest, ck_val(m))
 ): GenericNamesPresent(Cons(generic, rest), ck_val(ck_rigid_k(generic, value, m))) {
-  ⊢ GenericNamesPresent(Cons(generic, rest), ck_val(ck_rigid_k(generic, value, m))) from match m {
+  match m {
     mut1(map, next) => generic_names_insert_cons(generic, rest, map, value, ordered, names)
   }
 }
 pub theorem ck_rigid_names_present(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker
 ): GenericNamesPresent(gs, ck_val(ck_rigid(gs, c))) {
-  ⊢ GenericNamesPresent(gs, ck_val(ck_rigid(gs, c))) from match gs {
+  match gs {
     Nil => instance_names_nil(Ordmap::empty())
     Cons(generic, rest) => rigid_names_cons(
       generic,
@@ -87,7 +87,7 @@ pub theorem allocated_substitute_present(
   values: GenericMapAllocated(limit, map),
   present: InstanceNamePresent(map, name)
 ): TypeAllocated(limit, ty_substitute_name(name, map, fallback)) {
-  ⊢ TypeAllocated(limit, ty_substitute_name(name, map, fallback)) from match present {
+  match present {
     Mk(value, found) => Eq::subst(
       (choice: Option(Ty)) => TypeAllocated(limit, allocation_substitute_choice(fallback, choice)),
       Eq::sym(found),
@@ -96,22 +96,22 @@ pub theorem allocated_substitute_present(
   }
 }
 pub theorem generic_names_tail(
-  generic: Pair(Text, Kind),
-  rest: List(Pair(Text, Kind)),
+  generic: Text × Kind,
+  rest: List(Text × Kind),
   map: Ordmap(Text, Ty),
   names: GenericNamesPresent(Cons(generic, rest), map)
 ): GenericNamesPresent(rest, map) {
   item => member => names(item, MemThere(generic, rest, member))
 }
 pub theorem allocated_poly_map(
-  gb: List(Pair(Text, Kind)),
-  ga: List(Pair(Text, Kind)),
+  gb: List(Text × Kind),
+  ga: List(Text × Kind),
   rigid: Ordmap(Text, Ty),
   limit: Nat,
   values: GenericMapAllocated(limit, rigid),
   names: GenericNamesPresent(ga, rigid)
 ): RigidMapAllocation(limit, ty_poly_map(gb, ga, rigid)) {
-  ⊢ RigidMapAllocation(limit, ty_poly_map(gb, ga, rigid)) from match gb {
+  match gb {
     Nil => AndIntro(Trivial, name => value => found => False::elim(ck_none_ne_some(value, found)))
     Cons(b, brest) => ⊢ RigidMapAllocation(limit, ty_poly_map(Cons(b, brest), ga, rigid)) from match ga {
       Nil => AndIntro(Trivial, name => value => found => False::elim(ck_none_ne_some(value, found)))
@@ -165,8 +165,8 @@ pub theorem allocated_poly_map(
 // Both sides of polymorphic unification use this same rigid environment.
 pub theorem ck_poly_substitutions_allocated(
   c: Checker,
-  ga: List(Pair(Text, Kind)),
-  gb: List(Pair(Text, Kind)),
+  ga: List(Text × Kind),
+  gb: List(Text × Kind),
   a: Ty,
   b: Ty,
   limit: Nat,

@@ -1,0 +1,404 @@
+import "base.taut" { List, Nat }
+import "int.taut" { Int }
+import "sint.taut" { SInt }
+import "text.taut" { Text }
+import "uint.taut" { UInt }
+import std::builtin::classes { ToText }
+import std::builtin::macro { Syn, SynExpr, SynHighlight, SynIdent, SynSpan, SynTok, macro_error }
+import std::prelude::std { List, Option, concat }
+
+// A template: fixed text with holes, as `text!` and other macros read it
+// (`docs/design/text.md`). A hole is `$` and one postfix expression, or
+// `${ … }`; `$$` is a dollar. There are no escapes.
+syntax!(text, ```par
+%start Template
+%auto_newline_off
+%auto_ws_off
+%%
+Template: { Part };
+Part: Fixed | Dollar | TautoExpr;
+Fixed: /[^$]+/;
+Dollar: '$$';
+```, with(tokens: text_tokens)) => struct Template, enum Part, fn parse
+
+// Fixed text is coloured as a string and `$$` as an operator; holes are left to the
+// colours of tauto itself.
+pub fn text_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => if t.kind == "Fixed" {
+      Cons(SynHighlight { start: t.start, end: t.end, kind: "string" }, text_tokens(rest))
+    } else if t.kind == "Dollar" {
+      Cons(SynHighlight { start: t.start, end: t.end, kind: "operator" }, text_tokens(rest))
+    } else {
+      text_tokens(rest)
+    }
+  }
+}
+
+// A part of a template: fixed text, or a hole.
+pub(open) enum Part {
+  Fixed(Text, SynSpan)
+  Hole(Hole)
+}
+
+// A hole: the expression it renders, its name, and where it is written. The
+// name is the last name written in it: the variable of `$user`, the field of
+// `$(req.path)`, or the label of `$(@ms elapsed(t))`, whose expression is the
+// value under the label. Other holes have no name.
+pub(open) struct Hole { expr: SynExpr, name: Option(Text), span: SynSpan }
+
+// The parts of `t` in order. Adjacent fixed text is one part, and a hole that
+// is a `Text` literal is fixed text.
+pub fn parts(t: text::Template): List(Part) { merged(read_parts(t.part)) }
+
+fn read_parts(ps: List(text::Part)): List(Part) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(
+      match p {
+        text::Part::Fixed(tok) => Fixed(tok.text, tok.span)
+        text::Part::Dollar(tok) => Fixed("$", tok.span)
+        text::Part::TautoExpr(e) => hole(e)
+      },
+      read_parts(rest)
+    )
+  }
+}
+
+fn merged(ps: List(Part)): List(Part) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => {
+      let after := merged(rest)
+      match p {
+        Hole(h) => Cons(Hole(h), after)
+        Fixed(s, at) => match after {
+          Nil => Cons(Fixed(s, at), Nil)
+          Cons(q, more) => match q {
+            Fixed(u, next) => Cons(Fixed(concat(s, u), at), more)
+            Hole(h) => Cons(Fixed(s, at), after)
+          }
+        }
+      }
+    }
+  }
+}
+
+fn named(
+  e: SynExpr,
+  name: Text,
+  at: SynSpan
+): Part { Hole(Hole { expr: e, name: Some(name), span: at }) }
+
+fn unnamed(e: SynExpr, at: SynSpan): Part { Hole(Hole { expr: e, name: None, span: at }) }
+
+fn hole(e: SynExpr): Part {
+  let at := SynSpan { id: Syn::expr_span(e) }
+  match e {
+    ExVar(x) => named(e, x.name, at)
+    ExAtom(_, _) => unnamed(e, at)
+    ExNat(_, _) => unnamed(e, at)
+    ExText(s, sp) => Fixed(s, sp)
+    ExFloat(_, _) => unnamed(e, at)
+    ExBool(_, _) => unnamed(e, at)
+    ExApp(_, _, _) => unnamed(e, at)
+    ExPi(_, _, _, _) => unnamed(e, at)
+    ExLam(_, _, _) => unnamed(e, at)
+    ExIf(_, _, _, _) => unnamed(e, at)
+    ExField(_, f, _) => named(e, f, at)
+    ExBlock(_, _) => unnamed(e, at)
+    ExPerform(_, _, _) => unnamed(e, at)
+    ExHandle(_, _, _) => unnamed(e, at)
+    ExBudget(_, _, _) => unnamed(e, at)
+    ExBudgetMemory(_, _, _) => unnamed(e, at)
+    ExMatch(_, _, _, _, _, _) => unnamed(e, at)
+    ExRecord(_, _, _) => unnamed(e, at)
+    ExBorrow(_, _, _) => unnamed(e, at)
+    ExUnion(_, _) => unnamed(e, at)
+    ExProduct(_, _) => unnamed(e, at)
+    ExTagged(label, value, _) => named(value, label, at)
+    ExExists(_, _, _, _) => unnamed(e, at)
+    ExFnKind(_, _, _) => unnamed(e, at)
+    ExBorrowLam(_, _, _) => unnamed(e, at)
+    ExMacroCall(_, _, _) => unnamed(e, at)
+    ExMacroExpr(_, _, _) => unnamed(e, at)
+    ExStep(_, _, _, _, _) => unnamed(e, at)
+    ExHole(_, _) => unnamed(e, at)
+    ExUnit(_) => unnamed(e, at)
+  }
+}
+
+// `f(&e)` for the hole `e`, written at the hole: an error in the call, such as
+// a missing instance, points at the hole in the caller's file.
+pub fn call_at(f: SynIdent, h: Hole): SynExpr {
+  ExApp(
+    ExVar(SynIdent { name: f.name, ctx: f.ctx, span: h.span, declaration: f.declaration }),
+    Cons(ExBorrow(false, h.expr, h.span), Nil),
+    h.span
+  )
+}
+
+// The text of `t` with each hole rendered by `f`: `Text::concat_all` of the
+// parts, a hole `e` being `f(&e)`. Each hole is evaluated once, from left to
+// right, and borrowed.
+pub fn text_with(t: text::Template, f: SynIdent): SynExpr ! {div} {
+  let ps := parts(t)
+  match ps {
+    Nil => Syn::lift_text("", Syn::call_span())
+    Cons(p, rest) => match rest {
+      Nil => match p {
+        Fixed(s, at) => Syn::lift_text(s, at)
+        Hole(h) => call_at(f, h)
+      }
+      Cons(q, more) => {
+        let items := rendered(ps, f)
+        quote { Text::concat_all($items) }
+      }
+    }
+  }
+}
+
+fn rendered(ps: List(Part), f: SynIdent): SynExpr ! {div} {
+  match ps {
+    Nil => quote { Nil }
+    Cons(p, rest) => {
+      let x := match p {
+        Fixed(s, at) => Syn::lift_text(s, at)
+        Hole(h) => call_at(f, h)
+      }
+      let tail := rendered(rest, f)
+      quote { Cons($x, $tail) }
+    }
+  }
+}
+
+// The text of `t`, each hole `e` rendered by `ToText::to_text(&e)`: what
+// `text!` is.
+pub macro fn text(t: text::Template): SynExpr ! {macro_error, div} {
+  match Syn::ident_of(quote { ToText::to_text }) {
+    Some(f) => text_with(t, f)
+    None => Syn::error(Syn::call_span(), "text: `ToText::to_text` is not a name")
+  }
+}
+
+// The fixed text of `t` with `{name}` for a named hole and `{}` for another:
+// `user {name} has {} items`.
+pub fn pattern(t: text::Template): Text { pattern_of(parts(t)) }
+
+fn pattern_of(ps: List(Part)): Text {
+  match ps {
+    Nil => ""
+    Cons(p, rest) => concat(
+      match p {
+        Fixed(s, _) => s
+        Hole(h) => match h.name {
+          Some(n) => concat("{", concat(n, "}"))
+          None => "{}"
+        }
+      },
+      pattern_of(rest)
+    )
+  }
+}
+
+// The list of `f(name, e)` for each named hole `e` of `t`, in order: `name` is
+// the hole's name as a `Text` literal written at the hole.
+pub fn each_named(t: text::Template, f: (SynExpr, SynExpr) -> SynExpr): SynExpr ! {div} {
+  each_named_of(parts(t), f)
+}
+
+fn each_named_of(ps: List(Part), f: (SynExpr, SynExpr) -> SynExpr): SynExpr ! {div} {
+  match ps {
+    Nil => quote { Nil }
+    Cons(p, rest) => {
+      let tail := each_named_of(rest, f)
+      match p {
+        Fixed(_, _) => tail
+        Hole(h) => match h.name {
+          Some(n) => {
+            let x := f(Syn::lift_text(n, h.span), h.expr)
+            quote { Cons($x, $tail) }
+          }
+          None => tail
+        }
+      }
+    }
+  }
+}
+
+// Options: functions to call in a hole, each of them total. Widths count
+// characters (code points).
+
+// `a` after copies of `fill` that make it at least `width` characters long; an
+// empty `fill` adds none.
+pub fn pad_start_with<A>(a: A, width: Nat, fill: Text): Text where ToText(A) {
+  let t := ToText::to_text(&a)
+  Text::concat(padding_for(t, width, fill), t)
+}
+
+// `a` before copies of `fill` that make it at least `width` characters long; an
+// empty `fill` adds none.
+pub fn pad_end_with<A>(a: A, width: Nat, fill: Text): Text where ToText(A) {
+  let t := ToText::to_text(&a)
+  Text::concat(t, padding_for(t, width, fill))
+}
+
+// `a` after spaces that make it at least `width` characters long.
+pub fn pad_start<A>(a: A, width: Nat): Text where ToText(A) { pad_start_with(a, width, " ") }
+
+// `a` before spaces that make it at least `width` characters long.
+pub fn pad_end<A>(a: A, width: Nat): Text where ToText(A) { pad_end_with(a, width, " ") }
+
+// The characters of `t`: its bytes that are not `10xxxxxx`.
+fn chars(t: Text): Nat { char_count(Text::bytes(t)) }
+
+fn char_count(bs: List(Nat)): Nat {
+  match bs {
+    Nil => Zero
+    Cons(b, rest) => ⊢ Nat from match b < 128 || 192 <= b {
+      true => Succ(char_count(rest))
+      false => char_count(rest)
+    }
+  }
+}
+
+fn padding_for(t: Text, width: Nat, fill: Text): Text {
+  padding(width - chars(t), width - chars(t), fill)
+}
+
+// Copies of `fill` of at least `missing` characters in all, while `fuel`
+// lasts; none when `fill` is empty.
+fn padding(fuel: Nat, missing: Nat, fill: Text): Text {
+  match fuel {
+    Zero => ""
+    Succ(f) => ⊢ Text from match missing == 0 || chars(fill) == 0 {
+      true => ""
+      false => Text::concat(fill, padding(f, missing - chars(fill), fill))
+    }
+  }
+}
+
+// `n` in base 16, with `0`–`9` and `a`–`f`.
+pub fn hex(n: UInt(64)): Text { in_base(n, 15, false) }
+
+// `n` in base 16, with `0`–`9` and `A`–`F`.
+pub fn hex_upper(n: UInt(64)): Text { in_base(n, 15, true) }
+
+// `n` in base 2.
+pub fn bin(n: UInt(64)): Text { in_base(n, 1, false) }
+
+// `n` in base 8.
+pub fn oct(n: UInt(64)): Text { in_base(n, 7, false) }
+
+// `n` in base `Succ(b)`.
+fn in_base(n: UInt(64), b: Nat, upper: Bool): Text {
+  Text::Mk(digits(Succ(UInt::val64(n)), UInt::val64(n), b, upper, Nil))
+}
+
+// The digits of `n` in base `Succ(b)`, then `acc`, while `fuel` lasts.
+fn digits(fuel: Nat, n: Nat, b: Nat, upper: Bool, acc: List(Nat)): List(Nat) {
+  match fuel {
+    Zero => acc
+    Succ(f) => ⊢ List(Nat) from match Nat::div_nz(n, Succ(b), Nat::succ_ne_zero(b)) == 0 {
+      true => Cons(digit(Nat::rem_nz(n, Succ(b), Nat::succ_ne_zero(b)), upper), acc)
+      false => digits(
+        f,
+        Nat::div_nz(n, Succ(b), Nat::succ_ne_zero(b)),
+        b,
+        upper,
+        Cons(digit(Nat::rem_nz(n, Succ(b), Nat::succ_ne_zero(b)), upper), acc)
+      )
+    }
+  }
+}
+
+// The byte of the digit `d`.
+fn digit(d: Nat, upper: Bool): Nat {
+  match d < 10 {
+    true => Nat::add(d, 48)
+    false => ⊢ Nat from match upper {
+      true => Nat::add(d, 55)
+      false => Nat::add(d, 87)
+    }
+  }
+}
+
+// `n` in decimal, with zeros after its sign that make it at least `width`
+// characters long.
+pub fn zeros(n: SInt(64), width: Nat): Text {
+  match SInt::val64(n) {
+    IntOfNat(k) => zero_padded(Text::of_nat(k), width)
+    IntNegSucc(k) => Text::concat("-", zero_padded(Text::of_nat(Succ(k)), width - 1))
+  }
+}
+
+fn zero_padded(t: Text, width: Nat): Text { Text::concat(padding_for(t, width, "0"), t) }
+
+// `n` in decimal with its sign, `+` when it is not negative.
+pub fn signed(n: SInt(64)): Text {
+  match SInt::val64(n) {
+    IntOfNat(k) => Text::concat("+", Text::of_nat(k))
+    IntNegSucc(k) => Text::concat("-", Text::of_nat(Succ(k)))
+  }
+}
+
+// `n` in decimal, with `sep` between groups of three digits from the right.
+pub fn grouped(n: SInt(64), sep: Text): Text {
+  match SInt::val64(n) {
+    IntOfNat(k) => in_groups(k, sep)
+    IntNegSucc(k) => Text::concat("-", in_groups(Succ(k), sep))
+  }
+}
+
+fn in_groups(k: Nat, sep: Text): Text {
+  Text::Mk(groups(Text::bytes(Text::of_nat(k)), Text::bytes(sep)))
+}
+
+fn groups(ds: List(Nat), sep: List(Nat)): List(Nat) {
+  match ds {
+    Nil => Nil
+    Cons(d, rest) => Cons(
+      d,
+      ⊢ List(Nat) from match 0 < List::length(rest)
+        && Nat::rem_nz(List::length(rest), 3, Nat::ne_zero(3, Refl)) == 0 {
+        true => List::append(sep, groups(rest, sep))
+        false => groups(rest, sep)
+      }
+    )
+  }
+}
+
+// `t` as a Tauto literal: in `"`, with `"`, `\` and the control characters
+// escaped.
+pub fn quoted(t: Text): Text { Text::Mk(Cons(34, List::append(escaped(Text::bytes(t)), [34]))) }
+
+fn escaped(bs: List(Nat)): List(Nat) {
+  match bs {
+    Nil => Nil
+    Cons(b, rest) => List::append(escape(b), escaped(rest))
+  }
+}
+
+// The bytes that stand for the byte `b` in a literal.
+fn escape(b: Nat): List(Nat) {
+  match b == 34 || b == 92 {
+    true => [92, b]
+    false => ⊢ List(Nat) from match b == 10 {
+      true => [92, 110]
+      false => ⊢ List(Nat) from match b == 9 {
+        true => [92, 116]
+        false => ⊢ List(Nat) from match b == 13 {
+          true => [92, 114]
+          false => ⊢ List(Nat) from match b == 0 {
+            true => [92, 48]
+            false => ⊢ List(Nat) from match b < 32 || b == 127 {
+              true => List::append([92, 117, 123], digits(Succ(b), b, 15, false, [125]))
+              false => [b]
+            }
+          }
+        }
+      }
+    }
+  }
+}

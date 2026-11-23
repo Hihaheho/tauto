@@ -102,6 +102,7 @@ impl Locked {
             git: Text::from(self.source.url.as_str()),
             reference: Text::from(self.source.reference.as_str()),
             dir: Text::from(self.source.dir.as_str()),
+            sparse: self.source.sparse,
             project: self.source.project.as_deref().map(Text::from),
             rev: Text::from(self.rev.to_string()),
             source: Text::from(self.id.to_string()),
@@ -116,6 +117,7 @@ impl Locked {
                 url: l.git.to_string(),
                 reference: l.reference.to_string(),
                 dir: l.dir.to_string(),
+                sparse: l.sparse,
                 project: l.project.as_ref().map(|p| p.to_string()),
             },
             rev: Rev::parse(&l.rev).expect("checked"),
@@ -207,7 +209,15 @@ fn locked(doc: &EureDocument, id: NodeId) -> Result<Locked, String> {
     let (mut name, mut url, mut reference, mut dir, mut rev, mut source) =
         (None, None, None, String::new(), None, None);
     let mut project = None;
+    let mut sparse = false;
     for (key, v) in map(doc, id)? {
+        if key == "sparse" {
+            match &doc.node(v).content {
+                NodeValue::Primitive(P::Bool(true)) => sparse = true,
+                _ => return Err(say!("totebag-lock-sparse")),
+            }
+            continue;
+        }
         let value = text(doc, v).map_err(|e| say!("totebag-at", place = &key, error = e))?;
         match key.as_str() {
             "name" => name = Some(value),
@@ -229,6 +239,7 @@ fn locked(doc: &EureDocument, id: NodeId) -> Result<Locked, String> {
         url: url.ok_or_else(|| missing("git"))?,
         reference: reference.ok_or_else(|| missing("ref"))?,
         dir,
+        sparse,
         project,
     };
     git.check()?;
@@ -269,6 +280,7 @@ mod tests {
                 url: "https://example.org/text".into(),
                 reference: "refs/heads/main".into(),
                 dir: String::new(),
+                sparse: false,
                 project: None,
             },
             rev: Rev::from_git(&"1".repeat(40)).unwrap(),
@@ -280,6 +292,7 @@ mod tests {
                 url: "https://example.com/tauto/monorepo".into(),
                 reference: "refs/tags/v1".into(),
                 dir: "semver".into(),
+                sparse: true,
                 project: Some(format!("sha256:{}", "c".repeat(64))),
             },
             rev: Rev::from_git(&"2".repeat(40)).unwrap(),

@@ -1,0 +1,1922 @@
+// The values a syntax makes.
+// A syntax's own types are named `<syntax>_<Name>` and made from its grammar;
+// these are the parts every one of them shares.
+
+// Where a node was written: the number is a position in the file, as written.
+// The origin of a node a macro makes is in `docs/design/macro.md`「Spans and origins」.
+pub(open) struct SynSpan { id: u64 }
+
+// The scopes a name carries (hygiene); empty outside macros.
+pub(open) struct SynCtx { scopes: List(u64) }
+
+pub(open) struct SynToken { text: Text, span: SynSpan, ctx: SynCtx }
+
+// A token of a syntax's text as the functions registered with `syntax s … with fmt f, tokens g`
+// read it: the terminal's name, the text, the bytes it covers (from 0, in the text) and whether
+// the grammar skips it (white space and comments are tokens here).
+pub(open) struct SynTok { kind: Text, text: Text, start: u64, end: u64, skipped: Bool }
+
+// The lossless tree of a syntax's text: a node is a non-terminal of the grammar with the tokens
+// and nodes it holds in order, skipped tokens included, and the bytes it covers.
+pub(open) enum SynCst {
+  CstNode(Text, List(SynCst), u64, u64)
+  CstTok(SynTok)
+}
+
+// A part of a syntax's text (bytes from 0) and what an editor colours it as: one of the kinds of
+// the language server's legend (`keyword`, `number`, `string`, `variable`, `comment`, `operator`, `type`, …).
+pub(open) struct SynHighlight { start: u64, end: u64, kind: Text }
+
+// Why a text is not of a syntax, or what a macro objects to: the message, the
+// byte it stopped at, the terminals that would have been taken there, the
+// code a tool shows (`macro.error` for a macro's own), and the arguments of the
+// message. A macro's own message is its text, with no arguments. A syntax error
+// (`macro.syntax_error`) is a message of the tools: `message` is its id and
+// `args` its arguments, and a tool writes it in the language it is set to.
+pub(open) struct SynDiag {
+  message: Text,
+  at: u64,
+  expected: List(Text),
+  code: Text,
+  args: List(SynArg)
+}
+
+// An argument of a message: its name and value. A name may come more than once,
+// as `expected` does for each terminal that would have been taken.
+pub(open) struct SynArg { name: Text, value: Text }
+
+extern { type SynDeclaration }
+
+pub(open) struct SynIdent {
+  name: Text,
+  ctx: SynCtx,
+  span: SynSpan,
+  declaration: Option(SynDeclaration)
+}
+
+// A binder: a name or an atom of a `Judgement`, the type when written, and
+// where `^` marks an unused assertion on a named binder (none when absent).
+pub(open) enum SynBinder {
+  BName(SynIdent, Option(SynExpr), Option(SynSpan))
+  BAtom(u64, Option(SynExpr))
+}
+
+// A parameter of a function type; it has a name when the result mentions it.
+// `unused` is where `^` marks an unused assertion on that name (none when absent).
+pub(open) struct SynParam { name: Option(SynIdent), ty: SynExpr, unused: Option(SynSpan) }
+
+// An entry of an effect row: an effect or a row variable (`|e`) by its
+// name, or an effect applied to its type arguments (`res(Pos)`), for every
+// instance when the flag is set (`∀ A. res(A)`, with its names). The last
+// field is where `^` marks the entry as declared but not performed (none when
+// absent), as it does on a binder or a parameter.
+pub(open) enum SynRowEntry {
+  EffName(Text, Option(SynSpan))
+  EffApplied(Text, List(SynExpr), Bool, List(Text), Option(SynSpan))
+}
+
+// An expression or a type, one constructor for each kind of term of the
+// surface syntax (`TermKind` in `crates/tauto-surface/src/surface.rs`;
+// `crates/tauto-surface/src/macros/syn.rs` turns each into the other). There is no
+// unread syntax: a macro cannot make it. A hole is `?name`; a tactic leaves its goals as `?arm1`, `?arm2`, …
+pub(open) enum SynExpr {
+  ExVar(SynIdent)
+  ExAtom(u64, SynSpan)
+  ExNat(Text, SynSpan)
+  ExText(Text, SynSpan)
+  // A Float literal as written, `0.5`; the text is the digits, so it reads back unchanged.
+  ExFloat(Text, SynSpan)
+  ExBool(Bool, SynSpan)
+  ExApp(SynExpr, List(SynExpr), SynSpan)
+  ExPi(List(SynParam), SynExpr, Option(List(SynRowEntry)), SynSpan)
+  ExLam(List(SynBinder), SynExpr, SynSpan)
+  ExIf(SynExpr, SynExpr, Option(SynExpr), SynSpan)
+  ExField(SynExpr, Text, SynSpan)
+  ExBlock(List(SynStmt), SynSpan)
+  ExPerform(SynIdent, List(SynExpr), SynSpan)
+  ExHandle(SynExpr, List(SynHandler), SynSpan)
+  ExBudget(SynExpr, SynExpr, SynSpan)
+  ExBudgetMemory(SynExpr, SynExpr, SynSpan)
+  // The Option(SynSpan) after the eqn binder is where `^` was written on it.
+  ExMatch(SynExpr, Option(SynExpr), List(SynArm), Option(SynIdent), Option(SynSpan), SynSpan)
+  ExRecord(SynIdent, List(SynExpr × Text), SynSpan)
+  ExBorrow(Bool, SynExpr, SynSpan)
+  ExUnion(List(SynExpr), SynSpan)
+  ExProduct(List(SynExpr), SynSpan)
+  ExTagged(Text, SynExpr, SynSpan)
+  ExExists(SynBinder, SynExpr, SynExpr, SynSpan)
+  ExFnKind(Text, SynExpr, SynSpan)
+  ExBorrowLam(List(Option(Bool)), SynExpr, SynSpan)
+  ExMacroCall(SynIdent, Text, SynSpan)
+  // A call whose argument is an expression (an untyped or a typed macro).
+  ExMacroExpr(SynIdent, SynExpr, SynSpan)
+  // A step `by t!(arg): G0 { Δ ⊢ G from p … }` (`docs/design/macro-steps.md`):
+  // the tactic, its argument, the goal before it (`None` where the step is the
+  // whole proof of an arm) and the arms.
+  ExStep(SynIdent, SynExpr, Option(SynExpr), List(SynStepArm), SynSpan)
+  ExHole(Text, SynSpan)
+  ExUnit(SynSpan)
+}
+
+pub(open) enum SynPattern {
+  PtWild
+  // The second field is where `^` was written on the bind, when marked unused.
+  PtBind(SynIdent, Option(SynSpan))
+  PtInt(i64)
+  PtBool(Bool)
+  PtText(Text)
+  PtCtor(SynIdent, List(SynPattern))
+  PtRecord(SynIdent, List(SynPattern × Text))
+}
+
+// An arm of a step: `Δ ⊢ goal from body`.
+pub(open) struct SynStepArm { binders: List(SynBinder), goal: SynExpr, body: SynExpr }
+
+pub(open) struct SynArm {
+  pattern: SynPattern,
+  guard: Option(SynExpr),
+  goal: Option(SynExpr),
+  body: SynExpr
+}
+
+pub(open) enum SynHandler {
+  HReturn(SynPattern, SynExpr)
+  // The last fields are the instance the arm answers: the names `∀` binds
+  // and the type arguments (`∀ A. show<A>`: `A`, `A`), both empty when none
+  // is written.
+  // After the continuation name, Option(SynSpan) is where `^` was written on it.
+  HOp(
+    SynIdent,
+    List(SynPattern),
+    Option(SynIdent),
+    Option(SynSpan),
+    Option(SynExpr),
+    SynExpr,
+    List(Text),
+    List(SynExpr)
+  )
+}
+
+pub(open) struct SynFn {
+  name: SynIdent
+  generics: List(Text)
+  generic_types: List(SynExpr)
+  bounds: List(Option(Text))
+  params: List(SynIdent)
+  r#borrows: List(Option(Bool))
+  param_types: List(Option(SynExpr))
+  result: Option(SynExpr)
+  effects: Option(List(SynRowEntry))
+  // The `where C(T)` constraints the fn's signature carries.
+  where_: List(SynConstraint)
+  body: SynExpr
+  span: SynSpan
+  // Where `^` marks the function name unused, when written.
+  unused: Option(SynSpan)
+  // Where `^` marks each type parameter unused, aligned with `generics` (empty when none).
+  unused_generics: List(Option(SynSpan))
+  // Where `^` marks each parameter unused, aligned with `params` (empty when none).
+  unused_params: List(Option(SynSpan))
+}
+
+pub(open) struct SynTheorem {
+  name: SynIdent
+  implicit: u64
+  params: List(SynExpr × SynIdent)
+  ty: SynExpr
+  body: Option(SynExpr)
+  span: SynSpan
+  // Where `^` marks the declaration name unused, when written.
+  unused: Option(SynSpan)
+  // Where `^` marks each parameter unused, aligned with `params` (empty when none).
+  unused_params: List(Option(SynSpan))
+}
+
+pub(open) struct SynCtor { name: SynIdent, fields: List(Option(SynIdent) × SynExpr) }
+
+// A constructor of an `inductive` family: its generics come first among `params`
+// (the first `implicit` of them), and `result` is the family applied to its indices.
+pub(open) struct SynIndCtor {
+  name: SynIdent
+  implicit: u64
+  params: List(SynExpr × SynIdent)
+  result: SynExpr
+}
+
+pub(open) struct SynInductive {
+  name: SynIdent
+  params: List(SynExpr × SynIdent)
+  sort: SynExpr
+  ctors: List(SynIndCtor)
+  span: SynSpan
+}
+
+pub(open) struct SynData {
+  kind: Option(Text)
+  name: SynIdent
+  generics: List(Text)
+  ctors: List(SynCtor)
+  span: SynSpan
+  // Where `^` marks each type parameter unused, aligned with `generics` (empty when none).
+  unused_generics: List(Option(SynSpan))
+}
+
+pub(open) struct SynEffect {
+  name: SynIdent
+  generics: List(Text)
+  params: List(Option(SynExpr))
+  result: Option(SynExpr)
+  r#resume: Option(Text)
+  span: SynSpan
+  // Where `^` marks each type parameter unused, aligned with `generics` (empty when none).
+  unused_generics: List(Option(SynSpan))
+}
+
+// `class C(A: Type) { fn m(…): R … }`: a method has no body (`body` is `()`).
+// `bound` is the parameter kind, `laws` the law items, and `parents` the class header constraints.
+pub(open) struct SynClass {
+  name: SynIdent
+  params: List(SynExpr × SynIdent)
+  bound: Option(Text)
+  methods: List(SynFn)
+  laws: List(SynTheorem)
+  is_inductive: Bool
+  span: SynSpan
+  parents: List(SynConstraint)
+  // Where `^` marks each class parameter unused, aligned with `params` (empty when none).
+  unused_parameters: List(Option(SynSpan))
+}
+
+// A `where C(T)` of an instance: `ty` is `T`, and `arguments` follow it.
+pub(open) struct SynConstraint {
+  class_name: SynIdent
+  ty: SynExpr
+  arguments: List(SynExpr)
+}
+
+// `instance C(T) { fn m(…) … }`: `head` is `T`, and `arguments` are the class
+// arguments after it.
+pub(open) enum SynInferCondition {
+  InferParameter(Text)
+  InferAnd(SynInferCondition, SynInferCondition)
+  InferOr(SynInferCondition, SynInferCondition)
+}
+
+pub(open) struct SynInstance {
+  class_name: SynIdent
+  generics: List(Text)
+  generic_types: List(SynExpr)
+  bounds: List(Option(Text))
+  arguments: List(SynExpr)
+  head: SynExpr
+  infer_from: Option(SynInferCondition)
+  where_: List(SynConstraint)
+  methods: List(SynFn)
+  laws: List(SynTheorem)
+  span: SynSpan
+  // Where `^` marks each type parameter unused, aligned with `generics` (empty when none).
+  unused_generics: List(Option(SynSpan))
+}
+
+pub(open) enum SynStmt {
+  // The sixth field is where `^` marks the binding unused (none when absent).
+  StLet(SynIdent, Option(SynExpr), SynExpr, Bool, Bool, Option(SynSpan), SynSpan)
+  StVar(SynIdent, Option(SynExpr), SynExpr, Bool, Option(SynSpan), SynSpan)
+  StAssign(SynIdent, SynExpr, SynSpan)
+  StFn(SynFn)
+  StExpr(SynExpr)
+  StWhile(SynExpr, SynExpr)
+  StReturn(Option(SynExpr))
+  StTheorem(SynTheorem)
+  StDef(SynTheorem)
+  StStruct(SynData)
+  StEnum(SynData)
+  StInductive(SynInductive)
+  StEffect(SynEffect)
+  StClass(SynClass)
+  StInstance(SynInstance)
+  StMutual(List(SynStmt), SynSpan)
+  StModule(SynIdent, Bool, List(SynStmt), List(Text), SynSpan)
+  StReexport(SynIdent, List(SynIdent), SynSpan)
+  StMacroCall(SynIdent, Text, SynSpan)
+}
+
+// What a macro objects to (`macro_error`) and what it only remarks on
+// (`macro_warn`). An error does not return.
+pub(open) effect macro_error(d: SynDiag): Never resume 0
+pub(open) effect macro_warn(d: SynDiag): Unit resume 1
+
+pub fn Syn::error(at: SynSpan, message: Text): Never ! {macro_error} {
+  perform macro_error(
+    SynDiag { message: message, at: at.id, expected: Nil, code: "macro.error", args: Nil }
+  )
+}
+
+// Where the macro is called: for an attribute macro, the attribute. An
+// error at it points at the call.
+pub fn Syn::call_span(): SynSpan {
+  SynSpan { id: 0 }
+}
+
+pub fn Syn::ident(t: SynToken): SynIdent {
+  SynIdent { declaration: None, name: t.text, ctx: t.ctx, span: t.span }
+}
+
+// A name that borrows the scopes of `model`: the way to capture a local of the
+// caller, such as the `it` of an anaphoric macro
+// (`docs/design/macro.md`「Hygiene (scope sets)」, 6).
+pub fn Syn::ident_like(model: SynIdent, name: Text): SynIdent {
+  SynIdent { declaration: None, name: name, ctx: model.ctx, span: model.span }
+}
+
+// The name of a declaration a macro makes for the caller to use (the
+// `T_take` of `@derive!`), with the scopes of `model`: the caller sees the
+// declaration (`docs/design/macro.md`「Hygiene (scope sets)」, 7). It is what
+// `Syn::ident_like` is, written for a declaration's name; the lint
+// `macro-capture` does not take it for a capture.
+pub fn Syn::decl_name(model: SynIdent, name: Text): SynIdent {
+  SynIdent { declaration: None, name: name, ctx: model.ctx, span: model.span }
+}
+
+// A name of the macro's own tote, as a `quote` writes it: it means the
+// declaration the macro's tote sees (`Cons`, a lemma of the library), and no
+// local of the caller takes it.
+extern {
+  pub fn Syn::global(name: Text): SynIdent
+  pub fn Syn::same_declaration(a: SynDeclaration, b: SynDeclaration): Bool
+  // The eliminator (`T::ind`) of the inductive type `d`, found by its
+  // declaration and not by its name: it is the same wherever `T` is declared.
+  pub fn Syn::eliminator(d: SynDeclaration): SynDeclaration
+}
+
+pub fn Syn::all_digits(t: Text, i: u64): Bool ! {div} {
+  if i >= Text::len(&t) {
+    true
+  } else {
+    match Text::byte(&t, i) {
+      // `i < Text::len(t)`, so `i + 1` fits.
+      Some(b) => if b >= 48 && b <= 57 {
+        Syn::all_digits(t, handle { i + 1 } with { overflow() => i })
+      } else { false }
+      None => false
+    }
+  }
+}
+
+pub fn Syn::nat(t: SynToken): SynExpr ! {macro_error, div} {
+  if Text::len(&t.text) > 0 && Syn::all_digits(t.text, 0) {
+    ExNat(t.text, t.span)
+  } else {
+    Syn::error(t.span, concat("not a number: ", t.text))
+  }
+}
+
+// A value known when the macro runs, as syntax: the one way to carry it to the run time.
+pub fn Syn::lift_i64(n: i64, at: SynSpan): SynExpr ! {overflow} {
+  if n < 0 {
+    ExApp(
+      ExVar(SynIdent { declaration: None, name: "-", ctx: SynCtx { scopes: Nil }, span: at }),
+      Cons(ExNat(Text::of_i64(0 - n), at), Nil),
+      at
+    )
+  } else {
+    ExNat(Text::of_i64(n), at)
+  }
+}
+
+pub fn Syn::lift_u64(n: u64, at: SynSpan): SynExpr { ExNat(Text::of_u64(n), at) }
+pub fn Syn::lift_text(t: Text, at: SynSpan): SynExpr { ExText(t, at) }
+pub fn Syn::lift_bool(b: Bool, at: SynSpan): SynExpr { ExBool(b, at) }
+
+// The items of `a`, then those of `b`: what `$list` in a `quote stmts` is.
+pub fn Syn::append<T>(a: List(T), b: List(T)): List(T) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, Syn::append(rest, b))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Typed terms. A `Judgement` is what the
+// checker saw of an expression: it is made by the host, and what a macro makes
+// of it is checked again, so nothing here is trusted.
+
+pub(open) struct Judgement::Binder { atom: u64, name: Text, ty: SynExpr }
+
+// How the term uses a variable of the context: `moved`, `borrowed`,
+// `borrowed_mut` or `unused`.
+pub(open) struct Judgement::Use { atom: u64, how: Text }
+
+// `ctx |- term : ty ! row`. `tys` holds the type of the subterms by their span.
+// `generics` are the type parameters and the row variable (`!e`) that `ty`
+// and `row` mention, written as a `fn` writes them: the type of a generic
+// `fn` is its signature over them.
+pub(open) struct Judgement {
+  term: SynExpr
+  ty: SynExpr
+  row: List(Text)
+  generics: List(Text)
+  ctx: List(Judgement::Binder)
+  fragment: Text
+  tys: List(SynExpr × u64)
+  usage: List(Judgement::Use)
+  span: SynSpan
+}
+
+// A step of a proof, `by t!(arg): G0 { Δ ⊢ G from p … }`. A macro whose
+// function takes a `ProofStep` is a tactic, called only after `by`. `before`
+// is the goal written, as a `Judgement` (its term is the goal, its context the
+// variables in scope); `arg` is what the call
+// has in its parentheses, not checked; `after` are the goals written in the
+// arms, in order, or `Nil` when a tool asks the tactic which goals it leaves.
+// The tactic makes a term of `before` with a hole `?armK` for the goal of the
+// K-th arm; each hole is under binders for the variables of its arm, by their
+// atoms (`BAtom`).
+pub(open) struct ProofStep { before: Judgement, arg: SynExpr, after: List(StepGoal), span: SynSpan }
+
+// A goal of an arm: the variables it adds (each atom new, its type written
+// in the context of the ones before) and the goal, in the context with them.
+pub(open) struct StepGoal { binders: List(Judgement::Binder), ty: Judgement }
+
+// The hole of the goal of the K-th arm, from 1.
+pub fn Syn::hole(k: u64, at: SynSpan): SynExpr { ExHole(concat("arm", Text::of_u64(k)), at) }
+
+// `Nat::add` and `Nat::mul` as the operators `+` and `*` they are written as: the same
+// functions, so a name is compared by this.
+pub fn Syn::op_name(name: Text): Text {
+  if name == "Nat::add" {
+    "+"
+  } else if name == "Nat::mul" { "*" } else { name }
+}
+
+// Whether two expressions are written the same, apart from where they are and
+// the scopes their names carry: what a tactic compares goals by. Resolved names
+// are compared by declaration identity, unresolved names by their text, and
+// atoms by their number; a form with binders, by its
+// binders' names and types and its body. Only names, atoms, numerals, texts,
+// booleans, applications, function types, functions `x => …`, `∃` and holes
+// are compared; two expressions of any other form are not the same.
+pub fn Syn::same_ident(a: SynIdent, b: SynIdent): Bool {
+  match a.declaration {
+    Some(x) => match b.declaration {
+      Some(y) => Syn::same_declaration(x, y)
+      None => false
+    }
+    None => match b.declaration {
+      Some(_) => false
+      None => Syn::op_name(a.name) == Syn::op_name(b.name)
+    }
+  }
+}
+
+pub fn Syn::same(a: SynExpr, b: SynExpr): Bool ! {div} {
+  match a {
+    ExVar(x) => match b {
+      ExVar(y) => Syn::same_ident(x, y)
+      ExAtom(_, _) => false
+      ExNat(_, _) => false
+      ExText(_, _) => false
+      ExFloat(_, _) => false
+      ExBool(_, _) => false
+      ExApp(_, _, _) => false
+      ExPi(_, _, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+      ExUnit(_) => false
+    }
+    ExAtom(n, _) => match b {
+      ExAtom(m, _) => n == m
+      ExVar(_) => false
+      ExNat(_, _) => false
+      ExText(_, _) => false
+      ExFloat(_, _) => false
+      ExBool(_, _) => false
+      ExApp(_, _, _) => false
+      ExPi(_, _, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+      ExUnit(_) => false
+    }
+    ExNat(n, _) => match b {
+      ExNat(m, _) => n == m
+      ExVar(_) => false
+      ExAtom(_, _) => false
+      ExText(_, _) => false
+      ExFloat(_, _) => false
+      ExBool(_, _) => false
+      ExApp(_, _, _) => false
+      ExPi(_, _, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+      ExUnit(_) => false
+    }
+    ExText(n, _) => match b {
+      ExText(m, _) => n == m
+      ExFloat(_, _) => false
+      ExVar(_) => false
+      ExAtom(_, _) => false
+      ExNat(_, _) => false
+      ExBool(_, _) => false
+      ExApp(_, _, _) => false
+      ExPi(_, _, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+      ExUnit(_) => false
+    }
+    ExFloat(n, _) => match b {
+      ExFloat(m, _) => n == m
+      ExText(_, _) => false
+      ExVar(_) => false
+      ExAtom(_, _) => false
+      ExNat(_, _) => false
+      ExBool(_, _) => false
+      ExApp(_, _, _) => false
+      ExPi(_, _, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+      ExUnit(_) => false
+    }
+    ExBool(n, _) => match b {
+      ExBool(m, _) => n == m
+      ExVar(_) => false
+      ExAtom(_, _) => false
+      ExNat(_, _) => false
+      ExText(_, _) => false
+      ExFloat(_, _) => false
+      ExApp(_, _, _) => false
+      ExPi(_, _, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+      ExUnit(_) => false
+    }
+    ExApp(f, xs, _) => match b {
+      ExApp(g, ys, _) => Syn::same(f, g) && Syn::same_all(xs, ys)
+      ExVar(_) => false
+      ExAtom(_, _) => false
+      ExNat(_, _) => false
+      ExText(_, _) => false
+      ExFloat(_, _) => false
+      ExBool(_, _) => false
+      ExPi(_, _, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+      ExUnit(_) => false
+    }
+    ExPi(ps, r, _, _) => match b {
+      ExPi(qs, t, _, _) => Syn::same_params(ps, qs) && Syn::same(r, t)
+      ExVar(_) => false
+      ExAtom(_, _) => false
+      ExNat(_, _) => false
+      ExText(_, _) => false
+      ExFloat(_, _) => false
+      ExBool(_, _) => false
+      ExApp(_, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+      ExUnit(_) => false
+    }
+    ExLam(bs, body, _) => match b {
+      ExLam(cs, body2, _) => Syn::same_binders(bs, cs) && Syn::same(body, body2)
+      ExVar(_) => false
+      ExAtom(_, _) => false
+      ExNat(_, _) => false
+      ExText(_, _) => false
+      ExFloat(_, _) => false
+      ExBool(_, _) => false
+      ExApp(_, _, _) => false
+      ExPi(_, _, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+      ExUnit(_) => false
+    }
+    ExExists(x, d, body, _) => match b {
+      ExExists(y, d2, body2, _) => Syn::same_binders(
+        Cons(x, Nil),
+        Cons(y, Nil)
+      ) && Syn::same(d, d2) && Syn::same(body, body2)
+      ExVar(_) => false
+      ExAtom(_, _) => false
+      ExNat(_, _) => false
+      ExText(_, _) => false
+      ExFloat(_, _) => false
+      ExBool(_, _) => false
+      ExApp(_, _, _) => false
+      ExPi(_, _, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+      ExUnit(_) => false
+    }
+    ExHole(n, _) => match b {
+      ExHole(m, _) => n == m
+      ExVar(_) => false
+      ExAtom(_, _) => false
+      ExNat(_, _) => false
+      ExText(_, _) => false
+      ExFloat(_, _) => false
+      ExBool(_, _) => false
+      ExApp(_, _, _) => false
+      ExPi(_, _, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExUnit(_) => false
+    }
+    ExIf(_, _, _, _) => false
+    ExField(_, _, _) => false
+    ExBlock(_, _) => false
+    ExPerform(_, _, _) => false
+    ExHandle(_, _, _) => false
+    ExBudget(_, _, _) => false
+    ExBudgetMemory(_, _, _) => false
+    ExMatch(_, _, _, _, _, _) => false
+    ExRecord(_, _, _) => false
+    ExBorrow(_, _, _) => false
+    ExUnion(_, _) => false
+    ExProduct(_, _) => false
+    ExTagged(_, _, _) => false
+    ExFnKind(_, _, _) => false
+    ExBorrowLam(_, _, _) => false
+    ExMacroCall(_, _, _) => false
+    ExMacroExpr(_, _, _) => false
+    ExStep(_, _, _, _, _) => false
+    ExUnit(_) => match b {
+      ExUnit(_) => true
+      ExVar(_) => false
+      ExAtom(_, _) => false
+      ExNat(_, _) => false
+      ExText(_, _) => false
+      ExFloat(_, _) => false
+      ExBool(_, _) => false
+      ExApp(_, _, _) => false
+      ExPi(_, _, _, _) => false
+      ExLam(_, _, _) => false
+      ExIf(_, _, _, _) => false
+      ExField(_, _, _) => false
+      ExBlock(_, _) => false
+      ExPerform(_, _, _) => false
+      ExHandle(_, _, _) => false
+      ExBudget(_, _, _) => false
+      ExBudgetMemory(_, _, _) => false
+      ExMatch(_, _, _, _, _, _) => false
+      ExRecord(_, _, _) => false
+      ExBorrow(_, _, _) => false
+      ExUnion(_, _) => false
+      ExProduct(_, _) => false
+      ExTagged(_, _, _) => false
+      ExExists(_, _, _, _) => false
+      ExFnKind(_, _, _) => false
+      ExBorrowLam(_, _, _) => false
+      ExMacroCall(_, _, _) => false
+      ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
+      ExHole(_, _) => false
+    }
+  }
+}
+
+pub fn Syn::same_all(xs: List(SynExpr), ys: List(SynExpr)): Bool ! {div} {
+  match xs {
+    Nil => match ys {
+      Nil => true
+      Cons(_, _) => false
+    }
+    Cons(x, xr) => match ys {
+      Nil => false
+      Cons(y, yr) => Syn::same(x, y) && Syn::same_all(xr, yr)
+    }
+  }
+}
+
+pub fn Syn::same_name(a: Option(SynIdent), b: Option(SynIdent)): Bool {
+  match a {
+    None => match b {
+      None => true
+      Some(_) => false
+    }
+    Some(x) => match b {
+      None => false
+      Some(y) => Syn::same_ident(x, y)
+    }
+  }
+}
+
+pub fn Syn::same_params(ps: List(SynParam), qs: List(SynParam)): Bool ! {div} {
+  match ps {
+    Nil => match qs {
+      Nil => true
+      Cons(_, _) => false
+    }
+    Cons(p, pr) => match qs {
+      Nil => false
+      Cons(q, qr) => Syn::same_name(
+        p.name,
+        q.name
+      ) && Syn::same(p.ty, q.ty) && Syn::same_params(pr, qr)
+    }
+  }
+}
+
+pub fn Syn::same_ty(a: Option(SynExpr), b: Option(SynExpr)): Bool ! {div} {
+  match a {
+    None => match b {
+      None => true
+      Some(_) => false
+    }
+    Some(x) => match b {
+      None => false
+      Some(y) => Syn::same(x, y)
+    }
+  }
+}
+
+pub fn Syn::same_binders(bs: List(SynBinder), cs: List(SynBinder)): Bool ! {div} {
+  match bs {
+    Nil => match cs {
+      Nil => true
+      Cons(_, _) => false
+    }
+    Cons(b, br) => match cs {
+      Nil => false
+      Cons(c, cr) => {
+        let same := match b {
+          BName(x, t, _) => match c {
+            BName(y, u, _) => Syn::same_ident(x, y) && Syn::same_ty(t, u)
+            BAtom(_, _) => false
+          }
+          BAtom(n, t) => match c {
+            BAtom(m, u) => n == m && Syn::same_ty(t, u)
+            BName(_, _, _) => false
+          }
+        }
+        same && Syn::same_binders(br, cr)
+      }
+    }
+  }
+}
+
+// `a` with `z` where `a` has `l` and `b` has `r`, the two being written the same
+// elsewhere: the body of the motive that turns `b` into `a`. Only applications
+// are looked into; `None` when `a` and `b` differ otherwise.
+pub fn Syn::abstract(
+  a: SynExpr,
+  b: SynExpr,
+  l: SynExpr,
+  r: SynExpr,
+  z: SynExpr
+): Option(SynExpr) ! {div} {
+  if Syn::same(a, b) {
+    Some(a)
+  } else if Syn::same(a, l) && Syn::same(b, r) {
+    Some(z)
+  } else {
+    match a {
+      ExApp(f, xs, sp) => match b {
+        ExApp(g, ys, _) => match Syn::abstract(f, g, l, r, z) {
+          Some(f2) => match Syn::abstract_all(xs, ys, l, r, z) {
+            Some(zs) => Some(ExApp(f2, zs, sp))
+            None => None
+          }
+          None => None
+        }
+        ExVar(_) => None
+        ExAtom(_, _) => None
+        ExNat(_, _) => None
+        ExText(_, _) => None
+        ExFloat(_, _) => None
+        ExBool(_, _) => None
+        ExPi(_, _, _, _) => None
+        ExLam(_, _, _) => None
+        ExIf(_, _, _, _) => None
+        ExField(_, _, _) => None
+        ExBlock(_, _) => None
+        ExPerform(_, _, _) => None
+        ExHandle(_, _, _) => None
+        ExBudget(_, _, _) => None
+        ExBudgetMemory(_, _, _) => None
+        ExMatch(_, _, _, _, _, _) => None
+        ExRecord(_, _, _) => None
+        ExBorrow(_, _, _) => None
+        ExUnion(_, _) => None
+        ExProduct(_, _) => None
+        ExTagged(_, _, _) => None
+        ExExists(_, _, _, _) => None
+        ExFnKind(_, _, _) => None
+        ExBorrowLam(_, _, _) => None
+        ExMacroCall(_, _, _) => None
+        ExMacroExpr(_, _, _) => None
+        ExStep(_, _, _, _, _) => None
+        ExHole(_, _) => None
+        ExUnit(_) => None
+      }
+      ExVar(_) => None
+      ExAtom(_, _) => None
+      ExNat(_, _) => None
+      ExText(_, _) => None
+      ExFloat(_, _) => None
+      ExBool(_, _) => None
+      ExPi(_, _, _, _) => None
+      ExLam(_, _, _) => None
+      ExIf(_, _, _, _) => None
+      ExField(_, _, _) => None
+      ExBlock(_, _) => None
+      ExPerform(_, _, _) => None
+      ExHandle(_, _, _) => None
+      ExBudget(_, _, _) => None
+      ExBudgetMemory(_, _, _) => None
+      ExMatch(_, _, _, _, _, _) => None
+      ExRecord(_, _, _) => None
+      ExBorrow(_, _, _) => None
+      ExUnion(_, _) => None
+      ExProduct(_, _) => None
+      ExTagged(_, _, _) => None
+      ExExists(_, _, _, _) => None
+      ExFnKind(_, _, _) => None
+      ExBorrowLam(_, _, _) => None
+      ExMacroCall(_, _, _) => None
+      ExMacroExpr(_, _, _) => None
+      ExStep(_, _, _, _, _) => None
+      ExHole(_, _) => None
+      ExUnit(_) => None
+    }
+  }
+}
+
+pub fn Syn::abstract_all(
+  xs: List(SynExpr),
+  ys: List(SynExpr),
+  l: SynExpr,
+  r: SynExpr,
+  z: SynExpr
+): Option(List(SynExpr)) {
+  match xs {
+    Nil => match ys {
+      Nil => Some(Nil)
+      Cons(_, _) => None
+    }
+    Cons(x, xr) => match ys {
+      Nil => None
+      Cons(y, yr) => match Syn::abstract(x, y, l, r, z) {
+        Some(x2) => match Syn::abstract_all(xr, yr, l, r, z) {
+          Some(rest) => Some(Cons(x2, rest))
+          None => None
+        }
+        None => None
+      }
+    }
+  }
+}
+
+// `e` with each `l` in it, looked for through applications, written `r`.
+pub fn Syn::replace(e: SynExpr, l: SynExpr, r: SynExpr): SynExpr ! {div} {
+  if Syn::same(e, l) {
+    r
+  } else {
+    match e {
+      ExApp(f, xs, sp) => ExApp(Syn::replace(f, l, r), Syn::replace_all(xs, l, r), sp)
+      ExVar(_) => e
+      ExAtom(_, _) => e
+      ExNat(_, _) => e
+      ExText(_, _) => e
+      ExFloat(_, _) => e
+      ExBool(_, _) => e
+      ExPi(_, _, _, _) => e
+      ExLam(_, _, _) => e
+      ExIf(_, _, _, _) => e
+      ExField(_, _, _) => e
+      ExBlock(_, _) => e
+      ExPerform(_, _, _) => e
+      ExHandle(_, _, _) => e
+      ExBudget(_, _, _) => e
+      ExBudgetMemory(_, _, _) => e
+      ExMatch(_, _, _, _, _, _) => e
+      ExRecord(_, _, _) => e
+      ExBorrow(_, _, _) => e
+      ExUnion(_, _) => e
+      ExProduct(xs, sp) => ExProduct(Syn::replace_all(xs, l, r), sp)
+      ExTagged(_, _, _) => e
+      ExExists(_, _, _, _) => e
+      ExFnKind(_, _, _) => e
+      ExBorrowLam(_, _, _) => e
+      ExMacroCall(_, _, _) => e
+      ExMacroExpr(_, _, _) => e
+      ExStep(_, _, _, _, _) => e
+      ExHole(_, _) => e
+      ExUnit(_) => e
+    }
+  }
+}
+
+pub fn Syn::replace_all(xs: List(SynExpr), l: SynExpr, r: SynExpr): List(SynExpr) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(Syn::replace(x, l, r), Syn::replace_all(rest, l, r))
+  }
+}
+
+// Where `a` and `b` are not written the same: the smallest parts `l` of `a`
+// and `r` of `b` such that `b` is `a` with some `l` written `r`, looking through
+// applications with the same function and as many arguments. `None` when they
+// are written the same.
+pub fn Syn::diff(a: SynExpr, b: SynExpr): Option(@after SynExpr × @before SynExpr) ! {div} {
+  if Syn::same(a, b) {
+    None
+  } else {
+    match a {
+      ExApp(f, xs, _) => match b {
+        ExApp(g, ys, _) => if Syn::same(f, g) && Syn::same_length(xs, ys) {
+          match Syn::diff_all(xs, ys, None) {
+            Some(d) => d
+            None => Some(#(@after b, @before a))
+          }
+        } else {
+          Some(#(@after b, @before a))
+        }
+        ExVar(_) => Some(#(@after b, @before a))
+        ExAtom(_, _) => Some(#(@after b, @before a))
+        ExNat(_, _) => Some(#(@after b, @before a))
+        ExText(_, _) => Some(#(@after b, @before a))
+        ExFloat(_, _) => Some(#(@after b, @before a))
+        ExBool(_, _) => Some(#(@after b, @before a))
+        ExPi(_, _, _, _) => Some(#(@after b, @before a))
+        ExLam(_, _, _) => Some(#(@after b, @before a))
+        ExIf(_, _, _, _) => Some(#(@after b, @before a))
+        ExField(_, _, _) => Some(#(@after b, @before a))
+        ExBlock(_, _) => Some(#(@after b, @before a))
+        ExPerform(_, _, _) => Some(#(@after b, @before a))
+        ExHandle(_, _, _) => Some(#(@after b, @before a))
+        ExBudget(_, _, _) => Some(#(@after b, @before a))
+        ExBudgetMemory(_, _, _) => Some(#(@after b, @before a))
+        ExMatch(_, _, _, _, _, _) => Some(#(@after b, @before a))
+        ExRecord(_, _, _) => Some(#(@after b, @before a))
+        ExBorrow(_, _, _) => Some(#(@after b, @before a))
+        ExUnion(_, _) => Some(#(@after b, @before a))
+        ExProduct(_, _) => Some(#(@after b, @before a))
+        ExTagged(_, _, _) => Some(#(@after b, @before a))
+        ExExists(_, _, _, _) => Some(#(@after b, @before a))
+        ExFnKind(_, _, _) => Some(#(@after b, @before a))
+        ExBorrowLam(_, _, _) => Some(#(@after b, @before a))
+        ExMacroCall(_, _, _) => Some(#(@after b, @before a))
+        ExMacroExpr(_, _, _) => Some(#(@after b, @before a))
+        ExStep(_, _, _, _, _) => Some(#(@after b, @before a))
+        ExHole(_, _) => Some(#(@after b, @before a))
+        ExUnit(_) => Some(#(@after b, @before a))
+      }
+      ExVar(_) => Some(#(@after b, @before a))
+      ExAtom(_, _) => Some(#(@after b, @before a))
+      ExNat(_, _) => Some(#(@after b, @before a))
+      ExText(_, _) => Some(#(@after b, @before a))
+      ExFloat(_, _) => Some(#(@after b, @before a))
+      ExBool(_, _) => Some(#(@after b, @before a))
+      ExPi(_, _, _, _) => Some(#(@after b, @before a))
+      ExLam(_, _, _) => Some(#(@after b, @before a))
+      ExIf(_, _, _, _) => Some(#(@after b, @before a))
+      ExField(_, _, _) => Some(#(@after b, @before a))
+      ExBlock(_, _) => Some(#(@after b, @before a))
+      ExPerform(_, _, _) => Some(#(@after b, @before a))
+      ExHandle(_, _, _) => Some(#(@after b, @before a))
+      ExBudget(_, _, _) => Some(#(@after b, @before a))
+      ExBudgetMemory(_, _, _) => Some(#(@after b, @before a))
+      ExMatch(_, _, _, _, _, _) => Some(#(@after b, @before a))
+      ExRecord(_, _, _) => Some(#(@after b, @before a))
+      ExBorrow(_, _, _) => Some(#(@after b, @before a))
+      ExUnion(_, _) => Some(#(@after b, @before a))
+      ExProduct(_, _) => Some(#(@after b, @before a))
+      ExTagged(_, _, _) => Some(#(@after b, @before a))
+      ExExists(_, _, _, _) => Some(#(@after b, @before a))
+      ExFnKind(_, _, _) => Some(#(@after b, @before a))
+      ExBorrowLam(_, _, _) => Some(#(@after b, @before a))
+      ExMacroCall(_, _, _) => Some(#(@after b, @before a))
+      ExMacroExpr(_, _, _) => Some(#(@after b, @before a))
+      ExStep(_, _, _, _, _) => Some(#(@after b, @before a))
+      ExHole(_, _) => Some(#(@after b, @before a))
+      ExUnit(_) => Some(#(@after b, @before a))
+    }
+  }
+}
+
+// The one difference of the arguments, as `Some(d)`, when every argument that
+// differs differs by the same `l` and `r`; `None` when they differ by several.
+pub fn Syn::diff_all(
+  xs: List(SynExpr),
+  ys: List(SynExpr),
+  found: Option(@after SynExpr × @before SynExpr)
+): Option(Option(@after SynExpr × @before SynExpr)) ! {div} {
+  match xs {
+    Nil => Some(found)
+    Cons(x, xr) => match ys {
+      Nil => Some(found)
+      Cons(y, yr) => match Syn::diff(x, y) {
+        None => Syn::diff_all(xr, yr, found)
+        Some(#(@after r, @before l)) => match found {
+          None => Syn::diff_all(xr, yr, Some(#(@after r, @before l)))
+          Some(#(@after r0, @before l0)) => if Syn::same(l, l0) && Syn::same(r, r0) {
+            Syn::diff_all(xr, yr, found)
+          } else {
+            None
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn Syn::same_length(xs: List(SynExpr), ys: List(SynExpr)): Bool {
+  match xs {
+    Nil => match ys {
+      Nil => true
+      Cons(_, _) => false
+    }
+    Cons(_, xr) => match ys {
+      Nil => false
+      Cons(_, yr) => Syn::same_length(xr, yr)
+    }
+  }
+}
+
+pub fn Syn::app_parts(e: SynExpr): Option(List(SynExpr) × SynExpr) {
+  match e {
+    ExApp(f, xs, _) => Some(#(xs, f))
+    ExVar(_) => None
+    ExAtom(_, _) => None
+    ExNat(_, _) => None
+    ExText(_, _) => None
+    ExFloat(_, _) => None
+    ExBool(_, _) => None
+    ExPi(_, _, _, _) => None
+    ExLam(_, _, _) => None
+    ExIf(_, _, _, _) => None
+    ExField(_, _, _) => None
+    ExBlock(_, _) => None
+    ExPerform(_, _, _) => None
+    ExHandle(_, _, _) => None
+    ExBudget(_, _, _) => None
+    ExBudgetMemory(_, _, _) => None
+    ExMatch(_, _, _, _, _, _) => None
+    ExRecord(_, _, _) => None
+    ExBorrow(_, _, _) => None
+    ExUnion(_, _) => None
+    ExProduct(_, _) => None
+    ExTagged(_, _, _) => None
+    ExExists(_, _, _, _) => None
+    ExFnKind(_, _, _) => None
+    ExBorrowLam(_, _, _) => None
+    ExMacroCall(_, _, _) => None
+    ExMacroExpr(_, _, _) => None
+    ExStep(_, _, _, _, _) => None
+    ExHole(_, _) => None
+    ExUnit(_) => None
+  }
+}
+
+pub fn Syn::nat_text(e: SynExpr): Option(Text) {
+  match e {
+    ExNat(n, _) => Some(n)
+    ExVar(_) => None
+    ExAtom(_, _) => None
+    ExText(_, _) => None
+    ExFloat(_, _) => None
+    ExBool(_, _) => None
+    ExApp(_, _, _) => None
+    ExPi(_, _, _, _) => None
+    ExLam(_, _, _) => None
+    ExIf(_, _, _, _) => None
+    ExField(_, _, _) => None
+    ExBlock(_, _) => None
+    ExPerform(_, _, _) => None
+    ExHandle(_, _, _) => None
+    ExBudget(_, _, _) => None
+    ExBudgetMemory(_, _, _) => None
+    ExMatch(_, _, _, _, _, _) => None
+    ExRecord(_, _, _) => None
+    ExBorrow(_, _, _) => None
+    ExUnion(_, _) => None
+    ExProduct(_, _) => None
+    ExTagged(_, _, _) => None
+    ExExists(_, _, _, _) => None
+    ExFnKind(_, _, _) => None
+    ExBorrowLam(_, _, _) => None
+    ExMacroCall(_, _, _) => None
+    ExMacroExpr(_, _, _) => None
+    ExStep(_, _, _, _, _) => None
+    ExHole(_, _) => None
+    ExUnit(_) => None
+  }
+}
+
+pub fn Syn::name_of(e: SynExpr): Option(Text) {
+  match e {
+    ExVar(x) => Some(x.name)
+    ExAtom(_, _) => None
+    ExNat(_, _) => None
+    ExText(_, _) => None
+    ExFloat(_, _) => None
+    ExBool(_, _) => None
+    ExApp(_, _, _) => None
+    ExPi(_, _, _, _) => None
+    ExLam(_, _, _) => None
+    ExIf(_, _, _, _) => None
+    ExField(_, _, _) => None
+    ExBlock(_, _) => None
+    ExPerform(_, _, _) => None
+    ExHandle(_, _, _) => None
+    ExBudget(_, _, _) => None
+    ExBudgetMemory(_, _, _) => None
+    ExMatch(_, _, _, _, _, _) => None
+    ExRecord(_, _, _) => None
+    ExBorrow(_, _, _) => None
+    ExUnion(_, _) => None
+    ExProduct(_, _) => None
+    ExTagged(_, _, _) => None
+    ExExists(_, _, _, _) => None
+    ExFnKind(_, _, _) => None
+    ExBorrowLam(_, _, _) => None
+    ExMacroCall(_, _, _) => None
+    ExMacroExpr(_, _, _) => None
+    ExStep(_, _, _, _, _) => None
+    ExHole(_, _) => None
+    ExUnit(_) => None
+  }
+}
+
+pub fn Syn::ident_of(e: SynExpr): Option(SynIdent) {
+  match e {
+    ExVar(x) => Some(x)
+    ExAtom(_, _) => None
+    ExNat(_, _) => None
+    ExText(_, _) => None
+    ExFloat(_, _) => None
+    ExBool(_, _) => None
+    ExApp(_, _, _) => None
+    ExPi(_, _, _, _) => None
+    ExLam(_, _, _) => None
+    ExIf(_, _, _, _) => None
+    ExField(_, _, _) => None
+    ExBlock(_, _) => None
+    ExPerform(_, _, _) => None
+    ExHandle(_, _, _) => None
+    ExBudget(_, _, _) => None
+    ExBudgetMemory(_, _, _) => None
+    ExMatch(_, _, _, _, _, _) => None
+    ExRecord(_, _, _) => None
+    ExBorrow(_, _, _) => None
+    ExUnion(_, _) => None
+    ExProduct(_, _) => None
+    ExTagged(_, _, _) => None
+    ExExists(_, _, _, _) => None
+    ExFnKind(_, _, _) => None
+    ExBorrowLam(_, _, _) => None
+    ExMacroCall(_, _, _) => None
+    ExMacroExpr(_, _, _) => None
+    ExStep(_, _, _, _, _) => None
+    ExHole(_, _) => None
+    ExUnit(_) => None
+  }
+}
+
+// The members of a product type `A × B`.
+pub fn Syn::product_items(e: SynExpr): Option(List(SynExpr)) {
+  match e {
+    ExVar(_) => None
+    ExAtom(_, _) => None
+    ExNat(_, _) => None
+    ExText(_, _) => None
+    ExFloat(_, _) => None
+    ExBool(_, _) => None
+    ExApp(_, _, _) => None
+    ExPi(_, _, _, _) => None
+    ExLam(_, _, _) => None
+    ExIf(_, _, _, _) => None
+    ExField(_, _, _) => None
+    ExBlock(_, _) => None
+    ExPerform(_, _, _) => None
+    ExHandle(_, _, _) => None
+    ExBudget(_, _, _) => None
+    ExBudgetMemory(_, _, _) => None
+    ExMatch(_, _, _, _, _, _) => None
+    ExRecord(_, _, _) => None
+    ExBorrow(_, _, _) => None
+    ExUnion(_, _) => None
+    ExProduct(items, _) => Some(items)
+    ExTagged(_, _, _) => None
+    ExExists(_, _, _, _) => None
+    ExFnKind(_, _, _) => None
+    ExBorrowLam(_, _, _) => None
+    ExMacroCall(_, _, _) => None
+    ExMacroExpr(_, _, _) => None
+    ExStep(_, _, _, _, _) => None
+    ExHole(_, _) => None
+    ExUnit(_) => None
+  }
+}
+
+pub fn Syn::inductive_of(s: SynStmt): Option(SynInductive) {
+  match s {
+    StInductive(d) => Some(d)
+    StLet(_, _, _, _, _, _, _) => None
+    StVar(_, _, _, _, _, _) => None
+    StAssign(_, _, _) => None
+    StFn(_) => None
+    StExpr(_) => None
+    StWhile(_, _) => None
+    StReturn(_) => None
+    StTheorem(_) => None
+    StDef(_) => None
+    StStruct(_) => None
+    StEnum(_) => None
+    StEffect(_) => None
+    StClass(_) => None
+    StInstance(_) => None
+    StMutual(_, _) => None
+    StModule(_, _, _, _, _) => None
+    StReexport(_, _, _) => None
+    StMacroCall(_, _, _) => None
+  }
+}
+
+pub fn Syn::pi_parts(e: SynExpr): Option(List(SynParam) × SynExpr) {
+  match e {
+    ExPi(ps, r, _, _) => Some(#(ps, r))
+    ExVar(_) => None
+    ExAtom(_, _) => None
+    ExNat(_, _) => None
+    ExText(_, _) => None
+    ExFloat(_, _) => None
+    ExBool(_, _) => None
+    ExApp(_, _, _) => None
+    ExLam(_, _, _) => None
+    ExIf(_, _, _, _) => None
+    ExField(_, _, _) => None
+    ExBlock(_, _) => None
+    ExPerform(_, _, _) => None
+    ExHandle(_, _, _) => None
+    ExBudget(_, _, _) => None
+    ExBudgetMemory(_, _, _) => None
+    ExMatch(_, _, _, _, _, _) => None
+    ExRecord(_, _, _) => None
+    ExBorrow(_, _, _) => None
+    ExUnion(_, _) => None
+    ExProduct(_, _) => None
+    ExTagged(_, _, _) => None
+    ExExists(_, _, _, _) => None
+    ExFnKind(_, _, _) => None
+    ExBorrowLam(_, _, _) => None
+    ExMacroCall(_, _, _) => None
+    ExMacroExpr(_, _, _) => None
+    ExStep(_, _, _, _, _) => None
+    ExHole(_, _) => None
+    ExUnit(_) => None
+  }
+}
+
+// One step into a term; the parts are `Judgement` too.
+pub(open) enum CodeView {
+  VAtom(u64)
+  VConst(Text)
+  VInt(Text)
+  VText(Text)
+  VBool(Bool)
+  VApp(Judgement, List(Judgement))
+  VIf(Judgement, Judgement, Option(Judgement))
+  VField(Judgement, Text)
+  // A `λ` with its first binder opened: the atom the binder is now, the binder's
+  // type, and the body in a context that has the atom.
+  VLam(u64, Judgement, Judgement)
+  VOther(Judgement)
+}
+
+pub fn Judgement::term(c: Judgement): SynExpr { c.term }
+pub fn Judgement::row(c: Judgement): List(Text) { c.row }
+pub fn Judgement::generics(c: Judgement): List(Text) { c.generics }
+pub fn Judgement::ctx(c: Judgement): List(Judgement::Binder) { c.ctx }
+pub fn Judgement::fragment(c: Judgement): Text { c.fragment }
+pub fn Judgement::span(c: Judgement): SynSpan { c.span }
+pub fn Judgement::usage(c: Judgement): List(Judgement::Use) { c.usage }
+
+pub fn Judgement::ty_of(c: Judgement, ty: SynExpr): Judgement {
+  Judgement {
+    term: ty
+    ty: ExVar(
+      SynIdent { declaration: None, name: "Type", ctx: SynCtx { scopes: Nil }, span: c.span }
+    )
+    row: Nil
+    generics: c.generics
+    ctx: c.ctx
+    fragment: c.fragment
+    tys: c.tys
+    usage: c.usage
+    span: c.span
+  }
+}
+
+pub fn Judgement::type_of(c: Judgement): Judgement {
+  Judgement {
+    term: c.ty
+    ty: ExVar(
+      SynIdent { declaration: None, name: "Type", ctx: SynCtx { scopes: Nil }, span: c.span }
+    )
+    row: Nil
+    generics: c.generics
+    ctx: c.ctx
+    fragment: c.fragment
+    tys: c.tys
+    usage: c.usage
+    span: c.span
+  }
+}
+
+pub fn Judgement::lookup(tys: List(SynExpr × u64), id: u64, other: SynExpr): SynExpr {
+  match tys {
+    Nil => other
+    Cons(p, rest) => match p {
+      #(t, k) => if k == id { t } else { Judgement::lookup(rest, id, other) }
+    }
+  }
+}
+
+pub fn Syn::expr_span(e: SynExpr): u64 {
+  match e {
+    ExVar(i) => i.span.id
+    ExAtom(_, s) => s.id
+    ExNat(_, s) => s.id
+    ExText(_, s) => s.id
+    ExFloat(_, s) => s.id
+    ExBool(_, s) => s.id
+    ExApp(_, _, s) => s.id
+    ExPi(_, _, _, s) => s.id
+    ExLam(_, _, s) => s.id
+    ExIf(_, _, _, s) => s.id
+    ExField(_, _, s) => s.id
+    ExBlock(_, s) => s.id
+    ExPerform(_, _, s) => s.id
+    ExHandle(_, _, s) => s.id
+    ExBudget(_, _, s) => s.id
+    ExBudgetMemory(_, _, s) => s.id
+    ExMatch(_, _, _, _, _, s) => s.id
+    ExRecord(_, _, s) => s.id
+    ExBorrow(_, _, s) => s.id
+    ExUnion(_, s) => s.id
+    ExProduct(_, s) => s.id
+    ExTagged(_, _, s) => s.id
+    ExExists(_, _, _, s) => s.id
+    ExFnKind(_, _, s) => s.id
+    ExBorrowLam(_, _, s) => s.id
+    ExMacroCall(_, _, s) => s.id
+    ExMacroExpr(_, _, s) => s.id
+    ExStep(_, _, _, _, s) => s.id
+    ExHole(_, s) => s.id
+    ExUnit(s) => s.id
+  }
+}
+
+pub fn Judgement::sub(c: Judgement, e: SynExpr): Judgement {
+  let id := Syn::expr_span(e)
+  Judgement {
+    term: e
+    ty: Judgement::lookup(
+      c.tys,
+      id,
+      ExVar(SynIdent { declaration: None, name: "_", ctx: SynCtx { scopes: Nil }, span: c.span })
+    )
+    row: c.row
+    generics: c.generics
+    ctx: c.ctx
+    fragment: c.fragment
+    tys: c.tys
+    usage: c.usage
+    span: SynSpan { id: id }
+  }
+}
+
+pub fn Judgement::subs(c: Judgement, es: List(SynExpr)): List(Judgement) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(Judgement::sub(c, e), Judgement::subs(c, rest))
+  }
+}
+
+pub fn Judgement::sub_opt(c: Judgement, e: Option(SynExpr)): Option(Judgement) {
+  match e {
+    None => None
+    Some(x) => Some(Judgement::sub(c, x))
+  }
+}
+
+pub fn Judgement::unknown(c: Judgement): SynExpr {
+  ExVar(SynIdent { declaration: None, name: "_", ctx: SynCtx { scopes: Nil }, span: c.span })
+}
+
+pub fn Judgement::snoc(xs: List(Judgement::Binder), x: Judgement::Binder): List(Judgement::Binder) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(h, t) => Cons(h, Judgement::snoc(t, x))
+  }
+}
+
+pub fn Judgement::param_type(c: Judgement, ty: SynExpr): SynExpr {
+  match ty {
+    ExPi(ps, _, _, _) => match ps {
+      Cons(p, _) => p.ty
+      Nil => Judgement::unknown(c)
+    }
+    ExVar(_) => Judgement::unknown(c)
+    ExAtom(_, _) => Judgement::unknown(c)
+    ExNat(_, _) => Judgement::unknown(c)
+    ExText(_, _) => Judgement::unknown(c)
+    ExFloat(_, _) => Judgement::unknown(c)
+    ExBool(_, _) => Judgement::unknown(c)
+    ExApp(_, _, _) => Judgement::unknown(c)
+    ExLam(_, _, _) => Judgement::unknown(c)
+    ExIf(_, _, _, _) => Judgement::unknown(c)
+    ExField(_, _, _) => Judgement::unknown(c)
+    ExBlock(_, _) => Judgement::unknown(c)
+    ExPerform(_, _, _) => Judgement::unknown(c)
+    ExHandle(_, _, _) => Judgement::unknown(c)
+    ExBudget(_, _, _) => Judgement::unknown(c)
+    ExBudgetMemory(_, _, _) => Judgement::unknown(c)
+    ExMatch(_, _, _, _, _, _) => Judgement::unknown(c)
+    ExRecord(_, _, _) => Judgement::unknown(c)
+    ExBorrow(_, _, _) => Judgement::unknown(c)
+    ExUnion(_, _) => Judgement::unknown(c)
+    ExProduct(_, _) => Judgement::unknown(c)
+    ExTagged(_, _, _) => Judgement::unknown(c)
+    ExExists(_, _, _, _) => Judgement::unknown(c)
+    ExFnKind(_, _, _) => Judgement::unknown(c)
+    ExBorrowLam(_, _, _) => Judgement::unknown(c)
+    ExMacroCall(_, _, _) => Judgement::unknown(c)
+    ExMacroExpr(_, _, _) => Judgement::unknown(c)
+    ExStep(_, _, _, _, _) => Judgement::unknown(c)
+    ExHole(_, _) => Judgement::unknown(c)
+    ExUnit(_) => Judgement::unknown(c)
+  }
+}
+
+pub fn Judgement::result_type(c: Judgement, ty: SynExpr): SynExpr {
+  match ty {
+    ExPi(ps, r, _, _) => match ps {
+      Cons(_, rest) => match rest {
+        Nil => r
+        Cons(_, _) => Judgement::unknown(c)
+      }
+      Nil => Judgement::unknown(c)
+    }
+    ExVar(_) => Judgement::unknown(c)
+    ExAtom(_, _) => Judgement::unknown(c)
+    ExNat(_, _) => Judgement::unknown(c)
+    ExText(_, _) => Judgement::unknown(c)
+    ExFloat(_, _) => Judgement::unknown(c)
+    ExBool(_, _) => Judgement::unknown(c)
+    ExApp(_, _, _) => Judgement::unknown(c)
+    ExLam(_, _, _) => Judgement::unknown(c)
+    ExIf(_, _, _, _) => Judgement::unknown(c)
+    ExField(_, _, _) => Judgement::unknown(c)
+    ExBlock(_, _) => Judgement::unknown(c)
+    ExPerform(_, _, _) => Judgement::unknown(c)
+    ExHandle(_, _, _) => Judgement::unknown(c)
+    ExBudget(_, _, _) => Judgement::unknown(c)
+    ExBudgetMemory(_, _, _) => Judgement::unknown(c)
+    ExMatch(_, _, _, _, _, _) => Judgement::unknown(c)
+    ExRecord(_, _, _) => Judgement::unknown(c)
+    ExBorrow(_, _, _) => Judgement::unknown(c)
+    ExUnion(_, _) => Judgement::unknown(c)
+    ExProduct(_, _) => Judgement::unknown(c)
+    ExTagged(_, _, _) => Judgement::unknown(c)
+    ExExists(_, _, _, _) => Judgement::unknown(c)
+    ExFnKind(_, _, _) => Judgement::unknown(c)
+    ExBorrowLam(_, _, _) => Judgement::unknown(c)
+    ExMacroCall(_, _, _) => Judgement::unknown(c)
+    ExMacroExpr(_, _, _) => Judgement::unknown(c)
+    ExStep(_, _, _, _, _) => Judgement::unknown(c)
+    ExHole(_, _) => Judgement::unknown(c)
+    ExUnit(_) => Judgement::unknown(c)
+  }
+}
+
+pub fn Judgement::lam_view(
+  c: Judgement,
+  bs: List(SynBinder),
+  body: SynExpr,
+  sp: SynSpan
+): CodeView ! {overflow} {
+  match bs {
+    Nil => VOther(c)
+    Cons(b, rest) => match b {
+      BAtom(_, _) => VOther(c)
+      BName(id, ann, _) => {
+        // Apart from the host's atoms, which count from 1; the binder's
+        // position keeps the atoms of two binders apart.
+        let atom := 1000000000 + id.span.id
+        let inner := match rest {
+          Nil => body
+          Cons(_, _) => ExLam(rest, body, sp)
+        }
+        match Syn::open(inner, id.name, atom) {
+          None => VOther(c)
+          Some(opened) => {
+            let pty := match ann {
+              Some(t) => t
+              None => Judgement::param_type(c, c.ty)
+            }
+            let binder := Judgement::Binder { atom: atom, name: id.name, ty: pty }
+            let ctx := Judgement::snoc(c.ctx, binder)
+            VLam(atom, Judgement::ty_of(c, pty), Judgement {
+              term: opened
+              ty: Judgement::result_type(c, c.ty)
+              row: c.row
+              generics: c.generics
+              ctx: ctx
+              fragment: c.fragment
+              tys: c.tys
+              usage: c.usage
+              span: SynSpan { id: Syn::expr_span(opened) }
+            })
+          }
+        }
+      }
+    }
+  }
+}
+
+// The top of a term, one step; a global is `VConst`, a variable of the context
+// an atom. What is not listed is `VOther`, the term as it is.
+pub fn Judgement::open(c: Judgement): CodeView ! {overflow} {
+  match c.term {
+    ExAtom(n, _) => VAtom(n)
+    ExVar(i) => VConst(i.name)
+    ExNat(t, _) => VInt(t)
+    ExText(t, _) => VText(t)
+    ExFloat(_, _) => VOther(c)
+    ExBool(b, _) => VBool(b)
+    ExApp(f, args, _) => VApp(Judgement::sub(c, f), Judgement::subs(c, args))
+    ExIf(a, b, d, _) => VIf(Judgement::sub(c, a), Judgement::sub(c, b), Judgement::sub_opt(c, d))
+    ExField(e, name, _) => VField(Judgement::sub(c, e), name)
+    // Only the binder count is added to, so the count fits; the fallback is the term itself.
+    ExLam(bs, body, sp) => handle { Judgement::lam_view(c, bs, body, sp) } with { overflow() => VOther(c) }
+    ExPi(_, _, _, _) => VOther(c)
+    ExBlock(_, _) => VOther(c)
+    ExPerform(_, _, _) => VOther(c)
+    ExHandle(_, _, _) => VOther(c)
+    ExBudget(_, _, _) => VOther(c)
+    ExBudgetMemory(_, _, _) => VOther(c)
+    ExMatch(_, _, _, _, _, _) => VOther(c)
+    ExRecord(_, _, _) => VOther(c)
+    ExBorrow(_, _, _) => VOther(c)
+    ExUnion(_, _) => VOther(c)
+    ExProduct(_, _) => VOther(c)
+    ExTagged(_, _, _) => VOther(c)
+    ExExists(_, _, _, _) => VOther(c)
+    ExFnKind(_, _, _) => VOther(c)
+    ExBorrowLam(_, _, _) => VOther(c)
+    ExMacroCall(_, _, _) => VOther(c)
+    ExMacroExpr(_, _, _) => VOther(c)
+    ExStep(_, _, _, _, _) => VOther(c)
+    ExHole(_, _) => VOther(c)
+    ExUnit(_) => VOther(c)
+  }
+}
+
+extern {
+  // Whether the atom is in the term of the `Judgement`, and whether the term is it.
+  pub fn Judgement::mentions(c: Judgement, n: u64): Bool
+  pub fn Judgement::same_atom(c: Judgement, n: u64): Bool
+}
+
+// Reads a text as the syntax whose grammar has this hash. Each syntax gets
+// its own `<syntax>_parse` over this one.
+extern {
+  pub fn Syn::parse<T>(syntax: Text, sha: Text, t: Text): Result(T, SynDiag)
+  // What fills a `$name` or a `$(e)` in an expression of a `quote`: a SynExpr
+  // as it is, a SynIdent as the variable it names.
+  pub fn Syn::expr_of<T>(x: T): SynExpr
+  // The expression with the macro calls in it expanded (outside in, as the host does
+  // for the output of a macro). A macro reads an argument that holds a call, such as
+  // `lc!(`…`)`, as what the call makes by asking for it.
+  pub fn Syn::expand(e: SynExpr): SynExpr
+  // The variable `name` of an expression as the atom, to open its binder; `None`
+  // when the name is written in the expression other than as a variable.
+  pub fn Syn::open(e: SynExpr, name: Text, atom: u64): Option(SynExpr)
+}
+
+// What a macro asks the checker: the externs of `Raw` under the row `elab`,
+// so that only a macro, which the expander runs, asks it.
+pub fn Elab::whnf(c: Judgement): Judgement ! {elab} {
+  Elab::Raw::whnf(c)
+}
+pub fn Elab::defeq(a: Judgement, b: Judgement): Bool ! {elab} {
+  Elab::Raw::defeq(a, b)
+}
+pub fn Elab::check(
+  e: SynExpr,
+  ctx: Judgement,
+  ty: Option(Judgement)
+): Result(Judgement, SynDiag) ! {elab} {
+  Elab::Raw::check(e, ctx, ty)
+}
+pub fn Elab::global(name: Text): Option(Judgement) ! {elab} {
+  Elab::Raw::global(name)
+}
+pub fn Elab::resolve(id: SynIdent, ctx: Judgement): Option(Judgement) ! {elab} {
+  Elab::Raw::resolve(id, ctx)
+}
+pub fn Elab::siblings(name: SynIdent): Option(List(SynIdent)) ! {elab} {
+  Elab::Raw::siblings(name)
+}
+pub fn Elab::constructor_arity(name: SynIdent): Option(u64) ! {elab} {
+  Elab::Raw::constructor_arity(name)
+}
+pub fn Elab::implicit_names(name: SynIdent): Option(List(Text)) ! {elab} {
+  Elab::Raw::implicit_names(name)
+}
+pub fn Elab::data(name: SynIdent): Option(SynData) ! {elab} {
+  Elab::Raw::data(name)
+}
+pub fn Elab::class_decl(name: SynIdent): Option(SynClass) ! {elab} {
+  Elab::Raw::class_decl(name)
+}
+
+extern {
+  // Ask the checker: reading the
+  // declarations before the one in hand, changing nothing.
+  pub fn Elab::Raw::whnf(c: Judgement): Judgement
+  pub fn Elab::Raw::defeq(a: Judgement, b: Judgement): Bool
+  pub fn Elab::Raw::check(
+    e: SynExpr,
+    ctx: Judgement,
+    ty: Option(Judgement)
+  ): Result(Judgement, SynDiag)
+  pub fn Elab::Raw::global(name: Text): Option(Judgement)
+  pub fn Elab::Raw::resolve(id: SynIdent, ctx: Judgement): Option(Judgement)
+  // The constructors of the type `name` is a constructor of, in order; `None` when
+  // `name` is not a constructor. An attribute macro may ask it too.
+  pub fn Elab::Raw::siblings(name: SynIdent): Option(List(SynIdent))
+  // The constructor's field count, including its own generics but excluding
+  // the parameters of its family; None for a name that is not a constructor.
+  pub fn Elab::Raw::constructor_arity(name: SynIdent): Option(u64)
+  // The names of the implicit parameters of the declaration `name` names, in
+  // order; `None` for a name that is not a declaration. A call a macro writes
+  // gives its implicit arguments by these names, `f(<x: v>)`, as the source does.
+  pub fn Elab::Raw::implicit_names(name: SynIdent): Option(List(Text))
+  // The `struct` or `enum` declaration of the type `name` names, as written,
+  // its field types naming the declarations they name; `None` when `name`
+  // names no `struct` or `enum` before the one in hand.
+  pub fn Elab::Raw::data(name: SynIdent): Option(SynData)
+  // The `class` declaration `name` names, as written, its method and law
+  // types naming the declarations they name; `None` when `name` names no
+  // `class` before the one in hand.
+  pub fn Elab::Raw::class_decl(name: SynIdent): Option(SynClass)
+}
+
+// `f` applied to `args`, the first of them given by the names of the implicit
+// parameters of the declaration `f` names: `List::ind(A, m, …)` is written
+// `List::ind(<A: A>, m, …)`, as the source writes it. A call whose head names
+// no declaration, or whose declaration takes nothing implicit, is as it is.
+pub fn Elab::call(f: SynExpr, args: List(SynExpr), sp: SynSpan): SynExpr ! {elab, div} {
+  let names := match Syn::ident_of(f) {
+    Some(i) => match Elab::implicit_names(i) {
+      Some(ns) => ns
+      None => Nil
+    }
+    None => Nil
+  }
+  match Elab::named(names, args) {
+    #(Nil, rest) => ExApp(f, rest, sp)
+    #(fields, rest) => ExApp(
+      f,
+      Cons(
+        ExRecord(
+          SynIdent { declaration: None, name: "@implicits", ctx: SynCtx { scopes: Nil }, span: sp },
+          fields,
+          sp
+        ),
+        rest
+      ),
+      sp
+    )
+  }
+}
+
+// Each name with the argument in its place, and the arguments after them.
+fn Elab::named(
+  names: List(Text),
+  args: List(SynExpr)
+): List(SynExpr × Text) × List(SynExpr) ! {div} {
+  match #(names, args) {
+    #(Cons(n, ns), Cons(a, rest)) => match Elab::named(ns, rest) {
+      #(fields, after) => #(Cons(#(a, n), fields), after)
+    }
+    _ => #(Nil, args)
+  }
+}
+
+// What a macro of the kernel's fragment may return instead of a bare term: the
+// term, and a proof the kernel checks that it equals the expression it
+// replaces.
+pub(open) struct Proved { term: SynExpr, proof: SynExpr }
+
+// The mark of a function that reads the checker's environment (the `elab_*`
+// operations): it is allowed in a macro and nowhere else a macro may run.
+pub(open) effect elab(): Unit resume 1

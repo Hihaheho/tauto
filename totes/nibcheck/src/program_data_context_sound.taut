@@ -1,10 +1,11 @@
 import "registration_context_sound.taut"
 import "../../surface/src/surface.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_registration.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
@@ -15,7 +16,7 @@ pub theorem registration_if_context(
   take: Bool,
   h: CkContextFrame(c, m)
 ): CkContextFrame(c, registration_if(c, m, take)) {
-  ⊢ CkContextFrame(c, registration_if(c, m, take)) from match take {
+  match take {
     true => context_rewrap(c, m, h)
     false => ordinary => Refl
   }
@@ -24,10 +25,9 @@ pub theorem ck_program_data_one_context(
   c: Checker,
   s: SurfaceStmt
 ): CkContextFrame(c, ck_program_data_one(c, s)) {
-  ⊢ CkContextFrame(c, ck_program_data_one(c, s)) from match s {
-    StLet(name, ty, value, borrow, mutable) => ordinary => Refl
-    StVar(name, ty, value, borrow) => ordinary => Refl
-    StModule(name, stmts, start, end) => ordinary => Refl
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => ordinary => Refl
+    StVar(name, ty, value, r#borrow, unused, st_stack) => ordinary => Refl
     StAssign(name, name_place, value) => ordinary => Refl
     StCalled(name_generates, value) => ordinary => Refl
     StFn(f) => ordinary => Refl
@@ -37,13 +37,19 @@ pub theorem ck_program_data_one_context(
     StImport(path, start, end) => ordinary => Refl
     StInductive(i) => ordinary => Refl
     StEffect(e) => ordinary => Refl
-    StExtern(abi, fns, start, end) => ordinary => Refl
+    StExtern(fns, instances, types, structs, enums, start, end) => ordinary => Refl
     StClass(klass) => ordinary => Refl
     StInstance(i) => ordinary => Refl
     StWhile(cond, body) => ordinary => Refl
     StReturn(value) => ordinary => Refl
     StExpr(value) => ordinary => Refl
     StOther(what, start, end) => ordinary => Refl
+    StLoop(st_body, start, end) => ordinary => Refl
+    StModule(mod_name, mod_vis, mod_items, start, end) => ordinary => Refl
+    StReexport(re_path, re_names, re_spans, start, end) => ordinary => Refl
+    StFor(for_pat, for_src, st_body, start, end) => ordinary => Refl
+    StBreak(st_value, start, end) => ordinary => Refl
+    StContinue(start, end) => ordinary => Refl
     StMacro(name, function, start, end) => ordinary => Refl
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordinary => Refl
     StSyntax(name, grammar, start, end) => ordinary => Refl
@@ -71,14 +77,13 @@ pub theorem ck_program_data_context(
   stmts: List(SurfaceStmt),
   c: Checker
 ): CkContextFrame(c, ck_program_data(stmts, c)) {
-  ⊢ CkContextFrame(c, ck_program_data(stmts, c)) from match stmts {
+  match stmts {
     Nil => ordinary => Refl
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
       Eq::sym(registration_program_unf(s, rest, c)),
       context_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
         ck_program_data_one(c, s),
@@ -97,10 +102,9 @@ pub theorem ck_prelude_data_one_context(
   s: SurfaceStmt,
   own: Ordmap(Text, Bool)
 ): CkContextFrame(c, ck_prelude_data_one(c, s, own)) {
-  ⊢ CkContextFrame(c, ck_prelude_data_one(c, s, own)) from match s {
-    StLet(name, ty, value, borrow, mutable) => ordinary => Refl
-    StVar(name, ty, value, borrow) => ordinary => Refl
-    StModule(name, stmts, start, end) => ordinary => Refl
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => ordinary => Refl
+    StVar(name, ty, value, r#borrow, unused, st_stack) => ordinary => Refl
     StAssign(name, name_place, value) => ordinary => Refl
     StCalled(name_generates, value) => ordinary => Refl
     StFn(f) => ordinary => Refl
@@ -109,13 +113,19 @@ pub theorem ck_prelude_data_one_context(
     StMutual(stmts, start, end) => ordinary => Refl
     StImport(path, start, end) => ordinary => Refl
     StInductive(i) => ordinary => Refl
-    StExtern(abi, fns, start, end) => ordinary => Refl
+    StExtern(fns, instances, types, structs, enums, start, end) => ordinary => Refl
     StClass(klass) => ordinary => Refl
     StInstance(i) => ordinary => Refl
     StWhile(cond, body) => ordinary => Refl
     StReturn(value) => ordinary => Refl
     StExpr(value) => ordinary => Refl
     StOther(what, start, end) => ordinary => Refl
+    StLoop(st_body, start, end) => ordinary => Refl
+    StModule(mod_name, mod_vis, mod_items, start, end) => ordinary => Refl
+    StReexport(re_path, re_names, re_spans, start, end) => ordinary => Refl
+    StFor(for_pat, for_src, st_body, start, end) => ordinary => Refl
+    StBreak(st_value, start, end) => ordinary => Refl
+    StContinue(start, end) => ordinary => Refl
     StMacro(name, function, start, end) => ordinary => Refl
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordinary => Refl
     StSyntax(name, grammar, start, end) => ordinary => Refl
@@ -156,14 +166,13 @@ pub theorem ck_prelude_data_context(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkContextFrame(c, ck_prelude_data(stmts, c, own)) {
-  ⊢ CkContextFrame(c, ck_prelude_data(stmts, c, own)) from match stmts {
+  match stmts {
     Nil => ordinary => Refl
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
       Eq::sym(registration_prelude_unf(s, rest, c, own)),
       context_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_prelude_data(rest, next, own)),
         ck_prelude_data_one(c, s, own),

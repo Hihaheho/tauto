@@ -1,12 +1,13 @@
 import "inference_calls.taut"
 import "diagnostic_sound.taut"
-import std::Base
+import std::base
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
 import "inference_base.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -17,9 +18,9 @@ pub theorem accepted_bind_value<A: Type, B: Type>(
   tail: ∀ value: A. ∀ state: Checker. ∀ clean: DiagnosticClean(
     ck_st(k(value, state))
   ). p(ck_val(k(value, state))),
-  clean: DiagnosticClean(ck_st(frame_bind(A, B, k, m)))
-): p(ck_val(frame_bind(A, B, k, m))) {
-  ⊢ p(ck_val(frame_bind(A, B, k, m))) from match m { mut1(value, state) => tail(value, state, clean) }
+  clean: DiagnosticClean(ck_st(frame_bind(<A: A, B: B>, k, m)))
+): p(ck_val(frame_bind(<A: A, B: B>, k, m))) {
+  match m { mut1(value, state) => tail(value, state, clean) }
 }
 pub def AppArgumentCount(
   k: Nat
@@ -33,7 +34,7 @@ pub def AppArgumentCount(
   ck_st(ck_app_args_in(k, c, args, known, env, i))
 ). list_len(ck_val(ck_app_args_in(k, c, args, known, env, i))) = list_len(args)
 pub fn argument_count_prepend(t: Ty, m: Mut1(List(Ty), Checker)): Mut1(List(Ty), Checker) {
-  frame_bind(List(Ty), List(Ty), (tail: List(Ty), state: Checker) => mut1(Cons(t, tail), state), m)
+  frame_bind(<A: List(Ty), B: List(Ty)>, (tail: List(Ty), state: Checker) => mut1(Cons(t, tail), state), m)
 }
 pub theorem argument_count_prepend_sound(
   t: Ty,
@@ -42,7 +43,7 @@ pub theorem argument_count_prepend_sound(
   ih: ∀ clean: DiagnosticClean(ck_st(m)). list_len(ck_val(m)) = size,
   clean: DiagnosticClean(ck_st(argument_count_prepend(t, m)))
 ): list_len(ck_val(argument_count_prepend(t, m))) = Succ(size) {
-  ⊢ list_len(ck_val(argument_count_prepend(t, m))) = Succ(size) from match m {
+  match m {
     mut1(tail, state) => Eq::congr((n: Nat) => Succ(n), ih(clean))
   }
 }
@@ -61,18 +62,14 @@ pub theorem inference_argument_count(
   ck_val(inference_argument(j, c, a, rest, known, env, i, expected))
 ) = Succ(list_len(rest)) {
   accepted_bind_value(
-    Unit,
-    List(Ty),
+    <A: Unit, B: List(Ty)>,
     (values: List(Ty)) => list_len(values) = Succ(list_len(rest)),
     (ignored: Unit, c1: Checker) => frame_bind(
-      Ty,
-      List(Ty),
+      <A: Ty, B: List(Ty)>,
       (t: Ty, c2: Checker) => frame_bind(
-        Unit,
-        List(Ty),
+        <A: Unit, B: List(Ty)>,
         (cleared: Unit, c3: Checker) => frame_bind(
-          Unit,
-          List(Ty),
+          <A: Unit, B: List(Ty)>,
           (checked: Unit, c4: Checker) => argument_count_prepend(
             t,
             ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
@@ -85,15 +82,12 @@ pub theorem inference_argument_count(
     ),
     inference_argument_hint(j, c, a, rest, known, env, i, expected, ck_is_lambda(a)),
     ignored => c1 => accepted_c1 => accepted_bind_value(
-      Ty,
-      List(Ty),
+      <A: Ty, B: List(Ty)>,
       (values: List(Ty)) => list_len(values) = Succ(list_len(rest)),
       (t: Ty, c2: Checker) => frame_bind(
-        Unit,
-        List(Ty),
+        <A: Unit, B: List(Ty)>,
         (cleared: Unit, c3: Checker) => frame_bind(
-          Unit,
-          List(Ty),
+          <A: Unit, B: List(Ty)>,
           (checked: Unit, c4: Checker) => argument_count_prepend(
             t,
             ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
@@ -104,12 +98,10 @@ pub theorem inference_argument_count(
       ),
       ck_infer_in(j, c1, a, env),
       t => c2 => accepted_c2 => accepted_bind_value(
-        Unit,
-        List(Ty),
+        <A: Unit, B: List(Ty)>,
         (values: List(Ty)) => list_len(values) = Succ(list_len(rest)),
         (cleared: Unit, c3: Checker) => frame_bind(
-          Unit,
-          List(Ty),
+          <A: Unit, B: List(Ty)>,
           (checked: Unit, c4: Checker) => argument_count_prepend(
             t,
             ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
@@ -118,8 +110,7 @@ pub theorem inference_argument_count(
         ),
         inference_set_hint(c2, None),
         cleared => c3 => accepted_c3 => accepted_bind_value(
-          Unit,
-          List(Ty),
+          <A: Unit, B: List(Ty)>,
           (values: List(Ty)) => list_len(values) = Succ(list_len(rest)),
           (checked: Unit, c4: Checker) => argument_count_prepend(
             t,
@@ -152,7 +143,7 @@ pub theorem inference_arguments_count(
   ih: AppArgumentCount(j),
   clean: DiagnosticClean(ck_st(inference_arguments(j, c, known, env, i, args)))
 ): list_len(ck_val(inference_arguments(j, c, known, env, i, args))) = list_len(args) {
-  ⊢ list_len(ck_val(inference_arguments(j, c, known, env, i, args))) = list_len(args) from match args {
+  match args {
     Nil => Refl
     Cons(a, rest) => inference_argument_count(
       j,
@@ -177,7 +168,7 @@ pub theorem ck_app_args_count(
   i: Nat,
   clean: DiagnosticClean(ck_st(ck_app_args_in(k, c, args, known, env, i)))
 ): list_len(ck_val(ck_app_args_in(k, c, args, known, env, i))) = list_len(args) {
-  ⊢ list_len(ck_val(ck_app_args_in(k, c, args, known, env, i))) = list_len(args) from match k {
+  match k {
     Zero => False::elim(
       diagnostic_error_impossible(
         c,

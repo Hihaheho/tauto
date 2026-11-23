@@ -1,0 +1,77 @@
+// A borrow of one field leaves the other fields free in the generated code
+// as in the checker.
+
+@ cases.borrow-of-a-field-leaves-another-field-free
+source = ```tauto
+
+struct(affine) F { n: i64 }
+struct P { a: F, b: F }
+fn bump(f: &mut F): Unit ! {overflow} { f.n := f.n + 10 }
+fn size(f: &F): i64 { f.n }
+var p := P { a: F { n: 1 }, b: F { n: 2 } }
+let r := &p.a
+bump(&mut p.b)
+show(&(size(&r) + size(&p.b)))
+```
+stdout = "13\n"
+
+@ cases.borrows-field-path-frees-the-other-fields-at-the-call
+rust.unimplemented = "unsupported: pa names a field in borrows(…), which the Rust backend does not express"
+source = ```tauto
+
+struct(affine) F { n: i64 }
+struct P { a: F, b: F }
+fn pa(p: &P): &F borrows(p.a) { &p.a }
+fn bump(f: &mut F): Unit ! {overflow} { f.n := f.n + 10 }
+fn size(f: &F): i64 { f.n }
+var q := P { a: F { n: 1 }, b: F { n: 2 } }
+let r := pa(&q)
+bump(&mut q.b)
+show(&(size(&r) + size(&q.b)))
+```
+stdout = "13\n"
+
+@ cases.borrow-of-an-owned-field-of-a-view-struct
+source = ```tauto
+
+struct(affine) View(T: Type) { value: T, at: &i64 }
+fn get<T>(n: &View(T)): &T borrows(n) { &n.value }
+fn size(f: &i64): i64 { f }
+let k := 7
+let v := View { value: 3, at: &k }
+show(&(size(get(&v)) + size(&k)))
+```
+stdout = "10\n"
+
+// A `match` on a `&mut` parameter binds `&mut` pattern variables: a write
+// through one reaches the value the caller lent.
+@ cases.write-through-a-match-on-a-mut-parameter
+source = ```tauto
+enum Shape {
+  Circle(i64)
+  Square(i64)
+}
+fn grow(s: &mut Shape): Unit ! {overflow} {
+  match s {
+    Circle(r) => { *r := r + 1 }
+    Square(w) => { *w := 10 }
+  }
+}
+fn get(s: &Shape): i64 {
+  match s {
+    Circle(r) => r
+    Square(w) => w
+  }
+}
+var c := Circle(1)
+grow(&mut c)
+var q := Square(3)
+grow(&mut q)
+var d := Square(3)
+match &mut d {
+  Circle(r) => { *r := 7 }
+  Square(w) => { *w := w + 5 }
+}
+show(&(get(&c) * 100 + get(&q) * 10 + get(&d)))
+```
+stdout = "308\n"

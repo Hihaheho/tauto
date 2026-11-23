@@ -1,0 +1,206 @@
+import std::base
+import std::text
+
+// The identity of a name once it is resolved (`docs/design/name-identity.md`).
+// A name is resolved once, and from then on it is carried as an id: equality
+// and order are those of the ids, never of the text. The text of a
+// declaration is kept apart, in a `DeclTable`, for display only.
+//
+// Ids are handed out in order, so anything listed by id comes out in the
+// order the names were met.
+
+// A declaration: the `index`-th one given an id.
+pub(open) inductive DeclId: Type {
+  DeclIdMk(index: Nat): DeclId
+}
+
+// A local binding: the `index`-th binding position given an id. A different
+// type from `DeclId`, so that one never stands for the other.
+pub(open) inductive LocalId: Type {
+  LocalIdMk(index: Nat): LocalId
+}
+
+// A name as written (`NameSpelled`, not yet resolved, or resolved to nothing
+// the resolver could see), or what it was resolved to.
+pub(open) inductive SurfaceName: Type {
+  NameSpelled(text: Text): SurfaceName
+  NameGlobal(decl: DeclId): SurfaceName
+  NameLocal(local: LocalId): SurfaceName
+}
+
+pub fn decl_id_index(d: DeclId): Nat {
+  match d {
+    DeclIdMk(i) => i
+  }
+}
+
+pub fn local_id_index(l: LocalId): Nat {
+  match l {
+    LocalIdMk(i) => i
+  }
+}
+
+pub fn decl_id_eq(a: DeclId, b: DeclId): Bool {
+  Nat::eq(decl_id_index(a), decl_id_index(b))
+}
+
+pub fn local_id_eq(a: LocalId, b: LocalId): Bool {
+  Nat::eq(local_id_index(a), local_id_index(b))
+}
+
+pub fn decl_id_lt(a: DeclId, b: DeclId): Bool {
+  decl_id_index(a) < decl_id_index(b)
+}
+
+pub fn local_id_lt(a: LocalId, b: LocalId): Bool {
+  local_id_index(a) < local_id_index(b)
+}
+
+pub theorem decl_id_eta(d: DeclId): DeclIdMk(decl_id_index(d)) = d {
+  match d {
+    DeclIdMk(i) => Refl
+  }
+}
+
+pub theorem local_id_eta(l: LocalId): LocalIdMk(local_id_index(l)) = l {
+  match l {
+    LocalIdMk(i) => Refl
+  }
+}
+
+pub theorem decl_id_eq_refl(d: DeclId): decl_id_eq(d, d) = true {
+  Nat::eq_refl(decl_id_index(d))
+}
+
+pub theorem local_id_eq_refl(l: LocalId): local_id_eq(l, l) = true {
+  Nat::eq_refl(local_id_index(l))
+}
+
+// Two declarations the comparison calls equal are the same declaration.
+pub theorem decl_id_eq_sound(a: DeclId, b: DeclId, h: decl_id_eq(a, b) = true): a = b {
+  Eq::trans(
+    Eq::sym(decl_id_eta(a)),
+    Eq::trans(Eq::congr(DeclIdMk, Nat::eq_sound(decl_id_index(a), decl_id_index(b), h)), decl_id_eta(b))
+  )
+}
+
+pub theorem local_id_eq_sound(a: LocalId, b: LocalId, h: local_id_eq(a, b) = true): a = b {
+  Eq::trans(
+    Eq::sym(local_id_eta(a)),
+    Eq::trans(Eq::congr(LocalIdMk, Nat::eq_sound(local_id_index(a), local_id_index(b), h)), local_id_eta(b))
+  )
+}
+
+// Equality of resolved names: by id. Two spelled names are equal when they
+// are spelled the same, since neither stands for anything yet; a spelled
+// name is never equal to a resolved one.
+pub fn surface_name_eq(a: SurfaceName, b: SurfaceName): Bool {
+  match a {
+    NameSpelled(x) => ⊢ Bool from match b {
+      NameSpelled(y) => Text::eq(x, y)
+      NameGlobal(^d) => false
+      NameLocal(^l) => false
+    }
+    NameGlobal(d) => ⊢ Bool from match b {
+      NameSpelled(^y) => false
+      NameGlobal(e) => decl_id_eq(d, e)
+      NameLocal(^l) => false
+    }
+    NameLocal(l) => ⊢ Bool from match b {
+      NameSpelled(^y) => false
+      NameGlobal(^e) => false
+      NameLocal(m) => local_id_eq(l, m)
+    }
+  }
+}
+
+// The display text of the declarations, by id, the last one given first: of
+// `size` entries, the one at `size - 1 - i` is the text of `DeclIdMk(i)`.
+// Only diagnostics and output read it.
+pub(open) inductive DeclTable: Type {
+  DeclTableMk(texts: List(Text), size: Nat): DeclTable
+}
+
+pub fn decl_table_empty(): DeclTable {
+  DeclTableMk(Nil, 0)
+}
+
+pub fn decl_table_size(t: DeclTable): Nat {
+  match t {
+    DeclTableMk(^texts, size) => size
+  }
+}
+
+// The id the next declaration gets.
+pub fn decl_table_next(t: DeclTable): DeclId {
+  DeclIdMk(decl_table_size(t))
+}
+
+// The table with one more declaration, displayed as `text`, whose id is
+// `decl_table_next(t)`.
+pub fn decl_table_add(t: DeclTable, text: Text): DeclTable {
+  match t {
+    DeclTableMk(texts, size) => DeclTableMk(Cons(text, texts), Succ(size))
+  }
+}
+
+pub fn decl_table_nth(texts: List(Text), i: Nat): Option(Text) {
+  match texts {
+    Nil => None
+    Cons(x, rest) => ⊢ Option(Text) from match i {
+      Zero => Some(x)
+      Succ(j) => decl_table_nth(rest, j)
+    }
+  }
+}
+
+pub fn decl_table_display(t: DeclTable, d: DeclId): Option(Text) {
+  match t {
+    DeclTableMk(texts, size) => if decl_id_index(d) < size {
+      decl_table_nth(texts, size - Succ(decl_id_index(d)))
+    } else {
+      None
+    }
+  }
+}
+
+// The text a name is read as where code that still reads names as text needs
+// one: what a spelled name was written as, and for a resolved name a key made
+// of its id behind a control byte that no source spelling begins with. Two
+// names have the same text exactly when they are the same name; the words the
+// reader shows come from the `DeclTable`, never from this key.
+pub fn surface_name_text(n: SurfaceName): Text {
+  match n {
+    NameSpelled(t) => t
+    NameGlobal(d) => Text::concat(Text::Mk([1, 103]), Text::of_nat(decl_id_index(d)))
+    NameLocal(l) => Text::concat(Text::Mk([1, 108]), Text::of_nat(local_id_index(l)))
+  }
+}
+
+// A text a source could have spelled: it has a first byte, and it is not the
+// control byte that begins a key.
+pub fn surface_text_is_spelling(t: Text): Bool {
+  match Text::byte(t, 0) {
+    Some(b) => Nat::eq(b, 1) == false
+    None => false
+  }
+}
+
+// A name whose text is a spelling is that spelled name: a resolved name
+// reads as a key, which is not one.
+pub theorem surface_name_spelled(
+  n: SurfaceName,
+  t: Text,
+  h: surface_name_text(n) = t,
+  e: surface_text_is_spelling(t) = true
+): n = NameSpelled(t) {
+  match n {
+    NameSpelled(x) => Eq::congr(NameSpelled, h)
+    NameGlobal(d) => False::elim(
+      false_ne_true(Eq::sym(Eq::trans(Eq::sym(Eq::subst((z: Text) => surface_text_is_spelling(z) = true, Eq::sym(h), e)), Refl)))
+    )
+    NameLocal(l) => False::elim(
+      false_ne_true(Eq::sym(Eq::trans(Eq::sym(Eq::subst((z: Text) => surface_text_is_spelling(z) = true, Eq::sym(h), e)), Refl)))
+    )
+  }
+}

@@ -1,0 +1,308 @@
+// `ownership`: where each owned value is dropped. `check-ownership` asks that
+// every owned local is moved or dropped once on every path.
+
+@ cases.an-unused-owned-parameter-is-dropped-after-the-result-is-made
+source = ```tauto
+fn keep(t: Text, u: Text): Text { t }
+show(&keep("a", "b"))
+```
+stdout = ```
+"a"
+```
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.keep = ```nir
+fn keep@2(t#4: Text, u#5: Text): Text S = {
+  let dropped_after#4294967291 := move t#4;
+  builtin drop(move u#5): Unit;
+  move dropped_after#4294967291
+}
+```
+
+@ cases.a-value-moved-in-one-branch-is-dropped-in-the-other
+source = ```tauto
+fn take(t: Text): u64 { Text::len(t) }
+fn pick(b: Bool, t: Text): u64 { if b { take(t) } else { 0 } }
+show(&pick(true, "abc"))
+```
+stdout = "3\n"
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.take = ```nir
+fn take@5(t#8: Text): u64 S = {
+  let dropped_after#4294967292 := builtin Text::len(&t#8): u64;
+  builtin drop(move t#8): Unit;
+  move dropped_after#4294967292
+}
+```
+nir.fns.pick = ```nir
+fn pick@2(b#4: Bool, t#5: Text): u64 S = if copy b#4 then take@5(move t#5): u64 else {
+  let dropped_after#4294967293 := 0u64;
+  builtin drop(move t#5): Unit;
+  move dropped_after#4294967293
+}
+```
+
+@ cases.what-a-pattern-binds-is-dropped-unless-moved
+source = ```tauto
+enum Two { One(Text), Both(Text, Text) }
+fn first(x: Two): Text {
+  match x {
+    One(a) => a
+    Both(a, b) => a
+  }
+}
+show(&first(Both("a", "b")))
+```
+stdout = ```
+"a"
+```
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.first = ```nir
+fn first@2(x#4: Two): Text S = match x#4 {
+  Two::One(a#5: Text) => move a#5,
+  Two::Both(a#6: Text, b#7: Text) => {
+    let dropped_after#4294967291 := move a#6;
+    builtin drop(move b#7): Unit;
+    move dropped_after#4294967291
+  },
+}
+```
+
+@ cases.a-local-of-a-nested-block-is-dropped-in-it
+source = ```tauto
+fn total(xs: List(Text)): u64 ! {overflow} {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => {
+      let y := x
+      Text::len(y) + total(rest)
+    }
+  }
+}
+show(&total(["a", "bc", "def"]))
+```
+stdout = "6\n"
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.total = ```nir
+fn total@2(xs#4: List(Text)): u64 A = match xs#4 {
+  List::Nil => {
+    let dropped_after#4294967293 := 0u64;
+    builtin drop(move xs#4): Unit;
+    move dropped_after#4294967293
+  },
+  List::Cons(x#5: Text, rest#6: List(Text)) => {
+    let y#7 := move x#5;
+    {
+      let dropped_after#4294967292 := {
+        let anf#16 := builtin Text::len(&y#7): u64;
+        let anf#17 := total@2(move rest#6) tier A unwind {
+          builtin drop(move y#7): Unit;
+        }: u64;
+        add<u64>(move anf#16, move anf#17)
+      };
+      builtin drop(move y#7): Unit;
+      move dropped_after#4294967292
+    }
+  },
+}
+```
+
+@ cases.a-scrutinee-an-arm-takes-no-part-of-is-dropped-in-that-arm
+imports = [path`../std/base.taut`]
+source = ```tauto
+fn first(xs: List(Nat), d: Nat): Nat {
+  ⊢ Nat from match xs { Nil => d, Cons(x, rest) => x }
+}
+show(&first([1], 0))
+```
+stdout = "1\n"
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.first = ```nir
+fn first@2(xs#4: List(nat), d#5: nat): nat S = match xs#4 {
+  List::Nil => {
+    let dropped_after#4294967291 := move d#5;
+    builtin drop(move xs#4): Unit;
+    move dropped_after#4294967291
+  },
+  List::Cons(x#6: nat, rest#7: List(nat)) => {
+    let dropped_after#4294967289 := {
+      let dropped_after#4294967290 := move x#6;
+      builtin drop(move rest#7): Unit;
+      move dropped_after#4294967290
+    };
+    builtin drop(move d#5): Unit;
+    move dropped_after#4294967289
+  },
+}
+```
+
+@ cases.a-var-assigned-in-one-branch-stays-alive-on-the-other
+source = ```tauto
+fn f(c: Bool): Bool {
+  var r: Option(Text) := None
+  if c { r := Some("x") }
+  match r { Some(_) => true, None => false }
+}
+show(&f(true))
+```
+stdout = "true\n"
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.f = ```nir
+fn f@2(c#4: Bool): Bool S = {
+  var r#5 := Option::None: Option(Text);
+  if copy c#4 then {
+    builtin drop(move r#5): Unit;
+    set r#5 := Option::Some("x"): Option(Text);
+  } else ();
+  match r#5 {
+    Option::Some(_) => {
+      let dropped_after#4294967293 := true;
+      builtin drop(move r#5): Unit;
+      move dropped_after#4294967293
+    },
+    Option::None => {
+      let dropped_after#4294967292 := false;
+      builtin drop(move r#5): Unit;
+      move dropped_after#4294967292
+    },
+  }
+}
+```
+
+@ cases.a-guard-reads-what-its-arm-binds-without-moving-it
+llvm.unimplemented = "generate: the LLVM backend does not write a guard on a `match` that takes its value apart yet"
+source = ```tauto
+fn f(n: Option(Text)): u64 {
+  match n {
+    Some(x) if Text::len(x) == 1 => Text::len(x)
+    _ => 0
+  }
+}
+show(&f(Some("a")))
+```
+stdout = "1\n"
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.f = ```nir
+fn f@2(n#4: Option(Text)): u64 S = match n#4 {
+  Option::Some(x#5: Text) if {
+    let anf#11 := builtin Text::len(&x#5): u64;
+    eq(move anf#11, 1u64)
+  } => {
+    let dropped_after#4294967293 := builtin Text::len(&x#5): u64;
+    builtin drop(move x#5): Unit;
+    move dropped_after#4294967293
+  },
+  _ => {
+    let dropped_after#4294967292 := 0u64;
+    builtin drop(move n#4): Unit;
+    move dropped_after#4294967292
+  },
+}
+```
+
+@ cases.a-guard-never-moves-an-owned-binding
+llvm.unimplemented = "generate: the LLVM backend does not write a guard on a `match` that takes its value apart yet"
+source = ```tauto
+fn f(n: Option(Text)): u64 {
+  match n {
+    Some(x) if x == "a" => 1
+    Some(x) if x == "bc" => 2
+    _ => 0
+  }
+}
+show(&f(Some("a")))
+```
+stdout = "1\n"
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.f = ```nir
+fn f@2(n#4: Option(Text)): u64 S = match n#4 {
+  Option::Some(x#5: Text) if eq(clone x#5, "a") => {
+    let dropped_after#4294967293 := 1u64;
+    builtin drop(move x#5): Unit;
+    move dropped_after#4294967293
+  },
+  Option::Some(x#6: Text) if eq(clone x#6, "bc") => {
+    let dropped_after#4294967292 := 2u64;
+    builtin drop(move x#6): Unit;
+    move dropped_after#4294967292
+  },
+  _ => {
+    let dropped_after#4294967291 := 0u64;
+    builtin drop(move n#4): Unit;
+    move dropped_after#4294967291
+  },
+}
+```
+
+@ cases.a-value-that-is-lent-is-dropped-after-the-call-that-borrows-it
+source = ```tauto
+fn size(t: Text): u64 ! {overflow} { Text::len(t) + Text::len(t) }
+show(&size("ab"))
+```
+stdout = "4\n"
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.size = ```nir
+fn size@2(t#4: Text): u64 A = {
+  let dropped_after#4294967293 := {
+    let anf#9 := builtin Text::len(&t#4): u64;
+    let anf#10 := builtin Text::len(&t#4): u64;
+    add<u64>(move anf#9, move anf#10)
+  };
+  builtin drop(move t#4): Unit;
+  move dropped_after#4294967293
+}
+```
+
+@ cases.a-copy-is-not-dropped
+source = ```tauto
+fn first(a: u64, b: u64): u64 { a }
+show(&first(1, 2))
+```
+stdout = "1\n"
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.first = ```nir
+fn first@2(a#4: u64, b#5: u64): u64 S = copy a#4
+```
+
+// No program the compiler accepts moves a value twice; the check is asked
+// about a package written as text.
+@ cases.a-value-moved-twice-is-found
+nir.source = ```nir
+fn twice@0(t#1: Text): Pair(Text, Text) S = Pair::Mk(fst = move t#1, snd = move t#1): Pair(Text, Text)
+```
+nir.passes = ["check-ownership"]
+nir.error = "twice@0"
+
+@ cases.a-value-moved-on-the-right-of-or-is-dropped-where-the-left-decides
+source = ```tauto
+fn any<A>(p: (&A) -> Bool, l: &List(A)): Bool {
+  match l {
+    Nil => false
+    Cons(h, t) => p(h) || any(p, t)
+  }
+}
+show(&any((x: &u64) => x == 2, &[1, 2, 3]))
+```
+stdout = "true\n"
+nir.passes = ["anf", "ownership", "check-ownership"]
+nir.fns.any = ```nir
+fn any@2<'A: Clone>(p#5: fn(&'A) -> Bool shared S, ref l#6: &List('A)): Bool S = match by_ref &l#6 {
+  List::Nil => {
+    let dropped_after#4294967290 := false;
+    builtin drop(move p#5): Unit;
+    move dropped_after#4294967290
+  },
+  List::Cons(ref h#7: &'A, ref t#8: &List('A)) => if p#5(&h#7): Bool then {
+    let dropped_after#4294967291 := true;
+    builtin drop(move p#5): Unit;
+    move dropped_after#4294967291
+  } else any@2<'A>(move p#5, &t#8): Bool,
+}
+```
+
+
+@ cases.a-move-on-the-right-of-or-without-a-drop-where-it-is-skipped-is-found
+nir.source = ```nir
+fn f@0(b#1: Bool, t#2: Text): Bool S = or(copy b#1, builtin Text::is_empty(move t#2): Bool)
+```
+nir.passes = ["check-ownership"]
+nir.error = "f@0: `t` is not moved on a path"

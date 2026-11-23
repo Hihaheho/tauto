@@ -1,11 +1,12 @@
 import "data_presence_sound.taut"
 import "summary_state.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "summary_sound.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -15,7 +16,7 @@ pub theorem data_presence_mark_k(
   o: Option(Data),
   ordered: SummaryOrdered(d)
 ): DataSummaryPresence(d, summary_mark_k(d, n, o)) {
-  ⊢ DataSummaryPresence(d, summary_mark_k(d, n, o)) from match o {
+  match o {
     None => key => h => h
     Some(data) => data_presence_insert(
       summary_decls(d),
@@ -39,11 +40,11 @@ pub theorem data_presence_mark(
 }
 
 pub theorem ck_mark_preserves_declarations(
-  es: List(Pair(Text, Data)),
+  es: List(Text × Data),
   c: Checker,
   ordered: SummaryOrdered(ck_datas_of(c))
 ): DataSummaryPresence(ck_datas_of(c), ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
-  ⊢ DataSummaryPresence(ck_datas_of(c), ck_datas_of(ck_st(ck_mark_recursive(es, c)))) from match es {
+  match es {
     Nil => n => h => h
     Cons(e, rest) => {
       let next: Checker := summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(e)))
@@ -101,7 +102,7 @@ pub theorem ck_finish_datas_preserves_declarations(
   program: List(SurfaceStmt),
   ordered: SummaryOrdered(ck_datas_of(c))
 ): DataSummaryPresence(ck_datas_of(c), ck_datas_of(ck_st(ck_finish_datas(c, program)))) {
-  let es: List(Pair(Text, Data)) := Ordmap::entries(summary_decls(ck_datas_of(c)))
+  let es: List(Text × Data) := Ordmap::entries(summary_decls(ck_datas_of(c)))
   let marked: Mut1(Unit, Checker) := ck_mark_recursive(es, c)
   let tail: DataSummaryPresence(
     ck_datas_of(ck_st(marked)),

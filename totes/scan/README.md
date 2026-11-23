@@ -1,7 +1,7 @@
 # scan
 
 The scanner of Tauto's syntax, in the proof language (`src/scan.taut`,
-`docs/design/self-host.md`「構文（`totes/scan`、`totes/llk`、`totes/syntax`）」; extracted to Nib when
+`docs/design/self-host.md`「Syntax (`totes/scan`, `totes/llk`, `totes/lr`, `totes/syntax`)」; extracted to Nib when
 the tote is run). It cuts a text into tokens with the scanner tables of a
 grammar (`crates/tauto-parol/tauto.par` and the `syntax` of a macro).
 
@@ -54,7 +54,7 @@ tokens to skip.
 
 ## What is proved
 
-`src/longest.taut` (`docs/design/self-host.md`「証明（`totes/*/src/`、`std/`）」): a token `scan_find` gives is
+`src/longest.taut` (`docs/design/self-host.md`「Proofs」): a token `scan_find` gives is
 one a run of the automaton reaches (`scan_find_sound`), and no token a run
 reaches is longer (`scan_find_longest`).
 

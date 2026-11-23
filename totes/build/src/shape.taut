@@ -1,0 +1,984 @@
+import "../../identity/src/identity.taut"
+import std::base
+import std::data
+import std::text
+import std::list
+import query_flow::codec
+import surface::surface
+
+// What a part of the surface syntax says, without where it is: the writers of
+// `statements.taut` leaving out the positions (`start`, `end`, `call_start`,
+// `call_end`) and the occurrences. Two parts that differ only in where they
+// are written give the same text, so moving a declaration in its file does
+// not change its signature (`queries.taut`).
+
+pub fn build_shape_of_stmt(s: SurfaceStmt): Text ! {div} {
+  Text::concat_all(List::reverse(bss_w_SurfaceStmt(s, Nil)))
+}
+
+pub fn bss_w_Text(x: Text, acc: List(Text)): List(Text) ! {div} { Cons(field(x), acc) }
+
+pub fn bss_w_Nat(x: Nat, acc: List(Text)): List(Text) ! {div} {
+  Cons(field(Text::of_u64(nat_to_u64(x))), acc)
+}
+
+pub fn bss_w_Bool(x: Bool, acc: List(Text)): List(Text) ! {div} {
+  Cons(field(if x { "t" } else { "f" }), acc)
+}
+
+pub fn bss_w_SurfaceVis(x: SurfaceVis, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    VisPrivate => Cons(field("private"), acc)
+    VisPub => Cons(field("pub"), acc)
+    VisOpen => Cons(field("open"), acc)
+    VisHandle => Cons(field("handle"), acc)
+  }
+}
+
+pub fn bss_w_List_Nat(xs: List(Nat), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_Nat_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_Nat_items(xs: List(Nat), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_Nat_items(rest, bss_w_Nat(y, acc))
+  }
+}
+
+pub fn bss_w_List_Option_Bool(xs: List(Option(Bool)), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_Option_Bool_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_Option_Bool_items(xs: List(Option(Bool)), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_Option_Bool_items(rest, bss_w_Option_Bool(y, acc))
+  }
+}
+
+pub fn bss_w_List_Option_SurfaceTerm(xs: List(Option(SurfaceTerm)), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_Option_SurfaceTerm_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_Option_SurfaceTerm_items(xs: List(Option(SurfaceTerm)), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_Option_SurfaceTerm_items(rest, bss_w_Option_SurfaceTerm(y, acc))
+  }
+}
+
+pub fn bss_w_List_Option_Text(xs: List(Option(Text)), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_Option_Text_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_Option_Text_items(xs: List(Option(Text)), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_Option_Text_items(rest, bss_w_Option_Text(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceArm(xs: List(SurfaceArm), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceArm_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceArm_items(xs: List(SurfaceArm), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceArm_items(rest, bss_w_SurfaceArm(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceConstraint(xs: List(SurfaceConstraint), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceConstraint_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceConstraint_items(xs: List(SurfaceConstraint), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceConstraint_items(rest, bss_w_SurfaceConstraint(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceCtor(xs: List(SurfaceCtor), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceCtor_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceCtor_items(xs: List(SurfaceCtor), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceCtor_items(rest, bss_w_SurfaceCtor(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceDataCtor(xs: List(SurfaceDataCtor), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceDataCtor_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceDataCtor_items(xs: List(SurfaceDataCtor), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceDataCtor_items(rest, bss_w_SurfaceDataCtor(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceDataField(xs: List(SurfaceDataField), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceDataField_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceDataField_items(xs: List(SurfaceDataField), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceDataField_items(rest, bss_w_SurfaceDataField(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceField(xs: List(SurfaceField), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceField_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceField_items(xs: List(SurfaceField), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceField_items(rest, bss_w_SurfaceField(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceData(xs: List(SurfaceData), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceData_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceData_items(xs: List(SurfaceData), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceData_items(rest, bss_w_SurfaceData(y, acc))
+  }
+}
+
+
+
+pub fn bss_w_List_SurfaceFn(xs: List(SurfaceFn), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceFn_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceFn_items(xs: List(SurfaceFn), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceFn_items(rest, bss_w_SurfaceFn(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceHandler(xs: List(SurfaceHandler), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceHandler_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceHandler_items(xs: List(SurfaceHandler), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceHandler_items(rest, bss_w_SurfaceHandler(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceLaw(xs: List(SurfaceLaw), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceLaw_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceLaw_items(xs: List(SurfaceLaw), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceLaw_items(rest, bss_w_SurfaceLaw(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceNamed(xs: List(SurfaceNamed), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceNamed_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceNamed_items(xs: List(SurfaceNamed), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceNamed_items(rest, bss_w_SurfaceNamed(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceParam(xs: List(SurfaceParam), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceParam_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceParam_items(xs: List(SurfaceParam), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceParam_items(rest, bss_w_SurfaceParam(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfacePattern(xs: List(SurfacePattern), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfacePattern_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfacePattern_items(xs: List(SurfacePattern), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfacePattern_items(rest, bss_w_SurfacePattern(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfacePatternField(xs: List(SurfacePatternField), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfacePatternField_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfacePatternField_items(xs: List(SurfacePatternField), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfacePatternField_items(rest, bss_w_SurfacePatternField(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceStepArm(xs: List(SurfaceStepArm), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceStepArm_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceStepArm_items(xs: List(SurfaceStepArm), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceStepArm_items(rest, bss_w_SurfaceStepArm(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceStmt(xs: List(SurfaceStmt), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceStmt_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceStmt_items(xs: List(SurfaceStmt), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceStmt_items(rest, bss_w_SurfaceStmt(y, acc))
+  }
+}
+
+pub fn bss_w_List_SurfaceTerm(xs: List(SurfaceTerm), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_SurfaceTerm_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_SurfaceTerm_items(xs: List(SurfaceTerm), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_SurfaceTerm_items(rest, bss_w_SurfaceTerm(y, acc))
+  }
+}
+
+pub fn bss_w_List_Text(xs: List(Text), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_Text_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_Text_items(xs: List(Text), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_Text_items(rest, bss_w_Text(y, acc))
+  }
+}
+
+pub fn bss_w_Option_Bool(x: Option(Bool), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bss_w_Bool(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bss_w_Option_List_Text(x: Option(List(Text)), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bss_w_List_Text(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bss_w_Option_SurfaceTerm(x: Option(SurfaceTerm), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bss_w_SurfaceTerm(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bss_w_Option_TermOccurrence(x: Option(TermOccurrence), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bss_w_TermOccurrence(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bss_w_Option_Text(x: Option(Text), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bss_w_Text(y, Cons(field("s"), acc))
+  }
+}
+
+pub fn bss_w_SurfaceArm(x: SurfaceArm, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceArmMk(f0, f1, f2, f3) => bss_w_SurfaceTerm(f3, bss_w_Option_SurfaceTerm(f2, bss_w_Option_SurfaceTerm(f1, bss_w_SurfacePattern(f0, Cons(field("SurfaceArmMk"), acc)))))
+  }
+}
+
+pub fn bss_w_SurfaceClass(x: SurfaceClass, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceClassMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, slot_unused_parameters, c_vis) => bss_w_List_SurfaceConstraint(f10, bss_w_Bool(f9, bss_w_List_SurfaceNamed(f8, bss_w_List_SurfaceLaw(f5, bss_w_List_SurfaceFn(f4, bss_w_Option_Text(f3, bss_w_Nat(f2, bss_w_Text(f1, bss_w_Text(f0, Cons(field("SurfaceClassMk"), acc))))))))))
+  }
+}
+
+pub fn bss_w_SurfaceConstraint(x: SurfaceConstraint, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceConstraintMk(f0, f1, f2, f3, f4) => bss_w_List_SurfaceTerm(f4, bss_w_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("SurfaceConstraintMk"), acc))))
+  }
+}
+
+pub fn bss_w_SurfaceCtor(x: SurfaceCtor, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceCtorMk(f0, f1, f2, f3) => bss_w_SurfaceTerm(f3, bss_w_List_SurfaceNamed(f2, bss_w_Nat(f1, bss_w_Text(f0, Cons(field("SurfaceCtorMk"), acc)))))
+  }
+}
+
+pub fn bss_w_SurfaceData(x: SurfaceData, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceDataMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, slot_unused_generics, slot_rows) => bss_w_SurfaceVis(f8, bss_w_List_SurfaceDataCtor(f3, bss_w_List_Text(f2, bss_w_Text(f1, bss_w_Option_Text(f0, Cons(field("SurfaceDataMk"), acc))))))
+  }
+}
+
+pub fn bss_w_SurfaceDataCtor(x: SurfaceDataCtor, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceDataCtorMk(f0, f1) => bss_w_List_SurfaceDataField(f1, bss_w_Text(f0, Cons(field("SurfaceDataCtorMk"), acc)))
+  }
+}
+
+pub fn bss_w_SurfaceDataField(x: SurfaceDataField, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceDataFieldMk(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_Option_Text(f0, Cons(field("SurfaceDataFieldMk"), acc)))
+  }
+}
+
+pub fn bss_w_SurfaceEffect(x: SurfaceEffect, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceEffectMk(f0, f1, f2, f3, f4, f5, f6, f7, slot_unused_generics, slot_bounds, e_vis, slot_rows) => bss_w_Option_List_RowEntry(f7, bss_w_Option_Text(f4, bss_w_Option_SurfaceTerm(f3, bss_w_List_Option_SurfaceTerm(f2, bss_w_List_Text(f1, bss_w_Text(f0, Cons(field("SurfaceEffectMk"), acc)))))))
+  }
+}
+
+pub fn bss_w_SurfaceField(x: SurfaceField, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceFieldMk(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("SurfaceFieldMk"), acc)))
+  }
+}
+
+pub fn bss_w_SurfaceFn(x: SurfaceFn, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceFnMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f13, f12, f14, f15, f16, slot_unused, slot_unused_generics, slot_unused_params) => bss_w_Option_SurfaceSpan(f16, bss_w_SurfaceVis(f15, bss_w_List_Option_Nat(f14, bss_w_List_SurfaceTerm(f12, bss_w_Option_List_Text(f13, bss_w_SurfaceTerm(f11, bss_w_List_SurfaceConstraint(f8, bss_w_Option_List_RowEntry(f7, bss_w_Option_SurfaceTerm(f6, bss_w_List_Option_SurfaceTerm(f5, bss_w_List_Option_Bool(f4, bss_w_List_Text(f3, bss_w_List_Option_Text(f2, bss_w_List_Text(f1, bss_w_Text(f0, Cons(field("SurfaceFnMk"), acc))))))))))))))))
+  }
+}
+
+pub fn bss_w_SurfaceHandler(x: SurfaceHandler, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    HdReturn(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_SurfacePattern(f0, Cons(field("HdReturn"), acc)))
+    HdOperation(f0, f1, f2, f3, f4, _, f5, f6) => bss_w_SurfaceTerm(f6, bss_w_Option_SurfaceTerm(f5, bss_w_Option_Text(f4, bss_w_List_SurfacePattern(f3, bss_w_List_SurfaceTerm(f2, bss_w_List_Text(f1, bss_w_Text(f0, Cons(field("HdOperation"), acc))))))))
+  }
+}
+
+pub fn bss_w_SurfaceInductive(x: SurfaceInductive, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceInductiveMk(f0, f1, f2, f3, f4, f5, f6) => bss_w_SurfaceVis(f6, bss_w_List_SurfaceCtor(f3, bss_w_SurfaceTerm(f2, bss_w_List_SurfaceNamed(f1, bss_w_Text(f0, Cons(field("SurfaceInductiveMk"), acc))))))
+  }
+}
+
+pub fn bss_w_SurfaceInferCondition(x: SurfaceInferCondition, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    InferParameter(name) => bss_w_Text(name, Cons(field("InferParameter"), acc))
+    InferAnd(left, right) => bss_w_SurfaceInferCondition(right, bss_w_SurfaceInferCondition(left, Cons(field("InferAnd"), acc)))
+    InferOr(left, right) => bss_w_SurfaceInferCondition(right, bss_w_SurfaceInferCondition(left, Cons(field("InferOr"), acc)))
+  }
+}
+
+pub fn bss_w_Option_SurfaceInferCondition(x: Option(SurfaceInferCondition), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(value) => bss_w_SurfaceInferCondition(value, Cons(field("s"), acc))
+  }
+}
+
+pub fn bss_w_SurfaceInstance(x: SurfaceInstance, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceInstanceMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, slot_unused_generics) => bss_w_Option_SurfaceInferCondition(f11, bss_w_List_SurfaceTerm(f10, bss_w_List_SurfaceTerm(f9, bss_w_List_SurfaceLaw(f6, bss_w_List_SurfaceFn(f5, bss_w_List_SurfaceConstraint(f4, bss_w_SurfaceTerm(f3, bss_w_Text(f2, bss_w_List_Option_Text(f1, bss_w_List_Text(f0, Cons(field("SurfaceInstanceMk"), acc)))))))))))
+  }
+}
+
+pub fn bss_w_SurfaceKind(x: SurfaceKind, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SkVar(f0) => bss_w_Text(surface_name_text(f0), Cons(field("SkVar"), acc))
+    SkNat(f0) => bss_w_Text(f0, Cons(field("SkNat"), acc))
+    SkFloat(f0) => bss_w_Text(f0, Cons(field("SkFloat"), acc))
+    SkRow(f0) => bss_w_List_RowEntry(f0, Cons(field("SkRow"), acc))
+    SkText(f0) => bss_w_Text(f0, Cons(field("SkText"), acc))
+    SkBool(f0) => bss_w_Bool(f0, Cons(field("SkBool"), acc))
+    SkApp(f0, f1) => bss_w_List_SurfaceTerm(f1, bss_w_SurfaceTerm(f0, Cons(field("SkApp"), acc)))
+    SkPi(f0, f1, f2) => bss_w_Option_List_RowEntry(f2, bss_w_SurfaceTerm(f1, bss_w_List_SurfaceParam(f0, Cons(field("SkPi"), acc))))
+    SkExists(f0, f1, f2, unused) => bss_w_SurfaceTerm(f2, bss_w_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("SkExists"), acc))))
+    SkLam(f0, f1, f2, _) => bss_w_List_Option_SurfaceTerm(f2, bss_w_SurfaceTerm(f1, bss_w_List_Text(f0, Cons(field("SkLam"), acc))))
+    SkUnion(f0) => bss_w_List_SurfaceTerm(f0, Cons(field("SkUnion"), acc))
+    SkAscribe(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_SurfaceTerm(f0, Cons(field("SkAscribe"), acc)))
+    SkTagged(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("SkTagged"), acc)))
+    SkIf(f0, f1, f2) => bss_w_Option_SurfaceTerm(f2, bss_w_SurfaceTerm(f1, bss_w_SurfaceTerm(f0, Cons(field("SkIf"), acc))))
+    SkField(f0, f1) => bss_w_Text(f1, bss_w_SurfaceTerm(f0, Cons(field("SkField"), acc)))
+    SkBlock(f0) => bss_w_List_SurfaceStmt(f0, Cons(field("SkBlock"), acc))
+    SkPerform(f0, f1) => bss_w_List_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("SkPerform"), acc)))
+    SkHandle(f0, f1) => bss_w_List_SurfaceHandler(f1, bss_w_SurfaceTerm(f0, Cons(field("SkHandle"), acc)))
+    SkBudget(f0, f1, f2) => bss_w_SurfaceTerm(f2, bss_w_SurfaceTerm(f1, bss_w_Bool(f0, Cons(field("SkBudget"), acc))))
+    SkMatch(f0, f1, f2, f3, _) => bss_w_Option_Text(f3, bss_w_List_SurfaceArm(f2, bss_w_Option_SurfaceTerm(f1, bss_w_SurfaceTerm(f0, Cons(field("SkMatch"), acc)))))
+    SkHole(f0) => bss_w_Text(f0, Cons(field("SkHole"), acc))
+    SkRecord(f0, f1) => bss_w_List_SurfaceField(f1, bss_w_Text(f0, Cons(field("SkRecord"), acc)))
+    SkBorrow(f0, f1, f2) => bss_w_SurfaceTerm(f2, bss_w_Bool(f1, bss_w_Bool(f0, Cons(field("SkBorrow"), acc))))
+    SkFnKind(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("SkFnKind"), acc)))
+    SkBorrowLam(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_List_Option_Bool(f0, Cons(field("SkBorrowLam"), acc)))
+    SkOther(f0) => bss_w_Text(f0, Cons(field("SkOther"), acc))
+    SkMacroCall(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("SkMacroCall"), acc)))
+    SkQuote(f0, f1) => bss_w_List_SurfaceStmt(f1, bss_w_Bool(f0, Cons(field("SkQuote"), acc)))
+    SkSplice(f0) => bss_w_SurfaceTerm(f0, Cons(field("SkSplice"), acc))
+    SkSyntaxLit(f0, f1) => bss_w_Text(f1, bss_w_Option_Text(f0, Cons(field("SkSyntaxLit"), acc)))
+    SkStep(f0, f1, f2, f3, f4, f5) => bss_w_List_SurfaceStepArm(f5, bss_w_Option_SurfaceTerm(f4, bss_w_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("SkStep"), acc)))))
+  }
+}
+
+pub fn bss_w_SurfaceLaw(x: SurfaceLaw, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceLawMk(f0, f1, f2, f3) => bss_w_SurfaceTheorem(f3, bss_w_Text(f0, Cons(field("SurfaceLawMk"), acc)))
+  }
+}
+
+pub fn bss_w_SurfaceNamed(x: SurfaceNamed, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceNamedMk(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("SurfaceNamedMk"), acc)))
+  }
+}
+
+pub fn bss_w_SurfaceParam(x: SurfaceParam, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceParamMk(f0, f1, _) => bss_w_SurfaceTerm(f1, bss_w_Option_Text(f0, Cons(field("SurfaceParamMk"), acc)))
+  }
+}
+
+pub fn bss_w_SurfacePattern(x: SurfacePattern, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    PtWild => Cons(field("PtWild"), acc)
+    PtBind(f0, _) => bss_w_Text(f0, Cons(field("PtBind"), acc))
+    PtInt(f0, f1) => bss_w_Nat(f1, bss_w_Bool(f0, Cons(field("PtInt"), acc)))
+    PtBool(f0) => bss_w_Bool(f0, Cons(field("PtBool"), acc))
+    PtText(f0) => bss_w_Text(f0, Cons(field("PtText"), acc))
+    PtCtor(f0, f1) => bss_w_List_SurfacePattern(f1, bss_w_Text(surface_name_text(f0), Cons(field("PtCtor"), acc)))
+    PtRecord(f0, f1) => bss_w_List_SurfacePatternField(f1, bss_w_Text(f0, Cons(field("PtRecord"), acc)))
+    PtTyped(f0, f1, _) => bss_w_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("PtTyped"), acc)))
+    PtOther(f0) => bss_w_Text(f0, Cons(field("PtOther"), acc))
+  }
+}
+
+pub fn bss_w_SurfacePatternField(x: SurfacePatternField, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfacePatternFieldMk(f0, f1) => bss_w_SurfacePattern(f1, bss_w_Text(f0, Cons(field("SurfacePatternFieldMk"), acc)))
+  }
+}
+
+pub fn bss_w_SurfaceStepArm(x: SurfaceStepArm, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceStepArmMk(f0, _, f1, f2, f3, f4) => bss_w_SurfaceTerm(f2, bss_w_SurfaceTerm(f1, bss_w_List_SurfaceField(f0, Cons(field("SurfaceStepArmMk"), acc))))
+  }
+}
+
+pub fn bss_w_SurfaceStmt(x: SurfaceStmt, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    StLet(f0, f1, f2, f3, f4, unused, st_stack) => bss_w_Option_Text(st_stack, bss_w_Bool(f4, bss_w_Bool(f3, bss_w_SurfaceTerm(f2, bss_w_Option_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("StLet"), acc)))))))
+    StVar(f0, f1, f2, f3, unused, st_stack) => bss_w_Option_Text(st_stack, bss_w_Bool(f3, bss_w_SurfaceTerm(f2, bss_w_Option_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("StVar"), acc))))))
+    StAssign(f0, f1, f2) => bss_w_SurfaceTerm(f2, bss_w_Option_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("StAssign"), acc))))
+    StCalled(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_List_Text(f0, Cons(field("StCalled"), acc)))
+    StFn(f0) => bss_w_SurfaceFn(f0, Cons(field("StFn"), acc))
+    StTheorem(f0) => bss_w_SurfaceTheorem(f0, Cons(field("StTheorem"), acc))
+    StDef(f0) => bss_w_SurfaceTheorem(f0, Cons(field("StDef"), acc))
+    StMutual(f0, f1, f2) => bss_w_List_SurfaceStmt(f0, Cons(field("StMutual"), acc))
+    StImport(f0, f1, f2) => bss_w_Text(f0, Cons(field("StImport"), acc))
+    StInductive(f0) => bss_w_SurfaceInductive(f0, Cons(field("StInductive"), acc))
+    StEffect(f0) => bss_w_SurfaceEffect(f0, Cons(field("StEffect"), acc))
+    StStruct(f0) => bss_w_SurfaceData(f0, Cons(field("StStruct"), acc))
+    StEnum(f0) => bss_w_SurfaceData(f0, Cons(field("StEnum"), acc))
+    StExtern(f0, f1, f2, f3, f4, f5, f6) => bss_w_List_SurfaceData(
+      f4,
+      bss_w_List_SurfaceData(
+        f3,
+        bss_w_List_SurfaceData(
+          f2,
+          bss_w_List_SurfaceConstraint(
+            f1,
+            bss_w_List_SurfaceFn(f0, Cons(field("StExtern"), acc))
+          )
+        )
+      )
+    )
+    StClass(f0) => bss_w_SurfaceClass(f0, Cons(field("StClass"), acc))
+    StInstance(f0) => bss_w_SurfaceInstance(f0, Cons(field("StInstance"), acc))
+    StWhile(f0, f1) => bss_w_SurfaceTerm(f1, bss_w_SurfaceTerm(f0, Cons(field("StWhile"), acc)))
+    StReturn(f0) => bss_w_Option_SurfaceTerm(f0, Cons(field("StReturn"), acc))
+    StExpr(f0) => bss_w_SurfaceTerm(f0, Cons(field("StExpr"), acc))
+    StOther(f0, f1, f2) => bss_w_Text(f0, Cons(field("StOther"), acc))
+    StLoop(st_body, f1, f2) => bss_w_Text("LoopExpr", Cons(field("StOther"), acc))
+    StModule(mod_name, mod_vis, mod_items, f1, f2) => bss_w_Text("ModuleDecl", Cons(field("StOther"), acc))
+    StReexport(re_path, re_names, re_spans, f1, f2) => bss_w_Text("ReexportDecl", Cons(field("StOther"), acc))
+    StFor(for_pat, for_src, st_body, f1, f2) => bss_w_Text("ForStmt", Cons(field("StOther"), acc))
+    StBreak(st_value, f1, f2) => bss_w_Text("BreakStmt", Cons(field("StOther"), acc))
+    StContinue(f1, f2) => bss_w_Text("ContinueStmt", Cons(field("StOther"), acc))
+    StMacro(f0, f1, f2, f3) => bss_w_Text(f1, bss_w_Text(f0, Cons(field("StMacro"), acc)))
+    StSyntax(f0, f1, f2, f3) => bss_w_Text(f1, bss_w_Text(f0, Cons(field("StSyntax"), acc)))
+    StAttributed(f0, f1, f2, f3) => bss_w_SurfaceStmt(f3, bss_w_List_Text(f2, bss_w_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("StAttributed"), acc)))))
+  }
+}
+
+pub fn bss_w_SurfaceTerm(x: SurfaceTerm, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceTermIndexedMk(f0, f1, f2, f3) => bss_w_SurfaceKind(f0, Cons(field("SurfaceTermIndexedMk"), acc))
+  }
+}
+
+pub fn bss_w_SurfaceTheorem(x: SurfaceTheorem, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceTheoremMk(f0, f1, f2, f3, f4, f5, f6, slot_unused, slot_unused_params, t_vis) => bss_w_Option_SurfaceTerm(f4, bss_w_SurfaceTerm(f3, bss_w_List_SurfaceNamed(f2, bss_w_Nat(f1, bss_w_Text(f0, Cons(field("SurfaceTheoremMk"), acc))))))
+  }
+}
+
+pub fn bss_w_TermOccurrence(x: TermOccurrence, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    TermOccurrenceMk(f0) => bss_w_List_Nat(f0, Cons(field("TermOccurrenceMk"), acc))
+  }
+}
+
+
+// ---- the names a part uses ------------------------------------------------------------------
+//
+// Every name written as a variable (`SkVar`) in a part, each time it is
+// written: what a declaration may refer to.
+
+pub fn build_names_of_stmt(s: SurfaceStmt): List(Text) ! {div} { bsv_SurfaceStmt(s, Nil) }
+
+pub fn bsv_List_Option_SurfaceTerm(xs: List(Option(SurfaceTerm)), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_Option_SurfaceTerm(rest, bsv_Option_SurfaceTerm(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceArm(xs: List(SurfaceArm), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceArm(rest, bsv_SurfaceArm(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceConstraint(xs: List(SurfaceConstraint), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceConstraint(rest, bsv_SurfaceConstraint(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceCtor(xs: List(SurfaceCtor), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceCtor(rest, bsv_SurfaceCtor(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceDataCtor(xs: List(SurfaceDataCtor), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceDataCtor(rest, bsv_SurfaceDataCtor(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceDataField(xs: List(SurfaceDataField), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceDataField(rest, bsv_SurfaceDataField(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceField(xs: List(SurfaceField), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceField(rest, bsv_SurfaceField(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceData(xs: List(SurfaceData), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceData(rest, bsv_SurfaceData(y, acc))
+  }
+}
+
+
+
+pub fn bsv_List_SurfaceFn(xs: List(SurfaceFn), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceFn(rest, bsv_SurfaceFn(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceHandler(xs: List(SurfaceHandler), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceHandler(rest, bsv_SurfaceHandler(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceLaw(xs: List(SurfaceLaw), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceLaw(rest, bsv_SurfaceLaw(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceNamed(xs: List(SurfaceNamed), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceNamed(rest, bsv_SurfaceNamed(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceParam(xs: List(SurfaceParam), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceParam(rest, bsv_SurfaceParam(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfacePattern(xs: List(SurfacePattern), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfacePattern(rest, bsv_SurfacePattern(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfacePatternField(xs: List(SurfacePatternField), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfacePatternField(rest, bsv_SurfacePatternField(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceStepArm(xs: List(SurfaceStepArm), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceStepArm(rest, bsv_SurfaceStepArm(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceStmt(xs: List(SurfaceStmt), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceStmt(rest, bsv_SurfaceStmt(y, acc))
+  }
+}
+
+pub fn bsv_List_SurfaceTerm(xs: List(SurfaceTerm), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bsv_List_SurfaceTerm(rest, bsv_SurfaceTerm(y, acc))
+  }
+}
+
+pub fn bsv_Option_SurfaceTerm(x: Option(SurfaceTerm), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => acc
+    Some(y) => bsv_SurfaceTerm(y, acc)
+  }
+}
+
+pub fn bsv_SurfaceArm(x: SurfaceArm, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceArmMk(f0, f1, f2, f3) => bsv_SurfaceTerm(f3, bsv_Option_SurfaceTerm(f2, bsv_Option_SurfaceTerm(f1, bsv_SurfacePattern(f0, acc))))
+  }
+}
+
+pub fn bsv_SurfaceClass(x: SurfaceClass, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceClassMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, slot_unused_parameters, c_vis) => bsv_List_SurfaceConstraint(f10, bsv_List_SurfaceNamed(f8, bsv_List_SurfaceLaw(f5, bsv_List_SurfaceFn(f4, acc))))
+  }
+}
+
+pub fn bsv_SurfaceConstraint(x: SurfaceConstraint, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceConstraintMk(f0, f1, f2, f3, f4) => bsv_List_SurfaceTerm(f4, bsv_SurfaceTerm(f1, acc))
+  }
+}
+
+pub fn bsv_SurfaceCtor(x: SurfaceCtor, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceCtorMk(f0, f1, f2, f3) => bsv_SurfaceTerm(f3, bsv_List_SurfaceNamed(f2, acc))
+  }
+}
+
+pub fn bsv_SurfaceData(x: SurfaceData, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceDataMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, slot_unused_generics, slot_rows) => bsv_List_SurfaceDataCtor(f3, acc)
+  }
+}
+
+pub fn bsv_SurfaceDataCtor(x: SurfaceDataCtor, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceDataCtorMk(f0, f1) => bsv_List_SurfaceDataField(f1, acc)
+  }
+}
+
+pub fn bsv_SurfaceDataField(x: SurfaceDataField, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceDataFieldMk(f0, f1) => bsv_SurfaceTerm(f1, acc)
+  }
+}
+
+pub fn bsv_SurfaceEffect(x: SurfaceEffect, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceEffectMk(f0, f1, f2, f3, f4, f5, f6, f7, slot_unused_generics, slot_bounds, e_vis, slot_rows) => bsv_Option_SurfaceTerm(f3, bsv_List_Option_SurfaceTerm(f2, acc))
+  }
+}
+
+pub fn bsv_SurfaceField(x: SurfaceField, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceFieldMk(f0, f1) => bsv_SurfaceTerm(f1, acc)
+  }
+}
+
+pub fn bsv_SurfaceFn(x: SurfaceFn, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceFnMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f13, f12, f14, f15, f16, slot_unused, slot_unused_generics, slot_unused_params) => bsv_List_SurfaceTerm(f12, bsv_SurfaceTerm(f11, bsv_List_SurfaceConstraint(f8, bsv_Option_SurfaceTerm(f6, bsv_List_Option_SurfaceTerm(f5, acc)))))
+  }
+}
+
+pub fn bsv_SurfaceHandler(x: SurfaceHandler, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    HdReturn(f0, f1) => bsv_SurfaceTerm(f1, bsv_SurfacePattern(f0, acc))
+    HdOperation(f0, f1, f2, f3, f4, _, f5, f6) => bsv_SurfaceTerm(f6, bsv_Option_SurfaceTerm(f5, bsv_List_SurfacePattern(f3, bsv_List_SurfaceTerm(f2, acc))))
+  }
+}
+
+pub fn bsv_SurfaceInductive(x: SurfaceInductive, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceInductiveMk(f0, f1, f2, f3, f4, f5, f6) => bsv_List_SurfaceCtor(f3, bsv_SurfaceTerm(f2, bsv_List_SurfaceNamed(f1, acc)))
+  }
+}
+
+pub fn bsv_SurfaceInferCondition(x: SurfaceInferCondition, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    InferParameter(name) => acc
+    InferAnd(left, right) => bsv_SurfaceInferCondition(right, bsv_SurfaceInferCondition(left, acc))
+    InferOr(left, right) => bsv_SurfaceInferCondition(right, bsv_SurfaceInferCondition(left, acc))
+  }
+}
+
+pub fn bsv_Option_SurfaceInferCondition(x: Option(SurfaceInferCondition), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => acc
+    Some(value) => bsv_SurfaceInferCondition(value, acc)
+  }
+}
+
+pub fn bsv_SurfaceInstance(x: SurfaceInstance, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceInstanceMk(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, slot_unused_generics) => bsv_Option_SurfaceInferCondition(f11, bsv_List_SurfaceTerm(f10, bsv_List_SurfaceTerm(f9, bsv_List_SurfaceLaw(f6, bsv_List_SurfaceFn(f5, bsv_List_SurfaceConstraint(f4, bsv_SurfaceTerm(f3, acc)))))))
+  }
+}
+
+pub fn bsv_SurfaceKind(x: SurfaceKind, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SkVar(f0) => Cons(surface_name_text(f0), acc)
+    SkNat(f0) => acc
+    SkFloat(f0) => acc
+    SkRow(f0) => acc
+    SkText(f0) => acc
+    SkBool(f0) => acc
+    SkApp(f0, f1) => bsv_List_SurfaceTerm(f1, bsv_SurfaceTerm(f0, acc))
+    SkPi(f0, f1, f2) => bsv_SurfaceTerm(f1, bsv_List_SurfaceParam(f0, acc))
+    SkExists(f0, f1, f2, unused) => bsv_SurfaceTerm(f2, bsv_SurfaceTerm(f1, acc))
+    SkLam(f0, f1, f2, _) => bsv_List_Option_SurfaceTerm(f2, bsv_SurfaceTerm(f1, acc))
+    SkUnion(f0) => bsv_List_SurfaceTerm(f0, acc)
+    SkAscribe(f0, f1) => bsv_SurfaceTerm(f1, bsv_SurfaceTerm(f0, acc))
+    SkTagged(f0, f1) => bsv_SurfaceTerm(f1, acc)
+    SkIf(f0, f1, f2) => bsv_Option_SurfaceTerm(f2, bsv_SurfaceTerm(f1, bsv_SurfaceTerm(f0, acc)))
+    SkField(f0, f1) => bsv_SurfaceTerm(f0, acc)
+    SkBlock(f0) => bsv_List_SurfaceStmt(f0, acc)
+    SkPerform(f0, f1) => bsv_List_SurfaceTerm(f1, acc)
+    SkHandle(f0, f1) => bsv_List_SurfaceHandler(f1, bsv_SurfaceTerm(f0, acc))
+    SkBudget(f0, f1, f2) => bsv_SurfaceTerm(f2, bsv_SurfaceTerm(f1, acc))
+    SkMatch(f0, f1, f2, f3, _) => bsv_List_SurfaceArm(f2, bsv_Option_SurfaceTerm(f1, bsv_SurfaceTerm(f0, acc)))
+    SkHole(f0) => acc
+    SkRecord(f0, f1) => bsv_List_SurfaceField(f1, acc)
+    SkBorrow(f0, f0_orig, f1) => bsv_SurfaceTerm(f1, acc)
+    SkFnKind(f0, f1) => bsv_SurfaceTerm(f1, acc)
+    SkBorrowLam(f0, f1) => bsv_SurfaceTerm(f1, acc)
+    SkOther(f0) => acc
+    SkMacroCall(f0, f1) => bsv_SurfaceTerm(f1, acc)
+    SkQuote(f0, f1) => bsv_List_SurfaceStmt(f1, acc)
+    SkSplice(f0) => bsv_SurfaceTerm(f0, acc)
+    SkSyntaxLit(f0, f1) => acc
+    SkStep(f0, f1, f2, f3, f4, f5) => bsv_List_SurfaceStepArm(f5, bsv_Option_SurfaceTerm(f4, bsv_SurfaceTerm(f1, acc)))
+  }
+}
+
+pub fn bsv_SurfaceLaw(x: SurfaceLaw, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceLawMk(f0, f1, f2, f3) => bsv_SurfaceTheorem(f3, acc)
+  }
+}
+
+pub fn bsv_SurfaceNamed(x: SurfaceNamed, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceNamedMk(f0, f1) => bsv_SurfaceTerm(f1, acc)
+  }
+}
+
+pub fn bsv_SurfaceParam(x: SurfaceParam, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceParamMk(f0, f1, _) => bsv_SurfaceTerm(f1, acc)
+  }
+}
+
+pub fn bsv_SurfacePattern(x: SurfacePattern, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    PtWild => acc
+    PtBind(f0, _) => acc
+    PtInt(f0, f1) => acc
+    PtBool(f0) => acc
+    PtText(f0) => acc
+    PtCtor(f0, f1) => bsv_List_SurfacePattern(f1, acc)
+    PtRecord(f0, f1) => bsv_List_SurfacePatternField(f1, acc)
+    PtTyped(f0, f1, _) => bsv_SurfaceTerm(f1, acc)
+    PtOther(f0) => acc
+  }
+}
+
+pub fn bsv_SurfacePatternField(x: SurfacePatternField, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfacePatternFieldMk(f0, f1) => bsv_SurfacePattern(f1, acc)
+  }
+}
+
+pub fn bsv_SurfaceStepArm(x: SurfaceStepArm, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceStepArmMk(f0, _, f1, f2, f3, f4) => bsv_SurfaceTerm(f2, bsv_SurfaceTerm(f1, bsv_List_SurfaceField(f0, acc)))
+  }
+}
+
+pub fn bsv_SurfaceStmt(x: SurfaceStmt, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    StLet(f0, f1, f2, f3, f4, unused, st_stack) => bsv_SurfaceTerm(f2, bsv_Option_SurfaceTerm(f1, acc))
+    StVar(f0, f1, f2, f3, unused, st_stack) => bsv_SurfaceTerm(f2, bsv_Option_SurfaceTerm(f1, acc))
+    StAssign(f0, f1, f2) => bsv_SurfaceTerm(f2, bsv_Option_SurfaceTerm(f1, acc))
+    StCalled(f0, f1) => bsv_SurfaceTerm(f1, acc)
+    StFn(f0) => bsv_SurfaceFn(f0, acc)
+    StTheorem(f0) => bsv_SurfaceTheorem(f0, acc)
+    StDef(f0) => bsv_SurfaceTheorem(f0, acc)
+    StMutual(f0, f1, f2) => bsv_List_SurfaceStmt(f0, acc)
+    StImport(f0, f1, f2) => acc
+    StInductive(f0) => bsv_SurfaceInductive(f0, acc)
+    StEffect(f0) => bsv_SurfaceEffect(f0, acc)
+    StStruct(f0) => bsv_SurfaceData(f0, acc)
+    StEnum(f0) => bsv_SurfaceData(f0, acc)
+    StExtern(f0, f1, f2, f3, f4, f5, f6) => bsv_List_SurfaceData(
+      f4,
+      bsv_List_SurfaceData(
+        f3,
+        bsv_List_SurfaceData(
+          f2,
+          bsv_List_SurfaceConstraint(f1, bsv_List_SurfaceFn(f0, acc))
+        )
+      )
+    )
+    StClass(f0) => bsv_SurfaceClass(f0, acc)
+    StInstance(f0) => bsv_SurfaceInstance(f0, acc)
+    StWhile(f0, f1) => bsv_SurfaceTerm(f1, bsv_SurfaceTerm(f0, acc))
+    StReturn(f0) => bsv_Option_SurfaceTerm(f0, acc)
+    StExpr(f0) => bsv_SurfaceTerm(f0, acc)
+    StOther(f0, f1, f2) => acc
+    StLoop(st_body, f1, f2) => acc
+    StModule(mod_name, mod_vis, mod_items, f1, f2) => acc
+    StReexport(re_path, re_names, re_spans, f1, f2) => acc
+    StFor(for_pat, for_src, st_body, f1, f2) => acc
+    StBreak(st_value, f1, f2) => acc
+    StContinue(f1, f2) => acc
+    StMacro(f0, f1, f2, f3) => acc
+    StSyntax(f0, f1, f2, f3) => acc
+    StAttributed(f0, f1, f2, f3) => bsv_SurfaceStmt(f3, bsv_SurfaceTerm(f1, acc))
+  }
+}
+
+pub fn bsv_SurfaceTerm(x: SurfaceTerm, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceTermIndexedMk(f0, f1, f2, f3) => bsv_SurfaceKind(f0, acc)
+  }
+}
+
+pub fn bsv_SurfaceTheorem(x: SurfaceTheorem, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    SurfaceTheoremMk(f0, f1, f2, f3, f4, f5, f6, slot_unused, slot_unused_params, t_vis) => bsv_Option_SurfaceTerm(f4, bsv_SurfaceTerm(f3, bsv_List_SurfaceNamed(f2, acc)))
+  }
+}
+
+pub fn bss_w_List_Option_Nat(xs: List(Option(Nat)), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_Option_Nat_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_Option_Nat_items(xs: List(Option(Nat)), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_Option_Nat_items(rest, bss_w_Option_Nat(y, acc))
+  }
+}
+
+pub fn bss_w_Option_Nat(x: Option(Nat), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bss_w_Nat(y, Cons(field("s"), acc))
+  }
+}
+
+
+pub fn bss_w_Option_SurfaceSpan(x: Option(SurfaceSpan), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => match y {
+      SurfaceSpan::Mk(a, b) => bss_w_Nat(b, bss_w_Nat(a, Cons(field("s"), acc)))
+    }
+  }
+}
+
+pub fn bss_w_RowEntry(x: RowEntry, acc: List(Text)): List(Text) ! {div} {
+  match x {
+    EntryName(f0, f1) => bss_w_Option_SurfaceSpan(f1, bss_w_Text(f0, Cons(field("EntryName"), acc)))
+    EntryApplied(f0, f1, f2, f3, f4) => bss_w_Option_SurfaceSpan(
+      f4,
+      bss_w_List_Text(
+        f3,
+        bss_w_Bool(f2, bss_w_List_SurfaceTerm(f1, bss_w_Text(f0, Cons(field("EntryApplied"), acc))))
+      )
+    )
+  }
+}
+
+pub fn bss_w_List_RowEntry(xs: List(RowEntry), acc: List(Text)): List(Text) ! {div} {
+  bss_w_List_RowEntry_items(xs, Cons(field(Text::of_u64(nat_to_u64(List::length(xs)))), acc))
+}
+
+fn bss_w_List_RowEntry_items(xs: List(RowEntry), acc: List(Text)): List(Text) ! {div} {
+  match xs {
+    Nil => acc
+    Cons(y, rest) => bss_w_List_RowEntry_items(rest, bss_w_RowEntry(y, acc))
+  }
+}
+
+pub fn bss_w_Option_List_RowEntry(x: Option(List(RowEntry)), acc: List(Text)): List(Text) ! {div} {
+  match x {
+    None => Cons(field("n"), acc)
+    Some(y) => bss_w_List_RowEntry(y, Cons(field("s"), acc))
+  }
+}

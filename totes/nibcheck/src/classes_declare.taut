@@ -1,0 +1,335 @@
+import "messages.taut"
+import "types_infer.taut"
+import "infer_parts.taut"
+import "../../surface/src/surface.taut"
+import std::base
+import std::list
+import std::map
+import std::text
+import "checker.taut"
+import "datas.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_decl_head.taut"
+import "../../text/src/text.taut"
+import "classes_expand.taut"
+import "../../identity/src/identity.taut"
+
+// Classes declared and checked (`types/classes.rs`): their laws, methods
+// and bounds. Instances are checked in `types_classes.taut`.
+
+// A law is a statement about the methods, and a method that performs effects
+// has none.
+pub fn ck_law_methods(ms: List(SurfaceFn), c: &mut Checker, cl: SurfaceClass): Unit {
+  match ms {
+    Nil => #()
+    Cons(m, rest) => {
+      ⊢ Unit from match m.effects {
+        Some(es) => ⊢ Unit from match es {
+          Cons(^e, ^more) => ck_error(
+            &mut c,
+            class_method_performs_effects_message(cl.name, m.name),
+            span_at(m.start, m.end)
+          )
+          Nil => #()
+        }
+        None => #()
+      }
+      ck_law_methods(rest, &mut c, cl)
+    }
+  }
+}
+
+pub fn ck_class_laws_each(
+  ls: List(SurfaceLaw),
+  seen: List(Text),
+  c: &mut Checker,
+  cl: SurfaceClass
+): Unit {
+  match ls {
+    Nil => #()
+    Cons(l, rest) => if text_list_has(seen, l.name) {
+      ck_error(&mut c, class_member_declared_twice_message(cl.name, l.name), span_at(l.start, l.end))
+      ck_class_laws_each(rest, seen, &mut c, cl)
+    } else {
+      ck_class_laws_each(rest, Cons(l.name, seen), &mut c, cl)
+    }
+  }
+}
+
+pub fn ck_class_laws(c: &mut Checker, cl: SurfaceClass): Unit {
+  match cl.laws {
+    Nil => #()
+    Cons(^l, ^rest) => ck_law_methods(cl.methods, &mut c, cl)
+  }
+  ck_class_laws_each(cl.laws, Nil, &mut c, cl)
+}
+
+// Each law of an instance is one of the class's, written once.
+pub fn ck_instance_laws(
+  ls: List(SurfaceLaw),
+  seen: List(Text),
+  c: &mut Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass
+): Unit {
+  match ls {
+    Nil => #()
+    Cons(l, rest) => if not(law_named(decl.laws, l.name)) {
+      ck_error(&mut c, instance_no_law_message(i.r#class, l.name), span_at(l.start, l.end))
+      ck_instance_laws(rest, seen, &mut c, i, decl)
+    } else if text_list_has(seen, l.name) {
+      ck_error(
+        &mut c,
+        instance_law_twice_message(l.name),
+        span_at(l.start, l.end)
+      )
+      ck_instance_laws(rest, seen, &mut c, i, decl)
+    } else {
+      ck_instance_laws(rest, Cons(l.name, seen), &mut c, i, decl)
+    }
+  }
+}
+
+// Each method: declared once, mentioning the parameter.
+pub fn ck_class_methods(
+  ms: List(SurfaceFn),
+  seen: List(Text),
+  c: &mut Checker,
+  cl: SurfaceClass
+): Unit {
+  match ms {
+    Nil => #()
+    Cons(m, rest) => {
+      let span := span_at(m.start, m.end)
+      if text_list_has(seen, m.name) {
+        ck_error(&mut c, class_member_declared_twice_message(cl.name, m.name), span)
+      }
+      ck_class_methods(rest, Cons(m.name, seen), &mut c, cl)
+    }
+  }
+}
+
+// The kind the class's parameter makes, and for a class of type
+// constructors, the kind it takes.
+pub fn ck_class_bound(c: &mut Checker, cl: SurfaceClass): Option(Kind × Option(Kind)) {
+  match cl.bound {
+    None => Some(#(KindAffine, None))
+    Some(b) => ⊢ Option(Kind × Option(Kind)) from match kind_parse(b) {
+      Some(k) => Some(#(k, None))
+      None => ⊢ Option(Kind × Option(Kind)) from match kind_parse_ctor(b) {
+        Some(ak) => Some(#(ak.snd, Some(ak.fst)))
+        None => {
+          ck_error(&mut c, value_indexed_classes_message(), span_at(cl.start, cl.end))
+          None
+        }
+      }
+    }
+  }
+}
+
+pub fn ck_declare_class(c: &mut Checker, cl: SurfaceClass, own_types: List(Text)): Bool {
+  let span := span_at(cl.start, cl.end)
+  if class_is_structural(cl.name) {
+    ck_error(&mut c, class_built_in_message(cl.name), span)
+    false
+  } else if Ordmap::contains(c.classes, cl.name, Ordmap::compare_text) {
+    ck_error(&mut c, class_declared_twice_message(cl.name), span)
+    false
+  } else if text_list_has(own_types, cl.name) {
+    ck_error(&mut c, class_already_type_message(cl.name), span)
+    false
+  } else if not(cl.arity == 1) {
+    ck_error(
+      &mut c,
+      class_parameter_count_message(cl.name, Text::of_nat(cl.arity)),
+      span
+    )
+    false
+  } else {
+    ⊢ Bool from match ck_class_bound(&mut c, cl) {
+      None => false
+      Some(bound) => {
+        ck_class_methods(cl.methods, Nil, &mut c, cl)
+        ck_class_laws(&mut c, cl)
+        set_to(
+          &mut c.classes,
+          Ordmap::insert(
+            c.classes,
+            cl.name,
+            ClassInfo { decl: cl, bound: bound.fst, arg: bound.snd },
+            Ordmap::compare_text
+          )
+        )
+        true
+      }
+    }
+  }
+}
+
+// The bound of the class's parameter as written: `(arg)->bound` for a class
+// of type constructors.
+pub fn class_param_bound(info: ClassInfo): Text {
+  match info.arg {
+    None => kind_name(info.bound)
+    Some(arg) => Text::concat_all(
+      Cons("(", Cons(kind_name(arg), Cons(")->", Cons(kind_name(info.bound), Nil))))
+    )
+  }
+}
+
+// The evidence a method asks for is a dictionary in the type of the class's own,
+// so the classes traced through method `where`s cannot lead back to the class:
+// the dictionary type is finite. `work` holds, for each method still to follow,
+// the path that led to it and its `where`s; the search is depth first.
+pub fn where_cycle_search(
+  classes: Ordmap(Text, ClassInfo),
+  fuel: Nat,
+  target: Text,
+  seen: List(Text),
+  work: List(Text × List(SurfaceConstraint))
+): Text {
+  match fuel {
+    Zero => ""
+    Succ(rest_fuel) => ⊢ Text from match work {
+      Nil => ""
+      Cons(item, more) => ⊢ Text from match item.snd {
+        Nil => where_cycle_search(classes, rest_fuel, target, seen, more)
+        Cons(w, rest) => if w.r#class == target {
+          cat3(item.fst, " -> ", target)
+        } else if text_list_has(seen, w.r#class) {
+          where_cycle_search(classes, rest_fuel, target, seen, Cons(#(item.fst, rest), more))
+        } else {
+          ⊢ Text from match Ordmap::get(classes, w.r#class, Ordmap::compare_text) {
+            Some(info) => where_cycle_search(
+              classes,
+              rest_fuel,
+              target,
+              Cons(w.r#class, seen),
+              List::append(
+                where_cycle_methods(info.decl.methods, w.r#class, item.fst),
+                Cons(#(item.fst, rest), more)
+              )
+            )
+            None => where_cycle_search(classes, rest_fuel, target, seen, Cons(#(item.fst, rest), more))
+          }
+        }
+      }
+    }
+  }
+}
+
+// The methods of `owner` with the path that reached them.
+pub fn where_cycle_methods(ms: List(SurfaceFn), owner: Text, path: Text): List(Text × List(SurfaceConstraint)) {
+  match ms {
+    Nil => Nil
+    Cons(m, rest) => Cons(
+      #(cat5(path, " -> ", owner, "::", m.name), m.wheres),
+      where_cycle_methods(rest, owner, path)
+    )
+  }
+}
+
+// The path from the method `class::method` back to `class`, or "" when its
+// `where`s do not lead back.
+pub fn where_cycle_path(
+  classes: Ordmap(Text, ClassInfo),
+  owner: Text,
+  method: Text,
+  ws: List(SurfaceConstraint)
+): Text {
+  where_cycle_search(classes, 100000, owner, Nil, Cons(#(cat3(owner, "::", method), ws), Nil))
+}
+
+pub fn where_cycle_found(
+  classes: Ordmap(Text, ClassInfo),
+  owner: Text,
+  method: Text,
+  ws: List(SurfaceConstraint)
+): Bool { where_cycle_path(classes, owner, method, ws) != "" }
+
+// `C.m`: a function over the class's parameter that asks for the class.
+pub fn ck_declare_methods_each(
+  ms: List(SurfaceFn),
+  c: &mut Checker,
+  cl: SurfaceClass,
+  info: ClassInfo
+): Unit {
+  match ms {
+    Nil => #()
+    Cons(m, rest) => {
+      if where_cycle_found(c.classes, cl.name, m.name, m.wheres) {
+        ck_error(
+          &mut c,
+          class_method_where_cycle_message(where_cycle_path(c.classes, cl.name, m.name, m.wheres)),
+          span_at(m.start, m.end)
+        )
+      }
+      let f := SurfaceFn {
+        name: cat3(cl.name, "::", m.name),
+        generics: Cons(cl.param, m.generics),
+        bounds: Cons(Some(class_param_bound(info)), opts_resize(list_len(m.generics), m.bounds)),
+        params: m.params,
+        r#borrows: m.r#borrows,
+        param_types: m.param_types,
+        result: m.result,
+        effects: m.effects,
+        wheres: Cons(
+          SurfaceConstraint {
+            r#class: cl.name,
+            ty: surface_at(SkVar(NameSpelled(cl.param)), m.start, m.end),
+            start: m.start,
+            end: m.end,
+            arguments: surface_class_tail_vars(cl.parameters, m.start, m.end)
+          },
+          m.wheres
+        ),
+        start: m.start,
+        end: m.end,
+        body: m.body,
+        lends: m.lends,
+        generic_types: Cons(surface_type_generic(), m.generic_types),
+        bound_starts: Nil,
+        visibility: m.visibility,
+        row_hole: m.row_hole,
+    unused: None,
+    unused_generics: Nil,
+    unused_params: Nil
+  }
+      let scheme := ck_signature(&mut c, f)
+      set_to(&mut c.fns, Ordmap::insert(c.fns, f.name, scheme, Ordmap::compare_text))
+      ck_declare_methods_each(rest, &mut c, cl, info)
+    }
+  }
+}
+
+pub fn ck_declare_methods(cls: List(SurfaceClass), c: &mut Checker): Unit {
+  match cls {
+    Nil => #()
+    Cons(cl, rest) => {
+      ⊢ Unit from match Ordmap::get(c.classes, cl.name, Ordmap::compare_text) {
+        Some(info) => ck_declare_methods_each(cl.methods, &mut c, cl, info)
+        None => #()
+      }
+      ck_declare_methods(rest, &mut c)
+    }
+  }
+}
+
+pub fn ck_declare_class_list(
+  ss: List(SurfaceStmt),
+  c: &mut Checker,
+  own_types: List(Text)
+): List(SurfaceClass) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceClass) from match s {
+      StClass(cl) => {
+        let ok := ck_declare_class(&mut c, cl, own_types)
+        let tl := ck_declare_class_list(rest, &mut c, own_types)
+        if ok { Cons(cl, tl) } else { tl }
+      }
+      _ => ck_declare_class_list(rest, &mut c, own_types)
+    }
+  }
+}

@@ -306,12 +306,13 @@ fn bound_borrows(p: &Pat, out: &mut BTreeSet<u32>) {
             out.insert(l.id);
         }
         Pat::Ctor { fields, .. } => fields.iter().for_each(|f| bound_borrows(f, out)),
+        Pat::Variant { pat, .. } => bound_borrows(pat, out),
         _ => {}
     }
 }
 
 fn loops_owned(pkg: &Package, p: &Param) -> bool {
-    p.local.repr == Repr::Plain && !has_ref(pkg, &p.ty) && !has_fn(&p.ty)
+    p.local.repr == Repr::Plain && !has_ref(pkg, &p.ty) && !p.ty.has_fn()
 }
 
 /// Whether a type holds a borrow: a reference, or a `view` type.
@@ -321,27 +322,10 @@ fn has_ref(pkg: &Package, t: &Ty) -> bool {
         Ty::Vec(a) | Ty::Slice(a) | Ty::Option(a) | Ty::Info(a) | Ty::BudgetAnswer(a) => {
             has_ref(pkg, a)
         }
-        Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => has_ref(pkg, a) || has_ref(pkg, b),
+        Ty::Result(a, b) | Ty::Pair(a, b) => has_ref(pkg, a) || has_ref(pkg, b),
         Ty::Data(n, args) => {
             pkg.datas.iter().any(|d| d.name == *n && d.view) || args.iter().any(|a| has_ref(pkg, a))
         }
-        _ => false,
-    }
-}
-
-fn has_fn(t: &Ty) -> bool {
-    match t {
-        Ty::Fn(_) => true,
-        Ty::Ref(a)
-        | Ty::RefMut(a)
-        | Ty::Vec(a)
-        | Ty::Array(a)
-        | Ty::Slice(a)
-        | Ty::Option(a)
-        | Ty::Info(a)
-        | Ty::BudgetAnswer(a) => has_fn(a),
-        Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => has_fn(a) || has_fn(b),
-        Ty::Data(_, args) => args.iter().any(has_fn),
         _ => false,
     }
 }
@@ -368,7 +352,7 @@ pub(crate) fn holds_host(pkg: &Package, t: &Ty, seen: &mut BTreeSet<Name>) -> bo
         | Ty::SharedVar(_, a)
         | Ty::Info(a)
         | Ty::BudgetAnswer(a) => holds_host(pkg, a, seen),
-        Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
+        Ty::Result(a, b) | Ty::Pair(a, b) => {
             holds_host(pkg, a, seen) || holds_host(pkg, b, seen)
         }
         // A mutex guard gives its lock back when it is dropped.

@@ -2,12 +2,12 @@
 source = ```tauto
 def Same(a: Nat, b: Nat): Prop := True
 
-theorem lift_computes(n: Nat): Quot::lift(x => Zero, a => b => p => Refl(Nat, Zero), Quot::mk(Nat, Same, n)) = Zero {
-  Refl(Nat, Zero)
+theorem lift_computes(n: Nat): Quot::lift(x => Zero, a => b => p => Refl(<A: Nat, a: Zero>), Quot::mk(<A: Nat, r: Same>, n)) = Zero {
+  Refl(<A: Nat, a: Zero>)
 }
 
-theorem ind_computes(P: (Quot(Nat, Same)) -> Prop, m: ∀ a: Nat. P(Quot::mk(Nat, Same, a)), n: Nat): P(Quot::mk(Nat, Same, n)) {
-  Quot::ind(P, m, Quot::mk(Nat, Same, n))
+theorem ind_computes(P: (Quot(Nat, Same)) -> Prop, m: ∀ a: Nat. P(Quot::mk(<A: Nat, r: Same>, a)), n: Nat): P(Quot::mk(<A: Nat, r: Same>, n)) {
+  Quot::ind(P, m, Quot::mk(<A: Nat, r: Same>, n))
 }
 ```
 checks_all = "ok"
@@ -16,11 +16,11 @@ checks_all = "ok"
 source = ```tauto
 def Same(a: Nat, b: Nat): Prop := True
 
-theorem classes_equal(a: Nat, b: Nat): Quot::mk(Nat, Same, a) = Quot::mk(Nat, Same, b) {
-  Quot::sound(Nat, Same, a, b, Trivial)
+theorem classes_equal(a: Nat, b: Nat): Quot::mk(<A: Nat, r: Same>, a) = Quot::mk(<A: Nat, r: Same>, b) {
+  Quot::sound(<A: Nat, r: Same, a: a, b: b>, Trivial)
 }
 
-theorem no_axiom(n: Nat): n = n { Refl(Nat, n) }
+theorem no_axiom(n: Nat): n = n { Refl(<A: Nat, a: n>) }
 ```
 checks.Same = "ok"
 checks.classes_equal = "axioms: Quot::sound"
@@ -42,7 +42,7 @@ source = ```tauto
 def Same(a: Nat, b: Nat): Prop := True
 
 theorem peek(q: Quot(Nat, Same)): Nat {
-  Quot::lift(x => x, a => b => p => Refl(Nat, a), q)
+  Quot::lift(x => x, a => b => p => Refl(<A: Nat, a: a>), q)
 }
 ```
 checks.Same = "ok"
@@ -83,21 +83,21 @@ checks.large = "error: "
 
 @ cases.two-quotients-are-lifted-together-and-classes-are-exact
 files."main.nib" = ```tauto
-import std::Quot
+import std::quot
 
 def Same(a: Nat, b: Nat): Prop := True
 
-theorem lift2_computes(m: Nat, n: Nat): Quot::lift2(Same, Same, (a, b) => Zero, a1 => a2 => b => p => Refl(Nat, Zero), a => b1 => b2 => p => Refl(Nat, Zero), Quot::mk(Nat, Same, m), Quot::mk(Nat, Same, n)) = Zero {
-  Refl(Nat, Zero)
+theorem lift2_computes(m: Nat, n: Nat): Quot::lift2(Same, Same, (a, b) => Zero, a1 => a2 => b => p => Refl(<A: Nat, a: Zero>), a => b1 => b2 => p => Refl(<A: Nat, a: Zero>), Quot::mk(<A: Nat, r: Same>, m), Quot::mk(<A: Nat, r: Same>, n)) = Zero {
+  Refl(<A: Nat, a: Zero>)
 }
 
 def EqRel(a: Nat, b: Nat): Prop := a = b
 
-theorem exact_from_equal_classes(a: Nat, b: Nat, e: Quot::mk(Nat, EqRel, a) = Quot::mk(Nat, EqRel, b)): EqRel(a, b) {
+theorem exact_from_equal_classes(a: Nat, b: Nat, e: Quot::mk(<A: Nat, r: EqRel>, a) = Quot::mk(<A: Nat, r: EqRel>, b)): EqRel(a, b) {
   Quot::exact(
     Nat::eq,
     x => Nat::eq_refl(x),
-    x => y => z => p => Eq::congr(Nat, Bool, y, z, w => Nat::eq(x, w), p),
+    x => y => z => p => Eq::congr(<A: Nat, B: Bool, a: y, b: z>, w => Nat::eq(x, w), p),
     x => y => h => Nat::eq_sound(x, y, h),
     e
   )
@@ -112,16 +112,15 @@ checks_all = "ok"
 // A program reads a class only through a lift: the quotient is extracted as
 // its representation, and every backend gives the same results.
 @ cases.a-program-reads-a-class-through-a-lift-on-every-backend
-backends = ["rust", "javascript"]
-extract = true
+llvm.unimplemented = "generate: the LLVM backend does not write a closure whose body moves what it captured yet"
 source = ```tauto
-import std::Base
-import std::Quot
+import std::base
+import std::quot
 
 def Parity(a: Nat, b: Nat): Prop := Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)) = Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
 
 fn parity_of(q: Quot(Nat, Parity)): Nat {
-  Quot::lift(Nat, Parity, Nat, n => Nat::rem_nz(n, 2, Nat::ne_zero(2, Refl)), a => b => p => p, q)
+  Quot::lift(n => Nat::rem_nz(n, 2, Nat::ne_zero(2, Refl)), a => b => p => p, q)
 }
 
 fn same_parity(p: Quot(Nat, Parity), q: Quot(Nat, Parity)): Bool {
@@ -129,21 +128,25 @@ fn same_parity(p: Quot(Nat, Parity), q: Quot(Nat, Parity)): Bool {
     Parity,
     Parity,
     (a, b) => Nat::eq(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))),
-    a1 => a2 => b => h => Eq::congr(Nat, Bool, Nat::rem_nz(a1, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(a2, 2, Nat::ne_zero(2, Refl)), x => Nat::eq(x, Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))), h),
-    a => b1 => b2 => h => Eq::congr(Nat, Bool, Nat::rem_nz(b1, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b2, 2, Nat::ne_zero(2, Refl)), y => Nat::eq(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), y), h),
+    a1 => a2 => b => h => Eq::congr(<A: Nat, B: Bool, a: Nat::rem_nz(a1, 2, Nat::ne_zero(2, Refl)), b: Nat::rem_nz(a2, 2, Nat::ne_zero(2, Refl))>, x => Nat::eq(x, Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))), h),
+    a => b1 => b2 => h => Eq::congr(<A: Nat, B: Bool, a: Nat::rem_nz(b1, 2, Nat::ne_zero(2, Refl)), b: Nat::rem_nz(b2, 2, Nat::ne_zero(2, Refl))>, y => Nat::eq(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), y), h),
     p,
     q
   )
 }
 
 fn class_of(n: Nat): Quot(Nat, Parity) {
-  Quot::mk(Nat, Parity, n)
+  Quot::mk(<A: Nat, r: Parity>, n)
 }
 
-perform show("parity", parity_of(class_of(7)))
-perform show("same", same_parity(class_of(3), class_of(9)))
-perform show("different", same_parity(class_of(4), class_of(9)))
+show(&parity_of(class_of(7)))
+show(&same_parity(class_of(3), class_of(9)))
+show(&same_parity(class_of(4), class_of(9)))
 ```
 checks.parity_of = "ok"
 checks.same_parity = "ok"
-shows = ["parity = 1", "same = true", "different = false"]
+stdout = ```
+1
+true
+false
+```

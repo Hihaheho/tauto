@@ -1,0 +1,49 @@
+description = "A struct and a variant of another type of the file may share a name: written as a type, the name means the struct, and written as a value, it means the variant."
+
+// The variant `Remote` carries the struct `Remote`. A name written where a
+// type is wanted is never a constructor, so the payload, the parameter and the
+// result all mean the struct, however many constructors are known when each
+// is read.
+@ cases.a-variant-carries-the-struct-of-its-name
+source = ```tauto
+pub(open) struct Remote { id: u64 }
+pub enum Parent { Current
+  Remote(Remote) }
+
+pub fn get(p: Parent): Option(Remote) {
+  match p {
+    Remote(r) => Some(r)
+    Current => None
+  }
+}
+
+pub fn wrap(r: Remote): Parent { Parent::Remote(r) }
+
+fn id_of(p: Parent): u64 {
+  match get(p) {
+    Some(r) => r.id
+    None => 0
+  }
+}
+
+show(&id_of(wrap(Remote { id: 7 })))
+show(&id_of(Current))
+```
+types = "ok"
+stdout = ```
+7
+0
+```
+
+// The order the two are declared in never decides: a variant declared before
+// the struct of its name is the value `P(..)` means where its type is wanted,
+// and `P { .. }` means the struct.
+@ cases.a-variant-before-the-struct-of-its-name
+source = ```nib
+enum Other { P(Text) }
+struct P { n: i64 }
+let p: P := P { n: 42 }
+let other: Other := P("other")
+```
+types = "ok"
+lin = "ok"

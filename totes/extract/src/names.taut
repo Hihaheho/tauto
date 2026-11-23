@@ -1,0 +1,257 @@
+import "../../text/src/text.taut"
+import "../../unicode/src/unicode.taut"
+import "../../unicode/src/classes.taut"
+import std::text
+import std::map
+import std::base
+
+// The names extraction writes: each declaration and each binder gets a name
+// no library declaration has and no other name of its scope has, as the
+// host's output boundary allocates them. A name that is taken gets `_1`,
+// `_2`, … appended; a character that cannot be in a name becomes `_`.
+
+pub fn ex_library_names(): Text {
+  concat("", include_text!("tables/library-names.txt"))
+}
+
+pub fn ex_helpers(): Text {
+  concat("", include_text!("tables/helpers.txt"))
+}
+
+// What the host adds once the library's `Text` is loaded.
+pub fn ex_text_helpers(): Text {
+  concat("", include_text!("tables/text-helpers.txt"))
+}
+
+pub fn ex_set_add(s: Ordmap(Text, Unit), t: Text): Ordmap(Text, Unit) {
+  Ordmap::insert(s, t, #(), Ordmap::compare_text)
+}
+
+pub fn ex_set_has(s: Ordmap(Text, Unit), t: Text): Bool {
+  match Ordmap::get(s, t, Ordmap::compare_text) {
+    None => false
+    Some(^u) => true
+  }
+}
+
+pub fn ex_set_all(s: Ordmap(Text, Unit), ts: List(Text)): Ordmap(Text, Unit) {
+  match ts {
+    Nil => s
+    Cons(t, rest) => ex_set_all(ex_set_add(s, t), rest)
+  }
+}
+
+// What the library declares: each name and each of its `::` segments.
+pub fn ex_library(): Ordmap(Text, Unit) {
+  ex_set_all(Ordmap::empty(), text_lines(ex_library_names()))
+}
+
+// The names of the helpers' functions: a line `fn name(` or `fn name<`.
+pub fn ex_helper_name(line: Text): Option(Text) {
+  if text_starts_with(line, "fn ", 0) {
+    let open := ⊢ Option(Nat) from match text_find(line, "(", 3) {
+      None => None
+      Some(p) => ⊢ Option(Nat) from match text_find(line, "<", 3) {
+        None => Some(p)
+        Some(q) => if q < p { Some(q) } else { Some(p) }
+      }
+    }
+    ⊢ Option(Text) from match open {
+      None => None
+      Some(p) => Text::slice(line, 3, p)
+    }
+  } else { None }
+}
+
+pub fn ex_helper_names(lines: List(Text)): List(Text) {
+  match lines {
+    Nil => Nil
+    Cons(l, rest) => ⊢ List(Text) from match ex_helper_name(l) {
+      None => ex_helper_names(rest)
+      Some(n) => Cons(n, ex_helper_names(rest))
+    }
+  }
+}
+
+pub fn ex_not(b: Bool): Bool { if b { false } else { true } }
+
+pub fn ex_ascii_word(b: Nat): Bool {
+  (48 <= b && b <= 57) || (65 <= b && b <= 90) || (97 <= b && b <= 122) || b == 95
+}
+
+// The code point of the character starting at `i`, and its length.
+pub fn ex_decode(t: Text, i: Nat): (Nat × Nat) {
+  let b0 := Text::byte_value(t, i)
+  if b0 < 128 { #(b0, 1) } else {
+    let b1 := Nat::sub(Text::byte_value(t, i + 1), 128)
+    if b0 < 224 { #(Nat::sub(b0, 192) * 64 + b1, 2) } else {
+      let b2 := Nat::sub(Text::byte_value(t, i + 2), 128)
+      if b0 < 240 { #((Nat::sub(b0, 224) * 64 + b1) * 64 + b2, 3) } else {
+        let b3 := Nat::sub(Text::byte_value(t, i + 3), 128)
+        #(((Nat::sub(b0, 240) * 64 + b1) * 64 + b2) * 64 + b3, 4)
+      }
+    }
+  }
+}
+
+// `name` with each character that is not XID_Continue (or `:`
+// in a declaration's name) written `_`.
+pub fn ex_sanitize_in(k: Nat, classes: UnicodeClasses, t: Text, i: Nat, global: Bool, acc: List(Text)): List(Text) {
+  match k {
+    Zero => text_list_reverse(acc)
+    Succ(j) => if i >= Text::len(t) { text_list_reverse(acc) } else {
+      let c := ex_decode(t, i)
+      let keep: Bool := if c.fst < 128 { ex_ascii_word(c.fst) || (global && c.fst == 58) } else { unicode_in(unicode_xid_continue(), c.fst) }
+      let piece := ⊢ Text from match Text::slice(t, i, i + c.snd) {
+        None => "_"
+        Some(s) => if keep { s } else { "_" }
+      }
+      ex_sanitize_in(j, classes, t, i + c.snd, global, Cons(piece, acc))
+    }
+  }
+}
+
+pub fn ex_sanitize(classes: UnicodeClasses, t: Text, global: Bool): Text {
+  let base := Text::concat_all(ex_sanitize_in(Text::len(t) + 1, classes, t, 0, global, Nil))
+  if Text::len(base) == 0 { "id_" } else {
+    let b := Text::byte_value(base, 0)
+    if 48 <= b && b <= 57 { Text::concat("id_", base) } else { base }
+  }
+}
+
+// The text after the last `::`.
+pub fn ex_leaf_in(k: Nat, t: Text, at: Nat): Text {
+  match k {
+    Zero => t
+    Succ(j) => ⊢ Text from match text_find(t, "::", at) {
+      None => ⊢ Text from match Text::slice(t, at, Text::len(t)) {
+        None => t
+        Some(s) => s
+      }
+      Some(p) => ex_leaf_in(j, t, p + 2)
+    }
+  }
+}
+
+pub fn ex_leaf(t: Text): Text { ex_leaf_in(Text::len(t) + 1, t, 0) }
+
+pub fn ex_candidate(base: Text, i: Nat): Text {
+  if i == 0 { base } else { Text::concat_all([base, "_", Text::of_nat(i)]) }
+}
+
+pub fn ex_free_from(k: Nat, occupied: Ordmap(Text, Unit), base: Text, i: Nat): Text {
+  match k {
+    Zero => ex_candidate(base, i)
+    Succ(j) => {
+      let c := ex_candidate(base, i)
+      if ex_set_has(occupied, c) || ex_set_has(occupied, ex_leaf(c)) { ex_free_from(j, occupied, base, i + 1) } else { c }
+    }
+  }
+}
+
+// A name for `name`, and the names taken once it is: a declaration's
+// segments are taken too.
+pub fn ex_allocate(classes: UnicodeClasses, occupied: Ordmap(Text, Unit), name: Text, global: Bool): (Text × Ordmap(Text, Unit)) {
+  let base := ex_sanitize(classes, name, global)
+  let written := ex_free_from(Ordmap::size(occupied) + 1, occupied, base, 0)
+  let taken := ex_set_add(occupied, written)
+  #(written, if global { ex_set_all(taken, text_split(written, "::")) } else { taken })
+}
+
+// What the host maps a declaration of `std/` onto: a type of Nib, or the
+// template of a call, `$0`, `$1`, … its arguments. A line is `name\tmapped`;
+// a line without a tab continues the previous mapped value (templates hold
+// newlines).
+pub fn ex_mapped_table(lines: List(Text), m: Ordmap(Text, Text)): Ordmap(Text, Text) {
+  ex_mapped_table_at(lines, None, m)
+}
+
+pub fn ex_mapped_finish(cur: Option((Text × Text)), m: Ordmap(Text, Text)): Ordmap(Text, Text) {
+  match cur {
+    None => m
+    Some(p) => Ordmap::insert(m, p.fst, p.snd, Ordmap::compare_text)
+  }
+}
+
+pub fn ex_mapped_table_at(
+  lines: List(Text),
+  cur: Option((Text × Text)),
+  m: Ordmap(Text, Text)
+): Ordmap(Text, Text) {
+  match lines {
+    Nil => ex_mapped_finish(cur, m)
+    Cons(line, rest) => ⊢ Ordmap(Text, Text) from match text_find(line, "\t", 0) {
+      None => ⊢ Ordmap(Text, Text) from match cur {
+        None => ex_mapped_table_at(rest, None, m)
+        Some(p) => ex_mapped_table_at(
+          rest,
+          Some(#(p.fst, Text::concat_all([p.snd, "\n", line]))),
+          m
+        )
+      }
+      Some(p) => ⊢ Ordmap(Text, Text) from match Text::slice(line, 0, p) {
+        None => ex_mapped_table_at(rest, cur, m)
+        Some(name) => ⊢ Ordmap(Text, Text) from match Text::slice(line, p + 1, Text::len(line)) {
+          None => ex_mapped_table_at(rest, cur, m)
+          Some(mapped) => ex_mapped_table_at(
+            rest,
+            Some(#(name, mapped)),
+            ex_mapped_finish(cur, m)
+          )
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_mapped_fns(): Ordmap(Text, Text) {
+  ex_mapped_table(text_lines(concat("", include_text!("tables/mapped-fns.txt"))), Ordmap::empty())
+}
+
+pub fn ex_mapped_types(): Ordmap(Text, Text) {
+  ex_mapped_table(text_lines(concat("", include_text!("tables/mapped-types.txt"))), Ordmap::empty())
+}
+
+pub fn ex_mapped_get(m: Ordmap(Text, Text), name: Text): Option(Text) {
+  Ordmap::get(m, name, Ordmap::compare_text)
+}
+
+// The text of ASCII bytes.
+pub fn ex_ascii_text(bs: List(Nat)): Text {
+  match bs {
+    Nil => ""
+    Cons(b, rest) => Text::concat(text_code_point(b), ex_ascii_text(rest))
+  }
+}
+
+pub fn ex_ident_byte(b: Nat): Bool {
+  (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+}
+
+// A name the program declares, written for a binder of the helpers: it takes
+// the next free name, as the host allocates the helpers' binders after the
+// declarations.
+pub fn ex_helper_token(classes: UnicodeClasses, globals: Ordmap(Text, Unit), base: Ordmap(Text, Unit), after_path: Bool, tok: List(Nat)): List(Nat) {
+  let name := ex_ascii_text(List::reverse(tok))
+  if after_path || ex_not(ex_set_has(globals, name)) || ex_set_has(base, name) { tok } else {
+    List::reverse(text_code_points(ex_allocate(classes, globals, name, false).fst))
+  }
+}
+
+pub fn ex_helper_scan(k: Nat, classes: UnicodeClasses, globals: Ordmap(Text, Unit), base: Ordmap(Text, Unit), bs: List(Nat), out: List(Nat), tok: List(Nat), prev: Nat, prev2: Nat): List(Nat) {
+  match k {
+    Zero => List::append(List::reverse(out), List::reverse(tok))
+    Succ(j) => match bs {
+      Nil => List::reverse(List::append(ex_helper_token(classes, globals, base, prev == 58 && prev2 == 58, tok), out))
+      Cons(b, rest) => if ex_ident_byte(b) { ex_helper_scan(j, classes, globals, base, rest, out, Cons(b, tok), prev, prev2) } else {
+        ex_helper_scan(j, classes, globals, base, rest, Cons(b, List::append(ex_helper_token(classes, globals, base, prev == 58 && prev2 == 58, tok), out)), Nil, b, prev)
+      }
+    }
+  }
+}
+
+// The helpers with the binders that collide with a declared name renamed.
+pub fn ex_rename_helpers(classes: UnicodeClasses, globals: Ordmap(Text, Unit), base: Ordmap(Text, Unit), helpers: Text): Text {
+  let bs := text_code_points(helpers)
+  ex_ascii_text(ex_helper_scan(List::length(bs) + 1, classes, globals, base, bs, Nil, Nil, 0, 0))
+}

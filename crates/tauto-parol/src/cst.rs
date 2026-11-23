@@ -3,48 +3,13 @@
 //! each completed node collects its children in input order.
 
 use parol_runtime::{ParolError, Token, parser::parse_tree_type::TreeConstruct};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::declared::DECLARED;
 use crate::node_kind::{NonTerminalKind, TerminalKind};
 
-/// A byte range of the source, end exclusive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
-pub struct Span {
-    pub start: u32,
-    pub end: u32,
-}
-
-impl Span {
-    pub const fn new(start: u32, end: u32) -> Self {
-        Self { start, end }
-    }
-
-    pub fn merge(self, other: Span) -> Span {
-        if self.is_empty() && self.start == 0 {
-            return other;
-        }
-        if other.is_empty() && other.start == 0 {
-            return self;
-        }
-        Span::new(self.start.min(other.start), self.end.max(other.end))
-    }
-
-    pub fn is_empty(self) -> bool {
-        self.start >= self.end
-    }
-
-    pub fn contains(self, offset: u32) -> bool {
-        self.start <= offset && offset <= self.end
-    }
-
-    pub fn text(self, source: &str) -> &str {
-        source
-            .get(self.start as usize..self.end as usize)
-            .unwrap_or_default()
-    }
-}
+pub use tauto_surface::span::Span;
 
 pub type NodeId = usize;
 
@@ -223,15 +188,24 @@ pub fn is_trivia(kind: TerminalKind) -> bool {
 }
 
 fn is_declared(kind: NonTerminalKind) -> bool {
-    static KINDS: OnceLock<HashSet<NonTerminalKind>> = OnceLock::new();
+    // Indexed by the kind's discriminant: the parser asks this for every node
+    // it walks, and hashing each kind was a large share of reading a file.
+    static KINDS: OnceLock<Vec<bool>> = OnceLock::new();
     KINDS
         .get_or_init(|| {
-            DECLARED
+            let kinds: Vec<usize> = DECLARED
                 .iter()
-                .map(|name| NonTerminalKind::from_non_terminal_name(name))
-                .collect()
+                .map(|name| NonTerminalKind::from_non_terminal_name(name) as usize)
+                .collect();
+            let mut table = vec![false; kinds.iter().max().map_or(0, |m| m + 1)];
+            for k in kinds {
+                table[k] = true;
+            }
+            table
         })
-        .contains(&kind)
+        .get(kind as usize)
+        .copied()
+        .unwrap_or(false)
 }
 
 struct Open {

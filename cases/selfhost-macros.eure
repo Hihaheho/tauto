@@ -1,5 +1,16 @@
 // Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
 
+@ cases.quote-module-stmts
+source = ```tauto
+module hidden {
+  effect private_read(): Nat
+  pub(handle) effect read(): Nat
+  pub fn answer(): Nat { 7 }
+}
+pub import hidden { read, answer }
+```
+differential = "macro-module-quotes"
+
 // cases
 @ cases.cases-001
 source = ```tauto
@@ -99,8 +110,8 @@ differential = "macros"
 // cases
 @ cases.cases-013
 source = ```tauto
-module m { fn a__m1(): Nat { 1 }
- fn b(): Nat { a__m1() } }
+ fn m::a__m1(): Nat { 1 }
+ fn m::b(): Nat { m::a__m1() }
 ```
 differential = "macros"
 
@@ -258,5 +269,101 @@ differential = "macros"
 @ cases.quote-fragment-extra-012
 source = ```tauto
 if $c { $a } else { $b }
+```
+differential = "macros"
+
+// unused markers kept through Syn lift/lower
+@ cases.unused-marker-fn-param
+source = ```tauto
+fn f(^a: Nat, b: Nat): Nat { b }
+```
+differential = "macros"
+
+@ cases.unused-marker-fn-generic
+description = "An unmarked fn with generics quotes without SynFn unknown-field; `^` on a type parameter round-trips."
+source = ```tauto
+fn f<^A>(x: Nat): Nat { x }
+```
+differential = "macros"
+
+@ cases.unused-marker-fn-generic-unmarked
+description = "A plain fn with generics quotes (SynFn.unused_generics present)."
+source = ```tauto
+fn f<A>(x: A): A { x }
+```
+differential = "macros"
+
+@ cases.unused-marker-data-generic
+source = ```tauto
+struct Box(^A: Type) {
+  x: Nat,
+}
+```
+differential = "macros"
+
+@ cases.unused-marker-effect-generic
+source = ```tauto
+effect ask<^A>(): Nat
+```
+differential = "macros"
+
+@ cases.unused-marker-pi-param
+source = ```tauto
+fn f(): Type { (^A: Type) -> A }
+```
+differential = "macros"
+
+@ cases.unused-marker-let-and-lambda
+source = ```tauto
+fn f(): Nat {
+  let ^x := Zero
+  let g := (^y: Nat) => Zero
+  g(Zero)
+}
+```
+differential = "macros"
+
+@ cases.unused-marker-theorem-param
+source = ```tauto
+theorem t<P: Prop, Q: Prop>(^h: P, q: Q): Q { q }
+```
+differential = "macros"
+
+@ cases.unused-marker-eqn-binder
+source = ```tauto
+fn f(b: Bool): Bool {
+  match b eqn ^h {
+    true => true
+    false => false
+  }
+}
+```
+differential = "macros"
+
+@ cases.unused-marker-handler-cont
+source = ```tauto
+effect ask(): Bool
+fn f(): Bool {
+  handle { perform ask() } with {
+    ask(), ^k => false
+  }
+}
+```
+differential = "macros"
+
+@ cases.unused-marker-step-binder
+source = ```tauto
+theorem t(): ∀ n: Nat. True {
+  by intro!(): ∀ n: Nat. True {
+    ^m: Nat ⊢ True from Trivial
+  }
+}
+```
+differential = "macros"
+
+// A Float literal is lifted to `ExFloat` and lowered back with its digits.
+@ cases.float-literal
+source = ```tauto
+fn f(x: Float): Float { x * 0.5 + 6.02e23 }
 ```
 differential = "macros"

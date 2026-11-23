@@ -1,0 +1,425 @@
+import "base.taut" { List, Nat }
+import "nat.taut" { Nat }
+import std::prelude::std { List, Option }
+
+// Lists beyond the basics of `base.taut`: folds, searches, zips, and the
+// lemmas that relate them. Predicates are `(&A) -> Bool`.
+
+pub fn List::filter<A>(p: (&A) -> Bool, l: List(A)): List(A) {
+  match l {
+    Nil => Nil
+    Cons(h, t) => ⊢ List(A) from match p(&h) {
+      false => List::filter(p, t)
+      true => Cons(h, List::filter(p, t))
+    }
+  }
+}
+
+pub fn List::foldr<A, B>(f: (A, B) -> B, z: B, l: List(A)): B {
+  match l {
+    Nil => z
+    Cons(h, t) => f(h, List::foldr(f, z, t))
+  }
+}
+
+// Folds from the left: `f(f(f(z, a), b), c)` for `[a, b, c]`.
+pub fn List::foldl<A, B>(f: (B, A) -> B, z: B, l: List(A)): B {
+  List::foldr((a: A, acc: B) => f(acc, a), z, List::reverse(l))
+}
+
+pub fn List::any<A>(p: (&A) -> Bool, l: &List(A)): Bool {
+  match l {
+    Nil => false
+    Cons(h, t) => p(h) || List::any(p, t)
+  }
+}
+
+pub fn List::all<A>(p: (&A) -> Bool, l: &List(A)): Bool {
+  match l {
+    Nil => true
+    Cons(h, t) => p(h) && List::all(p, t)
+  }
+}
+
+pub fn List::find<A>(p: (&A) -> Bool, l: List(A)): Option(A) {
+  match l {
+    Nil => None
+    Cons(h, t) => ⊢ Option(A) from match p(&h) {
+      false => List::find(p, t)
+      true => Some(h)
+    }
+  }
+}
+
+// `List::find` over a list that is lent: the match is lent too, so the elements
+// need not be duplicable.
+pub fn List::find_ref<A>(p: (&A) -> Bool, l: &List(A)): Option(&A) {
+  match l {
+    Nil => None
+    Cons(h, t) => ⊢ Option(&A) from match p(h) {
+      false => List::find_ref(p, t)
+      true => Some(h)
+    }
+  }
+}
+
+// `List::length` of a list that is lent.
+pub fn List::length_ref<A>(l: &List(A)): Nat {
+  match l {
+    Nil => 0
+    Cons(h, t) => Succ(List::length_ref(t))
+  }
+}
+
+// Membership by a decision `eq` on the elements.
+pub fn List::contains<A>(eq: (&A, &A) -> Bool, x: &A, l: &List(A)): Bool {
+  match l {
+    Nil => false
+    Cons(h, t) => eq(x, h) || List::contains(eq, x, t)
+  }
+}
+
+pub fn List::replicate<A: Shared>(n: Nat, x: A): List(A) {
+  match n {
+    Zero => Nil
+    Succ(k) => Cons(x, List::replicate(k, x))
+  }
+}
+
+pub fn List::range(n: Nat): List(Nat) {
+  match n {
+    Zero => Nil
+    Succ(k) => Cons(Zero, List::map(Succ, List::range(k)))
+  }
+}
+
+pub fn List::range_from(start: Nat, n: Nat): List(Nat) {
+  List::map((i: Nat) => Nat::add(start, i), List::range(n))
+}
+
+pub fn List::head<A>(l: List(A)): Option(A) {
+  match l {
+    Nil => None
+    Cons(h, t) => Some(h)
+  }
+}
+
+pub fn List::tail<A>(l: List(A)): List(A) {
+  match l {
+    Nil => Nil
+    Cons(h, t) => t
+  }
+}
+
+pub fn List::last<A>(l: List(A)): Option(A) {
+  match l {
+    Nil => None
+    Cons(h, t) => ⊢ Option(A) from match t {
+      Nil => Some(h)
+      Cons(h2, t2) => List::last(Cons(h2, t2))
+    }
+  }
+}
+
+pub fn List::concat<A>(ls: List(List(A))): List(A) {
+  match ls {
+    Nil => Nil
+    Cons(h, t) => List::append(h, List::concat(t))
+  }
+}
+
+pub fn List::take_while<A>(p: (&A) -> Bool, l: List(A)): List(A) {
+  match l {
+    Nil => Nil
+    Cons(h, t) => ⊢ List(A) from match p(&h) {
+      false => Nil
+      true => Cons(h, List::take_while(p, t))
+    }
+  }
+}
+
+pub fn List::drop_while<A>(p: (&A) -> Bool, l: List(A)): List(A) {
+  match l {
+    Nil => Nil
+    Cons(h, t) => ⊢ List(A) from match p(&h) {
+      false => Cons(h, t)
+      true => List::drop_while(p, t)
+    }
+  }
+}
+
+// Pairs up to the shorter of the two lists.
+pub fn List::zip<A, B>(l: List(A), m: List(B)): List(A × B) {
+  match l {
+    Nil => Nil
+    Cons(a, t) => ⊢ List(A × B) from match m {
+      Nil => Nil
+      Cons(b, u) => Cons(#(a, b), List::zip(t, u))
+    }
+  }
+}
+
+pub fn List::unzip<A, B>(l: List(A × B)): List(A) × List(B) {
+  match l {
+    Nil => #(Nil, Nil)
+    Cons(p, t) => ⊢ List(A) × List(B) from match p {
+      #(a, b) => ⊢ List(A) × List(B) from match List::unzip(t) {
+        #(as, bs) => #(Cons(a, as), Cons(b, bs))
+      }
+    }
+  }
+}
+
+pub theorem List::append_nil<A: Type>(l: List(A)): List::append(l, Nil) = l {
+  match l {
+    Nil => Refl
+    Cons(h, t) => Eq::congr(⟦Cons(h, □)⟧, List::append_nil(t))
+  }
+}
+
+pub theorem List::length_append<A: Type>(
+  l: List(A),
+  m: List(A)
+): List::length(List::append(l, m)) = Nat::add(List::length(l), List::length(m)) {
+  match l {
+    Nil => Eq::sym(Nat::add_zero_left(List::length(m)))
+    Cons(h, t) => Eq::trans(
+      Eq::congr(Succ, List::length_append(t, m)),
+      Eq::sym(Nat::add_succ_left(List::length(t), List::length(m)))
+    )
+  }
+}
+
+pub theorem List::length_map<A: Type, B: Type>(
+  f: (A) -> B,
+  l: List(A)
+): List::length(List::map(f, l)) = List::length(l) {
+  match l {
+    Nil => Refl
+    Cons(h, t) => Eq::congr(Succ, List::length_map(f, t))
+  }
+}
+
+pub theorem List::map_append<A: Type, B: Type>(
+  f: (A) -> B,
+  l: List(A),
+  m: List(A)
+): List::map(f, List::append(l, m)) = List::append(List::map(f, l), List::map(f, m)) {
+  ⊢ List::map(
+    f,
+    List::append(l, m)
+  ) = List::append(List::map(f, l), List::map(f, m)) from match l {
+    Nil => Refl
+    Cons(h, t) => Eq::congr(⟦Cons(f(h), □)⟧, List::map_append(f, t, m))
+  }
+}
+
+pub theorem List::map_map<A: Type, B: Type, C: Type>(
+  f: (A) -> B,
+  g: (B) -> C,
+  l: List(A)
+): List::map(g, List::map(f, l)) = List::map((x: A) => g(f(x)), l) {
+  match l {
+    Nil => Refl
+    Cons(h, t) => Eq::congr(⟦Cons(g(f(h)), □)⟧, List::map_map(f, g, t))
+  }
+}
+
+pub theorem List::map_id<A: Type>(l: List(A)): List::map((x: A) => x, l) = l {
+  match l {
+    Nil => Refl
+    Cons(h, t) => Eq::congr(⟦Cons(h, □)⟧, List::map_id(t))
+  }
+}
+
+pub theorem List::reverse_onto_append<A: Type>(
+  l: List(A),
+  acc: List(A)
+): List::reverse_onto(l, acc) = List::append(List::reverse(l), acc) {
+  match l {
+    Nil => Refl
+    Cons(h, t) => Eq::trans(
+      List::reverse_onto_append(t, Cons(h, acc)),
+      Eq::sym(
+        Eq::trans(
+          Eq::congr(⟦List::append(□, acc)⟧, List::reverse_onto_append(t, Cons(h, Nil))),
+          List::append_assoc(List::reverse(t), Cons(h, Nil), acc)
+        )
+      )
+    )
+  }
+}
+
+pub theorem List::reverse_cons<A: Type>(
+  h: A,
+  t: List(A)
+): List::reverse(Cons(h, t)) = List::append(List::reverse(t), Cons(h, Nil)) {
+  List::reverse_onto_append(t, Cons(h, Nil))
+}
+
+pub theorem List::reverse_append<A: Type>(
+  l: List(A),
+  m: List(A)
+): List::reverse(List::append(l, m)) = List::append(List::reverse(m), List::reverse(l)) {
+  ⊢ List::reverse(
+    List::append(l, m)
+  ) = List::append(List::reverse(m), List::reverse(l)) from match l {
+    Nil => Eq::sym(List::append_nil(List::reverse(m)))
+    Cons(h, t) => Eq::trans(
+      List::reverse_cons(h, List::append(t, m)),
+      Eq::trans(
+        Eq::congr(⟦List::append(□, Cons(h, Nil))⟧, List::reverse_append(t, m)),
+        Eq::trans(
+          List::append_assoc(List::reverse(m), List::reverse(t), Cons(h, Nil)),
+          Eq::congr(⟦List::append(List::reverse(m), □)⟧, Eq::sym(List::reverse_cons(h, t)))
+        )
+      )
+    )
+  }
+}
+
+pub theorem List::reverse_reverse<A: Type>(l: List(A)): List::reverse(List::reverse(l)) = l {
+  match l {
+    Nil => Refl
+    Cons(h, t) => Eq::trans(
+      Eq::congr(⟦List::reverse(□)⟧, List::reverse_cons(h, t)),
+      Eq::trans(
+        List::reverse_append(List::reverse(t), Cons(h, Nil)),
+        Eq::congr(⟦Cons(h, □)⟧, List::reverse_reverse(t))
+      )
+    )
+  }
+}
+
+pub theorem List::length_reverse<A: Type>(
+  l: List(A)
+): List::length(List::reverse(l)) = List::length(l) {
+  match l {
+    Nil => Refl
+    Cons(h, t) => Eq::trans(
+      Eq::congr(⟦List::length(□)⟧, List::reverse_cons(h, t)),
+      Eq::trans(List::length_append(List::reverse(t), Cons(h, Nil)), Eq::congr(Succ, List::length_reverse(t)))
+    )
+  }
+}
+
+pub theorem List::take_drop<A: Type>(n: Nat, l: List(A)): List::append(List::take(n, l), List::drop(n, l)) = l {
+  match n {
+    Zero => Refl
+    Succ(k) => ⊢ List::append(List::take(Succ(k), l), List::drop(Succ(k), l)) = l from match l {
+      Nil => Refl
+      Cons(h, t) => Eq::congr(⟦Cons(h, □)⟧, List::take_drop(k, t))
+    }
+  }
+}
+
+pub theorem List::length_replicate<A: Type>(n: Nat, x: A): List::length(List::replicate(n, x)) = n {
+  match n {
+    Zero => Refl
+    Succ(k) => Eq::congr(Succ, List::length_replicate(k, x))
+  }
+}
+
+pub theorem List::length_ref_eq<A: Type>(l: List(A)): List::length_ref(l) = List::length(l) {
+  match l {
+    Nil => Refl
+    Cons(h, t) => Eq::congr(Succ, List::length_ref_eq(t))
+  }
+}
+
+pub theorem List::length_range(n: Nat): List::length(List::range(n)) = n {
+  match n {
+    Zero => Refl
+    Succ(k) => Eq::congr(Succ, Eq::trans(List::length_map(Succ, List::range(k)), List::length_range(k)))
+  }
+}
+
+pub theorem List::foldr_append<A: Type, B: Type>(
+  f: (A, B) -> B,
+  z: B,
+  l: List(A),
+  m: List(A)
+): List::foldr(f, z, List::append(l, m)) = List::foldr(f, List::foldr(f, z, m), l) {
+  match l {
+    Nil => Refl
+    Cons(h, t) => Eq::congr(⟦f(h, □)⟧, List::foldr_append(f, z, t, m))
+  }
+}
+
+pub theorem List::concat_append<A: Type>(
+  ls: List(List(A)),
+  ms: List(List(A))
+): List::concat(List::append(ls, ms)) = List::append(List::concat(ls), List::concat(ms)) {
+  ⊢ List::concat(
+    List::append(ls, ms)
+  ) = List::append(List::concat(ls), List::concat(ms)) from match ls {
+    Nil => Refl
+    Cons(h, t) => Eq::trans(
+      Eq::congr(⟦List::append(h, □)⟧, List::concat_append(t, ms)),
+      Eq::sym(List::append_assoc(h, List::concat(t), List::concat(ms)))
+    )
+  }
+}
+
+pub theorem List::filter_append<A: Type>(
+  p: (&A) -> Bool,
+  l: List(A),
+  m: List(A)
+): List::filter(p, List::append(l, m)) = List::append(List::filter(p, l), List::filter(p, m)) {
+  ⊢ List::filter(
+    p,
+    List::append(l, m)
+  ) = List::append(List::filter(p, l), List::filter(p, m)) from match l {
+    Nil => Refl
+    Cons(h, t) => ⊢ List::filter(
+      p,
+      List::append(Cons(h, t), m)
+    ) = List::append(List::filter(p, Cons(h, t)), List::filter(p, m)) from match p(&h) {
+      false => ⊢ List::filter(
+        p,
+        List::append(t, m)
+      ) = List::append(List::filter(p, t), List::filter(p, m)) from List::filter_append(p, t, m)
+      true => ⊢ Cons(
+        h,
+        List::filter(p, List::append(t, m))
+      ) = List::append(
+        Cons(h, List::filter(p, t)),
+        List::filter(p, m)
+      ) from Eq::congr(⟦Cons(h, □)⟧, List::filter_append(p, t, m))
+    }
+  }
+}
+
+pub theorem List::take_drop_while<A: Type>(
+  p: (&A) -> Bool,
+  l: List(A)
+): List::append(List::take_while(p, l), List::drop_while(p, l)) = l {
+  match l {
+    Nil => Refl
+    Cons(h, t) => ⊢ List::append(
+      List::take_while(p, Cons(h, t)),
+      List::drop_while(p, Cons(h, t))
+    ) = Cons(h, t) from match p(&h) {
+      false => ⊢ List::append(Nil, Cons(h, t)) = Cons(h, t) from Refl
+      true => ⊢ List::append(
+        Cons(h, List::take_while(p, t)),
+        List::drop_while(p, t)
+      ) = Cons(h, t) from Eq::congr(⟦Cons(h, □)⟧, List::take_drop_while(p, t))
+    }
+  }
+}
+
+pub theorem List::length_zip_le<A: Type, B: Type>(
+  l: List(A),
+  m: List(B)
+): List::length(List::zip(l, m)) <= List::length(l) = true {
+  match l {
+    Nil => Refl
+    Cons(a, t) => ⊢ List::length(
+      List::zip(Cons(a, t), m)
+    ) <= List::length(Cons(a, t)) = true from match m {
+      Nil => Refl
+      Cons(b, u) => List::length_zip_le(t, u)
+    }
+  }
+}

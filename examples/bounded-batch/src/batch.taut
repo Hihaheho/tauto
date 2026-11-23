@@ -1,4 +1,4 @@
-import "../../../std/Base.taut"
+import std::base
 
 // A finite queue snapshot. The two projections use the same requested limit.
 pub fn batch_items<A>(limit: Nat, pending: List(A)): List(A) {
@@ -14,7 +14,7 @@ pub theorem batch_reassembles<A: Type>(
   limit: Nat,
   pending: List(A)
 ): List::append(batch_items(limit, pending), batch_remaining(limit, pending)) = pending {
-  ⊢ List::append(batch_items(limit, pending), batch_remaining(limit, pending)) = pending from match limit {
+  match limit {
     Zero => Refl
     Succ(k) => match pending {
       Nil => Refl
@@ -30,7 +30,7 @@ pub theorem batch_size_bounded<A: Type>(
   limit: Nat,
   pending: List(A)
 ): Nat::le(List::length(batch_items(limit, pending)), limit) = true {
-  ⊢ Nat::le(List::length(batch_items(limit, pending)), limit) = true from match limit {
+  match limit {
     Zero => Refl
     Succ(k) => match pending {
       Nil => Refl
@@ -45,7 +45,7 @@ pub theorem batch_fills<A: Type>(
   pending: List(A),
   enough: Nat::le(limit, List::length(pending)) = true
 ): List::length(batch_items(limit, pending)) = limit {
-  ⊢ List::length(batch_items(limit, pending)) = limit from match limit {
+  match limit {
     Zero => Refl
     Succ(k) => match pending {
       Nil => False::elim(false_ne_true(enough))
@@ -60,7 +60,7 @@ pub theorem batch_short_queue<A: Type>(
   pending: List(A),
   fits: Nat::le(List::length(pending), limit) = true
 ): batch_items(limit, pending) = pending {
-  ⊢ batch_items(limit, pending) = pending from match limit {
+  match limit {
     Zero => match pending {
       Nil => Refl
       Cons(job, tail) => False::elim(false_ne_true(fits))

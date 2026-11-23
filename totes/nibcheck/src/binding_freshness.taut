@@ -1,7 +1,8 @@
 import "substitution_freshness.taut"
-import std::Base
+import std::base
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "unify_sound.taut"
 
@@ -57,7 +58,7 @@ pub theorem ck_var_set_fresh(
   below: Nat::le(Succ(v), ck_next_of(c)) = true,
   fresh: CheckerFresh(c)
 ): CheckerFresh(ck_st(ck_var_set(v, w, ck_int_k(c, w, flag)))) {
-  ⊢ CheckerFresh(ck_st(ck_var_set(v, w, ck_int_k(c, w, flag)))) from match flag {
+  match flag {
     true => ck_set_subst_preserves_freshness(
       ck_st(ck_add_int(c, w)),
       v,
@@ -92,7 +93,7 @@ pub theorem ck_bind_unbound_fresh(
   below: Nat::le(Succ(v), ck_next_of(c)) = true,
   fresh: CheckerFresh(c)
 ): CheckerFresh(ck_st(ck_bind_unbound(c, v, t))) {
-  ⊢ CheckerFresh(ck_st(ck_bind_unbound(c, v, t))) from match t {
+  match t {
     TyVar(w) => fresh_rewrap(
       ck_bind_var(c, v, w),
       ck_bind_var_fresh(c, v, w, ordered, below, fresh)
@@ -124,6 +125,10 @@ pub theorem ck_bind_unbound_fresh(
     TyFloat => fresh_rewrap(
       ck_bind_other(c, v, TyFloat),
       ck_bind_other_fresh(c, v, TyFloat, ordered, below, fresh)
+    )
+    TyFloat32 => fresh_rewrap(
+      ck_bind_other(c, v, TyFloat32),
+      ck_bind_other_fresh(c, v, TyFloat32, ordered, below, fresh)
     )
     TyFn(ps, result, kind) => fresh_rewrap(
       ck_bind_other(c, v, TyFn(ps, result, kind)),

@@ -1,0 +1,531 @@
+import std::base
+import std::list
+import std::text
+import "surface.taut"
+import "../../identity/src/identity.taut"
+import "../../text/src/text.taut"
+
+pub(open) inductive SuperclassError: Type {
+  SuperclassErrorMk(
+    id: Text,
+    name: Option(Text),
+    message: Text,
+    start: Nat,
+    end: Nat
+  ): SuperclassError
+}
+
+struct ParentEdge {
+  child: Text,
+  parent: Text,
+  start: Nat,
+  end: Nat
+}
+
+fn parent_class(classes: List(SurfaceClass), name: Text): Option(SurfaceClass) {
+  match classes {
+    Nil => None
+    Cons(c, rest) => if c.name == name { Some(c) } else { parent_class(rest, name) }
+  }
+}
+
+pub fn superclass_classes(program: List(SurfaceStmt)): List(SurfaceClass) {
+  match program {
+    Nil => Nil
+    Cons(stmt, rest) => match stmt {
+      StClass(c) => Cons(c, superclass_classes(rest))
+      _ => superclass_classes(rest)
+    }
+  }
+}
+
+fn superclass_var(t: SurfaceTerm): Option(Text) {
+  match t.kind { SkVar(n) => Some(surface_name_text(n)), _ => None }
+}
+
+fn superclass_type_suffix(name: Text, index: Nat, remaining: Nat): Bool {
+  match remaining {
+    Zero => true
+    Succ(more) => match text_digit(Text::byte_value(name, index)) {
+      None => false
+      Some(^digit) => superclass_type_suffix(name, index + 1, more)
+    }
+  }
+}
+
+mutual {
+  fn superclass_type_kind(t: SurfaceTerm): Bool {
+    match t {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^occurrence) => superclass_type_kind_of(kind)
+    }
+  }
+
+  fn superclass_type_kind_of(kind: SurfaceKind): Bool {
+    match kind {
+      SkVar(n) => {
+        let name := surface_name_text(n)
+        text_starts_with(name, "Type", 0) && superclass_type_suffix(name, 4, Text::len(name) - 4)
+      }
+      SkApp(f, args) => superclass_var(f) == Some("Type") && List::length(args) == 1
+      SkPi(params, result, ^effects) => superclass_type_params(params) && superclass_type_kind(result)
+      _ => false
+    }
+  }
+
+  fn superclass_type_params(params: List(SurfaceParam)): Bool {
+    match params {
+      Nil => true
+      Cons(p, rest) => superclass_type_param(p) && superclass_type_params(rest)
+    }
+  }
+
+  fn superclass_type_param(p: SurfaceParam): Bool {
+    match p { SurfaceParamMk(^name, ty, _) => superclass_type_kind(ty) }
+  }
+}
+
+fn superclass_bound(bound: Option(Text)): Text {
+  match bound { None => "Type", Some(b) => b }
+}
+
+fn superclass_kind(c: SurfaceClass): Option(SurfaceTerm) {
+  match c.parameters { Cons(p, Nil) => Some(p.ty), _ => None }
+}
+
+fn superclass_parent(
+  all: List(SurfaceClass),
+  child: SurfaceClass,
+  bound: SurfaceConstraint
+): Result(ParentEdge, SuperclassError) {
+  let wrong := SuperclassErrorMk(
+    "surface-superclass-argument",
+    None,
+    "the parent class must take the child's single type parameter",
+    bound.start,
+    bound.end
+  )
+  match superclass_kind(child) {
+    None => Err(wrong)
+    Some(kind) => if not(
+      superclass_type_kind(kind)
+    ) || List::length(bound.arguments) != 0 || superclass_var(bound.ty) != Some(child.param) {
+      Err(wrong)
+    } else { match parent_class(all, bound.r#class) {
+        None => Err(
+          SuperclassErrorMk(
+            "surface-unknown-superclass",
+            Some(bound.r#class),
+            Text::concat_all(["unknown parent class `", bound.r#class, "`"]),
+            bound.start,
+            bound.end
+          )
+        )
+        Some(parent) => {
+          let same := match superclass_kind(parent) {
+            None => false
+            Some(p) => row_arg_text(kind) == row_arg_text(p)
+          }
+          if same && child.proof_side == parent.proof_side && superclass_bound(child.bound) == superclass_bound(parent.bound) {
+            Ok(
+              ParentEdge {
+                child: child.name,
+                parent: parent.name,
+                start: bound.start,
+                end: bound.end
+              }
+            )
+          } else {
+            Err(
+              SuperclassErrorMk(
+                "surface-superclass-kind",
+                Some(bound.r#class),
+                Text::concat_all(
+                  [
+                    "parent class `",
+                    bound.r#class,
+                    "` must have the same parameter kind and class form"
+                  ]
+                ),
+                bound.start,
+                bound.end
+              )
+            )
+          }
+        }
+      } }
+  }
+}
+
+fn superclass_edges(
+  all: List(SurfaceClass),
+  remaining: List(SurfaceClass)
+): List(ParentEdge) × List(SuperclassError) {
+  match remaining {
+    Nil => #(Nil, Nil)
+    Cons(child, rest) => {
+      let tail := superclass_edges(all, rest)
+      match child.parents {
+        Nil => tail
+        Cons(bound, Nil) => match superclass_parent(all, child, bound) {
+          Ok(edge) => #(Cons(edge, tail.fst), tail.snd)
+          Err(e) => #(tail.fst, Cons(e, tail.snd))
+        }
+        Cons(^first, Cons(^second, ^more)) => #(
+          tail.fst,
+          Cons(
+            SuperclassErrorMk(
+              "surface-single-superclass",
+              None,
+              "a class may declare only one parent class",
+              child.start,
+              child.end
+            ),
+            tail.snd
+          )
+        )
+      }
+    }
+  }
+}
+
+fn superclass_edge(edges: List(ParentEdge), name: Text): Option(ParentEdge) {
+  match edges {
+    Nil => None
+    Cons(edge, rest) => if edge.child == name { Some(edge) } else { superclass_edge(rest, name) }
+  }
+}
+
+fn superclass_chain(fuel: Nat, edges: List(ParentEdge), name: Text): Option(List(Text)) {
+  match fuel {
+    Zero => None
+    Succ(remaining) => match superclass_edge(edges, name) {
+      None => Some(Nil)
+      Some(edge) => match superclass_chain(remaining, edges, edge.parent) {
+        None => None
+        Some(tail) => Some(Cons(edge.parent, tail))
+      }
+    }
+  }
+}
+
+fn superclass_cycles(
+  edges: List(ParentEdge),
+  remaining: List(ParentEdge),
+  fuel: Nat
+): List(SuperclassError) {
+  match remaining {
+    Nil => Nil
+    Cons(edge, rest) => {
+      let tail := superclass_cycles(edges, rest, fuel)
+      match superclass_chain(fuel, edges, edge.child) {
+        Some(^chain) => tail
+        None => Cons(
+          SuperclassErrorMk(
+            "surface-superclass-cycle",
+            Some(edge.child),
+            Text::concat_all(["the parent classes of `", edge.child, "` form a cycle"]),
+            edge.start,
+            edge.end
+          ),
+          tail
+        )
+      }
+    }
+  }
+}
+
+fn superclass_has(bounds: List(SurfaceConstraint), name: Text, ty: Text): Bool {
+  match bounds {
+    Nil => false
+    Cons(bound, rest) => (
+      bound.r#class == name && List::length(bound.arguments) == 0 && row_arg_text(bound.ty) == ty
+    ) || superclass_has(rest, name, ty)
+  }
+}
+
+fn superclass_append(
+  chain: List(Text),
+  bound: SurfaceConstraint,
+  bounds: List(SurfaceConstraint)
+): List(SurfaceConstraint) {
+  match chain {
+    Nil => bounds
+    Cons(name, rest) => {
+      let out := if superclass_has(bounds, name, row_arg_text(bound.ty)) { bounds } else {
+        List::append(bounds, [SurfaceConstraintMk(name, bound.ty, bound.start, bound.end, Nil)])
+      }
+      superclass_append(rest, bound, out)
+    }
+  }
+}
+
+fn superclass_inherit(
+  edges: List(ParentEdge),
+  fuel: Nat,
+  written: List(SurfaceConstraint),
+  bounds: List(SurfaceConstraint)
+): List(SurfaceConstraint) {
+  match written {
+    Nil => bounds
+    Cons(bound, rest) => {
+      let next := if List::length(bound.arguments) == 0 {
+        match superclass_chain(fuel, edges, bound.r#class) {
+          None => bounds
+          Some(chain) => superclass_append(chain, bound, bounds)
+        }
+      } else { bounds }
+      superclass_inherit(edges, fuel, rest, next)
+    }
+  }
+}
+
+fn superclass_bounds(
+  edges: List(ParentEdge),
+  bounds: List(SurfaceConstraint)
+): List(SurfaceConstraint) {
+  superclass_inherit(edges, List::length(edges) + 1, bounds, bounds)
+}
+
+fn superclass_theorem_bounds(params: List(SurfaceNamed)): List(SurfaceConstraint) {
+  match params {
+    Nil => Nil
+    Cons(p, rest) => if text_starts_with(p.name, "inst@", 0) {
+      match p.ty.kind {
+        SkApp(head, Cons(ty, args)) => match superclass_var(head) {
+          None => Nil
+          Some(name) => Cons(
+            SurfaceConstraintMk(name, ty, p.ty.start, p.ty.end, args),
+            superclass_theorem_bounds(rest)
+          )
+        }
+        _ => Nil
+      }
+    } else { Nil }
+  }
+}
+
+mutual {
+  fn superclass_fn(edges: List(ParentEdge), f: SurfaceFn): SurfaceFn {
+    match f {
+      SurfaceFnMk(name, generics, bounds, params, r#borrows, types, result, effects, wheres, start, end, body, lends, generic_types, starts, visibility, row_hole, slot_unused, slot_unused_generics, slot_unused_params) =>
+      SurfaceFnMk(name, generics, bounds, params, r#borrows, types, result, effects, superclass_bounds(edges, wheres), start, end, superclass_term(edges, body), lends, generic_types, starts, visibility, row_hole, slot_unused, slot_unused_generics, slot_unused_params)
+    }
+    }
+
+  fn superclass_fns(edges: List(ParentEdge), fns: List(SurfaceFn)): List(SurfaceFn) {
+    match fns {
+      Nil => Nil
+      Cons(f, rest) => Cons(superclass_fn(edges, f), superclass_fns(edges, rest))
+    }
+  }
+
+  fn superclass_theorem(edges: List(ParentEdge), t: SurfaceTheorem): SurfaceTheorem {
+    match t {
+      SurfaceTheoremMk(name, implicit, params, ty, body, start, end, slot_unused, slot_unused_params, t_vis) => {
+        let bounds := superclass_theorem_bounds(List::drop(implicit, params))
+        let count := List::length(bounds)
+        let added := surface_dictionary_params(
+          List::drop(count, superclass_bounds(edges, bounds)),
+          count
+        )
+        let at := implicit + count
+        SurfaceTheoremMk(name, implicit, List::append(List::take(at, params), List::append(added, List::drop(at, params))), ty, superclass_opt(edges, body), start, end, slot_unused, slot_unused_params, t_vis)
+      }
+    }
+  }
+
+  fn superclass_class_stmt(edges: List(ParentEdge), decl: SurfaceClass): SurfaceClass {
+    match decl {
+      SurfaceClassMk(name, param, arity, bound, methods, laws, start, end, parameters, proof_side, parents, unused_parameters, c_vis) =>
+      SurfaceClassMk(name, param, arity, bound, superclass_fns(edges, methods), laws, start, end, parameters, proof_side, parents, unused_parameters, c_vis)
+    }
+  }
+
+  fn superclass_instance(edges: List(ParentEdge), decl: SurfaceInstance): SurfaceInstance {
+    match decl {
+      SurfaceInstanceMk(generics, bounds, name, head, wheres, methods, laws, start, end, types, args, infer_from, unused_generics) =>
+      SurfaceInstanceMk(generics, bounds, name, head, superclass_bounds(edges, wheres), superclass_fns(edges, methods), laws, start, end, types, args, infer_from, unused_generics)
+    }
+  }
+
+  fn superclass_term(edges: List(ParentEdge), term: SurfaceTerm): SurfaceTerm {
+    match term {
+      SurfaceTermIndexedMk(kind, start, end, occurrence) =>
+      SurfaceTermIndexedMk(superclass_term_kind(edges, kind), start, end, occurrence)
+    }
+  }
+
+  fn superclass_term_kind(edges: List(ParentEdge), kind: SurfaceKind): SurfaceKind {
+    match kind {
+      SkApp(head, args) => SkApp(superclass_term(edges, head), superclass_terms(edges, args))
+      SkLam(params, body, types, unused) => SkLam(
+        params,
+        superclass_term(edges, body),
+        types,
+        unused
+      )
+      SkIf(cond, then, otherwise) => SkIf(
+        superclass_term(edges, cond),
+        superclass_term(edges, then),
+        superclass_opt(edges, otherwise)
+      )
+      SkBlock(stmts) => SkBlock(superclass_statements(edges, stmts))
+      SkMatch(subject, motive, arms, binder, binder_unused) => SkMatch(
+        superclass_term(edges, subject),
+        motive,
+        superclass_arms(edges, arms),
+        binder,
+        binder_unused
+      )
+      SkAscribe(value, ty) => SkAscribe(superclass_term(edges, value), ty)
+      SkTagged(tag, value) => SkTagged(tag, superclass_term(edges, value))
+      SkField(value, name) => SkField(superclass_term(edges, value), name)
+      SkRecord(name, fields) => SkRecord(name, superclass_fields(edges, fields))
+      SkBorrow(mutable, mutable_orig, value) => SkBorrow(mutable, mutable_orig, superclass_term(edges, value))
+      SkBorrowLam(r#borrows, lam) => SkBorrowLam(r#borrows, superclass_term(edges, lam))
+      SkPerform(op, args) => SkPerform(op, superclass_terms(edges, args))
+      SkHandle(body, handlers) => SkHandle(
+        superclass_term(edges, body),
+        superclass_handlers(edges, handlers)
+      )
+      SkBudget(memory, amount, body) => SkBudget(
+        memory,
+        superclass_term(edges, amount),
+        superclass_term(edges, body)
+      )
+      _ => kind
+    }
+  }
+
+  fn superclass_terms(edges: List(ParentEdge), terms: List(SurfaceTerm)): List(SurfaceTerm) {
+    match terms {
+      Nil => Nil
+      Cons(term, rest) => Cons(superclass_term(edges, term), superclass_terms(edges, rest))
+    }
+  }
+
+  fn superclass_opt(edges: List(ParentEdge), term: Option(SurfaceTerm)): Option(SurfaceTerm) {
+    match term { None => None, Some(value) => Some(superclass_term(edges, value)) }
+  }
+
+  fn superclass_arms(edges: List(ParentEdge), arms: List(SurfaceArm)): List(SurfaceArm) {
+    match arms {
+      Nil => Nil
+      Cons(arm, rest) => Cons(superclass_arm(edges, arm), superclass_arms(edges, rest))
+    }
+  }
+
+  fn superclass_arm(edges: List(ParentEdge), arm: SurfaceArm): SurfaceArm {
+    match arm {
+      SurfaceArmMk(pattern, guard, goal, body) =>
+      SurfaceArmMk(pattern, superclass_opt(edges, guard), goal, superclass_term(edges, body))
+    }
+  }
+
+  fn superclass_fields(edges: List(ParentEdge), fields: List(SurfaceField)): List(SurfaceField) {
+    match fields {
+      Nil => Nil
+      Cons(field, rest) => Cons(superclass_field(edges, field), superclass_fields(edges, rest))
+    }
+  }
+
+  fn superclass_field(edges: List(ParentEdge), field: SurfaceField): SurfaceField {
+    match field {
+      SurfaceFieldMk(name, value) => SurfaceFieldMk(name, superclass_term(edges, value))
+    }
+  }
+
+  fn superclass_handlers(
+    edges: List(ParentEdge),
+    handlers: List(SurfaceHandler)
+  ): List(SurfaceHandler) {
+    match handlers {
+      Nil => Nil
+      Cons(handler, rest) => Cons(
+        superclass_handler(edges, handler),
+        superclass_handlers(edges, rest)
+      )
+    }
+  }
+
+  fn superclass_handler(edges: List(ParentEdge), handler: SurfaceHandler): SurfaceHandler {
+    match handler {
+      HdReturn(pattern, body) => HdReturn(pattern, superclass_term(edges, body))
+      HdOperation(op, binds, types, patterns, r#resume, cont_unused, guard, body) =>
+      HdOperation(
+        op,
+        binds,
+        types,
+        patterns,
+        r#resume,
+        cont_unused,
+        superclass_opt(edges, guard),
+        superclass_term(edges, body)
+      )
+    }
+  }
+
+  fn superclass_statements(edges: List(ParentEdge), program: List(SurfaceStmt)): List(SurfaceStmt) {
+    match program {
+      Nil => Nil
+      Cons(stmt, rest) => Cons(
+        superclass_statement(edges, stmt),
+        superclass_statements(edges, rest)
+      )
+    }
+  }
+
+  fn superclass_statement(edges: List(ParentEdge), stmt: SurfaceStmt): SurfaceStmt {
+    match stmt {
+      StFn(f) => StFn(superclass_fn(edges, f))
+      StTheorem(t) => StTheorem(superclass_theorem(edges, t))
+      StExtern(fns, instances, types, structs, enums, start, end) => StExtern(
+        superclass_fns(edges, fns),
+        instances,
+        types,
+        structs,
+        enums,
+        start,
+        end
+      )
+      StClass(c) => StClass(superclass_class_stmt(edges, c))
+      StInstance(i) => StInstance(superclass_instance(edges, i))
+      StMutual(items, start, end) => StMutual(superclass_statements(edges, items), start, end)
+      StModule(name, vis, items, start, end) => StModule(name, vis, superclass_statements(edges, items), start, end)
+      StLet(name, ty, value, r#borrow, mutable, ^unused, stack) => StLet(name, ty, superclass_term(edges, value), r#borrow, mutable, None, stack)
+      StVar(name, ty, value, r#borrow, ^unused, stack) => StVar(name, ty, superclass_term(edges, value), r#borrow, None, stack)
+      StAssign(name, place, value) => StAssign(
+        name,
+        superclass_opt(edges, place),
+        superclass_term(edges, value)
+      )
+      StWhile(cond, body) => StWhile(superclass_term(edges, cond), superclass_term(edges, body))
+      StLoop(body, start, end) => StLoop(superclass_term(edges, body), start, end)
+      StFor(pat, src, body, start, end) => StFor(pat, src, body, start, end)
+      StReturn(value) => StReturn(superclass_opt(edges, value))
+      StBreak(value, start, end) => StBreak(superclass_opt(edges, value), start, end)
+      StExpr(value) => StExpr(superclass_term(edges, value))
+      _ => stmt
+    }
+  }
+}
+
+// The inherited dictionaries are ordinary bounds in the signatures that use them.
+pub fn expand_superclasses(
+  program: List(SurfaceStmt),
+  imported: List(SurfaceClass)
+): List(SurfaceStmt) × List(SuperclassError) {
+  let classes := List::append(superclass_classes(program), imported)
+  let result := superclass_edges(classes, classes)
+  let errors := List::append(
+    result.snd,
+    superclass_cycles(result.fst, result.fst, List::length(result.fst) + 1)
+  )
+  match errors {
+    Cons(^first, ^rest) => #(program, errors)
+    Nil => match result.fst {
+      Nil => #(program, Nil)
+      Cons(^edge, ^rest) => #(superclass_statements(result.fst, program), Nil)
+    }
+  }
+}

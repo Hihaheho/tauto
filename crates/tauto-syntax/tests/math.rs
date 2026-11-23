@@ -309,6 +309,25 @@ fn a_syntax_error_names_a_terminal_by_what_the_grammar_says_it_means() {
     let plain = Tables::read(include_str!("data/math.tables")).expect("tables");
     let e = tauto_syntax::parse_ast("math", &plain, "1 + 2").unwrap_err();
     assert_eq!(e.message, tauto_syntax::EXPECTED_END);
-    assert!(e.args.contains(&("expected".to_string(), "Equals".to_string())));
+    assert!(
+        e.args
+            .contains(&("expected".to_string(), "Equals".to_string()))
+    );
     assert!(Tables::read(&text.replace("describe Equals", "describe Nope")).is_err());
+}
+
+/// Tables made under another pargen revision are out of date, though their name (the hash of
+/// their grammar) is the same.
+#[test]
+fn tables_of_another_pargen_revision_are_not_current() {
+    let text = include_str!("data/math.tables");
+    let tables = Tables::read(text).unwrap();
+    assert!(tables.is_current());
+    let old = text.replace(
+        &format!(" pargen {}", tauto_syntax::PARGEN_REVISION),
+        " pargen 1",
+    );
+    assert!(!Tables::read(&old).unwrap().is_current());
+    let none = text.replace(&format!(" pargen {}", tauto_syntax::PARGEN_REVISION), "");
+    assert!(!Tables::read(&none).unwrap().is_current());
 }

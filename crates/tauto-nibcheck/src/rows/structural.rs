@@ -1,6 +1,6 @@
 //! Structural recursion: a function that calls itself only on a part of one
 //! of its parameters, taken apart by `match`, ends. Such a function does not
-//! perform `Div` for its recursion, as the kernel accepts the same recursion
+//! perform `div` for its recursion, as the kernel accepts the same recursion
 //! without a termination proof.
 //!
 //! A `Nat` taken apart by `match` is extracted as an unsigned integer:
@@ -91,6 +91,10 @@ impl Scan<'_> {
             TermKind::Borrow { term, .. } | TermKind::Ascribe { term, .. } => {
                 self.size(term, names)
             }
+            // A field of a strict part is a strict part of the parameter too:
+            // `Placed(T)` holds its `value`, and a coerced field reads as
+            // `l.value`.
+            TermKind::Field { base, .. } if self.size(base, names) == Size::Part => Size::Part,
             TermKind::App {
                 function,
                 arguments,
@@ -251,7 +255,7 @@ impl Scan<'_> {
             | TermKind::Ascribe { term: base, .. }
             | TermKind::Tagged { term: base, .. }
             | TermKind::Borrow { term: base, .. } => self.term(base, names),
-            TermKind::Perform { args, .. } | TermKind::Union(args) | TermKind::Tuple(args) => {
+            TermKind::Perform { args, .. } | TermKind::Union(args) => {
                 for a in args {
                     self.term(a, names);
                 }
@@ -271,7 +275,6 @@ impl Scan<'_> {
             | TermKind::Text(_)
             | TermKind::Bool(_)
             | TermKind::Pi { .. }
-            | TermKind::Product(_)
             | TermKind::Row(_)
             | TermKind::Exists { .. }
             | TermKind::FnKind { .. } => {}
@@ -299,7 +302,7 @@ impl Scan<'_> {
             }
             Stmt::Expr(e) | Stmt::Return(Some(e)) => self.term(e, names),
             Stmt::Return(None) => {}
-            // A loop is `Div` of its own.
+            // A loop is `div` of its own.
             Stmt::While { condition, body } => {
                 self.term(condition, names);
                 self.term(body, names);
@@ -313,6 +316,10 @@ impl Scan<'_> {
                 }
                 self.term(&f.body, &mut inner);
             }
+            // `lower_fors` / `lower_loops` expand them where the program is read.
+            Stmt::For { .. } | Stmt::Loop { .. } | Stmt::Break(_) | Stmt::Continue => {
+                self.ok = false
+            }
             _ => self.ok = false,
         }
     }
@@ -322,7 +329,16 @@ impl Scan<'_> {
 /// of a value that is the parameter or a part of it.
 fn bind(p: &Pattern, parts: bool, top: bool, names: &mut Names) {
     match p {
-        Pattern::Bind(n) => {
+        Pattern::Ctor { .. } if let Some(items) = p.product_members() => {
+            for a in items {
+                bind(a, parts, false, names);
+            }
+        }
+        // The value itself, narrowed: no smaller than it.
+        Pattern::Typed { name: n, .. } => {
+            names.insert(n.clone(), Size::Other);
+        }
+        Pattern::Bind { name: n, .. } => {
             let size = if parts && !top {
                 Size::Part
             } else {
@@ -337,11 +353,6 @@ fn bind(p: &Pattern, parts: bool, top: bool, names: &mut Names) {
         }
         Pattern::Record { fields, .. } => {
             for (_, a) in fields {
-                bind(a, parts, false, names);
-            }
-        }
-        Pattern::Tuple(items) => {
-            for a in items {
                 bind(a, parts, false, names);
             }
         }

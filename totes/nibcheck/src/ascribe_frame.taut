@@ -1,0 +1,192 @@
+import "types_infer.taut"
+import "infer_parts.taut"
+import "datas_frame.taut"
+import "checker_frame.taut"
+import "checked_frame.taut"
+import "error_frame.taut"
+import "operation_checked_sound.taut"
+import "tracked_run_frame.taut"
+import "tracked_read_frame.taut"
+import "expr_leaf_frame.taut"
+import "expr_leaf_error_sound.taut"
+import std::text
+import "checker.taut"
+import "finish_frame.taut"
+import "obligation_state_frame.taut"
+import "tracked_state_frame.taut"
+import "ty.taut"
+import "types_run.taut"
+import "unify_sound.taut"
+import "written_error_sound.taut"
+import "../../surface/src/surface.taut"
+import "messages.taut"
+
+// `ck_ascribed` once the written type `want` is read: `under` is what a borrowed term holds.
+pub fn leaf_ascribed_at(c: Checker, b: Ty, want: Ty, span: TySpan, under: Option(Ty)): Mut1(Ty, Checker) {
+  match under {
+    Some(inner) => frame_bind(
+      <A: Unit, B: Ty>,
+      (ignored: Unit, c1: Checker) => mut1(ascribe_member(c1, want), c1),
+      ck_expect(c, inner, want, span, what_ascription_message())
+    )
+    None => frame_bind(
+      <A: Unit, B: Ty>,
+      (ignored: Unit, c1: Checker) => mut1(ascribe_plain(c1, want), c1),
+      ck_expect(c, b, want, span, what_ascription_message())
+    )
+  }
+}
+
+pub fn ascribed_mirror(c: Checker, b: Ty, ty: SurfaceTerm, span: TySpan): Mut1(Ty, Checker) {
+  frame_bind(
+    <A: Ty, B: Ty>,
+    (want: Ty, c1: Checker) => ck_rewrap1(ck_ascribed_at(c1, b, want, span, ascribe_under(c1, b, want))),
+    ck_written_here(c, ty)
+  )
+}
+
+pub theorem ck_ascribed_unf(
+  c: Checker,
+  b: Ty,
+  ty: SurfaceTerm,
+  span: TySpan
+): ck_ascribed(c, b, ty, span) = ascribed_mirror(c, b, ty, span) { Refl }
+
+pub theorem leaf_ascribed_at_frame(
+  c: Checker,
+  b: Ty,
+  want: Ty,
+  span: TySpan,
+  under: Option(Ty),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_ascribed_at(c, b, want, span, under)) {
+  match under {
+    Some(inner) => run_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(ascribe_member(c1, want), c1),
+      ck_expect(c, inner, want, span, what_ascription_message()),
+      ck_expect_run_frame(c, inner, want, span, what_ascription_message(), ordered),
+      ignored => c1 => o_c1 => run_frame_return(c1, ascribe_member(c1, want), o_c1)
+    )
+    None => run_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(ascribe_plain(c1, want), c1),
+      ck_expect(c, b, want, span, what_ascription_message()),
+      ck_expect_run_frame(c, b, want, span, what_ascription_message(), ordered),
+      ignored => c1 => o_c1 => run_frame_return(c1, ascribe_plain(c1, want), o_c1)
+    )
+  }
+}
+
+pub theorem ck_ascribe_of_run_frame(
+  c: Checker,
+  types: List(Ty),
+  term: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_ascribe_of(c, types, term, arguments)) {
+  run_frame_rewrap(c, ck_ascribed(c, ascribe_found(types), ascribe_type(arguments, term), span_of(ascribe_term(arguments, term))),
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(ck_ascribed_unf(c, ascribe_found(types), ascribe_type(arguments, term), span_of(ascribe_term(arguments, term)))),
+    run_frame_bind(
+      <A: Ty, B: Ty>,
+      c,
+      (want: Ty, c1: Checker) => ck_rewrap1(ck_ascribed_at(
+        c1,
+        ascribe_found(types),
+        want,
+        span_of(ascribe_term(arguments, term)),
+        ascribe_under(c1, ascribe_found(types), want)
+      )),
+      ck_written_here(c, ascribe_type(arguments, term)),
+      run_frame_read(
+        c,
+        ck_written_here(c, ascribe_type(arguments, term)),
+        ck_written_here_frame(c, ascribe_type(arguments, term)),
+        ordered
+      ),
+      want => c1 => o_c1 => run_frame_rewrap(c1, ck_ascribed_at(c1, ascribe_found(types), want, span_of(ascribe_term(arguments, term)), ascribe_under(c1, ascribe_found(types), want)), leaf_ascribed_at_frame(
+        c1,
+        ascribe_found(types),
+        want,
+        span_of(ascribe_term(arguments, term)),
+        ascribe_under(c1, ascribe_found(types), want),
+        o_c1
+      ))
+    )
+  ))
+
+}
+
+pub theorem leaf_ascribed_at_frame_checked(
+  c: Checker,
+  b: Ty,
+  want: Ty,
+  span: TySpan,
+  under: Option(Ty),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_ascribed_at(c, b, want, span, under)) {
+  match under {
+    Some(inner) => checked_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(ascribe_member(c1, want), c1),
+      ck_expect(c, inner, want, span, what_ascription_message()),
+      ck_expect_run_frame_checked(c, inner, want, span, what_ascription_message(), ordered),
+      ignored => c1 => o_c1 => checked_frame_return(c1, ascribe_member(c1, want), o_c1)
+    )
+    None => checked_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(ascribe_plain(c1, want), c1),
+      ck_expect(c, b, want, span, what_ascription_message()),
+      ck_expect_run_frame_checked(c, b, want, span, what_ascription_message(), ordered),
+      ignored => c1 => o_c1 => checked_frame_return(c1, ascribe_plain(c1, want), o_c1)
+    )
+  }
+}
+
+pub theorem ck_ascribe_of_run_frame_checked(
+  c: Checker,
+  types: List(Ty),
+  term: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_ascribe_of(c, types, term, arguments)) {
+  checked_frame_rewrap(c, ck_ascribed(c, ascribe_found(types), ascribe_type(arguments, term), span_of(ascribe_term(arguments, term))),
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(ck_ascribed_unf(c, ascribe_found(types), ascribe_type(arguments, term), span_of(ascribe_term(arguments, term)))),
+    checked_frame_bind(
+      <A: Ty, B: Ty>,
+      c,
+      (want: Ty, c1: Checker) => ck_rewrap1(ck_ascribed_at(
+        c1,
+        ascribe_found(types),
+        want,
+        span_of(ascribe_term(arguments, term)),
+        ascribe_under(c1, ascribe_found(types), want)
+      )),
+      ck_written_here(c, ascribe_type(arguments, term)),
+      checked_frame_read(
+        c,
+        ck_written_here(c, ascribe_type(arguments, term)),
+        ck_written_here_frame(c, ascribe_type(arguments, term)),
+        ck_written_here_frame_errors(c, ascribe_type(arguments, term)),
+        ordered
+      ),
+      want => c1 => o_c1 => checked_frame_rewrap(c1, ck_ascribed_at(c1, ascribe_found(types), want, span_of(ascribe_term(arguments, term)), ascribe_under(c1, ascribe_found(types), want)), leaf_ascribed_at_frame_checked(
+        c1,
+        ascribe_found(types),
+        want,
+        span_of(ascribe_term(arguments, term)),
+        ascribe_under(c1, ascribe_found(types), want),
+        o_c1
+      ))
+    )
+  ))
+
+}

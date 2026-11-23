@@ -7,23 +7,32 @@ source = ```tauto
 struct Bundle { name: Text, revision: i64, size: i64 }
 let b := Bundle { name: "clip", revision: 1, size: 40 }
 let c := Bundle { revision: 2, ..b }
-perform show("name", c.name)
-perform show("revision", c.revision)
-perform show("size", c.size)
-perform show("old", b.revision)
+show(&c.name)
+show(&c.revision)
+show(&c.size)
+show(&b.revision)
 ```
-shows = ["name = \"clip\"", "revision = 2", "size = 40", "old = 1"]
-extract = true
+stdout = ```
+"clip"
+2
+40
+1
+```
 
 @ cases.a-base-that-is-not-a-name-runs-once
 source = ```tauto
+import std::builtin::os
 struct Bundle { name: Text, revision: i64, size: i64 }
-fn made(n: i64): Bundle {
-  perform show("made", n)
+fn made(n: i64): Bundle ! {stdout, stdout_flush} {
+  show(&n)
   Bundle { name: "clip", revision: n, size: 40 }
 }
 let c := Bundle { name: "cut", ..made(3) }
-perform show("name", c.name)
-perform show("revision", c.revision)
+show(&c.name)
+show(&c.revision)
 ```
-shows = ["made = 3", "name = \"cut\"", "revision = 3"]
+stdout = ```
+3
+"cut"
+3
+```

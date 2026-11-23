@@ -1,18 +1,21 @@
+import "messages.taut"
 import "inference_statements.taut"
 import "arm_frame.taut"
-import std::List
-import std::Text
+import std::list
+import std::text
 import "argument_frame.taut"
 import "checker.taut"
 import "checker_frame.taut"
 import "datas_frame.taut"
 import "expr_access_frame.taut"
+import "lambda_written_frame.taut"
 import "freevars.taut"
 import "handle_frame.taut"
 import "inference_base.taut"
 import "pattern_scope.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -24,35 +27,27 @@ pub fn inference_function_assumptions(
   scheme: Scheme,
   inner: Scope,
   result: Ty,
-  outer: List(Pair(Text, Text)),
+  outer: List(Text × Text),
   outer_types: List(TypeName)
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (assumed: Unit, c1: Checker) => frame_bind(
-      Ty,
-      Unit,
-      (body: Ty, c2: Checker) => frame_bind(
-        Unit,
-        Unit,
-        (restored: Unit, c3: Checker) => frame_bind(
-          Unit,
-          Unit,
-          (popped: Unit, c4: Checker) => ck_rewrap1(
-            ck_expect(
-              c4,
-              body,
-              result,
-              span_of(inference_fn_body(f)),
-              cat3("the result of `", inference_fn_name(f), "`")
-            )
+      <A: Unit, B: Unit>,
+      (hinted: Unit, c2: Checker) => frame_bind(
+        <A: Ty, B: Unit>,
+        (body: Ty, c3: Checker) => frame_bind(
+          <A: Unit, B: Unit>,
+          (restored: Unit, c4: Checker) => frame_bind(
+            <A: Unit, B: Unit>,
+            (popped: Unit, c5: Checker) => ck_rewrap1(ck_expect(c5, body, result, span_of(inference_fn_body(f)), what_result_of_message(inference_fn_name(f)))),
+            inference_set_returns(c4, List::tail(inference_returns(c4)))
           ),
-          inference_set_returns(c3, List::tail(inference_returns(c3)))
+          ck_leave_fn(c3, outer, outer_types)
         ),
-        ck_leave_fn(c2, outer, outer_types)
+        ck_infer_in(j, c2, inference_fn_body(f), inference_scope_items(inner))
       ),
-      ck_infer_in(j, c1, inference_fn_body(f), inference_scope_items(inner))
+      inference_set_result_hint(c1, ck_result_hint_for(inference_fn_body(f), Some(result)))
     ),
     ck_enter_fn(c, scheme)
   )
@@ -65,7 +60,7 @@ pub theorem inference_function_assumptions_frame(
   scheme: Scheme,
   inner: Scope,
   result: Ty,
-  outer: List(Pair(Text, Text)),
+  outer: List(Text × Text),
   outer_types: List(TypeName),
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
@@ -74,128 +69,99 @@ pub theorem inference_function_assumptions_frame(
   inference_function_assumptions(j, c, f, scheme, inner, result, outer, outer_types)
 ) {
   run_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (assumed: Unit, c1: Checker) => frame_bind(
-      Ty,
-      Unit,
-      (body: Ty, c2: Checker) => frame_bind(
-        Unit,
-        Unit,
-        (restored: Unit, c3: Checker) => frame_bind(
-          Unit,
-          Unit,
-          (popped: Unit, c4: Checker) => ck_rewrap1(
-            ck_expect(
-              c4,
-              body,
-              result,
-              span_of(inference_fn_body(f)),
-              cat3("the result of `", inference_fn_name(f), "`")
-            )
+      <A: Unit, B: Unit>,
+      (hinted: Unit, c2: Checker) => frame_bind(
+        <A: Ty, B: Unit>,
+        (body: Ty, c3: Checker) => frame_bind(
+          <A: Unit, B: Unit>,
+          (restored: Unit, c4: Checker) => frame_bind(
+            <A: Unit, B: Unit>,
+            (popped: Unit, c5: Checker) => ck_rewrap1(ck_expect(c5, body, result, span_of(inference_fn_body(f)), what_result_of_message(inference_fn_name(f)))),
+            inference_set_returns(c4, List::tail(inference_returns(c4)))
           ),
-          inference_set_returns(c3, List::tail(inference_returns(c3)))
+          ck_leave_fn(c3, outer, outer_types)
         ),
-        ck_leave_fn(c2, outer, outer_types)
+        ck_infer_in(j, c2, inference_fn_body(f), inference_scope_items(inner))
       ),
-      ck_infer_in(j, c1, inference_fn_body(f), inference_scope_items(inner))
+      inference_set_result_hint(c1, ck_result_hint_for(inference_fn_body(f), Some(result)))
     ),
     ck_enter_fn(c, scheme),
-    run_frame_read(c, ck_enter_fn(c, scheme), ck_enter_fn_frame(c, scheme), ordered),
+    run_frame_read(
+      c,
+      ck_enter_fn(c, scheme),
+      ck_enter_fn_frame(c, scheme),
+      ordered
+    ),
     assumed => c1 => o_c1 => run_frame_bind(
-      Ty,
-      Unit,
+      <A: Unit, B: Unit>,
       c1,
-      (body: Ty, c2: Checker) => frame_bind(
-        Unit,
-        Unit,
-        (restored: Unit, c3: Checker) => frame_bind(
-          Unit,
-          Unit,
-          (popped: Unit, c4: Checker) => ck_rewrap1(
-            ck_expect(
-              c4,
-              body,
-              result,
-              span_of(inference_fn_body(f)),
-              cat3("the result of `", inference_fn_name(f), "`")
-            )
+      (hinted: Unit, c2: Checker) => frame_bind(
+        <A: Ty, B: Unit>,
+        (body: Ty, c3: Checker) => frame_bind(
+          <A: Unit, B: Unit>,
+          (restored: Unit, c4: Checker) => frame_bind(
+            <A: Unit, B: Unit>,
+            (popped: Unit, c5: Checker) => ck_rewrap1(ck_expect(c5, body, result, span_of(inference_fn_body(f)), what_result_of_message(inference_fn_name(f)))),
+            inference_set_returns(c4, List::tail(inference_returns(c4)))
           ),
-          inference_set_returns(c3, List::tail(inference_returns(c3)))
+          ck_leave_fn(c3, outer, outer_types)
         ),
-        ck_leave_fn(c2, outer, outer_types)
+        ck_infer_in(j, c2, inference_fn_body(f), inference_scope_items(inner))
       ),
-      ck_infer_in(j, c1, inference_fn_body(f), inference_scope_items(inner)),
-      inference_use_ck_infer_in(
-        j,
+      inference_set_result_hint(c1, ck_result_hint_for(inference_fn_body(f), Some(result))),
+      run_frame_read(
         c1,
-        inference_fn_body(f),
-        inference_scope_items(inner),
-        o_c1,
-        ih
+        inference_set_result_hint(c1, ck_result_hint_for(inference_fn_body(f), Some(result))),
+        inference_set_result_hint_frame(c1, ck_result_hint_for(inference_fn_body(f), Some(result))),
+        o_c1
       ),
-      body => c2 => o_c2 => run_frame_bind(
-        Unit,
-        Unit,
+      hinted => c2 => o_c2 => run_frame_bind(
+        <A: Ty, B: Unit>,
         c2,
-        (restored: Unit, c3: Checker) => frame_bind(
-          Unit,
-          Unit,
-          (popped: Unit, c4: Checker) => ck_rewrap1(
-            ck_expect(
-              c4,
-              body,
-              result,
-              span_of(inference_fn_body(f)),
-              cat3("the result of `", inference_fn_name(f), "`")
-            )
+        (body: Ty, c3: Checker) => frame_bind(
+          <A: Unit, B: Unit>,
+          (restored: Unit, c4: Checker) => frame_bind(
+            <A: Unit, B: Unit>,
+            (popped: Unit, c5: Checker) => ck_rewrap1(ck_expect(c5, body, result, span_of(inference_fn_body(f)), what_result_of_message(inference_fn_name(f)))),
+            inference_set_returns(c4, List::tail(inference_returns(c4)))
           ),
-          inference_set_returns(c3, List::tail(inference_returns(c3)))
+          ck_leave_fn(c3, outer, outer_types)
         ),
-        ck_leave_fn(c2, outer, outer_types),
-        run_frame_read(
-          c2,
-          ck_leave_fn(c2, outer, outer_types),
-          ck_leave_fn_frame(c2, outer, outer_types),
-          o_c2
-        ),
-        restored => c3 => o_c3 => run_frame_bind(
-          Unit,
-          Unit,
+        ck_infer_in(j, c2, inference_fn_body(f), inference_scope_items(inner)),
+        inference_use_ck_infer_in(j, c2, inference_fn_body(f), inference_scope_items(inner), o_c2, ih),
+        body => c3 => o_c3 => run_frame_bind(
+          <A: Unit, B: Unit>,
           c3,
-          (popped: Unit, c4: Checker) => ck_rewrap1(
-            ck_expect(
-              c4,
-              body,
-              result,
-              span_of(inference_fn_body(f)),
-              cat3("the result of `", inference_fn_name(f), "`")
-            )
+          (restored: Unit, c4: Checker) => frame_bind(
+            <A: Unit, B: Unit>,
+            (popped: Unit, c5: Checker) => ck_rewrap1(ck_expect(c5, body, result, span_of(inference_fn_body(f)), what_result_of_message(inference_fn_name(f)))),
+            inference_set_returns(c4, List::tail(inference_returns(c4)))
           ),
-          inference_set_returns(c3, List::tail(inference_returns(c3))),
+          ck_leave_fn(c3, outer, outer_types),
           run_frame_read(
             c3,
-            inference_set_returns(c3, List::tail(inference_returns(c3))),
-            inference_set_returns_frame(c3, List::tail(inference_returns(c3))),
+            ck_leave_fn(c3, outer, outer_types),
+            ck_leave_fn_frame(c3, outer, outer_types),
             o_c3
           ),
-          popped => c4 => o_c4 => run_frame_rewrap(
+          restored => c4 => o_c4 => run_frame_bind(
+            <A: Unit, B: Unit>,
             c4,
-            ck_expect(
+            (popped: Unit, c5: Checker) => ck_rewrap1(ck_expect(c5, body, result, span_of(inference_fn_body(f)), what_result_of_message(inference_fn_name(f)))),
+            inference_set_returns(c4, List::tail(inference_returns(c4))),
+            run_frame_read(
               c4,
-              body,
-              result,
-              span_of(inference_fn_body(f)),
-              cat3("the result of `", inference_fn_name(f), "`")
-            ),
-            ck_expect_run_frame(
-              c4,
-              body,
-              result,
-              span_of(inference_fn_body(f)),
-              cat3("the result of `", inference_fn_name(f), "`"),
+              inference_set_returns(c4, List::tail(inference_returns(c4))),
+              inference_set_returns_frame(c4, List::tail(inference_returns(c4))),
               o_c4
+            ),
+            popped => c5 => o_c5 => run_frame_rewrap(
+              c5,
+              ck_expect(c5, body, result, span_of(inference_fn_body(f)), what_result_of_message(inference_fn_name(f))),
+              ck_expect_run_frame(c5, body, result, span_of(inference_fn_body(f)), what_result_of_message(inference_fn_name(f)), o_c5)
             )
           )
         )
@@ -212,20 +178,19 @@ pub fn inference_function_type(
   env: List(Local),
   ty: Ty
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match ty {
-    TyInt(pat_w) => mut1(Star, c)
+  match ty {
+    TyInt(^pat_w) => mut1(Star, c)
     TyBool => mut1(Star, c)
     TyText => mut1(Star, c)
     TyUnit => mut1(Star, c)
     TyNever => mut1(Star, c)
     TyDecimal => mut1(Star, c)
     TyFloat => mut1(Star, c)
-    TyFn(params, result, fk) => inference_bind_scope(
-      Unit,
-      Unit,
+    TyFloat32 => mut1(Star, c)
+    TyFn(params, result, ^fk) => inference_bind_scope(
+      <A: Unit, B: Unit>,
       (bound: Unit, c1: Checker, inner: Scope) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (pushed: Unit, c2: Checker) => inference_function_assumptions(
           j,
           c2,
@@ -246,16 +211,16 @@ pub fn inference_function_type(
         handle_body_start(inference_fn_body(f))
       )
     )
-    TyUnion(pat_members) => mut1(Star, c)
-    TyProduct(pat_members) => mut1(Star, c)
-    TyTagged(pat_tags, pat_inner) => mut1(Star, c)
-    TyNamed(pat_name, pat_args) => mut1(Star, c)
-    TyParam(pat_name, pat_bound) => mut1(Star, c)
-    TyInfo(pat_inner) => mut1(Star, c)
-    TyBorrow(pat_inner, pat_mutable) => mut1(Star, c)
-    TyVar(pat_v) => mut1(Star, c)
-    TyPoly(pat_generics, pat_inner) => mut1(Star, c)
-    TyApp(pat_head, pat_arg) => mut1(Star, c)
+    TyUnion(^pat_members) => mut1(Star, c)
+    TyProduct(^pat_members) => mut1(Star, c)
+    TyTagged(^pat_tags, ^pat_inner) => mut1(Star, c)
+    TyNamed(^pat_name, ^pat_args) => mut1(Star, c)
+    TyParam(^pat_name, ^pat_bound) => mut1(Star, c)
+    TyInfo(^pat_inner) => mut1(Star, c)
+    TyBorrow(^pat_inner, ^pat_mutable) => mut1(Star, c)
+    TyVar(^pat_v) => mut1(Star, c)
+    TyPoly(^pat_generics, ^pat_inner) => mut1(Star, c)
+    TyApp(^pat_head, ^pat_arg) => mut1(Star, c)
   }
 }
 
@@ -269,7 +234,7 @@ pub theorem inference_function_type_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_function_type(j, c, f, scheme, env, ty)) {
-  ⊢ CkRunFrame(c, inference_function_type(j, c, f, scheme, env, ty)) from match ty {
+  match ty {
     TyInt(pat_w) => run_frame_return(c, Star, ordered)
     TyBool => run_frame_return(c, Star, ordered)
     TyText => run_frame_return(c, Star, ordered)
@@ -277,13 +242,12 @@ pub theorem inference_function_type_frame(
     TyNever => run_frame_return(c, Star, ordered)
     TyDecimal => run_frame_return(c, Star, ordered)
     TyFloat => run_frame_return(c, Star, ordered)
+    TyFloat32 => run_frame_return(c, Star, ordered)
     TyFn(params, result, fk) => inference_bind_scope_frame(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (bound: Unit, c1: Checker, inner: Scope) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (pushed: Unit, c2: Checker) => inference_function_assumptions(
           j,
           c2,
@@ -312,8 +276,7 @@ pub theorem inference_function_type_frame(
         ordered
       ),
       bound => c1 => inner => o_c1 => run_frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c1,
         (pushed: Unit, c2: Checker) => inference_function_assumptions(
           j,
@@ -403,33 +366,26 @@ pub fn inference_lambda_body(
   body: SurfaceTerm,
   env: List(Local),
   ps: List(Ty),
-  kind: Kind
+  cap: TyCaptures
 ): Mut1(Ty, Checker) {
   inference_bind_scope(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     (bound: Unit, c1: Checker, inner: Scope) => frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       (r: Ty, c2: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (pushed: Unit, c3: Checker) => frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (b: Ty, c4: Checker) => frame_bind(
-            Unit,
-            Ty,
+            <A: Unit, B: Ty>,
             (popped: Unit, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (checked: Unit, c6: Checker) => frame_bind(
-                Unit,
-                Ty,
-                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
-                inference_record_closure(c6, r, body)
+                <A: Unit, B: Ty>,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, captures_kind(cap)), c7),
+                inference_record_closure(c6, r, body, cap)
               ),
-              ck_expect(c5, b, r, span_of(body), "the result of a function")
+              ck_expect(c5, b, r, span_of(body), what_function_result_message())
             ),
             inference_set_returns(c4, List::tail(inference_returns(c4)))
           ),
@@ -450,36 +406,29 @@ pub theorem inference_lambda_body_frame(
   body: SurfaceTerm,
   env: List(Local),
   ps: List(Ty),
-  kind: Kind,
+  cap: TyCaptures,
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
-): CkRunFrame(c, inference_lambda_body(j, c, params, body, env, ps, kind)) {
+): CkRunFrame(c, inference_lambda_body(j, c, params, body, env, ps, cap)) {
   inference_bind_scope_frame(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     c,
     (bound: Unit, c1: Checker, inner: Scope) => frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       (r: Ty, c2: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (pushed: Unit, c3: Checker) => frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (b: Ty, c4: Checker) => frame_bind(
-            Unit,
-            Ty,
+            <A: Unit, B: Ty>,
             (popped: Unit, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (checked: Unit, c6: Checker) => frame_bind(
-                Unit,
-                Ty,
-                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
-                inference_record_closure(c6, r, body)
+                <A: Unit, B: Ty>,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, captures_kind(cap)), c7),
+                inference_record_closure(c6, r, body, cap)
               ),
-              ck_expect(c5, b, r, span_of(body), "the result of a function")
+              ck_expect(c5, b, r, span_of(body), what_function_result_message())
             ),
             inference_set_returns(c4, List::tail(inference_returns(c4)))
           ),
@@ -492,28 +441,22 @@ pub theorem inference_lambda_body_frame(
     ck_bind_params(params, c, ScopeMk(env), ps, handle_body_start(body)),
     ck_bind_params_scope_frame(params, c, ScopeMk(env), ps, handle_body_start(body), ordered),
     bound => c1 => inner => o_c1 => run_frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c1,
       (r: Ty, c2: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (pushed: Unit, c3: Checker) => frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (b: Ty, c4: Checker) => frame_bind(
-            Unit,
-            Ty,
+            <A: Unit, B: Ty>,
             (popped: Unit, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (checked: Unit, c6: Checker) => frame_bind(
-                Unit,
-                Ty,
-                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
-                inference_record_closure(c6, r, body)
+                <A: Unit, B: Ty>,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, captures_kind(cap)), c7),
+                inference_record_closure(c6, r, body, cap)
               ),
-              ck_expect(c5, b, r, span_of(body), "the result of a function")
+              ck_expect(c5, b, r, span_of(body), what_function_result_message())
             ),
             inference_set_returns(c4, List::tail(inference_returns(c4)))
           ),
@@ -524,25 +467,20 @@ pub theorem inference_lambda_body_frame(
       ck_fresh(c1),
       run_frame_read(c1, ck_fresh(c1), ck_fresh_frame(c1), o_c1),
       r => c2 => o_c2 => run_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c2,
         (pushed: Unit, c3: Checker) => frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (b: Ty, c4: Checker) => frame_bind(
-            Unit,
-            Ty,
+            <A: Unit, B: Ty>,
             (popped: Unit, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (checked: Unit, c6: Checker) => frame_bind(
-                Unit,
-                Ty,
-                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
-                inference_record_closure(c6, r, body)
+                <A: Unit, B: Ty>,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, captures_kind(cap)), c7),
+                inference_record_closure(c6, r, body, cap)
               ),
-              ck_expect(c5, b, r, span_of(body), "the result of a function")
+              ck_expect(c5, b, r, span_of(body), what_function_result_message())
             ),
             inference_set_returns(c4, List::tail(inference_returns(c4)))
           ),
@@ -556,41 +494,34 @@ pub theorem inference_lambda_body_frame(
           o_c2
         ),
         pushed => c3 => o_c3 => run_frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           c3,
           (b: Ty, c4: Checker) => frame_bind(
-            Unit,
-            Ty,
+            <A: Unit, B: Ty>,
             (popped: Unit, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (checked: Unit, c6: Checker) => frame_bind(
-                Unit,
-                Ty,
-                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
-                inference_record_closure(c6, r, body)
+                <A: Unit, B: Ty>,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, captures_kind(cap)), c7),
+                inference_record_closure(c6, r, body, cap)
               ),
-              ck_expect(c5, b, r, span_of(body), "the result of a function")
+              ck_expect(c5, b, r, span_of(body), what_function_result_message())
             ),
             inference_set_returns(c4, List::tail(inference_returns(c4)))
           ),
           ck_infer_in(j, c3, body, inference_scope_items(inner)),
           inference_use_ck_infer_in(j, c3, body, inference_scope_items(inner), o_c3, ih),
           b => c4 => o_c4 => run_frame_bind(
-            Unit,
-            Ty,
+            <A: Unit, B: Ty>,
             c4,
             (popped: Unit, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (checked: Unit, c6: Checker) => frame_bind(
-                Unit,
-                Ty,
-                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
-                inference_record_closure(c6, r, body)
+                <A: Unit, B: Ty>,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, captures_kind(cap)), c7),
+                inference_record_closure(c6, r, body, cap)
               ),
-              ck_expect(c5, b, r, span_of(body), "the result of a function")
+              ck_expect(c5, b, r, span_of(body), what_function_result_message())
             ),
             inference_set_returns(c4, List::tail(inference_returns(c4))),
             run_frame_read(
@@ -600,30 +531,27 @@ pub theorem inference_lambda_body_frame(
               o_c4
             ),
             popped => c5 => o_c5 => run_frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               c5,
               (checked: Unit, c6: Checker) => frame_bind(
-                Unit,
-                Ty,
-                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
-                inference_record_closure(c6, r, body)
+                <A: Unit, B: Ty>,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, captures_kind(cap)), c7),
+                inference_record_closure(c6, r, body, cap)
               ),
-              ck_expect(c5, b, r, span_of(body), "the result of a function"),
-              ck_expect_run_frame(c5, b, r, span_of(body), "the result of a function", o_c5),
+              ck_expect(c5, b, r, span_of(body), what_function_result_message()),
+              ck_expect_run_frame(c5, b, r, span_of(body), what_function_result_message(), o_c5),
               checked => c6 => o_c6 => run_frame_bind(
-                Unit,
-                Ty,
+                <A: Unit, B: Ty>,
                 c6,
-                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
-                inference_record_closure(c6, r, body),
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, captures_kind(cap)), c7),
+                inference_record_closure(c6, r, body, cap),
                 run_frame_read(
                   c6,
-                  inference_record_closure(c6, r, body),
-                  inference_record_closure_frame(c6, r, body),
+                  inference_record_closure(c6, r, body, cap),
+                  inference_record_closure_frame(c6, r, body, cap),
                   o_c6
                 ),
-                recorded => c7 => o_c7 => run_frame_return(c7, TyFn(ps, r, kind), o_c7)
+                recorded => c7 => o_c7 => run_frame_return(c7, TyFn(ps, r, captures_kind(cap)), o_c7)
               )
             )
           )
@@ -637,25 +565,23 @@ pub fn inference_lambda_kind(
   j: Nat,
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local),
   hint: Option(Ty),
   sk: SurfaceKind
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match sk {
-    SkVar(pat_name) => ck_rewrap1(ck_fresh(c))
-    SkNat(pat_digits) => ck_rewrap1(ck_fresh(c))
-    SkText(pat_value) => ck_rewrap1(ck_fresh(c))
-    SkBool(pat_value) => ck_rewrap1(ck_fresh(c))
-    SkApp(pat_head, pat_args) => ck_rewrap1(ck_fresh(c))
-    SkPi(pat_params, pat_result, pat_effects) => ck_rewrap1(ck_fresh(c))
-    SkExists(pat_binder, pat_domain, pat_body) => ck_rewrap1(ck_fresh(c))
-    SkLam(params, body) => frame_bind(
-      List(Ty),
-      Ty,
+  match sk {
+    SkVar(^pat_name) => ck_rewrap1(ck_fresh(c))
+    SkNat(^pat_digits) => ck_rewrap1(ck_fresh(c))
+    SkText(^pat_value) => ck_rewrap1(ck_fresh(c))
+    SkBool(^pat_value) => ck_rewrap1(ck_fresh(c))
+    SkApp(^pat_head, ^pat_args) => ck_rewrap1(ck_fresh(c))
+    SkPi(^pat_params, ^pat_result, ^pat_effects) => ck_rewrap1(ck_fresh(c))
+    SkExists(^pat_binder, ^pat_domain, ^pat_body, ^unused) => ck_rewrap1(ck_fresh(c))
+    SkLam(params, body, types, _) => frame_bind(
+      <A: List(Ty), B: Ty>,
       (ps: List(Ty), c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (hinted: Unit, c2: Checker) => inference_lambda_body(
           j,
           c2,
@@ -663,36 +589,35 @@ pub fn inference_lambda_kind(
           body,
           env,
           ps,
-          ck_lambda_kind(free_vars(lam), c2, env, KindCopy)
+          ck_lambda_captures(lam, c2, env)
         ),
-        ck_lambda_hint_of(c1, hint, ps)
+        ck_lambda_hints(c1, hint, ps, types)
       ),
-      ck_lambda_params(params, c, borrows)
+      ck_lambda_params(params, c, r#borrows)
     )
-    SkUnion(pat_parts) => ck_rewrap1(ck_fresh(c))
-    SkTagged(pat_tag, pat_value) => ck_rewrap1(ck_fresh(c))
-    SkIf(pat_cond, pat_then, pat_otherwise) => ck_rewrap1(ck_fresh(c))
-    SkField(pat_value, pat_name) => ck_rewrap1(ck_fresh(c))
-    SkBlock(pat_stmts) => ck_rewrap1(ck_fresh(c))
-    SkPerform(pat_op, pat_args) => ck_rewrap1(ck_fresh(c))
-    SkHandle(pat_body, pat_handlers) => ck_rewrap1(ck_fresh(c))
-    SkBudget(pat_amount_memory, pat_amount, pat_body) => ck_rewrap1(ck_fresh(c))
-    SkMatch(pat_scrutinee, pat_motive, pat_arms, pat_binder) => ck_rewrap1(ck_fresh(c))
-    SkHole(pat_name) => ck_rewrap1(ck_fresh(c))
-    SkRecord(pat_name, pat_fields) => ck_rewrap1(ck_fresh(c))
-    SkBorrow(pat_mutable, pat_value) => ck_rewrap1(ck_fresh(c))
-    SkFnKind(pat_kind, pat_ty) => ck_rewrap1(ck_fresh(c))
-    SkBorrowLam(pat_borrows, pat_lam) => ck_rewrap1(ck_fresh(c))
-    SkOther(pat_what) => ck_rewrap1(ck_fresh(c))
-    SkRow(pat_what_effects) => ck_rewrap1(ck_fresh(c))
-    SkFloat(pat_what) => ck_rewrap1(ck_fresh(c))
-    SkProduct(pat_what) => ck_rewrap1(ck_fresh(c))
-    SkProject(pat_what, pat_what_ty) => ck_rewrap1(ck_fresh(c))
-    SkMacroCall(pat_name, pat_arg) => ck_rewrap1(ck_fresh(c))
-    SkQuote(pat_stmts_form, pat_stmts) => ck_rewrap1(ck_fresh(c))
-    SkSplice(pat_value) => ck_rewrap1(ck_fresh(c))
-    SkSyntaxLit(pat_name, pat_body) => ck_rewrap1(ck_fresh(c))
-    SkStep(pat_tactic, pat_arg, pat_call_start, pat_call_end, pat_before, pat_arms) => ck_rewrap1(
+    SkUnion(^pat_parts) => ck_rewrap1(ck_fresh(c))
+    SkTagged(^pat_tag, ^pat_value) => ck_rewrap1(ck_fresh(c))
+    SkIf(^pat_cond, ^pat_then, ^pat_otherwise) => ck_rewrap1(ck_fresh(c))
+    SkField(^pat_value, ^pat_name) => ck_rewrap1(ck_fresh(c))
+    SkBlock(^pat_stmts) => ck_rewrap1(ck_fresh(c))
+    SkPerform(^pat_op, ^pat_args) => ck_rewrap1(ck_fresh(c))
+    SkHandle(^pat_body, ^pat_handlers) => ck_rewrap1(ck_fresh(c))
+    SkBudget(^pat_amount_memory, ^pat_amount, ^pat_body) => ck_rewrap1(ck_fresh(c))
+    SkMatch(^pat_scrutinee, ^pat_motive, ^pat_arms, ^pat_binder, _) => ck_rewrap1(ck_fresh(c))
+    SkHole(^pat_name) => ck_rewrap1(ck_fresh(c))
+    SkRecord(^pat_name, ^pat_fields) => ck_rewrap1(ck_fresh(c))
+    SkBorrow(^pat_mutable, ^pat_mutable_orig, ^pat_value) => ck_rewrap1(ck_fresh(c))
+    SkFnKind(^pat_kind, ^pat_ty) => ck_rewrap1(ck_fresh(c))
+    SkBorrowLam(^pat_borrows, ^pat_lam) => ck_rewrap1(ck_fresh(c))
+    SkOther(^pat_what) => ck_rewrap1(ck_fresh(c))
+    SkAscribe(^pat_what, ^pat_what_ty) => ck_rewrap1(ck_fresh(c))
+    SkRow(^pat_what_effects) => ck_rewrap1(ck_fresh(c))
+    SkFloat(^pat_what) => ck_rewrap1(ck_fresh(c))
+    SkMacroCall(^pat_name, ^pat_arg) => ck_rewrap1(ck_fresh(c))
+    SkQuote(^pat_stmts_form, ^pat_stmts) => ck_rewrap1(ck_fresh(c))
+    SkSplice(^pat_value) => ck_rewrap1(ck_fresh(c))
+    SkSyntaxLit(^pat_name, ^pat_body) => ck_rewrap1(ck_fresh(c))
+    SkStep(^pat_tactic, ^pat_arg, ^pat_call_start, ^pat_call_end, ^pat_before, ^pat_arms) => ck_rewrap1(
       ck_fresh(c)
     )
   }
@@ -702,14 +627,14 @@ pub theorem inference_lambda_kind_frame(
   j: Nat,
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local),
   hint: Option(Ty),
   sk: SurfaceKind,
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
-): CkRunFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) {
-  ⊢ CkRunFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) from match sk {
+): CkRunFrame(c, inference_lambda_kind(j, c, lam, r#borrows, env, hint, sk)) {
+  match sk {
     SkVar(pat_name) => run_frame_read(
       c,
       ck_rewrap1(ck_fresh(c)),
@@ -746,19 +671,17 @@ pub theorem inference_lambda_kind_frame(
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
       ordered
     )
-    SkExists(pat_binder, pat_domain, pat_body) => run_frame_read(
+    SkExists(pat_binder, pat_domain, pat_body, unused) => run_frame_read(
       c,
       ck_rewrap1(ck_fresh(c)),
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
       ordered
     )
-    SkLam(params, body) => run_frame_bind(
-      List(Ty),
-      Ty,
+    SkLam(params, body, types, _) => run_frame_bind(
+      <A: List(Ty), B: Ty>,
       c,
       (ps: List(Ty), c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (hinted: Unit, c2: Checker) => inference_lambda_body(
           j,
           c2,
@@ -766,20 +689,19 @@ pub theorem inference_lambda_kind_frame(
           body,
           env,
           ps,
-          ck_lambda_kind(free_vars(lam), c2, env, KindCopy)
+          ck_lambda_captures(lam, c2, env)
         ),
-        ck_lambda_hint_of(c1, hint, ps)
+        ck_lambda_hints(c1, hint, ps, types)
       ),
-      ck_lambda_params(params, c, borrows),
+      ck_lambda_params(params, c, r#borrows),
       run_frame_read(
         c,
-        ck_lambda_params(params, c, borrows),
-        ck_lambda_params_frame(params, c, borrows),
+        ck_lambda_params(params, c, r#borrows),
+        ck_lambda_params_frame(params, c, r#borrows),
         ordered
       ),
       ps => c1 => o_c1 => run_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c1,
         (hinted: Unit, c2: Checker) => inference_lambda_body(
           j,
@@ -788,10 +710,10 @@ pub theorem inference_lambda_kind_frame(
           body,
           env,
           ps,
-          ck_lambda_kind(free_vars(lam), c2, env, KindCopy)
+          ck_lambda_captures(lam, c2, env)
         ),
-        ck_lambda_hint_of(c1, hint, ps),
-        ck_lambda_hint_of_run_frame(c1, hint, ps, o_c1),
+        ck_lambda_hints(c1, hint, ps, types),
+        ck_lambda_hints_run_frame(c1, hint, ps, types, o_c1),
         hinted => c2 => o_c2 => inference_lambda_body_frame(
           j,
           c2,
@@ -799,7 +721,7 @@ pub theorem inference_lambda_kind_frame(
           body,
           env,
           ps,
-          ck_lambda_kind(free_vars(lam), c2, env, KindCopy),
+          ck_lambda_captures(lam, c2, env),
           ih,
           o_c2
         )
@@ -853,7 +775,7 @@ pub theorem inference_lambda_kind_frame(
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
       ordered
     )
-    SkMatch(pat_scrutinee, pat_motive, pat_arms, pat_binder) => run_frame_read(
+    SkMatch(pat_scrutinee, pat_motive, pat_arms, pat_binder, _) => run_frame_read(
       c,
       ck_rewrap1(ck_fresh(c)),
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
@@ -871,7 +793,7 @@ pub theorem inference_lambda_kind_frame(
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
       ordered
     )
-    SkBorrow(pat_mutable, pat_value) => run_frame_read(
+    SkBorrow(pat_mutable, pat_mutable_orig, pat_value) => run_frame_read(
       c,
       ck_rewrap1(ck_fresh(c)),
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
@@ -895,6 +817,12 @@ pub theorem inference_lambda_kind_frame(
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
       ordered
     )
+    SkAscribe(pat_what, pat_what_ty) => run_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      ordered
+    )
     SkRow(pat_what_effects) => run_frame_read(
       c,
       ck_rewrap1(ck_fresh(c)),
@@ -902,18 +830,6 @@ pub theorem inference_lambda_kind_frame(
       ordered
     )
     SkFloat(pat_what) => run_frame_read(
-      c,
-      ck_rewrap1(ck_fresh(c)),
-      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
-      ordered
-    )
-    SkProduct(pat_what) => run_frame_read(
-      c,
-      ck_rewrap1(ck_fresh(c)),
-      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
-      ordered
-    )
-    SkProject(pat_what, pat_what_ty) => run_frame_read(
       c,
       ck_rewrap1(ck_fresh(c)),
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
@@ -956,18 +872,17 @@ pub fn inference_lambda_hint(
   j: Nat,
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local),
   hint: Option(Ty)
 ): Mut1(Ty, Checker) {
   frame_bind(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     (cleared: Unit, c1: Checker) => inference_lambda_kind(
       j,
       c1,
       lam,
-      borrows,
+      r#borrows,
       env,
       hint,
       inference_term_kind(lam)
@@ -980,21 +895,20 @@ pub theorem inference_lambda_hint_frame(
   j: Nat,
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local),
   hint: Option(Ty),
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
-): CkRunFrame(c, inference_lambda_hint(j, c, lam, borrows, env, hint)) {
+): CkRunFrame(c, inference_lambda_hint(j, c, lam, r#borrows, env, hint)) {
   run_frame_bind(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     c,
     (cleared: Unit, c1: Checker) => inference_lambda_kind(
       j,
       c1,
       lam,
-      borrows,
+      r#borrows,
       env,
       hint,
       inference_term_kind(lam)
@@ -1005,7 +919,7 @@ pub theorem inference_lambda_hint_frame(
       j,
       c1,
       lam,
-      borrows,
+      r#borrows,
       env,
       hint,
       inference_term_kind(lam),
@@ -1019,33 +933,33 @@ pub fn inference_step_ck_lambda_in(
   j: Nat,
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local)
-): Mut1(Ty, Checker) { inference_lambda_hint(j, c, lam, borrows, env, inference_hint(c)) }
+): Mut1(Ty, Checker) { inference_lambda_hint(j, c, lam, r#borrows, env, inference_hint(c)) }
 
 pub theorem inference_step_ck_lambda_in_frame(
   j: Nat,
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local),
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(
   c,
-  inference_step_ck_lambda_in(j, c, lam, borrows, env)
-) { inference_lambda_hint_frame(j, c, lam, borrows, env, inference_hint(c), ih, ordered) }
+  inference_step_ck_lambda_in(j, c, lam, r#borrows, env)
+) { inference_lambda_hint_frame(j, c, lam, r#borrows, env, inference_hint(c), ih, ordered) }
 
 pub theorem inference_unf_ck_lambda_in(
   j: Nat,
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local)
 ): ck_lambda_in(
   Succ(j),
   c,
   lam,
-  borrows,
+  r#borrows,
   env
-) = inference_step_ck_lambda_in(j, c, lam, borrows, env) { Refl }
+) = inference_step_ck_lambda_in(j, c, lam, r#borrows, env) { Refl }

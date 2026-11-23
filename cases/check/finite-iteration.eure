@@ -1,0 +1,109 @@
+description = "Finite iteration checks progress, preserves the body's effects, and stops at a break."
+
+@ cases.count-down-and-stop
+source = ```tauto
+import std::finite_iteration { FiniteStep, IterationControl, fold_finite }
+import std::base { Nat }
+import std::nat { Nat }
+import std::os
+import std::builtin::os { stdout, stdout_flush }
+
+fn next(n: Nat, state: Unit): FiniteStep(Nat, Unit, n) {
+  match n {
+    Zero => FiniteStep::Done
+    Succ(m) => FiniteStep::Yield(n, state, m, Nat::le_refl(m))
+  }
+}
+
+fn sum(n: Nat): Nat {
+  fold_finite(n, Star, next, Zero, (acc: Nat, item: Nat) => IterationControl::Continue(Nat::add(acc, item)))
+}
+
+fn first(n: Nat): Nat ! {stdout} {
+  fold_finite(
+    n,
+    Star,
+    next,
+    Zero,
+    (acc: Nat, item: Nat) => {
+      perform stdout("visit\n")
+      IterationControl::Break(item)
+    }
+  )
+}
+
+show(&sum(0))
+show(&sum(4))
+show(&first(4))
+```
+stdout = "0\n10\nvisit\n4\n"
+
+@ cases.cannot-yield-without-progress
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::finite_iteration { FiniteStep }
+import std::nat { Nat }
+
+fn stalled(n: Nat, state: Unit): FiniteStep(Nat, Unit, n) {
+  FiniteStep::Yield(n, state, n, Nat::le_refl(n))
+}
+```
+checks."input/main.taut::stalled" = "error: type mismatch"
+
+@ cases.effectful-transition-stops
+source = ```tauto
+import std::finite_iteration { FiniteTransition, run_finite }
+import std::base { Nat }
+import std::nat { Nat }
+import std::os
+import std::builtin::os { stdout, stdout_flush }
+
+fn step(n: Nat, state: Bool, value: Nat): FiniteTransition(Bool, Nat, n) ! {stdout} {
+  match n {
+    Zero => FiniteTransition::Finish(value)
+    Succ(m) => {
+      perform stdout("step\n")
+      ⊢ FiniteTransition(Bool, Nat, n) from match state {
+        false => FiniteTransition::Advance(true, n, m, Nat::le_refl(m))
+        true => FiniteTransition::Finish(Nat::add(value, n))
+      }
+    }
+  }
+}
+
+fn run(n: Nat): Nat ! {stdout} {
+  run_finite(n, false, Zero, step)
+}
+
+show(&run(0))
+show(&run(4))
+```
+stdout = "0\nstep\nstep\n7\n"
+
+@ cases.effectful-acquisition-stops-before-the-next-item
+source = ```tauto
+import std::finite_iteration { FiniteStep, IterationControl, fold_finite_effectful }
+import std::base { Nat }
+import std::nat { Nat }
+import std::os
+import std::builtin::os { stdout, stdout_flush }
+
+fn next(n: Nat, state: Unit): FiniteStep(Nat, Unit, n) ! {stdout} {
+  match n {
+    Zero => FiniteStep::Done
+    Succ(m) => {
+      perform stdout("get\n")
+      FiniteStep::Yield(n, state, m, Nat::le_refl(m))
+    }
+  }
+}
+
+fn run(n: Nat): Nat ! {stdout} {
+  fold_finite_effectful(n, Star, next, Zero, (acc: Nat, item: Nat) => {
+    perform stdout("visit\n")
+    IterationControl::Break(item)
+  })
+}
+show(&run(3))
+```
+stdout = "get\nvisit\n3\n"

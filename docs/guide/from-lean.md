@@ -8,7 +8,7 @@ This guide is for people who write proofs in Lean 4 and want to know how Tauto h
 
 There is no `sorry` or inference hole that asks the machine to guess a term. An unfinished proof is a named hole and is never accepted. A proposition can be proved by computation, by an explicit term, by a `calc` chain, or by a step that states both goals.
 
-The examples in [`Simp.taut`](../../examples/lean-migration/Simp.taut) correspond to the following situations:
+The examples in [`simp.taut`](../../examples/lean-migration/simp.taut) correspond to the following situations:
 
 - `add_zero_right`: computation closes an equality, so the proof uses `Refl`.
 - `zero_add`: structural induction uses `match`; the recursive call supplies the induction hypothesis.
@@ -32,15 +32,15 @@ The examples in [`Simp.taut`](../../examples/lean-migration/Simp.taut) correspon
 
 A rewrite step names the expression being rewritten, the goal before the rewrite, and the goal afterward. The tactic does not infer a motive. The reader can compare the written goals, and the kernel rejects a step when either goal is wrong. The `add_comm_steps` theorem in the checked example file demonstrates this pattern.
 
-For a chain of equalities, `calc!` (`std/Calc.taut`) names the intermediate expressions and the proof of each transition, with each expression written after a `$` (see `docs/design/syntax.md`, "証明の構文"). The `length_map_append` theorem shows how this replaces a simplifier that rewrites both sides.
+For a chain of equalities, `calc!` (`std/calc.taut`) names the intermediate expressions and the proof of each transition, with each expression written after a `$` (see `docs/design/syntax.md`, "証明の構文"). The `length_map_append` theorem shows how this replaces a simplifier that rewrites both sides.
 
 There is no rewriting of hypotheses in place. To use a hypothesis, rewrite the goal until it matches the hypothesis, as in `swap_hyp`. To change the proposition available as a hypothesis, bind a new, typed `let` with an explicit proof term.
 
 ## Arithmetic automation
 
-`nat_norm!` handles equations whose sides are polynomials over `Nat`, built from addition, multiplication, successors, numerals, and variables. Its correctness is proved in `std/NatNorm.taut`; the kernel checks the resulting term. It does not prove inequalities.
+`nat_norm!` handles equations whose sides are polynomials over `Nat`, built from addition, multiplication, successors, numerals, and variables. Its correctness is proved in `std/nat_norm.taut`; the kernel checks the resulting term. It does not prove inequalities.
 
-`nat_le!` handles the supported natural number propositions for `<` and `<=` described in `std/Tactic.taut`. For natural number facts outside those forms, use explicit lemmas and proof terms. Tauto has no counterparts for Lean's `omega`, `linarith`, `ring`, `norm_num`, or `decide` tactics.
+`nat_le!` handles the supported natural number propositions for `<` and `<=` described in `std/tactic.taut`. For natural number facts outside those forms, use explicit lemmas and proof terms. Tauto has no counterparts for Lean's `omega`, `linarith`, `ring`, `norm_num`, or `decide` tactics.
 
 ## What the tools report
 
@@ -53,7 +53,7 @@ A written goal that differs from the actual goal is an error. `tauto check --jso
 
 ## Differences to expect
 
-- A file sees names it imports. Files using `calc!` import `std/Calc.taut`; files using `rewrite!` import `std/Rewrite.taut`; files using `nat_norm!` or `nat_le!` import `std/Tactic.taut`.
+- A file sees names it imports. Files using `calc!` import `std/calc.taut`; files using `rewrite!` import `std/rewrite.taut`; files using `nat_norm!` or `nat_le!` import `std/tactic.taut`.
 - Every constructor must be listed in a `match`.
 - `tauto suggest` is shape-based lemma assistance, not a replacement for a simplifier's rewrite set.
 

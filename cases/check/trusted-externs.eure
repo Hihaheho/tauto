@@ -1,0 +1,26 @@
+@ cases.an-extern-in-a-module-is-trusted
+description = "An `extern` written in a `module` is trusted as one at the top is, so the report lists both."
+entry = "main.taut"
+files."main.taut" = ```tauto
+extern { fn top(): u64 }
+extern { fn M::inner(): u64 }
+fn main(): u64 { top() + M::inner() }
+```
+externs = ["extern top (main.taut:1)", "extern M::inner (main.taut:2)"]
+
+@ cases.an-extern-of-an-imported-file-that-declares-only-externs-is-trusted
+description = "A file the check reads that declares only an `extern`, nothing the kernel checks, is still trusted by the file that imports it."
+entry = "main.taut"
+files."lib.taut" = ```tauto
+extern { fn L::now(): u64 }
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+fn main(): u64 { L::now() }
+```
+externs = ["extern L::now (lib.taut:1)"]
+
+@ cases.a-file-without-externs-trusts-none
+entry = "main.taut"
+files."main.taut" = `fn main(): u64 { 1 }`
+externs = []

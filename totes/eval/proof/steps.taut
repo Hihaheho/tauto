@@ -1,7 +1,7 @@
 import "../../vm/proof/machine.taut"
 import "../../vm/src/machine.taut"
 import "../../vm/src/mval.taut"
-import std::Base
+import std::base
 
 // Finite runs stop at a machine state, before executing its following instruction.
 pub(open) inductive ERuns(p: MProgram): (Nat, MState, MState) -> Prop {
@@ -52,6 +52,7 @@ pub fn e_continue(p: MProgram, fuel: Nat, r: MStep): MStep {
   match r {
     MstepNext(s) => meval(p, fuel, s)
     MstepDone => MstepDone
+    MstepReport(dropped) => MstepReport(dropped)
     MstepExit(code) => MstepExit(code)
     MstepShow(name, v, s) => MstepShow(name, v, s)
     MstepAsk(name, args, s) => MstepAsk(name, args, s)
@@ -59,6 +60,7 @@ pub fn e_continue(p: MProgram, fuel: Nat, r: MStep): MStep {
     MstepStart(name, args, q, cx) => MstepStart(name, args, q, cx)
     MstepIdle(cx) => MstepIdle(cx)
     MstepError(message) => MstepError(message)
+    MstepTaskFailed(message, cx) => MstepTaskFailed(message, cx)
   }
 }
 
@@ -78,6 +80,7 @@ pub theorem e_meval_add(
       MstepNext(middle) => ⊢ meval(p, Nat::add(m, f), middle) =
       e_continue(p, m, meval(p, f, middle)) from e_meval_add(f, m, p, middle)
       MstepDone => ⊢ Eq(MStep, MstepDone, MstepDone) from Refl
+      MstepReport(dropped) => ⊢ Eq(MStep, MstepReport(dropped), MstepReport(dropped)) from Refl
       MstepExit(code) => ⊢ Eq(MStep, MstepExit(code), MstepExit(code)) from Refl
       MstepShow(name, v, middle) => ⊢ Eq(
         MStep,
@@ -97,6 +100,11 @@ pub theorem e_meval_add(
       ) from Refl
       MstepIdle(cx) => ⊢ Eq(MStep, MstepIdle(cx), MstepIdle(cx)) from Refl
       MstepError(message) => ⊢ Eq(MStep, MstepError(message), MstepError(message)) from Refl
+      MstepTaskFailed(message, cx) => ⊢ Eq(
+        MStep,
+        MstepTaskFailed(message, cx),
+        MstepTaskFailed(message, cx)
+      ) from Refl
     }
   }
 }
@@ -105,6 +113,7 @@ pub fn e_resume(p: MProgram, fuel: Nat, r: MStep): MStep {
   match r {
     MstepNext(s) => mrun(p, fuel, s)
     MstepDone => MstepDone
+    MstepReport(dropped) => MstepReport(dropped)
     MstepExit(code) => MstepExit(code)
     MstepShow(name, v, s) => MstepShow(name, v, s)
     MstepAsk(name, args, s) => MstepAsk(name, args, s)
@@ -112,6 +121,7 @@ pub fn e_resume(p: MProgram, fuel: Nat, r: MStep): MStep {
     MstepStart(name, args, q, cx) => MstepStart(name, args, q, cx)
     MstepIdle(cx) => MstepIdle(cx)
     MstepError(message) => MstepError(message)
+    MstepTaskFailed(message, cx) => MstepTaskFailed(message, cx)
   }
 }
 
@@ -123,6 +133,7 @@ pub theorem e_resume_correct(
   match r {
     MstepNext(s) => mrun_correct(p, fuel, s)
     MstepDone => Refl
+    MstepReport(dropped) => Refl
     MstepExit(code) => Refl
     MstepShow(name, v, s) => Refl
     MstepAsk(name, args, s) => Refl
@@ -130,6 +141,7 @@ pub theorem e_resume_correct(
     MstepStart(name, args, q, cx) => Refl
     MstepIdle(cx) => Refl
     MstepError(message) => Refl
+    MstepTaskFailed(message, cx) => Refl
   }
 }
 
@@ -190,6 +202,7 @@ pub theorem e_meval_runs(
         MstepNext(middle) => ⊢ ERuns(p, Succ(f), a, b) from
         ErunStep(edge, e_meval_runs(f, p, middle, b, advanced))
         MstepDone => ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
+        MstepReport(dropped) => ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
         MstepExit(code) => ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
         MstepShow(name, value, middle) => ⊢ ERuns(
           p,
@@ -222,6 +235,12 @@ pub theorem e_meval_runs(
           b
         ) from ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
         MstepError(message) => ⊢ ERuns(
+          p,
+          Succ(f),
+          a,
+          b
+        ) from ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
+        MstepTaskFailed(message, cx) => ⊢ ERuns(
           p,
           Succ(f),
           a,

@@ -1,6 +1,6 @@
 import "written_composite_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -8,12 +8,13 @@ import "diagnostic_sound.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
 import "written_error_sound.taut"
 import "../../surface/src/surface.taut"
 
-pub fn written_context_position(p: Pair(Bool, Bool)): Bool { p.fst }
+pub fn written_context_position(p: Bool × Bool): Bool { p.fst }
 pub theorem written_terms_state(
   c: Checker,
   next: Checker,
@@ -46,11 +47,9 @@ pub fn written_each_after(
   m: Mut1(Ty, Checker)
 ): Mut1(List(Ty), Checker) {
   frame_bind(
-    Ty,
-    List(Ty),
+    <A: Ty, B: List(Ty)>,
     (head: Ty, next: Checker) => written_map(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       (tail: List(Ty)) => Cons(head, tail),
       ck_written_each(rest, next, generics)
     ),
@@ -98,8 +97,7 @@ pub theorem written_each_after_sound(
       let tail_clean: DiagnosticClean(
         ck_st(ck_written_each(rest, next, generics))
       ) := written_map_clean(
-        List(Ty),
-        List(Ty),
+        <A: List(Ty), B: List(Ty)>,
         (tail: List(Ty)) => Cons(head, tail),
         ck_written_each(rest, next, generics),
         clean
@@ -114,8 +112,7 @@ pub theorem written_each_after_sound(
         ),
         Eq::sym(
           written_map_value(
-            List(Ty),
-            List(Ty),
+            <A: List(Ty), B: List(Ty)>,
             (tail: List(Ty)) => Cons(head, tail),
             ck_written_each(rest, next, generics)
           )
@@ -197,7 +194,7 @@ pub theorem written_terms_length<env: Datas, generics: Ordmap(
 ), types: List(
   Ty
 )>(meaning: WrittenTerms(env, generics, partial, terms, types)): list_len(terms) = list_len(types) {
-  ⊢ list_len(terms) = list_len(types) from match meaning {
+  match meaning {
     WrittenTermsNil(empty_generics, empty_partial) => Refl
     WrittenTermsCons(first, rest, t, ts, head, tail) => Eq::congr(Succ, written_terms_length(tail))
   }

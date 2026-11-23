@@ -1,0 +1,51 @@
+import "../../src/eure.taut"
+import "../../src/value.taut"
+
+// What the reader refuses, and where, checked by computing.
+
+// A written `!` is a value: giving the path another one is an error, as for any other value.
+theorem hole_is_a_value(): parse("a = !\na = 1\n") = Err(#(6, "a path that has no value yet")) {
+  Refl
+}
+
+theorem labelled_hole_is_a_value(): parse("a = !x\na = 1\n") = Err(#(7, "a path that has no value yet")) {
+  Refl
+}
+
+// A written `!` cannot be walked into either.
+theorem hole_is_not_a_map(): parse("a = !\na.b = 1\n") = Err(#(6, "a key under a hole")) {
+  Refl
+}
+
+// A node that has only extensions is `!`.
+theorem only_extensions(): parse("a.$x = 1\n") = Ok(
+    map_node(
+      Cons(entry("a", Node::Mk(Vhole(None), Cons(#("x", nat_node(1)), Nil))), Nil)
+    )
+  ) {
+  Refl
+}
+
+theorem binding_twice(): parse("a = 1\na = 2\n") = Err(#(6, "a path that has no value yet")) {
+  Refl
+}
+
+theorem binding_under_a_value(): parse("a = 1\na.b = 2\n") = Err(#(6, "a key under a value that is not a map")) {
+  Refl
+}
+
+theorem no_inf(): parse("a = inf\n") = Err(#(4, "a value (`inf` and `nan` are not read)")) {
+  Refl
+}
+
+theorem no_binary_float(): parse("a = 1.5f32\n") = Err(#(7, "a number without `f32` or `f64`: binary floating point is not read")) {
+  Refl
+}
+
+theorem no_negative_index(): parse("a[-1] = 1\n") = Err(#(2, "an index that is not negative")) {
+  Refl
+}
+
+theorem unclosed_string(): parse("a = \"x\n") = Err(#(7, "`\"` to close the string")) {
+  Refl
+}

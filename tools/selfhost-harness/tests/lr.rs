@@ -37,7 +37,7 @@ fn expected(t: &Tables, text: &str) -> String {
 fn agree(name: &str, texts: &[&str]) {
     let file = root().join(format!("crates/tauto-syntax/tests/data/{name}.tables"));
     let t = Tables::read(&std::fs::read_to_string(file).unwrap()).unwrap();
-    let mut args: Vec<String> = t.scan_texts().into();
+    let mut args: Vec<String> = t.scan_texts(None).into();
     args.extend(t.lr_texts().unwrap());
     args.extend(texts.iter().map(|s| s.to_string()));
     let out = run_tote("lr", &args, STEPS);

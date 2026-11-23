@@ -478,6 +478,15 @@ fn complete_compiler_inputs_match_independent_original_byte_oracle() {
     // Oracle only: never use its parsed/extracted output or discovered inputs to
     // construct the bundle consumed by the Tauto implementation.
     let oracle = tauto::program::tote_inputs(&root.join("totes/rustgen")).unwrap();
+    // The oracle reads std from the copy built into tauto, under a root that
+    // is not on disk; the bundle carries the same bytes from `std/`.
+    let oracle: Vec<std::path::PathBuf> = oracle
+        .into_iter()
+        .map(|f| match f.strip_prefix(tauto::stdlib::ROOT) {
+            Ok(rest) => root.join("std").join(rest),
+            Err(_) => f,
+        })
+        .collect();
     let ids: Vec<String> = oracle
         .iter()
         .map(|f| {
@@ -637,7 +646,7 @@ fn strict_shared_bundle_route_separates_inventory_from_reader_semantics() {
         .find(|r| r.name.ends_with("import_cycle_is_a_loader_diagnostic"))
         .unwrap();
     assert!(cycle.observations.iter().any(|o| o.stage == "load"
-        && matches!(&o.actual, Actual::Rejected(message) if message.contains("import cycle"))));
+        && matches!(&o.actual, Actual::Rejected(message) if message.contains("imports itself through a cycle"))));
     for id in [
         "missing_resource_retains_macro_contract",
         "resource_cannot_leave_tote_even_when_supplied",
@@ -664,117 +673,16 @@ fn strict_shared_bundle_route_separates_inventory_from_reader_semantics() {
     assert_eq!(results.len(), 8);
 }
 
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
+/// The inputs these tests read, kept as files under `tests/fixtures`.
 mod case_inputs {
-    pub fn fixture_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            ("selfhost-input-bundle.eure", "oversized_resource_path") => {
-                r#"fn answer(): Text { include_text!("a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a") }"#
-            }
-            ("selfhost-input-bundle.eure", "resolved_resource_depth_limit") => {
-                r#"fn answer(): Text { include_text!("b/c") }"#
-            }
-            ("selfhost-input-bundle.eure", "plain_answer") => r#"fn answer(): i64 { 42 }"#,
-            ("selfhost-input-bundle.eure", "oversized_import_path") => {
-                r#"import "a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a""#
-            }
-            ("selfhost-input-bundle.eure", "resolved_import_depth_limit") => r#"import "b/c""#,
-            ("selfhost-input-bundle.eure", "dependency_main") => r#"fn not_a_root(): i64 { 7 }"#,
-            ("selfhost-input-bundle.eure", "dynamic_resource") => {
-                r#"fn answer(path: Text): Text { include_text!(path) }"#
-            }
-            ("selfhost-input-bundle.eure", "resolved_import_byte_limit") => r#"import "bbbbbb""#,
-            ("selfhost-input-bundle.eure", "resolved_resource_byte_limit") => {
-                r#"fn answer(): Text { include_text!("bbbbbb") }"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
+    fn read(path: &str) -> String {
+        let path = format!("{}/tests/fixtures/{path}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"))
     }
-    #[allow(dead_code)]
     pub fn fixture(file: &str, name: &str) -> String {
-        fixture_static(file, name).to_string()
+        read(&format!("{}/{}.taut", file.trim_end_matches(".eure"), name))
     }
-    pub fn file_static(file: &str, name: &str, input: &str) -> &'static str {
-        match (file, name, input) {
-            (
-                "selfhost-input-bundle.eure",
-                "resource_cannot_leave_tote_even_when_supplied",
-                "app/src/main.taut",
-            ) => r#"fn answer(): Text { include_text!("../../other/data.txt") }"#,
-            (
-                "selfhost-input-bundle.eure",
-                "resource_cannot_leave_tote_even_when_supplied",
-                "app/Tauto.eure",
-            ) => r#"package { name="resource-fixture" }"#,
-            (
-                "selfhost-input-bundle.eure",
-                "missing_resource_retains_macro_contract",
-                "src/main.taut",
-            ) => r#"fn answer(): Text { include_text!("../data/missing.txt") }"#,
-            (
-                "selfhost-input-bundle.eure",
-                "missing_resource_retains_macro_contract",
-                "Tauto.eure",
-            ) => r#"package { name="resource-fixture" }"#,
-            (
-                "selfhost-input-bundle.eure",
-                "virtual_imports_compile_original_files",
-                "lib/value.taut",
-            ) => r#"fn value(): i64 { 21 }"#,
-            (
-                "selfhost-input-bundle.eure",
-                "virtual_imports_compile_original_files",
-                "src/main.taut",
-            ) => {
-                r#"import "../lib/value.taut"
-fn answer(): i64 { value() + value() }
-"#
-            }
-            (
-                "selfhost-input-bundle.eure",
-                "resource_without_tote_stays_in_source_directory",
-                "src/main.taut",
-            ) => r#"fn answer(): Text { include_text!("../data.txt") }"#,
-            ("selfhost-input-bundle.eure", "import_cycle_is_a_loader_diagnostic", "a.taut") => {
-                r#"import "b.taut""#
-            }
-            ("selfhost-input-bundle.eure", "import_cycle_is_a_loader_diagnostic", "b.taut") => {
-                r#"import "a.taut""#
-            }
-            (
-                "selfhost-input-bundle.eure",
-                "resource_availability_does_not_expand_macro",
-                "src/main.taut",
-            ) => r#"fn answer(): Text { include_text!("../data/日本語.txt") }"#,
-            (
-                "selfhost-input-bundle.eure",
-                "resource_availability_does_not_expand_macro",
-                "Tauto.eure",
-            ) => r#"package { name="resource-fixture" }"#,
-            (
-                "selfhost-input-bundle.eure",
-                "resource_cannot_leave_and_reenter_tote",
-                "app/src/main.taut",
-            ) => r#"fn answer(): Text { include_text!("../../app/data.txt") }"#,
-            (
-                "selfhost-input-bundle.eure",
-                "resource_cannot_leave_and_reenter_tote",
-                "app/Tauto.eure",
-            ) => r#"package { name="resource-fixture" }"#,
-            ("selfhost-input-bundle.eure", "unused_imported_proof_is_not_erased", "proof.taut") => {
-                r#"theorem retained(A: Prop, a: A): A { a }"#
-            }
-            ("selfhost-input-bundle.eure", "unused_imported_proof_is_not_erased", "main.taut") => {
-                r#"import "proof.taut"
-fn answer(): i64 { 42 }
-"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
     pub fn file(file: &str, name: &str, input: &str) -> String {
-        file_static(file, name, input).to_string()
+        read(&format!("{}/{name}/{input}", file.trim_end_matches(".eure")))
     }
 }

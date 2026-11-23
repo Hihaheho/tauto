@@ -1,0 +1,550 @@
+// Fields that hold borrows: a struct or enum whose field is `&T`, `&mut T`
+// or a type that holds a borrow holds a borrow itself, with nothing written
+// on the declaration. It is received as a borrow is (`let x`, `match`),
+// freezes the owners of the borrows it was built from until its block ends,
+// and cannot be an effect's argument or escape in a closure. `F`
+// is an affine struct, so that the freeze is the point (a `&i64` is an `i64`).
+
+@ cases.borrow-field-let-reads-fields
+source = ```nib
+struct(affine) F { n: i64 }
+struct Pick { f: &F, k: i64 }
+fn size(f: &F): i64 { f.n }
+let a := F { n: 3 }
+let p := Pick { f: &a, k: 4 }
+show(&(size(&p.f) + p.k))
+```
+stdout = "7\n"
+
+@ cases.borrow-field-freezes-owner
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+var a := F {}
+let p := Pick { f: &a }
+a := F {}
+let used_later := &p
+```
+lin = "error: a is frozen by p"
+
+@ cases.borrow-field-move-owner-while-alive
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn take(f: F): i64 { 1 }
+let a := F {}
+let p := Pick { f: &a }
+take(a)
+let used_later := &p
+```
+lin = "error: a is frozen by p"
+
+@ cases.borrow-field-mut-field-freezes-owner
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &mut F }
+fn size(f: &F): i64 { 1 }
+var a := F {}
+let p := Pick { f: &mut a }
+size(&a)
+let used_later := &p
+```
+lin = "error: a is frozen by p"
+
+@ cases.borrow-field-mut-and-shared-of-one-owner
+source = ```nib
+struct(affine) F {}
+struct Two { f: &mut F, g: &F }
+var a := F {}
+let p := Two { f: &mut a, g: &a }
+```
+lin = "error: a is borrowed twice in one call"
+
+@ cases.borrow-field-freeze-ends-with-block
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn size(f: &F): i64 { 1 }
+fn take(f: F): i64 { 1 }
+let a := F {}
+let n := {
+  let p := Pick { f: &a }
+  size(&p.f)
+}
+take(a)
+```
+lin = "ok"
+
+@ cases.borrow-field-from-function
+source = ```nib
+struct(affine) F { n: i64 }
+struct Both { l: &F, r: &F }
+fn both(a: &F, b: &F): Both { Both { l: &a, r: &b } }
+fn size(f: &F): i64 { f.n }
+let a := F { n: 1 }
+let b := F { n: 2 }
+let p := both(&a, &b)
+show(&(size(&p.l) * 10 + size(&p.r)))
+```
+stdout = "12\n"
+
+@ cases.borrow-field-from-function-freezes
+source = ```nib
+struct(affine) F {}
+struct Both { l: &F, r: &F }
+fn both(a: &F, b: &F): Both { Both { l: &a, r: &b } }
+var a := F {}
+let b := F {}
+let p := both(&a, &b)
+a := F {}
+let used_later := &p
+```
+lin = "error: a is frozen by p"
+
+@ cases.borrow-field-nested
+source = ```nib
+struct(affine) F { n: i64 }
+struct Pick { f: &F }
+struct Outer { p: Pick, k: i64 }
+fn size(f: &F): i64 { f.n }
+let a := F { n: 3 }
+let o := Outer { p: Pick { f: &a }, k: 4 }
+show(&(size(&o.p.f) + o.k))
+```
+stdout = "7\n"
+
+@ cases.borrow-field-nested-freezes
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+struct Outer { p: Pick }
+fn take(f: F): i64 { 1 }
+let a := F {}
+let o := Outer { p: Pick { f: &a } }
+take(a)
+let used_later := &o
+```
+lin = "error: a is frozen by o"
+
+@ cases.borrow-field-derived-binding-freezes
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn take(f: F): i64 { 1 }
+let a := F {}
+let s := Pick { f: &a }
+let t := Pick { f: s.f }
+take(a)
+let used_later := &t
+```
+lin = "error: a is frozen by"
+
+@ cases.borrow-field-match
+source = ```nib
+struct(affine) F { n: i64 }
+struct Pick { f: &F, k: i64 }
+fn size(f: &F): i64 { f.n }
+fn pick(f: &F, k: i64): Pick { Pick { f: &f, k: k } }
+let a := F { n: 3 }
+let n := match pick(&a, 4) {
+  Pick { f: g, k: j } => size(&g) + j
+}
+show(&n)
+```
+stdout = "7\n"
+
+@ cases.borrow-field-enum-match
+source = ```nib
+struct(affine) F { n: i64 }
+enum Look { Some(&F), None }
+fn size(f: &F): i64 { f.n }
+fn look(f: &F, here: Bool): Look { if here { Look::Some(&f) } else { Look::None } }
+let a := F { n: 3 }
+let l := look(&a, true)
+let n := match l {
+  Look::Some(g) => size(&g)
+  Look::None => 0
+}
+show(&n)
+```
+stdout = "3\n"
+
+@ cases.borrow-field-enum-freezes
+source = ```nib
+struct(affine) F {}
+enum Look { Some(&F), None }
+fn take(f: F): i64 { 1 }
+let a := F {}
+let l := Look::Some(&a)
+take(a)
+let used_later := &l
+```
+lin = "error: a is frozen by l"
+
+@ cases.borrow-field-can-be-stored-in-container
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+let a := F {}
+let p := Pick { f: &a }
+var v := Vec::new()
+Vec::push(&mut v, p)
+```
+lin = "ok"
+
+@ cases.borrow-field-can-be-type-argument
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn id<A>(x: A): A { x }
+let a := F {}
+let p := Pick { f: &a }
+id(p)
+```
+lin = "ok"
+
+@ cases.borrow-field-cannot-be-effect-argument
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+effect e(p: Pick): Unit
+let a := F {}
+let p := Pick { f: &a }
+perform e(p)
+```
+lin = "error: a borrow cannot be an effect argument"
+
+@ cases.borrow-field-without-a-lender-is-checked-in-the-body
+description = "A result that may hold a borrow needs no lender in the signature: the body is checked to lend nothing, and one that never returns lends nothing."
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn mk(): Pick { mk() }
+```
+lin = "ok"
+
+@ cases.borrow-field-cannot-return-local
+source = ```nib
+struct(affine) F {}
+struct Pick { f: &F }
+fn mk(a: &F): Pick {
+  let b := F {}
+  Pick { f: &b }
+}
+```
+lin = "error: a borrow of b cannot be returned"
+
+@ cases.borrow-field-kept-continuation
+source = ```nib
+effect choose(): Bool
+struct Pick { v: &Vec(i64) }
+enum(affine) R { Done(u64), More(affine (Bool) -> R ! {}) }
+fn pick(p: &Pick, b: Bool): u64 { Vec::len(&p.v) }
+fn mk(): R ! {} {
+  var v := Vec::new()
+  Vec::push(&mut v, 1)
+  handle {
+    let p := Pick { v: &v }
+    pick(&p, perform choose())
+  } with {
+    return x => Done(x)
+    choose(), k => More(k)
+  }
+}
+```
+lin = "error: k holds a borrow of v"
+
+@ cases.borrow-field-in-budget
+source = ```nib
+struct(linear) H { n: i64 }
+struct Pick { h: &H }
+enum(affine) R { Done(i64), Paused(Info(R)) }
+fn finish(h: H): i64 { match h { H { n } => n } }
+fn peek(p: &Pick, x: i64): i64 { x }
+fn top(): R ! {budget} {
+  let h := H { n: 5 }
+  let r := handle {
+    Done(perform budget(5, () => {
+      let p := Pick { h: &h }
+      peek(&p, 1 + 2)
+    }))
+  } with {
+    exceeded(info), k => Paused(info)
+  }
+  let s := finish(h)
+  r
+}
+```
+lin = "error: h is borrowed in a budget"
+
+@ cases.only-an-extern-type-is-declared-to-hold-a-borrow
+description = "A type with fields holds a borrow when a field does; `borrow` is written only on an extern type."
+source = ```nib
+struct(affine) F {}
+struct(borrow) Pick { f: &F }
+```
+parses = false
+
+@ cases.an-extern-type-declared-to-hold-a-borrow-freezes-its-owner
+description = "`type(affine, borrow)` is an opaque type that holds a borrow: the owner it borrows from stays frozen while it lives."
+source = ```nib
+
+struct(affine) F {}
+extern {
+  type(affine, borrow) Guard
+  fn lock(v: &Vec(F)): Guard
+  fn peek(g: &Guard): i64
+}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let g := lock(&v)
+let w := v
+peek(&g)
+```
+lin = "error: v is frozen by g"
+
+@ cases.an-extern-type-declared-to-hold-a-borrow-is-affine
+description = "`type(borrow)` without a kind is affine: the value that holds the borrow is not copied."
+source = ```nib
+
+struct(affine) F {}
+extern {
+  type(borrow) Guard
+  fn lock(v: &Vec(F)): Guard
+  fn unlock(g: Guard): Unit
+}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let g := lock(&v)
+unlock(g)
+unlock(g)
+```
+lin = "error: g is used after move"
+
+// A function without a borrowed parameter returns a value that borrows
+// nothing: its signature may name a type that may hold a borrow, and its
+// body is checked to lend nothing out. Only a result written `&T` or
+// `&mut T` itself needs a lender in the signature.
+
+@ cases.a-function-without-a-lender-returns-an-empty-holder
+description = "`None` of a type that may hold a borrow borrows nothing, so a function without a borrowed parameter may return it."
+source = ```nib
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn none(): Option(Holder) { None }
+let h := none()
+show(&(match h { Some(x) => 1, None => 0 }))
+```
+lin = "ok"
+
+@ cases.a-function-without-a-lender-returns-an-extern-holder-that-borrows-nothing
+description = "An extern function without a borrowed parameter makes a value of an extern `type(borrow)` that borrows nothing, and a function with a body may pass it on."
+source = ```nib
+extern {
+  type(borrow) Token
+  fn token(): Token
+  fn spend(t: Token): i64
+}
+fn make(): Token { token() }
+fn twice(): Token {
+  let t := make()
+  t
+}
+fn used(): i64 { spend(twice()) }
+```
+lin = "ok"
+
+@ cases.a-function-without-a-lender-returns-a-holder-of-what-it-was-given
+description = "A holder passed by value holds borrows of the caller's owners, not of the function's own bindings, so returning it lends nothing of the body."
+source = ```nib
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn wrap(h: Holder): Option(Holder) { Some(h) }
+let a := F { n: 3 }
+let w := wrap(Holder { r: &a })
+show(&(match w { Some(h) => h.r.n, None => 0 }))
+```
+lin = "ok"
+
+@ cases.a-function-without-a-lender-cannot-return-a-borrow-of-its-own-binding
+description = "Without a borrowed parameter the result borrows nothing: a holder of the body's own binding cannot be returned."
+source = ```nib
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn bad(): Holder {
+  let b := F { n: 1 }
+  Holder { r: &b }
+}
+```
+lin = "error: a borrow of b cannot be returned"
+
+@ cases.a-function-without-a-lender-cannot-return-a-borrow-in-a-constructor
+description = "A borrow of the body's own binding written in a constructor's argument cannot be the result."
+source = ```nib
+struct(affine) F { n: i64 }
+fn bad(): Option(&F) {
+  let b := F { n: 1 }
+  Some(&b)
+}
+```
+lin = "error: a borrow of b cannot be returned"
+
+@ cases.a-function-without-a-lender-cannot-return-a-call-that-borrows-its-binding
+description = "A call in the tail that borrows the body's own binding cannot be the result."
+source = ```nib
+struct(affine) F { n: i64 }
+fn pick(f: &F): Option(&F) { Some(&f) }
+fn bad(): Option(&F) {
+  let b := F { n: 1 }
+  pick(&b)
+}
+```
+lin = "error: a borrow of b cannot be returned"
+
+@ cases.local_wrap
+description = "A local put in a borrow field cannot escape, even when the borrowed type is duplicable."
+source = ```nib
+struct Ver { version: i64, value: i64 }
+struct Wrap { view: &Ver }
+
+fn local_wrap(): Wrap {
+  let v := Ver { version: 0, value: 7 }
+  Wrap { view: &v }
+}
+```
+lin = "error: a borrow of v cannot be returned"
+
+@ cases.keep
+description = "A record of a borrowed parameter may leave; the borrow is the parameter's."
+source = ```nib
+struct Ver { version: i64, value: i64 }
+struct Wrap { view: &Ver }
+
+fn keep(v: &Ver): Wrap { Wrap { view: v } }
+```
+lin = "ok"
+
+@ cases.local_wrap_option
+description = "A local behind `&` in an Option result cannot escape when the inner type is duplicable."
+source = ```nib
+struct Ver { version: i64, value: i64 }
+
+fn local_wrap(): Option(&Ver) {
+  let v := Ver { version: 0, value: 7 }
+  Some(&v)
+}
+```
+lin = "error: a borrow of v cannot be returned"
+
+@ cases.keep_option
+description = "An Option of a borrowed parameter may leave."
+source = ```nib
+struct Ver { version: i64, value: i64 }
+
+fn keep(v: &Ver): Option(&Ver) { Some(v) }
+```
+lin = "ok"
+
+@ cases.local_wrap_result
+description = "A local behind `&` in a Result result cannot escape when the inner type is duplicable."
+source = ```nib
+struct Ver { version: i64, value: i64 }
+
+fn local_wrap(): Result(&Ver, i64) {
+  let v := Ver { version: 0, value: 7 }
+  Ok(&v)
+}
+```
+lin = "error: a borrow of v cannot be returned"
+
+@ cases.keep_result
+description = "A Result of a borrowed parameter may leave."
+source = ```nib
+struct Ver { version: i64, value: i64 }
+
+fn keep(v: &Ver): Result(&Ver, i64) { Ok(v) }
+```
+lin = "ok"
+
+@ cases.local_wrap_via_let
+description = "A local borrowed into a field, bound, then returned still cannot escape."
+source = ```nib
+struct Ver { version: i64, value: i64 }
+struct Wrap { view: &Ver }
+
+fn local_wrap(): Wrap {
+  let v := Ver { version: 0, value: 7 }
+  let w := Wrap { view: &v }
+  w
+}
+```
+lin = "error: a borrow of v cannot be returned"
+
+@ cases.local_wrap_product
+description = "A local behind `&` in a product result cannot escape when the inner type is duplicable."
+source = ```nib
+struct Ver { version: i64, value: i64 }
+
+fn local_wrap(): i64 × &Ver {
+  let v := Ver { version: 0, value: 7 }
+  #( 1, &v )
+}
+```
+lin = "error: a borrow of v cannot be returned"
+
+@ cases.keep_product
+description = "A product of a borrowed parameter may leave."
+source = ```nib
+struct Ver { version: i64, value: i64 }
+
+fn keep(v: &Ver): i64 × &Ver { #( 1, v ) }
+```
+lin = "ok"
+
+// A `&A` of a duplicable `A` is a borrow too (`&A → A` is a copy only where
+// an `A` is wanted): a struct that holds one freezes the owner.
+@ cases.borrow-field-of-duplicable-freezes-owner
+source = ```nib
+struct Pick { t: &Text }
+var a := "x"
+let p := Pick { t: &a }
+a := "y"
+let used_later := &p
+```
+lin = "error: a is frozen by p"
+
+// Where an `A` is wanted, the borrow is copied and nothing stays frozen.
+@ cases.borrow-of-duplicable-copied-where-value-wanted
+source = ```nib
+struct Keep { t: Text }
+var a := "x"
+let p := Keep { t: &a }
+a := "y"
+let used_later := &p
+```
+lin = "ok"
+
+@ cases.borrow-field-relent-without-ampersand
+source = ```nib
+struct(affine) Tok { v: i64 }
+struct View { r: &Tok, k: i64 }
+fn peek(t: &Tok): i64 { t.v }
+let t1 := Tok { v: 3 }
+let w1 := View { r: &t1, k: 2 }
+show(&(peek(w1.r) + w1.k))
+```
+stdout = "5\n"
+
+@ cases.borrow-field-relent-still-freezes-owner
+source = ```nib
+struct(affine) Tok { v: i64 }
+struct View { r: &Tok, k: i64 }
+fn peek(t: &Tok): i64 { t.v }
+fn take(t: Tok): i64 { t.v }
+let t1 := Tok { v: 3 }
+let w1 := View { r: &t1, k: 2 }
+let a := peek(w1.r)
+take(t1)
+let used_later := &w1
+```
+lin = "error: t1 is frozen by w1"

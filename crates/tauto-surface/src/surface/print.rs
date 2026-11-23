@@ -4,106 +4,44 @@
 //! written with `@`, like `tmp@1`.
 
 use super::{
-    DataConstructor, DataDecl, EffectDecl, FnDecl, Handler, InductiveDecl, Instance, MatchArm,
-    Pattern, Stmt, SurfaceTerm, TermKind, TheoremDecl,
+    DataConstructor, DataDecl, EffectDecl, FnDecl, Handler, InductiveDecl, InferCondition,
+    Instance, MatchArm, Pattern, Stmt, SurfaceTerm, TermKind, TheoremDecl,
 };
 use crate::macros::scope::SEP;
+use crate::span::Span;
 
 pub fn print_stmts(stmts: &[Stmt]) -> String {
     let mut p = Printer::default();
-    let stmts = merged(written(stmts).map(in_modules).collect());
+    let stmts: Vec<Stmt> = written(stmts).cloned().collect();
     let items: Vec<&Stmt> = stmts.iter().collect();
     p.stmts(0, &items);
     p.out
 }
 
-/// Neighbouring modules of one name as one, so that what `syntax!(math, …)` made
-/// is written in one `module math { … }`.
-fn merged(stmts: Vec<Stmt>) -> Vec<Stmt> {
-    let mut out: Vec<Stmt> = Vec::new();
-    for s in stmts {
-        if let (
-            Some(Stmt::Module {
-                name: prev,
-                items: prev_items,
-                ..
-            }),
-            Stmt::Module { name, items, .. },
-        ) = (out.last_mut(), &s)
-            && prev == name
-        {
-            prev_items.extend(items.iter().cloned());
-            let all = std::mem::take(prev_items);
-            *prev_items = merged(all);
-            continue;
-        }
-        out.push(s);
-    }
-    out
+/// The text of a declaration of `name`: a name with a path (`a::b::T`) is written as it is, so
+/// `decl` already names it in full.
+pub fn in_modules_text(_name: &str, decl: &str) -> String {
+    decl.to_string()
 }
 
-/// The text of a declaration of `name` as a source file writes it: a path
-/// `a::b::T` opens a module for `a` and `b` around `decl`, which names `T`.
-pub fn in_modules_text(name: &str, decl: &str) -> String {
-    let Some((path, _)) = name.rsplit_once("::") else {
-        return decl.to_string();
-    };
-    path.rsplit("::").fold(decl.to_string(), |inner, m| {
-        let body: Vec<String> = inner.lines().map(|l| format!("  {l}")).collect();
-        format!("module {} {{\n{}\n}}", raw(m), body.join("\n"))
-    })
-}
-
-/// A declaration named by a path (`math::Eqn`, what `syntax!(math, …)` makes) as
-/// the last segment inside a module for each segment before it, as a source
-/// file names it: Nib has no path where a declaration is written.
-fn in_modules(s: &Stmt) -> Stmt {
-    let mut s = s.clone();
-    let (name, span) = match &mut s {
-        Stmt::Fn(f) => (&mut f.name, f.span),
-        Stmt::Struct(d) | Stmt::Enum(d) => (&mut d.name, d.span),
-        Stmt::Inductive(i) => (&mut i.name, i.span),
-        Stmt::Theorem(t) => (&mut t.name, t.span),
-        _ => return s,
-    };
-    let Some((path, short)) = name.rsplit_once("::") else {
-        return s;
-    };
-    let path = path.to_string();
-    *name = crate::identity::Name::Spelled(short.to_string());
-    // A record expression names its struct without the path of the modules
-    // it is written in, as `M::P { … }` is not read.
-    let prefix = format!("{path}::");
-    super::walk::stmt(&mut s, &mut |t| {
-        if let TermKind::Record { name, fields, base } = &*t.kind {
-            let within = path
-                .match_indices("::")
-                .map(|(i, _)| &path[..i + 2])
-                .chain(std::iter::once(prefix.as_str()))
-                .filter_map(|p| name.strip_prefix(p))
-                .last();
-            if let Some(short) = within {
-                t.kind = std::sync::Arc::new(TermKind::Record {
-                    name: crate::identity::Name::Spelled(short.to_string()),
-                    fields: fields.clone(),
-                    base: base.clone(),
-                });
-            }
-        }
-    });
-    path.rsplit("::").fold(s, |item, m| Stmt::Module {
-        name: m.to_string(),
-        items: vec![item],
-        span,
-    })
-}
-
-/// The statements as written: the struct of an extern type is printed in
-/// its `extern` block.
+/// The statements as written: types of an `extern` block are printed in
+/// the block, not as the injected decls the checkers see.
 fn written(stmts: &[Stmt]) -> impl Iterator<Item = &Stmt> {
-    stmts
-        .iter()
-        .filter(|s| !matches!(s, Stmt::Struct(d) if d.host))
+    stmts.iter().filter(move |s| match s {
+        Stmt::Struct(d) if d.host => false,
+        Stmt::Struct(d) | Stmt::Enum(d) => !stmts.iter().any(|e| {
+            matches!(
+                e,
+                Stmt::Extern {
+                    structs,
+                    enums,
+                    ..
+                } if structs.iter().any(|x| x.name == d.name)
+                    || enums.iter().any(|x| x.name == d.name)
+            )
+        }),
+        _ => true,
+    })
 }
 
 pub fn print_term(t: &SurfaceTerm) -> String {
@@ -176,6 +114,7 @@ pub const RESERVED: &[&str] = &[
     "from",
     "decreasing_by",
     "opaque",
+    "ghost",
     "eqn",
     "by",
     "let",
@@ -183,6 +122,8 @@ pub const RESERVED: &[&str] = &[
     "fn",
     "return",
     "while",
+    "for",
+    "in",
     "loop",
     "break",
     "continue",
@@ -195,20 +136,22 @@ pub const RESERVED: &[&str] = &[
     "handle",
     "with",
     "perform",
-    "budget",
     "copy",
     "shared",
-    "view",
+    "borrow",
+    "borrows",
     "affine",
     "linear",
     "resume",
     "direct",
     "mut",
+    "coerce",
     "pub",
     "module",
     "where",
     "class",
     "instance",
+    "infer",
     "extern",
     "type",
     "true",
@@ -217,8 +160,8 @@ pub const RESERVED: &[&str] = &[
     "quote",
 ];
 
-/// A name where it is declared or used: `r#view` for a name spelled like a reserved word. A path
-/// is written as it is (`view::Expr`): the lexer reads `view::Expr` as one name, so no segment of
+/// A name where it is declared or used: `r#match` for a name spelled like a reserved word. A path
+/// is written as it is (`match::Expr`): the lexer reads `match::Expr` as one name, so no segment of
 /// it is taken for a reserved word, and `r#` stands only before a name on its own.
 pub fn raw(n: &str) -> String {
     if !n.contains("::") && RESERVED.contains(&n) {
@@ -328,7 +271,25 @@ impl Printer<'_> {
         }
         match &*t.kind {
             TermKind::Declaration(_) => self.w("<declaration reference>"),
-            TermKind::Var(n) if prelude_is(n, "Star") => self.w("#()"),
+            TermKind::Var(n) if prelude_is(n, "Star") || t.is_unit() => self.w("#()"),
+            // `A × B × C`: the members of the `Pair`s nested to the right. A member that is
+            // itself a product is in parentheses, `(A × B) × C`.
+            TermKind::App { .. } if let Some(ts) = t.product_type_members() => {
+                self.paren_if(outer > 0, |p| {
+                    for (i, x) in ts.iter().enumerate() {
+                        if i > 0 {
+                            p.w(" × ");
+                        }
+                        p.term(level, x, 1);
+                    }
+                })
+            }
+            // `#(a, b, c)`: the members of the `Pair::Mk`s nested to the right.
+            TermKind::App { .. } if let Some(items) = t.product_value_members() => {
+                self.w("#(");
+                self.list(&items, |p, x| p.term(level, x, 0));
+                self.w(")");
+            }
             TermKind::Var(n) => self.w(&name(n)),
             TermKind::Nat(n) | TermKind::Float(n) => self.w(n),
             TermKind::Text(s) => self.w(&quoted(s)),
@@ -346,6 +307,7 @@ impl Printer<'_> {
                 params,
                 result,
                 effects: None,
+                ..
             } if params.len() == 1
                 && params[0].0.as_ref().is_none_or(|n| n.starts_with("_'"))
                 && matches!(&*result.kind, TermKind::Var(n) if crate::bindings::is_library(n, "False") || prelude_is(n, "False")) =>
@@ -357,21 +319,28 @@ impl Printer<'_> {
             }
             TermKind::Pi {
                 params,
+                unused,
                 result,
                 effects,
             } => {
                 self.paren_if(outer > 0, |p| {
                     p.w("(");
-                    p.list(params, |p, (n, ty)| {
+                    for (i, (n, ty)) in params.iter().enumerate() {
+                        if i > 0 {
+                            p.w(", ");
+                        }
                         // `_'2581` is the name the checker gave a `_`, which
                         // binds nothing: it is left out like `_` written as
                         // `(Nat) -> Prop`.
                         if let Some(n) = n.as_ref().filter(|n| !n.starts_with("_'")) {
+                            if unused.get(i).is_some_and(|u| u.is_some()) {
+                                p.w("^");
+                            }
                             p.w(&name(n));
                             p.w(": ");
                         }
                         p.term(level, ty, 0);
-                    });
+                    }
                     p.w(") -> ");
                     p.term(level, result, 0);
                     if let Some(e) = effects {
@@ -382,26 +351,40 @@ impl Printer<'_> {
             }
             TermKind::Exists {
                 binder,
+                unused,
                 domain,
                 body,
             } => self.paren_if(outer > 0, |p| {
-                p.w(&format!("∃ {}: ", name(binder)));
+                p.w("∃ ");
+                if unused.is_some() {
+                    p.w("^");
+                }
+                p.w(&format!("{}: ", name(binder)));
                 p.term(level, domain, 0);
                 p.w(". ");
                 p.term(level, body, 0);
             }),
             TermKind::Lam {
                 params,
+                unused_params,
                 body,
                 types,
             } => self.paren_if(outer > 0, |p| {
                 match params.as_slice() {
-                    [one] if types.is_empty() => p.w(&name(one)),
+                    [one] if types.is_empty() => {
+                        if unused_params.first().is_some_and(|u| u.is_some()) {
+                            p.w("^");
+                        }
+                        p.w(&name(one));
+                    }
                     many => {
                         p.w("(");
                         for (i, n) in many.iter().enumerate() {
                             if i > 0 {
                                 p.w(", ");
+                            }
+                            if unused_params.get(i).is_some_and(|u| u.is_some()) {
+                                p.w("^");
                             }
                             p.w(&name(n));
                             if let Some(Some(ty)) = types.get(i) {
@@ -420,7 +403,8 @@ impl Printer<'_> {
                     params,
                     body,
                     types,
-                } = &*lam.kind
+                ..
+            } = &*lam.kind
                 {
                     self.paren_if(outer > 0, |p| {
                         p.w("(");
@@ -428,16 +412,7 @@ impl Printer<'_> {
                             if i > 0 {
                                 p.w(", ");
                             }
-                            match borrows.get(i).copied().flatten() {
-                                Some(true) => p.w("&mut "),
-                                Some(false) => p.w("&"),
-                                None => {}
-                            }
-                            p.w(&name(n));
-                            if let Some(Some(ty)) = types.get(i) {
-                                p.w(": ");
-                                p.term(level, ty, 0);
-                            }
+                            p.param(level, n, borrows.get(i).copied().flatten(), types.get(i));
                         }
                         p.w(") => ");
                         p.term(level, body, 0);
@@ -450,14 +425,6 @@ impl Printer<'_> {
                 for (i, x) in ts.iter().enumerate() {
                     if i > 0 {
                         p.w(" | ");
-                    }
-                    p.term(level, x, 1);
-                }
-            }),
-            TermKind::Product(ts) => self.paren_if(outer > 0, |p| {
-                for (i, x) in ts.iter().enumerate() {
-                    if i > 0 {
-                        p.w(" × ");
                     }
                     p.term(level, x, 1);
                 }
@@ -514,17 +481,19 @@ impl Printer<'_> {
                 self.w("}");
             }
             TermKind::Budget { limit, steps, body } => {
-                self.w("budget(");
-                self.w(limit.name());
-                self.w(": ");
+                self.w("perform ");
+                self.w(limit.operation());
+                self.w("(");
                 self.term(level, steps, 0);
-                self.w(") ");
+                self.w(", () => ");
                 self.braced(level, body);
+                self.w(")");
             }
             TermKind::Match {
                 scrutinee,
                 result,
                 binder,
+                binder_unused,
                 arms,
             } => {
                 // `⊢ G from match x { … }`: the result type is the goal written before it.
@@ -536,7 +505,11 @@ impl Printer<'_> {
                 self.w("match ");
                 self.cond(level, scrutinee);
                 if let Some(h) = binder {
-                    self.w(&format!(" eqn {h}"));
+                    self.w(" eqn ");
+                    if binder_unused.is_some() {
+                        self.w("^");
+                    }
+                    self.w(&format!("{h}"));
                 }
                 self.w(" {\n");
                 for a in arms {
@@ -572,6 +545,9 @@ impl Printer<'_> {
                         if i > 0 {
                             self.w(", ");
                         }
+                        if a.unused_binders.get(i).is_some_and(|u| u.is_some()) {
+                            self.w("^");
+                        }
                         self.w(&format!("{n}: "));
                         self.term(level + 1, t, 0);
                     }
@@ -588,10 +564,20 @@ impl Printer<'_> {
                 self.indent(level);
                 self.w("}");
             }
-            TermKind::Tuple(items) => {
-                self.w("#(");
-                self.list(items, |p, x| p.term(level, x, 0));
-                self.w(")");
+            // `f(<x: v>, …)`: the implicit arguments named, carried first in a
+            // call as a record of the internal name, are written as the source
+            // writes them.
+            TermKind::Record {
+                name: n,
+                fields,
+                base: None,
+            } if n.spelling() == Some(crate::IMPLICITS) => {
+                self.w("<");
+                self.list(fields, |p, (f, v)| {
+                    p.w(&format!("{}: ", raw(f)));
+                    p.term(level, v, 0);
+                });
+                self.w(">");
             }
             TermKind::Record {
                 name: n,
@@ -609,8 +595,21 @@ impl Printer<'_> {
                 }
                 self.w(" }");
             }
-            TermKind::Borrow { mutable, term } => {
-                self.w(if *mutable { "&mut " } else { "&" });
+            TermKind::Borrow {
+                mutable,
+                orig,
+                rc,
+                term,
+            } => {
+                self.w("&");
+                if *rc {
+                    self.w("rc ");
+                } else if *mutable {
+                    self.w("mut ");
+                }
+                if *orig {
+                    self.w("orig ");
+                }
                 self.term(level, term, UNARY);
             }
             TermKind::FnKind { kind, ty } => {
@@ -644,6 +643,53 @@ impl Printer<'_> {
                 self.w(")");
             }
             TermKind::Other(k) => self.w(&format!("<{k}>")),
+        }
+    }
+
+    /// A parameter, `x: T`. A borrowed one is written `x: &T` or `x: &mut T`,
+    /// the borrow on its type; without a type it is `&x`, as a pattern.
+    fn unused_mark(&mut self, unused: Option<&Option<Span>>) {
+        if unused.is_some_and(|u| u.is_some()) {
+            self.w("^");
+        }
+    }
+
+    fn param(
+        &mut self,
+        level: usize,
+        n: &super::Name,
+        borrow: Option<bool>,
+        ty: Option<&Option<SurfaceTerm>>,
+    ) {
+        self.param_marked(level, n, borrow, ty, None);
+    }
+
+    fn param_marked(
+        &mut self,
+        level: usize,
+        n: &super::Name,
+        borrow: Option<bool>,
+        ty: Option<&Option<SurfaceTerm>>,
+        unused: Option<&Option<Span>>,
+    ) {
+        let mark = match borrow {
+            Some(true) => "&mut ",
+            Some(false) => "&",
+            None => "",
+        };
+        match ty {
+            Some(Some(ty)) => {
+                self.unused_mark(unused);
+                self.w(&name(n));
+                self.w(": ");
+                self.w(mark);
+                self.term(level, ty, if mark.is_empty() { 0 } else { UNARY });
+            }
+            _ => {
+                self.w(mark);
+                self.unused_mark(unused);
+                self.w(&name(n));
+            }
         }
     }
 
@@ -731,6 +777,12 @@ impl Printer<'_> {
     }
 
     fn block(&mut self, level: usize, stmts: &[Stmt]) {
+        // `loop { … }` is read as a block of this one statement.
+        if let [Stmt::Loop { body }] = stmts {
+            self.w("loop ");
+            self.braced(level, body);
+            return;
+        }
         if stmts.is_empty() {
             self.w("{}");
             return;
@@ -771,6 +823,7 @@ impl Printer<'_> {
                 instance,
                 patterns,
                 cont,
+                cont_unused,
                 guard,
                 body,
             } => {
@@ -779,7 +832,11 @@ impl Printer<'_> {
                 self.list(patterns, |p, x| p.pattern(x));
                 self.w(")");
                 if let Some(k) = cont {
-                    self.w(&format!(", {}", name(k)));
+                    self.w(", ");
+                    if cont_unused.is_some() {
+                        self.w("^");
+                    }
+                    self.w(&name(k));
                 }
                 if let Some(g) = guard {
                     self.w(" if ");
@@ -794,7 +851,12 @@ impl Printer<'_> {
     fn pattern(&mut self, p: &Pattern) {
         match p {
             Pattern::Wild => self.w("_"),
-            Pattern::Bind(n) => self.w(&name(n)),
+            Pattern::Bind { name: n, unused } => {
+                if unused.is_some() {
+                    self.w("^");
+                }
+                self.w(&name(n));
+            }
             Pattern::Int(i) => self.w(&i.to_string()),
             Pattern::Bool(b) => self.w(if *b { "true" } else { "false" }),
             Pattern::Text(t) => self.w(&quoted(t)),
@@ -805,9 +867,9 @@ impl Printer<'_> {
                 self.w(&format!("@{tag} "));
                 self.pattern(inner);
             }
-            Pattern::Tuple(items) => {
+            Pattern::Ctor { .. } if let Some(items) = p.product_members() => {
                 self.w("#(");
-                self.list(items, |p, x| p.pattern(x));
+                self.list(&items, |p, x| p.pattern(x));
                 self.w(")");
             }
             Pattern::Ctor { name: n, args } => {
@@ -842,6 +904,21 @@ impl Printer<'_> {
                 });
                 self.w(" }");
             }
+            Pattern::Typed { name: n, ty, unused } => {
+                if unused.is_some() {
+                    self.w("^");
+                }
+                self.w(&format!("{}: ", name(n)));
+                // A union is braced, as a bare `|` after the type would be read as
+                // alternatives.
+                if matches!(&*ty.kind, TermKind::Union(_)) {
+                    self.w("{");
+                    self.term(0, ty, 0);
+                    self.w("}");
+                } else {
+                    self.term(0, ty, 0);
+                }
+            }
             Pattern::Other(k) => self.w(&format!("<{k}>")),
         }
     }
@@ -870,6 +947,33 @@ impl Printer<'_> {
         }
     }
 
+    fn infer_condition(&mut self, condition: &InferCondition, outer: u8) {
+        let precedence = match condition {
+            InferCondition::Parameter(_) => 3,
+            InferCondition::And(_, _) => 2,
+            InferCondition::Or(_, _) => 1,
+        };
+        if precedence < outer {
+            self.w("(");
+        }
+        match condition {
+            InferCondition::Parameter(parameter) => self.w(&name(parameter.as_str())),
+            InferCondition::And(left, right) => {
+                self.infer_condition(left, precedence);
+                self.w(" ∧ ");
+                self.infer_condition(right, precedence + 1);
+            }
+            InferCondition::Or(left, right) => {
+                self.infer_condition(left, precedence);
+                self.w(" ∨ ");
+                self.infer_condition(right, precedence + 1);
+            }
+        }
+        if precedence < outer {
+            self.w(")");
+        }
+    }
+
     fn stmt(&mut self, level: usize, s: &Stmt) {
         self.indent(level);
         if !matches!(s, Stmt::Attributed { .. })
@@ -884,10 +988,18 @@ impl Printer<'_> {
                 value,
                 borrow,
                 borrow_mut,
+                stack,
+                unused,
             } => {
-                self.w("let ");
+                match stack {
+                    Some(word) => self.w(&format!("let({word}) ")),
+                    None => self.w("let "),
+                }
                 if *borrow {
                     self.w(if *borrow_mut { "&mut " } else { "&" });
+                }
+                if unused.is_some() {
+                    self.w("^");
                 }
                 self.w(&name(n));
                 if let Some(ty) = ty {
@@ -902,10 +1014,18 @@ impl Printer<'_> {
                 ty,
                 value,
                 borrow,
+                stack,
+                unused,
             } => {
-                self.w("var ");
+                match stack {
+                    Some(word) => self.w(&format!("var({word}) ")),
+                    None => self.w("var "),
+                }
                 if *borrow {
                     self.w("&");
+                }
+                if unused.is_some() {
+                    self.w("^");
                 }
                 self.w(&name(n));
                 if let Some(ty) = ty {
@@ -919,7 +1039,11 @@ impl Printer<'_> {
                 name: n,
                 place,
                 value,
+                deref,
             } => {
+                if deref.is_some() {
+                    self.w("*");
+                }
                 match place {
                     Some(place) => self.term(level, place, 0),
                     None => self.w(&name(n)),
@@ -1009,9 +1133,22 @@ impl Printer<'_> {
                 };
                 self.w(&format!("import {target}{list}"))
             }
+            Stmt::Reexport { module, names, .. } => {
+                let names = names.iter().map(|(n, _)| raw(n)).collect::<Vec<_>>();
+                self.w(&format!(
+                    "pub import {} {{ {} }}",
+                    raw(module),
+                    names.join(", ")
+                ));
+            }
             Stmt::Inductive(i) => self.inductive(level, i),
-            Stmt::Module { name: n, items, .. } => {
-                self.w(&format!("module {} {{\n", raw(n)));
+            Stmt::Module {
+                name: n,
+                vis,
+                items,
+                ..
+            } => {
+                self.w(&format!("{}module {} {{\n", vis.written(), raw(n)));
                 let items: Vec<&Stmt> = items.iter().collect();
                 self.stmts(level + 1, &items);
                 self.indent(level);
@@ -1026,6 +1163,9 @@ impl Printer<'_> {
                     if index > 0 {
                         self.w(", ");
                     }
+                    if c.unused_parameters.get(index).is_some_and(|u| u.is_some()) {
+                        self.w("^");
+                    }
                     self.w(&format!("{name}: "));
                     if index == 0
                         && let Some(bound) = &c.bound
@@ -1035,7 +1175,20 @@ impl Printer<'_> {
                         self.term(level, ty, 0);
                     }
                 }
-                self.w(") {\n");
+                self.w(")");
+                if !c.parents.is_empty() {
+                    self.w(" where ");
+                    self.list(&c.parents, |p, parent| {
+                        p.w(&format!("{}(", parent.class));
+                        p.term(level, &parent.ty, 0);
+                        for argument in &parent.arguments {
+                            p.w(", ");
+                            p.term(level, argument, 0);
+                        }
+                        p.w(")");
+                    });
+                }
+                self.w(" {\n");
                 for m in &c.methods {
                     self.indent(level + 1);
                     self.function(level + 1, m, false);
@@ -1051,6 +1204,9 @@ impl Printer<'_> {
                     for (index, name) in i.generics.iter().enumerate() {
                         if index > 0 {
                             self.w(", ");
+                        }
+                        if i.unused_generics.get(index).is_some_and(|u| u.is_some()) {
+                            self.w("^");
                         }
                         self.w(&name.to_string());
                         if let Some(bound) = i.bounds.get(index).and_then(Option::as_ref) {
@@ -1071,6 +1227,10 @@ impl Printer<'_> {
                     self.term(level, arg, 0);
                 }
                 self.w(")");
+                if let Some(condition) = &i.infer_from {
+                    self.w(" infer from ");
+                    self.infer_condition(condition, 0);
+                }
                 if !i.where_.is_empty() {
                     self.w(" where ");
                     self.list(&i.where_, |p, c| {
@@ -1096,15 +1256,29 @@ impl Printer<'_> {
                 fns,
                 instances,
                 types,
+                structs,
+                enums,
                 ..
             } => {
                 self.w("extern {\n");
                 for t in types {
                     self.indent(level + 1);
-                    if let Some(k) = &t.kind {
-                        self.w(&format!("{k} "));
+                    self.w(t.vis.written());
+                    match t.kind.as_deref() {
+                        Some(k) => self.w(&format!("type({k}) ")),
+                        None => self.w("type "),
                     }
-                    self.w(&format!("type {}\n", t.name));
+                    self.w(&format!("{}\n", t.name));
+                }
+                for d in structs {
+                    self.indent(level + 1);
+                    self.data(level + 1, "struct", d);
+                    self.w("\n");
+                }
+                for d in enums {
+                    self.indent(level + 1);
+                    self.data(level + 1, "enum", d);
+                    self.w("\n");
                 }
                 for i in instances {
                     self.indent(level + 1);
@@ -1114,7 +1288,9 @@ impl Printer<'_> {
                 }
                 for f in fns {
                     self.indent(level + 1);
-                    self.function(level + 1, f, false);
+                    self.w(f.vis.written());
+                    let with_body = !matches!(&*f.body.kind, TermKind::Other(_));
+                    self.function(level + 1, f, with_body);
                     self.w("\n");
                 }
                 self.indent(level);
@@ -1126,6 +1302,30 @@ impl Printer<'_> {
                 self.w(" ");
                 self.braced(level, body);
             }
+            Stmt::For {
+                pattern,
+                source,
+                body,
+            } => {
+                self.w("for ");
+                self.pattern(pattern);
+                self.w(" in ");
+                self.cond(level, source);
+                self.w(" ");
+                self.braced(level, body);
+            }
+            Stmt::Loop { body } => {
+                self.w("loop ");
+                self.braced(level, body);
+            }
+            Stmt::Break(v) => {
+                self.w("break");
+                if let Some(v) = v {
+                    self.w(" ");
+                    self.term(level, v, 0);
+                }
+            }
+            Stmt::Continue => self.w("continue"),
             Stmt::Return(v) => {
                 self.w("return");
                 if let Some(v) = v {
@@ -1168,23 +1368,30 @@ impl Printer<'_> {
     }
 
     /// `(A: Type, B: Type)`: the parameters of a type declaration.
-    fn type_params(&mut self, params: &[super::Name], rows: &[bool]) {
+    fn type_params(
+        &mut self,
+        params: &[super::Name],
+        rows: &[bool],
+        unused: &[Option<Span>],
+    ) {
         if params.is_empty() {
             return;
         }
         self.w("(");
-        let named: Vec<(super::Name, bool)> = params
-            .iter()
-            .enumerate()
-            .map(|(i, g)| (g.clone(), rows.get(i).copied().unwrap_or(false)))
-            .collect();
-        self.list(&named, |p, (g, row)| {
-            if *row {
-                p.w(&format!("!{g}"))
-            } else {
-                p.w(&format!("{g}: Type"))
+        for (i, g) in params.iter().enumerate() {
+            if i > 0 {
+                self.w(", ");
             }
-        });
+            if unused.get(i).is_some_and(|u| u.is_some()) {
+                self.w("^");
+            }
+            let row = rows.get(i).copied().unwrap_or(false);
+            if row {
+                self.w(&format!("!{g}"));
+            } else {
+                self.w(&format!("{g}: Type"));
+            }
+        }
         self.w(")");
     }
 
@@ -1192,12 +1399,22 @@ impl Printer<'_> {
         if f.opaque {
             self.w("opaque ");
         }
-        self.w(&format!("fn {}", raw(&f.name)));
+        if f.ghost {
+            self.w("ghost ");
+        }
+        self.w("fn ");
+        if f.unused.is_some() {
+            self.w("^");
+        }
+        self.w(&raw(&f.name));
         if !f.generics.is_empty() {
             self.w("<");
             for (i, g) in f.generics.iter().enumerate() {
                 if i > 0 {
                     self.w(", ");
+                }
+                if f.unused_generics.get(i).is_some_and(|u| u.is_some()) {
+                    self.w("^");
                 }
                 let bound = f.bounds.get(i).and_then(|b| b.as_deref());
                 let row = f.rows.get(i).copied().unwrap_or(false);
@@ -1233,16 +1450,13 @@ impl Printer<'_> {
             if i > 0 {
                 self.w(", ");
             }
-            match f.borrows.get(i).copied().flatten() {
-                Some(true) => self.w("&mut "),
-                Some(false) => self.w("&"),
-                None => {}
-            }
-            self.w(&name(p));
-            if let Some(Some(ty)) = f.param_types.get(i) {
-                self.w(": ");
-                self.term(level, ty, 0);
-            }
+            self.param_marked(
+                level,
+                p,
+                f.borrows.get(i).copied().flatten(),
+                f.param_types.get(i),
+                f.unused_params.get(i),
+            );
         }
         self.w(")");
         if let Some(r) = &f.result {
@@ -1274,30 +1488,49 @@ impl Printer<'_> {
     }
 
     fn theorem_head(&mut self, level: usize, t: &TheoremDecl) {
+        if t.unused.is_some() {
+            self.w("^");
+        }
         self.w(&raw(&t.name));
         let (generics, params) = t.params.split_at(t.implicit.min(t.params.len()));
         // The parameters a `where` made are written as the `where`.
-        let wheres = params
+        let n_wheres = params
             .iter()
             .take_while(|(n, _)| n.starts_with(crate::surface::DICT))
             .count();
-        let (wheres, params) = params.split_at(wheres);
+        let (wheres, params) = params.split_at(n_wheres);
         if !generics.is_empty() {
             self.w("<");
-            self.list(generics, |p, (n, ty)| {
-                p.w(&name(n));
-                if !matches!(&*ty.kind, TermKind::Var(v) if v.as_str() == "Type") {
-                    p.w(": ");
-                    p.term(level, ty, 0);
+            for (i, (n, ty)) in generics.iter().enumerate() {
+                if i > 0 {
+                    self.w(", ");
                 }
-            });
+                if t.unused_params.get(i).is_some_and(|u| u.is_some()) {
+                    self.w("^");
+                }
+                self.w(&name(n));
+                if !matches!(&*ty.kind, TermKind::Var(v) if v.as_str() == "Type") {
+                    self.w(": ");
+                    self.term(level, ty, 0);
+                }
+            }
             self.w(">");
         }
         self.w("(");
-        self.list(params, |p, (n, ty)| {
-            p.w(&format!("{}: ", name(n)));
-            p.term(level, ty, 0);
-        });
+        let param_start = t.implicit.min(t.params.len()) + n_wheres;
+        for (i, (n, ty)) in params.iter().enumerate() {
+            if i > 0 {
+                self.w(", ");
+            }
+            if t.unused_params
+                .get(param_start + i)
+                .is_some_and(|u| u.is_some())
+            {
+                self.w("^");
+            }
+            self.w(&format!("{}: ", name(n)));
+            self.term(level, ty, 0);
+        }
         self.w("): ");
         self.term(level, &t.ty, 0);
         if !wheres.is_empty() {
@@ -1346,19 +1579,23 @@ impl Printer<'_> {
     fn effect(&mut self, level: usize, e: &EffectDecl) {
         self.w(&format!("effect {}", raw(&e.name)));
         if let Some(set) = &e.set {
-            self.type_params(&e.generics, &e.rows);
+            self.type_params(&e.generics, &e.rows, &e.unused_generics);
+            let set: Vec<&str> = set.iter().map(|n| n.as_str()).collect();
             self.w(&format!(" {{ {} }}", set.join(", ")));
             return;
         }
         if !e.generics.is_empty() {
             self.w("<");
-            let named: Vec<(super::Name, bool)> = e
-                .generics
-                .iter()
-                .enumerate()
-                .map(|(i, g)| (g.clone(), e.rows.get(i).copied().unwrap_or(false)))
-                .collect();
-            self.list(&named, |p, (g, row)| p.w(&written_generic(g, None, *row)));
+            for (i, g) in e.generics.iter().enumerate() {
+                if i > 0 {
+                    self.w(", ");
+                }
+                if e.unused_generics.get(i).is_some_and(|u| u.is_some()) {
+                    self.w("^");
+                }
+                let row = e.rows.get(i).copied().unwrap_or(false);
+                self.w(&written_generic(g, None, row));
+            }
             self.w(">");
         }
         self.w("(");
@@ -1383,26 +1620,46 @@ impl Printer<'_> {
     }
 
     fn data(&mut self, level: usize, keyword: &str, d: &DataDecl) {
-        if let Some(k) = &d.kind {
-            self.w(&format!("{k} "));
+        if crate::inductive_data::is_inductive(d) {
+            self.w("inductive ");
         }
-        self.w(&format!("{keyword} {}", raw(&d.name)));
-        self.type_params(&d.generics, &d.rows);
+        match crate::inductive_data::written_kind(d) {
+            Some(k) => self.w(&format!("{keyword}({k}) ")),
+            None => self.w(&format!("{keyword} ")),
+        }
+        self.w(&raw(&d.name));
+        self.type_params(&d.generics, &d.rows, &d.unused_generics);
         self.w(" {\n");
         for c in &d.constructors {
             self.indent(level + 1);
-            self.constructor(level + 1, keyword == "struct", c);
+            let coerce = d.coerce.as_ref().map(|c| (c.field, c.level));
+            self.constructor(level + 1, keyword == "struct", coerce, &d.unused_fields, c);
             self.w("\n");
         }
         self.indent(level);
         self.w("}");
     }
 
-    fn constructor(&mut self, level: usize, is_struct: bool, c: &DataConstructor) {
+    fn constructor(
+        &mut self,
+        level: usize,
+        is_struct: bool,
+        coerce: Option<(usize, crate::surface::CoerceLevel)>,
+        unused: &[Option<Span>],
+        c: &DataConstructor,
+    ) {
         let named = !c.fields.is_empty() && c.fields.iter().all(|(n, _)| n.is_some());
         if is_struct {
             // A struct's one constructor is its fields.
-            self.list(&c.fields, |p, (n, ty)| {
+            let fields: Vec<_> = c.fields.iter().enumerate().collect();
+            self.list(&fields, |p, (i, (n, ty))| {
+                if let Some((_, level)) = coerce.filter(|(at, _)| at == i) {
+                    p.w(level.written());
+                    p.w(" ");
+                }
+                if unused.get(*i).is_some_and(|u| u.is_some()) {
+                    p.w("^");
+                }
                 if let Some(n) = n {
                     p.w(&format!("{}: ", raw(n)));
                 }
@@ -1512,9 +1769,8 @@ fn eq_readable(a: &SurfaceTerm, b: &SurfaceTerm) -> bool {
     }
     fn opens(t: &SurfaceTerm) -> bool {
         match &*t.kind {
-            TermKind::Tuple(_)
-            | TermKind::Product(_)
-            | TermKind::Union(_)
+            _ if t.product_type_members().is_some() || t.product_value_members().is_some() => true,
+            TermKind::Union(_)
             | TermKind::Ascribe { .. }
             | TermKind::Block(_)
             | TermKind::Record { .. }
@@ -1565,10 +1821,10 @@ mod tests {
     }
 
     /// `r#` stands before a reserved word alone; a path is one name to the lexer, so it is
-    /// written as it is (`r#view::Expr` would not read back).
+    /// written as it is (`view::Expr` would not read back).
     #[test]
     fn raw_names() {
-        assert_eq!(raw("view"), "r#view");
+        assert_eq!(raw("borrow"), "r#borrow");
         assert_eq!(raw("view::Expr"), "view::Expr");
         assert_eq!(raw("m::type"), "m::type");
         assert_eq!(raw("x"), "x");

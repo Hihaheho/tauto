@@ -1,12 +1,15 @@
+import "../../identity/src/identity.taut"
+import "rules_literal.taut"
+import "messages.taut"
 import "pattern_read_error_sound.taut"
 import "expr_leaf_frame.taut"
 import "written_error_sound.taut"
 import "signature_error_sound.taut"
 import "instantiation_error_sound.taut"
 import "widen_error_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -15,7 +18,9 @@ import "pattern_frame.taut"
 import "pattern_mutual.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -27,7 +32,7 @@ pub theorem leaf_constructor_return_frame_errors(
   args: List(Ty),
   fields: List(DataField)
 ): CkErrorFrame(c, leaf_constructor_return(c, d, args, fields)) {
-  ⊢ CkErrorFrame(c, leaf_constructor_return(c, d, args, fields)) from match fields { Nil => (
+  match fields { Nil => (
     clean_errors => clean_errors
   )
     Cons(f, rest) => (clean_errors => clean_errors) }
@@ -53,8 +58,7 @@ pub theorem leaf_constructor_fields_frame_errors(
   fields: List(DataField)
 ): CkErrorFrame(c, leaf_constructor_fields(c, d, idx, span, name, args, fields)) {
   error_frame_bind(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     c,
     (ignored: Unit, c1: Checker) => leaf_constructor_return(c1, d, args, fields),
     frame_error_if(
@@ -81,8 +85,7 @@ pub theorem leaf_constructor_frame_errors(
   name: Text
 ): CkErrorFrame(c, leaf_constructor(c, d, idx, span, name)) {
   error_frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     c,
     (args: List(Ty), c1: Checker) => leaf_constructor_fields(
       c1,
@@ -137,7 +140,7 @@ pub theorem leaf_constructor_choice_frame_errors(
   name: Text,
   ambiguous: Bool
 ): CkErrorFrame(c, leaf_constructor_choice(c, d, idx, span, name, ambiguous)) {
-  ⊢ CkErrorFrame(c, leaf_constructor_choice(c, d, idx, span, name, ambiguous)) from match ambiguous {
+  match ambiguous {
     true => error_frame_rewrap(
       c,
       ck_defer_constructor(c, name, span),
@@ -172,23 +175,46 @@ pub theorem ck_constructor_frame_errors(
   )
 }
 
+pub theorem leaf_lookup_missing_frame_errors(
+  c: Checker,
+  name: Text,
+  span: TySpan,
+  star: Bool
+): CkErrorFrame(c, leaf_lookup_missing(c, name, span, star)) {
+  match star {
+    true => (clean_errors => clean_errors)
+    false => error_frame_bind(
+    <A: Unit, B: Ty>,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+    ck_error(c, not_defined_message(name), span),
+    ck_error_frame_errors(c, not_defined_message(name), span),
+    ignored => c1 => error_frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame_errors(c1))
+  )
+  }
+}
+
+pub theorem ck_lookup_missing_frame_errors(
+  c: Checker,
+  name: Text,
+  span: TySpan
+): CkErrorFrame(c, ck_lookup_missing(c, name, span)) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => CkErrorFrame(c, m),
+    Eq::sym(ck_lookup_missing_unf(c, name, span)),
+    leaf_lookup_missing_frame_errors(c, name, span, Text::eq(name, "std::prelude::Star"))
+  )
+}
+
 pub theorem leaf_lookup_ctor_frame_errors(
   c: Checker,
   name: Text,
   env: List(Local),
   span: TySpan,
-  found: Option(Pair(Text, Nat))
+  found: Option(Text × Nat)
 ): CkErrorFrame(c, leaf_lookup_ctor(c, name, env, span, found)) {
-  ⊢ CkErrorFrame(c, leaf_lookup_ctor(c, name, env, span, found)) from match found {
-    None => error_frame_bind(
-      Unit,
-      Ty,
-      c,
-      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
-      ck_error(c, cat2(name, " is not defined"), span),
-      ck_error_frame_errors(c, cat2(name, " is not defined"), span),
-      ignored => c1 => error_frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame_errors(c1))
-    )
+  match found {
+    None => error_frame_rewrap(c, ck_lookup_missing(c, name, span), ck_lookup_missing_frame_errors(c, name, span))
     Some(dc) => error_frame_rewrap(
       c,
       ck_constructor(c, pattern_ctor_name(dc), pattern_ctor_index(dc), span, name),
@@ -202,14 +228,14 @@ pub theorem leaf_lookup_special_frame_errors(
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   special: Bool
-): CkErrorFrame(c, leaf_lookup_special(c, name, env, span, special)) {
-  ⊢ CkErrorFrame(c, leaf_lookup_special(c, name, env, span, special)) from match special {
+): CkErrorFrame(c, leaf_lookup_special(c, name, env, span, occurrence, special)) {
+  match special {
     true => error_frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c,
-      (i: Ty, c1: Checker) => mut1(TyFn(Cons(i, Cons(i, Nil)), i, KindShared), c1),
+      (i: Ty, c1: Checker) => leaf_lookup_builtin(c1, i, span, occurrence),
       ck_fresh_int(c),
       ck_fresh_int_read_frame_errors(c),
       i => c1 => (clean_errors => clean_errors)
@@ -223,9 +249,10 @@ pub theorem leaf_lookup_function_frame_errors(
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   found: Option(Scheme)
-): CkErrorFrame(c, leaf_lookup_function(c, name, env, span, found)) {
-  ⊢ CkErrorFrame(c, leaf_lookup_function(c, name, env, span, found)) from match found {
+): CkErrorFrame(c, leaf_lookup_function(c, name, env, span, occurrence, found)) {
+  match found {
     Some(s) => error_frame_rewrap(
       c,
       ck_instantiate_scheme(c, name, s, span),
@@ -236,6 +263,7 @@ pub theorem leaf_lookup_function_frame_errors(
       name,
       env,
       span,
+      occurrence,
       Bool::or(Text::eq(name, "div"), Text::eq(name, "mod"))
     )
   }
@@ -246,15 +274,17 @@ pub theorem leaf_lookup_frame_errors(
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   found: Option(Local)
-): CkErrorFrame(c, leaf_lookup(c, name, env, span, found)) {
-  ⊢ CkErrorFrame(c, leaf_lookup(c, name, env, span, found)) from match found {
+): CkErrorFrame(c, leaf_lookup(c, name, env, span, occurrence, found)) {
+  match found {
     Some(l) => (clean_errors => clean_errors)
     None => leaf_lookup_function_frame_errors(
       c,
       name,
       env,
       span,
+      occurrence,
       Ordmap::get(leaf_functions(c), name, Ordmap::compare_text)
     )
   }
@@ -265,11 +295,12 @@ pub theorem ck_lookup_frame_errors(
   name: Text,
   env: List(Local),
   span: TySpan
-): CkErrorFrame(c, ck_lookup(c, name, env, span)) {
+,
+  occurrence: Option(TermOccurrence)): CkErrorFrame(c, ck_lookup(c, name, env, span, occurrence)) {
   Eq::subst(
     (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
-    Eq::sym(leaf_lookup_unf(c, name, env, span)),
-    leaf_lookup_frame_errors(c, name, env, span, env_find(env, name))
+    Eq::sym(leaf_lookup_unf(c, name, env, span, occurrence)),
+    leaf_lookup_frame_errors(c, name, env, span, occurrence, env_find(env, name))
   )
 }
 
@@ -280,7 +311,7 @@ pub theorem leaf_literal_parsed_frame_errors(
   t: Ty,
   parsed: Option(Nat)
 ): CkErrorFrame(c, leaf_literal_parsed(c, n, span, t, parsed)) {
-  ⊢ CkErrorFrame(c, leaf_literal_parsed(c, n, span, t, parsed)) from match parsed {
+  match parsed {
     Some(v) => error_frame_rewrap(
       c,
       pattern_literal_record(c, false, v, t, span),
@@ -288,8 +319,8 @@ pub theorem leaf_literal_parsed_frame_errors(
     )
     None => error_frame_rewrap(
       c,
-      ck_error(c, cat2(n, " is too large"), span),
-      ck_error_frame_errors(c, cat2(n, " is too large"), span)
+      ck_error(c, nat_too_large_message(n), span),
+      ck_error_frame_errors(c, nat_too_large_message(n), span)
     )
   }
 }
@@ -301,12 +332,11 @@ pub theorem leaf_literal_after_frame_errors(
   t: Ty
 ): CkErrorFrame(c, leaf_literal_after(c, n, span, t)) {
   error_frame_bind(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     c,
     (ignored: Unit, c1: Checker) => mut1(t, c1),
-    leaf_literal_parsed(c, n, span, t, text_parse_u64(n)),
-    leaf_literal_parsed_frame_errors(c, n, span, t, text_parse_u64(n)),
+    leaf_literal_parsed(c, n, span, t, text_parse_i128(n)),
+    leaf_literal_parsed_frame_errors(c, n, span, t, text_parse_i128(n)),
     ignored => c1 => (clean_errors => clean_errors)
   )
 }
@@ -317,14 +347,61 @@ pub theorem leaf_literal_frame_errors(
   span: TySpan
 ): CkErrorFrame(c, leaf_literal(c, n, span)) {
   error_frame_bind(
-    Ty,
-    Ty,
+    <A: Ty, B: Ty>,
     c,
     (t: Ty, c1: Checker) => leaf_literal_after(c1, n, span, t),
     ck_fresh_int(c),
     ck_fresh_int_read_frame_errors(c),
     t => c1 => leaf_literal_after_frame_errors(c1, n, span, t)
   )
+}
+
+pub theorem ck_int_literal_frame_errors(
+  c: Checker,
+  n: Text,
+  span: TySpan
+): CkErrorFrame(c, ck_int_literal(c, n, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_literal_unf(c, n, span)),
+    leaf_literal_frame_errors(c, n, span)
+  )
+}
+
+pub theorem ck_hinted_nat_on_frame_errors(
+  c: Checker,
+  n: Text,
+  span: TySpan,
+  fits: Bool,
+  name: Text
+): CkErrorFrame(c, ck_hinted_nat_on(c, n, span, fits, name)) {
+  match fits {
+    true => (clean_errors => clean_errors)
+    false => error_frame_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (reported: Unit, c1: Checker) => mut1(TyNamed(NameSpelled(name), Nil), c1),
+      ck_rewrap1(ck_error(c, numeral_not_message(name, n), span)),
+      error_frame_rewrap(c, ck_error(c, numeral_not_message(name, n), span), ck_error_frame_errors(c, numeral_not_message(name, n), span)),
+      reported => c1 => (clean_errors => clean_errors)
+    )
+  }
+}
+
+pub theorem ck_nat_literal_on_frame_errors(
+  c: Checker,
+  n: Text,
+  span: TySpan,
+  hinted: Option(Text)
+): CkErrorFrame(c, ck_nat_literal_on(c, n, span, hinted)) {
+  match hinted {
+    Some(name) => error_frame_rewrap(
+      c,
+      ck_hinted_nat_on(c, n, span, numeral_reads_as(n, name), name),
+      ck_hinted_nat_on_frame_errors(c, n, span, numeral_reads_as(n, name), name)
+    )
+    None => error_frame_rewrap(c, ck_int_literal(c, n, span), ck_int_literal_frame_errors(c, n, span))
+  }
 }
 
 pub theorem ck_nat_literal_frame_errors(
@@ -334,7 +411,7 @@ pub theorem ck_nat_literal_frame_errors(
 ): CkErrorFrame(c, ck_nat_literal(c, n, span)) {
   Eq::subst(
     (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
-    Eq::sym(leaf_literal_unf(c, n, span)),
-    leaf_literal_frame_errors(c, n, span)
+    Eq::sym(ck_nat_literal_unf(c, n, span)),
+    ck_nat_literal_on_frame_errors(c, n, span, ck_hint_numeral(c))
   )
 }

@@ -1,6 +1,6 @@
 import "stable_state_frame.taut"
 import "obligation_state_frame.taut"
-import std::Row
+import std::row
 import "checker.taut"
 import "datas_frame.taut"
 import "unify_sound.taut"
@@ -63,8 +63,8 @@ pub theorem tracked_bind<A: Type, B: Type>(
   m: Mut1(A, Checker),
   first: TrackedFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. TrackedFrame(next, k(value, next))
-): TrackedFrame(c, frame_bind(A, B, k, m)) {
-  ⊢ TrackedFrame(c, frame_bind(A, B, k, m)) from match m {
+): TrackedFrame(c, frame_bind(<A: A, B: B>, k, m)) {
+  match m {
     mut1(value, next) => tracked_state_trans(
       c,
       next,
@@ -87,7 +87,7 @@ pub theorem tracked_return<A: Type, B: Type>(
   m: Mut1(A, Checker),
   frame: TrackedFrame(c, m)
 ): TrackedFrame(c, frame_return(value, m)) {
-  ⊢ TrackedFrame(c, frame_return(value, m)) from match m { mut1(ignored, next) => frame }
+  match m { mut1(ignored, next) => frame }
 }
 pub theorem tracked_changed<A: Type>(
   c: Checker,

@@ -1,0 +1,15 @@
+description = "A `for` in code the kernel does not check is refused with a diagnostic at the loop; extraction rewrites only what the source writes, never the terms the `for` expansion made."
+
+@ cases.for-over-list-in-an-i64-function
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+pub fn sum(xs: List(i64)): i64 {
+  var total: i64 := 0
+  for x in xs { total := total + x }
+  total
+}
+```
+load_error = "`iterator_ready` requires dependent-type constraints that code the kernel does not check cannot verify; use it in a function the kernel checks"

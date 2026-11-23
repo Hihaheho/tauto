@@ -1,7 +1,7 @@
 import "../../surface/src/surface.taut"
 import "datas.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "ty.taut"
 
 pub fn declaration_field_ty(f: DataField): Ty { f.ty }
@@ -60,7 +60,7 @@ pub fn declaration_annotation(d: Data): Option(Kind) { d.declared }
 pub fn declaration_data_recursive(d: Data): Bool { d.recursive }
 pub fn declaration_data_ctors(d: Data): List(DataCtor) { d.constructors }
 pub fn declaration_parameters(gs: List(Text), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
-  ⊢ Ordmap(Text, Ty) from match gs {
+  match gs {
     Nil => map
     Cons(g, rest) => declaration_parameters(
       rest,
@@ -92,29 +92,34 @@ pub def DataDeclarationKinds(
   )
 )
 pub fn StatementDataKinds(d: Datas, s: SurfaceStmt): Prop {
-  ⊢ Prop from match s {
-    StLet(n, ty, v, b, m) => True
-    StVar(n, ty, v, b) => True
-    StModule(n, ss, start, end) => True
-    StAssign(n, n_place, v) => True
-    StCalled(n_generates, v) => True
-    StFn(f) => True
-    StTheorem(t) => True
-    StDef(t) => True
-    StMutual(ss, start, end) => True
-    StImport(path, start, end) => True
-    StInductive(i) => True
-    StEffect(e) => True
-    StExtern(abi, fs, start, end) => True
-    StClass(cl) => True
-    StInstance(i) => True
-    StWhile(cond, body) => True
-    StReturn(v) => True
-    StExpr(v) => True
-    StOther(what, start, end) => True
-    StMacro(n, f, start, end) => True
-    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => True
-    StSyntax(n, grammar, start, end) => True
+  match s {
+    StLet(^n, ^ty, ^v, ^b, ^m, ^unused, ^st_stack) => True
+    StVar(^n, ^ty, ^v, ^b, ^unused, ^st_stack) => True
+    StAssign(^n, ^n_place, ^v) => True
+    StCalled(^n_generates, ^v) => True
+    StFn(^f) => True
+    StTheorem(^t) => True
+    StDef(^t) => True
+    StMutual(^ss, ^start, ^end) => True
+    StImport(^path, ^start, ^end) => True
+    StInductive(^i) => True
+    StEffect(^e) => True
+    StExtern(^fs, ^instances, ^types, ^structs, ^enums, ^start, ^end) => True
+    StClass(^cl) => True
+    StInstance(^i) => True
+    StWhile(^cond, ^body) => True
+    StReturn(^v) => True
+    StExpr(^v) => True
+    StOther(^what, ^start, ^end) => True
+    StLoop(^st_body, ^start, ^end) => True
+    StModule(^mod_name, ^mod_vis, ^mod_items, ^start, ^end) => True
+    StReexport(^re_path, ^re_names, ^re_spans, ^start, ^end) => True
+    StFor(^for_pat, ^for_src, ^st_body, ^start, ^end) => True
+    StBreak(^st_value, ^start, ^end) => True
+    StContinue(^start, ^end) => True
+    StMacro(^n, ^f, ^start, ^end) => True
+    StAttributed(^attr_name, ^attr_arg, ^attr_generates, ^attr_stmt) => True
+    StSyntax(^n, ^grammar, ^start, ^end) => True
     StStruct(data) => DataDeclarationKinds(d, data)
     StEnum(data) => DataDeclarationKinds(d, data)
   }

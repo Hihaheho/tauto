@@ -4,12 +4,13 @@ import "../../kernel/src/kernel.taut"
 import "../../kernel/src/check.taut"
 import "../../kernel/src/term.taut"
 import "../../kernel/src/level.taut"
-import std::List
-import std::Text
-import std::Base
+import std::list
+import std::text
+import std::base
+import std::map
 
-// No-confusion for the families of an inductive command without indices, as
-// the host generates it from the eliminator: constructors are injective and
+// No-confusion for the families of an inductive command without indices,
+// defined from the eliminator: constructors are injective and
 // distinct. For `I` with constructors `c_j(a⃗)`:
 //
 // * `I::nc(p⃗, P, x, y): Type`, by recursion on both: `(a_i = b_i → … → P) → P`
@@ -22,7 +23,7 @@ import std::Base
 
 // `Π (q_i: a_i = b_i) …, P` over the injective fields.
 pub fn elab_equations(
-  &mut core: KernelCore,
+  core: &mut KernelCore,
   inj: List(Nat),
   at: Nat,
   a: List(Nat),
@@ -30,7 +31,7 @@ pub fn elab_equations(
   types: List(KernelTerm),
   p: Nat
 ): KernelTerm {
-  ⊢ KernelTerm from match a {
+  match a {
     Nil => KernelFVar(p)
     Cons(x, rest) => ⊢ KernelTerm from match b {
       Nil => KernelFVar(p)
@@ -50,7 +51,7 @@ pub fn elab_equations(
 }
 
 pub fn elab_refls(inj: List(Nat), at: Nat, a: List(Nat), types: List(KernelTerm)): List(KernelTerm) {
-  ⊢ List(KernelTerm) from match a {
+  match a {
     Nil => Nil
     Cons(x, rest) => ⊢ List(KernelTerm) from match types {
       Nil => Nil
@@ -65,21 +66,21 @@ pub fn elab_refls(inj: List(Nat), at: Nat, a: List(Nat), types: List(KernelTerm)
 }
 
 pub fn elab_star_minors(cs: List(KernelCtorInfo)): List(KernelTerm) {
-  ⊢ List(KernelTerm) from match cs {
+  match cs {
     Nil => Nil
     Cons(c, rest) => Cons(elab_lam_n(KernelConst("Unit::Star"), c.nargs + List::length(c.recursive)), elab_star_minors(rest))
   }
 }
 
 pub fn elab_n_of(n: Nat, t: KernelTerm): List(KernelTerm) {
-  ⊢ List(KernelTerm) from match n {
+  match n {
     Zero => Nil
     Succ(m) => Cons(t, elab_n_of(m, t))
   }
 }
 
 pub fn elab_ctor_index(cs: List(KernelCtorInfo), name: Text, at: Nat): Nat {
-  ⊢ Nat from match cs {
+  match cs {
     Nil => at
     Cons(c, rest) => if c.name == name { at } else { elab_ctor_index(rest, name, at + 1) }
   }
@@ -89,7 +90,7 @@ pub fn elab_ctor_index(cs: List(KernelCtorInfo), name: Text, at: Nat): Nat {
 // equations when the inner one is `c` too, and `P` otherwise.
 pub fn elab_nc_inner(
   k: Nat,
-  &mut core: KernelCore,
+  core: &mut KernelCore,
   group: List(Text),
   family: Text,
   params: List(KernelTerm),
@@ -98,7 +99,7 @@ pub fn elab_nc_inner(
   inj: List(Nat),
   p: Nat
 ): Option(List(KernelTerm)) {
-  ⊢ Option(List(KernelTerm)) from match group {
+  match group {
     Nil => Some(Nil)
     Cons(g, rest) => ⊢ Option(List(KernelTerm)) from match kernel_ind_get(core, g) {
       None => None
@@ -115,7 +116,7 @@ pub fn elab_nc_inner(
 
 pub fn elab_nc_inner_ctors(
   k: Nat,
-  &mut core: KernelCore,
+  core: &mut KernelCore,
   ds: List(KernelCtorInfo),
   same_family: Bool,
   params: List(KernelTerm),
@@ -124,20 +125,20 @@ pub fn elab_nc_inner_ctors(
   inj: List(Nat),
   p: Nat
 ): Option(List(KernelTerm)) {
-  ⊢ Option(List(KernelTerm)) from match ds {
+  match ds {
     Nil => Some(Nil)
     Cons(d, rest) => {
-      let body: Option(Pair(List(Nat), KernelTerm)) := if same_family && d.name == c.name {
-        ⊢ Option(Pair(List(Nat), KernelTerm)) from match elab_open_ctor(k, &mut core, d, params) {
+      let body: Option(List(Nat) × KernelTerm) := if same_family && d.name == c.name {
+        ⊢ Option(List(Nat) × KernelTerm) from match elab_open_ctor(k, &mut core, d, params) {
           None => None
           Some(b) => {
             let eqs := elab_equations(&mut core, inj, 0, a.fields, b.fields, a.types, p)
             let kk := kernel_fresh(&mut core, eqs)
-            Some(Pair { fst: List::append(b.fields, b.ihs), snd: kernel_pi_over(kk, eqs, KernelFVar(p)) })
+            Some(#(List::append(b.fields, b.ihs), kernel_pi_over(kk, eqs, KernelFVar(p))))
           }
         }
       } else {
-        Some(Pair { fst: Nil, snd: elab_lam_n(KernelFVar(p), d.nargs + List::length(d.recursive)) })
+        Some(#(Nil, elab_lam_n(KernelFVar(p), d.nargs + List::length(d.recursive))))
       }
       ⊢ Option(List(KernelTerm)) from match body {
         None => None
@@ -174,7 +175,7 @@ pub fn elab_nc_rec(x: ElabNcCtx, motives: List(KernelTerm), minors: List(KernelT
 }
 
 pub fn elab_motives_for(group: List(Text), family: Text, here: KernelTerm, other: KernelTerm): List(KernelTerm) {
-  ⊢ List(KernelTerm) from match group {
+  match group {
     Nil => Nil
     Cons(g, rest) => Cons(if g == family { here } else { other }, elab_motives_for(rest, family, here, other))
   }
@@ -183,13 +184,13 @@ pub fn elab_motives_for(group: List(Text), family: Text, here: KernelTerm, other
 // The outer minors of `nc` (or `nc_diag`, by `diag`).
 pub fn elab_nc_outer(
   k: Nat,
-  &mut core: KernelCore,
+  core: &mut KernelCore,
   x: ElabNcCtx,
   group: List(Text),
   diag: Bool,
   injs: List(List(Nat))
 ): Option(List(KernelTerm)) {
-  ⊢ Option(List(KernelTerm)) from match group {
+  match group {
     Nil => Some(Nil)
     Cons(g, rest) => ⊢ Option(List(KernelTerm)) from match kernel_ind_get(core, g) {
       None => None
@@ -211,24 +212,24 @@ pub fn elab_nc_outer(
 
 pub fn elab_nc_outer_ctors(
   k: Nat,
-  &mut core: KernelCore,
+  core: &mut KernelCore,
   x: ElabNcCtx,
   cs: List(KernelCtorInfo),
   diag: Bool,
   injs: List(List(Nat))
 ): Option(List(KernelTerm)) {
-  ⊢ Option(List(KernelTerm)) from match cs {
+  match cs {
     Nil => Some(Nil)
     Cons(c, rest) => ⊢ Option(List(KernelTerm)) from match elab_open_ctor(k, &mut core, c, elab_nc_params(x)) {
       None => None
       Some(a) => {
         let inj := ⊢ List(Nat) from match injs {
           Nil => Nil
-          Cons(i, is) => i
+          Cons(i, ^is) => i
         }
         let later := ⊢ List(List(Nat)) from match injs {
           Nil => Nil
-          Cons(i, is) => is
+          Cons(^i, is) => is
         }
         let minor: Option(KernelTerm) := if diag {
           let f := kernel_fresh(&mut core, KernelConst("Unit"))
@@ -258,8 +259,8 @@ pub fn elab_nc_outer_ctors(
 // The injective fields of each constructor of the family, computed once
 // while the parameters are still in the kernel's context: declaring `nc`
 // leaves them out of it.
-pub fn elab_family_injs(k: Nat, &mut core: KernelCore, params: List(KernelTerm), cs: List(KernelCtorInfo)): Option(List(List(Nat))) {
-  ⊢ Option(List(List(Nat))) from match cs {
+pub fn elab_family_injs(k: Nat, core: &mut KernelCore, params: List(KernelTerm), cs: List(KernelCtorInfo)): Option(List(List(Nat))) {
+  match cs {
     Nil => Some(Nil)
     Cons(c, rest) => ⊢ Option(List(List(Nat))) from match elab_open_ctor(k, &mut core, c, params) {
       None => None
@@ -275,7 +276,7 @@ pub fn elab_family_injs(k: Nat, &mut core: KernelCore, params: List(KernelTerm),
 }
 
 pub fn elab_nc_pis_over(atoms: List(Nat), domains: List(KernelTerm), body: KernelTerm): KernelTerm {
-  ⊢ KernelTerm from match atoms {
+  match atoms {
     Nil => body
     Cons(a, rest) => ⊢ KernelTerm from match domains {
       Nil => body
@@ -296,14 +297,14 @@ pub fn elab_nc_at(x: ElabNcCtx, nc: Text, a: KernelTerm, b: KernelTerm): KernelT
   elab_apps(KernelConst(nc), List::append(elab_nc_params(x), Cons(KernelFVar(x.p), Cons(a, Cons(b, Nil)))))
 }
 
-pub fn elab_fresh_params(k: Nat, &mut core: KernelCore, ty: KernelTerm, n: Nat): Option(Pair(List(Nat), List(KernelTerm))) {
+pub fn elab_fresh_params(k: Nat, core: &mut KernelCore, ty: KernelTerm, n: Nat): Option(List(Nat) × List(KernelTerm)) {
   elab_open_fields(k, &mut core, ty, n)
 }
 
 // The three declarations of one family, declared in the kernel as they are
 // made; `None` when one does not check.
-pub fn elab_family_noconf(k: Nat, &mut core: KernelCore, family: Text): Option(List(ElabDeclaration)) {
-  ⊢ Option(List(ElabDeclaration)) from match kernel_ind_get(core, family) {
+pub fn elab_family_noconf(k: Nat, core: &mut KernelCore, family: Text): Option(List(ElabDeclaration)) {
+  match kernel_ind_get(core, family) {
     None => None
     Some(info) => ⊢ Option(List(ElabDeclaration)) from match kernel_global_get(core, family) {
       None => None
@@ -350,7 +351,7 @@ pub fn elab_family_noconf(k: Nat, &mut core: KernelCore, family: Text): Option(L
                         let d3 := ElabDeclaration::Mk(noconf, noconf_ty, noconf_val, true)
                         ⊢ Option(List(ElabDeclaration)) from match kernel_execute(k, &mut core, KernelDeclare(noconf, noconf_ty, Some(noconf_val), true)) {
                           KernelAccepted => Some(Cons(d1, Cons(d2, Cons(d3, Nil))))
-                          // As the host keeps them when `noconf` does not check (it needs `Eq` at the family's sort).
+                          // When `noconf` does not check (it needs `Eq` at the family's sort), `nc` and `nc_diag` are kept alone.
                           _ => Some(Cons(d1, Cons(d2, Nil)))
                         }
                       }
@@ -370,7 +371,7 @@ pub fn elab_family_noconf(k: Nat, &mut core: KernelCore, family: Text): Option(L
 }
 
 pub fn elab_indexed_member(core: KernelCore, group: List(Text)): Bool {
-  ⊢ Bool from match group {
+  match group {
     Nil => false
     Cons(g, rest) => ⊢ Bool from match kernel_ind_get(core, g) {
       None => true
@@ -381,8 +382,8 @@ pub fn elab_indexed_member(core: KernelCore, group: List(Text)): Bool {
 
 // The no-confusion of every family of the command, in order. A family whose
 // declarations do not check gets none, and the kernel is left as before it.
-pub fn elab_no_confusion(k: Nat, &mut core: KernelCore, fs: List(KernelFamily)): List(ElabDeclaration) {
-  ⊢ List(ElabDeclaration) from match fs {
+pub fn elab_no_confusion(k: Nat, core: &mut KernelCore, fs: List(KernelFamily)): List(ElabDeclaration) {
+  match fs {
     Nil => Nil
     Cons(f, rest) => {
       let skip := ⊢ Bool from match kernel_ind_get(core, f.name) {
@@ -400,6 +401,172 @@ pub fn elab_no_confusion(k: Nat, &mut core: KernelCore, fs: List(KernelFamily)):
         }
         List::append(here, elab_no_confusion(k, &mut core, rest))
       }
+    }
+  }
+}
+
+// `J@cases` for a family `J` of a group with others: `J::rec` with the
+// motives of the other families trivial and the minors of `J`'s constructors
+// only, without their induction hypotheses,
+//
+// `J@cases(p⃗, P, m⃗, t) = J::rec(p⃗, …, P, …, …, (a⃗ ⇒ h⃗ ⇒ m_j(a⃗)), …, t)`.
+//
+// A `match` that recurses into nothing is this, not the recursor of the
+// whole group. Only a family without indices and written as itself has one.
+
+pub(open) inductive ElabCaseCtor: Type {
+  Mk(atom: Nat, ty: KernelTerm, opened: ElabOpened, info: KernelCtorInfo): ElabCaseCtor
+}
+
+pub fn elab_cases_type1(): KernelTerm { KernelSortTerm(KernelType(KernelLevel::Mk(1, Nil))) }
+
+pub fn elab_cases_ctors(k: Nat, core: &mut KernelCore, params: List(KernelTerm), p: Nat, cs: List(KernelCtorInfo)): Option(List(ElabCaseCtor)) {
+  match cs {
+    Nil => Some(Nil)
+    Cons(c, rest) => ⊢ Option(List(ElabCaseCtor)) from match elab_open_ctor(k, &mut core, c, params) {
+      None => None
+      Some(a) => {
+        let built := elab_apps(KernelConst(c.name), List::append(params, elab_fvars(a.fields)))
+        let mty := elab_nc_pis_over(a.fields, a.types, kernel_app(KernelFVar(p), built))
+        let atom := kernel_fresh(&mut core, mty)
+        ⊢ Option(List(ElabCaseCtor)) from match elab_cases_ctors(k, &mut core, params, p, rest) {
+          None => None
+          Some(more) => Some(Cons(ElabCaseCtor::Mk(atom, mty, a, c), more))
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_cases_atoms(ms: List(ElabCaseCtor)): List(Nat) {
+  match ms {
+    Nil => Nil
+    Cons(m, rest) => Cons(m.atom, elab_cases_atoms(rest))
+  }
+}
+
+pub fn elab_cases_pis(ms: List(ElabCaseCtor), body: KernelTerm): KernelTerm {
+  match ms {
+    Nil => body
+    Cons(m, rest) => kernel_pi_over(m.atom, m.ty, elab_cases_pis(rest, body))
+  }
+}
+
+// `a⃗ ⇒ h⃗ ⇒ m_j(a⃗)` for each constructor.
+pub fn elab_cases_own(ms: List(ElabCaseCtor)): List(KernelTerm) {
+  match ms {
+    Nil => Nil
+    Cons(m, rest) => Cons(elab_lams(elab_apps(KernelFVar(m.atom), elab_fvars(m.opened.fields)), List::append(m.opened.fields, m.opened.ihs)), elab_cases_own(rest))
+  }
+}
+
+// The minors of the whole group: `own` for `family`, `Unit::Star` for the others.
+pub fn elab_cases_group_minors(core: KernelCore, group: List(Text), family: Text, own: List(KernelTerm)): List(KernelTerm) {
+  match group {
+    Nil => Nil
+    Cons(g, rest) => {
+      let here := if g == family { own } else {
+        ⊢ List(KernelTerm) from match kernel_ind_get(core, g) {
+          None => Nil
+          Some(info) => elab_star_minors(info.constructors)
+        }
+      }
+      List::append(here, elab_cases_group_minors(core, rest, family, own))
+    }
+  }
+}
+
+pub fn elab_family_cases(k: Nat, core: &mut KernelCore, family: Text): Option(ElabDeclaration) {
+  let name := Text::concat(family, "@cases")
+  ⊢ Option(ElabDeclaration) from match kernel_ind_get(core, family) {
+    None => None
+    Some(info) => ⊢ Option(ElabDeclaration) from match info.alias {
+      Some(^a) => None
+      None => if info.indices != 0 || List::length(info.group) < 2 { None } else {
+        ⊢ Option(ElabDeclaration) from match kernel_global_get(core, "Unit") {
+          None => None
+          Some(^u) => ⊢ Option(ElabDeclaration) from match kernel_global_get(core, "Unit::Star") {
+            None => None
+            Some(^s) => ⊢ Option(ElabDeclaration) from match kernel_global_get(core, Text::concat(family, "::rec")) {
+              None => None
+              Some(^r) => ⊢ Option(ElabDeclaration) from match kernel_global_get(core, name) {
+                Some(^already) => None
+                None => ⊢ Option(ElabDeclaration) from match kernel_global_get(core, family) {
+                  None => None
+                  Some(fg) => ⊢ Option(ElabDeclaration) from match elab_fresh_params(k, &mut core, fg.ty, info.params) {
+                    None => None
+                    Some(ps) => {
+                      let params := elab_fvars(ps.fst)
+                      let this := elab_apps(KernelConst(family), params)
+                      let pty := kernel_pi(this, elab_cases_type1())
+                      let p := kernel_fresh(&mut core, pty)
+                      ⊢ Option(ElabDeclaration) from match elab_cases_ctors(k, &mut core, params, p, info.constructors) {
+                        None => None
+                        Some(ms) => {
+                          let m := kernel_fresh(&mut core, this)
+                          let ty := elab_nc_pis_over(ps.fst, ps.snd, kernel_pi_over(p, pty, elab_cases_pis(ms, kernel_pi_over(m, this, kernel_app(KernelFVar(p), KernelFVar(m))))))
+                          let motives := elab_group_motives(core, info.group, family, KernelFVar(p), false)
+                          let minors := elab_cases_group_minors(core, info.group, family, elab_cases_own(ms))
+                          let body := elab_apps(KernelConst(Text::concat(family, "::rec")), List::append(params, List::append(motives, List::append(minors, Cons(KernelFVar(m), Nil)))))
+                          let value := elab_lams(body, List::append(ps.fst, Cons(p, List::append(elab_cases_atoms(ms), Cons(m, Nil)))))
+                          ⊢ Option(ElabDeclaration) from match kernel_execute(k, &mut core, KernelDeclare(name, ty, Some(value), true)) {
+                            KernelAccepted => Some(ElabDeclaration::Mk(name, ty, value, true))
+                            _ => None
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The cases of every family of the command, in order; one that does not
+// check has none, and the kernel is left as before it.
+pub fn elab_cases(k: Nat, core: &mut KernelCore, fs: List(KernelFamily)): List(ElabDeclaration) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let saved := kernel_snapshot(core)
+      let here: List(ElabDeclaration) := ⊢ List(ElabDeclaration) from match elab_family_cases(k, &mut core, f.name) {
+        Some(d) => Cons(d, Nil)
+        None => {
+          kernel_set_to(&mut core, saved)
+          Nil
+        }
+      }
+      List::append(here, elab_cases(k, &mut core, rest))
+    }
+  }
+}
+
+// The declarations the host derives from an inductive command: the
+// no-confusion of its families, then their cases.
+pub fn elab_derived(k: Nat, core: &mut KernelCore, fs: List(KernelFamily)): List(ElabDeclaration) {
+  let nc := elab_no_confusion(k, &mut core, fs)
+  let here := List::append(nc, elab_cases(k, &mut core, fs))
+  match fs {
+    Cons(f, Nil) => if f.name == "Eq" { List::append(here, elab_late_noconf(k, &mut core, Ordmap::entries(core.inductives))) } else { here }
+    _ => here
+  }
+}
+
+// Types declared before `Eq` get their no-confusion once it exists, as the
+// host gives them.
+pub fn elab_late_noconf(k: Nat, core: &mut KernelCore, entries: List(Text × KernelIndInfo)): List(ElabDeclaration) {
+  match entries {
+    Nil => Nil
+    Cons(#(name, info), rest) => {
+      let here: List(ElabDeclaration) := if name == "Eq" || info.indices != 0 || List::length(info.group) != 1 { Nil } else {
+        elab_no_confusion(k, &mut core, [KernelFamily::Mk(name, KernelConst("Type"), Nil)])
+      }
+      List::append(here, elab_late_noconf(k, &mut core, rest))
     }
   }
 }

@@ -1,0 +1,972 @@
+import std::row { Mem }
+import std::prelude::std { List }
+
+// The model of `latent_rows.taut` with a user's arm for some instances of
+// `spawn`. The arm
+// `HandleSp(ix, b, r)` answers each `spawn` in `b` whose index is within
+// `ix`, by calling its body where the arm is, under the arm's handlers. A
+// spawn whose index is not within any such arm goes to the host. Labels of
+// one family are merged, so the row of `b` keeps one index, the union of its
+// spawns'; the arm removes that label only when the whole union is within
+// `ix` (`Wt`), never part of it.
+//
+// Functions are values: `Call(dr, di, r)` calls a value of type
+// `() -> _ ! {dr, spawn(di)}` and `SpawnFn(dr, di, r)` spawns one. The program
+// does not say which body the value holds; it may have been passed in,
+// returned or stored. Any body whose row and index are within the type
+// (`FnOk`) may run, so each theorem holds for every such body.
+
+pub(open) inductive Prog: Type {
+  Done: Prog
+  Op(n: Nat, rest: Prog): Prog
+  Spawn(body: Prog, rest: Prog): Prog
+  Handle(h: Nat, body: Prog, rest: Prog): Prog
+  HandleSp(ix: List(Nat), body: Prog, rest: Prog): Prog
+  Call(dr: List(Nat), di: List(Nat), rest: Prog): Prog
+  SpawnFn(dr: List(Nat), di: List(Nat), rest: Prog): Prog
+}
+
+// The row: plain labels (`InRow`) and the merged, folded index of the spawn
+// label (`InIdx`).
+mutual {
+  pub(open) inductive InRow: (Prog) -> (Nat) -> Prop {
+    IOp<n: Nat, r: Prog>: InRow(Op(n, r), n)
+    IOpRest<n: Nat, r: Prog, m: Nat>(k: InRow(r, m)): InRow(Op(n, r), m)
+    ISpawnRest<b: Prog, r: Prog, m: Nat>(k: InRow(r, m)): InRow(Spawn(b, r), m)
+    IHandle<h: Nat, b: Prog, r: Prog, m: Nat>(
+      k: InRow(b, m),
+      other: (Mem(Nat, m, Cons(h, Nil(<A: Nat>)))) -> False
+    ): InRow(Handle(h, b, r), m)
+    IHandleRest<h: Nat, b: Prog, r: Prog, m: Nat>(k: InRow(r, m)): InRow(Handle(h, b, r), m)
+    IHSpBody<ix: List(Nat), b: Prog, r: Prog, m: Nat>(k: InRow(b, m)): InRow(HandleSp(ix, b, r), m)
+    // The arm calls the bodies it answers: their effects are the arm's, at
+    // most `ix`.
+    IHSpArm<ix: List(Nat), b: Prog, r: Prog, m: Nat>(
+      k: Mem(Nat, m, ix)
+    ): InRow(HandleSp(ix, b, r), m)
+    IHSpRest<ix: List(Nat), b: Prog, r: Prog, m: Nat>(k: InRow(r, m)): InRow(HandleSp(ix, b, r), m)
+    ICall<dr: List(Nat), di: List(Nat), r: Prog, m: Nat>(
+      k: Mem(Nat, m, dr)
+    ): InRow(Call(dr, di, r), m)
+    ICallRest<dr: List(Nat), di: List(Nat), r: Prog, m: Nat>(
+      k: InRow(r, m)
+    ): InRow(Call(dr, di, r), m)
+    ISpawnFnRest<dr: List(Nat), di: List(Nat), r: Prog, m: Nat>(
+      k: InRow(r, m)
+    ): InRow(SpawnFn(dr, di, r), m)
+  }
+
+  pub(open) inductive InIdx: (Prog) -> (Nat) -> Prop {
+    XOpRest<n: Nat, r: Prog, m: Nat>(k: InIdx(r, m)): InIdx(Op(n, r), m)
+    XSpawnRow<b: Prog, r: Prog, m: Nat>(k: InRow(b, m)): InIdx(Spawn(b, r), m)
+    XSpawnIdx<b: Prog, r: Prog, m: Nat>(k: InIdx(b, m)): InIdx(Spawn(b, r), m)
+    XSpawnRest<b: Prog, r: Prog, m: Nat>(k: InIdx(r, m)): InIdx(Spawn(b, r), m)
+    XHandle<h: Nat, b: Prog, r: Prog, m: Nat>(k: InIdx(b, m)): InIdx(Handle(h, b, r), m)
+    XHandleRest<h: Nat, b: Prog, r: Prog, m: Nat>(k: InIdx(r, m)): InIdx(Handle(h, b, r), m)
+    // The spawn label of the arm's body is removed; only the rest's stays.
+    XHSpRest<ix: List(Nat), b: Prog, r: Prog, m: Nat>(k: InIdx(r, m)): InIdx(HandleSp(ix, b, r), m)
+    XCall<dr: List(Nat), di: List(Nat), r: Prog, m: Nat>(
+      k: Mem(Nat, m, di)
+    ): InIdx(Call(dr, di, r), m)
+    XCallRest<dr: List(Nat), di: List(Nat), r: Prog, m: Nat>(
+      k: InIdx(r, m)
+    ): InIdx(Call(dr, di, r), m)
+    // Spawning a value folds its whole type into the index.
+    XSpawnFnRow<dr: List(Nat), di: List(Nat), r: Prog, m: Nat>(
+      k: Mem(Nat, m, dr)
+    ): InIdx(SpawnFn(dr, di, r), m)
+    XSpawnFnIdx<dr: List(Nat), di: List(Nat), r: Prog, m: Nat>(
+      k: Mem(Nat, m, di)
+    ): InIdx(SpawnFn(dr, di, r), m)
+    XSpawnFnRest<dr: List(Nat), di: List(Nat), r: Prog, m: Nat>(
+      k: InIdx(r, m)
+    ): InIdx(SpawnFn(dr, di, r), m)
+  }
+}
+
+// The index a spawn of `b` carries.
+pub def Idx(b: Prog, m: Nat): Prop := InRow(b, m) ∨ InIdx(b, m)
+
+pub def Within(p: Prog, ix: List(Nat)): Prop := ∀ m: Nat. (InIdx(p, m)) -> Mem(Nat, m, ix)
+
+pub def IdxWithin(b: Prog, ix: List(Nat)): Prop := ∀ m: Nat. (Idx(b, m)) -> Mem(Nat, m, ix)
+
+// The checker allows the arm to remove the label only when the whole merged
+// index is within `ix`.
+pub(open) inductive Wt: (Prog) -> Prop {
+  WDone: Wt(Done)
+  WOp(n: Nat, r: Prog, k: Wt(r)): Wt(Op(n, r))
+  WSpawn(b: Prog, r: Prog, kb: Wt(b), kr: Wt(r)): Wt(Spawn(b, r))
+  WHandle(h: Nat, b: Prog, r: Prog, kb: Wt(b), kr: Wt(r)): Wt(Handle(h, b, r))
+  WHSp(
+    ix: List(Nat),
+    b: Prog,
+    r: Prog,
+    within: Within(b, ix),
+    kb: Wt(b),
+    kr: Wt(r)
+  ): Wt(HandleSp(ix, b, r))
+  WCall(dr: List(Nat), di: List(Nat), r: Prog, kr: Wt(r)): Wt(Call(dr, di, r))
+  WSpawnFn(dr: List(Nat), di: List(Nat), r: Prog, kr: Wt(r)): Wt(SpawnFn(dr, di, r))
+}
+
+// An arm in scope: what it answers and the handlers around it.
+pub(open) inductive Arm: Type {
+  Mk(ix: List(Nat), hs: List(Nat)): Arm
+}
+
+// A body that a value of type `() -> _ ! {dr, spawn(di)}` may hold.
+pub def FnOk(dr: List(Nat), di: List(Nat), b: Prog): Prop :=
+((∀ m: Nat. (InRow(b, m)) -> Mem(Nat, m, dr)) ∧ (∀ m: Nat. (InIdx(b, m)) -> Mem(Nat, m, di))) ∧ Wt(b)
+
+// The type of a spawned value is within `ix`.
+pub def TyWithin(dr: List(Nat), di: List(Nat), ix: List(Nat)): Prop :=
+∀ m: Nat. (Mem(Nat, m, dr) ∨ Mem(Nat, m, di)) -> Mem(Nat, m, ix)
+
+// No arm in scope answers a spawned value of this type.
+pub def CaughtT(S: List(Arm), dr: List(Nat), di: List(Nat)): Prop :=
+∀ ix: List(Nat). ∀ hs: List(Nat). (Mem(Arm, Mk(ix, hs), S)) -> (TyWithin(dr, di, ix)) -> False
+
+// A spawn that some arm in scope answers.
+pub def Caught(S: List(Arm), b: Prog): Prop :=
+∀ ix: List(Nat). ∀ hs: List(Nat). (Mem(Arm, Mk(ix, hs), S)) -> (IdxWithin(b, ix)) -> False
+
+pub(open) inductive Reach: (List(Nat)) -> (List(Arm)) -> (Prog) -> (Nat) -> Prop {
+  ROp(
+    H: List(Nat),
+    S: List(Arm),
+    n: Nat,
+    r: Prog,
+    out: (Mem(Nat, n, H)) -> False
+  ): Reach(H, S, Op(n, r), n)
+  ROpRest(
+    H: List(Nat),
+    S: List(Arm),
+    n: Nat,
+    r: Prog,
+    m: Nat,
+    k: Reach(H, S, r, m)
+  ): Reach(H, S, Op(n, r), m)
+  // A spawn no arm answers: the host runs it under no handler and no arm.
+  RSpawnHost(
+    H: List(Nat),
+    S: List(Arm),
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    free: Caught(S, b),
+    k: Reach(Nil(<A: Nat>), Nil(<A: Arm>), b, m)
+  ): Reach(H, S, Spawn(b, r), m)
+  // A spawn an arm answers: the arm calls the body under its own handlers.
+  RSpawnArm(
+    H: List(Nat),
+    S: List(Arm),
+    ix: List(Nat),
+    hs: List(Nat),
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    at: Mem(Arm, Mk(ix, hs), S),
+    within: IdxWithin(b, ix),
+    k: Reach(hs, S, b, m)
+  ): Reach(H, S, Spawn(b, r), m)
+  RSpawnRest(
+    H: List(Nat),
+    S: List(Arm),
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    k: Reach(H, S, r, m)
+  ): Reach(H, S, Spawn(b, r), m)
+  RHandle(
+    H: List(Nat),
+    S: List(Arm),
+    h: Nat,
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    k: Reach(Cons(h, H), S, b, m)
+  ): Reach(H, S, Handle(h, b, r), m)
+  RHandleRest(
+    H: List(Nat),
+    S: List(Arm),
+    h: Nat,
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    k: Reach(H, S, r, m)
+  ): Reach(H, S, Handle(h, b, r), m)
+  RHSp(
+    H: List(Nat),
+    S: List(Arm),
+    ix: List(Nat),
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    k: Reach(H, Cons(Mk(ix, H), S), b, m)
+  ): Reach(H, S, HandleSp(ix, b, r), m)
+  RHSpRest(
+    H: List(Nat),
+    S: List(Arm),
+    ix: List(Nat),
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    k: Reach(H, S, r, m)
+  ): Reach(H, S, HandleSp(ix, b, r), m)
+  // The value's body runs where it is called, under the caller's handlers
+  // and arms. Which body it is, is not known: any `FnOk` body.
+  RCall(
+    H: List(Nat),
+    S: List(Arm),
+    dr: List(Nat),
+    di: List(Nat),
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    ok: FnOk(dr, di, b),
+    k: Reach(H, S, b, m)
+  ): Reach(H, S, Call(dr, di, r), m)
+  RCallRest(
+    H: List(Nat),
+    S: List(Arm),
+    dr: List(Nat),
+    di: List(Nat),
+    r: Prog,
+    m: Nat,
+    k: Reach(H, S, r, m)
+  ): Reach(H, S, Call(dr, di, r), m)
+  // A spawned value no arm answers: the host runs it under nothing.
+  RSpawnFnHost(
+    H: List(Nat),
+    S: List(Arm),
+    dr: List(Nat),
+    di: List(Nat),
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    ok: FnOk(dr, di, b),
+    free: CaughtT(S, dr, di),
+    k: Reach(Nil(<A: Nat>), Nil(<A: Arm>), b, m)
+  ): Reach(H, S, SpawnFn(dr, di, r), m)
+  // A spawned value an arm answers, chosen by its type.
+  RSpawnFnArm(
+    H: List(Nat),
+    S: List(Arm),
+    dr: List(Nat),
+    di: List(Nat),
+    ix: List(Nat),
+    hs: List(Nat),
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    ok: FnOk(dr, di, b),
+    at: Mem(Arm, Mk(ix, hs), S),
+    within: TyWithin(dr, di, ix),
+    k: Reach(hs, S, b, m)
+  ): Reach(H, S, SpawnFn(dr, di, r), m)
+  RSpawnFnRest(
+    H: List(Nat),
+    S: List(Arm),
+    dr: List(Nat),
+    di: List(Nat),
+    r: Prog,
+    m: Nat,
+    k: Reach(H, S, r, m)
+  ): Reach(H, S, SpawnFn(dr, di, r), m)
+}
+
+// An effect an arm in scope asks of the host: within its `ix`, not handled
+// around it.
+pub(open) inductive ByArm: (List(Arm)) -> (Nat) -> Prop {
+  AHere(
+    ix: List(Nat),
+    hs: List(Nat),
+    t: List(Arm),
+    m: Nat,
+    mem: Mem(Nat, m, ix),
+    out: (Mem(Nat, m, hs)) -> False
+  ): ByArm(Cons(Mk(ix, hs), t), m)
+  AThere(a: Arm, t: List(Arm), m: Nat, k: ByArm(t, m)): ByArm(Cons(a, t), m)
+}
+
+pub theorem by_arm_at(
+  S: List(Arm),
+  ix: List(Nat),
+  hs: List(Nat),
+  m: Nat,
+  at: Mem(Arm, Mk(ix, hs), S),
+  mem: Mem(Nat, m, ix),
+  out: (Mem(Nat, m, hs)) -> False
+): ByArm(S, m) {
+  match at {
+    MemHere(t) => ⊢ ByArm(Cons(Mk(ix, hs), t), m) from AHere(ix, hs, t, m, mem, out)
+    MemThere(a, t, at2) => ⊢ ByArm(
+      Cons(a, t),
+      m
+    ) from AThere(a, t, m, by_arm_at(t, ix, hs, m, at2, mem, out))
+  }
+}
+
+pub theorem out_of_head<m: Nat, h: Nat, H: List(Nat)>(
+  out: (Mem(Nat, m, Cons(h, H))) -> False
+): (Mem(Nat, m, Cons(h, Nil(<A: Nat>)))) -> False {
+  q => out(match q {
+    MemHere(t) => MemHere(<A: Nat, a: m>, H)
+    MemThere(b, t, q2) => Mem::nil(Mem(Nat, m, Cons(h, H)), q2)
+  })
+}
+
+pub theorem out_of_tail<m: Nat, h: Nat, H: List(Nat)>(
+  out: (Mem(Nat, m, Cons(h, H))) -> False
+): (Mem(Nat, m, H)) -> False {
+  q => out(MemThere(h, H, q))
+}
+
+pub def Plain(H: List(Nat), p: Prog, m: Nat): Prop := InRow(p, m) ∧ ((Mem(Nat, m, H)) -> False)
+
+pub theorem wt_spawn_body<b: Prog, r: Prog>(w: Wt(Spawn(b, r))): Wt(b) {
+  match w {
+    WSpawn(b0, r0, kb, kr) => ⊢ Wt(b0) from kb
+  }
+}
+
+pub theorem wt_spawn_rest<b: Prog, r: Prog>(w: Wt(Spawn(b, r))): Wt(r) {
+  match w {
+    WSpawn(b0, r0, kb, kr) => ⊢ Wt(r0) from kr
+  }
+}
+
+pub theorem wt_op_rest<n: Nat, r: Prog>(w: Wt(Op(n, r))): Wt(r) {
+  match w {
+    WOp(n0, r0, k) => ⊢ Wt(r0) from k
+  }
+}
+
+pub theorem wt_handle_body<h: Nat, b: Prog, r: Prog>(w: Wt(Handle(h, b, r))): Wt(b) {
+  match w {
+    WHandle(h0, b0, r0, kb, kr) => ⊢ Wt(b0) from kb
+  }
+}
+
+pub theorem wt_handle_rest<h: Nat, b: Prog, r: Prog>(w: Wt(Handle(h, b, r))): Wt(r) {
+  match w {
+    WHandle(h0, b0, r0, kb, kr) => ⊢ Wt(r0) from kr
+  }
+}
+
+pub theorem wt_hsp_body<ix: List(Nat), b: Prog, r: Prog>(w: Wt(HandleSp(ix, b, r))): Wt(b) {
+  match w {
+    WHSp(ix0, b0, r0, within, kb, kr) => ⊢ Wt(b0) from kb
+  }
+}
+
+pub theorem wt_hsp_rest<ix: List(Nat), b: Prog, r: Prog>(w: Wt(HandleSp(ix, b, r))): Wt(r) {
+  match w {
+    WHSp(ix0, b0, r0, within, kb, kr) => ⊢ Wt(r0) from kr
+  }
+}
+
+pub theorem wt_hsp_within<ix: List(Nat), b: Prog, r: Prog>(
+  w: Wt(HandleSp(ix, b, r))
+): Within(b, ix) {
+  match w {
+    WHSp(ix0, b0, r0, within, kb, kr) => ⊢ Within(b0, ix0) from within
+  }
+}
+
+pub theorem wt_call_rest<dr: List(Nat), di: List(Nat), r: Prog>(w: Wt(Call(dr, di, r))): Wt(r) {
+  match w {
+    WCall(dr0, di0, r0, kr) => ⊢ Wt(r0) from kr
+  }
+}
+
+pub theorem wt_spawn_fn_rest<dr: List(Nat), di: List(Nat), r: Prog>(
+  w: Wt(SpawnFn(dr, di, r))
+): Wt(r) {
+  match w {
+    WSpawnFn(dr0, di0, r0, kr) => ⊢ Wt(r0) from kr
+  }
+}
+
+pub theorem fn_row<dr: List(Nat), di: List(Nat), b: Prog>(
+  ok: FnOk(dr, di, b),
+  m: Nat,
+  k: InRow(b, m)
+): Mem(Nat, m, dr) {
+  And::left(And::left(ok))(m, k)
+}
+
+pub theorem fn_idx<dr: List(Nat), di: List(Nat), b: Prog>(
+  ok: FnOk(dr, di, b),
+  m: Nat,
+  k: InIdx(b, m)
+): Mem(Nat, m, di) {
+  And::right(And::left(ok))(m, k)
+}
+
+pub theorem fn_wt<dr: List(Nat), di: List(Nat), b: Prog>(ok: FnOk(dr, di, b)): Wt(b) {
+  And::right(ok)
+}
+
+pub theorem arm_split(
+  ix: List(Nat),
+  hs: List(Nat),
+  t: List(Arm),
+  m: Nat,
+  k: ByArm(Cons(Mk(ix, hs), t), m)
+): (Mem(Nat, m, ix) ∧ ((Mem(Nat, m, hs)) -> False)) ∨ ByArm(t, m) {
+  match k {
+    AHere(ix0, hs0, t0, m0, mem, out) => ⊢ (
+      Mem(Nat, m0, ix0) ∧ ((Mem(Nat, m0, hs0)) -> False)
+    ) ∨ ByArm(t0, m0) from OrInl(AndIntro(mem, out))
+    AThere(a, t0, m0, k2) => ⊢ (
+      Mem(Nat, m0, ix) ∧ ((Mem(Nat, m0, hs)) -> False)
+    ) ∨ ByArm(t0, m0) from OrInr(k2)
+  }
+}
+
+pub theorem by_arm_nil<C: Prop, m: Nat>(k: ByArm(Nil(<A: Arm>), m)): C {
+  match k {
+  }
+}
+
+// Under an arm whose `ix` holds the whole index of `p`, every spawn in `p`
+// is answered by an arm: what reaches the host is in the row unhandled, or
+// asked by an arm.
+pub theorem reach_caught(
+  H: List(Nat),
+  S: List(Arm),
+  p: Prog,
+  m: Nat,
+  k: Reach(H, S, p, m),
+  w: Wt(p),
+  ix: List(Nat),
+  hs: List(Nat),
+  at: Mem(Arm, Mk(ix, hs), S),
+  cov: Within(p, ix)
+): Plain(H, p, m) ∨ ByArm(S, m) {
+  match k {
+    ROp(H0, S0, n, r, out) => ⊢ Plain(H0, Op(n, r), n) ∨ ByArm(S0, n) from OrInl(AndIntro(IOp, out))
+    ROpRest(H0, S0, n, r, m0, k2) => ⊢ Plain(
+      H0,
+      Op(n, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(H0, S0, r, m0, k2, wt_op_rest(w), ix, hs, at, x => q => cov(x, XOpRest(q))),
+      a => OrInl(AndIntro(IOpRest(And::left(a)), And::right(a))),
+      a => OrInr(a)
+    )
+    RSpawnHost(H0, S0, b, r, m0, free, k2) => ⊢ Plain(
+      H0,
+      Spawn(b, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from match free(
+      ix,
+      hs,
+      at,
+      x => q => cov(x, Or::elim(q, a => XSpawnRow(a), a => XSpawnIdx(a)))
+    ) {
+    }
+    RSpawnArm(H0, S0, ix2, hs2, b, r, m0, at2, within2, k2) => ⊢ Plain(
+      H0,
+      Spawn(b, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(
+        hs2,
+        S0,
+        b,
+        m0,
+        k2,
+        wt_spawn_body(w),
+        ix,
+        hs,
+        at,
+        x => q => cov(x, XSpawnIdx(q))
+      ),
+      a => OrInr(
+        by_arm_at(
+          S0,
+          ix2,
+          hs2,
+          m0,
+          at2,
+          within2(m0, OrInl(<A: InRow(b, m0), B: InIdx(b, m0)>, And::left(a))),
+          And::right(a)
+        )
+      ),
+      a => OrInr(a)
+    )
+    RSpawnRest(H0, S0, b, r, m0, k2) => ⊢ Plain(
+      H0,
+      Spawn(b, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(
+        H0,
+        S0,
+        r,
+        m0,
+        k2,
+        wt_spawn_rest(w),
+        ix,
+        hs,
+        at,
+        x => q => cov(x, XSpawnRest(q))
+      ),
+      a => OrInl(AndIntro(ISpawnRest(And::left(a)), And::right(a))),
+      a => OrInr(a)
+    )
+    RHandle(H0, S0, h, b, r, m0, k2) => ⊢ Plain(
+      H0,
+      Handle(h, b, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(
+        Cons(h, H0),
+        S0,
+        b,
+        m0,
+        k2,
+        wt_handle_body(w),
+        ix,
+        hs,
+        at,
+        x => q => cov(x, XHandle(q))
+      ),
+      a => OrInl(
+        AndIntro(IHandle(And::left(a), out_of_head(And::right(a))), out_of_tail(And::right(a)))
+      ),
+      a => OrInr(a)
+    )
+    RHandleRest(H0, S0, h, b, r, m0, k2) => ⊢ Plain(
+      H0,
+      Handle(h, b, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(
+        H0,
+        S0,
+        r,
+        m0,
+        k2,
+        wt_handle_rest(w),
+        ix,
+        hs,
+        at,
+        x => q => cov(x, XHandleRest(q))
+      ),
+      a => OrInl(AndIntro(IHandleRest(And::left(a)), And::right(a))),
+      a => OrInr(a)
+    )
+    RHSp(H0, S0, ix3, b, r, m0, k2) => ⊢ Plain(
+      H0,
+      HandleSp(ix3, b, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(
+        H0,
+        Cons(Mk(ix3, H0), S0),
+        b,
+        m0,
+        k2,
+        wt_hsp_body(w),
+        ix3,
+        H0,
+        MemHere(<A: Arm, a: Mk(ix3, H0)>, S0),
+        wt_hsp_within(w)
+      ),
+      a => OrInl(AndIntro(IHSpBody(And::left(a)), And::right(a))),
+      a => Or::elim(
+        arm_split(ix3, H0, S0, m0, a),
+        c => OrInl(AndIntro(IHSpArm(And::left(c)), And::right(c))),
+        c => OrInr(c)
+      )
+    )
+    RHSpRest(H0, S0, ix3, b, r, m0, k2) => ⊢ Plain(
+      H0,
+      HandleSp(ix3, b, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(H0, S0, r, m0, k2, wt_hsp_rest(w), ix, hs, at, x => q => cov(x, XHSpRest(q))),
+      a => OrInl(AndIntro(IHSpRest(And::left(a)), And::right(a))),
+      a => OrInr(a)
+    )
+    RCall(H0, S0, dr, di, b, r, m0, ok, k2) => ⊢ Plain(
+      H0,
+      Call(dr, di, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(
+        H0,
+        S0,
+        b,
+        m0,
+        k2,
+        fn_wt(ok),
+        ix,
+        hs,
+        at,
+        x => q => cov(x, XCall(fn_idx(ok, x, q)))
+      ),
+      a => OrInl(AndIntro(ICall(fn_row(ok, m0, And::left(a))), And::right(a))),
+      a => OrInr(a)
+    )
+    RCallRest(H0, S0, dr, di, r, m0, k2) => ⊢ Plain(
+      H0,
+      Call(dr, di, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(H0, S0, r, m0, k2, wt_call_rest(w), ix, hs, at, x => q => cov(x, XCallRest(q))),
+      a => OrInl(AndIntro(ICallRest(And::left(a)), And::right(a))),
+      a => OrInr(a)
+    )
+    RSpawnFnHost(H0, S0, dr, di, b, r, m0, ok, free, k2) => ⊢ Plain(
+      H0,
+      SpawnFn(dr, di, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from match free(
+      ix,
+      hs,
+      at,
+      x => q => cov(x, Or::elim(q, a => XSpawnFnRow(a), a => XSpawnFnIdx(a)))
+    ) {
+    }
+    RSpawnFnArm(H0, S0, dr, di, ix2, hs2, b, r, m0, ok, at2, within2, k2) => ⊢ Plain(
+      H0,
+      SpawnFn(dr, di, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(
+        hs2,
+        S0,
+        b,
+        m0,
+        k2,
+        fn_wt(ok),
+        ix,
+        hs,
+        at,
+        x => q => cov(x, XSpawnFnIdx(fn_idx(ok, x, q)))
+      ),
+      a => OrInr(
+        by_arm_at(
+          S0,
+          ix2,
+          hs2,
+          m0,
+          at2,
+          within2(
+            m0,
+            OrInl(<A: Mem(Nat, m0, dr), B: Mem(Nat, m0, di)>, fn_row(ok, m0, And::left(a)))
+          ),
+          And::right(a)
+        )
+      ),
+      a => OrInr(a)
+    )
+    RSpawnFnRest(H0, S0, dr, di, r, m0, k2) => ⊢ Plain(
+      H0,
+      SpawnFn(dr, di, r),
+      m0
+    ) ∨ ByArm(
+      S0,
+      m0
+    ) from Or::elim(
+      reach_caught(
+        H0,
+        S0,
+        r,
+        m0,
+        k2,
+        wt_spawn_fn_rest(w),
+        ix,
+        hs,
+        at,
+        x => q => cov(x, XSpawnFnRest(q))
+      ),
+      a => OrInl(AndIntro(ISpawnFnRest(And::left(a)), And::right(a))),
+      a => OrInr(a)
+    )
+  }
+}
+
+// Each effect that reaches the host is in the row unhandled, in the spawn
+// label's index, or asked by an arm in scope.
+pub theorem reach_main(
+  H: List(Nat),
+  S: List(Arm),
+  p: Prog,
+  m: Nat,
+  k: Reach(H, S, p, m),
+  w: Wt(p)
+): Plain(H, p, m) ∨ (InIdx(p, m) ∨ ByArm(S, m)) {
+  match k {
+    ROp(H0, S0, n, r, out) => ⊢ Plain(
+      H0,
+      Op(n, r),
+      n
+    ) ∨ (InIdx(Op(n, r), n) ∨ ByArm(S0, n)) from OrInl(AndIntro(IOp, out))
+    ROpRest(H0, S0, n, r, m0, k2) => ⊢ Plain(
+      H0,
+      Op(n, r),
+      m0
+    ) ∨ (
+      InIdx(Op(n, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_main(H0, S0, r, m0, k2, wt_op_rest(w)),
+      a => OrInl(AndIntro(IOpRest(And::left(a)), And::right(a))),
+      a => OrInr(Or::elim(a, i => OrInl(XOpRest(i)), c => OrInr(c)))
+    )
+    RSpawnHost(H0, S0, b, r, m0, free, k2) => ⊢ Plain(
+      H0,
+      Spawn(b, r),
+      m0
+    ) ∨ (
+      InIdx(Spawn(b, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_main(Nil(<A: Nat>), Nil(<A: Arm>), b, m0, k2, wt_spawn_body(w)),
+      a => OrInr(OrInl(XSpawnRow(And::left(a)))),
+      a => Or::elim(a, i => OrInr(OrInl(XSpawnIdx(i))), c => by_arm_nil(c))
+    )
+    RSpawnArm(H0, S0, ix2, hs2, b, r, m0, at2, within2, k2) => ⊢ Plain(
+      H0,
+      Spawn(b, r),
+      m0
+    ) ∨ (
+      InIdx(Spawn(b, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_caught(
+        hs2,
+        S0,
+        b,
+        m0,
+        k2,
+        wt_spawn_body(w),
+        ix2,
+        hs2,
+        at2,
+        x => q => within2(x, OrInr(<A: InRow(b, x), B: InIdx(b, x)>, q))
+      ),
+      a => OrInr(
+        OrInr(
+          by_arm_at(
+            S0,
+            ix2,
+            hs2,
+            m0,
+            at2,
+            within2(m0, OrInl(<A: InRow(b, m0), B: InIdx(b, m0)>, And::left(a))),
+            And::right(a)
+          )
+        )
+      ),
+      c => OrInr(OrInr(c))
+    )
+    RSpawnRest(H0, S0, b, r, m0, k2) => ⊢ Plain(
+      H0,
+      Spawn(b, r),
+      m0
+    ) ∨ (
+      InIdx(Spawn(b, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_main(H0, S0, r, m0, k2, wt_spawn_rest(w)),
+      a => OrInl(AndIntro(ISpawnRest(And::left(a)), And::right(a))),
+      a => OrInr(Or::elim(a, i => OrInl(XSpawnRest(i)), c => OrInr(c)))
+    )
+    RHandle(H0, S0, h, b, r, m0, k2) => ⊢ Plain(
+      H0,
+      Handle(h, b, r),
+      m0
+    ) ∨ (
+      InIdx(Handle(h, b, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_main(Cons(h, H0), S0, b, m0, k2, wt_handle_body(w)),
+      a => OrInl(
+        AndIntro(IHandle(And::left(a), out_of_head(And::right(a))), out_of_tail(And::right(a)))
+      ),
+      a => OrInr(Or::elim(a, i => OrInl(XHandle(i)), c => OrInr(c)))
+    )
+    RHandleRest(H0, S0, h, b, r, m0, k2) => ⊢ Plain(
+      H0,
+      Handle(h, b, r),
+      m0
+    ) ∨ (
+      InIdx(Handle(h, b, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_main(H0, S0, r, m0, k2, wt_handle_rest(w)),
+      a => OrInl(AndIntro(IHandleRest(And::left(a)), And::right(a))),
+      a => OrInr(Or::elim(a, i => OrInl(XHandleRest(i)), c => OrInr(c)))
+    )
+    RHSp(H0, S0, ix3, b, r, m0, k2) => ⊢ Plain(
+      H0,
+      HandleSp(ix3, b, r),
+      m0
+    ) ∨ (
+      InIdx(HandleSp(ix3, b, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_caught(
+        H0,
+        Cons(Mk(ix3, H0), S0),
+        b,
+        m0,
+        k2,
+        wt_hsp_body(w),
+        ix3,
+        H0,
+        MemHere(<A: Arm, a: Mk(ix3, H0)>, S0),
+        wt_hsp_within(w)
+      ),
+      a => OrInl(AndIntro(IHSpBody(And::left(a)), And::right(a))),
+      a => Or::elim(
+        arm_split(ix3, H0, S0, m0, a),
+        c => OrInl(AndIntro(IHSpArm(And::left(c)), And::right(c))),
+        c => OrInr(OrInr(c))
+      )
+    )
+    RHSpRest(H0, S0, ix3, b, r, m0, k2) => ⊢ Plain(
+      H0,
+      HandleSp(ix3, b, r),
+      m0
+    ) ∨ (
+      InIdx(HandleSp(ix3, b, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_main(H0, S0, r, m0, k2, wt_hsp_rest(w)),
+      a => OrInl(AndIntro(IHSpRest(And::left(a)), And::right(a))),
+      a => OrInr(Or::elim(a, i => OrInl(XHSpRest(i)), c => OrInr(c)))
+    )
+    RCall(H0, S0, dr, di, b, r, m0, ok, k2) => ⊢ Plain(
+      H0,
+      Call(dr, di, r),
+      m0
+    ) ∨ (
+      InIdx(Call(dr, di, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_main(H0, S0, b, m0, k2, fn_wt(ok)),
+      a => OrInl(AndIntro(ICall(fn_row(ok, m0, And::left(a))), And::right(a))),
+      a => OrInr(Or::elim(a, i => OrInl(XCall(fn_idx(ok, m0, i))), c => OrInr(c)))
+    )
+    RCallRest(H0, S0, dr, di, r, m0, k2) => ⊢ Plain(
+      H0,
+      Call(dr, di, r),
+      m0
+    ) ∨ (
+      InIdx(Call(dr, di, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_main(H0, S0, r, m0, k2, wt_call_rest(w)),
+      a => OrInl(AndIntro(ICallRest(And::left(a)), And::right(a))),
+      a => OrInr(Or::elim(a, i => OrInl(XCallRest(i)), c => OrInr(c)))
+    )
+    RSpawnFnHost(H0, S0, dr, di, b, r, m0, ok, free, k2) => ⊢ Plain(
+      H0,
+      SpawnFn(dr, di, r),
+      m0
+    ) ∨ (
+      InIdx(SpawnFn(dr, di, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_main(Nil(<A: Nat>), Nil(<A: Arm>), b, m0, k2, fn_wt(ok)),
+      a => OrInr(OrInl(XSpawnFnRow(fn_row(ok, m0, And::left(a))))),
+      a => Or::elim(a, i => OrInr(OrInl(XSpawnFnIdx(fn_idx(ok, m0, i)))), c => by_arm_nil(c))
+    )
+    RSpawnFnArm(H0, S0, dr, di, ix2, hs2, b, r, m0, ok, at2, within2, k2) => ⊢ Plain(
+      H0,
+      SpawnFn(dr, di, r),
+      m0
+    ) ∨ (
+      InIdx(SpawnFn(dr, di, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_caught(
+        hs2,
+        S0,
+        b,
+        m0,
+        k2,
+        fn_wt(ok),
+        ix2,
+        hs2,
+        at2,
+        x => q => within2(x, OrInr(<A: Mem(Nat, x, dr), B: Mem(Nat, x, di)>, fn_idx(ok, x, q)))
+      ),
+      a => OrInr(
+        OrInr(
+          by_arm_at(
+            S0,
+            ix2,
+            hs2,
+            m0,
+            at2,
+            within2(
+              m0,
+              OrInl(<A: Mem(Nat, m0, dr), B: Mem(Nat, m0, di)>, fn_row(ok, m0, And::left(a)))
+            ),
+            And::right(a)
+          )
+        )
+      ),
+      c => OrInr(OrInr(c))
+    )
+    RSpawnFnRest(H0, S0, dr, di, r, m0, k2) => ⊢ Plain(
+      H0,
+      SpawnFn(dr, di, r),
+      m0
+    ) ∨ (
+      InIdx(SpawnFn(dr, di, r), m0) ∨ ByArm(S0, m0)
+    ) from Or::elim(
+      reach_main(H0, S0, r, m0, k2, wt_spawn_fn_rest(w)),
+      a => OrInl(AndIntro(ISpawnFnRest(And::left(a)), And::right(a))),
+      a => OrInr(Or::elim(a, i => OrInl(XSpawnFnRest(i)), c => OrInr(c)))
+    )
+  }
+}
+
+// The whole program: what reaches the host is in the top row, so asking for
+// the top row covers it, even with arms that answer only some spawns.
+pub theorem arm_covers_reach(
+  p: Prog,
+  m: Nat,
+  k: Reach(Nil(<A: Nat>), Nil(<A: Arm>), p, m),
+  w: Wt(p)
+): InRow(p, m) ∨ InIdx(p, m) {
+  Or::elim(
+    reach_main(Nil(<A: Nat>), Nil(<A: Arm>), p, m, k, w),
+    a => OrInl(And::left(a)),
+    a => Or::elim(a, i => OrInr(i), c => by_arm_nil(c))
+  )
+}

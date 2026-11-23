@@ -1,8 +1,9 @@
+import "messages.taut"
 import "data_fields_function_table.taut"
 import "registration_context_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -10,6 +11,7 @@ import "datas_registration.taut"
 import "signature_table_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -26,7 +28,7 @@ pub theorem fnt_ck_register_ctors_context(
   is_struct: Bool,
   i: Nat
 ): CkFnsFrame(c, ck_register_ctors(ctors, c, dname, i)) {
-  ⊢ CkFnsFrame(c, ck_register_ctors(ctors, c, dname, i)) from match ctors {
+  match ctors {
     Nil => Refl
     Cons(ctor, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkFnsFrame(c, m),
@@ -67,15 +69,12 @@ pub theorem fnt_registration_declare_context(
   builtin: Bool
 ): CkFnsFrame(c, registration_declare(c, d, is_struct, builtin)) {
   fnt_frame_bind_ok(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => frame_bind(
-      List(DataCtor),
-      Unit,
+      <A: List(DataCtor), B: Unit>,
       (constructors: List(DataCtor), c2: Checker) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
           d,
@@ -93,7 +92,7 @@ pub theorem fnt_registration_declare_context(
     ),
     frame_error_if(
       c,
-      "a view struct has no fields: it is an opaque type",
+      view_decl_message(is_struct),
       registration_span(d),
       Bool::and(
         surface_data_is_view(d),
@@ -102,7 +101,7 @@ pub theorem fnt_registration_declare_context(
     ),
     fnt_frame_error_if_ok(
       c,
-      "a view struct has no fields: it is an opaque type",
+      view_decl_message(is_struct),
       registration_span(d),
       Bool::and(
         surface_data_is_view(d),
@@ -110,12 +109,10 @@ pub theorem fnt_registration_declare_context(
       )
     ),
     ignored => c1 => fnt_frame_bind_ok(
-      List(DataCtor),
-      Unit,
+      <A: List(DataCtor), B: Unit>,
       c1,
       (constructors: List(DataCtor), c2: Checker) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
           d,
@@ -136,8 +133,7 @@ pub theorem fnt_registration_declare_context(
         ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
       ),
       constructors => c2 => fnt_frame_bind_ok(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c2,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,

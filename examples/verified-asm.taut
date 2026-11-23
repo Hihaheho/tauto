@@ -1,5 +1,5 @@
-import "../std/UInt.taut"
-import "../std/asm.taut"
+import std::uint
+import std::asm
 
 pub fn sum_code(): List(Asm::Instr) { asm!(`mov x0, x1; add x0, x0, x2`) }
 pub theorem sum_state(
@@ -9,24 +9,24 @@ pub theorem sum_state(
   s
 ) = (
   Asm::State {
-    x0: U64::wrapping_add(Asm::read(s, Asm::Reg::X1), Asm::read(s, Asm::Reg::X2)),
+    x0: UInt::wrapping_add64(Asm::read(s, Asm::Reg::X1), Asm::read(s, Asm::Reg::X2)),
     x1: Asm::read(s, Asm::Reg::X1),
     x2: Asm::read(s, Asm::Reg::X2)
   }
 ) { Refl }
 pub theorem sum_contract(
-  a: U64,
-  b: U64
+  a: UInt(64),
+  b: UInt(64)
 ): Asm::Hoare(
   sum_code(),
   (s: Asm::State) => Asm::read(s, Asm::Reg::X1) = a ∧ Asm::read(s, Asm::Reg::X2) = b,
-  (s: Asm::State) => Asm::read(s, Asm::Reg::X0) = U64::wrapping_add(a, b)
+  (s: Asm::State) => Asm::read(s, Asm::Reg::X0) = UInt::wrapping_add64(a, b)
 ) {
   (s: Asm::State, h: Asm::read(s, Asm::Reg::X1) = a ∧ Asm::read(s, Asm::Reg::X2) = b) =>
-  ⊢ Asm::read(Asm::run(sum_code(), s), Asm::Reg::X0) = U64::wrapping_add(a, b) from match h {
+  ⊢ Asm::read(Asm::run(sum_code(), s), Asm::Reg::X0) = UInt::wrapping_add64(a, b) from match h {
     AndIntro(left, right) => Eq::trans(
-      Eq::congr((x: U64) => U64::wrapping_add(x, Asm::read(s, Asm::Reg::X2)), left),
-      Eq::congr((x: U64) => U64::wrapping_add(a, x), right)
+      Eq::congr((x: UInt(64)) => UInt::wrapping_add64(x, Asm::read(s, Asm::Reg::X2)), left),
+      Eq::congr((x: UInt(64)) => UInt::wrapping_add64(a, x), right)
     )
   }
 }
@@ -38,7 +38,7 @@ pub theorem difference_state(
   s
 ) = (
   Asm::State {
-    x0: U64::wrapping_sub(Asm::read(s, Asm::Reg::X1), Asm::read(s, Asm::Reg::X2)),
+    x0: UInt::wrapping_sub64(Asm::read(s, Asm::Reg::X1), Asm::read(s, Asm::Reg::X2)),
     x1: Asm::read(s, Asm::Reg::X2),
     x2: Asm::read(s, Asm::Reg::X2)
   }
@@ -52,7 +52,7 @@ pub theorem double_state(
 ) = (
   Asm::State {
     x0: Asm::read(s, Asm::Reg::X0),
-    x1: U64::wrapping_add(Asm::read(s, Asm::Reg::X1), Asm::read(s, Asm::Reg::X1)),
+    x1: UInt::wrapping_add64(Asm::read(s, Asm::Reg::X1), Asm::read(s, Asm::Reg::X1)),
     x2: Asm::read(s, Asm::Reg::X2)
   }
 ) { Refl }
@@ -64,14 +64,14 @@ pub theorem subtract_into_rhs_state(
   s
 ) = (
   Asm::State {
-    x0: U64::wrapping_sub(Asm::read(s, Asm::Reg::X1), Asm::read(s, Asm::Reg::X0)),
+    x0: UInt::wrapping_sub64(Asm::read(s, Asm::Reg::X1), Asm::read(s, Asm::Reg::X0)),
     x1: Asm::read(s, Asm::Reg::X1),
     x2: Asm::read(s, Asm::Reg::X2)
   }
 ) { Refl }
-pub theorem addition_wraps(): U64::val(Asm::read(Asm::run(sum_code(), Asm::State {
-  x0: U64::of_nat_mod(7), x1: U64::of_nat_mod(18446744073709551615), x2: U64::of_nat_mod(1)
+pub theorem addition_wraps(): UInt::val64(Asm::read(Asm::run(sum_code(), Asm::State {
+  x0: UInt::of_nat_mod64(7), x1: UInt::of_nat_mod64(18446744073709551615), x2: UInt::of_nat_mod64(1)
 }), Asm::Reg::X0)) = 0 { Refl }
-pub theorem subtraction_wraps(): U64::val(Asm::read(Asm::run(difference_code(), Asm::State {
-  x0: U64::of_nat_mod(7), x1: U64::of_nat_mod(0), x2: U64::of_nat_mod(1)
+pub theorem subtraction_wraps(): UInt::val64(Asm::read(Asm::run(difference_code(), Asm::State {
+  x0: UInt::of_nat_mod64(7), x1: UInt::of_nat_mod64(0), x2: UInt::of_nat_mod64(1)
 }), Asm::Reg::X0)) = 18446744073709551615 { Refl }

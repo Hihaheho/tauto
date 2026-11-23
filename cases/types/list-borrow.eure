@@ -1,0 +1,57 @@
+// The functions over a `List` that read it by borrow: the elements are lent to the
+// function, so they may be affine, and the list stays with its owner.
+
+@ cases.each-ref-lends-each-element
+description = "`each_ref` calls its function with a borrow of each element, an affine one."
+source = ```nib
+struct(affine) Tok { n: u64 }
+let xs := Cons(Tok { n: 1 }, Cons(Tok { n: 2 }, Nil))
+each_ref(&xs, (t: &Tok) => { show(&t.n) })
+each_ref(&xs, (t: &Tok) => { show(&t.n) })
+```
+stdout = "1\n2\n1\n2\n"
+
+@ cases.fold-ref-reads-a-list-of-affine-values
+description = "`fold_ref` folds the borrows of the elements; the list is read twice."
+source = ```nib
+struct(affine) Tok { n: u64 }
+let xs := Cons(Tok { n: 1 }, Cons(Tok { n: 2 }, Cons(Tok { n: 4 }, Nil)))
+let a := fold_ref(&xs, 0, (acc: u64, t: &Tok) => { acc + t.n })
+let b := fold_ref(&xs, 0, (acc: u64, t: &Tok) => { acc * 10 + t.n })
+show(&a)
+show(&b)
+```
+stdout = "7\n124\n"
+
+@ cases.map-ref-makes-a-list-from-borrows
+description = "`map_ref` makes a new list from borrows of the elements."
+source = ```nib
+struct(affine) Tok { n: u64 }
+let xs := Cons(Tok { n: 3 }, Cons(Tok { n: 5 }, Nil))
+let ys := map_ref(&xs, (t: &Tok) => { t.n })
+show(&ys)
+each_ref(&xs, (t: &Tok) => { show(&t.n) })
+```
+stdout = "[3, 5]\n3\n5\n"
+
+// The functions of `std/list.taut` that search a lent list: the kernel computes with them.
+@ cases.find-ref-and-length-ref-are-read-by-the-kernel
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::base
+import std::list
+
+fn big(n: &Nat): Bool { Nat::lt(2, n) }
+
+theorem length_of_three(): List::length_ref(&Cons(5, Cons(1, Cons(9, Nil)))) = 3 { Refl }
+
+theorem length_ref_is_length(l: List(Nat)): List::length_ref(&l) = List::length(l) {
+  List::length_ref_eq(l)
+}
+
+theorem find_first_big(): List::find_ref(big, &Cons(1, Cons(5, Cons(9, Nil)))) = Some(5) { Refl }
+
+theorem find_none(): List::find_ref(big, &Cons(1, Cons(2, Nil))) = None { Refl }
+```
+
+checks_all = "ok"

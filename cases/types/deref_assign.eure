@@ -1,0 +1,146 @@
+// A write where a borrow points is written `*a := c`; `a := c` rebinds `a`.
+// A borrow reads as its value, so `*` is written only on the left of `:=`.
+
+@ cases.star-assign-writes-through-mut-param
+description = "`*x := x + 1` writes where the `&mut` parameter `x` points; the caller sees the new value."
+source = ```nib
+fn bump(x: &mut i64): i64 {
+  let old := x
+  *x := x + 1
+  old
+}
+var n := 1
+bump(&mut n)
+n
+```
+types = "ok"
+
+@ cases.star-assign-through-let-binding-is-ok
+description = "A `let` forbids rebinding the name, not writing where its `&mut` borrow points."
+source = ```nib
+struct Counter { n: i64 }
+fn reset(c: &mut Counter) {
+  let d: &mut Counter := c
+  *d := Counter { n: 0 }
+}
+var c := Counter { n: 3 }
+reset(&mut c)
+c.n
+```
+types = "ok"
+
+@ cases.plain-assign-to-mut-borrow-binding-is-error
+description = "`x := c` on a `&mut` binding would rebind it; the error says to write `*x := c`."
+source = ```nib
+fn bump(x: &mut i64) { x := x + 1 }
+var n := 1
+bump(&mut n)
+```
+types = "error: write `*x := …` to write through the borrow"
+
+@ cases.star-assign-needs-mut-borrow
+description = "`*x := c` writes through a `&mut` borrow; a `&` borrow does not allow it."
+source = ```nib
+fn set(x: &i64) { *x := 1 }
+let n := 1
+set(&n)
+```
+types = "error: `*x := …` writes through a `&mut` borrow, and `x` is not one"
+
+@ cases.star-on-right-is-error
+description = "A borrow reads as its value: `*x` on the right of `:=` is an error."
+source = ```nib
+fn read(x: &mut i64): i64 { *x }
+var n := 1
+read(&mut n)
+```
+types = "error: a borrow reads as its value; `*` is written only on the left of `:=`"
+
+@ cases.field-assign-through-mut-borrow-is-unchanged
+description = "`p.name := e` writes a field through `p: &mut Person` as before, with no `*`."
+source = ```nib
+struct Person { name: Text, age: i64 }
+fn rename(p: &mut Person) { p.name := "a" }
+var p := Person { name: "b", age: 3 }
+rename(&mut p)
+p.age
+```
+types = "ok"
+
+@ cases.star-assign-through-field-borrow
+description = "`*h.r := c` writes where the `&mut` in the field `r` points; `h.r := c` would rebind it."
+source = ```nib
+struct Holder { r: &mut i64 }
+fn set(h: &mut Holder) { *h.r := 5 }
+fn rebind(h: &mut Holder) { h.r := 5 }
+```
+types = "error: write `*h.r := …` to write through the borrow"
+
+@ cases.read-of-mut-borrow-without-expected-type-copies
+description = "With no expected type, reading a `&mut i64` gives a copy of the `i64`: `old` keeps the value before the write."
+source = ```nib
+fn swap_in(x: &mut i64, y: i64): i64 {
+  let old := x
+  *x := y
+  old + 0
+}
+var n := 1
+swap_in(&mut n, 2)
+```
+types = "ok"
+
+@ cases.read-of-mut-borrow-copy-keeps-the-value-before-the-write
+description = "The copy `let old := x` reads from a `&mut i64` is not written through `x`: `bump` returns the value before the write, the caller sees the new one."
+source = ```nib
+fn bump(x: &mut i64): i64 ! {overflow} {
+  let old := x
+  *x := x + 1
+  old
+}
+var n := 1
+let r := bump(&mut n)
+show(&r)
+show(&n)
+```
+types = "ok"
+stdout = ```
+1
+2
+```
+
+@ cases.read-of-affine-borrow-is-the-borrow
+description = "With no expected type, reading a borrow of a value that is not copied gives the borrow itself, which is passed on as `&mut`."
+source = ```nib
+fn push_two(v: &mut Vec(i64)) {
+  let w := v
+  Vec::push(&mut w, 2)
+}
+var v := Vec::new()
+push_two(&mut v)
+Vec::len(&v)
+```
+types = "ok"
+
+@ cases.star-assign-in-match-arm
+description = "A borrow bound by a pattern is written through the same way: `Some(x) => { *x := x + 1 }`."
+source = ```nib
+fn bump_some(o: &mut Option(i64)) {
+  match o {
+    Some(x) => { *x := x + 1 }
+    None => ()
+  }
+}
+var o := Some(1)
+bump_some(&mut o)
+```
+types = "ok"
+
+@ cases.var-of-mut-borrow-is-error
+description = "A `&mut` binding cannot be `var`: rebinding a borrow is not read yet."
+source = ```nib
+fn f(y: &mut i64) {
+  var a: &mut i64 := y
+  *a := 1
+}
+```
+types = "error: `var x: &mut T`: a `&mut` binding cannot be `var`"

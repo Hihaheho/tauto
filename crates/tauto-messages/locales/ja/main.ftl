@@ -22,7 +22,8 @@ main-fmt-fix-outside = { $file }: 修正の範囲がファイルの外にある
 
 # `tauto run`.
 main-run-tote-no-main = トート { $name } に src/main.taut も src/main.tauto もない
-main-run-interrupted = （{ $steps } ステップで中断。`--steps N` で増やせる。`--allow-div` で上限をなくせる）
+main-run-no-entry = { $path } に実行するものがない: 宣言以外のトップレベルの文（たとえば `perform print(...)`）がない
+main-run-interrupted = （{ $steps } ステップ。`--steps N` で増やせる。開始時に `div` を許可すると上限をなくせる）
 main-eval-text = テキスト
 main-lint-unknown-option = lint: 不明なオプション { $flag }
 main-fix-applied = 修正: { $file }:{ $line }:{ $col }: { $title }

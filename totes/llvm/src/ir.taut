@@ -1,0 +1,314 @@
+import std::text { Text }
+import std::builtin::macro
+import std::std
+
+// The LLVM IR the backend writes, and no more: an instruction the grammar
+// does not have cannot be written. `llvm::Module::I` is a module as a tree.
+inductive_syntax!(llvm, ```par
+%start Module, Frag
+%title "LLVM IR"
+%grammar_type 'LALR(1)'
+%line_comment ';'
+%%
+Module: { Item };
+Frag: Piece;
+Piece: Rhs | Store | Term | Ty | Case | Items;
+Items: Item { Item };
+Item: Declare | TypeDef | Constant | Boxed | Variable | Define;
+Declare: 'declare'^ Ty Global '('^ ParamTys ')'^ [ NoReturn ];
+ParamTys: [ ParamTy { ','^ ParamTy } ];
+ParamTy: Ty | Ellipsis;
+TypeDef: Local '='^ 'type'^ Ty;
+Constant: Global '='^ 'private'^ 'unnamed_addr'^ 'constant'^ Ty CString;
+Boxed: Global '='^ 'private'^ 'unnamed_addr'^ 'constant'^ Ty CString ','^ 'align'^ IntOf;
+Variable: Global '='^ Internal 'global'^ Ty Value;
+Define: 'define'^ [ Internal ] [ FastCc ] Ty Global '('^ Params ')'^ [ NoReturn ] [ Naked ] '{'^ Block { Block } '}'^;
+Params: [ Param { ','^ Param } ];
+Param: Ty Local;
+Block: LabelDef { Instr } Term;
+Instr: Def | Store | Call;
+Def: Local '='^ Rhs;
+Rhs: Alloca | Load | Gep | Bin | Icmp | Cast | Call | ExtractValue | InsertValue;
+Alloca: 'alloca'^ Ty;
+Load: 'load'^ Ty ','^ 'ptr'^ Value;
+Gep: 'getelementptr'^ Ty ','^ 'ptr'^ Value { ','^ TyValue };
+TyValue: Ty Value;
+Bin: BinOp Ty Value ','^ Value;
+BinOp: OpAdd | OpSub | OpMul | OpShl | OpLshr | OpAnd | OpOr | OpXor | OpSdiv | OpUdiv | OpSrem | OpUrem;
+Icmp: 'icmp'^ Pred Ty Value ','^ Value;
+Pred: PredEq | PredNe | PredSlt | PredSgt | PredSle | PredSge | PredUlt | PredUgt | PredUle | PredUge;
+Cast: CastOp Ty Value 'to'^ Ty;
+CastOp: OpTrunc | OpZext | OpSext | OpIntToPtr | OpPtrToInt;
+Call: 'call'^ [ FastCc ] Ty [ Sig ] Callee '('^ ArgsOf ')'^;
+Callee: Global | Hole | Asm;
+Asm: 'asm'^ 'sideeffect'^ Str ','^ Str;
+ArgsOf: Args | Hole;
+Sig: '('^ ParamTys ')'^;
+Args: [ TyValue { ','^ TyValue } ];
+ExtractValue: 'extractvalue'^ Ty Value ','^ IntOf;
+IntOf: Int | Hole;
+InsertValue: 'insertvalue'^ Ty Value ','^ Ty Value ','^ IntOf;
+Store: 'store'^ Ty Value ','^ 'ptr'^ Value;
+Term: Ret | Br | CondBr | Switch | Unreachable;
+Ret: 'ret'^ Ty [ Value ];
+Br: 'br'^ 'label'^ LabelRef;
+LabelRef: Local | Hole;
+CondBr: 'br'^ Ty Value ','^ 'label'^ LabelRef ','^ 'label'^ LabelRef;
+Switch: 'switch'^ Ty Value ','^ 'label'^ LabelRef '['^ [ CasesOf ] ']'^;
+CasesOf: Cases | Hole;
+Cases: Case { Case };
+Case: Ty Value ','^ 'label'^ LabelRef;
+Ty: Void | IntTy | Ptr | ArrayTy | StructTy | Named | Hole;
+ArrayTy: '['^ IntOf 'x'^ Ty ']'^;
+StructTy: '{'^ Ty { ','^ Ty } '}'^;
+Named: Local;
+Value: Local | Global | Int | Null | True | False | Poison | Zero | Hole;
+Hole: TautoExpr;
+Ellipsis: '...';
+NoReturn: 'noreturn';
+Naked: 'naked';
+Internal: 'internal';
+FastCc: 'fastcc';
+Unreachable: 'unreachable';
+Void: 'void';
+Ptr: 'ptr';
+Null: 'null';
+True: 'true';
+False: 'false';
+Poison: 'poison';
+Zero: 'zeroinitializer';
+OpAdd: 'add';
+OpSub: 'sub';
+OpMul: 'mul';
+OpShl: 'shl';
+OpLshr: 'lshr';
+OpAnd: 'and';
+OpOr: 'or';
+OpXor: 'xor';
+OpSdiv: 'sdiv';
+OpUdiv: 'udiv';
+OpSrem: 'srem';
+OpUrem: 'urem';
+PredEq: 'eq';
+PredNe: 'ne';
+PredSlt: 'slt';
+PredSgt: 'sgt';
+PredSle: 'sle';
+PredSge: 'sge';
+PredUlt: 'ult';
+PredUgt: 'ugt';
+PredUle: 'ule';
+PredUge: 'uge';
+OpTrunc: 'trunc';
+OpZext: 'zext';
+OpSext: 'sext';
+OpIntToPtr: 'inttoptr';
+OpPtrToInt: 'ptrtoint';
+LabelDef: /[A-Za-z_][A-Za-z0-9_.]*:/;
+Local: /%[A-Za-z0-9_.]+/;
+Global: /@[A-Za-z0-9_.]+/;
+IntTy: /i[0-9]+/;
+Int: /-?[0-9]+/;
+CString: /c"[^"]*"/;
+Str: /"[^"]*"/;
+```) =>
+  fn parse,
+  struct Alloca,
+  struct Args,
+  enum ArgsOf,
+  struct Args_Opt1,
+  struct Args_Rep1,
+  struct ArrayTy,
+  struct Asm,
+  struct Bin,
+  enum BinOp,
+  struct Block,
+  struct Boxed,
+  struct Br,
+  struct Call,
+  enum Callee,
+  struct Case,
+  struct Cases,
+  enum CasesOf,
+  struct Cast,
+  enum CastOp,
+  struct CondBr,
+  struct Constant,
+  struct Declare,
+  struct Def,
+  struct Define,
+  struct ExtractValue,
+  struct Frag,
+  struct Gep,
+  struct Gep_Rep1,
+  struct Icmp,
+  struct InsertValue,
+  enum Instr,
+  enum IntOf,
+  enum Item,
+  struct Items,
+  enum LabelRef,
+  struct Load,
+  struct Module,
+  struct Named,
+  struct Param,
+  enum ParamTy,
+  struct ParamTys,
+  struct ParamTys_Opt1,
+  struct ParamTys_Rep1,
+  struct Params,
+  struct Params_Opt1,
+  struct Params_Rep1,
+  enum Piece,
+  enum Pred,
+  struct Ret,
+  enum Rhs,
+  struct Sig,
+  struct Store,
+  struct StructTy,
+  struct StructTy_Rep1,
+  struct Switch,
+  enum Term,
+  enum Ty,
+  struct TyValue,
+  struct TypeDef,
+  struct Variable,
+  enum Value,
+  inductive Alloca::I,
+  inductive Args::I,
+  inductive ArgsOf::I,
+  inductive Args_Opt1::I,
+  inductive Args_Rep1::I,
+  inductive ArrayTy::I,
+  inductive Asm::I,
+  inductive Bin::I,
+  inductive BinOp::I,
+  inductive Block::I,
+  inductive Boxed::I,
+  inductive Br::I,
+  inductive Call::I,
+  inductive Callee::I,
+  inductive Case::I,
+  inductive Cases::I,
+  inductive CasesOf::I,
+  inductive Cast::I,
+  inductive CastOp::I,
+  inductive CondBr::I,
+  inductive Constant::I,
+  inductive Declare::I,
+  inductive Def::I,
+  inductive Define::I,
+  inductive ExtractValue::I,
+  inductive Frag::I,
+  inductive Gep::I,
+  inductive Gep_Rep1::I,
+  inductive Icmp::I,
+  inductive InsertValue::I,
+  inductive Instr::I,
+  inductive IntOf::I,
+  inductive Item::I,
+  inductive Items::I,
+  inductive LabelRef::I,
+  inductive Load::I,
+  inductive Module::I,
+  inductive Named::I,
+  inductive Param::I,
+  inductive ParamTy::I,
+  inductive ParamTys::I,
+  inductive ParamTys_Opt1::I,
+  inductive ParamTys_Rep1::I,
+  inductive Params::I,
+  inductive Params_Opt1::I,
+  inductive Params_Rep1::I,
+  inductive Piece::I,
+  inductive Pred::I,
+  inductive Ret::I,
+  inductive Rhs::I,
+  inductive Sig::I,
+  inductive Store::I,
+  inductive StructTy::I,
+  inductive StructTy_Rep1::I,
+  inductive Switch::I,
+  inductive Term::I,
+  inductive Ty::I,
+  inductive TyValue::I,
+  inductive TypeDef::I,
+  inductive Variable::I,
+  inductive Value::I,
+  fn Alloca::to_i,
+  fn Args::to_i,
+  fn ArgsOf::to_i,
+  fn Args_Opt1::to_i,
+  fn Args_Rep1::to_i,
+  fn ArrayTy::to_i,
+  fn Asm::to_i,
+  fn Bin::to_i,
+  fn BinOp::to_i,
+  fn Block::to_i,
+  fn Boxed::to_i,
+  fn Br::to_i,
+  fn Call::to_i,
+  fn Callee::to_i,
+  fn Case::to_i,
+  fn Cases::to_i,
+  fn CasesOf::to_i,
+  fn Cast::to_i,
+  fn CastOp::to_i,
+  fn CondBr::to_i,
+  fn Constant::to_i,
+  fn Declare::to_i,
+  fn Def::to_i,
+  fn Define::to_i,
+  fn ExtractValue::to_i,
+  fn Frag::to_i,
+  fn Gep::to_i,
+  fn Gep_Rep1::to_i,
+  fn Icmp::to_i,
+  fn InsertValue::to_i,
+  fn Instr::to_i,
+  fn IntOf::to_i,
+  fn Item::to_i,
+  fn Items::to_i,
+  fn LabelRef::to_i,
+  fn Load::to_i,
+  fn Module::to_i,
+  fn Named::to_i,
+  fn Param::to_i,
+  fn ParamTy::to_i,
+  fn ParamTys::to_i,
+  fn ParamTys_Opt1::to_i,
+  fn ParamTys_Rep1::to_i,
+  fn Params::to_i,
+  fn Params_Opt1::to_i,
+  fn Params_Rep1::to_i,
+  fn Piece::to_i,
+  fn Pred::to_i,
+  fn Ret::to_i,
+  fn Rhs::to_i,
+  fn Sig::to_i,
+  fn Store::to_i,
+  fn StructTy::to_i,
+  fn StructTy_Rep1::to_i,
+  fn Switch::to_i,
+  fn Term::to_i,
+  fn Ty::to_i,
+  fn TyValue::to_i,
+  fn TypeDef::to_i,
+  fn Variable::to_i,
+  fn Value::to_i,
+  fn Args_Opt1_opt::to_i,
+  fn Args_Rep1_list::to_i,
+  fn Instr_list::to_i,
+  fn token_opt::to_i,
+  fn Sig_opt::to_i,
+  fn Block_list::to_i,
+  fn Gep_Rep1_list::to_i,
+  fn Item_list::to_i,
+  fn ParamTys_Opt1_opt::to_i,
+  fn ParamTys_Rep1_list::to_i,
+  fn Params_Opt1_opt::to_i,
+  fn Params_Rep1_list::to_i,
+  fn Value_opt::to_i,
+  fn StructTy_Rep1_list::to_i,
+  fn Case_list::to_i,
+  fn CasesOf_opt::to_i

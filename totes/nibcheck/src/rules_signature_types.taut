@@ -1,6 +1,6 @@
 import "rules_written.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "datas.taut"
 import "ty.taut"
 import "../../surface/src/surface.taut"
@@ -36,9 +36,9 @@ pub(open) inductive SignatureBorrow: (Option(Bool), Ty, Ty) -> Prop {
   ): SignatureBorrow(Some(requested), t, TyBorrow(t, requested))
 }
 pub fn signature_borrow_mode(b: Option(Bool)): Bool {
-  ⊢ Bool from match b {
+  match b {
     None => false
-    Some(mutable) => true
+    Some(^mutable) => true
   }
 }
 pub(open) inductive SignatureParameter(
@@ -46,12 +46,12 @@ pub(open) inductive SignatureParameter(
   generics: Ordmap(Text, Ty),
   partial: Bool,
   source: Option(SurfaceTerm),
-  borrow: Option(Bool)
+  r#borrow: Option(Bool)
 ): (Ty) -> Prop {
   Mk(
     inner: Ty,
     result: Ty,
-    meaning: SignatureType(env, generics, partial, signature_borrow_mode(borrow), source, inner),
-    wrapped: SignatureBorrow(borrow, inner, result)
-  ): SignatureParameter(env, generics, partial, source, borrow, result)
+    meaning: SignatureType(env, generics, partial, signature_borrow_mode(r#borrow), source, inner),
+    wrapped: SignatureBorrow(r#borrow, inner, result)
+  ): SignatureParameter(env, generics, partial, source, r#borrow, result)
 }

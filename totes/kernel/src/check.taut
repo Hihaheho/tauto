@@ -1,18 +1,18 @@
 import "data.taut"
 import "level.taut"
 import "term.taut"
-import std::Text
-import std::List
-import std::Map
-import std::Base
-import std::prelude::Std { Ordering }
+import std::text
+import std::list
+import std::map
+import std::base
+import std::prelude::std { Ordering }
 
 // Reduction, conversion and typing, as `crates/tauto-kernel/src/check/core.rs`
 // does them. The Rust core keeps what nodes reduced to by their address; a
 // term here has no address, so the same part met again is reduced again.
 // That changes how long a check takes, never its answer.
 
-pub fn kernel_pair_cmp(x: Pair(KernelTerm, KernelTerm), y: Pair(KernelTerm, KernelTerm)): Ordering {
+pub fn kernel_pair_cmp(x: KernelTerm × KernelTerm, y: KernelTerm × KernelTerm): Ordering {
   match kernel_term_cmp(x.fst, y.fst) {
     Less => Less
     Equal => kernel_term_cmp(x.snd, y.snd)
@@ -53,14 +53,14 @@ pub fn kernel_bool(b: Bool): KernelTerm {
 }
 
 // The quotient and remainder of `x` by a nonzero `y`, by doubling `y`:
-// below 2^128 the fuel of 130 doublings is never used up.
-pub fn kernel_divmod(k: Nat, x: Nat, y: Nat): Pair(Nat, Nat) {
+// below 2^256 the fuel of 260 doublings is never used up.
+pub fn kernel_divmod(k: Nat, x: Nat, y: Nat): Nat × Nat {
   match k {
-    Zero => Pair { fst: 0, snd: x }
-    Succ(j) => if x < y { Pair { fst: 0, snd: x } } else {
+    Zero => #(0, x)
+    Succ(j) => if x < y { #(0, x) } else {
       let half := kernel_divmod(j, x, y + y)
-      if y <= half.snd { Pair { fst: half.fst + half.fst + 1, snd: half.snd - y } } else {
-        Pair { fst: half.fst + half.fst, snd: half.snd }
+      if y <= half.snd { #(half.fst + half.fst + 1, half.snd - y) } else {
+        #(half.fst + half.fst, half.snd)
       }
     }
   }
@@ -72,8 +72,8 @@ pub fn kernel_numeric_value(n: Text, x: Nat, y: Nat): KernelTerm {
   } else if n == "Nat::div_nz" {
     // A divisor of 0 comes with a proof of `¬(0 = 0)`: the quotient is 0
     // and the remainder `x`.
-    if y == 0 { KernelLit(0) } else { KernelLit(kernel_divmod(130, x, y).fst) }
-  } else if y == 0 { KernelLit(x) } else { KernelLit(kernel_divmod(130, x, y).snd) }
+    if y == 0 { KernelLit(0) } else { KernelLit(kernel_divmod(260, x, y).fst) }
+  } else if y == 0 { KernelLit(x) } else { KernelLit(kernel_divmod(260, x, y).snd) }
 }
 
 pub fn kernel_ctor_count(c: KernelCore, name: Text): Nat {
@@ -99,11 +99,11 @@ pub fn kernel_sum(ns: List(Nat)): Nat {
 
 // The constructor application a weak head normal major premise of the family
 // `of` is, reading a numeral as `Zero` or `Succ`.
-pub fn kernel_as_ctor(c: KernelCore, t: KernelTerm, of: Text): Option(Pair(Text, List(KernelTerm))) {
+pub fn kernel_as_ctor(c: KernelCore, t: KernelTerm, of: Text): Option(Text × List(KernelTerm)) {
   match kernel_as_lit(t) {
     Some(v) => if of == "Nat" && Ordmap::contains(c.constructors, "Zero", kernel_text_cmp) {
-      if v == 0 { Some(Pair { fst: "Zero", snd: Nil }) } else {
-        Some(Pair { fst: "Succ", snd: Cons(KernelLit(v - 1), Nil) })
+      if v == 0 { Some(#("Zero", Nil)) } else {
+        Some(#("Succ", Cons(KernelLit(v - 1), Nil)))
       }
     } else { None }
     None => {
@@ -112,7 +112,7 @@ pub fn kernel_as_ctor(c: KernelCore, t: KernelTerm, of: Text): Option(Pair(Text,
         None => None
         Some(n) => match kernel_ctor_get(c, n) {
           None => None
-          Some(owner) => if owner.fst == of { Some(Pair { fst: n, snd: sp.snd }) } else { None }
+          Some(owner) => if owner.fst == of { Some(#(n, sp.snd)) } else { None }
         }
       }
     }
@@ -131,17 +131,17 @@ pub fn kernel_is_sum(c: KernelCore, n: Text): Bool {
 
 pub fn kernel_is_sum_body(v: KernelTerm): Bool {
   match v {
-    KernelBVar(i) => false
-    KernelFVar(x) => false
-    KernelSortTerm(s) => false
-    KernelConst(n) => false
-    KernelPi(a, b, n) => false
-    KernelLam(b, n) => kernel_is_sum_body(b)
-    KernelApp(f, a, n) => {
+    KernelBVar(^i) => false
+    KernelFVar(^x) => false
+    KernelSortTerm(^s) => false
+    KernelConst(^n) => false
+    KernelPi(^a, ^b, ^n) => false
+    KernelLam(b, ^n) => kernel_is_sum_body(b)
+    KernelApp(^f, ^a, ^n) => {
       let sp := kernel_spine(v)
       kernel_is_const(sp.fst, "+") && List::length(sp.snd) == 2
     }
-    KernelLit(w) => false
+    KernelLit(^w) => false
   }
 }
 
@@ -168,7 +168,7 @@ pub fn kernel_arith_op(c: KernelCore, n: Text): Option(Text) {
                       y,
                       KernelBVar(0)
                     ) { Some(h) } else { None }
-                    Cons(z, others) => None
+                    Cons(^z, ^others) => None
                   }
                 }
               }
@@ -196,20 +196,20 @@ pub fn kernel_record_view(c: KernelCore, t: KernelTerm): Bool {
 
 pub fn kernel_record_body(c: KernelCore, v: KernelTerm, args: Nat): Bool {
   match v {
-    KernelBVar(i) => false
-    KernelFVar(x) => false
-    KernelSortTerm(s) => false
+    KernelBVar(^i) => false
+    KernelFVar(^x) => false
+    KernelSortTerm(^s) => false
     KernelConst(n) => kernel_record_rec(c, n)
-    KernelPi(a, b, n) => false
-    KernelLam(b, n) => match args {
+    KernelPi(^a, ^b, ^n) => false
+    KernelLam(b, ^n) => match args {
       Zero => false
       Succ(m) => kernel_record_body(c, b, m)
     }
-    KernelApp(f, a, n) => match kernel_as_const(kernel_head(v)) {
+    KernelApp(^f, ^a, ^n) => match kernel_as_const(kernel_head(v)) {
       None => false
       Some(r) => kernel_record_rec(c, r)
     }
-    KernelLit(w) => false
+    KernelLit(^w) => false
   }
 }
 
@@ -222,7 +222,7 @@ pub fn kernel_record_rec(c: KernelCore, r: Text): Bool {
         Nil => false
         Cons(ci, rest) => match rest {
           Nil => List::length(ci.recursive) == 0
-          Cons(other, more) => false
+          Cons(^other, ^more) => false
         }
       }
     }
@@ -232,27 +232,63 @@ pub fn kernel_record_rec(c: KernelCore, r: Text): Bool {
 // The names with a value that `t` uses, each once, added to `seen`.
 pub fn kernel_uses(c: KernelCore, t: KernelTerm, seen: List(Text)): List(Text) {
   match t {
-    KernelBVar(i) => seen
-    KernelFVar(x) => seen
-    KernelSortTerm(s) => seen
+    KernelBVar(^i) => seen
+    KernelFVar(^x) => seen
+    KernelSortTerm(^s) => seen
     KernelConst(n) => if kernel_text_in(seen, n) { seen } else {
       match kernel_value_of(c, n) {
         None => seen
-        Some(v) => Cons(n, seen)
+        Some(^v) => Cons(n, seen)
       }
     }
-    KernelPi(a, b, n) => kernel_uses(c, b, kernel_uses(c, a, seen))
-    KernelLam(b, n) => kernel_uses(c, b, seen)
-    KernelApp(f, a, n) => kernel_uses(c, a, kernel_uses(c, f, seen))
-    KernelLit(w) => seen
+    KernelPi(a, b, ^n) => kernel_uses(c, b, kernel_uses(c, a, seen))
+    KernelLam(b, ^n) => kernel_uses(c, b, seen)
+    KernelApp(f, a, ^n) => kernel_uses(c, a, kernel_uses(c, f, seen))
+    KernelLit(^w) => seen
   }
+}
+
+// Whether unfolding the terms in `todo` reaches `target`: a name met on the
+// way is followed into its value, once. Recursion reaches the kernel only
+// through eliminators, so no value needs to reach its own name, and one that
+// does is refused (`kernel_unfolds_to`). Running out of steps counts as
+// reaching it: refusing is never unsound.
+pub fn kernel_reaches(k: Nat, c: KernelCore, todo: List(KernelTerm), seen: List(Text), target: Text): Bool {
+  match k {
+    Zero => true
+    Succ(j) => match todo {
+      Nil => false
+      Cons(t, rest) => match t {
+        KernelBVar(^i) => kernel_reaches(j, c, rest, seen, target)
+        KernelFVar(^x) => kernel_reaches(j, c, rest, seen, target)
+        KernelSortTerm(^s) => kernel_reaches(j, c, rest, seen, target)
+        KernelLit(^w) => kernel_reaches(j, c, rest, seen, target)
+        KernelConst(n) => if n == target { true } else if kernel_text_in(seen, n) {
+          kernel_reaches(j, c, rest, seen, target)
+        } else {
+          match kernel_value_of(c, n) {
+            None => kernel_reaches(j, c, rest, Cons(n, seen), target)
+            Some(v) => kernel_reaches(j, c, Cons(v, rest), Cons(n, seen), target)
+          }
+        }
+        KernelPi(a, b, ^n) => kernel_reaches(j, c, Cons(a, Cons(b, rest)), seen, target)
+        KernelLam(b, ^n) => kernel_reaches(j, c, Cons(b, rest), seen, target)
+        KernelApp(f, a, ^n) => kernel_reaches(j, c, Cons(f, Cons(a, rest)), seen, target)
+      }
+    }
+  }
+}
+
+// Whether `v`, as the value of `name`, unfolds to `name` again.
+pub fn kernel_unfolds_to(c: KernelCore, name: Text, v: KernelTerm): Bool {
+  kernel_reaches(1099511627776, c, Cons(v, Nil), Nil, name)
 }
 
 // The height of a name with a value: one more than the highest of the
 // names its value uses. A name met again on the way down counts as 0, and
 // makes the name it was met from recursive.
 mutual {
-  pub fn kernel_def_of(k: Nat, &mut c: KernelCore, n: Text, path: List(Text)): Option(KernelDef) {
+  pub fn kernel_def_of(k: Nat, c: &mut KernelCore, n: Text, path: List(Text)): Option(KernelDef) {
     match k {
       Zero => None
       Succ(j) => match Ordmap::get(c.defs, n, kernel_text_cmp) {
@@ -272,7 +308,7 @@ mutual {
     }
   }
 
-  pub fn kernel_def_heights(k: Nat, &mut c: KernelCore, ns: List(Text), path: List(Text)): Nat {
+  pub fn kernel_def_heights(k: Nat, c: &mut KernelCore, ns: List(Text), path: List(Text)): Nat {
     match k {
       Zero => 0
       Succ(j) => match ns {
@@ -291,11 +327,11 @@ mutual {
   }
 }
 
-pub fn kernel_def(&mut c: KernelCore, n: Text): Option(KernelDef) {
+pub fn kernel_def(c: &mut KernelCore, n: Text): Option(KernelDef) {
   kernel_def_of(1048576, &mut c, n, Nil)
 }
 
-pub fn kernel_head_height(&mut c: KernelCore, t: KernelTerm): Option(Nat) {
+pub fn kernel_head_height(c: &mut KernelCore, t: KernelTerm): Option(Nat) {
   match kernel_as_const(kernel_head(t)) {
     None => None
     Some(n) => match kernel_def(&mut c, n) {
@@ -307,9 +343,9 @@ pub fn kernel_head_height(&mut c: KernelCore, t: KernelTerm): Option(Nat) {
 
 // Whether `f` can lay open calls of itself: an eliminator, or a name whose
 // value uses it.
-pub fn kernel_lays_open_itself(&mut c: KernelCore, f: Text): Bool {
+pub fn kernel_lays_open_itself(c: &mut KernelCore, f: Text): Bool {
   match kernel_elim_get(c, f) {
-    Some(family) => true
+    Some(^family) => true
     None => match kernel_def(&mut c, f) {
       None => false
       Some(d) => d.recursive
@@ -317,7 +353,7 @@ pub fn kernel_lays_open_itself(&mut c: KernelCore, f: Text): Bool {
   }
 }
 
-pub fn kernel_unfolded_below(us: List(Pair(Text, Nat)), f: Text, binders: Nat): Bool {
+pub fn kernel_unfolded_below(us: List(Text × Nat), f: Text, binders: Nat): Bool {
   match us {
     Nil => false
     Cons(u, rest) => if u.fst == f && u.snd < binders { true } else {
@@ -329,16 +365,16 @@ pub fn kernel_unfolded_below(us: List(Pair(Text, Nat)), f: Text, binders: Nat): 
 // Whether the comparison of `f` applied on both sides goes no further than
 // the arguments: `f` lays open calls of itself and was reduced on both sides
 // further out, outside a binder the comparison has since gone under.
-pub fn kernel_conv_cut(&mut c: KernelCore, f: Text): Bool {
+pub fn kernel_conv_cut(c: &mut KernelCore, f: Text): Bool {
   kernel_lays_open_itself(&mut c, f) && kernel_unfolded_below(c.unfolded, f, c.binders)
 }
 
-pub fn kernel_push_unfolded(&mut c: KernelCore, f: Text): Unit {
-  kernel_set_to(&mut c.unfolded, Cons(Pair { fst: f, snd: c.binders }, c.unfolded))
+pub fn kernel_push_unfolded(c: &mut KernelCore, f: Text): Unit {
+  kernel_set_to(&mut c.unfolded, Cons(#(f, c.binders), c.unfolded))
 }
 
 // The recursive name both `a` and `b` apply to as many arguments.
-pub fn kernel_same_recursive(&mut c: KernelCore, a: KernelTerm, b: KernelTerm): Option(Text) {
+pub fn kernel_same_recursive(c: &mut KernelCore, a: KernelTerm, b: KernelTerm): Option(Text) {
   let sa := kernel_spine(a)
   let sb := kernel_spine(b)
   match kernel_as_const(sa.fst) {
@@ -356,39 +392,39 @@ pub fn kernel_same_recursive(&mut c: KernelCore, a: KernelTerm, b: KernelTerm): 
 // `t` under its `Succ`s, without reducing.
 pub fn kernel_strip_succ(t: KernelTerm): KernelTerm {
   match t {
-    KernelBVar(i) => t
-    KernelFVar(x) => t
-    KernelSortTerm(s) => t
-    KernelConst(n) => t
-    KernelPi(a, b, n) => t
-    KernelLam(b, n) => t
-    KernelApp(f, a, n) => match kernel_is_const(f, "Succ") {
+    KernelBVar(^i) => t
+    KernelFVar(^x) => t
+    KernelSortTerm(^s) => t
+    KernelConst(^n) => t
+    KernelPi(^a, ^b, ^n) => t
+    KernelLam(^b, ^n) => t
+    KernelApp(f, a, ^n) => match kernel_is_const(f, "Succ") {
       true => kernel_strip_succ(a)
       false => t
     }
-    KernelLit(v) => t
+    KernelLit(^v) => t
   }
 }
 
 // Whether `s` is applied last to a numeral of at least 4096.
 pub fn kernel_large_last(s: KernelTerm): Bool {
   match s {
-    KernelBVar(i) => false
-    KernelFVar(x) => false
-    KernelSortTerm(r) => false
-    KernelConst(n) => false
-    KernelPi(a, b, n) => false
-    KernelLam(b, n) => false
-    KernelApp(f, a, n) => match kernel_as_lit(a) {
+    KernelBVar(^i) => false
+    KernelFVar(^x) => false
+    KernelSortTerm(^r) => false
+    KernelConst(^n) => false
+    KernelPi(^a, ^b, ^n) => false
+    KernelLam(^b, ^n) => false
+    KernelApp(^f, a, ^n) => match kernel_as_lit(a) {
       None => false
       Some(v) => 4096 <= v
     }
-    KernelLit(v) => false
+    KernelLit(^v) => false
   }
 }
 
 // The two arguments of `+`.
-pub fn kernel_as_plus(t: KernelTerm): Option(Pair(KernelTerm, KernelTerm)) {
+pub fn kernel_as_plus(t: KernelTerm): Option(KernelTerm × KernelTerm) {
   let sp := kernel_spine(t)
   if kernel_is_const(sp.fst, "+") {
     match sp.snd {
@@ -396,8 +432,8 @@ pub fn kernel_as_plus(t: KernelTerm): Option(Pair(KernelTerm, KernelTerm)) {
       Cons(x, rest) => match rest {
         Nil => None
         Cons(y, more) => match more {
-          Nil => Some(Pair { fst: x, snd: y })
-          Cons(z, others) => None
+          Nil => Some(#(x, y))
+          Cons(^z, ^others) => None
         }
       }
     }
@@ -420,7 +456,7 @@ mutual {
   // major premise becomes a constructor only by unfolding names.
   // With `delta`, what an application reduces to is kept until the
   // declaration is checked, and found again wherever the same term is met.
-  pub fn kernel_whnf(k: Nat, &mut c: KernelCore, t: KernelTerm, delta: Bool, lazy: Bool): KernelTerm {
+  pub fn kernel_whnf(k: Nat, c: &mut KernelCore, t: KernelTerm, delta: Bool, lazy: Bool): KernelTerm {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -441,7 +477,7 @@ mutual {
     }
   }
 
-  pub fn kernel_whnf_loop(k: Nat, &mut c: KernelCore, t: KernelTerm, delta: Bool, lazy: Bool): KernelTerm {
+  pub fn kernel_whnf_loop(k: Nat, c: &mut KernelCore, t: KernelTerm, delta: Bool, lazy: Bool): KernelTerm {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -450,12 +486,12 @@ mutual {
       Succ(j) => {
         let sp := kernel_spine(t)
         match sp.fst {
-          KernelBVar(i) => t
-          KernelFVar(x) => t
-          KernelSortTerm(s) => t
+          KernelBVar(^i) => t
+          KernelFVar(^x) => t
+          KernelSortTerm(^s) => t
           KernelConst(n) => kernel_whnf_const(j, &mut c, t, n, sp.snd, delta, lazy && not(delta))
-          KernelPi(a, b, n) => t
-          KernelLam(body, n) => match sp.snd {
+          KernelPi(^a, ^b, ^n) => t
+          KernelLam(body, ^n) => match sp.snd {
             Nil => t
             Cons(arg, rest) => kernel_whnf_loop(
               j,
@@ -465,8 +501,8 @@ mutual {
               lazy
             )
           }
-          KernelApp(f, a, n) => t
-          KernelLit(v) => t
+          KernelApp(^f, ^a, ^n) => t
+          KernelLit(^v) => t
         }
       }
     }
@@ -474,7 +510,7 @@ mutual {
 
   pub fn kernel_whnf_const(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     t: KernelTerm,
     n: Text,
     args: List(KernelTerm),
@@ -526,7 +562,7 @@ mutual {
 
   // `Nat::eq`, `Nat::lt`, `Nat::sub`, `Nat::div_nz` or `Nat::rem_nz` on two
   // numerals, computed at once: what unfolding the definition gives.
-  pub fn kernel_numeric(k: Nat, &mut c: KernelCore, n: Text, args: List(KernelTerm)): Option(KernelTerm) {
+  pub fn kernel_numeric(k: Nat, c: &mut KernelCore, n: Text, args: List(KernelTerm)): Option(KernelTerm) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -548,19 +584,22 @@ mutual {
   }
 
   // The number `t` reduces to when it is a numeral, or `Succ`s of one.
-  pub fn kernel_numeral(k: Nat, &mut c: KernelCore, t: KernelTerm): Option(Nat) {
+  pub fn kernel_numeral(k: Nat, c: &mut KernelCore, t: KernelTerm): Option(Nat) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
         None
       }
-      Succ(j) => kernel_numeral_of(j, &mut c, kernel_whnf(j, &mut c, t, true, false), 0)
+      Succ(j) => {
+        let whnf := kernel_whnf(j, &mut c, t, true, false)
+        kernel_numeral_of(j, &mut c, whnf, 0)
+      }
     }
   }
 
   // `more` plus the number a weak head normal `w` is. Below a `Succ`, a sum,
   // product or difference is computed only on numerals.
-  pub fn kernel_numeral_of(k: Nat, &mut c: KernelCore, w: KernelTerm, more: Nat): Option(Nat) {
+  pub fn kernel_numeral_of(k: Nat, c: &mut KernelCore, w: KernelTerm, more: Nat): Option(Nat) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -573,7 +612,10 @@ mutual {
             None => None
             Some(x) => match kernel_checked(Succ(more)) {
               None => None
-              Some(m) => kernel_numeral_of(j, &mut c, kernel_literal_or_whnf(j, &mut c, x), m)
+              Some(m) => {
+                let value := kernel_literal_or_whnf(j, &mut c, x)
+                kernel_numeral_of(j, &mut c, value, m)
+              }
             }
           }
         }
@@ -582,7 +624,7 @@ mutual {
   }
 
   // `t` reduced, except that `+`, `*` and `-` are computed only on numerals.
-  pub fn kernel_literal_or_whnf(k: Nat, &mut c: KernelCore, t: KernelTerm): KernelTerm {
+  pub fn kernel_literal_or_whnf(k: Nat, c: &mut KernelCore, t: KernelTerm): KernelTerm {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -611,7 +653,7 @@ mutual {
     }
   }
 
-  pub fn kernel_number(k: Nat, &mut c: KernelCore, t: KernelTerm): Option(Nat) {
+  pub fn kernel_number(k: Nat, c: &mut KernelCore, t: KernelTerm): Option(Nat) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -632,7 +674,7 @@ mutual {
   // `a * Succ(k) = a * k + a`, `a - Zero = a`, `a - Succ(k) = pred(a - k)`.
   // Two numerals are computed at once (a result past the largest numeral is
   // left as it is).
-  pub fn kernel_arith(k: Nat, &mut c: KernelCore, op: Text, args: List(KernelTerm)): Option(KernelTerm) {
+  pub fn kernel_arith(k: Nat, c: &mut KernelCore, op: Text, args: List(KernelTerm)): Option(KernelTerm) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -664,7 +706,7 @@ mutual {
 
   pub fn kernel_arith_symbolic(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     op: Text,
     a: KernelTerm,
     b: KernelTerm,
@@ -711,7 +753,7 @@ mutual {
 
   // `Quot::lift(A, r, B, f, h, Quot::mk(A', r', a))` is `f(a)` and
   // `Quot::ind(A, r, P, m, Quot::mk(A', r', a))` is `m(a)`.
-  pub fn kernel_quot_iota(k: Nat, &mut c: KernelCore, name: Text, args: List(KernelTerm)): Option(KernelTerm) {
+  pub fn kernel_quot_iota(k: Nat, c: &mut KernelCore, name: Text, args: List(KernelTerm)): Option(KernelTerm) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -749,7 +791,7 @@ mutual {
   // One step of the eliminator `rec` of `family` on a constructor.
   pub fn kernel_iota(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     rec: Text,
     family: Text,
     args: List(KernelTerm),
@@ -782,7 +824,7 @@ mutual {
                 None => np
                 Some(alias) => List::length(alias.snd)
               }
-              let chosen: Option(Pair(Text, List(KernelTerm))) := match kernel_as_ctor(c, major, of) {
+              let chosen: Option(Text × List(KernelTerm)) := match kernel_as_ctor(c, major, of) {
                 Some(found) => Some(found)
                 None => if lazy { None } else {
                   // An `Eq`-like proof reduces whenever the indices agree.
@@ -797,7 +839,7 @@ mutual {
                     ) {
                       match List::head(ind.constructors) {
                         None => None
-                        Some(ci) => Some(Pair { fst: ci.name, snd: List::take(np, args) })
+                        Some(ci) => Some(#(ci.name, List::take(np, args)))
                       }
                     } else { None }
                   }
@@ -846,7 +888,7 @@ mutual {
   // The induction hypotheses of a constructor's recursive arguments.
   pub fn kernel_iota_ihs(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     rs: List(KernelRecArg),
     targets: List(Text),
     params: List(KernelTerm),
@@ -880,7 +922,7 @@ mutual {
     }
   }
 
-  pub fn kernel_fresh_props(k: Nat, &mut c: KernelCore, n: Nat): List(Nat) {
+  pub fn kernel_fresh_props(k: Nat, c: &mut KernelCore, n: Nat): List(Nat) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -900,7 +942,7 @@ mutual {
   // given at its place.
   pub fn kernel_conv_indices(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     want: List(KernelTerm),
     params: List(KernelTerm),
     given: List(KernelTerm)
@@ -930,7 +972,7 @@ mutual {
   // taken off at once. `None` when `t` is a numeral, when no `+ m` was taken
   // off, or when `t` is not, under its `Succ`s, a sum applied last to a
   // numeral of at least 4096.
-  pub fn kernel_offset_view(k: Nat, &mut c: KernelCore, t: KernelTerm): Option(Pair(KernelTerm, Nat)) {
+  pub fn kernel_offset_view(k: Nat, c: &mut KernelCore, t: KernelTerm): Option(KernelTerm × Nat) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -950,22 +992,22 @@ mutual {
 
   pub fn kernel_offset_walk(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     t: KernelTerm,
     n: Nat,
     plus: Bool
-  ): Option(Pair(KernelTerm, Nat)) {
+  ): Option(KernelTerm × Nat) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
         None
       }
       Succ(j) => {
-        let taken: Option(Pair(KernelTerm, Nat)) := match kernel_as_plus(t) {
+        let taken: Option(KernelTerm × Nat) := match kernel_as_plus(t) {
           None => None
           Some(xy) => match kernel_as_lit(kernel_literal_or_whnf(j, &mut c, xy.snd)) {
             None => None
-            Some(m) => Some(Pair { fst: xy.fst, snd: m })
+            Some(m) => Some(#(xy.fst, m))
           }
         }
         match taken {
@@ -982,10 +1024,10 @@ mutual {
                   Some(total) => kernel_offset_walk(j, &mut c, x, total, plus)
                 }
                 None => match kernel_as_plus(w) {
-                  Some(xy) => if kernel_term_eq(w, t) {
-                    if plus { Some(Pair { fst: w, snd: n }) } else { None }
+                  Some(^xy) => if kernel_term_eq(w, t) {
+                    if plus { Some(#(w, n)) } else { None }
                   } else { kernel_offset_walk(j, &mut c, w, n, plus) }
-                  None => if plus { Some(Pair { fst: w, snd: n }) } else { None }
+                  None => if plus { Some(#(w, n)) } else { None }
                 }
               }
             }
@@ -997,7 +1039,7 @@ mutual {
 
   // Convertibility, with proof irrelevance. The untyped comparison runs
   // first; only when it fails are the terms compared with their types.
-  pub fn kernel_conv(k: Nat, &mut c: KernelCore, a: KernelTerm, b: KernelTerm): Bool {
+  pub fn kernel_conv(k: Nat, c: &mut KernelCore, a: KernelTerm, b: KernelTerm): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1019,7 +1061,7 @@ mutual {
 
   // When one side is a numeral, the other is reduced once and the two are
   // compared as values; `None` when the other does not reduce to a numeral.
-  pub fn kernel_conv_value(k: Nat, &mut c: KernelCore, a: KernelTerm, b: KernelTerm): Option(Bool) {
+  pub fn kernel_conv_value(k: Nat, c: &mut KernelCore, a: KernelTerm, b: KernelTerm): Option(Bool) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1035,7 +1077,7 @@ mutual {
     }
   }
 
-  pub fn kernel_conv_value_of(k: Nat, &mut c: KernelCore, x: Nat, other: KernelTerm): Option(Bool) {
+  pub fn kernel_conv_value_of(k: Nat, c: &mut KernelCore, x: Nat, other: KernelTerm): Option(Bool) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1056,7 +1098,7 @@ mutual {
     }
   }
 
-  pub fn kernel_is_prop(k: Nat, &mut c: KernelCore, ty: KernelTerm): Bool {
+  pub fn kernel_is_prop(k: Nat, c: &mut KernelCore, ty: KernelTerm): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1075,7 +1117,7 @@ mutual {
   // and a function at the codomain of its type.
   pub fn kernel_conv_typed(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     a: KernelTerm,
     b: KernelTerm,
     ty: Option(KernelTerm)
@@ -1096,7 +1138,7 @@ mutual {
 
   pub fn kernel_conv_typed_at(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     a: KernelTerm,
     b: KernelTerm,
     ty: Option(KernelTerm)
@@ -1144,7 +1186,7 @@ mutual {
 
   pub fn kernel_conv_typed_shapes(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     x: KernelTerm,
     y: KernelTerm,
     ty: Option(KernelTerm)
@@ -1155,8 +1197,8 @@ mutual {
         false
       }
       Succ(j) => match x {
-        KernelApp(f, a, n) => match y {
-          KernelApp(g, d, m) => {
+        KernelApp(^f, ^a, ^n) => match y {
+          KernelApp(^g, ^d, ^m) => {
             let sx := kernel_spine(x)
             let sy := kernel_spine(y)
             if List::length(sx.snd) == List::length(sy.snd) && kernel_conv_node(j, &mut c, sx.fst, sy.fst) {
@@ -1166,16 +1208,16 @@ mutual {
               }
             } else { false }
           }
-          KernelLam(r, m) => kernel_conv_typed_eta(j, &mut c, r, x, ty)
-          KernelBVar(i) => false
-          KernelFVar(i) => false
-          KernelSortTerm(s) => false
-          KernelConst(i) => false
-          KernelPi(d, r, m) => false
-          KernelLit(v) => false
+          KernelLam(r, ^m) => kernel_conv_typed_eta(j, &mut c, r, x, ty)
+          KernelBVar(^i) => false
+          KernelFVar(^i) => false
+          KernelSortTerm(^s) => false
+          KernelConst(^i) => false
+          KernelPi(^d, ^r, ^m) => false
+          KernelLit(^v) => false
         }
-        KernelPi(d1, r1, n) => match y {
-          KernelPi(d2, r2, m) => if kernel_conv_typed(j, &mut c, d1, d2, None) {
+        KernelPi(d1, r1, ^n) => match y {
+          KernelPi(d2, r2, ^m) => if kernel_conv_typed(j, &mut c, d1, d2, None) {
             let atom := kernel_fresh(&mut c, d1)
             kernel_set_to(&mut c.binders, Succ(c.binders))
             let r := kernel_conv_typed(
@@ -1188,16 +1230,16 @@ mutual {
             kernel_set_to(&mut c.binders, c.binders - 1)
             r
           } else { false }
-          KernelLam(r, m) => kernel_conv_typed_eta(j, &mut c, r, x, ty)
-          KernelBVar(i) => false
-          KernelFVar(i) => false
-          KernelSortTerm(s) => false
-          KernelConst(i) => false
-          KernelApp(g, d, m) => false
-          KernelLit(v) => false
+          KernelLam(r, ^m) => kernel_conv_typed_eta(j, &mut c, r, x, ty)
+          KernelBVar(^i) => false
+          KernelFVar(^i) => false
+          KernelSortTerm(^s) => false
+          KernelConst(^i) => false
+          KernelApp(^g, ^d, ^m) => false
+          KernelLit(^v) => false
         }
-        KernelLam(r1, n) => match y {
-          KernelLam(r2, m) => match ty {
+        KernelLam(r1, ^n) => match y {
+          KernelLam(r2, ^m) => match ty {
             None => false
             Some(t) => match kernel_as_pi(kernel_whnf(j, &mut c, t, true, false)) {
               None => false
@@ -1216,19 +1258,19 @@ mutual {
               }
             }
           }
-          KernelBVar(i) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
-          KernelFVar(i) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
-          KernelSortTerm(s) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
-          KernelConst(i) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
-          KernelPi(d, r, m) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
-          KernelApp(g, d, m) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
-          KernelLit(v) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
+          KernelBVar(^i) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
+          KernelFVar(^i) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
+          KernelSortTerm(^s) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
+          KernelConst(^i) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
+          KernelPi(^d, ^r, ^m) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
+          KernelApp(^g, ^d, ^m) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
+          KernelLit(^v) => kernel_conv_typed_eta(j, &mut c, r1, y, ty)
         }
-        KernelBVar(i) => kernel_conv_typed_other(j, &mut c, x, y, ty)
-        KernelFVar(i) => kernel_conv_typed_other(j, &mut c, x, y, ty)
-        KernelSortTerm(s) => kernel_conv_typed_other(j, &mut c, x, y, ty)
-        KernelConst(i) => kernel_conv_typed_other(j, &mut c, x, y, ty)
-        KernelLit(v) => kernel_conv_typed_other(j, &mut c, x, y, ty)
+        KernelBVar(^i) => kernel_conv_typed_other(j, &mut c, x, y, ty)
+        KernelFVar(^i) => kernel_conv_typed_other(j, &mut c, x, y, ty)
+        KernelSortTerm(^s) => kernel_conv_typed_other(j, &mut c, x, y, ty)
+        KernelConst(^i) => kernel_conv_typed_other(j, &mut c, x, y, ty)
+        KernelLit(^v) => kernel_conv_typed_other(j, &mut c, x, y, ty)
       }
     }
   }
@@ -1237,7 +1279,7 @@ mutual {
   // on the other side is compared (by η).
   pub fn kernel_conv_typed_other(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     x: KernelTerm,
     y: KernelTerm,
     ty: Option(KernelTerm)
@@ -1257,7 +1299,7 @@ mutual {
   // The body `r` of a λ against `other`, which is not one, at the type `ty`.
   pub fn kernel_conv_typed_eta(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     r: KernelTerm,
     other: KernelTerm,
     ty: Option(KernelTerm)
@@ -1291,7 +1333,7 @@ mutual {
 
   pub fn kernel_conv_typed_args(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     xs: List(KernelTerm),
     ys: List(KernelTerm),
     hty: KernelTerm
@@ -1317,14 +1359,14 @@ mutual {
   }
 
   // The untyped comparison, which restores the recursive names it unfolded.
-  pub fn kernel_conv_node(k: Nat, &mut c: KernelCore, a: KernelTerm, b: KernelTerm): Bool {
+  pub fn kernel_conv_node(k: Nat, c: &mut KernelCore, a: KernelTerm, b: KernelTerm): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
         false
       }
       Succ(j) => {
-        let key := Pair { fst: a, snd: b }
+        let key := #(a, b)
         if Ordmap::contains(c.conv_fail, key, kernel_pair_cmp) { false } else {
           let saved := c.unfolded
           let r := kernel_conv_nodes(j, &mut c, a, b)
@@ -1338,7 +1380,7 @@ mutual {
     }
   }
 
-  pub fn kernel_conv_args(k: Nat, &mut c: KernelCore, xs: List(KernelTerm), ys: List(KernelTerm)): Bool {
+  pub fn kernel_conv_args(k: Nat, c: &mut KernelCore, xs: List(KernelTerm), ys: List(KernelTerm)): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1347,7 +1389,7 @@ mutual {
       Succ(j) => match xs {
         Nil => match ys {
           Nil => true
-          Cons(y, more) => false
+          Cons(^y, ^more) => false
         }
         Cons(x, rest) => match ys {
           Nil => false
@@ -1357,7 +1399,7 @@ mutual {
     }
   }
 
-  pub fn kernel_conv_nodes(k: Nat, &mut c: KernelCore, a: KernelTerm, b: KernelTerm): Bool {
+  pub fn kernel_conv_nodes(k: Nat, c: &mut KernelCore, a: KernelTerm, b: KernelTerm): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1406,7 +1448,7 @@ mutual {
 
   // `+`, `*` and `-` of convertible operands are convertible, also when one
   // side names the operator. Saying no decides nothing.
-  pub fn kernel_conv_same_op(k: Nat, &mut c: KernelCore, a: KernelTerm, b: KernelTerm): Bool {
+  pub fn kernel_conv_same_op(k: Nat, c: &mut KernelCore, a: KernelTerm, b: KernelTerm): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1440,7 +1482,7 @@ mutual {
   // Names are unfolded one at a time, both sides together, and before each
   // the two are compared: the same name applied to convertible arguments is
   // convertible without unfolding it. The higher definition unfolds first.
-  pub fn kernel_conv_unfold(k: Nat, &mut c: KernelCore, a: KernelTerm, b: KernelTerm): Bool {
+  pub fn kernel_conv_unfold(k: Nat, c: &mut KernelCore, a: KernelTerm, b: KernelTerm): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1492,10 +1534,14 @@ mutual {
                   None => b
                   Some(v) => kernel_whnf(j, &mut c, v, false, true)
                 }
-                kernel_conv_unfold(j, &mut c, kernel_whnf(j, &mut c, x, false, true), y)
+                let left := kernel_whnf(j, &mut c, x, false, true)
+                kernel_conv_unfold(j, &mut c, left, y)
               }
               None => match ub {
-                Some(v) => kernel_conv_unfold(j, &mut c, a, kernel_whnf(j, &mut c, v, false, true))
+                Some(v) => {
+                  let right := kernel_whnf(j, &mut c, v, false, true)
+                  kernel_conv_unfold(j, &mut c, a, right)
+                }
                 None => {
                   let fa := kernel_whnf(j, &mut c, a, false, false)
                   let fb := kernel_whnf(j, &mut c, b, false, false)
@@ -1516,7 +1562,7 @@ mutual {
   // when it is higher).
   pub fn kernel_unfold_by_height(
     k: Nat,
-    &mut c: KernelCore,
+    c: &mut KernelCore,
     t: KernelTerm,
     other: KernelTerm,
     first: Bool
@@ -1541,7 +1587,7 @@ mutual {
     }
   }
 
-  pub fn kernel_unfold_head(k: Nat, &mut c: KernelCore, t: KernelTerm): Option(KernelTerm) {
+  pub fn kernel_unfold_head(k: Nat, c: &mut KernelCore, t: KernelTerm): Option(KernelTerm) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1563,7 +1609,7 @@ mutual {
     }
   }
 
-  pub fn kernel_unfold_record_view(k: Nat, &mut c: KernelCore, t: KernelTerm): Option(KernelTerm) {
+  pub fn kernel_unfold_record_view(k: Nat, c: &mut KernelCore, t: KernelTerm): Option(KernelTerm) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1577,7 +1623,7 @@ mutual {
   }
 
   // Two terms neither of which unfolds, compared by their shapes.
-  pub fn kernel_conv_shapes(k: Nat, &mut c: KernelCore, a0: KernelTerm, b0: KernelTerm): Bool {
+  pub fn kernel_conv_shapes(k: Nat, c: &mut KernelCore, a0: KernelTerm, b0: KernelTerm): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1588,65 +1634,65 @@ mutual {
         let a: KernelTerm := if one { kernel_expand_lit(a0) } else { a0 }
         let b: KernelTerm := if one { kernel_expand_lit(b0) } else { b0 }
         match a {
-          KernelApp(f, x, n) => match b {
-            KernelApp(g, y, m) => kernel_conv_node(j, &mut c, f, g) && kernel_conv_node(j, &mut c, x, y)
-            KernelLam(r, m) => kernel_conv_eta(j, &mut c, r, a)
-            KernelBVar(i) => false
-            KernelFVar(i) => false
-            KernelSortTerm(s) => false
-            KernelConst(i) => false
-            KernelPi(d, r, m) => false
-            KernelLit(v) => false
+          KernelApp(f, x, ^n) => match b {
+            KernelApp(g, y, ^m) => kernel_conv_node(j, &mut c, f, g) && kernel_conv_node(j, &mut c, x, y)
+            KernelLam(r, ^m) => kernel_conv_eta(j, &mut c, r, a)
+            KernelBVar(^i) => false
+            KernelFVar(^i) => false
+            KernelSortTerm(^s) => false
+            KernelConst(^i) => false
+            KernelPi(^d, ^r, ^m) => false
+            KernelLit(^v) => false
           }
-          KernelPi(d1, r1, n) => match b {
-            KernelPi(d2, r2, m) => if kernel_conv_node(j, &mut c, d1, d2) {
+          KernelPi(d1, r1, ^n) => match b {
+            KernelPi(d2, r2, ^m) => if kernel_conv_node(j, &mut c, d1, d2) {
               let atom := kernel_fresh(&mut c, d1)
               kernel_set_to(&mut c.binders, Succ(c.binders))
               let r := kernel_conv_node(j, &mut c, kernel_inst(r1, KernelFVar(atom)), kernel_inst(r2, KernelFVar(atom)))
               kernel_set_to(&mut c.binders, c.binders - 1)
               r
             } else { false }
-            KernelLam(r, m) => kernel_conv_eta(j, &mut c, r, a)
-            KernelBVar(i) => false
-            KernelFVar(i) => false
-            KernelSortTerm(s) => false
-            KernelConst(i) => false
-            KernelApp(g, y, m) => false
-            KernelLit(v) => false
+            KernelLam(r, ^m) => kernel_conv_eta(j, &mut c, r, a)
+            KernelBVar(^i) => false
+            KernelFVar(^i) => false
+            KernelSortTerm(^s) => false
+            KernelConst(^i) => false
+            KernelApp(^g, ^y, ^m) => false
+            KernelLit(^v) => false
           }
-          KernelLam(r1, n) => match b {
-            KernelLam(r2, m) => {
+          KernelLam(r1, ^n) => match b {
+            KernelLam(r2, ^m) => {
               let atom := kernel_fresh(&mut c, KernelSortTerm(KernelProp))
               kernel_set_to(&mut c.binders, Succ(c.binders))
               let r := kernel_conv_node(j, &mut c, kernel_inst(r1, KernelFVar(atom)), kernel_inst(r2, KernelFVar(atom)))
               kernel_set_to(&mut c.binders, c.binders - 1)
               r
             }
-            KernelBVar(i) => kernel_conv_eta(j, &mut c, r1, b)
-            KernelFVar(i) => kernel_conv_eta(j, &mut c, r1, b)
-            KernelSortTerm(s) => kernel_conv_eta(j, &mut c, r1, b)
-            KernelConst(i) => kernel_conv_eta(j, &mut c, r1, b)
-            KernelPi(d, r, m) => kernel_conv_eta(j, &mut c, r1, b)
-            KernelApp(g, y, m) => kernel_conv_eta(j, &mut c, r1, b)
-            KernelLit(v) => kernel_conv_eta(j, &mut c, r1, b)
+            KernelBVar(^i) => kernel_conv_eta(j, &mut c, r1, b)
+            KernelFVar(^i) => kernel_conv_eta(j, &mut c, r1, b)
+            KernelSortTerm(^s) => kernel_conv_eta(j, &mut c, r1, b)
+            KernelConst(^i) => kernel_conv_eta(j, &mut c, r1, b)
+            KernelPi(^d, ^r, ^m) => kernel_conv_eta(j, &mut c, r1, b)
+            KernelApp(^g, ^y, ^m) => kernel_conv_eta(j, &mut c, r1, b)
+            KernelLit(^v) => kernel_conv_eta(j, &mut c, r1, b)
           }
-          KernelBVar(x) => match kernel_as_lam(b) {
+          KernelBVar(^x) => match kernel_as_lam(b) {
             Some(r) => kernel_conv_eta(j, &mut c, r, a)
             None => kernel_term_eq(a, b)
           }
-          KernelFVar(x) => match kernel_as_lam(b) {
+          KernelFVar(^x) => match kernel_as_lam(b) {
             Some(r) => kernel_conv_eta(j, &mut c, r, a)
             None => kernel_term_eq(a, b)
           }
-          KernelSortTerm(s) => match kernel_as_lam(b) {
+          KernelSortTerm(^s) => match kernel_as_lam(b) {
             Some(r) => kernel_conv_eta(j, &mut c, r, a)
             None => kernel_term_eq(a, b)
           }
-          KernelConst(x) => match kernel_as_lam(b) {
+          KernelConst(^x) => match kernel_as_lam(b) {
             Some(r) => kernel_conv_eta(j, &mut c, r, a)
             None => kernel_term_eq(a, b)
           }
-          KernelLit(x) => match kernel_as_lam(b) {
+          KernelLit(^x) => match kernel_as_lam(b) {
             Some(r) => kernel_conv_eta(j, &mut c, r, a)
             None => kernel_term_eq(a, b)
           }
@@ -1656,7 +1702,7 @@ mutual {
   }
 
   // η: a function is what it does to a variable.
-  pub fn kernel_conv_eta(k: Nat, &mut c: KernelCore, r: KernelTerm, other: KernelTerm): Bool {
+  pub fn kernel_conv_eta(k: Nat, c: &mut KernelCore, r: KernelTerm, other: KernelTerm): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1672,7 +1718,7 @@ mutual {
     }
   }
 
-  pub fn kernel_subtype(k: Nat, &mut c: KernelCore, a: KernelTerm, b: KernelTerm): Bool {
+  pub fn kernel_subtype(k: Nat, c: &mut KernelCore, a: KernelTerm, b: KernelTerm): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1703,7 +1749,7 @@ mutual {
 
   // The functions at the head of `t` applied to their arguments, and nothing
   // else reduced.
-  pub fn kernel_beta_head(k: Nat, &mut c: KernelCore, t: KernelTerm): KernelTerm {
+  pub fn kernel_beta_head(k: Nat, c: &mut KernelCore, t: KernelTerm): KernelTerm {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1722,23 +1768,23 @@ mutual {
     }
   }
 
-  pub fn kernel_infer(k: Nat, &mut c: KernelCore, t: KernelTerm): Option(KernelTerm) {
+  pub fn kernel_infer(k: Nat, c: &mut KernelCore, t: KernelTerm): Option(KernelTerm) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
         None
       }
       Succ(j) => match t {
-        KernelBVar(i) => None
+        KernelBVar(^i) => None
         KernelFVar(x) => kernel_local_get(c, x)
         KernelSortTerm(s) => Some(KernelSortTerm(kernel_sort_next(s)))
         KernelConst(n) => match kernel_global_get(c, n) {
           None => None
           Some(g) => Some(g.ty)
         }
-        KernelLit(v) => Some(KernelConst("Nat"))
-        KernelLam(body, n) => None
-        KernelPi(a, b, n) => match kernel_infer_sort(j, &mut c, a) {
+        KernelLit(^v) => Some(KernelConst("Nat"))
+        KernelLam(^body, ^n) => None
+        KernelPi(a, b, ^n) => match kernel_infer_sort(j, &mut c, a) {
           None => None
           Some(s) => {
             let atom := kernel_fresh(&mut c, a)
@@ -1748,7 +1794,7 @@ mutual {
             }
           }
         }
-        KernelApp(f, a, n) => if kernel_is_lam(kernel_head(t)) {
+        KernelApp(f, a, ^n) => if kernel_is_lam(kernel_head(t)) {
           // A redex is typed by its reduct once its arguments are typed. Only
           // the redexes at the head are reduced.
           if kernel_infer_args(j, &mut c, kernel_spine(t).snd) {
@@ -1770,7 +1816,7 @@ mutual {
     }
   }
 
-  pub fn kernel_infer_args(k: Nat, &mut c: KernelCore, args: List(KernelTerm)): Bool {
+  pub fn kernel_infer_args(k: Nat, c: &mut KernelCore, args: List(KernelTerm)): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1780,13 +1826,13 @@ mutual {
         Nil => true
         Cons(a, rest) => match kernel_infer(j, &mut c, a) {
           None => false
-          Some(t) => kernel_infer_args(j, &mut c, rest)
+          Some(^t) => kernel_infer_args(j, &mut c, rest)
         }
       }
     }
   }
 
-  pub fn kernel_infer_sort(k: Nat, &mut c: KernelCore, t: KernelTerm): Option(KernelSort) {
+  pub fn kernel_infer_sort(k: Nat, c: &mut KernelCore, t: KernelTerm): Option(KernelSort) {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)
@@ -1799,7 +1845,7 @@ mutual {
     }
   }
 
-  pub fn kernel_check(k: Nat, &mut c: KernelCore, t: KernelTerm, expected: KernelTerm): Bool {
+  pub fn kernel_check(k: Nat, c: &mut KernelCore, t: KernelTerm, expected: KernelTerm): Bool {
     match k {
       Zero => {
         kernel_set_to(&mut c.exhausted, true)

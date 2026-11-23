@@ -11,10 +11,10 @@ fn project(name: &str, case: &str) -> (PathBuf, String) {
     std::os::unix::fs::symlink(tables, dir.join(".tauto-syntax")).unwrap();
     std::fs::write(
         dir.join("math.nib"),
-        case_inputs::file("aux-analyzer.eure", case, "math.nib"),
+        tauto_case_inputs::file("aux-analyzer.eure", case, "math.nib"),
     )
     .unwrap();
-    let text = case_inputs::file("aux-analyzer.eure", case, "main.nib");
+    let text = tauto_case_inputs::file("aux-analyzer.eure", case, "main.nib");
     std::fs::write(dir.join("main.nib"), &text).unwrap();
     (dir.join("main.nib"), text)
 }
@@ -56,42 +56,4 @@ fn a_tokens_function_of_the_syntax_says_what_the_literal_is_coloured_as() {
             ("1", "number"),
         ]
     );
-}
-
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
-mod case_inputs {
-    pub fn file_static(file: &str, name: &str, input: &str) -> &'static str {
-        match (file, name, input) {
-            ("aux-analyzer.eure", "editor_completion", "math.nib") => {
-                r#"syntax!(math, ```par
-%start Eqn
-%title "math"
-%%
-Eqn: Sum Equals Sum;
-Sum: Term { Plus Term };
-Term: Num | Paren;
-Paren: LParen Sum RParen;
-Num: /[0-9]+/;
-Equals: '=';
-Plus: '+';
-LParen: '(';
-RParen: ')';
-```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
-  fn parse
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
-"#
-            }
-            ("aux-analyzer.eure", "editor_completion", "main.nib") => {
-                r#"import "math.nib"
-theorem t(): math!(`1 + `) { Refl(Nat, 3) }
-"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
-    pub fn file(file: &str, name: &str, input: &str) -> String {
-        file_static(file, name, input).to_string()
-    }
 }

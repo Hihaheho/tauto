@@ -3,7 +3,7 @@
 // and declared after the block: the kernel gets the terms written by hand.
 
 @ cases.a-mutual-function-may-only-call-the-others
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn flip(y: Bool): Bool {
@@ -35,7 +35,7 @@ theorem three(): odd(3) = true { Refl }
 checks_all = "ok"
 
 @ cases.mutual-functions-not-defined-by-a-match-do-not-call-each-other
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 mutual {
@@ -133,4 +133,34 @@ mutual {
 }
 theorem result(): Eq(Nat, 7, 7) { left(3, 7) }
 ```
+checks_all = "ok"
+
+@ cases.mutual-functions-pass-a-function-typed-parameter-on-unchanged
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+mutual {
+  inductive P(ok: (Nat) -> Prop): (Nat) -> Prop {
+    Z: P(ok, Zero)
+    S<n: Nat>(h: Q(ok, n)): P(ok, Succ(n))
+  }
+  inductive Q(ok: (Nat) -> Prop): (Nat) -> Prop {
+    QS<n: Nat>(h: P(ok, n)): Q(ok, n)
+  }
+}
+mutual {
+  theorem mp(ok: (Nat) -> Prop, ok2: (Nat) -> Prop, n: Nat, h: P(ok, n)): P(ok2, n) {
+    ⊢ P(ok2, n) from match h {
+      Z => Z
+      S(m, h1) => S(mq(ok, ok2, m, h1))
+    }
+  }
+  theorem mq(ok: (Nat) -> Prop, ok2: (Nat) -> Prop, n: Nat, h: Q(ok, n)): Q(ok2, n) {
+    ⊢ Q(ok2, n) from match h {
+      QS(m, h1) => QS(mp(ok, ok2, m, h1))
+    }
+  }
+}
+```
+
 checks_all = "ok"

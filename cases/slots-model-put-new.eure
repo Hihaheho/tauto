@@ -1,0 +1,32 @@
+// `new` needs policy; empty/vacant come from the `OccLaws` result type of the
+// laws argument (`tb_laws`). Multi-line `put_m` must keep every line of its
+// template (not only the first `let`).
+@ cases.slots-model-put-new
+differential = "extract"
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::uhost
+import std::uint
+import std::slots { Byte, SlotsModel, Table }
+import std::hash_table { tb_used, tb_laws, tb_put_ok }
+fn make(): SlotsModel(Table, Byte, Nat, tb_used) {
+  SlotsModel::new(UHost::lit(1, Refl), tb_laws())
+}
+fn put_one(
+  t: &mut SlotsModel(Table, Byte, Nat, tb_used),
+  i: UHost,
+  m: Byte,
+  x: Nat,
+  q: Table::put_test(SlotsModel::state(t), i, SlotsModel::mark_at(t, i), m) = true
+): Unit {
+  SlotsModel::put_m(
+    &mut t,
+    i,
+    m,
+    x,
+    SlotsModel::state(t),
+    tb_laws(),
+    tb_put_ok(SlotsModel::state(t), i, SlotsModel::mark_at(t, i), m, q)
+  )
+}
+```

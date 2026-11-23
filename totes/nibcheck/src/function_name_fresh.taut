@@ -1,7 +1,7 @@
 import "function_name_absence.taut"
-import std::Base
-import std::Row
-import std::Text
+import std::base
+import std::row
+import std::text
 import "data_names_membership_sound.taut"
 import "rules_decls.taut"
 import "signature_frame.taut"
@@ -14,7 +14,7 @@ pub theorem fresh_function_head_absent(
   fresh: FreshFunctionNames(Cons(f, rest), seen),
   present: Mem(Text, signature_name(f), seen)
 ): False {
-  ⊢ False from match fresh {
+  match fresh {
     FreshFunctionsCons(head, tail, previous, absent, remaining) => absent(present)
   }
 }
@@ -25,7 +25,7 @@ pub theorem fresh_function_tail(
   seen: List(Text),
   fresh: FreshFunctionNames(Cons(f, rest), seen)
 ): FreshFunctionNames(rest, Cons(signature_name(f), seen)) {
-  ⊢ FreshFunctionNames(rest, Cons(signature_name(f), seen)) from match fresh {
+  match fresh {
     FreshFunctionsCons(head, tail, previous, absent, remaining) => remaining
   }
 }
@@ -40,7 +40,7 @@ pub theorem fresh_function_excludes<d: SurfaceFn, fs: List(
   already: Mem(Text, n, seen),
   equal: n = signature_name(d)
 ): False {
-  ⊢ False from match member {
+  match member {
     MemHere(rest) => fresh_function_head_absent(
       d,
       rest,
@@ -68,7 +68,7 @@ pub theorem fresh_function_weaken<fs: List(
   smaller: List(Text),
   sub: Sub(Text, smaller, seen)
 ): FreshFunctionNames(fs, smaller) {
-  ⊢ FreshFunctionNames(fs, smaller) from match fresh {
+  match fresh {
     FreshFunctionsNil(previous) => FreshFunctionsNil(smaller)
     FreshFunctionsCons(first, rest, previous, absent, remaining) => FreshFunctionsCons(
       first,
@@ -90,7 +90,7 @@ pub theorem fresh_function_append_tail(
   seen: List(Text),
   fresh: FreshFunctionNames(List::append(prefix, suffix), seen)
 ): FreshFunctionNames(suffix, seen) {
-  ⊢ FreshFunctionNames(suffix, seen) from match prefix {
+  match prefix {
     Nil => fresh
     Cons(first, rest) => fresh_function_weaken(
       fresh_function_append_tail(

@@ -1,0 +1,77 @@
+// The shell of the LLVM backend (`docs/design/llvm-backend.md`).
+//
+//   llvm emit FILE...   each FILE is a package as NIR text
+//   llvm print FILE...  each FILE is a module as IR text
+//
+// Each answer follows a line `== FILE`. `emit` answers the module of the
+// package, or one line that says what the backend does not write yet.
+// `print` answers the module as the backend writes modules.
+import "ir.taut"
+import "print.taut"
+import "emit.taut"
+import "../../nir/src/syntax.taut"
+import "../../nir/src/model.taut"
+import "../../nir/src/read.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::builtin::os
+
+pub fn llvm_line(parts: List(Text)): Unit ! {stdout} {
+  print(Text::concat_all(parts))
+  print(text_newline())
+}
+
+pub fn llvm_emit_text(source: Text): Text ! {div} {
+  match nir::parse(source) {
+    Err(d) => Text::concat_all(["not NIR text: ", d.message, text_newline()])
+    Ok(tree) => match nir_read(tree) {
+      Err(e) => Text::concat_all(["not NIR text: ", e, text_newline()])
+      Ok(pkg) => match llvm_emit(pkg) {
+        Ok(m) => llvm_print(m)
+        Err(e) => concat(e, text_newline())
+      }
+    }
+  }
+}
+
+pub fn llvm_print_text(source: Text): Text ! {div} {
+  match llvm::parse(source) {
+    Err(d) => Text::concat_all(["not IR text: ", d.message, text_newline()])
+    Ok(tree) => match llvm::Module::to_i(tree) {
+      None => concat("not IR text: a hole stands in it", text_newline())
+      Some(m) => llvm_print(m)
+    }
+  }
+}
+
+pub fn llvm_main_each(emit: Bool, paths: List(Text)): Unit ! {fs_read, stdout, div} {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      llvm_line(["== ", path])
+      match read_file(path) {
+        Err(e) => llvm_line(["cannot read: ", e])
+        Ok(source) => print(if emit { llvm_emit_text(source) } else { llvm_print_text(source) })
+      }
+      llvm_main_each(emit, rest)
+    }
+  }
+}
+
+pub fn llvm_main(args: List(Text)): Unit ! {stderr, fs_read, stdout, div} {
+  match args {
+    Nil => eprint("usage: llvm emit FILE... | llvm print FILE...")
+    Cons(mode, paths) => if mode == "emit" {
+      llvm_main_each(true, paths)
+    } else if mode == "print" {
+      llvm_main_each(false, paths)
+    } else {
+      eprint("usage: llvm emit FILE... | llvm print FILE...")
+    }
+  }
+}
+
+perform main(() => {
+  llvm_main(perform argv())
+})

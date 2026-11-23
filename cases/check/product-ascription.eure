@@ -11,9 +11,9 @@ fn fewer(p: Nat × Bool × Unit): Nat × Unit { (p: Nat × Unit) }
 
 fn swapped(p: Nat × Bool): Bool × Nat { (p: Bool × Nat) }
 
-theorem first_of(): (#(Zero, true): Nat) = Zero { Refl(Nat, Zero) }
+theorem first_of(): (#(Zero, true): Nat) = Zero { Refl(<A: Nat, a: Zero>) }
 
-theorem swapped_of(): (#(Zero, true): Bool × Nat) = #(true, Zero) { Refl(Bool × Nat, #(true, Zero)) }
+theorem swapped_of(): (#(Zero, true): Bool × Nat) = #(true, Zero) { Refl(<A: (Bool × Nat), a: #(true, Zero)>) }
 ```
 
 checks_all = "ok"
@@ -195,3 +195,23 @@ checks_all = "ok"
 checks."input/main.taut::entries" = "ok"
 checks."input/main.taut::keys_of" = "ok"
 checks."input/main.taut::to_list" = "ok"
+
+@ cases.a-projection-is-the-match-written-by-hand
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn entry_value<K, V>(e: @key K × @value V): V {
+  match e { #(@key _, @value v) => v }
+}
+
+fn third<A, B, C>(p: A × B × C): C {
+  match p { #(_, _, c) => c }
+}
+
+theorem value_of<K: Type, V: Type>(p: @key K × @value V): Eq(V, entry_value(p), (p: V)) { Refl }
+
+theorem third_of<A: Type, B: Type, C: Type>(p: A × B × C): Eq(C, third(p), (p: C)) { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::value_of" = "ok"
+checks."input/main.taut::third_of" = "ok"

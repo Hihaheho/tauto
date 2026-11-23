@@ -1,29 +1,32 @@
 import "types_decl.taut"
-import std::Base
-import std::Map
-import std::Text
+import "types_decl_head.taut"
+import std::base
+import std::map
+import std::text
 import "datas.taut"
 import "ty.taut"
 
 // The two interpretations of an annotation: constructor kinds take precedence;
 // annotations that parse as neither are row binders, not value-type binders.
+// `NoBorrow` is no kind: it is taken out before the kind is read
+// (`kind_parse_bound`), and alone it leaves the default.
 pub(open) inductive SignatureGenericBound: (
   Option(Option(Text)),
-  Option(Pair(Kind, Kind)),
+  Option(Kind × Kind),
   Option(Kind)
 ) -> Prop {
   SignatureBoundMissing: SignatureGenericBound(None, None, Some(KindAffine))
   SignatureBoundDefault: SignatureGenericBound(Some(None), None, Some(KindAffine))
   SignatureBoundWritten(
     spelling: Text
-  ): SignatureGenericBound(Some(Some(spelling)), kind_parse_ctor(spelling), kind_parse(spelling))
+  ): SignatureGenericBound(Some(Some(spelling)), kind_parse_ctor(spelling), kind_parse_bound(spelling))
 }
-pub fn signature_acc_generics(acc: SigGenerics): List(Pair(Text, Kind)) { acc.generics }
+pub fn signature_acc_generics(acc: SigGenerics): List(Text × Kind) { acc.generics }
 pub fn signature_acc_map(acc: SigGenerics): Ordmap(Text, Ty) { acc.map }
-pub fn signature_acc_ctors(acc: SigGenerics): List(Pair(Text, Kind)) { acc.ctors }
+pub fn signature_acc_ctors(acc: SigGenerics): List(Text × Kind) { acc.ctors }
 pub fn signature_bind_value(name: Text, kind: Kind, acc: SigGenerics): SigGenerics {
   SigGenericsMk(
-    Cons(Pair { fst: name, snd: kind }, acc.generics),
+    Cons(#(name, kind), acc.generics),
     Ordmap::insert(acc.map, name, TyParam(name, kind), Ordmap::compare_text),
     acc.ctors
   )
@@ -35,9 +38,9 @@ pub fn signature_bind_constructor(
   acc: SigGenerics
 ): SigGenerics {
   SigGenericsMk(
-    Cons(Pair { fst: name, snd: result }, acc.generics),
+    Cons(#(name, result), acc.generics),
     Ordmap::insert(acc.map, name, TyParam(name, result), Ordmap::compare_text),
-    Cons(Pair { fst: name, snd: argument }, acc.ctors)
+    Cons(#(name, argument), acc.ctors)
   )
 }
 pub(open) inductive SignatureGenerics: (
@@ -81,7 +84,7 @@ pub(open) inductive SignatureGenerics: (
     ordinary: Option(Kind),
     bound: SignatureGenericBound(
       nth_item(bounds, index),
-      Some(Pair { fst: argument, snd: result }),
+      Some(#(argument, result)),
       ordinary
     ),
     tail: SignatureGenerics(

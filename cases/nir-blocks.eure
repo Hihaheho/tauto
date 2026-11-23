@@ -1,0 +1,98 @@
+// `blocks { … }` is the text of a function in block form (`nir-text.md`
+// "Blocks"). The text reads back as the blocks it was written from.
+
+@ cases.a-branch-and-its-join-are-blocks
+source = ```tauto
+fn pick(c: Bool, a: u64, b: u64): u64 ! {overflow} { if c { a + 1 } else { b } }
+fn main(): u64 ! {overflow} { pick(true, 1, 2) }
+show(&main())
+```
+stdout = "2\n"
+nir.passes = ["anf"]
+nir.blocks.pick = ```nir
+fn pick@5(c#6: Bool, a#7: u64, b#8: u64): u64 A = blocks {
+  b0():
+    control region0 to [b2, b3] join b1;
+  b1() -> u64 joins region0:
+    done %0;
+  b2() owner region0:
+    jump b1(add<u64>((copy plain a#7: u64), 1u64));
+  b3() owner region0:
+    jump b1((copy plain b#8: u64));
+  regions {
+    region0 = node (if (-42535295865117307932921825928971026432: Never) then (-42535295865117307932921825928971026431: Never) else (-42535295865117307932921825928971026430: Never): u64) slots(operand (copy plain c#6: Bool), body b2, body b3);
+  }
+  counts opaque 0 refutable 0;
+}
+```
+
+@ cases.a-match-is-a-tree-of-tests
+source = ```tauto
+fn size(o: Option(u64)): u64 { match o { Some(n) => n, None => 0 } }
+fn main(): u64 { size(Some(3)) }
+show(&main())
+```
+stdout = "3\n"
+nir.passes = ["anf"]
+nir.blocks.size = ```nir
+fn size@5(o#6: Option(u64)): u64 S = blocks {
+  b0():
+    enter region0 at b4 join b1;
+  b1() -> u64 joins region0:
+    done %0;
+  b2() owner region0:
+    jump b1((copy plain n#7: u64));
+  b3() owner region0:
+    jump b1(0u64);
+  b4() owner region0:
+    test [] { ctor(1, 1) => b5, ctor(0, 0) => b6 };
+  b5() owner region0:
+    bind n#7: u64 := part [0];
+    goto b2;
+  b6() owner region0:
+    goto b3;
+  regions {
+    region0 = node (match (-42535295865117307932921825928971026432: Never) {
+      Option::Some(n#7: u64) => (-42535295865117307932921825928971026431: Never),
+      Option::None => (-42535295865117307932921825928971026430: Never),
+    }: u64) slots(operand (copy plain o#6: Option(u64)), body b2, body b3);
+  }
+  counts opaque 0 refutable 0;
+}
+```
+
+@ cases.a-loop-and-a-call-that-may-abort
+source = ```tauto
+fn main(): u64 ! {div, overflow} {
+  var i := 0
+  while i < 3 { i := i + 1 }
+  i
+}
+show(&main())
+```
+stdout = "3\n"
+nir.passes = ["anf"]
+nir.blocks.main = ```nir
+fn main@2(): u64 A = blocks {
+  b0():
+    open region0;
+    var i#4: u64 := 0u64;
+    control region1 to [b2, b3] join b1;
+  b1():
+    close region0 with (copy plain i#4: u64);
+    done %0;
+  b2() owner region1:
+    branch lt((copy plain i#4: u64), 3u64) then b3 else b1;
+  b3() owner region1:
+    open region2;
+    set (plain i#4: u64) := add<u64>((copy plain i#4: u64), 1u64);
+    close region2;
+    jump b2(%2);
+  regions {
+    region0 = block u64 slots();
+    region1 = while tick host slots(body b2, body b3);
+    region2 = block Unit slots();
+  }
+  counts opaque 0 refutable 0;
+}
+```

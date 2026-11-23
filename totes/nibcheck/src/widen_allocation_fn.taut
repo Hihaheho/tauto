@@ -7,6 +7,7 @@ import "checker_frame.taut"
 import "datas.taut"
 import "fits_allocation_sound.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "types_match.taut"
@@ -24,7 +25,7 @@ pub theorem widen_alloc_store(
   value_bound: TypeAllocated(ck_next_of(c), value),
   occurs: Bool
 ): AllocationAdvance(c, widen_store(c, rv, value, occurs)) {
-  ⊢ AllocationAdvance(c, widen_store(c, rv, value, occurs)) from match occurs {
+  match occurs {
     false => allocation_advance_return(c, Star, state)
     true => allocation_advance_rewrap(
       c,
@@ -43,8 +44,7 @@ pub theorem widen_alloc_store_true(
   value_bound: TypeAllocated(ck_next_of(c), value)
 ): AllocationAdvance(c, widen_store_true(c, rv, value)) {
   allocation_advance_bind(
-    Unit,
-    Bool,
+    <A: Unit, B: Bool>,
     c,
     (ignored: Unit, next: Checker) => mut1(true, next),
     widen_store(c, rv, value, not(ck_occurs(c, rv, value))),
@@ -76,7 +76,7 @@ pub theorem widen_alloc_attempt(
   wide_bound: TypeAllocated(ck_next_of(c), wide),
   success: Bool
 ): AllocationAdvance(c, widen_attempt(c, rv, wide, success)) {
-  ⊢ AllocationAdvance(c, widen_attempt(c, rv, wide, success)) from match success {
+  match success {
     false => allocation_advance_return(c, false, state)
     true => widen_alloc_store_true(
       c,
@@ -107,11 +107,10 @@ pub theorem widen_alloc_fn_allowed(
   rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
   allowed: Bool
 ): AllocationAdvance(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
-  ⊢ AllocationAdvance(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) from match allowed {
+  match allowed {
     false => allocation_advance_return(c, false, state)
     true => allocation_advance_bind(
-      Bool,
-      Bool,
+      <A: Bool, B: Bool>,
       c,
       (success: Bool, next: Checker) => widen_attempt(
         next,
@@ -171,7 +170,7 @@ pub theorem widen_alloc_fn_current(
   rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
   current_bound: TypeAllocated(ck_next_of(c), current)
 ): AllocationAdvance(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
-  ⊢ AllocationAdvance(c, widen_fn_current(c, pa, ra, ka, rv, current)) from match current {
+  match current {
     TyInt(width) => allocation_advance_return(c, false, state)
     TyBool => allocation_advance_return(c, false, state)
     TyText => allocation_advance_return(c, false, state)
@@ -179,6 +178,7 @@ pub theorem widen_alloc_fn_current(
     TyNever => allocation_advance_return(c, false, state)
     TyDecimal => allocation_advance_return(c, false, state)
     TyFloat => allocation_advance_return(c, false, state)
+    TyFloat32 => allocation_advance_return(c, false, state)
     TyParam(name, kind) => allocation_advance_return(c, false, state)
     TyVar(index) => allocation_advance_return(c, false, state)
     TyFn(params, result, kind) => widen_alloc_fn_allowed(
@@ -220,7 +220,7 @@ pub theorem widen_alloc_fn_arm(
   rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
   arm_bound: TypeAllocated(ck_next_of(c), arm)
 ): AllocationAdvance(c, widen_fn_arm(c, current, rv, arm)) {
-  ⊢ AllocationAdvance(c, widen_fn_arm(c, current, rv, arm)) from match arm {
+  match arm {
     TyInt(width) => allocation_advance_return(c, false, state)
     TyBool => allocation_advance_return(c, false, state)
     TyText => allocation_advance_return(c, false, state)
@@ -228,6 +228,7 @@ pub theorem widen_alloc_fn_arm(
     TyNever => allocation_advance_return(c, false, state)
     TyDecimal => allocation_advance_return(c, false, state)
     TyFloat => allocation_advance_return(c, false, state)
+    TyFloat32 => allocation_advance_return(c, false, state)
     TyParam(name, kind) => allocation_advance_return(c, false, state)
     TyVar(index) => allocation_advance_return(c, false, state)
     TyFn(params, result, kind) => widen_alloc_fn_current(
@@ -291,7 +292,7 @@ pub theorem widen_alloc_fits_if(
   b_bound: TypeAllocated(ck_next_of(c), b),
   allowed: Bool
 ): AllocationAdvance(c, widen_fits_if(c, a, b, allowed)) {
-  ⊢ AllocationAdvance(c, widen_fits_if(c, a, b, allowed)) from match allowed {
+  match allowed {
     false => allocation_advance_return(c, false, state)
     true => allocation_advance_rewrap(
       c,

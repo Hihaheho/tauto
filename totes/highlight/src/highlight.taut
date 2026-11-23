@@ -1,13 +1,13 @@
 import "../../scan/src/scan.taut"
 import "../../syntax/src/syntax.taut"
 import "../../text/src/text.taut"
-import std::Base
-import std::Text
-import std::prelude::Affine
+import std::base
+import std::text
 
 // The colour classes of a source file: each token the scanner reads, with
-// the class its kind has. A token without a class (white space, an
-// identifier, punctuation) is left out.
+// the class its kind has; an identifier takes its class from the tokens
+// around it. A token without a class (white space, punctuation, a plain
+// name) is left out.
 
 pub(open) inductive HlClass: Type {
   HlKeyword: HlClass
@@ -15,6 +15,9 @@ pub(open) inductive HlClass: Type {
   HlText: HlClass
   HlNumber: HlClass
   HlMacro: HlClass
+  HlType: HlClass
+  HlFunction: HlClass
+  HlParameter: HlClass
 }
 
 pub(open) inductive HlSpan: Type {
@@ -29,6 +32,9 @@ pub fn hl_class_name(c: HlClass): Text {
     HlText => "str"
     HlNumber => "num"
     HlMacro => "mac"
+    HlType => "ty"
+    HlFunction => "fn"
+    HlParameter => "var"
   }
 }
 
@@ -48,17 +54,99 @@ pub fn hl_class_of(kind: Text): Option(HlClass) {
   }
 }
 
-pub fn hl_classed(&t: SyntaxTables, tokens: List(ScanToken)): List(HlSpan) {
-  ⊢ List(HlSpan) from match tokens {
+// The last of a list of parts, "" for none.
+pub fn hl_last(parts: List(Text)): Text {
+  match parts {
+    Nil => ""
+    Cons(p, rest) => ⊢ Text from match rest {
+      Nil => p
+      _ => hl_last(rest)
+    }
+  }
+}
+
+// Whether a name, without its module path, begins with a capital letter
+// (A to Z): a type or a constructor, as an editor's grammar colours it.
+pub fn hl_capital(name: Text): Bool {
+  match text_decode(hl_last(text_split(name, "::")), 0) {
+    None => false
+    Some(c) => {
+      let code: Nat := c.fst
+      Bool::and(Nat::le(65, code), Nat::le(code, 90))
+    }
+  }
+}
+
+// The first token of `tokens` that is not a comment.
+pub fn hl_next(t: &SyntaxTables, tokens: List(ScanToken)): Option(ScanToken) {
+  match tokens {
+    Nil => None
+    Cons(token, rest) => ⊢ Option(ScanToken) from match hl_class_of(syntax_name(t.terminal_kinds, token.token_type)) {
+      Some(HlComment) => hl_next(t, rest)
+      _ => Some(token)
+    }
+  }
+}
+
+// The class of an identifier from the tokens around it, as the editor's
+// grammar colours it: a capital name is a type or a constructor, a name
+// called or given generics (`f(`, `f<` with no space) is a function, and a
+// name before `:` directly inside parentheses is a parameter.
+pub fn hl_ident_class(t: &SyntaxTables, source: Text, opens: List(Text), token: ScanToken, rest: List(ScanToken)): Option(HlClass) {
+  if hl_capital(Text::slice_or_empty(source, token.start, token.end)) {
+    Some(HlType)
+  } else {
+    match hl_next(t, rest) {
+      None => None
+      Some(n) => {
+        let kind := syntax_name(t.terminal_kinds, n.token_type)
+        if kind == "LParen" || (kind == "Lt" && n.start == token.end) {
+          Some(HlFunction)
+        } else if kind == "Colon" && (match opens { Cons(o, _) => o == "LParen"
+          Nil => false }) {
+          Some(HlParameter)
+        } else {
+          None
+        }
+      }
+    }
+  }
+}
+
+// The brackets open before a token of kind `kind`, innermost first, after it.
+pub fn hl_opens(kind: Text, opens: List(Text)): List(Text) {
+  if kind == "LParen" || kind == "LBrace" || kind == "LBracket" {
+    Cons(kind, opens)
+  } else if kind == "RParen" || kind == "RBrace" || kind == "RBracket" {
+    match opens {
+      Nil => Nil
+      Cons(_, outer) => outer
+    }
+  } else {
+    opens
+  }
+}
+
+pub fn hl_classed(t: &SyntaxTables, source: Text, opens: List(Text), tokens: List(ScanToken)): List(HlSpan) {
+  match tokens {
     Nil => Nil
-    Cons(token, rest) => ⊢ List(HlSpan) from match hl_class_of(syntax_name(t.terminal_kinds, token.token_type)) {
-      None => hl_classed(t, rest)
-      Some(c) => Cons(HlSpan { kind: c, start: token.start, end: token.end }, hl_classed(t, rest))
+    Cons(token, rest) => {
+      let kind := syntax_name(t.terminal_kinds, token.token_type)
+      let cls: Option(HlClass) := if kind == "Ident" {
+        hl_ident_class(t, source, opens, token, rest)
+      } else {
+        hl_class_of(kind)
+      }
+      let after := hl_classed(t, source, hl_opens(kind, opens), rest)
+      ⊢ List(HlSpan) from match cls {
+        None => after
+        Some(c) => Cons(HlSpan { kind: c, start: token.start, end: token.end }, after)
+      }
     }
   }
 }
 
 // The classed tokens of `source`, in order.
-pub fn hl_spans(&t: SyntaxTables, source: Text): List(HlSpan) {
-  hl_classed(t, scan_all(t.scan, source))
+pub fn hl_spans(t: &SyntaxTables, source: Text): List(HlSpan) {
+  hl_classed(t, source, Nil, scan_all(t.scan, source))
 }

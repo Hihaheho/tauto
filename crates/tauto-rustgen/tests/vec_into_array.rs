@@ -31,16 +31,16 @@ var values := Vec::new()
 Vec::push(&mut values, "日本語")
 Vec::push(&mut values, "two")
 let array := Vec::into_array(values)
-perform show("length", Array::len(array))
-perform show("first", Array::get(array, 0))
-perform show("second", Array::get(array, 1))
-perform show("missing", Array::get(array, 2))
+show(&Array::len(array))
+show(&Array::get(array, 0))
+show(&Array::get(array, 1))
+show(&Array::get(array, 2))
 let empty: Array(i64) := Vec::into_array(Vec::new())
-perform show("empty", Array::len(empty))
+show(&Array::len(empty))
 "#
     .to_string();
-    let pkg = tauto_nir::compile_with(source, true).unwrap();
-    let output = tauto::eval::run(source).unwrap().outputs;
+    let pkg = tauto::nir::compile_with(source, true).unwrap();
+    let output = tauto::exec::run(source).unwrap().outputs;
     assert_eq!(output.len(), 5);
     assert_eq!(output[0].1, "2");
     assert_eq!(output[1].1, "Some(\"日本語\")");
@@ -96,7 +96,7 @@ fn main() {
     );
     assert_eq!(
         String::from_utf8(output.stdout.clone()).unwrap(),
-        "length = 2\nfirst = Some(\"日本語\")\nsecond = Some(\"two\")\nmissing = None\nempty = 0\n"
+        "2\nSome(\"日本語\")\nSome(\"two\")\nNone\n0\n"
     );
     let javascript = tauto_jsgen::generate(&pkg).unwrap();
     std::fs::write(
@@ -122,14 +122,14 @@ fn conversion_consumes_the_vec_and_requires_shared_elements() {
     for source in [
         &r#"var v := Vec::new()
 Vec::push(&mut v, 1)
-let &slice := Vec::as_slice(&v)
+let slice := Vec::as_slice(&v)
 let a := Vec::into_array(v)
-perform show("length", Slice::len(&slice))"#
+show(&Slice::len(&slice))"#
             .to_string(),
         &r#"var v := Vec::new()
 Vec::push(&mut v, 1)
 let a := Vec::into_array(v)
-perform show("length", Vec::len(&v))"#
+show(&Vec::len(&v))"#
             .to_string(),
         &r#"var v := Vec::new()
 Vec::push(&mut v, Buf::of("x"))
@@ -137,8 +137,8 @@ let a := Vec::into_array(v)"#
             .to_string(),
     ] {
         for result in [
-            tauto_nir::compile(source),
-            tauto_nir::compile_javascript(source),
+            tauto::nir::compile(source),
+            tauto::nir::compile_javascript(source),
         ] {
             let error = result
                 .err()

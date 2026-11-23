@@ -1,50 +1,46 @@
-description = "A function with an effect row calls the function the checker resolved: `Text::len` of a file that imports std::Text is the library's (a Nat), and the prelude's builtin only when it is written by its full name."
+description = "A function with an effect row calls the function the checker resolved: `Text::len` of a file that imports std::text is the library's (a Nat), and the prelude's builtin only when it is written by its full name."
 
 // The library's `Text::len` in a pure function, for comparison.
 @ cases.text-len-in-a-pure-function
-extract = true
 source = ```tauto
-import std::Base
-import std::Text
+import std::base
+import std::text
 fn before(index: Nat, source: Text): Bool { index < Text::len(source) }
-perform show("before", before(1, "abc"))
+show(&before(1, "abc"))
 ```
-shows = ["before = true"]
+stdout = "true\n"
 
 // The same call in a function with an effect row, which the kernel does not
 // read: it means the library's function, not the builtin of the same short name.
 @ cases.text-len-in-an-effectful-function
-extract = true
 source = ```tauto
-import std::Base
-import std::Text
-fn before(index: Nat, source: Text): Bool ! {Div} { index < Text::len(source) }
-perform show("before", before(1, "abc"))
+import std::base
+import std::text
+fn before(index: Nat, source: Text): Bool ! {div} { index < Text::len(source) }
+show(&before(1, "abc"))
 ```
-shows = ["before = true"]
+stdout = "true\n"
 
 @ cases.text-len-in-a-recursive-effectful-function
-extract = true
 source = ```tauto
-import std::Base
-import std::Text
-fn count(index: Nat, source: Text): Nat ! {Div} {
+import std::base
+import std::text
+fn count(index: Nat, source: Text): Nat ! {div} {
   ⊢ Nat from match index < Text::len(source) {
     true => count(Succ(index), source)
     false => index
   }
 }
-perform show("count", count(0, "abc"))
+show(&count(0, "abc"))
 ```
-shows = ["count = 3"]
+stdout = "3\n"
 
 // The builtin written by its full name stays the builtin: a u64.
 @ cases.builtin-text-len-by-its-full-name-in-an-effectful-function
-extract = true
 source = ```tauto
-import std::Base
-import std::Text
-fn size(t: Text): u64 ! {Div} { std::prelude::Text::len(t) + 1 }
-perform show("size", size("abc"))
+import std::base
+import std::text
+fn size(t: Text): u64 ! {div, overflow} { std::prelude::Text::len(t) + 1 }
+show(&size("abc"))
 ```
-shows = ["size = 4"]
+stdout = "4\n"

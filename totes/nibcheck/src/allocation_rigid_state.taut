@@ -1,21 +1,22 @@
 import "allocation_poly_map.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "allocation_resolution.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "substitution_freshness.taut"
 import "ty.taut"
 import "unify_sound.taut"
 
 pub fn allocation_state_view(
   c: Checker
-): Pair(Nat, Ordmap(Nat, Ty)) { Pair { fst: ck_next_of(c), snd: ck_subst_of(c) } }
-pub fn allocation_view_valid(r#view: Pair(Nat, Ordmap(Nat, Ty))): Prop {
-  ⊢ Prop from match r#view {
-    Pair { fst: limit, snd: subst } => And(
+): Nat × Ordmap(Nat, Ty) { #(ck_next_of(c), ck_subst_of(c)) }
+pub fn allocation_view_valid(view: Nat × Ordmap(Nat, Ty)): Prop {
+  match view {
+    #(limit, subst) => And(
       SubstFutureEmpty(limit, subst),
       SubstValuesAllocated(limit, subst)
     )
@@ -31,20 +32,20 @@ pub theorem allocation_state_transfer(
 }
 pub theorem allocation_rigid_state_after(
   c: Checker,
-  generic: Pair(Text, Kind),
+  generic: Text × Kind,
   value: Ty,
   m: Mut1(Ordmap(Text, Ty), Checker),
   same: allocation_state_view(c) = allocation_state_view(ck_st(m))
 ): allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid_k(generic, value, m))) {
-  ⊢ allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid_k(generic, value, m))) from match m {
+  match m {
     mut1(map, next) => same
   }
 }
 pub theorem ck_rigid_allocation_state(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker
 ): allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid(gs, c))) {
-  ⊢ allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid(gs, c))) from match gs {
+  match gs {
     Nil => Refl
     Cons(generic, rest) => allocation_rigid_state_after(
       c,
@@ -59,7 +60,7 @@ pub theorem ck_rigid_allocation_state(
   }
 }
 pub theorem ck_rigid_allocation(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
   allocated: CheckerAllocation(c)
 ): CheckerAllocation(ck_st(ck_rigid(gs, c))) {
@@ -67,7 +68,7 @@ pub theorem ck_rigid_allocation(
 }
 pub theorem ck_keep_allocation_state(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   rigid: Ordmap(Text, Ty),
   a: Ty,
   b: Ty
@@ -83,7 +84,7 @@ pub theorem ck_keep_allocation_state(
 }
 pub theorem ck_keep_allocation(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   rigid: Ordmap(Text, Ty),
   a: Ty,
   b: Ty,

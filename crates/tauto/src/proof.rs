@@ -40,11 +40,6 @@ pub struct View {
     pub incomplete: bool,
 }
 
-/// Each displayed inference comes from a core check, without the proof cache.
-pub fn render_file(path: &Path, only: Option<&str>, format: Format) -> Result<View, Message> {
-    render_file_with(path, only, format, Options::default())
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Options {
     pub full: bool,
@@ -316,11 +311,13 @@ fn same_term(a: &SurfaceTerm, b: &SurfaceTerm) -> bool {
                     params: ap,
                     result: ar,
                     effects: ae,
+                    ..
                 },
                 TermKind::Pi {
                     params: bp,
                     result: br,
                     effects: be,
+                    ..
                 },
             ) => {
                 if ap.len() != bp.len() || ae != be {
@@ -342,11 +339,13 @@ fn same_term(a: &SurfaceTerm, b: &SurfaceTerm) -> bool {
                     params: ap,
                     body: ab,
                     types: at,
+                    ..
                 },
                 TermKind::Lam {
                     params: bp,
                     body: bb,
                     types: bt,
+                    ..
                 },
             ) => {
                 if ap.len() != bp.len() || at.len() != bt.len() {

@@ -1,7 +1,7 @@
 import "tracked_instantiation_sound.taut"
 import "final_class_parameter_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "diagnostic_report.taut"
 import "finish_acceptance.taut"
@@ -18,7 +18,7 @@ import "unify_sound.taut"
 
 pub def InstancePredicateParameter(
   c: Checker,
-  p: Pair(Text, Text),
+  p: Text × Text,
   map: Ordmap(Text, Ty),
   name: Text,
   kind: Kind
@@ -29,8 +29,8 @@ pub def InstancePredicateParameter(
 ) = Some(ty). ck_resolve(c, ty) = TyParam(name, kind)
 pub theorem final_instance_predicate_parameter(
   c: Checker,
-  assume: List(Pair(Text, Text)),
-  p: Pair(Text, Text),
+  assume: List(Text × Text),
+  p: Text × Text,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
@@ -40,7 +40,7 @@ pub theorem final_instance_predicate_parameter(
   resolved: InstancePredicateParameter(c, p, map, name, kind),
   final: FinalDiagnostics0(c)
 ): ClassAssumption(assume, instantiation_constraint(p), name) {
-  ⊢ ClassAssumption(assume, instantiation_constraint(p), name) from match recorded {
+  match recorded {
     Mk(ty, found, member) => final_parameter_class(
       c,
       instantiated_pending(instantiation_constraint(p), ty, what, span, assume),
@@ -55,8 +55,8 @@ pub theorem final_instance_predicate_parameter(
 pub theorem continued_instance_predicate_parameter(
   c: Checker,
   next: Checker,
-  assume: List(Pair(Text, Text)),
-  p: Pair(Text, Text),
+  assume: List(Text × Text),
+  p: Text × Text,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,

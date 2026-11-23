@@ -1,14 +1,15 @@
 import "instantiation_map_allocation.taut"
-import std::Base
-import std::Map
-import std::MapLaws
-import std::Text
+import std::base
+import std::map
+import std::map_laws
+import std::text
 import "allocation_advance.taut"
 import "allocation_generic_map.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "datas_frame.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "instance_allocation_sound.taut"
 import "ty.taut"
 import "type_allocation.taut"
@@ -57,8 +58,8 @@ pub theorem allocation_result_bind<A: Type>(
     ck_next_of(c),
     ck_next_of(next)
   ) = true. ∀ state: CheckerAllocation(next). AllocationResult(next, k(value, next))
-): AllocationResult(c, frame_bind(A, Ty, k, m)) {
-  ⊢ AllocationResult(c, frame_bind(A, Ty, k, m)) from match m {
+): AllocationResult(c, frame_bind(<A: A, B: Ty>, k, m)) {
+  match m {
     mut1(value, next) => allocation_result_start(
       c,
       next,
@@ -85,8 +86,8 @@ pub theorem allocation_result_map_bind(
     map,
     Ordmap::compare_text
   ). ∀ values: GenericMapAllocated(ck_next_of(next), map). AllocationResult(next, k(map, next))
-): AllocationResult(c, frame_bind(Ordmap(Text, Ty), Ty, k, m)) {
-  ⊢ AllocationResult(c, frame_bind(Ordmap(Text, Ty), Ty, k, m)) from match m {
+): AllocationResult(c, frame_bind(<A: Ordmap(Text, Ty), B: Ty>, k, m)) {
+  match m {
     mut1(map, next) => allocation_result_start(
       c,
       next,

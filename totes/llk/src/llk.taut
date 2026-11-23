@@ -1,8 +1,8 @@
-import std::Stack
-import std::Array
+import std::stack
+import std::array
 import "../../scan/src/scan.taut"
 import "../../text/src/text.taut"
-import std::Base
+import std::base
 
 // The LL(k) parser that reads the tables of the LL(k) table generator, in the
 // proof language (`docs/design/self-host.md`). `README.md` says what it does
@@ -61,7 +61,7 @@ pub(open) inductive LlkTables: Type {
     prod0: Array(Nat),
     depth: Array(Nat),
     first_state: Array(Nat),
-    // (state, terminal): the next state * 1024 + the production + 1, or 0.
+    // (state, terminal): the next state * 2048 + the production + 1, or 0.
     cells: Array(Nat),
     productions: Array(LlkProduction)
   ): LlkTables
@@ -69,7 +69,7 @@ pub(open) inductive LlkTables: Type {
 
 // The `k` numbers from `at`, put before `done` last first.
 pub fn llk_numbers_onto(k: Nat, a: Array(Nat), at: Nat, done: List(Nat)): List(Nat) {
-  ⊢ List(Nat) from match k {
+  match k {
     Zero => done
     Succ(k2) => llk_numbers_onto(k2, a, at + 1, Cons(scan_number(a, at), done))
   }
@@ -78,7 +78,7 @@ pub fn llk_numbers_onto(k: Nat, a: Array(Nat), at: Nat, done: List(Nat)): List(N
 // The skipped terminals of `k` modes from `p` (last mode first), and where
 // they end.
 pub fn llk_skips_in(k: Nat, a: Array(Nat), p: Nat, done: List(List(Nat))): List(List(Nat)) × Nat {
-  ⊢ List(List(Nat)) × Nat from match k {
+  match k {
     Zero => #(done, p)
     Succ(k2) => llk_skips_in(
       k2,
@@ -98,7 +98,7 @@ pub fn llk_starts_in(
   states: Nat,
   done: List(Nat)
 ): List(Nat) × Nat {
-  ⊢ List(Nat) × Nat from match k {
+  match k {
     Zero => #(done, states)
     Succ(k2) => llk_starts_in(k2, a, at + 3, states + scan_number(a, at), Cons(states, done))
   }
@@ -114,7 +114,7 @@ pub fn llk_cells_in(
   rp: Nat,
   done: List(Nat)
 ): List(Nat) × Nat {
-  ⊢ List(Nat) × Nat from match fuel {
+  match fuel {
     Zero => #(done, rp)
     Succ(f) => ⊢ List(Nat) × Nat from match filled < total {
       false => #(done, rp)
@@ -133,7 +133,7 @@ pub fn llk_cells_in(
 // `k` symbols from `at`, put before `done` last first: the symbols as the
 // parser expands them, the first at the head.
 pub fn llk_symbols_onto(k: Nat, a: Array(Nat), at: Nat, done: List(LlkSym)): List(LlkSym) {
-  ⊢ List(LlkSym) from match k {
+  match k {
     Zero => done
     Succ(k2) => llk_symbols_onto(
       k2,
@@ -142,7 +142,7 @@ pub fn llk_symbols_onto(k: Nat, a: Array(Nat), at: Nat, done: List(LlkSym)): Lis
       Cons(
         ⊢ LlkSym from match scan_number(a, at) {
           Zero => LlkN(scan_number(a, at + 1))
-          Succ(other) => LlkT(scan_number(a, at + 1))
+          Succ(^other) => LlkT(scan_number(a, at + 1))
         },
         done
       )
@@ -157,7 +157,7 @@ pub fn llk_productions_in(
   pp: Nat,
   done: List(LlkProduction)
 ): List(LlkProduction) × Nat {
-  ⊢ List(LlkProduction) × Nat from match k {
+  match k {
     Zero => #(done, pp)
     Succ(k2) => llk_productions_in(
       k2,
@@ -236,7 +236,7 @@ pub fn llk_tables_read(
 }
 
 pub fn llk_member(xs: List(Nat), x: Nat): Bool {
-  ⊢ Bool from match xs {
+  match xs {
     Nil => false
     Cons(y, rest) => ⊢ Bool from match y == x {
       true => true
@@ -249,7 +249,7 @@ pub fn llk_member(xs: List(Nat), x: Nat): Bool {
 // (terminals 1 to 4), and what the grammar skips (`skip`, per mode) in the
 // mode it was cut in.
 pub fn llk_skipped(skip: Array(List(Nat)), token: ScanToken): Bool {
-  ⊢ Bool from match 1 <= token.token_type && token.token_type <= 4 {
+  match 1 <= token.token_type && token.token_type <= 4 {
     true => true
     false => llk_member(Array::get_or(skip, token.mode, Nil), token.token_type)
   }
@@ -262,7 +262,7 @@ pub fn llk_tokens_in(
   pending: List(ScanToken),
   done: List(LlkTok)
 ): List(LlkTok) {
-  ⊢ List(LlkTok) from match rest {
+  match rest {
     Nil => List::reverse(
       Cons(
         LlkTok { token_type: 0, start: length, end: length, trivia: Nil },
@@ -297,34 +297,34 @@ pub fn llk_tokens_in(
 // (`TokenStream`), and at the end two tokens of the end of the input (the
 // skipped ones before the end go with the first). `length` is the length
 // of the input.
-pub fn llk_tokens(&t: LlkTables, tokens: List(ScanToken), length: Nat): List(LlkTok) {
+pub fn llk_tokens(t: &LlkTables, tokens: List(ScanToken), length: Nat): List(LlkTok) {
   llk_tokens_in(tokens, t.skip, length, Nil, Nil)
 }
 
 // The type of the next token, 0 (the end) past the end.
 pub fn llk_next_type(tokens: List(LlkTok)): Nat {
-  ⊢ Nat from match tokens {
+  match tokens {
     Nil => 0
-    Cons(token, rest) => token.token_type
+    Cons(token, ^rest) => token.token_type
   }
 }
 
 pub fn llk_rest(tokens: List(LlkTok)): List(LlkTok) {
-  ⊢ List(LlkTok) from match tokens {
+  match tokens {
     Nil => Nil
-    Cons(token, rest) => rest
+    Cons(^token, rest) => rest
   }
 }
 
 pub fn llk_last(production: Nat, last: Nat): Nat {
-  ⊢ Nat from match production {
+  match production {
     Zero => last
-    Succ(p) => production
+    Succ(^p) => production
   }
 }
 
 pub fn llk_chosen(production: Nat, last: Nat): Option(Nat) {
-  ⊢ Option(Nat) from match production {
+  match production {
     Succ(p) => Some(p)
     Zero => ⊢ Option(Nat) from match last {
       Succ(l) => Some(l)
@@ -337,14 +337,14 @@ pub fn llk_chosen(production: Nat, last: Nat): Option(Nat) {
 // `base`. `production` and `last` are plus one, 0 for None.
 pub fn llk_predict_in(
   k: Nat,
-  &t: LlkTables,
+  t: &LlkTables,
   base: Nat,
   tokens: List(LlkTok),
   state: Nat,
   production: Nat,
   last: Nat
 ): Option(Nat) {
-  ⊢ Option(Nat) from match k {
+  match k {
     Zero => llk_chosen(production, last)
     Succ(k2) => ⊢ Option(Nat) from match scan_number(
       t.cells,
@@ -356,9 +356,9 @@ pub fn llk_predict_in(
         t,
         base,
         llk_rest(tokens),
-        Nat::div_nz(Succ(c), 1024, Nat::ne_zero(1024, Refl)),
-        Nat::rem_nz(Succ(c), 1024, Nat::ne_zero(1024, Refl)),
-        llk_last(Nat::rem_nz(Succ(c), 1024, Nat::ne_zero(1024, Refl)), last)
+        Nat::div_nz(Succ(c), 2048, Nat::ne_zero(2048, Refl)),
+        Nat::rem_nz(Succ(c), 2048, Nat::ne_zero(2048, Refl)),
+        llk_last(Nat::rem_nz(Succ(c), 2048, Nat::ne_zero(2048, Refl)), last)
       )
     }
   }
@@ -366,7 +366,7 @@ pub fn llk_predict_in(
 
 // The production of a non-terminal for the tokens ahead: from the first state, each of the `k` tokens takes the transition
 // it has, if any; the production is the one of the last state that has one.
-pub fn llk_predict(&t: LlkTables, non_terminal: Nat, tokens: List(LlkTok)): Option(Nat) {
+pub fn llk_predict(t: &LlkTables, non_terminal: Nat, tokens: List(LlkTok)): Option(Nat) {
   llk_predict_in(
     scan_number(t.depth, non_terminal),
     t,
@@ -378,8 +378,8 @@ pub fn llk_predict(&t: LlkTables, non_terminal: Nat, tokens: List(LlkTok)): Opti
   )
 }
 
-pub fn llk_trivia_onto(trivia: List(ScanToken), &mut events: Stack(LlkEvent)): Unit {
-  ⊢ Unit from match trivia {
+pub fn llk_trivia_onto(trivia: List(ScanToken), events: &mut Stack(LlkEvent)): Unit {
+  match trivia {
     Nil => #()
     Cons(token, rest) => {
       Stack::push(&mut events, LlkToken(token.token_type, token.start, token.end))
@@ -388,8 +388,8 @@ pub fn llk_trivia_onto(trivia: List(ScanToken), &mut events: Stack(LlkEvent)): U
   }
 }
 
-pub fn llk_push_symbols(symbols: List(LlkSym), &mut stack: Stack(LlkSym)): Unit {
-  ⊢ Unit from match symbols {
+pub fn llk_push_symbols(symbols: List(LlkSym), stack: &mut Stack(LlkSym)): Unit {
+  match symbols {
     Nil => #()
     Cons(symbol, rest) => {
       Stack::push(&mut stack, symbol)
@@ -399,17 +399,17 @@ pub fn llk_push_symbols(symbols: List(LlkSym), &mut stack: Stack(LlkSym)): Unit 
 }
 
 pub fn llk_failure(tokens: List(LlkTok), expected: List(Nat)): LlkResult {
-  ⊢ LlkResult from match tokens {
+  match tokens {
     Nil => LlkFailed(LlkError { at: None, expected: expected })
-    Cons(token, rest) => LlkFailed(LlkError { at: Some(token.start), expected: expected })
+    Cons(token, ^rest) => LlkFailed(LlkError { at: Some(token.start), expected: expected })
   }
 }
 
 // The end of a parse whose stack is done: the input must be at its end.
-pub fn llk_finish(tokens: List(LlkTok), &mut events: Stack(LlkEvent)): LlkResult {
-  ⊢ LlkResult from match tokens {
+pub fn llk_finish(tokens: List(LlkTok), events: &mut Stack(LlkEvent)): LlkResult {
+  match tokens {
     Nil => llk_failure(tokens, Nil)
-    Cons(token, rest) => ⊢ LlkResult from match token.token_type == 0 {
+    Cons(token, ^rest) => ⊢ LlkResult from match token.token_type == 0 {
       true => {
         llk_trivia_onto(token.trivia, &mut events)
         Stack::push(&mut events, LlkClose)
@@ -425,12 +425,12 @@ pub fn llk_finish(tokens: List(LlkTok), &mut events: Stack(LlkEvent)): LlkResult
 // is left on the stack, or only the end of the input.
 pub fn llk_run_in(
   fuel: Nat,
-  &t: LlkTables,
+  t: &LlkTables,
   tokens: List(LlkTok),
-  &mut stack: Stack(LlkSym),
-  &mut events: Stack(LlkEvent)
+  stack: &mut Stack(LlkSym),
+  events: &mut Stack(LlkEvent)
 ): LlkResult {
-  ⊢ LlkResult from match fuel {
+  match fuel {
     Zero => LlkFailed(LlkError { at: None, expected: Nil })
     Succ(f) => ⊢ LlkResult from match Stack::pop(&mut stack) {
       None => llk_finish(tokens, &mut events)
@@ -466,7 +466,7 @@ pub fn llk_run_in(
             }
           }
         }
-        LlkE(production) => {
+        LlkE(^production) => {
           Stack::push(&mut events, LlkClose)
           llk_run_in(f, &t, tokens, &mut stack, &mut events)
         }
@@ -485,9 +485,9 @@ pub fn llk_fuel(t: LlkTables, tokens: List(LlkTok)): Nat {
 // the parser take fuel as a parameter independently of that budget formula.
 pub fn llk_parse(
   fuel: Nat,
-  &t: LlkTables,
+  t: &LlkTables,
   tokens: List(LlkTok),
-  &mut events: Stack(LlkEvent)
+  events: &mut Stack(LlkEvent)
 ): LlkResult {
   var stack: Stack(LlkSym) := Stack::new()
   Stack::push(&mut stack, LlkN(t.start))

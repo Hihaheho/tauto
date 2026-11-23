@@ -1,22 +1,22 @@
 description = "A program that calls a proof-language function from Nib still handles `fail` by its instance."
 
 @ cases.catch-beside-a-call-of-a-proof-function
-extract = true
-imports = [path`../std/Base.taut`]
+llvm.unimplemented = "generate: the LLVM backend does not write the operation `fail@Text` yet"
+imports = [path`../std/base.taut`]
 source = ```tauto
 fn pf(n: Nat): Nat { n }
 fn g(): Nat { pf(3) }
 fn f(): i64 ! {fail(Text)} { perform fail("q") }
-perform show("g", g())
-perform show("x", catch(() => f()))
+show(&g())
+let caught: Result(i64, Text) := catch(() => f())
+show(&caught)
 ```
-shows = ['g = 3', 'x = Err("q")']
+stdout = "3\nErr(\"q\")\n"
 
 @ cases.a-handler-instance-uses-the-extracted-text-type
-extract = true
-backends = ["javascript", "rust", "vm"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```tauto
-import std::Text
+import std::text
 
 fn produce(): Bool ! {fail(Text)} { perform fail("q") }
 fn result(): Result(Bool, Text) {
@@ -24,6 +24,6 @@ fn result(): Result(Bool, Text) {
     fail<Text>(why) => Err(why)
   }
 }
-perform show("result", result())
+show(&result())
 ```
-shows = ['result = Err("q")']
+stdout = "Err(\"q\")\n"

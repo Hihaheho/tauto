@@ -37,7 +37,7 @@ fn native_benchmark_builds_once_and_reports_real_samples() {
     let source = root.join("calc.taut");
     fs::write(
         &source,
-        r#"perform show("sum", 2 + 3)
+        r#"show(&(2 + 3))
 "#,
     )
     .unwrap();
@@ -77,7 +77,7 @@ fn native_benchmark_builds_once_and_reports_real_samples() {
     assert!(target.join("target/release/calc").exists());
     fs::write(
         &source,
-        r#"import std::prelude::Os
+        r#"import std::builtin::os
 perform exit(7)
 "#,
     )

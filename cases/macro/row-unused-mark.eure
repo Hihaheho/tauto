@@ -1,0 +1,92 @@
+// An attribute macro sees `^` before an entry of a fn's row, the mark of an
+// effect declared but not performed, on `EffName` and on `EffApplied` alike:
+// the last field is where `^` is written, and none when it is absent. What a
+// macro writes with a mark is read back as `^` written there.
+
+@ cases.an-attribute-macro-sees-which-row-entries-carry-the-unused-mark
+files."mac.taut" = ```tauto
+import std::builtin::macro
+
+pub fn mark(m: Option(SynSpan)): Text {
+  match m {
+    None => "false"
+    Some(sp) => "true"
+  }
+}
+
+pub fn entries(r: List(SynRowEntry)): Text ! {div} {
+  match r {
+    Nil => ""
+    Cons(e, rest) => {
+      let here := match e {
+        EffName(n, m) => concat(n, concat(":", mark(m)))
+        EffApplied(n, _, _, _, m) => concat(n, concat(":", mark(m)))
+      }
+      concat(concat(here, ","), entries(rest))
+    }
+  }
+}
+
+pub macro fn probe(tag: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
+  match s {
+    StFn(f) => {
+      let text := match f.effects {
+        None => "no row"
+        Some(r) => entries(r)
+      }
+      [StFn(SynFn {
+        name: f.name, generics: f.generics, generic_types: f.generic_types, bounds: f.bounds,
+        params: f.params, r#borrows: f.r#borrows, param_types: f.param_types, result: f.result,
+        effects: f.effects, where_: f.where_, body: ExText(text, f.span), span: f.span,
+        unused: f.unused, unused_generics: f.unused_generics, unused_params: f.unused_params
+      })]
+    }
+    _ => Syn::error(Syn::call_span(), "on a fn")
+  }
+}
+```
+files."main.taut" = ```tauto
+import std::builtin::os
+import "mac.taut" { probe }
+
+pub(open) effect query<R>(r: R): Unit resume 1
+
+@probe!(0) => replace fn described
+fn described(): Text ! {^query(Text), stdout, ^stderr} { "" }
+
+handle { show(&described()) } with {
+  query<Text>(r), k => k(())
+}
+```
+entry = "main.taut"
+stdout = ```
+"query:true,stdout:false,stderr:true,"
+```
+
+@ cases.a-mark-a-macro-writes-in-a-row-is-read-as-written
+files."mac.taut" = ```tauto
+import std::builtin::macro
+
+pub macro fn mark_note(tag: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StFn(f) => [StFn(SynFn {
+      name: f.name, generics: f.generics, generic_types: f.generic_types, bounds: f.bounds,
+      params: f.params, r#borrows: f.r#borrows, param_types: f.param_types, result: f.result,
+      effects: Some([EffName("note", Some(f.span))]),
+      where_: f.where_, body: f.body, span: f.span,
+      unused: f.unused, unused_generics: f.unused_generics, unused_params: f.unused_params
+    })]
+    _ => Syn::error(Syn::call_span(), "on a fn")
+  }
+}
+```
+files."main.taut" = ```tauto
+import "mac.taut" { mark_note }
+
+pub(open) effect note(): Unit resume 1
+
+@mark_note!(0) => replace fn noisy
+fn noisy(): Unit ! {note} { perform note() }
+```
+entry = "main.taut"
+check_report = "unused_marker_used"

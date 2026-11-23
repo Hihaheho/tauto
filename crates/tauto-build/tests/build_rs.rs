@@ -8,9 +8,9 @@ use std::process::Command;
 use support::{Fixture, cargo, scratch, write};
 
 fn callback_budget_source() -> &'static str {
-    r#"import std::prelude::Shared
+    r#"import std::prelude::collections
 
-fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+fn sum(read: &((u64) -> u64), size: u64): u64 ! {div, overflow} {
   var i: u64 := 0
   var total: u64 := 0
   while i < size {
@@ -20,29 +20,31 @@ fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
   total
 }
 
-fn run(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+fn run(read: &((u64) -> u64), size: u64): Result(u64, Text) ! {budget} {
   handle {
-    budget(steps: 1000) {
-      Ok(sum(&(i) => read(i), size))
-    }
+    perform budget(1000, () => {
+      Ok(sum((i) => read(i), size))
+    })
   } with {
     exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
   }
 }
 
-fn run_array(values: Array(u64)): Result(u64, Text) {
+fn run_array(values: Array(u64)): Result(u64, Text) ! {budget} {
   handle {
-    budget(steps: 1000) {
+    perform budget(1000, () => {
       Ok(sum(
-        &(i) => match Array::get(values, i) {
+        (i) => match Array::get(values, i) {
           None => 0,
           Some(v) => v
         },
         Array::len(values)
       ))
-    }
+    })
   } with {
     exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
   }
 }
 "#
@@ -62,7 +64,7 @@ fn borrowed_callbacks_forward_through_budgeted_helpers() -> Fixture {
         r#"
 package { name = "callback-budget"
  version = "0.1.0" }
-rust { exports = ["run", "run_array"] }
+exports = ["run", "run_array"]
 "#,
     );
     write(
@@ -116,12 +118,12 @@ fn budgeted_callbacks_keep_each_invocation_borrow_local() -> Fixture {
         r#"
 package { name = "logic"
  version = "0.1.0" }
-rust { exports = ["direct", "direct_loop", "nested", "text_direct", "text_forwarded", "text_owned"] }
+exports = ["direct", "direct_loop", "nested", "text_direct", "text_forwarded", "text_owned"]
 "#,
     );
-    let source = r#"import std::prelude::Shared
+    let source = r#"import std::prelude::collections
 
-fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+fn sum(read: &((u64) -> u64), size: u64): u64 ! {div, overflow} {
   var i: u64 := 0
   var total: u64 := 0
   while i < size {
@@ -131,37 +133,42 @@ fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
   total
 }
 
-fn run(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+fn run(read: &((u64) -> u64), size: u64): Result(u64, Text) ! {budget} {
   handle {
-    budget(steps: 1000) {
-      Ok(sum(&(i) => read(i), size))
-    }
+    perform budget(1000, () => {
+      Ok(sum((i) => read(i), size))
+    })
   } with {
     exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
   }
 }
 
-fn run_array(values: Array(u64)): Result(u64, Text) {
+fn run_array(values: Array(u64)): Result(u64, Text) ! {budget} {
   handle {
-    budget(steps: 1000) {
+    perform budget(1000, () => {
       Ok(sum(
-        &(i) => match Array::get(values, i) {
+        (i) => match Array::get(values, i) {
           None => 0,
           Some(v) => v
         },
         Array::len(values)
       ))
-    }
+    })
   } with {
     exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
   }
 }
 
-fn r#direct(&read: (u64) -> u64, size: u64): Result(u64, Text) {
-  handle { budget(steps: 1000) { Ok(sum(read, size)) } } with { exceeded(info), k => Err("exhausted") }
+fn r#direct(read: &((u64) -> u64), size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(1000, () => { Ok(sum(read, size)) }) } with {
+    exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
+  }
 }
-fn direct_loop(&read: (u64) -> u64, size: u64): Result(u64, Text) {
-  handle { budget(steps: 1000) {
+fn direct_loop(read: &((u64) -> u64), size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(1000, () => {
     var i: u64 := 0
     var total: u64 := 0
     while i < size {
@@ -169,15 +176,21 @@ fn direct_loop(&read: (u64) -> u64, size: u64): Result(u64, Text) {
       i := i + 1
     }
     Ok(total)
-  } } with { exceeded(info), k => Err("exhausted") }
+  }) } with {
+    exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
+  }
 }
-fn apply(&f: (u64) -> u64, value: u64): u64 { f(value) }
-fn nested(&read: (u64) -> u64, size: u64): Result(u64, Text) {
-  handle { budget(steps: 1000) {
-    Ok(sum(&(i) => apply((j) => read(i + j), 0), size))
-  } } with { exceeded(info), k => Err("exhausted") }
+fn apply(f: &((u64) -> u64), value: u64): u64 { f(value) }
+fn nested(read: &((u64) -> u64), size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(1000, () => {
+    Ok(sum((i) => apply((j) => handle { read(i + j) } with { overflow() => 0 }, 0), size))
+  }) } with {
+    exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
+  }
 }
-fn sum_text(&read: (&Text) -> u64, size: u64): u64 ! {Div} {
+fn sum_text(read: &((&Text) -> u64), size: u64): u64 ! {div, overflow} {
   var i: u64 := 0
   var total: u64 := 0
   while i < size {
@@ -187,7 +200,7 @@ fn sum_text(&read: (&Text) -> u64, size: u64): u64 ! {Div} {
   }
   total
 }
-fn sum_owned_text(&read: (Text) -> u64, size: u64): u64 ! {Div} {
+fn sum_owned_text(read: &((Text) -> u64), size: u64): u64 ! {div, overflow} {
   var i: u64 := 0
   var total: u64 := 0
   while i < size {
@@ -196,18 +209,27 @@ fn sum_owned_text(&read: (Text) -> u64, size: u64): u64 ! {Div} {
   }
   total
 }
-fn text_owned(&read: (&Text) -> u64, size: u64): Result(u64, Text) {
-  handle { budget(steps: 1000) {
-    Ok(sum_owned_text((&text) => read(&text), size))
-  } } with { exceeded(info), k => Err("exhausted") }
+fn text_owned(read: &((&Text) -> u64), size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(1000, () => {
+    Ok(sum_owned_text((text) => read(&text), size))
+  }) } with {
+    exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
+  }
 }
-fn text_direct(&read: (&Text) -> u64, size: u64): Result(u64, Text) {
-  handle { budget(steps: 1000) { Ok(sum_text(read, size)) } } with { exceeded(info), k => Err("exhausted") }
+fn text_direct(read: &((&Text) -> u64), size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(1000, () => { Ok(sum_text(read, size)) }) } with {
+    exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
+  }
 }
-fn text_forwarded(&read: (&Text) -> u64, size: u64): Result(u64, Text) {
-  handle { budget(steps: 1000) {
-    Ok(sum_text((&text) => read(&text), size))
-  } } with { exceeded(info), k => Err("exhausted") }
+fn text_forwarded(read: &((&Text) -> u64), size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(1000, () => {
+    Ok(sum_text((text) => read(&text), size))
+  }) } with {
+    exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
+  }
 }
 "#;
     write(&dir, "logic/src/main.taut", &source);
@@ -256,16 +278,16 @@ fn borrowed_budget_callback_cannot_escape_in_owned_data() {
         r#"
 package { name = "logic"
  version = "0.1.0" }
-rust { exports = ["leak"] }
+exports = ["leak"]
 "#,
     );
     write(
         &dir,
         "logic/src/main.taut",
         r#"
-struct Holder { callback: (u64) -> u64 ! {} }
-fn leak(&read: (u64) -> u64 ! {}): Holder {
-  Holder { callback: (i) => handle { budget(steps: 1000) { read(i) } } with { exceeded(info), k => 0 } }
+struct Holder { callback: (u64) -> u64 ! {budget} }
+fn leak(read: &((u64) -> u64 ! {})): Holder {
+  Holder { callback: (i) => handle { perform budget(1000, () => { read(i) }) } with { exceeded(info), k => 0 } }
 }
 "#,
     );
@@ -276,8 +298,8 @@ fn leak(&read: (u64) -> u64 ! {}): Holder {
 include!(concat!(env!("OUT_DIR"), "/tauto_logic.rs"));
 "#,
     );
-    // Ordinary data results are checked by Rust, including borrows hidden
-    // in callback fields; generation alone is not a no-escape check.
+    // Tauto itself refuses a closure that borrows a parameter and is stored
+    // in owned data, before the generated code reaches rustc.
     let out = cargo(&dir, &["check", "--quiet", "--locked", "--offline"]);
     assert!(
         !out.status.success(),
@@ -285,7 +307,7 @@ include!(concat!(env!("OUT_DIR"), "/tauto_logic.rs"));
     );
     let error = String::from_utf8_lossy(&out.stderr);
     assert!(
-        error.contains("lifetime") && error.contains("'static"),
+        error.contains("this closure borrows read and cannot be stored"),
         "{error}"
     );
 }
@@ -337,14 +359,14 @@ fn host_crate(dir: &Fixture, deps: &str) {
         dir,
         "logic/src/main.taut",
         r#"extern {
-  fn upper(&t: Text): Text
+  fn upper(t: &Text): Text
 }
 fn exported_identity(n: Nat): Nat { n }
 fn identity(n: Nat): Nat { n }
 theorem identity_zero(): identity(Zero) = Zero { Refl }
 fn checked_value(n: u64): u64 { U64::of_nat(identity(Nat::of_u64(n))) }
-fn add_one(n: i64): i64 { n + 1 }
-fn shouted(&t: Text): Text { upper(&t) }
+fn add_one(n: i64): i64 { handle { n + 1 } with { overflow() => 0 } }
+fn shouted(t: &Text): Text { upper(&t) }
 "#,
     );
     write(
@@ -382,6 +404,7 @@ fn a_missing_dependency_is_an_error() {
 #[test]
 fn a_rust_host_reads_runtime_ast_and_diagnostics_without_tote_files() {
     tauto_messages::install();
+    tauto_parse::install();
     let dir = scratch("syntax-runtime");
     host_crate(&dir, "");
     write(
@@ -399,7 +422,7 @@ fn a_rust_host_reads_runtime_ast_and_diagnostics_without_tote_files() {
         &format!("logic/.tauto-syntax/{}.tables", tables.grammar_sha256()),
         tables.source(),
     );
-    let declarations = r#"import std::prelude::Macro
+    let declarations = r#"import std::builtin::macro
 syntax!(ident, ```par
 %start Decl
 %title "ident"
@@ -538,16 +561,19 @@ fn selected_budget_wrapper_is_callable_without_helper_warnings() -> Fixture {
         r#"
 package { name = "logic"
  version = "0.1.0" }
-rust { exports = ["parse_with_budget"] }
+exports = ["parse_with_budget"]
 "#,
     );
     write(
         &dir,
         "logic/src/main.taut",
         r#"
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-fn parse_with_budget(steps: i64): Result(i64, Text) {
-  handle { budget(steps: steps) { visit(2); Ok(42) } } with { exceeded(info), k => Err("exceeded") }
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+fn parse_with_budget(steps: u64): Result(i64, Text) ! {budget} {
+  handle { perform budget(steps, () => { visit(2); Ok(42) }) } with {
+    exceeded(info), k => Err("exceeded")
+    overflow() => Err("overflow")
+  }
 }
 "#,
     );
@@ -585,23 +611,23 @@ fn rust_borrows_callbacks_for_one_call_without_static_captures() -> Fixture {
         r#"
 package { name = "logic"
  version = "0.1.0" }
-rust { exports = ["apply", "read_first", "read_if", "twice", "both", "produce", "notify", "text_value", "borrow_text", "names"] }
+exports = ["apply", "read_first", "read_if", "twice", "both", "produce", "notify", "text_value", "borrow_text", "names"]
 "#,
     );
     write(
         &dir,
         "logic/src/main.taut",
         r#"
-fn names(callback: u64, &arg0: (u64) -> u64): u64 { arg0(callback) }
-fn apply(&f: (u64) -> u64, value: u64): u64 { f(value) }
-fn read_first(&f: (u64) -> u64): u64 { f(0) }
-fn read_if(&f: (u64) -> u64, enabled: Bool): u64 { if enabled { f(0) } else { 0 } }
-fn twice(&f: (u64) -> u64, value: u64): u64 { f(value) + f(value) }
-fn both(&left: (u64) -> u64, &right: (u64, u64) -> u64): u64 { right(left(0), left(1)) }
-fn produce(&f: () -> u64): u64 { f() }
-fn notify(&f: () -> Unit, value: u64): u64 { f(); value }
-fn text_value(&f: (Option(Text)) -> Option(Text), value: Option(Text)): Option(Text) { f(value) }
-fn borrow_text(&f: (&Text) -> Text, &value: Text): Text { f(&value) }
+fn names(callback: u64, arg0: &((u64) -> u64)): u64 { arg0(callback) }
+fn apply(f: &((u64) -> u64), value: u64): u64 { f(value) }
+fn read_first(f: &((u64) -> u64)): u64 { f(0) }
+fn read_if(f: &((u64) -> u64), enabled: Bool): u64 { if enabled { f(0) } else { 0 } }
+fn twice(f: &((u64) -> u64), value: u64): u64 { handle { f(value) + f(value) } with { overflow() => 0 } }
+fn both(left: &((u64) -> u64), right: &((u64, u64) -> u64)): u64 { right(left(0), left(1)) }
+fn produce(f: &(() -> u64)): u64 { f() }
+fn notify(f: &(() -> Unit), value: u64): u64 { f(); value }
+fn text_value(f: &((Option(Text)) -> Option(Text)), value: Option(Text)): Option(Text) { f(value) }
+fn borrow_text(f: &((&Text) -> Text), value: &Text): Text { f(&value) }
 "#,
     );
     write(

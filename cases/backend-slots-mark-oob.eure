@@ -1,0 +1,27 @@
+// `Slots::mark` past the capacity is the vacant mark (total in the model).
+@ cases.slots-mark-past-capacity-is-vacant
+stdout = ```
+"vacant"
+"vacant"
+```
+source = ```tauto
+var r: Slots(u64, Text, Text) := Slots::new(2, 0, "vacant")
+show(&Slots::mark(&r, 0))
+show(&Slots::mark(&r, 3))
+```
+
+// Growing must not rewrite marks of slots that were never written: they keep
+// the vacant mark from `new`, not the mark given to `resize`.
+@ cases.slots-resize-keeps-old-vacant-marks
+stdout = ```
+7
+7
+9
+```
+source = ```tauto
+var r: Slots(u64, u64, u64) := Slots::new(2, 0, 7)
+Slots::resize(&mut r, 4, 9, 1)
+show(&Slots::mark(&r, 0))
+show(&Slots::mark(&r, 1))
+show(&Slots::mark(&r, 2))
+```

@@ -13,30 +13,36 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tauto_parol::{Cst, NodeId, NonTerminalKind as Nt, Parsed, Span, parse};
+use crate::span::Span;
 
 pub mod dump;
 pub mod effect_sets;
+pub mod extern_blocks;
 pub mod fence;
 mod literal;
+pub mod loops;
 pub mod modules;
 pub mod parsed;
 pub mod print;
 mod program;
 pub mod qualify;
 pub mod references;
+pub mod scoped;
 pub mod shift;
+pub mod superclasses;
 pub mod walk;
-pub use literal::{Lexical, LitForm, LitSite, SyntaxLit, lexical};
+pub use literal::{Lexical, LitForm, LitSite, SyntaxLit};
 
 /// How a `□` written outside `⟦ ⟧` is read: an error, as no term stands for it.
-const BOX_OUTSIDE: &str = "`□` outside `⟦ ⟧`";
+/// `(a, b)` read as a term: a parenthesized list is no term (a product is `#(a, b)`).
+pub const PAREN_LIST: &str = "parenthesized list";
+pub const BOX_OUTSIDE: &str = "`□` outside `⟦ ⟧`";
 
 /// Replaces the `□`s in `t` by the variable `name`, counting them in `found`; `bound` records
 /// one written under a binder (`under`). The parts a binder does not scope over (a λ's types,
 /// the domain of `∃` and of a function type's first parameter, the value matched) are filled
 /// before the rest, so the walk over everything finds no `□` left in them.
-fn fill_box(t: &mut SurfaceTerm, name: &str, under: bool, found: &mut usize, bound: &mut bool) {
+pub fn fill_box(t: &mut SurfaceTerm, name: &str, under: bool, found: &mut usize, bound: &mut bool) {
     if matches!(&*t.kind, TermKind::Other(m) if m == BOX_OUTSIDE) {
         *found += 1;
         *bound |= under;
@@ -74,12 +80,14 @@ fn fill_box(t: &mut SurfaceTerm, name: &str, under: bool, found: &mut usize, bou
     walk::children(t, &mut |c| fill_box(c, name, under || binds, found, bound));
 }
 pub use program::{
-    ClassDecl, Constraint, Constructor, DICT, DataConstructor, DataDecl, EffectDecl,
-    ExternInstance, FnDecl, GENERATED_BASE, Generates, GenericBound, Handler, InductiveDecl,
-    Instance, InstanceDecl, LawDecl, MatchArm, PRELUDE_BASE, ParseError, Pattern, Program, Replace,
-    Step, StepArm, Stmt, SyntaxUse, TheoremDecl, Vis, dictionary_name, parse_expr_at,
-    parse_program_as_written, parse_program_located_at, parse_program_unresolved_at,
-    row_parameters_of,
+    ClassDecl, CoerceLevel, Constraint, Constructor, DICT, DataCoerce, DataConstructor, DataDecl,
+    EffectDecl, ExternInstance, FnDecl, GENERATED_BASE, Generates, GenericBound, Handler,
+    InductiveDecl, InferCondition, Instance, InstanceDecl, LawDecl, MatchArm, PRELUDE_BASE,
+    ParseError, Pattern, Program, Replace, Step, StepArm, Stmt, SyntaxUse, TextReader, TheoremDecl,
+    Vis, WrittenRowEffect, alt_binders, dictionary_name, extern_block_id, extern_fn_has_body,
+    extern_is_replaceable, parse_builtin_as_written_at, parse_builtin_at, parse_expr_at,
+    parse_program_as_written, parse_program_unresolved_at, place_root, row_parameters_of,
+    set_text_reader, with_vis,
 };
 
 /// The identity of one surface occurrence. Clones retain the identity; source
@@ -136,6 +144,18 @@ pub struct SurfaceTerm {
     /// A call as the source writes it, `f(a, b)`, which must write implicit
     /// arguments by name; the checker's own applications are not marked.
     written_call: bool,
+    /// A call a macro writes as syntax (`ExApp`): checked as one the source
+    /// writes, though its span is in the expansion's range.
+    macro_call: bool,
+    /// A field the coercion expansion wrote: the struct's own field, read
+    /// without going through its `coerce` field.
+    own_field: bool,
+    /// A term a loop expansion made. It stands where the loop is written
+    /// and has no text of its own, so a pass that rewrites the written
+    /// source must leave it alone.
+    lowered: bool,
+    /// Permission granted to this occurrence by its lexical effect scope.
+    perform_scope: Option<TermId>,
 }
 
 impl std::fmt::Debug for SurfaceTerm {
@@ -202,15 +222,38 @@ impl Drop for SurfaceTerm {
     }
 }
 
+thread_local! {
+    /// Whether [`SurfaceTerm`]'s equality leaves out the terms' positions,
+    /// while [`same_term_structure`] looks for a difference.
+    static SPANS_LEFT_OUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 impl PartialEq for SurfaceTerm {
     fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind && self.span == other.span
+        (self.span == other.span || SPANS_LEFT_OUT.with(|o| o.get())) && self.kind == other.kind
     }
 }
 
 /// Compares syntax and references without using term occurrence positions.
 /// Declaration metadata in statement-valued syntax remains part of the comparison.
 pub fn same_term_structure(left: &SurfaceTerm, right: &SurfaceTerm) -> bool {
+    // Two terms that differ even with every term's position left out differ:
+    // found without copying them, which a search for a term in another
+    // (one comparison at each of its parts) would do at each part. When none
+    // is found the two are compared as below, their positions erased.
+    struct LeftOut(bool);
+    impl Drop for LeftOut {
+        fn drop(&mut self) {
+            SPANS_LEFT_OUT.with(|o| o.set(self.0));
+        }
+    }
+    let alike = {
+        let _restore = LeftOut(SPANS_LEFT_OUT.with(|o| o.replace(true)));
+        left == right
+    };
+    if !alike {
+        return false;
+    }
     fn erase_positions(term: &SurfaceTerm) -> SurfaceTerm {
         let mut term = term.clone();
         walk::term(&mut term, &mut |part| part.span = Span::new(0, 0));
@@ -219,8 +262,9 @@ pub fn same_term_structure(left: &SurfaceTerm, right: &SurfaceTerm) -> bool {
     erase_positions(left) == erase_positions(right)
 }
 
-/// What a `budget` counts: the machine's steps, or the cells its body
-/// allocates (constructors, closures, products, text and collections; see
+/// What a budget counts: the machine's steps (`perform budget(n, f)`), or
+/// the cells its body allocates (`perform budget_memory(n, f)`:
+/// constructors, closures, products, text and collections; see
 /// `docs/design/semantics.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BudgetLimit {
@@ -235,7 +279,44 @@ impl BudgetLimit {
             BudgetLimit::Memory => "memory",
         }
     }
+
+    /// The host's operation that runs a budget of this limit, which is
+    /// also the effect a row names for it.
+    pub fn operation(self) -> &'static str {
+        match self {
+            BudgetLimit::Steps => "budget",
+            BudgetLimit::Memory => "budget_memory",
+        }
+    }
+
+    /// The limit of the operation spelled `name`.
+    pub fn of_operation(name: &str) -> Option<BudgetLimit> {
+        match name {
+            "budget" => Some(BudgetLimit::Steps),
+            "budget_memory" => Some(BudgetLimit::Memory),
+            _ => None,
+        }
+    }
 }
+
+/// `*a`, the place a borrow points to: the term `a` inside it. It is read as
+/// the prefix `*` applied to one argument, and stands only on the left of `:=`.
+pub fn deref_of(t: &SurfaceTerm) -> Option<&SurfaceTerm> {
+    match &*t.kind {
+        TermKind::App {
+            function,
+            arguments,
+        } if arguments.len() == 1
+            && matches!(&*function.kind, TermKind::Var(f) if f.as_str() == DEREF) =>
+        {
+            arguments.first()
+        }
+        _ => None,
+    }
+}
+
+/// The name the prefix `*` is read as.
+pub const DEREF: &str = "*";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TermKind {
@@ -258,6 +339,9 @@ pub enum TermKind {
     /// parameter without a name does not occur in the result.
     Pi {
         params: Vec<(Option<Name>, SurfaceTerm)>,
+        /// Where `^` is written before each binder, aligned with `params`.
+        /// Empty means no binder is marked.
+        unused: Vec<Option<Span>>,
         result: Box<SurfaceTerm>,
         /// The effects after `!`, when written.
         effects: Option<Vec<Name>>,
@@ -269,11 +353,16 @@ pub enum TermKind {
     /// `∃ x: A. B`
     Exists {
         binder: Name,
+        /// Where `^` is written before the binder.
+        unused: Option<Span>,
         domain: Box<SurfaceTerm>,
         body: Box<SurfaceTerm>,
     },
     Lam {
         params: Vec<Name>,
+        /// Where `^` is written before each parameter, aligned with `params`.
+        /// Empty means no parameter is marked.
+        unused_params: Vec<Option<Span>>,
         body: Box<SurfaceTerm>,
         /// The types written on the parameters: empty when none is, else one
         /// for each parameter. The checker holds the parameters to them; the
@@ -281,16 +370,6 @@ pub enum TermKind {
         types: Vec<Option<SurfaceTerm>>,
     },
     Union(Vec<SurfaceTerm>),
-    /// `A × B × C` as a type, `a × b × c` as a value: a product whose
-    /// members are told apart by their types.
-    Product(Vec<SurfaceTerm>),
-    /// `#(a, b, c)`: a product's value, its members told apart by their types
-    /// (`@a e` for a member with a label), two or more as written; `#()` is the
-    /// unit. A member of type `Unit` gives none, as in the type; a member that
-    /// is itself a product stays one member (`#(#(a, b), c)` is not `#(a, b, c)`). Only the checker's elaboration puts it
-    /// as the prelude's `Pair` (`qualify::lower_tuples`); Nib and extraction
-    /// keep it a product.
-    Tuple(Vec<SurfaceTerm>),
     Tagged {
         tag: String,
         term: Box<SurfaceTerm>,
@@ -321,9 +400,9 @@ pub enum TermKind {
         body: Box<SurfaceTerm>,
         handlers: Vec<Handler>,
     },
-    /// `budget(steps: n) { body }` or `budget(memory: n) { body }`; with
-    /// both, `budget(steps: a, memory: b) { body }` is two budgets, the one
-    /// written first outside.
+    /// `perform budget(n, () => { body })` or `perform budget_memory(n, () => { body })`:
+    /// the host's operations, read apart from other `perform`s. Both limits are two
+    /// budgets, one in the body of the other.
     Budget {
         limit: BudgetLimit,
         /// The count, of steps or of cells as `limit` says.
@@ -337,6 +416,8 @@ pub enum TermKind {
         /// `match e eqn h -> T { … }`: the name of the equation between `e`
         /// and the arm's constructor, in the arms.
         binder: Option<Name>,
+        /// Where `^` is written before the `eqn` binder.
+        binder_unused: Option<Span>,
         arms: Vec<MatchArm>,
     },
     /// A named hole, `?h`: a term not written yet. The checker records its
@@ -353,6 +434,12 @@ pub enum TermKind {
     },
     Borrow {
         mutable: bool,
+        /// `&orig x` / `&orig T`: the original value, not through `Lend`.
+        orig: bool,
+        /// `&rc e`: `e` moved into a new counted box, and `&rc T` its type.
+        /// Every copy shares the box; the contents are read only through a
+        /// shared borrow.
+        rc: bool,
         term: Box<SurfaceTerm>,
     },
     /// `affine (A) -> B` or `linear (A) -> B`: a function type with its
@@ -361,7 +448,7 @@ pub enum TermKind {
         kind: String,
         ty: Box<SurfaceTerm>,
     },
-    /// A lambda some of whose parameters are borrowed, `(&v: A) => …`:
+    /// A lambda some of whose parameters are borrowed, `(v: &A) => …`:
     /// for each parameter, `None` when it takes the value, `Some(mutable)`
     /// when it borrows.
     BorrowLam {
@@ -542,6 +629,10 @@ impl SurfaceTerm {
             span,
             identity: self.identity,
             written_call: self.written_call,
+            macro_call: self.macro_call,
+            own_field: self.own_field,
+            lowered: self.lowered,
+            perform_scope: self.perform_scope,
         }
     }
 
@@ -552,7 +643,34 @@ impl SurfaceTerm {
             span,
             identity: Self::fresh_identity(),
             written_call: false,
+            macro_call: false,
+            own_field: false,
+            lowered: false,
+            perform_scope: None,
         }
+    }
+
+    /// Marks a field the coercion expansion wrote (`own_field`).
+    pub fn own_field(mut self) -> Self {
+        self.own_field = true;
+        self
+    }
+
+    /// Whether this field reads the struct's own field (`own_field`).
+    pub fn is_own_field(&self) -> bool {
+        self.own_field
+    }
+
+    /// Marks a term the `for`, `while` or `loop` expansion made (`lowered`).
+    pub fn lowered(mut self) -> Self {
+        self.lowered = true;
+        self
+    }
+
+    /// Whether a loop expansion made this term, so that the source has no
+    /// text for it (`lowered`).
+    pub fn is_lowered(&self) -> bool {
+        self.lowered
     }
 
     /// Marks a call written in the source (`written_call`).
@@ -566,6 +684,19 @@ impl SurfaceTerm {
         self.written_call
     }
 
+    /// Marks a call a macro wrote as syntax (`macro_call`), written as the
+    /// source's calls are.
+    pub fn macro_call(mut self) -> Self {
+        self.written_call = true;
+        self.macro_call = true;
+        self
+    }
+
+    /// Whether a macro wrote this call as syntax (`macro_call`).
+    pub fn is_macro_call(&self) -> bool {
+        self.macro_call
+    }
+
     pub fn var<N: ?Sized>(name: &N, span: Span) -> Self
     where
         for<'a> Name: From<&'a N>,
@@ -573,31 +704,126 @@ impl SurfaceTerm {
         Self::new(TermKind::Var(Name::from(name)), span)
     }
 
-    /// The product of `items` (`#()` when there are none), headed by the library's own
-    /// `Tuple`: the syntax writes no name, so no declaration the file sees can take
-    /// it over (a grammar's `Atom::Tuple`, say).
-    pub fn tuple_of(items: Vec<SurfaceTerm>, span: Span) -> Self {
+    /// The product type `A × B`: the prelude's `Pair(A, B)`. The reader writes it by the
+    /// library's own reference, which no program can spell, so no declaration a file sees can
+    /// take it over. `A × B × C` is `A × (B × C)`.
+    pub fn pair_type(fst: SurfaceTerm, snd: SurfaceTerm, span: Span) -> Self {
+        Self::library_app(crate::bindings::pair_reference(), vec![fst, snd], span)
+    }
+
+    /// The product value `#(a, b)`: the prelude's `Pair::Mk(a, b)`, by the library's own
+    /// reference as [`Self::pair_type`] is.
+    pub fn pair_value(fst: SurfaceTerm, snd: SurfaceTerm, span: Span) -> Self {
+        Self::library_app(crate::bindings::pair_mk_reference(), vec![fst, snd], span)
+    }
+
+    /// `#(a, b, c)`: `Pair::Mk(a, Pair::Mk(b, c))`, each cell spanning from its member to the
+    /// end. No member is the unit `#()`, and one is that member.
+    pub fn product_value(items: Vec<SurfaceTerm>, span: Span) -> Self {
+        Self::fold_right(items, span, Self::pair_value).unwrap_or_else(|| Self::unit(span))
+    }
+
+    /// `A × B × C`: `Pair(A, Pair(B, C))`, folded as [`Self::product_value`] is. No member is
+    /// `Unit`.
+    pub fn product_type(items: Vec<SurfaceTerm>, span: Span) -> Self {
+        Self::fold_right(items, span, Self::pair_type).unwrap_or_else(|| {
+            Self::new(
+                TermKind::Var(crate::bindings::unit_reference().clone().into()),
+                span,
+            )
+        })
+    }
+
+    fn fold_right(
+        mut items: Vec<SurfaceTerm>,
+        span: Span,
+        pair: fn(SurfaceTerm, SurfaceTerm, Span) -> SurfaceTerm,
+    ) -> Option<Self> {
+        let last = items.pop()?;
+        Some(items.into_iter().rev().fold(last, |snd, fst| {
+            let cell = Span::new(fst.span.start, span.end.max(snd.span.end));
+            pair(fst, snd, cell)
+        }))
+    }
+
+    fn library_app(
+        head: &crate::identity::DeclRef,
+        arguments: Vec<SurfaceTerm>,
+        span: Span,
+    ) -> Self {
         Self::new(
             TermKind::App {
-                function: Box::new(Self::new(
-                    TermKind::Var(crate::bindings::tuple_reference().clone().into()),
-                    span,
-                )),
-                arguments: items,
+                function: Box::new(Self::new(TermKind::Var(head.clone().into()), span)),
+                arguments,
             },
             span,
         )
     }
 
-    /// The unit `#()`.
+    /// The unit `#()`: the prelude's `Star`.
     pub fn unit(span: Span) -> Self {
-        Self::tuple_of(Vec::new(), span)
+        Self::new(
+            TermKind::Var(crate::bindings::star_reference().clone().into()),
+            span,
+        )
     }
 
     /// Whether `t` is the unit `#()`.
     pub fn is_unit(&self) -> bool {
-        matches!(&*self.kind, TermKind::App { function, arguments }
-            if arguments.is_empty() && is_tuple_head(function))
+        matches!(&*self.kind, TermKind::Var(n) if crate::bindings::is_reader_reference(n, "Star"))
+    }
+
+    /// The two members of a product type `Pair(A, B)`.
+    pub fn as_pair_type(&self) -> Option<(&SurfaceTerm, &SurfaceTerm)> {
+        self.as_library_pair("Pair")
+    }
+
+    /// The two members of a product value `Pair::Mk(a, b)`.
+    pub fn as_pair_value(&self) -> Option<(&SurfaceTerm, &SurfaceTerm)> {
+        self.as_library_pair("Pair::Mk")
+    }
+
+    fn as_library_pair(&self, head: &str) -> Option<(&SurfaceTerm, &SurfaceTerm)> {
+        match &*self.kind {
+            TermKind::App {
+                function,
+                arguments,
+            } if arguments.len() == 2
+                && matches!(&*function.kind, TermKind::Var(f) if crate::bindings::is_reader_reference(f, head)) =>
+            {
+                Some((&arguments[0], &arguments[1]))
+            }
+            _ => None,
+        }
+    }
+
+    /// The members of the product type `t` in order, the second's own where it is a product
+    /// too (`A × (B × C)` is `A × B × C`); none when `t` is not a product.
+    pub fn product_type_members(&self) -> Option<Vec<&SurfaceTerm>> {
+        Self::spine(self, Self::as_pair_type)
+    }
+
+    /// The members of the product value `t`, as [`Self::product_type_members`] gives a type's.
+    pub fn product_value_members(&self) -> Option<Vec<&SurfaceTerm>> {
+        Self::spine(self, Self::as_pair_value)
+    }
+
+    fn spine<'a>(
+        t: &'a SurfaceTerm,
+        pair: fn(&SurfaceTerm) -> Option<(&SurfaceTerm, &SurfaceTerm)>,
+    ) -> Option<Vec<&'a SurfaceTerm>> {
+        let (mut fst, mut snd) = pair(t)?;
+        let mut out = Vec::new();
+        loop {
+            out.push(fst);
+            match pair(snd) {
+                Some((f, s)) => (fst, snd) = (f, s),
+                None => {
+                    out.push(snd);
+                    return Some(out);
+                }
+            }
+        }
     }
 
     pub fn app<N: ?Sized>(function: &N, arguments: Vec<SurfaceTerm>, span: Span) -> Self
@@ -614,1148 +840,9 @@ impl SurfaceTerm {
     }
 }
 
-/// For tests and tools: parses `source` and returns, in the order of the
-/// source, the terms of every `Type` and `Expr` that is a direct child of a
-/// node of `kind` (such as the type written in a parameter, a result or a
-/// `let`).
-pub fn terms_in(source: &str, kind: Nt) -> Result<Vec<SurfaceTerm>, String> {
-    let parsed = parse(source);
-    if let Some(e) = parsed.errors.first() {
-        return Err(e.message.clone());
-    }
-    let reader = Reader::new(&parsed, source);
-    let mut out = Vec::new();
-    if let Some(root) = parsed.cst.root() {
-        reader.collect(root, kind, &mut out);
-    }
-    Ok(out)
-}
-
-struct Reader<'a> {
-    cst: &'a Cst,
-    source: &'a str,
-    /// Added to every span: the prelude's spans start at `PRELUDE_BASE`, so
-    /// they never meet a program's.
-    base: u32,
-}
-
-impl<'a> Reader<'a> {
-    pub(super) fn new(parsed: &'a Parsed, source: &'a str) -> Self {
-        Self {
-            cst: &parsed.cst,
-            source,
-            base: 0,
-        }
-    }
-
-    fn span(&self, id: NodeId) -> Span {
-        let s = self.cst.span(id);
-        Span::new(s.start + self.base, s.end + self.base)
-    }
-
-    fn collect(&self, id: NodeId, kind: Nt, out: &mut Vec<SurfaceTerm>) {
-        for child in self.cst.children(id) {
-            match self.cst.non_terminal(child) {
-                Some(k) if k == kind => {
-                    for term_node in self.cst.children(child) {
-                        if matches!(
-                            self.cst.non_terminal(term_node),
-                            Some(Nt::Type | Nt::BodyType | Nt::Expr)
-                        ) {
-                            out.push(self.term(term_node));
-                        }
-                    }
-                }
-                _ => self.collect(child, kind, out),
-            }
-        }
-    }
-
-    /// The text of a node. A name written `r#name` is `name`: the `r#` is not part of it. A
-    /// quotation hole `$r#name` or `${name}` is `$name`, the hole as it is written plainly.
-    fn text(&self, id: NodeId) -> std::borrow::Cow<'_, str> {
-        let text = self.cst.span(id).text(self.source);
-        if matches!(
-            self.nt(id),
-            Some(Nt::Ident | Nt::FnName | Nt::CondPath | Nt::OperationName)
-        ) {
-            unhole(text).map_or(
-                std::borrow::Cow::Borrowed(unraw(text)),
-                std::borrow::Cow::Owned,
-            )
-        } else {
-            std::borrow::Cow::Borrowed(text)
-        }
-    }
-
-    fn nt(&self, id: NodeId) -> Option<Nt> {
-        self.cst.non_terminal(id)
-    }
-
-    fn first(&self, id: NodeId, kind: Nt) -> Option<NodeId> {
-        self.cst
-            .children_iter(id)
-            .find(|c| self.nt(*c) == Some(kind))
-    }
-
-    /// The name of a field written under `id`: a name (`t.r#type`, `#{ r#view: v }`).
-    fn label_of(&self, id: NodeId) -> Option<NodeId> {
-        self.cst
-            .children_iter(id)
-            .find(|c| self.nt(*c) == Some(Nt::Ident))
-    }
-
-    /// The type written under `id`: a `Type`, or a `BodyType` where a `{` or `=>` follows it.
-    /// The `⊢ G from e` an arm's body is, `C => ⊢ G from e`.
-    pub(super) fn goal_expr(&self, arm_body: NodeId) -> Option<NodeId> {
-        let expr = self.first(arm_body, Nt::Expr)?;
-        self.first(expr, Nt::GoalExpr)
-    }
-
-    /// The `e` of `⊢ G from e`. A `match` written without a result type takes `G` as its
-    /// result type: `⊢ G from match l { … }` is `match l: G { … }`.
-    pub(super) fn goal_body(&self, goal: NodeId) -> SurfaceTerm {
-        let Some(e) = self.first(goal, Nt::Expr) else {
-            return self.other(goal);
-        };
-        let mut body = self.term(e);
-        if matches!(&*body.kind, TermKind::Match { result: None, .. })
-            && let Some(ty) = self.ty(goal)
-            && let TermKind::Match { result, .. } = Arc::make_mut(&mut body.kind)
-        {
-            *result = Some(Box::new(self.term(ty)));
-        }
-        body
-    }
-
-    pub(super) fn ty(&self, id: NodeId) -> Option<NodeId> {
-        self.cst
-            .children_iter(id)
-            .find(|c| matches!(self.nt(*c), Some(Nt::Type | Nt::BodyType)))
-    }
-
-    pub(super) fn tys(&self, id: NodeId) -> Vec<NodeId> {
-        self.cst
-            .children_iter(id)
-            .filter(|c| matches!(self.nt(*c), Some(Nt::Type | Nt::BodyType)))
-            .collect()
-    }
-
-    fn all(&self, id: NodeId, kind: Nt) -> Vec<NodeId> {
-        self.cst
-            .children_iter(id)
-            .filter(|c| self.nt(*c) == Some(kind))
-            .collect()
-    }
-
-    fn other(&self, id: NodeId) -> SurfaceTerm {
-        let kind = self
-            .nt(id)
-            .map(|k| k.to_string())
-            .unwrap_or_else(|| "token".into());
-        SurfaceTerm::new(TermKind::Other(kind), self.span(id))
-    }
-
-    fn term(&self, id: NodeId) -> SurfaceTerm {
-        let id = self.through_levels(id);
-        let span = self.span(id);
-        let kids = self.cst.children(id);
-        let Some(kind) = self.nt(id) else {
-            return self.other(id);
-        };
-        match kind {
-            // A flat sequence of operands and operators, and an operand with its prefixes.
-            Nt::Type | Nt::BodyType | Nt::Seq | Nt::Cond | Nt::Operand | Nt::CondOperand => {
-                self.sequence(id).0
-            }
-            Nt::AngleType | Nt::GenericKind => self.angle_type(id),
-            Nt::EffectRow => SurfaceTerm::new(TermKind::Row(self.row_names(id)), span),
-            // `⊢ G from e`: `e` checked against `G`.
-            Nt::GoalExpr => {
-                let body = self.goal_body(id);
-                if matches!(&*body.kind, TermKind::Match { .. }) {
-                    return body;
-                }
-                match self.ty(id) {
-                    Some(ty) => SurfaceTerm::new(
-                        TermKind::Ascribe {
-                            term: Box::new(body),
-                            ty: Box::new(self.term(ty)),
-                        },
-                        span,
-                    ),
-                    None => body,
-                }
-            }
-            Nt::Expr => self.expr(&kids, span),
-            Nt::Postfix | Nt::CondPostfix => self.postfix(&kids, span),
-            Nt::Primary | Nt::CondPrimary => match kids.as_slice() {
-                [only] => self.term(*only),
-                _ => self.other(id),
-            },
-            Nt::PathExpr | Nt::CondPath => self.path(id, &kids, span),
-            Nt::Number => self.number(id, &kids, span),
-            Nt::HoleExpr => SurfaceTerm::new(
-                TermKind::Hole(self.text(id).trim_start_matches('?').to_string()),
-                span,
-            ),
-            Nt::Text => SurfaceTerm::new(TermKind::Text(unquote_text(&self.text(id))), span),
-            Nt::SyntaxLit => self.syntax_lit(id, span),
-            Nt::MacroCall => self.macro_call(id, span),
-            Nt::QuoteExpr => self.quote_expr(id, span),
-            Nt::SpliceExpr => match self.first(id, Nt::Expr) {
-                Some(e) => SurfaceTerm::new(TermKind::Splice(Box::new(self.term(e))), span),
-                None => self.other(id),
-            },
-            Nt::True => SurfaceTerm::new(TermKind::Bool(true), span),
-            Nt::False => SurfaceTerm::new(TermKind::Bool(false), span),
-            Nt::Paren => self.paren(&kids, span),
-            Nt::ListLit => self.list_lit(&kids, span),
-            Nt::CongrExpr => self.congr_expr(id, span),
-            Nt::BoxHole => SurfaceTerm::new(TermKind::Other(BOX_OUTSIDE.into()), span),
-            Nt::TupleLit => self.tuple_lit(id, span),
-            Nt::Brace => match kids.as_slice() {
-                [only] => self.term(*only),
-                _ => match self.first(id, Nt::BraceBody) {
-                    Some(mut body) => {
-                        // `BraceBody: Nl BraceBody | …`: the newlines after the `{`.
-                        while let Some(inner) = self.first(body, Nt::BraceBody) {
-                            body = inner;
-                        }
-                        match self.first(body, Nt::RecordType) {
-                            Some(record) => self.record_type(record, span),
-                            None => self.brace_block(body, span),
-                        }
-                    }
-                    None => self.other(id),
-                },
-            },
-            Nt::AnonRecord => self.anon_record(id, span),
-            Nt::Block => self.block(id, span),
-            Nt::IfExpr => self.if_expr(&kids, span),
-            Nt::PerformExpr => self.perform(id, span),
-            Nt::HandleExpr => self.handle(id, span),
-            Nt::BudgetExpr => self.budget(id, span),
-            Nt::MatchExpr => self.match_expr(id, span),
-            Nt::StepExpr => self.step_expr(id, span),
-            Nt::Item => match kids.first() {
-                Some(e) => self.term(*e),
-                None => self.other(id),
-            },
-            _ => self.other(id),
-        }
-    }
-
-    /// The kind of a generic, `Linear` or `(Type) -> Copy`: an operand and, after `->`, a kind.
-    fn angle_type(&self, id: NodeId) -> SurfaceTerm {
-        let span = self.span(id);
-        let id = if self.nt(id) == Some(Nt::GenericKind) {
-            match self.first(id, Nt::AngleType) {
-                Some(inner) => inner,
-                None => return self.other(id),
-            }
-        } else {
-            id
-        };
-        let Some(head) = self.first(id, Nt::Postfix) else {
-            return self.other(id);
-        };
-        // `A × B × C`: the members in the order written.
-        let mut members: Vec<SurfaceTerm> = self.all(id, Nt::Postfix)[1..]
-            .iter()
-            .map(|p| self.term(*p))
-            .collect();
-        let mut list = self.first(id, Nt::AngleTypeList);
-        while let Some(l) = list {
-            members.extend(self.all(l, Nt::Postfix).into_iter().map(|p| self.term(p)));
-            list = self.first(l, Nt::AngleTypeList);
-        }
-        let lhs = if members.is_empty() {
-            self.term(head)
-        } else {
-            members.insert(0, self.term(head));
-            let end = members.last().map_or(span.end, |m| m.span.end);
-            SurfaceTerm::new(
-                TermKind::Product(members),
-                Span::new(self.span(head).start, end),
-            )
-        };
-        let Some(rest) = self.first(id, Nt::AngleType) else {
-            return lhs;
-        };
-        let product = matches!(&*lhs.kind, TermKind::Product(_));
-        let params = match self.sole_paren(head).filter(|_| !product) {
-            Some(paren) => self
-                .all(paren, Nt::Item)
-                .into_iter()
-                .map(|item| self.fn_type_item(item))
-                .collect(),
-            None => vec![(None, lhs)],
-        };
-        SurfaceTerm::new(
-            TermKind::Pi {
-                params,
-                result: Box::new(self.angle_type(rest)),
-                effects: None,
-            },
-            span,
-        )
-    }
-
-    /// An operand with the prefixes that bind to it alone applied (`-x`, `&x`, `@tag x`), and
-    /// the ones that stand before a whole sequence left for the caller: `¬` and a binder, which
-    /// take the operators tighter than `¬`, and `affine`/`linear`, which stand before an arrow.
-    fn piece(&self, operand: NodeId) -> Piece {
-        let kids = self.cst.children(operand);
-        let Some((&postfix, prefixes)) = kids.split_last() else {
-            return Piece::of(self.other(operand));
-        };
-        let mut acc = self.term(postfix);
-        // `affine` and `linear` take the whole arrow, so `affine () -> A` still has a
-        // parameter list: no parameter, not one `Unit`.
-        let only_kinds = prefixes.iter().all(|p| {
-            self.cst
-                .children(*p)
-                .first()
-                .is_some_and(|head| self.nt(*head) == Some(Nt::FnKind))
-        });
-        let paren = if only_kinds {
-            self.sole_paren(postfix)
-        } else {
-            None
-        };
-        let mut loose = Vec::new();
-        let mut kind = None;
-        for &p in prefixes.iter().rev() {
-            let Some(head) = self.cst.children(p).first().copied() else {
-                continue;
-            };
-            let span = Span::new(self.span(p).start, acc.span.end);
-            match self.nt(head) {
-                Some(Nt::NotSign | Nt::Binder) => loose.push(head),
-                Some(Nt::FnKind) => kind = Some(head),
-                Some(Nt::TagPrefix) => acc = self.tagged(head, acc, span),
-                Some(Nt::Borrow) => acc = self.borrowed(head, acc, span),
-                _ => acc = SurfaceTerm::app(self.text(p).trim(), vec![acc], span),
-            }
-        }
-        // The prefixes were walked from the last, so the first written is last in `loose`.
-        loose.reverse();
-        Piece {
-            term: acc,
-            paren,
-            loose,
-            kind,
-        }
-    }
-
-    /// A flat sequence of operands and operators (`Seq`, `BodyType`, `Cond`, or one operand) as the
-    /// term the precedences build, and the effect row written after it when no arrow takes it:
-    /// `fn f(): A × B ! {e}`. A row binds to the last arrow, `(A) -> B ! {e}`.
-    pub(super) fn sequence(&self, id: NodeId) -> (SurfaceTerm, Option<Vec<Name>>) {
-        let span = self.span(id);
-        let mut pieces = Vec::new();
-        let mut ops = Vec::new();
-        let mut row = None;
-        if matches!(self.nt(id), Some(Nt::Operand | Nt::CondOperand)) {
-            pieces.push(self.piece(id));
-        } else {
-            for k in self.cst.children(id) {
-                match self.nt(k) {
-                    Some(Nt::Operand | Nt::CondOperand) => pieces.push(self.piece(k)),
-                    Some(Nt::Op | Nt::CondOp) => {
-                        ops.push((sign(self.text(k).trim()).to_string(), self.span(k)))
-                    }
-                    Some(Nt::EffectRow) => row = Some(self.row_names(k)),
-                    _ => {}
-                }
-            }
-        }
-        if pieces.is_empty() || ops.len() + 1 != pieces.len() {
-            return (self.other(id), None);
-        }
-        let arrow = ops.iter().rposition(|(o, _)| o == "->");
-        let mut climb = Climb {
-            reader: self,
-            taken: vec![0; pieces.len()],
-            pieces,
-            ops,
-            arrow,
-            row: if arrow.is_some() { row.clone() } else { None },
-        };
-        let (parsed, _) = climb.climb(0, 0);
-        let term = self.finish(parsed);
-        let _ = span;
-        (term, if arrow.is_some() { None } else { row })
-    }
-
-    /// An operand with `affine` or `linear` written before it, kept as the kind of its type.
-    fn finish(&self, parsed: Part) -> SurfaceTerm {
-        match parsed.kind {
-            Some(kind) => {
-                let span = parsed.term.span;
-                self.fn_kind(kind, parsed.term, span)
-            }
-            None => parsed.term,
-        }
-    }
-
-    fn fn_kind(&self, kind: NodeId, ty: SurfaceTerm, span: Span) -> SurfaceTerm {
-        SurfaceTerm::new(
-            TermKind::FnKind {
-                kind: self.text(kind).trim().to_string(),
-                ty: Box::new(ty),
-            },
-            span,
-        )
-    }
-
-    fn borrowed(&self, borrow: NodeId, term: SurfaceTerm, span: Span) -> SurfaceTerm {
-        SurfaceTerm::new(
-            TermKind::Borrow {
-                mutable: self.first(borrow, Nt::KwMut).is_some(),
-                term: Box::new(term),
-            },
-            span,
-        )
-    }
-
-    fn tagged(&self, prefix: NodeId, term: SurfaceTerm, span: Span) -> SurfaceTerm {
-        let tag = self
-            .first(prefix, Nt::Ident)
-            .map(|i| self.text(i).to_string())
-            .unwrap_or_default();
-        SurfaceTerm::new(
-            TermKind::Tagged {
-                tag,
-                term: Box::new(term),
-            },
-            span,
-        )
-    }
-
-    /// The names in an effect row; a row variable `| e` is `|e`. An entry
-    /// with type arguments keeps them as written (`res(Pos)`), so that it
-    /// names no declared effect and is rejected rather than read as `res`.
-    pub(super) fn row_names(&self, row: NodeId) -> Vec<Name> {
-        let mut literals = Vec::new();
-        let mut variables = Vec::new();
-        for set in self.all(row, Nt::EffectSet) {
-            for term in self.all(set, Nt::EffectTerm) {
-                match self.first(term, Nt::EffectLit) {
-                    Some(lit) => literals.push(lit),
-                    None => variables.extend(self.first(term, Nt::Ident)),
-                }
-            }
-        }
-        let mut names: Vec<String> = literals
-            .into_iter()
-            .flat_map(|lit| self.all(lit, Nt::EffectName))
-            .filter_map(|n| {
-                let name = self.text(self.first(n, Nt::Ident)?);
-                let entry = match self.first(n, Nt::TypeCall) {
-                    Some(args) => format!("{name}{}", self.text(args)),
-                    None => name.to_string(),
-                };
-                // `∀ A. res(A)` is kept as written, `∀ ` and the names
-                // first: `types/instances.rs` reads it.
-                Some(match self.first(n, Nt::EffectForall) {
-                    Some(f) => {
-                        let names: Vec<String> = self
-                            .all(f, Nt::Ident)
-                            .into_iter()
-                            .map(|i| self.text(i).into_owned())
-                            .collect();
-                        format!("∀ {}. {entry}", names.join(", "))
-                    }
-                    None => entry,
-                })
-            })
-            .collect();
-        if let Some(var) = variables.first() {
-            names.push(format!("|{}", self.text(*var)));
-        }
-        names.into_iter().map(Name::from).collect()
-    }
-
-    /// `∀ x: A. B` and `∃ x: A. B`: the binder, with the body it takes.
-    /// `∀ x: A, y: B. P` is `∀ x: A. ∀ y: B. P`, one binder per name, the first outermost.
-    fn quantified(&self, binder: NodeId, body: SurfaceTerm) -> SurfaceTerm {
-        let kids = self.cst.children(binder);
-        let quantifier = kids.first().map(|k| self.text(*k));
-        let quantifier = quantifier.as_deref().map_or("", str::trim);
-        let names: Vec<String> = kids
-            .iter()
-            .filter(|k| self.nt(**k) == Some(Nt::Ident))
-            .map(|k| self.text(*k).to_string())
-            .collect();
-        let domains: Vec<NodeId> = kids
-            .iter()
-            .copied()
-            .filter(|k| self.nt(*k) == Some(Nt::Type))
-            .collect();
-        let start = self.span(binder).start;
-        let span = Span::new(start, body.span.end);
-        if names.is_empty() || names.len() != domains.len() {
-            return SurfaceTerm::new(TermKind::Other("Binder".into()), span);
-        }
-        let mut body = body;
-        for (name, domain) in names.into_iter().zip(domains).rev() {
-            body = self.quantified_one(
-                quantifier,
-                crate::identity::Name::Spelled(name),
-                self.term(domain),
-                body,
-                span,
-            );
-        }
-        body
-    }
-
-    fn quantified_one(
-        &self,
-        quantifier: &str,
-        binder: Name,
-        domain: SurfaceTerm,
-        body: SurfaceTerm,
-        span: Span,
-    ) -> SurfaceTerm {
-        if matches!(quantifier, "∃" | "\\exists") {
-            SurfaceTerm::new(
-                TermKind::Exists {
-                    binder,
-                    domain: Box::new(domain),
-                    body: Box::new(body),
-                },
-                span,
-            )
-        } else {
-            SurfaceTerm::new(
-                TermKind::Pi {
-                    params: vec![(Some(binder), domain)],
-                    result: Box::new(body),
-                    effects: None,
-                },
-                span,
-            )
-        }
-    }
-
-    fn expr(&self, kids: &[NodeId], span: Span) -> SurfaceTerm {
-        let parts: Vec<NodeId> = kids
-            .iter()
-            .copied()
-            .filter(|k| {
-                matches!(self.nt(*k), Some(nt) if !matches!(nt, Nt::Gap | Nt::FatArrow | Nt::ThinArrow))
-            })
-            .collect();
-        if parts.iter().any(|k| self.nt(*k) == Some(Nt::Generated)) {
-            // `=> fn a, theorem b` is read where a macro call statement or `decreasing_by` is.
-            return SurfaceTerm::new(
-                TermKind::Other("a list of generated declarations".into()),
-                span,
-            );
-        }
-        let [lhs, rhs] = parts.as_slice() else {
-            return match parts.as_slice() {
-                [only] => self.term(*only),
-                _ => SurfaceTerm::new(TermKind::Other("Expr".into()), span),
-            };
-        };
-        let param = |a: &SurfaceTerm| match &*a.kind {
-            TermKind::Var(name) => Some((name.clone(), None)),
-            TermKind::Borrow { mutable, term } => match &*term.kind {
-                TermKind::Var(name) => Some((name.clone(), Some(*mutable))),
-                _ => None,
-            },
-            _ => None,
-        };
-        let types: Vec<Option<SurfaceTerm>> = match self.sole_paren(*lhs) {
-            Some(paren) => self
-                .all(paren, Nt::Item)
-                .into_iter()
-                .map(|item| self.first(item, Nt::Type).map(|ty| self.term(ty)))
-                .collect(),
-            None => Vec::new(),
-        };
-        let types = if types.iter().any(Option::is_some) {
-            types
-        } else {
-            Vec::new()
-        };
-        // `() => e` takes no parameter; `()` is nothing else, the unit being `#()`.
-        let empty = self
-            .sole_paren(*lhs)
-            .is_some_and(|paren| self.all(paren, Nt::Item).is_empty());
-        // `(x: A) => …` names its one parameter: the item is read without the type.
-        let lhs = match self.sole_paren(*lhs).map(|paren| self.all(paren, Nt::Item)) {
-            Some(items) if items.len() == 1 && !types.is_empty() => self.term(items[0]),
-            _ => self.term(*lhs),
-        };
-        let params: Option<Vec<(Name, Option<bool>)>> = match &*lhs.kind {
-            _ if empty => Some(Vec::new()),
-            TermKind::App {
-                function,
-                arguments,
-            } if is_tuple_head(function) => arguments.iter().map(param).collect(),
-            _ => param(&lhs).map(|p| vec![p]),
-        };
-        match params {
-            Some(params) => {
-                let borrows: Vec<Option<bool>> = params.iter().map(|(_, b)| *b).collect();
-                let lam = SurfaceTerm::new(
-                    TermKind::Lam {
-                        params: params.into_iter().map(|(n, _)| n).collect(),
-                        body: Box::new(self.term(*rhs)),
-                        types,
-                    },
-                    span,
-                );
-                if borrows.iter().all(Option::is_none) {
-                    lam
-                } else {
-                    SurfaceTerm::new(
-                        TermKind::BorrowLam {
-                            borrows,
-                            lam: Box::new(lam),
-                        },
-                        span,
-                    )
-                }
-            }
-            None => SurfaceTerm::new(TermKind::Other("Expr".into()), span),
-        }
-    }
-
-    /// The node under the precedence levels that hold only it. An operand
-    /// sits under every level of the grammar, and reading each level by
-    /// recursion makes the depth of the reader grow with the levels times
-    /// the nesting of the source, enough to overflow a thread's stack on a
-    /// large program.
-    fn through_levels(&self, id: NodeId) -> NodeId {
-        let mut at = id;
-        while let Some(
-            Nt::Type
-            | Nt::BodyType
-            | Nt::Seq
-            | Nt::Cond
-            | Nt::Operand
-            | Nt::CondOperand
-            | Nt::Postfix
-            | Nt::CondPostfix
-            | Nt::Primary
-            | Nt::CondPrimary
-            | Nt::Brace
-            | Nt::ArmBody
-            | Nt::OperationType,
-        ) = self.nt(at)
-        {
-            match self.cst.children(at).as_slice() {
-                [only] => at = *only,
-                _ => break,
-            }
-        }
-        at
-    }
-
-    /// The parenthesized list `id` is, when it is nothing else.
-    fn sole_paren(&self, id: NodeId) -> Option<NodeId> {
-        let mut at = id;
-        loop {
-            if self.nt(at) == Some(Nt::Paren) {
-                return Some(at);
-            }
-            match self.cst.children(at).as_slice() {
-                [only] => at = *only,
-                _ => return None,
-            }
-        }
-    }
-
-    fn fn_type_item(&self, item: NodeId) -> (Option<Name>, SurfaceTerm) {
-        let (Some(name), Some(ty)) = (self.first(item, Nt::Expr), self.first(item, Nt::Type))
-        else {
-            return (None, self.term(item));
-        };
-        let ty = self.term(ty);
-        match self.term(name).into_kind() {
-            TermKind::Borrow { mutable, .. } => (
-                None,
-                SurfaceTerm::new(
-                    TermKind::Borrow {
-                        mutable,
-                        term: Box::new(ty.clone()),
-                    },
-                    ty.span,
-                ),
-            ),
-            TermKind::Var(name) => (Some(name), ty),
-            _ => (None, ty),
-        }
-    }
-
-    fn postfix(&self, kids: &[NodeId], span: Span) -> SurfaceTerm {
-        let Some((&primary, ops)) = kids.split_first() else {
-            return SurfaceTerm::new(TermKind::Other("Postfix".into()), span);
-        };
-        let acc = self.term(primary);
-        self.apply_post(acc, ops, span)
-    }
-
-    fn apply_post(&self, mut acc: SurfaceTerm, ops: &[NodeId], _span: Span) -> SurfaceTerm {
-        for &op in ops {
-            let Some(inner) = self.cst.children(op).into_iter().next() else {
-                continue;
-            };
-            let end = self.span(op).end;
-            let span = Span::new(acc.span.start, end);
-            acc = match self.nt(inner) {
-                Some(Nt::Call) => {
-                    // `f(<x: v>, h)`: the implicit arguments named, carried first as a
-                    // record the elaborator places by the generics' names, as a
-                    // pattern's `C<n: m>(…)` is.
-                    let implicits = self.first(inner, Nt::CallImplicits).map(|list| {
-                        let fields = self
-                            .all(list, Nt::CallImplicit)
-                            .into_iter()
-                            .filter_map(|i| {
-                                let n = self.first(i, Nt::Ident)?;
-                                let v = self.first(i, Nt::Postfix)?;
-                                Some((unraw(self.text(n).trim()).to_string(), self.term(v)))
-                            })
-                            .collect();
-                        SurfaceTerm::new(
-                            TermKind::Record {
-                                name: crate::IMPLICITS.into(),
-                                fields,
-                                base: None,
-                            },
-                            self.span(list),
-                        )
-                    });
-                    let arguments = implicits
-                        .into_iter()
-                        .chain(self.all(inner, Nt::Item).into_iter().map(|i| self.term(i)))
-                        .collect();
-                    SurfaceTerm::new(
-                        TermKind::App {
-                            function: Box::new(acc),
-                            arguments,
-                        },
-                        span,
-                    )
-                    .written_call()
-                }
-                Some(Nt::Field) => {
-                    let name = self
-                        .label_of(inner)
-                        .map(|i| self.text(i).trim().to_string())
-                        .unwrap_or_default();
-                    SurfaceTerm::new(
-                        TermKind::Field {
-                            base: Box::new(acc),
-                            name,
-                        },
-                        span,
-                    )
-                }
-                _ => SurfaceTerm::new(TermKind::Other(inner_name(self, inner)), span),
-            };
-        }
-        acc
-    }
-
-    fn path(&self, id: NodeId, kids: &[NodeId], span: Span) -> SurfaceTerm {
-        let only_names = kids.iter().all(|k| matches!(self.nt(*k), Some(Nt::Ident)));
-        if only_names {
-            let name: String = kids
-                .iter()
-                .map(|k| self.text(*k).trim().to_owned())
-                .collect();
-            return SurfaceTerm::var(&name, span);
-        }
-        let name: String = kids
-            .iter()
-            .filter(|k| matches!(self.nt(**k), Some(Nt::Ident)))
-            .map(|k| self.text(*k).trim().to_owned())
-            .collect();
-        // `F { }` is a struct without fields.
-        let Some(body) = self.first(id, Nt::RecordBody) else {
-            return self.other(id);
-        };
-        let mut inits = Vec::new();
-        let mut base = None;
-        self.push_field_inits(body, &mut inits, &mut base);
-        let fields = inits
-            .into_iter()
-            .map(|f| {
-                let field = self
-                    .label_of(f)
-                    .map(|i| self.text(i).trim().to_string())
-                    .unwrap_or_default();
-                let value = match self.first(f, Nt::Expr) {
-                    Some(e) => self.term(e),
-                    None => self.other(f),
-                };
-                (field, value)
-            })
-            .collect();
-        let base = base
-            .and_then(|b| self.first(b, Nt::Expr))
-            .map(|e| Box::new(self.term(e)));
-        SurfaceTerm::new(
-            TermKind::Record {
-                name: crate::identity::Name::Spelled(name),
-                fields,
-                base,
-            },
-            span,
-        )
-    }
-
-    /// `{ a: A, b: B }`: the record type, the struct `@record.a.b` that
-    /// `crate::records` declares, applied to the fields' types in the order of
-    /// their names.
-    fn record_type(&self, id: NodeId, span: Span) -> SurfaceTerm {
-        let mut decls = Vec::new();
-        self.push_field_decls(id, &mut decls);
-        let mut fields: Vec<(String, SurfaceTerm)> = decls
-            .into_iter()
-            .map(|f| {
-                let name = self
-                    .label_of(f)
-                    .map(|i| self.text(i).trim().to_string())
-                    .unwrap_or_default();
-                let ty = match self.ty(f) {
-                    Some(t) => self.term(t),
-                    None => self.other(f),
-                };
-                (name, ty)
-            })
-            .collect();
-        fields.sort_by(|a, b| a.0.cmp(&b.0));
-        let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
-        if let Some(twice) = crate::records::repeated(&names) {
-            return SurfaceTerm::new(
-                TermKind::Other(crate::records::repeated_message(twice)),
-                span,
-            );
-        }
-        SurfaceTerm::app(
-            &*crate::records::struct_name(&names),
-            fields.into_iter().map(|(_, t)| t).collect(),
-            span,
-        )
-    }
-
-    fn push_field_decls(&self, node: NodeId, out: &mut Vec<NodeId>) {
-        for c in self.cst.children(node) {
-            match self.nt(c) {
-                Some(Nt::FieldDecl) => out.push(c),
-                Some(Nt::RecordTypeTail) => self.push_field_decls(c, out),
-                _ => {}
-            }
-        }
-    }
-
-    /// `#{ a: 1, b: 2 }`: the literal of the struct `@record.a.b`, its fields
-    /// evaluated in the order they are written.
-    fn anon_record(&self, id: NodeId, span: Span) -> SurfaceTerm {
-        let mut inits = Vec::new();
-        let mut base = None;
-        self.push_field_inits(id, &mut inits, &mut base);
-        if base.is_some() {
-            return SurfaceTerm::new(TermKind::Other(crate::records::BASE_MESSAGE.into()), span);
-        }
-        let fields: Vec<(String, SurfaceTerm)> = inits
-            .into_iter()
-            .map(|f| {
-                let field = self
-                    .label_of(f)
-                    .map(|i| self.text(i).trim().to_string())
-                    .unwrap_or_default();
-                let value = match self.first(f, Nt::Expr) {
-                    Some(e) => self.term(e),
-                    None => self.other(f),
-                };
-                (field, value)
-            })
-            .collect();
-        let mut names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
-        names.sort();
-        if let Some(twice) = crate::records::repeated(&names) {
-            return SurfaceTerm::new(
-                TermKind::Other(crate::records::repeated_message(twice)),
-                span,
-            );
-        }
-        let name = crate::records::struct_name(&names);
-        SurfaceTerm::new(
-            TermKind::Record {
-                name: crate::identity::Name::Spelled(name),
-                fields,
-                base: None,
-            },
-            span,
-        )
-    }
-
-    /// The fields of a record's body, and its `..b` when written.
-    fn push_field_inits(&self, node: NodeId, out: &mut Vec<NodeId>, base: &mut Option<NodeId>) {
-        for c in self.cst.children(node) {
-            match self.nt(c) {
-                Some(Nt::FieldInit) => out.push(c),
-                Some(Nt::RecordBase) => *base = Some(c),
-                Some(_) => self.push_field_inits(c, out, base),
-                _ => {}
-            }
-        }
-    }
-
-    fn number(&self, id: NodeId, kids: &[NodeId], span: Span) -> SurfaceTerm {
-        match kids
-            .iter()
-            .map(|k| self.nt(*k))
-            .collect::<Vec<_>>()
-            .as_slice()
-        {
-            [Some(Nt::Integer)] => {
-                SurfaceTerm::new(TermKind::Nat(self.text(id).replace('_', "").into()), span)
-            }
-            [Some(Nt::Float | Nt::Decimal)] => {
-                SurfaceTerm::new(TermKind::Float(self.text(id).into()), span)
-            }
-            _ => self.other(id),
-        }
-    }
-
-    fn paren(&self, kids: &[NodeId], span: Span) -> SurfaceTerm {
-        let items: Vec<SurfaceTerm> = kids
-            .iter()
-            .filter(|k| self.nt(**k) == Some(Nt::Item))
-            .map(|k| self.term(*k))
-            .collect();
-        let has_comma = kids.iter().any(|k| self.nt(*k) == Some(Nt::Comma));
-        let written = kids
-            .iter()
-            .find(|k| self.nt(**k) == Some(Nt::Item))
-            .and_then(|item| self.first(*item, Nt::Type));
-        match (items.as_slice(), has_comma) {
-            ([only], false) => match written {
-                Some(ty) => SurfaceTerm::new(
-                    TermKind::Ascribe {
-                        term: Box::new(only.clone()),
-                        ty: Box::new(self.term(ty)),
-                    },
-                    span,
-                ),
-                None => only.clone(),
-            },
-            _ => SurfaceTerm::tuple_of(items, span),
-        }
-    }
-
-    /// `⟦and(or(x1, □), y)⟧`: the function `z => and(or(x1, z), y)`. The `□` is written once,
-    /// and not under a binder written inside the brackets; the parameter's name is one no
-    /// program can write, so it captures nothing. Its type is the one the context expects.
-    fn congr_expr(&self, id: NodeId, span: Span) -> SurfaceTerm {
-        let Some(inner) = self.first(id, Nt::Expr) else {
-            return self.other(id);
-        };
-        let mut body = self.term(inner);
-        let name = "congr@hole";
-        let (mut found, mut bound) = (0usize, false);
-        fill_box(&mut body, name, false, &mut found, &mut bound);
-        let message = match (found, bound) {
-            (0, _) => Some("`⟦ ⟧` without a `□`"),
-            (1, false) => None,
-            (1, true) => Some("`□` under a binder inside `⟦ ⟧`"),
-            _ => Some("more than one `□` in `⟦ ⟧`"),
-        };
-        if let Some(message) = message {
-            return SurfaceTerm::new(TermKind::Other(message.into()), span);
-        }
-        SurfaceTerm::new(
-            TermKind::Lam {
-                params: vec![crate::identity::Name::Spelled(name.to_string())],
-                body: Box::new(body),
-                types: Vec::new(),
-            },
-            span,
-        )
-    }
-
-    /// `[a, b]`: `Cons(a, Cons(b, Nil))`, the terms the constructors make,
-    /// as a tuple is `Tuple(…)`; `[a, ..r]` is `Cons(a, r)`, the rest in the
-    /// place of `Nil`. Each cell spans from its item to the `]`.
-    fn list_lit(&self, kids: &[NodeId], span: Span) -> SurfaceTerm {
-        let mut items: Vec<SurfaceTerm> = Vec::new();
-        let mut tail = None;
-        let mut next = kids
-            .iter()
-            .copied()
-            .find(|k| self.nt(*k) == Some(Nt::ListItems));
-        while let Some(at) = next {
-            next = None;
-            for c in self.cst.children(at) {
-                match self.nt(c) {
-                    Some(Nt::Expr) => items.push(self.term(c)),
-                    Some(Nt::ListRest) => {
-                        tail = self.first(c, Nt::Expr).map(|e| self.term(e));
-                    }
-                    Some(Nt::ListItems) => next = Some(c),
-                    _ => {}
-                }
-            }
-        }
-        let tail = tail.unwrap_or_else(|| SurfaceTerm::var("Nil", span));
-        items.into_iter().rev().fold(tail, |rest, item| {
-            let cell = Span::new(item.span.start, span.end);
-            SurfaceTerm::app("Cons", vec![item, rest], cell)
-        })
-    }
-
-    /// `#(a, b)`: `Pair { fst: a, snd: b }`, and `#(a, b, c)` nests to the
-    /// right as `A × B × C` does. `#()` is the unit.
-    /// `#(a, b, …)` as written: the members are not spliced here, so that the
-    /// program prints back as it is written.
-    fn tuple_lit(&self, id: NodeId, span: Span) -> SurfaceTerm {
-        let items: Vec<SurfaceTerm> = self
-            .all(id, Nt::Item)
-            .into_iter()
-            .map(|item| {
-                // `#(a: A, b)`: a member at a written type, as `(a: A)` is.
-                let term = self.term(item);
-                match self.first(item, Nt::Type) {
-                    Some(ty) => SurfaceTerm::new(
-                        TermKind::Ascribe {
-                            term: Box::new(term),
-                            ty: Box::new(self.term(ty)),
-                        },
-                        self.span(item),
-                    ),
-                    None => term,
-                }
-            })
-            .collect();
-        match items.len() {
-            0 => SurfaceTerm::unit(span),
-            1 => self.other(id),
-            _ => SurfaceTerm::new(TermKind::Tuple(items), span),
-        }
-    }
-
-    fn macro_call(&self, id: NodeId, span: Span) -> SurfaceTerm {
-        let name = self
-            .first(id, Nt::MacroName)
-            .map(|b| self.text(b).trim().trim_end_matches('!').to_string())
-            .unwrap_or_default();
-        // `name!()` passes the unit.
-        let arg = match self.first(id, Nt::Expr) {
-            Some(e) => self.term(e),
-            None => SurfaceTerm::unit(span),
-        };
-        SurfaceTerm::new(
-            TermKind::MacroCall {
-                name,
-                arg: Box::new(arg),
-            },
-            span,
-        )
-    }
-
-    fn quote_expr(&self, id: NodeId, span: Span) -> SurfaceTerm {
-        let stmts = self
-            .first(id, Nt::Ident)
-            .is_some_and(|i| self.text(i) == "stmts");
-        let body = self
-            .first(id, Nt::Block)
-            .and_then(|b| self.first(b, Nt::Stmts))
-            .map(|s| self.collect_stmts(s))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|s| self.stmt(s))
-            .collect();
-        SurfaceTerm::new(TermKind::Quote { stmts, body }, span)
-    }
-
-    /// The block of a `BraceBody`: its statements are under `Stmts` after a `;`,
-    /// else its own `Stmt` and `StmtsTail`.
-    fn brace_block(&self, body: NodeId, span: Span) -> SurfaceTerm {
-        if self.first(body, Nt::Stmts).is_some() {
-            return self.block(body, span);
-        }
-        let mut stmts = Vec::new();
-        self.push_stmts(body, &mut stmts);
-        let read: Vec<Stmt> = stmts.iter().map(|s| self.stmt(*s)).collect();
-        match read.as_slice() {
-            [Stmt::Expr(only)] => only.clone(),
-            _ => SurfaceTerm::new(TermKind::Block(read), span),
-        }
-    }
-
-    /// A block holding one expression is that expression.
-    fn block(&self, id: NodeId, span: Span) -> SurfaceTerm {
-        let stmts: Vec<NodeId> = self
-            .first(id, Nt::Stmts)
-            .map(|s| self.collect_stmts(s))
-            .unwrap_or_default();
-        let read: Vec<Stmt> = stmts.iter().map(|s| self.stmt(*s)).collect();
-        match read.as_slice() {
-            [Stmt::Expr(only)] => only.clone(),
-            _ => SurfaceTerm::new(TermKind::Block(read), span),
-        }
-    }
-
-    /// The `Stmt`s of `Stmts: … [ Stmt StmtsTail ]`, through the tails.
-    fn collect_stmts(&self, stmts: NodeId) -> Vec<NodeId> {
-        let mut out = Vec::new();
-        self.push_stmts(stmts, &mut out);
-        out
-    }
-
-    fn push_stmts(&self, node: NodeId, out: &mut Vec<NodeId>) {
-        for c in self.cst.children(node) {
-            match self.nt(c) {
-                Some(Nt::Stmt) => out.push(c),
-                Some(Nt::StmtsTail) => self.push_stmts(c, out),
-                _ => {}
-            }
-        }
-    }
-
-    fn if_expr(&self, kids: &[NodeId], span: Span) -> SurfaceTerm {
-        let cond = kids.iter().find(|k| self.nt(**k) == Some(Nt::Cond));
-        let then = kids.iter().find(|k| self.nt(**k) == Some(Nt::Block));
-        let otherwise = kids.iter().find(|k| self.nt(**k) == Some(Nt::ElseBranch));
-        let (Some(cond), Some(then)) = (cond, then) else {
-            return SurfaceTerm::new(TermKind::Other("IfExpr".into()), span);
-        };
-        let otherwise = otherwise.and_then(|e| self.cst.children(*e).into_iter().next());
-        SurfaceTerm::new(
-            TermKind::If {
-                condition: Box::new(self.term(*cond)),
-                then: Box::new(self.term(*then)),
-                otherwise: otherwise.map(|o| Box::new(self.term(o))),
-            },
-            span,
-        )
-    }
-}
-
-fn inner_name(reader: &Reader<'_>, id: NodeId) -> String {
-    reader
-        .nt(id)
-        .map(|k| k.to_string())
-        .unwrap_or_else(|| "token".into())
-}
-
-#[cfg(test)]
-mod tests;
-
 /// The value of a text literal's token: `"…"` with its escapes resolved
 /// (`\\ \" \' \n \r \t \0 \u{X…}`), `'…'` and plaintext`…` as written.
-pub(crate) fn unquote_text(token: &str) -> String {
+pub fn unquote_text(token: &str) -> String {
     let token = token.trim();
     if let Some(raw) = token.strip_prefix("plaintext`") {
         return raw.strip_suffix('`').unwrap_or(raw).to_string();
@@ -1793,286 +880,12 @@ pub(crate) fn unquote_text(token: &str) -> String {
     out
 }
 
-pub use program::parse_program_as_written_at;
-
 /// An edit of the file a diagnostic is in: `text` in place of `span`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fix {
     pub title: String,
     pub span: Span,
     pub text: String,
-}
-
-/// The sign an ASCII escape stands for, `\times` for `×`.
-fn sign(op: &str) -> &str {
-    match op {
-        "\\times" => "×",
-        "\\land" => "∧",
-        "\\lor" => "∨",
-        "\\iff" => "↔",
-        op => op,
-    }
-}
-
-/// One operand of a sequence: its term with the prefixes that bind to it alone applied, the
-/// parenthesized list it is when it is nothing else (a candidate for the parameters of `->`),
-/// and the prefixes that stand before a whole sequence.
-struct Piece {
-    term: SurfaceTerm,
-    paren: Option<NodeId>,
-    /// `¬` and binders, the first written first.
-    loose: Vec<NodeId>,
-    kind: Option<NodeId>,
-}
-
-impl Piece {
-    fn of(term: SurfaceTerm) -> Self {
-        Piece {
-            term,
-            paren: None,
-            loose: Vec::new(),
-            kind: None,
-        }
-    }
-}
-
-/// How a run of one operator was built: `A | B | C` is one union, `A × B × C` one product.
-#[derive(Clone, Copy, PartialEq)]
-enum Flat {
-    No,
-    Union,
-    Product,
-}
-
-/// A term read from a part of a sequence, with what a later operator needs to know of it.
-#[derive(Clone)]
-struct Part {
-    term: SurfaceTerm,
-    paren: Option<NodeId>,
-    kind: Option<NodeId>,
-    flat: Flat,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Assoc {
-    Left,
-    Right,
-    /// `a = b = c` and `a ↔ b ↔ c` are refused.
-    None,
-}
-
-/// The level of a binary operator and how it chains. From the loosest: `↔`, `->`, `∨ |`, `∧ ×`,
-/// `=`, `||`, `&&`, the comparisons `== != < <= > >=`, `+ -`, `* /`.
-fn level(op: &str) -> (u8, Assoc) {
-    match op {
-        "↔" => (0, Assoc::None),
-        "->" => (1, Assoc::Right),
-        "∨" | "|" => (2, Assoc::Right),
-        "∧" | "×" => (3, Assoc::Right),
-        "=" => (EQUAL, Assoc::None),
-        "||" => (5, Assoc::Left),
-        "&&" => (6, Assoc::Left),
-        "==" | "!=" | "<" | "<=" | ">" | ">=" => (7, Assoc::None),
-        "+" | "-" => (8, Assoc::Left),
-        _ => (9, Assoc::Left),
-    }
-}
-
-/// The level of `=`: the operand of `¬` is read at this level and above.
-const EQUAL: u8 = 4;
-
-struct Climb<'r, 'a> {
-    reader: &'r Reader<'a>,
-    pieces: Vec<Piece>,
-    /// `ops[k]` stands between `pieces[k]` and `pieces[k + 1]`.
-    ops: Vec<(String, Span)>,
-    /// How many of each piece's `loose` prefixes are applied.
-    taken: Vec<usize>,
-    /// The index of the last `->`, which takes the effect row written after the sequence.
-    arrow: Option<usize>,
-    row: Option<Vec<Name>>,
-}
-
-impl Climb<'_, '_> {
-    /// The operand at `k` and the operators of at least `min` after it. Returns the term and the
-    /// index of the last operand it holds.
-    fn climb(&mut self, k: usize, min: u8) -> (Part, usize) {
-        let (mut lhs, mut k) = self.operand(k);
-        while k < self.ops.len() {
-            let (level_of, assoc) = level(&self.ops[k].0);
-            if level_of < min {
-                break;
-            }
-            let next = if assoc == Assoc::Right {
-                level_of
-            } else {
-                level_of + 1
-            };
-            let (rhs, end) = self.climb(k + 1, next);
-            lhs = self.combine(lhs, k, rhs);
-            if assoc == Assoc::None && end < self.ops.len() && level(&self.ops[end].0).0 == level_of
-            {
-                let (op, at) = self.ops[end].clone();
-                let span = Span::new(lhs.term.span.start, at.end);
-                // `f<T>(x)` reads as `f < T > (x)`: say how a type is passed instead.
-                let message = if self.ops[k].0 == "<" && op == ">" {
-                    "`f<T>(x)` reads as the comparisons `f < T > (x)`: a call does not take type \
-                     arguments, as `<…>` declares implicit arguments, which are inferred from the \
-                     explicit ones; write the call without them (`f(x)`)"
-                        .to_string()
-                } else {
-                    format!("`{op}` after a chain")
-                };
-                lhs = Part {
-                    term: SurfaceTerm::new(TermKind::Other(message), span),
-                    paren: None,
-                    kind: None,
-                    flat: Flat::No,
-                };
-                return (lhs, self.pieces.len() - 1);
-            }
-            k = end;
-        }
-        (lhs, k)
-    }
-
-    /// The operand at `k`, with the prefixes written before it that take a sequence.
-    fn operand(&mut self, k: usize) -> (Part, usize) {
-        let at = self.taken[k];
-        if let Some(&prefix) = self.pieces[k].loose.get(at) {
-            self.taken[k] += 1;
-            // `¬` takes `=` and what binds tighter; a binder takes all that follows.
-            let (inner, end) = self.climb(
-                k,
-                if self.reader.nt(prefix) == Some(Nt::Binder) {
-                    0
-                } else {
-                    EQUAL
-                },
-            );
-            let body = self.reader.finish(inner);
-            let term = match self.reader.nt(prefix) {
-                Some(Nt::Binder) => self.reader.quantified(prefix, body),
-                _ => {
-                    let span = Span::new(self.reader.span(prefix).start, body.span.end);
-                    // `¬P` is `(P) -> False`: the kernel receives the function type.
-                    SurfaceTerm::new(
-                        TermKind::Pi {
-                            params: vec![(None, body)],
-                            result: Box::new(SurfaceTerm::var("False", span)),
-                            effects: None,
-                        },
-                        span,
-                    )
-                }
-            };
-            return (
-                Part {
-                    term,
-                    paren: None,
-                    kind: None,
-                    flat: Flat::No,
-                },
-                end,
-            );
-        }
-        let piece = &self.pieces[k];
-        (
-            Part {
-                term: piece.term.clone(),
-                paren: piece.paren,
-                kind: piece.kind,
-                flat: Flat::No,
-            },
-            k,
-        )
-    }
-
-    fn combine(&mut self, lhs: Part, k: usize, rhs: Part) -> Part {
-        let op = self.ops[k].0.clone();
-        if op == "->" {
-            return self.arrow(lhs, k, rhs);
-        }
-        let lhs = self.reader.finish(lhs);
-        let flat_rhs = rhs.flat;
-        let rhs = self.reader.finish(rhs);
-        let span = Span::new(lhs.span.start, rhs.span.end);
-        let chained = |flat: Flat, lhs: SurfaceTerm, rhs: SurfaceTerm| {
-            let mut members = vec![lhs];
-            match (&*rhs.kind, flat_rhs == flat) {
-                (TermKind::Union(rest) | TermKind::Product(rest), true) => {
-                    members.extend(rest.iter().cloned())
-                }
-                _ => members.push(rhs),
-            }
-            if flat == Flat::Union {
-                TermKind::Union(members)
-            } else {
-                TermKind::Product(members)
-            }
-        };
-        let (term, flat) = match op.as_str() {
-            "|" => (
-                SurfaceTerm::new(chained(Flat::Union, lhs, rhs), span),
-                Flat::Union,
-            ),
-            "×" => (
-                SurfaceTerm::new(chained(Flat::Product, lhs, rhs), span),
-                Flat::Product,
-            ),
-            "∧" => (SurfaceTerm::app("And", vec![lhs, rhs], span), Flat::No),
-            "∨" => (SurfaceTerm::app("Or", vec![lhs, rhs], span), Flat::No),
-            "↔" => (SurfaceTerm::app("Iff", vec![lhs, rhs], span), Flat::No),
-            op => (SurfaceTerm::app(op, vec![lhs, rhs], span), Flat::No),
-        };
-        Part {
-            term,
-            paren: None,
-            kind: None,
-            flat,
-        }
-    }
-
-    /// `(x: A, &y: B) -> C`: the parenthesized left is read as a parameter list. A parameter
-    /// `x: A` is of type `A` and binds `x` in the later parameters and the result; `&x: A` is `A`
-    /// borrowed. An operand that is not a parenthesized list is the one parameter, unnamed.
-    fn arrow(&mut self, lhs: Part, k: usize, rhs: Part) -> Part {
-        let kind = lhs.kind;
-        let params = match lhs.paren {
-            Some(paren) => self
-                .reader
-                .all(paren, Nt::Item)
-                .into_iter()
-                .map(|item| self.reader.fn_type_item(item))
-                .collect(),
-            None => vec![(None, lhs.term.clone())],
-        };
-        let result = self.reader.finish(rhs);
-        let span = Span::new(lhs.term.span.start, result.span.end);
-        let effects = if self.arrow == Some(k) {
-            self.row.take()
-        } else {
-            None
-        };
-        let term = SurfaceTerm::new(
-            TermKind::Pi {
-                params,
-                result: Box::new(result),
-                effects,
-            },
-            span,
-        );
-        let term = match kind {
-            Some(kind) => self.reader.fn_kind(kind, term, span),
-            None => term,
-        };
-        Part {
-            term,
-            paren: None,
-            kind: None,
-            flat: Flat::No,
-        }
-    }
 }
 
 /// `$name` for a hole written `$r#name` or `${name}` (`${r#name}` too), `$xs...` for
@@ -2085,27 +898,32 @@ pub fn unhole(text: &str) -> Option<String> {
     (braced.is_some() || name.len() != inner.len()).then(|| format!("${name}"))
 }
 
-pub fn unraw(text: &str) -> &str {
-    match text.strip_prefix("r#") {
-        Some(rest)
-            if rest
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_alphabetic() || c == '_') =>
-        {
-            rest
-        }
-        _ => text,
+/// A name written with `r#` on any segment is the name without it: `r#class` is `class`, and
+/// `Elab::r#class` is `Elab::class`.
+pub fn unraw(text: &str) -> std::borrow::Cow<'_, str> {
+    fn raw_segment(rest: &str) -> bool {
+        rest.chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
     }
-}
-
-/// Whether `function` is the head of a product (`#()`, `#(a, b)` as written): the library's
-/// `Tuple`, never a declaration of that spelling.
-pub fn is_tuple_head(function: &SurfaceTerm) -> bool {
-    // Compared with the reference itself, not through the prelude's table: the parser asks
-    // this while the prelude is being read.
-    matches!(&*function.kind, TermKind::Var(f) if match f {
-        Name::Spelled(text) => text == "Tuple",
-        _ => f.as_global() == Some(crate::bindings::tuple_reference()),
-    })
+    let head = match text.strip_prefix("r#") {
+        Some(rest) if raw_segment(rest) => rest,
+        _ => text,
+    };
+    if !head.contains("::r#") {
+        return std::borrow::Cow::Borrowed(head);
+    }
+    let mut out = String::with_capacity(head.len());
+    let mut segments = head.split("::");
+    if let Some(first) = segments.next() {
+        out.push_str(first);
+    }
+    for segment in segments {
+        out.push_str("::");
+        match segment.strip_prefix("r#") {
+            Some(rest) if raw_segment(rest) => out.push_str(rest),
+            _ => out.push_str(segment),
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }

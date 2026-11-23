@@ -5,11 +5,10 @@ import "canon.taut"
 import "list.taut"
 import "par.taut"
 import "../../text/src/text.taut"
-import std::Text
-import std::prelude::Affine
+import std::text
 
 pub(open) enum MSym {
-  MN(u64)
+  MN(u64, Bool)
   MT(u64, Bool)
 }
 
@@ -18,7 +17,7 @@ pub(open) struct MProd { lhs: u64, attr: u64, rhs: List(MSym) }
 pub(open) struct MModel {
   title: Option(Text)
   // What a terminal means (`%describe`), by the terminal's name in `terminal_names`.
-  describes: List(Pair(Text, Text))
+  describes: List(Text × Text)
   // LALR(1) (`%grammar_type 'lalr(1)'`), not LL(k).
   lalr: Bool
   // Names of all the terminals, the five built in first and `Error` last.
@@ -43,15 +42,15 @@ pub fn md_rev_text(xs: List(Text)): List(Text) {
   text_list_reverse(xs)
 }
 
-pub fn md_len_text(xs: List(Text)): u64 {
+pub fn md_len_text(xs: List(Text)): u64 ! {overflow} {
   match xs {
     Nil => 0
-    Cons(x, rest) => 1 + md_len_text(rest)
+    Cons(^x, rest) => 1 + md_len_text(rest)
   }
 }
 
 // Inserts `n` into a sorted list of names, once.
-pub fn md_insert(names: List(Text), n: Text): List(Text) ! {Div} {
+pub fn md_insert(names: List(Text), n: Text): List(Text) ! {div} {
   match names {
     Nil => Cons(n, Nil)
     Cons(x, rest) => {
@@ -67,7 +66,7 @@ pub fn md_insert(names: List(Text), n: Text): List(Text) ! {Div} {
   }
 }
 
-pub fn md_index_text(names: List(Text), n: Text, at: u64): u64 {
+pub fn md_index_text(names: List(Text), n: Text, at: u64): u64 ! {fail(Text), overflow} {
   match names {
     Nil => par_die(Text::concat_all(Cons("a name is not in the grammar: ", Cons(n, Nil))))
     Cons(x, rest) => if x == n { at } else { md_index_text(rest, n, at + 1) }
@@ -90,14 +89,14 @@ pub fn md_same_dyn(a: Option(PDyn), b: Option(PDyn)): Bool {
   match a {
     None => match b {
       None => true
-      Some(y) => false
+      Some(^y) => false
     }
     Some(x) => match b {
       None => false
       Some(y) => x.prefix == y.prefix && x.suffix == y.suffix && x.capture == y.capture && x.state == y.state && x.unit == y.unit && match x.range {
         None => match y.range {
           None => true
-          Some(r) => false
+          Some(^r) => false
         }
         Some(r) => match y.range {
           None => false
@@ -112,7 +111,7 @@ pub fn md_same_la(a: Option(PLa), b: Option(PLa)): Bool {
   match a {
     None => match b {
       None => true
-      Some(y) => false
+      Some(^y) => false
     }
     Some(x) => match b {
       None => false
@@ -121,14 +120,14 @@ pub fn md_same_la(a: Option(PLa), b: Option(PLa)): Bool {
   }
 }
 
-pub fn md_term_index(terms: List(PTerm), t: PTerm, at: u64): Option(u64) {
+pub fn md_term_index(terms: List(PTerm), t: PTerm, at: u64): Option(u64) ! {overflow} {
   match terms {
     Nil => None
     Cons(x, rest) => if md_same_term(x, t) { Some(at) } else { md_term_index(rest, t, at + 1) }
   }
 }
 
-pub fn md_rev_terms(xs: List(PTerm)): List(PTerm) {
+pub fn md_rev_terms(xs: List(PTerm)): List(PTerm) ! {div} {
   var out: List(PTerm) := Nil
   var rest := xs
   var running := true
@@ -148,7 +147,7 @@ pub fn md_rev_terms(xs: List(PTerm)): List(PTerm) {
 
 // The terminals of the productions in the order they are written, each once,
 // with the scanners it is read in united.
-pub fn md_terms_of(prods: List(PProd)): List(PTerm) {
+pub fn md_terms_of(prods: List(PProd)): List(PTerm) ! {div, overflow} {
   var out: List(PTerm) := Nil
   var rest := prods
   var running := true
@@ -160,7 +159,7 @@ pub fn md_terms_of(prods: List(PProd)): List(PTerm) {
       Cons(p, more) => {
         match p.alts {
           Nil => #()
-          Cons(alt, others) => {
+          Cons(alt, ^others) => {
             var fs := alt.factors
             var walking := true
             while walking {
@@ -173,10 +172,10 @@ pub fn md_terms_of(prods: List(PProd)): List(PTerm) {
                     PTermF(t) => {
                       out := md_add_term(out, t)
                     }
-                    PNt(n) => #()
-                    PGroup(x) => #()
-                    PRepeat(x) => #()
-                    POptional(x) => #()
+                    PNt(^n, ^c) => #()
+                    PGroup(^x) => #()
+                    PRepeat(^x) => #()
+                    POptional(^x) => #()
                   }
                   fs := fmore
                 }
@@ -192,7 +191,7 @@ pub fn md_terms_of(prods: List(PProd)): List(PTerm) {
 }
 
 // `out` is in order. A terminal that is there has its scanners united.
-pub fn md_add_term(out: List(PTerm), t: PTerm): List(PTerm) {
+pub fn md_add_term(out: List(PTerm), t: PTerm): List(PTerm) ! {div, overflow} {
   match out {
     Nil => Cons(t, Nil)
     Cons(x, rest) => if md_same_term(x, t) {
@@ -217,11 +216,11 @@ pub fn md_is_alnum(b: u64): Bool {
   (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
 }
 
-pub fn md_upper(b: u64): u64 {
+pub fn md_upper(b: u64): u64 ! {overflow} {
   if b >= 97 && b <= 122 { b - 32 } else { b }
 }
 
-pub fn md_byte_text(b: u64): Text {
+pub fn md_byte_text(b: u64): Text ! {overflow} {
   lk_slice(
     "\u{0}\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{8}\u{9}\u{a}\u{b}\u{c}\u{d}\u{e}\u{f}\u{10}\u{11}\u{12}\u{13}\u{14}\u{15}\u{16}\u{17}\u{18}\u{19}\u{1a}\u{1b}\u{1c}\u{1d}\u{1e}\u{1f} !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u{7f}",
     b,
@@ -232,7 +231,7 @@ pub fn md_byte_text(b: u64): Text {
 // A name in upper camel case: each `_` is taken out and the character after
 // it made upper case, but a `_` stays between two digits and before a
 // leading digit.
-pub fn md_camel(name: Text): Text {
+pub fn md_camel(name: Text): Text ! {div, overflow} {
   var b := Buf::new()
   var up := true
   var last: u64 := 46
@@ -328,7 +327,7 @@ pub fn md_symbol_name(c: u64): Text {
   }
 }
 
-pub fn md_name_of_chars(s: Text): Text {
+pub fn md_name_of_chars(s: Text): Text ! {div, overflow} {
   var b := Buf::new()
   var cap := true
   var at: u64 := 0
@@ -357,7 +356,7 @@ pub fn md_name_of_chars(s: Text): Text {
   }
 }
 
-pub fn md_count_prods(prods: List(PProd), lhs: Text): u64 {
+pub fn md_count_prods(prods: List(PProd), lhs: Text): u64 ! {overflow} {
   match prods {
     Nil => 0
     Cons(p, rest) => (if p.lhs == lhs { 1 } else { 0 }) + md_count_prods(rest, lhs)
@@ -371,13 +370,13 @@ pub fn md_primary(
   expanded: Text,
   la: Option(PLa),
   dynamic: Option(PDyn)
-): Option(Text) {
+): Option(Text) ! {div, overflow} {
   match prods {
     Nil => None
     Cons(p, rest) => {
       let hit := match p.alts {
         Nil => false
-        Cons(alt, others) => match alt.factors {
+        Cons(alt, ^others) => match alt.factors {
           Nil => false
           Cons(f, fmore) => match fmore {
             Nil => match f {
@@ -387,12 +386,12 @@ pub fn md_primary(
                 all,
                 p.lhs
               ) == 1 && md_same_la(la, t.la) && md_same_dyn(dynamic, t.dynamic)
-              PNt(n) => false
-              PGroup(x) => false
-              PRepeat(x) => false
-              POptional(x) => false
+              PNt(^n, ^c) => false
+              PGroup(^x) => false
+              PRepeat(^x) => false
+              POptional(^x) => false
             }
-            Cons(g, gmore) => false
+            Cons(^g, ^gmore) => false
           }
         }
       }
@@ -402,7 +401,7 @@ pub fn md_primary(
 }
 
 // The names of the terminals: the five built in, the ones of the grammar and `Error`.
-pub fn md_terminal_names(prods: List(PProd), terms: List(PTerm)): List(Text) {
+pub fn md_terminal_names(prods: List(PProd), terms: List(PTerm)): List(Text) ! {div, overflow} {
   var acc: List(
     Text
   ) := Cons(
@@ -449,8 +448,8 @@ pub fn md_uses_factors(fs: List(PFactor), n: Text): Bool {
   match fs {
     Nil => false
     Cons(f, rest) => (match f {
-      PNt(x) => x == n
-      PTermF(x) => false
+      PNt(x, ^c) => x == n
+      PTermF(^x) => false
       PGroup(a) => md_uses_alts(a, n)
       PRepeat(a) => md_uses_alts(a, n)
       POptional(a) => md_uses_alts(a, n)
@@ -478,14 +477,24 @@ pub fn md_append_prod(prods: List(PProd), p: PProd): List(PProd) {
 //
 // A terminal is read only in the scanners it is written for, so this one is
 // written for every scanner: `${` is taken whichever mode the text is in.
-pub fn md_scanner_numbers(scanners: List(PScanner), at: u64): List(u64) {
+pub fn md_scanner_numbers(scanners: List(PScanner), at: u64): List(u64) ! {overflow} {
   match scanners {
     Nil => Nil
-    Cons(s, rest) => Cons(at, md_scanner_numbers(rest, at + 1))
+    Cons(^s, rest) => Cons(at, md_scanner_numbers(rest, at + 1))
   }
 }
 
-pub fn md_with_tauto_expr(prods: List(PProd), scanners: List(PScanner)): List(PProd) {
+// The revision of what pargen adds to a grammar by itself (such as the `TautoExpr` terminal
+// above) and of how it reads one. Tables are kept by the hash of their grammar alone, so a
+// change to those makes tables already generated out of date without their grammar changing:
+// raise this number with such a change. The tables record it on their `generator` line, and a
+// table with another revision is regenerated (`tauto syntax gen`) and refused when read.
+// `PARGEN_REVISION` in `crates/tauto-syntax/src/tables.rs` is the same number.
+pub fn pargen_revision(): Text {
+  "2"
+}
+
+pub fn md_with_tauto_expr(prods: List(PProd), scanners: List(PScanner)): List(PProd) ! {overflow} {
   if md_uses(prods, "TautoExpr") && not(md_defines(prods, "TautoExpr")) {
     md_append_prod(
       prods,
@@ -517,7 +526,7 @@ pub fn md_with_tauto_expr(prods: List(PProd), scanners: List(PScanner)): List(PP
   }
 }
 
-pub fn md_nt_names(prods: List(PProd), start: Text): List(Text) {
+pub fn md_nt_names(prods: List(PProd), start: Text): List(Text) ! {div} {
   var out: List(Text) := md_insert(Nil, start)
   var rest := prods
   var running := true
@@ -530,7 +539,7 @@ pub fn md_nt_names(prods: List(PProd), start: Text): List(Text) {
         out := md_insert(out, p.lhs)
         match p.alts {
           Nil => #()
-          Cons(alt, others) => {
+          Cons(alt, ^others) => {
             var fs := alt.factors
             var walking := true
             while walking {
@@ -540,13 +549,13 @@ pub fn md_nt_names(prods: List(PProd), start: Text): List(Text) {
                 }
                 Cons(f, fmore) => {
                   match f {
-                    PNt(n) => {
+                    PNt(n, ^c) => {
                       out := md_insert(out, n)
                     }
-                    PTermF(x) => #()
-                    PGroup(x) => #()
-                    PRepeat(x) => #()
-                    POptional(x) => #()
+                    PTermF(^x) => #()
+                    PGroup(^x) => #()
+                    PRepeat(^x) => #()
+                    POptional(^x) => #()
                   }
                   fs := fmore
                 }
@@ -561,23 +570,23 @@ pub fn md_nt_names(prods: List(PProd), start: Text): List(Text) {
   out
 }
 
-pub fn md_symbols(fs: List(PFactor), nts: List(Text), terms: List(PTerm)): List(MSym) {
+pub fn md_symbols(fs: List(PFactor), nts: List(Text), terms: List(PTerm)): List(MSym) ! {fail(Text), overflow} {
   match fs {
     Nil => Nil
     Cons(f, rest) => Cons(match f {
-      PNt(n) => MN(md_index_text(nts, n, 0))
+      PNt(n, c) => MN(md_index_text(nts, n, 0), c)
       PTermF(t) => MT(5 + (match md_term_index(terms, t, 0) {
         Some(i) => i
         None => par_die("a terminal is lost")
       }), t.clipped)
-      PGroup(x) => par_die("a group is left")
-      PRepeat(x) => par_die("a repetition is left")
-      POptional(x) => par_die("an optional is left")
+      PGroup(^x) => par_die("a group is left")
+      PRepeat(^x) => par_die("a repetition is left")
+      POptional(^x) => par_die("an optional is left")
     }, md_symbols(rest, nts, terms))
   }
 }
 
-pub fn md_prods(prods: List(PProd), nts: List(Text), terms: List(PTerm)): List(MProd) {
+pub fn md_prods(prods: List(PProd), nts: List(Text), terms: List(PTerm)): List(MProd) ! {fail(Text), overflow} {
   match prods {
     Nil => Nil
     Cons(p, rest) => {
@@ -601,16 +610,16 @@ pub fn md_terminal_of(prods: List(PProd), name: Text): Option(PTerm) {
     Cons(p, rest) => if p.lhs == name {
       match p.alts {
         Nil => md_terminal_of(rest, name)
-        Cons(alt, others) => match alt.factors {
+        Cons(alt, ^others) => match alt.factors {
           Cons(f, fmore) => match fmore {
             Nil => match f {
               PTermF(t) => Some(t)
-              PNt(n) => md_terminal_of(rest, name)
-              PGroup(x) => md_terminal_of(rest, name)
-              PRepeat(x) => md_terminal_of(rest, name)
-              POptional(x) => md_terminal_of(rest, name)
+              PNt(^n, ^c) => md_terminal_of(rest, name)
+              PGroup(^x) => md_terminal_of(rest, name)
+              PRepeat(^x) => md_terminal_of(rest, name)
+              POptional(^x) => md_terminal_of(rest, name)
             }
-            Cons(g, gmore) => md_terminal_of(rest, name)
+            Cons(^g, ^gmore) => md_terminal_of(rest, name)
           }
           Nil => md_terminal_of(rest, name)
         }
@@ -621,7 +630,7 @@ pub fn md_terminal_of(prods: List(PProd), name: Text): Option(PTerm) {
   }
 }
 
-pub fn md_skips_of(names: List(Text), prods: List(PProd), terms: List(PTerm)): List(u64) {
+pub fn md_skips_of(names: List(Text), prods: List(PProd), terms: List(PTerm)): List(u64) ! {div, fail(Text), overflow} {
   var out: List(u64) := Nil
   var rest := names
   var running := true
@@ -647,7 +656,7 @@ pub fn md_skips_of(names: List(Text), prods: List(PProd), terms: List(PTerm)): L
   lg_sort(out)
 }
 
-pub fn md_skips(scanners: List(PScanner), prods: List(PProd), terms: List(PTerm)): List(List(u64)) {
+pub fn md_skips(scanners: List(PScanner), prods: List(PProd), terms: List(PTerm)): List(List(u64)) ! {div, fail(Text), overflow} {
   match scanners {
     Nil => Nil
     Cons(s, rest) => Cons(md_skips_of(s.skip, prods, terms), md_skips(rest, prods, terms))
@@ -656,7 +665,7 @@ pub fn md_skips(scanners: List(PScanner), prods: List(PProd), terms: List(PTerm)
 
 // Whether a non-terminal has exactly one production whose sole factor is an
 // unclipped terminal or `TautoExpr`.
-pub fn md_is_token(prods: List(PProd), lhs: Text): Bool {
+pub fn md_is_token(prods: List(PProd), lhs: Text): Bool ! {overflow} {
   if md_count_prods(prods, lhs) != 1 {
     false
   } else {
@@ -665,13 +674,13 @@ pub fn md_is_token(prods: List(PProd), lhs: Text): Bool {
       Some(p) => match cn_nth_alt(p.alts, 0).factors {
         Nil => false
         Cons(f, fmore) => match fmore {
-          Cons(g, gmore) => false
+          Cons(^g, ^gmore) => false
           Nil => match f {
             PTermF(t) => not(t.clipped)
-            PNt(n) => n == "TautoExpr"
-            PGroup(x) => false
-            PRepeat(x) => false
-            POptional(x) => false
+            PNt(n, ^c) => n == "TautoExpr"
+            PGroup(^x) => false
+            PRepeat(^x) => false
+            POptional(^x) => false
           }
         }
       }
@@ -686,7 +695,7 @@ pub fn md_prod_named(prods: List(PProd), lhs: Text): Option(PProd) {
   }
 }
 
-pub fn md_has_attr(prods: List(PProd), lhs: Text, a: u64, b: u64): Bool {
+pub fn md_has_attr(prods: List(PProd), lhs: Text, a: u64, b: u64): Bool ! {overflow} {
   match prods {
     Nil => false
     Cons(p, rest) => (
@@ -695,7 +704,7 @@ pub fn md_has_attr(prods: List(PProd), lhs: Text, a: u64, b: u64): Bool {
   }
 }
 
-pub fn md_kinds(nts: List(Text), final: List(PProd), declared: List(PProd)): List(u64) {
+pub fn md_kinds(nts: List(Text), final: List(PProd), declared: List(PProd)): List(u64) ! {overflow} {
   match nts {
     Nil => Nil
     Cons(n, rest) => Cons(if md_defines(declared, n) {
@@ -722,7 +731,7 @@ pub fn md_trans_of(
   names: List(Text),
   prods: List(PProd),
   terms: List(PTerm)
-): List(MTrans) {
+): List(MTrans) ! {div, fail(Text), overflow} {
   var out: List(MTrans) := Nil
   var rest := sc.transitions
   var running := true
@@ -778,7 +787,7 @@ pub fn md_ttrans(
   scanners: List(PScanner),
   prods: List(PProd),
   terms: List(PTerm)
-): List(List(MTrans)) {
+): List(List(MTrans)) ! {div, fail(Text), overflow} {
   let names := md_scanner_names(scanners)
   md_ttrans_each(scanners, names, prods, terms)
 }
@@ -788,7 +797,7 @@ pub fn md_ttrans_each(
   names: List(Text),
   prods: List(PProd),
   terms: List(PTerm)
-): List(List(MTrans)) {
+): List(List(MTrans)) ! {div, fail(Text), overflow} {
   match scanners {
     Nil => Nil
     Cons(s, rest) => Cons(
@@ -801,14 +810,14 @@ pub fn md_ttrans_each(
 // The start of an LALR(1) grammar: a new one, `S0: S;`, when `S` has more
 // than one production (parol's augmentation), so that one production starts
 // the parse.
-pub fn md_lr_start(prods: List(PProd), start: Text, lalr: Bool): Text {
+pub fn md_lr_start(prods: List(PProd), start: Text, lalr: Bool): Text ! {div, overflow} {
   if lalr && md_count_lhs(
     prods,
     start
   ) > 1 { cn_name(md_nt_names(prods, start), start) } else { start }
 }
 
-pub fn md_count_lhs(prods: List(PProd), lhs: Text): u64 {
+pub fn md_count_lhs(prods: List(PProd), lhs: Text): u64 ! {overflow} {
   match prods {
     Nil => 0
     Cons(p, rest) => if p.lhs == lhs { 1 + md_count_lhs(rest, lhs) } else {
@@ -818,7 +827,7 @@ pub fn md_count_lhs(prods: List(PProd), lhs: Text): u64 {
 }
 
 // `%describe` names a terminal of the grammar, each at most once.
-pub fn md_describes(names: List(Text), xs: List(Pair(Text, Text))): List(Pair(Text, Text)) {
+pub fn md_describes(names: List(Text), xs: List(Text × Text)): List(Text × Text) ! {fail(Text)} {
   match xs {
     Nil => Nil
     Cons(x, rest) => {
@@ -840,14 +849,14 @@ pub fn md_has_name(names: List(Text), name: Text): Bool {
   }
 }
 
-pub fn md_has_describe(xs: List(Pair(Text, Text)), name: Text): Bool {
+pub fn md_has_describe(xs: List(Text × Text), name: Text): Bool {
   match xs {
     Nil => false
     Cons(x, rest) => x.fst == name || md_has_describe(rest, name)
   }
 }
 
-pub fn md_build(g: PGrammar): MModel {
+pub fn md_build(g: PGrammar): MModel ! {div, fail(Text), overflow} {
   let written := md_with_tauto_expr(g.prods, g.scanners)
   let canonical := cn_transform(written, g.lalr)
   let start := md_lr_start(canonical, g.start, g.lalr)
@@ -855,7 +864,7 @@ pub fn md_build(g: PGrammar): MModel {
     canonical
   } else {
     Cons(
-      PProd { lhs: start, alts: Cons(PAlt { factors: Cons(PNt(g.start), Nil), attr: 0 }, Nil) },
+      PProd { lhs: start, alts: Cons(PAlt { factors: Cons(PNt(g.start, false), Nil), attr: 0 }, Nil) },
       canonical
     )
   }

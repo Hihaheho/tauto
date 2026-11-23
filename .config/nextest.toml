@@ -1,0 +1,25 @@
+# A test that hangs must become a reported failure, not a stuck run. Every test
+# gets a slow warning after one minute and is killed (with its child processes,
+# which nextest signals as a process group) after five, the same limit as
+# `tauto check`. A test that needs more than that has something to fix; do not
+# lengthen the limit to make it pass.
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 5, grace-period = "5s" }
+fail-fast = false
+
+# Checking a source file has a time limit on the clock, so the harnesses that
+# use every core must not overlap each other or the rest of the tests. Each
+# case file is its own test and runs on one thread.
+[[profile.default.overrides]]
+filter = 'binary(=backends) | binary(=fuzz)'
+threads-required = "num-cpus"
+
+# Each of the evaluator tests runs a whole tote in the interpreter on a thread
+# with a large stack and holds gigabytes while it does; four at once on a
+# small machine were killed for memory. They run one at a time.
+[test-groups]
+evaluator-memory = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary(=evaluator)'
+test-group = 'evaluator-memory'

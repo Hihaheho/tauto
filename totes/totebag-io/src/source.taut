@@ -1,0 +1,283 @@
+import totebag::tree
+import sha256::sha256
+import unicode::classes
+import unicode::unicode
+import "../../text/src/text.taut"
+import std::base
+import std::map
+import std::text
+import std::builtin::os
+
+// `source-v1`: a source tree as bytes, and its SHA-256, the source ID
+// (`crates/totebag/src/source.rs`).
+//
+//   frame(B)  = u64be(length(B)) || B
+//   source-v1 = UTF8("tauto-source-v1\0") || u64be(number of files)
+//               || each file, in the byte order of its path:
+//                  frame(UTF8(path)) || executable (one byte, 0 or 1) || frame(bytes)
+//   SourceId  = SHA256(source-v1)
+
+pub(open) struct TbFile {
+  path: Text
+  executable: Bool
+  bytes: Bytes
+}
+
+// Why a tree is refused, as `crates/totebag` words it.
+pub enum TbTreeError {
+  TooManyFiles
+  TooManyBytes
+  BadPath(Text, TbPathProblem)
+  BadTree(TbTreeProblem)
+  NotFileOrDirectory(Text)
+  Io(Text, Text)
+}
+
+pub fn tb_max_files(): u64 {
+  65536
+}
+
+pub fn tb_max_bytes(): u64 {
+  536870912
+}
+
+pub fn tb_u64be(n: u64): Bytes {
+  var out: List(u8) := Nil
+  var x := n
+  var i: u64 := 0
+  while i < 8 {
+    out := Cons(U8::of_u64(U64::and(x, 255)), out)
+    x := U64::shr(x, 8)
+    i := i + 1
+  }
+  Bytes::of_list(out)
+}
+
+// The pieces of `source-v1` for files already in path order.
+pub fn tb_source_pieces(files: List(TbFile)): List(Bytes) {
+  var rev: List(Bytes) := Nil
+  var count: u64 := 0
+  var rest := files
+  var going := true
+  while going {
+    match rest {
+      Cons(f, more) => {
+        let p := Bytes::of_text(f.path)
+        rev := Cons(f.bytes, Cons(tb_u64be(Bytes::len(f.bytes)), Cons(Bytes::of_list(Cons(if f.executable { U8::of_u64(1) } else { U8::of_u64(0) }, Nil)), Cons(p, Cons(tb_u64be(Bytes::len(p)), rev)))))
+        count := count + 1
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  let head := Bytes::concat(Bytes::of_text("tauto-source-v1"), Bytes::of_list(Cons(U8::of_u64(0), Nil)))
+  Cons(head, Cons(tb_u64be(count), List::reverse(rev)))
+}
+
+// `path` in lower case as `str::to_lowercase` folds it (without the final
+// sigma rule).
+pub fn tb_fold(lower: Ordmap(Nat, List(Nat)), path: Text): Text {
+  var b := Buf::new()
+  var cs := text_code_points(path)
+  var going := true
+  while going {
+    match cs {
+      Cons(c, more) => {
+        var ls := unicode_to_lowercase(lower, c)
+        var inner := true
+        while inner {
+          match ls {
+            Cons(l, ls2) => {
+              match Text::of_code_point(l) {
+                Some(t) => Buf::push(&mut b, &t)
+                None => #()
+              }
+              ls := ls2
+            }
+            Nil => {
+              inner := false
+            }
+          }
+        }
+        cs := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Text::of(b)
+}
+
+pub fn tb_has_non_ascii(t: Text): Bool {
+  var i: u64 := 0
+  var found := false
+  let b := Bytes::of_text(t)
+  let n := Bytes::len(b)
+  while i < n {
+    match Bytes::get(b, i) {
+      Some(x) => if U64::of_u8(x) >= 128 {
+        found := true
+      }
+      None => #()
+    }
+    i := i + 1
+  }
+  found
+}
+
+// Checks the files as `Tree::new` does and gives them in path order with the
+// tree's ID, `sha256:` and the hex digest.
+pub fn tb_tree(files: List(TbFile)): Result(List(TbFile) × Text, TbTreeError) {
+  if List::length(files) > Nat::of_u64(tb_max_files()) {
+    return Err(TooManyFiles)
+  }
+  var total: u64 := 0
+  var unicode := false
+  var rest := files
+  var going := true
+  while going {
+    match rest {
+      Cons(f, more) => {
+        match tb_check_path(f.path) {
+          Some(why) => {
+            return Err(BadPath(f.path, why))
+          }
+          None => #()
+        }
+        total := total + Bytes::len(f.bytes)
+        if total > tb_max_bytes() {
+          return Err(TooManyBytes)
+        }
+        if tb_has_non_ascii(f.path) {
+          unicode := true
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  // The table of lower cases is read only for a tree that needs it.
+  let lower: Ordmap(Nat, List(Nat)) := if unicode { unicode_lowercase() } else { Ordmap::empty() }
+  var paths_rev: List(TbTreePath) := Nil
+  var rest1 := files
+  var going1 := true
+  while going1 {
+    match rest1 {
+      Cons(f, more) => {
+        paths_rev := Cons(MkTreePath(f.path, tb_fold(lower, f.path)), paths_rev)
+        rest1 := more
+      }
+      Nil => {
+        going1 := false
+      }
+    }
+  }
+  let paths := List::reverse(paths_rev)
+  match tb_check_tree(paths) {
+    Some(why) => {
+      return Err(BadTree(why))
+    }
+    None => #()
+  }
+  var by_path: Ordmap(Text, TbFile) := Ordmap::empty()
+  var rest2 := files
+  var going2 := true
+  while going2 {
+    match rest2 {
+      Cons(f, more) => {
+        by_path := Ordmap::insert(by_path, f.path, f, Ordmap::compare_text)
+        rest2 := more
+      }
+      Nil => {
+        going2 := false
+      }
+    }
+  }
+  let sorted := List::map((e: Text × TbFile) => e.snd, Ordmap::entries(by_path))
+  Ok(#(sorted, Text::concat("sha256:", sha256_hex(tb_source_pieces(sorted)))))
+}
+
+pub fn tb_join(dir: Text, name: Text): Text {
+  if Text::len(dir) == 0 { name } else { Text::concat(Text::concat(dir, "/"), name) }
+}
+
+// The files under `dir`, as `Tree::read_dir` reads them: regular files and
+// directories, every other kind refused. A link is refused too. A file is
+// executable when its owner may execute it.
+pub fn tb_read_into(dir: Text, prefix: Text, out: &mut List(TbFile), count: &mut u64): Result(Unit, TbTreeError) {
+  let names := match perform fs_list_dir(dir) {
+    Ok(ns) => ns
+    Err(e) => {
+      return Err(Io(dir, io_message(e)))
+    }
+  }
+  var rest := names
+  var going := true
+  while going {
+    match rest {
+      Cons(name, more) => {
+        let full := tb_join(dir, name)
+        let path := Text::concat(prefix, name)
+        match perform fs_read_link(full) {
+          Ok(Some(_)) => {
+            return Err(NotFileOrDirectory(path))
+          }
+          Ok(None) => #()
+          Err(e) => {
+            return Err(Io(full, io_message(e)))
+          }
+        }
+        match perform fs_stat(full) {
+          Ok(Some(st)) => match st.kind {
+            IsDir => match tb_read_into(full, Text::concat(path, "/"), &mut out, &mut count) {
+              Ok(_) => #()
+              Err(e) => {
+                return Err(e)
+              }
+            }
+            IsFile => match perform fs_read_bytes(full) {
+              Ok(bytes) => {
+                *out := Cons(TbFile { path: path, executable: st.executable, bytes: bytes }, out)
+                *count := count + 1
+                if count > tb_max_files() {
+                  return Err(TooManyFiles)
+                }
+              }
+              Err(e) => {
+                return Err(Io(full, io_message(e)))
+              }
+            }
+            IsOther => {
+              return Err(NotFileOrDirectory(path))
+            }
+          }
+          Ok(None) => {
+            return Err(NotFileOrDirectory(path))
+          }
+          Err(e) => {
+            return Err(Io(full, io_message(e)))
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(#())
+}
+
+pub fn tb_read_dir(dir: Text): Result(List(TbFile) × Text, TbTreeError) {
+  var out: List(TbFile) := Nil
+  var count: u64 := 0
+  match tb_read_into(dir, "", &mut out, &mut count) {
+    Ok(_) => tb_tree(List::reverse(out))
+    Err(e) => Err(e)
+  }
+}

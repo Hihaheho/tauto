@@ -1,0 +1,738 @@
+import "messages.taut"
+import "types_infer.taut"
+import "infer_parts.taut"
+import "../../surface/src/surface.taut"
+import std::base
+import std::list
+import std::map
+import std::text
+import "checker.taut"
+import "datas.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_decl_head.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
+
+// Classes and instances (`types/classes.rs`): their declarations are checked,
+// each method becomes a function that carries the class as a `where`, and a
+// constraint of a class is resolved to an assumption or an instance; and the
+// prelude's classes expanded the way `types/expand.rs` gives the signatures,
+// in the proof language (`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」).
+
+mutual {
+  pub fn term_mentions(t: SurfaceTerm, name: Text): Bool {
+    match t {
+      SurfaceTermIndexedMk(k, ^start, ^end, ^ast_occurrence) => kind_mentions(k, name)
+    }
+  }
+
+  pub fn kind_mentions(k: SurfaceKind, name: Text): Bool {
+    match k {
+      SkVar(v) => surface_name_text(v) == name
+      SkApp(f, args) => term_mentions(f, name) || terms_mention(args, name)
+      SkPi(params, result, ^effects) => params_mention(params, name) || term_mentions(result, name)
+      SkBorrow(^m, ^m_orig, x) => term_mentions(x, name)
+      SkFnKind(^fk, x) => term_mentions(x, name)
+      SkTagged(^tag, x) => term_mentions(x, name)
+      SkUnion(parts) => terms_mention(parts, name)
+      SkField(x, ^field) => term_mentions(x, name)
+      SkExists(^binder, domain, body, ^unused) => term_mentions(domain, name) || term_mentions(body, name)
+      _ => false
+    }
+  }
+
+  pub fn terms_mention(ts: List(SurfaceTerm), name: Text): Bool {
+    match ts {
+      Nil => false
+      Cons(t, rest) => term_mentions(t, name) || terms_mention(rest, name)
+    }
+  }
+
+  pub fn params_mention(ps: List(SurfaceParam), name: Text): Bool {
+    match ps {
+      Nil => false
+      Cons(p, rest) => param_mentions(p, name) || params_mention(rest, name)
+    }
+  }
+
+  pub fn param_mentions(p: SurfaceParam, name: Text): Bool {
+    match p {
+      SurfaceParamMk(^n, ty, _) => term_mentions(ty, name)
+    }
+  }
+}
+
+// `t` with `by` in the place of each `name`; what is put in is not searched
+// again.
+mutual {
+  pub fn term_replace(t: SurfaceTerm, name: Text, r#by: SurfaceTerm): SurfaceTerm {
+    match t {
+      SurfaceTermIndexedMk(k, start, end, ^ast_occurrence) => ⊢ SurfaceTerm from match k {
+        SkVar(v) => if surface_name_text(v) == name { r#by } else { surface_term_mk(k, start, end) }
+        _ => surface_term_mk(kind_replace(k, name, r#by), start, end)
+      }
+    }
+  }
+
+  pub fn kind_replace(k: SurfaceKind, name: Text, r#by: SurfaceTerm): SurfaceKind {
+    match k {
+      SkApp(f, args) => SkApp(term_replace(f, name, r#by), terms_replace(args, name, r#by))
+      SkPi(params, result, effects) => SkPi(
+        params_replace(params, name, r#by),
+        term_replace(result, name, r#by),
+        effects
+      )
+      SkBorrow(m, m_orig, x) => SkBorrow(m, m_orig, term_replace(x, name, r#by))
+      SkFnKind(fk, x) => SkFnKind(fk, term_replace(x, name, r#by))
+      SkTagged(tag, x) => SkTagged(tag, term_replace(x, name, r#by))
+      SkUnion(parts) => SkUnion(terms_replace(parts, name, r#by))
+      SkField(x, field) => SkField(term_replace(x, name, r#by), field)
+      SkExists(binder, domain, body, unused) => SkExists(binder, term_replace(domain, name, r#by), term_replace(body, name, r#by), unused)
+      _ => k
+    }
+  }
+
+  pub fn terms_replace(ts: List(SurfaceTerm), name: Text, r#by: SurfaceTerm): List(SurfaceTerm) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(term_replace(t, name, r#by), terms_replace(rest, name, r#by))
+    }
+  }
+
+  pub fn params_replace(ps: List(SurfaceParam), name: Text, r#by: SurfaceTerm): List(SurfaceParam) {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(param_replace(p, name, r#by), params_replace(rest, name, r#by))
+    }
+  }
+
+  pub fn param_replace(p: SurfaceParam, name: Text, r#by: SurfaceTerm): SurfaceParam {
+    match p {
+      SurfaceParamMk(n, ty, unused) => SurfaceParamMk(n, term_replace(ty, name, r#by), unused)
+    }
+  }
+}
+
+pub fn opt_terms_replace(
+  ts: List(Option(SurfaceTerm)),
+  name: Text,
+  r#by: SurfaceTerm
+): List(Option(SurfaceTerm)) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(⊢ Option(SurfaceTerm) from match t {
+      Some(x) => Some(term_replace(x, name, r#by))
+      None => None
+    }, opt_terms_replace(rest, name, r#by))
+  }
+}
+
+pub fn opt_term_replace(
+  t: Option(SurfaceTerm),
+  name: Text,
+  r#by: SurfaceTerm
+): Option(SurfaceTerm) {
+  match t {
+    Some(x) => Some(term_replace(x, name, r#by))
+    None => None
+  }
+}
+
+pub fn surface_at(k: SurfaceKind, start: Nat, end: Nat): SurfaceTerm {
+  surface_term_mk(k, start, end)
+}
+
+pub fn surface_unit_type(): SurfaceTerm {
+  surface_at(SkVar(NameSpelled("std::prelude::Star")), 0, 0)
+}
+
+pub fn opts_resize<A>(n: Nat, xs: List(Option(A))): List(Option(A)) {
+  match n {
+    Zero => Nil
+    Succ(m) => ⊢ List(Option(A)) from match xs {
+      Nil => Cons(None, opts_resize(m, Nil))
+      Cons(x, rest) => Cons(x, opts_resize(m, rest))
+    }
+  }
+}
+
+pub fn text_list_has(xs: List(Text), x: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || text_list_has(rest, x)
+  }
+}
+
+pub fn opt_bool_eq(a: Option(Bool), b: Option(Bool)): Bool {
+  match a {
+    None => ⊢ Bool from match b {
+      None => true
+      Some(^y) => false
+    }
+    Some(x) => ⊢ Bool from match b {
+      None => false
+      Some(y) => x == y
+    }
+  }
+}
+
+pub fn borrows_eq(a: List(Option(Bool)), b: List(Option(Bool))): Bool {
+  match a {
+    Nil => ⊢ Bool from match b {
+      Nil => true
+      Cons(^y, ^more) => false
+    }
+    Cons(x, rest) => ⊢ Bool from match b {
+      Nil => false
+      Cons(y, more) => opt_bool_eq(x, y) && borrows_eq(rest, more)
+    }
+  }
+}
+
+// `C.m@H`: the function an instance of `C` for `H` gives `m`.
+pub fn instance_fn(r#class: Text, method: Text, head: Text): Text {
+  cat5(r#class, "::", method, "@", head)
+}
+
+pub fn instance_key(r#class: Text, ctor: Text): Text {
+  cat3(r#class, " ", ctor)
+}
+
+// The type constructor at the head of a type, as the instance table keys it.
+pub fn ty_constructor(t: Ty): Option(Text) {
+  match t {
+    TyNamed(n, ^args) => Some(surface_name_text(n))
+    TyInt(^w) => Some(ty_show(t))
+    TyBool => Some(ty_show(t))
+    TyText => Some(ty_show(t))
+    TyFloat => Some(ty_show(t))
+    TyFloat32 => Some(ty_show(t))
+    TyDecimal => Some(ty_show(t))
+    TyUnit => Some(ty_show(t))
+    // A product is a `Pair`, as `expand.rs` names its instance.
+    TyProduct(^members) => Some("Pair")
+    _ => None
+  }
+}
+
+// The name an instance's head gives its functions (`expand.rs`).
+pub fn head_name(t: SurfaceTerm): Text {
+  match t.kind {
+    SkVar(n) => surface_name_text(n)
+    // `A × B`: the prelude's `Pair`.
+    SkApp(f, ^args) => ⊢ Text from match f.kind {
+      SkVar(n) => if surface_name_text(n) == "std::prelude::Pair" { "Pair" } else { surface_name_text(n) }
+      _ => ""
+    }
+    _ => ""
+  }
+}
+
+pub fn span_at(start: Nat, end: Nat): TySpan {
+  TySpan { start: start, end: end }
+}
+
+pub fn class_named(cs: List(SurfaceClass), name: Text): Option(SurfaceClass) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if c.name == name { Some(c) } else { class_named(rest, name) }
+  }
+}
+
+pub fn stmts_classes(ss: List(SurfaceStmt)): List(SurfaceClass) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceClass) from match s {
+      StClass(c) => Cons(c, stmts_classes(rest))
+      _ => stmts_classes(rest)
+    }
+  }
+}
+
+// A method's parameter types with `by` for the class's parameter, each
+// borrowed as the method borrows it.
+pub fn method_params(
+  ts: List(Option(SurfaceTerm)),
+  r#borrows: List(Option(Bool)),
+  param: Text,
+  r#by: SurfaceTerm
+): List(SurfaceParam) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      let written: SurfaceTerm := ⊢ SurfaceTerm from match t {
+        Some(x) => term_replace(x, param, r#by)
+        None => surface_unit_type()
+      }
+      let ty: SurfaceTerm := ⊢ SurfaceTerm from match list_head_or_none(r#borrows) {
+        Some(m) => surface_at(SkBorrow(m, false, written), 0, 0)
+        None => written
+      }
+      Cons(SurfaceParamMk(None, ty, None), method_params(rest, List::tail(r#borrows), param, r#by))
+    }
+  }
+}
+
+// The method's own type generics make the dictionary polymorphic: the
+// binders `(A: Shared, B: Type, …)` lead.
+pub fn method_binders(gs: List(Text), bounds: List(Option(Text))): List(SurfaceParam) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => {
+      let more := method_binders(rest, List::tail(bounds))
+      ⊢ List(SurfaceParam) from match list_head_or_none(bounds) {
+        None => Cons(SurfaceParamMk(Some(g), surface_at(SkVar(NameSpelled("affine")), 0, 0), None), more)
+        Some(b) => ⊢ List(SurfaceParam) from match kind_parse(b) {
+          Some(^k) => Cons(SurfaceParamMk(Some(g), surface_at(SkVar(NameSpelled(b)), 0, 0), None), more)
+          None => more
+        }
+      }
+    }
+  }
+}
+
+// A method's type over its binders and parameters, then `extra`.
+pub fn method_type_over(
+  r#class: SurfaceClass,
+  m: SurfaceFn,
+  r#by: SurfaceTerm,
+  extra: List(SurfaceParam)
+): SurfaceTerm {
+  let result: SurfaceTerm := ⊢ SurfaceTerm from match m.result {
+    Some(r) => term_replace(r, r#class.param, r#by)
+    None => surface_unit_type()
+  }
+  surface_at(
+    SkPi(
+      List::append(
+        List::append(
+          method_binders(m.generics, m.bounds),
+          method_params(m.param_types, m.r#borrows, r#class.param, r#by)
+        ),
+        extra
+      ),
+      result,
+      m.effects
+    ),
+    0,
+    0
+  )
+}
+
+// The methods of a class, as the parameters that stand for it at `by`.
+pub fn held_params(ms: List(SurfaceFn), r#class: SurfaceClass, r#by: SurfaceTerm): List(SurfaceParam) {
+  match ms {
+    Nil => Nil
+    Cons(m, rest) => Cons(
+      SurfaceParamMk(None, method_type_over(r#class, m, r#by, Nil), None),
+      held_params(rest, r#class, r#by)
+    )
+  }
+}
+
+// The evidence a method's own `where` asks for follows its parameters: the
+// methods of each class asked for. A class asked for this way has methods
+// without `where` of their own.
+pub fn where_params(ws: List(SurfaceConstraint), cs: List(SurfaceClass)): List(SurfaceParam) {
+  match ws {
+    Nil => Nil
+    Cons(w, rest) => ⊢ List(SurfaceParam) from match w.ty.kind {
+      SkVar(^g) => ⊢ List(SurfaceParam) from match class_named(cs, w.r#class) {
+        Some(r#class) => List::append(
+          held_params(r#class.methods, r#class, w.ty),
+          where_params(rest, cs)
+        )
+        None => where_params(rest, cs)
+      }
+      _ => where_params(rest, cs)
+    }
+  }
+}
+
+pub fn method_type(
+  r#class: SurfaceClass,
+  m: SurfaceFn,
+  r#by: SurfaceTerm,
+  cs: List(SurfaceClass)
+): SurfaceTerm {
+  method_type_over(r#class, m, r#by, where_params(m.wheres, cs))
+}
+
+// The parameters that stand for one constraint: one for each method.
+pub(open) inductive Added: Type {
+  AddedMk(
+    params: List(Text),
+    param_types: List(Option(SurfaceTerm)),
+    r#borrows: List(Option(Bool))
+  ): Added
+}
+
+pub fn added_methods(
+  ms: List(SurfaceFn),
+  r#class: SurfaceClass,
+  g: Text,
+  r#by: SurfaceTerm,
+  cs: List(SurfaceClass),
+  acc: Added
+): Added {
+  match ms {
+    Nil => acc
+    Cons(m, rest) => added_methods(
+      rest,
+      r#class,
+      g,
+      r#by,
+      cs,
+      Added {
+        params: List::append(acc.params, Cons(cat5(r#class.name, "::", m.name, "@", g), Nil)),
+        param_types: List::append(acc.param_types, Cons(Some(method_type(r#class, m, r#by, cs)), Nil)),
+        r#borrows: List::append(acc.r#borrows, Cons(None, Nil))
+      }
+    )
+  }
+}
+
+pub fn added_constraints(ws: List(SurfaceConstraint), cs: List(SurfaceClass), acc: Added): Added {
+  match ws {
+    Nil => acc
+    Cons(w, rest) => ⊢ Added from match w.ty.kind {
+      SkVar(g) => ⊢ Added from match class_named(cs, w.r#class) {
+        Some(r#class) => added_constraints(
+          rest,
+          cs,
+          added_methods(r#class.methods, r#class, surface_name_text(g), w.ty, cs, acc)
+        )
+        None => added_constraints(rest, cs, acc)
+      }
+      _ => added_constraints(rest, cs, acc)
+    }
+  }
+}
+
+// A class without methods (`PolicyState`) has no dictionary: it stays as
+// written, with its instances and the constraints that name it, so that the
+// check after the expansion still sees a missing instance (`Expander::kept`
+// of `expand.rs`).
+pub fn class_kept(cs: List(SurfaceClass), name: Text): Bool {
+  match class_named(cs, name) {
+    None => false
+    Some(c) => ⊢ Bool from match c.methods {
+      Nil => true
+      Cons(^m, ^more) => false
+    }
+  }
+}
+
+pub fn structural_constraints(ws: List(SurfaceConstraint), cs: List(SurfaceClass)): List(SurfaceConstraint) {
+  match ws {
+    Nil => Nil
+    Cons(w, rest) => if class_is_structural(w.r#class) || class_kept(cs, w.r#class) {
+      Cons(w, structural_constraints(rest, cs))
+    } else {
+      structural_constraints(rest, cs)
+    }
+  }
+}
+
+// A call `C.m(…)` of a class's method made a call of a name: for the use
+// check (`rows.rs`) the expansion's call of the method's argument or of the
+// instance's function performs what the method's type says, which for the
+// prelude's classes is nothing.
+pub fn method_callee(f: SurfaceTerm, classes: List(Text)): SurfaceTerm {
+  match f.kind {
+    SkField(base, name) => ⊢ SurfaceTerm from match base.kind {
+      SkVar(cn) => if text_list_has(classes, surface_name_text(cn)) {
+        surface_at(SkVar(NameSpelled(cat3(surface_name_text(cn), "::", name))), f.start, f.end)
+      } else {
+        f
+      }
+      _ => f
+    }
+    _ => f
+  }
+}
+
+mutual {
+  pub fn cls_term(t: SurfaceTerm, classes: List(Text)): SurfaceTerm {
+    match t {
+      SurfaceTermIndexedMk(k, start, end, ^ast_occurrence) => surface_term_mk(
+        cls_kind(k, classes),
+        start,
+        end
+      )
+    }
+  }
+
+  pub fn cls_kind(k: SurfaceKind, classes: List(Text)): SurfaceKind {
+    match k {
+      SkApp(f, args) => SkApp(
+        method_callee(cls_term(f, classes), classes),
+        cls_terms(args, classes)
+      )
+      SkLam(params, body, types, unused) => SkLam(params, cls_term(body, classes), types, unused)
+      SkBorrowLam(r#borrows, lam) => SkBorrowLam(r#borrows, cls_term(lam, classes))
+      SkBorrow(m, m_orig, x) => SkBorrow(m, m_orig, cls_term(x, classes))
+      SkTagged(tag, x) => SkTagged(tag, cls_term(x, classes))
+      SkRecord(name, fields) => SkRecord(name, cls_fields(fields, classes))
+      SkIf(c, th, el) => SkIf(cls_term(c, classes), cls_term(th, classes), cls_opt(el, classes))
+      SkField(base, name) => SkField(cls_term(base, classes), name)
+      SkPerform(eff, args) => SkPerform(eff, cls_terms(args, classes))
+      SkBudget(steps_memory, steps, body) => SkBudget(
+        steps_memory,
+        cls_term(steps, classes),
+        cls_term(body, classes)
+      )
+      SkBlock(stmts) => SkBlock(cls_stmts(stmts, classes))
+      SkHandle(body, handlers) => SkHandle(cls_term(body, classes), cls_handlers(handlers, classes))
+      SkMatch(scrutinee, r, arms, binder, unused) => SkMatch(
+        cls_term(scrutinee, classes),
+        r,
+        cls_arms(arms, classes),
+        binder,
+        unused
+      )
+      _ => k
+    }
+  }
+
+  pub fn cls_terms(ts: List(SurfaceTerm), classes: List(Text)): List(SurfaceTerm) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(cls_term(t, classes), cls_terms(rest, classes))
+    }
+  }
+
+  pub fn cls_opt(t: Option(SurfaceTerm), classes: List(Text)): Option(SurfaceTerm) {
+    match t {
+      None => None
+      Some(x) => Some(cls_term(x, classes))
+    }
+  }
+
+  pub fn cls_fields(fs: List(SurfaceField), classes: List(Text)): List(SurfaceField) {
+    match fs {
+      Nil => Nil
+      Cons(f, rest) => Cons(cls_field(f, classes), cls_fields(rest, classes))
+    }
+  }
+
+  pub fn cls_field(f: SurfaceField, classes: List(Text)): SurfaceField {
+    match f {
+      SurfaceFieldMk(name, value) => SurfaceFieldMk(name, cls_term(value, classes))
+    }
+  }
+
+  pub fn cls_handlers(hs: List(SurfaceHandler), classes: List(Text)): List(SurfaceHandler) {
+    match hs {
+      Nil => Nil
+      Cons(h, rest) => Cons(cls_handler(h, classes), cls_handlers(rest, classes))
+    }
+  }
+
+  pub fn cls_handler(h: SurfaceHandler, classes: List(Text)): SurfaceHandler {
+    match h {
+      HdReturn(p, body) => HdReturn(p, cls_term(body, classes))
+      HdOperation(eff, hfa, hty, ps, cont, cont_unused, guard, body) => HdOperation(
+        eff,
+        hfa,
+        hty,
+        ps,
+        cont,
+        cont_unused,
+        cls_opt(guard, classes),
+        cls_term(body, classes)
+      )
+    }
+  }
+
+  pub fn cls_arms(arms: List(SurfaceArm), classes: List(Text)): List(SurfaceArm) {
+    match arms {
+      Nil => Nil
+      Cons(a, rest) => Cons(cls_arm(a, classes), cls_arms(rest, classes))
+    }
+  }
+
+  pub fn cls_arm(a: SurfaceArm, classes: List(Text)): SurfaceArm {
+    match a {
+      SurfaceArmMk(pattern, guard, goal, body) => SurfaceArmMk(
+        pattern,
+        cls_opt(guard, classes),
+        goal,
+        cls_term(body, classes)
+      )
+    }
+  }
+
+  pub fn cls_stmts(ss: List(SurfaceStmt), classes: List(Text)): List(SurfaceStmt) {
+    match ss {
+      Nil => Nil
+      Cons(st, rest) => Cons(cls_stmt(st, classes), cls_stmts(rest, classes))
+    }
+  }
+
+  pub fn cls_stmt(st: SurfaceStmt, classes: List(Text)): SurfaceStmt {
+    match st {
+      StLet(name, ty, value, b, bm, unused, st_stack) => StLet(name, ty, cls_term(value, classes), b, bm, unused, st_stack)
+      StVar(name, ty, value, vb, unused, st_stack) => StVar(name, ty, cls_term(value, classes), vb, unused, st_stack)
+      StAssign(name, name_place, value) => StAssign(
+        name,
+        cls_opt(name_place, classes),
+        cls_term(value, classes)
+      )
+      StWhile(c, body) => StWhile(cls_term(c, classes), cls_term(body, classes))
+      StReturn(e) => StReturn(cls_opt(e, classes))
+      StExpr(e) => StExpr(cls_term(e, classes))
+      _ => st
+    }
+  }
+}
+
+pub fn class_names(cs: List(SurfaceClass)): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(c.name, class_names(rest))
+  }
+}
+
+// A function that asks for a class takes the class's methods, after its own
+// parameters.
+pub fn expand_fn(f: SurfaceFn, cs: List(SurfaceClass)): SurfaceFn {
+  let a: Added := added_constraints(
+    f.wheres,
+    cs,
+    Added { params: Nil, param_types: Nil, r#borrows: Nil }
+  )
+  SurfaceFn {
+    name: f.name,
+    generics: f.generics,
+    bounds: f.bounds,
+    params: List::append(f.params, a.params),
+    r#borrows: List::append(f.r#borrows, a.r#borrows),
+    param_types: List::append(f.param_types, a.param_types),
+    result: f.result,
+    effects: f.effects,
+    wheres: structural_constraints(f.wheres, cs),
+    start: f.start,
+    end: f.end,
+    body: cls_term(f.body, class_names(cs)),
+    lends: None,
+    generic_types: f.generic_types,
+    bound_starts: f.bound_starts,
+    visibility: f.visibility,
+    row_hole: f.row_hole,
+    unused: f.unused,
+    unused_generics: f.unused_generics,
+    unused_params: f.unused_params
+  }
+}
+
+// The function an instance gives a method, over the instance's generics,
+// asking for what the instance's `where` asks, and then the method's own.
+pub fn instance_method(i: SurfaceInstance, m: SurfaceFn, head: Text): SurfaceFn {
+  SurfaceFn {
+    name: instance_fn(i.r#class, m.name, head),
+    generics: List::append(i.generics, m.generics),
+    bounds: List::append(
+      opts_resize(list_len(i.generics), i.bounds),
+      opts_resize(list_len(m.generics), m.bounds)
+    ),
+    params: m.params,
+    r#borrows: m.r#borrows,
+    param_types: m.param_types,
+    result: m.result,
+    effects: m.effects,
+    wheres: List::append(i.wheres, m.wheres),
+    start: m.start,
+    end: m.end,
+    body: m.body,
+    lends: m.lends,
+    generic_types: List::append(surface_type_generics(i.generics), m.generic_types),
+    bound_starts: List::append(surface_no_starts(surface_type_generics(i.generics)), m.bound_starts),
+    visibility: m.visibility,
+    row_hole: m.row_hole,
+    unused: m.unused,
+    unused_generics: m.unused_generics,
+    unused_params: m.unused_params
+  }
+}
+
+pub fn expand_instance(
+  i: SurfaceInstance,
+  ms: List(SurfaceFn),
+  cs: List(SurfaceClass),
+  rest: List(SurfaceStmt)
+): List(SurfaceStmt) {
+  match ms {
+    Nil => rest
+    Cons(m, more) => Cons(
+      StFn(expand_fn(instance_method(i, m, head_name(i.head)), cs)),
+      expand_instance(i, more, cs, rest)
+    )
+  }
+}
+
+pub fn expand_stmts(ss: List(SurfaceStmt), cs: List(SurfaceClass)): List(SurfaceStmt) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+      StClass(c) => if class_kept(cs, c.name) { Cons(s, expand_stmts(rest, cs)) } else {
+        expand_stmts(rest, cs)
+      }
+      StInstance(i) => if class_kept(cs, i.r#class) { Cons(s, expand_stmts(rest, cs)) } else {
+        expand_instance(i, i.methods, cs, expand_stmts(rest, cs))
+      }
+      StFn(f) => Cons(StFn(expand_fn(f, cs)), expand_stmts(rest, cs))
+      _ => Cons(s, expand_stmts(rest, cs))
+    }
+  }
+}
+
+pub fn classes_expand_prelude(ss: List(SurfaceStmt)): List(SurfaceStmt) {
+  match stmts_classes(ss) {
+    Nil => ss
+    Cons(c, rest) => expand_stmts(ss, Cons(c, rest))
+  }
+}
+
+pub fn stmts_class_names(ss: List(SurfaceStmt)): List(Text) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(Text) from match s {
+      StClass(c) => Cons(c.name, stmts_class_names(rest))
+      _ => stmts_class_names(rest)
+    }
+  }
+}
+
+pub fn stmts_type_names(ss: List(SurfaceStmt)): List(Text) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(Text) from match s {
+      StStruct(d) => Cons(d.name, stmts_type_names(rest))
+      StEnum(d) => Cons(d.name, stmts_type_names(rest))
+      _ => stmts_type_names(rest)
+    }
+  }
+}
+
+pub fn method_names_have(ms: List(SurfaceFn), name: Text): Bool {
+  match ms {
+    Nil => false
+    Cons(m, rest) => m.name == name || method_names_have(rest, name)
+  }
+}
+
+pub fn method_named(ms: List(SurfaceFn), name: Text): Option(SurfaceFn) {
+  match ms {
+    Nil => None
+    Cons(m, rest) => if m.name == name { Some(m) } else { method_named(rest, name) }
+  }
+}
+
+pub fn law_named(ls: List(SurfaceLaw), name: Text): Bool {
+  match ls {
+    Nil => false
+    Cons(l, rest) => l.name == name || law_named(rest, name)
+  }
+}

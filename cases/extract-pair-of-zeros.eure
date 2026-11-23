@@ -1,25 +1,28 @@
 // `Zero` extracts as a `nat`, also where nothing else says what a numeral is:
-// `Ord::compare` of two `Pair::Mk(Zero, Zero)` needs `Ord(Pair(nat, nat))`, not
-// the instance for the integer a bare numeral defaults to. A `Pair { … }` that
-// extraction writes is the declared `Pair`, so it fits a written `Pair(nat, nat)`.
+// `Ord::compare` of two `#(Zero, Zero)` needs `Ord(nat × nat)`, not the instance
+// for the integer a bare numeral defaults to. The product extraction writes fits
+// a written `nat × nat`.
 @ cases.pair-of-zeros
-extract = true
 source = ```tauto
-import std::prelude::Ord
-import std::Ord
+import std::builtin::ord
+import std::ord
 
-fn same(p: Nat): Pair(Nat, Nat) { Pair::Mk(p, p) }
-fn one(): Pair(Nat, Nat) { Pair::Mk(Zero, Succ(Zero)) }
-fn zeros(): Ordering { Ord::compare(Pair::Mk(Zero, Zero), Pair::Mk(Zero, Zero)) }
+fn same(p: Nat): Nat × Nat { #(p, p) }
+fn one(): Nat × Nat { #(Zero, Succ(Zero)) }
+fn zeros(): Ordering { Ord::compare(#(Zero, Zero), #(Zero, Zero)) }
 
-fn snd(p: Pair(Nat, Nat)): Nat {
+fn snd(p: Nat × Nat): Nat {
   ⊢ Nat from match p {
-    Pair::Mk(a, b) => b
+    #(a, b) => b
   }
 }
 
-perform show("zeros", zeros())
-perform show("one", snd(one()))
-perform show("same", snd(same(Succ(Zero))))
+show(&zeros())
+show(&snd(one()))
+show(&snd(same(Succ(Zero))))
 ```
-shows = ["zeros = Equal", "one = 1", "same = 1"]
+stdout = ```
+Equal
+1
+1
+```

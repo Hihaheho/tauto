@@ -1,0 +1,1468 @@
+import std::base
+import std::text
+import std::text_ops
+import "../../surface/src/surface.taut"
+import "freevars.taut"
+import "classes_expand.taut"
+import "ty.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
+
+// The `Debug` instances the compiler writes (`docs/design/debug.md`): one for
+// each `struct` and `enum` whose program writes none, its `where` inferred
+// from the fields (`crates/tauto-nibcheck/src/types/debug.rs`). The surface
+// tree keeps no visibility and no row parameter, so what the declaration
+// writes before and in its head is read from the text of the file, as `sealed.taut` does.
+
+// A type name by its last segment: how a head is looked up across the program
+// and the prelude, which may name it differently.
+pub fn dbg_last(parts: List(Text), found: Text): Text {
+  match parts {
+    Nil => found
+    Cons(p, rest) => dbg_last(rest, p)
+  }
+}
+
+pub fn dbg_key(n: Text): Text {
+  dbg_last(Text::split_on(n, 58), n)
+}
+
+// A declaration shows its inside when it is private or `pub(open)`.
+pub fn dbg_inside(src: Text, base: Nat, start: Nat): Bool {
+  let at := Nat::sub(start, base)
+  if Text::slice_or_empty(src, at, Nat::add(at, 9)) == "pub(open)" { true } else {
+    not(Text::slice_or_empty(src, at, Nat::add(at, 3)) == "pub")
+  }
+}
+
+// Whether a generic of the declaration is a row variable, `!e`: a `!` in the
+// head, before the `{` of its fields.
+pub fn dbg_rows(src: Text, base: Nat, start: Nat, end: Nat): Bool {
+  let at := Nat::sub(start, base)
+  let whole := Text::slice_or_empty(src, at, Nat::sub(end, base))
+  match Text::find(whole, "{") {
+    None => false
+    Some(i) => Text::contains(Text::slice_or_empty(whole, 0, i), "!")
+  }
+}
+
+pub struct DbgData {
+  data: SurfaceData,
+  is_struct: Bool,
+  inside: Bool,
+  rows: Bool
+}
+
+pub fn dbg_data_of(d: SurfaceData, is_struct: Bool, src: Text, base: Nat): DbgData {
+  DbgData {
+    data: d,
+    is_struct: is_struct,
+    inside: dbg_inside(src, base, d.start),
+    rows: dbg_rows(src, base, d.start, d.end)
+  }
+}
+
+// The types a program declares, at its top level and in its `mutual` groups.
+mutual {
+  pub fn dbg_collect(ss: List(SurfaceStmt), src: Text, base: Nat): List(DbgData) {
+    match ss {
+      Nil => Nil
+      Cons(s, rest) => List::append(dbg_collect_stmt(s, src, base), dbg_collect(rest, src, base))
+    }
+  }
+
+  pub fn dbg_collect_stmt(s: SurfaceStmt, src: Text, base: Nat): List(DbgData) {
+    match s {
+      StStruct(d) => Cons(dbg_data_of(d, true, src, base), Nil)
+      StEnum(d) => Cons(dbg_data_of(d, false, src, base), Nil)
+      StMutual(items, ^start, ^end) => dbg_collect(items, src, base)
+      _ => Nil
+    }
+  }
+}
+
+// ---- tables: which parameters of a type must be `Debug` for it to be ----
+
+pub fn dbg_table_get(t: List(Text × List(Bool)), k: Text): Option(List(Bool)) {
+  match t {
+    Nil => None
+    Cons(e, rest) => if e.fst == k { Some(e.snd) } else { dbg_table_get(rest, k) }
+  }
+}
+
+pub fn dbg_table_remove(t: List(Text × List(Bool)), k: Text): List(Text × List(Bool)) {
+  match t {
+    Nil => Nil
+    Cons(e, rest) => if e.fst == k { dbg_table_remove(rest, k) } else { Cons(e, dbg_table_remove(rest, k)) }
+  }
+}
+
+pub fn dbg_table_put(t: List(Text × List(Bool)), k: Text, v: List(Bool)): List(Text × List(Bool)) {
+  Cons(#(k, v), dbg_table_remove(t, k))
+}
+
+pub fn dbg_falses(n: Nat): List(Bool) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(false, dbg_falses(m))
+  }
+}
+
+pub fn dbg_index(xs: List(Text), x: Text, at: Nat): Option(Nat) {
+  match xs {
+    Nil => None
+    Cons(y, rest) => if y == x { Some(at) } else { dbg_index(rest, x, Succ(at)) }
+  }
+}
+
+// `need` with its `i`th entry set.
+pub fn dbg_set_need(need: List(Bool), i: Nat): List(Bool) {
+  match need {
+    Nil => Nil
+    Cons(b, rest) => match i {
+      Zero => Cons(true, rest)
+      Succ(j) => Cons(b, dbg_set_need(rest, j))
+    }
+  }
+}
+
+pub fn dbg_bools_eq(a: List(Bool), b: List(Bool)): Bool {
+  match a {
+    Nil => match b {
+      Nil => true
+      Cons(^y, ^ys) => false
+    }
+    Cons(x, xs) => match b {
+      Nil => false
+      Cons(y, ys) => x == y && dbg_bools_eq(xs, ys)
+    }
+  }
+}
+
+pub fn dbg_resize(need: List(Bool), n: Nat): List(Bool) {
+  match n {
+    Zero => Nil
+    Succ(m) => match need {
+      Nil => Cons(false, dbg_resize(Nil, m))
+      Cons(b, rest) => Cons(b, dbg_resize(rest, m))
+    }
+  }
+}
+
+// ---- terms ----
+
+mutual {
+  pub fn dbg_is_fn(t: SurfaceTerm): Bool {
+    match t {
+      SurfaceTermIndexedMk(k, ^start, ^end, ^ast_occurrence) => dbg_is_fn_kind(k)
+    }
+  }
+
+  pub fn dbg_is_fn_kind(k: SurfaceKind): Bool {
+    match k {
+      SkPi(^params, ^result, ^effects) => true
+      SkFnKind(^kind, ^ty) => true
+      SkBorrow(^mutable, ^mutable_orig, x) => dbg_is_fn(x)
+      _ => false
+    }
+  }
+}
+
+pub fn dbg_name_of(t: SurfaceTerm): Option(Text) {
+  match t {
+    SurfaceTermIndexedMk(k, ^start, ^end, ^ast_occurrence) => match k {
+      SkVar(n) => Some(surface_name_text(n))
+      _ => None
+    }
+  }
+}
+
+// The type names `t` mentions, by their last segment.
+pub fn dbg_mentions_of(ts: List(SurfaceTerm), out: List(Text)): List(Text) {
+  match ts {
+    Nil => out
+    Cons(t, rest) => match t {
+      SurfaceTermIndexedMk(k, ^start, ^end, ^ast_occurrence) => match k {
+        SkVar(n) => dbg_mentions_of(rest, Cons(dbg_key(surface_name_text(n)), out))
+        _ => dbg_mentions_of(rest, out)
+      }
+    }
+  }
+}
+
+pub fn dbg_mentioned(t: SurfaceTerm): List(Text) {
+  dbg_mentions_of(subterms(t, Nil), Nil)
+}
+
+pub fn dbg_fields_of(d: SurfaceData): List(SurfaceDataField) {
+  dbg_ctor_fields(d.constructors)
+}
+
+pub fn dbg_ctor_fields(cs: List(SurfaceDataCtor)): List(SurfaceDataField) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => List::append(c.fields, dbg_ctor_fields(rest))
+  }
+}
+
+// Adds to `need` the generics of the type that `t` asks `Debug` of; `None`
+// when the obligation cannot be reduced to them.
+mutual {
+  pub fn dbg_reduce(
+    t: SurfaceTerm,
+    generics: List(Text),
+    table: List(Text × List(Bool)),
+    need: List(Bool)
+  ): Option(List(Bool)) {
+    match t {
+      SurfaceTermIndexedMk(k, ^start, ^end, ^ast_occurrence) => dbg_reduce_kind(k, generics, table, need)
+    }
+  }
+
+  pub fn dbg_reduce_kind(
+    k: SurfaceKind,
+    generics: List(Text),
+    table: List(Text × List(Bool)),
+    need: List(Bool)
+  ): Option(List(Bool)) {
+    match k {
+      // A function shows as `fn { .. }`, asking nothing.
+      SkPi(^params, ^result, ^effects) => Some(need)
+      SkFnKind(^kind, ^ty) => Some(need)
+      SkBorrow(^mutable, ^mutable_orig, x) => dbg_reduce(x, generics, table, need)
+      SkVar(n) => match dbg_index(generics, surface_name_text(n), Zero) {
+        Some(i) => Some(dbg_set_need(need, i))
+        None => match dbg_table_get(table, dbg_key(surface_name_text(n))) {
+          None => None
+          Some(p) => match p {
+            Nil => Some(need)
+            Cons(^b, ^more) => None
+          }
+        }
+      }
+      SkApp(head, args) => match dbg_name_of(head) {
+        None => None
+        Some(h) => match dbg_index(generics, h, Zero) {
+          Some(^i) => None
+          None => match dbg_table_get(table, dbg_key(h)) {
+            None => None
+            Some(p) => if List::length(p) == List::length(args) {
+              dbg_reduce_args(args, p, generics, table, need)
+            } else { None }
+          }
+        }
+      }
+      _ => None
+    }
+  }
+
+  // A function shows as `fn { .. }` only as a field itself: the instance of a
+  // type applied to one has no instance to ask.
+  pub fn dbg_reduce_args(
+    args: List(SurfaceTerm),
+    asks: List(Bool),
+    generics: List(Text),
+    table: List(Text × List(Bool)),
+    need: List(Bool)
+  ): Option(List(Bool)) {
+    match args {
+      Nil => Some(need)
+      Cons(a, rest) => match asks {
+        Nil => Some(need)
+        Cons(wanted, more) => if wanted {
+          if dbg_is_fn(a) { None } else {
+            match dbg_reduce(a, generics, table, need) {
+              None => None
+              Some(n2) => dbg_reduce_args(rest, more, generics, table, n2)
+            }
+          }
+        } else { dbg_reduce_args(rest, more, generics, table, need) }
+      }
+    }
+  }
+}
+
+// ---- the instances written by hand, and the groups of recursive types ----
+
+pub fn dbg_is_debug(n: Text): Bool {
+  dbg_key(n) == "Debug"
+}
+
+pub fn dbg_same_var(a: SurfaceTerm, b: SurfaceTerm): Bool {
+  match dbg_name_of(a) {
+    None => false
+    Some(x) => match dbg_name_of(b) {
+      None => false
+      Some(y) => x == y
+    }
+  }
+}
+
+pub fn dbg_asked(ws: List(SurfaceConstraint), a: SurfaceTerm): Bool {
+  match ws {
+    Nil => false
+    Cons(w, rest) => (dbg_is_debug(w.r#class) && dbg_same_var(w.ty, a)) || dbg_asked(rest, a)
+  }
+}
+
+pub fn dbg_needs(args: List(SurfaceTerm), ws: List(SurfaceConstraint)): List(Bool) {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => Cons(dbg_asked(ws, a), dbg_needs(rest, ws))
+  }
+}
+
+// The head of an instance: a type and the arguments it is applied to.
+pub fn dbg_head(t: SurfaceTerm): Option(Text × List(SurfaceTerm)) {
+  match t {
+    SurfaceTermIndexedMk(k, ^start, ^end, ^ast_occurrence) => match k {
+      SkVar(n) => Some(#(surface_name_text(n), Nil))
+      SkApp(f, args) => match dbg_name_of(f) {
+        None => None
+        Some(h) => Some(#(h, args))
+      }
+      _ => None
+    }
+  }
+}
+
+// The `Debug` instances `ss` writes (or has made): the types they are for,
+// with the parameters their `where` asks `Debug` of.
+mutual {
+  pub fn dbg_written(ss: List(SurfaceStmt), out: List(Text × List(Bool))): List(Text × List(Bool)) {
+    match ss {
+      Nil => out
+      Cons(s, rest) => dbg_written(rest, dbg_written_stmt(s, out))
+    }
+  }
+
+  pub fn dbg_written_stmt(s: SurfaceStmt, out: List(Text × List(Bool))): List(Text × List(Bool)) {
+    match s {
+      StInstance(i) => if dbg_is_debug(i.r#class) {
+        match dbg_head(i.head) {
+          None => out
+          Some(h) => dbg_table_put(out, dbg_key(h.fst), dbg_needs(h.snd, i.wheres))
+        }
+      } else { out }
+      StMutual(items, ^start, ^end) => dbg_written(items, out)
+      _ => out
+    }
+  }
+
+  pub fn dbg_declares(ss: List(SurfaceStmt)): Bool {
+    match ss {
+      Nil => false
+      Cons(s, rest) => dbg_declares_stmt(s) || dbg_declares(rest)
+    }
+  }
+
+  pub fn dbg_declares_stmt(s: SurfaceStmt): Bool {
+    match s {
+      StClass(c) => dbg_is_debug(c.name)
+      StMutual(items, ^start, ^end) => dbg_declares(items)
+      _ => false
+    }
+  }
+}
+
+pub fn dbg_has(xs: List(Text), x: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || dbg_has(rest, x)
+  }
+}
+
+pub fn dbg_union(xs: List(Text), ys: List(Text)): List(Text) {
+  match ys {
+    Nil => xs
+    Cons(y, rest) => if dbg_has(xs, y) { dbg_union(xs, rest) } else { dbg_union(Cons(y, xs), rest) }
+  }
+}
+
+pub fn dbg_inter_any(xs: List(Text), ys: List(Text)): Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => dbg_has(ys, x) || dbg_inter_any(rest, ys)
+  }
+}
+
+pub fn dbg_keys(cs: List(DbgData)): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(dbg_key(c.data.name), dbg_keys(rest))
+  }
+}
+
+pub fn dbg_count(cs: List(DbgData), k: Text): Nat {
+  match cs {
+    Nil => 0
+    Cons(c, rest) => if dbg_key(c.data.name) == k { Succ(dbg_count(rest, k)) } else { dbg_count(rest, k) }
+  }
+}
+
+pub fn dbg_find(cs: List(DbgData), k: Text): Option(DbgData) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if dbg_key(c.data.name) == k { Some(c) } else { dbg_find(rest, k) }
+  }
+}
+
+pub fn dbg_mentioned_fields(fs: List(SurfaceDataField), out: List(Text)): List(Text) {
+  match fs {
+    Nil => out
+    Cons(f, rest) => dbg_mentioned_fields(rest, dbg_union(out, dbg_mentioned(f.ty)))
+  }
+}
+
+// The candidates each one's fields mention.
+pub fn dbg_edges(cands: List(DbgData), all: List(Text)): List(Text × List(Text)) {
+  match cands {
+    Nil => Nil
+    Cons(c, rest) => Cons(
+      #(dbg_key(c.data.name), dbg_keep(dbg_mentioned_fields(dbg_fields_of(c.data), Nil), all)),
+      dbg_edges(rest, all)
+    )
+  }
+}
+
+pub fn dbg_keep(xs: List(Text), all: List(Text)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if dbg_has(all, x) { Cons(x, dbg_keep(rest, all)) } else { dbg_keep(rest, all) }
+  }
+}
+
+pub fn dbg_edges_of(es: List(Text × List(Text)), k: Text): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => if e.fst == k { e.snd } else { dbg_edges_of(rest, k) }
+  }
+}
+
+pub fn dbg_step(es: List(Text × List(Text)), seen: List(Text), todo: List(Text)): List(Text) {
+  match todo {
+    Nil => seen
+    Cons(m, rest) => dbg_step(es, dbg_union(seen, dbg_edges_of(es, m)), rest)
+  }
+}
+
+// What `k` reaches through the fields; a path has at most as many steps as
+// there are types.
+pub fn dbg_reach(es: List(Text × List(Text)), seen: List(Text), rounds: Nat): List(Text) {
+  match rounds {
+    Zero => seen
+    Succ(r) => dbg_reach(es, dbg_step(es, seen, seen), r)
+  }
+}
+
+pub fn dbg_reaches(es: List(Text × List(Text)), names: List(Text), rounds: Nat): List(Text × List(Text)) {
+  match names {
+    Nil => Nil
+    Cons(k, rest) => Cons(#(k, dbg_reach(es, dbg_edges_of(es, k), rounds)), dbg_reaches(es, rest, rounds))
+  }
+}
+
+pub fn dbg_group_of(k: Text, rs: List(Text × List(Text)), all: List(Text)): List(Text) {
+  match all {
+    Nil => Nil
+    Cons(e, rest) => if e == k || (dbg_has(dbg_edges_of(rs, k), e) && dbg_has(dbg_edges_of(rs, e), k)) {
+      Cons(e, dbg_group_of(k, rs, rest))
+    } else { dbg_group_of(k, rs, rest) }
+  }
+}
+
+// The groups of recursive candidates: the types that each reach the others.
+pub fn dbg_components(
+  names: List(Text),
+  rs: List(Text × List(Text)),
+  all: List(Text),
+  done: List(Text)
+): List(List(Text)) {
+  match names {
+    Nil => Nil
+    Cons(k, rest) => if dbg_has(done, k) || not(dbg_has(dbg_edges_of(rs, k), k)) {
+      dbg_components(rest, rs, all, done)
+    } else {
+      let g := dbg_group_of(k, rs, all)
+      Cons(g, dbg_components(rest, rs, all, dbg_union(done, g)))
+    }
+  }
+}
+
+pub fn dbg_flatten(gs: List(List(Text))): List(Text) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => dbg_union(g, dbg_flatten(rest))
+  }
+}
+
+pub fn dbg_same_args(args: List(SurfaceTerm), gs: List(Text)): Bool {
+  match args {
+    Nil => match gs {
+      Nil => true
+      Cons(^g, ^more) => false
+    }
+    Cons(a, rest) => match gs {
+      Nil => false
+      Cons(g, more) => (match dbg_name_of(a) {
+        None => false
+        Some(n) => n == g
+      }) && dbg_same_args(rest, more)
+    }
+  }
+}
+
+// A field of `d` that mentions a recursive type is `d` itself, with its own
+// generics in order.
+pub fn dbg_itself_field(d: SurfaceData, t: SurfaceTerm, nested: List(Text)): Bool {
+  if not(dbg_inter_any(dbg_mentioned(t), nested)) { true } else {
+    match t {
+      SurfaceTermIndexedMk(k, ^start, ^end, ^ast_occurrence) => match k {
+        SkVar(n) => dbg_key(surface_name_text(n)) == dbg_key(d.name) && List::length(d.generics) == 0
+        SkApp(f, args) => (match dbg_name_of(f) {
+          None => false
+          Some(h) => dbg_key(h) == dbg_key(d.name)
+        }) && List::length(args) == List::length(d.generics) && dbg_same_args(args, d.generics)
+        _ => false
+      }
+    }
+  }
+}
+
+pub fn dbg_only_itself_fields(d: SurfaceData, fs: List(SurfaceDataField), nested: List(Text)): Bool {
+  match fs {
+    Nil => true
+    Cons(f, rest) => dbg_itself_field(d, f.ty, nested) && dbg_only_itself_fields(d, rest, nested)
+  }
+}
+
+pub fn dbg_no_generics(ds: List(DbgData)): Bool {
+  match ds {
+    Nil => true
+    Cons(d, rest) => List::length(d.data.generics) == 0 && dbg_no_generics(rest)
+  }
+}
+
+pub fn dbg_members(cands: List(DbgData), ks: List(Text)): List(DbgData) {
+  match ks {
+    Nil => Nil
+    Cons(k, rest) => match dbg_find(cands, k) {
+      None => dbg_members(cands, rest)
+      Some(d) => Cons(d, dbg_members(cands, rest))
+    }
+  }
+}
+
+pub fn dbg_all_once(cands: List(DbgData), ks: List(Text)): Bool {
+  match ks {
+    Nil => true
+    Cons(k, rest) => dbg_count(cands, k) == 1 && dbg_all_once(cands, rest)
+  }
+}
+
+pub struct DbgGroup {
+  names: List(Text),
+  fuel: Bool
+}
+
+// Whether the types of the group can be shown together, with fuel (a type
+// recursive through itself alone) or without.
+pub fn dbg_fuelable(cands: List(DbgData), g: List(Text), nested: List(Text)): Option(Bool) {
+  if not(dbg_all_once(cands, g)) { None } else {
+    let ds := dbg_members(cands, g)
+    match ds {
+      Cons(d, none) => match none {
+        Nil => if dbg_only_itself_fields(d.data, dbg_fields_of(d.data), nested) { Some(true) } else {
+          if dbg_no_generics(ds) { Some(false) } else { None }
+        }
+        Cons(^e, ^more) => if dbg_no_generics(ds) { Some(false) } else { None }
+      }
+      Nil => if dbg_no_generics(ds) { Some(false) } else { None }
+    }
+  }
+}
+
+pub fn dbg_groups(cands: List(DbgData), gs: List(List(Text)), nested: List(Text)): List(DbgGroup) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => match dbg_fuelable(cands, g, nested) {
+      None => dbg_groups(cands, rest, nested)
+      Some(fuel) => Cons(DbgGroup { names: g, fuel: fuel }, dbg_groups(cands, rest, nested))
+    }
+  }
+}
+
+pub fn dbg_group_names(gs: List(DbgGroup)): List(Text) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => dbg_union(g.names, dbg_group_names(rest))
+  }
+}
+
+pub fn dbg_group_find(gs: List(DbgGroup), k: Text): Option(DbgGroup) {
+  match gs {
+    Nil => None
+    Cons(g, rest) => if dbg_has(g.names, k) { Some(g) } else { dbg_group_find(rest, k) }
+  }
+}
+
+// ---- how a recursive group shows a field ----
+
+// The member of `ms` a field type is (0), or the `List` (1) or the `Option` (2)
+// of one.
+pub fn dbg_member_at(ms: List(DbgData), n: Text, at: Nat): Option(Nat) {
+  match ms {
+    Nil => None
+    Cons(m, rest) => if dbg_key(m.data.name) == dbg_key(n) { Some(at) } else { dbg_member_at(rest, n, Succ(at)) }
+  }
+}
+
+pub fn dbg_container(h: Text): Option(Nat) {
+  if dbg_key(h) == "List" { Some(1) } else { if dbg_key(h) == "Option" { Some(2) } else { None } }
+}
+
+pub fn dbg_shown_by(t: SurfaceTerm, ms: List(DbgData)): Option(Nat × Nat) {
+  match t {
+    SurfaceTermIndexedMk(k, ^start, ^end, ^ast_occurrence) => match k {
+      SkVar(n) => match dbg_member_at(ms, surface_name_text(n), 0) {
+        Some(i) => Some(#(0, i))
+        None => None
+      }
+      SkApp(f, args) => match dbg_name_of(f) {
+        None => None
+        Some(h) => match dbg_member_at(ms, h, 0) {
+          Some(i) => Some(#(0, i))
+          None => match dbg_container(h) {
+            None => None
+            Some(c) => match args {
+              Cons(a, more) => match more {
+                Nil => match dbg_name_of(a) {
+                  None => None
+                  Some(n) => match dbg_member_at(ms, n, 0) {
+                    Some(i) => Some(#(c, i))
+                    None => None
+                  }
+                }
+                Cons(^b, ^others) => None
+              }
+              Nil => None
+            }
+          }
+        }
+      }
+      _ => None
+    }
+  }
+}
+
+// A field of a group that its functions do not show (it is recursive in a way
+// they do not follow) shows as `..`, asking nothing.
+pub fn dbg_hidden(d: DbgData, t: SurfaceTerm, gs: List(DbgGroup), cands: List(DbgData)): Bool {
+  match dbg_group_find(gs, dbg_key(d.data.name)) {
+    None => false
+    Some(g) => if g.fuel { false } else {
+      match dbg_shown_by(t, dbg_members(cands, g.names)) {
+        Some(^x) => false
+        None => dbg_inter_any(dbg_mentioned(t), g.names)
+      }
+    }
+  }
+}
+
+pub fn dbg_all_fields(
+  d: DbgData,
+  fs: List(SurfaceDataField),
+  gs: List(DbgGroup),
+  cands: List(DbgData),
+  table: List(Text × List(Bool)),
+  need: List(Bool)
+): Option(List(Bool)) {
+  match fs {
+    Nil => Some(need)
+    Cons(f, rest) => if dbg_hidden(d, f.ty, gs, cands) { dbg_all_fields(d, rest, gs, cands, table, need) } else {
+      match dbg_reduce(f.ty, d.data.generics, table, need) {
+        None => None
+        Some(n2) => dbg_all_fields(d, rest, gs, cands, table, n2)
+      }
+    }
+  }
+}
+
+// ---- the `where` of each instance: the least set the fields ask for ----
+
+pub struct DbgInfer {
+  table: List(Text × List(Bool)),
+  changed: Bool
+}
+
+pub fn dbg_round(
+  cands: List(DbgData),
+  all: List(DbgData),
+  gs: List(DbgGroup),
+  st: DbgInfer
+): DbgInfer {
+  match cands {
+    Nil => st
+    Cons(d, rest) => {
+      let k := dbg_key(d.data.name)
+      let here := match dbg_table_get(st.table, k) {
+        None => st
+        Some(old) => if not(d.inside) || d.rows {
+          if d.rows { DbgInfer { table: dbg_table_remove(st.table, k), changed: true } } else { st }
+        } else {
+          match dbg_all_fields(
+            d,
+            dbg_fields_of(d.data),
+            gs,
+            all,
+            st.table,
+            dbg_resize(old, List::length(d.data.generics))
+          ) {
+            None => DbgInfer { table: dbg_table_remove(st.table, k), changed: true }
+            Some(need) => if dbg_bools_eq(need, old) { st } else {
+              DbgInfer { table: dbg_table_put(st.table, k, need), changed: true }
+            }
+          }
+        }
+      }
+      dbg_round(rest, all, gs, DbgInfer { table: here.table, changed: st.changed || here.changed })
+    }
+  }
+}
+
+pub fn dbg_start_table(cands: List(DbgData), table: List(Text × List(Bool))): List(Text × List(Bool)) {
+  match cands {
+    Nil => table
+    Cons(d, rest) => dbg_start_table(rest, dbg_table_put(table, dbg_key(d.data.name), dbg_falses(List::length(d.data.generics))))
+  }
+}
+
+pub fn dbg_loop(
+  cands: List(DbgData),
+  gs: List(DbgGroup),
+  table: List(Text × List(Bool)),
+  fuel: Nat
+): List(Text × List(Bool)) ! {overflow} {
+  match fuel {
+    Zero => table
+    Succ(f) => {
+      let st := dbg_round(cands, cands, gs, DbgInfer { table: table, changed: false })
+      if st.changed { dbg_loop(cands, gs, st.table, f) } else { st.table }
+    }
+  }
+}
+
+pub fn dbg_total(cands: List(DbgData)): Nat {
+  match cands {
+    Nil => 1
+    Cons(d, rest) => Nat::add(Succ(List::length(d.data.generics)), dbg_total(rest))
+  }
+}
+
+// Only the candidates that stayed.
+pub fn dbg_retain(table: List(Text × List(Bool)), cands: List(DbgData)): List(Text × List(Bool)) {
+  match table {
+    Nil => Nil
+    Cons(e, rest) => if dbg_has(dbg_keys(cands), e.fst) { Cons(e, dbg_retain(rest, cands)) } else { dbg_retain(rest, cands) }
+  }
+}
+
+// ---- the text of an instance ----
+
+pub fn dbg_quote(s: Text): Text {
+  cat3("\"", s, "\"")
+}
+
+// Nested `concat`s of the parts, as written text.
+pub fn dbg_concat(parts: List(Text)): Text {
+  match parts {
+    Nil => "\"\""
+    Cons(first, rest) => match rest {
+      Nil => first
+      Cons(^second, ^more) => Text::concat_all(Cons("concat(", Cons(first, Cons(", ", Cons(dbg_concat(rest), Cons(")", Nil))))))
+    }
+  }
+}
+
+pub fn dbg_unraw(n: Text): Text {
+  if Text::starts_with(n, "r#") { Text::slice_or_empty(n, 2, Text::len(n)) } else { n }
+}
+
+pub fn dbg_fuel_name(d: SurfaceData): Text {
+  Text::concat_all(Cons("debug__fuel_", Cons(dbg_key(d.name), Cons("_", Cons(Text::of_nat(d.start), Nil)))))
+}
+
+pub fn dbg_items_name(d: SurfaceData, suffix: Text): Text {
+  Text::concat_all(Cons("debug__list_", Cons(suffix, Cons("_", Cons(dbg_key(d.name), Cons("_", Cons(Text::of_nat(d.start), Nil)))))))
+}
+
+// The names a group's functions have, for the types of the group.
+pub struct DbgGo {
+  on: Bool,
+  members: List(DbgData),
+  fuel: Bool
+}
+
+pub fn dbg_nth_member(ms: List(DbgData), i: Nat): Option(DbgData) {
+  match ms {
+    Nil => None
+    Cons(m, rest) => match i {
+      Zero => Some(m)
+      Succ(j) => dbg_nth_member(rest, j)
+    }
+  }
+}
+
+pub enum DbgShown {
+  DbgHidden
+  DbgCall(Text, Bool)
+  DbgList(Text)
+  DbgOpt(Text)
+}
+
+pub fn dbg_member_name(ms: List(DbgData), i: Nat, f: (SurfaceData) -> Text): Text {
+  match dbg_nth_member(ms, i) {
+    None => ""
+    Some(m) => f(m.data)
+  }
+}
+
+pub fn dbg_fuel_of(d: SurfaceData): Text {
+  dbg_fuel_name(d)
+}
+
+pub fn dbg_items_of(d: SurfaceData): Text {
+  dbg_items_name(d, "items")
+}
+
+pub fn dbg_go(t: SurfaceTerm, go: DbgGo): Option(DbgShown) {
+  if not(go.on) { None } else {
+    match dbg_shown_by(t, go.members) {
+      None => if dbg_inter_any(dbg_mentioned(t), dbg_keys(go.members)) { Some(DbgHidden) } else { None }
+      Some(ci) => match ci.fst {
+        Zero => Some(DbgCall(dbg_member_name(go.members, ci.snd, dbg_fuel_of), go.fuel))
+        Succ(c) => match c {
+          Zero => Some(DbgList(dbg_member_name(go.members, ci.snd, dbg_items_of)))
+          Succ(^o) => Some(DbgOpt(dbg_member_name(go.members, ci.snd, dbg_fuel_of)))
+        }
+      }
+    }
+  }
+}
+
+pub fn dbg_is_hidden(t: SurfaceTerm, go: DbgGo): Bool {
+  match dbg_go(t, go) {
+    Some(s) => match s {
+      DbgHidden => true
+      DbgCall(^f, ^fuel) => false
+      DbgList(^f) => false
+      DbgOpt(^f) => false
+    }
+    None => false
+  }
+}
+
+// How a field of type `t`, held by `binder`, is shown.
+pub fn dbg_value(binder: Text, t: SurfaceTerm, go: DbgGo): Text {
+  if dbg_is_fn(t) { dbg_quote("..") } else {
+    match dbg_go(t, go) {
+      None => Text::concat_all(["Debug::debug(&", binder, ")"])
+      Some(shown) => match shown {
+        DbgHidden => dbg_quote("..")
+        DbgCall(f, fuel) => if fuel {
+          Text::concat_all([f, "(&", binder, ", debug__left)"])
+        } else { Text::concat_all([f, "(&", binder, ")"]) }
+        DbgList(items) => Text::concat_all(["concat(\"[\", concat(", items, "(&", binder, "), \"]\"))"])
+        DbgOpt(f) => Text::concat_all(
+          [
+            "match &",
+            binder,
+            " {",
+            text_newline(),
+            " None => \"None\"",
+            text_newline(),
+            " Some(debug__x) => concat(\"Some(\", concat(",
+            f,
+            "(&debug__x), \")\"))",
+            text_newline(),
+            " }"
+          ]
+        )
+      }
+    }
+  }
+}
+
+pub fn dbg_all_named(fs: List(SurfaceDataField)): Bool {
+  match fs {
+    Nil => true
+    Cons(f, rest) => (match f.name {
+      None => false
+      Some(^n) => true
+    }) && dbg_all_named(rest)
+  }
+}
+
+pub struct DbgScan {
+  parts: List(Text),
+  first: Bool,
+  hidden: Bool
+}
+
+pub fn dbg_scan(fs: List(SurfaceDataField), binders: List(Text), named: Bool, go: DbgGo, st: DbgScan): DbgScan {
+  match fs {
+    Nil => st
+    Cons(f, rest) => match binders {
+      Nil => st
+      Cons(b, more) => if named && (dbg_is_fn(f.ty) || dbg_is_hidden(f.ty, go)) {
+        dbg_scan(rest, more, named, go, DbgScan { parts: st.parts, first: st.first, hidden: true })
+      } else {
+        let sep := if st.first { "" } else { ", " }
+        let label := match f.name {
+          Some(n) => if named { Cons(dbg_quote(cat3(sep, dbg_unraw(n), ": ")), Nil) } else {
+            if sep == "" { Nil } else { Cons(dbg_quote(sep), Nil) }
+          }
+          None => if sep == "" { Nil } else { Cons(dbg_quote(sep), Nil) }
+        }
+        dbg_scan(
+          rest,
+          more,
+          named,
+          go,
+          DbgScan {
+            parts: List::append(st.parts, List::append(label, Cons(dbg_value(b, f.ty, go), Nil))),
+            first: false,
+            hidden: st.hidden
+          }
+        )
+      }
+    }
+  }
+}
+
+// The fields of a constructor as shown: `C(x, y)` or `C { f: x }`; a function
+// field shows as `..`, a named one left out.
+pub fn dbg_shown_fields(name: Text, fs: List(SurfaceDataField), binders: List(Text), go: DbgGo): List(Text) {
+  match fs {
+    Nil => Cons(dbg_quote(name), Nil)
+    Cons(^f0, ^more) => {
+      let named := dbg_all_named(fs)
+      let st := dbg_scan(
+        fs,
+        binders,
+        named,
+        go,
+        DbgScan { parts: Cons(dbg_quote(cat3(name, if named { " { " } else { "(" }, "")), Nil), first: true, hidden: false }
+      )
+      let tail := if st.hidden { Cons(dbg_quote(if st.first { ".." } else { ", .." }), Nil) } else { Nil }
+      List::append(st.parts, List::append(tail, Cons(dbg_quote(if named { " }" } else { ")" }), Nil)))
+    }
+  }
+}
+
+pub fn dbg_binders_numbered(n: Nat, prefix: Text, i: Nat): List(Text) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(Text::concat(prefix, Text::of_nat(i)), dbg_binders_numbered(m, prefix, Succ(i)))
+  }
+}
+
+// The fields of a struct read off `a`.
+pub fn dbg_struct_reads(d: SurfaceData, fs: List(SurfaceDataField), i: Nat): List(Text) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(
+      match f.name {
+        Some(n) => match d.coerce_level {
+          Some(^l) => Text::concat_all(Cons("a.", Cons(dbg_key(d.name), Cons("::r#", Cons(dbg_unraw(n), Nil)))))
+          None => cat3("a.r#", dbg_unraw(n), "")
+        }
+        None => cat3("a.", Text::of_nat(i), "")
+      },
+      dbg_struct_reads(d, rest, Succ(i))
+    )
+  }
+}
+
+pub fn dbg_pattern_fields(fs: List(SurfaceDataField), i: Nat): List(Text) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(
+      Text::concat_all(
+        Cons(
+          "r#",
+          Cons(
+            match f.name {
+              None => ""
+              Some(n) => dbg_unraw(n)
+            },
+            Cons(": b", Cons(Text::of_nat(i), Nil))
+          )
+        )
+      ),
+      dbg_pattern_fields(rest, Succ(i))
+    )
+  }
+}
+
+pub fn dbg_arm(c: SurfaceDataCtor, d: DbgData, go: DbgGo): Text {
+  let named := match c.fields {
+    Nil => false
+    Cons(^f, ^more) => dbg_all_named(c.fields)
+  }
+  let n := List::length(c.fields)
+  let pattern := match c.fields {
+    Nil => c.name
+    Cons(^f, ^more) => if named {
+      Text::concat_all(Cons(c.name, Cons(" { ", Cons(Text::join(", ", dbg_pattern_fields(c.fields, 0)), Cons(" }", Nil)))))
+    } else {
+      Text::concat_all(Cons(c.name, Cons("(", Cons(Text::join(", ", dbg_binders_numbered(n, "b", 0)), Cons(")", Nil)))))
+    }
+  }
+  let shown_ctor := if d.is_struct { d.data.name } else { dbg_key(c.name) }
+  let shown := dbg_concat(dbg_shown_fields(shown_ctor, c.fields, dbg_binders_numbered(n, "b", 0), go))
+  Text::concat_all(Cons("    ", Cons(pattern, Cons(" => ", Cons(shown, Cons(text_newline(), Nil))))))
+}
+
+pub fn dbg_arms(cs: List(SurfaceDataCtor), d: DbgData, go: DbgGo): Text {
+  match cs {
+    Nil => ""
+    Cons(c, rest) => Text::concat(dbg_arm(c, d, go), dbg_arms(rest, d, go))
+  }
+}
+
+pub fn dbg_constraints(gs: List(Text), need: List(Bool)): List(Text) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => match need {
+      Nil => Nil
+      Cons(b, more) => if b { Cons(cat3("Debug(", g, ")"), dbg_constraints(rest, more)) } else { dbg_constraints(rest, more) }
+    }
+  }
+}
+
+pub struct DbgText {
+  fn_text: Option(Text),
+  inst: Text
+}
+
+pub fn dbg_body(d: DbgData, go: DbgGo, fuel: Bool): Text {
+  let name := d.data.name
+  if not(d.inside) { dbg_quote(cat3(name, " { .. }", "")) } else {
+    match d.data.constructors {
+      Cons(c, none) => match none {
+        Nil => if d.is_struct && (not(go.on) || fuel) {
+          let reads := dbg_struct_reads(d.data, c.fields, 0)
+          dbg_concat(dbg_shown_fields(name, c.fields, reads, go))
+        } else {
+          Text::concat_all(["match a {", text_newline(), dbg_arms(d.data.constructors, d, go), "  }"])
+        }
+        Cons(^c2, ^more) => Text::concat_all(["match a {", text_newline(), dbg_arms(d.data.constructors, d, go), "  }"])
+      }
+      Nil => dbg_quote(name)
+    }
+  }
+}
+
+pub fn dbg_text(d: DbgData, need: List(Bool), go: DbgGo, fuel: Bool): DbgText {
+  let name := d.data.name
+  let gs := d.data.generics
+  let head := match gs {
+    Nil => name
+    Cons(^g, ^more) => Text::concat_all([name, "(", Text::join(", ", gs), ")"])
+  }
+  let binders := match gs {
+    Nil => ""
+    Cons(^g, ^more) => Text::concat_all(["<", Text::join(", ", gs), ">"])
+  }
+  let where_ := match dbg_constraints(gs, need) {
+    Nil => ""
+    Cons(c, more) => Text::concat(" where ", Text::join(", ", Cons(c, more)))
+  }
+  let body := dbg_body(d, go, fuel)
+  let fuel_fn := dbg_fuel_name(d.data)
+  let nl := text_newline()
+  let wrap := (b: Text) => Text::concat_all(
+    ["instance", binders, " Debug(", head, ")", where_, " {", nl, "  fn debug(a: &", head, "): Text {", nl, "  ", b, nl, "  }", nl, "}", nl]
+  )
+  if go.on && not(fuel) {
+    // A group of types recursive through each other: top-level functions that
+    // take their parameter apart by `match`, which the row check sees end.
+    DbgText {
+      fn_text: Some(
+        Text::concat_all(["fn ", fuel_fn, binders, "(a: &", head, "): Text", where_, " {", nl, "  ", body, nl, "}", nl])
+      ),
+      inst: wrap(Text::concat_all([fuel_fn, "(a)"]))
+    }
+  } else {
+    if go.on {
+      // A top-level function: the row check sees its fuel go down, which it
+      // does not for a local one.
+      DbgText {
+        fn_text: Some(
+          Text::concat_all(
+            [
+              "fn ",
+              fuel_fn,
+              binders,
+              "(a: &",
+              head,
+              ", debug__fuel: u64): Text",
+              where_,
+              " {",
+              nl,
+              "  if debug__fuel == 0 { \"..\" } else {",
+              nl,
+              "  let debug__left := U64::wrapping_sub(debug__fuel, 1)",
+              nl,
+              "  ",
+              body,
+              nl,
+              "  }",
+              nl,
+              "}",
+              nl
+            ]
+          )
+        ),
+        inst: wrap(Text::concat_all([fuel_fn, "(a, 64)"]))
+      }
+    } else { DbgText { fn_text: None, inst: wrap(body) } }
+  }
+}
+
+// ---- the instances for a program ----
+
+pub fn dbg_member_texts(ms: List(DbgData × List(Bool)), go: DbgGo, fuel: Bool): List(DbgText) {
+  match ms {
+    Nil => Nil
+    Cons(m, rest) => Cons(dbg_text(m.fst, m.snd, go, fuel), dbg_member_texts(rest, go, fuel))
+  }
+}
+
+pub fn dbg_fn_texts(ts: List(DbgText)): Text {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => Text::concat(
+      match t.fn_text {
+        None => ""
+        Some(f) => f
+      },
+      dbg_fn_texts(rest)
+    )
+  }
+}
+
+pub fn dbg_inst_texts(ts: List(DbgText)): Text {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => Text::concat(t.inst, dbg_inst_texts(rest))
+  }
+}
+
+// The members of a group that a `List` of is a field of one of them.
+pub fn dbg_helpers_of(fs: List(SurfaceDataField), ds: List(DbgData), out: List(Nat)): List(Nat) {
+  match fs {
+    Nil => out
+    Cons(f, rest) => dbg_helpers_of(
+      rest,
+      ds,
+      match dbg_shown_by(f.ty, ds) {
+        None => out
+        Some(ci) => match ci.fst {
+          Succ(c) => match c {
+            Zero => dbg_add_nat(out, ci.snd)
+            Succ(^o) => out
+          }
+          Zero => out
+        }
+      }
+    )
+  }
+}
+
+pub fn dbg_add_nat(xs: List(Nat), x: Nat): List(Nat) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => if y == x { xs } else { Cons(y, dbg_add_nat(rest, x)) }
+  }
+}
+
+pub fn dbg_helpers(ds: List(DbgData), all: List(DbgData), out: List(Nat)): List(Nat) {
+  match ds {
+    Nil => out
+    Cons(d, rest) => dbg_helpers(rest, all, dbg_helpers_of(dbg_fields_of(d.data), all, out))
+  }
+}
+
+// The functions that show the elements of a `List` of the `i`th member: the
+// items, after a first one, each taking its list apart by `match`.
+pub fn dbg_items_text(d: SurfaceData): Text {
+  let item := d.name
+  let go := dbg_fuel_name(d)
+  let items := dbg_items_name(d, "items")
+  let after := dbg_items_name(d, "after")
+  let nl := text_newline()
+  Text::concat_all(
+    [
+      "fn ",
+      items,
+      "(xs: &List(",
+      item,
+      ")): Text {",
+      nl,
+      "  match xs {",
+      nl,
+      "    Nil => \"\"",
+      nl,
+      "    Cons(x, rest) => concat(",
+      go,
+      "(&x), ",
+      after,
+      "(&rest))",
+      nl,
+      "  }",
+      nl,
+      "}",
+      nl,
+      "fn ",
+      after,
+      "(xs: &List(",
+      item,
+      ")): Text {",
+      nl,
+      "  match xs {",
+      nl,
+      "    Nil => \"\"",
+      nl,
+      "    Cons(x, rest) => concat(\", \", concat(",
+      go,
+      "(&x), ",
+      after,
+      "(&rest)))",
+      nl,
+      "  }",
+      nl,
+      "}",
+      nl
+    ]
+  )
+}
+
+pub fn dbg_helper_texts(is: List(Nat), ds: List(DbgData)): Text {
+  match is {
+    Nil => ""
+    Cons(i, rest) => Text::concat(
+      match dbg_nth_member(ds, i) {
+        None => ""
+        Some(m) => dbg_items_text(m.data)
+      },
+      dbg_helper_texts(rest, ds)
+    )
+  }
+}
+
+pub fn dbg_decls_of(ms: List(DbgData × List(Bool))): List(DbgData) {
+  match ms {
+    Nil => Nil
+    Cons(m, rest) => Cons(m.fst, dbg_decls_of(rest))
+  }
+}
+
+// The text of the instances for `ms`, which are the types of a recursive group
+// with the functions they call, or one type.
+pub fn dbg_source(ms: List(DbgData × List(Bool)), group: Bool, fuel: Bool): Text {
+  let ds := dbg_decls_of(ms)
+  let go := DbgGo { on: group, members: ds, fuel: fuel }
+  let ts := dbg_member_texts(ms, go, fuel)
+  let helpers := if group { dbg_helper_texts(dbg_helpers(ds, ds, Nil), ds) } else { "" }
+  Text::concat_all([dbg_fn_texts(ts), helpers, dbg_inst_texts(ts)])
+}
+
+pub(open) struct DbgJob {
+  at: Nat,
+  source: Text,
+  instances: Nat,
+  group: Bool
+}
+
+pub fn dbg_need_of(d: DbgData, inferred: List(Text × List(Bool))): Option(List(Bool)) {
+  match dbg_table_get(inferred, dbg_key(d.data.name)) {
+    None => None
+    Some(need) => if d.inside { Some(need) } else { Some(dbg_falses(List::length(d.data.generics))) }
+  }
+}
+
+pub fn dbg_single_jobs(
+  cands: List(DbgData),
+  fueled: List(Text),
+  inferred: List(Text × List(Bool))
+): List(DbgJob) {
+  match cands {
+    Nil => Nil
+    Cons(d, rest) => if dbg_has(fueled, dbg_key(d.data.name)) { dbg_single_jobs(rest, fueled, inferred) } else {
+      match dbg_need_of(d, inferred) {
+        None => dbg_single_jobs(rest, fueled, inferred)
+        Some(need) => Cons(
+          DbgJob { at: d.data.start, source: dbg_source(Cons(#(d, need), Nil), false, false), instances: 1, group: false },
+          dbg_single_jobs(rest, fueled, inferred)
+        )
+      }
+    }
+  }
+}
+
+pub fn dbg_with_needs(ds: List(DbgData), inferred: List(Text × List(Bool))): Option(List(DbgData × List(Bool))) {
+  match ds {
+    Nil => Some(Nil)
+    Cons(d, rest) => match dbg_need_of(d, inferred) {
+      None => None
+      Some(need) => match dbg_with_needs(rest, inferred) {
+        None => None
+        Some(more) => Some(Cons(#(d, need), more))
+      }
+    }
+  }
+}
+
+pub fn dbg_last_start(ds: List(DbgData), at: Nat): Nat {
+  match ds {
+    Nil => at
+    Cons(d, rest) => dbg_last_start(rest, Nat::max(at, d.data.start))
+  }
+}
+
+// A group is made in one place, after the last type it declares, where all of
+// them are known. It gets none when one of its types gets none.
+pub fn dbg_group_jobs(
+  gs: List(DbgGroup),
+  cands: List(DbgData),
+  inferred: List(Text × List(Bool))
+): List(DbgJob) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => {
+      let ms := dbg_members(cands, g.names)
+      if List::length(ms) == List::length(g.names) {
+        match dbg_with_needs(ms, inferred) {
+          None => dbg_group_jobs(rest, cands, inferred)
+          Some(parts) => Cons(
+            DbgJob { at: dbg_last_start(ms, 0), source: dbg_source(parts, true, g.fuel), instances: List::length(ms), group: true },
+            dbg_group_jobs(rest, cands, inferred)
+          )
+        }
+      } else { dbg_group_jobs(rest, cands, inferred) }
+    }
+  }
+}
+
+pub fn dbg_not_written(cands: List(DbgData), own: List(Text × List(Bool))): List(DbgData) {
+  match cands {
+    Nil => Nil
+    Cons(d, rest) => match dbg_table_get(own, dbg_key(d.data.name)) {
+      Some(^n) => dbg_not_written(rest, own)
+      None => Cons(d, dbg_not_written(rest, own))
+    }
+  }
+}
+
+pub fn dbg_not_slice(cands: List(DbgData), is_prelude: Bool): List(DbgData) {
+  match cands {
+    Nil => Nil
+    Cons(d, rest) => if is_prelude && dbg_key(d.data.name) == "Slice" { dbg_not_slice(rest, is_prelude) } else { Cons(d, dbg_not_slice(rest, is_prelude)) }
+  }
+}
+
+pub fn dbg_not_nested(cands: List(DbgData), nested: List(Text), fueled: List(Text)): List(DbgData) {
+  match cands {
+    Nil => Nil
+    Cons(d, rest) => if not(dbg_has(nested, dbg_key(d.data.name))) || dbg_has(fueled, dbg_key(d.data.name)) {
+      Cons(d, dbg_not_nested(rest, nested, fueled))
+    } else { dbg_not_nested(rest, nested, fueled) }
+  }
+}
+
+pub fn dbg_extend(table: List(Text × List(Bool)), more: List(Text × List(Bool))): List(Text × List(Bool)) {
+  match more {
+    Nil => table
+    Cons(e, rest) => dbg_extend(dbg_table_put(table, e.fst, e.snd), rest)
+  }
+}
+
+// What the compiler writes for the types `program` declares: where each goes
+// (after the type), and its text. `prelude` is where the class and the
+// instances of the types the program does not declare are, `is_prelude` when
+// `program` is the prelude; `src` is the text of the file read from `base`.
+pub fn dbg_jobs(
+  program: List(SurfaceStmt),
+  prelude: List(SurfaceStmt),
+  is_prelude: Bool,
+  src: Text,
+  base: Nat
+): List(DbgJob) ! {overflow} {
+  if not(dbg_declares(program)) && not(dbg_declares(prelude)) { Nil } else {
+    let table0 := if is_prelude { Nil } else { dbg_written(prelude, Nil) }
+    let own := dbg_written(program, Nil)
+    let table := dbg_extend(table0, own)
+    // A `Slice` is only ever borrowed, so it cannot be an instance's head.
+    let cands0 := dbg_not_slice(dbg_not_written(dbg_collect(program, src, base), own), is_prelude)
+    match cands0 {
+      Nil => Nil
+      Cons(^c0, ^more0) => {
+        let names := dbg_keys(cands0)
+        let rs := dbg_reaches(dbg_edges(cands0, names), names, Succ(List::length(names)))
+        let comps := dbg_components(names, rs, names, Nil)
+        let nested := dbg_flatten(comps)
+        let groups := dbg_groups(cands0, comps, nested)
+        let fueled := dbg_group_names(groups)
+        let cands := dbg_not_nested(cands0, nested, fueled)
+        let inferred := dbg_retain(
+          dbg_loop(cands, groups, dbg_start_table(cands, table), dbg_total(cands)),
+          cands
+        )
+        List::append(dbg_single_jobs(cands, fueled, inferred), dbg_group_jobs(groups, cands, inferred))
+      }
+    }
+  }
+}
+
+// ---- where they go: each after the statement that declares its type ----
+
+mutual {
+  pub fn dbg_declared(ss: List(SurfaceStmt)): List(Nat) {
+    match ss {
+      Nil => Nil
+      Cons(s, rest) => List::append(dbg_declared_stmt(s), dbg_declared(rest))
+    }
+  }
+
+  pub fn dbg_declared_stmt(s: SurfaceStmt): List(Nat) {
+    match s {
+      StStruct(d) => Cons(d.start, Nil)
+      StEnum(d) => Cons(d.start, Nil)
+      StMutual(items, ^start, ^end) => dbg_declared(items)
+      _ => Nil
+    }
+  }
+}
+
+pub fn dbg_nat_has(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || dbg_nat_has(rest, x)
+  }
+}
+
+pub fn dbg_made_after(starts: List(Nat), made: List(Nat × List(SurfaceStmt))): List(SurfaceStmt) {
+  match made {
+    Nil => Nil
+    Cons(m, rest) => if dbg_nat_has(starts, m.fst) { List::append(m.snd, dbg_made_after(starts, rest)) } else { dbg_made_after(starts, rest) }
+  }
+}
+
+pub fn dbg_insert(ss: List(SurfaceStmt), made: List(Nat × List(SurfaceStmt))): List(SurfaceStmt) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => Cons(s, List::append(dbg_made_after(dbg_declared_stmt(s), made), dbg_insert(rest, made)))
+  }
+}

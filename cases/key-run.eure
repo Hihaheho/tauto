@@ -1,0 +1,81 @@
+// The `Key` class of `std/key.taut` reaches a program that runs: `Key::eq` and
+// `Key::feed` on a number, on a struct with `@keyed!`, and through a function
+// generic over `where Key(K)`. `feed` hands the hash step a `UInt(64)`, which
+// crosses the checked/executable boundary as the machine word it is. `UInt(8)` and
+// `UInt(32)` keys do the same: each width crosses as its machine word, and
+// `of_nat_mod` wraps at `2^w`.
+
+@ cases.key-eq-and-feed-run
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Nat::of_u64` yet"
+source = ```tauto
+import std::key { Key, keyed }
+import std::uint { UInt }
+
+@keyed!(0) => instance Key
+pub(open) inductive struct Point { x: Nat, y: Nat }
+
+fn same<K>(a: &K, b: &K): Bool where Key(K) { Key::eq(a, b) }
+fn run(): Bool { same(&Point { x: 1, y: 2 }, &Point { x: 1, y: 2 }) }
+fn differ(): Bool { same(&Point { x: 1, y: 2 }, &Point { x: 1, y: 3 }) }
+fn word(p: &Nat): UInt(64) { Key::feed(p, UInt::of_nat_mod64(7), &((h: UInt(64), w: UInt(64)) => w)) }
+fn fed(): Nat { UInt::val64(word(&5)) }
+fn wrapped(): Nat { UInt::val64(UInt::of_nat_mod64(18446744073709551621)) }
+show(&run())
+show(&differ())
+show(&fed())
+show(&wrapped())
+```
+stdout = ```
+true
+false
+5
+5
+```
+
+@ cases.key-u8-eq-and-feed-run
+source = ```tauto
+import std::key { Key }
+import std::uint { UInt }
+
+fn same(a: &UInt(8), b: &UInt(8)): Bool { Key::eq(a, b) }
+fn word(p: &UInt(8)): UInt(64) { Key::feed(p, UInt::of_nat_mod64(7), &((h: UInt(64), w: UInt(64)) => w)) }
+fn fed(): Nat { UInt::val64(word(&UInt::of_nat_mod8(5))) }
+fn wrap_hi(): Nat { UInt::val8(UInt::of_nat_mod8(255)) }
+fn wrap_lo(): Nat { UInt::val8(UInt::of_nat_mod8(256)) }
+show(&same(&UInt::of_nat_mod8(3), &UInt::of_nat_mod8(3)))
+show(&same(&UInt::of_nat_mod8(3), &UInt::of_nat_mod8(4)))
+show(&fed())
+show(&wrap_hi())
+show(&wrap_lo())
+```
+stdout = ```
+true
+false
+5
+255
+0
+```
+
+@ cases.key-u32-eq-and-feed-run
+source = ```tauto
+import std::key { Key }
+import std::uint { UInt }
+
+fn same(a: &UInt(32), b: &UInt(32)): Bool { Key::eq(a, b) }
+fn word(p: &UInt(32)): UInt(64) { Key::feed(p, UInt::of_nat_mod64(7), &((h: UInt(64), w: UInt(64)) => w)) }
+fn fed(): Nat { UInt::val64(word(&UInt::of_nat_mod32(5))) }
+fn wrap_hi(): Nat { UInt::val32(UInt::of_nat_mod32(4294967295)) }
+fn wrap_lo(): Nat { UInt::val32(UInt::of_nat_mod32(4294967296)) }
+show(&same(&UInt::of_nat_mod32(3), &UInt::of_nat_mod32(3)))
+show(&same(&UInt::of_nat_mod32(3), &UInt::of_nat_mod32(4)))
+show(&fed())
+show(&wrap_hi())
+show(&wrap_lo())
+```
+stdout = ```
+true
+false
+5
+4294967295
+0
+```

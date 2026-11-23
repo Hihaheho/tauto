@@ -1,74 +1,55 @@
-# Rust から tote をマシンで動かす（`tauto-embed`）
+# Running totes from Rust on the VM (`tauto-embed`)
 
-Rust の crate は、`build.rs` で `tauto-build` が書く facade を通して tote を呼ぶ。
-facade には二つの形があり、関数と型は同じになる。
+A Rust crate calls a tote through the facade `tauto-build` writes in
+`build.rs`. Both facade kinds expose the same functions and types:
 
-- **Rust backend の facade**: tote のコードを crate の中にコンパイルする。
-- **マシンの facade**（`tauto-vm` を `tauto-embed` から使う）: crate に入るのは
-  data 型、その値とマシンの値の変換、マシンを呼ぶ関数と、ビルドがコンパイルした
-  プログラムのバイト列（`tauto_vm::image`）だけになる。tote を変えても crate で
-  再コンパイルされるのは小さな facade だけになる。
+- **Rust backend facade**: the tote is compiled into the crate.
+- **VM facade** (`tauto-vm` via `tauto-embed`): the crate contains only the
+  data types, value conversions, call stubs and the compiled program image
+  (`tauto_vm::image`), so changing the tote recompiles only the small facade.
 
-## どちらになるか
+`TAUTO_BACKEND=vm|rust` chooses; by default, builds with debug assertions use
+the VM facade. Totes the VM facade cannot serve (uniffi, nonresuming entries,
+exported functions over unconvertible values such as functions, `Nat`, linear
+types, links, and unsupported externs below) fall back to the Rust facade
+with a warning.
 
-`TAUTO_BACKEND=vm` か `TAUTO_BACKEND=rust` で選ぶ。指定がなければ、`tauto-embed`
-に依存する crate の debug assertions 付きのビルドはマシンの facade に、それ以外は
-Rust backend の facade になる。マシンの facade が扱えない tote（uniffi、nonresuming entry、
-変換のない型の値を公開する関数: 関数、`Nat`、linear な型、link、そして下の
-extern の制限に当たるもの）は、理由を書いた warning を出して Rust backend の
-facade になる。
+## `reload()`
 
-## reload
+`reload() -> Result<bool, String>`: the Rust facade always returns `Ok(false)`.
+The VM facade recompiles the tote if its files changed and returns `Ok(true)`;
+the next call runs the new code. If compilation fails, or the interface
+fingerprint (`tauto_nir::interface_fingerprint`: exported functions, data
+types, constructor order, extern types) changed, the old code keeps running
+and an error is returned. Each thread has its own compiled tote; `reload()`
+affects the calling thread.
 
-どちらの facade にも `reload() -> Result<bool, String>` がある。Rust backend の
-facade は常に `Ok(false)` を返し、変更は次のビルドで入る。マシンの facade は
-tote のファイルを読み、動いているコードをコンパイルしたとき（最初はビルドが
-読んだとき）と中身が違えば、コンパイルし直して次の呼び出しから新しいコードを
-動かす（`Ok(true)`）。いつ呼ぶかは呼ぶ側が決める。新しいコードが
-コンパイルできないとき、または公開する関数や data 型が facade を作ったときと
-違うとき（`tauto_nir::interface_fingerprint`。Rust の型が変わったので再ビルドが
-要る）は、古いコードのまま動き続け、理由をエラーで返す。
+## How a call ends
 
-マシンの値はスレッド間で共有しない。スレッドごとにコンパイルした tote を持ち、
-`reload()` は呼んだスレッドのものを読み直す。
+The facade's functions end as the Rust backend's code does: a run-time error of
+the guest (a division by zero, an overflow) panics, and the guest's `exit`
+ends the host process. A host that must outlive the guest calls
+`Tote::try_call`, which returns `Failure::Exit(code)` or `Failure::Error(message)`
+instead. A missing export, an answer of another type, and a tote that does not
+load are mistakes of the host's build and panic in both.
 
-## 変換
+## Conversion and image
 
-`tauto_embed::Vm` が Rust の値とマシンの値を相互に変換する。標準の型の実装は
-`tauto-embed` にあり、tote の data 型の実装は `tauto-rustgen` が書く
-（`emit_vm_lib_tokens`）。マシンは Rust の型を知らない。data 型はパッケージの中の
-番号で、constructor は data 型の中の番号で指す。fingerprint はこの順序も含むので、
-reload で読み違えることはない。
+`tauto_embed::Vm` converts values; `tauto-rustgen` (`emit_vm_lib_tokens`)
+writes the conversions for the tote's data types, which the VM knows only by
+index. The embedded `Image` lets the first call run without compiling and
+without the tote's files. Programs containing things an image cannot hold
+(runtime syntax parsers, macro-host declarations, constants other than
+literals and functions) are compiled from source on first call, with a
+warning. An image is read only by the same VM version.
 
-## ビルドが書くプログラム
+## Externs
 
-`tauto_vm::image::Image` はコンパイルしたプログラムと、外から呼ぶための公開関数の
-表と data 型ごとの constructor の表を持ち、バイト列に書ける。facade はこれを
-埋め込むので、最初の呼び出しはコンパイルせずに動き、debug のバイナリは tote の
-ファイルがなくても動く（reload にはファイルが要る）。
-
-バイト列に書けないもの（実行時の構文パーサ、macro host が作った宣言、リテラルと
-関数以外の定数）を持つプログラムは、warning を出して、最初の呼び出しでソースから
-コンパイルする。バイト列はそれを書いたマシンと同じ版でしか読まない。
-
-## extern
-
-マシンは extern 関数を、package の `externs` の中の番号で host に頼む
-（`Op::Extern`、`Host::call_extern`）。マシンは Rust の型も関数の名前も知らず、
-番号と値だけを渡す。この層は Rust に依存しないので、ほかの言語から動かすマシン
-でも使える。
-
-マシンの facade は、番号ごとに引数を変換し、Rust backend の facade と同じ
-extern のラッパー（`externs`）を呼び、答えを変換して返す関数
-（`tauto_externs`）を持つ。extern の型（`extern { type T }`）の値は、マシンの中
-では host の値（`Value::Host`）として持つだけで、表示は `<T>` になる。
-
-扱うのは、値で渡す引数と `&T` で渡す引数。`&T` は一度 Rust の値に変換して参照を
-渡す（extern の型なら、マシンが持つ値をそのまま借りる）。`&mut T` を取る extern、
-generic な extern、借用を返す extern、Tauto の関数を受け取る extern は扱わず、
-その tote は Rust backend の facade になる。
-
-extern の型は fingerprint に入る。extern を足す・型を変える reload は再ビルドが
-要る。
-
-公開する関数の `&T` の引数（extern の型以外）は、複製してマシンに渡す。
+The VM asks the host for externs by index (`Op::Extern`,
+`Host::call_extern`); this layer is language-independent. The VM facade's
+`tauto_externs` converts arguments, calls the same `externs` wrappers as the
+Rust facade and converts the result. Extern type values are opaque
+`Value::Host`s shown as `<T>`. Supported: by-value and `&T` arguments. Externs
+taking `&mut T`, generic externs, externs returning borrows or taking Tauto
+functions force the Rust facade. `&T` arguments of exported functions (other
+than extern types) are copied into the VM.

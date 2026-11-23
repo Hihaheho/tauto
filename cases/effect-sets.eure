@@ -4,7 +4,7 @@
 
 @ cases.set-in-row-names-its-effects
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
 effect log(m: Text): Unit resume 1
 effect Inner {log}
@@ -25,15 +25,14 @@ handle { apply(hello) } with {
 stdout = "hello"
 // The Rust backend does not yet build a named function passed as a callback
 // under a handler; that is not about sets.
-backends = ["javascript"]
 
 @ cases.set-in-row-cannot-hide-effects
 source = ```tauto
 effect log(m: Text): Unit resume 1
 effect Talk {log}
-fn hello(): Unit ! {Talk} { perform show("x", 1) }
+fn hello(): Unit ! {Talk} { show(&1) }
 ```
-rows = "error: `hello` may perform show"
+rows = "error: `hello` may perform stdout"
 
 @ cases.own-effect-hides-the-prelude-set
 source = ```tauto
@@ -43,19 +42,19 @@ let x := handle { f() } with {
   Host(), k => k(7)
   return v => v
 }
-perform show("x", x)
+show(&x)
 ```
-shows = ["x = 7"]
+stdout = "7\n"
 
 @ cases.task-body-uses-caller-effect-through-its-own-handler
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```tauto
-import std::prelude::Os
-import std::prelude::Par
+import std::builtin::os
+import std::builtin::par
 
 effect log(m: Text): Unit resume 1
 
-fn with_log(body: () -> i64 ! {log, stdout}): i64 ! {stdout} {
+fn with_log(body: () -> nat ! {log, stdout}): nat ! {stdout} {
   handle { body() } with {
     log(m), k => {
       perform stdout(m)
@@ -66,26 +65,25 @@ fn with_log(body: () -> i64 ! {log, stdout}): i64 ! {stdout} {
 }
 
 // A library: it starts a task and knows nothing of `log`.
-fn serve<!h: Host>(conn: (n: i64) -> i64 ! h): i64 ! {∀ T. spawn(T), wait} ∪ h {
+fn serve<!h: Host>(conn: (n: nat) -> nat ! h): nat ! {∀ T. spawn(() -> T ! {}), wait} ∪ h {
   let t := perform spawn(() => conn(1))
   Task::join(t)
 }
 
-fn hook(n: i64): i64 ! {log} {
+fn hook(n: nat): nat ! {log} {
   perform log("in-task ")
   n + 1
 }
 
 let r := serve((n) => with_log(() => hook(n)))
-perform show("r", r)
+show(&r)
 ```
-stdout = "in-task "
-shows = ["r = 2"]
+stdout = "in-task 2\n"
 
 @ cases.bounded-row-variable-rejects-effects-outside-its-set
 source = ```tauto
 effect log(m: Text): Unit resume 1
-fn serve<!h: Host>(conn: () -> i64 ! h): i64 ! {∀ T. spawn(T), wait} ∪ h {
+fn serve<!h: Host>(conn: () -> i64 ! h): i64 ! {∀ T. spawn(() -> T ! {}), wait} ∪ h {
   Task::join(perform spawn(() => conn()))
 }
 fn bad(): i64 ! {log} { perform log("x"); 1 }
@@ -95,7 +93,7 @@ rows = "error: log is not in Host, which bounds h"
 
 @ cases.bounded-row-variable-is-in-the-row-of-the-spawn
 source = ```tauto
-fn serve<!h: Host>(conn: () -> i64 ! h): i64 ! {∀ T. spawn(T), wait} {
+fn serve<!h: Host>(conn: () -> i64 ! h): i64 ! {∀ T. spawn(() -> T ! {}), wait} {
   Task::join(perform spawn(() => conn()))
 }
 ```
@@ -104,16 +102,45 @@ rows = "error: `serve` may perform |h"
 @ cases.task-body-with-an-outer-effect-says-where-the-handler-goes
 source = ```tauto
 effect log(m: Text): Unit resume 1
-fn go(): i64 ! {∀ T. spawn(T), log} {
+fn go(): i64 ! {∀ T. spawn(() -> T ! {}), log} {
   Task::join(perform spawn(() => { perform log("x"); 1 }))
 }
 ```
-rows = "error: a function value may perform log but its type permits {Div, argv, env, fs_canonicalize, fs_copy, fs_create_dir, fs_list_dir, fs_read, fs_read_bytes, fs_read_bytes_under, fs_read_link, fs_read_under, fs_remove, fs_rename, fs_stat, fs_temp_dir, fs_write, fs_write_bytes, fs_write_new, monotonic_clock, net, net_addr, net_resolve, permission, proc_close, proc_close_stdin, proc_read, proc_run, proc_spawn, proc_wait, proc_write, random, secure_random, shutdown_token, sleep, stderr, stdin_bytes, stdout, stdout_flush, tcp_accept, tcp_close, tcp_connect, tcp_listen, tcp_read, tcp_shutdown, tcp_unlisten, tcp_write, tls_accept, tls_close, tls_connect, tls_read, tls_shutdown, tls_write, wait, wall_clock}; a task runs apart from the handlers around its `spawn`, so its handler goes in the task's body: `spawn(() => handler(f))`"
+rows = "error: a function value may perform log but its type permits {argv, atomic_fetch_add, atomic_load, atomic_new, atomic_store, budget, budget_memory, div, divzero, env, environ, fs_canonicalize, fs_copy, fs_create_dir, fs_list_dir, fs_lock, fs_read, fs_read_bytes, fs_read_bytes_under, fs_read_link, fs_read_under, fs_remove, fs_rename, fs_set_mode, fs_stat, fs_temp_dir, fs_unlock, fs_write, fs_write_bytes, fs_write_new, hash_seed, host_width, monotonic_clock, mutex_claim, mutex_new, mutex_put, mutex_take_claimed, mutex_withdraw, net, net_addr, net_cancel, net_close, net_finish, net_open, net_read, net_resolve, net_write, overflow, permission, proc_close, proc_close_stdin, proc_read, proc_run, proc_spawn, proc_wait, proc_write, random, ref_get, ref_new, ref_set, secure_random, shutdown_token, sleep, spawn, stderr, stdin_bytes, stdout, stdout_flush, tcp_accept, tcp_close, tcp_connect, tcp_listen, tcp_read, tcp_shutdown, tcp_unlisten, tcp_write, timer, tls_accept, tls_close, tls_connect, tls_read, tls_shutdown, tls_write, uhost_add, uhost_mul, uhost_of_u64, uhost_sub, wait, wall_clock, weak_get, weak_of}; a task runs apart from the handlers around its `spawn`, so its handler goes in the task's body: `spawn(() => handler(f))`"
 
 @ cases.a-source-effect-with-a-host-display-is-not-a-host-operation
 source = ```tauto
 effect stdout(number: i64): i64 resume 1
 let value := perform stdout(7)
-perform show("value", value)
+show(&value)
 ```
 rows = "error: unhandled effect main::stdout at the top level"
+
+@ cases.a-helper-without-the-callback-effect-cannot-call-it
+source = ```tauto
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+fn call<!e>(f: &((i64) -> Unit ! e), n: i64): Unit ! {} { f(n) }
+fn run(): Unit ! {div} { call((k) => visit(k), 1) }
+```
+rows = "error: `call` may perform |e but its row is {}"
+
+// An arm of an effect indexed by a row removes its instance (`ui@!{}`), which
+// is not the label of a body's row (`spawn(() -> A ! e)`).
+@ cases.an-arm-removes-an-effect-indexed-by-a-row
+source = ```tauto
+pub struct Ui(!e) {
+  lift: (part: () -> Unit ! {div} ∪ e) -> Unit ! {div}
+}
+pub effect ui<!e>(): Ui(e) direct
+pub fn with_ui_of<A, !e, !f>(u: Ui(e), body: () -> A ! {ui(e)} ∪ f): A ! f {
+  handle { body() } with {
+    ui(), k => k(u)
+    return value => value
+  }
+}
+pub fn with_ui<A, !f>(body: () -> A ! {ui(!{})} ∪ f): A ! f {
+  let u: Ui(!{}) := Ui { lift: part => part() }
+  with_ui_of(u, body)
+}
+```
+rows = "ok"

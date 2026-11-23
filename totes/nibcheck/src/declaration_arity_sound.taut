@@ -1,12 +1,14 @@
+import "messages.taut"
 import "rules_data_kind.taut"
 import "diagnostic_sound.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
 import "kind_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 
 // Value types use every declared parameter exactly once in the argument list.
@@ -19,11 +21,11 @@ pub theorem declaration_arity_test(
   mismatch: Bool,
   clean: DiagnosticClean(ck_st(frame_arity_small(c, name, span, data, mismatch)))
 ): mismatch = false {
-  ⊢ mismatch = false from match mismatch {
+  match mismatch {
     true => False::elim(
       diagnostic_error_impossible(
         c,
-        cat4(name, " takes ", Text::of_nat(list_len(dgen(data))), " arguments"),
+        takes_arguments_message(name, Text::of_nat(list_len(dgen(data)))),
         span,
         clean
       )

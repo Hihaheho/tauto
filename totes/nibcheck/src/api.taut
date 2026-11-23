@@ -1,0 +1,648 @@
+import std::builtin::os
+import std::text
+import std::base
+import surface::surface
+import parse::parse
+import surface::occurrence
+import surface::apply
+import surface::keys
+import "../../identity/src/restore.taut"
+import "../../identity/src/identity.taut"
+import std::map
+import surface::unascribe
+import unicode::unicode
+import unicode::classes
+import syntax::syntax
+import text::text
+import "modules.taut"
+import "modules_head.taut"
+import "types_run.taut"
+import "report_borrows.taut"
+import "lin_value.taut"
+import "lin_value_head.taut"
+import "rows.taut"
+import "rows_verify.taut"
+import "rows_base.taut"
+import "messages.taut"
+import "sealed.taut"
+import "checker.taut"
+import std::text_ops
+import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
+import "classes_evidence.taut"
+import "indices.taut"
+import "indices_head.taut"
+import "types_fallback.taut"
+import "debug.taut"
+// The checks of nibcheck as a library: the prelude read once (`NibcheckPrelude`),
+// and the structured reports of the types and the rows (`TypeReport`, `RowReport`)
+// beside their dumps. `main.taut` is the command line over them.
+
+// `source` read as the checkers read it, with each `(e: T)` read as
+// `#ascribe(T, e)` (the checker holds `e` to `T` there). The ascriptions are
+// read before the products are put: `match x: T` and `match (x: T)` are the
+// scrutinee `(x: T)` and not the type of the whole `match`, as the Rust reader
+// gives them; only `⊢ G from match` writes that type.
+pub fn nibcheck_parse(
+  t: &SyntaxTables,
+  classes: UnicodeClasses,
+  source: Text,
+  base: Nat
+): Option(List(SurfaceStmt)) ! {div} {
+  match surface_read_program(t, classes, source, base) {
+    None => None
+    Some(stmts) => Some(surface_lower_list_surfacestmt(surface_unascribe(stmts), Nil, false))
+  }
+}
+
+pub fn nibcheck_read(
+  t: &SyntaxTables,
+  classes: UnicodeClasses,
+  path: Text,
+  base: Nat
+): Option(List(SurfaceStmt)) ! {div, fs_read, overflow} {
+  match read_file(path) {
+    Err(^e) => None
+    Ok(source) => nibcheck_parse(t, classes, source, base)
+  }
+}
+
+pub fn nibcheck_read_text(
+  t: &SyntaxTables,
+  classes: UnicodeClasses,
+  path: Text,
+  base: Nat
+): Option(Text × List(SurfaceStmt)) ! {div, fs_read, overflow} {
+  match read_file(path) {
+    Err(^e) => None
+    Ok(source) => match nibcheck_parse(t, classes, source, base) {
+      None => None
+      Some(stmts) => Some(#(source, stmts))
+    }
+  }
+}
+
+// The instances of `Debug` the compiler writes (`debug.taut`) are read as the
+// program writes them: parsed from their text, where the instances for a
+// group of recursive types come after the last of them.
+pub fn debug_count(ss: List(SurfaceStmt)): Nat {
+  match ss {
+    Nil => 0
+    Cons(s, rest) => match s {
+      StInstance(^i) => Succ(debug_count(rest))
+      _ => debug_count(rest)
+    }
+  }
+}
+
+pub fn debug_only_fns(ss: List(SurfaceStmt)): Bool {
+  match ss {
+    Nil => true
+    Cons(s, rest) => match s {
+      StInstance(^i) => debug_only_fns(rest)
+      StFn(^f) => debug_only_fns(rest)
+      _ => false
+    }
+  }
+}
+
+pub fn debug_made(
+  t: &SyntaxTables,
+  classes: UnicodeClasses,
+  job: DbgJob,
+  base: Nat
+): List(SurfaceStmt) ! {div, overflow} {
+  match nibcheck_parse(t, classes, job.source, base) {
+    None => Nil
+    Some(stmts) => {
+      let found := debug_count(stmts)
+      if (found == job.instances && List::length(stmts) > found) || (not(job.group) && debug_only_fns(stmts)) {
+        stmts
+      } else { Nil }
+    }
+  }
+}
+
+pub fn debug_all_made(
+  t: &SyntaxTables,
+  classes: UnicodeClasses,
+  jobs: List(DbgJob),
+  base: Nat
+): List(Nat × List(SurfaceStmt)) ! {div, overflow} {
+  match jobs {
+    Nil => Nil
+    Cons(j, rest) => Cons(
+      #(j.at, debug_made(t, classes, j, base)),
+      debug_all_made(t, classes, rest, Nat::add(base, Succ(Text::len(j.source))))
+    )
+  }
+}
+
+// `program` with the instances the compiler writes for its types, after each.
+// `prelude` is where the class and the instances of the other types are.
+// The spans of what is made start where no written program has any.
+pub fn debug_add(
+  t: &SyntaxTables,
+  classes: UnicodeClasses,
+  program: List(SurfaceStmt),
+  prelude: List(SurfaceStmt),
+  is_prelude: Bool,
+  src: Text,
+  base: Nat
+): List(SurfaceStmt) ! {div, overflow} {
+  match dbg_jobs(program, prelude, is_prelude, src, base) {
+    Nil => program
+    Cons(j, more) => dbg_insert(
+      program,
+      debug_all_made(t, classes, Cons(j, more), if is_prelude { 805306368 } else { Nat::add(805306368, 134217728) })
+    )
+  }
+}
+
+// The program resolved, with the instances for its types: the report reads
+// those, and what decides whether it uses a class reads what is written.
+pub fn debug_program(
+  t: &SyntaxTables,
+  classes: UnicodeClasses,
+  source: List(SurfaceStmt),
+  text: Text,
+  resolved: ModResolved
+): ModResolved ! {div, overflow} {
+  ModResolved { stmts: debug_add(t, classes, resolved.stmts, source, false, text, 0), errors: resolved.errors }
+}
+
+pub(open) enum NibcheckMode {
+  NibcheckRows
+  NibcheckTypes
+  NibcheckLin
+}
+
+pub fn nibcheck_mode(written: Text): Option(NibcheckMode) {
+  if written == "--rows" { Some(NibcheckRows) } else if written == "--types" {
+    Some(NibcheckTypes)
+  } else if written == "--lin" { Some(NibcheckLin) } else { None }
+}
+
+// The prelude and the program get their occurrences here, once, before the
+// checker sees them: the prelude in one namespace and the program in another,
+// so that no two of their nodes share one. What the checker makes from them
+// (an instance's methods as functions) keeps the occurrences of their nodes.
+pub fn nibcheck_index_prelude(prelude: List(SurfaceStmt)): List(SurfaceStmt) {
+  surface_index_program(prelude, 0)
+}
+
+pub fn nibcheck_index_program(program: List(SurfaceStmt)): List(SurfaceStmt) {
+  surface_index_program(program, 1)
+}
+
+// The program read once for the stages that compare names by id: its resolved
+// names are carried as ids, with the display text of its declarations beside
+// them. The stages that still read names as text keep taking the program as
+// written (`NameSpelled`), so no stage needs the table to read a name; each
+// group of the checker moves to this one when it moves to ids.
+pub fn nibcheck_resolved_program(program: List(SurfaceStmt)): SurfaceResolvedProgram {
+  surface_resolve_program(program)
+}
+
+pub fn nibcheck_missing_occurrence(): Text {
+  Text::concat_all(Cons("error: a term has no occurrence", Cons(text_newline(), Nil)))
+}
+
+// `source` is the prelude as written, with its classes (`check_program` of
+// `types.rs`): a program that uses a class does not check against the expanded
+// prelude, which has none, and is read against the prelude as written instead.
+// The structured result of the types: `None` when a term has no occurrence.
+// `nibcheck_types` is its dump; other totes read the report itself.
+pub fn nibcheck_types_report(
+  prelude: List(SurfaceStmt),
+  source: List(SurfaceStmt),
+  resolved0: ModResolved,
+  derived: List(SurfaceStmt),
+  sealed: List(Text × Text)
+): Option(TypeReport) {
+  nibcheck_types_report_of(prelude, source, resolved0.stmts, nibcheck_types_errors(resolved0, sealed), derived)
+}
+
+// What the program builds of a type the prelude keeps abstract is told
+// before the types are checked, as the surface check tells it. Replaceable
+// `extern` validation is folded into the module errors here and in the
+// `--lin` / `--rows` entries below (as Rust's `Checker::run` does), without
+// changing `ck_types_run` / `ck_run` bodies that the soundness proofs name.
+pub fn nibcheck_types_errors(resolved0: ModResolved, sealed: List(Text × Text)): List(TypeError) {
+  types_errors_with_extern(
+    resolved0.stmts,
+    List::append(sealed_errors(sealed, resolved0.stmts), resolved0.errors)
+  )
+}
+
+// The types of `stmts`, whose errors before the check are `errors`.
+pub fn nibcheck_types_report_of(
+  prelude: List(SurfaceStmt),
+  source: List(SurfaceStmt),
+  stmts: List(SurfaceStmt),
+  errors: List(TypeError),
+  derived: List(SurfaceStmt)
+): Option(TypeReport) {
+  let resolved := ModResolved { stmts: stmts, errors: errors }
+  let program := nibcheck_index_program(resolved.stmts)
+  let indexed := nibcheck_index_prelude(prelude)
+  let first := ix_report_determined(
+    report_extern_sealed(
+      report_borrow_checks(
+        types_check_with(unicode_lowercase(), indexed, program, resolved.errors),
+        indexed,
+        program
+      ),
+      program
+    ),
+    indexed,
+    program
+  )
+  let report := match first.errors {
+    Nil => first
+    Cons(^e, ^more) => if types_uses_classes(source, resolved.stmts) {
+      // The instances the compiler writes for the program's types ask nothing
+      // of a program that uses no class: only this one is read with them.
+      let written := nibcheck_index_prelude(source)
+      let own := nibcheck_index_program(derived)
+      ix_report_determined(
+        report_extern_sealed(
+          report_borrow_checks(
+            types_check_with(unicode_lowercase(), written, own, resolved.errors),
+            written,
+            own
+          ),
+          own
+        ),
+        written,
+        own
+      )
+    } else { first }
+  }
+  if report_missing_occurrence(report) { None } else { Some(report) }
+}
+
+// The lines of a part of the dump with the names shown, in the order of the
+// names shown: the report lists them by key, which is the order of the ids.
+pub fn nibcheck_shown_into(t: DeclTable, lines: List(Text), m: Ordmap(Text, Bool)): Ordmap(Text, Bool) {
+  match lines {
+    Nil => m
+    Cons(l, rest) => nibcheck_shown_into(t, rest, Ordmap::insert(m, restore_names(t, l), true, Ordmap::compare_text))
+  }
+}
+
+pub fn nibcheck_shown_keys(es: List(Text × Bool)): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(e.fst, nibcheck_shown_keys(rest))
+  }
+}
+
+pub fn nibcheck_shown_sorted(t: DeclTable, lines: List(Text)): List(Text) {
+  nibcheck_shown_keys(Ordmap::entries(nibcheck_shown_into(t, lines, Ordmap::empty())))
+}
+
+pub fn nibcheck_shown(t: DeclTable, lines: List(Text)): List(Text) {
+  match lines {
+    Nil => Nil
+    Cons(l, rest) => Cons(restore_names(t, l), nibcheck_shown(t, rest))
+  }
+}
+
+// `types_dump` with the names of the program's declarations shown.
+pub fn nibcheck_types_shown(t: DeclTable, r: TypeReport): Text {
+  Text::concat_all(
+    List::append(
+      nibcheck_shown(t, dump_errors(r.errors)),
+      List::append(
+        nibcheck_shown(t, dump_lets(r.lets)),
+        List::append(
+          nibcheck_shown(t, dump_locals(Ordmap::entries(r.locals))),
+          List::append(
+            nibcheck_shown(t, dump_terms(Ordmap::entries(r.terms))),
+            List::append(
+              nibcheck_shown(t, dump_widths(Ordmap::entries(r.widths))),
+              List::append(
+                nibcheck_shown_sorted(t, dump_quants(Ordmap::entries(r.quants))),
+                List::append(
+                  nibcheck_shown_sorted(t, dump_datas(Ordmap::entries(r.datas.decls))),
+                  nibcheck_shown_sorted(t, dump_ctors(Ordmap::entries(r.datas.ctors), r.datas))
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+pub fn nibcheck_types(
+  prelude: List(SurfaceStmt),
+  source: List(SurfaceStmt),
+  resolved0: ModResolved,
+  derived: List(SurfaceStmt),
+  sealed: List(Text × Text)
+): Text {
+  // The program's declarations are looked up by id: the checker reads them
+  // keyed (`surface_key_program`), and the dump shows their names again.
+  let keyed := surface_key_program(resolved0.stmts, source)
+  let own := surface_key_program(derived, source)
+  // The errors told before the check read the program as written.
+  let errors := nibcheck_types_errors(resolved0, sealed)
+  match nibcheck_types_report_of(prelude, source, keyed.stmts, errors, own.stmts) {
+    None => nibcheck_missing_occurrence()
+    Some(report) => nibcheck_types_shown(keyed.table, report)
+  }
+}
+
+// The program with its indexed effects expanded against the prelude
+// (`expand_indices` of `types/indices.rs`): a call of a prelude function whose
+// row writes an instance (`Placed::new`, `place(T)`) reaches a copy for its
+// type arguments (`place(Tree)`), so the rows and the use check tell the
+// instances apart. A program that does not check is left as it is; its type
+// errors (including replaceable-`extern` validation) are returned beside it
+// so `--rows` can refuse the same blocks as `--types`.
+pub fn nibcheck_expand_program(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError)
+): List(SurfaceStmt) × List(TypeError) {
+  let read := ix_every_instance(program, ix_typed_generics(List::append(prelude, program)))
+  let report := types_check_with(
+    unicode_lowercase(),
+    prelude,
+    read.fst,
+    types_errors_with_extern(read.fst, errors)
+  )
+  match List::append(read.snd, report.errors) {
+    Nil => {
+      let prelude_terms := types_check(Nil, prelude, Nil).terms
+      let made := ix_expand(read.fst, prelude, report.terms, prelude_terms, false)
+      #(nibcheck_index_program(made.fst), made.snd)
+    }
+    Cons(e, more) => #(program, Cons(e, more))
+  }
+}
+
+// `source` is the prelude as written, with its classes: a program that uses a
+// class does not check against the expanded prelude, which has none, and is
+// read against the prelude as written instead (`check_program` of `types.rs`).
+pub struct LinTry {
+  failed: Bool,
+  text: Text
+}
+
+pub fn nibcheck_lin_try(once: NibcheckShared, resolved: ModResolved): LinTry {
+  let indexed := once.indexed
+  let own := nibcheck_index_program(resolved.stmts)
+  let made := nibcheck_expand_program(indexed, own, resolved.errors)
+  // What the expansion cannot do (`c` indexes an effect by `e`, which is not
+  // known here) is not an error of the use check: the program is read as
+  // written then, as `check_lin_program` reads it.
+  let program := match made.snd {
+    Nil => made.fst
+    Cons(^e, ^more) => own
+  }
+  let errors := types_errors_with_extern(program, resolved.errors)
+  let first := ix_report_determined(
+    report_borrow_checks(
+      types_check_with(unicode_lowercase(), indexed, program, errors),
+      indexed,
+      program
+    ),
+    indexed,
+    program
+  )
+  LinTry {
+    failed: match first.errors {
+      Nil => false
+      Cons(^e, ^more) => true
+    },
+    text: nibcheck_lin_dump(once.rows, first, indexed, program)
+  }
+}
+
+// `derived` is the program with the instances the compiler writes for its
+// types (`debug.taut`): the program that uses a class is read with them.
+pub fn nibcheck_lin(
+  once: NibcheckShared,
+  source: List(SurfaceStmt),
+  resolved: ModResolved,
+  derived: ModResolved
+): Text {
+  let first := nibcheck_lin_try(once, resolved)
+  if first.failed && types_uses_classes(source, resolved.stmts) {
+    let written := nibcheck_index_prelude(source)
+    let own := nibcheck_index_program(derived.stmts)
+    let errors := types_errors_with_extern(own, derived.errors)
+    nibcheck_lin_dump(
+      rows_prelude(written),
+      ix_report_determined(
+        report_borrow_checks(
+          types_check_with(unicode_lowercase(), written, own, errors),
+          written,
+          own
+        ),
+        written,
+        own
+      ),
+      written,
+      own
+    )
+  } else { first.text }
+}
+
+pub fn nibcheck_lin_dump(pre: RowsPrelude, report: TypeReport, prelude: List(SurfaceStmt), program: List(SurfaceStmt)): Text {
+  if report_missing_occurrence(report) { nibcheck_missing_occurrence() } else {
+    match lin_run_report(pre, report, prelude, program) {
+      None => Text::concat_all(Cons("error", Cons(text_newline(), Nil)))
+      Some(dump) => dump
+    }
+  }
+}
+
+// The type errors of the program against `prelude`, as the types report them.
+pub fn nibcheck_type_errors(prelude: List(SurfaceStmt), resolved: ModResolved): List(TypeError) {
+  let program := nibcheck_index_program(resolved.stmts)
+  let indexed := nibcheck_index_prelude(prelude)
+  let errors := types_errors_with_extern(program, resolved.errors)
+  ix_report_determined(
+    report_borrow_checks(types_check(indexed, program, errors), indexed, program),
+    indexed,
+    program
+  ).errors
+}
+
+pub fn nibcheck_rows_type_error(e: TypeError): RowDiagnostic {
+  RowDiagnostic::Mk(msg1("rows-type-error", marg_msg("message", e.message)), e.start, e.end)
+}
+
+pub fn nibcheck_rows_type_errors(es: List(TypeError)): List(RowDiagnostic) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(nibcheck_rows_type_error(e), nibcheck_rows_type_errors(rest))
+  }
+}
+
+pub fn nibcheck_rows_unexpanded(es: List(RowDiagnostic)): Bool {
+  match es {
+    Nil => false
+    Cons(e, rest) => Text::starts_with(e.message, "rows-writes-type-arguments") || nibcheck_rows_unexpanded(rest)
+  }
+}
+
+// `errors` replaced by the type errors `found`, unless there are none.
+pub fn nibcheck_rows_replace(r: RowReport, found: List(TypeError)): RowReport {
+  match found {
+    Nil => r
+    Cons(^e, ^more) => RowReport::Mk(r.functions, nibcheck_rows_type_errors(found), r.calls, r.quants)
+  }
+}
+
+pub fn nibcheck_rows_clean(r: RowReport): Bool {
+  match r.errors {
+    Nil => true
+    Cons(^e, ^more) => false
+  }
+}
+
+// A clean report takes the type errors `checked`, so `--rows` refuses what
+// `--types` refuses. A report with errors of its own keeps them, unless they
+// only echo a failed expansion: an unknown callee stays "cannot follow", not
+// a type error that hides what the rows could not read (`check_program_rows`
+// of `rows.rs`).
+pub fn nibcheck_rows_found(
+  prelude: List(SurfaceStmt),
+  source: List(SurfaceStmt),
+  resolved: ModResolved,
+  r: RowReport,
+  checked: List(TypeError)
+): RowReport {
+  if nibcheck_rows_clean(r) { nibcheck_rows_replace(r, checked) } else if nibcheck_rows_unexpanded(r.errors) {
+    nibcheck_rows_replace(r, nibcheck_type_errors(prelude, resolved))
+  } else {
+    if types_uses_classes(source, resolved.stmts) {
+      nibcheck_rows_replace(r, nibcheck_type_errors(source, resolved))
+    } else { r }
+  }
+}
+
+// What kept the indexed effects of the program from expanding.
+pub fn nibcheck_rows_indices(prelude: List(SurfaceStmt), resolved: ModResolved, r: RowReport): RowReport {
+  if nibcheck_rows_clean(r) || nibcheck_names_empty(ix_indexed(resolved.stmts)) { r } else {
+    nibcheck_rows_replace(r, nibcheck_type_errors(prelude, resolved))
+  }
+}
+
+pub fn nibcheck_names_empty(names: List(Text)): Bool {
+  match names {
+    Nil => true
+    Cons(^n, ^more) => false
+  }
+}
+
+// The structured result of the rows; `nibcheck_rows` is its dump.
+// `prelude` may hold the prelude's sets of effects (`effect Show {…}`): only
+// the rows read them, to tell what a written row that names one holds.
+pub fn nibcheck_rows_report(with_sets: List(SurfaceStmt), source: List(SurfaceStmt), resolved: ModResolved): RowReport {
+  nibcheck_rows_report_after(rows_prelude(surface_unascribe_erase(with_sets)), with_sets, source, resolved)
+}
+
+// `nibcheck_rows_report` with the rows of the prelude checked before.
+pub fn nibcheck_rows_report_after(pre: RowsPrelude, with_sets: List(SurfaceStmt), source: List(SurfaceStmt), resolved: ModResolved): RowReport {
+  let prelude := modules_drop_sets(with_sets)
+  let made := nibcheck_expand_program(nibcheck_index_prelude(prelude), nibcheck_index_program(resolved.stmts), resolved.errors)
+  // The rows read no types: `(e: T)` is `e` to them, as `tauto::rows` reads it.
+  let r := rows_check_after(pre, surface_unascribe_erase(with_sets), surface_unascribe_erase(made.fst))
+  nibcheck_rows_indices(prelude, resolved, nibcheck_rows_found(prelude, source, resolved, r, made.snd))
+}
+
+// The declarations of sets of effects among `ss`.
+pub fn nibcheck_sets(ss: List(SurfaceStmt)): List(SurfaceStmt) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+      StEffect(e) => ⊢ List(SurfaceStmt) from match e.set {
+        Some(^names) => Cons(s, nibcheck_sets(rest))
+        None => nibcheck_sets(rest)
+      }
+      _ => nibcheck_sets(rest)
+    }
+  }
+}
+
+pub fn nibcheck_rows(once: NibcheckShared, prelude: List(SurfaceStmt), source: List(SurfaceStmt), resolved: ModResolved): Text {
+  rows_dump(nibcheck_rows_report_after(once.rows, prelude, source, resolved))
+}
+
+// The work on the prelude that every program of a run shares: `indexed` is
+// the prelude the use check reads (`nibcheck_lin_try`), and `rows` the check
+// of the rows of the prelude the mode reads, done once (`rows_prelude`).
+pub struct NibcheckShared {
+  indexed: List(SurfaceStmt),
+  rows: RowsPrelude
+}
+
+pub fn nibcheck_shared(mode: NibcheckMode, with_sets: List(SurfaceStmt), expanded: List(SurfaceStmt)): NibcheckShared {
+  match mode {
+    NibcheckRows => NibcheckShared { indexed: Nil, rows: rows_prelude(surface_unascribe_erase(with_sets)) }
+    NibcheckTypes => NibcheckShared { indexed: Nil, rows: rows_prelude(Nil) }
+    NibcheckLin => {
+      let indexed := nibcheck_index_prelude(expanded)
+      NibcheckShared { indexed: indexed, rows: rows_prelude(indexed) }
+    }
+  }
+}
+
+// The prelude of a run, read and prepared once: `read` as written with its
+// modules flattened, `expanded` with its classes and indexed effects expanded,
+// `sealed` the constructors of the types it declares without `pub(open)`, and
+// `sets` its sets of effects, which only the rows read.
+// Every program checked against it shares this work.
+pub(open) struct NibcheckPrelude {
+  source: List(SurfaceStmt)
+  expanded: List(SurfaceStmt)
+  sealed: List(Text × Text)
+  sets: List(SurfaceStmt)
+}
+
+pub fn nibcheck_prelude_load(
+  t: &SyntaxTables,
+  classes: UnicodeClasses,
+  prelude_path: Text
+): Option(NibcheckPrelude) ! {div, fs_read, overflow} {
+  match nibcheck_read_text(t, classes, prelude_path, 2147483648) {
+    None => None
+    Some(prelude_read) => {
+      // The prelude's own types have their `Debug` instances made before
+      // anything reads it, and after its modules are flattened, as the Rust
+      // side reads it: a type a module declares (`Judgement::Binder`) has one
+      // too, and so has each type that holds it.
+      let flat := modules_flatten(prelude_read.snd).stmts
+      let prelude := debug_add(t, classes, flat, Nil, true, prelude_read.fst, 2147483648)
+      // Every check sees the prelude's modules flattened, as the program names
+      // their functions (`Task::join`, `Text::len`), with its indexed effects
+      // expanded (`fail(Text)`), as `types::prelude_for` gives it.
+      let source := modules_drop_sets(modules_flatten(prelude).stmts)
+      let read := classes_expand_typed(source)
+      let sealed := sealed_collect(prelude, prelude_read.fst, 2147483648, false, Nil)
+      Some(NibcheckPrelude {
+        source: source,
+        expanded: ix_prelude(nibcheck_index_prelude(read)).stmts,
+        sealed: sealed,
+        sets: nibcheck_sets(modules_flatten(prelude).stmts)
+      })
+    }
+  }
+}
+
+pub fn nibcheck_prelude_types(p: NibcheckPrelude, resolved: ModResolved, derived: List(SurfaceStmt)): Option(TypeReport) {
+  nibcheck_types_report(p.expanded, p.source, resolved, derived, p.sealed)
+}
+
+pub fn nibcheck_prelude_rows(p: NibcheckPrelude, resolved: ModResolved): RowReport {
+  nibcheck_rows_report(List::append(p.sets, p.expanded), p.source, resolved)
+}

@@ -1,0 +1,55 @@
+@ cases.def-record-type-names-struct
+source = ```tauto
+struct Entity { id: i64 }
+def Scenes(): Type := { entity: Entity }
+fn read(row: Scenes): i64 { row.entity.id }
+show(&read(#{ entity: Entity { id: 7 } }))
+```
+stdout = ```
+7
+```
+
+@ cases.def-type-names-def-of-struct
+source = ```tauto
+struct Entity { id: i64 }
+def One(): Type := Entity
+def Scenes(): Type := { entity: One }
+fn read(row: Scenes): i64 { row.entity.id }
+show(&read(#{ entity: Entity { id: 3 } }))
+```
+stdout = ```
+3
+```
+
+// `row.entity` of a `def` record type is the field of that record, not the
+// field `entity` of an imported struct kept abstract (no `pub(open)`) that
+// happens to have a field of the same name.
+@ cases.def-record-type-field-beside-imported-sealed-struct
+files."a.taut" = ```tauto
+pub(open) struct Entity { id: i64 }
+pub struct Igniters { entity: Entity }
+```
+files."main.taut" = ```tauto
+import "a.taut" { Entity, Igniters }
+def Scenes(): Type := { entity: Entity }
+fn read(row: Scenes): i64 { row.entity.id }
+show(&read(#{ entity: Entity { id: 7 } }))
+```
+entry = "main.taut"
+stdout = ```
+7
+```
+
+// The field of the imported abstract struct itself is still refused.
+@ cases.def-record-type-beside-sealed-struct-still-sealed
+files."a.taut" = ```tauto
+pub(open) struct Entity { id: i64 }
+pub struct Igniters { entity: Entity }
+```
+files."main.taut" = ```tauto
+import "a.taut" { Entity, Igniters }
+def Scenes(): Type := { entity: Entity }
+fn read(row: Igniters): Entity { row.entity }
+```
+entry = "main.taut"
+check_errors = ["is a field of `Igniters`"]

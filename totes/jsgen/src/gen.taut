@@ -1,0 +1,1113 @@
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import "names.taut"
+import "walk.taut"
+import "cps.taut"
+import "lower.taut"
+import "direct.taut"
+import "shake.taut"
+import "syntax.taut"
+import std::text
+import std::base
+import std::indexed_map { IndexedMap }
+
+// A program as `program.mjs` and one module per chunk
+// (`cps::generate_modules`).
+
+// What the host configuration adds to a module (`Options`). `chunks` are in
+// the order of their names.
+pub(open) struct JsOptions {
+  host_types: List(Text),
+  exports: List(Text),
+  retain: List(Text),
+  chunks: List(Text × List(Text))
+}
+
+pub fn js_options_default(): JsOptions {
+  JsOptions { host_types: Nil, exports: Nil, retain: Nil, chunks: Nil }
+}
+
+pub(open) struct JsModules { program: Text, chunks: List(Text × Text) }
+
+// --- Chunks (`chunks.rs`) ---------------------------------------------------
+
+// The functions a function names: those it calls and those it takes as
+// values.
+pub fn jg_callees(f: NFn): List(Nat) ! {div} { jg_callees_of(jw_all(f.body, true)) }
+
+pub fn jg_callees_of(es: List(NExpr)): List(Nat) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => match e.kind {
+      NCallOf(c) => match c.callee {
+        NCallInst(i) => Cons(i, jg_callees_of(rest))
+        NCallBuiltin(^n) => jg_callees_of(rest)
+        NCallExtern(^n) => jg_callees_of(rest)
+        NCallLocal(^l) => jg_callees_of(rest)
+        NCallCont(^l) => jg_callees_of(rest)
+        NCallValue(^v) => jg_callees_of(rest)
+      }
+      NFnValue(i, ^ts) => Cons(i, jg_callees_of(rest))
+      NUnitLit => jg_callees_of(rest)
+      NIntLit(^s, ^n) => jg_callees_of(rest)
+      NBoolLit(^b) => jg_callees_of(rest)
+      NFloatLit(^t) => jg_callees_of(rest)
+      NTextLit(^t) => jg_callees_of(rest)
+      NDeclaration(^n) => jg_callees_of(rest)
+      NClosureOf(^c) => jg_callees_of(rest)
+      NHandleOf(^h) => jg_callees_of(rest)
+      NBudgetOf(^b) => jg_callees_of(rest)
+      NInject(^u, ^m, ^v) => jg_callees_of(rest)
+      NRemap(^u, ^t, ^v) => jg_callees_of(rest)
+      NFnCast(^v) => jg_callees_of(rest)
+      NRead(^l, ^h) => jg_callees_of(rest)
+      NBorrow(^p) => jg_callees_of(rest)
+      NBorrowMut(^p) => jg_callees_of(rest)
+      NTempRef(^v) => jg_callees_of(rest)
+      NDeref(^v, ^h) => jg_callees_of(rest)
+      NFieldOf(^b, ^f, ^h, ^i) => jg_callees_of(rest)
+      NArithOf(^o, ^t, ^a) => jg_callees_of(rest)
+      NCmpOf(^o, ^a) => jg_callees_of(rest)
+      NEqOf(^n, ^a) => jg_callees_of(rest)
+      NNot(^v) => jg_callees_of(rest)
+      NAnd(^a, ^b) => jg_callees_of(rest)
+      NOr(^a, ^b) => jg_callees_of(rest)
+      NIf(^c, ^t, ^o) => jg_callees_of(rest)
+      NBlockOf(^b) => jg_callees_of(rest)
+      NCtorOf(^c, ^a) => jg_callees_of(rest)
+      NMatchOf(^m) => jg_callees_of(rest)
+      NShownOf(^v) => jg_callees_of(rest)
+      NPerformOf(^p) => jg_callees_of(rest)
+      NUnreachable(^v) => jg_callees_of(rest)
+    }
+  }
+}
+
+pub fn jg_name_byte(b: Nat): Bool {
+  (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 || b == 45
+}
+
+pub fn jg_chunk_name_ok(t: Text): Bool {
+  Text::len(t) > 0 && Text::all_bytes(t, jg_name_byte)
+}
+
+pub fn jg_find_export(xs: List(NExport), name: Text): Option(NExport) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if x.name == name { Some(x) } else { jg_find_export(rest, name) }
+  }
+}
+
+// An entry function and its chunk.
+pub(open) struct JgEntry { inst: Nat, chunk: Text }
+
+pub fn jg_entry_chunk(es: List(JgEntry), id: Nat): Option(Text) {
+  match es {
+    Nil => None
+    Cons(e, rest) => if e.inst == id { Some(e.chunk) } else { jg_entry_chunk(rest, id) }
+  }
+}
+
+pub fn jg_entry_ids(es: List(JgEntry)): List(Nat) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(e.inst, jg_entry_ids(rest))
+  }
+}
+
+// Inserts an entry in the order of its function.
+pub fn jg_insert_entry(es: List(JgEntry), e: JgEntry): List(JgEntry) {
+  match es {
+    Nil => [e]
+    Cons(x, rest) => if e.inst < x.inst { Cons(e, es) } else { Cons(x, jg_insert_entry(rest, e)) }
+  }
+}
+
+// The entry functions of every chunk, by function (`chunks::entries`).
+pub fn jg_entries(pkg: NPackage, options: JsOptions): Result(List(JgEntry), Text) ! {div, overflow} {
+  var out: List(JgEntry) := Nil
+  var error: Option(Text) := None
+  var chunks := options.chunks
+  var going := true
+  while going {
+    match chunks {
+      Nil => { going := false }
+      Cons(c, rest) => {
+        chunks := rest
+        match c {
+          #(chunk, names) => if not(jg_chunk_name_ok(chunk)) {
+            error := Some(Text::concat_all(["javascript chunk ", jg_debug_text(chunk), " must be a name of letters, digits, `_` and `-`"]))
+            going := false
+          } else if List::length(names) == 0 {
+            error := Some(Text::concat_all(["javascript chunk ", chunk, " has no entry function"]))
+            going := false
+          } else {
+            match jg_add_entries(pkg, chunk, names, out) {
+              Ok(more) => { out := more }
+              Err(e) => {
+                error := Some(e)
+                going := false
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  match error {
+    Some(e) => Err(e)
+    None => Ok(out)
+  }
+}
+
+// A text as Rust's `{:?}` writes it, for the names the messages quote.
+pub fn jg_debug_text(t: Text): Text ! {div, overflow} { js_quote(t) }
+
+pub fn jg_add_entries(pkg: NPackage, chunk: Text, names: List(Text), out: List(JgEntry)): Result(List(JgEntry), Text) {
+  match names {
+    Nil => Ok(out)
+    Cons(name, rest) => match jg_find_export(pkg.exports, name) {
+      None => Err(Text::concat_all(["javascript chunk ", chunk, " names ", name, ", which is not a function of the program without generics"]))
+      Some(x) => if pkg.top == Some(x.inst) {
+        Err(Text::concat_all(["javascript chunk ", chunk, " names ", name, ", which runs when the program starts"]))
+      } else {
+        match jg_entry_chunk(out, x.inst) {
+          Some(other) => Err(Text::concat_all([name, " is an entry of both javascript chunks ", other, " and ", chunk]))
+          None => jg_add_entries(pkg, chunk, rest, jg_insert_entry(out, JgEntry { inst: x.inst, chunk: chunk }))
+        }
+      }
+    }
+  }
+}
+
+// What `start` reaches without entering an entry other than `start`.
+pub fn jg_reach(pkg: NPackage, entries: List(Nat), start: List(Nat)): List(Nat) ! {div} {
+  var seen: IndexedMap(Nat, Bool) := IndexedMap::new()
+  var order: List(Nat) := Nil
+  var todo: Vec(Nat) := Vec::new()
+  jg_push_all(&mut todo, start)
+  var going := true
+  while going {
+    match Vec::pop(&mut todo) {
+      None => { going := false }
+      Some(id) => if jl_cont(&seen, id) {
+        ()
+      } else {
+        IndexedMap::insert(&mut seen, id, true)
+        order := Cons(id, order)
+        if js_contains_nat(entries, id) && not(js_contains_nat(start, id)) {
+          ()
+        } else {
+          match js_find_fn(pkg.fns, id) {
+            Some(f) => jg_push_all(&mut todo, jg_callees(f))
+            None => ()
+          }
+        }
+      }
+    }
+  }
+  order
+}
+
+pub fn jg_push_all(v: &mut Vec(Nat), xs: List(Nat)): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      Vec::push(v, x)
+      jg_push_all(v, rest)
+    }
+  }
+}
+
+pub fn jg_chunk_names(cs: List(Text × List(Text))): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => match c {
+      #(n, ^xs) => Cons(n, jg_chunk_names(rest))
+    }
+  }
+}
+
+pub fn jg_entries_of(es: List(JgEntry), chunk: Text): List(Nat) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => if e.chunk == chunk { Cons(e.inst, jg_entries_of(rest, chunk)) } else { jg_entries_of(rest, chunk) }
+  }
+}
+
+// The functions of a chunk's entries that are entries of no other chunk.
+pub fn jg_chunk_set(pkg: NPackage, entries: List(JgEntry), chunk: Text): List(Nat) ! {div} {
+  let ids := jg_entry_ids(entries)
+  jg_chunk_set_of(pkg, ids, jg_entries_of(entries, chunk))
+}
+
+pub fn jg_chunk_set_of(pkg: NPackage, ids: List(Nat), mine: List(Nat)): List(Nat) ! {div} {
+  match mine {
+    Nil => Nil
+    Cons(id, rest) => jg_union(jg_keep_own(jg_reach(pkg, ids, [id]), ids, id), jg_chunk_set_of(pkg, ids, rest))
+  }
+}
+
+pub fn jg_keep_own(xs: List(Nat), ids: List(Nat), id: Nat): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if not(js_contains_nat(ids, x)) || x == id { Cons(x, jg_keep_own(rest, ids, id)) } else { jg_keep_own(rest, ids, id) }
+  }
+}
+
+pub fn jg_union(a: List(Nat), b: List(Nat)): List(Nat) {
+  match a {
+    Nil => b
+    Cons(x, rest) => if js_contains_nat(b, x) { jg_union(rest, b) } else { Cons(x, jg_union(rest, b)) }
+  }
+}
+
+pub fn jg_count(sets: List(List(Nat)), id: Nat): Nat {
+  match sets {
+    Nil => 0
+    Cons(s, rest) => (if js_contains_nat(s, id) { 1 } else { 0 }) + jg_count(rest, id)
+  }
+}
+
+pub fn jg_fn_ids(fs: List(NFn)): List(Nat) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(f.id, jg_fn_ids(rest))
+  }
+}
+
+pub fn jg_without(xs: List(Nat), drop: List(Nat)): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if js_contains_nat(drop, x) { jg_without(rest, drop) } else { Cons(x, jg_without(rest, drop)) }
+  }
+}
+
+pub fn jg_chunk_sets(pkg: NPackage, entries: List(JgEntry), names: List(Text)): List(List(Nat)) ! {div} {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(jg_chunk_set(pkg, entries, n), jg_chunk_sets(pkg, entries, rest))
+  }
+}
+
+pub fn jg_concat_sets(sets: List(List(Nat))): List(Nat) {
+  match sets {
+    Nil => Nil
+    Cons(s, rest) => jg_union(s, jg_concat_sets(rest))
+  }
+}
+
+// Which chunk each function that is not in `program.mjs` belongs to
+// (`chunks::owners`).
+pub fn jg_owners(pkg: NPackage, entries: List(JgEntry), names: List(Text)): List(Nat × Text) ! {div} {
+  let ids := jg_entry_ids(entries)
+  // The chunks that hold an entry, in order of their names.
+  let used := jg_used_chunks(names, entries)
+  let sets := jg_chunk_sets(pkg, entries, used)
+  let reached := jg_concat_sets(sets)
+  let roots := jg_without(jg_fn_ids(pkg.fns), ids)
+  let free0 := jg_without(roots, reached)
+  let free := match pkg.top {
+    Some(t) => List::append(free0, [t])
+    None => free0
+  }
+  let main := jg_reach(pkg, ids, free)
+  jg_owners_of(entries, used, sets, sets, main)
+}
+
+pub fn jg_used_chunks(names: List(Text), entries: List(JgEntry)): List(Text) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => match jg_entries_of(entries, n) {
+      Nil => jg_used_chunks(rest, entries)
+      Cons(^x, ^y) => Cons(n, jg_used_chunks(rest, entries))
+    }
+  }
+}
+
+pub fn jg_owners_of(entries: List(JgEntry), names: List(Text), sets: List(List(Nat)), all: List(List(Nat)), main: List(Nat)): List(Nat × Text) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => match sets {
+      Nil => Nil
+      Cons(s, more) => List::append(jg_owned(entries, n, s, all, main), jg_owners_of(entries, rest, more, all, main))
+    }
+  }
+}
+
+pub fn jg_owned(entries: List(JgEntry), chunk: Text, set: List(Nat), all: List(List(Nat)), main: List(Nat)): List(Nat × Text) {
+  match set {
+    Nil => Nil
+    Cons(id, rest) => {
+      let entry := match jg_entry_chunk(entries, id) {
+        Some(^c) => true
+        None => false
+      }
+      if entry || (not(js_contains_nat(main, id)) && jg_count(all, id) == 1) {
+        Cons(#(id, chunk), jg_owned(entries, chunk, rest, all, main))
+      } else {
+        jg_owned(entries, chunk, rest, all, main)
+      }
+    }
+  }
+}
+
+pub fn jg_owner(owners: List(Nat × Text), id: Nat): Option(Text) {
+  match owners {
+    Nil => None
+    Cons(o, rest) => match o {
+      #(i, c) => if i == id { Some(c) } else { jg_owner(rest, id) }
+    }
+  }
+}
+
+// --- Host signatures and exports -------------------------------------------
+
+pub fn jg_host_name(t: NTy, options: JsOptions): Option(Text) {
+  match t {
+    NData(n, args) => match args {
+      Nil => if js_contains_text(options.host_types, n) { Some(n) } else { None }
+      Cons(^a, ^b) => None
+    }
+    NInt(^w) => None
+    NBool => None
+    NText => None
+    NUnit => None
+    NNever => None
+    NFloat => None
+    NFloat32 => None
+    NBuf => None
+    NShown => None
+    NVec(^a) => None
+    NArray(^a) => None
+    NSlice(^a) => None
+    NOption(^a) => None
+    NInfo(^a) => None
+    NBudgetAnswer(^a) => None
+    NResult(^a, ^b) => None
+    NPair(^a, ^b) => None
+    NSharedVar(^c, ^a) => None
+    NStd(^n, ^a) => None
+    NUnion(^n) => None
+    NFn(^p, ^r, ^k, ^x) => None
+    NRef(^a) => None
+    NRefMut(^a) => None
+    NParam(^n) => None
+  }
+}
+
+// The host type an extern parameter or result carries directly.
+pub fn jg_host_type(t: NTy, options: JsOptions): Option(Text) {
+  match n_borrowed(t) {
+    Some(inner) => jg_host_name(inner, options)
+    None => jg_host_name(t, options)
+  }
+}
+
+pub fn jg_quoted(t: Option(Text)): Text ! {div, overflow} {
+  match t {
+    Some(n) => js_quote(n)
+    None => "null"
+  }
+}
+
+pub fn jg_extern_params(ps: List(NExternParam), options: JsOptions): List(Text) ! {div, overflow} {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(jg_quoted(jg_host_type(p.ty, options)), jg_extern_params(rest, options))
+  }
+}
+
+pub fn jg_first_host(ps: List(Text), at: Nat): Option(Nat) {
+  match ps {
+    Nil => None
+    Cons(p, rest) => if p != "null" { Some(at) } else { jg_first_host(rest, at + 1) }
+  }
+}
+
+pub fn jg_callbacks_ok(ps: List(NExternParam)): Bool {
+  match ps {
+    Nil => true
+    Cons(p, rest) => (match p.ty {
+      NFn(^a, ^r, ^k, tier) => (match p.pass {
+        NPassValue => true
+        NPassRef => false
+        NPassRefMut => false
+      }) && tier == "S"
+      NInt(^w) => true
+      NBool => true
+      NText => true
+      NUnit => true
+      NNever => true
+      NFloat => true
+      NFloat32 => true
+      NBuf => true
+      NShown => true
+      NVec(^a) => true
+      NArray(^a) => true
+      NSlice(^a) => true
+      NOption(^a) => true
+      NInfo(^a) => true
+      NBudgetAnswer(^a) => true
+      NResult(^a, ^b) => true
+      NPair(^a, ^b) => true
+      NSharedVar(^c, ^a) => true
+      NStd(^n, ^a) => true
+      NUnion(^n) => true
+      NRef(^a) => true
+      NRefMut(^a) => true
+      NData(^n, ^a) => true
+      NParam(^n) => true
+    }) && jg_callbacks_ok(rest)
+  }
+}
+
+pub fn jg_is_borrow_ty(t: NTy): Bool {
+  match n_borrowed(t) {
+    Some(^a) => true
+    None => false
+  }
+}
+
+pub fn jg_host_signatures(pkg: NPackage, options: JsOptions): Result(Text, Text) ! {div, overflow} {
+  var parts: List(Text) := ["const hostSignatures={"]
+  var error: Option(Text) := None
+  var xs := pkg.externs
+  var going := true
+  while going {
+    match xs {
+      Nil => { going := false }
+      Cons(x, rest) => {
+        xs := rest
+        let params := jg_extern_params(x.params, options)
+        let ret := jg_host_type(x.ret, options)
+        let has_ret := match ret {
+          Some(^n) => true
+          None => false
+        }
+        if jg_is_borrow_ty(x.ret) && has_ret {
+          error := Some(js_unsupported("an extern that returns a borrowed host type"))
+          going := false
+        } else {
+          let owner := if js_contains_text(options.retain, x.name) {
+            match jg_first_host(params, 0) {
+              None => {
+                error := Some(Text::concat_all(["javascript extern ", x.name, " keeps its callbacks, so it needs a host value that owns them"]))
+                going := false
+                "null"
+              }
+              Some(i) => if jg_callbacks_ok(x.params) {
+                js_nat(i)
+              } else {
+                error := Some(Text::concat_all(["javascript extern ", x.name, " keeps its callbacks, so each one is passed by value and performs no effect but show"]))
+                going := false
+                "null"
+              }
+            }
+          } else {
+            "null"
+          }
+          if going && (has_ret || match jg_first_host(params, 0) {
+            Some(^i) => true
+            None => false
+          }) {
+            parts := Cons(Text::concat_all([js_quote(x.name), ":{params:[", text_join(params, ","), "],ret:", jg_quoted(ret), ",owner:", owner, "},"]), parts)
+          }
+        }
+      }
+    }
+  }
+  match error {
+    Some(e) => Err(e)
+    None => {
+      parts := Cons("};\n", parts)
+      Ok(Text::concat_all(List::append(List::reverse(parts), [
+        "const hostWaits=new Set([",
+        text_join(jg_waits(pkg.externs), ","),
+        "]);\n"
+      ])))
+    }
+  }
+}
+
+pub fn jg_waits(xs: List(NExtern)): List(Text) ! {div, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if x.waits { Cons(js_quote(x.name), jg_waits(rest)) } else { jg_waits(rest) }
+  }
+}
+
+// Whether a function reaches the host other than through `show`.
+pub fn jg_reaches_host(pkg: NPackage, id: Nat, waits: List(Nat)): Bool ! {div} {
+  var seen: IndexedMap(Nat, Bool) := IndexedMap::new()
+  var todo: Vec(Nat) := Vec::new()
+  Vec::push(&mut todo, id)
+  var found := false
+  var going := true
+  while going {
+    match Vec::pop(&mut todo) {
+      None => { going := false }
+      Some(i) => if jl_cont(&seen, i) {
+        ()
+      } else {
+        IndexedMap::insert(&mut seen, i, true)
+        if js_contains_nat(waits, i) {
+          found := true
+          going := false
+        } else {
+          match js_find_fn(pkg.fns, i) {
+            None => {
+              found := true
+              going := false
+            }
+            Some(f) => {
+              let es := jw_all(f.body, true)
+              if jg_touches_host(es) {
+                found := true
+                going := false
+              } else {
+                jg_push_all(&mut todo, List::reverse(jg_callees_of(es)))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  found
+}
+
+pub fn jg_touches_host(es: List(NExpr)): Bool {
+  match es {
+    Nil => false
+    Cons(e, rest) => (match e.kind {
+      NCallOf(c) => match c.callee {
+        NCallExtern(^n) => true
+        NCallBuiltin(n) => text_starts_with(n, "Os::", 0)
+        NCallInst(^i) => false
+        NCallLocal(^l) => false
+        NCallCont(^l) => false
+        NCallValue(^v) => false
+      }
+      NUnitLit => false
+      NIntLit(^s, ^n) => false
+      NBoolLit(^b) => false
+      NFloatLit(^t) => false
+      NTextLit(^t) => false
+      NDeclaration(^n) => false
+      NFnValue(^i, ^ts) => false
+      NClosureOf(^c) => false
+      NHandleOf(^h) => false
+      NBudgetOf(^b) => false
+      NInject(^u, ^m, ^v) => false
+      NRemap(^u, ^t, ^v) => false
+      NFnCast(^v) => false
+      NRead(^l, ^h) => false
+      NBorrow(^p) => false
+      NBorrowMut(^p) => false
+      NTempRef(^v) => false
+      NDeref(^v, ^h) => false
+      NFieldOf(^b, ^f, ^h, ^i) => false
+      NArithOf(^o, ^t, ^a) => false
+      NCmpOf(^o, ^a) => false
+      NEqOf(^n, ^a) => false
+      NNot(^v) => false
+      NAnd(^a, ^b) => false
+      NOr(^a, ^b) => false
+      NIf(^c, ^t, ^o) => false
+      NBlockOf(^b) => false
+      NCtorOf(^c, ^a) => false
+      NMatchOf(^m) => false
+      NShownOf(^v) => false
+      NPerformOf(^p) => false
+      NUnreachable(^v) => false
+    }) || jg_touches_host(rest)
+  }
+}
+
+// How a value of an exported function's signature crosses to the host
+// (`Crossing`): 0 a value, 1 a host object, 2 a borrowed host object, 3 a
+// borrowed host function, 4 a kept function.
+pub(open) struct JgCrossing { kind: Nat, host: Text }
+
+pub fn jg_crossing_js(c: JgCrossing): Text ! {div, overflow} {
+  if c.kind == 0 {
+    "null"
+  } else if c.kind == 1 {
+    Text::concat_all(["{host:", js_quote(c.host), "}"])
+  } else if c.kind == 2 {
+    Text::concat_all(["{host:", js_quote(c.host), ",borrowed:true}"])
+  } else if c.kind == 3 {
+    "{fn:true}"
+  } else {
+    "{kept:true}"
+  }
+}
+
+pub(open) struct JgExport { name: Text, f: NFn, sync: Bool, params: List(JgCrossing), ret: JgCrossing }
+
+pub fn jg_refuse(name: Text, what: Text): Text {
+  Text::concat_all(["javascript export ", name, " has ", what, " in its signature, which an instance cannot pass"])
+}
+
+pub fn jg_is_fn(t: NTy): Bool {
+  match jl_fn_kind(t) {
+    Some(^k) => true
+    None => false
+  }
+}
+
+pub fn jg_fn_tier(t: NTy): Text {
+  match t {
+    NFn(^p, ^r, ^k, tier) => tier
+    NInt(^w) => ""
+    NBool => ""
+    NText => ""
+    NUnit => ""
+    NNever => ""
+    NFloat => ""
+    NFloat32 => ""
+    NBuf => ""
+    NShown => ""
+    NVec(^a) => ""
+    NArray(^a) => ""
+    NSlice(^a) => ""
+    NOption(^a) => ""
+    NInfo(^a) => ""
+    NBudgetAnswer(^a) => ""
+    NResult(^a, ^b) => ""
+    NPair(^a, ^b) => ""
+    NSharedVar(^c, ^a) => ""
+    NStd(^n, ^a) => ""
+    NUnion(^n) => ""
+    NRef(^a) => ""
+    NRefMut(^a) => ""
+    NData(^n, ^a) => ""
+    NParam(^n) => ""
+  }
+}
+
+pub fn jg_param_crossings(name: Text, ps: List(NParam), options: JsOptions): Result(List(JgCrossing), Text) {
+  match ps {
+    Nil => Ok(Nil)
+    Cons(p, rest) => {
+      let s := js_storage(p.local.repr)
+      let r := match jd_is_refmut(p.ty) {
+        Some(^x) => Err(jg_refuse(name, "a mutable borrow"))
+        None => if s == 3 {
+          Err(jg_refuse(name, "a mutable borrow"))
+        } else {
+          let ty := match jd_is_ref(p.ty) {
+            Some(inner) => inner
+            None => p.ty
+          }
+          let borrowed := match jd_is_ref(p.ty) {
+            Some(^inner) => true
+            None => s == 2 || s == 4
+          }
+          match jg_host_name(ty, options) {
+            Some(t) => Ok(JgCrossing { kind: if borrowed { 2 } else { 1 }, host: t })
+            None => if jg_is_fn(ty) {
+              if borrowed { Ok(JgCrossing { kind: 3, host: "" }) } else { Err(jg_refuse(name, "a function taken by value")) }
+            } else if borrowed {
+              Err(jg_refuse(name, "a borrow"))
+            } else {
+              Ok(JgCrossing { kind: 0, host: "" })
+            }
+          }
+        }
+      }
+      match r {
+        Err(e) => Err(e)
+        Ok(c) => match jg_param_crossings(name, rest, options) {
+          Err(e) => Err(e)
+          Ok(more) => Ok(Cons(c, more))
+        }
+      }
+    }
+  }
+}
+
+pub fn jg_has_host_fn(cs: List(JgCrossing)): Bool {
+  match cs {
+    Nil => false
+    Cons(c, rest) => c.kind == 3 || jg_has_host_fn(rest)
+  }
+}
+
+// The exported functions, checked (`export_table`).
+pub fn jg_export_table(pkg: NPackage, options: JsOptions, waits: List(Nat)): Result(List(JgExport), Text) ! {div} {
+  jg_export_each(pkg, options, waits, options.exports)
+}
+
+pub fn jg_export_each(pkg: NPackage, options: JsOptions, waits: List(Nat), names: List(Text)): Result(List(JgExport), Text) ! {div} {
+  match names {
+    Nil => Ok(Nil)
+    Cons(name, rest) => match jg_find_export(pkg.exports, name) {
+      None => Err(Text::concat_all(["javascript export ", name, " is not a function of the program without generics"]))
+      Some(x) => match x.foreign_row {
+        Cons(eff, ^more) => Err(Text::concat_all(["javascript export ", name, " performs ", eff, ", which no handler of the instance answers"]))
+        Nil => match js_find_fn(pkg.fns, x.inst) {
+          None => Err(Text::concat_all(["javascript export ", name, " is not a function of the program without generics"]))
+          Some(f) => match jg_param_crossings(name, f.params, options) {
+            Err(e) => Err(e)
+            Ok(params) => {
+              let ret := match jg_host_name(f.ret, options) {
+                Some(t) => Ok(JgCrossing { kind: 1, host: t })
+                None => if jg_is_fn(f.ret) {
+                  if jg_fn_tier(f.ret) == "S" { Ok(JgCrossing { kind: 4, host: "" }) } else { Err(jg_refuse(name, "a function result that performs an effect but show")) }
+                } else if jg_is_borrow_ty(f.ret) {
+                  Err(jg_refuse(name, "a borrow"))
+                } else {
+                  Ok(JgCrossing { kind: 0, host: "" })
+                }
+              }
+              match ret {
+                Err(e) => Err(e)
+                Ok(r) => {
+                  let sync := not(jg_has_host_fn(params)) && not(js_contains_text(x.row, "wait")) && not(jg_reaches_host(pkg, x.inst, waits))
+                  match jg_export_each(pkg, options, waits, rest) {
+                    Err(e) => Err(e)
+                    Ok(more) => Ok(Cons(JgExport { name: name, f: f, sync: sync, params: params, ret: r }, more))
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn jg_crossings_js(cs: List(JgCrossing)): List(Text) ! {div, overflow} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(jg_crossing_js(c), jg_crossings_js(rest))
+  }
+}
+
+pub fn jg_export_entries(es: List(JgExport)): List(Text) ! {div, overflow} {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(Text::concat_all([
+      js_quote(e.name),
+      ":[f",
+      js_nat(e.f.id),
+      ",",
+      js_bool(e.sync),
+      ",[",
+      text_join(jg_crossings_js(e.params), ","),
+      "],",
+      jg_crossing_js(e.ret),
+      "]"
+    ]), jg_export_entries(rest))
+  }
+}
+
+// --- The program -----------------------------------------------------------
+
+pub fn jg_short(name: Text): Text {
+  if text_starts_with(name, "std::prelude::", 0) { Text::slice_or_empty(name, 14, Text::len(name)) } else { name }
+}
+
+// The name `shown` writes for each constructor whose full name is not the
+// name written.
+pub fn jg_shown_names(sp: List(Text), all: List(NData), ds: List(NData)): List(Text) ! {div, overflow} {
+  match ds {
+    Nil => Nil
+    Cons(d, rest) => List::append(jg_shown_ctors(sp, all, d, d.ctors), jg_shown_names(sp, all, rest))
+  }
+}
+
+pub fn jg_shown_ctors(sp: List(Text), all: List(NData), d: NData, cs: List(NCtor)): List(Text) ! {div, overflow} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let tag := js_gen_ctor(sp, all, c.name)
+      let short := if d.is_struct { jg_short(d.name) } else { js_last_segment(tag) }
+      if short != tag {
+        Cons(Text::concat_all(["[", js_quote(tag), ",", js_quote(short), "]"]), jg_shown_ctors(sp, all, d, rest))
+      } else {
+        jg_shown_ctors(sp, all, d, rest)
+      }
+    }
+  }
+}
+
+pub fn jg_param_list(ps: List(NParam)): Text {
+  text_join(jd_param_names_bare(ps), ",")
+}
+
+pub fn jd_param_names_bare(ps: List(NParam)): List(Text) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(js_nat(p.local.id), jd_param_names_bare(rest))
+  }
+}
+
+// Text that goes to a chunk or to `program.mjs`, last first.
+pub(open) struct JgOut { main: List(Text), chunks: List(Text × List(Text)) }
+
+pub fn jg_put(chunks: List(Text × List(Text)), name: Text, t: Text): List(Text × List(Text)) {
+  match chunks {
+    Nil => Nil
+    Cons(c, rest) => match c {
+      #(n, parts) => if n == name { Cons(#(n, Cons(t, parts)), rest) } else { Cons(c, jg_put(rest, name, t)) }
+    }
+  }
+}
+
+pub fn jg_index_of(names: List(Text), name: Text, at: Nat): Nat {
+  match names {
+    Nil => at
+    Cons(n, rest) => if n == name { at } else { jg_index_of(rest, name, at + 1) }
+  }
+}
+
+pub fn jg_fn_text(pkg: NPackage, f: NFn, directs: List(Nat)): Result(Text, Text) ! {div, overflow} {
+  let id := js_nat(f.id)
+  let first := if js_contains_nat(directs, f.id) {
+    match jd_write_fn(pkg, f, concat("g", id)) {
+      Err(e) => Err(e)
+      Ok(t) => Ok(Some(t))
+    }
+  } else {
+    Ok(None)
+  }
+  match first {
+    Err(e) => Err(e)
+    Ok(d) => {
+      let constant := match d {
+        Some(^x) => jd_constant(f)
+        None => false
+      }
+      if constant {
+        match d {
+          Some(t) => Ok(concat(t, jd_constant_cps(f)))
+          None => Ok("")
+        }
+      } else {
+        let name := match d {
+          Some(^t) => "g"
+          None => "f"
+        }
+        let restart := jl_recurs(f.body)
+        match jl_lower(pkg, f, restart) {
+          Err(e) => Err(e)
+          Ok(body) => Ok(Text::concat_all([
+            match d {
+              Some(t) => t
+              None => ""
+            },
+            "\nconst b",
+            id,
+            " = ",
+            js_cps(body),
+            ";\nfunction ",
+            name,
+            id,
+            "(c,args,k){return enterFunction(b",
+            id,
+            ",[",
+            jg_param_list(f.params),
+            "],null,c,args,k,false,",
+            js_bool(jl_needs_export(pkg, f.ret)),
+            ",[",
+            js_bools(jd_param_owned_list(f.params)),
+            "],",
+            js_bool(restart),
+            ");}\n"
+          ]))
+        }
+      }
+    }
+  }
+}
+
+pub fn jd_param_owned_list(ps: List(NParam)): List(Bool) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(js_owned(p.local), jd_param_owned_list(rest))
+  }
+}
+
+pub fn jg_permissions(ps: List(Text)): List(Text) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(Text::concat_all(["'", p, "'"]), jg_permissions(rest))
+  }
+}
+
+// `program.mjs` and the module of each chunk (`generate_modules`).
+pub fn js_generate_modules(pkg: NPackage, options: JsOptions): Result(JsModules, Text) ! {div, overflow} {
+  match jg_entries(pkg, options) {
+    Err(e) => Err(e)
+    Ok(entries) => match jg_host_signatures(pkg, options) {
+      Err(e) => Err(e)
+      Ok(signatures) => match js_syntax_parsers(pkg, js_library_spellings()) {
+        Err(e) => Err(e)
+        Ok(parsers) => jg_modules(pkg, options, entries, signatures, parsers)
+      }
+    }
+  }
+}
+
+pub fn jg_modules(pkg: NPackage, options: JsOptions, entries: List(JgEntry), signatures: Text, parsers: Text × Text): Result(JsModules, Text) ! {div, overflow} {
+  let parsed := match parsers {
+    #(a, ^b) => a
+  }
+  let synrun := match parsers {
+    #(^a, b) => b
+  }
+  let names := jg_chunk_names(options.chunks)
+  let owners := jg_owners(pkg, entries, names)
+  let ids := jg_entry_ids(entries)
+  var out: List(Text) := [
+    parsed,
+    Text::concat_all(["\nconst shownNames=new Map([", text_join(jg_shown_names(js_library_spellings(), pkg.datas, pkg.datas), ","), "]);\n"]),
+    signatures,
+    Text::concat_all(["const declarationRefs=Array.from({length:", js_nat(List::length(pkg.declarations)), "},()=>Symbol());\n"])
+  ]
+  let directs := jd_functions(pkg, ids)
+  out := jg_chunk_vars(names, 0, out)
+  var chunks := jg_empty_chunks(names)
+  var error: Option(Text) := None
+  var fs := pkg.fns
+  var going := true
+  while going {
+    match fs {
+      Nil => { going := false }
+      Cons(f, rest) => {
+        fs := rest
+        match jg_fn_text(pkg, f, directs) {
+          Err(e) => {
+            error := Some(e)
+            going := false
+          }
+          Ok(t) => match jg_owner(owners, f.id) {
+            Some(c) => { chunks := jg_put(chunks, c, t) }
+            None => { out := Cons(t, out) }
+          }
+        }
+      }
+    }
+  }
+  match error {
+    Some(e) => Err(e)
+    None => {
+      out := jg_stubs(entries, names, out)
+      match jg_export_table(pkg, options, ids) {
+        Err(e) => Err(e)
+        Ok(table) => {
+          let top := match pkg.top {
+            Some(i) => Text::concat_all(["(c,k)=>f", js_nat(i), "(c,[],k)"])
+            None => "pure(null)"
+          }
+          out := Cons(Text::concat_all(["\nexport function instantiate(externs={}, options={}) {return instantiateWith({", text_join(jg_export_entries(table), ","), "},externs,options);}\n"]), out)
+          let check := match pkg.permissions {
+            Nil => ""
+            Cons(^p, ^more) => Text::concat_all(["const missing=missingPermissions(options,[", text_join(jg_permissions(pkg.permissions), ","), "]);if(missing.length)throw Object.assign(new Error(missingMessage(missing)),{exitCode:2,denied:true});"])
+          }
+          out := Cons(Text::concat_all(["\nexport async function run(show=console.log, externs={}, options={}) {", check, "return drive(", top, ",show,externs,options);}\n"]), out)
+          let main := Text::concat_all(List::reverse(out))
+          let bodies := jg_chunk_bodies(chunks)
+          let program := Text::concat_all([js_shake(concat(main, Text::concat_all(jg_chunk_texts(bodies)))), synrun, main])
+          match entries {
+            Nil => Ok(JsModules { program: program, chunks: Nil })
+            Cons(^e, ^more) => {
+              let sharednames := js_declared(program)
+              let full := Text::concat_all([program, "export {", text_join(sharednames, ","), "};\n"])
+              Ok(JsModules { program: full, chunks: jg_chunk_modules(bodies, sharednames, entries) })
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn jg_chunk_vars(names: List(Text), i: Nat, out: List(Text)): List(Text) {
+  match names {
+    Nil => out
+    Cons(^n, rest) => jg_chunk_vars(rest, i + 1, Cons(Text::concat_all(["\nlet chunk", js_nat(i), "=null;\n"]), out))
+  }
+}
+
+pub fn jg_empty_chunks(names: List(Text)): List(Text × List(Text)) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(#(n, Nil), jg_empty_chunks(rest))
+  }
+}
+
+pub fn jg_stubs(entries: List(JgEntry), names: List(Text), out: List(Text)): List(Text) ! {div, overflow} {
+  match entries {
+    Nil => out
+    Cons(e, rest) => {
+      let id := js_nat(e.inst)
+      let i := js_nat(jg_index_of(names, e.chunk, 0))
+      let file := js_quote(Text::concat_all(["./chunk-", e.chunk, ".mjs"]))
+      jg_stubs(rest, names, Cons(Text::concat_all([
+        "\nfunction f", id, "(c,args,k){if(chunk", i, ")return chunk", i, ".f", id, "(c,args,k);return import(", file, ").then(m=>{chunk", i, "=m;return ()=>m.f", id, "(c,args,k);});}\n"
+      ]), out))
+    }
+  }
+}
+
+pub fn jg_chunk_bodies(chunks: List(Text × List(Text))): List(Text × Text) {
+  match chunks {
+    Nil => Nil
+    Cons(c, rest) => match c {
+      #(n, parts) => Cons(#(n, Text::concat_all(List::reverse(parts))), jg_chunk_bodies(rest))
+    }
+  }
+}
+
+pub fn jg_chunk_texts(bodies: List(Text × Text)): List(Text) {
+  match bodies {
+    Nil => Nil
+    Cons(b, rest) => match b {
+      #(^n, t) => Cons(t, jg_chunk_texts(rest))
+    }
+  }
+}
+
+pub fn jg_without_texts(xs: List(Text), drop: List(Text)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if js_contains_text(drop, x) { jg_without_texts(rest, drop) } else { Cons(x, jg_without_texts(rest, drop)) }
+  }
+}
+
+pub fn jg_exported(entries: List(JgEntry), chunk: Text): List(Text) {
+  match entries {
+    Nil => Nil
+    Cons(e, rest) => if e.chunk == chunk { Cons(concat("f", js_nat(e.inst)), jg_exported(rest, chunk)) } else { jg_exported(rest, chunk) }
+  }
+}
+
+pub fn jg_chunk_modules(bodies: List(Text × Text), sharednames: List(Text), entries: List(JgEntry)): List(Text × Text) {
+  match bodies {
+    Nil => Nil
+    Cons(b, rest) => match b {
+      #(chunk, body) => {
+        let imports := jg_without_texts(sharednames, js_declared(body))
+        Cons(#(Text::concat_all(["chunk-", chunk, ".mjs"]), Text::concat_all([
+          "import {", text_join(imports, ","), "} from './program.mjs';\n", body, "export {", text_join(jg_exported(entries, chunk), ","), "};\n"
+        ])), jg_chunk_modules(rest, sharednames, entries))
+      }
+    }
+  }
+}
+
+// The program as one module (`generate_with`).
+pub fn js_generate_with(pkg: NPackage, options: JsOptions): Result(Text, Text) ! {div, overflow} {
+  match js_generate_modules(pkg, options) {
+    Err(e) => Err(e)
+    Ok(m) => match m.chunks {
+      Nil => Ok(m.program)
+      Cons(^c, ^rest) => Err("the program has javascript chunks; write each of its modules")
+    }
+  }
+}

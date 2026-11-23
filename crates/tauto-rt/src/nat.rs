@@ -48,23 +48,50 @@ impl Nat {
         }
     }
 
+    #[inline]
     pub fn zero() -> Nat {
         Nat(Repr::Small(0))
     }
 
+    #[inline]
     pub fn is_zero(&self) -> bool {
         matches!(self.0, Repr::Small(0))
     }
 
+    #[inline]
     pub fn from_u64(n: u64) -> Nat {
         Nat(Repr::Small(n))
     }
 
+    #[inline]
     pub fn to_u64(&self) -> Option<u64> {
         match self.0 {
             Repr::Small(n) => Some(n),
             Repr::Big(_) => None,
         }
+    }
+
+    /// The number `n`.
+    pub fn from_u128(n: u128) -> Nat {
+        Nat::of(vec![
+            n as u32,
+            (n >> 32) as u32,
+            (n >> 64) as u32,
+            (n >> 96) as u32,
+        ])
+    }
+
+    /// The number as a `u128`, or `None` when it is larger.
+    pub fn to_u128(&self) -> Option<u128> {
+        let d = self.digits();
+        if d.len() > 4 {
+            return None;
+        }
+        Some(
+            d.iter()
+                .rev()
+                .fold(0u128, |acc, x| acc << 32 | u128::from(*x)),
+        )
     }
 
     pub fn parse(s: &str) -> Option<Nat> {
@@ -79,12 +106,18 @@ impl Nat {
         Some(n)
     }
 
+    #[inline]
     pub fn add(&self, b: &Nat) -> Nat {
         if let (Repr::Small(x), Repr::Small(y)) = (&self.0, &b.0) {
             if let Some(s) = x.checked_add(*y) {
                 return Nat::from_u64(s);
             }
         }
+        self.add_big(b)
+    }
+
+    #[inline(never)]
+    fn add_big(&self, b: &Nat) -> Nat {
         let (x, y) = (&self.digits(), &b.digits());
         let mut out = Vec::with_capacity(x.len().max(y.len()) + 1);
         let mut carry = 0u64;
@@ -98,10 +131,16 @@ impl Nat {
     }
 
     /// `self - b`, or `None` when `b` is larger.
+    #[inline]
     pub fn sub(&self, b: &Nat) -> Option<Nat> {
         if let (Repr::Small(x), Repr::Small(y)) = (&self.0, &b.0) {
             return x.checked_sub(*y).map(Nat::from_u64);
         }
+        self.sub_big(b)
+    }
+
+    #[inline(never)]
+    fn sub_big(&self, b: &Nat) -> Option<Nat> {
         if self < b {
             return None;
         }
@@ -120,6 +159,7 @@ impl Nat {
         Some(Nat::of(out))
     }
 
+    #[inline]
     pub fn mul(&self, b: &Nat) -> Nat {
         if let (Repr::Small(x), Repr::Small(y)) = (&self.0, &b.0) {
             if let Some(p) = x.checked_mul(*y) {
@@ -179,6 +219,7 @@ impl Nat {
 
     /// The quotient and remainder of a division by `d`; `None` when `d` is
     /// zero.
+    #[inline]
     pub fn divmod(&self, d: &Nat) -> Option<(Nat, Nat)> {
         if d.is_zero() {
             return None;
@@ -214,12 +255,14 @@ impl Nat {
 }
 
 impl PartialOrd for Nat {
+    #[inline]
     fn partial_cmp(&self, b: &Nat) -> Option<Ordering> {
         Some(self.cmp(b))
     }
 }
 
 impl Ord for Nat {
+    #[inline]
     fn cmp(&self, b: &Nat) -> Ordering {
         match (&self.0, &b.0) {
             (Repr::Small(x), Repr::Small(y)) => x.cmp(y),

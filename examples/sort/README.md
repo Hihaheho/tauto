@@ -4,10 +4,10 @@ A tote (`Tauto.eure`): `src/sort.taut` is the program (`insert`, `sort`, both `w
 that sorts numbers and words with it, and `proof/sort.taut` is the proof, which `tauto check` checks and `tauto run` does
 not read. No axioms.
 
-- The order is the class `Ord` of `std/prelude/Ord.taut`, which programs and proofs both read. The program has one
+- The order is the class `Ord` of `std/builtin/ord.taut`, which programs and proofs both read. The program has one
   comparison, `Ord::compare(x, y)`, matched on `Less`, `Equal` and `Greater`. `List`, `Option` and `Pair` have an instance
-  there, with its laws proved; `i64`, `u64`, `Text` and the like have one in `std/prelude/Classes.taut`, and `Nat` in
-  `std/Ord.taut`.
+  there, with its laws proved; `i64`, `u64`, `Text` and the like have one in `std/builtin/classes.taut`, and `Nat` in
+  `std/ord.taut`.
 - `sorted(l)` is a function to a proposition (each element is `le` the next one, `le(a, b)` meaning `a` is not after `b`);
   `Perm(A, l, m)` is the usual inductive permutation (`PermNil`, `PermSkip`, `PermSwap`, `PermTrans`).
 - `le_of_less`, `le_of_equal` and `le_of_greater` turn the answer of `Ord::compare` into `le`; with `ord_swap_greater`
@@ -16,7 +16,7 @@ not read. No axioms.
   on the result of `insert`.
 - `sort_correct`: `sorted(sort(l)) ∧ Perm(A, l, sort(l))`, for every `A` with an `Ord`.
 
-`std/Sort.taut` also sorts, by a comparator argument, and proves the output has the same elements (`Equiv`, which ignores
+`std/sort.taut` also sorts, by a comparator argument, and proves the output has the same elements (`Equiv`, which ignores
 repeats). This example is the one that proves a permutation (the same number of each element).
 
 ```bash

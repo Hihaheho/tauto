@@ -1,0 +1,916 @@
+import "surface.taut"
+import "resolve.taut"
+import "../../identity/src/identity.taut"
+import "../../text/src/text.taut"
+import std::base
+import std::text
+
+// Puts what `surface_resolve` found into the syntax it read: a variable that
+// resolved to a declaration or a local binding carries that id instead of
+// its spelling (`docs/design/name-identity.md`). The uses are matched by
+// span; a variable the resolver left spelled (an import, the prelude, an
+// ambiguous constructor) stays `NameSpelled`.
+
+// The name the resolver gave the variable at `start..end`, if it did.
+pub fn surface_apply_find(uses: List(SurfaceUse), start: Nat, end: Nat, spelling: Text): Option(SurfaceName) {
+  match uses {
+    Nil => None
+    Cons(u, rest) => if u.start == start && u.end == end && Text::eq(u.spelling, spelling) {
+      Some(u.name)
+    } else {
+      surface_apply_find(rest, start, end, spelling)
+    }
+  }
+}
+
+pub fn surface_apply_var(start: Nat, end: Nat, uses: List(SurfaceUse), kind: SurfaceKind): SurfaceKind {
+  match kind {
+    SkVar(name) => ⊢ SurfaceKind from match name {
+      NameSpelled(text) => ⊢ SurfaceKind from match surface_apply_find(uses, start, end, text) {
+        Some(found) => SkVar(found)
+        None => kind
+      }
+      NameGlobal(^d) => kind
+      NameLocal(^l) => kind
+    }
+    _ => kind
+  }
+}
+
+mutual {
+  pub fn surface_apply_list_option_surfaceterm_from(
+    value: List(Option(SurfaceTerm)),
+    uses: List(SurfaceUse)
+  ): List(Option(SurfaceTerm)) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_option_surfaceterm(item, uses),
+        surface_apply_list_option_surfaceterm_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacearm_from(
+    value: List(SurfaceArm),
+    uses: List(SurfaceUse)
+  ): List(SurfaceArm) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacearm(item, uses),
+        surface_apply_list_surfacearm_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfaceconstraint_from(
+    value: List(SurfaceConstraint),
+    uses: List(SurfaceUse)
+  ): List(SurfaceConstraint) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfaceconstraint(item, uses),
+        surface_apply_list_surfaceconstraint_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacector_from(
+    value: List(SurfaceCtor),
+    uses: List(SurfaceUse)
+  ): List(SurfaceCtor) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacector(item, uses),
+        surface_apply_list_surfacector_from(rest, uses)
+      )
+    }
+  }
+
+
+
+
+  pub fn surface_apply_list_surfacedatactor_from(
+    value: List(SurfaceDataCtor),
+    uses: List(SurfaceUse)
+  ): List(SurfaceDataCtor) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacedatactor(item, uses),
+        surface_apply_list_surfacedatactor_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacedatafield_from(
+    value: List(SurfaceDataField),
+    uses: List(SurfaceUse)
+  ): List(SurfaceDataField) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacedatafield(item, uses),
+        surface_apply_list_surfacedatafield_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacefield_from(
+    value: List(SurfaceField),
+    uses: List(SurfaceUse)
+  ): List(SurfaceField) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacefield(item, uses),
+        surface_apply_list_surfacefield_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacefn_from(
+    value: List(SurfaceFn),
+    uses: List(SurfaceUse)
+  ): List(SurfaceFn) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacefn(item, uses),
+        surface_apply_list_surfacefn_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacehandler_from(
+    value: List(SurfaceHandler),
+    uses: List(SurfaceUse)
+  ): List(SurfaceHandler) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacehandler(item, uses),
+        surface_apply_list_surfacehandler_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacelaw_from(
+    value: List(SurfaceLaw),
+    uses: List(SurfaceUse)
+  ): List(SurfaceLaw) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacelaw(item, uses),
+        surface_apply_list_surfacelaw_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacenamed_from(
+    value: List(SurfaceNamed),
+    uses: List(SurfaceUse)
+  ): List(SurfaceNamed) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacenamed(item, uses),
+        surface_apply_list_surfacenamed_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfaceparam_from(
+    value: List(SurfaceParam),
+    uses: List(SurfaceUse)
+  ): List(SurfaceParam) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfaceparam(item, uses),
+        surface_apply_list_surfaceparam_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacepattern_from(
+    value: List(SurfacePattern),
+    uses: List(SurfaceUse)
+  ): List(SurfacePattern) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacepattern(item, uses),
+        surface_apply_list_surfacepattern_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacepatternfield_from(
+    value: List(SurfacePatternField),
+    uses: List(SurfaceUse)
+  ): List(SurfacePatternField) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacepatternfield(item, uses),
+        surface_apply_list_surfacepatternfield_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacesteparm_from(
+    value: List(SurfaceStepArm),
+    uses: List(SurfaceUse)
+  ): List(SurfaceStepArm) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacesteparm(item, uses),
+        surface_apply_list_surfacesteparm_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfacestmt_from(
+    value: List(SurfaceStmt),
+    uses: List(SurfaceUse)
+  ): List(SurfaceStmt) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfacestmt(item, uses),
+        surface_apply_list_surfacestmt_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_list_surfaceterm_from(
+    value: List(SurfaceTerm),
+    uses: List(SurfaceUse)
+  ): List(SurfaceTerm) {
+    match value {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        surface_apply_surfaceterm(item, uses),
+        surface_apply_list_surfaceterm_from(rest, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_option_surfaceterm(
+    value: Option(SurfaceTerm),
+    uses: List(SurfaceUse)
+  ): Option(SurfaceTerm) {
+    match value {
+      None => None
+      Some(item) => Some(surface_apply_surfaceterm(item, uses))
+    }
+  }
+
+  pub fn surface_apply_surfacearm(value: SurfaceArm, uses: List(SurfaceUse)): SurfaceArm {
+    match value {
+      SurfaceArmMk(slot_pattern, slot_guard, slot_goal, slot_body) => SurfaceArmMk(
+        surface_apply_surfacepattern(slot_pattern, uses),
+        surface_apply_option_surfaceterm(slot_guard, uses),
+        surface_apply_option_surfaceterm(slot_goal, uses),
+        surface_apply_surfaceterm(slot_body, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfaceclass(
+    value: SurfaceClass,
+    uses: List(SurfaceUse)
+  ): SurfaceClass {
+    match value {
+      SurfaceClassMk(slot_name, slot_param, slot_arity, slot_bound, slot_methods, slot_laws, slot_start, slot_end, slot_parameters, slot_inductive, slot_parents, slot_unused_parameters, c_vis) => SurfaceClassMk(slot_name, slot_param, slot_arity, slot_bound, surface_apply_list_surfacefn_from(slot_methods, uses), surface_apply_list_surfacelaw_from(slot_laws, uses), slot_start, slot_end, surface_apply_list_surfacenamed_from(slot_parameters, uses), slot_inductive, surface_apply_list_surfaceconstraint_from(slot_parents, uses), slot_unused_parameters, c_vis)
+    }
+  }
+
+  pub fn surface_apply_surfaceconstraint(
+    value: SurfaceConstraint,
+    uses: List(SurfaceUse)
+  ): SurfaceConstraint {
+    match value {
+      SurfaceConstraintMk(slot_class, slot_ty, slot_start, slot_end, slot_arguments) => SurfaceConstraintMk(
+        slot_class,
+        surface_apply_surfaceterm(slot_ty, uses),
+        slot_start,
+        slot_end,
+        surface_apply_list_surfaceterm_from(slot_arguments, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfacector(value: SurfaceCtor, uses: List(SurfaceUse)): SurfaceCtor {
+    match value {
+      SurfaceCtorMk(slot_name, slot_implicit, slot_params, slot_result) => SurfaceCtorMk(
+        slot_name,
+        slot_implicit,
+        surface_apply_list_surfacenamed_from(slot_params, uses),
+        surface_apply_surfaceterm(slot_result, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfacedata(value: SurfaceData, uses: List(SurfaceUse)): SurfaceData {
+    match value {
+      SurfaceDataMk(slot_kind, slot_name, slot_generics, slot_constructors, slot_start, slot_end, slot_coerce, slot_coerce_field, slot_visibility, slot_unused_generics, slot_rows) => SurfaceDataMk(slot_kind, slot_name, slot_generics, surface_apply_list_surfacedatactor_from(
+          slot_constructors,
+          uses), slot_start, slot_end, slot_coerce, slot_coerce_field, slot_visibility, slot_unused_generics, slot_rows)
+    }
+  }
+
+  pub fn surface_apply_surfacedatactor(
+    value: SurfaceDataCtor,
+    uses: List(SurfaceUse)
+  ): SurfaceDataCtor {
+    match value {
+      SurfaceDataCtorMk(slot_name, slot_fields) => SurfaceDataCtorMk(
+        slot_name,
+        surface_apply_list_surfacedatafield_from(slot_fields, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfacedatafield(
+    value: SurfaceDataField,
+    uses: List(SurfaceUse)
+  ): SurfaceDataField {
+    match value {
+      SurfaceDataFieldMk(slot_name, slot_ty) => SurfaceDataFieldMk(
+        slot_name,
+        surface_apply_surfaceterm(slot_ty, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfaceeffect(
+    value: SurfaceEffect,
+    uses: List(SurfaceUse)
+  ): SurfaceEffect {
+    match value {
+      SurfaceEffectMk(slot_name, slot_generics, slot_params, slot_result, slot_resume, slot_start, slot_end, slot_set, slot_unused_generics, slot_bounds, e_vis, slot_rows) => SurfaceEffectMk(slot_name, slot_generics, surface_apply_list_option_surfaceterm_from(
+          slot_params,
+          uses), surface_apply_option_surfaceterm(slot_result, uses), slot_resume, slot_start, slot_end, slot_set, slot_unused_generics, slot_bounds, e_vis, slot_rows)
+    }
+  }
+
+  pub fn surface_apply_surfacefield(
+    value: SurfaceField,
+    uses: List(SurfaceUse)
+  ): SurfaceField {
+    match value {
+      SurfaceFieldMk(slot_name, slot_value) => SurfaceFieldMk(
+        slot_name,
+        surface_apply_surfaceterm(slot_value, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfacefn(value: SurfaceFn, uses: List(SurfaceUse)): SurfaceFn {
+    match value {
+      SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, slot_param_types, slot_result, slot_effects, slot_wheres, slot_start, slot_end, slot_body, slot_lends, slot_generic_types, slot_bound_starts, slot_visibility, slot_row_hole, slot_unused, slot_unused_generics, slot_unused_params) => SurfaceFnMk(slot_name, slot_generics, slot_bounds, slot_params, slot_borrows, surface_apply_list_option_surfaceterm_from(
+          slot_param_types,
+          uses), surface_apply_option_surfaceterm(slot_result, uses), slot_effects, surface_apply_list_surfaceconstraint_from(
+          slot_wheres,
+          uses), slot_start, slot_end, surface_apply_surfaceterm(slot_body, uses), slot_lends, surface_apply_list_surfaceterm_from(
+          slot_generic_types,
+          uses), slot_bound_starts, slot_visibility, slot_row_hole, slot_unused, slot_unused_generics, slot_unused_params)
+    }
+    }
+
+  pub fn surface_apply_surfacehandler(
+    value: SurfaceHandler,
+    uses: List(SurfaceUse)
+  ): SurfaceHandler {
+    match value {
+      HdReturn(slot_pattern, slot_body) => HdReturn(
+        surface_apply_surfacepattern(slot_pattern, uses),
+        surface_apply_surfaceterm(slot_body, uses)
+      )
+      HdOperation(slot_op, slot_binds, slot_types, slot_patterns, slot_resume, slot_cont_unused, slot_guard, slot_body) => HdOperation(
+        slot_op,
+        slot_binds,
+        surface_apply_list_surfaceterm_from(slot_types, uses),
+        surface_apply_list_surfacepattern_from(
+          slot_patterns,
+          uses),
+        slot_resume,
+        slot_cont_unused,
+        surface_apply_option_surfaceterm(slot_guard, uses),
+        surface_apply_surfaceterm(slot_body, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfaceinductive(
+    value: SurfaceInductive,
+    uses: List(SurfaceUse)
+  ): SurfaceInductive {
+    match value {
+      SurfaceInductiveMk(slot_name, slot_params, slot_sort, slot_constructors, slot_start, slot_end, slot_visibility) => SurfaceInductiveMk(
+        slot_name,
+        surface_apply_list_surfacenamed_from(slot_params, uses),
+        surface_apply_surfaceterm(slot_sort, uses),
+        surface_apply_list_surfacector_from(
+          slot_constructors,
+          uses),
+        slot_start,
+        slot_end,
+        slot_visibility
+      )
+    }
+  }
+
+  pub fn surface_apply_surfaceinstance(
+    value: SurfaceInstance,
+    uses: List(SurfaceUse)
+  ): SurfaceInstance {
+    match value {
+      SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, slot_head, slot_wheres, slot_methods, slot_laws, slot_start, slot_end, slot_generic_types, slot_arguments, slot_infer_from, slot_unused_generics) => SurfaceInstanceMk(slot_generics, slot_bounds, slot_class, surface_apply_surfaceterm(slot_head, uses), surface_apply_list_surfaceconstraint_from(
+          slot_wheres,
+          uses), surface_apply_list_surfacefn_from(slot_methods, uses), surface_apply_list_surfacelaw_from(slot_laws, uses), slot_start, slot_end, surface_apply_list_surfaceterm_from(
+          slot_generic_types,
+          uses), surface_apply_list_surfaceterm_from(slot_arguments, uses), slot_infer_from, slot_unused_generics)
+    }
+  }
+
+  pub fn surface_apply_surfacekind(value: SurfaceKind, uses: List(SurfaceUse)): SurfaceKind {
+    match value {
+      SkVar(slot_name) => SkVar(slot_name)
+      SkNat(slot_digits) => SkNat(slot_digits)
+      SkFloat(slot_digits) => SkFloat(slot_digits)
+      SkRow(slot_effects) => SkRow(slot_effects)
+      SkText(slot_value) => SkText(slot_value)
+      SkBool(slot_value) => SkBool(slot_value)
+      SkApp(slot_head, slot_args) => SkApp(
+        surface_apply_surfaceterm(slot_head, uses),
+        surface_apply_list_surfaceterm_from(slot_args, uses)
+      )
+      SkPi(slot_params, slot_result, slot_effects) => SkPi(
+        surface_apply_list_surfaceparam_from(slot_params, uses),
+        surface_apply_surfaceterm(slot_result, uses),
+        slot_effects
+      )
+      SkExists(slot_binder, slot_domain, slot_body, unused) => SkExists(slot_binder, surface_apply_surfaceterm(slot_domain, uses), surface_apply_surfaceterm(slot_body, uses), unused)
+      SkLam(slot_params, slot_body, slot_types, unused) => SkLam(
+        slot_params,
+        surface_apply_surfaceterm(slot_body, uses),
+        slot_types,
+        unused
+      )
+      SkUnion(slot_parts) => SkUnion(
+        surface_apply_list_surfaceterm_from(slot_parts, uses)
+      )
+      SkTagged(slot_tag, slot_value) => SkTagged(
+        slot_tag,
+        surface_apply_surfaceterm(slot_value, uses)
+      )
+      SkIf(slot_cond, slot_then, slot_otherwise) => SkIf(
+        surface_apply_surfaceterm(slot_cond, uses),
+        surface_apply_surfaceterm(slot_then, uses),
+        surface_apply_option_surfaceterm(slot_otherwise, uses)
+      )
+      SkField(slot_value, slot_name) => SkField(
+        surface_apply_surfaceterm(slot_value, uses),
+        slot_name
+      )
+      SkBlock(slot_stmts) => SkBlock(
+        surface_apply_list_surfacestmt_from(slot_stmts, uses)
+      )
+      SkPerform(slot_op, slot_args) => SkPerform(
+        slot_op,
+        surface_apply_list_surfaceterm_from(slot_args, uses)
+      )
+      SkHandle(slot_body, slot_handlers) => SkHandle(
+        surface_apply_surfaceterm(slot_body, uses),
+        surface_apply_list_surfacehandler_from(slot_handlers, uses)
+      )
+      SkBudget(slot_memory, slot_amount, slot_body) => SkBudget(
+        slot_memory,
+        surface_apply_surfaceterm(slot_amount, uses),
+        surface_apply_surfaceterm(slot_body, uses)
+      )
+      SkMatch(slot_scrutinee, slot_motive, slot_arms, slot_binder, slot_binder_unused) => SkMatch(
+        surface_apply_surfaceterm(slot_scrutinee, uses),
+        surface_apply_option_surfaceterm(slot_motive, uses),
+        surface_apply_list_surfacearm_from(slot_arms, uses),
+        slot_binder,
+        slot_binder_unused
+      )
+      SkHole(slot_name) => SkHole(slot_name)
+      SkRecord(slot_name, slot_fields) => SkRecord(
+        slot_name,
+        surface_apply_list_surfacefield_from(slot_fields, uses)
+      )
+      SkBorrow(slot_mutable, slot_mutable_orig, slot_value) => SkBorrow(
+        slot_mutable, slot_mutable_orig,
+        surface_apply_surfaceterm(slot_value, uses)
+      )
+      SkFnKind(slot_kind, slot_ty) => SkFnKind(
+        slot_kind,
+        surface_apply_surfaceterm(slot_ty, uses)
+      )
+      SkBorrowLam(slot_borrows, slot_lam) => SkBorrowLam(
+        slot_borrows,
+        surface_apply_surfaceterm(slot_lam, uses)
+      )
+      SkOther(slot_what) => SkOther(slot_what)
+      SkMacroCall(slot_name, slot_arg) => SkMacroCall(
+        slot_name,
+        surface_apply_surfaceterm(slot_arg, uses)
+      )
+      SkQuote(slot_stmts_form, slot_stmts) => SkQuote(
+        slot_stmts_form,
+        surface_apply_list_surfacestmt_from(slot_stmts, uses)
+      )
+      SkSplice(slot_value) => SkSplice(
+        surface_apply_surfaceterm(slot_value, uses)
+      )
+      SkSyntaxLit(slot_name, slot_body) => SkSyntaxLit(slot_name, slot_body)
+      SkStep(slot_tactic, slot_arg, slot_call_start, slot_call_end, slot_before, slot_arms) => SkStep(
+        slot_tactic,
+        surface_apply_surfaceterm(slot_arg, uses),
+        slot_call_start,
+        slot_call_end,
+        surface_apply_option_surfaceterm(slot_before, uses),
+        surface_apply_list_surfacesteparm_from(slot_arms, uses)
+      )
+      SkAscribe(slot_value, slot_ty) => SkAscribe(
+        surface_apply_surfaceterm(slot_value, uses),
+        surface_apply_surfaceterm(slot_ty, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfacelaw(value: SurfaceLaw, uses: List(SurfaceUse)): SurfaceLaw {
+    match value {
+      SurfaceLawMk(slot_name, slot_start, slot_end, slot_theorem) => SurfaceLawMk(
+        slot_name,
+        slot_start,
+        slot_end,
+        surface_apply_surfacetheorem(slot_theorem, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfacenamed(
+    value: SurfaceNamed,
+    uses: List(SurfaceUse)
+  ): SurfaceNamed {
+    match value {
+      SurfaceNamedMk(slot_name, slot_ty) => SurfaceNamedMk(
+        slot_name,
+        surface_apply_surfaceterm(slot_ty, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfaceparam(
+    value: SurfaceParam,
+    uses: List(SurfaceUse)
+  ): SurfaceParam {
+    match value {
+      SurfaceParamMk(slot_name, slot_ty, unused) => SurfaceParamMk(
+        slot_name,
+        surface_apply_surfaceterm(slot_ty, uses),
+        unused
+      )
+    }
+  }
+
+  pub fn surface_apply_surfacepattern(
+    value: SurfacePattern,
+    uses: List(SurfaceUse)
+  ): SurfacePattern {
+    match value {
+      PtWild => PtWild
+      PtBind(slot_name, unused) => PtBind(slot_name, unused)
+      PtInt(slot_negative, slot_magnitude) => PtInt(slot_negative, slot_magnitude)
+      PtBool(slot_value) => PtBool(slot_value)
+      PtText(slot_value) => PtText(slot_value)
+      PtCtor(slot_name, slot_args) => PtCtor(
+        slot_name,
+        surface_apply_list_surfacepattern_from(slot_args, uses)
+      )
+      PtRecord(slot_name, slot_fields) => PtRecord(
+        slot_name,
+        surface_apply_list_surfacepatternfield_from(
+          slot_fields,
+          uses)
+      )
+      PtTyped(slot_name, slot_ty, slot_unused) => PtTyped(
+        slot_name,
+        surface_apply_surfaceterm(slot_ty, uses),
+        slot_unused
+      )
+      PtOther(slot_what) => PtOther(slot_what)
+    }
+  }
+
+  pub fn surface_apply_surfacepatternfield(
+    value: SurfacePatternField,
+    uses: List(SurfaceUse)
+  ): SurfacePatternField {
+    match value {
+      SurfacePatternFieldMk(slot_name, slot_pattern) => SurfacePatternFieldMk(
+        slot_name,
+        surface_apply_surfacepattern(slot_pattern, uses)
+      )
+    }
+  }
+
+  pub fn surface_apply_surfacesteparm(
+    value: SurfaceStepArm,
+    uses: List(SurfaceUse)
+  ): SurfaceStepArm {
+    match value {
+      SurfaceStepArmMk(slot_binders, slot_unused_binders, slot_goal, slot_body, slot_start, slot_end) => SurfaceStepArmMk(
+        surface_apply_list_surfacefield_from(slot_binders, uses),
+        slot_unused_binders,
+        surface_apply_surfaceterm(slot_goal, uses),
+        surface_apply_surfaceterm(slot_body, uses),
+        slot_start,
+        slot_end
+      )
+    }
+  }
+
+  pub fn surface_apply_surfacestmt(value: SurfaceStmt, uses: List(SurfaceUse)): SurfaceStmt {
+    match value {
+      StLet(slot_name, slot_ty, slot_value, slot_borrow, slot_mutable, unused, st_stack) => StLet(slot_name, surface_apply_option_surfaceterm(slot_ty, uses), surface_apply_surfaceterm(slot_value, uses), slot_borrow, slot_mutable, unused, st_stack)
+      StVar(slot_name, slot_ty, slot_value, slot_borrow, unused, st_stack) => StVar(slot_name, surface_apply_option_surfaceterm(slot_ty, uses), surface_apply_surfaceterm(slot_value, uses), slot_borrow, unused, st_stack)
+      StAssign(slot_name, slot_place, slot_value) => StAssign(
+        slot_name,
+        surface_apply_option_surfaceterm(slot_place, uses),
+        surface_apply_surfaceterm(slot_value, uses)
+      )
+      StCalled(slot_generates, slot_call) => StCalled(
+        slot_generates,
+        surface_apply_surfaceterm(slot_call, uses)
+      )
+      StAttributed(slot_name, slot_arg, slot_generates, slot_stmt) => StAttributed(
+        slot_name,
+        surface_apply_surfaceterm(slot_arg, uses),
+        slot_generates,
+        surface_apply_surfacestmt(slot_stmt, uses)
+      )
+      StFn(slot_f) => StFn(surface_apply_surfacefn(slot_f, uses))
+      StTheorem(slot_t) => StTheorem(
+        surface_apply_surfacetheorem(slot_t, uses)
+      )
+      StDef(slot_t) => StDef(
+        surface_apply_surfacetheorem(slot_t, uses)
+      )
+      StMutual(slot_stmts, slot_start, slot_end) => StMutual(
+        surface_apply_list_surfacestmt_from(slot_stmts, uses),
+        slot_start,
+        slot_end
+      )
+      StModule(slot_name, slot_visibility, slot_items, slot_start, slot_end) => StModule(
+        slot_name,
+        slot_visibility,
+        surface_apply_list_surfacestmt_from(slot_items, uses),
+        slot_start,
+        slot_end
+      )
+      StReexport(slot_path, slot_names, slot_spans, slot_start, slot_end) => StReexport(slot_path, slot_names, slot_spans, slot_start, slot_end)
+      StImport(slot_path, slot_start, slot_end) => StImport(slot_path, slot_start, slot_end)
+      StInductive(slot_i) => StInductive(
+        surface_apply_surfaceinductive(slot_i, uses)
+      )
+      StEffect(slot_e) => StEffect(
+        surface_apply_surfaceeffect(slot_e, uses)
+      )
+      StStruct(slot_d) => StStruct(
+        surface_apply_surfacedata(slot_d, uses)
+      )
+      StEnum(slot_d) => StEnum(
+        surface_apply_surfacedata(slot_d, uses)
+      )
+      StExtern(slot_fns, slot_instances, slot_types, slot_structs, slot_enums, slot_start, slot_end) => StExtern(
+        surface_apply_list_surfacefn_from(slot_fns, uses),
+        slot_instances,
+        slot_types,
+        slot_structs,
+        slot_enums,
+        slot_start,
+        slot_end
+      )
+      StClass(slot_c) => StClass(
+        surface_apply_surfaceclass(slot_c, uses)
+      )
+      StInstance(slot_i) => StInstance(
+        surface_apply_surfaceinstance(slot_i, uses)
+      )
+      StWhile(slot_cond, slot_body) => StWhile(
+        surface_apply_surfaceterm(slot_cond, uses),
+        surface_apply_surfaceterm(slot_body, uses)
+      )
+      StReturn(slot_value) => StReturn(
+        surface_apply_option_surfaceterm(slot_value, uses)
+      )
+      StExpr(slot_value) => StExpr(
+        surface_apply_surfaceterm(slot_value, uses)
+      )
+      StOther(slot_what, slot_start, slot_end) => StOther(slot_what, slot_start, slot_end)
+      StLoop(^st_body, slot_start, slot_end) => StOther("LoopExpr", slot_start, slot_end)
+      StFor(^for_pat, ^for_src, ^st_body, slot_start, slot_end) => StOther("ForStmt", slot_start, slot_end)
+      StBreak(^st_value, slot_start, slot_end) => StOther("BreakStmt", slot_start, slot_end)
+      StContinue(slot_start, slot_end) => StOther("ContinueStmt", slot_start, slot_end)
+      StMacro(slot_name, slot_function, slot_start, slot_end) => StMacro(
+        slot_name,
+        slot_function,
+        slot_start,
+        slot_end
+      )
+      StSyntax(slot_name, slot_grammar, slot_start, slot_end) => StSyntax(
+        slot_name,
+        slot_grammar,
+        slot_start,
+        slot_end
+      )
+    }
+  }
+
+  pub fn surface_apply_surfaceterm(value: SurfaceTerm, uses: List(SurfaceUse)): SurfaceTerm {
+    match value {
+      SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_old_occurrence) =>
+      SurfaceTermIndexedMk(
+        surface_apply_var(slot_start, slot_end, uses, surface_apply_surfacekind(slot_kind, uses)),
+        slot_start,
+        slot_end,
+        slot_old_occurrence
+      )
+    }
+  }
+
+  pub fn surface_apply_surfacetheorem(
+    value: SurfaceTheorem,
+    uses: List(SurfaceUse)
+  ): SurfaceTheorem {
+    match value {
+      SurfaceTheoremMk(slot_name, slot_implicit, slot_params, slot_ty, slot_body, slot_start, slot_end, slot_unused, slot_unused_params, t_vis) => SurfaceTheoremMk(slot_name, slot_implicit, surface_apply_list_surfacenamed_from(slot_params, uses), surface_apply_surfaceterm(slot_ty, uses), surface_apply_option_surfaceterm(slot_body, uses), slot_start, slot_end, slot_unused, slot_unused_params, t_vis)
+    }
+    }
+
+}
+
+pub fn surface_apply_list_option_surfaceterm(
+  value: List(Option(SurfaceTerm)),
+  uses: List(SurfaceUse)
+): List(Option(SurfaceTerm)) {
+  surface_apply_list_option_surfaceterm_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacearm(
+  value: List(SurfaceArm),
+  uses: List(SurfaceUse)
+): List(SurfaceArm) {
+  surface_apply_list_surfacearm_from(value, uses)
+}
+
+pub fn surface_apply_list_surfaceconstraint(
+  value: List(SurfaceConstraint),
+  uses: List(SurfaceUse)
+): List(SurfaceConstraint) {
+  surface_apply_list_surfaceconstraint_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacector(
+  value: List(SurfaceCtor),
+  uses: List(SurfaceUse)
+): List(SurfaceCtor) {
+  surface_apply_list_surfacector_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacedatactor(
+  value: List(SurfaceDataCtor),
+  uses: List(SurfaceUse)
+): List(SurfaceDataCtor) {
+  surface_apply_list_surfacedatactor_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacedatafield(
+  value: List(SurfaceDataField),
+  uses: List(SurfaceUse)
+): List(SurfaceDataField) {
+  surface_apply_list_surfacedatafield_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacefield(
+  value: List(SurfaceField),
+  uses: List(SurfaceUse)
+): List(SurfaceField) {
+  surface_apply_list_surfacefield_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacefn(
+  value: List(SurfaceFn),
+  uses: List(SurfaceUse)
+): List(SurfaceFn) {
+  surface_apply_list_surfacefn_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacehandler(
+  value: List(SurfaceHandler),
+  uses: List(SurfaceUse)
+): List(SurfaceHandler) {
+  surface_apply_list_surfacehandler_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacelaw(
+  value: List(SurfaceLaw),
+  uses: List(SurfaceUse)
+): List(SurfaceLaw) {
+  surface_apply_list_surfacelaw_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacenamed(
+  value: List(SurfaceNamed),
+  uses: List(SurfaceUse)
+): List(SurfaceNamed) {
+  surface_apply_list_surfacenamed_from(value, uses)
+}
+
+pub fn surface_apply_list_surfaceparam(
+  value: List(SurfaceParam),
+  uses: List(SurfaceUse)
+): List(SurfaceParam) {
+  surface_apply_list_surfaceparam_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacepattern(
+  value: List(SurfacePattern),
+  uses: List(SurfaceUse)
+): List(SurfacePattern) {
+  surface_apply_list_surfacepattern_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacepatternfield(
+  value: List(SurfacePatternField),
+  uses: List(SurfaceUse)
+): List(SurfacePatternField) {
+  surface_apply_list_surfacepatternfield_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacesteparm(
+  value: List(SurfaceStepArm),
+  uses: List(SurfaceUse)
+): List(SurfaceStepArm) {
+  surface_apply_list_surfacesteparm_from(value, uses)
+}
+
+pub fn surface_apply_list_surfacestmt(
+  value: List(SurfaceStmt),
+  uses: List(SurfaceUse)
+): List(SurfaceStmt) {
+  surface_apply_list_surfacestmt_from(value, uses)
+}
+
+pub fn surface_apply_list_surfaceterm(
+  value: List(SurfaceTerm),
+  uses: List(SurfaceUse)
+): List(SurfaceTerm) {
+  surface_apply_list_surfaceterm_from(value, uses)
+}
+
+
+// The program with the names its resolution found.
+pub fn surface_apply_program(stmts: List(SurfaceStmt), uses: List(SurfaceUse)): List(SurfaceStmt) {
+  surface_apply_list_surfacestmt(stmts, uses)
+}
+
+// The display text of the declarations by id, for what shows a name that has
+// been resolved: each id shown as the first spelling it was given. Ids are
+// handed out in order, so a declaration whose id is the next one is a new one.
+pub fn surface_decl_table_from(ds: List(SurfaceDecl), t: DeclTable): DeclTable {
+  match ds {
+    Nil => t
+    Cons(d, rest) => if decl_id_index(d.id) == decl_table_size(t) {
+      surface_decl_table_from(rest, decl_table_add(t, d.name))
+    } else {
+      surface_decl_table_from(rest, t)
+    }
+  }
+}
+
+// A program read once: its syntax with the resolved names carried as ids, and
+// the display text of its declarations.
+pub(open) inductive SurfaceResolvedProgram: Type {
+  SurfaceResolvedProgramMk(stmts: List(SurfaceStmt), table: DeclTable): SurfaceResolvedProgram
+}
+
+pub fn surface_resolve_program(stmts: List(SurfaceStmt)): SurfaceResolvedProgram {
+  let resolved := surface_resolve(stmts)
+  SurfaceResolvedProgramMk(
+    surface_apply_program(stmts, resolved.uses),
+    surface_decl_table_from(resolved.decls, decl_table_empty())
+  )
+}

@@ -1,0 +1,71 @@
+// Capacity 24 is three groups. Stepping one group at a time reaches every
+// group; triangular steps on the group index would revisit group 0 and skip 2.
+// `free_slot` / `probe` / `insert_in` call `next_group` once per recursion
+// with no growing stride, so the 0 → 8 → 16 walk is the insert/search path.
+// Capacity 25 has a fourth partial group starting at slot 24. Insert, find,
+// remove, and rehash all start from `HT::start_base` (ceil groups), so hash
+// 384 (group index 3) reaches slot 24 instead of wrapping to group 0.
+@ cases.hash-table-next-group-visits-all
+imports = [
+  path`../std/uhost.taut`,
+  path`../std/uint.taut`,
+  path`../std/hash_table.taut`,
+]
+checks."next_after_0" = "ok"
+checks."next_after_8" = "ok"
+checks."next_after_16" = "ok"
+checks."insert_path_second_step" = "ok"
+checks."groups_of_25" = "ok"
+checks."partial_group_after_16" = "ok"
+checks."partial_group_wraps" = "ok"
+checks."partial_start_hash_384" = "ok"
+source = ```tauto
+theorem next_after_0(): HT::next_group(UHost::lit(24, Refl), UInt::of_nat_mod64(0)) = Some(UInt::of_nat_mod64(8)) {
+  Refl
+}
+
+theorem next_after_8(): HT::next_group(UHost::lit(24, Refl), UInt::of_nat_mod64(8)) = Some(UInt::of_nat_mod64(16)) {
+  Refl
+}
+
+theorem next_after_16(): HT::next_group(UHost::lit(24, Refl), UInt::of_nat_mod64(16)) = Some(UInt::of_nat_mod64(0)) {
+  Refl
+}
+
+// Second recursive step of `HT::free_slot` / `HT::probe` after leaving group 0:
+// the old triangular stride (step = 2 from group 1) wrapped to group 0 and
+// skipped group 2; one-group steps reach it.
+theorem insert_path_second_step(): HT::next_group(
+  UHost::lit(24, Refl),
+  UInt::of_nat_mod64(8)
+) = Some(UInt::of_nat_mod64(16)) {
+  Refl
+}
+
+theorem groups_of_25(): HT::group_count(UHost::lit(25, Refl)) = Some(UInt::of_nat_mod64(4)) {
+  Refl
+}
+
+theorem partial_group_after_16(): HT::next_group(
+  UHost::lit(25, Refl),
+  UInt::of_nat_mod64(16)
+) = Some(UInt::of_nat_mod64(24)) {
+  Refl
+}
+
+theorem partial_group_wraps(): HT::next_group(
+  UHost::lit(25, Refl),
+  UInt::of_nat_mod64(24)
+) = Some(UInt::of_nat_mod64(0)) {
+  Refl
+}
+
+// Insert / find_idx / free_for share this start: truncated cap/8 would give
+// group 0 for hash 384 and miss the element stored at slot 24.
+theorem partial_start_hash_384(): HT::start_base(
+  UHost::lit(25, Refl),
+  UInt::of_nat_mod64(384)
+) = Some(UInt::of_nat_mod64(24)) {
+  Refl
+}
+```

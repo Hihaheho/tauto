@@ -3,9 +3,9 @@ import "tracked_body_frame.taut"
 import "tracked_records_sound.taut"
 import "finish_literal_sound.taut"
 import "rules_registered_signatures.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_report.taut"
@@ -30,10 +30,10 @@ pub theorem literal_records_bind_stable<A: Type, B: Type>(
   m: Mut1(A, Checker),
   first: FinishStableFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. FinishStableFrame(next, k(value, next))
-): FinishStableFrame(c, frame_bind(A, B, k, m)) {
+): FinishStableFrame(c, frame_bind(<A: A, B: B>, k, m)) {
   ⊢ FinishStableFrame(
     c,
-    frame_bind(A, B, k, m)
+    frame_bind(<A: A, B: B>, k, m)
   ) from match m { mut1(value, next) => Eq::trans(tail(value, next), first) }
 }
 pub theorem literal_records_rewrap_stable<A: Type>(
@@ -51,7 +51,7 @@ pub theorem literal_default_records_stable(
   c: Checker,
   t: Ty
 ): FinishStableFrame(c, finish_default(c, t)) {
-  ⊢ FinishStableFrame(c, finish_default(c, t)) from match t {
+  match t {
     TyInt(w) => Refl
     TyBool => Refl
     TyText => Refl
@@ -59,6 +59,7 @@ pub theorem literal_default_records_stable(
     TyNever => Refl
     TyDecimal => Refl
     TyFloat => Refl
+    TyFloat32 => Refl
     TyFn(ps, result, kind) => Refl
     TyUnion(ys) => Refl
     TyProduct(ys) => Refl
@@ -83,17 +84,16 @@ pub theorem ck_default_int_records_stable(
   )
 }
 pub theorem ck_default_ints_records_stable(
-  vs: List(Pair(Nat, Bool)),
+  vs: List(Nat × Bool),
   c: Checker
 ): FinishStableFrame(c, ck_default_ints(vs, c)) {
-  ⊢ FinishStableFrame(c, ck_default_ints(vs, c)) from match vs {
+  match vs {
     Nil => Refl
     Cons(v, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => FinishStableFrame(c, m),
       Eq::sym(finish_defaults_unf(v, rest, c)),
       literal_records_bind_stable(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_default_ints(rest, next)),
         ck_default_int(c, finish_int_key(v)),
@@ -113,10 +113,6 @@ pub theorem literal_after_defaults_records_stable(
   clean: DiagnosticReportClean(finish_after_defaults(c, widths))
 ): FinishStableFrame(c, finish_after_defaults(c, widths)) {
   Eq::congr(
-    Mut1(TypeReport, Checker),
-    Pair(List(TyLiteral), Ordmap(Text, Scheme)),
-    finish_after_defaults(c, widths),
-    mut1(finish_report(c, widths), c),
     (m: Mut1(TypeReport, Checker)) => ck_stable_view(ck_st(m)),
     And::right(finish_after_defaults_accepts(c, widths, clean))
   )
@@ -127,7 +123,7 @@ pub theorem literal_finish_default_records_stable(
   first: FinishStableFrame(c, m),
   clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
 ): FinishStableFrame(c, diagnostic_finish_default_result(m)) {
-  ⊢ FinishStableFrame(c, diagnostic_finish_default_result(m)) from match m {
+  match m {
     mut1(value, next) => Eq::trans(
       literal_after_defaults_records_stable(
         next,
@@ -168,7 +164,7 @@ pub theorem ck_finish_tracked(
 pub theorem tracked_registered_signatures(
   c: Checker,
   next: Checker,
-  schemes: List(Pair(SurfaceFn, Scheme)),
+  schemes: List(SurfaceFn × Scheme),
   registered: RegisteredSignatures(stable_functions(c), schemes),
   retained: TrackedState(c, next)
 ): RegisteredSignatures(stable_functions(next), schemes) {
@@ -181,7 +177,7 @@ pub theorem tracked_registered_signatures(
 pub theorem body_finish_registered_signatures(
   c: Checker,
   program: List(SurfaceStmt),
-  schemes: List(Pair(SurfaceFn, Scheme)),
+  schemes: List(SurfaceFn × Scheme),
   ordered: CkOrdered(c),
   registered: RegisteredSignatures(stable_functions(c), schemes),
   clean: DiagnosticReportClean(ck_finish(ck_st(names_function_body(c, program, schemes))))

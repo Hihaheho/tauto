@@ -1,0 +1,457 @@
+import "strict.taut"
+import totebag::spec
+import eure::value
+import std::base
+import std::text
+
+// The two files at the root of an index repository
+// (`crates/totebag/src/index/ledger.rs`): `Index.eure`, how the index is
+// published, and `observations.eure`, the batch of events a commit adds.
+// A SHA-256 is kept as written, `sha256:<hex>`, and so is an event's time,
+// checked by `tb_time`: what it reads is written back the same.
+
+pub fn tb_config_file(): Text { "Index.eure" }
+pub fn tb_batch_file(): Text { "observations.eure" }
+pub fn tb_max_config(): u64 { 65536 }
+pub fn tb_max_batch(): u64 { 1048576 }
+pub fn tb_max_events(): u64 { 4096 }
+
+pub(open) struct TbConfig {
+  name: Text,
+  git_object_format: Text,
+}
+
+// A package revision of a project.
+pub(open) struct TbKey {
+  project: Text,
+  rev: Text,
+}
+
+pub(open) inductive TbEvent: Type {
+  // key, source, first_seen_at
+  Observation(key: TbKey, source: Text, first_seen_at: Text): TbEvent
+  // index, repository, ref, rev, sha256, first_seen_at
+  IndexObservation(index: Text, repository: Text, reference: Text, rev: Text, sha256: Text, first_seen_at: Text): TbEvent
+  // key, accept, reason
+  Decision(key: TbKey, accept: Bool, reason: Text): TbEvent
+  Withdrawal(key: TbKey, reason: Text): TbEvent
+  Retirement(reason: Text): TbEvent
+}
+
+pub(open) struct TbBatch {
+  sequence: u64,
+  issued_at: u64,
+  valid_until: u64,
+  events: List(TbEvent),
+}
+
+pub fn tb_expect_format(fs: List(Text × Node), kind: Text): Result(List(Text × Node), Text) {
+  let f := match tb_field_integer(fs, "format") {
+    Ok(p) => if p.fst != 1 {
+      return Err("totebag-unknown-format")
+    } else {
+      p.snd
+    }
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_field_text(f, "kind") {
+    Ok(p) => if p.fst == kind { Ok(p.snd) } else { Err(tb_at("totebag-expected-value")) }
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_doc_fields(bytes: Bytes, max: u64): Result(List(Text × Node), Text) {
+  match tb_strict_parse(bytes, max) {
+    Ok(d) => tb_fields(d)
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_check_name_length(s: Text): Result(Text, Text) {
+  let n := Bytes::len(Bytes::of_text(s))
+  if n >= 1 && n <= 128 { Ok(s) } else { Err("totebag-name-length") }
+}
+
+pub fn tb_check_history(s: Text): Result(Text, Text) {
+  if s == "commit-batches" { Ok(s) } else { Err("totebag-only-history") }
+}
+
+pub fn tb_check_object_format(s: Text): Result(Text, Text) {
+  if s == "sha1" || s == "sha256" { Ok(s) } else { Err("totebag-not-object-format") }
+}
+
+pub fn tb_config(bytes: Bytes): Result(TbConfig, Text) {
+  let f0 := match tb_doc_fields(bytes, tb_max_config()) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let f1 := match tb_expect_format(f0, "index") {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let name := match tb_field_as(f1, "name", tb_check_name_length) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let history := match tb_field_as(name.snd, "history", tb_check_history) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let format := match tb_field_as(history.snd, "git_object_format", tb_check_object_format) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_finish(format.snd) {
+    Ok(_) => Ok(TbConfig { name: name.fst, git_object_format: format.fst })
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_key_fields(fs: List(Text × Node)): Result(TbKey × List(Text × Node), Text) {
+  let p := match tb_field_as(fs, "project", tb_sha256) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_field_as(p.snd, "rev", tb_package_rev) {
+    Ok(r) => Ok(#(TbKey { project: p.fst, rev: r.fst }, r.snd))
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_check_verdict(s: Text): Result(Text, Text) {
+  if s == "accept" || s == "reject" { Ok(s) } else { Err("totebag-not-verdict") }
+}
+
+pub fn tb_rev_format(rev: Text): Text {
+  match tb_split_colon(rev) {
+    Some(f) => f
+    None => ""
+  }
+}
+
+// The part of `t` before its first `:`.
+pub fn tb_split_colon(t: Text): Option(Text) {
+  let b := Bytes::of_text(t)
+  let n := Bytes::len(b)
+  var i: u64 := 0
+  while i < n {
+    if tb_byte_at(b, i) == 58 {
+      return Some(tb_piece(b, 0, i))
+    }
+    i := i + 1
+  }
+  None
+}
+
+pub fn tb_field_time_text(fs: List(Text × Node), key: Text): Result(Text × List(Text × Node), Text) {
+  match tb_field_text(fs, key) {
+    Ok(p) => match tb_time(p.fst) {
+      Ok(_) => Ok(p)
+      Err(e) => Err(tb_at(e))
+    }
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_event_kind(fs: List(Text × Node), kind: Text, object_format: Text): Result(TbEvent × List(Text × Node), Text) {
+  if kind == "observation" {
+let k := match tb_key_fields(fs) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+let s := match tb_field_as(k.snd, "source_sha256", tb_sha256) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+let t := match tb_field_time_text(s.snd, "first_seen_at") {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+    return Ok(#(Observation(k.fst, s.fst, t.fst), t.snd))
+  }
+  if kind == "index-observation" {
+let ix := match tb_field_as(fs, "index", tb_sha256) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+let repo := match tb_field_as(ix.snd, "repository", tb_https_url) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+let r := match tb_field_as(repo.snd, "ref", tb_branch) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+let v := match tb_field_text(r.snd, "rev") {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+    if not(tb_check_rev(v.fst)) {
+      return Err(tb_at("totebag-bad-rev"))
+    }
+    if tb_rev_format(v.fst) != object_format {
+      return Err(tb_at("totebag-not-commit-of-format"))
+    }
+let h := match tb_field_as(v.snd, "sha256", tb_sha256) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+let t := match tb_field_time_text(h.snd, "first_seen_at") {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+    return Ok(#(IndexObservation(ix.fst, repo.fst, r.fst, v.fst, h.fst, t.fst), t.snd))
+  }
+  if kind == "decision" {
+let k := match tb_key_fields(fs) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+let v := match tb_field_as(k.snd, "verdict", tb_check_verdict) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+let r := match tb_field_as(v.snd, "reason", tb_reason) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+    return Ok(#(Decision(k.fst, v.fst == "accept", r.fst), r.snd))
+  }
+  if kind == "withdrawal" {
+let k := match tb_key_fields(fs) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+let r := match tb_field_as(k.snd, "reason", tb_reason) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+    return Ok(#(Withdrawal(k.fst, r.fst), r.snd))
+  }
+  if kind == "retirement" {
+let r := match tb_field_as(fs, "reason", tb_reason) {
+      Ok(p) => p
+      Err(e) => {
+        return Err(e)
+      }
+    }
+    return Ok(#(Retirement(r.fst), r.snd))
+  }
+  Err("totebag-not-event-kind")
+}
+
+pub fn tb_event(n: Node, object_format: Text): Result(TbEvent, Text) {
+let fs := match tb_fields(n) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+let k := match tb_field_text(fs, "kind") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+let ev := match tb_event_kind(k.snd, k.fst, object_format) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_finish(ev.snd) {
+    Ok(_) => Ok(ev.fst)
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_is_retirement(e: TbEvent): Bool {
+  match e {
+    Retirement(_) => true
+    Observation(_, _, _) => false
+    IndexObservation(_, _, _, _, _, _) => false
+    Decision(_, _, _) => false
+    Withdrawal(_, _) => false
+  }
+}
+
+pub fn tb_rev_events(l: List(TbEvent), acc: List(TbEvent)): List(TbEvent) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => tb_rev_events(rest, Cons(x, acc))
+  }
+}
+
+// An event's error names the event once, under `totebag-at`.
+pub fn tb_at_once(e: Text): Text {
+  if tb_starts(e, "totebag-at ") { e } else { tb_at(e) }
+}
+
+pub fn tb_batch(bytes: Bytes, object_format: Text): Result(TbBatch, Text) {
+let f0 := match tb_doc_fields(bytes, tb_max_batch()) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+let f1 := match tb_expect_format(f0, "batch") {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+let sq := match tb_field_integer(f1, "sequence") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+let ia := match tb_field_time(sq.snd, "issued_at") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+let vu := match tb_field_time(ia.snd, "valid_until") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if vu.fst <= ia.fst {
+    return Err("totebag-valid-until-early")
+  }
+let ev := match tb_required(vu.snd, "events") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+let items := match tb_strict_list(ev.fst, tb_max_events()) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(tb_at(e))
+    }
+  }
+  match tb_finish(ev.snd) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var events: List(TbEvent) := Nil
+  var retired := false
+  var rest := items
+  var going := true
+  while going {
+    match rest {
+      Cons(n, more) => {
+let e := match tb_event(n, object_format) {
+          Ok(e) => e
+          Err(e) => {
+            return Err(tb_at_once(e))
+          }
+        }
+        if retired {
+          return Err("totebag-after-retirement")
+        }
+        retired := tb_is_retirement(e)
+        events := Cons(e, events)
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(TbBatch { sequence: sq.fst, issued_at: ia.fst, valid_until: vu.fst, events: tb_rev_events(events, Nil) })
+}
+
+pub fn tb_cat(l: List(Text)): Text {
+  match l {
+    Nil => ""
+    Cons(x, rest) => Text::concat(x, tb_cat(rest))
+  }
+}
+
+pub fn tb_render_key(k: TbKey): Text {
+  tb_cat(["  project = \"", k.project, "\"\n  rev = \"", k.rev, "\"\n"])
+}
+
+pub fn tb_render_event(e: TbEvent): Text {
+  let body := match e {
+    Observation(k, s, t) => tb_cat(["  kind = \"observation\"\n", tb_render_key(k), "  source_sha256 = \"", s, "\"\n  first_seen_at = \"", t, "\"\n"])
+    IndexObservation(ix, repo, r, v, h, t) => tb_cat(["  kind = \"index-observation\"\n  index = \"", ix, "\"\n  repository = ", tb_quote(repo), "\n  ref = ", tb_quote(r), "\n  rev = \"", v, "\"\n  sha256 = \"", h, "\"\n  first_seen_at = \"", t, "\"\n"])
+    Decision(k, a, r) => tb_cat(["  kind = \"decision\"\n", tb_render_key(k), "  verdict = \"", if a { "accept" } else { "reject" }, "\"\n  reason = ", tb_quote(r), "\n"])
+    Withdrawal(k, r) => tb_cat(["  kind = \"withdrawal\"\n", tb_render_key(k), "  reason = ", tb_quote(r), "\n"])
+    Retirement(r) => tb_cat(["  kind = \"retirement\"\n  reason = ", tb_quote(r), "\n"])
+  }
+  tb_cat(["\n@ events[] {\n", body, "}\n"])
+}
+
+// The batch as `observations.eure`, in the form `tb_batch` reads.
+pub fn tb_render_batch(b: TbBatch): Text {
+  var out := tb_cat(["format = 1\nkind = \"batch\"\nsequence = ", Text::of_u64(b.sequence), "\nissued_at = \"", tb_time_text(b.issued_at), "\"\nvalid_until = \"", tb_time_text(b.valid_until), "\"\n"])
+  match b.events {
+    Nil => {
+      out := Text::concat(out, "events = []\n")
+    }
+    Cons(_, _) => #()
+  }
+  var rest := b.events
+  var going := true
+  while going {
+    match rest {
+      Cons(e, more) => {
+        out := Text::concat(out, tb_render_event(e))
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  out
+}

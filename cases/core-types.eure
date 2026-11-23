@@ -51,25 +51,19 @@ inferred_types.c = "i64 | Text"
 
 @ cases.budget-info-resumes-with-the-handle-type-1
 source = ```tauto
-let d := handle { budget(steps: 50) { 1 } } with {
+let d := handle { perform budget(50, () => { 1 }) } with {
   exceeded(info), k => info.more(100)
 }
 ```
 types = "ok"
 inferred_types.d = "i64"
 
-@ cases.show-takes-a-name-and-any-value-1
+@ cases.show-takes-any-value
 source = ```tauto
-let u := perform show("a", 1)
-let v := perform show("b", true)
+let u := show(&1)
+let v := show(&true)
 ```
 types = "ok"
-
-@ cases.show-takes-a-name-and-any-value-2
-source = ```tauto
-let u := perform show(1, 1)
-```
-types = "error: an argument: i64 does not fit Text"
 
 @ cases.a-tag-is-forgotten-not-added-1
 source = ```tauto
@@ -137,7 +131,7 @@ types = "error: the `match` does not cover every value"
 
 @ cases.kinds-follow-the-fields-1
 source = ```tauto
-affine struct F {}
+struct(affine) F {}
 struct W { f: F }
 struct Q { t: Text }
 enum L { Nil, Cons(i64, L) }
@@ -152,7 +146,7 @@ inferred_kinds.P = "copy"
 
 @ cases.kinds-follow-the-fields-2
 source = ```tauto
-copy struct Q { t: Text }
+struct(copy) Q { t: Text }
 ```
 types = "error: declared copy but field t is shared"
 
@@ -235,3 +229,30 @@ enum Right { Empty, Full(Text) }
 let x := Empty
 ```
 types = "error: ambiguous constructor `Empty`: use a type annotation or Left::Empty or Right::Empty"
+
+// An integer literal where a union is wanted is the union's integer member.
+@ cases.an-integer-literal-fits-the-integer-member-of-a-union
+source = ```tauto
+enum Shape {
+  Circle(i64)
+}
+fn f(x: i64 | Shape): i64 { 0 }
+let a := f(5)
+let n: u8 | Text := 7
+```
+types = "ok"
+inferred_types.a = "i64"
+
+// A literal out of the range of the union's integer member does not fit it.
+@ cases.an-integer-literal-out-of-range-of-the-union-member
+source = ```tauto
+let n: u8 | Text := 300
+```
+types = "error: 300 does not fit u8"
+
+// Two integer members other than `i64` leave the literal's type open.
+@ cases.an-integer-literal-with-two-integer-members-of-a-union
+source = ```tauto
+let n: u8 | i32 := 3
+```
+types = "error: `n`: i64 does not fit i32 | u8"

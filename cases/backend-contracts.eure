@@ -1,159 +1,139 @@
 @ cases.bench-native_benchmark_builds_once_and_reports_real_samples
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("sum", 2 + 3)
+show(&(2 + 3))
 ```
-shows = ["sum = 5"]
+stdout = "5\n"
 
 @ cases.budget_diagnostics-ordinary_program_emission_keeps_its_runtime_guard
-rust_shows = ["result = 42"]
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
-let result := handle { budget(steps: 0) { 42 } } with { exceeded(info), k => -1 }
-perform show("result", result)
+let result := handle { perform budget(0, () => { 42 }) } with { exceeded(info), k => -1 }
+show(&result)
 ```
-shows = ["result = -1"]
+stdout = "42\n"
 
-javascript_shows = ["result = 42"]
 @ cases.build_timings-emit_preserves_stdout_and_observes_generated_source_reuse
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("answer", 42)
+show(&42)
 ```
-shows = ["answer = 42"]
+stdout = "42\n"
 
 @ cases.build_timings-output_and_native_failures_are_not_successful_phases
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("answer", 42)
+show(&42)
 ```
-shows = ["answer = 42"]
+stdout = "42\n"
 
 @ cases.build_timings-native_host_build_reports_cargo_without_changing_binary_path
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("answer", 42)
+show(&42)
 ```
-shows = ["answer = 42"]
+stdout = "42\n"
 
 @ cases.build_timings-javascript_build_targets_do_not_run_the_program_or_claim_native_compilation
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("answer", 42)
+show(&42)
 ```
-shows = ["answer = 42"]
+stdout = "42\n"
 
 @ cases.build_timings-tote_loading_reports_its_combined_proof_check_and_extraction_boundary
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("answer", 42)
+show(&42)
 ```
-shows = ["answer = 42"]
+stdout = "42\n"
 
 @ cases.doc-package_discovery_obeys_sources_and_never_executes_runtime
-backends = ["rust", "javascript"]
 source = ```tauto
-fn twice(n: i64): i64 { n + n }
-perform show("must-not-run", 1)
+fn twice(n: i64): i64 ! {overflow} { n + n }
+show(&1)
 ```
-shows = ["must-not-run = 1"]
+stdout = "1\n"
 
 @ cases.javascript-generation_modes_and_invalid_combinations
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("n", 42)
+show(&42)
 ```
-shows = ["n = 42"]
+stdout = "42\n"
 
 @ cases.javascript-declaration_output_is_opt_in_and_matches_esm_entry_points
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("n", 42)
+show(&42)
 ```
-shows = ["n = 42"]
+stdout = "42\n"
 
 @ cases.programs-a_run_of_one_file_prints_what_it_showed
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("a", 1 + 2)
+show(&(1 + 2))
 ```
-shows = ["a = 3"]
+stdout = "3\n"
 
 @ cases.test_command-package_sources_are_not_tests_and_order_is_stable
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("answer", 6 * 7)
+show(&(6 * 7))
 ```
-shows = ["answer = 42"]
+stdout = "42\n"
 
 @ cases.totes-a_tote_runs_its_main
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("x", 1)
+show(&1)
 ```
-shows = ["x = 1"]
+stdout = "1\n"
 
 @ cases.totes-a_dependencys_main_is_not_read-2
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("a", 0)
+show(&0)
 ```
-shows = ["a = 0"]
+stdout = "0\n"
 
 @ cases.totes-the_rust_section_is_ignored
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("x", 1)
+show(&1)
 ```
-shows = ["x = 1"]
+stdout = "1\n"
 
 @ cases.totes-dependencies_are_visited_in_name_order-3
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("x", 1)
+show(&1)
 ```
-shows = ["x = 1"]
+stdout = "1\n"
 
 @ cases.totes-the_cli_runs_a_tote
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("x", 1)
+show(&1)
 ```
-shows = ["x = 1"]
+stdout = "1\n"
 
 @ cases.totes-native_extension_is_rejected_in_tote_sources
-backends = ["rust", "javascript"]
 source = ```tauto
-perform show("x", 1)
+show(&1)
 ```
-shows = ["x = 1"]
+stdout = "1\n"
 
 @ cases.totes-native_text_functions_need_no_proof_library_import
-backends = ["rust", "javascript"]
 source = ```tauto
 
 fn greeting(): Text { "hello" }
-perform show("text", greeting())
+show(&greeting())
 ```
-shows = ["text = \"hello\""]
+stdout = ```
+"hello"
+```
 
 @ cases.array_match-source
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write an `Array` yet"
 source = ```tauto
-import std::prelude::Affine
-import std::prelude::Shared
 
 
 enum Tree { Leaf(Text), Branch(Text, Tree, Tree) }
 struct Entry { tag: u64, text: Text, tree: Tree }
 enum Store { Stored(Array(Entry)) }
-fn borrowed_length(&store: Store): u64 {
+fn borrowed_length(store: &Store): u64 {
   match &store { Stored(values) => Array::len(values) }
 }
-fn borrowed_entry(&store: Store, index: u64): Option(Entry) {
+fn borrowed_entry(store: &Store, index: u64): Option(Entry) {
   match &store { Stored(values) => match Array::get(values, index) { None => None, Some(entry) => Some(entry) } }
 }
-fn borrowed_direct(&store: Store, index: u64): Option(Entry) {
+fn borrowed_direct(store: &Store, index: u64): Option(Entry) {
   match &store { Stored(values) => Array::get(values, index) }
 }
 enum Packed { Payload(Text, Text, Text, Text), Fork(Packed, Packed) }
@@ -172,7 +152,7 @@ fn child_baseline(values: Array(Packed)): Packed {
     None => Payload("", "", "", "")
   }
 }
-fn nested(values: Array(Entry)): u64 {
+fn nested(values: Array(Entry)): u64 ! {overflow} {
   match Array::get(values, 0) {
     Some(Entry { tag, text: _, tree: _ }) => match Array::get(values, 0) {
       Some(Entry { tag: second, text: _, tree: _ }) => tag + second
@@ -215,7 +195,7 @@ fn whole(values: Array(Entry)): Entry {
   }
 }
 fn owned(values: Array(Entry)): Option(Entry) { Array::get(values, 0) }
-fn with_callback(values: Array(Entry), &f: (u64) -> u64): u64 {
+fn with_callback(values: Array(Entry), f: &((u64) -> u64)): u64 {
   match Array::get(values, 0) {
     Some(Entry { tag, text: _, tree: _ }) => f(tag)
     None => 0
@@ -232,71 +212,75 @@ let selected := match Array::get(original, { original := entries("new"); 0 }) {
   Some(Entry { text, tag: _, tree: _ }) => { original := entries("body"); text }
   None => "missing"
 }
-perform show("snapshot", selected)
-perform show("current", whole(original).text)
-perform show("temporary", projected(entries("temporary"), 0))
-perform show("recursive", recursive(original))
-perform show("past-end", projected(original, 1))
+show(&selected)
+show(&(whole(original).text))
+show(&projected(entries("temporary"), 0))
+show(&recursive(original))
+show(&projected(original, 1))
 let captured := capture(entries("captured"))
-perform show("captured", captured())
+show(&captured())
 ```
-shows = ["snapshot = \"old\"", "current = \"body\"", "temporary = 41", "recursive = \"left\"", "past-end = 0", "captured = \"captured\""]
+stdout = ```
+"old"
+"body"
+41
+"left"
+0
+"captured"
+```
 
 @ cases.budget_diagnostics-eligible_report_agrees_with_generated_guard
-rust_shows = ["r = 42"]
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
-let r := handle { budget(steps: 0) { 42 } } with { exceeded(info), k => -1 }
-perform show("r", r)
+let r := handle { perform budget(0, () => { 42 }) } with { exceeded(info), k => -1 }
+show(&r)
 ```
-shows = ["r = -1"]
+stdout = "42\n"
 
-javascript_shows = ["r = 42"]
 @ cases.nonresuming_budget-unknown_generic_values_and_body_returns_keep_the_future_path
-rust_shows = ["result = 42"]
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
-fn choose<T>(value: T, n: i64): T ! {Div} {
+fn choose<T>(value: T, n: i64): T ! {div, overflow} {
           var i := 0
           while i < n { i := i + 1 }
           value
         }
-        let result := handle { budget(steps: 20) { choose(42, 3) } } with { exceeded(info), k => -1 }
-        perform show("result", result)
+        let result := handle { perform budget(20, () => { choose(42, 3) }) } with { exceeded(info), k => -1 }
+        show(&result)
 ```
-shows = ["result = -1"]
+stdout = "42\n"
 
-javascript_shows = ["result = 42"]
 @ cases.nonresuming_budget-unknown_generic_values_and_body_returns_keep_the_future_path-2
-backend_known_failure.rust = "build: expected `Pin<Box<dyn Future<Output = Never>>>`"
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
-fn body_return(): i64 {
-          handle { budget(steps: 20) { return 7
- 1 } } with { exceeded(info), k => -1 }
+fn body_return(): i64 ! {budget} {
+          handle { perform budget(20, () => { return 7
+ 1 }) } with { exceeded(info), k => -1 }
         }
-        perform show("result", body_return())
+        show(&body_return())
 ```
-shows = ["result = 7"]
+stdout = "7\n"
 
 @ cases.nonresuming_budget-host_added_drop_on_generated_noncopy_data_keeps_original_order
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
 struct Held { text: Text }
-fn hold(value: Held, n: i64): Held ! {Div} {
+fn hold(value: Held, n: i64): Held ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   value
 }
-fn run(steps: i64): Held {
-  handle { budget(steps: steps) { hold(Held { text: "body" }, 5) } } with {
+fn run(steps: u64): Held ! {budget, overflow} {
+  handle { perform budget(steps, () => { hold(Held { text: "body" }, 5) }) } with {
     exceeded(info), k => { let temporary := Held { text: "arm" }
       Held { text: "handler" } }
   }
 }
-perform show("result", run(1))
+show(&run(1))
 ```
-shows = ["result = Held { text: \"handler\" }"]
+stdout = ```
+Held { text: "handler" }
+```
 
 @ cases.build_timings-failures_keep_exit_codes_and_diagnostics_before_final_json
 source = ```tauto
@@ -308,36 +292,36 @@ compile_errors.javascript = "front: i64 does not fit Bool"
 
 @ cases.checked_extraction-recursive_runtime_callbacks_and_forged_markers_remain_divergent
 source = ```tauto
-fn spin(): i64 { spin() }
+fn spin(): i64 ! {div} { spin() }
 fn use_callback(f: () -> i64 ! {}): i64 { f() }
-perform show("value", use_callback(spin))
+show(&use_callback(spin))
 ```
-rows = "error: a function value may perform Div but its type permits {}"
-compile_errors.rust = "front: a function value may perform Div but its type permits {}"
-compile_errors.javascript = "front: a function value may perform Div but its type permits {}"
+rows = "error: a function value may perform div but its type permits {}"
+compile_errors.rust = "front: a function value may perform div but its type permits {}"
+compile_errors.javascript = "front: a function value may perform div but its type permits {}"
 
 @ cases.checked_extraction-recursive_runtime_callbacks_and_forged_markers_remain_divergent-2
 source = ```tauto
 fn spin(): i64 ! {} { let again := spin
  again() }
 ```
-rows = "error: `spin` may perform Div but its row is {}"
-compile_errors.rust = "front: `spin` may perform Div but its row is {}"
-compile_errors.javascript = "front: `spin` may perform Div but its row is {}"
+rows = "error: `spin` may perform div but its row is {}"
+compile_errors.rust = "front: `spin` may perform div but its row is {}"
+compile_errors.javascript = "front: `spin` may perform div but its row is {}"
 
 @ cases.checked_extraction-recursive_runtime_callbacks_and_forged_markers_remain_divergent-3
 source = ```tauto
 fn make(): (() -> i64 ! {}) ! {} { spin }
 fn spin(): i64 ! {} { make()() }
 ```
-rows = "error: `make` may perform Div but its row is {}"
-compile_errors.rust = "front: `make` may perform Div but its row is {}"
-compile_errors.javascript = "front: `make` may perform Div but its row is {}"
+rows = "error: `make` may perform div but its row is {}"
+compile_errors.rust = "front: `make` may perform div but its row is {}"
+compile_errors.javascript = "front: `make` may perform div but its row is {}"
 
 @ cases.test_command-incomplete_and_runtime_failure_are_failures-2
 source = ```tauto
 let x: i64 := true
-perform show("x", x)
+show(&x)
 ```
 types = "error: Bool does not fit i64"
 compile_errors.rust = "front: Bool does not fit i64"
@@ -360,75 +344,93 @@ types = "error: -> &Tree needs a borrowed parameter"
 compile_errors.rust = "front: -> &Tree needs a borrowed parameter"
 compile_errors.javascript = "front: -> &Tree needs a borrowed parameter"
 
-@ cases.budget_closures-unsupported-1
+@ cases.budget_closures-made_outside_a_budget
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+stdout = "false\n"
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
 let f := (n) => visit(n)
-let r := handle { budget(steps: 0) { f(3)
-true } } with { exceeded(info), k => false }
+let r := handle { perform budget(0, () => { f(3)
+true }) } with { exceeded(info), k => false }
+show(&r)
 ```
-compile_errors.rust = "unsupported: created outside a budget"
-compile_errors.javascript = "unsupported: created outside a budget"
+// A divergent function value made outside a budget is held at the tier that
+// counts the steps of a budget it is called under.
 
+@ cases.budget_closures-lent_outside_a_budget
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```tauto
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+let f := (n) => visit(n)
+let r := handle { perform budget(0, () => { each(Cons(3, Nil), &f)
+true }) } with { exceeded(info), k => false }
+show(&r)
+```
+// The `exceeded` arm uses neither `info` nor `k`, so the stopped body, which
+// borrows `f`, is dropped inside the `handle`: lending `f` into it is allowed.
+stdout = "false\n"
+
+// Keeping `info` keeps the stopped body and its borrow of `f`.
 @ cases.budget_closures-unsupported-2
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+enum(affine) R { Done(Bool), Paused(Info(R)) }
 let f := (n) => visit(n)
-let r := handle { budget(steps: 0) { each(Cons(3, Nil), &f)
-true } } with { exceeded(info), k => false }
+let r := handle { Done(perform budget(0, () => { each(Cons(3, Nil), &f)
+true })) } with { exceeded(info), k => Paused(info) }
 ```
 compile_errors.rust = "front: f is borrowed in a budget, whose stopped body may outlive it"
 compile_errors.javascript = "front: f is borrowed in a budget, whose stopped body may outlive it"
 
 @ cases.budget_closures-unsupported-3
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-let r := handle { budget(steps: 0) { each(Cons(3, Nil), visit)
-true } } with { exceeded(info), k => false }
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+let r := handle { perform budget(0, () => { each(Cons(3, Nil), visit)
+true }) } with { exceeded(info), k => false }
 ```
 compile_errors.rust = "unsupported: divergent named function"
 compile_errors.javascript = "unsupported: divergent named function"
 
 @ cases.budget_closures-unused_owned_closure
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+stdout = "true\n"
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-let r := handle { budget(steps: 0) { let f := (n) => visit(n)
-true } } with { exceeded(info), k => false }
-perform show("r", r)
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+let r := handle { perform budget(0, () => { let f := (n) => visit(n)
+true }) } with { exceeded(info), k => false }
+show(&r)
 ```
-// What counts as a step is up to each implementation: the evaluator counts
-// every step of its machine, so a zero budget runs out on its `let`, while the
-// compiled backends take no step until the closure is called.
-rust_shows = ["r = true"]
-javascript_shows = ["r = true"]
+// A step is a call of a function with `div` or a round of a loop, on every
+// implementation: a closure that is made and never called takes no step.
 
-@ cases.budget_closures-unsupported-5
+@ cases.budget_closures-lent_from_outside_a_budget
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+stdout = "false\n"
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-fn wrap(&f: (i64) -> Unit ! {Div}): Bool { handle { budget(steps: 0) { f(3)
-true } } with { exceeded(info), k => false } }
-perform show("r", wrap((n) => visit(n)))
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+fn wrap(f: &((i64) -> Unit ! {div, overflow})): Bool ! {budget, overflow} { handle { perform budget(0, () => { f(3)
+true }) } with { exceeded(info), k => false } }
+show(&wrap((n) => visit(n)))
 ```
-compile_errors.rust = "unsupported: created outside a budget"
-compile_errors.javascript = "unsupported: created outside a budget"
+// A closure written for a parameter with `div` counts the steps of a budget
+// it is called under, wherever it was made.
 
 @ cases.budget_closures-unsupported-6
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-fn wrap<!e>(&f: (i64) -> Unit ! e): Bool ! e { handle { budget(steps: 0) { f(3)
-true } } with { exceeded(info), k => false } }
-perform show("r", wrap((n) => visit(n)))
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+fn wrap<!e>(f: &((i64) -> Unit ! e)): Bool ! {budget} ∪ e { handle { perform budget(0, () => { f(3)
+true }) } with { exceeded(info), k => false } }
+show(&wrap((n) => visit(n)))
 ```
 compile_errors.rust = "unsupported: created outside a budget"
 compile_errors.javascript = "unsupported: created outside a budget"
 
 @ cases.budget_closures-unsupported-7
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
 effect choose(): Bool resume ω
-let r := handle { budget(steps: 0) { each(Cons(3, Nil), (n) => { if perform choose() { visit(n) } })
-true } } with { exceeded(info), k => false
+let r := handle { perform budget(0, () => { each(Cons(3, Nil), (n) => { if perform choose() { visit(n) } })
+true }) } with { exceeded(info), k => false
 choose(), k => k(true) }
 ```
 compile_errors.rust = "unsupported: multi-shot closure"
@@ -436,59 +438,64 @@ compile_errors.javascript = "unsupported: multi-shot closure"
 
 @ cases.budget_closures-unsupported-8
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-fn outer(): Bool { let f := (n) => visit(n)
-fn inner(): Unit ! {Div} { f(3) }
-handle { budget(steps: 0) { inner()
-true } } with { exceeded(info), k => false } }
-perform show("r", outer())
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+fn outer(): Bool ! {budget} { let f := (n) => visit(n)
+fn inner(): Unit ! {div, overflow} { f(3) }
+handle { perform budget(0, () => { inner()
+true }) } with { exceeded(info), k => false } }
+show(&outer())
 ```
 compile_errors.rust = "unsupported: not a plain name"
 compile_errors.javascript = "unsupported: not a plain name"
 
 @ cases.budget_closures-unsupported-9
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-fn apply_div(&f: (i64) -> Unit ! {Div}): Unit ! {Div} { f(3) }
-let r := handle { budget(steps: 10) { let f := (n) => #()
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+fn apply_div(f: &((i64) -> Unit ! {div, overflow})): Unit ! {div, overflow} { f(3) }
+let r := handle { perform budget(10, () => { let f := (n) => #()
 apply_div(&f)
-true } } with { exceeded(info), k => false }
+true }) } with { exceeded(info), k => false }
 ```
 compile_errors.rust = "unsupported: synchronous function value"
 compile_errors.javascript = "unsupported: synchronous function value"
 
 @ cases.budget_closures-unsupported-10
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-extern { fn native(&f: (i64) -> Unit ! {Div}): Unit }
-let r := handle { budget(steps: 10) { native((n) => #())
-true } } with { exceeded(info), k => false }
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+extern { fn native(f: &((i64) -> Unit ! {div, overflow})): Unit }
+let r := handle { perform budget(10, () => { native((n) => #())
+true }) } with { exceeded(info), k => false }
 ```
 compile_errors.rust = "unsupported: callback through an extern"
 compile_errors.javascript = "unsupported: callback through an extern"
 
-@ cases.budget_closures-unsupported-11
+@ cases.budget_closures-a_helper_without_div_takes_a_div_callback
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+stdout = "true\n"
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-fn ignore_div(&f: (i64) -> Unit ! {Div}, n: i64): Unit { #() }
-let r := handle { budget(steps: 10) { each(Cons(1, Nil), (n) => ignore_div((k) => #(), n))
-true } } with { exceeded(info), k => false }
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+fn ignore_div(f: &((i64) -> Unit ! {div, overflow}), n: i64): Unit { #() }
+let r := handle { perform budget(10, () => { each(Cons(1, Nil), (n) => ignore_div((k) => #(), n))
+true }) } with { exceeded(info), k => false }
+show(&r)
 ```
-compile_errors.rust = "unsupported: absent from the helper's effect row"
-compile_errors.javascript = "unsupported: absent from the helper's effect row"
+// The helper's own instance takes the callback at the tier that counts a
+// budget's steps.
 
-@ cases.budget_closures-unsupported-12
+@ cases.budget_closures-total_closure_lends_an_uncalled_divergent_one
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+stdout = "true\n"
 source = ```tauto
-fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
-fn ignore<!e>(&f: (i64) -> Unit ! e, n: i64): Unit { #() }
-let r := handle { budget(steps: 10) { each(Cons(1, Nil), (n) => ignore((k) => visit(k), n))
-true } } with { exceeded(info), k => false }
+fn visit(n: i64): Unit ! {div, overflow} { if n > 0 { visit(n - 1) } }
+fn ignore<!e>(f: &((i64) -> Unit ! e), n: i64): Unit { #() }
+let r := handle { perform budget(10, () => { each(Cons(1, Nil), (n) => ignore((k) => visit(k), n))
+true }) } with { exceeded(info), k => false }
+show(&r)
 ```
-compile_errors.rust = "unsupported: absent from the helper's effect row"
-compile_errors.javascript = "unsupported: absent from the helper's effect row"
+// What counts as a step is the implementation's: the evaluator counts each
+// step of its machine, and spends more than 10 on the call itself.
 
 @ cases.constructor_resolution-shared_names-forward
-backends = ["rust", "javascript"]
 source = ```tauto
 enum Left { Same(i64), Empty, Wildcard { n: i64 } }
 enum Right { Same(Text), Empty, Wildcard { text: Text } }
@@ -507,23 +514,35 @@ let empty_left: Left := Empty
 let empty_right: Right := Empty
 let record_left: Left := Wildcard { n: 7 }
 let record_right: Right := Wildcard { text: "record" }
-perform show("a", left_value(a))
-perform show("b", right_value(b))
-perform show("function_left", left_value(make_left()))
-perform show("function_right", right_value(make_right()))
-perform show("arg_left", left_value(Same(12)))
-perform show("arg_right", right_value(Same("argument")))
-perform show("empty_left", left_value(empty_left))
-perform show("empty_right", right_value(empty_right))
-perform show("record_left", left_value(record_left))
-perform show("record_right", right_value(record_right))
-perform show("qualified_left", left_value(Left::Same(13)))
-perform show("qualified_right", right_value(Right::Same("qualified")))
+show(&left_value(a))
+show(&right_value(b))
+show(&left_value(make_left()))
+show(&right_value(make_right()))
+show(&left_value(Same(12)))
+show(&right_value(Same("argument")))
+show(&left_value(empty_left))
+show(&right_value(empty_right))
+show(&left_value(record_left))
+show(&right_value(record_right))
+show(&left_value(Left::Same(13)))
+show(&right_value(Right::Same("qualified")))
 ```
-shows = ["a = 42", "b = \"right\"", "function_left = 21", "function_right = \"日本語\"", "arg_left = 12", "arg_right = \"argument\"", "empty_left = 0", "empty_right = \"empty\"", "record_left = 7", "record_right = \"record\"", "qualified_left = 13", "qualified_right = \"qualified\""]
+stdout = ```
+42
+"right"
+21
+"日本語"
+12
+"argument"
+0
+"empty"
+7
+"record"
+13
+"qualified"
+```
 
 @ cases.constructor_resolution-shared_names-reverse
-backends = ["rust", "javascript"]
 source = ```tauto
 enum Right { Same(Text), Empty, Wildcard { text: Text } }
 enum Left { Same(i64), Empty, Wildcard { n: i64 } }
@@ -542,20 +561,33 @@ let empty_left: Left := Empty
 let empty_right: Right := Empty
 let record_left: Left := Wildcard { n: 7 }
 let record_right: Right := Wildcard { text: "record" }
-perform show("a", left_value(a))
-perform show("b", right_value(b))
-perform show("function_left", left_value(make_left()))
-perform show("function_right", right_value(make_right()))
-perform show("arg_left", left_value(Same(12)))
-perform show("arg_right", right_value(Same("argument")))
-perform show("empty_left", left_value(empty_left))
-perform show("empty_right", right_value(empty_right))
-perform show("record_left", left_value(record_left))
-perform show("record_right", right_value(record_right))
-perform show("qualified_left", left_value(Left::Same(13)))
-perform show("qualified_right", right_value(Right::Same("qualified")))
+show(&left_value(a))
+show(&right_value(b))
+show(&left_value(make_left()))
+show(&right_value(make_right()))
+show(&left_value(Same(12)))
+show(&right_value(Same("argument")))
+show(&left_value(empty_left))
+show(&right_value(empty_right))
+show(&left_value(record_left))
+show(&right_value(record_right))
+show(&left_value(Left::Same(13)))
+show(&right_value(Right::Same("qualified")))
 ```
-shows = ["a = 42", "b = \"right\"", "function_left = 21", "function_right = \"日本語\"", "arg_left = 12", "arg_right = \"argument\"", "empty_left = 0", "empty_right = \"empty\"", "record_left = 7", "record_right = \"record\"", "qualified_left = 13", "qualified_right = \"qualified\""]
+stdout = ```
+42
+"right"
+21
+"日本語"
+12
+"argument"
+0
+"empty"
+7
+"record"
+13
+"qualified"
+```
 
 @ cases.constructor-struct-owner-order-1
 source = ```tauto
@@ -563,11 +595,13 @@ struct P { n: i64 }
 enum Other { P(Text) }
 let p: P := P { n: 42 }
 let other: Other := P("other")
-perform show("struct", p.n)
-perform show("enum", match other { P(t) => t })
+show(&p.n)
+show(&(match other { P(t) => t }))
 ```
-backends = ["rust", "javascript"]
-shows = ["struct = 42", "enum = \"other\""]
+stdout = ```
+42
+"other"
+```
 
 @ cases.constructor-struct-owner-order-2
 source = ```tauto
@@ -575,15 +609,17 @@ enum Other { P(Text) }
 struct P { n: i64 }
 let p: P := P { n: 42 }
 let other: Other := P("other")
-perform show("struct", p.n)
-perform show("enum", match other { P(t) => t })
+show(&p.n)
+show(&(match other { P(t) => t }))
 ```
-backends = ["rust", "javascript"]
-shows = ["struct = 42", "enum = \"other\""]
+stdout = ```
+42
+"other"
+```
 
 @ cases.constructor-linear-owner-order-1
 source = ```tauto
-linear struct Token {}
+struct(linear) Token {}
 enum Left { Same(Token) }
 enum Right { Same(i64) }
 fn bad(x: Left): i64 { match x { Same(_) => 0 } }
@@ -595,7 +631,7 @@ compile_errors.javascript = "front: drops a linear Token"
 
 @ cases.constructor-linear-owner-order-2
 source = ```tauto
-linear struct Token {}
+struct(linear) Token {}
 enum Right { Same(i64) }
 enum Left { Same(Token) }
 fn bad(x: Left): i64 { match x { Same(_) => 0 } }
@@ -606,9 +642,8 @@ compile_errors.rust = "front: drops a linear Token"
 compile_errors.javascript = "front: drops a linear Token"
 
 @ cases.os-print-is-captured
-backends = ["rust", "javascript"]
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
 print("a")
 print("b")
@@ -619,9 +654,8 @@ stderr = "e"
 exit = 0
 
 @ cases.os-exit-code
-backends = ["rust", "javascript"]
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
 print("a")
 perform exit(3)
@@ -632,16 +666,16 @@ stderr = ""
 exit = 3
 
 @ cases.os-exit-out-of-range
-backends = ["rust", "javascript"]
+llvm.unimplemented = 'output: run_error: expected "the number is too large"'
 source = ```tauto
+import std::builtin::os
 perform exit(300)
 ```
 run_error = "the number is too large"
 
 @ cases.os-cli-prints-and-exits
-backends = ["rust", "javascript"]
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
 print("out")
 eprint("err")
@@ -652,9 +686,8 @@ stderr = "err"
 exit = 3
 
 @ cases.bench-failing-program-exit
-backends = ["rust", "javascript"]
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
 perform exit(7)
 ```
@@ -663,9 +696,8 @@ stderr = ""
 exit = 7
 
 @ cases.test-command-program-exit
-backends = ["rust", "javascript"]
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
 perform exit(7)
 ```
@@ -674,21 +706,21 @@ stderr = ""
 exit = 7
 
 @ cases.os-arguments
-backends = ["rust", "javascript"]
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
-perform show("a", perform argv())
+show(&(perform argv()))
 ```
 args = ["a", "b"]
-shows = ["a = Cons(\"a\", Cons(\"b\", Nil))"]
+stdout = ```
+["a", "b"]
+```
 
 @ cases.os-empty-arguments
-backends = ["rust", "javascript"]
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
-perform show("a", perform argv())
+show(&(perform argv()))
 ```
 args = []
-shows = ["a = Nil"]
+stdout = "[]\n"

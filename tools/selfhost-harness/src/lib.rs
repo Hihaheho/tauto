@@ -1,6 +1,7 @@
 //! Self-hosting verification tools: build and run totes, compare their output
 //! with the Rust implementation, and generate shared syntax and Unicode tables.
 
+pub mod extract_tables;
 mod javascript;
 mod native_cache;
 pub mod shared_cases;
@@ -13,7 +14,7 @@ use std::process::Command;
 
 use eure_document::document::node::NodeValue;
 use eure_document::value::PrimitiveValue as P;
-use tauto::eval::{RunError, RunOptions, run_program_with};
+use tauto::exec::{RunError, RunOptions, run_loaded_with};
 use tauto::program::load_tote;
 
 pub fn root() -> PathBuf {
@@ -35,12 +36,23 @@ pub fn run_tote(name: &str, args: &[String], steps: u64) -> RunOutput {
 }
 
 pub fn run_tote_at(dir: &Path, args: &[String], steps: u64) -> RunOutput {
+    run_tote_at_with(dir, args, steps, &[])
+}
+
+/// As [`run_tote_at`], and the tote may also run the programs `run`.
+pub fn run_tote_at_with(dir: &Path, args: &[String], steps: u64, run: &[&str]) -> RunOutput {
+    let run: Vec<String> = run.iter().map(|p| p.to_string()).collect();
     // Dropping a list of a million cells goes down the list recursively: a
     // thread with room for it.
     let (dir, args) = (dir.to_path_buf(), args.to_vec());
     std::thread::Builder::new()
         .stack_size(2 << 30)
-        .spawn(move || run_tote_here(&dir, &args, steps))
+        // The tote's syntax tables are read from its own directory, as `tauto run` reads them.
+        .spawn(move || {
+            tauto::syntax::with_search_dirs(vec![dir.clone()], || {
+                run_tote_here(&dir, &args, steps, &run)
+            })
+        })
         .unwrap()
         .join()
         .unwrap_or_else(|_| RunOutput {
@@ -81,8 +93,8 @@ pub fn run_tote_native(name: &str, args: &[String], steps: u64) -> RunOutput {
     };
     let out = match Command::new(&bin)
         .env("TAUTO_STEP_LIMIT", steps.to_string())
-        // A tote reads and writes the files it is given.
-        .args(["--allow-read", "--allow-write", "--"])
+        // What the tote is allowed is fixed in it when it is built
+        // (`native_cache::build_tote`).
         .args(args)
         .output()
     {
@@ -108,7 +120,7 @@ fn build_tote(name: &str) -> Result<PathBuf, String> {
     tauto_test_suite::with_deep_stack(|| native_cache::build_tote(name))
 }
 
-fn run_tote_here(dir: &Path, args: &[String], steps: u64) -> RunOutput {
+fn run_tote_here(dir: &Path, args: &[String], steps: u64, run: &[String]) -> RunOutput {
     let failed = |error: String| RunOutput {
         stdout: String::new(),
         stderr: String::new(),
@@ -122,14 +134,26 @@ fn run_tote_here(dir: &Path, args: &[String], steps: u64) -> RunOutput {
     let options = RunOptions {
         args: args.to_vec(),
         // A tote reads and writes the files it is given.
-        permissions: tauto::eval::Permissions {
-            read: tauto::eval::Grant::All,
-            write: tauto::eval::Grant::All,
+        permissions: tauto::exec::Permissions {
+            read: tauto::exec::Grant::All,
+            write: tauto::exec::Grant::All,
+            run: if run.is_empty() {
+                tauto::exec::Grant::Denied
+            } else {
+                tauto::exec::Grant::Only(run.to_vec())
+            },
+            // A program it runs is handed the run's own environment
+            // (`perform environ()`), so a tote that runs programs reads it.
+            env: if run.is_empty() {
+                tauto::exec::Grant::Denied
+            } else {
+                tauto::exec::Grant::All
+            },
             ..Default::default()
         },
-        ..RunOptions::default()
     };
-    match run_program_with(&loaded.program, steps, options) {
+    // With the effect evidence the loader keeps, as `tauto run` runs it.
+    match run_loaded_with(&loaded, steps, options) {
         Ok(outcome) => RunOutput {
             stdout: outcome.stdout,
             stderr: outcome.stderr,
@@ -228,6 +252,106 @@ pub fn differential(component: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Whole file trees for differential checks whose result depends on the tote
+/// containing each declaration. Paths are relative to a fresh case root.
+#[derive(Clone, Debug)]
+pub struct DifferentialProgram {
+    pub name: String,
+    pub files: Vec<(String, String)>,
+    pub entry: String,
+}
+
+pub fn differential_programs(component: &str) -> Vec<DifferentialProgram> {
+    fn safe_path(path: &str) -> bool {
+        !path.is_empty()
+            && Path::new(path)
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+    }
+    let root = root();
+    let mut case_files = Vec::new();
+    collect(&root.join("cases"), "eure", true, &mut case_files);
+    case_files.sort();
+    let mut out = Vec::new();
+    for path in case_files {
+        let name = relative(&root, &path);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let doc = eure_reader::parse_to_document(&text, &name)
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let NodeValue::Map(top) = &doc.node(doc.get_root_id()).content else {
+            continue;
+        };
+        let Some(cases) = top.get_node_id(&"cases".into()) else {
+            continue;
+        };
+        let NodeValue::Map(cases) = &doc.node(cases).content else {
+            continue;
+        };
+        for (case_name, case_id) in cases.iter() {
+            let NodeValue::Map(case) = &doc.node(*case_id).content else {
+                continue;
+            };
+            let Some(differential) = case.get_node_id(&"differential_program".into()) else {
+                continue;
+            };
+            let NodeValue::Primitive(P::Text(route)) = &doc.node(differential).content else {
+                continue;
+            };
+            if route.as_str() != component {
+                continue;
+            }
+            let Some(files_id) = case.get_node_id(&"files".into()) else {
+                continue;
+            };
+            let NodeValue::Map(files) = &doc.node(files_id).content else {
+                continue;
+            };
+            let mut materialized = Vec::new();
+            for (filename, value) in files.iter() {
+                let NodeValue::Primitive(P::Text(source)) = &doc.node(*value).content else {
+                    continue;
+                };
+                let source = if source.language.is_other("path") {
+                    std::fs::read_to_string(path.parent().unwrap().join(source.as_str()))
+                        .unwrap_or_else(|error| panic!("{name}: {error}"))
+                } else {
+                    source.as_str().to_owned()
+                };
+                let filename = filename.to_string().trim_matches('"').to_owned();
+                assert!(
+                    safe_path(&filename),
+                    "{name}: invalid file path {filename:?}"
+                );
+                materialized.push((filename, source));
+            }
+            let field = |key: &str| -> Option<String> {
+                let id = case.get_node_id(&key.into())?;
+                let NodeValue::Primitive(P::Text(value)) = &doc.node(id).content else {
+                    return None;
+                };
+                Some(value.as_str().to_owned())
+            };
+            let entry = field("entry")
+                .or_else(|| field("files_tote").map(|tote| format!("{tote}/src/main.taut")))
+                .unwrap_or_else(|| {
+                    panic!("{name}: differential_program requires entry or files_tote")
+                });
+            assert!(safe_path(&entry), "{name}: invalid entry path {entry:?}");
+            assert!(
+                materialized.iter().any(|(path, _)| path == &entry),
+                "{name}: no entry {entry}"
+            );
+            out.push(DifferentialProgram {
+                name: format!("{name}#{}", case_name.to_string().trim_matches('"')),
+                files: materialized,
+                entry,
+            });
+        }
+    }
+    assert!(!out.is_empty(), "no case is marked differential_program = {component:?}");
+    out
+}
+
 /// A case of a case file with the selfhost compiler contract: its source,
 /// the entry it is compiled at, and the one outcome it expects.
 #[derive(Clone, Debug)]
@@ -282,6 +406,35 @@ pub fn selfhost_cases(file: &str) -> Vec<SelfhostCase> {
         });
     }
     assert!(!out.is_empty(), "{name} has no selfhost case");
+    out
+}
+
+/// The inputs of the cases marked `differential = "<component>"` and
+/// `component_rejects = true`, named as `differential` names them: the oracle
+/// accepts them and the component rejects them.
+pub fn differential_rejects(component: &str) -> Vec<String> {
+    let root = root();
+    let mut files = Vec::new();
+    collect(&root.join("cases"), "eure", true, &mut files);
+    files.sort();
+    let mut out = Vec::new();
+    for path in files {
+        let name = relative(&root, &path);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let doc = eure_reader::parse_to_document(&text, &name).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let NodeValue::Map(top) = &doc.node(doc.get_root_id()).content else { continue };
+        let Some(cases) = top.get_node_id(&"cases".into()) else { continue };
+        let NodeValue::Map(cases) = &doc.node(cases).content else { continue };
+        for (case, id) in cases.iter() {
+            let NodeValue::Map(fields) = &doc.node(*id).content else { continue };
+            let flag = |key: &str| fields.get_node_id(&key.into()).map(|n| &doc.node(n).content);
+            if matches!(flag("differential"), Some(NodeValue::Primitive(P::Text(t))) if t.as_str() == component)
+                && matches!(flag("component_rejects"), Some(NodeValue::Primitive(P::Bool(true))))
+            {
+                out.push(format!("{name}#{}", case.to_string().trim_matches('"')));
+            }
+        }
+    }
     out
 }
 
@@ -462,6 +615,16 @@ pub fn assert_same_dump(what: &str, rust: &str, tauto: &str) {
     if rust == tauto {
         return;
     }
+    // The panic shows the first difference only; with `SELFHOST_DUMP_DIR`
+    // set, both dumps are written there whole. (Not a `TAUTO_` variable: those
+    // are part of the native cache's build identity.)
+    if let Some(dir) = std::env::var_os("SELFHOST_DUMP_DIR") {
+        let dir = PathBuf::from(dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let id = format!("{what}-{}", std::thread::current().name().unwrap_or("main"));
+        let _ = std::fs::write(dir.join(format!("{id}.rust")), rust);
+        let _ = std::fs::write(dir.join(format!("{id}.tauto")), tauto);
+    }
     let (a, b): (Vec<&str>, Vec<&str>) = (rust.lines().collect(), tauto.lines().collect());
     let at = (0..a.len().max(b.len()))
         .find(|&i| a.get(i) != b.get(i))
@@ -532,141 +695,52 @@ fn ranges(is_class: impl Fn(char) -> bool) -> String {
     out.join(" ")
 }
 
-pub type Generated = (String, String);
-
-pub type TableText = (String, String, String);
-
-/// The files of tables of a tote: one data file per table,
-/// `<dir>/<data>/<name>.txt` holding the table's text as it is (no header:
-/// the bytes are the value), and `<dir>/<module>.taut`, whose function
-/// `<prefix><name>` returns it with `include_text!`. `header` is the
-/// comment the module starts with.
-pub fn table_files(
-    dir: &str,
-    module: &str,
-    data: &str,
-    prefix: &str,
-    header: &str,
-    tables: &[TableText],
-) -> Vec<Generated> {
-    let mut source = format!("import std::prelude::Shared\n\n{header}");
-    let mut out = Vec::new();
-    for (name, what, text) in tables {
-        assert!(
-            !text.is_empty() && !text.contains('\n'),
-            "{name}: a table is one non-empty line"
-        );
-        // `concat` keeps the text a value of programs: a literal alone would
-        // be a `Text` of the proof language, which the kernel normalizes.
-        source.push_str(&format!(
-            "\n// {what}\npub fn {prefix}{name}(): Text {{\n  concat(\"\", include_text!(\"{data}/{name}.txt\"))\n}}\n"
-        ));
-        out.push((format!("{dir}/{data}/{name}.txt"), text.clone()));
-    }
-    out.insert(
-        0,
-        (
-            format!("{dir}/{module}.taut"),
-            tauto::fmt::format(&source).unwrap(),
-        ),
-    );
-    out
-}
-
-fn data_dirs(files: &[Generated]) -> Vec<String> {
-    let mut dirs: Vec<String> = files
-        .iter()
-        .filter(|(p, _)| p.ends_with(".txt"))
-        .filter_map(|(p, _)| p.rsplit_once('/').map(|(d, _)| d.to_string()))
-        .collect();
-    dirs.sort();
-    dirs.dedup();
-    dirs
-}
-
-/// What differs between `files` and the repository: a file whose text is not
-/// the one given, or a `.txt` file in a data directory that is not one of them.
-pub fn stale(files: &[Generated]) -> Vec<String> {
-    let root = root();
-    let mut out = Vec::new();
-    for (path, text) in files {
-        if std::fs::read(root.join(path)).ok().as_deref() != Some(text.as_bytes()) {
-            out.push(format!("{path} is out of date"));
+/// The characters from U+0080 that `char::to_lowercase` changes, as
+/// `"c n l1 … ln c n l1 … ln …"`.
+fn lowercase() -> String {
+    let mut out: Vec<String> = Vec::new();
+    for c in (0x80..=0x10_ffffu32).filter_map(char::from_u32) {
+        let lower: Vec<char> = c.to_lowercase().collect();
+        if lower != [c] {
+            let mut entry = vec![(c as u32).to_string(), lower.len().to_string()];
+            entry.extend(lower.iter().map(|l| (*l as u32).to_string()));
+            out.push(entry.join(" "));
         }
     }
-    for dir in data_dirs(files) {
-        let Ok(entries) = std::fs::read_dir(root.join(&dir)) else {
-            continue;
-        };
-        let mut extra: Vec<String> = entries
-            .flatten()
-            .map(|e| format!("{dir}/{}", e.file_name().to_string_lossy()))
-            .filter(|p| p.ends_with(".txt") && !files.iter().any(|(f, _)| f == p))
-            .collect();
-        extra.sort();
-        out.extend(extra.into_iter().map(|p| format!("{p} is left over")));
-    }
-    out
+    out.join(" ")
 }
 
-/// Writes `files` (and removes the `.txt` files of their data directories
-/// that are not among them), or, with `check`, only says what [`stale`] finds.
-/// Whether the repository has them.
-pub fn write_generated(files: &[Generated], check: bool, script: &str) -> bool {
-    let problems = stale(files);
-    if check {
-        for p in &problems {
-            eprintln!("{p}; run `bash {script}`");
-        }
-        return problems.is_empty();
-    }
-    let root = root();
-    for p in &problems {
-        if let Some(path) = p.strip_suffix(" is left over") {
-            std::fs::remove_file(root.join(path)).unwrap();
-        }
-    }
-    for (path, text) in files {
-        let path = root.join(path);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, text).unwrap();
-    }
-    true
-}
-
-/// The files of `totes/syntax`'s tables: `src/tables.taut` and
-/// `src/tables/<name>.txt`, from the parser and the scanner of
-/// `crates/tauto-parol/tauto.par`.
-pub fn syntax_table_files() -> Vec<Generated> {
-    let tables: Vec<TableText> = tauto_parol::syntax_tables()
-        .into_iter()
-        .map(|t| (t.name.to_string(), t.what.to_string(), t.text))
-        .collect();
-    table_files(
-        "totes/syntax/src",
-        "tables",
-        "tables",
-        "syntax_tables_",
-        "// Generated by `bash scripts/generate-syntax-tables.sh` from\n\
-         // crates/tauto-parol/tauto.par: the tables of its parser and its scanner.\n\
-         // Do not edit by hand: change the grammar and run the script again. Each\n\
-         // table is the text of tables/<name>.txt, read where it is written.\n",
-        &tables,
-    )
-}
+pub use tauto_tables_gen::{
+    Generated, TableText, stale, syntax_table_files, table_files, write_generated,
+};
 
 /// The files of `totes/unicode`'s tables: `src/tables.taut` and
 /// `src/tables/<name>.txt`, the characters from U+0080 that are letters or
-/// digits, and those that are white space, as ranges.
+/// digits, and those that are white space, as ranges, and the lowercase of
+/// those that `char::to_lowercase` changes.
 pub fn unicode_table_files() -> Vec<Generated> {
+    let mut files = unicode_tote_table_files();
+    // The VM's `Text::escape_debug` reads the table `escaped` in its own tote
+    // (a file reads only inside its tote).
+    let escaped = files
+        .iter()
+        .find(|(path, _)| path.ends_with("/tables/escaped.txt"))
+        .map(|(_, text)| text.clone())
+        .expect("the table escaped");
+    files.push(("totes/vm/src/tables/escaped.txt".to_string(), escaped));
+    files
+}
+
+fn unicode_tote_table_files() -> Vec<Generated> {
     table_files(
         "totes/unicode/src",
         "tables",
         "tables",
         "unicode_table_",
-        "// Generated by `bash scripts/generate-unicode-tables.sh` from the Unicode\n\
+        "// Generated by `tauto gen-unicode-tables` from the Unicode\n\
          // data of the Rust toolchain (rust-toolchain.toml). Do not edit. Each table\n\
          // is the text of tables/<name>.txt, read where it is written.\n\
+         // The tables of normalization are from the Rust crate icu_normalizer.\n\
          // Derived from the Unicode Character Database (Unicode License v3); see NOTICE.\n",
         &[
             (
@@ -675,11 +749,37 @@ pub fn unicode_table_files() -> Vec<Generated> {
                 ranges(char::is_alphanumeric),
             ),
             (
+                "alphabetic".into(),
+                "The characters from U+0080 for which `char::is_alphabetic` holds.".into(),
+                ranges(char::is_alphabetic),
+            ),
+            (
                 "whitespace".into(),
                 "The characters from U+0080 for which `char::is_whitespace` holds.".into(),
                 ranges(char::is_whitespace),
             ),
-        ],
+            (
+                "escaped".into(),
+                "The characters from U+0080 that `show` of a `Text` writes as `\\u{…}` (`{:?}` of a `str`).".into(),
+                ranges(|c| {
+                    let shown = format!("{:?}", c.to_string());
+                    shown.len() - 2 != c.len_utf8()
+                }),
+            ),
+            (
+                "lowercase".into(),
+                "Each character from U+0080 that `char::to_lowercase` changes: `c n l1 … ln`.".into(),
+                lowercase(),
+            ),
+            (
+                "xid_continue".into(),
+                "XID_Continue from U+0080, as `tauto.par`'s scanner reads names (regex-syntax).".into(),
+                class_ranges(r"[\p{XID_Continue}&&[^\x00-\x7f]]"),
+            ),
+        ]
+        .into_iter()
+        .chain(nfc_tables())
+        .collect::<Vec<_>>(),
     )
 }
 
@@ -713,7 +813,7 @@ pub fn llkgen_unicode_table_files() -> Vec<Generated> {
         "uni",
         "uni",
         "rx_table_",
-        "// Generated by `bash scripts/generate-unicode-tables.sh` from the Unicode\n\
+        "// Generated by `tauto gen-unicode-tables` from the Unicode\n\
          // classes of regular expressions of the Rust crate regex-syntax, which parol\n\
          // reads the regular expressions of a grammar with. Do not edit. Each table\n\
          // is the text of uni/<name>.txt, read where it is written.\n\
@@ -743,4 +843,152 @@ pub fn llkgen_unicode_table_files() -> Vec<Generated> {
             ),
         ],
     )
+}
+
+/// The tables of canonical normalization, from the crate icu_normalizer
+/// (ICU4X, built from the Unicode Character Database), as
+/// `(name, what, text)`: the nonzero canonical combining classes as
+/// `first last class …`, the canonical decompositions of one step as
+/// `c a b …` (`b` is 0 for a singleton), and the canonical compositions
+/// (composition exclusions left out) as `a b c …`. Hangul syllables are
+/// left out of both: they are decomposed and composed by arithmetic.
+pub fn nfc_tables() -> Vec<TableText> {
+    use icu_normalizer::properties::{
+        CanonicalCombiningClassMapBorrowed, CanonicalCompositionBorrowed,
+        CanonicalDecompositionBorrowed, Decomposed,
+    };
+    let ccc = CanonicalCombiningClassMapBorrowed::new();
+    let dec = CanonicalDecompositionBorrowed::new();
+    let comp = CanonicalCompositionBorrowed::new();
+    let hangul = |c: char| ('\u{AC00}'..='\u{D7A3}').contains(&c);
+    let chars = || (0..=0x10FFFFu32).filter_map(char::from_u32);
+    let mut classes: Vec<(u32, u32, u8)> = Vec::new();
+    for c in chars() {
+        let k = ccc.get_u8(c);
+        if k == 0 {
+            continue;
+        }
+        match classes.last_mut() {
+            Some((_, last, class)) if *last + 1 == c as u32 && *class == k => *last = c as u32,
+            _ => classes.push((c as u32, c as u32, k)),
+        }
+    }
+    let mut decompositions = Vec::new();
+    let mut compositions = Vec::new();
+    for c in chars().filter(|c| !hangul(*c)) {
+        match dec.decompose(c) {
+            Decomposed::Default => {}
+            Decomposed::Singleton(a) => decompositions.push(format!("{} {} 0", c as u32, a as u32)),
+            Decomposed::Expansion(a, b) => {
+                decompositions.push(format!("{} {} {}", c as u32, a as u32, b as u32));
+                if comp.compose(a, b) == Some(c) {
+                    compositions.push(format!("{} {} {}", a as u32, b as u32, c as u32));
+                }
+            }
+        }
+    }
+    vec![
+        (
+            "combining_class".into(),
+            "The nonzero canonical combining classes: `first last class …`.".into(),
+            classes
+                .iter()
+                .map(|(f, l, k)| format!("{f} {l} {k}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        (
+            "decomposition".into(),
+            "The canonical decompositions of one step, Hangul left out: `c a b …`, `b` 0 for one character.".into(),
+            decompositions.join(" "),
+        ),
+        (
+            "composition".into(),
+            "The canonical compositions, exclusions and Hangul left out: `a b c …`.".into(),
+            compositions.join(" "),
+        ),
+    ]
+}
+
+/// The identifier tables of `crates/tauto-parol/src/unicode/<name>.txt`:
+/// XID_Start and XID_Continue of regex-syntax (the classes the scanner of
+/// `tauto.par` reads identifiers with), and the tables of `nfc_tables`.
+pub fn parol_unicode_table_files() -> Vec<Generated> {
+    let mut tables: Vec<TableText> = vec![
+        ("xid_start".into(), String::new(), class_ranges(r"\p{XID_Start}")),
+        ("xid_continue".into(), String::new(), class_ranges(r"\p{XID_Continue}")),
+    ];
+    tables.extend(nfc_tables());
+    tables
+        .into_iter()
+        .map(|(name, _, text)| (format!("crates/tauto-parol/src/unicode/{name}.txt"), text))
+        .collect()
+}
+
+/// The tables of `crates/tauto/src/unicode/<name>.txt` that `tauto check`'s
+/// warnings about names read, from the files of UTS #39 vendored in
+/// `vendor/unicode-security-16.0.0`: `allowed`, the ranges of the characters
+/// whose Identifier_Status is Allowed, as `first last …`, and `confusables`,
+/// the prototype of each confusable character, as `c n p1 … pn …`.
+pub fn security_table_files() -> Vec<Generated> {
+    let dir = root().join("vendor/unicode-security-16.0.0");
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap();
+    let data = |line: &str| -> Option<Vec<String>> {
+        let line = line.split('#').next()?.trim();
+        (!line.is_empty()).then(|| line.split(';').map(|f| f.trim().to_string()).collect())
+    };
+    let hex = |h: &str| u32::from_str_radix(h, 16).unwrap();
+    let mut allowed: Vec<(u32, u32)> = Vec::new();
+    for fields in read("IdentifierStatus.txt").lines().filter_map(data) {
+        if fields.get(1).map(String::as_str) != Some("Allowed") {
+            continue;
+        }
+        let (first, last) = match fields[0].split_once("..") {
+            Some((a, b)) => (hex(a), hex(b)),
+            None => (hex(&fields[0]), hex(&fields[0])),
+        };
+        allowed.push((first, last));
+    }
+    allowed.sort_unstable();
+    let mut merged: Vec<(u32, u32)> = Vec::new();
+    for (first, last) in allowed {
+        match merged.last_mut() {
+            Some((_, l)) if *l + 1 >= first => *l = (*l).max(last),
+            _ => merged.push((first, last)),
+        }
+    }
+    let mut confusables: Vec<(u32, Vec<u32>)> = read("confusables.txt")
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .filter_map(data)
+        .map(|fields| {
+            let target = fields[1].split_whitespace().map(hex).collect();
+            (hex(&fields[0]), target)
+        })
+        .collect();
+    confusables.sort();
+    let allowed_text = merged
+        .iter()
+        .map(|(f, l)| format!("{f} {l}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let confusables_text = confusables
+        .iter()
+        .map(|(c, t)| {
+            let t: Vec<String> = t.iter().map(u32::to_string).collect();
+            format!("{c} {} {}", t.len(), t.join(" "))
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    vec![
+        ("crates/tauto/src/unicode/allowed.txt".into(), allowed_text),
+        ("crates/tauto/src/unicode/confusables.txt".into(), confusables_text),
+    ]
+}
+
+/// A host recorder with the text reader installed, which the standard
+/// library's texts are read with.
+pub fn host_recorder() -> Result<tauto_kernel::check::selfhost::Recorder, String> {
+    tauto_parse::install();
+    tauto_kernel::check::selfhost::Recorder::new()
 }

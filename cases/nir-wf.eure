@@ -1,0 +1,118 @@
+// `check-wf` (`docs/design/nir-wf.md`): every local is used where it is bound,
+// as it is bound, at its type, every call fits its callee, and every
+// continuation is closed. No program the compiler accepts breaks these; the
+// check is asked about packages written as text.
+
+@ cases.a-read-of-a-local-that-is-never-bound-is-found
+nir.source = ```nir
+fn f@0(n#1: u64): u64 S = (copy plain m#2: u64)
+```
+nir.passes = ["check-wf"]
+nir.error = "Scope: the read `m#2` is not bound here"
+
+@ cases.a-drop-of-a-handler-binding-outside-its-handle-is-found
+description = "`v#2` is bound by the return arm of the handle in the `else` branch; the `then` branch drops it where it was never bound."
+nir.source = ```nir
+op 0 ask(): u64 direct
+
+fn f@0(b#1: Bool): u64 S = if copy b#1 then {
+  builtin drop((move plain v#2: u64)): Unit;
+  0u64
+} else handle 0 S do perform ask() direct: u64 with {
+  return v#2: u64 => copy v#2,
+  direct ask() params() answer Unit => 7u64,
+}: u64
+```
+nir.passes = ["check-wf"]
+nir.error = "Scope: the read `v#2` is not bound here"
+
+@ cases.a-read-at-another-type-than-its-binder-is-found
+nir.source = ```nir
+fn f@0(t#1: Text): u64 S = (copy t#1: u64)
+```
+nir.passes = ["check-wf"]
+nir.error = "Type: the read of `t` is Int(U64), expected Text"
+
+@ cases.a-body-of-another-type-than-the-result-is-found
+nir.source = ```nir
+fn f@0(n#1: u64): Text S = copy n#1
+```
+nir.passes = ["check-wf"]
+nir.error = "Type: the body of the function is Int(U64), expected Text"
+
+@ cases.a-call-with-too-few-arguments-is-found
+nir.source = ```nir
+fn f@0(n#1: u64): u64 S = copy n#1
+
+fn g@1(): u64 S = f@0(): u64
+```
+nir.passes = ["check-wf"]
+nir.error = "Arity: f@0 takes 1 arguments, given 0"
+
+@ cases.a-call-that-states-another-tier-is-found
+nir.source = ```nir
+fn f@0(n#1: u64): u64 S = copy n#1
+
+fn g@1(): u64 S = f@0(1u64) tier O: u64
+```
+nir.passes = ["check-wf"]
+nir.error = "Tier: a call of f@0 states the tier O, the function is S"
+
+@ cases.a-continuation-is-given-the-function-value-it-only-calls
+description = "`twice` calls `body` after its first call suspends: the continuation after that point calls `body` without reading it, and its environment holds it."
+source = ```nib
+import std::builtin::par
+fn twice<!e>(body: &(() -> nat ! e)): nat ! e { body() + body() }
+fn render_twice(draw: () -> nat ! {wait}): nat ! {wait} { twice(() => draw()) }
+show(&render_twice(() => 21))
+```
+stdout = "42\n"
+nir.passes = ["anf", "ownership", "check-wf"]
+nir.fns.twice = ```nir
+fn twice@5(fnref body#8: &fn() -> nat shared O): nat O = {
+  let anf#13 := body#8() tier O: nat;
+  let anf#14 := body#8() tier O unwind {
+    builtin drop(move anf#13): Unit;
+  }: nat;
+  add<nat>(move anf#13, move anf#14)
+}
+```
+
+@ cases.a-borrow-used-after-its-owner-is-moved-is-found
+nir.source = ```nir
+fn f@0(a#1: Vec(u64)): u64 S = {
+  let ref r#2 := &a#1;
+  builtin drop(move a#1): Unit;
+  builtin vec_len(copy r#2): u64
+}
+```
+nir.passes = ["check-loans"]
+nir.error = "Dangling: `r#2` borrows `a#1`, which was moved before this use"
+
+@ cases.a-result-that-borrows-a-local-is-found
+nir.source = ```nir
+fn f@0(a#1: Vec(u64)): &Vec(u64) S = &a#1
+```
+nir.passes = ["check-loans"]
+nir.error = "Escape: the result borrows `a#1`, a local of the function"
+
+@ cases.a-result-that-borrows-a-parameter-lends-leaves-out-is-found
+nir.source = ```nir
+fn f@0(ref a#1: &u64, ref b#2: &u64): &u64 S lends(true, false) = copy b#2
+```
+nir.passes = ["check-loans"]
+nir.error = "Lends: the result borrows `b#2`, which `lends` says it does not"
+
+@ cases.a-borrow-of-a-local-that-left-its-block-is-found
+nir.source = ```nir
+fn f@0(z#1: u64): u64 S = {
+  var ref h#2 := &z#1;
+  {
+    let n#3 := 1u64;
+    set h#2 := &n#3;
+  };
+  copy h#2
+}
+```
+nir.passes = ["check-loans"]
+nir.error = "Dangling: `h#2` borrows `n#3`, which left its block"

@@ -1,0 +1,131 @@
+// A `direct` operation is answered by the nearest handler in place. Where the
+// program says which `handle` that is, a backend may call its arm directly
+// (`crates/tauto-nir/src/evidence.rs`); these cases fix the answer either way.
+
+@ cases.a-function-under-one-handle-asks-it
+description = "Every call of the function is under the same `handle`: its arm answers each perform."
+source = ```tauto
+effect ask(): u64 direct
+fn leaf(n: u64): u64 ! {ask, overflow} { n + perform ask() }
+fn walk(n: u64): u64 ! {ask, overflow} { if n == 0 { 0 } else { leaf(n) + walk(n - 1) } }
+let base := 10
+let s := handle { walk(3) } with { ask(), k => k(base) }
+show(&s)
+```
+stdout = "36\n"
+nir.evidence = ```nir
+evidence op ask(): u64
+evidence op stdout(Text): Unit
+evidence op stdout_flush(): Unit
+evidence fn walk@1(ask)
+evidence fn leaf@4(ask)
+evidence handle 0(ask)
+```
+
+@ cases.a-function-under-two-handles-asks-the-one-it-runs-under
+description = "The same function is called under two `handle`s: each call asks the one around it."
+source = ```tauto
+effect ask(): u64 direct
+fn leaf(n: u64): u64 ! {ask, overflow} { n + perform ask() }
+let a := handle { leaf(1) } with { ask(), k => k(10) }
+let b := handle { leaf(1) } with { ask(), k => k(100) }
+show(&a)
+show(&b)
+```
+stdout = ```
+11
+101
+```
+nir.evidence = ```nir
+evidence op ask(): u64
+evidence op stdout(Text): Unit
+evidence op stdout_flush(): Unit
+evidence handle 0(ask)
+evidence handle 1(ask)
+```
+
+@ cases.an-inner-handle-in-a-callee-answers-before-the-outer-one
+description = "A callee puts its own `handle` around a call: the perform under it asks the inner one."
+source = ```tauto
+effect ask(): u64 direct
+fn leaf(): u64 ! {ask} { perform ask() }
+fn mid(): u64 ! {ask, overflow} { leaf() + handle { leaf() } with { ask(), k => k(1000) } }
+let s := handle { mid() } with { ask(), k => k(1) }
+show(&s)
+```
+stdout = "1001\n"
+nir.evidence = ```nir
+evidence op ask(): u64
+evidence op stdout(Text): Unit
+evidence op stdout_flush(): Unit
+evidence fn mid@1(ask)
+evidence handle 0(ask)
+evidence handle 2(ask)
+```
+
+@ cases.an-arm-asks-the-handle-outside-it
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+description = "An arm runs outside its own `handle`: a perform in it asks the next one out."
+source = ```tauto
+effect ask(): u64 direct
+fn leaf(): u64 ! {ask} { perform ask() }
+let s := handle {
+  handle { leaf() } with { ask(), k => k(handle { leaf() + 1 } with { overflow() => 0 }) }
+} with { ask(), k => k(5) }
+show(&s)
+```
+stdout = "6\n"
+nir.evidence = ```nir
+evidence op ask(): u64
+evidence op stdout(Text): Unit
+evidence op stdout_flush(): Unit
+evidence handle 1(ask)
+```
+
+@ cases.a-function-value-asks-the-handle-it-runs-under
+description = "A function taken as a value asks the handler in place where it is called."
+source = ```tauto
+effect ask(): u64 direct
+fn leaf(): u64 ! {ask} { perform ask() }
+fn twice(f: &(() -> u64 ! {ask})): u64 ! {ask, overflow} { f() + f() }
+let s := handle { twice(&leaf) } with { ask(), k => k(7) }
+show(&s)
+```
+stdout = "14\n"
+nir.evidence = ```nir
+evidence op ask(): u64
+evidence op stdout(Text): Unit
+evidence op stdout_flush(): Unit
+```
+
+@ cases.a-direct-operation-whose-argument-resumes-many-times-is-answered-in-place
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+// The argument of `ref_new` performs `pick`, which resumes ω: once it has
+// its value, `ref_new` is answered in place by the handlers of the code that
+// runs the computation, as a `direct` operation is.
+source = ```tauto
+import std::builtin::par { Ref, ref_get, ref_new }
+import std::builtin::os { stdout }
+
+effect pick(): Nat resume ω
+
+fn picked<T: Shared>(x: T): T ! {pick} {
+  let p := perform pick()
+  x
+}
+
+fn cell<T: NoBorrow + Shared>(x: T): Ref(T) ! {pick, ref_new} {
+  perform ref_new(picked(x))
+}
+
+let n := handle {
+  let r := cell(perform pick())
+  perform ref_get(r)
+} with {
+  pick(), k => k(1) + k(2)
+}
+perform stdout(concat(debug(&n), "\n"))
+```
+stdout = ```
+6
+```

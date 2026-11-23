@@ -1,0 +1,74 @@
+import std::uint { UInt }
+
+// The seed of a hash function: two words, fixed by whoever builds the map.
+// The contents are not read anywhere but by `Sip::start`.
+pub inductive struct SipSeed { k0: UInt(64), k1: UInt(64) }
+
+pub fn SipSeed::of(a: UInt(64), b: UInt(64)): SipSeed {
+  SipSeed { k0: a, k1: b }
+}
+
+// SipHash-1-3 over 64-bit words, as plain functions (a map names it, it is not
+// a class). `start` takes the seed, `step` mixes one word, `finish` mixes the
+// length in and gives the hash. The state is four words and the number of
+// words mixed so far.
+pub inductive struct Sip { v0: UInt(64), v1: UInt(64), v2: UInt(64), v3: UInt(64), n: UInt(64) }
+
+fn Sip::word(x: Nat): UInt(64) {
+  UInt::of_nat_mod64(x)
+}
+
+fn Sip::round(s: Sip): Sip {
+  let a0 := UInt::wrapping_add64(s.v0, s.v1)
+  let a1 := UInt::xor64(UInt::rotl64(s.v1, 13), a0)
+  let a0 := UInt::rotl64(a0, 32)
+  let a2 := UInt::wrapping_add64(s.v2, s.v3)
+  let a3 := UInt::xor64(UInt::rotl64(s.v3, 16), a2)
+  let a0 := UInt::wrapping_add64(a0, a3)
+  let a3 := UInt::xor64(UInt::rotl64(a3, 21), a0)
+  let a2 := UInt::wrapping_add64(a2, a1)
+  let a1 := UInt::xor64(UInt::rotl64(a1, 17), a2)
+  let a2 := UInt::rotl64(a2, 32)
+  Sip { v0: a0, v1: a1, v2: a2, v3: a3, n: s.n }
+}
+
+pub fn Sip::start(seed: SipSeed): Sip {
+  Sip {
+    v0: UInt::xor64(seed.k0, Sip::word(8317987319222330741)),
+    v1: UInt::xor64(seed.k1, Sip::word(7237128888997146477)),
+    v2: UInt::xor64(seed.k0, Sip::word(7816392313619706465)),
+    v3: UInt::xor64(seed.k1, Sip::word(8387220255154660723)),
+    n: Sip::word(0)
+  }
+}
+
+pub fn Sip::step(h: Sip, w: UInt(64)): Sip {
+  let m := Sip::round(Sip { v0: h.v0, v1: h.v1, v2: h.v2, v3: UInt::xor64(h.v3, w), n: h.n })
+  Sip { v0: UInt::xor64(m.v0, w), v1: m.v1, v2: m.v2, v3: m.v3, n: UInt::wrapping_add64(h.n, Sip::word(8)) }
+}
+
+pub fn Sip::finish(h: Sip): UInt(64) {
+  let b := UInt::shl64(UInt::and64(h.n, Sip::word(255)), 56)
+  let m := Sip::round(Sip { v0: h.v0, v1: h.v1, v2: h.v2, v3: UInt::xor64(h.v3, b), n: h.n })
+  let f := Sip {
+    v0: UInt::xor64(m.v0, b),
+    v1: m.v1,
+    v2: UInt::xor64(m.v2, Sip::word(255)),
+    v3: m.v3,
+    n: h.n
+  }
+  let g := Sip::round(Sip::round(Sip::round(f)))
+  UInt::xor64(UInt::xor64(g.v0, g.v1), UInt::xor64(g.v2, g.v3))
+}
+
+// A vector from a reference SipHash-1-3 over words (key 0, 0; one word).
+pub theorem sip_vector_one_word(): UInt::val64(
+  Sip::finish(
+    Sip::step(
+      Sip::start(SipSeed::of(UInt::of_nat_mod64(0), UInt::of_nat_mod64(0))),
+      UInt::of_nat_mod64(81985529216486895)
+    )
+  )
+) = 9683307020671143352 {
+  Refl
+}

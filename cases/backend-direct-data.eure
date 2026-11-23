@@ -1,15 +1,15 @@
 // Code over the program's data, options, generic library functions and
 // builtins on text runs in direct form, not in continuation form.
 @ cases.direct-generic-option-text-walk
-backends = ["rust", "javascript"]
+stdout = "2000\n"
 source = ```tauto
-fn spaces(t: Text, i: u64, found: List(Option(u64))): List(Option(u64)) ! {Div} {
+fn spaces(t: Text, i: u64, found: List(Option(u64))): List(Option(u64)) ! {div, overflow} {
     match Text::byte(t, i) {
         None => found,
         Some(b) => spaces(t, i + 1, Cons(if b == 32 { Some(i) } else { None }, found))
     }
 }
-fn count<A>(&l: List(A)): i64 ! {Div} {
+fn count<A>(l: &List(A)): i64 ! {div, overflow} {
     match l { Nil => 0, Cons(h, rest) => 1 + count(&rest) }
 }
 var t := ""
@@ -17,16 +17,31 @@ var n := 0
 while n < 500 { t := concat(t, "a b "); n := n + 1 }
 let found := spaces(t, 0, Nil)
 // A generic function runs in direct form under a caller that is in it.
-fn total(&l: List(Option(u64))): i64 ! {Div} { count(&l) }
-perform show("bytes", total(&found))
+fn total(l: &List(Option(u64))): i64 ! {div, overflow} { count(&l) }
+show(&total(&found))
 ```
-rust_shows = ["bytes = 2000"]
+nir.fns.spaces = ```nir
+fn spaces@1(t#5: Text, i#6: u64, found#7: List(Option(u64))): List(Option(u64)) A = match builtin Text::byte(clone t#5, copy i#6): Option(u8) {
+  Option::None => move found#7,
+  Option::Some(b#8: u8) => spaces@1(move t#5, add<u64>(copy i#6, 1u64), List::Cons(if eq(copy b#8, 32u8) then Option::Some(copy i#6): Option(u64) else Option::None: Option(u64), move found#7): List(Option(u64))) tier A tick host recur: List(Option(u64)),
+}
+```
+nir.fns.count = ```nir
+fn count@6<'A: Clone>(ref l#14: &List('A)): i64 A = match by_ref &l#14 {
+  List::Nil => 0i64,
+  List::Cons(ref h#15: &'A, ref rest#16: &List('A)) => add<i64>(1i64, count@6<'A>(&rest#16) tier A tick host: i64),
+}
+```
+nir.fns.total = ```nir
+fn total@3(ref l#11: &List(Option(u64))): i64 A = count@6<Option(u64)>(&l#11) tier A tick host: i64
+```
 
 // The bits of a word run in direct form, as the continuation form computes them.
 @ cases.direct-word-bits
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `U64::and` yet"
+stdout = "18446744072294971391\n"
 source = ```tauto
-fn mix(n: u64): u64 ! {Div} {
+fn mix(n: u64): u64 ! {div, overflow} {
     var a: u32 := 2166136261
     var b: u64 := 1469598103934665603
     var i: u64 := 0
@@ -40,38 +55,67 @@ fn mix(n: u64): u64 ! {Div} {
     }
     U64::xor(b, U64::of_u32(a))
 }
-perform show("mix", mix(300))
+show(&mix(300))
 ```
-rust_shows = ["mix = 18446744072294971391"]
+nir.fns.mix = ```nir
+fn mix@2(n#4: u64): u64 A = {
+  var a#5 := 2166136261u32;
+  var b#6 := 1469598103934665603u64;
+  var i#7 := 0u64;
+  while lt(copy i#7, copy n#4) tick host do {
+    let w#8 := builtin U32::of_u64(builtin U64::and(copy b#6, 4294967295u64): u64): u32;
+    set a#5 := builtin U32::xor(builtin U32::rotl(copy a#5, 5u64): u32, builtin U32::or(builtin U32::and(copy w#8, 65535u32): u32, builtin U32::shl(copy a#5, 3u64): u32): u32): u32;
+    set a#5 := builtin U32::rotr(builtin U32::xor(copy a#5, builtin U32::shr(copy a#5, 7u64): u32): u32, 11u64): u32;
+    set b#6 := builtin U64::xor(builtin U64::rotl(copy b#6, 13u64): u64, builtin U64::of_u32(copy a#5): u64): u64;
+    set b#6 := builtin U64::or(builtin U64::and(copy b#6, builtin U64::shl(copy b#6, 1u64): u64): u64, builtin U64::shr(builtin U64::rotr(copy b#6, 17u64): u64, 3u64): u64): u64;
+    set i#7 := add<u64>(copy i#7, 1u64);
+  };
+  builtin U64::xor(copy b#6, builtin U64::of_u32(copy a#5): u64): u64
+}
+```
 
 // Integers past the safe range of a number, in direct form: sums, products,
 // quotients and matches give what the evaluator gives.
 @ cases.direct-integer-range
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write the standard effect `divzero` yet"
+stdout = ```
+18236498188585393201
+23
+-3001
+-2999
+-9223372036854775808
+-9007199254740991
+1000000000000000000000000000000
+20
+10
+true
+9223372036854775809
+2147483649
+```
 source = ```tauto
-fn grow(n: u64): u64 ! {Div} {
+fn grow(n: u64): u64 ! {div, overflow} {
     var x: u64 := 1
     var i: u64 := 0
     while i < n { x := x * 3 + 1; i := i + 1 }
     x
 }
-fn shrink(x: u64): u64 ! {Div} {
+fn shrink(x: u64): u64 ! {div, overflow} {
     var y := x
     var k: u64 := 0
     while y > 1 { y := div(y, 7); k := k + 1 }
     k
 }
-fn signed(a: i64, b: i64): i64 ! {Div} {
+fn signed(a: i64, b: i64): i64 ! {div, overflow, divzero} {
     div(a, b) * 1000 + mod(a, b)
 }
-fn big_i64(n: u64): i64 ! {Div} {
+fn big_i64(n: u64): i64 ! {div, overflow} {
     var x: i64 := -1
     var i: u64 := 0
     while i < n { x := x * 2; i := i + 1 }
     x
 }
-fn neg(a: i64): i64 { 0 - a }
-fn nat_pow(n: nat): nat ! {Div} {
+fn neg(a: i64): i64 ! {overflow} { 0 - a }
+fn nat_pow(n: nat): nat ! {div} {
     var x: nat := 1
     var i: nat := 0
     while i < n { x := x * 10; i := i + 1 }
@@ -79,20 +123,49 @@ fn nat_pow(n: nat): nat ! {Div} {
 }
 fn classify(n: u64): u64 { match n { 0 => 10, 9007199254740993 => 20, other => 30 } }
 fn same(a: u64, b: u64): Bool { a == b }
-fn wrap(n: u64): Option(u64) ! {Div} { Some(n * 2) }
-fn unwrap(o: Option(u64)): u64 ! {Div} { match o { None => 0, Some(v) => v + 1 } }
+fn wrap(n: u64): Option(u64) ! {div, overflow} { Some(n * 2) }
+fn unwrap(o: Option(u64)): u64 ! {div, overflow} { match o { None => 0, Some(v) => v + 1 } }
 fn shifts(a: u32): u32 { U32::xor(U32::shl(a, 31), U32::shr(a, 33)) }
-perform show("grow40", grow(40))
-perform show("shrink", shrink(grow(40)))
-perform show("signed", signed(0 - 7, 2))
-perform show("signed2", signed(7, 0 - 2))
-perform show("i64min", big_i64(63))
-perform show("negsafe", neg(9007199254740991))
-perform show("nat", nat_pow(30))
-perform show("classify", classify(9007199254740992 + 1))
-perform show("classify0", classify(0))
-perform show("same", same(9007199254740992 + 1, 9007199254740993))
-perform show("opt", unwrap(wrap(4611686018427387904)))
-perform show("shifts", shifts(3))
+show(&grow(40))
+show(&shrink(grow(40)))
+show(&signed(0 - 7, 2))
+show(&signed(7, 0 - 2))
+show(&big_i64(63))
+show(&neg(9007199254740991))
+show(&nat_pow(30))
+show(&classify(9007199254740992 + 1))
+show(&classify(0))
+show(&same(9007199254740992 + 1, 9007199254740993))
+show(&unwrap(wrap(4611686018427387904)))
+show(&shifts(3))
 ```
-rust_shows = ["grow40 = 18236498188585393201", "shrink = 23", "signed = -3001", "signed2 = -2999", "i64min = -9223372036854775808", "negsafe = -9007199254740991", "nat = 1000000000000000000000000000000", "classify = 20", "classify0 = 10", "same = true", "opt = 9223372036854775809", "shifts = 2147483649"]
+nir.fns.grow = ```nir
+fn grow@2(n#4: u64): u64 A = {
+  var x#5 := 1u64;
+  var i#6 := 0u64;
+  while lt(copy i#6, copy n#4) tick host do {
+    set x#5 := add<u64>(mul<u64>(copy x#5, 3u64), 1u64);
+    set i#6 := add<u64>(copy i#6, 1u64);
+  };
+  copy x#5
+}
+```
+nir.fns.classify = ```nir
+fn classify@11(n#26: u64): u64 S = match copy n#26 {
+  0 => 10u64,
+  9007199254740993 => 20u64,
+  other#27: u64 => 30u64,
+}
+```
+nir.fns.wrap = ```nir
+fn wrap@15(n#33: u64): Option(u64) A = Option::Some(mul<u64>(copy n#33, 2u64)): Option(u64)
+```
+nir.fns.unwrap = ```nir
+fn unwrap@14(o#31: Option(u64)): u64 A = match copy o#31 {
+  Option::None => 0u64,
+  Option::Some(v#32: u64) => add<u64>(copy v#32, 1u64),
+}
+```
+nir.fns.shifts = ```nir
+fn shifts@16(a#34: u32): u32 S = builtin U32::xor(builtin U32::shl(copy a#34, 31u64): u32, builtin U32::shr(copy a#34, 33u64): u32): u32
+```

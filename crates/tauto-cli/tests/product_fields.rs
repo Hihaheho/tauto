@@ -5,7 +5,7 @@
 use std::fs;
 use std::process::Command;
 
-const PROGRAM: &str = r#"import std::prelude::Os
+const PROGRAM: &str = r#"import std::builtin::os
 fn first<A>(p: A × List(Nat)): A {
   p.fst
 }
@@ -26,7 +26,7 @@ fn product_fields_run_on_every_backend() {
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(&d).unwrap();
     fs::write(d.join("main.taut"), PROGRAM).unwrap();
-    for backend in ["eval", "vm", "rust", "javascript"] {
+    for backend in ["vm", "rust", "javascript"] {
         let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
             .env("TAUTO_LANG", "en")
             .args(["run", "--backend", backend, "main.taut"])

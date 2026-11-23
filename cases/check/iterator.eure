@@ -1,0 +1,73 @@
+description = "An owned list source supplies checked progress and stops at break."
+
+@ cases.list-iterator-folds-and-breaks
+source = ```tauto
+import std::iterator { Iterator, ListSource }
+import std::finite_iteration { FiniteStep, IterationControl, fold_finite }
+import std::base { Nat }
+import std::os
+import std::builtin::os { stdout, stdout_flush }
+
+fn next_nat(n: Nat, state: List(Nat)): FiniteStep(Nat, List(Nat), n) {
+  Iterator::next(<A: ListSource(Nat), I: Nat, S: List(Nat)>, n, state)
+}
+
+fn sum(xs: List(Nat)): Nat {
+  let #(remaining, state) := Iterator::start(ListSource::FromList(xs))
+  fold_finite(
+    remaining,
+    state,
+    next_nat,
+    Zero,
+    (acc: Nat, item: Nat) => IterationControl::Continue(Nat::add(acc, item))
+  )
+}
+
+fn first(xs: List(Nat)): Nat ! {stdout} {
+  let #(remaining, state) := Iterator::start(ListSource::FromList(xs))
+  fold_finite(
+    remaining,
+    state,
+    next_nat,
+    Zero,
+    (acc: Nat, item: Nat) => {
+      perform stdout("visit\n")
+      IterationControl::Break(item)
+    }
+  )
+}
+
+show(&sum([]))
+show(&sum([1, 2, 3]))
+show(&first([4, 5]))
+```
+stdout = "0\n6\nvisit\n4\n"
+
+@ cases.shared-iterator-keeps-both-items
+source = ```tauto
+import std::iterator { ListSource, SharedIterator }
+import std::finite_iteration { FiniteStep }
+import std::text { Text }
+
+fn first_two(source: &ListSource(Text)): Option(&Text × &Text) borrows(source) {
+  let #(remaining, state) := SharedIterator::start(source)
+  match SharedIterator::next(source, remaining, state) {
+    Done => None
+    Yield(first, newer, smaller, proof) => match SharedIterator::next(source, smaller, newer) {
+      Done => None
+      Yield(second, next_state, next_rank, next_proof) => Some(#(first, second))
+    }
+  }
+}
+
+fn example(): Text {
+  let source := ListSource::FromList(["one", "two"])
+  match first_two(&source) {
+    None => "missing"
+    Some(#(first, second)) => concat(first, second)
+  }
+}
+
+show(&example())
+```
+stdout = "\"onetwo\"\n"

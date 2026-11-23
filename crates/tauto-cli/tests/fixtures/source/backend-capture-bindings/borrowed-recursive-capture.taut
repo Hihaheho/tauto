@@ -1,0 +1,11 @@
+fn pure_helper(): Unit { #() }
+fn plain(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
+  var x := n
+  if n == 0 { previous() } else { plain(n - 1, () => x) }
+}
+fn with_helper(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
+  var x := n
+  if n == 0 { previous() } else { with_helper(n - 1, () => { pure_helper(); x }) }
+}
+show(&plain(1, () => 99))
+show(&with_helper(1, () => 99))

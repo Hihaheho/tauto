@@ -1,27 +1,172 @@
-// Project manifest for the standard library and core proofs.
+// Project manifest for the core proofs, examples and cases. The standard
+// library is its own tote (`std/Tauto.eure`).
 package {
   name = "tauto-lib"
   version = "0.1.0"
   // The project has no `src`; its .taut files are under these directories, and `import` paths are relative to the importing file.
-  additional-sources = ["std", "meta"]
-  // The standard library declares the prelude: its files import what they use of it.
+  additional-sources = ["meta"]
+  // Its files import what they use of the prelude.
   prelude = false
 }
 
-// The laws of the rationals and the error bounds of rounding normalise many integer equations with
-// int_norm! steps; FloatRound is about 17000 lines of such bounds.
 check {
-  // The quotient's soundness is the one axiom of the library.
   axioms {
-    "std/Quot.taut" = ["Quot::sound"]
-    "std/RatField.taut" = ["Quot::sound"]
+    // The example of an axiom: what a proof that uses it says it assumes.
+    "examples/proofs.taut" = ["em"]
   }
-  slow {
-    "std/FloatBoundsA.taut" = 30
-    "std/FloatBoundsB.taut" = 30
-    "std/FloatEncode.taut" = 40
-    "std/FloatError.taut" = 40
-    "std/FloatRound.taut" = 60
-    "std/RatLaws.taut" = 60
+}
+
+// The repository's own tools, run as `tauto NAME [ARGS…]` from the checkout
+// (docs/design/commands.md). What each may do is granted under
+// `trust.commands` below, approved once.
+commands {
+  gate {
+    main = "scripts/test.taut"
+    about = "Run the verification gate: `full`, or `focused` with a nextest selection"
+  }
+  setup-lean {
+    main = "scripts/setup-lean-4.34.1.taut"
+    about = "Download Lean 4.34.1, check its pinned SHA-256 and unpack it"
+  }
+  gen-syntax-fixtures {
+    main = "scripts/generate-syntax-fixtures.taut"
+    about = "Write the tables of the macro grammar fixtures (--check to compare)"
+  }
+  gen-syntax-tables {
+    main = "scripts/generate-syntax-tables.taut"
+    about = "Write the syntax tote's parser tables (--check to compare)"
+  }
+  gen-grammar-tables {
+    main = "scripts/generate-grammar-tables.taut"
+    about = "Write the tables in crates/tauto-syntax/tests/data (--check to compare)"
+  }
+  gen-tauto-grammar {
+    main = "scripts/generate-tauto-grammar.taut"
+    about = "Write tauto.par from the syntax declaration (--check to compare)"
+  }
+  gen-tauto-parol {
+    main = "scripts/generate-tauto-parol.taut"
+    about = "Regenerate crates/tauto-parol/src/generated with parol (--check to compare)"
+  }
+  gen-unicode-tables {
+    main = "scripts/generate-unicode-tables.taut"
+    about = "Write the Unicode tables of the unicode and pargen totes (--check to compare)"
+  }
+  gen-symbol-table {
+    main = "scripts/generate-symbol-table.taut"
+    about = "Write the language server's symbol table from UnicodeData.txt (--check to compare)"
+  }
+  gen-extract-tables {
+    main = "scripts/generate-extract-tables.taut"
+    about = "Write the extract tote's tables from the host (--check to compare)"
+  }
+  check-tote-locks {
+    main = "scripts/check-tote-locks.taut"
+    about = "Fail when a tote's Cargo.lock no longer matches its generated crate"
+  }
+  check-bounded-batch {
+    main = "scripts/check-bounded-batch.taut"
+    about = "Check the bounded-batch example on every backend"
+  }
+  changelog-to-html {
+    main = "scripts/changelog-to-html.taut"
+    about = "Write a changelog in Eure as HTML: IN.eure OUT.html"
+  }
+}
+
+// Each tool runs other programs (cargo, sh and the `tauto` it builds) at paths it
+// computes, so `run` is granted whole; reads and writes stay in the checkout
+// where the tool keeps to it. A program it starts sees only the environment the
+// tool hands on, and the tool hands on its own (`perform environ()`), so each
+// tool that runs others is granted `env` whole too.
+trust {
+  commands {
+    gate {
+      tote = "tauto-lib"
+      read = true
+      write = true
+      run = true
+      env = true
+    }
+    setup-lean {
+      tote = "tauto-lib"
+      read = true
+      write = true
+      run = true
+      env = true
+    }
+    gen-syntax-fixtures {
+      tote = "tauto-lib"
+      read = ["."]
+      write = ["."]
+      run = true
+      env = true
+    }
+    gen-syntax-tables {
+      tote = "tauto-lib"
+      read = ["."]
+      run = true
+      env = true
+    }
+    gen-grammar-tables {
+      tote = "tauto-lib"
+      read = ["."]
+      write = ["."]
+      run = true
+      env = true
+    }
+    gen-tauto-grammar {
+      tote = "tauto-lib"
+      read = ["."]
+      write = ["."]
+      run = true
+      env = true
+    }
+    gen-tauto-parol {
+      tote = "tauto-lib"
+      read = true
+      write = true
+      run = true
+      env = true
+    }
+    gen-unicode-tables {
+      tote = "tauto-lib"
+      read = ["."]
+      run = true
+      env = true
+    }
+    gen-symbol-table {
+      tote = "tauto-lib"
+      read = true
+      write = true
+      run = true
+      env = true
+    }
+    gen-extract-tables {
+      tote = "tauto-lib"
+      read = ["."]
+      write = ["."]
+      run = true
+      env = true
+    }
+    check-tote-locks {
+      tote = "tauto-lib"
+      read = ["."]
+      write = ["."]
+      run = true
+      env = true
+    }
+    check-bounded-batch {
+      tote = "tauto-lib"
+      read = true
+      write = true
+      run = true
+      env = true
+    }
+    changelog-to-html {
+      tote = "tauto-lib"
+      read = true
+      write = true
+    }
   }
 }

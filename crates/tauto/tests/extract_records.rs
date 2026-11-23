@@ -70,7 +70,7 @@ fn record_fields_keep_their_declared_names() {
     let path = root.join("token.taut");
     fs::write(
         &path,
-        r#"import std::Text
+        r#"import std::text
 inductive Token: Type {
   Mk(width: Nat, text: Text): Token
 }
@@ -84,7 +84,7 @@ fn make_token(s: Text): Token { Token { width: 1, text: s } }
         nib.split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
-            .contains("shared struct Token { width: nat, text: Text }"),
+            .contains("struct(shared) Token { width: nat, text: Text }"),
         "{nib}"
     );
     assert!(nib.contains(".text"), "{nib}");
@@ -100,14 +100,14 @@ fn extracted_program_runs_as_tauto_source() {
     let path = root.join("program.taut");
     fs::write(
         &path,
-        "import std::Base\nfn f(c: Nat): Nat { Nat::add(c, 1) }\n",
+        "import std::base\nfn f(c: Nat): Nat { Nat::add(c, 1) }\n",
     )
     .unwrap();
     let extracted = tauto::extract::extract_files(&[path.clone()]).unwrap();
     assert!(extracted.contains("fn extract_unreachable"));
     fs::write(&path, format!("{extracted}\nfn main(): nat {{ f(2) }}\n")).unwrap();
     let loaded = tauto::program::load_extracted(&path).unwrap();
-    tauto::eval::run_loaded_with(&loaded, tauto::eval::DEFAULT_BUDGET, Default::default()).unwrap();
+    tauto::exec::run_loaded_with(&loaded, tauto::exec::DEFAULT_BUDGET, Default::default()).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -118,14 +118,14 @@ fn names_a_macro_made_hygienic_are_extracted_as_names_that_read_back() {
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("twice.taut"),
-        "import std::Base\nimport std::prelude::Macro\nmacro fn twice(c: Judgement): SynExpr {\n  quote {\n    let t := $c\n    Nat::add(t, t)\n  }\n}\n",
+        "import std::base\nimport std::builtin::macro\nmacro fn twice(c: Judgement): SynExpr {\n  quote {\n    let t := $c\n    Nat::add(t, t)\n  }\n}\n",
     )
     .unwrap();
     let path = root.join("program.taut");
-    // Before, the extracted `let t#1 = …` did not parse.
+    // The extracted `let t#1 = …` parses.
     fs::write(
         &path,
-        "import std::Base\nimport \"twice.taut\"\nfn f(t_1: Nat): Nat { twice!(Nat::add(t_1, 1)) }\n",
+        "import std::base\nimport \"twice.taut\"\nfn f(t_1: Nat): Nat { twice!(Nat::add(t_1, 1)) }\n",
     )
     .unwrap();
     fs::write(
@@ -137,7 +137,7 @@ fn names_a_macro_made_hygienic_are_extracted_as_names_that_read_back() {
     )
     .unwrap();
     let loaded = tauto::program::load_extracted(&path).unwrap();
-    tauto::eval::run_loaded_with(&loaded, tauto::eval::DEFAULT_BUDGET, Default::default()).unwrap();
+    tauto::exec::run_loaded_with(&loaded, tauto::exec::DEFAULT_BUDGET, Default::default()).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -149,8 +149,8 @@ fn an_import_is_extracted_only_as_far_as_it_is_used() {
     let path = root.join("main.taut");
     fs::write(
         &path,
-        r#"import std::Base
-import std::TextOps
+        r#"import std::base
+import std::text_ops
 fn next(c: Nat): Nat { Nat::add(c, 1) }
 "#,
     )
@@ -172,7 +172,7 @@ fn imported_tactics_are_not_extracted() {
     let path = root.join("tactics.taut");
     fs::write(
         &path,
-        "import std::Tactic\nimport std::Rewrite\n\
+        "import std::tactic\nimport std::rewrite\n\
          fn twice(n: Nat): Nat {\n  n + n\n}\n",
     )
     .unwrap();
@@ -188,31 +188,23 @@ fn a_mapped_std_function_runs_as_the_proofs_read_it() {
     let root = std::env::temp_dir().join(format!("tauto-extract-std-name-{}", std::process::id()));
     fs::create_dir_all(&root).unwrap();
     let path = root.join("program.taut");
-    // `std::UInt::U64::of_nat_checked` gives `None` past the range of `u64`,
+    // `std::uint::U64::of_nat_checked` gives `None` past the range of `u64`,
     // as the proofs read it; the prelude's `U64::of_nat` stops there instead.
     fs::write(
         &path,
-        "import std::Base\nimport std::UInt\n\
+        "import std::base\nimport std::uint\n\
          fn fits(n: Nat): Bool {\n  match U64::of_nat_checked(n) {\n    Some(_) => true,\n    None => false,\n  }\n}\n\
-         perform show(\"small\", fits(3))\n\
-         perform show(\"big\", fits(Nat::mul(4294967296, 4294967296)))\n\
-         perform show(\"x\", U64::of_nat_checked(Nat::mul(4294967296, 4294967296)))\n",
+         show(&fits(3))\n\
+         show(&fits(Nat::mul(4294967296, 4294967296)))\n\
+         show(&U64::of_nat_checked(Nat::mul(4294967296, 4294967296)))\n",
     )
     .unwrap();
     let loaded = tauto::program::load_extracted(&path).unwrap();
     let outcome =
-        tauto::eval::run_loaded_with(&loaded, tauto::eval::DEFAULT_BUDGET, Default::default())
+        tauto::exec::run_loaded_with(&loaded, tauto::exec::DEFAULT_BUDGET, Default::default())
             .unwrap();
-    let shown: Vec<(&str, &str)> = outcome
-        .outputs
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    assert_eq!(
-        shown,
-        [("small", "true"), ("big", "false"), ("x", "None")],
-        "{shown:?}"
-    );
+    // `show` writes each value on a line of its own on standard output.
+    assert_eq!(outcome.stdout, "true\nfalse\nNone\n", "{outcome:?}");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -222,36 +214,25 @@ fn a_division_in_code_the_kernel_does_not_check_runs_through_std() {
     let root = std::env::temp_dir().join(format!("tauto-extract-div-{}", std::process::id()));
     fs::create_dir_all(&root).unwrap();
     let path = root.join("program.taut");
-    // `Nat::div` performs `DivZero` and so is not checked by the kernel; the
+    // `Nat::div` performs `divzero` and so is not checked by the kernel; the
     // proof `Nat::div_nz` takes is given in `Nat::checked_div`, which is.
     fs::write(
         &path,
-        "import std::UInt\n\
-         fn safe(a: Nat, b: Nat): Option(Nat) {\n  handle { Some(Nat::div(a, b)) } with {\n    DivZero(), k => None\n  }\n}\n\
-         perform show(\"q\", Nat::checked_div(7, 2))\n\
-         perform show(\"r\", Nat::checked_rem(7, 2))\n\
-         perform show(\"d\", safe(7, 2))\n\
-         perform show(\"z\", safe(7, 0))\n",
+        "import std::uint\n\
+         fn safe(a: Nat, b: Nat): Option(Nat) {\n  handle { Some(Nat::div(a, b)) } with {\n    divzero() => None\n  }\n}\n\
+         show(&Nat::checked_div(7, 2))\n\
+         show(&Nat::checked_rem(7, 2))\n\
+         show(&safe(7, 2))\n\
+         show(&safe(7, 0))\n",
     )
     .unwrap();
     let loaded = tauto::program::load_extracted(&path).unwrap();
     let outcome =
-        tauto::eval::run_loaded_with(&loaded, tauto::eval::DEFAULT_BUDGET, Default::default())
+        tauto::exec::run_loaded_with(&loaded, tauto::exec::DEFAULT_BUDGET, Default::default())
             .unwrap();
-    let shown: Vec<(&str, &str)> = outcome
-        .outputs
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
     assert_eq!(
-        shown,
-        [
-            ("q", "Some(3)"),
-            ("r", "Some(1)"),
-            ("d", "Some(3)"),
-            ("z", "None")
-        ],
-        "{shown:?}"
+        outcome.stdout, "Some(3)\nSome(1)\nSome(3)\nNone\n",
+        "{outcome:?}"
     );
     fs::remove_dir_all(root).unwrap();
 }
@@ -270,21 +251,21 @@ fn a_parameter_with_effects_is_checked_against_a_written_row() {
         fs::write(
             &path,
             format!(
-                "import std::prelude::Os\nfn call(f: () -> Nat ! {{stdout}}): Nat{row} {{\n  f()\n}}\n\
+                "import std::builtin::os\nfn call(f: () -> Nat ! {{stdout}}): Nat{row} {{\n  f()\n}}\n\
                  call(() => {{ print(\"x\"); 0 }})\n"
             ),
         )
         .unwrap();
         tauto::program::load_extracted(&path).and_then(|loaded| {
-            tauto::eval::run_loaded_with(&loaded, 1 << 20, Default::default())
+            tauto::exec::run_loaded_with(&loaded, 1 << 20, Default::default())
                 .map_err(|e| e.to_string())
         })
     };
-    for row in [" ! {}", " ! {stderr}"] {
+    // A function without a written row is `! {}`, the same as the row `{}`.
+    for row in ["", " ! {}", " ! {stderr}"] {
         let error = run(row).err().unwrap_or_else(|| panic!("`{row}` accepted"));
         assert!(error.contains("`call` may perform stdout"), "{error}");
     }
-    run("").unwrap();
     run(" ! {stdout}").unwrap();
     fs::remove_dir_all(root).unwrap();
 }
@@ -324,7 +305,7 @@ fn a_macro_beside_a_function_that_runs_as_written_makes_its_declarations_once() 
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("gen.taut"),
-        "import std::prelude::Macro\nmacro fn gen_k(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {\n  \
+        "import std::builtin::macro\npub macro fn gen_k(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {\n  \
          ⊢ List(SynStmt) from match s {\n    StInductive(d) => {\n      \
          let k := Syn::decl_name(d.name, \"K\")\n      let a := Syn::decl_name(d.name, \"ka\")\n      \
          let f := Syn::decl_name(d.name, \"kf\")\n      quote stmts {\n        \
@@ -335,8 +316,8 @@ fn a_macro_beside_a_function_that_runs_as_written_makes_its_declarations_once() 
     .unwrap();
     let path = root.join("main.taut");
     // `K` is extracted and `kf`, with a text the kernel does not read here,
-    // runs as written; before, the file's own run of the macro made `K`
-    // again and `ka` was not defined.
+    // runs as written; the file's own run of the macro does not make `K`
+    // again, and `ka` is defined.
     fs::write(
         &path,
         "import \"gen.taut\"\n@gen_k!(0) => inductive K, fn kf\n\
@@ -344,14 +325,15 @@ fn a_macro_beside_a_function_that_runs_as_written_makes_its_declarations_once() 
          effect ping(n: Nat): Unit\n\
          fn quiet<!e>(body: () -> Unit ! {ping} ∪ e): Unit ! e {\n  \
          handle { body() } with { ping(n), k => k(()) }\n}\n\
-         perform show(\"k\", kf(ka))\n",
+         show(&kf(ka))\n",
     )
     .unwrap();
     let loaded = tauto::program::load_extracted(&path).unwrap();
     let out =
-        tauto::eval::run_loaded_with(&loaded, tauto::eval::DEFAULT_BUDGET, Default::default())
+        tauto::exec::run_loaded_with(&loaded, tauto::exec::DEFAULT_BUDGET, Default::default())
             .unwrap();
-    assert!(format!("{:?}", out.outputs).contains("seven"), "{out:?}");
+    // `show` writes a `Text` as `Debug` does, quoted.
+    assert_eq!(out.stdout, "\"seven\"\n", "{out:?}");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -366,9 +348,9 @@ fn variants_of_a_type_named_like_a_prelude_type_are_named_by_its_path() {
     let path = root.join("main.taut");
     fs::write(
         &path,
-        "import std::prelude::Os\npub(open) inductive Pending: Type {\n  Empty: Pending\n  One(a: Nat): Pending\n  Two(a: Nat, b: Nat): Pending\n}\n\
+        "import std::builtin::os\npub(open) inductive Pending: Type {\n  Empty: Pending\n  One(a: Nat): Pending\n  Two(a: Nat, b: Nat): Pending\n}\n\
          fn size(p: Pending): Nat {\n  ⊢ Nat from match p {\n    Empty => 0\n    One(a) => a\n    Two(a, b) => a + b\n  }\n}\n\
-         fn show(p: Pending) {\n  match p {\n    Empty => print(\"empty\")\n    One(_) => print(\"one\")\n    Two(_, _) => print(\"two\")\n  }\n}\n\
+         fn show(p: Pending) ! {stdout} {\n  match p {\n    Empty => print(\"empty\")\n    One(_) => print(\"one\")\n    Two(_, _) => print(\"two\")\n  }\n}\n\
          show(Two(1, 2))\n",
     )
     .unwrap();
@@ -376,7 +358,7 @@ fn variants_of_a_type_named_like_a_prelude_type_are_named_by_its_path() {
     // run.
     let loaded = tauto::program::load_extracted(&path).unwrap();
     let run =
-        tauto::eval::run_loaded_with(&loaded, tauto::eval::DEFAULT_BUDGET, Default::default());
+        tauto::exec::run_loaded_with(&loaded, tauto::exec::DEFAULT_BUDGET, Default::default());
     assert!(run.is_ok(), "{:?}", run.err());
     fs::remove_dir_all(root).unwrap();
 }

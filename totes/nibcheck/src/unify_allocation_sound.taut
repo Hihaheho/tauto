@@ -2,6 +2,7 @@ import "unify_allocation_rest.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "unify_allocation_app.taut"
@@ -16,7 +17,7 @@ pub def UnifyAllocationAt(
   And(UnifyAllocatedRest(fuel), And(UnifyPairsAllocated(fuel), UnifyAppAllocated(fuel)))
 )
 pub theorem unify_allocation_at(fuel: Nat): UnifyAllocationAt(fuel) {
-  ⊢ UnifyAllocationAt(fuel) from match fuel {
+  match fuel {
     Zero => AndIntro(
       c => a => b => ordered => state => left => right => AndIntro(Refl, state),
       AndIntro(
@@ -113,7 +114,7 @@ pub theorem allocation_attempt_result(
   state: CheckerAllocation(c),
   h: AllocationRun(c, m)
 ): AllocationRun(c, ck_attempt_k(c, m)) {
-  ⊢ AllocationRun(c, ck_attempt_k(c, m)) from match m {
+  match m {
     mut1(flag, next) => ⊢ AllocationRun(c, ck_attempt_k(c, mut1(flag, next))) from match flag {
       true => h
       false => AndIntro(Refl, state)

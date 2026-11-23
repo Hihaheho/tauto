@@ -1,0 +1,3031 @@
+import std::prelude::std { Option }
+import std::base { Bool, Nat }
+import std::nat { Nat }
+import std::uhost { UHost }
+
+// Names a type in a method's arguments. A method that mentions only one of the
+// class's two parameters cannot be resolved (`cannot infer the type that
+// `Occupancy` is needed for`), so each such method takes one of these.
+pub(open) inductive Proxy(T: Type): Type {
+  Mk: Proxy(T)
+}
+
+// Which slots are filled. `S` is the whole state, a few words; `M` is the
+// small copy value kept beside each slot, which the policy sees one at a time.
+// Memory is not touched here: the kernel checks it.
+pub(open) inductive class Occupancy(S: Type, M: Type) {
+  fn empty(cap: UHost, pm: Proxy(M)): S
+  // The mark of a new slot.
+  fn vacant(ps: Proxy(S), pm: Proxy(M)): M
+  fn cap(s: S, pm: Proxy(M)): UHost
+  // Whether slot `i`, whose mark is `m`, is filled.
+  fn used(s: S, i: UHost, m: M): Bool
+  // Fill slot `i`, changing its mark from `old` to `new`.
+  fn put(s: S, i: UHost, old: M, new: M): Option(S)
+  // Empty slot `i`, changing its mark from `old` to `new`.
+  fn take(s: S, i: UHost, old: M, new: M): Option(S)
+  // Change the capacity.
+  fn recap(s: S, cap: UHost, pm: Proxy(M)): Option(S)
+  // Whether the slots from `lo` up to (not including) `hi` are all filled.
+  fn full(s: S, lo: UHost, hi: UHost, pm: Proxy(M)): Bool
+
+  theorem empty_free<c: UHost, i: UHost, pm: Proxy(M), ps: Proxy(S)>(): Occupancy::used(
+    the(S, Occupancy::empty(c, pm)),
+    i,
+    the(M, Occupancy::vacant(ps, pm))
+  ) = false
+  theorem empty_cap<c: UHost, pm: Proxy(M), ps: Proxy(S)>(): Occupancy::cap(
+    the(S, Occupancy::empty(c, pm)),
+    pm
+  ) = c
+  theorem used_below<s: S, i: UHost, m: M, pm: Proxy(M), ps: Proxy(S)>(
+    u: Occupancy::used(s, i, m) = true
+  ): UHost::lt(i, Occupancy::cap(s, pm)) = true
+
+  theorem put_fresh<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::put(s, i, old, new) = Some(t)
+  ): Occupancy::used(s, i, old) = false
+  theorem put_same<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::put(s, i, old, new) = Some(t)
+  ): Occupancy::used(t, i, new) = true
+  theorem put_other<s: S, i: UHost, old: M, new: M, t: S, j: UHost, m: M, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::put(s, i, old, new) = Some(t),
+    ne: UHost::eq(i, j) = false
+  ): Occupancy::used(t, j, m) = Occupancy::used(s, j, m)
+  theorem put_cap<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::put(s, i, old, new) = Some(t)
+  ): Occupancy::cap(t, pm) = Occupancy::cap(s, pm)
+
+  theorem take_live<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::take(s, i, old, new) = Some(t)
+  ): Occupancy::used(s, i, old) = true
+  theorem take_same<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::take(s, i, old, new) = Some(t)
+  ): Occupancy::used(t, i, new) = false
+  theorem take_other<s: S, i: UHost, old: M, new: M, t: S, j: UHost, m: M, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::take(s, i, old, new) = Some(t),
+    ne: UHost::eq(i, j) = false
+  ): Occupancy::used(t, j, m) = Occupancy::used(s, j, m)
+  theorem take_cap<s: S, i: UHost, old: M, new: M, t: S, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::take(s, i, old, new) = Some(t)
+  ): Occupancy::cap(t, pm) = Occupancy::cap(s, pm)
+
+  // A new capacity keeps what the old slots held, and the new slots are empty.
+  theorem recap_keeps<s: S, c: UHost, t: S, i: UHost, m: M, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::recap(s, c, pm) = Some(t),
+    old: UHost::lt(i, Occupancy::cap(s, pm)) = true
+  ): Occupancy::used(t, i, m) = Occupancy::used(s, i, m)
+  theorem recap_fresh<s: S, c: UHost, t: S, i: UHost, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::recap(s, c, pm) = Some(t),
+    new: UHost::le(Occupancy::cap(s, pm), i) = true
+  ): Occupancy::used(t, i, the(M, Occupancy::vacant(ps, pm))) = false
+  theorem recap_cap<s: S, c: UHost, t: S, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::recap(s, c, pm) = Some(t)
+  ): Occupancy::cap(t, pm) = c
+
+  theorem full_used<s: S, a: UHost, b: UHost, i: UHost, m: M, pm: Proxy(M), ps: Proxy(S)>(
+    h: Occupancy::full(s, a, b, pm) = true,
+    lo: UHost::le(a, i) = true,
+    hi: UHost::lt(i, b) = true
+  ): Occupancy::used(s, i, m) = true
+}
+
+// `j < n + 1` is `j < n` unless `j` is `n`.
+pub theorem Nat::lt_succ_ne_eq(j: Nat, n: Nat, h: Nat::eq(j, n) = false): j < Succ(n) = (j < n) {
+  match j {
+    Zero => ⊢ Zero < Succ(n) = (Zero < n) from match n {
+      Zero => False::elim(true_ne_false(h))
+      Succ(m) => Refl
+    }
+    Succ(j2) => ⊢ Succ(j2) < Succ(n) = (Succ(j2) < n) from match n {
+      Zero => Refl
+      Succ(m) => Nat::lt_succ_ne_eq(j2, m, h)
+    }
+  }
+}
+
+pub theorem Nat::eq_false_comm(a: Nat, b: Nat, h: Nat::eq(a, b) = false): Nat::eq(b, a) = false {
+  match Nat::eq(b, a) eqn e {
+    true => ⊢ true = false from False::elim(
+      true_ne_false(
+        Eq::trans(
+          Eq::sym(Eq::trans(Eq::congr(⟦Nat::eq(a, □)⟧, Nat::eq_sound(b, a, e)), Nat::eq_refl(a))),
+          h
+        )
+      )
+    )
+    false => Refl
+  }
+}
+
+// The slots below `len` are filled, and `len` is at most the capacity.
+pub(open) inductive Prefix: Type {
+  Mk(len: UHost, cap: UHost, ok: UHost::le(len, cap) = true): Prefix
+}
+
+pub fn Prefix::len(s: Prefix): UHost {
+  match s {
+    Mk(l, c, h) => l
+  }
+}
+
+pub fn Prefix::cap(s: Prefix): UHost {
+  match s {
+    Mk(l, c, h) => c
+  }
+}
+
+pub theorem Prefix::ok(s: Prefix): UHost::le(Prefix::len(s), Prefix::cap(s)) = true {
+  match s {
+    Mk(l, c, h) => h
+  }
+}
+
+pub fn Prefix::empty(c: UHost): Prefix {
+  Prefix::Mk(UHost::zero(), c, Nat::le_zero(UHost::val(c)))
+}
+
+pub fn Prefix::used(s: Prefix, i: UHost): Bool {
+  UHost::lt(i, Prefix::len(s))
+}
+
+// The prefix one longer, where `len < cap`.
+pub fn Prefix::grown(s: Prefix, q: UHost::lt(Prefix::len(s), Prefix::cap(s)) = true): Prefix {
+  Prefix::Mk(UHost::succ_below_proved(Prefix::len(s), Prefix::cap(s), q), Prefix::cap(s), q)
+}
+
+// `put`, with the decision `c` of its test given.
+pub fn Prefix::put_of(
+  s: Prefix,
+  i: UHost,
+  c: Bool,
+  h: c = (UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)))
+): Option(Prefix) {
+  match c {
+    true => Some(
+      Prefix::grown(s, Bool::and_true_right(UHost::eq(i, Prefix::len(s)), UHost::lt(Prefix::len(s), Prefix::cap(s)), Eq::sym(h)))
+    )
+    false => None
+  }
+}
+
+pub fn Prefix::put(s: Prefix, i: UHost): Option(Prefix) {
+  Prefix::put_of(s, i, UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)), Refl)
+}
+
+// The prefix one shorter, where `i + 1 = len`.
+pub fn Prefix::shrunk(
+  s: Prefix,
+  i: UHost,
+  e: Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))) = true
+): Prefix {
+  Prefix::Mk(
+    i,
+    Prefix::cap(s),
+    Nat::le_trans(
+      UHost::val(i),
+      Succ(UHost::val(i)),
+      UHost::val(Prefix::cap(s)),
+      Nat::le_succ(UHost::val(i)),
+      Eq::trans(
+        Eq::congr(
+          ⟦□ <= UHost::val(Prefix::cap(s))⟧,
+          Nat::eq_sound(Succ(UHost::val(i)), UHost::val(Prefix::len(s)), e)
+        ),
+        Prefix::ok(s)
+      )
+    )
+  )
+}
+
+pub fn Prefix::take_of(
+  s: Prefix,
+  i: UHost,
+  c: Bool,
+  h: c = Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s)))
+): Option(Prefix) {
+  match c {
+    true => Some(Prefix::shrunk(s, i, Eq::sym(h)))
+    false => None
+  }
+}
+
+pub fn Prefix::take(s: Prefix, i: UHost): Option(Prefix) {
+  Prefix::take_of(s, i, Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))), Refl)
+}
+
+pub fn Prefix::recap_of(s: Prefix, c: UHost, o: Bool, h: o = UHost::le(Prefix::len(s), c)): Option(Prefix) {
+  match o {
+    true => Some(Prefix::Mk(Prefix::len(s), c, Eq::sym(h)))
+    false => None
+  }
+}
+
+pub fn Prefix::recap(s: Prefix, c: UHost): Option(Prefix) {
+  Prefix::recap_of(s, c, UHost::le(Prefix::len(s), c), Refl)
+}
+
+// ---- what a success says ------------------------------------------------
+
+// A success means the test held, and the result is one longer with the same capacity.
+pub theorem Prefix::put_of_inv(
+  s: Prefix,
+  i: UHost,
+  c: Bool,
+  h: c = (UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s))),
+  t: Prefix,
+  p: Prefix::put_of(s, i, c, h) = Some(t)
+): (
+  UHost::eq(
+    i,
+    Prefix::len(s)
+  ) = true ∧ (
+    (
+      UHost::lt(
+        Prefix::len(s),
+        Prefix::cap(s)
+      ) = true ∧ ((UHost::val(Prefix::len(t)) = Succ(UHost::val(Prefix::len(s))) ∧ Prefix::cap(t) = Prefix::cap(s)))
+    )
+  )
+) {
+  match c {
+    true => AndIntro(
+      Bool::and_true_left(UHost::eq(i, Prefix::len(s)), UHost::lt(Prefix::len(s), Prefix::cap(s)), Eq::sym(h)),
+      AndIntro(Bool::and_true_right(UHost::eq(i, Prefix::len(s)), UHost::lt(Prefix::len(s), Prefix::cap(s)), Eq::sym(h)), match p {
+        Refl => AndIntro(Refl, Refl)
+      })
+    )
+    false => match p {
+    }
+  }
+}
+
+pub theorem Prefix::take_of_inv(
+  s: Prefix,
+  i: UHost,
+  c: Bool,
+  h: c = Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))),
+  t: Prefix,
+  p: Prefix::take_of(s, i, c, h) = Some(t)
+): (Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))) = true ∧ ((Prefix::len(t) = i ∧ Prefix::cap(t) = Prefix::cap(s)))) {
+  match c {
+    true => AndIntro(Eq::sym(h), match p {
+      Refl => AndIntro(Refl, Refl)
+    })
+    false => match p {
+    }
+  }
+}
+
+pub theorem Prefix::recap_of_inv(
+  s: Prefix,
+  c: UHost,
+  o: Bool,
+  h: o = UHost::le(Prefix::len(s), c),
+  t: Prefix,
+  p: Prefix::recap_of(s, c, o, h) = Some(t)
+): (Prefix::len(t) = Prefix::len(s) ∧ Prefix::cap(t) = c) {
+  match o {
+    true => match p {
+      Refl => AndIntro(Refl, Refl)
+    }
+    false => match p {
+    }
+  }
+}
+
+// ---- the successes are exactly the cases the laws leave open --------------
+
+pub theorem Prefix::put_of_ok(
+  s: Prefix,
+  i: UHost,
+  c: Bool,
+  h: c = (UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s))),
+  q: UHost::lt(Prefix::len(s), Prefix::cap(s)) = true,
+  e: c = true
+): Prefix::put_of(s, i, c, h) = Some(Prefix::grown(s, q)) {
+  match c {
+    true => Refl
+    false => False::elim(false_ne_true(e))
+  }
+}
+
+// `put` at the end is the prefix one longer, with the proof that there is room.
+pub theorem Prefix::put_grown(
+  s: Prefix,
+  q: UHost::lt(Prefix::len(s), Prefix::cap(s)) = true
+): Prefix::put(s, Prefix::len(s)) = Some(Prefix::grown(s, q)) {
+  Prefix::put_of_ok(
+    s,
+    Prefix::len(s),
+    UHost::eq(Prefix::len(s), Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)),
+    Refl,
+    q,
+    Bool::and_intro(
+      UHost::eq(Prefix::len(s), Prefix::len(s)),
+      UHost::lt(Prefix::len(s), Prefix::cap(s)),
+      UHost::eq_refl(Prefix::len(s)),
+      q
+    )
+  )
+}
+
+pub theorem Prefix::take_of_ok(
+  s: Prefix,
+  i: UHost,
+  c: Bool,
+  h: c = Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))),
+  e: c = true
+): Prefix::take_of(s, i, c, h) = Some(Prefix::shrunk(s, i, Eq::sym(Eq::trans(Eq::sym(e), h)))) {
+  match c {
+    true => Refl
+    false => False::elim(false_ne_true(e))
+  }
+}
+
+// `take` of the last slot is the prefix one shorter.
+pub theorem Prefix::take_shrunk(
+  s: Prefix,
+  i: UHost,
+  e: Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))) = true
+): Prefix::take(s, i) = Some(Prefix::shrunk(s, i, e)) {
+  Prefix::take_of_ok(s, i, Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))), Refl, e)
+}
+
+pub theorem Prefix::recap_of_ok(
+  s: Prefix,
+  c: UHost,
+  o: Bool,
+  h: o = UHost::le(Prefix::len(s), c),
+  e: o = true
+): Prefix::recap_of(s, c, o, h) = Some(Prefix::Mk(Prefix::len(s), c, Eq::trans(Eq::sym(h), e))) {
+  match o {
+    true => Refl
+    false => False::elim(false_ne_true(e))
+  }
+}
+
+// `recap` to a capacity of at least the length keeps the length.
+pub theorem Prefix::recap_mk(
+  s: Prefix,
+  c: UHost,
+  h: UHost::le(Prefix::len(s), c) = true
+): Prefix::recap(s, c) = Some(Prefix::Mk(Prefix::len(s), c, h)) {
+  Prefix::recap_of_ok(s, c, UHost::le(Prefix::len(s), c), Refl, h)
+}
+
+// `i + 1 = len` and `lt(i, len)`.
+pub theorem Prefix::succ_lt(i: Nat, n: Nat, e: Succ(i) = n): i < n = true {
+  Eq::trans(Eq::congr(⟦Succ(i) <= □⟧, Eq::sym(e)), Nat::le_refl(Succ(i)))
+}
+
+// From `eq(i, len)` to the values being the same number.
+pub theorem Prefix::same_val(
+  i: UHost,
+  j: UHost,
+  e: UHost::eq(i, j) = true
+): UHost::val(i) = UHost::val(j) {
+  Nat::eq_sound(UHost::val(i), UHost::val(j), e)
+}
+
+// `a < b` is false when `b <= a`.
+pub theorem Nat::le_lt_false(a: Nat, b: Nat, h: b <= a = true): a < b = false {
+  match a {
+    Zero => ⊢ Zero < b = false from match b {
+      Zero => Refl
+      Succ(k) => False::elim(false_ne_true(h))
+    }
+    Succ(a2) => ⊢ Succ(a2) < b = false from match b {
+      Zero => Refl
+      Succ(b2) => Nat::le_lt_false(a2, b2, h)
+    }
+  }
+}
+
+// The marks are `Unit`: the policy does not use them.
+instance Occupancy(Prefix, Unit) {
+  fn empty(c: UHost, pm: Proxy(Unit)): Prefix { Prefix::empty(c) }
+  fn vacant(ps: Proxy(Prefix), pm: Proxy(Unit)): Unit { Star }
+  fn cap(s: Prefix, pm: Proxy(Unit)): UHost { Prefix::cap(s) }
+  fn used(s: Prefix, i: UHost, m: Unit): Bool { Prefix::used(s, i) }
+  fn put(s: Prefix, i: UHost, old: Unit, new: Unit): Option(Prefix) { Prefix::put(s, i) }
+  fn take(s: Prefix, i: UHost, old: Unit, new: Unit): Option(Prefix) { Prefix::take(s, i) }
+  fn recap(s: Prefix, c: UHost, pm: Proxy(Unit)): Option(Prefix) { Prefix::recap(s, c) }
+  fn full(s: Prefix, lo: UHost, hi: UHost, pm: Proxy(Unit)): Bool { UHost::le(hi, Prefix::len(s)) }
+
+  theorem empty_free<c: UHost, i: UHost, pm: Proxy(Unit), ps: Proxy(Prefix)>(): Occupancy::used(
+    the(Prefix, Occupancy::empty(c, pm)),
+    i,
+    the(Unit, Occupancy::vacant(ps, pm))
+  ) = false {
+    Nat::lt_zero_false(UHost::val(i))
+  }
+
+  theorem empty_cap<c: UHost, pm: Proxy(Unit), ps: Proxy(Prefix)>(): Occupancy::cap(
+    the(Prefix, Occupancy::empty(c, pm)),
+    pm
+  ) = c {
+    Refl
+  }
+
+  theorem used_below<s: Prefix, i: UHost, m: Unit, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    u: Occupancy::used(s, i, m) = true
+  ): UHost::lt(i, Occupancy::cap(s, pm)) = true {
+    Nat::le_trans(
+      Succ(UHost::val(i)),
+      UHost::val(Prefix::len(s)),
+      UHost::val(Prefix::cap(s)),
+      u,
+      Prefix::ok(s)
+    )
+  }
+
+  theorem put_fresh<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::put(s, i, old, new) = Some(t)
+  ): Occupancy::used(s, i, old) = false {
+    match Prefix::put_of_inv(
+      s,
+      i,
+      UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)),
+      Refl,
+      t,
+      h
+    ) {
+      AndIntro(e, rest) => Eq::trans(
+        Eq::congr(⟦Nat::lt(□, UHost::val(Prefix::len(s)))⟧, Prefix::same_val(i, Prefix::len(s), e)),
+        Nat::lt_irrefl(UHost::val(Prefix::len(s)))
+      )
+    }
+  }
+
+  theorem put_same<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::put(s, i, old, new) = Some(t)
+  ): Occupancy::used(t, i, new) = true {
+    match Prefix::put_of_inv(
+      s,
+      i,
+      UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)),
+      Refl,
+      t,
+      h
+    ) {
+      AndIntro(e, AndIntro(q, AndIntro(l, c))) => Eq::trans(
+        Eq::congr(⟦Nat::lt(UHost::val(i), □)⟧, l),
+        Eq::trans(
+          Eq::congr(
+            ⟦Nat::lt(□, Succ(UHost::val(Prefix::len(s))))⟧,
+            Prefix::same_val(i, Prefix::len(s), e)
+          ),
+          Nat::le_refl(Succ(UHost::val(Prefix::len(s))))
+        )
+      )
+    }
+  }
+
+  theorem put_other<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, j: UHost, m: Unit, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::put(s, i, old, new) = Some(t),
+    ne: UHost::eq(i, j) = false
+  ): Occupancy::used(t, j, m) = Occupancy::used(s, j, m) {
+    match Prefix::put_of_inv(
+      s,
+      i,
+      UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)),
+      Refl,
+      t,
+      h
+    ) {
+      AndIntro(e, AndIntro(q, AndIntro(l, c))) => Eq::trans(
+        Eq::congr(⟦Nat::lt(UHost::val(j), □)⟧, l),
+        Nat::lt_succ_ne_eq(
+          UHost::val(j),
+          UHost::val(Prefix::len(s)),
+          Nat::eq_false_comm(
+            UHost::val(Prefix::len(s)),
+            UHost::val(j),
+            Eq::trans(
+              Eq::sym(
+                Eq::congr(⟦Nat::eq(□, UHost::val(j))⟧, Prefix::same_val(i, Prefix::len(s), e))
+              ),
+              ne
+            )
+          )
+        )
+      )
+    }
+  }
+
+  theorem put_cap<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::put(s, i, old, new) = Some(t)
+  ): Occupancy::cap(t, pm) = Occupancy::cap(s, pm) {
+    match Prefix::put_of_inv(
+      s,
+      i,
+      UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)),
+      Refl,
+      t,
+      h
+    ) {
+      AndIntro(e, AndIntro(q, AndIntro(l, c))) => c
+    }
+  }
+
+  theorem take_live<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::take(s, i, old, new) = Some(t)
+  ): Occupancy::used(s, i, old) = true {
+    match Prefix::take_of_inv(
+      s,
+      i,
+      Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))),
+      Refl,
+      t,
+      h
+    ) {
+      AndIntro(e, rest) => Prefix::succ_lt(
+        UHost::val(i),
+        UHost::val(Prefix::len(s)),
+        Nat::eq_sound(Succ(UHost::val(i)), UHost::val(Prefix::len(s)), e)
+      )
+    }
+  }
+
+  theorem take_same<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::take(s, i, old, new) = Some(t)
+  ): Occupancy::used(t, i, new) = false {
+    match Prefix::take_of_inv(
+      s,
+      i,
+      Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))),
+      Refl,
+      t,
+      h
+    ) {
+      AndIntro(e, AndIntro(l, c)) => Eq::trans(
+        Eq::congr(⟦Nat::lt(UHost::val(i), UHost::val(□))⟧, l),
+        Nat::lt_irrefl(UHost::val(i))
+      )
+    }
+  }
+
+  theorem take_other<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, j: UHost, m: Unit, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::take(s, i, old, new) = Some(t),
+    ne: UHost::eq(i, j) = false
+  ): Occupancy::used(t, j, m) = Occupancy::used(s, j, m) {
+    match Prefix::take_of_inv(
+      s,
+      i,
+      Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))),
+      Refl,
+      t,
+      h
+    ) {
+      AndIntro(e, AndIntro(l, c)) => Eq::trans(
+        Eq::trans(
+          Eq::congr(⟦Nat::lt(UHost::val(j), UHost::val(□))⟧, l),
+          Eq::sym(
+            Nat::lt_succ_ne_eq(
+              UHost::val(j),
+              UHost::val(i),
+              Nat::eq_false_comm(UHost::val(i), UHost::val(j), ne)
+            )
+          )
+        ),
+        Eq::congr(
+          ⟦Nat::lt(UHost::val(j), □)⟧,
+          Nat::eq_sound(Succ(UHost::val(i)), UHost::val(Prefix::len(s)), e)
+        )
+      )
+    }
+  }
+
+  theorem take_cap<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::take(s, i, old, new) = Some(t)
+  ): Occupancy::cap(t, pm) = Occupancy::cap(s, pm) {
+    match Prefix::take_of_inv(
+      s,
+      i,
+      Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))),
+      Refl,
+      t,
+      h
+    ) {
+      AndIntro(e, AndIntro(l, c)) => c
+    }
+  }
+
+  theorem recap_keeps<s: Prefix, c: UHost, t: Prefix, i: UHost, m: Unit, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::recap(s, c, pm) = Some(t),
+    old: UHost::lt(i, Occupancy::cap(s, pm)) = true
+  ): Occupancy::used(t, i, m) = Occupancy::used(s, i, m) {
+    match Prefix::recap_of_inv(s, c, UHost::le(Prefix::len(s), c), Refl, t, h) {
+      AndIntro(l, k) => Eq::congr(⟦UHost::lt(i, □)⟧, l)
+    }
+  }
+
+  // The new slots are empty: the length stays at most the old capacity.
+  theorem recap_fresh<s: Prefix, c: UHost, t: Prefix, i: UHost, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::recap(s, c, pm) = Some(t),
+    new: UHost::le(Occupancy::cap(s, pm), i) = true
+  ): Occupancy::used(t, i, the(Unit, Occupancy::vacant(ps, pm))) = false {
+    match Prefix::recap_of_inv(s, c, UHost::le(Prefix::len(s), c), Refl, t, h) {
+      AndIntro(l, k) => Eq::trans(
+        Eq::congr(⟦UHost::lt(i, □)⟧, l),
+        Nat::le_lt_false(
+          UHost::val(i),
+          UHost::val(Prefix::len(s)),
+          Nat::le_trans(
+            UHost::val(Prefix::len(s)),
+            UHost::val(Prefix::cap(s)),
+            UHost::val(i),
+            Prefix::ok(s),
+            new
+          )
+        )
+      )
+    }
+  }
+
+  theorem recap_cap<s: Prefix, c: UHost, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::recap(s, c, pm) = Some(t)
+  ): Occupancy::cap(t, pm) = c {
+    match Prefix::recap_of_inv(s, c, UHost::le(Prefix::len(s), c), Refl, t, h) {
+      AndIntro(l, k) => k
+    }
+  }
+
+  theorem full_used<s: Prefix, a: UHost, b: UHost, i: UHost, m: Unit, pm: Proxy(Unit), ps: Proxy(Prefix)>(
+    h: Occupancy::full(s, a, b, pm) = true,
+    lo: UHost::le(a, i) = true,
+    hi: UHost::lt(i, b) = true
+  ): Occupancy::used(s, i, m) = true {
+    Nat::le_trans(Succ(UHost::val(i)), UHost::val(b), UHost::val(Prefix::len(s)), hi, h)
+  }
+}
+
+// The policy of a hash table with one control byte per slot. A byte below 128
+// is a filled slot (the value is the tag from the hash), 128 and above is empty
+// (255) or a tombstone (254). The state is the capacity only.
+// A byte as a number (the policy keeps it below 256: 255, 254, and the tags below
+// 128). `U8` cannot be the class's argument here: an instance whose argument is
+// a fixed-width type does not check.
+pub(open) inductive struct Byte { val: Nat }
+
+pub fn Byte::val(b: Byte): Nat { b.val }
+
+pub(open) inductive Table: Type {
+  Mk(cap: UHost): Table
+}
+
+pub fn Table::cap(s: Table): UHost {
+  match s {
+    Mk(c) => c
+  }
+}
+
+// A byte that marks a filled slot, and one that does not.
+pub fn Table::live(m: Byte): Bool { Nat::lt(Byte::val(m), 128) }
+pub fn Table::dead(m: Byte): Bool { Nat::le(128, Byte::val(m)) }
+
+pub theorem Table::dead_not_live(m: Byte, h: Table::dead(m) = true): Table::live(m) = false {
+  Nat::le_lt_false(Byte::val(m), 128, h)
+}
+
+pub fn Table::used(s: Table, i: UHost, m: Byte): Bool {
+  UHost::lt(i, Table::cap(s)) && Table::live(m)
+}
+
+// `Some` of the same table when the test says so.
+pub fn Table::keep(s: Table, c: Bool): Option(Table) {
+  match c {
+    true => Some(s)
+    false => None
+  }
+}
+
+pub theorem Table::keep_inv(s: Table, c: Bool, t: Table, h: Table::keep(s, c) = Some(t)): (c = true ∧ t = s) {
+  match c {
+    true => AndIntro(Refl, match h {
+      Refl => Refl
+    })
+    false => match h {
+    }
+  }
+}
+
+// Fill: the slot is in range, its byte was not a filled one, and the new one is.
+pub fn Table::put_test(s: Table, i: UHost, old: Byte, new: Byte): Bool {
+  UHost::lt(i, Table::cap(s)) && (Table::dead(old) && Table::live(new))
+}
+
+// Empty: the slot is in range, its byte was a filled one, and the new one is not.
+pub fn Table::take_test(s: Table, i: UHost, old: Byte, new: Byte): Bool {
+  UHost::lt(i, Table::cap(s)) && (Table::live(old) && Table::dead(new))
+}
+
+// A capacity at least the old one: the same bytes below the old capacity, empty above.
+pub fn Table::recap_of(s: Table, c: UHost, o: Bool, h: o = UHost::le(Table::cap(s), c)): Option(Table) {
+  match o {
+    true => Some(Table::Mk(c))
+    false => None
+  }
+}
+
+pub fn Table::recap(s: Table, c: UHost): Option(Table) {
+  Table::recap_of(s, c, UHost::le(Table::cap(s), c), Refl)
+}
+
+pub theorem Table::recap_inv(
+  s: Table,
+  c: UHost,
+  o: Bool,
+  h: o = UHost::le(Table::cap(s), c),
+  t: Table,
+  p: Table::recap_of(s, c, o, h) = Some(t)
+): (o = true ∧ t = Table::Mk(c)) {
+  match o {
+    true => AndIntro(Refl, match p {
+      Refl => Refl
+    })
+    false => match p {
+    }
+  }
+}
+
+instance Occupancy(Table, Byte) {
+  fn empty(c: UHost, pm: Proxy(Byte)): Table { Table::Mk(c) }
+  fn vacant(ps: Proxy(Table), pm: Proxy(Byte)): Byte { Byte { val: 255 } }
+  fn cap(s: Table, pm: Proxy(Byte)): UHost { Table::cap(s) }
+  fn used(s: Table, i: UHost, m: Byte): Bool { Table::used(s, i, m) }
+  fn put(
+    s: Table,
+    i: UHost,
+    old: Byte,
+    new: Byte
+  ): Option(Table) { Table::keep(s, Table::put_test(s, i, old, new)) }
+  fn take(
+    s: Table,
+    i: UHost,
+    old: Byte,
+    new: Byte
+  ): Option(Table) { Table::keep(s, Table::take_test(s, i, old, new)) }
+  fn recap(s: Table, c: UHost, pm: Proxy(Byte)): Option(Table) { Table::recap(s, c) }
+  fn full(s: Table, lo: UHost, hi: UHost, pm: Proxy(Byte)): Bool { false }
+
+  theorem empty_free<c: UHost, i: UHost, pm: Proxy(Byte), ps: Proxy(Table)>(): Occupancy::used(
+    the(Table, Occupancy::empty(c, pm)),
+    i,
+    the(Byte, Occupancy::vacant(ps, pm))
+  ) = false {
+    Bool::and_false_right(UHost::lt(i, c))
+  }
+
+  theorem empty_cap<c: UHost, pm: Proxy(Byte), ps: Proxy(Table)>(): Occupancy::cap(
+    the(Table, Occupancy::empty(c, pm)),
+    pm
+  ) = c {
+    Refl
+  }
+
+  theorem used_below<s: Table, i: UHost, m: Byte, pm: Proxy(Byte), ps: Proxy(Table)>(
+    u: Occupancy::used(s, i, m) = true
+  ): UHost::lt(i, Occupancy::cap(s, pm)) = true {
+    Bool::and_true_left(UHost::lt(i, Table::cap(s)), Table::live(m), u)
+  }
+
+  theorem put_fresh<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::put(s, i, old, new) = Some(t)
+  ): Occupancy::used(s, i, old) = false {
+    match Table::keep_inv(s, Table::put_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Eq::trans(
+        Eq::congr(
+          ⟦UHost::lt(i, Table::cap(s)) && □⟧,
+          Table::dead_not_live(
+            old,
+            Bool::and_true_left(
+              Table::dead(old),
+              Table::live(new),
+              Bool::and_true_right(
+                UHost::lt(i, Table::cap(s)),
+                Table::dead(old) && Table::live(new),
+                c
+              )
+            )
+          )
+        ),
+        Bool::and_false_right(UHost::lt(i, Table::cap(s)))
+      )
+    }
+  }
+
+  theorem put_same<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::put(s, i, old, new) = Some(t)
+  ): Occupancy::used(t, i, new) = true {
+    match Table::keep_inv(s, Table::put_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => match e {
+        Refl => Bool::and_intro(
+          UHost::lt(i, Table::cap(t)),
+          Table::live(new),
+          Bool::and_true_left(UHost::lt(i, Table::cap(t)), Table::dead(old) && Table::live(new), c),
+          Bool::and_true_right(
+            Table::dead(old),
+            Table::live(new),
+            Bool::and_true_right(
+              UHost::lt(i, Table::cap(t)),
+              Table::dead(old) && Table::live(new),
+              c
+            )
+          )
+        )
+      }
+    }
+  }
+
+  theorem put_other<s: Table, i: UHost, old: Byte, new: Byte, t: Table, j: UHost, m: Byte, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::put(s, i, old, new) = Some(t),
+    ne: UHost::eq(i, j) = false
+  ): Occupancy::used(t, j, m) = Occupancy::used(s, j, m) {
+    match Table::keep_inv(s, Table::put_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Eq::congr(⟦Table::used(□, j, m)⟧, e)
+    }
+  }
+
+  theorem put_cap<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::put(s, i, old, new) = Some(t)
+  ): Occupancy::cap(t, pm) = Occupancy::cap(s, pm) {
+    match Table::keep_inv(s, Table::put_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Eq::congr(Table::cap, e)
+    }
+  }
+
+  theorem take_live<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::take(s, i, old, new) = Some(t)
+  ): Occupancy::used(s, i, old) = true {
+    match Table::keep_inv(s, Table::take_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Bool::and_intro(
+        UHost::lt(i, Table::cap(s)),
+        Table::live(old),
+        Bool::and_true_left(UHost::lt(i, Table::cap(s)), Table::live(old) && Table::dead(new), c),
+        Bool::and_true_left(
+          Table::live(old),
+          Table::dead(new),
+          Bool::and_true_right(UHost::lt(i, Table::cap(s)), Table::live(old) && Table::dead(new), c)
+        )
+      )
+    }
+  }
+
+  theorem take_same<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::take(s, i, old, new) = Some(t)
+  ): Occupancy::used(t, i, new) = false {
+    match Table::keep_inv(s, Table::take_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => match e {
+        Refl => Eq::trans(
+          Eq::congr(
+            ⟦UHost::lt(i, Table::cap(t)) && □⟧,
+            Table::dead_not_live(
+              new,
+              Bool::and_true_right(
+                Table::live(old),
+                Table::dead(new),
+                Bool::and_true_right(
+                  UHost::lt(i, Table::cap(t)),
+                  Table::live(old) && Table::dead(new),
+                  c
+                )
+              )
+            )
+          ),
+          Bool::and_false_right(UHost::lt(i, Table::cap(t)))
+        )
+      }
+    }
+  }
+
+  theorem take_other<s: Table, i: UHost, old: Byte, new: Byte, t: Table, j: UHost, m: Byte, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::take(s, i, old, new) = Some(t),
+    ne: UHost::eq(i, j) = false
+  ): Occupancy::used(t, j, m) = Occupancy::used(s, j, m) {
+    match Table::keep_inv(s, Table::take_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Eq::congr(⟦Table::used(□, j, m)⟧, e)
+    }
+  }
+
+  theorem take_cap<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::take(s, i, old, new) = Some(t)
+  ): Occupancy::cap(t, pm) = Occupancy::cap(s, pm) {
+    match Table::keep_inv(s, Table::take_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Eq::congr(Table::cap, e)
+    }
+  }
+
+  theorem recap_keeps<s: Table, c: UHost, t: Table, i: UHost, m: Byte, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::recap(s, c, pm) = Some(t),
+    old: UHost::lt(i, Occupancy::cap(s, pm)) = true
+  ): Occupancy::used(t, i, m) = Occupancy::used(s, i, m) {
+    match Table::recap_inv(s, c, UHost::le(Table::cap(s), c), Refl, t, h) {
+      AndIntro(o, e) => match e {
+        Refl => Eq::trans(
+          Eq::congr(
+            ⟦□ && Table::live(m)⟧,
+            Nat::le_trans(Succ(UHost::val(i)), UHost::val(Table::cap(s)), UHost::val(c), old, o)
+          ),
+          Eq::sym(Eq::congr(⟦□ && Table::live(m)⟧, old))
+        )
+      }
+    }
+  }
+
+  theorem recap_fresh<s: Table, c: UHost, t: Table, i: UHost, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::recap(s, c, pm) = Some(t),
+    new: UHost::le(Occupancy::cap(s, pm), i) = true
+  ): Occupancy::used(t, i, the(Byte, Occupancy::vacant(ps, pm))) = false {
+    match Table::recap_inv(s, c, UHost::le(Table::cap(s), c), Refl, t, h) {
+      AndIntro(o, e) => match e {
+        Refl => Bool::and_false_right(UHost::lt(i, c))
+      }
+    }
+  }
+
+  theorem recap_cap<s: Table, c: UHost, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::recap(s, c, pm) = Some(t)
+  ): Occupancy::cap(t, pm) = c {
+    match Table::recap_inv(s, c, UHost::le(Table::cap(s), c), Refl, t, h) {
+      AndIntro(o, e) => match e {
+        Refl => Refl
+      }
+    }
+  }
+
+  theorem full_used<s: Table, a: UHost, b: UHost, i: UHost, m: Byte, pm: Proxy(Byte), ps: Proxy(Table)>(
+    h: Occupancy::full(s, a, b, pm) = true,
+    lo: UHost::le(a, i) = true,
+    hi: UHost::lt(i, b) = true
+  ): Occupancy::used(s, i, m) = true {
+    False::elim(false_ne_true(h))
+  }
+}
+
+// `x` when `b`, else `y`.
+pub fn sel<A>(b: Bool, x: A, y: A): A {
+  match b { true => x, false => y }
+}
+
+pub theorem sel_true<A>(b: Bool, x: A, y: A, h: b = true): sel(b, x, y) = x {
+  match b {
+    true => Refl
+    false => False::elim(false_ne_true(h))
+  }
+}
+
+pub theorem sel_false<A>(b: Bool, x: A, y: A, h: b = false): sel(b, x, y) = y {
+  match b {
+    true => False::elim(true_ne_false(h))
+    false => Refl
+  }
+}
+
+pub fn some_p<A>(o: Option(A)): Bool {
+  match o {
+    Some(x) => true
+    None => false
+  }
+}
+
+// `a < b` is false exactly when `b <= a`.
+pub theorem Nat::lt_false_le(a: Nat, b: Nat, h: a < b = false): b <= a = true {
+  match a {
+    Zero => ⊢ b <= Zero = true from match b {
+      Zero => Refl
+      Succ(k) => False::elim(true_ne_false(h))
+    }
+    Succ(a2) => ⊢ b <= Succ(a2) = true from match b {
+      Zero => Refl
+      Succ(b2) => Nat::lt_false_le(a2, b2, h)
+    }
+  }
+}
+
+// The policy's laws that the operations of the model use, as a value. The laws
+// of a class are not available inside a function (`no instance of the laws of
+// Occupancy`), only in a theorem, and an inductive takes no `where`; so the
+// policy is given by its functions, and `occ_laws` builds this value from the
+// class in a theorem. `u` is `used`, `em` is `empty`, `vac` is `vacant`, `cp` is
+// `cap`, `pu` is `put`, `ta` is `take`, `rc` is `recap` and
+// `fu` is `full`. Capacity laws (`empty_cap`, `put_cap`, `take_cap`,
+// `recap_cap`) keep `cp` in step with the physical `Slots` capacity after
+// extract: `cp(em(c)) = c`, put/take leave `cp` unchanged, and a successful
+// recap sets `cp` to the new capacity.
+pub(open) inductive OccLaws(
+  S: Type,
+  M: Type,
+  u: (S, UHost, M) -> Bool,
+  em: (UHost) -> S,
+  vac: M,
+  cp: (S) -> UHost,
+  pu: (S, UHost, M, M) -> Option(S),
+  ta: (S, UHost, M, M) -> Option(S),
+  rc: (S, UHost) -> Option(S),
+  fu: (S, UHost, UHost) -> Bool
+): Prop {
+  Mk(
+    empty_free: ∀ c: UHost. ∀ i: UHost. u(em(c), i, vac) = false,
+    empty_cap: ∀ c: UHost. cp(em(c)) = c,
+    used_below: ∀ s: S. ∀ i: UHost. ∀ m: M. u(s, i, m) = true -> UHost::lt(i, cp(s)) = true,
+    put_same: ∀ s: S. ∀ i: UHost. ∀ old: M. ∀ new: M. ∀ t: S. pu(
+      s,
+      i,
+      old,
+      new
+    ) = Some(t) -> u(t, i, new) = true,
+    put_other: ∀ s: S. ∀ i: UHost. ∀ old: M. ∀ new: M. ∀ t: S. ∀ j: UHost. ∀ m: M. pu(
+      s,
+      i,
+      old,
+      new
+    ) = Some(t) -> UHost::eq(i, j) = false -> u(t, j, m) = u(s, j, m),
+    put_cap: ∀ s: S. ∀ i: UHost. ∀ old: M. ∀ new: M. ∀ t: S. pu(
+      s,
+      i,
+      old,
+      new
+    ) = Some(t) -> cp(t) = cp(s),
+    take_live: ∀ s: S. ∀ i: UHost. ∀ old: M. ∀ new: M. ∀ t: S. ta(
+      s,
+      i,
+      old,
+      new
+    ) = Some(t) -> u(s, i, old) = true,
+    take_same: ∀ s: S. ∀ i: UHost. ∀ old: M. ∀ new: M. ∀ t: S. ta(
+      s,
+      i,
+      old,
+      new
+    ) = Some(t) -> u(t, i, new) = false,
+    take_other: ∀ s: S. ∀ i: UHost. ∀ old: M. ∀ new: M. ∀ t: S. ∀ j: UHost. ∀ m: M. ta(
+      s,
+      i,
+      old,
+      new
+    ) = Some(t) -> UHost::eq(i, j) = false -> u(t, j, m) = u(s, j, m),
+    take_cap: ∀ s: S. ∀ i: UHost. ∀ old: M. ∀ new: M. ∀ t: S. ta(
+      s,
+      i,
+      old,
+      new
+    ) = Some(t) -> cp(t) = cp(s),
+    recap_keeps: ∀ s: S. ∀ c: UHost. ∀ t: S. ∀ i: UHost. ∀ m: M. rc(
+      s,
+      c
+    ) = Some(t) -> UHost::lt(i, cp(s)) = true -> u(t, i, m) = u(s, i, m),
+    recap_fresh: ∀ s: S. ∀ c: UHost. ∀ t: S. ∀ i: UHost. rc(
+      s,
+      c
+    ) = Some(t) -> UHost::le(cp(s), i) = true -> u(t, i, vac) = false,
+    recap_cap: ∀ s: S. ∀ c: UHost. ∀ t: S. rc(s, c) = Some(t) -> cp(t) = c,
+    full_used: ∀ s: S. ∀ a: UHost. ∀ b: UHost. ∀ i: UHost. ∀ m: M. fu(
+      s,
+      a,
+      b
+    ) = true -> UHost::le(a, i) = true -> UHost::lt(i, b) = true -> u(s, i, m) = true
+  ): OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu)
+}
+
+// The fields of the laws, as theorems.
+pub theorem OccLaws::empty_free<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  c: UHost,
+  i: UHost
+): u(em(c), i, vac) = false {
+  match L {
+    Mk(p, qe, q1, q2, q3, qc, q4, q5, q6, qd, q7, q8, qe2, q9) => p(c, i)
+  }
+}
+
+pub theorem OccLaws::empty_cap<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  c: UHost
+): cp(em(c)) = c {
+  match L {
+    Mk(q0, p, q1, q2, q3, qc, q4, q5, q6, qd, q7, q8, qe2, q9) => p(c)
+  }
+}
+
+pub theorem OccLaws::used_below<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  i: UHost,
+  m: M,
+  h: u(s, i, m) = true
+): UHost::lt(i, cp(s)) = true {
+  match L {
+    Mk(q0, qe, p, q2, q3, qc, q4, q5, q6, qd, q7, q8, qe2, q9) => p(s, i, m, h)
+  }
+}
+
+pub theorem OccLaws::put_same<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  i: UHost,
+  old: M,
+  new: M,
+  t: S,
+  h: pu(s, i, old, new) = Some(t)
+): u(t, i, new) = true {
+  match L {
+    Mk(q0, qe, q1, p, q3, qc, q4, q5, q6, qd, q7, q8, qe2, q9) => p(s, i, old, new, t, h)
+  }
+}
+
+pub theorem OccLaws::put_other<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  i: UHost,
+  old: M,
+  new: M,
+  t: S,
+  j: UHost,
+  m: M,
+  h: pu(s, i, old, new) = Some(t),
+  ne: UHost::eq(i, j) = false
+): u(t, j, m) = u(s, j, m) {
+  match L {
+    Mk(q0, qe, q1, q2, p, qc, q4, q5, q6, qd, q7, q8, qe2, q9) => p(s, i, old, new, t, j, m, h, ne)
+  }
+}
+
+pub theorem OccLaws::put_cap<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  i: UHost,
+  old: M,
+  new: M,
+  t: S,
+  h: pu(s, i, old, new) = Some(t)
+): cp(t) = cp(s) {
+  match L {
+    Mk(q0, qe, q1, q2, q3, p, q4, q5, q6, qd, q7, q8, qe2, q9) => p(s, i, old, new, t, h)
+  }
+}
+
+pub theorem OccLaws::take_live<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  i: UHost,
+  old: M,
+  new: M,
+  t: S,
+  h: ta(s, i, old, new) = Some(t)
+): u(s, i, old) = true {
+  match L {
+    Mk(q0, qe, q1, q2, q3, qc, p, q5, q6, qd, q7, q8, qe2, q9) => p(s, i, old, new, t, h)
+  }
+}
+
+pub theorem OccLaws::take_same<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  i: UHost,
+  old: M,
+  new: M,
+  t: S,
+  h: ta(s, i, old, new) = Some(t)
+): u(t, i, new) = false {
+  match L {
+    Mk(q0, qe, q1, q2, q3, qc, q4, p, q6, qd, q7, q8, qe2, q9) => p(s, i, old, new, t, h)
+  }
+}
+
+pub theorem OccLaws::take_other<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  i: UHost,
+  old: M,
+  new: M,
+  t: S,
+  j: UHost,
+  m: M,
+  h: ta(s, i, old, new) = Some(t),
+  ne: UHost::eq(i, j) = false
+): u(t, j, m) = u(s, j, m) {
+  match L {
+    Mk(q0, qe, q1, q2, q3, qc, q4, q5, p, qd, q7, q8, qe2, q9) => p(s, i, old, new, t, j, m, h, ne)
+  }
+}
+
+pub theorem OccLaws::take_cap<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  i: UHost,
+  old: M,
+  new: M,
+  t: S,
+  h: ta(s, i, old, new) = Some(t)
+): cp(t) = cp(s) {
+  match L {
+    Mk(q0, qe, q1, q2, q3, qc, q4, q5, q6, p, q7, q8, qe2, q9) => p(s, i, old, new, t, h)
+  }
+}
+
+pub theorem OccLaws::recap_keeps<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  c: UHost,
+  t: S,
+  i: UHost,
+  m: M,
+  h: rc(s, c) = Some(t),
+  o: UHost::lt(i, cp(s)) = true
+): u(t, i, m) = u(s, i, m) {
+  match L {
+    Mk(q0, qe, q1, q2, q3, qc, q4, q5, q6, qd, p, q8, qe2, q9) => p(s, c, t, i, m, h, o)
+  }
+}
+
+pub theorem OccLaws::recap_fresh<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  c: UHost,
+  t: S,
+  i: UHost,
+  h: rc(s, c) = Some(t),
+  n: UHost::le(cp(s), i) = true
+): u(t, i, vac) = false {
+  match L {
+    Mk(q0, qe, q1, q2, q3, qc, q4, q5, q6, qd, q7, p, qe2, q9) => p(s, c, t, i, h, n)
+  }
+}
+
+pub theorem OccLaws::recap_cap<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  c: UHost,
+  t: S,
+  h: rc(s, c) = Some(t)
+): cp(t) = c {
+  match L {
+    Mk(q0, qe, q1, q2, q3, qc, q4, q5, q6, qd, q7, q8, p, q9) => p(s, c, t, h)
+  }
+}
+
+pub theorem OccLaws::full_used<S, M, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  s: S,
+  a: UHost,
+  b: UHost,
+  i: UHost,
+  m: M,
+  h: fu(s, a, b) = true,
+  lo: UHost::le(a, i) = true,
+  hi: UHost::lt(i, b) = true
+): u(s, i, m) = true {
+  match L {
+    Mk(q0, qe, q1, q2, q3, qc, q4, q5, q6, qd, q7, q8, qe2, p) => p(s, a, b, i, m, h, lo, hi)
+  }
+}
+
+// The slots as the proofs see them: the policy's state, the mark of each slot
+// number, the element at each (`None` where the slot is not filled), and the
+// proof that a slot has an element exactly when the policy says it is used
+// (`u` is the policy's `used`; it is an index because an inductive takes no
+// `where`).
+pub(open) inductive SlotsModel(S: Type, M: Type, A: Type, u: (S, UHost, M) -> Bool): Type {
+  Mk(
+    state: S,
+    mark: (UHost) -> M,
+    at: (UHost) -> Option(A),
+    inv: ∀ j: UHost. (
+      (
+        u(state, j, mark(j)) = true -> some_p(at(j)) = true
+      ) ∧ (some_p(at(j)) = true -> u(state, j, mark(j)) = true)
+    )
+  ): SlotsModel(S, M, A, u)
+}
+
+pub fn SlotsModel::state<S, M, A, u: (S, UHost, M) -> Bool>(r: &SlotsModel(S, M, A, u)): S {
+  match r {
+    Mk(s, k, f, v) => s
+  }
+}
+
+pub fn SlotsModel::mark<S, M, A, u: (S, UHost, M) -> Bool>(r: &SlotsModel(S, M, A, u)): (UHost) -> M {
+  match r {
+    Mk(s, k, f, v) => k
+  }
+}
+
+// The mark of slot `i`: `mark(r)(i)` as one call (the builtin `Slots::mark`).
+pub fn SlotsModel::mark_at<S, M, A, u: (S, UHost, M) -> Bool>(r: &SlotsModel(S, M, A, u), i: UHost): M {
+  SlotsModel::mark(r)(i)
+}
+
+pub fn SlotsModel::at<S, M, A, u: (S, UHost, M) -> Bool>(r: &SlotsModel(S, M, A, u)): (UHost) -> Option(A) {
+  match r {
+    Mk(s, k, f, v) => f
+  }
+}
+
+fn unwrap<A: Linear>(o: Option(A), h: some_p(o) = true): A {
+  match o {
+    Some(x) => x
+    None => match h {
+    }
+  }
+}
+
+theorem unwrap_is<A: Linear>(
+  o: Option(A),
+  h: some_p(o) = true,
+  x: A,
+  e: o = Some(x)
+): unwrap(o, h) = x {
+  match e {
+    Refl => Refl
+  }
+}
+
+pub theorem SlotsModel::inv_of<S, M, A, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  j: UHost
+): (
+  (
+    u(SlotsModel::state(r), j, SlotsModel::mark(r)(j)) = true -> some_p(SlotsModel::at(r)(j)) = true
+  ) ∧ (some_p(SlotsModel::at(r)(j)) = true -> u(SlotsModel::state(r), j, SlotsModel::mark(r)(j)) = true)
+) {
+  match r {
+    Mk(s, k, f, v) => v(j)
+  }
+}
+
+// A state whose `used` agrees with the old one on slot `j`, at the mark `m2`.
+pub theorem SlotsModel::inv_via<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  t: S,
+  j: UHost,
+  m2: M,
+  e: u(t, j, m2) = u(SlotsModel::state(r), j, SlotsModel::mark(r)(j))
+): (
+  (u(t, j, m2) = true -> some_p(SlotsModel::at(r)(j)) = true) ∧ (
+    some_p(SlotsModel::at(r)(j)) = true -> u(t, j, m2) = true
+  )
+) {
+  AndIntro(
+    (a: u(t, j, m2) = true) => And::left(SlotsModel::inv_of(r, j))(Eq::trans(Eq::sym(e), a)),
+    (c: some_p(SlotsModel::at(r)(j)) = true) => Eq::trans(e, And::right(SlotsModel::inv_of(r, j))(c))
+  )
+}
+
+// The element of a slot the policy says is used.
+pub fn SlotsModel::get<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(r: &SlotsModel(S, M, A, u), i: UHost, hu: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = true): &A {
+  unwrap(SlotsModel::at(r)(i), And::left(SlotsModel::inv_of(r, i))(hu))
+}
+
+// The element of a used slot, for writing in place (extracts to `Slots::get_mut`).
+// The body is for checking only; extract replaces the call with `Slots::get_mut`.
+pub fn SlotsModel::get_mut<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(r: &mut SlotsModel(S, M, A, u), i: UHost, hu: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = true): &mut A {
+  unwrap(SlotsModel::at(r)(i), And::left(SlotsModel::inv_of(r, i))(hu))
+}
+
+pub theorem SlotsModel::new_inv<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  c: UHost,
+  j: UHost
+): (
+  (
+    u(em(c), j, vac) = true -> some_p(None(<A: A>)) = true
+  ) ∧ (some_p(None(<A: A>)) = true -> u(em(c), j, vac) = true)
+) {
+  AndIntro(
+    (a: u(em(c), j, vac) = true) => False::elim(
+      false_ne_true(Eq::trans(Eq::sym(OccLaws::empty_free(L, c, j)), a))
+    ),
+    (b: some_p(None(<A: A>)) = true) => False::elim(false_ne_true(b))
+  )
+}
+
+pub fn SlotsModel::new<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(c: UHost, L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu)): SlotsModel(S, M, A, u) {
+  SlotsModel::Mk(
+    em(c),
+    (j: UHost) => vac,
+    (j: UHost) => None(<A: A>),
+    (j: UHost) => SlotsModel::new_inv(
+      <S: S, M: M, A: A, u: u, em: em, vac: vac, cp: cp, pu: pu, ta: ta, rc: rc, fu: fu>,
+      L,
+      c,
+      j
+    )
+  )
+}
+
+pub theorem SlotsModel::put_inv_b<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t),
+  j: UHost,
+  b: Bool,
+  hb: b = UHost::eq(i, j)
+): (
+  (
+    u(t, j, sel(b, m, SlotsModel::mark(r)(j))) = true -> some_p(sel(b, Some(x), SlotsModel::at(r)(j))) = true
+  ) ∧ (some_p(sel(b, Some(x), SlotsModel::at(r)(j))) = true -> u(t, j, sel(b, m, SlotsModel::mark(r)(j))) = true)
+) {
+  match b {
+    true => AndIntro(
+      (a: u(t, j, m) = true) => Refl,
+      (c: some_p(Some(x)) = true) => Eq::subst(
+        ⟦u(t, □, m) = true⟧,
+        UHost::eq_sound(i, j, Eq::sym(hb)),
+        OccLaws::put_same(L, SlotsModel::state(r), i, SlotsModel::mark(r)(i), m, t, h)
+      )
+    )
+    false => AndIntro(
+      (a: u(t, j, SlotsModel::mark(r)(j)) = true) => And::left(
+        SlotsModel::inv_of(r, j)
+      )(
+        Eq::trans(
+          Eq::sym(
+            OccLaws::put_other(L, SlotsModel::state(r), i, SlotsModel::mark(r)(i), m, t, j, SlotsModel::mark(r)(j), h, Eq::sym(hb))
+          ),
+          a
+        )
+      ),
+      (c: some_p(SlotsModel::at(r)(j)) = true) => Eq::trans(
+        OccLaws::put_other(L, SlotsModel::state(r), i, SlotsModel::mark(r)(i), m, t, j, SlotsModel::mark(r)(j), h, Eq::sym(hb)),
+        And::right(SlotsModel::inv_of(r, j))(c)
+      )
+    )
+  }
+}
+
+// Mapped: `SlotsModel::put`; `t` is the state the policy answered, `h` its answer.
+pub fn SlotsModel::put<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t)
+): SlotsModel(S, M, A, u) {
+  SlotsModel::Mk(
+    t,
+    (j: UHost) => sel(UHost::eq(i, j), m, SlotsModel::mark(r)(j)),
+    (j: UHost) => sel(UHost::eq(i, j), Some(x), SlotsModel::at(r)(j)),
+    (j: UHost) => SlotsModel::put_inv_b(r, i, m, x, t, L, h, j, UHost::eq(i, j), Refl)
+  )
+}
+
+pub theorem SlotsModel::take_inv_b<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: ta(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t),
+  j: UHost,
+  b: Bool,
+  hb: b = UHost::eq(i, j)
+): (
+  (
+    u(t, j, sel(b, m, SlotsModel::mark(r)(j))) = true -> some_p(sel(b, None(<A: A>), SlotsModel::at(r)(j))) = true
+  ) ∧ (some_p(sel(b, None(<A: A>), SlotsModel::at(r)(j))) = true -> u(t, j, sel(b, m, SlotsModel::mark(r)(j))) = true)
+) {
+  match b {
+    true => AndIntro(
+      (a: u(t, j, m) = true) => False::elim(
+        false_ne_true(
+          Eq::trans(
+            Eq::sym(
+              Eq::subst(
+                ⟦u(t, □, m) = false⟧,
+                UHost::eq_sound(i, j, Eq::sym(hb)),
+                OccLaws::take_same(L, SlotsModel::state(r), i, SlotsModel::mark(r)(i), m, t, h)
+              )
+            ),
+            a
+          )
+        )
+      ),
+      (c: some_p(None(<A: A>)) = true) => False::elim(false_ne_true(c))
+    )
+    false => AndIntro(
+      (a: u(t, j, SlotsModel::mark(r)(j)) = true) => And::left(
+        SlotsModel::inv_of(r, j)
+      )(
+        Eq::trans(
+          Eq::sym(
+            OccLaws::take_other(L, SlotsModel::state(r), i, SlotsModel::mark(r)(i), m, t, j, SlotsModel::mark(r)(j), h, Eq::sym(hb))
+          ),
+          a
+        )
+      ),
+      (c: some_p(SlotsModel::at(r)(j)) = true) => Eq::trans(
+        OccLaws::take_other(L, SlotsModel::state(r), i, SlotsModel::mark(r)(i), m, t, j, SlotsModel::mark(r)(j), h, Eq::sym(hb)),
+        And::right(SlotsModel::inv_of(r, j))(c)
+      )
+    )
+  }
+}
+
+// Mapped: `SlotsModel::take`: the slots without the element...
+pub fn SlotsModel::take_rest<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: ta(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t)
+): SlotsModel(S, M, A, u) {
+  SlotsModel::Mk(
+    t,
+    (j: UHost) => sel(UHost::eq(i, j), m, SlotsModel::mark(r)(j)),
+    (j: UHost) => sel(UHost::eq(i, j), None(<A: A>), SlotsModel::at(r)(j)),
+    (j: UHost) => SlotsModel::take_inv_b(r, i, m, t, L, h, j, UHost::eq(i, j), Refl)
+  )
+}
+
+// ... and the element.
+pub fn SlotsModel::take_elem<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: ta(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t)
+): A {
+  SlotsModel::get(r, i, OccLaws::take_live(L, SlotsModel::state(r), i, SlotsModel::mark(r)(i), m, t, h))
+}
+
+pub fn SlotsModel::take<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: ta(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t)
+): SlotsModel(S, M, A, u) × A {
+  #(SlotsModel::take_rest(r, i, m, t, L, h), SlotsModel::take_elem(r, i, m, t, L, h))
+}
+
+pub theorem SlotsModel::resize_inv_b<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  g: UHost,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: rc(SlotsModel::state(r), g) = Some(t),
+  j: UHost,
+  b: Bool,
+  hb: b = UHost::lt(j, cp(SlotsModel::state(r)))
+): (
+  (
+    u(t, j, sel(b, SlotsModel::mark(r)(j), vac)) = true -> some_p(SlotsModel::at(r)(j)) = true
+  ) ∧ (some_p(SlotsModel::at(r)(j)) = true -> u(t, j, sel(b, SlotsModel::mark(r)(j), vac)) = true)
+) {
+  match b {
+    true => SlotsModel::inv_via(
+      r,
+      t,
+      j,
+      SlotsModel::mark(r)(j),
+      OccLaws::recap_keeps(L, SlotsModel::state(r), g, t, j, SlotsModel::mark(r)(j), h, Eq::sym(hb))
+    )
+    false => AndIntro(
+      (a: u(t, j, vac) = true) => False::elim(
+        false_ne_true(
+          Eq::trans(
+            Eq::sym(
+              OccLaws::recap_fresh(
+                L,
+                SlotsModel::state(r),
+                g,
+                t,
+                j,
+                h,
+                Nat::lt_false_le(UHost::val(j), UHost::val(cp(SlotsModel::state(r))), Eq::sym(hb))
+              )
+            ),
+            a
+          )
+        )
+      ),
+      (c: some_p(SlotsModel::at(r)(j)) = true) => False::elim(
+        false_ne_true(
+          Eq::trans(
+            hb,
+            OccLaws::used_below(L, SlotsModel::state(r), j, SlotsModel::mark(r)(j), And::right(SlotsModel::inv_of(r, j))(c))
+          )
+        )
+      )
+    )
+  }
+}
+
+// Mapped: `SlotsModel::resize`, with the capacity the allocator granted. The new
+// slots have the policy's vacant mark.
+pub fn SlotsModel::resize<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  g: UHost,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: rc(SlotsModel::state(r), g) = Some(t)
+): SlotsModel(S, M, A, u) {
+  SlotsModel::Mk(
+    t,
+    (j: UHost) => sel(UHost::lt(j, cp(SlotsModel::state(r))), SlotsModel::mark(r)(j), vac),
+    SlotsModel::at(r),
+    (j: UHost) => SlotsModel::resize_inv_b(r, g, t, L, h, j, UHost::lt(j, cp(SlotsModel::state(r))), Refl)
+  )
+}
+
+// The `&mut` forms of `put`, `take` and `resize`: the operations a program
+// runs, each the model operation with its result written back through the
+// borrow. Nib's `Slots` builtins are these (`extract.rs`); the bodies are
+// what the proofs use.
+pub fn SlotsModel::put_m<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: &mut SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t)
+): Unit {
+  *r := SlotsModel::put(r, i, m, x, t, L, h)
+}
+
+pub fn SlotsModel::take_m<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: &mut SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: ta(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t)
+): A {
+  let r2 := SlotsModel::take_rest(r, i, m, t, L, h)
+  let x := SlotsModel::take_elem(r, i, m, t, L, h)
+  *r := r2
+  x
+}
+
+// The element of a used slot replaced, the slot's mark and the state as they were.
+pub theorem SlotsModel::swap_inv_b<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  x: A,
+  hu: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = true,
+  j: UHost,
+  b: Bool,
+  hb: b = UHost::eq(i, j)
+): (
+  (
+    u(SlotsModel::state(r), j, SlotsModel::mark(r)(j)) = true -> some_p(sel(b, Some(x), SlotsModel::at(r)(j))) = true
+  ) ∧ (
+    some_p(sel(b, Some(x), SlotsModel::at(r)(j))) = true -> u(SlotsModel::state(r), j, SlotsModel::mark(r)(j)) = true
+  )
+) {
+  match b {
+    true => AndIntro(
+      (a: u(SlotsModel::state(r), j, SlotsModel::mark(r)(j)) = true) => Refl,
+      (c: some_p(Some(x)) = true) => Eq::subst(
+        ⟦u(SlotsModel::state(r), □, SlotsModel::mark(r)(□)) = true⟧,
+        UHost::eq_sound(i, j, Eq::sym(hb)),
+        hu
+      )
+    )
+    false => SlotsModel::inv_of(r, j)
+  }
+}
+
+pub fn SlotsModel::swap_rest<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  x: A,
+  hu: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = true
+): SlotsModel(S, M, A, u) {
+  SlotsModel::Mk(
+    SlotsModel::state(r),
+    SlotsModel::mark(r),
+    (j: UHost) => sel(UHost::eq(i, j), Some(x), SlotsModel::at(r)(j)),
+    (j: UHost) => SlotsModel::swap_inv_b(r, i, x, hu, j, UHost::eq(i, j), Refl)
+  )
+}
+
+pub fn SlotsModel::swap_elem<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  hu: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = true
+): A {
+  unwrap(SlotsModel::at(r)(i), And::left(SlotsModel::inv_of(r, i))(hu))
+}
+
+// Replaces the element of the used slot `i` with `x` and gives the old one:
+// the state and every mark are as they were.
+pub fn SlotsModel::swap_m<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: &mut SlotsModel(S, M, A, u),
+  i: UHost,
+  x: A,
+  hu: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = true
+): A {
+  let r2 := SlotsModel::swap_rest(r, i, x, hu)
+  let old := SlotsModel::swap_elem(r, i, hu)
+  *r := r2
+  old
+}
+
+// `resize` and then `put`, as one operation through the borrow: the proof of
+// the second is about the vector the first gives, which the program's two
+// builtins (`Slots::resize`, `Slots::put`) do in turn.
+pub fn SlotsModel::resize_put_m<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: &mut SlotsModel(S, M, A, u),
+  c: UHost,
+  t1: S,
+  i: UHost,
+  m: M,
+  x: A,
+  t2: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h1: rc(SlotsModel::state(r), c) = Some(t1),
+  h2: pu(t1, i, SlotsModel::mark(SlotsModel::resize(r, c, t1, L, h1))(i), m) = Some(t2)
+): Unit {
+  *r := SlotsModel::put(SlotsModel::resize(r, c, t1, L, h1), i, m, x, t2, L, h2)
+}
+
+// Takes the element of slot `i` (its mark `m1` from then on) and puts it in
+// slot `j` (marked `m2`): one operation, so the element is never out of the
+// vector. The program's two builtins, `Slots::take` and `Slots::put`, in turn.
+pub fn SlotsModel::move_m<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: &mut SlotsModel(S, M, A, u),
+  i: UHost,
+  m1: M,
+  t1: S,
+  j: UHost,
+  m2: M,
+  t2: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h1: ta(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m1) = Some(t1),
+  h2: pu(t1, j, sel(UHost::eq(i, j), m1, SlotsModel::mark(r)(j)), m2) = Some(t2)
+): Unit {
+  *r := SlotsModel::put(
+    SlotsModel::take_rest(r, i, m1, t1, L, h1),
+    j,
+    m2,
+    SlotsModel::take_elem(r, i, m1, t1, L, h1),
+    t2,
+    L,
+    h2
+  )
+}
+
+pub fn SlotsModel::resize_m<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: &mut SlotsModel(S, M, A, u),
+  g: UHost,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: rc(SlotsModel::state(r), g) = Some(t)
+): Unit {
+  *r := SlotsModel::resize(r, g, t, L, h)
+}
+
+// The elements of `lo` up to `hi`, given that the policy says they are all used.
+pub fn SlotsModel::slice<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: &SlotsModel(S, M, A, u),
+  lo: UHost,
+  hi: UHost,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  hf: fu(SlotsModel::state(r), lo, hi) = true
+): ∀ j: UHost. (UHost::le(lo, j) = true) -> (UHost::lt(j, hi) = true) -> A {
+  (j: UHost) => (a: UHost::le(lo, j) = true) => (b: UHost::lt(j, hi) = true) => SlotsModel::get(
+    r,
+    j,
+    OccLaws::full_used(L, SlotsModel::state(r), lo, hi, j, SlotsModel::mark(r)(j), hf, a, b)
+  )
+}
+
+pub theorem SlotsModel::unwrap_some<A: Linear>(o: Option(A), h: some_p(o) = true): o = Some(unwrap(o, h)) {
+  match o {
+    Some(x) => Refl
+    None => match h {
+    }
+  }
+}
+
+// The element of a slot whose cell is `Some(x)`.
+pub theorem SlotsModel::get_eq<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  hu: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = true,
+  x: A,
+  e: SlotsModel::at(r)(i) = Some(x)
+): SlotsModel::get(r, i, hu) = x {
+  unwrap_is(SlotsModel::at(r)(i), And::left(SlotsModel::inv_of(r, i))(hu), x, e)
+}
+
+// The element read back after a `put` of it.
+pub theorem SlotsModel::get_put_same<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t),
+  hu: u(SlotsModel::state(SlotsModel::put(r, i, m, x, t, L, h)), i, SlotsModel::mark(SlotsModel::put(r, i, m, x, t, L, h))(i)) = true
+): SlotsModel::get(SlotsModel::put(r, i, m, x, t, L, h), i, hu) = x {
+  unwrap_is(
+    SlotsModel::at(SlotsModel::put(r, i, m, x, t, L, h))(i),
+    And::left(SlotsModel::inv_of(SlotsModel::put(r, i, m, x, t, L, h), i))(hu),
+    x,
+    sel_true(UHost::eq(i, i), Some(x), SlotsModel::at(r)(i), UHost::eq_refl(i))
+  )
+}
+
+// The other slots' elements are unchanged by a `put`.
+pub theorem SlotsModel::get_put_other<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t),
+  j: UHost,
+  ne: UHost::eq(i, j) = false,
+  hu1: u(SlotsModel::state(r), j, SlotsModel::mark(r)(j)) = true,
+  hu2: u(SlotsModel::state(SlotsModel::put(r, i, m, x, t, L, h)), j, SlotsModel::mark(SlotsModel::put(r, i, m, x, t, L, h))(j)) = true
+): SlotsModel::get(SlotsModel::put(r, i, m, x, t, L, h), j, hu2) = SlotsModel::get(r, j, hu1) {
+  unwrap_is(
+    SlotsModel::at(SlotsModel::put(r, i, m, x, t, L, h))(j),
+    And::left(SlotsModel::inv_of(SlotsModel::put(r, i, m, x, t, L, h), j))(hu2),
+    SlotsModel::get(r, j, hu1),
+    Eq::trans(
+      sel_false(UHost::eq(i, j), Some(x), SlotsModel::at(r)(j), ne),
+      SlotsModel::unwrap_some(SlotsModel::at(r)(j), And::left(SlotsModel::inv_of(r, j))(hu1))
+    )
+  )
+}
+
+// `get`, `None` when the policy says the slot is not used.
+pub fn SlotsModel::try_get<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(r: &SlotsModel(S, M, A, u), i: UHost): Option(A) {
+  match u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) eqn hu {
+    false => None
+    true => Some(SlotsModel::get(r, i, hu))
+  }
+}
+
+// `put`, `None` when the policy refuses. (The element is lost then: with `A`
+// `Shared` this is not a loss of a resource.)
+pub fn SlotsModel::try_put<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu)
+): Option(SlotsModel(S, M, A, u)) {
+  match pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) eqn h {
+    None => None
+    Some(t) => Some(SlotsModel::put(r, i, m, x, t, L, h))
+  }
+}
+
+pub fn SlotsModel::try_put_gen<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  o: Option(S),
+  ho: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = o
+): Option(SlotsModel(S, M, A, u)) {
+  match o {
+    None => None
+    Some(t) => Some(SlotsModel::put(r, i, m, x, t, L, ho))
+  }
+}
+
+pub theorem SlotsModel::try_put_is_gen<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu)
+): SlotsModel::try_put(r, i, m, x, L) = SlotsModel::try_put_gen(r, i, m, x, L, pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m), Refl) {
+  Refl
+}
+
+pub theorem SlotsModel::try_put_gen_some<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  o: Option(S),
+  ho: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = o,
+  t: S,
+  e: o = Some(t)
+): SlotsModel::try_put_gen(r, i, m, x, L, o, ho) = Some(SlotsModel::put(r, i, m, x, t, L, Eq::trans(ho, e))) {
+  match o {
+    None => match e {
+    }
+    Some(t2) => Eq::subst(
+      y => (
+        h2: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(y)
+      ) -> Some(SlotsModel::put(r, i, m, x, t2, L, ho)) = Some(SlotsModel::put(r, i, m, x, y, L, h2)),
+      SlotsModel::some_inj(t2, t, e),
+      (h2: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t2)) => Refl
+    )(Eq::trans(ho, e))
+  }
+}
+
+pub theorem SlotsModel::try_put_gen_none<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  o: Option(S),
+  ho: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = o,
+  e: o = None
+): SlotsModel::try_put_gen(r, i, m, x, L, o, ho) = None(<A: SlotsModel(S, M, A, u)>) {
+  match o {
+    None => Refl
+    Some(t2) => match e {
+    }
+  }
+}
+
+// A `try_put` the policy accepts is the `put`.
+pub theorem SlotsModel::try_put_some<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  t: S,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = Some(t)
+): SlotsModel::try_put(r, i, m, x, L) = Some(SlotsModel::put(r, i, m, x, t, L, h)) {
+  Eq::trans(
+    SlotsModel::try_put_is_gen(r, i, m, x, L),
+    SlotsModel::try_put_gen_some(r, i, m, x, L, pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m), Refl, t, h)
+  )
+}
+
+// A `try_put` the policy refuses is `None`.
+pub theorem SlotsModel::try_put_none<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool, em: (UHost) -> S, vac: M, cp: (S) -> UHost, pu: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), ta: (
+  S,
+  UHost,
+  M,
+  M
+) -> Option(S), rc: (
+  S,
+  UHost
+) -> Option(S), fu: (
+  S,
+  UHost,
+  UHost
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  m: M,
+  x: A,
+  L: OccLaws(S, M, u, em, vac, cp, pu, ta, rc, fu),
+  h: pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m) = None(<A: S>)
+): SlotsModel::try_put(r, i, m, x, L) = None(<A: SlotsModel(S, M, A, u)>) {
+  Eq::trans(
+    SlotsModel::try_put_is_gen(r, i, m, x, L),
+    SlotsModel::try_put_gen_none(r, i, m, x, L, pu(SlotsModel::state(r), i, SlotsModel::mark(r)(i), m), Refl, h)
+  )
+}
+
+pub fn SlotsModel::try_get_gen<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: &SlotsModel(S, M, A, u),
+  i: UHost,
+  b: Bool,
+  hb: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = b
+): Option(A) {
+  match b {
+    false => None
+    true => Some(SlotsModel::get(r, i, hb))
+  }
+}
+
+pub theorem SlotsModel::try_get_is_gen<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost
+): SlotsModel::try_get(r, i) = SlotsModel::try_get_gen(r, i, u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)), Refl) {
+  Refl
+}
+
+pub theorem SlotsModel::try_get_gen_some<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  b: Bool,
+  hb: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = b,
+  e: b = true
+): SlotsModel::try_get_gen(r, i, b, hb) = Some(SlotsModel::get(r, i, Eq::trans(hb, e))) {
+  match b {
+    false => match e {
+    }
+    true => Refl
+  }
+}
+
+pub theorem SlotsModel::try_get_gen_none<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  b: Bool,
+  hb: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = b,
+  e: b = false
+): SlotsModel::try_get_gen(r, i, b, hb) = None(<A: A>) {
+  match b {
+    false => Refl
+    true => match e {
+    }
+  }
+}
+
+// A `try_get` of a used slot is the `get`.
+pub theorem SlotsModel::try_get_some<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  hu: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = true
+): SlotsModel::try_get(r, i) = Some(SlotsModel::get(r, i, hu)) {
+  Eq::trans(SlotsModel::try_get_is_gen(r, i), SlotsModel::try_get_gen_some(r, i, u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)), Refl, hu))
+}
+
+pub theorem SlotsModel::try_get_none<S, M, A: Linear, u: (
+  S,
+  UHost,
+  M
+) -> Bool>(
+  r: SlotsModel(S, M, A, u),
+  i: UHost,
+  hu: u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)) = false
+): SlotsModel::try_get(r, i) = None(<A: A>) {
+  Eq::trans(SlotsModel::try_get_is_gen(r, i), SlotsModel::try_get_gen_none(r, i, u(SlotsModel::state(r), i, SlotsModel::mark(r)(i)), Refl, hu))
+}
+
+pub fn SlotsModel::opt_or<A: Type>(d: A, o: Option(A)): A {
+  match o {
+    Some(x) => x
+    None => d
+  }
+}
+
+pub theorem SlotsModel::some_inj<A: Type>(a: A, b: A, e: Some(a) = Some(b)): a = b {
+  Eq::congr((o: Option(A)) => SlotsModel::opt_or(a, o), e)
+}
+
+// The class's methods as values, for the indices above.
+pub fn used_of<S, M>(s: S, i: UHost, m: M): Bool where Occupancy(S, M) {
+  Occupancy::used(s, i, m)
+}
+
+pub fn put_of_c<S, M>(s: S, i: UHost, old: M, new: M): Option(S) where Occupancy(S, M) {
+  Occupancy::put(s, i, old, new)
+}
+
+pub fn take_of_c<S, M>(s: S, i: UHost, old: M, new: M): Option(S) where Occupancy(S, M) {
+  Occupancy::take(s, i, old, new)
+}
+
+// The laws of the class, as one value.
+pub theorem occ_laws<S, M>(
+  pm: Proxy(M),
+  ps: Proxy(S)
+): OccLaws(
+  S,
+  M,
+  used_of,
+  c => Occupancy::empty(c, pm),
+  Occupancy::vacant(ps, pm),
+  s => Occupancy::cap(s, pm),
+  put_of_c,
+  take_of_c,
+  (s, c) => Occupancy::recap(s, c, pm),
+  (s, a, b) => Occupancy::full(s, a, b, pm)
+) where Occupancy(S, M) {
+  OccLaws::Mk(
+    c => i => Occupancy::empty_free(<S: S, M: M, c: c, i: i, pm: pm, ps: ps>),
+    c => Occupancy::empty_cap(<S: S, M: M, c: c, pm: pm, ps: ps>),
+    s => i => m => h => Occupancy::used_below(<S: S, M: M, s: s, i: i, m: m, pm: pm, ps: ps>, h),
+    s => i => old => new => t => h => Occupancy::put_same(
+      <S: S, M: M, s: s, i: i, old: old, new: new, t: t, pm: pm, ps: ps>,
+      h
+    ),
+    s => i => old => new => t => j => m => h => ne => Occupancy::put_other(
+      <S: S, M: M, s: s, i: i, old: old, new: new, t: t, j: j, m: m, pm: pm, ps: ps>,
+      h,
+      ne
+    ),
+    s => i => old => new => t => h => Occupancy::put_cap(
+      <S: S, M: M, s: s, i: i, old: old, new: new, t: t, pm: pm, ps: ps>,
+      h
+    ),
+    s => i => old => new => t => h => Occupancy::take_live(
+      <S: S, M: M, s: s, i: i, old: old, new: new, t: t, pm: pm, ps: ps>,
+      h
+    ),
+    s => i => old => new => t => h => Occupancy::take_same(
+      <S: S, M: M, s: s, i: i, old: old, new: new, t: t, pm: pm, ps: ps>,
+      h
+    ),
+    s => i => old => new => t => j => m => h => ne => Occupancy::take_other(
+      <S: S, M: M, s: s, i: i, old: old, new: new, t: t, j: j, m: m, pm: pm, ps: ps>,
+      h,
+      ne
+    ),
+    s => i => old => new => t => h => Occupancy::take_cap(
+      <S: S, M: M, s: s, i: i, old: old, new: new, t: t, pm: pm, ps: ps>,
+      h
+    ),
+    s => c => t => i => m => h => o => Occupancy::recap_keeps(
+      <S: S, M: M, s: s, c: c, t: t, i: i, m: m, pm: pm, ps: ps>,
+      h,
+      o
+    ),
+    s => c => t => i => h => n => Occupancy::recap_fresh(
+      <S: S, M: M, s: s, c: c, t: t, i: i, pm: pm, ps: ps>,
+      h,
+      n
+    ),
+    s => c => t => h => Occupancy::recap_cap(
+      <S: S, M: M, s: s, c: c, t: t, pm: pm, ps: ps>,
+      h
+    ),
+    s => a => b => i => m => h => lo => hi => Occupancy::full_used(
+      <S: S, M: M, s: s, a: a, b: b, i: i, m: m, pm: pm, ps: ps>,
+      h,
+      lo,
+      hi
+    )
+  )
+}

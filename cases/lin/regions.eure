@@ -1,0 +1,145 @@
+// A place of a scoped region (`std/builtin/region.taut`) borrows the region:
+// the rules of values that hold a borrow make it freeze the region and keep
+// it from outliving it, with nothing written for regions. A place of a
+// counted region or of the heap borrows nothing.
+
+@ cases.a-place-freezes-its-region
+description = "While a place of a region lives, the region cannot move."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+fn take(p: Place(u64)): Unit { () }
+let r := Bump::new(64, 64)
+let p: Place(u64) := Region::place(&r)
+let moved := r
+take(p)
+```
+lin = "error: r is frozen by p"
+
+@ cases.a-region-gives-several-places
+description = "A region lends itself to as many places as are made from it, of any types."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+let r := Bump::new(64, 64)
+let a: Place(u64) := Region::place(&r)
+let b: Place(Text) := Region::place(&r)
+show(&2)
+```
+lin = "ok"
+
+@ cases.a-place-does-not-outlive-its-region
+description = "A place of a region in an inner block cannot be stored in a `var` outside it."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+let outer := Bump::new(64, 64)
+var out: Place(u64) := Region::place(&outer)
+{
+  let r := Bump::new(64, 64)
+  out := Region::place(&r)
+}
+```
+lin = "error: r does not live as long as out, which borrows it"
+
+@ cases.a-place-is-not-an-effect-argument
+description = "A place of a region holds a borrow, so it cannot be an effect's argument."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+effect keep(p: Place(u64)): Unit
+let r := Bump::new(64, 64)
+handle {
+  perform keep(Region::place(&r))
+} with {
+  keep(p), k => k(())
+}
+```
+lin = "error: a borrow cannot be an effect argument"
+
+@ cases.a-place-goes-to-a-call-while-its-region-lives
+description = "A place passed by value to a call lends the region for the call."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+fn with_place(p: Place(u64)): u64 { 1 }
+let r := Bump::new(64, 64)
+show(&with_place(Region::place(&r)))
+```
+lin = "ok"
+
+@ cases.a-place-of-a-counted-region-does-not-freeze-it
+description = "A place of an `RcRegion` borrows nothing: the region may be copied and moved while it lives."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { RcRegion, RcPlace }
+
+fn take(p: RcPlace(u64)): Unit { () }
+let r := RcBump::new(64, 64)
+let p: RcPlace(u64) := RcRegion::place(r)
+let moved := r
+take(p)
+```
+lin = "ok"
+
+@ cases.a-place-of-a-local-region-is-not-the-result-of-a-borrowing-function
+description = "A function that borrows a parameter still cannot return a value holding a place of its own region."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+struct Node { v: u64 }
+struct(affine) K {}
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn tag(k: &K): Kept ! {spot} { Kept { value: Node { v: 1 }, at: perform spot() } }
+fn bad(k: &K): Kept {
+  let r := Bump::new(64, 64)
+  handle { tag(k) } with { spot(), k => k(Region::place(&r)) }
+}
+```
+lin = "error: a borrow of r cannot be returned"
+
+@ cases.a-place-of-a-local-region-is-not-the-result-of-a-function
+description = "A function without borrowed parameters cannot return a value holding a place of its own region."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+struct Node { v: u64 }
+effect spot(): Place(Node) resume 1
+struct Kept { value: Node, at: Place(Node) }
+fn tag(): Kept ! {spot} { Kept { value: Node { v: 1 }, at: perform spot() } }
+fn bad(): Kept {
+  let r := Bump::new(64, 64)
+  handle { tag() } with { spot(), k => k(Region::place(&r)) }
+}
+```
+lin = "error: a borrow of r cannot be returned"
+
+@ cases.a-borrowing-function-returns-a-place-it-was-lent
+description = "A function may return a place that borrows the region its parameter lends."
+extract = true
+source = ```tauto
+import std::bump
+import std::alloc { BumpPolicy }
+import std::builtin::region { Region, Place }
+
+fn at(r: &Region(BumpPolicy)): Place(u64) { Region::place(r) }
+let r := Bump::new(64, 64)
+let p := at(&r)
+```
+lin = "ok"

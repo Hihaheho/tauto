@@ -2,10 +2,11 @@
 //! (`rust.executor = "tokio"`, the default for a program that starts tasks).
 //! Each thread is a tokio runtime of its own, with a `LocalSet` that holds
 //! the tasks started on it, and a new task goes to the threads in turn. A
-//! task that waits (`wait`, `std/prelude/Os.taut`) gives its thread to the
+//! task that waits (`wait`, `std/builtin/os.taut`) gives its thread to the
 //! others until the signal is raised (`o::Hosted`); what the host answers
-//! after a while is a timer of the runtime (`sleep`) or a job of its pool of
-//! threads for blocking work (`offload`), which raise the signal when done.
+//! after a while is a timer of the runtime (`sleep`), a job of its pool of
+//! threads for blocking work (`offload`), or a wait for a socket on the
+//! thread that watches sockets (`io_wait`), which raise the signal when done.
 //! On a target without threads there is no reactor: `installed` is `false`.
 
 #[cfg(not(target_family = "wasm"))]
@@ -92,6 +93,7 @@ mod imp {
     struct Task<A> {
         run: Hosted<'static, A>,
         done: Arc<Slot<A>>,
+        ctx: Arc<crate::exec::TaskCtx>,
     }
 
     impl<A> Future for Task<A> {
@@ -99,9 +101,9 @@ mod imp {
 
         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
             let this = &mut *self;
-            let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                Pin::new(&mut this.run).poll(cx)
-            }));
+            // A panic poisons what the task holds before its body, and the
+            // guards in it, are dropped.
+            let polled = crate::exec::in_task(&this.ctx, || Pin::new(&mut this.run).poll(cx));
             match polled {
                 Ok(Poll::Pending) => Poll::Pending,
                 Ok(Poll::Ready(v)) => {
@@ -123,7 +125,11 @@ mod imp {
         let i = w.next.fetch_add(1, Ordering::Relaxed) % w.jobs.len();
         let job: Job = Box::new(move || {
             let run = Hosted::new(body(&Ev::empty()));
-            drop(tokio::task::spawn_local(Task { run, done }));
+            drop(tokio::task::spawn_local(Task {
+                run,
+                done,
+                ctx: Default::default(),
+            }));
         });
         if w.jobs[i].send(job).is_err() {
             panic!("tauto: a thread of the reactor has stopped");
@@ -136,6 +142,38 @@ mod imp {
             Ok(h) => drop(h.spawn_blocking(job)),
             Err(_) => drop(std::thread::spawn(job)),
         }
+    }
+
+    /// The thread that watches sockets for the reactor: a runtime with the
+    /// system's poller (epoll, kqueue), on a thread of its own, so that a
+    /// socket registered once is watched for a task on any thread.
+    fn io() -> &'static tokio::runtime::Handle {
+        static IO: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+        IO.get_or_init(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .expect("tauto: a tokio runtime for sockets");
+            let handle = rt.handle().clone();
+            std::thread::Builder::new()
+                .name("tauto-reactor-io".to_string())
+                .spawn(move || rt.block_on(std::future::pending::<()>()))
+                .expect("tauto: a thread for the reactor's sockets");
+            handle
+        })
+    }
+
+    /// Runs `wait` on the thread that watches sockets, then `done`.
+    /// No thread is held while it waits.
+    pub fn io_wait(
+        wait: impl Future<Output = ()> + Send + 'static,
+        done: Arc<dyn Fn() + Send + Sync>,
+    ) {
+        drop(io().spawn(async move {
+            wait.await;
+            done();
+        }));
     }
 
     pub fn sleep(ms: u64, done: Arc<Slot<()>>) {

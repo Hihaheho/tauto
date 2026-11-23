@@ -1,0 +1,167 @@
+import "identity.taut"
+import std::base
+import std::map
+import std::map_text
+import std::map_laws
+import std::text
+import std::builtin::ord { greater_ne_equal, greater_ne_less, less_ne_equal, less_ne_greater }
+
+// The order of resolved names, for the maps keyed by them: a spelled name
+// before a declaration before a local binding, and within a kind by its text
+// or its id.
+
+pub fn surface_name_compare(a: SurfaceName, b: SurfaceName): Ordering {
+  match a {
+    NameSpelled(x) => ⊢ Ordering from match b {
+      NameSpelled(y) => Ordmap::compare_text(x, y)
+      NameGlobal(^e) => Less
+      NameLocal(^m) => Less
+    }
+    NameGlobal(d) => ⊢ Ordering from match b {
+      NameSpelled(^y) => Greater
+      NameGlobal(e) => Ordmap::compare_nat(decl_id_index(d), decl_id_index(e))
+      NameLocal(^m) => Less
+    }
+    NameLocal(l) => ⊢ Ordering from match b {
+      NameSpelled(^y) => Greater
+      NameGlobal(^e) => Greater
+      NameLocal(m) => Ordmap::compare_nat(local_id_index(l), local_id_index(m))
+    }
+  }
+}
+
+pub theorem decl_id_index_inj(d: DeclId, e: DeclId, h: decl_id_index(d) = decl_id_index(e)): d = e {
+  decl_id_eq_sound(d, e, Eq::subst((z: Nat) => Nat::eq(decl_id_index(d), z) = true, h, Nat::eq_refl(decl_id_index(d))))
+}
+
+pub theorem local_id_index_inj(d: LocalId, e: LocalId, h: local_id_index(d) = local_id_index(e)): d = e {
+  local_id_eq_sound(d, e, Eq::subst((z: Nat) => Nat::eq(local_id_index(d), z) = true, h, Nat::eq_refl(local_id_index(d))))
+}
+
+pub theorem surface_name_compare_same(a: SurfaceName): surface_name_compare(a, a) = Equal {
+  match a {
+    NameSpelled(x) => Ordmap::law_same(Ordmap::compare_text, Ordmap::compare_text_law(), x)
+    NameGlobal(d) => Ordmap::law_same(Ordmap::compare_nat, Ordmap::compare_nat_law(), decl_id_index(d))
+    NameLocal(l) => Ordmap::law_same(Ordmap::compare_nat, Ordmap::compare_nat_law(), local_id_index(l))
+  }
+}
+
+pub theorem surface_name_compare_eq(a: SurfaceName, b: SurfaceName, e: surface_name_compare(a, b) = Equal): a = b {
+  ⊢ a = b from match a {
+    NameSpelled(x) => ⊢ NameSpelled(x) = b from match b {
+      NameSpelled(y) => Eq::congr(NameSpelled, Ordmap::law_eq(Ordmap::compare_text, Ordmap::compare_text_law(), x, y, e))
+      NameGlobal(f) => False::elim(less_ne_equal(e))
+      NameLocal(m) => False::elim(less_ne_equal(e))
+    }
+    NameGlobal(d) => ⊢ NameGlobal(d) = b from match b {
+      NameSpelled(y) => False::elim(greater_ne_equal(e))
+      NameGlobal(f) => Eq::congr(NameGlobal, decl_id_index_inj(d, f, Ordmap::law_eq(Ordmap::compare_nat, Ordmap::compare_nat_law(), decl_id_index(d), decl_id_index(f), e)))
+      NameLocal(m) => False::elim(less_ne_equal(e))
+    }
+    NameLocal(l) => ⊢ NameLocal(l) = b from match b {
+      NameSpelled(y) => False::elim(greater_ne_equal(e))
+      NameGlobal(f) => False::elim(greater_ne_equal(e))
+      NameLocal(m) => Eq::congr(NameLocal, local_id_index_inj(l, m, Ordmap::law_eq(Ordmap::compare_nat, Ordmap::compare_nat_law(), local_id_index(l), local_id_index(m), e)))
+    }
+  }
+}
+
+pub theorem surface_name_compare_flip_less(a: SurfaceName, b: SurfaceName, e: surface_name_compare(a, b) = Less): surface_name_compare(b, a) = Greater {
+  ⊢ surface_name_compare(b, a) = Greater from match a {
+    NameSpelled(x) => ⊢ surface_name_compare(b, NameSpelled(x)) = Greater from match b {
+      NameSpelled(y) => Ordmap::law_flip_less(Ordmap::compare_text, Ordmap::compare_text_law(), x, y, e)
+      NameGlobal(f) => Refl
+      NameLocal(m) => Refl
+    }
+    NameGlobal(d) => ⊢ surface_name_compare(b, NameGlobal(d)) = Greater from match b {
+      NameSpelled(y) => False::elim(greater_ne_less(e))
+      NameGlobal(f) => Ordmap::law_flip_less(Ordmap::compare_nat, Ordmap::compare_nat_law(), decl_id_index(d), decl_id_index(f), e)
+      NameLocal(m) => Refl
+    }
+    NameLocal(l) => ⊢ surface_name_compare(b, NameLocal(l)) = Greater from match b {
+      NameSpelled(y) => False::elim(greater_ne_less(e))
+      NameGlobal(f) => False::elim(greater_ne_less(e))
+      NameLocal(m) => Ordmap::law_flip_less(Ordmap::compare_nat, Ordmap::compare_nat_law(), local_id_index(l), local_id_index(m), e)
+    }
+  }
+}
+
+pub theorem surface_name_compare_flip_greater(a: SurfaceName, b: SurfaceName, e: surface_name_compare(a, b) = Greater): surface_name_compare(b, a) = Less {
+  ⊢ surface_name_compare(b, a) = Less from match a {
+    NameSpelled(x) => ⊢ surface_name_compare(b, NameSpelled(x)) = Less from match b {
+      NameSpelled(y) => Ordmap::law_flip_greater(Ordmap::compare_text, Ordmap::compare_text_law(), x, y, e)
+      NameGlobal(f) => False::elim(less_ne_greater(e))
+      NameLocal(m) => False::elim(less_ne_greater(e))
+    }
+    NameGlobal(d) => ⊢ surface_name_compare(b, NameGlobal(d)) = Less from match b {
+      NameSpelled(y) => Refl
+      NameGlobal(f) => Ordmap::law_flip_greater(Ordmap::compare_nat, Ordmap::compare_nat_law(), decl_id_index(d), decl_id_index(f), e)
+      NameLocal(m) => False::elim(less_ne_greater(e))
+    }
+    NameLocal(l) => ⊢ surface_name_compare(b, NameLocal(l)) = Less from match b {
+      NameSpelled(y) => Refl
+      NameGlobal(f) => Refl
+      NameLocal(m) => Ordmap::law_flip_greater(Ordmap::compare_nat, Ordmap::compare_nat_law(), local_id_index(l), local_id_index(m), e)
+    }
+  }
+}
+
+pub theorem surface_name_compare_less_trans(
+  a: SurfaceName,
+  b: SurfaceName,
+  c: SurfaceName,
+  e1: surface_name_compare(a, b) = Less,
+  e2: surface_name_compare(b, c) = Less
+): surface_name_compare(a, c) = Less {
+  ⊢ surface_name_compare(a, c) = Less from match a {
+    NameSpelled(x) => ⊢ surface_name_compare(NameSpelled(x), c) = Less from match c {
+      NameSpelled(z) => ⊢ surface_name_compare(NameSpelled(x), NameSpelled(z)) = Less from match b {
+        NameSpelled(y) => Ordmap::law_less_trans(Ordmap::compare_text, Ordmap::compare_text_law(), x, y, z, e1, e2)
+        NameGlobal(f) => False::elim(less_ne_greater(Eq::sym(e2)))
+        NameLocal(m) => False::elim(less_ne_greater(Eq::sym(e2)))
+      }
+      NameGlobal(g) => Refl
+      NameLocal(n) => Refl
+    }
+    NameGlobal(d) => ⊢ surface_name_compare(NameGlobal(d), c) = Less from match c {
+      NameSpelled(z) => ⊢ Greater = Less from match b {
+        NameSpelled(y) => False::elim(greater_ne_less(e1))
+        NameGlobal(f) => False::elim(greater_ne_less(e2))
+        NameLocal(m) => False::elim(greater_ne_less(e2))
+      }
+      NameGlobal(g) => ⊢ surface_name_compare(NameGlobal(d), NameGlobal(g)) = Less from match b {
+        NameSpelled(y) => False::elim(greater_ne_less(e1))
+        NameGlobal(f) => Ordmap::law_less_trans(Ordmap::compare_nat, Ordmap::compare_nat_law(), decl_id_index(d), decl_id_index(f), decl_id_index(g), e1, e2)
+        NameLocal(m) => False::elim(less_ne_greater(Eq::sym(e2)))
+      }
+      NameLocal(n) => Refl
+    }
+    NameLocal(l) => ⊢ surface_name_compare(NameLocal(l), c) = Less from match c {
+      NameSpelled(z) => ⊢ Greater = Less from match b {
+        NameSpelled(y) => False::elim(greater_ne_less(e1))
+        NameGlobal(f) => False::elim(greater_ne_less(e1))
+        NameLocal(m) => False::elim(greater_ne_less(e2))
+      }
+      NameGlobal(g) => ⊢ Greater = Less from match b {
+        NameSpelled(y) => False::elim(greater_ne_less(e1))
+        NameGlobal(f) => False::elim(greater_ne_less(e1))
+        NameLocal(m) => False::elim(greater_ne_less(e2))
+      }
+      NameLocal(n) => ⊢ surface_name_compare(NameLocal(l), NameLocal(n)) = Less from match b {
+        NameSpelled(y) => False::elim(greater_ne_less(e1))
+        NameGlobal(f) => False::elim(greater_ne_less(e1))
+        NameLocal(m) => Ordmap::law_less_trans(Ordmap::compare_nat, Ordmap::compare_nat_law(), local_id_index(l), local_id_index(m), local_id_index(n), e1, e2)
+      }
+    }
+  }
+}
+
+pub theorem surface_name_compare_law(): OrdmapLaw(SurfaceName, surface_name_compare) {
+  OrdmapLaw::Mk(
+    surface_name_compare_same,
+    surface_name_compare_eq,
+    surface_name_compare_flip_less,
+    surface_name_compare_flip_greater,
+    surface_name_compare_less_trans
+  )
+}

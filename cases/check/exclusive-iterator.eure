@@ -1,0 +1,125 @@
+description = "An exclusive list source yields mutable items and freezes the source while one is held."
+
+@ cases.exclusive-iterator-writes-through-a-yielded-item
+source = ```tauto
+import std::iterator { ExclusiveStep, exclusive_list_next, exclusive_list_start, ListSource }
+import std::base { Nat }
+import std::nat { Nat }
+
+fn set_nat(n: &mut Nat, v: Nat): Unit {
+  *n := v
+}
+
+fn bump_each(source: &mut ListSource(Nat)): Unit {
+  let #(remaining, state) := exclusive_list_start(&source)
+  match exclusive_list_next(source, remaining, state) {
+    Done => #()
+    Yield(item, newer, smaller, progress) => {
+      set_nat(item, Succ(item))
+      match exclusive_list_next(source, smaller, newer) {
+        Done => #()
+        Yield(second, next_state, next_rank, next_progress) => {
+          set_nat(second, Succ(Succ(second)))
+          #()
+        }
+      }
+    }
+  }
+}
+
+fn example(): Nat {
+  var source := ListSource::FromList([Zero, Succ(Zero)])
+  bump_each(&mut source)
+  match source {
+    FromList(items) => match items {
+      Cons(first, rest) => match rest {
+        Cons(second, _) => Nat::add(first, second)
+        Nil => Zero
+      }
+      Nil => Zero
+    }
+  }
+}
+
+show(&example())
+```
+stdout = "4\n"
+
+@ cases.a-single-exclusive-acquire-updates-the-source
+source = ```tauto
+import std::iterator { ExclusiveStep, exclusive_list_next, exclusive_list_start, ListSource }
+import std::base { Nat }
+import std::nat { Nat }
+
+fn set_nat(n: &mut Nat, v: Nat): Unit {
+  *n := v
+}
+
+fn write_first(source: &mut ListSource(Nat)): Unit {
+  let #(remaining, state) := exclusive_list_start(&source)
+  match exclusive_list_next(source, remaining, state) {
+    Done => #()
+    Yield(item, newer, smaller, progress) => {
+      set_nat(item, Succ(item))
+      #()
+    }
+  }
+}
+
+fn example(): Nat {
+  var source := ListSource::FromList([Zero, Succ(Zero)])
+  write_first(&mut source)
+  match source {
+    FromList(items) => match items {
+      Cons(first, _) => first
+      Nil => Zero
+    }
+  }
+}
+
+show(&example())
+```
+stdout = "1\n"
+
+@ cases.exclusive-iterator-rejects-a-second-acquire-while-an-item-is-held
+extract = true
+source = ```tauto
+import std::iterator { ExclusiveStep, exclusive_list_next, exclusive_list_start, ListSource, ListCursor }
+import std::base { Nat }
+import std::nat { Nat }
+
+fn set_nat(n: &mut Nat, v: Nat): Unit {
+  *n := v
+}
+
+fn alias_write(source: &mut ListSource(Nat)): Unit {
+  let #(remaining, state) := exclusive_list_start(&source)
+  match exclusive_list_next(source, remaining, state) {
+    Done => #()
+    Yield(item, newer, smaller, progress) => {
+      match exclusive_list_next(source, smaller, ListCursor::At(Zero)) {
+        Done => #()
+        Yield(again, next_state, next_rank, next_progress) => {
+          set_nat(item, Succ(item))
+          set_nat(again, Succ(Succ(again)))
+          #()
+        }
+      }
+    }
+  }
+}
+
+fn example(): Nat {
+  var source := ListSource::FromList([Zero, Succ(Zero)])
+  alias_write(&mut source)
+  match source {
+    FromList(items) => match items {
+      Cons(first, _) => first
+      Nil => Zero
+    }
+  }
+}
+
+show(&example())
+```
+lin = "error: source is frozen by item"

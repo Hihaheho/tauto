@@ -1,31 +1,91 @@
+import "coerce_sound.taut"
 import "expect_sound.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "checker_frame.taut"
 import "datas_frame.taut"
 import "diagnostic_sound.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "unify_sound.taut"
 
-pub theorem expect_after_identity(
+pub theorem expect_refused_grows(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  m: Mut1(Option(CoerceFound), Checker),
+  grows: Grows(c, ck_st(m)),
+  clean: DiagnosticClean(
+    ck_st(
+      frame_bind(
+        <A: Option(CoerceFound), B: Unit>,
+        (found: Option(CoerceFound), next: Checker) => run_expect_refused(next, a, b, span, what, found),
+        m
+      )
+    )
+  )
+): Grows(
+  c,
+  ck_st(
+    frame_bind(
+      <A: Option(CoerceFound), B: Unit>,
+      (found: Option(CoerceFound), next: Checker) => run_expect_refused(next, a, b, span, what, found),
+      m
+    )
+  )
+) {
+  ⊢ Grows(
+    c,
+    ck_st(
+      frame_bind(
+        <A: Option(CoerceFound), B: Unit>,
+        (found: Option(CoerceFound), next: Checker) => run_expect_refused(next, a, b, span, what, found),
+        m
+      )
+    )
+  ) from match m {
+    mut1(found, next) => Eq::subst(
+      (after: Checker) => Grows(c, after),
+      Eq::sym(
+        Eq::congr(
+          (result: Mut1(Unit, Checker)) => ck_st(result),
+          error_if_clean_identity(
+            next,
+            coerce_refusal(next, a, b, what, found),
+            span,
+            coerce_refused(next, found),
+            clean
+          )
+        )
+      ),
+      grows
+    )
+  }
+}
+pub theorem expect_after_grows(
   c: Checker,
   a: Ty,
   b: Ty,
   span: TySpan,
   what: Text,
   fits: Bool,
+  ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(run_expect_after(c, a, b, span, what, fits)))
-): run_expect_after(c, a, b, span, what, fits) = mut1(Star, c) {
-  ⊢ run_expect_after(c, a, b, span, what, fits) = mut1(Star, c) from match fits {
-    true => Refl
-    false => False::elim(
-      diagnostic_error_impossible(
-        c,
-        ck_expect_message(ck_shown(c, a), ck_shown(c, b), what),
-        span,
-        clean
-      )
+): Grows(c, ck_st(run_expect_after(c, a, b, span, what, fits))) {
+  match fits {
+    true => grows_refl(c, ordered)
+    false => expect_refused_grows(
+      c,
+      a,
+      b,
+      span,
+      what,
+      ck_coerce_fit(c, a, b),
+      ck_coerce_fit_grows(c, a, b, ordered),
+      clean
     )
   }
 }
@@ -40,8 +100,7 @@ pub theorem expect_bind_grows(
   clean: DiagnosticClean(
     ck_st(
       frame_bind(
-        Bool,
-        Unit,
+        <A: Bool, B: Unit>,
         (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
         m
       )
@@ -51,8 +110,7 @@ pub theorem expect_bind_grows(
   c,
   ck_st(
     frame_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
       m
     )
@@ -62,26 +120,18 @@ pub theorem expect_bind_grows(
     c,
     ck_st(
       frame_bind(
-        Bool,
-        Unit,
+        <A: Bool, B: Unit>,
         (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
         m
       )
     )
   ) from match m {
-    mut1(value, state) => Eq::subst(
-      (next: Checker) => Grows(c, next),
-      Eq::sym(
-        Eq::congr(
-          Mut1(Unit, Checker),
-          Checker,
-          run_expect_after(state, a, b, span, what, value),
-          mut1(Star, state),
-          (result: Mut1(Unit, Checker)) => ck_st(result),
-          expect_after_identity(state, a, b, span, what, value, clean)
-        )
-      ),
-      grows
+    mut1(value, state) => grows_trans(
+      c,
+      state,
+      ck_st(run_expect_after(state, a, b, span, what, value)),
+      grows,
+      expect_after_grows(state, a, b, span, what, value, And::left(grows), clean)
     )
   }
 }

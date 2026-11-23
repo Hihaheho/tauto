@@ -1,0 +1,13 @@
+effect pause(): Unit resume ω
+effect read(): i64 resume 1
+fn pure_helper(): Unit { #() }
+fn resumed_arm(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); perform read() } with {
+      pause(), k => resumed_arm(n - 1, () => k(#()))
+      read(), k => { pure_helper(); k(x) }
+    }
+  }
+}
+show(&resumed_arm(1, () => 99))

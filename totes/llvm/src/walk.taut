@@ -1,0 +1,416 @@
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+
+// What the backend reads of an expression and every expression in it, in
+// the order `Expr::walk` of the NIR visits them: an expression, then the
+// expressions in it.
+
+pub fn w_append<A>(xs: List(A), ys: List(A)): List(A) {
+  match xs {
+    Nil => ys
+    Cons(x, rest) => Cons(x, w_append(rest, ys))
+  }
+}
+
+pub fn w_unit(): NTy { NUnit }
+
+// The expressions in the statements of a block, then its tail.
+pub fn w_stmts(stmts: List(NStmt), tail: Option(NExpr)): List(NExpr) {
+  match stmts {
+    Nil => match tail {
+      None => Nil
+      Some(t) => [t]
+    }
+    Cons(s, rest) => {
+      let more := w_stmts(rest, tail)
+      match s {
+        NLet(^l, ^ty, init, ^stack) => Cons(init, more)
+        NVar(^l, ^ty, init) => Cons(init, more)
+        NAssign(^target, value) => Cons(value, more)
+        NExprStmt(e) => Cons(e, more)
+        NWhile(cond, body, ^tick) => Cons(
+          cond,
+          Cons(NExpr { kind: NBlockOf(body), ty: w_unit() }, more)
+        )
+        NReturn(value) => match value {
+          None => more
+          Some(v) => Cons(v, more)
+        }
+      }
+    }
+  }
+}
+
+pub fn w_guarded(guard: Option(NExpr), body: NExpr): List(NExpr) {
+  match guard {
+    None => [body]
+    Some(g) => [g, body]
+  }
+}
+
+pub fn w_arms(arms: List(NArm)): List(NExpr) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => w_append(w_guarded(a.guard, a.body), w_arms(rest))
+  }
+}
+
+pub fn w_is_suspend(k: NArmKind): Bool {
+  match k {
+    NArmDirect => false
+    NArmAbort => false
+    NArmSuspend => true
+  }
+}
+
+pub fn w_is_direct(k: NArmKind): Bool {
+  match k {
+    NArmDirect => true
+    NArmAbort => false
+    NArmSuspend => false
+  }
+}
+
+// The arms of the kind, in order: `direct` ones, or `abort` ones.
+pub fn w_arms_of(arms: List(NOpArm), answering: Bool): List(NOpArm) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => if w_is_suspend(a.kind) {
+      w_arms_of(rest, answering)
+    } else if w_is_direct(a.kind) == answering {
+      Cons(a, w_arms_of(rest, answering))
+    } else {
+      w_arms_of(rest, answering)
+    }
+  }
+}
+
+pub fn w_op_arms(arms: List(NOpArm)): List(NExpr) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => w_append(w_guarded(a.guard, a.body), w_op_arms(rest))
+  }
+}
+
+pub fn w_fields(fields: List(NArg)): List(NExpr) {
+  match fields {
+    Nil => Nil
+    Cons(f, rest) => Cons(f.value, w_fields(rest))
+  }
+}
+
+// The expressions in `e`, in order.
+pub fn w_children(e: NExpr): List(NExpr) {
+  match e.kind {
+    NCallOf(c) => match c.callee {
+      NCallValue(v) => Cons(v, c.args)
+      ^other => c.args
+    }
+    NArithOf(^op, ^num, args) => args
+    NCmpOf(^op, args) => args
+    NEqOf(^negate, args) => args
+    NNot(a) => [a]
+    NTempRef(a) => [a]
+    NShownOf(a) => [a]
+    NUnreachable(a) => [a]
+    NFnCast(a) => [a]
+    NAnd(a, b) => [a, b]
+    NOr(a, b) => [a, b]
+    NBudgetOf(b) => [b.steps, b.body]
+    NCtorOf(^c, fields) => w_fields(fields)
+    NFieldOf(base, ^field, ^how, ^read) => [base]
+    NMatchOf(m) => Cons(m.scrut, w_arms(m.arms))
+    NIf(c, t, o) => match o {
+      None => [c, t]
+      Some(x) => [c, t, x]
+    }
+    NBlockOf(b) => w_stmts(b.stmts, b.tail)
+    NClosureOf(c) => [c.body]
+    NPerformOf(p) => p.args
+    NHandleOf(h) => {
+      let ret := match h.ret {
+        None => Nil
+        Some(r) => [r.body]
+      }
+      Cons(
+        h.body,
+        w_append(
+          ret,
+          w_append(w_op_arms(w_arms_of(h.arms, true)), w_op_arms(w_arms_of(h.arms, false)))
+        )
+      )
+    }
+    NInject(^u, ^v, x) => [x]
+    NRemap(^u, ^t, x) => [x]
+    NDeref(value, ^how) => [value]
+    ^leaf => Nil
+  }
+}
+
+pub fn w_is_handle(e: NExpr): Bool {
+  match e.kind {
+    NHandleOf(^h) => true
+    ^other => false
+  }
+}
+
+// Whether `e` has a `handle` in it, or is one.
+pub fn w_has_handle(e: NExpr): Bool ! {div} { w_is_handle(e) || w_any_handle(w_children(e)) }
+
+pub fn w_any_handle(es: List(NExpr)): Bool ! {div} {
+  match es {
+    Nil => false
+    Cons(e, rest) => w_has_handle(e) || w_any_handle(rest)
+  }
+}
+
+pub fn w_stmts_return(stmts: List(NStmt)): Bool {
+  match stmts {
+    Nil => false
+    Cons(s, rest) => match s {
+      NReturn(^v) => true
+      ^other => w_stmts_return(rest)
+    }
+  }
+}
+
+pub fn w_is_returning_block(e: NExpr): Bool {
+  match e.kind {
+    NBlockOf(b) => w_stmts_return(b.stmts)
+    ^other => false
+  }
+}
+
+// Whether a block in `e` returns.
+pub fn w_returns(e: NExpr): Bool ! {div} { w_is_returning_block(e) || w_any_returns(w_children(e)) }
+
+pub fn w_any_returns(es: List(NExpr)): Bool ! {div} {
+  match es {
+    Nil => false
+    Cons(e, rest) => w_returns(e) || w_any_returns(rest)
+  }
+}
+
+pub fn w_arms_handle(arms: List(NOpArm), op: Nat): Bool {
+  match arms {
+    Nil => false
+    Cons(a, rest) => a.op == op || w_arms_handle(rest, op)
+  }
+}
+
+pub fn w_handle_handles(e: NExpr, op: Nat): Bool {
+  match e.kind {
+    NHandleOf(h) => w_arms_handle(h.arms, op)
+    ^other => false
+  }
+}
+
+// Whether a `handle` in `e` has an arm of the operation.
+pub fn w_handles(e: NExpr, op: Nat): Bool ! {div} {
+  w_handle_handles(e, op) || w_any_handles(w_children(e), op)
+}
+
+pub fn w_any_handles(es: List(NExpr), op: Nat): Bool ! {div} {
+  match es {
+    Nil => false
+    Cons(e, rest) => w_handles(e, op) || w_any_handles(rest, op)
+  }
+}
+
+pub fn w_fns_handle(fns: List(NFn), op: Nat): Bool ! {div} {
+  match fns {
+    Nil => false
+    Cons(f, rest) => w_handles(f.body, op) || w_fns_handle(rest, op)
+  }
+}
+
+// What a closure reads of the frame it is made in: each local in the order
+// first read, whether the body moves it, and the locals declared in it.
+pub(open) struct WFree { used: List(NLocal × Bool), declared: List(Nat) }
+
+pub fn w_note_in(used: List(NLocal × Bool), l: NLocal, moved: Bool): Option(List(NLocal × Bool)) {
+  match used {
+    Nil => None
+    Cons(u, rest) => match u {
+      #(x, m) => if x.id == l.id {
+        Some(Cons(#(x, m || moved), rest))
+      } else {
+        match w_note_in(rest, l, moved) {
+          None => None
+          Some(more) => Some(Cons(u, more))
+        }
+      }
+    }
+  }
+}
+
+pub fn w_note(w: WFree, l: NLocal, moved: Bool): WFree {
+  match w_note_in(w.used, l, moved) {
+    Some(used) => WFree { used: used, declared: w.declared }
+    None => WFree { used: w_append(w.used, [#(l, moved)]), declared: w.declared }
+  }
+}
+
+pub fn w_notes(w: WFree, ls: List(NLocal)): WFree {
+  match ls {
+    Nil => w
+    Cons(l, rest) => w_notes(w_note(w, l, false), rest)
+  }
+}
+
+pub fn w_declare(w: WFree, id: Nat): WFree { WFree { used: w.used, declared: Cons(id, w.declared) } }
+
+pub fn w_declare_params(w: WFree, ps: List(NParam)): WFree {
+  match ps {
+    Nil => w
+    Cons(p, rest) => w_declare_params(w_declare(w, p.local.id), rest)
+  }
+}
+
+pub fn w_is_owned(l: NLocal): Bool {
+  match l.repr {
+    NPlain => true
+    NSharedVarRepr => false
+    NSharedVarCopy => false
+    NRefRepr => false
+    NRefMutRepr => false
+    NBorrowClosure => false
+    NFnRef => false
+  }
+}
+
+pub fn w_is_ref(l: NLocal): Bool {
+  match l.repr {
+    NRefRepr => true
+    NRefMutRepr => true
+    NPlain => false
+    NSharedVarRepr => false
+    NSharedVarCopy => false
+    NBorrowClosure => false
+    NFnRef => false
+  }
+}
+
+// The locals a pattern binds that own what needs dropping.
+pub fn w_bound(w: WFree, p: NPat): WFree {
+  match p {
+    NBind(l, t) => if n_needs_drop(t) && not(w_is_ref(l)) { w_declare(w, l.id) } else { w }
+    NCtorPat(^c, fields) => w_bound_all(w, fields)
+    NInjectPat(^u, ^k, q) => w_bound(w, q)
+    NWild => w
+    NIntPat(^neg, ^n) => w
+    NNatPat(^n) => w
+    NBoolPat(^b) => w
+    NTextPat(^s) => w
+  }
+}
+
+pub fn w_bound_all(w: WFree, ps: List(NPat)): WFree {
+  match ps {
+    Nil => w
+    Cons(p, rest) => w_bound_all(w_bound(w, p), rest)
+  }
+}
+
+pub fn w_bound_arms(w: WFree, arms: List(NArm)): WFree {
+  match arms {
+    Nil => w
+    Cons(a, rest) => w_bound_arms(w_bound(w, a.pat), rest)
+  }
+}
+
+pub fn w_block_notes(w: WFree, stmts: List(NStmt)): WFree {
+  match stmts {
+    Nil => w
+    Cons(s, rest) => {
+      let next := match s {
+        NLet(l, ^ty, ^init, ^stack) => w_declare(w, l.id)
+        NVar(l, ^ty, ^init) => w_declare(w, l.id)
+        NAssign(target, ^value) => w_note(w, target.local, false)
+        ^other => w
+      }
+      w_block_notes(next, rest)
+    }
+  }
+}
+
+pub fn w_is_move(how: NUse): Bool {
+  match how {
+    NMove => true
+    NCopy => false
+    NClone => false
+    NPlace => false
+  }
+}
+
+// What a visit of `e` itself notes.
+pub fn w_visit(w: WFree, e: NExpr): WFree {
+  match e.kind {
+    NRead(local, how) => w_note(w, local, w_is_move(how) && w_is_owned(local))
+    NMatchOf(m) => {
+      let noted := if m.by_ref {
+        w
+      } else {
+        match m.scrut.kind {
+          NRead(local, how) => match how {
+            NPlace => if w_is_owned(local) { w_note(w, local, true) } else { w }
+            NMove => w
+            NCopy => w
+            NClone => w
+          }
+          ^other => w
+        }
+      }
+      w_bound_arms(noted, m.arms)
+    }
+    NBorrow(p) => w_note(w, p.local, false)
+    NBorrowMut(p) => w_note(w, p.local, false)
+    NCallOf(c) => match c.callee {
+      NCallLocal(l) => w_note(w, l, false)
+      NCallCont(l) => w_note(w, l, false)
+      ^other => w
+    }
+    NClosureOf(inner) => w_declare_params(w_notes(w, inner.clones), inner.params)
+    NBlockOf(b) => w_block_notes(w, b.stmts)
+    ^other => w
+  }
+}
+
+pub fn w_free_in(w: WFree, e: NExpr): WFree ! {div} { w_free_all(w_visit(w, e), w_children(e)) }
+
+pub fn w_free_all(w: WFree, es: List(NExpr)): WFree ! {div} {
+  match es {
+    Nil => w
+    Cons(e, rest) => w_free_all(w_free_in(w, e), rest)
+  }
+}
+
+pub fn w_is_declared(ids: List(Nat), id: Nat): Bool {
+  match ids {
+    Nil => false
+    Cons(i, rest) => i == id || w_is_declared(rest, id)
+  }
+}
+
+pub fn w_undeclared(used: List(NLocal × Bool), declared: List(Nat)): List(NLocal × Bool) {
+  match used {
+    Nil => Nil
+    Cons(u, rest) => match u {
+      #(l, ^moved) => if w_is_declared(declared, l.id) {
+        w_undeclared(rest, declared)
+      } else {
+        Cons(u, w_undeclared(rest, declared))
+      }
+    }
+  }
+}
+
+// The locals a closure reads of the frame it is made in, in the order first
+// read, and whether its body moves each.
+pub fn w_free_locals(c: NClosure): List(NLocal × Bool) ! {div} {
+  let start := w_declare_params(WFree { used: Nil, declared: Nil }, c.params)
+  let w := w_free_in(w_notes(start, c.clones), c.body)
+  w_undeclared(w.used, w.declared)
+}

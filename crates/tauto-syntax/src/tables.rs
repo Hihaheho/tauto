@@ -38,7 +38,7 @@ pub struct Production {
     /// 0 none, 1 collection start, 2 add to collection, 3 optional some, 4 optional none.
     pub attr: u8,
     pub rhs: Vec<Sym>,
-    /// Parallel to `rhs`: the terminal is dropped from the tree (`^`).
+    /// Parallel to `rhs`: the symbol is dropped from the tree (`^`).
     pub clipped: Vec<bool>,
 }
 
@@ -226,7 +226,19 @@ impl<'a> Cursor<'a> {
     }
 }
 
+/// The revision of pargen's own additions to a grammar (`pargen_revision` in
+/// `totes/pargen/src/model.taut`). Tables are named by their grammar's hash alone, so tables made
+/// under another revision are out of date though their name is right.
+pub const PARGEN_REVISION: &str = "2";
+
 impl Tables {
+    /// Whether these tables were made under the current pargen revision.
+    pub fn is_current(&self) -> bool {
+        self.generator
+            .rsplit_once(" pargen ")
+            .is_some_and(|(_, r)| r == PARGEN_REVISION)
+    }
+
     /// The validated serialized tables, for embedding in generated programs.
     pub fn source(&self) -> &str {
         &self.source
@@ -732,21 +744,76 @@ impl Tables {
             .map(|i| i as u32)
     }
 
+    /// The types of the schema the start symbol reaches through its fields, in the order of
+    /// the schema: the values a parse from it makes. A type only a later start symbol reaches
+    /// is not among them.
+    pub fn types_from_start(&self) -> Vec<&TypeDef> {
+        fn named<'a>(t: &'a FieldTy, out: &mut Vec<&'a str>) {
+            match t {
+                FieldTy::Named(n) => out.push(n),
+                FieldTy::List(t) | FieldTy::Opt(t) => named(t, out),
+                FieldTy::Token | FieldTy::Expr => {}
+            }
+        }
+        fn name_of(t: &TypeDef) -> &str {
+            match t {
+                TypeDef::Struct { name, .. } | TypeDef::Enum { name, .. } => name,
+            }
+        }
+        let types = &self.schema().types;
+        let mut seen = std::collections::HashSet::new();
+        let mut pending: Vec<&str> = Vec::new();
+        if let Some(start) = self.start_type().and_then(|i| types.get(i as usize)) {
+            seen.insert(name_of(start));
+            pending.push(name_of(start));
+        }
+        while let Some(current) = pending.pop() {
+            let Some(t) = types.iter().find(|t| name_of(t) == current) else {
+                continue;
+            };
+            let mut next = Vec::new();
+            match t {
+                TypeDef::Struct { fields, .. } => {
+                    fields.iter().for_each(|(_, f)| named(f, &mut next));
+                }
+                TypeDef::Enum { ctors, .. } => {
+                    for c in ctors {
+                        match &c.payload {
+                            Payload::Record(fs) => fs.iter().for_each(|(_, f)| named(f, &mut next)),
+                            Payload::Single(f) => named(f, &mut next),
+                        }
+                    }
+                }
+            }
+            for n in next {
+                if seen.insert(n) {
+                    pending.push(n);
+                }
+            }
+        }
+        types.iter().filter(|t| seen.contains(name_of(t))).collect()
+    }
+
     /// The type of the start symbol: an index into the schema's types.
     pub fn start_type(&self) -> Option<u32> {
         let p = self.productions.iter().position(|p| p.lhs == self.start)?;
-        u32::try_from(self.prod_types[p].0).ok()
-    }
-
-    pub fn mode_names(&self) -> impl Iterator<Item = &str> {
-        self.modes.iter().map(|m| m.name.as_str())
+        match (self.prod_types[p].0, self.productions[p].rhs.as_slice()) {
+            // An LALR(1) start of several productions is read through `S0: S;`, which builds no
+            // tree of its own: the tree is `S`'s.
+            (-1, [Sym::Nt(s)]) => {
+                let q = self.productions.iter().position(|q| q.lhs == *s)?;
+                u32::try_from(self.prod_types[q].0).ok()
+            }
+            (ty, _) => u32::try_from(ty).ok(),
+        }
     }
 
     /// The scanner as the texts `totes/scan` reads (`scan_tables_read_dynamic`):
     /// `meta`, `classes`, `states`, `rows` and `dynamic`, numbers separated by single spaces.
     /// The automata are numbered together: the modes', the lookaheads', then those of the
     /// terminals written with `%capture` or `%validate`.
-    pub fn scan_texts(&self) -> [String; 5] {
+    /// `dropped` is a terminal the scanner's modes do not take.
+    pub fn scan_texts(&self, dropped: Option<u32>) -> [String; 5] {
         let n_classes = self.classes.iter().map(|c| c.2 + 1).max().unwrap_or(0) as usize;
         let n_modes = self.modes.len();
         let first_dynamic = n_modes + self.lookahead_dfas.len();
@@ -771,11 +838,16 @@ impl Tables {
         }
         let mut states = Vec::new();
         let mut rows = Vec::new();
-        for dfa in &automata {
+        for (at, dfa) in automata.iter().enumerate() {
             states.push(dfa.len());
             for s in *dfa {
-                states.push(s.accepts.len());
-                for a in &s.accepts {
+                let accepts: Vec<_> = s
+                    .accepts
+                    .iter()
+                    .filter(|a| at >= n_modes || Some(a.terminal) != dropped)
+                    .collect();
+                states.push(accepts.len());
+                for a in accepts {
                     let nested = if a.la_kind == 0 {
                         0
                     } else {
@@ -1011,4 +1083,33 @@ fn schema(c: &mut Cursor) -> Result<Schema, TableError> {
         }
     }
     Ok(Schema { types })
+}
+
+/// The start symbols a grammar's `%start` names, the first first (`%start A, B`): the tables
+/// of the first are the grammar's `<sha256>.tables`, those of another `B` are
+/// `<sha256>.B.tables` ([`tables_key`]). Empty when the header names none.
+pub fn start_symbols(grammar: &str) -> Vec<String> {
+    for line in grammar.lines() {
+        let line = line.split("//").next().unwrap_or("").trim();
+        if line.starts_with("%%") {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix("%start") {
+            return rest
+                .split(',')
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+/// The name a grammar's tables for the start symbol `start` are kept under: the hash of the
+/// grammar for its first start symbol, and the hash and the symbol for another.
+pub fn tables_key(sha: &str, start: Option<&str>) -> String {
+    match start {
+        None => sha.to_string(),
+        Some(s) => format!("{sha}.{s}"),
+    }
 }

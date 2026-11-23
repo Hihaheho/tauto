@@ -3,9 +3,9 @@ import "../../fmt/src/fmt.taut"
 import "../../text/src/text.taut"
 import "../../unicode/src/classes.taut"
 import "../../unicode/src/unicode.taut"
-import std::Base
-import std::Text
-import std::prelude::Os
+import std::base
+import std::text
+import std::builtin::os
 
 // `tauto fmt [--check] FILE…`: lays the files out again, or with `--check`
 // lists the ones that would change. The exit status is 0 when every file is
@@ -17,13 +17,13 @@ extern {
   // The usage text of the `tauto` command.
   fn fmt_usage(): Text
   // "`path` is not formatted", in the user's language.
-  fn fmt_not_formatted(&path: Text): Text
+  fn fmt_not_formatted(path: &Text): Text
   // The text with the bodies of its syntax literals laid out; warnings go
   // to standard error.
-  fn fmt_literals(&path: Text, &formatted: Text): Text
+  fn fmt_literals(path: &Text, formatted: &Text): Text
   // Why the Rust formatter rejects the source, with the place; empty when it
   // accepts it.
-  fn fmt_diagnostic(&source: Text): Text
+  fn fmt_diagnostic(source: &Text): Text
 }
 
 pub fn fmt_is_flag(a: Text): Bool {
@@ -57,14 +57,14 @@ pub fn fmt_paths(args: List(Text)): List(Text) {
 
 // The file laid out, and then the bodies of its syntax literals laid out by
 // the functions their syntaxes register.
-pub fn fmt_with_literals(&tables: SyntaxTables, classes: UnicodeClasses, path: Text, formatted: Text): Text {
+pub fn fmt_with_literals(tables: &SyntaxTables, classes: UnicodeClasses, path: Text, formatted: Text): Text ! {div, overflow} {
   let laid := fmt_literals(path, formatted)
   if Text::eq(laid, formatted) {
     formatted
   } else {
     match fmt_format(tables, classes, laid) {
       FmtOk(again) => again
-      FmtErr(e) => laid
+      FmtErr(^e) => laid
     }
   }
 }
@@ -78,7 +78,7 @@ pub fn fmt_why(source: Text, message: Text): Text {
 
 // Formats each file in turn. `status` is 0 or 1; a file that cannot be read
 // or written ends the run with 2.
-pub fn fmt_each(&tables: SyntaxTables, classes: UnicodeClasses, check: Bool, paths: List(Text), status: i32): i32 ! {fs_read, fs_write, stdout, stderr, Div} {
+pub fn fmt_each(tables: &SyntaxTables, classes: UnicodeClasses, check: Bool, paths: List(Text), status: i32): i32 ! {div, fs_read, fs_write, overflow, stderr, stdout} {
   match paths {
     Nil => status
     Cons(path, rest) => match read_file(path) {
@@ -104,7 +104,7 @@ pub fn fmt_each(&tables: SyntaxTables, classes: UnicodeClasses, check: Bool, pat
                 eprint(Text::concat_all(Cons(path, Cons(": ", Cons(e, Cons("\n", Nil))))))
                 2
               }
-              Ok(u) => fmt_each(tables, classes, check, rest, status)
+              Ok(^u) => fmt_each(tables, classes, check, rest, status)
             }
           }
         }
@@ -113,7 +113,7 @@ pub fn fmt_each(&tables: SyntaxTables, classes: UnicodeClasses, check: Bool, pat
   }
 }
 
-pub fn fmt_command(&tables: SyntaxTables, classes: UnicodeClasses, args: List(Text)): i32 ! {fs_read, fs_write, stdout, stderr, Div} {
+pub fn fmt_command(tables: &SyntaxTables, classes: UnicodeClasses, args: List(Text)): i32 ! {div, fs_read, fs_write, overflow, stderr, stdout} {
   let paths := fmt_paths(args)
   if fmt_has_other_flag(args) || List::length(paths) == 0 {
     eprint(Text::concat_all(Cons(fmt_usage(), Cons("\n", Nil))))
@@ -123,17 +123,19 @@ pub fn fmt_command(&tables: SyntaxTables, classes: UnicodeClasses, args: List(Te
   }
 }
 
-match syntax_tables() {
-  None => {
-    eprint("the tables of the syntax are damaged\n")
-    perform exit(2)
-  }
-  Some(tables) => {
-    let code := fmt_command(tables, unicode_classes(), perform argv())
-    if code != 0 {
-      perform exit(code)
-    } else {
-      #()
+perform main(() => {
+  match syntax_tables() {
+    None => {
+      eprint("the tables of the syntax are damaged\n")
+      perform exit(2)
+    }
+    Some(tables) => {
+      let code := fmt_command(tables, unicode_classes(), perform argv())
+      if code != 0 {
+        perform exit(code)
+      } else {
+        #()
+      }
     }
   }
-}
+})

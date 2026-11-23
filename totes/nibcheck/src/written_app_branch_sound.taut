@@ -1,6 +1,7 @@
+import "messages.taut"
 import "written_app_choice_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -10,16 +11,19 @@ import "error_frame.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_application_sound.taut"
 import "written_atomic_sound.taut"
 import "written_context_sound.taut"
 import "written_error_sound.taut"
 import "written_list_sound.taut"
+import "written_composite_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 pub fn written_info_after(m: Mut1(List(Ty), Checker)): Mut1(Ty, Checker) {
-  frame_bind(List(Ty), Ty, (types: List(Ty), state: Checker) => frame_app_info(state, types), m)
+  frame_bind(<A: List(Ty), B: Ty>, (types: List(Ty), state: Checker) => frame_app_info(state, types), m)
 }
 pub theorem written_info_after_sound(
   ast_occurrence: Option(TermOccurrence),
@@ -45,7 +49,7 @@ pub theorem written_info_after_sound(
   generics,
   frame_constructor_position(c),
   under_borrow,
-  SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
+  SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("Info")), start, end, ast_occurrence), Cons(arg, Nil)),
   ck_val(written_info_after(m))
 ) {
   ⊢ WrittenKind(
@@ -53,7 +57,7 @@ pub theorem written_info_after_sound(
     generics,
     frame_constructor_position(c),
     under_borrow,
-    SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
+    SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("Info")), start, end, ast_occurrence), Cons(arg, Nil)),
     ck_val(written_info_after(m))
   ) from match m {
     mut1(types, MkState) => written_info_arguments(
@@ -73,8 +77,7 @@ pub fn written_generic_after(
   m: Mut1(List(Ty), Checker)
 ): Mut1(Ty, Checker) {
   frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     (types: List(Ty), state: Checker) => frame_app_generic(state, name, generics, span, types),
     m
   )
@@ -87,12 +90,12 @@ pub theorem written_generic_after_sound(
   start: Nat,
   end: Nat,
   under_borrow: Bool,
-  name: Text,
+  name: SurfaceName,
   bound: Ty,
   span: TySpan,
   m: Mut1(List(Ty), Checker),
-  not_info: (name = "Info") -> False,
-  parameter: Ordmap::get(generics, name, Ordmap::compare_text) = Some(bound),
+  not_info: (surface_name_text(name) = "Info") -> False,
+  parameter: Ordmap::get(generics, surface_name_text(name), Ordmap::compare_text) = Some(bound),
   ih: ∀ clean: DiagnosticClean(
     ck_st(m)
   ). WrittenTerms(
@@ -102,14 +105,14 @@ pub theorem written_generic_after_sound(
     Cons(arg, Nil),
     ck_val(m)
   ),
-  clean: DiagnosticClean(ck_st(written_generic_after(name, generics, span, m)))
+  clean: DiagnosticClean(ck_st(written_generic_after(surface_name_text(name), generics, span, m)))
 ): WrittenKind(
   ck_datas_of(c),
   generics,
   frame_constructor_position(c),
   under_borrow,
   SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
-  ck_val(written_generic_after(name, generics, span, m))
+  ck_val(written_generic_after(surface_name_text(name), generics, span, m))
 ) {
   ⊢ WrittenKind(
     ck_datas_of(c),
@@ -117,11 +120,11 @@ pub theorem written_generic_after_sound(
     frame_constructor_position(c),
     under_borrow,
     SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
-    ck_val(written_generic_after(name, generics, span, m))
+    ck_val(written_generic_after(surface_name_text(name), generics, span, m))
   ) from match m {
     mut1(types, MkState) => written_generic_arguments(
       ast_occurrence,
-      ih(frame_app_generic_ok_errors(MkState, name, generics, span, types, clean)),
+      ih(frame_app_generic_ok_errors(MkState, surface_name_text(name), generics, span, types, clean)),
       MkState,
       under_borrow,
       start,
@@ -139,7 +142,7 @@ pub theorem written_kind_state(
   c: Checker,
   next: Checker,
   generics: Ordmap(Text, Ty),
-  borrow: Bool,
+  r#borrow: Bool,
   kind: SurfaceKind,
   t: Ty,
   env: ck_datas_of(next) = ck_datas_of(c),
@@ -148,20 +151,20 @@ pub theorem written_kind_state(
     ck_datas_of(next),
     generics,
     frame_constructor_position(next),
-    borrow,
+    r#borrow,
     kind,
     t
   )
-): WrittenKind(ck_datas_of(c), generics, frame_constructor_position(c), borrow, kind, t) {
+): WrittenKind(ck_datas_of(c), generics, frame_constructor_position(c), r#borrow, kind, t) {
   Eq::subst(
-    (partial: Bool) => WrittenKind(ck_datas_of(c), generics, partial, borrow, kind, t),
+    (partial: Bool) => WrittenKind(ck_datas_of(c), generics, partial, r#borrow, kind, t),
     position,
     Eq::subst(
       (datas: Datas) => WrittenKind(
         datas,
         generics,
         frame_constructor_position(next),
-        borrow,
+        r#borrow,
         kind,
         t
       ),
@@ -176,10 +179,9 @@ pub fn written_named_after(
   m: Mut1(List(Ty), Checker)
 ): Mut1(Ty, Checker) {
   frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     (types: List(Ty), state: Checker) => frame_return(
-      TyNamed(name, types),
+      TyNamed(NameSpelled(name), types),
       ck_arity(state, name, list_len(types), span)
     ),
     m
@@ -193,26 +195,26 @@ pub theorem written_named_after_sound(
   start: Nat,
   end: Nat,
   under_borrow: Bool,
-  name: Text,
+  name: SurfaceName,
   span: TySpan,
   m: Mut1(List(Ty), Checker),
-  not_tuple: (name = "Tuple") -> False,
-  not_info: (name = "Info") -> (list_len(args) = 1) -> False,
-  unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None,
-  slice_borrowed: (name = "Slice") -> (under_borrow = true),
+  not_pair: (surface_name_text(name) = "std::prelude::Pair") -> False,
+  not_info: (surface_name_text(name) = "Info") -> (list_len(args) = 1) -> False,
+  unbound: Ordmap::get(generics, surface_name_text(name), Ordmap::compare_text) = None,
+  slice_borrowed: (surface_name_text(name) = "Slice") -> (under_borrow = true),
   read: CkReadFrame(c, m),
   position: frame_constructor_position(ck_st(m)) = frame_constructor_position(c),
   ih: ∀ clean: DiagnosticClean(
     ck_st(m)
   ). WrittenTerms(ck_datas_of(c), generics, frame_constructor_position(c), args, ck_val(m)),
-  clean: DiagnosticClean(ck_st(written_named_after(name, span, m)))
+  clean: DiagnosticClean(ck_st(written_named_after(surface_name_text(name), span, m)))
 ): WrittenKind(
   ck_datas_of(c),
   generics,
   frame_constructor_position(c),
   under_borrow,
   SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
-  ck_val(written_named_after(name, span, m))
+  ck_val(written_named_after(surface_name_text(name), span, m))
 ) {
   ⊢ WrittenKind(
     ck_datas_of(c),
@@ -220,7 +222,7 @@ pub theorem written_named_after_sound(
     frame_constructor_position(c),
     under_borrow,
     SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
-    ck_val(written_named_after(name, span, m))
+    ck_val(written_named_after(surface_name_text(name), span, m))
   ) from match m {
     mut1(types, MkState) => written_kind_state(
       c,
@@ -228,7 +230,7 @@ pub theorem written_named_after_sound(
       generics,
       under_borrow,
       SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
-      ck_val(frame_return(TyNamed(name, types), ck_arity(MkState, name, list_len(types), span))),
+      ck_val(frame_return(TyNamed(NameSpelled(surface_name_text(name)), types), ck_arity(MkState, surface_name_text(name), list_len(types), span))),
       Eq::congr(frame_read_datas, read),
       position,
       written_named_arguments(
@@ -242,7 +244,7 @@ pub theorem written_named_after_sound(
         start,
         end,
         span,
-        not_tuple,
+        not_pair,
         not_info,
         unbound,
         slice_borrowed,
@@ -257,14 +259,14 @@ pub theorem written_named_after_sound(
           ih(
             ck_arity_frame_errors(
               MkState,
-              name,
+              surface_name_text(name),
               list_len(types),
               span,
               Eq::subst(
                 DiagnosticClean,
                 written_return_state(
-                  TyNamed(name, types),
-                  ck_arity(MkState, name, list_len(types), span)
+                  TyNamed(NameSpelled(surface_name_text(name)), types),
+                  ck_arity(MkState, surface_name_text(name), list_len(types), span)
                 ),
                 clean
               )
@@ -283,7 +285,7 @@ pub theorem written_bind_input_clean<A: Type, B: Type>(
   preserve: ∀ value: A. ∀ MkState: Checker. CkErrorFrame(MkState, k(value, MkState)),
   clean: DiagnosticClean(ck_st(frame_bind(k, m)))
 ): DiagnosticClean(ck_st(m)) {
-  ⊢ DiagnosticClean(ck_st(m)) from match m { mut1(value, MkState) => preserve(value, MkState, clean) }
+  match m { mut1(value, MkState) => preserve(value, MkState, clean) }
 }
 pub theorem written_error_if_false(
   c: Checker,
@@ -292,7 +294,7 @@ pub theorem written_error_if_false(
   condition: Bool,
   clean: DiagnosticClean(ck_st(frame_error_if(c, message, span, condition)))
 ): (condition = false) {
-  ⊢ (condition = false) from match condition {
+  match condition {
     true => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     false => Refl
   }
@@ -303,7 +305,7 @@ pub theorem written_slice_borrowed(
   allowed: Bool::and(Text::eq(name, "Slice"), not(under_borrow)) = false,
   slice: name = "Slice"
 ): (under_borrow = true) {
-  ⊢ (under_borrow = true) from match under_borrow {
+  match under_borrow {
     true => Refl
     false => False::elim(
       false_ne_true(
@@ -326,18 +328,17 @@ pub theorem written_named_after_errors(
   before: CkErrorFrame(state, m)
 ): CkErrorFrame(state, written_named_after(name, span, m)) {
   error_frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     state,
     (types: List(Ty), next: Checker) => frame_return(
-      TyNamed(name, types),
+      TyNamed(NameSpelled(name), types),
       ck_arity(next, name, list_len(types), span)
     ),
     m,
     before,
     types => next => written_error_return(
       next,
-      TyNamed(name, types),
+      TyNamed(NameSpelled(name), types),
       ck_arity(next, name, list_len(types), span),
       ck_arity_frame_errors(next, name, list_len(types), span)
     )
@@ -352,14 +353,13 @@ pub fn written_named_checked(
   condition: Bool
 ): Mut1(Ty, Checker) {
   frame_bind(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     (ignored: Unit, next: Checker) => written_named_after(
       name,
       span,
       ck_written_each(args, next, generics)
     ),
-    frame_error_if(c, "Slice(A) can only be borrowed", span, condition)
+    frame_error_if(c, slice_only_borrowed_message(), span, condition)
   )
 }
 pub theorem written_named_checked_allowed(
@@ -373,13 +373,12 @@ pub theorem written_named_checked_allowed(
 ): (condition = false) {
   written_error_if_false(
     c,
-    "Slice(A) can only be borrowed",
+    slice_only_borrowed_message(),
     span,
     condition,
     written_bind_input_clean(
-      Unit,
-      Ty,
-      frame_error_if(c, "Slice(A) can only be borrowed", span, condition),
+      <A: Unit, B: Ty>,
+      frame_error_if(c, slice_only_borrowed_message(), span, condition),
       (ignored: Unit, next: Checker) => written_named_after(
         name,
         span,
@@ -405,12 +404,12 @@ pub theorem written_named_branch_sound(
   start: Nat,
   end: Nat,
   under_borrow: Bool,
-  name: Text,
+  name: SurfaceName,
   span: TySpan,
   ordinary: frame_under_borrow(c) = false,
-  not_tuple: (name = "Tuple") -> False,
-  not_info: (name = "Info") -> (list_len(args) = 1) -> False,
-  unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None,
+  not_pair: (surface_name_text(name) = "std::prelude::Pair") -> False,
+  not_info: (surface_name_text(name) = "Info") -> (list_len(args) = 1) -> False,
+  unbound: Ordmap::get(generics, surface_name_text(name), Ordmap::compare_text) = None,
   ih: ∀ clean: DiagnosticClean(
     ck_st(ck_written_each(args, c, generics))
   ). WrittenTerms(
@@ -421,7 +420,7 @@ pub theorem written_named_branch_sound(
     ck_val(ck_written_each(args, c, generics))
   ),
   clean: DiagnosticClean(
-    ck_st(frame_app_kind(c, args, generics, span, under_borrow, WrittenNamed(name)))
+    ck_st(frame_app_kind(c, args, generics, span, under_borrow, WrittenNamed(surface_name_text(name))))
   )
 ): WrittenKind(
   ck_datas_of(c),
@@ -429,18 +428,18 @@ pub theorem written_named_branch_sound(
   frame_constructor_position(c),
   under_borrow,
   SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
-  ck_val(frame_app_kind(c, args, generics, span, under_borrow, WrittenNamed(name)))
+  ck_val(frame_app_kind(c, args, generics, span, under_borrow, WrittenNamed(surface_name_text(name))))
 ) {
   let allowed: Bool::and(
-    Text::eq(name, "Slice"),
+    Text::eq(surface_name_text(name), "Slice"),
     not(under_borrow)
   ) = false := written_named_checked_allowed(
     c,
-    name,
+    surface_name_text(name),
     args,
     generics,
     span,
-    Bool::and(Text::eq(name, "Slice"), not(under_borrow)),
+    Bool::and(Text::eq(surface_name_text(name), "Slice"), not(under_borrow)),
     clean
   )
   Eq::subst(
@@ -450,7 +449,7 @@ pub theorem written_named_branch_sound(
       frame_constructor_position(c),
       under_borrow,
       SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
-      ck_val(written_named_checked(c, name, args, generics, span, b))
+      ck_val(written_named_checked(c, surface_name_text(name), args, generics, span, b))
     ),
     Eq::sym(allowed),
     written_named_after_sound(
@@ -464,10 +463,10 @@ pub theorem written_named_branch_sound(
       name,
       span,
       ck_written_each(args, c, generics),
-      not_tuple,
+      not_pair,
       not_info,
       unbound,
-      same => written_slice_borrowed(name, under_borrow, allowed, same),
+      same => written_slice_borrowed(surface_name_text(name), under_borrow, allowed, same),
       ck_written_each_frame(args, c, generics),
       Eq::congr(
         written_context_position,
@@ -476,7 +475,7 @@ pub theorem written_named_branch_sound(
       ih,
       Eq::subst(
         (b: Bool) => DiagnosticClean(
-          ck_st(written_named_checked(c, name, args, generics, span, b))
+          ck_st(written_named_checked(c, surface_name_text(name), args, generics, span, b))
         ),
         allowed,
         clean
@@ -485,35 +484,6 @@ pub theorem written_named_branch_sound(
   )
 }
 
-pub theorem written_unit_branch_sound(
-  ast_occurrence: Option(TermOccurrence),
-  args: List(SurfaceTerm),
-  c: Checker,
-  generics: Ordmap(Text, Ty),
-  under_borrow: Bool,
-  start: Nat,
-  end: Nat,
-  empty: list_len(args) = 0
-): WrittenKind(
-  ck_datas_of(c),
-  generics,
-  frame_constructor_position(c),
-  under_borrow,
-  SkApp(SurfaceTermIndexedMk(SkVar("Tuple"), start, end, ast_occurrence), args),
-  TyUnit
-) {
-  ⊢ WrittenKind(
-    ck_datas_of(c),
-    generics,
-    frame_constructor_position(c),
-    under_borrow,
-    SkApp(SurfaceTermIndexedMk(SkVar("Tuple"), start, end, ast_occurrence), args),
-    TyUnit
-  ) from match args {
-    Nil => WrittenKindUnit(start, end)
-    Cons(first, rest) => False::elim(false_ne_true(Eq::congr((n: Nat) => Nat::eq(n, 0), empty)))
-  }
-}
 pub theorem written_info_branch_sound(
   ast_occurrence: Option(TermOccurrence),
   args: List(SurfaceTerm),
@@ -539,7 +509,7 @@ pub theorem written_info_branch_sound(
   generics,
   frame_constructor_position(c),
   under_borrow,
-  SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), args),
+  SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("Info")), start, end, ast_occurrence), args),
   ck_val(frame_app_kind(c, args, generics, span, under_borrow, WrittenInfo))
 ) {
   ⊢ WrittenKind(
@@ -547,7 +517,7 @@ pub theorem written_info_branch_sound(
     generics,
     frame_constructor_position(c),
     under_borrow,
-    SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), args),
+    SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("Info")), start, end, ast_occurrence), args),
     ck_val(frame_app_kind(c, args, generics, span, under_borrow, WrittenInfo))
   ) from match args {
     Nil => False::elim(false_ne_true(Eq::congr((n: Nat) => Nat::eq(n, 1), one)))
@@ -556,7 +526,7 @@ pub theorem written_info_branch_sound(
       generics,
       frame_constructor_position(c),
       under_borrow,
-      SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(first, rest)),
+      SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("Info")), start, end, ast_occurrence), Cons(first, rest)),
       ck_val(frame_app_kind(c, Cons(first, rest), generics, span, under_borrow, WrittenInfo))
     ) from match rest {
       Nil => written_info_after_sound(
@@ -586,10 +556,10 @@ pub theorem written_generic_branch_sound(
   start: Nat,
   end: Nat,
   span: TySpan,
-  name: Text,
+  name: SurfaceName,
   bound: Ty,
-  not_info: (name = "Info") -> (list_len(args) = 1) -> False,
-  parameter: Ordmap::get(generics, name, Ordmap::compare_text) = Some(bound),
+  not_info: (surface_name_text(name) = "Info") -> (list_len(args) = 1) -> False,
+  parameter: Ordmap::get(generics, surface_name_text(name), Ordmap::compare_text) = Some(bound),
   ih: ∀ clean: DiagnosticClean(
     ck_st(ck_written_each(args, c, generics))
   ). WrittenTerms(
@@ -600,7 +570,7 @@ pub theorem written_generic_branch_sound(
     ck_val(ck_written_each(args, c, generics))
   ),
   clean: DiagnosticClean(
-    ck_st(frame_app_kind(c, args, generics, span, under_borrow, WrittenGeneric(name)))
+    ck_st(frame_app_kind(c, args, generics, span, under_borrow, WrittenGeneric(surface_name_text(name))))
   )
 ): WrittenKind(
   ck_datas_of(c),
@@ -608,7 +578,7 @@ pub theorem written_generic_branch_sound(
   frame_constructor_position(c),
   under_borrow,
   SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
-  ck_val(frame_app_kind(c, args, generics, span, under_borrow, WrittenGeneric(name)))
+  ck_val(frame_app_kind(c, args, generics, span, under_borrow, WrittenGeneric(surface_name_text(name))))
 ) {
   ⊢ WrittenKind(
     ck_datas_of(c),
@@ -616,7 +586,7 @@ pub theorem written_generic_branch_sound(
     frame_constructor_position(c),
     under_borrow,
     SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
-    ck_val(frame_app_kind(c, args, generics, span, under_borrow, WrittenGeneric(name)))
+    ck_val(frame_app_kind(c, args, generics, span, under_borrow, WrittenGeneric(surface_name_text(name))))
   ) from match args {
     Nil => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     Cons(first, rest) => ⊢ WrittenKind(
@@ -626,7 +596,7 @@ pub theorem written_generic_branch_sound(
       under_borrow,
       SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(first, rest)),
       ck_val(
-        frame_app_kind(c, Cons(first, rest), generics, span, under_borrow, WrittenGeneric(name))
+        frame_app_kind(c, Cons(first, rest), generics, span, under_borrow, WrittenGeneric(surface_name_text(name)))
       )
     ) from match rest {
       Nil => written_generic_after_sound(
@@ -655,14 +625,14 @@ pub theorem written_app_choice_elaborates(
   ast_occurrence: Option(TermOccurrence),
   c: Checker,
   generics: Ordmap(Text, Ty),
-  name: Text,
+  name: SurfaceName,
   args: List(SurfaceTerm),
   under_borrow: Bool,
   start: Nat,
   end: Nat,
   span: TySpan,
   app: WrittenApp,
-  choice: WrittenAppChoice(generics, name, list_len(args), app),
+  choice: WrittenAppChoice(generics, surface_name_text(name), list_len(args), app),
   ordinary: frame_under_borrow(c) = false,
   ih: ∀ clean: DiagnosticClean(
     ck_st(ck_written_each(args, c, generics))
@@ -690,20 +660,20 @@ pub theorem written_app_choice_elaborates(
     SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
     ck_val(frame_app_kind(c, args, generics, span, under_borrow, app))
   ) from match choice {
-    WrittenChoiceUnit(Named, Empty) => Eq::subst(
-      (head: Text) => WrittenKind(
+    WrittenChoiceProduct(Named, Two) => Eq::subst(
+      (head: SurfaceName) => WrittenKind(
         ck_datas_of(c),
         generics,
         frame_constructor_position(c),
         under_borrow,
         SkApp(SurfaceTermIndexedMk(SkVar(head), start, end, ast_occurrence), args),
-        TyUnit
+        ck_val(frame_app_kind(c, args, generics, span, under_borrow, WrittenProduct))
       ),
-      Eq::sym(Named),
-      written_unit_branch_sound(ast_occurrence, args, c, generics, under_borrow, start, end, Empty)
+      Eq::sym(surface_name_spelled(name, "std::prelude::Pair", Named, Refl)),
+      written_product_sound(ast_occurrence, args, c, generics, under_borrow, start, end, Two, ih, clean)
     )
     WrittenChoiceInfo(Named, one) => Eq::subst(
-      (head: Text) => WrittenKind(
+      (head: SurfaceName) => WrittenKind(
         ck_datas_of(c),
         generics,
         frame_constructor_position(c),
@@ -711,7 +681,7 @@ pub theorem written_app_choice_elaborates(
         SkApp(SurfaceTermIndexedMk(SkVar(head), start, end, ast_occurrence), args),
         ck_val(frame_app_kind(c, args, generics, span, under_borrow, WrittenInfo))
       ),
-      Eq::sym(Named),
+      Eq::sym(surface_name_spelled(name, "Info", Named, Refl)),
       written_info_branch_sound(
         ast_occurrence,
         args,
@@ -742,7 +712,7 @@ pub theorem written_app_choice_elaborates(
       ih,
       clean
     )
-    WrittenChoiceNamed(unbound, NotTuple, not_info) => written_named_branch_sound(
+    WrittenChoiceNamed(unbound, NotPair, not_info) => written_named_branch_sound(
       ast_occurrence,
       c,
       generics,
@@ -753,7 +723,7 @@ pub theorem written_app_choice_elaborates(
       name,
       span,
       ordinary,
-      NotTuple,
+      NotPair,
       not_info,
       unbound,
       ih,
@@ -857,12 +827,11 @@ pub theorem written_non_nested_kind_sound(
     SkPi(arg_params, arg_result, arg_effects) => False::elim(
       false_ne_true(Eq::congr(decl_names_empty, clean))
     )
-    SkExists(arg_binder, arg_domain, arg_body) => False::elim(
+    SkExists(arg_binder, arg_domain, arg_body, unused) => False::elim(
       false_ne_true(Eq::congr(decl_names_empty, clean))
     )
-    SkLam(arg_params, arg_body) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    SkLam(arg_params, arg_body, _, _) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     SkUnion(arg_parts) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
-    SkProduct(arg_parts) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     SkTagged(arg_tag, arg_value) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     SkIf(arg_cond, arg_then, arg_otherwise) => False::elim(
       false_ne_true(Eq::congr(decl_names_empty, clean))
@@ -876,12 +845,12 @@ pub theorem written_non_nested_kind_sound(
     SkBudget(arg_amount_memory, arg_amount, arg_body) => False::elim(
       false_ne_true(Eq::congr(decl_names_empty, clean))
     )
-    SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder) => False::elim(
+    SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder, _) => False::elim(
       false_ne_true(Eq::congr(decl_names_empty, clean))
     )
     SkHole(arg_name) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     SkRecord(arg_name, arg_fields) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
-    SkBorrow(arg_mutable, arg_value) => False::elim(
+    SkBorrow(arg_mutable, arg_mutable_orig, arg_value) => False::elim(
       false_ne_true(Eq::congr(decl_names_empty, clean))
     )
     SkFnKind(arg_kind, arg_ty) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
@@ -889,11 +858,9 @@ pub theorem written_non_nested_kind_sound(
       false_ne_true(Eq::congr(decl_names_empty, clean))
     )
     SkOther(arg_what) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    SkAscribe(arg_what, arg_what_ty) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     SkRow(arg_what_effects) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     SkFloat(arg_what) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
-    SkProject(arg_what, arg_what_ty) => False::elim(
-      false_ne_true(Eq::congr(decl_names_empty, clean))
-    )
     SkMacroCall(arg_name, arg_arg) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     SkQuote(arg_stmts_form, arg_stmts) => False::elim(
       false_ne_true(Eq::congr(decl_names_empty, clean))

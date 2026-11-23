@@ -81,6 +81,27 @@ pub(super) fn specialize(
                     return;
                 };
                 let arguments: Vec<_> = groups.into_iter().rev().flatten().cloned().collect();
+                let generic_names: Vec<String> = original
+                    .generics
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| original.rows.get(*index) != Some(&true))
+                    .map(|(_, name)| name.to_string())
+                    .collect();
+                let named = arguments
+                    .first()
+                    .is_some_and(crate::extract::is_named_implicits);
+                let arguments = crate::extract::positional_args(&arguments, &generic_names);
+                // The program reads the implicit arguments by position.
+                let positional = named.then(|| {
+                    term.with_kind(
+                        TermKind::App {
+                            function: Box::new(head.clone()),
+                            arguments: arguments.clone(),
+                        },
+                        term.span,
+                    )
+                });
                 let source_roles = signature.source_generic_roles(original);
                 let nonrow: Vec<_> = source_roles
                     .iter()
@@ -90,6 +111,9 @@ pub(super) fn specialize(
                     .collect();
                 let arity = nonrow.len() + original.params.len();
                 if arguments.len() > arity {
+                    if let Some(rewritten) = positional {
+                        *term = rewritten;
+                    }
                     return;
                 }
                 if arguments.len() < arity {
@@ -108,6 +132,9 @@ pub(super) fn specialize(
                 }
                 let partial = arguments.len() < arity;
                 if !partial && nonrow.iter().all(|role| *role == Role::Value) {
+                    if let Some(rewritten) = positional {
+                        *term = rewritten;
+                    }
                     return;
                 }
                 let occurrence = term.id();
@@ -347,6 +374,7 @@ fn partial_adapter(
                 .collect(),
             result: Box::new(result),
             effects: None,
+            unused: Vec::new(),
         },
         original.span,
     ));
@@ -355,6 +383,7 @@ fn partial_adapter(
             params: names,
             types,
             body: Box::new(call),
+            unused_params: Vec::new(),
         },
         original.span,
     );

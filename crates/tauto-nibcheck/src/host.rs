@@ -1,13 +1,27 @@
-//! The standard effects (`std/prelude/Os.taut`): which the host answers at the
+//! The standard effects (`std/builtin/os.taut`): which the host answers at the
 //! top level, the permission each needs, and how a backend's program is put
-//! inside the prelude's `host_run` that answers them
+//! under the host's handler that answers them
 //! (`docs/design/host-effects.md`).
 
-use crate::surface::{Handler, PRELUDE_BASE, Program, Stmt, SurfaceTerm, TermKind, parse_expr_at};
+use crate::surface::{PRELUDE_BASE, Program, Stmt, TermKind};
 use std::collections::BTreeSet;
 
 /// The effects the host answers when they reach the top level unanswered.
 pub const HOST_EFFECTS: &[&str] = &[
+    "ref_new",
+    "ref_get",
+    "ref_set",
+    "weak_of",
+    "weak_get",
+    "mutex_new",
+    "mutex_claim",
+    "mutex_take_claimed",
+    "mutex_put",
+    "mutex_withdraw",
+    "atomic_new",
+    "atomic_load",
+    "atomic_store",
+    "atomic_fetch_add",
     "stdout",
     "stderr",
     "stdin_bytes",
@@ -19,7 +33,14 @@ pub const HOST_EFFECTS: &[&str] = &[
     "stop",
     "wall_clock",
     "monotonic_clock",
+    "uhost_add",
+    "uhost_sub",
+    "uhost_mul",
+    "uhost_of_u64",
+    "host_width",
+    "hash_seed",
     "sleep",
+    "timer",
     "wait",
     "random",
     "secure_random",
@@ -36,6 +57,9 @@ pub const HOST_EFFECTS: &[&str] = &[
     "fs_read_link",
     "fs_write_new",
     "fs_rename",
+    "fs_set_mode",
+    "fs_lock",
+    "fs_unlock",
     "fs_copy",
     "fs_canonicalize",
     "fs_temp_dir",
@@ -47,10 +71,17 @@ pub const HOST_EFFECTS: &[&str] = &[
     "proc_close",
     "proc_run",
     "env",
+    "environ",
     "permission",
     "net",
     "net_addr",
     "net_resolve",
+    "net_open",
+    "net_write",
+    "net_finish",
+    "net_cancel",
+    "net_read",
+    "net_close",
     "tcp_listen",
     "tcp_accept",
     "tcp_connect",
@@ -67,18 +98,6 @@ pub const HOST_EFFECTS: &[&str] = &[
     "tls_close",
 ];
 
-/// Whether `f`, declared in an `extern` block of the prelude, is how the host answers
-/// a standard effect: its row names one. Its row says what a call asks of the
-/// host; the call itself is made by the host's own code (the handler in
-/// `Os.taut`), which has already checked the permission, so no backend treats
-/// it as performing the effect, and a program may not call it.
-pub fn is_host_primitive(f: &crate::surface::FnDecl) -> bool {
-    f.span.start >= crate::surface::PRELUDE_BASE
-        && f.effects
-            .as_ref()
-            .is_some_and(|row| row.iter().any(|e| HOST_EFFECTS.contains(&e.as_str())))
-}
-
 /// The permission (`--allow-<name>`) an effect needs, if any.
 pub fn permission(effect: &str) -> Option<&'static str> {
     match effect {
@@ -91,10 +110,11 @@ pub fn permission(effect: &str) -> Option<&'static str> {
         | "fs_read_link"
         | "fs_canonicalize" => Some("read"),
         "fs_write" | "fs_write_bytes" | "fs_write_new" | "fs_create_dir" | "fs_remove"
-        | "fs_rename" => Some("write"),
+        | "fs_rename" | "fs_set_mode" | "fs_lock" => Some("write"),
         "proc_run" | "proc_spawn" => Some("run"),
-        "env" => Some("env"),
-        "net" | "net_addr" | "net_resolve" => Some("net"),
+        "env" | "environ" => Some("env"),
+        "net" | "net_addr" | "net_resolve" | "net_open" | "net_write" | "net_finish"
+        | "net_cancel" | "net_read" | "net_close" => Some("net"),
         "tcp_listen" | "tcp_accept" | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_shutdown"
         | "tcp_close" | "tcp_unlisten" => Some("net"),
         "tls_accept" | "tls_connect" | "tls_read" | "tls_write" | "tls_shutdown" | "tls_close" => {
@@ -104,13 +124,12 @@ pub fn permission(effect: &str) -> Option<&'static str> {
     }
 }
 
-/// The permissions a run that performs `effects` needs before it starts. A
-/// run that makes a temporary directory (`fs_temp_dir`) may read and write
-/// under it with no flag, so `read` and `write` are not needed up front: a
-/// request outside what the flags cover is still denied when it is made.
+/// The permissions a run that performs `effects` needs before it starts.
+/// `fs_temp_dir` grants nothing up front: a program that makes a temporary
+/// directory may still read or write elsewhere, and it is asked for `read`
+/// and `write` like any other, so that a request outside the temporary
+/// directory is not denied after the run has started.
 pub fn permissions<'e>(effects: impl IntoIterator<Item = &'e String>) -> BTreeSet<&'static str> {
-    let effects: Vec<&String> = effects.into_iter().collect();
-    let temp = effects.iter().any(|e| e.as_str() == "fs_temp_dir");
     effects
         .into_iter()
         .flat_map(|e| {
@@ -121,7 +140,6 @@ pub fn permissions<'e>(effects: impl IntoIterator<Item = &'e String>) -> BTreeSe
                 permission(e).into_iter().collect()
             }
         })
-        .filter(|k| !(temp && matches!(*k, "read" | "write")))
         .collect()
 }
 
@@ -129,22 +147,16 @@ pub fn permissions<'e>(effects: impl IntoIterator<Item = &'e String>) -> BTreeSe
 /// file can reach.
 const WRAPPER_BASE: u32 = PRELUDE_BASE + (1 << 30);
 
-/// The program with its top-level statements in `host_run(() => { … })`, so
-/// a backend answers the standard effects with the prelude's handler. The
-/// declarations stay at the top level; a function does not see a top-level
-/// `let`, so moving the statements does not change what a name means. Each
-/// `perform spawn(f)` becomes `perform spawn(() => host_run(f))`: a task runs
-/// apart from the handlers around its `spawn`, on a thread of its own where a
-/// backend has threads, so the host answers what it asks. Each
-/// `perform test(name, body)` puts its body in `host_run` too: the host runs
-/// it apart from the program, so a test can `print`. `None` when there
-/// is nothing to move.
-pub fn wrap(program: &Program) -> Option<Program> {
-    let mut program = program.clone();
-    for stmt in &mut program.stmts {
-        tasks_in_stmt(stmt);
-    }
-    let program = &program;
+/// The program with its top-level statements in `Entry::run(() => { … })`,
+/// when the top level performs `main` or `test`: the statements are the
+/// module's top level that `Entry::run` evaluates to find the entries and
+/// again to call their bodies. The declarations stay at the top level; a
+/// function does not see a top-level `let`, so moving the statements does not
+/// change what a name means. The host's handler is not written here: the
+/// lowering puts it outside the top level and each task
+/// (`Lowerer::host_handle`). `None` when there are no entries or nothing to
+/// move.
+pub fn wrap(program: &Program, entries: bool) -> Option<Program> {
     let runs = |s: &Stmt| {
         matches!(
             s,
@@ -158,10 +170,12 @@ pub fn wrap(program: &Program) -> Option<Program> {
     if !program.stmts.iter().any(runs) {
         return None;
     }
-    // The result is written as `()`: a program that stops (`perform exit(3)`)
-    // gives its body the type `Never`, which leaves `host_run`'s `A` open.
-    let mut wrapper = crate::surface::parse_program_unresolved_at(
-        "let _: () := Host::run(() => ())",
+    let mut wrapper = tauto_parse::parse_program_unresolved_at(
+        if entries {
+            "let ^ran: () := Entry::run(() => ())"
+        } else {
+            return None;
+        },
         WRAPPER_BASE,
     )
     .expect("the wrapper parses");
@@ -188,6 +202,9 @@ fn fill(t: &mut crate::surface::SurfaceTerm, body: Vec<Stmt>) {
     let mut kind = (*t.kind).clone();
     match &mut kind {
         TermKind::App { arguments, .. } => fill(&mut arguments[0], body),
+        TermKind::Lam { body: inner, .. } if matches!(&*inner.kind, TermKind::App { arguments, .. } if !arguments.is_empty()) => {
+            fill(inner, body)
+        }
         TermKind::Lam { body: unit, .. } => {
             let mut stmts = body;
             stmts.push(Stmt::Expr((**unit).clone()));
@@ -198,123 +215,41 @@ fn fill(t: &mut crate::surface::SurfaceTerm, body: Vec<Stmt>) {
     *t = t.with_kind(kind, t.span);
 }
 
-/// Puts the body of each `spawn` and `test` in `stmt` in `host_run`.
-fn tasks_in_stmt(stmt: &mut Stmt) {
-    match stmt {
-        Stmt::Let { value, .. } | Stmt::Var { value, .. } | Stmt::Assign { value, .. } => {
-            tasks_in(value)
-        }
-        Stmt::Fn(f) => tasks_in(&mut f.body),
-        Stmt::Attributed { stmt, .. } => tasks_in_stmt(stmt),
-        Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
-            items.iter_mut().for_each(tasks_in_stmt)
-        }
-        Stmt::Instance(i) => i.methods.iter_mut().for_each(|f| tasks_in(&mut f.body)),
-        Stmt::While { condition, body } => {
-            tasks_in(condition);
-            tasks_in(body);
-        }
-        Stmt::Return(Some(e)) | Stmt::Expr(e) => tasks_in(e),
-        _ => {}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_temporary_directory_does_not_stand_in_for_read_or_write() {
+        let effects: Vec<String> = ["fs_temp_dir", "fs_read", "fs_write"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let needed = permissions(effects.iter());
+        assert!(needed.contains("read") && needed.contains("write"));
     }
 }
 
-fn tasks_in(t: &mut SurfaceTerm) {
-    let mut kind = (*t.kind).clone();
-    match &mut kind {
-        TermKind::Perform { effect, args } => {
-            args.iter_mut().for_each(tasks_in);
-            let body = match (effect.as_str(), args.as_mut_slice()) {
-                ("spawn", [f]) | ("test", [_, f]) => Some(f),
-                _ => None,
-            };
-            if let Some(f) = body {
-                let mut task = parse_expr_at("() => Host::run(())", WRAPPER_BASE)
-                    .expect("the task's wrapper parses");
-                if effect.is_resolved() {
-                    let mut wrapper = vec![Stmt::Expr(task)];
-                    tauto_surface::resolve::Resolver::new(
-                        tauto_surface::bindings::library_bindings(),
-                    )
-                    .statements(&mut wrapper);
-                    let Stmt::Expr(resolved) = wrapper.remove(0) else {
-                        unreachable!()
-                    };
-                    task = resolved;
-                }
-                put_task(&mut task, f.clone());
-                *f = task;
-            }
-        }
-        TermKind::App {
-            function,
-            arguments,
-        } => {
-            tasks_in(function);
-            arguments.iter_mut().for_each(tasks_in);
-        }
-        TermKind::Lam { body, .. } => tasks_in(body),
-        TermKind::Union(ts) | TermKind::Product(ts) | TermKind::Tuple(ts) => {
-            ts.iter_mut().for_each(tasks_in)
-        }
-        TermKind::Tagged { term, .. } | TermKind::Borrow { term, .. } => tasks_in(term),
-        TermKind::If {
-            condition,
-            then,
-            otherwise,
-        } => {
-            tasks_in(condition);
-            tasks_in(then);
-            if let Some(o) = otherwise {
-                tasks_in(o);
-            }
-        }
-        TermKind::Field { base, .. } | TermKind::Ascribe { term: base, .. } => tasks_in(base),
-        TermKind::Block(stmts) => stmts.iter_mut().for_each(tasks_in_stmt),
-        TermKind::Handle { body, handlers } => {
-            tasks_in(body);
-            for h in handlers {
-                match h {
-                    Handler::Return { body, .. } => tasks_in(body),
-                    Handler::Operation { guard, body, .. } => {
-                        if let Some(g) = guard {
-                            tasks_in(g);
-                        }
-                        tasks_in(body);
-                    }
-                }
-            }
-        }
-        TermKind::Budget { steps, body, .. } => {
-            tasks_in(steps);
-            tasks_in(body);
-        }
-        TermKind::Match {
-            scrutinee, arms, ..
-        } => {
-            tasks_in(scrutinee);
-            for arm in arms {
-                if let Some(g) = &mut arm.guard {
-                    tasks_in(g);
-                }
-                tasks_in(&mut arm.body);
-            }
-        }
-        TermKind::Record { fields, .. } => fields.iter_mut().for_each(|(_, v)| tasks_in(v)),
-        TermKind::BorrowLam { lam, .. } => tasks_in(lam),
-        _ => return,
-    }
-    if kind != *t.kind {
-        *t = t.with_kind(kind, t.span);
-    }
-}
-
-fn put_task(t: &mut SurfaceTerm, f: SurfaceTerm) {
-    let mut kind = (*t.kind).clone();
-    match &mut kind {
-        TermKind::Lam { body, .. } => put_task(body, f),
-        TermKind::App { arguments, .. } => arguments[0] = f,
-        other => panic!("the task's wrapper has the shape it is written with: {other:?}"),
-    }
-    *t = t.with_kind(kind, t.span);
+/// Whether `effect` is one of the operations on a `Ref` or a `Weak` the
+/// host answers (`ref_new`, `ref_get`, `ref_set`, `weak_of`, `weak_get`),
+/// or on a `Mutex` or an `Atomic` (`mutex_new`, `atomic_load`, …).
+pub fn is_storage_operation(effect: &crate::surface::Name) -> bool {
+    [
+        "ref_new",
+        "ref_get",
+        "ref_set",
+        "weak_of",
+        "weak_get",
+        "mutex_new",
+        "mutex_claim",
+        "mutex_take_claimed",
+        "mutex_put",
+        "mutex_withdraw",
+        "atomic_new",
+        "atomic_load",
+        "atomic_store",
+        "atomic_fetch_add",
+    ]
+    .iter()
+    .any(|op| tauto_surface::bindings::is_library(effect, op))
 }

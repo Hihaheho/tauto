@@ -4,7 +4,7 @@ use selfhost_harness::{materialize, root, run_tote};
 #[test]
 fn bootstrap_grammar_and_declared_parser_share_the_source_and_tables() {
     let source = std::fs::read_to_string(root().join("totes/grammar/src/grammar.taut")).unwrap();
-    let parsed = tauto::surface::parse_program_unresolved_at(&source, 0).unwrap();
+    let parsed = tauto_parse::parse_program_unresolved_at(&source, 0).unwrap();
     let declarations: Vec<_> = parsed
         .stmts
         .iter()
@@ -129,7 +129,7 @@ fn generated_parser_really_parses_tauto_including_its_own_declaration() {
     let expected: String = inputs
         .iter()
         .map(|(_, source)| {
-            if tauto_parol::parse(source).is_ok() {
+            if tauto_parol::grammar_accepts(source) {
                 "ok\n"
             } else {
                 "error\n"
@@ -151,22 +151,23 @@ fn generated_tree_has_typed_fields_and_original_tokens() {
     let source = std::fs::read_to_string(root().join("totes/grammar/src/grammar.taut")).unwrap();
     let source = source
         + r#"
-fn inspect(source: std.prelude.Text): Unit {
+import std::builtin::os { stdout, stdout_flush }
+fn inspect(source: std::prelude::Text): Unit ! {stdout, stdout_flush} {
   match tauto::parse(source) {
-    Ok(tree) => perform show("tree", tree.stmts)
-    Err(diag) => perform show("error", diag)
+    Ok(tree) => show(&tree.stmts)
+    Err(diag) => show(&diag)
   }
 }
-inspect("let answer = 42")
+inspect("let answer := 42")
 "#;
     let out = tauto::syntax::with_search_dirs(vec![root().join("totes/grammar")], || {
-        tauto::eval::run(&source)
+        tauto::exec::run(&source)
     })
     .unwrap();
-    assert_eq!(out.outputs.len(), 1);
-    assert_eq!(out.outputs[0].0, "tree");
-    let tree = &out.outputs[0].1;
-    assert!(tree.starts_with("tauto.Stmts {"), "{tree}");
+    // `show` prints the value, as Rust's `Debug` would, to the program's output.
+    assert_eq!(out.stderr, "");
+    let tree = &out.stdout;
+    assert!(tree.starts_with("tauto::Stmts {"), "{tree}");
     assert!(tree.contains("text: \"answer\""), "{tree}");
     assert!(tree.contains("text: \"42\""), "{tree}");
 }
@@ -178,7 +179,7 @@ fn generated_parser_acceptance_matches_repository_corpus() {
     let expected: String = inputs
         .iter()
         .map(|(_, source)| {
-            if tauto_parol::parse(source).is_ok() {
+            if tauto_parol::grammar_accepts(source) {
                 "ok\n"
             } else {
                 "error\n"

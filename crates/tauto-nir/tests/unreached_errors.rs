@@ -1,8 +1,7 @@
-//! A build generates only what its roots reach, so the checks of generating
-//! answer only for that: a function nothing reaches does not stop the build,
-//! and the same function stops it once something calls it.
+//! A build answers to the same checks as `tauto check`: a function whose row
+//! does not hold stops the build whether or not anything reaches it.
 
-use tauto_nir::compile_with;
+use tauto::nir::compile_with;
 
 const SPIN: &str = r#"struct Holder { call: () -> i64 ! {} }
 fn spin(): i64 ! {} {
@@ -11,17 +10,19 @@ fn spin(): i64 ! {} {
 }
 "#;
 
-const MESSAGE: &str = "a function value may perform Div but its type permits {}";
+const MESSAGE: &str = "a function value may perform div but its type permits {}";
 
 #[test]
-fn an_unreached_function_does_not_stop_the_build() {
+fn an_unreached_function_keeps_its_error() {
+    tauto_messages::install();
     let source = format!("{SPIN}let r := 1\n");
-    let package = compile_with(&source, false).unwrap_or_else(|e| panic!("{e:?}"));
-    assert!(package.fns.iter().all(|f| f.source.as_str() != "spin"));
+    let error = format!("{:?}", compile_with(&source, false).unwrap_err());
+    assert!(error.contains(MESSAGE), "{error}");
 }
 
 #[test]
 fn a_reached_function_keeps_its_error() {
+    tauto_messages::install();
     let source = format!("{SPIN}let r := spin()\n");
     let error = format!("{:?}", compile_with(&source, false).unwrap_err());
     assert!(error.contains(MESSAGE), "{error}");
@@ -29,6 +30,7 @@ fn a_reached_function_keeps_its_error() {
 
 #[test]
 fn a_library_exports_reach_every_function() {
+    tauto_messages::install();
     let error = format!("{:?}", compile_with(SPIN, true).unwrap_err());
     assert!(error.contains(MESSAGE), "{error}");
 }

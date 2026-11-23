@@ -10,7 +10,7 @@
 //! own file dialog, and nothing else, becomes readable or writable. The
 //! program never names the path it is given; the user's act grants it.
 //!
-//! `--allow-div` is not about a resource the program reaches: it lets `Div`
+//! `--allow-div` is not about a resource the program reaches: it lets `div`
 //! (a loop or a call that may not stop) run without the host's step limit,
 //! for a program whose job is not to stop, such as an event loop or a
 //! server. Without it the limit stops a run that loops by mistake.
@@ -42,7 +42,7 @@ pub struct Permissions {
     /// Reading the clipboard (writing to it is always allowed, like standard
     /// output). Only `Denied` or `All`: there is nothing to name.
     pub clipboard: Grant,
-    /// `--allow-div`: `Div` outside any `budget` runs without the host's
+    /// `--allow-div`: `div` outside any `budget` runs without the host's
     /// step limit. Only `Denied` or `All`.
     pub div: Grant,
     /// What the user picked in the host's file dialog ([`Permissions::choose`]).
@@ -304,7 +304,15 @@ impl Permissions {
     fn check_flags(&self, kind: &str, target: &str) -> Option<String> {
         match self.grant(kind) {
             Grant::Denied => None,
-            Grant::All => Some(target.to_string()),
+            // A path is given back resolved under every grant, as the
+            // program is promised (`docs/design/host-effects.md`): what a
+            // grant of everything checks is what an `Only` grant would use.
+            Grant::All => Some(match kind {
+                "read" | "write" => resolve(Path::new(target))
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| target.to_string()),
+                _ => target.to_string(),
+            }),
             Grant::Only(items) => match kind {
                 "read" | "write" => {
                     let real = resolve(Path::new(target))?;

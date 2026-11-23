@@ -1,57 +1,43 @@
-# 検査の時間の上限
+# `check` settings in `Tauto.eure`
 
-`tauto check` は、ソースファイル一つの検査に時間の上限を置く。既定は 10 秒。上限を超えたファイルは、検査を強制的に止めてエラーにする。警告にも、検査の省略にもしない。
+## Time limit
 
-## 何を数えるか
+`tauto check` gives each source file a time budget (default 10 s). A file that
+exceeds it is an error, never a warning or a skip.
 
-上限はファイルごとに数える。ファイルの最初の宣言を検査し始めたときから、そのファイルの宣言を検査している時間を足す。`import` で読まれたファイルの時間は、読まれたファイルの側に数える。読み込みと構文の展開は含めない。ただし、ステップの展開（`macro-steps.md`「展開と検査（`step.rs`）」）が行うカーネルの検査は宣言の検査なので、その時間は数える。
-
-上限は、カーネルが宣言ごとに持つ締め切り（`--timeout`）と同じしくみで守る。宣言の検査中に締め切りが来れば、その宣言を拒否する。次の宣言を始めるときにすでに過ぎていれば、その宣言を始めずに拒否する。どちらも、そのファイルと後のファイルの残りの宣言は検査しない。`--timeout` は一つの宣言の上限で、ファイルの上限とは別に働く。早く来たほうで止まる。
-
-エラーはファイル名と上限を述べ、`Tauto.eure` の `check.slow` に書けば上げられると伝える。
-
-## 上限を決める
-
-ファイルの上限は、そのファイルの上に最も近い `Tauto.eure` が決める。
+The budget counts time spent checking the file's own declarations, including
+the kernel checks run by step expansion
+([`macro-steps.md`](macro-steps.md)), but not loading or syntax expansion;
+imported files count against themselves. It is enforced by the same deadline
+as `--timeout` (a per-declaration limit; whichever comes first wins): the
+declaration being checked is rejected, and the rest of that file and later
+files are not checked. The error names the file and the limit and points to
+`check.slow`.
 
 ```eure
 check {
   time-limit = 10
-  slow {
-    "std/FloatPack.taut" = 120
-  }
+  slow { "std/float_pack.taut" = 120 }
 }
 ```
 
-- `time-limit` は `slow` にないすべてのファイルの上限で、秒で書く。省略すると 10 秒。小数も書ける。
-- `slow` は、より長くかかってよいファイルと、そのファイルの上限（秒）の対応。キーは `Tauto.eure` のあるディレクトリからの相対パスで書く。
-- `slow` の各項目は、存在するファイルを指し、上限が `time-limit`（省略したときは 10 秒）より大きくなければならない。そうでなければエラーにする。一覧には、実際に長くかかるファイルだけが残る。
-- 秒数は正の有限の数でなければならない。
-- 環境変数 `TAUTO_TIME_SCALE` を正の数にすると、どのファイルの上限もその倍になる（`TAUTO_TIME_SCALE=3` なら既定の 10 秒が 30 秒）。
-  負荷の高い機械でテストを流すためのもので、`slow` の項目の検査は書かれた秒数で行う。
-- `check` の下のキーは `time-limit` と `slow` だけで、綴りの違いはエラーになる。
+- The nearest `Tauto.eure` above a file decides; with none, 10 s.
+- `time-limit` (seconds, positive, may be fractional) applies to files not in
+  `slow`. `slow` keys are paths relative to the manifest; each must exist and
+  exceed `time-limit`, so the list holds only genuinely slow files.
+- `TAUTO_TIME_SCALE=k` multiplies every limit (for loaded machines); the
+  `slow` validation uses the written values.
+- Unknown keys under `check` are errors.
+- The bundled standard library carries its own `check` settings, applied to its
+  virtual paths independently of the user's manifest.
 
-`Tauto.eure` が上にないファイルの上限は 10 秒である。
-
-組み込み標準ライブラリは、ビルド時の配布側の `Tauto.eure` の `check` 設定を同梱し、仮想パスにも適用する。`slow` の標準ライブラリに属する項目は、同梱したファイルの存在と上限を検証する。利用側のマニフェストや、実行場所にあるファイルには依存しない。
-
-## 適用される場所
-
-`tauto check FILE` と `tauto check --tote DIR` は、読んだファイルのそれぞれに、そのファイルの上限を適用する。標準ライブラリと `meta/` の検査（`scripts/test.sh`）も同じ読み方をするので、プロジェクトの根の `Tauto.eure` の `check.slow` に従う。
-
-## 許す公理
-
-`check` の `axioms` は、そのマニフェストの下のファイルが依存してよい公理を、ファイルごとに書く。
+## Allowed axioms
 
 ```eure
-check {
-  axioms {
-    "std/Quot.taut" = ["Quot::sound"]
-  }
-}
+check { axioms { "std/quot.taut" = ["Quot::sound"] } }
 ```
 
-- `axioms` を書くと、書かれていないファイルは公理に依存できない。書かれたファイルは、並べた公理にだけ依存できる。依存した宣言は検査の失敗になる。
-- `axioms` を書かないマニフェストの下では、公理への依存は失敗にならず、これまでどおり一覧に出る。
-- 公理そのものの宣言は失敗にしない。その公理に依存する宣言が失敗する。
-- キーはマニフェストのあるディレクトリからの相対パスで、存在するファイルを指さなければならない。
+When `axioms` is present, a declaration under the manifest that depends on an
+axiom not listed for its file fails (declaring the axiom itself does not).
+Keys must name existing files. Without `axioms`, dependencies are only
+reported.

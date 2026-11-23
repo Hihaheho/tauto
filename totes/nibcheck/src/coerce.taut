@@ -1,0 +1,203 @@
+import "../../identity/src/identity.taut"
+import "messages.taut"
+import std::base
+import std::list
+import std::map
+import std::text
+import "checker.taut"
+import "datas.taut"
+import "ty.taut"
+import "types_match.taut"
+import "../../text/src/text.taut"
+
+// Structs read through their `coerce` fields (`coerce_step`, `coerce_fit`
+// and the field reading of `types.rs`), in the proof language
+// (`docs/design/ownership.md`「Coercing structs (`coerce`)」).
+// A `coerce` field lends its struct `W` as the field's type `T`: `&W` as
+// `&T`, under `coerce(mut)` also `&mut W` as `&mut T`, under
+// `coerce(owned)` also `W` as `T`. Each of these functions only reads the
+// checker, or reports through `ck_error`; the reading itself is written out
+// after the check (`expand_coercions` of `types/coerce.rs`).
+
+// The last of the names of a path: `W` of `m::W`.
+pub fn coerce_last(t: Text): Text {
+  match List::last(text_split(t, "::")) {
+    Some(n) => n
+    None => t
+  }
+}
+
+// The field named by `w.W::f`: the type named before it and the field, or
+// `None` for a plain `w.f`.
+pub fn coerce_qualified(name: Text): Option(Text × Text) {
+  let parts := text_split(name, "::")
+  ⊢ Option(Text × Text) from match coerce_init(parts) {
+    Nil => None
+    Cons(q, more) => ⊢ Option(Text × Text) from match List::last(parts) {
+      Some(f) => Some(#(text_join(Cons(q, more), "::"), f))
+      None => None
+    }
+  }
+}
+
+// All but the last of `l`.
+pub fn coerce_init(l: List(Text)): List(Text) {
+  match l {
+    Nil => Nil
+    Cons(x, rest) => ⊢ List(Text) from match rest {
+      Nil => Nil
+      Cons(^y, ^more) => Cons(x, coerce_init(rest))
+    }
+  }
+}
+
+// Whether `t` is the struct named `q`, by the last of their names.
+pub fn coerce_names(t: Ty, q: Text): Bool {
+  match t {
+    TyNamed(d, ^args) => coerce_last(surface_name_text(d)) == coerce_last(q)
+    _ => false
+  }
+}
+
+// Whether the struct `d` declares the field `f` itself.
+pub fn coerce_declares(datas: Datas, d: Text, f: Text): Bool {
+  data_is_struct(datas, d) && coerce_has_field(datas_fields(datas, d, 0, Nil), f)
+}
+
+pub fn coerce_has_field(fs: List(DataField), f: Text): Bool {
+  match fs {
+    Nil => false
+    Cons(x, rest) => ⊢ Bool from match x.name {
+      Some(n) => n == f || coerce_has_field(rest, f)
+      None => coerce_has_field(rest, f)
+    }
+  }
+}
+
+// The first of `passed` that declares `f`.
+pub fn coerce_owner(datas: Datas, passed: List(Text), f: Text): Option(Text) {
+  match passed {
+    Nil => None
+    Cons(d, rest) => if coerce_declares(datas, d, f) { Some(d) } else { coerce_owner(datas, rest, f) }
+  }
+}
+
+// Where a reading through `coerce` fields ends: the type reached, the structs
+// passed on the way (the first first), how many steps and the narrowest level.
+pub(open) inductive CoerceWalk: Type {
+  CoerceWalkMk(reached: Ty, passed: List(Text), steps: Nat, level: CoerceLevel): CoerceWalk
+}
+
+// `t` read through every `coerce` field, or up to the struct `q` that a
+// `w.q::f` names. At most `k` steps are taken.
+pub fn ck_coerce_walk(k: Nat, c: &Checker, t: Ty, q: Option(Text)): CoerceWalk {
+  match k {
+    Zero => CoerceWalk { reached: t, passed: Nil, steps: 0, level: CoerceOwned }
+    Succ(j) => {
+      let stop := ⊢ Bool from match q {
+        Some(n) => coerce_names(t, n)
+        None => false
+      }
+      if stop {
+        CoerceWalk { reached: t, passed: Nil, steps: 0, level: CoerceOwned }
+      } else {
+        ⊢ CoerceWalk from match ck_coerce_step(&c, t) {
+          None => CoerceWalk { reached: t, passed: Nil, steps: 0, level: CoerceOwned }
+          Some(s) => {
+            let rest := ck_coerce_walk(j, &c, s.ty, q)
+            CoerceWalk {
+              reached: rest.reached,
+              passed: Cons(s.data, rest.passed),
+              steps: rest.steps + 1,
+              level: coerce_min(s.level, rest.level)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// `reached` borrowed as `resolved` is: `&mut w` read as its field's type is a
+// `&mut` of that type.
+pub fn coerce_rewrap(resolved: Ty, reached: Ty): Ty {
+  match resolved {
+    TyBorrow(^inner, m) => TyBorrow(reached, m)
+    _ => reached
+  }
+}
+
+// What `w.f` (or `w.W::f`) reads: the base's type read through its `coerce`
+// fields, and the field then read. `None` when the reading is refused and
+// reported.
+pub(open) inductive CoerceRead: Type {
+  CoerceReadMk(base: Ty, field: Text, refused: Option(Text)): CoerceRead
+}
+
+// How `w.f` reads `w: b`, with `place` the name of `w` for a message (`types.rs`, the field of an expression): the type
+// whose field is read, the field's own name, and the message when the reading
+// is refused.
+pub fn ck_coerce_read(c: &Checker, place: Text, b: Ty, name: Text): CoerceRead {
+  let resolved := ck_resolve(&c, b)
+  let split := coerce_qualified(name)
+  let q := ⊢ Option(Text) from match split {
+    Some(p) => Some(p.fst)
+    None => None
+  }
+  let field := ⊢ Text from match split {
+    Some(p) => p.snd
+    None => name
+  }
+  let walk := ck_coerce_walk(33, &c, ty_unborrowed(resolved), q)
+  let shown := ty_show(ck_shown(&c, ty_unborrowed(resolved)))
+  ⊢ CoerceRead from match q {
+    Some(n) => if coerce_names(walk.reached, n) {
+      CoerceRead { base: coerce_rewrap(resolved, walk.reached), field: field, refused: None }
+    } else {
+      CoerceRead { base: b, field: name, refused: Some(no_field_message(shown, name)) }
+    }
+    None => {
+      let own := ⊢ Option(Text) from match walk.reached {
+        TyNamed(here, ^args) => if coerce_declares(c.datas, surface_name_text(here), field) {
+          None
+        } else {
+          coerce_owner(c.datas, walk.passed, field)
+        }
+        _ => None
+      }
+      ⊢ CoerceRead from match own {
+        Some(owner) => CoerceRead {
+          base: b,
+          field: name,
+          refused: Some(coerce_own_field_message(field, coerce_last(owner), place))
+        }
+        None => ⊢ CoerceRead from match walk.steps {
+          Zero => CoerceRead { base: b, field: name, refused: None }
+          Succ(^n) => CoerceRead { base: coerce_rewrap(resolved, walk.reached), field: field, refused: None }
+        }
+      }
+    }
+  }
+}
+
+// How a place `w.f := e` writes through `coerce` fields: the message when a
+// step on the way lends less than `&mut`.
+pub fn ck_coerce_assign(c: &Checker, b: Ty, name: Text): Option(Text) {
+  let resolved := ck_resolve(&c, b)
+  let q := ⊢ Option(Text) from match coerce_qualified(name) {
+    Some(p) => Some(p.fst)
+    None => None
+  }
+  let walk := ck_coerce_walk(33, &c, ty_unborrowed(resolved), q)
+  ⊢ Option(Text) from match walk.steps {
+    Zero => None
+    Succ(^n) => if coerce_below(walk.level, CoerceMut) {
+      Some(coerce_assign_message(
+        ty_show(ck_shown(&c, ty_unborrowed(resolved))),
+        ty_show(ck_shown(&c, walk.reached))
+      ))
+    } else {
+      None
+    }
+  }
+}

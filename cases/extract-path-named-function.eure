@@ -1,0 +1,23 @@
+description = "A function declared as `T::f` is extracted under its own name, not under the modules of its file's path."
+
+// `Bytes::concat` has the name of a function of the standard library, so the
+// program tells the two apart by the file's module in the full name. The
+// extraction writes it as `fn Bytes::concat_…` and calls it as
+// `Bytes::concat_…(…)`, as it writes the library's `List::concat`.
+@ cases.a-function-named-by-a-path-has-no-module-of-its-file
+entry = "src/main.taut"
+files."src/help.taut" = ```tauto
+import std::base
+import std::list
+fn Bytes::concat(ls: List(List(Nat))): List(Nat) { List::concat(ls) }
+pub fn joined(a: List(Nat), b: List(Nat)): List(Nat) { Bytes::concat(Cons(a, Cons(b, Nil))) }
+```
+files."src/main.taut" = ```tauto
+import "help.taut"
+perform main(() => {
+  show(&joined(Cons(1, Nil), Cons(2, Nil)))
+})
+```
+stdout = "[1, 2]\n"
+extracted_text = ["fn Bytes::concat_2(", "Bytes::concat_2("]
+extracted_lacks = ["module ", "src::help"]

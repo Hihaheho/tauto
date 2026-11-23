@@ -1,30 +1,89 @@
 // A function of the A tier (aborts only) handed to a parameter whose row
 // suspends is made into one of the O tier (resumes at most once; see
 // docs/design/rust-backend.md, "層の決定と単相化"); an abort it meets
-// reaches the `resume 0` arm.
+// reaches the `resume 0` arm. The arm of `ask` computes after it resumes, so
+// `ask` stays an operation that suspends.
 @ cases.abort-fn-to-suspending-parameter
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```tauto
-effect ask(): i64
+effect ask(): nat
 effect stop(): Never resume 0
-fn both<!h>(a: () -> i64 ! h, b: () -> i64 ! h): i64 ! h { a() + b() }
-fn f(k: () -> i64 ! {stop}, j: () -> i64 ! {ask}): i64 ! {stop, ask} { both(k, j) }
-fn early(): i64 ! {stop} { perform stop() }
-fn one(): i64 ! {stop} { 1 }
-fn asked(): i64 ! {ask} { perform ask() }
-perform show("a", handle { handle { f(one, asked) } with {
-  ask(), k => k(10)
+fn both<!h>(a: () -> nat ! h, b: () -> nat ! h): nat ! h { a() + b() }
+fn f(k: () -> nat ! {stop}, j: () -> nat ! {ask}): nat ! {stop, ask} { both(k, j) }
+fn early(): nat ! {stop} { perform stop() }
+fn one(): nat ! {stop} { 1 }
+fn asked(): nat ! {ask} { perform ask() }
+show(&(handle { handle { f(one, asked) } with {
+  ask(), k => k(10) + 100
   return v => v
 } } with {
   stop() => 7
   return v => v
-})
-perform show("b", handle { handle { f(early, asked) } with {
-  ask(), k => k(10)
+}))
+show(&(handle { handle { f(early, asked) } with {
+  ask(), k => k(10) + 100
   return v => v
 } } with {
   stop() => 7
   return v => v
-})
+}))
 ```
-shows = ["a = 11", "b = 7"]
+stdout = ```
+111
+7
+```
+nir.fns."f@0" = ```nir
+fn $"f@0"@2(): nat O = both@6(one@7: fn() -> nat shared O, asked@8: fn() -> nat shared O) tier O: nat
+```
+nir.fns."f@1" = ```nir
+fn $"f@1"@4(): nat O = both@6(early@9: fn() -> nat shared O, asked@8: fn() -> nat shared O) tier O: nat
+```
+nir.fns.both = ```nir
+fn both@6(a#12: fn() -> nat shared O, b#13: fn() -> nat shared O): nat O = add<nat>(a#12() tier O: nat, b#13() tier O: nat)
+```
+nir.fns.one = ```nir
+fn one@7(): nat A = 1nat
+```
+nir.fns.early = ```nir
+fn early@9(): nat A = perform main::stop() resume 0 instance() -> Never legacy: Never
+```
+nir.fns.asked = ```nir
+fn asked@8(): nat O = perform ask() resume <=1 instance() -> nat legacy: nat
+```
+
+// The parameter of a field's function is taken at the tier its type holds it
+// at; a call of it states that tier, though its row has an operation that
+// suspends (`ask`). The call is not awaited where the parameter is not a
+// future.
+@ cases.field-function-parameter-with-suspending-row-is-called-at-its-held-tier
+source = ```tauto
+effect ask(): nat
+pub struct Ui(!e) {
+  lift: (part: () -> Unit ! {ask} ∪ e) -> Unit ! {ask}
+}
+pub effect ui<!e>(): Ui(e) direct
+
+pub fn with_ui<A, !f>(body: () -> A ! {ui(!{})} ∪ f): A ! f {
+  let u: Ui(!{}) := Ui { lift: part => part() }
+  with_ui_of(u, body)
+}
+
+pub fn with_ui_of<A, !e, !f>(u: Ui(e), body: () -> A ! {ui(e)} ∪ f): A ! f {
+  handle { body() } with {
+    ui(), k => k(u)
+    return value => value
+  }
+}
+
+fn page(): nat ! {ui(!{}), ask} {
+  let u: Ui(!{}) := perform ui()
+  (u.lift)(() => #())
+  1
+}
+
+show(&(handle { with_ui(() => page()) } with {
+  ask(), k => k(0)
+  return v => v
+}))
+```
+stdout = "1\n"

@@ -27,10 +27,45 @@ fn normalized_environment(
         .into_iter()
         // The reusable launcher clears test-runner metadata and Cargo's
         // validated caller library path; the compiler supplies its own paths.
-        .filter(|(key, _)| !caller_metadata(key))
+        .filter(|(key, _)| !caller_metadata(key) && build_relevant(key))
         .collect();
     vars.sort();
     vars
+}
+
+/// Only variables a build can read are part of the identity. Shell and
+/// session variables (`PWD`, `OLDPWD`, `SHLVL`, `TERM`, session ids, ...)
+/// differ between runs without changing the compiler, and hashing them gave
+/// every run a new key and a full rebuild of the compiler.
+fn build_relevant(key: &std::ffi::OsStr) -> bool {
+    const PREFIXES: &[&str] = &[
+        "CARGO",
+        "RUST",
+        "TAUTO",
+        "DYLD_",
+        "LD_",
+        "CC",
+        "CXX",
+        "AR",
+        "CFLAGS",
+        "CPPFLAGS",
+        "LDFLAGS",
+        "LIBRARY_PATH",
+        "PKG_CONFIG",
+        "SDKROOT",
+        "MACOSX_",
+        "OPENSSL",
+        "SSL_CERT",
+        "BINDGEN",
+        "LIBCLANG",
+        "CLANG",
+        "ZSTD",
+        "SOURCE_DATE_EPOCH",
+        "PATH",
+        "HOME",
+    ];
+    let name = key.to_string_lossy().to_ascii_uppercase();
+    PREFIXES.iter().any(|p| name.starts_with(p))
 }
 
 fn caller_metadata(key: &std::ffi::OsStr) -> bool {
@@ -220,7 +255,77 @@ fn syntax_tables(files: &mut BTreeSet<PathBuf>) -> Result<()> {
 /// Discovery is repeated when a manifest, source or directory membership
 /// changes. A warm request hashes the known include files without reparsing
 /// the whole compiler tote; new imports are discovered on the next edit.
+#[cfg(test)]
 fn tote_files(dir: &Path) -> Result<(BTreeSet<PathBuf>, bool)> {
+    tote_files_with(dir, None)
+}
+
+/// A discovery kept on disk, so that a new test process does not reparse the
+/// whole tote to learn the files it already knows. Loading a tote such as
+/// `totes/nibcheck` in a debug test binary takes about a minute and a half;
+/// hashing the files it named takes milliseconds.
+///
+/// The record is trusted only under the same rule as the in-process memo: its
+/// digest covers the manifests, sources, syntax tables and every file it
+/// lists, so an edit to any of them discovers again. The digest also covers
+/// `compiler`, the digest of the compiler sources, because which files a tote
+/// reads is decided by the compiler's import resolution.
+struct DiscoveryStore<'a> {
+    path: PathBuf,
+    compiler: &'a str,
+}
+
+const DISCOVERY_FORMAT: &str = "tauto-tote-discovery-1";
+
+impl DiscoveryStore<'_> {
+    fn load(&self) -> Option<(String, Vec<PathBuf>)> {
+        reject_link(&self.path).ok()?;
+        let text = fs::read_to_string(&self.path).ok()?;
+        let mut lines = text.lines();
+        if lines.next()? != DISCOVERY_FORMAT || lines.next()? != self.compiler {
+            return None;
+        }
+        let digest = lines.next()?.to_string();
+        let imports: Vec<PathBuf> = lines.map(PathBuf::from).collect();
+        imports
+            .iter()
+            .all(|p| p.is_absolute())
+            .then_some((digest, imports))
+    }
+
+    /// Written to a fresh file and renamed into place; a failed write leaves
+    /// no record and only costs the next process a discovery.
+    fn save(&self, digest: &str, imports: &[PathBuf]) {
+        let mut text = format!("{DISCOVERY_FORMAT}\n{}\n{digest}\n", self.compiler);
+        for path in imports {
+            let Some(path) = path.to_str().filter(|p| !p.contains('\n')) else {
+                return;
+            };
+            text.push_str(path);
+            text.push('\n');
+        }
+        let Some(dir) = self.path.parent() else {
+            return;
+        };
+        if safe_dir(dir).is_err() {
+            return;
+        }
+        let pending = dir.join(format!("discovery.pending-{}", unique_id()));
+        let written = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&pending)
+            .and_then(|mut f| f.write_all(text.as_bytes()).and_then(|()| f.sync_all()));
+        if written.is_err() || fs::rename(&pending, &self.path).is_err() {
+            let _ = fs::remove_file(&pending);
+        }
+    }
+}
+
+fn tote_files_with(
+    dir: &Path,
+    store: Option<&DiscoveryStore<'_>>,
+) -> Result<(BTreeSet<PathBuf>, bool)> {
     type Discovery = BTreeMap<PathBuf, (String, Vec<PathBuf>)>;
     static DISCOVERED: OnceLock<Mutex<Discovery>> = OnceLock::new();
     let mut files = BTreeSet::new();
@@ -230,6 +335,12 @@ fn tote_files(dir: &Path) -> Result<(BTreeSet<PathBuf>, bool)> {
         .get_or_init(Default::default)
         .lock()
         .map_err(|e| e.to_string())?;
+    if !known.contains_key(dir)
+        && let Some(saved) = store.and_then(DiscoveryStore::load)
+    {
+        trace("discovery: loaded the tote's recorded inputs");
+        known.insert(dir.to_path_buf(), saved);
+    }
     let mut discovery_files = files.clone();
     if let Some((_, imports)) = known.get(dir) {
         discovery_files.extend(imports.iter().cloned());
@@ -244,6 +355,9 @@ fn tote_files(dir: &Path) -> Result<(BTreeSet<PathBuf>, bool)> {
             discovery_files.extend(imports.iter().cloned());
             syntax_tables(&mut discovery_files)?;
             let discovery = digest_files(&discovery_files, b"discovery")?;
+            if let Some(store) = store {
+                store.save(&discovery, &imports);
+            }
             known.insert(dir.to_path_buf(), (discovery, imports.clone()));
             imports
         }
@@ -256,6 +370,7 @@ fn tote_files(dir: &Path) -> Result<(BTreeSet<PathBuf>, bool)> {
 fn compiler_files(root: &Path, files: &mut BTreeSet<PathBuf>) -> Result<bool> {
     tree(&root.join("crates"), files, true)?;
     tree(&root.join("std/prelude"), files, false)?;
+    tree(&root.join("std/builtin"), files, false)?;
     for name in [
         "Cargo.toml",
         "Cargo.lock",
@@ -781,11 +896,18 @@ fn keys(
 }
 
 fn input_key(root: &Path, dir: &Path) -> Result<Option<Identity>> {
-    let (files, closed) = tote_files(dir)?;
     let mut compiler = BTreeSet::new();
     if !compiler_files(root, &mut compiler)? {
         return Ok(bypass("open compiler configuration"));
     }
+    let compiler_sources = digest_files(&compiler, b"discovery compiler")?;
+    let store = DiscoveryStore {
+        path: cache_root(root)
+            .join("discovery")
+            .join(sha256_hex(dir.as_os_str().as_encoded_bytes())),
+        compiler: &compiler_sources,
+    };
+    let (files, closed) = tote_files_with(dir, Some(&store))?;
     if !closed {
         return Ok(bypass("open tote configuration"));
     }
@@ -836,12 +958,24 @@ fn cache_root(root: &Path) -> PathBuf {
         .or_else(|| std::env::var_os("CARGO_TARGET_DIR"))
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("target"));
-    let target = if target.is_absolute() {
-        target
+    absolute(root, target).join("selfhost-harness-cache/v1")
+}
+
+/// The checkout's Cargo target directory: where `cargo build -p tauto-cli`
+/// leaves the compiler.
+fn workspace_target(root: &Path) -> PathBuf {
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"));
+    absolute(root, target)
+}
+
+fn absolute(root: &Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
     } else {
-        root.join(target)
-    };
-    target.join("selfhost-harness-cache/v1")
+        root.join(path)
+    }
 }
 
 fn checksum(path: &Path) -> Result<String> {
@@ -937,12 +1071,32 @@ fn cached_build(
     key: &str,
     build: impl FnOnce(&Path) -> Result<PathBuf>,
 ) -> Result<PathBuf> {
-    build_artifact(cache, namespace, Some(key), build)
+    build_artifact(cache, namespace, Some(key), None, build)
 }
 
 fn bypass<T>(reason: &str) -> Option<T> {
     trace(&format!("identity unavailable: {reason}"));
+    *BYPASS_REASON.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason.to_owned());
     None
+}
+
+/// Why the last identity was unavailable, for the warning below.
+static BYPASS_REASON: Mutex<Option<String>> = Mutex::new(None);
+
+/// Without an identity every call builds the compiler and the tote from
+/// nothing in a fresh directory, so a harness that runs a tote per program
+/// pays a full build per program. That must not happen silently: say so once
+/// per process and tote, whether or not tracing is on.
+fn warn_uncached(name: &str, reason: Option<String>) {
+    static WARNED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+    if !WARNED.lock().unwrap_or_else(|e| e.into_inner()).insert(name.to_owned()) {
+        return;
+    }
+    let reason = reason.unwrap_or_else(|| "the toolchain's identity cannot be read".into());
+    eprintln!(
+        "warning: tauto selfhost cache: totes/{name} is not cached ({reason}); \
+         every run rebuilds it from nothing. Run with TAUTO_SELFHOST_CACHE_TRACE=1 for details."
+    );
 }
 
 fn trace(message: &str) {
@@ -958,6 +1112,7 @@ fn build_artifact(
     cache: &Path,
     namespace: &str,
     key: Option<&str>,
+    build_key: Option<&str>,
     build: impl FnOnce(&Path) -> Result<PathBuf>,
 ) -> Result<PathBuf> {
     let tote = cache.join(namespace);
@@ -992,6 +1147,9 @@ fn build_artifact(
         && let Some(bin) = verified(&entry, key)
     {
         trace("hit: input identity and executable SHA-256 verified");
+        if let Some(build_key) = build_key {
+            prune(cache, namespace, key, build_key);
+        }
         return Ok(bin);
     }
     trace(if key.is_some() {
@@ -1068,7 +1226,68 @@ fn build_artifact(
     if key.is_none() && result.is_err() {
         let _ = fs::remove_dir_all(&entry);
     }
+    if let (Ok(_), Some(key), Some(build_key)) = (&result, key, build_key) {
+        prune(cache, namespace, key, build_key);
+    }
     result
+}
+
+/// Keeps the cache at what the current inputs use. Each build key has its
+/// own Cargo build directories, a release compiler of several gigabytes, and
+/// each tote edit its own entry: kept, every toolchain or environment change
+/// left another compiler behind until the disk was full.
+///
+/// Called with the tote's lock held, so its entries are this process's to
+/// remove. A compiler directory of another build key is removed only when no
+/// build holds the shared compiler lock.
+fn prune(cache: &Path, namespace: &str, key: &str, build: &str) {
+    let tote = cache.join(namespace);
+    let target = format!("target-{build}");
+    if let Ok(entries) = fs::read_dir(&tote) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let stale_entry =
+                name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()) && name != key;
+            let stale_target = name.starts_with("target-") && name != target;
+            if (stale_entry || stale_target) && entry.file_type().is_ok_and(|t| t.is_dir()) {
+                trace(&format!("prune: {name}"));
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    let Ok(lock) = compiler_lock(cache) else {
+        return;
+    };
+    if lock.try_lock().is_err() {
+        return;
+    }
+    if let Ok(entries) = fs::read_dir(cache.join("compiler")) {
+        for entry in entries.flatten() {
+            if entry.file_name() != build && entry.file_type().is_ok_and(|t| t.is_dir()) {
+                trace(&format!(
+                    "prune: compiler {}",
+                    entry.file_name().to_string_lossy()
+                ));
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+}
+
+/// Held shared while a compiler build directory is in use, exclusively while
+/// the ones of other build keys are removed.
+fn compiler_lock(cache: &Path) -> Result<File> {
+    safe_dir(cache)?;
+    let path = cache.join("compiler.lock");
+    reject_link(&path)?;
+    File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|e| err(&path, e))
 }
 
 #[cfg(test)]
@@ -1084,52 +1303,63 @@ pub(super) fn build_tote(name: &str) -> Result<PathBuf> {
     }
     let root = super::root().canonicalize().map_err(|e| e.to_string())?;
     let dir = root.join("totes").join(name);
+    BYPASS_REASON.lock().unwrap_or_else(|e| e.into_inner()).take();
     // Cache-only discovery failures do not change which programs can build.
     let key = match input_key(&root, &dir) {
         Ok(key) => key,
         Err(error) => {
             trace(&format!("identity unavailable: {error}"));
+            *BYPASS_REASON.lock().unwrap_or_else(|e| e.into_inner()) = Some(error);
             None
         }
     };
+    if key.is_none() {
+        let reason = BYPASS_REASON.lock().unwrap_or_else(|e| e.into_inner()).take();
+        warn_uncached(name, reason);
+    }
     let namespace = sha256_hex(dir.as_os_str().as_encoded_bytes());
     let cache = cache_root(&root);
     let result = build_artifact(
         &cache,
         &namespace,
         key.as_ref().map(|k| k.tote.as_str()),
+        key.as_ref().map(|k| k.build.as_str()),
         |work| {
             // The artifact key changes with every source edit; the Cargo
             // build directories do not, so an edit recompiles only what
-            // changed instead of the whole release compiler and its
-            // dependencies. Cargo locks and fingerprints these directories.
+            // changed instead of the whole compiler and its dependencies.
+            // The compiler is built in the checkout's own target directory,
+            // with the settings of a plain `cargo build -p tauto-cli`, so the
+            // `tauto` a developer has already built is reused instead of
+            // compiled again from nothing (minutes on a cold cache).
+            // Cargo locks and fingerprints these directories.
             let (compiler_target, tote_target) = match &key {
                 Some(k) => (
-                    cache.join("compiler").join(&k.build),
+                    workspace_target(&root),
                     cache.join(&namespace).join(format!("target-{}", k.build)),
                 ),
                 None => (work.join("compiler"), work.join("tote")),
             };
-            for dir in [&compiler_target, &tote_target] {
-                safe_dir(dir)?;
-                reject_tree_links(dir)?;
+            safe_dir(&compiler_target)?;
+            if key.is_none() {
+                reject_tree_links(&compiler_target)?;
             }
+            safe_dir(&tote_target)?;
+            reject_tree_links(&tote_target)?;
             #[cfg(test)]
             TEST_COMPILER_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
             let mut command = Command::new(env!("CARGO"));
+            // A tote reads and writes the files a test gives it, wherever
+            // they are; what it is allowed is fixed in the binary as it is
+            // built.
             command
                 .current_dir(&root)
-                .args([
-                    "run",
-                    "--locked",
-                    "-q",
-                    "-p",
-                    "tauto-cli",
-                    "--",
-                    "build",
-                    "--release",
-                ])
-                .arg(format!("totes/{name}"));
+                .arg("run")
+                .arg("--manifest-path")
+                .arg(root.join("Cargo.toml"))
+                .args(["--locked", "-q", "-p", "tauto-cli", "--", "build", "--release"])
+                .args(["--allow-read", "--allow-write"])
+                .arg(&dir);
             if key.is_some() {
                 trace("normalized caller Cargo process metadata for compiler execution");
             }
@@ -1139,7 +1369,12 @@ pub(super) fn build_tote(name: &str) -> Result<PathBuf> {
                 &compiler_target,
                 &tote_target,
             );
+            let compiler_lock = compiler_lock(&cache)?;
+            compiler_lock
+                .lock_shared()
+                .map_err(|e| format!("compiler lock: {e}"))?;
             let out = command.output().map_err(|e| format!("cargo: {e}"))?;
+            drop(compiler_lock);
             if !out.status.success() {
                 return Err(format!(
                     "tauto build totes/{name} failed: {}",
@@ -1151,7 +1386,7 @@ pub(super) fn build_tote(name: &str) -> Result<PathBuf> {
             let path = if path.is_absolute() {
                 path
             } else {
-                root.join(path)
+                Path::new("/").join(path)
             };
             // A source edit during compilation must not publish under the old key.
             if key.is_some() && input_key(&root, &dir)? != key {
@@ -1243,6 +1478,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_build_keeps_only_what_the_current_inputs_use() {
+        let s = Scratch::new();
+        let (old, new) = ("a".repeat(64), "b".repeat(64));
+        for path in [
+            format!("cache/app/{old}/tool"),
+            format!("cache/app/{new}/tool"),
+            "cache/app/target-old/x".to_string(),
+            "cache/app/target-new/x".to_string(),
+            "cache/app/work-1/x".to_string(),
+            "cache/compiler/old/x".to_string(),
+            "cache/compiler/new/x".to_string(),
+        ] {
+            s.write(&path, "x");
+        }
+        let cache = s.0.join("cache");
+        prune(&cache, "app", &new, "new");
+        let left = |p: &str| cache.join(p).exists();
+        assert!(!left(&format!("app/{old}")));
+        assert!(left(&format!("app/{new}/tool")));
+        assert!(!left("app/target-old"));
+        assert!(left("app/target-new/x"));
+        assert!(left("app/work-1/x"));
+        assert!(!left("compiler/old"));
+        assert!(left("compiler/new/x"));
+        // A compiler build directory in use is not removed.
+        s.write("cache/compiler/old/x", "x");
+        let busy = compiler_lock(&cache).unwrap();
+        busy.lock_shared().unwrap();
+        prune(&cache, "app", &new, "new");
+        assert!(left("compiler/old/x"));
+    }
+
     fn executable(work: &Path, text: &str) -> PathBuf {
         let path = work.join("built");
         fs::write(&path, text).unwrap();
@@ -1263,7 +1531,7 @@ mod tests {
         s.write(
             "totes/app/src/main.taut",
             r#"let payload := include_text!("data.txt")
-perform show("payload", payload)
+show(&payload)
 "#,
         );
         s.write("totes/app/src/data.txt", "alpha");
@@ -1284,12 +1552,52 @@ perform show("payload", payload)
         );
         s.write("crates/compiler/src/lib.rs", "compiler");
         s.write("crates/tauto-rt/src/lib.rs", "runtime");
-        s.write("std/prelude/Std.taut", "prelude");
+        s.write("std/prelude/std.taut", "prelude");
         s.write("Cargo.lock", "locked dependencies");
         s.write("Cargo.toml", "compiler profiles/features");
         s.write(".cargo/config.toml", "compiler config");
         s.write("rust-toolchain.toml", "toolchain");
         s
+    }
+
+    /// A record on disk is the in-process memo of another process: it is
+    /// read only for the compiler it was written under, and a record whose
+    /// digest no longer matches the files is replaced by a new discovery.
+    #[test]
+    fn recorded_discovery_is_reused_only_while_it_matches() {
+        let s = Scratch::new();
+        let path = s.0.join("store/record");
+        let one = DiscoveryStore {
+            path: path.clone(),
+            compiler: "compiler-1",
+        };
+        let imports = vec![s.0.join("a.taut"), s.0.join("b.taut")];
+        one.save("digest", &imports);
+        assert_eq!(one.load(), Some(("digest".to_string(), imports)));
+        let other = DiscoveryStore {
+            path: path.clone(),
+            compiler: "compiler-2",
+        };
+        assert_eq!(other.load(), None);
+        fs::write(
+            &path,
+            format!("{DISCOVERY_FORMAT}\ncompiler-1\nd\nrelative.taut\n"),
+        )
+        .unwrap();
+        assert_eq!(one.load(), None);
+
+        s.write("totes/app/Tauto.eure", "package { name = \"app\" }\n");
+        s.write("totes/app/src/main.taut", "let x := 1\n");
+        let dir = s.0.join("totes/app");
+        let store = DiscoveryStore {
+            path: s.0.join("store/app"),
+            compiler: "compiler-1",
+        };
+        store.save("stale", &[s.0.join("gone.taut")]);
+        let (files, _) = tote_files_with(&dir, Some(&store)).unwrap();
+        assert!(!files.contains(&s.0.join("gone.taut")));
+        let (saved, _) = store.load().unwrap();
+        assert_ne!(saved, "stale");
     }
 
     fn fixture_key(s: &Scratch) -> String {
@@ -1315,7 +1623,7 @@ perform show("payload", payload)
             "totes/app/src/data.txt",
             "crates/compiler/src/lib.rs",
             "crates/tauto-rt/src/lib.rs",
-            "std/prelude/Std.taut",
+            "std/prelude/std.taut",
             "Cargo.lock",
             "Cargo.toml",
             ".cargo/config.toml",
@@ -1678,6 +1986,28 @@ fn first(): u64 { second() }
     }
 
     #[test]
+    fn shell_and_session_variables_do_not_change_compiler_identity() {
+        let base = vec![(OsString::from("RUSTFLAGS"), OsString::from("-Cdebuginfo=0"))];
+        let mut a = base.clone();
+        a.extend([("PWD".into(), "/a".into()), ("SHLVL".into(), "1".into())]);
+        let mut b = base.clone();
+        b.extend([
+            ("PWD".into(), "/b".into()),
+            ("SESSION_ID".into(), "x".into()),
+        ]);
+        assert_eq!(normalized_environment(a), normalized_environment(b));
+        let mut c = base;
+        c.push(("CARGO_PROFILE_RELEASE_LTO".into(), "fat".into()));
+        assert_ne!(
+            normalized_environment(c),
+            normalized_environment(vec![(
+                OsString::from("RUSTFLAGS"),
+                OsString::from("-Cdebuginfo=0")
+            )])
+        );
+    }
+
+    #[test]
     fn unit_and_integration_caller_metadata_do_not_change_compiler_identity() {
         let base = vec![(
             OsString::from("RUSTFLAGS"),
@@ -1823,11 +2153,11 @@ fn first(): u64 { second() }
             "package { name = \"app\" }\nrust { bridge = \"bridge\" }\n",
         );
         assert!(!tote_files(&s.0.join("totes/app")).unwrap().1);
-        let first = build_artifact(&s.0.join("cache"), "app", None, |work| {
+        let first = build_artifact(&s.0.join("cache"), "app", None, None, |work| {
             Ok(executable(work, "first"))
         })
         .unwrap();
-        let second = build_artifact(&s.0.join("cache"), "app", None, |work| {
+        let second = build_artifact(&s.0.join("cache"), "app", None, None, |work| {
             Ok(executable(work, "second"))
         })
         .unwrap();
@@ -1984,7 +2314,6 @@ fn first(): u64 { second() }
         );
         let input_path = input.0.join("format.taut");
         let out = Command::new(&warm)
-            .args(["--allow-read", "--"])
             .arg(&input_path)
             .output()
             .unwrap();

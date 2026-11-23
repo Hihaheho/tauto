@@ -1,0 +1,57 @@
+// A match with many constructor arms picks the first arm that matches, even
+// when a wildcard, a name, or a guarded arm comes before the constructor's
+// own arm, or the constructor has no arm of its own.
+@ cases.many-constructor-arms-keep-first-match
+source = ```nib
+enum E {
+  A(u64)
+  B(u64)
+  C(u64)
+  D(u64)
+  F(u64)
+  G
+}
+fn pick(e: E): u64 ! {overflow} {
+  match e {
+    A(x) if x > 10 => 100
+    B(x) => x + 2
+    C(1) => 31
+    _ if false => 999
+    C(x) => x + 3
+    A(x) => x + 1
+    D(x) => x + 4
+    other => 7
+  }
+}
+fn by_ref(e: &E): u64 ! {overflow} {
+  match e {
+    A(x) => 1
+    B(x) => 2
+    C(x) => 3
+    D(x) => 4
+    _ => 0
+  }
+}
+show(&pick(A(20)))
+show(&pick(A(5)))
+show(&pick(B(5)))
+show(&pick(C(1)))
+show(&pick(C(5)))
+show(&pick(D(5)))
+show(&pick(F(5)))
+show(&pick(G))
+show(&by_ref(&D(1)))
+show(&by_ref(&G))
+```
+stdout = ```
+100
+6
+7
+31
+8
+9
+7
+7
+4
+0
+```

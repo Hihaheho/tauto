@@ -2,16 +2,17 @@
 use std::{fs, path::Path, process::Command};
 
 fn library_source() -> &'static str {
-    r#"fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+    r#"fn sum(read: &((u64) -> u64), size: u64): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < size { total := total + read(index)
     index := index + 1 }
   total
 }
-fn run(&read: (u64) -> u64, size: u64): Result(u64, Text) {
-  handle { budget(steps: 1000) { Ok(sum(&(index) => read(index), size)) } } with {
+fn run(read: &((u64) -> u64), size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(1000, () => { Ok(sum((index) => read(index), size)) }) } with {
     exceeded(info), k => Err("exhausted")
+    overflow() => Err("overflow")
   }
 }
 "#
@@ -74,8 +75,8 @@ fn selected_qualified_library_entry_reports_assertions_separately() {
     let dir = directory("qualified");
     fs::write(
         dir.join("Tauto.eure"),
-        r#"rust {
-      exports = ["run"]
+        r#"exports = ["run"]
+    rust {
       nonresuming { entries { run_trusted = "run" } }
     }"#,
     )
@@ -114,7 +115,8 @@ fn selected_qualified_library_entry_reports_assertions_separately() {
     assert!(!facade.contains("pub fn sum("));
     fs::write(
         dir.join("Tauto.eure"),
-        r#"rust { exports = [] nonresuming { entries { run_trusted = "run" } } }"#,
+        r#"exports = []
+rust { nonresuming { entries { run_trusted = "run" } } }"#,
     )
     .unwrap();
     let rejected = emit(&dir, true);
@@ -128,8 +130,8 @@ fn ordinary_program_emission_keeps_its_runtime_guard() {
     let dir = directory("program");
     fs::write(
         dir.join("input.taut"),
-        r#"let result := handle { budget(steps: 0) { 42 } } with { exceeded(info), k => -1 }
-perform show("result", result)"#,
+        r#"let result := handle { perform budget(0, () => { 42 }) } with { exceeded(info), k => -1 }
+show(&result)"#,
     )
     .unwrap();
     let ordinary = emit(&dir, false);
@@ -153,7 +155,8 @@ fn library_diagnostics_compose_with_build_timing_observers() {
     let dir = directory("timings");
     fs::write(
         dir.join("Tauto.eure"),
-        r#"rust { exports = ["run"] nonresuming { entries { run_trusted = "run" } } }"#,
+        r#"exports = ["run"]
+rust { nonresuming { entries { run_trusted = "run" } } }"#,
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tauto"))

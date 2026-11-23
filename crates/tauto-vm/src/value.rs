@@ -23,6 +23,8 @@ pub enum Value {
     Unit,
     Bool(bool),
     Int(i128),
+    /// A `nat` past `i128`; a `nat` that fits is an `Int`.
+    Nat(Rc<tauto_rt::nat::Nat>),
     Float(f64),
     Float32(f32),
     Text(Rc<str>),
@@ -34,8 +36,8 @@ pub enum Value {
     Bytes(Rc<[u8]>),
     /// `Secret` of the prelude: its content, which only `expose` reads.
     Secret(Rc<Value>),
-    /// `HashMap`, in insertion order.
-    Map(Rc<Vec<(Value, Value)>>),
+    /// `Slots`: the slots with the marks and the state kept beside them.
+    Slots(Rc<SlotsVal>),
     /// `Ref`, `Mutex` and `Atomic` of the prelude: one slot every copy shares.
     Shared(SharedKind, Rc<RefCell<Value>>),
     /// `Weak` of the prelude: a handle on a `Ref`'s slot that does not keep
@@ -63,6 +65,17 @@ pub enum Value {
     /// A value of an extern type: the host's, which the machine only holds
     /// and hands back. The name is the type's, for showing it.
     Host(Rc<str>, Rc<dyn std::any::Any>),
+}
+
+/// What `Slots` holds: a slot that was never written, or whose value was
+/// taken, is `Moved`; the drop of the slots drops the used ones only.
+#[derive(Clone)]
+pub struct SlotsVal {
+    pub state: Value,
+    /// The mark of a slot that holds no value.
+    pub vacant: Value,
+    pub marks: Vec<Value>,
+    pub items: Vec<Value>,
 }
 
 #[derive(Default)]
@@ -102,6 +115,8 @@ pub enum PendingState {
     Running,
     /// A sleep that ends at the instant.
     Timer(std::time::Instant),
+    /// The task ended with this runtime error.
+    Failed(String),
     Taken,
 }
 
@@ -140,6 +155,8 @@ impl Pending {
 pub struct MutexState {
     pub value: Option<Value>,
     pub waiting: std::collections::VecDeque<Rc<Signal>>,
+    /// A task that held the content failed: taking from it fails.
+    pub poisoned: bool,
 }
 
 impl MutexState {
@@ -164,7 +181,7 @@ pub struct GuardState {
 impl Drop for GuardState {
     fn drop(&mut self) {
         let v = std::mem::replace(&mut *self.content.borrow_mut(), Value::Moved);
-        if !matches!(v, Value::Moved) {
+        if !matches!(v, Value::Moved) && !self.mutex.borrow().poisoned {
             self.mutex.borrow_mut().put(v);
         }
     }
@@ -206,7 +223,111 @@ pub struct Closure {
 
 pub struct Place {
     pub root: Root,
-    pub path: Vec<Step>,
+    pub path: Path,
+    /// The value at the root when the place was last read, and the value the
+    /// path named then. A value is never changed in place while another handle
+    /// holds it (a write copies the path to the change), so while the root
+    /// still holds that same value the path names the same part: a read takes
+    /// it instead of walking the path, and a borrow one step further down finds
+    /// its part at once. What it keeps does not keep a vector, map, buffer or
+    /// constructor value alive (`Held`): were the place to hold them, a write
+    /// through another place on the same root would copy the whole value
+    /// instead of changing it in place, and a recursion whose frames each
+    /// hold a place would hold a copy for every frame.
+    seen: RefCell<Option<(Held, Held)>>,
+}
+
+/// A value a place keeps, without keeping the parts a write changes in place
+/// alive. While the root still holds the value, upgrading it succeeds.
+#[derive(Clone)]
+enum Held {
+    Value(Value),
+    Data(std::rc::Weak<Data>),
+    Inject(u32, u32, std::rc::Weak<Value>),
+    Vec(std::rc::Weak<Vec<Value>>),
+    Array(std::rc::Weak<Vec<Value>>),
+    Slots(std::rc::Weak<SlotsVal>),
+    Buf(std::rc::Weak<String>),
+}
+
+impl Held {
+    fn of(v: &Value) -> Held {
+        match v {
+            Value::Data(x) => Held::Data(Rc::downgrade(x)),
+            Value::Inject(a, b, x) => Held::Inject(*a, *b, Rc::downgrade(x)),
+            Value::Vec(x) => Held::Vec(Rc::downgrade(x)),
+            Value::Array(x) => Held::Array(Rc::downgrade(x)),
+            Value::Slots(x) => Held::Slots(Rc::downgrade(x)),
+            Value::Buf(x) => Held::Buf(Rc::downgrade(x)),
+            v => Held::Value(v.clone()),
+        }
+    }
+
+    fn get(&self) -> Option<Value> {
+        Some(match self {
+            Held::Value(v) => v.clone(),
+            Held::Data(x) => Value::Data(x.upgrade()?),
+            Held::Inject(a, b, x) => Value::Inject(*a, *b, x.upgrade()?),
+            Held::Vec(x) => Value::Vec(x.upgrade()?),
+            Held::Array(x) => Value::Array(x.upgrade()?),
+            Held::Slots(x) => Value::Slots(x.upgrade()?),
+            Held::Buf(x) => Value::Buf(x.upgrade()?),
+        })
+    }
+}
+
+/// Whether `a` and `b` are the same handle on one value (not merely equal).
+fn same(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Data(x), Value::Data(y)) => Rc::ptr_eq(x, y),
+        (Value::Inject(_, _, x), Value::Inject(_, _, y)) => Rc::ptr_eq(x, y),
+        (Value::Vec(x), Value::Vec(y)) | (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
+        (Value::Slots(x), Value::Slots(y)) => Rc::ptr_eq(x, y),
+        _ => false,
+    }
+}
+
+/// A place's path, its most recent step first, so that a step further down
+/// shares the steps before it.
+#[derive(Clone, Default)]
+pub struct Path(Option<Rc<(Step, Path)>>);
+
+impl Path {
+    pub fn of(steps: &[Step]) -> Path {
+        let mut p = Path::default();
+        for s in steps {
+            p = p.then(s.clone());
+        }
+        p
+    }
+
+    pub fn then(&self, step: Step) -> Path {
+        Path(Some(Rc::new((step, self.clone()))))
+    }
+
+    pub fn extended(&self, steps: &[Step]) -> Path {
+        let mut p = self.clone();
+        for s in steps {
+            p = p.then(s.clone());
+        }
+        p
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+
+    /// The steps from the root.
+    pub fn steps(&self) -> Vec<Step> {
+        let mut out = Vec::new();
+        let mut p = self;
+        while let Some(node) = &p.0 {
+            out.push(node.0.clone());
+            p = &node.1;
+        }
+        out.reverse();
+        out
+    }
 }
 
 pub enum Root {
@@ -222,7 +343,6 @@ pub enum Step {
     /// A field by name, found in the constructor's names.
     Name(Rc<str>),
     Item(usize),
-    Entry(usize),
 }
 
 pub type R<T> = Result<T, Error>;
@@ -256,8 +376,30 @@ impl Value {
     pub fn as_int(&self) -> R<i128> {
         match self {
             Value::Int(n) => Ok(*n),
+            Value::Nat(_) => fail(TOO_LARGE),
             Value::Ref(p) => p.get()?.as_int(),
             v => fail(format!("internal: expected an integer, got {}", v.kind())),
+        }
+    }
+
+    /// The `nat` this integer or big `nat` is; a negative integer is none.
+    pub fn as_nat(&self) -> R<tauto_rt::nat::Nat> {
+        match self {
+            Value::Int(n) => match u128::try_from(*n) {
+                Ok(n) => Ok(tauto_rt::nat::Nat::from_u128(n)),
+                Err(_) => fail(TOO_LARGE),
+            },
+            Value::Nat(n) => Ok((**n).clone()),
+            Value::Ref(p) => p.get()?.as_nat(),
+            v => fail(format!("internal: expected a nat, got {}", v.kind())),
+        }
+    }
+
+    /// The `nat` `n` as a value: an `Int` when it fits in `i128`.
+    pub fn of_nat(n: tauto_rt::nat::Nat) -> Value {
+        match n.to_u128().map(i128::try_from) {
+            Some(Ok(n)) => Value::Int(n),
+            _ => Value::Nat(Rc::new(n)),
         }
     }
 
@@ -299,7 +441,7 @@ impl Value {
             Value::Declaration(_) => "a declaration reference",
             Value::Unit => "()",
             Value::Bool(_) => "Bool",
-            Value::Int(_) => "an integer",
+            Value::Int(_) | Value::Nat(_) => "an integer",
             Value::Float(_) => "Float",
             Value::Float32(_) => "Float32",
             Value::Text(_) => "Text",
@@ -310,7 +452,7 @@ impl Value {
             Value::Array(_) => "Array",
             Value::Bytes(_) => "Bytes",
             Value::Secret(_) => "Secret",
-            Value::Map(_) => "HashMap",
+            Value::Slots(_) => "Slots",
             Value::Shared(..) => "a shared slot",
             Value::Weak(_) => "Weak",
             Value::Shown(_) => "a shown value",
@@ -331,6 +473,8 @@ impl Value {
     pub fn at(&self, step: &Step) -> R<Value> {
         match (self, step) {
             (Value::Ref(p), _) => p.get()?.at(step),
+            // What a union value holds, as a pattern on its member reaches it.
+            (Value::Inject(_, _, x), Step::Index(0)) => Ok((**x).clone()),
             (Value::Data(d), Step::Index(i)) => d
                 .fields
                 .get(*i)
@@ -343,10 +487,11 @@ impl Value {
             (Value::Vec(xs) | Value::Array(xs), Step::Item(i)) => {
                 xs.get(*i).cloned().ok_or_else(|| internal("an item"))
             }
-            (Value::Map(m), Step::Entry(i)) => m
-                .get(*i)
-                .map(|e| e.1.clone())
-                .ok_or_else(|| internal("an entry")),
+            (Value::Slots(r), Step::Item(i)) => match r.items.get(*i) {
+                Some(Value::Moved) => fail("internal: a slot that holds no value"),
+                Some(x) => Ok(x.clone()),
+                None => Err(internal("a slot")),
+            },
             (v, s) => fail(format!("internal: no {s:?} in {}", v.kind())),
         }
     }
@@ -354,6 +499,7 @@ impl Value {
     /// The part of the value at one step, to change in place.
     pub fn at_mut(&mut self, step: &Step) -> R<&mut Value> {
         match (self, step) {
+            (Value::Inject(_, _, x), Step::Index(0)) => Ok(Rc::make_mut(x)),
             (Value::Data(d), Step::Index(i)) => {
                 let d = Rc::make_mut(d);
                 d.fields
@@ -367,10 +513,10 @@ impl Value {
             (Value::Vec(xs) | Value::Array(xs), Step::Item(i)) => Rc::make_mut(xs)
                 .get_mut(*i)
                 .ok_or_else(|| internal("an item")),
-            (Value::Map(m), Step::Entry(i)) => Rc::make_mut(m)
+            (Value::Slots(r), Step::Item(i)) => Rc::make_mut(r)
+                .items
                 .get_mut(*i)
-                .map(|e| &mut e.1)
-                .ok_or_else(|| internal("an entry")),
+                .ok_or_else(|| internal("a slot")),
             (v, s) => fail(format!("internal: no {s:?} to change in {}", v.kind())),
         }
     }
@@ -381,7 +527,47 @@ fn internal(what: &str) -> Error {
 }
 
 impl Place {
+    pub fn new(root: Root, path: Path) -> Place {
+        Place {
+            root,
+            path,
+            seen: RefCell::new(None),
+        }
+    }
+
+    fn root_value(&self) -> Value {
+        match &self.root {
+            Root::Slot(env, i) => env.borrow()[*i as usize].clone(),
+            Root::Cell(c) => c.borrow().clone(),
+        }
+    }
+
+    /// What the place kept, with the root's value, while the root holds it.
+    fn kept(&self) -> Option<(Value, Value)> {
+        let seen = self.seen.borrow();
+        let (root, part) = seen.as_ref()?;
+        // A dropped root fails to upgrade; one that upgrades is still
+        // allocated, so the same handle is the same value.
+        let root = root.get()?;
+        if !same(&root, &self.root_value()) {
+            return None;
+        }
+        Some((root, part.get()?))
+    }
+
     pub fn get(&self) -> R<Value> {
+        if let Some((_, part)) = self.kept() {
+            return Ok(part);
+        }
+        let v = self.walk()?;
+        let root = self.root_value();
+        if !matches!(v, Value::Ref(_)) && !through_ref(&root, &self.path.steps()) {
+            *self.seen.borrow_mut() = Some((Held::of(&root), Held::of(&v)));
+        }
+        Ok(v)
+    }
+
+    fn walk(&self) -> R<Value> {
         let mut v = match &self.root {
             Root::Slot(env, i) => env.borrow()[*i as usize].clone(),
             Root::Cell(c) => c.borrow().clone(),
@@ -390,7 +576,7 @@ impl Place {
         if let Value::Ref(p) = &v {
             v = p.get()?;
         }
-        for s in &self.path {
+        for s in &self.path.steps() {
             v = v.at(s)?;
             if let Value::Ref(p) = &v {
                 v = p.get()?;
@@ -400,6 +586,7 @@ impl Place {
     }
 
     pub fn with_mut<T>(&self, f: impl FnOnce(&mut Value) -> R<T>) -> R<T> {
+        let path = self.path.steps();
         match &self.root {
             Root::Slot(env, i) => {
                 let inner = match &env.borrow()[*i as usize] {
@@ -407,10 +594,10 @@ impl Place {
                     _ => None,
                 };
                 match inner {
-                    Some(p) => p.with_path_mut(&self.path, f),
+                    Some(p) => p.with_path_mut(&path, f),
                     None => {
                         let mut slots = env.borrow_mut();
-                        walk_mut(&mut slots[*i as usize], &self.path, f)
+                        walk_mut(&mut slots[*i as usize], &path, f)
                     }
                 }
             }
@@ -420,23 +607,21 @@ impl Place {
                     _ => None,
                 };
                 match inner {
-                    Some(p) => p.with_path_mut(&self.path, f),
-                    None => walk_mut(&mut c.borrow_mut(), &self.path, f),
+                    Some(p) => p.with_path_mut(&path, f),
+                    None => walk_mut(&mut c.borrow_mut(), &path, f),
                 }
             }
         }
     }
 
     fn with_path_mut<T>(&self, more: &[Step], f: impl FnOnce(&mut Value) -> R<T>) -> R<T> {
-        let mut path = self.path.clone();
-        path.extend(more.iter().cloned());
-        Place {
-            root: match &self.root {
+        Place::new(
+            match &self.root {
                 Root::Slot(e, i) => Root::Slot(e.clone(), *i),
                 Root::Cell(c) => Root::Cell(c.clone()),
             },
-            path,
-        }
+            self.path.extended(more),
+        )
         .with_mut(f)
     }
 
@@ -447,17 +632,52 @@ impl Place {
         })
     }
 
+    /// The place `steps` further down, keeping what this one keeps.
+    pub fn further(&self, steps: &[Step]) -> Place {
+        let mut p = Place {
+            root: match &self.root {
+                Root::Slot(e, i) => Root::Slot(e.clone(), *i),
+                Root::Cell(c) => Root::Cell(c.clone()),
+            },
+            path: self.path.clone(),
+            seen: RefCell::new(self.seen.borrow().clone()),
+        };
+        for s in steps {
+            p = p.child(s.clone());
+        }
+        p
+    }
+
     pub fn child(&self, step: Step) -> Place {
-        let mut path = self.path.clone();
-        path.push(step);
+        let seen = self.kept().and_then(|(root, v)| match v.at(&step).ok()? {
+            Value::Ref(_) => None,
+            part => Some((Held::of(&root), Held::of(&part))),
+        });
         Place {
             root: match &self.root {
                 Root::Slot(e, i) => Root::Slot(e.clone(), *i),
                 Root::Cell(c) => Root::Cell(c.clone()),
             },
-            path,
+            path: self.path.then(step),
+            seen: RefCell::new(seen),
         }
     }
+}
+
+/// Whether the path from `root` goes through a borrow held in the value: what
+/// it names then depends on another root, so the place keeps nothing.
+fn through_ref(root: &Value, path: &[Step]) -> bool {
+    let mut v = root.clone();
+    if matches!(v, Value::Ref(_)) {
+        return true;
+    }
+    for s in path {
+        match v.at(s) {
+            Ok(Value::Ref(_)) | Err(_) => return true,
+            Ok(next) => v = next,
+        }
+    }
+    false
 }
 
 fn walk_mut<T>(v: &mut Value, path: &[Step], f: impl FnOnce(&mut Value) -> R<T>) -> R<T> {
@@ -478,72 +698,75 @@ fn walk_mut<T>(v: &mut Value, path: &[Step], f: impl FnOnce(&mut Value) -> R<T>)
 
 /// A temporary borrowed: a cell of its own.
 pub fn temp_ref(v: Value) -> Value {
-    Value::Ref(Rc::new(Place {
-        root: Root::Cell(Rc::new(RefCell::new(v))),
-        path: Vec::new(),
-    }))
+    Value::Ref(Rc::new(Place::new(
+        Root::Cell(Rc::new(RefCell::new(v))),
+        Path::default(),
+    )))
 }
 
-/// Whether two values are equal, as `==` compares them.
+/// Whether two values are equal, as `==` compares them. The parts are
+/// compared from a list of pairs still to compare, not by recursion: a long
+/// list compared with `==` is as deep as it is long, deeper than a thread's
+/// stack holds.
 pub fn equal(a: &Value, b: &Value) -> R<bool> {
-    let (a, b) = (a.get()?, b.get()?);
-    Ok(match (&a, &b) {
-        (Value::Inject(_, _, x), _) => return equal(x, &b),
-        (_, Value::Inject(_, _, y)) => return equal(&a, y),
-        (Value::Declaration(x), Value::Declaration(y)) => x == y,
-        (Value::Unit, Value::Unit) => true,
-        (Value::Bool(x), Value::Bool(y)) => x == y,
-        (Value::Int(x), Value::Int(y)) => x == y,
-        (Value::Float(x), Value::Float(y)) => x == y,
-        (Value::Float32(x), Value::Float32(y)) => x == y,
-        (Value::Text(x), Value::Text(y)) => x == y,
-        (Value::Buf(x), Value::Buf(y)) => x == y,
-        (Value::Shown(x), Value::Shown(y)) => x == y,
-        (Value::Bytes(x), Value::Bytes(y)) => x == y,
-        (Value::Data(x), Value::Data(y)) => {
-            if Rc::ptr_eq(x, y) {
-                return Ok(true);
+    let mut pending: Vec<(Value, Value)> = vec![(a.clone(), b.clone())];
+    while let Some((a, b)) = pending.pop() {
+        let (a, b) = (a.get()?, b.get()?);
+        // Parts are pushed last first, so that they are compared in order.
+        let same = match (&a, &b) {
+            (Value::Inject(_, _, x), _) => {
+                pending.push(((**x).clone(), b.clone()));
+                true
             }
-            if x.ctor.id != y.ctor.id || x.fields.len() != y.fields.len() {
-                return Ok(false);
+            (_, Value::Inject(_, _, y)) => {
+                pending.push((a.clone(), (**y).clone()));
+                true
             }
-            for (p, q) in x.fields.iter().zip(&y.fields) {
-                if !equal(p, q)? {
-                    return Ok(false);
+            (Value::Declaration(x), Value::Declaration(y)) => x == y,
+            (Value::Unit, Value::Unit) => true,
+            (Value::Bool(x), Value::Bool(y)) => x == y,
+            (Value::Int(x), Value::Int(y)) => x == y,
+            (Value::Nat(x), Value::Nat(y)) => x == y,
+            (Value::Float(x), Value::Float(y)) => x == y,
+            (Value::Float32(x), Value::Float32(y)) => x == y,
+            (Value::Text(x), Value::Text(y)) => x == y,
+            (Value::Buf(x), Value::Buf(y)) => x == y,
+            (Value::Shown(x), Value::Shown(y)) => x == y,
+            (Value::Bytes(x), Value::Bytes(y)) => x == y,
+            (Value::Data(x), Value::Data(y)) => {
+                if Rc::ptr_eq(x, y) {
+                    true
+                } else if x.ctor.id != y.ctor.id || x.fields.len() != y.fields.len() {
+                    false
+                } else {
+                    for (p, q) in x.fields.iter().zip(&y.fields).rev() {
+                        pending.push((p.clone(), q.clone()));
+                    }
+                    true
                 }
             }
-            true
-        }
-        (Value::Vec(x), Value::Vec(y))
-        | (Value::Array(x), Value::Array(y)) => {
-            if x.len() != y.len() {
-                return Ok(false);
-            }
-            for (p, q) in x.iter().zip(y.iter()) {
-                if !equal(p, q)? {
-                    return Ok(false);
+            (Value::Vec(x), Value::Vec(y)) | (Value::Array(x), Value::Array(y)) => {
+                if x.len() != y.len() {
+                    false
+                } else {
+                    for (p, q) in x.iter().zip(y.iter()).rev() {
+                        pending.push((p.clone(), q.clone()));
+                    }
+                    true
                 }
             }
-            true
+            (Value::Shared(_, x), Value::Shared(_, y)) => Rc::ptr_eq(x, y),
+            (Value::Weak(x), Value::Weak(y)) => std::rc::Weak::ptr_eq(x, y),
+            (Value::Signal(x), Value::Signal(y)) => Rc::ptr_eq(x, y),
+            (Value::Mutex(x), Value::Mutex(y)) => Rc::ptr_eq(x, y),
+            (Value::Guard(x), Value::Guard(y)) => Rc::ptr_eq(x, y),
+            _ => false,
+        };
+        if !same {
+            return Ok(false);
         }
-        (Value::Map(x), Value::Map(y)) => {
-            if x.len() != y.len() {
-                return Ok(false);
-            }
-            for ((k1, v1), (k2, v2)) in x.iter().zip(y.iter()) {
-                if !equal(k1, k2)? || !equal(v1, v2)? {
-                    return Ok(false);
-                }
-            }
-            true
-        }
-        (Value::Shared(_, x), Value::Shared(_, y)) => Rc::ptr_eq(x, y),
-        (Value::Weak(x), Value::Weak(y)) => std::rc::Weak::ptr_eq(x, y),
-        (Value::Signal(x), Value::Signal(y)) => Rc::ptr_eq(x, y),
-        (Value::Mutex(x), Value::Mutex(y)) => Rc::ptr_eq(x, y),
-        (Value::Guard(x), Value::Guard(y)) => Rc::ptr_eq(x, y),
-        _ => false,
-    })
+    }
+    Ok(true)
 }
 
 /// The value as `show` writes it.
@@ -555,9 +778,7 @@ pub fn show(v: &Value) -> R<String> {
 
 /// Whether `d` is a `Pair`, which `#(a, b)` is.
 fn is_pair(d: &Data) -> bool {
-    d.fields.len() == 2
-        && d.ctor.is_struct
-        && tauto_nir::display_name(&d.ctor.owner) == "Pair"
+    d.fields.len() == 2 && d.ctor.is_struct && tauto_nir::display_name(&d.ctor.owner) == "Pair"
 }
 
 fn show_into(v: &Value, out: &mut String) -> R<()> {
@@ -582,6 +803,7 @@ fn show_into(v: &Value, out: &mut String) -> R<()> {
         Value::Unit => out.push_str("()"),
         Value::Bool(b) => write!(out, "{b}").unwrap(),
         Value::Int(n) => write!(out, "{n}").unwrap(),
+        Value::Nat(n) => write!(out, "{n}").unwrap(),
         Value::Float(x) => out.push_str(&tauto_rt::float::text_of_float(*x)),
         Value::Float32(x) => out.push_str(&tauto_rt::float::text_of_float(f64::from(*x))),
         Value::Text(t) => write!(out, "{:?}", &**t).unwrap(),
@@ -599,18 +821,6 @@ fn show_into(v: &Value, out: &mut String) -> R<()> {
                 write!(out, "{x}").unwrap();
             }
             out.push(']');
-        }
-        Value::Map(m) => {
-            out.push_str("HashMap{");
-            for (i, (k, x)) in m.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                show_into(k, out)?;
-                out.push_str(": ");
-                show_into(x, out)?;
-            }
-            out.push('}');
         }
         Value::Shared(SharedKind::Ref, c) => {
             out.push_str("Ref(");
@@ -704,5 +914,18 @@ mod declaration_tests {
         assert!(value.as_int().is_err());
         let borrowed = temp_ref(value);
         assert!(equal(&borrowed, &Value::Declaration(reference)).unwrap());
+    }
+}
+
+/// The `i`-th argument of a builtin. The checker and the prelude fix how many
+/// arguments each builtin takes, so a call with fewer is malformed bytecode:
+/// it stops with an internal error instead of indexing past the end.
+pub fn arg(a: &[Value], i: usize) -> R<&Value> {
+    match a.get(i) {
+        Some(x) => Ok(x),
+        None => fail(format!(
+            "internal: a builtin read argument {i} of {} arguments",
+            a.len()
+        )),
     }
 }

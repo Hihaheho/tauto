@@ -1,0 +1,44 @@
+// A match over a tuple of borrowed lists, and a text pattern in a later arm
+// whose body uses the scrutinee, generate code that the Rust backend accepts.
+
+@ cases.match-tuple-of-borrowed-lists
+source = ```tauto
+
+struct A { name: Text }
+struct B { name: Text }
+fn name_a(a: &A): Text { a.name }
+fn name_b(b: &B): Text { b.name }
+fn same(xs: &List(A), ys: &List(B)): Bool ! {div} {
+    match #(xs, ys) {
+        #(Nil, Nil) => true
+        #(Cons(x, xr), Cons(y, yr)) => name_a(x) == name_b(y) && same(xr, yr)
+        _ => false
+    }
+}
+let a := [A { name: "p" }]
+let b := [B { name: "p" }]
+show(&same(&a, &b))
+let c := [B { name: "q" }]
+show(&same(&a, &c))
+```
+stdout = "true\nfalse\n"
+
+@ cases.match-text-pattern-arm-uses-the-scrutinee
+source = ```tauto
+
+enum C {
+    D(Nat, Text, List(C))
+}
+fn first(c: C): Option(C) {
+    match c { D(_, _, Cons(x, _)) => Some(x), D(_, _, Nil) => None }
+}
+fn pick(c: C): Text {
+    match c {
+        D(_, "Primary", _) => "primary"
+        D(_, "Named", _) => match first(c) { Some(_) => "named", None => "empty" }
+        _ => "other"
+    }
+}
+show(&pick(D(0, "Named", [D(1, "x", Nil)])))
+```
+stdout = "\"named\"\n"

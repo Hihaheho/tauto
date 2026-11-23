@@ -59,7 +59,6 @@ pub fn substitute(t: &Ty, s: &Subst) -> Ty {
         Ty::BudgetAnswer(a) => Ty::BudgetAnswer(sub(a)),
         Ty::Result(a, b) => Ty::Result(sub(a), sub(b)),
         Ty::Pair(a, b) => Ty::Pair(sub(a), sub(b)),
-        Ty::HashMap(a, b) => Ty::HashMap(sub(a), sub(b)),
         Ty::Data(n, a) => Ty::Data(n.clone(), a.iter().map(|t| substitute(t, s)).collect()),
         Ty::Std(n, a) => Ty::Std(n.clone(), a.iter().map(|t| substitute(t, s)).collect()),
         Ty::Fn(f) => Ty::Fn(Box::new(FnTy {
@@ -72,7 +71,7 @@ pub fn substitute(t: &Ty, s: &Subst) -> Ty {
 }
 fn infer(pattern: &Ty, actual: &Ty, out: &mut Subst) -> Result<(), String> {
     if let Ty::Param(n) = pattern {
-        if *actual != Ty::Infer
+        if !actual.has_arm_generic()
             && let Some(previous) = out.insert(n.clone(), actual.clone())
             && previous != *actual
         {
@@ -95,8 +94,7 @@ fn infer(pattern: &Ty, actual: &Ty, out: &mut Subst) -> Result<(), String> {
         | (Ty::SharedVar(true, a), Ty::SharedVar(true, b))
         | (Ty::SharedVar(false, a), Ty::SharedVar(false, b)) => infer(a, b, out)?,
         (Ty::Pair(a, b), Ty::Pair(c, d))
-        | (Ty::Result(a, b), Ty::Result(c, d))
-        | (Ty::HashMap(a, b), Ty::HashMap(c, d)) => {
+        | (Ty::Result(a, b), Ty::Result(c, d)) => {
             infer(a, c, out)?;
             infer(b, d, out)?;
         }
@@ -128,7 +126,7 @@ fn concrete(names: impl Iterator<Item = String>, s: &Subst) -> Result<Vec<Ty>, S
                 .ok_or_else(|| crate::i18n::t!("js-no-concrete-instantiation", name = &n))?;
             let mut params = BTreeSet::new();
             t.params(&mut params);
-            if !params.is_empty() || t.has_infer() {
+            if !params.is_empty() {
                 return Err(crate::i18n::t!(
                     "js-unresolved-type-argument",
                     name = &n,
@@ -203,6 +201,7 @@ impl Specializer<'_> {
                     Self::pat(p, s);
                 }
             }
+            Pat::Variant { pat, .. } => Self::pat(pat, s),
             _ => {}
         }
     }
@@ -332,7 +331,7 @@ impl Specializer<'_> {
                         }
                         infer(&f.ret, &e.ty, &mut subst)?;
                         for ((n, _), t) in f.generics.iter().zip(&c.targs) {
-                            if *t != Ty::Infer {
+                            if !t.has_arm_generic() {
                                 subst.insert(n.clone(), t.clone());
                             }
                         }
@@ -529,7 +528,8 @@ mod tests {
             fns: vec![FnInst {
                 id: 0,
                 source: "identity".into(),
-                rust_name: "identity__s".into(),
+                lends: None,
+                fn_region: false,
                 tier: Tier::S,
                 generics: vec![("B".into(), BTreeSet::new()), ("A".into(), BTreeSet::new())],
                 params: vec![Param {
@@ -607,7 +607,7 @@ mod tests {
             (vec![], "incomplete checked type arguments"),
             (vec![Ty::Text], "incomplete checked type arguments"),
             (
-                vec![Ty::Text, Ty::Infer],
+                vec![Ty::Text, Ty::Param(tauto_nir::arms::skolem(0))],
                 "unresolved JavaScript type argument",
             ),
         ] {

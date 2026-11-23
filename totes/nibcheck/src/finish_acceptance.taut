@@ -1,6 +1,6 @@
 import "diagnostic_report.taut"
-import std::Base
-import std::Map
+import std::base
+import std::map
 import "checker.taut"
 import "diagnostic_final_lists.taut"
 import "diagnostic_leaves.taut"
@@ -218,8 +218,8 @@ pub theorem finish_after_defaults_accepts(
 }
 
 pub fn diagnostic_finish_default_result(m: Mut1(Unit, Checker)): Mut1(TypeReport, Checker) {
-  ⊢ Mut1(TypeReport, Checker) from match m {
-    mut1(v, next) => finish_after_defaults(
+  match m {
+    mut1(^v, next) => finish_after_defaults(
       next,
       ck_widths(List::reverse(finish_ops(next)), next, Ordmap::empty())
     )
@@ -229,7 +229,7 @@ pub theorem diagnostic_finish_default_result_accepts(
   m: Mut1(Unit, Checker),
   clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
 ): FinalDiagnostics0(ck_st(diagnostic_finish_default_result(m))) {
-  ⊢ FinalDiagnostics0(ck_st(diagnostic_finish_default_result(m))) from match m {
+  match m {
     mut1(v, next) => {
       let accepted: DiagnosticReportResult(
         FinalDiagnostics0,

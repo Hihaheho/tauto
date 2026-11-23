@@ -1,545 +1,119 @@
+import "messages.taut"
 import "checker.taut"
 import "../../surface/src/surface.taut"
-import std::Base
-import std::List
-import std::Map
-import std::Text
+import std::base
+import std::list
+import std::map
+import std::text
 import "datas.taut"
 import "rows.taut"
+import "rows_base.taut"
 import "ty.taut"
+import "types_decl_head.taut"
+import "effect_key.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
 
-// Written types and declarations (`written`, `declare_effect`, `declare_data`,
-// `finish_datas`, `signature`, `instantiate` of `types.rs`), in the proof
-// language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
+// Continued from `types_decl_head.taut`.
 
-pub fn ck_written_name(n: Text, generics: Ordmap(Text, Ty)): Ty {
-  if n == "i32" {
-    TyInt(Width32)
-  } else if n == "i64" {
-    TyInt(Width64)
-  } else if n == "u8" {
-    TyInt(WidthU8)
-  } else if n == "u32" {
-    TyInt(WidthU32)
-  } else if n == "u64" {
-    TyInt(WidthU64)
-  } else if n == "Bool" {
-    TyBool
-  } else if n == "Text" {
-    TyText
-  } else if n == "Never" {
-    TyNever
-  } else if n == "Decimal" {
-    TyDecimal
-  } else if n == "Float" {
-    TyFloat
-  } else {
-    ⊢ Ty from match Ordmap::get(generics, n, Ordmap::compare_text) {
-      Some(t) => t
-      None => TyNamed(n, Nil)
-    }
-  }
-}
-
-pub fn ck_written_ctor_arity(&mut c: Checker, n: Text, span: TySpan): Ty {
-  ck_error(&mut c, cat2(n, " is a type constructor variable and takes one argument"), span)
-  ck_fresh(&mut c)
-}
-
-pub fn ck_written_bad(&mut c: Checker, span: TySpan): Ty {
-  ck_error(&mut c, "not a type", span)
-  ck_fresh(&mut c)
-}
-
-pub(open) inductive WrittenApp: Type {
-  WrittenUnit: WrittenApp
-  WrittenInfo: WrittenApp
-  WrittenNamed(name: Text): WrittenApp
-  WrittenGeneric(name: Text): WrittenApp
-  WrittenBad: WrittenApp
-}
-
-pub fn written_nested(function: SurfaceTerm): Bool {
-  ⊢ Bool from match function.kind {
-    SkApp(inner, first) => true
-    _ => false
-  }
-}
-
-pub fn written_app(function: SurfaceTerm, arity: Nat, generics: Ordmap(Text, Ty)): WrittenApp {
-  ⊢ WrittenApp from match function.kind {
-    SkVar(n) => if n == "Tuple" && arity == 0 {
-      WrittenUnit
-    } else if n == "Info" && arity == 1 {
-      WrittenInfo
-    } else if Ordmap::contains(generics, n, Ordmap::compare_text) {
-      WrittenGeneric(n)
-    } else if n == "Tuple" {
-      WrittenBad
-    } else {
-      WrittenNamed(n)
-    }
-    _ => WrittenBad
-  }
-}
-
-// A declared type is written with all its arguments, except where a type
-// constructor is wanted.
-pub fn ck_arity(&mut c: Checker, name: Text, given: Nat, span: TySpan): Unit {
-  if not(c.constructor_position) {
-    ⊢ Unit from match datas_decl(c.datas, name) {
-      None => #()
-      Some(d) => if given != list_len(d.generics) {
-        ck_error(
-          &mut c,
-          cat4(name, " takes ", Text::of_nat(list_len(d.generics)), " arguments"),
-          span
-        )
-      }
-    }
-  }
-}
-
-pub fn ck_written_var(&mut c: Checker, n: Text, generics: Ordmap(Text, Ty), span: TySpan): Ty {
-  let t := ck_written_name(n, generics)
-  ⊢ Ty from match t {
-    TyNamed(name, args) => if Ordmap::contains(generics, n, Ordmap::compare_text) {
-      t
-    } else {
-      ck_arity(&mut c, n, 0, span)
-      t
-    }
-    _ => t
-  }
-}
-
-pub fn pi_binder(p: SurfaceParam): Option(Pair(Text, Kind)) {
-  ⊢ Option(Pair(Text, Kind)) from match p.name {
-    None => None
-    Some(n) => ⊢ Option(Pair(Text, Kind)) from match p.ty.kind {
-      SkVar(k) => ⊢ Option(Pair(Text, Kind)) from match kind_parse(k) {
-        None => None
-        Some(kind) => Some(Pair { fst: n, snd: kind })
-      }
-      _ => None
-    }
-  }
-}
-
-// The leading `(A: Shared, B: Type, …)` of a function type: the expansion's
-// `<A: Shared, B: Type>(…) -> …`.
-pub fn pi_binders(ps: List(SurfaceParam)): Pair(List(Pair(Text, Kind)), List(SurfaceParam)) {
-  ⊢ Pair(List(Pair(Text, Kind)), List(SurfaceParam)) from match ps {
-    Nil => Pair { fst: Nil, snd: Nil }
-    Cons(p, rest) => ⊢ Pair(List(Pair(Text, Kind)), List(SurfaceParam)) from match pi_binder(p) {
-      None => Pair { fst: Nil, snd: ps }
-      Some(b) => {
-        let more := pi_binders(rest)
-        Pair { fst: Cons(b, more.fst), snd: more.snd }
-      }
-    }
-  }
-}
-
-pub fn binders_map(bs: List(Pair(Text, Kind)), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
-  ⊢ Ordmap(Text, Ty) from match bs {
-    Nil => map
-    Cons(b, rest) => binders_map(
-      rest,
-      Ordmap::insert(map, b.fst, TyParam(b.fst, b.snd), Ordmap::compare_text)
-    )
-  }
-}
-
-pub fn ty_poly_of(bs: List(Pair(Text, Kind)), fun: Ty): Ty {
-  ⊢ Ty from match bs {
-    Nil => fun
-    Cons(b, rest) => TyPoly(bs, fun)
-  }
-}
-
-pub fn ck_written_fn_kind(w: Ty, &mut c: Checker, fk: Text, span: TySpan): Ty {
-  ⊢ Ty from match w {
-    TyFn(ps, r, k) => TyFn(ps, r, ⊢ Kind from match kind_parse(fk) {
-      Some(x) => x
-      None => KindShared
-    })
-    _ => {
-      ck_error(&mut c, cat3("`", fk, "` is the kind of a function type"), span)
-      w
-    }
-  }
-}
-
-// A type written in a program, over the type parameters `generics` names.
-// `under_borrow` is whether the type is the one directly under a `&`.
-mutual {
-  pub fn ck_written_in(t: SurfaceTerm, &mut c: Checker, generics: Ordmap(Text, Ty)): Ty {
-    ⊢ Ty from match t {
-      SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => {
-        let under_borrow := c.under_borrow
-        set_to(&mut c.under_borrow, false)
-        ck_written_kind(sk, &mut c, generics, TySpan { start: start, end: end }, under_borrow)
-      }
-    }
-  }
-
-  pub fn ck_written_kind(
-    sk: SurfaceKind,
-    &mut c: Checker,
-    generics: Ordmap(Text, Ty),
-    span: TySpan,
-    under_borrow: Bool
-  ): Ty {
-    ⊢ Ty from match sk {
-      SkVar(n) => ck_written_var(&mut c, n, generics, span)
-      SkApp(function, arguments) => if written_nested(function) {
-        // The arguments of both, the inner ones first.
-        let saved := c.constructor_position
-        set_to(&mut c.constructor_position, true)
-        let inner := ck_written_in(function, &mut c, generics)
-        set_to(&mut c.constructor_position, saved)
-        let after := ck_written_each(arguments, &mut c, generics)
-        ⊢ Ty from match inner {
-          TyNamed(n, before) => {
-            let targs := List::append(before, after)
-            ck_arity(&mut c, n, list_len(targs), span)
-            TyNamed(n, targs)
-          }
-          _ => ck_written_bad(&mut c, span)
-        }
-      } else {
-        ⊢ Ty from match written_app(function, list_len(arguments), generics) {
-          WrittenUnit => TyUnit
-          WrittenInfo => ⊢ Ty from match ck_written_each(arguments, &mut c, generics) {
-            Cons(a, rest) => TyInfo(a)
-            Nil => TyUnit
-          }
-          WrittenNamed(n) => {
-            if n == "Slice" && not(under_borrow) {
-              ck_error(&mut c, "Slice(A) can only be borrowed", span)
-            }
-            let targs := ck_written_each(arguments, &mut c, generics)
-            ck_arity(&mut c, n, list_len(targs), span)
-            TyNamed(n, targs)
-          }
-          WrittenGeneric(n) => if list_len(arguments) == 1 {
-            ⊢ Ty from match ck_written_each(arguments, &mut c, generics) {
-              Cons(x, more) => ty_apply(ck_written_name(n, generics), x)
-              Nil => ck_written_ctor_arity(&mut c, n, span)
-            }
-          } else {
-            ck_written_ctor_arity(&mut c, n, span)
-          }
-          WrittenBad => ck_written_bad(&mut c, span)
-        }
-      }
-      SkPi(params, result, effects) => {
-        let split := pi_binders(params)
-        let inner := binders_map(split.fst, generics)
-        let ps := ck_written_params(params, &mut c, inner, list_len(split.fst))
-        let r := ck_written_in(result, &mut c, inner)
-        ty_poly_of(split.fst, TyFn(ps, r, KindShared))
-      }
-      SkFnKind(fk, ty) => ck_written_fn_kind(ck_written_in(ty, &mut c, generics), &mut c, fk, span)
-      SkBorrow(mutable, x) => {
-        set_to(&mut c.under_borrow, true)
-        let w := ck_written_in(x, &mut c, generics)
-        TyBorrow(w, mutable)
-      }
-      SkUnion(ts) => {
-        let ws := ck_written_each(ts, &mut c, generics)
-        ty_union(ws)
-      }
-      SkProduct(ts) => {
-        let ws := ck_written_each(ts, &mut c, generics)
-        ty_product(ws)
-      }
-      SkTagged(tag, x) => {
-        let w := ck_written_in(x, &mut c, generics)
-        ty_tagged(Cons(tag, Nil), w)
-      }
-      _ => {
-        ck_error(&mut c, "not a type of a program", span)
-        ck_fresh(&mut c)
-      }
-    }
-  }
-
-  pub fn ck_written_each(
-    ts: List(SurfaceTerm),
-    &mut c: Checker,
-    generics: Ordmap(Text, Ty)
-  ): List(Ty) {
-    ⊢ List(Ty) from match ts {
-      Nil => Nil
-      Cons(t, rest) => {
-        let h := ck_written_in(t, &mut c, generics)
-        let tl := ck_written_each(rest, &mut c, generics)
-        Cons(h, tl)
-      }
-    }
-  }
-
-  // The parameters after the first `skip`.
-  pub fn ck_written_params(
-    ps: List(SurfaceParam),
-    &mut c: Checker,
-    generics: Ordmap(Text, Ty),
-    skip: Nat
-  ): List(Ty) {
-    ⊢ List(Ty) from match ps {
-      Nil => Nil
-      Cons(p, rest) => ⊢ List(Ty) from match skip {
-        Succ(n) => ck_written_params(rest, &mut c, generics, n)
-        Zero => {
-          let h := ck_written_param(p, &mut c, generics)
-          let tl := ck_written_params(rest, &mut c, generics, 0)
-          Cons(h, tl)
-        }
-      }
-    }
-  }
-
-  pub fn ck_written_param(p: SurfaceParam, &mut c: Checker, generics: Ordmap(Text, Ty)): Ty {
-    ⊢ Ty from match p {
-      SurfaceParamMk(name, ty) => ck_written_in(ty, &mut c, generics)
-    }
-  }
-}
-
-pub fn ck_written(&mut c: Checker, t: SurfaceTerm, generics: Ordmap(Text, Ty)): Ty {
-  ck_written_in(t, &mut c, generics)
-}
-
-pub fn ck_named_generics(gs: List(Text), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
-  ⊢ Ordmap(Text, Ty) from match gs {
-    Nil => map
-    Cons(g, rest) => ck_named_generics(
-      rest,
-      Ordmap::insert(map, g, TyNamed(g, Nil), Ordmap::compare_text)
-    )
-  }
-}
-
-pub fn ck_effect_param(
-  &mut c: Checker,
-  e: SurfaceEffect,
-  p: Option(SurfaceTerm),
-  generics: Ordmap(Text, Ty)
-): Ty {
-  ⊢ Ty from match p {
-    Some(x) => ck_written(&mut c, x, generics)
-    None => {
-      ck_error(
-        &mut c,
-        cat3("a parameter of `", e.name, "` has no type"),
-        TySpan { start: e.start, end: e.end }
-      )
-      TyNever
-    }
-  }
-}
-
-pub fn ck_effect_params(
-  ps: List(Option(SurfaceTerm)),
-  &mut c: Checker,
-  e: SurfaceEffect,
-  generics: Ordmap(Text, Ty)
-): List(Ty) {
-  ⊢ List(Ty) from match ps {
-    Nil => Nil
-    Cons(p, rest) => {
-      let h := ck_effect_param(&mut c, e, p, generics)
-      let tl := ck_effect_params(rest, &mut c, e, generics)
-      Cons(h, tl)
-    }
-  }
-}
-
-pub fn ck_effect_quant(&mut c: Checker, e: SurfaceEffect): Quant {
-  ⊢ Quant from match e.r#resume {
-    None => QuantAtMostOne
-    Some(q) => ⊢ Quant from match quant_parse(q) {
-      Some(x) => x
-      None => {
-        ck_error(
-          &mut c,
-          cat3("`resume ", q, "`: write 0, <=1, 1 or \u{3c9}"),
-          TySpan { start: e.start, end: e.end }
-        )
-        QuantAtMostOne
-      }
-    }
-  }
-}
-
-pub fn ck_effect_result(&mut c: Checker, e: SurfaceEffect, generics: Ordmap(Text, Ty)): Ty {
-  ⊢ Ty from match e.result {
-    Some(r) => ck_written(&mut c, r, generics)
-    None => TyUnit
-  }
-}
-
-pub fn ck_declare_effect(&mut c: Checker, e: SurfaceEffect): Unit {
-  let generics := ck_named_generics(e.generics, Ordmap::empty())
-  let params := ck_effect_params(e.params, &mut c, e, generics)
-  let result := ck_effect_result(&mut c, e, generics)
-  let quant := ck_effect_quant(&mut c, e)
-  set_to(&mut c.quants, Ordmap::insert(c.quants, e.name, quant, Ordmap::compare_text))
-  set_to(
-    &mut c.effects,
-    Ordmap::insert(
-      c.effects,
-      e.name,
-      EffectSig { generics: e.generics, params: params, result: result },
-      Ordmap::compare_text
-    )
-  )
-}
-
-pub fn ck_param_generics(gs: List(Text), kind: Kind, map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
-  ⊢ Ordmap(Text, Ty) from match gs {
-    Nil => map
-    Cons(g, rest) => ck_param_generics(
-      rest,
-      kind,
-      Ordmap::insert(map, g, TyParam(g, kind), Ordmap::compare_text)
-    )
-  }
-}
-
-mutual {
-  pub fn term_has_borrow(t: SurfaceTerm): Bool {
-    ⊢ Bool from match t {
-      SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => kind_has_borrow(sk)
-    }
-  }
-
-  pub fn kind_has_borrow(sk: SurfaceKind): Bool {
-    ⊢ Bool from match sk {
-      SkBorrow(m, x) => true
-      SkApp(f, args) => term_has_borrow(f) || terms_have_borrow(args)
-      SkTagged(tag, x) => term_has_borrow(x)
-      SkUnion(ts) => terms_have_borrow(ts)
-      SkProduct(ts) => terms_have_borrow(ts)
-      SkPi(ps, r, e) => params_have_borrow(ps) || term_has_borrow(r)
-      _ => false
-    }
-  }
-
-  pub fn terms_have_borrow(ts: List(SurfaceTerm)): Bool {
-    ⊢ Bool from match ts {
-      Nil => false
-      Cons(t, rest) => term_has_borrow(t) || terms_have_borrow(rest)
-    }
-  }
-
-  pub fn params_have_borrow(ps: List(SurfaceParam)): Bool {
-    ⊢ Bool from match ps {
-      Nil => false
-      Cons(p, rest) => param_has_borrow(p) || params_have_borrow(rest)
-    }
-  }
-
-  pub fn param_has_borrow(p: SurfaceParam): Bool {
-    ⊢ Bool from match p {
-      SurfaceParamMk(name, ty) => term_has_borrow(ty)
-    }
-  }
-}
-
-pub fn ck_data_fields(
-  fs: List(SurfaceDataField),
-  &mut c: Checker,
-  generics: Ordmap(Text, Ty)
-): List(DataField) {
-  ⊢ List(DataField) from match fs {
-    Nil => Nil
-    Cons(f, rest) => {
-      if term_has_borrow(f.ty) {
-        ck_error(&mut c, "a borrow cannot be a field", span_of(f.ty))
-      }
-      let t := ck_written(&mut c, f.ty, generics)
-      let tl := ck_data_fields(rest, &mut c, generics)
-      Cons(DataField { name: f.name, ty: t }, tl)
-    }
-  }
-}
-
-pub fn ck_data_ctors(
-  cs: List(SurfaceDataCtor),
-  &mut c: Checker,
-  generics: Ordmap(Text, Ty)
-): List(DataCtor) {
-  ⊢ List(DataCtor) from match cs {
-    Nil => Nil
-    Cons(k, rest) => {
-      let fields := ck_data_fields(k.fields, &mut c, generics)
-      let tl := ck_data_ctors(rest, &mut c, generics)
-      Cons(DataCtor { name: k.name, fields: fields }, tl)
-    }
-  }
-}
-
-pub fn ck_register_ctors(cs: List(DataCtor), &mut c: Checker, dname: Text, i: Nat): Unit {
-  ⊢ Unit from match cs {
+pub fn ck_register_ctors(cs: List(DataCtor), c: &mut Checker, dname: Text, i: Nat): Unit {
+  match cs {
     Nil => #()
     Cons(k, rest) => {
       let m := Ordmap::insert(
         c.datas.ctors,
         k.name,
-        Pair { fst: dname, snd: i },
+        #(dname, i),
         Ordmap::compare_text
       )
       let m2 := Ordmap::insert(
         m,
-        cat3(dname, ".", k.name),
-        Pair { fst: dname, snd: i },
+        cat3(dname, "::", k.name),
+        #(dname, i),
         Ordmap::compare_text
       )
-      set_to(&mut c.datas, Datas { decls: c.datas.decls, ctors: m2, steps: c.datas.steps })
+      set_to(&mut c.datas, Datas { decls: c.datas.decls, ctors: m2, owners: datas_owners_insert(c.datas.owners, k.name, dname, i), coerces: c.datas.coerces, steps: c.datas.steps, lower: c.datas.lower })
       ck_register_ctors(rest, &mut c, dname, i + 1)
     }
   }
 }
 
 pub fn ctors_have_fields(cs: List(SurfaceDataCtor)): Bool {
-  ⊢ Bool from match cs {
+  match cs {
     Nil => false
     Cons(k, rest) => ⊢ Bool from match k.fields {
-      Cons(f, more) => true
+      Cons(^f, ^more) => true
       Nil => ctors_have_fields(rest)
     }
   }
 }
 
+// An extern type declared to hold a borrow: `type(borrow) Iter(A: Type)` or
+// `type(affine, borrow) Guard`, read as the words `borrow` and `affine, borrow`.
+pub fn kind_words_borrow(k: Text): Bool {
+  k == "borrow" || kind_words_without_borrow(k) != k
+}
+
+// The kind written beside `borrow`: `affine, borrow` is `affine`.
+pub fn kind_words_without_borrow(k: Text): Text {
+  match Text::len(k) < 8 {
+    true => k
+    false => ⊢ Text from match Text::slice_or_empty(k, Text::len(k) - 8, Text::len(k)) == ", borrow" {
+      true => Text::slice_or_empty(k, 0, Text::len(k) - 8)
+      false => k
+    }
+  }
+}
+
 pub fn surface_data_is_view(d: SurfaceData): Bool {
-  ⊢ Bool from match d.kind {
-    Some(k) => k == "view"
+  match d.kind {
+    Some(k) => kind_words_borrow(k)
     None => false
   }
 }
 
 pub fn data_declared(d: SurfaceData): Option(Kind) {
-  if surface_data_is_view(d) {
-    Some(KindAffine)
-  } else {
-    ⊢ Option(Kind) from match d.kind {
-      Some(k) => kind_parse(k)
-      None => None
+  match d.kind {
+    Some(k) => ⊢ Option(Kind) from match k == "borrow" {
+      true => Some(KindAffine)
+      false => kind_parse(kind_words_without_borrow(k))
     }
+    None => None
+  }
+}
+
+// The level a `coerce` field is written with: `coerce`, `coerce(mut)` or
+// `coerce(owned)`.
+pub fn coerce_level_of(written: Text): CoerceLevel {
+  if written == "coerce(mut)" {
+    CoerceMut
+  } else if written == "coerce(owned)" {
+    CoerceOwned
+  } else {
+    CoerceRef
+  }
+}
+
+// The struct's `coerce` field, recorded with the others.
+pub fn data_coerces_with(m: Ordmap(Text, DataCoerce), d: SurfaceData, is_struct: Bool): Ordmap(Text, DataCoerce) {
+  match d.coerce_level {
+    Some(l) => if is_struct {
+      Ordmap::insert(m, d.name, DataCoerce { field: d.coerce_field, level: coerce_level_of(l) }, Ordmap::compare_text)
+    } else {
+      m
+    }
+    None => m
   }
 }
 
 // Records a `struct` or `enum`; field types are checked again after all
 // declarations are known (`ck_recheck_datas`).
-pub fn ck_declare_data(&mut c: Checker, d: SurfaceData, is_struct: Bool, builtin: Bool): Unit {
-  let r#view := surface_data_is_view(d)
-  if r#view && (not(is_struct) || ctors_have_fields(d.constructors)) {
+pub fn ck_declare_data(c: &mut Checker, d: SurfaceData, is_struct: Bool, builtin: Bool): Unit {
+  let view := surface_data_is_view(d)
+  if view && (not(is_struct) || ctors_have_fields(d.constructors)) {
     ck_error(
       &mut c,
-      "a view struct has no fields: it is an opaque type",
+      view_decl_message(is_struct),
       TySpan { start: d.start, end: d.end }
     )
   }
@@ -556,14 +130,17 @@ pub fn ck_declare_data(&mut c: Checker, d: SurfaceData, is_struct: Bool, builtin
     base: KindLinear,
     holds: d.generics,
     builtin: builtin,
-    r#view: r#view
+    view: view
   }
   set_to(
     &mut c.datas,
     Datas {
       decls: Ordmap::insert(c.datas.decls, d.name, decl, Ordmap::compare_text),
       ctors: c.datas.ctors,
-      steps: c.datas.steps
+      owners: c.datas.owners,
+      coerces: data_coerces_with(c.datas.coerces, d, is_struct),
+      steps: c.datas.steps,
+      lower: c.datas.lower
     }
   )
 }
@@ -579,12 +156,12 @@ pub fn data_with_recursive(data: Data, recursive: Bool): Data {
     base: data.base,
     holds: data.holds,
     builtin: data.builtin,
-    r#view: data.r#view
+    view: data.view
   }
 }
 
 pub fn datas_mark_recursive(d: Datas, n: Text): Datas {
-  ⊢ Datas from match datas_decl(d, n) {
+  match datas_decl(d, n) {
     None => d
     Some(data) => Datas {
       decls: Ordmap::insert(
@@ -594,18 +171,59 @@ pub fn datas_mark_recursive(d: Datas, n: Text): Datas {
         Ordmap::compare_text
       ),
       ctors: d.ctors,
-      steps: d.steps
+      owners: d.owners,
+      coerces: d.coerces,
+      steps: d.steps,
+      lower: d.lower
     }
   }
 }
 
-pub fn ck_mark_recursive(names: List(Pair(Text, Data)), &mut c: Checker): Unit {
-  ⊢ Unit from match names {
+pub fn ck_mark_recursive(names: List(Text × Data), c: &mut Checker): Unit {
+  match names {
     Nil => #()
     Cons(entry, rest) => {
       set_to(&mut c.datas, datas_mark_recursive(c.datas, entry.fst))
       ck_mark_recursive(rest, &mut c)
     }
+  }
+}
+
+pub fn data_with_view(data: Data, view: Bool): Data {
+  Data {
+    name: data.name,
+    declared: data.declared,
+    generics: data.generics,
+    constructors: data.constructors,
+    is_struct: data.is_struct,
+    recursive: data.recursive,
+    base: data.base,
+    holds: data.holds,
+    builtin: data.builtin,
+    view: view
+  }
+}
+
+// A declaration that holds a view is one (`find_views` of `types.rs`), not
+// only an extern `type(borrow)`.
+pub fn datas_mark_view(d: Datas, n: Text): Datas {
+  match datas_decl(d, n) {
+    None => d
+    Some(data) => Datas {
+      decls: Ordmap::insert(d.decls, n, data_with_view(data, data_is_view(d, n)), Ordmap::compare_text),
+      ctors: d.ctors,
+      owners: d.owners,
+      coerces: d.coerces,
+      steps: d.steps,
+      lower: d.lower
+    }
+  }
+}
+
+pub fn datas_mark_views(names: List(Text × Data), d: Datas): Datas {
+  match names {
+    Nil => d
+    Cons(entry, rest) => datas_mark_views(rest, datas_mark_view(d, entry.fst))
   }
 }
 
@@ -618,7 +236,7 @@ pub fn ck_declared_fields(
   declared: Kind,
   i: Nat
 ): Option(Text) {
-  ⊢ Option(Text) from match fs {
+  match fs {
     Nil => None
     Cons(f, rest) => {
       let k := datas_kind(datas, ty_substitute(f.ty, least))
@@ -643,7 +261,7 @@ pub fn ck_declared_ctors(
   least: Ordmap(Text, Ty),
   declared: Kind
 ): Option(Text) {
-  ⊢ Option(Text) from match cs {
+  match cs {
     Nil => None
     Cons(k, rest) => ⊢ Option(Text) from match ck_declared_fields(
       k.fields,
@@ -662,7 +280,7 @@ pub fn ck_declared_ctors(
 pub fn ck_declared_message(d: SurfaceData, data: Data, declared: Kind): Option(Text) {
   if data.recursive && kind_rank(declared) < kind_rank(KindShared) {
     Some(
-      cat5("declared ", kind_name(declared), " but `", d.name, "` holds itself, so it is shared")
+      declared_shared_holds_itself_message(kind_name(declared), d.name)
     )
   } else {
     None
@@ -670,7 +288,7 @@ pub fn ck_declared_message(d: SurfaceData, data: Data, declared: Kind): Option(T
 }
 
 pub fn ck_finish_message(datas: Datas, d: SurfaceData): Option(Text) {
-  ⊢ Option(Text) from match datas_decl(datas, d.name) {
+  match datas_decl(datas, d.name) {
     None => None
     Some(data) => ⊢ Option(Text) from match data.declared {
       None => None
@@ -687,23 +305,23 @@ pub fn ck_finish_message(datas: Datas, d: SurfaceData): Option(Text) {
   }
 }
 
-pub fn ck_finish_decl(&mut c: Checker, d: SurfaceData): Unit {
-  ⊢ Unit from match ck_finish_message(c.datas, d) {
+pub fn ck_finish_decl(c: &mut Checker, d: SurfaceData): Unit {
+  match ck_finish_message(c.datas, d) {
     None => #()
     Some(m) => ck_error(&mut c, m, TySpan { start: d.start, end: d.end })
   }
 }
 
-pub fn ck_finish_stmt(&mut c: Checker, s: SurfaceStmt): Unit {
-  ⊢ Unit from match s {
+pub fn ck_finish_stmt(c: &mut Checker, s: SurfaceStmt): Unit {
+  match s {
     StStruct(d) => ck_finish_decl(&mut c, d)
     StEnum(d) => ck_finish_decl(&mut c, d)
     _ => #()
   }
 }
 
-pub fn ck_finish_stmts(ss: List(SurfaceStmt), &mut c: Checker): Unit {
-  ⊢ Unit from match ss {
+pub fn ck_finish_stmts(ss: List(SurfaceStmt), c: &mut Checker): Unit {
+  match ss {
     Nil => #()
     Cons(s, rest) => {
       ck_finish_stmt(&mut c, s)
@@ -714,30 +332,23 @@ pub fn ck_finish_stmts(ss: List(SurfaceStmt), &mut c: Checker): Unit {
 
 // Which declarations hold themselves, and whether a written kind is looser
 // than what the fields give.
-pub fn ck_finish_datas(&mut c: Checker, program: List(SurfaceStmt)): Unit {
+pub fn ck_finish_datas(c: &mut Checker, program: List(SurfaceStmt)): Unit {
   ck_mark_recursive(Ordmap::entries(c.datas.decls), &mut c)
   set_to(&mut c.datas, datas_summarize(c.datas))
   ck_finish_stmts(program, &mut c)
 }
 
-// `Option`, `Result` and `Pair` hold what they are given: a view if one of
-// the arguments is.
-pub fn ck_view_container(n: Text): Bool {
-  n == "Option" || n == "Result" || n == "Pair"
-}
-
+// A declaration that holds a borrow: an extern `type(borrow)`, or one whose fields
+// hold one.
 pub fn ck_declared_view(c: Checker, n: Text): Bool {
-  ⊢ Bool from match datas_decl(c.datas, n) {
-    Some(d) => d.r#view
-    None => false
-  }
+  data_is_view(c.datas, n)
 }
 
-// A type that holds a borrow, received as one is: a borrow, a `view struct`,
-// or an `Option`, `Result` or `Pair` of one.
+// A type that holds a borrow, received as one is: a borrow, a declaration
+// that holds one, or a type applied to one.
 mutual {
-  pub fn ck_any_view_in(k: Nat, &c: Checker, ts: List(Ty)): Bool {
-    ⊢ Bool from match k {
+  pub fn ck_any_view_in(k: Nat, c: &Checker, ts: List(Ty)): Bool {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match ts {
         Nil => false
@@ -746,28 +357,28 @@ mutual {
     }
   }
 
-  pub fn ck_is_view_in(k: Nat, &c: Checker, t: Ty): Bool {
-    ⊢ Bool from match k {
+  pub fn ck_is_view_in(k: Nat, c: &Checker, t: Ty): Bool {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match ck_resolve(&c, t) {
-        TyBorrow(x, m) => true
+        TyBorrow(^x, ^m) => true
         TyNamed(n, args) => ck_declared_view(
           c,
-          n
-        ) || (ck_view_container(n) && ck_any_view_in(j, &c, args))
+          surface_name_text(n)
+        ) || ck_any_view_in(j, &c, args)
         _ => false
       }
     }
   }
 }
 
-pub fn ck_is_view(&c: Checker, t: Ty): Bool {
+pub fn ck_is_view(c: &Checker, t: Ty): Bool {
   ck_is_view_in(c.steps, &c, t)
 }
 
 mutual {
-  pub fn ck_any_mut_borrow_in(k: Nat, &c: Checker, ts: List(Ty)): Bool {
-    ⊢ Bool from match k {
+  pub fn ck_any_mut_borrow_in(k: Nat, c: &Checker, ts: List(Ty)): Bool {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match ts {
         Nil => false
@@ -776,27 +387,27 @@ mutual {
     }
   }
 
-  pub fn ck_has_mut_borrow_in(k: Nat, &c: Checker, t: Ty): Bool {
-    ⊢ Bool from match k {
+  pub fn ck_has_mut_borrow_in(k: Nat, c: &Checker, t: Ty): Bool {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match ck_resolve(&c, t) {
         TyBorrow(inner, m) => m || ck_has_mut_borrow_in(j, &c, inner)
-        TyNamed(n, args) => ck_any_mut_borrow_in(j, &c, args)
+        TyNamed(^n, args) => ck_any_mut_borrow_in(j, &c, args)
         _ => false
       }
     }
   }
 }
 
-pub fn ck_has_mut_borrow(&c: Checker, t: Ty): Bool {
+pub fn ck_has_mut_borrow(c: &Checker, t: Ty): Bool {
   ck_has_mut_borrow_in(c.steps, &c, t)
 }
 
 // The value a view of duplicable things stands for (`&A == A`), or `None`
 // when something in it is not duplicable or is a `&mut`.
 mutual {
-  pub fn ck_view_values_in(k: Nat, &c: Checker, ts: List(Ty)): Option(List(Ty)) {
-    ⊢ Option(List(Ty)) from match k {
+  pub fn ck_view_values_in(k: Nat, c: &Checker, ts: List(Ty)): Option(List(Ty)) {
+    match k {
       Zero => None
       Succ(j) => ⊢ Option(List(Ty)) from match ts {
         Nil => Some(Nil)
@@ -811,8 +422,8 @@ mutual {
     }
   }
 
-  pub fn ck_view_value_in(k: Nat, &c: Checker, t: Ty): Option(Ty) {
-    ⊢ Option(Ty) from match k {
+  pub fn ck_view_value_in(k: Nat, c: &Checker, t: Ty): Option(Ty) {
+    match k {
       Zero => None
       Succ(j) => ⊢ Option(Ty) from match ck_resolve(&c, t) {
         TyBorrow(inner, m) => if m {
@@ -823,7 +434,7 @@ mutual {
             Some(v) => if kind_dup(ck_kind(&c, v)) { Some(v) } else { None }
           }
         }
-        TyNamed(n, args) => if ck_declared_view(c, n) {
+        TyNamed(n, args) => if ck_declared_view(c, surface_name_text(n)) {
           None
         } else {
           ⊢ Option(Ty) from match ck_view_values_in(j, &c, args) {
@@ -837,16 +448,16 @@ mutual {
   }
 }
 
-pub fn ck_view_value(&c: Checker, t: Ty): Option(Ty) {
+pub fn ck_view_value(c: &Checker, t: Ty): Option(Ty) {
   ck_view_value_in(c.steps, &c, t)
 }
 
 pub fn ck_bound_of(bounds: List(Option(Text)), i: Nat): Option(Kind) {
-  ⊢ Option(Kind) from match nth_item(bounds, i) {
+  match nth_item(bounds, i) {
     None => Some(KindAffine)
     Some(o) => ⊢ Option(Kind) from match o {
       None => Some(KindAffine)
-      Some(b) => kind_parse(b)
+      Some(b) => kind_parse_bound(b)
     }
   }
 }
@@ -855,18 +466,18 @@ pub fn ck_bound_of(bounds: List(Option(Text)), i: Nat): Option(Kind) {
 // from their names to type parameters.
 pub(open) inductive SigGenerics: Type {
   SigGenericsMk(
-    generics: List(Pair(Text, Kind)),
+    generics: List(Text × Kind),
     map: Ordmap(Text, Ty),
     // The type constructors among them, with the kind each takes.
-    ctors: List(Pair(Text, Kind))
+    ctors: List(Text × Kind)
   ): SigGenerics
 }
 
 // `(k₁)->k₂`: the generic is a type constructor.
-pub fn ck_ctor_bound_of(bounds: List(Option(Text)), i: Nat): Option(Pair(Kind, Kind)) {
-  ⊢ Option(Pair(Kind, Kind)) from match nth_item(bounds, i) {
+pub fn ck_ctor_bound_of(bounds: List(Option(Text)), i: Nat): Option(Kind × Kind) {
+  match nth_item(bounds, i) {
     None => None
-    Some(o) => ⊢ Option(Pair(Kind, Kind)) from match o {
+    Some(o) => ⊢ Option(Kind × Kind) from match o {
       None => None
       Some(b) => kind_parse_ctor(b)
     }
@@ -879,7 +490,7 @@ pub fn sig_generics(
   i: Nat,
   acc: SigGenerics
 ): SigGenerics {
-  ⊢ SigGenerics from match gs {
+  match gs {
     Nil => acc
     Cons(g, rest) => ⊢ SigGenerics from match ck_ctor_bound_of(bounds, i) {
       Some(ak) => sig_generics(
@@ -887,9 +498,9 @@ pub fn sig_generics(
         bounds,
         i + 1,
         SigGenerics {
-          generics: Cons(Pair { fst: g, snd: ak.snd }, acc.generics),
+          generics: Cons(#(g, ak.snd), acc.generics),
           map: Ordmap::insert(acc.map, g, TyParam(g, ak.snd), Ordmap::compare_text),
-          ctors: Cons(Pair { fst: g, snd: ak.fst }, acc.ctors)
+          ctors: Cons(#(g, ak.fst), acc.ctors)
         }
       )
       None => ⊢ SigGenerics from match ck_bound_of(bounds, i) {
@@ -899,7 +510,7 @@ pub fn sig_generics(
           bounds,
           i + 1,
           SigGenerics {
-            generics: Cons(Pair { fst: g, snd: k }, acc.generics),
+            generics: Cons(#(g, k), acc.generics),
             map: Ordmap::insert(acc.map, g, TyParam(g, k), Ordmap::compare_text),
             ctors: acc.ctors
           }
@@ -909,8 +520,8 @@ pub fn sig_generics(
   }
 }
 
-pub fn ck_sig_written(&mut c: Checker, p: Option(SurfaceTerm), map: Ordmap(Text, Ty)): Ty {
-  ⊢ Ty from match p {
+pub fn ck_sig_written(c: &mut Checker, p: Option(SurfaceTerm), map: Ordmap(Text, Ty)): Ty {
+  match p {
     Some(x) => ck_written(&mut c, x, map)
     None => {
       // No written type consumes the borrow-position flag for an inferred parameter.
@@ -921,13 +532,13 @@ pub fn ck_sig_written(&mut c: Checker, p: Option(SurfaceTerm), map: Ordmap(Text,
 }
 
 pub fn ck_sig_param(
-  &mut c: Checker,
+  c: &mut Checker,
   p: Option(SurfaceTerm),
   b: Option(Bool),
   map: Ordmap(Text, Ty)
 ): Ty {
   set_to(&mut c.under_borrow, ⊢ Bool from match b {
-    Some(m) => true
+    Some(^m) => true
     None => false
   })
   let t := ck_sig_written(&mut c, p, map)
@@ -938,47 +549,47 @@ pub fn ck_sig_param(
 }
 
 pub fn list_head_or_none<A>(xs: List(Option(A))): Option(A) {
-  ⊢ Option(A) from match xs {
+  match xs {
     Nil => None
-    Cons(o, more) => o
+    Cons(o, ^more) => o
   }
 }
 
 pub fn ck_sig_params(
   pts: List(Option(SurfaceTerm)),
-  &mut c: Checker,
-  borrows: List(Option(Bool)),
+  c: &mut Checker,
+  r#borrows: List(Option(Bool)),
   map: Ordmap(Text, Ty)
 ): List(Ty) {
-  ⊢ List(Ty) from match pts {
+  match pts {
     Nil => Nil
     Cons(p, rest) => {
-      let wrapped := ck_sig_param(&mut c, p, list_head_or_none(borrows), map)
-      let tl := ck_sig_params(rest, &mut c, List::tail(borrows), map)
+      let wrapped := ck_sig_param(&mut c, p, list_head_or_none(r#borrows), map)
+      let tl := ck_sig_params(rest, &mut c, List::tail(r#borrows), map)
       Cons(wrapped, tl)
     }
   }
 }
 
 pub fn ty_any_mut_borrow(ts: List(Ty)): Bool {
-  ⊢ Bool from match ts {
+  match ts {
     Nil => false
     Cons(t, rest) => ⊢ Bool from match t {
-      TyBorrow(x, m) => m || ty_any_mut_borrow(rest)
+      TyBorrow(^x, m) => m || ty_any_mut_borrow(rest)
       _ => ty_any_mut_borrow(rest)
     }
   }
 }
 
 pub fn ty_any_borrow(ts: List(Ty)): Bool {
-  ⊢ Bool from match ts {
+  match ts {
     Nil => false
     Cons(t, rest) => ty_is_borrow(t) || ty_any_borrow(rest)
   }
 }
 
-pub fn ck_sig_result(&mut c: Checker, f: SurfaceFn, map: Ordmap(Text, Ty)): Ty {
-  ⊢ Ty from match f.result {
+pub fn ck_sig_result(c: &mut Checker, f: SurfaceFn, map: Ordmap(Text, Ty)): Ty {
+  match f.result {
     Some(r) => ck_written(&mut c, r, map)
     None => ck_fresh(&mut c)
   }
@@ -987,50 +598,293 @@ pub fn ck_sig_result(&mut c: Checker, f: SurfaceFn, map: Ordmap(Text, Ty)): Ty {
 // A view is returned only from a borrowed parameter: the message when not.
 pub fn ck_view_result_message(c: Checker, params: List(Ty), result: Ty): Option(Text) {
   let shown := ty_show(ck_shown(&c, result))
-  if not(ck_is_view(&c, result)) {
+  // A result that may hold a borrow needs a lender only when it is written
+  // `&T` or `&mut T` itself; without one, the body's check sees that the
+  // result borrows nothing (an extern, which has no body, is trusted to).
+  let lends := ty_any_borrow(params)
+  let written := ty_is_borrow(ck_resolve(&c, result))
+  if not(ck_is_view(&c, result)) || not(lends || written) {
     None
   } else if ck_has_mut_borrow(&c, result) {
     if ty_any_mut_borrow(
       params
-    ) { None } else { Some(cat3("-> ", shown, " needs a &mut parameter")) }
-  } else if ty_any_borrow(params) {
+    ) { None } else { Some(return_needs_mut_parameter_message(shown)) }
+  } else if lends {
     None
   } else {
-    Some(cat3("-> ", shown, " needs a borrowed parameter"))
+    Some(return_needs_borrowed_parameter_message(shown))
+  }
+}
+
+// What a signature's result says wrong, the first of it: a view returned
+// without a lender (`ck_view_result_message`), then what `borrows(…)` names
+// (`ck_lends_message`).
+pub fn ck_signature_message(c: Checker, f: SurfaceFn, params: List(Ty), result: Ty): Option(Text) {
+  match ck_view_result_message(c, params, result) {
+    Some(m) => Some(m)
+    None => ck_lends_message(c, f, params, result)
+  }
+}
+
+// `borrows(m, x.f, place(Tree))`: the result holds a borrow, each path starts
+// at a parameter that lends one or names an operation of the written row,
+// and a result that holds a `&mut` borrow names a lender of one.
+pub fn ck_lends_message(c: Checker, f: SurfaceFn, params: List(Ty), result: Ty): Option(Text) {
+  match f.lends {
+    None => None
+    Some(paths) => {
+      let shown := ty_show(ck_shown(&c, result))
+      if not(ck_is_view(&c, result)) {
+        Some(borrows_result_holds_no_borrow_message(shown))
+      } else {
+        ⊢ Option(Text) from match ck_lends_bad(c, f, params, paths) {
+          Some(root) => Some(borrows_not_a_borrowed_parameter_message(root))
+          None => if ck_has_mut_borrow(&c, result) && not(ck_lends_mut(c, f, params, paths)) {
+            Some(return_needs_mut_parameter_message(shown))
+          } else { None }
+        }
+      }
+    }
+  }
+}
+
+pub fn lends_root(path: Text): Text {
+  match text_split(path, ".") {
+    Cons(r, ^more) => r
+    Nil => path
+  }
+}
+
+pub fn lends_has_field(path: Text): Bool {
+  match text_split(path, ".") {
+    Cons(^r, Cons(^x, ^more)) => true
+    _ => false
+  }
+}
+
+pub fn lends_effects_have(es: List(RowEntry), key: Text): Bool {
+  match es {
+    Nil => false
+    Cons(e, rest) => effect_key_text(row_entry_text(e)) == key || lends_effects_have(rest, key)
+  }
+}
+
+// Whether `path` names an operation of the written row.
+pub fn lends_in_row(f: SurfaceFn, path: Text): Bool {
+  match f.effects {
+    None => false
+    Some(es) => not(lends_has_field(path)) && lends_effects_have(es, effect_key_text(path))
+  }
+}
+
+pub fn lends_param_ty(names: List(Text), tys: List(Ty), root: Text): Option(Ty) {
+  match names {
+    Nil => None
+    Cons(n, rest) => ⊢ Option(Ty) from match tys {
+      Nil => None
+      Cons(t, more) => if n == root { Some(t) } else { lends_param_ty(rest, more, root) }
+    }
+  }
+}
+
+// What the parameter a path starts at lends: `None` for a path that lends
+// nothing, `Some(m)` for one that lends a borrow (`&mut` when `m`).
+pub fn ck_lends_path(c: Checker, f: SurfaceFn, params: List(Ty), path: Text): Option(Bool) {
+  if lends_in_row(f, path) { Some(false) } else {
+    ⊢ Option(Bool) from match lends_param_ty(f.params, params, lends_root(path)) {
+      None => None
+      Some(t) => ⊢ Option(Bool) from match t {
+        TyBorrow(^inner, m) => Some(m)
+        _ => if ck_is_view(&c, t) { Some(ck_has_mut_borrow(&c, t)) } else { None }
+      }
+    }
+  }
+}
+
+// The root of the first path that lends nothing.
+pub fn ck_lends_bad(c: Checker, f: SurfaceFn, params: List(Ty), paths: List(Text)): Option(Text) {
+  match paths {
+    Nil => None
+    Cons(p, rest) => ⊢ Option(Text) from match ck_lends_path(c, f, params, p) {
+      None => Some(lends_root(p))
+      Some(^m) => ck_lends_bad(c, f, params, rest)
+    }
+  }
+}
+
+// Whether a path lends a `&mut` borrow.
+pub fn ck_lends_mut(c: Checker, f: SurfaceFn, params: List(Ty), paths: List(Text)): Bool {
+  match paths {
+    Nil => false
+    Cons(p, rest) => ⊢ Bool from match ck_lends_path(c, f, params, p) {
+      Some(true) => true
+      _ => ck_lends_mut(c, f, params, rest)
+    }
+  }
+}
+
+pub fn generic_no_effects(effects: Option(List(RowEntry))): Bool {
+  match effects {
+    None => true
+    Some(es) => ⊢ Bool from match es {
+      Nil => true
+      Cons(^e, ^rest) => false
+    }
+  }
+}
+pub fn generic_sort(n: Text): Bool {
+  Text::slice_or_empty(n, 0, 4) == "Type" && generic_digits(n, 4, Text::len(n) - 4)
+}
+pub fn generic_digits(t: Text, at: Nat, k: Nat): Bool {
+  match k {
+    Zero => true
+    Succ(j) => Text::byte_value(t, at) >= 48 && Text::byte_value(t, at) <= 57 && generic_digits(t, at + 1, j)
+  }
+}
+
+// What native Nib takes as a generic: a sort (`Type`, `Type1`), `NoBorrow`,
+// a sum of them (`Shared + NoBorrow`), a sort applied (`Type(u)`), or a pure
+// function of them.
+mutual {
+  pub fn generic_native(k: Nat, t: SurfaceTerm): Bool {
+    match k {
+      Zero => false
+      Succ(j) => ⊢ Bool from match t.kind {
+        SkVar(n) => surface_name_text(n) == "NoBorrow" || generic_sort(surface_name_text(n))
+        SkApp(f, args) => ⊢ Bool from match f.kind {
+          SkVar(n) => if surface_name_text(n) == "+" { generic_native_all(j, args) } else { generic_sort(surface_name_text(n)) }
+          _ => false
+        }
+        SkPi(params, result, effects) => generic_no_effects(effects) && generic_native_params(j, params) && generic_native(j, result)
+        _ => false
+      }
+    }
+  }
+  pub fn generic_native_all(k: Nat, ts: List(SurfaceTerm)): Bool {
+    match k {
+      Zero => false
+      Succ(j) => ⊢ Bool from match ts {
+        Nil => true
+        Cons(t, rest) => generic_native(j, t) && generic_native_all(j, rest)
+      }
+    }
+  }
+  pub fn generic_native_params(k: Nat, ps: List(SurfaceParam)): Bool {
+    match k {
+      Zero => false
+      Succ(j) => ⊢ Bool from match ps {
+        Nil => true
+        Cons(p, rest) => generic_native(j, p.ty) && generic_native_params(j, rest)
+      }
+    }
+  }
+}
+
+// A generic of a signature that is a term rather than a type or a row
+// (`<n: Nat>`): native Nib takes it as an ordinary parameter only once it is
+// lowered to one, so it is reported, at its `n: Nat`.
+pub fn term_generic_problem(f: SurfaceFn): Option(Text × TySpan) {
+  term_generic_in(f, f.generics, 0)
+}
+pub fn term_generic_in(f: SurfaceFn, gs: List(Text), i: Nat): Option(Text × TySpan) {
+  match gs {
+    Nil => None
+    Cons(g, rest) => if term_generic_at(f, i) {
+      Some(#(term_generic_needs_extraction_message(g), term_generic_span(f, i)))
+    } else {
+      term_generic_in(f, rest, i + 1)
+    }
+  }
+}
+pub fn term_generic_at(f: SurfaceFn, i: Nat): Bool {
+  match nth_item(f.bound_starts, i) {
+    Some(o) => ⊢ Bool from match o {
+      None => false
+      Some(^s) => term_generic_written(f, i)
+    }
+    None => term_generic_written(f, i)
+  }
+}
+pub fn term_generic_written(f: SurfaceFn, i: Nat): Bool {
+  let typed := ⊢ Bool from match nth_item(f.generic_types, i) {
+    None => false
+    Some(t) => not(generic_native(1000, t))
+  }
+  let bounded := ⊢ Bool from match nth_item(f.bounds, i) {
+    None => false
+    Some(o) => ⊢ Bool from match o {
+      None => false
+      Some(b) => ⊢ Bool from match bound_kind_part(b) {
+        None => false
+        Some(k) => ⊢ Bool from match kind_parse(k) {
+          Some(^x) => false
+          None => ⊢ Bool from match kind_parse_ctor(k) {
+            Some(^x) => false
+            None => true
+          }
+        }
+      }
+    }
+  }
+  typed || bounded
+}
+pub fn term_generic_span(f: SurfaceFn, i: Nat): TySpan {
+  match nth_item(f.bound_starts, i) {
+    Some(o) => ⊢ TySpan from match o {
+      Some(s) => ⊢ TySpan from match nth_item(f.generic_types, i) {
+        Some(t) => TySpan { start: s, end: span_of(t).end }
+        None => TySpan { start: f.start, end: f.end }
+      }
+      None => TySpan { start: f.start, end: f.end }
+    }
+    None => TySpan { start: f.start, end: f.end }
+  }
+}
+// What a signature reports: a term generic first, else what its result says.
+pub fn sig_report_message(c: Checker, f: SurfaceFn, params: List(Ty), result: Ty): Option(Text) {
+  match term_generic_problem(f) {
+    Some(p) => Some(p.fst)
+    None => ck_signature_message(c, f, params, result)
+  }
+}
+pub fn sig_report_span(f: SurfaceFn): TySpan {
+  match term_generic_problem(f) {
+    Some(p) => p.snd
+    None => ck_sig_span(f)
   }
 }
 
 pub fn ck_sig_span(f: SurfaceFn): TySpan {
-  ⊢ TySpan from match f.result {
+  match f.result {
     Some(r) => span_of(r)
     None => TySpan { start: f.start, end: f.end }
   }
 }
 
-pub fn ck_report(&mut c: Checker, message: Option(Text), span: TySpan): Unit {
-  ⊢ Unit from match message {
+pub fn ck_report(c: &mut Checker, message: Option(Text), span: TySpan): Unit {
+  match message {
     None => #()
     Some(m) => ck_error(&mut c, m, span)
   }
 }
 
-pub fn generics_have(gs: List(Pair(Text, Kind)), n: Text): Bool {
-  ⊢ Bool from match gs {
+pub fn generics_have(gs: List(Text × Kind), n: Text): Bool {
+  match gs {
     Nil => false
     Cons(g, rest) => g.fst == n || generics_have(rest, n)
   }
 }
 
-pub fn preds_have(ps: List(Pair(Text, Text)), r#class: Text, g: Text): Bool {
-  ⊢ Bool from match ps {
+pub fn preds_have(ps: List(Text × Text), r#class: Text, g: Text): Bool {
+  match ps {
     Nil => false
     Cons(p, rest) => (p.fst == r#class && p.snd == g) || preds_have(rest, r#class, g)
   }
 }
 
-pub fn constraint_generic(t: SurfaceTerm, gs: List(Pair(Text, Kind))): Option(Text) {
-  ⊢ Option(Text) from match t.kind {
-    SkVar(g) => if generics_have(gs, g) { Some(g) } else { None }
+pub fn constraint_generic(t: SurfaceTerm, gs: List(Text × Kind)): Option(Text) {
+  match t.kind {
+    SkVar(g) => if generics_have(gs, surface_name_text(g)) { Some(surface_name_text(g)) } else { None }
     _ => None
   }
 }
@@ -1039,36 +893,36 @@ pub fn constraint_generic(t: SurfaceTerm, gs: List(Pair(Text, Kind))): Option(Te
 // Checked dictionary expansion must remove indexed constraints before this
 // path; preserve the source AST and reject the unsupported view here.
 pub fn constraint_single_type(w: SurfaceConstraint): SurfaceTerm {
-  ⊢ SurfaceTerm from match w.arguments {
+  match w.arguments {
     Nil => w.ty
-    Cons(index, rest) => surface_term_mk(SkOther("indexed class constraint"), w.start, w.end)
+    Cons(^index, ^rest) => surface_term_mk(SkOther("indexed class constraint"), w.start, w.end)
   }
 }
 
 pub fn ck_where_pred(
-  &mut c: Checker,
+  c: &mut Checker,
   w: SurfaceConstraint,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   name: Text,
-  preds: List(Pair(Text, Text))
-): List(Pair(Text, Text)) {
+  preds: List(Text × Text)
+): List(Text × Text) {
   let span: TySpan := TySpan { start: w.start, end: w.end }
   if not(
     class_is_structural(w.r#class)
   ) && not(Ordmap::contains(c.classes, w.r#class, Ordmap::compare_text)) {
-    ck_error(&mut c, cat2(w.r#class, " is not a class"), span)
+    ck_error(&mut c, not_a_class_message(w.r#class), span)
     preds
   } else {
-    ⊢ List(Pair(Text, Text)) from match constraint_generic(constraint_single_type(w), gs) {
+    ⊢ List(Text × Text) from match constraint_generic(constraint_single_type(w), gs) {
       None => {
         ck_error(&mut c, cat2("where constrains only generics of ", name), span)
         preds
       }
       Some(g) => if preds_have(preds, w.r#class, g) {
-        ck_error(&mut c, cat5(w.r#class, "(", g, ") is written twice", ""), span)
+        ck_error(&mut c, predicate_written_twice_message(w.r#class, g), span)
         preds
       } else {
-        Cons(Pair { fst: w.r#class, snd: g }, preds)
+        Cons(#(w.r#class, g), preds)
       }
     }
   }
@@ -1076,31 +930,31 @@ pub fn ck_where_pred(
 
 pub fn ck_where_preds(
   ws: List(SurfaceConstraint),
-  &mut c: Checker,
-  gs: List(Pair(Text, Kind)),
+  c: &mut Checker,
+  gs: List(Text × Kind),
   name: Text,
-  preds: List(Pair(Text, Text))
-): List(Pair(Text, Text)) {
-  ⊢ List(Pair(Text, Text)) from match ws {
+  preds: List(Text × Text)
+): List(Text × Text) {
+  match ws {
     Nil => preds
     Cons(w, rest) => {
-      let next: List(Pair(Text, Text)) := ck_where_pred(&mut c, w, gs, name, preds)
+      let next: List(Text × Text) := ck_where_pred(&mut c, w, gs, name, preds)
       ck_where_preds(rest, &mut c, gs, name, next)
     }
   }
 }
 
-pub fn ck_signature(&mut c: Checker, f: SurfaceFn): Scheme {
+pub fn ck_signature(c: &mut Checker, f: SurfaceFn): Scheme {
   let g := sig_generics(
     f.generics,
     f.bounds,
     0,
     SigGenerics { generics: Nil, map: Ordmap::empty(), ctors: Nil }
   )
-  let params := ck_sig_params(f.param_types, &mut c, f.borrows, g.map)
+  let params := ck_sig_params(f.param_types, &mut c, f.r#borrows, g.map)
   let result := ck_sig_result(&mut c, f, g.map)
-  ck_report(&mut c, ck_view_result_message(c, params, result), ck_sig_span(f))
-  let preds: List(Pair(Text, Text)) := ck_where_preds(f.wheres, &mut c, g.generics, f.name, Nil)
+  ck_report(&mut c, sig_report_message(c, f, params, result), sig_report_span(f))
+  let preds: List(Text × Text) := ck_where_preds(f.wheres, &mut c, g.generics, f.name, Nil)
   Scheme {
     generics: List::reverse(g.generics),
     ty: TyFn(params, result, KindShared),
@@ -1109,8 +963,8 @@ pub fn ck_signature(&mut c: Checker, f: SurfaceFn): Scheme {
   }
 }
 
-pub fn ctor_arg_of(ctors: List(Pair(Text, Kind)), g: Text): Option(Kind) {
-  ⊢ Option(Kind) from match ctors {
+pub fn ctor_arg_of(ctors: List(Text × Kind), g: Text): Option(Kind) {
+  match ctors {
     Nil => None
     Cons(p, rest) => if p.fst == g { Some(p.snd) } else { ctor_arg_of(rest, g) }
   }
@@ -1119,14 +973,14 @@ pub fn ctor_arg_of(ctors: List(Pair(Text, Kind)), g: Text): Option(Kind) {
 // Fresh variables for the generics; a type constructor's bound is checked
 // once it is known, for `name`.
 pub fn ck_instantiate_map_ctors(
-  generics: List(Pair(Text, Kind)),
-  &mut c: Checker,
-  ctors: List(Pair(Text, Kind)),
+  generics: List(Text × Kind),
+  c: &mut Checker,
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan,
   map: Ordmap(Text, Ty)
 ): Ordmap(Text, Ty) {
-  ⊢ Ordmap(Text, Ty) from match generics {
+  match generics {
     Nil => map
     Cons(g, rest) => {
       let v := ck_fresh(&mut c)
@@ -1163,20 +1017,20 @@ pub fn ck_instantiate_map_ctors(
 }
 
 pub fn ck_instantiate_map(
-  generics: List(Pair(Text, Kind)),
-  &mut c: Checker,
+  generics: List(Text × Kind),
+  c: &mut Checker,
   span: TySpan,
   map: Ordmap(Text, Ty)
 ): Ordmap(Text, Ty) {
   ck_instantiate_map_ctors(generics, &mut c, Nil, "", span, map)
 }
 
-pub fn ck_instantiate(&mut c: Checker, generics: List(Pair(Text, Kind)), t: Ty, span: TySpan): Ty {
+pub fn ck_instantiate(c: &mut Checker, generics: List(Text × Kind), t: Ty, span: TySpan): Ty {
   let map := ck_instantiate_map(generics, &mut c, span, Ordmap::empty())
   ty_substitute(t, map)
 }
 
-pub fn ck_pend(&mut c: Checker, r#class: Text, t: Ty, what: Text, span: TySpan): Unit {
+pub fn ck_pend(c: &mut Checker, r#class: Text, t: Ty, what: Text, span: TySpan): Unit {
   set_to(
     &mut c.pending,
     Cons(
@@ -1194,13 +1048,13 @@ pub fn ck_pend(&mut c: Checker, r#class: Text, t: Ty, what: Text, span: TySpan):
 }
 
 pub fn ck_pend_preds(
-  ps: List(Pair(Text, Text)),
-  &mut c: Checker,
+  ps: List(Text × Text),
+  c: &mut Checker,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan
 ): Unit {
-  ⊢ Unit from match ps {
+  match ps {
     Nil => #()
     Cons(p, rest) => {
       ⊢ Unit from match Ordmap::get(map, p.snd, Ordmap::compare_text) {
@@ -1212,21 +1066,50 @@ pub fn ck_pend_preds(
   }
 }
 
+// The generics a function's type mentions, with what a use gave each: a
+// generic the type does not mention is no type argument a backend writes.
+pub fn ck_use_generics(gs: List(Text × Kind), t: Ty, map: Ordmap(Text, Ty)): List(Text × Ty) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => if ty_param_in(t, g.fst) {
+      ⊢ List(Text × Ty) from match Ordmap::get(map, g.fst, Ordmap::compare_text) {
+        Some(v) => Cons(#(g.fst, v), ck_use_generics(rest, t, map))
+        None => ck_use_generics(rest, t, map)
+      }
+    } else {
+      ck_use_generics(rest, t, map)
+    }
+  }
+}
+
+// A use that gives no generic a type is not recorded: it has nothing to determine.
+pub fn ck_uses_after(uses: List(TyUse), name: Text, gs: List(Text × Ty), span: TySpan): List(TyUse) {
+  match gs {
+    Nil => uses
+    Cons(^g, ^rest) => Cons(TyUse { name: name, generics: gs, start: span.start, end: span.end }, uses)
+  }
+}
+
+pub fn ck_record_use(c: &mut Checker, name: Text, gs: List(Text × Ty), span: TySpan): Unit {
+  set_to(&mut c.uses, ck_uses_after(c.uses, name, gs, span))
+}
+
 // A function's type at a use, its constraints left to be checked once the
 // types are known.
-pub fn ck_instantiate_scheme(&mut c: Checker, name: Text, s: Scheme, span: TySpan): Ty {
+pub fn ck_instantiate_scheme(c: &mut Checker, name: Text, s: Scheme, span: TySpan): Ty {
   let map := ck_instantiate_map_ctors(s.generics, &mut c, s.ctors, name, span, Ordmap::empty())
   ck_pend_preds(s.preds, &mut c, map, name, span)
+  ck_record_use(&mut c, name, ck_use_generics(s.generics, s.ty, map), span)
   ty_substitute(s.ty, map)
 }
 
 // An effect's generics by name (they are written as names, not parameters).
 pub fn ck_instantiate_named_map(
   gs: List(Text),
-  &mut c: Checker,
+  c: &mut Checker,
   map: Ordmap(Text, Ty)
 ): Ordmap(Text, Ty) {
-  ⊢ Ordmap(Text, Ty) from match gs {
+  match gs {
     Nil => map
     Cons(g, rest) => {
       let v := ck_fresh(&mut c)
@@ -1235,7 +1118,13 @@ pub fn ck_instantiate_named_map(
   }
 }
 
-pub fn ck_instantiate_named(&mut c: Checker, gs: List(Text), t: Ty): Ty {
+// `t` with `gs` as fresh variables, each bound by its kind at `span`.
+pub fn ck_instantiate_kinded(c: &mut Checker, gs: List(Text × Kind), span: TySpan, t: Ty): Ty {
+  let map := ck_instantiate_map(gs, &mut c, span, Ordmap::empty())
+  ty_substitute(t, map)
+}
+
+pub fn ck_instantiate_named(c: &mut Checker, gs: List(Text), t: Ty): Ty {
   let map := ck_instantiate_named_map(gs, &mut c, Ordmap::empty())
   ty_substitute(t, map)
 }

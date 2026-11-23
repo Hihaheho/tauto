@@ -1,0 +1,241 @@
+// `&rc T`: a counted box shared by its copies, read only through a shared
+// borrow of its contents, which drop when the last copy does.
+
+@ cases.rc-is-copied
+description = "`let b := &rc v` moves `v` into a box, and `b` is given twice: a `&rc` is shared whatever its contents are."
+source = ```nib
+fn count(a: &rc Vec(u8), b: &rc Vec(u8)): u64 ! {overflow} { Vec::len(&a) + Vec::len(&b) }
+var v := Vec::new()
+Vec::push(&mut v, 1)
+let b := &rc v
+show(&count(b, b))
+```
+stdout = "2\n"
+
+@ cases.rc-field-makes-the-struct-shared
+description = "A struct whose only field is a `&rc Vec(u8)` is shared by the join of its fields, so an `Atom` is copied."
+source = ```nib
+struct Atom { text: &rc Vec(u8) }
+fn len(v: &Vec(u8)): u64 { Vec::len(v) }
+fn both(a: Atom, b: Atom): u64 ! {overflow} { len(a.text) + len(b.text) }
+var v := Vec::new()
+Vec::push(&mut v, 1)
+Vec::push(&mut v, 2)
+let a := Atom { text: &rc v }
+show(&both(a, a))
+show(&len(a.text))
+```
+stdout = "4\n2\n"
+
+@ cases.rc-is-made-where-it-is-expected
+description = "A `T` where a `&rc T` is written (an argument, a field, an annotated `let`) is moved into a new box."
+source = ```nib
+struct Named { name: &rc Text, n: u64 }
+fn len(t: &rc Text): u64 { Text::len(&t) }
+fn total(x: Named): u64 ! {overflow} { len(x.name) + x.n }
+let t: &rc Text := "abc"
+let named := Named { name: "de", n: 4 }
+show(&len(t))
+show(&len("fghi"))
+show(&total(named))
+```
+stdout = "3\n4\n6\n"
+
+@ cases.rc-is-read-as-a-borrow
+description = "A `&rc T` is given where `&T` is wanted, and a `&rc Vec(u8)` is lent as `&Vec(u8)` through `Lend`; its fields are read and it is matched through the same borrow."
+source = ```nib
+struct Pair2 { n: u64, v: Vec(u8) }
+fn len(v: &Vec(u8)): u64 { Vec::len(v) }
+fn first(p: &Pair2): u64 { p.n }
+fn plain(n: u64): u64 { n }
+fn main(): u64 ! {overflow} {
+  var w := Vec::new()
+  Vec::push(&mut w, 7)
+  let bytes := &rc w
+  let p: &rc Pair2 := Pair2 { n: 5, v: Vec::new() }
+  let n: &rc u64 := 3
+  len(bytes) + len(&bytes) + first(p) + len(&p.v) + plain(n) + match p { Pair2 { n, v } => n + len(v) }
+}
+show(&main())
+```
+stdout = "15\n"
+
+@ cases.rc-generic-contents
+description = "`&rc A` of a generic `A` that holds no borrow is made with `&rc e` and read through `&`."
+source = ```nib
+fn boxed<A: Type + NoBorrow>(x: A): &rc A { &rc x }
+fn size<A: Type + NoBorrow>(b: &rc A, f: &((&A) -> u64)): u64 { f(&b) }
+let b := boxed("abc")
+show(&size(b, &((t: &Text) => Text::len(t))))
+```
+stdout = "3\n"
+
+@ cases.rc-shows-and-compares-its-contents
+description = "`show` and `==` read the contents of a `&rc T`, and a struct holding one shows the contents as its field."
+source = ```nib
+struct Atom { text: &rc Text, n: u64 }
+let a := Atom { text: "hi", n: 2 }
+let b := &rc 5
+let c: &rc u64 := 5
+show(&b)
+show(&a)
+show(&(b == c))
+```
+stdout = ```
+5
+Atom { text: "hi", n: 2 }
+true
+```
+
+@ cases.rc-contents-drop-with-the-last-copy
+description = "The contents drop once, when the last copy of the box drops: inside `scope` for the box only it holds, at the end of `main` for the one given twice."
+files_tote = "p"
+llvm.unimplemented = "generate: the LLVM backend does not write an `extern` (the native backend has no host) yet"
+stdout = ```
+1
+2
+```
+probe_drops = ["a", "c", "b"]
+
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+struct(affine) Probe {}
+extern {
+  fn Probe::new(name: &Text): Probe
+}
+fn scope(p: &rc Probe): i64 {
+  let q := p
+  1
+}
+fn hold(p: &rc Probe, q: &rc Probe): i64 { 2 }
+perform main(() => {
+  let b := &rc Probe::new("b")
+  let r := scope(Probe::new("a"))
+  show(&r)
+  let s := hold(b, b)
+  let c := Probe::new("c")
+  show(&s)
+})
+```
+
+@ cases.rc-field-of-an-inductive-struct
+description = "The kernel reads a field `&rc Nat` as `Nat`, so a theorem speaks of the struct as its fields."
+source = ```tauto
+inductive struct Cell { item: &rc Nat, count: Nat }
+fn item_of(c: Cell): Nat { match c { Cell { item, count } => item } }
+fn make(n: Nat): Cell { Cell { item: n, count: 1 } }
+theorem item_of_make(n: Nat): item_of(make(n)) = n { Refl }
+show(&item_of(make(3)))
+```
+checks."item_of_make" = "ok"
+stdout = "3\n"
+
+@ cases.rc-moves-its-value
+description = "`&rc v` moves `v`."
+source = ```nib
+fn len(v: &Vec(u8)): u64 { Vec::len(v) }
+fn main(): u64 {
+  let v: Vec(u8) := Vec::new()
+  let b := &rc v
+  len(&v)
+}
+```
+lin = "error: v is borrowed after move"
+diagnostics[] {
+  stage = "lin"
+  message = "v is borrowed after move"
+  span = "  len(«&v»)"
+}
+
+@ cases.rc-is-not-lent-mutably
+description = "The contents of a `&rc T` are shared by its copies and are never borrowed with `&mut`."
+source = ```nib
+fn main(): u64 {
+  var v: Vec(u8) := Vec::new()
+  var b := &rc v
+  Vec::push(&mut b, 1)
+  0
+}
+```
+types = "error: &rc Vec(u8) is shared by its copies: its contents are only borrowed with `&`, never with `&mut`"
+
+@ cases.rc-contents-are-not-moved-out
+description = "A field of the contents of a `&rc T` is borrowed, never moved out."
+source = ```nib
+struct P { v: Vec(u8) }
+fn main(): u64 {
+  let b := &rc P { v: Vec::new() }
+  let w: Vec(u8) := b.v
+  Vec::len(&w)
+}
+```
+lin = "error: b.v is borrowed and cannot be moved"
+
+@ cases.rc-match-binds-borrows
+description = "A `match` on a `&rc T` binds its affine parts as borrows, which are not moved out."
+source = ```nib
+struct P { v: Vec(u8) }
+fn main(): u64 {
+  let b := &rc P { v: Vec::new() }
+  let w: Vec(u8) := match b { P { v } => v }
+  Vec::len(&w)
+}
+```
+lin = "error: v is borrowed and cannot be moved"
+
+@ cases.rc-of-a-linear-type
+description = "A linear value is used exactly once, so it is not put in a box its copies share."
+source = ```nib
+struct(linear) Ticket {}
+fn f(x: &rc Ticket): u64 { 1 }
+```
+types = "error: `&rc Ticket` cannot be written: a linear value is used exactly once"
+
+@ cases.rc-of-a-linear-generic
+description = "`&rc A` of a type parameter bounded by `Linear` is refused as a linear type is."
+source = ```nib
+fn f<A: Linear>(x: A): &rc A { &rc x }
+```
+types = "error: `&rc A` cannot be written: a linear value is used exactly once"
+
+@ cases.rc-of-a-borrow
+description = "A box is kept and returned, so what it holds holds no borrow."
+source = ```nib
+struct Holds { r: &u64 }
+fn f(x: &rc Holds): u64 { 1 }
+```
+types = "error: `&rc Holds` cannot be written: Holds holds a borrow"
+
+@ cases.rc-of-a-generic-that-may-borrow
+description = "`&rc A` asks `A` to hold no borrow: a parameter without `NoBorrow` may stand for one that does."
+source = ```nib
+fn boxed<A>(x: A): &rc A { &rc x }
+```
+types = "error: `&rc A`: A may hold a borrow"
+
+@ cases.rc-is-not-given-as-its-affine-contents
+description = "A `&rc T` of an affine `T` is not given where a `T` is wanted: its contents are shared."
+source = ```nib
+fn take(v: Vec(u8)): u64 { Vec::len(&v) }
+fn main(): u64 {
+  let v: Vec(u8) := Vec::new()
+  let b := &rc v
+  take(b)
+}
+```
+types = "error: an argument: &rc Vec(u8) does not fit Vec(u8): the copies of a `&rc` share its contents"
+diagnostics[] {
+  stage = "types"
+  message = "the copies of a `&rc` share its contents, which are borrowed with `&` and never taken"
+  span = "  take(«b»)"
+}
+
+@ cases.rc-is-a-word-only-after-amp
+description = "`rc` is a word only right after `&`: elsewhere it is a name, and `&rcount` borrows `rcount`."
+source = ```nib
+fn rc(n: u64): u64 { n }
+let rcount: u64 := rc(2)
+fn get(x: &u64): u64 { x }
+show(&get(&rcount))
+```
+stdout = "2\n"

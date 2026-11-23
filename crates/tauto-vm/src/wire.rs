@@ -29,16 +29,53 @@ pub(crate) struct Writer {
     operation_symbols: HashMap<Name, String>,
     /// Each runtime syntax parser of the package (`syn_parse`), as the machine reads it.
     parsers: Vec<(String, String, tauto_nir::Ty, String)>,
+    /// The program makes host values (an `extern` the machine binds): every
+    /// local is dropped when its block ends, a move empties its local, and
+    /// the machine looks for host values nothing reaches after each
+    /// statement (`totes/vm/src/host.taut`).
+    hosts: bool,
+    /// Locals the writer adds, numbered down from the largest.
+    fresh: u32,
 }
 
+/// The externs the machine binds, as every runner of the cases does: the
+/// case host's probe (`tauto_rt::probe`), a value whose drop is written down
+/// by name.
+pub const BOUND_EXTERNS: &[&str] = &["Probe::new"];
+
+/// Why a program with another extern is refused: the machine has no binding
+/// for it, as the Rust backend refuses an extern its manifest does not bind.
+pub fn unbound_extern(name: &str) -> String {
+    format!("the extern {name}{UNBOUND}")
+}
+
+const UNBOUND: &str = ", which has no binding on the machine";
+
+/// Whether `write` refused the program by a decision of the backend (the
+/// secret words, an extern it does not bind), not for a gap of the machine.
+pub fn refused(what: &str) -> bool {
+    what == SECRET_WORDS || what.ends_with(UNBOUND)
+}
+
+/// Why a program that computes on secrets (`Ct::`) is refused: what the
+/// machine runs takes a time that depends on the values.
+pub const SECRET_WORDS: &str = "secret words, which it cannot run in constant time";
+
 pub fn write(pkg: &Package) -> Rs<String> {
-    if !pkg.externs.is_empty() {
-        return Err("extern functions (the machine has no host bindings)".into());
+    if let Some(x) = pkg
+        .externs
+        .iter()
+        .find(|x| !BOUND_EXTERNS.contains(&x.name.as_str()))
+    {
+        return Err(unbound_extern(x.name.as_str()));
     }
     let Some(top) = pkg.top else {
         return Err("a program with no top level".into());
     };
-    let mut w = Writer::default();
+    let mut w = Writer {
+        hosts: !pkg.externs.is_empty(),
+        ..Writer::default()
+    };
     // The prelude's data types first, in the order the machine has them.
     w.ctor(
         &tauto_nir::library_name("Option"),
@@ -66,7 +103,7 @@ pub fn write(pkg: &Package) -> Rs<String> {
     );
     w.ctor(
         &tauto_nir::library_name("Pair"),
-        &tauto_nir::library_name("Pair"),
+        &tauto_nir::library_name("Pair::Mk"),
         &[Some("fst"), Some("snd")],
         true,
     );
@@ -126,6 +163,10 @@ fn width(w: Width) -> u32 {
         Width::U32 => 3,
         Width::U64 => 4,
         Width::Nat => 5,
+        Width::Host => 6,
+        Width::W8 => 7,
+        Width::W16 => 8,
+        Width::U16 => 9,
     }
 }
 
@@ -269,10 +310,19 @@ impl Writer {
     fn pat(&mut self, p: &CpsPat) -> Rs<()> {
         match p {
             CpsPat::Wild => self.num(0),
-            CpsPat::Bind { id, borrow, .. } => {
+            // Nothing changes what a `&` binding names while it lives, so the
+            // machine binds its value: a borrow of a part of a borrow would
+            // otherwise lengthen its path at each step of a recursion over a
+            // borrowed list, and reading it would walk that path.
+            CpsPat::Bind {
+                id,
+                borrow,
+                mutable,
+                ..
+            } => {
                 self.num(1);
                 self.num(id);
-                self.yn(*borrow);
+                self.yn(*borrow && *mutable);
             }
             CpsPat::Literal(v) => {
                 self.num(2);
@@ -286,6 +336,11 @@ impl Writer {
                 for f in fields {
                     self.pat(f)?;
                 }
+            }
+            CpsPat::Variant { variant, pat, .. } => {
+                self.num(5);
+                self.num(variant);
+                self.pat(pat)?;
             }
         }
         Ok(())
@@ -420,6 +475,17 @@ impl Writer {
                 self.num(0);
                 self.value(v);
             }
+            // A move out of a local that may hold a host value empties it,
+            // so the value is dropped by its new owner.
+            Cps::ReadLocal {
+                id,
+                deref: false,
+                take: true,
+                ..
+            } if self.hosts => {
+                self.num(19);
+                self.num(id);
+            }
             Cps::ReadLocal { id, deref, .. } => {
                 self.num(1);
                 self.num(id);
@@ -435,13 +501,29 @@ impl Writer {
                 self.list(args)?;
                 self.yn(*ticked);
             }
-            Cps::TailSelfCall { inst, args } => {
+            Cps::TailSelfCall { inst, args, ticked } => {
                 self.num(3);
                 self.num(inst);
                 self.list(args)?;
+                self.yn(*ticked);
             }
-            Cps::External { name, .. } => return Err(format!("the extern {name}")),
+            // The machine refuses the externs it does not bind too
+            // (`totes/vm/src/compile.taut`); refusing here as well gives the
+            // reason before a program is written.
+            Cps::External { name, args } => {
+                if !BOUND_EXTERNS.contains(&name.as_str()) {
+                    return Err(unbound_extern(name.as_str()));
+                }
+                self.num(21);
+                self.text(name.as_str());
+                self.list(args)?;
+            }
             Cps::Builtin { name, args } => {
+                // `docs/design/secret.md`: the machine's words and numbers
+                // promise no constant time, so the secret words are refused.
+                if name.starts_with("Ct::") {
+                    return Err(SECRET_WORDS.into());
+                }
                 self.num(4);
                 self.text(name);
                 self.list(args)?;
@@ -466,6 +548,19 @@ impl Writer {
                 self.expr(then)?;
                 self.expr(otherwise)?;
             }
+            Cps::Sequence(es) if self.hosts && es.len() > 1 => {
+                // After each statement, a host value nothing reaches any
+                // more (a temporary, a continuation no one resumes) is
+                // dropped.
+                self.num(8);
+                self.num(2 * es.len() - 1);
+                for (i, e) in es.iter().enumerate() {
+                    if i > 0 {
+                        self.num(20);
+                    }
+                    self.expr(e)?;
+                }
+            }
             Cps::Sequence(es) => {
                 self.num(8);
                 self.list(es)?;
@@ -480,7 +575,7 @@ impl Writer {
                 self.num(9);
                 self.num(id);
                 self.yn(*shared);
-                self.yn(*drop);
+                self.yn(*drop || self.hosts);
                 self.expr(init)?;
             }
             Cps::Assign {
@@ -512,6 +607,28 @@ impl Writer {
                 for arm in arms {
                     self.arm(arm)?;
                 }
+            }
+            // A closure that moves locals in empties them once it is made,
+            // so what they held is dropped with the closure.
+            Cps::Closure(c) if self.hosts && !c.moves.is_empty() => {
+                self.fresh += 1;
+                let made = u32::MAX - self.fresh;
+                self.num(8);
+                self.num(c.moves.len() + 2);
+                self.num(9);
+                self.num(made);
+                self.yn(false);
+                self.yn(true);
+                let mut inner = (**c).clone();
+                inner.moves.clear();
+                self.expr(&Cps::Closure(Box::new(inner)))?;
+                for id in &c.moves {
+                    self.num(19);
+                    self.num(id);
+                }
+                self.num(1);
+                self.num(made);
+                self.yn(false);
             }
             Cps::Closure(c) => {
                 self.num(14);
@@ -572,10 +689,25 @@ impl Writer {
                     }
                 }
             }
+            // A `&` borrow of a local that is itself a borrow: nothing writes
+            // the place while it lives, so the machine reads the value
+            // instead of naming the place again. (A local of its own stays
+            // a place, which the machine may have to put in a cell.)
+            Cps::BorrowPlace {
+                id,
+                path,
+                through_borrow: true,
+                mutable: false,
+            } if path.is_empty() => {
+                self.num(1);
+                self.num(id);
+                self.yn(true);
+            }
             Cps::BorrowPlace {
                 id,
                 path,
                 through_borrow,
+                ..
             } => {
                 self.num(17);
                 self.num(id);
@@ -598,10 +730,17 @@ impl Writer {
     }
 }
 
+/// The most calls that nest, one inside another, that the machine
+/// (`totes/vm`, `m_max_frames`) keeps before it stops the run.
+pub const MACHINE_MAX_FRAMES: u64 = 1 << 21;
+
 /// The arguments of the machine (`totes/vm`) that runs the program written
 /// to `program` with the permissions `flags` (`--allow-…`), at most `steps`
 /// steps (`None` for none), what it shows going to `shows` (the standard
-/// output when `None`), and `args` as the program's own arguments.
+/// output when `None`), what it says when the steps run out (`interrupted`,
+/// in the language of the user; the English one when `None`), what it says
+/// when its calls nest deeper than `MACHINE_MAX_FRAMES` (`too_deep`, likewise),
+/// and `args` as the program's own arguments.
 ///
 /// The machine asks its own host for what the program asks of it, so it is
 /// given the program's permissions; besides them it may read the program,
@@ -612,6 +751,8 @@ pub fn machine_args(
     program: &std::path::Path,
     steps: Option<u64>,
     shows: Option<&std::path::Path>,
+    interrupted: Option<&str>,
+    too_deep: Option<&str>,
     args: &[String],
 ) -> Vec<String> {
     let mut out: Vec<String> = flags
@@ -632,6 +773,8 @@ pub fn machine_args(
     out.push(program.display().to_string());
     out.push(steps.map_or("-".into(), |s| s.to_string()));
     out.push(shows.map_or("-".into(), |s| s.display().to_string()));
+    out.push(interrupted.unwrap_or("-").to_string());
+    out.push(too_deep.unwrap_or("-").to_string());
     out.extend(args.iter().cloned());
     out
 }
@@ -640,9 +783,8 @@ fn locals(e: &Cps, used: &mut Vec<u32>, bound: &mut Vec<u32>) {
     fn pat(p: &CpsPat, bound: &mut Vec<u32>) {
         match p {
             CpsPat::Bind { id, .. } => bound.push(*id),
-            CpsPat::Ctor { fields, .. } => {
-                fields.iter().for_each(|f| pat(f, bound))
-            }
+            CpsPat::Ctor { fields, .. } => fields.iter().for_each(|f| pat(f, bound)),
+            CpsPat::Variant { pat: p, .. } => pat(p, bound),
             CpsPat::Wild | CpsPat::Literal(_) => {}
         }
     }

@@ -73,7 +73,7 @@ pub struct Fetched {
 
 pub fn fetch_head(cache: &Cache, source: &GitSource) -> Result<Fetched, String> {
     source.check()?;
-    let mirror = git::Mirror::open(cache.mirror_dir(&source.url), "sha1")?;
+    let mirror = git::Mirror::open(cache.mirror_for(source), "sha1")?;
     let rev = mirror.fetch_head(source)?;
     install(cache, &mirror, source, rev)
 }
@@ -87,7 +87,7 @@ pub fn fetch_locked(cache: &Cache, locked: &Locked) -> Result<PathBuf, String> {
         cache.verify(&locked.id)?;
         return Ok(tote_dir(cache, locked));
     }
-    let mirror = git::Mirror::open(cache.mirror_dir(&locked.source.url), locked.rev.format())?;
+    let mirror = git::Mirror::open(cache.mirror_for(&locked.source), locked.rev.format())?;
     mirror.fetch_rev(&locked.source, &locked.rev)?;
     let fetched = install(cache, &mirror, &locked.source, locked.rev.clone())?;
     if fetched.id != locked.id {
@@ -109,7 +109,7 @@ fn install(
     source: &GitSource,
     rev: Rev,
 ) -> Result<Fetched, String> {
-    let tree = mirror.tree(&rev).map_err(|e| {
+    let tree = mirror.tree(&rev, source).map_err(|e| {
         say!(
             "totebag-source-at-rev",
             source = source.to_string(),

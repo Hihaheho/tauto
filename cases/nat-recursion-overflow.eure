@@ -1,0 +1,23 @@
+// `overflow` is for fixed-width `+`, `-`, `*` and out-of-range conversions.
+// Carrying an `i64` through Nat recursion (Succ elimination as `n - 1` on
+// `nat`) does not perform `overflow`.
+
+@ cases.nat-recursion-carrying-i64-needs-no-overflow
+description = "Structural recursion on `Nat` that only passes an `i64` through checks with an empty row."
+source = ```tauto
+fn ignore(fuel: Nat, n: i64): Bool ! {} {
+  match fuel {
+    Zero => true
+    Succ(k) => ignore(k, n)
+  }
+}
+```
+checks.ignore = "skipped"
+rows = "ok"
+
+@ cases.i64-addition-still-requires-overflow
+description = "`a + b` on `i64` still performs `overflow`."
+source = ```tauto
+fn add(a: i64, b: i64): i64 ! {} { a + b }
+```
+rows = "error: `add` may perform overflow but its row is {}"

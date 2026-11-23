@@ -1,9 +1,9 @@
 import "control_allocation_sound.taut"
 import "written_sound.taut"
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Text
+import std::map
+import std::map_laws
+import std::map_text
+import std::text
 import "allocation_generic_map.taut"
 import "allocation_rigid_map.taut"
 import "datas.taut"
@@ -24,7 +24,7 @@ pub theorem written_name_option_allocated(
   tail: OptionTypeAllocated(limit, rest),
   flag: Bool
 ): OptionTypeAllocated(limit, written_name_choose_option(ty, rest, flag)) {
-  ⊢ OptionTypeAllocated(limit, written_name_choose_option(ty, rest, flag)) from match flag {
+  match flag {
     true => bounded
     false => tail }
 }
@@ -34,11 +34,16 @@ pub theorem primitive_type_name_allocated(
 ): OptionTypeAllocated(limit, primitive_type_name(name)) {
   let o0: Option(Ty) := None
   let h0: OptionTypeAllocated(limit, o0) := Trivial
-  let o1: Option(Ty) := written_name_choose_option(TyFloat, o0, Text::eq(name, "Float"))
+  let o00: Option(Ty) := written_name_choose_option(TyFloat32, o0, Text::eq(name, "Float32"))
+  let h00: OptionTypeAllocated(
+    limit,
+    o00
+  ) := written_name_option_allocated(TyFloat32, o0, limit, Trivial, h0, Text::eq(name, "Float32"))
+  let o1: Option(Ty) := written_name_choose_option(TyFloat, o00, Text::eq(name, "Float"))
   let h1: OptionTypeAllocated(
     limit,
     o1
-  ) := written_name_option_allocated(TyFloat, o0, limit, Trivial, h0, Text::eq(name, "Float"))
+  ) := written_name_option_allocated(TyFloat, o00, limit, Trivial, h00, Text::eq(name, "Float"))
   let o2: Option(Ty) := written_name_choose_option(TyDecimal, o1, Text::eq(name, "Decimal"))
   let h2: OptionTypeAllocated(
     limit,
@@ -59,11 +64,31 @@ pub theorem primitive_type_name_allocated(
     limit,
     o5
   ) := written_name_option_allocated(TyBool, o4, limit, Trivial, h4, Text::eq(name, "Bool"))
-  let o6: Option(Ty) := written_name_choose_option(TyInt(WidthU64), o5, Text::eq(name, "u64"))
+  let o5h: Option(Ty) := written_name_choose_option(TyInt(WidthHost), o5, Text::eq(name, "uhost"))
+  let h5h: OptionTypeAllocated(
+    limit,
+    o5h
+  ) := written_name_option_allocated(TyInt(WidthHost), o5, limit, Trivial, h5, Text::eq(name, "uhost"))
+  let o5u16: Option(Ty) := written_name_choose_option(TyInt(WidthU16), o5h, Text::eq(name, "u16"))
+  let h5u16: OptionTypeAllocated(
+    limit,
+    o5u16
+  ) := written_name_option_allocated(TyInt(WidthU16), o5h, limit, Trivial, h5h, Text::eq(name, "u16"))
+  let o5i16: Option(Ty) := written_name_choose_option(TyInt(Width16), o5u16, Text::eq(name, "i16"))
+  let h5i16: OptionTypeAllocated(
+    limit,
+    o5i16
+  ) := written_name_option_allocated(TyInt(Width16), o5u16, limit, Trivial, h5u16, Text::eq(name, "i16"))
+  let o5i8: Option(Ty) := written_name_choose_option(TyInt(Width8), o5i16, Text::eq(name, "i8"))
+  let h5i8: OptionTypeAllocated(
+    limit,
+    o5i8
+  ) := written_name_option_allocated(TyInt(Width8), o5i16, limit, Trivial, h5i16, Text::eq(name, "i8"))
+  let o6: Option(Ty) := written_name_choose_option(TyInt(WidthU64), o5i8, Text::eq(name, "u64"))
   let h6: OptionTypeAllocated(
     limit,
     o6
-  ) := written_name_option_allocated(TyInt(WidthU64), o5, limit, Trivial, h5, Text::eq(name, "u64"))
+  ) := written_name_option_allocated(TyInt(WidthU64), o5i8, limit, Trivial, h5i8, Text::eq(name, "u64"))
   let o7: Option(Ty) := written_name_choose_option(TyInt(WidthU32), o6, Text::eq(name, "u32"))
   let h7: OptionTypeAllocated(
     limit,
@@ -84,7 +109,17 @@ pub theorem primitive_type_name_allocated(
     limit,
     o10
   ) := written_name_option_allocated(TyInt(Width32), o9, limit, Trivial, h9, Text::eq(name, "i32"))
-  h10
+  let o11: Option(Ty) := written_name_choose_option(TyInt(WidthNat), o10, Text::eq(name, "nat"))
+  let h11: OptionTypeAllocated(
+    limit,
+    o11
+  ) := written_name_option_allocated(TyInt(WidthNat), o10, limit, Trivial, h10, Text::eq(name, "nat"))
+  let o12: Option(Ty) := written_name_choose_option(TyUnit, o11, Text::eq(name, "Unit"))
+  let h12: OptionTypeAllocated(
+    limit,
+    o12
+  ) := written_name_option_allocated(TyUnit, o11, limit, Trivial, h11, Text::eq(name, "Unit"))
+  h12
 }
 pub theorem written_type_name_allocated<generics: Ordmap(
   Text,
@@ -94,7 +129,7 @@ pub theorem written_type_name_allocated<generics: Ordmap(
   limit: Nat,
   bounded: GenericMapAllocated(limit, generics)
 ): TypeAllocated(limit, ty) {
-  ⊢ TypeAllocated(limit, ty) from match meaning {
+  match meaning {
     WrittenNamePrimitive(t, builtin) => Eq::subst(
       (found: Option(Ty)) => OptionTypeAllocated(limit, found),
       builtin,
@@ -111,7 +146,7 @@ pub theorem written_atomic_allocated<env: Datas, generics: Ordmap(
   limit: Nat,
   bounded: GenericMapAllocated(limit, generics)
 ): TypeAllocated(limit, ty) {
-  ⊢ TypeAllocated(limit, ty) from match meaning {
+  match meaning {
     AtomicPrimitive(t, builtin) => Eq::subst(
       (found: Option(Ty)) => OptionTypeAllocated(limit, found),
       builtin,
@@ -128,12 +163,12 @@ pub theorem written_name_type_allocated<env: Datas, generics: Ordmap(
   limit: Nat,
   bounded: GenericMapAllocated(limit, generics)
 ): TypeAllocated(limit, ty) {
-  ⊢ TypeAllocated(limit, ty) from match meaning {
+  match meaning {
     WrittenNameValue(t, atomic) => written_atomic_allocated(atomic, limit, bounded)
     WrittenNameConstructor(t, named) => written_type_name_allocated(named, limit, bounded) }
 }
 pub theorem written_binder_map_allocated<bs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), initial: Ordmap(
   Text,
   Ty
@@ -145,7 +180,7 @@ pub theorem written_binder_map_allocated<bs: List(
   limit: Nat,
   bounded: RigidMapAllocation(limit, initial)
 ): RigidMapAllocation(limit, final) {
-  ⊢ RigidMapAllocation(limit, final) from match meaning {
+  match meaning {
     WrittenBinderMapNil(map) => bounded
     WrittenBinderMapCons(name, kind, rest, first, last, tail) => written_binder_map_allocated(
       tail,
@@ -172,13 +207,13 @@ pub theorem written_binder_map_allocated<bs: List(
     ) }
 }
 pub theorem written_polymorphic_allocated<bs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), body: Ty, ty: Ty>(
   meaning: WrittenPolymorphicType(bs, body, ty),
   limit: Nat,
   bounded: TypeAllocated(limit, body)
 ): TypeAllocated(limit, ty) {
-  ⊢ TypeAllocated(limit, ty) from match meaning {
+  match meaning {
     WrittenMonomorphic(inner) => bounded
     WrittenPolymorphic(first, rest, inner) => bounded }
 }

@@ -2,7 +2,6 @@
 // as a keyword (`box`, `yield`, `dyn`, `async`, `Self`), or such a name with
 // a trailing `_`: the generated code still builds and runs.
 @ cases.keyword-names
-extract = true
 source = ```tauto
 inductive Shape: Type { Box(dyn: Nat): Shape, Box_(w: Nat): Shape, Yield: Shape }
 inductive Self: Type { Mk(n: Nat): Self }
@@ -20,11 +19,9 @@ fn unwrap(s: Self_): Nat {
   ⊢ Nat from match s { Mk(i) => ⊢ Nat from match i { Mk(n) => n } }
 }
 
-perform show("box", async(Box(Succ(Zero))))
-perform show("box_", async(Box_(Succ(Zero))))
-perform show("yield", async(Yield))
-perform show("self", unwrap(Self_::Mk(Self::Mk(Succ(Zero)))))
+show(&async(Box(Succ(Zero))))
+show(&async(Box_(Succ(Zero))))
+show(&async(Yield))
+show(&unwrap(Self_::Mk(Self::Mk(Succ(Zero)))))
 ```
-shows = ['box = 1', 'box_ = 2', 'yield = 0', 'self = 1']
-rust_shows = ['box = 1', 'box_ = 2', 'yield = 0', 'self = 1']
-javascript_shows = ['box = 1', 'box_ = 2', 'yield = 0', 'self = 1']
+stdout = "1\n2\n0\n1\n"

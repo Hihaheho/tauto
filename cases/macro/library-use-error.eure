@@ -1,0 +1,32 @@
+// A function of an imported file whose types check but whose use of values
+// does not (it returns a borrow of a local) is left out of the library a
+// macro runs in: the macros of the importing file still run, and the use
+// error is left to the imported file's own check, at the borrow it writes.
+
+@ cases.a-use-error-of-an-imported-file-is-not-a-macro-error
+entry = "cross.taut"
+files."cross.taut" = ````tauto
+import std::base
+import std::nat
+import std::tactic
+import "unrelated.taut"
+
+theorem add_succ(a: Nat, b: Nat): Nat::add(Succ(a), b) = Succ(Nat::add(a, b)) {
+  by nat_norm!(()): (Nat::add(Succ(a), b) = Succ(Nat::add(a, b))) {}
+}
+
+#()
+````
+files."unrelated.taut" = ````tauto
+import std::base
+import std::nat
+import std::tactic
+
+fn borrow_ver(cell: &Option(i64)): Option(&i64) {
+  match cell {
+    None => None
+    Some(v) => Some(&v)
+  }
+}
+````
+checks.add_succ = "ok"

@@ -1,0 +1,17 @@
+// A case with `extract = true` goes through the same use check (`lin`) as
+// `tauto check`: extraction does not let a returned borrow of a local pass.
+
+@ cases.extract-lin-returned-borrow
+description = "With extract = true, a place of a scoped region cannot leave it, as `tauto check` says."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+import std::ord
+
+fn leak(): Place(Nat) {
+  let r := Bump::new(64, 64)
+  Region::place(&r)
+}
+```
+lin = "error: a borrow of r cannot be returned"

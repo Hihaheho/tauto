@@ -43,6 +43,8 @@ pub(crate) type Key = (InstId, Vec<Ty>);
 #[derive(Clone)]
 pub(crate) struct Variant {
     pub function: FnInst,
+    /// The Rust name of `function`.
+    pub name: String,
     pub context: Context,
     pub parameters: BTreeSet<usize>,
 }
@@ -72,7 +74,7 @@ fn scalar(t: &Ty) -> bool {
 
 fn resolve(t: &Ty, context: &Context) -> Ty {
     match t {
-        Ty::Param(name) => context.get(name).cloned().unwrap_or(Ty::Infer),
+        Ty::Param(name) => context.get(name).cloned().unwrap_or_else(|| t.clone()),
         Ty::Data(name, args) => Ty::Data(
             name.clone(),
             args.iter().map(|t| resolve(t, context)).collect(),
@@ -225,9 +227,11 @@ impl Gen<'_> {
             for (_, bounds) in &mut function.generics {
                 bounds.insert(Bound::Clone);
             }
+            let name = self.fn_names[key.0].clone();
             functions.insert(
                 key,
                 Variant {
+                    name,
                     function,
                     context: types,
                     parameters,
@@ -309,22 +313,25 @@ impl Gen<'_> {
                     let mut serial = self.borrowed_budget.functions.len();
                     let name = loop {
                         let name = format!("__tauto_budget_borrow_{}_{}", key.0, serial);
-                        if !self.pkg.fns.iter().any(|f| {
-                            f.rust_name == name || f.rust_name == format!("{name}_budget_sync")
-                        }) && !self.pkg.datas.iter().any(|d| {
-                            Self::data_name(self.pkg, &d.name).to_string()
-                                == format!("{name}_budget_sync")
-                        }) && !self
-                            .borrowed_budget
-                            .functions
-                            .values()
-                            .any(|v| v.function.rust_name == name)
+                        if !self
+                            .fn_names
+                            .iter()
+                            .any(|f| *f == name || *f == format!("{name}_budget_sync"))
+                            && !self.pkg.datas.iter().any(|d| {
+                                Self::data_name(self.pkg, &d.name).to_string()
+                                    == format!("{name}_budget_sync")
+                            })
+                            && !self
+                                .borrowed_budget
+                                .functions
+                                .values()
+                                .any(|v| v.name == name)
                         {
                             break name;
                         }
                         serial += 1;
                     };
-                    variant.function.rust_name = name;
+                    variant.name = name;
                     self.borrowed_budget.functions.insert(key, variant);
                 }
             }
@@ -347,7 +354,7 @@ impl Gen<'_> {
                 a.ty = Ty::Ref(Box::new(a.ty.clone()));
             }
             Ok(Some((
-                format!("{}_budget_sync", variant.function.rust_name),
+                format!("{}_budget_sync", variant.name),
                 args,
                 parameters,
             )))
@@ -407,34 +414,29 @@ impl Gen<'_> {
                 return None;
             }
             let types = context(f, &key.1).ok()?;
-            let mut function = f.clone();
+            let function = f.clone();
             let mut serial = self.borrowed_budget.owned.len();
-            loop {
+            let name = loop {
                 let name = format!("__tauto_budget_owned_{}_{}", inst, serial);
                 if !self
-                    .pkg
-                    .fns
+                    .fn_names
                     .iter()
-                    .any(|f| f.rust_name == name || f.rust_name == format!("{name}_budget_sync"))
-                    && !self
-                        .borrowed_budget
-                        .owned
-                        .values()
-                        .any(|v| v.function.rust_name == name)
+                    .any(|f| *f == name || *f == format!("{name}_budget_sync"))
+                    && !self.borrowed_budget.owned.values().any(|v| v.name == name)
                     && !self.pkg.datas.iter().any(|d| {
                         Self::data_name(self.pkg, &d.name).to_string()
                             == format!("{name}_budget_sync")
                     })
                 {
-                    function.rust_name = name;
-                    break;
+                    break name;
                 }
                 serial += 1;
-            }
+            };
             self.borrowed_budget.owned.insert(
                 key.clone(),
                 Variant {
                     function,
+                    name,
                     context: types,
                     parameters: BTreeSet::new(),
                 },
@@ -442,7 +444,7 @@ impl Gen<'_> {
         }
         Some(format!(
             "{}_budget_sync",
-            self.borrowed_budget.owned[&key].function.rust_name
+            self.borrowed_budget.owned[&key].name
         ))
     }
 

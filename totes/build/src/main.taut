@@ -1,0 +1,125 @@
+import std::base
+import std::text
+import std::list
+import std::builtin::os
+import std::builtin::par
+import query_flow::codec
+import query_flow::flow
+import query_flow::api
+import query_flow::store
+import query_flow::storage_fs
+import surface::surface
+import surface::dump
+import text::text
+import "queries.taut"
+
+fn build_answer(a: Answer(List(Text))): Text ! {div} {
+  match a {
+    Value(v) => Text::concat_all(List::map((l: Text) => concat(l, "\n"), v))
+    Error(e) => concat(concat("error: ", e), "\n")
+    Suspended => "suspended\n"
+    Cycle(ks) => "cycle\n"
+    Cancelled => "cancelled\n"
+    DependenciesRemoved(ks) => "dependencies removed\n"
+  }
+}
+
+// The files of the prelude, in order, joined by newlines (`tauto::nibstd::PRELUDE`).
+fn build_prelude_text(files: List(Text), acc: List(Text)): Option(Text) ! {div, fs_read} {
+  match files {
+    Nil => Some(text_join(List::reverse(acc), "\n"))
+    Cons(f, rest) => match perform fs_read(f) {
+      Err(e) => None
+      Ok(t) => build_prelude_text(rest, Cons(t, acc))
+    }
+  }
+}
+
+fn build_list(t: Text): List(Text) {
+  if t == "" { Nil } else { text_split(t, ",") }
+}
+
+fn build_resolve_files(rt: Runtime, files: List(Text)): Bool ! {div, fs_read, overflow, ref_get, ref_set} {
+  match files {
+    Nil => true
+    Cons(f, rest) => match perform fs_read(f) {
+      Err(e) => false
+      Ok(source) => {
+        resolve_asset(rt, BuildSource(), BuildSourcePath { path: f }, source, Stable)
+        build_resolve_files(rt, rest)
+      }
+    }
+  }
+}
+
+// Gives the assets of each tote: `DIR DEPS FILES`, the lists comma separated.
+// The last tote is the one built.
+fn build_resolve(rt: Runtime, args: List(Text), last: Text): Option(Text) ! {div, fs_read, overflow, ref_get, ref_set} {
+  match args {
+    Cons(dir, Cons(deps, Cons(files, rest))) => {
+      resolve_asset(rt, BuildToteDeps(), BuildDepsOf { dir: dir }, build_list(deps), Stable)
+      resolve_asset(rt, BuildToteFiles(), BuildToteDir { dir: dir }, build_list(files), Stable)
+      if build_resolve_files(rt, build_list(files)) { build_resolve(rt, rest, dir) } else { None }
+    }
+    Nil => if last == "" { None } else { Some(last) }
+    Cons(a, more) => None
+  }
+}
+
+fn build_print_ran(keys: List(Text)): Unit ! {div, stdout} {
+  match keys {
+    Nil => #()
+    Cons(k, rest) => {
+      print(concat(concat("ran ", k), "\n"))
+      build_print_ran(rest)
+    }
+  }
+}
+
+fn build_tracer(ran: Ref(List(Text))): (Event) -> Unit ! {div, ref_get, ref_set} {
+  (e: Event) => match e {
+    Ran(k, changed) => perform ref_set(ran, Cons(if changed { concat(k, " changed") } else { k }, perform ref_get(ran)))
+    QueryStart(k) => #()
+    CacheHit(k) => #()
+    Stopped(k) => #()
+    CycleFound(ks) => #()
+    AssetResolved(k, changed) => #()
+    AssetInvalidated(k) => #()
+    QueryInvalidated(k) => #()
+    Located(k) => #()
+  }
+}
+
+// `build STORE PRELUDE (DIR DEPS FILES)…`, PRELUDE the files of the prelude comma separated: builds the last tote through the queries,
+// keeping what they computed in the directory STORE. Prints `ran KEY` for each
+// query that ran, then what the build gave.
+perform main(() => {
+  match perform argv() {
+    Nil => eprint("build STORE PRELUDE (DIR DEPS FILES)…")
+    Cons(store, Nil) => eprint("build STORE PRELUDE (DIR DEPS FILES)…")
+    Cons(store, Cons(prelude_files, specs)) => {
+      let ran := perform ref_new(Nil)
+      let rt := build_runtime((a: Text, b: Text) => false, build_tracer(ran))
+      with_dir_store(store, () => {
+        let loaded := load(rt)
+        build_register(rt)
+        match build_prelude_text(build_list(prelude_files), Nil) {
+          None => eprint("the prelude cannot be read")
+          Some(text) => resolve_asset(rt, BuildPreludeText(), BuildPreludeOf { name: "prelude" }, text, Stable)
+        }
+        match build_resolve(rt, specs, "") {
+          None => eprint("build STORE (DIR DEPS FILES)…: a file cannot be read")
+          Some(root) => {
+            let out := build_answer(run(rt, BuildTote(root)))
+            build_print_ran(List::reverse(perform ref_get(ran)))
+            print(out)
+          }
+        }
+        match save(rt) {
+          Ok(u) => #()
+          Err(e) => eprint(concat("cannot keep the results: ", e))
+        }
+      })
+    }
+  }
+})

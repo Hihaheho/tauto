@@ -1,6 +1,6 @@
 @ cases.dependent-and-derived-equalities-track-the-assumption
 files."main.nib" = ```tauto
-import std::Quot
+import std::quot
 
 // The codomain can vary with the input.
 theorem dependent_extensionality<A: Type, B: (A) -> Type>(
@@ -8,7 +8,7 @@ theorem dependent_extensionality<A: Type, B: (A) -> Type>(
   g: ∀ x: A. B(x),
   pointwise: ∀ x: A. f(x) = g(x)
 ): f = g {
-  funext(A, B, f, g, pointwise)
+  funext(<A: A, B: B>, f, g, pointwise)
 }
 
 theorem functions_equal(
@@ -16,12 +16,12 @@ theorem functions_equal(
   g: (Nat) -> Nat,
   pointwise: ∀ x: Nat. f(x) = g(x)
 ): f = g {
-  funext_nondependent(Nat, Nat, f, g, pointwise)
+  funext_nondependent(<A: Nat, B: Nat>, f, g, pointwise)
 }
 
 // Merely importing the library does not give this theorem an axiom dependency.
 theorem identity_is_identity(n: Nat): n = n {
-  Refl(Nat, n)
+  Refl(<A: Nat, a: n>)
 }
 ```
 checks.dependent_extensionality = "axioms: Quot::sound"
@@ -35,7 +35,7 @@ checks.unavailable = "error: "
 
 @ cases.a-wrong-pointwise-witness-is-rejected
 files."main.nib" = ```tauto
-import std::Quot
+import std::quot
 
 theorem wrong(f: (Nat) -> Nat, g: (Nat) -> Nat,
 h: ∀ n: Nat. f(n) = f(n)): f = g {
@@ -47,7 +47,7 @@ checks_all = "checked"
 
 @ cases.a-pointwise-hypothesis-does-not-change-conversion
 files."main.nib" = ```tauto
-import std::Quot
+import std::quot
 
 theorem no_conversion(f: (Nat) -> Nat, g: (Nat) -> Nat,
 h: ∀ n: Nat. f(n) = g(n)): f(0) = g(0) {
@@ -59,7 +59,7 @@ checks_all = "checked"
 
 @ cases.higher-universes-are-not-silently-lowered
 files."main.nib" = ```tauto
-import std::Quot
+import std::quot
 
 theorem too_large(f: (Type) -> Nat, g: (Type) -> Nat,
 h: ∀ A: Type. f(A) = g(A)): f = g {

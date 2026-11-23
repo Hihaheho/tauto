@@ -30,7 +30,7 @@ fn comp2<A, B, C>(f: (A) -> B, g: (B) -> C): (A) -> C {
 theorem same<A: Type, B: Type, C: Type>(f: (A) -> B, g: (B) -> C, a: A): comp2(f, g)(a) = g(f(a)) {
   Refl
 }
-theorem written<A: Type, B: Type, C: Type>(f: (A) -> B, g: (B) -> C, a: A): comp2(A, B, C, f, g)(a) = g(f(a)) {
+theorem written<A: Type, B: Type, C: Type>(f: (A) -> B, g: (B) -> C, a: A): comp2(<A: A, B: B, C: C>, f, g)(a) = g(f(a)) {
   Refl
 }
 ```
@@ -68,7 +68,7 @@ checks.t = "ok"
 @ cases.a-function-that-uses-a-skipped-one-is-skipped
 parses = true
 source = ```tauto
-fn inner(x: Nat): Result(Nat, String) { Ok(x) }
+fn inner(x: Nat): Result(Nat, Text) { Ok(x) }
 fn outer(x: Nat): Nat {
   match inner(x) {
     Ok(_) => Zero
@@ -229,15 +229,15 @@ source = ```tauto
 inductive Counter: Type {
   Mk(n: Nat, hits: Nat): Counter
 }
-fn set_to<A>(&mut slot: A, v: A): Unit {
-  slot := v
+fn set_to<A>(slot: &mut A, v: A): Unit {
+  *slot := v
 }
-fn bump(&mut c: Counter): Nat {
+fn bump(c: &mut Counter): Nat {
   set_to(&mut c.n, Succ(c.n))
   set_to(&mut c.hits, Succ(c.hits))
   c.n
 }
-fn maybe(&mut c: Counter, go: Bool): Nat {
+fn maybe(c: &mut Counter, go: Bool): Nat {
   var seen: Nat := Zero
   if go {
     seen := bump(&mut c)
@@ -245,10 +245,10 @@ fn maybe(&mut c: Counter, go: Bool): Nat {
   seen
 }
 theorem once(): maybe(Counter::Mk(Zero, Zero), true) = mut1(Succ(Zero), Counter::Mk(Succ(Zero), Succ(Zero))) {
-  Refl(Mut1(Nat, Counter), mut1(Succ(Zero), Counter::Mk(Succ(Zero), Succ(Zero))))
+  Refl(<A: Mut1(Nat, Counter), a: mut1(Succ(Zero), Counter::Mk(Succ(Zero), Succ(Zero)))>)
 }
 theorem never(): maybe(Counter::Mk(Zero, Zero), false) = mut1(Zero, Counter::Mk(Zero, Zero)) {
-  Refl(Mut1(Nat, Counter), mut1(Zero, Counter::Mk(Zero, Zero)))
+  Refl(<A: Mut1(Nat, Counter), a: mut1(Zero, Counter::Mk(Zero, Zero))>)
 }
 ```
 checks.set_to = "ok"
@@ -260,13 +260,13 @@ checks.never = "ok"
 @ cases.mut-functions-can-share-a-step-count
 parses = true
 source = ```tauto
-fn set_to<A>(&mut slot: A, v: A): Unit {
-  slot := v
+fn set_to<A>(slot: &mut A, v: A): Unit {
+  *slot := v
 }
 mutual {
   // Counts down `n` into `seen`, a step at a time; out of steps, `seen` is
   // what it was.
-  fn down(k: Nat, &mut seen: Nat, n: Nat): Bool {
+  fn down(k: Nat, seen: &mut Nat, n: Nat): Bool {
     ⊢ Bool from match k {
       Zero => false
       Succ(j) => ⊢ Bool from match n {
@@ -278,15 +278,15 @@ mutual {
       }
     }
   }
-  fn again(k: Nat, &mut seen: Nat, n: Nat): Bool {
+  fn again(k: Nat, seen: &mut Nat, n: Nat): Bool {
     ⊢ Bool from match k {
       Zero => false
       Succ(j) => down(j, &mut seen, n)
     }
   }
 }
-theorem done(): down(10, Zero, 2) = mut1(true, 2) { Refl(Mut1(Bool, Nat), mut1(true, 2)) }
-theorem short(): down(2, Zero, 5) = mut1(false, 1) { Refl(Mut1(Bool, Nat), mut1(false, 1)) }
+theorem done(): down(10, Zero, 2) = mut1(true, 2) { Refl(<A: Mut1(Bool, Nat), a: mut1(true, 2)>) }
+theorem short(): down(2, Zero, 5) = mut1(false, 1) { Refl(<A: Mut1(Bool, Nat), a: mut1(false, 1)>) }
 ```
 checks.down = "ok"
 checks.again = "ok"
@@ -296,11 +296,11 @@ checks.short = "ok"
 @ cases.a-handler-arm-may-change-an-outer-var
 parses = true
 source = ```tauto
-affine struct Platform {}
+struct(affine) Platform {}
 extern {
   fn platform_new(): Platform
-  fn platform_bump(&mut p: Platform, n: i64): Unit
-  fn platform_get(&p: Platform): i64
+  fn platform_bump(p: &mut Platform, n: i64): Unit
+  fn platform_get(p: &Platform): i64
 }
 effect tick(n: i64): Unit direct
 effect peek(): i64 direct

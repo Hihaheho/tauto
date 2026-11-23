@@ -1,5 +1,5 @@
 //! A file that imports `Macro` is checked as strictly as any other file: a type error in one of its
-//! plain functions is reported by `tauto check FILE` and by `tauto check --tote`.
+//! plain functions is reported by `tauto check FILE` and by `tauto check .`.
 use std::{fs, path::PathBuf, process::Command};
 
 struct Fixture(PathBuf);
@@ -21,8 +21,8 @@ fn fixture(name: &str) -> Fixture {
     fs::write(root.join("src/main.taut"), "fn main() { }\n").unwrap();
     fs::write(
         root.join("src/macro.taut"),
-        "import std::prelude::Macro\n\
-         pub macro fn gen(e: SynExpr): List(SynStmt) ! {macro_error, Div} { Nil }\n\
+        "import std::builtin::macro\n\
+         pub macro fn gen(e: SynExpr): List(SynStmt) ! {macro_error, div} { Nil }\n\
          fn bad(): Nat { true }\n",
     )
     .unwrap();
@@ -51,7 +51,7 @@ fn check_file_reports_an_error_in_a_file_importing_macro() {
 #[test]
 fn check_tote_reports_an_error_in_a_file_importing_macro() {
     let f = fixture("macro-strict-tote");
-    let (ok, text) = run(&f, &["check", "--tote"]);
+    let (ok, text) = run(&f, &["check", "."]);
     assert!(!ok, "{text}");
     assert!(text.contains("bad"), "{text}");
 }

@@ -1,14 +1,14 @@
 # kernel
 
-`crates/tauto-kernel/src/check/core.rs` の、閉じた宣言を独立に検査する部分。
+閉じた宣言を独立に検査するカーネル。
 精密化済みの項を受け取り、宣言の型・値と帰納型の構成を検査する。
-表層構文の読み取りと精密化、名前付き検査器への問い合わせの診断と穴の収集は Rust 側にある。
+表層構文の読み取りと精密化、名前付き検査器への問い合わせの診断、穴の収集は扱わない。
 
 | ソース | 内容 |
 |---|---|
 | `level.taut` | 変数とオフセットを持つ宇宙レベル、累積性、Π の宇宙 |
 | `term.taut` | 束縛変数・自由な原子を分けた項、各節点が持つ要約（緩い束縛変数の上限・自由変数の上限・ハッシュ）、置換、抽象化、全順序 |
-| `data.taut` | 宣言環境（`std::Map` の順序付き写像）、帰納型と除去子の情報、検査中のメモ |
+| `data.taut` | 宣言環境（`std::map` の順序付き写像）、帰納型と除去子の情報、検査中のメモ |
 | `check.taut` | β・δ・ι・商の計算規則・算術の簡約、η と証明の無関係性を含む変換、双方向型検査 |
 | `inductive.taut` | 一様なパラメータ、厳密な正値性、宇宙、相互・入れ子帰納型、大きな除去、除去子生成 |
 | `kernel.taut` | 宣言の登録（商の定数は決まった型で値なしのときだけ）、値の設定、拒否時の環境復元 |
@@ -35,18 +35,18 @@
 
 `tauto-kernel` の任意機能 `selfhost` が公開する `check::selfhost::Recorder` は、
 独立カーネルへ渡された宣言を項として書き出す。型・値・帰納型の宣言だけを渡し、
-Rust 側が計算した正値性、再帰引数、除去子の型などは入力に含めない。
-`totes/kernel` はそれらを自分で検査・生成する。Rust 側の期待する判定は別の出力で比較する。
+正値性、再帰引数、除去子の型などは入力に含めず、`totes/kernel` が検査・生成する。
+比較のための期待する判定は別の出力にする。
 
 ```sh
-cargo run --locked --manifest-path tools/selfhost-harness/Cargo.toml --bin export-kernel -- meta/KernelSafe.taut > target/kernel-input.txt
+cargo run --locked --manifest-path tools/selfhost-harness/Cargo.toml --bin export-kernel -- meta/kernel_safe.taut > target/kernel-input.txt
 cargo run --locked -p tauto-cli -- build --release totes/kernel
 target/tauto/target/release/kernel target/kernel-input.txt
 cargo test --locked --manifest-path tools/selfhost-harness/Cargo.toml --test kernel
 ```
 
 各ファイルは空の宣言環境で始まり、1行につき1操作を再生する。書き出しには前提となる
-prelude と import した宣言も入る。`export-kernel --expected FILE` は Rust 側の判定を書く。
+prelude と import した宣言も入る。`export-kernel --expected FILE` は期待する判定を書く。
 入力は長さ付きリストと前置記法の項からなり、名前に空白を含めない。
 不正な入力や未消費の入力を、宣言の受理として扱わない。
 `R family level` は既に大きな除去が許された帰納型の再帰子を指定宇宙へ実体化する。
@@ -54,8 +54,8 @@ prelude と import した宣言も入る。`export-kernel --expected FILE` は R
 Prop の大きな除去の制限は回避せず、失敗時にはグループ全体の登録を戻す。
 
 差分試験は評価器での実行、受理と拒否、失敗後の再登録、相互・入れ子帰納型、
-宇宙の実体化、128ビット算術、生成した項、`std/Nat.taut`・`std/List.taut`・
-`std/Quot.taut`・`meta/KernelSafe.taut` の精密化済み宣言を検査する。
+宇宙の実体化、128ビット算術、生成した項、`std/nat.taut`・`std/list.taut`・
+`std/quot.taut`・`meta/kernel_safe.taut` の精密化済み宣言を検査する。
 
 型と全域性の検査、計算結果の定理、差分試験がある。実装全体の健全性を述べる定理はない。
 `meta/Kernel*.taut` は限定した計算体系のモデルとその証明であり、この実装の健全性証明にはならない。

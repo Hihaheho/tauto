@@ -1,0 +1,39 @@
+// `@keyed!(0) => instance Key` on a struct gives it the `Key` of its fields, and
+// the laws of the class are proved from the laws of each field.
+
+@ cases.key-of-a-struct-from-its-fields
+description = "A struct of two, three and no fields gets an instance whose `eq`, `feed` and laws the kernel checks."
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::nat { Nat }
+import std::key { Key, keyed }
+
+@keyed!(0) => instance Key
+pub(open) inductive struct Point { x: Nat, y: Nat }
+
+@keyed!(0) => instance Key
+pub(open) inductive struct Triple { a: Nat, b: Nat, c: Nat }
+
+@keyed!(0) => instance Key
+pub(open) inductive struct Nothing {}
+```
+checks."Key::eq_refl@Point" = "ok"
+checks."Key::feed_eq@Point" = "ok"
+checks."Key::eq_refl@Triple" = "ok"
+checks."Key::feed_eq@Triple" = "ok"
+
+@ cases.key-class-call-beside-the-macro
+description = "A file whose macro makes an `instance Key` still reads `Key::eq`, as the class it imports, in its own code."
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::nat { Nat }
+import std::key { Key, keyed }
+
+@keyed!(0) => instance Key
+pub(open) inductive struct Point { x: Nat, y: Nat }
+
+pub fn same(a: &Nat, b: &Nat): Bool { Key::eq(a, b) }
+pub fn same_point(a: &Point, b: &Point): Bool { Key::eq(a, b) }
+```
+checks."same" = "ok"
+checks."same_point" = "ok"

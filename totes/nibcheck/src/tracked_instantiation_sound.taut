@@ -1,7 +1,7 @@
 import "tracked_finish_sound.taut"
 import "instantiation_obligations.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "finish_frame.taut"
 import "inference_base.taut"
@@ -14,7 +14,7 @@ import "ty.taut"
 import "unify_sound.taut"
 
 pub theorem tracked_recorded_instantiation<gs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), initial: Ordmap(
   Text,
   Ty
@@ -24,7 +24,7 @@ pub theorem tracked_recorded_instantiation<gs: List(
 )>(
   c: Checker,
   next: Checker,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan,
   recorded: RecordedInstantiation(c, ctors, name, span, gs, initial, result),
@@ -43,15 +43,15 @@ pub theorem tracked_recorded_instantiation<gs: List(
 pub theorem tracked_instance_predicate(
   c: Checker,
   next: Checker,
-  assume: List(Pair(Text, Text)),
-  p: Pair(Text, Text),
+  assume: List(Text × Text),
+  p: Text × Text,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
   recorded: InstancePredicateRecorded(assume, p, map, what, span, finish_pending_items(c)),
   retained: TrackedState(c, next)
 ): InstancePredicateRecorded(assume, p, map, what, span, finish_pending_items(next)) {
-  ⊢ InstancePredicateRecorded(assume, p, map, what, span, finish_pending_items(next)) from match recorded {
+  match recorded {
     Mk(ty, found, member) => InstancePredicateRecorded::Mk(
       ty,
       found,
@@ -64,8 +64,8 @@ pub theorem tracked_instance_predicate(
 pub theorem tracked_instance_predicates(
   c: Checker,
   next: Checker,
-  assume: List(Pair(Text, Text)),
-  ps: List(Pair(Text, Text)),
+  assume: List(Text × Text),
+  ps: List(Text × Text),
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan,
@@ -94,13 +94,9 @@ pub theorem tracked_scheme_instance_obligations(
   recorded: SchemeInstanceObligations(c, name, scheme, span, m),
   retained: TrackedState(ck_st(m), next)
 ): SchemeInstanceObligations(c, name, scheme, span, mut1(ck_val(m), next)) {
-  ⊢ SchemeInstanceObligations(c, name, scheme, span, mut1(ck_val(m), next)) from match recorded {
+  match recorded {
     Mk(map, covered, substituted, predicates, requirements) => SchemeInstanceObligations::Mk(
-      c,
-      name,
-      scheme,
-      span,
-      mut1(ck_val(m), next),
+      <c: c, name: name, scheme: scheme, span: span, m: mut1(ck_val(m), next)>,
       map,
       covered,
       substituted,

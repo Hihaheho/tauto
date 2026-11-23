@@ -68,6 +68,6 @@ close, token (terminal, start, end). Or `LlkFailed(error)`.
 
 ## What is proved
 
-`src/derives.taut` (`docs/design/self-host.md`「証明（`totes/*/src/`、`std/`）」): when the parse succeeds, the
+`src/derives.taut` (`docs/design/self-host.md`「Proofs」): when the parse succeeds, the
 start symbol derives the tokens by the tables' productions
 (`llk_parse_sound`).

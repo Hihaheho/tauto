@@ -1,0 +1,850 @@
+import "../../surface/src/surface.taut"
+import "../../ordmap/src/ordmap.taut"
+import std::base
+import std::text
+import std::map
+import "rows_base.taut"
+import "../../identity/src/identity.taut"
+
+// Which followed functions are recursive, and which of those end by
+// structural recursion (`crates/tauto-nibcheck/src/rows/structural.rs`): a
+// function that calls itself only on a part of one of its parameters, taken
+// apart by `match`, ends. Such a function does not perform `div` for its
+// recursion, as the kernel accepts the same recursion without a termination
+// proof.
+//
+// A `Nat` taken apart by `match` is extracted as an unsigned integer:
+// `Succ(k) => …` becomes `if n == 0 { … } else { let k = n - 1 … }`. On an
+// unsigned parameter, `n - c` with `c ≥ 1` in the branch where `n` is not
+// zero is a strict part too. A signed parameter gets no such rule: `n - 1` of
+// a negative `n` does not end.
+
+// ---- the functions a function refers to -------------------------------------
+
+// The functions of `env` the body of `f` names, as a call or not: a
+// reference that is not a call is followed as one that may recurse.
+pub fn rows_refs(env: RowEnv, f: SurfaceFn): List(Text) {
+  rows_fn_names(env, rows_free(f.body, f.params, Nil))
+}
+
+// The references of `g`, a function of `env` under its own name.
+pub fn rows_known_refs(env: RowEnv, g: SurfaceFn): List(Text) {
+  match Ordmap::get(env.refs, g.name, Ordmap::compare_text) {
+    Some(found) => found
+    None => rows_refs(env, g)
+  }
+}
+
+pub fn rows_fn_names(env: RowEnv, names: List(Text)): List(Text) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => ⊢ List(Text) from match rows_env_has(env, n) {
+      true => Cons(n, rows_fn_names(env, rest))
+      false => rows_fn_names(env, rest)
+    }
+  }
+}
+
+// The names a term refers to that it does not bind (`free_vars` of `lin.rs`),
+// the newest first.
+pub fn rows_free_note(name: Text, bound: List(Text), out: List(Text)): List(Text) {
+  match rows_names_has(bound, name) || rows_names_has(out, name) {
+    true => out
+    false => Cons(name, out)
+  }
+}
+
+pub fn rows_free_bind(names: List(Text), bound: List(Text)): List(Text) {
+  match names {
+    Nil => bound
+    Cons(n, rest) => rows_free_bind(rest, Cons(n, bound))
+  }
+}
+
+pub(open) inductive RowFree: Type {
+  Mk(bound: List(Text), out: List(Text)): RowFree
+}
+
+mutual {
+  pub fn rows_free(t: SurfaceTerm, bound: List(Text), out: List(Text)): List(Text) {
+    match t {
+      SurfaceTermIndexedMk(k, ^start, ^end, ^ast_occurrence) => rows_free_kind(k, bound, out)
+    }
+  }
+
+  pub fn rows_free_kind(k: SurfaceKind, bound: List(Text), out: List(Text)): List(Text) {
+    match k {
+      SkVar(n) => rows_free_note(surface_name_text(n), bound, out)
+      SkApp(f, args) => rows_free_each(args, bound, rows_free(f, bound, out))
+      SkLam(params, body, _, _) => rows_free(body, rows_free_bind(params, bound), out)
+      SkBorrowLam(^bs, lam) => rows_free(lam, bound, out)
+      SkIf(c, th, el) => rows_free_opt(el, bound, rows_free(th, bound, rows_free(c, bound, out)))
+      SkField(base, ^name) => rows_free(base, bound, out)
+      SkTagged(^tag, x) => rows_free(x, bound, out)
+      SkBorrow(^m, ^m_orig, x) => rows_free(x, bound, out)
+      SkRecord(^name, fields) => rows_free_fields(fields, bound, out)
+      SkPerform(^eff, args) => rows_free_each(args, bound, out)
+      SkBudget(^memory, steps, body) => rows_free(body, bound, rows_free(steps, bound, out))
+      SkBlock(stmts) => rows_free_stmts(stmts, RowFree::Mk(bound, out)).out
+      SkMatch(s, ^motive, arms, ^hb, _) => rows_free_arms(arms, bound, rows_free(s, bound, out))
+      SkHandle(body, handlers) => rows_free_handlers(handlers, bound, rows_free(body, bound, out))
+      _ => out
+    }
+  }
+
+  pub fn rows_free_each(ts: List(SurfaceTerm), bound: List(Text), out: List(Text)): List(Text) {
+    match ts {
+      Nil => out
+      Cons(t, rest) => rows_free_each(rest, bound, rows_free(t, bound, out))
+    }
+  }
+
+  pub fn rows_free_opt(t: Option(SurfaceTerm), bound: List(Text), out: List(Text)): List(Text) {
+    match t {
+      None => out
+      Some(x) => rows_free(x, bound, out)
+    }
+  }
+
+  pub fn rows_free_fields(fs: List(SurfaceField), bound: List(Text), out: List(Text)): List(Text) {
+    match fs {
+      Nil => out
+      Cons(f, rest) => rows_free_fields(rest, bound, rows_free_field(f, bound, out))
+    }
+  }
+
+  pub fn rows_free_field(f: SurfaceField, bound: List(Text), out: List(Text)): List(Text) {
+    match f {
+      SurfaceFieldMk(^name, value) => rows_free(value, bound, out)
+    }
+  }
+
+  pub fn rows_free_arms(arms: List(SurfaceArm), bound: List(Text), out: List(Text)): List(Text) {
+    match arms {
+      Nil => out
+      Cons(arm, rest) => rows_free_arms(rest, bound, rows_free_arm(arm, bound, out))
+    }
+  }
+
+  pub fn rows_free_arm(arm: SurfaceArm, bound: List(Text), out: List(Text)): List(Text) {
+    match arm {
+      SurfaceArmMk(pattern, guard, ^goal, body) => rows_free(
+        body,
+        rows_pattern_names(pattern, bound),
+        rows_free_opt(guard, rows_pattern_names(pattern, bound), out)
+      )
+    }
+  }
+
+  pub fn rows_free_handlers(hs: List(SurfaceHandler), bound: List(Text), out: List(Text)): List(Text) {
+    match hs {
+      Nil => out
+      Cons(h, rest) => rows_free_handlers(rest, bound, rows_free_handler(h, bound, out))
+    }
+  }
+
+  pub fn rows_free_handler(h: SurfaceHandler, bound: List(Text), out: List(Text)): List(Text) {
+    match h {
+      HdReturn(p, body) => rows_free(body, rows_pattern_names(p, bound), out)
+      HdOperation(^op, ^binds, ^types, patterns, cont, _, guard, body) => {
+        let named := rows_patterns_names(patterns, bound)
+        let inner := ⊢ List(Text) from match cont {
+          Some(c) => Cons(c, named)
+          None => named
+        }
+        rows_free(body, inner, rows_free_opt(guard, inner, out))
+      }
+    }
+  }
+
+  pub fn rows_free_stmts(ss: List(SurfaceStmt), st: RowFree): RowFree {
+    match ss {
+      Nil => st
+      Cons(s, rest) => rows_free_stmts(rest, rows_free_stmt(s, st.bound, st.out))
+    }
+  }
+
+  pub fn rows_free_stmt(s: SurfaceStmt, bound: List(Text), out: List(Text)): RowFree {
+    match s {
+      StLet(name, ^ty, value, ^b, ^m, ^unused, ^st_stack) => RowFree::Mk(Cons(name, bound), rows_free(value, bound, out))
+      StVar(name, ^ty, value, ^b, ^unused, ^st_stack) => RowFree::Mk(Cons(name, bound), rows_free(value, bound, out))
+      StAssign(name, ^place, value) => RowFree::Mk(bound, rows_free(value, bound, rows_free_note(name, bound, out)))
+      StFn(f) => rows_free_fn(f, bound, out)
+      StWhile(c, body) => RowFree::Mk(bound, rows_free(body, bound, rows_free(c, bound, out)))
+      StReturn(e) => RowFree::Mk(bound, rows_free_opt(e, bound, out))
+      StExpr(e) => RowFree::Mk(bound, rows_free(e, bound, out))
+      _ => RowFree::Mk(bound, out)
+    }
+  }
+
+  pub fn rows_free_fn(f: SurfaceFn, bound: List(Text), out: List(Text)): RowFree {
+    match f {
+      SurfaceFnMk(name, ^generics, ^bounds, params, ^bs, ^types, ^result, ^effects, ^wheres, ^start, ^end, body, ^lends, ^generic_types, ^bound_starts, ^visibility, ^row_hole, ^slot_unused, ^slot_unused_generics, ^slot_unused_params) => RowFree::Mk(
+        Cons(name, bound),
+        rows_free(body, rows_free_bind(params, Cons(name, bound)), out)
+      )
+    }
+  }
+}
+
+mutual {
+  pub fn rows_pattern_names(p: SurfacePattern, bound: List(Text)): List(Text) {
+    match p {
+      PtBind(n, _) => Cons(n, bound)
+      PtCtor(^name, args) => rows_patterns_names(args, bound)
+      PtRecord(^name, fields) => rows_pattern_fields_names(fields, bound)
+      _ => bound
+    }
+  }
+
+  pub fn rows_patterns_names(ps: List(SurfacePattern), bound: List(Text)): List(Text) {
+    match ps {
+      Nil => bound
+      Cons(p, rest) => rows_patterns_names(rest, rows_pattern_names(p, bound))
+    }
+  }
+
+  pub fn rows_pattern_fields_names(fs: List(SurfacePatternField), bound: List(Text)): List(Text) {
+    match fs {
+      Nil => bound
+      Cons(f, rest) => rows_pattern_fields_names(rest, rows_pattern_field_names(f, bound))
+    }
+  }
+
+  pub fn rows_pattern_field_names(f: SurfacePatternField, bound: List(Text)): List(Text) {
+    match f {
+      SurfacePatternFieldMk(^name, pattern) => rows_pattern_names(pattern, bound)
+    }
+  }
+}
+
+// The functions reachable from `todo` through references, with `seen`.
+pub fn rows_reach(k: Nat, env: RowEnv, todo: List(Text), seen: Ordmap(Text, Bool)): Ordmap(Text, Bool) {
+  match k {
+    Zero => seen
+    Succ(j) => ⊢ Ordmap(Text, Bool) from match todo {
+      Nil => seen
+      Cons(n, rest) => ⊢ Ordmap(Text, Bool) from match Ordmap::contains(seen, n, Ordmap::compare_text) {
+        true => rows_reach(j, env, rest, seen)
+        false => ⊢ Ordmap(Text, Bool) from match rows_env_fn(env, n) {
+          None => rows_reach(j, env, rest, seen)
+          Some(g) => rows_reach(
+            j,
+            env,
+            List::append(rows_known_refs(env, g), rest),
+            Ordmap::insert(seen, n, true, Ordmap::compare_text)
+          )
+        }
+      }
+    }
+  }
+}
+
+pub fn rows_reached_from(k: Nat, env: RowEnv, f: SurfaceFn): Ordmap(Text, Bool) {
+  rows_reach(k, env, rows_refs(env, f), Ordmap::empty())
+}
+
+// The members of the group of mutually recursive functions `f` is in, `f`
+// first: the functions it reaches that reach it back.
+pub fn rows_group(k: Nat, env: RowEnv, f: SurfaceFn, reached: List(Text)): List(SurfaceFn) {
+  match reached {
+    Nil => Cons(f, Nil)
+    Cons(n, rest) => ⊢ List(SurfaceFn) from match rows_env_fn(env, n) {
+      None => rows_group(k, env, f, rest)
+      Some(g) => ⊢ List(SurfaceFn) from match n == f.name {
+        true => rows_group(k, env, f, rest)
+        false => ⊢ List(SurfaceFn) from match Ordmap::contains(rows_reached_from(k, env, g), f.name, Ordmap::compare_text) {
+          true => rows_group_add(g, rows_group(k, env, f, rest))
+          false => rows_group(k, env, f, rest)
+        }
+      }
+    }
+  }
+}
+
+pub fn rows_group_add(g: SurfaceFn, group: List(SurfaceFn)): List(SurfaceFn) {
+  match group {
+    Nil => Cons(g, Nil)
+    Cons(f, rest) => Cons(f, Cons(g, rest))
+  }
+}
+
+pub fn rows_keys(entries: List(Text × Bool)): List(Text) {
+  match entries {
+    Nil => Nil
+    Cons(e, rest) => Cons(e.fst, rows_keys(rest))
+  }
+}
+
+// Whether following `f` may not end because of its recursion: it reaches
+// itself, and its group does not recurse structurally.
+pub fn rows_recursion_diverges(k: Nat, env: RowEnv, f: SurfaceFn): Bool {
+  let reached := rows_reached_from(k, env, f)
+  ⊢ Bool from match Ordmap::contains(reached, f.name, Ordmap::compare_text) {
+    true => not(rows_decreases(rows_group(k, env, f, rows_keys(Ordmap::entries(reached)))))
+    false => false
+  }
+}
+
+// ---- structural recursion ---------------------------------------------------
+
+pub(open) inductive RowSize: Type {
+  SizeWhole: RowSize
+  SizePart: RowSize
+  // The parameter itself (`part` false) or a strict part of it, known not to
+  // be zero.
+  SizeNonZero(part: Bool): RowSize
+  // Anything else, or a name that shadows one of the above.
+  SizeOther: RowSize
+}
+
+pub fn rows_size_is_other(s: RowSize): Bool {
+  match s {
+    SizeOther => true
+    _ => false
+  }
+}
+
+pub fn rows_size_is_nonzero(s: RowSize): Bool {
+  match s {
+    SizeNonZero(^p) => true
+    _ => false
+  }
+}
+
+// A strict part: what a recursive call may take at the position.
+pub fn rows_size_is_part(s: RowSize): Bool {
+  match s {
+    SizePart => true
+    SizeNonZero(p) => p
+    _ => false
+  }
+}
+
+pub(open) inductive RowScan: Type {
+  Mk(members: List(Text), at: Nat, unsigned: Bool): RowScan
+}
+
+pub fn rows_fns_names(fs: List(SurfaceFn)): List(Text) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(f.name, rows_fns_names(rest))
+  }
+}
+
+pub fn rows_list_len_text(xs: List(Text)): Nat {
+  match xs {
+    Nil => Zero
+    Cons(^x, rest) => Succ(rows_list_len_text(rest))
+  }
+}
+
+pub fn rows_list_len_types(xs: List(Option(SurfaceTerm))): Nat {
+  match xs {
+    Nil => Zero
+    Cons(^x, rest) => Succ(rows_list_len_types(rest))
+  }
+}
+
+pub fn rows_nat_same(a: Nat, b: Nat): Bool {
+  match a {
+    Zero => ⊢ Bool from match b {
+      Zero => true
+      Succ(^y) => false
+    }
+    Succ(x) => ⊢ Bool from match b {
+      Zero => false
+      Succ(y) => rows_nat_same(x, y)
+    }
+  }
+}
+
+pub fn rows_nat_min(a: Nat, b: Nat): Nat {
+  match a {
+    Zero => Zero
+    Succ(x) => ⊢ Nat from match b {
+      Zero => Zero
+      Succ(y) => Succ(rows_nat_min(x, y))
+    }
+  }
+}
+
+pub fn rows_type_at(ts: List(Option(SurfaceTerm)), i: Nat): Option(SurfaceTerm) {
+  match ts {
+    Nil => None
+    Cons(t, rest) => ⊢ Option(SurfaceTerm) from match i {
+      Zero => t
+      Succ(j) => rows_type_at(rest, j)
+    }
+  }
+}
+
+pub fn rows_term_at(ts: List(SurfaceTerm), i: Nat): Option(SurfaceTerm) {
+  match ts {
+    Nil => None
+    Cons(t, rest) => ⊢ Option(SurfaceTerm) from match i {
+      Zero => Some(t)
+      Succ(j) => rows_term_at(rest, j)
+    }
+  }
+}
+
+// The unsigned integer types, whose `n - c` stays at or above zero. `nat`, the
+// type a `Nat` is extracted as, is one of them.
+pub fn rows_unsigned(t: Option(SurfaceTerm)): Bool {
+  match t {
+    None => false
+    Some(ty) => ⊢ Bool from match ty.kind {
+      SkVar(n) => surface_name_text(n) == "nat" || surface_name_text(n) == "u8" || surface_name_text(n) == "u16" || surface_name_text(n) == "u32" || surface_name_text(n) == "u64" || surface_name_text(n) == "usize"
+      _ => false
+    }
+  }
+}
+
+pub fn rows_min_params(group: List(SurfaceFn), m: Nat): Nat {
+  match group {
+    Nil => m
+    Cons(f, rest) => rows_min_params(rest, rows_nat_min(m, rows_list_len_text(f.params)))
+  }
+}
+
+pub fn rows_typed_fully(group: List(SurfaceFn)): Bool {
+  match group {
+    Nil => true
+    Cons(f, rest) => rows_nat_same(rows_list_len_types(f.param_types), rows_list_len_text(f.params)) &&
+      rows_typed_fully(rest)
+  }
+}
+
+// Whether every reference the functions of `group` make to one another (a
+// function to itself, when the group is one function) is a call whose
+// argument at one fixed position is a strict part of the parameter at that
+// position.
+pub fn rows_decreases(group: List(SurfaceFn)): Bool {
+  match group {
+    Nil => false
+    Cons(first, more) => rows_typed_fully(group) &&
+      rows_some_position(group, rows_fns_names(group), Zero, rows_min_params(more, rows_list_len_text(first.params)))
+  }
+}
+
+// Whether a position below `positions`, from `i` on, shrinks along every
+// cycle.
+pub fn rows_some_position(group: List(SurfaceFn), members: List(Text), i: Nat, positions: Nat): Bool {
+  match positions {
+    Zero => false
+    Succ(left) => rows_position_shrinks(group, group, members, i) ||
+      rows_some_position(group, members, Succ(i), left)
+  }
+}
+
+pub fn rows_same_signedness(group: List(SurfaceFn), unsigned: Bool, i: Nat): Bool {
+  match group {
+    Nil => true
+    Cons(g, rest) => rows_unsigned(rows_type_at(g.param_types, i)) == unsigned &&
+      rows_same_signedness(rest, unsigned, i)
+  }
+}
+
+pub fn rows_position_shrinks(fs: List(SurfaceFn), group: List(SurfaceFn), members: List(Text), i: Nat): Bool {
+  match fs {
+    Nil => true
+    Cons(f, rest) => {
+      let ty := rows_type_at(f.param_types, i)
+      let unsigned := rows_unsigned(ty)
+      let typed := ⊢ Bool from match ty {
+        Some(^t) => true
+        None => false
+      }
+      typed &&
+        rows_same_signedness(group, unsigned, i) &&
+        rows_scan_term(
+          RowScan::Mk(members, i, unsigned),
+          f.body,
+          rows_param_sizes(f.params, Some(i), Ordmap::empty())
+        ) &&
+        rows_position_shrinks(rest, group, members, i)
+    }
+  }
+}
+
+// The parameter at `at` is the whole value; the others are anything else.
+pub fn rows_param_sizes(params: List(Text), at: Option(Nat), names: Ordmap(Text, RowSize)): Ordmap(Text, RowSize) {
+  match params {
+    Nil => names
+    Cons(p, rest) => ⊢ Ordmap(Text, RowSize) from match at {
+      Some(i) => ⊢ Ordmap(Text, RowSize) from match i {
+        Zero => rows_param_sizes(rest, None, Ordmap::insert(names, p, SizeWhole, Ordmap::compare_text))
+        Succ(j) => rows_param_sizes(rest, Some(j), Ordmap::insert(names, p, SizeOther, Ordmap::compare_text))
+      }
+      None => rows_param_sizes(rest, None, Ordmap::insert(names, p, SizeOther, Ordmap::compare_text))
+    }
+  }
+}
+
+pub fn rows_names_has_key(names: Ordmap(Text, RowSize), n: Text): Bool {
+  Ordmap::contains(names, n, Ordmap::compare_text)
+}
+
+pub fn rows_shadow(names: Ordmap(Text, RowSize), n: Text): Ordmap(Text, RowSize) {
+  Ordmap::insert(names, n, SizeOther, Ordmap::compare_text)
+}
+
+pub fn rows_shadow_all(names: Ordmap(Text, RowSize), ns: List(Text)): Ordmap(Text, RowSize) {
+  match ns {
+    Nil => names
+    Cons(n, rest) => rows_shadow_all(rows_shadow(names, n), rest)
+  }
+}
+
+pub fn rows_digits_zero(digits: Text): Bool {
+  digits == "0"
+}
+
+mutual {
+// `n - c` with `c ≥ 1` on an unsigned `n` known not to be zero.
+pub fn rows_size(c: RowScan, t: SurfaceTerm, names: Ordmap(Text, RowSize)): RowSize {
+  match t {
+    SurfaceTermIndexedMk(kind, ^start, ^end, ^ast_occurrence) => rows_size_kind(c, kind, names)
+  }
+}
+
+pub fn rows_size_kind(c: RowScan, k: SurfaceKind, names: Ordmap(Text, RowSize)): RowSize {
+  match k {
+    SkVar(n) => ⊢ RowSize from match Ordmap::get(names, surface_name_text(n), Ordmap::compare_text) {
+      Some(s) => s
+      None => SizeOther
+    }
+    SkBorrow(^m, ^m_orig, term) => rows_size(c, term, names)
+    // A field of a strict part is a strict part too (`l.value` of a
+    // `Placed(T)` part).
+    SkField(base, ^name) => ⊢ RowSize from match rows_size(c, base, names) {
+      SizePart => SizePart
+      _ => SizeOther
+    }
+    SkApp(function, arguments) => ⊢ RowSize from match rows_is_minus(c, function, names) {
+      true => rows_size_minus(c, arguments, names)
+      false => SizeOther
+    }
+    _ => SizeOther
+  }
+}
+
+pub fn rows_is_minus(c: RowScan, function: SurfaceTerm, names: Ordmap(Text, RowSize)): Bool {
+  match function.kind {
+    SkVar(op) => c.unsigned && surface_name_text(op) == "-" && not(rows_names_has_key(names, surface_name_text(op)))
+    _ => false
+  }
+}
+
+pub fn rows_size_minus(c: RowScan, arguments: List(SurfaceTerm), names: Ordmap(Text, RowSize)): RowSize {
+  match arguments {
+    Cons(a, more) => ⊢ RowSize from match more {
+      Cons(b, none) => ⊢ RowSize from match none {
+        Nil => ⊢ RowSize from match b.kind {
+          SkNat(digits) => ⊢ RowSize from match rows_size_is_nonzero(rows_size(c, a, names)) && not(rows_digits_zero(digits)) {
+            true => SizePart
+            false => SizeOther
+          }
+          _ => SizeOther
+        }
+        _ => SizeOther
+      }
+      Nil => SizeOther
+    }
+    Nil => SizeOther
+  }
+}
+}
+
+pub fn rows_is_zero(t: SurfaceTerm): Bool {
+  match t.kind {
+    SkNat(digits) => rows_digits_zero(digits)
+    _ => false
+  }
+}
+
+// The name and size of the parameter or part that `n == 0` (or `0 == n`)
+// tests, so that it is not zero in the `else` branch.
+pub fn rows_zero_test(c: RowScan, cond: SurfaceTerm, names: Ordmap(Text, RowSize)): Option(Text × RowSize) {
+  match cond.kind {
+    SkApp(function, arguments) => ⊢ Option(Text × RowSize) from match function.kind {
+      SkVar(op) => ⊢ Option(Text × RowSize) from match c.unsigned && surface_name_text(op) == "==" && not(rows_names_has_key(names, surface_name_text(op))) {
+        true => rows_zero_tested(c, arguments, names)
+        false => None
+      }
+      _ => None
+    }
+    _ => None
+  }
+}
+
+pub fn rows_zero_tested(c: RowScan, arguments: List(SurfaceTerm), names: Ordmap(Text, RowSize)): Option(Text × RowSize) {
+  match arguments {
+    Cons(a, more) => ⊢ Option(Text × RowSize) from match more {
+      Cons(b, none) => ⊢ Option(Text × RowSize) from match none {
+        Nil => ⊢ Option(Text × RowSize) from match rows_is_zero(b) {
+          true => rows_tested_name(c, a, names)
+          false => ⊢ Option(Text × RowSize) from match rows_is_zero(a) {
+            true => rows_tested_name(c, b, names)
+            false => None
+          }
+        }
+        _ => None
+      }
+      Nil => None
+    }
+    Nil => None
+  }
+}
+
+pub fn rows_tested_name(c: RowScan, t: SurfaceTerm, names: Ordmap(Text, RowSize)): Option(Text × RowSize) {
+  let size := rows_size(c, t, names)
+  ⊢ Option(Text × RowSize) from match rows_size_is_other(size) {
+    true => None
+    false => ⊢ Option(Text × RowSize) from match t.kind {
+      SkVar(n) => Some(#(surface_name_text(n), size))
+      _ => None
+    }
+  }
+}
+
+pub fn rows_is_self(c: RowScan, t: SurfaceTerm, names: Ordmap(Text, RowSize)): Bool {
+  match t.kind {
+    SkVar(n) => rows_names_has(c.members, surface_name_text(n)) && not(rows_names_has_key(names, surface_name_text(n)))
+    _ => false
+  }
+}
+
+// The names an operation arm binds: its patterns and its continuation.
+pub fn rows_arm_names(patterns: List(SurfacePattern), cont: Option(Text), names: Ordmap(Text, RowSize)): Ordmap(Text, RowSize) {
+  match cont {
+    Some(k) => rows_shadow(rows_size_bind_all(patterns, false, true, names), k)
+    None => rows_size_bind_all(patterns, false, true, names)
+  }
+}
+
+pub(open) inductive RowScanOut: Type {
+  Mk(ok: Bool, names: Ordmap(Text, RowSize)): RowScanOut
+}
+
+mutual {
+  pub fn rows_scan_term(c: RowScan, t: SurfaceTerm, names: Ordmap(Text, RowSize)): Bool {
+    match t {
+      SurfaceTermIndexedMk(kind, ^start, ^end, ^ast_occurrence) => rows_scan_kind(c, kind, names)
+    }
+  }
+
+  pub fn rows_scan_kind(c: RowScan, k: SurfaceKind, names: Ordmap(Text, RowSize)): Bool {
+    match k {
+      // A reference that is not a call: the recursion is not followed.
+      SkVar(n) => not(rows_names_has(c.members, surface_name_text(n)) && not(rows_names_has_key(names, surface_name_text(n))))
+      SkApp(function, arguments) => rows_scan_call(c, function, arguments, names) &&
+        rows_scan_terms(c, arguments, names)
+      SkMatch(scrutinee, ^motive, arms, ^binder, _) => rows_scan_term(c, scrutinee, names) &&
+        rows_scan_arms(c, arms, not(rows_size_is_other(rows_size(c, scrutinee, names))), names)
+      SkLam(params, body, _, _) => rows_scan_term(c, body, rows_shadow_all(names, params))
+      SkBorrowLam(^bs, lam) => rows_scan_term(c, lam, names)
+      SkBlock(stmts) => rows_scan_stmts(c, stmts, names)
+      SkHandle(body, handlers) => rows_scan_term(c, body, names) && rows_scan_handlers(c, handlers, names)
+      SkIf(cond, then, otherwise) => rows_scan_term(c, cond, names) &&
+        rows_scan_term(c, then, names) &&
+        rows_scan_otherwise(c, cond, otherwise, names)
+      SkField(base, ^name) => rows_scan_term(c, base, names)
+      SkTagged(^tag, value) => rows_scan_term(c, value, names)
+      SkBorrow(^m, ^m_orig, value) => rows_scan_term(c, value, names)
+      SkPerform(^op, args) => rows_scan_terms(c, args, names)
+      SkUnion(parts) => rows_scan_terms(c, parts, names)
+      SkBudget(^memory, steps, body) => rows_scan_term(c, steps, names) && rows_scan_term(c, body, names)
+      SkRecord(^name, fields) => rows_scan_fields(c, fields, names)
+      SkNat(^d) => true
+      SkFloat(^d) => true
+      SkText(^v) => true
+      SkBool(^v) => true
+      SkPi(^ps, ^r, ^e) => true
+      SkRow(^es) => true
+      SkExists(^b, ^d, ^body, ^unused) => true
+      SkFnKind(^kind, ^ty) => true
+      // Anything else is not read: the recursion is not known to end.
+      _ => false
+    }
+  }
+
+  pub fn rows_scan_call(
+    c: RowScan,
+    function: SurfaceTerm,
+    arguments: List(SurfaceTerm),
+    names: Ordmap(Text, RowSize)
+  ): Bool {
+    match rows_is_self(c, function, names) {
+      true => ⊢ Bool from match rows_term_at(arguments, c.at) {
+        Some(a) => rows_size_is_part(rows_size(c, a, names))
+        None => false
+      }
+      false => rows_scan_term(c, function, names)
+    }
+  }
+
+  pub fn rows_scan_opt(c: RowScan, t: Option(SurfaceTerm), names: Ordmap(Text, RowSize)): Bool {
+    match t {
+      Some(e) => rows_scan_term(c, e, names)
+      None => true
+    }
+  }
+
+  pub fn rows_scan_terms(c: RowScan, ts: List(SurfaceTerm), names: Ordmap(Text, RowSize)): Bool {
+    match ts {
+      Nil => true
+      Cons(t, rest) => rows_scan_term(c, t, names) && rows_scan_terms(c, rest, names)
+    }
+  }
+
+  pub fn rows_scan_fields(c: RowScan, fs: List(SurfaceField), names: Ordmap(Text, RowSize)): Bool {
+    match fs {
+      Nil => true
+      Cons(f, rest) => rows_scan_field(c, f, names) && rows_scan_fields(c, rest, names)
+    }
+  }
+
+  pub fn rows_scan_field(c: RowScan, f: SurfaceField, names: Ordmap(Text, RowSize)): Bool {
+    match f {
+      SurfaceFieldMk(^name, value) => rows_scan_term(c, value, names)
+    }
+  }
+
+  pub fn rows_scan_otherwise(
+    c: RowScan,
+    cond: SurfaceTerm,
+    otherwise: Option(SurfaceTerm),
+    names: Ordmap(Text, RowSize)
+  ): Bool {
+    match otherwise {
+      None => true
+      Some(o) => rows_scan_term(
+        c,
+        o,
+        ⊢ Ordmap(Text, RowSize) from match rows_zero_test(c, cond, names) {
+          Some(tested) => Ordmap::insert(
+            names,
+            tested.fst,
+            SizeNonZero(rows_size_is_part(tested.snd)),
+            Ordmap::compare_text
+          )
+          None => names
+        }
+      )
+    }
+  }
+
+  pub fn rows_scan_arms(c: RowScan, arms: List(SurfaceArm), parts: Bool, names: Ordmap(Text, RowSize)): Bool {
+    match arms {
+      Nil => true
+      Cons(arm, rest) => rows_scan_arm(c, arm, parts, names) && rows_scan_arms(c, rest, parts, names)
+    }
+  }
+
+  pub fn rows_scan_arm(c: RowScan, arm: SurfaceArm, parts: Bool, names: Ordmap(Text, RowSize)): Bool {
+    match arm {
+      SurfaceArmMk(pattern, guard, ^goal, body) => rows_scan_opt(c, guard, rows_size_bind(pattern, parts, true, names)) &&
+        rows_scan_term(c, body, rows_size_bind(pattern, parts, true, names))
+    }
+  }
+
+  pub fn rows_scan_handlers(c: RowScan, hs: List(SurfaceHandler), names: Ordmap(Text, RowSize)): Bool {
+    match hs {
+      Nil => true
+      Cons(h, rest) => rows_scan_handler(c, h, names) && rows_scan_handlers(c, rest, names)
+    }
+  }
+
+  pub fn rows_scan_handler(c: RowScan, h: SurfaceHandler, names: Ordmap(Text, RowSize)): Bool {
+    match h {
+      HdReturn(pattern, body) => rows_scan_term(c, body, rows_size_bind(pattern, false, true, names))
+      HdOperation(^op, ^binds, ^types, patterns, cont, _, guard, body) => rows_scan_opt(c, guard, rows_arm_names(patterns, cont, names)) &&
+        rows_scan_term(c, body, rows_arm_names(patterns, cont, names))
+    }
+  }
+
+  pub fn rows_scan_stmts(c: RowScan, stmts: List(SurfaceStmt), names: Ordmap(Text, RowSize)): Bool {
+    match stmts {
+      Nil => true
+      Cons(s, rest) => {
+        let out := rows_scan_stmt(c, s, names)
+        out.ok && rows_scan_stmts(c, rest, out.names)
+      }
+    }
+  }
+
+  pub fn rows_scan_stmt(c: RowScan, s: SurfaceStmt, names: Ordmap(Text, RowSize)): RowScanOut {
+    match s {
+      // A `let` keeps the size of its value: the extracted `Succ(k)` arm
+      // binds `let k = n - 1`.
+      StLet(name, ^ty, value, ^b, ^mutable, ^unused, ^st_stack) => RowScanOut::Mk(
+        rows_scan_term(c, value, names),
+        Ordmap::insert(names, name, rows_size(c, value, names), Ordmap::compare_text)
+      )
+      StVar(name, ^ty, value, ^b, ^unused, ^st_stack) => RowScanOut::Mk(rows_scan_term(c, value, names), rows_shadow(names, name))
+      StAssign(name, ^place, value) => RowScanOut::Mk(rows_scan_term(c, value, names), rows_shadow(names, name))
+      StExpr(e) => RowScanOut::Mk(rows_scan_term(c, e, names), names)
+      StReturn(value) => RowScanOut::Mk(rows_scan_opt(c, value, names), names)
+      // A loop is `div` of its own.
+      StWhile(cond, body) => RowScanOut::Mk(
+        rows_scan_term(c, cond, names) && rows_scan_term(c, body, names),
+        names
+      )
+      // A local function that takes the name hides it.
+      StFn(f) => rows_scan_local_fn(c, f, names)
+      _ => RowScanOut::Mk(false, names)
+    }
+  }
+
+  pub fn rows_scan_local_fn(c: RowScan, f: SurfaceFn, names: Ordmap(Text, RowSize)): RowScanOut {
+    match f {
+      SurfaceFnMk(name, ^generics, ^bounds, params, ^bs, ^types, ^result, ^effects, ^wheres, ^start, ^end, body, ^lends, ^generic_types, ^bound_starts, ^visibility, ^row_hole, ^slot_unused, ^slot_unused_generics, ^slot_unused_params) => ⊢ RowScanOut from match rows_names_has(c.members, name) {
+        true => RowScanOut::Mk(true, rows_shadow(names, name))
+        false => RowScanOut::Mk(rows_scan_term(c, body, rows_shadow_all(names, params)), names)
+      }
+    }
+  }
+}
+
+// The names a pattern binds: a strict part when it is under a constructor of
+// a value that is the parameter or a part of it.
+mutual {
+  pub fn rows_size_bind(p: SurfacePattern, parts: Bool, top: Bool, names: Ordmap(Text, RowSize)): Ordmap(Text, RowSize) {
+    match p {
+      PtBind(n, _) => Ordmap::insert(
+        names,
+        n,
+        ⊢ RowSize from match parts && not(top) {
+          true => SizePart
+          false => SizeOther
+        },
+        Ordmap::compare_text
+      )
+      PtCtor(^name, args) => rows_size_bind_all(args, parts, false, names)
+      PtRecord(^name, fields) => rows_size_bind_fields(fields, parts, names)
+      _ => names
+    }
+  }
+
+  pub fn rows_size_bind_all(ps: List(SurfacePattern), parts: Bool, top: Bool, names: Ordmap(Text, RowSize)): Ordmap(Text, RowSize) {
+    match ps {
+      Nil => names
+      Cons(p, rest) => rows_size_bind_all(rest, parts, top, rows_size_bind(p, parts, top, names))
+    }
+  }
+
+  pub fn rows_size_bind_fields(fs: List(SurfacePatternField), parts: Bool, names: Ordmap(Text, RowSize)): Ordmap(Text, RowSize) {
+    match fs {
+      Nil => names
+      Cons(f, rest) => rows_size_bind_fields(rest, parts, rows_size_bind_field(f, parts, names))
+    }
+  }
+
+  pub fn rows_size_bind_field(f: SurfacePatternField, parts: Bool, names: Ordmap(Text, RowSize)): Ordmap(Text, RowSize) {
+    match f {
+      SurfacePatternFieldMk(^name, pattern) => rows_size_bind(pattern, parts, false, names)
+    }
+  }
+}

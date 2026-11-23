@@ -1,19 +1,22 @@
+import "messages.taut"
 import "datas_frame.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "kind_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 pub fn written_context(
   c: Checker
-): Pair(Bool, Bool) { Pair { fst: c.constructor_position, snd: c.under_borrow } }
-pub fn written_context_borrow(p: Pair(Bool, Bool)): Bool { p.snd }
+): Bool × Bool { #(c.constructor_position, c.under_borrow) }
+pub fn written_context_borrow(p: Bool × Bool): Bool { p.snd }
 pub def CkContextFrame<A: Type>(
   c: Checker,
   m: Mut1(A, Checker)
@@ -21,7 +24,7 @@ pub def CkContextFrame<A: Type>(
 pub def CkWrittenReset<A: Type>(
   c: Checker,
   m: Mut1(A, Checker)
-): Prop := written_context(ck_st(m)) = (Pair { fst: frame_constructor_position(c), snd: false })
+): Prop := written_context(ck_st(m)) = (#(frame_constructor_position(c), false))
 pub def CkWrittenInput<A: Type>(
   c: Checker,
   m: Mut1(A, Checker)
@@ -34,7 +37,7 @@ pub theorem context_reset_frame<A: Type>(
 ): CkContextFrame(c, m) {
   ordinary => Eq::trans(
     reset,
-    Eq::sym(Eq::congr((b: Bool) => Pair { fst: frame_constructor_position(c), snd: b }, ordinary))
+    Eq::sym(Eq::congr((b: Bool) => #(frame_constructor_position(c), b), ordinary))
   )
 }
 pub theorem context_input_make<A: Type>(
@@ -50,7 +53,7 @@ pub theorem context_bind<A: Type, B: Type>(
   hm: CkContextFrame(c, m),
   hk: ∀ v: A. ∀ next: Checker. CkContextFrame(next, k(v, next))
 ): CkContextFrame(c, frame_bind(k, m)) {
-  ⊢ CkContextFrame(c, frame_bind(k, m)) from match m {
+  match m {
     mut1(v, next) => ordinary => Eq::trans(
       hk(v, next, Eq::trans(Eq::congr(written_context_borrow, hm(ordinary)), ordinary)),
       hm(ordinary)
@@ -79,7 +82,7 @@ pub theorem context_return<A: Type, B: Type>(
   m: Mut1(A, Checker),
   h: CkContextFrame(c, m)
 ): CkContextFrame(c, frame_return(v, m)) {
-  ⊢ CkContextFrame(c, frame_return(v, m)) from match m { mut1(value, next) => h }
+  match m { mut1(value, next) => h }
 }
 pub theorem context_changed<A: Type>(
   c: Checker,
@@ -94,10 +97,10 @@ pub theorem context_value_bind<A: Type, B: Type>(
   f: (A) -> B,
   m: Mut1(A, Checker)
 ): written_context(
-  ck_st(frame_bind(A, B, (v: A, next: Checker) => mut1(f(v), next), m))
+  ck_st(frame_bind(<A: A, B: B>, (v: A, next: Checker) => mut1(f(v), next), m))
 ) = written_context(ck_st(m)) {
   ⊢ written_context(
-    ck_st(frame_bind(A, B, (v: A, next: Checker) => mut1(f(v), next), m))
+    ck_st(frame_bind(<A: A, B: B>, (v: A, next: Checker) => mut1(f(v), next), m))
   ) = written_context(ck_st(m)) from match m { mut1(value, next) => Refl }
 }
 
@@ -177,7 +180,7 @@ pub theorem frame_arity_small_ok_context(
   data: Data,
   small: Bool
 ): CkContextFrame(c, frame_arity_small(c, n, span, data, small)) {
-  ⊢ CkContextFrame(c, frame_arity_small(c, n, span, data, small)) from match small {
+  match small {
     true => (ordinary => Refl)
     false => (ordinary => Refl)
   }
@@ -190,7 +193,7 @@ pub theorem frame_arity_decl_ok_context(
   span: TySpan,
   o: Option(Data)
 ): CkContextFrame(c, frame_arity_decl(c, n, given, span, o)) {
-  ⊢ CkContextFrame(c, frame_arity_decl(c, n, given, span, o)) from match o {
+  match o {
     None => (ordinary => Refl)
     Some(data) => frame_arity_small_ok_context(
       c,
@@ -209,7 +212,7 @@ pub theorem frame_arity_k_ok_context(
   span: TySpan,
   constructor: Bool
 ): CkContextFrame(c, frame_arity_k(c, n, given, span, constructor)) {
-  ⊢ CkContextFrame(c, frame_arity_k(c, n, given, span, constructor)) from match constructor {
+  match constructor {
     true => frame_arity_decl_ok_context(c, n, given, span, datas_decl(ck_datas_of(c), n))
     false => (ordinary => Refl)
   }
@@ -235,7 +238,7 @@ pub theorem frame_written_var_named_ok_context(
   t: Ty,
   found: Bool
 ): CkContextFrame(c, frame_written_var_named(c, n, span, t, found)) {
-  ⊢ CkContextFrame(c, frame_written_var_named(c, n, span, t, found)) from match found {
+  match found {
     true => (ordinary => Refl)
     false => context_return(c, t, ck_arity(c, n, 0, span), ck_arity_frame_context(c, n, 0, span))
   }
@@ -249,7 +252,7 @@ pub theorem frame_written_var_k_ok_context(
   original: Ty,
   t: Ty
 ): CkContextFrame(c, frame_written_var_k(c, n, generics, span, original, t)) {
-  ⊢ CkContextFrame(c, frame_written_var_k(c, n, generics, span, original, t)) from match t {
+  match t {
     TyNamed(name, args) => frame_written_var_named_ok_context(
       c,
       n,
@@ -264,6 +267,7 @@ pub theorem frame_written_var_k_ok_context(
     TyNever => (ordinary => Refl)
     TyDecimal => (ordinary => Refl)
     TyFloat => (ordinary => Refl)
+    TyFloat32 => (ordinary => Refl)
     TyFn(params, result, kind) => (ordinary => Refl)
     TyUnion(members) => (ordinary => Refl)
     TyProduct(members) => (ordinary => Refl)
@@ -303,7 +307,7 @@ pub theorem ck_written_fn_kind_frame_context(
   fk: Text,
   span: TySpan
 ): CkContextFrame(c, ck_written_fn_kind(w, c, fk, span)) {
-  ⊢ CkContextFrame(c, ck_written_fn_kind(w, c, fk, span)) from match w {
+  match w {
     TyFn(ps, r, k) => (ordinary => Refl)
     TyInt(width) => (ordinary => Refl)
     TyBool => (ordinary => Refl)
@@ -312,6 +316,7 @@ pub theorem ck_written_fn_kind_frame_context(
     TyNever => (ordinary => Refl)
     TyDecimal => (ordinary => Refl)
     TyFloat => (ordinary => Refl)
+    TyFloat32 => (ordinary => Refl)
     TyUnion(members) => (ordinary => Refl)
     TyProduct(members) => (ordinary => Refl)
     TyTagged(tags, inner) => (ordinary => Refl)
@@ -331,7 +336,7 @@ pub theorem frame_error_if_ok_context(
   span: TySpan,
   b: Bool
 ): CkContextFrame(c, frame_error_if(c, message, span, b)) {
-  ⊢ CkContextFrame(c, frame_error_if(c, message, span, b)) from match b {
+  match b {
     true => (ordinary => Refl)
     false => (ordinary => Refl)
   }
@@ -343,12 +348,12 @@ pub theorem frame_app_nested_ok_context(
   after: List(Ty),
   inner: Ty
 ): CkContextFrame(c, frame_app_nested(c, span, after, inner)) {
-  ⊢ CkContextFrame(c, frame_app_nested(c, span, after, inner)) from match inner {
+  match inner {
     TyNamed(n, before) => context_return(
       c,
       TyNamed(n, List::append(before, after)),
-      ck_arity(c, n, list_len(List::append(before, after)), span),
-      ck_arity_frame_context(c, n, list_len(List::append(before, after)), span)
+      ck_arity(c, surface_name_text(n), list_len(List::append(before, after)), span),
+      ck_arity_frame_context(c, surface_name_text(n), list_len(List::append(before, after)), span)
     )
     TyInt(width) => (ordinary => Refl)
     TyBool => (ordinary => Refl)
@@ -357,6 +362,7 @@ pub theorem frame_app_nested_ok_context(
     TyNever => (ordinary => Refl)
     TyDecimal => (ordinary => Refl)
     TyFloat => (ordinary => Refl)
+    TyFloat32 => (ordinary => Refl)
     TyFn(params, result, kind) => (ordinary => Refl)
     TyUnion(members) => (ordinary => Refl)
     TyProduct(members) => (ordinary => Refl)
@@ -374,7 +380,7 @@ pub theorem frame_app_info_ok_context(
   c: Checker,
   args: List(Ty)
 ): CkContextFrame(c, frame_app_info(c, args)) {
-  ⊢ CkContextFrame(c, frame_app_info(c, args)) from match args {
+  match args {
     Nil => (ordinary => Refl)
     Cons(a, rest) => (ordinary => Refl)
   }
@@ -386,7 +392,7 @@ pub theorem frame_app_generic_ok_context(
   span: TySpan,
   args: List(Ty)
 ): CkContextFrame(c, frame_app_generic(c, n, generics, span, args)) {
-  ⊢ CkContextFrame(c, frame_app_generic(c, n, generics, span, args)) from match args {
+  match args {
     Nil => (ordinary => Refl)
     Cons(x, more) => (ordinary => Refl)
   }
@@ -401,10 +407,9 @@ pub theorem frame_app_generic_count_ok_context(
   one: Bool,
   iheach: ∀ next: Checker. CkContextFrame(next, ck_written_each(arguments, next, generics))
 ): CkContextFrame(c, frame_app_generic_count(c, arguments, generics, span, n, one)) {
-  ⊢ CkContextFrame(c, frame_app_generic_count(c, arguments, generics, span, n, one)) from match one {
+  match one {
     true => context_bind(
-      List(Ty),
-      Ty,
+      <A: List(Ty), B: Ty>,
       c,
       (ws: List(Ty), c1: Checker) => frame_app_generic(c1, n, generics, span, ws),
       ck_written_each(arguments, c, generics),
@@ -419,6 +424,24 @@ pub theorem frame_app_generic_count_ok_context(
   }
 }
 
+// `()`, the unit, or a type by its name.
+pub theorem frame_written_var_ok_context(
+  c: Checker,
+  n: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  star: Bool
+): CkContextFrame(c, frame_written_var(c, n, generics, span, star)) {
+  match star {
+    true => (ordinary => Refl)
+    false => context_rewrap(
+      c,
+      ck_written_var(c, n, generics, span),
+      ck_written_var_frame_context(c, n, generics, span)
+    )
+  }
+}
+
 pub theorem frame_app_kind_ok_context(
   c: Checker,
   arguments: List(SurfaceTerm),
@@ -428,11 +451,10 @@ pub theorem frame_app_kind_ok_context(
   app: WrittenApp,
   iheach: ∀ next: Checker. CkContextFrame(next, ck_written_each(arguments, next, generics))
 ): CkContextFrame(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) {
-  ⊢ CkContextFrame(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) from match app {
-    WrittenUnit => (ordinary => Refl)
+  match app {
+    WrittenProduct => frame_written_product_ok_context(arguments, c, generics, iheach)
     WrittenInfo => context_bind(
-      List(Ty),
-      Ty,
+      <A: List(Ty), B: Ty>,
       c,
       (ws: List(Ty), c1: Checker) => frame_app_info(c1, ws),
       ck_written_each(arguments, c, generics),
@@ -440,43 +462,40 @@ pub theorem frame_app_kind_ok_context(
       ws => c1 => frame_app_info_ok_context(c1, ws)
     )
     WrittenNamed(n) => context_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => frame_bind(
-        List(Ty),
-        Ty,
+        <A: List(Ty), B: Ty>,
         (ws: List(Ty), c2: Checker) => frame_return(
-          TyNamed(n, ws),
+          TyNamed(NameSpelled(n), ws),
           ck_arity(c2, n, list_len(ws), span)
         ),
         ck_written_each(arguments, c1, generics)
       ),
       frame_error_if(
         c,
-        "Slice(A) can only be borrowed",
+        slice_only_borrowed_message(),
         span,
         Bool::and(Text::eq(n, "Slice"), not(under_borrow))
       ),
       frame_error_if_ok_context(
         c,
-        "Slice(A) can only be borrowed",
+        slice_only_borrowed_message(),
         span,
         Bool::and(Text::eq(n, "Slice"), not(under_borrow))
       ),
       ignored => c1 => context_bind(
-        List(Ty),
-        Ty,
+        <A: List(Ty), B: Ty>,
         c1,
         (ws: List(Ty), c2: Checker) => frame_return(
-          TyNamed(n, ws),
+          TyNamed(NameSpelled(n), ws),
           ck_arity(c2, n, list_len(ws), span)
         ),
         ck_written_each(arguments, c1, generics),
         iheach(c1),
         ws => c2 => context_return(
           c2,
-          TyNamed(n, ws),
+          TyNamed(NameSpelled(n), ws),
           ck_arity(c2, n, list_len(ws), span),
           ck_arity_frame_context(c2, n, list_len(ws), span)
         )
@@ -508,10 +527,9 @@ pub fn context_nested_after(
   span: TySpan,
   m: Mut1(Ty, Checker)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match m {
+  match m {
     mut1(before, next) => frame_bind(
-      List(Ty),
-      Ty,
+      <A: List(Ty), B: Ty>,
       (after: List(Ty), final: Checker) => frame_app_nested(final, span, after, before),
       ck_written_each(
         arguments,
@@ -530,17 +548,16 @@ pub theorem context_nested_after_sound(
   reset: CkWrittenReset(frame_set_constructor_position(c, true), m),
   iheach: ∀ next: Checker. CkContextFrame(next, ck_written_each(arguments, next, generics))
 ): CkContextFrame(c, context_nested_after(c, arguments, generics, span, m)) {
-  ⊢ CkContextFrame(c, context_nested_after(c, arguments, generics, span, m)) from match m {
+  match m {
     mut1(before, next) => ordinary => {
       let ready: frame_under_borrow(
         frame_set_constructor_position(next, frame_constructor_position(c))
       ) = false := Eq::congr(written_context_borrow, reset)
       let after: CkContextFrame(
-        Ty,
+        <A: Ty>,
         frame_set_constructor_position(next, frame_constructor_position(c)),
         frame_bind(
-          List(Ty),
-          Ty,
+          <A: List(Ty), B: Ty>,
           context_nested_finish(span, before),
           ck_written_each(
             arguments,
@@ -549,8 +566,7 @@ pub theorem context_nested_after_sound(
           )
         )
       ) := context_bind(
-        List(Ty),
-        Ty,
+        <A: List(Ty), B: Ty>,
         frame_set_constructor_position(next, frame_constructor_position(c)),
         context_nested_finish(span, before),
         ck_written_each(
@@ -564,7 +580,7 @@ pub theorem context_nested_after_sound(
       Eq::trans(
         after(ready),
         Eq::congr(
-          (b: Bool) => Pair { fst: frame_constructor_position(c), snd: b },
+          (b: Bool) => #(frame_constructor_position(c), b),
           Eq::trans(ready, Eq::sym(ordinary))
         )
       )
@@ -619,20 +635,17 @@ pub theorem frame_written_each_cons_ok_context(
   ihr: ∀ next: Checker. CkContextFrame(next, ck_written_each(rest, next, generics))
 ): CkContextFrame(c, frame_written_each_cons(t, rest, c, generics)) {
   context_bind(
-    Ty,
-    List(Ty),
+    <A: Ty, B: List(Ty)>,
     c,
     (head: Ty, c1: Checker) => frame_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
       ck_written_each(rest, c1, generics)
     ),
     ck_written_in(t, c, generics),
     And::right(iht(c)),
     head => c1 => context_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       c1,
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
       ck_written_each(rest, c1, generics),
@@ -654,22 +667,19 @@ pub theorem frame_written_params_cons_ok_context(
     ck_written_params(rest, next, generics, count)
   )
 ): CkContextFrame(c, frame_written_params_cons(p, rest, c, generics, skip)) {
-  ⊢ CkContextFrame(c, frame_written_params_cons(p, rest, c, generics, skip)) from match skip {
+  match skip {
     Zero => context_bind(
-      Ty,
-      List(Ty),
+      <A: Ty, B: List(Ty)>,
       c,
       (head: Ty, c1: Checker) => frame_bind(
-        List(Ty),
-        List(Ty),
+        <A: List(Ty), B: List(Ty)>,
         (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
         ck_written_params(rest, c1, generics, 0)
       ),
       ck_written_param(p, c, generics),
       ihp(c),
       head => c1 => context_bind(
-        List(Ty),
-        List(Ty),
+        <A: List(Ty), B: List(Ty)>,
         c1,
         (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
         ck_written_params(rest, c1, generics, 0),
@@ -701,12 +711,10 @@ pub theorem frame_written_pi_ok_context(
   )
 ): CkContextFrame(c, frame_written_pi(params, result, c, generics)) {
   context_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     c,
     (ps: List(Ty), c1: Checker) => frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       (r: Ty, c2: Checker) => mut1(
         ty_poly_of(frame_pi_binders(params), TyFn(ps, r, KindShared)),
         c2
@@ -721,8 +729,7 @@ pub theorem frame_written_pi_ok_context(
     ),
     ihps(c),
     ps => c1 => context_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c1,
       (r: Ty, c2: Checker) => mut1(
         ty_poly_of(frame_pi_binders(params), TyFn(ps, r, KindShared)),
@@ -744,8 +751,7 @@ pub theorem frame_written_fnkind_ok_context(
   ih: ∀ next: Checker. CkWrittenInput(next, ck_written_in(ty, next, generics))
 ): CkContextFrame(c, frame_written_fnkind(fk, ty, c, generics, span)) {
   context_bind(
-    Ty,
-    Ty,
+    <A: Ty, B: Ty>,
     c,
     (w: Ty, c1: Checker) => ck_rewrap1(ck_written_fn_kind(w, c1, fk, span)),
     ck_written_in(ty, c, generics),
@@ -770,8 +776,7 @@ pub theorem frame_written_borrow_ok_context(
     frame_written_borrow(mutable, x, c, generics),
     Eq::trans(
       context_value_bind(
-        Ty,
-        Ty,
+        <A: Ty, B: Ty>,
         w => TyBorrow(w, mutable),
         ck_written_in(x, frame_set_under_borrow(c, true), generics)
       ),
@@ -787,8 +792,7 @@ pub theorem frame_written_union_ok_context(
   ih: ∀ next: Checker. CkContextFrame(next, ck_written_each(ts, next, generics))
 ): CkContextFrame(c, frame_written_union(ts, c, generics)) {
   context_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     c,
     (w: List(Ty), c1: Checker) => mut1(ty_union(w), c1),
     ck_written_each(ts, c, generics),
@@ -804,8 +808,7 @@ pub theorem frame_written_product_ok_context(
   ih: ∀ next: Checker. CkContextFrame(next, ck_written_each(ts, next, generics))
 ): CkContextFrame(c, frame_written_product(ts, c, generics)) {
   context_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     c,
     (w: List(Ty), c1: Checker) => mut1(ty_product(w), c1),
     ck_written_each(ts, c, generics),
@@ -822,8 +825,7 @@ pub theorem frame_written_tagged_ok_context(
   ih: ∀ next: Checker. CkWrittenInput(next, ck_written_in(x, next, generics))
 ): CkContextFrame(c, frame_written_tagged(tag, x, c, generics)) {
   context_bind(
-    Ty,
-    Ty,
+    <A: Ty, B: Ty>,
     c,
     (w: Ty, c1: Checker) => mut1(ty_tagged(Cons(tag, Nil), w), c1),
     ck_written_in(x, c, generics),
@@ -838,7 +840,7 @@ mutual {
     c: Checker,
     generics: Ordmap(Text, Ty)
   ): CkWrittenInput(c, ck_written_in(t, c, generics)) {
-    ⊢ CkWrittenInput(c, ck_written_in(t, c, generics)) from match t {
+    match t {
       SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => context_input_from_kind(
         ast_occurrence,
         sk,
@@ -863,15 +865,11 @@ mutual {
     span: TySpan,
     under_borrow: Bool
   ): CkContextFrame(c, ck_written_kind(sk, c, generics, span, under_borrow)) {
-    ⊢ CkContextFrame(c, ck_written_kind(sk, c, generics, span, under_borrow)) from match sk {
+    match sk {
       SkVar(n) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
         Eq::sym(frame_unf_SkVar(n, c, generics, span, under_borrow)),
-        context_rewrap(
-          c,
-          ck_written_var(c, n, generics, span),
-          ck_written_var_frame_context(c, n, generics, span)
-        )
+        frame_written_var_ok_context(c, surface_name_text(n), generics, span, Text::eq(surface_name_text(n), "std::prelude::Star"))
       )
       SkApp(function, arguments) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
@@ -917,9 +915,9 @@ mutual {
           next => ck_written_in_frame_context(ty, next, generics)
         )
       )
-      SkBorrow(mutable, x) => Eq::subst(
+      SkBorrow(mutable, mutable_orig, x) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
-        Eq::sym(frame_unf_SkBorrow(mutable, x, c, generics, span, under_borrow)),
+        Eq::sym(frame_unf_SkBorrow(mutable, mutable_orig, x, c, generics, span, under_borrow)),
         frame_written_borrow_ok_context(
           mutable,
           x,
@@ -932,16 +930,6 @@ mutual {
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
         Eq::sym(frame_unf_SkUnion(ts, c, generics, span, under_borrow)),
         frame_written_union_ok_context(
-          ts,
-          c,
-          generics,
-          next => ck_written_each_frame_context(ts, next, generics)
-        )
-      )
-      SkProduct(ts) => Eq::subst(
-        (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
-        Eq::sym(frame_unf_SkProduct(ts, c, generics, span, under_borrow)),
-        frame_written_product_ok_context(
           ts,
           c,
           generics,
@@ -974,14 +962,14 @@ mutual {
         Eq::sym(frame_unf_SkBool(value, c, generics, span, under_borrow)),
         context_invalid(c, span)
       )
-      SkExists(binder, domain, body) => Eq::subst(
+      SkExists(binder, domain, body, unused) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
-        Eq::sym(frame_unf_SkExists(binder, domain, body, c, generics, span, under_borrow)),
+        Eq::sym(frame_unf_SkExists(binder, domain, body, unused, c, generics, span, under_borrow)),
         context_invalid(c, span)
       )
-      SkLam(params, body) => Eq::subst(
+      SkLam(params, body, types, unused_params) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
-        Eq::sym(frame_unf_SkLam(params, body, c, generics, span, under_borrow)),
+        Eq::sym(frame_unf_SkLam(params, body, types, unused_params, c, generics, span, under_borrow)),
         context_invalid(c, span)
       )
       SkIf(cond, then, otherwise) => Eq::subst(
@@ -1014,10 +1002,10 @@ mutual {
         Eq::sym(frame_unf_SkBudget(amount_memory, amount, body, c, generics, span, under_borrow)),
         context_invalid(c, span)
       )
-      SkMatch(scrutinee, motive, arms, binder) => Eq::subst(
+      SkMatch(scrutinee, motive, arms, binder, unused) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
         Eq::sym(
-          frame_unf_SkMatch(scrutinee, motive, arms, binder, c, generics, span, under_borrow)
+          frame_unf_SkMatch(scrutinee, motive, arms, binder, unused, c, generics, span, under_borrow)
         ),
         context_invalid(c, span)
       )
@@ -1031,9 +1019,9 @@ mutual {
         Eq::sym(frame_unf_SkRecord(name, fields, c, generics, span, under_borrow)),
         context_invalid(c, span)
       )
-      SkBorrowLam(borrows, lam) => Eq::subst(
+      SkBorrowLam(r#borrows, lam) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
-        Eq::sym(frame_unf_SkBorrowLam(borrows, lam, c, generics, span, under_borrow)),
+        Eq::sym(frame_unf_SkBorrowLam(r#borrows, lam, c, generics, span, under_borrow)),
         context_invalid(c, span)
       )
       SkOther(what) => Eq::subst(
@@ -1041,19 +1029,19 @@ mutual {
         Eq::sym(frame_unf_SkOther(what, c, generics, span, under_borrow)),
         context_invalid(c, span)
       )
+      SkAscribe(what, what_ty) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
+        Eq::sym(frame_unf_SkAscribe(what, what_ty, c, generics, span, under_borrow)),
+        context_invalid(c, span)
+      )
       SkRow(what_effects) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
         Eq::sym(frame_unf_SkRow(what_effects, c, generics, span, under_borrow)),
-        context_invalid(c, span)
+        (ordinary => Refl)
       )
       SkFloat(what) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
         Eq::sym(frame_unf_SkFloat(what, c, generics, span, under_borrow)),
-        context_invalid(c, span)
-      )
-      SkProject(what, what_ty) => Eq::subst(
-        (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
-        Eq::sym(frame_unf_SkProject(what, what_ty, c, generics, span, under_borrow)),
         context_invalid(c, span)
       )
       SkMacroCall(name, arg) => Eq::subst(
@@ -1101,7 +1089,7 @@ mutual {
     c: Checker,
     generics: Ordmap(Text, Ty)
   ): CkContextFrame(c, ck_written_each(ts, c, generics)) {
-    ⊢ CkContextFrame(c, ck_written_each(ts, c, generics)) from match ts {
+    match ts {
       Nil => (ordinary => Refl)
       Cons(t, rest) => Eq::subst(
         (z: Mut1(List(Ty), Checker)) => CkContextFrame(c, z),
@@ -1123,7 +1111,7 @@ mutual {
     generics: Ordmap(Text, Ty),
     skip: Nat
   ): CkContextFrame(c, ck_written_params(ps, c, generics, skip)) {
-    ⊢ CkContextFrame(c, ck_written_params(ps, c, generics, skip)) from match ps {
+    match ps {
       Nil => (ordinary => Refl)
       Cons(p, rest) => Eq::subst(
         (z: Mut1(List(Ty), Checker)) => CkContextFrame(c, z),
@@ -1145,10 +1133,10 @@ mutual {
     c: Checker,
     generics: Ordmap(Text, Ty)
   ): CkContextFrame(c, ck_written_param(p, c, generics)) {
-    ⊢ CkContextFrame(c, ck_written_param(p, c, generics)) from match p {
-      SurfaceParamMk(name, ty) => Eq::subst(
+    match p {
+      SurfaceParamMk(name, ty, unused) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
-        Eq::sym(frame_written_param_unf(name, ty, c, generics)),
+        Eq::sym(frame_written_param_unf(name, ty, unused, c, generics)),
         context_rewrap(
           c,
           ck_written_in(ty, c, generics),

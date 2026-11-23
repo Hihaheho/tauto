@@ -1,0 +1,43 @@
+description = "A type is shown as it is written: where a form takes a tighter one, the type is in parentheses (`@value (Text × u64)`, not `@value Text × u64`, which reads as `(@value Text) × u64`)."
+
+@ cases.a-tagged-product-keeps-its-parentheses
+source = ```tauto
+fn f(p: @value (Text × u64)): Bool { p }
+```
+differential = "types"
+types = "error: @value (Text × u64) does not fit Bool"
+
+@ cases.a-product-of-tagged-members-has-none
+source = ```tauto
+fn f(p: @value Text × u64): Bool { p }
+```
+differential = "types"
+types = "error: @value Text × u64 does not fit Bool"
+
+@ cases.a-tagged-union-keeps-its-parentheses
+source = ```tauto
+fn f(p: @value (Text | u64)): Bool { p }
+```
+differential = "types"
+types = "error: @value (u64 | Text) does not fit Bool"
+
+@ cases.a-borrowed-product-keeps-its-parentheses
+source = ```tauto
+fn f(p: &(Text × u64)): Bool { p }
+```
+differential = "types"
+types = "error: &(Text × u64) does not fit Bool"
+
+@ cases.a-function-in-a-union-keeps-its-parentheses
+source = ```tauto
+fn f(p: (() -> u64) | Text): Bool { p }
+```
+differential = "types"
+types = "error: Text | (() -> u64) does not fit Bool"
+
+@ cases.a-function-and-a-union-in-a-product-keep-theirs
+source = ```tauto
+fn f(p: (() -> u64) × (Bool | Text) × (u8 × u8) × u64): Bool { p }
+```
+differential = "types"
+types = "error: (() -> u64) × (Bool | Text) × (u8 × u8) × u64 does not fit Bool"

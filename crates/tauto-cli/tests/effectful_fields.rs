@@ -35,17 +35,17 @@ effect ask(i: i64): i64 resume 1
 
 struct Src { get: (i: i64) -> i64 ! {ask}, pure: () -> i64 ! {ask} }
 
-enum Lazy { More(i64, () -> Lazy ! {ask, Div}), Done }
+enum Lazy { More(i64, () -> Lazy ! {ask, div}), Done }
 
 fn use_src(s: Src): i64 ! {ask} {
   s.get(2) + s.pure()
 }
 
-fn lazy(i: i64): Lazy ! {ask, Div} {
+fn lazy(i: i64): Lazy ! {ask, div} {
   if i == 3 { Done } else { More(perform ask(i), () => lazy(i + 1)) }
 }
 
-fn total(l: Lazy): i64 ! {ask, Div} {
+fn total(l: Lazy): i64 ! {ask, div} {
   match l {
     More(x, rest) => x + total(rest())
     Done => 0
@@ -62,39 +62,39 @@ let t := handle { total(lazy(0)) } with {
   return v => v
 }
 
-perform show("r", r)
-perform show("t", t)
+show(&r)
+show(&t)
 "#
 }
 
 #[test]
 fn effectful_fields_agree_on_both_backends() {
     let eval = run(&["run"], source());
-    assert_eq!(eval, "r = 206\nt = 33\n");
+    assert_eq!(eval, "206\n33\n");
     assert_eq!(eval, run(&["run", "--backend", "rust"], source()));
 }
 
 #[test]
 fn suspending_function_values_agree_on_both_backends() {
     let source = r#"
-import std::prelude::Par
+import std::builtin::par
 
 effect ask(i: i64): i64 resume 1
 
-struct Job { run: () -> Unit ! {ask, Div} }
+struct Job { run: () -> Unit ! {ask, div} }
 
-fn first(l: List(Job)): Option(() -> Unit ! {ask, Div}) {
+fn first(l: List(Job)): Option(() -> Unit ! {ask, div}) {
   match l {
     Nil => None
     Cons(j, t) => Some(j.run)
   }
 }
 
-fn keep(log: Ref(List(i64)), f: () -> Unit ! {ask, Div}): List(Job) {
+fn keep(log: Ref(List(i64)), f: () -> Unit ! {ask, div}): List(Job) {
   Cons(Job { run: () => f() }, Nil)
 }
 
-fn run_first(l: List(Job)): Unit ! {ask, Div} {
+fn run_first(l: List(Job)): Unit ! {ask, div} {
   match first(l) {
     None => #()
     Some(f) => f()
@@ -107,11 +107,11 @@ handle { run_first(jobs) } with {
   ask(i), k => k(i + 41)
   return v => v
 }
-perform show("log", Ref::get(log))
-perform show("cell", Ref::new(7))
+show(&Ref::get(log))
+show(&Ref::new(7))
 "#;
     let eval = run(&["run"], source);
-    assert_eq!(eval, "log = Cons(42, Nil)\ncell = Ref(7)\n");
+    assert_eq!(eval, "Cons(42, Nil)\nRef(7)\n");
     assert_eq!(eval, run(&["run", "--backend", "rust"], source));
 }
 
@@ -135,18 +135,18 @@ let s := handle { perform stop(None) } with {
   return v => v
 }
 
-perform show("r", r)
-perform show("s", s)
+show(&r)
+show(&s)
 "#;
     let eval = run(&["run"], source);
-    assert_eq!(eval, "r = 42\ns = 41\n");
+    assert_eq!(eval, "42\n41\n");
     assert_eq!(eval, run(&["run", "--backend", "rust"], source));
 }
 
 #[test]
 fn effectful_function_items_as_callbacks_agree_on_both_backends() {
     let source = r#"
-import std::prelude::Os
+import std::builtin::os
 
 effect log(m: Text): Unit resume 1
 

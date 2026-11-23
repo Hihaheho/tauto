@@ -1,0 +1,219 @@
+@ cases.model
+source = path`../../meta/mutable_state.taut`
+checks_all = "ok"
+
+@ cases.call-shapes-and-handlers
+source = path`../../meta/mutable_state_examples.taut`
+checks_all = "ok"
+
+@ cases.unrelated-field-does-not-change
+imports = [path`../../meta/mutable_state.taut`]
+source = ```tauto
+theorem forged(): write(left(Nat, Nat), PairOf(0, 4), 9) = PairOf(9, 9) { Refl }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.effect-answer-is-not-a-known-constant
+imports = [path`../../meta/mutable_state.taut`, path`../../meta/mutable_state_examples.taut`]
+source = ```tauto
+theorem forged(): tree_all(translate(effect_only(), 0), out => second(out) = 0) {
+  answer => Refl
+}
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.abort-does-not-undo-preceding-write
+imports = [path`../../meta/mutable_state_examples.taut`]
+source = ```tauto
+theorem forged(): abort_visible(0) = 0 { Refl }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.operation-dependent-answers
+source = path`../../meta/mutable_effects.taut`
+checks_all = "ok"
+
+@ cases.variable-length-container
+source = path`../../meta/mutable_container.taut`
+checks_all = "ok"
+
+@ cases.ownership-and-resumption
+source = path`../../meta/mutable_permissions.taut`
+checks_all = "ok"
+
+@ cases.checked-lowering-conditions
+source = path`../../meta/mutable_conditions.taut`
+checks_all = "ok"
+
+@ cases.extended-examples
+source = path`../../meta/mutable_extended_examples.taut`
+checks_all = "ok"
+
+@ cases.wrong-operation-answer-type
+imports = [path`../../meta/mutable_extended_examples.taut`]
+source = ```tauto
+ghost fn wrong(): Response(Decision) { 3 }
+```
+checks_all = "ok"
+checks.wrong = "error: type mismatch"
+
+@ cases.out-of-bounds-reference
+imports = [path`../../meta/mutable_container.taut`, path`../../meta/mutable_extended_examples.taut`]
+source = ```tauto
+theorem forged(): ValidCell(Nat, sample(), open_region, 0, 2) {
+  AndIntro(Refl, AndIntro(Refl, AndIntro(Trivial, Refl)))
+}
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.structural-replacement-invalidates-borrow
+imports = [path`../../meta/mutable_container.taut`, path`../../meta/mutable_extended_examples.taut`]
+source = ```tauto
+theorem forged(): ValidCell(Nat, reshape(sample(), elements(sample())), open_region, 0, 1) {
+  AndIntro(Refl, AndIntro(Refl, AndIntro(Trivial, Refl)))
+}
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.closed-owner-invalidates-borrow
+imports = [path`../../meta/mutable_container.taut`, path`../../meta/mutable_extended_examples.taut`]
+source = ```tauto
+theorem forged(): ValidCell(Nat, close(sample()), open_region, 0, 1) {
+  AndIntro(Refl, AndIntro(Refl, AndIntro(Trivial, Refl)))
+}
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.closed-region-invalidates-borrow
+imports = [path`../../meta/mutable_container.taut`, path`../../meta/mutable_extended_examples.taut`]
+source = ```tauto
+ghost fn closed_region(r: Nat): Prop { False }
+theorem forged(): ValidCell(Nat, sample(), closed_region, 0, 1) {
+  AndIntro(Refl(<A: Bool, a: true>), AndIntro(Refl(<A: Nat, a: 0>), AndIntro(Trivial, Refl(<A: Bool, a: true>))))
+}
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.mutable-loan-cannot-cross-many
+imports = [path`../../meta/mutable_permissions.taut`, path`../../meta/mutable_extended_examples.taut`]
+source = ```tauto
+theorem forged(): Suspension(Many, Cons(child(), Nil), Nil, false) {
+  AndIntro(AndIntro(Trivial, Trivial), AndIntro(Trivial, Refl(<A: Bool, a: false>)))
+}
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.mutable-answer-cannot-be-multishot
+imports = [path`../../meta/mutable_permissions.taut`]
+source = ```tauto
+theorem forged(): AnswerAllowed(Many, true) { Refl }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.linear-value-cannot-cross-abort
+imports = [path`../../meta/mutable_permissions.taut`]
+source = ```tauto
+theorem forged(): LiveAcross(Never, Linear) { Trivial }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.linear-value-cannot-be-dropped
+imports = [path`../../meta/mutable_permissions.taut`]
+source = ```tauto
+theorem forged(): OwnershipStep(Linear, Available, Destroyed) { Drop(Linear, Trivial) }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.moved-value-cannot-be-used
+imports = [path`../../meta/mutable_permissions.taut`]
+source = ```tauto
+theorem forged(): Usable(Transferred) { Refl }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.at-most-once-body-cannot-resume-twice
+imports = [path`../../meta/mutable_permissions.taut`, path`../../meta/mutable_extended_examples.taut`]
+source = ```tauto
+theorem forged(): BodySafe(AtMost, 0, twice_body()) { AndIntro(Refl, a => AndIntro(Refl, b => OrInr(Refl))) }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.exactly-once-body-cannot-abort
+imports = [path`../../meta/mutable_permissions.taut`]
+source = ```tauto
+theorem forged(): BodySafe(Once, 0, Finish(<A: Nat, B: Bool>, 7)) { Refl }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.borrowed-continuation-cannot-escape
+imports = [path`../../meta/mutable_permissions.taut`]
+source = ```tauto
+theorem forged(): InPlace(true, true) { Refl }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.mutable-reborrow-cannot-derive-from-shared
+imports = [path`../../meta/mutable_permissions.taut`]
+source = ```tauto
+theorem forged(): Reborrow(LoanOf(0, 0, Nil, false), LoanOf(1, 0, Nil, true)) {
+  AndIntro(Refl, AndIntro(Refl, h => Refl))
+}
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.local-owner-cannot-escape
+imports = [path`../../meta/mutable_permissions.taut`, path`../../meta/mutable_extended_examples.taut`]
+source = ```tauto
+import std::row { Mem }
+theorem forged(): Returnable(child(), Nil, loan => True) { AndIntro(MemHere(Nil), Trivial) }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.suspended-parent-cannot-be-used
+imports = [path`../../meta/mutable_permissions.taut`, path`../../meta/mutable_extended_examples.taut`]
+source = ```tauto
+import std::row { Mem }
+theorem forged(): Active(parent(), Cons(child(), Nil)) { MemHere(Nil) }
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.nonresuming-effect-has-no-resume-even-for-empty-result
+imports = [path`../../meta/mutable_permissions.taut`]
+source = ```tauto
+ghost fn dead_body(impossible: OpNone): Body(Nat, OpNone, Unit) { match impossible {} }
+ghost fn forbidden(): Body(Nat, OpNone, Unit) { Resume(0, dead_body) }
+theorem forged(): BodySafe(Never, 0, forbidden()) {
+  let cannot_resume: MayResume(Never, 0) := Trivial
+  AndIntro(cannot_resume, (impossible: OpNone) => ⊢ BodySafe(Never, 1, dead_body(impossible)) from match impossible {})
+}
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.operation-arguments-cannot-carry-borrows
+imports = [path`../../meta/mutable_conditions.taut`, path`../../meta/mutable_permissions.taut`]
+source = ```tauto
+theorem forged(): can_suspend((n: Nat) => Once, n => false, n => true, 0, WorldOf(Star, Nil, Nil)) {
+  AndIntro(Refl, AndIntro(Trivial, AndIntro(Trivial, Trivial)))
+}
+```
+checks_all = "ok"
+checks.forged = "error: type mismatch"

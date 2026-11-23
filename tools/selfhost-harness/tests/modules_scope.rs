@@ -25,6 +25,6 @@ fn module_resolution_preserves_lexical_bindings() {
     assert_eq!(out.stderr, "");
     assert_eq!(
         out.stdout,
-        "argument = f\nlambda = f\npattern = f\nhandler = f\nblock = M.f/f\nafter = M.f\n"
+        "argument = f\nlambda = f\npattern = f\nhandler = f\nblock = M::f/f\nafter = M::f\n"
     );
 }

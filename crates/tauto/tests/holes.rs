@@ -81,10 +81,10 @@ fn a_trusted_extern_is_listed() {
     tauto_messages::install();
     let path = file(
         "extern",
-        r#"affine struct File {}
-affine struct IoError {}
+        r#"struct(affine) File {}
+struct(affine) IoError {}
 extern {
-  fn file_open(&path: Text): Result(File, IoError)
+  fn file_open(path: &Text): Result(File, IoError)
 }
 "#,
     );

@@ -1,0 +1,100 @@
+description = "totes/json reads a number by the grammar of RFC 8259 and writes only such numbers."
+
+@ cases.json-numbers-accepted
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
+imports = [path`../totes/json/src/json.taut`]
+source = ```tauto
+fn reads(t: Text, expected: Text): Bool ! {div, overflow} {
+  match json_parse(t) {
+    Ok(JNum(n)) => text_same(n, expected)
+    Ok(v) => false
+    Err(e) => false
+  }
+}
+show(&reads("0", "0"))
+show(&reads("-0", "-0"))
+show(&reads("123", "123"))
+show(&reads("-45", "-45"))
+show(&reads("0.5", "0.5"))
+show(&reads("1e10", "1e10"))
+show(&reads("-1.25E+3", "-1.25E+3"))
+show(&reads("2e-2", "2e-2"))
+show(&reads(" 7 ", "7"))
+```
+stdout = ```
+true
+true
+true
+true
+true
+true
+true
+true
+true
+```
+
+@ cases.json-numbers-rejected
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
+imports = [path`../totes/json/src/json.taut`]
+source = ```tauto
+fn rejected(t: Text): Bool ! {div, overflow} {
+  match json_parse(t) {
+    Ok(v) => false
+    Err(e) => true
+  }
+}
+show(&rejected("-"))
+show(&rejected("+1"))
+show(&rejected("1..2"))
+show(&rejected("1e"))
+show(&rejected("1e+"))
+show(&rejected("--"))
+show(&rejected("--1"))
+show(&rejected("01"))
+show(&rejected("1."))
+show(&rejected(".5"))
+show(&rejected("0x1"))
+show(&rejected("[1,-]"))
+show(&rejected("{\"a\":1e}"))
+```
+stdout = ```
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+```
+
+@ cases.json-numbers-written
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
+imports = [path`../totes/json/src/json.taut`]
+source = ```tauto
+fn made(t: Text): Bool ! {div, overflow} {
+  match json_number(t) {
+    Some(v) => true
+    None => false
+  }
+}
+show(&text_same(json_text(JArr([JNum("1"), JNum("-2.5e3")])), "[1,-2.5e3]"))
+show(&text_same(json_text(JArr([JNum("-"), JNum("+1"), JNum("1..2"), JNum("1e"), JNum(""), JNum("1 ")])), "[null,null,null,null,null,null]"))
+show(&made("12.5"))
+show(&made("1e"))
+show(&is_json_number("-0.5e+7"))
+show(&is_json_number("0.e1"))
+```
+stdout = ```
+true
+true
+true
+false
+true
+false
+```

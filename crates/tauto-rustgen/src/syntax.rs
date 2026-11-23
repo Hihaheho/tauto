@@ -96,8 +96,8 @@ impl Gen<'_> {
                 let value = self.syntax_field(parser, syntax, inner, quote!(*item));
                 quote!({ let __tauto_syntax_runtime::Ast::Opt(item) = #ast else { unreachable!("validated option schema") }; item.map(|item| #value) })
             }
-            // Expression holes are compile-time syntax literals, not runtime tokens.
-            FieldTy::Expr => unreachable!("NIR rejects runtime expression holes"),
+            // A hole is a whole alternative (`syntax_parsers`), which text read at run time has none of.
+            FieldTy::Expr => unreachable!("NIR takes holes only as whole alternatives"),
         }
     }
 
@@ -130,10 +130,21 @@ impl Gen<'_> {
                     ),
                 };
                 let data = tauto_syntax::type_name(&parser.name, name);
-                let result = Self::data_name(self.pkg, &parser.data_bindings[&data]);
+                // A type only a later start symbol reaches is never made at run time, and
+                // NIR binds only the types the first start reaches.
+                let Some(binding) = parser.data_bindings.get(&data) else {
+                    continue;
+                };
+                let result = Self::data_name(self.pkg, binding);
                 let fun = id(&format!("__tauto_syn_{i}_{name}"));
                 let mut arms = Vec::new();
                 for (ctor_index, (ctor, span, fields)) in ctors.into_iter().enumerate() {
+                    let c = num(ctor_index as u64);
+                    // A hole, an alternative of its own: text read at run time has none.
+                    if !span && matches!(fields.as_slice(), [FieldTy::Expr]) {
+                        arms.push(quote!(#c => unreachable!("a hole is not read at run time")));
+                        continue;
+                    }
                     let mut values = Vec::new();
                     if span {
                         values.push(self.syntax_ctor(
@@ -152,7 +163,6 @@ impl Gen<'_> {
                         ));
                     }
                     let value = self.syntax_ctor(i, &data, ctor, values);
-                    let c = num(ctor_index as u64);
                     arms.push(quote!(#c => #value));
                 }
                 let index = num(index as u64);

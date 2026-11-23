@@ -1,0 +1,62 @@
+// `Text` is read through `&Text`, and a shared value holds one as a `&rc Text`.
+
+@ cases.a-text-literal-is-given-as-a-borrow
+description = "A literal is given where a `&Text` is wanted, and the borrow is read."
+source = ```nib
+fn len(t: &Text): u64 { Text::len(t) }
+show(&len("abc"))
+show(&len(""))
+```
+stdout = "3\n0\n"
+
+@ cases.a-struct-holds-a-text-as-a-counted-reference
+description = "A struct whose text field is a `&rc Text` is shared: it is given twice, and the field is borrowed for each read."
+source = ```nib
+struct Name { text: &rc Text }
+fn len(t: &Text): u64 { Text::len(t) }
+fn both(a: Name, b: Name): u64 ! {overflow} { len(a.text) + len(b.text) }
+let n := Name { text: "alpha" }
+show(&both(n, n))
+show(&len(n.text))
+```
+stdout = "10\n5\n"
+
+@ cases.each-word-borrows-a-word-of-a-buffer
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
+description = "`Buf::each_word` calls its function with each word of the buffer as a borrowed `Buf`."
+source = ```nib
+var b := Buf::of("alpha beta  gamma")
+Buf::each_word(&b, (w) => { show(&Text::of(Buf::clone(w))) })
+```
+stdout = "\"alpha\"\n\"beta\"\n\"gamma\"\n"
+
+@ cases.clone-copies-a-text-through-a-borrow
+description = "`clone` of a `&Text` is an explicit copy, whatever the kind of `Text` is."
+source = ```nib
+fn twice(t: &Text): Text { concat(clone(t), clone(t)) }
+let s := "ab"
+show(&twice(&s))
+show(&s)
+```
+stdout = "\"abab\"\n\"ab\"\n"
+
+@ cases.a-literal-is-a-borrow-where-one-is-expected
+description = "A literal fits a `&Text` in a builtin's argument and in a function's, with no `&`."
+source = ```nib
+fn same(a: &Text, b: &Text): Bool { Text::len(a) == Text::len(b) }
+show(&Text::len("q"))
+show(&Text::byte("a", 0))
+show(&same("xy", "zw"))
+```
+stdout = "1\nSome(97)\ntrue\n"
+
+@ cases.compare-takes-two-borrows
+description = "`Text::compare` reads two borrowed texts, literals or not."
+source = ```nib
+let a := "abc"
+let b := "abd"
+show(&Text::compare(&a, &b))
+show(&Text::compare(&b, "abc"))
+show(&Text::compare("x", "x"))
+```
+stdout = "-1\n1\n0\n"

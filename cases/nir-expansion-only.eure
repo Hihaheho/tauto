@@ -1,0 +1,61 @@
+// A library leaves out what belongs to the expansion of macros, and a program
+// that runs cannot call what only the expander answers.
+
+@ cases.a-library-does-not-export-the-helpers-of-a-macro
+files."mac.taut" = ```tauto
+import std::builtin::macro
+
+pub fn gvar(name: Text): SynExpr { ExVar(Syn::global(name)) }
+
+fn helper(): SynExpr { gvar("Nil") }
+
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
+  let ^helped := helper()
+  Cons(s, Nil)
+}
+```
+files."main.taut" = ```tauto
+import "mac.taut"
+
+@keep!(1) => replace fn one
+fn one(): u64 { 1 }
+
+fn two(): u64 ! {overflow} { one() + 1 }
+
+fn three(): u64 { 3 }
+```
+entry = "main.taut"
+nir.library = true
+nir.passes = []
+// `one` is the program's own function though a macro attribute made it again.
+nir.exports = ```nir
+export "one" = one@1 row() foreign_row() pure_borrow_callbacks()
+export "two" = two@2 row("overflow") foreign_row("overflow") pure_borrow_callbacks()
+export "three" = three@3 row() foreign_row() pure_borrow_callbacks()
+```
+
+@ cases.a-program-that-runs-cannot-call-syn-global
+files."mac.taut" = ```tauto
+import std::builtin::macro
+
+pub fn gvar(name: Text): SynExpr { ExVar(Syn::global(name)) }
+
+fn helper(): SynExpr { gvar("Nil") }
+
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
+  let ^helped := helper()
+  Cons(s, Nil)
+}
+```
+files."main.taut" = ```tauto
+import "mac.taut"
+
+@keep!(1) => replace fn one
+fn one(): u64 { 1 }
+
+fn two(): u64 ! {overflow} { one() + 1 }
+
+let ^g := gvar("Nil")
+```
+entry = "main.taut"
+nir.error = "answers only while macros are expanded"

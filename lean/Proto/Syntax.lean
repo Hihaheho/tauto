@@ -1,11 +1,11 @@
 import Proto.Effects
 
 /-!
-# Preliminary abstract syntax of the proposed core language
+# Abstract syntax of the core language
 
-De Bruijn variables avoid alpha-conversion in the eventual metatheory.
-This module defines *syntax only*. Its complete formation, typing,
-conversion, inductive positivity and evaluation rules are future work.
+De Bruijn variables avoid alpha-conversion in the metatheory.
+This module defines *syntax only*; it does not state formation, typing,
+conversion, inductive positivity or evaluation rules.
 
 In handlers, the `returnBody` binds one returned value. Each operation
 arm binds the operation's argument and one resumption. The exact binding

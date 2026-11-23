@@ -1,0 +1,511 @@
+import "nat.taut" { Nat }
+import std::prelude::std { Ordering }
+import "calc.taut" { calc }
+
+// Natural numbers in binary, as inductive types: a number of `n` bits is a term
+// of size `n`, where `Nat` takes a term of size of the number itself. The
+// arithmetic here is the definitions; the kernel computes nothing of its own on
+// these types. `to_nat` and `of_nat` go to and from `Nat`, and the theorems say
+// that the operations agree with those of `Nat` through `to_nat`.
+
+// A positive number, read from the least significant bit: `Bit0(p)` is `2p`
+// and `Bit1(p)` is `2p + 1`.
+pub(open) inductive Pos: Type {
+  One: Pos
+  Bit0(p: Pos): Pos
+  Bit1(p: Pos): Pos
+}
+
+pub(open) inductive BinNat: Type {
+  BinZero: BinNat
+  BinPos(p: Pos): BinNat
+}
+
+pub(open) inductive PosDiff: Type {
+  DiffNeg(r: Pos): PosDiff
+  DiffZero: PosDiff
+  DiffPos(r: Pos): PosDiff
+}
+
+pub fn Pos::to_nat(p: Pos): Nat {
+  match p {
+    One => 1
+    Bit0(q) => Pos::to_nat(q) + Pos::to_nat(q)
+    Bit1(q) => Succ(Pos::to_nat(q) + Pos::to_nat(q))
+  }
+}
+
+pub fn Pos::succ(p: Pos): Pos {
+  match p {
+    One => Bit0(One)
+    Bit0(q) => Bit1(q)
+    Bit1(q) => Bit0(Pos::succ(q))
+  }
+}
+
+// The carry of `Bit1` and `Bit1` is added by `succ`.
+pub fn Pos::add(p: Pos, q: Pos): Pos {
+  match p {
+    One => ⊢ Pos from match q {
+      One => Bit0(One)
+      Bit0(q2) => Bit1(q2)
+      Bit1(q2) => Bit0(Pos::succ(q2))
+    }
+    Bit0(p2) => ⊢ Pos from match q {
+      One => Bit1(p2)
+      Bit0(q2) => Bit0(Pos::add(p2, q2))
+      Bit1(q2) => Bit1(Pos::add(p2, q2))
+    }
+    Bit1(p2) => ⊢ Pos from match q {
+      One => Bit0(Pos::succ(p2))
+      Bit0(q2) => Bit1(Pos::add(p2, q2))
+      Bit1(q2) => Bit0(Pos::succ(Pos::add(p2, q2)))
+    }
+  }
+}
+
+pub fn Pos::mul(p: Pos, q: Pos): Pos {
+  match p {
+    One => q
+    Bit0(p2) => Bit0(Pos::mul(p2, q))
+    Bit1(p2) => Pos::add(Bit0(Pos::mul(p2, q)), q)
+  }
+}
+
+pub fn Pos::pred_double(p: Pos): Pos {
+  match p {
+    One => One
+    Bit0(q) => Bit1(Pos::pred_double(q))
+    Bit1(q) => Bit1(Bit0(q))
+  }
+}
+
+pub fn Pos::pred(p: Pos): BinNat {
+  match p {
+    One => BinZero
+    Bit0(q) => BinPos(Pos::pred_double(q))
+    Bit1(q) => BinPos(Bit0(q))
+  }
+}
+
+pub fn Pos::diff_double(d: PosDiff): PosDiff {
+  match d {
+    DiffNeg(r) => DiffNeg(Bit0(r))
+    DiffZero => DiffZero
+    DiffPos(r) => DiffPos(Bit0(r))
+  }
+}
+
+pub fn Pos::diff_succ_double(d: PosDiff): PosDiff {
+  match d {
+    DiffNeg(r) => DiffNeg(Pos::pred_double(r))
+    DiffZero => DiffPos(One)
+    DiffPos(r) => DiffPos(Bit1(r))
+  }
+}
+
+pub fn Pos::diff_pred_double(d: PosDiff): PosDiff {
+  match d {
+    DiffNeg(r) => DiffNeg(Bit1(r))
+    DiffZero => DiffNeg(One)
+    DiffPos(r) => DiffPos(Pos::pred_double(r))
+  }
+}
+
+// `1 - q`, for `q` other than `One`, is `-(q - 1)`.
+pub fn Pos::one_minus(q: Pos): PosDiff {
+  match q {
+    One => DiffZero
+    Bit0(q2) => DiffNeg(Pos::pred_double(q2))
+    Bit1(q2) => DiffNeg(Bit0(q2))
+  }
+}
+
+// `p - 1`, for `p` other than `One`.
+pub fn Pos::minus_one(p: Pos): PosDiff {
+  match p {
+    One => DiffZero
+    Bit0(p2) => DiffPos(Pos::pred_double(p2))
+    Bit1(p2) => DiffPos(Bit0(p2))
+  }
+}
+
+pub fn Pos::diff(p: Pos, q: Pos): PosDiff {
+  match p {
+    One => Pos::one_minus(q)
+    Bit0(p2) => ⊢ PosDiff from match q {
+      One => Pos::minus_one(Bit0(p2))
+      Bit0(q2) => Pos::diff_double(Pos::diff(p2, q2))
+      Bit1(q2) => Pos::diff_pred_double(Pos::diff(p2, q2))
+    }
+    Bit1(p2) => ⊢ PosDiff from match q {
+      One => Pos::minus_one(Bit1(p2))
+      Bit0(q2) => Pos::diff_succ_double(Pos::diff(p2, q2))
+      Bit1(q2) => Pos::diff_double(Pos::diff(p2, q2))
+    }
+  }
+}
+
+pub fn Pos::diff_sign(d: PosDiff): Ordering {
+  match d {
+    DiffNeg(_) => Less
+    DiffZero => Equal
+    DiffPos(_) => Greater
+  }
+}
+
+// A difference, or zero when it is negative.
+pub fn Pos::diff_trunc(d: PosDiff): BinNat {
+  match d {
+    DiffNeg(r) => BinZero
+    DiffZero => BinZero
+    DiffPos(r) => BinPos(r)
+  }
+}
+
+pub fn Pos::compare(p: Pos, q: Pos): Ordering {
+  Pos::diff_sign(Pos::diff(p, q))
+}
+
+pub fn Pos::eq(p: Pos, q: Pos): Bool {
+  match p {
+    One => ⊢ Bool from match q {
+      One => true
+      Bit0(_) => false
+      Bit1(_) => false
+    }
+    Bit0(p2) => ⊢ Bool from match q {
+      One => false
+      Bit0(q2) => Pos::eq(p2, q2)
+      Bit1(_) => false
+    }
+    Bit1(p2) => ⊢ Bool from match q {
+      One => false
+      Bit0(_) => false
+      Bit1(q2) => Pos::eq(p2, q2)
+    }
+  }
+}
+
+pub theorem Pos::double_congr<a: Nat, b: Nat>(h: a = b): a + a = b + b {
+  calc!(```
+    $(a + a)
+    = $(b + a) from $Eq::congr(⟦Nat::add(□, a)⟧, h)
+    = $(b + b) from $Eq::congr(⟦Nat::add(b, □)⟧, h)
+    ```)
+}
+
+pub theorem Pos::double_succ(n: Nat): Succ(n) + Succ(n) = Succ(Succ(n + n)) {
+  Eq::congr(Succ, Nat::add_succ_left(n, n))
+}
+
+pub theorem Pos::one_add(n: Nat): 1 + n = Succ(n) {
+  calc!(```
+    $(1 + n)
+    = $Succ(Zero + n) from $Nat::add_succ_left(Zero, n)
+    = $Succ(n) from $Eq::congr(Succ, Nat::add_zero_left(n))
+    ```)
+}
+
+pub theorem Pos::double_add(a: Nat, b: Nat): a + b + (a + b) = a + a + (b + b) {
+  Nat::add_shuffle(a, b, a, b)
+}
+
+// ---- agreement with `Nat` -----------------------------------------------------
+
+pub theorem Pos::succ_to_nat(p: Pos): Pos::to_nat(Pos::succ(p)) = Succ(Pos::to_nat(p)) {
+  match p {
+    One => Refl
+    Bit0(_) => Refl
+    Bit1(q) => calc!(```
+      $(to_nat(succ(q)) + to_nat(succ(q)))
+      = $(Succ(to_nat(q)) + Succ(to_nat(q))) from $double_congr(succ_to_nat(q))
+      = $Succ(Succ(to_nat(q) + to_nat(q))) from $double_succ(to_nat(q))
+      ```)
+  }
+}
+
+pub theorem Pos::add_to_nat(p: Pos, q: Pos): Pos::to_nat(Pos::add(p, q)) = Pos::to_nat(p) + Pos::to_nat(q) {
+  match p {
+    One => ⊢ Pos::to_nat(Pos::add(One, q)) = 1 + Pos::to_nat(q) from match q {
+      One => Refl
+      Bit0(q2) => Eq::sym(Pos::one_add(Pos::to_nat(Bit0(q2))))
+      Bit1(q2) => calc!(```
+        $(to_nat(succ(q2)) + to_nat(succ(q2)))
+        = $(Succ(to_nat(q2)) + Succ(to_nat(q2))) from $double_congr(succ_to_nat(q2))
+        = $Succ(Succ(to_nat(q2) + to_nat(q2))) from $double_succ(to_nat(q2))
+        = $(1 + to_nat(Bit1(q2))) from $Eq::sym(one_add(to_nat(Bit1(q2))))
+        ```)
+    }
+    Bit0(p2) => ⊢ Pos::to_nat(Pos::add(Bit0(p2), q)) = Pos::to_nat(Bit0(p2)) + Pos::to_nat(q) from match q {
+      One => Refl
+      Bit0(q2) => calc!(```
+        $(to_nat(add(p2, q2)) + to_nat(add(p2, q2)))
+        = $(to_nat(p2) + to_nat(q2) + (to_nat(p2) + to_nat(q2))) from $double_congr(
+          add_to_nat(p2, q2)
+        )
+        = $(to_nat(p2) + to_nat(p2) + (
+          to_nat(q2) + to_nat(q2)
+        )) from $double_add(to_nat(p2), to_nat(q2))
+        ```)
+      Bit1(q2) => Eq::congr(
+        Succ,
+        Eq::trans(Pos::double_congr(Pos::add_to_nat(p2, q2)), Pos::double_add(Pos::to_nat(p2), Pos::to_nat(q2)))
+      )
+    }
+    Bit1(p2) => ⊢ Pos::to_nat(Pos::add(Bit1(p2), q)) = Pos::to_nat(Bit1(p2)) + Pos::to_nat(q) from match q {
+      One => calc!(```
+        $(to_nat(succ(p2)) + to_nat(succ(p2)))
+        = $(Succ(to_nat(p2)) + Succ(to_nat(p2))) from $double_congr(succ_to_nat(p2))
+        = $Succ(Succ(to_nat(p2) + to_nat(p2))) from $double_succ(to_nat(p2))
+        ```)
+      Bit0(q2) => calc!(```
+        $Succ(to_nat(add(p2, q2)) + to_nat(add(p2, q2)))
+        = $Succ(
+          to_nat(p2) + to_nat(q2) + (to_nat(p2) + to_nat(q2))
+        ) from $Eq::congr(Succ, double_congr(add_to_nat(p2, q2)))
+        = $Succ(
+          to_nat(p2) + to_nat(p2) + (to_nat(q2) + to_nat(q2))
+        ) from $Eq::congr(Succ, double_add(to_nat(p2), to_nat(q2)))
+        = $(Succ(
+          to_nat(Bit0(p2))
+        ) + to_nat(Bit0(q2))) from $Eq::sym(Nat::add_succ_left(to_nat(Bit0(p2)), to_nat(Bit0(q2))))
+        ```)
+      Bit1(q2) => calc!(```
+        $(to_nat(succ(add(p2, q2))) + to_nat(succ(add(p2, q2))))
+        = $(Succ(
+          to_nat(add(p2, q2))
+        ) + Succ(to_nat(add(p2, q2)))) from $double_congr(succ_to_nat(add(p2, q2)))
+        = $Succ(
+          Succ(to_nat(add(p2, q2)) + to_nat(add(p2, q2)))
+        ) from $double_succ(to_nat(add(p2, q2)))
+        = $Succ(
+          Succ(to_nat(p2) + to_nat(q2) + (to_nat(p2) + to_nat(q2)))
+        ) from $Eq::congr(⟦Succ(Succ(□))⟧, double_congr(add_to_nat(p2, q2)))
+        = $Succ(
+          Succ(to_nat(p2) + to_nat(p2) + (to_nat(q2) + to_nat(q2)))
+        ) from $Eq::congr(⟦Succ(Succ(□))⟧, double_add(to_nat(p2), to_nat(q2)))
+        = $Succ(
+          Succ(to_nat(Bit0(p2))) + to_nat(Bit0(q2))
+        ) from $Eq::sym(Eq::congr(Succ, Nat::add_succ_left(to_nat(Bit0(p2)), to_nat(Bit0(q2)))))
+        ```)
+    }
+  }
+}
+
+pub theorem Pos::mul_to_nat(p: Pos, q: Pos): Pos::to_nat(Pos::mul(p, q)) = Pos::to_nat(p) * Pos::to_nat(q) {
+  match p {
+    One => Eq::sym(Nat::mul_one_left(Pos::to_nat(q)))
+    Bit0(p2) => calc!(```
+      $(to_nat(mul(p2, q)) + to_nat(mul(p2, q)))
+      = $(to_nat(p2) * to_nat(q) + to_nat(p2) * to_nat(q)) from $double_congr(mul_to_nat(p2, q))
+      = $((
+        to_nat(p2) + to_nat(p2)
+      ) * to_nat(q)) from $Eq::sym(Nat::mul_add_distrib_right(to_nat(p2), to_nat(p2), to_nat(q)))
+      ```)
+    Bit1(p2) => calc!(```
+      $to_nat(add(Bit0(mul(p2, q)), q))
+      = $(to_nat(Bit0(mul(p2, q))) + to_nat(q)) from $add_to_nat(Bit0(mul(p2, q)), q)
+      = $(to_nat(p2) * to_nat(q) + to_nat(p2) * to_nat(q) + to_nat(q)) from $Eq::congr(
+        ⟦Nat::add(□, to_nat(q))⟧,
+        double_congr(mul_to_nat(p2, q))
+      )
+      = $((
+        to_nat(p2) + to_nat(p2)
+      ) * to_nat(q) + to_nat(q)) from $Eq::congr(
+        ⟦Nat::add(□, to_nat(q))⟧,
+        Eq::sym(Nat::mul_add_distrib_right(to_nat(p2), to_nat(p2), to_nat(q)))
+      )
+      = $(Succ(
+        to_nat(Bit0(p2))
+      ) * to_nat(q)) from $Eq::sym(Nat::mul_succ_left(to_nat(Bit0(p2)), to_nat(q)))
+      ```)
+  }
+}
+
+pub theorem Pos::eq_refl(p: Pos): Pos::eq(p, p) = true {
+  match p {
+    One => Refl
+    Bit0(q) => Pos::eq_refl(q)
+    Bit1(q) => Pos::eq_refl(q)
+  }
+}
+
+pub theorem Pos::eq_sound(p: Pos, q: Pos, h: Pos::eq(p, q) = true): p = q {
+  match p {
+    One => ⊢ One = q from match q {
+      One => Refl
+      Bit0(q2) => False::elim(false_ne_true(h))
+      Bit1(q2) => False::elim(false_ne_true(h))
+    }
+    Bit0(p2) => ⊢ Bit0(p2) = q from match q {
+      One => False::elim(false_ne_true(h))
+      Bit0(q2) => Eq::congr(Bit0, Pos::eq_sound(p2, q2, h))
+      Bit1(q2) => False::elim(false_ne_true(h))
+    }
+    Bit1(p2) => ⊢ Bit1(p2) = q from match q {
+      One => False::elim(false_ne_true(h))
+      Bit0(q2) => False::elim(false_ne_true(h))
+      Bit1(q2) => Eq::congr(Bit1, Pos::eq_sound(p2, q2, h))
+    }
+  }
+}
+
+pub theorem Pos::diff_self(p: Pos): Pos::diff(p, p) = DiffZero {
+  match p {
+    One => Refl
+    Bit0(q) => Eq::congr(Pos::diff_double, Pos::diff_self(q))
+    Bit1(q) => Eq::congr(Pos::diff_double, Pos::diff_self(q))
+  }
+}
+
+pub theorem Pos::compare_refl(p: Pos): Pos::compare(p, p) = Equal {
+  Eq::congr(Pos::diff_sign, Pos::diff_self(p))
+}
+
+pub fn BinNat::to_nat(n: BinNat): Nat {
+  match n {
+    BinZero => 0
+    BinPos(p) => Pos::to_nat(p)
+  }
+}
+
+pub fn BinNat::succ(n: BinNat): BinNat {
+  match n {
+    BinZero => BinPos(One)
+    BinPos(p) => BinPos(Pos::succ(p))
+  }
+}
+
+pub fn BinNat::of_nat(n: Nat): BinNat {
+  match n {
+    Zero => BinZero
+    Succ(k) => BinNat::succ(BinNat::of_nat(k))
+  }
+}
+
+pub fn BinNat::add(a: BinNat, b: BinNat): BinNat {
+  match a {
+    BinZero => b
+    BinPos(p) => ⊢ BinNat from match b {
+      BinZero => a
+      BinPos(q) => BinPos(Pos::add(p, q))
+    }
+  }
+}
+
+pub fn BinNat::mul(a: BinNat, b: BinNat): BinNat {
+  match a {
+    BinZero => BinZero
+    BinPos(p) => ⊢ BinNat from match b {
+      BinZero => BinZero
+      BinPos(q) => BinPos(Pos::mul(p, q))
+    }
+  }
+}
+
+pub fn BinNat::sub(a: BinNat, b: BinNat): BinNat {
+  match a {
+    BinZero => BinZero
+    BinPos(p) => ⊢ BinNat from match b {
+      BinZero => a
+      BinPos(q) => Pos::diff_trunc(Pos::diff(p, q))
+    }
+  }
+}
+
+pub fn BinNat::compare(a: BinNat, b: BinNat): Ordering {
+  match a {
+    BinZero => ⊢ Ordering from match b {
+      BinZero => Equal
+      BinPos(_) => Less
+    }
+    BinPos(p) => ⊢ Ordering from match b {
+      BinZero => Greater
+      BinPos(q) => Pos::compare(p, q)
+    }
+  }
+}
+
+pub fn BinNat::eq(a: BinNat, b: BinNat): Bool {
+  match a {
+    BinZero => ⊢ Bool from match b {
+      BinZero => true
+      BinPos(_) => false
+    }
+    BinPos(p) => ⊢ Bool from match b {
+      BinZero => false
+      BinPos(q) => Pos::eq(p, q)
+    }
+  }
+}
+
+// ---- agreement with `Nat` -----------------------------------------------------
+
+pub theorem BinNat::succ_to_nat(n: BinNat): BinNat::to_nat(BinNat::succ(n)) = Succ(BinNat::to_nat(n)) {
+  match n {
+    BinZero => Refl
+    BinPos(p) => Pos::succ_to_nat(p)
+  }
+}
+
+pub theorem BinNat::to_nat_of_nat(n: Nat): BinNat::to_nat(BinNat::of_nat(n)) = n {
+  match n {
+    Zero => Refl
+    Succ(k) => Eq::trans(BinNat::succ_to_nat(BinNat::of_nat(k)), Eq::congr(Succ, BinNat::to_nat_of_nat(k)))
+  }
+}
+
+pub theorem BinNat::add_to_nat(a: BinNat, b: BinNat): BinNat::to_nat(BinNat::add(a, b)) = BinNat::to_nat(a) + BinNat::to_nat(b) {
+  match a {
+    BinZero => Eq::sym(Nat::add_zero_left(BinNat::to_nat(b)))
+    BinPos(p) => ⊢ BinNat::to_nat(BinNat::add(BinPos(p), b)) = Pos::to_nat(p) + BinNat::to_nat(b) from match b {
+      BinZero => Refl
+      BinPos(q) => Pos::add_to_nat(p, q)
+    }
+  }
+}
+
+pub theorem BinNat::mul_to_nat(a: BinNat, b: BinNat): BinNat::to_nat(BinNat::mul(a, b)) = BinNat::to_nat(a) * BinNat::to_nat(b) {
+  match a {
+    BinZero => Eq::sym(Nat::mul_zero_left(BinNat::to_nat(b)))
+    BinPos(p) => ⊢ BinNat::to_nat(BinNat::mul(BinPos(p), b)) = Pos::to_nat(p) * BinNat::to_nat(b) from match b {
+      BinZero => Refl
+      BinPos(q) => Pos::mul_to_nat(p, q)
+    }
+  }
+}
+
+pub theorem BinNat::compare_refl(a: BinNat): BinNat::compare(a, a) = Equal {
+  match a {
+    BinZero => Refl
+    BinPos(p) => Pos::compare_refl(p)
+  }
+}
+
+pub theorem BinNat::eq_refl(a: BinNat): BinNat::eq(a, a) = true {
+  match a {
+    BinZero => Refl
+    BinPos(p) => Pos::eq_refl(p)
+  }
+}
+
+pub theorem BinNat::eq_sound(a: BinNat, b: BinNat, h: BinNat::eq(a, b) = true): a = b {
+  match a {
+    BinZero => ⊢ BinZero = b from match b {
+      BinZero => Refl
+      BinPos(q) => False::elim(false_ne_true(h))
+    }
+    BinPos(p) => ⊢ BinPos(p) = b from match b {
+      BinZero => False::elim(false_ne_true(h))
+      BinPos(q) => Eq::congr(BinPos, Pos::eq_sound(p, q, h))
+    }
+  }
+}
+
+pub theorem BinNat::sub_self(a: BinNat): BinNat::sub(a, a) = BinZero {
+  match a {
+    BinZero => Refl
+    BinPos(p) => Eq::congr(Pos::diff_trunc, Pos::diff_self(p))
+  }
+}

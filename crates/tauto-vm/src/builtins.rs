@@ -9,8 +9,8 @@ use tauto_rt::host::{Host as _, System};
 use crate::code::{Ctor, Program};
 use crate::machine::{Machine, checked};
 use crate::value::{
-    Answer, Data, Error, GuardState, MutexState, Pending, PendingState, Place, R, Root, SharedKind,
-    Signal, Step, TOO_LARGE, Value, equal, fail, temp_ref,
+    Answer, Data, Error, GuardState, MutexState, Path, Pending, PendingState, Place, R, Root,
+    SharedKind, Signal, SlotsVal, Step, TOO_LARGE, Value, fail, temp_ref,
 };
 
 /// What a builtin answers: a value, or an operation it performs (with no
@@ -39,7 +39,7 @@ pub struct Known {
 
 impl Known {
     pub fn new(p: &Program) -> Known {
-        let find = |owner: &str, tag: &str| {
+        let find_in = |owner: &str, tag: &str| {
             p.ctors
                 .iter()
                 .find(|c| {
@@ -47,6 +47,12 @@ impl Known {
                         && c.tag == tauto_nir::library_name(tag)
                 })
                 .cloned()
+        };
+        let find = |owner: &str, tag: &str| {
+            find_in(owner, tag)
+                // A program whose structures were read as data (the
+                // kernel's extraction) names a structure's constructor `Mk`.
+                .or_else(|| find_in(owner, &format!("{owner}::Mk")))
                 .expect("a constructor of the prelude")
         };
         Known {
@@ -140,17 +146,28 @@ pub const NAMES: &[&str] = &[
     "Vec::get_mut",
     "Slice::get",
     "Vec::last_mut",
-    "Vec::index",
-    "Vec::swap",
+    "Vec::swap_within",
+    "Slots::new",
+    "Slots::copy",
+    "Slots::state",
+    "Slots::mark",
+    "Slots::cap",
+    "Slots::get",
+    "Slots::get_mut",
+    "Slots::put",
+    "Slots::take",
+    "Slots::resize",
     "Vec::into_list",
     "Array::to_list",
     "Vec::into_array",
     "Array::of_list",
     "Array::get",
+    "Array::set",
     "Bytes::of_list",
     "Bytes::to_list",
     "Bytes::len",
     "Bytes::get",
+    "Bytes::find",
     "Bytes::slice",
     "Bytes::concat",
     "Syn::same_declaration",
@@ -158,16 +175,17 @@ pub const NAMES: &[&str] = &[
     "Bytes::eq",
     "Bytes::of_text",
     "Text::of_bytes",
-    "HashMap::new",
-    "HashMap::insert",
-    "HashMap::get",
-    "HashMap::get_mut",
-    "HashMap::index",
-    "HashMap::into_vec",
     "Text::byte",
     "Text::slice",
     "Text::of_code_point",
+    "Text::escape_debug",
     "Text::of_utf8",
+    "I64::of_i8",
+    "I64::of_i16",
+    "I8::of_i64",
+    "I16::of_i64",
+    "U64::of_u16",
+    "U16::of_u64",
     "I64::of_i32",
     "I64::of_u64",
     "I32::of_i64",
@@ -263,6 +281,11 @@ pub const NAMES: &[&str] = &[
     "Atomic::fetch_add",
     "secret",
     "expose",
+    "Region::new",
+    "Region::place",
+    "RcRegion::new",
+    "RcRegion::place",
+    "RcPlace::heap",
     "Os::args",
     "Os::print",
     "Os::eprint",
@@ -278,6 +301,9 @@ pub const NAMES: &[&str] = &[
     "Os::read_link",
     "Os::write_new",
     "Os::move_path",
+    "Os::set_mode",
+    "Os::lock",
+    "Os::unlock",
     "Os::copy_file",
     "Os::canonicalize",
     "Os::temp_dir",
@@ -286,15 +312,32 @@ pub const NAMES: &[&str] = &[
     "Os::flush",
     "Os::on_shutdown",
     "Os::env",
+    "Os::env_names",
     "Os::wall_ms",
     "Os::monotonic_ns",
+    "Os::uhost_add",
+    "Os::uhost_sub",
+    "Os::uhost_mul",
+    "Os::uhost_of_u64",
+    "Os::host_bits",
+    "Os::hash_seed_k0",
+    "Os::hash_seed_k1",
+    "U64::of_uhost",
+    "UHost::succ_below",
+    "UHost::pred_nz",
+    "UHost::add_within",
+    "UHost::sub",
+    "UHost::of_u64_below",
     "Os::random",
     "Os::secure_random",
     "Os::status",
+    "Os::entry",
     "Os::check",
     "Os::stop",
     "Os::exit",
     "Os::sleep_pending",
+    "Os::tcp_ready",
+    "Os::tls_ready",
     "Os::offload",
     "pending_spawn",
     "Pending::ready",
@@ -305,6 +348,7 @@ pub const NAMES: &[&str] = &[
     "Mutex::claim",
     "Mutex::take_claimed",
     "Mutex::put",
+    "Mutex::withdraw",
     "MutexGuard::claimed",
     "MutexGuard::get",
     "MutexGuard::get_mut",
@@ -313,6 +357,9 @@ pub const NAMES: &[&str] = &[
     "Signal::is_raised",
     "Signal::either",
     "Signal::listen",
+    "U64::wrapping_add",
+    "U64::wrapping_sub",
+    "U64::wrapping_mul",
 ];
 
 fn pending(v: &Value) -> R<Rc<Pending>> {
@@ -376,20 +423,31 @@ fn with_vec<T>(v: &Value, f: impl FnOnce(&mut Vec<Value>) -> T) -> R<T> {
     })
 }
 
-fn with_map<T>(v: &Value, f: impl FnOnce(&mut Vec<(Value, Value)>) -> R<T>) -> R<T> {
+fn with_slots<T>(v: &Value, f: impl FnOnce(&mut SlotsVal) -> R<T>) -> R<T> {
     place(v).with_mut(|slot| match slot {
-        Value::Map(m) => f(Rc::make_mut(m)),
-        v => fail(format!("internal: expected a HashMap, got {}", v.kind())),
+        Value::Slots(r) => f(Rc::make_mut(r)),
+        v => fail(format!("internal: expected Slots, got {}", v.kind())),
     })
 }
 
-fn find_key(m: &[(Value, Value)], k: &Value) -> R<Option<usize>> {
-    for (i, (key, _)) in m.iter().enumerate() {
-        if equal(key, k)? {
-            return Ok(Some(i));
-        }
+fn slots(v: &Value) -> R<Rc<SlotsVal>> {
+    match v.get()? {
+        Value::Slots(r) => Ok(r),
+        v => fail(format!("internal: expected Slots, got {}", v.kind())),
     }
-    Ok(None)
+}
+
+/// The slot `i` of the argument, whose number the proof arguments (erased
+/// here) put below the capacity; a number outside it ends the run instead of
+/// reaching memory that is not there.
+fn slot_index(r: &SlotsVal, i: &Value) -> R<usize> {
+    index(int(i)?, r.items.len()).ok_or_else(|| {
+        Error::Runtime(format!(
+            "internal: slot {} of {} slots",
+            i.as_int().unwrap_or(-1),
+            r.items.len()
+        ))
+    })
 }
 
 fn shared(v: &Value) -> R<Rc<std::cell::RefCell<Value>>> {
@@ -415,25 +473,53 @@ fn rotl(a: u128, s: u32, bits: u32) -> u128 {
     ((a << s) | (a >> (bits - s))) & mask
 }
 
+const POISONED: &str = "the Mutex is poisoned: a task that held its content failed";
+
+/// The builtins a macro's host answers (`Host::builtin`): a program that
+/// calls one compiles, and its run fails where no host answers it.
+pub const HOST_NAMES: &[&str] = &[
+    "Syn::global",
+    "Syn::expr_of",
+    "Syn::expand",
+    "Syn::open",
+    "Judgement::mentions",
+    "Judgement::same_atom",
+    "Elab::Raw::defeq",
+    "Elab::Raw::whnf",
+    "Elab::Raw::check",
+    "Elab::Raw::global",
+    "Elab::Raw::resolve",
+    "Elab::Raw::siblings",
+    "Elab::Raw::constructor_arity",
+    "Elab::Raw::implicit_names",
+    "Elab::Raw::data",
+    "Elab::Raw::class_decl",
+];
+
 pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
     let k = &m.known;
     if crate::hostcall::NAMES.contains(&name) {
         return Ok(Out::Host(crate::hostcall::job(k, name, &a)?));
     }
     let v = |v: Value| Ok(Out::Value(v));
+    if crate::ct::is_ct(name) {
+        return v(crate::ct::call(k, name, &a)?);
+    }
     match name {
-        "clone" => v(a[0].get()?),
+        "clone" => v(crate::value::arg(&a, 0)?.get()?),
         "replace" => {
-            let p = place(&a[0]);
+            let p = place(crate::value::arg(&a, 0)?);
             let old = p.get()?;
-            p.set(a[1].clone())?;
+            p.set(crate::value::arg(&a, 1)?.clone())?;
             v(old)
         }
         "Buf::new" => v(Value::Buf(Rc::new(String::new()))),
-        "Buf::of" | "Buf::clone" => v(Value::Buf(Rc::new(a[0].as_text()?.to_string()))),
+        "Buf::of" | "Buf::clone" => v(Value::Buf(Rc::new(
+            crate::value::arg(&a, 0)?.as_text()?.to_string(),
+        ))),
         "Buf::push" => {
-            let t = a[1].as_text()?;
-            place(&a[0]).with_mut(|slot| match slot {
+            let t = crate::value::arg(&a, 1)?.as_text()?;
+            place(crate::value::arg(&a, 0)?).with_mut(|slot| match slot {
                 Value::Buf(b) => {
                     Rc::make_mut(b).push_str(&t);
                     Ok(())
@@ -442,157 +528,272 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             })?;
             v(Value::Unit)
         }
-        "Text::of" => v(Value::Text(a[0].as_text()?)),
+        "Text::of" => v(Value::Text(crate::value::arg(&a, 0)?.as_text()?)),
         "Vec::new" => v(Value::Vec(Rc::new(Vec::new()))),
         "Vec::push" => {
-            let x = a[1].clone();
-            with_vec(&a[0], |xs| xs.push(x))?;
+            let x = crate::value::arg(&a, 1)?.clone();
+            with_vec(crate::value::arg(&a, 0)?, |xs| xs.push(x))?;
             v(Value::Unit)
         }
         "Vec::pop" => {
-            let x = with_vec(&a[0], |xs| xs.pop())?;
+            let x = with_vec(crate::value::arg(&a, 0)?, |xs| xs.pop())?;
             v(k.option(x))
         }
-        "Vec::len" | "Slice::len" | "Array::len" => v(Value::Int(items(&a[0])?.len() as i128)),
-        "Vec::as_slice" | "Vec::as_mut_slice" => v(a[0].clone()),
+        "Vec::len" | "Slice::len" | "Array::len" => {
+            v(Value::Int(items(crate::value::arg(&a, 0)?)?.len() as i128))
+        }
+        "Vec::as_slice" | "Vec::as_mut_slice" => v(crate::value::arg(&a, 0)?.clone()),
         "Vec::clear" => {
-            with_vec(&a[0], |xs| xs.clear())?;
+            with_vec(crate::value::arg(&a, 0)?, |xs| xs.clear())?;
             v(Value::Unit)
         }
         "Vec::truncate" => {
-            let n = usize::try_from(int(&a[1])?).unwrap_or(usize::MAX);
-            with_vec(&a[0], |xs| xs.truncate(n))?;
+            let n = usize::try_from(int(crate::value::arg(&a, 1)?)?).unwrap_or(usize::MAX);
+            with_vec(crate::value::arg(&a, 0)?, |xs| xs.truncate(n))?;
             v(Value::Unit)
         }
-        "Vec::get" | "Vec::get_mut" | "Slice::get" | "Vec::index" => {
-            let len = items(&a[0])?.len();
-            match index(int(&a[1])?, len) {
+        "Vec::get" | "Vec::get_mut" | "Slice::get" => {
+            let len = items(crate::value::arg(&a, 0)?)?.len();
+            match index(int(crate::value::arg(&a, 1)?)?, len) {
                 Some(i) => {
-                    let r = Value::Ref(Rc::new(place(&a[0]).child(Step::Item(i))));
-                    v(if name == "Vec::index" { r } else { k.some(r) })
+                    let r = Value::Ref(Rc::new(
+                        place(crate::value::arg(&a, 0)?).child(Step::Item(i)),
+                    ));
+                    v(k.some(r))
                 }
-                None if name == "Vec::index" => Ok(Out::Perform(Rc::from("out_of_bounds"))),
                 None => v(k.none()),
             }
         }
         "Vec::last_mut" => {
-            let len = items(&a[0])?.len();
+            let len = items(crate::value::arg(&a, 0)?)?.len();
             if len == 0 {
                 return v(k.none());
             }
-            v(k.some(Value::Ref(Rc::new(place(&a[0]).child(Step::Item(len - 1))))))
+            v(k.some(Value::Ref(Rc::new(
+                place(crate::value::arg(&a, 0)?).child(Step::Item(len - 1)),
+            ))))
         }
-        "Vec::swap" => {
-            let len = items(&a[0])?.len();
-            match (index(int(&a[1])?, len), index(int(&a[2])?, len)) {
+        "Vec::swap_within" => {
+            let len = items(crate::value::arg(&a, 0)?)?.len();
+            match (
+                index(int(crate::value::arg(&a, 1)?)?, len),
+                index(int(crate::value::arg(&a, 2)?)?, len),
+            ) {
                 (Some(i), Some(j)) => {
-                    with_vec(&a[0], |xs| xs.swap(i, j))?;
-                    v(Value::Unit)
+                    with_vec(crate::value::arg(&a, 0)?, |xs| xs.swap(i, j))?;
+                    v(Value::Bool(true))
                 }
-                _ => Ok(Out::Perform(Rc::from("out_of_bounds"))),
+                _ => v(Value::Bool(false)),
             }
         }
+        "Slots::new" => {
+            let cap = usize::try_from(int(crate::value::arg(&a, 0)?)?)
+                .map_err(|_| Error::Runtime(TOO_LARGE.into()))?;
+            let m0 = crate::value::arg(&a, 2)?.clone();
+            v(Value::Slots(Rc::new(SlotsVal {
+                state: crate::value::arg(&a, 1)?.clone(),
+                marks: vec![m0.clone(); cap],
+                vacant: m0,
+                items: vec![Value::Moved; cap],
+            })))
+        }
+        "Slots::copy" => {
+            let r = slots(crate::value::arg(&a, 0)?)?;
+            let m0 = crate::value::arg(&a, 2)?.clone();
+            v(Value::Slots(Rc::new(SlotsVal {
+                state: crate::value::arg(&a, 1)?.clone(),
+                marks: vec![m0.clone(); r.items.len()],
+                vacant: m0,
+                items: r.items.clone(),
+            })))
+        }
+        "Slots::state" => v(slots(crate::value::arg(&a, 0)?)?.state.clone()),
+        "Slots::cap" => v(Value::Int(
+            slots(crate::value::arg(&a, 0)?)?.items.len() as i128
+        )),
+        "Slots::mark" => {
+            let r = slots(crate::value::arg(&a, 0)?)?;
+            // Total in the model: past the capacity it is the vacant mark.
+            match index(int(crate::value::arg(&a, 1)?)?, r.items.len()) {
+                Some(i) => v(r.marks[i].clone()),
+                None => v(r.vacant.clone()),
+            }
+        }
+        "Slots::get" | "Slots::get_mut" => {
+            let r = slots(crate::value::arg(&a, 0)?)?;
+            let i = slot_index(&r, crate::value::arg(&a, 1)?)?;
+            if matches!(r.items[i], Value::Moved) {
+                return Err(Error::Runtime(format!("internal: slot {i} holds no value")));
+            }
+            v(Value::Ref(Rc::new(
+                place(crate::value::arg(&a, 0)?).child(Step::Item(i)),
+            )))
+        }
+        "Slots::put" => {
+            let (m, x, t) = (
+                crate::value::arg(&a, 2)?.clone(),
+                crate::value::arg(&a, 3)?.clone(),
+                crate::value::arg(&a, 4)?.clone(),
+            );
+            let i = int(crate::value::arg(&a, 1)?)?;
+            with_slots(crate::value::arg(&a, 0)?, |r| {
+                let i = index(i, r.items.len()).ok_or_else(|| {
+                    Error::Runtime(format!("internal: slot {i} of {} slots", r.items.len()))
+                })?;
+                r.items[i] = x;
+                r.marks[i] = m;
+                r.state = t;
+                Ok(())
+            })?;
+            v(Value::Unit)
+        }
+        "Slots::take" => {
+            let (m, t) = (
+                crate::value::arg(&a, 2)?.clone(),
+                crate::value::arg(&a, 3)?.clone(),
+            );
+            let i = int(crate::value::arg(&a, 1)?)?;
+            let x = with_slots(crate::value::arg(&a, 0)?, |r| {
+                let i = index(i, r.items.len()).ok_or_else(|| {
+                    Error::Runtime(format!("internal: slot {i} of {} slots", r.items.len()))
+                })?;
+                if matches!(r.items[i], Value::Moved) {
+                    return fail(format!("internal: slot {i} holds no value"));
+                }
+                let x = std::mem::replace(&mut r.items[i], Value::Moved);
+                r.marks[i] = m;
+                r.state = t;
+                Ok(x)
+            })?;
+            v(x)
+        }
+        "Slots::resize" => {
+            let cap = usize::try_from(int(crate::value::arg(&a, 1)?)?)
+                .map_err(|_| Error::Runtime(TOO_LARGE.into()))?;
+            let (m0, t) = (
+                crate::value::arg(&a, 2)?.clone(),
+                crate::value::arg(&a, 3)?.clone(),
+            );
+            with_slots(crate::value::arg(&a, 0)?, |r| {
+                // The slots past the new capacity are vacant by the proof.
+                r.items.resize(cap, Value::Moved);
+                r.marks.resize(cap, m0.clone());
+                r.vacant = m0;
+                r.state = t;
+                Ok(())
+            })?;
+            v(Value::Unit)
+        }
         "Vec::into_list" | "Array::to_list" => {
-            let xs = items(&a[0])?;
+            let xs = items(crate::value::arg(&a, 0)?)?;
             v(k.list(xs.iter().cloned()))
         }
-        "Vec::into_array" => v(Value::Array(items(&a[0])?)),
-        "Array::of_list" => v(Value::Array(Rc::new(k.items(a[0].clone())?))),
+        "Vec::into_array" => v(Value::Array(items(crate::value::arg(&a, 0)?)?)),
+        "Array::of_list" => v(Value::Array(Rc::new(
+            k.items(crate::value::arg(&a, 0)?.clone())?,
+        ))),
         "Array::get" => {
-            let xs = items(&a[0])?;
-            v(k.option(index(int(&a[1])?, xs.len()).map(|i| xs[i].clone())))
+            let xs = items(crate::value::arg(&a, 0)?)?;
+            v(k.option(index(int(crate::value::arg(&a, 1)?)?, xs.len()).map(|i| xs[i].clone())))
+        }
+        "Array::set" => {
+            let mut xs = items(crate::value::arg(&a, 0)?)?;
+            if let Some(i) = index(int(crate::value::arg(&a, 1)?)?, xs.len()) {
+                Rc::make_mut(&mut xs)[i] = crate::value::arg(&a, 2)?.clone();
+            }
+            v(Value::Array(xs))
         }
         "Bytes::of_list" => {
             let mut out = Vec::new();
-            for x in k.items(a[0].clone())? {
+            for x in k.items(crate::value::arg(&a, 0)?.clone())? {
                 out.push(u8::try_from(int(&x)?).map_err(|_| Error::Runtime(TOO_LARGE.into()))?);
             }
             v(Value::Bytes(Rc::from(out)))
         }
         "Bytes::to_list" => {
-            let b = bytes(&a[0])?;
+            let b = bytes(crate::value::arg(&a, 0)?)?;
             v(k.list(b.iter().map(|x| Value::Int(*x as i128))))
         }
-        "Bytes::len" => v(Value::Int(bytes(&a[0])?.len() as i128)),
+        "Bytes::len" => v(Value::Int(bytes(crate::value::arg(&a, 0)?)?.len() as i128)),
         "Bytes::get" => {
-            let b = bytes(&a[0])?;
-            v(k.option(index(int(&a[1])?, b.len()).map(|i| Value::Int(b[i] as i128))))
+            let b = bytes(crate::value::arg(&a, 0)?)?;
+            v(k.option(
+                index(int(crate::value::arg(&a, 1)?)?, b.len()).map(|i| Value::Int(b[i] as i128)),
+            ))
+        }
+        "Bytes::find" => {
+            let b = bytes(crate::value::arg(&a, 0)?)?;
+            let (c, s, e) = (
+                int(crate::value::arg(&a, 1)?)?,
+                int(crate::value::arg(&a, 2)?)?,
+                int(crate::value::arg(&a, 3)?)?,
+            );
+            let lim = (e.max(0) as u128).min(b.len() as u128) as i128;
+            let found = (s.max(0)..lim.max(s.max(0))).find(|&i| b[i as usize] as i128 == c);
+            v(Value::Int(found.unwrap_or(e)))
         }
         "Bytes::slice" => {
-            let b = bytes(&a[0])?;
-            let (s, e) = (int(&a[1])?, int(&a[2])?);
+            let b = bytes(crate::value::arg(&a, 0)?)?;
+            let (s, e) = (
+                int(crate::value::arg(&a, 1)?)?,
+                int(crate::value::arg(&a, 2)?)?,
+            );
             if s < 0 || e < s || e > b.len() as i128 {
                 return v(k.none());
             }
             v(k.some(Value::Bytes(Rc::from(&b[s as usize..e as usize]))))
         }
         "Bytes::concat" => {
-            let (x, y) = (bytes(&a[0])?, bytes(&a[1])?);
+            let (x, y) = (
+                bytes(crate::value::arg(&a, 0)?)?,
+                bytes(crate::value::arg(&a, 1)?)?,
+            );
             let mut out = x.to_vec();
             out.extend_from_slice(&y);
             v(Value::Bytes(Rc::from(out)))
         }
-        "Syn::same_declaration" => v(Value::Bool(crate::value::equal(&a[0], &a[1])?)),
-        "Syn::eliminator" => match a[0].get()? {
+        "Syn::same_declaration" => v(Value::Bool(crate::value::equal(
+            crate::value::arg(&a, 0)?,
+            crate::value::arg(&a, 1)?,
+        )?)),
+        "Syn::eliminator" => match crate::value::arg(&a, 0)?.get()? {
             Value::Declaration(d) => v(Value::Declaration(tauto_rt::stdlib::syn_eliminator(d))),
-            other => fail(format!("internal: expected a declaration reference, got {}", other.kind())),
+            other => fail(format!(
+                "internal: expected a declaration reference, got {}",
+                other.kind()
+            )),
         },
-        "Bytes::eq" => v(Value::Bool(bytes(&a[0])? == bytes(&a[1])?)),
-        "Bytes::of_text" => v(Value::Bytes(Rc::from(a[0].as_text()?.as_bytes()))),
-        "Text::of_bytes" => v(k.option(text_of_utf8(&bytes(&a[0])?))),
-        "HashMap::new" => v(Value::Map(Rc::new(Vec::new()))),
-        "HashMap::insert" => {
-            let (key, x) = (a[1].get()?, a[2].clone());
-            let old = with_map(&a[0], |m| match find_key(m, &key)? {
-                Some(i) => Ok(Some(std::mem::replace(&mut m[i].1, x))),
-                None => {
-                    m.push((key, x));
-                    Ok(None)
-                }
-            })?;
-            v(k.option(old))
-        }
-        "HashMap::get" | "HashMap::get_mut" | "HashMap::index" => {
-            let key = a[1].get()?;
-            let found = match a[0].get()? {
-                Value::Map(m) => find_key(&m, &key)?,
-                v => return fail(format!("internal: expected a HashMap, got {}", v.kind())),
-            };
-            match found {
-                Some(i) => {
-                    let r = Value::Ref(Rc::new(place(&a[0]).child(Step::Entry(i))));
-                    v(if name == "HashMap::index" {
-                        r
-                    } else {
-                        k.some(r)
-                    })
-                }
-                None if name == "HashMap::index" => Ok(Out::Perform(Rc::from("missing"))),
-                None => v(k.none()),
-            }
-        }
-        "HashMap::into_vec" => match a[0].get()? {
-            Value::Map(m) => v(Value::Vec(Rc::new(
-                m.iter()
-                    .map(|(x, y)| k.pair(x.clone(), y.clone()))
-                    .collect(),
-            ))),
-            v => fail(format!("internal: expected a HashMap, got {}", v.kind())),
-        },
+        "Bytes::eq" => v(Value::Bool(
+            bytes(crate::value::arg(&a, 0)?)? == bytes(crate::value::arg(&a, 1)?)?,
+        )),
+        "Bytes::of_text" => v(Value::Bytes(Rc::from(
+            crate::value::arg(&a, 0)?.as_text()?.as_bytes(),
+        ))),
+        "Text::of_bytes" => v(k.option(text_of_utf8(&bytes(crate::value::arg(&a, 0)?)?))),
         "Text::byte" => {
-            let t = a[0].as_text()?;
-            v(k.option(index(int(&a[1])?, t.len()).map(|i| Value::Int(t.as_bytes()[i] as i128))))
+            let t = crate::value::arg(&a, 0)?.as_text()?;
+            v(k.option(
+                index(int(crate::value::arg(&a, 1)?)?, t.len())
+                    .map(|i| Value::Int(t.as_bytes()[i] as i128)),
+            ))
         }
         "Text::slice" => {
-            let t = a[0].as_text()?;
-            let (s, e) = (int(&a[1])?, int(&a[2])?);
+            let t = crate::value::arg(&a, 0)?.as_text()?;
+            let (s, e) = (
+                int(crate::value::arg(&a, 1)?)?,
+                int(crate::value::arg(&a, 2)?)?,
+            );
             if s < 0 || e < s || e > t.len() as i128 {
                 return v(k.none());
             }
             v(k.option(text_of_utf8(&t.as_bytes()[s as usize..e as usize])))
         }
+        "Text::escape_debug" => {
+            let t = crate::value::arg(&a, 0)?.as_text()?;
+            v(Value::text(&tauto_rt::stdlib::escape_debug(&t)))
+        }
         "Text::of_code_point" => {
-            let n = int(&a[0])?;
+            let n = int(crate::value::arg(&a, 0)?)?;
             v(k.option(
                 u32::try_from(n)
                     .ok()
@@ -602,7 +803,7 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
         }
         "Text::of_utf8" => {
             let mut out = Vec::new();
-            for x in k.items(a[0].clone())? {
+            for x in k.items(crate::value::arg(&a, 0)?.clone())? {
                 match u8::try_from(int(&x)?) {
                     Ok(b) => out.push(b),
                     Err(_) => return v(k.none()),
@@ -610,50 +811,82 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             }
             v(k.option(text_of_utf8(&out)))
         }
-        "I64::of_i32" | "I64::of_u64" => v(Value::Int(checked(
-            Some(int(&a[0])?),
+        "I8::of_i64" => v(Value::Int(checked(
+            Some(int(crate::value::arg(&a, 0)?)?),
+            tauto_nir::Width::W8,
+        )?)),
+        "I16::of_i64" => v(Value::Int(checked(
+            Some(int(crate::value::arg(&a, 0)?)?),
+            tauto_nir::Width::W16,
+        )?)),
+        "U16::of_u64" => v(Value::Int(checked(
+            Some(int(crate::value::arg(&a, 0)?)?),
+            tauto_nir::Width::U16,
+        )?)),
+        "I64::of_i8" | "I64::of_i16" | "I64::of_i32" | "I64::of_u64" => v(Value::Int(checked(
+            Some(int(crate::value::arg(&a, 0)?)?),
             tauto_nir::Width::W64,
         )?)),
         "I32::of_i64" => v(Value::Int(checked(
-            Some(int(&a[0])?),
+            Some(int(crate::value::arg(&a, 0)?)?),
             tauto_nir::Width::W32,
         )?)),
-        "Nat::of_u64" => v(Value::Int(int(&a[0])?)),
-        "U64::of_i64" | "U64::of_u32" | "U64::of_u8" | "U64::of_nat" => v(Value::Int(checked(
-            Some(int(&a[0])?),
-            tauto_nir::Width::U64,
-        )?)),
+        "Nat::of_u64" => v(Value::Int(int(crate::value::arg(&a, 0)?)?)),
+        "U64::of_i64" | "U64::of_u32" | "U64::of_u16" | "U64::of_u8" | "U64::of_uhost"
+        | "U64::of_nat" => {
+            v(Value::Int(checked(
+                Some(int(crate::value::arg(&a, 0)?)?),
+                tauto_nir::Width::U64,
+            )?))
+        }
         "U32::of_u64" => v(Value::Int(checked(
-            Some(int(&a[0])?),
+            Some(int(crate::value::arg(&a, 0)?)?),
             tauto_nir::Width::U32,
         )?)),
         "U8::of_u64" => v(Value::Int(checked(
-            Some(int(&a[0])?),
+            Some(int(crate::value::arg(&a, 0)?)?),
             tauto_nir::Width::U8,
         )?)),
-        "Float::of_i64" => v(Value::Float(int(&a[0])? as f64)),
-        "I64::of_float" => match float::i64_of_float_checked(a[0].as_float()?) {
+        "Float::of_i64" => v(Value::Float(int(crate::value::arg(&a, 0)?)? as f64)),
+        "I64::of_float" => match float::i64_of_float_checked(crate::value::arg(&a, 0)?.as_float()?)
+        {
             Some(n) => v(Value::Int(n as i128)),
             None => fail(TOO_LARGE),
         },
-        "Float::of_text" => v(k.option(float::float_of_str(&a[0].as_text()?).map(Value::Float))),
-        "Text::of_float" => v(Value::text(&float::text_of_float(a[0].as_float()?))),
-        "Float::bits" => v(Value::Int(float::float_bits(a[0].as_float()?) as i128)),
+        "Float::of_text" => v(
+            k.option(float::float_of_str(&crate::value::arg(&a, 0)?.as_text()?).map(Value::Float))
+        ),
+        "Text::of_float" => v(Value::text(&float::text_of_float(
+            crate::value::arg(&a, 0)?.as_float()?,
+        ))),
+        "Float::bits" => v(Value::Int(
+            float::float_bits(crate::value::arg(&a, 0)?.as_float()?) as i128,
+        )),
         "Float::of_bits" => {
-            let b = u64::try_from(int(&a[0])?).map_err(|_| Error::Runtime(TOO_LARGE.into()))?;
+            let b = u64::try_from(int(crate::value::arg(&a, 0)?)?)
+                .map_err(|_| Error::Runtime(TOO_LARGE.into()))?;
             v(Value::Float(float::float_of_bits(b)))
         }
-        "Float::is_nan" => v(Value::Bool(a[0].as_float()?.is_nan())),
-        "Float::of_float32" => v(Value::Float(f64::from(a[0].as_float32()?))),
-        "Float32::of_float" => v(Value::Float32(float::float32_of_float(a[0].as_float()?))),
-        "Float32::bits" => v(Value::Int(float::float32_bits(a[0].as_float32()?) as i128)),
+        "Float::is_nan" => v(Value::Bool(crate::value::arg(&a, 0)?.as_float()?.is_nan())),
+        "Float::of_float32" => v(Value::Float(f64::from(
+            crate::value::arg(&a, 0)?.as_float32()?,
+        ))),
+        "Float32::of_float" => v(Value::Float32(float::float32_of_float(
+            crate::value::arg(&a, 0)?.as_float()?,
+        ))),
+        "Float32::bits" => v(Value::Int(
+            float::float32_bits(crate::value::arg(&a, 0)?.as_float32()?) as i128,
+        )),
         "Float32::of_bits" => {
-            let b = u32::try_from(int(&a[0])?).map_err(|_| Error::Runtime(TOO_LARGE.into()))?;
+            let b = u32::try_from(int(crate::value::arg(&a, 0)?)?)
+                .map_err(|_| Error::Runtime(TOO_LARGE.into()))?;
             v(Value::Float32(float::float32_of_bits(b)))
         }
-        "Float32::is_nan" => v(Value::Bool(a[0].as_float32()?.is_nan())),
-        n if n.starts_with("Float32.") => {
-            let x = a[0].as_float32()?;
+        "Float32::is_nan" => v(Value::Bool(
+            crate::value::arg(&a, 0)?.as_float32()?.is_nan(),
+        )),
+        n if n.starts_with("Float32::") => {
+            let x = crate::value::arg(&a, 0)?.as_float32()?;
             let y = match a.get(1) {
                 Some(b) => b.as_float32()?,
                 None => 0.0,
@@ -684,8 +917,8 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
                 _ => return fail(format!("unknown builtin {n}")),
             }))
         }
-        n if n.starts_with("Float.") => {
-            let x = a[0].as_float()?;
+        n if n.starts_with("Float::") => {
+            let x = crate::value::arg(&a, 0)?.as_float()?;
             let y = match a.get(1) {
                 Some(b) => b.as_float()?,
                 None => 0.0,
@@ -717,7 +950,7 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             }))
         }
         "words" => {
-            let t = a[0].as_text()?;
+            let t = crate::value::arg(&a, 0)?.as_text()?;
             v(k.list(
                 t.split(char::is_whitespace)
                     .filter(|w| !w.is_empty())
@@ -726,12 +959,27 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
                     .into_iter(),
             ))
         }
-        n if n.starts_with("U32.") || n.starts_with("U64.") => {
-            let bits = if n.starts_with("U32.") { 32 } else { 64 };
-            let (x, y) = (int(&a[0])? as u128, int(&a[1])? as u128);
+        "U64::wrapping_add" | "U64::wrapping_sub" | "U64::wrapping_mul" => {
+            let (x, y) = (
+                int(crate::value::arg(&a, 0)?)? as u64,
+                int(crate::value::arg(&a, 1)?)? as u64,
+            );
+            let r = match name {
+                "U64::wrapping_add" => x.wrapping_add(y),
+                "U64::wrapping_sub" => x.wrapping_sub(y),
+                _ => x.wrapping_mul(y),
+            };
+            v(Value::Int(i128::from(r)))
+        }
+        n if n.starts_with("U32::") || n.starts_with("U64::") => {
+            let bits = if n.starts_with("U32::") { 32 } else { 64 };
+            let (x, y) = (
+                int(crate::value::arg(&a, 0)?)? as u128,
+                int(crate::value::arg(&a, 1)?)? as u128,
+            );
             let s = (y % bits as u128) as u32;
             let mask = (1u128 << bits) - 1;
-            let r = match &n[4..] {
+            let r = match &n[5..] {
                 "and" => x & y,
                 "or" => x | y,
                 "xor" => x ^ y,
@@ -743,38 +991,61 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             };
             v(Value::Int(r as i128))
         }
-        "budget_value" => v(Value::Answer(Rc::new(Answer::Value(a[0].clone())))),
-        "info_more" => v(Value::Answer(Rc::new(Answer::More(Some(int(&a[1])?))))),
+        "budget_value" => v(Value::Answer(Rc::new(Answer::Value(
+            crate::value::arg(&a, 0)?.clone(),
+        )))),
+        "info_more" => v(Value::Answer(Rc::new(Answer::More(Some(int(
+            crate::value::arg(&a, 1)?,
+        )?))))),
         "info_unbounded" => v(Value::Answer(Rc::new(Answer::More(None)))),
         "Ref::new" => v(Value::Shared(
             SharedKind::Ref,
-            Rc::new(std::cell::RefCell::new(a[0].get()?)),
+            Rc::new(std::cell::RefCell::new(crate::value::arg(&a, 0)?.get()?)),
         )),
-        "Ref::get" => v(shared(&a[0])?.borrow().clone()),
+        "Ref::get" => v(shared(crate::value::arg(&a, 0)?)?.borrow().clone()),
         "Ref::set" => {
-            *shared(&a[0])?.borrow_mut() = a[1].clone();
+            *shared(crate::value::arg(&a, 0)?)?.borrow_mut() = crate::value::arg(&a, 1)?.clone();
             v(Value::Unit)
         }
-        "Weak::of" => v(Value::Weak(Rc::downgrade(&shared(&a[0])?))),
-        "Weak::get" => match a[0].get()? {
+        "Weak::of" => v(Value::Weak(Rc::downgrade(&shared(crate::value::arg(
+            &a, 0,
+        )?)?))),
+        "Weak::get" => match crate::value::arg(&a, 0)?.get()? {
             Value::Weak(w) => v(k.option(w.upgrade().map(|c| Value::Shared(SharedKind::Ref, c)))),
             x => fail(format!("internal: expected a Weak, got {}", x.kind())),
         },
         "Atomic::new" => v(Value::Shared(
             SharedKind::Atomic,
-            Rc::new(std::cell::RefCell::new(a[0].get()?)),
+            Rc::new(std::cell::RefCell::new(crate::value::arg(&a, 0)?.get()?)),
         )),
-        "Atomic::load" => v(shared(&a[0])?.borrow().clone()),
+        "Atomic::load" => v(shared(crate::value::arg(&a, 0)?)?.borrow().clone()),
         "Atomic::store" => {
-            *shared(&a[0])?.borrow_mut() = a[1].get()?;
+            *shared(crate::value::arg(&a, 0)?)?.borrow_mut() = crate::value::arg(&a, 1)?.get()?;
             v(Value::Unit)
         }
         "Atomic::fetch_add" => {
-            let c = shared(&a[0])?;
+            let c = shared(crate::value::arg(&a, 0)?)?;
             let old = int(&c.borrow())?;
-            let new = (old as u128).wrapping_add(int(&a[1])? as u128) as u64;
+            let new = (old as u128).wrapping_add(int(crate::value::arg(&a, 1)?)? as u128) as u64;
             *c.borrow_mut() = Value::Int(new as i128);
             v(Value::Int(old))
+        }
+        "Os::entry" => {
+            let what = a[0].as_text()?;
+            let args = m
+                .known
+                .items(a[1].clone())?
+                .iter()
+                .map(|t| t.as_text().map(|t| t.to_string()))
+                .collect::<R<Vec<String>>>()?;
+            let answer = tauto_rt::entry::call(&what, &args);
+            v(m.known.list(
+                answer
+                    .iter()
+                    .map(|s| Value::text(s))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            ))
         }
         "Os::args" => {
             let args = m.host.args();
@@ -786,77 +1057,142 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             ))
         }
         "Os::print" => {
-            let t = a[0].as_text()?;
+            let t = crate::value::arg(&a, 0)?.as_text()?;
             m.host.stdout(&t);
             v(Value::Unit)
         }
         "Os::eprint" => {
-            let t = a[0].as_text()?;
+            let t = crate::value::arg(&a, 0)?.as_text()?;
             m.host.stderr(&t);
             v(Value::Unit)
         }
-        "Os::read_file" => v(k.result(System.read_file(&a[0].as_text()?).map(|t| Value::text(&t)))),
+        "Os::read_file" => v(k.result(
+            System
+                .read_file(&crate::value::arg(&a, 0)?.as_text()?)
+                .map(|t| Value::text(&t)),
+        )),
         "Os::write_file" => v(k.result(
             System
-                .write_file(&a[0].as_text()?, &a[1].as_text()?)
+                .write_file(
+                    &crate::value::arg(&a, 0)?.as_text()?,
+                    &crate::value::arg(&a, 1)?.as_text()?,
+                )
                 .map(|()| Value::Unit),
         )),
         "Os::read_bytes" => v(k.result(
             System
-                .read_bytes(&a[0].as_text()?)
+                .read_bytes(&crate::value::arg(&a, 0)?.as_text()?)
                 .map(|b| Value::Bytes(Rc::from(b))),
         )),
         "Os::write_bytes" => v(k.result(
             System
-                .write_bytes(&a[0].as_text()?, &bytes(&a[1])?)
+                .write_bytes(
+                    &crate::value::arg(&a, 0)?.as_text()?,
+                    &bytes(crate::value::arg(&a, 1)?)?,
+                )
                 .map(|()| Value::Unit),
         )),
         "Os::read_under" => v(k.result(
             tauto_rt::stdlib::os_read_under(
-                tauto_rt::Text::from(&*a[0].as_text()?),
-                tauto_rt::Text::from(&*a[1].as_text()?),
+                tauto_rt::Text::from(&*crate::value::arg(&a, 0)?.as_text()?),
+                tauto_rt::Text::from(&*crate::value::arg(&a, 1)?.as_text()?),
             )
             .map(|t| Value::text(&t)),
         )),
         "Os::read_bytes_under" => v(k.result(
             System
-                .read_bytes_under(&a[0].as_text()?, &a[1].as_text()?)
+                .read_bytes_under(
+                    &crate::value::arg(&a, 0)?.as_text()?,
+                    &crate::value::arg(&a, 1)?.as_text()?,
+                )
                 .map(|b| Value::Bytes(Rc::from(b))),
         )),
-        "Os::create_dir" => v(k.result(System.create_dir(&a[0].as_text()?).map(|()| Value::Unit))),
-        "Os::remove" => v(k.result(System.remove(&a[0].as_text()?).map(|()| Value::Unit))),
-        "Os::stat" => v(k.result(System.stat(&a[0].as_text()?).map(|found| {
-            let items = match found {
-                None => Vec::new(),
-                Some(s) => vec![
-                    Value::text(s.kind),
-                    Value::text(&s.size.to_string()),
-                    Value::text(&s.modified_ms.to_string()),
-                ],
-            };
-            k.list(items.into_iter())
-        }))),
-        "Os::read_link" => v(k.result(System.read_link(&a[0].as_text()?).map(|found| {
-            k.list(found.iter().map(|t| Value::text(t)).collect::<Vec<_>>().into_iter())
-        }))),
+        "Os::create_dir" => v(k.result(
+            System
+                .create_dir(&crate::value::arg(&a, 0)?.as_text()?)
+                .map(|()| Value::Unit),
+        )),
+        "Os::remove" => v(k.result(
+            System
+                .remove(&crate::value::arg(&a, 0)?.as_text()?)
+                .map(|()| Value::Unit),
+        )),
+        "Os::stat" => {
+            v(k.result(
+                System
+                    .stat(&crate::value::arg(&a, 0)?.as_text()?)
+                    .map(|found| {
+                        let items = match found {
+                            None => Vec::new(),
+                            Some(s) => vec![
+                                Value::text(s.kind),
+                                Value::text(&s.size.to_string()),
+                                Value::text(&s.modified_ms.to_string()),
+                                Value::text(if s.executable { "1" } else { "0" }),
+                            ],
+                        };
+                        k.list(items.into_iter())
+                    }),
+            ))
+        }
+        "Os::read_link" => v(k.result(
+            System
+                .read_link(&crate::value::arg(&a, 0)?.as_text()?)
+                .map(|found| {
+                    k.list(
+                        found
+                            .iter()
+                            .map(|t| Value::text(t))
+                            .collect::<Vec<_>>()
+                            .into_iter(),
+                    )
+                }),
+        )),
         "Os::write_new" => v(k.result(
             System
-                .create_new(&a[0].as_text()?, a[1].as_text()?.as_bytes())
+                .create_new(
+                    &crate::value::arg(&a, 0)?.as_text()?,
+                    crate::value::arg(&a, 1)?.as_text()?.as_bytes(),
+                )
                 .map(|()| Value::Unit),
         )),
         "Os::move_path" => v(k.result(
             System
-                .rename(&a[0].as_text()?, &a[1].as_text()?)
+                .rename(
+                    &crate::value::arg(&a, 0)?.as_text()?,
+                    &crate::value::arg(&a, 1)?.as_text()?,
+                )
                 .map(|()| Value::Unit),
         )),
+        "Os::set_mode" => v(k.result(
+            System
+                .set_mode(
+                    &crate::value::arg(&a, 0)?.as_text()?,
+                    crate::value::arg(&a, 1)?.as_bool()?,
+                    crate::value::arg(&a, 2)?.as_bool()?,
+                )
+                .map(|()| Value::Unit),
+        )),
+        "Os::lock" => v(k.result(
+            System
+                .lock(&crate::value::arg(&a, 0)?.as_text()?)
+                .map(|id| Value::Int(id as i128)),
+        )),
+        "Os::unlock" => {
+            System.unlock(crate::value::arg(&a, 0)?.as_int()? as u64);
+            v(Value::Unit)
+        }
         "Os::copy_file" => v(k.result(
             System
-                .copy(&a[0].as_text()?, &a[1].as_text()?)
+                .copy(
+                    &crate::value::arg(&a, 0)?.as_text()?,
+                    &crate::value::arg(&a, 1)?.as_text()?,
+                )
                 .map(|()| Value::Unit),
         )),
         "Os::canonicalize" => v(k.result(
             System
-                .canonicalize(&a[0].as_text()?)
+                .canonicalize(&crate::value::arg(&a, 0)?.as_text()?)
                 .map(|p| Value::text(&p)),
         )),
         // The run may read and write under the directory, as under one the
@@ -874,12 +1210,13 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             v(k.result(made.map(|d| Value::text(&d))))
         }
         "Os::read_stdin" => v(Value::Bytes(Rc::from(
-            System.read_stdin(a[0].as_int()?.clamp(0, 1 << 24) as usize),
+            System.read_stdin(crate::value::arg(&a, 0)?.as_int()?.clamp(0, 1 << 24) as usize),
         ))),
         "Os::on_shutdown" => {
             let outside = tauto_rt::signal::Signal::new();
             tauto_rt::shutdown::register(outside.clone());
-            *signal(&a[0])?.outside.borrow_mut() = Some(outside);
+            crate::machine::OUTSIDE.with(|o| o.borrow_mut().push(outside.clone()));
+            *signal(crate::value::arg(&a, 0)?)?.outside.borrow_mut() = Some(outside);
             v(Value::Unit)
         }
         "Os::flush" => {
@@ -887,29 +1224,94 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             v(Value::Unit)
         }
         "Os::read_line" => v(k.option(System.read_line().map(|t| Value::text(&t)))),
-        "Os::env" => v(k.option(System.env(&a[0].as_text()?).map(|t| Value::text(&t)))),
+        "Os::env_names" => v(m.known.list(
+            System
+                .env_names()
+                .iter()
+                .map(|s| Value::text(s))
+                .collect::<Vec<_>>()
+                .into_iter(),
+        )),
+        "Os::env" => v(k.option(
+            System
+                .env(&crate::value::arg(&a, 0)?.as_text()?)
+                .map(|t| Value::text(&t)),
+        )),
         "Os::wall_ms" => v(Value::Int(System.wall_ms() as i128)),
         "Os::monotonic_ns" => v(Value::Int(System.monotonic_ns() as i128)),
+        // `uhost` is 64 bits here; a result outside it ends the run.
+        "Os::uhost_add" | "Os::uhost_sub" | "Os::uhost_mul" => {
+            let (x, y) = (
+                int(crate::value::arg(&a, 0)?)?,
+                int(crate::value::arg(&a, 1)?)?,
+            );
+            let r = match name {
+                "Os::uhost_add" => x.checked_add(y),
+                "Os::uhost_sub" => x.checked_sub(y),
+                _ => x.checked_mul(y),
+            };
+            match r.filter(|r| u64::try_from(*r).is_ok()) {
+                Some(r) => v(Value::Int(r)),
+                None => Err(Error::Runtime(format!(
+                    "the number is too large for a word of 64 bits: {}",
+                    &name[4..]
+                ))),
+            }
+        }
+        // The operations of `uhost` that carry a proof in Tauto: the result fits.
+        "UHost::succ_below"
+        | "UHost::pred_nz"
+        | "UHost::add_within"
+        | "UHost::sub"
+        | "UHost::of_u64_below" => {
+            let x = int(crate::value::arg(&a, 0)?)?;
+            let y = match name {
+                "UHost::add_within" | "UHost::sub" => int(crate::value::arg(&a, 1)?)?,
+                _ => 0,
+            };
+            v(Value::Int(match name {
+                "UHost::succ_below" => x + 1,
+                "UHost::pred_nz" => x - 1,
+                "UHost::add_within" => x + y,
+                "UHost::sub" => x - y,
+                _ => x,
+            }))
+        }
+        "Os::uhost_of_u64" => v(Value::Int(int(crate::value::arg(&a, 0)?)?)),
+        "Os::host_bits" => v(Value::Int(64)),
+        "Os::hash_seed_k0" => v(Value::Int(System.hash_seed().0 as i128)),
+        "Os::hash_seed_k1" => v(Value::Int(System.hash_seed().1 as i128)),
         "Os::random" => v(Value::Int((System.random() >> 1) as i128)),
-        "secret" => v(Value::Secret(Rc::new(a[0].clone()))),
-        "expose" => match a[0].get()? {
+        // Every value goes on the heap: a region keeps nothing, and a place
+        // says nothing (`std/builtin/region.taut`).
+        "Region::new" | "Region::place" | "RcRegion::new" | "RcRegion::place" | "RcPlace::heap" => {
+            v(Value::Unit)
+        }
+        "secret" => v(Value::Secret(Rc::new(crate::value::arg(&a, 0)?.clone()))),
+        "expose" => match crate::value::arg(&a, 0)?.get()? {
             Value::Secret(x) => v((*x).clone()),
             x => fail(format!("internal: expected a Secret, got {}", x.kind())),
         },
         "Os::secure_random" => {
-            let n = usize::try_from(int(&a[0])?).unwrap_or(usize::MAX);
+            let n = usize::try_from(int(crate::value::arg(&a, 0)?)?).unwrap_or(usize::MAX);
             v(k.result(System.secure_random(n).map(|b| Value::Bytes(Rc::from(b)))))
         }
         "Os::status" => v(Value::Int(
-            a[0].as_text()?.parse::<u64>().unwrap_or(0) as i128
+            crate::value::arg(&a, 0)?
+                .as_text()?
+                .parse::<u64>()
+                .unwrap_or(0) as i128,
         )),
         "Os::check" => {
-            let (kind, target) = (a[0].as_text()?, a[1].as_text()?);
+            let (kind, target) = (
+                crate::value::arg(&a, 0)?.as_text()?,
+                crate::value::arg(&a, 1)?.as_text()?,
+            );
             let t = m.host.permissions().check_or_ask(&kind, &target);
             v(m.known.option(t.map(|t| Value::text(&t))))
         }
         "Os::sleep_pending" => {
-            let ms = u64::try_from(int(&a[0])?).unwrap_or(u64::MAX);
+            let ms = u64::try_from(int(crate::value::arg(&a, 0)?)?).unwrap_or(u64::MAX);
             let at = std::time::Instant::now()
                 .checked_add(std::time::Duration::from_millis(ms))
                 .unwrap_or_else(|| {
@@ -919,67 +1321,79 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             m.timers.push(p.clone());
             v(Value::Pending(p))
         }
+        // The request that follows waits on its own thread.
+        "Os::tcp_ready" | "Os::tls_ready" => v(Value::Pending(Pending::new(PendingState::Ready(
+            Value::Bool(false),
+        )))),
         "Os::offload" | "pending_spawn" => {
             let p = Pending::new(PendingState::Running);
-            Ok(Out::Spawn(a[0].get()?, p))
+            Ok(Out::Spawn(crate::value::arg(&a, 0)?.get()?, p))
         }
         "Pending::ready" => v(Value::Pending(Pending::new(PendingState::Ready(
-            a[0].clone(),
+            crate::value::arg(&a, 0)?.clone(),
         )))),
         "Pending::take" => {
-            let p = pending(&a[0])?;
+            let p = pending(crate::value::arg(&a, 0)?)?;
             p.ready();
             let state = std::mem::replace(&mut *p.state.borrow_mut(), PendingState::Taken);
             match state {
                 PendingState::Ready(x) => v(x),
+                PendingState::Failed(e) => fail(format!("the joined task failed: {e}")),
                 _ => fail("internal: a result taken before it was there"),
             }
         }
         "Pending::is_ready" => {
-            let p = pending(&a[0])?;
+            let p = pending(crate::value::arg(&a, 0)?)?;
             if p.ready() {
                 v(Value::Bool(true))
             } else {
                 Ok(Out::Yield(p))
             }
         }
-        "Signal::listen" => v(a[0].get()?),
+        "Signal::listen" => v(crate::value::arg(&a, 0)?.get()?),
         "Signal::fresh" => v(Value::Signal(Rc::new(Signal::default()))),
         "Signal::raise" => {
-            signal(&a[0])?.raise();
+            signal(crate::value::arg(&a, 0)?)?.raise();
             v(Value::Unit)
         }
-        "Signal::is_raised" => v(Value::Bool(signal(&a[0])?.is_raised())),
+        "Signal::is_raised" => v(Value::Bool(signal(crate::value::arg(&a, 0)?)?.is_raised())),
         "Signal::either" => {
             let mut seen = std::collections::HashSet::new();
-            let inputs = [signal(&a[0])?, signal(&a[1])?]
-                .into_iter()
-                .flat_map(|s| {
-                    if s.inputs.is_empty() {
-                        vec![s]
-                    } else {
-                        s.inputs.clone()
-                    }
-                })
-                .filter(|s| seen.insert(Rc::as_ptr(s) as usize))
-                .collect();
+            let inputs = [
+                signal(crate::value::arg(&a, 0)?)?,
+                signal(crate::value::arg(&a, 1)?)?,
+            ]
+            .into_iter()
+            .flat_map(|s| {
+                if s.inputs.is_empty() {
+                    vec![s]
+                } else {
+                    s.inputs.clone()
+                }
+            })
+            .filter(|s| seen.insert(Rc::as_ptr(s) as usize))
+            .collect();
             v(Value::Signal(Rc::new(Signal {
                 inputs,
                 ..Signal::default()
             })))
         }
         "Pending::signal" => {
-            let p = pending(&a[0])?;
+            let p = pending(crate::value::arg(&a, 0)?)?;
             p.ready();
             v(Value::Signal(p.signal.clone()))
         }
         "Mutex::new" => v(Value::Mutex(Rc::new(std::cell::RefCell::new(MutexState {
-            value: Some(a[0].clone()),
+            value: Some(crate::value::arg(&a, 0)?.clone()),
             waiting: Default::default(),
+            poisoned: false,
         })))),
         "Mutex::claim" => {
-            let mx = mutex(&a[0])?;
+            let mx = mutex(crate::value::arg(&a, 0)?)?;
             let mut mx = mx.borrow_mut();
+            if mx.poisoned {
+                return fail(POISONED);
+            }
             let s = Rc::new(Signal::default());
             if mx.value.is_some() && mx.waiting.is_empty() {
                 *s.handed.borrow_mut() = mx.value.take();
@@ -990,17 +1404,30 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             v(Value::Signal(s))
         }
         "Mutex::take_claimed" => {
-            let s = signal(&a[1])?;
+            let mx = mutex(crate::value::arg(&a, 0)?)?;
+            if mx.borrow().poisoned {
+                return fail(POISONED);
+            }
+            let s = signal(crate::value::arg(&a, 1)?)?;
             let x = s.handed.borrow_mut().take();
             match x {
-                Some(x) => v(x),
+                Some(x) => {
+                    m.took(&mx);
+                    v(x)
+                }
                 None => fail("internal: a mutex's content taken before it was handed"),
             }
         }
         "MutexGuard::claimed" => {
-            let mx = mutex(&a[0])?;
-            let s = signal(&a[1])?;
+            let mx = mutex(crate::value::arg(&a, 0)?)?;
+            if mx.borrow().poisoned {
+                return fail(POISONED);
+            }
+            let s = signal(crate::value::arg(&a, 1)?)?;
             let x = s.handed.borrow_mut().take();
+            if x.is_some() {
+                m.took(&mx);
+            }
             match x {
                 Some(x) => v(Value::Guard(Rc::new(GuardState {
                     mutex: mx,
@@ -1009,31 +1436,48 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
                 None => fail("internal: a mutex's content taken before it was handed"),
             }
         }
-        "MutexGuard::get" | "MutexGuard::get_mut" => match a[0].get()? {
-            Value::Guard(g) => v(Value::Ref(Rc::new(Place {
-                root: Root::Cell(g.content.clone()),
-                path: Vec::new(),
-            }))),
+        "MutexGuard::get" | "MutexGuard::get_mut" => match crate::value::arg(&a, 0)?.get()? {
+            Value::Guard(g) => v(Value::Ref(Rc::new(Place::new(
+                Root::Cell(g.content.clone()),
+                Path::default(),
+            )))),
             other => fail(format!(
                 "internal: expected a MutexGuard, got {}",
                 other.kind()
             )),
         },
+        "Mutex::withdraw" => {
+            let mx = mutex(crate::value::arg(&a, 0)?)?;
+            let s = signal(crate::value::arg(&a, 1)?)?;
+            if mx.borrow().poisoned {
+                return fail(POISONED);
+            }
+            mx.borrow_mut().waiting.retain(|w| !Rc::ptr_eq(w, &s));
+            let x = s.handed.borrow_mut().take();
+            let some = x.is_some();
+            let out = m.known.option(x);
+            if some {
+                m.took(&mx);
+            }
+            v(out)
+        }
         "Mutex::put" => {
-            let mx = mutex(&a[0])?;
+            let mx = mutex(crate::value::arg(&a, 0)?)?;
             let mut mx = mx.borrow_mut();
             match mx.waiting.pop_front() {
                 Some(s) => {
-                    *s.handed.borrow_mut() = Some(a[1].clone());
+                    *s.handed.borrow_mut() = Some(crate::value::arg(&a, 1)?.clone());
                     s.raise();
                 }
-                None => mx.value = Some(a[1].clone()),
+                None => mx.value = Some(crate::value::arg(&a, 1)?.clone()),
             }
             v(Value::Unit)
         }
-        "Os::stop" => Err(Error::Runtime(a[0].as_text()?.to_string())),
+        "Os::stop" => Err(Error::Runtime(
+            crate::value::arg(&a, 0)?.as_text()?.to_string(),
+        )),
         "Os::exit" => {
-            let code = checked(Some(int(&a[0])?), tauto_nir::Width::U8)?;
+            let code = checked(Some(int(crate::value::arg(&a, 0)?)?), tauto_nir::Width::U8)?;
             Err(Error::Exit(code as i32))
         }
         n => fail(format!("unknown builtin {n}")),

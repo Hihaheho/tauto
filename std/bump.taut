@@ -1,0 +1,24 @@
+import "alloc.taut" { BumpPolicy }
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+// The bump allocators of std, built on the region primitives and the proved
+// policy `BumpPolicy` (`alloc.taut`). A `Bump` is a scoped region, given back
+// whole when its owner's block ends, and a place of it borrows it. An
+// `RcBump` counts: it lives until its last value and copy are dead (its
+// `free` keeps the state), and a place of it borrows nothing.
+// A region with chunks of `size` bytes, growing by `step`.
+pub fn Bump::new(size: Nat, step: Nat): Region(BumpPolicy) {
+  Region::new(BumpPolicy::new(size, step))
+}
+
+pub fn Bump::place<T>(a: &Region(BumpPolicy)): Place(T) {
+  Region::place(a)
+}
+
+pub fn RcBump::new(size: Nat, step: Nat): RcRegion(BumpPolicy) {
+  RcRegion::new(BumpPolicy::new(size, step))
+}
+
+pub fn RcBump::place<T>(a: RcRegion(BumpPolicy)): RcPlace(T) {
+  RcRegion::place(a)
+}

@@ -1,7 +1,8 @@
 import "binding_allocation.taut"
-import std::Base
+import std::base
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "unify_sound.taut"
 
@@ -46,7 +47,7 @@ pub theorem ck_var_set_counter(
   w: Nat,
   flag: Bool
 ): CounterUnchanged(c, ck_var_set(v, w, ck_int_k(c, w, flag))) {
-  ⊢ CounterUnchanged(c, ck_var_set(v, w, ck_int_k(c, w, flag))) from match flag {
+  match flag {
     true => Refl
     false => Refl
   }
@@ -68,7 +69,7 @@ pub theorem ck_bind_unbound_counter(
   v: Nat,
   t: Ty
 ): CounterUnchanged(c, ck_bind_unbound(c, v, t)) {
-  ⊢ CounterUnchanged(c, ck_bind_unbound(c, v, t)) from match t {
+  match t {
     TyInt(width) => counter_rewrap(
       c,
       ck_bind_value(c, v, TyInt(width)),
@@ -84,6 +85,7 @@ pub theorem ck_bind_unbound_counter(
       ck_bind_other_counter(c, v, TyDecimal)
     )
     TyFloat => counter_rewrap(c, ck_bind_other(c, v, TyFloat), ck_bind_other_counter(c, v, TyFloat))
+    TyFloat32 => counter_rewrap(c, ck_bind_other(c, v, TyFloat32), ck_bind_other_counter(c, v, TyFloat32))
     TyParam(name, kind) => counter_rewrap(
       c,
       ck_bind_other(c, v, TyParam(name, kind)),

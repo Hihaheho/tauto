@@ -1,0 +1,27 @@
+import std::base
+import std::list
+import std::text
+import "../../text/src/text.taut"
+
+// An operation as `borrows(…)` and a row both write it: its last name and
+// its type arguments, without spaces.
+pub fn effect_key_text(e: Text): Text {
+  let shown: Text := ⊢ Text from match text_split(e, "@") {
+    Cons(name, Cons(arg, more)) => Text::concat_all(Cons(name, Cons("(", Cons(text_join(Cons(arg, more), "@"), Cons(")", Nil)))))
+    _ => e
+  }
+  let head: Text := ⊢ Text from match text_split(shown, "(") {
+    Cons(name, ^more) => name
+    Nil => shown
+  }
+  let args: Text := Text::slice_or_empty(shown, Text::len(head), Text::len(shown))
+  let parts: List(Text) := text_split(head, "::")
+  text_join(text_split(Text::concat_all(Cons(list_last_text(parts, head), Cons(args, Nil))), " "), "")
+}
+
+pub fn list_last_text(xs: List(Text), d: Text): Text {
+  match xs {
+    Nil => d
+    Cons(x, rest) => list_last_text(rest, x)
+  }
+}

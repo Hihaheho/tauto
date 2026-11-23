@@ -34,6 +34,22 @@ pub struct SourceText(pub PathBuf);
 #[asset_key(asset = u64)]
 pub struct Epoch;
 
+/// The text of a file, as [`SourceText`] gives it, for what a load does not tell.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct FileText(pub PathBuf);
+
+impl Query for FileText {
+    type Output = String;
+
+    fn query(self, db: &impl Db) -> Result<Arc<String>, QueryError> {
+        db.asset(SourceText(self.0))
+    }
+
+    fn output_eq(old: &String, new: &String) -> bool {
+        old == new
+    }
+}
+
 /// What a workspace is configured with, as the queries need it.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct Ctx {

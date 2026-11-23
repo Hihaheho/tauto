@@ -1,0 +1,1265 @@
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::array
+
+// A syntax's tables (`.tauto-syntax/<sha256>.tables`, `Tables::read` of `crates/tauto-syntax`)
+// read, and the parser of `totes/synrun` they make: the text `Tables::runtime_text` writes,
+// which `syn_read` (`totes/synrun/src/read.taut`) reads. The constructors of the values a
+// parse makes are numbered by `tb_node_id`, and `tb_nodes` says what each is.
+
+// ---------------------------------------------------------------------------
+// The words of a section, read in turn.
+
+pub(open) struct TbCur { ws: List(Text), bad: Bool }
+
+pub fn tb_words(t: Text): List(Text) { tb_nonempty(text_split(t, " ")) }
+
+pub fn tb_nonempty(ws: List(Text)): List(Text) {
+  match ws {
+    Nil => Nil
+    Cons(w, rest) => if w == "" { tb_nonempty(rest) } else { Cons(w, tb_nonempty(rest)) }
+  }
+}
+
+pub fn tb_word(c: &mut TbCur): Text {
+  match c.ws {
+    Nil => {
+      c.bad := true
+      ""
+    }
+    Cons(w, rest) => {
+      c.ws := rest
+      w
+    }
+  }
+}
+
+pub fn tb_num(c: &mut TbCur): Nat {
+  let w := tb_word(&mut c)
+  match text_parse_u64(w) {
+    Some(n) => n
+    None => {
+      c.bad := true
+      0
+    }
+  }
+}
+
+// A signed number as its successor, 0 for a negative one (`plus_one`).
+pub fn tb_plus_one(c: &mut TbCur): Nat {
+  let w := tb_word(&mut c)
+  if text_starts_with(w, "-", 0) {
+    match text_parse_u64(Text::slice_or_empty(w, 1, Text::len(w))) {
+      Some(^n) => 0
+      None => {
+        c.bad := true
+        0
+      }
+    }
+  } else {
+    match text_parse_u64(w) {
+      Some(n) => n + 1
+      None => {
+        c.bad := true
+        0
+      }
+    }
+  }
+}
+
+// A symbol of a production: a non-terminal at or above 0, a terminal `t`
+// as `-t - 1`.
+pub fn tb_sym(c: &mut TbCur): TbSym {
+  let w := tb_word(&mut c)
+  if text_starts_with(w, "-", 0) {
+    match text_parse_u64(Text::slice_or_empty(w, 1, Text::len(w))) {
+      Some(n) => TbTerm(n - 1)
+      None => {
+        c.bad := true
+        TbTerm(0)
+      }
+    }
+  } else {
+    match text_parse_u64(w) {
+      Some(n) => TbNt(n)
+      None => {
+        c.bad := true
+        TbNt(0)
+      }
+    }
+  }
+}
+
+pub fn tb_nums(c: &mut TbCur, n: Nat): List(Nat) ! {div} {
+  var out: List(Nat) := Nil
+  var i := 0
+  while i < n {
+    out := Cons(tb_num(&mut c), out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+// ---------------------------------------------------------------------------
+// What the tables say (`Tables::read`), as far as the parser's text needs.
+
+pub(open) enum TbSym {
+  TbNt(Nat)
+  TbTerm(Nat)
+}
+
+pub(open) struct TbProd { lhs: Nat, attr: Nat, rhs: List(TbSym) }
+
+pub(open) struct TbLook { nt: Nat, prod0: Nat, k: Nat, transitions: List(List(Nat)) }
+
+pub(open) struct TbLr { actions: List(List(Nat)), gotos: List(List(Nat)) }
+
+// A state of a scanner: its accepts (terminal, priority, lookahead kind,
+// lookahead automaton) and its transitions (class, target).
+pub(open) struct TbState { accepts: List(List(Nat)), transitions: List(List(Nat)) }
+
+pub(open) struct TbMode { transitions: List(List(Nat)), states: List(TbState) }
+
+// A terminal written with `%capture` or `%validate`: its terminal, the
+// numbers the scanner's text gives of it before its automata, and its
+// automata (the capture's as its successor, 0 for none).
+pub(open) struct TbDyn { terminal: Nat, head: List(Nat), prefix: Nat, suffix: Nat, capture: Nat }
+
+// A constructor of an enum: its name, and the names of its fields when it is a record.
+pub(open) struct TbCtorDef { name: Text, record: Bool, fields: List(Text) }
+
+pub(open) enum TbType {
+  TbStruct(Text, List(Text))
+  TbEnum(Text, List(TbCtorDef))
+}
+
+pub(open) struct TbTables {
+  terminals: List(Text),
+  non_terminals: Nat,
+  nt_kinds: Array(Nat),
+  start: Nat,
+  prods: List(TbProd),
+  // The type (as its successor, 0 for none) and the constructor each
+  // production builds.
+  prod_types: Array(Nat × Nat),
+  // The symbols dropped from the tree (`^`): production and place.
+  clipped: List(Nat × Nat),
+  looks: List(TbLook),
+  lr: Option(List(TbLr)),
+  skip: List(Nat),
+  classes: List(List(Nat)),
+  modes: List(TbMode),
+  lookahead_dfas: List(List(TbState)),
+  dyn_states: List(List(Nat)),
+  dynamic: List(TbDyn),
+  dynamic_dfas: List(List(TbState)),
+  types: Array(TbType)
+}
+
+// Ascending, as `sort` leaves tuples: each is put into a descending list,
+// which is turned at the end, so that sorted input takes one step each.
+pub fn tb_sort(xs: List(List(Nat))): List(List(Nat)) ! {div} {
+  var down: List(List(Nat)) := Nil
+  var rest := xs
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(x, more) => {
+        rest := more
+        down := tb_insert_down(x, down)
+      }
+    }
+  }
+  List::reverse(down)
+}
+
+pub fn tb_insert_down(x: List(Nat), down: List(List(Nat))): List(List(Nat)) {
+  match down {
+    Nil => [x]
+    Cons(y, rest) => if tb_lex_le(y, x) { Cons(x, down) } else { Cons(y, tb_insert_down(x, rest)) }
+  }
+}
+
+pub fn tb_lex_le(a: List(Nat), b: List(Nat)): Bool {
+  match a {
+    Nil => true
+    Cons(x, ra) => match b {
+      Nil => false
+      Cons(y, rb) => if x < y { true } else if y < x { false } else { tb_lex_le(ra, rb) }
+    }
+  }
+}
+
+pub fn tb_tuples(c: &mut TbCur, n: Nat, width: Nat): List(List(Nat)) ! {div} {
+  var out: List(List(Nat)) := Nil
+  var i := 0
+  while i < n {
+    out := Cons(tb_nums(&mut c, width), out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+pub fn tb_states(c: &mut TbCur): List(TbState) ! {div} {
+  let n := tb_num(&mut c)
+  var out: List(TbState) := Nil
+  var i := 0
+  while i < n {
+    let na := tb_num(&mut c)
+    let accepts := tb_tuples(&mut c, na, 4)
+    let nt := tb_num(&mut c)
+    let transitions := tb_sort(tb_tuples(&mut c, nt, 2))
+    out := Cons(TbState { accepts: accepts, transitions: transitions }, out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+pub fn tb_automata(c: &mut TbCur): List(List(TbState)) ! {div} {
+  let n := tb_num(&mut c)
+  var out: List(List(TbState)) := Nil
+  var i := 0
+  while i < n {
+    out := Cons(tb_states(&mut c), out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+// A field's type, which is read and not kept.
+pub fn tb_field_ty(c: &mut TbCur): Unit ! {div, overflow} {
+  var need := 1
+  while need > 0 {
+    let w := tb_word(&mut c)
+    if w == "L" || w == "O" {
+      #()
+    } else if w == "N" {
+      tb_word(&mut c)
+      need := need - 1
+    } else if w == "K" || w == "E" {
+      need := need - 1
+    } else {
+      c.bad := true
+      need := 0
+    }
+  }
+}
+
+// A record's field names; the field types are read and not kept.
+pub fn tb_record(c: &mut TbCur): List(Text) ! {div, overflow} {
+  let n := tb_num(&mut c)
+  var names: List(Text) := Nil
+  var i := 0
+  while i < n {
+    names := Cons(tb_word(&mut c), names)
+    tb_field_ty(&mut c)
+    i := i + 1
+  }
+  List::reverse(names)
+}
+
+pub fn tb_schema(c: &mut TbCur): List(TbType) ! {div, overflow} {
+  let n := tb_num(&mut c)
+  var out: List(TbType) := Nil
+  var i := 0
+  while i < n {
+    let kind := tb_word(&mut c)
+    if kind == "S" {
+      let name := tb_word(&mut c)
+      tb_num(&mut c)
+      out := Cons(TbStruct(name, tb_record(&mut c)), out)
+    } else if kind == "E" {
+      let name := tb_word(&mut c)
+      let m := tb_num(&mut c)
+      var ctors: List(TbCtorDef) := Nil
+      var j := 0
+      while j < m {
+        let cname := tb_word(&mut c)
+        tb_num(&mut c)
+        let payload := tb_word(&mut c)
+        var fields: List(Text) := Nil
+        if payload == "R" {
+          fields := tb_record(&mut c)
+        } else if payload == "P" {
+          tb_field_ty(&mut c)
+        } else {
+          c.bad := true
+        }
+        ctors := Cons(TbCtorDef { name: cname, record: payload == "R", fields: fields }, ctors)
+        j := j + 1
+      }
+      out := Cons(TbEnum(name, List::reverse(ctors)), out)
+    } else {
+      c.bad := true
+    }
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+pub fn tb_dynamic(c: &mut TbCur): List(TbDyn) ! {div, overflow} {
+  let n := tb_num(&mut c)
+  var entries: List(TbDyn) := Nil
+  var i := 0
+  while i < n {
+    let terminal := tb_num(&mut c)
+    let op := tb_num(&mut c)
+    let state := tb_num(&mut c)
+    let len := tb_num(&mut c)
+    let unit := tb_nums(&mut c, len)
+    let ranged := tb_num(&mut c)
+    let range := if ranged == 0 { [0] } else { Cons(1, tb_bits(tb_nums(&mut c, 10))) }
+    let prefix := tb_num(&mut c)
+    let suffix := tb_num(&mut c)
+    let capture := tb_plus_one(&mut c)
+    let head := List::append([terminal, op, state, len], List::append(unit, range))
+    entries := Cons(TbDyn { terminal: terminal, head: head, prefix: prefix, suffix: suffix, capture: capture }, entries)
+    i := i + 1
+  }
+  tb_by_terminal(List::reverse(entries))
+}
+
+// The sides of a range, with each flag (the first and fourth of five) as
+// 0 or 1.
+pub fn tb_bits(xs: List(Nat)): List(Nat) ! {div, overflow} {
+  var out: List(Nat) := Nil
+  var i := 0
+  var rest := xs
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(x, more) => {
+        rest := more
+        let flag := i == 0 || i == 3 || i == 5 || i == 8
+        out := Cons(if flag && x != 0 { 1 } else { x }, out)
+        i := i + 1
+      }
+    }
+  }
+  List::reverse(out)
+}
+
+// The entries in the order of their terminals, the last of a terminal kept.
+pub fn tb_by_terminal(ds: List(TbDyn)): List(TbDyn) ! {div} {
+  var down: List(TbDyn) := Nil
+  var rest := ds
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(d, more) => {
+        rest := more
+        down := tb_insert_dyn(d, down)
+      }
+    }
+  }
+  List::reverse(down)
+}
+
+pub fn tb_insert_dyn(d: TbDyn, down: List(TbDyn)): List(TbDyn) {
+  match down {
+    Nil => [d]
+    Cons(e, rest) => if e.terminal < d.terminal {
+      Cons(d, down)
+    } else if e.terminal == d.terminal {
+      Cons(d, rest)
+    } else {
+      Cons(e, tb_insert_dyn(d, rest))
+    }
+  }
+}
+
+pub fn tb_first_word(line: Text): Text × Text {
+  match text_find(line, " ", 0) {
+    Some(at) => #(Text::slice_or_empty(line, 0, at), Text::slice_or_empty(line, at + 1, Text::len(line)))
+    None => #(line, "")
+  }
+}
+
+pub fn tb_read(text: Text): Result(TbTables, Text) ! {div, overflow} {
+  var terminals: List(Text) := Nil
+  var non_terminals := 0
+  var nt_kinds: List(Nat) := Nil
+  var start := 0
+  var prods: List(TbProd) := Nil
+  var prod_types: List(Nat × Nat) := Nil
+  var clipped: List(Nat × Nat) := Nil
+  var looks: List(TbLook) := Nil
+  var lr: Option(List(TbLr)) := None
+  var skip: List(Nat) := Nil
+  var classes: List(List(Nat)) := Nil
+  var modes: List(TbMode) := Nil
+  var lookahead_dfas: List(List(TbState)) := Nil
+  var dyn_states: List(List(Nat)) := Nil
+  var dynamic: List(TbDyn) := Nil
+  var dynamic_dfas: List(List(TbState)) := Nil
+  var types: List(TbType) := Nil
+  var bad: Option(Text) := None
+  var lines := match text_lines(text) {
+    Nil => Nil
+    Cons(magic, rest) => {
+      if magic != "tauto-syntax-tables 1" {
+        bad := Some(concat("unknown header ", magic))
+      }
+      rest
+    }
+  }
+  var going := true
+  while going {
+    match lines {
+      Nil => { going := false }
+      Cons(line, more) => {
+        lines := more
+        match tb_first_word(line) {
+          #(name, rest) => {
+            var c := TbCur { ws: tb_words(rest), bad: false }
+            if name == "terminals" {
+              let n := tb_num(&mut c)
+              var ts: List(Text) := Nil
+              var i := 0
+              while i < n {
+                ts := Cons(tb_word(&mut c), ts)
+                i := i + 1
+              }
+              terminals := List::reverse(ts)
+            } else if name == "non_terminals" {
+              let n := tb_num(&mut c)
+              var i := 0
+              while i < n {
+                tb_word(&mut c)
+                i := i + 1
+              }
+              non_terminals := n
+            } else if name == "nt_kinds" {
+              let count1 := tb_num(&mut c)
+              nt_kinds := tb_nums(&mut c, count1)
+            } else if name == "start" {
+              start := tb_num(&mut c)
+            } else if name == "productions" {
+              let n := tb_num(&mut c)
+              var ps: List(TbProd) := Nil
+              var i := 0
+              while i < n {
+                let lhs := tb_num(&mut c)
+                let attr := tb_num(&mut c)
+                let len := tb_num(&mut c)
+                var rhs: List(TbSym) := Nil
+                var j := 0
+                while j < len {
+                  rhs := Cons(tb_sym(&mut c), rhs)
+                  j := j + 1
+                }
+                ps := Cons(TbProd { lhs: lhs, attr: attr, rhs: List::reverse(rhs) }, ps)
+                i := i + 1
+              }
+              prods := List::reverse(ps)
+            } else if name == "symbol_attrs" {
+              let n := tb_num(&mut c)
+              var i := 0
+              while i < n {
+                let p := tb_num(&mut c)
+                let pos := tb_num(&mut c)
+                let attr := tb_num(&mut c)
+                if attr == 1 {
+                  clipped := Cons(#(p, pos), clipped)
+                }
+                i := i + 1
+              }
+            } else if name == "prod_types" {
+              let n := tb_num(&mut c)
+              var ts: List(Nat × Nat) := Nil
+              var i := 0
+              while i < n {
+                let ty := tb_plus_one(&mut c)
+                let ctor := tb_num(&mut c)
+                ts := Cons(#(ty, ctor), ts)
+                i := i + 1
+              }
+              prod_types := List::reverse(ts)
+            } else if name == "lookahead" {
+              let n := tb_num(&mut c)
+              var ls: List(TbLook) := Nil
+              var i := 0
+              while i < n {
+                let nt := tb_num(&mut c)
+                let prod0 := tb_plus_one(&mut c)
+                let k := tb_num(&mut c)
+                let m := tb_num(&mut c)
+                var ts: List(List(Nat)) := Nil
+                var j := 0
+                while j < m {
+                  let src := tb_num(&mut c)
+                  let term := tb_num(&mut c)
+                  let to := tb_num(&mut c)
+                  let prod := tb_plus_one(&mut c)
+                  ts := Cons([src, term, to, prod], ts)
+                  j := j + 1
+                }
+                ls := Cons(TbLook { nt: nt, prod0: prod0, k: k, transitions: tb_sort(List::reverse(ts)) }, ls)
+                i := i + 1
+              }
+              looks := ls
+            } else if name == "lr" {
+              let n := tb_num(&mut c)
+              var states: List(TbLr) := Nil
+              var i := 0
+              while i < n {
+                let count3 := tb_num(&mut c)
+                let actions := tb_sort(tb_tuples(&mut c, count3, 3))
+                let count4 := tb_num(&mut c)
+                let gotos := tb_sort(tb_tuples(&mut c, count4, 2))
+                states := Cons(TbLr { actions: actions, gotos: gotos }, states)
+                i := i + 1
+              }
+              lr := Some(List::reverse(states))
+            } else if name == "skip" {
+              let n := tb_num(&mut c)
+              var i := 0
+              while i < n {
+                let count2 := tb_num(&mut c)
+                skip := List::append(tb_nums(&mut c, count2), skip)
+                i := i + 1
+              }
+            } else if name == "classes" {
+              let count5 := tb_num(&mut c)
+              classes := tb_sort(tb_tuples(&mut c, count5, 3))
+            } else if name == "modes" {
+              let n := tb_num(&mut c)
+              var ms: List(TbMode) := Nil
+              var i := 0
+              while i < n {
+                tb_word(&mut c)
+                let count6 := tb_num(&mut c)
+                let transitions := tb_tuples(&mut c, count6, 3)
+                let states := tb_states(&mut c)
+                ms := Cons(TbMode { transitions: transitions, states: states }, ms)
+                i := i + 1
+              }
+              modes := List::reverse(ms)
+            } else if name == "lookahead_dfas" {
+              lookahead_dfas := tb_automata(&mut c)
+            } else if name == "dyn_states" {
+              let count7 := tb_num(&mut c)
+              dyn_states := tb_tuples(&mut c, count7, 3)
+            } else if name == "dynamic" {
+              dynamic := tb_dynamic(&mut c)
+            } else if name == "dynamic_dfas" {
+              dynamic_dfas := tb_automata(&mut c)
+            } else if name == "schema" {
+              types := tb_schema(&mut c)
+            } else {
+              c.ws := Nil
+            }
+            if c.bad {
+              bad := Some(concat("section ", name))
+            }
+          }
+        }
+      }
+    }
+  }
+  match bad {
+    Some(e) => Err(concat("bad syntax tables: ", e))
+    None => Ok(TbTables {
+      terminals: terminals,
+      non_terminals: non_terminals,
+      nt_kinds: Array::of_list(nt_kinds),
+      start: start,
+      prods: prods,
+      prod_types: Array::of_list(prod_types),
+      clipped: clipped,
+      looks: looks,
+      lr: lr,
+      skip: skip,
+      classes: classes,
+      modes: modes,
+      lookahead_dfas: lookahead_dfas,
+      dyn_states: dyn_states,
+      dynamic: dynamic,
+      dynamic_dfas: dynamic_dfas,
+      types: Array::of_list(types)
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The scanner's tables as five texts of numbers (`scan_texts`).
+
+pub fn tb_contains(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => x == y || tb_contains(rest, x)
+  }
+}
+
+pub fn tb_index_of(xs: List(Text), x: Text, at: Nat): Option(Nat) {
+  match xs {
+    Nil => None
+    Cons(y, rest) => if x == y { Some(at) } else { tb_index_of(rest, x, at + 1) }
+  }
+}
+
+pub fn tb_nth(xs: List(Nat), i: Nat): Nat {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => if i == 0 { x } else { tb_nth(rest, i - 1) }
+  }
+}
+
+pub fn tb_count_classes(classes: List(List(Nat))): Nat ! {div} {
+  var n := 0
+  var rest := classes
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(c, more) => {
+        rest := more
+        let k := tb_nth(c, 2) + 1
+        if k > n {
+          n := k
+        }
+      }
+    }
+  }
+  n
+}
+
+// The class's target, as its successor, 0 for none: the last transition of
+// the class decides, as a row filled in order does.
+pub fn tb_target(ts: List(List(Nat)), cls: Nat): Nat ! {div} {
+  var out := 0
+  var rest := ts
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(t, more) => {
+        rest := more
+        if tb_nth(t, 0) == cls {
+          out := tb_nth(t, 1) + 1
+        }
+      }
+    }
+  }
+  out
+}
+
+pub(open) struct TbScan { meta: List(Nat), classes: List(Nat), states: List(Nat), rows: List(Nat), dynamic: List(Nat) }
+
+pub fn tb_scan(t: TbTables, dropped: Option(Nat)): TbScan ! {div, overflow} {
+  let n_classes := tb_count_classes(t.classes)
+  let n_modes := List::length(t.modes)
+  let first_dynamic := n_modes + List::length(t.lookahead_dfas)
+  var automata: List(List(TbState)) := Nil
+  var meta: List(Nat) := Nil
+  var ms := t.modes
+  var going := true
+  while going {
+    match ms {
+      Nil => { going := false }
+      Cons(m, more) => {
+        ms := more
+        automata := Cons(m.states, automata)
+      }
+    }
+  }
+  automata := List::append(List::reverse(automata), List::append(t.lookahead_dfas, t.dynamic_dfas))
+  meta := List::reverse([n_classes, n_modes, List::length(automata)])
+  ms := t.modes
+  going := true
+  while going {
+    match ms {
+      Nil => { going := false }
+      Cons(m, more) => {
+        ms := more
+        meta := Cons(List::length(m.transitions), meta)
+        var ts := m.transitions
+        var more_ts := true
+        while more_ts {
+          match ts {
+            Nil => { more_ts := false }
+            Cons(x, rest) => {
+              ts := rest
+              let token := tb_nth(x, 0)
+              let kind := tb_nth(x, 1)
+              let to := if kind == 2 { 0 } else { tb_nth(x, 2) }
+              meta := Cons(to, Cons(token, Cons(kind, meta)))
+            }
+          }
+        }
+      }
+    }
+  }
+  var classes: List(Nat) := [List::length(t.classes)]
+  var cs := t.classes
+  going := true
+  while going {
+    match cs {
+      Nil => { going := false }
+      Cons(x, more) => {
+        cs := more
+        classes := Cons(tb_nth(x, 2), Cons(tb_nth(x, 1), Cons(tb_nth(x, 0), classes)))
+      }
+    }
+  }
+  var states: List(Nat) := Nil
+  var rows: List(Nat) := Nil
+  var at := 0
+  var dfas := automata
+  going := true
+  while going {
+    match dfas {
+      Nil => { going := false }
+      Cons(dfa, more) => {
+        dfas := more
+        states := Cons(List::length(dfa), states)
+        var ss := dfa
+        var more_ss := true
+        while more_ss {
+          match ss {
+            Nil => { more_ss := false }
+            Cons(s, rest) => {
+              ss := rest
+              var kept: List(List(Nat)) := Nil
+              var acs := s.accepts
+              var more_acs := true
+              while more_acs {
+                match acs {
+                  Nil => { more_acs := false }
+                  Cons(a, ra) => {
+                    acs := ra
+                    let keep := at >= n_modes || match dropped {
+                      Some(d) => tb_nth(a, 0) != d
+                      None => true
+                    }
+                    if keep {
+                      kept := Cons(a, kept)
+                    }
+                  }
+                }
+              }
+              kept := List::reverse(kept)
+              states := Cons(List::length(kept), states)
+              var ks := kept
+              var more_ks := true
+              while more_ks {
+                match ks {
+                  Nil => { more_ks := false }
+                  Cons(a, rk) => {
+                    ks := rk
+                    let la_kind := tb_nth(a, 2)
+                    let nested := if la_kind == 0 { 0 } else { n_modes + tb_nth(a, 3) }
+                    states := Cons(nested, Cons(la_kind, Cons(tb_nth(a, 0), states)))
+                  }
+                }
+              }
+              var i := 0
+              while i < n_classes {
+                let v := tb_target(s.transitions, i)
+                var j := i + 1
+                while j < n_classes && tb_target(s.transitions, j) == v {
+                  j := j + 1
+                }
+                rows := Cons(v, Cons(j - i, rows))
+                i := j
+              }
+            }
+          }
+        }
+        at := at + 1
+      }
+    }
+  }
+  var dynamic: List(Nat) := Nil
+  match t.dyn_states {
+    Nil => #()
+    Cons(^first, ^others) => {
+      dynamic := [List::length(t.dyn_states)]
+      var ds := t.dyn_states
+      var more_ds := true
+      while more_ds {
+        match ds {
+          Nil => { more_ds := false }
+          Cons(s, rest) => {
+            ds := rest
+            if tb_nth(s, 0) == 0 {
+              dynamic := Cons(tb_nth(s, 2), Cons(tb_nth(s, 1), Cons(0, dynamic)))
+            } else {
+              dynamic := Cons(0, Cons(0, Cons(1, dynamic)))
+            }
+          }
+        }
+      }
+      dynamic := Cons(List::length(tb_known_dynamic(t.dynamic, List::length(t.terminals))), dynamic)
+      var es := tb_known_dynamic(t.dynamic, List::length(t.terminals))
+      var more_es := true
+      while more_es {
+        match es {
+          Nil => { more_es := false }
+          Cons(e, rest) => {
+            es := rest
+            dynamic := List::append(List::reverse(e.head), dynamic)
+            let capture := if e.capture == 0 { 0 } else { first_dynamic + e.capture }
+            dynamic := Cons(capture, Cons(first_dynamic + e.suffix, Cons(first_dynamic + e.prefix, dynamic)))
+          }
+        }
+      }
+    }
+  }
+  TbScan {
+    meta: List::reverse(meta),
+    classes: List::reverse(classes),
+    states: List::reverse(states),
+    rows: List::reverse(rows),
+    dynamic: List::reverse(dynamic)
+  }
+}
+
+// The entries whose terminal the tables have.
+pub fn tb_known_dynamic(ds: List(TbDyn), n: Nat): List(TbDyn) {
+  match ds {
+    Nil => Nil
+    Cons(d, rest) => if d.terminal < n { Cons(d, tb_known_dynamic(rest, n)) } else { tb_known_dynamic(rest, n) }
+  }
+}
+
+pub fn tb_number_text(xs: List(Nat)): Text ! {div} {
+  var parts: List(Text) := Nil
+  var rest := xs
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(x, more) => {
+        rest := more
+        parts := Cons(Text::of_nat(x), parts)
+      }
+    }
+  }
+  text_join(List::reverse(parts), " ")
+}
+
+// ---------------------------------------------------------------------------
+// The scanner's tables as five texts of numbers (`scan_texts`), above, and the parser as
+// the text `totes/synrun` reads (`runtime_text`), below: written the way the crate
+// writes it, with the constructors of the values a parse makes numbered as `tb_node_id`
+// numbers them.
+
+// The numbers the values every parse makes have (`RuntimeIds`): the span, the context of
+// a token, the token, the diagnostic and its argument. The nodes of the schema follow.
+pub fn tb_ids(): List(Nat) { [0, 1, 2, 3, 4] }
+
+pub(open) struct TbOut { parts: List(Text), error: Option(Text) }
+
+pub fn tb_num_out(o: &mut TbOut, n: Nat): Unit { o.parts := Cons(concat(" ", Text::of_nat(n)), o.parts) }
+
+pub fn tb_yn(o: &mut TbOut, b: Bool): Unit { tb_num_out(&mut o, if b { 1 } else { 0 }) }
+
+pub fn tb_text_out(o: &mut TbOut, t: Text): Unit {
+  o.parts := Cons(Text::concat_all([" t", Text::of_nat(Text::len(t)), " ", t]), o.parts)
+}
+
+pub fn tb_fail(o: &mut TbOut, e: Text): Unit {
+  match o.error {
+    None => { o.error := Some(e) }
+    Some(^x) => #()
+  }
+}
+
+pub fn tb_type_at(t: TbTables, ty: Nat): Option(TbType) { Array::get(t.types, ty) }
+
+pub fn tb_ctor_def(cs: List(TbCtorDef), i: Nat): Option(TbCtorDef) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if i == 0 { Some(c) } else { tb_ctor_def(rest, i - 1) }
+  }
+}
+
+// The schema's type's constructor: the type's name, the constructor's, and whether its
+// first field is the span (`runtime_constructor`).
+pub fn tb_runtime_ctor(t: TbTables, ty: Nat, ctor: Nat): Result(Text × Text × Bool, Text) {
+  match tb_type_at(t, ty) {
+    None => Err("a runtime syntax parser whose tables name no type")
+    Some(found) => match found {
+      TbStruct(name, ^fields) => Ok(#(name, name, true))
+      TbEnum(name, ctors) => match tb_ctor_def(ctors, ctor) {
+        None => Err("a runtime syntax parser whose tables name no constructor")
+        Some(c) => Ok(#(name, c.name, c.record))
+      }
+    }
+  }
+}
+
+// How many constructors the types before `ty` have: a struct has one, an enum each of its.
+pub fn tb_ctors_before(t: TbTables, ty: Nat): Nat ! {div} {
+  var n := 0
+  var i := 0
+  while i < ty {
+    match tb_type_at(t, i) {
+      None => #()
+      Some(found) => match found {
+        TbStruct(^name, ^fields) => { n := n + 1 }
+        TbEnum(^name, ctors) => { n := n + List::length(ctors) }
+      }
+    }
+    i := i + 1
+  }
+  n
+}
+
+// The number of the constructor `ctor` of the schema's type `ty`: after the five fixed
+// ones, the schema's in order.
+pub fn tb_node_id(t: TbTables, ty: Nat, ctor: Nat): Nat ! {div} {
+  let is_struct := match tb_type_at(t, ty) {
+    Some(found) => match found {
+      TbStruct(^name, ^fields) => true
+      TbEnum(^name, ^ctors) => false
+    }
+    None => true
+  }
+  5 + tb_ctors_before(t, ty) + (if is_struct { 0 } else { ctor })
+}
+
+// What a node of the schema is made into: the name of its constructor as `make` takes it
+// (`syntax::Type::Constructor`, `syntax::Type` for a struct), and for each of its fields
+// the label it is written under. A struct's and a record's first field is the span.
+pub(open) struct TbNode { name: Text, labels: List(Option(Text)) }
+
+pub fn tb_labeled(names: List(Text)): List(Option(Text)) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(Some(n), tb_labeled(rest))
+  }
+}
+
+pub fn tb_nodes_of(syntax: Text, ty: TbType): List(TbNode) {
+  match ty {
+    TbStruct(name, fields) => [
+      TbNode {
+        name: Text::concat_all([syntax, "::", name]),
+        labels: Cons(Some("span"), tb_labeled(fields))
+      }
+    ]
+    TbEnum(name, ctors) => tb_ctor_nodes(syntax, name, ctors)
+  }
+}
+
+pub fn tb_ctor_nodes(syntax: Text, name: Text, ctors: List(TbCtorDef)): List(TbNode) {
+  match ctors {
+    Nil => Nil
+    Cons(c, rest) => Cons(
+      TbNode {
+        name: Text::concat_all([syntax, "::", name, "::", c.name]),
+        labels: if c.record { Cons(Some("span"), tb_labeled(c.fields)) } else { Nil }
+      },
+      tb_ctor_nodes(syntax, name, rest)
+    )
+  }
+}
+
+// Every node of the schema, in the order of `tb_node_id` (from the first one).
+pub fn tb_nodes(syntax: Text, t: TbTables): List(TbNode) ! {div} {
+  var out: List(TbNode) := Nil
+  var i := 0
+  let n := Array::len(t.types)
+  while i < n {
+    match tb_type_at(t, i) {
+      None => #()
+      Some(found) => { out := List::append(List::reverse(tb_nodes_of(syntax, found)), out) }
+    }
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+// Numbers the node of the type `ty` and constructor `ctor`, and writes how it is made: its
+// number, whether it is spanned, and the values it keeps.
+pub fn tb_node_of(t: TbTables, o: &mut TbOut, ty: Nat, ctor: Nat, keep: List(Bool)): Unit ! {div} {
+  let spanned := match tb_runtime_ctor(t, ty, ctor) {
+    Err(e) => {
+      tb_fail(&mut o, e)
+      false
+    }
+    Ok(r) => match r {
+      #(^a, ^b, s) => s
+    }
+  }
+  tb_num_out(&mut o, tb_node_id(t, ty, ctor))
+  tb_yn(&mut o, spanned)
+  tb_num_out(&mut o, List::length(keep))
+  var rest := keep
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(k, more) => {
+        rest := more
+        tb_yn(&mut o, k)
+      }
+    }
+  }
+}
+
+// Which of the symbols from `skip` on are fields (`keep`).
+pub fn tb_keep(clipped: List(Nat × Nat), p: Nat, width: Nat, skip: Nat): List(Bool) ! {div} {
+  var out: List(Bool) := Nil
+  var i := skip
+  while i < width {
+    out := Cons(not(tb_clipped(clipped, p, i)), out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+pub fn tb_clipped(cs: List(Nat × Nat), p: Nat, i: Nat): Bool {
+  match cs {
+    Nil => false
+    Cons(c, rest) => match c {
+      #(a, b) => (a == p && b == i) || tb_clipped(rest, p, i)
+    }
+  }
+}
+
+// What a production makes of its symbols (`shape`), written.
+pub fn tb_shape(t: TbTables, o: &mut TbOut, p: Nat, prod: TbProd): Unit ! {div, overflow} {
+  let types := match Array::get(t.prod_types, p) {
+    Some(x) => x
+    None => #(0, 0)
+  }
+  let ty := match types {
+    #(a, ^b) => a
+  }
+  let ctor := match types {
+    #(^a, b) => b
+  }
+  let lr := match t.lr {
+    Some(^s) => true
+    None => false
+  }
+  let width := List::length(prod.rhs)
+  let kind := tb_at(t.nt_kinds, prod.lhs)
+  if kind == 2 {
+    if prod.attr == 1 {
+      tb_num_out(&mut o, 4)
+    } else if prod.attr == 2 {
+      tb_num_out(&mut o, 5)
+      tb_element(t, &mut o, p, width, if lr { 1 } else { 0 }, ty, ctor)
+    } else {
+      tb_bad(&mut o, "a repetition production without its attribute")
+    }
+  } else if kind == 3 {
+    if prod.attr == 3 {
+      tb_num_out(&mut o, 2)
+      tb_element(t, &mut o, p, width, 0, ty, ctor)
+    } else if prod.attr == 4 {
+      tb_num_out(&mut o, 3)
+    } else {
+      tb_bad(&mut o, "an option production without its attribute")
+    }
+  } else if (kind == 1 && ty == 0) || (kind == 4 && lr && ty == 0 && prod.lhs == t.start) {
+    tb_num_out(&mut o, 1)
+  } else if ty == 0 {
+    tb_bad(&mut o, "a production builds no type")
+  } else {
+    tb_num_out(&mut o, 0)
+    tb_node_of(t, &mut o, ty - 1, ctor, tb_keep(t.clipped, p, width, 0))
+  }
+}
+
+pub fn tb_at(a: Array(Nat), i: Nat): Nat {
+  match Array::get(a, i) {
+    Some(x) => x
+    None => 0
+  }
+}
+
+pub fn tb_bad(o: &mut TbOut, m: Text): Unit {
+  tb_num_out(&mut o, 6)
+  tb_text_out(&mut o, m)
+}
+
+pub fn tb_element(t: TbTables, o: &mut TbOut, p: Nat, width: Nat, skip: Nat, ty: Nat, ctor: Nat): Unit ! {div, overflow} {
+  if ty == 0 {
+    tb_num_out(&mut o, 0)
+  } else {
+    tb_num_out(&mut o, 1)
+    tb_node_of(t, &mut o, ty - 1, ctor, tb_keep(t.clipped, p, width, skip))
+  }
+}
+
+pub fn tb_find_look(ls: List(TbLook), nt: Nat): Option(TbLook) {
+  match ls {
+    Nil => None
+    Cons(l, rest) => if l.nt == nt { Some(l) } else { tb_find_look(rest, nt) }
+  }
+}
+
+// A hole is no token at run time: the scanner does not take one.
+pub fn tb_is_skipped(t: TbTables, terminal: Nat): Bool {
+  (terminal >= 1 && terminal <= 4) || tb_contains(t.skip, terminal)
+}
+
+pub fn tb_out_nums(o: &mut TbOut, xs: List(Nat)): Unit ! {div} {
+  var rest := xs
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(n, more) => {
+        rest := more
+        tb_num_out(&mut o, n)
+      }
+    }
+  }
+}
+
+// The parser named `name` as `totes/synrun` reads it (`Tables::runtime_text`).
+pub fn tb_parser_text(name: Text, t: TbTables): Result(Text, Text) ! {div, overflow} {
+  tb_parser_text_of(name, t, true)
+}
+
+// The same, whose scanner takes a hole (`TautoExpr`) when `drop_holes` is false: the host's scanner does, and
+// the parser of `totes/synrun` does not.
+pub fn tb_parser_text_of(name: Text, t: TbTables, drop_holes: Bool): Result(Text, Text) ! {div, overflow} {
+  var o := TbOut { parts: Nil, error: None }
+  tb_text_out(&mut o, name)
+  let scan := tb_scan(t, if drop_holes { tb_index_of(t.terminals, "TautoExpr", 0) } else { None })
+  tb_text_out(&mut o, tb_number_text(scan.meta))
+  tb_text_out(&mut o, tb_number_text(scan.classes))
+  tb_text_out(&mut o, tb_number_text(scan.states))
+  tb_text_out(&mut o, tb_number_text(scan.rows))
+  tb_text_out(&mut o, tb_number_text(scan.dynamic))
+  let nt := List::length(t.terminals)
+  tb_num_out(&mut o, nt)
+  var ts := t.terminals
+  var going := true
+  while going {
+    match ts {
+      Nil => { going := false }
+      Cons(terminal, more) => {
+        ts := more
+        tb_text_out(&mut o, terminal)
+      }
+    }
+  }
+  tb_num_out(&mut o, nt)
+  var i := 0
+  while i < nt {
+    tb_yn(&mut o, tb_is_skipped(t, i))
+    i := i + 1
+  }
+  tb_num_out(&mut o, t.start)
+  match t.lr {
+    Some(ss) => {
+      tb_yn(&mut o, true)
+      tb_num_out(&mut o, List::length(ss))
+      var rest := ss
+      var more_ss := true
+      while more_ss {
+        match rest {
+          Nil => { more_ss := false }
+          Cons(s, more) => {
+            rest := more
+            tb_num_out(&mut o, List::length(s.actions))
+            var acs := s.actions
+            var more_acs := true
+            while more_acs {
+              match acs {
+                Nil => { more_acs := false }
+                Cons(a, ra) => {
+                  acs := ra
+                  tb_out_nums(&mut o, a)
+                }
+              }
+            }
+            tb_num_out(&mut o, List::length(s.gotos))
+            var gs := s.gotos
+            var more_gs := true
+            while more_gs {
+              match gs {
+                Nil => { more_gs := false }
+                Cons(g, rg) => {
+                  gs := rg
+                  tb_out_nums(&mut o, g)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    None => {
+      tb_yn(&mut o, false)
+      tb_num_out(&mut o, t.non_terminals)
+      var n := 0
+      while n < t.non_terminals {
+        match tb_find_look(t.looks, n) {
+          None => { tb_yn(&mut o, false) }
+          Some(l) => {
+            tb_yn(&mut o, true)
+            tb_num_out(&mut o, l.prod0)
+            tb_num_out(&mut o, l.k)
+            tb_num_out(&mut o, List::length(l.transitions))
+            var rest := l.transitions
+            var more_t := true
+            while more_t {
+              match rest {
+                Nil => { more_t := false }
+                Cons(tr, more) => {
+                  rest := more
+                  tb_out_nums(&mut o, tr)
+                }
+              }
+            }
+          }
+        }
+        n := n + 1
+      }
+    }
+  }
+  tb_num_out(&mut o, List::length(t.prods))
+  var ps := t.prods
+  var p := 0
+  going := true
+  while going {
+    match ps {
+      Nil => { going := false }
+      Cons(prod, more) => {
+        ps := more
+        tb_num_out(&mut o, prod.lhs)
+        tb_num_out(&mut o, List::length(prod.rhs))
+        var rs := prod.rhs
+        var more_rs := true
+        while more_rs {
+          match rs {
+            Nil => { more_rs := false }
+            Cons(s, rest) => {
+              rs := rest
+              match s {
+                TbNt(n) => {
+                  tb_yn(&mut o, false)
+                  tb_num_out(&mut o, n)
+                }
+                TbTerm(n) => {
+                  tb_yn(&mut o, true)
+                  tb_num_out(&mut o, n)
+                }
+              }
+            }
+          }
+        }
+        tb_shape(t, &mut o, p, prod)
+        p := p + 1
+      }
+    }
+  }
+  tb_out_nums(&mut o, tb_ids())
+  match o.error {
+    Some(e) => Err(e)
+    None => Ok(Text::concat_all(List::reverse(o.parts)))
+  }
+}

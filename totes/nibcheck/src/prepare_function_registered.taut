@@ -1,9 +1,9 @@
 import "program_function_registered.taut"
 import "prepare_function_table_ordered.taut"
 import "run_data_names_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_sound.taut"
@@ -17,19 +17,23 @@ import "rules_registered_signatures.taut"
 import "signature_frame.taut"
 import "signature_table_frame.taut"
 import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../surface/src/extern_blocks.taut"
 
 pub fn fnt_synthesized_get(
   c: Checker,
   source: SurfaceFn,
   rest: List(SurfaceFn),
   found: Option(Scheme)
-): List(Pair(SurfaceFn, Scheme)) {
-  ⊢ List(Pair(SurfaceFn, Scheme)) from match found {
+): List(SurfaceFn × Scheme) {
+  match found {
     None => ck_synthesized_schemes(rest, c)
-    Some(scheme) => Cons(Pair {fst: source, snd: scheme}, ck_synthesized_schemes(rest, c))
+    Some(scheme) => Cons(#(source, scheme), ck_synthesized_schemes(rest, c))
   }
 }
 pub theorem fnt_synthesized_unf(
@@ -48,7 +52,7 @@ pub theorem fnt_synthesized_get_registered(
   lookup: fnt_lookup(c, signature_name(source)) = found,
   tail: RegisteredSignatures(fnt_table(c), ck_synthesized_schemes(rest, c))
 ): RegisteredSignatures(fnt_table(c), fnt_synthesized_get(c, source, rest, found)) {
-  ⊢ RegisteredSignatures(fnt_table(c), fnt_synthesized_get(c, source, rest, found)) from match found {
+  match found {
     None => tail
     Some(scheme) => RegisteredSignaturesCons(
       source,
@@ -63,10 +67,10 @@ pub theorem ck_synthesized_schemes_registered(
   sources: List(SurfaceFn),
   c: Checker
 ): RegisteredSignatures(fnt_table(c), ck_synthesized_schemes(sources, c)) {
-  ⊢ RegisteredSignatures(fnt_table(c), ck_synthesized_schemes(sources, c)) from match sources {
+  match sources {
     Nil => RegisteredSignaturesNil
     Cons(source, rest) => Eq::subst(
-      (schemes: List(Pair(SurfaceFn, Scheme))) => RegisteredSignatures(fnt_table(c), schemes),
+      (schemes: List(SurfaceFn × Scheme)) => RegisteredSignatures(fnt_table(c), schemes),
       Eq::sym(fnt_synthesized_unf(c, source, rest)),
       fnt_synthesized_get_registered(
         c,
@@ -83,13 +87,13 @@ pub theorem fnt_registered_append<table: Ordmap(
   Text,
   Scheme
 ), first: List(
-  Pair(SurfaceFn, Scheme)
+  (SurfaceFn × Scheme)
 )>(
   prefix: RegisteredSignatures(table, first),
-  rest: List(Pair(SurfaceFn, Scheme)),
+  rest: List(SurfaceFn × Scheme),
   tail: RegisteredSignatures(table, rest)
 ): RegisteredSignatures(table, List::append(first, rest)) {
-  ⊢ RegisteredSignatures(table, List::append(first, rest)) from match prefix {
+  match prefix {
     RegisteredSignaturesNil => tail
     RegisteredSignaturesCons(source, scheme, remaining, found, checked) => RegisteredSignaturesCons(
       source,
@@ -100,41 +104,177 @@ pub theorem fnt_registered_append<table: Ordmap(
     )
   }
 }
-pub theorem fnt_append_synthesized_registered(
-  sources: List(SurfaceFn),
-  m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
-  registered: RegisteredSignatures(fnt_table(ck_st(m)), ck_val(m))
-): RegisteredSignatures(
-  fnt_table(ck_st(signature_append_synthesized(sources, m))),
-  ck_val(signature_append_synthesized(sources, m))
-) {
-  ⊢ RegisteredSignatures(
-    fnt_table(ck_st(signature_append_synthesized(sources, m))),
-    ck_val(signature_append_synthesized(sources, m))
-  ) from match m {
-    mut1(schemes, next) => fnt_registered_append(
-      registered,
-      ck_synthesized_schemes(sources, next),
-      ck_synthesized_schemes_registered(sources, next)
+pub fn ck_extern_replaceable_get(
+  c: Checker,
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  found: Option(Scheme)
+): List(SurfaceFn × Scheme) {
+  match found {
+    None => ck_extern_replaceable_schemes(rest, c)
+    Some(scheme) => Cons(#(f, scheme), ck_extern_replaceable_schemes(rest, c))
+  }
+}
+
+pub theorem ck_extern_replaceable_unf(
+  c: Checker,
+  f: SurfaceFn,
+  rest: List(SurfaceFn)
+): ck_extern_replaceable_schemes(
+  Cons(f, rest),
+  c
+) = ck_extern_replaceable_get(
+  c,
+  f,
+  rest,
+  Ordmap::get(fnt_table(c), decl_fn_name(f), Ordmap::compare_text)
+) { Refl }
+
+pub theorem ck_extern_replaceable_get_registered(
+  c: Checker,
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  found: Option(Scheme),
+  lookup: Ordmap::get(fnt_table(c), decl_fn_name(f), Ordmap::compare_text) = found,
+  tail: RegisteredSignatures(fnt_table(c), ck_extern_replaceable_schemes(rest, c))
+): RegisteredSignatures(fnt_table(c), ck_extern_replaceable_get(c, f, rest, found)) {
+  match found {
+    None => tail
+    Some(scheme) => RegisteredSignaturesCons(
+      f,
+      scheme,
+      ck_extern_replaceable_schemes(rest, c),
+      lookup,
+      tail
     )
   }
 }
+
+pub theorem ck_extern_replaceable_schemes_registered(
+  fns: List(SurfaceFn),
+  c: Checker
+): RegisteredSignatures(fnt_table(c), ck_extern_replaceable_schemes(fns, c)) {
+  match fns {
+    Nil => RegisteredSignaturesNil
+    Cons(f, rest) => Eq::subst(
+      (schemes: List(SurfaceFn × Scheme)) => RegisteredSignatures(fnt_table(c), schemes),
+      Eq::sym(ck_extern_replaceable_unf(c, f, rest)),
+      ck_extern_replaceable_get_registered(
+        c,
+        f,
+        rest,
+        Ordmap::get(fnt_table(c), decl_fn_name(f), Ordmap::compare_text),
+        Refl,
+        ck_extern_replaceable_schemes_registered(rest, c)
+      )
+    )
+  }
+}
+
+pub theorem ck_program_decl_check_fns_StExtern_unf(
+  c: Checker,
+  fns: List(SurfaceFn),
+  instances: List(SurfaceConstraint),
+  types: List(SurfaceData),
+  structs: List(SurfaceData),
+  enums: List(SurfaceData),
+  a: Nat,
+  b: Nat
+): ck_program_decl_check_fns(
+  c,
+  StExtern(fns, instances, types, structs, enums, a, b)
+) = if extern_is_replaceable(fns, instances, types, structs, enums) {
+  ck_extern_replaceable_schemes(fns, c)
+} else {
+  Nil
+} { Refl }
+
+pub theorem ck_program_decl_check_fns_registered(
+  c: Checker,
+  s: SurfaceStmt
+): RegisteredSignatures(fnt_table(c), ck_program_decl_check_fns(c, s)) {
+  match s {
+    StExtern(fns, instances, types, structs, enums, a, b) => Eq::subst(
+      (schemes: List(SurfaceFn × Scheme)) => RegisteredSignatures(fnt_table(c), schemes),
+      Eq::sym(
+        ck_program_decl_check_fns_StExtern_unf(c, fns, instances, types, structs, enums, a, b)
+      ),
+      Bool::rec(
+        (b: Bool) => RegisteredSignatures(
+          fnt_table(c),
+          if b {
+            ck_extern_replaceable_schemes(fns, c)
+          } else {
+            Nil
+          }
+        ),
+        RegisteredSignaturesNil,
+        ck_extern_replaceable_schemes_registered(fns, c),
+        extern_is_replaceable(fns, instances, types, structs, enums)
+      )
+    )
+    _ => RegisteredSignaturesNil
+  }
+}
+
+pub theorem ck_program_replaceable_fns_registered(
+  program: List(SurfaceStmt),
+  c: Checker
+): RegisteredSignatures(fnt_table(c), ck_program_replaceable_fns(program, c)) {
+  match program {
+    Nil => RegisteredSignaturesNil
+    Cons(s, rest) => fnt_registered_append(
+      ck_program_decl_check_fns_registered(c, s),
+      ck_program_replaceable_fns(rest, c),
+      ck_program_replaceable_fns_registered(rest, c)
+    )
+  }
+}
+
+pub theorem fnt_append_synthesized_registered(
+  program: List(SurfaceStmt),
+  sources: List(SurfaceFn),
+  m: Mut1(List(SurfaceFn × Scheme), Checker),
+  registered: RegisteredSignatures(fnt_table(ck_st(m)), ck_val(m))
+): RegisteredSignatures(
+  fnt_table(ck_st(signature_append_synthesized(program, sources, m))),
+  ck_val(signature_append_synthesized(program, sources, m))
+) {
+  ⊢ RegisteredSignatures(
+    fnt_table(ck_st(signature_append_synthesized(program, sources, m))),
+    ck_val(signature_append_synthesized(program, sources, m))
+  ) from match m {
+    mut1(schemes, next) => fnt_registered_append(
+      registered,
+      List::append(
+        ck_program_replaceable_fns(program, next),
+        ck_synthesized_schemes(sources, next)
+      ),
+      fnt_registered_append(
+        ck_program_replaceable_fns_registered(program, next),
+        ck_synthesized_schemes(sources, next),
+        ck_synthesized_schemes_registered(sources, next)
+      )
+    )
+  }
+}
+
 pub theorem fnt_prepared_bind<A: Type>(
   c: Checker,
   m: Mut1(A, Checker),
-  k: (A, Checker) -> Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  k: (A, Checker) -> Mut1(List(SurfaceFn × Scheme), Checker),
   ordered: CkFnsOrdered(c),
   step: CkFnsStep(c, m),
   after: ∀ value: A. ∀ next: Checker. ∀ next_ordered: CkFnsOrdered(
     next
   ). RegisteredSignatures(fnt_table(ck_st(k(value, next))), ck_val(k(value, next)))
 ): RegisteredSignatures(
-  fnt_table(ck_st(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))),
-  ck_val(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))
+  fnt_table(ck_st(frame_bind(<A: A, B: List(SurfaceFn × Scheme)>, k, m))),
+  ck_val(frame_bind(<A: A, B: List(SurfaceFn × Scheme)>, k, m))
 ) {
   ⊢ RegisteredSignatures(
-    fnt_table(ck_st(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))),
-    ck_val(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))
+    fnt_table(ck_st(frame_bind(<A: A, B: List(SurfaceFn × Scheme)>, k, m))),
+    ck_val(frame_bind(<A: A, B: List(SurfaceFn × Scheme)>, k, m))
   ) from match m {
     mut1(value, next) => after(value, next, step(ordered))
   }
@@ -152,16 +292,18 @@ pub theorem fnt_after_prelude_registered(
   ck_val(signature_after_prelude(c, prelude, program, own, synthesized))
 ) {
   fnt_prepared_bind(
-    Unit,
+    <A: Unit>,
     c,
     ck_prelude_fns(prelude, c, own),
     (ignored: Unit, next: Checker) => signature_append_synthesized(
+      program,
       synthesized,
       ck_program_decls(program, next)
     ),
     ordered,
     ck_prelude_fns_ordered(prelude, c, own),
     ignored => next => next_ordered => fnt_append_synthesized_registered(
+      program,
       synthesized,
       ck_program_decls(program, next),
       ck_program_decls_registered(program, next, Nil, next_ordered, fresh)
@@ -180,9 +322,9 @@ pub theorem fnt_after_fields_registered(
   ck_val(registration_fns_after_fields(c, prelude, program, own))
 ) {
   fnt_prepared_bind(
-    List(SurfaceFn),
+    <A: List(SurfaceFn)>,
     c,
-    ck_declare_classes(c, program),
+    ck_declare_all_classes(c, prelude, program),
     (synthesized: List(SurfaceFn), next: Checker) => signature_after_prelude(
       next,
       prelude,
@@ -191,7 +333,7 @@ pub theorem fnt_after_fields_registered(
       synthesized
     ),
     ordered,
-    ck_declare_classes_fns_ordered(c, program),
+    ck_declare_all_classes_fns_ordered(c, prelude, program),
     synthesized => next => next_ordered => fnt_after_prelude_registered(
       next,
       prelude,
@@ -215,7 +357,7 @@ pub theorem fnt_after_names_registered(
   ck_val(registration_fns_after_names(c, prelude, program, own))
 ) {
   fnt_prepared_bind(
-    Unit,
+    <A: Unit>,
     c,
     ck_recheck_datas(types_data_decls(program), c),
     (ignored: Unit, next: Checker) => registration_fns_after_fields(next, prelude, program, own),
@@ -243,7 +385,7 @@ pub theorem fnt_after_data_names_registered(
   ck_val(registration_fns_after_data_names(c, prelude, program, own))
 ) {
   fnt_prepared_bind(
-    Unit,
+    <A: Unit>,
     c,
     ck_check_fn_names(c, types_function_decls(program)),
     (ignored: Unit, next: Checker) => registration_fns_after_names(next, prelude, program, own),
@@ -271,7 +413,7 @@ pub theorem fnt_fns_registered(
   ck_val(registration_fns(c, prelude, program, own))
 ) {
   fnt_prepared_bind(
-    Unit,
+    <A: Unit>,
     c,
     ck_check_data_names(c, types_data_decls(program)),
     (ignored: Unit, next: Checker) => registration_fns_after_data_names(
@@ -304,7 +446,7 @@ pub theorem ck_prepare_fns_registered(
   ck_val(ck_prepare_fns(c, prelude, program, own))
 ) {
   Eq::subst(
-    (result: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => RegisteredSignatures(
+    (result: Mut1(List(SurfaceFn × Scheme), Checker)) => RegisteredSignatures(
       fnt_table(ck_st(result)),
       ck_val(result)
     ),

@@ -1,0 +1,48 @@
+description = "Server-sent events decoded from pieces cut anywhere, a CRLF between two of them among the cuts, give the events of the whole stream."
+
+@ cases.sse-runs
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
+imports = [path`../std/sse.taut`, path`../std/bytes.taut`, path`../std/base.taut`]
+source = ```tauto
+let whole := Bytes::of_text("event: up\r\ndata: 1\r\ndata:2\r\nid: 7\r\n\r\n: note\ndata: three\n\n")
+let cut := Cons(
+  Bytes::of_text("event: up\r"),
+  Cons(Bytes::of_text("\ndata: 1\r\nda"), Cons(Bytes::of_text("ta:2\r\nid: 7\r\n\r"), Cons(Bytes::of_text("\n: note\ndata: three\n\n"), Nil)))
+)
+let shown := (es: List(Event)) => List::map(
+  (e: Event) => #(Text::of_bytes(Event::name(e)), Text::of_bytes(Event::data(e)), Text::of_bytes(Event::id(e))),
+  es
+)
+show(&shown(Sse::events(Sse::feed(Sse::new(), whole))))
+show(&shown(Sse::events(Sse::feed_all(Sse::new(), cut))))
+let first := Sse::feed(Sse::new(), Bytes::of_text("data: a\n\ndata: b"))
+show(&shown(Sse::events(first)))
+show(&shown(Sse::events(Sse::feed(Sse::rest(first), Bytes::of_text("\n\n")))))
+```
+stdout = ```
+[#(Some("up"), #(Some("1\n2"), Some("7"))), #(Some(""), #(Some("three"), Some("7")))]
+[#(Some("up"), #(Some("1\n2"), Some("7"))), #(Some(""), #(Some("three"), Some("7")))]
+[#(Some(""), #(Some("a"), Some("")))]
+[#(Some(""), #(Some("b"), Some("")))]
+```
+
+@ cases.a-closed-body-is-not-read
+description = "A response body is owned: once `net_close` takes it, nothing reads it again."
+source = ```tauto
+fn twice(b: ResponseBody): Unit ! {net_read, net_close} {
+  perform net_close(b)
+  match perform net_read(b, 16, None) {
+    Piece { body, got } => perform net_close(body)
+  }
+}
+```
+lin = "error: b is used after move"
+
+@ cases.a-body-is-not-made-outside
+description = "A program cannot make a body of a number: outside the prelude the type shows only its name."
+source = ```nib
+import std::builtin::os { ResponseBody }
+
+let b := ResponseBody { id: 3 }
+```
+types = "error: `ResponseBody` is a constructor of `ResponseBody`, which the prelude declares without `pub(open)`: outside that file the type is abstract; use the functions it makes public"

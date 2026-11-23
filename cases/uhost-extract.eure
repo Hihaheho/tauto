@@ -1,0 +1,17 @@
+// The kernel's `UHost` (`std/UHost.taut`) runs as `uhost`: each function that
+// takes a proof is one machine operation, and the proofs are not run.
+
+@ cases.kernel-uhost-runs-as-uhost
+imports = [path`../std/uhost.taut`, path`../std/nat.taut`]
+source = ```tauto
+fn twice_zero(): UHost {
+  UHost::add_within_proved(UHost::zero(), UHost::zero(), UHost::zero(), Refl)
+}
+fn run(): Nat {
+  UHost::val(twice_zero())
+}
+show(&run())
+show(&UHost::lt(UHost::zero(), twice_zero()))
+show(&UHost::eq(UHost::zero(), twice_zero()))
+```
+stdout = "0\nfalse\ntrue\n"

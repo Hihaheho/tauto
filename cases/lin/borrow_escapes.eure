@@ -1,0 +1,404 @@
+// Borrows that must not leave their scope: the value of a block or a match
+// arm cannot borrow a binding of that block or arm, a value put into a `&mut`
+// argument freezes what it holds as a borrow does, and a value that holds a
+// borrow is no more an effect argument than the borrow is.
+
+@ cases.block-tail-holder-of-inner-local
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn size(f: &F): i64 { f.n }
+fn take(f: F): i64 { f.n }
+effect keep(h: Holder): ()
+effect keepo(h: Option(Holder)): ()
+fn wrap(x: &F): Holder { Holder { r: x } }
+
+fn go(): i64 { let h := { let b := F { n: 2 }
+  let k := Holder { r: &b }
+  k }
+  size(&h.r) }
+show(&go())
+```
+lin = "error: a borrow of b cannot be returned"
+
+@ cases.block-tail-borrow-of-inner-local
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn take(f: F): i64 { f.n }
+
+let r := { let x := F { n: 1 }
+  let y := &x
+  show(&size(y))
+  y }
+show(&size(r))
+```
+lin = "error: a borrow of x cannot be returned"
+
+@ cases.match-arm-borrow-of-arm-name
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn size(f: &F): i64 { f.n }
+fn take(f: F): i64 { f.n }
+let o := Some(F { n: 1 })
+let r := match o { Some(v) => &v
+  None => &F { n: 0 } }
+show(&size(&r))
+```
+lin = "error: a borrow of v cannot be returned"
+
+@ cases.block-tail-option-holder-of-inner-local
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn size(f: &F): i64 { f.n }
+fn take(f: F): i64 { f.n }
+effect keep(h: Holder): ()
+effect keepo(h: Option(Holder)): ()
+fn wrap(x: &F): Holder { Holder { r: x } }
+
+fn go(): i64 { let h := { let b := F { n: 2 }
+  Some(Holder { r: &b }) }
+  match h { Some(x) => size(&x.r)
+    None => 0 } }
+show(&go())
+```
+lin = "error: a borrow of b cannot be returned"
+
+@ cases.block-tail-call-borrowing-inner-local
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn size(f: &F): i64 { f.n }
+fn take(f: F): i64 { f.n }
+
+fn wrap(x: &F): Holder { Holder { r: x } }
+fn bad(): i64 { let h := { let b := F { n: 2 }
+  wrap(&b) }
+  size(&h.r) }
+show(&bad())
+```
+lin = "error: a borrow of b cannot be returned"
+
+@ cases.push-holder-freezes-owner
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn size(f: &F): i64 { f.n }
+fn take(f: F): i64 { f.n }
+
+let b := F { n: 2 }
+var v := Vec::new()
+Vec::push(&mut v, Holder { r: &b })
+show(&take(b))
+match Vec::pop(&mut v) {
+  Some(h) => show(&size(&h.r))
+  None => show(&0)
+}
+```
+lin = "error: b is frozen by v"
+
+@ cases.push-holder-of-inner-local-does-not-live-long-enough
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn size(f: &F): i64 { f.n }
+fn take(f: F): i64 { f.n }
+var v := Vec::new()
+{
+  let b := F { n: 2 }
+  Vec::push(&mut v, Holder { r: &b })
+}
+show(&Vec::len(&v))
+```
+lin = "error: b does not live as long as v, which borrows it"
+
+@ cases.effect-argument-holder-literal
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn size(f: &F): i64 { f.n }
+fn take(f: F): i64 { f.n }
+effect keep(h: Holder): ()
+effect keepo(h: Option(Holder)): ()
+fn wrap(x: &F): Holder { Holder { r: x } }
+
+fn go(): () ! {keep} { let b := F { n: 2 }
+  perform keep(Holder { r: &b }) }
+```
+lin = "error: a borrow cannot be an effect argument"
+
+@ cases.effect-argument-holder-call
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn size(f: &F): i64 { f.n }
+fn take(f: F): i64 { f.n }
+effect keep(h: Holder): ()
+effect keepo(h: Option(Holder)): ()
+fn wrap(x: &F): Holder { Holder { r: x } }
+
+fn go(): () ! {keep} { let b := F { n: 2 }
+  perform keep(wrap(&b)) }
+```
+lin = "error: a borrow cannot be an effect argument"
+
+// A function behind `&` may be a closure that borrows its caller's locals,
+// or one that owns what it captured and is gone when the call returns. Such a
+// lent function is called or lent on; it is not copied out as `&A ≡ A` copies
+// duplicable data. The cases follow one from each place it could leave by.
+@ cases.borrowed-function-parameter-cannot-be-returned
+source = ```nib
+fn keep(cb: &((i64) -> i64 ! {})): (i64) -> i64 ! {} { cb }
+```
+lin = "error: a borrowed function cannot be kept: it can only be called or lent"
+
+@ cases.closure-capturing-borrowed-function-parameter-cannot-be-returned
+source = ```nib
+fn keep(cb: &((i64) -> i64 ! {})): (i64) -> i64 ! {} { (x: i64) => cb(x) }
+```
+lin = "error: this closure borrows cb and cannot be stored"
+
+@ cases.borrowed-function-parameter-called-is-ok
+source = ```nib
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn twice(cb: &((i64) -> i64 ! {})): i64 { cb(1) + cb(2) }
+fn make(): i64 {
+  let b := F { n: 7 }
+  twice((x: i64) => size(&b))
+}
+```
+lin = "ok"
+
+@ cases.borrowed-function-is-lent-on-and-renamed
+source = ```nib
+fn apply(f: &((i64) -> i64 ! {})): i64 { f(1) }
+fn same(cb: &((i64) -> i64 ! {})): &((i64) -> i64 ! {}) { cb }
+fn twice(cb: &((i64) -> i64 ! {})): i64 {
+  let g := same(cb)
+  let h := cb
+  apply(cb) + apply(g) + g(2) + h(3) + apply((x: i64) => cb(x))
+}
+```
+lin = "ok"
+
+@ cases.borrow-of-borrowed-function-cannot-be-returned
+source = ```nib
+fn keep(cb: &((i64) -> i64 ! {})): (i64) -> i64 ! {} {
+  let g := &cb
+  g
+}
+```
+lin = "error: a borrowed function cannot be kept: it can only be called or lent"
+
+@ cases.borrowed-function-cannot-be-an-effect-argument
+source = ```nib
+effect stash(f: (i64) -> i64 ! {}): ()
+fn keep(cb: &((i64) -> i64 ! {})): () ! {stash} {
+  let g := &cb
+  perform stash(g)
+}
+```
+lin = "error: a borrow cannot be an effect argument"
+
+@ cases.borrowed-function-cannot-be-stored-in-a-value
+source = ```nib
+fn keep(cb: &((i64) -> i64 ! {})): Option((i64) -> i64 ! {}) { Some(cb) }
+```
+lin = "error: cb is borrowed and cannot be moved"
+
+// A `-> &F` function gives back the function it was lent: its result is
+// lent as its argument is.
+@ cases.result-of-borrowed-function-is-lent
+source = ```nib
+fn same(cb: &((i64) -> i64 ! {})): &((i64) -> i64 ! {}) { cb }
+fn make(): (i64) -> i64 ! {} {
+  var n := 0
+  let g := same((x: i64) => { n := n + x; n })
+  g
+}
+```
+lin = "error: a borrow of n cannot be returned"
+
+// A closure written in place that owns an affine value is dropped when the
+// call returns, so nothing of the call's value may be that closure.
+@ cases.result-of-owning-closure-written-in-place-is-not-kept
+source = ```nib
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn same(cb: &((i64) -> i64 ! {})): &((i64) -> i64 ! {}) { cb }
+fn make(): i64 {
+  let b := F { n: 7 }
+  let g := same((x: i64) => size(&b))
+  g(1)
+}
+```
+lin = "error: a borrowed function cannot be kept: it can only be called or lent"
+
+// A type parameter stands for values that are kept: `x: &A` is copied out as
+// an `A`, so a lent function is not given to it.
+@ cases.borrowed-function-is-not-lent-to-a-type-parameter
+source = ```nib
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn keep<A: Shared>(x: &A): A { x }
+fn make(): (i64) -> i64 ! {} {
+  let b := F { n: 7 }
+  keep((x: i64) => size(&b))
+}
+```
+lin = "error: a borrowed function can only be lent to a parameter declared as a borrowed function"
+
+// A value that holds a lent function borrows what the function does.
+@ cases.holder-of-borrowed-function-borrows-its-captures
+source = ```nib
+struct(affine) F { n: i64 }
+struct Holder { f: &((i64) -> i64 ! {}) }
+fn size(f: &F): i64 { f.n }
+fn hold(cb: &((i64) -> i64 ! {})): Holder { Holder { f: &cb } }
+fn make(): Holder {
+  var b := F { n: 7 }
+  hold((x: i64) => size(&b))
+}
+```
+lin = "error: a borrow of b cannot be returned"
+
+@ cases.function-matched-out-of-borrowed-holder-is-lent
+source = ```nib
+fn pick(o: Option(&((i64) -> i64 ! {}))): (i64) -> i64 ! {} {
+  match o {
+    Some(f) => f
+    None => (x: i64) => x
+  }
+}
+```
+lin = "error: f is borrowed and cannot be moved"
+
+@ cases.function-matched-out-of-borrowed-holder-is-called
+source = ```nib
+fn pick(o: Option(&((i64) -> i64 ! {}))): i64 {
+  match o {
+    Some(f) => f(1)
+    None => 0
+  }
+}
+```
+lin = "ok"
+
+// Owned data holds no lent function, so a `&` of a function read out of it
+// is the function (`&A ≡ A`).
+@ cases.function-copied-out-of-owned-data-is-kept
+extract = true
+source = ```nib
+import std::indexed_map { IndexedMap }
+fn find(m: &IndexedMap(u64, (i64) -> i64 ! {}), w: u64): Option((i64) -> i64 ! {}) {
+  match IndexedMap::get(&m, &w) {
+    None => None
+    Some(f) => Some(f)
+  }
+}
+```
+lin = "ok"
+
+// A borrowed function parameter is lent on to another `&` parameter, as in a
+// recursion: the reborrow ends with the call, so it does not outlive the
+// closure the caller lent.
+@ cases.borrowed-function-parameter-lent-on-is-ok
+source = ```nib
+fn each(xs: List(i64), on: &((i64) -> i64 ! {})): i64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => on(x) + each(rest, on)
+  }
+}
+fn twice(on: &((i64) -> i64 ! {})): i64 { each(Cons(1, Nil), &on) + each(Nil, on) }
+```
+lin = "ok"
+
+// Lending a borrowed function is an exclusive use: it is lent to one
+// parameter of a call at a time.
+@ cases.borrowed-function-parameter-lent-twice-in-one-call
+source = ```nib
+fn both(f: &((i64) -> i64 ! {}), g: &((i64) -> i64 ! {})): i64 { f(1) + g(2) }
+fn go(on: &((i64) -> i64 ! {})): i64 { both(on, on) }
+```
+lin = "error: on is borrowed twice in one call"
+
+// Another name of a lent function is the same function.
+@ cases.borrowed-function-lent-twice-under-another-name
+source = ```nib
+fn both(f: &((i64) -> i64 ! {}), g: &((i64) -> i64 ! {})): i64 { f(1) + g(2) }
+fn go(on: &((i64) -> i64 ! {})): i64 {
+  let g := on
+  both(g, on)
+}
+```
+lin = "error: on is borrowed twice in one call"
+
+@ cases.borrowed-function-lent-twice-through-its-borrow
+source = ```nib
+fn both(f: &((i64) -> i64 ! {}), g: &((i64) -> i64 ! {})): i64 { f(1) + g(2) }
+fn go(on: &((i64) -> i64 ! {})): i64 {
+  let g := &on
+  both(g, on)
+}
+```
+lin = "error: on is borrowed twice in one call"
+
+// A closure written in place that calls a lent function holds it for the call.
+@ cases.borrowed-function-lent-and-called-by-a-closure-in-one-call
+source = ```nib
+fn both(f: &((i64) -> i64 ! {}), g: &((i64) -> i64 ! {})): i64 { f(1) + g(2) }
+fn go(on: &((i64) -> i64 ! {})): i64 { both(on, (x: i64) => on(x)) }
+```
+lin = "error: on is borrowed twice in one call"
+
+// Calling a lent function is an exclusive use of it too: an argument
+// cannot lend it or call it again while the call of it runs.
+@ cases.borrowed-function-called-again-by-a-closure-given-to-it
+source = ```nib
+fn go(cb: &((&(() -> i64 ! {})) -> i64 ! {})): i64 ! {} { cb(() => cb(() => 5)) }
+```
+lin = "error: cb is borrowed twice in one call"
+
+@ cases.mut-borrowed-function-called-again-by-a-closure-given-to-it
+source = ```nib
+fn go(cb: &mut ((&mut (() -> i64 ! {})) -> i64 ! {})): i64 ! {} { cb(() => cb(() => 5)) }
+```
+lin = "error: cb is borrowed twice in one call"
+
+@ cases.borrowed-function-called-under-another-name-by-a-closure-given-to-it
+source = ```nib
+fn go(cb: &((&(() -> i64 ! {})) -> i64 ! {})): i64 ! {} {
+  let g := cb
+  g(() => cb(() => 5))
+}
+```
+lin = "error: cb is borrowed twice in one call"
+
+@ cases.borrowed-function-called-with-its-result-is-ok
+source = ```nib
+fn go(cb: &((i64) -> i64 ! {})): i64 ! {} { cb(cb(1)) }
+```
+lin = "ok"
+
+@ cases.borrowed-function-lent-under-another-name-in-separate-calls-is-ok
+source = ```nib
+fn apply(f: &((i64) -> i64 ! {})): i64 { f(1) }
+fn go(on: &((i64) -> i64 ! {})): i64 {
+  let g := on
+  apply(g) + apply(on) + apply((x: i64) => on(x))
+}
+```
+lin = "ok"

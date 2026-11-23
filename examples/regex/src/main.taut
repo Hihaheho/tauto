@@ -1,7 +1,7 @@
 import "regex.taut"
-import std::prelude::Os
+import std::builtin::os
 
-pub fn show_match(w: Text, r: Re): Unit {
+pub fn show_match(w: Text, r: Re): Unit ! {stdout} {
   print(w)
   match re_match_text(w, r) {
     true => print(" matches\n")
@@ -9,10 +9,12 @@ pub fn show_match(w: Text, r: Re): Unit {
   }
 }
 
-let ab := RAlt(RChr(97), RChr(98))
-let abb := RSeq(RStar(ab), RSeq(RChr(97), RSeq(RChr(98), RChr(98))))
-show_match("abb", abb)
-show_match("aabb", abb)
-show_match("babb", abb)
-show_match("abab", abb)
-show_match("", abb)
+perform main(() => {
+  let ab := RAlt(RChr(97), RChr(98))
+  let abb := RSeq(RStar(ab), RSeq(RChr(97), RSeq(RChr(98), RChr(98))))
+  show_match("abb", abb)
+  show_match("aabb", abb)
+  show_match("babb", abb)
+  show_match("abab", abb)
+  show_match("", abb)
+})

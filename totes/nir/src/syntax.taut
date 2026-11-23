@@ -1,0 +1,532 @@
+import std::text
+import std::builtin::macro
+import std::std
+
+// NIR text (docs/design/nir-text.md). An `if` with no `else` is an `Open`
+// expression: an `else` belongs to the nearest `if`.
+syntax!(nir, ```par
+%start Package
+%title "NIR text"
+%grammar_type 'LALR(1)'
+%%
+Package: { Item };
+Item: Declarations | SyntaxParser | Data | Union | Op | Extern | Function | Top | Export | Sync | Permissions | Unsupported | Evidence;
+
+Declarations: KwDeclarations^ '('^ Names ')'^;
+Names: [ Name { ','^ Name } ];
+SyntaxParser: KwSyntax^ Str KwSha^ Str KwResult^ Ty KwTables^ Str KwData^ '('^ [ DataBinding { ','^ DataBinding } ] ')'^ KwConstructors^ '('^ [ CtorBinding { ','^ CtorBinding } ] ')'^;
+DataBinding: Str '='^ Name;
+CtorBinding: Str '.'^ Str '='^ Name;
+Union: 'union'^ Num Kind '('^ Tys ')'^;
+Op: KwOp^ Num Name Generics '('^ Tys ')'^ ':'^ Ty Quant;
+Top: KwTop^ Inst;
+Export: KwExport^ Str '='^ Inst KwRow^ '('^ Strs ')'^ KwForeignRow^ '('^ Strs ')'^ KwPureBorrowCallbacks^ '('^ Nums ')'^;
+Strs: [ Str { ','^ Str } ];
+Nums: [ Num { ','^ Num } ];
+Sync: KwSync;
+Permissions: KwPermissions^ '('^ Strs ')'^;
+Unsupported: KwUnsupported^ Message;
+Message: Str '('^ [ MessageArg { ','^ MessageArg } ] ')'^;
+MessageArg: Str '='^ MessageValue;
+MessageValue: Num | Str | Message;
+Evidence: KwEvidence^ EvidenceOf;
+EvidenceOf: EvidenceOp | EvidenceFn | EvidenceHandle;
+EvidenceOp: KwOp^ Name '('^ Tys ')'^ ':'^ Ty;
+EvidenceFn: 'fn'^ Inst '('^ Names ')'^;
+EvidenceHandle: 'handle'^ Num '('^ Names ')'^;
+
+Kind: KwCopy | KwShared | KwAffine | KwLinear;
+Tier: KwTierS | KwTierA | KwTierO | KwTierM;
+Quant: KwDirect | ResumeCount;
+ResumeCount: 'resume'^ Resumes;
+Resumes: AtMost | KwOmega | Num;
+AtMost: '<'^ '='^ Num;
+TyParam: Apostrophe^ Name;
+Generics: [ '<'^ [ TyParam { ','^ TyParam } ] '>'^ ];
+Indirect: KwShared | KwUnique;
+
+Data: KwData^ Kind DataForm Name Generics [ KwClone ] [ KwCopy ] [ KwLinear ] [ KwView ] [ KwHost ] [ DataShown ] '{'^ { Ctor } '}'^;
+DataShown: KwAs^ Str;
+DataForm: KwStruct | KwEnum;
+Ctor: Name [ '('^ [ Field { ','^ Field } ] ')'^ ] ','^;
+Field: [ Indirect ] FieldOf;
+FieldOf: Labelled | Ty;
+Labelled: Name ':'^ Ty;
+
+Extern: 'extern'^ 'fn'^ Name Generics '('^ [ ExternParam { ','^ ExternParam } ] ')'^ ':'^ Ty [ Lends ] [ KwWaits ];
+ExternParam: [ Pass ] Name ':'^ Ty;
+Pass: KwRef | KwRefmut;
+
+Function: 'fn'^ Inst [ '<'^ [ Generic { ','^ Generic } ] '>'^ ] '('^ [ Param { ','^ Param } ] ')'^ ':'^ Ty Tier [ Lends ] [ KwFnRegion ] '='^ Expr;
+Generic: TyParam [ ':'^ Name { '+'^ Name } ];
+Param: Binding ':'^ Ty;
+Lends: KwLends^ '('^ [ Boolean { ','^ Boolean } ] ')'^;
+Boolean: KwTrue | KwFalse;
+
+Ty: RefTy | TyParam | Prim | Unary | Binary | SharedVarTy | StdTy | UnionTy | FnTyOf | DataTy;
+RefTy: '&'^ [ KwMut ] Ty;
+Prim: WU8 | WU16 | WI8 | WI16 | WU32 | WU64 | WUHost | WI32 | WI64 | WNat | WBool | WText | WUnit | WNever | WFloat | WFloat32 | WBuf | WShown;
+Unary: UnaryWord '('^ Ty ')'^;
+UnaryWord: WVec | WArray | WSlice | WOption | WInfo | WBudgetAnswer;
+Binary: BinaryWord '('^ Ty ','^ Ty ')'^;
+BinaryWord: WResult | WPair;
+SharedVarTy: 'SharedVar'^ '('^ [ CopyMark ] Ty ')'^;
+CopyMark: KwCopy ','^;
+StdTy: 'std'^ Name [ TyArgs ];
+UnionTy: 'union'^ '('^ Num ')'^;
+FnTyOf: 'fn'^ FnTy;
+FnTy: '('^ Tys ')'^ '->'^ Ty Kind Tier;
+DataTy: Name [ TyArgs ];
+TyArgs: '('^ Tys ')'^;
+Tys: [ Ty { ','^ Ty } ];
+TArgs: '<'^ Tys '>'^;
+
+Repr: KwRef | KwRefmut | KwPlain | KwSharedvar | KwSharedvarCopy | KwBorrowclosure | KwFnref;
+Binding: [ Repr ] Local;
+LocalUse: [ Repr ] Local;
+Locals: '('^ [ LocalUse { ','^ LocalUse } ] ')'^;
+Step: '.'^ Name [ Index ] [ Indirect ];
+Index: '['^ Num ']'^;
+Place: LocalUse | Path;
+Path: '('^ LocalUse { Step } ':'^ Ty ')'^;
+
+Block: '{'^ { Stmt ';'^ } [ Expr ] '}'^;
+Unwind: KwUnwind^ '{'^ { Stmt ';'^ } '}'^;
+Stmt: Let | Var | Set | While | Return | Expr;
+Let: 'let'^ [ KwStack ] Binding [ Written ] ':='^ Expr;
+Var: 'var'^ Binding [ Written ] ':='^ Expr;
+Written: ':'^ Ty;
+Set: 'set'^ Place ':='^ Expr;
+While: 'while'^ Expr [ Tick ] KwDo^ Block;
+Return: 'return' [ Expr ];
+Tick: KwTick^ TickOf;
+TickOf: KwHost | KwBudget;
+
+Pat: Bind | Wild | Boolean | Str | Num | NumSuffixed | CtorPat | InjectPat;
+Bind: Binding ':'^ Ty;
+CtorPat: CtorName [ '('^ Pats ')'^ ];
+InjectPat: 'inject'^ '('^ Num ','^ Num ','^ Pat ')'^;
+Pats: [ Pat { ','^ Pat } ];
+
+Expr: Closed | Open;
+Open: IfThen | IfElseOpen | ClosureOpen;
+IfThen: 'if'^ Expr KwThen^ Expr;
+IfElseOpen: 'if'^ Expr KwThen^ Closed KwElse^ Open;
+ClosureOpen: ClosureHead '=>'^ Open;
+Closed: IfElse | Closure | Unit | Group | Block | Borrow | Num | NumSuffixed | Float | Str | FnValue | InstCall | LocalExpr | Used | Deref | CtorExpr | Arith | Cmp | Eq | Not | Logic | Boolean | Nan | Inf | NegInf | Declaration | ExternCall | BuiltinCall | Resume | Match | Perform | Handle | Inject | Remap | TempRef | ShownOf | Budget | Unreachable | FnCast;
+IfElse: 'if'^ Expr KwThen^ Closed KwElse^ Closed;
+Closure: ClosureHead '=>'^ Closed;
+ClosureHead: 'closure'^ [ KwBorrowed ] [ KwPure ] '('^ [ Param { ','^ Param } ] ')'^ '->'^ Ty KwAs^ 'fn'^ FnTy [ Clones ] [ Refs ] [ OwnedRefs ];
+Clones: KwClones^ Locals;
+OwnedRefs: KwOwnedRefs^ Locals;
+Refs: KwRefs^ '('^ [ CapturedRef { ','^ CapturedRef } ] ')'^;
+CapturedRef: Binding '='^ '&'^ [ KwMut ] LocalUse;
+
+Unit: '('^ ')'^;
+Paren: '('^ Expr [ Written ] ')'^;
+Group: Paren [ After ];
+After: FieldTail | CallTail;
+FieldTail: Step [ ReadAs ] ':'^ Ty;
+ReadAs: KwRead^ ReadHow;
+ReadHow: KwDirect | KwShared | KwUnique;
+CallTail: [ TArgs ] Args [ TierOf ] [ Tick ] [ KwRecur ] [ Unwind ] ':'^ Ty;
+TierOf: KwTier^ Tier;
+Args: '('^ [ Expr { ','^ Expr } ] ')'^;
+Borrow: '&'^ [ KwMut ] Place;
+FnValue: Inst [ TArgs ] ':'^ Ty;
+InstCall: Inst CallTail;
+LocalExpr: LocalUse [ After ];
+Used: How UsedOf;
+How: KwMove | KwCopy | KwClone;
+UsedOf: LocalField | ParenField | DerefOf;
+LocalField: LocalUse [ FieldTail ];
+ParenField: Paren FieldTail;
+Deref: DerefOf;
+DerefOf: 'deref'^ '('^ Expr ')'^ ':'^ Ty;
+CtorExpr: CtorName [ '('^ [ CtorArg { ','^ CtorArg } ] ')'^ ] ':'^ Ty;
+CtorArg: LabelledArg | Expr;
+LabelledArg: Name '='^ Expr;
+Arith: ArithOp '<'^ NumTy '>'^ Args;
+ArithOp: OpAdd | OpSub | OpMul | OpNeg | OpDiv;
+OpAdd: 'add';
+OpSub: 'sub';
+OpMul: 'mul';
+OpNeg: 'neg';
+OpDiv: 'div';
+NumTy: WU8 | WU16 | WI8 | WI16 | WU32 | WU64 | WUHost | WI32 | WI64 | WNat | WFloat | WFloat32;
+Cmp: CmpOp Args;
+CmpOp: KwLt | KwGt | KwLe | KwGe;
+Eq: EqOp Args;
+EqOp: KwEq | KwNe;
+Not: 'not'^ '('^ Expr ')'^;
+Logic: LogicOp '('^ Expr ','^ Expr ')'^;
+LogicOp: KwAnd | KwOr;
+Nan: 'nan';
+Inf: 'inf';
+NegInf: '-inf';
+Declaration: 'declaration'^ '('^ Num ')'^ ':'^ Ty;
+ExternCall: 'extern'^ Name CallTail;
+BuiltinCall: 'builtin'^ Name CallTail;
+Resume: 'resume'^ LocalUse CallTail;
+Match: 'match'^ [ KwByRef ] [ KwPartial ] Expr '{'^ { Arm } '}'^;
+Arm: Pat [ Guard ] '=>'^ Expr ','^;
+Guard: 'if'^ Expr;
+Perform: 'perform'^ Name Args Quant [ KwDetached ] [ Instance ] [ Unwind ] ':'^ Ty;
+Instance: KwInstance^ [ TArgs ] '('^ Tys ')'^ '->'^ Ty Admission;
+Admission: Name | KwUnique;
+Handle: 'handle'^ Num Tier [ KwM ] [ KwKept ] [ KwDetached ] [ HostRet ] [ Captures ] [ Clones ] KwDo^ Expr [ BodyAs ] KwWith^ '{'^ { HandleArm } '}'^ ':'^ Ty;
+HostRet: KwHostRet^ Ty;
+Captures: KwCaptures^ Locals;
+BodyAs: KwAs^ Ty;
+HandleArm: ReturnArm | OpArm;
+ReturnArm: 'return'^ Pat '=>'^ Expr ','^;
+OpArm: ArmKind Name '('^ Pats ')'^ KwParams^ '('^ Tys ')'^ KwAnswer^ Ty [ Cont ] [ Instance ] [ KwInstantiated ] [ Guard ] '=>'^ Expr ','^;
+ArmKind: KwDirect | KwAbort | KwSuspend;
+Cont: KwK^ Binding;
+Inject: 'inject'^ '('^ Num ','^ Num ','^ Expr ')'^;
+Remap: 'remap'^ '('^ Num ','^ Ty ','^ Expr ')'^;
+TempRef: 'tempref'^ '('^ Expr ')'^;
+ShownOf: 'shown'^ '('^ Expr ')'^;
+Budget: KwBudget^ Num [ KwMemory ] [ KwM ] '('^ Expr ','^ Expr ')'^;
+Unreachable: 'unreachable'^ '('^ Expr ')'^ ':'^ Ty;
+FnCast: 'fncast'^ '('^ Expr ')'^ ':'^ Ty;
+
+CtorName: Word | Quoted;
+Name: Word | Quoted | KwDeclarations | KwSyntax | KwSha | KwResult | KwTables | KwData | KwConstructors | KwOp | KwTop | KwExport | KwRow | KwForeignRow | KwPureBorrowCallbacks | KwSync | KwPermissions | KwUnsupported | KwEvidence | KwDirect | KwOmega | KwStruct | KwEnum | KwLinear | KwView | KwHost | KwWaits | KwLends | KwFnRegion | KwStack | KwDo | KwTick | KwByRef | KwPartial | KwThen | KwElse | KwTier | KwRecur | KwUnwind | KwRead | KwBorrowed | KwPure | KwAs | KwClones | KwRefs | KwOwnedRefs | KwDetached | KwInstance | KwCaptures | KwWith | KwParams | KwAnswer | KwK | KwInstantiated | KwKept | KwHostRet | KwM | KwMemory | KwAbort | KwSuspend | KwAffine | KwTierS | KwTierA | KwTierO | KwTierM | KwPlain | KwSharedvar | KwSharedvarCopy | KwBorrowclosure | KwFnref;
+
+KwDeclarations: 'declarations';
+KwSyntax: 'syntax';
+KwSha: 'sha';
+KwResult: 'result';
+KwTables: 'tables';
+KwData: 'data';
+KwConstructors: 'constructors';
+KwOp: 'op';
+KwTop: 'top';
+KwExport: 'export';
+KwRow: 'row';
+KwForeignRow: 'foreign_row';
+KwPureBorrowCallbacks: 'pure_borrow_callbacks';
+KwSync: 'sync';
+KwPermissions: 'permissions';
+KwUnsupported: 'unsupported';
+KwEvidence: 'evidence';
+KwDirect: 'direct';
+KwOmega: 'ω';
+KwStruct: 'struct';
+KwEnum: 'enum';
+KwLinear: 'linear';
+KwView: 'view';
+KwHost: 'host';
+KwWaits: 'waits';
+KwLends: 'lends';
+KwFnRegion: 'fn_region';
+KwMut: 'mut';
+KwStack: 'stack';
+KwDo: 'do';
+KwTick: 'tick';
+KwByRef: 'by_ref';
+KwPartial: 'partial';
+KwThen: 'then';
+KwElse: 'else';
+KwTier: 'tier';
+KwRecur: 'recur';
+KwUnwind: 'unwind';
+KwRead: 'read';
+KwBorrowed: 'borrowed';
+KwPure: 'pure';
+KwAs: 'as';
+KwClones: 'clones';
+KwRefs: 'refs';
+KwOwnedRefs: 'owned_refs';
+KwDetached: 'detached';
+KwInstance: 'instance';
+KwCaptures: 'captures';
+KwWith: 'with';
+KwParams: 'params';
+KwAnswer: 'answer';
+KwK: 'k';
+KwInstantiated: 'instantiated';
+KwKept: 'kept';
+KwHostRet: 'host_ret';
+KwM: 'm';
+KwMemory: 'memory';
+KwAbort: 'abort';
+KwSuspend: 'suspend';
+KwAffine: 'affine';
+KwTierS: 'S';
+KwTierA: 'A';
+KwTierO: 'O';
+KwTierM: 'M';
+KwPlain: 'plain';
+KwSharedvar: 'sharedvar';
+KwSharedvarCopy: 'sharedvar_copy';
+KwBorrowclosure: 'borrowclosure';
+KwFnref: 'fnref';
+WU8: 'u8';
+WU16: 'u16';
+WI8: 'i8';
+WI16: 'i16';
+WU32: 'u32';
+WU64: 'u64';
+WUHost: 'uhost';
+WI32: 'i32';
+WI64: 'i64';
+WNat: 'nat';
+WBool: 'Bool';
+WText: 'Text';
+WUnit: 'Unit';
+WNever: 'Never';
+WFloat: 'Float';
+WFloat32: 'Float32';
+WBuf: 'Buf';
+WShown: 'Shown';
+WVec: 'Vec';
+WArray: 'Array';
+WSlice: 'Slice';
+WOption: 'Option';
+WInfo: 'Info';
+WBudgetAnswer: 'BudgetAnswer';
+WResult: 'Result';
+WPair: 'Pair';
+KwTrue: 'true';
+KwFalse: 'false';
+KwMove: 'move';
+KwCopy: 'copy';
+KwClone: 'clone';
+KwShared: 'shared';
+KwUnique: 'unique';
+KwLt: 'lt';
+KwGt: 'gt';
+KwLe: 'le';
+KwGe: 'ge';
+KwEq: 'eq';
+KwNe: 'ne';
+KwAnd: 'and';
+KwOr: 'or';
+KwRef: 'ref';
+KwRefmut: 'refmut';
+KwBudget: 'budget';
+Apostrophe: /'/;
+Wild: '_';
+Local: /([\p{XID_Start}_][\p{XID_Continue}]*(::[\p{XID_Start}_][\p{XID_Continue}]*)*|\$"([^"\\]|\\.)*")#[0-9]+/;
+Inst: /([\p{XID_Start}_][\p{XID_Continue}]*(::[\p{XID_Start}_][\p{XID_Continue}]*)*|\$"([^"\\]|\\.)*")@[0-9]+/;
+Quoted: /\$"([^"\\]|\\.)*"/;
+Str: /"([^"\\]|\\.)*"/;
+Float: /-?[0-9]+(\.[0-9]+(e-?[0-9]+)?|e-?[0-9]+)/;
+Num: /-?[0-9]+/;
+NumSuffixed: /-?[0-9]+[\p{L}_][\p{L}\p{N}_]*/;
+Word: /[\p{XID_Start}_][\p{XID_Continue}]*(::[\p{XID_Start}_][\p{XID_Continue}]*)*/;
+```) =>
+  fn parse,
+  enum Admission,
+  enum After,
+  struct Args,
+  struct Args_Opt1,
+  struct Args_Rep1,
+  struct Arith,
+  enum ArithOp,
+  struct Arm,
+  enum ArmKind,
+  struct AtMost,
+  struct Binary,
+  enum BinaryWord,
+  struct Bind,
+  struct Binding,
+  struct Block,
+  struct Block_Rep1,
+  struct BodyAs,
+  enum Boolean,
+  struct Borrow,
+  struct Budget,
+  struct BuiltinCall,
+  struct CallTail,
+  struct CapturedRef,
+  struct Captures,
+  struct Clones,
+  enum Closed,
+  struct Closure,
+  struct ClosureHead,
+  struct ClosureHead_Opt1,
+  struct ClosureHead_Rep1,
+  struct ClosureOpen,
+  struct Cmp,
+  enum CmpOp,
+  struct Cont,
+  struct CopyMark,
+  struct Ctor,
+  struct Ctor_Opt1,
+  struct Ctor_Opt2,
+  struct Ctor_Rep1,
+  enum CtorArg,
+  struct CtorBinding,
+  struct CtorExpr,
+  struct CtorExpr_Opt1,
+  struct CtorExpr_Opt2,
+  struct CtorExpr_Rep1,
+  enum CtorName,
+  struct CtorPat,
+  struct CtorPat_Opt1,
+  struct InjectPat,
+  struct Data,
+  struct DataBinding,
+  struct DataShown,
+  enum DataForm,
+  struct DataTy,
+  struct Declaration,
+  struct Declarations,
+  struct Deref,
+  struct DerefOf,
+  struct Eq,
+  enum EqOp,
+  struct Evidence,
+  struct EvidenceFn,
+  struct EvidenceHandle,
+  enum EvidenceOf,
+  struct EvidenceOp,
+  struct Export,
+  enum Expr,
+  struct Extern,
+  struct Extern_Opt1,
+  struct Extern_Rep1,
+  struct ExternCall,
+  struct ExternParam,
+  struct Field,
+  enum FieldOf,
+  struct FieldTail,
+  struct FnCast,
+  struct FnTy,
+  struct FnTyOf,
+  struct FnValue,
+  struct Function,
+  struct Function_Opt1,
+  struct Function_Opt2,
+  struct Function_Rep1,
+  struct Function_Opt3,
+  struct Function_Rep2,
+  struct Generic,
+  struct Generic_Opt1,
+  struct Generic_Rep1,
+  struct Generics,
+  struct Generics_Opt1,
+  struct Generics_Opt2,
+  struct Generics_Rep1,
+  struct Group,
+  struct Guard,
+  struct Handle,
+  enum HandleArm,
+  struct HostRet,
+  enum How,
+  struct IfElse,
+  struct IfElseOpen,
+  struct IfThen,
+  struct Index,
+  enum Indirect,
+  struct Inject,
+  struct InstCall,
+  struct Instance,
+  enum Item,
+  enum Kind,
+  struct Labelled,
+  struct LabelledArg,
+  struct Lends,
+  struct Lends_Opt1,
+  struct Lends_Rep1,
+  struct Let,
+  struct LocalExpr,
+  struct LocalField,
+  struct LocalUse,
+  struct Locals,
+  struct Locals_Opt1,
+  struct Locals_Rep1,
+  struct Logic,
+  enum LogicOp,
+  struct Match,
+  struct Message,
+  struct Message_Opt1,
+  struct Message_Rep1,
+  struct MessageArg,
+  enum MessageValue,
+  enum Name,
+  struct Names,
+  struct Names_Opt1,
+  struct Names_Rep1,
+  struct Not,
+  enum NumTy,
+  struct Nums,
+  struct Nums_Opt1,
+  struct Nums_Rep1,
+  struct Op,
+  struct OpArm,
+  enum Open,
+  struct OwnedRefs,
+  struct Package,
+  struct Param,
+  struct Paren,
+  struct ParenField,
+  enum Pass,
+  enum Pat,
+  struct Path,
+  struct Pats,
+  struct Pats_Opt1,
+  struct Pats_Rep1,
+  struct Perform,
+  struct Permissions,
+  enum Place,
+  enum Prim,
+  enum Quant,
+  struct ReadAs,
+  enum ReadHow,
+  struct RefTy,
+  struct Refs,
+  struct Refs_Opt1,
+  struct Refs_Rep1,
+  struct Remap,
+  enum Repr,
+  struct Resume,
+  struct ResumeCount,
+  enum Resumes,
+  struct Return,
+  struct ReturnArm,
+  struct Set,
+  struct SharedVarTy,
+  struct ShownOf,
+  struct StdTy,
+  struct Step,
+  enum Stmt,
+  struct Strs,
+  struct Strs_Opt1,
+  struct Strs_Rep1,
+  struct Sync,
+  struct SyntaxParser,
+  struct SyntaxParser_Opt1,
+  struct SyntaxParser_Rep1,
+  struct SyntaxParser_Opt2,
+  struct SyntaxParser_Rep2,
+  struct TArgs,
+  struct TempRef,
+  struct Tick,
+  enum TickOf,
+  enum Tier,
+  struct TierOf,
+  struct Top,
+  enum Ty,
+  struct TyArgs,
+  struct TyParam,
+  struct Tys,
+  struct Tys_Opt1,
+  struct Tys_Rep1,
+  struct Unary,
+  enum UnaryWord,
+  struct Union,
+  struct UnionTy,
+  struct Unit,
+  struct Unreachable,
+  struct Unsupported,
+  struct Unwind,
+  struct Unwind_Rep1,
+  struct Used,
+  enum UsedOf,
+  struct Var,
+  struct While,
+  struct Written

@@ -1,7 +1,10 @@
+import "../../identity/src/identity.taut"
+import "rules_literal.taut"
+import "messages.taut"
 import "widen_frame.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "checker_frame.taut"
 import "datas.taut"
@@ -12,7 +15,9 @@ import "pattern_mutual.taut"
 import "pattern_scope.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -21,8 +26,8 @@ import "../../text/src/text.taut"
 pub fn leaf_local_ty(l: Local): Ty { l.ty }
 pub fn leaf_functions(c: Checker): Ordmap(Text, Scheme) { c.fns }
 pub fn leaf_constructor_ty(d: Text, args: List(Ty), fields: List(DataField)): Ty {
-  ⊢ Ty from match fields { Nil => TyNamed(d, args)
-    Cons(f, rest) => TyFn(field_tys(Cons(f, rest)), TyNamed(d, args), KindShared) }
+  match fields { Nil => TyNamed(NameSpelled(d), args)
+    Cons(f, rest) => TyFn(field_tys(Cons(f, rest)), TyNamed(NameSpelled(d), args), KindShared) }
 }
 
 pub fn leaf_constructor_return(
@@ -31,9 +36,9 @@ pub fn leaf_constructor_return(
   args: List(Ty),
   fields: List(DataField)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match fields {
-    Nil => mut1(TyNamed(d, args), c)
-    Cons(f, rest) => mut1(TyFn(field_tys(Cons(f, rest)), TyNamed(d, args), KindShared), c)
+  match fields {
+    Nil => mut1(TyNamed(NameSpelled(d), args), c)
+    Cons(f, rest) => mut1(TyFn(field_tys(Cons(f, rest)), TyNamed(NameSpelled(d), args), KindShared), c)
   }
 }
 pub theorem leaf_constructor_return_frame(
@@ -42,7 +47,7 @@ pub theorem leaf_constructor_return_frame(
   args: List(Ty),
   fields: List(DataField)
 ): CkReadFrame(c, leaf_constructor_return(c, d, args, fields)) {
-  ⊢ CkReadFrame(c, leaf_constructor_return(c, d, args, fields)) from match fields { Nil => Refl
+  match fields { Nil => Refl
     Cons(f, rest) => Refl }
 }
 pub theorem ck_written_here_frame(
@@ -66,8 +71,7 @@ pub fn leaf_constructor_fields(
   fields: List(DataField)
 ): Mut1(Ty, Checker) {
   frame_bind(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     (ignored: Unit, c1: Checker) => leaf_constructor_return(c1, d, args, fields),
     frame_error_if(
       c,
@@ -88,8 +92,7 @@ pub theorem leaf_constructor_fields_frame(
   fields: List(DataField)
 ): CkReadFrame(c, leaf_constructor_fields(c, d, idx, span, name, args, fields)) {
   frame_bind_ok(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     c,
     (ignored: Unit, c1: Checker) => leaf_constructor_return(c1, d, args, fields),
     frame_error_if(
@@ -116,8 +119,7 @@ pub fn leaf_constructor(
   name: Text
 ): Mut1(Ty, Checker) {
   frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     (args: List(Ty), c1: Checker) => leaf_constructor_fields(
       c1,
       d,
@@ -139,8 +141,7 @@ pub theorem leaf_constructor_frame(
   name: Text
 ): CkReadFrame(c, leaf_constructor(c, d, idx, span, name)) {
   frame_bind_ok(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     c,
     (args: List(Ty), c1: Checker) => leaf_constructor_fields(
       c1,
@@ -201,7 +202,7 @@ pub fn leaf_constructor_choice(
   name: Text,
   ambiguous: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match ambiguous {
+  match ambiguous {
     true => ck_rewrap1(ck_defer_constructor(c, name, span))
     false => ck_rewrap1(ck_constructor_known(c, d, idx, span, name))
   }
@@ -236,7 +237,7 @@ pub theorem leaf_constructor_choice_frame(
   name: Text,
   ambiguous: Bool
 ): CkReadFrame(c, leaf_constructor_choice(c, d, idx, span, name, ambiguous)) {
-  ⊢ CkReadFrame(c, leaf_constructor_choice(c, d, idx, span, name, ambiguous)) from match ambiguous {
+  match ambiguous {
     true => frame_rewrap(
       c,
       ck_defer_constructor(c, name, span),
@@ -264,20 +265,63 @@ pub theorem ck_constructor_frame(
   )
 }
 
+pub fn leaf_lookup_missing(c: Checker, name: Text, span: TySpan, star: Bool): Mut1(Ty, Checker) {
+  match star {
+    true => mut1(TyUnit, c)
+    false => frame_bind(
+      <A: Unit, B: Ty>,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, not_defined_message(name), span)
+    )
+  }
+}
+
+pub theorem ck_lookup_missing_unf(
+  c: Checker,
+  name: Text,
+  span: TySpan
+): ck_lookup_missing(c, name, span) = leaf_lookup_missing(c, name, span, Text::eq(name, "std::prelude::Star")) { Refl }
+
+pub theorem leaf_lookup_missing_frame(
+  c: Checker,
+  name: Text,
+  span: TySpan,
+  star: Bool
+): CkReadFrame(c, leaf_lookup_missing(c, name, span, star)) {
+  match star {
+    true => Refl
+    false => frame_bind_ok(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, not_defined_message(name), span),
+      ck_error_frame(c, not_defined_message(name), span),
+      ignored => c1 => frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1))
+    )
+  }
+}
+
+pub theorem ck_lookup_missing_frame(
+  c: Checker,
+  name: Text,
+  span: TySpan
+): CkReadFrame(c, ck_lookup_missing(c, name, span)) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => CkReadFrame(c, m),
+    Eq::sym(ck_lookup_missing_unf(c, name, span)),
+    leaf_lookup_missing_frame(c, name, span, Text::eq(name, "std::prelude::Star"))
+  )
+}
+
 pub fn leaf_lookup_ctor(
   c: Checker,
   name: Text,
   env: List(Local),
   span: TySpan,
-  found: Option(Pair(Text, Nat))
+  found: Option(Text × Nat)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match found {
-    None => frame_bind(
-      Unit,
-      Ty,
-      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
-      ck_error(c, cat2(name, " is not defined"), span)
-    )
+  match found {
+    None => ck_rewrap1(ck_lookup_missing(c, name, span))
     Some(dc) => ck_rewrap1(
       ck_constructor(c, pattern_ctor_name(dc), pattern_ctor_index(dc), span, name)
     )
@@ -289,18 +333,10 @@ pub theorem leaf_lookup_ctor_frame(
   name: Text,
   env: List(Local),
   span: TySpan,
-  found: Option(Pair(Text, Nat))
+  found: Option(Text × Nat)
 ): CkReadFrame(c, leaf_lookup_ctor(c, name, env, span, found)) {
-  ⊢ CkReadFrame(c, leaf_lookup_ctor(c, name, env, span, found)) from match found {
-    None => frame_bind_ok(
-      Unit,
-      Ty,
-      c,
-      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
-      ck_error(c, cat2(name, " is not defined"), span),
-      ck_error_frame(c, cat2(name, " is not defined"), span),
-      ignored => c1 => frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1))
-    )
+  match found {
+    None => frame_rewrap(c, ck_lookup_missing(c, name, span), ck_lookup_missing_frame(c, name, span))
     Some(dc) => frame_rewrap(
       c,
       ck_constructor(c, pattern_ctor_name(dc), pattern_ctor_index(dc), span, name),
@@ -309,18 +345,48 @@ pub theorem leaf_lookup_ctor_frame(
   }
 }
 
+// `div` and `mod` at the integer `i`: the width is recorded at the term.
+pub fn leaf_lookup_builtin(
+  c: Checker,
+  i: Ty,
+  span: TySpan,
+  occurrence: Option(TermOccurrence)
+): Mut1(Ty, Checker) {
+  frame_bind(
+    <A: Unit, B: Ty>,
+    (ignored: Unit, c1: Checker) => mut1(TyFn(Cons(i, Cons(i, Nil)), i, KindShared), c1),
+    ck_record_op(c, i, span, occurrence)
+  )
+}
+
+pub theorem leaf_lookup_builtin_frame(
+  c: Checker,
+  i: Ty,
+  span: TySpan,
+  occurrence: Option(TermOccurrence)
+): CkReadFrame(c, leaf_lookup_builtin(c, i, span, occurrence)) {
+  frame_bind_ok(
+    <A: Unit, B: Ty>,
+    c,
+    (ignored: Unit, c1: Checker) => mut1(TyFn(Cons(i, Cons(i, Nil)), i, KindShared), c1),
+    ck_record_op(c, i, span, occurrence),
+    Refl,
+    ignored => c1 => Refl
+  )
+}
+
 pub fn leaf_lookup_special(
   c: Checker,
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   special: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match special {
+  match special {
     true => frame_bind(
-      Ty,
-      Ty,
-      (i: Ty, c1: Checker) => mut1(TyFn(Cons(i, Cons(i, Nil)), i, KindShared), c1),
+      <A: Ty, B: Ty>,
+      (i: Ty, c1: Checker) => leaf_lookup_builtin(c1, i, span, occurrence),
       ck_fresh_int(c)
     )
     false => leaf_lookup_ctor(c, name, env, span, datas_ctor(ck_datas_of(c), name))
@@ -332,17 +398,17 @@ pub theorem leaf_lookup_special_frame(
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   special: Bool
-): CkReadFrame(c, leaf_lookup_special(c, name, env, span, special)) {
-  ⊢ CkReadFrame(c, leaf_lookup_special(c, name, env, span, special)) from match special {
+): CkReadFrame(c, leaf_lookup_special(c, name, env, span, occurrence, special)) {
+  match special {
     true => frame_bind_ok(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c,
-      (i: Ty, c1: Checker) => mut1(TyFn(Cons(i, Cons(i, Nil)), i, KindShared), c1),
+      (i: Ty, c1: Checker) => leaf_lookup_builtin(c1, i, span, occurrence),
       ck_fresh_int(c),
       ck_fresh_int_read_frame(c),
-      i => c1 => Refl
+      i => c1 => leaf_lookup_builtin_frame(c1, i, span, occurrence)
     )
     false => leaf_lookup_ctor_frame(c, name, env, span, datas_ctor(ck_datas_of(c), name))
   }
@@ -353,15 +419,17 @@ pub fn leaf_lookup_function(
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   found: Option(Scheme)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match found {
+  match found {
     Some(s) => ck_rewrap1(ck_instantiate_scheme(c, name, s, span))
     None => leaf_lookup_special(
       c,
       name,
       env,
       span,
+      occurrence,
       Bool::or(Text::eq(name, "div"), Text::eq(name, "mod"))
     )
   }
@@ -372,9 +440,10 @@ pub theorem leaf_lookup_function_frame(
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   found: Option(Scheme)
-): CkReadFrame(c, leaf_lookup_function(c, name, env, span, found)) {
-  ⊢ CkReadFrame(c, leaf_lookup_function(c, name, env, span, found)) from match found {
+): CkReadFrame(c, leaf_lookup_function(c, name, env, span, occurrence, found)) {
+  match found {
     Some(s) => frame_rewrap(
       c,
       ck_instantiate_scheme(c, name, s, span),
@@ -385,6 +454,7 @@ pub theorem leaf_lookup_function_frame(
       name,
       env,
       span,
+      occurrence,
       Bool::or(Text::eq(name, "div"), Text::eq(name, "mod"))
     )
   }
@@ -395,15 +465,17 @@ pub fn leaf_lookup(
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   found: Option(Local)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match found {
+  match found {
     Some(l) => mut1(leaf_local_ty(l), c)
     None => leaf_lookup_function(
       c,
       name,
       env,
       span,
+      occurrence,
       Ordmap::get(leaf_functions(c), name, Ordmap::compare_text)
     )
   }
@@ -414,15 +486,17 @@ pub theorem leaf_lookup_frame(
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   found: Option(Local)
-): CkReadFrame(c, leaf_lookup(c, name, env, span, found)) {
-  ⊢ CkReadFrame(c, leaf_lookup(c, name, env, span, found)) from match found {
+): CkReadFrame(c, leaf_lookup(c, name, env, span, occurrence, found)) {
+  match found {
     Some(l) => Refl
     None => leaf_lookup_function_frame(
       c,
       name,
       env,
       span,
+      occurrence,
       Ordmap::get(leaf_functions(c), name, Ordmap::compare_text)
     )
   }
@@ -433,18 +507,20 @@ pub theorem leaf_lookup_unf(
   name: Text,
   env: List(Local),
   span: TySpan
-): ck_lookup(c, name, env, span) = leaf_lookup(c, name, env, span, env_find(env, name)) { Refl }
+,
+  occurrence: Option(TermOccurrence)): ck_lookup(c, name, env, span, occurrence) = leaf_lookup(c, name, env, span, occurrence, env_find(env, name)) { Refl }
 
 pub theorem ck_lookup_frame(
   c: Checker,
   name: Text,
   env: List(Local),
   span: TySpan
-): CkReadFrame(c, ck_lookup(c, name, env, span)) {
+,
+  occurrence: Option(TermOccurrence)): CkReadFrame(c, ck_lookup(c, name, env, span, occurrence)) {
   Eq::subst(
     (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
-    Eq::sym(leaf_lookup_unf(c, name, env, span)),
-    leaf_lookup_frame(c, name, env, span, env_find(env, name))
+    Eq::sym(leaf_lookup_unf(c, name, env, span, occurrence)),
+    leaf_lookup_frame(c, name, env, span, occurrence, env_find(env, name))
   )
 }
 
@@ -455,9 +531,9 @@ pub fn leaf_literal_parsed(
   t: Ty,
   parsed: Option(Nat)
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match parsed {
+  match parsed {
     Some(v) => ck_rewrap1(pattern_literal_record(c, false, v, t, span))
-    None => ck_rewrap1(ck_error(c, cat2(n, " is too large"), span))
+    None => ck_rewrap1(ck_error(c, nat_too_large_message(n), span))
   }
 }
 
@@ -468,7 +544,7 @@ pub theorem leaf_literal_parsed_frame(
   t: Ty,
   parsed: Option(Nat)
 ): CkReadFrame(c, leaf_literal_parsed(c, n, span, t, parsed)) {
-  ⊢ CkReadFrame(c, leaf_literal_parsed(c, n, span, t, parsed)) from match parsed {
+  match parsed {
     Some(v) => frame_rewrap(
       c,
       pattern_literal_record(c, false, v, t, span),
@@ -476,18 +552,17 @@ pub theorem leaf_literal_parsed_frame(
     )
     None => frame_rewrap(
       c,
-      ck_error(c, cat2(n, " is too large"), span),
-      ck_error_frame(c, cat2(n, " is too large"), span)
+      ck_error(c, nat_too_large_message(n), span),
+      ck_error_frame(c, nat_too_large_message(n), span)
     )
   }
 }
 
 pub fn leaf_literal_after(c: Checker, n: Text, span: TySpan, t: Ty): Mut1(Ty, Checker) {
   frame_bind(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     (ignored: Unit, c1: Checker) => mut1(t, c1),
-    leaf_literal_parsed(c, n, span, t, text_parse_u64(n))
+    leaf_literal_parsed(c, n, span, t, text_parse_i128(n))
   )
 }
 
@@ -498,18 +573,17 @@ pub theorem leaf_literal_after_frame(
   t: Ty
 ): CkReadFrame(c, leaf_literal_after(c, n, span, t)) {
   frame_bind_ok(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     c,
     (ignored: Unit, c1: Checker) => mut1(t, c1),
-    leaf_literal_parsed(c, n, span, t, text_parse_u64(n)),
-    leaf_literal_parsed_frame(c, n, span, t, text_parse_u64(n)),
+    leaf_literal_parsed(c, n, span, t, text_parse_i128(n)),
+    leaf_literal_parsed_frame(c, n, span, t, text_parse_i128(n)),
     ignored => c1 => Refl
   )
 }
 
 pub fn leaf_literal(c: Checker, n: Text, span: TySpan): Mut1(Ty, Checker) {
-  frame_bind(Ty, Ty, (t: Ty, c1: Checker) => leaf_literal_after(c1, n, span, t), ck_fresh_int(c))
+  frame_bind(<A: Ty, B: Ty>, (t: Ty, c1: Checker) => leaf_literal_after(c1, n, span, t), ck_fresh_int(c))
 }
 
 pub theorem leaf_literal_frame(
@@ -518,8 +592,7 @@ pub theorem leaf_literal_frame(
   span: TySpan
 ): CkReadFrame(c, leaf_literal(c, n, span)) {
   frame_bind_ok(
-    Ty,
-    Ty,
+    <A: Ty, B: Ty>,
     c,
     (t: Ty, c1: Checker) => leaf_literal_after(c1, n, span, t),
     ck_fresh_int(c),
@@ -532,7 +605,55 @@ pub theorem leaf_literal_unf(
   c: Checker,
   n: Text,
   span: TySpan
-): ck_nat_literal(c, n, span) = leaf_literal(c, n, span) { Refl }
+): ck_int_literal(c, n, span) = leaf_literal(c, n, span) { Refl }
+
+pub theorem ck_int_literal_frame(
+  c: Checker,
+  n: Text,
+  span: TySpan
+): CkReadFrame(c, ck_int_literal(c, n, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
+    Eq::sym(leaf_literal_unf(c, n, span)),
+    leaf_literal_frame(c, n, span)
+  )
+}
+
+pub theorem ck_hinted_nat_on_frame(
+  c: Checker,
+  n: Text,
+  span: TySpan,
+  fits: Bool,
+  name: Text
+): CkReadFrame(c, ck_hinted_nat_on(c, n, span, fits, name)) {
+  match fits {
+    true => Refl
+    false => frame_bind_ok(
+      <A: Unit, B: Ty>,
+      c,
+      (reported: Unit, c1: Checker) => mut1(TyNamed(NameSpelled(name), Nil), c1),
+      ck_rewrap1(ck_error(c, numeral_not_message(name, n), span)),
+      frame_rewrap(c, ck_error(c, numeral_not_message(name, n), span), ck_error_frame(c, numeral_not_message(name, n), span)),
+      reported => c1 => Refl
+    )
+  }
+}
+
+pub theorem ck_nat_literal_on_frame(
+  c: Checker,
+  n: Text,
+  span: TySpan,
+  hinted: Option(Text)
+): CkReadFrame(c, ck_nat_literal_on(c, n, span, hinted)) {
+  match hinted {
+    Some(name) => frame_rewrap(
+      c,
+      ck_hinted_nat_on(c, n, span, numeral_reads_as(n, name), name),
+      ck_hinted_nat_on_frame(c, n, span, numeral_reads_as(n, name), name)
+    )
+    None => frame_rewrap(c, ck_int_literal(c, n, span), ck_int_literal_frame(c, n, span))
+  }
+}
 
 pub theorem ck_nat_literal_frame(
   c: Checker,
@@ -541,10 +662,16 @@ pub theorem ck_nat_literal_frame(
 ): CkReadFrame(c, ck_nat_literal(c, n, span)) {
   Eq::subst(
     (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
-    Eq::sym(leaf_literal_unf(c, n, span)),
-    leaf_literal_frame(c, n, span)
+    Eq::sym(ck_nat_literal_unf(c, n, span)),
+    ck_nat_literal_on_frame(c, n, span, ck_hint_numeral(c))
   )
 }
+
+pub theorem ck_nat_literal_unf(
+  c: Checker,
+  n: Text,
+  span: TySpan
+): ck_nat_literal(c, n, span) = ck_nat_literal_on(c, n, span, ck_hint_numeral(c)) { Refl }
 
 pub fn leaf_stmt_ty(
   c: Checker,
@@ -553,14 +680,12 @@ pub fn leaf_stmt_ty(
   name: Text,
   ty: Option(SurfaceTerm)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match ty {
+  match ty {
     None => mut1(v, c)
     Some(tt) => frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       (w: Ty, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored: Unit, c2: Checker) => mut1(w, c2),
         ck_expect(c1, v, w, span_of(value), cat3("`", name, "`"))
       ),
@@ -577,23 +702,20 @@ pub theorem leaf_stmt_ty_frame(
   ty: Option(SurfaceTerm),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, leaf_stmt_ty(c, v, value, name, ty)) {
-  ⊢ CkRunFrame(c, leaf_stmt_ty(c, v, value, name, ty)) from match ty {
+  match ty {
     None => run_frame_return(c, v, ordered)
     Some(tt) => run_frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c,
       (w: Ty, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored: Unit, c2: Checker) => mut1(w, c2),
         ck_expect(c1, v, w, span_of(value), cat3("`", name, "`"))
       ),
       ck_written_here(c, tt),
       run_frame_read(c, ck_written_here(c, tt), ck_written_here_frame(c, tt), ordered),
       w => c1 => o_c1 => run_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c1,
         (ignored: Unit, c2: Checker) => mut1(w, c2),
         ck_expect(c1, v, w, span_of(value), cat3("`", name, "`")),
@@ -604,7 +726,7 @@ pub theorem leaf_stmt_ty_frame(
   }
 }
 
-pub theorem leaf_stmt_ty_unf(c: Checker, ty: Option(SurfaceTerm), v: Ty, value: SurfaceTerm, name: Text): ck_stmt_ty(c, ty, v, value, name) = leaf_stmt_ty(c, v, value, name, ty) { ⊢ ck_stmt_ty(c, ty, v, value, name) = leaf_stmt_ty(c, v, value, name, ty) from match ty { None => Refl
+pub theorem leaf_stmt_ty_unf(c: Checker, ty: Option(SurfaceTerm), v: Ty, value: SurfaceTerm, name: Text): ck_stmt_ty(c, ty, v, value, name) = leaf_stmt_ty(c, v, value, name, ty) { match ty { None => Refl
     Some(tt) => Refl } }
 
 pub theorem ck_stmt_ty_run_frame(

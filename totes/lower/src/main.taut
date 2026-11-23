@@ -1,0 +1,159 @@
+import std::builtin::os
+import std::text
+import std::text_ops
+import std::base
+import std::map
+import surface::occurrence
+import surface::surface
+import parse::parse
+import surface::unascribe
+import unicode::unicode
+import unicode::classes
+import syntax::syntax
+import text::text
+import "../../nibcheck/src/modules.taut"
+import "../../nibcheck/src/types_run.taut"
+import "../../nibcheck/src/checker.taut"
+import "../../nibcheck/src/datas.taut"
+import "../../nibcheck/src/ty.taut"
+import "../../nibcheck/src/classes_expand.taut"
+import "../../nibcheck/src/classes_evidence.taut"
+import "../../nibcheck/src/indices.taut"
+import "../../nibcheck/src/sealed.taut"
+import "../../nir/src/model.taut"
+import "../../nir/src/print.taut"
+import "data.taut"
+
+pub fn lower_read(t: &SyntaxTables, classes: UnicodeClasses, path: Text, base: Nat): Option(List(SurfaceStmt)) ! {div, fs_read, overflow} {
+  match read_file(path) {
+    Err(e) => None
+    Ok(source) => match surface_parse_program(t, classes, source, base) {
+      None => None
+      Some(stmts) => Some(surface_unascribe(stmts))
+    }
+  }
+}
+
+pub fn lower_empty_package(ds: List(NData)): NPackage {
+  NPackage {
+    declarations: Nil,
+    syntax_parsers: Nil,
+    datas: ds,
+    unions: Nil,
+    ops: Nil,
+    externs: Nil,
+    fns: Nil,
+    top: None,
+    exports: Nil,
+    sync: false,
+    permissions: Nil,
+    unsupported: None,
+    evidence_ops: Nil,
+    evidence_fns: Nil,
+    evidence_handles: Nil,
+    block_fns: Nil
+  }
+}
+
+// The data items of a program: its declarations and the prelude's.
+pub fn lower_declares(program: List(SurfaceStmt)): Bool {
+  match lower_data_names(program) {
+    Nil => false
+    Cons(n, rest) => true
+  }
+}
+
+pub fn lower_program_datas(expanded: List(SurfaceStmt), program: List(SurfaceStmt)): Text ! {div, overflow} {
+  let prog := surface_index_program(modules_resolve(program).stmts, 1)
+  var c: Checker := checker_new(16 * (program_extent(expanded) + program_extent(prog) + 1))
+  ck_prepare_datas(&mut c, expanded, prog, types_own(prog, Ordmap::empty()))
+  let names := lower_data_names(List::append(expanded, prog))
+  let skip := lower_macro_only(c.datas, list_len(names), names, lower_data_names(prog), lower_macro_start(names, lower_data_names(prog)))
+  match lower_datas(c.datas, skip, names) {
+    // A program's own data types take the rows and the types of the whole
+    // program (row parameters, the tiers of function fields, which data keep
+    // their cells behind an `Rc`), which the port does not read yet.
+    Some(ds) => if lower_declares(prog) { "unsupported data types of the program\n" } else {
+      nir_print(lower_empty_package(ds))
+    }
+    None => Text::concat_all(
+      Cons(
+        "unsupported ",
+        Cons(lower_first_refused(c.datas, skip, names), Cons(text_newline(), Nil))
+      )
+    )
+  }
+}
+
+// Macros, imports and records: what makes data types the port does not read yet.
+pub fn lower_uses_syntax(source: Text): Bool {
+  Text::contains(source, "Syn") || Text::contains(source, "syntax") || Text::contains(source, "macro") || Text::contains(source, "import") || Text::contains(source, "!(") || Text::contains(source, "#{") || Text::contains(source, ": {")
+}
+
+pub fn lower_has_top(stmts: List(SurfaceStmt)): Bool {
+  match stmts {
+    Nil => false
+    Cons(st, rest) => match st {
+      StLet(name, ty, value, r#borrow, bm, unused, st_stack) => true
+      StVar(name, ty, value, vb, unused, st_stack) => true
+      StExpr(e) => true
+      _ => lower_has_top(rest)
+    }
+  }
+}
+
+pub fn lower_each(
+  t: &SyntaxTables,
+  classes: UnicodeClasses,
+  expanded: List(SurfaceStmt),
+  paths: List(Text)
+): Unit ! {div, fs_read, overflow, stdout} {
+  match paths {
+    Nil => #()
+    Cons(path, rest) => {
+      print(Text::concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match read_file(path) {
+        Err(e) => print("error\n")
+        Ok(source) => if lower_uses_syntax(source) {
+          // The syntax types a macro uses are written when the program's
+          // runtime reaches them, which takes the types of its terms.
+          print("unsupported syntax types\n")
+        } else {
+          match surface_parse_program(t, classes, source, 0) {
+            None => print("error\n")
+            Some(parsed) => if lower_has_top(parsed) && Text::contains(source, "show(") {
+              print(lower_program_datas(expanded, surface_unascribe(parsed)))
+            } else {
+              // A program that shows nothing holds less of the prelude, which
+              // is not read yet.
+              print("unsupported program that shows nothing\n")
+            }
+          }
+        }
+      }
+      lower_each(t, classes, expanded, rest)
+    }
+  }
+}
+
+// `lower PRELUDE FILE…`: for each FILE, `== FILE` and the package's `data`
+// items as NIR text, or `unsupported`, or `error` when it does not parse.
+perform main(() => {
+  match syntax_tables() {
+    None => eprint("the tables of the syntax are damaged")
+    Some(t) => match perform argv() {
+      Cons(prelude_path, paths) => {
+        let classes := unicode_classes()
+        match lower_read(t, classes, prelude_path, 2147483648) {
+          None => eprint("the prelude does not parse")
+          Some(prelude) => {
+            let read := classes_expand_typed(modules_drop_sets(modules_flatten(prelude).stmts))
+            let expanded := ix_prelude(surface_index_program(read, 0)).stmts
+            lower_each(t, classes, expanded, paths)
+          }
+        }
+      }
+      Nil => eprint("usage: lower PRELUDE FILE…")
+    }
+  }
+})

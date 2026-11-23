@@ -1,48 +1,46 @@
-// View types: `Option(&A)`, `Result(&A, E)`,
-// `Pair(&A, &B)` and the extern `view struct`s hold borrows and are received
-// as borrows are. Elements are `F`, an affine struct, where the freeze is the
+// Types that hold a borrow: `Option(&A)`, `Result(&A, E)`,
+// `Pair(&A, &B)` and an extern `type(borrow)`, received as borrows are. Elements are `F`, an affine struct, where the freeze is the
 // point: a `&i64` is an `i64`.
 
 @ cases.option-borrow-match
 source = ```nib
-import std::prelude::Affine
 
 var v := Vec::new()
 Vec::push(&mut v, 7)
 match Vec::get(&v, 0) {
-  Some(x) => perform show("x", x)
+  Some(x) => show(&x)
   None => #()
 }
 ```
-shows = ["x = 7"]
+stdout = "7\n"
 
 @ cases.option-borrow-match-miss
 source = ```nib
-import std::prelude::Affine
 
 var v := Vec::new()
 Vec::push(&mut v, 7)
 match Vec::get(&v, 3) {
-  Some(x) => perform show("x", x)
-  None => perform show("none", 0)
+  Some(x) => show(&x)
+  None => show(&0)
 }
 ```
-shows = ["none = 0"]
+stdout = "0\n"
 
 @ cases.option-borrow-let
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 var v := Vec::new()
 Vec::push(&mut v, F {})
-let &o := Vec::get(&v, 0)
+let o := Vec::get(&v, 0)
 Vec::push(&mut v, F {})
+let used_later := &o
 ```
 lin = "error: v is frozen by o"
 
 @ cases.option-borrow-match-unfreezes
 source = ```nib
-affine struct F {}
-fn size(&f: F): i64 { 1 }
+struct(affine) F {}
+fn size(f: &F): i64 { 1 }
 var v := Vec::new()
 Vec::push(&mut v, F {})
 let n := match Vec::get(&v, 0) {
@@ -55,108 +53,106 @@ lin = "ok"
 
 @ cases.option-borrow-match-freezes
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 var v := Vec::new()
 Vec::push(&mut v, F {})
 match Vec::get(&v, 0) {
-  Some(f) => Vec::push(&mut v, F {})
+  Some(f) => {
+    Vec::push(&mut v, F {})
+    let used_later := &f
+  }
   None => #()
 }
 ```
 lin = "error: v is frozen by f"
 
-@ cases.view-not-type-argument
-source = ```nib
-fn id<A>(x: A): A { x }
-var v := Vec::new()
-Vec::push(&mut v, 1)
-let &o := Vec::get(&v, 0)
-id(o)
-```
-types = "error: a view cannot be a type argument"
-
 @ cases.view-in-pair-is-view
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 var v := Vec::new()
 Vec::push(&mut v, F {})
-let &o := Vec::get(&v, 0)
-let &p := Pair { fst: o, snd: 1 }
+let o := Vec::get(&v, 0)
+let p := #(o, 1)
 ```
 lin = "ok"
 
-@ cases.view-cannot-be-field
+@ cases.view-can-be-field
 source = "struct S { o: Option(&i64) }"
-types = "error: a borrow cannot be a field"
+lin = "ok"
 
-@ cases.view-cannot-be-let
+@ cases.view-can-be-let
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 var v := Vec::new()
 Vec::push(&mut v, F {})
 let o := Vec::get(&v, 0)
 ```
-types = "error: a borrow cannot be stored"
+lin = "ok"
 
 @ cases.view-var-advance
 source = ```nib
-view struct Iter(A: Type) {}
 extern {
-  fn vec_iter<A: Linear>(&v: Vec(A)): Iter(A)
-  fn iter_next<A: Linear>(&mut it: Iter(A)): Option(&A)
+  type(borrow) Iter(A: Type)
+  fn vec_iter<A: Linear>(v: &Vec(A)): Iter(A)
+  fn iter_next<A: Linear>(it: &mut Iter(A)): Option(&A)
 }
 var v := Vec::new()
 Vec::push(&mut v, 1)
-var &it := vec_iter(&v)
+var it := vec_iter(&v)
 let first := iter_next(&mut it)
 ```
 lin = "ok"
 
 @ cases.view-var-reassign
 source = ```nib
-view struct Iter(A: Type) {}
 extern {
-  fn vec_iter<A: Linear>(&v: Vec(A)): Iter(A)
+  type(borrow) Iter(A: Type)
+  fn vec_iter<A: Linear>(v: &Vec(A)): Iter(A)
 }
 var v := Vec::new()
 Vec::push(&mut v, 1)
-var &it := vec_iter(&v)
+var it := vec_iter(&v)
 it := vec_iter(&v)
 ```
-types = "error: a view var cannot be reassigned"
+lin = "ok"
 
 @ cases.view-let-not-mut
 source = ```nib
-view struct Iter(A: Type) {}
 extern {
-  fn vec_iter<A: Linear>(&v: Vec(A)): Iter(A)
-  fn iter_next<A: Linear>(&mut it: Iter(A)): Option(&A)
+  type(borrow) Iter(A: Type)
+  fn vec_iter<A: Linear>(v: &Vec(A)): Iter(A)
+  fn iter_next<A: Linear>(it: &mut Iter(A)): Option(&A)
 }
 var v := Vec::new()
 Vec::push(&mut v, 1)
-let &it := vec_iter(&v)
+let it := vec_iter(&v)
 iter_next(&mut it)
 ```
 types = "error: it is not a var"
 
-@ cases.view-needs-borrow-param
+@ cases.view-without-a-lender-borrows-nothing
+description = "A result that may hold a borrow needs no lender in the signature when the body lends nothing."
 source = "fn mk(): Option(&i64) { None }"
-types = "error: -> Option(&i64) needs a borrowed parameter"
+lin = "ok"
+
+@ cases.view-needs-borrow-param
+source = "fn mk(): &i64 { mk() }"
+types = "error: -> &i64 needs a borrowed parameter"
 
 @ cases.view-not-effect-argument
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 effect e(o: Option(&F)): Unit
 var v := Vec::new()
 Vec::push(&mut v, F {})
-let &o := Vec::get(&v, 0)
+let o := Vec::get(&v, 0)
 perform e(o)
 ```
 lin = "error: a borrow cannot be an effect argument"
 
 @ cases.view-of-dup-is-value
 source = ```nib
-fn first(&v: Vec(i64)): Option(&i64) { Vec::get(&v, 0) }
+fn first(v: &Vec(i64)): Option(&i64) { Vec::get(&v, 0) }
 var v := Vec::new()
 Vec::push(&mut v, 1)
 let o := first(&v)
@@ -166,91 +162,155 @@ lin = "ok"
 
 @ cases.view-result-can-be-returned
 source = ```nib
-import std::prelude::Affine
 
-fn second(&v: Vec(i64)): Option(&i64) { Vec::get(&v, 1) }
+fn second(v: &Vec(i64)): Option(&i64) { Vec::get(&v, 1) }
 var v := Vec::new()
 Vec::push(&mut v, 4)
 Vec::push(&mut v, 5)
 match second(&v) {
-  Some(x) => perform show("x", x)
+  Some(x) => show(&x)
   None => #()
 }
 ```
-shows = ["x = 5"]
+stdout = "5\n"
 
 @ cases.hashmap-get-is-an-option
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-var m := HashMap::new()
-HashMap::insert(&mut m, "a", 1)
-match HashMap::get(&m, "a") {
-  Some(x) => perform show("a", x)
+var m := IndexedMap::new()
+IndexedMap::insert(&mut m, "a", 1)
+match IndexedMap::get(&m, "a") {
+  Some(x) => show(&x)
   None => #()
 }
-match HashMap::get(&m, "b") {
-  Some(x) => perform show("b", x)
-  None => perform show("b", 0)
+match IndexedMap::get(&m, "b") {
+  Some(x) => show(&x)
+  None => show(&0)
 }
 ```
-shows = ["a = 1", "b = 0"]
+stdout = ```
+1
+0
+```
 
 // A view's duplicable value is copied out where the result wants the value:
 // the wanted `Option(A)` fixes `Some`'s argument, and `&A ≡ A`.
 @ cases.view-value-is-copied-into-a-result
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-fn find(&m: HashMap(u64, u64), k: u64): Option(u64) {
-  match HashMap::get(&m, &k) {
+fn find(m: &IndexedMap(u64, u64), k: u64): Option(u64) {
+  match IndexedMap::get(&m, &k) {
     None => None
     Some(x) => Some(x)
   }
 }
-var m: HashMap(u64, u64) := HashMap::new()
-let old := HashMap::insert(&mut m, 1, 5)
+var m: IndexedMap(u64, u64) := IndexedMap::new()
+let old := IndexedMap::insert(&mut m, 1, 5)
 match find(&m, 1) {
   None => #()
-  Some(x) => perform show("x", x)
+  Some(x) => show(&x)
 }
 ```
-shows = ["x = 5"]
+stdout = "5\n"
 
 @ cases.view-function-is-copied-into-a-result
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-fn find(&m: HashMap(u64, () -> Unit ! {∀ A. show(A)}), k: u64): Option(() -> Unit ! {∀ A. show(A)}) {
-  match HashMap::get(&m, &k) {
+fn find(m: &IndexedMap(u64, () -> Unit ! {Show}), k: u64): Option(() -> Unit ! {Show}) {
+  match IndexedMap::get(&m, &k) {
     None => None
     Some(f) => Some(f)
   }
 }
-var m: HashMap(u64, () -> Unit ! {∀ A. show(A)}) := HashMap::new()
-let old := HashMap::insert(&mut m, 1, () => perform show("x", 1))
+var m: IndexedMap(u64, () -> Unit ! {Show}) := IndexedMap::new()
+let old := IndexedMap::insert(&mut m, 1, () => show(&1))
 match find(&m, 1) {
   None => #()
   Some(f) => f()
 }
 ```
-shows = ["x = 1"]
+stdout = "1\n"
 
 @ cases.view-is-kept-where-the-result-is-a-view
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-fn find(&m: HashMap(u64, u64), k: u64): Option(&u64) {
-  match HashMap::get(&m, &k) {
+fn find(m: &IndexedMap(u64, u64), k: u64): Option(&u64) {
+  match IndexedMap::get(&m, &k) {
     None => None
     Some(x) => Some(x)
   }
 }
-var m: HashMap(u64, u64) := HashMap::new()
-let old := HashMap::insert(&mut m, 1, 5)
+var m: IndexedMap(u64, u64) := IndexedMap::new()
+let old := IndexedMap::insert(&mut m, 1, 5)
 match find(&m, 1) {
   None => #()
-  Some(x) => perform show("x", x)
+  Some(x) => show(&x)
 }
 ```
-shows = ["x = 5"]
+stdout = "5\n"
+
+@ cases.option-borrow-let-block
+source = ```nib
+struct(affine) F {}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let o := { Vec::get(&v, 0) }
+Vec::push(&mut v, F {})
+let used_later := &o
+```
+lin = "error: v is frozen by o"
+
+@ cases.option-borrow-let-block-stmts
+source = ```nib
+struct(affine) F {}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let o := {
+  let i := 0
+  Vec::get(&v, i)
+}
+Vec::push(&mut v, F {})
+let used_later := &o
+```
+lin = "error: v is frozen by o"
+
+@ cases.option-borrow-let-if
+source = ```nib
+struct(affine) F {}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let o := if true { Vec::get(&v, 0) } else { Vec::get(&v, 1) }
+Vec::push(&mut v, F {})
+let used_later := &o
+```
+lin = "error: v is frozen by o"
+
+@ cases.option-borrow-let-match
+source = ```nib
+struct(affine) F {}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let o := match 0 {
+  0 => Vec::get(&v, 0)
+  n => Vec::get(&v, n)
+}
+Vec::push(&mut v, F {})
+let used_later := &o
+```
+lin = "error: v is frozen by o"
+
+@ cases.a-struct-holding-a-struct-that-holds-a-view-is-a-view
+description = "`Placed` holds a `Place`, an extern `type(borrow)`; a struct that holds a `Placed` holds a view too, however deep (the types report marks each of them)."
+source = ```nib
+import std::builtin::region { Placed, Place, place }
+
+struct Node { v: u64 }
+struct Holder { p: Placed(Node) }
+struct Outer { h: Holder, n: u64 }
+fn make(): Outer ! {place(Node)} { Outer { h: Holder { p: Placed::new(Node { v: 1 }) }, n: 2 } }
+```
+lin = "ok"

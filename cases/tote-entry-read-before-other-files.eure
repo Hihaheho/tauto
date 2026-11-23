@@ -1,0 +1,54 @@
+description = "A tote's entry, `src/main.taut` unless `package.entry` names another file, performs `main` at its top level, though the tote's other files are read after it. The top level of any other file of the tote's sources is a module's, which only says which entries it has; a script the tote imports must not ask the host at its top level."
+
+@ cases.main-top-level-asks-the-host-with-other-files-read-after-it
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::builtin::os
+perform main(() => {
+  print("from main\n")
+})
+```
+files."app/model/spec.taut" = ```tauto
+pub fn two(): Nat { 2 }
+```
+
+@ cases.other-file-top-level-asking-the-host-is-still-imported
+files_tote = "app"
+tote_errors = ["the top level of an imported script performs stdout"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import "../model/spec.taut"
+pub fn two(): Nat { 2 }
+```
+files."app/model/spec.taut" = ```tauto
+import std::builtin::os
+print("from model\n")
+```
+
+@ cases.package-entry-names-the-file-that-performs-main
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" entry = "src/start.taut" }'
+files."app/src/start.taut" = ```tauto
+import std::builtin::os
+perform main(() => {
+  print("from start\n")
+})
+```
+files."app/src/spec.taut" = ```tauto
+pub fn two(): Nat { 2 }
+```
+
+@ cases.with-package-entry-src-main-is-a-module
+files_tote = "app"
+tote_errors = ["the top level of a module performs stdout"]
+files."app/Tauto.eure" = 'package { name = "app" entry = "src/start.taut" }'
+files."app/src/start.taut" = ```tauto
+pub fn two(): Nat { 2 }
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os
+print("from main\n")
+```

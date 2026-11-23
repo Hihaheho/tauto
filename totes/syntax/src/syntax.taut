@@ -2,10 +2,11 @@ import "tables.taut"
 import "../../llk/src/llk.taut"
 import "../../scan/src/scan.taut"
 import "../../text/src/text.taut"
-import std::Array
-import std::Stack
-import std::Text
-import std::Base
+import "../../unicode/src/nfc.taut"
+import std::array
+import std::stack
+import std::text
+import std::base
 
 // The syntax of Tauto, read from the parser and scanner tables of
 // `crates/tauto-parol` (`tables.taut`), in the proof language (`docs/design/self-host.md`). `README.md`
@@ -27,7 +28,7 @@ pub(open) inductive SyntaxTables: Type {
 }
 
 pub fn syntax_has_name(names: List(Text), name: Text): Bool {
-  ⊢ Bool from match names {
+  match names {
     Nil => false
     Cons(n, rest) => ⊢ Bool from match n == name {
       true => true
@@ -37,7 +38,7 @@ pub fn syntax_has_name(names: List(Text), name: Text): Bool {
 }
 
 pub fn syntax_flags_of(non_terminals: List(Text), declared: List(Text)): List(Bool) {
-  ⊢ List(Bool) from match non_terminals {
+  match non_terminals {
     Nil => Nil
     Cons(name, rest) => Cons(syntax_has_name(declared, name), syntax_flags_of(rest, declared))
   }
@@ -62,7 +63,7 @@ pub fn syntax_tables_read(
   non_terminal_names: Text,
   declared: Text
 ): Option(SyntaxTables) {
-  ⊢ Option(SyntaxTables) from match scan_tables_read(scan_meta, scan_classes, scan_states, scan_rows) {
+  match scan_tables_read(scan_meta, scan_classes, scan_states, scan_rows) {
     None => None
     Some(scan) => ⊢ Option(SyntaxTables) from match llk_tables_read(
       parser_meta,
@@ -135,7 +136,7 @@ pub fn cst_empty(s: CstSpan): Bool {
 
 // `Span::merge` of `cst.rs`: an empty span at 0 is no span.
 pub fn cst_merge(a: CstSpan, b: CstSpan): CstSpan {
-  ⊢ CstSpan from match cst_empty(a) {
+  match cst_empty(a) {
     true => b
     false => ⊢ CstSpan from match cst_empty(b) {
       true => a
@@ -153,8 +154,8 @@ pub fn cst_is_trivia(kinds: Array(Text), terminal: Nat): Bool {
 
 // The node of `non_terminal` that a frame closes into. Without `keep` it has
 // no `children`, which saves the box they would be in.
-pub fn cst_closed(&t: SyntaxTables, keep: Bool, non_terminal: Nat, frame: CstFrame): CstNode {
-  ⊢ CstNode from match keep {
+pub fn cst_closed(t: &SyntaxTables, keep: Bool, non_terminal: Nat, frame: CstFrame): CstNode {
+  match keep {
     true => CstNode {
       kind: CstNonTerminal(non_terminal),
       name: syntax_name(t.non_terminal_kinds, non_terminal),
@@ -182,14 +183,14 @@ pub fn cst_closed(&t: SyntaxTables, keep: Bool, non_terminal: Nat, frame: CstFra
 
 // A token goes into the innermost open node, before the children it has.
 pub fn cst_add_token(
-  &t: SyntaxTables,
+  t: &SyntaxTables,
   keep: Bool,
-  &mut frames: Stack(CstFrame),
+  frames: &mut Stack(CstFrame),
   terminal: Nat,
   r#from: Nat,
   to: Nat
 ): Unit {
-  ⊢ Unit from match Stack::pop(&mut frames) {
+  match Stack::pop(&mut frames) {
     None => #()
     Some(parent) => {
       let trivia := cst_is_trivia(t.terminal_kinds, terminal)
@@ -248,13 +249,13 @@ pub fn cst_add_node(keep: Bool, parent: CstFrame, span: CstSpan, node: CstNode):
 // whether the nodes keep all their `children`; `flat` is built either way.
 pub fn cst_build_in(
   fuel: Nat,
-  &t: SyntaxTables,
+  t: &SyntaxTables,
   keep: Bool,
-  &mut events: Stack(LlkEvent),
-  &mut frames: Stack(CstFrame),
+  events: &mut Stack(LlkEvent),
+  frames: &mut Stack(CstFrame),
   root: Option(CstNode)
 ): Option(CstNode) {
-  ⊢ Option(CstNode) from match fuel {
+  match fuel {
     Zero => root
     Succ(f) => ⊢ Option(CstNode) from match Stack::pop(&mut events) {
       None => root
@@ -294,7 +295,7 @@ pub fn cst_build_in(
   }
 }
 
-pub fn cst_build(&t: SyntaxTables, keep: Bool, &mut events: Stack(LlkEvent)): Option(CstNode) {
+pub fn cst_build(t: &SyntaxTables, keep: Bool, events: &mut Stack(LlkEvent)): Option(CstNode) {
   var frames: Stack(CstFrame) := Stack::new()
   cst_build_in(Stack::len(&events) + 1, &t, keep, &mut events, &mut frames, None)
 }
@@ -302,11 +303,11 @@ pub fn cst_build(&t: SyntaxTables, keep: Bool, &mut events: Stack(LlkEvent)): Op
 pub fn cst_at_depth(
   nodes: List(CstNode),
   depth: Nat,
-  rest: List(Pair(CstNode, Nat))
-): List(Pair(CstNode, Nat)) {
-  ⊢ List(Pair(CstNode, Nat)) from match nodes {
+  rest: List(CstNode × Nat)
+): List(CstNode × Nat) {
+  match nodes {
     Nil => rest
-    Cons(node, more) => Cons(Pair { fst: node, snd: depth }, cst_at_depth(more, depth, rest))
+    Cons(node, more) => Cons(#(node, depth), cst_at_depth(more, depth, rest))
   }
 }
 
@@ -333,8 +334,8 @@ pub fn cst_line(node: CstNode, depth: Nat): Text {
 
 // The lines of at most `fuel` nodes of `todo` and their children, parents
 // first, after `lines` (last first).
-pub fn cst_dump_in(fuel: Nat, todo: List(Pair(CstNode, Nat)), lines: List(Text)): List(Text) {
-  ⊢ List(Text) from match fuel {
+pub fn cst_dump_in(fuel: Nat, todo: List(CstNode × Nat), lines: List(Text)): List(Text) {
+  match fuel {
     Zero => lines
     Succ(f) => ⊢ List(Text) from match todo {
       Nil => lines
@@ -350,19 +351,80 @@ pub fn cst_dump_in(fuel: Nat, todo: List(Pair(CstNode, Nat)), lines: List(Text))
 // The dump of a tree of at most `size` nodes: a line for each node, the
 // parent first, its children in order.
 pub fn cst_dump(node: CstNode, size: Nat): Text {
-  Text::concat_all(List::reverse(cst_dump_in(size, Cons(Pair { fst: node, snd: 0 }, Nil), Nil)))
+  Text::concat_all(List::reverse(cst_dump_in(size, Cons(#(node, 0), Nil), Nil)))
 }
 
-// The events of the parse of `source` are left on `events`, the last on top.
-pub fn syntax_events(&t: SyntaxTables, source: Text, &mut events: Stack(LlkEvent)): Bool {
-  let tokens := llk_tokens(t.llk, scan_all(t.scan, source), Text::len(source))
-  ⊢ Bool from match llk_parse(llk_fuel(t.llk, tokens), t.llk, tokens, &mut events) {
-    LlkFailed(error) => false
-    LlkParsed => true
+// The code points of the name a token of kind `kind` writes: the whole
+// token for a name, a hole and a macro's name, the name before the text of
+// a macro's literal, and none for the others.
+pub fn syntax_name_points(kind: Text, cs: List(Nat)): List(Nat) {
+  if Bool::or(kind == "Ident", Bool::or(kind == "Hole", kind == "MacroName")) {
+    cs
+  } else {
+    if text_starts_with(kind, "Macro", 0) {
+      syntax_take_name(syntax_drop_ticks(cs))
+    } else {
+      Nil
+    }
   }
 }
 
-pub fn syntax_parse(&t: SyntaxTables, source: Text): Option(CstNode) {
+pub fn syntax_drop_ticks(cs: List(Nat)): List(Nat) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => ⊢ List(Nat) from match Nat::eq(c, 96) {
+      true => syntax_drop_ticks(rest)
+      false => cs
+    }
+  }
+}
+
+pub fn syntax_take_name(cs: List(Nat)): List(Nat) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => ⊢ List(Nat) from match Bool::or(
+      Bool::or(Nat::eq(c, 96), Nat::eq(c, 60)),
+      Bool::or(Bool::or(Nat::eq(c, 32), Nat::eq(c, 9)), Bool::or(Nat::eq(c, 13), Nat::eq(c, 10)))
+    ) {
+      true => Nil
+      false => Cons(c, syntax_take_name(rest))
+    }
+  }
+}
+
+// Whether every name that `tokens` write is in Normalization Form C, as
+// `tauto-parol` requires (`names_not_nfc`); the tables of normalization are
+// read only when a token is not ASCII.
+pub fn syntax_names_nfc(t: &SyntaxTables, source: Text, tokens: List(ScanToken)): Bool {
+  match tokens {
+    Nil => true
+    Cons(token, rest) => {
+      let cs := syntax_name_points(
+        syntax_name(t.terminal_kinds, token.token_type),
+        text_code_points(Text::slice_or_empty(source, token.start, token.end))
+      )
+      ⊢ Bool from match unicode_all_ascii(cs) {
+        true => syntax_names_nfc(&t, source, rest)
+        false => Bool::and(
+          unicode_points_eq(unicode_nfc_points(unicode_nfc(), cs), cs),
+          syntax_names_nfc(&t, source, rest)
+        )
+      }
+    }
+  }
+}
+
+// The events of the parse of `source` are left on `events`, the last on top.
+pub fn syntax_events(t: &SyntaxTables, source: Text, events: &mut Stack(LlkEvent)): Bool {
+  let scanned := scan_all(t.scan, source)
+  let tokens := llk_tokens(t.llk, scanned, Text::len(source))
+  ⊢ Bool from match llk_parse(llk_fuel(t.llk, tokens), t.llk, tokens, &mut events) {
+    LlkFailed(^error) => false
+    LlkParsed => syntax_names_nfc(&t, source, scanned)
+  }
+}
+
+pub fn syntax_parse(t: &SyntaxTables, source: Text): Option(CstNode) {
   var events: Stack(LlkEvent) := Stack::new()
   ⊢ Option(CstNode) from match syntax_events(&t, source, &mut events) {
     false => None
@@ -373,7 +435,7 @@ pub fn syntax_parse(&t: SyntaxTables, source: Text): Option(CstNode) {
 // The dump of the tree of `source`, or `None` when it is not a program of
 // the grammar. Each node opens or is a token, so there are no more nodes
 // than events.
-pub fn syntax_dump(&t: SyntaxTables, source: Text): Option(Text) {
+pub fn syntax_dump(t: &SyntaxTables, source: Text): Option(Text) {
   var events: Stack(LlkEvent) := Stack::new()
   ⊢ Option(Text) from match syntax_events(&t, source, &mut events) {
     false => None

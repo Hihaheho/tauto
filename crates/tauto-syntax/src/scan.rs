@@ -185,34 +185,40 @@ fn find_next(
 
 /// Every token of `text`, skipped ones included, with byte positions plus `base`.
 pub fn tokens(t: &Tables, text: &str, base: u32) -> Result<Vec<Token>, LexError> {
-    scan(t, text, base)
+    scan(t, text, base, true)
 }
 
 /// Every token of `text`, skipped ones included, with byte positions plus `base`.
-pub(crate) fn scan(t: &Tables, text: &str, base: u32) -> Result<Vec<Token>, LexError> {
-    let embed = t.embed_terminal();
+/// Without `holes`, a hole (`TautoExpr`) is no token: `$` where one would be is an error.
+pub(crate) fn scan(t: &Tables, text: &str, base: u32, holes: bool) -> Result<Vec<Token>, LexError> {
+    let hole = t.embed_terminal();
+    let embed = hole.filter(|_| holes);
     let mut out = Vec::new();
     let mut pos = 0usize;
     let mut mode = 0usize;
     let mut stack: Vec<usize> = Vec::new();
     let mut held: Vec<Option<DynValue>> = vec![None; t.dyn_states.len()];
     while pos < text.len() {
-        // `$(` and `$[`: a parenthesised expression and a list literal, read before the
-        // modes' automata as `${` is.
-        let paren = embed
-            .filter(|_| text[pos..].starts_with("$(") || text[pos..].starts_with("$["));
+        // `$(`, `$[`, `$#(` and `$#{`: a parenthesised expression, a list literal, a product
+        // and a record, read before the modes' automata as `${` is.
+        let paren = embed.filter(|_| {
+            ["$(", "$[", "$#(", "$#{"]
+                .iter()
+                .any(|open| text[pos..].starts_with(open))
+        });
         let found = match paren {
             Some(e) => Some((pos + 1, e)),
             None => find_next(t, &t.modes[mode].states, text, pos, &held)
                 .map(|(end, term, _)| (end, term)),
         };
-        let Some((mut end, terminal)) = found else {
+        let Some((mut end, terminal)) = found.filter(|&(_, term)| holes || Some(term) != hole)
+        else {
             return Err(LexError {
                 at: base + pos as u32,
             });
         };
         // `${`: the token goes on to the matching `}`. `$f(…)`, `$m!(…)` and `$(…)` go on
-        // over the calls written right after (`docs/design/macro.md`「DSL の中の tauto の式」).
+        // over the calls written right after (`docs/design/macro.md`「Tauto expressions inside a DSL (`${ … }` and `$`)」).
         if Some(terminal) == embed {
             let braced = text.as_bytes()[end - 1] == b'{';
             match if braced {
@@ -268,16 +274,38 @@ fn embed_end(text: &str, from: usize) -> Option<usize> {
 }
 
 /// Where a `$` expression without braces ends. `from` is just after `$name` (or just
-/// after the `$` of `$(`), the name with its `::` path read by the scanner as tauto
-/// reads a name: then a `!` that a `(` follows, then each `(…)` written right after it.
+/// after the `$` of `$(`): then the rest of the name's `::` path, read here as tauto reads
+/// a path (`$Nat::add`), then a `!` that a `(` follows, then each `(…)` written right after it.
+/// The path is read here and not only by the grammar's automaton, so that tables made
+/// when the automaton stopped the name at `::` read the same text the same way. A `!` that
+/// a backtick follows takes the syntax literal `` `…` `` (on one line) in place of the parentheses,
+/// and no call goes after it.
 /// A `.` is not read: a field is `$(p.f)`.
+/// `$[…]`, `$#(…)` and `$#{…}` (from just after the `$`) end at their closing bracket, and
+/// no call goes after them.
 fn postfix_end(text: &str, from: usize) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut i = from;
+    if from > 0 && bytes[from - 1] == b'$' && bytes.get(i) == Some(&b'#') {
+        return match bytes.get(i + 1) {
+            Some(b'(') => close_end(text, i + 2, b'(', b')'),
+            Some(b'{') => close_end(text, i + 2, b'{', b'}'),
+            _ => None,
+        };
+    }
     // `$[…]`: a list literal, which no call follows. A `[` after `$name` is the DSL's own
     // (`$b[$a]`), not part of the expression.
     if from > 0 && bytes[from - 1] == b'$' && bytes.get(i) == Some(&b'[') {
         return close_end(text, i + 1, b'[', b']');
+    }
+    if from > 0 && bytes[from - 1] != b'$' {
+        while let Some(e) = path_segment_end(text, i) {
+            i = e;
+        }
+    }
+    if bytes.get(i) == Some(&b'!') && bytes.get(i + 1) == Some(&b'`') {
+        let close = text[i + 2..].find(['`', '\n', '\r'])?;
+        return (text.as_bytes()[i + 2 + close] == b'`').then_some(i + 2 + close + 1);
     }
     if bytes.get(i) == Some(&b'!') && bytes.get(i + 1) == Some(&b'(') {
         i += 1;
@@ -286,6 +314,22 @@ fn postfix_end(text: &str, from: usize) -> Option<usize> {
         i = close_end(text, i + 1, b'(', b')')?;
     }
     Some(i)
+}
+
+/// Just after `::name` (or `::r#name`) at `from`, when the text there is one.
+fn path_segment_end(text: &str, from: usize) -> Option<usize> {
+    let rest = text.get(from..)?.strip_prefix("::")?;
+    let raw = rest.strip_prefix("r#");
+    let name = raw.unwrap_or(rest);
+    let mut chars = name.char_indices();
+    let (_, first) = chars.next()?;
+    if !(first.is_alphabetic() || first == '_') {
+        return None;
+    }
+    let len = chars
+        .find(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+        .map_or(name.len(), |(at, _)| at);
+    Some(text.len() - name.len() + len)
 }
 
 /// Just after the `close` that matches an `open` before `from`. Brackets inside a
@@ -350,8 +394,20 @@ mod tests {
             Some("$add(add(a, b), c)")
         );
         assert_eq!(end("$Eq::sym(h) x", 8), Some("$Eq::sym(h)"));
+        // The path after a name the automaton stopped at `::` (tables made before it read
+        // paths) is read here.
+        assert_eq!(end("$Nat::add(n, 0) x", 4), Some("$Nat::add(n, 0)"));
+        assert_eq!(end("$Text::of_nat(i + 1)", 5), Some("$Text::of_nat(i + 1)"));
+        assert_eq!(end("$a::b::r#c x", 2), Some("$a::b::r#c"));
+        assert_eq!(end("$Nat::add!(x) y", 4), Some("$Nat::add!(x)"));
+        assert_eq!(end("$n :: m", 2), Some("$n"));
+        assert_eq!(end("$n::(x)", 2), Some("$n"));
+        assert_eq!(end("$(x)::y", 1), Some("$(x)"));
         assert_eq!(end("$Iの数(x) = y", "$Iの数".len()), Some("$Iの数(x)"));
         assert_eq!(end("$nat!(a = b) x", 4), Some("$nat!(a = b)"));
+        assert_eq!(end("$nat!`a = b` x", 4), Some("$nat!`a = b`"));
+        assert_eq!(end("$nat!`a = b`(x)", 4), Some("$nat!`a = b`"));
+        assert_eq!(end("$nat!`a = b", 4), None);
         assert_eq!(end("$(1 + n) = m", 1), Some("$(1 + n)"));
         assert_eq!(end("$f (x)", 2), Some("$f"));
         assert_eq!(end("$b[$a] : B", 2), Some("$b"));
@@ -361,6 +417,15 @@ mod tests {
         assert_eq!(end("$[[a], [b, c]]. Then", 1), Some("$[[a], [b, c]]"));
         assert_eq!(end("$[\"]\"] x", 1), Some("$[\"]\"]"));
         assert_eq!(end("$[a", 1), None);
+        assert_eq!(end("$#(a, b) = c", 1), Some("$#(a, b)"));
+        assert_eq!(end("$#() x", 1), Some("$#()"));
+        assert_eq!(end("$#(#(a, b), c)(y)", 1), Some("$#(#(a, b), c)"));
+        assert_eq!(
+            end("$#{ x: 1, y: f(\"}\") }. Then", 1),
+            Some("$#{ x: 1, y: f(\"}\") }")
+        );
+        assert_eq!(end("$#(a", 1), None);
+        assert_eq!(end("$#{ x: 1", 1), None);
         assert_eq!(end("$f(\")\") y", 2), Some("$f(\")\")"));
         assert_eq!(end("$f(never", 2), None);
     }

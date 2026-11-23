@@ -1,0 +1,66 @@
+// `last-use`: a clone at the last use of a local becomes a move.
+
+@ cases.the-only-use-moves
+source = ```tauto
+fn last(t: Text): Text { t }
+show(&last("a"))
+```
+stdout = ```
+"a"
+```
+nir.fns.last = ```nir
+fn last@2(t#4: Text): Text S = move t#4
+```
+
+@ cases.the-last-of-two-uses-moves
+source = ```tauto
+
+fn twice(t: Text): Text { concat(t, t) }
+show(&twice("a"))
+```
+stdout = ```
+"aa"
+```
+nir.fns.twice = ```nir
+fn twice@2(t#4: Text): Text S = builtin concat(clone t#4, move t#4): Text
+```
+
+@ cases.a-use-in-a-loop-stays-a-clone
+source = ```tauto
+
+fn spin(t: Text, n: u64): u64 ! {div, overflow} {
+  var i := 0
+  var total := 0
+  while i < n {
+    total := total + Text::len(concat(t, "b"))
+    i := i + 1
+  }
+  total
+}
+show(&spin("a", 3))
+```
+stdout = "6\n"
+nir.fns.spin = ```nir
+fn spin@2(t#4: Text, n#5: u64): u64 A = {
+  var i#6 := 0u64;
+  var total#7 := 0u64;
+  while lt(copy i#6, copy n#5) tick host do {
+    set total#7 := add<u64>(copy total#7, builtin Text::len(builtin concat(clone t#4, "b"): Text): u64);
+    set i#6 := add<u64>(copy i#6, 1u64);
+  };
+  copy total#7
+}
+```
+
+@ cases.a-use-in-one-branch-moves-and-the-other-branch-keeps-its-own
+source = ```tauto
+
+fn pick(b: Bool, t: Text): Text { if b { concat(t, t) } else { t } }
+show(&pick(true, "a"))
+```
+stdout = ```
+"aa"
+```
+nir.fns.pick = ```nir
+fn pick@2(b#4: Bool, t#5: Text): Text S = if copy b#4 then builtin concat(clone t#5, move t#5): Text else move t#5
+```

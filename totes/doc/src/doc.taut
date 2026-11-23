@@ -1,15 +1,16 @@
 import "../../highlight/src/highlight.taut"
 import "../../names/src/names.taut"
+import "../../identity/src/identity.taut"
 import "../../surface/src/surface.taut"
+import "../../parse/src/parse.taut"
 import "../../syntax/src/syntax.taut"
 import "../../text/src/text.taut"
 import "../../unicode/src/classes.taut"
 import "../../unicode/src/unicode.taut"
-import std::prelude::Affine
-import std::Base
-import std::Text
-import std::Sort
-import std::List
+import std::base
+import std::text
+import std::sort
+import std::list
 
 // A source file: its path under the root, its text, and what `totes/names`
 // reads of it (nothing when it does not parse). `imports` are the paths
@@ -36,7 +37,7 @@ pub fn doc_nat_cmp(a: Nat, b: Nat): Ordering {
   if a < b { Less } else if a == b { Equal } else { Greater }
 }
 
-pub fn doc_piece_cmp(a: DocPiece, b: DocPiece): Ordering {
+pub fn doc_piece_cmp(a: &DocPiece, b: &DocPiece): Ordering {
   doc_nat_cmp(a.start, b.start)
 }
 
@@ -53,21 +54,21 @@ pub fn doc_concat(parts: List(Text)): Text {
 pub fn doc_dir_parts(path: Text): List(Text) {
   match text_list_reverse(text_split(path, "/")) {
     Nil => Nil
-    Cons(file, dirs) => text_list_reverse(dirs)
+    Cons(^file, dirs) => text_list_reverse(dirs)
   }
 }
 
 // `parts` after the directories `kept` (last first), with `.` and `x/..`
 // taken out; `None` when it leaves the root.
 pub fn doc_normalize_onto(kept: List(Text), parts: List(Text)): Option(List(Text)) {
-  ⊢ Option(List(Text)) from match parts {
+  match parts {
     Nil => Some(text_list_reverse(kept))
     Cons(p, rest) => if p == "" || p == "." {
       doc_normalize_onto(kept, rest)
     } else if p == ".." {
       ⊢ Option(List(Text)) from match kept {
         Nil => None
-        Cons(k, up) => doc_normalize_onto(up, rest)
+        Cons(^k, up) => doc_normalize_onto(up, rest)
       }
     } else {
       doc_normalize_onto(Cons(p, kept), rest)
@@ -121,14 +122,14 @@ pub fn doc_is_name_byte(b: Nat): Bool {
 pub fn doc_last_part(name: Text): Text {
   match text_list_reverse(text_split(name, "::")) {
     Nil => name
-    Cons(last, rest) => last
+    Cons(last, ^rest) => last
   }
 }
 
 // Where the declaration's name is written: the first time it stands as a
 // whole word in the declaration from `at`, or its start; at most `k` tries.
 pub fn doc_name_in(k: Nat, source: Text, name: Text, at: Nat, d: NamesDecl): Nat {
-  ⊢ Nat from match k {
+  match k {
     Zero => d.start
     Succ(k1) => ⊢ Nat from match text_find(source, name, at) {
       None => d.start
@@ -150,7 +151,7 @@ pub fn doc_name_at(source: Text, d: NamesDecl): Nat {
 // The lines of the names of `ds`, counted on from the byte `at` on the line
 // `line`; a name before `at` is counted from the start.
 pub fn doc_lines_from(source: Text, at: Nat, line: Nat, ds: List(NamesDecl)): List(Nat) {
-  ⊢ List(Nat) from match ds {
+  match ds {
     Nil => Nil
     Cons(d, rest) => {
       let pos := doc_name_at(source, d)
@@ -165,7 +166,7 @@ pub fn doc_lines_from(source: Text, at: Nat, line: Nat, ds: List(NamesDecl)): Li
 }
 
 pub fn doc_line_in(ds: List(NamesDecl), lines: List(Nat), d: NamesDecl): Nat {
-  ⊢ Nat from match ds {
+  match ds {
     Nil => 1
     Cons(x, rest) => ⊢ Nat from match lines {
       Nil => 1
@@ -194,7 +195,7 @@ pub fn doc_escape_byte(b: Nat): Option(Text) {
   }
 }
 
-pub fn doc_escape(t: Text): Text {
+pub fn doc_escape(t: Text): Text ! {div} {
   var b := Buf::new()
   var i := 0
   var origin := 0
@@ -216,9 +217,9 @@ pub fn doc_escape(t: Text): Text {
 
 pub fn doc_style(): Text {
   doc_concat(Cons(
-    ":root{color-scheme:light dark;--bg:#fff;--fg:#1f2328;--mut:#6e7781;--kw:#cf222e;--str:#0a3069;--num:#0550ae;--com:#6e7781;--mac:#8250df;--ty:#953800;--fn:#6639ba;--var:#116329;--link:#0969da;--sel:#fff8c5}",
+    ":root{color-scheme:light dark;--bg:#fff;--fg:#1f2328;--mut:#6e7781;--kw:#cf222e;--str:#0a3069;--num:#0550ae;--com:#6e7781;--mac:#8250df;--ty:#953800;--fn:#6639ba;--var:#116329;--op:#0550ae;--link:#0969da;--sel:#fff8c5}",
     Cons(
-      "@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mut:#7d8590;--kw:#ff7b72;--str:#a5d6ff;--num:#79c0ff;--com:#8b949e;--mac:#d2a8ff;--ty:#ffa657;--fn:#d2a8ff;--var:#7ee787;--link:#58a6ff;--sel:#3a3000}}",
+      "@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mut:#7d8590;--kw:#ff7b72;--str:#a5d6ff;--num:#79c0ff;--com:#8b949e;--mac:#d2a8ff;--ty:#ffa657;--fn:#d2a8ff;--var:#7ee787;--op:#79c0ff;--link:#58a6ff;--sel:#3a3000}}",
       Cons(
         "body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}nav,main{padding:8px 16px}a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}",
         Cons(
@@ -226,7 +227,7 @@ pub fn doc_style(): Text {
           Cons(
             ".ln{display:inline-block;width:5ch;margin-right:2ch;text-align:right;color:var(--mut);user-select:none;text-decoration:none!important}.ln:target{background:var(--sel)}",
             Cons(
-              ".kw{color:var(--kw)}.str{color:var(--str)}.num{color:var(--num)}.com{color:var(--com)}.mac{color:var(--mac)}.ty{color:var(--ty)}.fn{color:var(--fn)}.var{color:var(--var)}ul{list-style:none;padding-left:0}li li{padding-left:2ch}.kind{color:var(--mut)}",
+              ".kw{color:var(--kw)}.str{color:var(--str)}.num{color:var(--num)}.com{color:var(--com)}.mac{color:var(--mac)}.ty{color:var(--ty)}.fn{color:var(--fn)}.var{color:var(--var)}.op{color:var(--op)}ul{list-style:none;padding-left:0}li li{padding-left:2ch}.kind{color:var(--mut)}",
               Nil
             )
           )
@@ -236,7 +237,7 @@ pub fn doc_style(): Text {
   ))
 }
 
-pub fn doc_head(title: Text): Text {
+pub fn doc_head(title: Text): Text ! {div} {
   doc_concat(Cons(
     "<!doctype html>\n<html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>",
     Cons(doc_escape(title), Cons("</title><style>", Cons(doc_style(), Cons("</style>\n", Nil))))
@@ -250,13 +251,13 @@ pub fn doc_line_mark(n: Nat): Text {
 
 // The bytes `start` to `to` of the source, escaped, with the number of
 // each line that starts in them.
-pub fn doc_push_plain(&mut b: Buf, &mut line: Nat, source: Text, origin: Nat, to: Nat): Unit {
+pub fn doc_push_plain(b: &mut Buf, line: &mut Nat, source: Text, origin: Nat, to: Nat): Unit ! {div} {
   var i := origin
   var start := origin
   while i < to {
     if Text::byte_value(source, i) == 10 {
       Buf::push(&mut b, &doc_escape(Text::slice_or_empty(source, start, i + 1)))
-      line := line + 1
+      *line := line + 1
       if i + 1 < Text::len(source) {
         Buf::push(&mut b, &doc_line_mark(line))
       }
@@ -269,7 +270,7 @@ pub fn doc_push_plain(&mut b: Buf, &mut line: Nat, source: Text, origin: Nat, to
 
 // The source with its pieces (sorted by start), each line after its
 // number. A piece that overlaps the one before it is left out.
-pub fn doc_source_html(source: Text, pieces: List(DocPiece)): Text {
+pub fn doc_source_html(source: Text, pieces: List(DocPiece)): Text ! {div} {
   var b := Buf::new()
   var line := 1
   var pos := 0
@@ -324,18 +325,18 @@ pub fn doc_same(a: NamesDecl, b: NamesDecl): Bool {
   a.start == b.start && doc_last_part(a.name) == doc_last_part(b.name)
 }
 
-pub fn doc_has_target(ts: List(Pair(Text, NamesDecl)), path: Text, d: NamesDecl): Bool {
-  ⊢ Bool from match ts {
+pub fn doc_has_target(ts: List(Text × NamesDecl), path: Text, d: NamesDecl): Bool {
+  match ts {
     Nil => false
     Cons(t, rest) => if t.fst == path && doc_same(t.snd, d) { true } else { doc_has_target(rest, path, d) }
   }
 }
 
-pub fn doc_targets_in(path: Text, ds: List(NamesDecl), name: Text, out: List(Pair(Text, NamesDecl))): List(Pair(Text, NamesDecl)) {
-  ⊢ List(Pair(Text, NamesDecl)) from match ds {
+pub fn doc_targets_in(path: Text, ds: List(NamesDecl), name: Text, out: List(Text × NamesDecl)): List(Text × NamesDecl) {
+  match ds {
     Nil => out
     Cons(d, rest) => if d.name == name && not(doc_has_target(out, path, d)) {
-      doc_targets_in(path, rest, name, Cons(Pair { fst: path, snd: d }, out))
+      doc_targets_in(path, rest, name, Cons(#(path, d), out))
     } else {
       doc_targets_in(path, rest, name, out)
     }
@@ -343,38 +344,63 @@ pub fn doc_targets_in(path: Text, ds: List(NamesDecl), name: Text, out: List(Pai
 }
 
 // The files and places a name is declared at in `scope`; each place once.
-pub fn doc_targets_of(scope: List(DocFile), name: Text, out: List(Pair(Text, NamesDecl))): List(Pair(Text, NamesDecl)) {
-  ⊢ List(Pair(Text, NamesDecl)) from match scope {
+pub fn doc_targets_of(scope: List(DocFile), name: Text, out: List(Text × NamesDecl)): List(Text × NamesDecl) {
+  match scope {
     Nil => out
     Cons(f, rest) => doc_targets_of(rest, name, doc_targets_in(f.path, f.decls, name, out))
   }
 }
 
-pub fn doc_targets(scope: List(DocFile), name: Text): List(Pair(Text, NamesDecl)) {
+pub fn doc_targets(scope: List(DocFile), name: Text): List(Text × NamesDecl) {
   doc_targets_of(scope, name, Nil)
 }
 
 // Where a use links to: the one declaration of its name, looked up first
 // under its module path and then as written. None when there is none, or
 // more than one.
-pub fn doc_only(found: List(Pair(Text, NamesDecl))): Option(Pair(Text, NamesDecl)) {
-  ⊢ Option(Pair(Text, NamesDecl)) from match found {
+pub fn doc_only(found: List(Text × NamesDecl)): Option(Text × NamesDecl) {
+  match found {
     Nil => None
-    Cons(only, more) => ⊢ Option(Pair(Text, NamesDecl)) from match more {
+    Cons(only, more) => ⊢ Option(Text × NamesDecl) from match more {
       Nil => Some(only)
-      Cons(x, r) => None
+      Cons(^x, ^r) => None
     }
   }
 }
 
-pub fn doc_or_written(inner: List(Pair(Text, NamesDecl)), scope: List(DocFile), u: NamesUse): List(Pair(Text, NamesDecl)) {
-  ⊢ List(Pair(Text, NamesDecl)) from match inner {
+pub fn doc_or_written(inner: List(Text × NamesDecl), scope: List(DocFile), u: NamesUse): List(Text × NamesDecl) {
+  match inner {
     Nil => doc_targets(scope, u.name)
-    Cons(x, r) => inner
+    Cons(^x, ^r) => inner
   }
 }
 
-pub fn doc_resolve(scope: List(DocFile), u: NamesUse): Option(Pair(Text, NamesDecl)) {
+// The declaration of `ds` whose id is `id`.
+pub fn doc_decl_by_id(ds: List(NamesDecl), id: DeclId): Option(NamesDecl) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => if decl_id_eq(d.id, id) { Some(d) } else { doc_decl_by_id(rest, id) }
+  }
+}
+
+// Where a use links to. A use the file's own declarations resolved
+// (`surface_resolve`) links to that declaration; one it did not is looked up
+// by its spelling among the files in `scope` (the file and its imports).
+pub fn doc_resolve(scope: List(DocFile), u: NamesUse): Option(Text × NamesDecl) {
+  match u.target {
+    NameGlobal(id) => ⊢ Option(Text × NamesDecl) from match scope {
+      Nil => None
+      Cons(f, ^rest) => ⊢ Option(Text × NamesDecl) from match doc_decl_by_id(f.decls, id) {
+        None => None
+        Some(d) => Some(#(f.path, d))
+      }
+    }
+    NameLocal(^l) => None
+    NameSpelled(^t) => doc_resolve_spelled(scope, u)
+  }
+}
+
+pub fn doc_resolve_spelled(scope: List(DocFile), u: NamesUse): Option(Text × NamesDecl) {
   if u.scope == "" {
     doc_only(doc_targets(scope, u.name))
   } else {
@@ -382,7 +408,7 @@ pub fn doc_resolve(scope: List(DocFile), u: NamesUse): Option(Pair(Text, NamesDe
   }
 }
 
-pub fn doc_link(files: List(DocFile), origin: DocFile, target: Pair(Text, NamesDecl)): Option(Text) {
+pub fn doc_link(files: List(DocFile), origin: DocFile, target: Text × NamesDecl): Option(Text) ! {div} {
   match doc_find_file(files, target.fst) {
     None => None
     Some(f) => {
@@ -396,7 +422,7 @@ pub fn doc_link(files: List(DocFile), origin: DocFile, target: Pair(Text, NamesD
   }
 }
 
-pub fn doc_link_pieces(files: List(DocFile), f: DocFile): List(DocPiece) {
+pub fn doc_link_pieces(files: List(DocFile), f: DocFile): List(DocPiece) ! {div} {
   let scope := Cons(f, doc_files_named(files, f.imports))
   var out := Nil
   var us := f.uses
@@ -462,8 +488,10 @@ pub fn doc_dsl_class(kind: Text): Text {
     "fn"
   } else if kind == "macro" {
     "mac"
-  } else if kind == "parameter" || kind == "property" || kind == "event" {
+  } else if kind == "parameter" || kind == "property" || kind == "event" || kind == "variable" || kind == "label" {
     "var"
+  } else if kind == "operator" {
+    "op"
   } else {
     ""
   }
@@ -504,7 +532,7 @@ pub fn doc_dsl_pieces(lines: List(Text)): List(DocPiece) {
 pub fn doc_is_dsl_arg(arg: Text): Bool {
   match text_find(arg, "\n", 0) {
     None => false
-    Some(i) => true
+    Some(^i) => true
   }
 }
 
@@ -549,7 +577,7 @@ pub fn doc_dsl_holds(p: DocPiece): Bool {
 // editor.
 pub fn doc_dsl_merge(scanned: List(DocPiece), inner: List(DocPiece)): List(DocPiece) {
   match scanned {
-    Nil => List::filter(doc_dsl_coloured, inner)
+    Nil => List::filter((x) => doc_dsl_coloured(x), inner)
     Cons(p, more) => if doc_dsl_holds(p) && doc_dsl_inside(p, inner) {
       doc_dsl_merge(more, inner)
     } else {
@@ -558,12 +586,38 @@ pub fn doc_dsl_merge(scanned: List(DocPiece), inner: List(DocPiece)): List(DocPi
   }
 }
 
+// The piece of `pieces` that covers exactly the bytes of `p`, if any.
+pub fn doc_same_bytes(pieces: List(DocPiece), p: DocPiece): Option(DocPiece) {
+  match pieces {
+    Nil => None
+    Cons(q, more) => if q.start == p.start && q.end == p.end {
+      Some(q)
+    } else {
+      doc_same_bytes(more, p)
+    }
+  }
+}
+
+// The coloured pieces and the links, a link keeping the colour of the name
+// it covers: both cover the same bytes, so only one would be written.
+pub fn doc_with_links(hl: List(DocPiece), links: List(DocPiece)): List(DocPiece) {
+  let linked := List::map(
+    (l: DocPiece) => match doc_same_bytes(hl, l) {
+      None => l
+      Some(h) => DocPiece { start: l.start, end: l.end, open: Text::concat(l.open, h.open), close: Text::concat(h.close, l.close) }
+    },
+    links
+  )
+  List::append(List::filter((h) => match doc_same_bytes(links, h) { None => true
+    Some(_) => false }, hl), linked)
+}
+
 // --- Pages -----------------------------------------------------------------
 
-pub fn doc_source_page(&t: SyntaxTables, files: List(DocFile), dsl: List(DocDsl), f: DocFile): Text {
+pub fn doc_source_page(t: &SyntaxTables, files: List(DocFile), dsl: List(DocDsl), f: DocFile): Text ! {div} {
   let inner := doc_dsl_of(dsl, f.path)
   let hl := doc_dsl_merge(doc_hl_pieces(hl_spans(t, f.source)), inner)
-  let pieces := List::sort(doc_piece_cmp, List::append(hl, doc_link_pieces(files, f)))
+  let pieces := List::sort(doc_piece_cmp, doc_with_links(hl, doc_link_pieces(files, f)))
   doc_concat(Cons(
     doc_head(f.path),
     Cons(
@@ -585,14 +639,14 @@ pub fn doc_listed(d: NamesDecl): Bool {
   not(d.kind == "ctor") && not(d.kind == "method" && Text::len(doc_last_part(d.name)) < Text::len(d.name))
 }
 
-pub fn doc_index_entry(f: DocFile): Text {
+pub fn doc_index_entry(f: DocFile): Text ! {div} {
   var b := Buf::new()
   let page := doc_escape(doc_page(f.path))
   Buf::push(&mut b, &doc_concat(Cons("<li><a href=\"", Cons(page, Cons("\">", Cons(doc_escape(f.path), Cons("</a>", Nil)))))))
-  let listed := List::filter(doc_listed, f.decls)
+  let listed := List::filter((x) => doc_listed(x), f.decls)
   match listed {
     Nil => #()
-    Cons(x, r) => {
+    Cons(^x, ^r) => {
       Buf::push(&mut b, &"<ul>")
       var ds := listed
       var running := true
@@ -616,14 +670,14 @@ pub fn doc_index_entry(f: DocFile): Text {
   Text::of(b)
 }
 
-pub fn doc_index_entries(files: List(DocFile)): Text {
+pub fn doc_index_entries(files: List(DocFile)): Text ! {div} {
   match files {
     Nil => ""
     Cons(f, rest) => Text::concat(doc_index_entry(f), doc_index_entries(rest))
   }
 }
 
-pub fn doc_index_page(title: Text, files: List(DocFile)): Text {
+pub fn doc_index_page(title: Text, files: List(DocFile)): Text ! {div} {
   doc_concat(Cons(
     doc_head(title),
     Cons(
@@ -635,7 +689,7 @@ pub fn doc_index_page(title: Text, files: List(DocFile)): Text {
 
 // --- Reading ---------------------------------------------------------------
 
-pub fn doc_read(&t: SyntaxTables, classes: UnicodeClasses, path: Text, source: Text): DocFile {
+pub fn doc_read(t: &SyntaxTables, classes: UnicodeClasses, path: Text, source: Text): DocFile ! {div, overflow} {
   match surface_parse_program(t, classes, source, 0) {
     None => DocFile { path: path, source: source, decls: Nil, lines: Nil, uses: Nil, imports: Nil }
     Some(stmts) => DocFile {

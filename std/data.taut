@@ -1,0 +1,114 @@
+import std::prelude::std { Option }
+
+// `Option` and the product `A × B` (`std.taut`): the usual functions and their laws.
+
+pub fn Option::map<A, B>(f: (A) -> B, o: Option(A)): Option(B) {
+  match o {
+    None => None
+    Some(a) => Some(f(a))
+  }
+}
+
+pub fn Option::bind<A, B>(o: Option(A), f: (A) -> Option(B)): Option(B) {
+  match o {
+    None => None
+    Some(a) => f(a)
+  }
+}
+
+pub fn Option::unwrap_or<A>(o: Option(A), d: A): A {
+  match o {
+    None => d
+    Some(a) => a
+  }
+}
+
+pub fn Option::is_some<A>(o: Option(A)): Bool {
+  match o {
+    None => false
+    Some(_) => true
+  }
+}
+
+pub fn Option::or<A>(o: Option(A), p: Option(A)): Option(A) {
+  match o {
+    None => p
+    Some(a) => Some(a)
+  }
+}
+
+pub theorem Option::map_id<A: Type>(o: Option(A)): Option::map((x: A) => x, o) = o {
+  match o {
+    None => Refl
+    Some(_) => Refl
+  }
+}
+
+pub theorem Option::map_map<A: Type, B: Type, C: Type>(
+  f: (A) -> B,
+  g: (B) -> C,
+  o: Option(A)
+): Option::map(g, Option::map(f, o)) = Option::map((x: A) => g(f(x)), o) {
+  match o {
+    None => Refl
+    Some(_) => Refl
+  }
+}
+
+pub theorem Option::bind_some<A: Type>(o: Option(A)): Option::bind(o, (x: A) => Some(x)) = o {
+  match o {
+    None => Refl
+    Some(_) => Refl
+  }
+}
+
+pub theorem Option::unwrap_or_some<A: Type>(a: A, d: A): Option::unwrap_or(Some(a), d) = a {
+  Refl
+}
+
+pub theorem Option::unwrap_or_none<A: Type>(d: A): Option::unwrap_or(None, d) = d {
+  Refl
+}
+
+pub theorem Option::or_none_right<A: Type>(o: Option(A)): Option::or(o, None) = o {
+  match o {
+    None => Refl
+    Some(_) => Refl
+  }
+}
+
+pub fn Product::fst<A, B>(p: A × B): A {
+  match p {
+    #(a, b) => a
+  }
+}
+
+pub fn Product::snd<A, B>(p: A × B): B {
+  match p {
+    #(a, b) => b
+  }
+}
+
+pub fn Product::swap<A, B>(p: A × B): B × A {
+  ⊢ (B × A) from match p {
+    #(a, b) => #(b, a)
+  }
+}
+
+pub fn Product::map<A, B, C, D>(f: (A) -> C, g: (B) -> D, p: A × B): C × D {
+  ⊢ (C × D) from match p {
+    #(a, b) => #(f(a), g(b))
+  }
+}
+
+pub theorem Product::swap_swap<A: Type, B: Type>(p: A × B): Product::swap(Product::swap(p)) = p {
+  match p {
+    #(a, b) => Refl
+  }
+}
+
+pub theorem Product::eta<A: Type, B: Type>(p: A × B): Eq(A × B, #(Product::fst(p), Product::snd(p)), p) {
+  match p {
+    #(a, b) => Refl
+  }
+}

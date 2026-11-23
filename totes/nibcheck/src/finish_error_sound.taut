@@ -1,8 +1,8 @@
 import "error_frame.taut"
 import "product_frame.taut"
 import "finish_acceptance.taut"
-import std::Base
-import std::Map
+import std::base
+import std::map
 import "checker.taut"
 import "decl_names_sound.taut"
 import "diagnostic_report.taut"
@@ -16,7 +16,7 @@ pub theorem finish_default_errors(
   c: Checker,
   t: Ty
 ): decl_names_errors(ck_st(finish_default(c, t))) = decl_names_errors(c) {
-  ⊢ decl_names_errors(ck_st(finish_default(c, t))) = decl_names_errors(c) from match t {
+  match t {
     TyInt(w) => Refl
     TyBool => Refl
     TyText => Refl
@@ -24,6 +24,7 @@ pub theorem finish_default_errors(
     TyNever => Refl
     TyDecimal => Refl
     TyFloat => Refl
+    TyFloat32 => Refl
     TyFn(params, result, kind) => Refl
     TyUnion(members) => Refl
     TyProduct(members) => Refl
@@ -49,17 +50,16 @@ pub theorem ck_default_int_error_frame(c: Checker, v: Nat): CkErrorFrame(c, ck_d
   )
 }
 pub theorem ck_default_ints_error_frame(
-  vs: List(Pair(Nat, Bool)),
+  vs: List(Nat × Bool),
   c: Checker
 ): CkErrorFrame(c, ck_default_ints(vs, c)) {
-  ⊢ CkErrorFrame(c, ck_default_ints(vs, c)) from match vs {
+  match vs {
     Nil => error_frame_return(c, Star)
     Cons(p, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
       Eq::sym(finish_defaults_unf(p, rest, c)),
       error_frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_default_ints(rest, next)),
         ck_default_int(c, finish_int_key(p)),
@@ -92,7 +92,7 @@ pub theorem finish_default_result_clean(
   m: Mut1(Unit, Checker),
   clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
 ): DiagnosticClean(ck_st(m)) {
-  ⊢ DiagnosticClean(ck_st(m)) from match m {
+  match m {
     mut1(v, next) => finish_after_defaults_clean(
       next,
       ck_widths(List::reverse(finish_ops(next)), next, Ordmap::empty()),

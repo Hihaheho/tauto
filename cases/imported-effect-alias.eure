@@ -5,32 +5,34 @@ package { name = "app"
 version = "0.1.0" }
 ```
 files."app/src/runtime.taut" = ```tauto
-import std::Base
-import std::prelude::Par
+import std::base
+import std::builtin::par
 
 effect access_runtime(): Unit direct
 pub effect rt { access_runtime, wait }
-pub fn run_handler(): Unit ! {rt, Div} {
+pub fn run_handler(): Unit ! {rt, div} {
   perform access_runtime()
 }
-pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+pub fn batch<T>(f: () -> T ! {rt, div}): T ! {rt, div} {
   f()
 }
 
-pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+pub fn drive(body: () -> Unit ! {rt, div}): Unit ! {wait, div} {
   handle { body() } with {
     access_runtime(), k => k(#())
   }
 }
 ```
 files."app/src/main.taut" = ```tauto
-import std::Base
+import std::base
 import "runtime.taut"
 
-pub fn fire(): Unit ! {rt, Div} {
+pub fn fire(): Unit ! {rt, div} {
   batch(() => run_handler())
 }
-drive(() => fire())
+perform main(() => {
+  drive(() => fire())
+})
 ```
 tote_errors = []
 
@@ -41,29 +43,31 @@ package { name = "app"
 version = "0.1.0" }
 ```
 files."app/src/main.taut" = ```tauto
-import std::Base
-import std::prelude::Par
+import std::base
+import std::builtin::par
 
 effect access_runtime(): Unit direct
 pub effect rt { access_runtime, wait }
-pub fn run_handler(): Unit ! {rt, Div} {
+pub fn run_handler(): Unit ! {rt, div} {
   perform access_runtime()
 }
-pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+pub fn batch<T>(f: () -> T ! {rt, div}): T ! {rt, div} {
   f()
 }
 
-pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+pub fn drive(body: () -> Unit ! {rt, div}): Unit ! {wait, div} {
   handle { body() } with {
     access_runtime(), k => k(#())
   }
 }
 
 
-pub fn fire(): Unit ! {rt, Div} {
+pub fn fire(): Unit ! {rt, div} {
   batch(() => run_handler())
 }
-drive(() => fire())
+perform main(() => {
+  drive(() => fire())
+})
 ```
 tote_errors = []
 
@@ -74,33 +78,35 @@ package { name = "app"
 version = "0.1.0" }
 ```
 files."app/src/runtime.taut" = ```tauto
-import std::Base
-import std::prelude::Par
+import std::base
+import std::builtin::par
 
 effect access_runtime(): Unit direct
 pub effect rt { access_runtime, wait }
-pub fn run_handler(): Unit ! {rt, Div} {
+pub fn run_handler(): Unit ! {rt, div} {
   perform access_runtime()
 }
-pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+pub fn batch<T>(f: () -> T ! {rt, div}): T ! {rt, div} {
   f()
 }
 
-pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+pub fn drive(body: () -> Unit ! {rt, div}): Unit ! {wait, div} {
   handle { body() } with {
     access_runtime(), k => k(#())
   }
 }
 ```
 files."app/src/main.taut" = ```tauto
-import std::Base
-import std::prelude::Par
+import std::base
+import std::builtin::par
 import "runtime.taut"
 
-pub fn fire(): Unit ! {wait, Div} {
+pub fn fire(): Unit ! {wait, div} {
   batch(() => run_handler())
 }
-drive(() => fire())
+perform main(() => {
+  drive(() => fire())
+})
 ```
 tote_errors = ["access_runtime but its row"]
 
@@ -111,38 +117,40 @@ package { name = "app"
 version = "0.1.0" }
 ```
 files."app/src/runtime.taut" = ```tauto
-import std::Base
-import std::prelude::Par
+import std::base
+import std::builtin::par
 
 effect access_runtime(): Unit direct
 pub effect rt { access_runtime, wait }
-pub fn run_handler(): Unit ! {rt, Div} {
+pub fn run_handler(): Unit ! {rt, div} {
   perform access_runtime()
 }
-pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+pub fn batch<T>(f: () -> T ! {rt, div}): T ! {rt, div} {
   f()
 }
 
-pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+pub fn drive(body: () -> Unit ! {rt, div}): Unit ! {wait, div} {
   handle { body() } with {
     access_runtime(), k => k(#())
   }
 }
 ```
 files."app/src/middle.taut" = ```tauto
-import std::Base
+import std::base
 import "runtime.taut"
 
 pub effect session {rt}
-pub fn invoke(): Unit ! {session, Div} { batch(() => run_handler()) }
+pub fn invoke(): Unit ! {session, div} { batch(() => run_handler()) }
 ```
 files."app/src/main.taut" = ```tauto
-import std::Base
+import std::base
 import "middle.taut"
 import "runtime.taut"
 
-pub fn fire(): Unit ! {session, Div} { invoke() }
-drive(() => fire())
+pub fn fire(): Unit ! {session, div} { invoke() }
+perform main(() => {
+  drive(() => fire())
+})
 ```
 tote_errors = []
 
@@ -153,34 +161,36 @@ package { name = "app"
 version = "0.1.0" }
 ```
 files."app/src/runtime.taut" = ```tauto
-import std::Base
-import std::prelude::Par
+import std::base
+import std::builtin::par
 
 effect access_runtime(): Unit direct
 pub effect rt { access_runtime, wait }
-pub fn run_handler(): Unit ! {rt, Div} {
+pub fn run_handler(): Unit ! {rt, div} {
   perform access_runtime()
 }
-pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+pub fn batch<T>(f: () -> T ! {rt, div}): T ! {rt, div} {
   f()
 }
 
-pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+pub fn drive(body: () -> Unit ! {rt, div}): Unit ! {wait, div} {
   handle { body() } with {
     access_runtime(), k => k(#())
   }
 }
 ```
 files."app/src/main.taut" = ```tauto
-import std::Base
+import std::base
 import "runtime.taut"
 
 effect access_runtime(): Unit direct
 
-pub fn fire(): Unit ! {rt, Div} {
+pub fn fire(): Unit ! {rt, div} {
   batch(() => run_handler())
 }
-drive(() => fire())
+perform main(() => {
+  drive(() => fire())
+})
 ```
 tote_errors = []
 
@@ -191,34 +201,36 @@ package { name = "app"
 version = "0.1.0" }
 ```
 files."app/src/runtime.taut" = ```tauto
-import std::Base
-import std::prelude::Par
+import std::base
+import std::builtin::par
 
 effect access_runtime(): Unit direct
 pub effect rt { access_runtime, wait }
-pub fn run_handler(): Unit ! {rt, Div} {
+pub fn run_handler(): Unit ! {rt, div} {
   perform access_runtime()
 }
-pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+pub fn batch<T>(f: () -> T ! {rt, div}): T ! {rt, div} {
   f()
 }
 
-pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+pub fn drive(body: () -> Unit ! {rt, div}): Unit ! {wait, div} {
   handle { body() } with {
     access_runtime(), k => k(#())
   }
 }
 ```
 files."app/src/main.taut" = ```tauto
-import std::Base
+import std::base
 import "runtime.taut"
 
 effect access_runtime(): Unit direct
 
-pub fn fire(): Unit ! {rt, Div} {
+pub fn fire(): Unit ! {rt, div} {
   perform access_runtime()
 }
-drive(() => fire())
+perform main(() => {
+  drive(() => fire())
+})
 ```
 tote_errors = ["access_runtime but its row"]
 
@@ -229,32 +241,34 @@ package { name = "app"
 version = "0.1.0" }
 ```
 files."app/src/runtime.taut" = ```tauto
-import std::Base
-import std::prelude::Par
+import std::base
+import std::builtin::par
 
 effect access_runtime(): Unit direct
 pub effect rt { access_runtime, wait }
-pub fn run_handler(): Unit ! {rt, Div} {
+pub fn run_handler(): Unit ! {rt, div} {
   perform access_runtime()
 }
-pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+pub fn batch<T>(f: () -> T ! {rt, div}): T ! {rt, div} {
   f()
 }
 
-pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+pub fn drive(body: () -> Unit ! {rt, div}): Unit ! {wait, div} {
   handle { body() } with {
     access_runtime(), k => k(#())
   }
 }
 
-pub effect all_rt {rt, Div}
+pub effect all_rt {rt, div}
 pub fn forward<!e: all_rt>(f: () -> Unit ! e): Unit ! e { f() }
 ```
 files."app/src/main.taut" = ```tauto
-import std::Base
+import std::base
 import "runtime.taut"
 
 pub fn fire<!e: all_rt>(f: () -> Unit ! e): Unit ! e { forward(f) }
-drive(() => fire(() => run_handler()))
+perform main(() => {
+  drive(() => fire(() => run_handler()))
+})
 ```
 tote_errors = []

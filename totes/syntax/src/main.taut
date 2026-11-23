@@ -5,14 +5,13 @@
 import "../../scan/src/scan.taut"
 import "syntax.taut"
 import "../../text/src/text.taut"
-import std::Text
-import std::prelude::Os
-import std::prelude::Affine
+import std::text
+import std::builtin::os
 
 // With `--tokens` first: the scanner's tokens only, a line `<kind> <start>
 // <end>` for each (the differential test's way to tell the scanner's faults
 // from the parser's).
-pub fn syntax_tokens_each(t: SyntaxTables, paths: List(Text)): Unit {
+pub fn syntax_tokens_each(t: SyntaxTables, paths: List(Text)): Unit ! {div, fs_read, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
@@ -26,7 +25,7 @@ pub fn syntax_tokens_each(t: SyntaxTables, paths: List(Text)): Unit {
   }
 }
 
-pub fn syntax_print_tokens(t: SyntaxTables, tokens: List(ScanToken)): Unit {
+pub fn syntax_print_tokens(t: SyntaxTables, tokens: List(ScanToken)): Unit ! {div, stdout} {
   var b := Buf::new()
   var rest := tokens
   var running := true
@@ -49,7 +48,7 @@ pub fn syntax_print_tokens(t: SyntaxTables, tokens: List(ScanToken)): Unit {
   print(Text::of(b))
 }
 
-pub fn syntax_main_each(t: SyntaxTables, paths: List(Text)): Unit {
+pub fn syntax_main_each(t: SyntaxTables, paths: List(Text)): Unit ! {fs_read, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
@@ -66,14 +65,16 @@ pub fn syntax_main_each(t: SyntaxTables, paths: List(Text)): Unit {
   }
 }
 
-match syntax_tables() {
-  None => eprint("the tables of the syntax are damaged")
-  Some(t) => match perform argv() {
-    Nil => #()
-    Cons(first, rest) => if first == "--tokens" {
-      syntax_tokens_each(t, rest)
-    } else {
-      syntax_main_each(t, Cons(first, rest))
+perform main(() => {
+  match syntax_tables() {
+    None => eprint("the tables of the syntax are damaged")
+    Some(t) => match perform argv() {
+      Nil => #()
+      Cons(first, rest) => if first == "--tokens" {
+        syntax_tokens_each(t, rest)
+      } else {
+        syntax_main_each(t, Cons(first, rest))
+      }
     }
   }
-}
+})

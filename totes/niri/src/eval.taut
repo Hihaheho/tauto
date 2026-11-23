@@ -1,0 +1,5657 @@
+import "value.taut"
+import "num.taut"
+import "show.taut"
+import "machine.taut"
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::float
+import std::base
+import std::map
+import std::uint
+
+// Evaluation and the steps of the machine (crates/tauto-niri/src/machine.rs).
+
+pub fn is_control(e: NExpr): Bool {
+  match e.kind {
+    NBlockOf(^b) => true
+    NIf(^c, ^t, ^o) => true
+    NAnd(^a, ^b) => true
+    NOr(^a, ^b) => true
+    NMatchOf(^x) => true
+    NPerformOf(^p) => true
+    NHandleOf(^h) => true
+    NBudgetOf(^b) => true
+    NCallOf(c) => match c.callee {
+      NCallBuiltin(^n) => false
+      NCallInst(^i) => true
+      NCallExtern(^n) => true
+      NCallLocal(^l) => true
+      NCallCont(^l) => true
+      NCallValue(^v) => true
+    }
+    NUnitLit => false
+    NIntLit(^n, ^k) => false
+    NBoolLit(^b) => false
+    NFloatLit(^t) => false
+    NTextLit(^t) => false
+    NDeclaration(^i) => false
+    NFnValue(^i, ^ts) => false
+    NClosureOf(^c) => false
+    NInject(^u, ^i, ^x) => false
+    NRemap(^u, ^t, ^x) => false
+    NFnCast(^x) => false
+    NRead(^l, ^h) => false
+    NBorrow(^p) => false
+    NBorrowMut(^p) => false
+    NTempRef(^x) => false
+    NDeref(^x, ^h) => false
+    NFieldOf(^b, ^f, ^h, ^r) => false
+    NArithOf(^o, ^t, ^xs) => false
+    NCmpOf(^o, ^xs) => false
+    NEqOf(^n, ^xs) => false
+    NNot(^x) => false
+    NShownOf(^x) => false
+    NUnreachable(^x) => false
+    NCtorOf(^c, ^xs) => false
+  }
+}
+
+// Whether `e` names a place: a field read of it reads the place.
+pub fn is_path(e: NExpr): Bool ! {div} {
+  match e.kind {
+    NRead(^l, ^h) => true
+    NBorrow(^p) => true
+    NBorrowMut(^p) => true
+    NFieldOf(b, ^f, ^h, ^r) => is_path(b)
+    NDeref(b, ^h) => is_path(b)
+    NUnitLit => false
+    NIntLit(^n, ^k) => false
+    NBoolLit(^b) => false
+    NFloatLit(^t) => false
+    NTextLit(^t) => false
+    NDeclaration(^i) => false
+    NFnValue(^i, ^ts) => false
+    NClosureOf(^c) => false
+    NHandleOf(^h) => false
+    NBudgetOf(^b) => false
+    NInject(^u, ^i, ^x) => false
+    NRemap(^u, ^t, ^x) => false
+    NFnCast(^x) => false
+    NTempRef(^x) => false
+    NArithOf(^o, ^t, ^xs) => false
+    NCmpOf(^o, ^xs) => false
+    NEqOf(^n, ^xs) => false
+    NNot(^x) => false
+    NAnd(^a, ^b) => false
+    NOr(^a, ^b) => false
+    NIf(^c, ^t, ^o) => false
+    NBlockOf(^b) => false
+    NCtorOf(^c, ^xs) => false
+    NMatchOf(^x) => false
+    NCallOf(^c) => false
+    NShownOf(^x) => false
+    NPerformOf(^p) => false
+    NUnreachable(^x) => false
+  }
+}
+
+pub fn count_step(m: &mut M): Unit ! {nout} {
+  m.steps := m.steps + 1
+  if m.steps > m.max_steps { unsupported("the step limit") } else { () }
+}
+
+pub fn eval(m: &mut M, e: NExpr, fr: u64): Val ! {div, divzero, nflow, nout, overflow} {
+  if is_control(e) {
+    run_from(&mut m, CEval(e, fr))
+  } else {
+    count_step(&mut m)
+    let copy_read := match e.kind {
+      NRead(^l, h) => is_copy_use(h)
+      NFieldOf(^b, ^f, h, ^r) => is_copy_use(h)
+      NDeref(^x, h) => is_copy_use(h)
+      NUnitLit => false
+      NIntLit(^n, ^k) => false
+      NBoolLit(^b) => false
+      NFloatLit(^t) => false
+      NTextLit(^t) => false
+      NDeclaration(^i) => false
+      NFnValue(^i, ^ts) => false
+      NClosureOf(^c) => false
+      NHandleOf(^h) => false
+      NBudgetOf(^b) => false
+      NInject(^u, ^i, ^x) => false
+      NRemap(^u, ^t, ^x) => false
+      NFnCast(^x) => false
+      NBorrow(^p) => false
+      NBorrowMut(^p) => false
+      NTempRef(^x) => false
+      NArithOf(^o, ^t, ^xs) => false
+      NCmpOf(^o, ^xs) => false
+      NEqOf(^n, ^xs) => false
+      NNot(^x) => false
+      NAnd(^a, ^b) => false
+      NOr(^a, ^b) => false
+      NIf(^c, ^t, ^o) => false
+      NBlockOf(^b) => false
+      NCtorOf(^c, ^xs) => false
+      NMatchOf(^x) => false
+      NCallOf(^c) => false
+      NShownOf(^x) => false
+      NPerformOf(^p) => false
+      NUnreachable(^x) => false
+    }
+    if copy_read {
+      let before := m.copy_type
+      m.copy_type := is_copy(&m, e.ty)
+      let r := eval_kind(&mut m, e, fr)
+      m.copy_type := before
+      r
+    } else {
+      m.copy_type := false
+      eval_kind(&mut m, e, fr)
+    }
+  }
+}
+
+pub fn is_copy_use(h: NUse): Bool {
+  match h {
+    NCopy => true
+    NMove => false
+    NClone => false
+    NPlace => false
+  }
+}
+
+pub fn eval_all(m: &mut M, xs: List(NExpr), fr: u64): List(Val) ! {div, divzero, nflow, nout, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let v := eval(&mut m, x, fr)
+      Cons(v, eval_all(&mut m, rest, fr))
+    }
+  }
+}
+
+pub fn consume_all(m: &mut M, vs: List(Val)): Unit ! {div, nout, overflow} { release_all(&mut m, vs, TConsumed) }
+
+pub fn first(vs: List(Val)): Val {
+  match vs {
+    Nil => VUnit
+    Cons(v, ^rest) => v
+  }
+}
+
+pub fn second(vs: List(Val)): Val {
+  match vs {
+    Nil => VUnit
+    Cons(^v, rest) => first(rest)
+  }
+}
+
+pub fn eval_kind(m: &mut M, e: NExpr, fr: u64): Val ! {div, divzero, nflow, nout, overflow} {
+  match e.kind {
+    NDeclaration(^i) => unsupported("a declaration reference")
+    NUnitLit => VUnit
+    NIntLit(neg, n) => VInt(neg && n != 0, n, mint(&mut m, e.ty))
+    NFloatLit(t) => VFloat(float_lit(t))
+    NBoolLit(b) => VBool(b)
+    NTextLit(s) => VText(s, mint(&mut m, e.ty))
+    NRead(l, how) => read(&mut m, l, how, fr)
+    NFnValue(i, ^ts) => VFn(FInst(i), mint(&mut m, e.ty))
+    NCallOf(c) => call_builtin(&mut m, c, e, fr)
+    NArithOf(op, num, args) => {
+      let vals := eval_all(&mut m, args, fr)
+      let r := handle { Ok(arith(&mut m, op, num, vals, e)) } with { nout(o) => Err(o) }
+      consume_all(&mut m, vals)
+      match r {
+        Ok(v) => v
+        Err(o) => match operator_effect(o) {
+          Some(name) => operator_performs(&mut m, name, o, fr)
+          None => perform nout(o)
+        }
+      }
+    }
+    NCmpOf(op, args) => {
+      let vals := eval_all(&mut m, args, fr)
+      let a := value_of(&mut m, first(vals))
+      let b := value_of(&mut m, second(vals))
+      let r := compare(op, a, b)
+      consume_all(&mut m, vals)
+      VBool(r)
+    }
+    NEqOf(neg, args) => {
+      let vals := eval_all(&mut m, args, fr)
+      let a := value_of(&mut m, first(vals))
+      let b := value_of(&mut m, second(vals))
+      let r := equal(&mut m, a, b)
+      consume_all(&mut m, vals)
+      VBool(r != neg)
+    }
+    NNot(a) => match eval(&mut m, a, fr) {
+      VBool(b) => VBool(not(b))
+      VFloat(^b) => internal("`!` of a float")
+      VUnit => internal("`!` of a unit")
+      VInt(^n, ^g, ^t) => internal("`!` of a int")
+      VText(^x, ^t) => internal("`!` of a text")
+      VShown(^x, ^t) => internal("`!` of a shown")
+      VData(^c, ^fs, ^t) => internal("`!` of a data")
+      VInject(^i, ^x) => internal("`!` of a union")
+      VFn(^f, ^t) => internal("`!` of a function")
+      VRef(^p) => internal("`!` of a borrow")
+      VCell(^c) => internal("`!` of a shared var")
+      VSeq(^xs, ^t, ^k) => internal("`!` of a Vec")
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal("`!` of a Slots")
+      VBuf(^x, ^t) => internal("`!` of a Buf")
+      VShared(^c, ^t) => internal("`!` of a Ref")
+      VInfo => internal("`!` of a budget info")
+      VAnswer(^x) => internal("`!` of a budget answer")
+      VCont(^c) => internal("`!` of a continuation")
+      VMoved => internal("`!` of a moved")
+    }
+    NAnd(^a, ^b) => internal("a step of the machine on the Rust stack")
+    NOr(^a, ^b) => internal("a step of the machine on the Rust stack")
+    NMatchOf(^x) => internal("a step of the machine on the Rust stack")
+    NIf(^c, ^t, ^o) => internal("a step of the machine on the Rust stack")
+    NBlockOf(^b) => internal("a step of the machine on the Rust stack")
+    NPerformOf(^p) => internal("a step of the machine on the Rust stack")
+    NHandleOf(^h) => internal("a step of the machine on the Rust stack")
+    NBudgetOf(^b) => internal("a step of the machine on the Rust stack")
+    NCtorOf(ctor, args) => {
+      let n := if l_len(ctor.labels) > l_len(args) { l_len(ctor.labels) } else { l_len(args) }
+      let slots := ctor_slots(&mut m, ctor, args, 0, l_units(n), fr)
+      let library := match ctor.data {
+        NDataGen(^x) => false
+        NDataOption => true
+        NDataResult => true
+        NDataPair => true
+      }
+      let fields_own := any_owning(slots)
+      let tok := if owns(&m, e.ty) && (not(library) || not(has_params(e.ty)) || fields_own || ctor.is_linear) {
+        mint_linear(&mut m, ctor.is_linear)
+      } else {
+        None
+      }
+      VData(ctor, slots, tok)
+    }
+    NFieldOf(base, field, how, ^read_as) => if is_path(base) {
+      let p := place_of(&mut m, base, fr)
+      take_at(&mut m, PlaceRef { root: p.root, path: l_snoc(p.path, field) }, how)
+    } else {
+      let v := eval(&mut m, base, fr)
+      let p := temp(&mut m, v, fr)
+      take_at(&mut m, PlaceRef { root: p.root, path: l_snoc(p.path, field) }, how)
+    }
+    NClosureOf(c) => closure(&mut m, c, e, fr)
+    NInject(^u, member, value) => VInject(member, eval(&mut m, value, fr))
+    NRemap(src, to, value) => {
+      let x := eval(&mut m, value, fr)
+      remap(&mut m, src, to, x)
+    }
+    NBorrow(p) => VRef(place_from(&mut m, p, fr))
+    NBorrowMut(p) => VRef(place_from(&mut m, p, fr))
+    NTempRef(x) => {
+      let v := eval(&mut m, x, fr)
+      VRef(temp(&mut m, v, fr))
+    }
+    NDeref(value, how) => match eval(&mut m, value, fr) {
+      VRef(p) => take_at(&mut m, p, how)
+      VUnit => internal("`*` of a unit")
+      VBool(^b) => internal("`*` of a bool")
+      VFloat(^b) => internal("`*` of a bool")
+      VInt(^n, ^g, ^t) => internal("`*` of a int")
+      VText(^x, ^t) => internal("`*` of a text")
+      VShown(^x, ^t) => internal("`*` of a shown")
+      VData(^c, ^fs, ^t) => internal("`*` of a data")
+      VInject(^i, ^x) => internal("`*` of a union")
+      VFn(^f, ^t) => internal("`*` of a function")
+      VCell(^c) => internal("`*` of a shared var")
+      VSeq(^xs, ^t, ^k) => internal("`*` of a Vec")
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal("`*` of a Slots")
+      VBuf(^x, ^t) => internal("`*` of a Buf")
+      VShared(^c, ^t) => internal("`*` of a Ref")
+      VInfo => internal("`*` of a budget info")
+      VAnswer(^x) => internal("`*` of a budget answer")
+      VCont(^c) => internal("`*` of a continuation")
+      VMoved => internal("`*` of a moved")
+    }
+    NShownOf(x) => {
+      let v := eval(&mut m, x, fr)
+      let shown := deep(&mut m, v)
+      let s := show_text(&m, shown)
+      release(&mut m, v, TConsumed)
+      VShown(s, mint(&mut m, e.ty))
+    }
+    NUnreachable(x) => {
+      eval(&mut m, x, fr)
+      fail("`unreachable` was reached")
+    }
+    NFnCast(x) => eval(&mut m, x, fr)
+  }
+}
+
+pub fn cells_list(m: &M): List(Val) ! {div, overflow} {
+  var out: List(Val) := Nil
+  var i: u64 := Vec::len(&m.cells)
+  while i > 0 {
+    i := i - 1
+    out := Cons(cell_get(&m, i), out)
+  }
+  out
+}
+
+pub fn show_text(m: &M, v: Val): Text ! {div, nout, overflow} {
+  match show(m.pkg.datas, cells_list(&m), v) {
+    ShownText(t) => t
+    ShownNot(k) => fail(Text::concat("cannot show a ", k))
+  }
+}
+
+pub fn l_units(n: Nat): List(Option(Val)) {
+  if n == 0 { Nil } else { Cons(None, l_units(n - 1)) }
+}
+
+pub fn ctor_slots(m: &mut M, ctor: NCtorRef, args: List(NArg), i: Nat, slots: List(Option(Val)), fr: u64): List(Val) ! {div, divzero, nflow, nout, overflow} {
+  match args {
+    Nil => fill_units(slots)
+    Cons(a, rest) => {
+      let v := eval(&mut m, a.value, fr)
+      let at := match a.label {
+        Some(n) => match label_pos(ctor.labels, n, 0) {
+          Some(j) => j
+          None => i
+        }
+        None => i
+      }
+      ctor_slots(&mut m, ctor, rest, i + 1, l_set(slots, at, Some(v)), fr)
+    }
+  }
+}
+
+pub fn fill_units(xs: List(Option(Val))): List(Val) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(
+      match x {
+        Some(v) => v
+        None => VUnit
+      },
+      fill_units(rest)
+    )
+  }
+}
+
+pub fn any_owning(xs: List(Val)): Bool ! {div} {
+  match xs {
+    Nil => false
+    Cons(x, rest) => {
+      let here := match x {
+        VFn(^f, ^t) => true
+        VCell(^c) => true
+        VUnit => v_owns_token(x)
+        VBool(^b) => v_owns_token(x)
+        VFloat(^b) => v_owns_token(x)
+        VInt(^n, ^g, ^t) => v_owns_token(x)
+        VText(^y, ^t) => v_owns_token(x)
+        VShown(^y, ^t) => v_owns_token(x)
+        VData(^c, ^fs, ^t) => v_owns_token(x)
+        VInject(^i, ^y) => v_owns_token(x)
+        VRef(^p) => v_owns_token(x)
+        VSeq(^ys, ^t, ^a) => v_owns_token(x)
+        VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => v_owns_token(x)
+        VBuf(^y, ^t) => v_owns_token(x)
+        VShared(^c, ^t) => v_owns_token(x)
+        VInfo => v_owns_token(x)
+        VAnswer(^a) => v_owns_token(x)
+        VCont(^c) => v_owns_token(x)
+        VMoved => v_owns_token(x)
+      }
+      here || any_owning(rest)
+    }
+  }
+}
+
+pub fn union_def(us: List(NUnionDef), id: Nat): Option(NUnionDef) {
+  match us {
+    Nil => None
+    Cons(u, rest) => if u.id == id { Some(u) } else { union_def(rest, id) }
+  }
+}
+
+pub fn ty_pos(ts: List(NTy), t: NTy, i: Nat): Option(Nat) ! {div} {
+  match ts {
+    Nil => None
+    Cons(x, rest) => if n_ty_eq(x, t) { Some(i) } else { ty_pos(rest, t, i + 1) }
+  }
+}
+
+pub fn remap(m: &mut M, src: Nat, to: NTy, v: Val): Val ! {div, nout} {
+  match v {
+    VInject(i, inner) => {
+      let member := match union_def(m.pkg.unions, src) {
+        Some(u) => l_nth(u.members, i)
+        None => None
+      }
+      match to {
+        NUnion(u2) => match union_def(m.pkg.unions, u2) {
+          Some(target) => match member {
+            Some(t) => match ty_pos(target.members, t, 0) {
+              Some(j) => VInject(j, inner)
+              None => unsupported("a remap to a union without the member")
+            }
+            None => unsupported("a remap to a union without the member")
+          }
+          None => internal("no union")
+        }
+        NInt(^w) => inner
+        NBool => inner
+        NText => inner
+        NUnit => inner
+        NNever => inner
+        NFloat => inner
+        NFloat32 => inner
+        NBuf => inner
+        NShown => inner
+        NVec(^a) => inner
+        NArray(^a) => inner
+        NSlice(^a) => inner
+        NOption(^a) => inner
+        NInfo(^a) => inner
+        NBudgetAnswer(^a) => inner
+        NResult(^a, ^b) => inner
+        NPair(^a, ^b) => inner
+        NSharedVar(^c, ^a) => inner
+        NStd(^n, ^args) => inner
+        NFn(^ps, ^r, ^k, ^t) => inner
+        NRef(^a) => inner
+        NRefMut(^a) => inner
+        NData(^n, ^args) => inner
+        NParam(^p) => inner
+      }
+    }
+    VUnit => internal("remap of a unit")
+    VBool(^b) => internal("remap of a bool")
+    VFloat(^b) => internal("remap of a bool")
+    VInt(^n, ^g, ^t) => internal("remap of a int")
+    VText(^x, ^t) => internal("remap of a text")
+    VShown(^x, ^t) => internal("remap of a shown")
+    VData(^c, ^fs, ^t) => internal("remap of a data")
+    VFn(^f, ^t) => internal("remap of a function")
+    VRef(^p) => internal("remap of a borrow")
+    VCell(^c) => internal("remap of a shared var")
+    VSeq(^xs, ^t, ^k) => internal("remap of a Vec")
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal("remap of a Slots")
+    VBuf(^x, ^t) => internal("remap of a Buf")
+    VShared(^c, ^t) => internal("remap of a Ref")
+    VInfo => internal("remap of a budget info")
+    VAnswer(^x) => internal("remap of a budget answer")
+    VCont(^c) => internal("remap of a continuation")
+    VMoved => internal("remap of a moved")
+  }
+}
+
+// The place an expression names; a value that is not a place is kept in a
+// slot of its own.
+pub fn place_of(m: &mut M, e: NExpr, fr: u64): PlaceRef ! {div, divzero, nflow, nout, overflow} {
+  match e.kind {
+    NRead(l, ^h) => place_of_local(&mut m, l, Nil, fr)
+    NBorrow(p) => place_from(&mut m, p, fr)
+    NBorrowMut(p) => place_from(&mut m, p, fr)
+    NFieldOf(base, field, ^h, ^r) => {
+      let p := place_of(&mut m, base, fr)
+      PlaceRef { root: p.root, path: l_snoc(p.path, field) }
+    }
+    NUnitLit => place_by_value(&mut m, e, fr)
+    NIntLit(^n, ^k) => place_by_value(&mut m, e, fr)
+    NBoolLit(^b) => place_by_value(&mut m, e, fr)
+    NFloatLit(^t) => place_by_value(&mut m, e, fr)
+    NTextLit(^t) => place_by_value(&mut m, e, fr)
+    NDeclaration(^i) => place_by_value(&mut m, e, fr)
+    NFnValue(^i, ^ts) => place_by_value(&mut m, e, fr)
+    NClosureOf(^c) => place_by_value(&mut m, e, fr)
+    NHandleOf(^h) => place_by_value(&mut m, e, fr)
+    NBudgetOf(^b) => place_by_value(&mut m, e, fr)
+    NInject(^u, ^i, ^x) => place_by_value(&mut m, e, fr)
+    NRemap(^u, ^t, ^x) => place_by_value(&mut m, e, fr)
+    NFnCast(^x) => place_by_value(&mut m, e, fr)
+    NTempRef(^x) => place_by_value(&mut m, e, fr)
+    NDeref(^x, ^h) => place_by_value(&mut m, e, fr)
+    NArithOf(^o, ^t, ^xs) => place_by_value(&mut m, e, fr)
+    NCmpOf(^o, ^xs) => place_by_value(&mut m, e, fr)
+    NEqOf(^n, ^xs) => place_by_value(&mut m, e, fr)
+    NNot(^x) => place_by_value(&mut m, e, fr)
+    NAnd(^a, ^b) => place_by_value(&mut m, e, fr)
+    NOr(^a, ^b) => place_by_value(&mut m, e, fr)
+    NIf(^c, ^t, ^o) => place_by_value(&mut m, e, fr)
+    NBlockOf(^b) => place_by_value(&mut m, e, fr)
+    NCtorOf(^c, ^xs) => place_by_value(&mut m, e, fr)
+    NMatchOf(^x) => place_by_value(&mut m, e, fr)
+    NCallOf(^c) => place_by_value(&mut m, e, fr)
+    NShownOf(^x) => place_by_value(&mut m, e, fr)
+    NPerformOf(^p) => place_by_value(&mut m, e, fr)
+    NUnreachable(^x) => place_by_value(&mut m, e, fr)
+  }
+}
+
+pub fn place_by_value(m: &mut M, e: NExpr, fr: u64): PlaceRef ! {div, divzero, nflow, nout, overflow} {
+  match eval(&mut m, e, fr) {
+    VRef(p) => p
+    VUnit => temp(&mut m, VUnit, fr)
+    VBool(b) => temp(&mut m, VBool(b), fr)
+    VFloat(b) => temp(&mut m, VFloat(b), fr)
+    VInt(n, g, t) => temp(&mut m, VInt(n, g, t), fr)
+    VText(x, t) => temp(&mut m, VText(x, t), fr)
+    VShown(x, t) => temp(&mut m, VShown(x, t), fr)
+    VData(c, fs, t) => temp(&mut m, VData(c, fs, t), fr)
+    VInject(i, x) => temp(&mut m, VInject(i, x), fr)
+    VFn(f, t) => temp(&mut m, VFn(f, t), fr)
+    VCell(c) => temp(&mut m, VCell(c), fr)
+    VSeq(xs, t, k) => temp(&mut m, VSeq(xs, t, k), fr)
+    VSlots(st, vac, cap, ms, xs, t) => temp(&mut m, VSlots(st, vac, cap, ms, xs, t), fr)
+    VBuf(x, t) => temp(&mut m, VBuf(x, t), fr)
+    VShared(c, t) => temp(&mut m, VShared(c, t), fr)
+    VInfo => temp(&mut m, VInfo, fr)
+    VAnswer(x) => temp(&mut m, VAnswer(x), fr)
+    VCont(c) => temp(&mut m, VCont(c), fr)
+    VMoved => temp(&mut m, VMoved, fr)
+  }
+}
+
+pub fn named_violation(o: Outcome, local: Text): Outcome { o }
+
+pub fn read(m: &mut M, local: NLocal, how: NUse, fr: u64): Val ! {div, nout} {
+  let p := PlaceRef { root: RSlot(fr, key_local(local.id)), path: Nil }
+  if storage_shared(local) {
+    match how {
+      NPlace => VRef(p)
+      NCopy => take_at(&mut m, p, NCopy)
+      NMove => take_at(&mut m, p, NClone)
+      NClone => take_at(&mut m, p, NClone)
+    }
+  } else if storage_borrow(local) {
+    let v := at_read(&m, p).val
+    match v {
+      VMoved => violation("UseAfterMove", "moved at 0..0")
+      VRef(q) => match how {
+        NCopy => take_at(&mut m, q, how)
+        NClone => take_at(&mut m, q, how)
+        NMove => v
+        NPlace => v
+      }
+      VUnit => v
+      VBool(^b) => v
+      VFloat(^b) => v
+      VInt(^n, ^g, ^t) => v
+      VText(^x, ^t) => v
+      VShown(^x, ^t) => v
+      VData(^c, ^fs, ^t) => v
+      VInject(^i, ^x) => v
+      VFn(^f, ^t) => v
+      VCell(^c) => v
+      VSeq(^xs, ^t, ^k) => v
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => v
+      VBuf(^x, ^t) => v
+      VShared(^c, ^t) => v
+      VInfo => v
+      VAnswer(^x) => v
+      VCont(^c) => v
+    }
+  } else {
+    take_at(&mut m, p, how)
+  }
+}
+
+pub fn compare(op: NCmp, a: Val, b: Val): Bool ! {nout} {
+  match v_float(a) {
+    Some(x) => match v_float(b) {
+      Some(y) => if Float::is_nan(x) || Float::is_nan(y) { false } else { cmp_result(op, Float::lt(x, y), Float::eq(x, y)) }
+      None => compare_v(op, a, b)
+    }
+    None => compare_v(op, a, b)
+  }
+}
+
+pub fn compare_v(op: NCmp, a: Val, b: Val): Bool ! {nout} {
+  match a {
+    VInt(an, ag, ^at) => match b {
+      VInt(bn, bg, ^bt) => cmp_result(op, int_lt(int_of(an, ag), int_of(bn, bg)), int_eq(int_of(an, ag), int_of(bn, bg)))
+      VUnit => compare_error(a, b)
+      VBool(^x) => compare_error(a, b)
+      VFloat(^x) => compare_error(a, b)
+      VText(^x, ^t) => compare_error(a, b)
+      VShown(^x, ^t) => compare_error(a, b)
+      VData(^c, ^fs, ^t) => compare_error(a, b)
+      VInject(^i, ^x) => compare_error(a, b)
+      VFn(^f, ^t) => compare_error(a, b)
+      VRef(^p) => compare_error(a, b)
+      VCell(^c) => compare_error(a, b)
+      VSeq(^xs, ^t, ^k) => compare_error(a, b)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => compare_error(a, b)
+      VBuf(^x, ^t) => compare_error(a, b)
+      VShared(^c, ^t) => compare_error(a, b)
+      VInfo => compare_error(a, b)
+      VAnswer(^x) => compare_error(a, b)
+      VCont(^c) => compare_error(a, b)
+      VMoved => compare_error(a, b)
+    }
+    VText(x, ^xt) => match b {
+      VText(y, ^yt) => match Text::ordering(x, y) {
+        Less => cmp_result(op, true, false)
+        Equal => cmp_result(op, false, true)
+        Greater => cmp_result(op, false, false)
+      }
+      VUnit => compare_error(a, b)
+      VBool(^z) => compare_error(a, b)
+      VFloat(^z) => compare_error(a, b)
+      VInt(^n, ^g, ^t) => compare_error(a, b)
+      VShown(^z, ^t) => compare_error(a, b)
+      VData(^c, ^fs, ^t) => compare_error(a, b)
+      VInject(^i, ^z) => compare_error(a, b)
+      VFn(^f, ^t) => compare_error(a, b)
+      VRef(^p) => compare_error(a, b)
+      VCell(^c) => compare_error(a, b)
+      VSeq(^xs, ^t, ^k) => compare_error(a, b)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => compare_error(a, b)
+      VBuf(^z, ^t) => compare_error(a, b)
+      VShared(^c, ^t) => compare_error(a, b)
+      VInfo => compare_error(a, b)
+      VAnswer(^z) => compare_error(a, b)
+      VCont(^c) => compare_error(a, b)
+      VMoved => compare_error(a, b)
+    }
+    VUnit => compare_error(a, b)
+    VBool(^z) => compare_error(a, b)
+    VFloat(^z) => compare_error(a, b)
+    VShown(^z, ^t) => compare_error(a, b)
+    VData(^c, ^fs, ^t) => compare_error(a, b)
+    VInject(^i, ^z) => compare_error(a, b)
+    VFn(^f, ^t) => compare_error(a, b)
+    VRef(^p) => compare_error(a, b)
+    VCell(^c) => compare_error(a, b)
+    VSeq(^xs, ^t, ^k) => compare_error(a, b)
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => compare_error(a, b)
+    VBuf(^z, ^t) => compare_error(a, b)
+    VShared(^c, ^t) => compare_error(a, b)
+    VInfo => compare_error(a, b)
+    VAnswer(^z) => compare_error(a, b)
+    VCont(^c) => compare_error(a, b)
+    VMoved => compare_error(a, b)
+  }
+}
+
+pub fn compare_error(a: Val, b: Val): Bool ! {nout} {
+  internal(Text::concat_all(["compare a ", v_kind(a), " and a ", v_kind(b)]))
+}
+
+pub fn cmp_result(op: NCmp, lt: Bool, eq: Bool): Bool {
+  match op {
+    NLt => lt
+    NGt => not(lt) && not(eq)
+    NLe => lt || eq
+    NGe => not(lt)
+  }
+}
+
+pub fn width_of(num: NTy): NWidth ! {nout} {
+  match num {
+    NInt(w) => w
+    NFloat => unsupported("tote: a `Float`")
+    NFloat32 => unsupported("tote: a `Float`")
+    NBool => internal("integer operands of a float operation")
+    NText => internal("integer operands of a float operation")
+    NUnit => internal("integer operands of a float operation")
+    NNever => internal("integer operands of a float operation")
+    NBuf => internal("integer operands of a float operation")
+    NShown => internal("integer operands of a float operation")
+    NVec(^a) => internal("integer operands of a float operation")
+    NArray(^a) => internal("integer operands of a float operation")
+    NSlice(^a) => internal("integer operands of a float operation")
+    NOption(^a) => internal("integer operands of a float operation")
+    NInfo(^a) => internal("integer operands of a float operation")
+    NBudgetAnswer(^a) => internal("integer operands of a float operation")
+    NResult(^a, ^b) => internal("integer operands of a float operation")
+    NPair(^a, ^b) => internal("integer operands of a float operation")
+    NSharedVar(^c, ^a) => internal("integer operands of a float operation")
+    NStd(^n, ^args) => internal("integer operands of a float operation")
+    NUnion(^u) => internal("integer operands of a float operation")
+    NFn(^ps, ^r, ^k, ^t) => internal("integer operands of a float operation")
+    NRef(^a) => internal("integer operands of a float operation")
+    NRefMut(^a) => internal("integer operands of a float operation")
+    NData(^n, ^args) => internal("integer operands of a float operation")
+    NParam(^p) => internal("integer operands of a float operation")
+  }
+}
+
+pub fn width_word(w: NWidth): Text {
+  match w {
+    NW32 => "W32"
+    NW64 => "W64"
+    NU8 => "U8"
+    NU32 => "U32"
+    NU64 => "U64"
+    NHost => "Host"
+    NNat => "Nat"
+    NW8 => "W8"
+    NW16 => "W16"
+    NU16 => "U16"
+  }
+}
+
+pub fn width_fits(w: NWidth, a: Int): Bool {
+  match w {
+    NW32 => if a.neg { a.mag <= 2147483648 } else { a.mag < 2147483648 }
+    NW64 => if a.neg { a.mag <= 9223372036854775808 } else { a.mag < 9223372036854775808 }
+    NU8 => not(a.neg) && a.mag < 256
+    NU32 => not(a.neg) && a.mag < 4294967296
+    NU64 => not(a.neg) && a.mag < 18446744073709551616
+    NHost => not(a.neg) && a.mag < 18446744073709551616
+    NNat => not(a.neg)
+    NW8 => if a.neg { a.mag <= 128 } else { a.mag < 128 }
+    NW16 => if a.neg { a.mag <= 32768 } else { a.mag < 32768 }
+    NU16 => not(a.neg) && a.mag < 65536
+  }
+}
+
+pub fn too_large(): Text { "the number is too large" }
+
+pub fn division_by_zero(): Text { "division by zero" }
+
+// The result of an operator of a fixed width: one that does not fit
+// performs `overflow`.
+pub fn fits_int(m: &mut M, a: Int, w: NWidth, ty: NTy): Val ! {nout} {
+  if width_fits(w, a) { make_int(&mut m, a, w, ty) } else { fail(too_large()) }
+}
+
+// The effect an operator whose result does not exist performs, by how
+// `arith` stopped.
+pub fn operator_effect(o: Outcome): Option(Text) {
+  match o {
+    OError(t) => if t == too_large() { Some("overflow") } else if t == division_by_zero() { Some("divzero") } else { None }
+    OOk => None
+    OViolation(^k, ^d) => None
+    OUnsupported(^t) => None
+  }
+}
+
+// An operator whose result does not exist performs `name` with no
+// argument: an arm that answers it gives its value, and with no handler of
+// it the run stops as `o`.
+pub fn operator_performs(m: &mut M, name: Text, o: Outcome, fr: u64): Val ! {div, divzero, nflow, nout, overflow} {
+  match op_pos(m.pkg.ops, name, 0) {
+    None => perform nout(o)
+    Some(op) => {
+      let base := m.depth
+      m.bases := Cons(base, m.bases)
+      match handled(&mut m, op, NQZero, Nil, Nil, fr, base) {
+        None => {
+          m.bases := l_tail(m.bases)
+          perform nout(o)
+        }
+        Some(c) => {
+          let r := handle { Ok(run_loop(&mut m, StartCtl(c), base)) } with { nflow(x) => Err(x) }
+          truncate(&mut m, base)
+          m.bases := l_tail(m.bases)
+          match r {
+            Ok(v) => v
+            Err(x) => perform nflow(x)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn l_tail<A>(xs: List(A)): List(A) {
+  match xs {
+    Nil => Nil
+    Cons(^x, rest) => rest
+  }
+}
+
+pub fn make_int(m: &mut M, a: Int, w: NWidth, ty: NTy): Val ! {nout} {
+  if width_fits(w, a) {
+    VInt(a.neg, a.mag, mint(&mut m, ty))
+  } else {
+    fail(Text::concat_all([int_text(a), " does not fit in ", width_word(w)]))
+  }
+}
+
+pub fn int_val(v: Val): Option(Int) {
+  match v {
+    VInt(n, g, ^t) => Some(int_of(n, g))
+    VUnit => None
+    VBool(^b) => None
+    VFloat(^b) => None
+    VText(^x, ^t) => None
+    VShown(^x, ^t) => None
+    VData(^c, ^fs, ^t) => None
+    VInject(^i, ^x) => None
+    VFn(^f, ^t) => None
+    VRef(^p) => None
+    VCell(^c) => None
+    VSeq(^xs, ^t, ^k) => None
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => None
+    VBuf(^x, ^t) => None
+    VShared(^c, ^t) => None
+    VInfo => None
+    VAnswer(^x) => None
+    VCont(^c) => None
+    VMoved => None
+  }
+}
+
+pub fn is_nat_width(num: NTy): Bool {
+  match num {
+    NInt(w) => match w {
+      NNat => true
+      NW32 => false
+      NW64 => false
+      NU8 => false
+      NU32 => false
+      NU64 => false
+      NHost => false
+      NW8 => false
+      NW16 => false
+      NU16 => false
+    }
+    NBool => false
+    NText => false
+    NUnit => false
+    NNever => false
+    NFloat => false
+    NFloat32 => false
+    NBuf => false
+    NShown => false
+    NVec(^a) => false
+    NArray(^a) => false
+    NSlice(^a) => false
+    NOption(^a) => false
+    NInfo(^a) => false
+    NBudgetAnswer(^a) => false
+    NResult(^a, ^b) => false
+    NPair(^a, ^b) => false
+    NSharedVar(^c, ^a) => false
+    NStd(^n, ^args) => false
+    NUnion(^u) => false
+    NFn(^ps, ^r, ^k, ^t) => false
+    NRef(^a) => false
+    NRefMut(^a) => false
+    NData(^n, ^args) => false
+    NParam(^p) => false
+  }
+}
+
+pub fn arith(m: &mut M, op: NArith, num: NTy, vals: List(Val), e: NExpr): Val ! {div, nout} {
+  let vs := value_all(&mut m, vals)
+  if is_float_ty(num) { float_arith(op, vs) } else { arith_int(&mut m, op, num, vs, e) }
+}
+
+pub fn is_float_ty(t: NTy): Bool {
+  match t {
+    NFloat => true
+    NFloat32 => true
+    NInt(^w) => false
+    NBool => false
+    NText => false
+    NUnit => false
+    NNever => false
+    NBuf => false
+    NShown => false
+    NVec(^a) => false
+    NArray(^a) => false
+    NSlice(^a) => false
+    NOption(^a) => false
+    NInfo(^a) => false
+    NBudgetAnswer(^a) => false
+    NResult(^a, ^b) => false
+    NPair(^a, ^b) => false
+    NSharedVar(^x, ^a) => false
+    NStd(^n, ^ts) => false
+    NUnion(^u) => false
+    NFn(^ps, ^r, ^x, ^y) => false
+    NRef(^a) => false
+    NRefMut(^a) => false
+    NData(^n, ^ts) => false
+    NParam(^n) => false
+  }
+}
+
+pub fn float_arith(op: NArith, vs: List(Val)): Val ! {nout} {
+  match vs {
+    Cons(a, rest) => match v_float(a) {
+      None => internal(Text::concat("arithmetic on ", kinds_debug(vs)))
+      Some(x) => match rest {
+        Nil => match op {
+          NNeg => VFloat(Float::neg(x))
+          NAdd => internal("arithmetic on one operand")
+          NSub => internal("arithmetic on one operand")
+          NMul => internal("arithmetic on one operand")
+          NDivide => internal("arithmetic on one operand")
+        }
+        Cons(b, ^more) => match v_float(b) {
+          None => internal(Text::concat("arithmetic on ", kinds_debug(vs)))
+          Some(y) => match op {
+            NAdd => VFloat(Float::add(x, y))
+            NSub => VFloat(Float::sub(x, y))
+            NMul => VFloat(Float::mul(x, y))
+            NDivide => match Float::checked_div(x, y) {
+              Some(z) => VFloat(z)
+              None => fail(division_by_zero())
+            }
+            NNeg => internal("binary negation")
+          }
+        }
+      }
+    }
+    Nil => internal("arithmetic on no operands")
+  }
+}
+
+pub fn float_lit(t: Text): Float ! {nout} {
+  if t == "nan" {
+    Float::of_bits(U64::of_nat(9221120237041090560))
+  } else if t == "inf" {
+    Float::of_bits(U64::of_nat(9218868437227405312))
+  } else if t == "-inf" {
+    Float::of_bits(U64::of_nat(18442240474082181120))
+  } else {
+    match Float::of_text(t) {
+      Some(x) => x
+      None => internal(Text::concat("a float literal ", t))
+    }
+  }
+}
+
+pub fn float_of_int(n: Int): Float ! {nout} {
+  match Float::of_text(int_text(n)) {
+    Some(x) => x
+    None => internal("a float of an integer")
+  }
+}
+
+pub fn arith_int(m: &mut M, op: NArith, num: NTy, vs: List(Val), e: NExpr): Val ! {div, nout} {
+  let w := width_of(num)
+  match vs {
+    Cons(a, rest) => match rest {
+      Nil => match op {
+        NNeg => match int_val(a) {
+          Some(x) => fits_int(&mut m, int_neg(x), w, e.ty)
+          None => internal("arithmetic on a non-number")
+        }
+        NAdd => internal("arithmetic on one operand")
+        NSub => internal("arithmetic on one operand")
+        NMul => internal("arithmetic on one operand")
+        NDivide => internal("arithmetic on one operand")
+      }
+      Cons(b, ^more) => match int_val(a) {
+        Some(x) => match int_val(b) {
+          Some(y) => arith2(&mut m, op, w, x, y, e)
+          None => internal(Text::concat("arithmetic on ", kinds_debug(vs)))
+        }
+        None => internal(Text::concat("arithmetic on ", kinds_debug(vs)))
+      }
+    }
+    Nil => internal("arithmetic on no operands")
+  }
+}
+
+pub fn arith2(m: &mut M, op: NArith, w: NWidth, x: Int, y: Int, e: NExpr): Val ! {div, nout} {
+  let nat := match w {
+    NNat => true
+    NW32 => false
+    NW64 => false
+    NU8 => false
+    NU32 => false
+    NU64 => false
+    NHost => false
+    NW8 => false
+    NW16 => false
+    NU16 => false
+  }
+  let r := match op {
+    NAdd => int_add(x, y)
+    NSub => int_sub(x, y)
+    NMul => int_mul(x, y)
+    NNeg => internal("binary negation")
+    NDivide => int_of(false, 0)
+  }
+  let big := not(int_fits_i128(x)) || not(int_fits_i128(y))
+  let overflows := match op {
+    NAdd => not(int_fits_i128(r))
+    NMul => not(int_fits_i128(r))
+    NSub => false
+    NNeg => false
+    NDivide => false
+  }
+  if nat && (big || overflows) {
+    match op {
+      NAdd => VInt(false, r.mag, mint(&mut m, e.ty))
+      NMul => VInt(false, r.mag, mint(&mut m, e.ty))
+      NSub => if r.neg { fail(too_large()) } else { VInt(false, r.mag, mint(&mut m, e.ty)) }
+      NNeg => internal("Nat operation")
+      NDivide => internal("Nat operation")
+    }
+  } else {
+    match op {
+      NDivide => fail(too_large())
+      NNeg => fail(too_large())
+      NAdd => if int_fits_i128(r) { fits_int(&mut m, r, w, e.ty) } else { fail(too_large()) }
+      NSub => if int_fits_i128(r) { fits_int(&mut m, r, w, e.ty) } else { fail(too_large()) }
+      NMul => if int_fits_i128(r) { fits_int(&mut m, r, w, e.ty) } else { fail(too_large()) }
+    }
+  }
+}
+
+pub fn value_all(m: &mut M, vs: List(Val)): List(Val) ! {div, nout} {
+  match vs {
+    Nil => Nil
+    Cons(v, rest) => {
+      let x := value_of(&mut m, v)
+      Cons(x, value_all(&mut m, rest))
+    }
+  }
+}
+
+pub fn equal(m: &mut M, a0: Val, b0: Val): Bool ! {div, nout} {
+  let a := value_of(&mut m, a0)
+  let b := value_of(&mut m, b0)
+  match v_float(a) {
+    Some(x) => match v_float(b) {
+      Some(y) => Float::eq(x, y)
+      None => equal_v(&mut m, a, b)
+    }
+    None => equal_v(&mut m, a, b)
+  }
+}
+
+pub fn equal_v(m: &mut M, a0: Val, b0: Val): Bool ! {div, nout} {
+  let a := value_of(&mut m, a0)
+  let b := value_of(&mut m, b0)
+  match a {
+    VUnit => match b {
+      VUnit => true
+      VBool(^y) => eq_error(a, b)
+      VFloat(^y) => eq_error(a, b)
+      VInt(^n, ^g, ^t) => eq_error(a, b)
+      VText(^y, ^t) => eq_error(a, b)
+      VShown(^y, ^t) => eq_error(a, b)
+      VData(^c, ^fs, ^t) => eq_error(a, b)
+      VInject(^i, ^y) => eq_error(a, b)
+      VFn(^f, ^t) => eq_error(a, b)
+      VRef(^p) => eq_error(a, b)
+      VCell(^c) => eq_error(a, b)
+      VSeq(^xs, ^t, ^k) => eq_error(a, b)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => eq_error(a, b)
+      VBuf(^y, ^t) => eq_error(a, b)
+      VShared(^c, ^t) => eq_error(a, b)
+      VInfo => eq_error(a, b)
+      VAnswer(^y) => eq_error(a, b)
+      VCont(^c) => eq_error(a, b)
+      VMoved => eq_error(a, b)
+    }
+    VBool(x) => match b {
+      VBool(y) => x == y
+      VFloat(^y) => eq_error(a, b)
+      VUnit => eq_error(a, b)
+      VInt(^n, ^g, ^t) => eq_error(a, b)
+      VText(^y, ^t) => eq_error(a, b)
+      VShown(^y, ^t) => eq_error(a, b)
+      VData(^c, ^fs, ^t) => eq_error(a, b)
+      VInject(^i, ^y) => eq_error(a, b)
+      VFn(^f, ^t) => eq_error(a, b)
+      VRef(^p) => eq_error(a, b)
+      VCell(^c) => eq_error(a, b)
+      VSeq(^xs, ^t, ^k) => eq_error(a, b)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => eq_error(a, b)
+      VBuf(^y, ^t) => eq_error(a, b)
+      VShared(^c, ^t) => eq_error(a, b)
+      VInfo => eq_error(a, b)
+      VAnswer(^y) => eq_error(a, b)
+      VCont(^c) => eq_error(a, b)
+      VMoved => eq_error(a, b)
+    }
+    VFloat(^x) => match b {
+      VBool(^y) => eq_error(a, b)
+      VFloat(^y) => eq_error(a, b)
+      VUnit => eq_error(a, b)
+      VInt(^n, ^g, ^t) => eq_error(a, b)
+      VText(^y, ^t) => eq_error(a, b)
+      VShown(^y, ^t) => eq_error(a, b)
+      VData(^c, ^fs, ^t) => eq_error(a, b)
+      VInject(^i, ^y) => eq_error(a, b)
+      VFn(^f, ^t) => eq_error(a, b)
+      VRef(^p) => eq_error(a, b)
+      VCell(^c) => eq_error(a, b)
+      VSeq(^xs, ^t, ^k) => eq_error(a, b)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => eq_error(a, b)
+      VBuf(^y, ^t) => eq_error(a, b)
+      VShared(^c, ^t) => eq_error(a, b)
+      VInfo => eq_error(a, b)
+      VAnswer(^y) => eq_error(a, b)
+      VCont(^c) => eq_error(a, b)
+      VMoved => eq_error(a, b)
+    }
+    VInt(xn, xg, ^xt) => match int_val(b) {
+      Some(y) => int_eq(int_of(xn, xg), y)
+      None => eq_error(a, b)
+    }
+    VText(x, ^xt) => match b {
+      VText(y, ^yt) => x == y
+      VUnit => eq_error(a, b)
+      VBool(^y) => eq_error(a, b)
+      VFloat(^y) => eq_error(a, b)
+      VInt(^n, ^g, ^t) => eq_error(a, b)
+      VShown(^y, ^t) => eq_error(a, b)
+      VData(^c, ^fs, ^t) => eq_error(a, b)
+      VInject(^i, ^y) => eq_error(a, b)
+      VFn(^f, ^t) => eq_error(a, b)
+      VRef(^p) => eq_error(a, b)
+      VCell(^c) => eq_error(a, b)
+      VSeq(^xs, ^t, ^k) => eq_error(a, b)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => eq_error(a, b)
+      VBuf(^y, ^t) => eq_error(a, b)
+      VShared(^c, ^t) => eq_error(a, b)
+      VInfo => eq_error(a, b)
+      VAnswer(^y) => eq_error(a, b)
+      VCont(^c) => eq_error(a, b)
+      VMoved => eq_error(a, b)
+    }
+    VBuf(x, ^xt) => match b {
+      VBuf(y, ^yt) => x == y
+      VUnit => eq_error(a, b)
+      VBool(^y) => eq_error(a, b)
+      VFloat(^y) => eq_error(a, b)
+      VInt(^n, ^g, ^t) => eq_error(a, b)
+      VText(^y, ^t) => eq_error(a, b)
+      VShown(^y, ^t) => eq_error(a, b)
+      VData(^c, ^fs, ^t) => eq_error(a, b)
+      VInject(^i, ^y) => eq_error(a, b)
+      VFn(^f, ^t) => eq_error(a, b)
+      VRef(^p) => eq_error(a, b)
+      VCell(^c) => eq_error(a, b)
+      VSeq(^xs, ^t, ^k) => eq_error(a, b)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => eq_error(a, b)
+      VShared(^c, ^t) => eq_error(a, b)
+      VInfo => eq_error(a, b)
+      VAnswer(^y) => eq_error(a, b)
+      VCont(^c) => eq_error(a, b)
+      VMoved => eq_error(a, b)
+    }
+    VSeq(xs, ^xt, ^xa) => match b {
+      VSeq(ys, ^yt, ^ya) => seq_len(xs) == seq_len(ys) && equal_all(&mut m, seq_list(xs), seq_list(ys))
+      VUnit => eq_error(a, b)
+      VBool(^y) => eq_error(a, b)
+      VFloat(^y) => eq_error(a, b)
+      VInt(^n, ^g, ^t) => eq_error(a, b)
+      VText(^y, ^t) => eq_error(a, b)
+      VShown(^y, ^t) => eq_error(a, b)
+      VData(^c, ^fs, ^t) => eq_error(a, b)
+      VInject(^i, ^y) => eq_error(a, b)
+      VFn(^f, ^t) => eq_error(a, b)
+      VRef(^p) => eq_error(a, b)
+      VCell(^c) => eq_error(a, b)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => eq_error(a, b)
+      VBuf(^y, ^t) => eq_error(a, b)
+      VShared(^c, ^t) => eq_error(a, b)
+      VInfo => eq_error(a, b)
+      VAnswer(^y) => eq_error(a, b)
+      VCont(^c) => eq_error(a, b)
+      VMoved => eq_error(a, b)
+    }
+    VInject(i, x) => match b {
+      VInject(j, y) => i == j && equal(&mut m, x, y)
+      VUnit => eq_error(a, b)
+      VBool(^y) => eq_error(a, b)
+      VFloat(^y) => eq_error(a, b)
+      VInt(^n, ^g, ^t) => eq_error(a, b)
+      VText(^y, ^t) => eq_error(a, b)
+      VShown(^y, ^t) => eq_error(a, b)
+      VData(^c, ^fs, ^t) => eq_error(a, b)
+      VFn(^f, ^t) => eq_error(a, b)
+      VRef(^p) => eq_error(a, b)
+      VCell(^c) => eq_error(a, b)
+      VSeq(^xs, ^t, ^k) => eq_error(a, b)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => eq_error(a, b)
+      VBuf(^y, ^t) => eq_error(a, b)
+      VShared(^c, ^t) => eq_error(a, b)
+      VInfo => eq_error(a, b)
+      VAnswer(^y) => eq_error(a, b)
+      VCont(^c) => eq_error(a, b)
+      VMoved => eq_error(a, b)
+    }
+    VData(xc, xs, ^xt) => match b {
+      VData(yc, ys, ^yt) => xc.index == yc.index && l_len(xs) == l_len(ys) && equal_all(&mut m, xs, ys)
+      VUnit => eq_error(a, b)
+      VBool(^y) => eq_error(a, b)
+      VFloat(^y) => eq_error(a, b)
+      VInt(^n, ^g, ^t) => eq_error(a, b)
+      VText(^y, ^t) => eq_error(a, b)
+      VShown(^y, ^t) => eq_error(a, b)
+      VInject(^i, ^y) => eq_error(a, b)
+      VFn(^f, ^t) => eq_error(a, b)
+      VRef(^p) => eq_error(a, b)
+      VCell(^c) => eq_error(a, b)
+      VSeq(^ys2, ^t, ^k) => eq_error(a, b)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => eq_error(a, b)
+      VBuf(^y, ^t) => eq_error(a, b)
+      VShared(^c, ^t) => eq_error(a, b)
+      VInfo => eq_error(a, b)
+      VAnswer(^y) => eq_error(a, b)
+      VCont(^c) => eq_error(a, b)
+      VMoved => eq_error(a, b)
+    }
+    VShown(^x, ^t) => eq_error(a, b)
+    VFn(^f, ^t) => eq_error(a, b)
+    VRef(^p) => eq_error(a, b)
+    VCell(^c) => eq_error(a, b)
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => eq_error(a, b)
+    VShared(^c, ^t) => eq_error(a, b)
+    VInfo => eq_error(a, b)
+    VAnswer(^x) => eq_error(a, b)
+    VCont(^c) => eq_error(a, b)
+    VMoved => eq_error(a, b)
+  }
+}
+
+pub fn eq_error(a: Val, b: Val): Bool ! {nout} {
+  internal(Text::concat_all(["`==` of a ", v_kind(a), " and a ", v_kind(b)]))
+}
+
+pub fn equal_all(m: &mut M, xs: List(Val), ys: List(Val)): Bool ! {div, nout} {
+  match xs {
+    Nil => true
+    Cons(x, rest) => match ys {
+      Nil => true
+      Cons(y, more) => if equal(&mut m, x, y) { equal_all(&mut m, rest, more) } else { false }
+    }
+  }
+}
+
+// ---- the machine ----
+
+// What a run of the machine starts from.
+pub(open) enum Start {
+  StartCtl(Ctl)
+  StartStmt(NStmt, u64)
+  StartInst(Nat)
+}
+
+pub fn start_of(m: &mut M, s: Start): Ctl ! {nout} {
+  match s {
+    StartCtl(c) => c
+    StartStmt(st, fr) => start_stmt(&mut m, st, fr)
+    StartInst(id) => enter_inst(&mut m, id, Nil)
+  }
+}
+
+pub fn guard_start(m: &mut M, s: Start): Ctl ! {nout} {
+  handle { start_of(&mut m, s) } with { nflow(x) => CStop(x) }
+}
+
+pub fn guard_step(m: &mut M, e: NExpr, fr: u64): Ctl ! {div, divzero, nout, overflow} {
+  handle { step(&mut m, e, fr) } with { nflow(x) => CStop(x) }
+}
+
+pub fn guard_apply(m: &mut M, k: Kont, v: Val): Ctl ! {div, nout, overflow} {
+  handle { apply(&mut m, k, v) } with { nflow(x) => CStop(x) }
+}
+
+// Runs the machine from `start` until the continuation is back where it
+// was: a run on the stack of the tote.
+pub fn run_from(m: &mut M, c: Ctl): Val ! {div, divzero, nflow, nout, overflow} { run_start(&mut m, StartCtl(c)) }
+
+pub fn run_start(m: &mut M, s: Start): Val ! {div, divzero, nflow, nout, overflow} {
+  let base := m.depth
+  m.bases := Cons(base, m.bases)
+  let r := handle { Ok(run_loop(&mut m, s, base)) } with { nflow(x) => Err(x) }
+  truncate(&mut m, base)
+  m.bases := match m.bases {
+    Nil => Nil
+    Cons(^b, rest) => rest
+  }
+  match r {
+    Ok(v) => v
+    Err(x) => perform nflow(x)
+  }
+}
+
+pub fn run_loop(m: &mut M, s: Start, base: Nat): Val ! {div, divzero, nflow, nout, overflow} {
+  var next := guard_start(&mut m, s)
+  var out: Option(Val) := None
+  while out == None {
+    match next {
+      CStop(x) => match unwind(&mut m, x, base) {
+        CStop(y) => perform nflow(y)
+        CEval(e, fr) => { next := CEval(e, fr) }
+        CValue(v) => { next := CValue(v) }
+      }
+      CEval(e, fr) => { next := guard_step(&mut m, e, fr) }
+      CValue(v) => if m.depth <= base {
+        out := Some(v)
+      } else {
+        let k := pop(&mut m)
+        next := guard_apply(&mut m, k, v)
+      }
+    }
+  }
+  match out {
+    Some(v) => v
+    None => VUnit
+  }
+}
+
+pub fn step(m: &mut M, e: NExpr, fr: u64): Ctl ! {div, divzero, nflow, nout, overflow} {
+  if not(is_control(e)) {
+    CValue(eval(&mut m, e, fr))
+  } else {
+    count_step(&mut m)
+    m.copy_type := false
+    match e.kind {
+      NBlockOf(b) => block_from(&mut m, b.stmts, b.tail, fr)
+      NIf(cond, then, otherwise) => {
+        push(&mut m, KIf(then, otherwise, fr))
+        CEval(cond, fr)
+      }
+      NAnd(a, b) => {
+        push(&mut m, KAndOr(true, b, fr))
+        CEval(a, fr)
+      }
+      NOr(a, b) => {
+        push(&mut m, KAndOr(false, b, fr))
+        CEval(a, fr)
+      }
+      NMatchOf(x) => CEval(match_(&mut m, x, fr), fr)
+      NCallOf(c) => call(&mut m, c, e, fr)
+      NPerformOf(p) => perform_op(&mut m, p, fr)
+      NBudgetOf(b) => if b.memory {
+        unsupported("a memory budget")
+      } else {
+        let steps := match eval(&mut m, b.steps, fr) {
+          VInt(neg, n, ^t) => if neg || n > unbounded() { unbounded() } else { n }
+          VUnit => internal("a budget of a unit")
+          VBool(^x) => internal("a budget of a bool")
+          VFloat(^x) => internal("a budget of a bool")
+          VText(^x, ^t) => internal("a budget of a text")
+          VShown(^x, ^t) => internal("a budget of a shown")
+          VData(^c, ^fs, ^t) => internal("a budget of a data")
+          VInject(^i, ^x) => internal("a budget of a union")
+          VFn(^f, ^t) => internal("a budget of a function")
+          VRef(^p) => internal("a budget of a borrow")
+          VCell(^c) => internal("a budget of a shared var")
+          VSeq(^xs, ^t, ^k) => internal("a budget of a Vec")
+          VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal("a budget of a Slots")
+          VBuf(^x, ^t) => internal("a budget of a Buf")
+          VShared(^c, ^t) => internal("a budget of a Ref")
+          VInfo => internal("a budget of a budget info")
+          VAnswer(^x) => internal("a budget of a budget answer")
+          VCont(^c) => internal("a budget of a continuation")
+          VMoved => internal("a budget of a moved")
+        }
+        let id := m.next_handler
+        m.next_handler := m.next_handler + 1
+        m.budgets := Cons(id, m.budgets)
+        let left := left_new(&mut m, steps)
+        push(&mut m, KBudget(id, left))
+        CEval(b.body, fr)
+      }
+      NHandleOf(h) => {
+        let id := m.next_handler
+        m.next_handler := m.next_handler + 1
+        let body := arm_frame(&mut m, fr)
+        push(&mut m, KHandle(h, fr, body, id))
+        CEval(h.body, body)
+      }
+      NUnitLit => internal("not a step")
+      NIntLit(^n, ^k) => internal("not a step")
+      NBoolLit(^b) => internal("not a step")
+      NFloatLit(^t) => internal("not a step")
+      NTextLit(^t) => internal("not a step")
+      NDeclaration(^i) => internal("not a step")
+      NFnValue(^i, ^ts) => internal("not a step")
+      NClosureOf(^c) => internal("not a step")
+      NInject(^u, ^i, ^x) => internal("not a step")
+      NRemap(^u, ^t, ^x) => internal("not a step")
+      NFnCast(^x) => internal("not a step")
+      NRead(^l, ^h) => internal("not a step")
+      NBorrow(^p) => internal("not a step")
+      NBorrowMut(^p) => internal("not a step")
+      NTempRef(^x) => internal("not a step")
+      NDeref(^x, ^h) => internal("not a step")
+      NFieldOf(^b, ^f, ^h, ^r) => internal("not a step")
+      NArithOf(^o, ^t, ^xs) => internal("not a step")
+      NCmpOf(^o, ^xs) => internal("not a step")
+      NEqOf(^n, ^xs) => internal("not a step")
+      NNot(^x) => internal("not a step")
+      NCtorOf(^c, ^xs) => internal("not a step")
+      NShownOf(^x) => internal("not a step")
+      NUnreachable(^x) => internal("not a step")
+    }
+  }
+}
+
+// A frame whose slots are those of `fr`.
+pub fn arm_frame(m: &mut M, fr: u64): u64 {
+  let n := fr_new(&mut m)
+  alias_keys(&mut m, n, fr, slot_keys(&m, fr))
+  n
+}
+
+pub fn alias_keys(m: &mut M, n: u64, fr: u64, ks: List(Nat)): Unit {
+  match ks {
+    Nil => ()
+    Cons(k, rest) => {
+      slot_put(&mut m, n, k, SAlias(fr, k))
+      alias_keys(&mut m, n, fr, rest)
+    }
+  }
+}
+
+pub fn bool_of(v: Val, what: Text): Bool ! {nout} {
+  match v {
+    VBool(b) => b
+    VFloat(^b) => internal(Text::concat_all([what, " on a float"]))
+    VUnit => internal(Text::concat_all([what, " on a unit"]))
+    VInt(^n, ^g, ^t) => internal(Text::concat_all([what, " on a int"]))
+    VText(^x, ^t) => internal(Text::concat_all([what, " on a text"]))
+    VShown(^x, ^t) => internal(Text::concat_all([what, " on a shown"]))
+    VData(^c, ^fs, ^t) => internal(Text::concat_all([what, " on a data"]))
+    VInject(^i, ^x) => internal(Text::concat_all([what, " on a union"]))
+    VFn(^f, ^t) => internal(Text::concat_all([what, " on a function"]))
+    VRef(^p) => internal(Text::concat_all([what, " on a borrow"]))
+    VCell(^c) => internal(Text::concat_all([what, " on a shared var"]))
+    VSeq(^xs, ^t, ^k) => internal(Text::concat_all([what, " on a Vec"]))
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal(Text::concat_all([what, " on a Slots"]))
+    VBuf(^x, ^t) => internal(Text::concat_all([what, " on a Buf"]))
+    VShared(^c, ^t) => internal(Text::concat_all([what, " on a Ref"]))
+    VInfo => internal(Text::concat_all([what, " on a budget info"]))
+    VAnswer(^x) => internal(Text::concat_all([what, " on a budget answer"]))
+    VCont(^c) => internal(Text::concat_all([what, " on a continuation"]))
+    VMoved => internal(Text::concat_all([what, " on a moved"]))
+  }
+}
+
+// Gives `v` to the frame `k` of the continuation.
+pub fn apply(m: &mut M, k: Kont, v: Val): Ctl ! {div, nout, overflow} {
+  match k {
+    KBlock(rest, tail, fr) => block_from(&mut m, rest, tail, fr)
+    KStmt(s, fr) => {
+      finish_stmt(&mut m, s, v, fr)
+      CValue(VUnit)
+    }
+    KWhileCond(s, fr) => match s {
+      NWhile(^cond, body, tick) => if bool_of(v, "`while`") {
+        push(&mut m, KWhileBody(s, fr))
+        let ticked := if n_tick_budget(tick) { tick_check(&mut m, ThenBody(body, fr)) } else { None }
+        match ticked {
+          Some(c) => c
+          None => block_from(&mut m, body.stmts, body.tail, fr)
+        }
+      } else {
+        CValue(VUnit)
+      }
+      NLet(^l, ^t, ^x, ^st) => internal("not a `while`")
+      NVar(^l, ^t, ^x) => internal("not a `while`")
+      NAssign(^p, ^x) => internal("not a `while`")
+      NExprStmt(^x) => internal("not a `while`")
+      NReturn(^x) => internal("not a `while`")
+    }
+    KWhileBody(s, fr) => match s {
+      NWhile(cond, ^body, ^tick) => match live(&m, v) {
+        Some(^t) => violation("Leak", "the value of a loop's body is dropped by nothing")
+        None => {
+          push(&mut m, KWhileCond(s, fr))
+          CEval(cond, fr)
+        }
+      }
+      NLet(^l, ^t, ^x, ^st) => internal("not a `while`")
+      NVar(^l, ^t, ^x) => internal("not a `while`")
+      NAssign(^p, ^x) => internal("not a `while`")
+      NExprStmt(^x) => internal("not a `while`")
+      NReturn(^x) => internal("not a `while`")
+    }
+    KReturn => CStop(SReturn(v))
+    KUnwind(^ss, ^fr) => CValue(v)
+    KIf(then, otherwise, fr) => if bool_of(v, "`if`") {
+      CEval(then, fr)
+    } else {
+      match otherwise {
+        Some(o) => CEval(o, fr)
+        None => CValue(VUnit)
+      }
+    }
+    KAndOr(and, b, fr) => {
+      let x := bool_of(v, "`&&`")
+      if x != and { CValue(VBool(x)) } else { CEval(b, fr) }
+    }
+    KCall(fr, name) => {
+      push(&mut m, KCall(fr, name))
+      check_frame(&mut m, fr)
+      pop(&mut m)
+      fr_set_dead(&mut m, fr, true)
+      CValue(v)
+    }
+    KRelease(f) => {
+      release(&mut m, f, TConsumed)
+      CValue(v)
+    }
+    KHandle(h, fr, body, ^id) => {
+      check_frame(&mut m, body)
+      match h.ret {
+        Some(arm) => {
+          let fr2 := arm_frame(&mut m, fr)
+          bind_arm(&mut m, arm.pat, v, fr2)
+          CEval(arm.body, fr2)
+        }
+        None => CValue(v)
+      }
+    }
+    KArm(^pos, abort) => match abort {
+      Some(id) => CStop(SAbort(id, v))
+      None => CValue(v)
+    }
+    KBudget(^id, ^left) => CValue(v)
+    KTick(id, then) => match v {
+      VAnswer(a) => match a {
+        AValue(x) => CStop(SAbort(id, x))
+        AMore(n) => {
+          let left := match n {
+            Some(x) => x
+            None => unbounded()
+          }
+          let ks := m.konts
+          set_budget(&mut m, ks, id, left)
+          match then {
+            ThenCall(e, fr) => {
+              m.ticked := true
+              CEval(e, fr)
+            }
+            ThenBody(b, fr) => block_from(&mut m, b.stmts, b.tail, fr)
+          }
+        }
+      }
+      VUnit => internal("a budget answered with a unit")
+      VBool(^x) => internal("a budget answered with a bool")
+      VFloat(^x) => internal("a budget answered with a bool")
+      VInt(^n, ^g, ^t) => internal("a budget answered with a int")
+      VText(^x, ^t) => internal("a budget answered with a text")
+      VShown(^x, ^t) => internal("a budget answered with a shown")
+      VData(^c, ^fs, ^t) => internal("a budget answered with a data")
+      VInject(^i, ^x) => internal("a budget answered with a union")
+      VFn(^f, ^t) => internal("a budget answered with a function")
+      VRef(^p) => internal("a budget answered with a borrow")
+      VCell(^c) => internal("a budget answered with a shared var")
+      VSeq(^xs, ^t, ^a) => internal("a budget answered with a Vec")
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal("a budget answered with a Slots")
+      VBuf(^x, ^t) => internal("a budget answered with a Buf")
+      VShared(^c, ^t) => internal("a budget answered with a Ref")
+      VInfo => internal("a budget answered with a budget info")
+      VCont(^c) => internal("a budget answered with a continuation")
+      VMoved => internal("a budget answered with a moved")
+    }
+    KResumed(c) => {
+      let k2 := cont_get(&m, c)
+      let one := match k2.quant {
+        NQOne => true
+        NQZero => false
+        NQAtMostOne => false
+        NQMany => false
+        NQDirect => false
+      }
+      if one && k2.resumed == 0 {
+        violation("Linear", "an arm of a `resume 1` operation ends without resuming")
+      } else {
+        if not(k2.kept) { drop_cont(&mut m, c) } else { () }
+        CValue(v)
+      }
+    }
+  }
+}
+
+pub fn set_budget(m: &mut M, ks: List(Kont), id: Nat, left: Nat): Unit {
+  match ks {
+    Nil => ()
+    Cons(k, rest) => {
+      match k {
+        KBudget(b, cell) => if b == id { left_set(&mut m, cell, left) } else { () }
+        KBlock(^ss, ^t, ^f) => ()
+        KStmt(^s, ^f) => ()
+        KWhileCond(^s, ^f) => ()
+        KWhileBody(^s, ^f) => ()
+        KReturn => ()
+        KIf(^a, ^b2, ^f) => ()
+        KAndOr(^a, ^b2, ^f) => ()
+        KUnwind(^ss, ^f) => ()
+        KCall(^f, ^n) => ()
+        KRelease(^x) => ()
+        KHandle(^h, ^f, ^b2, ^i) => ()
+        KArm(^p, ^a) => ()
+        KTick(^i, ^t) => ()
+        KResumed(^c) => ()
+      }
+      set_budget(&mut m, rest, id, left)
+    }
+  }
+}
+
+// A continuation dropped: what its calls still own is dropped with it.
+pub fn drop_cont(m: &mut M, c: u64): Unit ! {div, nout, overflow} {
+  let k := cont_get(&m, c)
+  match k.frames {
+    None => ()
+    Some(frames) => {
+      cont_set(&mut m, c, ContData { frames: None, base: k.base, quant: k.quant, resumed: k.resumed, kept: k.kept })
+      drop_konts(&mut m, frames)
+    }
+  }
+}
+
+pub fn drop_konts(m: &mut M, ks: List(Kont)): Unit ! {div, nout, overflow} {
+  match ks {
+    Nil => ()
+    Cons(k, rest) => {
+      match k {
+        KCall(fr, ^n) => {
+          drop_slots(&mut m, fr)
+          fr_set_dead(&mut m, fr, true)
+        }
+        KHandle(^h, ^f, body, ^i) => {
+          drop_slots(&mut m, body)
+          fr_set_dead(&mut m, body, true)
+        }
+        KRelease(v) => if live(&m, v) != None { release(&mut m, v, TConsumed) } else { () }
+        KBlock(^ss, ^t, ^f) => ()
+        KStmt(^s, ^f) => ()
+        KWhileCond(^s, ^f) => ()
+        KWhileBody(^s, ^f) => ()
+        KReturn => ()
+        KIf(^a, ^b2, ^f) => ()
+        KAndOr(^a, ^b2, ^f) => ()
+        KUnwind(^ss, ^f) => ()
+        KArm(^p, ^a) => ()
+        KBudget(^i, ^l) => ()
+        KTick(^i, ^t) => ()
+        KResumed(^c) => ()
+      }
+      drop_konts(&mut m, rest)
+    }
+  }
+}
+
+// Drops what the slots of a frame still own.
+pub fn drop_slots(m: &mut M, fr: u64): Unit ! {div, nout, overflow} {
+  let vals := take_live(&mut m, fr, slot_keys(&m, fr))
+  release_all(&mut m, vals, TDropped)
+}
+
+pub fn take_live(m: &mut M, fr: u64, ks: List(Nat)): List(Val) ! {div} {
+  match ks {
+    Nil => Nil
+    Cons(k, rest) => match slot_get(&m, fr, k) {
+      Some(s) => match s {
+        SOwned(name, v) => if live(&m, v) != None {
+          slot_put(&mut m, fr, k, SOwned(name, VMoved))
+          Cons(v, take_live(&mut m, fr, rest))
+        } else {
+          take_live(&mut m, fr, rest)
+        }
+        SAlias(^f, ^k2) => take_live(&mut m, fr, rest)
+      }
+      None => take_live(&mut m, fr, rest)
+    }
+  }
+}
+
+// The budget in place with no steps left, from the top: its place and id.
+pub fn spent_budget(m: &M, ks: List(Kont), j: Nat): Option(Nat × Nat) {
+  match ks {
+    Nil => None
+    Cons(k, rest) => match k {
+      KBudget(id, cell) => if left_get(&m, cell) == 0 { Some(#(j, id)) } else { spent_budget(&m, rest, dec(j)) }
+      KBlock(^ss, ^t, ^f) => spent_budget(&m, rest, dec(j))
+      KStmt(^s, ^f) => spent_budget(&m, rest, dec(j))
+      KWhileCond(^s, ^f) => spent_budget(&m, rest, dec(j))
+      KWhileBody(^s, ^f) => spent_budget(&m, rest, dec(j))
+      KReturn => spent_budget(&m, rest, dec(j))
+      KIf(^a, ^b2, ^f) => spent_budget(&m, rest, dec(j))
+      KAndOr(^a, ^b2, ^f) => spent_budget(&m, rest, dec(j))
+      KUnwind(^ss, ^f) => spent_budget(&m, rest, dec(j))
+      KCall(^f, ^n) => spent_budget(&m, rest, dec(j))
+      KRelease(^x) => spent_budget(&m, rest, dec(j))
+      KHandle(^h, ^f, ^b2, ^i) => spent_budget(&m, rest, dec(j))
+      KArm(^p, ^a) => spent_budget(&m, rest, dec(j))
+      KTick(^i, ^t) => spent_budget(&m, rest, dec(j))
+      KResumed(^c) => spent_budget(&m, rest, dec(j))
+    }
+  }
+}
+
+pub fn spend_all(m: &mut M, ks: List(Kont)): Unit {
+  match ks {
+    Nil => ()
+    Cons(k, rest) => {
+      match k {
+        KBudget(^id, cell) => {
+          let left := left_get(&m, cell)
+          if left != unbounded() { left_set(&mut m, cell, left - 1) } else { () }
+        }
+        KBlock(^ss, ^t, ^f) => ()
+        KStmt(^s, ^f) => ()
+        KWhileCond(^s, ^f) => ()
+        KWhileBody(^s, ^f) => ()
+        KReturn => ()
+        KIf(^a, ^b2, ^f) => ()
+        KAndOr(^a, ^b2, ^f) => ()
+        KUnwind(^ss, ^f) => ()
+        KCall(^f, ^n) => ()
+        KRelease(^x) => ()
+        KHandle(^h, ^f, ^b2, ^i) => ()
+        KArm(^p, ^a) => ()
+        KTick(^i, ^t) => ()
+        KResumed(^c) => ()
+      }
+      spend_all(&mut m, rest)
+    }
+  }
+}
+
+pub fn op_pos(ops: List(NOp), name: Text, i: Nat): Option(Nat) {
+  match ops {
+    Nil => None
+    Cons(o, rest) => if o.name == name { Some(i) } else { op_pos(rest, name, i + 1) }
+  }
+}
+
+// A fuel check: one step off every budget in place, or, when one has none
+// left, its `exceeded` arm is run with the body stopped here as its
+// continuation.
+pub fn tick_check(m: &mut M, then: Then): Option(Ctl) ! {div, nout, overflow} {
+  let ks0 := m.konts
+  let d0 := dec(m.depth)
+  match spent_budget(&m, ks0, d0) {
+    None => {
+      spend_all(&mut m, ks0)
+      None
+    }
+    Some(found) => match found {
+      #(j, id) => match op_pos(m.pkg.ops, "exceeded", 0) {
+        None => internal("a budget with no `exceeded` operation")
+        Some(op) => {
+          let site := match then {
+            ThenCall(^e, fr) => fr
+            ThenBody(^b, fr) => fr
+          }
+          push(&mut m, KTick(id, then))
+          match handled(&mut m, op, NQAtMostOne, Nil, [VInfo], site, j) {
+            Some(c) => Some(c)
+            None => unsupported("a budget that no `exceeded` arm handles")
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn nat_in(xs: List(Nat), x: Nat): Bool { nat_has(xs, x) }
+
+pub fn left_by_abort(o: Outcome): Outcome {
+  match o {
+    OViolation(k, d) => OViolation(k, Text::concat(d, " (left by an abort)"))
+    OOk => o
+    OUnsupported(^w) => o
+    OError(^e) => o
+  }
+}
+
+// Takes the continuation down to what catches `s`; `CStop` when nothing
+// above `base` does.
+pub fn unwind(m: &mut M, s: Stop, base: Nat): Ctl ! {div, divzero, nflow, nout, overflow} {
+  var out: Option(Ctl) := None
+  while out == None {
+    if m.depth <= base {
+      out := Some(CStop(s))
+    } else {
+      let top := match m.konts {
+        Cons(k, ^rest) => k
+        Nil => KReturn
+      }
+      match s {
+        SReturn(v) => match top {
+          KCall(^fr, ^name) => {
+            let k := pop(&mut m)
+            out := Some(apply(&mut m, k, v))
+          }
+          KBlock(^ss, ^t, ^f) => { pop(&mut m); () }
+          KStmt(^x, ^f) => { pop(&mut m); () }
+          KWhileCond(^x, ^f) => { pop(&mut m); () }
+          KWhileBody(^x, ^f) => { pop(&mut m); () }
+          KReturn => { pop(&mut m); () }
+          KIf(^a, ^b, ^f) => { pop(&mut m); () }
+          KAndOr(^a, ^b, ^f) => { pop(&mut m); () }
+          KUnwind(^ss, ^f) => { pop(&mut m); () }
+          KRelease(^x) => { pop(&mut m); () }
+          KHandle(^h, ^f, ^b, ^i) => { pop(&mut m); () }
+          KArm(^p, ^a) => { pop(&mut m); () }
+          KBudget(^i, ^l) => { pop(&mut m); () }
+          KTick(^i, ^t) => { pop(&mut m); () }
+          KResumed(^c) => { pop(&mut m); () }
+        }
+        SAbort(i, v) => match top {
+          KCall(fr, ^name) => if nat_in(m.budgets, i) {
+            drop_slots(&mut m, fr)
+            fr_set_dead(&mut m, fr, true)
+            pop(&mut m)
+            ()
+          } else {
+            handle { check_frame(&mut m, fr) } with { nout(o) => perform nout(left_by_abort(o)) }
+            fr_set_dead(&mut m, fr, true)
+            pop(&mut m)
+            ()
+          }
+          KBudget(id, ^l) => if i == id {
+            pop(&mut m)
+            out := Some(CValue(v))
+          } else {
+            pop(&mut m)
+            ()
+          }
+          KUnwind(drops, fr) => {
+            pop(&mut m)
+            run_drops(&mut m, drops, fr)
+          }
+          KHandle(^h, ^f, ^b, id) => if i == id {
+            pop(&mut m)
+            out := Some(CValue(v))
+          } else {
+            pop(&mut m)
+            ()
+          }
+          KRelease(x) => {
+            pop(&mut m)
+            release(&mut m, x, TConsumed)
+          }
+          KBlock(^ss, ^t, ^f) => { pop(&mut m); () }
+          KStmt(^x, ^f) => { pop(&mut m); () }
+          KWhileCond(^x, ^f) => { pop(&mut m); () }
+          KWhileBody(^x, ^f) => { pop(&mut m); () }
+          KReturn => { pop(&mut m); () }
+          KIf(^a, ^b, ^f) => { pop(&mut m); () }
+          KAndOr(^a, ^b, ^f) => { pop(&mut m); () }
+          KArm(^p, ^a) => { pop(&mut m); () }
+          KTick(^t, ^x) => { pop(&mut m); () }
+          KResumed(^c) => { pop(&mut m); () }
+        }
+      }
+    }
+  }
+  match out {
+    Some(c) => c
+    None => CStop(s)
+  }
+}
+
+pub fn run_drops(m: &mut M, ds: List(NStmt), fr: u64): Unit ! {div, divzero, nflow, nout, overflow} {
+  match ds {
+    Nil => ()
+    Cons(d, rest) => {
+      run_start(&mut m, StartStmt(d, fr))
+      run_drops(&mut m, rest, fr)
+    }
+  }
+}
+
+// ---- blocks ----
+
+pub fn block_from(m: &mut M, ss: List(NStmt), tail: Option(NExpr), fr: u64): Ctl {
+  match ss {
+    Cons(s, rest) => {
+      push(&mut m, KBlock(rest, tail, fr))
+      start_stmt(&mut m, s, fr)
+    }
+    Nil => match tail {
+      Some(t) => CEval(t, fr)
+      None => CValue(VUnit)
+    }
+  }
+}
+
+pub fn start_stmt(m: &mut M, s: NStmt, fr: u64): Ctl {
+  match s {
+    NWhile(cond, ^body, ^tick) => {
+      push(&mut m, KWhileCond(s, fr))
+      CEval(cond, fr)
+    }
+    NReturn(value) => match value {
+      Some(v) => {
+        push(&mut m, KReturn)
+        CEval(v, fr)
+      }
+      None => CStop(SReturn(VUnit))
+    }
+    NLet(^l, ^t, x, ^st) => {
+      push(&mut m, KStmt(s, fr))
+      CEval(x, fr)
+    }
+    NVar(^l, ^t, x) => {
+      push(&mut m, KStmt(s, fr))
+      CEval(x, fr)
+    }
+    NAssign(^p, x) => {
+      push(&mut m, KStmt(s, fr))
+      CEval(x, fr)
+    }
+    NExprStmt(x) => {
+      push(&mut m, KStmt(s, fr))
+      CEval(x, fr)
+    }
+  }
+}
+
+pub fn finish_stmt(m: &mut M, s: NStmt, v: Val, fr: u64): Unit ! {div, nout} {
+  match s {
+    NLet(l, ^t, ^x, ^st) => bind(&mut m, fr, l, v)
+    NVar(l, ^t, ^x) => if storage_shared(l) {
+      let c := cell_new(&mut m, v)
+      bind(&mut m, fr, l, VCell(c))
+    } else {
+      bind(&mut m, fr, l, v)
+    }
+    NAssign(target, ^x) => {
+      let p := place_from(&mut m, target, fr)
+      let old := at_replace(&mut m, p, v)
+      match live(&m, old.val) {
+        Some(^t) => violation("Leak", "an assignment replaces a value that was not dropped")
+        None => ()
+      }
+    }
+    NExprStmt(^x) => match live(&m, v) {
+      Some(^t) => violation("Leak", "the value of a statement is dropped by nothing")
+      None => ()
+    }
+    NWhile(^c, ^b, ^t) => internal("not a simple statement")
+    NReturn(^x) => internal("not a simple statement")
+  }
+}
+
+// ---- binding ----
+
+pub fn bind(m: &mut M, fr: u64, l: NLocal, v: Val): Unit ! {div, nout} {
+  match slot_put(&mut m, fr, key_local(l.id), SOwned(l.name, v)) {
+    Some(old) => match old {
+      SOwned(^name, x) => match live(&m, x) {
+        Some(^t) => violation("Leak", "a local is bound again while it still owns its last value")
+        None => ()
+      }
+      SAlias(^f, ^k) => ()
+    }
+    None => ()
+  }
+}
+
+// The locals a pattern binds that own a value.
+pub fn owned_binds(p: NPat, acc: List(Nat)): List(Nat) {
+  match p {
+    NBind(l, t) => if needs_drop(t) { Cons(l.id, acc) } else { acc }
+    NCtorPat(^c, fs) => owned_binds_all(fs, acc)
+    NInjectPat(^u, ^k, q) => owned_binds(q, acc)
+    NWild => acc
+    NIntPat(^n, ^k) => acc
+    NNatPat(^n) => acc
+    NBoolPat(^b) => acc
+    NTextPat(^t) => acc
+  }
+}
+
+pub fn owned_binds_all(ps: List(NPat), acc: List(Nat)): List(Nat) {
+  match ps {
+    Nil => acc
+    Cons(p, rest) => owned_binds(p, owned_binds_all(rest, acc))
+  }
+}
+
+pub fn data_ref_eq(a: NDataRef, b: NDataRef): Bool {
+  match a {
+    NDataGen(x) => match b {
+      NDataGen(y) => x == y
+      NDataOption => false
+      NDataResult => false
+      NDataPair => false
+    }
+    NDataOption => match b {
+      NDataOption => true
+      NDataGen(^y) => false
+      NDataResult => false
+      NDataPair => false
+    }
+    NDataResult => match b {
+      NDataResult => true
+      NDataGen(^y) => false
+      NDataOption => false
+      NDataPair => false
+    }
+    NDataPair => match b {
+      NDataPair => true
+      NDataGen(^y) => false
+      NDataOption => false
+      NDataResult => false
+    }
+  }
+}
+
+pub fn is_ctor_pat(p: NPat): Bool {
+  match p {
+    NCtorPat(^c, ^fs) => true
+    NInjectPat(^u, ^k, ^q) => false
+    NWild => false
+    NBind(^l, ^t) => false
+    NIntPat(^n, ^k) => false
+    NNatPat(^n) => false
+    NBoolPat(^b) => false
+    NTextPat(^t) => false
+  }
+}
+
+pub fn through(m: &mut M, v: Val): Val ! {div, nout} {
+  match v {
+    VRef(^p) => value_of(&mut m, v)
+    VCell(^c) => value_of(&mut m, v)
+    VUnit => v
+    VBool(^b) => v
+    VFloat(^b) => v
+    VInt(^n, ^g, ^t) => v
+    VText(^x, ^t) => v
+    VShown(^x, ^t) => v
+    VData(^c, ^fs, ^t) => v
+    VInject(^i, ^x) => v
+    VFn(^f, ^t) => v
+    VSeq(^xs, ^t, ^k) => v
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => v
+    VBuf(^x, ^t) => v
+    VShared(^c, ^t) => v
+    VInfo => v
+    VAnswer(^x) => v
+    VCont(^c) => v
+    VMoved => v
+  }
+}
+
+pub fn matches(m: &mut M, p: NPat, v0: Val): Bool ! {div, nout} {
+  match p {
+    NWild => true
+    NBind(^l, ^t) => true
+    NIntPat(neg, n) => match unwrap_inject(through(&mut m, v0)) {
+      VInt(xn, xg, ^t) => int_eq(int_of(neg, n), int_of(xn, xg))
+      VMoved => violation("UseAfterMove", "a match on a value moved at 0..0")
+      VUnit => false
+      VBool(^b) => false
+      VFloat(^b) => false
+      VText(^x, ^t) => false
+      VShown(^x, ^t) => false
+      VData(^c, ^fs, ^t) => false
+      VInject(^i, ^x) => false
+      VFn(^f, ^t) => false
+      VRef(^q) => false
+      VCell(^c) => false
+      VSeq(^xs, ^t, ^k) => false
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => false
+      VBuf(^x, ^t) => false
+      VShared(^c, ^t) => false
+      VInfo => false
+      VAnswer(^x) => false
+      VCont(^c) => false
+    }
+    NNatPat(n) => match through(&mut m, v0) {
+      VInt(xn, xg, ^t) => int_eq(int_of(false, n), int_of(xn, xg))
+      VMoved => violation("UseAfterMove", "a match on a value moved at 0..0")
+      VUnit => false
+      VBool(^b) => false
+      VFloat(^b) => false
+      VText(^x, ^t) => false
+      VShown(^x, ^t) => false
+      VData(^c, ^fs, ^t) => false
+      VInject(^i, ^x) => false
+      VFn(^f, ^t) => false
+      VRef(^q) => false
+      VCell(^c) => false
+      VSeq(^xs, ^t, ^k) => false
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => false
+      VBuf(^x, ^t) => false
+      VShared(^c, ^t) => false
+      VInfo => false
+      VAnswer(^x) => false
+      VCont(^c) => false
+    }
+    NBoolPat(b) => match through(&mut m, v0) {
+      VBool(x) => x == b
+      VFloat(^x) => false
+      VMoved => violation("UseAfterMove", "a match on a value moved at 0..0")
+      VUnit => false
+      VInt(^n, ^g, ^t) => false
+      VText(^x, ^t) => false
+      VShown(^x, ^t) => false
+      VData(^c, ^fs, ^t) => false
+      VInject(^i, ^x) => false
+      VFn(^f, ^t) => false
+      VRef(^q) => false
+      VCell(^c) => false
+      VSeq(^xs, ^t, ^k) => false
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => false
+      VBuf(^x, ^t) => false
+      VShared(^c, ^t) => false
+      VInfo => false
+      VAnswer(^x) => false
+      VCont(^c) => false
+    }
+    NTextPat(s) => match through(&mut m, v0) {
+      VText(x, ^t) => x == s
+      VMoved => violation("UseAfterMove", "a match on a value moved at 0..0")
+      VUnit => false
+      VBool(^b) => false
+      VFloat(^b) => false
+      VInt(^n, ^g, ^t) => false
+      VShown(^x, ^t) => false
+      VData(^c, ^fs, ^t) => false
+      VInject(^i, ^x) => false
+      VFn(^f, ^t) => false
+      VRef(^q) => false
+      VCell(^c) => false
+      VSeq(^xs, ^t, ^k) => false
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => false
+      VBuf(^x, ^t) => false
+      VShared(^c, ^t) => false
+      VInfo => false
+      VAnswer(^x) => false
+      VCont(^c) => false
+    }
+    NInjectPat(^u, k, q) => matches_inject(&mut m, k, q, v0)
+    NCtorPat(ctor, fields) => match unwrap_inject(through(&mut m, v0)) {
+      VData(c, fs, ^t) => if c.index != ctor.index || not(data_ref_eq(c.data, ctor.data)) {
+        false
+      } else {
+        matches_fields(&mut m, fields, fs)
+      }
+      VMoved => violation("UseAfterMove", "a match on a value moved at 0..0")
+      VUnit => false
+      VBool(^b) => false
+      VFloat(^b) => false
+      VInt(^n, ^g, ^t) => false
+      VText(^x, ^t) => false
+      VShown(^x, ^t) => false
+      VInject(^i, ^x) => false
+      VFn(^f, ^t) => false
+      VRef(^q) => false
+      VCell(^c) => false
+      VSeq(^xs, ^t, ^k) => false
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => false
+      VBuf(^x, ^t) => false
+      VShared(^c, ^t) => false
+      VInfo => false
+      VAnswer(^x) => false
+      VCont(^c) => false
+    }
+  }
+}
+
+// A value of a union at the variant `k`, and `q` on what it holds.
+pub fn matches_inject(m: &mut M, k: Nat, q: NPat, v0: Val): Bool ! {div, nout} {
+  match through(&mut m, v0) {
+    VInject(i, x) => if i == k { matches(&mut m, q, x) } else { false }
+    VMoved => violation("UseAfterMove", "a match on a value moved at 0..0")
+    VUnit => false
+    VBool(^b) => false
+    VFloat(^b) => false
+    VInt(^n, ^g, ^t) => false
+    VText(^x, ^t) => false
+    VShown(^x, ^t) => false
+    VData(^c, ^fs, ^t) => false
+    VFn(^f, ^t) => false
+    VRef(^q2) => false
+    VCell(^c) => false
+    VSeq(^xs, ^t, ^a) => false
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => false
+    VBuf(^x, ^t) => false
+    VShared(^c, ^t) => false
+    VInfo => false
+    VAnswer(^x) => false
+    VCont(^c) => false
+  }
+}
+
+pub fn matches_fields(m: &mut M, ps: List(NPat), vs: List(Val)): Bool ! {div, nout} {
+  match ps {
+    Nil => true
+    Cons(p, rest) => match vs {
+      Nil => false
+      Cons(v, more) => if matches(&mut m, p, v) { matches_fields(&mut m, rest, more) } else { false }
+    }
+  }
+}
+
+pub fn matches_all(m: &mut M, ps: List(NPat), vs: List(Val)): Bool ! {div, nout} {
+  match ps {
+    Nil => true
+    Cons(p, rest) => match vs {
+      Nil => true
+      Cons(v, more) => {
+        let a := matches(&mut m, p, v)
+        let b := matches_all(&mut m, rest, more)
+        a && b
+      }
+    }
+  }
+}
+
+// Binds a pattern by borrowing: each name borrows its part (a name of a
+// type with nothing to own copies it).
+pub fn bind_ref(m: &mut M, p: NPat, place: PlaceRef, inner: Option(PlaceRef), fr: u64): Unit ! {div, nout} {
+  match p {
+    NBind(l, t) => {
+      let v := if is_borrow_ty(t) || needs_drop(t) {
+        VRef(place)
+      } else {
+        let x := peek(&mut m, place)
+        let y := value_of(&mut m, x)
+        copy_val(&m, y)
+      }
+      bind(&mut m, fr, l, v)
+    }
+    NCtorPat(^c, fields) => {
+      let base := match inner {
+        Some(q) => q
+        None => place
+      }
+      bind_ref_fields(&mut m, fields, base, 0, fr)
+    }
+    NInjectPat(^u, ^k, q) => {
+      let base := match inner {
+        Some(b) => b
+        None => place
+      }
+      let at := PlaceRef { root: base.root, path: l_snoc(base.path, NFieldRef { name: "|", index: None, indirect: NDirect }) }
+      bind_ref(&mut m, q, at, None, fr)
+    }
+    NWild => ()
+    NIntPat(^n, ^k) => ()
+    NNatPat(^n) => ()
+    NBoolPat(^b) => ()
+    NTextPat(^t) => ()
+  }
+}
+
+pub fn bind_ref_fields(m: &mut M, ps: List(NPat), base: PlaceRef, i: Nat, fr: u64): Unit ! {div, nout} {
+  match ps {
+    Nil => ()
+    Cons(p, rest) => {
+      let q := PlaceRef { root: base.root, path: l_snoc(base.path, NFieldRef { name: Text::of_nat(i), index: Some(i), indirect: NDirect }) }
+      bind_ref(&mut m, p, q, None, fr)
+      bind_ref_fields(&mut m, rest, base, i + 1, fr)
+    }
+  }
+}
+
+// Binds a pattern by copying the parts it names; the value stays.
+pub fn bind_copy(m: &mut M, p: NPat, v0: Val, fr: u64): Unit ! {div, nout} {
+  let v1 := if is_ctor_pat(p) { through(&mut m, v0) } else { v0 }
+  let v := if is_ctor_pat(p) { unwrap_inject(v1) } else { v1 }
+  match p {
+    NInjectPat(^u, ^k, q) => match through(&mut m, v0) {
+      VInject(^i, x) => bind_copy(&mut m, q, x, fr)
+      VUnit => ()
+      VBool(^b) => ()
+      VFloat(^b) => ()
+      VInt(^n, ^g, ^t) => ()
+      VText(^x, ^t) => ()
+      VShown(^x, ^t) => ()
+      VData(^k2, ^fs, ^t) => ()
+      VFn(^f, ^t) => ()
+      VRef(^q2) => ()
+      VCell(^c2) => ()
+      VSeq(^xs, ^t, ^a) => ()
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => ()
+      VBuf(^x, ^t) => ()
+      VShared(^c2, ^t) => ()
+      VInfo => ()
+      VAnswer(^x) => ()
+      VCont(^c2) => ()
+      VMoved => ()
+    }
+    NBind(l, ^t) => {
+      let c := copy_val(&m, v)
+      bind(&mut m, fr, l, c)
+    }
+    NCtorPat(^c, fields) => match v {
+      VData(^k, fs, ^t) => bind_copy_fields(&mut m, fields, fs, fr)
+      VUnit => ()
+      VBool(^b) => ()
+      VFloat(^b) => ()
+      VInt(^n, ^g, ^t) => ()
+      VText(^x, ^t) => ()
+      VShown(^x, ^t) => ()
+      VInject(^i, ^x) => ()
+      VFn(^f, ^t) => ()
+      VRef(^q) => ()
+      VCell(^c2) => ()
+      VSeq(^xs, ^t, ^k) => ()
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => ()
+      VBuf(^x, ^t) => ()
+      VShared(^c2, ^t) => ()
+      VInfo => ()
+      VAnswer(^x) => ()
+      VCont(^c2) => ()
+      VMoved => ()
+    }
+    NWild => ()
+    NIntPat(^n, ^k) => ()
+    NNatPat(^n) => ()
+    NBoolPat(^b) => ()
+    NTextPat(^t) => ()
+  }
+}
+
+pub fn bind_copy_fields(m: &mut M, ps: List(NPat), vs: List(Val), fr: u64): Unit ! {div, nout} {
+  match ps {
+    Nil => ()
+    Cons(p, rest) => match vs {
+      Nil => ()
+      Cons(v, more) => {
+        bind_copy(&mut m, p, v, fr)
+        bind_copy_fields(&mut m, rest, more, fr)
+      }
+    }
+  }
+}
+
+// Takes a value apart: the pattern's names own their parts, and the value
+// itself (and each constructor matched) ends here.
+pub fn split(m: &mut M, p: NPat, v: Val, fr: u64): Unit ! {div, nout, overflow} {
+  match p {
+    NBind(l, ^t) => bind(&mut m, fr, l, v)
+    NWild => match live(&m, v) {
+      Some(^t) => violation("Leak", "a part of the scrutinee that no pattern binds is not dropped")
+      None => ()
+    }
+    NCtorPat(^c, fields) => match v {
+      VInject(^i, x) => split(&mut m, p, x, fr)
+      VData(^k, fs, t) => {
+        match t {
+          Some(tk) => if tok_live(&m, tk) {
+            tok_set(&mut m, tk, TConsumed)
+          } else {
+            violation("DoubleDrop", "a match takes apart a value already ended")
+          }
+          None => ()
+        }
+        split_fields(&mut m, fields, fs, fr)
+      }
+      VUnit => release(&mut m, v, TConsumed)
+      VBool(^b) => release(&mut m, v, TConsumed)
+      VFloat(^b) => release(&mut m, v, TConsumed)
+      VInt(^n, ^g, ^t) => release(&mut m, v, TConsumed)
+      VText(^x, ^t) => release(&mut m, v, TConsumed)
+      VShown(^x, ^t) => release(&mut m, v, TConsumed)
+      VFn(^f, ^t) => release(&mut m, v, TConsumed)
+      VRef(^q) => release(&mut m, v, TConsumed)
+      VCell(^c2) => release(&mut m, v, TConsumed)
+      VSeq(^xs, ^t, ^k) => release(&mut m, v, TConsumed)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => release(&mut m, v, TConsumed)
+      VBuf(^x, ^t) => release(&mut m, v, TConsumed)
+      VShared(^c2, ^t) => release(&mut m, v, TConsumed)
+      VInfo => release(&mut m, v, TConsumed)
+      VAnswer(^x) => release(&mut m, v, TConsumed)
+      VCont(^c2) => release(&mut m, v, TConsumed)
+      VMoved => release(&mut m, v, TConsumed)
+    }
+    NInjectPat(^u, ^k, q) => match v {
+      VInject(^i, x) => split(&mut m, q, x, fr)
+      VUnit => release(&mut m, v, TConsumed)
+      VBool(^b) => release(&mut m, v, TConsumed)
+      VFloat(^b) => release(&mut m, v, TConsumed)
+      VInt(^n, ^g, ^t) => release(&mut m, v, TConsumed)
+      VText(^x, ^t) => release(&mut m, v, TConsumed)
+      VShown(^x, ^t) => release(&mut m, v, TConsumed)
+      VData(^k2, ^fs, ^t) => release(&mut m, v, TConsumed)
+      VFn(^f, ^t) => release(&mut m, v, TConsumed)
+      VRef(^q2) => release(&mut m, v, TConsumed)
+      VCell(^c2) => release(&mut m, v, TConsumed)
+      VSeq(^xs, ^t, ^a) => release(&mut m, v, TConsumed)
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => release(&mut m, v, TConsumed)
+      VBuf(^x, ^t) => release(&mut m, v, TConsumed)
+      VShared(^c2, ^t) => release(&mut m, v, TConsumed)
+      VInfo => release(&mut m, v, TConsumed)
+      VAnswer(^x) => release(&mut m, v, TConsumed)
+      VCont(^c2) => release(&mut m, v, TConsumed)
+      VMoved => release(&mut m, v, TConsumed)
+    }
+    NIntPat(^n, ^k) => release(&mut m, v, TConsumed)
+    NNatPat(^n) => release(&mut m, v, TConsumed)
+    NBoolPat(^b) => release(&mut m, v, TConsumed)
+    NTextPat(^t) => release(&mut m, v, TConsumed)
+  }
+}
+
+pub fn split_fields(m: &mut M, ps: List(NPat), vs: List(Val), fr: u64): Unit ! {div, nout, overflow} {
+  match ps {
+    Nil => ()
+    Cons(p, rest) => match vs {
+      Nil => ()
+      Cons(v, more) => {
+        split(&mut m, p, v, fr)
+        split_fields(&mut m, rest, more, fr)
+      }
+    }
+  }
+}
+
+// Binds what an arm's pattern takes of a value the arm is given.
+pub fn bind_arm(m: &mut M, p: NPat, v: Val, fr: u64): Unit ! {div, nout, overflow} {
+  if not(matches(&mut m, p, v)) {
+    fail("an arm's pattern does not match what it is given")
+  } else {
+    match owned_binds(p, Nil) {
+      Nil => {
+        bind_copy(&mut m, p, v, fr)
+        match live(&m, v) {
+          Some(^t) => violation("Leak", "a value given to an arm that binds no owned part of it is not dropped")
+          None => ()
+        }
+      }
+      Cons(^x, ^rest) => split(&mut m, p, v, fr)
+    }
+  }
+}
+
+pub fn bind_arms(m: &mut M, ps: List(NPat), vs: List(Val), fr: u64): Unit ! {div, nout, overflow} {
+  match ps {
+    Nil => ()
+    Cons(p, rest) => match vs {
+      Nil => ()
+      Cons(v, more) => {
+        bind_arm(&mut m, p, v, fr)
+        bind_arms(&mut m, rest, more, fr)
+      }
+    }
+  }
+}
+
+// ---- match ----
+
+pub fn match_(m: &mut M, x: NMatch, fr: u64): NExpr ! {div, divzero, nflow, nout, overflow} {
+  let i := choose(&mut m, x.scrut, x.by_ref, x.arms, fr)
+  match l_nth(x.arms, i) {
+    Some(a) => a.body
+    None => internal("no arm")
+  }
+}
+
+pub fn guard_holds(m: &mut M, g: Option(NExpr), fr: u64): Bool ! {div, divzero, nflow, nout, overflow} {
+  match g {
+    None => true
+    Some(e) => match eval(&mut m, e, fr) {
+      VBool(b) => b
+      VFloat(^b) => internal("a guard is a float")
+      VUnit => internal("a guard is a unit")
+      VInt(^n, ^k, ^t) => internal("a guard is a int")
+      VText(^x, ^t) => internal("a guard is a text")
+      VShown(^x, ^t) => internal("a guard is a shown")
+      VData(^c, ^fs, ^t) => internal("a guard is a data")
+      VInject(^i, ^x) => internal("a guard is a union")
+      VFn(^f, ^t) => internal("a guard is a function")
+      VRef(^p) => internal("a guard is a borrow")
+      VCell(^c) => internal("a guard is a shared var")
+      VSeq(^xs, ^t, ^k) => internal("a guard is a Vec")
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal("a guard is a Slots")
+      VBuf(^x, ^t) => internal("a guard is a Buf")
+      VShared(^c, ^t) => internal("a guard is a Ref")
+      VInfo => internal("a guard is a budget info")
+      VAnswer(^x) => internal("a guard is a budget answer")
+      VCont(^c) => internal("a guard is a continuation")
+      VMoved => internal("a guard is a moved")
+    }
+  }
+}
+
+pub fn scrut_local(e: NExpr): Option(NLocal) {
+  match e.kind {
+    NRead(l, ^h) => Some(l)
+    NBorrow(p) => match p.path {
+      Nil => Some(p.local)
+      Cons(^f, ^rest) => None
+    }
+    NBorrowMut(p) => match p.path {
+      Nil => Some(p.local)
+      Cons(^f, ^rest) => None
+    }
+    NUnitLit => None
+    NIntLit(^n, ^k) => None
+    NBoolLit(^b) => None
+    NFloatLit(^t) => None
+    NTextLit(^t) => None
+    NDeclaration(^i) => None
+    NFnValue(^i, ^ts) => None
+    NClosureOf(^c) => None
+    NHandleOf(^h) => None
+    NBudgetOf(^b) => None
+    NInject(^u, ^i, ^x) => None
+    NRemap(^u, ^t, ^x) => None
+    NFnCast(^x) => None
+    NTempRef(^x) => None
+    NDeref(^x, ^h) => None
+    NFieldOf(^b, ^f, ^h, ^r) => None
+    NArithOf(^o, ^t, ^xs) => None
+    NCmpOf(^o, ^xs) => None
+    NEqOf(^n, ^xs) => None
+    NNot(^x) => None
+    NAnd(^a, ^b) => None
+    NOr(^a, ^b) => None
+    NIf(^c, ^t, ^o) => None
+    NBlockOf(^b) => None
+    NCtorOf(^c, ^xs) => None
+    NMatchOf(^x) => None
+    NCallOf(^c) => None
+    NShownOf(^x) => None
+    NPerformOf(^p) => None
+    NUnreachable(^x) => None
+  }
+}
+
+pub fn moved_scrut_local(e: NExpr): Option(NLocal) {
+  match e.kind {
+    NRead(l, h) => match h {
+      NMove => if needs_drop(e.ty) && storage_owned(l) { Some(l) } else { None }
+      NPlace => if needs_drop(e.ty) && storage_owned(l) { Some(l) } else { None }
+      NCopy => None
+      NClone => None
+    }
+    NUnitLit => None
+    NIntLit(^n, ^k) => None
+    NBoolLit(^b) => None
+    NFloatLit(^t) => None
+    NTextLit(^t) => None
+    NDeclaration(^i) => None
+    NFnValue(^i, ^ts) => None
+    NClosureOf(^c) => None
+    NHandleOf(^h) => None
+    NBudgetOf(^b) => None
+    NInject(^u, ^i, ^x) => None
+    NRemap(^u, ^t, ^x) => None
+    NFnCast(^x) => None
+    NBorrow(^p) => None
+    NBorrowMut(^p) => None
+    NTempRef(^x) => None
+    NDeref(^x, ^h) => None
+    NFieldOf(^b, ^f, ^h, ^r) => None
+    NArithOf(^o, ^t, ^xs) => None
+    NCmpOf(^o, ^xs) => None
+    NEqOf(^n, ^xs) => None
+    NNot(^x) => None
+    NAnd(^a, ^b) => None
+    NOr(^a, ^b) => None
+    NIf(^c, ^t, ^o) => None
+    NBlockOf(^b) => None
+    NCtorOf(^c, ^xs) => None
+    NMatchOf(^x) => None
+    NCallOf(^c) => None
+    NShownOf(^x) => None
+    NPerformOf(^p) => None
+    NUnreachable(^x) => None
+  }
+}
+
+// Chooses the arm of a `match` and binds it; its index.
+pub fn choose(m: &mut M, scrut: NExpr, by_ref: Bool, arms: List(NArm), fr: u64): Nat ! {div, divzero, nflow, nout, overflow} {
+  if by_ref {
+    let place := place_of(&mut m, scrut, fr)
+    let inner := match scrut_local(scrut) {
+      Some(l) => if storage_borrow(l) {
+        match unalias(&m, fr, key_local(l.id)) {
+          #(f, k) => match slot_get(&m, f, k) {
+            Some(s) => match s {
+              SOwned(^name, v) => match v {
+                VRef(q) => Some(PlaceRef { root: RVia(q), path: Nil })
+                VUnit => None
+                VBool(^b) => None
+                VFloat(^b) => None
+                VInt(^n, ^g, ^t) => None
+                VText(^x, ^t) => None
+                VShown(^x, ^t) => None
+                VData(^c, ^fs, ^t) => None
+                VInject(^i, ^x) => None
+                VFn(^f2, ^t) => None
+                VCell(^c) => None
+                VSeq(^xs, ^t, ^a) => None
+                VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => None
+                VBuf(^x, ^t) => None
+                VShared(^c, ^t) => None
+                VInfo => None
+                VAnswer(^a) => None
+                VCont(^c) => None
+                VMoved => None
+              }
+              SAlias(^f2, ^k2) => None
+            }
+            None => None
+          }
+        }
+      } else {
+        None
+      }
+      None => None
+    }
+    let snap := peek(&mut m, place)
+    choose_ref(&mut m, arms, 0, snap, place, inner, fr)
+  } else {
+    let local := moved_scrut_local(scrut)
+    match local {
+      Some(l) => {
+        let p := PlaceRef { root: RSlot(fr, key_local(l.id)), path: Nil }
+        let v := peek(&mut m, p)
+        if moved_part(&m, v) { violation("UseAfterMove", "moved at 0..0") } else { () }
+        choose_value(&mut m, arms, 0, v, local, None, scrut, fr)
+      }
+      None => {
+        let v := eval(&mut m, scrut, fr)
+        choose_value(&mut m, arms, 0, v, None, Some(v), scrut, fr)
+      }
+    }
+  }
+}
+
+pub fn choose_ref(m: &mut M, arms: List(NArm), i: Nat, snap: Val, place: PlaceRef, inner: Option(PlaceRef), fr: u64): Nat ! {div, divzero, nflow, nout, overflow} {
+  match arms {
+    Nil => fail("no arm matches")
+    Cons(a, rest) => if not(matches(&mut m, a.pat, snap)) {
+      choose_ref(&mut m, rest, i + 1, snap, place, inner, fr)
+    } else {
+      bind_ref(&mut m, a.pat, place, inner, fr)
+      if guard_holds(&mut m, a.guard, fr) { i } else { choose_ref(&mut m, rest, i + 1, snap, place, inner, fr) }
+    }
+  }
+}
+
+pub fn tok_states(m: &M, ts: List(u64)): List(u64 × TState) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(#(t, tok_get(&m, t).state), tok_states(&m, rest))
+  }
+}
+
+pub fn restore_toks(m: &mut M, xs: List(u64 × TState)): Unit {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => match x {
+      #(t, s) => {
+        tok_set(&mut m, t, s)
+        restore_toks(&mut m, rest)
+      }
+    }
+  }
+}
+
+pub fn unbind(m: &mut M, fr: u64, ids: List(Nat)): Unit {
+  match ids {
+    Nil => ()
+    Cons(id, rest) => {
+      slot_remove(&mut m, fr, key_local(id))
+      unbind(&mut m, fr, rest)
+    }
+  }
+}
+
+pub fn choose_value(m: &mut M, arms: List(NArm), i: Nat, snap: Val, local: Option(NLocal), value: Option(Val), scrut: NExpr, fr: u64): Nat ! {div, divzero, nflow, nout, overflow} {
+  match arms {
+    Nil => fail("no arm matches")
+    Cons(a, rest) => if not(matches(&mut m, a.pat, snap)) {
+      choose_value(&mut m, rest, i + 1, snap, local, value, scrut, fr)
+    } else {
+      match owned_binds(a.pat, Nil) {
+        Nil => {
+          bind_copy(&mut m, a.pat, snap, fr)
+          if not(guard_holds(&mut m, a.guard, fr)) {
+            choose_value(&mut m, rest, i + 1, snap, local, value, scrut, fr)
+          } else {
+            match value {
+              Some(v) => match live(&m, v) {
+                Some(^t) => violation("Leak", "a scrutinee that no local holds is taken by no arm")
+                None => i
+              }
+              None => i
+            }
+          }
+        }
+        Cons(^b, ^more) => {
+          let v := match local {
+            Some(l) => take_at(&mut m, PlaceRef { root: RSlot(fr, key_local(l.id)), path: Nil }, NMove)
+            None => match value {
+              Some(x) => x
+              None => internal("the scrutinee is gone")
+            }
+          }
+          match a.guard {
+            None => {
+              split(&mut m, a.pat, v, fr)
+              i
+            }
+            Some(^g) => {
+              let saved := tok_states(&m, v_tokens(v, Nil))
+              split(&mut m, a.pat, v, fr)
+              if guard_holds(&mut m, a.guard, fr) {
+                i
+              } else {
+                restore_toks(&mut m, saved)
+                unbind(&mut m, fr, owned_binds(a.pat, Nil))
+                match local {
+                  Some(l) => {
+                    at_replace(&mut m, PlaceRef { root: RSlot(fr, key_local(l.id)), path: Nil }, v)
+                    choose_value(&mut m, rest, i + 1, snap, local, None, scrut, fr)
+                  }
+                  None => choose_value(&mut m, rest, i + 1, snap, local, Some(v), scrut, fr)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- calls ----
+
+pub fn is_builtin_callee(c: NCallee): Bool {
+  match c {
+    NCallBuiltin(^n) => true
+    NCallInst(^zz0) => false
+    NCallExtern(^zz0) => false
+    NCallLocal(^zz0) => false
+    NCallCont(^zz0) => false
+    NCallValue(^zz0) => false
+  }
+}
+
+pub fn call(m: &mut M, c: NCall, e: NExpr, fr: u64): Ctl ! {div, divzero, nflow, nout, overflow} {
+  let ticked := if n_tick_budget(c.tick) {
+    let was := m.ticked
+    m.ticked := false
+    if was { None } else { tick_check(&mut m, ThenCall(e, fr)) }
+  } else {
+    None
+  }
+  match ticked {
+    Some(x) => x
+    None => call_go(&mut m, c, e, fr)
+  }
+}
+
+pub fn call_go(m: &mut M, c: NCall, e: NExpr, fr: u64): Ctl ! {div, divzero, nflow, nout, overflow} {
+  match c.unwind {
+    Nil => ()
+    Cons(^s, ^rest) => if is_builtin_callee(c.callee) { () } else { push(&mut m, KUnwind(c.unwind, fr)) }
+  }
+  match c.callee {
+    NCallBuiltin(^n) => CValue(call_builtin(&mut m, c, e, fr))
+    NCallInst(id) => {
+      let vals := eval_all(&mut m, c.args, fr)
+      enter_inst(&mut m, id, vals)
+    }
+    NCallLocal(l) => {
+      let p := place_of_local(&mut m, l, Nil, fr)
+      match value_of(&mut m, VRef(p)) {
+        VCont(k) => {
+          let vals := eval_all(&mut m, c.args, fr)
+          resume_k(&mut m, k, first(vals))
+        }
+        VUnit => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VBool(^zz0) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VFloat(^zz0) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VInt(^zz0, ^zz1, ^zz2) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VText(^zz0, ^zz1) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VShown(^zz0, ^zz1) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VData(^zz0, ^zz1, ^zz2) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VInject(^zz0, ^zz1) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VFn(^zz0, ^zz1) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VRef(^zz0) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VCell(^zz0) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VSeq(^zz0, ^zz1, ^zz2) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VBuf(^zz0, ^zz1) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VShared(^zz0, ^zz1) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VInfo => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VAnswer(^zz0) => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+        VMoved => {
+          let f := fn_at(&mut m, p)
+          let vals := eval_all(&mut m, c.args, fr)
+          enter_fn(&mut m, f, vals)
+        }
+      }
+    }
+    NCallValue(x) => {
+      let v := eval(&mut m, x, fr)
+      let vals := eval_all(&mut m, c.args, fr)
+      match v {
+        VCont(k) => resume_k(&mut m, k, first(vals))
+        VRef(p) => match value_of(&mut m, VRef(p)) {
+          VCont(k) => resume_k(&mut m, k, first(vals))
+          VUnit => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VBool(^zz0) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VFloat(^zz0) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VInt(^zz0, ^zz1, ^zz2) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VText(^zz0, ^zz1) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VShown(^zz0, ^zz1) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VData(^zz0, ^zz1, ^zz2) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VInject(^zz0, ^zz1) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VFn(^zz0, ^zz1) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VRef(^zz0) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VCell(^zz0) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VSeq(^zz0, ^zz1, ^zz2) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VBuf(^zz0, ^zz1) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VShared(^zz0, ^zz1) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VInfo => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VAnswer(^zz0) => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+          VMoved => {
+            let f := fn_at(&mut m, p)
+            enter_fn(&mut m, f, vals)
+          }
+        }
+        VFn(f, t) => {
+          push(&mut m, KRelease(VFn(f, t)))
+          enter_fn(&mut m, f, vals)
+        }
+        VUnit => internal(Text::concat("a call of a ", v_kind(v)))
+        VBool(^zz0) => internal(Text::concat("a call of a ", v_kind(v)))
+        VFloat(^zz0) => internal(Text::concat("a call of a ", v_kind(v)))
+        VInt(^zz0, ^zz1, ^zz2) => internal(Text::concat("a call of a ", v_kind(v)))
+        VText(^zz0, ^zz1) => internal(Text::concat("a call of a ", v_kind(v)))
+        VShown(^zz0, ^zz1) => internal(Text::concat("a call of a ", v_kind(v)))
+        VData(^zz0, ^zz1, ^zz2) => internal(Text::concat("a call of a ", v_kind(v)))
+        VInject(^zz0, ^zz1) => internal(Text::concat("a call of a ", v_kind(v)))
+        VCell(^zz0) => internal(Text::concat("a call of a ", v_kind(v)))
+        VSeq(^zz0, ^zz1, ^zz2) => internal(Text::concat("a call of a ", v_kind(v)))
+        VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal(Text::concat("a call of a ", v_kind(v)))
+        VBuf(^zz0, ^zz1) => internal(Text::concat("a call of a ", v_kind(v)))
+        VShared(^zz0, ^zz1) => internal(Text::concat("a call of a ", v_kind(v)))
+        VInfo => internal(Text::concat("a call of a ", v_kind(v)))
+        VAnswer(^zz0) => internal(Text::concat("a call of a ", v_kind(v)))
+        VMoved => internal(Text::concat("a call of a ", v_kind(v)))
+      }
+    }
+    NCallCont(l) => {
+      let p := place_of_local(&mut m, l, Nil, fr)
+      match value_of(&mut m, VRef(p)) {
+        VCont(k) => {
+          let vals := eval_all(&mut m, c.args, fr)
+          resume_k(&mut m, k, first(vals))
+        }
+        v => internal(Text::concat("a resume of a ", v_kind(v)))
+      }
+    }
+    NCallExtern(n) => unsupported(Text::concat_all(["extern `", n, "`"]))
+  }
+}
+
+pub fn fn_at(m: &mut M, p: PlaceRef): FnVal ! {div, nout} {
+  match value_of(&mut m, VRef(p)) {
+    VFn(f, t) => match t {
+      Some(x) => if tok_live(&m, x) { f } else { violation("UseAfterMove", "a call of a function value already ended") }
+      None => f
+    }
+    v => internal(Text::concat("a call of a ", v_kind(v)))
+  }
+}
+
+pub fn bind_params(m: &mut M, fr: u64, ps: List(NParam), args: List(Val)): Unit {
+  match ps {
+    Nil => ()
+    Cons(p, rest) => match args {
+      Nil => ()
+      Cons(a, more) => {
+        slot_put(&mut m, fr, key_local(p.local.id), SOwned(p.local.name, a))
+        bind_params(&mut m, fr, rest, more)
+      }
+    }
+  }
+}
+
+pub fn enter_inst(m: &mut M, id: Nat, args: List(Val)): Ctl ! {nout} {
+  match l_nth(m.pkg.fns, id) {
+    None => internal("a call of no function")
+    Some(f) => {
+      let fr := fr_new(&mut m)
+      bind_params(&mut m, fr, f.params, args)
+      push(&mut m, KCall(fr, f.source))
+      CEval(f.body, fr)
+    }
+  }
+}
+
+pub fn function_name(ks: List(Kont)): Text {
+  match ks {
+    Nil => "<top>"
+    Cons(k, rest) => match k {
+      KCall(^fr, name) => name
+      KBlock(^zz0, ^zz1, ^zz2) => function_name(rest)
+      KStmt(^zz0, ^zz1) => function_name(rest)
+      KWhileCond(^zz0, ^zz1) => function_name(rest)
+      KWhileBody(^zz0, ^zz1) => function_name(rest)
+      KReturn => function_name(rest)
+      KIf(^zz0, ^zz1, ^zz2) => function_name(rest)
+      KAndOr(^zz0, ^zz1, ^zz2) => function_name(rest)
+      KUnwind(^zz0, ^zz1) => function_name(rest)
+      KRelease(^zz0) => function_name(rest)
+      KHandle(^zz0, ^zz1, ^zz2, ^zz3) => function_name(rest)
+      KArm(^zz0, ^zz1) => function_name(rest)
+      KBudget(^zz0, ^zz1) => function_name(rest)
+      KTick(^zz0, ^zz1) => function_name(rest)
+      KResumed(^zz0) => function_name(rest)
+    }
+  }
+}
+
+pub fn enter_fn(m: &mut M, f: FnVal, args: List(Val)): Ctl ! {nout} {
+  match f {
+    FInst(id) => enter_inst(&mut m, id, args)
+    FClosure(node, env) => if fr_dead(&m, env) {
+      violation("DanglingBorrow", "a call of a closure already dropped")
+    } else {
+      let name := Text::concat(function_name(m.konts), "::<closure>")
+      let fr := fr_new(&mut m)
+      alias_keys(&mut m, fr, env, slot_keys(&m, env))
+      bind_params(&mut m, fr, node.params, args)
+      push(&mut m, KCall(fr, name))
+      CEval(node.body, fr)
+    }
+  }
+}
+
+// ---- effects ----
+
+pub fn perform_op(m: &mut M, p: NPerform, fr: u64): Ctl ! {div, divzero, nflow, nout, overflow} {
+  let vals := eval_all(&mut m, p.args, fr)
+  let d := m.depth
+  match handled(&mut m, p.op, p.quant, p.unwind, vals, fr, d) {
+    Some(c) => c
+    None => match l_nth(m.pkg.ops, p.op) {
+      None => internal("a perform of no operation")
+      // What a program writes to standard output is kept for the run.
+      Some(op) => if op.name == "stdout_flush" {
+        consume_all(&mut m, vals)
+        CValue(VUnit)
+      } else if op.name != "stdout" {
+        unsupported(Text::concat_all(["perform `", op.name, "` with no handler niri runs"]))
+      } else {
+        match value_of(&mut m, first(vals)) {
+          VText(t, ^k) => {
+            m.out := Cons(t, m.out)
+          }
+          v => internal(Text::concat("stdout's text is a ", v_kind(v)))
+        }
+        consume_all(&mut m, vals)
+        CValue(VUnit)
+      }
+    }
+  }
+}
+
+pub fn base_above(bs: List(Nat), j: Nat): Bool {
+  match bs {
+    Nil => false
+    Cons(b, ^rest) => b > j
+  }
+}
+
+pub fn handled(m: &mut M, op: Nat, quant: NQuant, unwind: List(NStmt), vals: List(Val), site: u64, start: Nat): Option(Ctl) ! {div, nout, overflow} {
+  if start == 0 {
+    None
+  } else {
+    let i := start - 1
+    match kont_at(&m, i) {
+      KArm(pos, ^abort) => handled(&mut m, op, quant, unwind, vals, site, pos)
+      KHandle(h, fr, ^body, id) => match find_arm(&mut m, h.arms, op, vals) {
+        None => handled(&mut m, op, quant, unwind, vals, site, i)
+        Some(arm) => Some(take_arm(&mut m, arm, h, fr, id, i, quant, unwind, vals, site))
+      }
+      KBlock(^zz0, ^zz1, ^zz2) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KStmt(^zz0, ^zz1) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KWhileCond(^zz0, ^zz1) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KWhileBody(^zz0, ^zz1) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KReturn => handled(&mut m, op, quant, unwind, vals, site, i)
+      KIf(^zz0, ^zz1, ^zz2) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KAndOr(^zz0, ^zz1, ^zz2) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KUnwind(^zz0, ^zz1) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KCall(^zz0, ^zz1) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KRelease(^zz0) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KBudget(^zz0, ^zz1) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KTick(^zz0, ^zz1) => handled(&mut m, op, quant, unwind, vals, site, i)
+      KResumed(^zz0) => handled(&mut m, op, quant, unwind, vals, site, i)
+    }
+  }
+}
+
+pub fn find_arm(m: &mut M, arms: List(NOpArm), op: Nat, vals: List(Val)): Option(NOpArm) ! {div, nout} {
+  match arms {
+    Nil => None
+    Cons(a, rest) => if a.op == op && matches_all(&mut m, a.pats, vals) { Some(a) } else { find_arm(&mut m, rest, op, vals) }
+  }
+}
+
+pub fn take_arm(m: &mut M, arm: NOpArm, h: NHandle, fr: u64, id: Nat, i: Nat, quant: NQuant, unwind: List(NStmt), vals: List(Val), site: u64): Ctl ! {div, nout, overflow} {
+  let hf := arm_frame(&mut m, fr)
+  match arm.guard {
+    Some(^g) => unsupported("a guard on an operation arm")
+    None => ()
+  }
+  match arm.kind {
+    NArmSuspend => if base_above(m.bases, i) {
+      unsupported("a continuation taken across a nested evaluation")
+    } else {
+      let frames := l_take(m.konts, m.depth - i)
+      truncate(&mut m, i)
+      let k := cont_new(&mut m, ContData { frames: Some(frames), base: i, quant: quant, resumed: 0, kept: h.kept })
+      bind_arms(&mut m, arm.pats, vals, hf)
+      match arm.k {
+        Some(l) => bind(&mut m, hf, l, VCont(k))
+        None => ()
+      }
+      push(&mut m, KResumed(k))
+      CEval(arm.body, hf)
+    }
+    NArmDirect => {
+      bind_arms(&mut m, arm.pats, vals, hf)
+      push_unwind(&mut m, unwind, site)
+      push(&mut m, KArm(i, None))
+      CEval(arm.body, hf)
+    }
+    NArmAbort => {
+      bind_arms(&mut m, arm.pats, vals, hf)
+      push_unwind(&mut m, unwind, site)
+      push(&mut m, KArm(i, Some(id)))
+      CEval(arm.body, hf)
+    }
+  }
+}
+
+pub fn push_unwind(m: &mut M, unwind: List(NStmt), site: u64): Unit {
+  match unwind {
+    Nil => ()
+    Cons(^s, ^rest) => push(&mut m, KUnwind(unwind, site))
+  }
+}
+
+pub fn kont_frame(k: Kont): Option(u64) {
+  match k {
+    KBlock(^ss, ^t, fr) => Some(fr)
+    KStmt(^s, fr) => Some(fr)
+    KWhileCond(^s, fr) => Some(fr)
+    KWhileBody(^s, fr) => Some(fr)
+    KIf(^a, ^b, fr) => Some(fr)
+    KAndOr(^a, ^b, fr) => Some(fr)
+    KCall(fr, ^n) => Some(fr)
+    KHandle(^h, ^fr, body, ^id) => Some(body)
+    KReturn => None
+    KUnwind(^zz0, ^zz1) => None
+    KRelease(^zz0) => None
+    KArm(^zz0, ^zz1) => None
+    KBudget(^zz0, ^zz1) => None
+    KTick(^zz0, ^zz1) => None
+    KResumed(^zz0) => None
+  }
+}
+
+// The frames put back: alive again, and each arm's place moved to where
+// they now start.
+pub fn revive(m: &mut M, ks: List(Kont), base: Nat, start: Nat): List(Kont) {
+  match ks {
+    Nil => Nil
+    Cons(k, rest) => {
+      match kont_frame(k) {
+        Some(fr) => fr_set_dead(&mut m, fr, false)
+        None => ()
+      }
+      let k2 := match k {
+        KArm(pos, abort) => KArm(pos - base + start, abort)
+        KBlock(^zz0, ^zz1, ^zz2) => k
+        KStmt(^zz0, ^zz1) => k
+        KWhileCond(^zz0, ^zz1) => k
+        KWhileBody(^zz0, ^zz1) => k
+        KReturn => k
+        KIf(^zz0, ^zz1, ^zz2) => k
+        KAndOr(^zz0, ^zz1, ^zz2) => k
+        KUnwind(^zz0, ^zz1) => k
+        KCall(^zz0, ^zz1) => k
+        KRelease(^zz0) => k
+        KHandle(^zz0, ^zz1, ^zz2, ^zz3) => k
+        KBudget(^zz0, ^zz1) => k
+        KTick(^zz0, ^zz1) => k
+        KResumed(^zz0) => k
+      }
+      Cons(k2, revive(&mut m, rest, base, start))
+    }
+  }
+}
+
+pub fn resume_k(m: &mut M, k: u64, v: Val): Ctl ! {div, nout} {
+  let c := cont_get(&m, k)
+  let many := match c.quant {
+    NQMany => true
+    NQZero => false
+    NQAtMostOne => false
+    NQOne => false
+    NQDirect => false
+  }
+  let frames := if many {
+    match c.frames {
+      Some(f) => Some(copy_frames(&mut m, f))
+      None => None
+    }
+  } else {
+    c.frames
+  }
+  let kept := if many { c.frames } else { None }
+  cont_set(&mut m, k, ContData { frames: kept, base: c.base, quant: c.quant, resumed: c.resumed + 1, kept: c.kept })
+  match frames {
+    None => match v {
+      VAnswer(a) => match a {
+        AValue(x) => CValue(x)
+        AMore(^n) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      }
+      VUnit => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VBool(^zz0) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VFloat(^zz0) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VInt(^zz0, ^zz1, ^zz2) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VText(^zz0, ^zz1) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VShown(^zz0, ^zz1) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VData(^zz0, ^zz1, ^zz2) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VInject(^zz0, ^zz1) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VFn(^zz0, ^zz1) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VRef(^zz0) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VCell(^zz0) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VSeq(^zz0, ^zz1, ^zz2) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VBuf(^zz0, ^zz1) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VShared(^zz0, ^zz1) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VInfo => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VCont(^zz0) => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+      VMoved => violation("UseAfterMove", "a continuation that resumes at most once is resumed again")
+    }
+    Some(fs) => {
+      let start := m.depth
+      let fs2 := revive(&mut m, fs, c.base, start)
+      m.konts := l_append(fs2, m.konts)
+      m.depth := m.depth + l_len(fs2)
+      CValue(v)
+    }
+  }
+}
+
+// ---- copies of a continuation ----
+
+pub fn frame_map(m: &mut M, ks: List(Kont), acc: List(u64 × u64)): List(u64 × u64) {
+  match ks {
+    Nil => acc
+    Cons(k, rest) => {
+      let own := match k {
+        KCall(fr, ^n) => Some(fr)
+        KHandle(^h, ^fr, body, ^id) => Some(body)
+        KBlock(^zz0, ^zz1, ^zz2) => None
+        KStmt(^zz0, ^zz1) => None
+        KWhileCond(^zz0, ^zz1) => None
+        KWhileBody(^zz0, ^zz1) => None
+        KReturn => None
+        KIf(^zz0, ^zz1, ^zz2) => None
+        KAndOr(^zz0, ^zz1, ^zz2) => None
+        KUnwind(^zz0, ^zz1) => None
+        KRelease(^zz0) => None
+        KArm(^zz0, ^zz1) => None
+        KBudget(^zz0, ^zz1) => None
+        KTick(^zz0, ^zz1) => None
+        KResumed(^zz0) => None
+      }
+      match own {
+        Some(f) => if mapped(acc, f) == f {
+          let n := fr_new(&mut m)
+          frame_map(&mut m, rest, Cons(#(f, n), acc))
+        } else {
+          frame_map(&mut m, rest, acc)
+        }
+        None => frame_map(&mut m, rest, acc)
+      }
+    }
+  }
+}
+
+pub fn mapped(map: List(u64 × u64), f: u64): u64 {
+  match map {
+    Nil => f
+    Cons(e, rest) => match e {
+      #(a, b) => if a == f { b } else { mapped(rest, f) }
+    }
+  }
+}
+
+pub fn remap_place(map: List(u64 × u64), p: PlaceRef): PlaceRef ! {div} {
+  let root := match p.root {
+    RSlot(f, k) => RSlot(mapped(map, f), k)
+    RCell(c) => RCell(c)
+    RVia(q) => RVia(remap_place(map, q))
+  }
+  PlaceRef { root: root, path: p.path }
+}
+
+pub fn copy_slots(m: &mut M, map: List(u64 × u64), dst: u64, es: List(Nat × Slot)): Unit ! {div, nout} {
+  match es {
+    Nil => ()
+    Cons(e, rest) => match e {
+      #(key, slot) => {
+        let s2 := match slot {
+          SOwned(name, val) => {
+            let val2 := match val {
+              VRef(p) => match p.root {
+                RCell(^c) => val
+                RSlot(^zz0, ^zz1) => VRef(remap_place(map, p))
+                RVia(^zz0) => VRef(remap_place(map, p))
+              }
+              VUnit => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VBool(^zz0) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VFloat(^zz0) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VInt(^zz0, ^zz1, ^zz2) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VText(^zz0, ^zz1) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VShown(^zz0, ^zz1) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VData(^zz0, ^zz1, ^zz2) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VInject(^zz0, ^zz1) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VFn(^zz0, ^zz1) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VCell(^zz0) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VSeq(^zz0, ^zz1, ^zz2) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VBuf(^zz0, ^zz1) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VShared(^zz0, ^zz1) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VInfo => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VAnswer(^zz0) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VCont(^zz0) => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+              VMoved => if v_owns_token(val) { clone_val(&mut m, val) } else { val }
+            }
+            SOwned(name, val2)
+          }
+          SAlias(f, k) => SAlias(mapped(map, f), k)
+        }
+        slot_put(&mut m, dst, key, s2)
+        copy_slots(&mut m, map, dst, rest)
+      }
+    }
+  }
+}
+
+pub fn copy_all_frames(m: &mut M, map: List(u64 × u64), todo: List(u64 × u64)): Unit ! {div, nout} {
+  match todo {
+    Nil => ()
+    Cons(e, rest) => match e {
+      #(old, new) => {
+        copy_slots(&mut m, map, new, Ordmap::entries(fr_get(&m, old).slots))
+        copy_all_frames(&mut m, map, rest)
+      }
+    }
+  }
+}
+
+pub fn copy_konts(m: &mut M, map: List(u64 × u64), ks: List(Kont)): List(Kont) ! {div, nout} {
+  match ks {
+    Nil => Nil
+    Cons(k, rest) => {
+      let k2 := match k {
+        KBlock(ss, t, fr) => KBlock(ss, t, mapped(map, fr))
+        KStmt(s, fr) => KStmt(s, mapped(map, fr))
+        KWhileCond(s, fr) => KWhileCond(s, mapped(map, fr))
+        KWhileBody(s, fr) => KWhileBody(s, mapped(map, fr))
+        KIf(a, b, fr) => KIf(a, b, mapped(map, fr))
+        KAndOr(a, b, fr) => KAndOr(a, b, mapped(map, fr))
+        KUnwind(ss, fr) => KUnwind(ss, mapped(map, fr))
+        KCall(fr, n) => KCall(mapped(map, fr), n)
+        KHandle(h, fr, body, id) => KHandle(h, fr, mapped(map, body), id)
+        KBudget(id, left) => KBudget(id, left_new(&mut m, left_get(&m, left)))
+        KTick(id, then) => match then {
+          ThenCall(e, fr) => KTick(id, ThenCall(e, mapped(map, fr)))
+          ThenBody(b, fr) => KTick(id, ThenBody(b, mapped(map, fr)))
+        }
+        KRelease(v) => if v_owns_token(v) { KRelease(clone_val(&mut m, v)) } else { k }
+        KReturn => k
+        KArm(^zz0, ^zz1) => k
+        KResumed(^zz0) => k
+      }
+      Cons(k2, copy_konts(&mut m, map, rest))
+    }
+  }
+}
+
+pub fn copy_frames(m: &mut M, ks: List(Kont)): List(Kont) ! {div, nout} {
+  let map := frame_map(&mut m, ks, Nil)
+  copy_all_frames(&mut m, map, map)
+  copy_konts(&mut m, map, ks)
+}
+
+// ---- closures ----
+
+pub(open) struct FL { declared: List(Nat), used: List(Nat × Bool) }
+
+pub fn fl_note(s: FL, id: Nat, moved: Bool): FL {
+  FL { declared: s.declared, used: note_used(s.used, id, moved) }
+}
+
+pub fn note_used(us: List(Nat × Bool), id: Nat, moved: Bool): List(Nat × Bool) {
+  if used_has(us, id) { note_or(us, id, moved) } else { Cons(#(id, moved), us) }
+}
+
+pub fn used_has(us: List(Nat × Bool), id: Nat): Bool {
+  match us {
+    Nil => false
+    Cons(e, rest) => match e {
+      #(a, ^b) => a == id || used_has(rest, id)
+    }
+  }
+}
+
+pub fn note_or(us: List(Nat × Bool), id: Nat, moved: Bool): List(Nat × Bool) {
+  match us {
+    Nil => Nil
+    Cons(e, rest) => match e {
+      #(a, b) => if a == id { Cons(#(a, b || moved), rest) } else { Cons(e, note_or(rest, id, moved)) }
+    }
+  }
+}
+
+pub fn fl_declare(s: FL, id: Nat): FL { FL { declared: Cons(id, s.declared), used: s.used } }
+
+pub fn fl_declare_params(s: FL, ps: List(NParam)): FL {
+  match ps {
+    Nil => s
+    Cons(p, rest) => fl_declare_params(fl_declare(s, p.local.id), rest)
+  }
+}
+
+pub fn fl_note_all(s: FL, ls: List(NLocal)): FL {
+  match ls {
+    Nil => s
+    Cons(l, rest) => fl_note_all(fl_note(s, l.id, false), rest)
+  }
+}
+
+pub fn fl_pat(s: FL, p: NPat): FL {
+  match p {
+    NBind(l, ^t) => fl_declare(s, l.id)
+    NCtorPat(^c, ps) => fl_pats(s, ps)
+    NInjectPat(^u, ^k, q) => fl_pat(s, q)
+    NWild => s
+    NIntPat(^zz0, ^zz1) => s
+    NNatPat(^zz0) => s
+    NBoolPat(^zz0) => s
+    NTextPat(^zz0) => s
+  }
+}
+
+pub fn fl_pats(s: FL, ps: List(NPat)): FL {
+  match ps {
+    Nil => s
+    Cons(p, rest) => fl_pats(fl_pat(s, p), rest)
+  }
+}
+
+pub fn fl_arms(s: FL, arms: List(NArm)): FL {
+  match arms {
+    Nil => s
+    Cons(a, rest) => fl_arms(fl_pat(s, a.pat), rest)
+  }
+}
+
+pub fn fl_stmts(s: FL, ss: List(NStmt)): FL {
+  match ss {
+    Nil => s
+    Cons(st, rest) => {
+      let s2 := match st {
+        NLet(l, ^t, ^x, ^k) => fl_declare(s, l.id)
+        NVar(l, ^t, ^x) => fl_declare(s, l.id)
+        NAssign(p, ^x) => fl_note(s, p.local.id, false)
+        NExprStmt(^zz0) => s
+        NWhile(^zz0, ^zz1, ^zz2) => s
+        NReturn(^zz0) => s
+      }
+      fl_stmts(s2, rest)
+    }
+  }
+}
+
+pub fn fl_node(s: FL, e: NExpr): FL {
+  match e.kind {
+    NRead(local, how) => {
+      let moved := match how {
+        NMove => storage_owned(local)
+        NCopy => false
+        NClone => false
+        NPlace => false
+      }
+      fl_note(s, local.id, moved)
+    }
+    NMatchOf(x) => if x.by_ref {
+      fl_arms(s, x.arms)
+    } else {
+      match x.scrut.kind {
+        NRead(local, how) => match how {
+          NPlace => if storage_owned(local) { fl_note(s, local.id, true) } else { s }
+          NMove => s
+          NCopy => s
+          NClone => s
+        }
+        NUnitLit => s
+        NIntLit(^zz0, ^zz1) => s
+        NBoolLit(^zz0) => s
+        NFloatLit(^zz0) => s
+        NTextLit(^zz0) => s
+        NDeclaration(^zz0) => s
+        NFnValue(^zz0, ^zz1) => s
+        NClosureOf(^zz0) => s
+        NHandleOf(^zz0) => s
+        NBudgetOf(^zz0) => s
+        NInject(^zz0, ^zz1, ^zz2) => s
+        NRemap(^zz0, ^zz1, ^zz2) => s
+        NFnCast(^zz0) => s
+        NBorrow(^zz0) => s
+        NBorrowMut(^zz0) => s
+        NTempRef(^zz0) => s
+        NDeref(^zz0, ^zz1) => s
+        NFieldOf(^zz0, ^zz1, ^zz2, ^zz3) => s
+        NArithOf(^zz0, ^zz1, ^zz2) => s
+        NCmpOf(^zz0, ^zz1) => s
+        NEqOf(^zz0, ^zz1) => s
+        NNot(^zz0) => s
+        NAnd(^zz0, ^zz1) => s
+        NOr(^zz0, ^zz1) => s
+        NIf(^zz0, ^zz1, ^zz2) => s
+        NBlockOf(^zz0) => s
+        NCtorOf(^zz0, ^zz1) => s
+        NMatchOf(^zz0) => s
+        NCallOf(^zz0) => s
+        NShownOf(^zz0) => s
+        NPerformOf(^zz0) => s
+        NUnreachable(^zz0) => s
+      }
+    }
+    NBorrow(p) => fl_note(s, p.local.id, false)
+    NBorrowMut(p) => fl_note(s, p.local.id, false)
+    NCallOf(c) => match c.callee {
+      NCallLocal(l) => fl_note(s, l.id, false)
+      NCallCont(l) => fl_note(s, l.id, false)
+      NCallInst(^zz0) => s
+      NCallBuiltin(^zz0) => s
+      NCallExtern(^zz0) => s
+      NCallValue(^zz0) => s
+    }
+    NClosureOf(inner) => fl_declare_params(fl_note_all(s, inner.clones), inner.params)
+    NBlockOf(b) => fl_stmts(s, b.stmts)
+    NUnitLit => s
+    NIntLit(^zz0, ^zz1) => s
+    NBoolLit(^zz0) => s
+    NFloatLit(^zz0) => s
+    NTextLit(^zz0) => s
+    NDeclaration(^zz0) => s
+    NFnValue(^zz0, ^zz1) => s
+    NHandleOf(^zz0) => s
+    NBudgetOf(^zz0) => s
+    NInject(^zz0, ^zz1, ^zz2) => s
+    NRemap(^zz0, ^zz1, ^zz2) => s
+    NFnCast(^zz0) => s
+    NTempRef(^zz0) => s
+    NDeref(^zz0, ^zz1) => s
+    NFieldOf(^zz0, ^zz1, ^zz2, ^zz3) => s
+    NArithOf(^zz0, ^zz1, ^zz2) => s
+    NCmpOf(^zz0, ^zz1) => s
+    NEqOf(^zz0, ^zz1) => s
+    NNot(^zz0) => s
+    NAnd(^zz0, ^zz1) => s
+    NOr(^zz0, ^zz1) => s
+    NIf(^zz0, ^zz1, ^zz2) => s
+    NCtorOf(^zz0, ^zz1) => s
+    NShownOf(^zz0) => s
+    NPerformOf(^zz0) => s
+    NUnreachable(^zz0) => s
+  }
+}
+
+pub fn fl_walk(s: FL, e: NExpr): FL ! {div} { fl_walk_all(fl_node(s, e), children(e)) }
+
+pub fn fl_walk_all(s: FL, es: List(NExpr)): FL ! {div} {
+  match es {
+    Nil => s
+    Cons(e, rest) => fl_walk_all(fl_walk(s, e), rest)
+  }
+}
+
+pub fn free_locals(c: NClosure): List(Nat × Bool) ! {div} {
+  let s0 := fl_declare_params(FL { declared: Nil, used: Nil }, c.params)
+  let s := fl_walk(fl_note_all(s0, c.clones), c.body)
+  undeclared(l_rev(s.used), s.declared)
+}
+
+pub fn undeclared(us: List(Nat × Bool), ds: List(Nat)): List(Nat × Bool) {
+  match us {
+    Nil => Nil
+    Cons(e, rest) => match e {
+      #(a, ^b) => if nat_has(ds, a) { undeclared(rest, ds) } else { Cons(e, undeclared(rest, ds)) }
+    }
+  }
+}
+
+// The value subexpressions of `e`, as `Expr::children` gives them.
+pub fn children(e: NExpr): List(NExpr) {
+  match e.kind {
+    NCallOf(c) => match c.callee {
+      NCallValue(v) => Cons(v, c.args)
+      NCallInst(^zz0) => c.args
+      NCallBuiltin(^zz0) => c.args
+      NCallExtern(^zz0) => c.args
+      NCallLocal(^zz0) => c.args
+      NCallCont(^zz0) => c.args
+    }
+    NArithOf(^o, ^t, xs) => xs
+    NCmpOf(^o, xs) => xs
+    NEqOf(^n, xs) => xs
+    NNot(a) => [a]
+    NTempRef(a) => [a]
+    NShownOf(a) => [a]
+    NUnreachable(a) => [a]
+    NFnCast(a) => [a]
+    NAnd(a, b) => [a, b]
+    NOr(a, b) => [a, b]
+    NBudgetOf(b) => [b.steps, b.body]
+    NCtorOf(^c, args) => arg_values(args)
+    NFieldOf(b, ^f, ^h, ^r) => [b]
+    NMatchOf(x) => Cons(x.scrut, arm_children(x.arms))
+    NIf(c, t, o) => match o {
+      Some(x) => [c, t, x]
+      None => [c, t]
+    }
+    NBlockOf(b) => block_children(b.stmts, b.tail)
+    NClosureOf(c) => [c.body]
+    NPerformOf(p) => p.args
+    NHandleOf(h) => {
+      let rest := op_arm_children(h.arms)
+      let ret := match h.ret {
+        Some(r) => Cons(r.body, rest)
+        None => rest
+      }
+      Cons(h.body, ret)
+    }
+    NInject(^u, ^i, v) => [v]
+    NRemap(^u, ^t, v) => [v]
+    NDeref(v, ^h) => [v]
+    NUnitLit => Nil
+    NIntLit(^zz0, ^zz1) => Nil
+    NBoolLit(^zz0) => Nil
+    NFloatLit(^zz0) => Nil
+    NTextLit(^zz0) => Nil
+    NDeclaration(^zz0) => Nil
+    NFnValue(^zz0, ^zz1) => Nil
+    NRead(^zz0, ^zz1) => Nil
+    NBorrow(^zz0) => Nil
+    NBorrowMut(^zz0) => Nil
+  }
+}
+
+pub fn arg_values(args: List(NArg)): List(NExpr) {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => Cons(a.value, arg_values(rest))
+  }
+}
+
+pub fn opt_cons(o: Option(NExpr), xs: List(NExpr)): List(NExpr) {
+  match o {
+    Some(x) => Cons(x, xs)
+    None => xs
+  }
+}
+
+pub fn arm_children(arms: List(NArm)): List(NExpr) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => opt_cons(a.guard, Cons(a.body, arm_children(rest)))
+  }
+}
+
+pub fn op_arm_children(arms: List(NOpArm)): List(NExpr) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => match a.kind {
+      NArmSuspend => op_arm_children(rest)
+      NArmDirect => opt_cons(a.guard, Cons(a.body, op_arm_children(rest)))
+      NArmAbort => opt_cons(a.guard, Cons(a.body, op_arm_children(rest)))
+    }
+  }
+}
+
+pub fn block_children(ss: List(NStmt), tail: Option(NExpr)): List(NExpr) {
+  match ss {
+    Nil => match tail {
+      Some(t) => [t]
+      None => Nil
+    }
+    Cons(s, rest) => {
+      let more := block_children(rest, tail)
+      match s {
+        NLet(^l, ^t, x, ^k) => Cons(x, more)
+        NVar(^l, ^t, x) => Cons(x, more)
+        NAssign(^p, x) => Cons(x, more)
+        NExprStmt(x) => Cons(x, more)
+        NWhile(cond, body, ^tick) => Cons(cond, Cons(NExpr { kind: NBlockOf(body), ty: NUnit }, more))
+        NReturn(x) => opt_cons(x, more)
+      }
+    }
+  }
+}
+
+pub fn local_in(ls: List(NLocal), id: Nat): Bool {
+  match ls {
+    Nil => false
+    Cons(l, rest) => l.id == id || local_in(rest, id)
+  }
+}
+
+pub fn closure(m: &mut M, c: NClosure, e: NExpr, fr: u64): Val ! {div, nout} {
+  let env := fr_new_closure(&mut m)
+  capture(&mut m, c, free_locals(c), env, fr)
+  capture_refs(&mut m, c.refs, env, fr)
+  let t := mint(&mut m, e.ty)
+  VFn(FClosure(c, env), t)
+}
+
+pub fn capture_refs(m: &mut M, rs: List(NCapturedRef), env: u64, fr: u64): Unit {
+  match rs {
+    Nil => ()
+    Cons(r, rest) => {
+      let p := PlaceRef { root: RSlot(fr, key_local(r.outer.id)), path: Nil }
+      slot_put(&mut m, env, key_local(r.inner.id), SOwned(r.inner.name, VRef(p)))
+      capture_refs(&mut m, rest, env, fr)
+    }
+  }
+}
+
+pub fn is_cell(v: Val): Bool {
+  match v {
+    VCell(^c) => true
+    VUnit => false
+    VBool(^zz0) => false
+    VFloat(^zz0) => false
+    VInt(^zz0, ^zz1, ^zz2) => false
+    VText(^zz0, ^zz1) => false
+    VShown(^zz0, ^zz1) => false
+    VData(^zz0, ^zz1, ^zz2) => false
+    VInject(^zz0, ^zz1) => false
+    VFn(^zz0, ^zz1) => false
+    VRef(^zz0) => false
+    VSeq(^zz0, ^zz1, ^zz2) => false
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => false
+    VBuf(^zz0, ^zz1) => false
+    VShared(^zz0, ^zz1) => false
+    VInfo => false
+    VAnswer(^zz0) => false
+    VCont(^zz0) => false
+    VMoved => false
+  }
+}
+
+pub fn capture(m: &mut M, c: NClosure, ids: List(Nat × Bool), env: u64, fr: u64): Unit ! {div, nout} {
+  match ids {
+    Nil => ()
+    Cons(e, rest) => match e {
+      #(id, moved) => {
+        let k := key_local(id)
+        match slot_get(&m, fr, k) {
+          None => ()
+          Some(^x) => capture_one(&mut m, c, id, moved, env, fr)
+        }
+        capture(&mut m, c, rest, env, fr)
+      }
+    }
+  }
+}
+
+pub fn capture_one(m: &mut M, c: NClosure, id: Nat, moved: Bool, env: u64, fr: u64): Unit ! {div, nout} {
+  let k := key_local(id)
+  match unalias(&m, fr, k) {
+    #(src, sk) => match slot_get(&m, src, sk) {
+      Some(slot) => match slot {
+        SOwned(name, val) => {
+          let is_sh := is_cell(val)
+          let lent := match val {
+            VRef(p) => if local_in(c.owned_refs, id) { Some(p) } else { None }
+            VUnit => None
+            VBool(^zz0) => None
+            VFloat(^zz0) => None
+            VInt(^zz0, ^zz1, ^zz2) => None
+            VText(^zz0, ^zz1) => None
+            VShown(^zz0, ^zz1) => None
+            VData(^zz0, ^zz1, ^zz2) => None
+            VInject(^zz0, ^zz1) => None
+            VFn(^zz0, ^zz1) => None
+            VCell(^zz0) => None
+            VSeq(^zz0, ^zz1, ^zz2) => None
+            VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => None
+            VBuf(^zz0, ^zz1) => None
+            VShared(^zz0, ^zz1) => None
+            VInfo => None
+            VAnswer(^zz0) => None
+            VCont(^zz0) => None
+            VMoved => None
+          }
+          match lent {
+            Some(p) => {
+              let v := peek(&mut m, p)
+              let val2 := clone_val(&mut m, v)
+              let held := key_temp(id)
+              slot_put(&mut m, env, held, SOwned(name, val2))
+              slot_put(&mut m, env, k, SOwned(name, VRef(PlaceRef { root: RSlot(env, held), path: Nil })))
+              ()
+            }
+            None => {
+              let s := if local_in(c.clones, id) {
+                SOwned(name, if is_sh { val } else { clone_val(&mut m, val) })
+              } else if moved && not(c.borrowed) && not(is_sh) {
+                SOwned(name, take_at(&mut m, PlaceRef { root: RSlot(src, sk), path: Nil }, NMove))
+              } else if not(c.borrowed) && not(is_sh) {
+                let plain := match live(&m, val) {
+                  Some(^t) => false
+                  None => not(moved_part(&m, val)) && v_tok(val) == None
+                }
+                if plain { SOwned(name, val) } else { SAlias(src, sk) }
+              } else {
+                SAlias(src, sk)
+              }
+              slot_put(&mut m, env, k, s)
+              ()
+            }
+          }
+        }
+        SAlias(^f, ^x) => internal("an alias of an alias")
+      }
+      None => internal("a capture of no slot")
+    }
+  }
+}
+
+// ---- constructors the run makes ----
+
+pub fn ctors_of(fns: List(NFn)): List(NCtorRef) ! {div} {
+  match fns {
+    Nil => Nil
+    Cons(f, rest) => ctors_in(f.body, ctors_of(rest))
+  }
+}
+
+pub fn ctors_in(e: NExpr, acc: List(NCtorRef)): List(NCtorRef) ! {div} {
+  let here := match e.kind {
+    NCtorOf(c, ^args) => Cons(c, acc)
+    NMatchOf(x) => ctors_arm_pats(x.arms, acc)
+    NUnitLit => acc
+    NIntLit(^zz0, ^zz1) => acc
+    NBoolLit(^zz0) => acc
+    NFloatLit(^zz0) => acc
+    NTextLit(^zz0) => acc
+    NDeclaration(^zz0) => acc
+    NFnValue(^zz0, ^zz1) => acc
+    NClosureOf(^zz0) => acc
+    NHandleOf(^zz0) => acc
+    NBudgetOf(^zz0) => acc
+    NInject(^zz0, ^zz1, ^zz2) => acc
+    NRemap(^zz0, ^zz1, ^zz2) => acc
+    NFnCast(^zz0) => acc
+    NRead(^zz0, ^zz1) => acc
+    NBorrow(^zz0) => acc
+    NBorrowMut(^zz0) => acc
+    NTempRef(^zz0) => acc
+    NDeref(^zz0, ^zz1) => acc
+    NFieldOf(^zz0, ^zz1, ^zz2, ^zz3) => acc
+    NArithOf(^zz0, ^zz1, ^zz2) => acc
+    NCmpOf(^zz0, ^zz1) => acc
+    NEqOf(^zz0, ^zz1) => acc
+    NNot(^zz0) => acc
+    NAnd(^zz0, ^zz1) => acc
+    NOr(^zz0, ^zz1) => acc
+    NIf(^zz0, ^zz1, ^zz2) => acc
+    NBlockOf(^zz0) => acc
+    NCallOf(^zz0) => acc
+    NShownOf(^zz0) => acc
+    NPerformOf(^zz0) => acc
+    NUnreachable(^zz0) => acc
+  }
+  ctors_in_all(children(e), here)
+}
+
+pub fn ctors_in_all(es: List(NExpr), acc: List(NCtorRef)): List(NCtorRef) ! {div} {
+  match es {
+    Nil => acc
+    Cons(e, rest) => ctors_in(e, ctors_in_all(rest, acc))
+  }
+}
+
+pub fn ctors_arm_pats(arms: List(NArm), acc: List(NCtorRef)): List(NCtorRef) {
+  match arms {
+    Nil => acc
+    Cons(a, rest) => ctors_pat(a.pat, ctors_arm_pats(rest, acc))
+  }
+}
+
+pub fn ctors_pat(p: NPat, acc: List(NCtorRef)): List(NCtorRef) {
+  match p {
+    NCtorPat(c, ps) => Cons(c, ctors_pats(ps, acc))
+    NInjectPat(^u, ^k, q) => ctors_pat(q, acc)
+    NWild => acc
+    NBind(^zz0, ^zz1) => acc
+    NIntPat(^zz0, ^zz1) => acc
+    NNatPat(^zz0) => acc
+    NBoolPat(^zz0) => acc
+    NTextPat(^zz0) => acc
+  }
+}
+
+pub fn ctors_pats(ps: List(NPat), acc: List(NCtorRef)): List(NCtorRef) {
+  match ps {
+    Nil => acc
+    Cons(p, rest) => ctors_pat(p, ctors_pats(rest, acc))
+  }
+}
+
+pub fn find_ctor(cs: List(NCtorRef), data: NDataRef, name: Text): Option(NCtorRef) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if data_ref_eq(c.data, data) && display_last(c.name) == name { Some(c) } else { find_ctor(rest, data, name) }
+  }
+}
+
+pub fn ctor(m: &M, data: NDataRef, name: Text): NCtorRef ! {nout} {
+  match find_ctor(m.ctors, data, name) {
+    Some(c) => c
+    None => unsupported(Text::concat_all(["a `", name, "` the program does not write"]))
+  }
+}
+
+pub fn data(m: &mut M, c: NCtorRef, fields: List(Val), ty: NTy): Val ! {div} {
+  let tok := if any_owning(fields) && owns(&m, ty) { mint_linear(&mut m, false) } else { None }
+  VData(c, fields, tok)
+}
+
+pub fn option(m: &mut M, v: Option(Val), ty: NTy): Val ! {div, nout} {
+  match v {
+    Some(x) => {
+      let c := ctor(&m, NDataOption, "Some")
+      data(&mut m, c, [x], ty)
+    }
+    None => VData(ctor(&m, NDataOption, "None"), Nil, None)
+  }
+}
+
+pub fn list(m: &mut M, items: List(Val), ty: NTy): Val ! {nout} {
+  match ty {
+    NData(name, ^args) => {
+      let nil := ctor(&m, NDataGen(name), "Nil")
+      let cons := ctor(&m, NDataGen(name), "Cons")
+      let t := mint(&mut m, ty)
+      list_build(&mut m, l_rev(items), cons, ty, VData(nil, Nil, t))
+    }
+    NInt(^zz0) => internal("a list of a type that is not `List`")
+    NBool => internal("a list of a type that is not `List`")
+    NText => internal("a list of a type that is not `List`")
+    NUnit => internal("a list of a type that is not `List`")
+    NNever => internal("a list of a type that is not `List`")
+    NFloat => internal("a list of a type that is not `List`")
+    NFloat32 => internal("a list of a type that is not `List`")
+    NBuf => internal("a list of a type that is not `List`")
+    NShown => internal("a list of a type that is not `List`")
+    NVec(^zz0) => internal("a list of a type that is not `List`")
+    NArray(^zz0) => internal("a list of a type that is not `List`")
+    NSlice(^zz0) => internal("a list of a type that is not `List`")
+    NOption(^zz0) => internal("a list of a type that is not `List`")
+    NInfo(^zz0) => internal("a list of a type that is not `List`")
+    NBudgetAnswer(^zz0) => internal("a list of a type that is not `List`")
+    NResult(^zz0, ^zz1) => internal("a list of a type that is not `List`")
+    NPair(^zz0, ^zz1) => internal("a list of a type that is not `List`")
+    NSharedVar(^zz0, ^zz1) => internal("a list of a type that is not `List`")
+    NStd(^zz0, ^zz1) => internal("a list of a type that is not `List`")
+    NUnion(^zz0) => internal("a list of a type that is not `List`")
+    NFn(^zz0, ^zz1, ^zz2, ^zz3) => internal("a list of a type that is not `List`")
+    NRef(^zz0) => internal("a list of a type that is not `List`")
+    NRefMut(^zz0) => internal("a list of a type that is not `List`")
+    NParam(^zz0) => internal("a list of a type that is not `List`")
+  }
+}
+
+pub fn list_build(m: &mut M, rev: List(Val), cons: NCtorRef, ty: NTy, out: Val): Val {
+  match rev {
+    Nil => out
+    Cons(x, rest) => {
+      let t := mint(&mut m, ty)
+      list_build(&mut m, rest, cons, ty, VData(cons, [x, out], t))
+    }
+  }
+}
+
+pub fn list_items(m: &mut M, v: Val, acc: List(Val)): List(Val) ! {nout} {
+  match v {
+    VData(^c, fs, t) => {
+      match t {
+        Some(x) => if tok_live(&m, x) { tok_set(&mut m, x, TConsumed) } else { () }
+        None => ()
+      }
+      match fs {
+        Cons(x, more) => match more {
+          Cons(rest, ^z) => list_items(&mut m, rest, Cons(x, acc))
+          Nil => l_rev(acc)
+        }
+        Nil => l_rev(acc)
+      }
+    }
+    VUnit => internal(Text::concat("a list that is a ", v_kind(v)))
+    VBool(^zz0) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VFloat(^zz0) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VInt(^zz0, ^zz1, ^zz2) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VText(^zz0, ^zz1) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VShown(^zz0, ^zz1) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VInject(^zz0, ^zz1) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VFn(^zz0, ^zz1) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VRef(^zz0) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VCell(^zz0) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VSeq(^zz0, ^zz1, ^zz2) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VBuf(^zz0, ^zz1) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VShared(^zz0, ^zz1) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VInfo => internal(Text::concat("a list that is a ", v_kind(v)))
+    VAnswer(^zz0) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VCont(^zz0) => internal(Text::concat("a list that is a ", v_kind(v)))
+    VMoved => internal(Text::concat("a list that is a ", v_kind(v)))
+  }
+}
+
+// ---- builtins ----
+
+pub fn call_builtin(m: &mut M, c: NCall, e: NExpr, fr: u64): Val ! {div, divzero, nflow, nout, overflow} {
+  match c.callee {
+    NCallBuiltin(name) => if name == "drop" {
+      drop_builtin(&mut m, first_expr(c.args), fr)
+    } else if name == "release_shell" {
+      let v := eval(&mut m, first_expr(c.args), fr)
+      release(&mut m, v, TConsumed)
+      VUnit
+    } else {
+      let vals := eval_all(&mut m, c.args, fr)
+      match answer_of(&mut m, name, vals) {
+        Some(a) => VAnswer(a)
+        None => match collection(&mut m, name, vals, e) {
+          Some(r) => {
+            release_unborrowed(&mut m, r.rest)
+            r.val
+          }
+          None => {
+            let r := builtin(&mut m, name, vals, e)
+            consume_all(&mut m, vals)
+            r
+          }
+        }
+      }
+    }
+    NCallInst(^zz0) => internal("a call on the Rust stack")
+    NCallExtern(^zz0) => internal("a call on the Rust stack")
+    NCallLocal(^zz0) => internal("a call on the Rust stack")
+    NCallCont(^zz0) => internal("a call on the Rust stack")
+    NCallValue(^zz0) => internal("a call on the Rust stack")
+  }
+}
+
+pub fn first_expr(xs: List(NExpr)): NExpr ! {nout} {
+  match xs {
+    Cons(x, ^rest) => x
+    Nil => internal("a builtin with no argument")
+  }
+}
+
+pub fn drop_builtin(m: &mut M, arg: NExpr, fr: u64): Val ! {div, divzero, nflow, nout, overflow} {
+  let is_sh := match arg.kind {
+    NRead(local, ^how) => if storage_shared(local) { Some(local) } else { None }
+    NUnitLit => None
+    NIntLit(^zz0, ^zz1) => None
+    NBoolLit(^zz0) => None
+    NFloatLit(^zz0) => None
+    NTextLit(^zz0) => None
+    NDeclaration(^zz0) => None
+    NFnValue(^zz0, ^zz1) => None
+    NClosureOf(^zz0) => None
+    NHandleOf(^zz0) => None
+    NBudgetOf(^zz0) => None
+    NInject(^zz0, ^zz1, ^zz2) => None
+    NRemap(^zz0, ^zz1, ^zz2) => None
+    NFnCast(^zz0) => None
+    NBorrow(^zz0) => None
+    NBorrowMut(^zz0) => None
+    NTempRef(^zz0) => None
+    NDeref(^zz0, ^zz1) => None
+    NFieldOf(^zz0, ^zz1, ^zz2, ^zz3) => None
+    NArithOf(^zz0, ^zz1, ^zz2) => None
+    NCmpOf(^zz0, ^zz1) => None
+    NEqOf(^zz0, ^zz1) => None
+    NNot(^zz0) => None
+    NAnd(^zz0, ^zz1) => None
+    NOr(^zz0, ^zz1) => None
+    NIf(^zz0, ^zz1, ^zz2) => None
+    NBlockOf(^zz0) => None
+    NCtorOf(^zz0, ^zz1) => None
+    NMatchOf(^zz0) => None
+    NCallOf(^zz0) => None
+    NShownOf(^zz0) => None
+    NPerformOf(^zz0) => None
+    NUnreachable(^zz0) => None
+  }
+  match is_sh {
+    Some(local) => match unalias(&m, fr, key_local(local.id)) {
+      #(fr2, k) => match slot_get(&m, fr2, k) {
+        Some(slot) => match slot {
+          SOwned(name, val) => {
+            slot_put(&mut m, fr2, k, SOwned(name, VMoved))
+            match val {
+              VMoved => violation("UseAfterMove", "moved at 0..0")
+              VUnit => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VBool(^zz0) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VFloat(^zz0) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VInt(^zz0, ^zz1, ^zz2) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VText(^zz0, ^zz1) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VShown(^zz0, ^zz1) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VData(^zz0, ^zz1, ^zz2) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VInject(^zz0, ^zz1) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VFn(^zz0, ^zz1) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VRef(^zz0) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VCell(^zz0) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VSeq(^zz0, ^zz1, ^zz2) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VBuf(^zz0, ^zz1) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VShared(^zz0, ^zz1) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VInfo => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VAnswer(^zz0) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+              VCont(^zz0) => {
+                release(&mut m, val, TDropped)
+                VUnit
+              }
+            }
+          }
+          SAlias(^f, ^x) => internal("drop of no local")
+        }
+        None => internal("drop of no local")
+      }
+    }
+    None => {
+      let v := eval(&mut m, arg, fr)
+      release(&mut m, v, TDropped)
+      VUnit
+    }
+  }
+}
+
+pub fn answer_of(m: &mut M, name: Text, vals: List(Val)): Option(Answer) ! {div, nout} {
+  if name == "budget_value" {
+    match vals {
+      Cons(v, rest) => match rest {
+        Nil => Some(AValue(v))
+        Cons(^zz0, ^zz1) => None
+      }
+      Nil => None
+    }
+  } else if name == "info_more" {
+    match vals {
+      Cons(i, rest) => match i {
+        VInfo => match rest {
+          Cons(n, ^z) => match value_of(&mut m, n) {
+            VInt(neg, k, ^t) => Some(AMore(Some(if neg || k > unbounded() { 0 } else { k })))
+            v => internal(Text::concat("more of a ", v_kind(v)))
+          }
+          Nil => None
+        }
+        VUnit => None
+        VBool(^zz0) => None
+        VFloat(^zz0) => None
+        VInt(^zz0, ^zz1, ^zz2) => None
+        VText(^zz0, ^zz1) => None
+        VShown(^zz0, ^zz1) => None
+        VData(^zz0, ^zz1, ^zz2) => None
+        VInject(^zz0, ^zz1) => None
+        VFn(^zz0, ^zz1) => None
+        VRef(^zz0) => None
+        VCell(^zz0) => None
+        VSeq(^zz0, ^zz1, ^zz2) => None
+        VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => None
+        VBuf(^zz0, ^zz1) => None
+        VShared(^zz0, ^zz1) => None
+        VAnswer(^zz0) => None
+        VCont(^zz0) => None
+        VMoved => None
+      }
+      Nil => None
+    }
+  } else if name == "info_unbounded" {
+    match vals {
+      Cons(i, ^rest) => match i {
+        VInfo => Some(AMore(None))
+        VUnit => None
+        VBool(^zz0) => None
+        VFloat(^zz0) => None
+        VInt(^zz0, ^zz1, ^zz2) => None
+        VText(^zz0, ^zz1) => None
+        VShown(^zz0, ^zz1) => None
+        VData(^zz0, ^zz1, ^zz2) => None
+        VInject(^zz0, ^zz1) => None
+        VFn(^zz0, ^zz1) => None
+        VRef(^zz0) => None
+        VCell(^zz0) => None
+        VSeq(^zz0, ^zz1, ^zz2) => None
+        VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => None
+        VBuf(^zz0, ^zz1) => None
+        VShared(^zz0, ^zz1) => None
+        VAnswer(^zz0) => None
+        VCont(^zz0) => None
+        VMoved => None
+      }
+      Nil => None
+    }
+  } else {
+    None
+  }
+}
+
+pub fn release_unborrowed(m: &mut M, vs: List(Val)): Unit ! {div, nout, overflow} {
+  match vs {
+    Nil => ()
+    Cons(v, rest) => {
+      match v {
+        VRef(^p) => ()
+        VUnit => release(&mut m, v, TConsumed)
+        VBool(^zz0) => release(&mut m, v, TConsumed)
+        VFloat(^zz0) => release(&mut m, v, TConsumed)
+        VInt(^zz0, ^zz1, ^zz2) => release(&mut m, v, TConsumed)
+        VText(^zz0, ^zz1) => release(&mut m, v, TConsumed)
+        VShown(^zz0, ^zz1) => release(&mut m, v, TConsumed)
+        VData(^zz0, ^zz1, ^zz2) => release(&mut m, v, TConsumed)
+        VInject(^zz0, ^zz1) => release(&mut m, v, TConsumed)
+        VFn(^zz0, ^zz1) => release(&mut m, v, TConsumed)
+        VCell(^zz0) => release(&mut m, v, TConsumed)
+        VSeq(^zz0, ^zz1, ^zz2) => release(&mut m, v, TConsumed)
+        VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => release(&mut m, v, TConsumed)
+        VBuf(^zz0, ^zz1) => release(&mut m, v, TConsumed)
+        VShared(^zz0, ^zz1) => release(&mut m, v, TConsumed)
+        VInfo => release(&mut m, v, TConsumed)
+        VAnswer(^zz0) => release(&mut m, v, TConsumed)
+        VCont(^zz0) => release(&mut m, v, TConsumed)
+        VMoved => release(&mut m, v, TConsumed)
+      }
+      release_unborrowed(&mut m, rest)
+    }
+  }
+}
+
+// What a builtin of a collection gives, and what is left of its arguments.
+pub(open) struct Took { val: Val, rest: List(Val) }
+
+pub fn arg(vs: List(Val), i: Nat): Val {
+  match l_nth(vs, i) {
+    Some(v) => v
+    None => VUnit
+  }
+}
+
+pub fn item_step(i: Nat): NFieldRef {
+  NFieldRef { name: "[]", index: Some(i), indirect: NDirect }
+}
+
+pub fn seq_items(m: &mut M, r: Val): List(Val) ! {div, nout} {
+  match value_of(&mut m, r) {
+    VSeq(xs, ^t, ^a) => seq_list(xs)
+    v => internal(Text::concat("a `Vec` that is a ", v_kind(v)))
+  }
+}
+
+pub fn seq_raw(m: &mut M, r: Val): Ordmap(Nat, Val) ! {div, nout} {
+  match value_of(&mut m, r) {
+    VSeq(xs, ^t, ^a) => xs
+    v => internal(Text::concat("a `Vec` that is a ", v_kind(v)))
+  }
+}
+
+pub fn seq_put(m: &mut M, r: Val, xs: List(Val)): Unit ! {div, nout} { seq_put_raw(&mut m, r, seq_of(xs)) }
+
+pub fn seq_put_raw(m: &mut M, r: Val, xs: Ordmap(Nat, Val)): Unit ! {div, nout} {
+  match r {
+    VRef(p) => match peek(&mut m, p) {
+      VSeq(^old, t, a) => {
+        at_replace(&mut m, p, VSeq(xs, t, a))
+        ()
+      }
+      v => internal(Text::concat("a `Vec` that is a ", v_kind(v)))
+    }
+    VUnit => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VBool(^zz0) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VFloat(^zz0) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VInt(^zz0, ^zz1, ^zz2) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VText(^zz0, ^zz1) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VShown(^zz0, ^zz1) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VData(^zz0, ^zz1, ^zz2) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VInject(^zz0, ^zz1) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VFn(^zz0, ^zz1) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VCell(^zz0) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VSeq(^zz0, ^zz1, ^zz2) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VBuf(^zz0, ^zz1) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VShared(^zz0, ^zz1) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VInfo => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VAnswer(^zz0) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VCont(^zz0) => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+    VMoved => internal(Text::concat("a `Vec` given as a ", v_kind(r)))
+  }
+}
+
+pub fn len_of(m: &mut M, v: Val): Nat ! {div, nout} {
+  match value_of(&mut m, v) {
+    VSeq(xs, ^t, ^a) => seq_len(xs)
+    x => internal(Text::concat("the length of a ", v_kind(x)))
+  }
+}
+
+pub fn index_of(m: &mut M, v: Val, len: Nat): Option(Nat) ! {div, nout} {
+  match value_of(&mut m, v) {
+    VInt(neg, n, ^t) => if not(neg) && n < len { Some(n) } else { None }
+    x => internal(Text::concat("an index that is a ", v_kind(x)))
+  }
+}
+
+pub fn text_of(m: &mut M, name: Text, v: Val): Text ! {div, nout} {
+  match value_of(&mut m, v) {
+    VText(t, ^k) => t
+    VBuf(t, ^k) => t
+    x => internal(Text::concat_all(["`", name, "` of a ", v_kind(x)]))
+  }
+}
+
+pub fn ref_step(m: &mut M, name: Text, r: Val, i: Option(Nat), ty: NTy): Val ! {div, nout} {
+  match i {
+    Some(j) => match r {
+      VRef(p) => option(&mut m, Some(VRef(PlaceRef { root: p.root, path: l_snoc(p.path, item_step(j)) })), ty)
+      VUnit => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VBool(^zz0) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VFloat(^zz0) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VInt(^zz0, ^zz1, ^zz2) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VText(^zz0, ^zz1) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VShown(^zz0, ^zz1) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VData(^zz0, ^zz1, ^zz2) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VInject(^zz0, ^zz1) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VFn(^zz0, ^zz1) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VCell(^zz0) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VSeq(^zz0, ^zz1, ^zz2) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VBuf(^zz0, ^zz1) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VShared(^zz0, ^zz1) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VInfo => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VAnswer(^zz0) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VCont(^zz0) => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+      VMoved => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+    }
+    None => option(&mut m, None, ty)
+  }
+}
+
+pub fn shared_cell(m: &mut M, name: Text, v: Val): u64 ! {div, nout} {
+  match value_of(&mut m, v) {
+    VShared(c, ^t) => c
+    x => internal(Text::concat_all(["`", name, "` of a ", v_kind(x)]))
+  }
+}
+
+pub fn swap_items(xs: List(Val), i: Nat, j: Nat): List(Val) {
+  match l_nth(xs, i) {
+    Some(a) => match l_nth(xs, j) {
+      Some(b) => l_set(l_set(xs, i, b), j, a)
+      None => xs
+    }
+    None => xs
+  }
+}
+
+pub fn slots_write(m: &mut M, r: Val, s: Val): Unit ! {div, nout} {
+  match r {
+    VRef(p) => {
+      at_replace(&mut m, p, s)
+      ()
+    }
+    v => internal(Text::concat("`Slots` given as a ", v_kind(v)))
+  }
+}
+
+// Releases the values that were held: a slot that holds none is `VMoved`.
+pub fn slots_release(m: &mut M, xs: List(Val)): Unit ! {div, nout, overflow} { release_all(&mut m, slots_keep(xs), TDropped) }
+
+pub fn collection(m: &mut M, name: Text, a: List(Val), e: NExpr): Option(Took) ! {div, nout, overflow} {
+  let ty := e.ty
+  if name == "Vec::new" {
+    let t := mint(&mut m, ty)
+    Some(Took { val: VSeq(Ordmap::empty(), t, false), rest: Nil })
+  } else if name == "Slots::new" {
+    let cap := match value_of(&mut m, arg(a, 0)) {
+      VInt(^neg, n, ^k) => n
+      x => internal(Text::concat("a capacity that is a ", v_kind(x)))
+    }
+    // A mark is a copy kept for good: it owns nothing, so the argument's end
+    // (or a later one's) does not end it.
+    let vac := v_strip(value_of(&mut m, arg(a, 2)))
+    let t := mint(&mut m, ty)
+    Some(Took {
+      val: VSlots(arg(a, 1), vac, cap, slots_fill(Ordmap::empty(), 0, cap, vac), slots_fill(Ordmap::empty(), 0, cap, VMoved), t),
+      rest: [arg(a, 0), arg(a, 2)]
+    })
+  } else if name == "Slots::state" || name == "Slots::mark" || name == "Slots::cap" {
+    match value_of(&mut m, arg(a, 0)) {
+      VSlots(st, vac, cap, ms, ^xs, ^t) => if name == "Slots::cap" {
+        Some(Took { val: VInt(false, cap, mint(&mut m, ty)), rest: a })
+      } else if name == "Slots::state" {
+        Some(Took { val: clone_val(&mut m, st), rest: a })
+      } else {
+        // Total in the model: past the capacity it is the vacant mark.
+        match index_of(&mut m, arg(a, 1), cap) {
+          Some(i) => match seq_get(ms, i) {
+            Some(x) => Some(Took { val: clone_val(&mut m, x), rest: a })
+            None => Some(Took { val: clone_val(&mut m, vac), rest: a })
+          }
+          None => Some(Took { val: clone_val(&mut m, vac), rest: a })
+        }
+      }
+      x => internal(Text::concat("`Slots` that is a ", v_kind(x)))
+    }
+  } else if name == "Slots::get" || name == "Slots::get_mut" {
+    match value_of(&mut m, arg(a, 0)) {
+      VSlots(^st, ^vac, cap, ^ms, xs, ^t) => match index_of(&mut m, arg(a, 1), cap) {
+        Some(i) => match seq_get(xs, i) {
+          Some(VMoved) => internal("a slot that holds no value")
+          Some(^x) => match arg(a, 0) {
+            VRef(p) => Some(Took { val: VRef(PlaceRef { root: p.root, path: l_snoc(p.path, item_step(i)) }), rest: a })
+            r => internal(Text::concat_all(["`", name, "` of a ", v_kind(r)]))
+          }
+          None => internal("a slot that is not there")
+        }
+        None => internal("a slot past the capacity")
+      }
+      x => internal(Text::concat("`Slots` that is a ", v_kind(x)))
+    }
+  } else if name == "Slots::put" {
+    match value_of(&mut m, arg(a, 0)) {
+      VSlots(st, vac, cap, ms, xs, t) => match index_of(&mut m, arg(a, 1), cap) {
+        Some(i) => {
+          let old := match seq_get(xs, i) {
+            Some(o) => o
+            None => VMoved
+          }
+          let mk := v_strip(value_of(&mut m, arg(a, 2)))
+          slots_write(&mut m, arg(a, 0), VSlots(arg(a, 4), vac, cap, seq_set(ms, i, mk), seq_set(xs, i, arg(a, 3)), t))
+          release(&mut m, st, TDropped)
+          slots_release(&mut m, [old])
+          Some(Took { val: VUnit, rest: [arg(a, 0), arg(a, 1), arg(a, 2)] })
+        }
+        None => internal("a slot past the capacity")
+      }
+      x => internal(Text::concat("`Slots` that is a ", v_kind(x)))
+    }
+  } else if name == "Slots::take" {
+    match value_of(&mut m, arg(a, 0)) {
+      VSlots(st, vac, cap, ms, xs, t) => match index_of(&mut m, arg(a, 1), cap) {
+        Some(i) => match seq_get(xs, i) {
+          Some(VMoved) => internal("a slot that holds no value")
+          Some(x) => {
+            let mk := v_strip(value_of(&mut m, arg(a, 2)))
+            slots_write(&mut m, arg(a, 0), VSlots(arg(a, 3), vac, cap, seq_set(ms, i, mk), seq_set(xs, i, VMoved), t))
+            release(&mut m, st, TDropped)
+            Some(Took { val: x, rest: [arg(a, 0), arg(a, 1), arg(a, 2)] })
+          }
+          None => internal("a slot that is not there")
+        }
+        None => internal("a slot past the capacity")
+      }
+      x => internal(Text::concat("`Slots` that is a ", v_kind(x)))
+    }
+  } else if name == "Slots::resize" {
+    match value_of(&mut m, arg(a, 0)) {
+      VSlots(st, ^vac, cap, ms, xs, t) => {
+        let c := match value_of(&mut m, arg(a, 1)) {
+          VInt(^neg, n, ^k) => n
+          x => internal(Text::concat("a capacity that is a ", v_kind(x)))
+        }
+        let m0 := v_strip(value_of(&mut m, arg(a, 2)))
+        if c <= cap {
+          slots_write(&mut m, arg(a, 0), VSlots(arg(a, 3), m0, c, seq_take(ms, c), seq_take(xs, c), t))
+          release(&mut m, st, TDropped)
+          slots_release(&mut m, l_drop(seq_list(xs), c))
+        } else {
+          slots_write(&mut m, arg(a, 0), VSlots(arg(a, 3), m0, c, slots_fill(ms, cap, c - cap, m0), slots_fill(xs, cap, c - cap, VMoved), t))
+          release(&mut m, st, TDropped)
+        }
+        Some(Took { val: VUnit, rest: [arg(a, 0), arg(a, 1), arg(a, 2)] })
+      }
+      x => internal(Text::concat("`Slots` that is a ", v_kind(x)))
+    }
+  } else if name == "Buf::new" {
+    let t := mint(&mut m, ty)
+    Some(Took { val: VBuf("", t), rest: Nil })
+  } else if name == "Buf::of" || name == "Buf::clone" {
+    let s := text_of(&mut m, name, arg(a, 0))
+    release(&mut m, arg(a, 0), TConsumed)
+    let t := mint(&mut m, ty)
+    Some(Took { val: VBuf(s, t), rest: l_drop(a, 1) })
+  } else if name == "Buf::push" {
+    let s := text_of(&mut m, name, arg(a, 1))
+    match arg(a, 0) {
+      VRef(p) => match peek(&mut m, p) {
+        VBuf(b, t) => {
+          at_replace(&mut m, p, VBuf(Text::concat(b, s), t))
+          ()
+        }
+        VUnit => ()
+        VBool(^zz0) => ()
+        VFloat(^zz0) => ()
+        VInt(^zz0, ^zz1, ^zz2) => ()
+        VText(^zz0, ^zz1) => ()
+        VShown(^zz0, ^zz1) => ()
+        VData(^zz0, ^zz1, ^zz2) => ()
+        VInject(^zz0, ^zz1) => ()
+        VFn(^zz0, ^zz1) => ()
+        VRef(^zz0) => ()
+        VCell(^zz0) => ()
+        VSeq(^zz0, ^zz1, ^zz2) => ()
+        VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => ()
+        VShared(^zz0, ^zz1) => ()
+        VInfo => ()
+        VAnswer(^zz0) => ()
+        VCont(^zz0) => ()
+        VMoved => ()
+      }
+      VUnit => internal("`Buf::push` of no borrow")
+      VBool(^zz0) => internal("`Buf::push` of no borrow")
+      VFloat(^zz0) => internal("`Buf::push` of no borrow")
+      VInt(^zz0, ^zz1, ^zz2) => internal("`Buf::push` of no borrow")
+      VText(^zz0, ^zz1) => internal("`Buf::push` of no borrow")
+      VShown(^zz0, ^zz1) => internal("`Buf::push` of no borrow")
+      VData(^zz0, ^zz1, ^zz2) => internal("`Buf::push` of no borrow")
+      VInject(^zz0, ^zz1) => internal("`Buf::push` of no borrow")
+      VFn(^zz0, ^zz1) => internal("`Buf::push` of no borrow")
+      VCell(^zz0) => internal("`Buf::push` of no borrow")
+      VSeq(^zz0, ^zz1, ^zz2) => internal("`Buf::push` of no borrow")
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => internal("`Buf::push` of no borrow")
+      VBuf(^zz0, ^zz1) => internal("`Buf::push` of no borrow")
+      VShared(^zz0, ^zz1) => internal("`Buf::push` of no borrow")
+      VInfo => internal("`Buf::push` of no borrow")
+      VAnswer(^zz0) => internal("`Buf::push` of no borrow")
+      VCont(^zz0) => internal("`Buf::push` of no borrow")
+      VMoved => internal("`Buf::push` of no borrow")
+    }
+    release(&mut m, arg(a, 1), TConsumed)
+    Some(Took { val: VUnit, rest: [arg(a, 0)] })
+  } else if name == "Vec::push" {
+    let xs := seq_raw(&mut m, arg(a, 0))
+    seq_put_raw(&mut m, arg(a, 0), seq_push(xs, arg(a, 1)))
+    Some(Took { val: VUnit, rest: [arg(a, 0)] })
+  } else if name == "Vec::pop" {
+    let xs := seq_raw(&mut m, arg(a, 0))
+    let n := seq_len(xs)
+    if n == 0 {
+      Some(Took { val: option(&mut m, None, ty), rest: a })
+    } else {
+      seq_put_raw(&mut m, arg(a, 0), seq_take(xs, n - 1))
+      Some(Took { val: option(&mut m, seq_get(xs, n - 1), ty), rest: a })
+    }
+  } else if name == "Os::print" {
+    // `Os::run` answers `stdout` with `Os::print`: the run keeps the text.
+    match value_of(&mut m, arg(a, 0)) {
+      VText(t, ^k) => {
+        m.out := Cons(t, m.out)
+      }
+      v => internal(Text::concat("Os::print's text is a ", v_kind(v)))
+    }
+    Some(Took { val: VUnit, rest: a })
+  } else if name == "Os::flush" {
+    Some(Took { val: VUnit, rest: a })
+  } else if text_starts_with(name, "UHost::", 0) {
+    // The operations of `uhost` that carry a proof in Tauto: the result fits.
+    let x := match value_of(&mut m, arg(a, 0)) {
+      VInt(^neg, n, ^t) => n
+      v => internal(Text::concat_all(["`", name, "` on a ", v_kind(v)]))
+    }
+    let y := if name == "UHost::add_within" || name == "UHost::sub" {
+      match value_of(&mut m, arg(a, 1)) {
+        VInt(^neg, n, ^t) => n
+        v => internal(Text::concat_all(["`", name, "` on a ", v_kind(v)]))
+      }
+    } else {
+      0
+    }
+    let r := if name == "UHost::succ_below" {
+      x + 1
+    } else if name == "UHost::pred_nz" {
+      x - 1
+    } else if name == "UHost::add_within" {
+      x + y
+    } else if name == "UHost::sub" {
+      x - y
+    } else {
+      x
+    }
+    Some(Took { val: VInt(false, r, None), rest: a })
+  } else if name == "Os::uhost_add" || name == "Os::uhost_sub" || name == "Os::uhost_mul" || name == "Os::uhost_of_u64" {
+    // The host's `uhost` arithmetic: 64 bits here, and a result outside the
+    // word ends the run.
+    let x := match value_of(&mut m, arg(a, 0)) {
+      VInt(^neg, n, ^t) => n
+      v => internal(Text::concat_all(["`", name, "` on a ", v_kind(v)]))
+    }
+    let y := if name == "Os::uhost_of_u64" {
+      0
+    } else {
+      match value_of(&mut m, arg(a, 1)) {
+        VInt(^neg, n, ^t) => n
+        v => internal(Text::concat_all(["`", name, "` on a ", v_kind(v)]))
+      }
+    }
+    let r := if name == "Os::uhost_add" {
+      Some(x + y)
+    } else if name == "Os::uhost_sub" {
+      if x < y { None } else { Some(x - y) }
+    } else if name == "Os::uhost_mul" {
+      Some(x * y)
+    } else {
+      Some(x)
+    }
+    match r {
+      Some(n) => if n < 18446744073709551616 {
+        Some(Took { val: VInt(false, n, None), rest: a })
+      } else {
+        fail(Text::concat("the word of the host (64 bits) does not hold the result of ", name))
+      }
+      None => fail(Text::concat("the word of the host (64 bits) does not hold the result of ", name))
+    }
+  } else if name == "Os::host_bits" {
+    Some(Took { val: VInt(false, 64, None), rest: a })
+  } else if name == "Os::hash_seed_k0" || name == "Os::hash_seed_k1" {
+    Some(Took { val: VInt(false, 0, None), rest: a })
+  } else if name == "Vec::len" || name == "Slice::len" || name == "Array::len" {
+    Some(Took { val: VInt(false, len_of(&mut m, arg(a, 0)), None), rest: a })
+  } else if name == "Vec::as_slice" || name == "Vec::as_mut_slice" {
+    Some(Took { val: arg(a, 0), rest: a })
+  } else if name == "Vec::clear" || name == "Vec::truncate" {
+    let xs := seq_items(&mut m, arg(a, 0))
+    let n := if name == "Vec::clear" {
+      0
+    } else {
+      match value_of(&mut m, arg(a, 1)) {
+        VInt(neg, k, ^t) => if neg { 0 } else { k }
+        VUnit => l_len(xs)
+        VBool(^zz0) => l_len(xs)
+        VFloat(^zz0) => l_len(xs)
+        VText(^zz0, ^zz1) => l_len(xs)
+        VShown(^zz0, ^zz1) => l_len(xs)
+        VData(^zz0, ^zz1, ^zz2) => l_len(xs)
+        VInject(^zz0, ^zz1) => l_len(xs)
+        VFn(^zz0, ^zz1) => l_len(xs)
+        VRef(^zz0) => l_len(xs)
+        VCell(^zz0) => l_len(xs)
+        VSeq(^zz0, ^zz1, ^zz2) => l_len(xs)
+        VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => l_len(xs)
+        VBuf(^zz0, ^zz1) => l_len(xs)
+        VShared(^zz0, ^zz1) => l_len(xs)
+        VInfo => l_len(xs)
+        VAnswer(^zz0) => l_len(xs)
+        VCont(^zz0) => l_len(xs)
+        VMoved => l_len(xs)
+      }
+    }
+    seq_put(&mut m, arg(a, 0), l_take(xs, n))
+    release_all(&mut m, l_drop(xs, n), TDropped)
+    Some(Took { val: VUnit, rest: a })
+  } else if name == "Vec::get" || name == "Vec::get_mut" || name == "Slice::get" || name == "Vec::last_mut" {
+    let n := len_of(&mut m, arg(a, 0))
+    let i := if name == "Vec::last_mut" {
+      if n == 0 { None } else { Some(n - 1) }
+    } else {
+      index_of(&mut m, arg(a, 1), n)
+    }
+    Some(Took { val: ref_step(&mut m, name, arg(a, 0), i, ty), rest: a })
+  } else if name == "clone" {
+    let x := value_of(&mut m, arg(a, 0))
+    Some(Took { val: clone_val(&mut m, x), rest: a })
+  } else if name == "Vec::swap_within" {
+    let n := len_of(&mut m, arg(a, 0))
+    match index_of(&mut m, arg(a, 1), n) {
+      Some(i) => match index_of(&mut m, arg(a, 2), n) {
+        Some(j) => {
+          let xs := seq_items(&mut m, arg(a, 0))
+          seq_put(&mut m, arg(a, 0), swap_items(xs, i, j))
+          Some(Took { val: VBool(true), rest: a })
+        }
+        None => Some(Took { val: VBool(false), rest: a })
+      }
+      None => Some(Took { val: VBool(false), rest: a })
+    }
+  } else if name == "Vec::into_list" || name == "Array::to_list" || name == "Vec::into_array" {
+    let v0 := arg(a, 0)
+    let v := match v0 {
+      VRef(^p) => value_of(&mut m, v0)
+      VUnit => v0
+      VBool(^zz0) => v0
+      VFloat(^zz0) => v0
+      VInt(^zz0, ^zz1, ^zz2) => v0
+      VText(^zz0, ^zz1) => v0
+      VShown(^zz0, ^zz1) => v0
+      VData(^zz0, ^zz1, ^zz2) => v0
+      VInject(^zz0, ^zz1) => v0
+      VFn(^zz0, ^zz1) => v0
+      VCell(^zz0) => v0
+      VSeq(^zz0, ^zz1, ^zz2) => v0
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => v0
+      VBuf(^zz0, ^zz1) => v0
+      VShared(^zz0, ^zz1) => v0
+      VInfo => v0
+      VAnswer(^zz0) => v0
+      VCont(^zz0) => v0
+      VMoved => v0
+    }
+    match v {
+      VSeq(xs, tok, ^k) => {
+        match tok {
+          Some(t) => tok_set(&mut m, t, TConsumed)
+          None => ()
+        }
+        let r := if name == "Vec::into_array" {
+          let t := mint(&mut m, ty)
+          VSeq(xs, t, true)
+        } else {
+          list(&mut m, seq_list(xs), ty)
+        }
+        Some(Took { val: r, rest: l_drop(a, 1) })
+      }
+      x => internal(Text::concat_all(["`", name, "` of a ", v_kind(x)]))
+    }
+  } else if name == "Array::of_list" {
+    let xs := list_items(&mut m, arg(a, 0), Nil)
+    let t := mint(&mut m, ty)
+    Some(Took { val: VSeq(seq_of(xs), t, true), rest: l_drop(a, 1) })
+  } else if name == "Array::get" {
+    match value_of(&mut m, arg(a, 0)) {
+      VSeq(xs, ^t, ^k) => {
+        let x := match index_of(&mut m, arg(a, 1), seq_len(xs)) {
+          Some(i) => match seq_get(xs, i) {
+            Some(y) => Some(clone_val(&mut m, y))
+            None => None
+          }
+          None => None
+        }
+        Some(Took { val: option(&mut m, x, ty), rest: a })
+      }
+      v => internal(Text::concat("`Array::get` of a ", v_kind(v)))
+    }
+  } else if name == "Ref::new" {
+    let c := cell_new(&mut m, arg(a, 0))
+    let t := mint(&mut m, ty)
+    Some(Took { val: VShared(c, t), rest: l_drop(a, 1) })
+  } else if name == "Ref::get" {
+    let c := shared_cell(&mut m, name, arg(a, 0))
+    let x := cell_get(&m, c)
+    Some(Took { val: clone_val(&mut m, x), rest: a })
+  } else if name == "Ref::set" {
+    let c := shared_cell(&mut m, name, arg(a, 0))
+    let old := cell_get(&m, c)
+    cell_set(&mut m, c, arg(a, 1))
+    release(&mut m, old, TDropped)
+    Some(Took { val: VUnit, rest: [arg(a, 0)] })
+  } else {
+    None
+  }
+}
+
+pub fn text_val(v: Val): Option(Text) {
+  match v {
+    VText(t, ^k) => Some(t)
+    VUnit => None
+    VBool(^zz0) => None
+    VFloat(^zz0) => None
+    VInt(^zz0, ^zz1, ^zz2) => None
+    VShown(^zz0, ^zz1) => None
+    VData(^zz0, ^zz1, ^zz2) => None
+    VInject(^zz0, ^zz1) => None
+    VFn(^zz0, ^zz1) => None
+    VRef(^zz0) => None
+    VCell(^zz0) => None
+    VSeq(^zz0, ^zz1, ^zz2) => None
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => None
+    VBuf(^zz0, ^zz1) => None
+    VShared(^zz0, ^zz1) => None
+    VInfo => None
+    VAnswer(^zz0) => None
+    VCont(^zz0) => None
+    VMoved => None
+  }
+}
+
+pub fn int_arg(v: Val): Option(Int) { int_val(v) }
+
+pub fn starts(t: Text, p: Text): Bool {
+  match Text::slice(t, 0, Text::len(p)) {
+    Some(x) => x == p
+    None => false
+  }
+}
+
+pub fn bits(name: Text, w: Nat, x: Nat, y: Nat): Nat ! {div, divzero} {
+  let op := Text::slice_or_empty(name, 5, Text::len(name))
+  let sh := Nat::rem(y, w)
+  let xu := U64::of_nat(x)
+  let yu := U64::of_nat(y)
+  let rotl := (s: Nat) => {
+    if s == 0 {
+      x
+    } else {
+      let hi := Nat::rem(Nat::of_u64(UInt::shl64(xu, s)), pow2(w))
+      let lo := Nat::of_u64(UInt::shr64(xu, w - s))
+      Nat::of_u64(U64::or(U64::of_nat(hi), U64::of_nat(lo)))
+    }
+  }
+  if op == "and" {
+    Nat::of_u64(U64::and(xu, yu))
+  } else if op == "or" {
+    Nat::of_u64(U64::or(xu, yu))
+  } else if op == "xor" {
+    Nat::of_u64(U64::xor(xu, yu))
+  } else if op == "shl" {
+    Nat::rem(Nat::of_u64(UInt::shl64(xu, sh)), pow2(w))
+  } else if op == "shr" {
+    Nat::of_u64(UInt::shr64(xu, sh))
+  } else if op == "rotl" {
+    rotl(sh)
+  } else if sh == 0 {
+    x
+  } else {
+    rotl(w - sh)
+  }
+}
+
+pub fn is_bit_op(name: Text): Bool {
+  let op := Text::slice_or_empty(name, 5, Text::len(name))
+  (starts(name, "U32::") || starts(name, "U64::")) && (op == "and" || op == "or" || op == "xor" || op == "shl" || op == "shr" || op == "rotl" || op == "rotr")
+}
+
+pub fn option_inner(t: NTy): NTy {
+  match t {
+    NOption(a) => a
+    NInt(^zz0) => NText
+    NBool => NText
+    NText => NText
+    NUnit => NText
+    NNever => NText
+    NFloat => NText
+    NFloat32 => NText
+    NBuf => NText
+    NShown => NText
+    NVec(^zz0) => NText
+    NArray(^zz0) => NText
+    NSlice(^zz0) => NText
+    NInfo(^zz0) => NText
+    NBudgetAnswer(^zz0) => NText
+    NResult(^zz0, ^zz1) => NText
+    NPair(^zz0, ^zz1) => NText
+    NSharedVar(^zz0, ^zz1) => NText
+    NStd(^zz0, ^zz1) => NText
+    NUnion(^zz0) => NText
+    NFn(^zz0, ^zz1, ^zz2, ^zz3) => NText
+    NRef(^zz0) => NText
+    NRefMut(^zz0) => NText
+    NData(^zz0, ^zz1) => NText
+    NParam(^zz0) => NText
+  }
+}
+
+pub fn builtin(m: &mut M, name: Text, args: List(Val), e: NExpr): Val ! {div, divzero, nout} {
+  let vs := value_all(&mut m, args)
+  let a := arg(vs, 0)
+  let b := arg(vs, 1)
+  let ty := e.ty
+  if name == "concat" {
+    match text_val(a) {
+      Some(x) => match text_val(b) {
+        Some(y) => {
+          let t := mint(&mut m, ty)
+          VText(Text::concat(x, y), t)
+        }
+        None => fail("internal: concat of non-text")
+      }
+      None => fail("internal: concat of non-text")
+    }
+  } else if name == "Text::len" {
+    match text_val(a) {
+      Some(x) => {
+        let t := mint(&mut m, ty)
+        VInt(false, Text::len(x), t)
+      }
+      None => fail("internal: len of non-text")
+    }
+  } else if name == "Text::of_i64" || name == "Text::of_u64" || name == "Text::of_nat" {
+    match int_arg(a) {
+      Some(n) => {
+        let t := mint(&mut m, ty)
+        VText(int_text(n), t)
+      }
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "div" || name == "mod" {
+    match int_arg(a) {
+      Some(x) => match int_arg(b) {
+        Some(y) => if y.mag == 0 {
+          fail("division by zero")
+        } else {
+          let r := if name == "div" { int_div(x, y) } else { int_rem(x, y) }
+          match ty {
+            NInt(w) => make_int(&mut m, r, w, ty)
+            NBool => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NText => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NUnit => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NNever => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NFloat => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NFloat32 => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NBuf => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NShown => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NVec(^zz0) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NArray(^zz0) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NSlice(^zz0) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NOption(^zz0) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NInfo(^zz0) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NBudgetAnswer(^zz0) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NResult(^zz0, ^zz1) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NPair(^zz0, ^zz1) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NSharedVar(^zz0, ^zz1) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NStd(^zz0, ^zz1) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NUnion(^zz0) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NFn(^zz0, ^zz1, ^zz2, ^zz3) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NRef(^zz0) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NRefMut(^zz0) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NData(^zz0, ^zz1) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+            NParam(^zz0) => {
+              let t := mint(&mut m, ty)
+              VInt(r.neg, r.mag, t)
+            }
+          }
+        }
+        None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      }
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "I64::of_i32" || name == "I64::of_u64" || name == "I32::of_i64" || name == "U64::of_i64" || name == "U64::of_u32" || name == "U64::of_u8" || name == "U64::of_uhost" || name == "U64::of_nat" || name == "U32::of_u64" || name == "U8::of_u64" {
+    match int_arg(a) {
+      Some(n) => match ty {
+        NInt(w) => make_int(&mut m, n, w, ty)
+        NBool => fail("internal: a conversion to a non-integer")
+        NText => fail("internal: a conversion to a non-integer")
+        NUnit => fail("internal: a conversion to a non-integer")
+        NNever => fail("internal: a conversion to a non-integer")
+        NFloat => fail("internal: a conversion to a non-integer")
+        NFloat32 => fail("internal: a conversion to a non-integer")
+        NBuf => fail("internal: a conversion to a non-integer")
+        NShown => fail("internal: a conversion to a non-integer")
+        NVec(^zz0) => fail("internal: a conversion to a non-integer")
+        NArray(^zz0) => fail("internal: a conversion to a non-integer")
+        NSlice(^zz0) => fail("internal: a conversion to a non-integer")
+        NOption(^zz0) => fail("internal: a conversion to a non-integer")
+        NInfo(^zz0) => fail("internal: a conversion to a non-integer")
+        NBudgetAnswer(^zz0) => fail("internal: a conversion to a non-integer")
+        NResult(^zz0, ^zz1) => fail("internal: a conversion to a non-integer")
+        NPair(^zz0, ^zz1) => fail("internal: a conversion to a non-integer")
+        NSharedVar(^zz0, ^zz1) => fail("internal: a conversion to a non-integer")
+        NStd(^zz0, ^zz1) => fail("internal: a conversion to a non-integer")
+        NUnion(^zz0) => fail("internal: a conversion to a non-integer")
+        NFn(^zz0, ^zz1, ^zz2, ^zz3) => fail("internal: a conversion to a non-integer")
+        NRef(^zz0) => fail("internal: a conversion to a non-integer")
+        NRefMut(^zz0) => fail("internal: a conversion to a non-integer")
+        NData(^zz0, ^zz1) => fail("internal: a conversion to a non-integer")
+        NParam(^zz0) => fail("internal: a conversion to a non-integer")
+      }
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "Nat::of_u64" {
+    match int_arg(a) {
+      Some(n) => {
+        let t := mint(&mut m, ty)
+        VInt(n.neg, n.mag, t)
+      }
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "Float::of_i64" {
+    match int_arg(a) {
+      Some(n) => VFloat(float_of_int(n))
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "Float::sqrt" {
+    match v_float(a) {
+      Some(x) => VFloat(Float::sqrt(x))
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "I64::of_float" {
+    match v_float(a) {
+      Some(x) => match SInt::of_float_checked64(x) {
+        Some(n) => match int_of_text(Text::of_i64(n)) {
+          Some(k) => VInt(k.neg, k.mag, None)
+          None => internal("an integer of a float")
+        }
+        None => fail("the value is too large")
+      }
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "Text::of" {
+    match a {
+      VText(s, ^k) => {
+        let t := mint(&mut m, ty)
+        VText(s, t)
+      }
+      VBuf(s, ^k) => {
+        let t := mint(&mut m, ty)
+        VText(s, t)
+      }
+      VUnit => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VBool(^zz0) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VFloat(^zz0) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VInt(^zz0, ^zz1, ^zz2) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VShown(^zz0, ^zz1) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VData(^zz0, ^zz1, ^zz2) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VInject(^zz0, ^zz1) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VFn(^zz0, ^zz1) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VRef(^zz0) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VCell(^zz0) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VSeq(^zz0, ^zz1, ^zz2) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VShared(^zz0, ^zz1) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VInfo => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VAnswer(^zz0) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VCont(^zz0) => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      VMoved => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "Text::byte" {
+    match text_val(a) {
+      Some(s) => match int_arg(b) {
+        Some(i) => {
+          let x := if i.neg { None } else {
+            match Text::byte(s, i.mag) {
+              Some(y) => Some(VInt(false, y, None))
+              None => None
+            }
+          }
+          option(&mut m, x, ty)
+        }
+        None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      }
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "Text::slice" {
+    match text_val(a) {
+      Some(s) => match int_arg(b) {
+        Some(st) => match int_arg(arg(vs, 2)) {
+          Some(n) => {
+            let part := if st.neg || n.neg || st.mag > n.mag || n.mag > Text::len(s) { None } else { Text::slice(s, st.mag, n.mag) }
+            let x := match part {
+              Some(p) => {
+                let t := mint(&mut m, option_inner(ty))
+                Some(VText(p, t))
+              }
+              None => None
+            }
+            option(&mut m, x, ty)
+          }
+          None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+        }
+        None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      }
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "Text::of_code_point" {
+    match int_arg(a) {
+      Some(n) => {
+        let c := if n.neg { None } else { Text::of_code_point(n.mag) }
+        let x := match c {
+          Some(p) => {
+            let t := mint(&mut m, option_inner(ty))
+            Some(VText(p, t))
+          }
+          None => None
+        }
+        option(&mut m, x, ty)
+      }
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if name == "U64::wrapping_add" || name == "U64::wrapping_sub" || name == "U64::wrapping_mul" {
+    match int_arg(a) {
+      Some(x) => match int_arg(b) {
+        Some(y) => {
+          let xu := U64::of_nat(x.mag)
+          let yu := U64::of_nat(y.mag)
+          let r := if name == "U64::wrapping_add" {
+            U64::wrapping_add(xu, yu)
+          } else if name == "U64::wrapping_sub" {
+            U64::wrapping_sub(xu, yu)
+          } else {
+            U64::wrapping_mul(xu, yu)
+          }
+          VInt(false, Nat::of_u64(r), None)
+        }
+        None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      }
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else if is_bit_op(name) {
+    match int_arg(a) {
+      Some(x) => match int_arg(b) {
+        Some(y) => VInt(false, bits(name, if starts(name, "U32::") { 32 } else { 64 }, x.mag, y.mag), None)
+        None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+      }
+      None => unsupported(Text::concat_all(["builtin `", name, "`"]))
+    }
+  } else {
+    unsupported(Text::concat_all(["builtin `", name, "`"]))
+  }
+}
+
+// ---- a run ----
+
+pub fn new_machine(pkg: NPackage, max_steps: Nat): M ! {div} {
+  M {
+    pkg: pkg,
+    max_steps: max_steps,
+    toks: Vec::new(),
+    frames: Vec::new(),
+    cells: Vec::new(),
+    conts: Vec::new(),
+    lefts: Vec::new(),
+    out: Nil,
+    steps: 0,
+    konts: Nil,
+    depth: 0,
+    bases: Nil,
+    temps: 0,
+    next_handler: 0,
+    ctors: ctors_of(pkg.fns),
+    copy_type: false,
+    budgets: Nil,
+    ticked: false,
+    holes: false
+  }
+}
+
+pub fn first_live(m: &M, i: u64): Option(u64) ! {div, overflow} {
+  var j := i
+  var found: Option(u64) := None
+  var more := true
+  while more {
+    match Vec::get(&m.toks, j) {
+      Some(t) => {
+        let x := t
+        match x.state {
+          TLive => {
+            found := Some(j)
+            more := false
+          }
+          TDropped => {
+            j := j + 1
+          }
+          TConsumed => {
+            j := j + 1
+          }
+        }
+      }
+      None => {
+        more := false
+      }
+    }
+  }
+  found
+}
+
+pub fn top_go(m: &mut M): Outcome ! {div, divzero, nflow, nout, overflow} {
+  anf_check_fns(m.pkg.fns)
+  match m.pkg.top {
+    None => unsupported("a package without a top level")
+    Some(t) => {
+      let v := run_start(&mut m, StartInst(t))
+      release(&mut m, v, TDropped)
+      match first_live(&m, 0) {
+        Some(i) => violation(leak_kind(&m, i), "a value is still alive at the end of the program and nothing owns it")
+        None => OOk
+      }
+    }
+  }
+}
+
+pub fn top(m: &mut M): Outcome ! {div, divzero, overflow} {
+  handle {
+    handle { top_go(&mut m) } with {
+      nflow(s) => match s {
+        SReturn(^v) => OError("a `return` outside a function")
+        SAbort(^id, ^v) => OError("an abort that no handle catches")
+      }
+    }
+  } with {
+    nout(o) => o
+  }
+}
+
+pub fn dec(n: Nat): Nat { if n == 0 { 0 } else { n - 1 } }
+
+// The kinds of the values as Rust's `{:?}` writes a list of texts.
+pub fn kinds_debug(vs: List(Val)): Text { Text::concat_all(["[", kinds_join(vs), "]"]) }
+
+pub fn kinds_join(vs: List(Val)): Text {
+  match vs {
+    Nil => ""
+    Cons(v, rest) => match rest {
+      Nil => Text::concat_all([text_quote(), v_kind(v), text_quote()])
+      Cons(^zz0, ^zz1) => Text::concat_all([text_quote(), v_kind(v), text_quote(), ", ", kinds_join(rest)])
+    }
+  }
+}
+
+pub fn int_of_text(t: Text): Option(Int) {
+  if starts(t, "-") {
+    match nat_of_text(Text::slice_or_empty(t, 1, Text::len(t))) {
+      Some(n) => Some(int_of(true, n))
+      None => None
+    }
+  } else {
+    match nat_of_text(t) {
+      Some(n) => Some(int_of(false, n))
+      None => None
+    }
+  }
+}
+
+// ---- A-normal form (tauto_nir::anf::check) ----
+
+pub fn ty_has_arm_generic(t: NTy): Bool {
+  match t {
+    NParam(p) => starts(p, "?arm")
+    NVec(a) => ty_has_arm_generic(a)
+    NArray(a) => ty_has_arm_generic(a)
+    NSlice(a) => ty_has_arm_generic(a)
+    NOption(a) => ty_has_arm_generic(a)
+    NRef(a) => ty_has_arm_generic(a)
+    NRefMut(a) => ty_has_arm_generic(a)
+    NInfo(a) => ty_has_arm_generic(a)
+    NBudgetAnswer(a) => ty_has_arm_generic(a)
+    NSharedVar(^x, a) => ty_has_arm_generic(a)
+    NResult(a, b) => ty_has_arm_generic(a) || ty_has_arm_generic(b)
+    NPair(a, b) => ty_has_arm_generic(a) || ty_has_arm_generic(b)
+    NData(^n, ts) => tys_have_arm_generic(ts)
+    NStd(^n, ts) => tys_have_arm_generic(ts)
+    NFn(ps, r, ^x, ^y) => tys_have_arm_generic(ps) || ty_has_arm_generic(r)
+    NInt(^w) => false
+    NBool => false
+    NText => false
+    NUnit => false
+    NNever => false
+    NFloat => false
+    NFloat32 => false
+    NBuf => false
+    NShown => false
+    NUnion(^u) => false
+  }
+}
+
+pub fn tys_have_arm_generic(ts: List(NTy)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => ty_has_arm_generic(t) || tys_have_arm_generic(rest)
+  }
+}
+
+pub fn anf_is_path(e: NExpr): Bool ! {div} {
+  match e.kind {
+    NRead(^l, ^h) => true
+    NBorrow(^p) => true
+    NBorrowMut(^p) => true
+    NFieldOf(b, ^f, ^h, ^r) => anf_is_path(b)
+    NDeref(b, ^h) => anf_is_path(b)
+    NUnitLit => false
+    NIntLit(^zz0, ^zz1) => false
+    NBoolLit(^zz0) => false
+    NFloatLit(^zz0) => false
+    NTextLit(^zz0) => false
+    NDeclaration(^zz0) => false
+    NFnValue(^zz0, ^zz1) => false
+    NClosureOf(^zz0) => false
+    NHandleOf(^zz0) => false
+    NBudgetOf(^zz0) => false
+    NInject(^zz0, ^zz1, ^zz2) => false
+    NRemap(^zz0, ^zz1, ^zz2) => false
+    NFnCast(^zz0) => false
+    NTempRef(^zz0) => false
+    NArithOf(^zz0, ^zz1, ^zz2) => false
+    NCmpOf(^zz0, ^zz1) => false
+    NEqOf(^zz0, ^zz1) => false
+    NNot(^zz0) => false
+    NAnd(^zz0, ^zz1) => false
+    NOr(^zz0, ^zz1) => false
+    NIf(^zz0, ^zz1, ^zz2) => false
+    NBlockOf(^zz0) => false
+    NCtorOf(^zz0, ^zz1) => false
+    NMatchOf(^zz0) => false
+    NCallOf(^zz0) => false
+    NShownOf(^zz0) => false
+    NPerformOf(^zz0) => false
+    NUnreachable(^zz0) => false
+  }
+}
+
+// Whether an operand computes a value the pass binds to a name.
+pub fn anf_names(e: NExpr): Bool ! {div} {
+  if ty_has_arm_generic(e.ty) {
+    false
+  } else {
+    match e.kind {
+      NDeclaration(^i) => false
+      NUnitLit => false
+      NIntLit(^n, ^k) => false
+      NFloatLit(^t) => false
+      NBoolLit(^b) => false
+      NTextLit(^t) => false
+      NRead(^l, ^h) => false
+      NFnValue(^i, ^ts) => false
+      NBorrow(^p) => false
+      NBorrowMut(^p) => false
+      NTempRef(^x) => false
+      NFieldOf(b, ^f, h, ^r) => match h {
+        NPlace => false
+        NMove => not(anf_is_path(b))
+        NCopy => not(anf_is_path(b))
+        NClone => not(anf_is_path(b))
+      }
+      NDeref(^x, h) => match h {
+        NPlace => false
+        NMove => true
+        NCopy => true
+        NClone => true
+      }
+      NClosureOf(c) => not(c.borrowed)
+      NHandleOf(^zz0) => true
+      NBudgetOf(^zz0) => true
+      NInject(^zz0, ^zz1, ^zz2) => true
+      NRemap(^zz0, ^zz1, ^zz2) => true
+      NFnCast(^zz0) => true
+      NArithOf(^zz0, ^zz1, ^zz2) => true
+      NCmpOf(^zz0, ^zz1) => true
+      NEqOf(^zz0, ^zz1) => true
+      NNot(^zz0) => true
+      NAnd(^zz0, ^zz1) => true
+      NOr(^zz0, ^zz1) => true
+      NIf(^zz0, ^zz1, ^zz2) => true
+      NBlockOf(^zz0) => true
+      NCtorOf(^zz0, ^zz1) => true
+      NMatchOf(^zz0) => true
+      NCallOf(^zz0) => true
+      NShownOf(^zz0) => true
+      NPerformOf(^zz0) => true
+      NUnreachable(^zz0) => true
+    }
+  }
+}
+
+pub fn anf_kind(e: NExpr): Text {
+  match e.kind {
+    NCallOf(^c) => "call"
+    NCtorOf(^c, ^xs) => "constructor"
+    NMatchOf(^x) => "match"
+    NIf(^c, ^t, ^o) => "if"
+    NBlockOf(^b) => "block"
+    NPerformOf(^p) => "perform"
+    NHandleOf(^h) => "handle"
+    NUnitLit => "expression"
+    NIntLit(^zz0, ^zz1) => "expression"
+    NBoolLit(^zz0) => "expression"
+    NFloatLit(^zz0) => "expression"
+    NTextLit(^zz0) => "expression"
+    NDeclaration(^zz0) => "expression"
+    NFnValue(^zz0, ^zz1) => "expression"
+    NClosureOf(^zz0) => "expression"
+    NBudgetOf(^zz0) => "expression"
+    NInject(^zz0, ^zz1, ^zz2) => "expression"
+    NRemap(^zz0, ^zz1, ^zz2) => "expression"
+    NFnCast(^zz0) => "expression"
+    NRead(^zz0, ^zz1) => "expression"
+    NBorrow(^zz0) => "expression"
+    NBorrowMut(^zz0) => "expression"
+    NTempRef(^zz0) => "expression"
+    NDeref(^zz0, ^zz1) => "expression"
+    NFieldOf(^zz0, ^zz1, ^zz2, ^zz3) => "expression"
+    NArithOf(^zz0, ^zz1, ^zz2) => "expression"
+    NCmpOf(^zz0, ^zz1) => "expression"
+    NEqOf(^zz0, ^zz1) => "expression"
+    NNot(^zz0) => "expression"
+    NAnd(^zz0, ^zz1) => "expression"
+    NOr(^zz0, ^zz1) => "expression"
+    NShownOf(^zz0) => "expression"
+    NUnreachable(^zz0) => "expression"
+  }
+}
+
+// The operands the pass names: `Expr::operands_mut`, and the scrutinee of a
+// `match` on a value.
+pub fn anf_operands(e: NExpr): List(NExpr) {
+  match e.kind {
+    NMatchOf(x) => if x.by_ref { Nil } else { [x.scrut] }
+    NCallOf(c) => match c.callee {
+      NCallValue(v) => Cons(v, c.args)
+      NCallInst(^zz0) => c.args
+      NCallBuiltin(^zz0) => c.args
+      NCallExtern(^zz0) => c.args
+      NCallLocal(^zz0) => c.args
+      NCallCont(^zz0) => c.args
+    }
+    NArithOf(^o, ^t, xs) => xs
+    NCmpOf(^o, xs) => xs
+    NEqOf(^n, xs) => xs
+    NNot(a) => [a]
+    NTempRef(a) => [a]
+    NShownOf(a) => [a]
+    NUnreachable(a) => [a]
+    NFnCast(a) => [a]
+    NCtorOf(^c, args) => arg_values(args)
+    NFieldOf(b, ^f, ^h, ^r) => [b]
+    NPerformOf(p) => p.args
+    NInject(^u, ^i, v) => [v]
+    NRemap(^u, ^t, v) => [v]
+    NDeref(v, ^h) => [v]
+    NUnitLit => Nil
+    NIntLit(^zz0, ^zz1) => Nil
+    NBoolLit(^zz0) => Nil
+    NFloatLit(^zz0) => Nil
+    NTextLit(^zz0) => Nil
+    NDeclaration(^zz0) => Nil
+    NFnValue(^zz0, ^zz1) => Nil
+    NClosureOf(^zz0) => Nil
+    NHandleOf(^zz0) => Nil
+    NBudgetOf(^zz0) => Nil
+    NRead(^zz0, ^zz1) => Nil
+    NBorrow(^zz0) => Nil
+    NBorrowMut(^zz0) => Nil
+    NAnd(^zz0, ^zz1) => Nil
+    NOr(^zz0, ^zz1) => Nil
+    NIf(^zz0, ^zz1, ^zz2) => Nil
+    NBlockOf(^zz0) => Nil
+  }
+}
+
+pub fn anf_first(ops: List(NExpr), i: Nat): Option(Nat) ! {div} {
+  match ops {
+    Nil => None
+    Cons(o, rest) => if anf_names(o) { Some(i) } else { anf_first(rest, i + 1) }
+  }
+}
+
+// The first operand that is not in A-normal form, as `anf::check` says it.
+pub fn anf_check(e: NExpr): Option(Text) ! {div} {
+  match anf_first(anf_operands(e), 0) {
+    Some(i) => Some(Text::concat_all(["operand ", Text::of_nat(i), " of a ", anf_kind(e), " at Span { start: 0, end: 0 }"]))
+    None => anf_check_all(children(e))
+  }
+}
+
+pub fn anf_check_all(es: List(NExpr)): Option(Text) ! {div} {
+  match es {
+    Nil => None
+    Cons(e, rest) => match anf_check(e) {
+      Some(t) => Some(t)
+      None => anf_check_all(rest)
+    }
+  }
+}
+
+pub fn anf_check_fns(fns: List(NFn)): Unit ! {div, nout} {
+  match fns {
+    Nil => ()
+    Cons(f, rest) => match anf_check(f.body) {
+      Some(t) => violation("NotAnf", t)
+      None => anf_check_fns(rest)
+    }
+  }
+}

@@ -2,21 +2,24 @@
 source = ```tauto
 let a := 1 + 2 * 3
 let f := (x, y) => x * y
-perform show("a", a)
-perform show("b", f(a, 2))
+show(&a)
+show(&f(a, 2))
 ```
-shows = ["a = 7", "b = 14"]
+stdout = ```
+7
+14
+```
 
 @ cases.recursion-and-if
 source = ```tauto
-fn fact(n: i64): i64 { if n <= 1 { 1 } else { n * fact(n - 1) } }
-perform show("r", fact(10))
+fn fact(n: i64): i64 ! {div, overflow} { if n <= 1 { 1 } else { n * fact(n - 1) } }
+show(&fact(10))
 ```
-shows = ["r = 3628800"]
+stdout = "3628800\n"
 
 @ cases.var-and-while
 source = ```tauto
-fn sum(n: i64): i64 {
+fn sum(n: i64): i64 ! {div, overflow} {
   var i := 0
   var s := 0
   while i < n {
@@ -25,20 +28,72 @@ fn sum(n: i64): i64 {
   }
   s
 }
-perform show("r", sum(100))
+show(&sum(100))
 ```
-shows = ["r = 5050"]
+stdout = "5050\n"
+
+@ cases.loop-break-continue
+source = ```tauto
+fn first_square_over(limit: i64): i64 ! {div, overflow} {
+  var i := 0
+  var found := 0
+  loop {
+    i := i + 1
+    if i * i <= limit { continue }
+    found := i
+    break
+  }
+  found
+}
+fn odd_sum(n: i64): i64 ! {div, overflow} {
+  var i := 0
+  var s := 0
+  while i < n {
+    i := i + 1
+    if i == 2 { continue }
+    if i == 4 { continue }
+    if i == 6 { continue }
+    if i == 8 { continue }
+    if i > 7 { break }
+    s := s + i
+  }
+  s
+}
+fn nested(): i64 ! {div, overflow} {
+  var count := 0
+  var i := 0
+  while i < 3 {
+    i := i + 1
+    var j := 0
+    loop {
+      j := j + 1
+      if j > i { break }
+      count := count + 1
+    }
+  }
+  count
+}
+show(&first_square_over(50))
+show(&odd_sum(100))
+show(&nested())
+```
+stdout = ```
+8
+16
+6
+```
 
 @ cases.a-continuation-resumes-twice
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
 effect ask(n: i64): i64 resume ω
 let c := handle { perform ask(5) + 1 } with {
   ask(n), k => k(n) + k(n + 1)
   return v => v
 }
-perform show("c", c)
+show(&c)
 ```
-shows = ["c = 13"]
+stdout = "13\n"
 
 @ cases.return-clause-wraps-the-result
 source = ```tauto
@@ -47,92 +102,104 @@ let c := handle { perform ask(1) } with {
   ask(n), k => k(n)
   return v => v * 100
 }
-perform show("c", c)
+show(&c)
 ```
-shows = ["c = 100"]
+stdout = "100\n"
 
 @ cases.budget-exceeded-is-handled
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
-fn spin(): i64 { while true { }
+fn spin(): i64 ! {div} { while true { }
   0 }
-let d := handle { budget(steps: 50) { spin() } } with {
+let d := handle { perform budget(50, () => { spin() }) } with {
   exceeded(info), k => k(0 - 1)
 }
-perform show("d", d)
+show(&d)
 ```
-shows = ["d = -1"]
+stdout = "-1\n"
 
 @ cases.more-steps-resume-the-body
+llvm.unimplemented = "generate: the LLVM backend does not write a `var` shared with a closure yet"
 source = ```tauto
-fn count(n: i64): i64 {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
 var stops := 0
-let d := handle { budget(steps: 50) { count(100) } } with {
+let d := handle { perform budget(50, () => { count(100) }) } with {
   exceeded(info), k => {
     stops := stops + 1
     info.more(50)
   }
 }
-perform show("d", d)
-perform show("stopped", stops > 0)
+show(&d)
+show(&(stops > 0))
 ```
-shows = ["d = 100", "stopped = true"]
+stdout = ```
+100
+true
+```
 
 @ cases.unbounded-runs-the-body-to-the-end
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
-fn count(n: i64): i64 {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-let d := handle { budget(steps: 10) { count(1000) } } with {
+let d := handle { perform budget(10, () => { count(1000) }) } with {
   exceeded(info), k => info.unbounded()
 }
-perform show("d", d)
+show(&d)
 ```
-shows = ["d = 1000"]
+stdout = "1000\n"
 
 @ cases.show-inside-a-handled-computation
 source = ```tauto
 effect ask(): i64
-let c := handle { perform show("in", 1)
+let c := handle { show(&1)
   perform ask() } with {
   ask(), k => k(2)
 }
-perform show("c", c)
+show(&c)
 ```
-shows = ["in = 1", "c = 2"]
+stdout = ```
+1
+2
+```
 
 @ cases.integers-overflow-at-their-width-1
 source = ```tauto
 let a: i32 := 2147483646
-perform show("a", a + 1)
+show(&(a + 1))
 ```
-shows = ["a = 2147483647"]
+stdout = "2147483647\n"
 
 @ cases.integers-overflow-at-their-width-2
 source = ```tauto
 let a: i32 := 2147483647
-perform show("a", a + 1)
+show(&(a + 1))
 ```
 run_error = "the number is too large"
 
 @ cases.integers-overflow-at-their-width-3
 source = ```tauto
 let a: i64 := 2147483647
-perform show("a", a + 1)
+show(&(a + 1))
 ```
-shows = ["a = 2147483648"]
+stdout = "2147483648\n"
 
 @ cases.div-and-mod-1
 source = ```tauto
-perform show("q", div(7, 2))
-perform show("r", mod(7, 2))
+show(&div(7, 2))
+show(&mod(7, 2))
 ```
-shows = ["q = 3", "r = 1"]
+stdout = ```
+3
+1
+```
 
 @ cases.div-and-mod-2
 source = ```tauto
@@ -166,8 +233,9 @@ compile_errors.javascript = "front: unhandled effect ask at the top level"
 compile_errors.vm = "front: unhandled effect ask at the top level"
 
 @ cases.the-session-limit-interrupts
+llvm.unimplemented = "runtime: runtime safety limit exceeded"
 source = ```tauto
-fn spin(): i64 { while true { }
+fn spin(): i64 ! {div} { while true { }
   0 }
 let d := spin()
 ```
@@ -177,20 +245,22 @@ run_error = "interrupted: the step limit ran out"
 
 @ cases.the-session-limit-counts-calls-not-machine-steps-1
 source = ```tauto
-fn deep(n: i64): i64 {
+fn deep(n: i64): i64 ! {div, overflow} {
   if n == 0 { 0 } else { let a := { { { { 1 } } } }
   let b := { { { { a } } } }
   b + deep(n - 1) }
 }
 let r := deep(100)
-perform show("r", r)
+show(&r)
 ```
 budget = 500
-shows = ["r = 100"]
+stdout = "100\n"
 
 @ cases.the-session-limit-counts-calls-not-machine-steps-2
+llvm.unimplemented = 'output: run_error: expected "interrupted: the step limit ran out"'
+niri.unimplemented = "output: interrupted"
 source = ```tauto
-fn deep(n: i64): i64 {
+fn deep(n: i64): i64 ! {div, overflow} {
   if n == 0 { 0 } else { let a := { { { { 1 } } } }
   let b := { { { { a } } } }
   b + deep(n - 1) }

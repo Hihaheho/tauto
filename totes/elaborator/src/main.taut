@@ -1,32 +1,95 @@
+import "../../surface/src/superclasses.taut"
 import "elaborate.taut"
 import "program.taut"
+import "classes.taut"
+import "prelude.taut"
+import "qualify.taut"
+import "modname.taut"
+import "deq.taut"
+import "manifest.taut"
 import "write.taut"
+import "include.taut"
+import "visibility.taut"
+import "syntax_types.taut"
 import "../../kernel/src/data.taut"
+import "../../kernel/src/term.taut"
 import "../../surface/src/surface.taut"
+import "../../parse/src/parse.taut"
 import "../../syntax/src/syntax.taut"
 import "../../text/src/text.taut"
 import "../../unicode/src/classes.taut"
-import std::Text
-import std::prelude::Os
-pub fn elab_source(k: Nat, source: Text): ElabResult(List(ElabItem)) {
-  ⊢ ElabResult(List(ElabItem)) from match syntax_tables() {
+import std::text
+import std::base
+import std::builtin::os
+import surface::dump
+pub fn elab_source(k: Nat, lib: ElabRoots, path: Text, source: Text): ElabResult(List(ElabItem)) ! {div, fs_canonicalize, fs_read, fs_stat} {
+  match syntax_tables() {
     None => ElabErr("invalid syntax tables")
-    Some(tables) => ⊢ ElabResult(List(ElabItem)) from match syntax_parse(tables, source) {
+    Some(tables) => match syntax_parse(tables, source) {
       None => ElabErr("cannot parse source")
       Some(Root) => if elab_unsupported(surface_size(Root) + 1, Cons(Root, Nil)) {
         ElabErr("attributes and generated declarations are unsupported")
       } else {
-        let stmts := surface_program_of(
+        let read := surface_program_of(
           SurfaceCtx {
             source: source,
             base: 0,
             classes: unicode_classes(),
-            fuel: surface_size(Root) + 1
+            fuel: surface_size(Root) + 1,
+            lambda_types: true,
+          own_budget: false,
+          own_budget_memory: false
           },
           Root
         )
+        var inc := ic_state(path)
+        let stmts := ic_program(&mut inc, read)
         var core := kernel_new()
-        if elab_prelude(k, &mut core) { elab_program(stmts, k, &mut core) } else { ElabErr("cannot declare the library families") }
+        if Vec::len(&inc.errs) > 0 {
+          ElabErr("an include_text! cannot be read")
+        } else {
+        match elab_prelude_source(k, &mut core, tables) {
+          None => ElabErr("cannot read the prelude")
+          // A source starting `// prelude-report` asks which prelude
+          // declarations were left out, and why.
+          Some(p) => if text_starts_with(source, "// prelude-report", 0) {
+            ElabErr(Text::concat_all(["the prelude leaves out: ", text_join(p.snd, " | ")]))
+          } else {
+            let generated := dq_families()
+            let derived := dq_derive(k, &mut core, tables, generated, p.fst)
+            let base := elab_explicit_prelude_instances(tables) + dq_instance_count(core, generated)
+            let counted := Cons(ElabBinding::Mk("#instance-base", KernelLit(base), KernelLit(0)), derived)
+            let base_core := core
+            match elab_load(4096, k, &mut core, tables, lib, elab_dir_of(path), elab_import_paths(stmts), ElabImports { files: Nil, bindings: counted, classes: Nil, effects: Nil, visible: Nil }) {
+              Err(e) => ElabErr(e)
+              Ok(r) => {
+                let prelude := elab_std_prelude_names(tables, lib)
+                let entry := elab_vis_file(lib, path, source, stmts, true)
+                let seen := Cons(entry, r.visible)
+                match vis_check(seen, seen, base_core, prelude) {
+                Some(unseen) => ElabErr(unseen)
+                None => {
+                let m := elab_file_module(path)
+                let flat := elab_flatten_modules(k, elab_strip_body_imports(stmts))
+                let written := elab_requalify(flat, core, prelude, m)
+                let inherited := expand_superclasses(written, r.classes)
+                match inherited.snd {
+                  Nil => {
+                    let root := elab_owner_root(path, lib.library)
+                    let current := ElabBinding::Mk("#current-tote", KernelConst(root), KernelLit(0))
+                    let owners := cls_type_bindings(inherited.fst, root)
+                    let context := Cons(current, List::append(owners, r.bindings))
+                    elab_program_with_effects(elab_expand_classes(k, inherited.fst, context), k, &mut core, Cons(ElabBinding::Mk("#module", KernelConst(m), KernelLit(0)), elab_alias_bindings(elab_declared_runtime(flat), m, context)), r.effects)
+                  }
+                  Cons(error, ^more) => ElabErr(error.message)
+                }
+                }
+                }
+              }
+            }
+          }
+        }
+        }
       }
     }
   }
@@ -34,7 +97,7 @@ pub fn elab_source(k: Nat, source: Text): ElabResult(List(ElabItem)) {
 
 // Each file is an independent source program. Successful output is the kernel
 // wire format, suitable for replay by totes/kernel, not a host API result.
-pub fn elab_main_files(paths: List(Text)): Unit {
+pub fn elab_main_files(lib: ElabRoots, paths: List(Text)): Unit ! {div, exit, fs_canonicalize, fs_read, fs_stat, stderr, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
@@ -43,18 +106,132 @@ pub fn elab_main_files(paths: List(Text)): Unit {
           eprint(Text::concat_all(Cons(path, Cons(": ", Cons(message, Cons(text_newline(), Nil))))))
           perform exit(1)
         }
-        Ok(source) => match elab_source(2000, source) {
+        Ok(source) => match elab_source(2000, lib, path, source) {
           ElabErr(message) => {
             eprint(
               Text::concat_all(Cons(path, Cons(": ", Cons(message, Cons(text_newline(), Nil)))))
             )
             perform exit(1)
           }
-          ElabOk(ds) => print(elab_write_items(ds))
+          ElabOk(ds) => {
+            eprint(elab_write_skipped(ds))
+            print(elab_write_items(ds))
+          }
         }
       }
-      elab_main_files(rest)
+      elab_main_files(lib, rest)
     }
   }
 }
-elab_main_files(perform argv())
+// `--std DIR` names the standard library that `import std::…` reads, and
+// each `--dep NAME=DIR` the directory of the dependency `NAME`.
+pub fn elab_main_with(library: Text, deps: List(Text × Text), args: List(Text)): Unit ! {div, exit, fs_canonicalize, fs_read, fs_stat, out_of_bounds, overflow, stderr, stdout} {
+  match args {
+    Cons(a, rest) => if a == "--std" {
+      match rest {
+        Cons(dir, more) => elab_main_with(dir, deps, more)
+        Nil => {
+          eprint(Text::concat("--std needs a directory", text_newline()))
+          perform exit(1)
+        }
+      }
+    } else if a == "--dep" {
+      match rest {
+        Cons(d, more) => match text_find(d, "=", 0) {
+          Some(at) => elab_main_with(library, Cons(#(Text::slice_or_empty(d, 0, at), Text::slice_or_empty(d, at + 1, Text::len(d))), deps), more)
+          None => {
+            eprint(Text::concat("--dep needs NAME=DIR", text_newline()))
+            perform exit(1)
+          }
+        }
+        Nil => {
+          eprint(Text::concat("--dep needs NAME=DIR", text_newline()))
+          perform exit(1)
+        }
+      }
+    } else if a == "--syntax-types" {
+      match rest {
+        Cons(name, files) => elab_syntax_types(name, files)
+        Nil => #()
+      }
+    } else if a == "--include" {
+      elab_include_files(rest)
+    } else { elab_main_files(ElabRoots::Mk(library, deps), args) }
+    Nil => #()
+  }
+}
+
+// `--include FILE…`: each file's program with its `include_text!` calls read,
+// as the surface dump, then `error START END` for each call that failed.
+pub fn elab_include_files(paths: List(Text)): Unit ! {div, fs_canonicalize, fs_read, fs_stat, out_of_bounds, overflow, stdout} {
+  match paths {
+    Nil => #()
+    Cons(path, rest) => {
+      print(Text::concat_all(["== ", path, text_newline()]))
+      match read_file(path) {
+        Err(e) => print(Text::concat_all(["cannot read: ", e, text_newline()]))
+        Ok(source) => match syntax_tables() {
+          None => print("error\n")
+          Some(tables) => match syntax_parse(tables, source) {
+            None => print("error\n")
+            Some(Root) => {
+              let stmts := surface_program_of(
+                SurfaceCtx {
+                  source: source,
+                  base: 0,
+                  classes: unicode_classes(),
+                  fuel: surface_size(Root) + 1,
+                  lambda_types: true,
+                own_budget: false,
+                own_budget_memory: false
+                },
+                Root
+              )
+              var inc := ic_state(path)
+              let out := ic_program(&mut inc, stmts)
+              print(surface_dump(out))
+              var i: u64 := 0
+              while i < Vec::len(&inc.errs) {
+                print(Text::concat_all(["error ", Vec::index(&inc.errs, i), text_newline()]))
+                i := i + 1
+              }
+            }
+          }
+        }
+      }
+      elab_include_files(rest)
+    }
+  }
+}
+
+// `--syntax-types NAME TABLES…`: the types each table file's schema makes for
+// a syntax named `NAME`, as `tauto syntax show` prints them (`== FILE`, then the
+// source, or `error`).
+pub fn elab_syntax_types(name: Text, paths: List(Text)): Unit ! {div, fs_read, overflow, stdout} {
+  match paths {
+    Nil => #()
+    Cons(path, rest) => {
+      print(Text::concat_all(["== ", path, text_newline()]))
+      match read_file(path) {
+        Err(e) => print(Text::concat_all(["cannot read: ", e, text_newline()]))
+        Ok(tables) => match st_types_text(name, tables) {
+          Some(text) => print(text)
+          None => print("error\n")
+        }
+      }
+      elab_syntax_types(name, rest)
+    }
+  }
+}
+
+pub fn elab_main(args: List(Text)): Unit ! {div, exit, fs_canonicalize, fs_read, fs_stat, out_of_bounds, overflow, stderr, stdout} { elab_main_with("", Nil, args) }
+
+// Every index is below the length it was read with; a slip there says so
+// and stops rather than reading past the end.
+perform main(() => {
+  handle {
+    elab_main(perform argv())
+  } with {
+    out_of_bounds() => eprint("an index went past the end of a vector")
+  }
+})

@@ -1,7 +1,8 @@
 import "checker.taut"
-import std::Text
+import std::text
 import "ty.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 pub fn expr_local_name(local: Local): Text { local.name }
 pub fn expr_local_ty(local: Local): Ty { local.ty }
@@ -22,7 +23,7 @@ pub(open) inductive LocalBinding: (List(Local), Text, Local) -> Prop {
   ): LocalBinding(Cons(head, rest), name, local)
 }
 
-// The value/type fragment for text, booleans, and names of locals. This is
+// The value/type fragment for text, floats, booleans, and names of locals. This is
 // independent of lookup and inference; the other expression forms use further
 // typing rules, and effects and uses are separate judgments.
 pub(open) inductive AtomicTyping(env: List(Local)): (SurfaceTerm, Ty) -> Prop {
@@ -31,16 +32,21 @@ pub(open) inductive AtomicTyping(env: List(Local)): (SurfaceTerm, Ty) -> Prop {
     start: Nat,
     end: Nat
   ): AtomicTyping(env, surface_term_mk(SkText(value), start, end), TyText)
+  AtomicFloat(
+    digits: Text,
+    start: Nat,
+    end: Nat
+  ): AtomicTyping(env, surface_term_mk(SkFloat(digits), start, end), TyFloat)
   AtomicBool(
     value: Bool,
     start: Nat,
     end: Nat
   ): AtomicTyping(env, surface_term_mk(SkBool(value), start, end), TyBool)
   AtomicLocal(
-    name: Text,
+    name: SurfaceName,
     local: Local,
     start: Nat,
     end: Nat,
-    binding: LocalBinding(env, name, local)
+    binding: LocalBinding(env, surface_name_text(name), local)
   ): AtomicTyping(env, surface_term_mk(SkVar(name), start, end), expr_local_ty(local))
 }

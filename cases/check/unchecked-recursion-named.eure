@@ -1,0 +1,20 @@
+description = "A function that recurses without shrinking a matched parameter fails even where it uses a type written without `inductive`, which would otherwise run as written; a function that may not terminate says so with `div`."
+
+@ cases.a-non-structural-recursion-fails-with-a-type-written-without-inductive-0
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+struct Box { n: Nat }
+
+fn climb(b: Box, n: Nat, j: Nat): Nat {
+  if j == n { j } else { climb(b, n, j + 1) }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::climb" = "error: "
+@ cases.a-non-structural-recursion-fails-with-a-type-written-without-inductive-0.diagnostics[]
+file = "input/main.taut"
+name = "climb"
+message = "`climb` calls itself outside a structural match; there is no other termination check"
+span = "if j == n { j } else { «climb»(b, n, j + 1) }"

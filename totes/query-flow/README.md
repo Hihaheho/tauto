@@ -5,8 +5,8 @@ Tauto で書く増分計算のライブラリ。クエリの結果をキャッ�
 設計と、ディスクの形式は `docs/design/query-flow.md` にある。
 
 ```
-@query!(Add) => fn Add
-fn add(db: Db, a: i64, b: i64): i64 ! {halt, Div} { a + b }
+@query!(Add) => fn Add, fn Add::register
+fn add(db: Db, a: i64, b: i64): i64 ! {halt, div, overflow} { a + b }
 
 let rt := new_runtime()
 run(rt, Add(1, 2))                 // Value(3)

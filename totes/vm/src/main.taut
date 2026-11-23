@@ -1,34 +1,39 @@
+import "../../synrun/src/read.taut"
 import "builtins.taut"
 import "compile.taut"
 import "machine.taut"
 import "mval.taut"
 import "wire.taut"
-import "native.taut"
-import std::Int
-import std::Text
-import std::prelude::Os
-import std::prelude::Par
-import std::Base
-import std::prelude::Secret
-import std::Secret
+import std::int
+import std::text
+import std::uint
+import std::builtin::os
+import std::builtin::par
+import std::builtin::secret { secret }
+import std::base
+import std::secret
+import std::indexed_map { IndexedMap }
 
 // The shell of the machine of `machine.taut`. It reads the program that
 // `tauto run --backend vm` wrote to the file (`wire.taut`), compiles it (`compile.taut`),
 // runs it, and does what it asks of the host.
 //
-//   vm FILE LIMIT SHOWS ARGS...
+//   vm FILE LIMIT SHOWS INTERRUPTED TOO_DEEP ARGS...
 //
 // LIMIT is the host's limit of steps, or `-` for none. SHOWS is where what the program
 // shows goes: `-` for the standard output, else a file that holds them one to a line.
+// INTERRUPTED is what to say when the limit runs out, in the language of the host's user,
+// or `-` for the English one. TOO_DEEP is what to say when the calls nest deeper than the
+// machine keeps (`m_max_frames`), likewise.
 // ARGS are the program's own arguments. What the machine cannot run ends the shell with
 // code 3.
 
-pub fn vm_fail(message: Text): Unit {
+pub fn vm_fail(message: Text): Unit ! {exit, stderr} {
   eprint(Text::concat(message, "\n"))
   perform exit(1)
 }
 
-pub fn vm_int(n: i64): Int {
+pub fn vm_int(n: i64): Int ! {overflow} {
   if n < 0 {
     IntNegSucc(Nat::of_u64(U64::of_i64(0 - (n + 1))))
   } else {
@@ -36,7 +41,7 @@ pub fn vm_int(n: i64): Int {
   }
 }
 
-pub fn vm_i64(n: Int): i64 {
+pub fn vm_i64(n: Int): i64 ! {overflow} {
   match n {
     IntOfNat(k) => I64::of_u64(U64::of_nat(k))
     IntNegSucc(k) => 0 - I64::of_u64(U64::of_nat(k)) - 1
@@ -65,7 +70,7 @@ pub fn vm_arg(args: List(MVal), i: Nat): MVal {
 }
 
 // The clock the machine's timers read: milliseconds of the monotonic clock.
-pub fn vm_now(): Int {
+pub fn vm_now(): Int ! {monotonic_clock, overflow} {
   vm_int(div(perform monotonic_clock(), 1000000))
 }
 
@@ -79,7 +84,7 @@ pub fn vm_kind_name(k: FileKind): Text {
 
 pub fn vm_io_unit(r: Result(Unit, IoError)): MVal {
   match r {
-    Ok(u) => m_ok(MvUnit)
+    Ok(^u) => m_ok(MvUnit)
     Err(e) => m_errv(MvText(io_message(e)))
   }
 }
@@ -88,12 +93,8 @@ pub fn vm_u64(v: MVal): u64 {
   U64::of_nat(m_as_nat(v))
 }
 
-pub fn vm_stream(v: MVal): TcpStream {
-  TcpStream { id: vm_u64(v), local: "", peer: "" }
-}
-
 // A deadline as the machine holds an `Option(i64)`.
-pub fn vm_deadline(v: MVal): Option(i64) {
+pub fn vm_deadline(v: MVal): Option(i64) ! {overflow} {
   match v {
     MvData(c, fields) => if Nat::eq(c, 0) { Some(vm_i64(m_as_int(vm_arg(fields, 0)))) } else {
       None
@@ -117,9 +118,89 @@ pub fn vm_text_items(fuel: Nat, v: MVal): List(Text) {
   }
 }
 
-pub fn vm_pairs(ts: List(Text)): List(Pair(Text, Text)) {
+// The bytes of a `List(Bytes)` as the machine holds it; `fuel` bounds its length.
+pub fn vm_bytes_items(fuel: Nat, v: MVal): List(Bytes) ! {overflow} {
+  match fuel {
+    Zero => Nil
+    Succ(f) => match v {
+      MvData(c, fields) => if Nat::eq(c, 5) {
+        Cons(m_as_bytes(vm_arg(fields, 0)), vm_bytes_items(f, vm_arg(fields, 1)))
+      } else {
+        Nil
+      }
+      _ => Nil
+    }
+  }
+}
+
+pub fn vm_text_or_empty(o: Option(Text)): Text {
+  match o {
+    Some(t) => t
+    None => ""
+  }
+}
+
+pub fn vm_bytes_or_empty(o: Option(Bytes)): Bytes {
+  match o {
+    Some(b) => b
+    None => Bytes::of_list(Nil)
+  }
+}
+
+pub fn vm_some_bytes(b: Bytes): Option(Bytes) {
+  if Bytes::len(b) == 0 { None } else { Some(b) }
+}
+
+// The certificates of `Os::tls_accept`: the SNI names of each, joined by commas as the
+// program's host joined them (its own host joins the one name back), then its chain and key.
+pub fn vm_certs(names: List(Text), pems: List(Bytes)): List(TlsCert) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => match pems {
+      Cons(chain, Cons(key, more)) => Cons(
+        TlsCert { names: Cons(n, Nil), chain: chain, key: secret(key) },
+        vm_certs(rest, more)
+      )
+      _ => Nil
+    }
+  }
+}
+
+// The client of `Os::tls_connect`: `kind` 0 trusts the system's roots, 1 those and `cas`,
+// 2 `cas` alone; the client certificate is the chain and key after `cas`, empty when none.
+pub fn vm_tls_client(name: Text, kind: Nat, pems: List(Bytes), alpn: List(Text)): TlsClient ! {overflow} {
+  let cas := match pems {
+    Cons(c, _) => c
+    Nil => Bytes::of_list(Nil)
+  }
+  let roots := match kind {
+    Zero => SystemRoots
+    Succ(Zero) => SystemRootsAnd(cas)
+    _ => OnlyRoots(cas)
+  }
+  let mine := match pems {
+    Cons(_, Cons(chain, Cons(key, _))) => if Bytes::len(chain) == 0 {
+      None
+    } else {
+      Some(TlsClientCert { chain: chain, key: secret(key) })
+    }
+    _ => None
+  }
+  TlsClient { server_name: name, roots: roots, client_cert: mine, alpn: alpn }
+}
+
+// The names of an environment's variables.
+pub fn vm_names(env: List(Text × Text)): List(Text) {
+  match env {
+    Nil => Nil
+    Cons(#(n, _), rest) => Cons(n, vm_names(rest))
+  }
+}
+
+// The variables a flat environment sets: each name and its value.
+pub fn vm_pairs(ts: List(Text)): List(Text × Text) {
   match ts {
-    Cons(name, Cons(value, rest)) => Cons(Pair { fst: name, snd: value }, vm_pairs(rest))
+    Cons(name, Cons(value, rest)) => Cons(#(name, value), vm_pairs(rest))
     _ => Nil
   }
 }
@@ -141,22 +222,250 @@ pub fn vm_timed(r: Result(MVal, IoError)): MVal {
   }
 }
 
-pub fn vm_stream_answer(r: Result(TcpStream, IoError)): MVal {
-  vm_timed(
-    match r {
-      Ok(s) => Ok(
-        m_list(
-          Cons(MvText(Text::of_u64(s.id)), Cons(MvText(s.local), Cons(MvText(s.peer), Nil)))
+
+// What the shell's host gave it to own, by the numbers the shell gave the program for them:
+// HTTP bodies, listeners, TCP streams and TLS sessions. Each is owned: the shell takes it out
+// to ask the host, and puts back what the answer gives. A number the program closed holds
+// nothing. What stops a stream or a listener is kept apart, under the same number, so that
+// one job can stop what another is reading.
+pub enum(affine) VmHeld {
+  HRequest(RequestBody)
+  HResponse(ResponseBody)
+  HListener(TcpListener)
+  HTcp(TcpStream)
+  HTls(TlsStream)
+}
+
+pub enum VmStop {
+  STcp(TcpStopper)
+  SListen(ListenStopper)
+  STls(TlsStopper)
+}
+
+pub struct(affine) VmBodies {
+  next: u64,
+  held: IndexedMap(u64, Option(VmHeld)),
+  stops: IndexedMap(u64, Option(VmStop)),
+}
+
+pub fn vm_net_new(): Mutex(VmBodies) ! {mutex_new} {
+  perform mutex_new(VmBodies { next: 0, held: IndexedMap::new(), stops: IndexedMap::new() })
+}
+
+// The answer of a `uhost` operation: the word of the machine is 64 bits, and a
+// result that does not fit ends the run without resuming.
+pub fn vm_uhost(n: Nat, what: Text): Option(MVal) ! {stop} {
+  if n < 18446744073709551616 {
+    Some(MvInt(IntOfNat(n)))
+  } else {
+    perform stop(Text::concat("the number is too large for a word of 64 bits: uhost ", what))
+  }
+}
+
+pub fn vm_nat(n: u64): MVal {
+  MvInt(IntOfNat(Nat::of_u64(n)))
+}
+
+pub fn vm_flat(pairs: List(Text × Text)): List(Text) {
+  match pairs {
+    Nil => Nil
+    Cons(p, rest) => match p {
+      #(k, v) => Cons(k, Cons(v, vm_flat(rest)))
+    }
+  }
+}
+
+// Puts `h` under `n`, or under a new number when `n` is `None`, with its stopper: the number.
+pub fn vm_net_give(net: Mutex(VmBodies), n: Option(u64), h: VmHeld, stop: Option(VmStop)): u64 ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  match Mutex::take(net) {
+    VmBodies { next, held, stops } => {
+      let at := match n {
+        Some(k) => k
+        None => next + 1
+      }
+      var hs := held
+      var ss := stops
+      match IndexedMap::insert(&mut hs, at, Some(h)) {
+        #(_, _) => #()
+      }
+      match stop {
+        Some(s) => match IndexedMap::insert(&mut ss, at, Some(s)) {
+          #(_, _) => #()
+        }
+        None => #()
+      }
+      perform mutex_put(net, VmBodies { next: if at > next { at } else { next }, held: hs, stops: ss })
+      at
+    }
+  }
+}
+
+// Takes out what `n` holds; `None` when it holds nothing.
+pub fn vm_net_take(net: Mutex(VmBodies), n: u64): Option(VmHeld) ! {wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  match Mutex::take(net) {
+    VmBodies { next, held, stops } => {
+      var hs := held
+      let old := match IndexedMap::insert(&mut hs, n, None) {
+        #(o, _) => o
+      }
+      perform mutex_put(net, VmBodies { next: next, held: hs, stops: stops })
+      match old {
+        Some(#(_, o)) => o
+        None => None
+      }
+    }
+  }
+}
+
+pub fn vm_net_stopper(net: Mutex(VmBodies), n: u64): Option(VmStop) ! {wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  match Mutex::take(net) {
+    VmBodies { next, held, stops } => {
+      var ss := stops
+      let s := match IndexedMap::insert(&mut ss, n, None) {
+        #(Some(#(_, o)), _) => o
+        #(None, _) => None
+      }
+      match IndexedMap::insert(&mut ss, n, s) {
+        #(_, _) => #()
+      }
+      perform mutex_put(net, VmBodies { next: next, held: held, stops: ss })
+      s
+    }
+  }
+}
+
+pub fn vm_net_hold_request(net: Mutex(VmBodies), body: RequestBody): u64 ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  vm_net_give(net, None, HRequest(body), None)
+}
+
+pub fn vm_net_hold_response(net: Mutex(VmBodies), body: ResponseBody): u64 ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  vm_net_give(net, None, HResponse(body), None)
+}
+
+pub fn vm_net_give_request(net: Mutex(VmBodies), n: u64, body: RequestBody): u64 ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  vm_net_give(net, Some(n), HRequest(body), None)
+}
+
+pub fn vm_net_give_response(net: Mutex(VmBodies), n: u64, body: ResponseBody): u64 ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  vm_net_give(net, Some(n), HResponse(body), None)
+}
+
+pub fn vm_net_hold_listener(net: Mutex(VmBodies), l: TcpListener): u64 ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  let s := TcpListener::stopper(&l)
+  vm_net_give(net, None, HListener(l), Some(SListen(s)))
+}
+
+pub fn vm_net_hold_tcp(net: Mutex(VmBodies), s: TcpStream): u64 ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  let st := TcpStream::stopper(&s)
+  vm_net_give(net, None, HTcp(s), Some(STcp(st)))
+}
+
+pub fn vm_net_hold_tls(net: Mutex(VmBodies), s: TlsStream): u64 ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  let st := TlsStream::stopper(&s)
+  vm_net_give(net, None, HTls(s), Some(STls(st)))
+}
+
+pub fn vm_net_put(net: Mutex(VmBodies), n: u64, h: VmHeld): u64 ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  vm_net_give(net, Some(n), h, None)
+}
+
+// Takes out the body `n` holds; anything else it holds stays.
+pub fn vm_net_request(net: Mutex(VmBodies), n: u64): Option(RequestBody) ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  match vm_net_take(net, n) {
+    Some(HRequest(b)) => Some(b)
+    Some(other) => {
+      vm_net_put(net, n, other)
+      None
+    }
+    None => None
+  }
+}
+
+pub fn vm_net_response(net: Mutex(VmBodies), n: u64): Option(ResponseBody) ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  match vm_net_take(net, n) {
+    Some(HResponse(b)) => Some(b)
+    Some(other) => {
+      vm_net_put(net, n, other)
+      None
+    }
+    None => None
+  }
+}
+
+pub fn vm_net_listener(net: Mutex(VmBodies), n: u64): Option(TcpListener) ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  match vm_net_take(net, n) {
+    Some(HListener(l)) => Some(l)
+    Some(other) => {
+      vm_net_put(net, n, other)
+      None
+    }
+    None => None
+  }
+}
+
+pub fn vm_net_tcp(net: Mutex(VmBodies), n: u64): Option(TcpStream) ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  match vm_net_take(net, n) {
+    Some(HTcp(s)) => Some(s)
+    Some(other) => {
+      vm_net_put(net, n, other)
+      None
+    }
+    None => None
+  }
+}
+
+pub fn vm_net_tls(net: Mutex(VmBodies), n: u64): Option(TlsStream) ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  match vm_net_take(net, n) {
+    Some(HTls(s)) => Some(s)
+    Some(other) => {
+      vm_net_put(net, n, other)
+      None
+    }
+    None => None
+  }
+}
+
+// A TCP stream the host gave, held: its number, its local and its peer address.
+pub fn vm_stream_answer(net: Mutex(VmBodies), r: Result(TcpStream, IoError)): MVal ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  match r {
+    Ok(s) => {
+      let local := TcpStream::local(&s)
+      let peer := TcpStream::peer(&s)
+      let n := vm_net_hold_tcp(net, s)
+      vm_timed(Ok(m_list(Cons(MvText(Text::of_u64(n)), Cons(MvText(local), Cons(MvText(peer), Nil))))))
+    }
+    Err(e) => vm_timed(Err(e))
+  }
+}
+
+// A session as `Os::tls_accept` and `Os::tls_connect` answer it: the peer's certificate (empty
+// when it sent none) and the number, the ALPN protocol and the SNI name (empty when none).
+pub fn vm_session_answer(net: Mutex(VmBodies), r: Result(TlsStream, IoError)): MVal ! {overflow, wait, mutex_put, mutex_claim, mutex_take_claimed} {
+  match r {
+    Ok(s) => {
+      let cert := vm_bytes_or_empty(TlsStream::peer_certificate(&s))
+      let alpn := vm_text_or_empty(TlsStream::alpn(&s))
+      let name := vm_text_or_empty(TlsStream::server_name(&s))
+      let n := vm_net_hold_tls(net, s)
+      vm_timed(
+        Ok(
+          m_pair(
+            MvBytes(cert),
+            m_list(Cons(MvText(Text::of_u64(n)), Cons(MvText(alpn), Cons(MvText(name), Nil))))
+          )
         )
       )
-      Err(e) => Err(e)
     }
-  )
+    Err(e) => vm_timed(Err(e))
+  }
 }
 
 // Where the deadline of a request that waits (`m_waits`) is among its arguments.
 pub fn vm_deadline_at(name: Text): Nat {
-  if Text::eq(name, "Os::tcp_read") {
+  if Bool::or(
+    Bool::or(Text::eq(name, "Os::tcp_read"), Text::eq(name, "Os::tls_read")),
+    Bool::or(Text::eq(name, "Os::http_read"), Text::eq(name, "Os::http_write"))
+  ) {
     2
   } else if Text::eq(name, "Os::child_read") {
     3
@@ -167,28 +476,140 @@ pub fn vm_deadline_at(name: Text): Nat {
 
 // Asks the host `name` with the deadline `d` (nanoseconds of `monotonic_clock`) in place of
 // the program's own.
-pub fn vm_waiting(name: Text, args: List(MVal), d: Option(i64)): MVal ! {Host} {
+pub fn vm_waiting(net: Mutex(VmBodies), name: Text, args: List(MVal), d: Option(i64)): MVal ! {Host, overflow} {
   let a := vm_arg(args, 0)
   let b := vm_arg(args, 1)
   let c := vm_arg(args, 2)
-  if Text::eq(name, "Os::tcp_accept") {
-    vm_stream_answer(perform tcp_accept(TcpListener { id: vm_u64(a), address: "" }, d))
+  if Text::eq(name, "Os::http_write") {
+    match vm_net_request(net, vm_u64(a)) {
+      None => m_errv(MvText("no such request"))
+      Some(body) => match perform net_write(body, m_as_bytes(b), d) {
+        Written { body: back, result } => {
+          vm_net_give_request(net, vm_u64(a), back)
+          vm_timed(
+            match result {
+              Ok(^u) => Ok(MvUnit)
+              Err(e) => Err(e)
+            }
+          )
+        }
+      }
+    }
+  } else if Text::eq(name, "Os::http_finish") {
+    match vm_net_request(net, vm_u64(a)) {
+      None => m_errv(MvText("no such request"))
+      Some(body) => match perform net_finish(body, d) {
+        Responded(Opened { head, body: got }) => {
+          let n := vm_net_hold_response(net, got)
+          m_ok(
+            m_some(
+              m_list(
+                vm_texts(
+                  Cons(Text::of_u64(n), Cons(Text::of_u64(head.status), vm_flat(head.headers)))
+                )
+              )
+            )
+          )
+        }
+        Unanswered(back) => {
+          vm_net_give_request(net, vm_u64(a), back)
+          m_ok(m_none())
+        }
+        NoResponse(e) => m_errv(MvText(io_message(e)))
+      }
+    }
+  } else if Text::eq(name, "Os::http_read") {
+    match vm_net_response(net, vm_u64(a)) {
+      None => m_errv(MvText("no such response"))
+      Some(body) => match perform net_read(body, vm_u64(b), d) {
+        Piece { body: back, got } => {
+          vm_net_give_response(net, vm_u64(a), back)
+          vm_timed(
+            match got {
+              Ok(bs) => Ok(MvBytes(bs))
+              Err(e) => Err(e)
+            }
+          )
+        }
+      }
+    }
+  } else if Text::eq(name, "Os::tcp_accept") {
+    match vm_net_listener(net, vm_u64(a)) {
+      None => m_errv(MvText("no such listener"))
+      Some(l) => match perform tcp_accept(l, d) {
+        TcpAccepted { listener, got } => {
+          vm_net_put(net, vm_u64(a), HListener(listener))
+          vm_stream_answer(net, got)
+        }
+      }
+    }
   } else if Text::eq(name, "Os::tcp_connect") {
-    vm_stream_answer(perform tcp_connect(m_as_text(a), d))
+    vm_stream_answer(net, perform tcp_connect(m_as_text(a), d))
   } else if Text::eq(name, "Os::tcp_read") {
-    vm_timed(
-      match perform tcp_read(vm_stream(a), vm_u64(b), d) {
-        Ok(bs) => Ok(MvBytes(bs))
-        Err(e) => Err(e)
+    match vm_net_tcp(net, vm_u64(a)) {
+      None => m_errv(MvText("no such stream"))
+      Some(st) => match perform tcp_read(st, vm_u64(b), d) {
+        TcpRead { stream, got } => {
+          vm_net_put(net, vm_u64(a), HTcp(stream))
+          vm_timed(
+            match got {
+              Ok(bs) => Ok(MvBytes(bs))
+              Err(e) => Err(e)
+            }
+          )
+        }
       }
-    )
+    }
+  } else if Text::eq(name, "Os::tcp_send") {
+    // Sends all of the bytes, waiting as `tcp_write` does.
+    match vm_net_tcp(net, vm_u64(a)) {
+      None => m_errv(MvText("no such stream"))
+      Some(st) => {
+        let bs := m_as_bytes(b)
+        let n := UInt::val64(Bytes::len(bs))
+        match perform tcp_write(st, bs, d) {
+          TcpWritten { stream, result } => {
+            vm_net_put(net, vm_u64(a), HTcp(stream))
+            vm_timed(
+              match result {
+                Ok(^u) => Ok(m_int(n))
+                Err(e) => Err(e)
+              }
+            )
+          }
+        }
+      }
+    }
   } else if Text::eq(name, "Os::tcp_write") {
-    vm_timed(
-      match perform tcp_write(vm_stream(a), m_as_bytes(b), d) {
-        Ok(u) => Ok(MvUnit)
-        Err(e) => Err(e)
+    match vm_net_tcp(net, vm_u64(a)) {
+      None => m_errv(MvText("no such stream"))
+      Some(st) => match perform tcp_write(st, m_as_bytes(b), d) {
+        TcpWritten { stream, result } => {
+          vm_net_put(net, vm_u64(a), HTcp(stream))
+          vm_timed(
+            match result {
+              Ok(^u) => Ok(MvUnit)
+              Err(e) => Err(e)
+            }
+          )
+        }
       }
-    )
+    }
+  } else if Text::eq(name, "Os::tls_read") {
+    match vm_net_tls(net, vm_u64(a)) {
+      None => m_errv(MvText("no such session"))
+      Some(st) => match perform tls_read(st, vm_u64(b), d) {
+        TlsRead { stream, got } => {
+          vm_net_put(net, vm_u64(a), HTls(stream))
+          vm_timed(
+            match got {
+              Ok(bs) => Ok(MvBytes(bs))
+              Err(e) => Err(e)
+            }
+          )
+        }
+      }
+    }
   } else if Text::eq(name, "Os::child_read") {
     let which := if Nat::eq(m_as_nat(b), 2) { ChildStderr } else { ChildStdout }
     vm_timed(
@@ -215,7 +636,7 @@ pub fn vm_timed_out(v: MVal): Bool {
   match v {
     MvData(c, fields) => if Nat::eq(c, 2) {
       match vm_arg(fields, 0) {
-        MvData(d, inner) => Nat::eq(d, 1)
+        MvData(d, ^inner) => Nat::eq(d, 1)
         _ => false
       }
     } else {
@@ -236,7 +657,7 @@ pub struct VmPolled { jobs: List(VmJob), answered: Bool, cx: MCx }
 // when that comes first; one already past still takes what is there), and gives the machine
 // the answers. The shell runs on one thread, so a request waits in turns like this: the
 // machine's other tasks go on between them.
-pub fn vm_poll(jobs: List(VmJob), cx: MCx, until: i64): VmPolled ! {Host} {
+pub fn vm_poll(net: Mutex(VmBodies), jobs: List(VmJob), cx: MCx, until: i64): VmPolled ! {Host, overflow} {
   match jobs {
     Nil => VmPolled { jobs: Nil, answered: false, cx: cx }
     Cons(j, rest) => {
@@ -245,7 +666,7 @@ pub fn vm_poll(jobs: List(VmJob), cx: MCx, until: i64): VmPolled ! {Host} {
         Some(o) => if o < until { o } else { until }
         None => until
       }
-      let answer := vm_waiting(j.name, j.args, Some(d))
+      let answer := vm_waiting(net, j.name, j.args, Some(d))
       let still := if vm_timed_out(answer) {
         match own {
           None => true
@@ -254,7 +675,7 @@ pub fn vm_poll(jobs: List(VmJob), cx: MCx, until: i64): VmPolled ! {Host} {
       } else {
         false
       }
-      match vm_poll(rest, cx, until) {
+      match vm_poll(net, rest, cx, until) {
         VmPolled { jobs: left, answered, cx: cx2 } => if still {
           VmPolled { jobs: Cons(j, left), answered: answered, cx: cx2 }
         } else {
@@ -265,15 +686,12 @@ pub fn vm_poll(jobs: List(VmJob), cx: MCx, until: i64): VmPolled ! {Host} {
   }
 }
 
-pub fn vm_poll_state(jobs: List(VmJob), st: MState): Pair(List(VmJob), MState) ! {Host} {
+pub fn vm_poll_state(net: Mutex(VmBodies), jobs: List(VmJob), st: MState): (List(VmJob) × MState) ! {Host, overflow} {
   match jobs {
-    Nil => Pair { fst: Nil, snd: st }
+    Nil => #(Nil, st)
     _ => match st {
-      Mstate(MkCode, slots, stack, fr, cx) => match vm_poll(jobs, cx, perform monotonic_clock()) {
-        VmPolled { jobs: left, answered, cx: cx2 } => Pair {
-          fst: left,
-          snd: Mstate(MkCode, slots, stack, fr, cx2),
-        }
+      Mstate(MkCode, slots, stack, fr, cx) => match vm_poll(net, jobs, cx, perform monotonic_clock()) {
+        VmPolled { jobs: left, ^answered, cx: cx2 } => #(left, Mstate(MkCode, slots, stack, fr, cx2))
       }
     }
   }
@@ -287,13 +705,15 @@ pub fn vm_turn(): i64 {
 // The host's answer to the request `name`, or `None` when the shell cannot make it. The
 // shell asks its own host by the standard effects, which check what it was allowed
 // itself: a request the program's permissions would refuse is refused there.
-pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(MVal) {
+pub fn vm_host(net: Mutex(VmBodies), name: Text, args: List(MVal), program_args: List(Text)): Option(MVal) ! {div, argv, budget, budget_memory, env, environ, fs_canonicalize, fs_copy, fs_create_dir, fs_list_dir, fs_lock, fs_read, fs_read_bytes, fs_read_bytes_under, fs_read_link, fs_read_under, fs_remove, fs_rename, fs_set_mode, fs_stat, fs_temp_dir, fs_unlock, fs_write, fs_write_bytes, fs_write_new, hash_seed, host_width, monotonic_clock, net, net_addr, net_cancel, net_close, net_finish, net_open, net_read, net_resolve, net_write, overflow, permission, proc_close, proc_close_stdin, proc_read, proc_run, proc_spawn, proc_wait, proc_write, random, secure_random, shutdown_token, sleep, stop, ∀ T. spawn(() -> T ! {div}), ∀ T. spawn(() -> T ! {wait}), stderr, stdin, stdin_bytes, stdout, stdout_flush, tcp_accept, tcp_close, tcp_connect, tcp_listen, tcp_read, tcp_shutdown, tcp_unlisten, tcp_write, timer, tls_accept, tls_close, tls_connect, tls_read, tls_shutdown, tls_write, uhost_add, uhost_mul, uhost_of_u64, uhost_sub, wait, wall_clock, ref_get, ref_new, ref_set, weak_get, weak_of, atomic_fetch_add, atomic_load, atomic_new, atomic_store, mutex_claim, mutex_new, mutex_put, mutex_take_claimed, mutex_withdraw} {
   let a := vm_arg(args, 0)
   let b := vm_arg(args, 1)
   if Text::eq(name, "vm_now") {
     Some(MvInt(vm_now()))
   } else if Text::eq(name, "Os::args") {
     Some(m_list(vm_texts(program_args)))
+  } else if Text::eq(name, "Os::entry") {
+    Some(m_list(vm_texts(Os::entry(m_as_text(a), vm_text_items(1000000, b)))))
   } else if Text::eq(name, "Os::print") {
     print(m_as_text(a))
     Some(MvUnit)
@@ -353,7 +773,10 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
           m_list(
             Cons(
               MvText(vm_kind_name(st.kind)),
-              Cons(MvText(Text::of_u64(st.size)), Cons(MvText(Text::of_u64(st.modified_ms)), Nil))
+              Cons(
+                MvText(Text::of_u64(st.size)),
+                Cons(MvText(Text::of_u64(st.modified_ms)), Cons(MvText(if st.executable { "1" } else { "0" }), Nil))
+              )
             )
           )
         )
@@ -370,6 +793,24 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
     Some(vm_io_unit(perform fs_write_new(m_as_text(a), m_as_text(b))))
   } else if Text::eq(name, "Os::move_path") {
     Some(vm_io_unit(perform fs_rename(m_as_text(a), m_as_text(b))))
+  } else if Text::eq(name, "Os::set_mode") {
+    let readonly := match b {
+      MvBool(x) => x
+      _ => false
+    }
+    let executable := match vm_arg(args, 2) {
+      MvBool(x) => x
+      _ => false
+    }
+    Some(vm_io_unit(perform fs_set_mode(m_as_text(a), readonly, executable)))
+  } else if Text::eq(name, "Os::lock") {
+    match perform fs_lock(m_as_text(a)) {
+      Ok(l) => Some(m_ok(MvInt(IntOfNat(Nat::of_u64(l.id)))))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::unlock") {
+    perform fs_unlock(FileLock { id: vm_u64(a) })
+    Some(MvUnit)
   } else if Text::eq(name, "Os::copy_file") {
     Some(vm_io_unit(perform fs_copy(m_as_text(a), m_as_text(b))))
   } else if Text::eq(name, "Os::canonicalize") {
@@ -389,15 +830,47 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
   } else if Text::eq(name, "Os::flush") {
     perform stdout_flush()
     Some(MvUnit)
+  } else if Text::eq(name, "Os::env_names") {
+    Some(m_list(vm_texts(vm_names(perform environ()))))
   } else if Text::eq(name, "Os::env") {
     match perform env(m_as_text(a)) {
       Ok(o) => Some(vm_text_option(o))
-      Err(e) => Some(m_none())
+      Err(^e) => Some(m_none())
     }
   } else if Text::eq(name, "Os::wall_ms") {
     Some(MvInt(vm_int(perform wall_clock())))
   } else if Text::eq(name, "Os::monotonic_ns") {
     Some(MvInt(vm_int(perform monotonic_clock())))
+  } else if Text::eq(name, "Os::uhost_add") {
+    vm_uhost(m_as_nat(a) + m_as_nat(b), "+")
+  } else if Text::eq(name, "Os::uhost_sub") {
+    if m_as_nat(a) < m_as_nat(b) {
+      vm_uhost(18446744073709551616, "-")
+    } else {
+      vm_uhost(m_as_nat(a) - m_as_nat(b), "-")
+    }
+  } else if Text::eq(name, "Os::uhost_mul") {
+    vm_uhost(m_as_nat(a) * m_as_nat(b), "*")
+  } else if Text::eq(name, "Os::uhost_of_u64") {
+    Some(MvInt(IntOfNat(m_as_nat(a))))
+  } else if Text::eq(name, "UHost::succ_below") {
+    Some(MvInt(IntOfNat(m_as_nat(a) + 1)))
+  } else if Text::eq(name, "UHost::pred_nz") {
+    Some(MvInt(IntOfNat(m_as_nat(a) - 1)))
+  } else if Text::eq(name, "UHost::add_within") {
+    Some(MvInt(IntOfNat(m_as_nat(a) + m_as_nat(b))))
+  } else if Text::eq(name, "UHost::sub") {
+    Some(MvInt(IntOfNat(m_as_nat(a) - m_as_nat(b))))
+  } else if Text::eq(name, "UHost::of_u64_below") {
+    Some(MvInt(IntOfNat(m_as_nat(a))))
+  } else if Text::eq(name, "U64::of_uhost") {
+    Some(MvInt(IntOfNat(m_as_nat(a))))
+  } else if Text::eq(name, "Os::host_bits") {
+    Some(MvInt(IntOfNat(64)))
+  } else if Text::eq(name, "Os::hash_seed_k0") {
+    Some(MvInt(IntOfNat(Nat::of_u64((perform hash_seed()).k0))))
+  } else if Text::eq(name, "Os::hash_seed_k1") {
+    Some(MvInt(IntOfNat(Nat::of_u64((perform hash_seed()).k1))))
   } else if Text::eq(name, "Os::random") {
     Some(MvInt(IntOfNat(Nat::of_u64(perform random()))))
   } else if Text::eq(name, "Os::secure_random") {
@@ -405,13 +878,121 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
       Ok(s) => Some(m_ok(MvBytes(expose(s))))
       Err(e) => Some(m_errv(MvText(io_message(e))))
     }
-  } else if Bool::or(Text::eq(name, "Os::tcp_connect"), Text::eq(name, "Os::tcp_write")) {
-    Some(vm_waiting(name, args, vm_deadline(vm_arg(args, vm_deadline_at(name)))))
+  } else if Text::eq(name, "Os::http_open") {
+    let at := m_as_text(vm_arg(args, 2))
+    let head := RequestHead {
+      method: m_as_text(a),
+      url: m_as_text(b),
+      headers: vm_pairs(vm_text_items(1000000, vm_arg(args, 3))),
+    }
+    match perform net_open(head, if Text::len(at) == 0 { None } else { Some(at) }) {
+      Ok(body) => Some(m_ok(vm_nat(vm_net_hold_request(net, body))))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::http_close") {
+    let n := vm_u64(a)
+    match vm_net_request(net, n) {
+      Some(body) => perform net_cancel(body)
+      None => match vm_net_response(net, n) {
+        Some(body) => perform net_close(body)
+        None => #()
+      }
+    }
+    Some(MvUnit)
+  } else if Bool::or(
+    Bool::or(
+      Text::eq(name, "Os::tcp_connect"),
+      Bool::or(Text::eq(name, "Os::tcp_write"), Text::eq(name, "Os::tcp_send"))
+    ),
+    Text::eq(name, "Os::http_write")
+  ) {
+    Some(vm_waiting(net, name, args, vm_deadline(vm_arg(args, vm_deadline_at(name)))))
+  } else if Text::eq(name, "Os::tls_connect") {
+    let client := vm_tls_client(
+      m_as_text(b),
+      m_as_nat(vm_arg(args, 2)),
+      vm_bytes_items(1000000, vm_arg(args, 3)),
+      vm_text_items(1000000, vm_arg(args, 4))
+    )
+    match vm_net_tcp(net, vm_u64(a)) {
+      None => Some(m_errv(MvText("no such stream")))
+      Some(st) => Some(vm_session_answer(net, perform tls_connect(st, client, vm_deadline(vm_arg(args, 5)))))
+    }
+  } else if Text::eq(name, "Os::tls_accept") {
+    let server := TlsServer {
+      certs: vm_certs(vm_text_items(1000000, b), vm_bytes_items(1000000, vm_arg(args, 2))),
+      alpn: vm_text_items(1000000, vm_arg(args, 3)),
+      client_roots: vm_some_bytes(m_as_bytes(vm_arg(args, 4))),
+    }
+    match vm_net_tcp(net, vm_u64(a)) {
+      None => Some(m_errv(MvText("no such stream")))
+      Some(st) => Some(vm_session_answer(net, perform tls_accept(st, server, vm_deadline(vm_arg(args, 5)))))
+    }
+  } else if Text::eq(name, "Os::tls_send") {
+    // Sends all of the bytes, waiting as `tls_write` does; with none,
+    // nothing is left to send.
+    match vm_net_tls(net, vm_u64(a)) {
+      None => Some(m_errv(MvText("no such session")))
+      Some(st) => {
+        let bs := m_as_bytes(b)
+        let n := UInt::val64(Bytes::len(bs))
+        match perform tls_write(st, bs, vm_deadline(vm_arg(args, 2))) {
+          TlsWritten { stream, result } => {
+            vm_net_put(net, vm_u64(a), HTls(stream))
+            Some(
+              vm_timed(
+                match result {
+                  Ok(^u) => Ok(m_int(n))
+                  Err(e) => Err(e)
+                }
+              )
+            )
+          }
+        }
+      }
+    }
+  } else if Text::eq(name, "Os::tls_write") {
+    match vm_net_tls(net, vm_u64(a)) {
+      None => Some(m_errv(MvText("no such session")))
+      Some(st) => match perform tls_write(st, m_as_bytes(b), vm_deadline(vm_arg(args, 2))) {
+        TlsWritten { stream, result } => {
+          vm_net_put(net, vm_u64(a), HTls(stream))
+          Some(
+            vm_timed(
+              match result {
+                Ok(^u) => Ok(MvUnit)
+                Err(e) => Err(e)
+              }
+            )
+          )
+        }
+      }
+    }
+  } else if Text::eq(name, "Os::tls_shutdown") {
+    let how := match m_as_nat(b) {
+      Zero => ShutdownRead
+      Succ(Zero) => ShutdownWrite
+      _ => ShutdownBoth
+    }
+    match vm_net_stopper(net, vm_u64(a)) {
+      Some(STls(st)) => Some(vm_io_unit(perform tls_shutdown(st, how)))
+      _ => Some(m_errv(MvText("no such session")))
+    }
+  } else if Text::eq(name, "Os::tls_close") {
+    match vm_net_tls(net, vm_u64(a)) {
+      Some(st) => perform tls_close(st)
+      None => #()
+    }
+    Some(MvUnit)
   } else if Text::eq(name, "Os::child_write") {
     Some(vm_io_unit(perform proc_write(Child { id: vm_u64(a) }, m_as_bytes(b))))
   } else if Text::eq(name, "Os::tcp_listen") {
     match perform tcp_listen(m_as_text(a)) {
-      Ok(l) => Some(m_ok(m_list(Cons(MvText(Text::of_u64(l.id)), Cons(MvText(l.address), Nil)))))
+      Ok(l) => {
+        let at := TcpListener::address(&l)
+        let n := vm_net_hold_listener(net, l)
+        Some(m_ok(m_list(Cons(MvText(Text::of_u64(n)), Cons(MvText(at), Nil)))))
+      }
       Err(e) => Some(m_errv(MvText(io_message(e))))
     }
   } else if Text::eq(name, "Os::tcp_shutdown") {
@@ -420,12 +1001,25 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
       Succ(Zero) => ShutdownWrite
       _ => ShutdownBoth
     }
-    Some(vm_io_unit(perform tcp_shutdown(vm_stream(a), how)))
+    match vm_net_stopper(net, vm_u64(a)) {
+      Some(STcp(st)) => Some(vm_io_unit(perform tcp_shutdown(st, how)))
+      _ => Some(m_errv(MvText("no such stream")))
+    }
   } else if Text::eq(name, "Os::tcp_close") {
-    perform tcp_close(vm_stream(a))
+    match vm_net_tcp(net, vm_u64(a)) {
+      Some(st) => perform tcp_close(st)
+      None => #()
+    }
     Some(MvUnit)
   } else if Text::eq(name, "Os::tcp_unlisten") {
-    perform tcp_unlisten(TcpListener { id: vm_u64(a), address: "" })
+    match vm_net_stopper(net, vm_u64(a)) {
+      Some(SListen(st)) => perform tcp_unlisten(st)
+      _ => #()
+    }
+    match vm_net_listener(net, vm_u64(a)) {
+      Some(_) => #()
+      None => #()
+    }
     Some(MvUnit)
   } else if Text::eq(name, "Os::child_spawn") {
     let process := Process {
@@ -445,6 +1039,30 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
       Ok(c) => Some(m_ok(m_list(Cons(MvText(Text::of_u64(c.id)), Nil))))
       Err(e) => Some(m_errv(MvText(io_message(e))))
     }
+  } else if Text::eq(name, "Os::run") {
+    // The host's `proc_run`, answered as `Os::run` answers: standard output, then the
+    // exit status (empty when a signal ended it) and standard error.
+    let process := Process {
+      program: m_as_text(a),
+      args: vm_text_items(1000000, b),
+      dir: m_as_text(vm_arg(args, 2)),
+      env: vm_pairs(vm_text_items(1000000, vm_arg(args, 3))),
+      stdin: m_as_bytes(vm_arg(args, 4)),
+    }
+    match perform proc_run(process) {
+      Ok(out) => {
+        let status := match out.status {
+          None => ""
+          Some(n) => Text::of_u64(n)
+        }
+        Some(
+          m_ok(
+            m_pair(MvBytes(out.stdout), m_list(Cons(MvText(status), Cons(MvText(out.stderr), Nil))))
+          )
+        )
+      }
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
   } else if Text::eq(name, "Os::child_close_stdin") {
     Some(vm_io_unit(perform proc_close_stdin(Child { id: vm_u64(a) })))
   } else if Text::eq(name, "Os::child_close") {
@@ -454,7 +1072,7 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
     match w_number(Text::bytes(m_as_text(a)), 0, false) {
       None => Some(MvInt(IntOfNat(0)))
       Some(r) => match r {
-        Pair { fst: n, snd: rest } => Some(MvInt(IntOfNat(n)))
+        #(n, ^rest) => Some(MvInt(IntOfNat(n)))
       }
     }
   } else {
@@ -462,7 +1080,17 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
   }
 }
 
-pub fn vm_show(shows: Option(Text), so_far: Text, line: Text): Text {
+pub fn vm_commas(names: List(Text)): Text {
+  match names {
+    Nil => ""
+    Cons(first, rest) => match rest {
+      Nil => first
+      _ => Text::concat_all(Cons(first, Cons(",", Cons(vm_commas(rest), Nil))))
+    }
+  }
+}
+
+pub fn vm_show(shows: Option(Text), so_far: Text, line: Text): Text ! {exit, fs_write, stderr, stdout} {
   match shows {
     None => {
       print(line)
@@ -471,7 +1099,7 @@ pub fn vm_show(shows: Option(Text), so_far: Text, line: Text): Text {
     Some(path) => {
       let all := Text::concat(so_far, line)
       match write_file(path, all) {
-        Ok(u) => all
+        Ok(^u) => all
         Err(e) => {
           vm_fail(Text::concat_all(Cons(path, Cons(": ", Cons(e, Nil)))))
           all
@@ -481,12 +1109,12 @@ pub fn vm_show(shows: Option(Text), so_far: Text, line: Text): Text {
   }
 }
 
-pub fn vm_exit(code: Int): Unit {
+pub fn vm_exit(code: Int): Unit ! {exit, overflow} {
   perform exit(I32::of_i64(vm_i64(code)))
 }
 
-// Runs the machine to its end, in runs of at most 100000 instructions. LIMIT is the
-// host's limit of steps as `vm` was given it, for the message when it runs out. JOBS are
+// Runs the machine to its end, in runs of at most 100000 instructions. INTERRUPTED is
+// what to say when the host's limit of steps runs out. JOBS are
 // the requests that wait which the shell started (`MstepStart`): between runs, and while
 // every task waits, it gives the machine the answers that came.
 // The signals of the program's `shutdown_token`s still waiting for a request to end the run,
@@ -494,7 +1122,7 @@ pub fn vm_exit(code: Int): Unit {
 // the program does, so until then a request ends the shell as it would end the program.
 pub struct VmShutdown { token: Option(CancelToken), watch: List(Nat) }
 
-pub fn vm_shutdown_add(sd: VmShutdown, id: Nat): VmShutdown {
+pub fn vm_shutdown_add(sd: VmShutdown, id: Nat): VmShutdown ! {shutdown_token} {
   let token := match sd.token {
     Some(t) => t
     None => perform shutdown_token()
@@ -510,21 +1138,21 @@ pub fn vm_shutdown_raise(ids: List(Nat), cx: MCx): MCx {
 }
 
 // Raises the waiting signals once the request has come.
-pub fn vm_shutdown_fire(sd: VmShutdown, cx: MCx): Pair(VmShutdown, MCx) {
+pub fn vm_shutdown_fire(sd: VmShutdown, cx: MCx): VmShutdown × MCx {
   match sd.token {
     Some(t) => if CancelToken::is_requested(t) {
-      Pair { fst: VmShutdown { token: sd.token, watch: Nil }, snd: vm_shutdown_raise(sd.watch, cx) }
+      #(VmShutdown { token: sd.token, watch: Nil }, vm_shutdown_raise(sd.watch, cx))
     } else {
-      Pair { fst: sd, snd: cx }
+      #(sd, cx)
     }
-    None => Pair { fst: sd, snd: cx }
+    None => #(sd, cx)
   }
 }
 
-pub fn vm_shutdown_state(sd: VmShutdown, st: MState): Pair(VmShutdown, MState) {
+pub fn vm_shutdown_state(sd: VmShutdown, st: MState): VmShutdown × MState {
   match st {
     Mstate(MkCode, slots, stack, fr, cx) => match vm_shutdown_fire(sd, cx) {
-      Pair { fst: sd2, snd: cx2 } => Pair { fst: sd2, snd: Mstate(MkCode, slots, stack, fr, cx2) }
+      #(sd2, cx2) => #(sd2, Mstate(MkCode, slots, stack, fr, cx2))
     }
   }
 }
@@ -536,32 +1164,48 @@ pub fn vm_shutdown_waits(sd: VmShutdown): Bool {
   }
 }
 
+// What the shell says when the host's limits end the run, in the host's user's language.
+pub struct VmSay { interrupted: Text, too_deep: Text }
+
 pub fn vm_shell(
   p: MProgram,
-  limit: Text,
+  interrupted: VmSay,
   r: MStep,
   shows: Option(Text),
   so_far: Text,
   program_args: List(Text),
   jobs: List(VmJob),
-  sd: VmShutdown
-): Unit {
+  sd: VmShutdown,
+  net: Mutex(VmBodies)
+): Unit ! {div, argv, budget, budget_memory, env, environ, exit, fs_canonicalize, fs_copy, fs_create_dir, fs_list_dir, fs_lock, fs_read, fs_read_bytes, fs_read_bytes_under, fs_read_link, fs_read_under, fs_remove, fs_rename, fs_set_mode, fs_stat, fs_temp_dir, fs_unlock, fs_write, fs_write_bytes, fs_write_new, hash_seed, host_width, monotonic_clock, net, net_addr, net_cancel, net_close, net_finish, net_open, net_read, net_resolve, net_write, overflow, permission, proc_close, proc_close_stdin, proc_read, proc_run, proc_spawn, proc_wait, proc_write, random, secure_random, shutdown_token, sleep, stdin, stop, ∀ T. spawn(() -> T ! {div}), ∀ T. spawn(() -> T ! {wait}), stderr, stdin_bytes, stdout, stdout_flush, tcp_accept, tcp_close, tcp_connect, tcp_listen, tcp_read, tcp_shutdown, tcp_unlisten, tcp_write, timer, tls_accept, tls_close, tls_connect, tls_read, tls_shutdown, tls_write, uhost_add, uhost_mul, uhost_of_u64, uhost_sub, wait, wall_clock, ref_get, ref_new, ref_set, weak_get, weak_of, atomic_fetch_add, atomic_load, atomic_new, atomic_store, mutex_claim, mutex_new, mutex_put, mutex_take_claimed, mutex_withdraw} {
   match r {
-    MstepNext(s) => match vm_poll_state(jobs, s) {
-      Pair { fst: left, snd: s1 } => match vm_shutdown_state(sd, s1) {
-        Pair { fst: sd2, snd: s2 } => vm_shell(
+    MstepNext(s) => match vm_poll_state(net, jobs, s) {
+      #(left, s1) => match vm_shutdown_state(sd, s1) {
+        #(sd2, s2) => vm_shell(
           p,
-          limit,
-          mrun(p, 100000, m_set_now(s2, vm_now())),
+          interrupted,
+          mrun_tasks(p, 100000, m_set_now(s2, vm_now())),
           shows,
           so_far,
           program_args,
           left,
-          sd2
+          sd2,
+          net
         )
       }
     }
     MstepDone => #()
+    // The host values the run dropped, in order, for the runner of the cases, which reads
+    // them where the shows go when they go to a file. On the standard output they would be
+    // taken for what the program writes.
+    MstepReport(dropped) => match shows {
+      None => #()
+      Some(^path) => {
+        let line := Text::concat_all(Cons("tauto-probe-drops: ", Cons(vm_commas(dropped), Cons("\n", Nil))))
+        let all := vm_show(shows, so_far, line)
+        #()
+      }
+    }
     MstepExit(MkCode) => vm_exit(MkCode)
     MstepShow(name, shown, s) => {
       let so_far2 := vm_show(
@@ -569,24 +1213,23 @@ pub fn vm_shell(
         so_far,
         Text::concat_all(Cons(name, Cons(" = ", Cons(shown, Cons("\n", Nil)))))
       )
-      vm_shell(p, limit, MstepNext(s), shows, so_far2, program_args, jobs, sd)
+      vm_shell(p, interrupted, MstepNext(s), shows, so_far2, program_args, jobs, sd, net)
     }
-    MstepAsk(name, args, s) => if Text::eq(name, "vm_native") {
-      vm_shell(p, limit, vm_native_answer(p, args, s), shows, so_far, program_args, jobs, sd)
-    } else if Text::eq(name, "Os::on_shutdown") {
+    MstepAsk(name, args, s) => if Text::eq(name, "Os::on_shutdown") {
       let sd2 := vm_shutdown_add(sd, m_id_of(vm_arg(args, 0)))
-      vm_shell(p, limit, MstepNext(m_answer(s, MvUnit)), shows, so_far, program_args, jobs, sd2)
+      vm_shell(p, interrupted, MstepNext(m_answer(s, MvUnit)), shows, so_far, program_args, jobs, sd2, net)
     } else {
-      match vm_host(name, args, program_args) {
+      match vm_host(net, name, args, program_args) {
         Some(v) => vm_shell(
           p,
-          limit,
+          interrupted,
           MstepNext(m_answer(s, v)),
           shows,
           so_far,
           program_args,
           jobs,
-          sd
+          sd,
+          net
         )
         None => {
           eprint(
@@ -603,13 +1246,14 @@ pub fn vm_shell(
     }
     MstepStart(name, args, pending, cx) => vm_shell(
       p,
-      limit,
+      interrupted,
       m_wake(cx, vm_now()),
       shows,
       so_far,
       program_args,
       Cons(VmJob { pending: pending, name: name, args: args }, jobs),
-      sd
+      sd,
+      net
     )
     MstepIdle(cx) => match jobs {
       // No task can go on and nothing the host was asked can wake one, but a request to
@@ -617,36 +1261,38 @@ pub fn vm_shell(
       Nil => if vm_shutdown_waits(sd) {
         perform sleep(10)
         match vm_shutdown_fire(sd, cx) {
-          Pair { fst: sd2, snd: cx2 } => vm_shell(
+          #(sd2, cx2) => vm_shell(
             p,
-            limit,
+            interrupted,
             if vm_shutdown_waits(sd2) { MstepIdle(cx2) } else { m_wake(cx2, vm_now()) },
             shows,
             so_far,
             program_args,
             jobs,
-            sd2
+            sd2,
+            net
           )
         }
       } else {
         vm_fail(m_deadlock())
       }
-      _ => match vm_poll(jobs, cx, perform monotonic_clock() + vm_turn()) {
+      _ => match vm_poll(net, jobs, cx, perform monotonic_clock() + vm_turn()) {
         VmPolled { jobs: left, answered, cx: cx2 } => match vm_shutdown_fire(sd, cx2) {
-          Pair { fst: sd2, snd: cx3 } => {
+          #(sd2, cx3) => {
             let fired := if vm_shutdown_waits(
               sd
             ) { if vm_shutdown_waits(sd2) { false } else { true } } else { false }
             let go := if answered { true } else { fired }
             vm_shell(
               p,
-              limit,
+              interrupted,
               if go { m_wake(cx3, vm_now()) } else { MstepIdle(cx3) },
               shows,
               so_far,
               program_args,
               left,
-              sd2
+              sd2,
+              net
             )
           }
         }
@@ -662,38 +1308,35 @@ pub fn vm_shell(
         } else {
           #()
         }
-        vm_shell(p, limit, m_wake(cx, vm_now()), shows, so_far, program_args, jobs, sd)
+        vm_shell(p, interrupted, m_wake(cx, vm_now()), shows, so_far, program_args, jobs, sd, net)
       }
       // A started request may answer before the timer: wait for them in turns until it.
       _ => {
         let timer := vm_i64(until) * 1000000
         let turn := perform monotonic_clock() + vm_turn()
-        match vm_poll(jobs, cx, if timer < turn { timer } else { turn }) {
-          VmPolled { jobs: left, answered, cx: cx2 } => vm_shell(
+        match vm_poll(net, jobs, cx, if timer < turn { timer } else { turn }) {
+          VmPolled { jobs: left, ^answered, cx: cx2 } => vm_shell(
             p,
-            limit,
+            interrupted,
             m_wake(cx2, vm_now()),
             shows,
             so_far,
             program_args,
             left,
-            sd
+            sd,
+            net
           )
         }
       }
     }
+    MstepTaskFailed(message, cx) => {
+      eprint(Text::concat_all(Cons("a task failed: ", Cons(message, Cons("\n", Nil)))))
+      vm_shell(p, interrupted, m_switch(cx), shows, so_far, program_args, jobs, sd, net)
+    }
     MstepError(message) => if Text::eq(message, m_step_limit()) {
-      vm_fail(
-        Text::concat_all(
-          Cons(
-            message,
-            Cons(
-              " after ",
-              Cons(limit, Cons(" steps; `--steps N` raises it, `--allow-div` lifts it", Nil))
-            )
-          )
-        )
-      )
+      vm_fail(interrupted.interrupted)
+    } else if Text::eq(message, m_too_deep()) {
+      vm_fail(interrupted.too_deep)
     } else {
       vm_fail(message)
     }
@@ -704,15 +1347,37 @@ pub fn vm_limit(t: Text): Option(Nat) {
   match w_number(Text::bytes(t), 0, false) {
     None => None
     Some(r) => match r {
-      Pair { fst: n, snd: rest } => Some(n)
+      #(n, ^rest) => Some(n)
     }
   }
 }
 
-pub fn vm_main(path: Text, limit_text: Text, shows: Option(Text), program_args: List(Text)): Unit {
+// The English message of a run whose limit of steps ran out.
+pub fn vm_interrupted(limit: Text): Text {
+  Text::concat_all(
+    Cons(
+      m_step_limit(),
+      Cons(" after ", Cons(limit, Cons(" steps; `--steps N` raises it, `--allow-div` lifts it", Nil)))
+    )
+  )
+}
+
+// The English message of a run whose calls nest too deep.
+pub fn vm_too_deep(): Text {
+  Text::concat(m_too_deep(), ": more than 2097152 calls, one inside another")
+}
+
+pub fn vm_main(
+  path: Text,
+  limit_text: Text,
+  shows: Option(Text),
+  interrupted: Text,
+  too_deep: Text,
+  program_args: List(Text)
+): Unit ! {div, argv, budget, budget_memory, env, environ, exit, fs_canonicalize, fs_copy, fs_create_dir, fs_list_dir, fs_lock, fs_read, fs_read_bytes, fs_read_bytes_under, fs_read_link, fs_read_under, fs_remove, fs_rename, fs_set_mode, fs_stat, fs_temp_dir, fs_unlock, fs_write, fs_write_bytes, fs_write_new, hash_seed, host_width, monotonic_clock, net, net_addr, net_cancel, net_close, net_finish, net_open, net_read, net_resolve, net_write, overflow, permission, proc_close, proc_close_stdin, proc_read, proc_run, proc_spawn, proc_wait, proc_write, random, secure_random, shutdown_token, sleep, stdin, stop, ∀ T. spawn(() -> T ! {div}), ∀ T. spawn(() -> T ! {wait}), stderr, stdin_bytes, stdout, stdout_flush, tcp_accept, tcp_close, tcp_connect, tcp_listen, tcp_read, tcp_shutdown, tcp_unlisten, tcp_write, timer, tls_accept, tls_close, tls_connect, tls_read, tls_shutdown, tls_write, uhost_add, uhost_mul, uhost_of_u64, uhost_sub, wait, wall_clock, ref_get, ref_new, ref_set, weak_get, weak_of, atomic_fetch_add, atomic_load, atomic_new, atomic_store, mutex_claim, mutex_new, mutex_put, mutex_take_claimed, mutex_withdraw} {
   match read_file(path) {
     Err(message) => vm_fail(Text::concat_all(Cons(path, Cons(": ", Cons(message, Nil)))))
-    Ok(source) => match read_program(Text::bytes(source)) {
+    Ok(source) => match read_program(source) {
       None => vm_fail(Text::concat(path, ": malformed program"))
       Some(cp) => match vm::src::compile::compile(cp) {
         CUnsupported(what) => {
@@ -721,24 +1386,27 @@ pub fn vm_main(path: Text, limit_text: Text, shows: Option(Text), program_args: 
           )
           perform exit(3)
         }
-        COk(p0) => {
-          let p := vm_native_program(p0)
+        COk(p) => {
           match shows {
             None => #()
             Some(f) => match write_file(f, "") {
-              Ok(u) => #()
+              Ok(^u) => #()
               Err(e) => vm_fail(Text::concat_all(Cons(f, Cons(": ", Cons(e, Nil)))))
             }
           }
           vm_shell(
             p,
-            limit_text,
+            VmSay {
+              interrupted: if Text::eq(interrupted, "-") { vm_interrupted(limit_text) } else { interrupted },
+              too_deep: if Text::eq(too_deep, "-") { vm_too_deep() } else { too_deep }
+            },
             MstepNext(mstart(p, vm_limit(limit_text), vm_now())),
             shows,
             "",
             program_args,
             Nil,
-            VmShutdown { token: None, watch: Nil }
+            VmShutdown { token: None, watch: Nil },
+            vm_net_new()
           )
         }
       }
@@ -746,18 +1414,24 @@ pub fn vm_main(path: Text, limit_text: Text, shows: Option(Text), program_args: 
   }
 }
 
-match perform argv() {
-  Nil => vm_fail("usage: vm FILE [LIMIT [SHOWS [ARGS...]]]")
-  Cons(path, rest) => match rest {
-    Nil => vm_main(path, "-", None, Nil)
-    Cons(limit, more) => match more {
-      Nil => vm_main(path, limit, None, Nil)
-      Cons(shows, program_args) => vm_main(
-        path,
-        limit,
-        if Text::eq(shows, "-") { None } else { Some(shows) },
-        program_args
-      )
+perform main(() => {
+  match perform argv() {
+    Nil => vm_fail("usage: vm FILE [LIMIT [SHOWS [INTERRUPTED [TOO_DEEP [ARGS...]]]]]")
+    Cons(path, rest) => match rest {
+      Nil => vm_main(path, "-", None, "-", "-", Nil)
+      Cons(limit, more) => match more {
+        Nil => vm_main(path, limit, None, "-", "-", Nil)
+        Cons(shows, after) => {
+          let shown := if Text::eq(shows, "-") { None } else { Some(shows) }
+          match after {
+            Nil => vm_main(path, limit, shown, "-", "-", Nil)
+            Cons(interrupted, more2) => match more2 {
+              Nil => vm_main(path, limit, shown, interrupted, "-", Nil)
+              Cons(too_deep, program_args) => vm_main(path, limit, shown, interrupted, too_deep, program_args)
+            }
+          }
+        }
+      }
     }
   }
-}
+})

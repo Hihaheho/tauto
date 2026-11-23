@@ -1,7 +1,8 @@
+import "messages.taut"
 import "checker_frame.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -9,8 +10,13 @@ import "kind_sound.taut"
 import "summary_state.taut"
 import "ty.taut"
 import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
@@ -50,68 +56,71 @@ pub fn finish_pending_class(x: TyPending): Text { x.r#class }
 
 pub fn finish_pending_what(x: TyPending): Text { x.what }
 
-pub fn finish_pending_assume(x: TyPending): List(Pair(Text, Text)) { x.assume }
+pub fn finish_pending_assume(x: TyPending): List(Text × Text) { x.assume }
 
 pub fn finish_pending_span(x: TyPending): TySpan { span_at(x.start, x.end) }
 
 pub fn finish_literal(c: Checker, l: TyLiteral, t: Ty): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match t {
+  match t {
     TyInt(w) => frame_error_if(
       c,
-      cat3(literal_text(l), " does not fit ", ty_show(TyInt(w))),
+      literal_does_not_fit_message(literal_text(l), ty_show(TyInt(w))),
       finish_literal_span(l),
       not(width_fits(w, finish_literal_negative(l), finish_literal_magnitude(l)))
     )
     TyBool => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyText => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyUnit => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyNever => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyDecimal => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyFloat => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyFn(params, result, kind) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyFloat32 => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyUnion(members) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyFn(^params, ^result, ^kind) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyProduct(members) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyUnion(^members) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyTagged(tags, inner) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyProduct(^members) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyNamed(name, args) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyTagged(^tags, ^inner) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyParam(name, bound) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyNamed(^name, ^args) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyInfo(inner) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyParam(^name, ^bound) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyBorrow(inner, mutable) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyInfo(^inner) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyVar(v) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyBorrow(^inner, ^mutable) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyPoly(generics, inner) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyVar(^v) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
-    TyApp(head, arg) => ck_rewrap1(
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l))
+    TyPoly(^generics, ^inner) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
+    )
+    TyApp(^head, ^arg) => ck_rewrap1(
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l))
     )
   }
 }
@@ -121,97 +130,102 @@ pub theorem finish_literal_frame(
   l: TyLiteral,
   t: Ty
 ): CkReadFrame(c, finish_literal(c, l, t)) {
-  ⊢ CkReadFrame(c, finish_literal(c, l, t)) from match t {
+  match t {
     TyInt(w) => frame_error_if_ok(
       c,
-      cat3(literal_text(l), " does not fit ", ty_show(TyInt(w))),
+      literal_does_not_fit_message(literal_text(l), ty_show(TyInt(w))),
       finish_literal_span(l),
       not(width_fits(w, finish_literal_negative(l), finish_literal_magnitude(l)))
     )
     TyBool => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyText => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyUnit => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyNever => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyDecimal => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyFloat => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
+    )
+    TyFloat32 => frame_rewrap(
+      c,
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyFn(params, result, kind) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyUnion(members) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyProduct(members) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyTagged(tags, inner) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyNamed(name, args) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyParam(name, bound) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyInfo(inner) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyBorrow(inner, mutable) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyVar(v) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyPoly(generics, inner) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
     TyApp(head, arg) => frame_rewrap(
       c,
-      ck_error(c, "an integer literal has no integer type", finish_literal_span(l)),
-      ck_error_frame(c, "an integer literal has no integer type", finish_literal_span(l))
+      ck_error(c, int_literal_no_type_message(), finish_literal_span(l)),
+      ck_error_frame(c, int_literal_no_type_message(), finish_literal_span(l))
     )
   }
 }
@@ -233,32 +247,26 @@ pub theorem ck_check_literal_frame(
 }
 
 pub fn finish_class(c: Checker, p: TyPending, r: Unresolved): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match r {
+  match r {
     UnresolvedNone => mut1(Star, c)
     UnresolvedUndetermined => ck_rewrap1(
       ck_error(
         c,
-        cat3("the type in ", finish_pending_class(p), "(?) is not determined"),
+        class_type_undetermined_message(finish_pending_class(p)),
         finish_pending_span(p)
       )
     )
     UnresolvedAssumption(shown) => ck_rewrap1(
       ck_error(
         c,
-        cat5(
-          finish_pending_what(p),
-          " needs ",
-          finish_pending_class(p),
-          cat3("(", shown, ")"),
-          cat4(": add where ", finish_pending_class(p), cat3("(", shown, ")"), "")
-        ),
+        needs_class_add_where_message(finish_pending_what(p), finish_pending_class(p), shown),
         finish_pending_span(p)
       )
     )
     UnresolvedNoInstance(shown) => ck_rewrap1(
       ck_error(
         c,
-        cat4("no instance ", finish_pending_class(p), cat3("(", shown, ")"), ""),
+        no_instance_message(finish_pending_class(p), shown),
         finish_pending_span(p)
       )
     )
@@ -270,18 +278,18 @@ pub theorem finish_class_frame(
   p: TyPending,
   r: Unresolved
 ): CkReadFrame(c, finish_class(c, p, r)) {
-  ⊢ CkReadFrame(c, finish_class(c, p, r)) from match r {
+  match r {
     UnresolvedNone => Refl
     UnresolvedUndetermined => frame_rewrap(
       c,
       ck_error(
         c,
-        cat3("the type in ", finish_pending_class(p), "(?) is not determined"),
+        class_type_undetermined_message(finish_pending_class(p)),
         finish_pending_span(p)
       ),
       ck_error_frame(
         c,
-        cat3("the type in ", finish_pending_class(p), "(?) is not determined"),
+        class_type_undetermined_message(finish_pending_class(p)),
         finish_pending_span(p)
       )
     )
@@ -289,24 +297,12 @@ pub theorem finish_class_frame(
       c,
       ck_error(
         c,
-        cat5(
-          finish_pending_what(p),
-          " needs ",
-          finish_pending_class(p),
-          cat3("(", shown, ")"),
-          cat4(": add where ", finish_pending_class(p), cat3("(", shown, ")"), "")
-        ),
+        needs_class_add_where_message(finish_pending_what(p), finish_pending_class(p), shown),
         finish_pending_span(p)
       ),
       ck_error_frame(
         c,
-        cat5(
-          finish_pending_what(p),
-          " needs ",
-          finish_pending_class(p),
-          cat3("(", shown, ")"),
-          cat4(": add where ", finish_pending_class(p), cat3("(", shown, ")"), "")
-        ),
+        needs_class_add_where_message(finish_pending_what(p), finish_pending_class(p), shown),
         finish_pending_span(p)
       )
     )
@@ -314,12 +310,12 @@ pub theorem finish_class_frame(
       c,
       ck_error(
         c,
-        cat4("no instance ", finish_pending_class(p), cat3("(", shown, ")"), ""),
+        no_instance_message(finish_pending_class(p), shown),
         finish_pending_span(p)
       ),
       ck_error_frame(
         c,
-        cat4("no instance ", finish_pending_class(p), cat3("(", shown, ")"), ""),
+        no_instance_message(finish_pending_class(p), shown),
         finish_pending_span(p)
       )
     )
@@ -353,18 +349,12 @@ pub theorem ck_check_class_pending_frame(
   )
 }
 
-pub fn finish_bound(c: Checker, b: TyBound, r#view: Bool): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match r#view {
-    true => ck_rewrap1(ck_error(c, "a view cannot be a type argument", finish_bound_span(b)))
+pub fn finish_bound(c: Checker, b: TyBound, view: Bool): Mut1(Unit, Checker) {
+  match view {
+    true => ck_rewrap1(ck_error(c, view_type_argument_message(), finish_bound_span(b)))
     false => frame_error_if(
       c,
-      cat5(
-        kind_name(ck_kind(c, finish_bound_ty(b))),
-        " does not fit ",
-        kind_name(finish_bound_kind(b)),
-        ": ",
-        cat2(ty_show(ck_shown(c, finish_bound_ty(b))), " for a type parameter")
-      ),
+      kind_does_not_fit_bound_message(kind_name(ck_kind(c, finish_bound_ty(b))), kind_name(finish_bound_kind(b)), ty_show(ck_shown(c, finish_bound_ty(b)))),
       finish_bound_span(b),
       not(kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)))
     )
@@ -374,23 +364,17 @@ pub fn finish_bound(c: Checker, b: TyBound, r#view: Bool): Mut1(Unit, Checker) {
 pub theorem finish_bound_frame(
   c: Checker,
   b: TyBound,
-  r#view: Bool
-): CkReadFrame(c, finish_bound(c, b, r#view)) {
-  ⊢ CkReadFrame(c, finish_bound(c, b, r#view)) from match r#view {
+  view: Bool
+): CkReadFrame(c, finish_bound(c, b, view)) {
+  match view {
     true => frame_rewrap(
       c,
-      ck_error(c, "a view cannot be a type argument", finish_bound_span(b)),
-      ck_error_frame(c, "a view cannot be a type argument", finish_bound_span(b))
+      ck_error(c, view_type_argument_message(), finish_bound_span(b)),
+      ck_error_frame(c, view_type_argument_message(), finish_bound_span(b))
     )
     false => frame_error_if_ok(
       c,
-      cat5(
-        kind_name(ck_kind(c, finish_bound_ty(b))),
-        " does not fit ",
-        kind_name(finish_bound_kind(b)),
-        ": ",
-        cat2(ty_show(ck_shown(c, finish_bound_ty(b))), " for a type parameter")
-      ),
+      kind_does_not_fit_bound_message(kind_name(ck_kind(c, finish_bound_ty(b))), kind_name(finish_bound_kind(b)), ty_show(ck_shown(c, finish_bound_ty(b)))),
       finish_bound_span(b),
       not(kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)))
     )
@@ -400,58 +384,48 @@ pub theorem finish_bound_frame(
 pub theorem finish_bound_unf(
   c: Checker,
   b: TyBound
-): ck_check_bound(c, b) = finish_bound(c, b, ck_is_view(c, finish_bound_ty(b))) { Refl }
+): ck_check_bound(c, b) = finish_bound(c, b, false) { Refl }
 
 pub theorem ck_check_bound_frame(c: Checker, b: TyBound): CkReadFrame(c, ck_check_bound(c, b)) {
   Eq::subst(
     (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
     Eq::sym(finish_bound_unf(c, b)),
-    finish_bound_frame(c, b, ck_is_view(c, finish_bound_ty(b)))
+    finish_bound_frame(c, b, false)
   )
 }
 
 pub fn finish_ctor_made(b: TyCtorBound, original: Ty, t: Ty): Option(Ty) {
-  ⊢ Option(Ty) from match t {
-    TyInt(w) => None
+  match t {
+    TyInt(^w) => None
     TyBool => None
     TyText => None
     TyUnit => None
     TyNever => None
     TyDecimal => None
     TyFloat => None
-    TyFn(params, result, kind) => None
-    TyUnion(members) => None
-    TyProduct(members) => None
-    TyTagged(tags, inner) => None
-    TyNamed(n, args) => Some(
+    TyFloat32 => None
+    TyFn(^params, ^result, ^kind) => None
+    TyUnion(^members) => None
+    TyProduct(^members) => None
+    TyTagged(^tags, ^inner) => None
+    TyNamed(^n, ^args) => Some(
       ty_apply(original, TyParam(kind_name(finish_ctor_arg(b)), finish_ctor_arg(b)))
     )
-    TyParam(n, k) => Some(original)
-    TyInfo(inner) => None
-    TyBorrow(inner, mutable) => None
-    TyVar(v) => None
-    TyPoly(generics, inner) => None
-    TyApp(head, arg) => None
+    TyParam(^n, ^k) => Some(original)
+    TyInfo(^inner) => None
+    TyBorrow(^inner, ^mutable) => None
+    TyVar(^v) => None
+    TyPoly(^generics, ^inner) => None
+    TyApp(^head, ^arg) => None
   }
 }
 
 pub fn finish_ctor(c: Checker, b: TyCtorBound, made: Option(Ty)): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match made {
+  match made {
     None => mut1(Star, c)
     Some(m) => frame_error_if(
       c,
-      cat5(
-        finish_ctor_what(b),
-        cat4(
-          " takes constructors from ",
-          kind_name(finish_ctor_arg(b)),
-          " to ",
-          kind_name(finish_ctor_result(b))
-        ),
-        ", and ",
-        ty_show(ck_shown(c, m)),
-        cat2(" is ", kind_name(ck_kind(c, m)))
-      ),
+      constructor_kind_mismatch_message(finish_ctor_what(b), kind_name(finish_ctor_arg(b)), kind_name(finish_ctor_result(b)), ty_show(ck_shown(c, m)), kind_name(ck_kind(c, m))),
       finish_ctor_span(b),
       not(kind_fits(ck_kind(c, m), finish_ctor_result(b)))
     )
@@ -463,22 +437,11 @@ pub theorem finish_ctor_frame(
   b: TyCtorBound,
   made: Option(Ty)
 ): CkReadFrame(c, finish_ctor(c, b, made)) {
-  ⊢ CkReadFrame(c, finish_ctor(c, b, made)) from match made {
+  match made {
     None => Refl
     Some(m) => frame_error_if_ok(
       c,
-      cat5(
-        finish_ctor_what(b),
-        cat4(
-          " takes constructors from ",
-          kind_name(finish_ctor_arg(b)),
-          " to ",
-          kind_name(finish_ctor_result(b))
-        ),
-        ", and ",
-        ty_show(ck_shown(c, m)),
-        cat2(" is ", kind_name(ck_kind(c, m)))
-      ),
+      constructor_kind_mismatch_message(finish_ctor_what(b), kind_name(finish_ctor_arg(b)), kind_name(finish_ctor_result(b)), ty_show(ck_shown(c, m)), kind_name(ck_kind(c, m))),
       finish_ctor_span(b),
       not(kind_fits(ck_kind(c, m), finish_ctor_result(b)))
     )
@@ -512,10 +475,7 @@ pub theorem ck_check_ctor_bound_frame(
   )
 }
 
-pub fn finish_closure_bad(c: Checker, r: TyClosure): Bool {
-  let t := ck_resolve(c, r.ty)
-  Bool::and(ck_is_view(c, t), Bool::or(ck_has_vars(c, t), ck_no_view_value(c, t)))
-}
+pub fn finish_closure_bad(c: Checker, r: TyClosure): Bool { ck_closure_returns_borrow(c, r) }
 pub fn finish_kept_bad(
   c: Checker,
   k: TyKept
@@ -528,11 +488,11 @@ pub fn finish_pending_bad(c: Checker, p: TyPending): Bool {
 pub fn finish_pending_message(c: Checker, p: TyPending): Text {
   let t := ck_resolve(c, p.ty)
   let shown := ty_show(ck_shown(c, t))
-  cat5(p.what, " needs ", p.r#class, cat3("(", shown, ")"), pending_hint(t, p.r#class, shown))
+  pending_message(t, p.what, p.r#class, shown)
 }
 
 pub fn finish_pending(c: Checker, p: TyPending, nonstructural: Bool): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match nonstructural {
+  match nonstructural {
     true => ck_rewrap1(ck_check_class_pending(c, p))
     false => frame_error_if(
       c,
@@ -548,7 +508,7 @@ pub theorem finish_pending_frame(
   p: TyPending,
   nonstructural: Bool
 ): CkReadFrame(c, finish_pending(c, p, nonstructural)) {
-  ⊢ CkReadFrame(c, finish_pending(c, p, nonstructural)) from match nonstructural {
+  match nonstructural {
     true => frame_rewrap(c, ck_check_class_pending(c, p), ck_check_class_pending_frame(c, p))
     false => frame_error_if_ok(
       c,
@@ -565,8 +525,7 @@ pub fn finish_ck_check_literals(
   c: Checker
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_literals(rest, c1)),
     ck_check_literal(c, l)
   )
@@ -579,8 +538,7 @@ pub theorem finish_ck_check_literals_frame(
   ih: ∀ next: Checker. CkReadFrame(next, ck_check_literals(rest, next))
 ): CkReadFrame(c, finish_ck_check_literals(l, rest, c)) {
   frame_bind_ok(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_literals(rest, c1)),
     ck_check_literal(c, l),
@@ -599,7 +557,7 @@ pub theorem ck_check_literals_frame(
   xs: List(TyLiteral),
   c: Checker
 ): CkReadFrame(c, ck_check_literals(xs, c)) {
-  ⊢ CkReadFrame(c, ck_check_literals(xs, c)) from match xs {
+  match xs {
     Nil => Refl
     Cons(l, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
@@ -611,8 +569,7 @@ pub theorem ck_check_literals_frame(
 
 pub fn finish_ck_check_bounds(b: TyBound, rest: List(TyBound), c: Checker): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_bounds(rest, c1)),
     ck_check_bound(c, b)
   )
@@ -625,8 +582,7 @@ pub theorem finish_ck_check_bounds_frame(
   ih: ∀ next: Checker. CkReadFrame(next, ck_check_bounds(rest, next))
 ): CkReadFrame(c, finish_ck_check_bounds(b, rest, c)) {
   frame_bind_ok(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_bounds(rest, c1)),
     ck_check_bound(c, b),
@@ -645,7 +601,7 @@ pub theorem ck_check_bounds_frame(
   xs: List(TyBound),
   c: Checker
 ): CkReadFrame(c, ck_check_bounds(xs, c)) {
-  ⊢ CkReadFrame(c, ck_check_bounds(xs, c)) from match xs {
+  match xs {
     Nil => Refl
     Cons(b, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
@@ -661,8 +617,7 @@ pub fn finish_ck_check_ctor_bounds(
   c: Checker
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_ctor_bounds(rest, c1)),
     ck_check_ctor_bound(c, b)
   )
@@ -675,8 +630,7 @@ pub theorem finish_ck_check_ctor_bounds_frame(
   ih: ∀ next: Checker. CkReadFrame(next, ck_check_ctor_bounds(rest, next))
 ): CkReadFrame(c, finish_ck_check_ctor_bounds(b, rest, c)) {
   frame_bind_ok(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_ctor_bounds(rest, c1)),
     ck_check_ctor_bound(c, b),
@@ -695,7 +649,7 @@ pub theorem ck_check_ctor_bounds_frame(
   xs: List(TyCtorBound),
   c: Checker
 ): CkReadFrame(c, ck_check_ctor_bounds(xs, c)) {
-  ⊢ CkReadFrame(c, ck_check_ctor_bounds(xs, c)) from match xs {
+  match xs {
     Nil => Refl
     Cons(b, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
@@ -705,75 +659,74 @@ pub theorem ck_check_ctor_bounds_frame(
   }
 }
 
-pub fn finish_ck_check_closures(
-  r: TyClosure,
-  rest: List(TyClosure),
+pub theorem ck_check_closure_results_frame(
+  xs: List(TyClosure),
   c: Checker
-): Mut1(Unit, Checker) {
-  frame_bind(
-    Unit,
-    Unit,
-    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_closures(rest, c1)),
-    frame_error_if(
+): CkReadFrame(c, ck_check_closure_results(xs, c)) {
+  match xs {
+    Nil => Refl
+    Cons(r, rest) => frame_bind_ok(
+      <A: Unit, B: Unit>,
       c,
-      "a closure cannot return a borrow",
-      finish_closure_span(r),
-      finish_closure_bad(c, r)
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_closure_results(rest, c1)),
+      frame_error_if(c, closure_returns_borrow_message(), finish_closure_span(r), finish_closure_bad(c, r)),
+      frame_error_if_ok(c, closure_returns_borrow_message(), finish_closure_span(r), finish_closure_bad(c, r)),
+      ignored => c1 => frame_rewrap(c1, ck_check_closure_results(rest, c1), ck_check_closure_results_frame(rest, c1))
     )
-  )
+  }
 }
 
-pub theorem finish_ck_check_closures_frame(
-  r: TyClosure,
-  rest: List(TyClosure),
-  c: Checker,
-  ih: ∀ next: Checker. CkReadFrame(next, ck_check_closures(rest, next))
-): CkReadFrame(c, finish_ck_check_closures(r, rest, c)) {
-  frame_bind_ok(
-    Unit,
-    Unit,
-    c,
-    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_closures(rest, c1)),
-    frame_error_if(
-      c,
-      "a closure cannot return a borrow",
-      finish_closure_span(r),
-      finish_closure_bad(c, r)
-    ),
-    frame_error_if_ok(
-      c,
-      "a closure cannot return a borrow",
-      finish_closure_span(r),
-      finish_closure_bad(c, r)
-    ),
-    ignored => c1 => frame_rewrap(c1, ck_check_closures(rest, c1), ih(c1))
-  )
-}
-
-pub theorem finish_ck_check_closures_unf(
-  r: TyClosure,
-  rest: List(TyClosure),
+pub theorem ck_check_captures_frame(
+  xs: List(TyClosure),
   c: Checker
-): ck_check_closures(Cons(r, rest), c) = finish_ck_check_closures(r, rest, c) { Refl }
+): CkReadFrame(c, ck_check_captures(xs, c)) {
+  match xs {
+    Nil => Refl
+    Cons(r, rest) => frame_bind_ok(
+      <A: Unit, B: Unit>,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_captures(rest, c1)),
+      frame_error_if(c, ck_capture_text(c, r), ck_capture_span(r), ck_capture_bad(c, r)),
+      frame_error_if_ok(c, ck_capture_text(c, r), ck_capture_span(r), ck_capture_bad(c, r)),
+      ignored => c1 => frame_rewrap(c1, ck_check_captures(rest, c1), ck_check_captures_frame(rest, c1))
+    )
+  }
+}
+
+pub theorem ck_check_closures_unf(
+  xs: List(TyClosure),
+  c: Checker
+): ck_check_closures(xs, c) = frame_bind(
+  <A: Unit, B: Unit>,
+  (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_captures(closures_by_start(xs), c1)),
+  ck_check_closure_results(xs, c)
+) { Refl }
 
 pub theorem ck_check_closures_frame(
   xs: List(TyClosure),
   c: Checker
 ): CkReadFrame(c, ck_check_closures(xs, c)) {
-  ⊢ CkReadFrame(c, ck_check_closures(xs, c)) from match xs {
-    Nil => Refl
-    Cons(r, rest) => Eq::subst(
-      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
-      Eq::sym(finish_ck_check_closures_unf(r, rest, c)),
-      finish_ck_check_closures_frame(r, rest, c, next => ck_check_closures_frame(rest, next))
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+    Eq::sym(ck_check_closures_unf(xs, c)),
+    frame_bind_ok(
+      <A: Unit, B: Unit>,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_captures(closures_by_start(xs), c1)),
+      ck_check_closure_results(xs, c),
+      ck_check_closure_results_frame(xs, c),
+      ignored => c1 => frame_rewrap(
+        c1,
+        ck_check_captures(closures_by_start(xs), c1),
+        ck_check_captures_frame(closures_by_start(xs), c1)
+      )
     )
-  }
+  )
 }
 
 pub fn finish_ck_check_kept(k: TyKept, rest: List(TyKept), c: Checker): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_kept(rest, c1)),
     frame_error_if(
       c,
@@ -791,8 +744,7 @@ pub theorem finish_ck_check_kept_frame(
   ih: ∀ next: Checker. CkReadFrame(next, ck_check_kept(rest, next))
 ): CkReadFrame(c, finish_ck_check_kept(k, rest, c)) {
   frame_bind_ok(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_kept(rest, c1)),
     frame_error_if(
@@ -821,7 +773,7 @@ pub theorem ck_check_kept_frame(
   xs: List(TyKept),
   c: Checker
 ): CkReadFrame(c, ck_check_kept(xs, c)) {
-  ⊢ CkReadFrame(c, ck_check_kept(xs, c)) from match xs {
+  match xs {
     Nil => Refl
     Cons(k, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
@@ -837,8 +789,7 @@ pub fn finish_ck_check_pending(
   c: Checker
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_pending(rest, c1)),
     finish_pending(c, p, not(class_is_structural(finish_pending_class(p))))
   )
@@ -851,8 +802,7 @@ pub theorem finish_ck_check_pending_frame(
   ih: ∀ next: Checker. CkReadFrame(next, ck_check_pending(rest, next))
 ): CkReadFrame(c, finish_ck_check_pending(p, rest, c)) {
   frame_bind_ok(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_pending(rest, c1)),
     finish_pending(c, p, not(class_is_structural(finish_pending_class(p)))),
@@ -871,7 +821,7 @@ pub theorem ck_check_pending_frame(
   xs: List(TyPending),
   c: Checker
 ): CkReadFrame(c, ck_check_pending(xs, c)) {
-  ⊢ CkReadFrame(c, ck_check_pending(xs, c)) from match xs {
+  match xs {
     Nil => Refl
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
@@ -882,25 +832,26 @@ pub theorem ck_check_pending_frame(
 }
 
 pub fn finish_default(c: Checker, t: Ty): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match t {
-    TyInt(w) => mut1(Star, c)
+  match t {
+    TyInt(^w) => mut1(Star, c)
     TyBool => mut1(Star, c)
     TyText => mut1(Star, c)
     TyUnit => mut1(Star, c)
     TyNever => mut1(Star, c)
     TyDecimal => mut1(Star, c)
     TyFloat => mut1(Star, c)
-    TyFn(params, result, kind) => mut1(Star, c)
-    TyUnion(members) => mut1(Star, c)
-    TyProduct(members) => mut1(Star, c)
-    TyTagged(tags, inner) => mut1(Star, c)
-    TyNamed(name, args) => mut1(Star, c)
-    TyParam(name, bound) => mut1(Star, c)
-    TyInfo(inner) => mut1(Star, c)
-    TyBorrow(inner, mutable) => mut1(Star, c)
+    TyFloat32 => mut1(Star, c)
+    TyFn(^params, ^result, ^kind) => mut1(Star, c)
+    TyUnion(^members) => mut1(Star, c)
+    TyProduct(^members) => mut1(Star, c)
+    TyTagged(^tags, ^inner) => mut1(Star, c)
+    TyNamed(^name, ^args) => mut1(Star, c)
+    TyParam(^name, ^bound) => mut1(Star, c)
+    TyInfo(^inner) => mut1(Star, c)
+    TyBorrow(^inner, ^mutable) => mut1(Star, c)
     TyVar(w) => ck_rewrap1(ck_set_subst(c, w, TyInt(Width64)))
-    TyPoly(generics, inner) => mut1(Star, c)
-    TyApp(head, arg) => mut1(Star, c)
+    TyPoly(^generics, ^inner) => mut1(Star, c)
+    TyApp(^head, ^arg) => mut1(Star, c)
   }
 }
 
@@ -909,7 +860,7 @@ pub theorem finish_default_frame(
   t: Ty,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, finish_default(c, t)) {
-  ⊢ CkRunFrame(c, finish_default(c, t)) from match t {
+  match t {
     TyInt(w) => run_frame_return(c, Star, ordered)
     TyBool => run_frame_return(c, Star, ordered)
     TyText => run_frame_return(c, Star, ordered)
@@ -917,6 +868,7 @@ pub theorem finish_default_frame(
     TyNever => run_frame_return(c, Star, ordered)
     TyDecimal => run_frame_return(c, Star, ordered)
     TyFloat => run_frame_return(c, Star, ordered)
+    TyFloat32 => run_frame_return(c, Star, ordered)
     TyFn(params, result, kind) => run_frame_return(c, Star, ordered)
     TyUnion(members) => run_frame_return(c, Star, ordered)
     TyProduct(members) => run_frame_return(c, Star, ordered)
@@ -951,31 +903,29 @@ pub theorem ck_default_int_run_frame(
     finish_default_frame(c, ck_resolve(c, TyVar(v)), ordered)
   )
 }
-pub fn finish_int_key(p: Pair(Nat, Bool)): Nat { p.fst }
+pub fn finish_int_key(p: Nat × Bool): Nat { p.fst }
 
 pub fn finish_defaults_cons(
-  p: Pair(Nat, Bool),
-  rest: List(Pair(Nat, Bool)),
+  p: Nat × Bool,
+  rest: List(Nat × Bool),
   c: Checker
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_default_ints(rest, c1)),
     ck_default_int(c, finish_int_key(p))
   )
 }
 
 pub theorem finish_defaults_cons_frame(
-  p: Pair(Nat, Bool),
-  rest: List(Pair(Nat, Bool)),
+  p: Nat × Bool,
+  rest: List(Nat × Bool),
   c: Checker,
   ih: ∀ next: Checker. ∀ onext: CkOrdered(next). CkRunFrame(next, ck_default_ints(rest, next)),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, finish_defaults_cons(p, rest, c)) {
   run_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_default_ints(rest, c1)),
     ck_default_int(c, finish_int_key(p)),
@@ -985,17 +935,17 @@ pub theorem finish_defaults_cons_frame(
 }
 
 pub theorem finish_defaults_unf(
-  p: Pair(Nat, Bool),
-  rest: List(Pair(Nat, Bool)),
+  p: Nat × Bool,
+  rest: List(Nat × Bool),
   c: Checker
 ): ck_default_ints(Cons(p, rest), c) = finish_defaults_cons(p, rest, c) { Refl }
 
 pub theorem ck_default_ints_run_frame(
-  vs: List(Pair(Nat, Bool)),
+  vs: List(Nat × Bool),
   c: Checker,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, ck_default_ints(vs, c)) {
-  ⊢ CkRunFrame(c, ck_default_ints(vs, c)) from match vs {
+  match vs {
     Nil => run_frame_return(c, Star, ordered)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
@@ -1033,29 +983,28 @@ pub fn finish_report(c: Checker, widths: Ordmap(TermAt, Width)): TypeReport {
     lets: ck_resolved_lets(c.lets, c, Nil),
     locals: ck_resolved_locals(Ordmap::entries(c.locals), c, Ordmap::empty()),
     terms: ck_resolved_terms(c.terms, c, Ordmap::empty()),
-    datas: c.datas, quants: c.quants
+    datas: c.datas, quants: c.quants,
+    undetermined: ck_undetermined(List::reverse(c.uses), c),
+    uses: ck_resolved_uses(List::reverse(c.uses), c),
+    lending: ck_lending(Ordmap::entries(c.effects), c.datas),
+    lending_mut: ck_lending_mut(Ordmap::entries(c.effects), c.datas),
+    op_sigs: c.effects
   }
 }
 
 pub fn finish_after_defaults(c: Checker, widths: Ordmap(TermAt, Width)): Mut1(TypeReport, Checker) {
   frame_bind(
-    Unit,
-    TypeReport,
+    <A: Unit, B: TypeReport>,
     (ignored0: Unit, c1: Checker) => frame_bind(
-      Unit,
-      TypeReport,
+      <A: Unit, B: TypeReport>,
       (ignored1: Unit, c2: Checker) => frame_bind(
-        Unit,
-        TypeReport,
+        <A: Unit, B: TypeReport>,
         (ignored2: Unit, c3: Checker) => frame_bind(
-          Unit,
-          TypeReport,
+          <A: Unit, B: TypeReport>,
           (ignored3: Unit, c4: Checker) => frame_bind(
-            Unit,
-            TypeReport,
+            <A: Unit, B: TypeReport>,
             (ignored4: Unit, c5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
@@ -1077,24 +1026,18 @@ pub theorem finish_after_defaults_frame(
   ordered: CkOrdered(c)
 ): CkRunFrame(c, finish_after_defaults(c, widths)) {
   run_frame_bind(
-    Unit,
-    TypeReport,
+    <A: Unit, B: TypeReport>,
     c,
     (ignored0: Unit, c1: Checker) => frame_bind(
-      Unit,
-      TypeReport,
+      <A: Unit, B: TypeReport>,
       (ignored1: Unit, c2: Checker) => frame_bind(
-        Unit,
-        TypeReport,
+        <A: Unit, B: TypeReport>,
         (ignored2: Unit, c3: Checker) => frame_bind(
-          Unit,
-          TypeReport,
+          <A: Unit, B: TypeReport>,
           (ignored3: Unit, c4: Checker) => frame_bind(
-            Unit,
-            TypeReport,
+            <A: Unit, B: TypeReport>,
             (ignored4: Unit, c5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
@@ -1114,21 +1057,16 @@ pub theorem finish_after_defaults_frame(
       ordered
     ),
     ignored0 => c1 => o_c1 => run_frame_bind(
-      Unit,
-      TypeReport,
+      <A: Unit, B: TypeReport>,
       c1,
       (ignored1: Unit, c2: Checker) => frame_bind(
-        Unit,
-        TypeReport,
+        <A: Unit, B: TypeReport>,
         (ignored2: Unit, c3: Checker) => frame_bind(
-          Unit,
-          TypeReport,
+          <A: Unit, B: TypeReport>,
           (ignored3: Unit, c4: Checker) => frame_bind(
-            Unit,
-            TypeReport,
+            <A: Unit, B: TypeReport>,
             (ignored4: Unit, c5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
@@ -1146,18 +1084,14 @@ pub theorem finish_after_defaults_frame(
         o_c1
       ),
       ignored1 => c2 => o_c2 => run_frame_bind(
-        Unit,
-        TypeReport,
+        <A: Unit, B: TypeReport>,
         c2,
         (ignored2: Unit, c3: Checker) => frame_bind(
-          Unit,
-          TypeReport,
+          <A: Unit, B: TypeReport>,
           (ignored3: Unit, c4: Checker) => frame_bind(
-            Unit,
-            TypeReport,
+            <A: Unit, B: TypeReport>,
             (ignored4: Unit, c5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
@@ -1173,15 +1107,12 @@ pub theorem finish_after_defaults_frame(
           o_c2
         ),
         ignored2 => c3 => o_c3 => run_frame_bind(
-          Unit,
-          TypeReport,
+          <A: Unit, B: TypeReport>,
           c3,
           (ignored3: Unit, c4: Checker) => frame_bind(
-            Unit,
-            TypeReport,
+            <A: Unit, B: TypeReport>,
             (ignored4: Unit, c5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
@@ -1195,12 +1126,10 @@ pub theorem finish_after_defaults_frame(
             o_c3
           ),
           ignored3 => c4 => o_c4 => run_frame_bind(
-            Unit,
-            TypeReport,
+            <A: Unit, B: TypeReport>,
             c4,
             (ignored4: Unit, c5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
@@ -1212,8 +1141,7 @@ pub theorem finish_after_defaults_frame(
               o_c4
             ),
             ignored4 => c5 => o_c5 => run_frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               c5,
               (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5),
@@ -1238,8 +1166,7 @@ pub fn finish_after_ints(c: Checker): Mut1(TypeReport, Checker) {
 
 pub fn finish_run(c: Checker): Mut1(TypeReport, Checker) {
   frame_bind(
-    Unit,
-    TypeReport,
+    <A: Unit, B: TypeReport>,
     (ignored: Unit, c1: Checker) => finish_after_ints(c1),
     ck_default_ints(Ordmap::entries(finish_ints(c)), c)
   )
@@ -1258,8 +1185,7 @@ pub theorem finish_after_ints_frame(
 
 pub theorem finish_run_frame(c: Checker, ordered: CkOrdered(c)): CkRunFrame(c, finish_run(c)) {
   run_frame_bind(
-    Unit,
-    TypeReport,
+    <A: Unit, B: TypeReport>,
     c,
     (ignored: Unit, c1: Checker) => finish_after_ints(c1),
     ck_default_ints(Ordmap::entries(finish_ints(c)), c),
@@ -1295,7 +1221,7 @@ pub theorem finish_report_bind<A: Type>(
   m: Mut1(A, Checker),
   h: ∀ v: A. ∀ c: Checker. FinishReportAgrees(k(v, c))
 ): FinishReportAgrees(frame_bind(k, m)) {
-  ⊢ FinishReportAgrees(frame_bind(k, m)) from match m {
+  match m {
     mut1(v, c) => h(v, c)
   }
 }
@@ -1305,22 +1231,17 @@ pub theorem finish_after_defaults_report(
   widths: Ordmap(TermAt, Width)
 ): FinishReportAgrees(finish_after_defaults(c, widths)) {
   finish_report_bind(
-    Unit,
+    <A: Unit>,
     (unused0: Unit, r1: Checker) => frame_bind(
-      Unit,
-      TypeReport,
+      <A: Unit, B: TypeReport>,
       (unused1: Unit, r2: Checker) => frame_bind(
-        Unit,
-        TypeReport,
+        <A: Unit, B: TypeReport>,
         (unused2: Unit, r3: Checker) => frame_bind(
-          Unit,
-          TypeReport,
+          <A: Unit, B: TypeReport>,
           (unused3: Unit, r4: Checker) => frame_bind(
-            Unit,
-            TypeReport,
+            <A: Unit, B: TypeReport>,
             (unused4: Unit, r5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5)
             ),
@@ -1334,19 +1255,15 @@ pub theorem finish_after_defaults_report(
     ),
     ck_check_literals(List::reverse(finish_literals(c)), c),
     unused0 => r1 => finish_report_bind(
-      Unit,
+      <A: Unit>,
       (unused1: Unit, r2: Checker) => frame_bind(
-        Unit,
-        TypeReport,
+        <A: Unit, B: TypeReport>,
         (unused2: Unit, r3: Checker) => frame_bind(
-          Unit,
-          TypeReport,
+          <A: Unit, B: TypeReport>,
           (unused3: Unit, r4: Checker) => frame_bind(
-            Unit,
-            TypeReport,
+            <A: Unit, B: TypeReport>,
             (unused4: Unit, r5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5)
             ),
@@ -1358,16 +1275,13 @@ pub theorem finish_after_defaults_report(
       ),
       ck_check_closures(List::reverse(finish_closure_results(r1)), r1),
       unused1 => r2 => finish_report_bind(
-        Unit,
+        <A: Unit>,
         (unused2: Unit, r3: Checker) => frame_bind(
-          Unit,
-          TypeReport,
+          <A: Unit, B: TypeReport>,
           (unused3: Unit, r4: Checker) => frame_bind(
-            Unit,
-            TypeReport,
+            <A: Unit, B: TypeReport>,
             (unused4: Unit, r5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5)
             ),
@@ -1377,13 +1291,11 @@ pub theorem finish_after_defaults_report(
         ),
         ck_check_kept(List::reverse(finish_kept(r2)), r2),
         unused2 => r3 => finish_report_bind(
-          Unit,
+          <A: Unit>,
           (unused3: Unit, r4: Checker) => frame_bind(
-            Unit,
-            TypeReport,
+            <A: Unit, B: TypeReport>,
             (unused4: Unit, r5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5)
             ),
@@ -1391,16 +1303,15 @@ pub theorem finish_after_defaults_report(
           ),
           ck_check_bounds(List::reverse(finish_bounds(r3)), r3),
           unused3 => r4 => finish_report_bind(
-            Unit,
+            <A: Unit>,
             (unused4: Unit, r5: Checker) => frame_bind(
-              Unit,
-              TypeReport,
+              <A: Unit, B: TypeReport>,
               (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(r4)), r4),
             unused4 => r5 => finish_report_bind(
-              Unit,
+              <A: Unit>,
               (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5),
               unused5 => r6 => Refl
@@ -1413,7 +1324,7 @@ pub theorem finish_after_defaults_report(
 }
 pub theorem finish_run_report(c: Checker): FinishReportAgrees(finish_run(c)) {
   finish_report_bind(
-    Unit,
+    <A: Unit>,
     (ignored: Unit, next: Checker) => finish_after_ints(next),
     ck_default_ints(Ordmap::entries(finish_ints(c)), c),
     ignored => next => finish_after_defaults_report(

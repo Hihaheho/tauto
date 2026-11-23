@@ -1,13 +1,111 @@
+import "coerce_rules_sound.taut"
+import "coerce_sound.taut"
 import "checker_frame.taut"
 import "diagnostic_sound.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "unify_sound.taut"
 
 pub def ExpectFits(c: Checker, a: Ty, b: Ty, fits: Bool): Prop := (fits = true) -> SubAt(c, a, b)
+
+// What `ck_expect` gives when it reports nothing: `a` fits `b`, or `a` is
+// read as `b` through `coerce` fields (`rules_coerce.taut`).
+pub def ExpectAt(c: Checker, a: Ty, b: Ty): Prop := Or(SubAt(c, a, b), CoerceTypeAt(c, a, b))
+
+pub theorem error_if_clean_identity(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  flag: Bool,
+  clean: DiagnosticClean(ck_st(frame_error_if(c, message, span, flag)))
+): frame_error_if(c, message, span, flag) = mut1(Star, c) {
+  match flag {
+    true => False::elim(diagnostic_error_impossible(c, message, span, clean))
+    false => Refl
+  }
+}
+
+pub theorem expect_refused_found(
+  next: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  found: Option(CoerceFound)
+): (CoerceFitResult(next, a, b, mut1(found, next))) -> (DiagnosticClean(
+  ck_st(run_expect_refused(next, a, b, span, what, found))
+)) -> ExpectAt(ck_st(run_expect_refused(next, a, b, span, what, found)), a, b) {
+  ⊢ (CoerceFitResult(next, a, b, mut1(found, next))) -> (DiagnosticClean(
+    ck_st(run_expect_refused(next, a, b, span, what, found))
+  )) -> ExpectAt(ck_st(run_expect_refused(next, a, b, span, what, found)), a, b) from match found {
+    None => (res: True) => (clean: DiagnosticClean(ck_st(run_expect_refused(next, a, b, span, what, None)))) => False::elim(
+      diagnostic_error_impossible(next, coerce_refusal(next, a, b, what, None), span, clean)
+    )
+    Some(f) => (res: CoerceAt(next, a, b)) => (clean: DiagnosticClean(ck_st(run_expect_refused(next, a, b, span, what, Some(f))))) => Eq::subst(
+      (after: Checker) => ExpectAt(after, a, b),
+      Eq::sym(
+        Eq::congr(
+          (result: Mut1(Unit, Checker)) => ck_st(result),
+          error_if_clean_identity(
+            next,
+            coerce_refusal(next, a, b, what, Some(f)),
+            span,
+            coerce_refused(next, Some(f)),
+            clean
+          )
+        )
+      ),
+      OrInr(coerce_at_type(next, a, b, res))
+    )
+  }
+}
+
+pub theorem expect_refused_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  m: Mut1(Option(CoerceFound), Checker),
+  res: CoerceFitResult(c, a, b, m),
+  clean: DiagnosticClean(
+    ck_st(
+      frame_bind(
+        <A: Option(CoerceFound), B: Unit>,
+        (found: Option(CoerceFound), next: Checker) => run_expect_refused(next, a, b, span, what, found),
+        m
+      )
+    )
+  )
+): ExpectAt(
+  ck_st(
+    frame_bind(
+      <A: Option(CoerceFound), B: Unit>,
+      (found: Option(CoerceFound), next: Checker) => run_expect_refused(next, a, b, span, what, found),
+      m
+    )
+  ),
+  a,
+  b
+) {
+  ⊢ ExpectAt(
+    ck_st(
+      frame_bind(
+        <A: Option(CoerceFound), B: Unit>,
+        (found: Option(CoerceFound), next: Checker) => run_expect_refused(next, a, b, span, what, found),
+        m
+      )
+    ),
+    a,
+    b
+  ) from match m {
+    mut1(found, next) => expect_refused_found(next, a, b, span, what, found)(res)(clean)
+  }
+}
 
 pub theorem expect_after_sound(
   c: Checker,
@@ -17,17 +115,20 @@ pub theorem expect_after_sound(
   what: Text,
   fits: Bool,
   h: ExpectFits(c, a, b, fits),
+  ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(run_expect_after(c, a, b, span, what, fits)))
-): SubAt(ck_st(run_expect_after(c, a, b, span, what, fits)), a, b) {
-  ⊢ SubAt(ck_st(run_expect_after(c, a, b, span, what, fits)), a, b) from match fits {
-    true => h(Refl)
-    false => False::elim(
-      diagnostic_error_impossible(
-        c,
-        ck_expect_message(ck_shown(c, a), ck_shown(c, b), what),
-        span,
-        clean
-      )
+): ExpectAt(ck_st(run_expect_after(c, a, b, span, what, fits)), a, b) {
+  match fits {
+    true => OrInl(h(Refl))
+    false => expect_refused_sound(
+      c,
+      a,
+      b,
+      span,
+      what,
+      ck_coerce_fit(c, a, b),
+      ck_coerce_fit_sound(c, a, b, ordered),
+      clean
     )
   }
 }
@@ -44,18 +145,16 @@ pub theorem expect_bind_sound(
   clean: DiagnosticClean(
     ck_st(
       frame_bind(
-        Bool,
-        Unit,
+        <A: Bool, B: Unit>,
         (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
         m
       )
     )
   )
-): SubAt(
+): ExpectAt(
   ck_st(
     frame_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
       m
     )
@@ -63,11 +162,10 @@ pub theorem expect_bind_sound(
   a,
   b
 ) {
-  ⊢ SubAt(
+  ⊢ ExpectAt(
     ck_st(
       frame_bind(
-        Bool,
-        Unit,
+        <A: Bool, B: Unit>,
         (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
         m
       )
@@ -83,6 +181,7 @@ pub theorem expect_bind_sound(
       what,
       value,
       And::right(h(ordered)),
+      And::left(And::left(h(ordered))),
       clean
     )
   }
@@ -96,7 +195,7 @@ pub theorem ck_expect_sound(
   what: Text,
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(ck_expect(c, a, b, span, what)))
-): SubAt(ck_st(ck_expect(c, a, b, span, what)), a, b) {
+): ExpectAt(ck_st(ck_expect(c, a, b, span, what)), a, b) {
   let expanded: DiagnosticClean(
     ck_st(run_expect(c, a, b, span, what))
   ) := Eq::subst(
@@ -105,7 +204,7 @@ pub theorem ck_expect_sound(
     clean
   )
   Eq::subst(
-    (m: Mut1(Unit, Checker)) => SubAt(ck_st(m), a, b),
+    (m: Mut1(Unit, Checker)) => ExpectAt(ck_st(m), a, b),
     Eq::sym(run_expect_unf(c, a, b, span, what)),
     expect_bind_sound(
       c,

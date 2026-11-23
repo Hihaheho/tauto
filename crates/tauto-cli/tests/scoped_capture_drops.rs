@@ -12,31 +12,31 @@ fn write(root: &Path, path: &str, source: &str) {
 #[test]
 fn named_and_lambda_captures_keep_their_value_and_drop_scope() {
     for (case, expected) in [
-        ("owned-capture-drop", "drop captured\nafter_inner = 1\n"),
-        ("owned-lambda-drop", "drop lambda\nafter_inner = 1\n"),
+        ("owned-capture-drop", "drop captured\n1\n"),
+        ("owned-lambda-drop", "drop lambda\n1\n"),
         (
             "generic-owned-capture-drop",
-            "drop captured\nafter_inner = 1\n",
+            "drop captured\n1\n",
         ),
         (
             "generic-owned-capture-shadow",
-            "after_call = 1\ndrop original\ndrop shadow\nafter_inner = 1\n",
+            "1\ndrop original\ndrop shadow\n1\n",
         ),
         (
             "owned-capture-argument-abort",
-            "drop captured\nafter_call = 1\nafter_inner = 1\n",
+            "drop captured\n1\n1\n",
         ),
         (
             "owned-lambda-argument-abort",
-            "drop captured\nafter_call = 1\nafter_inner = 1\n",
+            "drop captured\n1\n1\n",
         ),
         (
             "owned-capture-shadow",
-            "after_call = 1\ndrop original\ndrop shadow\nafter_inner = 1\n",
+            "1\ndrop original\ndrop shadow\n1\n",
         ),
         (
             "owned-lambda-shadow",
-            "after_call = 1\ndrop original\ndrop shadow\nafter_inner = 1\n",
+            "1\ndrop original\ndrop shadow\n1\n",
         ),
     ] {
         let root = std::env::temp_dir().join(format!(
@@ -132,63 +132,65 @@ pub fn dropped() -> i64 { DROPS.load(Ordering::SeqCst) }
     write(
         &root,
         "src/main.taut",
-        &r#"affine struct Probe {}
+        &r#"import std::builtin::os { stdout, stdout_flush }
+struct(affine) Probe {}
 extern { fn make(n: i64): Probe
   fn dropped(): i64 }
 effect stop(): Never resume 0
-fn named_unused(): Unit {
+fn named_unused(): Unit ! {stdout, stdout_flush} {
   let captured := make(10)
   { fn unused_named(): Probe { captured }; #() }
-  perform show("named_unused", dropped())
+  show(&dropped())
 }
-fn lambda_unused(): Unit {
+fn lambda_unused(): Unit ! {stdout, stdout_flush} {
   let captured := make(20)
   { let unused: affine () -> Probe := () => captured; #() }
-  perform show("lambda_unused", dropped())
+  show(&dropped())
 }
-fn named_shadow(): Unit {
+fn named_shadow(): Unit ! {stdout, stdout_flush} {
   let captured := make(40)
   { fn consume_named(): Probe { captured }
     let captured := make(80)
     let result := consume_named()
   }
-  perform show("named_shadow", dropped())
+  show(&dropped())
 }
-fn lambda_shadow(): Unit {
+fn lambda_shadow(): Unit ! {stdout, stdout_flush} {
   let captured := make(160)
   { let consume: affine () -> Probe := () => captured
     let captured := make(320)
     let result := consume()
   }
-  perform show("lambda_shadow", dropped())
+  show(&dropped())
 }
-fn generic_unused(): Unit {
+fn generic_unused(): Unit ! {stdout, stdout_flush} {
   let captured := make(640)
   { fn unused_generic<A: Shared>(marker: A): Probe { captured }; #() }
-  perform show("generic_unused", dropped())
+  show(&dropped())
 }
-fn generic_shadow(): Unit {
+fn generic_shadow(): Unit ! {stdout, stdout_flush} {
   let captured := make(1280)
   { fn consume_generic<A: Shared>(marker: A): Probe { captured }
     let captured := make(2560)
     let result := consume_generic(7)
   }
-  perform show("generic_shadow", dropped())
+  show(&dropped())
 }
-fn named_abort(): Unit {
+fn named_abort(): Unit ! {stdout, stdout_flush} {
   let captured := make(5120)
   { fn consume_abort(marker: i64): Probe { captured }
     handle { let result := consume_abort(perform stop()); #() } with { stop() => #() }
-    perform show("named_abort", dropped())
+    show(&dropped())
   }
 }
-fn lambda_abort(): Unit {
+fn lambda_abort(): Unit ! {stdout, stdout_flush} {
   let captured := make(10240)
   { let consume: affine (i64) -> Probe := (marker) => captured
     handle { let result := consume(perform stop()); #() } with { stop() => #() }
-    perform show("lambda_abort", dropped())
+    show(&dropped())
   }
 }
+perform main(() => {
 named_unused()
 lambda_unused()
 named_shadow()
@@ -197,7 +199,8 @@ generic_unused()
 generic_shadow()
 named_abort()
 lambda_abort()
-perform show("finished", dropped())
+show(&dropped())
+})
 "#
         .to_string(),
     );
@@ -223,149 +226,18 @@ perform show("finished", dropped())
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "named_unused = 10\nlambda_unused = 30\nnamed_shadow = 150\nlambda_shadow = 630\ngeneric_unused = 1270\ngeneric_shadow = 5110\nnamed_abort = 10230\nlambda_abort = 20470\nfinished = 20470\n"
+        "10\n30\n150\n630\n1270\n5110\n10230\n20470\n20470\n"
     );
     fs::remove_dir_all(root).unwrap();
 }
 
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
+/// The inputs these tests read, kept as files under `tests/fixtures`.
 mod case_inputs {
-    pub fn fixture_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            ("scoped-capture-fixtures.eure", "generic-owned-capture-drop") => {
-                r#"affine struct Probe {}
-module Probe {
-  extern { fn new(&name: Text): Probe }
-}
-fn outer(): Unit {
-  let captured := Probe::new("captured")
-  {
-    fn unused<A: Shared>(marker: A): Probe { captured }
-    #()
-  }
-  perform show("after_inner", 1)
-}
-outer()
-"#
-            }
-            ("scoped-capture-fixtures.eure", "owned-lambda-argument-abort") => {
-                r#"affine struct Probe {}
-module Probe { extern { fn new(&name: Text): Probe } }
-effect stop(): Never resume 0
-fn outer(): Unit {
-  let captured := Probe::new("captured")
-  {
-    let consume: affine (i64) -> Probe := (marker) => captured
-    handle { let result := consume(perform stop()); #() } with { stop() => #() }
-    perform show("after_call", 1)
-  }
-  perform show("after_inner", 1)
-}
-outer()
-"#
-            }
-            ("scoped-capture-fixtures.eure", "owned-capture-drop") => {
-                r#"affine struct Probe {}
-module Probe {
-  extern { fn new(&name: Text): Probe }
-}
-fn outer(): Unit {
-  let captured := Probe::new("captured")
-  {
-    fn unused(): Probe { captured }
-    #()
-  }
-  perform show("after_inner", 1)
-}
-outer()
-"#
-            }
-            ("scoped-capture-fixtures.eure", "generic-owned-capture-shadow") => {
-                r#"affine struct Probe {}
-module Probe { extern { fn new(&name: Text): Probe } }
-fn outer(): Unit {
-  let captured := Probe::new("original")
-  {
-    fn consume<A: Shared>(marker: A): Probe { captured }
-    let captured := Probe::new("shadow")
-    let result := consume(7)
-    perform show("after_call", 1)
-  }
-  perform show("after_inner", 1)
-}
-outer()
-"#
-            }
-            ("scoped-capture-fixtures.eure", "owned-lambda-shadow") => {
-                r#"affine struct Probe {}
-module Probe { extern { fn new(&name: Text): Probe } }
-fn outer(): Unit {
-  let captured := Probe::new("original")
-  {
-    let consume: affine () -> Probe := () => captured
-    let captured := Probe::new("shadow")
-    let result := consume()
-    perform show("after_call", 1)
-  }
-  perform show("after_inner", 1)
-}
-outer()
-"#
-            }
-            ("scoped-capture-fixtures.eure", "owned-capture-argument-abort") => {
-                r#"affine struct Probe {}
-module Probe { extern { fn new(&name: Text): Probe } }
-effect stop(): Never resume 0
-fn outer(): Unit {
-  let captured := Probe::new("captured")
-  {
-    fn consume(marker: i64): Probe { captured }
-    handle { let result := consume(perform stop()); #() } with { stop() => #() }
-    perform show("after_call", 1)
-  }
-  perform show("after_inner", 1)
-}
-outer()
-"#
-            }
-            ("scoped-capture-fixtures.eure", "owned-capture-shadow") => {
-                r#"affine struct Probe {}
-module Probe { extern { fn new(&name: Text): Probe } }
-fn outer(): Unit {
-  let captured := Probe::new("original")
-  {
-    fn consume(): Probe { captured }
-    let captured := Probe::new("shadow")
-    let result := consume()
-    perform show("after_call", 1)
-  }
-  perform show("after_inner", 1)
-}
-outer()
-"#
-            }
-            ("scoped-capture-fixtures.eure", "owned-lambda-drop") => {
-                r#"affine struct Probe {}
-module Probe {
-  extern { fn new(&name: Text): Probe }
-}
-fn outer(): Unit {
-  let captured := Probe::new("lambda")
-  {
-    let unused: affine () -> Probe := () => captured
-    #()
-  }
-  perform show("after_inner", 1)
-}
-outer()
-"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
+    fn read(path: &str) -> String {
+        let path = format!("{}/tests/fixtures/{path}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"))
     }
-    #[allow(dead_code)]
     pub fn fixture(file: &str, name: &str) -> String {
-        fixture_static(file, name).to_string()
+        read(&format!("{}/{}.taut", file.trim_end_matches(".eure"), name))
     }
 }

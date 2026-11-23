@@ -2,7 +2,6 @@
 // `Poll`, `Rc`, `Op`, …), or such a name with a trailing `_`: the
 // generated code still builds and runs.
 @ cases.runtime-name-clash
-extract = true
 source = ```tauto
 inductive Peek: Type { PeekOk: Peek, PeekBad: Peek }
 inductive Poll: Type { Ready: Poll, Pending: Poll }
@@ -27,9 +26,7 @@ fn score_rc(p: Peek, q: Poll, r: Rc): Nat {
   }
 }
 
-perform show("ok", score(PeekOk, Ready, Rc_::Mk(Rc::Mk(Succ(Succ(Zero))))))
-perform show("bad", score(PeekBad, Pending, Rc_::Mk(Rc::Mk(Zero))))
+show(&score(PeekOk, Ready, Rc_::Mk(Rc::Mk(Succ(Succ(Zero))))))
+show(&score(PeekBad, Pending, Rc_::Mk(Rc::Mk(Zero))))
 ```
-shows = ['ok = 2', 'bad = 1']
-rust_shows = ['ok = 2', 'bad = 1']
-javascript_shows = ['ok = 2', 'bad = 1']
+stdout = "2\n1\n"

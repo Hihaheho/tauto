@@ -7,20 +7,20 @@ use tauto_rustgen::{Bindings, Options, Sources, workspace};
 fn nested_owned_results_convert_text_without_repeating_foreign_calls() {
     let source = r#"
 extern {
-  fn lookup(&value: Text): Option(Text)
+  fn lookup(value: &Text): Option(Text)
   fn missing(): Option(Text)
   fn nested(ok: Bool): Result(Option(Text), Text)
   fn words(): Vec(Text)
-  fn pair(): Pair(Text, Option(Text))
-  fn deep(): Pair(Text, Vec(Result(Text, Pair(i64, Text))))
+  fn pair(): Text × Option(Text)
+  fn deep(): Text × Vec(Result(Text, i64 × Text))
 }
-perform show("value", lookup("hello"))
-perform show("missing", missing())
-perform show("ok", nested(true))
-perform show("err", nested(false))
-perform show("words", Vec::into_list(words()))
-perform show("pair", pair())
-perform show("deep", deep())
+show(&lookup("hello"))
+show(&missing())
+show(&nested(true))
+show(&nested(false))
+show(&Vec::into_list(words()))
+show(&pair())
+show(&deep())
 "#;
     let manifest = tauto::manifest::parse(
         r#"rust { extern {
@@ -34,8 +34,8 @@ perform show("deep", deep())
         Path::new("Tauto.eure"),
     )
     .unwrap();
-    let package = tauto_nir::compile(source).unwrap();
-    let bindings = Bindings::resolve(&package, Some(&manifest), None).unwrap();
+    let mut package = tauto::nir::compile(source).unwrap();
+    let bindings = Bindings::resolve(&mut package, Some(&manifest), None).unwrap();
     let mut ws = workspace(
         "owned-text",
         &package,

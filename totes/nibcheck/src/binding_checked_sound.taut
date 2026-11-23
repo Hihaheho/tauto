@@ -1,8 +1,10 @@
+import "messages.taut"
 import "binding_frame.taut"
 import "binding_error_sound.taut"
 import "application_checked_sound.taut"
 import "pattern_scope_checked.taut"
-import std::Text
+import std::base
+import std::text
 import "checked_frame.taut"
 import "checker.taut"
 import "datas_frame.taut"
@@ -14,7 +16,9 @@ import "operation_checked_sound.taut"
 import "pattern_scope.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "written_error_sound.taut"
@@ -37,7 +41,7 @@ pub theorem binding_mark_frame_checked(
   vb: Bool,
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, binding_mark(c, env, vb)) {
-  ⊢ CkScopeChecked(c, binding_mark(c, env, vb)) from match vb {
+  match vb {
     true => binding_scope_only_frame_checked(c, ck_mark_view(env), ordered)
     false => pattern_return_frame_checked(c, env, Star, ordered)
   }
@@ -53,12 +57,10 @@ pub theorem binding_var_after_frame_checked(
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, binding_var_after(c, env, name, value, vb, t)) {
   pattern_bind_one_frame_checked(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => pattern_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (ignored2: Unit, c2: Checker, env2: Scope) => binding_mark(c2, env2, vb),
       ck_bind_local(c1, env, name, t, true, handle_body_start(value))
     ),
@@ -71,8 +73,7 @@ pub theorem binding_var_after_frame_checked(
       ordered
     ),
     ignored => c1 => o_c1 => pattern_bind_frame_checked(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c1,
       (ignored2: Unit, c2: Checker, env2: Scope) => binding_mark(c2, env2, vb),
       ck_bind_local(c1, env, name, t, true, handle_body_start(value)),
@@ -93,13 +94,12 @@ pub theorem binding_var_frame_checked(
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, binding_var(c, env, name, ty, v, value, vb)) {
   pattern_bind_one_frame_checked(
-    Ty,
-    Unit,
+    <A: Ty, B: Unit>,
     c,
-    (t: Ty, c1: Checker) => binding_var_after(c1, env, name, value, vb, t),
+    (t: Ty, c1: Checker) => binding_var_after(c1, env, name, value, Bool::or(vb, ck_is_view(c1, ck_resolve(c1, t))), t),
     ck_stmt_ty(c, ty, v, value, name),
     ck_stmt_ty_run_frame_checked(c, ty, v, value, name, ordered),
-    t => c1 => o_c1 => binding_var_after_frame_checked(c1, env, name, value, vb, t, o_c1)
+    t => c1 => o_c1 => binding_var_after_frame_checked(c1, env, name, value, Bool::or(vb, ck_is_view(c1, ck_resolve(c1, t))), t, o_c1)
   )
 }
 
@@ -124,26 +124,26 @@ pub theorem binding_let_if_frame_checked(
   c: Checker,
   env: Scope,
   name: Text,
-  r#view: Bool,
+  view: Bool,
   bm: Bool,
   resolved: Ty,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   ordered: CkOrdered(c)
-): CkScopeChecked(c, binding_let_if(c, env, name, r#view, bm, resolved, value, borrow)) {
+): CkScopeChecked(c, binding_let_if(c, env, name, view, bm, resolved, value, r#borrow)) {
   ⊢ CkScopeChecked(
     c,
-    binding_let_if(c, env, name, r#view, bm, resolved, value, borrow)
-  ) from match borrow {
+    binding_let_if(c, env, name, view, bm, resolved, value, r#borrow)
+  ) from match r#borrow {
     true => pattern_lift_frame_checked(
       c,
       env,
-      ck_let_borrow(c, name, r#view, bm, resolved, value),
+      ck_let_borrow(c, name, view, bm, resolved, value),
       checked_frame_read(
         c,
-        ck_let_borrow(c, name, r#view, bm, resolved, value),
-        ck_let_borrow_frame(c, name, r#view, bm, resolved, value),
-        ck_let_borrow_frame_errors(c, name, r#view, bm, resolved, value),
+        ck_let_borrow(c, name, view, bm, resolved, value),
+        ck_let_borrow_frame(c, name, view, bm, resolved, value),
+        ck_let_borrow_frame_errors(c, name, view, bm, resolved, value),
         ordered
       )
     )
@@ -157,39 +157,36 @@ pub theorem binding_let_after_frame_checked(
   name: Text,
   t0: Ty,
   resolved: Ty,
-  r#view: Bool,
+  view: Bool,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   bm: Bool,
   ordered: CkOrdered(c)
-): CkScopeChecked(c, binding_let_after(c, env, name, t0, resolved, r#view, value, borrow, bm)) {
+): CkScopeChecked(c, binding_let_after(c, env, name, t0, resolved, view, value, r#borrow, bm)) {
   pattern_bind_frame_checked(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker, env1: Scope) => pattern_bind_one(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       (t: Ty, c2: Checker) => pattern_rewrap(
         ck_bind_local(c2, env1, name, t, false, handle_body_start(value))
       ),
-      ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(borrow), r#view))
+      ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(r#borrow), view))
     ),
-    binding_let_if(c, env, name, r#view, bm, resolved, value, borrow),
-    binding_let_if_frame_checked(c, env, name, r#view, bm, resolved, value, borrow, ordered),
+    binding_let_if(c, env, name, view, bm, resolved, value, r#borrow),
+    binding_let_if_frame_checked(c, env, name, view, bm, resolved, value, r#borrow, ordered),
     ignored => c1 => env1 => o_c1 => pattern_bind_one_frame_checked(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       c1,
       (t: Ty, c2: Checker) => pattern_rewrap(
         ck_bind_local(c2, env1, name, t, false, handle_body_start(value))
       ),
-      ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(borrow), r#view)),
+      ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(r#borrow), view)),
       checked_frame_read(
         c1,
-        ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(borrow), r#view)),
-        ck_let_stored_frame(c1, name, t0, resolved, value, Bool::and(not(borrow), r#view)),
-        ck_let_stored_frame_errors(c1, name, t0, resolved, value, Bool::and(not(borrow), r#view)),
+        ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(r#borrow), view)),
+        ck_let_stored_frame(c1, name, t0, resolved, value, Bool::and(not(r#borrow), view)),
+        ck_let_stored_frame_errors(c1, name, t0, resolved, value, Bool::and(not(r#borrow), view)),
         o_c1
       ),
       t => c2 => o_c2 => pattern_rewrap_frame_checked(
@@ -208,13 +205,12 @@ pub theorem binding_let_frame_checked(
   ty: Option(SurfaceTerm),
   v: Ty,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   bm: Bool,
   ordered: CkOrdered(c)
-): CkScopeChecked(c, binding_let(c, env, name, ty, v, value, borrow, bm)) {
+): CkScopeChecked(c, binding_let(c, env, name, ty, v, value, r#borrow, bm)) {
   pattern_bind_one_frame_checked(
-    Ty,
-    Unit,
+    <A: Ty, B: Unit>,
     c,
     (t0: Ty, c1: Checker) => binding_let_after(
       c1,
@@ -224,7 +220,7 @@ pub theorem binding_let_frame_checked(
       ck_resolve(c1, t0),
       ck_is_view(c1, ck_resolve(c1, t0)),
       value,
-      borrow,
+      r#borrow,
       bm
     ),
     ck_stmt_ty(c, ty, v, value, name),
@@ -237,7 +233,7 @@ pub theorem binding_let_frame_checked(
       ck_resolve(c1, t0),
       ck_is_view(c1, ck_resolve(c1, t0)),
       value,
-      borrow,
+      r#borrow,
       bm,
       o_c1
     )
@@ -251,44 +247,62 @@ pub theorem ck_let_scope_frame_checked(
   ty: Option(SurfaceTerm),
   v: Ty,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   bm: Bool,
   ordered: CkOrdered(c)
-): CkScopeChecked(c, ck_let(c, env, name, ty, v, value, borrow, bm)) {
+): CkScopeChecked(c, ck_let(c, env, name, ty, v, value, r#borrow, bm)) {
   Eq::subst(
     (z: Mut2(Unit, Checker, Scope)) => CkScopeChecked(c, z),
-    Eq::sym(binding_let_unf(c, env, name, ty, v, value, borrow, bm)),
-    binding_let_frame_checked(c, env, name, ty, v, value, borrow, bm, ordered)
+    Eq::sym(binding_let_unf(c, env, name, ty, v, value, r#borrow, bm)),
+    binding_let_frame_checked(c, env, name, ty, v, value, r#borrow, bm, ordered)
   )
 }
 
 pub theorem binding_assign_borrow_frame_checked(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   inner: Ty,
   mutable: Bool,
   ordered: CkOrdered(c)
-): CkCheckedFrame(c, binding_assign_borrow(c, name, v, value, inner, mutable)) {
-  ⊢ CkCheckedFrame(c, binding_assign_borrow(c, name, v, value, inner, mutable)) from match mutable {
-    true => checked_frame_rewrap(
-      c,
-      ck_expect(c, v, inner, span_of(value), cat3("`", name, "`")),
-      ck_expect_run_frame_checked(c, v, inner, span_of(value), cat3("`", name, "`"), ordered)
-    )
+): CkCheckedFrame(c, binding_assign_borrow(c, name, deref, v, value, inner, mutable)) {
+  match mutable {
+    true => ⊢ CkCheckedFrame(c, binding_assign_borrow(c, name, deref, v, value, inner, true)) from match deref {
+      true => checked_frame_rewrap(
+        c,
+        ck_expect(c, v, inner, span_of(value), cat3("`", name, "`")),
+        ck_expect_run_frame_checked(c, v, inner, span_of(value), cat3("`", name, "`"), ordered)
+      )
+      false => checked_frame_read(
+        c,
+        ck_rewrap1(ck_error(c, assign_through_borrow_message(name), span_of(value))),
+        frame_rewrap(
+          c,
+          ck_error(c, assign_through_borrow_message(name), span_of(value)),
+          ck_error_frame(c, assign_through_borrow_message(name), span_of(value))
+        ),
+        error_frame_rewrap(
+          c,
+          ck_error(c, assign_through_borrow_message(name), span_of(value)),
+          ck_error_frame_errors(c, assign_through_borrow_message(name), span_of(value))
+        ),
+        ordered
+      )
+    }
     false => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
@@ -298,265 +312,281 @@ pub theorem binding_assign_borrow_frame_checked(
 pub theorem binding_assign_type_frame_checked(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   t: Ty,
   ordered: CkOrdered(c)
-): CkCheckedFrame(c, binding_assign_type(c, name, v, value, t)) {
-  ⊢ CkCheckedFrame(c, binding_assign_type(c, name, v, value, t)) from match t {
+): CkCheckedFrame(c, binding_assign_type(c, name, deref, v, value, t)) {
+  match t {
     TyInt(pat_w) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyBool => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyText => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyUnit => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyNever => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyDecimal => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyFloat => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
+      ),
+      ordered
+    )
+    TyFloat32 => checked_frame_read(
+      c,
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
+      frame_rewrap(
+        c,
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
+      ),
+      error_frame_rewrap(
+        c,
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyFn(pat_params, pat_result, pat_kind) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyUnion(pat_members) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyProduct(pat_members) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyTagged(pat_tags, pat_inner) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyNamed(pat_name, pat_args) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyParam(pat_name, pat_bound) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyInfo(pat_inner) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
-    TyBorrow(inner, m) => binding_assign_borrow_frame_checked(c, name, v, value, inner, m, ordered)
+    TyBorrow(inner, m) => binding_assign_borrow_frame_checked(c, name, deref, v, value, inner, m, ordered)
     TyVar(pat_v) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyPoly(pat_generics, pat_inner) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyApp(pat_head, pat_arg) => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame_errors(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame_errors(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
@@ -566,28 +596,47 @@ pub theorem binding_assign_type_frame_checked(
 pub theorem binding_assign_mutable_frame_checked(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   l: Local,
   mutable: Bool,
   ordered: CkOrdered(c)
-): CkCheckedFrame(c, binding_assign_mutable(c, name, v, value, l, mutable)) {
-  ⊢ CkCheckedFrame(c, binding_assign_mutable(c, name, v, value, l, mutable)) from match mutable {
-    true => checked_frame_rewrap(
-      c,
-      ck_expect(c, v, leaf_local_ty(l), span_of(value), cat3("`", name, "`")),
-      ck_expect_run_frame_checked(
+): CkCheckedFrame(c, binding_assign_mutable(c, name, deref, v, value, l, mutable)) {
+  match mutable {
+    true => ⊢ CkCheckedFrame(c, binding_assign_mutable(c, name, deref, v, value, l, true)) from match deref {
+      true => checked_frame_read(
         c,
-        v,
-        leaf_local_ty(l),
-        span_of(value),
-        cat3("`", name, "`"),
+        ck_rewrap1(ck_error(c, deref_needs_mut_borrow_message(name), span_of(value))),
+        frame_rewrap(
+          c,
+          ck_error(c, deref_needs_mut_borrow_message(name), span_of(value)),
+          ck_error_frame(c, deref_needs_mut_borrow_message(name), span_of(value))
+        ),
+        error_frame_rewrap(
+          c,
+          ck_error(c, deref_needs_mut_borrow_message(name), span_of(value)),
+          ck_error_frame_errors(c, deref_needs_mut_borrow_message(name), span_of(value))
+        ),
         ordered
       )
-    )
+      false => checked_frame_rewrap(
+        c,
+        ck_expect(c, v, leaf_local_ty(l), span_of(value), cat3("`", name, "`")),
+        ck_expect_run_frame_checked(
+          c,
+          v,
+          leaf_local_ty(l),
+          span_of(value),
+          cat3("`", name, "`"),
+          ordered
+        )
+      )
+    }
     false => binding_assign_type_frame_checked(
       c,
       name,
+      deref,
       v,
       value,
       ck_resolve(c, leaf_local_ty(l)),
@@ -596,34 +645,35 @@ pub theorem binding_assign_mutable_frame_checked(
   }
 }
 
-pub theorem binding_assign_view_frame_checked(
+pub theorem binding_assign_frame_checked(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
-  l: Local,
-  r#view: Bool,
+  found: Option(Local),
   ordered: CkOrdered(c)
-): CkCheckedFrame(c, binding_assign_view(c, name, v, value, l, r#view)) {
-  ⊢ CkCheckedFrame(c, binding_assign_view(c, name, v, value, l, r#view)) from match r#view {
-    true => checked_frame_read(
+): CkCheckedFrame(c, binding_assign(c, name, deref, v, value, found)) {
+  match found {
+    None => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, "a view var cannot be reassigned", span_of(value))),
+      ck_rewrap1(ck_error(c, not_defined_message(name), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, "a view var cannot be reassigned", span_of(value)),
-        ck_error_frame(c, "a view var cannot be reassigned", span_of(value))
+        ck_error(c, not_defined_message(name), span_of(value)),
+        ck_error_frame(c, not_defined_message(name), span_of(value))
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, "a view var cannot be reassigned", span_of(value)),
-        ck_error_frame_errors(c, "a view var cannot be reassigned", span_of(value))
+        ck_error(c, not_defined_message(name), span_of(value)),
+        ck_error_frame_errors(c, not_defined_message(name), span_of(value))
       ),
       ordered
     )
-    false => binding_assign_mutable_frame_checked(
+    Some(l) => binding_assign_mutable_frame_checked(
       c,
       name,
+      deref,
       v,
       value,
       l,
@@ -633,53 +683,181 @@ pub theorem binding_assign_view_frame_checked(
   }
 }
 
-pub theorem binding_assign_frame_checked(
-  c: Checker,
-  name: Text,
-  v: Ty,
-  value: SurfaceTerm,
-  found: Option(Local),
-  ordered: CkOrdered(c)
-): CkCheckedFrame(c, binding_assign(c, name, v, value, found)) {
-  ⊢ CkCheckedFrame(c, binding_assign(c, name, v, value, found)) from match found {
-    None => checked_frame_read(
-      c,
-      ck_rewrap1(ck_error(c, cat2(name, " is not defined"), span_of(value))),
-      frame_rewrap(
-        c,
-        ck_error(c, cat2(name, " is not defined"), span_of(value)),
-        ck_error_frame(c, cat2(name, " is not defined"), span_of(value))
-      ),
-      error_frame_rewrap(
-        c,
-        ck_error(c, cat2(name, " is not defined"), span_of(value)),
-        ck_error_frame_errors(c, cat2(name, " is not defined"), span_of(value))
-      ),
-      ordered
-    )
-    Some(l) => binding_assign_view_frame_checked(
-      c,
-      name,
-      v,
-      value,
-      l,
-      binding_local_view(l),
-      ordered
-    )
-  }
-}
-
 pub theorem ck_assign_run_frame_checked(
   c: Checker,
   env: List(Local),
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   ordered: CkOrdered(c)
-): CkCheckedFrame(c, ck_assign(c, env, name, v, value)) {
+): CkCheckedFrame(c, ck_assign(c, env, name, deref, v, value)) {
   Eq::subst(
     (z: Mut1(Unit, Checker)) => CkCheckedFrame(c, z),
-    Eq::sym(binding_assign_unf(c, env, name, v, value)),
-    binding_assign_frame_checked(c, name, v, value, env_find(env, name), ordered)
+    Eq::sym(binding_assign_unf(c, env, name, deref, v, value)),
+    binding_assign_frame_checked(c, name, deref, v, value, env_find(env, name), ordered)
+  )
+}
+
+pub theorem binding_assign_place_deref_frame_checked(
+  c: Checker,
+  inner: Option(Ty),
+  v: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, binding_assign_place_deref(c, inner, v, place, value)) {
+  match inner {
+    Some(t) => checked_frame_rewrap(
+      c,
+      ck_expect(c, v, t, span_of(value), cat3("`", place_label(place), "`")),
+      ck_expect_run_frame_checked(c, v, t, span_of(value), cat3("`", place_label(place), "`"), ordered)
+    )
+    None => checked_frame_read(
+    c,
+    ck_rewrap1(ck_error(c, deref_needs_mut_borrow_message(place_label(place)), span_of(place))),
+    frame_rewrap(
+      c,
+      ck_error(c, deref_needs_mut_borrow_message(place_label(place)), span_of(place)),
+      ck_error_frame(c, deref_needs_mut_borrow_message(place_label(place)), span_of(place))
+    ),
+    error_frame_rewrap(c, ck_error(c, deref_needs_mut_borrow_message(place_label(place)), span_of(place)), ck_error_frame_errors(c, deref_needs_mut_borrow_message(place_label(place)), span_of(place))),
+    ordered
+  )
+  }
+}
+
+pub theorem binding_assign_place_plain_frame_checked(
+  c: Checker,
+  through: Bool,
+  v: Ty,
+  pt: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, binding_assign_place_plain(c, through, v, pt, place, value)) {
+  match through {
+    true => checked_frame_read(
+    c,
+    ck_rewrap1(ck_error(c, assign_through_borrow_message(place_label(place)), span_of(place))),
+    frame_rewrap(
+      c,
+      ck_error(c, assign_through_borrow_message(place_label(place)), span_of(place)),
+      ck_error_frame(c, assign_through_borrow_message(place_label(place)), span_of(place))
+    ),
+    error_frame_rewrap(c, ck_error(c, assign_through_borrow_message(place_label(place)), span_of(place)), ck_error_frame_errors(c, assign_through_borrow_message(place_label(place)), span_of(place))),
+    ordered
+  )
+    false => checked_frame_rewrap(
+      c,
+      ck_expect(c, v, ty_unborrowed(ck_resolve(c, pt)), span_of(value), cat3("`", place_label(place), "`")),
+      ck_expect_run_frame_checked(c, v, ty_unborrowed(ck_resolve(c, pt)), span_of(value), cat3("`", place_label(place), "`"), ordered)
+    )
+  }
+}
+
+pub theorem binding_assign_place_frame_checked(
+  c: Checker,
+  borrowed: Bool,
+  deref: Bool,
+  v: Ty,
+  pt: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, binding_assign_place(c, borrowed, deref, v, pt, place, value)) {
+  match deref {
+    true => binding_assign_place_deref_frame_checked(c, ty_mut_inner(ck_declared_place(c, borrowed, pt)), v, place, value, ordered)
+    false => binding_assign_place_plain_frame_checked(c, ty_is_borrow(ck_declared_place(c, borrowed, pt)), v, pt, place, value, ordered)
+  }
+}
+
+pub theorem binding_assign_refuse_local_frame_checked(
+  c: Checker,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  view: Bool,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, binding_assign_refuse_local(c, place, value, view)) {
+  match view {
+    true => checked_frame_read(
+    c,
+    ck_rewrap1(ck_error(c, view_var_field_assigned_message(), span_of(value))),
+    frame_rewrap(
+      c,
+      ck_error(c, view_var_field_assigned_message(), span_of(value)),
+      ck_error_frame(c, view_var_field_assigned_message(), span_of(value))
+    ),
+    error_frame_rewrap(c, ck_error(c, view_var_field_assigned_message(), span_of(value)), ck_error_frame_errors(c, view_var_field_assigned_message(), span_of(value))),
+    ordered
+  )
+    false => checked_frame_read(
+    c,
+    ck_rewrap1(ck_error(c, assigns_field_of_var_message(cat3("`", place_label(place), "`")), span_of(place))),
+    frame_rewrap(
+      c,
+      ck_error(c, assigns_field_of_var_message(cat3("`", place_label(place), "`")), span_of(place)),
+      ck_error_frame(c, assigns_field_of_var_message(cat3("`", place_label(place), "`")), span_of(place))
+    ),
+    error_frame_rewrap(c, ck_error(c, assigns_field_of_var_message(cat3("`", place_label(place), "`")), span_of(place)), ck_error_frame_errors(c, assigns_field_of_var_message(cat3("`", place_label(place), "`")), span_of(place))),
+    ordered
+  )
+  }
+}
+
+pub theorem binding_assign_refuse_frame_checked(
+  c: Checker,
+  name: Text,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  found: Option(Local),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, binding_assign_refuse(c, name, place, value, found)) {
+  match found {
+    None => checked_frame_read(
+    c,
+    ck_rewrap1(ck_error(c, not_defined_message(name), span_of(place))),
+    frame_rewrap(
+      c,
+      ck_error(c, not_defined_message(name), span_of(place)),
+      ck_error_frame(c, not_defined_message(name), span_of(place))
+    ),
+    error_frame_rewrap(c, ck_error(c, not_defined_message(name), span_of(place)), ck_error_frame_errors(c, not_defined_message(name), span_of(place))),
+    ordered
+  )
+    Some(l) => binding_assign_refuse_local_frame_checked(c, place, value, binding_local_view(l), ordered)
+  }
+}
+
+pub theorem ck_assign_place_run_frame_checked(
+  c: Checker,
+  env: List(Local),
+  name: Text,
+  deref: Bool,
+  v: Ty,
+  pt: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_assign_place(c, env, name, deref, v, pt, place, value)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(binding_assign_place_unf(c, env, name, deref, v, pt, place, value)),
+    binding_assign_place_frame_checked(c, ck_root_borrowed(c, env, name), deref, v, pt, place, value, ordered)
+  )
+}
+
+pub theorem ck_assign_refuse_run_frame_checked(
+  c: Checker,
+  env: List(Local),
+  name: Text,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_assign_refuse(c, env, name, place, value)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(binding_assign_refuse_unf(c, env, name, place, value)),
+    binding_assign_refuse_frame_checked(c, name, place, value, env_find(env, name), ordered)
   )
 }

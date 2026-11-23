@@ -1,0 +1,67 @@
+// A macro reads the head of a written type by its written name (`Marker`), and finds the
+// declaration in `declaration`. Another file of the tote that declares a type of the same
+// name does not change the name the macro reads: checking the whole tote and checking the
+// file alone give the same expansion.
+
+@ cases.a-type-name-the-macro-reads-is-the-written-name-in-a-whole-tote-check
+files_tote = "r1"
+tote_errors = []
+files."r1/Tauto.eure" = ```eure
+package {
+  name = "r1"
+  version = "0.1.0"
+}
+```
+files."r1/src/m.taut" = ````tauto
+import std::builtin::macro
+
+fn head_name(e: SynExpr): Text {
+  match e {
+    ExApp(ExVar(id), _, _) => id.name
+    _ => ""
+  }
+}
+
+fn first_type(f: &SynFn): Option(SynExpr) {
+  match f.param_types {
+    Cons(Some(t), _) => Some(t)
+    _ => None
+  }
+}
+
+pub macro fn extra(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StFn(f) => match first_type(&f) {
+      Some(t) => if head_name(t) == "Marker" {
+        let name := Syn::decl_name(f.name, concat(f.name.name, "_extra"))
+        quote stmts {
+          pub fn $name(): Nat { 1 }
+        }
+      } else {
+        Syn::error(f.span, concat("the head is ", head_name(t)))
+      }
+      None => Nil
+    }
+    other => Syn::error(Syn::call_span(), "extra! goes on a fn")
+  }
+}
+````
+files."r1/src/user.taut" = ```tauto
+import "m.taut" { extra }
+
+pub struct Marker(A: Shared) {}
+pub struct Thing {}
+
+@extra!(0) => fn go_extra
+pub fn go(t: Marker(Thing)): Unit { #() }
+```
+files."r1/src/other.taut" = ```tauto
+pub struct Marker(A: Shared) {}
+pub struct Thing {}
+```
+files."r1/src/main.taut" = ```tauto
+import std::nat
+import "user.taut" { go_extra }
+
+theorem one(): go_extra() = 1 { Refl }
+```

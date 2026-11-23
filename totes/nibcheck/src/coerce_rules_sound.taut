@@ -1,0 +1,632 @@
+import "../../identity/src/identity.taut"
+import "coerce_sound.taut"
+import "rules_coerce.taut"
+import "rules_ty.taut"
+import "checker.taut"
+import "datas.taut"
+import "fits_sound_head.taut"
+import "ty.taut"
+import "unify.taut"
+import "unify_sound.taut"
+import std::base
+import std::map
+import std::text
+
+// What the checker finds through `coerce` fields (`CoerceAt`) is the typing
+// rule of `rules_coerce.taut` at the state it reaches.
+
+pub def CoerceTypeAt(c: Checker, a: Ty, b: Ty): Prop := CoerceType(
+  ck_subst_of(c),
+  KeptOk(ck_kept_of(c)),
+  InstAt(c),
+  DupAt(c),
+  ck_datas_of(c),
+  a,
+  b
+)
+
+pub fn opt_is_none<A>(o: Option(A)): Prop {
+  match o {
+    None => True
+    Some(^x) => False
+  }
+}
+
+pub theorem none_ne_some<A: Type>(x: A, e: None = Some(x)): False {
+  Eq::subst((o: Option(A)) => opt_is_none(o), e, Trivial)
+}
+
+pub fn opt_step_ty(o: Option(CoerceStep)): Ty {
+  match o {
+    None => TyUnit
+    Some(s) => coerce_step_ty(s)
+  }
+}
+
+pub fn data_coerce_level(k: DataCoerce): CoerceLevel { k.level }
+
+// What a step at `at` read: `x` resolved to a struct that declares a
+// `coerce` field, and `y` the field's type, resolved.
+pub(open) inductive StepFacts(at: Checker, x: Ty, y: Ty): Prop {
+  StepFactsMk(
+    d: SurfaceName,
+    args: List(Ty),
+    k: DataCoerce,
+    f: DataField,
+    named: ck_resolve(at, x) = TyNamed(d, args),
+    declared: datas_coerce(ck_datas_of(at), surface_name_text(d)) = Some(k),
+    field: coerce_field_at(datas_fields(ck_datas_of(at), surface_name_text(d), 0, args), data_coerce_index(k)) = Some(f),
+    ty: y = ck_resolve(at, data_field_ty(f))
+  ): StepFacts(at, x, y)
+}
+
+pub theorem step_named_inv(
+  at: Checker,
+  d: Text,
+  f: DataField,
+  level: CoerceLevel,
+  n: Option(Text),
+  s: CoerceStep
+): (coerce_step_named(at, d, f, level, n) = Some(s)) -> coerce_step_ty(s) = ck_resolve(at, data_field_ty(f)) {
+  match n {
+    None => (e: None = Some(s)) => False::elim(none_ne_some(s, e))
+    Some(x) => (e: Some(CoerceStep { data: d, field: x, ty: ck_resolve(at, data_field_ty(f)), level: level }) = Some(s)) => Eq::sym(
+      Eq::congr(opt_step_ty, e)
+    )
+  }
+}
+
+pub theorem step_field_inv(
+  at: Checker,
+  x: Ty,
+  s: CoerceStep,
+  d: SurfaceName,
+  args: List(Ty),
+  k: DataCoerce,
+  named: ck_resolve(at, x) = TyNamed(d, args),
+  declared: datas_coerce(ck_datas_of(at), surface_name_text(d)) = Some(k),
+  o: Option(DataField)
+): (coerce_field_at(datas_fields(ck_datas_of(at), surface_name_text(d), 0, args), data_coerce_index(k)) = o) -> (coerce_step_field(at, surface_name_text(d), k, o) = Some(s)) -> StepFacts(at, x, coerce_step_ty(s)) {
+  match o {
+    None => (ef: coerce_field_at(datas_fields(ck_datas_of(at), surface_name_text(d), 0, args), data_coerce_index(k)) = None) => (e: None = Some(s)) => False::elim(none_ne_some(s, e))
+    Some(f) => (ef: coerce_field_at(datas_fields(ck_datas_of(at), surface_name_text(d), 0, args), data_coerce_index(k)) = Some(f)) => (e: coerce_step_named(at, surface_name_text(d), f, k.level, f.name) = Some(s)) => StepFactsMk(
+      d,
+      args,
+      k,
+      f,
+      named,
+      declared,
+      ef,
+      step_named_inv(at, surface_name_text(d), f, k.level, f.name, s)(e)
+    )
+  }
+}
+
+pub theorem step_declared_inv(
+  at: Checker,
+  x: Ty,
+  s: CoerceStep,
+  d: SurfaceName,
+  args: List(Ty),
+  named: ck_resolve(at, x) = TyNamed(d, args),
+  o: Option(DataCoerce)
+): (datas_coerce(ck_datas_of(at), surface_name_text(d)) = o) -> (coerce_step_declared(at, surface_name_text(d), args, o) = Some(s)) -> StepFacts(at, x, coerce_step_ty(s)) {
+  match o {
+    None => (eo: datas_coerce(ck_datas_of(at), surface_name_text(d)) = None) => (e: None = Some(s)) => False::elim(none_ne_some(s, e))
+    Some(k) => (eo: datas_coerce(ck_datas_of(at), surface_name_text(d)) = Some(k)) => (e: coerce_step_field(
+      at,
+      surface_name_text(d),
+      k,
+      coerce_field_at(datas_fields(ck_datas_of(at), surface_name_text(d), 0, args), data_coerce_index(k))
+    ) = Some(s)) => step_field_inv(
+      at,
+      x,
+      s,
+      d,
+      args,
+      k,
+      named,
+      eo,
+      coerce_field_at(datas_fields(ck_datas_of(at), surface_name_text(d), 0, args), data_coerce_index(k))
+    )(Refl)(e)
+  }
+}
+
+pub theorem step_resolved_inv(
+  at: Checker,
+  x: Ty,
+  s: CoerceStep,
+  r: Ty
+): (ck_resolve(at, x) = r) -> (coerce_step_resolved(at, r) = Some(s)) -> StepFacts(at, x, coerce_step_ty(s)) {
+  match r {
+    TyNamed(d, args) => (er: ck_resolve(at, x) = TyNamed(d, args)) => (e: coerce_step_declared(
+      at,
+      surface_name_text(d),
+      args,
+      datas_coerce(ck_datas_of(at), surface_name_text(d))
+    ) = Some(s)) => step_declared_inv(at, x, s, d, args, er, datas_coerce(ck_datas_of(at), surface_name_text(d)))(Refl)(e)
+    _ => er => e => False::elim(none_ne_some(s, e))
+  }
+}
+
+pub theorem step_inv<s: CoerceStep, x: Ty>(
+  at: Checker,
+  e: ck_coerce_step(at, x) = Some(s)
+): StepFacts(at, x, coerce_step_ty(s)) {
+  step_resolved_inv(at, x, s, ck_resolve(at, x))(Refl)(Eq::trans(Eq::sym(coerce_step_unf(at, x)), e))
+}
+
+// `t` and what `at` resolves it to are the same type at a later `c`.
+pub theorem resolve_eq_at(at: Checker, c: Checker, grows: Grows(at, c), t: Ty): TyEqAt(c, t, ck_resolve(at, t)) {
+  tyeq_at_move(
+    at,
+    c,
+    grows,
+    t,
+    ck_resolve(at, t),
+    ty_resolve_eq(ck_steps_of(at), ck_subst_of(at), KeptOk(ck_kept_of(at)), t)
+  )
+}
+
+pub theorem grows_datas(at: Checker, c: Checker, grows: Grows(at, c)): ck_datas_of(at) = ck_datas_of(c) {
+  And::left(And::right(And::right(And::right(grows))))
+}
+
+pub theorem step_type_of_facts<x: Ty, y: Ty>(
+  at: Checker,
+  c: Checker,
+  grows: Grows(at, c),
+  h: StepFacts(at, x, y)
+): CoerceStepType(ck_subst_of(c), KeptOk(ck_kept_of(c)), ck_datas_of(c), x, y) {
+  match h {
+    StepFactsMk(d, args, k, f, named, declared, field, ty) => CoerceStepTypeMk(
+      d,
+      args,
+      k,
+      f,
+      Eq::subst((r: Ty) => TyEqAt(c, x, r), named, resolve_eq_at(at, c, grows, x)),
+      Eq::subst((datas: Datas) => datas_coerce(datas, surface_name_text(d)) = Some(k), grows_datas(at, c, grows), declared),
+      Eq::subst(
+        (datas: Datas) => coerce_field_at(datas_fields(datas, surface_name_text(d), 0, args), data_coerce_index(k)) = Some(f),
+        grows_datas(at, c, grows),
+        field
+      ),
+      Eq::subst((r: Ty) => TyEqAt(c, data_field_ty(f), r), Eq::sym(ty), resolve_eq_at(at, c, grows, data_field_ty(f)))
+    )
+  }
+}
+
+pub theorem chain_reach_type<start: Ty, t: Ty, want: Ty>(
+  c: Checker,
+  h: CoerceChain(c, start, t),
+  fits: SubAt(c, t, want)
+): CoerceReachType(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), ck_datas_of(c), start, want) {
+  match h {
+    ChainOne(at, d, f, l, grows, step) => ReachHere(
+      step_type_of_facts(at, c, grows, step_inv(at, step)),
+      fits
+    )
+    ChainMore(at, d, f, l, grows, step, rest) => ReachThrough(
+      step_type_of_facts(at, c, grows, step_inv(at, step)),
+      chain_reach_type(c, rest, fits)
+    )
+  }
+}
+
+// What `coerce_shape(a, b)` took apart: `a` and `b` themselves, or the
+// borrows `&source` (`&mut source`) and `&want` (`&mut want`).
+pub(open) inductive ShapeOf: (Ty, Ty, Ty, Ty) -> Prop {
+  ShapeOwned<a: Ty, b: Ty>: ShapeOf(a, b, a, b)
+  ShapeLent<source: Ty, want: Ty>(
+    lent: Bool,
+    wanted: Bool,
+    allowed: Bool::or(lent, not(wanted)) = true
+  ): ShapeOf(TyBorrow(source, lent), TyBorrow(want, wanted), source, want)
+}
+
+pub fn opt_shape_source(o: Option(CoerceShape)): Ty {
+  match o {
+    None => TyUnit
+    Some(s) => coerce_shape_source(s)
+  }
+}
+
+pub fn opt_shape_want(o: Option(CoerceShape)): Ty {
+  match o {
+    None => TyUnit
+    Some(s) => coerce_shape_want(s)
+  }
+}
+
+pub fn opt_pair_fst(o: Option(Ty × Bool)): Ty {
+  match o {
+    None => TyUnit
+    Some(x) => x.fst
+  }
+}
+
+pub fn opt_pair_snd(o: Option(Ty × Bool)): Bool {
+  match o {
+    None => false
+    Some(x) => x.snd
+  }
+}
+
+pub theorem borrow_eq(a: Ty, m: Bool, b: Ty, n: Bool, ea: a = b, em: m = n): TyBorrow(a, m) = TyBorrow(b, n) {
+  Eq::subst(
+    (k: Bool) => TyBorrow(a, m) = TyBorrow(b, k),
+    em,
+    Eq::subst((t: Ty) => TyBorrow(a, m) = TyBorrow(t, m), ea, Refl)
+  )
+}
+
+// `p(x, y)` from `p(a, b)` and `a = x`, `b = y`.
+pub theorem subst_two<a: Ty, b: Ty, x: Ty, y: Ty>(p: (Ty, Ty) -> Prop, ex: a = x, ey: b = y, h: p(a, b)): p(x, y) {
+  Eq::subst((v: Ty) => p(x, v), ey, Eq::subst((u: Ty) => p(u, b), ex, h))
+}
+
+pub fn pair_fst(x: Ty × Bool): Ty { x.fst }
+pub fn pair_snd(x: Ty × Bool): Bool { x.snd }
+
+// `t` is the borrow its parts say.
+pub theorem borrow_parts_inv(t: Ty, x: Ty × Bool): (ty_borrow_parts(t) = Some(x)) -> t = TyBorrow(pair_fst(x), pair_snd(x)) {
+  match t {
+    TyBorrow(inner, m) => (e: Some(#(inner, m)) = Some(x)) => borrow_eq(inner, m, pair_fst(x), pair_snd(x), Eq::congr(opt_pair_fst, e), Eq::congr(opt_pair_snd, e))
+    _ => e => False::elim(none_ne_some(x, e))
+  }
+}
+
+pub theorem shape_lent_of(
+  w: Ty,
+  t: Ty,
+  lent: Bool,
+  wanted: Bool,
+  shape: CoerceShape
+): (coerce_shape_lent(w, t, lent, wanted) = Some(shape)) -> ShapeOf(
+  TyBorrow(w, lent),
+  TyBorrow(t, wanted),
+  coerce_shape_source(shape),
+  coerce_shape_want(shape)
+) {
+  ⊢ (coerce_shape_lent(w, t, lent, wanted) = Some(shape)) -> ShapeOf(
+    TyBorrow(w, lent),
+    TyBorrow(t, wanted),
+    coerce_shape_source(shape),
+    coerce_shape_want(shape)
+  ) from match wanted {
+    true => ⊢ (coerce_shape_lent(w, t, lent, true) = Some(shape)) -> ShapeOf(
+      TyBorrow(w, lent),
+      TyBorrow(t, true),
+      coerce_shape_source(shape),
+      coerce_shape_want(shape)
+    ) from match lent {
+      true => (e: Some(CoerceShape { source: w, want: t, mode: CoerceMut }) = Some(shape)) => subst_two(
+        (x: Ty, y: Ty) => ShapeOf(TyBorrow(w, true), TyBorrow(t, true), x, y),
+        Eq::congr(opt_shape_source, e),
+        Eq::congr(opt_shape_want, e),
+        ShapeLent(true, true, Refl)
+      )
+      false => (e: None = Some(shape)) => False::elim(none_ne_some(shape, e))
+    }
+    false => (e: Some(CoerceShape { source: w, want: t, mode: CoerceRef }) = Some(shape)) => subst_two(
+      (x: Ty, y: Ty) => ShapeOf(TyBorrow(w, lent), TyBorrow(t, false), x, y),
+      Eq::congr(opt_shape_source, e),
+      Eq::congr(opt_shape_want, e),
+      ShapeLent(lent, false, bool_or_true_right(lent))
+    )
+  }
+}
+
+pub theorem bool_or_true_right(b: Bool): Bool::or(b, not(false)) = true {
+  match b {
+    true => Refl
+    false => Refl
+  }
+}
+
+pub theorem shape_parts_of(
+  a: Ty,
+  b: Ty,
+  shape: CoerceShape,
+  pa: Option(Ty × Bool),
+  pb: Option(Ty × Bool)
+): (ty_borrow_parts(a) = pa) -> (ty_borrow_parts(b) = pb) -> (coerce_shape_parts(a, b, pa, pb) = Some(shape)) -> ShapeOf(
+  a,
+  b,
+  coerce_shape_source(shape),
+  coerce_shape_want(shape)
+) {
+  ⊢ (ty_borrow_parts(a) = pa) -> (ty_borrow_parts(b) = pb) -> (coerce_shape_parts(a, b, pa, pb) = Some(shape)) -> ShapeOf(
+    a,
+    b,
+    coerce_shape_source(shape),
+    coerce_shape_want(shape)
+  ) from match pa {
+    Some(x) => ⊢ (ty_borrow_parts(a) = Some(x)) -> (ty_borrow_parts(b) = pb) -> (coerce_shape_parts(a, b, Some(x), pb) = Some(shape)) -> ShapeOf(
+      a,
+      b,
+      coerce_shape_source(shape),
+      coerce_shape_want(shape)
+    ) from match pb {
+      Some(y) => (ea: ty_borrow_parts(a) = Some(x)) => (eb: ty_borrow_parts(b) = Some(y)) => (e: coerce_shape_lent(
+        pair_fst(x),
+        pair_fst(y),
+        pair_snd(x),
+        pair_snd(y)
+      ) = Some(shape)) => subst_two(
+        (u: Ty, v: Ty) => ShapeOf(u, v, coerce_shape_source(shape), coerce_shape_want(shape)),
+        Eq::sym(borrow_parts_inv(a, x)(ea)),
+        Eq::sym(borrow_parts_inv(b, y)(eb)),
+        shape_lent_of(pair_fst(x), pair_fst(y), pair_snd(x), pair_snd(y), shape)(e)
+      )
+      None => ea => eb => (e: None = Some(shape)) => False::elim(none_ne_some(shape, e))
+    }
+    None => ⊢ (ty_borrow_parts(a) = None) -> (ty_borrow_parts(b) = pb) -> (coerce_shape_parts(a, b, None, pb) = Some(shape)) -> ShapeOf(
+      a,
+      b,
+      coerce_shape_source(shape),
+      coerce_shape_want(shape)
+    ) from match pb {
+      Some(y) => ea => eb => (e: None = Some(shape)) => False::elim(none_ne_some(shape, e))
+      None => ea => eb => (e: Some(CoerceShape { source: a, want: b, mode: CoerceOwned }) = Some(shape)) => subst_two(
+        (x: Ty, y: Ty) => ShapeOf(a, b, x, y),
+        Eq::congr(opt_shape_source, e),
+        Eq::congr(opt_shape_want, e),
+        ShapeOwned
+      )
+    }
+  }
+}
+
+pub theorem shape_skip_of(
+  a: Ty,
+  b: Ty,
+  shape: CoerceShape,
+  skip: Bool
+): (coerce_shape_skip(skip, a, b) = Some(shape)) -> ShapeOf(a, b, coerce_shape_source(shape), coerce_shape_want(shape)) {
+  match skip {
+    true => (e: None = Some(shape)) => False::elim(none_ne_some(shape, e))
+    false => (e: coerce_shape_parts(a, b, ty_borrow_parts(a), ty_borrow_parts(b)) = Some(shape)) => shape_parts_of(
+      a,
+      b,
+      shape,
+      ty_borrow_parts(a),
+      ty_borrow_parts(b)
+    )(Refl)(Refl)(e)
+  }
+}
+
+pub theorem shape_of(
+  a: Ty,
+  b: Ty,
+  shape: CoerceShape,
+  e: coerce_shape(a, b) = Some(shape)
+): ShapeOf(a, b, coerce_shape_source(shape), coerce_shape_want(shape)) {
+  shape_skip_of(a, b, shape, ty_is_var(ty_unborrowed(b)))(e)
+}
+
+pub theorem coerce_type_of_shape<ra: Ty, rb: Ty, source: Ty, want: Ty>(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  h: ShapeOf(ra, rb, source, want),
+  left: TyEqAt(c, a, ra),
+  right: TyEqAt(c, b, rb),
+  reach: CoerceReachType(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), ck_datas_of(c), source, want)
+): CoerceTypeAt(c, a, b) {
+  match h {
+    ShapeOwned(x, y) => CoerceValue(x, y, left, right, reach)
+    ShapeLent(src, wt, lent, wanted, allowed) => CoerceLent(src, wt, lent, wanted, left, right, allowed, reach)
+  }
+}
+
+pub theorem coerce_reach_type<start: Ty, want: Ty>(
+  c: Checker,
+  h: CoerceReach(c, start, want)
+): CoerceReachType(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), ck_datas_of(c), start, want) {
+  match h {
+    CoerceReachMk(t, chain, fits) => chain_reach_type(c, chain, fits)
+  }
+}
+
+// The checker's reading through `coerce` fields is the rule's.
+pub theorem coerce_at_type(c: Checker, a: Ty, b: Ty, h: CoerceAt(c, a, b)): CoerceTypeAt(c, a, b) {
+  match h {
+    CoerceAtMk(at, shape, grows, shaped, reach) => coerce_type_of_shape(
+      c,
+      a,
+      b,
+      shape_of(ck_resolve(at, a), ck_resolve(at, b), shape, shaped),
+      resolve_eq_at(at, c, grows, a),
+      resolve_eq_at(at, c, grows, b),
+      coerce_reach_type(c, reach)
+    )
+  }
+}
+
+// The rule keeps holding as the substitution and the records grow.
+
+pub theorem tyeq_move_i<a: Ty, b: Ty>(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  s2: Ordmap(Nat, Ty),
+  ok2: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  hs: SubstExt(s, s2),
+  hk: OkExt(ok, ok2),
+  h: TyEq(s, ok, a, b)
+): TyEq(s2, ok2, a, b) {
+  tyeq_move(s, ok, s2, ok2, hs, hk, a, b, h)
+}
+
+pub theorem tysub_move_i<a: Ty, b: Ty>(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup: (Ty) -> Prop,
+  s2: Ordmap(Nat, Ty),
+  ok2: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst2: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup2: (Ty) -> Prop,
+  hs: SubstExt(s, s2),
+  hk: OkExt(ok, ok2),
+  hi: InstExt(inst, inst2),
+  hd: DupExt(dup, dup2),
+  h: TySub(s, ok, inst, dup, a, b)
+): TySub(s2, ok2, inst2, dup2, a, b) {
+  tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, a, b, h)
+}
+
+pub theorem step_type_move<x: Ty, y: Ty>(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  s2: Ordmap(Nat, Ty),
+  ok2: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  datas: Datas,
+  hs: SubstExt(s, s2),
+  hk: OkExt(ok, ok2),
+  h: CoerceStepType(s, ok, datas, x, y)
+): CoerceStepType(s2, ok2, datas, x, y) {
+  match h {
+    CoerceStepTypeMk(d, args, k, f, named, declared, field, ty) => CoerceStepTypeMk(
+      d,
+      args,
+      k,
+      f,
+      tyeq_move_i(s, ok, s2, ok2, hs, hk, named),
+      declared,
+      field,
+      tyeq_move_i(s, ok, s2, ok2, hs, hk, ty)
+    )
+  }
+}
+
+pub theorem reach_type_move<x: Ty, want: Ty>(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup: (Ty) -> Prop,
+  s2: Ordmap(Nat, Ty),
+  ok2: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst2: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup2: (Ty) -> Prop,
+  datas: Datas,
+  hs: SubstExt(s, s2),
+  hk: OkExt(ok, ok2),
+  hi: InstExt(inst, inst2),
+  hd: DupExt(dup, dup2),
+  h: CoerceReachType(s, ok, inst, dup, datas, x, want)
+): CoerceReachType(s2, ok2, inst2, dup2, datas, x, want) {
+  match h {
+    ReachHere(step, fits) => ReachHere(
+      step_type_move(s, ok, s2, ok2, datas, hs, hk, step),
+      tysub_move_i(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, fits)
+    )
+    ReachThrough(step, rest) => ReachThrough(
+      step_type_move(s, ok, s2, ok2, datas, hs, hk, step),
+      reach_type_move(s, ok, inst, dup, s2, ok2, inst2, dup2, datas, hs, hk, hi, hd, rest)
+    )
+  }
+}
+
+pub theorem coerce_type_move<a: Ty, b: Ty>(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup: (Ty) -> Prop,
+  s2: Ordmap(Nat, Ty),
+  ok2: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst2: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup2: (Ty) -> Prop,
+  datas: Datas,
+  hs: SubstExt(s, s2),
+  hk: OkExt(ok, ok2),
+  hi: InstExt(inst, inst2),
+  hd: DupExt(dup, dup2),
+  h: CoerceType(s, ok, inst, dup, datas, a, b)
+): CoerceType(s2, ok2, inst2, dup2, datas, a, b) {
+  match h {
+    CoerceValue(source, want, left, right, reach) => CoerceValue(
+      source,
+      want,
+      tyeq_move_i(s, ok, s2, ok2, hs, hk, left),
+      tyeq_move_i(s, ok, s2, ok2, hs, hk, right),
+      reach_type_move(s, ok, inst, dup, s2, ok2, inst2, dup2, datas, hs, hk, hi, hd, reach)
+    )
+    CoerceLent(source, want, lent, wanted, left, right, allowed, reach) => CoerceLent(
+      source,
+      want,
+      lent,
+      wanted,
+      tyeq_move_i(s, ok, s2, ok2, hs, hk, left),
+      tyeq_move_i(s, ok, s2, ok2, hs, hk, right),
+      allowed,
+      reach_type_move(s, ok, inst, dup, s2, ok2, inst2, dup2, datas, hs, hk, hi, hd, reach)
+    )
+  }
+}
+
+pub theorem arg_fit_move<xs: List(Ty), ys: List(Ty)>(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup: (Ty) -> Prop,
+  s2: Ordmap(Nat, Ty),
+  ok2: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst2: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
+  dup2: (Ty) -> Prop,
+  datas: Datas,
+  hs: SubstExt(s, s2),
+  hk: OkExt(ok, ok2),
+  hi: InstExt(inst, inst2),
+  hd: DupExt(dup, dup2),
+  h: ArgFitList(s, ok, inst, dup, datas, xs, ys)
+): ArgFitList(s2, ok2, inst2, dup2, datas, xs, ys) {
+  match h {
+    ArgFitNil => ArgFitNil
+    ArgFitSub(fit, rest) => ArgFitSub(
+      tysub_move_i(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, fit),
+      arg_fit_move(s, ok, inst, dup, s2, ok2, inst2, dup2, datas, hs, hk, hi, hd, rest)
+    )
+    ArgFitCoerce(fit, rest) => ArgFitCoerce(
+      coerce_type_move(s, ok, inst, dup, s2, ok2, inst2, dup2, datas, hs, hk, hi, hd, fit),
+      arg_fit_move(s, ok, inst, dup, s2, ok2, inst2, dup2, datas, hs, hk, hi, hd, rest)
+    )
+  }
+}
+
+pub theorem coerce_type_at_move(
+  c: Checker,
+  c2: Checker,
+  g: Grows(c, c2),
+  a: Ty,
+  b: Ty,
+  h: CoerceTypeAt(c, a, b)
+): CoerceTypeAt(c2, a, b) {
+  Eq::subst(
+    (datas: Datas) => CoerceType(ck_subst_of(c2), KeptOk(ck_kept_of(c2)), InstAt(c2), DupAt(c2), datas, a, b),
+    grows_datas(c, c2, g),
+    coerce_type_move(
+      ck_subst_of(c),
+      KeptOk(ck_kept_of(c)),
+      InstAt(c),
+      DupAt(c),
+      ck_subst_of(c2),
+      KeptOk(ck_kept_of(c2)),
+      InstAt(c2),
+      DupAt(c2),
+      ck_datas_of(c),
+      And::left(And::right(g)),
+      And::left(And::right(And::right(g))),
+      (gs: List(Text × Kind), map: Ordmap(Text, Ty), hi: InstBy(ck_bounds_of(c), gs, map)) => inst_by_move(
+        ck_bounds_of(c),
+        ck_bounds_of(c2),
+        And::left(And::right(And::right(And::right(And::right(g))))),
+        gs,
+        map,
+        hi
+      ),
+      (t: Ty, hd: DupBy(ck_subst_of(c), KeptOk(ck_kept_of(c)), ck_datas_of(c), t)) => dup_at_move(c, c2, g, t, hd),
+      h
+    )
+  )
+}

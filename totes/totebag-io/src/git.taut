@@ -1,0 +1,677 @@
+import "source.taut"
+import "cache.taut"
+import totebag::spec
+import std::base
+import std::text
+import std::text_ops
+import std::builtin::os
+
+// Fetching from Git with the `git` command (`crates/totebag/src/git.rs`):
+// one bare repository per URL under the cache, fetched into without a
+// working tree, and read with `ls-tree` and `cat-file`. No hook, checkout or
+// filter runs. Each command is given the URL, never a remote name, and runs
+// with redirects off, terminal prompts off and only the `https` and `file`
+// protocols allowed.
+//
+// As crates/totebag does, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY`
+// and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are taken out of the environment
+// `git` runs in, so the run's own never point it elsewhere.
+
+pub fn tb_git_config(): List(Text) {
+  Cons("-c", Cons("http.followRedirects=false", Cons("-c", Cons("protocol.allow=never", Cons("-c", Cons("protocol.https.allow=always", Cons("-c", Cons("protocol.file.allow=always", Cons("-c", Cons("core.hooksPath=/dev/null", Cons("-c", Cons("fetch.recurseSubmodules=false", Nil))))))))))))
+}
+
+pub fn tb_append(a: List(Text), b: List(Text)): List(Text) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, tb_append(rest, b))
+  }
+}
+
+pub fn tb_trim(t: Text): Text {
+  let b := Bytes::of_text(t)
+  var s: u64 := 0
+  var e := Bytes::len(b)
+  var going := true
+  while going && s < e {
+    match Bytes::get(b, s) {
+      Some(c) => if U64::of_u8(c) <= 32 { s := s + 1 } else { going := false }
+      None => {
+        going := false
+      }
+    }
+  }
+  going := true
+  while going && e > s {
+    match Bytes::get(b, e - 1) {
+      Some(c) => if U64::of_u8(c) <= 32 { e := e - 1 } else { going := false }
+      None => {
+        going := false
+      }
+    }
+  }
+  match Bytes::slice(b, s, e) {
+    Some(p) => match Text::of_bytes(p) {
+      Some(x) => x
+      None => ""
+    }
+    None => ""
+  }
+}
+
+// Runs `git` on the repository `dir` (none: outside any) and gives its
+// standard output, or `what` and its standard error.
+pub fn tb_git_run(dir: Option(Text), args: List(Text), stdin: Bytes, what: Text): Result(Bytes, Text) {
+  let repo: List(Text) := match dir {
+    Some(d) => Cons("--git-dir", Cons(d, Nil))
+    None => Nil
+  }
+  let p := Process {
+    program: "git",
+    args: tb_append(repo, tb_append(tb_git_config(), args)),
+    dir: "",
+    env: EnvVars::set(
+      EnvVars::without(perform environ(), Cons("GIT_DIR", Cons("GIT_WORK_TREE", Cons("GIT_OBJECT_DIRECTORY", Cons("GIT_ALTERNATE_OBJECT_DIRECTORIES", Nil))))),
+      Cons(#("GIT_TERMINAL_PROMPT", "0"), Nil)
+    ),
+    stdin: stdin
+  }
+  match perform proc_run(p) {
+    Ok(out) => match out.status {
+      Some(0) => Ok(out.stdout)
+      Some(_) => Err(Text::concat_all(Cons(what, Cons(": ", Cons(tb_trim(out.stderr), Nil)))))
+      None => Err(Text::concat_all(Cons(what, Cons(": ", Cons(tb_trim(out.stderr), Nil)))))
+    }
+    Err(e) => Err(Text::concat_all(Cons("totebag-git-could-not-run-for: ", Cons(what, Cons(": ", Cons(io_message(e), Nil))))))
+  }
+}
+
+pub fn tb_git(dir: Option(Text), args: List(Text), what: Text): Result(Bytes, Text) {
+  tb_git_run(dir, args, Bytes::of_text(""), what)
+}
+
+pub fn tb_text_of(b: Bytes): Text {
+  match Text::of_bytes(b) {
+    Some(t) => t
+    None => ""
+  }
+}
+
+// The lines of a text, without their newlines.
+pub fn tb_lines(t: Text): List(Text) {
+  tb_split(Bytes::of_text(t), 10)
+}
+
+// The pieces of `b` between the bytes `sep`, the empty ones left out.
+pub fn tb_split(b: Bytes, sep: u64): List(Text) {
+  var out: List(Text) := Nil
+  var start: u64 := 0
+  let n := Bytes::len(b)
+  while start < n {
+    let at := Bytes::find(b, sep, start, n)
+    if at > start {
+      match Bytes::slice(b, start, at) {
+        Some(p) => {
+          out := Cons(tb_text_of(p), out)
+        }
+        None => #()
+      }
+    }
+    start := at + 1
+  }
+  List::reverse(out)
+}
+
+// The text before and after the first `sep` byte.
+pub fn tb_split_once(t: Text, sep: u64): Option(Text × Text) {
+  let b := Bytes::of_text(t)
+  let n := Bytes::len(b)
+  let at := Bytes::find(b, sep, 0, n)
+  if at >= n {
+    None
+  } else {
+    match Bytes::slice(b, 0, at) {
+      Some(x) => match Bytes::slice(b, at + 1, n) {
+        Some(y) => Some(#(tb_text_of(x), tb_text_of(y)))
+        None => None
+      }
+      None => None
+    }
+  }
+}
+
+pub fn tb_strip_prefix(t: Text, p: Text): Option(Text) {
+  if Text::starts_with(t, p) {
+    Text::slice(t, Text::len(p), Text::len(t))
+  } else {
+    None
+  }
+}
+
+// A commit ID as Git prints it, with its object format: `sha1:` for 40 hex
+// digits, `sha256:` for 64.
+pub fn tb_rev_from_git(hex: Text): Result(Text, Text) {
+  let n := Bytes::len(Bytes::of_text(hex))
+  let rev := if n == 40 { Text::concat("sha1:", hex) } else { Text::concat("sha256:", hex) }
+  if tb_check_rev(rev) { Ok(rev) } else { Err(Text::concat("totebag-bad-rev: ", hex)) }
+}
+
+// The hex digits of a commit ID.
+pub fn tb_rev_hex(rev: Text): Text {
+  match tb_split_once(rev, 58) {
+    Some(p) => p.snd
+    None => rev
+  }
+}
+
+// The branch `HEAD` of the repository at `url` points to, as a full ref.
+pub fn tb_default_branch(url: Text): Result(Text, Text) {
+  match tb_check_url(url) {
+    Some(_) => {
+      return Err("totebag-bad-url")
+    }
+    None => #()
+  }
+  let out := match tb_git(None, Cons("ls-remote", Cons("--symref", Cons("--", Cons(url, Cons("HEAD", Nil))))), Text::concat("totebag-asking-default-branch: ", url)) {
+    Ok(o) => o
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var lines := tb_lines(tb_text_of(out))
+  var going := true
+  while going {
+    match lines {
+      Cons(l, rest) => {
+        match tb_strip_prefix(l, "ref: ") {
+          Some(r) => match tb_split_once(r, 9) {
+            Some(p) => if p.snd == "HEAD" {
+              if tb_check_ref(p.fst) {
+                return Ok(p.fst)
+              } else {
+                return Err("totebag-bad-ref")
+              }
+            }
+            None => #()
+          }
+          None => #()
+        }
+        lines := rest
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Err(Text::concat("totebag-no-default-branch: ", url))
+}
+
+// The bare repository in `dir`, made when it is not there.
+pub fn tb_mirror_open(dir: Text, object_format: Text): Result(Text, Text) {
+  match perform fs_stat(tb_join(dir, "HEAD")) {
+    Ok(Some(st)) => match st.kind {
+      IsFile => {
+        return Ok(dir)
+      }
+      IsDir => #()
+      IsOther => #()
+    }
+    Ok(None) => #()
+    Err(_) => #()
+  }
+  match perform fs_create_dir(dir) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(tb_io(dir, e))
+    }
+  }
+  match tb_git(None, Cons("init", Cons("--bare", Cons("--quiet", Cons(Text::concat("--object-format=", object_format), Cons(dir, Nil))))), "git init") {
+    Ok(_) => Ok(dir)
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_has_commit(dir: Text, rev: Text): Bool {
+  match tb_git(Some(dir), Cons("cat-file", Cons("-e", Cons(Text::concat(tb_rev_hex(rev), "^{commit}"), Nil))), "git cat-file") {
+    Ok(_) => true
+    Err(_) => false
+  }
+}
+
+pub fn tb_fetch_head_rev(dir: Text): Result(Text, Text) {
+  match tb_git(Some(dir), Cons("rev-parse", Cons("--verify", Cons("FETCH_HEAD^{commit}", Nil))), "git rev-parse") {
+    Ok(out) => tb_rev_from_git(tb_trim(tb_text_of(out)))
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_filter(sparse: Bool, rest: List(Text)): List(Text) {
+  if sparse { Cons("--filter=blob:none", rest) } else { rest }
+}
+
+// Fetches the commit `reference` names now, and gives its ID.
+pub fn tb_fetch_head(dir: Text, url: Text, reference: Text, sparse: Bool): Result(Text, Text) {
+  let args := Cons("fetch", Cons("--quiet", Cons("--no-tags", Cons("--depth=1", tb_filter(sparse, Cons("--", Cons(url, Cons(reference, Nil))))))))
+  match tb_git(Some(dir), args, Text::concat("totebag-fetching: ", url)) {
+    Ok(_) => tb_fetch_head_rev(dir)
+    Err(e) => Err(e)
+  }
+}
+
+// Fetches the branch `reference` of `url` with all of its history.
+pub fn tb_fetch_history(dir: Text, url: Text, reference: Text): Result(Text, Text) {
+  match tb_check_url(url) {
+    Some(_) => {
+      return Err("totebag-bad-url")
+    }
+    None => #()
+  }
+  if not(tb_check_ref(reference)) {
+    return Err("totebag-bad-ref")
+  }
+  let shallow := match perform fs_stat(tb_join(dir, "shallow")) {
+    Ok(Some(st)) => match st.kind {
+      IsFile => true
+      IsDir => false
+      IsOther => false
+    }
+    Ok(None) => false
+    Err(_) => false
+  }
+  let tail := Cons("--", Cons(url, Cons(reference, Nil)))
+  let args := Cons("fetch", Cons("--quiet", Cons("--no-tags", if shallow { Cons("--unshallow", tail) } else { tail })))
+  match tb_git(Some(dir), args, Text::concat("totebag-fetching-from: ", url)) {
+    Ok(_) => tb_fetch_head_rev(dir)
+    Err(e) => Err(e)
+  }
+}
+
+// The commit `name` (a ref, or `HEAD`) names here.
+pub fn tb_resolve(dir: Text, name: Text): Result(Text, Text) {
+  match tb_git(Some(dir), Cons("rev-parse", Cons("--verify", Cons("--end-of-options", Cons(Text::concat(name, "^{commit}"), Nil)))), Text::concat("totebag-finding: ", name)) {
+    Ok(out) => tb_rev_from_git(tb_trim(tb_text_of(out)))
+    Err(e) => Err(e)
+  }
+}
+
+// Points `refs/totebag/<name>` at `rev`.
+pub fn tb_keep(dir: Text, name: Text, rev: Text): Result(Unit, Text) {
+  match tb_git(Some(dir), Cons("update-ref", Cons(Text::concat("refs/totebag/", name), Cons(tb_rev_hex(rev), Nil))), "git update-ref") {
+    Ok(_) => Ok(#())
+    Err(e) => Err(e)
+  }
+}
+
+// Makes sure the commit `rev` is here: fetched by its ID, or else through
+// `reference` when the server does not give a commit by ID.
+pub fn tb_fetch_rev(dir: Text, url: Text, reference: Text, sparse: Bool, rev: Text): Result(Unit, Text) {
+  if tb_has_commit(dir, rev) {
+    return Ok(#())
+  }
+  let by_id := tb_git(Some(dir), Cons("fetch", Cons("--quiet", Cons("--no-tags", Cons("--depth=1", tb_filter(sparse, Cons("--", Cons(url, Cons(tb_rev_hex(rev), Nil)))))))), Text::concat("totebag-fetching-from: ", url))
+  if tb_has_commit(dir, rev) {
+    return Ok(#())
+  }
+  match tb_git(Some(dir), Cons("fetch", Cons("--quiet", Cons("--no-tags", tb_filter(sparse, Cons("--", Cons(url, Cons(reference, Nil))))))), Text::concat("totebag-fetching: ", url)) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if tb_has_commit(dir, rev) {
+    return Ok(#())
+  }
+  match by_id {
+    Ok(_) => Err(Text::concat_all(Cons("totebag-no-commit: ", Cons(url, Cons(" ", Cons(rev, Nil))))))
+    Err(e) => Err(Text::concat_all(Cons("totebag-no-commit-because: ", Cons(url, Cons(" ", Cons(rev, Cons(": ", Cons(e, Nil))))))))
+  }
+}
+
+// The ID Git gives `bytes` as an object of `kind`.
+pub fn tb_hash_object(dir: Text, kind: Text, bytes: Bytes): Result(Text, Text) {
+  match tb_git_run(Some(dir), Cons("hash-object", Cons("-t", Cons(kind, Cons("--stdin", Nil)))), bytes, "git hash-object") {
+    Ok(out) => Ok(tb_trim(tb_text_of(out)))
+    Err(e) => Err(e)
+  }
+}
+
+// The payload of the commit `rev`, checked to hash to `rev`.
+pub fn tb_commit(dir: Text, rev: Text): Result(Bytes, Text) {
+  let payload := match tb_git(Some(dir), Cons("cat-file", Cons("commit", Cons(tb_rev_hex(rev), Nil))), Text::concat("totebag-reading-commit: ", rev)) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_hash_object(dir, "commit", payload) {
+    Ok(h) => if h == tb_rev_hex(rev) { Ok(payload) } else { Err(Text::concat("totebag-commit-hash-mismatch: ", rev)) }
+    Err(e) => Err(e)
+  }
+}
+
+// The mode and ID of the entry `name` at the root of the tree `tree`.
+pub fn tb_root_entry(dir: Text, tree: Text, name: Text): Result(Option(Text × Text), Text) {
+  let out := match tb_git(Some(dir), Cons("ls-tree", Cons("-z", Cons("--full-tree", Cons(tree, Cons("--", Cons(name, Nil)))))), "git ls-tree") {
+    Ok(o) => o
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var records := tb_split(out, 0)
+  var going := true
+  while going {
+    match records {
+      Cons(r, rest) => {
+        match tb_split_once(r, 9) {
+          Some(hp) => if hp.snd == name {
+            match tb_split(Bytes::of_text(hp.fst), 32) {
+              Cons(mode, Cons(_, Cons(oid, _))) => {
+                return Ok(Some(#(mode, oid)))
+              }
+              _ => #()
+            }
+          }
+          None => #()
+        }
+        records := rest
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(None)
+}
+
+// The bytes of the blob `oid`, at most `max`, checked to hash to `oid`.
+pub fn tb_blob(dir: Text, oid: Text, max: u64): Result(Bytes, Text) {
+  let size := match tb_git(Some(dir), Cons("cat-file", Cons("-s", Cons(oid, Nil))), "git cat-file -s") {
+    Ok(out) => match U64::of_text(tb_trim(tb_text_of(out))) {
+      Some(n) => n
+      None => {
+        return Err("totebag-cat-file-not-a-size")
+      }
+    }
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if size > max {
+    return Err(Text::concat("totebag-blob-too-large: ", oid))
+  }
+  let bytes := match tb_git(Some(dir), Cons("cat-file", Cons("blob", Cons(oid, Nil))), "git cat-file blob") {
+    Ok(b) => b
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_hash_object(dir, "blob", bytes) {
+    Ok(h) => if h == oid { Ok(bytes) } else { Err(Text::concat("totebag-blob-hash-mismatch: ", oid)) }
+    Err(e) => Err(e)
+  }
+}
+
+pub struct TbEntry {
+  path: Text
+  executable: Bool
+  oid: Text
+}
+
+pub fn tb_oids(es: List(TbEntry)): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(e.oid, tb_oids(rest))
+  }
+}
+
+pub fn tb_lines_of(ts: List(Text)): Text {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => Text::concat(Text::concat(t, "\n"), tb_lines_of(rest))
+  }
+}
+
+// The contents of the blobs `oids`, in order, by `cat-file --batch`.
+pub fn tb_blobs(dir: Text, oids: List(Text)): Result(List(Bytes), Text) {
+  let out := match tb_git_run(Some(dir), Cons("cat-file", Cons("--batch", Nil)), Bytes::of_text(tb_lines_of(oids)), "git cat-file") {
+    Ok(o) => o
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var blobs: List(Bytes) := Nil
+  var at: u64 := 0
+  var total: u64 := 0
+  let n := Bytes::len(out)
+  while at < n {
+    let nl := Bytes::find(out, 10, at, n)
+    let head := match Bytes::slice(out, at, nl) {
+      Some(h) => tb_text_of(h)
+      None => ""
+    }
+    let ks := match tb_split(Bytes::of_text(head), 32) {
+      Cons(_, Cons(k, Cons(s, _))) => match U64::of_text(s) {
+        Some(z) => #(k, z)
+        None => {
+          return Err(Text::concat("git cat-file: ", head))
+        }
+      }
+      _ => {
+        return Err(Text::concat("git cat-file: ", head))
+      }
+    }
+    let kind := ks.fst
+    let size := ks.snd
+    total := total + size
+    if kind != "blob" || total > tb_max_bytes() {
+      return Err("totebag-cat-file-not-a-blob")
+    }
+    match Bytes::slice(out, nl + 1, nl + 1 + size) {
+      Some(b) => {
+        blobs := Cons(b, blobs)
+      }
+      None => {
+        return Err("totebag-cat-file-blob-missing")
+      }
+    }
+    at := nl + 1 + size + 1
+  }
+  Ok(List::reverse(blobs))
+}
+
+// Those of `oids` that the commit `rev` reaches and that are not here.
+pub fn tb_missing(dir: Text, rev: Text, oids: List(Text)): Result(List(Text), Text) {
+  let out := match tb_git(Some(dir), Cons("rev-list", Cons("--objects", Cons("--missing=print", Cons("--no-object-names", Cons(tb_rev_hex(rev), Nil))))), "git rev-list") {
+    Ok(o) => o
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var found: List(Text) := Nil
+  var lines := tb_lines(tb_text_of(out))
+  var going := true
+  while going {
+    match lines {
+      Cons(l, rest) => {
+        match tb_strip_prefix(l, "?") {
+          Some(oid) => if tb_has_text(oids, oid) {
+            found := Cons(oid, found)
+          }
+          None => #()
+        }
+        lines := rest
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(List::reverse(found))
+}
+
+pub fn tb_has_text(ts: List(Text), t: Text): Bool {
+  match ts {
+    Nil => false
+    Cons(x, rest) => if x == t { true } else { tb_has_text(rest, t) }
+  }
+}
+
+pub fn tb_take(n: u64, l: List(Text)): List(Text) × List(Text) {
+  var taken: List(Text) := Nil
+  var rest := l
+  var i: u64 := 0
+  var going := true
+  while going && i < n {
+    match rest {
+      Cons(x, more) => {
+        taken := Cons(x, taken)
+        rest := more
+        i := i + 1
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  #(List::reverse(taken), rest)
+}
+
+// Makes sure the blobs `oids` are here: asked for by ID, 256 at a time, and
+// when the server does not give objects by ID, the commit is fetched again
+// with everything in it.
+pub fn tb_have_blobs(dir: Text, url: Text, rev: Text, oids: List(Text)): Result(Unit, Text) {
+  let missing := match tb_missing(dir, rev, oids) {
+    Ok(m) => m
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var rest := missing
+  var failed := false
+  var more := match rest { Cons(_, _) => true, Nil => false }
+  while not(failed) && more {
+    let chunk := tb_take(256, rest)
+    match tb_git(Some(dir), Cons("fetch", Cons("--quiet", Cons("--no-tags", Cons("--", Cons(url, chunk.fst))))), Text::concat("totebag-fetching-files: ", url)) {
+      Ok(_) => #()
+      Err(_) => {
+        failed := true
+      }
+    }
+    rest := chunk.snd
+    more := match rest { Cons(_, _) => true, Nil => false }
+  }
+  if failed {
+    match tb_git(Some(dir), Cons("fetch", Cons("--quiet", Cons("--no-tags", Cons("--depth=1", Cons("--refetch", Cons("--", Cons(url, Cons(tb_rev_hex(rev), Nil)))))))), Text::concat("totebag-fetching: ", url)) {
+      Ok(_) => #()
+      Err(e) => {
+        return Err(e)
+      }
+    }
+  }
+  Ok(#())
+}
+
+// The files of the commit `rev`: the whole repository, or when `sparse`
+// only the files under `sdir`, with their paths in the repository; checked
+// as a tree and given with its ID.
+pub fn tb_git_tree(dir: Text, rev: Text, url: Text, sparse: Bool, sdir: Text): Result(List(TbFile) × Text, Text) {
+  let base := Cons("ls-tree", Cons("-r", Cons("-z", Cons("--full-tree", Cons(tb_rev_hex(rev), Nil)))))
+  let args := if sparse { tb_append(base, Cons("--", Cons(Text::concat(sdir, "/"), Nil))) } else { base }
+  let listing := match tb_git(Some(dir), args, "git ls-tree") {
+    Ok(o) => o
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var entries: List(TbEntry) := Nil
+  var count: u64 := 0
+  var records := tb_split(listing, 0)
+  var going := true
+  while going {
+    match records {
+      Cons(r, rest) => {
+        let hp := match tb_split_once(r, 9) {
+          Some(p) => p
+          None => {
+            return Err("totebag-ls-tree-no-path")
+          }
+        }
+        let mko := match tb_split(Bytes::of_text(hp.fst), 32) {
+          Cons(m, Cons(k, Cons(o, _))) => #(m, #(k, o))
+          _ => {
+            return Err(Text::concat("totebag-ls-tree-cannot-read: ", hp.fst))
+          }
+        }
+        let mode := mko.fst
+        let kind := mko.snd.fst
+        let oid := mko.snd.snd
+        let executable := if mode == "100644" && kind == "blob" {
+          false
+        } else if mode == "100755" && kind == "blob" {
+          true
+        } else if mode == "120000" {
+          return Err(Text::concat("totebag-symbolic-link: ", hp.snd))
+        } else if mode == "160000" {
+          return Err(Text::concat("totebag-submodule: ", hp.snd))
+        } else {
+          return Err(Text::concat("totebag-not-regular-file: ", hp.snd))
+        }
+        entries := Cons(TbEntry { path: hp.snd, executable: executable, oid: oid }, entries)
+        count := count + 1
+        records := rest
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  if count > tb_max_files() {
+    return Err("totebag-too-many-files")
+  }
+  let es := List::reverse(entries)
+  if sparse {
+    match tb_have_blobs(dir, url, rev, tb_oids(es)) {
+      Ok(_) => #()
+      Err(e) => {
+        return Err(e)
+      }
+    }
+  }
+  let blobs := match tb_blobs(dir, tb_oids(es)) {
+    Ok(b) => b
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var files: List(TbFile) := Nil
+  var e1 := es
+  var b1 := blobs
+  var zipping := true
+  while zipping {
+    match e1 {
+      Cons(e, erest) => match b1 {
+        Cons(b, brest) => {
+          files := Cons(TbFile { path: e.path, executable: e.executable, bytes: b }, files)
+          e1 := erest
+          b1 := brest
+        }
+        Nil => {
+          return Err("totebag-cat-file-blob-missing")
+        }
+      }
+      Nil => {
+        zipping := false
+      }
+    }
+  }
+  match b1 {
+    Cons(_, _) => {
+      return Err("totebag-cat-file-blob-missing")
+    }
+    Nil => #()
+  }
+  match tb_tree(List::reverse(files)) {
+    Ok(t) => Ok(t)
+    Err(_) => Err("totebag-tree-refused")
+  }
+}

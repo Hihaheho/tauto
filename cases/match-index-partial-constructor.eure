@@ -1,0 +1,27 @@
+description = "A function given to a call that names its implicit arguments (`L(<A: Q(Cons(a, t)), B: False>, f)`) matches on its parameter: the named values have their own implicit arguments written in (`Cons(Nat, a, t)`), so the λ's domain and the index of the match agree and the arms check. Before, the index held `Cons(a, t)` short of its type parameter, and unifying it read past its arguments."
+
+@ cases.a_lambda_given_with_named_implicits_matches_on_its_parameter
+source = ```tauto
+inductive InL(A: Type): (A, List(A)) -> Prop {
+  Ihere(x: A, t: List(A)): InL(A, x, Cons(x, t))
+  Ithere(x: A, y: A, t: List(A), m: InL(A, x, t)): InL(A, x, Cons(y, t))
+}
+inductive G(n: Nat): Prop {
+  Gr: G(n)
+}
+inductive Or2(A: Prop, B: Prop): Prop {
+  L(a: A): Or2(A, B)
+  R(b: B): Or2(A, B)
+}
+fn Q(t: List(Nat)): Prop {
+  (x: Nat) -> (InL(Nat, x, t)) -> G(x)
+}
+theorem pg(a: Nat, t: List(Nat), h: Q(t)): Or2(Q(Cons(a, t)), False) {
+  L(<A: (Q(Cons(a, t))), B: (False)>,
+    (x: Nat) => (mx: InL(Nat, x, Cons(a, t))) => ⊢ G(x) from match mx {
+      Ihere(y, u) => Gr
+      Ithere(y, z, u, my) => h(y, my)
+    })
+}
+```
+checks."pg" = "checked"

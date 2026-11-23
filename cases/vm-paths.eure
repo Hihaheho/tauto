@@ -1,33 +1,35 @@
 @ cases.nested-reborrow-updates-the-owner
-backends = ["rust", "javascript", "vm"]
 source = ```nib
-copy struct Point { x: i64, y: i64 }
-copy struct Boxed { point: Point, mark: i64 }
-fn through(&mut value: Boxed): &mut Point { &mut value.point }
-fn forward(&mut point: Point): &mut Point { &mut point }
-fn set(&mut n: i64, value: i64): Unit { n := value }
+struct(copy) Point { x: i64, y: i64 }
+struct(copy) Boxed { point: Point, mark: i64 }
+fn through(value: &mut Boxed): &mut Point { &mut value.point }
+fn forward(point: &mut Point): &mut Point { &mut point }
+fn set(n: &mut i64, value: i64): Unit { *n := value }
 var boxed := Boxed { point: Point { x: 10, y: 20 }, mark: 30 }
 {
-  let &mut borrowed := through(&mut boxed)
+  let borrowed := through(&mut boxed)
   set(&mut borrowed.x, 40)
   {
-    let &mut again := forward(&mut borrowed)
+    let again := forward(&mut borrowed)
     set(&mut again.y, 50)
   }
-  perform show("field", borrowed.x)
+  show(&borrowed.x)
 }
-perform show("owner", boxed)
+show(&boxed)
 ```
-shows = ["field = 40", "owner = Boxed { point: Point { x: 40, y: 50 }, mark: 30 }"]
+stdout = ```
+40
+Boxed { point: Point { x: 40, y: 50 }, mark: 30 }
+```
 
 @ cases.borrowed-tail-survives-multiple-resumptions
-backends = ["javascript", "vm"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `var` shared with a closure yet"
 source = ```nib
 effect choose(): Bool resume ω
-fn sum(&items: List(i64)): i64 ! {Div} {
+fn sum(items: &List(i64)): i64 ! {div, overflow} {
   match items { Nil => 0, Cons(head, tail) => head + sum(&tail) }
 }
-fn pick(&items: List(i64)): i64 ! {choose, Div} {
+fn pick(items: &List(i64)): i64 ! {choose, div, overflow} {
   match items {
     Nil => 0
     Cons(head, tail) => if perform choose() { head + sum(&tail) } else { sum(&tail) }
@@ -37,32 +39,38 @@ var items := [1, 2, 4, 8]
 let result := handle { pick(&items) } with {
   choose(), k => k(true) + k(false)
 }
-perform show("result", result)
+show(&result)
 items := [20, 30]
-perform show("changed", sum(&items))
+show(&sum(&items))
 ```
-shows = ["result = 29", "changed = 50"]
+stdout = ```
+29
+50
+```
 
 @ cases.collection-entry-and-named-field-reborrows
-backends = ["rust", "javascript", "vm"]
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-copy struct Point { x: i64, y: i64 }
-struct Store { items: Vec(Point), entries: HashMap(Text, Point) }
-fn set(&mut n: i64, value: i64): Unit { n := value }
-var store := Store { items: Vec::new(), entries: HashMap::new() }
+struct(copy) Point { x: i64, y: i64 }
+struct Store { items: Vec(Point), entries: IndexedMap(Text, Point) }
+fn set(n: &mut i64, value: i64): Unit { *n := value }
+var store := Store { items: Vec::new(), entries: IndexedMap::new() }
 Vec::push(&mut store.items, Point { x: 1, y: 2 })
-HashMap::insert(&mut store.entries, "a", Point { x: 3, y: 4 })
+IndexedMap::insert(&mut store.entries, "a", Point { x: 3, y: 4 })
 match Vec::get_mut(&mut store.items, 0) {
   Some(at) => set(&mut at.y, 20)
   None => #()
 }
-match HashMap::get_mut(&mut store.entries, "a") {
+match IndexedMap::get_mut(&mut store.entries, "a") {
   Some(at) => set(&mut at.x, 30)
   None => #()
 }
-perform show("item", Vec::get(&store.items, 0))
-perform show("entry", HashMap::get(&store.entries, "a"))
+show(&Vec::get(&store.items, 0))
+show(&IndexedMap::get(&store.entries, "a"))
 ```
-shows = ["item = Some(Point { x: 1, y: 20 })", "entry = Some(Point { x: 30, y: 4 })"]
+stdout = ```
+Some(Point { x: 1, y: 20 })
+Some(Point { x: 30, y: 4 })
+```

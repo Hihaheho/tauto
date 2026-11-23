@@ -1,0 +1,1648 @@
+import "value.taut"
+import "num.taut"
+import "show.taut"
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::float
+import std::base
+import std::map
+
+// The interpreter (crates/tauto-niri/src/machine.rs): a machine whose
+// continuation is a stack of frames (`Kont`), so that a `perform` can take
+// the part of it up to its `handle` as a value and resume it later, once or
+// more.
+//
+// What changes the flow (a block, `if`, `match`, a call, `perform`,
+// `handle`) is a step of the machine; what does not is evaluated on the
+// stack of the tote. It evaluates in the order the tree is written and
+// decides no order and no drop itself.
+//
+// A run stops by an effect: `nout` with how it ended, `nflow` with a
+// `return` or an abort that goes to the frames below.
+
+pub(open) enum Outcome {
+  OOk
+  // The kind of the violation and what it says.
+  OViolation(Text, Text)
+  OUnsupported(Text)
+  OError(Text)
+}
+
+pub(open) enum Stop {
+  SReturn(Val)
+  // An abort arm of the `handle` numbered so ended with this value.
+  SAbort(Nat, Val)
+}
+
+pub(open) effect nout(o: Outcome): Never resume 0
+pub(open) effect nflow(s: Stop): Never resume 0
+
+pub(open) enum Then {
+  // A call, counted once.
+  ThenCall(NExpr, u64)
+  // The body of a `while` whose condition held.
+  ThenBody(NBlock, u64)
+}
+
+pub(open) enum Kont {
+  // The statements of a block left, then its tail.
+  KBlock(List(NStmt), Option(NExpr), u64)
+  KStmt(NStmt, u64)
+  KWhileCond(NStmt, u64)
+  KWhileBody(NStmt, u64)
+  KReturn
+  // An `if` given its condition: its branches.
+  KIf(NExpr, Option(NExpr), u64)
+  // `&&` (true) or `||` given its first operand: the second.
+  KAndOr(Bool, NExpr, u64)
+  // What an abort that passes here drops, in the frame it leaves.
+  KUnwind(List(NStmt), u64)
+  // A call returns to its caller here: its frame and its function.
+  KCall(u64, Text)
+  // A function value called by value ends once the call returns.
+  KRelease(Val)
+  // A `handle` in place: where it is written, the locals of its body, its id.
+  KHandle(NHandle, u64, u64, Nat)
+  // An arm of the `handle` at that place in the stack runs; the id it
+  // aborts to.
+  KArm(Nat, Option(Nat))
+  // A `budget` in place: its id and the cell of the steps left.
+  KBudget(Nat, u64)
+  KTick(Nat, Then)
+  // An arm that took the continuation ends.
+  KResumed(u64)
+}
+
+pub(open) enum Ctl {
+  CEval(NExpr, u64)
+  CValue(Val)
+  CStop(Stop)
+}
+
+// A continuation: the frames from a `handle` up to a `perform` in it, the
+// innermost first.
+pub(open) struct ContData {
+  frames: Option(List(Kont)),
+  base: Nat,
+  quant: NQuant,
+  resumed: Nat,
+  kept: Bool
+}
+
+pub(open) struct M {
+  pkg: NPackage,
+  max_steps: Nat,
+  toks: Vec(Token),
+  frames: Vec(Frame),
+  cells: Vec(Val),
+  conts: Vec(ContData),
+  lefts: Vec(Nat),
+  // What the program wrote to standard output, the last part first.
+  out: List(Text),
+  steps: Nat,
+  // The continuation, innermost first, and its length.
+  konts: List(Kont),
+  depth: Nat,
+  // Where each run of the machine on the stack of the tote starts.
+  bases: List(Nat),
+  temps: Nat,
+  next_handler: Nat,
+  ctors: List(NCtorRef),
+  copy_type: Bool,
+  budgets: List(Nat),
+  ticked: Bool,
+  // Whether a part of a value was ever moved out, leaving a hole.
+  holes: Bool
+}
+
+pub fn unbounded(): Nat { 18446744073709551615 }
+
+pub fn n64(n: Nat): u64 { U64::of_nat(n) }
+
+pub fn nn(n: u64): Nat { Nat::of_u64(n) }
+
+// ---- stops ----
+
+pub fn unsupported<A>(what: Text): A ! {nout} { perform nout(OUnsupported(what)) }
+
+pub fn fail<A>(what: Text): A ! {nout} { perform nout(OError(what)) }
+
+pub fn internal<A>(what: Text): A ! {nout} { perform nout(OError(Text::concat("internal: ", what))) }
+
+pub fn violation<A>(kind: Text, detail: Text): A ! {nout} { perform nout(OViolation(kind, detail)) }
+
+// A violation found through a borrow: a use after a move is a borrow used
+// after what it borrows was moved.
+pub fn o_dangling(o: Outcome): Outcome {
+  match o {
+    OViolation(k, d) => if k == "UseAfterMove" { OViolation("DanglingBorrow", d) } else { o }
+    OOk => o
+    OUnsupported(^w) => o
+    OError(^e) => o
+  }
+}
+
+// ---- stores ----
+
+pub fn tok_get(m: &M, t: u64): Token {
+  match Vec::get(&m.toks, t) {
+    Some(x) => {
+      let y := x
+      y
+    }
+    None => Token { state: TLive, is_linear: false }
+  }
+}
+
+pub fn tok_set(m: &mut M, t: u64, s: TState): Unit {
+  match Vec::get_mut(&mut m.toks, t) {
+    Some(x) => {
+      *x := Token { state: s, is_linear: x.is_linear }
+    }
+    None => ()
+  }
+}
+
+pub fn tok_live(m: &M, t: u64): Bool {
+  match tok_get(&m, t).state {
+    TLive => true
+    TDropped => false
+    TConsumed => false
+  }
+}
+
+pub fn fr_get(m: &M, f: u64): Frame {
+  match Vec::get(&m.frames, f) {
+    Some(x) => {
+      let y := x
+      y
+    }
+    None => frame_empty()
+  }
+}
+
+pub fn fr_put(m: &mut M, f: u64, x: Frame): Unit {
+  match Vec::get_mut(&mut m.frames, f) {
+    Some(^s) => {
+      *s := x
+    }
+    None => ()
+  }
+}
+
+pub fn fr_new(m: &mut M): u64 {
+  let n := Vec::len(&m.frames)
+  Vec::push(&mut m.frames, frame_empty())
+  n
+}
+
+pub fn fr_new_closure(m: &mut M): u64 {
+  let n := Vec::len(&m.frames)
+  Vec::push(&mut m.frames, Frame { slots: Ordmap::empty(), dead: false, closure: true })
+  n
+}
+
+pub fn fr_dead(m: &M, f: u64): Bool { fr_get(&m, f).dead }
+
+pub fn fr_set_dead(m: &mut M, f: u64, dead: Bool): Unit {
+  let x := fr_get(&m, f)
+  fr_put(&mut m, f, Frame { slots: x.slots, dead: dead, closure: x.closure })
+}
+
+pub fn slot_get(m: &M, f: u64, k: Nat): Option(Slot) {
+  Ordmap::get(fr_get(&m, f).slots, k, Ordmap::compare_nat)
+}
+
+// Puts a slot in; the slot it takes the place of.
+pub fn slot_put(m: &mut M, f: u64, k: Nat, s: Slot): Option(Slot) {
+  let x := fr_get(&m, f)
+  let old := Ordmap::get(x.slots, k, Ordmap::compare_nat)
+  fr_put(&mut m, f, Frame { slots: Ordmap::insert(x.slots, k, s, Ordmap::compare_nat), dead: x.dead, closure: x.closure })
+  old
+}
+
+pub fn slot_remove(m: &mut M, f: u64, k: Nat): Unit {
+  let x := fr_get(&m, f)
+  fr_put(&mut m, f, Frame { slots: Ordmap::remove(x.slots, k, Ordmap::compare_nat), dead: x.dead, closure: x.closure })
+}
+
+pub fn slot_keys(m: &M, f: u64): List(Nat) { keys_of(Ordmap::entries(fr_get(&m, f).slots)) }
+
+pub fn keys_of(es: List(Nat × Slot)): List(Nat) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => match e {
+      #(k, ^s) => Cons(k, keys_of(rest))
+    }
+  }
+}
+
+pub fn cell_get(m: &M, c: u64): Val {
+  match Vec::get(&m.cells, c) {
+    Some(x) => {
+      let y := x
+      y
+    }
+    None => VUnit
+  }
+}
+
+pub fn cell_set(m: &mut M, c: u64, v: Val): Unit {
+  match Vec::get_mut(&mut m.cells, c) {
+    Some(^s) => {
+      *s := v
+    }
+    None => ()
+  }
+}
+
+pub fn cell_new(m: &mut M, v: Val): u64 {
+  let n := Vec::len(&m.cells)
+  Vec::push(&mut m.cells, v)
+  n
+}
+
+pub fn left_get(m: &M, c: u64): Nat {
+  match Vec::get(&m.lefts, c) {
+    Some(x) => {
+      let y := x
+      y
+    }
+    None => 0
+  }
+}
+
+pub fn left_set(m: &mut M, c: u64, n: Nat): Unit {
+  match Vec::get_mut(&mut m.lefts, c) {
+    Some(^s) => {
+      *s := n
+    }
+    None => ()
+  }
+}
+
+pub fn left_new(m: &mut M, n: Nat): u64 {
+  let i := Vec::len(&m.lefts)
+  Vec::push(&mut m.lefts, n)
+  i
+}
+
+pub fn cont_get(m: &M, k: u64): ContData {
+  match Vec::get(&m.conts, k) {
+    Some(x) => {
+      let y := x
+      y
+    }
+    None => ContData { frames: None, base: 0, quant: NQOne, resumed: 0, kept: false }
+  }
+}
+
+pub fn cont_set(m: &mut M, k: u64, c: ContData): Unit {
+  match Vec::get_mut(&mut m.conts, k) {
+    Some(^s) => {
+      *s := c
+    }
+    None => ()
+  }
+}
+
+pub fn cont_new(m: &mut M, c: ContData): u64 {
+  let n := Vec::len(&m.conts)
+  Vec::push(&mut m.conts, c)
+  n
+}
+
+// ---- the continuation ----
+
+pub fn push(m: &mut M, k: Kont): Unit {
+  m.konts := Cons(k, m.konts)
+  m.depth := m.depth + 1
+}
+
+pub fn pop(m: &mut M): Kont ! {nout, overflow} {
+  match m.konts {
+    Nil => internal("a frame")
+    Cons(k, rest) => {
+      m.konts := rest
+      m.depth := m.depth - 1
+      k
+    }
+  }
+}
+
+pub fn truncate(m: &mut M, base: Nat): Unit ! {overflow} {
+  m.konts := l_drop(m.konts, m.depth - base)
+  m.depth := base
+}
+
+// The frame at the place `j` from the bottom.
+pub fn kont_at(m: &M, j: Nat): Kont ! {overflow} {
+  match l_nth(m.konts, m.depth - 1 - j) {
+    Some(k) => k
+    None => KReturn
+  }
+}
+
+// ---- types ----
+
+pub fn needs_drop(t: NTy): Bool {
+  match t {
+    NInt(w) => match w {
+      NNat => true
+      NW32 => false
+      NW64 => false
+      NU8 => false
+      NU32 => false
+      NU64 => false
+      NHost => false
+      NW8 => false
+      NW16 => false
+      NU16 => false
+    }
+    NBool => false
+    NUnit => false
+    NNever => false
+    NFloat => false
+    NFloat32 => false
+    NRef(^a) => false
+    NRefMut(^a) => false
+    NSlice(^a) => false
+    NText => true
+    NBuf => true
+    NShown => true
+    NVec(^a) => true
+    NArray(^a) => true
+    NOption(^a) => true
+    NInfo(^a) => true
+    NBudgetAnswer(^a) => true
+    NResult(^a, ^b) => true
+    NPair(^a, ^b) => true
+    NSharedVar(^c, ^a) => true
+    NStd(^n, ^args) => true
+    NUnion(^u) => true
+    NFn(^ps, ^r, ^k, ^t2) => true
+    NData(^n, ^args) => true
+    NParam(^p) => true
+  }
+}
+
+pub fn is_borrow_ty(t: NTy): Bool {
+  match t {
+    NRef(^a) => true
+    NRefMut(^a) => true
+    NSlice(^a) => true
+    NInt(^w) => false
+    NBool => false
+    NUnit => false
+    NNever => false
+    NFloat => false
+    NFloat32 => false
+    NText => false
+    NBuf => false
+    NShown => false
+    NVec(^a) => false
+    NArray(^a) => false
+    NOption(^a) => false
+    NInfo(^a) => false
+    NBudgetAnswer(^a) => false
+    NResult(^a, ^b) => false
+    NPair(^a, ^b) => false
+    NSharedVar(^c, ^a) => false
+    NStd(^n, ^args) => false
+    NUnion(^u) => false
+    NFn(^ps, ^r, ^k, ^t2) => false
+    NData(^n, ^args) => false
+    NParam(^p) => false
+  }
+}
+
+pub fn data_def(m: &M, name: Text): Option(NData) { data_in(m.pkg.datas, name) }
+
+pub fn data_in(ds: List(NData), name: Text): Option(NData) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => if d.name == name { Some(d) } else { data_in(rest, name) }
+  }
+}
+
+pub fn is_copy(m: &M, t: NTy): Bool {
+  match t {
+    NInt(w) => match w {
+      NNat => false
+      NW32 => true
+      NW64 => true
+      NU8 => true
+      NU32 => true
+      NU64 => true
+      NHost => true
+      NW8 => true
+      NW16 => true
+      NU16 => true
+    }
+    NBool => true
+    NUnit => true
+    NNever => true
+    NFloat => true
+    NFloat32 => true
+    NRef(^a) => true
+    NSlice(^a) => true
+    NOption(a) => is_copy(&m, a)
+    NResult(a, b) => is_copy(&m, a) && is_copy(&m, b)
+    NPair(a, b) => is_copy(&m, a) && is_copy(&m, b)
+    NData(n, args) => match data_def(&m, n) {
+      Some(d) => d.is_copy && all_copy(&m, args)
+      None => false
+    }
+    NRefMut(^a) => false
+    NText => false
+    NBuf => false
+    NShown => false
+    NVec(^a) => false
+    NArray(^a) => false
+    NInfo(^a) => false
+    NBudgetAnswer(^a) => false
+    NSharedVar(^c, ^a) => false
+    NStd(^n, ^args) => false
+    NUnion(^u) => false
+    NFn(^ps, ^r, ^k, ^t2) => false
+    NParam(^p) => false
+  }
+}
+
+pub fn all_copy(m: &M, ts: List(NTy)): Bool {
+  match ts {
+    Nil => true
+    Cons(t, rest) => is_copy(&m, t) && all_copy(&m, rest)
+  }
+}
+
+// Whether a value of the type owns something: what `needs_drop` says, less
+// the types that are `copy`.
+pub fn owns(m: &M, t: NTy): Bool { needs_drop(t) && not(is_copy(&m, t)) }
+
+pub fn has_params(t: NTy): Bool {
+  match t {
+    NParam(^p) => true
+    NVec(a) => has_params(a)
+    NArray(a) => has_params(a)
+    NSlice(a) => has_params(a)
+    NOption(a) => has_params(a)
+    NRef(a) => has_params(a)
+    NRefMut(a) => has_params(a)
+    NInfo(a) => has_params(a)
+    NBudgetAnswer(a) => has_params(a)
+    NResult(a, b) => has_params(a) || has_params(b)
+    NPair(a, b) => has_params(a) || has_params(b)
+    NData(^n, args) => any_params(args)
+    NStd(^n, args) => any_params(args)
+    NFn(ps, r, ^k, ^t2) => any_params(ps) || has_params(r)
+    NSharedVar(^c, a) => has_params(a)
+    NInt(^w) => false
+    NBool => false
+    NText => false
+    NUnit => false
+    NNever => false
+    NFloat => false
+    NFloat32 => false
+    NBuf => false
+    NShown => false
+    NUnion(^u) => false
+  }
+}
+
+pub fn any_params(ts: List(NTy)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => has_params(t) || any_params(rest)
+  }
+}
+
+pub fn storage_shared(l: NLocal): Bool {
+  match l.repr {
+    NSharedVarRepr => true
+    NSharedVarCopy => true
+    NPlain => false
+    NRefRepr => false
+    NRefMutRepr => false
+    NBorrowClosure => false
+    NFnRef => false
+  }
+}
+
+pub fn storage_borrow(l: NLocal): Bool {
+  match l.repr {
+    NRefRepr => true
+    NRefMutRepr => true
+    NFnRef => true
+    NPlain => false
+    NSharedVarRepr => false
+    NSharedVarCopy => false
+    NBorrowClosure => false
+  }
+}
+
+pub fn storage_owned(l: NLocal): Bool {
+  match l.repr {
+    NPlain => true
+    NRefRepr => false
+    NRefMutRepr => false
+    NFnRef => false
+    NSharedVarRepr => false
+    NSharedVarCopy => false
+    NBorrowClosure => false
+  }
+}
+
+// ---- tokens ----
+
+pub fn mint_linear(m: &mut M, lin: Bool): Option(u64) {
+  let n := Vec::len(&m.toks)
+  Vec::push(&mut m.toks, Token { state: TLive, is_linear: lin })
+  Some(n)
+}
+
+pub fn mint(m: &mut M, t: NTy): Option(u64) {
+  if owns(&m, t) { mint_linear(&mut m, false) } else { None }
+}
+
+// The first live token of the value, depth first.
+pub fn live(m: &M, v: Val): Option(u64) ! {div} {
+  let own := match v_tok(v) {
+    Some(t) => if tok_live(&m, t) { Some(t) } else { None }
+    None => None
+  }
+  match own {
+    Some(t) => Some(t)
+    None => match v {
+      VData(^c, fs, ^t) => live_all(&m, fs)
+      VInject(^i, x) => live(&m, x)
+      VAnswer(a) => match a {
+        AValue(x) => live(&m, x)
+        AMore(^n) => None
+      }
+      VSeq(xs, ^t, ^a) => live_all(&m, seq_list(xs))
+      VSlots(st, ^vac, ^cap, ^ms, xs, ^t) => live_all(&m, Cons(st, slots_held(xs)))
+      VUnit => None
+      VBool(^b) => None
+      VFloat(^b) => None
+      VInt(^n, ^k, ^t) => None
+      VText(^s, ^t) => None
+      VShown(^s, ^t) => None
+      VFn(^f, ^t) => None
+      VRef(^p) => None
+      VCell(^c) => None
+      VBuf(^s, ^t) => None
+      VShared(^c, ^t) => None
+      VInfo => None
+      VCont(^k) => None
+      VMoved => None
+    }
+  }
+}
+
+pub fn live_all(m: &M, xs: List(Val)): Option(u64) ! {div} {
+  match xs {
+    Nil => None
+    Cons(x, rest) => match live(&m, x) {
+      Some(t) => Some(t)
+      None => live_all(&m, rest)
+    }
+  }
+}
+
+pub fn leak_kind(m: &M, t: u64): Text { if tok_get(&m, t).is_linear { "Linear" } else { "Leak" } }
+
+// How many holders a shared cell has besides the value being ended: the
+// frames that still run, the cells, and the frames of the continuation.
+pub fn cell_holders(m: &M, c: u64): Nat ! {div, overflow} {
+  var n: Nat := 0
+  var f: u64 := 0
+  let count := Vec::len(&m.frames)
+  while f < count {
+    let x := fr_get(&m, f)
+    if not(x.dead) {
+      n := n + holds_slots(Ordmap::entries(x.slots), c)
+    } else {
+      ()
+    }
+    f := f + 1
+  }
+  var i: u64 := 0
+  let cells := Vec::len(&m.cells)
+  while i < cells {
+    n := n + holds(cell_get(&m, i), c)
+    i := i + 1
+  }
+  n + holds_konts(m.konts, c)
+}
+
+pub fn holds_slots(es: List(Nat × Slot), c: u64): Nat ! {div} {
+  match es {
+    Nil => 0
+    Cons(e, rest) => match e {
+      #(^k, s) => match s {
+        SOwned(^name, v) => holds(v, c) + holds_slots(rest, c)
+        SAlias(^f, ^k2) => holds_slots(rest, c)
+      }
+    }
+  }
+}
+
+pub fn holds_konts(ks: List(Kont), c: u64): Nat ! {div} {
+  match ks {
+    Nil => 0
+    Cons(k, rest) => match k {
+      KRelease(v) => holds(v, c) + holds_konts(rest, c)
+      KBlock(^ss, ^t, ^f) => holds_konts(rest, c)
+      KStmt(^s, ^f) => holds_konts(rest, c)
+      KWhileCond(^s, ^f) => holds_konts(rest, c)
+      KWhileBody(^s, ^f) => holds_konts(rest, c)
+      KReturn => holds_konts(rest, c)
+      KIf(^a, ^b, ^f) => holds_konts(rest, c)
+      KAndOr(^a, ^b, ^f) => holds_konts(rest, c)
+      KUnwind(^ss, ^f) => holds_konts(rest, c)
+      KCall(^f, ^n) => holds_konts(rest, c)
+      KHandle(^h, ^f, ^b, ^i) => holds_konts(rest, c)
+      KArm(^p, ^a) => holds_konts(rest, c)
+      KBudget(^i, ^l) => holds_konts(rest, c)
+      KTick(^i, ^t) => holds_konts(rest, c)
+      KResumed(^k2) => holds_konts(rest, c)
+    }
+  }
+}
+
+pub fn holds(v: Val, c: u64): Nat ! {div} {
+  match v {
+    VCell(d) => if d == c { 1 } else { 0 }
+    VShared(d, ^t) => if d == c { 1 } else { 0 }
+    VRef(p) => holds_place(p, c)
+    VData(^k, fs, ^t) => holds_all(fs, c)
+    VInject(^i, x) => holds(x, c)
+    VSeq(xs, ^t, ^a) => holds_all(seq_list(xs), c)
+    VSlots(st, ^vac, ^cap, ^ms, xs, ^t) => holds_all(Cons(st, slots_held(xs)), c)
+    VAnswer(a) => match a {
+      AValue(x) => holds(x, c)
+      AMore(^n) => 0
+    }
+    VUnit => 0
+    VBool(^b) => 0
+    VFloat(^b) => 0
+    VInt(^n, ^k, ^t) => 0
+    VText(^s, ^t) => 0
+    VShown(^s, ^t) => 0
+    VFn(^f, ^t) => 0
+    VBuf(^s, ^t) => 0
+    VInfo => 0
+    VCont(^k) => 0
+    VMoved => 0
+  }
+}
+
+pub fn holds_place(p: PlaceRef, c: u64): Nat ! {div} {
+  match p.root {
+    RCell(d) => if d == c { 1 } else { 0 }
+    RVia(q) => holds_place(q, c)
+    RSlot(^f, ^k) => 0
+  }
+}
+
+pub fn holds_all(xs: List(Val), c: u64): Nat ! {div} {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => holds(x, c) + holds_all(rest, c)
+  }
+}
+
+// Ends the value: each of its tokens is set to `to`.
+pub fn release(m: &mut M, v: Val, to: TState): Unit ! {div, nout, overflow} {
+  match v_tok(v) {
+    Some(t) => {
+      let tok := tok_get(&m, t)
+      if not(tok_live(&m, t)) {
+        violation("DoubleDrop", "the value was already ended at 0..0")
+      } else {
+        ()
+      }
+      let dropped := match to {
+        TDropped => true
+        TLive => false
+        TConsumed => false
+      }
+      if tok.is_linear && dropped { violation("Linear", "a linear value is dropped") } else { () }
+      tok_set(&mut m, t, to)
+    }
+    None => ()
+  }
+  match v {
+    VMoved => violation("UseAfterMove", "a part was moved out at 0..0")
+    VData(^c, fs, ^t) => release_all(&mut m, fs, to)
+    VInject(^i, x) => release(&mut m, x, to)
+    VSeq(xs, ^t, ^a) => release_all(&mut m, seq_list(xs), to)
+    VSlots(st, ^vac, ^cap, ^ms, xs, ^t) => release_all(&mut m, Cons(st, slots_held(xs)), to)
+    VShared(c, ^t) => release_cell(&mut m, c)
+    VCell(c) => release_cell(&mut m, c)
+    VFn(f, ^t) => match f {
+      FClosure(^node, env) => release_frame(&mut m, env)
+      FInst(^i) => ()
+    }
+    VUnit => ()
+    VBool(^b) => ()
+    VFloat(^b) => ()
+    VInt(^n, ^k, ^t) => ()
+    VText(^s, ^t) => ()
+    VShown(^s, ^t) => ()
+    VRef(^p) => ()
+    VBuf(^s, ^t) => ()
+    VInfo => ()
+    VAnswer(^a) => ()
+    VCont(^k) => ()
+  }
+}
+
+pub fn release_cell(m: &mut M, c: u64): Unit ! {div, nout, overflow} {
+  if cell_holders(&m, c) == 0 {
+    let inner := cell_get(&m, c)
+    cell_set(&mut m, c, VUnit)
+    release(&mut m, inner, TDropped)
+  } else {
+    ()
+  }
+}
+
+pub fn release_all(m: &mut M, xs: List(Val), to: TState): Unit ! {div, nout, overflow} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      release(&mut m, x, to)
+      release_all(&mut m, rest, to)
+    }
+  }
+}
+
+// Drops what a closure's environment still owns.
+pub fn release_frame(m: &mut M, env: u64): Unit ! {div, nout, overflow} {
+  release_keys(&mut m, env, slot_keys(&m, env))
+  fr_set_dead(&mut m, env, true)
+}
+
+pub fn release_keys(m: &mut M, env: u64, ks: List(Nat)): Unit ! {div, nout, overflow} {
+  match ks {
+    Nil => ()
+    Cons(k, rest) => {
+      match slot_get(&m, env, k) {
+        Some(s) => match s {
+          SOwned(name, v) => {
+            slot_put(&mut m, env, k, SOwned(name, VMoved))
+            match v {
+              VMoved => ()
+              VUnit => release(&mut m, v, TDropped)
+              VBool(^b) => release(&mut m, v, TDropped)
+              VFloat(^b) => release(&mut m, v, TDropped)
+              VInt(^n, ^g, ^t) => release(&mut m, v, TDropped)
+              VText(^x, ^t) => release(&mut m, v, TDropped)
+              VShown(^x, ^t) => release(&mut m, v, TDropped)
+              VData(^c, ^fs, ^t) => release(&mut m, v, TDropped)
+              VInject(^i, ^x) => release(&mut m, v, TDropped)
+              VFn(^f, ^t) => release(&mut m, v, TDropped)
+              VRef(^p) => release(&mut m, v, TDropped)
+              VCell(^c) => release(&mut m, v, TDropped)
+              VSeq(^xs, ^t, ^a) => release(&mut m, v, TDropped)
+              VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => release(&mut m, v, TDropped)
+              VBuf(^x, ^t) => release(&mut m, v, TDropped)
+              VShared(^c, ^t) => release(&mut m, v, TDropped)
+              VInfo => release(&mut m, v, TDropped)
+              VAnswer(^a) => release(&mut m, v, TDropped)
+              VCont(^c) => release(&mut m, v, TDropped)
+            }
+          }
+          SAlias(^f, ^k2) => ()
+        }
+        None => ()
+      }
+      release_keys(&mut m, env, rest)
+    }
+  }
+}
+
+// Whether a part was moved out; a hole below the top is looked for only
+// once some move has left one.
+pub fn moved_part(m: &M, v: Val): Bool ! {div} { if m.holes { v_moved_part(v) } else { is_moved(v) } }
+
+pub fn is_moved(v: Val): Bool {
+  match v {
+    VMoved => true
+    VUnit => false
+    VBool(^b) => false
+    VFloat(^b) => false
+    VInt(^n, ^g, ^t) => false
+    VText(^x, ^t) => false
+    VShown(^x, ^t) => false
+    VData(^c, ^fs, ^t) => false
+    VInject(^i, ^x) => false
+    VFn(^f, ^t) => false
+    VRef(^p) => false
+    VCell(^c) => false
+    VSeq(^xs, ^t, ^a) => false
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => false
+    VBuf(^x, ^t) => false
+    VShared(^c, ^t) => false
+    VInfo => false
+    VAnswer(^a) => false
+    VCont(^c) => false
+  }
+}
+
+// A value whose parts were all moved out or dropped one by one: its shell
+// ends with its last part.
+pub fn release_hollow(m: &mut M, v: Val): Bool ! {div} {
+  match v {
+    VData(^c, fs, t) => {
+      let taken := hollow_all(&mut m, fs)
+      match t {
+        None => false
+        Some(k) => if not(tok_live(&m, k)) || not(taken) || live_all(&m, fs) != None {
+          false
+        } else {
+          tok_set(&mut m, k, TConsumed)
+          true
+        }
+      }
+    }
+    VMoved => true
+    VUnit => false
+    VBool(^b) => false
+    VFloat(^b) => false
+    VInt(^n, ^g, ^t) => false
+    VText(^x, ^t) => false
+    VShown(^x, ^t) => false
+    VInject(^i, ^x) => false
+    VFn(^f, ^t) => false
+    VRef(^p) => false
+    VCell(^c) => false
+    VSeq(^xs, ^t, ^a) => false
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => false
+    VBuf(^x, ^t) => false
+    VShared(^c, ^t) => false
+    VInfo => false
+    VAnswer(^a) => false
+    VCont(^c) => false
+  }
+}
+
+pub fn hollow_all(m: &mut M, xs: List(Val)): Bool ! {div} {
+  match xs {
+    Nil => false
+    Cons(x, rest) => {
+      let a := release_hollow(&mut m, x)
+      let b := hollow_all(&mut m, rest)
+      a || b
+    }
+  }
+}
+
+// The owned slots of a frame that still hold a live token: a leak.
+pub fn check_frame(m: &mut M, fr: u64): Unit ! {div, nout} {
+  let es := Ordmap::entries(fr_get(&m, fr).slots)
+  hollow_slots(&mut m, es)
+  check_slots(&m, es)
+}
+
+pub fn hollow_slots(m: &mut M, es: List(Nat × Slot)): Unit ! {div} {
+  match es {
+    Nil => ()
+    Cons(e, rest) => {
+      match e {
+        #(^k, s) => match s {
+          SOwned(^name, v) => {
+            release_hollow(&mut m, v)
+            ()
+          }
+          SAlias(^f, ^k2) => ()
+        }
+      }
+      hollow_slots(&mut m, rest)
+    }
+  }
+}
+
+pub fn check_slots(m: &M, es: List(Nat × Slot)): Unit ! {div, nout} {
+  match es {
+    Nil => ()
+    Cons(e, rest) => match e {
+      #(^k, s) => match s {
+        SOwned(^name, v) => match live(&m, v) {
+          Some(t) => violation(leak_kind(&m, t), "a local still owns a value when its function returns")
+          None => check_slots(&m, rest)
+        }
+        SAlias(^f, ^k2) => check_slots(&m, rest)
+      }
+    }
+  }
+}
+
+pub fn copy_val(m: &M, v: Val): Val ! {div, nout} {
+  if moved_part(&m, v) { violation("UseAfterMove", "moved at 0..0") } else { () }
+  let owned := v_owns_token(v)
+  if owned && m.copy_type {
+    v_strip(v)
+  } else if owned {
+    violation("UseMark", "`Copy` of a value that owns something")
+  } else {
+    match v {
+      VCell(^c) => violation("UseMark", "`Copy` of a shared var's cell")
+      VUnit => v
+      VBool(^b) => v
+      VFloat(^b) => v
+      VInt(^n, ^g, ^t) => v
+      VText(^x, ^t) => v
+      VShown(^x, ^t) => v
+      VData(^c, ^fs, ^t) => v
+      VInject(^i, ^x) => v
+      VFn(^f, ^t) => v
+      VRef(^p) => v
+      VSeq(^xs, ^t, ^a) => v
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => v
+      VBuf(^x, ^t) => v
+      VShared(^c, ^t) => v
+      VInfo => v
+      VAnswer(^a) => v
+      VCont(^c) => v
+      VMoved => v
+    }
+  }
+}
+
+pub fn fresh(m: &mut M, t: Option(u64)): Option(u64) ! {nout} {
+  match t {
+    None => None
+    Some(k) => if tok_live(&m, k) {
+      mint_linear(&mut m, tok_get(&m, k).is_linear)
+    } else {
+      violation("UseAfterMove", "`Clone` of a value already ended")
+    }
+  }
+}
+
+pub fn display_last(n: Text): Text {
+  match l_rev(text_split(n, "::")) {
+    Nil => n
+    Cons(x, ^rest) => x
+  }
+}
+
+// A copy with tokens of its own (`dup`).
+pub fn clone_val(m: &mut M, v: Val): Val ! {div, nout} {
+  match v {
+    VMoved => violation("UseAfterMove", "moved at 0..0")
+    VInt(n, g, t) => VInt(n, g, fresh(&mut m, t))
+    VText(s, t) => VText(s, fresh(&mut m, t))
+    VShown(s, t) => VShown(s, fresh(&mut m, t))
+    VData(c, fs, t) => {
+      let cloneable := match c.data {
+        NDataGen(n) => match data_def(&m, n) {
+          Some(d) => d.is_clone
+          None => true
+        }
+        NDataOption => true
+        NDataResult => true
+        NDataPair => true
+      }
+      if not(cloneable) || c.is_linear {
+        violation("UseMark", Text::concat_all(["`Clone` of `", c.name, "`, which cannot be cloned"]))
+      } else {
+        let tok := fresh(&mut m, t)
+        VData(c, clone_all(&mut m, fs), tok)
+      }
+    }
+    VInject(i, x) => VInject(i, clone_val(&mut m, x))
+    VFn(f, t) => {
+      let t2 := fresh(&mut m, t)
+      match f {
+        FInst(i) => VFn(FInst(i), t2)
+        FClosure(node, env) => {
+          let dup := fr_new(&mut m)
+          clone_env(&mut m, env, dup, Ordmap::entries(fr_get(&m, env).slots))
+          VFn(FClosure(node, dup), t2)
+        }
+      }
+    }
+    VCell(^c) => v
+    VSeq(xs, t, a) => {
+      let t2 := fresh(&mut m, t)
+      VSeq(seq_of(clone_all(&mut m, seq_list(xs))), t2, a)
+    }
+    VSlots(^st, ^vac, ^cap, ^ms, ^xs, ^t) => v
+    VBuf(s, t) => VBuf(s, fresh(&mut m, t))
+    VShared(c, t) => VShared(c, fresh(&mut m, t))
+    VUnit => v
+    VBool(^b) => v
+    VFloat(^b) => v
+    VRef(^p) => v
+    VInfo => v
+    VAnswer(^a) => v
+    VCont(^k) => v
+  }
+}
+
+pub fn clone_all(m: &mut M, xs: List(Val)): List(Val) ! {div, nout} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let y := clone_val(&mut m, x)
+      Cons(y, clone_all(&mut m, rest))
+    }
+  }
+}
+
+pub fn clone_env(m: &mut M, env: u64, dup: u64, es: List(Nat × Slot)): Unit ! {div, nout} {
+  match es {
+    Nil => ()
+    Cons(e, rest) => {
+      match e {
+        #(k, s) => {
+          let slot := match s {
+            SAlias(^f, ^k2) => s
+            SOwned(name, v) => match v {
+              VRef(p) => match p.root {
+                RSlot(f, held) => if f == env {
+                  SOwned(name, VRef(PlaceRef { root: RSlot(dup, held), path: p.path }))
+                } else {
+                  s
+                }
+                RCell(^c) => s
+                RVia(^q) => s
+              }
+              VMoved => s
+              VUnit => SOwned(name, clone_val(&mut m, v))
+              VBool(^b) => SOwned(name, clone_val(&mut m, v))
+              VFloat(^b) => SOwned(name, clone_val(&mut m, v))
+              VInt(^n, ^g, ^t) => SOwned(name, clone_val(&mut m, v))
+              VText(^x, ^t) => SOwned(name, clone_val(&mut m, v))
+              VShown(^x, ^t) => SOwned(name, clone_val(&mut m, v))
+              VData(^c, ^fs, ^t) => SOwned(name, clone_val(&mut m, v))
+              VInject(^i, ^x) => SOwned(name, clone_val(&mut m, v))
+              VFn(^f, ^t) => SOwned(name, clone_val(&mut m, v))
+              VCell(^c) => SOwned(name, clone_val(&mut m, v))
+              VSeq(^xs, ^t, ^a) => SOwned(name, clone_val(&mut m, v))
+              VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => SOwned(name, clone_val(&mut m, v))
+              VBuf(^x, ^t) => SOwned(name, clone_val(&mut m, v))
+              VShared(^c, ^t) => SOwned(name, clone_val(&mut m, v))
+              VInfo => SOwned(name, clone_val(&mut m, v))
+              VAnswer(^a) => SOwned(name, clone_val(&mut m, v))
+              VCont(^c) => SOwned(name, clone_val(&mut m, v))
+            }
+          }
+          slot_put(&mut m, dup, k, slot)
+          ()
+        }
+      }
+      clone_env(&mut m, env, dup, rest)
+    }
+  }
+}
+
+// ---- places ----
+
+pub fn key_word(k: Nat): Text {
+  if key_is_local(k) {
+    Text::concat_all(["Local(", Text::of_nat(k), ")"])
+  } else {
+    Text::concat_all(["Temp(", Text::of_nat(k - 1000000000000), ")"])
+  }
+}
+
+pub fn unalias(m: &M, fr: u64, k: Nat): u64 × Nat ! {div, nout} {
+  let x := fr_get(&m, fr)
+  if x.dead {
+    violation("DanglingBorrow", "a frame used after its call returned")
+  } else {
+    match Ordmap::get(x.slots, k, Ordmap::compare_nat) {
+      Some(s) => match s {
+        SAlias(f2, k2) => unalias(&m, f2, k2)
+        SOwned(^name, ^v) => #(fr, k)
+      }
+      None => violation("UseAfterMove", Text::concat(key_word(k), " holds no value on this path: it was never bound"))
+    }
+  }
+}
+
+pub fn place_of_local(m: &mut M, local: NLocal, path: List(NFieldRef), fr: u64): PlaceRef ! {div, nout} {
+  let root := RSlot(fr, key_local(local.id))
+  if storage_borrow(local) {
+    match peek(&mut m, PlaceRef { root: root, path: Nil }) {
+      VRef(p) => PlaceRef { root: p.root, path: l_append(p.path, path) }
+      VUnit => PlaceRef { root: root, path: path }
+      VBool(^b) => PlaceRef { root: root, path: path }
+      VFloat(^b) => PlaceRef { root: root, path: path }
+      VInt(^n, ^g, ^t) => PlaceRef { root: root, path: path }
+      VText(^x, ^t) => PlaceRef { root: root, path: path }
+      VShown(^x, ^t) => PlaceRef { root: root, path: path }
+      VData(^c, ^fs, ^t) => PlaceRef { root: root, path: path }
+      VInject(^i, ^x) => PlaceRef { root: root, path: path }
+      VFn(^f, ^t) => PlaceRef { root: root, path: path }
+      VCell(^c) => PlaceRef { root: root, path: path }
+      VSeq(^xs, ^t, ^a) => PlaceRef { root: root, path: path }
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => PlaceRef { root: root, path: path }
+      VBuf(^x, ^t) => PlaceRef { root: root, path: path }
+      VShared(^c, ^t) => PlaceRef { root: root, path: path }
+      VInfo => PlaceRef { root: root, path: path }
+      VAnswer(^a) => PlaceRef { root: root, path: path }
+      VCont(^c) => PlaceRef { root: root, path: path }
+      VMoved => PlaceRef { root: root, path: path }
+    }
+  } else {
+    PlaceRef { root: root, path: path }
+  }
+}
+
+pub fn place_from(m: &mut M, p: NPlaceOf, fr: u64): PlaceRef ! {div, nout} { place_of_local(&mut m, p.local, p.path, fr) }
+
+pub fn temp(m: &mut M, v: Val, fr: u64): PlaceRef {
+  m.temps := m.temps + 1
+  let k := key_temp(m.temps)
+  slot_put(&mut m, fr, k, SOwned("<temporary>", v))
+  PlaceRef { root: RSlot(fr, k), path: Nil }
+}
+
+pub fn nat_of_text(t: Text): Option(Nat) { nat_of_digits(Text::bytes(t), 0, false) }
+
+pub fn nat_of_digits(bs: List(Nat), acc: Nat, any: Bool): Option(Nat) {
+  match bs {
+    Nil => if any { Some(acc) } else { None }
+    Cons(b, rest) => if b >= 48 && b <= 57 { nat_of_digits(rest, acc * 10 + (b - 48), true) } else { None }
+  }
+}
+
+pub fn label_pos(ls: List(Option(Text)), name: Text, i: Nat): Option(Nat) {
+  match ls {
+    Nil => None
+    Cons(l, rest) => match l {
+      Some(n) => if n == name { Some(i) } else { label_pos(rest, name, i + 1) }
+      None => label_pos(rest, name, i + 1)
+    }
+  }
+}
+
+pub fn field_pos(c: NCtorRef, f: NFieldRef): Option(Nat) {
+  match f.index {
+    Some(i) => Some(i)
+    None => match label_pos(c.labels, f.name, 0) {
+      Some(i) => Some(i)
+      None => nat_of_text(f.name)
+    }
+  }
+}
+
+pub fn root_val(m: &M, r: Root): Val {
+  match r {
+    RSlot(f, k) => match slot_get(&m, f, k) {
+      Some(s) => match s {
+        SOwned(^name, v) => v
+        SAlias(^f2, ^k2) => VMoved
+      }
+      None => VMoved
+    }
+    RCell(c) => cell_get(&m, c)
+    RVia(^q) => VMoved
+  }
+}
+
+pub fn root_name(m: &M, r: Root): Option(Text) {
+  match r {
+    RSlot(f, k) => match slot_get(&m, f, k) {
+      Some(s) => match s {
+        SOwned(name, ^v) => Some(name)
+        SAlias(^f2, ^k2) => None
+      }
+      None => None
+    }
+    RCell(^c) => None
+    RVia(^q) => None
+  }
+}
+
+pub fn unwrap_inject(v: Val): Val {
+  match v {
+    VInject(^i, x) => unwrap_inject(x)
+    VUnit => v
+    VBool(^b) => v
+    VFloat(^b) => v
+    VInt(^n, ^g, ^t) => v
+    VText(^x, ^t) => v
+    VShown(^x, ^t) => v
+    VData(^c, ^fs, ^t) => v
+    VFn(^f, ^t) => v
+    VRef(^p) => v
+    VCell(^c) => v
+    VSeq(^xs, ^t, ^a) => v
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => v
+    VBuf(^x, ^t) => v
+    VShared(^c, ^t) => v
+    VInfo => v
+    VAnswer(^a) => v
+    VCont(^c) => v
+    VMoved => v
+  }
+}
+
+// One step into a value along a place's path.
+pub(open) enum Into {
+  IntoVal(Val)
+  IntoCell(u64)
+  IntoRef(PlaceRef)
+  IntoMoved
+  IntoError(Text)
+}
+
+pub fn step_into(v: Val, step: NFieldRef): Into ! {div} {
+  match v {
+    VSeq(xs, ^t, ^a) => if step.name == "[]" {
+      match step.index {
+        Some(j) => match seq_get(xs, j) {
+          Some(x) => IntoVal(x)
+          None => IntoError("an item past the end")
+        }
+        None => IntoError("an item past the end")
+      }
+    } else {
+      IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    }
+    VSlots(^st, ^vac, ^cap, ^ms, xs, ^t) => if step.name == "[]" {
+      match step.index {
+        Some(j) => match seq_get(xs, j) {
+          Some(x) => IntoVal(x)
+          None => IntoError("a slot past the end")
+        }
+        None => IntoError("a slot past the end")
+      }
+    } else {
+      IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    }
+    VData(c, fs, ^t) => match field_pos(c, step) {
+      Some(j) => match l_nth(fs, j) {
+        Some(x) => IntoVal(x)
+        None => IntoError(Text::concat_all(["no field `", step.name, "`"]))
+      }
+      None => IntoError(Text::concat_all(["no field `", step.name, "`"]))
+    }
+    // `|` is the step to what a union's value holds, as a pattern on a member borrows it.
+    VInject(^i, x) => if step.name == "|" { IntoVal(x) } else { match unwrap_inject(x) {
+      VData(c, fs, t) => step_into(VData(c, fs, t), step)
+      VUnit => IntoError("a field of a union")
+      VBool(^b) => IntoError("a field of a union")
+      VFloat(^b) => IntoError("a field of a union")
+      VInt(^n, ^g, ^t) => IntoError("a field of a union")
+      VText(^y, ^t) => IntoError("a field of a union")
+      VShown(^y, ^t) => IntoError("a field of a union")
+      VInject(^j, ^y) => IntoError("a field of a union")
+      VFn(^f, ^t) => IntoError("a field of a union")
+      VRef(^p) => IntoError("a field of a union")
+      VCell(^c) => IntoError("a field of a union")
+      VSeq(^xs, ^t, ^a) => IntoError("a field of a union")
+      VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => IntoError("a field of a union")
+      VBuf(^y, ^t) => IntoError("a field of a union")
+      VShared(^c, ^t) => IntoError("a field of a union")
+      VInfo => IntoError("a field of a union")
+      VAnswer(^a) => IntoError("a field of a union")
+      VCont(^c) => IntoError("a field of a union")
+      VMoved => IntoError("a field of a union")
+    } }
+    VMoved => IntoMoved
+    VUnit => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VBool(^b) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VFloat(^b) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VInt(^n, ^g, ^t) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VText(^y, ^t) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VShown(^y, ^t) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VFn(^f, ^t) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VRef(^p) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VCell(^c) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VBuf(^y, ^t) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VShared(^c, ^t) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VInfo => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VAnswer(^a) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+    VCont(^c) => IntoError(Text::concat_all(["a field `", step.name, "` of a ", v_kind(v)]))
+  }
+}
+
+// Where a walk from a root along a path goes: on to another place, to
+// the end, or to something wrong.
+pub(open) enum Walk {
+  WalkDone
+  WalkRedirect(PlaceRef, Bool)
+  WalkMoved
+  WalkError(Text)
+}
+
+pub fn walk_path(cur: Val, path: List(NFieldRef)): Walk ! {div} {
+  match cur {
+    VCell(c) => WalkRedirect(PlaceRef { root: RCell(c), path: path }, false)
+    VUnit => walk_on(cur, path)
+    VBool(^b) => walk_on(cur, path)
+    VFloat(^b) => walk_on(cur, path)
+    VInt(^n, ^g, ^t) => walk_on(cur, path)
+    VText(^x, ^t) => walk_on(cur, path)
+    VShown(^x, ^t) => walk_on(cur, path)
+    VData(^c, ^fs, ^t) => walk_on(cur, path)
+    VInject(^i, ^x) => walk_on(cur, path)
+    VFn(^f, ^t) => walk_on(cur, path)
+    VRef(q) => match path {
+      Nil => WalkDone
+      Cons(^s, ^rest) => WalkRedirect(PlaceRef { root: q.root, path: l_append(q.path, path) }, true)
+    }
+    VSeq(^xs, ^t, ^a) => walk_on(cur, path)
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => walk_on(cur, path)
+    VBuf(^x, ^t) => walk_on(cur, path)
+    VShared(^c, ^t) => walk_on(cur, path)
+    VInfo => walk_on(cur, path)
+    VAnswer(^a) => walk_on(cur, path)
+    VCont(^c) => walk_on(cur, path)
+    VMoved => walk_on(cur, path)
+  }
+}
+
+pub fn walk_on(cur: Val, path: List(NFieldRef)): Walk ! {div} {
+  match path {
+    Nil => WalkDone
+    Cons(s, rest) => match step_into(cur, s) {
+      IntoVal(x) => walk_path(x, rest)
+      IntoCell(c) => WalkRedirect(PlaceRef { root: RCell(c), path: rest }, false)
+      IntoRef(q) => WalkRedirect(q, true)
+      IntoMoved => WalkMoved
+      IntoError(e) => WalkError(e)
+    }
+  }
+}
+
+pub fn flatten_via(p: PlaceRef): PlaceRef ! {div} {
+  match p.root {
+    RVia(q) => flatten_via(PlaceRef { root: q.root, path: l_append(q.path, p.path) })
+    RSlot(^f, ^k) => p
+    RCell(^c) => p
+  }
+}
+
+// The place with every borrow and shared cell on its way followed, and
+// whether a borrow was followed.
+pub fn resolve(m: &M, p0: PlaceRef, via0: Bool): PlaceRef × Bool ! {div, nout} {
+  let p1 := flatten_via(p0)
+  let p := match p1.root {
+    RSlot(f, k) => match unalias(&m, f, k) {
+      #(f2, k2) => PlaceRef { root: RSlot(f2, k2), path: p1.path }
+    }
+    RCell(^c) => p1
+    RVia(^q) => p1
+  }
+  match walk_path(root_val(&m, p.root), p.path) {
+    WalkDone => #(p, via0)
+    WalkRedirect(q, b) => resolve(&m, q, via0 || b)
+    WalkMoved => if via0 {
+      violation("DanglingBorrow", "a part moved:0:0")
+    } else {
+      violation("UseAfterMove", "a part moved:0:0")
+    }
+    WalkError(e) => internal(e)
+  }
+}
+
+pub fn get_path(v: Val, path: List(NFieldRef)): Val ! {div, nout} {
+  match path {
+    Nil => v
+    Cons(s, rest) => match step_into(v, s) {
+      IntoVal(x) => get_path(x, rest)
+      IntoCell(^c) => internal("a field of a value that has none")
+      IntoRef(^q) => internal("a field of a value that has none")
+      IntoMoved => internal("a field of a value that has none")
+      IntoError(^e) => internal("a field of a value that has none")
+    }
+  }
+}
+
+pub fn set_path(v: Val, path: List(NFieldRef), x: Val): Val ! {div, nout} {
+  match path {
+    Nil => x
+    Cons(s, rest) => match v {
+      VSeq(xs, t, a) => match s.index {
+        Some(j) => match seq_get(xs, j) {
+          Some(y) => VSeq(seq_set(xs, j, set_path(y, rest, x)), t, a)
+          None => internal("an item past the end")
+        }
+        None => internal("no item")
+      }
+      VSlots(st, vac, cap, ms, xs, t) => match s.index {
+        Some(j) => match seq_get(xs, j) {
+          Some(y) => VSlots(st, vac, cap, ms, seq_set(xs, j, set_path(y, rest, x)), t)
+          None => internal("a slot past the end")
+        }
+        None => internal("no slot")
+      }
+      VData(c, fs, t) => match field_pos(c, s) {
+        Some(j) => match l_nth(fs, j) {
+          Some(y) => VData(c, l_set(fs, j, set_path(y, rest, x)), t)
+          None => internal("no field")
+        }
+        None => internal("no field")
+      }
+      VInject(i, y) => if s.name == "|" {
+        VInject(i, set_path(y, rest, x))
+      } else {
+        VInject(i, set_path(y, path, x))
+      }
+      VUnit => internal("a field of a value that has none")
+      VBool(^b) => internal("a field of a value that has none")
+      VFloat(^b) => internal("a field of a value that has none")
+      VInt(^n, ^g, ^t) => internal("a field of a value that has none")
+      VText(^y, ^t) => internal("a field of a value that has none")
+      VShown(^y, ^t) => internal("a field of a value that has none")
+      VFn(^f, ^t) => internal("a field of a value that has none")
+      VRef(^p) => internal("a field of a value that has none")
+      VCell(^c) => internal("a field of a value that has none")
+      VBuf(^y, ^t) => internal("a field of a value that has none")
+      VShared(^c, ^t) => internal("a field of a value that has none")
+      VInfo => internal("a field of a value that has none")
+      VAnswer(^a) => internal("a field of a value that has none")
+      VCont(^c) => internal("a field of a value that has none")
+      VMoved => internal("a field of a value that has none")
+    }
+  }
+}
+
+pub fn root_set(m: &mut M, r: Root, v: Val): Unit ! {nout} {
+  match r {
+    RSlot(f, k) => match slot_get(&m, f, k) {
+      Some(s) => match s {
+        SOwned(name, ^old) => {
+          slot_put(&mut m, f, k, SOwned(name, v))
+          ()
+        }
+        SAlias(^f2, ^k2) => internal("no slot")
+      }
+      None => internal("no slot")
+    }
+    RCell(c) => cell_set(&mut m, c, v)
+    RVia(^q) => internal("a place by way of a borrow, not resolved")
+  }
+}
+
+// What a resolved place reads, whether a borrow was followed, and the name
+// of its local.
+pub(open) struct Read { val: Val, via: Bool, name: Option(Text) }
+
+pub fn at_read(m: &M, p: PlaceRef): Read ! {div, nout} {
+  match resolve(&m, p, false) {
+    #(q, via) => Read { val: get_path(root_val(&m, q.root), q.path), via: via, name: root_name(&m, q.root) }
+  }
+}
+
+// Puts `v` at the place; what was there.
+pub fn at_replace(m: &mut M, p: PlaceRef, v: Val): Read ! {div, nout} {
+  match resolve(&m, p, false) {
+    #(q, via) => {
+      let whole := root_val(&m, q.root)
+      let old := get_path(whole, q.path)
+      root_set(&mut m, q.root, set_path(whole, q.path, v))
+      Read { val: old, via: via, name: root_name(&m, q.root) }
+    }
+  }
+}
+
+pub fn peek(m: &mut M, p: PlaceRef): Val ! {div, nout} { at_read(&m, p).val }
+
+pub fn take_at(m: &mut M, p: PlaceRef, how: NUse): Val ! {div, nout} {
+  match how {
+    NPlace => VRef(p)
+    NMove => {
+      let r := at_read(&m, p)
+      let v := r.val
+      let owns_v := match v {
+        VFn(^f, ^t) => true
+        VCell(^c) => true
+        VMoved => true
+        VUnit => v_owns_token(v)
+        VBool(^b) => v_owns_token(v)
+        VFloat(^b) => v_owns_token(v)
+        VInt(^n, ^g, ^t) => v_owns_token(v)
+        VText(^x, ^t) => v_owns_token(v)
+        VShown(^x, ^t) => v_owns_token(v)
+        VData(^c, ^fs, ^t) => v_owns_token(v)
+        VInject(^i, ^x) => v_owns_token(v)
+        VRef(^q) => v_owns_token(v)
+        VSeq(^xs, ^t, ^a) => v_owns_token(v)
+        VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => v_owns_token(v)
+        VBuf(^x, ^t) => v_owns_token(v)
+        VShared(^c, ^t) => v_owns_token(v)
+        VInfo => v_owns_token(v)
+        VAnswer(^a) => v_owns_token(v)
+        VCont(^c) => v_owns_token(v)
+      }
+      if moved_part(&m, v) {
+        if r.via {
+          violation("DanglingBorrow", "moved at 0..0")
+        } else {
+          violation("UseAfterMove", "moved at 0..0")
+        }
+      } else {
+        ()
+      }
+      if owns_v {
+        at_replace(&mut m, p, VMoved)
+        let deep_place := match p.path {
+          Nil => match p.root {
+            RVia(^q) => true
+            RSlot(^f, ^k) => false
+            RCell(^c) => false
+          }
+          Cons(^f, ^rest) => true
+        }
+        if deep_place { m.holes := true } else { () }
+      } else {
+        ()
+      }
+      match v_tok(v) {
+        Some(t) => if tok_live(&m, t) { v } else { violation("UseAfterMove", "a value already ended") }
+        None => v
+      }
+    }
+    NCopy => {
+      let r := at_read(&m, p)
+      if r.via {
+        handle { copy_val(&m, r.val) } with { nout(o) => perform nout(o_dangling(o)) }
+      } else {
+        copy_val(&m, r.val)
+      }
+    }
+    NClone => {
+      let r := at_read(&m, p)
+      if r.via {
+        handle { clone_val(&mut m, r.val) } with { nout(o) => perform nout(o_dangling(o)) }
+      } else {
+        clone_val(&mut m, r.val)
+      }
+    }
+  }
+}
+
+// The value with every borrow in it followed, for `show`.
+pub fn deep(m: &mut M, v: Val): Val ! {div, nout} {
+  let x := value_of(&mut m, v)
+  match x {
+    VData(c, fs, t) => VData(c, deep_all(&mut m, fs), t)
+    VInject(i, y) => VInject(i, deep(&mut m, y))
+    VSeq(xs, t, a) => VSeq(seq_of(deep_all(&mut m, seq_list(xs))), t, a)
+    VSlots(^st, ^vac, ^cap, ^ms, ^xs, ^t) => v
+    VUnit => x
+    VBool(^b) => x
+    VFloat(^b) => x
+    VInt(^n, ^g, ^t) => x
+    VText(^y, ^t) => x
+    VShown(^y, ^t) => x
+    VFn(^f, ^t) => x
+    VRef(^p) => x
+    VCell(^c) => x
+    VBuf(^y, ^t) => x
+    VShared(^c, ^t) => x
+    VInfo => x
+    VAnswer(^a) => x
+    VCont(^c) => x
+    VMoved => x
+  }
+}
+
+pub fn deep_all(m: &mut M, xs: List(Val)): List(Val) ! {div, nout} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let y := deep(&mut m, x)
+      Cons(y, deep_all(&mut m, rest))
+    }
+  }
+}
+
+// The value a builtin or an operator reads: through a borrow.
+pub fn value_of(m: &mut M, v: Val): Val ! {div, nout} {
+  match v {
+    VRef(p) => {
+      let x := peek(&mut m, p)
+      if moved_part(&m, x) { violation("DanglingBorrow", "moved at 0..0") } else { value_of(&mut m, x) }
+    }
+    VCell(c) => value_of(&mut m, cell_get(&m, c))
+    VMoved => violation("UseAfterMove", "moved at 0..0")
+    VUnit => v
+    VBool(^b) => v
+    VFloat(^b) => v
+    VInt(^n, ^g, ^t) => v
+    VText(^x, ^t) => v
+    VShown(^x, ^t) => v
+    VData(^c, ^fs, ^t) => v
+    VInject(^i, ^x) => v
+    VFn(^f, ^t) => v
+    VSeq(^xs, ^t, ^a) => v
+    VSlots(^zs0, ^zs1, ^zs2, ^zs3, ^zs4, ^zs5) => v
+    VBuf(^x, ^t) => v
+    VShared(^c, ^t) => v
+    VInfo => v
+    VAnswer(^a) => v
+    VCont(^c) => v
+  }
+}

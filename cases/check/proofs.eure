@@ -3,8 +3,8 @@
 @ cases.computation-in-conversion
 parses = true
 source = ```tauto
-theorem good(): 2 + 2 = 4 { Refl(Nat, 4) }
-theorem bad(): 2 + 2 = 5 { Refl(Nat, 4) }
+theorem good(): 2 + 2 = 4 { Refl(<A: Nat, a: 4>) }
+theorem bad(): 2 + 2 = 5 { Refl(<A: Nat, a: 4>) }
 ```
 checks.good = "ok"
 checks.bad = "error: type mismatch"
@@ -47,7 +47,7 @@ theorem both(a: Nat, b: Nat, e: a = b): b = a {
   sym2(e)
 }
 theorem full(a: Nat, b: Nat, e: a = b): b = a {
-  sym2(Nat, a, b, e)
+  sym2(<A: Nat, a: a, b: b>, e)
 }
 theorem four(): Eq(Nat, 4, 4) { Refl }
 ```
@@ -92,9 +92,9 @@ fn len<A>(l: List(A)): Nat {
   }
 }
 theorem unfixed(): len(nothing(true)) = 0 { Refl }
-theorem written(): len(nothing(Nat, true)) = 0 { Refl }
+theorem written(): len(nothing(<A: Nat>, true)) = 0 { Refl }
 ```
-checks.unfixed = "error: cannot infer the generic `A` of `nothing`: neither its arguments nor the expected type fix it; write the generics as its first arguments, `nothing(A, …)`"
+checks.unfixed = "error: cannot infer the generic `A` of `nothing`: neither its arguments nor the expected type fix it; write them by name, `nothing(<A: …>, …)`"
 checks.written = "ok"
 
 @ cases.implicit-arguments-take-the-expected-type-first

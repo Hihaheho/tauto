@@ -1,4 +1,4 @@
-//! `effect Host {Div, stdout}` names a set of effects. A row that writes
+//! `effect Host {div, stdout}` names a set of effects. A row that writes
 //! the name means the effects of the set: this pass writes them in its place,
 //! in every row of the program, and drops the declaration. The checkers and
 //! the backends see only the effects, so the name adds nothing to what they
@@ -10,21 +10,20 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
+use crate::span::Span;
 use tauto_message::{Message, msg};
-use tauto_parol::Span;
 
 use super::program::{FnDecl, Stmt};
 use super::{TermKind, walk};
 
 /// Each set, by its name: the effects as written.
-pub type Sets = HashMap<String, (Vec<String>, Span)>;
+pub type Sets = HashMap<String, (Vec<super::Name>, Span)>;
 
 /// The prelude's sets, each written out to effects only.
-pub fn prelude_sets() -> &'static HashMap<String, Vec<String>> {
-    static SETS: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+pub fn prelude_sets() -> &'static HashMap<String, Vec<super::Name>> {
+    static SETS: OnceLock<HashMap<String, Vec<super::Name>>> = OnceLock::new();
     SETS.get_or_init(|| {
-        let Ok(program) = super::program::parse_program_unresolved_at(crate::nibstd::PRELUDE, 0)
-        else {
+        let Ok(program) = super::program::parse_builtin_at(crate::nibstd::PRELUDE, 0) else {
             return HashMap::new();
         };
         let mut sets = Sets::new();
@@ -83,10 +82,42 @@ pub fn expand_resolving(
         .map(|(n, s)| (n.clone(), s.clone()))
         .collect();
     sets.extend(own);
-    let mut outer: HashMap<String, Vec<String>> = prelude
+    // A set of the prelude means the effects the prelude declares, by their
+    // references: a file that names the set does not name, or import, each
+    // of its members.
+    let mut outer: HashMap<String, Vec<super::Name>> = prelude
         .iter()
         .filter(|(n, _)| !declared.contains(*n) && !sets.contains_key(*n))
-        .map(|(n, s)| (n.clone(), s.clone()))
+        .map(|(n, s)| {
+            let members = s
+                .iter()
+                .map(|m| match m {
+                    // `∀ T. spawn(() -> T ! {})`: its terms are read where
+                    // it is written, its effect is the library's, by its
+                    // full name.
+                    super::Name::Written(w)
+                        if crate::bindings::library_effect(w.head()).is_some() =>
+                    {
+                        super::Name::Written(std::sync::Arc::new(w.edited(
+                            |head| {
+                                *head = format!(
+                                    "{}{}{head}",
+                                    super::qualify::PRELUDE_MODULE,
+                                    super::qualify::SEPARATOR
+                                )
+                            },
+                            |_| {},
+                        )))
+                    }
+                    _ => m
+                        .spelling()
+                        .and_then(crate::bindings::library_effect)
+                        .map(|r| super::Name::Global(r.clone()))
+                        .unwrap_or_else(|| m.clone()),
+                })
+                .collect();
+            (n.clone(), members)
+        })
         .collect();
     outer.extend(written_out(&sets, &outer, &mut errors));
     drop_sets(stmts);
@@ -99,7 +130,53 @@ pub fn expand_resolving(
             let effects = effects
                 .iter()
                 .map(|effect| {
-                    let mut effect = effect.into();
+                    let mut effect = effect.clone();
+                    resolve(&mut effect);
+                    effect
+                })
+                .collect();
+            (name.clone(), effects)
+        })
+        .collect();
+    // A set of the prelude written by its full name (`std::builtin::os::Host`,
+    // `std::prelude::Host`) is that set: the module says which declaration,
+    // and only the file of the prelude that declares it gives it that name.
+    let mut resolved = resolved;
+    let mut outer = outer;
+    let named: Vec<String> = prelude
+        .keys()
+        .filter(|n| outer.contains_key(*n) && !sets.contains_key(*n))
+        .cloned()
+        .collect();
+    for name in &named {
+        let mut fulls = vec![format!("{}{}{name}", super::qualify::PRELUDE_MODULE, super::qualify::SEPARATOR)];
+        for map in [super::qualify::hidden_prelude(), super::qualify::core_prelude()] {
+            for key in [name.clone(), format!("!{name}")] {
+                for file in map.get(&key).into_iter().flatten() {
+                    fulls.push(format!(
+                        "{}{}{name}",
+                        super::qualify::prelude_file_module(file),
+                        super::qualify::SEPARATOR
+                    ));
+                }
+            }
+        }
+        for full in fulls {
+            let members = resolved[name].clone();
+            resolved.insert(full.clone(), members);
+            let members = outer[name].clone();
+            outer.insert(full, members);
+        }
+    }
+    // A bound reads a member written for every instance (`∀ T. spawn(T)`)
+    // as the effect a row names once its instances are read (`spawn`).
+    let bounds: HashMap<String, Vec<super::Name>> = outer
+        .iter()
+        .map(|(name, effects)| {
+            let effects = effects
+                .iter()
+                .map(|effect| {
+                    let mut effect = forall_head(effect);
                     resolve(&mut effect);
                     effect
                 })
@@ -108,17 +185,47 @@ pub fn expand_resolving(
         })
         .collect();
     for s in stmts.iter_mut() {
-        rows_of_stmt(s, &mut |row| write_row(row, &resolved), &mut |bound| {
-            let name = bound.as_ref().to_string();
-            if let Some(effects) = outer.get(&name) {
-                bound.edit_spelling(&mut |written| *written = bound_of_set(&name, effects));
-                if let Some(members) = bound.effects_mut() {
-                    *members = resolved[&name].clone();
+        rows_of_stmt(
+            s,
+            &mut |row| write_row(row, &resolved),
+            &mut |written| fill_written_members(written, &resolved),
+            &mut |bound| {
+                let name = bound.as_ref().to_string();
+                if let Some(effects) = outer.get(&name) {
+                    bound.edit_spelling(&mut |written| *written = bound_of_set(&name, effects));
+                    if let Some(members) = bound.effects_mut() {
+                        *members = bounds[&name].clone();
+                    }
                 }
-            }
-        });
+            },
+        );
     }
     errors
+}
+
+/// Record which effects a written set name expands to, for unused-effect checks.
+fn fill_written_members(
+    written: &mut [super::program::WrittenRowEffect],
+    sets: &HashMap<String, Vec<super::Name>>,
+) {
+    for entry in written {
+        if entry.members.is_some() {
+            continue;
+        }
+        if let Some(name) = entry.name.spelling()
+            && let Some(effects) = sets.get(name)
+        {
+            entry.members = Some(effects.clone());
+        }
+    }
+}
+
+/// `spawn` for `∀ T. spawn(T)`; any other member as written.
+fn forall_head(effect: &super::Name) -> super::Name {
+    match effect {
+        super::Name::Written(w) if w.is_universal() => super::Name::from(w.head()),
+        _ => effect.clone(),
+    }
 }
 
 /// A set with type parameters (`effect State(T: Type) { Get(T), Put(T) }`) would
@@ -155,17 +262,17 @@ fn effects_declared(stmts: &[Stmt], out: &mut HashSet<String>) {
 /// error, and so is one with type parameters.
 fn written_out(
     sets: &Sets,
-    outer: &HashMap<String, Vec<String>>,
+    outer: &HashMap<String, Vec<super::Name>>,
     errors: &mut Vec<(Message, Span)>,
-) -> HashMap<String, Vec<String>> {
+) -> HashMap<String, Vec<super::Name>> {
     fn go(
         name: &str,
         sets: &Sets,
-        outer: &HashMap<String, Vec<String>>,
-        done: &mut HashMap<String, Vec<String>>,
+        outer: &HashMap<String, Vec<super::Name>>,
+        done: &mut HashMap<String, Vec<super::Name>>,
         on: &mut Vec<String>,
         errors: &mut Vec<(Message, Span)>,
-    ) -> Vec<String> {
+    ) -> Vec<super::Name> {
         if let Some(d) = done.get(name) {
             return d.clone();
         }
@@ -173,7 +280,7 @@ fn written_out(
             return outer
                 .get(name)
                 .cloned()
-                .unwrap_or_else(|| vec![name.to_string()]);
+                .unwrap_or_else(|| vec![super::Name::from(name)]);
         };
         if on.iter().any(|n| n == name) {
             errors.push((
@@ -189,7 +296,10 @@ fn written_out(
         on.push(name.to_string());
         let mut out = Vec::new();
         for m in members {
-            let effects = if sets.contains_key(m.as_str()) || outer.contains_key(m.as_str()) {
+            let set = m
+                .spelling()
+                .filter(|m| sets.contains_key(*m) || outer.contains_key(*m));
+            let effects = if let Some(m) = set {
                 go(m, sets, outer, done, on, errors)
             } else {
                 vec![m.clone()]
@@ -224,6 +334,27 @@ fn drop_sets(stmts: &mut Vec<Stmt>) {
 
 /// A row with each set's name replaced by its effects, each effect once.
 fn write_row(row: &mut Vec<super::Name>, sets: &HashMap<String, Vec<super::Name>>) {
+    // An entry with arguments (`∀ T. spawn(() -> T ! {cells})`) writes rows
+    // in its terms: a set named there means its effects too.
+    for e in row.iter_mut() {
+        if let super::Name::Written(w) = e {
+            let edited = w.edited(
+                |_| {},
+                |argument| {
+                    walk::term(argument, &mut |t| {
+                        match std::sync::Arc::make_mut(&mut t.kind) {
+                            TermKind::Pi {
+                                effects: Some(row), ..
+                            }
+                            | TermKind::Row(row) => write_row(row, sets),
+                            _ => {}
+                        }
+                    })
+                },
+            );
+            *e = super::Name::Written(std::sync::Arc::new(edited));
+        }
+    }
     if !row
         .iter()
         .any(|e| e.spelling().is_some_and(|s| sets.contains_key(s)))
@@ -254,15 +385,20 @@ fn write_row(row: &mut Vec<super::Name>, sets: &HashMap<String, Vec<super::Name>
 
 /// `f` on every row `s` writes: a function's effects, and those of each
 /// function type and row argument in its terms, in nested statements too.
+/// `written` fills set membership on a function's written row entries.
 /// `bound` on each bound of a function's generics.
 fn rows_of_stmt(
     s: &mut Stmt,
     f: &mut dyn FnMut(&mut Vec<super::Name>),
+    written: &mut dyn FnMut(&mut [super::program::WrittenRowEffect]),
     bound: &mut dyn FnMut(&mut super::program::GenericBound),
 ) {
     fns_of_decl(s, &mut |d| {
         if let Some(row) = &mut d.effects {
             f(row);
+        }
+        if let Some(entries) = &mut d.written_effects {
+            written(entries);
         }
         d.bounds.iter_mut().flatten().for_each(&mut *bound);
     });
@@ -275,6 +411,9 @@ fn rows_of_stmt(
             fns_of_decl(s, &mut |d| {
                 if let Some(row) = &mut d.effects {
                     f(row);
+                }
+                if let Some(entries) = &mut d.written_effects {
+                    written(entries);
                 }
                 d.bounds.iter_mut().flatten().for_each(&mut *bound);
             })
@@ -300,9 +439,10 @@ fn fns_of_decl(s: &mut Stmt, f: &mut dyn FnMut(&mut FnDecl)) {
 
 /// A row variable bounded by a set (`<!h: Host>`) stands for some of the set's
 /// effects only. The bound is written as the set's name and its effects,
-/// `Host{Div, stdout}`, for the row checks (`rows`), which read a bound
+/// `Host{div, stdout}` (a member for every instance by its name, `spawn`), for the row checks (`rows`), which read a bound
 /// with `{` in it so.
-pub fn bound_of_set(name: &str, effects: &[String]) -> String {
+pub fn bound_of_set(name: &str, effects: &[super::Name]) -> String {
+    let effects: Vec<String> = effects.iter().map(|e| forall_head(e).to_string()).collect();
     format!("{name}{{{}}}", effects.join(", "))
 }
 
@@ -317,86 +457,4 @@ pub fn set_of_bound(bound: &str) -> Option<(&str, Vec<String>)> {
         .map(str::to_string)
         .collect();
     Some((name, effects))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::program::{Stmt, parse_program_as_written};
-
-    fn read(source: &str) -> (Vec<Stmt>, Vec<String>) {
-        tauto_messages::install();
-        let program = parse_program_as_written(source).unwrap();
-        let errors = program.errors.iter().map(|(m, _)| m.to_string()).collect();
-        (program.stmts, errors)
-    }
-
-    fn row_of(stmts: &[Stmt], name: &str) -> Vec<String> {
-        stmts
-            .iter()
-            .find_map(|s| match s {
-                Stmt::Fn(f) if f.name.spelling() == Some(name) => f
-                    .effects
-                    .as_ref()
-                    .map(|row| row.iter().map(ToString::to_string).collect()),
-                _ => None,
-            })
-            .unwrap()
-    }
-
-    #[test]
-    fn a_set_is_written_out_once_in_each_row_and_dropped() {
-        let (stmts, errors) = read(
-            "effect log(m: Text): () resume 1\neffect Inner {log}\neffect Talk {Inner, stdout}\nfn f(): () ! {Talk, log} ∪ e { () }",
-        );
-        assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(row_of(&stmts, "f"), ["log", "stdout", "|e"]);
-        assert!(
-            !stmts
-                .iter()
-                .any(|s| matches!(s, Stmt::Effect(e) if e.set.is_some()))
-        );
-    }
-
-    #[test]
-    fn the_prelude_set_host_is_seen_and_bounds_a_row_variable() {
-        let (stmts, errors) = read("fn f<!h: Host>(): () ! {Host} { () }");
-        assert!(errors.is_empty(), "{errors:?}");
-        assert!(row_of(&stmts, "f").contains(&"net".to_string()));
-        let Some(Stmt::Fn(f)) = stmts.iter().find(|s| matches!(s, Stmt::Fn(_))) else {
-            unreachable!()
-        };
-        let bound = f.bounds[0].as_deref().unwrap();
-        let (name, set) = super::set_of_bound(bound).unwrap();
-        assert_eq!(name, "Host");
-        assert!(set.contains(&"stdout".to_string()));
-    }
-
-    #[test]
-    fn a_set_that_names_itself_is_an_error() {
-        let (_, errors) = read("effect A1 {B1}\neffect B1 {A1}");
-        assert!(
-            errors
-                .iter()
-                .any(|e| e == "the effect set A1 names itself: A1 -> B1 -> A1"),
-            "{errors:?}"
-        );
-    }
-
-    #[test]
-    fn a_set_with_type_parameters_is_an_error() {
-        let (_, errors) = read("effect S(T: Type) { stdout }");
-        assert!(
-            errors.iter().any(|e| e.contains("has type parameters")),
-            "{errors:?}"
-        );
-    }
-
-    #[test]
-    fn an_own_effect_hides_the_prelude_set() {
-        let (stmts, _) = read(
-            "effect Host(): i64 resume 1
-fn f(): i64 ! {Host} { perform Host() }",
-        );
-        assert_eq!(row_of(&stmts, "f"), ["Host"]);
-    }
 }

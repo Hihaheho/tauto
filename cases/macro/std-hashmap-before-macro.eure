@@ -1,0 +1,27 @@
+// A file that uses `HashMap` of `std::hashmap` does not stop macros. The library a macro runs in
+// leaves out what does not check there (`UHashMap::with_seed`), and with it the functions of an
+// `extern` block whose Tauto bodies call it (`HashMap::with_seed`); the rest of the block stays.
+
+@ cases.a-macro-runs-in-a-file-that-uses-std-hashmap
+entry = "main.taut"
+files."keep.taut" = ````tauto
+import std::builtin::macro
+
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  Cons(s, Nil)
+}
+````
+files."main.taut" = ````tauto
+import std::hashmap { HashMap }
+import "keep.taut" { keep }
+
+fn len(m: &HashMap(u64, u64)): Nat {
+  HashMap::len(m)
+}
+
+@keep!(1) => replace fn f
+fn f(k: i64): i64 { k }
+
+show(f(3))
+````
+stdout = "3\n"

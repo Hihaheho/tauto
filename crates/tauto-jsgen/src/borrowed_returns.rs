@@ -28,7 +28,7 @@ fn visit(
         | Ty::Float32
         | Ty::Buf
         | Ty::Shown => false,
-        Ty::Ref(_) | Ty::RefMut(_) | Ty::Slice(_) | Ty::Infer | Ty::Std(_, _) | Ty::Fn(_) => true,
+        Ty::Ref(_) | Ty::RefMut(_) | Ty::Slice(_) | Ty::Std(_, _) | Ty::Fn(_) => true,
         Ty::Param(name) => !safe_params.contains(name),
         Ty::Vec(t)
         | Ty::Array(t)
@@ -37,7 +37,7 @@ fn visit(
         | Ty::SharedVar(false, t)
         | Ty::Info(t)
         | Ty::BudgetAnswer(t) => visit(pkg, t, safe_params, active, fuel - 1),
-        Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
+        Ty::Result(a, b) | Ty::Pair(a, b) => {
             visit(pkg, a, safe_params, active, fuel - 1)
                 || visit(pkg, b, safe_params, active, fuel - 1)
         }
@@ -102,6 +102,7 @@ mod tests {
                 linear: false,
                 view: false,
                 host: false,
+                shown: String::new(),
                 ctors: vec![CtorDef {
                     name: "Cons".into(),
                     fields: vec![
@@ -150,7 +151,6 @@ mod tests {
         assert!(needs_export(&pkg, &list(Ty::Text)));
         pkg.datas[0].ctors[0].fields.last_mut().unwrap().ty = Ty::Param("undeclared".into());
         assert!(needs_export(&pkg, &list(Ty::Text)));
-        assert!(needs_export(&pkg, &Ty::Infer));
         pkg.datas[0].ctors.clear();
         assert!(needs_export(&pkg, &list(Ty::Text)));
     }

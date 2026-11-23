@@ -1,8 +1,8 @@
 import "bytes.taut"
 import "../src/percent.taut"
 import "../src/bytes.taut"
-import std::Base
-import std::Nat
+import std::base
+import std::nat
 
 // Percent-encoding changes nothing that is already encoded, a second
 // encoding changes nothing, and decoding undoes an encoding whose set holds
@@ -76,7 +76,7 @@ pub theorem pct_encode_clean(
   x: List(Nat),
   h: all_bytes((b: Nat) => not(set(b)), x) = true
 ): pct_encode(set, x) = x {
-  ⊢ pct_encode(set, x) = x from match x {
+  match x {
     Nil => Refl
     Cons(b, t) => Eq::trans(
       enc_clean_byte(set, b, t, not_true(set(b), all_bytes_head((y: Nat) => not(set(y)), b, t, h))),
@@ -110,7 +110,7 @@ pub theorem pct_encode_idem(
   s: Stable(set),
   x: List(Nat)
 ): pct_encode(set, pct_encode(set, x)) = pct_encode(set, x) {
-  ⊢ pct_encode(set, pct_encode(set, x)) = pct_encode(set, x) from match x {
+  match x {
     Nil => Refl
     Cons(b, t) => Bool::cases(
       (z: Bool) => pct_encode(set, pct_encode(set, Cons(b, t))) = pct_encode(set, Cons(b, t)),
@@ -189,7 +189,7 @@ pub theorem pct_encode_idem(
 }
 
 pub fn opt_is(o: Option(Nat), v: Nat): Bool {
-  ⊢ Bool from match o {
+  match o {
     None => false
     Some(w) => Nat::eq(w, v)
   }
@@ -326,7 +326,7 @@ pub theorem pct_decode_encode(
   x: List(Nat),
   hx: all_bytes(is_byte, x) = true
 ): pct_decode(pct_encode(set, x)) = x {
-  ⊢ pct_decode(pct_encode(set, x)) = x from match x {
+  match x {
     Nil => Refl
     Cons(b, t) => Bool::cases(
       (z: Bool) => pct_decode(pct_encode(set, Cons(b, t))) = Cons(b, t),

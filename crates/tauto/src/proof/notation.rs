@@ -151,6 +151,7 @@ impl Notation {
                 params,
                 types,
                 body,
+                ..
             } => {
                 let mut ctx = ctx.to_vec();
                 for (i, n) in params.iter().enumerate() {
@@ -247,6 +248,7 @@ impl Notation {
                     params,
                     types,
                     body,
+                    ..
                 } => {
                     let mut ctx = ctx.to_vec();
                     for (i, name) in params.iter().enumerate() {

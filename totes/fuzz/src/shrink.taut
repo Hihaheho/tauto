@@ -1,0 +1,113 @@
+// The shrinker shared by every generator: smaller sequences of choices to
+// try in place of one that fails, most promising first. A caller keeps the
+// first that fails the same way and asks again, until none does.
+
+import "choices.taut"
+
+pub fn fz_len(l: List(u64)): u64 ! {overflow} {
+  match l {
+    Nil => 0
+    Cons(^x, rest) => 1 + fz_len(rest)
+  }
+}
+
+pub fn fz_take(l: List(u64), n: u64): List(u64) ! {overflow} {
+  if n == 0 {
+    Nil
+  } else {
+    match l {
+      Nil => Nil
+      Cons(x, rest) => Cons(x, fz_take(rest, n - 1))
+    }
+  }
+}
+
+pub fn fz_drop(l: List(u64), n: u64): List(u64) ! {overflow} {
+  if n == 0 {
+    l
+  } else {
+    match l {
+      Nil => Nil
+      Cons(^x, rest) => fz_drop(rest, n - 1)
+    }
+  }
+}
+
+pub fn fz_append(a: List(u64), b: List(u64)): List(u64) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, fz_append(rest, b))
+  }
+}
+
+// `l` with the `n` choices from `at` removed.
+pub fn fz_cut(l: List(u64), at: u64, n: u64): List(u64) ! {overflow} {
+  fz_append(fz_take(l, at), fz_drop(l, at + n))
+}
+
+// `l` with the choice at `at` replaced by `v`.
+pub fn fz_put(l: List(u64), at: u64, v: u64): List(u64) ! {overflow} {
+  fz_append(fz_take(l, at), Cons(v, fz_drop(l, at + 1)))
+}
+
+pub fn fz_at(l: List(u64), at: u64): u64 ! {overflow} {
+  match fz_drop(l, at) {
+    Nil => 0
+    Cons(x, ^rest) => x
+  }
+}
+
+// Removing runs of `n` choices, from the end back: a later choice is more
+// often a detail of what the earlier ones made.
+pub fn fz_cuts(l: List(u64), len: u64, n: u64, acc: List(List(u64))): List(List(u64)) ! {div, divzero, overflow} {
+  var out := acc
+  var at: u64 := 0
+  while at + n <= len {
+    out := Cons(fz_cut(l, at, n), out)
+    at := at + 1
+  }
+  out
+}
+
+// Making one choice smaller: 0, then half, then one less.
+pub fn fz_lowers(l: List(u64), len: u64, acc: List(List(u64))): List(List(u64)) ! {div, divzero, overflow} {
+  var out := acc
+  var at: u64 := 0
+  while at < len {
+    let v := fz_at(l, at)
+    if v > 1 {
+      out := Cons(fz_put(l, at, v - 1), out)
+    }
+    if v > 2 {
+      out := Cons(fz_put(l, at, div(v, 2)), out)
+    }
+    if v > 0 {
+      out := Cons(fz_put(l, at, 0), out)
+    }
+    at := at + 1
+  }
+  out
+}
+
+pub fn fz_rev_lists(l: List(List(u64)), acc: List(List(u64))): List(List(u64)) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => fz_rev_lists(rest, Cons(x, acc))
+  }
+}
+
+// Every sequence one step smaller than `l`: dropping the tail, cutting runs
+// of 8, 4, 2 and 1 choices, then lowering single choices.
+pub fn fz_shrinks(l: List(u64)): List(List(u64)) ! {div, divzero, overflow} {
+  let len := fz_len(l)
+  var out: List(List(u64)) := Nil
+  if len > 1 {
+    out := Cons(fz_take(l, div(len, 2)), out)
+  }
+  out := fz_cuts(l, len, 8, out)
+  out := fz_cuts(l, len, 4, out)
+  out := fz_cuts(l, len, 2, out)
+  out := fz_cuts(l, len, 1, out)
+  out := fz_lowers(l, len, out)
+  fz_rev_lists(out, Nil)
+}

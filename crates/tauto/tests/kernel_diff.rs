@@ -1,7 +1,7 @@
 //! Differential test: the Rust kernel against the model of it.
 //!
-//! The model is the checker written in tauto itself (`meta/Kernel.taut`),
-//! whose soundness is proved in `meta/KernelSafe.taut` and whose
+//! The model is the checker written in tauto itself (`meta/kernel.taut`),
+//! whose soundness is proved in `meta/kernel_safe.taut` and whose
 //! metatheory is also in `lean/Proto/Kernel/`. Here we generate closed
 //! `(term, type)` pairs, most of them well typed and some mutated, and ask both
 //! sides whether `term : type`.
@@ -27,6 +27,11 @@ enum Tm {
     Zero,
     Succ(Box<Tm>),
     Rec(Box<Tm>, Box<Tm>, Box<Tm>, Box<Tm>),
+    /// A numeral (`Lit` of `core.rs`).
+    Lit(u32),
+    /// `a + b`, `a * b` or `a - b` on `Nat`, the primitive operators of
+    /// `core.rs` that compute on two numerals at once.
+    Op(char, Box<Tm>, Box<Tm>),
 }
 use Tm::*;
 
@@ -51,6 +56,40 @@ fn shift(t: &Tm, cut: usize, by: usize) -> Tm {
             b(shift(s, cut, by)),
             b(shift(n, cut, by)),
         ),
+        Lit(k) => Lit(*k),
+        Op(o, x, y) => Op(*o, b(shift(x, cut, by)), b(shift(y, cut, by))),
+    }
+}
+
+/// Numerals and operators in the model's own terms, as
+/// `lean/Proto/Kernel/Literals.lean` defines them: `Lit(k)` is `Succ^k(Zero)`
+/// and each operator is `natRec` with the motive `λ_. Nat`, by recursion on the
+/// second operand.
+fn expand(t: &Tm) -> Tm {
+    let nat_k = || b(Lam(b(Nat)));
+    let add = |x: Tm, y: Tm| Rec(nat_k(), b(x), b(Lam(b(Lam(b(Succ(b(Var(0)))))))), b(y));
+    let pred = |n: Tm| Rec(nat_k(), b(Zero), b(Lam(b(Lam(b(Var(1)))))), b(n));
+    match t {
+        Var(_) | Sort(_) | Nat | Zero => t.clone(),
+        Pi(a, c) => Pi(b(expand(a)), b(expand(c))),
+        Lam(x) => Lam(b(expand(x))),
+        App(f, a) => App(b(expand(f)), b(expand(a))),
+        Succ(n) => Succ(b(expand(n))),
+        Rec(p, z, s, n) => Rec(b(expand(p)), b(expand(z)), b(expand(s)), b(expand(n))),
+        Lit(k) => (0..*k).fold(Zero, |n, _| Succ(b(n))),
+        Op(o, x, y) => {
+            let (x, y) = (expand(x), expand(y));
+            match o {
+                '+' => add(x, y),
+                '-' => Rec(nat_k(), b(x), b(Lam(b(Lam(b(pred(Var(0))))))), b(y)),
+                _ => Rec(
+                    nat_k(),
+                    b(Zero),
+                    b(Lam(b(Lam(b(add(Var(0), shift(&x, 0, 2))))))),
+                    b(y),
+                ),
+            }
+        }
     }
 }
 
@@ -72,6 +111,7 @@ fn model(t: &Tm) -> String {
             model(s),
             model(n)
         ),
+        Lit(_) | Op(..) => model(&expand(t)),
     }
 }
 
@@ -84,6 +124,8 @@ fn uses(t: &Tm, i: usize) -> bool {
         App(f, a) => uses(f, i) || uses(a, i),
         Succ(n) => uses(n, i),
         Rec(p, z, s, n) => uses(p, i) || uses(z, i) || uses(s, i) || uses(n, i),
+        Lit(_) => false,
+        Op(_, x, y) => uses(x, i) || uses(y, i),
     }
 }
 
@@ -115,6 +157,8 @@ fn surface(t: &Tm, depth: usize) -> Option<String> {
             surface(s, depth)?,
             surface(n, depth)?
         ),
+        Lit(k) => k.to_string(),
+        Op(o, x, y) => format!("({} {o} {})", surface(x, depth)?, surface(y, depth)?),
     })
 }
 
@@ -195,7 +239,7 @@ fn gen_term(r: &mut Rng, ctx: &Ctx, goal: &Tm, d: usize) -> Tm {
                     Var(direct[0])
                 };
             }
-            match r.below(6) {
+            match r.below(7) {
                 0 => Zero,
                 1 | 2 => Succ(b(gen_term(r, ctx, &Nat, d - 1))),
                 3 => {
@@ -218,6 +262,23 @@ fn gen_term(r: &mut Rng, ctx: &Ctx, goal: &Tm, d: usize) -> Tm {
                         b(gen_term(r, ctx, &Nat, d - 1)),
                     )
                 }
+                5 => match r.below(3) {
+                    0 => Lit(r.below(6) as u32),
+                    _ => {
+                        // Numerals mostly, so that the shortcut is taken; any
+                        // `Nat` term sometimes, so that the equations are.
+                        let operand = |r: &mut Rng| {
+                            if r.below(3) == 0 {
+                                gen_term(r, ctx, &Nat, d - 1)
+                            } else {
+                                Lit(r.below(5) as u32)
+                            }
+                        };
+                        let o = ['+', '*', '-'][r.below(3)];
+                        let x = operand(r);
+                        Op(o, b(x), b(operand(r)))
+                    }
+                },
                 _ => Zero,
             }
         }
@@ -255,7 +316,8 @@ fn gen_term(r: &mut Rng, ctx: &Ctx, goal: &Tm, d: usize) -> Tm {
 }
 
 fn mutate(r: &mut Rng, t: &Tm) -> Tm {
-    let small = |r: &mut Rng| match r.below(6) {
+    let small = |r: &mut Rng| match r.below(7) {
+        6 => Lit(r.below(4) as u32),
         0 => Var(r.below(3)),
         1 => Zero,
         2 => Nat,
@@ -283,6 +345,11 @@ fn mutate(r: &mut Rng, t: &Tm) -> Tm {
             }
         }
         Succ(n) => Succ(b(mutate(r, n))),
+        Op(o, x, y) => match r.below(3) {
+            0 => Op(*o, b(mutate(r, x)), y.clone()),
+            1 => Op(*o, x.clone(), b(mutate(r, y))),
+            _ => Op(['+', '*', '-'][r.below(3)], x.clone(), y.clone()),
+        },
         Rec(p, z, s, n) => match r.below(4) {
             0 => Rec(b(mutate(r, p)), z.clone(), s.clone(), n.clone()),
             1 => Rec(p.clone(), b(mutate(r, z)), s.clone(), n.clone()),
@@ -333,12 +400,12 @@ fn rust_kernel_agrees_with_the_model() {
     let dir = std::env::temp_dir().join("tauto-kernel-diff");
     std::fs::create_dir_all(&dir).unwrap();
 
-    let mut model_src = format!("import \"{}\"\n", root.join("Kernel.taut").display());
+    let mut model_src = format!("import \"{}\"\n", root.join("kernel.taut").display());
     let mut rust_src = String::new();
     for (i, (t, a)) in pairs.iter().enumerate() {
         writeln!(
             model_src,
-            "theorem m{i}(): check_ok({}, {}) = 1 {{ Refl(Nat, 1) }}",
+            "theorem m{i}(): check_ok({}, {}) = 1 {{ Refl(<A: Nat, a: 1>) }}",
             model(t),
             model(a)
         )
@@ -396,7 +463,7 @@ fn rust_kernel_agrees_with_the_model() {
             Rec(..) => true,
             Pi(a, c) => has_rec(a) || has_rec(c),
             Lam(x) | Succ(x) => has_rec(x),
-            App(f, a) => has_rec(f) || has_rec(a),
+            App(f, a) | Op(_, f, a) => has_rec(f) || has_rec(a),
             _ => false,
         }
     }

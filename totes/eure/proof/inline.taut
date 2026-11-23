@@ -1,0 +1,459 @@
+import "../src/read.taut"
+import "../src/syntax.taut"
+import "../src/value.taut"
+import "../src/write.taut"
+import "doc.taut"
+import "mono.taut"
+import "scalars.taut"
+import std::base
+import std::list
+import std::nat
+import "heads.taut"
+
+// Values written in place: `read_value` reads back what `put_node` wrote, for every node that
+// `wf_node` accepts, with fuel for the bytes the node takes.
+
+pub theorem no_room(a: Nat, b: Nat, h1: le(a, b), h2: le(Succ(b), a)): False {
+  le_succ_self(b, le_tr(Succ(b), a, b, h2, h1))
+}
+
+pub fn close_ok(c: Nat): Bool {
+  Bool::or(Nat::eq(c, 93), Nat::eq(c, 41))
+}
+
+// What holds for `]` and `)` holds for the byte that closes a list.
+theorem close_cases(
+  p: (Nat) -> Bool,
+  c: Nat,
+  hc: close_ok(c) = true,
+  h93: p(93) = true,
+  h41: p(41) = true
+): p(c) = true {
+  Bool::cases(
+    (y: Bool) => Bool::or(y, Nat::eq(c, 41)) = true -> p(c) = true,
+    Nat::eq(c, 93),
+    (e: Nat::eq(c, 93) = false) => (h: Bool::or(false, Nat::eq(c, 41)) = true) => eq_case(
+      p,
+      c,
+      41,
+      h,
+      h41
+    ),
+    (e: Nat::eq(c, 93) = true) => (h: true = true) => eq_case(p, c, 93, e, h93)
+  )(hc)
+}
+
+theorem close_stops(
+  c: Nat,
+  x: List(Nat),
+  hc: close_ok(c) = true
+): stops(Cons(c, x)) = true {
+  close_cases((z: Nat) => stops(Cons(z, x)), c, hc, Refl, Refl)
+}
+
+theorem close_solid(
+  c: Nat,
+  x: List(Nat),
+  hc: close_ok(c) = true
+): solid(Cons(c, x)) = true {
+  close_cases((z: Nat) => solid(Cons(z, x)), c, hc, Refl, Refl)
+}
+
+theorem close_bad(c: Nat, hc: close_ok(c) = true): bad_head(c) = true {
+  close_cases(bad_head, c, hc, Refl, Refl)
+}
+
+pub theorem close_not_comma(c: Nat, hc: close_ok(c) = true): Nat::eq(44, c) = false {
+  Bool::not_true(Nat::eq(44, c), close_cases((z: Nat) => not(Nat::eq(44, z)), c, hc, Refl, Refl))
+}
+
+// ---- lengths ---------------------------------------------------------------------------------
+
+pub theorem le_down2(a: Nat, b: Nat, h: le(Succ(Succ(a)), b)): le(a, b) {
+  le_down(a, b, le_down(Succ(a), b, h))
+}
+
+pub theorem comma_mono(t: List(Nat)): le(List::length(t), List::length(Cons(44, Cons(32, t)))) {
+  le_up(List::length(t), Succ(List::length(t)), Nat::le_succ(List::length(t)))
+}
+
+// ---- lists ---------------------------------------------------------------------------------
+
+fn arr_lam(): (List(Expr)) -> Expr {
+  (xs: List(Expr)) => Earr(xs)
+}
+
+fn tup_lam(): (List(Expr)) -> Expr {
+  (xs: List(Expr)) => Etup(xs)
+}
+
+pub theorem arr_read(
+  xs: List(Node),
+  x: List(Nat),
+  g: Nat,
+  ih: (
+    g2: Nat,
+    hg2: le(List::length(put_items(xs, true, Cons(93, x))), Nat::add(List::length(x), g2))
+  ) -> read_items(g2, 93, put_items(xs, true, Cons(93, x))) = MkRd(expr_items(xs), x),
+  hskip: skip(put_items(xs, true, Cons(93, x))) = put_items(xs, true, Cons(93, x)),
+  hl: le(List::length(Cons(91, put_items(xs, true, Cons(93, x)))), Nat::add(List::length(x), g))
+): read_value(g, Cons(91, put_items(xs, true, Cons(93, x)))) = MkRd(Earr(expr_items(xs)), x) {
+  match g {
+    Zero => out_of_fuel(
+      List::length(x),
+      List::length(Cons(91, put_items(xs, true, Cons(93, x)))),
+      le_tr(
+        List::length(x),
+        List::length(Cons(93, x)),
+        List::length(put_items(xs, true, Cons(93, x))),
+        Nat::le_succ(List::length(x)),
+        put_items_mono(xs, true, Cons(93, x))
+      ),
+      hl
+    )
+    Succ(g2) => Eq::trans(
+      Eq::congr(⟦rd_map(arr_lam(), read_items(g2, 93, □))⟧, hskip),
+      Eq::congr((q: Rd(List(Expr))) => rd_map(arr_lam(), q), ih(g2, hl))
+    )
+  }
+}
+
+pub theorem tup_read(
+  xs: List(Node),
+  x: List(Nat),
+  g: Nat,
+  ih: (
+    g2: Nat,
+    hg2: le(List::length(put_items(xs, true, Cons(41, x))), Nat::add(List::length(x), g2))
+  ) -> read_items(g2, 41, put_items(xs, true, Cons(41, x))) = MkRd(expr_items(xs), x),
+  hskip: skip(put_items(xs, true, Cons(41, x))) = put_items(xs, true, Cons(41, x)),
+  hl: le(List::length(Cons(40, put_items(xs, true, Cons(41, x)))), Nat::add(List::length(x), g))
+): read_value(g, Cons(40, put_items(xs, true, Cons(41, x)))) = MkRd(Etup(expr_items(xs)), x) {
+  match g {
+    Zero => out_of_fuel(
+      List::length(x),
+      List::length(Cons(40, put_items(xs, true, Cons(41, x)))),
+      le_tr(
+        List::length(x),
+        List::length(Cons(41, x)),
+        List::length(put_items(xs, true, Cons(41, x))),
+        Nat::le_succ(List::length(x)),
+        put_items_mono(xs, true, Cons(41, x))
+      ),
+      hl
+    )
+    Succ(g2) => Eq::trans(
+      Eq::congr(⟦rd_map(tup_lam(), read_items(g2, 41, □))⟧, hskip),
+      Eq::congr((q: Rd(List(Expr))) => rd_map(tup_lam(), q), ih(g2, hl))
+    )
+  }
+}
+
+pub theorem items_wf_head(
+  x: Node,
+  t: List(Node),
+  h: wf_items(Cons(x, t)) = true
+): wf_node(x) = true {
+  And::left(Bool::and_split(wf_node(x), wf_items(t), h))
+}
+
+pub theorem items_wf_tail(
+  x: Node,
+  t: List(Node),
+  h: wf_items(Cons(x, t)) = true
+): wf_items(t) = true {
+  And::right(Bool::and_split(wf_node(x), wf_items(t), h))
+}
+
+pub theorem items_skip(
+  xs: List(Node),
+  c: Nat,
+  x: List(Nat),
+  hc: close_ok(c) = true,
+  hw: wf_items(xs) = true
+): skip(put_items(xs, true, Cons(c, x))) = put_items(xs, true, Cons(c, x)) {
+  match xs {
+    Nil => skip_solid(Cons(c, x), close_solid(c, x, hc))
+    Cons(y, t) => skip_solid(
+      put_node(y, put_items(t, false, Cons(c, x))),
+      solid_of_plain(
+        put_node(y, put_items(t, false, Cons(c, x))),
+        node_plain(y, put_items(t, false, Cons(c, x)), items_wf_head(y, t, hw))
+      )
+    )
+  }
+}
+
+pub theorem more_stops(
+  t: List(Node),
+  c: Nat,
+  x: List(Nat),
+  hc: close_ok(c) = true
+): stops(put_items(t, false, Cons(c, x))) = true {
+  match t {
+    Nil => close_stops(c, x, hc)
+    Cons(y, u) => Refl
+  }
+}
+
+theorem more_skip(
+  t: List(Node),
+  c: Nat,
+  x: List(Nat),
+  hc: close_ok(c) = true
+): skip(put_items(t, false, Cons(c, x))) = put_items(t, false, Cons(c, x)) {
+  match t {
+    Nil => skip_solid(Cons(c, x), close_solid(c, x, hc))
+    Cons(y, u) => Refl
+  }
+}
+
+pub fn items_after(g: Nat, c: Nat, q: Rd(Expr)): Rd(List(Expr)) {
+  match q {
+    MkRd(e, r) => rd_map((es: List(Expr)) => Cons(e, es), read_items_more(g, c, skip(r)))
+    RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+  }
+}
+
+// One item and the items after it, from what the node and the rest read.
+pub theorem items_step(
+  y: Node,
+  t: List(Node),
+  c: Nat,
+  x: List(Nat),
+  g: Nat,
+  hc: close_ok(c) = true,
+  hp: plain(put_node(y, put_items(t, false, Cons(c, x)))) = true,
+  hn: read_value(g, put_node(y, put_items(t, false, Cons(c, x)))) = MkRd(expr_node(y), put_items(t, false, Cons(c, x))),
+  hm: read_items_more(g, c, put_items(t, false, Cons(c, x))) = MkRd(expr_items(t), x)
+): read_items(Succ(g), c, put_node(y, put_items(t, false, Cons(c, x)))) = MkRd(expr_items(Cons(y, t)), x) {
+  Eq::subst(
+    Bool,
+    false,
+    head_is(c, put_node(y, put_items(t, false, Cons(c, x)))),
+    (z: Bool) => Eq(Rd(List(Expr)), ⊢ Rd(List(Expr)) from match z {
+      true => MkRd(Nil, List::tail(put_node(y, put_items(t, false, Cons(c, x)))))
+      false => items_after(g, c, read_value(g, put_node(y, put_items(t, false, Cons(c, x)))))
+    }, MkRd(expr_items(Cons(y, t)), x)),
+    Eq::sym(plain_not(c, put_node(y, put_items(t, false, Cons(c, x))), hp, close_bad(c, hc))),
+    Eq::trans(
+      Eq::congr((q: Rd(Expr)) => items_after(g, c, q), hn),
+      Eq::trans(
+        Eq::congr(
+          (z: List(Nat)) => rd_map((es: List(Expr)) => Cons(expr_node(y), es), read_items_more(g, c, z)),
+          more_skip(t, c, x, hc)
+        ),
+        Eq::congr((q: Rd(List(Expr))) => rd_map((es: List(Expr)) => Cons(expr_node(y), es), q), hm)
+      )
+    )
+  )
+}
+
+// ---- scalars in place ---------------------------------------------------------------------------
+
+pub theorem scalar_read(
+  v: Value,
+  x: List(Nat),
+  g: Nat,
+  hs: is_scalar(v) = true,
+  hw: wf_value(v) = true,
+  hx: stops(x) = true,
+  hl: le(List::length(put_scalar(v, x)), Nat::add(List::length(x), g))
+): read_value(g, put_scalar(v, x)) = MkRd(Escalar(v), x) {
+  match g {
+    Zero => out_of_fuel(
+      List::length(x),
+      List::length(put_scalar(v, x)),
+      put_scalar_strict(v, x, hs),
+      hl
+    )
+    Succ(g2) => scalar_back(v, x, g2, hs, hw, hx)
+  }
+}
+
+// ---- values with extensions: `{ = v, $e => w, }` --------------------------------------------------
+
+fn obj_k(g: Nat): (Rd(Expr)) -> Rd(Expr) {
+  (q: Rd(Expr)) => ⊢ Rd(Expr) from match q {
+    MkRd(e, r) => rd_map(
+      (bs: List(List(Seg) × Expr)) => Eobj(Cons(#(Nil(<A: Seg>), e), bs)),
+      read_entries(g, after_comma(r))
+    )
+    RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+  }
+}
+
+pub theorem ext_read(
+  c: List(Nat),
+  t: List(Nat),
+  r: List(Nat),
+  f: Nat,
+  ec: Expr,
+  xb: List(List(Seg) × Expr),
+  hp: plain(c) = true,
+  hc: (
+    g: Nat,
+    hg: le(List::length(c), Nat::add(List::length(Cons(44, Cons(32, t))), g))
+  ) -> read_value(g, c) = MkRd(ec, Cons(44, Cons(32, t))),
+  hx: (
+    k: Nat,
+    hk: le(List::length(t), Nat::add(List::length(r), k))
+  ) -> read_entries(k, t) = MkRd(xb, r),
+  hts: solid(t) = true,
+  hrt: le(List::length(r), List::length(t)),
+  hct: strictly(Cons(44, Cons(32, t)), c),
+  hl: le(List::length(Cons(123, Cons(32, Cons(61, Cons(32, c))))), Nat::add(List::length(r), f))
+): read_value(f, Cons(123, Cons(32, Cons(61, Cons(32, c))))) = MkRd(Eobj(Cons(#(Nil(<A: Seg>), ec), xb)), r) {
+  match f {
+    Zero => False::elim(
+      no_room(
+        List::length(r),
+        Succ(Succ(Succ(List::length(c)))),
+        le_tr(
+          List::length(r),
+          List::length(c),
+          Succ(Succ(Succ(List::length(c)))),
+          le_tr(
+            List::length(r),
+            List::length(t),
+            List::length(c),
+            hrt,
+            le_down2(
+              List::length(t),
+              List::length(c),
+              le_down(Succ(Succ(List::length(t))), List::length(c), hct)
+            )
+          ),
+          le_succ3(List::length(c))
+        ),
+        hl
+      )
+    )
+    Succ(g) => match g {
+      Zero => False::elim(
+        no_room(
+          List::length(r),
+          Succ(Succ(List::length(c))),
+          le_tr(
+            List::length(r),
+            List::length(c),
+            Succ(Succ(List::length(c))),
+            le_tr(
+              List::length(r),
+              List::length(t),
+              List::length(c),
+              hrt,
+              le_down2(
+                List::length(t),
+                List::length(c),
+                le_down(Succ(Succ(List::length(t))), List::length(c), hct)
+              )
+            ),
+            le_up(List::length(c), Succ(List::length(c)), Nat::le_succ(List::length(c)))
+          ),
+          hl
+        )
+      )
+      Succ(g2) => Eq::trans(
+        Eq::congr(
+          ⟦obj_k(g2)(read_value(g2, □))⟧,
+          skip_solid(c, solid_of_plain(c, hp))
+        ),
+        Eq::trans(
+          Eq::congr(
+            obj_k(g2),
+            hc(
+              g2,
+              le_rest(
+                List::length(c),
+                List::length(r),
+                List::length(Cons(44, Cons(32, t))),
+                g2,
+                le_down2(List::length(c), Nat::add(List::length(r), g2), hl),
+                le_tr(
+                  List::length(r),
+                  List::length(t),
+                  List::length(Cons(44, Cons(32, t))),
+                  hrt,
+                  comma_mono(t)
+                )
+              )
+            )
+          ),
+          Eq::trans(
+            Eq::congr(
+              (z: List(Nat)) => rd_map(
+                (bs: List(List(Seg) × Expr)) => Eobj(Cons(#(Nil(<A: Seg>), ec), bs)),
+                read_entries(g2, z)
+              ),
+              skip_solid(t, hts)
+            ),
+            Eq::congr(
+              (q: Rd(List(List(Seg) × Expr))) => rd_map(
+                (bs: List(List(Seg) × Expr)) => Eobj(Cons(#(Nil(<A: Seg>), ec), bs)),
+                q
+              ),
+              hx(
+                g2,
+                le_tr(
+                  List::length(t),
+                  List::length(c),
+                  Nat::add(List::length(r), g2),
+                  le_down2(
+                    List::length(t),
+                    List::length(c),
+                    le_down(Succ(Succ(List::length(t))), List::length(c), hct)
+                  ),
+                  le_down2(List::length(c), Nat::add(List::length(r), g2), hl)
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+}
+
+// ---- maps in place: `{ k => v, $e => w, }` ---------------------------------------------------------
+
+fn eobj_lam(): (List(List(Seg) × Expr)) -> Expr {
+  (bs: List(List(Seg) × Expr)) => Eobj(bs)
+}
+
+fn object_tested(g: Nat, l: List(Nat), y: Bool): Rd(Expr) {
+  match y {
+    true => obj_k(g)(read_value(g, skip(List::tail(l))))
+    false => rd_map(eobj_lam(), read_entries(g, l))
+  }
+}
+
+pub theorem map_read(
+  e: List(Nat),
+  r: List(Nat),
+  f: Nat,
+  bs: List(List(Seg) × Expr),
+  he: (
+    g: Nat,
+    hg: le(List::length(e), Nat::add(List::length(r), g))
+  ) -> read_entries(g, e) = MkRd(bs, r),
+  hes: solid(e) = true,
+  hre: le(List::length(r), List::length(e)),
+  hl: le(List::length(Cons(123, Cons(32, e))), Nat::add(List::length(r), f))
+): read_value(f, Cons(123, Cons(32, e))) = MkRd(Eobj(bs), r) {
+  match f {
+    Zero => False::elim(
+      no_room(List::length(r), Succ(List::length(e)), le_up(List::length(r), List::length(e), hre), hl)
+    )
+    Succ(g) => match g {
+      Zero => False::elim(no_room(List::length(r), List::length(e), hre, hl))
+      Succ(g2) => Eq::trans(
+        Eq::congr(⟦read_object(Succ(g2), □)⟧, skip_solid(e, hes)),
+        Eq::trans(
+          Eq::congr(⟦object_tested(g2, e, □)⟧, solid_not_eq(e, hes)),
+          Eq::congr((q: Rd(List(List(Seg) × Expr))) => rd_map(eobj_lam(), q), he(g2, hl))
+        )
+      )
+    }
+  }
+}

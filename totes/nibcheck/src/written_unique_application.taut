@@ -1,7 +1,10 @@
+import "../../identity/src/identity.taut"
 import "written_unique_base.taut"
-import std::Base
-import std::Map
-import std::Text
+import "written_unique_info.taut"
+import "written_unique_cases.taut"
+import std::base
+import std::map
+import std::text
 import "datas.taut"
 import "rules_written.taut"
 import "rules_written_name.taut"
@@ -9,87 +12,14 @@ import "ty.taut"
 import "unify_sound.taut"
 import "written_value_base.taut"
 import "../../surface/src/surface.taut"
+import "written_unique_application_head.taut"
+import "written_unique_application_mid.taut"
 
-pub theorem written_unique_named<env: Datas, generics: Ordmap(
-  Text,
+// Continued from `written_unique_application_mid.taut`.
+
+pub theorem written_named_extend_equal<name: SurfaceName, first: List(
   Ty
-), partial: Bool, borrow: Bool, name: Text, args: List(
-  SurfaceTerm
-), start: Nat, end: Nat, other: Ty>(
-  ast_occurrence: Option(TermOccurrence),
-  meaning: WrittenKind(
-    env,
-    generics,
-    partial,
-    borrow,
-    SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
-    other
-  ),
-  types: List(Ty),
-  not_tuple: (name = "Tuple") -> False,
-  not_info: (name = "Info") -> (list_len(args) = 1) -> False,
-  unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None,
-  ih: WrittenTermsUnique(generics, partial, args, types)
-): TyNamed(name, types) = other {
-  ⊢ TyNamed(name, types) = other from match meaning {
-    WrittenKindUnit(ctor_ast_occurrence, gs, Mode, borrowing, begin, finish) => False::elim(
-      not_tuple(Refl)
-    )
-    WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, first, value, begin, finish, argument) => False::elim(
-      not_info(Refl, Refl)
-    )
-    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, spelling, terms, values, begin, finish, other_not_tuple, other_not_info, other_unbound, SliceBorrowed, arguments, arity) => Eq::congr(
-      (ts: List(Ty)) => TyNamed(spelling, ts),
-      ih(env, values, arguments)
-    )
-    WrittenKindGeneric(ctor_ast_occurrence, gs, Mode, borrowing, spelling, first, head, value, bound, begin, finish, other_not_info, Parameter, constructor, argument) => False::elim(
-      ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), Parameter))
-    )
-  }
-}
-pub theorem written_unique_generic<env: Datas, generics: Ordmap(
-  Text,
-  Ty
-), partial: Bool, borrow: Bool, name: Text, arg: SurfaceTerm, start: Nat, end: Nat, other: Ty>(
-  ast_occurrence: Option(TermOccurrence),
-  meaning: WrittenKind(
-    env,
-    generics,
-    partial,
-    borrow,
-    SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
-    other
-  ),
-  head: Ty,
-  t: Ty,
-  bound: Ty,
-  not_info: (name = "Info") -> False,
-  parameter: Ordmap::get(generics, name, Ordmap::compare_text) = Some(bound),
-  constructor: WrittenTypeName(generics, name, head),
-  ih: WrittenTermUnique(generics, partial, false, arg, t)
-): ty_apply(head, t) = other {
-  ⊢ ty_apply(head, t) = other from match meaning {
-    WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, first, value, begin, finish, argument) => False::elim(
-      not_info(Refl)
-    )
-    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, spelling, terms, values, begin, finish, other_not_tuple, other_not_info, unbound, SliceBorrowed, arguments, arity) => False::elim(
-      ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), parameter))
-    )
-    WrittenKindGeneric(ctor_ast_occurrence, gs, Mode, borrowing, spelling, first, other_head, value, other_bound, begin, finish, other_not_info, other_parameter, other_constructor, argument) => Eq::trans(
-      Eq::congr(
-        (h: Ty) => ty_apply(h, t),
-        Eq::trans(
-          Eq::sym(written_name_determined(constructor)),
-          written_name_determined(other_constructor)
-        )
-      ),
-      Eq::congr((a: Ty) => ty_apply(other_head, a), ih(env, value, argument))
-    )
-  }
-}
-pub theorem written_named_extend_equal<name: Text, first: List(
-  Ty
-), other_name: Text, other_first: List(
+), other_name: SurfaceName, other_first: List(
   Ty
 )>(
   equal: TyNamed(name, first) = TyNamed(other_name, other_first),
@@ -110,7 +40,7 @@ pub theorem written_named_extend_equal<name: Text, first: List(
 pub theorem written_unique_nested<env: Datas, generics: Ordmap(
   Text,
   Ty
-), partial: Bool, borrow: Bool, function: SurfaceTerm, before: List(
+), partial: Bool, r#borrow: Bool, function: SurfaceTerm, before: List(
   SurfaceTerm
 ), args: List(
   SurfaceTerm
@@ -120,11 +50,11 @@ pub theorem written_unique_nested<env: Datas, generics: Ordmap(
     env,
     generics,
     partial,
-    borrow,
+    r#borrow,
     SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
     other
   ),
-  name: Text,
+  name: SurfaceName,
   first: List(Ty),
   last: List(Ty),
   ihhead: WrittenTermUnique(
@@ -136,7 +66,7 @@ pub theorem written_unique_nested<env: Datas, generics: Ordmap(
   ),
   ihtail: WrittenTermsUnique(generics, partial, args, last)
 ): TyNamed(name, List::append(first, last)) = other {
-  ⊢ TyNamed(name, List::append(first, last)) = other from match meaning {
+  match meaning {
     WrittenKindNested(ctor_ast_occurrence, gs, Mode, borrowing, inner, initial, terms, begin, finish, other_name, other_first, other_last, constructor, arguments, arity) => written_named_extend_equal(
       ihhead(env, TyNamed(other_name, other_first), constructor),
       last,

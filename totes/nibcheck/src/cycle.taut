@@ -1,20 +1,24 @@
-import std::TextOps
+import "messages.taut"
+import std::text_ops
 import "cycle_signal.taut"
 import "lin_arms.taut"
 import "../../surface/src/surface.taut"
-import std::Base
-import std::Map
-import std::Text
+import "../../surface/src/extern_blocks.taut"
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "freevars.taut"
 import "lin_state.taut"
 import "rows.taut"
+import "rows_base.taut"
 import "ty.taut"
 import "types_run.taut"
+import "../../identity/src/identity.taut"
 
 // Which mutable storages may hold which others (`cycle/analysis.rs`), in the
-// proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
+// proof language (`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」).
 // Every syntactic place that makes a storage is one site; a node is a set of
 // atoms a value may be, and the constraints between nodes are solved to a
 // fixpoint. The program is rejected when the graph of the storages each
@@ -81,7 +85,6 @@ pub(open) inductive CyExtern: Type {
   ExAlloc: CyExtern
   ExStore: CyExtern
   ExLoad: CyExtern
-  ExSwap: CyExtern
   ExDowngrade: CyExtern
   ExUpgrade: CyExtern
   ExReplace: CyExtern
@@ -96,28 +99,28 @@ pub(open) inductive Cy: Type {
     pts: Ordmap(Nat, Ordmap(CyAtom, Bool)),
     edges: Ordmap(Nat, Ordmap(Nat, Bool)),
     // `dst ⊇ contents(c)` for each storage `c` in `src`, as `(dst, src)`.
-    loads: List(Pair(Nat, Nat)),
+    loads: List(Nat × Nat),
     // `dst ⊇ src` without its places, and the content of each place.
-    reads: List(Pair(Nat, Nat)),
+    reads: List(Nat × Nat),
     // `contents(c) ⊇ src` for each storage or place `c` in `dst`, as `(dst, src)`.
-    stores: List(Pair(Nat, Nat)),
+    stores: List(Nat × Nat),
     // `dst ∋ Place(c)` for each storage `c` in `src`.
-    places: List(Pair(Nat, Nat)),
+    places: List(Nat × Nat),
     // `dst ∋ Weak(c)` for each storage `c` in `src`.
-    weakens: List(Pair(Nat, Nat)),
+    weakens: List(Nat × Nat),
     // `dst ∋ Cell(c)` for each `Weak(c)` in `src`.
-    upgrades: List(Pair(Nat, Nat)),
+    upgrades: List(Nat × Nat),
     filters: List(CyFilter),
     calls: List(CyCall),
     // The effects some arm keeps the continuation of, and each call's row: a call whose row
     // has none of them is on the stack of no kept continuation
     // (`lean/Proto/Nib/KeptFrames.lean`). `None` when the rows cannot be read.
-    settling: Option(Pair(RowSet, Ordmap(RowSpan, RowSet))),
+    settling: Option(RowSet × Ordmap(RowSpan, RowSet)),
     cells: Ordmap(Nat, CyCell),
     cell_count: Nat,
     lams: Ordmap(Nat, CyLam),
     lam_count: Nat,
-    unknowns: Ordmap(Nat, Pair(Text, Nat)),
+    unknowns: Ordmap(Nat, Text × Nat),
     unknown_count: Nat,
     effect_args: Ordmap(Text, List(Nat)),
     effect_resume: Ordmap(Text, Nat),
@@ -188,27 +191,95 @@ pub fn cy_extern_in(name: Text, names: List(Text)): Bool {
   list_has_text(names, name)
 }
 
+// The rest of the immutable externs, kept in step with `extern_model` in the
+// Rust checker (`crates/tauto-nibcheck/src/cycle/analysis.rs`).
+pub fn cy_flatten_names_more(): List(Text) {
+  var out: List(Text) := Nil
+  set_to(&mut out, Cons("Float::of_float32", out))
+  set_to(&mut out, Cons("Float::tanh", out))
+  set_to(&mut out, Cons("Float::cosh", out))
+  set_to(&mut out, Cons("Float::sinh", out))
+  set_to(&mut out, Cons("Float::atan2", out))
+  set_to(&mut out, Cons("Float::atan", out))
+  set_to(&mut out, Cons("Float::acos", out))
+  set_to(&mut out, Cons("Float::asin", out))
+  set_to(&mut out, Cons("Float::tan", out))
+  set_to(&mut out, Cons("Float::cos", out))
+  set_to(&mut out, Cons("Float::sin", out))
+  set_to(&mut out, Cons("Float::pow", out))
+  set_to(&mut out, Cons("Float::log10", out))
+  set_to(&mut out, Cons("Float::log2", out))
+  set_to(&mut out, Cons("Float::ln", out))
+  set_to(&mut out, Cons("Float::exp", out))
+  set_to(&mut out, Cons("Float::cbrt", out))
+  set_to(&mut out, Cons("Float::sqrt", out))
+  set_to(&mut out, Cons("Float::round", out))
+  set_to(&mut out, Cons("Float::trunc", out))
+  set_to(&mut out, Cons("Float::ceil", out))
+  set_to(&mut out, Cons("Float::floor", out))
+  set_to(&mut out, Cons("Float::abs", out))
+  set_to(&mut out, Cons("Float::is_nan", out))
+  set_to(&mut out, Cons("Float::of_bits", out))
+  set_to(&mut out, Cons("Float::bits", out))
+  set_to(&mut out, Cons("Text::of_float", out))
+  set_to(&mut out, Cons("Float::of_text", out))
+  set_to(&mut out, Cons("I64::of_float", out))
+  set_to(&mut out, Cons("Float::of_i64", out))
+  set_to(&mut out, Cons("U64::of_nat", out))
+  set_to(&mut out, Cons("Nat::of_u64", out))
+  set_to(&mut out, Cons("Text::of_nat", out))
+  set_to(&mut out, Cons("Os::http_close", out))
+  set_to(&mut out, Cons("Os::http_read", out))
+  set_to(&mut out, Cons("Os::http_finish", out))
+  set_to(&mut out, Cons("Os::http_write", out))
+  set_to(&mut out, Cons("Os::http_open", out))
+  set_to(&mut out, Cons("Os::child_close", out))
+  set_to(&mut out, Cons("Os::child_wait", out))
+  set_to(&mut out, Cons("Os::child_close_stdin", out))
+  set_to(&mut out, Cons("Os::child_write", out))
+  set_to(&mut out, Cons("Os::child_read", out))
+  set_to(&mut out, Cons("Os::child_spawn", out))
+  set_to(&mut out, Cons("Os::run", out))
+  set_to(&mut out, Cons("Os::temp_dir", out))
+  set_to(&mut out, Cons("Os::remove", out))
+  set_to(&mut out, Cons("Os::list_dir", out))
+  set_to(&mut out, Cons("Os::secure_random", out))
+  set_to(&mut out, Cons("Os::read_bytes_under", out))
+  set_to(&mut out, Cons("Os::read_under", out))
+  set_to(&mut out, Cons("Text::of_bytes", out))
+  set_to(&mut out, Cons("Bytes::of_text", out))
+  set_to(&mut out, Cons("Bytes::eq", out))
+  set_to(&mut out, Cons("Bytes::concat", out))
+  set_to(&mut out, Cons("Bytes::slice", out))
+  set_to(&mut out, Cons("Bytes::find", out))
+  set_to(&mut out, Cons("Bytes::get", out))
+  set_to(&mut out, Cons("Bytes::len", out))
+  set_to(&mut out, Cons("Bytes::to_list", out))
+  set_to(&mut out, Cons("Bytes::of_list", out))
+  out
+}
+
 pub fn cy_flatten_names(): List(Text) {
   Cons(
-    "Vec.len",
+    "Vec::len",
     Cons(
-      "Vec.clear",
+      "Vec::clear",
       Cons(
-        "Vec.truncate",
+        "Vec::truncate",
         Cons(
-          "Vec.swap",
+          "Vec::swap_within",
           Cons(
-            "Slice.len",
+            "Slice::len",
             Cons(
-              "Text.of",
+              "Text::of",
               Cons(
-                "Buf.of",
+                "Buf::of",
                 Cons(
-                  "Buf.clone",
+                  "Buf::clone",
                   Cons(
-                    "Buf.new",
+                    "Buf::new",
                     Cons(
-                      "Buf.push",
+                      "Buf::push",
                       Cons(
                         "Syn::parse",
                         Cons(
@@ -218,35 +289,41 @@ pub fn cy_flatten_names(): List(Text) {
                             Cons(
                               "Syn::open",
                               Cons(
-                                "Judgement.mentions",
+                                "Judgement::mentions",
                                 Cons(
-                                  "Judgement.same_atom",
+                                  "Judgement::same_atom",
                                   Cons(
-                                    "Elab::whnf",
+                                    "Elab::Raw::whnf",
                                     Cons(
-                                      "Elab::defeq",
+                                      "Elab::Raw::defeq",
                                       Cons(
-                                        "Elab::check",
+                                        "Elab::Raw::check",
                                         Cons(
-                                          "Elab::global",
+                                          "Elab::Raw::global",
                                           Cons(
-                                            "Elab::resolve",
+                                            "Elab::Raw::resolve",
                                             Cons(
-                                              "I64.of_i32",
+                                              "I64::of_i32",
                                               Cons(
-                                                "I32.of_i64",
+                                                "I32::of_i64",
                                                 Cons(
-                                                  "I64.of_u64",
+                                                  "I64::of_u64",
                                                   Cons(
-                                                    "U64.of_i64",
+                                                    "U64::of_i64",
                                                     Cons(
-                                                      "U64.of_u32",
+                                                      "U64::of_u32",
                                                       Cons(
-                                                        "U32.of_u64",
+                                                        "U32::of_u64",
                                                         Cons(
-                                                          "U64.of_u8",
+                                                          "U64::of_u8",
+                                                          Cons("U64::of_uhost",
+                                                          Cons("I64::of_i8", Cons("I8::of_i64", Cons("I64::of_i16", Cons("I16::of_i64", Cons("U64::of_u16", Cons("U16::of_u64", Cons("UHost::succ_below",
+                                                          Cons("UHost::pred_nz",
+                                                          Cons("UHost::add_within",
+                                                          Cons("UHost::sub",
+                                                          Cons("UHost::of_u64_below",
                                                           Cons(
-                                                            "U8.of_u64",
+                                                            "U8::of_u64",
                                                             Cons(
                                                               "Os::args",
                                                               Cons(
@@ -300,80 +377,80 @@ pub fn cy_flatten_names(): List(Text) {
                                                                                                               Cons(
                                                                                                                 "Os::offload",
                                                                                                                 Cons(
-                                                                                                                  "Pending.ready",
+                                                                                                                  "Pending::ready",
                                                                                                                   Cons(
-                                                                                                                    "Pending.take",
+                                                                                                                    "Pending::take",
                                                                                                                     Cons(
-                                                                                                                      "Pending.is_ready",
+                                                                                                                      "Pending::is_ready",
                                                                                                                       Cons(
-                                                                                                                        "Pending.signal",
+                                                                                                                        "Pending::signal",
                                                                                                                         Cons(
-                                                                                                                          "Mutex.claim",
+                                                                                                                          "Mutex::claim",
                                                                                                                           Cons(
-                                                                                                                            "Atomic.new",
+                                                                                                                            "Atomic::new",
                                                                                                                             Cons(
-                                                                                                                              "Atomic.load",
+                                                                                                                              "Atomic::load",
                                                                                                                               Cons(
-                                                                                                                                "Atomic.store",
+                                                                                                                                "Atomic::store",
                                                                                                                                 Cons(
-                                                                                                                                  "Atomic.fetch_add",
+                                                                                                                                  "Atomic::fetch_add",
                                                                                                                                   Cons(
                                                                                                                                     "words",
                                                                                                                                     Cons(
                                                                                                                                       "concat",
                                                                                                                                       Cons(
-                                                                                                                                        "Array.of_list",
+                                                                                                                                        "Array::of_list",
                                                                                                                                         Cons(
-                                                                                                                                          "Array.get",
+                                                                                                                                          "Array::get",
                                                                                                                                           Cons(
-                                                                                                                                            "Array.len",
+                                                                                                                                            "Array::len",
                                                                                                                                             Cons(
-                                                                                                                                              "Array.to_list",
+                                                                                                                                              "Array::to_list",
                                                                                                                                               Cons(
-                                                                                                                                                "Text.len",
+                                                                                                                                                "Text::len",
                                                                                                                                                 Cons(
-                                                                                                                                                  "Text.byte",
+                                                                                                                                                  "Text::byte",
                                                                                                                                                   Cons(
-                                                                                                                                                    "Text.slice",
+                                                                                                                                                    "Text::slice",
                                                                                                                                                     Cons(
-                                                                                                                                                      "Text.compare",
+                                                                                                                                                      "Text::compare",
                                                                                                                                                       Cons(
-                                                                                                                                                        "Text.of_code_point",
+                                                                                                                                                        "Text::of_code_point",
                                                                                                                                                         Cons(
-                                                                                                                                                          "Text.of_utf8",
+                                                                                                                                                          "Text::of_utf8",
                                                                                                                                                           Cons(
-                                                                                                                                                            "Text.of_i64",
+                                                                                                                                                            "Text::of_i64",
                                                                                                                                                             Cons(
-                                                                                                                                                              "Text.of_u64",
+                                                                                                                                                              "Text::of_u64",
                                                                                                                                                               Cons(
-                                                                                                                                                                "U32.and",
+                                                                                                                                                                "U32::and",
                                                                                                                                                                 Cons(
-                                                                                                                                                                  "U32.or",
+                                                                                                                                                                  "U32::or",
                                                                                                                                                                   Cons(
-                                                                                                                                                                    "U32.xor",
+                                                                                                                                                                    "U32::xor",
                                                                                                                                                                     Cons(
-                                                                                                                                                                      "U32.shl",
+                                                                                                                                                                      "U32::shl",
                                                                                                                                                                       Cons(
-                                                                                                                                                                        "U32.shr",
+                                                                                                                                                                        "U32::shr",
                                                                                                                                                                         Cons(
-                                                                                                                                                                          "U32.rotl",
+                                                                                                                                                                          "U32::rotl",
                                                                                                                                                                           Cons(
-                                                                                                                                                                            "U32.rotr",
+                                                                                                                                                                            "U32::rotr",
                                                                                                                                                                             Cons(
-                                                                                                                                                                              "U64.and",
+                                                                                                                                                                              "U64::and",
                                                                                                                                                                               Cons(
-                                                                                                                                                                                "U64.or",
+                                                                                                                                                                                "U64::or",
                                                                                                                                                                                 Cons(
-                                                                                                                                                                                  "U64.xor",
+                                                                                                                                                                                  "U64::xor",
                                                                                                                                                                                   Cons(
-                                                                                                                                                                                    "U64.shl",
+                                                                                                                                                                                    "U64::shl",
                                                                                                                                                                                     Cons(
-                                                                                                                                                                                      "U64.shr",
+                                                                                                                                                                                      "U64::shr",
                                                                                                                                                                                       Cons(
-                                                                                                                                                                                        "U64.rotl",
+                                                                                                                                                                                        "U64::rotl",
                                                                                                                                                                                         Cons(
-                                                                                                                                                                                          "U64.rotr",
-                                                                                                                                                                                          Nil
+                                                                                                                                                                                          "U64::rotr",
+                                                                                                                                                                                          Cons("U64::wrapping_add", Cons("U64::wrapping_sub", Cons("U64::wrapping_mul", Cons("Os::tcp_ready", Cons("Os::tcp_send", Cons("Os::tls_ready", Cons("Os::tls_send", Nil)))))))))))))
                                                                                                                                                                                         )
                                                                                                                                                                                       )
                                                                                                                                                                                     )
@@ -465,56 +542,90 @@ pub fn cy_flatten_names(): List(Text) {
         )
       )
     )
-  )
+  )))))))
+}
+
+// The `extern` the host answers an operation on a `Ref` with.
+pub fn cy_storage_operation(eff: Text): Option(Text) {
+  if eff == "ref_new" {
+    Some("Ref::new")
+  } else if eff == "ref_get" {
+    Some("Ref::get")
+  } else if eff == "ref_set" {
+    Some("Ref::set")
+  } else if eff == "weak_of" {
+    Some("Weak::of")
+  } else if eff == "weak_get" {
+    Some("Weak::get")
+  } else if eff == "mutex_new" {
+    Some("Mutex::new")
+  } else if eff == "mutex_claim" {
+    Some("Mutex::claim")
+  } else if eff == "mutex_take_claimed" {
+    Some("Mutex::take_claimed")
+  } else if eff == "mutex_put" {
+    Some("Mutex::put")
+  } else if eff == "mutex_withdraw" {
+    Some("Mutex::withdraw")
+  } else if eff == "atomic_new" {
+    Some("Atomic::new")
+  } else if eff == "atomic_load" {
+    Some("Atomic::load")
+  } else if eff == "atomic_store" {
+    Some("Atomic::store")
+  } else if eff == "atomic_fetch_add" {
+    Some("Atomic::fetch_add")
+  } else {
+    None
+  }
+}
+
+pub fn cy_host_storage_arm(eff: Text, arm: SurfaceTerm): Bool {
+  match cy_storage_operation(eff) {
+    Some(^what) => 2147483648 < arm.start || arm.start == 2147483648
+    None => false
+  }
 }
 
 pub fn cy_extern_model(name: Text): Option(CyExtern) {
   if cy_extern_in(
     name,
-    Cons("Ref.new", Cons("Mutex.new", Cons("Vec.new", Cons("HashMap.new", Nil))))
+    Cons("Ref::new", Cons("Mutex::new", Cons("Vec::new", Cons("Slots::new", Nil))))
   ) {
     Some(ExAlloc)
-  } else if cy_extern_in(name, Cons("Ref.set", Cons("Mutex.put", Cons("Vec.push", Nil)))) {
+  } else if cy_extern_in(name, Cons("Ref::set", Cons("Mutex::put", Cons("Vec::push", Cons("Slots::put", Cons("Slots::resize", Nil)))))) {
     Some(ExStore)
-  } else if name == "HashMap.insert" {
-    Some(ExSwap)
   } else if name == "replace" {
     Some(ExReplace)
-  } else if name == "Weak.of" {
+  } else if name == "Weak::of" {
     Some(ExDowngrade)
-  } else if name == "Weak.get" {
+  } else if name == "Weak::get" {
     Some(ExUpgrade)
-  } else if name == "MutexGuard.get_mut" {
+  } else if name == "MutexGuard::get_mut" {
     Some(ExLoadMut)
-  } else if name == "MutexGuard.get" {
+  } else if name == "MutexGuard::get" {
     Some(ExLoad)
-  } else if name == "MutexGuard.claimed" {
+  } else if name == "MutexGuard::claimed" {
     Some(ExFlatten)
   } else if cy_extern_in(
     name,
     Cons(
-      "Vec.get_mut",
-      Cons("Vec.last_mut", Cons("Vec.as_mut_slice", Cons("HashMap.get_mut", Nil)))
+      "Vec::get_mut",
+      Cons("Vec::last_mut", Cons("Vec::as_mut_slice", Cons("Slots::get_mut", Nil)))
     )
   ) {
     Some(ExLoadMut)
   } else if cy_extern_in(
     name,
     Cons(
-      "Ref.get",
+      "Ref::get",
       Cons(
-        "Mutex.take_claimed",
+        "Mutex::take_claimed",
         Cons(
-          "Vec.pop",
+          "Vec::pop",
           Cons(
-            "Vec.index",
-            Cons(
-              "Vec.get",
-              Cons(
-                "Vec.as_slice",
-                Cons("Slice.get", Cons("HashMap.get", Cons("HashMap.index", Nil)))
-              )
-            )
+            "Vec::get",
+            Cons("Vec::as_slice", Cons("Slice::get", Cons("Slots::get", Cons("Slots::take", Nil))))
           )
         )
       )
@@ -523,17 +634,24 @@ pub fn cy_extern_model(name: Text): Option(CyExtern) {
     Some(ExLoad)
   } else if cy_extern_in(
     name,
-    Cons("Vec.into_list", Cons("Vec.into_array", Cons("HashMap.into_vec", Nil)))
+    Cons("Vec::into_list", Cons("Vec::into_array", Nil))
   ) {
     Some(ExConvert)
+  } else if cy_extern_in(name, Cons("Slots::state", Cons("Slots::mark", Cons("Slots::cap", Nil)))) {
+    Some(ExFlatten)
   } else if cy_is_signal_primitive(name) {
     Some(ExFlatten)
   } else if cy_extern_in(name, cy_flatten_names()) {
     Some(ExFlatten)
+  } else if cy_extern_in(name, cy_flatten_names_more()) {
+    Some(ExFlatten)
+  } else if Text::starts_with(name, "Float32::") {
+    // `Float32`'s functions (`std/prelude/num.taut`).
+    Some(ExFlatten)
   } else if cy_extern_in(name, Cons("secret", Cons("expose", Nil))) {
     Some(ExFlatten)
-  } else if Text::starts_with(name, "ct_") {
-    // The secret words (`std/prelude/Secret.taut`).
+  } else if Text::starts_with(name, "Ct::") {
+    // The secret words (`std/builtin/secret.taut`).
     Some(ExFlatten)
   } else {
     None
@@ -541,15 +659,15 @@ pub fn cy_extern_model(name: Text): Option(CyExtern) {
 }
 
 pub fn cy_is_some_extern(name: Text): Bool {
-  ⊢ Bool from match cy_extern_model(name) {
-    Some(m) => true
+  match cy_extern_model(name) {
+    Some(^m) => true
     None => false
   }
 }
 
 // An operator's name starts with ASCII punctuation other than `_`.
 pub fn cy_is_operator(name: Text): Bool {
-  ⊢ Bool from match Text::byte(name, 0) {
+  match Text::byte(name, 0) {
     None => false
     Some(b) => not(
       b == 95
@@ -558,32 +676,51 @@ pub fn cy_is_operator(name: Text): Bool {
 }
 
 pub fn cy_has_ctor(c: Cy, name: Text): Bool {
-  ⊢ Bool from match datas_ctor(c.types.datas, name) {
-    Some(x) => true
+  match datas_ctor(c.types.datas, name) {
+    Some(^x) => true
     None => ⊢ Bool from match datas_ctor_candidates(c.types.datas, name) {
       Nil => false
-      Cons(x, rest) => true
+      Cons(^x, ^rest) => true
     }
   }
 }
 
 // A name whose value holds nothing the check follows.
+// `e` of `#ascribe(T, e)`.
+pub fn cy_ascribed_body(function: SurfaceTerm, arguments: List(SurfaceTerm)): Option(SurfaceTerm) {
+  match function.kind {
+    SkVar(head) => if surface_name_text(head) == "#ascribe" {
+      ⊢ Option(SurfaceTerm) from match arguments {
+        Cons(^ty, rest) => ⊢ Option(SurfaceTerm) from match rest {
+          Cons(body, ^more) => Some(body)
+          Nil => None
+        }
+        Nil => None
+      }
+    } else {
+      None
+    }
+    _ => None
+  }
+}
+
+// `#()`, the reader's `Star` of `Unit`, holds nothing.
 pub fn cy_quiet_name(c: Cy, name: Text): Bool {
-  cy_has_ctor(
+  name == "std::prelude::Star" || cy_has_ctor(
     c,
     name
   ) || cy_is_some_extern(
     name
-  ) || Ordmap::contains(c.host_fns, name, Ordmap::compare_text) || cy_is_operator(name)
+  ) || Ordmap::contains(c.host_fns, name, Ordmap::compare_text) || cy_is_operator(name) || cy_is_expanded_method(c, name)
 }
 
-pub fn cy_atom_rank(a: CyAtom): Pair(Nat, Nat) {
-  ⊢ Pair(Nat, Nat) from match a {
-    AtCell(s) => Pair { fst: 0, snd: s }
-    AtPlace(s) => Pair { fst: 1, snd: s }
-    AtLam(l) => Pair { fst: 2, snd: l }
-    AtUnknown(u) => Pair { fst: 3, snd: u }
-    AtWeak(s) => Pair { fst: 4, snd: s }
+pub fn cy_atom_rank(a: CyAtom): Nat × Nat {
+  ⊢ (Nat × Nat) from match a {
+    AtCell(s) => #(0, s)
+    AtPlace(s) => #(1, s)
+    AtLam(l) => #(2, l)
+    AtUnknown(u) => #(3, u)
+    AtWeak(s) => #(4, s)
   }
 }
 
@@ -598,16 +735,18 @@ pub fn cy_atom_compare(a: CyAtom, b: CyAtom): Ordering {
 }
 
 pub fn cy_atoms(c: Cy, n: Nat): Ordmap(CyAtom, Bool) {
-  ⊢ Ordmap(CyAtom, Bool) from match Ordmap::get(c.pts, n, Ordmap::compare_nat) {
+  match Ordmap::get(c.pts, n, Ordmap::compare_nat) {
     Some(s) => s
     None => Ordmap::empty()
   }
 }
 
-pub fn cy_keys<K>(es: List(Pair(K, Bool))): List(K) {
-  ⊢ List(K) from match es {
+pub fn cy_keys<K>(es: List(K × Bool)): List(K) {
+  match es {
     Nil => Nil
-    Cons(e, rest) => Cons(e.fst, cy_keys(rest))
+    Cons(e, rest) => ⊢ List(K) from match e {
+      #(key, ^present) => Cons(key, cy_keys(rest))
+    }
   }
 }
 
@@ -616,19 +755,19 @@ pub fn cy_atom_list(c: Cy, n: Nat): List(CyAtom) {
 }
 
 pub fn cy_succs(c: Cy, n: Nat): Ordmap(Nat, Bool) {
-  ⊢ Ordmap(Nat, Bool) from match Ordmap::get(c.edges, n, Ordmap::compare_nat) {
+  match Ordmap::get(c.edges, n, Ordmap::compare_nat) {
     Some(s) => s
     None => Ordmap::empty()
   }
 }
 
-pub fn cy_node(&mut c: Cy): Nat {
+pub fn cy_node(c: &mut Cy): Nat {
   let n := c.nodes
   set_to(&mut c.nodes, n + 1)
   n
 }
 
-pub fn cy_insert(&mut c: Cy, n: Nat, a: CyAtom): Unit {
+pub fn cy_insert(c: &mut Cy, n: Nat, a: CyAtom): Unit {
   let s := cy_atoms(c, n)
   if not(Ordmap::contains(s, a, cy_atom_compare)) {
     set_to(
@@ -639,8 +778,8 @@ pub fn cy_insert(&mut c: Cy, n: Nat, a: CyAtom): Unit {
   }
 }
 
-pub fn cy_insert_all(atoms: List(CyAtom), &mut c: Cy, n: Nat): Unit {
-  ⊢ Unit from match atoms {
+pub fn cy_insert_all(atoms: List(CyAtom), c: &mut Cy, n: Nat): Unit {
+  match atoms {
     Nil => #()
     Cons(a, rest) => {
       cy_insert(&mut c, n, a)
@@ -649,7 +788,7 @@ pub fn cy_insert_all(atoms: List(CyAtom), &mut c: Cy, n: Nat): Unit {
   }
 }
 
-pub fn cy_flow(&mut c: Cy, r#from: Nat, to: Nat): Unit {
+pub fn cy_flow(c: &mut Cy, r#from: Nat, to: Nat): Unit {
   if not(r#from == 0) && not(to == 0) && not(r#from == to) {
     let s := cy_succs(c, r#from)
     if not(Ordmap::contains(s, to, Ordmap::compare_nat)) {
@@ -667,8 +806,8 @@ pub fn cy_flow(&mut c: Cy, r#from: Nat, to: Nat): Unit {
   }
 }
 
-pub fn cy_flow_each(froms: List(Nat), &mut c: Cy, to: Nat): Unit {
-  ⊢ Unit from match froms {
+pub fn cy_flow_each(froms: List(Nat), c: &mut Cy, to: Nat): Unit {
+  match froms {
     Nil => #()
     Cons(f, rest) => {
       cy_flow(&mut c, f, to)
@@ -677,8 +816,8 @@ pub fn cy_flow_each(froms: List(Nat), &mut c: Cy, to: Nat): Unit {
   }
 }
 
-pub fn cy_flow_zip(froms: List(Nat), &mut c: Cy, tos: List(Nat)): Unit {
-  ⊢ Unit from match froms {
+pub fn cy_flow_zip(froms: List(Nat), c: &mut Cy, tos: List(Nat)): Unit {
+  match froms {
     Nil => #()
     Cons(f, rest) => ⊢ Unit from match tos {
       Nil => #()
@@ -690,17 +829,17 @@ pub fn cy_flow_zip(froms: List(Nat), &mut c: Cy, tos: List(Nat)): Unit {
   }
 }
 
-pub fn cy_atom(&mut c: Cy, a: CyAtom): Nat {
+pub fn cy_atom(c: &mut Cy, a: CyAtom): Nat {
   let n := cy_node(&mut c)
   cy_insert(&mut c, n, a)
   n
 }
 
-pub fn cy_unknown(&mut c: Cy, why: Text, start: Nat): Nat {
+pub fn cy_unknown(c: &mut Cy, why: Text, start: Nat): Nat {
   let id := c.unknown_count
   set_to(
     &mut c.unknowns,
-    Ordmap::insert(c.unknowns, id, Pair { fst: why, snd: start }, Ordmap::compare_nat)
+    Ordmap::insert(c.unknowns, id, #(why, start), Ordmap::compare_nat)
   )
   set_to(&mut c.unknown_count, id + 1)
   cy_atom(&mut c, AtUnknown(id))
@@ -711,7 +850,7 @@ pub fn cy_cell_dummy(): CyCell {
 }
 
 pub fn cy_cell_at(c: Cy, s: Nat): CyCell {
-  ⊢ CyCell from match Ordmap::get(c.cells, s, Ordmap::compare_nat) {
+  match Ordmap::get(c.cells, s, Ordmap::compare_nat) {
     Some(x) => x
     None => cy_cell_dummy()
   }
@@ -722,7 +861,7 @@ pub fn cy_contents(c: Cy, s: Nat): Nat {
 }
 
 // A new site: its number and the node of its content.
-pub fn cy_cell(&mut c: Cy, what: Text, start: Nat, end: Nat): Pair(Nat, Nat) {
+pub fn cy_cell(c: &mut Cy, what: Text, start: Nat, end: Nat): Nat × Nat {
   let contents := cy_node(&mut c)
   let site := c.cell_count
   set_to(
@@ -735,12 +874,12 @@ pub fn cy_cell(&mut c: Cy, what: Text, start: Nat, end: Nat): Pair(Nat, Nat) {
     )
   )
   set_to(&mut c.cell_count, site + 1)
-  Pair { fst: site, snd: contents }
+  #(site, contents)
 }
 
 // The state of a host function, one for all its calls.
-pub fn cy_host_cell(&mut c: Cy, name: Text, start: Nat, end: Nat): Nat {
-  ⊢ Nat from match Ordmap::get(c.hosts, name, Ordmap::compare_text) {
+pub fn cy_host_cell(c: &mut Cy, name: Text, start: Nat, end: Nat): Nat {
+  match Ordmap::get(c.hosts, name, Ordmap::compare_text) {
     Some(s) => s
     None => {
       let s := cy_cell(&mut c, cat3("the host state of ", name, ""), start, end).fst
@@ -755,23 +894,23 @@ pub fn cy_lam_dummy(): CyLam {
 }
 
 pub fn cy_lam(c: Cy, l: Nat): CyLam {
-  ⊢ CyLam from match Ordmap::get(c.lams, l, Ordmap::compare_nat) {
+  match Ordmap::get(c.lams, l, Ordmap::compare_nat) {
     Some(x) => x
     None => cy_lam_dummy()
   }
 }
 
-pub fn cy_nodes(ps: List(Text), &mut c: Cy): List(Nat) {
-  ⊢ List(Nat) from match ps {
+pub fn cy_nodes(ps: List(Text), c: &mut Cy): List(Nat) {
+  match ps {
     Nil => Nil
-    Cons(p, rest) => {
+    Cons(^p, rest) => {
       let n := cy_node(&mut c)
       Cons(n, cy_nodes(rest, &mut c))
     }
   }
 }
 
-pub fn cy_new_lam(&mut c: Cy, params: List(Text)): Nat {
+pub fn cy_new_lam(c: &mut Cy, params: List(Text)): Nat {
   let ps := cy_nodes(params, &mut c)
   let ret := cy_node(&mut c)
   let env := cy_node(&mut c)
@@ -791,18 +930,18 @@ pub fn cy_new_lam(&mut c: Cy, params: List(Text)): Nat {
 }
 
 pub fn cy_nonempty(ns: List(Nat)): List(Nat) {
-  ⊢ List(Nat) from match ns {
+  match ns {
     Nil => Nil
     Cons(n, rest) => if n == 0 { cy_nonempty(rest) } else { Cons(n, cy_nonempty(rest)) }
   }
 }
 
-pub fn cy_join(&mut c: Cy, parts: List(Nat)): Nat {
-  ⊢ Nat from match cy_nonempty(parts) {
+pub fn cy_join(c: &mut Cy, parts: List(Nat)): Nat {
+  match cy_nonempty(parts) {
     Nil => 0
     Cons(first, rest) => ⊢ Nat from match rest {
       Nil => first
-      Cons(second, more) => {
+      Cons(^second, ^more) => {
         let n := cy_node(&mut c)
         cy_flow_each(Cons(first, rest), &mut c, n)
         n
@@ -820,14 +959,14 @@ pub fn cy_local_type(c: Cy, name: Text, at: SurfaceTerm): Option(Ty) {
 }
 
 pub fn cy_data_is_handle(cs: List(DataCtor)): Bool {
-  ⊢ Bool from match cs {
+  match cs {
     Nil => true
     Cons(x, more) => ⊢ Bool from match more {
       Nil => ⊢ Bool from match x.fields {
         Nil => true
-        Cons(f, rest) => false
+        Cons(^f, ^rest) => false
       }
-      Cons(y, others) => false
+      Cons(^y, ^others) => false
     }
   }
 }
@@ -846,31 +985,32 @@ mutual {
     t: Ty,
     inside: Bool,
     seen: List(Text)
-  ): Pair(Bool, List(Text)) {
-    ⊢ Pair(Bool, List(Text)) from match k {
-      Zero => Pair { fst: true, snd: seen }
-      Succ(j) => ⊢ Pair(Bool, List(Text)) from match t {
-        TyInt(w) => Pair { fst: false, snd: seen }
-        TyBool => Pair { fst: false, snd: seen }
-        TyText => Pair { fst: false, snd: seen }
-        TyUnit => Pair { fst: false, snd: seen }
-        TyNever => Pair { fst: false, snd: seen }
-        TyDecimal => Pair { fst: false, snd: seen }
-        TyFloat => Pair { fst: false, snd: seen }
-        TyFn(ps, r, kind) => Pair { fst: true, snd: seen }
-        TyPoly(gs, inner) => Pair { fst: true, snd: seen }
-        TyVar(v) => Pair { fst: true, snd: seen }
+  ): Bool × List(Text) {
+    ⊢ (Bool × List(Text)) from match k {
+      Zero => #(true, seen)
+      Succ(j) => ⊢ (Bool × List(Text)) from match t {
+        TyInt(^w) => #(false, seen)
+        TyBool => #(false, seen)
+        TyText => #(false, seen)
+        TyUnit => #(false, seen)
+        TyNever => #(false, seen)
+        TyDecimal => #(false, seen)
+        TyFloat => #(false, seen)
+        TyFloat32 => #(false, seen)
+        TyFn(^ps, ^r, ^kind) => #(true, seen)
+        TyPoly(^gs, ^inner) => #(true, seen)
+        TyVar(^v) => #(true, seen)
         // Inside the fields of a data type, a parameter stands for an
         // argument `cy_holds_named` has already read, so it adds nothing:
         // the tail of a `List(A)` is not an unknown type.
-        TyParam(n, b) => Pair { fst: not(inside), snd: seen }
-        TyApp(h, a) => Pair { fst: true, snd: seen }
+        TyParam(^n, ^b) => #(not(inside), seen)
+        TyApp(^h, ^a) => #(true, seen)
         TyUnion(ts) => cy_holds_any(j, d, ts, inside, seen)
         TyProduct(ts) => cy_holds_any(j, d, ts, inside, seen)
-        TyTagged(tags, inner) => cy_holds_ty(j, d, inner, inside, seen)
+        TyTagged(^tags, inner) => cy_holds_ty(j, d, inner, inside, seen)
         TyInfo(inner) => cy_holds_ty(j, d, inner, inside, seen)
-        TyBorrow(inner, m) => cy_holds_ty(j, d, inner, inside, seen)
-        TyNamed(n, args) => cy_holds_named(j, d, n, args, inside, seen)
+        TyBorrow(inner, ^m) => cy_holds_ty(j, d, inner, inside, seen)
+        TyNamed(n, args) => cy_holds_named(j, d, surface_name_text(n), args, inside, seen)
       }
     }
   }
@@ -881,11 +1021,11 @@ mutual {
     ts: List(Ty),
     inside: Bool,
     seen: List(Text)
-  ): Pair(Bool, List(Text)) {
-    ⊢ Pair(Bool, List(Text)) from match k {
-      Zero => Pair { fst: true, snd: seen }
-      Succ(j) => ⊢ Pair(Bool, List(Text)) from match ts {
-        Nil => Pair { fst: false, snd: seen }
+  ): Bool × List(Text) {
+    ⊢ (Bool × List(Text)) from match k {
+      Zero => #(true, seen)
+      Succ(j) => ⊢ (Bool × List(Text)) from match ts {
+        Nil => #(false, seen)
         Cons(t, rest) => {
           let r := cy_holds_ty(j, d, t, inside, seen)
           if r.fst { r } else { cy_holds_any(j, d, rest, inside, r.snd) }
@@ -901,9 +1041,9 @@ mutual {
     args: List(Ty),
     inside: Bool,
     seen: List(Text)
-  ): Pair(Bool, List(Text)) {
-    ⊢ Pair(Bool, List(Text)) from match k {
-      Zero => Pair { fst: true, snd: seen }
+  ): Bool × List(Text) {
+    ⊢ (Bool × List(Text)) from match k {
+      Zero => #(true, seen)
       Succ(j) => if list_has_text(
         Cons(
           "Ref",
@@ -911,26 +1051,26 @@ mutual {
             "Mutex",
             Cons(
               "MutexGuard",
-              Cons("Vec", Cons("HashMap", Cons("Slice", Cons("Task", Cons("Pending", Nil)))))
+              Cons("Vec", Cons("Slots", Cons("Slice", Cons("Task", Cons("Pending", Nil)))))
             )
           )
         ),
         n
       ) {
-        Pair { fst: true, snd: seen }
+        #(true, seen)
       } else if n == "Atomic" || n == "Buf" {
-        Pair { fst: false, snd: seen }
+        #(false, seen)
       } else {
         let r := cy_holds_any(j, d, args, inside, seen)
         if r.fst {
           r
         } else {
-          ⊢ Pair(Bool, List(Text)) from match datas_decl(d, n) {
-            None => Pair { fst: true, snd: r.snd }
+          ⊢ (Bool × List(Text)) from match datas_decl(d, n) {
+            None => #(true, r.snd)
             Some(data) => if data.is_struct && cy_data_is_handle(data.constructors) {
-              Pair { fst: true, snd: r.snd }
+              #(true, r.snd)
             } else if list_has_text(r.snd, n) {
-              Pair { fst: false, snd: r.snd }
+              #(false, r.snd)
             } else {
               cy_holds_ctors(j, d, data.constructors, Cons(n, r.snd))
             }
@@ -945,11 +1085,11 @@ mutual {
     d: Datas,
     cs: List(DataCtor),
     seen: List(Text)
-  ): Pair(Bool, List(Text)) {
-    ⊢ Pair(Bool, List(Text)) from match k {
-      Zero => Pair { fst: true, snd: seen }
-      Succ(j) => ⊢ Pair(Bool, List(Text)) from match cs {
-        Nil => Pair { fst: false, snd: seen }
+  ): Bool × List(Text) {
+    ⊢ (Bool × List(Text)) from match k {
+      Zero => #(true, seen)
+      Succ(j) => ⊢ (Bool × List(Text)) from match cs {
+        Nil => #(false, seen)
         Cons(x, rest) => {
           let r := cy_holds_fields(j, d, x.fields, seen)
           if r.fst { r } else { cy_holds_ctors(j, d, rest, r.snd) }
@@ -963,11 +1103,11 @@ mutual {
     d: Datas,
     fs: List(DataField),
     seen: List(Text)
-  ): Pair(Bool, List(Text)) {
-    ⊢ Pair(Bool, List(Text)) from match k {
-      Zero => Pair { fst: true, snd: seen }
-      Succ(j) => ⊢ Pair(Bool, List(Text)) from match fs {
-        Nil => Pair { fst: false, snd: seen }
+  ): Bool × List(Text) {
+    ⊢ (Bool × List(Text)) from match k {
+      Zero => #(true, seen)
+      Succ(j) => ⊢ (Bool × List(Text)) from match fs {
+        Nil => #(false, seen)
         Cons(f, rest) => {
           let r := cy_holds_ty(j, d, f.ty, true, seen)
           if r.fst { r } else { cy_holds_fields(j, d, rest, r.snd) }
@@ -979,7 +1119,7 @@ mutual {
 
 // `None` is not known, which holds.
 pub fn cy_holds(c: Cy, ty: Option(Ty)): Bool {
-  ⊢ Bool from match ty {
+  match ty {
     None => true
     Some(t) => cy_holds_ty(c.steps, c.types.datas, t, false, Nil).fst
   }
@@ -988,21 +1128,21 @@ pub fn cy_holds(c: Cy, ty: Option(Ty)): Bool {
 // The kind of storage an allocation makes, by the name of the `extern` that
 // makes it; `None` for every other storage (a `var`, a host state).
 pub fn cy_storage_kind(what: Text): Option(Text) {
-  if what == "Ref.new" {
+  if what == "Ref::new" {
     Some("Ref")
-  } else if what == "Mutex.new" {
+  } else if what == "Mutex::new" {
     Some("Mutex")
-  } else if what == "Vec.new" || what == "HashMap.into_vec" {
+  } else if what == "Vec::new" {
     Some("Vec")
-  } else if what == "HashMap.new" {
-    Some("HashMap")
+  } else if what == "Slots::new" {
+    Some("Slots")
   } else {
     None
   }
 }
 
 pub fn cy_is_storage_type(n: Text): Bool {
-  list_has_text(Cons("Ref", Cons("Mutex", Cons("Vec", Cons("HashMap", Nil)))), n)
+  list_has_text(Cons("Ref", Cons("Mutex", Cons("Vec", Nil))), n)
 }
 
 // The kinds of storage a value of a type may hold without going through a
@@ -1015,29 +1155,30 @@ mutual {
     d: Datas,
     t: Ty,
     inside: Bool,
-    acc: Pair(List(Text), List(Text))
-  ): Option(Pair(List(Text), List(Text))) {
-    ⊢ Option(Pair(List(Text), List(Text))) from match k {
+    acc: (List(Text) × List(Text))
+  ): Option(List(Text) × List(Text)) {
+    match k {
       Zero => None
-      Succ(j) => ⊢ Option(Pair(List(Text), List(Text))) from match t {
-        TyInt(w) => Some(acc)
+      Succ(j) => ⊢ Option(List(Text) × List(Text)) from match t {
+        TyInt(^w) => Some(acc)
         TyBool => Some(acc)
         TyText => Some(acc)
         TyUnit => Some(acc)
         TyNever => Some(acc)
         TyDecimal => Some(acc)
         TyFloat => Some(acc)
-        TyFn(ps, r, kind) => None
-        TyPoly(gs, inner) => None
-        TyVar(v) => None
-        TyParam(n, b) => if inside { Some(acc) } else { None }
-        TyApp(h, a) => None
+        TyFloat32 => Some(acc)
+        TyFn(^ps, ^r, ^kind) => None
+        TyPoly(^gs, ^inner) => None
+        TyVar(^v) => None
+        TyParam(^n, ^b) => if inside { Some(acc) } else { None }
+        TyApp(^h, ^a) => None
         TyUnion(ts) => cy_kinds_all(j, d, ts, inside, acc)
         TyProduct(ts) => cy_kinds_all(j, d, ts, inside, acc)
-        TyTagged(tags, inner) => cy_kinds_ty(j, d, inner, inside, acc)
+        TyTagged(^tags, inner) => cy_kinds_ty(j, d, inner, inside, acc)
         TyInfo(inner) => cy_kinds_ty(j, d, inner, inside, acc)
-        TyBorrow(inner, m) => cy_kinds_ty(j, d, inner, inside, acc)
-        TyNamed(n, args) => cy_kinds_named(j, d, n, args, inside, acc)
+        TyBorrow(inner, ^m) => cy_kinds_ty(j, d, inner, inside, acc)
+        TyNamed(n, args) => cy_kinds_named(j, d, surface_name_text(n), args, inside, acc)
       }
     }
   }
@@ -1047,13 +1188,13 @@ mutual {
     d: Datas,
     ts: List(Ty),
     inside: Bool,
-    acc: Pair(List(Text), List(Text))
-  ): Option(Pair(List(Text), List(Text))) {
-    ⊢ Option(Pair(List(Text), List(Text))) from match k {
+    acc: (List(Text) × List(Text))
+  ): Option(List(Text) × List(Text)) {
+    match k {
       Zero => None
-      Succ(j) => ⊢ Option(Pair(List(Text), List(Text))) from match ts {
+      Succ(j) => ⊢ Option(List(Text) × List(Text)) from match ts {
         Nil => Some(acc)
-        Cons(t, rest) => ⊢ Option(Pair(List(Text), List(Text))) from match cy_kinds_ty(
+        Cons(t, rest) => ⊢ Option(List(Text) × List(Text)) from match cy_kinds_ty(
           j,
           d,
           t,
@@ -1073,28 +1214,28 @@ mutual {
     n: Text,
     args: List(Ty),
     inside: Bool,
-    acc: Pair(List(Text), List(Text))
-  ): Option(Pair(List(Text), List(Text))) {
-    ⊢ Option(Pair(List(Text), List(Text))) from match k {
+    acc: (List(Text) × List(Text))
+  ): Option(List(Text) × List(Text)) {
+    match k {
       Zero => None
       Succ(j) => {
         // The storages the prelude declares, read by name as
         // `cy_holds_named` reads them.
         if cy_is_storage_type(n) {
-          Some(Pair { fst: Cons(n, acc.fst), snd: acc.snd })
+          Some(#(Cons(n, acc.fst), acc.snd))
         } else if n == "Atomic" || n == "Buf" || n == "Bytes" {
           Some(acc)
         } else {
-          ⊢ Option(Pair(List(Text), List(Text))) from match cy_kinds_all(j, d, args, inside, acc) {
+          ⊢ Option(List(Text) × List(Text)) from match cy_kinds_all(j, d, args, inside, acc) {
             None => None
-            Some(r) => ⊢ Option(Pair(List(Text), List(Text))) from match datas_decl(d, n) {
+            Some(r) => ⊢ Option(List(Text) × List(Text)) from match datas_decl(d, n) {
               None => None
               Some(data) => if data.is_struct && cy_data_is_handle(data.constructors) {
                 None
               } else if list_has_text(r.snd, n) {
                 Some(r)
               } else {
-                cy_kinds_ctors(j, d, data.constructors, Pair { fst: r.fst, snd: Cons(n, r.snd) })
+                cy_kinds_ctors(j, d, data.constructors, #(r.fst, Cons(n, r.snd)))
               }
             }
           }
@@ -1107,13 +1248,13 @@ mutual {
     k: Nat,
     d: Datas,
     cs: List(DataCtor),
-    acc: Pair(List(Text), List(Text))
-  ): Option(Pair(List(Text), List(Text))) {
-    ⊢ Option(Pair(List(Text), List(Text))) from match k {
+    acc: (List(Text) × List(Text))
+  ): Option(List(Text) × List(Text)) {
+    match k {
       Zero => None
-      Succ(j) => ⊢ Option(Pair(List(Text), List(Text))) from match cs {
+      Succ(j) => ⊢ Option(List(Text) × List(Text)) from match cs {
         Nil => Some(acc)
-        Cons(x, rest) => ⊢ Option(Pair(List(Text), List(Text))) from match cy_kinds_fields(
+        Cons(x, rest) => ⊢ Option(List(Text) × List(Text)) from match cy_kinds_fields(
           j,
           d,
           x.fields,
@@ -1130,13 +1271,13 @@ mutual {
     k: Nat,
     d: Datas,
     fs: List(DataField),
-    acc: Pair(List(Text), List(Text))
-  ): Option(Pair(List(Text), List(Text))) {
-    ⊢ Option(Pair(List(Text), List(Text))) from match k {
+    acc: (List(Text) × List(Text))
+  ): Option(List(Text) × List(Text)) {
+    match k {
       Zero => None
-      Succ(j) => ⊢ Option(Pair(List(Text), List(Text))) from match fs {
+      Succ(j) => ⊢ Option(List(Text) × List(Text)) from match fs {
         Nil => Some(acc)
-        Cons(f, rest) => ⊢ Option(Pair(List(Text), List(Text))) from match cy_kinds_ty(
+        Cons(f, rest) => ⊢ Option(List(Text) × List(Text)) from match cy_kinds_ty(
           j,
           d,
           f.ty,
@@ -1152,15 +1293,15 @@ mutual {
 }
 
 // `n` without the storages a value of type `ty` cannot be: the flattening
-// merges values of different types, and a value of type `HashMap(K, V)` is
+// merges values of different types, and a value of type `Vec(A)` is
 // never a `Ref`, whatever it was merged with.
-pub fn cy_typed(&mut c: Cy, n: Nat, ty: Option(Ty)): Nat {
-  ⊢ Nat from match ty {
+pub fn cy_typed(c: &mut Cy, n: Nat, ty: Option(Ty)): Nat {
+  match ty {
     None => n
     Some(t) => if n == 0 {
       0
     } else {
-      ⊢ Nat from match cy_kinds_ty(c.steps, c.types.datas, t, false, Pair { fst: Nil, snd: Nil }) {
+      ⊢ Nat from match cy_kinds_ty(c.steps, c.types.datas, t, false, #(Nil, Nil)) {
         None => n
         Some(r) => {
           let d := cy_node(&mut c)
@@ -1172,7 +1313,7 @@ pub fn cy_typed(&mut c: Cy, n: Nat, ty: Option(Ty)): Nat {
   }
 }
 
-pub fn cy_read_through_typed(&mut c: Cy, n: Nat, t: Option(SurfaceTerm)): Nat {
+pub fn cy_read_through_typed(c: &mut Cy, n: Nat, t: Option(SurfaceTerm)): Nat {
   let v := cy_read_through(&mut c, n)
   ⊢ Nat from match t {
     None => v
@@ -1185,7 +1326,7 @@ pub fn cy_max_clones(): Nat {
 }
 
 pub fn cy_find_in(bs: List(CyBinding), name: Text): Option(CyBinding) {
-  ⊢ Option(CyBinding) from match bs {
+  match bs {
     Nil => None
     Cons(b, rest) => if b.name == name { Some(b) } else { cy_find_in(rest, name) }
   }
@@ -1198,7 +1339,7 @@ pub fn cy_find(c: Cy, name: Text): Option(CyBinding) {
 // Whether no entry of the row may be an effect whose continuation is kept. A row variable (`|e`)
 // or an effect not followed (`?…`) may be.
 pub fn cy_row_settled(names: List(Text), kept: RowSet): Bool {
-  ⊢ Bool from match names {
+  match names {
     Nil => true
     Cons(n, rest) => if rowset_has(kept, n) || Text::starts_with(n, "|") || Text::starts_with(n, "?") {
       false
@@ -1209,7 +1350,7 @@ pub fn cy_row_settled(names: List(Text), kept: RowSet): Bool {
 }
 
 pub fn cy_settled(c: Cy, t: SurfaceTerm): Bool {
-  ⊢ Bool from match c.settling {
+  match c.settling {
     None => false
     Some(s) => ⊢ Bool from match Ordmap::get(s.snd, RowSpan::Mk(t.start, t.end), rows_compare_span) {
       None => false
@@ -1219,11 +1360,11 @@ pub fn cy_settled(c: Cy, t: SurfaceTerm): Bool {
 }
 
 pub fn cy_kept_arms(hs: List(SurfaceHandler), kept: RowSet): RowSet {
-  ⊢ RowSet from match hs {
+  match hs {
     Nil => kept
     Cons(h, rest) => cy_kept_arms(rest, ⊢ RowSet from match h {
-      HdReturn(pattern, body) => kept
-      HdOperation(op, binds, types, patterns, cont, guard, body) => ⊢ RowSet from match cont {
+      HdReturn(^pattern, ^body) => kept
+      HdOperation(op, ^binds, ^types, ^patterns, cont, _, guard, body) => ⊢ RowSet from match cont {
         None => kept
         Some(k) => {
           let stray := stray_conts(body, k, false, Nil, false)
@@ -1233,7 +1374,7 @@ pub fn cy_kept_arms(hs: List(SurfaceHandler), kept: RowSet): RowSet {
           }
           ⊢ RowSet from match all {
             Nil => kept
-            Cons(s, more) => rowset_add(kept, op)
+            Cons(^s, ^more) => rowset_add(kept, op)
           }
         }
       }
@@ -1242,10 +1383,10 @@ pub fn cy_kept_arms(hs: List(SurfaceHandler), kept: RowSet): RowSet {
 }
 
 pub fn cy_kept_effects(ts: List(SurfaceTerm), kept: RowSet): RowSet {
-  ⊢ RowSet from match ts {
+  match ts {
     Nil => kept
     Cons(t, rest) => cy_kept_effects(rest, ⊢ RowSet from match t.kind {
-      SkHandle(body, handlers) => cy_kept_arms(handlers, kept)
+      SkHandle(^body, handlers) => cy_kept_arms(handlers, kept)
       _ => kept
     })
   }
@@ -1255,56 +1396,53 @@ pub fn cy_settling(
   rows: RowReport,
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt)
-): Option(Pair(RowSet, Ordmap(RowSpan, RowSet))) {
-  ⊢ Option(Pair(RowSet, Ordmap(RowSpan, RowSet))) from match rows.errors {
-    Nil => Some(Pair {
-      fst: cy_kept_effects(subterms_stmts(prelude, subterms_stmts(program, Nil)), rowset_empty()),
-      snd: rows.calls
-    })
-    Cons(e, rest) => None
+): Option(RowSet × Ordmap(RowSpan, RowSet)) {
+  match rows.errors {
+    Nil => Some(#(cy_kept_effects(subterms_stmts(prelude, subterms_stmts(program, Nil)), rowset_empty()), rows.calls))
+    Cons(^e, ^rest) => None
   }
 }
 
 pub fn cy_scope(c: Cy): Nat {
-  ⊢ Nat from match c.scopes {
-    Cons(f, rest) => f
+  match c.scopes {
+    Cons(f, ^rest) => f
     Nil => 0
   }
 }
 
-pub fn cy_hold(&mut c: Cy, n: Nat): Unit {
+pub fn cy_hold(c: &mut Cy, n: Nat): Unit {
   cy_flow(&mut c, n, cy_scope(c))
 }
 
-pub fn cy_bound_node(&mut c: Cy, bound: CyBound): Nat {
-  ⊢ Nat from match bound {
+pub fn cy_bound_node(c: &mut Cy, bound: CyBound): Nat {
+  match bound {
     BdVal(n) => n
     BdPlace(n) => n
     BdVar(s) => cy_atom(&mut c, AtCell(s))
   }
 }
 
-pub fn cy_bind(&mut c: Cy, name: Text, bound: CyBound): Unit {
+pub fn cy_bind(c: &mut Cy, name: Text, bound: CyBound): Unit {
   let held := cy_bound_node(&mut c, bound)
   cy_hold(&mut c, held)
   set_to(&mut c.bindings, Cons(CyBinding { name: name, bound: bound, frame: c.depth }, c.bindings))
 }
 
-pub fn cy_push_frame(&mut c: Cy, lam: Option(Nat), ret: Nat, raw: Bool): Unit {
+pub fn cy_push_frame(c: &mut Cy, lam: Option(Nat), ret: Nat, raw: Bool): Unit {
   let at := c.depth + 1
   set_to(&mut c.frames, Cons(CyFrame { at: at, lam: lam, ret: ret, raw: raw }, c.frames))
   set_to(&mut c.depth, at)
 }
 
 pub fn cy_top_frame(c: Cy): CyFrame {
-  ⊢ CyFrame from match c.frames {
+  match c.frames {
     Nil => CyFrame { at: 0, lam: None, ret: 0, raw: false }
-    Cons(f, rest) => f
+    Cons(f, ^rest) => f
   }
 }
 
-pub fn cy_capture_in(fs: List(CyFrame), &mut c: Cy, b: CyBinding): Unit {
-  ⊢ Unit from match fs {
+pub fn cy_capture_in(fs: List(CyFrame), c: &mut Cy, b: CyBinding): Unit {
+  match fs {
     Nil => #()
     Cons(f, rest) => {
       if b.frame < f.at {
@@ -1327,22 +1465,22 @@ pub fn cy_capture_in(fs: List(CyFrame), &mut c: Cy, b: CyBinding): Unit {
 
 // A name used from a frame inside the one that binds it is captured by every
 // closure in between.
-pub fn cy_capture(&mut c: Cy, b: CyBinding): Unit {
+pub fn cy_capture(c: &mut Cy, b: CyBinding): Unit {
   cy_capture_in(c.frames, &mut c, b)
 }
 
-pub fn cy_read_through(&mut c: Cy, n: Nat): Nat {
+pub fn cy_read_through(c: &mut Cy, n: Nat): Nat {
   if n == 0 {
     0
   } else {
     let d := cy_node(&mut c)
-    set_to(&mut c.reads, Cons(Pair { fst: d, snd: n }, c.reads))
+    set_to(&mut c.reads, Cons(#(d, n), c.reads))
     d
   }
 }
 
-pub fn cy_read_through_each(ns: List(Nat), &mut c: Cy): List(Nat) {
-  ⊢ List(Nat) from match ns {
+pub fn cy_read_through_each(ns: List(Nat), c: &mut Cy): List(Nat) {
+  match ns {
     Nil => Nil
     Cons(n, rest) => {
       let d := cy_read_through(&mut c, n)
@@ -1351,18 +1489,18 @@ pub fn cy_read_through_each(ns: List(Nat), &mut c: Cy): List(Nat) {
   }
 }
 
-pub fn cy_store_each(vs: List(Nat), &mut c: Cy, dst: Nat): Unit {
-  ⊢ Unit from match vs {
+pub fn cy_store_each(vs: List(Nat), c: &mut Cy, dst: Nat): Unit {
+  match vs {
     Nil => #()
     Cons(v, rest) => {
-      set_to(&mut c.stores, Cons(Pair { fst: dst, snd: v }, c.stores))
+      set_to(&mut c.stores, Cons(#(dst, v), c.stores))
       cy_store_each(rest, &mut c, dst)
     }
   }
 }
 
-pub fn cy_new_nodes(n: Nat, &mut c: Cy): List(Nat) {
-  ⊢ List(Nat) from match n {
+pub fn cy_new_nodes(n: Nat, c: &mut Cy): List(Nat) {
+  match n {
     Zero => Nil
     Succ(m) => {
       let x := cy_node(&mut c)
@@ -1372,7 +1510,7 @@ pub fn cy_new_nodes(n: Nat, &mut c: Cy): List(Nat) {
 }
 
 pub fn cy_lam_atoms(c: Cy, ls: List(Nat)): List(CyAtom) {
-  ⊢ List(CyAtom) from match ls {
+  match ls {
     Nil => Nil
     Cons(l, rest) => Cons(AtLam(l), cy_lam_atoms(c, rest))
   }
@@ -1382,7 +1520,28 @@ pub fn cy_methods(c: Cy, name: Text): Option(List(Nat)) {
   Ordmap::get(c.methods, name, Ordmap::compare_text)
 }
 
-pub fn cy_effect_slots(&mut c: Cy, eff: Text, arity: Nat): List(Nat) {
+// A class method of a program whose classes are expanded: the instances are
+// the functions named `Class::method@Type`, which a call of the method does
+// not reach.
+pub fn cy_is_expanded_method(c: Cy, name: Text): Bool {
+  match cy_expanded_methods(Ordmap::entries(c.globals), cat3(name, "@", "")) {
+    Nil => false
+    Cons(^l, ^more) => true
+  }
+}
+
+pub fn cy_expanded_methods(gs: List(Text × Nat), prefix: Text): List(Nat) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => if Text::starts_with(g.fst, prefix) {
+      Cons(g.snd, cy_expanded_methods(rest, prefix))
+    } else {
+      cy_expanded_methods(rest, prefix)
+    }
+  }
+}
+
+pub fn cy_effect_slots(c: &mut Cy, eff: Text, arity: Nat): List(Nat) {
   let have := ⊢ List(Nat) from match Ordmap::get(c.effect_args, eff, Ordmap::compare_text) {
     Some(ns) => ns
     None => Nil
@@ -1399,8 +1558,8 @@ pub fn cy_effect_slots(&mut c: Cy, eff: Text, arity: Nat): List(Nat) {
   }
 }
 
-pub fn cy_effect_resume(&mut c: Cy, eff: Text): Nat {
-  ⊢ Nat from match Ordmap::get(c.effect_resume, eff, Ordmap::compare_text) {
+pub fn cy_effect_resume(c: &mut Cy, eff: Text): Nat {
+  match Ordmap::get(c.effect_resume, eff, Ordmap::compare_text) {
     Some(n) => n
     None => {
       let n := cy_node(&mut c)
@@ -1411,10 +1570,10 @@ pub fn cy_effect_resume(&mut c: Cy, eff: Text): Nat {
 }
 
 pub fn cy_is_borrow_term(t: Option(SurfaceTerm)): Bool {
-  ⊢ Bool from match t {
+  match t {
     None => false
     Some(r) => ⊢ Bool from match r.kind {
-      SkBorrow(m, inner) => true
+      SkBorrow(^m, ^m_orig, ^inner) => true
       _ => false
     }
   }
@@ -1430,25 +1589,25 @@ pub fn cy_kept(holds: Bool, n: Nat): Nat {
 
 pub fn cy_bind_params(
   ps: List(Text),
-  &mut c: Cy,
+  c: &mut Cy,
   nodes: List(Nat),
-  borrows: List(Option(Bool))
+  r#borrows: List(Option(Bool))
 ): Unit {
-  ⊢ Unit from match ps {
+  match ps {
     Nil => #()
     Cons(p, rest) => ⊢ Unit from match nodes {
       Nil => #()
       Cons(n, more) => {
-        let placed := ⊢ Bool from match borrows {
-          Cons(b, bs) => ⊢ Bool from match b {
-            Some(m) => true
+        let placed := ⊢ Bool from match r#borrows {
+          Cons(b, ^bs) => ⊢ Bool from match b {
+            Some(^m) => true
             None => false
           }
           Nil => false
         }
         cy_bind(&mut c, p, cy_bound(placed, n))
-        cy_bind_params(rest, &mut c, more, ⊢ List(Option(Bool)) from match borrows {
-          Cons(b, bs) => bs
+        cy_bind_params(rest, &mut c, more, ⊢ List(Option(Bool)) from match r#borrows {
+          Cons(^b, bs) => bs
           Nil => Nil
         })
       }
@@ -1457,21 +1616,21 @@ pub fn cy_bind_params(
 }
 
 pub fn cy_place_root(t: SurfaceTerm): Option(Text) {
-  ⊢ Option(Text) from match lin_place(t) {
+  match lin_place(t) {
     Some(p) => Some(p.fst)
     None => None
   }
 }
 
 pub fn cy_none_borrows(ps: List(Text)): List(Option(Bool)) {
-  ⊢ List(Option(Bool)) from match ps {
+  match ps {
     Nil => Nil
-    Cons(p, rest) => Cons(None, cy_none_borrows(rest))
+    Cons(^p, rest) => Cons(None, cy_none_borrows(rest))
   }
 }
 
-pub fn cy_var(&mut c: Cy, name: Text, t: SurfaceTerm, raw: Bool): Nat {
-  ⊢ Nat from match cy_find(c, name) {
+pub fn cy_var(c: &mut Cy, name: Text, t: SurfaceTerm, raw: Bool): Nat {
+  match cy_find(c, name) {
     Some(b) => {
       cy_capture(&mut c, b)
       ⊢ Nat from match b.bound {
@@ -1499,8 +1658,8 @@ pub fn cy_var(&mut c: Cy, name: Text, t: SurfaceTerm, raw: Bool): Nat {
   }
 }
 
-pub fn cy_call_methods(ls: List(Nat), &mut c: Cy, args: List(Nat), res: Nat): Unit {
-  ⊢ Unit from match ls {
+pub fn cy_call_methods(ls: List(Nat), c: &mut Cy, args: List(Nat), res: Nat): Unit {
+  match ls {
     Nil => #()
     Cons(l, rest) => {
       let lam := cy_lam(c, l)
@@ -1512,8 +1671,8 @@ pub fn cy_call_methods(ls: List(Nat), &mut c: Cy, args: List(Nat), res: Nat): Un
   }
 }
 
-pub fn cy_bind_names(names: List(Text), &mut c: Cy, r#from: Nat, at: SurfaceTerm): Unit {
-  ⊢ Unit from match names {
+pub fn cy_bind_names(names: List(Text), c: &mut Cy, r#from: Nat, at: SurfaceTerm): Unit {
+  match names {
     Nil => #()
     Cons(n, rest) => {
       let v := cy_kept(cy_holds(c, cy_local_type(c, n, at)), r#from)
@@ -1523,17 +1682,17 @@ pub fn cy_bind_names(names: List(Text), &mut c: Cy, r#from: Nat, at: SurfaceTerm
   }
 }
 
-pub fn cy_bind_pattern(&mut c: Cy, p: SurfacePattern, r#from: Nat, at: SurfaceTerm): Unit {
+pub fn cy_bind_pattern(c: &mut Cy, p: SurfacePattern, r#from: Nat, at: SurfaceTerm): Unit {
   cy_bind_names(pattern_names_ordered(p), &mut c, r#from, at)
 }
 
 pub fn cy_bind_patterns(
   ps: List(SurfacePattern),
-  &mut c: Cy,
+  c: &mut Cy,
   froms: List(Nat),
   at: SurfaceTerm
 ): Unit {
-  ⊢ Unit from match ps {
+  match ps {
     Nil => #()
     Cons(p, rest) => ⊢ Unit from match froms {
       Nil => #()
@@ -1548,8 +1707,8 @@ pub fn cy_bind_patterns(
 mutual {
   // The node of the value of `t`. `raw` leaves places unread (a function that
   // returns a borrow).
-  pub fn cy_eval(k: Nat, &mut c: Cy, t: SurfaceTerm, raw: Bool): Nat {
-    ⊢ Nat from match k {
+  pub fn cy_eval(k: Nat, c: &mut Cy, t: SurfaceTerm, raw: Bool): Nat {
+    match k {
       Zero => 0
       Succ(j) => {
         let n := cy_eval_kind(j, &mut c, t, raw)
@@ -1564,8 +1723,8 @@ mutual {
     }
   }
 
-  pub fn cy_eval_each(k: Nat, &mut c: Cy, ts: List(SurfaceTerm), raw: Bool): List(Nat) {
-    ⊢ List(Nat) from match k {
+  pub fn cy_eval_each(k: Nat, c: &mut Cy, ts: List(SurfaceTerm), raw: Bool): List(Nat) {
+    match k {
       Zero => Nil
       Succ(j) => ⊢ List(Nat) from match ts {
         Nil => Nil
@@ -1577,8 +1736,8 @@ mutual {
     }
   }
 
-  pub fn cy_eval_fields(k: Nat, &mut c: Cy, fs: List(SurfaceField)): List(Nat) {
-    ⊢ List(Nat) from match k {
+  pub fn cy_eval_fields(k: Nat, c: &mut Cy, fs: List(SurfaceField)): List(Nat) {
+    match k {
       Zero => Nil
       Succ(j) => ⊢ List(Nat) from match fs {
         Nil => Nil
@@ -1590,22 +1749,22 @@ mutual {
     }
   }
 
-  pub fn cy_eval_kind(k: Nat, &mut c: Cy, t: SurfaceTerm, raw: Bool): Nat {
-    ⊢ Nat from match k {
+  pub fn cy_eval_kind(k: Nat, c: &mut Cy, t: SurfaceTerm, raw: Bool): Nat {
+    match k {
       Zero => 0
       Succ(j) => ⊢ Nat from match t.kind {
-        SkVar(name) => cy_var(&mut c, name, t, raw)
-        SkNat(d) => 0
-        SkText(v) => 0
-        SkBool(v) => 0
-        SkHole(n) => 0
-        SkPi(ps, r, e) => 0
-        SkExists(b, d, body) => 0
-        SkUnion(ps) => 0
-        SkFnKind(kind, ty) => 0
-        SkTagged(tag, term) => cy_eval(j, &mut c, term, raw)
-        SkField(base, name) => cy_eval(j, &mut c, base, false)
-        SkRecord(name, fields) => {
+        SkVar(name) => cy_var(&mut c, surface_name_text(name), t, raw)
+        SkNat(^d) => 0
+        SkText(^v) => 0
+        SkBool(^v) => 0
+        SkHole(^n) => 0
+        SkPi(^ps, ^r, ^e) => 0
+        SkExists(^b, ^d, ^body, ^unused) => 0
+        SkUnion(^ps) => 0
+        SkFnKind(^kind, ^ty) => 0
+        SkTagged(^tag, term) => cy_eval(j, &mut c, term, raw)
+        SkField(base, ^name) => cy_eval(j, &mut c, base, false)
+        SkRecord(^name, fields) => {
           let parts := cy_eval_fields(j, &mut c, fields)
           cy_join(&mut c, parts)
         }
@@ -1619,28 +1778,31 @@ mutual {
           cy_join(&mut c, Cons(a, Cons(b, Nil)))
         }
         SkBlock(stmts) => cy_block(j, &mut c, stmts, raw)
-        SkLam(params, body) => cy_closure(j, &mut c, params, cy_none_borrows(params), body, false)
-        SkBorrowLam(borrows, lam) => ⊢ Nat from match lam.kind {
-          SkLam(params, body) => cy_closure(j, &mut c, params, borrows, body, false)
+        SkLam(params, body, _, _) => cy_closure(j, &mut c, params, cy_none_borrows(params), body, false)
+        SkBorrowLam(r#borrows, lam) => ⊢ Nat from match lam.kind {
+          SkLam(params, body, _, _) => cy_closure(j, &mut c, params, r#borrows, body, false)
           _ => cy_unknown(&mut c, "a borrowing closure of an unexpected shape", t.start)
         }
-        SkBorrow(m, term) => cy_borrow(j, &mut c, term)
-        SkApp(function, arguments) => cy_app(j, &mut c, t, function, arguments)
-        SkPerform(eff, args) => {
-          let nodes := cy_eval_each(j, &mut c, args, false)
-          let slots := cy_effect_slots(&mut c, eff, List::length(nodes))
-          cy_flow_zip(nodes, &mut c, slots)
-          // The handler of an effect nothing here handles (the runtime's) may
-          // keep or return what it is given.
-          let back := cy_effect_resume(&mut c, eff)
-          cy_join(&mut c, List::append(nodes, Cons(back, Nil)))
+        SkBorrow(^m, ^m_orig, term) => cy_borrow(j, &mut c, term)
+        // `(e: T)`: `e`, the type only checked.
+        SkApp(function, arguments) => ⊢ Nat from match cy_ascribed_body(function, arguments) {
+          Some(body) => cy_eval(j, &mut c, body, raw)
+          None => cy_app(j, &mut c, t, function, arguments)
+        }
+        // A storage operation is read as the `extern` the host answers it with.
+        SkPerform(eff, args) => ⊢ Nat from match cy_storage_operation(eff) {
+          Some(what) => ⊢ Nat from match cy_extern_model(what) {
+            Some(model) => cy_extern_call(j, &mut c, model, what, t, args)
+            None => cy_perform(j, &mut c, eff, args)
+          }
+          None => cy_perform(j, &mut c, eff, args)
         }
         SkHandle(body, handlers) => cy_handle(j, &mut c, body, handlers)
-        SkBudget(steps_memory, steps, body) => {
+        SkBudget(^steps_memory, steps, body) => {
           cy_ignore(cy_eval(j, &mut c, steps, false))
           cy_eval(j, &mut c, body, raw)
         }
-        SkMatch(scrutinee, motive, arms, binder) => {
+        SkMatch(scrutinee, ^motive, arms, ^binder, _) => {
           let s := cy_eval(j, &mut c, scrutinee, false)
           let results := cy_arms(j, &mut c, arms, s, raw)
           cy_join(&mut c, results)
@@ -1650,8 +1812,8 @@ mutual {
     }
   }
 
-  pub fn cy_arms(k: Nat, &mut c: Cy, arms: List(SurfaceArm), s: Nat, raw: Bool): List(Nat) {
-    ⊢ List(Nat) from match k {
+  pub fn cy_arms(k: Nat, c: &mut Cy, arms: List(SurfaceArm), s: Nat, raw: Bool): List(Nat) {
+    match k {
       Zero => Nil
       Succ(j) => ⊢ List(Nat) from match arms {
         Nil => Nil
@@ -1673,8 +1835,8 @@ mutual {
   }
 
   // `&p` or `&mut p`: the place of a `var`, or the value.
-  pub fn cy_borrow(k: Nat, &mut c: Cy, term: SurfaceTerm): Nat {
-    ⊢ Nat from match k {
+  pub fn cy_borrow(k: Nat, c: &mut Cy, term: SurfaceTerm): Nat {
+    match k {
       Zero => 0
       Succ(j) => ⊢ Nat from match cy_place_root(term) {
         None => cy_eval(j, &mut c, term, false)
@@ -1693,8 +1855,8 @@ mutual {
     }
   }
 
-  pub fn cy_block(k: Nat, &mut c: Cy, stmts: List(SurfaceStmt), raw: Bool): Nat {
-    ⊢ Nat from match k {
+  pub fn cy_block(k: Nat, c: &mut Cy, stmts: List(SurfaceStmt), raw: Bool): Nat {
+    match k {
       Zero => 0
       Succ(j) => {
         let saved := c.bindings
@@ -1705,14 +1867,14 @@ mutual {
     }
   }
 
-  pub fn cy_stmts(k: Nat, &mut c: Cy, stmts: List(SurfaceStmt), raw: Bool): Nat {
-    ⊢ Nat from match k {
+  pub fn cy_stmts(k: Nat, c: &mut Cy, stmts: List(SurfaceStmt), raw: Bool): Nat {
+    match k {
       Zero => 0
       Succ(j) => ⊢ Nat from match stmts {
         Nil => 0
         Cons(s, rest) => ⊢ Nat from match rest {
           Nil => cy_stmt(j, &mut c, s, raw)
-          Cons(next, more) => {
+          Cons(^next, ^more) => {
             cy_ignore(cy_stmt(j, &mut c, s, false))
             cy_stmts(j, &mut c, rest, raw)
           }
@@ -1721,19 +1883,19 @@ mutual {
     }
   }
 
-  pub fn cy_stmt(k: Nat, &mut c: Cy, s: SurfaceStmt, raw: Bool): Nat {
-    ⊢ Nat from match k {
+  pub fn cy_stmt(k: Nat, c: &mut Cy, s: SurfaceStmt, raw: Bool): Nat {
+    match k {
       Zero => 0
       Succ(j) => ⊢ Nat from match s {
-        StLet(name, ty, value, borrow, mutable) => {
-          let place := borrow || mutable
+        StLet(name, ^ty, value, r#borrow, mutable, ^unused, ^st_stack) => {
+          let place := r#borrow || mutable
           let v0 := cy_eval(j, &mut c, value, place)
           let v := cy_kept(cy_holds(c, cy_local_type(c, name, value)), v0)
           cy_bind(&mut c, name, cy_bound(place, v))
           0
         }
-        StVar(name, ty, value, borrow) => {
-          if borrow {
+        StVar(name, ^ty, value, r#borrow, ^unused, ^st_stack) => {
+          if r#borrow {
             let v := cy_eval(j, &mut c, value, true)
             cy_bind(&mut c, name, BdPlace(v))
           } else {
@@ -1744,7 +1906,7 @@ mutual {
           }
           0
         }
-        StAssign(name, name_place, value) => {
+        StAssign(name, ^name_place, value) => {
           let v := cy_eval(j, &mut c, value, false)
           ⊢ Unit from match cy_find(c, name) {
             None => #()
@@ -1788,8 +1950,8 @@ mutual {
     }
   }
 
-  pub fn cy_local_fn(k: Nat, &mut c: Cy, f: SurfaceFn): Nat {
-    ⊢ Nat from match k {
+  pub fn cy_local_fn(k: Nat, c: &mut Cy, f: SurfaceFn): Nat {
+    match k {
       Zero => 0
       Succ(j) => {
         let l := cy_new_lam(&mut c, f.params)
@@ -1797,7 +1959,7 @@ mutual {
         let saved := c.bindings
         let me := cy_atom(&mut c, AtLam(l))
         cy_bind(&mut c, f.name, BdVal(me))
-        cy_closure_body(j, &mut c, l, f.params, f.borrows, f.body, cy_is_borrow_term(f.result))
+        cy_closure_body(j, &mut c, l, f.params, f.r#borrows, f.body, cy_is_borrow_term(f.result))
         set_to(&mut c.bindings, saved)
         l
       }
@@ -1806,17 +1968,17 @@ mutual {
 
   pub fn cy_closure(
     k: Nat,
-    &mut c: Cy,
+    c: &mut Cy,
     params: List(Text),
-    borrows: List(Option(Bool)),
+    r#borrows: List(Option(Bool)),
     body: SurfaceTerm,
     raw: Bool
   ): Nat {
-    ⊢ Nat from match k {
+    match k {
       Zero => 0
       Succ(j) => {
         let l := cy_new_lam(&mut c, params)
-        cy_closure_body(j, &mut c, l, params, borrows, body, raw)
+        cy_closure_body(j, &mut c, l, params, r#borrows, body, raw)
         cy_atom(&mut c, AtLam(l))
       }
     }
@@ -1824,14 +1986,14 @@ mutual {
 
   pub fn cy_closure_body(
     k: Nat,
-    &mut c: Cy,
+    c: &mut Cy,
     l: Nat,
     params: List(Text),
-    borrows: List(Option(Bool)),
+    r#borrows: List(Option(Bool)),
     body: SurfaceTerm,
     raw: Bool
   ): Unit {
-    ⊢ Unit from match k {
+    match k {
       Zero => #()
       Succ(j) => {
         let lam := cy_lam(c, l)
@@ -1841,7 +2003,7 @@ mutual {
         let saved_scopes := c.scopes
         cy_push_frame(&mut c, Some(l), lam.ret, raw)
         set_to(&mut c.scopes, Cons(lam.frame, c.scopes))
-        cy_bind_params(params, &mut c, lam.params, borrows)
+        cy_bind_params(params, &mut c, lam.params, r#borrows)
         let v := cy_eval(j, &mut c, body, raw)
         cy_flow(&mut c, v, lam.ret)
         set_to(&mut c.bindings, saved)
@@ -1854,18 +2016,18 @@ mutual {
 
   pub fn cy_app(
     k: Nat,
-    &mut c: Cy,
+    c: &mut Cy,
     t: SurfaceTerm,
     function: SurfaceTerm,
     arguments: List(SurfaceTerm)
   ): Nat {
-    ⊢ Nat from match k {
+    match k {
       Zero => 0
       Succ(j) => {
         let named := ⊢ Option(Text) from match function.kind {
-          SkVar(n) => ⊢ Option(Text) from match cy_find(c, n) {
-            None => Some(n)
-            Some(b) => None
+          SkVar(n) => ⊢ Option(Text) from match cy_find(c, surface_name_text(n)) {
+            None => Some(surface_name_text(n))
+            Some(^b) => None
           }
           _ => None
         }
@@ -1894,8 +2056,8 @@ mutual {
   // given. A copy is the same body over fresh nodes, so it makes every value
   // and storage the call may make; a call to a function already being copied
   // (recursion) and every use as a value read the shared copy instead.
-  pub fn cy_clone_of(k: Nat, &mut c: Cy, name: Text): Option(Nat) {
-    ⊢ Option(Nat) from match k {
+  pub fn cy_clone_of(k: Nat, c: &mut Cy, name: Text): Option(Nat) {
+    match k {
       Zero => None
       Succ(j) => ⊢ Option(Nat) from match Ordmap::get(c.generic_fns, name, Ordmap::compare_text) {
         None => None
@@ -1916,7 +2078,7 @@ mutual {
           set_to(&mut c.scopes, Nil)
           cy_push_frame(&mut c, None, 0, false)
           set_to(&mut c.cloning, Cons(name, c.cloning))
-          cy_closure_body(j, &mut c, l, f.params, f.borrows, f.body, cy_is_borrow_term(f.result))
+          cy_closure_body(j, &mut c, l, f.params, f.r#borrows, f.body, cy_is_borrow_term(f.result))
           set_to(&mut c.cloning, saved_cloning)
           set_to(&mut c.frames, saved_frames)
           set_to(&mut c.depth, saved_depth)
@@ -1930,13 +2092,13 @@ mutual {
 
   pub fn cy_app_named(
     k: Nat,
-    &mut c: Cy,
+    c: &mut Cy,
     t: SurfaceTerm,
     function: SurfaceTerm,
     arguments: List(SurfaceTerm),
     named: Option(Text)
   ): Nat {
-    ⊢ Nat from match k {
+    match k {
       Zero => 0
       Succ(j) => ⊢ Nat from match named {
         None => cy_app_value(j, &mut c, t, function, arguments)
@@ -1960,7 +2122,7 @@ mutual {
                   cy_call_methods(ls, &mut c, args, res)
                   res
                 }
-                None => if cy_has_ctor(c, name) || cy_is_operator(name) || name == "Tuple" {
+                None => if cy_has_ctor(c, name) || cy_is_operator(name) || name == "std::prelude::Pair::Mk" || cy_is_expanded_method(c, name) {
                   let parts := cy_eval_each(j, &mut c, arguments, false)
                   cy_join(&mut c, parts)
                 } else {
@@ -1984,18 +2146,18 @@ mutual {
   // A call of a value: what it calls is known once the program is solved.
   pub fn cy_app_value(
     k: Nat,
-    &mut c: Cy,
+    c: &mut Cy,
     t: SurfaceTerm,
     function: SurfaceTerm,
     arguments: List(SurfaceTerm)
   ): Nat {
-    ⊢ Nat from match k {
+    match k {
       Zero => 0
       Succ(j) => {
         let callee := cy_eval(j, &mut c, function, false)
         let args := cy_eval_each(j, &mut c, arguments, false)
         let res := cy_node(&mut c)
-        let frame := if cy_settled(c, t) { cy_node(&mut c) } else { cy_scope(c) }
+        let frame: Nat := if cy_settled(c, t) { cy_node(&mut c) } else { cy_scope(c) }
         set_to(
           &mut c.calls,
           Cons(CyCall { callee: callee, args: args, res: res, frame: frame }, c.calls)
@@ -2005,30 +2167,45 @@ mutual {
     }
   }
 
+  pub fn cy_perform(k: Nat, c: &mut Cy, eff: Text, args: List(SurfaceTerm)): Nat {
+    match k {
+      Zero => 0
+      Succ(j) => {
+        let nodes := cy_eval_each(j, &mut c, args, false)
+        let slots := cy_effect_slots(&mut c, eff, List::length(nodes))
+        cy_flow_zip(nodes, &mut c, slots)
+        // The handler of an effect nothing here handles (the runtime's) may
+        // keep or return what it is given.
+        let back := cy_effect_resume(&mut c, eff)
+        cy_join(&mut c, List::append(nodes, Cons(back, Nil)))
+      }
+    }
+  }
+
   pub fn cy_extern_call(
     k: Nat,
-    &mut c: Cy,
+    c: &mut Cy,
     model: CyExtern,
     name: Text,
     t: SurfaceTerm,
     arguments: List(SurfaceTerm)
   ): Nat {
-    ⊢ Nat from match k {
+    match k {
       Zero => 0
       Succ(j) => {
         let args := cy_eval_each(j, &mut c, arguments, true)
         // The storage an operation works on is the first argument, read
         // through when it is a place.
         let first := ⊢ Nat from match args {
-          Cons(a, rest) => a
+          Cons(a, ^rest) => a
           Nil => 0
         }
         let first_term := ⊢ Option(SurfaceTerm) from match arguments {
-          Cons(a, rest) => Some(a)
+          Cons(a, ^rest) => Some(a)
           Nil => None
         }
         let others := ⊢ List(Nat) from match args {
-          Cons(a, rest) => rest
+          Cons(^a, rest) => rest
           Nil => Nil
         }
         ⊢ Nat from match model {
@@ -2061,54 +2238,46 @@ mutual {
           ExLoad => {
             let target := cy_read_through_typed(&mut c, first, first_term)
             let d := cy_node(&mut c)
-            set_to(&mut c.loads, Cons(Pair { fst: d, snd: target }, c.loads))
-            d
-          }
-          ExSwap => {
-            let target := cy_read_through_typed(&mut c, first, first_term)
-            let vs := cy_read_through_each(others, &mut c)
-            cy_store_each(vs, &mut c, target)
-            let d := cy_node(&mut c)
-            set_to(&mut c.loads, Cons(Pair { fst: d, snd: target }, c.loads))
+            set_to(&mut c.loads, Cons(#(d, target), c.loads))
             d
           }
           ExReplace => {
             let vs := cy_read_through_each(others, &mut c)
             cy_store_each(vs, &mut c, first)
             let d := cy_node(&mut c)
-            set_to(&mut c.reads, Cons(Pair { fst: d, snd: first }, c.reads))
+            set_to(&mut c.reads, Cons(#(d, first), c.reads))
             d
           }
           ExDowngrade => {
             let target := cy_read_through_typed(&mut c, first, first_term)
             let d := cy_node(&mut c)
-            set_to(&mut c.weakens, Cons(Pair { fst: d, snd: target }, c.weakens))
+            set_to(&mut c.weakens, Cons(#(d, target), c.weakens))
             d
           }
           ExUpgrade => {
             let target := cy_read_through_typed(&mut c, first, first_term)
             let d := cy_node(&mut c)
-            set_to(&mut c.upgrades, Cons(Pair { fst: d, snd: target }, c.upgrades))
+            set_to(&mut c.upgrades, Cons(#(d, target), c.upgrades))
             d
           }
           ExLoadMut => {
             let target := cy_read_through_typed(&mut c, first, first_term)
             let d := cy_node(&mut c)
-            set_to(&mut c.places, Cons(Pair { fst: d, snd: target }, c.places))
+            set_to(&mut c.places, Cons(#(d, target), c.places))
             d
           }
           ExConvert => ⊢ Nat from match cy_storage_kind(name) {
             // A storage of another kind, holding what the first held.
-            Some(kind) => {
+            Some(^kind) => {
               let target := cy_read_through_typed(&mut c, first, first_term)
               let cell := cy_cell(&mut c, name, t.start, t.end)
-              set_to(&mut c.loads, Cons(Pair { fst: cell.snd, snd: target }, c.loads))
+              set_to(&mut c.loads, Cons(#(cell.snd, target), c.loads))
               cy_atom(&mut c, AtCell(cell.fst))
             }
             None => {
               let target := cy_read_through_typed(&mut c, first, first_term)
               let d := cy_node(&mut c)
-              set_to(&mut c.loads, Cons(Pair { fst: d, snd: target }, c.loads))
+              set_to(&mut c.loads, Cons(#(d, target), c.loads))
               d
             }
           }
@@ -2117,8 +2286,8 @@ mutual {
     }
   }
 
-  pub fn cy_handle(k: Nat, &mut c: Cy, body: SurfaceTerm, handlers: List(SurfaceHandler)): Nat {
-    ⊢ Nat from match k {
+  pub fn cy_handle(k: Nat, c: &mut Cy, body: SurfaceTerm, handlers: List(SurfaceHandler)): Nat {
+    match k {
       Zero => 0
       Succ(j) => {
         // What the body holds at a `perform`: the stack up to this handle.
@@ -2144,13 +2313,13 @@ mutual {
 
   pub fn cy_handlers(
     k: Nat,
-    &mut c: Cy,
+    c: &mut Cy,
     hs: List(SurfaceHandler),
     b: Nat,
     res: Nat,
     arms: Nat
   ): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match hs {
         Nil => false
@@ -2163,7 +2332,9 @@ mutual {
               cy_flow(&mut c, v, res)
               true
             }
-            HdOperation(eff, hfa, hty, patterns, cont, guard, arm) => {
+            // The host's arms for the storage operations: each `perform` of
+            // one is read as what they answer it with.
+            HdOperation(eff, ^hfa, ^hty, patterns, cont, _, guard, arm) => if cy_host_storage_arm(eff, arm) { false } else {
               let slots := cy_effect_slots(&mut c, eff, List::length(patterns))
               cy_bind_patterns(patterns, &mut c, slots, arm)
               ⊢ Unit from match cont {
@@ -2202,8 +2373,8 @@ mutual {
   }
 }
 
-pub fn cy_hold_bindings(bs: List(CyBinding), &mut c: Cy, dst: Nat): Unit {
-  ⊢ Unit from match bs {
+pub fn cy_hold_bindings(bs: List(CyBinding), c: &mut Cy, dst: Nat): Unit {
+  match bs {
     Nil => #()
     Cons(b, rest) => {
       let held := cy_bound_node(&mut c, b.bound)
@@ -2213,8 +2384,8 @@ pub fn cy_hold_bindings(bs: List(CyBinding), &mut c: Cy, dst: Nat): Unit {
   }
 }
 
-pub fn cy_collect_externs(fns: List(SurfaceFn), &mut c: Cy): Unit {
-  ⊢ Unit from match fns {
+pub fn cy_collect_externs(fns: List(SurfaceFn), c: &mut Cy): Unit {
+  match fns {
     Nil => #()
     Cons(f, rest) => {
       if not(cy_is_some_extern(f.name)) {
@@ -2230,13 +2401,13 @@ pub fn cy_collect_externs(fns: List(SurfaceFn), &mut c: Cy): Unit {
 mutual {
   pub fn cy_collect(
     k: Nat,
-    &mut c: Cy,
+    c: &mut Cy,
     ss: List(SurfaceStmt),
-    acc: List(Pair(Nat, SurfaceFn))
-  ): List(Pair(Nat, SurfaceFn)) {
-    ⊢ List(Pair(Nat, SurfaceFn)) from match k {
+    acc: List(Nat × SurfaceFn)
+  ): List(Nat × SurfaceFn) {
+    match k {
       Zero => acc
-      Succ(j) => ⊢ List(Pair(Nat, SurfaceFn)) from match ss {
+      Succ(j) => ⊢ List(Nat × SurfaceFn) from match ss {
         Nil => acc
         Cons(s, rest) => {
           let more := cy_collect_one(j, &mut c, s, acc)
@@ -2248,28 +2419,36 @@ mutual {
 
   pub fn cy_collect_one(
     k: Nat,
-    &mut c: Cy,
+    c: &mut Cy,
     s: SurfaceStmt,
-    acc: List(Pair(Nat, SurfaceFn))
-  ): List(Pair(Nat, SurfaceFn)) {
-    ⊢ List(Pair(Nat, SurfaceFn)) from match k {
+    acc: List(Nat × SurfaceFn)
+  ): List(Nat × SurfaceFn) {
+    match k {
       Zero => acc
-      Succ(j) => ⊢ List(Pair(Nat, SurfaceFn)) from match s {
+      Succ(j) => ⊢ List(Nat × SurfaceFn) from match s {
         StFn(f) => {
           let l := cy_new_lam(&mut c, f.params)
           set_to(&mut c.globals, Ordmap::insert(c.globals, f.name, l, Ordmap::compare_text))
           ⊢ Unit from match f.generics {
             Nil => #()
-            Cons(g, more) => set_to(
+            Cons(^g, ^more) => set_to(
               &mut c.generic_fns,
               Ordmap::insert(c.generic_fns, f.name, f, Ordmap::compare_text)
             )
           }
-          Cons(Pair { fst: l, snd: f }, acc)
+          Cons(#(l, f), acc)
         }
         StInstance(i) => cy_collect_methods(j, &mut c, i.methods, acc)
-        StMutual(items, start, end) => cy_collect(j, &mut c, items, acc)
-        StExtern(abi, fns, start, end) => {
+        StMutual(items, ^start, ^end) => cy_collect(j, &mut c, items, acc)
+        StExtern(fns, instances, types, structs, enums, ^start, ^end) => if extern_is_replaceable(
+          fns,
+          instances,
+          types,
+          structs,
+          enums
+        ) {
+          cy_collect_methods(j, &mut c, fns, acc)
+        } else {
           cy_collect_externs(fns, &mut c)
           acc
         }
@@ -2280,13 +2459,13 @@ mutual {
 
   pub fn cy_collect_methods(
     k: Nat,
-    &mut c: Cy,
+    c: &mut Cy,
     ms: List(SurfaceFn),
-    acc: List(Pair(Nat, SurfaceFn))
-  ): List(Pair(Nat, SurfaceFn)) {
-    ⊢ List(Pair(Nat, SurfaceFn)) from match k {
+    acc: List(Nat × SurfaceFn)
+  ): List(Nat × SurfaceFn) {
+    match k {
       Zero => acc
-      Succ(j) => ⊢ List(Pair(Nat, SurfaceFn)) from match ms {
+      Succ(j) => ⊢ List(Nat × SurfaceFn) from match ms {
         Nil => acc
         Cons(m, rest) => {
           let l := cy_new_lam(&mut c, m.params)
@@ -2303,15 +2482,15 @@ mutual {
               Ordmap::compare_text
             )
           )
-          cy_collect_methods(j, &mut c, rest, Cons(Pair { fst: l, snd: m }, acc))
+          cy_collect_methods(j, &mut c, rest, Cons(#(l, m), acc))
         }
       }
     }
   }
 }
 
-pub fn cy_functions(k: Nat, &mut c: Cy, ds: List(Pair(Nat, SurfaceFn))): Unit {
-  ⊢ Unit from match k {
+pub fn cy_functions(k: Nat, c: &mut Cy, ds: List(Nat × SurfaceFn)): Unit {
+  match k {
     Zero => #()
     Succ(j) => ⊢ Unit from match ds {
       Nil => #()
@@ -2322,7 +2501,7 @@ pub fn cy_functions(k: Nat, &mut c: Cy, ds: List(Pair(Nat, SurfaceFn))): Unit {
           &mut c,
           d.fst,
           f.params,
-          f.borrows,
+          f.r#borrows,
           f.body,
           cy_is_borrow_term(f.result)
         )
@@ -2333,21 +2512,21 @@ pub fn cy_functions(k: Nat, &mut c: Cy, ds: List(Pair(Nat, SurfaceFn))): Unit {
 }
 
 pub fn cy_not_fns(ss: List(SurfaceStmt)): List(SurfaceStmt) {
-  ⊢ List(SurfaceStmt) from match ss {
+  match ss {
     Nil => Nil
     Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
-      StFn(f) => cy_not_fns(rest)
+      StFn(^f) => cy_not_fns(rest)
       _ => Cons(s, cy_not_fns(rest))
     }
   }
 }
 
-pub fn cy_union(&mut c: Cy, dst: Nat, src: Nat): Unit {
+pub fn cy_union(c: &mut Cy, dst: Nat, src: Nat): Unit {
   cy_insert_all(cy_atom_list(c, src), &mut c, dst)
 }
 
-pub fn cy_union_each(dsts: List(Nat), &mut c: Cy, src: Nat): Unit {
-  ⊢ Unit from match dsts {
+pub fn cy_union_each(dsts: List(Nat), c: &mut Cy, src: Nat): Unit {
+  match dsts {
     Nil => #()
     Cons(d, rest) => {
       cy_union(&mut c, d, src)
@@ -2356,8 +2535,8 @@ pub fn cy_union_each(dsts: List(Nat), &mut c: Cy, src: Nat): Unit {
   }
 }
 
-pub fn cy_solve_copies(es: List(Pair(Nat, Ordmap(Nat, Bool))), &mut c: Cy): Unit {
-  ⊢ Unit from match es {
+pub fn cy_solve_copies(es: List(Nat × Ordmap(Nat, Bool)), c: &mut Cy): Unit {
+  match es {
     Nil => #()
     Cons(e, rest) => {
       cy_union_each(cy_keys(Ordmap::entries(e.snd)), &mut c, e.fst)
@@ -2366,8 +2545,8 @@ pub fn cy_solve_copies(es: List(Pair(Nat, Ordmap(Nat, Bool))), &mut c: Cy): Unit
   }
 }
 
-pub fn cy_load_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
-  ⊢ Unit from match atoms {
+pub fn cy_load_atoms(atoms: List(CyAtom), c: &mut Cy, dst: Nat): Unit {
+  match atoms {
     Nil => #()
     Cons(a, rest) => {
       ⊢ Unit from match a {
@@ -2380,8 +2559,8 @@ pub fn cy_load_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
   }
 }
 
-pub fn cy_read_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
-  ⊢ Unit from match atoms {
+pub fn cy_read_atoms(atoms: List(CyAtom), c: &mut Cy, dst: Nat): Unit {
+  match atoms {
     Nil => #()
     Cons(a, rest) => {
       ⊢ Unit from match a {
@@ -2393,8 +2572,8 @@ pub fn cy_read_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
   }
 }
 
-pub fn cy_place_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
-  ⊢ Unit from match atoms {
+pub fn cy_place_atoms(atoms: List(CyAtom), c: &mut Cy, dst: Nat): Unit {
+  match atoms {
     Nil => #()
     Cons(a, rest) => {
       ⊢ Unit from match a {
@@ -2407,8 +2586,8 @@ pub fn cy_place_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
   }
 }
 
-pub fn cy_weaken_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
-  ⊢ Unit from match atoms {
+pub fn cy_weaken_atoms(atoms: List(CyAtom), c: &mut Cy, dst: Nat): Unit {
+  match atoms {
     Nil => #()
     Cons(a, rest) => {
       ⊢ Unit from match a {
@@ -2420,8 +2599,8 @@ pub fn cy_weaken_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
   }
 }
 
-pub fn cy_upgrade_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
-  ⊢ Unit from match atoms {
+pub fn cy_upgrade_atoms(atoms: List(CyAtom), c: &mut Cy, dst: Nat): Unit {
+  match atoms {
     Nil => #()
     Cons(a, rest) => {
       ⊢ Unit from match a {
@@ -2433,8 +2612,8 @@ pub fn cy_upgrade_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
   }
 }
 
-pub fn cy_solve_weakens(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
-  ⊢ Unit from match es {
+pub fn cy_solve_weakens(es: List(Nat × Nat), c: &mut Cy): Unit {
+  match es {
     Nil => #()
     Cons(e, rest) => {
       cy_weaken_atoms(cy_atom_list(c, e.snd), &mut c, e.fst)
@@ -2443,8 +2622,8 @@ pub fn cy_solve_weakens(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
   }
 }
 
-pub fn cy_solve_upgrades(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
-  ⊢ Unit from match es {
+pub fn cy_solve_upgrades(es: List(Nat × Nat), c: &mut Cy): Unit {
+  match es {
     Nil => #()
     Cons(e, rest) => {
       cy_upgrade_atoms(cy_atom_list(c, e.snd), &mut c, e.fst)
@@ -2453,8 +2632,8 @@ pub fn cy_solve_upgrades(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
   }
 }
 
-pub fn cy_store_atoms(atoms: List(CyAtom), &mut c: Cy, src: Nat): Unit {
-  ⊢ Unit from match atoms {
+pub fn cy_store_atoms(atoms: List(CyAtom), c: &mut Cy, src: Nat): Unit {
+  match atoms {
     Nil => #()
     Cons(a, rest) => {
       ⊢ Unit from match a {
@@ -2467,8 +2646,8 @@ pub fn cy_store_atoms(atoms: List(CyAtom), &mut c: Cy, src: Nat): Unit {
   }
 }
 
-pub fn cy_call_atoms(atoms: List(CyAtom), &mut c: Cy, call: CyCall): Unit {
-  ⊢ Unit from match atoms {
+pub fn cy_call_atoms(atoms: List(CyAtom), c: &mut Cy, call: CyCall): Unit {
+  match atoms {
     Nil => #()
     Cons(a, rest) => {
       ⊢ Unit from match a {
@@ -2478,7 +2657,7 @@ pub fn cy_call_atoms(atoms: List(CyAtom), &mut c: Cy, call: CyCall): Unit {
           cy_flow(&mut c, lam.ret, call.res)
           cy_flow(&mut c, lam.frame, call.frame)
         }
-        AtUnknown(u) => cy_insert(&mut c, call.res, a)
+        AtUnknown(^u) => cy_insert(&mut c, call.res, a)
         _ => #()
       }
       cy_call_atoms(rest, &mut c, call)
@@ -2486,8 +2665,8 @@ pub fn cy_call_atoms(atoms: List(CyAtom), &mut c: Cy, call: CyCall): Unit {
   }
 }
 
-pub fn cy_solve_loads(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
-  ⊢ Unit from match es {
+pub fn cy_solve_loads(es: List(Nat × Nat), c: &mut Cy): Unit {
+  match es {
     Nil => #()
     Cons(e, rest) => {
       cy_load_atoms(cy_atom_list(c, e.snd), &mut c, e.fst)
@@ -2496,8 +2675,8 @@ pub fn cy_solve_loads(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
   }
 }
 
-pub fn cy_solve_reads(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
-  ⊢ Unit from match es {
+pub fn cy_solve_reads(es: List(Nat × Nat), c: &mut Cy): Unit {
+  match es {
     Nil => #()
     Cons(e, rest) => {
       cy_read_atoms(cy_atom_list(c, e.snd), &mut c, e.fst)
@@ -2506,8 +2685,8 @@ pub fn cy_solve_reads(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
   }
 }
 
-pub fn cy_solve_places(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
-  ⊢ Unit from match es {
+pub fn cy_solve_places(es: List(Nat × Nat), c: &mut Cy): Unit {
+  match es {
     Nil => #()
     Cons(e, rest) => {
       cy_place_atoms(cy_atom_list(c, e.snd), &mut c, e.fst)
@@ -2516,8 +2695,8 @@ pub fn cy_solve_places(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
   }
 }
 
-pub fn cy_solve_stores(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
-  ⊢ Unit from match es {
+pub fn cy_solve_stores(es: List(Nat × Nat), c: &mut Cy): Unit {
+  match es {
     Nil => #()
     Cons(e, rest) => {
       cy_store_atoms(cy_atom_list(c, e.fst), &mut c, e.snd)
@@ -2526,8 +2705,8 @@ pub fn cy_solve_stores(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
   }
 }
 
-pub fn cy_filter_atoms(atoms: List(CyAtom), &mut c: Cy, f: CyFilter): Unit {
-  ⊢ Unit from match atoms {
+pub fn cy_filter_atoms(atoms: List(CyAtom), c: &mut Cy, f: CyFilter): Unit {
+  match atoms {
     Nil => #()
     Cons(a, rest) => {
       let kept := ⊢ Bool from match a {
@@ -2545,8 +2724,8 @@ pub fn cy_filter_atoms(atoms: List(CyAtom), &mut c: Cy, f: CyFilter): Unit {
   }
 }
 
-pub fn cy_solve_filters(fs: List(CyFilter), &mut c: Cy): Unit {
-  ⊢ Unit from match fs {
+pub fn cy_solve_filters(fs: List(CyFilter), c: &mut Cy): Unit {
+  match fs {
     Nil => #()
     Cons(f, rest) => {
       cy_filter_atoms(cy_atom_list(c, f.src), &mut c, f)
@@ -2555,8 +2734,8 @@ pub fn cy_solve_filters(fs: List(CyFilter), &mut c: Cy): Unit {
   }
 }
 
-pub fn cy_solve_calls(cs: List(CyCall), &mut c: Cy): Unit {
-  ⊢ Unit from match cs {
+pub fn cy_solve_calls(cs: List(CyCall), c: &mut Cy): Unit {
+  match cs {
     Nil => #()
     Cons(call, rest) => {
       cy_call_atoms(cy_atom_list(c, call.callee), &mut c, call)
@@ -2566,8 +2745,8 @@ pub fn cy_solve_calls(cs: List(CyCall), &mut c: Cy): Unit {
 }
 
 // Every constraint once, until none adds an atom or an edge.
-pub fn cy_solve(k: Nat, &mut c: Cy): Unit {
-  ⊢ Unit from match k {
+pub fn cy_solve(k: Nat, c: &mut Cy): Unit {
+  match k {
     Zero => #()
     Succ(j) => {
       set_to(&mut c.changed, false)
@@ -2593,7 +2772,7 @@ pub(open) inductive CyFrontier: Type {
 
 // The sites a content reaches through immutable values and closures.
 pub fn cy_frontier_in(k: Nat, c: Cy, stack: List(CyAtom), f: CyFrontier): CyFrontier {
-  ⊢ CyFrontier from match k {
+  match k {
     Zero => f
     Succ(j) => ⊢ CyFrontier from match stack {
       Nil => f
@@ -2609,7 +2788,7 @@ pub fn cy_frontier_in(k: Nat, c: Cy, stack: List(CyAtom), f: CyFrontier): CyFron
           lams: f.lams
         })
         // A `Weak` keeps nothing alive.
-        AtWeak(s) => cy_frontier_in(j, c, rest, f)
+        AtWeak(^s) => cy_frontier_in(j, c, rest, f)
         AtUnknown(u) => cy_frontier_in(
           j,
           c,
@@ -2645,7 +2824,7 @@ pub fn cy_frontier(c: Cy, contents: Nat): CyFrontier {
 }
 
 // `(why, start)` before by where, then why.
-pub fn cy_unknown_before(a: Pair(Text, Nat), b: Pair(Text, Nat)): Bool {
+pub fn cy_unknown_before(a: Text × Nat, b: Text × Nat): Bool {
   let less := ⊢ Bool from match Text::ordering(a.fst, b.fst) {
     Less => true
     _ => false
@@ -2653,24 +2832,24 @@ pub fn cy_unknown_before(a: Pair(Text, Nat), b: Pair(Text, Nat)): Bool {
   a.snd < b.snd || (a.snd == b.snd && less)
 }
 
-pub fn cy_pick(first: Bool, x: Pair(Text, Nat), y: Pair(Text, Nat)): Option(Pair(Text, Nat)) {
+pub fn cy_pick(first: Bool, x: Text × Nat, y: Text × Nat): Option(Text × Nat) {
   if first { Some(x) } else { Some(y) }
 }
 
 pub fn cy_min_unknown(
   us: List(Nat),
   c: Cy,
-  best: Option(Pair(Text, Nat))
-): Option(Pair(Text, Nat)) {
-  ⊢ Option(Pair(Text, Nat)) from match us {
+  best: Option(Text × Nat)
+): Option(Text × Nat) {
+  match us {
     Nil => best
-    Cons(u, rest) => ⊢ Option(Pair(Text, Nat)) from match Ordmap::get(
+    Cons(u, rest) => ⊢ Option(Text × Nat) from match Ordmap::get(
       c.unknowns,
       u,
       Ordmap::compare_nat
     ) {
       None => cy_min_unknown(rest, c, best)
-      Some(x) => ⊢ Option(Pair(Text, Nat)) from match best {
+      Some(x) => ⊢ Option(Text × Nat) from match best {
         None => cy_min_unknown(rest, c, Some(x))
         Some(b) => cy_min_unknown(rest, c, cy_pick(cy_unknown_before(x, b), x, b))
       }
@@ -2686,9 +2865,9 @@ pub fn cy_edges(
   s: Nat,
   edges: Ordmap(Nat, List(Nat)),
   out: List(LinError)
-): Pair(Ordmap(Nat, List(Nat)), List(LinError)) {
-  ⊢ Pair(Ordmap(Nat, List(Nat)), List(LinError)) from match k {
-    Zero => Pair { fst: edges, snd: out }
+): Ordmap(Nat, List(Nat)) × List(LinError) {
+  ⊢ (Ordmap(Nat, List(Nat)) × List(LinError)) from match k {
+    Zero => #(edges, out)
     Succ(j) => if s < c.cell_count {
       let cell := cy_cell_at(c, s)
       let f := cy_frontier(c, cell.contents)
@@ -2696,9 +2875,7 @@ pub fn cy_edges(
         None => out
         Some(u) => Cons(
           LinError {
-            message: Text::concat_all(
-              Cons(cell.what, Cons(" may hold a value that cannot be checked for reference cycles: ", Cons(u.fst, Nil)))
-            ),
+            message: cycle_unchecked_message(cell.what, u.fst),
             start: cell.start,
             end: cell.end
           },
@@ -2713,13 +2890,13 @@ pub fn cy_edges(
         more
       )
     } else {
-      Pair { fst: edges, snd: out }
+      #(edges, out)
     }
   }
 }
 
 pub fn cy_edges_of(edges: Ordmap(Nat, List(Nat)), s: Nat): List(Nat) {
-  ⊢ List(Nat) from match Ordmap::get(edges, s, Ordmap::compare_nat) {
+  match Ordmap::get(edges, s, Ordmap::compare_nat) {
     Some(es) => es
     None => Nil
   }
@@ -2731,7 +2908,7 @@ pub fn cy_reach_in(
   stack: List(Nat),
   seen: Ordmap(Nat, Bool)
 ): Ordmap(Nat, Bool) {
-  ⊢ Ordmap(Nat, Bool) from match k {
+  match k {
     Zero => seen
     Succ(j) => ⊢ Ordmap(Nat, Bool) from match stack {
       Nil => seen
@@ -2756,7 +2933,7 @@ pub fn cy_reaches(
   n: Nat,
   acc: Ordmap(Nat, Ordmap(Nat, Bool))
 ): Ordmap(Nat, Ordmap(Nat, Bool)) {
-  ⊢ Ordmap(Nat, Ordmap(Nat, Bool)) from match k {
+  match k {
     Zero => acc
     Succ(j) => if s < n {
       cy_reaches(
@@ -2778,7 +2955,7 @@ pub fn cy_reaches(
 }
 
 pub fn cy_reach_of(reach: Ordmap(Nat, Ordmap(Nat, Bool)), s: Nat): Ordmap(Nat, Bool) {
-  ⊢ Ordmap(Nat, Bool) from match Ordmap::get(reach, s, Ordmap::compare_nat) {
+  match Ordmap::get(reach, s, Ordmap::compare_nat) {
     Some(r) => r
     None => Ordmap::empty()
   }
@@ -2796,7 +2973,7 @@ pub fn cy_component(
   d: Nat,
   n: Nat
 ): List(Nat) {
-  ⊢ List(Nat) from match k {
+  match k {
     Zero => Nil
     Succ(j) => if d < n {
       if cy_reached(reach, s, d) && cy_reached(reach, d, s) {
@@ -2811,7 +2988,7 @@ pub fn cy_component(
 }
 
 pub fn cy_mark_done(ds: List(Nat), done: Ordmap(Nat, Bool)): Ordmap(Nat, Bool) {
-  ⊢ Ordmap(Nat, Bool) from match ds {
+  match ds {
     Nil => done
     Cons(d, rest) => cy_mark_done(rest, Ordmap::insert(done, d, true, Ordmap::compare_nat))
   }
@@ -2836,7 +3013,7 @@ pub fn cy_cell_order(a: CyCell, b: CyCell): Ordering {
 
 // `x` was before every element of `l`: it goes before the equal ones.
 pub fn cy_insert_cell_first(x: CyCell, l: List(CyCell)): List(CyCell) {
-  ⊢ List(CyCell) from match l {
+  match l {
     Nil => Cons(x, Nil)
     Cons(h, t) => ⊢ List(CyCell) from match cy_cell_order(x, h) {
       Greater => Cons(h, cy_insert_cell_first(x, t))
@@ -2847,45 +3024,41 @@ pub fn cy_insert_cell_first(x: CyCell, l: List(CyCell)): List(CyCell) {
 
 // Stable: equal ones keep their order.
 pub fn cy_sort_cells(l: List(CyCell)): List(CyCell) {
-  ⊢ List(CyCell) from match l {
+  match l {
     Nil => Nil
     Cons(h, t) => cy_insert_cell_first(h, cy_sort_cells(t))
   }
 }
 
 pub fn cy_cells_of(c: Cy, ds: List(Nat)): List(CyCell) {
-  ⊢ List(CyCell) from match ds {
+  match ds {
     Nil => Nil
     Cons(d, rest) => Cons(cy_cell_at(c, d), cy_cells_of(c, rest))
   }
 }
 
 pub fn cy_whats(cs: List(CyCell)): List(Text) {
-  ⊢ List(Text) from match cs {
+  match cs {
     Nil => Nil
     Cons(x, rest) => Cons(x.what, cy_whats(rest))
   }
 }
 
 pub fn cy_comma(ns: List(Text)): Text {
-  ⊢ Text from match ns {
+  match ns {
     Nil => ""
     Cons(n, rest) => ⊢ Text from match rest {
       Nil => n
-      Cons(m, more) => Text::concat_all(Cons(n, Cons(", ", Cons(cy_comma(rest), Nil))))
+      Cons(^m, ^more) => Text::concat_all(Cons(n, Cons(", ", Cons(cy_comma(rest), Nil))))
     }
   }
 }
 
 pub fn cy_cycle_message(names: List(Text)): Text {
   if List::length(names) == 1 {
-    cat3(
-      cy_comma(names),
-      " may hold itself through a closure or a data structure, which is a strong reference cycle",
-      ""
-    )
+    cycle_self_message(cy_comma(names))
   } else {
-    cat3("strong reference cycle among ", cy_comma(names), "")
+    cycle_among_message(cy_comma(names))
   }
 }
 
@@ -2897,7 +3070,7 @@ pub fn cy_cycles(
   done: Ordmap(Nat, Bool),
   out: List(LinError)
 ): List(LinError) {
-  ⊢ List(LinError) from match k {
+  match k {
     Zero => out
     Succ(j) => if s < c.cell_count {
       if Ordmap::contains(done, s, Ordmap::compare_nat) || not(cy_reached(reach, s, s)) {
@@ -2908,7 +3081,7 @@ pub fn cy_cycles(
         let names := cy_whats(cells)
         let message := cy_cycle_message(names)
         let first := ⊢ CyCell from match cells {
-          Cons(x, rest) => x
+          Cons(x, ^rest) => x
           Nil => cy_cell_dummy()
         }
         cy_cycles(
@@ -2927,7 +3100,7 @@ pub fn cy_cycles(
 }
 
 pub fn cy_error_order(a: LinError, b: LinError): Ordering {
-  ⊢ Ordering from match Ordmap::compare_nat(a.start, b.start) {
+  match Ordmap::compare_nat(a.start, b.start) {
     Equal => ⊢ Ordering from match Ordmap::compare_nat(a.end, b.end) {
       Equal => Text::ordering(a.message, b.message)
       Less => Less
@@ -2939,7 +3112,7 @@ pub fn cy_error_order(a: LinError, b: LinError): Ordering {
 }
 
 pub fn cy_insert_error(x: LinError, l: List(LinError)): List(LinError) {
-  ⊢ List(LinError) from match l {
+  match l {
     Nil => Cons(x, Nil)
     Cons(h, t) => ⊢ List(LinError) from match cy_error_order(x, h) {
       Greater => Cons(h, cy_insert_error(x, t))
@@ -2949,17 +3122,17 @@ pub fn cy_insert_error(x: LinError, l: List(LinError)): List(LinError) {
 }
 
 pub fn cy_sort_errors(l: List(LinError)): List(LinError) {
-  ⊢ List(LinError) from match l {
+  match l {
     Nil => Nil
     Cons(h, t) => cy_insert_error(h, cy_sort_errors(t))
   }
 }
 
 pub fn cy_dedup(es: List(LinError)): List(LinError) {
-  ⊢ List(LinError) from match es {
+  match es {
     Nil => Nil
     Cons(a, rest) => ⊢ List(LinError) from match rest {
-      Cons(b, more) => ⊢ List(LinError) from match cy_error_order(a, b) {
+      Cons(b, ^more) => ⊢ List(LinError) from match cy_error_order(a, b) {
         Equal => cy_dedup(rest)
         _ => Cons(a, cy_dedup(rest))
       }

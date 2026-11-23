@@ -1,21 +1,26 @@
+import "messages.taut"
 import "instantiation_frame.taut"
 import "pattern_mutual.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "checker_frame.taut"
 import "datas_frame.taut"
 import "direct.taut"
 import "pattern_scope.taut"
 import "rows.taut"
+import "rows_base.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn handle_body_start(body: SurfaceTerm): Nat { body.start }
 pub fn handle_effect_generics(s: EffectSig): List(Text) { s.generics }
+pub fn handle_effect_kinded(s: EffectSig): List(Text × Kind) { kinded_generics(s.generics, s.kinds) }
+pub fn handle_arm_generics(s: EffectSig): List(Text × Kind) { arm_generics(s.generics, s.kinds) }
 pub fn handle_effect_type(s: EffectSig): Ty { TyFn(s.params, s.result, KindShared) }
 pub fn handle_effects(c: Checker): Ordmap(Text, EffectSig) { c.effects }
 pub fn handle_direct_bad(
@@ -39,7 +44,7 @@ pub fn handle_direct(
 ): Mut1(Unit, Checker) {
   frame_error_if(
     c,
-    cat3(eff, " is direct; every path of its arm must end in k(e)", ""),
+    direct_arm_must_resume_message(eff),
     span_of(body),
     handle_direct_bad(quant, cont, guard, body)
   )
@@ -55,7 +60,7 @@ pub theorem handle_direct_frame(
 ): CkReadFrame(c, handle_direct(c, quant, eff, cont, guard, body)) {
   frame_error_if_ok(
     c,
-    cat3(eff, " is direct; every path of its arm must end in k(e)", ""),
+    direct_arm_must_resume_message(eff),
     span_of(body),
     handle_direct_bad(quant, cont, guard, body)
   )
@@ -99,19 +104,17 @@ pub fn handle_sig_found(
   budget_ty: Ty,
   body: SurfaceTerm,
   found: Option(EffectSig)
-): Mut1(Option(Pair(List(Ty), Ty)), Checker) {
-  ⊢ Mut1(Option(Pair(List(Ty), Ty)), Checker) from match found {
+): Mut1(Option(List(Ty) × Ty), Checker) {
+  match found {
     Some(s) => frame_bind(
-      Ty,
-      Option(Pair(List(Ty), Ty)),
+      <A: Ty, B: Option(List(Ty) × Ty)>,
       (ty: Ty, c1: Checker) => mut1(ty_fn_sig(ty), c1),
       ck_instantiate_named(c, handle_effect_generics(s), handle_effect_type(s))
     )
     None => frame_bind(
-      Unit,
-      Option(Pair(List(Ty), Ty)),
+      <A: Unit, B: Option(List(Ty) × Ty)>,
       (ignored: Unit, c1: Checker) => mut1(None, c1),
-      ck_error(c, cat3("no effect `", eff, "` is declared"), span_of(body))
+      ck_error(c, no_effect_declared_message(eff), span_of(body))
     )
   }
 }
@@ -124,10 +127,9 @@ pub theorem handle_sig_found_frame(
   body: SurfaceTerm,
   found: Option(EffectSig)
 ): CkReadFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) {
-  ⊢ CkReadFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) from match found {
+  match found {
     Some(s) => frame_bind_ok(
-      Ty,
-      Option(Pair(List(Ty), Ty)),
+      <A: Ty, B: Option(List(Ty) × Ty)>,
       c,
       (ty: Ty, c1: Checker) => mut1(ty_fn_sig(ty), c1),
       ck_instantiate_named(c, handle_effect_generics(s), handle_effect_type(s)),
@@ -135,12 +137,11 @@ pub theorem handle_sig_found_frame(
       ty => c1 => Refl
     )
     None => frame_bind_ok(
-      Unit,
-      Option(Pair(List(Ty), Ty)),
+      <A: Unit, B: Option(List(Ty) × Ty)>,
       c,
       (ignored: Unit, c1: Checker) => mut1(None, c1),
-      ck_error(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
-      ck_error_frame(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
+      ck_error(c, no_effect_declared_message(eff), span_of(body)),
+      ck_error_frame(c, no_effect_declared_message(eff), span_of(body)),
       ignored => c1 => Refl
     )
   }
@@ -153,9 +154,9 @@ pub fn handle_sig(
   budget_ty: Ty,
   body: SurfaceTerm,
   exceeded: Bool
-): Mut1(Option(Pair(List(Ty), Ty)), Checker) {
-  ⊢ Mut1(Option(Pair(List(Ty), Ty)), Checker) from match exceeded {
-    true => mut1(Some(Pair { fst: Cons(TyInfo(result), Nil), snd: budget_ty }), c)
+): Mut1(Option(List(Ty) × Ty), Checker) {
+  match exceeded {
+    true => mut1(Some(#(Cons(TyInfo(result), Nil), budget_ty)), c)
     false => handle_sig_found(
       c,
       eff,
@@ -175,7 +176,7 @@ pub theorem handle_sig_frame(
   body: SurfaceTerm,
   exceeded: Bool
 ): CkReadFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) {
-  ⊢ CkReadFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) from match exceeded {
+  match exceeded {
     true => Refl
     false => handle_sig_found_frame(
       c,
@@ -210,7 +211,7 @@ pub theorem ck_handle_sig_frame(
   body: SurfaceTerm
 ): CkReadFrame(c, ck_handle_sig(c, eff, result, budget_ty, body)) {
   Eq::subst(
-    (z: Mut1(Option(Pair(List(Ty), Ty)), Checker)) => CkReadFrame(c, z),
+    (z: Mut1(Option(List(Ty) × Ty), Checker)) => CkReadFrame(c, z),
     Eq::sym(handle_sig_unf(c, eff, result, budget_ty, body)),
     handle_sig_frame(c, eff, result, budget_ty, body, Text::eq(eff, "exceeded"))
   )
@@ -224,11 +225,10 @@ pub fn handle_patterns_cons(
   body: SurfaceTerm,
   tys: List(Ty)
 ): Mut2(Unit, Checker, Scope) {
-  ⊢ Mut2(Unit, Checker, Scope) from match tys {
+  match tys {
     Nil => mut2(Star, c, inner)
     Cons(t, more) => pattern_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (ignored: Unit, c1: Checker, inner1: Scope) => pattern_rewrap(
         ck_handle_patterns(rest, c1, more, inner1, body)
       ),
@@ -251,11 +251,10 @@ pub theorem handle_patterns_cons_frame(
   ). CkScopeFrame(next, ck_handle_patterns(rest, next, more, env, body)),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, handle_patterns_cons(p, rest, c, inner, body, tys)) {
-  ⊢ CkScopeFrame(c, handle_patterns_cons(p, rest, c, inner, body, tys)) from match tys {
+  match tys {
     Nil => pattern_return_frame(c, inner, Star, ordered)
     Cons(t, more) => pattern_bind_frame(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, c1: Checker, inner1: Scope) => pattern_rewrap(
         ck_handle_patterns(rest, c1, more, inner1, body)
@@ -293,7 +292,7 @@ pub theorem ck_handle_patterns_frame(
   body: SurfaceTerm,
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, ck_handle_patterns(ps, c, tys, inner, body)) {
-  ⊢ CkScopeFrame(c, ck_handle_patterns(ps, c, tys, inner, body)) from match ps {
+  match ps {
     Nil => AndIntro(ordered, Refl)
     Cons(p, rest) => Eq::subst(
       (z: Mut2(Unit, Checker, Scope)) => CkScopeFrame(c, z),
@@ -329,11 +328,10 @@ pub fn handle_cont(
   body: SurfaceTerm,
   cont: Option(Text)
 ): Mut2(Unit, Checker, Scope) {
-  ⊢ Mut2(Unit, Checker, Scope) from match cont {
+  match cont {
     None => mut2(Star, c, inner)
     Some(k) => pattern_bind_one(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (ignored: Unit, c1: Checker) => pattern_rewrap(
         ck_bind_local(
           c1,
@@ -346,7 +344,7 @@ pub fn handle_cont(
       ),
       frame_error_if(
         c,
-        cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+        arm_does_not_resume_message(eff, k),
         span_of(body),
         quant_is_zero(quant)
       )
@@ -365,11 +363,10 @@ pub theorem handle_cont_frame(
   cont: Option(Text),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) {
-  ⊢ CkScopeFrame(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) from match cont {
+  match cont {
     None => pattern_return_frame(c, inner, Star, ordered)
     Some(k) => pattern_bind_one_frame(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, c1: Checker) => pattern_rewrap(
         ck_bind_local(
@@ -383,7 +380,7 @@ pub theorem handle_cont_frame(
       ),
       frame_error_if(
         c,
-        cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+        arm_does_not_resume_message(eff, k),
         span_of(body),
         quant_is_zero(quant)
       ),
@@ -391,13 +388,13 @@ pub theorem handle_cont_frame(
         c,
         frame_error_if(
           c,
-          cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+          arm_does_not_resume_message(eff, k),
           span_of(body),
           quant_is_zero(quant)
         ),
         frame_error_if_ok(
           c,
-          cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+          arm_does_not_resume_message(eff, k),
           span_of(body),
           quant_is_zero(quant)
         ),
@@ -427,7 +424,7 @@ pub theorem handle_cont_frame(
   }
 }
 
-pub theorem handle_cont_unf(c: Checker, inner: Scope, quant: Quant, eff: Text, cont: Option(Text), answer: Ty, result: Ty, body: SurfaceTerm): ck_handle_cont(c, inner, quant, eff, cont, answer, result, body) = handle_cont(c, inner, quant, eff, answer, result, body, cont) { ⊢ ck_handle_cont(c, inner, quant, eff, cont, answer, result, body) = handle_cont(c, inner, quant, eff, answer, result, body, cont) from match cont { None => Refl
+pub theorem handle_cont_unf(c: Checker, inner: Scope, quant: Quant, eff: Text, cont: Option(Text), answer: Ty, result: Ty, body: SurfaceTerm): ck_handle_cont(c, inner, quant, eff, cont, answer, result, body) = handle_cont(c, inner, quant, eff, answer, result, body, cont) { match cont { None => Refl
     Some(k) => ⊢ ck_handle_cont(
       c,
       inner,

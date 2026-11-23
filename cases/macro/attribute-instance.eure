@@ -1,0 +1,102 @@
+description = "An attribute macro makes an instance (`=> instance Class`), and a declaration takes several attributes."
+
+@ cases.an-attribute-macro-makes-an-instance
+entry = "main.taut"
+files."mk.taut" = path`../fixtures/attribute-instance-mk.taut`
+files."main.taut" = ````tauto
+import "mk.taut"
+
+@sized!(0) => instance Size
+struct Point { x: Nat }
+
+show(&mk::Size::size(Point { x: 1 }))
+````
+stdout = "7\n"
+
+// Each macro is given the declaration as written: both instances are for `Point`.
+@ cases.a-declaration-takes-several-attributes
+entry = "main.taut"
+files."mk.taut" = path`../fixtures/attribute-instance-mk.taut`
+files."main.taut" = ````tauto
+import "mk.taut"
+
+@sized!(0) => instance Size
+@labelled!(0) => instance Label
+struct Point { x: Nat }
+
+show(&mk::Size::size(Point { x: 1 }))
+show(&mk::Label::label(Point { x: 1 }))
+````
+stdout = ```
+7
+5
+```
+
+// The order the attributes are written in does not change the program.
+@ cases.the-order-of-attributes-does-not-change-the-program
+entry = "main.taut"
+files."mk.taut" = path`../fixtures/attribute-instance-mk.taut`
+files."main.taut" = ````tauto
+import "mk.taut"
+
+@labelled!(0) => instance Label
+@sized!(0) => instance Size
+struct Point { x: Nat }
+
+show(&mk::Size::size(Point { x: 1 }))
+show(&mk::Label::label(Point { x: 1 }))
+````
+stdout = ```
+7
+5
+```
+
+// One attribute rebuilds the declaration and another makes a declaration besides it.
+@ cases.one-attribute-replaces-and-another-adds
+entry = "main.taut"
+files."mk.taut" = path`../fixtures/attribute-instance-mk.taut`
+files."main.taut" = ````tauto
+import "mk.taut"
+
+@keep!(0) => replace fn zero
+@twin!(0) => fn zerotwin
+fn zero(): Nat { 0 }
+
+show(&zero())
+show(&zerotwin())
+````
+stdout = ```
+0
+0
+```
+
+// An attribute's list names what that attribute makes, not what the others make.
+@ cases.an-attribute-list-does-not-name-what-another-attribute-makes
+entry = "main.taut"
+files."mk.taut" = path`../fixtures/attribute-instance-mk.taut`
+files."main.taut" = ````tauto
+import "mk.taut"
+
+@sized!(0) => instance Size, instance Label
+@labelled!(0) => instance Label
+struct Point { x: Nat }
+````
+diagnostics[] {
+  stage = "checks"
+  message = "the attribute's list does not match what the macro made"
+}
+
+@ cases.only-one-attribute-of-a-declaration-replaces
+entry = "main.taut"
+files."mk.taut" = path`../fixtures/attribute-instance-mk.taut`
+files."main.taut" = ````tauto
+import "mk.taut"
+
+@keep!(0) => replace fn zero
+@keep!(0) => replace fn zero
+fn zero(): Nat { 0 }
+````
+diagnostics[] {
+  stage = "checks"
+  message = "only one attribute of a declaration says `replace`"
+}

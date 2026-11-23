@@ -1,6 +1,6 @@
 import "list.taut"
 import "rx.taut"
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
 // The disjoint character classes of a scanner: the leaves of all the
 // expressions (a character or a class) cut the code points into elementary
@@ -13,20 +13,20 @@ import std::prelude::Affine
 pub fn cc_ranges(h: RHir): List(RRange) {
   match h {
     RhLit(cs) => match cs {
-      Cons(c, rest) => Cons(RRange { lo: c, hi: c }, Nil)
+      Cons(c, ^rest) => Cons(RRange { lo: c, hi: c }, Nil)
       Nil => Nil
     }
     RhClass(rs) => rs
-    other => Nil
+    ^other => Nil
   }
 }
 
 // The exclusive integer bound after a range's last code point.
-pub fn cc_next(c: u64): u64 {
+pub fn cc_next(c: u64): u64 ! {overflow} {
   c + 1
 }
 
-pub fn cc_boundaries_of(leaves: List(RHir)): List(u64) {
+pub fn cc_boundaries_of(leaves: List(RHir)): List(u64) ! {div, overflow} {
   var out: List(u64) := Nil
   var rest := leaves
   var running := true
@@ -57,7 +57,7 @@ pub fn cc_boundaries_of(leaves: List(RHir)): List(u64) {
 }
 
 // Sorted, once each.
-pub fn cc_unique(xs: List(u64)): List(u64) {
+pub fn cc_unique(xs: List(u64)): List(u64) ! {div, overflow} {
   var out: List(u64) := Nil
   var rest := lg_sort_keep(xs)
   var running := true
@@ -84,7 +84,7 @@ pub fn cc_unique(xs: List(u64)): List(u64) {
 
 // The elementary intervals between the boundaries that some leaf holds, before
 // the ones that no leaf holds are dropped.
-pub fn cc_cut(bs: List(u64)): List(RRange) {
+pub fn cc_cut(bs: List(u64)): List(RRange) ! {div, overflow} {
   var out: List(RRange) := Nil
   var rest := bs
   var running := true
@@ -97,7 +97,7 @@ pub fn cc_cut(bs: List(u64)): List(RRange) {
         Nil => {
           running := false
         }
-        Cons(next, others) => {
+        Cons(next, ^others) => {
           let e := next - 1
           if start <= e {
             if start <= 55295 {
@@ -115,28 +115,28 @@ pub fn cc_cut(bs: List(u64)): List(RRange) {
   rx_rev_ranges(out)
 }
 
-pub fn cc_members_get(&v: Vec(List(u64)), i: u64): List(u64) {
-  let &x := Vec::index(&v, i)
+pub fn cc_members_get(v: &Vec(List(u64)), i: u64): List(u64) ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn cc_members_add(&mut v: Vec(List(u64)), i: u64, c: u64): Unit {
+pub fn cc_members_add(v: &mut Vec(List(u64)), i: u64, c: u64): Unit ! {out_of_bounds} {
   let cur := cc_members_get(&v, i)
   match Vec::get_mut(&mut v, i) {
-    Some(slot) => {
-      slot := Cons(c, cur)
+    Some(^slot) => {
+      *slot := Cons(c, cur)
     }
     None => #()
   }
 }
 
-pub fn cc_range_get(&v: Vec(RRange), i: u64): RRange {
-  let &x := Vec::index(&v, i)
+pub fn cc_range_get(v: &Vec(RRange), i: u64): RRange ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn cc_groups_get(&v: Vec(List(RRange)), i: u64): List(RRange) {
-  let &x := Vec::index(&v, i)
+pub fn cc_groups_get(v: &Vec(List(RRange)), i: u64): List(RRange) ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
@@ -144,7 +144,7 @@ pub fn cc_groups_get(&v: Vec(List(RRange)), i: u64): List(RRange) {
 // disjoint classes it is made of, and for each class its intervals.
 pub(open) struct CcOut { leaves: List(RHir), ids: List(List(u64)), groups: List(List(RRange)) }
 
-pub fn cc_key(ms: List(u64)): Text {
+pub fn cc_key(ms: List(u64)): Text ! {div} {
   var b := Buf::new()
   var rest := ms
   var running := true
@@ -163,7 +163,7 @@ pub fn cc_key(ms: List(u64)): Text {
   Text::of(b)
 }
 
-pub fn cc_make(leaves: List(RHir)): CcOut {
+pub fn cc_make(leaves: List(RHir)): CcOut ! {div, out_of_bounds, overflow} {
   let cuts := cc_cut(cc_unique(cc_boundaries_of(leaves)))
   var intervals: Vec(RRange) := Vec::new()
   var members: Vec(List(u64)) := Vec::new()
@@ -209,7 +209,7 @@ pub fn cc_make(leaves: List(RHir)): CcOut {
             }
           }
           match rs {
-            Cons(r, others) => if r.lo <= iv.lo && iv.hi <= r.hi {
+            Cons(r, ^others) => if r.lo <= iv.lo && iv.hi <= r.hi {
               cc_members_add(&mut members, i, c)
             }
             Nil => #()
@@ -222,7 +222,7 @@ pub fn cc_make(leaves: List(RHir)): CcOut {
     }
   }
   // The groups, in the order their first interval comes.
-  var group_of := HashMap::new()
+  var group_of := IndexedMap::new()
   var groups: Vec(List(RRange)) := Vec::new()
   var group_members: Vec(List(u64)) := Vec::new()
   var i: u64 := 0
@@ -230,11 +230,11 @@ pub fn cc_make(leaves: List(RHir)): CcOut {
     let ms := text_u64_reverse(cc_members_get(&members, i))
     match ms {
       Nil => #()
-      Cons(first, rest) => {
+      Cons(^first, ^rest) => {
         let key := cc_key(ms)
         let iv := cc_range_get(&intervals, i)
         var found: Option(u64) := None
-        match HashMap::get(&group_of, key) {
+        match IndexedMap::get(&group_of, key) {
           Some(g) => {
             found := Some(g + 0)
           }
@@ -244,15 +244,15 @@ pub fn cc_make(leaves: List(RHir)): CcOut {
           Some(g) => {
             let old := cc_groups_get(&groups, g)
             match Vec::get_mut(&mut groups, g) {
-              Some(slot) => {
-                slot := Cons(iv, old)
+              Some(^slot) => {
+                *slot := Cons(iv, old)
               }
               None => #()
             }
           }
           None => {
             let g := Vec::len(&groups)
-            HashMap::insert(&mut group_of, key, g)
+            IndexedMap::insert(&mut group_of, key, g)
             Vec::push(&mut groups, Cons(iv, Nil))
             Vec::push(&mut group_members, ms)
           }
@@ -271,7 +271,7 @@ pub fn cc_make(leaves: List(RHir)): CcOut {
       Nil => {
         running2 := false
       }
-      Cons(leaf, more) => {
+      Cons(^leaf, more) => {
         var mine: List(u64) := Nil
         var g: u64 := 0
         while g < ng {
@@ -302,7 +302,7 @@ pub fn cc_has(xs: List(u64), x: u64): Bool {
   }
 }
 
-pub fn cc_rev_lists(xs: List(List(u64))): List(List(u64)) {
+pub fn cc_rev_lists(xs: List(List(u64))): List(List(u64)) ! {div} {
   var out: List(List(u64)) := Nil
   var rest := xs
   var running := true

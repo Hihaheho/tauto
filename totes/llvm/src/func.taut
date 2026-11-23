@@ -1,0 +1,5638 @@
+import "ir.taut"
+import "names.taut"
+import "tmpl.taut"
+import "build.taut"
+import "layout.taut"
+import "glue.taut"
+import "decision.taut"
+import "walk.taut"
+import "../../nir/src/model.taut"
+import "../../nir/src/blocks.taut" { b_lower_fn }
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::map
+
+// A function of the program as an IR function.
+//
+// A value is its words, each an IR value of its own; a local is a slot of
+// the frame that holds them. A function takes the words of its parameters
+// and gives back the words of its result.
+
+// The slot of a local: its address, and the type of what it holds, which is
+// a borrow for a local that is one.
+pub(open) struct FSlot { ptr: llvm::Value::I, ty: NTy }
+
+// The function being written.
+pub(open) struct FFun {
+  m: LModule,
+  b: BBody,
+  locals: Ordmap(Nat, FSlot),
+  ret: NTy,
+  // The handlers the function was called under, for a function with a
+  // `handle`: they are the handlers again when it returns.
+  ev: Option(llvm::Value::I),
+  // The blocks of the function being written.
+  graph: FGraph
+}
+
+// An address and the type of the value there.
+pub(open) struct FPlace { ptr: llvm::Value::I, ty: NTy }
+
+// The words of a value and its type.
+pub(open) struct FOperand { v: List(llvm::Value::I), ty: NTy }
+
+pub fn f_set<A>(slot: &mut A, value: A): Unit {
+  *slot := value
+}
+
+pub fn f_refuse(g: &mut FFun, what: Text): Unit { l_refuse(&mut g.m, what) }
+
+pub fn f_words(g: &mut FFun, t: NTy): Nat ! {div} { l_words(&mut g.m, t) }
+
+pub fn f_plain(g: &mut FFun, t: NTy): Bool ! {div} { l_plain(&mut g.m, t) }
+
+pub fn f_zeros(n: Nat): List(llvm::Value::I) {
+  match n {
+    Zero => Nil
+    Succ(k) => Cons(ll_word(0), f_zeros(k))
+  }
+}
+
+// The first word of a value.
+pub fn f_head(v: List(llvm::Value::I)): llvm::Value::I {
+  match v {
+    Nil => ll_word(0)
+    Cons(w, ^rest) => w
+  }
+}
+
+pub fn f_nth<A>(xs: List(A), i: Nat): Option(A) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if i == 0 { Some(x) } else { f_nth(rest, i - 1) }
+  }
+}
+
+pub fn f_snoc<A>(xs: List(A), x: A): List(A) {
+  match xs {
+    Nil => [x]
+    Cons(y, rest) => Cons(y, f_snoc(rest, x))
+  }
+}
+
+pub fn f_append<A>(xs: List(A), ys: List(A)): List(A) {
+  match xs {
+    Nil => ys
+    Cons(x, rest) => Cons(x, f_append(rest, ys))
+  }
+}
+
+// The name of a declaration as a message shows it.
+pub fn f_display(name: Text): Text {
+  if text_starts_with(
+    name,
+    "std::prelude::",
+    0
+  ) { Text::slice_or_empty(name, 14, Text::len(name)) } else { name }
+}
+
+// The IR type a function gives a result of `n` words as.
+pub fn f_result_type(n: Nat): llvm::Ty::I {
+  if n == 0 {
+    ll!(`void`)
+  } else if n == 1 {
+    ll!(`i64`)
+  } else {
+    let size := ll_int(n)
+    ll!(`[$size x i64]`)
+  }
+}
+
+pub fn f_is_borrow(r: NRepr): Bool {
+  match r {
+    NPlain => false
+    NSharedVarRepr => false
+    NSharedVarCopy => false
+    NRefRepr => true
+    NRefMutRepr => true
+    NBorrowClosure => false
+    NFnRef => true
+  }
+}
+
+pub fn f_is_borrowed(t: NTy): Bool {
+  match n_borrowed(t) {
+    None => false
+    Some(^a) => true
+  }
+}
+
+// The type of what the slot of `local` holds, declared at `ty`.
+pub fn f_slot_type(g: &mut FFun, local: NLocal, ty: NTy): NTy {
+  match local.repr {
+    NPlain => ty
+    NRefRepr => if f_is_borrowed(ty) { ty } else { NRef(ty) }
+    NRefMutRepr => if f_is_borrowed(ty) { ty } else { NRefMut(ty) }
+    NSharedVarRepr => {
+      f_refuse(&mut g, "a `var` shared with a closure")
+      ty
+    }
+    NSharedVarCopy => {
+      f_refuse(&mut g, "a `var` shared with a closure")
+      ty
+    }
+    NFnRef => if f_is_borrowed(ty) { ty } else { NRef(ty) }
+    // A closure that holds borrows is a function value the frame owns,
+    // which does not outlive what it borrows.
+    NBorrowClosure => ty
+  }
+}
+
+// A value in a slot of its own, and the slot's address.
+pub fn f_temp(g: &mut FFun, v: List(llvm::Value::I)): llvm::Value::I {
+  let p := b_alloca(&mut g.b, l_len(v))
+  b_store(&mut g.b, p, 0, v)
+  p
+}
+
+// A copy of `v` that is a value of its own.
+pub fn f_dup(g: &mut FFun, v: List(llvm::Value::I), t: NTy): List(llvm::Value::I) ! {div} {
+  if f_plain(&mut g, t) {
+    v
+  } else {
+    let p := f_temp(&mut g, v)
+    g_call(&mut g.m, &mut g.b, LDup, p, t)
+    b_load(&mut g.b, p, 0, l_len(v))
+  }
+}
+
+pub fn f_drop(g: &mut FFun, v: List(llvm::Value::I), t: NTy): Unit ! {div} {
+  if f_plain(&mut g, t) {
+    ()
+  } else {
+    let p := f_temp(&mut g, v)
+    g_call(&mut g.m, &mut g.b, LDrop, p, t)
+  }
+}
+
+// Ends the run with a message.
+pub fn f_fail(g: &mut FFun, message: Text): Unit {
+  let s := ll_global_value(g_string(&mut g.m, message))
+  b_run(&mut g.b, ll!(`call void @rt_fail(ptr $s)`))
+  b_end(&mut g.b, ll!(`unreachable`))
+}
+
+// `v` of the type `was`, where a value of the type `to` is read: the same
+// value, or the value a borrow stands for (`&A ≡ A`).
+pub fn f_coerce(g: &mut FFun, v: List(llvm::Value::I), was: NTy, to: NTy): List(llvm::Value::I) ! {div} {
+  if f_same(was, to) {
+    v
+  } else if n_ty_eq(was, NNever) {
+    // What never gives a value stands for a value of any type.
+    f_zeros(f_words(&mut g, to))
+  } else {
+    match n_borrowed(was) {
+      None => f_coerce_refused(&mut g, v)
+      Some(a) => match n_borrowed(to) {
+        Some(b) => if f_same(a, b) { v } else { f_coerce_refused(&mut g, v) }
+        None => if f_same(a, to) {
+          let p := b_ptr(&mut g.b, f_head(v))
+          let n := f_words(&mut g, to)
+          let read := b_load(&mut g.b, p, 0, n)
+          f_dup(&mut g, read, to)
+        } else {
+          f_coerce_refused(&mut g, v)
+        }
+      }
+    }
+  }
+}
+
+pub fn f_coerce_refused(g: &mut FFun, v: List(llvm::Value::I)): List(llvm::Value::I) {
+  f_refuse(&mut g, "internal: a value of one type where a value of another is read")
+  v
+}
+
+// Makes the slot of a local declared at `ty` and stores `v` in it.
+pub fn f_bind(g: &mut FFun, local: NLocal, ty: NTy, v: List(llvm::Value::I), was: NTy): Unit ! {div} {
+  let held := f_slot_type(&mut g, local, ty)
+  let stored := f_coerce(&mut g, v, was, held)
+  // The same local is bound again where a `match` is written twice in the
+  // tree of its tests.
+  let again := match Ordmap::get(g.locals, local.id, Ordmap::compare_nat) {
+    None => None
+    Some(s) => if n_ty_eq(s.ty, held) { Some(s.ptr) } else { None }
+  }
+  let ptr := match again {
+    Some(p) => p
+    None => {
+      let n := f_words(&mut g, held)
+      b_alloca(&mut g.b, n)
+    }
+  }
+  b_store(&mut g.b, ptr, 0, stored)
+  f_set(
+    &mut g.locals,
+    Ordmap::insert(g.locals, local.id, FSlot { ptr: ptr, ty: held }, Ordmap::compare_nat)
+  )
+}
+
+pub fn f_slot(g: &mut FFun, local: NLocal): FPlace {
+  match Ordmap::get(g.locals, local.id, Ordmap::compare_nat) {
+    Some(s) => FPlace { ptr: s.ptr, ty: s.ty }
+    None => {
+      f_refuse(&mut g, Text::concat_all(["internal: the local `", local.name, "` has no slot"]))
+      FPlace { ptr: ll_null(), ty: NUnit }
+    }
+  }
+}
+
+pub fn f_ret_words(
+  g: &mut FFun,
+  of: llvm::Ty::I,
+  agg: llvm::Value::I,
+  v: List(llvm::Value::I),
+  i: Nat
+): llvm::Value::I {
+  match v {
+    Nil => agg
+    Cons(w, rest) => {
+      let at := ll_int(i)
+      let next := b_def(&mut g.b, ll!(`insertvalue $of $agg, i64 $w, $at`))
+      f_ret_words(&mut g, of, next, rest, i + 1)
+    }
+  }
+}
+
+// Gives back the words of the function's result.
+pub fn f_ret(g: &mut FFun, v: List(llvm::Value::I)): Unit {
+  match g.ev {
+    None => ()
+    Some(ev) => b_ins(&mut g.b, ll!(`store ptr $ev, ptr @rt.ev`))
+  }
+  match v {
+    Nil => b_end(&mut g.b, ll!(`ret void`))
+    Cons(w, rest) => match rest {
+      Nil => b_end(&mut g.b, ll!(`ret i64 $w`))
+      Cons(^x, ^more) => {
+        let of := f_result_type(l_len(v))
+        let agg := f_ret_words(&mut g, of, ll_poison(), v, 0)
+        b_end(&mut g.b, ll!(`ret $of $agg`))
+      }
+    }
+  }
+}
+
+// What an expression names, as far as it is a path to a place.
+pub(open) enum FPath {
+  FPathRead(NLocal, NUse)
+  FPathBorrow(NPlaceOf)
+  FPathField(NExpr, NFieldRef, NUse)
+  FPathDeref(NExpr, NUse)
+  FPathValue
+}
+
+pub fn f_path(e: NExpr): FPath {
+  match e.kind {
+    NRead(local, how) => FPathRead(local, how)
+    NBorrow(p) => FPathBorrow(p)
+    NBorrowMut(p) => FPathBorrow(p)
+    NFieldOf(base, field, how, ^read) => FPathField(base, field, how)
+    NDeref(value, how) => FPathDeref(value, how)
+    NUnitLit => FPathValue
+    NIntLit(^neg, ^n) => FPathValue
+    NBoolLit(^b) => FPathValue
+    NFloatLit(^t) => FPathValue
+    NTextLit(^s) => FPathValue
+    NDeclaration(^i) => FPathValue
+    NFnValue(^i, ^targs) => FPathValue
+    NClosureOf(^c) => FPathValue
+    NHandleOf(^h) => FPathValue
+    NBudgetOf(^b) => FPathValue
+    NInject(^u, ^v, ^x) => FPathValue
+    NRemap(^u, ^t, ^x) => FPathValue
+    NFnCast(^x) => FPathValue
+    NTempRef(^x) => FPathValue
+    NArithOf(^op, ^num, ^args) => FPathValue
+    NCmpOf(^op, ^args) => FPathValue
+    NEqOf(^negate, ^args) => FPathValue
+    NNot(^a) => FPathValue
+    NAnd(^a, ^b) => FPathValue
+    NOr(^a, ^b) => FPathValue
+    NIf(^c, ^t, ^o) => FPathValue
+    NBlockOf(^b) => FPathValue
+    NCtorOf(^c, ^fields) => FPathValue
+    NMatchOf(^m) => FPathValue
+    NCallOf(^c) => FPathValue
+    NShownOf(^x) => FPathValue
+    NPerformOf(^x) => FPathValue
+    NUnreachable(^x) => FPathValue
+  }
+}
+
+pub fn f_is_path(e: NExpr): Bool ! {div} {
+  match f_path(e) {
+    FPathRead(^local, ^how) => true
+    FPathBorrow(^p) => true
+    FPathField(base, ^field, ^how) => f_is_path(base)
+    FPathDeref(value, ^how) => f_is_path(value)
+    FPathValue => false
+  }
+}
+
+pub fn f_is_place_use(how: NUse): Bool {
+  match how { NMove => false, NCopy => false, NClone => false, NPlace => true }
+}
+
+pub fn f_is_clone(how: NUse): Bool {
+  match how { NMove => false, NCopy => false, NClone => true, NPlace => false }
+}
+
+pub fn f_is_move(how: NUse): Bool {
+  match how { NMove => true, NCopy => false, NClone => false, NPlace => false }
+}
+
+// The value at `p`, or the value the borrow at `p` stands for.
+pub fn f_through(g: &mut FFun, p: llvm::Value::I, t: NTy): FPlace {
+  match n_borrowed(t) {
+    Some(inner) => {
+      let w := b_load_word(&mut g.b, p)
+      let q := b_ptr(&mut g.b, w)
+      FPlace { ptr: q, ty: inner }
+    }
+    None => FPlace { ptr: p, ty: t }
+  }
+}
+
+// A field of a value: where it is, and its type.
+pub(open) struct FFieldAt { at: GAt, ty: NTy }
+
+pub fn f_no_field(): FFieldAt {
+  FFieldAt { at: GAt { slot: ll_null(), content: ll_null(), boxed: None }, ty: NUnit }
+}
+
+pub fn f_position(fields: List(NField), name: Text, i: Nat): Option(Nat) {
+  match fields {
+    Nil => None
+    Cons(f, rest) => match f.name {
+      None => f_position(rest, name, i + 1)
+      Some(n) => if n == name { Some(i) } else { f_position(rest, name, i + 1) }
+    }
+  }
+}
+
+// The constructors that have a field of this name, each with the field's
+// position.
+pub fn f_named(cs: List(LCtor), name: Text, c: Nat): List(Nat × Nat) {
+  match cs {
+    Nil => Nil
+    Cons(ctor, rest) => match f_position(ctor.fields, name, 0) {
+      None => f_named(rest, name, c + 1)
+      Some(i) => Cons(#(c, i), f_named(rest, name, c + 1))
+    }
+  }
+}
+
+// The constructor and the position of the field `f` in a type with a word
+// for its constructor.
+pub fn f_which(g: &mut FFun, cs: List(LCtor), f: NFieldRef): Option(Nat × Nat) {
+  match f_named(cs, f.name, 0) {
+    Cons(one, rest) => match rest {
+      Nil => Some(one)
+      Cons(^x, ^more) => {
+        f_refuse(&mut g, Text::concat_all(["a field `", f.name, "` of a type with constructors"]))
+        None
+      }
+    }
+    Nil => match cs {
+      Nil => {
+        f_refuse(&mut g, Text::concat_all(["a field `", f.name, "` of a type with constructors"]))
+        None
+      }
+      Cons(only, others) => match others {
+        Cons(^x, ^more) => {
+          f_refuse(&mut g, Text::concat_all(["a field `", f.name, "` of a type with constructors"]))
+          None
+        }
+        Nil => {
+          // A positional field of a type with one constructor.
+          let at := match f.index {
+            Some(i) => Some(i)
+            None => text_parse_u64(f.name)
+          }
+          match at {
+            None => {
+              f_refuse(&mut g, Text::concat_all(["internal: no field `", f.name, "`"]))
+              None
+            }
+            Some(i) => if i < l_len(only.fields) {
+              Some(#(0, i))
+            } else {
+              f_refuse(&mut g, Text::concat_all(["internal: no field `", f.name, "`"]))
+              None
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The field `f` of the value of the type `t` at `p`.
+pub fn f_field(g: &mut FFun, p: llvm::Value::I, t: NTy, f: NFieldRef): FFieldAt ! {div} {
+  let shape := l_shape(&mut g.m, t)
+  match l_ctors_of(shape) {
+    None => {
+      f_refuse(&mut g, "internal: a field of a type with none")
+      f_no_field()
+    }
+    Some(found) => match found {
+      #(tagged, cs) => {
+        let which := if tagged {
+          f_which(&mut g, cs, f)
+        } else {
+          match f.index {
+            Some(i) => Some(#(0, i))
+            None => {
+              f_refuse(&mut g, "internal: a member of a product with no position")
+              None
+            }
+          }
+        }
+        match which {
+          None => f_no_field()
+          Some(ci) => match ci {
+            #(c, i) => match f_nth(cs, c) {
+              None => f_no_field()
+              Some(ctor) => match f_nth(ctor.fields, i) {
+                None => {
+                  f_refuse(&mut g, Text::concat_all(["internal: no field `", f.name, "`"]))
+                  f_no_field()
+                }
+                Some(field) => {
+                  let at := g_field_at(&mut g.m, &mut g.b, p, tagged, ctor.fields, i)
+                  FFieldAt { at: at, ty: field.ty }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn f_place_path(g: &mut FFun, at: FPlace, path: List(NFieldRef)): FPlace ! {div} {
+  match path {
+    Nil => at
+    Cons(f, rest) => {
+      let found := f_field(&mut g, at.ptr, at.ty, f)
+      let next := f_through(&mut g, found.at.content, found.ty)
+      f_place_path(&mut g, next, rest)
+    }
+  }
+}
+
+pub fn f_place_of(g: &mut FFun, p: NPlaceOf): FPlace ! {div} {
+  let slot := f_slot(&mut g, p.local)
+  let start := f_through(&mut g, slot.ptr, slot.ty)
+  f_place_path(&mut g, start, p.path)
+}
+
+// The address of the value `e` names, and its type: a place for a path, a
+// slot of its own for a value.
+pub fn f_place(g: &mut FFun, e: NExpr): FPlace ! {div} {
+  match f_path(e) {
+    FPathRead(local, ^how) => {
+      let slot := f_slot(&mut g, local)
+      f_through(&mut g, slot.ptr, slot.ty)
+    }
+    FPathBorrow(p) => f_place_of(&mut g, p)
+    FPathField(base, field, ^how) => if f_is_path(base) {
+      let at := f_place(&mut g, base)
+      let found := f_field(&mut g, at.ptr, at.ty, field)
+      f_through(&mut g, found.at.content, found.ty)
+    } else {
+      f_place_value(&mut g, e)
+    }
+    FPathDeref(value, ^how) => if f_is_path(value) { f_place(&mut g, value) } else {
+      f_place_value(&mut g, e)
+    }
+    FPathValue => f_place_value(&mut g, e)
+  }
+}
+
+pub fn f_place_value(g: &mut FFun, e: NExpr): FPlace ! {div} {
+  let v := f_expr(&mut g, e)
+  let p := f_temp(&mut g, v)
+  f_through(&mut g, p, e.ty)
+}
+
+// Takes the value out of a field stored in a box: the box is released when
+// nothing else shares it, and the value is a copy when something does.
+pub fn f_unbox(
+  g: &mut FFun,
+  v: List(llvm::Value::I),
+  t: NTy,
+  indirect: NIndirect,
+  boxed: llvm::Value::I
+): List(llvm::Value::I) ! {div} {
+  match indirect {
+    NDirect => v
+    NUnique => {
+      b_run(&mut g.b, ll!(`call void @rt_free(ptr $boxed)`))
+      v
+    }
+    NShared => {
+      let rc := b_load_word(&mut g.b, boxed)
+      let last := b_def(&mut g.b, ll!(`icmp eq i64 $rc, 1`))
+      let free := b_label(&mut g.b)
+      let keep := b_label(&mut g.b)
+      let done := b_label(&mut g.b)
+      let out := f_temp(&mut g, v)
+      b_condbr(&mut g.b, last, free, keep)
+      b_start(&mut g.b, free)
+      b_run(&mut g.b, ll!(`call void @rt_free(ptr $boxed)`))
+      b_br(&mut g.b, done)
+      b_start(&mut g.b, keep)
+      let less := b_def(&mut g.b, ll!(`sub i64 $rc, 1`))
+      b_store_word(&mut g.b, less, boxed)
+      g_call(&mut g.m, &mut g.b, LDup, out, t)
+      b_start(&mut g.b, done)
+      b_load(&mut g.b, out, 0, l_len(v))
+    }
+  }
+}
+
+// The value of an operand of an operator: the value itself, or the value a
+// borrow stands for.
+pub fn f_operand(g: &mut FFun, e: NExpr): FOperand ! {div} {
+  let v := f_expr(&mut g, e)
+  match n_borrowed(e.ty) {
+    Some(inner) => {
+      let p := b_ptr(&mut g.b, f_head(v))
+      let n := f_words(&mut g, inner)
+      FOperand { v: b_load(&mut g.b, p, 0, n), ty: inner }
+    }
+    None => FOperand { v: v, ty: e.ty }
+  }
+}
+
+// The value of `==` whose operands `x` and `y` were read as `a` and `b` and
+// are the same when `same` holds; `==` ends the operands it is given by
+// value.
+pub fn f_equal(
+  g: &mut FFun,
+  negate: Bool,
+  same: llvm::Value::I,
+  x: NExpr,
+  y: NExpr,
+  a: FOperand,
+  b: FOperand
+): List(llvm::Value::I) ! {div} {
+  f_end_operand(&mut g, x, a.v)
+  f_end_operand(&mut g, y, b.v)
+  let all := if negate { b_def(&mut g.b, ll!(`xor i1 $same, true`)) } else { same }
+  [b_bool(&mut g.b, all)]
+}
+
+// Ends an operand given by value, whose words were read as `v`: an operator
+// or a builtin only reads its operands.
+pub fn f_end_operand(g: &mut FFun, e: NExpr, v: List(llvm::Value::I)): Unit ! {div} {
+  if f_is_borrowed(e.ty) { () } else { f_drop(&mut g, v, e.ty) }
+}
+
+// The size of a number type and whether it has numbers below zero.
+pub fn f_int_of(g: &mut FFun, t: NTy): Nat × Bool {
+  match n_int_width(t) {
+    Some(w) => l_int(&mut g.m, w)
+    None => {
+      f_refuse(&mut g, "arithmetic on a type that is not a number")
+      #(64, true)
+    }
+  }
+}
+
+// An operation (`add`, `sub`, `mul`) on numbers of `bits` bits that fails
+// when the result does not fit.
+pub fn f_checked(
+  g: &mut FFun,
+  op: Text,
+  bits: Nat,
+  signed: Bool,
+  a: llvm::Value::I,
+  b: llvm::Value::I
+): llvm::Value::I {
+  let of := ll_int_ty(bits)
+  let x := if bits == 64 { a } else { b_def(&mut g.b, ll!(`trunc i64 $a to $of`)) }
+  let y := if bits == 64 { b } else { b_def(&mut g.b, ll!(`trunc i64 $b to $of`)) }
+  let f := ll_overflow(signed, op, bits)
+  let pair := b_def(&mut g.b, ll!(`call { $of, i1 } ${f}($of $x, $of $y)`))
+  let r := b_def(&mut g.b, ll!(`extractvalue { $of, i1 } $pair, 0`))
+  let over := b_def(&mut g.b, ll!(`extractvalue { $of, i1 } $pair, 1`))
+  let bad := b_label(&mut g.b)
+  let good := b_label(&mut g.b)
+  b_condbr(&mut g.b, over, bad, good)
+  b_start(&mut g.b, bad)
+  f_fail(&mut g, "the number is too large")
+  b_start(&mut g.b, good)
+  if bits == 64 {
+    r
+  } else if signed {
+    b_def(&mut g.b, ll!(`sext $of $r to i64`))
+  } else {
+    b_def(&mut g.b, ll!(`zext $of $r to i64`))
+  }
+}
+
+// Fails with "the number is too large" when the word `v` is outside the
+// width that the conversion `name` gives.
+pub fn f_fits_or_fail(g: &mut FFun, name: Text, v: llvm::Value::I): Unit {
+  let bad := if name == "I8::of_i64" {
+    f_outside(&mut g, v, ll_minus(128), ll_word(127))
+  } else if name == "I16::of_i64" {
+    f_outside(&mut g, v, ll_minus(32768), ll_word(32767))
+  } else if name == "I32::of_i64" {
+    f_outside(&mut g, v, ll_minus(2147483648), ll_word(2147483647))
+  } else if name == "U8::of_u64" {
+    b_def(&mut g.b, ll!(`icmp ugt i64 $v, 255`))
+  } else if name == "U16::of_u64" {
+    b_def(&mut g.b, ll!(`icmp ugt i64 $v, 65535`))
+  } else if name == "U32::of_u64" {
+    b_def(&mut g.b, ll!(`icmp ugt i64 $v, 4294967295`))
+  } else {
+    // `I64::of_u64` and `U64::of_i64`: the word is the same number when its
+    // top bit is clear.
+    b_def(&mut g.b, ll!(`icmp slt i64 $v, 0`))
+  }
+  let fail := b_label(&mut g.b)
+  let good := b_label(&mut g.b)
+  b_condbr(&mut g.b, bad, fail, good)
+  b_start(&mut g.b, fail)
+  f_fail(&mut g, "the number is too large")
+  b_start(&mut g.b, good)
+}
+
+pub fn f_outside(g: &mut FFun, v: llvm::Value::I, lo: llvm::Value::I, hi: llvm::Value::I): llvm::Value::I {
+  let below := b_def(&mut g.b, ll!(`icmp slt i64 $v, $lo`))
+  let above := b_def(&mut g.b, ll!(`icmp sgt i64 $v, $hi`))
+  b_def(&mut g.b, ll!(`or i1 $below, $above`))
+}
+
+// The first words of the operands, in order.
+pub fn f_operands(g: &mut FFun, args: List(NExpr)): List(llvm::Value::I) ! {div} {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => {
+      let x := f_operand(&mut g, a)
+      Cons(f_head(x.v), f_operands(&mut g, rest))
+    }
+  }
+}
+
+pub fn f_arith(
+  g: &mut FFun,
+  op: NArith,
+  bits: Nat,
+  signed: Bool,
+  vals: List(llvm::Value::I)
+): List(llvm::Value::I) {
+  match vals {
+    Nil => f_no_arith(&mut g)
+    Cons(a, rest) => match rest {
+      Nil => match op {
+        NNeg => [f_checked(&mut g, "sub", bits, signed, ll_word(0), a)]
+        NAdd => f_no_arith(&mut g)
+        NSub => f_no_arith(&mut g)
+        NMul => f_no_arith(&mut g)
+        NDivide => f_no_arith(&mut g)
+      }
+      Cons(b, more) => match more {
+        Cons(^c, ^others) => f_no_arith(&mut g)
+        Nil => match op {
+          NAdd => [f_checked(&mut g, "add", bits, signed, a, b)]
+          NSub => [f_checked(&mut g, "sub", bits, signed, a, b)]
+          NMul => [f_checked(&mut g, "mul", bits, signed, a, b)]
+          NNeg => f_no_arith(&mut g)
+          NDivide => f_no_arith(&mut g)
+        }
+      }
+    }
+  }
+}
+
+pub fn f_no_arith(g: &mut FFun): List(llvm::Value::I) {
+  f_refuse(&mut g, "a division of `Float`s")
+  [ll_word(0)]
+}
+
+pub fn f_icmp(op: NCmp, signed: Bool, a: llvm::Value::I, b: llvm::Value::I): llvm::Rhs::I {
+  if signed {
+    match op {
+      NLt => ll!(`icmp slt i64 $a, $b`)
+      NGt => ll!(`icmp sgt i64 $a, $b`)
+      NLe => ll!(`icmp sle i64 $a, $b`)
+      NGe => ll!(`icmp sge i64 $a, $b`)
+    }
+  } else {
+    match op {
+      NLt => ll!(`icmp ult i64 $a, $b`)
+      NGt => ll!(`icmp ugt i64 $a, $b`)
+      NLe => ll!(`icmp ule i64 $a, $b`)
+      NGe => ll!(`icmp uge i64 $a, $b`)
+    }
+  }
+}
+
+// Whether every word of one value is the same word of the other.
+pub fn f_same_words(
+  g: &mut FFun,
+  all: llvm::Value::I,
+  a: List(llvm::Value::I),
+  b: List(llvm::Value::I)
+): llvm::Value::I {
+  match a {
+    Nil => all
+    Cons(x, rest) => match b {
+      Nil => all
+      Cons(y, more) => {
+        let c := b_def(&mut g.b, ll!(`icmp eq i64 $x, $y`))
+        let both := b_def(&mut g.b, ll!(`and i1 $all, $c`))
+        f_same_words(&mut g, both, rest, more)
+      }
+    }
+  }
+}
+
+// A number as the word that holds it, extended to 64 bits.
+pub fn f_number(neg: Bool, n: Nat): llvm::Value::I {
+  if neg {
+    if n == 0 { ll_word(0) } else { ll_minus(n) }
+  } else if n >= 9223372036854775808 {
+    ll_minus(18446744073709551616 - n)
+  } else {
+    ll_word(n)
+  }
+}
+
+pub fn f_two(g: &mut FFun, args: List(NExpr)): Option(NExpr × NExpr) {
+  match args {
+    Nil => f_not_two(&mut g)
+    Cons(a, rest) => match rest {
+      Nil => f_not_two(&mut g)
+      Cons(b, ^more) => Some(#(a, b))
+    }
+  }
+}
+
+pub fn f_not_two(g: &mut FFun): Option(NExpr × NExpr) {
+  f_refuse(&mut g, "internal: an operator without two operands")
+  None
+}
+
+pub fn f_refused_value(g: &mut FFun, what: Text): List(llvm::Value::I) {
+  f_refuse(&mut g, what)
+  Nil
+}
+
+// The words of the value of an expression.
+pub fn f_expr(g: &mut FFun, e: NExpr): List(llvm::Value::I) ! {div} {
+  match e.kind {
+    NUnitLit => Nil
+    NIntLit(neg, n) => {
+      let ^int_ty := f_int_of(&mut g, e.ty)
+      if n >= 18446744073709551616 || (neg && n > 9223372036854775808) {
+        f_refused_value(&mut g, "a number beyond 64 bits")
+      } else {
+        [f_number(neg, n)]
+      }
+    }
+    NBoolLit(b) => [ll_word(if b { 1 } else { 0 })]
+    NFloatLit(^t) => f_refused_value(&mut g, "a `Float`")
+    // A literal is its constant box, which no read copies.
+    NTextLit(s) => {
+      let c := ll_global_value(g_box(&mut g.m, s))
+      [b_word(&mut g.b, c)]
+    }
+    NDeclaration(^i) => f_refused_value(&mut g, "a declaration reference")
+    NFnValue(i, ^targs) => f_fn_value(&mut g, i)
+    NClosureOf(c) => f_closure(&mut g, c)
+    NHandleOf(^h) => f_refused_value(&mut g, "internal: control flow in a leaf")
+    NBudgetOf(^b) => f_refused_value(&mut g, "a `budget`")
+    NInject(^u, ^v, ^x) => f_refused_value(&mut g, "a union")
+    NRemap(^u, ^t, ^x) => f_refused_value(&mut g, "a union")
+    NFnCast(x) => f_fn_cast(&mut g, e.ty, x)
+    NRead(local, how) => {
+      let slot := f_slot(&mut g, local)
+      let n := f_words(&mut g, slot.ty)
+      let v := b_load(&mut g.b, slot.ptr, 0, n)
+      if f_is_clone(how) && n_ty_eq(
+        slot.ty,
+        e.ty
+      ) { f_dup(&mut g, v, slot.ty) } else { f_coerce(&mut g, v, slot.ty, e.ty) }
+    }
+    NBorrow(p) => {
+      let at := f_place_of(&mut g, p)
+      [b_word(&mut g.b, at.ptr)]
+    }
+    NBorrowMut(p) => {
+      let at := f_place_of(&mut g, p)
+      [b_word(&mut g.b, at.ptr)]
+    }
+    NTempRef(x) => {
+      let at := f_place(&mut g, x)
+      [b_word(&mut g.b, at.ptr)]
+    }
+    NDeref(value, how) => {
+      let at := f_place(&mut g, value)
+      let n := f_words(&mut g, at.ty)
+      let read := b_load(&mut g.b, at.ptr, 0, n)
+      let v := if f_is_clone(how) { f_dup(&mut g, read, at.ty) } else { read }
+      f_coerce(&mut g, v, at.ty, e.ty)
+    }
+    NFieldOf(base, field, how, ^read) => {
+      let at := f_place(&mut g, base)
+      let found := f_field(&mut g, at.ptr, at.ty, field)
+      let n := f_words(&mut g, found.ty)
+      let read := b_load(&mut g.b, found.at.content, 0, n)
+      let v := if f_is_clone(how) {
+        f_dup(&mut g, read, found.ty)
+      } else if f_is_move(how) {
+        match found.at.boxed {
+          Some(boxed) => f_unbox(&mut g, read, found.ty, field.indirect, boxed)
+          None => read
+        }
+      } else {
+        read
+      }
+      f_coerce(&mut g, v, found.ty, e.ty)
+    }
+    NArithOf(op, ^num, args) => match f_int_of(&mut g, e.ty) {
+      #(bits, signed) => {
+        let vals := f_operands(&mut g, args)
+        f_arith(&mut g, op, bits, signed, vals)
+      }
+    }
+    NCmpOf(op, args) => match f_two(&mut g, args) {
+      None => [ll_word(0)]
+      Some(two) => match two {
+        #(x, y) => {
+          let a := f_operand(&mut g, x)
+          let b := f_operand(&mut g, y)
+          match f_int_of(&mut g, a.ty) {
+            #(^bits, signed) => {
+              let c := b_def(&mut g.b, f_icmp(op, signed, f_head(a.v), f_head(b.v)))
+              [b_bool(&mut g.b, c)]
+            }
+          }
+        }
+      }
+    }
+    NEqOf(negate, args) => match f_two(&mut g, args) {
+      None => [ll_word(0)]
+      Some(two) => match two {
+        #(x, y) => {
+          let a := f_operand(&mut g, x)
+          let b := f_operand(&mut g, y)
+          if n_ty_eq(a.ty, NText) {
+            let p := b_ptr(&mut g.b, f_head(a.v))
+            let q := b_ptr(&mut g.b, f_head(b.v))
+            let same := b_def(&mut g.b, ll!(`call i1 @rt_text_eq(ptr $p, ptr $q)`))
+            f_equal(&mut g, negate, same, x, y, a, b)
+          } else if f_plain(&mut g, a.ty) {
+            // Two values with no box in them are equal when their words are.
+            let same := f_same_words(&mut g, ll_true(), a.v, b.v)
+            f_equal(&mut g, negate, same, x, y, a, b)
+          } else {
+            f_refuse(&mut g, "`==` on a type stored in a box")
+            [ll_word(0)]
+          }
+        }
+      }
+    }
+    NNot(a) => {
+      let x := f_operand(&mut g, a)
+      let w := f_head(x.v)
+      [b_def(&mut g.b, ll!(`xor i64 $w, 1`))]
+    }
+    NAnd(^a, ^b) => f_refused_value(&mut g, "internal: control flow in a leaf")
+    NOr(^a, ^b) => f_refused_value(&mut g, "internal: control flow in a leaf")
+    NIf(^cond, ^then, ^otherwise) => f_refused_value(&mut g, "internal: control flow in a leaf")
+    NBlockOf(^b) => f_refused_value(&mut g, "internal: control flow in a leaf")
+    NCtorOf(ctor, fields) => f_ctor(&mut g, e.ty, ctor, fields)
+    NMatchOf(^m) => f_refused_value(&mut g, "internal: control flow in a leaf")
+    NCallOf(c) => f_call(&mut g, e.ty, c.callee, c.args, f_tier_plain(c.tier), n_tick_budget(c.tick))
+    NShownOf(x) => f_shown(&mut g, x)
+    NPerformOf(x) => f_perform(&mut g, e.ty, x.op, x.args, n_quant_direct(x.quant) && not(x.detached))
+    NUnreachable(x) => {
+      let ^exprd := f_expr(&mut g, x)
+      f_fail(&mut g, "`unreachable` was reached")
+      f_zeros(f_words(&mut g, e.ty))
+    }
+  }
+}
+
+// Whether what is shown is only lent: a value read in place, or a borrow.
+pub fn f_lent(x: NExpr): Bool { f_is_borrowed(x.ty) || f_in_place(x) }
+
+// Whether `x` reads a value in place, which it then only lends.
+pub fn f_in_place(x: NExpr): Bool {
+  match f_path(x) {
+    FPathBorrow(^p) => true
+    FPathRead(^local, how) => f_is_place_use(how)
+    FPathField(^base, ^field, how) => f_is_place_use(how)
+    FPathDeref(^value, how) => f_is_place_use(how)
+    FPathValue => false
+  }
+}
+
+// The text `show` gives a value. What is shown ends there, unless it is only
+// lent.
+pub fn f_shown(g: &mut FFun, x: NExpr): List(llvm::Value::I) ! {div} {
+  let lent := f_lent(x)
+  let at := if lent {
+    f_place(&mut g, x)
+  } else {
+    let v := f_expr(&mut g, x)
+    FPlace { ptr: f_temp(&mut g, v), ty: x.ty }
+  }
+  let buf := b_alloca_buf(&mut g.b)
+  b_ins(&mut g.b, ll!(`store %Buf zeroinitializer, ptr $buf`))
+  g_show_at(&mut g.m, &mut g.b, buf, at.ptr, at.ty)
+  let s := b_def(&mut g.b, ll!(`call ptr @rt_finish(ptr $buf)`))
+  if lent { () } else { g_call(&mut g.m, &mut g.b, LDrop, at.ptr, at.ty) }
+  [b_word(&mut g.b, s)]
+}
+
+pub fn f_through_shared(path: List(NFieldRef)): Bool {
+  match path {
+    Nil => false
+    Cons(f, rest) => match f.indirect {
+      NShared => true
+      NDirect => f_through_shared(rest)
+      NUnique => f_through_shared(rest)
+    }
+  }
+}
+
+// `out` with its first words replaced by `vals`.
+pub fn f_overwrite(out: List(llvm::Value::I), vals: List(llvm::Value::I)): List(llvm::Value::I) {
+  match vals {
+    Nil => out
+    Cons(v, more) => match out {
+      Nil => Nil
+      Cons(^w, rest) => Cons(v, f_overwrite(rest, more))
+    }
+  }
+}
+
+// `out` with the words `vals` from the word `at` on.
+pub fn f_put(out: List(llvm::Value::I), at: Nat, vals: List(llvm::Value::I)): List(llvm::Value::I) {
+  match at {
+    Zero => f_overwrite(out, vals)
+    Succ(k) => match out {
+      Nil => Nil
+      Cons(w, rest) => Cons(w, f_put(rest, k, vals))
+    }
+  }
+}
+
+pub fn f_label_at(labels: List(Option(Text)), name: Text, i: Nat): Option(Nat) {
+  match labels {
+    Nil => None
+    Cons(l, rest) => match l {
+      None => f_label_at(rest, name, i + 1)
+      Some(n) => if n == name { Some(i) } else { f_label_at(rest, name, i + 1) }
+    }
+  }
+}
+
+// The declared position of the `i`-th field as written, which is by name for
+// a named field.
+pub fn f_ctor_slot(ctor: NCtorRef, i: Nat, name: Option(Text)): Nat {
+  match name {
+    None => i
+    Some(n) => match f_label_at(ctor.labels, n, 0) {
+      Some(at) => at
+      None => i
+    }
+  }
+}
+
+pub fn f_ctor_fields(
+  g: &mut FFun,
+  ctor: NCtorRef,
+  tagged: Bool,
+  c: LCtor,
+  fields: List(NArg),
+  i: Nat,
+  out: List(llvm::Value::I)
+): List(llvm::Value::I) ! {div} {
+  match fields {
+    Nil => out
+    Cons(arg, rest) => {
+      let slot := f_ctor_slot(ctor, i, arg.label)
+      match f_nth(c.fields, slot) {
+        None => {
+          f_refuse(&mut g, "internal: a field the constructor does not have")
+          out
+        }
+        Some(f) => {
+          let v := f_expr(&mut g, arg.value)
+          let w := f_coerce(&mut g, v, arg.value.ty, f.ty)
+          let at := l_offset(&mut g.m, tagged, c.fields, slot)
+          let next := if l_is_indirect(f.indirect) {
+            let boxed := g_new_box(&mut g.b, w)
+            f_put(out, at, [b_word(&mut g.b, boxed)])
+          } else {
+            f_put(out, at, w)
+          }
+          f_ctor_fields(&mut g, ctor, tagged, c, rest, i + 1, next)
+        }
+      }
+    }
+  }
+}
+
+// A value made by a constructor.
+pub fn f_ctor(g: &mut FFun, ty: NTy, ctor: NCtorRef, fields: List(NArg)): List(llvm::Value::I) ! {div} {
+  let shape := l_shape(&mut g.m, ty)
+  match l_ctors_of(shape) {
+    None => f_refused_value(&mut g, "internal: a constructor of a type with none")
+    Some(found) => match found {
+      #(tagged, cs) => {
+        let index := if tagged { ctor.index } else { 0 }
+        match f_nth(cs, index) {
+          None => f_refused_value(&mut g, "internal: a constructor the type does not have")
+          Some(c) => {
+            let n := f_words(&mut g, ty)
+            let out := if tagged { f_put(f_zeros(n), 0, [ll_word(index)]) } else { f_zeros(n) }
+            f_ctor_fields(&mut g, ctor, tagged, c, fields, 0, out)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn f_word_args(v: List(llvm::Value::I)): List(llvm::TyValue::I) {
+  match v {
+    Nil => Nil
+    Cons(w, rest) => Cons(ll_word_arg(w), f_word_args(rest))
+  }
+}
+
+pub fn f_call_args(g: &mut FFun, args: List(NExpr), params: List(NParam)): List(llvm::TyValue::I) ! {div} {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => match params {
+      Nil => Nil
+      Cons(p, more) => {
+        let to := f_slot_type(&mut g, p.local, p.ty)
+        let v := f_expr(&mut g, a)
+        let w := f_coerce(&mut g, v, a.ty, to)
+        f_append(f_word_args(w), f_call_args(&mut g, rest, more))
+      }
+    }
+  }
+}
+
+// The words of a result given as one value of `n` words.
+pub fn f_result_words(
+  g: &mut FFun,
+  of: llvm::Ty::I,
+  r: llvm::Value::I,
+  i: Nat,
+  n: Nat
+): List(llvm::Value::I) ! {div} {
+  if i >= n {
+    Nil
+  } else {
+    let at := ll_int(i)
+    let w := b_def(&mut g.b, ll!(`extractvalue $of $r, $at`))
+    Cons(w, f_result_words(&mut g, of, r, i + 1, n))
+  }
+}
+
+// A call of `extract_nat_mod` whose modulus is a number beyond a word.
+pub fn f_is_nat_mod_by_a_non_word(source: Text, args: List(NExpr)): Bool {
+  if f_display(source) == "extract_nat_mod" {
+    match args {
+      Cons(^a, rest) => match rest {
+        Cons(m, ^none) => match m.kind {
+          NIntLit(^neg, n) => n >= 18446744073709551616
+          _ => false
+        }
+        Nil => false
+      }
+      Nil => false
+    }
+  } else {
+    false
+  }
+}
+
+pub fn f_call(
+  g: &mut FFun,
+  ty: NTy,
+  callee: NCallee,
+  args: List(NExpr),
+  tier_s: Bool,
+  counted: Bool
+): List(llvm::Value::I) ! {div} {
+  match callee {
+    NCallInst(id) => match f_nth(g.m.pkg.fns, id) {
+      None => f_refused_value(&mut g, "internal: a call of a function the package does not have")
+      Some(f) => if not(tier_s) || not(f_tier_plain(f.tier)) {
+        f_refused_value(&mut g, "a call that may stop")
+      } else if counted {
+        f_refused_value(&mut g, "a `budget`")
+      } else if f_is_nat_mod_by_a_non_word(f.source, args) {
+        // `extract_nat_mod(a, 2^64)`: a `nat` here is one 64-bit word, so it is already
+        // below 2^64, and the modulus (which is not a word) is not made.
+        match args {
+          Cons(a, ^rest) => f_expr(&mut g, a)
+          Nil => f_refused_value(&mut g, "internal: a call without arguments")
+        }
+      } else {
+        let words := f_call_args(&mut g, args, f.params)
+        let n := f_words(&mut g, f.ret)
+        let of := f_result_type(n)
+        let name := ll_fn(id)
+        let call := ll!(`call fastcc $of ${name}($words)`)
+        let v := if n == 0 {
+          b_run(&mut g.b, call)
+          Nil
+        } else if n == 1 {
+          [b_def(&mut g.b, call)]
+        } else {
+          let r := b_def(&mut g.b, call)
+          f_result_words(&mut g, of, r, 0, n)
+        }
+        f_coerce(&mut g, v, f.ret, ty)
+      }
+    }
+    NCallBuiltin(name) => f_builtin(&mut g, ty, name, args)
+    NCallExtern(^n) => f_refused_value(&mut g, "an `extern` (the native backend has no host)")
+    NCallLocal(local) => {
+      let slot := f_slot(&mut g, local)
+      let at := f_through(&mut g, slot.ptr, slot.ty)
+      match f_fn_parts(at.ty) {
+        None => f_refused_value(&mut g, "internal: a call of a local that is not a function")
+        Some(^f) => {
+          let w := b_load(&mut g.b, at.ptr, 0, 1)
+          f_call_value(&mut g, ty, args, tier_s, counted, at.ty, f_head(w))
+        }
+      }
+    }
+    NCallValue(x) => match f_fn_of(x.ty) {
+      None => f_refused_value(&mut g, "internal: a call of a value that is not a function")
+      Some(f) => {
+        let v := f_expr(&mut g, x)
+        let place := f_in_place(x)
+        let lent := f_is_borrowed(x.ty)
+        let w := if lent {
+          let p := b_ptr(&mut g.b, f_head(v))
+          f_head(b_load(&mut g.b, p, 0, 1))
+        } else {
+          f_head(v)
+        }
+        let r := f_call_value(&mut g, ty, args, tier_s, counted, f, w)
+        // The call takes a value the expression made, and it ends when the
+        // call does.
+        if not(lent) && not(place) { f_drop(&mut g, v, x.ty) } else { () }
+        r
+      }
+    }
+    NCallCont(^l) => f_refused_value(&mut g, "a continuation")
+  }
+}
+
+pub fn f_builtin(g: &mut FFun, ty: NTy, name: Text, args: List(NExpr)): List(llvm::Value::I) ! {div} {
+  if name == "drop" {
+    match args {
+      Nil => f_refused_value(&mut g, "internal: a `drop` of nothing")
+      Cons(a, ^rest) => if f_is_borrowed(a.ty) {
+        Nil
+      } else {
+        let v := f_expr(&mut g, a)
+        f_drop(&mut g, v, a.ty)
+        Nil
+      }
+    }
+  } else if name == "clone" {
+    // `clone(&x)`: the value the borrow stands for, copied.
+    match args {
+      Nil => f_refused_value(&mut g, "internal: a `clone` of nothing")
+      Cons(a, rest) => {
+        let o := f_operand(&mut g, a)
+        f_dup(&mut g, o.v, o.ty)
+      }
+    }
+  } else if name == "div" || name == "mod" {
+    match f_int_of(&mut g, ty) {
+      #(bits, signed) => match f_two(&mut g, args) {
+        None => [ll_word(0)]
+        Some(two) => match two {
+          #(x, y) => {
+            let left := f_operand(&mut g, x)
+            let a := f_head(left.v)
+            let right := f_operand(&mut g, y)
+            let b := f_head(right.v)
+            let zero := b_def(&mut g.b, ll!(`icmp eq i64 $b, 0`))
+            let bad := b_label(&mut g.b)
+            let good := b_label(&mut g.b)
+            b_condbr(&mut g.b, zero, bad, good)
+            b_start(&mut g.b, bad)
+            f_fail(&mut g, "division by zero")
+            b_start(&mut g.b, good)
+            if signed {
+              // The least number divided by -1 does not fit.
+              let least := if bits == 64 { ll_minus(9223372036854775808) } else if bits == 32 {
+                ll_minus(2147483648)
+              } else if bits == 16 { ll_minus(32768) } else { ll_minus(128) }
+              let is_least := b_def(&mut g.b, ll!(`icmp eq i64 $a, $least`))
+              let by_minus := b_def(&mut g.b, ll!(`icmp eq i64 $b, -1`))
+              let over := b_def(&mut g.b, ll!(`and i1 $is_least, $by_minus`))
+              let large := b_label(&mut g.b)
+              let fits := b_label(&mut g.b)
+              b_condbr(&mut g.b, over, large, fits)
+              b_start(&mut g.b, large)
+              f_fail(&mut g, "the number is too large")
+              b_start(&mut g.b, fits)
+            } else {
+              ()
+            }
+            if name == "div" {
+              if signed { [b_def(&mut g.b, ll!(`sdiv i64 $a, $b`))] } else {
+                [b_def(&mut g.b, ll!(`udiv i64 $a, $b`))]
+              }
+            } else if signed {
+              [b_def(&mut g.b, ll!(`srem i64 $a, $b`))]
+            } else {
+              [b_def(&mut g.b, ll!(`urem i64 $a, $b`))]
+            }
+          }
+        }
+      }
+    }
+  } else if name == "U64::wrapping_add" || name == "U64::wrapping_sub" || name == "U64::wrapping_mul" {
+    // A `u64` is its 64 bits, so the machine's wrapping operation is the answer.
+    match f_two(&mut g, args) {
+      None => [ll_word(0)]
+      Some(two) => match two {
+        #(x, y) => {
+          let left := f_operand(&mut g, x)
+          let a := f_head(left.v)
+          let right := f_operand(&mut g, y)
+          let b := f_head(right.v)
+          if name == "U64::wrapping_add" {
+            [b_def(&mut g.b, ll!(`add i64 $a, $b`))]
+          } else if name == "U64::wrapping_sub" {
+            [b_def(&mut g.b, ll!(`sub i64 $a, $b`))]
+          } else {
+            [b_def(&mut g.b, ll!(`mul i64 $a, $b`))]
+          }
+        }
+      }
+    }
+  } else if name == "U64::and" || name == "U64::or" || name == "U64::xor" {
+    match f_two(&mut g, args) {
+      None => [ll_word(0)]
+      Some(two) => match two {
+        #(x, y) => {
+          let left := f_operand(&mut g, x)
+          let a := f_head(left.v)
+          let right := f_operand(&mut g, y)
+          let b := f_head(right.v)
+          if name == "U64::and" {
+            [b_def(&mut g.b, ll!(`and i64 $a, $b`))]
+          } else if name == "U64::or" {
+            [b_def(&mut g.b, ll!(`or i64 $a, $b`))]
+          } else {
+            [b_def(&mut g.b, ll!(`xor i64 $a, $b`))]
+          }
+        }
+      }
+    }
+  } else if name == "U64::shl" || name == "U64::shr" {
+    // The amount is below 64 (the extraction reduces it).
+    match f_two(&mut g, args) {
+      None => [ll_word(0)]
+      Some(two) => match two {
+        #(x, y) => {
+          let left := f_operand(&mut g, x)
+          let a := f_head(left.v)
+          let right := f_operand(&mut g, y)
+          let b := f_head(right.v)
+          let s := b_def(&mut g.b, ll!(`and i64 $b, 63`))
+          if name == "U64::shl" {
+            [b_def(&mut g.b, ll!(`shl i64 $a, $s`))]
+          } else {
+            [b_def(&mut g.b, ll!(`lshr i64 $a, $s`))]
+          }
+        }
+      }
+    }
+  } else if name == "U64::rotl" || name == "U64::rotr" {
+    // Two shifts whose amounts stay below 64.
+    match f_two(&mut g, args) {
+      None => [ll_word(0)]
+      Some(two) => match two {
+        #(x, y) => {
+          let left := f_operand(&mut g, x)
+          let a := f_head(left.v)
+          let right := f_operand(&mut g, y)
+          let b := f_head(right.v)
+          let s := b_def(&mut g.b, ll!(`and i64 $b, 63`))
+          let n := b_def(&mut g.b, ll!(`sub i64 0, $s`))
+          let t := b_def(&mut g.b, ll!(`and i64 $n, 63`))
+          if name == "U64::rotl" {
+            let x1 := b_def(&mut g.b, ll!(`shl i64 $a, $s`))
+            let y1 := b_def(&mut g.b, ll!(`lshr i64 $a, $t`))
+            [b_def(&mut g.b, ll!(`or i64 $x1, $y1`))]
+          } else {
+            let x1 := b_def(&mut g.b, ll!(`lshr i64 $a, $s`))
+            let y1 := b_def(&mut g.b, ll!(`shl i64 $a, $t`))
+            [b_def(&mut g.b, ll!(`or i64 $x1, $y1`))]
+          }
+        }
+      }
+    }
+  } else if name == "concat" {
+    match f_two(&mut g, args) {
+      None => [ll_word(0)]
+      Some(two) => match two {
+        #(x, y) => {
+          let a := f_operand(&mut g, x)
+          let b := f_operand(&mut g, y)
+          let p := b_ptr(&mut g.b, f_head(a.v))
+          let q := b_ptr(&mut g.b, f_head(b.v))
+          let t := b_def(&mut g.b, ll!(`call ptr @rt_text_concat(ptr $p, ptr $q)`))
+          f_end_operand(&mut g, x, a.v)
+          f_end_operand(&mut g, y, b.v)
+          [b_word(&mut g.b, t)]
+        }
+      }
+    }
+  } else if name == "Text::len" {
+    match args {
+      Nil => f_refused_value(&mut g, "internal: the length of nothing")
+      Cons(a, ^rest) => {
+        let x := f_operand(&mut g, a)
+        let p := b_ptr(&mut g.b, f_head(x.v))
+        let n := b_def(&mut g.b, ll!(`call i64 @rt_text_len(ptr $p)`))
+        f_end_operand(&mut g, a, x.v)
+        [n]
+      }
+    }
+  } else if name == "Text::compare" {
+    match f_two(&mut g, args) {
+      None => [ll_word(0)]
+      Some(two) => match two {
+        #(x, y) => {
+          let a := f_operand(&mut g, x)
+          let b := f_operand(&mut g, y)
+          let p := b_ptr(&mut g.b, f_head(a.v))
+          let q := b_ptr(&mut g.b, f_head(b.v))
+          let r := b_def(&mut g.b, ll!(`call i64 @rt_text_compare(ptr $p, ptr $q)`))
+          f_end_operand(&mut g, x, a.v)
+          f_end_operand(&mut g, y, b.v)
+          [r]
+        }
+      }
+    }
+  } else if name == "Text::byte" {
+    match f_two(&mut g, args) {
+      None => [ll_word(0), ll_word(0)]
+      Some(two) => match two {
+        #(x, y) => {
+          let a := f_operand(&mut g, x)
+          let b := f_operand(&mut g, y)
+          let p := b_ptr(&mut g.b, f_head(a.v))
+          let i := f_head(b.v)
+          let r := b_def(&mut g.b, ll!(`call [2 x i64] @rt_text_byte(ptr $p, i64 $i)`))
+          let tag := b_def(&mut g.b, ll!(`extractvalue [2 x i64] $r, 0`))
+          let word := b_def(&mut g.b, ll!(`extractvalue [2 x i64] $r, 1`))
+          f_end_operand(&mut g, x, a.v)
+          f_end_operand(&mut g, y, b.v)
+          [tag, word]
+        }
+      }
+    }
+  } else if name == "Text::slice" {
+    match args {
+      Cons(x, rest) => match rest {
+        Cons(y, rest2) => match rest2 {
+          Cons(z, ^rest3) => {
+            let a := f_operand(&mut g, x)
+            let b := f_operand(&mut g, y)
+            let c := f_operand(&mut g, z)
+            let p := b_ptr(&mut g.b, f_head(a.v))
+            let i := f_head(b.v)
+            let j := f_head(c.v)
+            let r := b_def(
+              &mut g.b,
+              ll!(`call [2 x i64] @rt_text_slice(ptr $p, i64 $i, i64 $j)`)
+            )
+            let tag := b_def(&mut g.b, ll!(`extractvalue [2 x i64] $r, 0`))
+            let word := b_def(&mut g.b, ll!(`extractvalue [2 x i64] $r, 1`))
+            f_end_operand(&mut g, x, a.v)
+            f_end_operand(&mut g, y, b.v)
+            f_end_operand(&mut g, z, c.v)
+            [tag, word]
+          }
+          Nil => [ll_word(0), ll_word(0)]
+        }
+        Nil => [ll_word(0), ll_word(0)]
+      }
+      Nil => [ll_word(0), ll_word(0)]
+    }
+  } else if name == "Text::escape_debug" {
+    match args {
+      Nil => f_refused_value(&mut g, "internal: a text to escape of nothing")
+      Cons(a, ^rest) => {
+        let x := f_operand(&mut g, a)
+        let p := b_ptr(&mut g.b, f_head(x.v))
+        let t := b_def(&mut g.b, ll!(`call ptr @rt_text_escape_debug(ptr $p)`))
+        f_end_operand(&mut g, a, x.v)
+        [b_word(&mut g.b, t)]
+      }
+    }
+  } else if name == "Text::of_i64" || name == "Text::of_u64" || name == "Text::of_nat" {
+    match args {
+      Nil => f_refused_value(&mut g, "internal: a number to write of nothing")
+      Cons(a, ^rest) => {
+        let x := f_operand(&mut g, a)
+        let w := f_head(x.v)
+        let t := if name == "Text::of_i64" {
+          b_def(&mut g.b, ll!(`call ptr @rt_text_of_i64(i64 $w)`))
+        } else {
+          b_def(&mut g.b, ll!(`call ptr @rt_text_of_u64(i64 $w)`))
+        }
+        [b_word(&mut g.b, t)]
+      }
+    }
+  } else if name == "Os::print" {
+    f_host_answer(&mut g, ty, "stdout", args)
+  } else if name == "Os::eprint" {
+    f_host_answer(&mut g, ty, "stderr", args)
+  } else if name == "Os::flush" {
+    f_host_answer(&mut g, ty, "stdout_flush", args)
+  } else if name == "Os::exit" {
+    f_host_answer(&mut g, ty, "exit", args)
+  } else if name == "Os::args" {
+    f_host_answer(&mut g, ty, "argv", args)
+  } else if name == "Os::uhost_add" || name == "Os::uhost_sub" || name == "Os::uhost_mul" || name == "Os::uhost_of_u64" {
+    // The host's `uhost` arithmetic, written where no `handle` of the program answers it.
+    let vals := f_operands(&mut g, args)
+    f_perform_uhost_arith(&mut g, Text::slice_or_empty(name, 4, Text::len(name)), vals)
+  } else if name == "Os::host_bits" {
+    [ll_word(64)]
+  } else if name == "Os::hash_seed_k0" {
+    [b_def(&mut g.b, ll!(`call i64 @rt_hash_seed(i64 0)`))]
+  } else if name == "Os::hash_seed_k1" {
+    [b_def(&mut g.b, ll!(`call i64 @rt_hash_seed(i64 1)`))]
+  } else if text_starts_with(name, "UHost::", 0) {
+    // The operations of `uhost` that carry a proof in Tauto: the result fits,
+    // so each is one machine operation with no check.
+    let vals := f_operands(&mut g, args)
+    match vals {
+      Nil => f_refused_value(&mut g, "internal: a `uhost` operation of nothing")
+      Cons(a, rest) => match rest {
+        Nil => if name == "UHost::succ_below" {
+          [b_def(&mut g.b, ll!(`add i64 $a, 1`))]
+        } else if name == "UHost::pred_nz" {
+          [b_def(&mut g.b, ll!(`sub i64 $a, 1`))]
+        } else {
+          [a]
+        }
+        Cons(b, ^more) => if name == "UHost::add_within" {
+          [b_def(&mut g.b, ll!(`add i64 $a, $b`))]
+        } else {
+          [b_def(&mut g.b, ll!(`sub i64 $a, $b`))]
+        }
+      }
+    }
+  } else if name == "I64::of_i8" || name == "I64::of_i16" || name == "I64::of_i32" || name == "U64::of_u16" {
+    // A smaller signed number is held sign-extended, an unsigned one
+    // zero-extended: the same word.
+    match args {
+      Nil => f_refused_value(&mut g, "internal: a conversion of nothing")
+      Cons(a, rest) => {
+        let x := f_operand(&mut g, a)
+        [f_head(x.v)]
+      }
+    }
+  } else if name == "I8::of_i64" || name == "I16::of_i64" || name == "I32::of_i64" || name == "U8::of_u64" || name == "U16::of_u64" || name == "U32::of_u64" || name == "I64::of_u64" || name == "U64::of_i64" {
+    // The same word, when the number fits the smaller width.
+    match args {
+      Nil => f_refused_value(&mut g, "internal: a conversion of nothing")
+      Cons(a, rest) => {
+        let x := f_operand(&mut g, a)
+        let v := f_head(x.v)
+        f_fits_or_fail(&mut g, name, v)
+        [v]
+      }
+    }
+  } else if name == "U64::of_uhost" || name == "U64::of_u8" || name == "U64::of_u32" || name == "U64::of_nat" || name == "Nat::of_u64" {
+    // The word of the host is at most 64 bits: the same number.
+    match args {
+      Nil => f_refused_value(&mut g, "internal: a conversion of nothing")
+      Cons(a, ^rest) => {
+        let x := f_operand(&mut g, a)
+        [f_head(x.v)]
+      }
+    }
+  } else if text_starts_with(name, "Vec::", 0) {
+    f_vec_builtin(&mut g, name, args)
+  } else if text_starts_with(name, "Slots::", 0) {
+    f_slots_builtin(&mut g, ty, name, args)
+  } else {
+    f_refused_value(&mut g, Text::concat_all(["the builtin `", name, "`"]))
+  }
+}
+
+// A function that may stop only by what the program ends itself: an
+// arithmetic that overflows and a division by zero stop the run, and any
+// other operation that does not resume is refused where it is performed.
+pub fn f_tier_plain(t: NTier): Bool {
+  match t {
+    NTierS => true
+    NTierA => true
+    NTierO => false
+    NTierM => false
+  }
+}
+
+// The builtins of `Vec`. A `Vec` is a word holding the address of its header,
+// which the runtime reads and writes; the words of one element are given to
+// it where it needs them.
+pub fn f_vec_builtin(g: &mut FFun, name: Text, args: List(NExpr)): List(llvm::Value::I) ! {div} {
+  if name == "Vec::new" {
+    let h := b_def(&mut g.b, ll!(`call ptr @rt_vec_new()`))
+    [b_word(&mut g.b, h)]
+  } else {
+    match args {
+      Nil => f_refused_value(&mut g, Text::concat_all(["the builtin `", name, "`"]))
+      Cons(first, rest) => match n_borrowed(first.ty) {
+        None => f_refused_value(&mut g, Text::concat_all(["the builtin `", name, "`"]))
+        Some(inner) => match inner {
+          NVec(elem) => if name == "Vec::push" || name == "Vec::pop" || name == "Vec::len" || name == "Vec::get" || name == "Vec::get_mut" || name == "Vec::last_mut" || name == "Vec::clear" || name == "Vec::truncate" || name == "Vec::swap_within" {
+            f_vec_op(&mut g, name, first, rest, elem)
+          } else {
+            f_refused_value(&mut g, Text::concat_all(["the builtin `", name, "`"]))
+          }
+          ^other => f_refused_value(&mut g, Text::concat_all(["the builtin `", name, "`"]))
+        }
+      }
+    }
+  }
+}
+
+// The operand `i` of the arguments after the first.
+pub fn f_vec_arg(g: &mut FFun, rest: List(NExpr), i: Nat): llvm::Value::I ! {div} {
+  match rest {
+    Nil => {
+      f_refuse(&mut g, "internal: a `Vec` builtin without its argument")
+      ll_word(0)
+    }
+    Cons(a, more) => if i == 0 {
+      f_head(f_operand(&mut g, a).v)
+    } else {
+      f_vec_arg(&mut g, more, i - 1)
+    }
+  }
+}
+
+pub fn f_vec_op(
+  g: &mut FFun,
+  name: Text,
+  first: NExpr,
+  rest: List(NExpr),
+  elem: NTy
+): List(llvm::Value::I) ! {div} {
+  let nw := f_words(&mut g, elem)
+  let n := ll_word(nw)
+  let v := f_expr(&mut g, first)
+  let slot := b_ptr(&mut g.b, f_head(v))
+  let hw := b_load(&mut g.b, slot, 0, 1)
+  let h := b_ptr(&mut g.b, f_head(hw))
+  if name == "Vec::push" {
+    match rest {
+      Nil => f_refused_value(&mut g, "internal: a `push` without its element")
+      Cons(a, ^more) => {
+        let x := f_expr(&mut g, a)
+        let t := f_temp(&mut g, x)
+        b_run(&mut g.b, ll!(`call void @rt_vec_push(ptr $h, ptr $t, i64 $n)`))
+        Nil
+      }
+    }
+  } else if name == "Vec::len" {
+    let lenp := b_gep(&mut g.b, h, 1)
+    b_load(&mut g.b, lenp, 0, 1)
+  } else if name == "Vec::get" || name == "Vec::get_mut" {
+    let i := f_vec_arg(&mut g, rest, 0)
+    let p := b_def(&mut g.b, ll!(`call ptr @rt_vec_at(ptr $h, i64 $i, i64 $n)`))
+    f_some_address(&mut g, p)
+  } else if name == "Vec::last_mut" {
+    let p := b_def(&mut g.b, ll!(`call ptr @rt_vec_last(ptr $h, i64 $n)`))
+    f_some_address(&mut g, p)
+  } else if name == "Vec::pop" {
+    let p := b_def(&mut g.b, ll!(`call ptr @rt_vec_pop(ptr $h, i64 $n)`))
+    let out := b_alloca(&mut g.b, 1 + nw)
+    b_store(&mut g.b, out, 0, f_zeros(1 + nw))
+    let found := b_def(&mut g.b, ll!(`icmp ne ptr $p, null`))
+    let some := b_label(&mut g.b)
+    let done := b_label(&mut g.b)
+    b_condbr(&mut g.b, found, some, done)
+    b_start(&mut g.b, some)
+    let x := b_load(&mut g.b, p, 0, nw)
+    b_store(&mut g.b, out, 1, x)
+    b_store(&mut g.b, out, 0, [ll_word(1)])
+    b_start(&mut g.b, done)
+    b_load(&mut g.b, out, 0, 1 + nw)
+  } else if name == "Vec::clear" || name == "Vec::truncate" {
+    let to := if name == "Vec::clear" { ll_word(0) } else { f_vec_arg(&mut g, rest, 0) }
+    let lenp := b_gep(&mut g.b, h, 1)
+    let len := b_load_word(&mut g.b, lenp)
+    let less := b_def(&mut g.b, ll!(`icmp ult i64 $to, $len`))
+    let cut := b_label(&mut g.b)
+    let done := b_label(&mut g.b)
+    b_condbr(&mut g.b, less, cut, done)
+    b_start(&mut g.b, cut)
+    g_drop_rows(&mut g.m, &mut g.b, h, to, nw, elem, 0, NUnit)
+    b_store_word(&mut g.b, to, lenp)
+    b_start(&mut g.b, done)
+    Nil
+  } else {
+    let i := f_vec_arg(&mut g, rest, 0)
+    let j := f_vec_arg(&mut g, rest, 1)
+    let c := b_def(&mut g.b, ll!(`call i1 @rt_vec_swap(ptr $h, i64 $i, i64 $j, i64 $n)`))
+    [b_bool(&mut g.b, c)]
+  }
+}
+
+// The builtins of `Slots`. A `Slots` is a word holding the address of its
+// header, which the runtime reads and writes (`rt_slots_*`): the room for the
+// elements, the capacity, a flag for each slot that says whether it holds an
+// element, the marks, the vacant mark and the state. The words of the state, a
+// mark and an element are given to it where it needs them. A slot past the
+// capacity ends the run for `get`, `put` and `take`; `mark` past the capacity
+// is the vacant mark; an empty slot ends the run for `get` and `take`.
+pub fn f_slots_builtin(g: &mut FFun, ty: NTy, name: Text, args: List(NExpr)): List(llvm::Value::I) ! {div} {
+  let target := if name == "Slots::new" {
+    Some(ty)
+  } else {
+    match args {
+      Nil => None
+      Cons(first, ^rest) => n_borrowed(first.ty)
+    }
+  }
+  match target {
+    Some(t) => match t {
+      NStd(kind, targs) => if kind == "Slots" {
+        match targs {
+          Cons(s, Cons(m, Cons(a, Nil))) => f_slots_op(&mut g, name, args, s, m, a)
+          ^other => f_refused_value(&mut g, Text::concat_all(["the builtin `", name, "`"]))
+        }
+      } else {
+        f_refused_value(&mut g, Text::concat_all(["the builtin `", name, "`"]))
+      }
+      ^other => f_refused_value(&mut g, Text::concat_all(["the builtin `", name, "`"]))
+    }
+    None => f_refused_value(&mut g, Text::concat_all(["the builtin `", name, "`"]))
+  }
+}
+
+// The operand `i` of a builtin's arguments, as one word.
+pub fn f_slots_operand(g: &mut FFun, args: List(NExpr), i: Nat): llvm::Value::I ! {div} {
+  match args {
+    Nil => {
+      f_refuse(&mut g, "internal: a `Slots` builtin without its argument")
+      ll_word(0)
+    }
+    Cons(a, more) => if i == 0 {
+      f_head(f_operand(&mut g, a).v)
+    } else {
+      f_slots_operand(&mut g, more, i - 1)
+    }
+  }
+}
+
+// The argument `i` of a builtin's arguments, as the words of its value.
+pub fn f_slots_value(g: &mut FFun, args: List(NExpr), i: Nat): List(llvm::Value::I) ! {div} {
+  match args {
+    Nil => {
+      f_refuse(&mut g, "internal: a `Slots` builtin without its argument")
+      Nil
+    }
+    Cons(a, more) => if i == 0 {
+      f_expr(&mut g, a)
+    } else {
+      f_slots_value(&mut g, more, i - 1)
+    }
+  }
+}
+
+// For each mark from `lo` up to `to`, make the value at that mark a copy of
+// its own. Used after the runtime has memcpy'd a template mark into those
+// slots: each mark then holds a share, and the template can be released.
+pub fn f_slots_share_marks(
+  g: &mut FFun,
+  h: llvm::Value::I,
+  lo: llvm::Value::I,
+  to: llvm::Value::I,
+  m: NTy
+): Unit ! {div} {
+  if f_plain(&mut g, m) {
+    ()
+  } else {
+    let mn := ll_word(f_words(&mut g, m))
+    let ip := b_alloca(&mut g.b, 1)
+    b_ins(&mut g.b, ll!(`store i64 $lo, ptr $ip`))
+    let head := b_label(&mut g.b)
+    let body := b_label(&mut g.b)
+    let next := b_label(&mut g.b)
+    let done := b_label(&mut g.b)
+    b_br(&mut g.b, head)
+    b_start(&mut g.b, head)
+    let i := b_def(&mut g.b, ll!(`load i64, ptr $ip`))
+    let more := b_def(&mut g.b, ll!(`icmp ult i64 $i, $to`))
+    b_condbr(&mut g.b, more, body, done)
+    b_start(&mut g.b, body)
+    let p := b_def(&mut g.b, ll!(`call ptr @rt_slots_mark(ptr $h, i64 $i, i64 $mn)`))
+    g_call(&mut g.m, &mut g.b, LDup, p, m)
+    b_br(&mut g.b, next)
+    b_start(&mut g.b, next)
+    let i1 := b_def(&mut g.b, ll!(`add i64 $i, 1`))
+    b_ins(&mut g.b, ll!(`store i64 $i1, ptr $ip`))
+    b_br(&mut g.b, head)
+    b_start(&mut g.b, done)
+  }
+}
+
+// For each mark from `lo` up to `to`, release the value at that mark when `m`
+// is not plain. Used when shrinking capacity: marks of slots that fall off are
+// dropped before the capacity is updated.
+pub fn f_slots_drop_marks(
+  g: &mut FFun,
+  h: llvm::Value::I,
+  lo: llvm::Value::I,
+  to: llvm::Value::I,
+  m: NTy
+): Unit ! {div} {
+  if f_plain(&mut g, m) {
+    ()
+  } else {
+    let mn := ll_word(f_words(&mut g, m))
+    let ip := b_alloca(&mut g.b, 1)
+    b_ins(&mut g.b, ll!(`store i64 $lo, ptr $ip`))
+    let head := b_label(&mut g.b)
+    let body := b_label(&mut g.b)
+    let next := b_label(&mut g.b)
+    let done := b_label(&mut g.b)
+    b_br(&mut g.b, head)
+    b_start(&mut g.b, head)
+    let i := b_def(&mut g.b, ll!(`load i64, ptr $ip`))
+    let more := b_def(&mut g.b, ll!(`icmp ult i64 $i, $to`))
+    b_condbr(&mut g.b, more, body, done)
+    b_start(&mut g.b, body)
+    let p := b_def(&mut g.b, ll!(`call ptr @rt_slots_mark(ptr $h, i64 $i, i64 $mn)`))
+    g_call(&mut g.m, &mut g.b, LDrop, p, m)
+    b_br(&mut g.b, next)
+    b_start(&mut g.b, next)
+    let i1 := b_def(&mut g.b, ll!(`add i64 $i, 1`))
+    b_ins(&mut g.b, ll!(`store i64 $i1, ptr $ip`))
+    b_br(&mut g.b, head)
+    b_start(&mut g.b, done)
+  }
+}
+
+pub fn f_slots_op(
+  g: &mut FFun,
+  name: Text,
+  args: List(NExpr),
+  s: NTy,
+  m: NTy,
+  a: NTy
+): List(llvm::Value::I) ! {div} {
+  let snw := f_words(&mut g, s)
+  let mnw := f_words(&mut g, m)
+  let nw := f_words(&mut g, a)
+  let sn := ll_word(snw)
+  let mn := ll_word(mnw)
+  let n := ll_word(nw)
+  if name == "Slots::new" {
+    let cap := f_slots_operand(&mut g, args, 0)
+    let s0 := f_slots_value(&mut g, args, 1)
+    let m0 := f_slots_value(&mut g, args, 2)
+    let sp := f_temp(&mut g, s0)
+    let mp := f_temp(&mut g, m0)
+    let h := b_def(&mut g.b, ll!(`call ptr @rt_slots_new(i64 $cap, i64 $n, i64 $mn, i64 $sn, ptr $sp, ptr $mp)`))
+    // The runtime memcpy'd `m0` into every mark and the vacant mark; give
+    // each a share of its own, then release the template.
+    f_slots_share_marks(&mut g, h, ll_word(0), cap, m)
+    let vacp := b_def(&mut g.b, ll!(`call ptr @rt_slots_mark(ptr $h, i64 $cap, i64 $mn)`))
+    g_call(&mut g.m, &mut g.b, LDup, vacp, m)
+    f_drop(&mut g, m0, m)
+    [b_word(&mut g.b, h)]
+  } else {
+    let v := f_slots_value(&mut g, args, 0)
+    let slot := b_ptr(&mut g.b, f_head(v))
+    let hw := b_load(&mut g.b, slot, 0, 1)
+    let h := b_ptr(&mut g.b, f_head(hw))
+    if name == "Slots::copy" {
+      // A new `Slots` of the lent range's capacity, made as `new` makes one
+      // from the given state and mark; then each filled element is copied
+      // into it (the elements are `Copy`: a share of each) and its flag set.
+      let capp := b_gep(&mut g.b, h, 1)
+      let cap := b_load_word(&mut g.b, capp)
+      let s0 := f_slots_value(&mut g, args, 1)
+      let m0 := f_slots_value(&mut g, args, 2)
+      let sp := f_temp(&mut g, s0)
+      let mp := f_temp(&mut g, m0)
+      let r := b_def(&mut g.b, ll!(`call ptr @rt_slots_new(i64 $cap, i64 $n, i64 $mn, i64 $sn, ptr $sp, ptr $mp)`))
+      f_slots_share_marks(&mut g, r, ll_word(0), cap, m)
+      let vacp := b_def(&mut g.b, ll!(`call ptr @rt_slots_mark(ptr $r, i64 $cap, i64 $mn)`))
+      g_call(&mut g.m, &mut g.b, LDup, vacp, m)
+      f_drop(&mut g, m0, m)
+      let plain := f_plain(&mut g, a)
+      let ip := b_alloca(&mut g.b, 1)
+      b_ins(&mut g.b, ll!(`store i64 0, ptr $ip`))
+      let head := b_label(&mut g.b)
+      let body := b_label(&mut g.b)
+      let full := b_label(&mut g.b)
+      let next := b_label(&mut g.b)
+      let done := b_label(&mut g.b)
+      b_br(&mut g.b, head)
+      b_start(&mut g.b, head)
+      let i := b_def(&mut g.b, ll!(`load i64, ptr $ip`))
+      let more := b_def(&mut g.b, ll!(`icmp ult i64 $i, $cap`))
+      b_condbr(&mut g.b, more, body, done)
+      b_start(&mut g.b, body)
+      let fp := b_def(&mut g.b, ll!(`call ptr @rt_slots_flag(ptr $h, i64 $i)`))
+      let f := b_def(&mut g.b, ll!(`load i64, ptr $fp`))
+      let filled := b_def(&mut g.b, ll!(`icmp ne i64 $f, 0`))
+      b_condbr(&mut g.b, filled, full, next)
+      b_start(&mut g.b, full)
+      let src := b_def(&mut g.b, ll!(`call ptr @rt_slots_elem(ptr $h, i64 $i, i64 $n)`))
+      let to := b_def(&mut g.b, ll!(`call ptr @rt_slots_elem(ptr $r, i64 $i, i64 $n)`))
+      let x := b_load(&mut g.b, src, 0, nw)
+      b_store(&mut g.b, to, 0, x)
+      if plain { () } else { g_call(&mut g.m, &mut g.b, LDup, to, a) }
+      let tfp := b_def(&mut g.b, ll!(`call ptr @rt_slots_flag(ptr $r, i64 $i)`))
+      b_store(&mut g.b, tfp, 0, [ll_word(1)])
+      b_br(&mut g.b, next)
+      b_start(&mut g.b, next)
+      let i1 := b_def(&mut g.b, ll!(`add i64 $i, 1`))
+      b_ins(&mut g.b, ll!(`store i64 $i1, ptr $ip`))
+      b_br(&mut g.b, head)
+      b_start(&mut g.b, done)
+      [b_word(&mut g.b, r)]
+    } else if name == "Slots::cap" {
+      let capp := b_gep(&mut g.b, h, 1)
+      b_load(&mut g.b, capp, 0, 1)
+    } else if name == "Slots::state" {
+      let sp := b_gep(&mut g.b, h, 5)
+      let v := b_load(&mut g.b, sp, 0, snw)
+      f_dup(&mut g, v, s)
+    } else if name == "Slots::mark" {
+      let i := f_slots_operand(&mut g, args, 1)
+      // Past the capacity: the vacant mark (total in the model).
+      let p := b_def(&mut g.b, ll!(`call ptr @rt_slots_mark(ptr $h, i64 $i, i64 $mn)`))
+      let v := b_load(&mut g.b, p, 0, mnw)
+      f_dup(&mut g, v, m)
+    } else if name == "Slots::get" || name == "Slots::get_mut" {
+      let i := f_slots_operand(&mut g, args, 1)
+      b_run(&mut g.b, ll!(`call void @rt_slots_require_full(ptr $h, i64 $i)`))
+      let p := b_def(&mut g.b, ll!(`call ptr @rt_slots_elem(ptr $h, i64 $i, i64 $n)`))
+      [b_word(&mut g.b, p)]
+    } else if name == "Slots::put" {
+      let i := f_slots_operand(&mut g, args, 1)
+      let mark := f_slots_value(&mut g, args, 2)
+      let x := f_slots_value(&mut g, args, 3)
+      let t := f_slots_value(&mut g, args, 4)
+      // A filled slot already holds an element: drop it before the overwrite,
+      // then clear its flag so the store below owns the new one alone.
+      // `rt_slots_elem` refuses a slot past capacity.
+      let next := b_def(&mut g.b, ll!(`add i64 $i, 1`))
+      g_drop_slots_range(&mut g.m, &mut g.b, h, i, next, nw, a)
+      let ep := b_def(&mut g.b, ll!(`call ptr @rt_slots_elem(ptr $h, i64 $i, i64 $n)`))
+      b_store(&mut g.b, ep, 0, x)
+      let mp := b_def(&mut g.b, ll!(`call ptr @rt_slots_mark(ptr $h, i64 $i, i64 $mn)`))
+      let old_m := b_load(&mut g.b, mp, 0, mnw)
+      f_drop(&mut g, old_m, m)
+      b_store(&mut g.b, mp, 0, mark)
+      let fp := b_def(&mut g.b, ll!(`call ptr @rt_slots_flag(ptr $h, i64 $i)`))
+      b_store(&mut g.b, fp, 0, [ll_word(1)])
+      let sp := b_gep(&mut g.b, h, 5)
+      let old_s := b_load(&mut g.b, sp, 0, snw)
+      f_drop(&mut g, old_s, s)
+      b_store(&mut g.b, sp, 0, t)
+      Nil
+    } else if name == "Slots::take" {
+      let i := f_slots_operand(&mut g, args, 1)
+      let mark := f_slots_value(&mut g, args, 2)
+      let t := f_slots_value(&mut g, args, 3)
+      b_run(&mut g.b, ll!(`call void @rt_slots_require_full(ptr $h, i64 $i)`))
+      let ep := b_def(&mut g.b, ll!(`call ptr @rt_slots_elem(ptr $h, i64 $i, i64 $n)`))
+      let x := b_load(&mut g.b, ep, 0, nw)
+      let mp := b_def(&mut g.b, ll!(`call ptr @rt_slots_mark(ptr $h, i64 $i, i64 $mn)`))
+      let old_m := b_load(&mut g.b, mp, 0, mnw)
+      f_drop(&mut g, old_m, m)
+      b_store(&mut g.b, mp, 0, mark)
+      let fp := b_def(&mut g.b, ll!(`call ptr @rt_slots_flag(ptr $h, i64 $i)`))
+      b_store(&mut g.b, fp, 0, [ll_word(0)])
+      let sp := b_gep(&mut g.b, h, 5)
+      let old_s := b_load(&mut g.b, sp, 0, snw)
+      f_drop(&mut g, old_s, s)
+      b_store(&mut g.b, sp, 0, t)
+      x
+    } else if name == "Slots::resize" {
+      let cap := f_slots_operand(&mut g, args, 1)
+      let m0 := f_slots_value(&mut g, args, 2)
+      let t := f_slots_value(&mut g, args, 3)
+      let mp := f_temp(&mut g, m0)
+      // Slots that fall off a smaller capacity are dropped first; the runtime
+      // then stores the new capacity and keeps the room.
+      let capp := b_gep(&mut g.b, h, 1)
+      let old := b_load_word(&mut g.b, capp)
+      let shrink := b_def(&mut g.b, ll!(`icmp ult i64 $cap, $old`))
+      let cut := b_label(&mut g.b)
+      let after := b_label(&mut g.b)
+      b_condbr(&mut g.b, shrink, cut, after)
+      b_start(&mut g.b, cut)
+      g_drop_slots_range(&mut g.m, &mut g.b, h, cap, old, nw, a)
+      // Marks of slots that fall off are owned; drop them before capacity
+      // update (after that, those indices would name the vacant mark).
+      f_slots_drop_marks(&mut g, h, cap, old, m)
+      b_start(&mut g.b, after)
+      // Drop the vacant mark before the runtime overwrites it with `m0`.
+      let vacp := b_def(&mut g.b, ll!(`call ptr @rt_slots_mark(ptr $h, i64 $old, i64 $mn)`))
+      let old_vac := b_load(&mut g.b, vacp, 0, mnw)
+      f_drop(&mut g, old_vac, m)
+      b_run(&mut g.b, ll!(`call void @rt_slots_resize(ptr $h, i64 $cap, i64 $n, i64 $mn, ptr $mp)`))
+      // New marks (if any) are a memcpy of `m0`; share them and the vacant
+      // mark, then release the template.
+      f_slots_share_marks(&mut g, h, old, cap, m)
+      let vacp2 := b_def(&mut g.b, ll!(`call ptr @rt_slots_mark(ptr $h, i64 $cap, i64 $mn)`))
+      g_call(&mut g.m, &mut g.b, LDup, vacp2, m)
+      f_drop(&mut g, m0, m)
+      let sp := b_gep(&mut g.b, h, 5)
+      let old_s := b_load(&mut g.b, sp, 0, snw)
+      f_drop(&mut g, old_s, s)
+      b_store(&mut g.b, sp, 0, t)
+      Nil
+    } else {
+      f_refused_value(&mut g, Text::concat_all(["the builtin `", name, "`"]))
+    }
+  }
+}
+
+// `Some` of a borrow of the address, or `None` when it is null.
+pub fn f_some_address(g: &mut FFun, p: llvm::Value::I): List(llvm::Value::I) {
+  let found := b_def(&mut g.b, ll!(`icmp ne ptr $p, null`))
+  let tag := b_bool(&mut g.b, found)
+  let w := b_word(&mut g.b, p)
+  [tag, w]
+}
+
+pub fn f_is_shown(t: NTy): Bool ! {div} { n_ty_eq(t, NShown) }
+
+// The index of the constructor of `cs` called `name`.
+pub fn f_ctor_named(cs: List(LCtor), name: Text, i: Nat): Option(Nat) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if c.name == name { Some(i) } else { f_ctor_named(rest, name, i + 1) }
+  }
+}
+
+// A `Result(A, IoError)` of a system call that gave the error number `err`
+// (0 for none): `Ok` with the words `ok`, or `Err(Failed(text))` with the text
+// of the error.
+pub fn f_host_result(
+  g: &mut FFun,
+  ty: NTy,
+  err: llvm::Value::I,
+  ok: List(llvm::Value::I)
+): List(llvm::Value::I) ! {div} {
+  let shape := l_shape(&mut g.m, ty)
+  match l_ctors_of(shape) {
+    None => f_refused_value(&mut g, "internal: a host result of a type that is not a `Result`")
+    Some(found) => match found {
+      #(tagged, cs) => match cs {
+        Cons(ok_c, rest) => match rest {
+          Cons(err_c, ^more) => match f_nth(err_c.fields, 0) {
+            None => f_refused_value(
+              &mut g,
+              "internal: a host result of a type that is not a `Result`"
+            )
+            Some(io) => match l_ctors_of(l_shape(&mut g.m, io.ty)) {
+              None => f_refused_value(
+                &mut g,
+                "internal: a host error of a type with no constructors"
+              )
+              Some(ifound) => match ifound {
+                #(itagged, ics) => match f_ctor_named(ics, "Failed", 0) {
+                  None => f_refused_value(&mut g, "internal: a host error with no `Failed`")
+                  Some(failed) => match f_nth(ics, failed) {
+                    None => f_refused_value(&mut g, "internal: a host error with no `Failed`")
+                    Some(fc) => match f_nth(fc.fields, 0) {
+                      None => f_refused_value(&mut g, "internal: a host error with no `Failed`")
+                      Some(ff) => if not(tagged) || not(itagged) || l_is_indirect(io.indirect) || l_is_indirect(
+                        ff.indirect
+                      ) {
+                        f_refused_value(&mut g, "internal: a host error stored in a box")
+                      } else {
+                        f_host_result_words(&mut g, ty, err, ok, ok_c, err_c, failed, fc)
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          Nil => f_refused_value(&mut g, "internal: a host result of a type that is not a `Result`")
+        }
+        Nil => f_refused_value(&mut g, "internal: a host result of a type that is not a `Result`")
+      }
+    }
+  }
+}
+
+pub fn f_host_result_words(
+  g: &mut FFun,
+  ty: NTy,
+  err: llvm::Value::I,
+  ok: List(llvm::Value::I),
+  ok_c: LCtor,
+  err_c: LCtor,
+  failed: Nat,
+  fc: LCtor
+): List(llvm::Value::I) ! {div} {
+  let n := f_words(&mut g, ty)
+  let ok_at := l_offset(&mut g.m, true, ok_c.fields, 0)
+  let err_at := l_offset(&mut g.m, true, err_c.fields, 0)
+  let text_at := l_offset(&mut g.m, true, fc.fields, 0)
+  let acc := b_alloca(&mut g.b, n)
+  let good := b_def(&mut g.b, ll!(`icmp eq i64 $err, 0`))
+  let yes := b_label(&mut g.b)
+  let no := b_label(&mut g.b)
+  let done := b_label(&mut g.b)
+  b_condbr(&mut g.b, good, yes, no)
+  b_start(&mut g.b, yes)
+  b_store(&mut g.b, acc, 0, f_put(f_put(f_zeros(n), 0, [ll_word(0)]), ok_at, ok))
+  b_br(&mut g.b, done)
+  b_start(&mut g.b, no)
+  let msg := b_def(&mut g.b, ll!(`call ptr @rt_errno_text(i64 $err)`))
+  let mw := b_word(&mut g.b, msg)
+  b_store(
+    &mut g.b,
+    acc,
+    0,
+    f_put(
+      f_put(f_put(f_zeros(n), 0, [ll_word(1)]), err_at, [ll_word(failed)]),
+      err_at + text_at,
+      [mw]
+    )
+  )
+  b_br(&mut g.b, done)
+  b_start(&mut g.b, done)
+  b_load(&mut g.b, acc, 0, n)
+}
+
+// The index of the first of `cs` with `count` fields.
+pub fn f_ctor_with(cs: List(LCtor), count: Nat, i: Nat): Option(Nat) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if l_len(c.fields) == count { Some(i) } else { f_ctor_with(rest, count, i + 1) }
+  }
+}
+
+// The arguments of the program after its name, as the list `ty` is: from the
+// last to the first, each put in front of what is made so far.
+pub fn f_argv(g: &mut FFun, ty: NTy): List(llvm::Value::I) ! {div} {
+  let shape := l_shape(&mut g.m, ty)
+  match l_ctors_of(shape) {
+    None => f_refused_value(&mut g, "internal: `argv` of a type that is not a list")
+    Some(found) => match found {
+      #(tagged, cs) => match f_ctor_with(cs, 0, 0) {
+        None => f_refused_value(&mut g, "internal: `argv` of a type that is not a list")
+        Some(nil) => match f_ctor_with(cs, 2, 0) {
+          None => f_refused_value(&mut g, "internal: `argv` of a type that is not a list")
+          Some(cons) => match f_nth(cs, cons) {
+            None => f_refused_value(&mut g, "internal: `argv` of a type that is not a list")
+            Some(c) => match f_nth(c.fields, 0) {
+              None => f_refused_value(&mut g, "internal: `argv` of a type that is not a list")
+              Some(first) => match f_nth(c.fields, 1) {
+                None => f_refused_value(&mut g, "internal: `argv` of a type that is not a list")
+                Some(second) => if not(tagged) || not(l_is_indirect(second.indirect)) || l_is_indirect(
+                  first.indirect
+                ) {
+                  f_refused_value(
+                    &mut g,
+                    "internal: `argv` of a list that is not a list of values"
+                  )
+                } else {
+                  f_argv_loop(&mut g, ty, nil, cons, c)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn f_argv_loop(g: &mut FFun, ty: NTy, nil: Nat, cons: Nat, c: LCtor): List(llvm::Value::I) ! {div} {
+  let n := f_words(&mut g, ty)
+  let head_at := l_offset(&mut g.m, true, c.fields, 0)
+  let tail_at := l_offset(&mut g.m, true, c.fields, 1)
+  let acc := b_alloca(&mut g.b, n)
+  let ip := b_alloca(&mut g.b, 1)
+  b_store(&mut g.b, acc, 0, f_put(f_zeros(n), 0, [ll_word(nil)]))
+  let argc := b_def(&mut g.b, ll!(`load i64, ptr @rt.argc`))
+  let last := b_def(&mut g.b, ll!(`sub i64 $argc, 1`))
+  b_ins(&mut g.b, ll!(`store i64 $last, ptr $ip`))
+  let head := b_label(&mut g.b)
+  let body := b_label(&mut g.b)
+  let done := b_label(&mut g.b)
+  b_start(&mut g.b, head)
+  let i := b_def(&mut g.b, ll!(`load i64, ptr $ip`))
+  let more := b_def(&mut g.b, ll!(`icmp sgt i64 $i, 0`))
+  b_condbr(&mut g.b, more, body, done)
+  b_start(&mut g.b, body)
+  let argv := b_def(&mut g.b, ll!(`load ptr, ptr @rt.argv`))
+  let at := b_def(&mut g.b, ll!(`getelementptr ptr, ptr $argv, i64 $i`))
+  let s := b_def(&mut g.b, ll!(`load ptr, ptr $at`))
+  let len := b_def(&mut g.b, ll!(`call i64 @rt_strlen(ptr $s)`))
+  let t := b_def(&mut g.b, ll!(`call ptr @rt_text(ptr $s, i64 $len)`))
+  let tw := b_word(&mut g.b, t)
+  let cur := b_load(&mut g.b, acc, 0, n)
+  let boxed := g_new_box(&mut g.b, cur)
+  let bw := b_word(&mut g.b, boxed)
+  let out := f_put(f_put(f_put(f_zeros(n), 0, [ll_word(cons)]), head_at, [tw]), tail_at, [bw])
+  b_store(&mut g.b, acc, 0, out)
+  let next := b_def(&mut g.b, ll!(`sub i64 $i, 1`))
+  b_ins(&mut g.b, ll!(`store i64 $next, ptr $ip`))
+  b_br(&mut g.b, head)
+  b_start(&mut g.b, done)
+  b_load(&mut g.b, acc, 0, n)
+}
+
+// A standard effect no `handle` answers: the host does, with the C library.
+// `stdout` writes its text and `stdout_flush` writes out what is held.
+pub fn f_perform_host(
+  g: &mut FFun,
+  ty: NTy,
+  op: Nat,
+  name: Text,
+  args: List(NExpr)
+): List(llvm::Value::I) ! {div} {
+  if w_fns_handle(g.m.pkg.fns, op) {
+    f_refused_value(&mut g, Text::concat_all(["a `handle` of `", name, "`"]))
+  } else {
+    f_host_answer(&mut g, ty, name, args)
+  }
+}
+
+// What the host answers the standard effect `name` with: where it is
+// performed, or in the arms of the host's handler (`Os::print` and the
+// others, `f_builtin`).
+fn f_host_answer(
+  g: &mut FFun,
+  ty: NTy,
+  name: Text,
+  args: List(NExpr)
+): List(llvm::Value::I) ! {div} {
+  {
+    match args {
+      Nil => if name == "stdout_flush" {
+        b_run(&mut g.b, ll!(`call void @rt_stdout_flush()`))
+        Nil
+      } else if name == "argv" {
+        f_argv(&mut g, ty)
+      } else {
+        f_refused_value(&mut g, Text::concat_all(["internal: `", name, "` with other arguments"]))
+      }
+      Cons(text, rest) => match rest {
+        Nil => if name == "main" {
+          match f_fn_parts(text.ty) {
+            None => f_refused_value(&mut g, "internal: an entry that is not a function value")
+            Some(^parts) => {
+              let v := f_expr(&mut g, text)
+              match f_signature(&mut g, text.ty) {
+                #(n, r) => {
+                  f_note_call(&mut g, n, r)
+                  let o := b_ptr(&mut g.b, f_head(v))
+                  let of := f_result_type(r)
+                  let callee := ll_call_value(n, r)
+                  let words := Cons(ll_ptr_arg(o), Nil)
+                  let ^resulted := f_result(&mut g, ll!(`call fastcc $of ${callee}($words)`), r)
+                  f_drop(&mut g, v, text.ty)
+                  Nil
+                }
+              }
+            }
+          }
+        } else if name == "fs_read" {
+          let v := f_expr(&mut g, text)
+          let t := b_ptr(&mut g.b, f_head(v))
+          let r := b_def(&mut g.b, ll!(`call [2 x i64] @rt_fs_read(ptr $t)`))
+          let err := b_def(&mut g.b, ll!(`extractvalue [2 x i64] $r, 0`))
+          let word := b_def(&mut g.b, ll!(`extractvalue [2 x i64] $r, 1`))
+          f_drop(&mut g, v, text.ty)
+          f_host_result(&mut g, ty, err, [word])
+        } else if name == "stdout" {
+          let v := f_expr(&mut g, text)
+          let t := b_ptr(&mut g.b, f_head(v))
+          b_run(&mut g.b, ll!(`call void @rt_stdout(ptr $t)`))
+          Nil
+        } else if name == "stderr" {
+          let v := f_expr(&mut g, text)
+          let t := b_ptr(&mut g.b, f_head(v))
+          b_run(&mut g.b, ll!(`call void @rt_stderr(ptr $t)`))
+          Nil
+        } else if name == "exit" {
+          let v := f_expr(&mut g, text)
+          let c := f_head(v)
+          b_run(&mut g.b, ll!(`call void @rt_exit(i64 $c)`))
+          b_end(&mut g.b, ll!(`unreachable`))
+          Nil
+        } else {
+          f_refused_value(&mut g, Text::concat_all(["internal: `", name, "` with other arguments"]))
+        }
+        Cons(^x, ^more) => f_refused_value(
+          &mut g,
+          Text::concat_all(["internal: `", name, "` with other arguments"])
+        )
+      }
+    }
+  }
+}
+
+pub fn f_is_uhost_op(name: Text): Bool {
+  name == "uhost_add" || name == "uhost_sub" || name == "uhost_mul" || name == "uhost_of_u64" || name == "host_width" || name == "hash_seed"
+}
+
+// The host's `uhost` arithmetic where no `handle` answers it: one checked
+// operation on the 64-bit word of this target.
+pub fn f_perform_uhost(
+  g: &mut FFun,
+  ty: NTy,
+  name: Text,
+  args: List(NExpr)
+): List(llvm::Value::I) ! {div} {
+  let vals := f_operands(&mut g, args)
+  f_uhost_native(&mut g, ty, name, vals)
+}
+
+// What the host answers of its `uhost` effects on this target, given the
+// operands written.
+pub fn f_uhost_native(
+  g: &mut FFun,
+  ty: NTy,
+  name: Text,
+  vals: List(llvm::Value::I)
+): List(llvm::Value::I) ! {div} {
+  if name == "host_width" {
+    // The word of this target is 64 bits: `W64`, the second constructor of `Width`.
+    match l_ctors_of(l_shape(&mut g.m, ty)) {
+      Some(found) => match found {
+        #(tagged, ^cs) => if tagged {
+          f_put(f_zeros(f_words(&mut g, ty)), 0, [ll_word(1)])
+        } else {
+          f_refused_value(&mut g, "internal: `host_width` of a type with no tag")
+        }
+      }
+      None => f_refused_value(&mut g, "internal: `host_width` of a type with no tag")
+    }
+  } else if name == "hash_seed" {
+    // The seed: two words the system picks once for the run.
+    match l_ctors_of(l_shape(&mut g.m, ty)) {
+      Some(found) => match found {
+        #(tagged, cs) => match cs {
+          Cons(c, ^others) => {
+            let k0 := b_def(&mut g.b, ll!(`call i64 @rt_hash_seed(i64 0)`))
+            let k1 := b_def(&mut g.b, ll!(`call i64 @rt_hash_seed(i64 1)`))
+            let at0 := l_offset(&mut g.m, tagged, c.fields, 0)
+            let at1 := l_offset(&mut g.m, tagged, c.fields, 1)
+            f_put(f_put(f_zeros(f_words(&mut g, ty)), at0, [k0]), at1, [k1])
+          }
+          Nil => f_refused_value(&mut g, "internal: `hash_seed` of a type with no constructor")
+        }
+      }
+      None => f_refused_value(&mut g, "internal: `hash_seed` of a type with no constructor")
+    }
+  } else {
+    f_perform_uhost_arith(&mut g, name, vals)
+  }
+}
+
+pub fn f_perform_uhost_arith(
+  g: &mut FFun,
+  name: Text,
+  vals: List(llvm::Value::I)
+): List(llvm::Value::I) {
+  match vals {
+    Cons(a, rest) => match rest {
+      Nil => if name == "uhost_of_u64" {
+        [a]
+      } else {
+        f_refused_value(&mut g, Text::concat_all(["internal: `", name, "` with other arguments"]))
+      }
+      Cons(b, more) => match more {
+        Nil => if name == "uhost_add" {
+          [f_checked(&mut g, "add", 64, false, a, b)]
+        } else if name == "uhost_sub" {
+          [f_checked(&mut g, "sub", 64, false, a, b)]
+        } else if name == "uhost_mul" {
+          [f_checked(&mut g, "mul", 64, false, a, b)]
+        } else {
+          f_refused_value(&mut g, Text::concat_all(["internal: `", name, "` with other arguments"]))
+        }
+        Cons(^c, ^others) => f_refused_value(
+          &mut g,
+          Text::concat_all(["internal: `", name, "` with other arguments"])
+        )
+      }
+    }
+    Nil => f_refused_value(&mut g, Text::concat_all(["internal: `", name, "` with other arguments"]))
+  }
+}
+
+// An operation performed. When no `handle` answers `show`, the host does.
+pub fn f_perform(
+  g: &mut FFun,
+  ty: NTy,
+  op: Nat,
+  args: List(NExpr),
+  answered: Bool
+): List(llvm::Value::I) ! {div} {
+  let name := match f_nth(g.m.pkg.ops, op) {
+    None => ""
+    Some(o) => o.name
+  }
+  // `main` and `fs_read` are answered where they are performed. The other
+  // standard effects the host's handler answers, where the program has it
+  // around its top level; a program of entries has none, so the host
+  // answers them where they are performed.
+  if name == "main" || name == "fs_read" {
+    f_perform_host(&mut g, ty, op, name, args)
+  } else if (name == "stdout" || name == "stdout_flush" || name == "stderr" || name == "exit" || name == "argv") && not(w_fns_handle(g.m.pkg.fns, op)) {
+    f_host_answer(&mut g, ty, name, args)
+  } else if name == "stdout" || name == "stdout_flush" || name == "stderr" || name == "argv" {
+    f_perform_handled(&mut g, ty, op, name, args, answered, false)
+  } else if f_is_uhost_op(name) && not(w_fns_handle(g.m.pkg.fns, op)) {
+    f_perform_uhost(&mut g, ty, name, args)
+  } else if f_is_uhost_op(name) {
+    // A handler answers where the chain of handlers has one, and the host
+    // where it has none.
+    f_perform_handled(&mut g, ty, op, name, args, answered, true)
+  } else if not(name == "show") {
+    // No `handle` answers it: the host would, and this backend does not
+    // write that answer yet.
+    if w_fns_handle(g.m.pkg.fns, op) {
+      f_perform_handled(&mut g, ty, op, name, args, answered, false)
+    } else {
+      f_refused_value(&mut g, Text::concat_all(["the standard effect `", f_display(name), "`"]))
+    }
+  } else if g.m.handles_show {
+    f_refused_value(&mut g, "a `handle` of `show`")
+  } else {
+    match args {
+      Nil => f_refused_value(&mut g, "internal: `show` of other than a name and a value")
+      Cons(named, rest) => match rest {
+        Nil => f_refused_value(&mut g, "internal: `show` of other than a name and a value")
+        Cons(value, more) => match more {
+          Cons(^x, ^others) => f_refused_value(
+            &mut g,
+            "internal: `show` of other than a name and a value"
+          )
+          Nil => match f_text_of(named) {
+            None => f_refused_value(&mut g, "a `show` whose name is not written in place")
+            Some(text) => if f_is_shown(value.ty) {
+              let c := ll_global_value(g_string(&mut g.m, text))
+              let v := f_expr(&mut g, value)
+              let s := b_ptr(&mut g.b, f_head(v))
+              b_run(&mut g.b, ll!(`call void @rt_show(ptr $c, ptr $s)`))
+              Nil
+            } else {
+              f_refused_value(&mut g, "internal: `show` of a value not shown")
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The text an expression is, when it is one written in place.
+pub fn f_text_of(e: NExpr): Option(Text) {
+  match e.kind {
+    NTextLit(s) => Some(s)
+    ^other => None
+  }
+}
+
+// What the tests made so far know of the scrutinee's parts: where the part
+// at a path is, and the constructor the part at a path was tested to be.
+pub(open) struct FParts { at: List(List(Nat) × FPlace), ctor: List(List(Nat) × Nat) }
+
+pub fn f_part_at(at: List(List(Nat) × FPlace), path: List(Nat)): Option(FPlace) {
+  match at {
+    Nil => None
+    Cons(x, rest) => match x {
+      #(p, found) => if d_path_eq(p, path) { Some(found) } else { f_part_at(rest, path) }
+    }
+  }
+}
+
+pub fn f_ctor_at(ctor: List(List(Nat) × Nat), path: List(Nat)): Option(Nat) {
+  match ctor {
+    Nil => None
+    Cons(x, rest) => match x {
+      #(p, c) => if d_path_eq(p, path) { Some(c) } else { f_ctor_at(rest, path) }
+    }
+  }
+}
+
+// A path without its last field, and the last field.
+pub fn f_split_last(path: List(Nat)): Option(List(Nat) × Nat) {
+  match path {
+    Nil => None
+    Cons(x, rest) => match f_split_last(rest) {
+      None => Some(#(Nil, x))
+      Some(found) => match found {
+        #(parent, last) => Some(#(Cons(x, parent), last))
+      }
+    }
+  }
+}
+
+pub fn f_no_place(g: &mut FFun, what: Text): FPlace {
+  f_refuse(&mut g, what)
+  FPlace { ptr: ll_null(), ty: NUnit }
+}
+
+// The address and type of the part of the scrutinee at `path`.
+pub fn f_part(g: &mut FFun, parts: &mut FParts, path: List(Nat)): FPlace ! {div} {
+  match f_part_at(parts.at, path) {
+    Some(found) => found
+    None => match f_split_last(path) {
+      None => f_no_place(&mut g, "internal: a match with no scrutinee")
+      Some(split) => match split {
+        #(parent, last) => {
+          let whole := f_part(&mut g, &mut parts, parent)
+          let shape := l_shape(&mut g.m, whole.ty)
+          match l_ctors_of(shape) {
+            None => f_no_place(&mut g, "internal: a part of a type with none")
+            Some(of) => match of {
+              #(tagged, cs) => {
+                let which := if tagged { f_ctor_at(parts.ctor, parent) } else { Some(0) }
+                match which {
+                  None => f_no_place(&mut g, "internal: a part of an untested constructor")
+                  Some(c) => match f_nth(cs, c) {
+                    None => f_no_place(&mut g, "internal: a part the constructor does not have")
+                    Some(ctor) => match f_nth(ctor.fields, last) {
+                      None => f_no_place(&mut g, "internal: a part the constructor does not have")
+                      Some(f) => {
+                        let at := g_field_at(
+                          &mut g.m,
+                          &mut g.b,
+                          whole.ptr,
+                          tagged,
+                          ctor.fields,
+                          last
+                        )
+                        let found := f_through(&mut g, at.content, f.ty)
+                        f_set(&mut parts.at, Cons(#(path, found), parts.at))
+                        found
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Whether a pattern binds a local that owns a value.
+pub fn f_binds(p: NPat): Bool {
+  match p {
+    NBind(l, t) => if n_needs_drop(t) {
+      match l.repr {
+        NRefRepr => false
+        NRefMutRepr => false
+        NPlain => true
+        NSharedVarRepr => true
+        NSharedVarCopy => true
+        NBorrowClosure => true
+        NFnRef => true
+      }
+    } else {
+      false
+    }
+    NCtorPat(^c, fields) => f_any_binds(fields)
+    NInjectPat(^u, ^k, q) => f_binds(q)
+    NWild => false
+    NIntPat(^neg, ^n) => false
+    NNatPat(^n) => false
+    NBoolPat(^b) => false
+    NTextPat(^s) => false
+  }
+}
+
+pub fn f_any_binds(ps: List(NPat)): Bool {
+  match ps {
+    Nil => false
+    Cons(p, rest) => if f_binds(p) { true } else { f_any_binds(rest) }
+  }
+}
+
+// Whether the scrutinee is an owned local the `match` takes by value: it is
+// read as the place the arms take it from.
+pub fn f_scrutinee_local(cx: NMatch): Bool {
+  if cx.by_ref {
+    false
+  } else {
+    match f_path(cx.scrut) {
+      FPathRead(^local, how) => (f_is_move(how) || f_is_place_use(how)) && n_needs_drop(cx.scrut.ty)
+      FPathBorrow(^p) => false
+      FPathField(^base, ^field, ^how) => false
+      FPathDeref(^value, ^how) => false
+      FPathValue => false
+    }
+  }
+}
+
+// Whether the arm takes nothing out of the scrutinee: the `match` is on a
+// borrow, or the scrutinee is a local the arm binds no owned part of, which
+// the arm then still owns whole.
+pub fn f_lends(cx: NMatch, arm: NArm): Bool {
+  if cx.by_ref { true } else { not(f_binds(arm.pat)) && f_scrutinee_local(cx) }
+}
+
+pub fn f_is_number(shape: LShape): Bool {
+  match shape {
+    LScalarOf(s) => match s {
+      LInt(^bits, ^signed) => true
+      LBool => false
+      LBorrow => false
+      LShown => false
+      LText => false
+      LFn => false
+      LVec => false
+      LSlots => false
+    }
+    LUnit => false
+    LPair(^a, ^b) => false
+    LSum(^cs, ^is_struct) => false
+  }
+}
+
+pub fn f_is_pair(shape: LShape): Bool {
+  match shape {
+    LPair(^a, ^b) => true
+    LScalarOf(^s) => false
+    LUnit => false
+    LSum(^cs, ^is_struct) => false
+  }
+}
+
+pub fn f_want_number(g: &mut FFun, t: NTy, w: llvm::Value::I): Option(llvm::Value::I) {
+  let shape := l_shape(&mut g.m, t)
+  if f_is_number(shape) { () } else { f_refuse(&mut g, "a number pattern on a `Nat`") }
+  Some(w)
+}
+
+pub fn f_sub_patterns(
+  g: &mut FFun,
+  subs: List(NPat),
+  p: llvm::Value::I,
+  tagged: Bool,
+  c: LCtor,
+  i: Nat,
+  by_ref: Bool,
+  owned: Bool
+): Unit ! {div} {
+  match subs {
+    Nil => ()
+    Cons(sub, rest) => match f_nth(c.fields, i) {
+      None => f_refuse(&mut g, "internal: a pattern of a field the constructor does not have")
+      Some(f) => {
+        let at := g_field_at(&mut g.m, &mut g.b, p, tagged, c.fields, i)
+        let part := f_through(&mut g, at.content, f.ty)
+        let lent := by_ref || f_is_borrowed(f.ty)
+        let taken := match at.boxed {
+          None => None
+          Some(boxed) => if not(lent) && owned { Some(boxed) } else { None }
+        }
+        match taken {
+          None => f_pattern(&mut g, sub, part.ptr, part.ty, lent, owned)
+          Some(boxed) => match f.indirect {
+            NDirect => f_pattern(&mut g, sub, part.ptr, part.ty, lent, owned)
+            NShared => {
+              let rc := b_load_word(&mut g.b, boxed)
+              let last := b_def(&mut g.b, ll!(`icmp eq i64 $rc, 1`))
+              let free := b_label(&mut g.b)
+              let keep := b_label(&mut g.b)
+              let done := b_label(&mut g.b)
+              b_condbr(&mut g.b, last, free, keep)
+              b_start(&mut g.b, free)
+              f_pattern(&mut g, sub, part.ptr, part.ty, false, true)
+              b_run(&mut g.b, ll!(`call void @rt_free(ptr $boxed)`))
+              b_br(&mut g.b, done)
+              b_start(&mut g.b, keep)
+              let less := b_def(&mut g.b, ll!(`sub i64 $rc, 1`))
+              b_store_word(&mut g.b, less, boxed)
+              f_pattern(&mut g, sub, part.ptr, part.ty, false, false)
+              b_start(&mut g.b, done)
+            }
+            NUnique => {
+              f_pattern(&mut g, sub, part.ptr, part.ty, false, true)
+              b_run(&mut g.b, ll!(`call void @rt_free(ptr $boxed)`))
+            }
+          }
+        }
+        f_sub_patterns(&mut g, rest, p, tagged, c, i + 1, by_ref, owned)
+      }
+    }
+  }
+}
+
+// A part of a value taken apart that nothing names ends here.
+pub fn f_unnamed(g: &mut FFun, p: llvm::Value::I, t: NTy, by_ref: Bool, owned: Bool): Unit ! {div} {
+  if not(by_ref) && owned { g_call(&mut g.m, &mut g.b, LDrop, p, t) } else { () }
+}
+
+// Binds what `pat` names of the value of the type `t` at `p`.
+//
+// A `match` on a borrow lends each part. A `match` on a value takes the
+// parts out: one in a box is moved out of it when nothing else shares the
+// box (`owned`), which is then released, and copied when something does.
+pub fn f_pattern(
+  g: &mut FFun,
+  pat: NPat,
+  p: llvm::Value::I,
+  t: NTy,
+  by_ref: Bool,
+  owned: Bool
+): Unit ! {div} {
+  match pat {
+    NWild => f_unnamed(&mut g, p, t, by_ref, owned)
+    NInjectPat(^u, ^k, ^q) => f_refuse(&mut g, "a union")
+    NIntPat(^neg, ^n) => f_unnamed(&mut g, p, t, by_ref, owned)
+    NNatPat(^n) => f_unnamed(&mut g, p, t, by_ref, owned)
+    NBoolPat(^b) => f_unnamed(&mut g, p, t, by_ref, owned)
+    NTextPat(^s) => f_unnamed(&mut g, p, t, by_ref, owned)
+    NBind(local, ty) => if f_is_borrow(local.repr) {
+      let w := b_word(&mut g.b, p)
+      let lent := match local.repr {
+        NRefMutRepr => NRefMut(t)
+        NRefRepr => NRef(t)
+        NFnRef => NRef(t)
+        NPlain => NRef(t)
+        NSharedVarRepr => NRef(t)
+        NSharedVarCopy => NRef(t)
+        NBorrowClosure => NRef(t)
+      }
+      f_bind(&mut g, local, ty, [w], lent)
+    } else {
+      let n := f_words(&mut g, t)
+      let read := b_load(&mut g.b, p, 0, n)
+      let v := if by_ref || not(owned) { f_dup(&mut g, read, t) } else { read }
+      f_bind(&mut g, local, ty, v, t)
+    }
+    NCtorPat(ctor, fields) => {
+      let shape := l_shape(&mut g.m, t)
+      match l_ctors_of(shape) {
+        None => f_refuse(&mut g, "internal: a constructor pattern on a type with none")
+        Some(found) => match found {
+          #(tagged, cs) => match f_nth(cs, if tagged { ctor.index } else { 0 }) {
+            None => f_refuse(&mut g, "internal: a pattern of a constructor the type does not have")
+            Some(c) => f_sub_patterns(&mut g, fields, p, tagged, c, 0, by_ref, owned)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn f_param_words(id: Nat, i: Nat, n: Nat): List(LlLocal) {
+  f_param_words_left(id, i, n - i)
+}
+
+// `f_param_words` over the `left` words from `i`: the recursion is structural on `left`.
+fn f_param_words_left(id: Nat, i: Nat, left: Nat): List(LlLocal) {
+  match left {
+    Zero => Nil
+    Succ(rest) => Cons(ll_param(id, i), f_param_words_left(id, i + 1, rest))
+  }
+}
+
+pub fn f_local_values(ls: List(LlLocal)): List(llvm::Value::I) {
+  match ls {
+    Nil => Nil
+    Cons(l, rest) => Cons(ll_value(l), f_local_values(rest))
+  }
+}
+
+pub fn f_local_params(ls: List(LlLocal)): List(llvm::Param::I) {
+  match ls {
+    Nil => Nil
+    Cons(l, rest) => Cons(ll_word_param(l), f_local_params(rest))
+  }
+}
+
+// Makes the slots of the parameters, and gives the words the function takes.
+pub fn f_params(g: &mut FFun, params: List(NParam)): List(llvm::Param::I) ! {div} {
+  match params {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ty := f_slot_type(&mut g, p.local, p.ty)
+      let n := f_words(&mut g, ty)
+      let words := f_param_words(p.local.id, 0, n)
+      let ptr := b_alloca(&mut g.b, n)
+      b_store(&mut g.b, ptr, 0, f_local_values(words))
+      f_set(
+        &mut g.locals,
+        Ordmap::insert(g.locals, p.local.id, FSlot { ptr: ptr, ty: ty }, Ordmap::compare_nat)
+      )
+      f_append(f_local_params(words), f_params(&mut g, rest))
+    }
+  }
+}
+
+pub fn f_is_handled(handled: List(Nat), id: Nat): Bool {
+  match handled {
+    Nil => false
+    Cons(h, rest) => if h == id { true } else { f_is_handled(rest, id) }
+  }
+}
+
+// A function of the program, or nothing when the backend does not write it.
+pub fn f_function(g: &mut FFun, f: NFn): Option(llvm::Item::I) ! {div} {
+  if not(f_tier_plain(f.tier)) {
+    f_refuse(&mut g, Text::concat_all(["a function that may stop (`", f_display(f.source), "`)"]))
+    None
+  } else {
+    // A function passed its handler finds it in the chain of handlers too.
+    let blocks_of := b_lower_fn(f)
+    f_set(&mut g.b, b_new())
+    f_set(&mut g.locals, Ordmap::empty())
+    f_set(&mut g.ret, f.ret)
+    f_set(&mut g.ev, None)
+    f_set(&mut g.graph, k_graph(blocks_of.body))
+    k_enter(&mut g, 0, None)
+    let params := f_params(&mut g, f.params)
+    k_emit_graph(&mut g, 0, None)
+    let n := f_words(&mut g, f.ret)
+    let blocks := b_finish(g.b)
+    Some(ll_define(f_result_type(n), ll_fn(f.id), params, blocks.entry, blocks.rest))
+  }
+}
+
+// Function values.
+//
+// A function value is the address of a box: a count of the values that
+// share it, the number of its function, then the words of what it
+// captured. There is no call of an address: a call of a function value goes
+// through `@call.<n>.<r>`, which tests the number and calls its function.
+
+// `t` with every function type's kind the same: the words of a function
+// value do not tell its kind.
+pub fn f_erase(t: NTy): NTy {
+  match t {
+    NFn(p, r, ^k, x) => NFn(f_erase_all(p), f_erase(r), "shared", x)
+    NVec(a) => NVec(f_erase(a))
+    NArray(a) => NArray(f_erase(a))
+    NSlice(a) => NSlice(f_erase(a))
+    NOption(a) => NOption(f_erase(a))
+    NInfo(a) => NInfo(f_erase(a))
+    NBudgetAnswer(a) => NBudgetAnswer(f_erase(a))
+    NResult(a, b) => NResult(f_erase(a), f_erase(b))
+    NPair(a, b) => NPair(f_erase(a), f_erase(b))
+    NSharedVar(c, a) => NSharedVar(c, f_erase(a))
+    NStd(n, a) => NStd(n, f_erase_all(a))
+    NRef(a) => NRef(f_erase(a))
+    NRefMut(a) => NRefMut(f_erase(a))
+    NData(n, a) => NData(n, f_erase_all(a))
+    NInt(^w) => t
+    NBool => t
+    NText => t
+    NUnit => t
+    NNever => t
+    NFloat => t
+    NFloat32 => t
+    NBuf => t
+    NShown => t
+    NUnion(^n) => t
+    NParam(^n) => t
+  }
+}
+
+pub fn f_erase_all(ts: List(NTy)): List(NTy) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(f_erase(t), f_erase_all(rest))
+  }
+}
+
+// Whether values of the two types are the same words: function types that
+// differ only in their kind are.
+pub fn f_same(a: NTy, b: NTy): Bool ! {div} { n_ty_eq(a, b) || n_ty_eq(f_erase(a), f_erase(b)) }
+
+// The parameters, result and tier of a function type.
+pub(open) struct FFnParts { params: List(NTy), ret: NTy, tier_s: Bool }
+
+pub fn f_fn_parts(t: NTy): Option(FFnParts) {
+  match t {
+    NFn(p, r, ^k, x) => Some(FFnParts { params: p, ret: r, tier_s: x == "S" || x == "A" })
+    NInt(^w) => None
+    NBool => None
+    NText => None
+    NUnit => None
+    NNever => None
+    NFloat => None
+    NFloat32 => None
+    NBuf => None
+    NShown => None
+    NVec(^a) => None
+    NArray(^a) => None
+    NSlice(^a) => None
+    NOption(^a) => None
+    NInfo(^a) => None
+    NBudgetAnswer(^a) => None
+    NResult(^a, ^b) => None
+    NPair(^a, ^b) => None
+    NSharedVar(^c, ^a) => None
+    NStd(^n, ^a) => None
+    NUnion(^n) => None
+    NRef(^a) => None
+    NRefMut(^a) => None
+    NData(^n, ^a) => None
+    NParam(^n) => None
+  }
+}
+
+// The function type a value of the type `t` is or borrows.
+pub fn f_fn_of(t: NTy): Option(NTy) ! {div} {
+  match n_borrowed(t) {
+    Some(a) => f_fn_of(a)
+    None => match f_fn_parts(t) {
+      Some(^f) => Some(t)
+      None => None
+    }
+  }
+}
+
+pub fn f_words_of(g: &mut FFun, ts: List(NTy)): Nat ! {div} {
+  match ts {
+    Nil => 0
+    Cons(t, rest) => {
+      let n := f_words(&mut g, t)
+      n + f_words_of(&mut g, rest)
+    }
+  }
+}
+
+// The words a function value of the type takes and gives.
+pub fn f_signature(g: &mut FFun, t: NTy): Nat × Nat ! {div} {
+  match f_fn_parts(t) {
+    None => #(0, 0)
+    Some(f) => {
+      let n := f_words_of(&mut g, f.params)
+      #(n, f_words(&mut g, f.ret))
+    }
+  }
+}
+
+pub fn f_has_call(calls: List(Nat × Nat), n: Nat, r: Nat): Bool {
+  match calls {
+    Nil => false
+    Cons(c, rest) => match c {
+      #(a, b) => (a == n && b == r) || f_has_call(rest, n, r)
+    }
+  }
+}
+
+pub fn f_note_call(g: &mut FFun, n: Nat, r: Nat): Unit {
+  if f_has_call(g.m.calls, n, r) { () } else { f_set(&mut g.m.calls, Cons(#(n, r), g.m.calls)) }
+}
+
+// The words of the result of a call that gives `n` words.
+pub fn f_result(g: &mut FFun, call: llvm::Rhs::I, n: Nat): List(llvm::Value::I) ! {div} {
+  if n == 0 {
+    b_run(&mut g.b, call)
+    Nil
+  } else if n == 1 {
+    [b_def(&mut g.b, call)]
+  } else {
+    let r := b_def(&mut g.b, call)
+    f_result_words(&mut g, f_result_type(n), r, 0, n)
+  }
+}
+
+pub fn f_value_args(g: &mut FFun, args: List(NExpr), params: List(NTy)): List(llvm::TyValue::I) ! {div} {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => match params {
+      Nil => Nil
+      Cons(p, more) => {
+        let v := f_expr(&mut g, a)
+        let w := f_coerce(&mut g, v, a.ty, p)
+        f_append(f_word_args(w), f_value_args(&mut g, rest, more))
+      }
+    }
+  }
+}
+
+// Calls the function value of the type `f` whose box the word `w` holds.
+pub fn f_call_value(
+  g: &mut FFun,
+  ty: NTy,
+  args: List(NExpr),
+  tier_s: Bool,
+  counted: Bool,
+  f: NTy,
+  w: llvm::Value::I
+): List(llvm::Value::I) ! {div} {
+  match f_fn_parts(f) {
+    None => f_refused_value(&mut g, "internal: a call of a value that is not a function")
+    Some(parts) => if not(tier_s) || not(parts.tier_s) {
+      f_refused_value(&mut g, "a call that may stop")
+    } else if counted {
+      f_refused_value(&mut g, "a `budget`")
+    } else {
+      let o := b_ptr(&mut g.b, w)
+      let words := Cons(ll_ptr_arg(o), f_value_args(&mut g, args, parts.params))
+      match f_signature(&mut g, f) {
+        #(n, r) => {
+          f_note_call(&mut g, n, r)
+          let of := f_result_type(r)
+          let name := ll_call_value(n, r)
+          let v := f_result(&mut g, ll!(`call fastcc $of ${name}($words)`), r)
+          f_coerce(&mut g, v, parts.ret, ty)
+        }
+      }
+    }
+  }
+}
+
+// A function value of its own: a box of the count, the number of its
+// function and the words of what it captured.
+pub fn f_new_fn(g: &mut FFun, id: Nat, env: List(llvm::Value::I)): List(llvm::Value::I) {
+  let size := ll_word(8 * (2 + l_len(env)))
+  let o := b_def(&mut g.b, ll!(`call ptr @rt_alloc(i64 $size)`))
+  b_ins(&mut g.b, ll!(`store i64 1, ptr $o`))
+  b_store(&mut g.b, o, 1, [ll_word(id)])
+  b_store(&mut g.b, o, 2, env)
+  [b_word(&mut g.b, o)]
+}
+
+pub fn f_note_closure(g: &mut FFun, n: Nat, r: Nat, owns: Bool): Nat {
+  let id := l_len(g.m.closures)
+  f_set(&mut g.m.closures, Cons(#(#(n, r), owns), g.m.closures))
+  id
+}
+
+pub fn f_wrapper_of(ws: List(Nat × Nat), inst: Nat): Option(Nat) {
+  match ws {
+    Nil => None
+    Cons(w, rest) => match w {
+      #(i, id) => if i == inst { Some(id) } else { f_wrapper_of(rest, inst) }
+    }
+  }
+}
+
+pub fn f_env(): llvm::Value::I { ll_value(ll_named("env")) }
+
+// Word `n` the function of a function value takes.
+pub fn f_arg(n: Nat): LlLocal { ll_named(concat("a", Text::of_nat(n))) }
+
+pub fn f_wrapper_params(
+  g: &mut FFun,
+  params: List(NParam),
+  n: Nat
+): List(LlLocal) ! {div} {
+  match params {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ty := f_slot_type(&mut g, p.local, p.ty)
+      let k := f_words(&mut g, ty)
+      f_append(f_arg_names(n, k), f_wrapper_params(&mut g, rest, n + k))
+    }
+  }
+}
+
+pub fn f_arg_names(first: Nat, k: Nat): List(LlLocal) {
+  match k {
+    Zero => Nil
+    Succ(j) => Cons(f_arg(first), f_arg_names(first + 1, j))
+  }
+}
+
+pub fn f_finish(
+  b: BBody,
+  r: Nat,
+  name: LlGlobal,
+  params: List(llvm::Param::I)
+): llvm::Item::I {
+  let blocks := b_finish(b)
+  ll_define(f_result_type(r), name, params, blocks.entry, blocks.rest)
+}
+
+// A function of the program as a function value.
+pub fn f_fn_value(g: &mut FFun, inst: Nat): List(llvm::Value::I) ! {div} {
+  match f_nth(g.m.pkg.fns, inst) {
+    None => f_refused_value(&mut g, "internal: a function the package does not have")
+    Some(f) => if not(f_tier_plain(f.tier)) {
+      f_refused_value(&mut g, "a function value that may stop")
+    } else {
+      let id := match f_wrapper_of(g.m.wrappers, inst) {
+        Some(id) => id
+        None => {
+          var b := b_new()
+          let names := f_wrapper_params(&mut g, f.params, 0)
+          let r := f_words(&mut g, f.ret)
+          let of := f_result_type(r)
+          let words := f_word_args(f_local_values(names))
+          let name := ll_fn(inst)
+          let call := ll!(`call fastcc $of ${name}($words)`)
+          if r == 0 {
+            b_run(&mut b, call)
+            b_end(&mut b, ll!(`ret void`))
+          } else {
+            let v := b_def(&mut b, call)
+            b_end(&mut b, ll!(`ret $of $v`))
+          }
+          let id := f_note_closure(&mut g, l_len(names), r, false)
+          f_set(&mut g.m.wrappers, Cons(#(inst, id), g.m.wrappers))
+          let params := Cons(ll_named_ptr_param(ll_named("env")), f_local_params(names))
+          let item := f_finish(b, r, ll_closure(id), params)
+          f_set(&mut g.m.closure_defs, Cons(item, g.m.closure_defs))
+          id
+        }
+      }
+      f_new_fn(&mut g, id, Nil)
+    }
+  }
+}
+
+// How a closure holds a local it reads.
+pub(open) enum FHeld {
+  // The value's words, its own.
+  FHeldValue
+  // The address of the slot of the frame it was made in.
+  FHeldPlace
+  // A copy of the value a borrow stands for, read through a borrow of the
+  // copy.
+  FHeldCopy(NTy)
+}
+
+pub(open) struct FHold { local: NLocal, held: FHeld, ty: NTy, at: Nat }
+
+pub fn f_has_local(ls: List(NLocal), id: Nat): Bool {
+  match ls {
+    Nil => false
+    Cons(l, rest) => l.id == id || f_has_local(rest, id)
+  }
+}
+
+pub fn f_is_place_held(h: FHeld): Bool {
+  match h {
+    FHeldValue => false
+    FHeldPlace => true
+    FHeldCopy(^t) => false
+  }
+}
+
+pub fn f_owns(hs: List(FHold)): Bool {
+  match hs {
+    Nil => false
+    Cons(h, rest) => not(f_is_place_held(h.held)) || f_owns(rest)
+  }
+}
+
+// What a closure holds of the locals it reads, and the words of it in its
+// box: the holds the last first.
+pub(open) struct FCaptured { holds: List(FHold), env: List(llvm::Value::I), moved: Bool }
+
+pub fn f_capture(
+  g: &mut FFun,
+  c: NClosure,
+  free: List(NLocal × Bool),
+  got: FCaptured
+): FCaptured ! {div} {
+  match free {
+    Nil => got
+    Cons(x, rest) => match x {
+      #(local, moved) => match Ordmap::get(g.locals, local.id, Ordmap::compare_nat) {
+        None => f_capture(&mut g, c, rest, got)
+        Some(slot) => if moved {
+          FCaptured { holds: got.holds, env: got.env, moved: true }
+        } else {
+          let at := l_len(got.env)
+          let next := if f_has_local(c.owned_refs, local.id) {
+            match n_borrowed(slot.ty) {
+              None => {
+                f_refuse(&mut g, "internal: a borrow a closure copies that is not one")
+                got
+              }
+              Some(inner) => {
+                let w := b_load(&mut g.b, slot.ptr, 0, 1)
+                let p := b_ptr(&mut g.b, f_head(w))
+                let n := f_words(&mut g, inner)
+                let v := b_load(&mut g.b, p, 0, n)
+                let d := f_dup(&mut g, v, inner)
+                FCaptured {
+                  holds: Cons(FHold { local: local, held: FHeldCopy(inner), ty: slot.ty, at: at }, got.holds),
+                  env: f_append(got.env, d),
+                  moved: false
+                }
+              }
+            }
+          } else if f_has_local(c.clones, local.id) || (not(c.borrowed) && f_plain(&mut g, slot.ty)) {
+            let n := f_words(&mut g, slot.ty)
+            let v := b_load(&mut g.b, slot.ptr, 0, n)
+            let d := f_dup(&mut g, v, slot.ty)
+            FCaptured {
+              holds: Cons(FHold { local: local, held: FHeldValue, ty: slot.ty, at: at }, got.holds),
+              env: f_append(got.env, d),
+              moved: false
+            }
+          } else {
+            let w := b_word(&mut g.b, slot.ptr)
+            FCaptured {
+              holds: Cons(FHold { local: local, held: FHeldPlace, ty: slot.ty, at: at }, got.holds),
+              env: f_append(got.env, [w]),
+              moved: false
+            }
+          }
+          f_capture(&mut g, c, rest, next)
+        }
+      }
+    }
+  }
+}
+
+pub fn f_insert_local(g: &mut FFun, id: Nat, slot: FSlot): Unit {
+  f_set(&mut g.locals, Ordmap::insert(g.locals, id, slot, Ordmap::compare_nat))
+}
+
+// Makes the slots of what a closure holds, from its box.
+pub fn f_held_slots(g: &mut FFun, hs: List(FHold)): Unit {
+  match hs {
+    Nil => ()
+    Cons(h, rest) => {
+      let content := b_gep(&mut g.b, f_env(), 2 + h.at)
+      match h.held {
+        FHeldValue => f_insert_local(&mut g, h.local.id, FSlot { ptr: content, ty: h.ty })
+        FHeldPlace => {
+          let w := b_def(&mut g.b, ll!(`load i64, ptr $content`))
+          let p := b_ptr(&mut g.b, w)
+          f_insert_local(&mut g, h.local.id, FSlot { ptr: p, ty: h.ty })
+        }
+        FHeldCopy(^inner) => {
+          let w := b_word(&mut g.b, content)
+          let p := b_alloca(&mut g.b, 1)
+          b_store(&mut g.b, p, 0, [w])
+          f_insert_local(&mut g, h.local.id, FSlot { ptr: p, ty: h.ty })
+        }
+      }
+      f_held_slots(&mut g, rest)
+    }
+  }
+}
+
+pub fn f_closure_params(
+  g: &mut FFun,
+  params: List(NParam),
+  tys: List(NTy)
+): List(llvm::Param::I) ! {div} {
+  match params {
+    Nil => Nil
+    Cons(p, rest) => match tys {
+      Nil => Nil
+      Cons(t, more) => {
+        let n := f_words(&mut g, t)
+        let words := f_param_words(p.local.id, 0, n)
+        f_bind(&mut g, p.local, p.ty, f_local_values(words), t)
+        f_append(f_local_params(words), f_closure_params(&mut g, rest, more))
+      }
+    }
+  }
+}
+
+// Drops what a closure holds of its own.
+pub fn f_drop_held(m: &mut LModule, b: &mut BBody, hs: List(FHold)): Unit ! {div} {
+  match hs {
+    Nil => ()
+    Cons(h, rest) => {
+      match h.held {
+        FHeldPlace => ()
+        FHeldValue => {
+          let p := b_gep(&mut b, f_env(), 2 + h.at)
+          g_call(&mut m, &mut b, LDrop, p, h.ty)
+        }
+        FHeldCopy(inner) => {
+          let p := b_gep(&mut b, f_env(), 2 + h.at)
+          g_call(&mut m, &mut b, LDrop, p, inner)
+        }
+      }
+      f_drop_held(&mut m, &mut b, rest)
+    }
+  }
+}
+
+pub fn f_fn_tier_s(t: NTy): Bool {
+  match f_fn_parts(t) {
+    None => false
+    Some(f) => f.tier_s
+  }
+}
+
+pub fn f_fn_params(t: NTy): List(NTy) {
+  match f_fn_parts(t) {
+    None => Nil
+    Some(f) => f.params
+  }
+}
+
+// A closure: a function value whose function is the closure's body,
+// holding what the body reads of this frame.
+pub fn f_closure(g: &mut FFun, c: NClosure): List(llvm::Value::I) ! {div} {
+  if not(f_fn_tier_s(c.fn_ty)) {
+    f_refused_value(&mut g, "a closure that may stop")
+  } else if f_nonempty(c.refs) {
+    f_refused_value(&mut g, "a closure passed what it uses as references")
+  } else {
+    match k_closure_index(c.body) {
+    None => f_refused_value(&mut g, "internal: a closure whose body is not in the blocks")
+    Some(k) => match f_nth(g.graph.ix.closures, k) {
+      None => f_refused_value(&mut g, "internal: a closure whose body is not in the blocks")
+      Some(sub) => f_closure_in(&mut g, c, sub)
+    }
+    }
+  }
+}
+
+pub fn f_closure_in(g: &mut FFun, c: NClosure, sub: NBlockFn): List(llvm::Value::I) ! {div} {
+    let got := f_capture(&mut g, c, k_free_locals(c, sub), FCaptured { holds: Nil, env: Nil, moved: false })
+    if got.moved {
+      f_refused_value(&mut g, "a closure whose body moves what it captured")
+    } else {
+      let holds := text_list_reverse(got.holds)
+      match f_signature(&mut g, c.fn_ty) {
+        #(n, r) => {
+          let owns := f_owns(holds)
+          let id := f_note_closure(&mut g, n, r, owns)
+          // The closure's function, written as a function of its own.
+          var inner := FFun {
+            m: g.m,
+            b: b_new(),
+            locals: Ordmap::empty(),
+            ret: c.ret,
+            ev: None,
+            graph: k_graph(sub)
+          }
+          k_enter(&mut inner, 0, None)
+          f_held_slots(&mut inner, holds)
+          let params := f_closure_params(&mut inner, c.params, f_fn_params(c.fn_ty))
+          k_emit_graph(&mut inner, 0, None)
+          f_set(&mut g.m, inner.m)
+          let all := Cons(ll_named_ptr_param(ll_named("env")), params)
+          let item := f_finish(inner.b, r, ll_closure(id), all)
+          f_set(&mut g.m.closure_defs, Cons(item, g.m.closure_defs))
+          if owns {
+            // What the closure holds of its own ends with it.
+            var b := b_new()
+            f_drop_held(&mut g.m, &mut b, holds)
+            b_end(&mut b, ll!(`ret void`))
+            let drop := f_finish(b, 0, ll_closure_drop(id), [ll_named_ptr_param(ll_named("env"))])
+            f_set(&mut g.m.closure_defs, Cons(drop, g.m.closure_defs))
+          } else {
+            ()
+          }
+          f_new_fn(&mut g, id, got.env)
+        }
+      }
+    }
+}
+
+// A cast of a function value: the same words serve every kind of function
+// value of the tier written.
+pub fn f_fn_cast(g: &mut FFun, ty: NTy, x: NExpr): List(llvm::Value::I) ! {div} {
+  match f_fn_of(x.ty) {
+    None => f_refused_value(&mut g, "internal: a cast of other than a function value")
+    Some(a) => match f_fn_parts(ty) {
+      None => f_refused_value(&mut g, "internal: a cast of other than a function value")
+      Some(b) => {
+        let sig_a := f_signature(&mut g, a)
+        let to := f_signature(&mut g, ty)
+        let same := match sig_a {
+          #(n, r) => match to {
+            #(m, s) => n == m && r == s
+          }
+        }
+        if not(same) || not(b.tier_s) {
+          f_refused_value(&mut g, "a function value cast to another signature")
+        } else {
+          let v := f_expr(&mut g, x)
+          if f_is_borrowed(x.ty) {
+            // A borrowed function read as a value is a copy of it.
+            let p := b_ptr(&mut g.b, f_head(v))
+            let w := b_load(&mut g.b, p, 0, 1)
+            f_dup(&mut g, w, ty)
+          } else {
+            v
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn f_is_copied(e: NExpr): Bool {
+  match f_path(e) {
+    FPathRead(^local, how) => f_is_clone(how)
+    FPathField(^base, ^field, how) => f_is_clone(how)
+    FPathDeref(^value, how) => f_is_clone(how)
+    FPathBorrow(^p) => false
+    FPathValue => false
+  }
+}
+
+// Effects.
+//
+// The handlers in force are a chain, `@rt.ev`: each entry is the next entry,
+// the number of an operation and the function value of its arm, in the frame
+// of the `handle`. A `direct` operation calls the nearest arm of it under
+// the handlers outside that arm's own.
+
+pub fn f_is_abort(k: NArmKind): Bool {
+  match k {
+    NArmDirect => false
+    NArmAbort => true
+    NArmSuspend => false
+  }
+}
+
+pub fn f_any_kind(arms: List(NOpArm), abort: Bool): Bool {
+  match arms {
+    Nil => false
+    Cons(a, rest) => (if abort { f_is_abort(a.kind) } else { w_is_suspend(a.kind) }) || f_any_kind(rest, abort)
+  }
+}
+
+pub fn f_nth_field_ty(fields: List(NField), i: Nat): NTy {
+  match f_nth(fields, i) {
+    None => NUnit
+    Some(f) => f.ty
+  }
+}
+
+pub fn f_irrefutable_all(g: &mut FFun, ps: List(NPat), tys: List(NTy)): Bool {
+  match ps {
+    Nil => true
+    Cons(p, rest) => match tys {
+      Nil => false
+      Cons(t, more) => f_irrefutable(&mut g, p, t) && f_irrefutable_all(&mut g, rest, more)
+    }
+  }
+}
+
+pub fn f_field_tys(fs: List(NField), generics: List(Text), args: List(NTy)): List(NTy) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(l_subst(f.ty, generics, args), f_field_tys(rest, generics, args))
+  }
+}
+
+// Whether a pattern of the type `t` fits every value of it.
+pub fn f_irrefutable(g: &mut FFun, p: NPat, t: NTy): Bool {
+  match p {
+    NWild => true
+    NBind(^l, ^ty) => true
+    NInjectPat(^u, ^k, ^q) => false
+    NCtorPat(^c, fields) => match t {
+      NPair(a, b) => f_irrefutable_all(&mut g, fields, [a, b])
+      NData(name, args) => match l_find_data(g.m.pkg.datas, name) {
+        None => false
+        Some(d) => match d.ctors {
+          Nil => false
+          Cons(only, more) => match more {
+            Cons(^x, ^others) => false
+            Nil => f_irrefutable_all(&mut g, fields, f_field_tys(only.fields, d.generics, args))
+          }
+        }
+      }
+      NInt(^w) => false
+      NBool => false
+      NText => false
+      NUnit => false
+      NNever => false
+      NFloat => false
+      NFloat32 => false
+      NBuf => false
+      NShown => false
+      NVec(^a) => false
+      NArray(^a) => false
+      NSlice(^a) => false
+      NOption(^a) => false
+      NInfo(^a) => false
+      NBudgetAnswer(^a) => false
+      NResult(^a, ^b) => false
+      NSharedVar(^x, ^a) => false
+      NStd(^n, ^a) => false
+      NUnion(^n) => false
+      NFn(^ps, ^r, ^k, ^x) => false
+      NRef(^a) => false
+      NRefMut(^a) => false
+      NParam(^n) => false
+    }
+    NIntPat(^neg, ^n) => false
+    NNatPat(^n) => false
+    NBoolPat(^b) => false
+    NTextPat(^s) => false
+  }
+}
+
+pub fn f_has_op(ops: List(Nat), op: Nat): Bool {
+  match ops {
+    Nil => false
+    Cons(o, rest) => o == op || f_has_op(rest, op)
+  }
+}
+
+pub fn f_drop_arms(g: &mut FFun, arms: List(List(llvm::Value::I))): Unit ! {div} {
+  match arms {
+    Nil => ()
+    Cons(a, rest) => {
+      f_drop(&mut g, a, NFn(Nil, NUnit, "shared", "S"))
+      f_drop_arms(&mut g, rest)
+    }
+  }
+}
+
+pub fn f_has_hold(hs: List(FHold), id: Nat): Bool {
+  match hs {
+    Nil => false
+    Cons(h, rest) => h.local.id == id || f_has_hold(rest, id)
+  }
+}
+
+// The locals of this frame an arm reads in place, the last first.
+pub fn f_arm_holds(g: &mut FFun, ls: List(NLocal), got: FCaptured): FCaptured {
+  match ls {
+    Nil => got
+    Cons(l, rest) => if f_has_hold(got.holds, l.id) {
+      f_arm_holds(&mut g, rest, got)
+    } else {
+      match Ordmap::get(g.locals, l.id, Ordmap::compare_nat) {
+        None => f_arm_holds(&mut g, rest, got)
+        Some(slot) => {
+          let at := l_len(got.env)
+          let w := b_word(&mut g.b, slot.ptr)
+          f_arm_holds(
+            &mut g,
+            rest,
+            FCaptured {
+              holds: Cons(FHold { local: l, held: FHeldPlace, ty: slot.ty, at: at }, got.holds),
+              env: f_append(got.env, [w]),
+              moved: false
+            }
+          )
+        }
+      }
+    }
+  }
+}
+
+pub fn f_arm_params(
+  g: &mut FFun,
+  pats: List(NPat),
+  tys: List(NTy),
+  k: Nat
+): List(llvm::Param::I) ! {div} {
+  match pats {
+    Nil => Nil
+    Cons(pat, rest) => match tys {
+      Nil => Nil
+      Cons(t, more) => {
+        let n := f_words(&mut g, t)
+        let names := f_arg_names(k, n)
+        let p := f_temp(&mut g, f_local_values(names))
+        f_pattern(&mut g, pat, p, t, false, true)
+        f_append(f_local_params(names), f_arm_params(&mut g, rest, more, k + n))
+      }
+    }
+  }
+}
+
+// A `direct` operation: the nearest arm of it in the chain of handlers
+// answers, under the handlers outside its own.
+pub fn f_perform_handled(
+  g: &mut FFun,
+  ty: NTy,
+  op: Nat,
+  name: Text,
+  args: List(NExpr),
+  answered: Bool,
+  host: Bool
+): List(llvm::Value::I) ! {div} {
+  if not(answered) {
+    f_refused_value(&mut g, Text::concat_all(["the operation `", f_display(name), "`"]))
+  } else {
+    let vals := f_operand_words(&mut g, args)
+    let n := l_len(vals)
+    let r := f_words(&mut g, ty)
+    let opn := ll_word(op)
+    let entry := b_def(&mut g.b, ll!(`call ptr @rt_find(i64 $opn)`))
+    let found := b_def(&mut g.b, ll!(`icmp ne ptr $entry, null`))
+    let yes := b_label(&mut g.b)
+    let no := b_label(&mut g.b)
+    b_condbr(&mut g.b, found, yes, no)
+    b_start(&mut g.b, no)
+    // Where no handler answers, the host does, or the run ends.
+    let slot := b_alloca(&mut g.b, r)
+    let join := b_label(&mut g.b)
+    if host {
+      let native := f_uhost_native(&mut g, ty, name, vals)
+      b_store(&mut g.b, slot, 0, native)
+      b_br(&mut g.b, join)
+    } else {
+      f_fail(&mut g, "no handler answers the operation")
+    }
+    b_start(&mut g.b, yes)
+    let saved := b_def(&mut g.b, ll!(`load ptr, ptr @rt.ev`))
+    let next := b_def(&mut g.b, ll!(`load ptr, ptr $entry`))
+    b_ins(&mut g.b, ll!(`store ptr $next, ptr @rt.ev`))
+    let armp := b_gep(&mut g.b, entry, 2)
+    let arm := b_def(&mut g.b, ll!(`load i64, ptr $armp`))
+    let o := b_ptr(&mut g.b, arm)
+    f_note_call(&mut g, n, r)
+    let of := f_result_type(r)
+    let callee := ll_call_value(n, r)
+    let words := Cons(ll_ptr_arg(o), f_word_args(vals))
+    let v := f_result(&mut g, ll!(`call fastcc $of ${callee}($words)`), r)
+    b_ins(&mut g.b, ll!(`store ptr $saved, ptr @rt.ev`))
+    if host {
+      b_store(&mut g.b, slot, 0, v)
+      b_start(&mut g.b, join)
+      b_load(&mut g.b, slot, 0, r)
+    } else {
+      v
+    }
+  }
+}
+
+pub fn f_operand_words(g: &mut FFun, args: List(NExpr)): List(llvm::Value::I) ! {div} {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => {
+      let v := f_expr(&mut g, a)
+      f_append(v, f_operand_words(&mut g, rest))
+    }
+  }
+}
+
+// The functions that call a function value of each signature, and the one
+// that drops what a function value captured: each tests the number of the
+// value's function.
+
+pub fn f_numbered<A>(xs: List(A), i: Nat): List(Nat × A) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(#(i, x), f_numbered(rest, i + 1))
+  }
+}
+
+pub fn f_of_signature(cs: List(Nat × ((Nat × Nat) × Bool)), n: Nat, r: Nat): List(Nat) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => match c {
+      #(i, x) => match x {
+        #(sig, ^owns) => match sig {
+          #(a, b) => if a == n && b == r { Cons(i, f_of_signature(rest, n, r)) } else {
+            f_of_signature(rest, n, r)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn f_owning(cs: List(Nat × ((Nat × Nat) × Bool))): List(Nat) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => match c {
+      #(i, x) => match x {
+        #(^sig, owns) => if owns { Cons(i, f_owning(rest)) } else { f_owning(rest) }
+      }
+    }
+  }
+}
+
+pub fn f_cases(ids: List(Nat), prefix: Text): List(llvm::Case::I) {
+  match ids {
+    Nil => Nil
+    Cons(i, rest) => {
+      let v := ll_word(i)
+      let l := ll_named_label(concat(prefix, Text::of_nat(i)))
+      Cons(ll!(`i64 $v, label $l`), f_cases(rest, prefix))
+    }
+  }
+}
+
+pub fn f_def(name: Text, rhs: llvm::Rhs::I): llvm::Instr::I { b_named(ll_named(name), rhs) }
+
+pub fn f_run(rhs: llvm::Rhs::I): llvm::Instr::I {
+  match b_call_of(rhs) {
+    Some(c) => llvm::Instr::I::Call_I(c)
+    None => b_named(ll_named("unused"), rhs)
+  }
+}
+
+pub fn f_ir_block(label: Text, instrs: List(llvm::Instr::I), last: llvm::Term::I): llvm::Block::I {
+  llvm::Block::I::Mk(ll_label_def(ll_named_label(label)), instrs, last)
+}
+
+pub fn f_dispatch_cases(ids: List(Nat), args: List(llvm::TyValue::I), r: Nat): List(llvm::Block::I) {
+  match ids {
+    Nil => Nil
+    Cons(i, rest) => {
+      let of := f_result_type(r)
+      let name := ll_closure(i)
+      let call := ll!(`call fastcc $of ${name}($args)`)
+      let block := if r == 0 {
+        f_ir_block(concat("c", Text::of_nat(i)), [f_run(call)], ll!(`ret void`))
+      } else {
+        let res := concat("r", Text::of_nat(i))
+        let v := ll_value(ll_named(res))
+        f_ir_block(concat("c", Text::of_nat(i)), [f_def(res, call)], ll!(`ret $of $v`))
+      }
+      Cons(block, f_dispatch_cases(rest, args, r))
+    }
+  }
+}
+
+pub fn f_call_fns(cs: List(Nat × ((Nat × Nat) × Bool)), calls: List(Nat × Nat)): List(llvm::Item::I) {
+  match calls {
+    Nil => Nil
+    Cons(c, rest) => match c {
+      #(n, r) => {
+        let names := f_arg_names(0, n)
+        let o := ll_value(ll_named("o"))
+        let args := Cons(ll_ptr_arg(o), f_word_args(f_local_values(names)))
+        let params := Cons(ll_named_ptr_param(ll_named("o")), f_local_params(names))
+        let idp := ll_value(ll_named("idp"))
+        let id := ll_value(ll_named("id"))
+        let none := ll_named_label("none")
+        let cases := f_cases(f_of_signature(cs, n, r), "c")
+        let entry := f_ir_block(
+          "entry",
+          [f_def("idp", ll!(`getelementptr i64, ptr $o, i64 1`)), f_def("id", ll!(`load i64, ptr $idp`))],
+          ll!(`switch i64 $id, label $none [ $cases ]`)
+        )
+        let blocks := f_append(
+          f_dispatch_cases(f_of_signature(cs, n, r), args, r),
+          [f_ir_block("none", Nil, ll!(`unreachable`))]
+        )
+        Cons(
+          ll_define(f_result_type(r), ll_call_value(n, r), params, entry, blocks),
+          f_call_fns(cs, rest)
+        )
+      }
+    }
+  }
+}
+
+pub fn f_drop_cases(ids: List(Nat)): List(llvm::Block::I) {
+  match ids {
+    Nil => Nil
+    Cons(i, rest) => {
+      let o := ll_value(ll_named("o"))
+      let name := ll_closure_drop(i)
+      let done := ll_named_label("done")
+      Cons(
+        f_ir_block(
+          concat("d", Text::of_nat(i)),
+          [f_run(ll!(`call fastcc void ${name}(ptr $o)`))],
+          ll!(`br label $done`)
+        ),
+        f_drop_cases(rest)
+      )
+    }
+  }
+}
+
+// `@fn.drop`: one value fewer shares a function value; the last drops what
+// it captured and frees it.
+pub fn f_fn_drop(cs: List(Nat × ((Nat × Nat) × Bool))): llvm::Item::I {
+  let o := ll_value(ll_named("o"))
+  let rc := ll_value(ll_named("rc"))
+  let last := ll_value(ll_named("last"))
+  let less := ll_value(ll_named("less"))
+  let idp := ll_value(ll_named("idp"))
+  let id := ll_value(ll_named("id"))
+  let free := ll_named_label("free")
+  let keep := ll_named_label("keep")
+  let done := ll_named_label("done")
+  let ids := f_owning(cs)
+  let cases := f_cases(ids, "d")
+  let entry := f_ir_block(
+    "entry",
+    [f_def("rc", ll!(`load i64, ptr $o`)), f_def("last", ll!(`icmp eq i64 $rc, 1`))],
+    ll!(`br i1 $last, label $free, label $keep`)
+  )
+  let kept := f_ir_block(
+    "keep",
+    [f_def("less", ll!(`sub i64 $rc, 1`)), ll!(`store i64 $less, ptr $o`)],
+    ll!(`ret void`)
+  )
+  let freed := f_ir_block(
+    "free",
+    [f_def("idp", ll!(`getelementptr i64, ptr $o, i64 1`)), f_def("id", ll!(`load i64, ptr $idp`))],
+    ll!(`switch i64 $id, label $done [ $cases ]`)
+  )
+  let finished := f_ir_block("done", [f_run(ll!(`call void @rt_free(ptr $o)`))], ll!(`ret void`))
+  ll_define(
+    ll!(`void`),
+    ll_fn_drop(),
+    [ll_named_ptr_param(ll_named("o"))],
+    entry,
+    Cons(kept, Cons(freed, f_append(f_drop_cases(ids), [finished])))
+  )
+}
+
+pub fn f_dispatch(m: LModule): List(llvm::Item::I) {
+  let cs := f_numbered(text_list_reverse(m.closures), 0)
+  f_append(f_call_fns(cs, text_list_reverse(m.calls)), [f_fn_drop(cs)])
+}
+
+pub fn f_nonempty<A>(xs: List(A)): Bool {
+  match xs {
+    Nil => false
+    Cons(^x, ^rest) => true
+  }
+}
+
+pub fn n_quant_direct(q: NQuant): Bool {
+  match q {
+    NQDirect => true
+    ^other => false
+  }
+}
+
+// ---- The control flow of a function, written from its blocks ----
+//
+// A function is lowered to blocks (`NBlockFn`): each block becomes a block of
+// the IR function, its instructions (`let`, `var`, an assignment, a
+// pattern's binding, the end of a taken value) are written in order, and its
+// terminator is the branch, the test, the call or the return that ends it.
+// What a region (an `if`, a `match`, a call, a `handle`) makes arrives at the
+// block where its parts meet: from the slot the parts store it in, or, for a
+// call, directly.
+//
+// What stays as the tree reads it: the operands (leaves with no control flow
+// in them) are written by `f_expr`, and the part of a `match` that takes a
+// value apart by `k_unpack`.
+
+// The blocks and regions of a function by number, and what ties them.
+pub(open) struct KIndex {
+  blocks: Ordmap(Nat, NBBlock),
+  regions: Ordmap(Nat, NRegion),
+  closures: List(NBlockFn),
+  count: Nat,
+  // The block that owns the region a block of a guard belongs to.
+  join_owner: Ordmap(Nat, Option(Nat))
+}
+
+// A `match` being written: what its blocks need of it.
+pub(open) struct KMatch {
+  node: NMatch,
+  // The scrutinee's address and type.
+  root: FPlace,
+  // The entry of each arm.
+  arms: List(Nat)
+}
+
+// A `handle` being written: where the value of its body goes, and what is
+// done once the body has ended.
+pub(open) struct KHandle {
+  // Where the body's value is kept until the body has ended.
+  value: llvm::Value::I,
+  // The label the end of the body goes to.
+  done: LlLabel,
+  // The block the code at `done` goes on to: the return arm, or where the
+  // parts of the `handle` meet.
+  after: Nat,
+  // The saved chain of handlers, and the arms put on it.
+  saved: llvm::Value::I,
+  arms: List(List(llvm::Value::I)),
+  body_ty: NTy,
+  ret: Option(NPat),
+  ty: NTy,
+  region: Nat,
+  join: Nat
+}
+
+// What `FFun` keeps for the blocks it writes.
+pub(open) struct FGraph {
+  ix: KIndex,
+  // The type of what each region makes.
+  rty: Ordmap(Nat, NTy),
+  labels: Ordmap(Nat, LlLabel),
+  // Where the parts of a region store what it makes.
+  rslot: Ordmap(Nat, llvm::Value::I),
+  // What a region has made, as words.
+  rval: Ordmap(Nat, List(llvm::Value::I)),
+  matches: Ordmap(Nat, KMatch),
+  arm_entries: List(Nat),
+  // What the tests made so far know of the scrutinee's parts, at the start of
+  // each block of a `match`'s decision.
+  parts: Ordmap(Nat, FParts),
+  // The `handle` each block that ends a body jumps out of.
+  body_ends: Ordmap(Nat, Nat),
+  handles: Ordmap(Nat, KHandle),
+  // The blocks the code at the end of a body goes before.
+  after: Ordmap(Nat, Nat),
+  // The paths of the constructors `NIUnpack` has taken apart in the arm being
+  // written.
+  unpacked: List(List(Nat))
+}
+
+pub fn k_get<V: Shared>(m: Ordmap(Nat, V), k: Nat): Option(V) {
+  Ordmap::get(m, k, Ordmap::compare_nat)
+}
+
+pub fn k_put<V: Shared>(m: Ordmap(Nat, V), k: Nat, v: V): Ordmap(Nat, V) {
+  Ordmap::insert(m, k, v, Ordmap::compare_nat)
+}
+
+pub fn k_dummy_block(): NBBlock {
+  NBBlock { params: Nil, takes: None, owner: None, joins: None, insts: Nil, term: NTAbort }
+}
+
+pub fn k_blocks_index(
+  bs: List(NBBlock),
+  i: Nat,
+  m: Ordmap(Nat, NBBlock)
+): Ordmap(Nat, NBBlock) {
+  match bs {
+    Nil => m
+    Cons(b, rest) => k_blocks_index(rest, i + 1, k_put(m, i, b))
+  }
+}
+
+pub fn k_regions_index(
+  rs: List(Option(NRegion)),
+  i: Nat,
+  m: Ordmap(Nat, NRegion)
+): Ordmap(Nat, NRegion) {
+  match rs {
+    Nil => m
+    Cons(r, rest) => match r {
+      None => k_regions_index(rest, i + 1, m)
+      Some(x) => k_regions_index(rest, i + 1, k_put(m, i, x))
+    }
+  }
+}
+
+// The type of what each region makes: the type its join block takes, or the
+// type of its block.
+pub fn k_rty_blocks(bs: List(NBBlock), m: Ordmap(Nat, NTy)): Ordmap(Nat, NTy) {
+  match bs {
+    Nil => m
+    Cons(b, rest) => match b.joins {
+      None => k_rty_blocks(rest, m)
+      Some(r) => match b.takes {
+        None => k_rty_blocks(rest, m)
+        Some(t) => k_rty_blocks(rest, k_put(m, r, t))
+      }
+    }
+  }
+}
+
+pub fn k_rty_regions(
+  rs: List(Option(NRegion)),
+  i: Nat,
+  m: Ordmap(Nat, NTy)
+): Ordmap(Nat, NTy) {
+  match rs {
+    Nil => m
+    Cons(r, rest) => match r {
+      None => k_rty_regions(rest, i + 1, m)
+      Some(x) => match x.shell {
+        NShellBlock(ty) => k_rty_regions(rest, i + 1, k_put(m, i, ty))
+        NShellNode(^e) => k_rty_regions(rest, i + 1, m)
+        NShellCall(^e) => k_rty_regions(rest, i + 1, m)
+        NShellWhile(^t) => k_rty_regions(rest, i + 1, m)
+      }
+    }
+  }
+}
+
+// The owner of the first block that is the join of each region.
+pub fn k_join_owners(
+  bs: List(NBBlock),
+  m: Ordmap(Nat, Option(Nat))
+): Ordmap(Nat, Option(Nat)) {
+  match bs {
+    Nil => m
+    Cons(b, rest) => match b.joins {
+      None => k_join_owners(rest, m)
+      Some(r) => match k_get(m, r) {
+        Some(^x) => k_join_owners(rest, m)
+        None => k_join_owners(rest, k_put(m, r, b.owner))
+      }
+    }
+  }
+}
+
+pub fn k_graph(bf: NBlockFn): FGraph {
+  let ix := KIndex {
+    blocks: k_blocks_index(bf.blocks, 0, Ordmap::empty()),
+    regions: k_regions_index(bf.regions, 0, Ordmap::empty()),
+    closures: bf.closures,
+    count: l_len(bf.blocks),
+    join_owner: k_join_owners(bf.blocks, Ordmap::empty())
+  }
+  FGraph {
+    ix: ix,
+    rty: k_rty_regions(bf.regions, 0, k_rty_blocks(bf.blocks, Ordmap::empty())),
+    labels: Ordmap::empty(),
+    rslot: Ordmap::empty(),
+    rval: Ordmap::empty(),
+    matches: Ordmap::empty(),
+    arm_entries: Nil,
+    parts: Ordmap::empty(),
+    body_ends: Ordmap::empty(),
+    handles: Ordmap::empty(),
+    after: Ordmap::empty(),
+    unpacked: Nil
+  }
+}
+
+// The graph of a function that is written from the same blocks, as the
+// function of an arm is.
+pub fn k_child(gr: FGraph): FGraph {
+  FGraph {
+    ix: gr.ix,
+    rty: gr.rty,
+    labels: Ordmap::empty(),
+    rslot: Ordmap::empty(),
+    rval: Ordmap::empty(),
+    matches: Ordmap::empty(),
+    arm_entries: Nil,
+    parts: Ordmap::empty(),
+    body_ends: Ordmap::empty(),
+    handles: Ordmap::empty(),
+    after: Ordmap::empty(),
+    unpacked: Nil
+  }
+}
+
+// ---- The graph ----
+
+pub fn k_case_blocks(cases: List(NCaseArm), default: Option(Nat)): List(Nat) {
+  match cases {
+    Nil => match default {
+      None => Nil
+      Some(d) => [d]
+    }
+    Cons(c, rest) => Cons(c.block, k_case_blocks(rest, default))
+  }
+}
+
+// Where an arm of a `handle` goes on once what it is given is taken: the
+// decision on the arguments (tests, names bound) ends in a `goto` there.
+pub fn k_arm_target(ix: KIndex, entry: Nat, fuel: Nat): Nat {
+  match fuel {
+    Zero => entry
+    Succ(k) => match k_get(ix.blocks, entry) {
+      None => entry
+      Some(blk) => match blk.term {
+        NTGoto(t) => t
+        NTTest(^path, cases, default) => match cases {
+          Cons(c, ^rest) => k_arm_target(ix, c.block, k)
+          Nil => match default {
+            Some(d) => k_arm_target(ix, d, k)
+            None => entry
+          }
+        }
+        ^other => entry
+      }
+    }
+  }
+}
+
+pub fn k_handle_next(ix: KIndex, edges: List(NEdge), join: Nat, has_ret: Bool): List(Nat) {
+  match edges {
+    Nil => if has_ret { Nil } else { [join] }
+    Cons(e, rest) => {
+      let more := k_handle_next(ix, rest, join, has_ret)
+      match e.kind {
+        NEdgeBody => Cons(k_arm_target(ix, e.entry, ix.count), more)
+        NEdgeRet => Cons(k_arm_target(ix, e.entry, ix.count), more)
+        NEdgeDirect => more
+        NEdgeAbort => more
+        NEdgeSusp => more
+      }
+    }
+  }
+}
+
+pub fn k_has_ret(edges: List(NEdge)): Bool {
+  match edges {
+    Nil => false
+    Cons(e, rest) => match e.kind {
+      NEdgeRet => true
+      NEdgeBody => k_has_ret(rest)
+      NEdgeDirect => k_has_ret(rest)
+      NEdgeAbort => k_has_ret(rest)
+      NEdgeSusp => k_has_ret(rest)
+    }
+  }
+}
+
+// The blocks a block goes on to in the function being written. A `handle`'s
+// operation arms are functions of their own; the code that ends its body goes
+// on to its return arm, or to where its parts meet.
+pub fn k_next(ix: KIndex, b: Nat): List(Nat) {
+  match k_get(ix.blocks, b) {
+    None => Nil
+    Some(blk) => match blk.term {
+      NTJump(to, ^v) => [to]
+      NTGoto(to) => [to]
+      NTBranch(^v, then, els) => match els {
+        None => [then]
+        Some(e) => [then, e]
+      }
+      NTCall(^region, join, ^abort) => [join]
+      NTSuspend(^region, join, ^abort, ^resumes, ^env) => [join]
+      NTEnter(^region, entry, ^join, ^by_ref) => [entry]
+      NTTest(^path, cases, default) => k_case_blocks(cases, default)
+      NTControl(region, succs, join) => match k_get(ix.regions, region) {
+        None => succs
+        Some(reg) => match reg.shell {
+          // An `if` without `else`, `&&` and `||` reach their join directly
+          // too.
+          NShellNode(e) => match e.kind {
+            NIf(^c, ^t, ^o) => if l_len(succs) < 2 { f_snoc(succs, join) } else { succs }
+            NAnd(^x, ^y) => f_snoc(succs, join)
+            NOr(^x, ^y) => f_snoc(succs, join)
+            ^other => succs
+          }
+          NShellBlock(^t) => succs
+          NShellCall(^e) => succs
+          NShellWhile(^t) => succs
+        }
+      }
+      NTHandle(^region, edges, join) => k_handle_next(ix, edges, join, k_has_ret(edges))
+      NTReturn(^v, ^cont) => Nil
+      NTDone(^v) => Nil
+      NTAbort => Nil
+      NTUnreachable => Nil
+      NTDecline => Nil
+      NTPending => Nil
+    }
+  }
+}
+
+pub fn k_succ(ix: KIndex, stop: Option(Nat), b: Nat): List(Nat) {
+  k_not_stop(stop, k_next(ix, b))
+}
+
+pub fn k_not_stop(stop: Option(Nat), ns: List(Nat)): List(Nat) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => match stop {
+      Some(s) => if s == n { k_not_stop(stop, rest) } else { Cons(n, k_not_stop(stop, rest)) }
+      None => Cons(n, k_not_stop(stop, rest))
+    }
+  }
+}
+
+pub(open) struct KSeen { seen: Ordmap(Nat, Bool), post: List(Nat) }
+
+// Visits the block, then what it goes on to, the last first, and puts the
+// block before what was finished before it: the blocks end up each after the
+// blocks that reach it (reverse post-order).
+pub fn k_visit(ix: KIndex, stop: Option(Nat), fuel: Nat, st: &mut KSeen, b: Nat): Unit ! {div} {
+  match fuel {
+    Zero => ()
+    Succ(k) => {
+      f_set(&mut st.seen, k_put(st.seen, b, true))
+      k_visit_all(ix, stop, k, &mut st, text_list_reverse(k_succ(ix, stop, b)))
+      f_set(&mut st.post, Cons(b, st.post))
+    }
+  }
+}
+
+pub fn k_visit_all(
+  ix: KIndex,
+  stop: Option(Nat),
+  fuel: Nat,
+  st: &mut KSeen,
+  ns: List(Nat)
+): Unit ! {div} {
+  match ns {
+    Nil => ()
+    Cons(n, rest) => {
+      match k_get(st.seen, n) {
+        Some(^x) => ()
+        None => k_visit(ix, stop, fuel, &mut st, n)
+      }
+      k_visit_all(ix, stop, fuel, &mut st, rest)
+    }
+  }
+}
+
+// The blocks reached from `entry`, each after the blocks that reach it. A
+// jump to `stop` leaves the graph.
+pub fn k_reachable(ix: KIndex, entry: Nat, stop: Option(Nat)): List(Nat) ! {div} {
+  var st := KSeen { seen: Ordmap::empty(), post: Nil }
+  k_visit(ix, stop, ix.count + 1, &mut st, entry)
+  st.post
+}
+
+pub fn k_any_handle(ix: KIndex, bs: List(Nat)): Bool {
+  match bs {
+    Nil => false
+    Cons(b, rest) => match k_get(ix.blocks, b) {
+      None => k_any_handle(ix, rest)
+      Some(blk) => match blk.term {
+        NTHandle(^r, ^es, ^j) => true
+        ^other => k_any_handle(ix, rest)
+      }
+    }
+  }
+}
+
+// Whether any block of the graph from `entry` ends a `handle`.
+pub fn k_has_handle(ix: KIndex, entry: Nat, stop: Option(Nat)): Bool ! {div} {
+  k_any_handle(ix, k_reachable(ix, entry, stop))
+}
+
+pub fn k_any_return(ix: KIndex, bs: List(Nat)): Bool {
+  match bs {
+    Nil => false
+    Cons(b, rest) => match k_get(ix.blocks, b) {
+      None => k_any_return(ix, rest)
+      Some(blk) => match blk.term {
+        NTReturn(^v, ^cont) => true
+        ^other => k_any_return(ix, rest)
+      }
+    }
+  }
+}
+
+// ---- The pattern's parts ----
+
+// The constructors of a pattern by path, for the parts of the value it
+// matches.
+pub fn k_ctors_of(
+  p: NPat,
+  at: List(Nat),
+  acc: List(List(Nat) × Nat)
+): List(List(Nat) × Nat) {
+  match p {
+    NCtorPat(ctor, fields) => k_ctors_fields(fields, at, 0, Cons(#(at, ctor.index), acc))
+    NInjectPat(^u, ^k, q) => k_ctors_of(q, d_snoc(at, 0), acc)
+    NWild => acc
+    NBind(^l, ^t) => acc
+    NIntPat(^neg, ^n) => acc
+    NNatPat(^n) => acc
+    NBoolPat(^b) => acc
+    NTextPat(^s) => acc
+  }
+}
+
+pub fn k_ctors_fields(
+  fs: List(NPat),
+  at: List(Nat),
+  i: Nat,
+  acc: List(List(Nat) × Nat)
+): List(List(Nat) × Nat) {
+  match fs {
+    Nil => acc
+    Cons(f, rest) => k_ctors_fields(rest, at, i + 1, k_ctors_of(f, d_snoc(at, i), acc))
+  }
+}
+
+// The sub-pattern of `p` at `path`.
+pub fn k_pat_at(p: NPat, path: List(Nat)): Option(NPat) {
+  match path {
+    Nil => Some(p)
+    Cons(first, rest) => match p {
+      NCtorPat(^c, fields) => match f_nth(fields, first) {
+        None => None
+        Some(sub) => k_pat_at(sub, rest)
+      }
+      NInjectPat(^u, ^k, q) => k_pat_at(q, rest)
+      NWild => None
+      NBind(^l, ^t) => None
+      NIntPat(^neg, ^n) => None
+      NNatPat(^n) => None
+      NBoolPat(^b) => None
+      NTextPat(^s) => None
+    }
+  }
+}
+
+pub fn k_starts_with(path: List(Nat), prefix: List(Nat)): Bool {
+  match prefix {
+    Nil => true
+    Cons(x, more) => match path {
+      Nil => false
+      Cons(y, rest) => x == y && k_starts_with(rest, more)
+    }
+  }
+}
+
+pub fn k_any_prefix(done: List(List(Nat)), path: List(Nat)): Bool {
+  match done {
+    Nil => false
+    Cons(p, rest) => k_starts_with(path, p) || k_any_prefix(rest, path)
+  }
+}
+
+// Whether a pattern binds the local, whatever it owns.
+pub fn k_binds_id(p: NPat, id: Nat): Bool {
+  match p {
+    NBind(l, ^t) => l.id == id
+    NCtorPat(^c, fields) => k_any_binds_id(fields, id)
+    NInjectPat(^u, ^k, q) => k_binds_id(q, id)
+    NWild => false
+    NIntPat(^neg, ^n) => false
+    NNatPat(^n) => false
+    NBoolPat(^b) => false
+    NTextPat(^s) => false
+  }
+}
+
+pub fn k_any_binds_id(ps: List(NPat), id: Nat): Bool {
+  match ps {
+    Nil => false
+    Cons(p, rest) => k_binds_id(p, id) || k_any_binds_id(rest, id)
+  }
+}
+
+// The locals a pattern binds, whatever they own.
+pub fn k_binders(p: NPat, acc: List(NLocal)): List(NLocal) {
+  match p {
+    NBind(l, ^t) => Cons(l, acc)
+    NCtorPat(^c, fields) => k_binders_all(fields, acc)
+    NInjectPat(^u, ^k, q) => k_binders(q, acc)
+    NWild => acc
+    NIntPat(^neg, ^n) => acc
+    NNatPat(^n) => acc
+    NBoolPat(^b) => acc
+    NTextPat(^s) => acc
+  }
+}
+
+pub fn k_binders_all(ps: List(NPat), acc: List(NLocal)): List(NLocal) {
+  match ps {
+    Nil => acc
+    Cons(p, rest) => k_binders_all(rest, k_binders(p, acc))
+  }
+}
+
+// The first arm that binds the local.
+pub fn k_arm_binding(arms: List(NArm), id: Nat): Option(NArm) {
+  match arms {
+    Nil => None
+    Cons(a, rest) => if k_binds_id(a.pat, id) { Some(a) } else { k_arm_binding(rest, id) }
+  }
+}
+
+// ---- Values ----
+
+pub fn k_unit_value(): NValue { NValLeaf(NExpr { kind: NUnitLit, ty: NUnit }) }
+
+pub fn k_block(g: &mut FFun, b: Nat): NBBlock {
+  match k_get(g.graph.ix.blocks, b) {
+    Some(x) => x
+    None => {
+      f_refuse(&mut g, "internal: a block the function does not have")
+      k_dummy_block()
+    }
+  }
+}
+
+pub fn k_rty(g: &mut FFun, r: Nat): NTy {
+  match k_get(g.graph.rty, r) {
+    Some(t) => t
+    None => NUnit
+  }
+}
+
+pub fn k_label(g: &mut FFun, b: Nat): LlLabel {
+  match k_get(g.graph.labels, b) {
+    Some(l) => l
+    None => {
+      f_refuse(&mut g, "internal: a jump out of the blocks being written")
+      ll_start()
+    }
+  }
+}
+
+// The words of a value of the blocks, and its type.
+pub fn k_value(g: &mut FFun, v: NValue): FOperand ! {div} {
+  match v {
+    NValLeaf(e) => {
+      let words := f_expr(&mut g, e)
+      FOperand { v: words, ty: e.ty }
+    }
+    NValRegion(r) => match k_get(g.graph.rval, r) {
+      Some(words) => FOperand { v: words, ty: k_rty(&mut g, r) }
+      None => {
+        f_refuse(&mut g, "internal: a region read before it made its value")
+        FOperand { v: Nil, ty: NUnit }
+      }
+    }
+  }
+}
+
+// The value of an operand of an operator: the value itself, or the value a
+// borrow stands for.
+pub fn k_operand_value(g: &mut FFun, v: NValue): FOperand ! {div} {
+  let x := k_value(&mut g, v)
+  match n_borrowed(x.ty) {
+    Some(inner) => {
+      let p := b_ptr(&mut g.b, f_head(x.v))
+      let n := f_words(&mut g, inner)
+      FOperand { v: b_load(&mut g.b, p, 0, n), ty: inner }
+    }
+    None => x
+  }
+}
+
+// The slot where the parts of a region store what it makes.
+pub fn k_region_slot(g: &mut FFun, r: Nat): llvm::Value::I ! {div} {
+  match k_get(g.graph.rslot, r) {
+    Some(s) => s
+    None => {
+      let ty := k_rty(&mut g, r)
+      let n := f_words(&mut g, ty)
+      let s := b_alloca(&mut g.b, n)
+      f_set(&mut g.graph.rslot, k_put(g.graph.rslot, r, s))
+      s
+    }
+  }
+}
+
+pub fn k_region(g: &mut FFun, r: Nat): Option(NRegion) {
+  match k_get(g.graph.ix.regions, r) {
+    Some(x) => Some(x)
+    None => {
+      f_refuse(&mut g, "internal: a region the function does not have")
+      None
+    }
+  }
+}
+
+pub fn k_operand(slots: List(NSlot), i: Nat): NValue {
+  match f_nth(slots, i) {
+    Some(s) => match s {
+      NSlotOperand(v) => v
+      NSlotBody(^b) => k_unit_value()
+    }
+    None => k_unit_value()
+  }
+}
+
+// ---- Writing the graph ----
+
+// Writes the blocks reached from `entry` as the rest of the function being
+// written. A jump to `stop` returns its value from the function.
+pub fn k_emit_graph(g: &mut FFun, entry: Nat, stop: Option(Nat)): Unit ! {div} {
+  let order := k_reachable(g.graph.ix, entry, stop)
+  k_make_labels(&mut g, order)
+  k_emit_blocks(&mut g, entry, stop, order)
+}
+
+pub fn k_make_labels(g: &mut FFun, order: List(Nat)): Unit {
+  match order {
+    Nil => ()
+    Cons(b, rest) => {
+      let l := b_label(&mut g.b)
+      f_set(&mut g.graph.labels, k_put(g.graph.labels, b, l))
+      k_make_labels(&mut g, rest)
+    }
+  }
+}
+
+pub fn k_emit_blocks(g: &mut FFun, entry: Nat, stop: Option(Nat), order: List(Nat)): Unit ! {div} {
+  match order {
+    Nil => ()
+    Cons(b, rest) => {
+      // The code that ends a `handle`'s body comes before the block it goes
+      // on to.
+      match k_get(g.graph.after, b) {
+        Some(r) => k_end_of_body(&mut g, r)
+        None => ()
+      }
+      if b == entry {
+        ()
+      } else {
+        let l := k_label(&mut g, b)
+        b_start(&mut g.b, l)
+      }
+      k_emit_block(&mut g, b, stop)
+      k_emit_blocks(&mut g, entry, stop, rest)
+    }
+  }
+}
+
+pub fn k_has_unpack(insts: List(NInst)): Bool {
+  match insts {
+    Nil => false
+    Cons(i, rest) => match i {
+      NIUnpack(^path, ^last) => true
+      ^other => k_has_unpack(rest)
+    }
+  }
+}
+
+pub fn k_emit_block(g: &mut FFun, b: Nat, stop: Option(Nat)): Unit ! {div} {
+  let blk := k_block(&mut g, b)
+  match blk.joins {
+    None => ()
+    Some(r) => match k_get(g.graph.rslot, r) {
+      None => ()
+      Some(slot) => {
+        let ty := k_rty(&mut g, r)
+        let n := f_words(&mut g, ty)
+        let v := b_load(&mut g.b, slot, 0, n)
+        f_set(&mut g.graph.rval, k_put(g.graph.rval, r, v))
+      }
+    }
+  }
+  if k_has_unpack(blk.insts) { f_set(&mut g.graph.unpacked, Nil) } else { () }
+  k_insts(&mut g, b, blk.insts)
+  k_term(&mut g, b, blk.term, stop)
+}
+
+pub fn k_insts(g: &mut FFun, b: Nat, insts: List(NInst)): Unit ! {div} {
+  match insts {
+    Nil => ()
+    Cons(i, rest) => {
+      k_inst(&mut g, b, i)
+      k_insts(&mut g, b, rest)
+    }
+  }
+}
+
+pub fn k_inst(g: &mut FFun, b: Nat, inst: NInst): Unit ! {div} {
+  match inst {
+    NILet(local, ty, init, ^stack) => {
+      let v := k_value(&mut g, init)
+      f_bind(&mut g, local, ty, v.v, v.ty)
+    }
+    NIVar(local, ty, init) => {
+      let v := k_value(&mut g, init)
+      f_bind(&mut g, local, ty, v.v, v.ty)
+    }
+    NISet(target, value) => if f_through_shared(target.path) {
+      f_refuse(&mut g, "an assignment through a shared field")
+    } else {
+      let v := k_value(&mut g, value)
+      let at := f_place_of(&mut g, target)
+      let w := f_coerce(&mut g, v.v, v.ty, at.ty)
+      b_store(&mut g.b, at.ptr, 0, w)
+    }
+    NIEval(v) => {
+      let ^valued := k_value(&mut g, v)
+      ()
+    }
+    NIOpen(^r) => ()
+    NIClose(r, v) => {
+      let ty := k_rty(&mut g, r)
+      let val := match v {
+        Some(x) => {
+          let y := k_value(&mut g, x)
+          f_coerce(&mut g, y.v, y.ty, ty)
+        }
+        None => f_zeros(f_words(&mut g, ty))
+      }
+      f_set(&mut g.graph.rval, k_put(g.graph.rval, r, val))
+    }
+    NIBind(local, ty, path, ^lent) => k_bind_part(&mut g, b, local, ty, path)
+    NIUnpack(path, ^last) => k_unpack_at(&mut g, b, path)
+    // A name that was bound for a guard owned nothing.
+    NIEnd(^l) => ()
+    // An argument no name takes was ended with the pattern.
+    NIRelease(^path) => ()
+  }
+}
+
+// The match a block of a `match` belongs to.
+pub fn k_match_chain(gr: FGraph, r: Option(Nat), fuel: Nat): Option(Nat) {
+  match fuel {
+    Zero => None
+    Succ(k) => match r {
+      None => None
+      Some(x) => match k_get(gr.matches, x) {
+        Some(^m) => Some(x)
+        // Blocks of a guard are owned by the regions the guard has.
+        None => match k_get(gr.ix.join_owner, x) {
+          None => None
+          Some(owner) => k_match_chain(gr, owner, k)
+        }
+      }
+    }
+  }
+}
+
+pub fn k_match_of(g: &mut FFun, b: Nat): Option(Nat) {
+  match k_get(g.graph.ix.blocks, b) {
+    None => None
+    Some(blk) => k_match_chain(g.graph, blk.owner, g.graph.ix.count + 1)
+  }
+}
+
+pub fn k_match_of_scrut(m: NMatch): Bool { f_scrutinee_local(m) }
+
+// What the tests made so far know of the scrutinee's parts, at the start of a
+// block.
+pub fn k_parts_of(g: &mut FFun, b: Nat, r: Nat): FParts {
+  let known := match k_get(g.graph.parts, b) {
+    Some(p) => p
+    None => FParts { at: Nil, ctor: Nil }
+  }
+  match known.at {
+    Nil => match k_get(g.graph.matches, r) {
+      Some(cx) => FParts { at: [#(Nil, cx.root)], ctor: known.ctor }
+      None => known
+    }
+    Cons(^x, ^rest) => known
+  }
+}
+
+// A local takes the part of the scrutinee at `path`.
+pub fn k_bind_part(g: &mut FFun, b: Nat, local: NLocal, ty: NTy, path: List(Nat)): Unit ! {div} {
+  match k_match_of(&mut g, b) {
+    None => f_refuse(&mut g, "internal: a binding outside a match")
+    Some(r) => match k_get(g.graph.matches, r) {
+      None => f_refuse(&mut g, "internal: a binding outside a match")
+      Some(cx) => {
+        let by_ref := match k_arm_binding(cx.node.arms, local.id) {
+          Some(a) => f_lends(cx.node, a)
+          None => cx.node.by_ref
+        }
+        var parts := k_parts_of(&mut g, b, r)
+        let at := f_part(&mut g, &mut parts, path)
+        f_set(&mut g.graph.parts, k_put(g.graph.parts, b, parts))
+        if f_is_borrow(local.repr) {
+          let w := b_word(&mut g.b, at.ptr)
+          let lent := match local.repr {
+            NRefMutRepr => NRefMut(at.ty)
+            NRefRepr => NRef(at.ty)
+            NFnRef => NRef(at.ty)
+            NPlain => NRef(at.ty)
+            NSharedVarRepr => NRef(at.ty)
+            NSharedVarCopy => NRef(at.ty)
+            NBorrowClosure => NRef(at.ty)
+          }
+          f_bind(&mut g, local, ty, [w], lent)
+        } else {
+          let n := f_words(&mut g, at.ty)
+          let read := b_load(&mut g.b, at.ptr, 0, n)
+          // A `match` on a borrow lends its parts: each name holds a copy. A
+          // `match` on a value gives the part to the name, which owns it from
+          // the `unpack` that covers it (until then it is shared with the
+          // scrutinee, which the name may copy but not move).
+          let v := if by_ref { f_dup(&mut g, read, at.ty) } else { read }
+          f_bind(&mut g, local, ty, v, at.ty)
+        }
+      }
+    }
+  }
+}
+
+pub fn k_arm_position(arms: List(Nat), b: Nat, i: Nat): Option(Nat) {
+  match arms {
+    Nil => None
+    Cons(e, rest) => if e == b { Some(i) } else { k_arm_position(rest, b, i + 1) }
+  }
+}
+
+pub fn k_arm_nth(arms: List(NArm), i: Nat): Option(NArm) { f_nth(arms, i) }
+
+// The constructor at `path` of the scrutinee ends: the names bound to its
+// parts own them from here.
+pub fn k_unpack_at(g: &mut FFun, b: Nat, path: List(Nat)): Unit ! {div} {
+  // A constructor inside one that was taken apart is done with it.
+  if k_any_prefix(g.graph.unpacked, path) {
+    ()
+  } else {
+    // The names of an operation arm's pattern were bound with it.
+    match k_match_of(&mut g, b) {
+      None => ()
+      Some(r) => match k_get(g.graph.matches, r) {
+        None => ()
+        Some(cx) => match k_arm_position(cx.arms, b, 0) {
+          None => f_refuse(&mut g, "internal: an unpack outside the entry of an arm")
+          Some(i) => match k_arm_nth(cx.node.arms, i) {
+            None => f_refuse(&mut g, "internal: an unpack outside the entry of an arm")
+            Some(arm) => match k_pat_at(arm.pat, path) {
+              None => f_refuse(&mut g, "internal: an unpack of a part the pattern does not have")
+              Some(sub) => {
+                var parts := FParts {
+                  at: [#(Nil, cx.root)],
+                  ctor: k_ctors_of(arm.pat, Nil, Nil)
+                }
+                let at := f_part(&mut g, &mut parts, path)
+                k_unpack(&mut g, sub, at.ptr, at.ty, false, true)
+                f_set(&mut g.graph.unpacked, Cons(path, g.graph.unpacked))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// What the pattern does for a part of a value taken apart, with the names
+// already bound: the parts nothing names end, and a part that something else
+// still holds (a box shared with another) is copied by the names.
+pub fn k_unpack(
+  g: &mut FFun,
+  pat: NPat,
+  p: llvm::Value::I,
+  t: NTy,
+  by_ref: Bool,
+  owned: Bool
+): Unit ! {div} {
+  match pat {
+    NInjectPat(^u, ^k, ^q) => f_refuse(&mut g, "a union")
+    NWild => f_unnamed(&mut g, p, t, by_ref, owned)
+    NIntPat(^neg, ^n) => f_unnamed(&mut g, p, t, by_ref, owned)
+    NNatPat(^n) => f_unnamed(&mut g, p, t, by_ref, owned)
+    NBoolPat(^b) => f_unnamed(&mut g, p, t, by_ref, owned)
+    NTextPat(^s) => f_unnamed(&mut g, p, t, by_ref, owned)
+    NBind(local, ^ty) => if f_is_borrow(local.repr) || not(by_ref || not(owned)) {
+      ()
+    } else {
+      // The name holds what the part holds: it makes the words its own.
+      let slot := f_slot(&mut g, local)
+      let n := f_words(&mut g, t)
+      let read := b_load(&mut g.b, slot.ptr, 0, n)
+      let v := f_dup(&mut g, read, t)
+      b_store(&mut g.b, slot.ptr, 0, v)
+    }
+    NCtorPat(ctor, fields) => {
+      let shape := l_shape(&mut g.m, t)
+      match l_ctors_of(shape) {
+        None => f_refuse(&mut g, "internal: a constructor pattern on a type with none")
+        Some(found) => match found {
+          #(tagged, cs) => match f_nth(cs, if tagged { ctor.index } else { 0 }) {
+            None => f_refuse(&mut g, "internal: a pattern of a constructor the type does not have")
+            Some(c) => k_unpack_subs(&mut g, fields, p, tagged, c, 0, by_ref, owned)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn k_unpack_subs(
+  g: &mut FFun,
+  subs: List(NPat),
+  p: llvm::Value::I,
+  tagged: Bool,
+  c: LCtor,
+  i: Nat,
+  by_ref: Bool,
+  owned: Bool
+): Unit ! {div} {
+  match subs {
+    Nil => ()
+    Cons(sub, rest) => match f_nth(c.fields, i) {
+      None => f_refuse(&mut g, "internal: a pattern of a field the constructor does not have")
+      Some(f) => {
+        let at := g_field_at(&mut g.m, &mut g.b, p, tagged, c.fields, i)
+        let part := f_through(&mut g, at.content, f.ty)
+        let lent := by_ref || f_is_borrowed(f.ty)
+        let taken := match at.boxed {
+          None => None
+          Some(boxed) => if not(lent) && owned { Some(boxed) } else { None }
+        }
+        match taken {
+          None => k_unpack(&mut g, sub, part.ptr, part.ty, lent, owned)
+          Some(boxed) => match f.indirect {
+            NDirect => k_unpack(&mut g, sub, part.ptr, part.ty, lent, owned)
+            NShared => {
+              let rc := b_load_word(&mut g.b, boxed)
+              let last := b_def(&mut g.b, ll!(`icmp eq i64 $rc, 1`))
+              let free := b_label(&mut g.b)
+              let keep := b_label(&mut g.b)
+              let done := b_label(&mut g.b)
+              b_condbr(&mut g.b, last, free, keep)
+              b_start(&mut g.b, free)
+              k_unpack(&mut g, sub, part.ptr, part.ty, false, true)
+              b_run(&mut g.b, ll!(`call void @rt_free(ptr $boxed)`))
+              b_br(&mut g.b, done)
+              b_start(&mut g.b, keep)
+              let less := b_def(&mut g.b, ll!(`sub i64 $rc, 1`))
+              b_store_word(&mut g.b, less, boxed)
+              k_unpack(&mut g, sub, part.ptr, part.ty, false, false)
+              b_start(&mut g.b, done)
+            }
+            NUnique => {
+              k_unpack(&mut g, sub, part.ptr, part.ty, false, true)
+              b_run(&mut g.b, ll!(`call void @rt_free(ptr $boxed)`))
+            }
+          }
+        }
+        k_unpack_subs(&mut g, rest, p, tagged, c, i + 1, by_ref, owned)
+      }
+    }
+  }
+}
+
+// Passes what the tests of a `match` know to the blocks that follow.
+pub fn k_pass_parts(g: &mut FFun, start: Nat, to: List(Nat)): Unit {
+  match k_get(g.graph.parts, start) {
+    None => ()
+    Some(parts) => k_pass_to(&mut g, parts, to)
+  }
+}
+
+pub fn k_pass_to(g: &mut FFun, parts: FParts, to: List(Nat)): Unit {
+  match to {
+    Nil => ()
+    Cons(t, rest) => {
+      if f_has_op(g.graph.arm_entries, t) {
+        ()
+      } else {
+        match k_get(g.graph.parts, t) {
+          Some(^x) => ()
+          None => f_set(&mut g.graph.parts, k_put(g.graph.parts, t, parts))
+        }
+      }
+      k_pass_to(&mut g, parts, rest)
+    }
+  }
+}
+
+// Stores what a jump gives to the block where the parts of a region meet,
+// then goes there.
+pub fn k_jump(g: &mut FFun, b: Nat, to: Nat, v: NValue, stop: Option(Nat)): Unit ! {div} {
+  let leaves := match stop {
+    Some(s) => s == to
+    None => false
+  }
+  if leaves {
+    let x := k_value(&mut g, v)
+    let w := f_coerce(&mut g, x.v, x.ty, g.ret)
+    f_ret(&mut g, w)
+  } else {
+    // The end of a `handle`'s body.
+    let ending := match k_get(g.graph.body_ends, b) {
+      None => None
+      Some(r) => match k_get(g.graph.handles, r) {
+        None => None
+        Some(h) => if h.join == to { Some(h) } else { None }
+      }
+    }
+    match ending {
+      Some(h) => {
+        let x := k_value(&mut g, v)
+        let w := f_coerce(&mut g, x.v, x.ty, h.body_ty)
+        b_store(&mut g.b, h.value, 0, w)
+        b_br(&mut g.b, h.done)
+      }
+      None => {
+        let blk := k_block(&mut g, to)
+        match blk.joins {
+          Some(r) => {
+            let ty := k_rty(&mut g, r)
+            let slot := k_region_slot(&mut g, r)
+            let x := k_value(&mut g, v)
+            let w := f_coerce(&mut g, x.v, x.ty, ty)
+            b_store(&mut g.b, slot, 0, w)
+          }
+          None => {
+            let ^valued := k_value(&mut g, v)
+            ()
+          }
+        }
+        let l := k_label(&mut g, to)
+        b_br(&mut g.b, l)
+        k_pass_parts(&mut g, b, [to])
+      }
+    }
+  }
+}
+
+pub fn k_term(g: &mut FFun, b: Nat, t: NTerm, stop: Option(Nat)): Unit ! {div} {
+  match t {
+    NTJump(to, v) => k_jump(&mut g, b, to, v, stop)
+    NTGoto(to) => {
+      let l := k_label(&mut g, to)
+      b_br(&mut g.b, l)
+      k_pass_parts(&mut g, b, [to])
+    }
+    NTDone(v) => {
+      let x := k_value(&mut g, v)
+      let w := f_coerce(&mut g, x.v, x.ty, g.ret)
+      f_ret(&mut g, w)
+    }
+    NTReturn(value, ^cont) => {
+      let w := match value {
+        Some(v) => {
+          let x := k_value(&mut g, v)
+          f_coerce(&mut g, x.v, x.ty, g.ret)
+        }
+        None => Nil
+      }
+      f_ret(&mut g, w)
+    }
+    NTUnreachable => f_fail(&mut g, "no arm matches")
+    NTBranch(value, then, els) => {
+      let c := k_operand_value(&mut g, value)
+      let test := b_cond(&mut g.b, f_head(c.v))
+      let yes := k_label(&mut g, then)
+      match els {
+        Some(e) => {
+          let no := k_label(&mut g, e)
+          b_condbr(&mut g.b, test, yes, no)
+          k_pass_parts(&mut g, b, [then, e])
+        }
+        None => f_refuse(&mut g, "an operation arm whose pattern may not fit")
+      }
+    }
+    NTControl(region, succs, join) => k_control(&mut g, b, region, succs, join)
+    NTCall(region, join, ^abort) => k_call(&mut g, b, region, join)
+    NTSuspend(region, join, ^abort, ^resumes, ^env) => k_call(&mut g, b, region, join)
+    NTEnter(region, entry, ^join, ^by_ref) => k_enter_match(&mut g, region, entry)
+    NTTest(path, cases, default) => k_test(&mut g, b, path, cases, default)
+    NTHandle(region, edges, join) => k_handle_term(&mut g, region, edges, join)
+    NTDecline => f_refuse(&mut g, "an operation arm whose pattern may not fit")
+    NTAbort => f_refuse(&mut g, "internal: a block with no end")
+    NTPending => f_refuse(&mut g, "internal: a block with no end")
+  }
+}
+
+// A call region: the call is written here, and its value goes to the block
+// that takes it. The abort edge is not written: what stops a run here is what
+// `f_fail` ends it with.
+pub fn k_call(g: &mut FFun, b: Nat, region: Nat, join: Nat): Unit ! {div} {
+  match k_region(&mut g, region) {
+    None => ()
+    Some(reg) => match reg.shell {
+      NShellCall(e) => {
+        let v := f_expr(&mut g, e)
+        let ty := k_rty(&mut g, region)
+        let w := f_coerce(&mut g, v, e.ty, ty)
+        f_set(&mut g.graph.rval, k_put(g.graph.rval, region, w))
+        let l := k_label(&mut g, join)
+        b_br(&mut g.b, l)
+        k_pass_parts(&mut g, b, [join])
+      }
+      NShellNode(^e) => f_refuse(&mut g, "internal: a call region without its call")
+      NShellBlock(^t) => f_refuse(&mut g, "internal: a call region without its call")
+      NShellWhile(^t) => f_refuse(&mut g, "internal: a call region without its call")
+    }
+  }
+}
+
+pub fn k_control(g: &mut FFun, b: Nat, region: Nat, succs: List(Nat), join: Nat): Unit ! {div} {
+  match k_region(&mut g, region) {
+    None => ()
+    Some(reg) => {
+      k_pass_parts(&mut g, b, f_snoc(succs, join))
+      match reg.shell {
+        NShellWhile(tick) => if n_tick_budget(tick) {
+          f_refuse(&mut g, "a `budget`")
+        } else {
+          match f_head_nat(succs) {
+            Some(first) => {
+              let head := k_label(&mut g, first)
+              b_br(&mut g.b, head)
+            }
+            None => f_refuse(&mut g, "internal: a loop with no body")
+          }
+        }
+        NShellNode(e) => match e.kind {
+          NBudgetOf(^x) => f_refuse(&mut g, "a `budget`")
+          NAnd(^x, ^y) => k_and_or(&mut g, true, region, reg, succs, join)
+          NOr(^x, ^y) => k_and_or(&mut g, false, region, reg, succs, join)
+          NIf(^c, ^t, ^o) => {
+            let ^slotted := k_region_slot(&mut g, region)
+            let cond := k_operand_value(&mut g, k_operand(reg.slots, 0))
+            let test := b_cond(&mut g.b, f_head(cond.v))
+            match f_head_nat(succs) {
+              None => f_refuse(&mut g, "internal: an `if` with no branch")
+              Some(first) => {
+                let yes := k_label(&mut g, first)
+                let no := match f_nth(succs, 1) {
+                  Some(o2) => k_label(&mut g, o2)
+                  None => k_label(&mut g, join)
+                }
+                b_condbr(&mut g.b, test, yes, no)
+              }
+            }
+          }
+          ^other => f_refuse(&mut g, "internal: a control that is not written")
+        }
+        NShellBlock(^t) => f_refuse(&mut g, "internal: a control that is not written")
+        NShellCall(^e) => f_refuse(&mut g, "internal: a control that is not written")
+      }
+    }
+  }
+}
+
+pub fn f_head_nat(xs: List(Nat)): Option(Nat) {
+  match xs {
+    Nil => None
+    Cons(x, ^rest) => Some(x)
+  }
+}
+
+pub fn k_and_or(
+  g: &mut FFun,
+  is_and: Bool,
+  region: Nat,
+  reg: NRegion,
+  succs: List(Nat),
+  join: Nat
+): Unit ! {div} {
+  let out := k_region_slot(&mut g, region)
+  let first := k_operand_value(&mut g, k_operand(reg.slots, 0))
+  b_store(&mut g.b, out, 0, first.v)
+  let c := b_cond(&mut g.b, f_head(first.v))
+  match f_head_nat(succs) {
+    None => f_refuse(&mut g, "internal: a `&&` with no second operand")
+    Some(s) => {
+      let more := k_label(&mut g, s)
+      let done := k_label(&mut g, join)
+      if is_and { b_condbr(&mut g.b, c, more, done) } else { b_condbr(&mut g.b, c, done, more) }
+    }
+  }
+}
+
+// ---- A `match` ----
+
+// The entry of each arm, in the order the slots hold them, and whether the arm
+// has a guard.
+pub(open) struct KArmSlot { entry: Nat, guarded: Bool }
+
+pub fn k_arm_slots(g: &mut FFun, slots: List(NSlot), arms: List(NArm), at: Nat): List(KArmSlot) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => {
+      let guarded := match a.guard {
+        Some(^x) => true
+        None => false
+      }
+      let here := if guarded { at + 1 } else { at }
+      match f_nth(slots, here) {
+        None => {
+          f_refuse(&mut g, "internal: an arm without its entry")
+          Nil
+        }
+        Some(s) => match s {
+          NSlotOperand(^v) => {
+            f_refuse(&mut g, "internal: an arm without its entry")
+            Nil
+          }
+          NSlotBody(e) => Cons(KArmSlot { entry: e, guarded: guarded }, k_arm_slots(&mut g, slots, rest, here + 1))
+        }
+      }
+    }
+  }
+}
+
+pub fn k_arm_entries(xs: List(KArmSlot)): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(x.entry, k_arm_entries(rest))
+  }
+}
+
+// Whether a guard is written on an arm that takes the value apart.
+pub fn k_guard_apart(g: &mut FFun, m: NMatch, t: NTy, xs: List(KArmSlot), i: Nat): Bool ! {div} {
+  match xs {
+    Nil => false
+    Cons(x, rest) => {
+      let apart := if x.guarded {
+        match f_nth(m.arms, i) {
+          None => false
+          Some(a) => if f_lends(m, a) { false } else { not(f_plain(&mut g, t)) }
+        }
+      } else {
+        false
+      }
+      apart || k_guard_apart(&mut g, m, t, rest, i + 1)
+    }
+  }
+}
+
+// A `match` starts: the scrutinee stays where it is; an arm takes its parts
+// out of it or borrows them. A copy of a place is a value of its own.
+pub fn k_enter_match(g: &mut FFun, region: Nat, entry: Nat): Unit ! {div} {
+  match k_region(&mut g, region) {
+    None => ()
+    Some(reg) => match reg.shell {
+      NShellNode(e) => match e.kind {
+        NMatchOf(m) => {
+          let scrut := k_operand(reg.slots, 0)
+          let found := match scrut {
+            NValLeaf(x) => {
+              let root := if f_is_copied(x) {
+                let v := f_expr(&mut g, x)
+                FPlace { ptr: f_temp(&mut g, v), ty: x.ty }
+              } else {
+                f_place(&mut g, x)
+              }
+              #(NMatch { scrut: x, by_ref: m.by_ref, exhaustive: m.exhaustive, arms: m.arms }, root)
+            }
+            NValRegion(^r) => {
+              let v := k_value(&mut g, scrut)
+              #(m, FPlace { ptr: f_temp(&mut g, v.v), ty: v.ty })
+            }
+          }
+          match found {
+            #(node, root) => {
+              let slots := k_arm_slots(&mut g, reg.slots, node.arms, 1)
+              let arms := k_arm_entries(slots)
+              let cx := KMatch { node: node, root: root, arms: arms }
+              if k_guard_apart(&mut g, node, root.ty, slots, 0) {
+                f_refuse(&mut g, "a guard on a `match` that takes its value apart")
+              } else {
+                let ^slotted := k_region_slot(&mut g, region)
+                f_set(&mut g.graph.arm_entries, f_append(g.graph.arm_entries, arms))
+                f_set(&mut g.graph.matches, k_put(g.graph.matches, region, cx))
+                f_set(&mut g.graph.parts, k_put(g.graph.parts, entry, FParts { at: [#(Nil, root)], ctor: Nil }))
+                let l := k_label(&mut g, entry)
+                b_br(&mut g.b, l)
+              }
+            }
+          }
+        }
+        ^other => f_refuse(&mut g, "internal: a match without its node")
+      }
+      NShellBlock(^t) => f_refuse(&mut g, "internal: a match without its node")
+      NShellCall(^x) => f_refuse(&mut g, "internal: a match without its node")
+      NShellWhile(^t) => f_refuse(&mut g, "internal: a match without its node")
+    }
+  }
+}
+
+// Tests the part of the scrutinee at `path`: the first case it is goes on.
+pub fn k_test(
+  g: &mut FFun,
+  b: Nat,
+  path: List(Nat),
+  cases: List(NCaseArm),
+  default: Option(Nat)
+): Unit ! {div} {
+  match k_match_of(&mut g, b) {
+    None => f_refuse(&mut g, "internal: a test outside a match")
+    Some(r) => {
+      var parts := k_parts_of(&mut g, b, r)
+      let at := f_part(&mut g, &mut parts, path)
+      let shape := l_shape(&mut g.m, at.ty)
+      let untagged := f_is_pair(shape)
+      k_cases(&mut g, parts, path, at, untagged, cases)
+      match default {
+        Some(d) => {
+          let l := k_label(&mut g, d)
+          b_br(&mut g.b, l)
+          match k_get(g.graph.parts, d) {
+            Some(^x) => ()
+            None => f_set(&mut g.graph.parts, k_put(g.graph.parts, d, parts))
+          }
+        }
+        None => f_fail(&mut g, "no arm matches")
+      }
+      f_set(&mut g.graph.parts, k_put(g.graph.parts, b, parts))
+    }
+  }
+}
+
+pub fn k_cases(
+  g: &mut FFun,
+  parts: FParts,
+  path: List(Nat),
+  at: FPlace,
+  untagged: Bool,
+  cases: List(NCaseArm)
+): Unit {
+  match cases {
+    Nil => ()
+    Cons(c, rest) => {
+      let yes := k_label(&mut g, c.block)
+      let no := b_label(&mut g.b)
+      var inner := parts
+      let want := match c.case {
+        NCaseCtor(index, ^count) => if untagged {
+          None
+        } else {
+          f_set(&mut inner.ctor, Cons(#(path, index), inner.ctor))
+          Some(ll_word(index))
+        }
+        NCaseInt(neg, n) => f_want_number(
+          &mut g,
+          at.ty,
+          if neg { if n == 0 { ll_word(0) } else { ll_minus(n) } } else { ll_word(n) }
+        )
+        NCaseNat(n) => f_want_number(&mut g, at.ty, ll_word(n))
+        NCaseBool(v) => Some(ll_word(if v { 1 } else { 0 }))
+        NCaseVariant(^i) => {
+          f_refuse(&mut g, "a union")
+          None
+        }
+        NCaseText(s) => {
+          let word := b_load_word(&mut g.b, at.ptr)
+          let x := b_ptr(&mut g.b, word)
+          let k := ll_global_value(g_string(&mut g.m, s))
+          let n := ll_word(Text::len(s))
+          let is := b_def(&mut g.b, ll!(`call i1 @rt_text_is(ptr $x, ptr $k, i64 $n)`))
+          b_condbr(&mut g.b, is, yes, no)
+          None
+        }
+      }
+      match want {
+        Some(w) => {
+          let word := b_load_word(&mut g.b, at.ptr)
+          let test := b_def(&mut g.b, ll!(`icmp eq i64 $word, $w`))
+          b_condbr(&mut g.b, test, yes, no)
+        }
+        None => match c.case {
+          NCaseText(^s) => ()
+          NCaseCtor(^index, ^count) => b_br(&mut g.b, yes)
+          NCaseInt(^neg, ^n) => b_br(&mut g.b, yes)
+          NCaseNat(^n) => b_br(&mut g.b, yes)
+          NCaseBool(^v) => b_br(&mut g.b, yes)
+          NCaseVariant(^i) => b_br(&mut g.b, yes)
+        }
+      }
+      match k_get(g.graph.parts, c.block) {
+        Some(^x) => ()
+        None => f_set(&mut g.graph.parts, k_put(g.graph.parts, c.block, inner))
+      }
+      b_start(&mut g.b, no)
+      k_cases(&mut g, parts, path, at, untagged, rest)
+    }
+  }
+}
+
+// ---- A `handle` ----
+
+// The entries of the chain a `handle` puts its arms in, and the arms.
+pub fn k_put_arms(
+  g: &mut FFun,
+  h: NHandle,
+  arms: List(NOpArm),
+  edges: List(NEdge),
+  join: Nat
+): List(List(llvm::Value::I)) ! {div} {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => match edges {
+      Nil => Nil
+      Cons(edge, more) => {
+        let target := k_arm_target(g.graph.ix, edge.entry, g.graph.ix.count)
+        let arm := k_arm_fn(&mut g, h, a, target, join)
+        let entry := b_alloca(&mut g.b, 3)
+        let top := b_def(&mut g.b, ll!(`load ptr, ptr @rt.ev`))
+        let next := b_word(&mut g.b, top)
+        b_store(&mut g.b, entry, 0, [next, ll_word(a.op), f_head(arm)])
+        b_ins(&mut g.b, ll!(`store ptr $entry, ptr @rt.ev`))
+        Cons(arm, k_put_arms(&mut g, h, rest, more, join))
+      }
+    }
+  }
+}
+
+// The edges of a kind.
+pub fn k_edges_of(edges: List(NEdge), wanted: Bool): List(NEdge) {
+  match edges {
+    Nil => Nil
+    Cons(e, rest) => {
+      let keep := match e.kind {
+        NEdgeDirect => wanted
+        NEdgeBody => false
+        NEdgeRet => false
+        NEdgeAbort => false
+        NEdgeSusp => false
+      }
+      if keep { Cons(e, k_edges_of(rest, wanted)) } else { k_edges_of(rest, wanted) }
+    }
+  }
+}
+
+pub fn k_edge_entry(edges: List(NEdge), body: Bool): Option(Nat) {
+  match edges {
+    Nil => None
+    Cons(e, rest) => match e.kind {
+      NEdgeBody => if body { Some(e.entry) } else { k_edge_entry(rest, body) }
+      NEdgeRet => if body { k_edge_entry(rest, body) } else { Some(e.entry) }
+      NEdgeDirect => k_edge_entry(rest, body)
+      NEdgeAbort => k_edge_entry(rest, body)
+      NEdgeSusp => k_edge_entry(rest, body)
+    }
+  }
+}
+
+// What in the `direct` arms the backend does not write, if anything.
+pub fn k_arms_refused(
+  g: &mut FFun,
+  arms: List(NOpArm),
+  edges: List(NEdge),
+  join: Nat,
+  ops: List(Nat)
+): Option(Text) ! {div} {
+  match arms {
+    Nil => None
+    Cons(a, rest) => match edges {
+      Nil => None
+      Cons(edge, more) => if f_has_op(ops, a.op) {
+        Some("a `handle` with two arms of an operation")
+      } else {
+        let fits := match a.guard {
+          Some(^x) => false
+          None => f_irrefutable_all(&mut g, a.pats, a.params)
+        }
+        if not(fits) {
+          Some("an operation arm whose pattern may not fit")
+        } else {
+          let ix := g.graph.ix
+          let target := k_arm_target(ix, edge.entry, ix.count)
+          if k_any_return(ix, k_reachable(ix, target, Some(join))) {
+            Some("an operation arm that returns")
+          } else {
+            k_arms_refused(&mut g, rest, more, join, Cons(a.op, ops))
+          }
+        }
+      }
+    }
+  }
+}
+
+// The blocks of the body that end it.
+pub fn k_mark_body_ends(g: &mut FFun, bs: List(Nat), region: Nat, join: Nat): Unit {
+  match bs {
+    Nil => ()
+    Cons(x, rest) => {
+      match k_get(g.graph.ix.blocks, x) {
+        None => ()
+        Some(blk) => match blk.term {
+          NTJump(t, ^v) => if t == join {
+            f_set(&mut g.graph.body_ends, k_put(g.graph.body_ends, x, region))
+          } else {
+            ()
+          }
+          ^other => ()
+        }
+      }
+      k_mark_body_ends(&mut g, rest, region, join)
+    }
+  }
+}
+
+// A `handle`: its operation arms are put on the chain of handlers and its body
+// runs here; the code that ends the body takes them off again.
+pub fn k_handle_term(g: &mut FFun, region: Nat, edges: List(NEdge), join: Nat): Unit ! {div} {
+  match k_region(&mut g, region) {
+    None => ()
+    Some(reg) => match reg.shell {
+      NShellNode(e) => match e.kind {
+        NHandleOf(h) => k_handle(&mut g, region, e, h, edges, join)
+        ^other => f_refuse(&mut g, "internal: a handle without its node")
+      }
+      NShellBlock(^t) => f_refuse(&mut g, "internal: a handle without its node")
+      NShellCall(^x) => f_refuse(&mut g, "internal: a handle without its node")
+      NShellWhile(^t) => f_refuse(&mut g, "internal: a handle without its node")
+    }
+  }
+}
+
+pub fn k_handle(
+  g: &mut FFun,
+  region: Nat,
+  e: NExpr,
+  h: NHandle,
+  edges: List(NEdge),
+  join: Nat
+): Unit ! {div} {
+  let answering := w_arms_of(h.arms, true)
+  let arm_edges := k_edges_of(edges, true)
+  if f_any_kind(h.arms, true) {
+    f_refuse(&mut g, "a `handle` with an arm that does not resume")
+  } else if f_any_kind(h.arms, false) || h.m || h.kept || h.detached {
+    f_refuse(&mut g, "a `handle` with an arm that keeps its continuation")
+  } else if not(f_tier_plain(h.body_tier)) {
+    f_refuse(&mut g, "a `handle` whose body may stop")
+  } else {
+    match k_arms_refused(&mut g, answering, arm_edges, join, Nil) {
+      Some(what) => f_refuse(&mut g, what)
+      None => match k_edge_entry(edges, true) {
+        None => f_refuse(&mut g, "internal: a handle without its body")
+        Some(body_entry) => {
+          let ix := g.graph.ix
+          let after := match k_edge_entry(edges, false) {
+            Some(ret_entry) => k_arm_target(ix, ret_entry, ix.count)
+            None => join
+          }
+          let saved := b_def(&mut g.b, ll!(`load ptr, ptr @rt.ev`))
+          let entries := k_put_arms(&mut g, h, answering, arm_edges, join)
+          // Where the body's value waits for the code that ends the body.
+          let n := f_words(&mut g, h.body_ty)
+          let value := b_alloca(&mut g.b, n)
+          let done := b_label(&mut g.b)
+          let ^slotted := k_region_slot(&mut g, region)
+          k_mark_body_ends(&mut g, k_reachable(ix, body_entry, Some(join)), region, join)
+          f_set(&mut g.graph.after, k_put(g.graph.after, after, region))
+          f_set(
+            &mut g.graph.handles,
+            k_put(
+              g.graph.handles,
+              region,
+              KHandle {
+                value: value,
+                done: done,
+                after: after,
+                saved: saved,
+                arms: entries,
+                body_ty: h.body_ty,
+                ret: match h.ret {
+                  None => None
+                  Some(r) => Some(r.pat)
+                },
+                ty: e.ty,
+                region: region,
+                join: join
+              }
+            )
+          )
+          let l := k_label(&mut g, body_entry)
+          b_br(&mut g.b, l)
+        }
+      }
+    }
+  }
+}
+
+// The code that ends the body of a `handle`: it takes its operation arms off
+// the chain, then goes on with the body's value to the return arm, or out of
+// the `handle`.
+pub fn k_end_of_body(g: &mut FFun, r: Nat): Unit ! {div} {
+  match k_get(g.graph.handles, r) {
+    None => ()
+    Some(h) => {
+      f_set(&mut g.graph.handles, Ordmap::remove(g.graph.handles, r, Ordmap::compare_nat))
+      b_start(&mut g.b, h.done)
+      let n := f_words(&mut g, h.body_ty)
+      let v := b_load(&mut g.b, h.value, 0, n)
+      let saved := h.saved
+      b_ins(&mut g.b, ll!(`store ptr $saved, ptr @rt.ev`))
+      f_drop_arms(&mut g, h.arms)
+      match h.ret {
+        None => {
+          let w := f_coerce(&mut g, v, h.body_ty, h.ty)
+          let slot := k_region_slot(&mut g, h.region)
+          b_store(&mut g.b, slot, 0, w)
+        }
+        Some(pat) => {
+          let p := f_temp(&mut g, v)
+          f_pattern(&mut g, pat, p, h.body_ty, false, true)
+        }
+      }
+      let l := k_label(&mut g, h.after)
+      b_br(&mut g.b, l)
+    }
+  }
+}
+
+// The function value of an arm: its function takes the operation's arguments
+// and gives its answer, and reads the locals of this frame the arm mentions in
+// place.
+pub fn k_arm_fn(
+  g: &mut FFun,
+  h: NHandle,
+  a: NOpArm,
+  entry: Nat,
+  join: Nat
+): List(llvm::Value::I) ! {div} {
+  let got := f_arm_holds(&mut g, f_append(h.captures, h.clones), FCaptured { holds: Nil, env: Nil, moved: false })
+  let holds := text_list_reverse(got.holds)
+  let n := f_words_of(&mut g, a.params)
+  // A `direct` arm's body is the operation's answer.
+  let answer := match a.inst {
+    Some(i) => i.answer
+    None => match f_nth(g.m.pkg.ops, a.op) {
+      Some(o) => o.result
+      None => NUnit
+    }
+  }
+  let r := f_words(&mut g, answer)
+  let id := f_note_closure(&mut g, n, r, false)
+  var inner := FFun {
+    m: g.m,
+    b: b_new(),
+    locals: Ordmap::empty(),
+    ret: answer,
+    ev: None,
+    graph: k_child(g.graph)
+  }
+  f_held_slots(&mut inner, holds)
+  let params := f_arm_params(&mut inner, a.pats, a.params, 0)
+  k_enter(&mut inner, entry, Some(join))
+  k_emit_graph(&mut inner, entry, Some(join))
+  f_set(&mut g.m, inner.m)
+  let all := Cons(ll_named_ptr_param(ll_named("env")), params)
+  let item := f_finish(inner.b, r, ll_closure(id), all)
+  f_set(&mut g.m.closure_defs, Cons(item, g.m.closure_defs))
+  f_new_fn(&mut g, id, got.env)
+}
+
+pub fn k_enter(g: &mut FFun, entry: Nat, stop: Option(Nat)): Unit ! {div} {
+  if k_has_handle(g.graph.ix, entry, stop) {
+    let ev := b_def(&mut g.b, ll!(`load ptr, ptr @rt.ev`))
+    f_set(&mut g.ev, Some(ev))
+  } else {
+    ()
+  }
+}
+
+// ---- What a closure reads of the frame it is made in ----
+
+// Which of the closures of the blocks the body of a closure node stands for.
+pub fn k_closure_index(body: NExpr): Option(Nat) {
+  match body.kind {
+    NIntLit(neg, n) => if neg && n <= 85070591730234615865843651857942052864 && 85070591730234615865843651857942052864 - n < 4294967296 {
+      Some(85070591730234615865843651857942052864 - n)
+    } else {
+      None
+    }
+    ^other => None
+  }
+}
+
+pub fn k_free_value(w: WFree, v: NValue): WFree ! {div} {
+  match v {
+    NValLeaf(e) => w_free_in(w, e)
+    NValRegion(^r) => w
+  }
+}
+
+pub fn k_free_insts(w: WFree, insts: List(NInst)): WFree ! {div} {
+  match insts {
+    Nil => w
+    Cons(i, rest) => k_free_insts(k_free_inst(w, i), rest)
+  }
+}
+
+pub fn k_free_inst(w: WFree, i: NInst): WFree ! {div} {
+  match i {
+    NILet(local, ^ty, init, ^stack) => k_free_value(w_declare(w, local.id), init)
+    NIVar(local, ^ty, init) => k_free_value(w_declare(w, local.id), init)
+    NISet(target, value) => k_free_value(w_note(w, target.local, false), value)
+    NIEval(v) => k_free_value(w, v)
+    NIClose(^r, v) => match v {
+      Some(x) => k_free_value(w, x)
+      None => w
+    }
+    NIBind(local, ^ty, ^path, ^lent) => w_declare(w, local.id)
+    NIEnd(^l) => w
+    NIRelease(^path) => w
+    NIUnpack(^path, ^last) => w
+    NIOpen(^r) => w
+  }
+}
+
+pub fn k_free_term(w: WFree, t: NTerm): WFree ! {div} {
+  match t {
+    NTJump(^to, v) => k_free_value(w, v)
+    NTDone(v) => k_free_value(w, v)
+    NTBranch(v, ^then, ^els) => k_free_value(w, v)
+    NTReturn(v, ^cont) => match v {
+      Some(x) => k_free_value(w, x)
+      None => w
+    }
+    NTGoto(^to) => w
+    NTControl(^r, ^ss, ^j) => w
+    NTEnter(^r, ^e, ^j, ^held) => w
+    NTTest(^path, ^cases, ^default) => w
+    NTHandle(^r, ^es, ^j) => w
+    NTCall(^r, ^j, ^a) => w
+    NTSuspend(^r, ^j, ^a, ^k, ^env) => w
+    NTAbort => w
+    NTUnreachable => w
+    NTDecline => w
+    NTPending => w
+  }
+}
+
+pub fn k_free_params(w: WFree, ps: List(NParam)): WFree { w_declare_params(w, ps) }
+
+pub fn k_free_blocks(w: WFree, bs: List(NBBlock)): WFree ! {div} {
+  match bs {
+    Nil => w
+    Cons(b, rest) => k_free_blocks(k_free_term(k_free_insts(k_free_params(w, b.params), b.insts), b.term), rest)
+  }
+}
+
+pub fn k_free_slots(w: WFree, slots: List(NSlot)): WFree ! {div} {
+  match slots {
+    Nil => w
+    Cons(s, rest) => match s {
+      NSlotOperand(v) => k_free_slots(k_free_value(w, v), rest)
+      NSlotBody(^b) => k_free_slots(w, rest)
+    }
+  }
+}
+
+// The scrutinee of a `match` that takes its value apart is moved by an arm
+// that binds an owned part of it.
+pub fn k_free_scrutinee(w: WFree, e: NExpr, slots: List(NSlot)): WFree {
+  match e.kind {
+    NMatchOf(m) => if m.by_ref {
+      w
+    } else {
+      match k_operand(slots, 0) {
+        NValLeaf(s) => match s.kind {
+          NRead(local, how) => match how {
+            NPlace => if w_is_owned(local) { w_note(w, local, true) } else { w }
+            NMove => w
+            NCopy => w
+            NClone => w
+          }
+          ^other => w
+        }
+        NValRegion(^r) => w
+      }
+    }
+    NHandleOf(h) => k_free_arm_binders(w, h.arms)
+    ^other => w
+  }
+}
+
+pub fn k_declare_all(w: WFree, ls: List(NLocal)): WFree {
+  match ls {
+    Nil => w
+    Cons(l, rest) => k_declare_all(w_declare(w, l.id), rest)
+  }
+}
+
+pub fn k_free_arm_binders(w: WFree, arms: List(NOpArm)): WFree {
+  match arms {
+    Nil => w
+    Cons(a, rest) => k_free_arm_binders(k_declare_all(w, k_binders_all(a.pats, Nil)), rest)
+  }
+}
+
+pub fn k_free_regions(w: WFree, rs: List(Option(NRegion))): WFree ! {div} {
+  match rs {
+    Nil => w
+    Cons(r, rest) => match r {
+      None => k_free_regions(w, rest)
+      Some(reg) => {
+        let noted := k_free_slots(w, reg.slots)
+        let seen := match reg.shell {
+          NShellNode(e) => k_free_scrutinee(w_free_in(noted, e), e, reg.slots)
+          NShellCall(e) => k_free_scrutinee(w_free_in(noted, e), e, reg.slots)
+          NShellBlock(^t) => noted
+          NShellWhile(^t) => noted
+        }
+        k_free_regions(seen, rest)
+      }
+    }
+  }
+}
+
+pub fn k_free_closures(w: WFree, subs: List(NBlockFn)): WFree ! {div} {
+  match subs {
+    Nil => w
+    Cons(s, rest) => k_free_closures(k_free_collect(w, s), rest)
+  }
+}
+
+pub fn k_free_collect(w: WFree, bf: NBlockFn): WFree ! {div} {
+  k_free_closures(k_free_regions(k_free_blocks(w, bf.blocks), bf.regions), bf.closures)
+}
+
+// The locals a closure reads of the frame it is made in, in the order first
+// read, and whether its body moves each.
+pub fn k_free_locals(c: NClosure, sub: NBlockFn): List(NLocal × Bool) ! {div} {
+  let start := w_declare_params(WFree { used: Nil, declared: Nil }, c.params)
+  let w := k_free_collect(w_notes(start, c.clones), sub)
+  w_undeclared(w.used, w.declared)
+}

@@ -1,0 +1,35 @@
+// The operations of `uhost` that carry a proof in Tauto (`std/prelude/num.taut`):
+// the result fits, so each is one machine operation with no check and no effect.
+
+@ cases.uhost-operations-with-a-proof-have-an-empty-row
+description = "`succ_below`, `pred_nz`, `add_within`, `sub` and `of_u64_below` check nothing, so a function that uses them has no effect in its row."
+source = ```tauto
+fn calc(a: uhost, b: uhost): u64 ! {} {
+  let s := UHost::succ_below(a)
+  let p := UHost::pred_nz(b)
+  let t := UHost::add_within(s, p)
+  let d := UHost::sub(t, 1)
+  U64::of_uhost(UHost::add_within(d, UHost::of_u64_below(7)))
+}
+show(&calc(4, 5))
+```
+stdout = "15\n"
+
+@ cases.a-uhost-literal-below-two-to-the-32-needs-no-effect
+description = "A literal below 2^32 is a `uhost` on every target, and the comparisons need no effect."
+source = ```tauto
+fn below(a: uhost): Bool ! {} { a < 4294967295 }
+fn same(a: uhost): Bool ! {} { a == 4294967295 }
+show(&below(7))
+show(&same(4294967295))
+show(&(U64::of_uhost(4294967295) == 4294967295))
+```
+stdout = "true\ntrue\ntrue\n"
+
+@ cases.a-uhost-literal-of-two-to-the-32-is-refused
+description = "A number of 2^32 or more is not a `uhost` literal: it goes through `uhost_of_u64`, which the host checks."
+source = ```tauto
+let x: uhost := 4294967296
+show(&(x == x))
+```
+types = "error: 4294967296 does not fit uhost"

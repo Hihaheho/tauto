@@ -1,5 +1,6 @@
 import "fits_sound.taut"
-import std::Base
+import "fits_sound_head.taut"
+import std::base
 import "checker.taut"
 import "rules_ty.taut"
 import "ty.taut"
@@ -14,14 +15,14 @@ import "unify_sound.taut"
 // ----- the steps of `ck_join`, as the `&mut` desugaring writes them -----
 
 pub fn ck_join_my(c: Checker, a0: Ty, b0: Ty, y: Bool): Mut1(Bool, Checker) {
-  ⊢ Mut1(Bool, Checker) from match y {
+  match y {
     true => ck_rewrap1(ck_attempt_unify(c, a0, b0))
     false => mut1(false, c)
   }
 }
 
 pub fn ck_join_e2(a: Ty, b: Ty, m: Mut1(Option(Ty), Checker)): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match m {
+  match m {
     mut1(o, c2) => ⊢ Mut1(Ty, Checker) from match o {
       Some(t) => mut1(t, c2)
       None => mut1(ty_union(Cons(a, Cons(b, Nil))), c2)
@@ -30,14 +31,14 @@ pub fn ck_join_e2(a: Ty, b: Ty, m: Mut1(Option(Ty), Checker)): Mut1(Ty, Checker)
 }
 
 pub fn ck_join_e1z(c: Checker, a: Ty, b: Ty, z: Bool): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match z {
+  match z {
     true => mut1(b, c)
     false => ck_join_e2(a, b, ck_join_borrowed(c, a, b))
   }
 }
 
 pub fn ck_join_e1y(c: Checker, a: Ty, b: Ty, y: Bool): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match y {
+  match y {
     true => mut1(a, c)
     false => ck_join_e1z(c, a, b, ty_is_never(a))
   }
@@ -59,7 +60,7 @@ pub fn ck_join_e(c: Checker, a0: Ty, b0: Ty): Mut1(Ty, Checker) {
 }
 
 pub fn ck_join_k(a0: Ty, b0: Ty, m: Mut1(Bool, Checker)): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match m {
+  match m {
     mut1(v, c2) => ⊢ Mut1(Ty, Checker) from match v {
       true => mut1(ty_resolve_in(ck_steps_of(c2), ck_subst_of(c2), a0), c2)
       false => ck_join_e(c2, a0, b0)
@@ -80,7 +81,7 @@ pub theorem join_unf(
 }
 
 pub fn ck_jb_k(x: Ty, m: Mut1(Bool, Checker)): Mut1(Option(Ty), Checker) {
-  ⊢ Mut1(Option(Ty), Checker) from match m {
+  match m {
     mut1(v, c2) => ⊢ Mut1(Option(Ty), Checker) from match v {
       true => mut1(Some(ty_resolve_in(ck_steps_of(c2), ck_subst_of(c2), x)), c2)
       false => mut1(None, c2)
@@ -89,15 +90,15 @@ pub fn ck_jb_k(x: Ty, m: Mut1(Bool, Checker)): Mut1(Option(Ty), Checker) {
 }
 
 pub fn ck_jb2y(c: Checker, a: Ty, x: Ty, y: Bool): Mut1(Option(Ty), Checker) {
-  ⊢ Mut1(Option(Ty), Checker) from match y {
+  match y {
     true => ck_jb_k(x, ck_attempt_unify(c, x, a))
     false => mut1(None, c)
   }
 }
 
 pub fn ck_jb2(c: Checker, a: Ty, b: Ty): Mut1(Option(Ty), Checker) {
-  ⊢ Mut1(Option(Ty), Checker) from match b {
-    TyBorrow(x, m) => ck_jb2y(c, a, x, Bool::and(not(ty_is_borrow(a)), kind_dup(ck_kind(c, x))))
+  match b {
+    TyBorrow(x, ^m) => ck_jb2y(c, a, x, Bool::and(not(ty_is_borrow(a)), kind_dup(ck_kind(c, x))))
     _ => mut1(None, c)
   }
 }
@@ -107,7 +108,7 @@ pub theorem jb2_unf(c: Checker, a: Ty, b: Ty): ck_join_borrowed_second(c, a, b) 
 }
 
 pub fn ck_jb1y(c: Checker, x: Ty, m: Bool, b: Ty, y: Bool): Mut1(Option(Ty), Checker) {
-  ⊢ Mut1(Option(Ty), Checker) from match y {
+  match y {
     true => ck_jb_k(x, ck_attempt_unify(c, x, b))
     false => ck_rewrap1(ck_join_borrowed_second(c, TyBorrow(x, m), b))
   }
@@ -162,8 +163,8 @@ pub def OptEq(
 )
 
 pub fn jn_is_some(o: Option(Ty)): Bool {
-  ⊢ Bool from match o {
-    Some(t) => true
+  match o {
+    Some(^t) => true
     None => false
   }
 }
@@ -207,7 +208,7 @@ pub theorem join_my_ok(
   b0: Ty,
   y: Bool
 ): Post(c, ck_join_my(c, a0, b0, y), (c2: Checker) => TyEqAt(c2, a0, b0)) {
-  ⊢ Post(c, ck_join_my(c, a0, b0, y), (c2: Checker) => TyEqAt(c2, a0, b0)) from match y {
+  match y {
     true => post_map(
       c,
       ck_attempt_unify(c, a0, b0),
@@ -321,7 +322,7 @@ pub theorem jb2y_ok(
   mm: Bool,
   y: Bool
 ): OptOk(c, ck_jb2y(c, a, x, y), a, TyBorrow(x, mm)) {
-  ⊢ OptOk(c, ck_jb2y(c, a, x, y), a, TyBorrow(x, mm)) from match y {
+  match y {
     true => opt_of_eq(
       c,
       ck_jb_k(x, ck_attempt_unify(c, x, a)),
@@ -350,7 +351,7 @@ pub theorem jb2_cases(
   b: Ty,
   eb: b1 = b
 ): OptOk(c, ck_jb2(c, a, b), a, b1) {
-  ⊢ OptOk(c, ck_jb2(c, a, b), a, b1) from match b {
+  match b {
     TyBorrow(x, mm) => Eq::subst(
       (z: Ty) => OptOk(c, ck_jb2(c, a, TyBorrow(x, mm)), a, z),
       Eq::sym(eb),
@@ -385,7 +386,7 @@ pub theorem jb1y_ok(
   b: Ty,
   y: Bool
 ): OptOk(c, ck_jb1y(c, x, mm, b, y), TyBorrow(x, mm), b) {
-  ⊢ OptOk(c, ck_jb1y(c, x, mm, b, y), TyBorrow(x, mm), b) from match y {
+  match y {
     true => opt_of_eq(
       c,
       ck_jb_k(x, ck_attempt_unify(c, x, b)),
@@ -438,7 +439,7 @@ pub theorem jb1_cases(
   b: Ty,
   ea: a1 = a
 ): OptOk(c, ck_join_borrowed(c, a, b), a1, b) {
-  ⊢ OptOk(c, ck_join_borrowed(c, a, b), a1, b) from match a {
+  match a {
     TyBorrow(x, mm) => Eq::subst(
       (z: Ty) => OptOk(c, ck_join_borrowed(c, TyBorrow(x, mm), b), z, b),
       Eq::sym(ea),

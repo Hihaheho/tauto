@@ -13,7 +13,7 @@ fn accepts(condition: Condition, input: u64): Bool {
  Below(maximum) => input < maximum
  Always => true }
 }
-fn score(rules: List(Rule), input: u64): u64 ! {Div} {
+fn score(rules: List(Rule), input: u64): u64 ! {div, overflow} {
   match rules { Nil => 0
  Cons(rule, tail) => {
     let weight := if accepts(rule.condition, input) { rule.weight } else { 0 }
@@ -24,15 +24,15 @@ fn score(rules: List(Rule), input: u64): u64 ! {Div} {
 }
 fn run_source() -> &'static str {
     r#"
-fn run(steps: i64, rules: List(Rule), input: u64): Result(u64, Text) {
-  handle { budget(steps: steps) { let local_rules := rules; Ok(score(local_rules, input)) } } with {
-    exceeded(info), k => Err("exhausted")
+fn run(steps: u64, rules: List(Rule), input: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(steps, () => { let local_rules := rules; Ok(score(local_rules, input)) }) } with {
+    exceeded(info), k => Err("exhausted"), overflow() => Err("overflow")
   }
 }
 "#
 }
 
-fn bindings(pkg: &Package) -> Bindings {
+fn bindings(pkg: &mut Package) -> Bindings {
     let manifest = tauto::manifest::parse(
         r#"rust { nonresuming { entries { run_trusted = "run" } } }"#,
         Path::new("Tauto.eure"),
@@ -41,7 +41,7 @@ fn bindings(pkg: &Package) -> Bindings {
     Bindings::resolve(pkg, Some(&manifest), None).unwrap()
 }
 
-fn inspect(pkg: &Package, source: &str) -> (String, Vec<BorrowDiagnostic>) {
+fn inspect(pkg: &mut Package, source: &str) -> (String, Vec<BorrowDiagnostic>) {
     let bindings = bindings(pkg);
     let sources = Sources {
         file: "borrow.taut",
@@ -54,8 +54,8 @@ fn inspect(pkg: &Package, source: &str) -> (String, Vec<BorrowDiagnostic>) {
 }
 
 fn compiled(source: &str) -> (Package, String, Vec<BorrowDiagnostic>) {
-    let pkg = tauto_nir::compile_with(source, true).unwrap();
-    let (rust, reports) = inspect(&pkg, source);
+    let mut pkg = tauto::nir::compile_with(source, true).unwrap();
+    let (rust, reports) = inspect(&mut pkg, source);
     (pkg, rust, reports)
 }
 
@@ -77,8 +77,9 @@ fn retained_readonly_tree_has_a_distinct_private_route() {
         .find(|f| f.source.as_str() == "score" && f.tier == Tier::O)
         .unwrap();
     assert_eq!(original.params[0].local.repr, Repr::Plain);
-    assert!(rust.contains(&format!("pub fn {}", original.rust_name)));
-    assert!(rust.contains(&format!("fn {}_budget_sync", original.rust_name)));
+    let name = &tauto_rustgen::fn_names(&pkg)[original.id];
+    assert!(rust.contains(&format!("pub fn {name}")));
+    assert!(rust.contains(&format!("fn {name}_budget_sync")));
     assert!(rust.contains("fn __tauto_budget_borrow_"));
     assert!(!rust.contains("pub fn __tauto_budget_borrow_"));
     assert!(rust.contains("can_run_nonresuming"));
@@ -90,7 +91,7 @@ fn ordinary_bindings_never_emit_private_borrows() {
     let run = run_source();
     let helpers = helpers_source();
     let source = format!("{helpers}{run}");
-    let pkg = tauto_nir::compile_with(&source, true).unwrap();
+    let mut pkg = tauto::nir::compile_with(&source, true).unwrap();
     let sources = Sources {
         file: "borrow.taut",
         text: &source,
@@ -136,7 +137,7 @@ fn moving_a_unique_root_is_not_reclassified_as_a_retained_clone() {
     let run = run_source();
     let helpers = helpers_source();
     let source = format!("{helpers}{run}");
-    let mut pkg = tauto_nir::compile_with(&source, true).unwrap();
+    let mut pkg = tauto::nir::compile_with(&source, true).unwrap();
     fn moves(e: &mut Expr) {
         match &mut e.kind {
             ExprKind::Call(c) => {
@@ -174,7 +175,7 @@ fn moving_a_unique_root_is_not_reclassified_as_a_retained_clone() {
             moves(&mut f.body);
         }
     }
-    let (rust, reports) = inspect(&pkg, &source);
+    let (rust, reports) = inspect(&mut pkg, &source);
     assert!(
         reports.iter().any(|r| r
             .reason
@@ -188,9 +189,9 @@ fn moving_a_unique_root_is_not_reclassified_as_a_retained_clone() {
 #[test]
 fn scalar_result_and_closed_read_proof_are_independent_of_budget_eligibility() {
     let source = r#"
-fn retain(items: List(u64)): List(u64) ! {Div} { items }
-fn run(steps: i64, items: List(u64)): List(u64) {
- handle { budget(steps: steps) { let local := items; retain(local) } } with { exceeded(info), k => Nil }
+fn retain(items: List(u64)): List(u64) ! {div, overflow} { items }
+fn run(steps: u64, items: List(u64)): List(u64) ! {budget} {
+ handle { perform budget(steps, () => { let local := items; retain(local) }) } with { exceeded(info), k => Nil, overflow() => Nil }
 }"#;
     let (_, rust, reports) = compiled(source);
     assert!(rust.contains("run_nonresuming"));
@@ -207,12 +208,12 @@ fn run(steps: i64, items: List(u64)): List(u64) {
 #[test]
 fn recursive_generic_calls_keep_concrete_context_identity() {
     let source = r#"
-fn length<T: Shared>(items: List(T)): u64 ! {Div} {
+fn length<T: Shared>(items: List(T)): u64 ! {div, overflow} {
  match items { Nil => 0
  Cons(value, tail) => 1 + length(tail) }
 }
-fn run(steps: i64, numbers: List(u64), flags: List(Bool)): u64 {
- handle { budget(steps: steps) { let ns := numbers; let fs := flags; length(ns) + length(fs) } } with { exceeded(info), k => 0 }
+fn run(steps: u64, numbers: List(u64), flags: List(Bool)): u64 ! {budget} {
+ handle { perform budget(steps, () => { let ns := numbers; let fs := flags; length(ns) + length(fs) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#;
     let (_, rust, reports) = compiled(source);
     let successful: Vec<_> = reports
@@ -243,10 +244,10 @@ fn sync_feature_and_resuming_handlers_keep_the_original_route() {
     let run = run_source();
     let helpers = helpers_source();
     let source = format!("{helpers}{run}");
-    let mut pkg = tauto_nir::compile_with(&source, true).unwrap();
+    let mut pkg = tauto::nir::compile_with(&source, true).unwrap();
     pkg.sync = true;
     assert!(
-        !inspect(&pkg, &source)
+        !inspect(&mut pkg, &source)
             .0
             .contains("fn __tauto_budget_borrow_")
     );
@@ -266,51 +267,47 @@ fn native_private_routes_generic_contexts_snapshots_and_unique_owners() {
 
     let source = format!(
         r#"{}{}
-fn length<T: Shared>(items: List(T)): u64 ! {{Div}} {{
+fn length<T: Shared>(items: List(T)): u64 ! {{div, overflow}} {{
   match items {{ Nil => 0
     Cons(value, tail) => {{ let copied := value; 1 + length(tail) }} }}
 }}
-fn run_generic(steps: i64, numbers: List(u64), flags: List(Bool)): u64 {{
-  handle {{ budget(steps: steps) {{ let ns := numbers; let fs := flags; length(ns) + length(fs) }} }} with {{ exceeded(info), k => 999 }}
+fn run_generic(steps: u64, numbers: List(u64), flags: List(Bool)): u64 ! {{budget}} {{
+  handle {{ perform budget(steps, () => {{ let ns := numbers; let fs := flags; length(ns) + length(fs) }}) }} with {{ exceeded(info), k => 999, overflow() => 999 }}
 }}
-fn alternate_a(items: List(u64)): u64 ! {{Div}} {{
+fn alternate_a(items: List(u64)): u64 ! {{div, overflow}} {{
   match items {{ Nil => 0
     Cons(value, tail) => value + alternate_b(tail) }}
 }}
-fn alternate_b(items: List(u64)): u64 ! {{Div}} {{ alternate_a(items) }}
-fn run_mutual(steps: i64, items: List(u64)): u64 {{
-  handle {{ budget(steps: steps) {{ let local := items; alternate_a(local) }} }} with {{ exceeded(info), k => 999 }}
+fn alternate_b(items: List(u64)): u64 ! {{div, overflow}} {{ alternate_a(items) }}
+fn run_mutual(steps: u64, items: List(u64)): u64 ! {{budget}} {{
+  handle {{ perform budget(steps, () => {{ let local := items; alternate_a(local) }}) }} with {{ exceeded(info), k => 999, overflow() => 999 }}
 }}
-module Left {{
- fn count(items: List(u64)): u64 ! {{Div}} {{
-  match items {{ Nil => 0
-   Cons(value, tail) => 1 + count(tail) }}
- }}
+fn Left::count(items: List(u64)): u64 ! {{div, overflow}} {{
+ match items {{ Nil => 0
+  Cons(value, tail) => 1 + Left::count(tail) }}
 }}
-module Right {{
- fn count(items: List(u64)): u64 ! {{Div}} {{
-  match items {{ Nil => 0
-   Cons(value, tail) => 2 + count(tail) }}
- }}
+fn Right::count(items: List(u64)): u64 ! {{div, overflow}} {{
+ match items {{ Nil => 0
+  Cons(value, tail) => 2 + Right::count(tail) }}
 }}
-fn run_modules(steps: i64, items: List(u64)): u64 {{
- handle {{ budget(steps: steps) {{ let local := items; Left::count(local) + Right::count(local) }} }} with {{ exceeded(info), k => 999 }}
+fn run_modules(steps: u64, items: List(u64)): u64 ! {{budget}} {{
+ handle {{ perform budget(steps, () => {{ let local := items; Left::count(local) + Right::count(local) }}) }} with {{ exceeded(info), k => 999, overflow() => 999 }}
 }}
-fn run_order(steps: i64, rules: List(Rule), input: u64): Pair(u64, u64) {{
+fn run_order(steps: u64, rules: List(Rule), input: u64): u64 × u64 ! {{budget}} {{
   var seen: u64 := 0
-  let value := handle {{ budget(steps: steps) {{
+  let value := handle {{ perform budget(steps, () => {{
     var local := rules
     score(local, {{ seen := seen + 1
       var once := true
       while once {{ local := Nil; once := false }}
       input }})
-  }} }} with {{ exceeded(info), k => 0 }}
-  Pair {{ fst: value, snd: seen }}
+  }}) }} with {{ exceeded(info), k => 0, overflow() => 0 }}
+  #(value, seen)
 }}
 "#,
         helpers, run
     );
-    let mut pkg = tauto_nir::compile_with(&source, true).unwrap();
+    let mut pkg = tauto::nir::compile_with(&source, true).unwrap();
     let length = pkg
         .fns
         .iter()
@@ -339,7 +336,7 @@ fn run_order(steps: i64, rules: List(Rule), input: u64): Pair(u64, u64) {{
         Path::new("Tauto.eure"),
     )
     .unwrap();
-    let bindings = Bindings::resolve(&pkg, Some(&manifest), None).unwrap();
+    let bindings = Bindings::resolve(&mut pkg, Some(&manifest), None).unwrap();
     let mut ws = workspace(
         "borrowed-budget-native",
         &pkg,
@@ -403,13 +400,13 @@ fn main() {
       let mut weak = Vec::new();
       let mut current = &root;
       while let List::Cons(_, tail) = current { weak.push(Rc::downgrade(tail.as_rc())); current = tail; }
-      for steps in [0,1,n as i64,n as i64+1,n as i64+2,1000] {
+      for steps in [0,1,n,n+1,n+2,1000] {
         let ordinary = api::run(steps,root.clone(),0);
         assert_eq!(borrowed(),0);
         let qualified = api::run_trusted(&token,steps,root.clone(),0);
         assert_eq!(ordinary,qualified);
         assert_eq!(borrowed()>0,EXPECT_FAST && steps>0);
-        assert_eq!(qualified,if steps as u64>n { Ok(n) } else { Err(tauto_rt::Text::from("exhausted")) });
+        assert_eq!(qualified,if steps>n { Ok(n) } else { Err(tauto_rt::Text::from("exhausted")) });
         assert!(weak.iter().all(|w| w.strong_count()==1));
         let at = tauto_rt::Loc { file:"outer",line:1,col:1 };
         let mut outer = std::pin::pin!(tauto_rt::budget::run(901,10000,tauto_rt::o::pin(async { api::run_trusted(&token,steps,root.clone(),0) }),at));
@@ -422,7 +419,7 @@ fn main() {
       let mut weak = Vec::new(); let mut current = &unique;
       while let List::Cons(_,tail) = current { weak.push(Rc::downgrade(tail.as_rc())); current=tail; }
       tauto_rt::UNRC_UNIQUE.store(0,Relaxed);
-      assert_eq!(borrowed_budget_native::score__s(&tauto_rt::ev::Ev::empty(),unique,0),n);
+      assert_eq!(borrowed_budget_native::score__a(&tauto_rt::ev::Ev::empty(),unique,0).ok(),Some(n));
       assert_eq!(tauto_rt::UNRC_UNIQUE.load(Relaxed),n);
       assert!(weak.iter().all(|w| w.upgrade().is_none()));
       assert_eq!(borrowed(),0);
@@ -443,16 +440,12 @@ fn main() {
       if steps==0 {assert_eq!(b,(0,0));}
       if steps>=5 {assert_eq!(b,(3,1));}
     }
-    let hook=std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
+    // The sum overflows, and `run` handles `overflow`; both routes answer alike.
     let overflowing=|| list([Rule {condition:Condition::Always,weight:u64::MAX},Rule {condition:Condition::Always,weight:1}]);
-    let original=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| api::run(10,overflowing(),0))).unwrap_err();
-    let qualified=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| api::run_trusted(&token,10,overflowing(),0))).unwrap_err();
-    let original=original.downcast::<tauto_rt::TautoError>().unwrap();
-    let qualified=qualified.downcast::<tauto_rt::TautoError>().unwrap();
-    assert_eq!(original.message,qualified.message);
-    assert_eq!(original.at,qualified.at);
-    std::panic::set_hook(hook);
+    let original=api::run(10,overflowing(),0);
+    let qualified=api::run_trusted(&token,10,overflowing(),0);
+    assert_eq!(original,Err(tauto_rt::Text::from("overflow")));
+    assert_eq!(original,qualified);
     borrowed();
     assert_eq!(api::run_trusted(&token,10,rules(3),0),Ok(3));
     assert_eq!(borrowed()>0,EXPECT_FAST);

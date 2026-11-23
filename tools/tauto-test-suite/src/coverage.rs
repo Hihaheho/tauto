@@ -2,9 +2,8 @@
 //!
 //! A backend runner reports one status per selected case: `pass`, or a
 //! status that says why the case is not a pass. `partial` checked the output
-//! but leaves an assertion no backend observes, `declined` is a declared
-//! `rust = "skip: …"`, and `todo` is a failure the case itself declares
-//! (`backend_known_failure`, or `unimplemented`). Anything else is `fail`,
+//! but leaves an assertion no backend observes, and `todo` is a failure the
+//! case itself declares (`<backend>.unimplemented` or `<backend>.bug`). Anything else is `fail`,
 //! and one `fail` fails the run. A declared failure that no longer happens
 //! is a `fail` too, so the declarations in the cases are the whole list of
 //! what a backend does not do yet.
@@ -103,6 +102,7 @@ pub fn run_backend<R: FnMut(usize, &crate::RustCase) -> String>(
     cases_dir: &Path,
     backend: crate::Scenario,
     filter: Option<crate::Filter>,
+    shard: Option<(usize, usize)>,
     make_runner: impl Fn(usize) -> R + Sync,
 ) -> Result<bool, String> {
     // The expected messages of the cases are the English ones, whichever
@@ -112,15 +112,16 @@ pub fn run_backend<R: FnMut(usize, &crate::RustCase) -> String>(
     cases.retain(|case| {
         filter.is_none_or(|f| f.admits(&case.name)) && case.selects_backend(backend.name())
     });
+    // The cases of shard `k` of `n` are every `n`th one, from the `k`th.
+    if let Some((k, n)) = shard {
+        let mut i = 0;
+        cases.retain(|_| {
+            i += 1;
+            (i - 1) % n == k
+        });
+    }
     let statuses = crate::parallel_map(&cases, make_runner, |run, i, case| {
-        let mut s = run(i, case);
-        // An `unimplemented` case is a declared failure, never a hard one.
-        if case.unimplemented {
-            if let Some(why) = s.strip_prefix("fail") {
-                s = format!("todo: unimplemented{why}");
-            }
-        }
-        s
+        run(i, case)
     });
     let mut got = BTreeMap::new();
     for (case, s) in cases.iter().zip(statuses) {

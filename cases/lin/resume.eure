@@ -74,7 +74,7 @@ lin = "ok"
 @ cases.shared-borrow-live-across-omega
 source = ```nib
 effect choose(): Bool resume ω
-fn pick(&v: Vec(i64)): u64 ! {choose} {
+fn pick(v: &Vec(i64)): u64 ! {choose} {
   if perform choose() { Vec::len(&v) } else { 0 }
 }
 var v := Vec::new()
@@ -88,7 +88,7 @@ lin = "ok"
 @ cases.outer-owned-used-after-omega
 source = ```nib
 effect choose(): Bool resume ω
-affine struct F { n: i64 }
+struct(affine) F { n: i64 }
 fn consume(x: F): i64 { match x { F { n } => n } }
 fn g(b: Bool, n: i64): i64 { n }
 let a := F { n: 5 }
@@ -98,20 +98,86 @@ let r := handle { g(perform choose(), consume(a)) } with {
 ```
 lin = "error: a is live across choose"
 
+// What a handle's body moves before it can perform an operation with an arm
+// is gone when the arm runs: the arm's `k` may then be called where the rest
+// of the row resumes many times.
+@ cases.moved-before-the-handled-operation-is-not-live-in-the-arm
+source = ```nib
+effect log(s: Text): Unit
+struct(affine) F { n: i64 }
+fn quiet<!e>(f: (x: F) -> i64 ! {log} ∪ e, x: F): i64 ! e {
+  handle { f(x) } with {
+    log(s), k => k(#())
+  }
+}
+```
+lin = "ok"
+
+// The body may perform the operation while it still owns `x`: the arm runs
+// with `x` live.
+@ cases.owned-at-the-handled-operation-is-live-in-the-arm
+source = ```nib
+effect log(s: Text): Unit
+struct(affine) F { n: i64 }
+fn quiet<!e>(f: (x: F) -> i64 ! {log} ∪ e, x: F): i64 ! e {
+  handle {
+    perform log("first")
+    f(x)
+  } with {
+    log(s), k => k(#())
+  }
+}
+```
+lin = "error: x is live across e, which resumes ω"
+
+// A callback whose row is a row variable may perform the handled operation.
+@ cases.owned-at-a-row-variable-call-is-live-in-the-arm
+source = ```nib
+effect log(s: Text): Unit
+struct(affine) F { n: i64 }
+fn quiet<!e>(first: () -> Unit ! e, f: (x: F) -> i64 ! {log} ∪ e, x: F): i64 ! e {
+  handle {
+    first()
+    f(x)
+  } with {
+    log(s), k => k(#())
+  }
+}
+```
+lin = "error: x is live across e, which resumes ω"
+
 @ cases.mut-borrow-live-across-omega
 source = ```nib
 effect choose(): Bool resume ω
-fn f(&mut v: Vec(i64)): Unit ! {choose} {
+fn f(v: &mut Vec(i64)): Unit ! {choose} {
   let b := perform choose()
   Vec::push(&mut v, 1)
 }
 ```
 lin = "error: v is live across choose"
 
+// A continuation copies the body's environment, so a `var` from outside the
+// handle would differ between resumptions and reach no code after it.
+@ cases.a-var-from-outside-cannot-cross-many-resumptions
+source = ```nib
+effect choose(): Bool resume ω
+var n := 0
+let r := handle {
+  let b := perform choose()
+  n := n + 1
+  if b { n * 10 } else { n }
+} with {
+  choose(), k => k(true) + k(false)
+}
+show(&r)
+show(&n)
+```
+lin = "error: `var n` from outside the handle is used across choose, which resumes ω: each resumption would have its own copy of it"
+
 @ cases.linear-live-across-le-one
 source = ```nib
 effect ask(): i64
-linear struct H {}
+struct(linear) H {}
 fn hello(): H { H {} }
 fn finish(h: H): i64 { match h { H {} => 0 } }
 fn f(): i64 ! {ask} {
@@ -125,7 +191,7 @@ lin = "error: h is live across ask, which may not resume"
 @ cases.linear-moved-before-le-one
 source = ```nib
 effect ask(): i64
-linear struct H {}
+struct(linear) H {}
 fn hello(): H { H {} }
 fn finish(h: H): i64 { match h { H {} => 0 } }
 fn f(): i64 ! {ask} {
@@ -140,7 +206,7 @@ lin = "ok"
 @ cases.linear-live-across-one
 source = ```nib
 effect step(): Unit resume 1
-linear struct H {}
+struct(linear) H {}
 fn hello(): H { H {} }
 fn finish(h: H): i64 { match h { H {} => 0 } }
 fn f(): i64 ! {step} {
@@ -154,8 +220,8 @@ lin = "ok"
 @ cases.arm-captures-affine
 source = ```nib
 effect ask(): i64
-affine struct F {}
-fn use_it(&f: F): i64 { 1 }
+struct(affine) F {}
+fn use_it(f: &F): i64 { 1 }
 let f := F {}
 let r := handle { perform ask() } with {
   ask(), k => {
@@ -169,8 +235,8 @@ lin = "error: arm captures affine f"
 @ cases.arm-threads-affine-as-parameter
 source = ```nib
 effect get(): i64
-affine struct F {}
-fn size(&f: F): i64 { 3 }
+struct(affine) F {}
+fn size(f: &F): i64 { 3 }
 let run := handle { perform get() + 1 } with {
   get(), k => (m) => k(size(&m))(m)
   return v => (m) => v
@@ -182,7 +248,7 @@ lin = "ok"
 @ cases.return-arm-live-across-omega
 source = ```nib
 effect choose(): Bool resume ω
-affine struct F {}
+struct(affine) F {}
 fn consume(f: F): i64 { 0 }
 let f := F {}
 let r := handle { if perform choose() { 1 } else { 2 } } with {
@@ -194,28 +260,28 @@ lin = "error: f is live across choose"
 
 @ cases.budget-rejects-linear
 source = ```nib
-linear struct H {}
+struct(linear) H {}
 fn hello(): H { H {} }
 fn finish(h: H): i64 { match h { H {} => 0 } }
 let r := handle {
-  budget(steps: 10) {
+  perform budget(10, () => {
     let h := hello()
     finish(h)
-  }
+  })
 } with {
   exceeded(info), k => k(0)
 }
 ```
-lin = "error: h is live across Exceeded"
+lin = "error: h is live across exceeded"
 
 @ cases.budget-allows-affine
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 let r := handle {
-  budget(steps: 10) {
+  perform budget(10, () => {
     let f := F {}
     0
-  }
+  })
 } with {
   exceeded(info), k => k(0)
 }
@@ -244,9 +310,9 @@ rows = "error: choose resumes ω but e is <=1"
 
 @ cases.row-variable-le-one-allows-affine-across
 source = ```nib
-affine struct File {}
+struct(affine) File {}
 fn open(path: Text): File { File {} }
-fn with_file<A, !e: <=1>(path: Text, &body: (&f: File) -> A ! e): A ! e {
+fn with_file<A, !e: <=1>(path: Text, body: &((f: &File) -> A ! e)): A ! e {
   var f := open(path)
   body(&f)
 }
@@ -259,7 +325,7 @@ fn spin(): i64 {
   while true { }
   0
 }
-let d := handle { budget(steps: 50) { spin() } } with {
+let d := handle { perform budget(50, () => { spin() }) } with {
   exceeded(info), k => {
     let a := info.more(1)
     let b := info.more(2)
@@ -273,7 +339,7 @@ lin = "error: info is used after move"
 // `f`'s first argument is moved into the call before the second runs: the
 // continuation of `ask` holds it.
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 effect ask(): i64 resume ω
 fn f(x: F, n: i64): i64 { match x { F {} => n } }
 fn g(): i64 ! {ask} {
@@ -285,7 +351,7 @@ lin = "error: x is live across ask, which resumes ω"
 
 @ cases.a-later-argument-is-fine-once
 source = ```nib
-affine struct F {}
+struct(affine) F {}
 effect ask(): i64
 fn f(x: F, n: i64): i64 { match x { F {} => n } }
 fn g(): i64 ! {ask} {
@@ -298,10 +364,10 @@ lin = "ok"
 @ cases.borrowing-k-kept-in-value
 source = ```nib
 effect choose(): Bool
-linear struct H { n: i64 }
-affine enum R { Done(i64), More(affine (Bool) -> R ! {}) }
+struct(linear) H { n: i64 }
+enum(affine) R { Done(i64), More(affine (Bool) -> R ! {}) }
 fn finish(h: H): i64 { match h { H { n } => n } }
-fn peek(&h: H, b: Bool): i64 { match &h { H { n } => if b { n } else { 0 } } }
+fn peek(h: &H, b: Bool): i64 { match &h { H { n } => if b { n } else { 0 } } }
 fn go(k: affine (Bool) -> R ! {}): i64 ! {} { match k(true) { Done(v) => v, More(_) => 0 } }
 fn top(): i64 ! {} {
   let h := H { n: 5 }
@@ -318,9 +384,9 @@ lin = "error: k holds a borrow of h, so it may only be called in its arm"
 @ cases.borrowing-k-in-closure
 source = ```nib
 effect choose(): Bool resume ω
-linear struct H { n: i64 }
+struct(linear) H { n: i64 }
 fn finish(h: H): i64 { match h { H { n } => n } }
-fn peek(&h: H, b: Bool): i64 { match &h { H { n } => if b { n } else { 0 } } }
+fn peek(h: &H, b: Bool): i64 { match &h { H { n } => if b { n } else { 0 } } }
 fn top(): i64 ! {} {
   let h := H { n: 5 }
   let f := handle { let v := peek(&h, perform choose()); x => v } with {
@@ -335,13 +401,14 @@ lin = "error: k holds a borrow of h, so it may only be called in its arm"
 @ cases.borrowing-k-called-in-place
 source = ```nib
 effect choose(): Bool resume ω
-linear struct H { n: i64 }
+struct(linear) H { n: i64 }
 fn finish(h: H): i64 { match h { H { n } => n } }
-fn peek(&h: H, b: Bool): i64 { match &h { H { n } => if b { n } else { 0 } } }
+fn peek(h: &H, b: Bool): i64 { match &h { H { n } => if b { n } else { 0 } } }
 fn top(): i64 ! {} {
   let h := H { n: 5 }
   let r := handle { peek(&h, perform choose()) } with {
-    choose(), k => k(true) + k(false)
+    choose(), k => { let first := k(true)
+      k(false) }
   }
   finish(h) + r
 }
@@ -351,13 +418,13 @@ lin = "ok"
 @ cases.budget-body-borrows-outside
 // Stopped, the body is `info`, which the arm may keep past `finish(h)`.
 source = ```nib
-linear struct H { n: i64 }
-affine enum R { Done(i64), Paused(Info(R)) }
+struct(linear) H { n: i64 }
+enum(affine) R { Done(i64), Paused(Info(R)) }
 fn finish(h: H): i64 { match h { H { n } => n } }
-fn peek(&h: H, x: i64): i64 { match &h { H { n } => n + x } }
-fn top(): R {
+fn peek(h: &H, x: i64): i64 { match &h { H { n } => n + x } }
+fn top(): R ! {budget} {
   let h := H { n: 5 }
-  let r := handle { Done(budget(steps: 5) { peek(&h, 1 + 2) }) } with {
+  let r := handle { Done(perform budget(5, () => { peek(&h, 1 + 2) })) } with {
     exceeded(info), k => Paused(info)
   }
   let s := finish(h)
@@ -366,17 +433,69 @@ fn top(): R {
 ```
 lin = "error: h is borrowed in a budget, whose stopped body may outlive it"
 
+// An `exceeded` arm that uses neither `info` nor `k` drops the stopped body
+// inside the `handle`, before anything it borrows can go: the body may borrow.
+@ cases.budget-body-borrows-outside-dropped-in-arm
+source = ```nib
+struct(affine) H { n: i64 }
+fn finish(h: H): i64 { match h { H { n } => n } }
+fn peek(h: &H, x: i64): i64 { match &h { H { n } => n + x } }
+fn top(): i64 ! {budget} {
+  let h := H { n: 5 }
+  let r := handle { perform budget(5, () => { peek(&h, 1 + 2) }) } with {
+    exceeded(info), k => 0
+  }
+  finish(h) + r
+}
+```
+lin = "ok"
+
+@ cases.borrowed-callback-in-budget-dropped-in-arm
+source = ```nib
+fn run(read: &((i64) -> i64 ! {}), x: i64): i64 ! {budget} {
+  handle { perform budget(5, () => { read(x) }) } with { exceeded(^info), ^k => 0 }
+}
+```
+lin = "ok"
+
+// Using `info` keeps the stopped body, and with it the borrow.
+@ cases.budget-body-borrows-outside-info-used
+source = ```nib
+struct(affine) H { n: i64 }
+fn finish(h: H): i64 { match h { H { n } => n } }
+fn peek(h: &H, x: i64): i64 { match &h { H { n } => n + x } }
+fn drop_info(i: Info(i64)): i64 { 0 }
+fn top(): i64 ! {budget} {
+  let h := H { n: 5 }
+  let r := handle { perform budget(5, () => { peek(&h, 1 + 2) }) } with {
+    exceeded(info), k => drop_info(info)
+  }
+  finish(h) + r
+}
+```
+lin = "error: h is borrowed in a budget, whose stopped body may outlive it"
+
+// A `budget` that is not the whole body sends its stop past code the arm
+// does not see: the rule stays.
+@ cases.budget-body-borrows-outside-not-whole-body
+source = ```nib
+fn run(read: &((i64) -> i64 ! {}), x: i64): i64 ! {budget} {
+  handle { 1 + perform budget(5, () => { read(x) }) } with { exceeded(^info), ^k => 0 }
+}
+```
+lin = "error: read is borrowed in a budget, whose stopped body may outlive it"
+
 @ cases.budget-body-borrows-inside
 source = ```nib
-affine struct H { n: i64 }
+struct(affine) H { n: i64 }
 fn finish(h: H): i64 { match h { H { n } => n } }
-fn peek(&h: H, x: i64): i64 { match &h { H { n } => n + x } }
+fn peek(h: &H, x: i64): i64 { match &h { H { n } => n + x } }
 let r := handle {
-  budget(steps: 50) {
+  perform budget(50, () => {
     let h := H { n: 5 }
     let v := peek(&h, 1)
     finish(h) + v
-  }
+  })
 } with {
   exceeded(info), k => k(0)
 }
@@ -387,10 +506,10 @@ lin = "ok"
 // The continuation holds the `return` arm too.
 source = ```nib
 effect choose(): Bool
-affine struct H { n: i64 }
-affine enum R { Done(i64), More(affine (Bool) -> R ! {}) }
+struct(affine) H { n: i64 }
+enum(affine) R { Done(i64), More(affine (Bool) -> R ! {}) }
 fn finish(h: H): i64 { match h { H { n } => n } }
-fn peek(&h: H, b: Bool): i64 { match &h { H { n } => if b { n } else { 0 } } }
+fn peek(h: &H, b: Bool): i64 { match &h { H { n } => if b { n } else { 0 } } }
 fn go(k: affine (Bool) -> R ! {}): i64 ! {} { match k(true) { Done(v) => v, More(_) => 0 } }
 fn top(): i64 ! {} {
   let h := H { n: 5 }
@@ -404,14 +523,14 @@ fn top(): i64 ! {} {
 ```
 lin = "error: k holds a borrow of h, so it may only be called in its arm"
 
-// `Div` resumes 0: a `budget` turns it into `Exceeded` and drops the rest of
+// `div` resumes 0: a `budget` turns it into `exceeded` and drops the rest of
 // the computation, and the host's step limit stops it. A linear `k` waiting
 // across it would be dropped without being called.
 @ cases.linear-k-live-across-div
 source = ```nib
 effect step(): i64 resume 1
-fn spin(n: i64): i64 ! {Div} { if n <= 0 { 0 } else { spin(n - 1) } }
-fn f(): i64 ! {Div} {
+fn spin(n: i64): i64 ! {div} { if n <= 0 { 0 } else { spin(n - 1) } }
+fn f(): i64 ! {div} {
   handle { perform step() } with {
     step(), k => {
       let m := spin(3)
@@ -420,13 +539,13 @@ fn f(): i64 ! {Div} {
   }
 }
 ```
-lin = "error: k is live across Div, which may not resume; finish the loop before the arm (in the body), give it fuel so it has no Div, or declare the operation resume <=1"
+lin = "error: k is live across div, which may not resume; finish the loop before the arm (in the body), give it fuel so it has no div, or declare the operation resume <=1"
 
 @ cases.linear-k-div-in-body
 source = ```nib
 effect step(n: i64): i64 resume 1
-fn spin(n: i64): i64 ! {Div} { if n <= 0 { 0 } else { spin(n - 1) } }
-fn f(): i64 ! {Div} {
+fn spin(n: i64): i64 ! {div} { if n <= 0 { 0 } else { spin(n - 1) } }
+fn f(): i64 ! {div} {
   handle { perform step(spin(3)) } with {
     step(n), k => k(n)
   }
@@ -437,8 +556,8 @@ lin = "ok"
 @ cases.affine-k-live-across-div
 source = ```nib
 effect step(): i64
-fn spin(n: i64): i64 ! {Div} { if n <= 0 { 0 } else { spin(n - 1) } }
-fn f(): i64 ! {Div} {
+fn spin(n: i64): i64 ! {div} { if n <= 0 { 0 } else { spin(n - 1) } }
+fn f(): i64 ! {div} {
   handle { perform step() } with {
     step(), k => {
       let m := spin(3)
@@ -452,11 +571,37 @@ lin = "ok"
 @ cases.linear-callee-live-across-div-argument
 source = ```nib
 effect step(): i64 resume 1
-fn spin(n: i64): i64 ! {Div} { if n <= 0 { 0 } else { spin(n - 1) } }
-fn f(): i64 ! {Div} {
+fn spin(n: i64): i64 ! {div} { if n <= 0 { 0 } else { spin(n - 1) } }
+fn f(): i64 ! {div} {
   handle { perform step() } with {
     step(), k => k(spin(3))
   }
 }
 ```
-lin = "error: k is live across Div, which may not resume; finish the loop before the arm (in the body), give it fuel so it has no Div, or declare the operation resume <=1"
+lin = "error: k is live across div, which may not resume; finish the loop before the arm (in the body), give it fuel so it has no div, or declare the operation resume <=1"
+
+@ cases.omega-lending-shared-borrows
+description = "An operation whose answer lends only shared borrows may resume any number of times: the kept results share their loans (`EffectLend.many_ok_shared`)."
+source = ```nib
+struct Node { v: u64 }
+effect look(): &Node resume ω
+let n := Node { v: 1 }
+let r := handle { let p := perform look()
+  p.v } with {
+  look(), k => k(&n) + k(&n)
+}
+```
+lin = "ok"
+
+@ cases.omega-lending-mutable-borrow
+description = "An operation whose answer lends a mutable borrow resumes at most once: two kept results could hold the same mutable loan (`EffectLend.many_mut_conflict`)."
+source = ```nib
+struct Node { v: u64 }
+effect poke(): &mut Node resume ω
+var n := Node { v: 1 }
+let r := handle { let p := perform poke()
+  p.v } with {
+  poke(), k => k(&mut n) + k(&mut n)
+}
+```
+lin = "error: `poke` answers a value that may hold a mutable borrow, so it resumes at most once: declare it `resume 1` or `resume <=1`"

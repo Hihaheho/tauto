@@ -1,0 +1,342 @@
+@ cases.reexported-effect-and-wrapper-work-from-another-file
+differential = "macro-sealed-expansion"
+files."macro.nib" = ```nib
+import std::builtin::macro { SynStmt, SynExpr }
+
+pub macro fn make(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    module sealed {
+      effect a_sealed(): i64
+      pub(handle) effect a(): i64
+      pub fn perform_a(): i64 ! {a} { perform a() }
+    }
+    pub import sealed { a, perform_a }
+  }
+}
+```
+files."lib.nib" = ```nib
+import "macro.nib"
+make!(0) => module sealed, effect sealed::a_sealed, effect sealed::a, fn sealed::perform_a, effect a, fn perform_a
+```
+files."main.nib" = ```nib
+import "lib.nib" { a, perform_a }
+fn wrapped(): i64 ! {a} { perform_a() }
+let result := handle { wrapped() } with {
+  a(), k => k(7)
+  return v => v
+}
+show(&result)
+```
+stdout = "7\n"
+
+@ cases.reexported-wrapper-works-in-the-expanding-file
+differential = "macro-sealed-expansion"
+files."macro.nib" = ```nib
+import std::builtin::macro { SynStmt, SynExpr }
+
+pub macro fn make(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    module sealed {
+      effect a_sealed(): i64
+      pub(handle) effect a(): i64
+      pub fn perform_a(): i64 ! {a} { perform a() }
+    }
+    pub import sealed { a, perform_a }
+  }
+}
+```
+files."main.nib" = ```nib
+import "macro.nib"
+make!(0) => module sealed, effect sealed::a_sealed, effect sealed::a, fn sealed::perform_a, effect a, fn perform_a
+fn wrapped(): i64 ! {a} { perform_a() }
+let result := handle { wrapped() } with {
+  a(), k => k(7)
+  return v => v
+}
+show(&result)
+```
+stdout = "7\n"
+
+@ cases.generated-module-name-cannot-be-written-in-a-row
+differential = "macro-sealed-expansion"
+files."macro.nib" = ```nib
+import std::builtin::macro { SynStmt, SynExpr }
+
+pub macro fn make(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    module sealed {
+      effect a_sealed(): i64
+      pub(handle) effect a(): i64
+      pub fn perform_a(): i64 ! {a} { perform a() }
+    }
+    pub import sealed { a, perform_a }
+  }
+}
+```
+files."main.nib" = ```nib
+import "macro.nib"
+make!(0) => module sealed, effect sealed::a_sealed, effect sealed::a, fn sealed::perform_a, effect a, fn perform_a
+fn attempt(): i64 ! {sealed::a_sealed} { 0 }
+```
+check_errors = ["`sealed::a_sealed`, which is not a declared effect"]
+
+@ cases.generated-module-name-cannot-be-performed
+differential = "macro-sealed-expansion"
+files."macro.nib" = ```nib
+import std::builtin::macro { SynStmt, SynExpr }
+
+pub macro fn make(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    module sealed {
+      effect a_sealed(): i64
+      pub(handle) effect a(): i64
+      pub fn perform_a(): i64 ! {a} { perform a() }
+    }
+    pub import sealed { a, perform_a }
+  }
+}
+```
+files."main.nib" = ```nib
+import "macro.nib"
+make!(0) => module sealed, effect sealed::a_sealed, effect sealed::a, fn sealed::perform_a, effect a, fn perform_a
+fn attempt(): i64 { perform sealed::a_sealed() }
+```
+check_errors = ["no effect `sealed::a_sealed` is declared"]
+
+@ cases.handle-only-effect-cannot-be-performed-outside-its-module
+files."macro.nib" = ```nib
+import std::builtin::macro { SynStmt, SynExpr }
+
+pub macro fn make(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    module sealed {
+      effect a_sealed(): i64
+      pub(handle) effect a(): i64
+      pub fn perform_a(): i64 ! {a} { perform a() }
+    }
+    pub import sealed { a, perform_a }
+  }
+}
+```
+files."main.nib" = ```nib
+import "macro.nib"
+make!(0) => module sealed, effect sealed::a_sealed, effect sealed::a, fn sealed::perform_a, effect a, fn perform_a
+fn attempt(): i64 ! {a} { perform a() }
+```
+check_errors = ["`a` is declared with `pub(handle)` and may only be performed in its declaring scope"]
+
+@ cases.reexport-does-not-grant-perform-to-an-importer
+files."macro.nib" = ```nib
+import std::builtin::macro { SynStmt, SynExpr }
+
+pub macro fn make(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    module sealed {
+      effect a_sealed(): i64
+      pub(handle) effect a(): i64
+      pub fn perform_a(): i64 ! {a} { perform a() }
+    }
+    pub import sealed { a, perform_a }
+  }
+}
+```
+files."lib.nib" = ```nib
+import "macro.nib"
+make!(0) => module sealed, effect sealed::a_sealed, effect sealed::a, fn sealed::perform_a, effect a, fn perform_a
+```
+files."main.nib" = ```nib
+import "lib.nib" { a }
+fn attempt(): i64 ! {a} { perform a() }
+```
+check_errors = ["`a` is declared with `pub(handle)` and may only be performed in its declaring scope"]
+
+@ cases.same-spelled-written-module-does-not-capture-an-expansion
+files."macro.nib" = ```nib
+import std::builtin::macro { SynStmt, SynExpr }
+
+pub macro fn make(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    module sealed {
+      effect a_sealed(): i64
+      pub(handle) effect a(): i64
+      pub fn perform_a(): i64 ! {a} { perform a() }
+    }
+    pub import sealed { a, perform_a }
+  }
+}
+```
+files."main.nib" = ```nib
+import "macro.nib"
+make!(0) => module sealed, effect sealed::a_sealed, effect sealed::a, fn sealed::perform_a, effect a, fn perform_a
+module sealed {
+  pub fn other(): i64 { 3 }
+}
+fn wrapped(): i64 ! {a} { perform_a() }
+let result := handle { wrapped() } with {
+  a(), k => k(7)
+  return v => v
+}
+show(&result)
+```
+stdout = "7\n"
+
+@ cases.private-effect-cannot-be-reexported
+files."main.nib" = ```nib
+module sealed {
+  effect a_sealed(): i64
+}
+pub import sealed { a_sealed }
+```
+check_errors = ["`sealed::a_sealed` is not a public member of its module"]
+
+@ cases.each-expansion-declares-a-distinct-effect
+files."macro.nib" = ```nib
+import std::builtin::macro { SynStmt, SynExpr }
+
+pub macro fn make(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    module sealed {
+      effect a_sealed(): i64
+      pub(handle) effect a(): i64
+      pub fn perform_a(): i64 ! {a} { perform a() }
+    }
+    pub import sealed { a, perform_a }
+  }
+}
+```
+files."left.nib" = ```nib
+import "macro.nib"
+make!(0) => module sealed, effect sealed::a_sealed, effect sealed::a, fn sealed::perform_a, effect a, fn perform_a
+```
+files."right.nib" = ```nib
+import "macro.nib"
+make!(0) => module sealed, effect sealed::a_sealed, effect sealed::a, fn sealed::perform_a, effect a, fn perform_a
+```
+files."main.nib" = ```nib
+import "left.nib"
+import "right.nib"
+let result := handle {
+  handle { left::perform_a() + right::perform_a() } with {
+    left::a(), k => k(2)
+    return v => v
+  }
+} with {
+  right::a(), k => k(3)
+  return v => v
+}
+show(&result)
+```
+stdout = "5\n"
+
+@ cases.generated-module-name-cannot-be-handled
+files."macro.nib" = ```nib
+import std::builtin::macro { SynStmt, SynExpr }
+
+pub macro fn make(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    module sealed {
+      effect a_sealed(): i64
+      pub(handle) effect a(): i64
+      pub fn perform_a(): i64 ! {a} { perform a() }
+    }
+    pub import sealed { a, perform_a }
+  }
+}
+```
+files."main.nib" = ```nib
+import "macro.nib"
+make!(0) => module sealed, effect sealed::a_sealed, effect sealed::a, fn sealed::perform_a, effect a, fn perform_a
+fn attempt(): i64 {
+  handle { perform_a() } with {
+    sealed::a_sealed(), k => k(0)
+    a(), k => k(7)
+    return v => v
+  }
+}
+```
+check_errors = [
+  "no effect `sealed::a_sealed` is declared",
+  "no effect `sealed::a_sealed` is declared"
+]
+
+@ cases.public-module-exports-a-handler-only-effect
+files."lib.nib" = ```nib
+pub module api {
+  pub(handle) effect ask(): i64
+  pub fn request(): i64 ! {ask} { perform ask() }
+}
+```
+files."main.nib" = ```nib
+import "lib.nib" { api }
+let result := handle { api::request() } with {
+  api::ask(), k => k(4)
+  return v => v
+}
+show(&result)
+```
+stdout = "4\n"
+
+@ cases.written-module-hides-a-private-effect-in-the-same-file
+files."main.nib" = ```nib
+module implementation {
+  effect ask(): i64
+}
+fn attempt(): i64 ! {implementation::ask} { perform implementation::ask() }
+```
+check_errors = ["`implementation::ask` is private to its module"]
+
+@ cases.a-macro-outside-the-module-cannot-grant-perform
+files."macros.nib" = ```nib
+import std::builtin::macro { SynExpr }
+
+pub macro fn attempt_effect(e: SynExpr): SynExpr {
+  match e {
+    ExVar(op) => quote { perform $op() }
+    _ => quote { 0 }
+  }
+}
+```
+files."main.nib" = ```nib
+import "macros.nib"
+
+module implementation {
+  pub(handle) effect ask(): i64
+}
+pub import implementation { ask }
+
+fn attempt(): i64 ! {ask} { attempt_effect!(ask) }
+```
+check_errors = ["may only be performed in its declaring scope"]
+
+@ cases.public-function-keeps-its-qualified-name-after-reexport
+files."lib.nib" = ```nib
+pub module api {
+  pub fn answer(): i64 { 7 }
+}
+pub import api { answer }
+```
+files."main.nib" = ```nib
+import "lib.nib" { api, answer }
+let result := api::answer() + answer()
+show(&result)
+```
+stdout = "14\n"
+
+@ cases.qualified-and-reexported-effects-share-an-operation
+files."lib.nib" = ```nib
+pub module api {
+  pub(open) effect ask(): i64
+}
+pub import api { ask }
+```
+files."main.nib" = ```nib
+import "lib.nib" { api, ask }
+let result := handle {
+  perform api::ask() + perform ask()
+} with {
+  ask(), k => k(6)
+  return value => value
+}
+show(&result)
+```
+stdout = "12\n"

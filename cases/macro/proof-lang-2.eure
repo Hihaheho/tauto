@@ -1,0 +1,233 @@
+@ cases.induction-on-a-type-with-parameters-and-a-generalized-hypothesis
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case, proof_we }
+
+fn product<A>(op: (A, A) -> A, unit: A, xs: List(A)): A {
+  ⊢ A from match xs {
+    Nil => unit
+    Cons(x, rest) => op(x, product(op, unit, rest))
+  }
+}
+
+fn append<A>(xs: List(A), ys: List(A)): List(A) {
+  ⊢ List(A) from match xs {
+    Nil => ys
+    Cons(x, rest) => Cons(x, append(rest, ys))
+  }
+}
+
+theorem product_append<A>(
+  op: (A, A) -> A,
+  unit: A,
+  assoc: (a: A, b: A, c: A) -> op(op(a, b), c) = op(a, op(b, c)),
+  left_unit: (a: A) -> op(unit, a) = a,
+  xs: List(A),
+  ys: List(A)
+): product(op, unit, append(xs, ys)) = op(product(op, unit, xs), product(op, unit, ys)) {
+  proof!(```
+    By induction on xs.
+      [nil] Case Nil. By Eq::sym.
+      Case Cons(x, rest). We have op(x, product(op, unit, append(rest, ys)))
+        = op(x, op(product(op, unit, rest), product(op, unit, ys))) by the induction hypothesis
+        = op(op(x, product(op, unit, rest)), product(op, unit, ys)) by assoc(x, product(op, unit, rest), product(op, unit, ys)).
+    %%
+    [nil] left_unit(product(op, unit, ys))
+  ```)
+}
+````
+checks.product_append = "ok"
+diagnostics = []
+
+@ cases.induction-with-qualified-constructors
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case, proof_we }
+
+fn product<A>(op: (A, A) -> A, unit: A, xs: List(A)): A {
+  ⊢ A from match xs {
+    Nil => unit
+    Cons(x, rest) => op(x, product(op, unit, rest))
+  }
+}
+
+fn map_list<A, B>(f: (A) -> B, xs: List(A)): List(B) {
+  ⊢ List(B) from match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(f(x), map_list(f, rest))
+  }
+}
+
+theorem map_product<A, B>(
+  op: (A, A) -> A,
+  unit: A,
+  target: (B, B) -> B,
+  target_unit: B,
+  f: (A) -> B,
+  preserves_unit: f(unit) = target_unit,
+  preserves_op: (a: A, b: A) -> f(op(a, b)) = target(f(a), f(b)),
+  xs: List(A)
+): f(product(op, unit, xs)) = product(target, target_unit, map_list(f, xs)) {
+  proof!(```
+    By induction on xs.
+      Case List::Nil. By preserves_unit.
+      Case List::Cons(x, rest). We have f(op(x, product(op, unit, rest)))
+        = target(f(x), f(product(op, unit, rest))) by preserves_op(x, product(op, unit, rest))
+        = target(f(x), product(target, target_unit, map_list(f, rest))) by the induction hypothesis.
+  ```)
+}
+````
+checks.map_product = "ok"
+diagnostics = []
+
+@ cases.congruence-at-a-place-where-several-arguments-differ
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
+
+theorem swap_inside<A>(
+  op: (A, A) -> A,
+  comm: (a: A, b: A) -> op(a, b) = op(b, a),
+  f: (A) -> A,
+  a: A,
+  b: A,
+  c: A
+): f(op(op(a, b), c)) = f(op(op(b, a), c)) {
+  proof!(```
+    We have f(op(op(a, b), c)) = f(op(op(b, a), c)) by comm(a, b).
+  ```)
+}
+````
+checks.swap_inside = "ok"
+diagnostics = []
+
+// The place of a congruence is where the sides of the equation are, not the
+// deepest place where the two terms differ: by `a ⋆ b = a ⋆ c` the place is
+// `a ⋆ b`, although the terms first differ at `b`.
+@ cases.congruence-at-the-sides-of-the-equation
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
+
+theorem inside<A>(op: (A, A) -> A, i: A, a: A, b: A, c: A, h: op(a, b) = op(a, c)): op(i, op(a, b)) = op(i, op(a, c)) {
+  proof!(```
+    We have op(i, op(a, b)) = op(i, op(a, c)) by h.
+  ```)
+}
+````
+checks.inside = "ok"
+diagnostics = []
+
+@ cases.a-named-chain-of-equations
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_we }
+
+theorem named<A>(
+  op: (A, A) -> A,
+  unit: A,
+  a: A,
+  b: A,
+  h1: op(a, b) = a,
+  h2: a = unit
+): unit = op(a, b) {
+  proof!(```
+    [main] We have h: op(a, b) = a by h1 = unit by h2. By Eq::sym.
+    %%
+    [main] h
+  ```)
+}
+````
+checks.named = "ok"
+diagnostics = []
+
+@ cases.a-sentence-names-a-let-of-the-body
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case, proof_we }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      Case Succ(k). We have Nat::add(0, Succ(k)) = ${Succ(0 + k)} = Succ(k) by the induction hypothesis.
+  ```)
+}
+
+theorem twice(n: Nat): Nat::add(0, Nat::add(0, n)) = n {
+  let base: Nat::add(0, n) = n := add_zero_left(n)
+  proof!(```
+    We have Nat::add(0, Nat::add(0, n)) = Nat::add(0, n) by add_zero_left(Nat::add(0, n)) = n by base.
+  ```)
+}
+````
+checks.add_zero_left = "ok"
+checks.twice = "ok"
+diagnostics = []
+
+@ cases.a-proof-after-a-file-whose-helpers-extraction-writes
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::uint
+import std::proof::lang { proof }
+import std::proof::forms { proof_this }
+
+theorem no_succ_le_zero(n: Nat, h: Nat::le(Succ(n), Zero) = true): False {
+  proof!(```
+    This contradicts h.
+  ```)
+}
+````
+checks.no_succ_le_zero = "ok"
+diagnostics = []
+
+@ cases.a-case-analysis-after-a-file-that-declares-never
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::uint
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case, proof_consider }
+
+theorem same(b: Bool): b = b {
+  proof!(```
+    Consider b.
+      Case true. By Refl.
+      Case false. By Refl.
+  ```)
+}
+````
+checks.same = "ok"
+diagnostics = []
+
+@ cases.a-case-analysis-after-a-file-that-declares-text
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::text
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case, proof_consider }
+
+theorem same(b: Bool): b = b {
+  proof!(```
+    Consider b.
+      Case true. By Refl.
+      Case false. By Refl.
+  ```)
+}
+````
+checks.same = "ok"
+diagnostics = []

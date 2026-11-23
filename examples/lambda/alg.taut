@@ -1,0 +1,322 @@
+import "lib.taut"
+import "typing.taut"
+
+// The algebra of renaming and substitution, up to pointwise equality of the maps (there is no
+// function extensionality, so every lemma takes the equality of maps as a hypothesis).
+
+pub def ExtR(xi: (Nat) -> Nat, zeta: (Nat) -> Nat): Prop := ∀ n: Nat. xi(n) = zeta(n)
+
+pub def ExtS(sigma: (Nat) -> Tm, tau: (Nat) -> Tm): Prop := ∀ n: Nat. sigma(n) = tau(n)
+
+pub theorem upR_ext_at(
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  e: ExtR(xi, zeta),
+  n: Nat
+): upR(xi, n) = upR(zeta, n) {
+  match n {
+    Zero => Refl
+    Succ(m) => Eq::congr(Succ, e(m))
+  }
+}
+
+pub theorem upR_ext(
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  e: ExtR(xi, zeta)
+): ExtR(upR(xi), upR(zeta)) {
+  n => upR_ext_at(xi, zeta, e, n)
+}
+
+pub theorem ren_ext(
+  t: Tm,
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  e: ExtR(xi, zeta)
+): ren(t, xi) = ren(t, zeta) {
+  match t {
+    Tvar(i) => Eq::congr(Tvar, e(i))
+    Lam(A, b) => Eq::congr(x => Lam(A, x), ren_ext(b, upR(xi), upR(zeta), upR_ext(xi, zeta, e)))
+    App(f, a) => Eq::trans(
+      Eq::congr(x => App(x, ren(a, xi)), ren_ext(f, xi, zeta, e)),
+      Eq::congr(x => App(ren(f, zeta), x), ren_ext(a, xi, zeta, e))
+    )
+    Tstar => Refl
+  }
+}
+
+pub theorem up_ext_at(
+  sigma: (Nat) -> Tm,
+  tau: (Nat) -> Tm,
+  e: ExtS(sigma, tau),
+  n: Nat
+): up(sigma, n) = up(tau, n) {
+  match n {
+    Zero => Refl
+    Succ(m) => Eq::congr(x => ren(x, Succ), e(m))
+  }
+}
+
+pub theorem up_ext(
+  sigma: (Nat) -> Tm,
+  tau: (Nat) -> Tm,
+  e: ExtS(sigma, tau)
+): ExtS(up(sigma), up(tau)) {
+  n => up_ext_at(sigma, tau, e, n)
+}
+
+pub theorem subst_ext(
+  t: Tm,
+  sigma: (Nat) -> Tm,
+  tau: (Nat) -> Tm,
+  e: ExtS(sigma, tau)
+): subst(t, sigma) = subst(t, tau) {
+  match t {
+    Tvar(i) => e(i)
+    Lam(A, b) => Eq::congr(x => Lam(A, x), subst_ext(b, up(sigma), up(tau), up_ext(sigma, tau, e)))
+    App(f, a) => Eq::trans(
+      Eq::congr(x => App(x, subst(a, sigma)), subst_ext(f, sigma, tau, e)),
+      Eq::congr(x => App(subst(f, tau), x), subst_ext(a, sigma, tau, e))
+    )
+    Tstar => Refl
+  }
+}
+
+pub theorem ren_ren_up(
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  n: Nat
+): upR(zeta, upR(xi, n)) = upR(n0 => zeta(xi(n0)), n) {
+  match n {
+    Zero => Refl
+    Succ(m) => Refl
+  }
+}
+
+pub theorem ren_ren(
+  t: Tm,
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat
+): ren(ren(t, xi), zeta) = ren(t, n => zeta(xi(n))) {
+  match t {
+    Tvar(i) => Refl
+    Lam(A, b) => {
+      let s1: ren(ren(b, upR(xi)), upR(zeta)) = ren(b, n => upR(zeta, upR(xi, n))) := ren_ren(b, upR(xi), upR(zeta))
+      let s2: ren(b, n => upR(zeta, upR(xi, n))) = ren(b, upR(n => zeta(xi(n)))) := ren_ext(
+        b,
+        n => upR(zeta, upR(xi, n)),
+        upR(n => zeta(xi(n))),
+        n => ren_ren_up(xi, zeta, n)
+      )
+      Eq::congr(x => Lam(A, x), Eq::trans(s1, s2))
+    }
+    App(f, a) => Eq::trans(
+      Eq::congr(x => App(x, ren(ren(a, xi), zeta)), ren_ren(f, xi, zeta)),
+      Eq::congr(x => App(ren(f, n => zeta(xi(n))), x), ren_ren(a, xi, zeta))
+    )
+    Tstar => Refl
+  }
+}
+
+pub theorem ren_subst_up(
+  tau: (Nat) -> Tm,
+  xi: (Nat) -> Nat,
+  n: Nat
+): ren(up(tau, n), upR(xi)) = up(m => ren(tau(m), xi), n) {
+  match n {
+    Zero => Refl
+    Succ(m) => {
+      let r1: ren(ren(tau(m), Succ), upR(xi)) = ren(tau(m), k => upR(xi, Succ(k))) := ren_ren(tau(m), Succ, upR(xi))
+      let r2: ren(ren(tau(m), xi), Succ) = ren(tau(m), k => Succ(xi(k))) := ren_ren(tau(m), xi, Succ)
+      Eq::trans(r1, Eq::sym(r2))
+    }
+  }
+}
+
+pub theorem ren_subst(
+  t: Tm,
+  tau: (Nat) -> Tm,
+  xi: (Nat) -> Nat
+): ren(subst(t, tau), xi) = subst(t, n => ren(tau(n), xi)) {
+  match t {
+    Tvar(i) => Refl
+    Lam(A, b) => {
+      let s1: ren(subst(b, up(tau)), upR(xi)) = subst(b, n => ren(up(tau, n), upR(xi))) := ren_subst(b, up(tau), upR(xi))
+      let s2: subst(b, n => ren(up(tau, n), upR(xi))) = subst(b, up(m => ren(tau(m), xi))) := subst_ext(
+        b,
+        n => ren(up(tau, n), upR(xi)),
+        up(m => ren(tau(m), xi)),
+        n => ren_subst_up(tau, xi, n)
+      )
+      Eq::congr(x => Lam(A, x), Eq::trans(s1, s2))
+    }
+    App(f, a) => Eq::trans(
+      Eq::congr(x => App(x, ren(subst(a, tau), xi)), ren_subst(f, tau, xi)),
+      Eq::congr(x => App(subst(f, n => ren(tau(n), xi)), x), ren_subst(a, tau, xi))
+    )
+    Tstar => Refl
+  }
+}
+
+pub theorem subst_ren_up(
+  sigma: (Nat) -> Tm,
+  xi: (Nat) -> Nat,
+  n: Nat
+): up(sigma, upR(xi, n)) = up(m => sigma(xi(m)), n) {
+  match n {
+    Zero => Refl
+    Succ(m) => Refl
+  }
+}
+
+pub theorem subst_ren(
+  t: Tm,
+  xi: (Nat) -> Nat,
+  sigma: (Nat) -> Tm
+): subst(ren(t, xi), sigma) = subst(t, n => sigma(xi(n))) {
+  match t {
+    Tvar(i) => Refl
+    Lam(A, b) => {
+      let s1: subst(ren(b, upR(xi)), up(sigma)) = subst(b, n => up(sigma, upR(xi, n))) := subst_ren(b, upR(xi), up(sigma))
+      let s2: subst(b, n => up(sigma, upR(xi, n))) = subst(b, up(m => sigma(xi(m)))) := subst_ext(
+        b,
+        n => up(sigma, upR(xi, n)),
+        up(m => sigma(xi(m))),
+        n => subst_ren_up(sigma, xi, n)
+      )
+      Eq::congr(x => Lam(A, x), Eq::trans(s1, s2))
+    }
+    App(f, a) => Eq::trans(
+      Eq::congr(x => App(x, subst(ren(a, xi), sigma)), subst_ren(f, xi, sigma)),
+      Eq::congr(x => App(subst(f, n => sigma(xi(n))), x), subst_ren(a, xi, sigma))
+    )
+    Tstar => Refl
+  }
+}
+
+pub theorem subst_subst_up(
+  sigma: (Nat) -> Tm,
+  tau: (Nat) -> Tm,
+  n: Nat
+): subst(up(sigma, n), up(tau)) = up(m => subst(sigma(m), tau), n) {
+  match n {
+    Zero => Refl
+    Succ(m) => {
+      let r1: subst(ren(sigma(m), Succ), up(tau)) = subst(sigma(m), k => up(tau, Succ(k))) := subst_ren(sigma(m), Succ, up(tau))
+      let r2: ren(subst(sigma(m), tau), Succ) = subst(sigma(m), k => ren(tau(k), Succ)) := ren_subst(sigma(m), tau, Succ)
+      Eq::trans(r1, Eq::sym(r2))
+    }
+  }
+}
+
+pub theorem subst_subst(
+  t: Tm,
+  sigma: (Nat) -> Tm,
+  tau: (Nat) -> Tm
+): subst(subst(t, sigma), tau) = subst(t, n => subst(sigma(n), tau)) {
+  match t {
+    Tvar(i) => Refl
+    Lam(A, b) => {
+      let s1: subst(subst(b, up(sigma)), up(tau)) = subst(b, n => subst(up(sigma, n), up(tau))) := subst_subst(b, up(sigma), up(tau))
+      let s2: subst(b, n => subst(up(sigma, n), up(tau))) = subst(b, up(m => subst(sigma(m), tau))) := subst_ext(
+        b,
+        n => subst(up(sigma, n), up(tau)),
+        up(m => subst(sigma(m), tau)),
+        n => subst_subst_up(sigma, tau, n)
+      )
+      Eq::congr(x => Lam(A, x), Eq::trans(s1, s2))
+    }
+    App(f, a) => Eq::trans(
+      Eq::congr(x => App(x, subst(subst(a, sigma), tau)), subst_subst(f, sigma, tau)),
+      Eq::congr(x => App(subst(f, n => subst(sigma(n), tau)), x), subst_subst(a, sigma, tau))
+    )
+    Tstar => Refl
+  }
+}
+
+pub theorem up_tvar(n: Nat): up(Tvar, n) = Tvar(n) {
+  match n {
+    Zero => Refl
+    Succ(m) => Refl
+  }
+}
+
+pub theorem subst_id(t: Tm): subst(t, Tvar) = t {
+  match t {
+    Tvar(i) => Refl
+    Lam(A, b) => {
+      let s1: subst(b, up(Tvar)) = subst(b, Tvar) := subst_ext(b, up(Tvar), Tvar, n => up_tvar(n))
+      Eq::congr(x => Lam(A, x), Eq::trans(s1, subst_id(b)))
+    }
+    App(f, a) => Eq::trans(
+      Eq::congr(x => App(x, subst(a, Tvar)), subst_id(f)),
+      Eq::congr(x => App(f, x), subst_id(a))
+    )
+    Tstar => Refl
+  }
+}
+
+pub theorem subst_single_ren(u: Tm, w: Tm): subst(ren(u, Succ), single(w)) = u {
+  let s1: subst(ren(u, Succ), single(w)) = subst(u, k => single(w, Succ(k))) := subst_ren(u, Succ, single(w))
+  let s2: subst(u, k => single(w, Succ(k))) = subst(u, Tvar) := subst_ext(u, k => single(w, Succ(k)), Tvar, k => Refl)
+  Eq::trans(s1, Eq::trans(s2, subst_id(u)))
+}
+
+pub fn extend(w: Tm, sigma: (Nat) -> Tm, n: Nat): Tm {
+  match n {
+    Zero => w
+    Succ(m) => sigma(m)
+  }
+}
+
+pub theorem subst_up_single_at(
+  sigma: (Nat) -> Tm,
+  w: Tm,
+  n: Nat
+): subst(up(sigma, n), single(w)) = extend(w, sigma, n) {
+  match n {
+    Zero => Refl
+    Succ(m) => subst_single_ren(sigma(m), w)
+  }
+}
+
+pub theorem subst_up_single(
+  b: Tm,
+  sigma: (Nat) -> Tm,
+  w: Tm
+): subst(subst(b, up(sigma)), single(w)) = subst(b, extend(w, sigma)) {
+  let s1: subst(subst(b, up(sigma)), single(w)) = subst(b, n => subst(up(sigma, n), single(w))) := subst_subst(b, up(sigma), single(w))
+  let s2: subst(b, n => subst(up(sigma, n), single(w))) = subst(b, extend(w, sigma)) := subst_ext(
+    b,
+    n => subst(up(sigma, n), single(w)),
+    extend(w, sigma),
+    n => subst_up_single_at(sigma, w, n)
+  )
+  Eq::trans(s1, s2)
+}
+
+pub theorem subst_single_at(
+  a: Tm,
+  sigma: (Nat) -> Tm,
+  n: Nat
+): subst(single(a, n), sigma) = extend(subst(a, sigma), sigma, n) {
+  match n {
+    Zero => Refl
+    Succ(m) => Refl
+  }
+}
+
+pub theorem subst_single_subst(
+  b: Tm,
+  a: Tm,
+  sigma: (Nat) -> Tm
+): subst(subst(b, single(a)), sigma) = subst(subst(b, up(sigma)), single(subst(a, sigma))) {
+  let s1: subst(subst(b, single(a)), sigma) = subst(b, n => subst(single(a, n), sigma)) := subst_subst(b, single(a), sigma)
+  let s2: subst(b, n => subst(single(a, n), sigma)) = subst(b, extend(subst(a, sigma), sigma)) := subst_ext(
+    b,
+    n => subst(single(a, n), sigma),
+    extend(subst(a, sigma), sigma),
+    n => subst_single_at(a, sigma, n)
+  )
+  Eq::trans(Eq::trans(s1, s2), Eq::sym(subst_up_single(b, sigma, subst(a, sigma))))
+}

@@ -1,0 +1,24 @@
+// `Slots`: a mark that owns something (here text) is read again and again.
+// Each read is a copy of its own, so ending one read (showing it) leaves the
+// mark in the slots, and a mark written by `put` or `take` stays readable
+// after the value it was copied from ended.
+@ cases.slots-mark-reads-are-copies
+stdout = ```
+"vacant"
+"vacant"
+"filled"
+"filled"
+"vacant"
+"emptied"
+```
+source = ```tauto
+var r: Slots(u64, Text, Text) := Slots::new(3, 0, "vacant")
+show(&Slots::mark(&r, 0))
+show(&Slots::mark(&r, 2))
+Slots::put(&mut r, 1, "filled", "a", 1)
+show(&Slots::mark(&r, 1))
+show(&Slots::mark(&r, 1))
+show(&Slots::mark(&r, 0))
+let t := Slots::take(&mut r, 1, "emptied", 2)
+show(&Slots::mark(&r, 1))
+```

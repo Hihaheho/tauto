@@ -2,7 +2,9 @@
 //! [`recorded`] runs; otherwise [`mark`] does nothing.
 
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tauto_kernel::clock::Instant;
 
 thread_local! {
     static PHASES: RefCell<Option<(Instant, Vec<(&'static str, Duration)>)>> =
@@ -25,7 +27,7 @@ pub fn mark(name: &'static str) {
     PHASES.with(|p| {
         if let Some((since, phases)) = p.borrow_mut().as_mut() {
             let now = Instant::now();
-            phases.push((name, now - *since));
+            phases.push((name, now.saturating_duration_since(*since)));
             *since = now;
         }
     });

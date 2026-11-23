@@ -2,8 +2,7 @@ description = "`tauto fmt` lays out the bodies of syntax literals with the `fmt`
 
 @ cases.literals-and-comment-fences-are-laid-out-wherever-they-are-written
 files."lib.taut" = ````tauto
-import std::prelude::Macro
-import std::prelude::Shared
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -12,7 +11,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -33,11 +32,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -65,7 +64,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -73,7 +72,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -96,7 +95,7 @@ syntax!(outline, ```par
 ````
 files."main.taut" = ````tauto
 import "lib.taut"
-import std::prelude::Macro
+import std::builtin::macro
 
 // Nothing uses it, and it does not check.
 fn broken(): Nat {
@@ -104,7 +103,7 @@ fn broken(): Nat {
   true
 }
 
-pub macro fn m(e: layout::Doc): SynExpr ! {macro_error, Div} {
+pub macro fn m(e: layout::Doc): SynExpr ! {macro_error, div} {
   quote { f(layout`x ,  y`) }
 }
 
@@ -129,7 +128,7 @@ fn other(): outline::Doc {
 entry = "main.taut"
 format_literals = ````tauto
 import "lib.taut"
-import std::prelude::Macro
+import std::builtin::macro
 
 // Nothing uses it, and it does not check.
 fn broken(): Nat {
@@ -137,7 +136,7 @@ fn broken(): Nat {
   true
 }
 
-pub macro fn m(e: layout::Doc): SynExpr ! {macro_error, Div} {
+pub macro fn m(e: layout::Doc): SynExpr ! {macro_error, div} {
   quote { f(layout`x, y`) }
 }
 
@@ -160,7 +159,7 @@ fn other(): outline::Doc {
 
 @ cases.indented-block-literal-keeps-its-closing-indentation
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -169,7 +168,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -190,11 +189,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -222,7 +221,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -230,7 +229,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -278,7 +277,7 @@ fn f(): Nat {
 
 @ cases.block-literal-with-a-shallower-closing-fence
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -287,7 +286,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -308,11 +307,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -340,7 +339,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -348,7 +347,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -394,7 +393,7 @@ fn f(): Nat {
 
 @ cases.block-literal-with-a-line-shallower-than-its-closing-fence
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -403,7 +402,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -424,11 +423,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -456,7 +455,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -464,7 +463,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -510,7 +509,7 @@ format_literals_warnings = ["macro.block_indent"]
 
 @ cases.block-literal-closed-before-a-parenthesis
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -519,7 +518,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -540,11 +539,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -572,7 +571,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -580,7 +579,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -623,7 +622,7 @@ fn f(): Nat {
 
 @ cases.delimited-literal-holding-a-lone-backtick
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -632,7 +631,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -653,11 +652,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -685,7 +684,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -693,7 +692,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -736,7 +735,7 @@ fn f(): Nat {
 
 @ cases.line-comment-fences-of-three-kinds
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -745,7 +744,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -766,11 +765,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -798,7 +797,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -806,7 +805,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -859,7 +858,7 @@ fn n(): Nat { 0 }
 
 @ cases.an-unclosed-comment-fence-is-reported
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -868,7 +867,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -889,11 +888,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -921,7 +920,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -929,7 +928,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -969,7 +968,7 @@ format_literals_warnings = ["not closed"]
 
 @ cases.text-that-only-looks-like-a-fence-or-a-literal-is-left
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -978,7 +977,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -999,11 +998,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -1031,7 +1030,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -1039,7 +1038,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -1095,7 +1094,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -1116,11 +1115,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -1148,7 +1147,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -1156,7 +1155,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -1180,7 +1179,7 @@ syntax!(outline, ```par
 files."main.taut" = ````tauto
 import "lib.taut"
 
-syntax!(ghost, ```par
+syntax!(missing_tables, ```par
 %start Doc
 %%
 Doc: Word;
@@ -1188,7 +1187,7 @@ Word: /[a-z]+/;
 ```, with(fmt: layout_fmt)) => fn parse
 
 fn g(): Nat {
-  let d := ghost`a ,b`
+  let d := missing_tables`a ,b`
   0
 }
 ````
@@ -1196,7 +1195,7 @@ entry = "main.taut"
 format_literals = ````tauto
 import "lib.taut"
 
-syntax!(ghost, ```par
+syntax!(missing_tables, ```par
 %start Doc
 %%
 Doc: Word;
@@ -1204,7 +1203,7 @@ Word: /[a-z]+/;
 ```, with(fmt: layout_fmt)) => fn parse
 
 fn g(): Nat {
-  let d := ghost`a ,b`
+  let d := missing_tables`a ,b`
   0
 }
 ````
@@ -1212,7 +1211,7 @@ format_literals_warnings = ["tables of this syntax are missing"]
 
 @ cases.line-ends-of-a-file-are-kept
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -1221,7 +1220,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -1242,11 +1241,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -1274,7 +1273,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -1282,7 +1281,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {
@@ -1309,7 +1308,7 @@ format_literals = "import \"lib.taut\"\r\n\r\nfn f(): Nat {\r\n  let d := ```lay
 
 @ cases.a-fence-prefix-with-a-tab-is-not-a-fence
 files."lib.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
 
@@ -1318,7 +1317,7 @@ pub fn layout_sep(glue: Bool): Text {
 }
 
 // Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
-pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {div} {
   match ts {
     Nil => ""
     Cons(t, rest) => {
@@ -1339,11 +1338,11 @@ pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
   }
 }
 
-pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {div} {
   Some(layout_go(ts, true))
 }
 
-pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {div} {
   match ts {
     Nil => Nil
     Cons(t, rest) => {
@@ -1371,7 +1370,7 @@ pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHig
   }
 }
 
-pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {div} {
   match cs {
     Nil => Nil
     Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
@@ -1379,7 +1378,7 @@ pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
 }
 
 // A number is a number and a word a type, by the node the grammar reads it as.
-pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {div} {
   match c {
     CstTok(t) => Nil
     CstNode(name, children, start, end) => {

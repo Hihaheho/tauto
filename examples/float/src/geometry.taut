@@ -1,9 +1,9 @@
-import std::Float
-import std::SInt
-import std::UInt
+import std::float
+import std::sint
+import std::uint
 
 // Floating-point code the kernel checks: the proofs compute with
-// `std/Float.taut`'s definitions, and the program runs on Nib's `Float`.
+// `std/float.taut`'s definitions, and the program runs on Nib's `Float`.
 pub fn hypot(a: Float, b: Float): Float {
   Float::sqrt(Float::add(Float::mul(a, a), Float::mul(b, b)))
 }
@@ -31,8 +31,8 @@ pub theorem mean_of_two(): mean(3.0, 2.0) = Some(1.5) {
 }
 
 // Whole units, rounded half away from zero, or `None` when they do not fit.
-pub fn units(x: Float): Option(I64) {
-  I64::of_float_checked(Float::round(x))
+pub fn units(x: Float): Option(SInt(64)) {
+  SInt::of_float_checked64(Float::round(x))
 }
 
 pub theorem units_of_nan(): units(Float::sqrt(-1.0)) = None {
@@ -40,7 +40,7 @@ pub theorem units_of_nan(): units(Float::sqrt(-1.0)) = None {
 }
 
 // Every NaN has the same bits.
-pub theorem nan_bits(): U64::val(Float::bits(Float::sqrt(-1.0))) = 9221120237041090560 {
+pub theorem nan_bits(): UInt::val64(Float::bits(Float::sqrt(-1.0))) = 9221120237041090560 {
   Refl
 }
 

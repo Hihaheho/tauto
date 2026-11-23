@@ -2,7 +2,7 @@
 files."math.taut" = path`fixtures/proof-notation.taut`
 files."main.taut" = ```tauto
 import "math.taut"
-pub theorem dsl_sum(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+pub theorem dsl_sum(): math!(`1 + 2 = 3`) { Refl(<A: Nat, a: 3>) }
 ```
 entry = "main.taut"
 checks.dsl_sum = "ok"
@@ -45,8 +45,8 @@ proofs = [
 files."math.taut" = path`fixtures/proof-notation.taut`
 files."main.taut" = ```tauto
 import "math.taut"
-pub theorem dsl_source(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
-pub theorem plain_source(): Eq(Nat, 1 + 2, 3) { Refl(Nat, 3) }
+pub theorem dsl_source(): math!(`1 + 2 = 3`) { Refl(<A: Nat, a: 3>) }
+pub theorem plain_source(): Eq(Nat, 1 + 2, 3) { Refl(<A: Nat, a: 3>) }
 ```
 entry = "main.taut"
 checks.dsl_source = "ok"
@@ -71,7 +71,7 @@ proofs = [
 files."math.taut" = path`fixtures/proof-notation.taut`
 files."main.taut" = ```tauto
 import "math.taut"
-pub theorem dsl_binder(n: Nat): (m: Nat) -> math!(`$m = $m`) { m => Refl(Nat, m) }
+pub theorem dsl_binder(n: Nat): (m: Nat) -> math!(`$m = $m`) { m => Refl(<A: Nat, a: m>) }
 ```
 entry = "main.taut"
 checks.dsl_binder = "ok"
@@ -81,7 +81,7 @@ proofs = [
 
 @ cases.expression-macro
 files."expr.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 pub macro fn identity_expr(e: SynExpr): SynExpr { e }
 ```
 files."main.taut" = ```tauto
@@ -96,12 +96,12 @@ proofs = [
 
 @ cases.subexpression
 files."expr.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 pub macro fn identity_expr(e: SynExpr): SynExpr { e }
 ```
 files."main.taut" = ```tauto
 import "expr.taut"
-pub theorem subexpression(): Eq(Nat, identity_expr!(1 + 2), 3) { Refl(Nat, 3) }
+pub theorem subexpression(): Eq(Nat, identity_expr!(1 + 2), 3) { Refl(<A: Nat, a: 3>) }
 ```
 entry = "main.taut"
 checks.subexpression = "ok"
@@ -111,14 +111,14 @@ proofs = [
 
 @ cases.html-escape
 files."expr.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 pub macro fn identity_expr(e: SynExpr): SynExpr { e }
 ```
 files."main.taut" = ```tauto
-import std::Text
+import std::text
 import "expr.taut"
 pub theorem escaped_dsl(): identity_expr!(Eq(Text, "<script>&", "<script>&")) {
-  Refl(Text, "<script>&")
+  Refl(<A: Text, a: "<script>&">)
 }
 ```
 entry = "main.taut"
@@ -129,7 +129,7 @@ proofs = [
 
 @ cases.constant-motive
 files."expr.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 pub macro fn identity_expr(e: SynExpr): SynExpr { e }
 ```
 files."main.taut" = ```tauto
@@ -150,15 +150,15 @@ proofs = [
 
 @ cases.global-motive-scope
 files."expr.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 pub macro fn identity_expr(e: SynExpr): SynExpr { e }
 ```
 files."main.taut" = ```tauto
 import "expr.taut"
 pub theorem global_motive(n: Nat): identity_expr!(Eq(Nat, 0, 0)) {
   ⊢ identity_expr!(Eq(Nat, 0, 0)) from match n {
-    Zero => Refl(Nat, 0)
-    Succ(k) => Refl(Nat, 0)
+    Zero => Refl(<A: Nat, a: 0>)
+    Succ(k) => Refl(<A: Nat, a: 0>)
   }
 }
 ```

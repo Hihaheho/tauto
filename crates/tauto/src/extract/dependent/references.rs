@@ -34,7 +34,7 @@ impl References {
         text: &str,
     ) -> Result<(Vec<Stmt>, HashMap<String, Name>), Message> {
         let (text, renamed) = legal_names(text);
-        let mut program = crate::surface::parse_program_unresolved_at(&text, 0)?;
+        let mut program = tauto_parse::parse_program_unresolved_at(&text, 0)?;
         if let Some((error, _)) = program.errors.first() {
             return Err(error.clone());
         }

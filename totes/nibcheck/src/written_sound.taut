@@ -1,6 +1,6 @@
 import "written_param_step_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -9,6 +9,7 @@ import "diagnostic_sound.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_composite_sound.taut"
 import "written_drop_sound.taut"
@@ -16,7 +17,10 @@ import "written_leaf_sound.taut"
 import "written_list_sound.taut"
 import "written_nested_sound.taut"
 import "written_transfer_sound.taut"
+import "written_app_choice_sound.taut"
+import "kind_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 mutual {
   pub theorem ck_written_in_sound(
@@ -85,7 +89,7 @@ mutual {
       ck_val(ck_written_kind(sk, c, generics, span, under_borrow))
     ) from match sk {
       SkVar(name) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -95,23 +99,22 @@ mutual {
           t
         ),
         ck_written_kind(SkVar(name), c, generics, span, under_borrow),
-        ck_written_var(c, name, generics, span),
-        Eq::trans(
-          frame_unf_SkVar(name, c, generics, span, under_borrow),
-          ck_rewrap1_id(ck_written_var(c, name, generics, span))
-        ),
-        branch_clean => ck_written_var_kind_sound(
+        frame_written_var(c, surface_name_text(name), generics, span, Text::eq(surface_name_text(name), "std::prelude::Star")),
+        frame_unf_SkVar(name, c, generics, span, under_borrow),
+        branch_clean => written_var_sound(
           c,
           name,
           generics,
           span,
           under_borrow,
+          Text::eq(surface_name_text(name), "std::prelude::Star"),
+          Refl,
           branch_clean
         ),
         clean
       )
       SkApp(function, args) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -152,7 +155,7 @@ mutual {
         clean
       )
       SkPi(params, result, effects) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -193,7 +196,7 @@ mutual {
         clean
       )
       SkFnKind(spelling, body) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -224,21 +227,22 @@ mutual {
         ),
         clean
       )
-      SkBorrow(mutable, body) => written_transfer(
-        Ty,
+      SkBorrow(mutable, mutable_orig, body) => written_transfer(
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
           frame_constructor_position(c),
           under_borrow,
-          SkBorrow(mutable, body),
+          SkBorrow(mutable, mutable_orig, body),
           t
         ),
-        ck_written_kind(SkBorrow(mutable, body), c, generics, span, under_borrow),
+        ck_written_kind(SkBorrow(mutable, mutable_orig, body), c, generics, span, under_borrow),
         frame_written_borrow(mutable, body, c, generics),
-        frame_unf_SkBorrow(mutable, body, c, generics, span, under_borrow),
+        frame_unf_SkBorrow(mutable, mutable_orig, body, c, generics, span, under_borrow),
         branch_clean => written_borrow_sound(
           mutable,
+          mutable_orig,
           body,
           c,
           generics,
@@ -254,7 +258,7 @@ mutual {
         clean
       )
       SkUnion(parts) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -276,31 +280,8 @@ mutual {
         ),
         clean
       )
-      SkProduct(parts) => written_transfer(
-        Ty,
-        (t: Ty) => WrittenKind(
-          ck_datas_of(c),
-          generics,
-          frame_constructor_position(c),
-          under_borrow,
-          SkProduct(parts),
-          t
-        ),
-        ck_written_kind(SkProduct(parts), c, generics, span, under_borrow),
-        frame_written_product(parts, c, generics),
-        frame_unf_SkProduct(parts, c, generics, span, under_borrow),
-        branch_clean => written_product_sound(
-          parts,
-          c,
-          generics,
-          under_borrow,
-          inner_clean => ck_written_each_sound(parts, c, generics, ordinary, inner_clean),
-          branch_clean
-        ),
-        clean
-      )
       SkTagged(tag, body) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -331,7 +312,7 @@ mutual {
         clean
       )
       SkNat(arg_digits) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -347,7 +328,7 @@ mutual {
         clean
       )
       SkText(arg_value) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -363,7 +344,7 @@ mutual {
         clean
       )
       SkBool(arg_value) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -378,46 +359,46 @@ mutual {
         branch_clean => False::elim(false_ne_true(Eq::congr(decl_names_empty, branch_clean))),
         clean
       )
-      SkExists(arg_binder, arg_domain, arg_body) => written_transfer(
-        Ty,
+      SkExists(arg_binder, arg_domain, arg_body, unused) => written_transfer(
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
           frame_constructor_position(c),
           under_borrow,
-          SkExists(arg_binder, arg_domain, arg_body),
+          SkExists(arg_binder, arg_domain, arg_body, unused),
           t
         ),
         ck_written_kind(
-          SkExists(arg_binder, arg_domain, arg_body),
+          SkExists(arg_binder, arg_domain, arg_body, unused),
           c,
           generics,
           span,
           under_borrow
         ),
         frame_written_invalid(c, span),
-        frame_unf_SkExists(arg_binder, arg_domain, arg_body, c, generics, span, under_borrow),
+        frame_unf_SkExists(arg_binder, arg_domain, arg_body, unused, c, generics, span, under_borrow),
         branch_clean => False::elim(false_ne_true(Eq::congr(decl_names_empty, branch_clean))),
         clean
       )
-      SkLam(arg_params, arg_body) => written_transfer(
-        Ty,
+      SkLam(arg_params, arg_body, arg_types, arg_unused_params) => written_transfer(
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
           frame_constructor_position(c),
           under_borrow,
-          SkLam(arg_params, arg_body),
+          SkLam(arg_params, arg_body, arg_types, arg_unused_params),
           t
         ),
-        ck_written_kind(SkLam(arg_params, arg_body), c, generics, span, under_borrow),
+        ck_written_kind(SkLam(arg_params, arg_body, arg_types, arg_unused_params), c, generics, span, under_borrow),
         frame_written_invalid(c, span),
-        frame_unf_SkLam(arg_params, arg_body, c, generics, span, under_borrow),
+        frame_unf_SkLam(arg_params, arg_body, arg_types, arg_unused_params, c, generics, span, under_borrow),
         branch_clean => False::elim(false_ne_true(Eq::congr(decl_names_empty, branch_clean))),
         clean
       )
       SkIf(arg_cond, arg_then, arg_otherwise) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -433,7 +414,7 @@ mutual {
         clean
       )
       SkField(arg_value, arg_name) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -449,7 +430,7 @@ mutual {
         clean
       )
       SkBlock(arg_stmts) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -465,7 +446,7 @@ mutual {
         clean
       )
       SkPerform(arg_op, arg_args) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -481,7 +462,7 @@ mutual {
         clean
       )
       SkHandle(arg_body, arg_handlers) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -497,7 +478,7 @@ mutual {
         clean
       )
       SkBudget(arg_amount_memory, arg_amount, arg_body) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -526,18 +507,18 @@ mutual {
         branch_clean => False::elim(false_ne_true(Eq::congr(decl_names_empty, branch_clean))),
         clean
       )
-      SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder) => written_transfer(
-        Ty,
+      SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder, arg_unused) => written_transfer(
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
           frame_constructor_position(c),
           under_borrow,
-          SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder),
+          SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder, arg_unused),
           t
         ),
         ck_written_kind(
-          SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder),
+          SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder, arg_unused),
           c,
           generics,
           span,
@@ -549,6 +530,7 @@ mutual {
           arg_motive,
           arg_arms,
           arg_binder,
+          arg_unused,
           c,
           generics,
           span,
@@ -558,7 +540,7 @@ mutual {
         clean
       )
       SkHole(arg_name) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -574,7 +556,7 @@ mutual {
         clean
       )
       SkRecord(arg_name, arg_fields) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -590,7 +572,7 @@ mutual {
         clean
       )
       SkBorrowLam(arg_borrows, arg_lam) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -606,7 +588,7 @@ mutual {
         clean
       )
       SkOther(arg_what) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -621,8 +603,24 @@ mutual {
         branch_clean => False::elim(false_ne_true(Eq::congr(decl_names_empty, branch_clean))),
         clean
       )
+      SkAscribe(arg_what, arg_what_ty) => written_transfer(
+        <A: Ty>,
+        (t: Ty) => WrittenKind(
+          ck_datas_of(c),
+          generics,
+          frame_constructor_position(c),
+          under_borrow,
+          SkAscribe(arg_what, arg_what_ty),
+          t
+        ),
+        ck_written_kind(SkAscribe(arg_what, arg_what_ty), c, generics, span, under_borrow),
+        frame_written_invalid(c, span),
+        frame_unf_SkAscribe(arg_what, arg_what_ty, c, generics, span, under_borrow),
+        branch_clean => False::elim(false_ne_true(Eq::congr(decl_names_empty, branch_clean))),
+        clean
+      )
       SkRow(arg_what_effects) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -632,13 +630,13 @@ mutual {
           t
         ),
         ck_written_kind(SkRow(arg_what_effects), c, generics, span, under_borrow),
-        frame_written_invalid(c, span),
+        mut1(TyUnit, c),
         frame_unf_SkRow(arg_what_effects, c, generics, span, under_borrow),
-        branch_clean => False::elim(false_ne_true(Eq::congr(decl_names_empty, branch_clean))),
+        branch_clean => WrittenKindRow(arg_what_effects),
         clean
       )
       SkFloat(arg_what) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -653,24 +651,8 @@ mutual {
         branch_clean => False::elim(false_ne_true(Eq::congr(decl_names_empty, branch_clean))),
         clean
       )
-      SkProject(arg_what, arg_what_ty) => written_transfer(
-        Ty,
-        (t: Ty) => WrittenKind(
-          ck_datas_of(c),
-          generics,
-          frame_constructor_position(c),
-          under_borrow,
-          SkProject(arg_what, arg_what_ty),
-          t
-        ),
-        ck_written_kind(SkProject(arg_what, arg_what_ty), c, generics, span, under_borrow),
-        frame_written_invalid(c, span),
-        frame_unf_SkProject(arg_what, arg_what_ty, c, generics, span, under_borrow),
-        branch_clean => False::elim(false_ne_true(Eq::congr(decl_names_empty, branch_clean))),
-        clean
-      )
       SkMacroCall(arg_name, arg_arg) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -686,7 +668,7 @@ mutual {
         clean
       )
       SkQuote(arg_stmts_form, arg_stmts) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -702,7 +684,7 @@ mutual {
         clean
       )
       SkSplice(arg_value) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -718,7 +700,7 @@ mutual {
         clean
       )
       SkSyntaxLit(arg_name, arg_body) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -734,7 +716,7 @@ mutual {
         clean
       )
       SkStep(arg_tactic, arg_arg, arg_call_start, arg_call_end, arg_before, arg_arms) => written_transfer(
-        Ty,
+        <A: Ty>,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
           generics,
@@ -790,7 +772,7 @@ mutual {
     ) from match terms {
       Nil => WrittenTermsNil
       Cons(first, rest) => written_transfer(
-        List(Ty),
+        <A: List(Ty)>,
         (types: List(Ty)) => WrittenTerms(
           ck_datas_of(c),
           generics,
@@ -897,9 +879,10 @@ mutual {
       written_param_body(p),
       ck_val(ck_written_param(p, c, generics))
     ) from match p {
-      SurfaceParamMk(name, body) => written_param_step(
+      SurfaceParamMk(name, body, unused) => written_param_step(
         name,
         body,
+        unused,
         c,
         generics,
         ordinary,
@@ -924,7 +907,7 @@ pub theorem ck_written_sound(
   ck_val(ck_written(c, term, generics))
 ) {
   written_transfer(
-    Ty,
+    <A: Ty>,
     (t: Ty) => WrittenTerm(
       ck_datas_of(c),
       generics,
@@ -939,4 +922,69 @@ pub theorem ck_written_sound(
     inner_clean => ck_written_in_sound(term, c, generics, inner_clean),
     clean
   )
+}
+
+// `()`, the unit, or a type by its name.
+pub theorem written_var_sound(
+  c: Checker,
+  name: SurfaceName,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  under_borrow: Bool,
+  star: Bool,
+  star_test: Text::eq(surface_name_text(name), "std::prelude::Star") = star,
+  clean: DiagnosticClean(ck_st(frame_written_var(c, surface_name_text(name), generics, span, star)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkVar(name),
+  ck_val(frame_written_var(c, surface_name_text(name), generics, span, star))
+) {
+  ⊢ WrittenKind(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    under_borrow,
+    SkVar(name),
+    ck_val(frame_written_var(c, surface_name_text(name), generics, span, star))
+  ) from match star {
+    true => Eq::subst(
+      (n: SurfaceName) => WrittenKind(
+        ck_datas_of(c),
+        generics,
+        frame_constructor_position(c),
+        under_borrow,
+        SkVar(n),
+        TyUnit
+      ),
+      Eq::sym(surface_name_spelled(name, "std::prelude::Star", text_eq_true(surface_name_text(name), "std::prelude::Star", star_test), Refl)),
+      WrittenKindUnit
+    )
+    false => written_transfer(
+      <A: Ty>,
+      (t: Ty) => WrittenKind(
+        ck_datas_of(c),
+        generics,
+        frame_constructor_position(c),
+        under_borrow,
+        SkVar(name),
+        t
+      ),
+      ck_rewrap1(ck_written_var(c, surface_name_text(name), generics, span)),
+      ck_written_var(c, surface_name_text(name), generics, span),
+      ck_rewrap1_id(ck_written_var(c, surface_name_text(name), generics, span)),
+      branch_clean => ck_written_var_kind_sound(
+        c,
+        name,
+        generics,
+        span,
+        under_borrow,
+        same => written_not_named(surface_name_text(name), "std::prelude::Star", star_test, same),
+        branch_clean
+      ),
+      clean
+    )
+  }
 }

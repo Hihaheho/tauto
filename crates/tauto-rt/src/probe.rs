@@ -1,5 +1,5 @@
-//! The case runner's host value: a program's `affine struct Probe {}` with
-//! `module Probe { extern { fn new(&name: Text): Probe } }` makes one,
+//! The case runner's host value: a program's `struct(affine) Probe {}` with
+//! `extern { fn Probe::new(name: &Text): Probe }` makes one,
 //! and its drop is written down by name. Every runner gives the same
 //! extern, so the order a program drops its values in is a case
 //! expectation (`probe_drops`) on every backend.

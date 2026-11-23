@@ -12,6 +12,7 @@ kernel-core-numeral-too-large = 数値 `{ $numeral }` は大きすぎる
 kernel-core-not-kernel-term = カーネルの項ではない
 kernel-core-quot-has-type = 商の定数には型がある
 kernel-core-quot-no-value = `{ $name }` は商の定数であり、値を持たない
+kernel-core-value-cycle = `{ $name }` の値は展開すると再び `{ $name }` に至る。core が受け付ける再帰は除去子によるものだけである
 kernel-core-quot-declared-after = `{ $name }` は { $needs } の後に宣言する
 kernel-core-quot-type = `{ $name }` はコアが与える型を持たなければならない
 kernel-core-bvar-out-of-scope = スコープ外の束縛変数
@@ -51,11 +52,13 @@ kernel-gave-up-unfolded = { $seconds } 秒検査して打ち切った (最も多
 kernel-unfolded-times = `{ $name }` { $count } 回
 kernel-out-of-steps = 簡約を { $steps } 歩進めて打ち切った
 kernel-out-of-steps-in = 簡約を { $steps } 歩進めて、`{ $name }` を展開したところで打ち切った (最も多く展開したもの: { $top })。宣言の上限は `budget` で上げる
-kernel-file-time-limit = { $file } の検査が { $seconds } 秒を超えたので打ち切った。もっと時間が要るなら、Tauto.eure の check.slow にそのファイルをより大きな上限で書く
+kernel-file-time-limit = { $file } の検査が上限の { $seconds } 秒を超えたので、この宣言 ({ $spent } 秒使った) で打ち切った。上限はこの宣言ではなくファイル全体のものなので、ファイルを速くするか分ける (Tauto.eure の check.slow でより大きな上限も与えられる)
+kernel-file-time-limit-before = { $file } の検査が、この宣言を始める前に上限の { $seconds } 秒を超えた
+kernel-file-ran-out = 検査していない: `{ $name }` の検査中に { $file } が上限の { $seconds } 秒を超えた
 kernel-ran-out-of-time = 検査していない: `{ $name }` が時間切れになった
-kernel-past-u128 =
+kernel-past-numeral-limit =
     { $message }
-    注: `{ $op }` は u128 を超えるため、そのままにした。カーネルはそれほど大きな閉じた数を計算しない
+    注: `{ $op }` は 2^256 以上になるため、そのままにした。カーネルはそれほど大きな閉じた数を計算しない
 kernel-handle-not-read = その `handle` は証明では読まれない: { $why }
 kernel-reserved = `{ $name }` は予約されており、宣言の名前にできない
 kernel-already-defined = `{ $name }` はすでに定義されている
@@ -81,7 +84,7 @@ kernel-untyped-param = 型のないパラメータ
 kernel-body-executable = 本体はカーネルの項ではなく実行可能なコードである
 kernel-type-not-kernel = その型はカーネルのものではない
 kernel-not-kernel-term-match = カーネルの項ではない: match。ここに `match` は書けない。本体がその match である `fn` を定義して呼び出す
-kernel-not-kernel-term-text = カーネルの項ではない: テキスト (テキストリテラルは `Text` の宣言後にのみカーネルの項として読まれる。`import std::Text` を追加する)
+kernel-not-kernel-term-text = カーネルの項ではない: テキスト (テキストリテラルは `Text` の宣言後にのみカーネルの項として読まれる。`import std::text` を追加する)
 kernel-not-kernel-term-kind = カーネルの項ではない: { $kind }
 kernel-block-value = 証明内のブロックはその値で終わる
 kernel-block-lets = 証明内のブロックは値の前に `let x: T := e` だけを置ける
@@ -99,7 +102,7 @@ kernel-mismatch-expected-written = 期待された側は { $written } と書か�
 kernel-mismatch-found-written = 実際の側は { $written } と書かれている
 kernel-hole-twice = 穴 `?{ $name }` が二度書かれている
 kernel-underscore-not-value = `_` は値ではない
-kernel-float-not-defined = `Float` は宣言されるまで証明では定義されていない。`import std::Float` を追加する
+kernel-float-not-defined = `Float` は宣言されるまで証明では定義されていない。`import std::float` を追加する
 kernel-integer-division = `/` は分数としての割り算で、証明では整数には定義されていない。`Nat::div(a, b)`、`Nat::rem(a, b)`、`Int::tdiv`、`Int::tmod`、`Int::fdiv`、`Int::fmod`（固定幅の整数は `U8::div`、`I32::tdiv` など）で書き、分数は `Rat::div` で書く
 kernel-unit-value-as-type = `#()` は単位の値で、型ではない。単位の型は `Unit` と書く
 kernel-calls-itself = `{ $name }` は構造的な match の外で自身を呼んでいる。ほかに停止性の検査はない
@@ -166,6 +169,7 @@ kernel-match-named-last = すべての値に一致するアーム `{ $name } =>`
 kernel-match-default-last = 既定のアーム `_ =>` は最後でなければならない
 kernel-match-named-indices = 照合される値を名付けるアーム `y =>` には、照合される族の添字が変数である必要がある。`_ =>` と書いて照合される変数を使う
 kernel-match-lists-ctors = カーネルの match はコンストラクタを列挙する (入れ子や変数のパターンは未対応である)
+kernel-match-typed-arm = 型付きアーム `y: T =>` は Nib の合併を絞り込む。カーネルの match はコンストラクタを列挙する
 kernel-match-not-ctor = `{ $name }` はコンストラクタではない
 kernel-match-not-ctor-hint = `{ $name }` はコンストラクタではない。`{ $hint }` のことか
 kernel-match-other-ctor = `{ $name }` は `{ $matched }` ではなく `{ $family }` のコンストラクタである
@@ -190,6 +194,7 @@ kernel-ascribe-mismatch = `{ $have }` は `{ $want }` でも、その成分を�
 kernel-ascribe-no-member = `{ $product }` に型 `{ $member }` の成分はない
 kernel-ascribe-clash = 直積の二つの成分が型 `{ $member }` を持つので、成分を型で対応づけられない。成分を位置で（同じ順に）書くか、ラベル（`@x { $member }`）で見分ける
 kernel-ascribe-open = `{ $have }` と `{ $want }` は、どちらにも型変数が現れないときだけ、成分の型で対応づけられる。成分を同じ順に位置で書くか、それぞれにラベル（`@x T`）を付ける
+kernel-eq-needs-where = `==` には PartialEq({ $ty }) が要る。`where PartialEq({ $ty })` を足す（`==` から等しさを証明するなら `where DecEq({ $ty })`）
 kernel-eq-no-deq = `==` は `{ $ty }` ではなく、`Nat`、`Bool`、`Text` か決定可能な等価性を持つ型に対して使う。帰納型はソートの後に `=> fn { $head }::beq, theorem { $head }::beq_refl, theorem { $head }::beq_sound, theorem { $head }::deq` を挙げるとそれを持つ
 kernel-eq-type-open = `=` の両辺とも型を決められない。数値リテラル、`[]`、穴、λ、引数なしで書いた型パラメータのあるコンストラクタ（`Nil`、`None`）は型を決めない。`Eq(T, a, b)` と書く
 kernel-if-type-open = この `if` の枝のどちらも型を決められない。数値リテラル、`[]`、穴、λ、引数なしで書いた型パラメータのあるコンストラクタ（`Nil`、`None`）は型を決めない。型を書く: `⊢ T from match c {"{"} true => a  false => b {"}"}`
@@ -221,7 +226,8 @@ kernel-unify-no-confusion = `{ $name }` には no-confusion がないので、�
 kernel-unify-index = `{ $family }` に対する match で添字 `{ $left }` と `{ $right }` を単一化できない
 kernel-unify-cyclic = 添字が変数を互いによって決めている。この単一化は未対応である
 kernel-class-skipped = 証明言語のクラスではない: { $why }
-kernel-class-one-param = 種 `Type` のパラメータを一つ持つ
+kernel-class-not-inductive = `inductive class` ではなく `class` である
+kernel-class-one-param = パラメータを持たない
 kernel-class-defined = クラス `{ $name }` はすでに定義されている
 kernel-class-method-effects = `{ $name }` は作用を行う
 kernel-class-effects-laws = { $class }::{ $method } は作用を行うので、{ $class } は法則を持てない
@@ -230,7 +236,11 @@ kernel-class-method-untyped = `{ $name }` は型のないパラメータを持�
 kernel-instance-not-class-skipped = `{ $name }` は証明言語のクラスではない
 kernel-instance-head = `{ $name }` のインスタンスは先頭に名前を持つ型に対するものである
 kernel-instance-defined = インスタンス { $instance } はすでに定義されている
+kernel-instance-infer-condition = infer from にはこの class の型引数名を指定してください
+kernel-instance-infer-owner = infer from のどの入口にも、この tote で定義した名前付き型が必要です
+kernel-instance-infer-conflict = infer from がこの class の別の instance と競合します
 kernel-instance-not-class = `{ $name }` はクラスではない
+kernel-instance-structural = `{ $name }` は構造的な述語で、インスタンスは書けない。インスタンスは型の構造から決まる
 kernel-instance-lacks = インスタンス { $instance } にメソッド `{ $method }` がない
 kernel-instance-method-params = { $instance } のメソッド `{ $method }` のパラメータは { $written } 個だが、クラスでは { $class } 個である
 kernel-instance-not-method = `{ $name }` は { $class } のメソッドではない
@@ -244,7 +254,7 @@ kernel-effect-row-variables = 行に複数の変数がある
 kernel-effect-unread = 作用 `{ $name }` は証明で読まれるものではない
 kernel-effect-no-result = 結果の型がない
 kernel-effect-untyped-param = 型のないパラメータがある
-kernel-effect-where = `where` がある
+kernel-effect-where = `where` が証明の言語にないクラスを挙げている
 kernel-effect-bind-first = { $what }が作用を持つ。先に `let` で束縛する
 kernel-effect-called-function = 呼ばれる関数
 kernel-effect-if-condition = `if` の条件
@@ -254,7 +264,8 @@ kernel-effect-not-in-row = 行にない `{ $name }` を行っている
 kernel-effect-arity = `{ $name }` は別の個数の引数を取る
 kernel-effect-call-not-in-row = `{ $function }` は行にない `{ $name }` を行う
 kernel-effect-block-value = 作用を持つブロックはその値で終わる
-kernel-effect-assign-field = `{ $place } :=` はフィールドへの代入であり、まだ証明では読まれない
+kernel-effect-assign-field = `{ $place } :=` はフィールドのフィールドへの代入であり、まだ証明では読まれない
+kernel-effect-lend = `&mut` が返す状態の族を宣言できない: { $why }
 kernel-effect-assign-not-var = `{ $name }` に代入しているが、それは関数の `var` ではない
 kernel-effect-block-statement = 作用を持つブロックに、証明で読まれない文がある
 kernel-effect-var-type = `var { $name }` の型を書く
@@ -262,6 +273,10 @@ kernel-effect-block-type = `var { $name }` を持つブロックの値の型を�
 kernel-effect-return-pattern = パターン付きの `return` アーム
 kernel-effect-handler-guard = ガード付きのハンドラのアーム
 kernel-effect-not-read = `{ $name }` は証明で読まれる作用ではない
+kernel-effect-instances = 行に `{ $name }` の実体が二つ以上あり、この `perform` がどれかが決まらない
+kernel-effect-instance-unknown = 呼び出しの行に `{ $name }` があり、その型が引数から決まらない
+kernel-effect-handler-forall = `{ $name }` のすべての実体を処理する `∀ …. { $name }<…>` の腕
+kernel-effect-handler-instance = `{ $name }` の腕が、総称のそれぞれに型を書いていない
 kernel-effect-handler-pattern = パターン付きのハンドラのアーム
 kernel-effect-two-arms = `{ $name }` のアームが二つある
 kernel-effect-none-read = 証明で読まれる作用がない
@@ -283,6 +298,8 @@ kernel-implicit-nullary = `{ $name }` はパラメータを持たず、`()` な�
 kernel-implicit-not-defined = `{ $name }` は定義されていない
 kernel-implicit-fewer-params = `{ $name }` のパラメータが暗黙のものより少ない
 kernel-implicit-named-unknown = `{ $name }` には暗黙のパラメータ `{ $field }` がない
+kernel-class-member-not-method = `{ $name }` は class のメソッドでも法則でもないので、`C(T)::m(…)` の形で class の引数を書けない
+kernel-class-member-argument-count = `{ $name }` の class は引数を { $expected } 個とり、{ $given } 個ではない
 kernel-implicit-named-twice = 暗黙の引数 `{ $field }` が二度書かれている
 kernel-implicit-named-mismatch = `{ $name }` の暗黙の引数 `{ $field }` が、呼び出しから決まるものと食い違う
 kernel-implicit-named-none = 暗黙の引数を名前で書けるのは、暗黙のパラメータを持つ宣言の呼び出しだけ
@@ -290,21 +307,25 @@ kernel-implicit-named-partial = 暗黙の引数を名前で書く呼び出しで
 kernel-implicit-positional = `{ $name }` に明示のパラメータより多い引数が渡されている。暗黙の引数は `{ $name }(<x: v>, …)` と名前で書く
 kernel-implicit-no-match = `{ $name }` の暗黙の引数を推論できない: `{ $expected }` が `{ $found }` と一致しない
 kernel-implicit-cannot-infer = `{ $name }` の暗黙の引数をすべては推論できない
-kernel-implicit-generic = `{ $name }` のジェネリック `{ $generic }` を推論できない。引数も期待される型もそれを決めない。ジェネリクスを最初の引数として書く: `{ $name }({ $generics }, …)`
+kernel-implicit-generic = `{ $name }` のジェネリック `{ $generic }` を推論できない。引数も期待される型もそれを決めない。名前で書く: `{ $name }(<{ $generics }>, …)`
 kernel-implicit-class-needed = ここにはクラスが要る
 kernel-implicit-laws-of = { $instance } の法則
 kernel-implicit-class-type = `{ $class }` が必要とされる型を推論できない
 kernel-implicit-no-instance = { $instance } のインスタンスがない
-kernel-implicit-no-instance-ord = { $instance } のインスタンスがない。std で宣言されているので、`import std::Ord` を追加する
+kernel-implicit-no-instance-ord = { $instance } のインスタンスがない。std で宣言されているので、`import std::ord` を追加する
 kernel-implicit-instance-types = インスタンス { $instance } の型をすべては推論できない
+kernel-implicit-infer-types = infer from では必要な型引数がすべて決まりません
 kernel-mut-field-family = `&mut { $name }.…` には、コンストラクタが一つの族の型を持つ `{ $name }` が要る
 kernel-mut-lends = `&mut` が貸すのは `var`、`&mut` パラメータ、またはそれらのフィールドである
+kernel-mut-lent-written = { $name } はこの呼び出しに借用され、その後ろの引数で書き換えられています。その引数を先に `let` で束縛してください
 kernel-mut-argument = `&mut` は呼び出しの引数である
 kernel-mut-lambda = ラムダは状態を変えない
 kernel-mut-match-type = 状態を変える `match` には型が要る: `let x: T := match …` または `⊢ T from match e …`
 kernel-mut-var-type = `match` の中で変えるには `var { $name }` に型が要る: `var { $name }: T := …`
 kernel-mut-term = この項は証明言語の関数の中で状態を変えない
 kernel-mut-assign = `{ $name } :=` が代入するのは `var` か `&mut` パラメータである
+kernel-assign-through-borrow = 借用の指す先に書き込むには `*{ $place } := …` と書く
+kernel-deref-needs-mut-borrow = `*{ $place } := …` は `&mut` の借用の指す先への書き込みだが、`{ $place }` は `&mut` の借用ではない
 kernel-mut-block = 関数内のブロックに置けるのは `let`、`var`、`:=` と項である
 kernel-mut-param-type = `&mut { $name }` には型が要る
 kernel-mut-verdict = `{ $name }`: { $verdict }
@@ -315,9 +336,9 @@ kernel-resume-hint-once = 再開するには `resume <=1` と宣言する
 kernel-resume-hint-many = 二度以上再開するには `resume ω` と宣言する
 kernel-resume-overused = `{ $effect }` のアームは `{ $cont }` を{ $times }呼ぶかもしれないが、`{ $effect }` は `resume { $written }` と宣言されている。{ $hint }
 kernel-wf-list-mismatch = `decreasing_by`: `{ $name }` が作るもののリストが、実際に作ったものと一致しない
-kernel-wf-needs = `decreasing_by` には `{ $name }` が要る: "WellFounded.taut" を import する
+kernel-wf-needs = `decreasing_by` には `{ $name }` が要る: "well_founded.taut" を import する
 kernel-wf-no-param = `decreasing_by` は最初のパラメータで再帰するが、パラメータがない
-kernel-wf-where = `decreasing_by` は `where` や作用を取らない
+kernel-wf-where = `decreasing_by` は証明の言語が読めない `where` を取らない
 kernel-wf-result = `decreasing_by` には結果の型が要る
 kernel-wf-typed = `decreasing_by` にはすべてのパラメータの型が要る
 kernel-wf-call-arity = `{ $name }` の再帰呼び出しは { $count } 個の引数と、最初の引数が `{ $param }` より下である証明を取る
@@ -341,3 +362,4 @@ kernel-instance-first-order = インスタンス引数には第一階の構成�
 kernel-instance-ambiguous = インスタンスが一意に決まらない
 kernel-instance-resolution-cycle = インスタンス解決の制約が循環している
 kernel-instance-resolution-depth = インスタンス解決の入れ子が上限を超えている
+kernel-match-labelled = `{ $name }` は `{ $family }` のコンストラクタだが、照合する値はラベル `@{ $label }` の下にあり、これは別の型である。パターンにラベルを付けて書く（`@{ $label } { $name }`）か、値の注釈でラベルを外す（`match (e: { $family }(…))`。`@{ $label } T <: T` による）

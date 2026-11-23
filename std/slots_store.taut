@@ -1,0 +1,657 @@
+// The slots as the kernel reads them: a state, a mark beside each
+// slot, the mark of a slot that is not there, and the element of each slot
+// (`None` where it is empty), as the fields of an ordinary `inductive struct`;
+// and `&Slots`, a lent range of them, the contents in order. The functions below
+// are written over those fields, and the kernel reads them as written.
+//
+// What runs is the host's `Slots` of `std/prelude/collections.taut`: the
+// compiler maps `Slots` onto it, `&Slots` onto the host's reference to it, and
+// each function named in `tauto::extract::SWAPPED_FNS` onto the builtin of its
+// meaning (`crates/tauto/src/extract.rs`). That the builtin does what the body
+// says is not proved, since the host's memory is outside the kernel; the trust
+// report lists the swapped declarations as unchecked.
+//
+// Functions that stop at a slot without an element in the builtin (`get`,
+// `get_mut`, `take`) take a proof that the slot is filled; `put` takes a proof
+// that it is empty and `resize` a proof that the slots it drops are. The
+// bodies do not run on a slot the proof rules out, so a program does not
+// either. `Slots::put`, `resize` and the helpers under them are total for
+// elements that must be used: where the proof is false they keep every
+// element, and the result is of no use.
+//
+// The functions that read a `Slots` take `&orig Slots`, the shared reference to
+// the value itself: with a `struct &Slots`, `&Slots` is the lent range, which
+// has only the contents (no state, no marks, no capacity), read by `lent_cap`
+// and `lent_get`.
+//
+// `Lend(Slots)`: `lend` lists the contents of the slots, `owned` allocates
+// exactly that many and copies the elements in. The copy has to be given a
+// state and a mark, which the range does not hold; `Fresh` supplies them, and
+// the law `lend(&orig owned(y)) = y` is proved (`lend_owned`) for any state and
+// mark. The instance is for `Copy` elements (a copy of a borrow of another
+// kind cannot be made). `Lend` is a plain `class`, whose instance methods the
+// kernel does not read, so the law is proved of the functions the methods call
+// (`lend_range`, `own_with`).
+
+import std::prelude::std { Option, List }
+import std::uhost { UHost }
+import std::prelude::debug { Lend }
+
+pub inductive struct Slots(S: Type, M: Type, A: Type) {
+  state: S,
+  marks: List(M),
+  vacant: M,
+  items: List(Option(A))
+}
+
+pub ghost fn Slots::filled_at<A: Linear>(xs: &List(Option(A)), i: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(c, rest) => match i {
+      Zero => match c {
+        Some(x) => true
+        None => false
+      }
+      Succ(j) => Slots::filled_at(rest, j)
+    }
+  }
+}
+
+pub ghost fn Slots::vacant_at<A: Linear>(xs: &List(Option(A)), i: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(c, rest) => match i {
+      Zero => match c {
+        Some(x) => false
+        None => true
+      }
+      Succ(j) => Slots::vacant_at(rest, j)
+    }
+  }
+}
+
+pub ghost fn Slots::item_at<A: Linear>(
+  xs: &List(Option(A)),
+  i: Nat,
+  h: Slots::filled_at(xs, i) = true
+): &A {
+  match xs {
+    Nil => match h {
+    }
+    Cons(c, rest) => match i {
+      Zero => match c {
+        Some(x) => x
+        None => match h {
+        }
+      }
+      Succ(j) => Slots::item_at(rest, j, h)
+    }
+  }
+}
+
+// `item_at`, for writing in place.
+pub ghost fn Slots::item_at_mut<A: Linear>(
+  xs: &mut List(Option(A)),
+  i: Nat,
+  h: Slots::filled_at(xs, i) = true
+): &mut A {
+  match xs {
+    Nil => match h {
+    }
+    Cons(c, rest) => match i {
+      Zero => match c {
+        Some(x) => x
+        None => match h {
+        }
+      }
+      Succ(j) => Slots::item_at_mut(rest, j, h)
+    }
+  }
+}
+
+// `xs` with `x` in the empty slot `i`. A slot that is not empty, or not there,
+// keeps what it holds and `x` goes in beside it, so the function is total for
+// elements that must be used; `Slots::put` is for the empty slot below
+// the capacity.
+pub ghost fn Slots::put_at<A: Linear>(xs: List(Option(A)), i: Nat, x: A): List(Option(A)) {
+  match xs {
+    Nil => Cons(Some(x), Nil)
+    Cons(c, rest) => match i {
+      Zero => match c {
+        Some(y) => Cons(Some(y), Cons(Some(x), rest))
+        None => Cons(Some(x), rest)
+      }
+      Succ(j) => Cons(c, Slots::put_at(rest, j, x))
+    }
+  }
+}
+
+// `n` slots, all empty.
+pub ghost fn Slots::vacant_list<A: Linear>(n: Nat): List(Option(A)) {
+  match n {
+    Zero => Nil
+    Succ(k) => Cons(None, Slots::vacant_list(k))
+  }
+}
+
+// The number of slots.
+pub fn Slots::len_of<A: Linear>(xs: &List(Option(A))): Nat {
+  match xs {
+    Nil => 0
+    Cons(c, rest) => Succ(Slots::len_of(rest))
+  }
+}
+
+// Whether every slot from `n` on is empty (so a capacity of `n` drops none).
+pub ghost fn Slots::vacant_from<A: Linear>(xs: &List(Option(A)), n: Nat): Bool {
+  match xs {
+    Nil => true
+    Cons(c, rest) => match n {
+      Zero => match c {
+        Some(x) => false
+        None => Slots::vacant_from(rest, Zero)
+      }
+      Succ(k) => Slots::vacant_from(rest, k)
+    }
+  }
+}
+
+// The slots of `xs` below `n`, then empty ones up to `n`. A filled slot from
+// `n` on is kept (the capacity is larger), so the function is total for
+// elements that must be used; `Slots::resize` is for slots from `n` on
+// that are empty.
+pub ghost fn Slots::refit_items<A: Linear>(xs: List(Option(A)), n: Nat): List(Option(A)) {
+  match xs {
+    Nil => Slots::vacant_list(n)
+    Cons(c, rest) => match n {
+      Zero => match c {
+        Some(y) => Cons(Some(y), Slots::refit_items(rest, Zero))
+        None => Slots::refit_items(rest, Zero)
+      }
+      Succ(k) => Cons(c, Slots::refit_items(rest, k))
+    }
+  }
+}
+
+// Elements that are dropped when the slot holds none (the proof rules that
+// out) are those a program may drop.
+pub ghost fn Slots::take_at<A>(
+  xs: List(Option(A)),
+  i: Nat,
+  h: Slots::filled_at(xs, i) = true
+): List(Option(A)) × A {
+  match xs {
+    Nil => match h {
+    }
+    Cons(c, rest) => match i {
+      Zero => match c {
+        Some(x) => #(Cons(None, rest), x)
+        None => match h {
+        }
+      }
+      Succ(j) => match Slots::take_at(rest, j, h) {
+        #(rest2, x) => #(Cons(c, rest2), x)
+      }
+    }
+  }
+}
+
+// `n` copies of `x`.
+pub fn Slots::copies<M: Copy>(n: Nat, x: M): List(M) {
+  match n {
+    Zero => Nil
+    Succ(k) => Cons(x, Slots::copies(k, x))
+  }
+}
+
+// The element at `i`, or `d` past the end.
+pub ghost fn Slots::nth_or<M: Copy>(xs: &List(M), i: Nat, d: M): M {
+  match xs {
+    Nil => d
+    Cons(c, rest) => match i {
+      Zero => c
+      Succ(j) => Slots::nth_or(rest, j, d)
+    }
+  }
+}
+
+// `xs` with the element at `i` replaced; as it is past the end.
+pub ghost fn Slots::set_nth<M: Copy>(xs: List(M), i: Nat, m: M): List(M) {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => match i {
+      Zero => Cons(m, rest)
+      Succ(j) => Cons(c, Slots::set_nth(rest, j, m))
+    }
+  }
+}
+
+// The first `n` elements of `xs`, then `x` up to `n`.
+pub ghost fn Slots::refit<M: Copy>(xs: List(M), n: Nat, x: M): List(M) {
+  match n {
+    Zero => Nil
+    Succ(k) => match xs {
+      Nil => Cons(x, Slots::refit(Nil, k, x))
+      Cons(c, rest) => Cons(c, Slots::refit(rest, k, x))
+    }
+  }
+}
+
+// `n` as a `UHost`, or the largest one when it does not fit.
+pub fn Slots::clamp(n: Nat): UHost {
+  match n < 18446744073709551616 eqn q {
+    true => UHost::lit(n, q)
+    false => UHost::lit(18446744073709551615, Refl)
+  }
+}
+
+pub fn Slots::new<S: Copy, M: Copy, A: Linear>(cap: UHost, s0: S, m0: M): Slots(S, M, A) {
+  Slots {
+    state: s0,
+    marks: Slots::copies(UHost::val(cap), m0),
+    vacant: m0,
+    items: Slots::vacant_list(UHost::val(cap))
+  }
+}
+
+pub ghost fn Slots::items<S: Copy, M: Copy, A: Linear>(r: &orig Slots(S, M, A)): &List(Option(A)) {
+  match r {
+    Slots { state: s, marks: ms, vacant: v, items: xs } => xs
+  }
+}
+
+pub ghost fn Slots::items_mut<S: Copy, M: Copy, A: Linear>(
+  r: &mut Slots(S, M, A)
+): &mut List(Option(A)) {
+  match r {
+    Slots { state: s, marks: ms, vacant: v, items: xs } => xs
+  }
+}
+
+pub fn Slots::cap<S: Copy, M: Copy, A: Linear>(r: &orig Slots(S, M, A)): UHost {
+  Slots::clamp(Slots::len_of(Slots::items(r)))
+}
+
+pub fn Slots::state<S: Copy, M: Copy, A: Linear>(r: &orig Slots(S, M, A)): S {
+  match r {
+    Slots { state: s, marks: ms, vacant: v, items: xs } => s
+  }
+}
+
+// The mark of slot `i`; the mark of the vacant slots past the capacity.
+pub fn Slots::mark<S: Copy, M: Copy, A: Linear>(r: &orig Slots(S, M, A), i: UHost): M {
+  match r {
+    Slots { state: s, marks: ms, vacant: v, items: xs } => Slots::nth_or(ms, UHost::val(i), v)
+  }
+}
+
+// Whether slot `i` holds an element.
+pub ghost fn Slots::filled<S: Copy, M: Copy, A: Linear>(r: &orig Slots(S, M, A), i: UHost): Bool {
+  Slots::filled_at(Slots::items(r), UHost::val(i))
+}
+
+// Whether slot `i` is below the capacity and holds none.
+pub ghost fn Slots::vacant<S: Copy, M: Copy, A: Linear>(r: &orig Slots(S, M, A), i: UHost): Bool {
+  Slots::vacant_at(Slots::items(r), UHost::val(i))
+}
+
+// The element of a filled slot.
+pub fn Slots::get<S: Copy, M: Copy, A: Linear>(
+  r: &orig Slots(S, M, A),
+  i: UHost,
+  h: Slots::filled(r, i) = true
+): &A {
+  Slots::item_at(Slots::items(r), UHost::val(i), h)
+}
+
+pub fn Slots::get_mut<S: Copy, M: Copy, A: Linear>(
+  r: &mut Slots(S, M, A),
+  i: UHost,
+  h: Slots::filled(r, i) = true
+): &mut A {
+  Slots::item_at_mut(Slots::items_mut(r), UHost::val(i), h)
+}
+
+// Fills the empty slot `i` with `x`, marked `m`, and sets the state to `t`.
+pub fn Slots::put<S: Copy, M: Copy, A: Linear>(
+  r: Slots(S, M, A),
+  i: UHost,
+  m: M,
+  x: A,
+  t: S,
+  h: Slots::vacant(&orig r, i) = true
+): Slots(S, M, A) {
+  match r {
+    Slots { state: s, marks: ms, vacant: v, items: xs } => Slots {
+      state: t,
+      marks: Slots::set_nth(ms, UHost::val(i), m),
+      vacant: v,
+      items: Slots::put_at(xs, UHost::val(i), x)
+    }
+  }
+}
+
+// Empties the filled slot `i`, marked `m` from then on, and sets the state to `t`; the element, too.
+pub fn Slots::take<S: Copy, M: Copy, A>(
+  r: Slots(S, M, A),
+  i: UHost,
+  m: M,
+  t: S,
+  h: Slots::filled(&orig r, i) = true
+): Slots(S, M, A) × A {
+  match r {
+    Slots { state: s, marks: ms, vacant: v, items: xs } => match Slots::take_at(
+      xs,
+      UHost::val(i),
+      h
+    ) {
+      #(ys, x) => #(
+        Slots {
+          state: t,
+          marks: Slots::set_nth(ms, UHost::val(i), m),
+          vacant: v,
+          items: ys
+        },
+        x
+      )
+    }
+  }
+}
+
+// `cap` slots: those of `r` below it as they are, the new ones empty and marked `m0`, in the state `t`.
+// The slots of `r` from `cap` on are empty.
+pub fn Slots::resize<S: Copy, M: Copy, A: Linear>(
+  r: Slots(S, M, A),
+  cap: UHost,
+  m0: M,
+  t: S,
+  h: Slots::vacant_from(Slots::items(&orig r), UHost::val(cap)) = true
+): Slots(S, M, A) {
+  match r {
+    Slots { state: s, marks: ms, vacant: v, items: xs } => Slots {
+      state: t,
+      marks: Slots::refit(ms, UHost::val(cap), m0),
+      vacant: m0,
+      items: Slots::refit_items(xs, UHost::val(cap))
+    }
+  }
+}
+
+// The state a fresh slots is given.
+pub theorem Slots::state_new<S: Copy, M: Copy, A: Linear>(
+  c: UHost,
+  s0: S,
+  m0: M
+): Slots::state(Slots::new(<S: S, M: M, A: A>, c, s0, m0)) = s0 {
+  Refl
+}
+
+// Every slot of a fresh slots has the mark it is given.
+pub theorem Slots::nth_or_copies<M: Copy>(
+  n: Nat,
+  j: Nat,
+  m: M
+): Slots::nth_or(Slots::copies(n, m), j, m) = m {
+  match n {
+    Zero => Refl
+    Succ(k) => match j {
+      Zero => Refl
+      Succ(l) => Slots::nth_or_copies(k, l, m)
+    }
+  }
+}
+
+pub theorem Slots::mark_new<S: Copy, M: Copy, A: Linear>(
+  c: UHost,
+  s0: S,
+  m0: M,
+  i: UHost
+): Slots::mark(Slots::new(<S: S, M: M, A: A>, c, s0, m0), i) = m0 {
+  Slots::nth_or_copies(UHost::val(c), UHost::val(i), m0)
+}
+
+// `put` sets the state.
+pub theorem Slots::state_put<S: Copy, M: Copy, A: Linear>(
+  r: Slots(S, M, A),
+  i: UHost,
+  m: M,
+  x: A,
+  t: S,
+  h: Slots::vacant(&orig r, i) = true
+): Slots::state(Slots::put(r, i, m, x, t, h)) = t {
+  match r {
+    Slots { state: s, marks: ms, vacant: v, items: xs } => Refl
+  }
+}
+
+// The slot that `put_at` fills holds an element afterwards.
+pub theorem Slots::put_at_filled<A: Linear>(
+  xs: List(Option(A)),
+  i: Nat,
+  x: A,
+  h: Slots::vacant_at(xs, i) = true
+): Slots::filled_at(Slots::put_at(xs, i, x), i) = true {
+  match xs {
+    Nil => False::elim(false_ne_true(h))
+    Cons(c, rest) => match i {
+      Zero => match c {
+        Some(y) => False::elim(false_ne_true(h))
+        None => Refl
+      }
+      Succ(j) => Slots::put_at_filled(rest, j, x, h)
+    }
+  }
+}
+
+// After `put`, the slot holds an element.
+pub theorem Slots::filled_put<S: Copy, M: Copy, A: Linear>(
+  r: Slots(S, M, A),
+  i: UHost,
+  m: M,
+  x: A,
+  t: S,
+  h: Slots::vacant(&orig r, i) = true
+): Slots::filled(&orig Slots::put(r, i, m, x, t, h), i) = true {
+  match r {
+    Slots { state: s, marks: ms, vacant: v, items: xs } => Slots::put_at_filled(
+      xs,
+      UHost::val(i),
+      x,
+      h
+    )
+  }
+}
+
+// A range of slots lent: the contents in order, a borrow of each element,
+// `None` where a slot is empty. It holds no state, no marks
+// and no capacity, so two lent ranges are equal when their lists are.
+pub inductive struct &Slots(^S: Type, ^M: Type, A: Type) {
+  items: List(Option(&A))
+}
+
+// The elements of `xs`, each borrowed.
+pub fn Slots::lend_items<A: Linear>(xs: &List(Option(A))): List(Option(&A)) {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => Cons(
+      match c {
+        Some(x) => Some(x)
+        None => None
+      },
+      Slots::lend_items(rest)
+    )
+  }
+}
+
+// The elements of a lent range, each copied.
+pub fn Slots::own_items<A: Copy>(xs: List(Option(&A))): List(Option(A)) {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => Cons(
+      match c {
+        Some(x) => Some(x)
+        None => None
+      },
+      Slots::own_items(rest)
+    )
+  }
+}
+
+// `lend` lists the contents of the slots; `owned` allocates exactly that
+// many, each with the mark and the state the policy gives a fresh slots, and
+// copies the elements in. The state and the marks of the owner are not in the
+// lent range, so `owned(lend(x)) = x` does not hold and is not asked for.
+// `owned` needs an empty state and a vacant mark of `S` and `M`, which
+// `Occupancy` gives.
+pub fn Slots::lend_range<S: Copy, M: Copy, A: Linear>(r: &orig Slots(S, M, A)): &Slots(S, M, A) {
+  match r {
+    Slots { state: s, marks: ms, vacant: v, items: xs } => &Slots { items: Slots::lend_items(xs) }
+  }
+}
+
+// Whether the lent slot `i` holds an element.
+pub ghost fn Slots::lent_filled_at<A: Linear>(xs: &List(Option(&A)), i: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(c, rest) => match i {
+      Zero => match c {
+        Some(x) => true
+        None => false
+      }
+      Succ(j) => Slots::lent_filled_at(rest, j)
+    }
+  }
+}
+
+// The element of a filled slot of a lent range.
+pub ghost fn Slots::lent_item_at<A: Linear>(
+  xs: &List(Option(&A)),
+  i: Nat,
+  h: Slots::lent_filled_at(xs, i) = true
+): &A {
+  match xs {
+    Nil => match h {
+    }
+    Cons(c, rest) => match i {
+      Zero => match c {
+        Some(x) => x
+        None => match h {
+        }
+      }
+      Succ(j) => Slots::lent_item_at(rest, j, h)
+    }
+  }
+}
+
+// The number of slots in a lent range.
+pub ghost fn Slots::lent_len_of<A: Linear>(xs: &List(Option(&A))): Nat {
+  match xs {
+    Nil => 0
+    Cons(c, rest) => Succ(Slots::lent_len_of(rest))
+  }
+}
+
+// The items of a lent range, read by `lent_cap` and `lent_get`.
+pub ghost fn Slots::lent_items<S: Copy, M: Copy, A: Linear>(l: &Slots(S, M, A)): &List(Option(&A)) {
+  match l {
+    &Slots { items: xs } => xs
+  }
+}
+
+// The number of slots in the lent range.
+pub fn Slots::lent_cap<S: Copy, M: Copy, A: Linear>(l: &Slots(S, M, A)): UHost {
+  Slots::clamp(Slots::lent_len_of(Slots::lent_items(l)))
+}
+
+// Whether slot `i` of the lent range holds an element.
+pub ghost fn Slots::lent_filled<S: Copy, M: Copy, A: Linear>(l: &Slots(S, M, A), i: UHost): Bool {
+  Slots::lent_filled_at(Slots::lent_items(l), UHost::val(i))
+}
+
+// The element of a filled slot of the lent range.
+pub fn Slots::lent_get<S: Copy, M: Copy, A: Linear>(
+  l: &Slots(S, M, A),
+  i: UHost,
+  h: Slots::lent_filled(l, i) = true
+): &A {
+  Slots::lent_item_at(Slots::lent_items(l), UHost::val(i), h)
+}
+
+// A lent range has as many slots as the slots it lends.
+pub theorem Slots::lent_len_of_lend<A: Linear>(
+  xs: &List(Option(A))
+): Slots::lent_len_of(&Slots::lend_items(xs)) = Slots::len_of(xs) {
+  match xs {
+    Nil => Refl
+    Cons(c, rest) => Eq::congr(Succ, Slots::lent_len_of_lend(rest))
+  }
+}
+
+// A slot of a lent range is filled when the slot it lends is.
+pub theorem Slots::lent_filled_of_lend<A: Linear>(
+  xs: &List(Option(A)),
+  i: Nat
+): Slots::lent_filled_at(&Slots::lend_items(xs), i) = Slots::filled_at(xs, i) {
+  match xs {
+    Nil => Refl
+    Cons(c, rest) => match i {
+      Zero => match c {
+        Some(x) => Refl
+        None => Refl
+      }
+      Succ(j) => Slots::lent_filled_of_lend(rest, j)
+    }
+  }
+}
+
+// The state and the mark of a fresh slot, for the copy `owned` makes of a lent
+// range: what `Occupancy::empty` and `Occupancy::vacant` of `std/slots.taut`
+// give a policy, for the types that have one.
+pub(open) class Fresh(T: Type) {
+  fn fresh(): T
+}
+
+// A copy of the lent range: exactly its capacity, the elements copied in, every
+// mark `v` and the state `e`.
+pub fn Slots::own_with<S: Copy, M: Copy, A: Copy>(e: S, v: M, l: &Slots(S, M, A)): Slots(S, M, A) {
+  match l {
+    &Slots { items: xs } => Slots {
+      state: e,
+      marks: Slots::copies(Slots::len_of(&orig Slots::own_items(xs)), v),
+      vacant: v,
+      items: Slots::own_items(xs)
+    }
+  }
+}
+
+instance<S: Copy, M: Copy, A: Copy> Lend(std::slots_store::Slots(S, M, A)) where Fresh(S), Fresh(M) {
+  fn lend(owned: &orig Slots(S, M, A)): &Slots(S, M, A) { Slots::lend_range(owned) }
+  fn owned(lent: &Slots(S, M, A)): Slots(S, M, A) {
+    Slots::own_with(Fresh::fresh(), Fresh::fresh(), lent)
+  }
+}
+
+// The lent range of a copy of a lent range is the range.
+pub theorem Slots::lend_own_items<A: Copy>(
+  xs: List(Option(&A))
+): Slots::lend_items(&Slots::own_items(xs)) = xs {
+  match xs {
+    Nil => Refl
+    Cons(c, rest) => match c {
+      Some(x) => Eq::congr(⟦Cons(Some(x), □)⟧, Slots::lend_own_items(rest))
+      None => Eq::congr(⟦Cons(None, □)⟧, Slots::lend_own_items(rest))
+    }
+  }
+}
+
+// The law of `Lend`: `lend(&orig owned(y)) = y`, whatever state and mark
+// `owned` gives the copy.
+pub theorem Slots::lend_owned<S: Copy, M: Copy, A: Copy>(
+  e: S,
+  v: M,
+  y: &Slots(S, M, A)
+): Slots::lend_range(&orig Slots::own_with(e, v, y)) = y {
+  match y {
+    &Slots { items: xs } => Eq::congr(⟦&Slots { items: □ }⟧, Slots::lend_own_items(xs))
+  }
+}

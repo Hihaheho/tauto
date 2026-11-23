@@ -1,8 +1,11 @@
+import "coerce_sound.taut"
+import "datas_frame.taut"
 import "error_frame.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "checker_frame.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "join_sound.taut"
 import "ty.taut"
 import "unify_sound.taut"
@@ -58,6 +61,48 @@ pub theorem ck_join_error_frame(
 ): CkErrorFrame(c, ck_join(c, a, b)) {
   error_frame_grows(c, ck_join(c, a, b), And::left(ck_join_ok(c, a, b)(ordered)))
 }
+pub theorem run_expect_after_error_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  fits: Bool,
+  ordered: CkOrdered(c)
+): CkErrorFrame(c, run_expect_after(c, a, b, span, what, fits)) {
+  match fits {
+    true => error_frame_return(c, Star)
+    false => error_frame_bind(
+      <A: Option(CoerceFound), B: Unit>,
+      c,
+      (found: Option(CoerceFound), next: Checker) => run_expect_refused(next, a, b, span, what, found),
+      ck_coerce_fit(c, a, b),
+      error_frame_grows(c, ck_coerce_fit(c, a, b), ck_coerce_fit_grows(c, a, b, ordered)),
+      found => next => error_frame_if(next, coerce_refusal(next, a, b, what, found), span, coerce_refused(next, found))
+    )
+  }
+}
+pub theorem expect_error_bind(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  m: Mut1(Bool, Checker),
+  grows: Grows(c, ck_st(m))
+): CkErrorFrame(
+  c,
+  frame_bind(<A: Bool, B: Unit>, (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits), m)
+) {
+  ⊢ CkErrorFrame(
+    c,
+    frame_bind(<A: Bool, B: Unit>, (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits), m)
+  ) from match m {
+    mut1(fits, next) => (clean => error_frame_grows(c, mut1(fits, next), grows)(
+      run_expect_after_error_frame(next, a, b, span, what, fits, And::left(grows))(clean)
+    ))
+  }
+}
 pub theorem ck_expect_error_frame(
   c: Checker,
   a: Ty,
@@ -69,19 +114,6 @@ pub theorem ck_expect_error_frame(
   Eq::subst(
     (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
     Eq::sym(run_expect_unf(c, a, b, span, what)),
-    error_frame_bind(
-      Bool,
-      Unit,
-      c,
-      (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
-      ck_fits_wide(c, a, b),
-      ck_fits_wide_error_frame(c, a, b, ordered),
-      fits => next => error_frame_if(
-        next,
-        ck_expect_message(ck_shown(next, a), ck_shown(next, b), what),
-        span,
-        not(fits)
-      )
-    )
+    expect_error_bind(c, a, b, span, what, ck_fits_wide(c, a, b), And::left(ck_fits_wide_ok(c, a, b)(ordered)))
   )
 }

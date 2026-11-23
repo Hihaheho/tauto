@@ -64,3 +64,12 @@ fn the_schema_rejects_a_misspelled_field() {
         );
     }
 }
+
+#[test]
+fn the_schema_rejects_the_removed_backends_field() {
+    // Every case runs on every backend; an opt-out is `<backend>.bug` or
+    // `<backend>.unimplemented` with a reason.
+    let text = "@ cases.one\nsource = \"\"\nbackends = [\"rust\"]\n";
+    let doc = eure_reader::parse_to_document(text, "case").unwrap();
+    assert!(!eure_schema::validate::validate(&doc, &schema::document()).is_valid);
+}

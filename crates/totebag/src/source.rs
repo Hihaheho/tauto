@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn the_id_is_the_hash_of_the_spelled_form() {
         let tree = Tree::new(vec![
-            file("src/main.taut", "perform show(\"hello\", 42)\n"),
+            file("src/main.taut", "show(&42)\n"),
             File {
                 executable: true,
                 ..file("run.sh", "#!/bin/sh\n")
@@ -241,7 +241,7 @@ mod tests {
         let expected = tauto_syntax::sha256_hex(&spelled(&[
             ("Tauto.eure", 0, "package { name = \"a\" }\n"),
             ("run.sh", 1, "#!/bin/sh\n"),
-            ("src/main.taut", 0, "perform show(\"hello\", 42)\n"),
+            ("src/main.taut", 0, "show(&42)\n"),
         ]));
         assert_eq!(tree.id.hex(), expected);
     }

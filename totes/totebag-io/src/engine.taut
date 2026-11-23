@@ -1,0 +1,617 @@
+import "source.taut"
+import "cache.taut"
+import "git.taut"
+import "strict.taut"
+import "ledger.taut"
+import "policy.taut"
+import "state.taut"
+import "checkpoint.taut"
+import index::history
+import index::admission
+import index::engine
+import std::base
+import std::text
+
+// Taking in the indexes a policy trusts, and asking whether a package
+// revision may be adopted (`crates/totebag-index/src/engine.rs` and
+// `facts.rs`): the facts read from Git and kept in the state, given to the
+// core in totes/index. The core compares identities only for equality, so
+// each becomes a small number, the same for the same identity throughout
+// one evaluation; an identity of one kind never shares a number with one of
+// another kind.
+
+// The identities numbered so far, the first numbered 1.
+pub(open) struct TbAtoms {
+  seen: List(Text),
+  count: Nat,
+}
+
+pub fn tb_no_atoms(): TbAtoms {
+  TbAtoms { seen: Nil, count: 0 }
+}
+
+// Where `t` is in `l` (counted from the end, from 1), or 0.
+pub fn tb_atom_find(l: List(Text), n: Nat, t: Text): Nat {
+  match l {
+    Nil => 0
+    Cons(x, rest) => if x == t { n } else { tb_atom_find(rest, Nat::sub(n, 1), t) }
+  }
+}
+
+pub fn tb_atom(a: TbAtoms, t: Text): Nat × TbAtoms {
+  let k := tb_atom_find(a.seen, a.count, t)
+  if k == 0 {
+    let n := Nat::add(a.count, 1)
+    #(n, TbAtoms { seen: Cons(t, a.seen), count: n })
+  } else {
+    #(k, a)
+  }
+}
+
+pub fn tb_atom_point(a: TbAtoms, rev: Text, digest: Text): IxPoint × TbAtoms {
+  let r := tb_atom(a, Text::concat("commit ", rev))
+  let d := tb_atom(r.snd, Text::concat("checkpoint ", digest))
+  #(IxPoint::Mk(r.fst, d.fst), d.snd)
+}
+
+pub fn tb_atom_origin(a: TbAtoms, url: Text, reference: Text): Nat × TbAtoms {
+  tb_atom(a, tb_cat(["origin ", url, " ", reference]))
+}
+
+pub fn tb_atom_key(a: TbAtoms, k: TbKey): IxKey × TbAtoms {
+  let p := tb_atom(a, Text::concat("project ", k.project))
+  let r := tb_atom(p.snd, Text::concat("revision ", k.rev))
+  #(IxKey::Mk(p.fst, r.fst), r.snd)
+}
+
+pub fn tb_reverse<A>(l: List(A)): List(A) {
+  var out: List(A) := Nil
+  var rest := l
+  var going := true
+  while going {
+    match rest {
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+      Nil => {
+        rest := Nil
+        going := false
+      }
+    }
+  }
+  out
+}
+
+pub fn tb_nat(n: u64): Nat {
+  Nat::of_u64(n)
+}
+
+pub fn tb_time_nat(t: Text): Nat {
+  match tb_time(t) {
+    Ok(n) => tb_nat(n)
+    Err(_) => 0
+  }
+}
+
+pub fn tb_atom_event(a: TbAtoms, e: TbEvent): IxEvent × TbAtoms {
+  match e {
+    Observation(k, s, t) => {
+      let key := tb_atom_key(a, k)
+      let c := tb_atom(key.snd, Text::concat("content ", s))
+      #(IxObserve(key.fst, c.fst, tb_time_nat(t)), c.snd)
+    }
+    IndexObservation(ix, repo, r, v, h, t) => {
+      let i := tb_atom(a, Text::concat("checkpoint ", ix))
+      let o := tb_atom_origin(i.snd, repo, r)
+      let p := tb_atom_point(o.snd, v, h)
+      #(MkIxWitness(IxReceipt::Mk(i.fst, o.fst, p.fst, tb_time_nat(t))), p.snd)
+    }
+    Decision(k, accept, _) => {
+      let key := tb_atom_key(a, k)
+      #(IxDecide(key.fst, accept), key.snd)
+    }
+    Withdrawal(k, _) => {
+      let key := tb_atom_key(a, k)
+      #(IxWithdraw(key.fst), key.snd)
+    }
+    Retirement(_) => #(IxRetire, a)
+  }
+}
+
+pub fn tb_atom_events(a: TbAtoms, es: List(TbEvent)): List(IxEvent) × TbAtoms {
+  match es {
+    Nil => #(Nil, a)
+    Cons(e, rest) => {
+      let x := tb_atom_event(a, e)
+      let xs := tb_atom_events(x.snd, rest)
+      #(Cons(x.fst, xs.fst), xs.snd)
+    }
+  }
+}
+
+// The batch `c` adds after the head of `state`.
+pub fn tb_ix_batch(a: TbAtoms, config: Nat, state: IxState, c: TbCheckpoint): IxBatch × TbAtoms {
+  let p := tb_atom_point(a, c.rev, c.digest)
+  let es := tb_atom_events(p.snd, c.batch.events)
+  #(IxBatch::Mk(tb_nat(c.batch.sequence), tb_nat(c.batch.issued_at), tb_nat(c.batch.valid_until), config, ix_state_head(state), p.fst, es.fst), es.snd)
+}
+
+pub fn tb_short(rev: Text): Text {
+  let h := Bytes::of_text(tb_rev_hex(rev))
+  tb_piece(h, 0, 12)
+}
+
+pub fn tb_nat_u64(n: Nat): u64 {
+  match U64::of_text(Text::of_nat(n)) {
+    Some(x) => x
+    None => 18446744073709551615
+  }
+}
+
+// Why the core would refuse `c` after `state`, in the words
+// `crates/totebag-index` writes into the state.
+pub fn tb_refusal(state: IxState, c: TbCheckpoint): Text {
+  let seq := tb_nat_u64(ix_state_sequence(state))
+  let next := if seq == 18446744073709551615 { seq } else { seq + 1 }
+  let why := if ix_state_retired(state) {
+    "the index had retired"
+  } else {
+    if c.batch.sequence != next {
+      tb_cat(["it is numbered ", Text::of_u64(c.batch.sequence), " after ", Text::of_nat(ix_state_sequence(state))])
+    } else {
+      if c.batch.issued_at < tb_nat_u64(ix_state_issued(state)) {
+        "it was issued before the batch it follows"
+      } else {
+        "an event in it is not allowed there (a revision observed twice, a decision on one not observed, …)"
+      }
+    }
+  }
+  tb_cat(["the batch at ", tb_short(c.rev), " is refused: ", why])
+}
+
+pub fn tb_drop_cp(l: List(TbCheckpoint), n: u64): List(TbCheckpoint) {
+  var rest := l
+  var k := n
+  while k > 0 {
+    match rest {
+      Cons(_, more) => {
+        rest := more
+      }
+      Nil => {
+        rest := Nil
+      }
+    }
+    k := k - 1
+  }
+  rest
+}
+
+pub fn tb_cp_len(l: List(TbCheckpoint)): u64 {
+  var rest := l
+  var k: u64 := 0
+  var going := true
+  while going {
+    match rest {
+      Cons(_, more) => {
+        k := k + 1
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  k
+}
+
+// The ledger the first `len` checkpoints of `h` hold, every batch applied
+// in order by the core.
+pub fn tb_rebuild(h: TbHistory, len: u64, atoms: TbAtoms): Result(IxState × TbAtoms, Text) {
+  let cfg := tb_atom(atoms, Text::concat("config ", tb_config_id(h)))
+  let root := match h.checkpoints {
+    Cons(c, _) => c
+    Nil => {
+      return Err("totebag-root-invalid")
+    }
+  }
+  let rp := tb_atom_point(cfg.snd, root.rev, root.digest)
+  var a := rp.snd
+  var state := match ix_rebuild(cfg.fst, rp.fst, tb_nat(root.batch.issued_at), tb_nat(root.batch.valid_until), Nil) {
+    Some(s) => s
+    None => {
+      return Err("totebag-root-invalid")
+    }
+  }
+  var rest := tb_drop_cp(h.checkpoints, 1)
+  var i: u64 := 1
+  while i < len {
+    match rest {
+      Cons(c, more) => {
+        let b := tb_ix_batch(a, cfg.fst, state, c)
+        a := b.snd
+        match ix_step(state, b.fst) {
+          Some(s) => {
+            state := s
+          }
+          None => {
+            return Err(tb_refusal(state, c))
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        rest := Nil
+      }
+    }
+    i := i + 1
+  }
+  Ok(#(state, a))
+}
+
+// Where the checkpoint `p` is in `h`, if it is.
+pub fn tb_position(h: TbHistory, p: TbPoint): Option(u64) {
+  var rest := h.checkpoints
+  var i: u64 := 0
+  var going := true
+  while going {
+    match rest {
+      Cons(c, more) => {
+        if c.rev == p.rev && c.digest == p.digest {
+          return Some(i)
+        }
+        i := i + 1
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  None
+}
+
+pub fn tb_point_at(h: TbHistory, i: u64): TbPoint {
+  match tb_drop_cp(h.checkpoints, i) {
+    Cons(c, _) => TbPoint { rev: c.rev, digest: c.digest }
+    Nil => TbPoint { rev: "", digest: "" }
+  }
+}
+
+pub fn tb_state_mirror(dir: Text, url: Text): Text {
+  tb_mirror_dir(dir, url, false)
+}
+
+pub(open) inductive TbSynced: Type {
+  // The ledger now holds the history through `head`; `taken` batches were new.
+  SyncOpen(head: TbPoint, taken: Nat): TbSynced
+  // The ledger is frozen at `prefix`, now or before.
+  SyncFrozen(prefix: TbPoint, why: Text): TbSynced
+}
+
+pub fn tb_trust(a: TbAtoms, t: TbTrusted, pin: TbPoint): IxTrust × TbAtoms {
+  let i := tb_atom(a, Text::concat("checkpoint ", t.index))
+  let o := tb_atom_origin(i.snd, t.url, t.reference)
+  let p := tb_atom_point(o.snd, pin.rev, pin.digest)
+  #(IxTrust::Mk(i.fst, o.fst, p.fst), p.snd)
+}
+
+pub fn tb_ix_origin(a: TbAtoms, l: TbLedger, head: TbPoint, at: u64): IxOrigin × TbAtoms {
+  let i := tb_atom(a, Text::concat("checkpoint ", l.index))
+  let o := tb_atom_origin(i.snd, l.url, l.reference)
+  let p := tb_atom_point(o.snd, head.rev, head.digest)
+  #(IxOrigin::Mk(i.fst, o.fst, p.fst, tb_nat(at)), p.snd)
+}
+
+pub fn tb_replace_ledger(l: List(TbLedger), x: TbLedger): List(TbLedger) {
+  match l {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => if y.index == x.index { Cons(x, rest) } else { Cons(y, tb_replace_ledger(rest, x)) }
+  }
+}
+
+pub fn tb_with_ledger(s: TbState, l: TbLedger): TbState {
+  TbState { evaluated_at: s.evaluated_at, ledgers: tb_replace_ledger(s.ledgers, l), receipts: s.receipts }
+}
+
+pub fn tb_ledger_with(l: TbLedger, pin: TbPoint, prefix: TbPoint, frozen: Option(Text), checked: Option(TbPoint), at: u64): TbLedger {
+  TbLedger { index: l.index, url: l.url, reference: l.reference, pin: pin, prefix: prefix, frozen: frozen, checked: checked, checked_at: at }
+}
+
+// Fetches the index `t` into its mirror under the state's directory `dir`
+// and takes in what is new, at `now`: the state as it is after, and what
+// the sync did. The caller saves the state.
+pub fn tb_sync(dir: Text, state: TbState, t: TbTrusted, now: u64): Result(TbState × TbSynced, Text) {
+  let mdir := match tb_mirror_open(tb_state_mirror(dir, t.url), tb_rev_format(t.pin_rev)) {
+    Ok(d) => d
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let head_rev := match tb_fetch_history(mdir, t.url, t.reference) {
+    Ok(r) => r
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let h := match tb_history(mdir, head_rev) {
+    Ok(h) => h
+    Err(e) => {
+      return Err(Text::concat("totebag-index-unused ", e))
+    }
+  }
+  if tb_history_id(h) != t.index {
+    return Err("totebag-index-other-id")
+  }
+  let n := tb_cp_len(h.checkpoints)
+  let head := tb_point_at(h, n - 1)
+  let pin := TbPoint { rev: t.pin_rev, digest: t.pin_digest }
+  let ledger0 := match tb_state_ledger(state, t.index) {
+    Some(l) => l
+    None => {
+      match tb_position(h, pin) {
+        Some(_) => #()
+        None => {
+          return Err("totebag-pin-not-in-history")
+        }
+      }
+      TbLedger { index: t.index, url: t.url, reference: t.reference, pin: pin, prefix: pin, frozen: None, checked: None, checked_at: 0 }
+    }
+  }
+  if ledger0.url != t.url || ledger0.reference != t.reference {
+    return Err("totebag-index-read-elsewhere")
+  }
+  let ledger1 := tb_ledger_with(ledger0, ledger0.pin, ledger0.prefix, ledger0.frozen, Some(head), now)
+  match ledger1.frozen {
+    Some(why) => {
+      return Ok(#(tb_with_ledger(state, ledger1), SyncFrozen(ledger1.prefix, why)))
+    }
+    None => #()
+  }
+  let k := match tb_position(h, ledger1.prefix) {
+    Some(k) => k
+    None => {
+      let why := tb_cat(["the history at ", tb_short(head.rev), " no longer holds ", tb_short(ledger1.prefix.rev), ", which was taken in"])
+      let l := tb_ledger_with(ledger1, ledger1.pin, ledger1.prefix, Some(why), ledger1.checked, now)
+      return Ok(#(tb_with_ledger(state, l), SyncFrozen(l.prefix, why)))
+    }
+  }
+  let rb := match tb_rebuild(h, k + 1, tb_no_atoms()) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var a := rb.snd
+  let cfg := tb_atom(a, Text::concat("config ", tb_config_id(h)))
+  a := cfg.snd
+  var open := rb.fst
+  var frozen: Option(Text) := None
+  var at := k
+  var rest := tb_drop_cp(h.checkpoints, k + 1)
+  var going := true
+  while going {
+    match rest {
+      Cons(c, more) => {
+        let b := tb_ix_batch(a, cfg.fst, open, c)
+        a := b.snd
+        match ix_ingest_grounded(IxOpen(open), b.fst) {
+          IxOpen(s) => {
+            open := s
+            at := at + 1
+            rest := more
+          }
+          IxFrozen(_) => {
+            frozen := Some(tb_refusal(open, c))
+            rest := Nil
+            going := false
+          }
+        }
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  let prefix := tb_point_at(h, at)
+  match tb_keep(mdir, "prefix", prefix.rev) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match frozen {
+    Some(why) => {
+      let l := tb_ledger_with(ledger1, ledger1.pin, prefix, Some(why), ledger1.checked, now)
+      return Ok(#(tb_with_ledger(state, l), SyncFrozen(prefix, why)))
+    }
+    None => #()
+  }
+  // The pin moves to the head when the origin answered with it just now.
+  let tr := tb_trust(a, t, ledger1.pin)
+  let og := tb_ix_origin(tr.snd, ledger1, head, now)
+  let new_pin := match ix_advance_pin(tr.fst, open, Cons(og.fst, Nil)) {
+    Some(_) => prefix
+    None => ledger1.pin
+  }
+  let l := tb_ledger_with(ledger1, new_pin, prefix, None, ledger1.checked, now)
+  let s := tb_receive(tb_with_ledger(state, l), l.index, l.url, l.reference, prefix, now)
+  Ok(#(s, SyncOpen(prefix, Nat::of_u64(at - k))))
+}
+
+// The ledger of `l` as taken in, read again from its mirror.
+pub fn tb_ledger_of(dir: Text, l: TbLedger, atoms: TbAtoms): Result(IxLedger × TbAtoms, Text) {
+  let mdir := match tb_mirror_open(tb_state_mirror(dir, l.url), tb_rev_format(l.prefix.rev)) {
+    Ok(d) => d
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let h := match tb_history(mdir, l.prefix.rev) {
+    Ok(h) => h
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_rebuild(h, tb_cp_len(h.checkpoints), atoms) {
+    Ok(p) => match l.frozen {
+      Some(_) => Ok(#(IxFrozen(p.fst), p.snd))
+      None => Ok(#(IxOpen(p.fst), p.snd))
+    }
+    Err(e) => Err(e)
+  }
+}
+
+// Every index a rule names, each once: its observers, then its remote
+// witnesses.
+pub fn tb_rule_indexes(r: TbRule): List(TbTrusted) {
+  var out: List(TbTrusted) := Nil
+  var rest := tb_append_trusted(r.observers, tb_remote_trusted(r.witnesses))
+  var going := true
+  while going {
+    match rest {
+      Cons(t, more) => {
+        if not(tb_has_index(out, t.index)) {
+          out := Cons(t, out)
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  tb_rev_trusted(out, Nil)
+}
+
+pub fn tb_append_trusted(a: List(TbTrusted), b: List(TbTrusted)): List(TbTrusted) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, tb_append_trusted(rest, b))
+  }
+}
+
+pub fn tb_remote_trusted(l: List(TbWitness)): List(TbTrusted) {
+  match l {
+    Nil => Nil
+    Cons(w, rest) => match w {
+      WitnessLocal => tb_remote_trusted(rest)
+      WitnessRemote(t) => Cons(t, tb_remote_trusted(rest))
+    }
+  }
+}
+
+pub fn tb_current_pin(s: TbState, t: TbTrusted): TbPoint {
+  match tb_state_ledger(s, t.index) {
+    Some(l) => l.pin
+    None => TbPoint { rev: t.pin_rev, digest: t.pin_digest }
+  }
+}
+
+// Whether the package revision `key` with the source tree `source` may be
+// adopted at `now` under `rule`, from what the state holds, and the state
+// with its time moved forward.
+pub fn tb_evaluate(dir: Text, state: TbState, rule: TbRule, now: u64, key: TbKey, source: Text): Result(Bool × TbState, Text) {
+  if now < state.evaluated_at {
+    return Err("totebag-clock-behind-adopting-nothing")
+  }
+  var a := tb_no_atoms()
+  var ledgers: List(IxLedger) := Nil
+  var origins: List(IxOrigin) := Nil
+  var rest := tb_rule_indexes(rule)
+  var going := true
+  while going {
+    match rest {
+      Cons(t, more) => {
+        match tb_state_ledger(state, t.index) {
+          Some(l) => {
+            match tb_ledger_of(dir, l, a) {
+              Ok(p) => {
+                ledgers := Cons(p.fst, ledgers)
+                a := p.snd
+              }
+              Err(e) => {
+                return Err(e)
+              }
+            }
+            match l.checked {
+              Some(c) => {
+                let o := tb_ix_origin(a, l, c, l.checked_at)
+                origins := Cons(o.fst, origins)
+                a := o.snd
+              }
+              None => #()
+            }
+          }
+          None => #()
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  var observers: List(IxTrust) := Nil
+  var obs := rule.observers
+  going := true
+  while going {
+    match obs {
+      Cons(t, more) => {
+        let x := tb_trust(a, t, tb_current_pin(state, t))
+        observers := Cons(x.fst, observers)
+        a := x.snd
+        obs := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  var witnesses: List(IxWitness) := Nil
+  var ws := rule.witnesses
+  going := true
+  while going {
+    match ws {
+      Cons(w, more) => {
+        match w {
+          WitnessLocal => {
+            witnesses := Cons(IxLocal, witnesses)
+          }
+          WitnessRemote(t) => {
+            let x := tb_trust(a, t, tb_current_pin(state, t))
+            witnesses := Cons(IxRemote(x.fst), witnesses)
+            a := x.snd
+          }
+        }
+        ws := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  var receipts: List(IxReceipt) := Nil
+  var rs := state.receipts
+  going := true
+  while going {
+    match rs {
+      Cons(r, more) => {
+        let i := tb_atom(a, Text::concat("checkpoint ", r.index))
+        let o := tb_atom_origin(i.snd, r.url, r.reference)
+        let p := tb_atom_point(o.snd, r.point.rev, r.point.digest)
+        receipts := Cons(IxReceipt::Mk(i.fst, o.fst, p.fst, tb_nat(r.first_seen_at)), receipts)
+        a := p.snd
+        rs := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  let limits := IxLimits::Mk(tb_nat(rule.min_age), tb_nat(rule.max_checkpoint_lifetime), tb_nat(rule.max_source_check_age))
+  let k := tb_atom_key(a, key)
+  let d := tb_atom(k.snd, Text::concat("content ", source))
+  let answer := ix_evaluate_ledgers(tb_nat(state.evaluated_at), tb_reverse(observers), tb_reverse(witnesses), limits, tb_reverse(ledgers), tb_reverse(origins), tb_reverse(receipts), tb_nat(now), k.fst, d.fst)
+  Ok(#(answer, TbState { evaluated_at: now, ledgers: state.ledgers, receipts: state.receipts }))
+}

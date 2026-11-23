@@ -1,0 +1,74 @@
+// A `macro fn` declared as `T::name` is called by its full name.
+
+@ cases.a-macro-with-a-prefix-is-called-by-its-path
+entry = "main.taut"
+files."macro.taut" = ````tauto
+import std::builtin::macro
+pub macro fn Log::answer(value: SynExpr): SynExpr { value }
+````
+files."main.taut" = ````tauto
+import "macro.taut"
+import std::builtin::os
+show(&(Log::answer!(1)))
+````
+stdout = "1\n"
+
+@ cases.a-macro-with-a-prefix-is-not-called-by-its-short-name
+entry = "main.taut"
+files."macro.taut" = ````tauto
+import std::builtin::macro
+pub macro fn Log::answer(value: SynExpr): SynExpr { value }
+````
+files."main.taut" = ````tauto
+import "macro.taut"
+import std::builtin::os
+show(&(answer!(1)))
+````
+macro_error = "macro.unknown"
+
+@ cases.two-prefixes-have-macros-of-one-name
+entry = "main.taut"
+files."macro.taut" = ````tauto
+import std::builtin::macro
+pub macro fn Log::answer(value: SynExpr): SynExpr { value }
+pub macro fn Trace::answer(value: SynExpr): SynExpr { quote { 2 } }
+````
+files."main.taut" = ````tauto
+import "macro.taut"
+import std::builtin::os
+show(&(Log::answer!(1)))
+show(&(Trace::answer!(1)))
+````
+stdout = ```
+1
+2
+```
+
+@ cases.a-macro-of-a-prefixed-without-pub-is-not-called-from-another-file
+entry = "main.taut"
+files."macro.taut" = ````tauto
+import std::builtin::macro
+macro fn Log::answer(value: SynExpr): SynExpr { value }
+````
+files."main.taut" = ````tauto
+import "macro.taut"
+import std::builtin::os
+show(&(Log::answer!(1)))
+````
+macro_error = "macro.private"
+
+
+@ cases.an-attribute-macro-with-a-prefix-is-called-by-its-path
+entry = "main.taut"
+files."macro.taut" = ````tauto
+import std::builtin::macro
+pub macro fn Gen::keep(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} { Nil }
+````
+files."main.taut" = ````tauto
+import "macro.taut"
+import std::builtin::os
+@Gen::keep!(1)
+fn one(): i64 { 1 }
+show(&one())
+````
+stdout = "1\n"

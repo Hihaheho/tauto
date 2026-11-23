@@ -1,0 +1,363 @@
+import "semiring.taut"
+import "equality.taut"
+import "monoid.taut"
+
+pub(open) inductive AlgebraFin: (Nat) -> Type {
+  AlgebraFirst(n: Nat): AlgebraFin(Succ(n))
+  AlgebraNext(n: Nat, index: AlgebraFin(n)): AlgebraFin(Succ(n))
+}
+
+pub def AlgebraVector(R: Type, n: Nat): Type := (AlgebraFin(n)) -> R
+
+pub fn algebra_sum<R: Type>(addition: AlgebraMonoid(0, R), n: Nat, values: AlgebraVector(R, n)): R {
+  match n {
+    Zero => algebra_unit(<u: 0, A: R>, addition)
+    Succ(k) => algebra_op(<u: 0, A: R>,
+      addition
+    )(values(AlgebraFirst(k)), algebra_sum(<R: R>, addition, k, index => values(AlgebraNext(k, index))))
+  }
+}
+
+pub def AlgebraVectorEq(
+  R: Type,
+  n: Nat,
+  left: AlgebraVector(R, n),
+  right: AlgebraVector(R, n)
+): Prop :=
+∀ index: AlgebraFin(n). AlgebraEq(0, R, left(index), right(index))
+
+pub theorem algebra_binary_congr<R: Type, a: R, b: R, c: R, d: R>(
+  op: (R, R) -> R,
+  first: AlgebraEq(0, R, a, b),
+  second: AlgebraEq(0, R, c, d)
+): AlgebraEq(0, R, op(a, c), op(b, d)) {
+  algebra_trans(<u: 0, A: R, a: op(a, c), b: op(b, c), c: op(b, d)>,
+    algebra_congr(<u: 0, v: 0, A: R, B: R, a: a, b: b>, (x: R) => op(x, c), first),
+    algebra_congr(<u: 0, v: 0, A: R, B: R, a: c, b: d>, (y: R) => op(b, y), second)
+  )
+}
+
+pub theorem algebra_sum_congr<R: Type>(
+  addition: AlgebraMonoid(0, R),
+  n: Nat,
+  left: AlgebraVector(R, n),
+  right: AlgebraVector(R, n),
+  equal: AlgebraVectorEq(R, n, left, right)
+): AlgebraEq(0, R, algebra_sum(<R: R>, addition, n, left), algebra_sum(<R: R>, addition, n, right)) {
+  match n {
+    Zero => AlgebraRefl(<u: 0, A: R, a: algebra_unit(<u: 0, A: R>, addition)>)
+    Succ(k) => algebra_binary_congr(
+      algebra_op(<u: 0, A: R>, addition),
+      equal(AlgebraFirst(k)),
+      algebra_sum_congr(<R: R>,
+        addition,
+        k,
+        index => left(AlgebraNext(k, index)),
+        index => right(AlgebraNext(k, index)),
+        index => equal(AlgebraNext(k, index))
+      )
+    )
+  }
+}
+
+pub theorem algebra_sum_zero<R: Type>(
+  addition: AlgebraMonoid(0, R),
+  n: Nat
+): AlgebraEq(
+  0,
+  R,
+  algebra_sum(<R: R>, addition, n, index => algebra_unit(<u: 0, A: R>, addition)),
+  algebra_unit(<u: 0, A: R>, addition)
+) {
+  ⊢ AlgebraEq(
+    0,
+    R,
+    algebra_sum(<R: R>, addition, n, index => algebra_unit(<u: 0, A: R>, addition)),
+    algebra_unit(<u: 0, A: R>, addition)
+  ) from match n {
+    Zero => AlgebraRefl(<u: 0, A: R, a: algebra_unit(<u: 0, A: R>, addition)>)
+    Succ(k) => algebra_chain(
+      algebra_left_unit(<u: 0, A: R>,
+        addition,
+        algebra_sum(<R: R>, addition, k, index => algebra_unit(<u: 0, A: R>, addition))
+      ),
+      algebra_sum_zero(<R: R>, addition, k)
+    )
+  }
+}
+
+pub theorem algebra_add_interchange<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  a: R,
+  b: R,
+  c: R,
+  d: R
+): AlgebraEq(
+  0,
+  R,
+  algebra_op(<u: 0, A: R>, addition)(algebra_op(<u: 0, A: R>, addition)(a, b), algebra_op(<u: 0, A: R>, addition)(c, d)),
+  algebra_op(<u: 0, A: R>, addition)(algebra_op(<u: 0, A: R>, addition)(a, c), algebra_op(<u: 0, A: R>, addition)(b, d))
+) {
+  algebra_chain(
+    algebra_assoc(<u: 0, A: R>, addition, a, b, algebra_op(<u: 0, A: R>, addition)(c, d)),
+    algebra_chain(
+      algebra_apply(
+        (v: R) => algebra_op(<u: 0, A: R>, addition)(a, v),
+        algebra_flip(algebra_assoc(<u: 0, A: R>, addition, b, c, d))
+      ),
+      algebra_chain(
+        algebra_apply(
+          (v: R) => algebra_op(<u: 0, A: R>, addition)(a, algebra_op(<u: 0, A: R>, addition)(v, d)),
+          algebra_add_comm(laws, b, c)
+        ),
+        algebra_chain(
+          algebra_apply(
+            (v: R) => algebra_op(<u: 0, A: R>, addition)(a, v),
+            algebra_assoc(<u: 0, A: R>, addition, c, b, d)
+          ),
+          algebra_flip(algebra_assoc(<u: 0, A: R>, addition, a, c, algebra_op(<u: 0, A: R>, addition)(b, d)))
+        )
+      )
+    )
+  )
+}
+
+pub theorem algebra_sum_add<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  n: Nat,
+  left: AlgebraVector(R, n),
+  right: AlgebraVector(R, n)
+): AlgebraEq(
+  0,
+  R,
+  algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, addition)(left(index), right(index))),
+  algebra_op(<u: 0, A: R>, addition)(algebra_sum(<R: R>, addition, n, left), algebra_sum(<R: R>, addition, n, right))
+) {
+  ⊢ AlgebraEq(
+    0,
+    R,
+    algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, addition)(left(index), right(index))),
+    algebra_op(<u: 0, A: R>,
+      addition
+    )(algebra_sum(<R: R>, addition, n, left), algebra_sum(<R: R>, addition, n, right))
+  ) from match n {
+    Zero => algebra_flip(algebra_left_unit(<u: 0, A: R>, addition, algebra_unit(<u: 0, A: R>, addition)))
+    Succ(k) => algebra_chain(
+      algebra_apply(
+        (v: R) => algebra_op(<u: 0, A: R>,
+          addition
+        )(algebra_op(<u: 0, A: R>, addition)(left(AlgebraFirst(k)), right(AlgebraFirst(k))), v),
+        algebra_sum_add(
+          laws,
+          k,
+          index => left(AlgebraNext(k, index)),
+          index => right(AlgebraNext(k, index))
+        )
+      ),
+      algebra_add_interchange(
+        laws,
+        left(AlgebraFirst(k)),
+        right(AlgebraFirst(k)),
+        algebra_sum(<R: R>, addition, k, index => left(AlgebraNext(k, index))),
+        algebra_sum(<R: R>, addition, k, index => right(AlgebraNext(k, index)))
+      )
+    )
+  }
+}
+
+pub theorem algebra_sum_mul_left<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  n: Nat,
+  values: AlgebraVector(R, n),
+  scalar: R
+): AlgebraEq(
+  0,
+  R,
+  algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, multiplication)(scalar, values(index))),
+  algebra_op(<u: 0, A: R>, multiplication)(scalar, algebra_sum(<R: R>, addition, n, values))
+) {
+  ⊢ AlgebraEq(
+    0,
+    R,
+    algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, multiplication)(scalar, values(index))),
+    algebra_op(<u: 0, A: R>, multiplication)(scalar, algebra_sum(<R: R>, addition, n, values))
+  ) from match n {
+    Zero => algebra_flip(algebra_mul_zero(laws, scalar))
+    Succ(k) => algebra_chain(
+      algebra_apply(
+        (v: R) => algebra_op(<u: 0, A: R>,
+          addition
+        )(algebra_op(<u: 0, A: R>, multiplication)(scalar, values(AlgebraFirst(k))), v),
+        algebra_sum_mul_left(laws, k, index => values(AlgebraNext(k, index)), scalar)
+      ),
+      algebra_flip(
+        algebra_distribute_left(
+          laws,
+          scalar,
+          values(AlgebraFirst(k)),
+          algebra_sum(<R: R>, addition, k, index => values(AlgebraNext(k, index)))
+        )
+      )
+    )
+  }
+}
+
+pub theorem algebra_sum_mul_right<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  n: Nat,
+  values: AlgebraVector(R, n),
+  scalar: R
+): AlgebraEq(
+  0,
+  R,
+  algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, multiplication)(values(index), scalar)),
+  algebra_op(<u: 0, A: R>, multiplication)(algebra_sum(<R: R>, addition, n, values), scalar)
+) {
+  ⊢ AlgebraEq(
+    0,
+    R,
+    algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, multiplication)(values(index), scalar)),
+    algebra_op(<u: 0, A: R>, multiplication)(algebra_sum(<R: R>, addition, n, values), scalar)
+  ) from match n {
+    Zero => algebra_flip(algebra_zero_mul(laws, scalar))
+    Succ(k) => algebra_chain(
+      algebra_apply(
+        (v: R) => algebra_op(<u: 0, A: R>,
+          addition
+        )(algebra_op(<u: 0, A: R>, multiplication)(values(AlgebraFirst(k)), scalar), v),
+        algebra_sum_mul_right(laws, k, index => values(AlgebraNext(k, index)), scalar)
+      ),
+      algebra_flip(
+        algebra_distribute_right(
+          laws,
+          values(AlgebraFirst(k)),
+          algebra_sum(<R: R>, addition, k, index => values(AlgebraNext(k, index))),
+          scalar
+        )
+      )
+    )
+  }
+}
+
+pub theorem algebra_sum_swap<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  rows: Nat,
+  columns: Nat,
+  values: (AlgebraFin(rows), AlgebraFin(columns)) -> R
+): AlgebraEq(
+  0,
+  R,
+  algebra_sum(<R: R>,
+    addition,
+    rows,
+    row => algebra_sum(<R: R>, addition, columns, column => values(row, column))
+  ),
+  algebra_sum(<R: R>,
+    addition,
+    columns,
+    column => algebra_sum(<R: R>, addition, rows, row => values(row, column))
+  )
+) {
+  ⊢ AlgebraEq(
+    0,
+    R,
+    algebra_sum(<R: R>,
+      addition,
+      rows,
+      row => algebra_sum(<R: R>, addition, columns, column => values(row, column))
+    ),
+    algebra_sum(<R: R>,
+      addition,
+      columns,
+      column => algebra_sum(<R: R>, addition, rows, row => values(row, column))
+    )
+  ) from match rows {
+    Zero => algebra_flip(algebra_sum_zero(<R: R>, addition, columns))
+    Succ(k) => algebra_chain(
+      algebra_apply(
+        (v: R) => algebra_op(<u: 0, A: R>,
+          addition
+        )(algebra_sum(<R: R>, addition, columns, column => values(AlgebraFirst(k), column)), v),
+        algebra_sum_swap(laws, k, columns, row => column => values(AlgebraNext(k, row), column))
+      ),
+      algebra_flip(
+        algebra_sum_add(
+          laws,
+          columns,
+          column => values(AlgebraFirst(k), column),
+          column => algebra_sum(<R: R>, addition, k, row => values(AlgebraNext(k, row), column))
+        )
+      )
+    )
+  }
+}
+
+pub fn algebra_fin_value(n: Nat, index: AlgebraFin(n)): Nat {
+  match index {
+    AlgebraFirst(^k) => Zero
+    AlgebraNext(k, prior) => Succ(algebra_fin_value(k, prior))
+  }
+}
+
+pub theorem algebra_vector_eq_refl<R: Type>(
+  n: Nat,
+  values: AlgebraVector(R, n)
+): AlgebraVectorEq(R, n, values, values) {
+  index => AlgebraRefl(<u: 0, A: R, a: values(index)>)
+}
+
+pub theorem algebra_vector_eq_sym<R: Type, n: Nat, left: AlgebraVector(
+  R,
+  n
+), right: AlgebraVector(
+  R,
+  n
+)>(equal: AlgebraVectorEq(R, n, left, right)): AlgebraVectorEq(R, n, right, left) {
+  index => algebra_flip(equal(index))
+}
+
+pub theorem algebra_vector_eq_trans<R: Type, n: Nat, first: AlgebraVector(
+  R,
+  n
+), middle: AlgebraVector(
+  R,
+  n
+), last: AlgebraVector(
+  R,
+  n
+)>(
+  left: AlgebraVectorEq(R, n, first, middle),
+  right: AlgebraVectorEq(R, n, middle, last)
+): AlgebraVectorEq(R, n, first, last) {
+  index => algebra_chain(left(index), right(index))
+}

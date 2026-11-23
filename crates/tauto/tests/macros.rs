@@ -30,14 +30,14 @@ RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
 
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -47,11 +47,11 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -68,7 +68,7 @@ fn check_json_lists_the_macro_runs_with_where_they_were_called() {
     let (lib, lib_text) = math_lib();
     std::fs::write(dir.join(lib), lib_text).unwrap();
     let main = r#"import "math.nib"
-theorem one_plus_two(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+theorem one_plus_two(): math!(`1 + 2 = 3`) { Refl(<A: Nat, a: 3>) }
 "#;
     std::fs::write(dir.join("main.nib"), main).unwrap();
     let report = tauto::report::check_report(&dir.join("main.nib"), None).expect("reads");
@@ -85,7 +85,7 @@ fn a_typed_macro_may_be_in_a_theorems_statement() {
     let dir = scratch("typed-statement");
     std::fs::write(
         dir.join("lib.nib"),
-        r#"import std::prelude::Macro
+        r#"import std::builtin::macro
 pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
 "#,
     )
@@ -93,8 +93,8 @@ pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
     std::fs::write(
         dir.join("main.nib"),
         r#"import "lib.nib"
-theorem in_type(n: Nat): keep!(n = n) { Refl(Nat, n) }
-theorem in_param(n: keep!(Nat)): n = n { Refl(Nat, n) }
+theorem in_type(n: Nat): keep!(n = n) { Refl(<A: Nat, a: n>) }
+theorem in_param(n: keep!(Nat)): n = n { Refl(<A: Nat, a: n>) }
 "#,
     )
     .unwrap();
@@ -103,4 +103,31 @@ theorem in_param(n: keep!(Nat)): n = n { Refl(Nat, n) }
     let json = report.json().render();
     assert!(!json.contains("macro.code"), "{json}");
     assert!(json.contains("\"kind\":\"typed\""), "{json}");
+}
+
+#[test]
+fn a_macro_call_may_take_a_backtick_literal_without_parentheses() {
+    tauto_messages::install();
+    let dir = scratch("bare-literal");
+    let (lib, lib_text) = math_lib();
+    std::fs::write(dir.join(lib), lib_text).unwrap();
+    std::fs::write(
+        dir.join("main.nib"),
+        r#"import "math.nib"
+theorem one_plus_two(): math!`1 + 2 = 3` { Refl(<A: Nat, a: 3>) }
+theorem in_param(h: math!`1 + 2 = 3`): math!`1 + 2 = 3` { h }
+"#,
+    )
+    .unwrap();
+    let report = tauto::report::check_report(&dir.join("main.nib"), None).expect("reads");
+    let json = report.json().render();
+    // (The library's own declarations are not what is under test.)
+    for name in ["one_plus_two", "in_param"] {
+        let ok = format!(
+            "\"name\":\"{name}\",\"file\":\"{}/main.nib\",\"status\":\"ok\"",
+            dir.display()
+        );
+        assert!(json.contains(&ok), "{name}: {json}");
+    }
+    assert!(json.contains("\"macro\":\"math\""), "{json}");
 }

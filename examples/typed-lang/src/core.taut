@@ -1,5 +1,5 @@
-import "../../../std/Base.taut"
-import "../../../std/Mode.taut"
+import std::base
+import std::mode
 
 // 型付き式言語の核。木ではなく、型検査と評価が読む形。
 
@@ -22,7 +22,7 @@ pub(open) inductive TyDecision(a: Ty, b: Ty): Type {
 }
 
 pub fn ty_dec(a: Ty, b: Ty): TyDecision(a, b) {
-  ⊢ TyDecision(a, b) from match a {
+  match a {
     TNat => ⊢ TyDecision(TNat, b) from match b {
       TNat => TySame(Refl)
       TBool => TyDifferent(e => ⊢ False from match e {})
@@ -60,14 +60,14 @@ pub(open) inductive Val: Type {
 
 // 評価器。型の合わない演算は `None`（実行時の型エラー）。
 pub fn add_val(x: Option(Val), y: Option(Val)): Option(Val) {
-  ⊢ Option(Val) from match x {
+  match x {
     None => None
     Some(vx) => ⊢ Option(Val) from match vx {
-      VBool(xb) => None
+      VBool(^xb) => None
       VNat(nx) => ⊢ Option(Val) from match y {
         None => None
         Some(vy) => ⊢ Option(Val) from match vy {
-          VBool(yb) => None
+          VBool(^yb) => None
           VNat(ny) => Some(VNat(Nat::add(nx, ny)))
         }
       }
@@ -76,14 +76,14 @@ pub fn add_val(x: Option(Val), y: Option(Val)): Option(Val) {
 }
 
 pub fn eq_val(x: Option(Val), y: Option(Val)): Option(Val) {
-  ⊢ Option(Val) from match x {
+  match x {
     None => None
     Some(vx) => ⊢ Option(Val) from match vx {
-      VBool(xb) => None
+      VBool(^xb) => None
       VNat(nx) => ⊢ Option(Val) from match y {
         None => None
         Some(vy) => ⊢ Option(Val) from match vy {
-          VBool(yb) => None
+          VBool(^yb) => None
           VNat(ny) => Some(VBool(Nat::eq(nx, ny)))
         }
       }
@@ -92,10 +92,10 @@ pub fn eq_val(x: Option(Val), y: Option(Val)): Option(Val) {
 }
 
 pub fn if_val(c: Option(Val), t: Option(Val), e: Option(Val)): Option(Val) {
-  ⊢ Option(Val) from match c {
+  match c {
     None => None
     Some(vc) => ⊢ Option(Val) from match vc {
-      VNat(n) => None
+      VNat(^n) => None
       VBool(b) => ⊢ Option(Val) from match b {
         true => t
         false => e
@@ -105,7 +105,7 @@ pub fn if_val(c: Option(Val), t: Option(Val), e: Option(Val)): Option(Val) {
 }
 
 pub fn eval(t: Term): Option(Val) {
-  ⊢ Option(Val) from match t {
+  match t {
     TmNum(n) => Some(VNat(n))
     TmBool(b) => Some(VBool(b))
     TmAdd(a, b) => add_val(eval(a), eval(b))

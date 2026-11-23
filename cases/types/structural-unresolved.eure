@@ -26,13 +26,6 @@ values == values
 ```
 types = "error: == needs PartialEq"
 
-@ cases.eq-on-inferred-hashmap
-source = ```nib
-let values := HashMap::new()
-values == values
-```
-types = "error: == needs PartialEq"
-
 @ cases.eq-on-inferred-function-field
 source = ```nib
 struct Holder(A: Shared) { f: (A) -> A }
@@ -40,3 +33,38 @@ let holder := Holder { f: (x) => x }
 holder == holder
 ```
 types = "error: == needs PartialEq"
+
+// A structural class is decided on settled types: an integer literal's type
+// is `i64`, and a type nothing fixed holds no value (`Never`).
+@ cases.eq-on-literal-options
+source = ```nib
+Some(1) == Some(2)
+```
+types = "ok"
+
+@ cases.eq-on-empty-option
+source = ```nib
+let n := None
+n == n
+```
+types = "ok"
+
+@ cases.eq-on-generalized-argument-is-checked-at-the-call
+source = ```nib
+fn same(x) { x == x }
+same((y: i64) => y)
+```
+types = "error: == needs PartialEq"
+
+@ cases.eq-on-list-of-functions-in-a-literal
+source = ```nib
+Cons((y: i64) => y, Nil) == Nil
+```
+types = "error: == needs PartialEq"
+
+@ cases.eq-on-buf
+source = ```nib
+let a := Buf::of(&"x")
+a == a
+```
+types = "ok"

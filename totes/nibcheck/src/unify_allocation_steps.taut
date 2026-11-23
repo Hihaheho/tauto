@@ -5,6 +5,7 @@ import "allocation_state.taut"
 import "binding_allocation.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "unify_sound.taut"
@@ -57,7 +58,7 @@ pub theorem allocated_unify_choice(
   right: TypeAllocated(ck_next_of(c), b),
   same: whole = a
 ): AllocationRun(c, ck_unify_k(fuel, c, b, whole, a)) {
-  ⊢ AllocationRun(c, ck_unify_k(fuel, c, b, whole, a)) from match a {
+  match a {
     TyInt(width) => allocation_run_rewrap(
       c,
       ck_unify_rest_in(fuel, c, whole, b),
@@ -89,6 +90,11 @@ pub theorem allocated_unify_choice(
       ih(c, whole, b, ordered, state, left, right)
     )
     TyFloat => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyFloat32 => allocation_run_rewrap(
       c,
       ck_unify_rest_in(fuel, c, whole, b),
       ih(c, whole, b, ordered, state, left, right)

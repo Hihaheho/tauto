@@ -5,36 +5,39 @@
 // function whose row is written has an effect left to handle.
 
 @ cases.unfixed-row-parameter-is-the-empty-row
-backends = ["rust", "javascript"]
 source = ```tauto
-struct Answer(!e) { run: (arg: i64) -> i64 ! {Div} ∪ e }
+struct Answer(!e) { run: (arg: i64) -> i64 ! {div} ∪ e }
 struct App(!e) { name: Text, answers: List(Answer(e)) }
 
-fn answer<!e>(l: List(Answer(e)), arg: i64): i64 ! {Div} ∪ e {
+fn answer<!e>(l: List(Answer(e)), arg: i64): i64 ! {div} ∪ e {
   match l {
     Nil => 0
     Cons(a, rest) => (a.run)(arg)
   }
 }
 
-fn run_app<!e>(app: App(e)): i64 ! {Div} ∪ e { answer(app.answers, 1) }
+fn run_app<!e>(app: App(e)): i64 ! {div} ∪ e { answer(app.answers, 1) }
 
-fn quiet(): i64 ! {Div} { run_app(App { name: "q", answers: Nil }) }
+fn quiet(): i64 ! {div} { run_app(App { name: "q", answers: Nil }) }
 
-perform show("q", quiet())
-perform show("t", run_app(App { name: "t", answers: Nil }))
-perform show("n", answer(Nil, 4))
+show(&quiet())
+show(&run_app(App { name: "t", answers: Nil }))
+show(&answer(Nil, 4))
 ```
 rows = "ok"
-shows = ["q = 0", "t = 0", "n = 0"]
+stdout = ```
+0
+0
+0
+```
 
 // A function the value holds fixes the parameter: what it performs is still
 // the caller's to handle.
 @ cases.fixed-row-parameter-is-still-handled
 source = ```tauto
 effect log(m: Text): Unit resume 1
-struct Answer(!e) { run: (arg: i64) -> i64 ! {Div} ∪ e }
-fn answer<!e>(l: List(Answer(e)), arg: i64): i64 ! {Div} ∪ e {
+struct Answer(!e) { run: (arg: i64) -> i64 ! {div} ∪ e }
+fn answer<!e>(l: List(Answer(e)), arg: i64): i64 ! {div} ∪ e {
   match l {
     Nil => 0
     Cons(a, rest) => (a.run)(arg)
@@ -44,6 +47,46 @@ let a := Answer { run: (n: i64) => {
   perform log("x")
   n
 } }
-perform show("r", answer(Cons(a, Nil), 4))
+show(&answer(Cons(a, Nil), 4))
 ```
 rows = "error: unhandled effect log at the top level"
+
+// A field of no function, `resources: Nil`, fixes nothing either when
+// another field fixes the row: the record's row is the one `functions`
+// gives, and `Nil` is a `List(Answer(!{ping}))` as it is one of any row.
+@ cases.unfixed-field-beside-a-fixed-one
+llvm.unimplemented = "unsupported: row variable `e` of `run_app` is carried by a record and specialized to a suspending row"
+source = ```tauto
+effect ping(): i64
+struct Answer(!e) { run: (arg: i64) -> i64 ! e }
+struct App(!e) { resources: List(Answer(!e)), functions: List(Answer(!e)) }
+
+fn answering<!e>(run: (a: i64) -> i64 ! e): Answer(!e) { Answer { run: run } }
+
+fn run_app<!e>(a: App(!e)): i64 ! e {
+  match a.functions {
+    Cons(f, _) => (f.run)(1)
+    Nil => 0
+  }
+}
+
+fn pinged(x: i64): i64 ! {ping, overflow} { x + perform ping() }
+
+show(&(handle {
+  run_app(App { resources: Nil, functions: [answering(x => pinged(x))] })
+} with {
+  ping(), k => k(41)
+  return v => v
+}))
+show(&(handle {
+  run_app(App { functions: [answering(x => pinged(x))], resources: Nil })
+} with {
+  ping(), k => k(1)
+  return v => v
+}))
+```
+rows = "ok"
+stdout = ```
+42
+2
+```

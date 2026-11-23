@@ -1,0 +1,47 @@
+// `lang` writes the messages a case reads in that language, as `TAUTO_LANG`
+// does for the command. Each message the user reads has its text in every
+// language, including what `tauto check` says of a hole and what a run says
+// when its step limit runs out.
+
+@ cases.a-hole-is-reported-in-the-language
+lang = "ja"
+files."main.taut" = ```tauto
+theorem both<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  AndIntro(?l, ?r)
+}
+theorem again<A: Prop, B: Prop>(p: And(A, B)): And(B, A) { both(p) }
+```
+entry = "main.taut"
+check_report = "`both` の `?l` はまだ書かれていない"
+
+@ cases.what-uses-a-hole-is-reported-in-the-language
+lang = "ja"
+files."main.taut" = ```tauto
+theorem both<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  AndIntro(?l, ?r)
+}
+theorem again<A: Prop, B: Prop>(p: And(A, B)): And(B, A) { both(p) }
+```
+entry = "main.taut"
+check_report = "`again` は未完成の `both` を使っている"
+
+@ cases.the-step-limit-is-reported-in-the-language
+lang = "ja"
+source = ```tauto
+fn spin(n: u64): u64 ! {div, overflow} { spin(n + 1) }
+let r := spin(0)
+```
+budget = 1000
+run_error = "中断: ステップの上限に達した"
+
+@ cases.a-recursion-that-does-not-end-stops-with-a-message
+// It would run out of the host's memory before its steps: a page's module
+// has 4 GiB at most, and running out ends it with no message. (A call in tail
+// position keeps no frame, so this one adds to what the call answers.)
+lang = "ja"
+source = ```tauto
+fn spin(n: u64): u64 ! {div, overflow} { 1 + spin(n + 1) }
+let r := spin(0)
+```
+budget = 20000000
+run_error = "呼び出しの入れ子が 2097152 段を超えた"

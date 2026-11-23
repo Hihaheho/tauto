@@ -1,6 +1,7 @@
-// Closed numbers past u128 (2^255 - 19) inside terms the kernel compares.
+// Closed numbers past the largest numeral (2^300 - 19) inside terms the kernel
+// compares.
 // The comparison must look at the terms as written before computing them:
-// a sum past u128 taken one `Succ` at a time does not end, and comparing
+// a sum past the largest numeral (2^256 - 1) taken one `Succ` at a time does not end, and comparing
 // `x + n` with `y + n` one `Succ` at a time goes `n` deep.
 
 @ cases.a-name-is-compared-with-its-value-without-computing-a-big-modulus
@@ -12,7 +13,7 @@ fn two_pow(n: Nat): Nat {
     Succ(k) => 2 * two_pow(k)
   }
 }
-fn p(): Nat { Nat::sub(two_pow(255), 19) }
+fn p(): Nat { Nat::sub(two_pow(300), 19) }
 fn nsub(a: Nat, b: Nat, hp: ¬(p() = 0)): Nat { Nat::rem_nz(Nat::sub(a + p(), b), p(), hp) }
 theorem nsub_def(x: Nat, hp: ¬(p() = 0)): nsub(x, two_pow(130), hp) = Nat::rem_nz(Nat::sub(x + p(), two_pow(130)), p(), hp) {
   Refl
@@ -24,7 +25,20 @@ theorem congr_mod(x: Nat, hp: ¬(p() = 0), h: two_pow(130) = x): Nat::rem_nz(two
 
 checks_all = "ok"
 
-@ cases.a-sum-past-u128-is-left-as-it-is-and-said
+@ cases.a-subtraction-past-the-counter-limit-does-not-reduce-to-a-variable
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem wrong(x: Nat): Succ(x) - Succ(Succ(340282366920938463463374607431768211455)) = x {
+  Refl
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::wrong" = "error: type mismatch"
+
+// The kernel computes closed numbers below 2^256: the bounds of 128-bit
+// integers and the products of their values.
+@ cases.closed-numbers-below-2-256-are-computed
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn two_pow(n: Nat): Nat {
@@ -33,15 +47,38 @@ fn two_pow(n: Nat): Nat {
     Succ(k) => 2 * two_pow(k)
   }
 }
-fn p(): Nat { Nat::sub(two_pow(255), 19) }
-fn nsub(a: Nat, b: Nat, hp: ¬(p() = 0)): Nat { Nat::rem_nz(Nat::sub(a + p(), b), p(), hp) }
-theorem wrong(x: Nat, hp: ¬(p() = 0), hq: ¬(two_pow(255) = 0)): Nat::rem_nz(x, p(), hp) = Nat::rem_nz(x, two_pow(255), hq) {
+theorem pow128(): two_pow(128) = 340282366920938463463374607431768211456 {
+  Refl
+}
+theorem max_squared(): Nat::sub(two_pow(128), 1) * Nat::sub(two_pow(128), 1) = 115792089237316195423570985008687907852589419931798687112530834793049593217025 {
+  Refl
+}
+theorem quotient(hq: ¬(Nat::sub(two_pow(128), 1) = 0)): Nat::div_nz(two_pow(255), Nat::sub(two_pow(128), 1), hq) = 170141183460469231731687303715884105728 {
+  Refl
+}
+theorem below(): Nat::lt(two_pow(128) + 1, two_pow(255)) = true {
   Refl
 }
 ```
 
 checks_all = "ok"
-checks."input/main.taut::wrong" = "error: "
+
+@ cases.a-sum-past-2-256-is-left-as-it-is-and-said
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn two_pow(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => 1
+    Succ(k) => 2 * two_pow(k)
+  }
+}
+theorem wrong(): Nat::lt(two_pow(300), 1) = false {
+  Refl
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::wrong" = "error: is past 2^256 and was left as it is"
 
 // `Nat::lt(x + n, m)` ends in a numeral too, but it is not a sum: reading a
 // `Succ` off it runs `lt` down `n` steps. Only sums are taken apart, and the

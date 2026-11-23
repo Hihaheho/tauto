@@ -1,0 +1,55 @@
+// The stage-zero grammar files are projections of Tauto's syntax declaration.
+//   tauto gen-tauto-grammar [--check]
+import "lib/sh.taut" { sh_arg1, sh_bytes, sh_process, sh_root, sh_write }
+import std::builtin::os { eprint, exit, fs_read_bytes }
+import std::prelude::collections { Bytes }
+import std::text { Text }
+
+let root := sh_root()
+let check := sh_arg1() == "--check"
+let out := sh_bytes(
+  sh_process(
+    "cargo",
+    [
+      "run",
+      "--locked",
+      "--quiet",
+      "-p",
+      "tauto-cli",
+      "--",
+      "syntax",
+      "source",
+      "totes/grammar",
+      "tauto"
+    ],
+    root,
+    []
+  )
+)
+var status: i32 := 0
+var files := ["crates/tauto-parol/tauto.par", "crates/tauto-syntax/tests/data/tauto.par"]
+while files != Nil {
+  match files {
+    Nil => #()
+    Cons(file, rest) => {
+      files := rest
+      let path := Text::concat_all([root, "/", file])
+      if check {
+        let same := match perform fs_read_bytes(path) {
+          Ok(b) => Bytes::eq(b, out)
+          Err(_) => false
+        }
+        if same { #() } else {
+          eprint(
+            Text::concat(
+              file,
+              " is out of date; run: tauto gen-tauto-grammar\n"
+            )
+          )
+          status := 1
+        }
+      } else { sh_write(path, out) }
+    }
+  }
+}
+perform exit(status)

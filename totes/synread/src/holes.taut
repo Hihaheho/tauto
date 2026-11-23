@@ -1,0 +1,292 @@
+import "../../scan/src/scan.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::array
+import scan::dynamic
+import std::map
+import "../../ordmap/src/ordmap.taut"
+import "../../unicode/src/tables.taut"
+import "../../unicode/src/unicode.taut"
+
+// The scanner of a syntax whose grammar has a hole (`TautoExpr`): the tokens of `scan_all`, and
+// where a hole ends, as `scan` of `crates/tauto-syntax/src/scan.rs` reads it with `holes`. The
+// scanner's tables find where a hole starts (`${`, `$name`); it goes on to the matching `}`, or over
+// the path and the calls written right after the name.
+
+pub fn ho_byte(text: Text, i: Nat): Nat {
+  match Text::byte(text, i) {
+    Some(b) => b
+    None => 0
+  }
+}
+
+pub fn ho_starts(text: Text, at: Nat, needle: Text): Bool { text_starts_with(text, needle, at) }
+
+// Just after the `close` that matches an `open` before `start_at`. Brackets inside a string or a
+// comment do not count (`close_end`).
+pub fn ho_close_end(text: Text, start_at: Nat, open: Nat, close: Nat): Option(Nat) ! {div, overflow} {
+  let n := Text::len(text)
+  var depth := 1
+  var i := start_at
+  var found: Option(Nat) := None
+  var going := true
+  while going && i < n {
+    let b := ho_byte(text, i)
+    if b == open {
+      depth := depth + 1
+      i := i + 1
+    } else if b == close {
+      depth := depth - 1
+      if depth == 0 {
+        found := Some(i + 1)
+        going := false
+      } else {
+        i := i + 1
+      }
+    } else if b == 34 || b == 39 {
+      i := i + 1
+      var inside := true
+      while inside && i < n {
+        let c := ho_byte(text, i)
+        if c == b {
+          inside := false
+        } else {
+          if c == 92 && b == 34 {
+            i := i + 1
+          }
+          i := i + 1
+        }
+      }
+      i := i + 1
+    } else if b == 47 && ho_byte(text, i + 1) == 47 {
+      while i < n && ho_byte(text, i) != 10 {
+        i := i + 1
+      }
+    } else {
+      i := i + 1
+    }
+  }
+  found
+}
+
+// The six bits a continuation byte of UTF-8 holds (the text is valid UTF-8).
+pub fn ho_cont(text: Text, i: Nat): Nat { ho_byte(text, i) - 128 }
+
+// The code point whose UTF-8 starts at byte `i`, and how many bytes it takes.
+pub fn ho_code_point(text: Text, i: Nat): Nat × Nat {
+  let b := ho_byte(text, i)
+  if b < 128 {
+    #(b, 1)
+  } else if b < 224 {
+    #((b - 192) * 64 + ho_cont(text, i + 1), 2)
+  } else if b < 240 {
+    #(
+      (b - 224) * 4096 + (ho_cont(text, i + 1)) * 64 + ho_cont(text, i + 2),
+      3
+    )
+  } else {
+    #(
+      (b - 240) * 262144 + (ho_cont(text, i + 1)) * 4096 + (ho_cont(text, i + 2)) * 64 + ho_cont(text, i + 3),
+      4
+    )
+  }
+}
+
+// `alpha` are the ranges of `char::is_alphabetic` from U+0080 (`unicode_table_alphabetic`), the alphanumeric
+// ones those of `classes`.
+pub fn ho_alphabetic(alpha: Ordmap(Nat, Nat), c: Nat): Bool {
+  if c < 128 { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) } else { unicode_in(alpha, c) }
+}
+
+pub fn ho_alphanumeric(classes: UnicodeClasses, c: Nat): Bool { unicode_is_alphanumeric(classes, c) }
+
+// Just after `::name` (or `::r#name`) at `start_at`, when the text there is one, as tauto reads a path: a
+// name starts with an alphabetic character or `_` and goes on with alphanumeric ones.
+pub fn ho_path_segment_end(
+  text: Text,
+  alpha: Ordmap(Nat, Nat),
+  classes: UnicodeClasses,
+  start_at: Nat
+): Option(Nat) ! {div} {
+  if ho_byte(text, start_at) == 58 && ho_byte(text, start_at + 1) == 58 {
+    var at := start_at + 2
+    if ho_byte(text, at) == 114 && ho_byte(text, at + 1) == 35 {
+      at := at + 2
+    }
+    if at < Text::len(text) {
+      match ho_code_point(text, at) {
+        #(first, len) => if ho_alphabetic(alpha, first) || first == 95 {
+          var i := at + len
+          var going := true
+          while going && i < Text::len(text) {
+            match ho_code_point(text, i) {
+              #(c, n) => if ho_alphanumeric(classes, c) || c == 95 {
+                i := i + n
+              } else {
+                going := false
+              }
+            }
+          }
+          Some(i)
+        } else {
+          None
+        }
+      }
+    } else {
+      None
+    }
+  } else {
+    None
+  }
+}
+
+// Where a `$` expression without braces ends. `start_at` is just after `$name` (or just after the `$` of `$(`)
+// (`postfix_end`).
+pub fn ho_postfix_end(text: Text, alpha: Ordmap(Nat, Nat), classes: UnicodeClasses, start_at: Nat): Option(Nat) ! {div, overflow} {
+  let after_dollar := start_at > 0 && ho_byte(text, start_at - 1) == 36
+  if after_dollar && ho_byte(text, start_at) == 35 {
+    if ho_byte(text, start_at + 1) == 40 {
+      ho_close_end(text, start_at + 2, 40, 41)
+    } else if ho_byte(text, start_at + 1) == 123 {
+      ho_close_end(text, start_at + 2, 123, 125)
+    } else {
+      None
+    }
+  } else if after_dollar && ho_byte(text, start_at) == 91 {
+    ho_close_end(text, start_at + 1, 91, 93)
+  } else {
+    var i := start_at
+    if start_at > 0 && not(after_dollar) {
+      var more := true
+      while more {
+        match ho_path_segment_end(text, alpha, classes, i) {
+          Some(e) => { i := e }
+          None => { more := false }
+        }
+      }
+    }
+    if ho_byte(text, i) == 33 && ho_byte(text, i + 1) == 96 {
+      var j := i + 2
+      var stop := false
+      while not(stop) && j < Text::len(text) {
+        let b := ho_byte(text, j)
+        if b == 96 || b == 10 || b == 13 {
+          stop := true
+        } else {
+          j := j + 1
+        }
+      }
+      if stop && ho_byte(text, j) == 96 { Some(j + 1) } else { None }
+    } else {
+      if ho_byte(text, i) == 33 && ho_byte(text, i + 1) == 40 {
+        i := i + 1
+      }
+      var ok := true
+      while ok && ho_byte(text, i) == 40 && i < Text::len(text) {
+        match ho_close_end(text, i + 1, 40, 41) {
+          Some(e) => { i := e }
+          None => { ok := false }
+        }
+      }
+      if ok { Some(i) } else { None }
+    }
+  }
+}
+
+// The end of a hole the scanner found up to `end`: `${` goes to the matching `}`, the rest over the path and calls.
+pub fn ho_end(text: Text, alpha: Ordmap(Nat, Nat), classes: UnicodeClasses, end: Nat): Option(Nat) ! {div, overflow} {
+  if ho_byte(text, end - 1) == 123 {
+    ho_close_end(text, end, 123, 125)
+  } else {
+    ho_postfix_end(text, alpha, classes, end)
+  }
+}
+
+// `$(`, `$[`, `$#(` and `$#{` start a hole before the scanner's tables are asked.
+pub fn ho_paren_start(text: Text, pos: Nat): Bool {
+  ho_starts(text, pos, "$(") || ho_starts(text, pos, "$[") || ho_starts(text, pos, "$#(") || ho_starts(text, pos, "$#{")
+}
+
+// The tokens start_at byte `pos` within `k` steps, after `done` (last first); a hole token that does not end is no token.
+pub fn ho_scan_in(
+  k: Nat,
+  t: &ScanTables,
+  text: Text,
+  n: Nat,
+  pos: Nat,
+  mode: ScanMode,
+  held: List(ScanHeld),
+  hole: Nat,
+  alpha: Ordmap(Nat, Nat),
+  classes: UnicodeClasses,
+  done: List(ScanToken)
+): List(ScanToken) ! {div, overflow} {
+  match k {
+    Zero => List::reverse(done)
+    Succ(k2) => if pos < n {
+      let found: Option(Nat × Nat) := if ho_paren_start(text, pos) {
+        Some(#(pos + 1, hole))
+      } else {
+        scan_find(scan_at(t, held, pos), text, mode.current, pos, n)
+      }
+      let r: Option(Nat × Nat) := match found {
+        None => None
+        Some(f) => match f {
+          #(end0, token) => match if token == hole { ho_end(text, alpha, classes, end0) } else { Some(end0) } {
+            None => None
+            Some(end) => Some(#(end, token))
+          }
+        }
+      }
+      match r {
+        None => ho_scan_in(
+          k2,
+          t,
+          text,
+          n,
+          pos + scan_char_length(Text::byte_value(text, pos)),
+          mode,
+          held,
+          hole,
+          alpha,
+          classes,
+          done
+        )
+        Some(e) => match e {
+          #(end, token) => ho_scan_in(
+            k2,
+            t,
+            text,
+            n,
+            end,
+            scan_change(t, mode, token),
+            scan_commit(scan_at(t, held, pos), text, token, pos, end),
+            hole,
+            alpha,
+            classes,
+            Cons(ScanToken { token_type: token, start: pos, end: end, mode: mode.current }, done)
+          )
+        }
+      }
+    } else {
+      List::reverse(done)
+    }
+  }
+}
+
+pub fn ho_scan_all(t: &ScanTables, text: Text, hole: Nat, classes: UnicodeClasses): List(ScanToken) ! {div, overflow} {
+  ho_scan_in(
+    Text::len(text),
+    t,
+    text,
+    Text::len(text),
+    0,
+    ScanMode { current: 0, pushed: Nil },
+    scan_held_start(List::length(t.dyn_states)),
+    hole,
+    unicode_ranges(text_split(unicode_table_alphabetic(), " "), None, Ordmap::empty()),
+    classes,
+    Nil
+  )
+}

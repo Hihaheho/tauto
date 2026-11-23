@@ -1,5 +1,5 @@
 //! `include_text!("path")`: the text of a file, read where the call is
-//! written (`docs/design/macro.md`「組み込みの読み込み `include_text!`」).
+//! written (`docs/design/macro.md`「`include_text!`」).
 //!
 //! The reader replaces each call in a file it reads, before the macros of the
 //! file are expanded, by a `Text` literal that holds the bytes of the file
@@ -11,9 +11,14 @@
 //! that is not UTF-8. What comes after the reader (the macros, the checkers,
 //! the kernel) sees only the literal.
 //!
-//! The call is not a macro: no user code runs and a macro function cannot read
-//! a file through it. A call that a macro makes, or one in a text read without
-//! a file, is refused by the expander (`macro.include_text`).
+//! `include_bytes!("path")` follows the same rules and reads any bytes: it is
+//! replaced by `Bytes::of_list([b0, b1, …])`, the bytes of the file as a
+//! `Bytes` of `std::prelude::Collections`, with each byte a number literal.
+//!
+//! The calls are not macros: no user code runs and a macro function cannot
+//! read a file through them. A call that a macro makes, or one in a text read
+//! without a file, is refused by the expander (`macro.include_text`,
+//! `macro.include_bytes`).
 
 use std::path::{Component, Path, PathBuf};
 use tauto_message::{Message, msg};
@@ -24,10 +29,16 @@ use super::{Source, canonical_path};
 use crate::surface::{Stmt, SurfaceTerm, TermKind, walk};
 
 pub const NAME: &str = tauto_macro::macros::expand::INCLUDE_TEXT;
+pub const BYTES: &str = tauto_macro::macros::expand::INCLUDE_BYTES;
+
+/// Whether `name` is one of the built-in reads.
+pub fn is_include(name: &str) -> bool {
+    name == NAME || name == BYTES
+}
 
 /// What the reader of one file read for its `include_text!` calls.
 #[derive(Default)]
-pub(crate) struct Included {
+pub struct Included {
     /// What went wrong, at the call.
     pub errors: Vec<(Message, Span)>,
     /// The files read, by canonical path, in the order of the calls.
@@ -37,10 +48,11 @@ pub(crate) struct Included {
 }
 
 /// Replaces every `include_text!("path")` written in `stmts`, the statements
-/// of the file at `file`, by the text of the file it names. A file whose text
+/// of the file at `file`, by the text of the file it names, and every
+/// `include_bytes!("path")` by its bytes. A file whose text
 /// `source` gives is not read from disk. A call that fails is left as syntax
 /// the checkers refuse, with its error in `out`.
-pub(crate) fn read_includes(
+pub fn read_includes(
     stmts: &mut [Stmt],
     file: &Path,
     source: &Source<'_>,
@@ -51,25 +63,57 @@ pub(crate) fn read_includes(
             let TermKind::MacroCall { name, arg } = &*t.kind else {
                 return;
             };
-            if name != NAME {
+            if !is_include(name) {
                 return;
             }
+            let name = name.clone();
+            let bytes = name == BYTES;
             let made = match &*arg.kind {
-                TermKind::Text(path) => read(file, path, source, &mut out.inputs),
-                _ => Err(msg!("tauto-include-argument", name = NAME)),
+                TermKind::Text(path) => read(file, path, source, bytes, &mut out.inputs),
+                _ => Err(msg!("tauto-include-argument", name = &name)),
             };
             *t = match made {
-                Ok((text, read)) => {
-                    out.files.push(read);
-                    SurfaceTerm::new(TermKind::Text(text), t.span)
+                Ok((read, path)) => {
+                    out.files.push(path);
+                    match read {
+                        Read::Text(text) => SurfaceTerm::new(TermKind::Text(text), t.span),
+                        Read::Bytes(bytes) => bytes_literal(&bytes, t.span),
+                    }
                 }
                 Err(e) => {
                     out.errors.push((e.into(), t.span));
-                    SurfaceTerm::new(TermKind::Other(format!("{NAME}!")), t.span)
+                    SurfaceTerm::new(TermKind::Other(format!("{name}!")), t.span)
                 }
             };
         });
     }
+}
+
+/// The most bytes one `include_bytes!` reads. The literal is a term for each
+/// byte, nested once per byte, and the passes after the reader walk it
+/// recursively; a file larger than this is refused rather than overflowing
+/// their stack.
+pub const BYTES_LIMIT: usize = 16 * 1024;
+
+/// What a call read: a text, or bytes.
+enum Read {
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+/// `Bytes::of_list([b0, b1, …])`, every part at the span of the call.
+pub(crate) fn bytes_literal(bytes: &[u8], span: Span) -> SurfaceTerm {
+    let list = bytes
+        .iter()
+        .rev()
+        .fold(SurfaceTerm::var("Nil", span), |rest, b| {
+            SurfaceTerm::app(
+                "Cons",
+                vec![SurfaceTerm::new(TermKind::Nat(b.to_string()), span), rest],
+                span,
+            )
+        });
+    SurfaceTerm::app("Bytes::of_list", vec![list], span)
 }
 
 /// The directory a file's `include_text!` may read in: the nearest directory
@@ -83,14 +127,56 @@ pub fn root_of(file: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-/// The text of the file `written` names, from `file`, and its canonical path.
+/// The directories a file's `include_text!` may read in: [`root_of`], and the
+/// directories its tote's manifest lists as `package.include-from`, as far as they
+/// stay inside the workspace: the outermost directory above the tote that holds
+/// a `Tauto.eure`. A tote fetched from elsewhere is its own workspace, so its
+/// list reaches nothing new.
+pub fn roots_of(file: &Path) -> Vec<PathBuf> {
+    let root = root_of(file);
+    let mut roots = vec![root.clone()];
+    let Ok(manifest) = crate::manifest::read(&root) else {
+        return roots;
+    };
+    if manifest.package.include_from.is_empty() {
+        return roots;
+    }
+    let workspace = root
+        .ancestors()
+        .filter(|d| d.join("Tauto.eure").is_file())
+        .last()
+        .unwrap_or(&root)
+        .to_path_buf();
+    for dir in &manifest.package.include_from {
+        let mut target = root.clone();
+        for part in Path::new(dir).components() {
+            match part {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    target.pop();
+                }
+                Component::Normal(p) => target.push(p),
+                Component::RootDir | Component::Prefix(_) => {}
+            }
+        }
+        if target.starts_with(&workspace) {
+            roots.push(canonical_path(&target));
+        }
+    }
+    roots
+}
+
+/// The text (or, with `bytes`, the bytes) of the file `written` names, from
+/// `file`, and its canonical path.
 fn read(
     file: &Path,
     written: &str,
     source: &Source<'_>,
+    bytes: bool,
     inputs: &mut Vec<PathBuf>,
-) -> Result<(String, PathBuf), Message> {
+) -> Result<(Read, PathBuf), Message> {
     let root = root_of(file);
+    let roots = roots_of(file);
     let file = canonical_path(file);
     let dir = file.parent().unwrap_or(Path::new("/"));
     let rel = Path::new(written);
@@ -108,12 +194,17 @@ fn read(
         )
     };
     let mut target = dir.to_path_buf();
+    // Whether the path went out of the tote's own directory on the way.
+    let mut left = false;
     for part in rel.components() {
         match part {
             Component::CurDir => {}
             Component::ParentDir => {
-                if target == root || !target.pop() {
+                if !target.pop() {
                     return Err(outside());
+                }
+                if !target.starts_with(&root) {
+                    left = true;
                 }
             }
             Component::Normal(p) => target.push(p),
@@ -122,13 +213,17 @@ fn read(
             }
         }
     }
-    if !target.starts_with(&root) {
+    if !roots.iter().any(|r| target.starts_with(r)) {
+        return Err(outside());
+    }
+    // A path that leaves the tote does not come back into it.
+    if left && target.starts_with(&root) {
         return Err(outside());
     }
     // A symbolic link on the way may lead out of the tote.
-    let on_disk = target.canonicalize().ok();
+    let on_disk = crate::program::canonicalize(&target).ok();
     if let Some(real) = &on_disk
-        && !real.starts_with(&root)
+        && !roots.iter().any(|r| real.starts_with(r))
     {
         return Err(msg!(
             "tauto-include-symlink",
@@ -140,14 +235,38 @@ fn read(
     // Track the written path too: a local symlink can be retargeted.
     inputs.push(target);
     inputs.push(path.clone());
-    let text = match source(&path) {
-        Some(given) => given.map_err(|e| read_error(written, e.to_string()))?,
+    let read = match source(&path) {
+        Some(given) => {
+            let text = given.map_err(|e| read_error(written, e.to_string()))?;
+            if bytes {
+                Read::Bytes(text.into_bytes())
+            } else {
+                Read::Text(text)
+            }
+        }
         None => {
-            let bytes = std::fs::read(&path).map_err(|e| read_error(written, e.to_string()))?;
-            String::from_utf8(bytes).map_err(|_| msg!("tauto-include-not-utf8", path = written))?
+            let read = std::fs::read(&path).map_err(|e| read_error(written, e.to_string()))?;
+            if bytes {
+                Read::Bytes(read)
+            } else {
+                Read::Text(
+                    String::from_utf8(read)
+                        .map_err(|_| msg!("tauto-include-not-utf8", path = written))?,
+                )
+            }
         }
     };
-    Ok((text, path))
+    if let Read::Bytes(b) = &read
+        && b.len() > BYTES_LIMIT
+    {
+        return Err(msg!(
+            "tauto-include-too-large",
+            path = written,
+            size = b.len().to_string(),
+            limit = BYTES_LIMIT.to_string()
+        ));
+    }
+    Ok((read, path))
 }
 
 /// "include.read: `WRITTEN`: ERROR".

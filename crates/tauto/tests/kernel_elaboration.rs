@@ -30,7 +30,7 @@ fn core_accepts_what_the_named_checker_elaborates() {
         recs: 0,
     };
     let library = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../std/WellFounded.taut")
+        .join("../../std/well_founded.taut")
         .canonicalize()
         .unwrap();
     let prefix = generator::prefix();

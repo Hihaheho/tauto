@@ -1,0 +1,84 @@
+// A borrowed function of the S tier handed to a function of the M tier (one
+// that performs an operation that resumes ω). The M tier's continuations may
+// run after the code that made the closure has returned, so the Rust backend
+// holds the function as a shared handle with copies of what it captures; CFL
+// lets only duplicable values and shared borrows live across `ω`, so the
+// copies read what the borrows would (docs/design/rust-backend.md, "Tier M").
+@ cases.multi-shot-borrowed-callback-captures-a-local
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect pick(): Bool resume ω
+fn own<A: Shared + NoBorrow>(x: &A): A { x }
+fn with_mut<A: Shared, R>(a: A, f: &((x: &mut A) -> R)): R ! {pick} {
+  let b := perform pick()
+  var v := a
+  f(&mut v)
+}
+fn bump(n: nat, k: nat): nat ! {pick} {
+  with_mut(n, (m) => {
+    *m := m + k
+    own(m)
+  })
+}
+show(&(handle { bump(1, 2) } with {
+  pick(), k => k(true) + k(false)
+  return x => x
+}))
+```
+stdout = "6\n"
+
+// The callback's own row (`h`) holds an operation of the O tier that a
+// handler outside answers.
+@ cases.multi-shot-borrowed-callback-with-its-own-row
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect pick(): Bool resume ω
+effect ask(): nat
+fn own<A: Shared + NoBorrow>(x: &A): A { x }
+fn with_mut<A: Shared, R, !h>(a: A, f: &((x: &mut A) -> R ! h)): R ! {pick} ∪ h {
+  let b := perform pick()
+  var v := a
+  f(&mut v)
+}
+fn bump(n: nat, k: nat): nat ! {pick, ask} {
+  with_mut(n, (m) => {
+    *m := m + k + perform ask()
+    own(m)
+  })
+}
+show(&(handle {
+  handle { bump(1, 2) } with {
+    pick(), k => k(true) + k(false)
+    return x => x
+  }
+} with {
+  ask(), k => k(10)
+  return x => x
+}))
+```
+stdout = "26\n"
+
+// A named function lent with `&`, and a callback the M tier passes on to
+// another function of the M tier, which calls it after each resumption.
+@ cases.multi-shot-borrowed-callback-passed-on
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+effect pick(): nat resume ω
+fn apply(f: &((x: nat) -> nat), x: nat): nat ! {pick} {
+  let d := perform pick()
+  f(x + d)
+}
+fn twice(f: &((x: nat) -> nat), x: nat): nat ! {pick} {
+  let y := apply(f, x)
+  apply(f, y)
+}
+fn double(x: nat): nat { x * 2 }
+fn run(base: nat): nat ! {pick} {
+  twice(&double, base) + twice((x) => x + base, 1)
+}
+show(&(handle { run(3) } with {
+  pick(), k => k(0) + k(1)
+  return x => x
+}))
+```
+stdout = "368\n"

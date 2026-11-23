@@ -1,0 +1,1238 @@
+import "../../identity/src/identity.taut"
+import "messages.taut"
+import "rows_base.taut"
+import "types_run.taut"
+import std::map
+import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
+import std::base
+import std::text
+import "checker.taut"
+import "datas.taut"
+import "ty.taut"
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
+
+
+// Effects indexed by type (`types/indices.rs`): a row that writes an effect
+// with type arguments (`! {res(Pos), res(Vel)}`) names two effects,
+// `res(Pos)` and `res(Vel)`. The expansion gives each instance a name of its
+// own (`res@Pos`, which no program can write) and a declaration without
+// generics, renames each `perform` and arm of the effect after the type
+// arguments it was checked with, and copies a function whose own generic is
+// such an argument for each type a call gives it. The checks after it see
+// ordinary effects, matched by name.
+
+pub fn ix_has_byte(bs: List(Nat), b: Nat): Bool {
+  match bs {
+    Nil => false
+    Cons(x, rest) => if x == b { true } else { ix_has_byte(rest, b) }
+  }
+}
+
+mutual {
+  // The names a type argument is written with, each once, the last first
+  // (`Vec` and `T` of `Vec(T)`).
+  pub fn ix_term_names(t: SurfaceTerm, out: List(Text)): List(Text) {
+    match t {
+      SurfaceTermIndexedMk(k, ^start, ^end, ^occurrence) => ix_kind_names(k, out)
+    }
+  }
+
+  pub fn ix_kind_names(k: SurfaceKind, out: List(Text)): List(Text) {
+    match k {
+      SkVar(n) => if text_list_has(out, surface_name_text(n)) { out } else { Cons(surface_name_text(n), out) }
+      SkApp(f, args) => ix_terms_names(args, ix_term_names(f, out))
+      _ => out
+    }
+  }
+
+  pub fn ix_terms_names(ts: List(SurfaceTerm), out: List(Text)): List(Text) {
+    match ts {
+      Nil => out
+      Cons(t, rest) => ix_terms_names(rest, ix_term_names(t, out))
+    }
+  }
+}
+
+// The effects the host answers by their names; they are never indexed.
+pub fn ix_host(name: Text): Bool {
+  name == "exceeded" || name == "ref_new" || name == "ref_get" || name == "ref_set" || name == "weak_of" || name == "weak_get" || name == "mutex_new" || name == "mutex_claim" || name == "mutex_take_claimed" || name == "mutex_put" || name == "mutex_withdraw"
+}
+
+// The effect an entry applies to type arguments (`res` of `res(Pos)`); none
+// for a name, a row variable, an instance already written (`res@Pos`) or an
+// entry for every instance (`∀ A. res(A)`).
+pub fn ix_head(entry: RowEntry): Option(Text) {
+  match entry {
+    EntryName(^n, ^mark) => None
+    EntryApplied(n, ^args, universal, ^forall, ^mark) => if universal { None } else { Some(n) }
+  }
+}
+
+// The type arguments an entry applies its effect to.
+pub fn ix_entry_args(entry: RowEntry): List(SurfaceTerm) {
+  match entry {
+    EntryName(^n, ^mark) => Nil
+    EntryApplied(^n, args, ^universal, ^forall, ^mark) => args
+  }
+}
+
+// What the expansion reads of a term.
+pub(open) inductive IxSite: Type {
+  IxVarAt(name: Text, start: Nat, end: Nat, occ: Option(TermOccurrence)): IxSite
+  IxPerformAt(
+    op: Text,
+    start: Nat,
+    end: Nat,
+    occ: Option(TermOccurrence),
+    args: List(SurfaceTerm)
+  ): IxSite
+  IxArmAt(op: Text, binds: List(Text), types: List(SurfaceTerm), start: Nat, end: Nat): IxSite
+  IxCallAt(start: Nat, end: Nat, args: List(SurfaceTerm)): IxSite
+  IxRowAt(entries: List(RowEntry)): IxSite
+  IxHandleAt: IxSite
+}
+
+mutual {
+  pub fn ix_sites(t: SurfaceTerm): List(IxSite) {
+    match t {
+      SurfaceTermIndexedMk(k, start, end, occurrence) => ix_kind_sites(k, start, end, occurrence)
+    }
+  }
+
+  pub fn ix_kind_sites(
+    k: SurfaceKind,
+    start: Nat,
+    end: Nat,
+    occurrence: Option(TermOccurrence)
+  ): List(IxSite) {
+    match k {
+      SkVar(name) => Cons(IxVarAt(surface_name_text(name), start, end, occurrence), Nil)
+      SkApp(f, args) => Cons(
+        IxCallAt(f.start, f.end, args),
+        List::append(ix_sites(f), ix_sites_each(args))
+      )
+      SkPi(params, result, effects) => List::append(
+        ⊢ List(IxSite) from match effects {
+          None => Nil
+          Some(row) => Cons(IxRowAt(row), Nil)
+        },
+        List::append(ix_param_sites(params), ix_sites(result))
+      )
+      SkExists(^binder, domain, body, ^unused) => List::append(ix_sites(domain), ix_sites(body))
+      SkLam(^params, body, _, _) => ix_sites(body)
+      SkUnion(parts) => ix_sites_each(parts)
+      SkTagged(^tag, x) => ix_sites(x)
+      SkIf(c, th, el) => List::append(ix_sites(c), List::append(ix_sites(th), ix_opt_sites(el)))
+      SkField(base, ^name) => ix_sites(base)
+      SkBlock(stmts) => ix_stmts_sites(stmts)
+      SkPerform(op, args) => Cons(
+        IxPerformAt(op, start, end, occurrence, args),
+        ix_sites_each(args)
+      )
+      SkHandle(body, handlers) => Cons(
+        IxHandleAt,
+        List::append(ix_sites(body), ix_handler_sites(handlers))
+      )
+      SkBudget(^memory, amount, body) => List::append(ix_sites(amount), ix_sites(body))
+      SkMatch(scrutinee, motive, arms, ^binder, _) => List::append(
+        ix_sites(scrutinee),
+        List::append(ix_opt_sites(motive), ix_arm_sites(arms))
+      )
+      SkRecord(^name, fields) => ix_field_sites(fields)
+      SkBorrow(^m, ^m_orig, x) => ix_sites(x)
+      SkFnKind(^kind, ty) => ix_sites(ty)
+      SkBorrowLam(^r#borrows, lam) => ix_sites(lam)
+      _ => Nil
+    }
+  }
+
+  pub fn ix_sites_each(ts: List(SurfaceTerm)): List(IxSite) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => List::append(ix_sites(t), ix_sites_each(rest))
+    }
+  }
+
+  pub fn ix_opt_sites(t: Option(SurfaceTerm)): List(IxSite) {
+    match t {
+      None => Nil
+      Some(x) => ix_sites(x)
+    }
+  }
+
+  pub fn ix_param_sites(ps: List(SurfaceParam)): List(IxSite) {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => List::append(ix_param_site(p), ix_param_sites(rest))
+    }
+  }
+
+  pub fn ix_field_sites(fs: List(SurfaceField)): List(IxSite) {
+    match fs {
+      Nil => Nil
+      Cons(f, rest) => List::append(ix_field_site(f), ix_field_sites(rest))
+    }
+  }
+
+  pub fn ix_handler_sites(hs: List(SurfaceHandler)): List(IxSite) {
+    match hs {
+      Nil => Nil
+      Cons(h, rest) => List::append(ix_handler_site(h), ix_handler_sites(rest))
+    }
+  }
+
+  pub fn ix_arm_sites(arms: List(SurfaceArm)): List(IxSite) {
+    match arms {
+      Nil => Nil
+      Cons(a, rest) => List::append(ix_arm_site(a), ix_arm_sites(rest))
+    }
+  }
+
+  pub fn ix_param_site(p: SurfaceParam): List(IxSite) {
+    match p {
+      SurfaceParamMk(^name, ty, _) => ix_sites(ty)
+    }
+  }
+
+  pub fn ix_field_site(f: SurfaceField): List(IxSite) {
+    match f {
+      SurfaceFieldMk(^name, value) => ix_sites(value)
+    }
+  }
+
+  pub fn ix_arm_site(a: SurfaceArm): List(IxSite) {
+    match a {
+      SurfaceArmMk(^pattern, guard, ^goal, body) => List::append(ix_opt_sites(guard), ix_sites(body))
+    }
+  }
+
+  pub fn ix_handler_site(h: SurfaceHandler): List(IxSite) {
+    match h {
+      HdReturn(^p, body) => ix_sites(body)
+      HdOperation(op, binds, types, ^patterns, ^resume_mode, _, guard, body) => Cons(
+        IxArmAt(op, binds, types, body.start, body.end),
+        List::append(ix_opt_sites(guard), ix_sites(body))
+      )
+    }
+  }
+
+  pub fn ix_fn_sites(f: SurfaceFn): List(IxSite) {
+    match f {
+      SurfaceFnMk(^name, ^gs, ^bounds, ^params, ^r#borrows, types, result, effects, ^wheres, ^start, ^end, body, ^lends, generic_types, ^bound_starts, ^visibility, ^row_hole, ^slot_unused, ^slot_unused_generics, ^slot_unused_params) => List::append(
+        ⊢ List(IxSite) from match effects {
+          None => Nil
+          Some(row) => Cons(IxRowAt(row), Nil)
+        },
+        List::append(ix_sites_each(generic_types), List::append(ix_opt_sites_each(types), List::append(ix_opt_sites(result), ix_sites(body))))
+      )
+    }
+  }
+
+  pub fn ix_opt_sites_each(ts: List(Option(SurfaceTerm))): List(IxSite) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => List::append(ix_opt_sites(t), ix_opt_sites_each(rest))
+    }
+  }
+
+  pub fn ix_fns_sites(fs: List(SurfaceFn)): List(IxSite) {
+    match fs {
+      Nil => Nil
+      Cons(f, rest) => List::append(ix_fn_sites(f), ix_fns_sites(rest))
+    }
+  }
+
+  pub fn ix_stmt_sites(s: SurfaceStmt): List(IxSite) {
+    match s {
+      StLet(^name, ty, value, ^b, ^m, ^unused, ^st_stack) => List::append(ix_opt_sites(ty), ix_sites(value))
+      StVar(^name, ty, value, ^b, ^unused, ^st_stack) => List::append(ix_opt_sites(ty), ix_sites(value))
+      StAssign(^name, place, value) => List::append(ix_opt_sites(place), ix_sites(value))
+      StFn(f) => ix_fn_sites(f)
+      StMutual(stmts, ^start, ^end) => ix_stmts_sites(stmts)
+      StExtern(fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => ix_fns_sites(fns)
+      StWhile(c, body) => List::append(ix_sites(c), ix_sites(body))
+      StReturn(value) => ix_opt_sites(value)
+      StExpr(value) => ix_sites(value)
+      StAttributed(^name, ^arg, ^generates, stmt) => ix_stmt_sites(stmt)
+      _ => Nil
+    }
+  }
+
+  pub fn ix_stmts_sites(ss: List(SurfaceStmt)): List(IxSite) {
+    match ss {
+      Nil => Nil
+      Cons(s, rest) => List::append(ix_stmt_sites(s), ix_stmts_sites(rest))
+    }
+  }
+}
+
+pub fn ix_names_in(sites: List(IxSite), name: Text): Bool {
+  match sites {
+    Nil => false
+    Cons(s, rest) => ⊢ Bool from match s {
+      IxVarAt(n, ^start, ^end, ^occ) => n == name || ix_names_in(rest, name)
+      _ => ix_names_in(rest, name)
+    }
+  }
+}
+
+pub fn ix_row_heads(row: List(RowEntry), out: List(Text)): List(Text) {
+  match row {
+    Nil => out
+    Cons(entry, rest) => ⊢ List(Text) from match ix_head(entry) {
+      Some(head) => if ix_host(head) || text_list_has(out, head) {
+        ix_row_heads(rest, out)
+      } else {
+        ix_row_heads(rest, Cons(head, out))
+      }
+      None => ix_row_heads(rest, out)
+    }
+  }
+}
+
+// The effects some row writes with type arguments, or an arm answers one
+// instance of (`res<Pos>()`).
+pub fn ix_indexed_in(sites: List(IxSite), out: List(Text)): List(Text) {
+  match sites {
+    Nil => out
+    Cons(s, rest) => ⊢ List(Text) from match s {
+      IxRowAt(row) => ix_indexed_in(rest, ix_row_heads(row, out))
+      IxArmAt(op, binds, types, ^start, ^end) => ⊢ List(Text) from match binds {
+        Nil => ⊢ List(Text) from match types {
+          Nil => ix_indexed_in(rest, out)
+          Cons(^t, ^more) => if ix_host(op) || text_list_has(out, op) {
+            ix_indexed_in(rest, out)
+          } else {
+            ix_indexed_in(rest, Cons(op, out))
+          }
+        }
+        Cons(^b, ^more) => ix_indexed_in(rest, out)
+      }
+      _ => ix_indexed_in(rest, out)
+    }
+  }
+}
+
+pub fn ix_field_types_sites(fs: List(SurfaceDataField)): List(IxSite) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => List::append(ix_sites(f.ty), ix_field_types_sites(rest))
+  }
+}
+
+pub fn ix_ctors_sites(cs: List(SurfaceDataCtor)): List(IxSite) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => List::append(ix_field_types_sites(c.fields), ix_ctors_sites(rest))
+  }
+}
+
+// The types of the fields of the data the statements declare: a row written
+// in a field's function type is written by the program too.
+mutual {
+  pub fn ix_data_sites(ss: List(SurfaceStmt)): List(IxSite) {
+    match ss {
+      Nil => Nil
+      Cons(s, rest) => List::append(ix_data_stmt_sites(s), ix_data_sites(rest))
+    }
+  }
+
+  pub fn ix_data_stmt_sites(s: SurfaceStmt): List(IxSite) {
+    match s {
+      StStruct(d) => ix_ctors_sites(d.constructors)
+      StEnum(d) => ix_ctors_sites(d.constructors)
+      StMutual(stmts, ^start, ^end) => ix_data_sites(stmts)
+      StAttributed(^name, ^arg, ^generates, stmt) => ix_data_stmt_sites(stmt)
+      _ => Nil
+    }
+  }
+}
+
+pub fn ix_indexed(stmts: List(SurfaceStmt)): List(Text) {
+  List::reverse(ix_indexed_in(List::append(ix_stmts_sites(stmts), ix_data_sites(stmts)), Nil))
+}
+
+// The generics of an operation that its values mention: what a row entry
+// and an arm write the instance with.
+pub fn ix_typed(gs: List(Text), sites: List(IxSite)): List(Text) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => if ix_names_in(sites, g) {
+      Cons(g, ix_typed(rest, sites))
+    } else {
+      ix_typed(rest, sites)
+    }
+  }
+}
+
+pub fn ix_effect_typed(e: SurfaceEffect): List(Text) {
+  ix_typed(e.generics, List::append(ix_opt_sites_each(e.params), ix_opt_sites(e.result)))
+}
+
+mutual {
+  pub fn ix_typed_generics_in(
+    ss: List(SurfaceStmt),
+    out: List(Text × List(Text))
+  ): List(Text × List(Text)) {
+    match ss {
+      Nil => out
+      Cons(s, rest) => ix_typed_generics_in(rest, ix_typed_generics_of(s, out))
+    }
+  }
+
+  pub fn ix_typed_generics_of(
+    s: SurfaceStmt,
+    out: List(Text × List(Text))
+  ): List(Text × List(Text)) {
+    match s {
+      StEffect(e) => Cons(#(e.name, ix_effect_typed(e)), out)
+      StMutual(items, ^start, ^end) => ix_typed_generics_in(items, out)
+      StAttributed(^name, ^arg, ^generates, stmt) => ix_typed_generics_of(stmt, out)
+      _ => out
+    }
+  }
+}
+
+// The typed generics of each operation, by its name.
+pub fn ix_typed_generics(ss: List(SurfaceStmt)): List(Text × List(Text)) {
+  ix_typed_generics_in(ss, Nil)
+}
+
+pub fn ix_lookup_names(xs: List(Text × List(Text)), name: Text): Option(List(Text)) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if x.fst == name { Some(x.snd) } else { ix_lookup_names(rest, name) }
+  }
+}
+
+pub fn ix_distinct(xs: List(Text)): Bool {
+  match xs {
+    Nil => true
+    Cons(x, rest) => not(text_list_has(rest, x)) && ix_distinct(rest)
+  }
+}
+
+pub fn ix_texts_eq(xs: List(Text), ys: List(Text)): Bool {
+  match xs {
+    Nil => ⊢ Bool from match ys {
+      Nil => true
+      Cons(^y, ^more) => false
+    }
+    Cons(x, rest) => ⊢ Bool from match ys {
+      Nil => false
+      Cons(y, more) => x == y && ix_texts_eq(rest, more)
+    }
+  }
+}
+
+// What a row entry reads as: `∀ A. res(A)`, every instance of `res`, is the
+// bare `res`; a bare entry of an operation with type arguments is an error.
+pub(open) inductive IxRead: Type {
+  IxReadAs(entry: RowEntry): IxRead
+  IxReadBad(why: Text): IxRead
+}
+
+// The members of the row of an index written as a body's function type,
+// `() -> A ! e` (`body_index` of `indices.rs`), and the result type `A`.
+pub fn ix_body_index(args: List(SurfaceTerm)): Option(SurfaceTerm × List(RowEntry)) {
+  match args {
+    Cons(only, rest) => ⊢ Option(SurfaceTerm × List(RowEntry)) from match rest {
+      Cons(^more, ^others) => None
+      Nil => ⊢ Option(SurfaceTerm × List(RowEntry)) from match only {
+        SurfaceTermIndexedMk(k, ^start, ^end, ^occurrence) => ⊢ Option(SurfaceTerm × List(RowEntry)) from match k {
+          SkPi(params, result, effects) => ⊢ Option(SurfaceTerm × List(RowEntry)) from match params {
+            Cons(^p, ^ps) => None
+            Nil => ⊢ Option(SurfaceTerm × List(RowEntry)) from match effects {
+              None => Some(#(result, Nil))
+              Some(row) => Some(#(result, row))
+            }
+          }
+          _ => None
+        }
+      }
+    }
+    Nil => None
+  }
+}
+
+pub fn ix_entry_name(entry: RowEntry): Text {
+  match entry {
+    EntryName(n, ^mark) => n
+    EntryApplied(n, ^args, ^universal, ^forall, ^mark) => n
+  }
+}
+
+pub fn ix_last_text(xs: List(Text), fallback: Text): Text {
+  match xs {
+    Nil => fallback
+    Cons(x, rest) => ix_last_text(rest, x)
+  }
+}
+
+// The family of an effect or of one of its instances: `spawn` for `spawn@i64`.
+pub fn ix_family_of(name: Text): Text {
+  let base := ⊢ Text from match text_split(name, "@") {
+    Nil => name
+    Cons(b, ^more) => b
+  }
+  ix_last_text(text_split(base, "::"), base)
+}
+
+// The label `family@^member` that writes `member` as the index of `family`'s
+// label: no program can write it.
+pub fn ix_index_label(family: Text, member: Text): Text {
+  Text::concat_all(Cons(ix_family_of(family), Cons("@^", Cons(ix_family_of(member), Nil))))
+}
+
+pub fn ix_member_labels(family: Text, members: List(Text)): List(Text) {
+  match members {
+    Nil => Nil
+    Cons(m, rest) => List::append(
+      // `Host` stands for every effect of the host.
+      if ix_family_of(m) == "Host" {
+        ix_host_labels(family, rows_host_effects())
+      } else {
+        Cons(ix_index_label(family, m), Nil)
+      },
+      ix_member_labels(family, rest)
+    )
+  }
+}
+
+pub fn ix_host_labels(family: Text, hosts: List(Text)): List(Text) {
+  match hosts {
+    Nil => Nil
+    Cons(h, rest) => Cons(ix_index_label(family, h), ix_host_labels(family, rest))
+  }
+}
+
+pub fn ix_entry_names(row: List(RowEntry)): List(Text) {
+  match row {
+    Nil => Nil
+    Cons(e, rest) => Cons(ix_entry_name(e), ix_entry_names(rest))
+  }
+}
+
+pub fn ix_labels_entries(labels: List(Text)): List(RowEntry) {
+  match labels {
+    Nil => Nil
+    Cons(l, rest) => Cons(EntryName(l, None), ix_labels_entries(rest))
+  }
+}
+
+// `spawn(() -> A ! e)`, or `∀ T. spawn(() -> T ! e)`: the family, with the
+// body's row as the index of its labels; `A` is not an index.
+pub fn ix_body_labelled(entry: RowEntry): Option(Text × List(RowEntry)) {
+  match entry {
+    EntryName(^n, ^mark) => None
+    EntryApplied(head, args, universal, names, ^mark) => ⊢ Option(Text × List(RowEntry)) from match ix_body_index(args) {
+      None => None
+      Some(body) => if universal {
+        ⊢ Option(Text × List(RowEntry)) from match names {
+          Cons(name, more) => ⊢ Option(Text × List(RowEntry)) from match more {
+            Cons(^x, ^xs) => None
+            Nil => ⊢ Option(Text × List(RowEntry)) from match body.fst {
+              SurfaceTermIndexedMk(k, ^start, ^end, ^occurrence) => ⊢ Option(Text × List(RowEntry)) from match k {
+                SkVar(r) => if surface_name_text(r) == name {
+                  Some(#(head, ix_labels_entries(ix_member_labels(head, ix_entry_names(body.snd)))))
+                } else { None }
+                _ => None
+              }
+            }
+          }
+          Nil => None
+        }
+      } else {
+        Some(#(head, ix_labels_entries(ix_member_labels(head, ix_entry_names(body.snd)))))
+      }
+    }
+  }
+}
+
+// The names of the type arguments that are names (`A` of `res(A)`).
+pub fn ix_arg_names(args: List(SurfaceTerm)): List(Text) {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => ⊢ List(Text) from match a.kind {
+      SkVar(n) => Cons(surface_name_text(n), ix_arg_names(rest))
+      _ => Cons("", ix_arg_names(rest))
+    }
+  }
+}
+
+pub fn ix_read_forall(
+  entry: RowEntry,
+  head: Text,
+  args: List(SurfaceTerm),
+  names: List(Text),
+  typed: List(Text × List(Text))
+): IxRead {
+  match ix_lookup_names(typed, head) {
+    // A head that no effect declares is not an instance to bind: the row
+    // check says what it is (a function, or nothing), as for a bare entry.
+    None => IxReadAs(entry)
+    Some(gs) => ix_read_forall_of(entry, head, args, names, gs)
+  }
+}
+
+pub fn ix_read_forall_of(
+  entry: RowEntry,
+  head: Text,
+  args: List(SurfaceTerm),
+  names: List(Text),
+  gs: List(Text)
+): IxRead {
+  let written := ix_arg_names(args)
+  let fits := ⊢ Bool from match gs {
+    Nil => false
+    Cons(^g, ^more) => ix_distinct(names) && ix_texts_eq(names, written) &&
+    list_len(written) == list_len(gs)
+  }
+  if fits {
+    IxReadAs(EntryName(head, None))
+  } else {
+    let want := text_join(gs, ", ")
+    IxReadBad(
+      index_entry_binds_each_type_argument_message(row_entry_text(entry), head, want)
+    )
+  }
+}
+
+pub fn ix_read_entry(entry: RowEntry, typed: List(Text × List(Text))): IxRead {
+  match entry {
+    EntryApplied(head, args, universal, names, ^mark) => if universal {
+      // A label of a body's effect writes the body's row: `∀ T. spawn(T)`
+      // would hide it.
+      match ix_body_index(args) {
+        None => if ix_family_of(head) == "spawn" {
+          IxReadBad(
+            index_entry_writes_body_row_message(row_entry_text(entry), ix_family_of(head))
+          )
+        } else {
+          ix_read_forall(entry, head, args, names, typed)
+        }
+        Some(^body) => ix_read_forall(entry, head, args, names, typed)
+      }
+    } else {
+      IxReadAs(entry)
+    }
+    EntryName(name, ^mark) => ⊢ IxRead from match Text::bytes(name) {
+      Nil => IxReadAs(entry)
+      Cons(b, ^bs) => if b == 124 || b == 63 || ix_has_byte(Text::bytes(name), 64) {
+        IxReadAs(entry)
+      } else {
+        ⊢ IxRead from match ix_lookup_names(typed, name) {
+          None => IxReadAs(entry)
+          Some(gs) => ⊢ IxRead from match gs {
+            Nil => IxReadAs(entry)
+            // A host operation is never read by instance: named alone, it
+            // is every instance of it.
+            Cons(^g, ^more) => if ix_host(name) { IxReadAs(entry) } else {
+              IxReadBad(row_write_instance_message(name, text_join(gs, ", ")))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn ix_var(name: Text): SurfaceTerm {
+  surface_term_mk(SkVar(NameSpelled(name)), 0, 0)
+}
+
+mutual {
+  // A type argument as text, the same for a written one and an inferred one.
+  pub fn ix_print(t: SurfaceTerm): Text {
+    match t {
+      SurfaceTermIndexedMk(k, ^start, ^end, ^occurrence) => ix_print_kind(k)
+    }
+  }
+
+  pub fn ix_print_kind(k: SurfaceKind): Text {
+    match k {
+      SkVar(n) => surface_name_text(n)
+      SkApp(f, args) => Text::concat_all(
+        Cons(ix_print(f), Cons("(", Cons(text_join(ix_print_each(args), ","), Cons(")", Nil))))
+      )
+      _ => "?"
+    }
+  }
+
+  pub fn ix_print_each(ts: List(SurfaceTerm)): List(Text) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(ix_print(t), ix_print_each(rest))
+    }
+  }
+}
+
+pub fn ix_label(eff: Text, args: List(SurfaceTerm)): Text {
+  Text::concat_all(Cons(eff, Cons("@", Cons(text_join(ix_print_each(args), ","), Nil))))
+}
+
+mutual {
+  pub fn ix_surface_of(t: Ty): Option(SurfaceTerm) {
+    match t {
+      TyInt(^w) => Some(ix_var(ty_show(t)))
+      TyBool => Some(ix_var("Bool"))
+      TyText => Some(ix_var("Text"))
+      TyDecimal => Some(ix_var("Decimal"))
+      TyFloat => Some(ix_var("Float"))
+      TyFloat32 => Some(ix_var("Float32"))
+      TyNamed(n, args) => ⊢ Option(SurfaceTerm) from match args {
+        Nil => Some(ix_var(surface_name_text(n)))
+        Cons(^a, ^rest) => ⊢ Option(SurfaceTerm) from match ix_surface_each(args) {
+          None => None
+          Some(xs) => Some(surface_term_mk(SkApp(ix_var(surface_name_text(n)), xs), 0, 0))
+        }
+      }
+      _ => None
+    }
+  }
+
+  pub fn ix_surface_each(ts: List(Ty)): Option(List(SurfaceTerm)) {
+    match ts {
+      Nil => Some(Nil)
+      Cons(t, rest) => ⊢ Option(List(SurfaceTerm)) from match ix_surface_of(t) {
+        None => None
+        Some(x) => ⊢ Option(List(SurfaceTerm)) from match ix_surface_each(rest) {
+          None => None
+          Some(xs) => Some(Cons(x, xs))
+        }
+      }
+    }
+  }
+}
+
+pub fn ix_lookup_term(xs: List(Text × SurfaceTerm), name: Text): Option(SurfaceTerm) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if x.fst == name { Some(x.snd) } else { ix_lookup_term(rest, name) }
+  }
+}
+
+mutual {
+  pub fn ix_replace(t: SurfaceTerm, given: List(Text × SurfaceTerm)): SurfaceTerm {
+    match t {
+      SurfaceTermIndexedMk(k, start, end, ^occurrence) => ix_replace_kind(k, start, end, given)
+    }
+  }
+
+  pub fn ix_replace_kind(
+    k: SurfaceKind,
+    start: Nat,
+    end: Nat,
+    given: List(Text × SurfaceTerm)
+  ): SurfaceTerm {
+    match k {
+      SkVar(n) => ⊢ SurfaceTerm from match ix_lookup_term(given, surface_name_text(n)) {
+        Some(r) => surface_term_mk(r.kind, start, end)
+        None => surface_term_mk(k, start, end)
+      }
+      SkApp(f, args) => surface_term_mk(
+        SkApp(ix_replace(f, given), ix_replace_each(args, given)),
+        start,
+        end
+      )
+      _ => surface_term_mk(k, start, end)
+    }
+  }
+
+  pub fn ix_replace_each(
+    ts: List(SurfaceTerm),
+    given: List(Text × SurfaceTerm)
+  ): List(SurfaceTerm) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(ix_replace(t, given), ix_replace_each(rest, given))
+    }
+  }
+}
+
+mutual {
+  pub fn ix_params_in(t: Ty, out: List(Text)): List(Text) {
+    match t {
+      TyParam(n, ^k) => if text_list_has(out, n) { out } else { Cons(n, out) }
+      TyFn(ps, r, ^k) => ix_params_in(r, ix_params_each(ps, out))
+      TyUnion(ts) => ix_params_each(ts, out)
+      TyNamed(^n, ts) => ix_params_each(ts, out)
+      TyTagged(^tags, x) => ix_params_in(x, out)
+      TyInfo(x) => ix_params_in(x, out)
+      TyBorrow(x, ^m) => ix_params_in(x, out)
+      TyPoly(^gs, x) => ix_params_in(x, out)
+      TyApp(h, x) => ix_params_in(x, ix_params_in(h, out))
+      _ => out
+    }
+  }
+
+  pub fn ix_params_each(ts: List(Ty), out: List(Text)): List(Text) {
+    match ts {
+      Nil => out
+      Cons(t, rest) => ix_params_each(rest, ix_params_in(t, out))
+    }
+  }
+}
+
+pub fn ix_term_type(
+  terms: Ordmap(TermAt, Ty),
+  start: Nat,
+  end: Nat,
+  occ: Option(TermOccurrence)
+): Option(Ty) {
+  Ordmap::get(terms, TermAtMk(start, end, occ), term_at_compare)
+}
+
+pub fn ix_lookup_ty(xs: List(Text × Ty), name: Text): Option(Ty) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if x.fst == name { Some(x.snd) } else { ix_lookup_ty(rest, name) }
+  }
+}
+
+mutual {
+  // The generics `gs` a written type gives, read from the type `t` it was
+  // found to be: `Vec(A)` and `Vec(i64)` give `A` as `i64`.
+  pub fn ix_bind(
+    s: SurfaceTerm,
+    t: Ty,
+    gs: List(Text),
+    acc: List(Text × Ty)
+  ): List(Text × Ty) {
+    match s {
+      SurfaceTermIndexedMk(k, ^start, ^end, ^occurrence) => ix_bind_kind(k, t, gs, acc)
+    }
+  }
+
+  pub fn ix_bind_kind(
+    k: SurfaceKind,
+    t: Ty,
+    gs: List(Text),
+    acc: List(Text × Ty)
+  ): List(Text × Ty) {
+    match k {
+      SkVar(n) => if text_list_has(gs, surface_name_text(n)) {
+        ⊢ List(Text × Ty) from match ix_lookup_ty(acc, surface_name_text(n)) {
+          Some(^x) => acc
+          None => Cons(#(surface_name_text(n), t), acc)
+        }
+      } else {
+        acc
+      }
+      SkApp(^f, args) => ⊢ List(Text × Ty) from match t {
+        TyNamed(^n, ts) => ix_bind_each(args, ts, gs, acc)
+        _ => acc
+      }
+      SkPi(params, result, ^effects) => ⊢ List(Text × Ty) from match t {
+        TyFn(ps, r, ^fk) => ix_bind(result, r, gs, ix_bind_params(params, ps, gs, acc))
+        _ => acc
+      }
+      SkBorrow(^m, ^m_orig, x) => ⊢ List(Text × Ty) from match t {
+        TyBorrow(inner, ^tm) => ix_bind(x, inner, gs, acc)
+        _ => ix_bind(x, t, gs, acc)
+      }
+      SkFnKind(^fk, ty) => ix_bind(ty, t, gs, acc)
+      _ => acc
+    }
+  }
+
+  pub fn ix_bind_each(
+    ss: List(SurfaceTerm),
+    ts: List(Ty),
+    gs: List(Text),
+    acc: List(Text × Ty)
+  ): List(Text × Ty) {
+    match ss {
+      Nil => acc
+      Cons(s, rest) => ⊢ List(Text × Ty) from match ts {
+        Nil => acc
+        Cons(t, more) => ix_bind_each(rest, more, gs, ix_bind(s, t, gs, acc))
+      }
+    }
+  }
+
+  pub fn ix_bind_params(
+    ps: List(SurfaceParam),
+    ts: List(Ty),
+    gs: List(Text),
+    acc: List(Text × Ty)
+  ): List(Text × Ty) {
+    match ps {
+      Nil => acc
+      Cons(p, rest) => ⊢ List(Text × Ty) from match ts {
+        Nil => acc
+        Cons(t, more) => ix_bind_params(rest, more, gs, ix_bind_param(p, t, gs, acc))
+      }
+    }
+  }
+
+  pub fn ix_bind_param(
+    p: SurfaceParam,
+    t: Ty,
+    gs: List(Text),
+    acc: List(Text × Ty)
+  ): List(Text × Ty) {
+    match p {
+      SurfaceParamMk(^name, ty, _) => ix_bind(ty, t, gs, acc)
+    }
+  }
+}
+
+pub fn ix_bind_opts(
+  ss: List(Option(SurfaceTerm)),
+  ts: List(Ty),
+  gs: List(Text),
+  acc: List(Text × Ty)
+): List(Text × Ty) {
+  match ss {
+    Nil => acc
+    Cons(s, rest) => ⊢ List(Text × Ty) from match ts {
+      Nil => acc
+      Cons(t, more) => ix_bind_opts(
+        rest,
+        more,
+        gs,
+        ⊢ List(Text × Ty) from match s {
+          None => acc
+          Some(x) => ix_bind(x, t, gs, acc)
+        }
+      )
+    }
+  }
+}
+
+pub fn ix_term_types(terms: Ordmap(TermAt, Ty), ts: List(SurfaceTerm)): List(Ty) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(
+      ⊢ Ty from match ix_term_type(terms, t.start, t.end, t.occurrence) {
+        Some(x) => x
+        None => TyVar(0)
+      },
+      ix_term_types(terms, rest)
+    )
+  }
+}
+
+// What a call of `f` gave its generics: its written type read against the
+// type its name was found to have where it is called.
+pub fn ix_instantiation(f: SurfaceFn, called: Ty): List(Text × Ty) {
+  match called {
+    TyFn(ps, r, ^k) => {
+      let acc := ix_bind_opts(f.param_types, ps, f.generics, Nil)
+      ⊢ List(Text × Ty) from match f.result {
+        None => acc
+        Some(x) => ix_bind(x, r, f.generics, acc)
+      }
+    }
+    _ => Nil
+  }
+}
+
+pub(open) inductive IxName: Type {
+  IxNameMk(start: Nat, end: Nat, name: Text): IxName
+}
+
+pub fn ix_name_at(xs: List(IxName), start: Nat, end: Nat): Option(Text) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if x.start == start && x.end == end { Some(x.name) } else {
+      ix_name_at(rest, start, end)
+    }
+  }
+}
+
+// What a rewrite renames: the performs and arms by their instances, the calls
+// by their copies, the generics a copy is given, and the rows.
+pub(open) inductive IxRw: Type {
+  IxRwMk(
+    performs: List(IxName),
+    arms: List(IxName),
+    calls: List(IxName),
+    given: List(Text × SurfaceTerm),
+    indexed: List(Text),
+    typed: List(Text × List(Text)),
+    reading: Bool
+  ): IxRw
+}
+
+pub fn ix_rw_entry(entry: RowEntry, rw: IxRw): RowEntry {
+  if rw.reading {
+    ⊢ RowEntry from match ix_read_entry(entry, rw.typed) {
+      IxReadAs(e) => e
+      IxReadBad(^why) => entry
+    }
+  } else {
+    ⊢ RowEntry from match ix_head(entry) {
+      None => entry
+      Some(head) => if text_list_has(rw.indexed, head) {
+        EntryName(ix_label(head, ix_replace_each(ix_entry_args(entry), rw.given)), row_entry_unused(entry))
+      } else {
+        entry
+      }
+    }
+  }
+}
+
+// The labels the body-indexed entries of a row write, after the row.
+pub fn ix_is_body_labelled(entry: RowEntry): Bool {
+  ⊢ Bool from match ix_body_labelled(entry) {
+    Some(^l) => true
+    None => false
+  }
+}
+
+pub fn ix_rw_labels(row: List(RowEntry)): List(RowEntry) {
+  match row {
+    Nil => Nil
+    Cons(e, rest) => List::append(
+      ⊢ List(RowEntry) from match ix_body_labelled(e) {
+        None => Nil
+        Some(l) => l.snd
+      },
+      ix_rw_labels(rest)
+    )
+  }
+}
+
+pub fn ix_rw_heads(row: List(RowEntry), rw: IxRw): List(RowEntry) {
+  match row {
+    Nil => Nil
+    Cons(e, rest) => Cons(
+      ⊢ RowEntry from match ix_body_labelled(e) {
+        Some(l) => EntryName(l.fst, None)
+        None => ix_rw_entry(e, rw)
+      },
+      ix_rw_heads(rest, rw)
+    )
+  }
+}
+
+pub fn ix_rw_row(row: List(RowEntry), rw: IxRw): List(RowEntry) {
+  List::append(ix_rw_heads(row, rw), ix_rw_labels(row))
+}
+
+pub fn ix_rw_opt_row(row: Option(List(RowEntry)), rw: IxRw): Option(List(RowEntry)) {
+  match row {
+    None => None
+    Some(r) => Some(ix_rw_row(r, rw))
+  }
+}
+
+mutual {
+  pub fn ix_rw(t: SurfaceTerm, rw: IxRw): SurfaceTerm {
+    match t {
+      SurfaceTermIndexedMk(k, start, end, occurrence) => SurfaceTermIndexedMk(
+        ix_rw_kind(k, start, end, rw),
+        start,
+        end,
+        occurrence
+      )
+    }
+  }
+
+  pub fn ix_rw_kind(k: SurfaceKind, start: Nat, end: Nat, rw: IxRw): SurfaceKind {
+    match k {
+      SkVar(name) => ⊢ SurfaceKind from match ix_name_at(rw.calls, start, end) {
+        Some(n) => SkVar(NameSpelled(n))
+        None => ⊢ SurfaceKind from match ix_lookup_term(rw.given, surface_name_text(name)) {
+          Some(r) => r.kind
+          None => k
+        }
+      }
+      SkApp(f, args) => SkApp(ix_rw(f, rw), ix_rw_each(args, rw))
+      SkPi(params, result, effects) => SkPi(
+        ix_rw_params(params, rw),
+        ix_rw(result, rw),
+        ix_rw_opt_row(effects, rw)
+      )
+      SkExists(binder, domain, body, unused) => SkExists(binder, ix_rw(domain, rw), ix_rw(body, rw), unused)
+      SkLam(params, body, types, unused) => SkLam(params, ix_rw(body, rw), types, unused)
+      SkUnion(parts) => SkUnion(ix_rw_each(parts, rw))
+      SkTagged(tag, x) => SkTagged(tag, ix_rw(x, rw))
+      SkIf(c, th, el) => SkIf(ix_rw(c, rw), ix_rw(th, rw), ix_rw_opt(el, rw))
+      SkField(base, name) => SkField(ix_rw(base, rw), name)
+      SkBlock(stmts) => SkBlock(ix_rw_stmts(stmts, rw))
+      SkPerform(op, args) => SkPerform(
+        ⊢ Text from match ix_name_at(rw.performs, start, end) {
+          Some(n) => n
+          None => op
+        },
+        ix_rw_each(args, rw)
+      )
+      SkHandle(body, handlers) => SkHandle(ix_rw(body, rw), ix_rw_handlers(handlers, rw))
+      SkBudget(memory, amount, body) => SkBudget(memory, ix_rw(amount, rw), ix_rw(body, rw))
+      SkMatch(scrutinee, motive, arms, binder, match_unused) => SkMatch(
+        ix_rw(scrutinee, rw),
+        ix_rw_opt(motive, rw),
+        ix_rw_arms(arms, rw),
+        binder,
+        match_unused
+      )
+      SkRecord(name, fields) => SkRecord(name, ix_rw_fields(fields, rw))
+      SkBorrow(m, m_orig, x) => SkBorrow(m, m_orig, ix_rw(x, rw))
+      SkFnKind(kind, ty) => SkFnKind(kind, ix_rw(ty, rw))
+      SkBorrowLam(r#borrows, lam) => SkBorrowLam(r#borrows, ix_rw(lam, rw))
+      _ => k
+    }
+  }
+
+  pub fn ix_rw_each(ts: List(SurfaceTerm), rw: IxRw): List(SurfaceTerm) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(ix_rw(t, rw), ix_rw_each(rest, rw))
+    }
+  }
+
+  pub fn ix_rw_opt(t: Option(SurfaceTerm), rw: IxRw): Option(SurfaceTerm) {
+    match t {
+      None => None
+      Some(x) => Some(ix_rw(x, rw))
+    }
+  }
+
+  pub fn ix_rw_opts(ts: List(Option(SurfaceTerm)), rw: IxRw): List(Option(SurfaceTerm)) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(ix_rw_opt(t, rw), ix_rw_opts(rest, rw))
+    }
+  }
+
+  pub fn ix_rw_params(ps: List(SurfaceParam), rw: IxRw): List(SurfaceParam) {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(ix_rw_param(p, rw), ix_rw_params(rest, rw))
+    }
+  }
+
+  pub fn ix_rw_param(p: SurfaceParam, rw: IxRw): SurfaceParam {
+    match p {
+      SurfaceParamMk(name, ty, unused) => SurfaceParamMk(name, ix_rw(ty, rw), unused)
+    }
+  }
+
+  pub fn ix_rw_fields(fs: List(SurfaceField), rw: IxRw): List(SurfaceField) {
+    match fs {
+      Nil => Nil
+      Cons(f, rest) => Cons(ix_rw_field(f, rw), ix_rw_fields(rest, rw))
+    }
+  }
+
+  pub fn ix_rw_field(f: SurfaceField, rw: IxRw): SurfaceField {
+    match f {
+      SurfaceFieldMk(name, value) => SurfaceFieldMk(name, ix_rw(value, rw))
+    }
+  }
+
+  pub fn ix_rw_handlers(hs: List(SurfaceHandler), rw: IxRw): List(SurfaceHandler) {
+    match hs {
+      Nil => Nil
+      Cons(h, rest) => Cons(ix_rw_handler(h, rw), ix_rw_handlers(rest, rw))
+    }
+  }
+
+  pub fn ix_rw_handler(h: SurfaceHandler, rw: IxRw): SurfaceHandler {
+    match h {
+      HdReturn(p, body) => HdReturn(p, ix_rw(body, rw))
+      HdOperation(op, binds, types, patterns, resume_mode, resume_unused, guard, body) => ⊢ SurfaceHandler from match ix_name_at(
+        rw.arms,
+        body.start,
+        body.end
+      ) {
+        // The instance's own name: it has false generics.
+        Some(n) => HdOperation(
+          n,
+          Nil,
+          Nil,
+          patterns,
+          resume_mode,
+          resume_unused,
+          ix_rw_opt(guard, rw),
+          ix_rw(body, rw)
+        )
+        None => HdOperation(
+          op,
+          binds,
+          ix_rw_each(types, rw),
+          patterns,
+          resume_mode,
+          resume_unused,
+          ix_rw_opt(guard, rw),
+          ix_rw(body, rw)
+        )
+      }
+    }
+  }
+
+  pub fn ix_rw_arms(arms: List(SurfaceArm), rw: IxRw): List(SurfaceArm) {
+    match arms {
+      Nil => Nil
+      Cons(a, rest) => Cons(ix_rw_arm(a, rw), ix_rw_arms(rest, rw))
+    }
+  }
+
+  pub fn ix_rw_arm(a: SurfaceArm, rw: IxRw): SurfaceArm {
+    match a {
+      SurfaceArmMk(pattern, guard, goal, body) => SurfaceArmMk(
+        pattern,
+        ix_rw_opt(guard, rw),
+        goal,
+        ix_rw(body, rw)
+      )
+    }
+  }
+
+  pub fn ix_rw_fn(f: SurfaceFn, rw: IxRw): SurfaceFn {
+    match f {
+      SurfaceFnMk(name, gs, bounds, params, r#borrows, types, result, effects, wheres, start, end, body, lends, generic_types, bound_starts, visibility, row_hole, slot_unused, slot_unused_generics, slot_unused_params) => SurfaceFnMk(name, gs, bounds, params, r#borrows, ix_rw_opts(types, rw), ix_rw_opt(result, rw), ix_rw_opt_row(effects, rw), wheres, start, end, ix_rw(body, rw), lends, ix_rw_each(generic_types, rw), bound_starts, visibility, row_hole, slot_unused, slot_unused_generics, slot_unused_params)
+    }
+  }
+
+  pub fn ix_rw_fns(fs: List(SurfaceFn), rw: IxRw): List(SurfaceFn) {
+    match fs {
+      Nil => Nil
+      Cons(f, rest) => Cons(ix_rw_fn(f, rw), ix_rw_fns(rest, rw))
+    }
+  }
+
+  pub fn ix_rw_stmt(s: SurfaceStmt, rw: IxRw): SurfaceStmt {
+    match s {
+      StLet(name, ty, value, b, m, unused, st_stack) => StLet(name, ix_rw_opt(ty, rw), ix_rw(value, rw), b, m, unused, st_stack)
+      StVar(name, ty, value, b, unused, st_stack) => StVar(name, ix_rw_opt(ty, rw), ix_rw(value, rw), b, unused, st_stack)
+      StAssign(name, place, value) => StAssign(name, ix_rw_opt(place, rw), ix_rw(value, rw))
+      StFn(f) => StFn(ix_rw_fn(f, rw))
+      StMutual(stmts, start, end) => StMutual(ix_rw_stmts(stmts, rw), start, end)
+      StExtern(fns, instances, types, structs, enums, start, end) => StExtern(
+        ix_rw_fns(fns, rw),
+        instances,
+        types,
+        structs,
+        enums,
+        start,
+        end
+      )
+      StWhile(c, body) => StWhile(ix_rw(c, rw), ix_rw(body, rw))
+      StReturn(value) => StReturn(ix_rw_opt(value, rw))
+      StExpr(value) => StExpr(ix_rw(value, rw))
+      StAttributed(name, arg, generates, stmt) => StAttributed(
+        name,
+        arg,
+        generates,
+        ix_rw_stmt(stmt, rw)
+      )
+      _ => s
+    }
+  }
+
+  pub fn ix_rw_stmts(ss: List(SurfaceStmt), rw: IxRw): List(SurfaceStmt) {
+    match ss {
+      Nil => Nil
+      Cons(s, rest) => Cons(ix_rw_stmt(s, rw), ix_rw_stmts(rest, rw))
+    }
+  }
+}

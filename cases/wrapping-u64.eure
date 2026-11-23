@@ -1,0 +1,64 @@
+// `+`, `-` and `*` on `u64` perform `overflow`; `U64::wrapping_add`, `wrapping_sub` and
+// `wrapping_mul` say the wrap in their names and leave no `overflow` in a row.
+
+@ cases.wrapping-functions-wrap-modulo-2-to-the-64
+description = "The sum, difference and product are taken modulo 2^64, in a function whose row is empty."
+source = ```nib
+fn add(a: u64, b: u64): u64 { U64::wrapping_add(a, b) }
+fn sub(a: u64, b: u64): u64 { U64::wrapping_sub(a, b) }
+fn mul(a: u64, b: u64): u64 { U64::wrapping_mul(a, b) }
+let max := U64::of_nat(18446744073709551615)
+show(&add(max, 2))
+show(&sub(1, 3))
+show(&mul(4294967296, 4294967297))
+show(&add(5, 6))
+```
+stdout = ```
+1
+18446744073709551614
+4294967296
+11
+```
+
+@ cases.wrapping-add-keeps-a-callback-closed
+description = "A callback that wraps has no `overflow` in its row, so a continuation stays usable after it."
+source = ```nib
+effect ask(n: u64): u64 resume 1
+let r := handle { perform ask(5) + 0 } with {
+  ask(n), k => k(U64::wrapping_add(n, 1))
+}
+show(&r)
+```
+stdout = "6\n"
+
+@ cases.wrapping-functions-at-the-edges-of-u64
+description = "Results past either end of `u64` wrap on every backend, as the machine's wrapping arithmetic does."
+source = ```nib
+let max := U64::of_nat(18446744073709551615)
+let half := U64::of_nat(9223372036854775808)
+show(&U64::wrapping_add(max, max))
+show(&U64::wrapping_add(half, half))
+show(&U64::wrapping_sub(0, 1))
+show(&U64::wrapping_sub(0, max))
+show(&U64::wrapping_mul(max, max))
+show(&U64::wrapping_mul(6364136223846793005, 1442695040888963407))
+show(&U64::wrapping_mul(half, 2))
+```
+stdout = ```
+18446744073709551614
+0
+18446744073709551615
+1
+1
+433315962919513059
+0
+```
+
+@ cases.wrapping-mul-folds-a-hash
+description = "FNV-1a over two bytes: `xor` and `wrapping_mul` over a loop that stays in `u64`."
+source = ```nib
+fn step(h: u64, b: u64): u64 { U64::wrapping_mul(U64::xor(h, b), 1099511628211) }
+let h := step(step(U64::of_nat(14695981039346656037), 97), 98)
+show(&h)
+```
+stdout = "620445648566982762\n"

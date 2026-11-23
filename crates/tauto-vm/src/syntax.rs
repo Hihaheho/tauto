@@ -1,11 +1,11 @@
-//! `syn_parse` on the machines. The parse runs in Tauto, on the machine of `totes/vm`
-//! (`src/syn.taut`): what is written here is the grammar's tables and, for each production,
-//! what its node becomes (`tauto_syntax::Shape`), with the machine's constructors already
-//! chosen, so that the machine decides nothing about the schema itself. The machine of this
+//! `syn_parse` on the machines. The parse runs in Tauto, on the machine of `totes/vm`, with
+//! the parser of `totes/synrun`: what is written here is the parser as
+//! `Tables::runtime_text` writes it, with the machine's constructors already chosen, so that
+//! the machine decides nothing about the schema itself. The machine of this
 //! crate (`TAUTO_VM=rust`) parses with `tauto_syntax`, as the other backends do.
 
 use tauto_nir::{Name, Package, SyntaxParser};
-use tauto_syntax::{Element, Payload, Shape, Sym, Tables, TypeDef};
+use tauto_syntax::{Payload, RuntimeIds, Tables, TypeDef};
 
 use crate::wire::Writer;
 
@@ -66,13 +66,10 @@ fn id(
     Ok(w.ctor(&data, &name, &names, is_struct))
 }
 
-/// The parser as the machine reads it (`syn_read` in `totes/vm/src/syn.taut`), after the tag of
-/// the operation.
+/// The parser as the machine reads it (`w_syn_parser` in `totes/synrun/src/read.taut`), after
+/// the tag of the operation.
 pub(crate) fn write(w: &mut Writer, pkg: &Package, p: &SyntaxParser) -> Rs<String> {
     let tables = Tables::read(&p.tables).map_err(|e| e.to_string())?;
-    if tables.embed_terminal().is_some() {
-        return Err("a runtime syntax parser of a grammar with TautoExpr".into());
-    }
     // The constructors first: they are written as numbers.
     let span = id(w, pkg, p, "SynSpan", "SynSpan", &["id"])?;
     let ctx = id(w, pkg, p, "SynCtx", "SynCtx", &["scopes"])?;
@@ -86,163 +83,22 @@ pub(crate) fn write(w: &mut Writer, pkg: &Package, p: &SyntaxParser) -> Rs<Strin
         &["message", "at", "expected", "code", "args"],
     )?;
     let arg = id(w, pkg, p, "SynArg", "SynArg", &["name", "value"])?;
-    let schema = &tables.schema().types;
-    // (machine constructor, whether its first field is the span) by (type, constructor).
-    let node = |w: &mut Writer, ty: u32, c: u32| -> Rs<(u32, bool)> {
-        let def = schema
-            .get(ty as usize)
-            .ok_or("a runtime syntax parser whose tables name no type")?;
-        let (name, ctor, spanned) = match def {
-            TypeDef::Struct { name, .. } => (name, name.as_str(), true),
-            TypeDef::Enum { name, ctors } => {
-                let c = ctors
-                    .get(c as usize)
-                    .ok_or("a runtime syntax parser whose tables name no constructor")?;
-                (
-                    name,
-                    c.name.as_str(),
-                    matches!(c.payload, Payload::Record(_)),
-                )
-            }
-        };
-        let data = tauto_syntax::type_name(&p.name, name);
-        Ok((id(w, pkg, p, &data, ctor, &[])?, spanned))
-    };
-    let shapes = tables.shapes();
-    let mut nodes = Vec::with_capacity(shapes.len());
-    for s in &shapes {
-        let e = match s {
-            Shape::Node { ty, ctor, .. }
-            | Shape::Some(Element::Node { ty, ctor, .. })
-            | Shape::More(Element::Node { ty, ctor, .. }) => Some(node(w, *ty, *ctor)?),
-            _ => None,
-        };
-        nodes.push(e);
-    }
-
-    let saved = std::mem::take(&mut w.out);
-    w.text(&p.name);
-    for t in tables.scan_texts() {
-        w.text(&t);
-    }
-    let terminals = tables.terminals();
-    w.num(terminals.len());
-    for t in terminals {
-        w.text(t);
-    }
-    w.num(terminals.len());
-    for t in 0..terminals.len() {
-        w.yn(tables.is_skipped(t as u32));
-    }
-    w.num(tables.start());
-    match tables.lr_states() {
-        None => {
-            w.yn(false);
-            let n = tables.non_terminals().len();
-            w.num(n);
-            for nt in 0..n {
-                match tables.lookahead_of(nt as u32) {
-                    None => w.yn(false),
-                    Some((prod0, k, transitions)) => {
-                        w.yn(true);
-                        w.num(plus_one(prod0));
-                        w.num(k);
-                        w.num(transitions.len());
-                        for &(from, term, to, prod) in transitions {
-                            w.num(from);
-                            w.num(term);
-                            w.num(to);
-                            w.num(plus_one(prod));
-                        }
-                    }
-                }
-            }
-        }
-        Some(states) => {
-            w.yn(true);
-            w.num(states.len());
-            for (actions, gotos) in states {
-                w.num(actions.len());
-                for &(term, kind, arg) in actions {
-                    w.num(term);
-                    w.num(kind);
-                    w.num(arg);
-                }
-                w.num(gotos.len());
-                for &(nt, to) in gotos {
-                    w.num(nt);
-                    w.num(to);
-                }
-            }
-        }
-    }
-    let productions = tables.productions();
-    w.num(productions.len());
-    for ((prod, shape), node) in productions.iter().zip(&shapes).zip(&nodes) {
-        w.num(prod.lhs);
-        w.num(prod.rhs.len());
-        for s in &prod.rhs {
-            match *s {
-                Sym::Nt(n) => {
-                    w.yn(false);
-                    w.num(n);
-                }
-                Sym::Term(t) => {
-                    w.yn(true);
-                    w.num(t);
-                }
-            }
-        }
-        let element = |w: &mut Writer, e: &Element| match e {
-            Element::Item => w.num(0),
-            Element::Node { keep, .. } => {
-                let (c, spanned) = node.expect("a node's constructor");
-                w.num(1);
-                w.num(c);
-                w.yn(spanned);
-                bools(w, keep);
-            }
-        };
-        match shape {
-            Shape::Node { keep, .. } => {
-                let (c, spanned) = node.expect("a node's constructor");
-                w.num(0);
-                w.num(c);
-                w.yn(spanned);
-                bools(w, keep);
-            }
-            Shape::Pass => w.num(1),
-            Shape::Some(e) => {
-                w.num(2);
-                element(w, e);
-            }
-            Shape::None => w.num(3),
-            Shape::Empty => w.num(4),
-            Shape::More(e) => {
-                w.num(5);
-                element(w, e);
-            }
-            Shape::Bad(m) => {
-                w.num(6);
-                w.text(m);
-            }
-        }
-    }
-    for c in [span, ctx, token, diag, arg] {
-        w.num(c);
-    }
-    Ok(std::mem::replace(&mut w.out, saved))
-}
-
-fn plus_one(n: i64) -> u64 {
-    u64::try_from(n).map_or(0, |n| n + 1)
-}
-
-fn bools(w: &mut Writer, bs: &[bool]) {
-    w.num(bs.len());
-    for b in bs {
-        w.yn(*b);
-    }
+    let text = tables.runtime_text(
+        &p.name,
+        &mut |ty, c| {
+            let (name, ctor, _) = tables.runtime_constructor(ty, c)?;
+            let data = tauto_syntax::type_name(&p.name, name);
+            id(w, pkg, p, &data, ctor, &[])
+        },
+        RuntimeIds {
+            span,
+            ctx,
+            token,
+            diag,
+            arg,
+        },
+    )?;
+    Ok(text)
 }
 
 /// A parser of the machine of this crate: the tables, and the constructors of each type of

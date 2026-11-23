@@ -1,11 +1,11 @@
 import "rules_program_signatures.taut"
 import "../../surface/src/surface.taut"
-import std::Base
+import std::base
 import "checker.taut"
 import "datas.taut"
 
 pub fn signature_source_cons(head: Option(SurfaceFn), tail: List(SurfaceFn)): List(SurfaceFn) {
-  ⊢ List(SurfaceFn) from match head {
+  match head {
     None => tail
     Some(source) => Cons(source, tail)
   }
@@ -13,35 +13,40 @@ pub fn signature_source_cons(head: Option(SurfaceFn), tail: List(SurfaceFn)): Li
 // Source coverage: declarations with bodies occur exactly once in this list,
 // in source order, independently of whether their signatures report errors.
 pub fn signature_statement_source(stmt: SurfaceStmt): Option(SurfaceFn) {
-  ⊢ Option(SurfaceFn) from match stmt {
-    StLet(name, ty, value, borrow, mutable) => None
-    StVar(name, ty, value, borrow) => None
-    StModule(name, stmts, start, end) => None
-    StAssign(name, name_place, value) => None
-    StCalled(name_generates, value) => None
+  match stmt {
+    StLet(^name, ^ty, ^value, ^r#borrow, ^mutable, ^unused, ^st_stack) => None
+    StVar(^name, ^ty, ^value, ^r#borrow, ^unused, ^st_stack) => None
+    StAssign(^name, ^name_place, ^value) => None
+    StCalled(^name_generates, ^value) => None
     StFn(f) => Some(f)
-    StTheorem(t) => None
-    StDef(t) => None
-    StMutual(stmts, start, end) => None
-    StImport(path, start, end) => None
-    StInductive(i) => None
-    StEffect(e) => None
-    StExtern(abi, fns, start, end) => None
-    StClass(klass) => None
-    StInstance(i) => None
-    StWhile(cond, body) => None
-    StReturn(value) => None
-    StExpr(value) => None
-    StOther(what, start, end) => None
-    StMacro(name, function, start, end) => None
-    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => None
-    StSyntax(name, grammar, start, end) => None
-    StStruct(d) => None
-    StEnum(d) => None
+    StTheorem(^t) => None
+    StDef(^t) => None
+    StMutual(^stmts, ^start, ^end) => None
+    StImport(^path, ^start, ^end) => None
+    StInductive(^i) => None
+    StEffect(^e) => None
+    StExtern(^fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => None
+    StClass(^klass) => None
+    StInstance(^i) => None
+    StWhile(^cond, ^body) => None
+    StReturn(^value) => None
+    StExpr(^value) => None
+    StOther(^what, ^start, ^end) => None
+    StLoop(^st_body, ^start, ^end) => None
+    StModule(^mod_name, ^mod_vis, ^mod_items, ^start, ^end) => None
+    StReexport(^re_path, ^re_names, ^re_spans, ^start, ^end) => None
+    StFor(^for_pat, ^for_src, ^st_body, ^start, ^end) => None
+    StBreak(^st_value, ^start, ^end) => None
+    StContinue(^start, ^end) => None
+    StMacro(^name, ^function, ^start, ^end) => None
+    StAttributed(^attr_name, ^attr_arg, ^attr_generates, ^attr_stmt) => None
+    StSyntax(^name, ^grammar, ^start, ^end) => None
+    StStruct(^d) => None
+    StEnum(^d) => None
   }
 }
 pub fn signature_program_sources(program: List(SurfaceStmt)): List(SurfaceFn) {
-  ⊢ List(SurfaceFn) from match program {
+  match program {
     Nil => Nil
     Cons(Stmt, rest) => signature_source_cons(
       signature_statement_source(Stmt),
@@ -49,14 +54,14 @@ pub fn signature_program_sources(program: List(SurfaceStmt)): List(SurfaceFn) {
     )
   }
 }
-pub fn signature_option_source(item: Option(Pair(SurfaceFn, Scheme))): Option(SurfaceFn) {
-  ⊢ Option(SurfaceFn) from match item {
+pub fn signature_option_source(item: Option(SurfaceFn × Scheme)): Option(SurfaceFn) {
+  match item {
     None => None
     Some(entry) => Some(entry.fst)
   }
 }
-pub fn signature_list_sources(items: List(Pair(SurfaceFn, Scheme))): List(SurfaceFn) {
-  ⊢ List(SurfaceFn) from match items {
+pub fn signature_list_sources(items: List(SurfaceFn × Scheme)): List(SurfaceFn) {
+  match items {
     Nil => Nil
     Cons(entry, rest) => Cons(entry.fst, signature_list_sources(rest))
   }
@@ -64,11 +69,11 @@ pub fn signature_list_sources(items: List(Pair(SurfaceFn, Scheme))): List(Surfac
 pub(open) inductive PreparedSourceSignatures(
   env: Datas,
   program: List(SurfaceStmt),
-  schemes: List(Pair(SurfaceFn, Scheme))
+  schemes: List(SurfaceFn × Scheme)
 ): Prop {
   Mk(
-    own: List(Pair(SurfaceFn, Scheme)),
-    generated: List(Pair(SurfaceFn, Scheme)),
+    own: List(SurfaceFn × Scheme),
+    generated: List(SurfaceFn × Scheme),
     combined: schemes = List::append(own, generated),
     sources: signature_list_sources(own) = signature_program_sources(program),
     derived: ElaboratedSignatures(env, false, own)
@@ -77,7 +82,7 @@ pub(open) inductive PreparedSourceSignatures(
 
 pub(open) inductive SourceFunctionsElaborated(env: Datas, program: List(SurfaceStmt)): Prop {
   Mk(
-    schemes: List(Pair(SurfaceFn, Scheme)),
+    schemes: List(SurfaceFn × Scheme),
     sources: signature_list_sources(schemes) = signature_program_sources(program),
     derived: ElaboratedSignatures(env, false, schemes)
   ): SourceFunctionsElaborated(env, program)

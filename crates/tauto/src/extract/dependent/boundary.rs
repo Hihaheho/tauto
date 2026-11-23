@@ -55,7 +55,7 @@ impl Eraser<'_> {
         } else {
             format!(
                 " ! {{{}}}",
-                std::iter::once("Div")
+                std::iter::once("div")
                     .chain(
                         row.iter()
                             .map(|name| self.symbol(name))
@@ -192,7 +192,10 @@ impl Eraser<'_> {
             if self.std.of(n) == Some("Int") {
                 return self.integer_bridge().map(Some);
             }
-            if matches!(self.std.of(n), Some("Nat" | "Bool" | "I64" | "Text")) {
+            if matches!(
+                self.std.of(n),
+                Some("Nat" | "Bool" | "Text" | "UHost")
+            ) {
                 return self.boundary(&crate::check::BoundaryType {
                     id: usize::MAX,
                     ty: ty.clone(),
@@ -200,6 +203,21 @@ impl Eraser<'_> {
                 });
             }
             return self.native_family(n, Vec::new());
+        }
+        // `@a T`: the native type keeps the label, which the checked value
+        // does not carry, so packing takes it off and unpacking puts it on.
+        if let TermKind::Tagged { tag, term } = &*ty.kind {
+            let Some((inner, pack, unpack)) = self.native_field(term, env)? else {
+                return Ok(None);
+            };
+            return Ok(Some((
+                format!("@{tag} ({inner})"),
+                format!(
+                    "match ($v) {{ @{tag} tauto_label => {} }}",
+                    pack.replace("$v", "tauto_label")
+                ),
+                format!("@{tag} ({unpack})"),
+            )));
         }
         if let TermKind::App {
             function,
@@ -211,6 +229,17 @@ impl Eraser<'_> {
                     Some(value) => self.native_field(value, env),
                     None => Ok(None),
                 };
+            }
+            // `UInt(64)`, `SInt(64)`: a machine word, as the boundary writes it.
+            if matches!(
+                head_name(function).and_then(|head| self.std.of(head)),
+                Some("UInt" | "SInt")
+            ) {
+                return self.boundary(&crate::check::BoundaryType {
+                    id: usize::MAX,
+                    ty: ty.clone(),
+                    arguments: Vec::new(),
+                });
             }
             let mut reprs = Vec::new();
             for argument in arguments {
@@ -225,6 +254,28 @@ impl Eraser<'_> {
             };
         }
         Ok(None)
+    }
+    /// The packing and unpacking of the bytes of `Text::Mk(bytes)`: the
+    /// field's type as the standard library declares it, `List(Nat)`. The
+    /// native `Text` is not a constructor value, so building or taking
+    /// apart a text goes through its bytes.
+    pub(super) fn text_bytes_bridge(&mut self) -> Result<(String, String), Message> {
+        let field = self
+            .declarations
+            .iter()
+            .find(|(name, _)| self.std.of(name) == Some("Text"))
+            .and_then(|(_, decl)| match decl.constructors.as_slice() {
+                [ctor] => match ctor.params.as_slice() {
+                    [(_, ty)] => Some(ty.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .ok_or("dependent extraction: the standard library's Text::Mk")?;
+        let (_, pack, unpack) = self
+            .native_field(&field, &BTreeMap::new())?
+            .ok_or("dependent extraction: the bytes of Text::Mk")?;
+        Ok((pack, unpack))
     }
     pub(super) fn integer_bridge(&mut self) -> Result<(String, String, String), Message> {
         let info = self
@@ -263,7 +314,7 @@ impl Eraser<'_> {
                         "TautoErasedGetBool#r0($v)".into(),
                     )));
                 }
-                Some("I64" | "i64") => {
+                Some("i64") => {
                     return Ok(Some((
                         "i64".into(),
                         "TautoErasedI64#r0($v)".into(),
@@ -288,6 +339,24 @@ impl Eraser<'_> {
                 Some(value) => self.boundary(value),
                 None => Ok(None),
             };
+        }
+        // The width of `UInt(w)` and `SInt(w)`, a numeral.
+        let width = match &*t.kind {
+            TermKind::App { arguments, .. } => match arguments.as_slice() {
+                [w] => match &*w.kind {
+                    TermKind::Nat(w) => Some(w.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        if self.std.of(head) == Some("SInt") && width == Some("64") {
+            return Ok(Some((
+                "i64".into(),
+                "TautoErasedI64#r0($v)".into(),
+                "TautoErasedGetI64#r0($v)".into(),
+            )));
         }
         if !self
             .checked
@@ -331,6 +400,69 @@ impl Eraser<'_> {
                 format!("{to}($v)"),
             )));
         }
+        // `UHost` is the machine word `uhost`, not a struct: its one
+        // constructor carries the number, so packing reads the word as a
+        // number and unpacking checks nothing (the proof says it fits).
+        if self.std.of(head) == Some("UHost") {
+            let fam = self.checked.families[head].clone();
+            let ctor = fam
+                .ctors
+                .first()
+                .ok_or("dependent boundary: UHost::Mk")?
+                .clone();
+            let c = self.ctor(&ctor)?;
+            let from = format!("TautoErasedPack{}#r0", info.id);
+            let to = format!("TautoErasedUnpack{}#r0", info.id);
+            if self.total.insert(from.clone().into()) {
+                self.definitions.push(format!("fn {from}(value: uhost): {VALUE} {{ {c}({NAT}(Nat::of_u64(U64::of_uhost(value)))) }}\nfn {to}(value: {VALUE}): uhost {{ match value {{ {c}(v) => UHost::of_u64_below(U64::of_nat(TautoErasedGetNat#r0(v)))\n _ => extract_unreachable() }} }}\n"));
+                self.total.insert(to.clone().into());
+                self.forbidden.extend([from.clone(), to.clone()]);
+            }
+            return Ok(Some(("uhost".into(), format!("{from}($v)"), format!("{to}($v)"))));
+        }
+        // `UInt(8)` / `UInt(32)` / `UInt(64)` are machine words, not structs: like `UHost`,
+        // each constructor carries the number, and the proof says it fits.
+        if let Some((std_name, nib_ty, pack_body, unpack_body)) = match (self.std.of(head), width) {
+            (Some("UInt"), Some("8")) => Some((
+                "U8",
+                "u8",
+                "Nat::of_u64(U64::of_u8(value))",
+                "U8::of_u64(U64::of_nat(TautoErasedGetNat#r0(v)))",
+            )),
+            (Some("UInt"), Some("32")) => Some((
+                "U32",
+                "u32",
+                "Nat::of_u64(U64::of_u32(value))",
+                "U32::of_u64(U64::of_nat(TautoErasedGetNat#r0(v)))",
+            )),
+            (Some("UInt"), Some("64")) => Some((
+                "U64",
+                "u64",
+                "Nat::of_u64(value)",
+                "U64::of_nat(TautoErasedGetNat#r0(v))",
+            )),
+            _ => None,
+        } {
+            let fam = self.checked.families[head].clone();
+            let ctor = fam
+                .ctors
+                .first()
+                .ok_or(format!("dependent boundary: {std_name}::Mk"))?
+                .clone();
+            let c = self.ctor(&ctor)?;
+            let from = format!("TautoErasedPack{}#r0", info.id);
+            let to = format!("TautoErasedUnpack{}#r0", info.id);
+            if self.total.insert(from.clone().into()) {
+                self.definitions.push(format!("fn {from}(value: {nib_ty}): {VALUE} {{ {c}({NAT}({pack_body})) }}\nfn {to}(value: {VALUE}): {nib_ty} {{ match value {{ {c}(v) => {unpack_body}\n _ => extract_unreachable() }} }}\n"));
+                self.total.insert(to.clone().into());
+                self.forbidden.extend([from.clone(), to.clone()]);
+            }
+            return Ok(Some((
+                nib_ty.into(),
+                format!("{from}($v)"),
+                format!("{to}($v)"),
+            )));
+        }
         if matches!(self.std.of(head), Some("Option" | "List")) {
             let Some(arg) = info.arguments.first() else {
                 return Ok(None);
@@ -360,11 +492,11 @@ impl Eraser<'_> {
             let from = format!("TautoErasedPack{}#r0", info.id);
             let to = format!("TautoErasedUnpack{}#r0", info.id);
             let list = self.std.of(head) == Some("List");
-            let (empty_pat, full_pat, tail, source) = if list {
-                ("Nil", "Cons", ", tail", "List")
-            } else {
-                ("None", "Some", "", "Option")
-            };
+            // The family's own constructors, by reference: a program that
+            // declares its own `None` or `Nil` must not capture these patterns.
+            let (empty_pat, full_pat, source) =
+                (self.symbol(&empty), self.symbol(&full), self.symbol(head));
+            let tail = if list { ", tail" } else { "" };
             let ty = format!("{source}({inner})");
             if self.total.insert(from.clone().into()) {
                 let p = pack.replace("$v", "item");
@@ -485,9 +617,11 @@ impl Eraser<'_> {
                 .zip(&names)
                 .map(|((_, _, unpack), name)| unpack.replace("$v", name))
                 .collect();
-            let pattern = names.iter().rev().fold("Nil".to_string(), |tail, name| {
-                format!("Cons({name}, {tail})")
-            });
+            let (nil, cons) = self.list_constructors()?;
+            let pattern = names
+                .iter()
+                .rev()
+                .fold(nil, |tail, name| format!("{cons}({name}, {tail})"));
             let answer = self.fresh("Answer");
             let packed = pack.replace("$v", &answer);
             let call = format!(
@@ -500,9 +634,29 @@ impl Eraser<'_> {
                 "if tag == {tag} {{ match args {{ {pattern} => {call}\n _ => extract_unreachable() }} }} else {{ {dispatch} }}"
             );
         }
-        self.definitions.push(format!("fn {run}(value: {VALUE}): {VALUE} ! {{{}}} {{ match value {{ {REQUEST}(tag, args, continuation) => {dispatch}\n _ => value }} }}", std::iter::once("Div").chain(row.iter().map(|name| self.symbol(name)).collect::<Vec<_>>().iter().map(String::as_str)).collect::<Vec<_>>().join(", ")));
+        self.definitions.push(format!("fn {run}(value: {VALUE}): {VALUE} ! {{{}}} {{ match value {{ {REQUEST}(tag, args, continuation) => {dispatch}\n _ => value }} }}", std::iter::once("div").chain(row.iter().map(|name| self.symbol(name)).collect::<Vec<_>>().iter().map(String::as_str)).collect::<Vec<_>>().join(", ")));
         self.total.insert(run.clone().into());
         self.forbidden.insert(run.clone());
         Ok(Some(run))
+    }
+
+    /// The prelude list's `Nil` and `Cons`, as reference slots.
+    fn list_constructors(&self) -> Result<(String, String), Message> {
+        let mut nil = None;
+        let mut cons = None;
+        for family in &self.checked.families {
+            if self.std.of(family.0) != Some("List") {
+                continue;
+            }
+            for c in &family.1.ctors {
+                match self.std.of(c) {
+                    Some("Nil") => nil = Some(self.symbol(c)),
+                    Some("Cons") => cons = Some(self.symbol(c)),
+                    _ => {}
+                }
+            }
+        }
+        nil.zip(cons)
+            .ok_or_else(|| "dependent boundary: no list".into())
     }
 }

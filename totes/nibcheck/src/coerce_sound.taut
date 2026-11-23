@@ -1,0 +1,679 @@
+import "../../identity/src/identity.taut"
+import "checker.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "fits_sound.taut"
+import "fits_sound_head.taut"
+import "ty.taut"
+import "unify_sound.taut"
+
+// A reading through `coerce` fields (`ck_coerce_fit`) only grows the
+// checker: each step tries a fit as `ck_attempt_fits` does, and nothing else
+// changes (`docs/design/ownership.md`「Coercing structs (`coerce`)」).
+
+pub fn coerce_step_named(c: Checker, d: Text, f: DataField, level: CoerceLevel, n: Option(Text)): Option(CoerceStep) {
+  match n {
+    None => None
+    Some(x) => Some(CoerceStep { data: d, field: x, ty: ck_resolve(c, data_field_ty(f)), level: level })
+  }
+}
+
+pub fn coerce_step_field(c: Checker, d: Text, k: DataCoerce, o: Option(DataField)): Option(CoerceStep) {
+  match o {
+    None => None
+    Some(f) => coerce_step_named(c, d, f, k.level, f.name)
+  }
+}
+
+pub fn coerce_step_declared(c: Checker, d: Text, args: List(Ty), o: Option(DataCoerce)): Option(CoerceStep) {
+  match o {
+    None => None
+    Some(k) => coerce_step_field(c, d, k, coerce_field_at(datas_fields(ck_datas_of(c), d, 0, args), data_coerce_index(k)))
+  }
+}
+
+pub fn coerce_step_resolved(c: Checker, r: Ty): Option(CoerceStep) {
+  match r {
+    TyNamed(d, args) => coerce_step_declared(c, surface_name_text(d), args, datas_coerce(ck_datas_of(c), surface_name_text(d)))
+    TyInt(^w) => None
+    TyBool => None
+    TyText => None
+    TyUnit => None
+    TyNever => None
+    TyDecimal => None
+    TyFloat => None
+    TyFloat32 => None
+    TyParam(^n, ^k) => None
+    TyVar(^v) => None
+    TyFn(^ps, ^r2, ^k) => None
+    TyUnion(^ms) => None
+    TyProduct(^ms) => None
+    TyTagged(^tags, ^inner) => None
+    TyInfo(^h) => None
+    TyBorrow(^inner, ^m) => None
+    TyPoly(^gs, ^inner) => None
+    TyApp(^h, ^a) => None
+  }
+}
+
+pub theorem coerce_step_unf(c: Checker, t: Ty): ck_coerce_step(c, t) = coerce_step_resolved(c, ck_resolve(c, t)) { Refl }
+
+pub fn coerce_fit_next(
+  j: Nat,
+  c: Checker,
+  s: CoerceStep,
+  want: Ty,
+  level: CoerceLevel,
+  fits: Bool
+): Mut1(Option(CoerceLevel), Checker) {
+  match fits {
+    true => mut1(Some(coerce_min(level, s.level)), c)
+    false => ck_rewrap1(ck_coerce_fit_in(j, c, s.ty, want, coerce_min(level, s.level)))
+  }
+}
+
+pub fn coerce_fit_step(
+  j: Nat,
+  c: Checker,
+  want: Ty,
+  level: CoerceLevel,
+  o: Option(CoerceStep)
+): Mut1(Option(CoerceLevel), Checker) {
+  match o {
+    None => mut1(None, c)
+    Some(s) => frame_bind(
+      <A: Bool, B: Option(CoerceLevel)>,
+      (fits: Bool, next: Checker) => coerce_fit_next(j, next, s, want, level, fits),
+      ck_attempt_fits(c, s.ty, want)
+    )
+  }
+}
+
+pub theorem coerce_fit_in_unf(
+  j: Nat,
+  c: Checker,
+  t: Ty,
+  want: Ty,
+  level: CoerceLevel
+): ck_coerce_fit_in(Succ(j), c, t, want, level) = coerce_fit_step(j, c, want, level, ck_coerce_step(c, t)) { Refl }
+
+pub def CoerceFitGrows(j: Nat): Prop := ∀ c: Checker. ∀ t: Ty. ∀ want: Ty. ∀ level: CoerceLevel. ∀ ordered: CkOrdered(
+  c
+). Grows(c, ck_st(ck_coerce_fit_in(j, c, t, want, level)))
+
+pub theorem coerce_fit_next_grows(
+  j: Nat,
+  c: Checker,
+  s: CoerceStep,
+  want: Ty,
+  level: CoerceLevel,
+  fits: Bool,
+  ordered: CkOrdered(c),
+  ih: CoerceFitGrows(j)
+): Grows(c, ck_st(coerce_fit_next(j, c, s, want, level, fits))) {
+  match fits {
+    true => grows_refl(c, ordered)
+    false => Eq::subst(
+      (m: Mut1(Option(CoerceLevel), Checker)) => Grows(c, ck_st(m)),
+      Eq::sym(ck_rewrap1_id(ck_coerce_fit_in(j, c, s.ty, want, coerce_min(level, s.level)))),
+      ih(c, s.ty, want, coerce_min(level, s.level), ordered)
+    )
+  }
+}
+
+pub theorem coerce_fit_step_grows(
+  j: Nat,
+  c: Checker,
+  want: Ty,
+  level: CoerceLevel,
+  o: Option(CoerceStep),
+  ordered: CkOrdered(c),
+  ih: CoerceFitGrows(j)
+): Grows(c, ck_st(coerce_fit_step(j, c, want, level, o))) {
+  match o {
+    None => grows_refl(c, ordered)
+    Some(s) => coerce_fit_attempt_grows(j, c, s, want, level, ck_attempt_fits(c, s.ty, want), And::left(ck_attempt_fits_ok(c, s.ty, want)(ordered)), ih)
+  }
+}
+
+pub theorem coerce_fit_attempt_grows(
+  j: Nat,
+  c: Checker,
+  s: CoerceStep,
+  want: Ty,
+  level: CoerceLevel,
+  m: Mut1(Bool, Checker),
+  first: Grows(c, ck_st(m)),
+  ih: CoerceFitGrows(j)
+): Grows(
+  c,
+  ck_st(
+    frame_bind(
+      <A: Bool, B: Option(CoerceLevel)>,
+      (fits: Bool, next: Checker) => coerce_fit_next(j, next, s, want, level, fits),
+      m
+    )
+  )
+) {
+  ⊢ Grows(
+    c,
+    ck_st(
+      frame_bind(
+        <A: Bool, B: Option(CoerceLevel)>,
+        (fits: Bool, next: Checker) => coerce_fit_next(j, next, s, want, level, fits),
+        m
+      )
+    )
+  ) from match m {
+    mut1(fits, next) => grows_trans(
+      c,
+      next,
+      ck_st(coerce_fit_next(j, next, s, want, level, fits)),
+      first,
+      coerce_fit_next_grows(j, next, s, want, level, fits, And::left(first), ih)
+    )
+  }
+}
+
+pub theorem coerce_fit_in_grows(k: Nat): CoerceFitGrows(k) {
+  match k {
+    Zero => (c: Checker, t: Ty, want: Ty, level: CoerceLevel, ordered: CkOrdered(c)) => grows_refl(c, ordered)
+    Succ(j) => (c: Checker, t: Ty, want: Ty, level: CoerceLevel, ordered: CkOrdered(c)) => Eq::subst(
+      (m: Mut1(Option(CoerceLevel), Checker)) => Grows(c, ck_st(m)),
+      Eq::sym(coerce_fit_in_unf(j, c, t, want, level)),
+      coerce_fit_step_grows(j, c, want, level, ck_coerce_step(c, t), ordered, coerce_fit_in_grows(j))
+    )
+  }
+}
+
+pub fn coerce_fit_shaped(c: Checker, o: Option(CoerceShape)): Mut1(Option(CoerceFound), Checker) {
+  match o {
+    None => mut1(None, c)
+    Some(shape) => frame_bind(
+      <A: Option(CoerceLevel), B: Option(CoerceFound)>,
+      (level: Option(CoerceLevel), next: Checker) => mut1(coerce_found(shape, level), next),
+      ck_coerce_fit_in(33, c, shape.source, shape.want, CoerceOwned)
+    )
+  }
+}
+
+pub theorem coerce_fit_unf(
+  c: Checker,
+  a: Ty,
+  b: Ty
+): ck_coerce_fit(c, a, b) = coerce_fit_shaped(c, coerce_shape(ck_resolve(c, a), ck_resolve(c, b))) { Refl }
+
+pub theorem coerce_fit_shaped_grows(
+  c: Checker,
+  o: Option(CoerceShape),
+  ordered: CkOrdered(c)
+): Grows(c, ck_st(coerce_fit_shaped(c, o))) {
+  match o {
+    None => grows_refl(c, ordered)
+    Some(shape) => coerce_found_grows(
+      c,
+      shape,
+      ck_coerce_fit_in(33, c, shape.source, shape.want, CoerceOwned),
+      coerce_fit_in_grows(33)(c, shape.source, shape.want, CoerceOwned, ordered)
+    )
+  }
+}
+
+pub theorem coerce_found_grows(
+  c: Checker,
+  shape: CoerceShape,
+  m: Mut1(Option(CoerceLevel), Checker),
+  first: Grows(c, ck_st(m))
+): Grows(
+  c,
+  ck_st(
+    frame_bind(
+      <A: Option(CoerceLevel), B: Option(CoerceFound)>,
+      (level: Option(CoerceLevel), next: Checker) => mut1(coerce_found(shape, level), next),
+      m
+    )
+  )
+) {
+  ⊢ Grows(
+    c,
+    ck_st(
+      frame_bind(
+        <A: Option(CoerceLevel), B: Option(CoerceFound)>,
+        (level: Option(CoerceLevel), next: Checker) => mut1(coerce_found(shape, level), next),
+        m
+      )
+    )
+  ) from match m {
+    mut1(level, next) => first
+  }
+}
+
+pub theorem ck_coerce_fit_grows(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): Grows(c, ck_st(ck_coerce_fit(c, a, b))) {
+  Eq::subst(
+    (m: Mut1(Option(CoerceFound), Checker)) => Grows(c, ck_st(m)),
+    Eq::sym(coerce_fit_unf(c, a, b)),
+    coerce_fit_shaped_grows(c, coerce_shape(ck_resolve(c, a), ck_resolve(c, b)), ordered)
+  )
+}
+
+pub fn coerce_step_ty(s: CoerceStep): Ty { s.ty }
+pub fn coerce_shape_source(s: CoerceShape): Ty { s.source }
+pub fn coerce_shape_want(s: CoerceShape): Ty { s.want }
+
+// What a reading through `coerce` fields establishes. `t` is reached start
+// `from` through `coerce` fields, each step read at a state that `c` comes
+// after.
+pub(open) inductive CoerceChain(c: Checker): (Ty, Ty) -> Prop {
+  ChainOne<start: Ty, next: Ty>(
+    at: Checker,
+    d: Text,
+    f: Text,
+    l: CoerceLevel,
+    grows: Grows(at, c),
+    step: ck_coerce_step(at, start) = Some(CoerceStepMk(d, f, next, l))
+  ): CoerceChain(c, start, next)
+  ChainMore<start: Ty, next: Ty, t: Ty>(
+    at: Checker,
+    d: Text,
+    f: Text,
+    l: CoerceLevel,
+    grows: Grows(at, c),
+    step: ck_coerce_step(at, start) = Some(CoerceStepMk(d, f, next, l)),
+    rest: CoerceChain(c, next, t)
+  ): CoerceChain(c, start, t)
+}
+
+pub theorem chain_one(
+  c: Checker,
+  at: Checker,
+  start: Ty,
+  s: CoerceStep,
+  grows: Grows(at, c)
+): (ck_coerce_step(at, start) = Some(s)) -> CoerceChain(c, start, coerce_step_ty(s)) {
+  match s {
+    CoerceStepMk(d, f, ty, l) => (step: ck_coerce_step(at, start) = Some(CoerceStepMk(d, f, ty, l))) => ChainOne(at, d, f, l, grows, step)
+  }
+}
+
+pub theorem chain_more(
+  c: Checker,
+  at: Checker,
+  start: Ty,
+  t: Ty,
+  s: CoerceStep,
+  grows: Grows(at, c)
+): (ck_coerce_step(at, start) = Some(s)) -> (CoerceChain(c, coerce_step_ty(s), t)) -> CoerceChain(c, start, t) {
+  match s {
+    CoerceStepMk(d, f, ty, l) => (step: ck_coerce_step(at, start) = Some(CoerceStepMk(d, f, ty, l))) => (rest: CoerceChain(c, ty, t)) => ChainMore(at, d, f, l, grows, step, rest)
+  }
+}
+
+// `from` read through `coerce` fields as a type that fits `want` at `c`.
+pub(open) inductive CoerceReach(c: Checker): (Ty, Ty) -> Prop {
+  CoerceReachMk<start: Ty, want: Ty>(
+    t: Ty,
+    chain: CoerceChain(c, start, t),
+    fits: SubAt(c, t, want)
+  ): CoerceReach(c, start, want)
+}
+
+pub fn CoerceFitFound(c: Checker, start: Ty, want: Ty, r: Option(CoerceLevel)): Prop {
+  match r {
+    None => True
+    Some(^l) => CoerceReach(c, start, want)
+  }
+}
+
+pub def CoerceFitSound(j: Nat): Prop := ∀ c: Checker. ∀ t: Ty. ∀ want: Ty. ∀ level: CoerceLevel. ∀ ordered: CkOrdered(
+  c
+). CoerceFitFound(
+  ck_st(ck_coerce_fit_in(j, c, t, want, level)),
+  t,
+  want,
+  ck_val(ck_coerce_fit_in(j, c, t, want, level))
+)
+
+pub theorem chain_grows<start: Ty, t: Ty>(
+  c: Checker,
+  c2: Checker,
+  later: Grows(c, c2),
+  h: CoerceChain(c, start, t)
+): CoerceChain(c2, start, t) {
+  match h {
+    ChainOne(at, d, f, l, grows, step) => ChainOne(at, d, f, l, grows_trans(at, c, c2, grows, later), step)
+    ChainMore(at, d, f, l, grows, step, rest) => ChainMore(
+      at,
+      d,
+      f,
+      l,
+      grows_trans(at, c, c2, grows, later),
+      step,
+      chain_grows(c, c2, later, rest)
+    )
+  }
+}
+
+pub theorem coerce_fit_next_sound(
+  j: Nat,
+  c0: Checker,
+  t0: Ty,
+  c: Checker,
+  s: CoerceStep,
+  want: Ty,
+  level: CoerceLevel,
+  fits: Bool,
+  grown: Grows(c0, c),
+  step: ck_coerce_step(c0, t0) = Some(s),
+  found: (fits = true) -> SubAt(c, coerce_step_ty(s), want),
+  ih: CoerceFitSound(j)
+): CoerceFitFound(
+  ck_st(coerce_fit_next(j, c, s, want, level, fits)),
+  t0,
+  want,
+  ck_val(coerce_fit_next(j, c, s, want, level, fits))
+) {
+  ⊢ CoerceFitFound(
+    ck_st(coerce_fit_next(j, c, s, want, level, fits)),
+    t0,
+    want,
+    ck_val(coerce_fit_next(j, c, s, want, level, fits))
+  ) from match fits {
+    true => CoerceReachMk(coerce_step_ty(s), chain_one(c, c0, t0, s, grown)(step), found(Refl))
+    false => coerce_fit_rest_sound(
+      c0,
+      t0,
+      c,
+      s,
+      want,
+      grown,
+      step,
+      ck_coerce_fit_in(j, c, coerce_step_ty(s), want, coerce_min(level, s.level)),
+      coerce_fit_in_grows(j)(c, coerce_step_ty(s), want, coerce_min(level, s.level), And::left(grown)),
+      ih(c, coerce_step_ty(s), want, coerce_min(level, s.level), And::left(grown))
+    )
+  }
+}
+
+pub theorem coerce_fit_rest_sound(
+  c0: Checker,
+  t0: Ty,
+  c: Checker,
+  s: CoerceStep,
+  want: Ty,
+  grown: Grows(c0, c),
+  step: ck_coerce_step(c0, t0) = Some(s),
+  m: Mut1(Option(CoerceLevel), Checker),
+  after: Grows(c, ck_st(m)),
+  h: CoerceFitFound(ck_st(m), coerce_step_ty(s), want, ck_val(m))
+): CoerceFitFound(ck_st(ck_rewrap1(m)), t0, want, ck_val(ck_rewrap1(m))) {
+  match m {
+    mut1(r, final) => coerce_fit_rest_found(c0, t0, c, s, want, final, r, grown, step, after, h)
+  }
+}
+
+pub theorem coerce_fit_rest_found(
+  c0: Checker,
+  t0: Ty,
+  c: Checker,
+  s: CoerceStep,
+  want: Ty,
+  final: Checker,
+  r: Option(CoerceLevel),
+  grown: Grows(c0, c),
+  step: ck_coerce_step(c0, t0) = Some(s),
+  after: Grows(c, final),
+  h: CoerceFitFound(final, coerce_step_ty(s), want, r)
+): CoerceFitFound(final, t0, want, r) {
+  match r {
+    None => Trivial
+    Some(l) => coerce_reach_more(c0, t0, c, s, want, final, grown, step, after, h)
+  }
+}
+
+pub theorem coerce_reach_more(
+  c0: Checker,
+  t0: Ty,
+  c: Checker,
+  s: CoerceStep,
+  want: Ty,
+  final: Checker,
+  grown: Grows(c0, c),
+  step: ck_coerce_step(c0, t0) = Some(s),
+  after: Grows(c, final),
+  h: CoerceReach(final, coerce_step_ty(s), want)
+): CoerceReach(final, t0, want) {
+  match h {
+    CoerceReachMk(t, chain, fits) => CoerceReachMk(
+      t,
+      chain_more(final, c0, t0, t, s, grows_trans(c0, c, final, grown, after))(step)(chain),
+      fits
+    )
+  }
+}
+
+pub theorem coerce_fit_attempt_sound(
+  j: Nat,
+  c: Checker,
+  t: Ty,
+  s: CoerceStep,
+  want: Ty,
+  level: CoerceLevel,
+  step: ck_coerce_step(c, t) = Some(s),
+  m: Mut1(Bool, Checker),
+  post: And(Grows(c, ck_st(m)), (ck_val(m) = true) -> SubAt(ck_st(m), coerce_step_ty(s), want)),
+  ih: CoerceFitSound(j)
+): CoerceFitFound(
+  ck_st(
+    frame_bind(
+      <A: Bool, B: Option(CoerceLevel)>,
+      (fits: Bool, next: Checker) => coerce_fit_next(j, next, s, want, level, fits),
+      m
+    )
+  ),
+  t,
+  want,
+  ck_val(
+    frame_bind(
+      <A: Bool, B: Option(CoerceLevel)>,
+      (fits: Bool, next: Checker) => coerce_fit_next(j, next, s, want, level, fits),
+      m
+    )
+  )
+) {
+  ⊢ CoerceFitFound(
+    ck_st(
+      frame_bind(
+        <A: Bool, B: Option(CoerceLevel)>,
+        (fits: Bool, next: Checker) => coerce_fit_next(j, next, s, want, level, fits),
+        m
+      )
+    ),
+    t,
+    want,
+    ck_val(
+      frame_bind(
+        <A: Bool, B: Option(CoerceLevel)>,
+        (fits: Bool, next: Checker) => coerce_fit_next(j, next, s, want, level, fits),
+        m
+      )
+    )
+  ) from match m {
+    mut1(fits, next) => coerce_fit_next_sound(j, c, t, next, s, want, level, fits, And::left(post), step, And::right(post), ih)
+  }
+}
+
+pub theorem coerce_fit_step_sound(
+  j: Nat,
+  c: Checker,
+  t: Ty,
+  want: Ty,
+  level: CoerceLevel,
+  o: Option(CoerceStep),
+  ordered: CkOrdered(c),
+  ih: CoerceFitSound(j)
+): (ck_coerce_step(c, t) = o) -> CoerceFitFound(
+  ck_st(coerce_fit_step(j, c, want, level, o)),
+  t,
+  want,
+  ck_val(coerce_fit_step(j, c, want, level, o))
+) {
+  ⊢ (ck_coerce_step(c, t) = o) -> CoerceFitFound(
+    ck_st(coerce_fit_step(j, c, want, level, o)),
+    t,
+    want,
+    ck_val(coerce_fit_step(j, c, want, level, o))
+  ) from match o {
+    None => (e: ck_coerce_step(c, t) = None) => Trivial
+    Some(s) => (e: ck_coerce_step(c, t) = Some(s)) => coerce_fit_attempt_sound(
+      j,
+      c,
+      t,
+      s,
+      want,
+      level,
+      e,
+      ck_attempt_fits(c, coerce_step_ty(s), want),
+      ck_attempt_fits_ok(c, coerce_step_ty(s), want)(ordered),
+      ih
+    )
+  }
+}
+
+pub theorem coerce_fit_in_sound(k: Nat): CoerceFitSound(k) {
+  match k {
+    Zero => (c: Checker, t: Ty, want: Ty, level: CoerceLevel, ordered: CkOrdered(c)) => Trivial
+    Succ(j) => (c: Checker, t: Ty, want: Ty, level: CoerceLevel, ordered: CkOrdered(c)) => Eq::subst(
+      (m: Mut1(Option(CoerceLevel), Checker)) => CoerceFitFound(ck_st(m), t, want, ck_val(m)),
+      Eq::sym(coerce_fit_in_unf(j, c, t, want, level)),
+      coerce_fit_step_sound(j, c, t, want, level, ck_coerce_step(c, t), ordered, coerce_fit_in_sound(j))(Refl)
+    )
+  }
+}
+
+// `a` read as `b` through `coerce` fields at `c`: the shape of the reading
+// was taken at a state `c` comes after (`coerce_shape`), and the struct read
+// reaches a type that fits the one wanted.
+pub(open) inductive CoerceAt(c: Checker, a: Ty, b: Ty): Prop {
+  CoerceAtMk(
+    at: Checker,
+    shape: CoerceShape,
+    grows: Grows(at, c),
+    shaped: coerce_shape(ck_resolve(at, a), ck_resolve(at, b)) = Some(shape),
+    reach: CoerceReach(c, coerce_shape_source(shape), coerce_shape_want(shape))
+  ): CoerceAt(c, a, b)
+}
+
+pub fn CoerceFitResult(c0: Checker, a: Ty, b: Ty, m: Mut1(Option(CoerceFound), Checker)): Prop {
+  match m {
+    mut1(v, next) => ⊢ Prop from match v {
+      None => True
+      Some(^f) => CoerceAt(next, a, b)
+    }
+  }
+}
+
+pub theorem coerce_found_at(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  shape: CoerceShape,
+  final: Checker,
+  r: Option(CoerceLevel),
+  grows: Grows(c, final),
+  shaped: coerce_shape(ck_resolve(c, a), ck_resolve(c, b)) = Some(shape)
+): (CoerceFitFound(final, coerce_shape_source(shape), coerce_shape_want(shape), r)) -> CoerceFitResult(
+  c,
+  a,
+  b,
+  mut1(coerce_found(shape, r), final)
+) {
+  ⊢ (CoerceFitFound(final, coerce_shape_source(shape), coerce_shape_want(shape), r)) -> CoerceFitResult(
+    c,
+    a,
+    b,
+    mut1(coerce_found(shape, r), final)
+  ) from match r {
+    None => (h: True) => Trivial
+    Some(l) => (h: CoerceReach(final, coerce_shape_source(shape), coerce_shape_want(shape))) => CoerceAtMk(
+      c,
+      shape,
+      grows,
+      shaped,
+      h
+    )
+  }
+}
+
+pub theorem coerce_found_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  shape: CoerceShape,
+  shaped: coerce_shape(ck_resolve(c, a), ck_resolve(c, b)) = Some(shape),
+  m: Mut1(Option(CoerceLevel), Checker),
+  grows: Grows(c, ck_st(m)),
+  h: CoerceFitFound(ck_st(m), coerce_shape_source(shape), coerce_shape_want(shape), ck_val(m))
+): CoerceFitResult(
+  c,
+  a,
+  b,
+  frame_bind(
+    <A: Option(CoerceLevel), B: Option(CoerceFound)>,
+    (level: Option(CoerceLevel), next: Checker) => mut1(coerce_found(shape, level), next),
+    m
+  )
+) {
+  ⊢ CoerceFitResult(
+    c,
+    a,
+    b,
+    frame_bind(
+      <A: Option(CoerceLevel), B: Option(CoerceFound)>,
+      (level: Option(CoerceLevel), next: Checker) => mut1(coerce_found(shape, level), next),
+      m
+    )
+  ) from match m {
+    mut1(r, final) => coerce_found_at(c, a, b, shape, final, r, grows, shaped)(h)
+  }
+}
+
+pub theorem coerce_fit_shaped_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  o: Option(CoerceShape),
+  ordered: CkOrdered(c)
+): (coerce_shape(ck_resolve(c, a), ck_resolve(c, b)) = o) -> CoerceFitResult(c, a, b, coerce_fit_shaped(c, o)) {
+  match o {
+    None => (e: coerce_shape(ck_resolve(c, a), ck_resolve(c, b)) = None) => Trivial
+    Some(shape) => (e: coerce_shape(ck_resolve(c, a), ck_resolve(c, b)) = Some(shape)) => coerce_found_sound(
+      c,
+      a,
+      b,
+      shape,
+      e,
+      ck_coerce_fit_in(33, c, coerce_shape_source(shape), coerce_shape_want(shape), CoerceOwned),
+      coerce_fit_in_grows(33)(c, coerce_shape_source(shape), coerce_shape_want(shape), CoerceOwned, ordered),
+      coerce_fit_in_sound(33)(c, coerce_shape_source(shape), coerce_shape_want(shape), CoerceOwned, ordered)
+    )
+  }
+}
+
+// What `ck_coerce_fit` finds is a reading through `coerce` fields.
+pub theorem ck_coerce_fit_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CoerceFitResult(c, a, b, ck_coerce_fit(c, a, b)) {
+  Eq::subst(
+    (m: Mut1(Option(CoerceFound), Checker)) => CoerceFitResult(c, a, b, m),
+    Eq::sym(coerce_fit_unf(c, a, b)),
+    coerce_fit_shaped_sound(c, a, b, coerce_shape(ck_resolve(c, a), ck_resolve(c, b)), ordered)(Refl)
+  )
+}

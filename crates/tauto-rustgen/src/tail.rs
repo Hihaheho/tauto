@@ -31,11 +31,15 @@ impl Gen<'_> {
             evaluate.extend(quote!(let #t = #v;));
             assign.extend(quote!(#x = #t;));
         }
-        let tick = match c.tick {
+        let host_tick = match c.tick {
             tauto_nir::Tick::Host => {
                 let at = self.loc(c.span);
                 quote!(tauto_rt::host_tick(#at);)
             }
+            _ => Rs::new(),
+        };
+        // A budget's step is charged after the arguments are evaluated.
+        let tick = match c.tick {
             tauto_nir::Tick::Budget if fx.sync_budget => quote!(__tauto_fuel.tick()?;),
             // A function of the O tier counts the steps of its budget as a
             // call to itself would.
@@ -46,6 +50,6 @@ impl Gen<'_> {
             _ => Rs::new(),
         };
         let label = label();
-        quote!({ #tick #evaluate #assign continue #label; })
+        quote!({ #host_tick #evaluate #tick #assign continue #label; })
     }
 }

@@ -4,7 +4,7 @@ use std::process::Command;
 use tauto_rustgen::{Bindings, Options, Sources, emit_module, workspace};
 
 fn emit(source: &str) -> String {
-    let pkg = tauto_nir::compile(source).unwrap();
+    let mut pkg = tauto::nir::compile(source).unwrap();
     emit_module(
         &pkg,
         &Sources {
@@ -18,17 +18,17 @@ fn emit(source: &str) -> String {
 #[test]
 fn synchronous_specializations_keep_original_functions_and_guarded_fallback() {
     let source = r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-let r := handle { budget(steps: 20) { descend(count(5)) } } with { exceeded(info), k => -1 }
-perform show("r", r)"#;
+let r := handle { perform budget(20, () => { descend(count(5)) }) } with { exceeded(info), k => -1 }
+show(&r)"#;
     let rust = emit(&source);
     assert!(rust.contains("budget_sync"), "{rust}");
     assert!(rust.contains("can_run_nonresuming"));
@@ -43,24 +43,28 @@ perform show("r", r)"#;
 fn local_resume_zero_and_budget_exhaustion_use_original_handler_arms() {
     let source = &r#"effect stop(value: i64): Never resume 0
 fn stop_at(n: i64): i64 ! {stop} { perform stop(n) }
-fn visit(n: i64): i64 ! {Div, stop} {
+fn visit(n: i64): i64 ! {div, overflow, stop} {
   var i := 0
   while i < n { i := i + 1 }
   stop_at(i)
 }
-fn run(steps: i64): Result(i64, Text) {
-  handle { budget(steps: steps) { Ok(visit(3)) } } with {
+fn run(steps: u64): Result(i64, Text) ! {budget} {
+  handle { perform budget(steps, () => { Ok(visit(3)) }) } with {
     stop(value) => Ok(value)
     exceeded(info), k => Err("exhausted")
   }
 }
 var fuel := 0
-while fuel < 10 { perform show("result", run(fuel))
+while fuel < 10 { show(&run(fuel))
   fuel := fuel + 1 }
 "#
     .to_string();
     assert!(emit(source).contains("run_nonresuming"));
-    let output = run_both_paths_observed(source, Some(34), true, Some(0));
+    // 34 ticks are the budget bodies' (visit(3) takes 4, so fuel 0..=9
+    // attempts 1+2+3+4 and then 4 six times). The other 20 are the top
+    // level's: it runs under the program's step limit, and each of its 10
+    // iterations ticks once for the loop and once for the call to `run`.
+    let output = run_both_paths_observed(source, Some(54), true, Some(0));
     assert!(
         output.status.success(),
         "{}",
@@ -73,29 +77,29 @@ while fuel < 10 { perform show("result", run(fuel))
 
 #[test]
 fn closed_shared_callback_alone_keeps_exact_fuel_and_invocation_counts() {
-    let source = &r#"fn value(index: u64): u64 { index + 1 }
-fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+    let source = &r#"fn value(index: u64): u64 { U64::wrapping_add(index, 1) }
+fn sum(read: &((u64) -> u64), size: u64): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < size { total := total + read(index)
     index := index + 1 }
   total
 }
-fn forward(&read: (u64) -> u64, size: u64): u64 ! {Div} {
-  sum(&(index) => read(index), size)
+fn forward(read: &((u64) -> u64), size: u64): u64 ! {div, overflow} {
+  sum((index) => read(index), size)
 }
-fn run(steps: i64): Result(u64, Text) {
-  handle { budget(steps: steps) { Ok(forward(&(index) => value(index), 4)) } } with {
+fn run(steps: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(steps, () => { Ok(forward((index) => value(index), 4)) }) } with {
     exceeded(info), k => Err("exhausted")
   }
 }
 var fuel := 0
-while fuel < 12 { perform show("result", run(fuel))
+while fuel < 12 { show(&run(fuel))
   fuel := fuel + 1 }
 "#
     .to_string();
     assert!(emit(source).contains("run_nonresuming"));
-    let output = run_both_paths_observed(source, Some(57), false, Some(30));
+    let output = run_both_paths_observed(source, Some(81), false, Some(30));
     assert!(
         output.status.success(),
         "{}",
@@ -107,8 +111,8 @@ while fuel < 12 { perform show("result", run(fuel))
 #[test]
 fn closed_shared_callbacks_forward_through_helpers_and_compose_with_abort() {
     let source = &r#"effect stop(value: u64): Never resume 0
-fn value(index: u64): u64 { index + 1 }
-fn scan(&read: (u64) -> u64, size: u64, abort_at: u64): u64 ! {Div, stop} {
+fn value(index: u64): u64 { U64::wrapping_add(index, 1) }
+fn scan(read: &((u64) -> u64), size: u64, abort_at: u64): u64 ! {div, overflow, stop} {
   var index: u64 := 0
   var total: u64 := 0
   while index < size {
@@ -118,19 +122,19 @@ fn scan(&read: (u64) -> u64, size: u64, abort_at: u64): u64 ! {Div, stop} {
   }
   total
 }
-fn forward(&read: (u64) -> u64, size: u64, abort_at: u64): u64 ! {Div, stop} {
-  scan(&(index) => read(index), size, abort_at)
+fn forward(read: &((u64) -> u64), size: u64, abort_at: u64): u64 ! {div, overflow, stop} {
+  scan((index) => read(index), size, abort_at)
 }
-fn run(steps: i64, abort_at: u64): Result(u64, Text) {
-  handle { budget(steps: steps) { Ok(forward(&value, 4, abort_at)) } } with {
+fn run(steps: u64, abort_at: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(steps, () => { Ok(forward(&value, 4, abort_at)) }) } with {
     stop(total) => Ok(total)
     exceeded(info), k => Err("exhausted")
   }
 }
 var fuel := 0
 while fuel < 12 {
-  perform show("abort", run(fuel, 2))
-  perform show("normal", run(fuel, 9))
+  show(&run(fuel, 2))
+  show(&run(fuel, 9))
   fuel := fuel + 1
 }
 "#
@@ -138,7 +142,7 @@ while fuel < 12 {
     let rust = emit(source);
     assert!(rust.contains("run_nonresuming"), "{rust}");
     assert!(rust.contains("budget_sync"));
-    let output = run_both_paths_observed(source, Some(107), true, Some(47));
+    let output = run_both_paths_observed(source, Some(143), true, Some(47));
     assert!(
         output.status.success(),
         "{}",
@@ -153,79 +157,79 @@ while fuel < 12 {
 fn resumptions_nested_control_and_callbacks_keep_the_future_path() {
     for source in [
         r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-let r := handle { budget(steps: 0) { count(5) } } with { exceeded(info), k => info.more(2) }
-perform show("r", r)"#,
+let r := handle { perform budget(0, () => { count(5) }) } with { exceeded(info), k => info.more(2) }
+show(&r)"#,
         r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-let r := handle { budget(steps: 0) { count(5) } } with { exceeded(info), k => info.unbounded() }
-perform show("r", r)"#,
+let r := handle { perform budget(0, () => { count(5) }) } with { exceeded(info), k => info.unbounded() }
+show(&r)"#,
         r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-let r := handle { budget(steps: 0) { count(5) } } with { exceeded(info), k => k(7) }
-perform show("r", r)"#,
+let r := handle { perform budget(0, () => { count(5) }) } with { exceeded(info), k => k(7) }
+show(&r)"#,
         r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-let r := handle { budget(steps: 20) { budget(steps: 10) { count(5) } } } with { exceeded(info), k => -1 }
-perform show("r", r)"#,
+let r := handle { perform budget(20, () => { perform budget(10, () => { count(5) }) }) } with { exceeded(info), k => -1 }
+show(&r)"#,
         r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-let r := handle { budget(steps: 20) { each(Cons(5, Nil), (n) => { count(n)
+let r := handle { perform budget(20, () => { each(Cons(5, Nil), (n) => { count(n)
 () })
-1 } } with { exceeded(info), k => -1 }
-perform show("r", r)"#,
+1 }) } with { exceeded(info), k => -1 }
+show(&r)"#,
         r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-let r := handle { budget(steps: 20) { handle { count(5) } with { return x => x } } } with { exceeded(info), k => -1 }
-perform show("r", r)"#,
+let r := handle { perform budget(20, () => { handle { count(5) } with { return x => x } }) } with { exceeded(info), k => -1 }
+show(&r)"#,
     ] {
         let rust = emit(source);
         assert!(
@@ -238,51 +242,51 @@ perform show("r", r)"#,
 #[test]
 fn boundaries_mutation_return_arms_and_outer_resumption_match_original_path() {
     let source = r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-fn run(steps: i64): i64 {
-  handle { budget(steps: steps) { descend(count(5)) } } with {
+fn run(steps: u64): i64 ! {budget} {
+  handle { perform budget(steps, () => { descend(count(5)) }) } with {
     exceeded(info), k => -1
     return value => value + 100
   }
 }
-fn inner(steps: i64): i64 {
-  handle { budget(steps: steps) { count(5) } } with { exceeded(info), k => -9 }
+fn inner(steps: u64): i64 ! {budget} {
+  handle { perform budget(steps, () => { count(5) }) } with { exceeded(info), k => -9 }
 }
-fn argument_order(steps: i64): i64 {
+fn argument_order(steps: u64): i64 ! {budget} {
   var visited := 0
-  let result := handle { budget(steps: steps) { descend({ visited := visited + 10
-5 }) } } with { exceeded(info), k => -10 }
+  let result := handle { perform budget(steps, () => { descend({ visited := visited + 10
+5 }) }) } with { exceeded(info), k => -10 }
   result * 100 + visited
 }
-fn mutation(steps: i64): i64 {
+fn mutation(steps: u64): i64 ! {budget} {
   var visited := 0
-  let result := handle { budget(steps: steps) {
+  let result := handle { perform budget(steps, () => {
     while visited < 5 { visited := visited + 1 }
     visited
-  } } with { exceeded(info), k => -10 }
+  }) } with { exceeded(info), k => -10 }
   result * 100 + visited
 }
 var fuel := 0
 while fuel < 15 {
-  perform show("run", run(fuel))
-  perform show("mutation", mutation(fuel))
-  perform show("argument_order", argument_order(fuel))
+  show(&run(fuel))
+  show(&mutation(fuel))
+  show(&argument_order(fuel))
   fuel := fuel + 1
 }
-let outer := handle { budget(steps: 0) { handle { budget(steps: 100) { count(5) } } with { exceeded(info), discarded => -9 } } } with { exceeded(info), k => info.more(2) }
-perform show("outer_resume", outer)
-let nested := handle { budget(steps: 0) { budget(steps: 0) { count(5) } } } with { exceeded(info), k => -88 }
-perform show("nested_zero", nested)
-let no_ticks := handle { budget(steps: 0) { 42 } } with { exceeded(info), k => -1 }
-perform show("no_ticks", no_ticks)
+let outer := handle { perform budget(0, () => { handle { perform budget(100, () => { count(5) }) } with { exceeded(info), discarded => -9 } }) } with { exceeded(info), k => info.more(2) }
+show(&outer)
+let nested := handle { perform budget(0, () => { perform budget(0, () => { count(5) }) }) } with { exceeded(info), k => -88 }
+show(&nested)
+let no_ticks := handle { perform budget(0, () => { 42 }) } with { exceeded(info), k => -1 }
+show(&no_ticks)
 "#;
     let output = run_both_paths(&source);
     assert!(
@@ -291,13 +295,14 @@ perform show("no_ticks", no_ticks)
         String::from_utf8_lossy(&output.stderr)
     );
     let actual = String::from_utf8(output.stdout).unwrap();
-    assert!(actual.contains("outer_resume ="), "{actual}");
-    assert!(actual.contains("no_ticks = 42\n"));
+    // `show` writes the value alone: the outer resumption gives 5, then the
+    // nested zero budgets and the budget that never ticks.
+    assert!(actual.ends_with("\n5\n-88\n42\n"), "{actual}");
 }
 
 #[test]
 fn captured_refcell_temporaries_keep_the_future_path() {
-    let source = &r#"fn count(n: i64): i64 ! {Div} {
+    let source = &r#"fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
@@ -305,16 +310,16 @@ fn captured_refcell_temporaries_keep_the_future_path() {
 fn first(label: Text, value: i64): i64 { value }
 var text := "before"
 let saved := () => text
-let result := handle { budget(steps: 0) {
+let result := handle { perform budget(0, () => {
   first(text, count(5))
-} } with {
+}) } with {
   exceeded(info), discarded => {
     text := "after"
     -9
   }
 }
-perform show("result", result)
-perform show("text", saved())
+show(&result)
+show(&saved())
 "#
     .to_string();
     assert!(!emit(source).contains("run_nonresuming"));
@@ -323,18 +328,18 @@ perform show("text", saved())
 #[test]
 fn unknown_generic_values_and_body_returns_keep_the_future_path() {
     for source in [
-        r#"fn choose<T>(value: T, n: i64): T ! {Div} {
+        r#"fn choose<T>(value: T, n: i64): T ! {div, overflow} {
           var i := 0
           while i < n { i := i + 1 }
           value
         }
-        let result := handle { budget(steps: 20) { choose(42, 3) } } with { exceeded(info), k => -1 }
-        perform show("result", result)"#,
-        r#"fn body_return(): i64 {
-          handle { budget(steps: 20) { return 7
- 1 } } with { exceeded(info), k => -1 }
+        let result := handle { perform budget(20, () => { choose(42, 3) }) } with { exceeded(info), k => -1 }
+        show(&result)"#,
+        r#"fn body_return(): i64 ! {budget} {
+          handle { perform budget(20, () => { return 7
+ 1 }) } with { exceeded(info), k => -1 }
         }
-        perform show("result", body_return())"#,
+        show(&body_return())"#,
     ] {
         assert!(!emit(source).contains("run_nonresuming"), "{source}");
     }
@@ -342,19 +347,19 @@ fn unknown_generic_values_and_body_returns_keep_the_future_path() {
 
 #[test]
 fn mutual_recursion_and_function_local_returns_preserve_steps() {
-    let source = &r#"fn even(n: i64): i64 ! {Div} {
+    let source = &r#"fn even(n: i64): i64 ! {div, overflow} {
       if n == 0 { return 1 }
       odd(n - 1)
     }
-    fn odd(n: i64): i64 ! {Div} {
+    fn odd(n: i64): i64 ! {div, overflow} {
       if n == 0 { return 0 }
       even(n - 1)
     }
-    fn run(steps: i64): i64 {
-      handle { budget(steps: steps) { even(6) } } with { exceeded(info), k => -1 }
+    fn run(steps: u64): i64 ! {budget} {
+      handle { perform budget(steps, () => { even(6) }) } with { exceeded(info), k => -1 }
     }
     var fuel := 0
-    while fuel < 10 { perform show("result", run(fuel))
+    while fuel < 10 { show(&run(fuel))
  fuel := fuel + 1 }
     "#
     .to_string();
@@ -370,20 +375,20 @@ fn mutual_recursion_and_function_local_returns_preserve_steps() {
 #[test]
 fn ample_fuel_and_nonresuming_error_values_match_evaluator() {
     let source = r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-fn run(steps: i64): Result(i64, Text) {
-  handle { budget(steps: steps) { Ok(descend(count(5))) } } with { exceeded(info), k => Err("fuel exhausted") }
+fn run(steps: u64): Result(i64, Text) ! {budget} {
+  handle { perform budget(steps, () => { Ok(descend(count(5))) }) } with { exceeded(info), k => Err("fuel exhausted") }
 }
-perform show("value", run(1000))
-perform show("error", run(0))
+show(&run(1000))
+show(&run(0))
 "#;
     run_and_compare(&source);
 }
@@ -391,7 +396,7 @@ perform show("error", run(0))
 #[test]
 fn noncopy_host_augmentable_data_keeps_array_projection_but_not_sync_budget() {
     let source = &r#"struct Entry { tag: i64, payload: Text }
-fn scan(values: Array(Entry), n: i64): i64 ! {Div} {
+fn scan(values: Array(Entry), n: i64): i64 ! {div, overflow} {
   var i := 0
   var total := 0
   while i < n {
@@ -403,14 +408,14 @@ fn scan(values: Array(Entry), n: i64): i64 ! {Div} {
   }
   total
 }
-fn run(steps: i64): i64 {
+fn run(steps: u64): i64 ! {budget} {
   var entries := Vec::new()
   Vec::push(&mut entries, Entry { tag: 7, payload: "kept" })
   let values := Vec::into_array(entries)
-  handle { budget(steps: steps) { scan(values, 5) } } with { exceeded(info), k => -1 }
+  handle { perform budget(steps, () => { scan(values, 5) }) } with { exceeded(info), k => -1 }
 }
 var fuel := 0
-while fuel < 9 { perform show("result", run(fuel))
+while fuel < 9 { show(&run(fuel))
  fuel := fuel + 1 }
 "#
     .to_string();
@@ -426,12 +431,7 @@ while fuel < 9 { perform show("result", run(fuel))
 }
 
 fn run_and_compare(source: &str) -> String {
-    let expected = tauto::eval::run(source)
-        .unwrap()
-        .outputs
-        .into_iter()
-        .map(|(label, value)| format!("{label} = {value}\n"))
-        .collect::<String>();
+    let expected = tauto::exec::run(source).unwrap().stdout;
     let output = run_both_paths(source);
     assert!(
         output.status.success(),
@@ -479,7 +479,7 @@ fn run_both_paths_checked(
     run_both_paths_variant(source, bindings, host, observed, false)
 }
 
-fn fixture_bindings(pkg: &tauto_nir::Package, bindings: &Bindings) -> Bindings {
+fn fixture_bindings(pkg: &mut tauto_nir::Package, bindings: &Bindings) -> Bindings {
     let mut manifest = tauto::manifest::Manifest::default();
     for (name, binding) in &bindings.types {
         manifest.rust.types.insert(
@@ -504,6 +504,9 @@ fn fixture_bindings(pkg: &tauto_nir::Package, bindings: &Bindings) -> Bindings {
     Bindings::resolve(pkg, Some(&manifest), None).unwrap()
 }
 
+/// Native builds share target directories and the binary name, so one runs at a time.
+static NATIVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn run_both_paths_variant(
     source: &str,
     bindings: &Bindings,
@@ -511,10 +514,9 @@ fn run_both_paths_variant(
     observed: Option<(bool, Option<u64>, bool, Option<u64>)>,
     runtime_sync: bool,
 ) -> std::process::Output {
-    static NATIVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _native = NATIVE.lock().unwrap_or_else(|p| p.into_inner());
-    let pkg = tauto_nir::compile(source).unwrap();
-    let bindings = fixture_bindings(&pkg, bindings);
+    let mut pkg = tauto::nir::compile(source).unwrap();
+    let bindings = fixture_bindings(&mut pkg, bindings);
     let mut ws = workspace(
         "nonresuming-budget",
         &pkg,
@@ -539,8 +541,9 @@ fn run_both_paths_variant(
             .find(|(path, _)| path == "src/lib.rs")
             .unwrap()
             .1;
+        let names = tauto_rustgen::fn_names(&pkg);
         for function in pkg.fns.iter().filter(|f| f.source.as_str() == "value") {
-            let signature = format!("fn {}", function.rust_name);
+            let signature = format!("fn {}", names[function.id]);
             assert_eq!(
                 lib.matches(&signature).count(),
                 1,
@@ -560,25 +563,25 @@ fn run_both_paths_variant(
             .1;
         replace_once(
             manifest,
-            "tauto-rt = { path = \"tauto-rt\" }",
-            "tauto-rt = { path = \"tauto-rt\", features = [\"sync\"] }",
+            "[dependencies]\ntauto-rt = { path = \"tauto-rt\" }",
+            "[dependencies]\ntauto-rt = { path = \"tauto-rt\", features = [\"sync\"] }",
         );
     }
-    // Different runtime sources never share native incremental artifacts.
-    use std::hash::{Hash, Hasher};
-    let mut fingerprint = std::collections::hash_map::DefaultHasher::new();
-    ws.files.hash(&mut fingerprint);
-    let variant = format!("{:016x}", fingerprint.finish());
+    // Native targets are keyed by the runtime sources and the manifest alone,
+    // so every test with the same runtime shares one compiled `tauto-rt` and
+    // only the generated crate is rebuilt; different runtime sources never
+    // share native incremental artifacts.
     let dir = std::env::temp_dir().join(format!("tauto-nonresuming-{}", std::process::id()));
-    let target = std::env::var_os("TAUTO_NATIVE_TEST_TARGET")
+    let target_root = std::env::var_os("TAUTO_NATIVE_TEST_TARGET")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| dir.join("target"))
-        .join(variant);
+        .unwrap_or_else(|| {
+            std::env::temp_dir().join(format!("tauto-nonresuming-target-{}", std::process::id()))
+        });
     let binary = ws
         .build(
             "nonresuming-budget",
             &dir.join("generated"),
-            &target.join("nonresuming-equivalence/fast"),
+            &runtime_target(&target_root, &ws),
             false,
         )
         .unwrap();
@@ -589,7 +592,7 @@ fn run_both_paths_variant(
         .build(
             "nonresuming-budget",
             &dir.join("generated"),
-            &target.join("nonresuming-equivalence/original"),
+            &runtime_target(&target_root, &ws),
             false,
         )
         .unwrap();
@@ -630,6 +633,18 @@ fn run_both_paths_variant(
     assert_eq!(actual.stderr, baseline.stderr);
     std::fs::remove_dir_all(dir).unwrap();
     actual
+}
+
+/// The native target directory for the runtime `ws` builds against.
+fn runtime_target(root: &std::path::Path, ws: &tauto_rustgen::Workspace) -> std::path::PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut fingerprint = std::collections::hash_map::DefaultHasher::new();
+    for (path, text) in &ws.files {
+        if !path.starts_with("src/") {
+            (path, text).hash(&mut fingerprint);
+        }
+    }
+    root.join(format!("{:016x}", fingerprint.finish()))
 }
 
 fn replace_once(text: &mut String, from: &str, to: &str) {
@@ -736,19 +751,19 @@ fn execution_counts(output: &mut std::process::Output) -> [u64; 6] {
 fn host_refcount_observer_retains_suspended_values_until_original_arm_finishes() {
     let source = r#"extern { fn refs(): i64
  fn tracked(): Text }
-fn hold(value: Text, n: i64): Text ! {Div} {
+fn hold(value: Text, n: i64): Text ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   value
 }
-fn observed(steps: i64): Text {
+fn observed(steps: u64): Text ! {budget} {
   let text := tracked()
-  handle { budget(steps: steps) { hold(text, 5) } } with {
+  handle { perform budget(steps, () => { hold(text, 5) }) } with {
     exceeded(info), k => Text::of_i64(refs())
   }
 }
 var fuel := 0
-while fuel < 9 { perform show("observed", observed(fuel))
+while fuel < 9 { show(&observed(fuel))
   fuel := fuel + 1 }
 "#;
     let mut bindings = Bindings::default();
@@ -768,8 +783,8 @@ while fuel < 9 { perform show("observed", observed(fuel))
             marks: String::new(),
         },
     );
-    let pkg = tauto_nir::compile(source).unwrap();
-    let bindings = fixture_bindings(&pkg, &bindings);
+    let mut pkg = tauto::nir::compile(source).unwrap();
+    let bindings = fixture_bindings(&mut pkg, &bindings);
     let sources = Sources {
         file: "main.taut",
         text: source,
@@ -810,16 +825,16 @@ mod host {
 
 #[test]
 fn nested_synchronous_helper_preserves_original_result_or_diagnostic() {
-    let source = &r#"fn count(n: i64): i64 ! {Div} {
+    let source = &r#"fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn inner(steps: i64): i64 {
-  handle { budget(steps: steps) { count(5) } } with { exceeded(info), discarded => -9 }
+fn inner(steps: u64): i64 ! {budget} {
+  handle { perform budget(steps, () => { count(5) }) } with { exceeded(info), discarded => -9 }
 }
-let result := handle { budget(steps: 0) { inner(100) } } with { exceeded(info), resume_outer => info.more(2) }
-perform show("result", result)
+let result := handle { perform budget(0, () => { inner(100) }) } with { exceeded(info), resume_outer => info.more(2) }
+show(&result)
 "#.to_string();
     // This boundary can fail on the original runtime; the optimization must
     // neither hide that diagnostic nor bypass the outer resumable budget.
@@ -829,19 +844,19 @@ perform show("result", result)
 #[test]
 fn an_outer_resumable_budget_records_only_future_entries() {
     let source = r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-let result := handle { budget(steps: 0) {
-  handle { budget(steps: 100) { count(5) } } with { exceeded(info), discarded => -9 }
-} } with { exceeded(info), resume_outer => info.more(2) }
-perform show("result", result)
+let result := handle { perform budget(0, () => {
+  handle { perform budget(100, () => { count(5) }) } with { exceeded(info), discarded => -9 }
+}) } with { exceeded(info), resume_outer => info.more(2) }
+show(&result)
 "#;
     let output = run_both_paths_checked(
         &source,
@@ -859,23 +874,23 @@ perform show("result", result)
 #[test]
 fn steps_are_evaluated_once_before_each_runtime_branch_choice() {
     let source = r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-fn run(steps: i64): i64 {
+fn run(steps: u64): i64 ! {budget} {
   var visits := 0
-  let result := handle { budget(steps: { visits := visits + 1
-    steps }) { count(4) } } with { exceeded(info), k => -1 }
+  let result := handle { perform budget({ visits := visits + 1
+    steps }, () => { count(4) }) } with { exceeded(info), k => -1 }
   result + visits * 100
 }
-perform show("empty", run(0))
-perform show("ample", run(100))
+show(&run(0))
+show(&run(100))
 "#;
     let output = run_both_paths_observed(&source, None, false, Some(0));
     assert!(
@@ -883,19 +898,21 @@ perform show("ample", run(100))
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
-        "empty = 99\nample = 104\n"
-    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "99\n104\n");
 }
 
 #[test]
 fn a_host_panic_hook_observes_the_same_active_outer_fuel() {
-    let source = r#"extern { fn install_hook(): Unit }
-fn divide(n: i64): i64 ! {Div} { div(1, n) }
+    // Integer division by zero performs divzero, which leaves the budget
+    // before the host stops the program, so the panic comes from the host.
+    // An untrusted extern keeps the budget on the ordinary path, where the
+    // hook has to see the active outer fuel.
+    let source = r#"extern { fn install_hook(): Unit
+fn crash(n: i64): i64 }
+fn divide(n: i64): i64 ! {div, overflow} { crash(n) }
 install_hook()
-let result := handle { budget(steps: 1) { divide(0) } } with { exceeded(info), k => -1 }
-perform show("result", result)
+let result := handle { perform budget(1, () => { divide(0) }) } with { exceeded(info), k => -1 }
+show(&result)
 "#;
     let mut bindings = Bindings::default();
     bindings.externs.insert(
@@ -906,11 +923,22 @@ perform show("result", result)
             marks: String::new(),
         },
     );
+    bindings.externs.insert(
+        "crash".into(),
+        tauto_rustgen::Binding {
+            rust: "host::crash".into(),
+            at: "test host".into(),
+            marks: String::new(),
+        },
+    );
     let output = run_both_paths_checked(
         source,
         &bindings,
         r#"
 mod host {
+    pub fn crash(n: i64) -> i64 {
+        panic!("host crash {n}")
+    }
     pub fn install_hook() {
         std::panic::set_hook(Box::new(|_| {
             let at = tauto_rt::Loc { file: "host hook", line: 1, col: 1 };
@@ -922,60 +950,65 @@ mod host {
     }
 }
 "#,
-        Some((true, None, false, Some(0))),
+        Some((false, None, false, Some(0))),
     );
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("host hook outer budget: Some("), "{stderr}");
-    assert!(stderr.contains("division by zero"), "{stderr}");
+    assert!(stderr.contains("host crash 0"), "{stderr}");
 }
 
 #[test]
 fn runtime_error_location_and_negative_fuel_match_original_path() {
-    let failing = &r#"fn divide(n: i64): i64 ! {Div} { div(1, n) }
-let result := handle { budget(steps: 10) { divide(0) } } with { exceeded(info), k => -1 }
-perform show("result", result)"#
+    let failing = &r#"fn divide(n: i64): i64 ! {div, overflow, divzero} { div(1, n) }
+let result := handle { perform budget(10, () => { divide(0) }) } with { exceeded(info), k => -1 }
+show(&result)"#
         .to_string();
-    let output = run_both_paths(failing);
+    let output = run_both_paths_checked(
+        failing,
+        &Bindings::default(),
+        "",
+        Some((true, None, true, None)),
+    );
     assert!(!output.status.success());
     let diagnostic = String::from_utf8(output.stderr).unwrap();
     assert!(diagnostic.contains("main.taut:1:"), "{diagnostic}");
-    let negative = r#"
-fn count(n: i64): i64 ! {Div} {
+    let empty = r#"
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-let result := handle { budget(steps: -3) { count(2) } } with { exceeded(info), k => -9 }
-perform show("result", result)"#;
-    let output = run_both_paths(&negative);
+let result := handle { perform budget(0, () => { count(2) }) } with { exceeded(info), k => -9 }
+show(&result)"#;
+    let output = run_both_paths(&empty);
     assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "result = -9\n");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "-9\n");
 }
 
 #[test]
 fn suspended_step_expression_rechecks_the_surrounding_budget() {
-    let source = &r#"effect request_steps(): i64 resume <=1
-fn count(n: i64): i64 ! {Div} {
+    let source = &r#"effect request_steps(): u64 resume <=1
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn inner(): i64 ! {request_steps} {
-  handle { budget(steps: perform request_steps()) { count(5) } } with {
+fn inner(): i64 ! {budget, request_steps, overflow} {
+  handle { perform budget(perform request_steps(), () => { count(5) }) } with {
     exceeded(info), discarded => -9
   }
 }
 let result := handle { inner() } with {
-  request_steps(), resume_inner => handle { budget(steps: 0) { resume_inner(100) } } with {
+  request_steps(), resume_inner => handle { perform budget(0, () => { resume_inner(100) }) } with {
     exceeded(info), discarded_outer => -77
   }
 }
-perform show("result", result)
+show(&result)
 "#
     .to_string();
     let output = run_both_paths_checked(
@@ -990,30 +1023,25 @@ perform show("result", result)
         String::from_utf8_lossy(&output.stderr)
     );
     let actual = String::from_utf8(output.stdout).unwrap();
-    let expected = tauto::eval::run(source)
-        .unwrap()
-        .outputs
-        .into_iter()
-        .map(|(label, value)| format!("{label} = {value}\n"))
-        .collect::<String>();
+    let expected = tauto::exec::run(source).unwrap().stdout;
     assert_eq!(actual, expected);
-    assert_eq!(actual, "result = -77\n");
+    assert_eq!(actual, "-77\n");
 }
 
 #[test]
 fn runtime_sync_feature_unification_compiles_and_selects_future_path() {
     let source = r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
-let result := handle { budget(steps: 100) { count(5) } } with { exceeded(info), k => -1 }
-perform show("result", result)"#;
+let result := handle { perform budget(100, () => { count(5) }) } with { exceeded(info), k => -1 }
+show(&result)"#;
     assert!(emit(&source).contains("run_nonresuming"));
     let output = run_both_paths_variant(
         &source,
@@ -1027,24 +1055,24 @@ perform show("result", result)"#;
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "result = 5\n");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "5\n");
 }
 
 #[test]
 fn host_added_drop_on_generated_noncopy_data_keeps_original_order() {
     let source = r#"struct Held { text: Text }
-fn hold(value: Held, n: i64): Held ! {Div} {
+fn hold(value: Held, n: i64): Held ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   value
 }
-fn run(steps: i64): Held {
-  handle { budget(steps: steps) { hold(Held { text: "body" }, 5) } } with {
+fn run(steps: u64): Held ! {budget} {
+  handle { perform budget(steps, () => { hold(Held { text: "body" }, 5) }) } with {
     exceeded(info), k => { let temporary := Held { text: "arm" }
       Held { text: "handler" } }
   }
 }
-perform show("result", run(1))
+show(&run(1))
 "#;
     assert!(!emit(source).contains("run_nonresuming"));
     let output = run_both_paths_checked(
@@ -1072,21 +1100,21 @@ impl Drop for Held {
 #[test]
 fn nested_external_and_linear_data_do_not_specialize() {
     let source = r#"
-fn count(n: i64): i64 ! {Div} {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn descend(n: i64): i64 ! {Div} {
+fn descend(n: i64): i64 ! {div, overflow} {
   if n > 0 { descend(n - 1) + 1 } else { 0 }
 }
 
 struct Token { value: i64 }
 struct Nested { token: Option(Token) }
-let result := handle { budget(steps: 20) { Nested { token: Some(Token { value: count(5) }) } } } with { exceeded(info), k => Nested { token: None } }
-perform show("result", result)
+let result := handle { perform budget(20, () => { Nested { token: Some(Token { value: count(5) }) } }) } with { exceeded(info), k => Nested { token: None } }
+show(&result)
 "#;
-    let mut pkg = tauto_nir::compile(&source).unwrap();
+    let mut pkg = tauto::nir::compile(&source).unwrap();
     let sources = Sources {
         file: "main.taut",
         text: &source,
@@ -1123,8 +1151,8 @@ perform show("result", result)
 fn native_release_comparison() {
     fn source_source() -> &'static str {
         r#"
-fn mix(n: i64): i64 ! {Div} { mod(n * 17 + 23, 1000003) }
-fn fold(n: i64): i64 ! {Div} {
+fn mix(n: i64): i64 ! {div, overflow} { mod(n * 17 + 23, 1000003) }
+fn fold(n: i64): i64 ! {div, overflow} {
   var i := 0
   var total := 0
   while i < n {
@@ -1133,13 +1161,13 @@ fn fold(n: i64): i64 ! {Div} {
   }
   total
 }
-let result := handle { budget(steps: 6000000) { fold(2500000) } } with {
+let result := handle { perform budget(6000000, () => { fold(2500000) }) } with {
   exceeded(info), discarded => -1
 }
-perform show("checksum", result)
+show(&result)
 "#
     }
-    let pkg = tauto_nir::compile(source_source()).unwrap();
+    let mut pkg = tauto::nir::compile(source_source()).unwrap();
     let ws = workspace(
         "nonresuming-cost",
         &pkg,
@@ -1160,7 +1188,7 @@ perform show("checksum", result)
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| dir.join("target"));
     let expected = format!(
-        "checksum = {}\n",
+        "{}\n",
         (0..2_500_000_i64).fold(0, |total, i| (total + (i * 17 + 23) % 1_000_003)
             % 1_000_003)
     );
@@ -1184,14 +1212,11 @@ perform show("checksum", result)
             }
             // A shared Cargo target must not reuse one executable path for
             // independently cached workspaces with different runtime sources.
-            let package = format!("nonresuming-cost-{name}");
+            let mut package = format!("nonresuming-cost-{name}");
             let crate_name = package.replace('-', "_");
             for (path, text) in &mut variant.files {
                 if path == "Cargo.toml" {
-                    *text = text.replace(
-                        "name = \"nonresuming-cost\"",
-                        &format!("name = \"{package}\""),
-                    );
+                    *text = text.replace("\"nonresuming-cost\"", &format!("name = \"{package}\""));
                 } else if path == "src/main.rs" {
                     *text = text.replace("nonresuming_cost", &crate_name);
                 }
@@ -1356,25 +1381,25 @@ fn qualified_host_entries_preserve_results_ticks_and_call_counts() {
 extern { fn native(value: u64): u64
   fn __tauto_budget_contract_0(value: u64): u64 }
 fn extern_name_probe(value: u64): u64 { __tauto_budget_contract_0(value) }
-fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+fn sum(read: &((u64) -> u64), size: u64): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < size { total := total + read(index)
     index := index + 1 }
   total
 }
-fn value(index: u64): u64 { index + 1 }
-fn inner(): u64 {
-  handle { budget(steps: 100) { sum(&value, 1) } } with { exceeded(info), k => 0 }
+fn value(index: u64): u64 { U64::wrapping_add(index, 1) }
+fn inner(): u64 ! {budget} {
+  handle { perform budget(100, () => { sum(&value, 1) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }
-fn ext_sum(size: u64): u64 ! {Div} {
+fn ext_sum(size: u64): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < size { total := total + native(index)
     index := index + 1 }
   total
 }
-fn scan(&read: (u64) -> u64, size: u64, stop_at: u64): u64 ! {Div, stop} {
+fn scan(read: &((u64) -> u64), size: u64, stop_at: u64): u64 ! {div, overflow, stop} {
   var index: u64 := 0
   var total: u64 := 0
   while index < size {
@@ -1384,44 +1409,43 @@ fn scan(&read: (u64) -> u64, size: u64, stop_at: u64): u64 ! {Div, stop} {
   }
   total
 }
-fn callback_run(steps: i64, &read: (u64) -> u64, size: u64): Result(u64, Text) {
-  handle { budget(steps: steps) { Ok(sum(&(index) => read(index), size)) } } with {
-    exceeded(info), k => Err("exhausted")
+fn callback_run(steps: u64, read: &((u64) -> u64), size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(steps, () => { Ok(sum((index) => read(index), size)) }) } with {
+    exceeded(info), k => Err("exhausted"), overflow() => Err("exhausted")
   }
 }
-fn extern_run(steps: i64, size: u64): Result(u64, Text) {
-  handle { budget(steps: steps) { Ok(ext_sum(size)) } } with {
-    exceeded(info), k => Err("exhausted")
+fn extern_run(steps: u64, size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(steps, () => { Ok(ext_sum(size)) }) } with {
+    exceeded(info), k => Err("exhausted"), overflow() => Err("exhausted")
   }
 }
-fn combined_run(steps: i64, &read: (u64) -> u64, size: u64, stop_at: u64): Result(u64, Text) {
-  handle { budget(steps: steps) { Ok(scan(&(index) => read(index), size, stop_at)) } } with {
+fn combined_run(steps: u64, read: &((u64) -> u64), size: u64, stop_at: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(steps, () => { Ok(scan((index) => read(index), size, stop_at)) }) } with {
     stop(total) => Ok(total)
-    exceeded(info), k => Err("exhausted")
+    exceeded(info), k => Err("exhausted"), overflow() => Err("exhausted")
   }
 }
 struct TrustedBudgetHost { value: u64 }
 fn token_named_data(value: TrustedBudgetHost): u64 { value.value }
 struct Held { text: Text }
-fn hold(value: Held, size: u64): Held ! {Div} {
+fn hold(value: Held, size: u64): Held ! {div, overflow} {
   var index: u64 := 0
   while index < size { index := index + 1 }
   value
 }
-fn data_run(steps: i64): Held {
-  handle { budget(steps: steps) { hold(Held { text: "body" }, 4) } } with {
-    exceeded(info), k => Held { text: "handler" }
+fn data_run(steps: u64): Held ! {budget} {
+  handle { perform budget(steps, () => { hold(Held { text: "body" }, 4) }) } with {
+    exceeded(info), k => Held { text: "handler" }, overflow() => Held { text: "handler" }
   }
 }
 "#;
-    let package = tauto_nir::compile_with(source, true).unwrap();
-    let internal_name = package.fns[package
+    let mut package = tauto::nir::compile_with(source, true).unwrap();
+    let internal_name = tauto_rustgen::fn_names(&package)[package
         .exports
         .iter()
         .find(|e| e.name.as_str() == "callback_run")
         .unwrap()
         .inst]
-        .rust_name
         .clone();
     let manifest_text =
         r#"rust {
@@ -1438,7 +1462,7 @@ fn data_run(steps: i64): Held {
 }"#.replace("entries {", &format!("entries {{ __tauto_budget_contract_1 = \"callback_run\" {internal_name} = \"callback_run\" "));
     let manifest =
         tauto::manifest::parse(&manifest_text, std::path::Path::new("Tauto.eure")).unwrap();
-    let bindings = Bindings::resolve(&package, Some(&manifest), None).unwrap();
+    let bindings = Bindings::resolve(&mut package, Some(&manifest), None).unwrap();
     let sources = Sources {
         file: "main.taut",
         text: source,
@@ -1565,16 +1589,20 @@ fn main() {
     println!("trusted outer ticks={}", nested[2]);
 }
 "#.replace("INTERNAL_SHADOW_NAME", &internal_name);
+    let _native = NATIVE.lock().unwrap_or_else(|p| p.into_inner());
     let dir = std::env::temp_dir().join(format!("tauto-qualified-budget-{}", std::process::id()));
-    use std::hash::{Hash, Hasher};
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    ws.files.hash(&mut hash);
-    let target = std::env::var_os("TAUTO_NATIVE_TEST_TARGET")
+    let target_root = std::env::var_os("TAUTO_NATIVE_TEST_TARGET")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| dir.join("target"))
-        .join(format!("qualified-{:016x}", hash.finish()));
+        .unwrap_or_else(|| {
+            std::env::temp_dir().join(format!("tauto-nonresuming-target-{}", std::process::id()))
+        });
     let binary = ws
-        .build("nonresuming-budget", &dir, &target.join("fast"), false)
+        .build(
+            "nonresuming-budget",
+            &dir,
+            &runtime_target(&target_root, &ws),
+            false,
+        )
         .unwrap();
     let fast = Command::new(binary).output().unwrap();
     assert!(
@@ -1595,7 +1623,12 @@ fn main() {
         "const EXPECT_FAST: bool = false;",
     );
     let binary = ws
-        .build("nonresuming-budget", &dir, &target.join("future"), false)
+        .build(
+            "nonresuming-budget",
+            &dir,
+            &runtime_target(&target_root, &ws),
+            false,
+        )
         .unwrap();
     let baseline = Command::new(binary).output().unwrap();
     assert!(
@@ -1606,4 +1639,69 @@ fn main() {
     assert_eq!(fast.stdout, baseline.stdout);
     assert_eq!(fast.stderr, baseline.stderr);
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn unhandled_and_outer_handled_arithmetic_aborts_take_the_synchronous_path() {
+    // divzero and overflow leave the budget whether or not a handler for them
+    // exists; both paths must agree on the result and on the diagnostic.
+    for (source, ok) in [
+        (
+            r#"fn divide(n: i64): i64 ! {div, overflow, divzero} { div(10, n) }
+fn run(n: i64): i64 ! {budget, div, overflow} {
+  handle { handle { perform budget(10, () => { divide(n) }) } with { exceeded(info), k => -1 } } with { divzero() => -7 }
+}
+show(&run(2))
+show(&run(0))"#,
+            Some("5\n-7\n"),
+        ),
+        (
+            r#"fn grow(n: i64): i64 ! {div, overflow} { n * n }
+fn run(n: i64): i64 ! {budget, div} {
+  handle { handle { perform budget(10, () => { grow(n) }) } with { exceeded(info), k => -1 } } with { overflow() => -8 }
+}
+show(&run(3))
+show(&run(9223372036854775807))"#,
+            Some("9\n-8\n"),
+        ),
+        (
+            r#"fn divide(n: i64): i64 ! {div, overflow, divzero} { div(10, n) }
+let r := handle { perform budget(10, () => { divide(0) }) } with { exceeded(info), k => -1 }
+show(&r)"#,
+            None,
+        ),
+        (
+            r#"fn grow(n: i64): i64 ! {div, overflow} { n * n }
+let r := handle { perform budget(10, () => { grow(9223372036854775807) }) } with { exceeded(info), k => -1 }
+show(&r)"#,
+            None,
+        ),
+    ] {
+        let output = run_both_paths_checked(
+            source,
+            &Bindings::default(),
+            "",
+            Some((true, None, true, None)),
+        );
+        match ok {
+            Some(expected) => {
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+                assert_eq!(
+                    expected,
+                    tauto::exec::run(source).unwrap().stdout,
+                    "evaluator"
+                );
+            }
+            None => {
+                assert!(!output.status.success());
+                let stderr = String::from_utf8(output.stderr).unwrap();
+                assert!(stderr.contains("main.taut:"), "{stderr}");
+            }
+        }
+    }
 }

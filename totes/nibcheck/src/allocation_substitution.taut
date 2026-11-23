@@ -1,7 +1,8 @@
+import "../../identity/src/identity.taut"
 import "allocation_generic_map.taut"
-import std::Map
-import std::MapLaws
-import std::Text
+import std::map
+import std::map_laws
+import std::text
 import "allocation_normalization.taut"
 import "ty.taut"
 import "type_allocation.taut"
@@ -9,12 +10,12 @@ pub theorem allocated_named_substitution(
   params: List(Ty),
   limit: Nat,
   map: Ordmap(Text, Ty),
-  name: Text,
+  name: SurfaceName,
   values: GenericMapAllocated(limit, map),
   mapped: TypeListAllocated(limit, ty_map_list(params, map))
 ): TypeAllocated(limit, ty_substitute(TyNamed(name, params), map)) {
-  ⊢ TypeAllocated(limit, ty_substitute(TyNamed(name, params), map)) from match params {
-    Nil => allocated_substitute_name(limit, map, name, TyNamed(name, Nil), Trivial, values)
+  match params {
+    Nil => allocated_substitute_name(limit, map, surface_name_text(name), TyNamed(name, Nil), Trivial, values)
     Cons(first, rest) => mapped
   }
 }
@@ -27,7 +28,7 @@ mutual {
     values: GenericMapAllocated(limit, map),
     allocated: TypeAllocated(limit, ty)
   ): TypeAllocated(limit, ty_substitute(ty, map)) {
-    ⊢ TypeAllocated(limit, ty_substitute(ty, map)) from match ty {
+    match ty {
       TyInt(width) => Trivial
       TyBool => Trivial
       TyText => Trivial
@@ -35,6 +36,7 @@ mutual {
       TyNever => Trivial
       TyDecimal => Trivial
       TyFloat => Trivial
+      TyFloat32 => Trivial
       TyParam(name, kind) => allocated_substitute_name(
         limit,
         map,
@@ -106,7 +108,7 @@ mutual {
     values: GenericMapAllocated(limit, map),
     allocated: TypeListAllocated(limit, types)
   ): TypeListAllocated(limit, ty_map_list(types, map)) {
-    ⊢ TypeListAllocated(limit, ty_map_list(types, map)) from match types {
+    match types {
       Nil => Trivial
       Cons(head, tail) => AndIntro(
         allocated_substitute(head, limit, map, ordered, values, And::left(allocated)),

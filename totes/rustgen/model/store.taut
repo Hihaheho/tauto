@@ -1,8 +1,8 @@
 import "core.taut" { RsAddress, RsBorrow, RsLiteral, RsPlace, RsStore, RsValue }
-import "../../../std/Base.taut" { List }
+import std::base { List }
 
 pub fn rs_set<A>(xs: List(A), index: Nat, value: A): List(A) {
-  ⊢ List(A) from match xs {
+  match xs {
     Nil => Nil
     Cons(x, rest) => ⊢ List(A) from match index {
       Zero => Cons(value, rest)
@@ -12,7 +12,7 @@ pub fn rs_set<A>(xs: List(A), index: Nat, value: A): List(A) {
 }
 
 pub fn rs_cell(heap: RsStore, index: Nat): Option(RsValue) {
-  ⊢ Option(RsValue) from match heap {
+  match heap {
     RsHeap(cells) => ⊢ Option(RsValue) from match List::nth(cells, index) {
       None => None
       Some(cell) => cell
@@ -21,19 +21,19 @@ pub fn rs_cell(heap: RsStore, index: Nat): Option(RsValue) {
 }
 
 pub fn rs_store_cell(heap: RsStore, index: Nat, value: Option(RsValue)): RsStore {
-  ⊢ RsStore from match heap {
+  match heap {
     RsHeap(cells) => RsHeap(rs_set(cells, index, value))
   }
 }
 
 pub fn rs_alloc(heap: RsStore, value: RsValue): Nat × RsStore {
-  ⊢ Nat × RsStore from match heap {
+  match heap {
     RsHeap(cells) => #(List::length(cells), RsHeap(List::append(cells, Cons(Some(value), Nil))))
   }
 }
 
 pub fn rs_alloc_values(heap: RsStore, values: List(RsValue)): List(Nat) × RsStore {
-  ⊢ List(Nat) × RsStore from match values {
+  match values {
     Nil => #(Nil, heap)
     Cons(v, rest) => ⊢ List(Nat) × RsStore from match rs_alloc(heap, v) {
       #(index, next) => ⊢ List(Nat) × RsStore from match rs_alloc_values(next, rest) {
@@ -44,46 +44,46 @@ pub fn rs_alloc_values(heap: RsStore, values: List(RsValue)): List(Nat) × RsSto
 }
 
 pub fn rs_initialized(value: RsValue): Bool {
-  ⊢ Bool from match value {
+  match value {
     RsUninitialized => false
-    RsScalar(v) => true
-    RsData(tag, is_copy, fields) => true
-    RsReference(kind, address) => true
-    RsGlobal(index) => true
-    RsClosure(kind, arity, captures, body) => true
-    RsSuspended(captures, body) => true
-    RsHandle(index) => true
+    RsScalar(^v) => true
+    RsData(^tag, ^is_copy, ^fields) => true
+    RsReference(^kind, ^address) => true
+    RsGlobal(^index) => true
+    RsClosure(^kind, ^arity, ^captures, ^body) => true
+    RsSuspended(^captures, ^body) => true
+    RsHandle(^index) => true
   }
 }
 
 pub fn rs_fields(value: RsValue): Option(List(RsValue)) {
-  ⊢ Option(List(RsValue)) from match value {
-    RsData(tag, is_copy, fields) => Some(fields)
+  match value {
+    RsData(^tag, ^is_copy, fields) => Some(fields)
     RsUninitialized => None
-    RsScalar(v) => None
-    RsReference(kind, address) => None
-    RsGlobal(index) => None
-    RsClosure(kind, arity, captures, body) => None
-    RsSuspended(captures, body) => None
-    RsHandle(index) => None
+    RsScalar(^v) => None
+    RsReference(^kind, ^address) => None
+    RsGlobal(^index) => None
+    RsClosure(^kind, ^arity, ^captures, ^body) => None
+    RsSuspended(^captures, ^body) => None
+    RsHandle(^index) => None
   }
 }
 
 pub fn rs_rebuild(value: RsValue, fields: List(RsValue)): Option(RsValue) {
-  ⊢ Option(RsValue) from match value {
-    RsData(tag, is_copy, old) => Some(RsData(tag, is_copy, fields))
+  match value {
+    RsData(tag, is_copy, ^old) => Some(RsData(tag, is_copy, fields))
     RsUninitialized => None
-    RsScalar(v) => None
-    RsReference(kind, address) => None
-    RsGlobal(index) => None
-    RsClosure(kind, arity, captures, body) => None
-    RsSuspended(captures, body) => None
-    RsHandle(index) => None
+    RsScalar(^v) => None
+    RsReference(^kind, ^address) => None
+    RsGlobal(^index) => None
+    RsClosure(^kind, ^arity, ^captures, ^body) => None
+    RsSuspended(^captures, ^body) => None
+    RsHandle(^index) => None
   }
 }
 
 pub fn rs_project(value: RsValue, path: List(Nat)): Option(RsValue) {
-  ⊢ Option(RsValue) from match path {
+  match path {
     Nil => Some(value)
     Cons(index, rest) => ⊢ Option(RsValue) from match rs_fields(value) {
       None => None
@@ -97,19 +97,19 @@ pub fn rs_project(value: RsValue, path: List(Nat)): Option(RsValue) {
 
 mutual {
   pub fn rs_complete(value: RsValue): Bool {
-    ⊢ Bool from match value {
-      RsData(tag, is_copy, fields) => rs_fields_complete(fields)
+    match value {
+      RsData(^tag, ^is_copy, fields) => rs_fields_complete(fields)
       RsUninitialized => false
-      RsScalar(lit) => true
-      RsReference(kind, address) => true
-      RsGlobal(index) => true
-      RsClosure(kind, arity, captures, body) => true
-      RsSuspended(captures, body) => true
-      RsHandle(index) => true
+      RsScalar(^lit) => true
+      RsReference(^kind, ^address) => true
+      RsGlobal(^index) => true
+      RsClosure(^kind, ^arity, ^captures, ^body) => true
+      RsSuspended(^captures, ^body) => true
+      RsHandle(^index) => true
     }
   }
   pub fn rs_fields_complete(fields: List(RsValue)): Bool {
-    ⊢ Bool from match fields {
+    match fields {
       Nil => true
       Cons(value, rest) => rs_complete(value) && rs_fields_complete(rest)
     }
@@ -117,7 +117,7 @@ mutual {
 }
 
 pub fn rs_replace(value: RsValue, path: List(Nat), replacement: RsValue): Option(RsValue) {
-  ⊢ Option(RsValue) from match path {
+  match path {
     Nil => Some(replacement)
     Cons(index, rest) => ⊢ Option(RsValue) from match rs_fields(value) {
       None => None
@@ -133,7 +133,7 @@ pub fn rs_replace(value: RsValue, path: List(Nat), replacement: RsValue): Option
 }
 
 pub fn rs_peek(heap: RsStore, address: RsAddress): Option(RsValue) {
-  ⊢ Option(RsValue) from match address {
+  match address {
     RsAddr(root, fields) => ⊢ Option(RsValue) from match rs_cell(heap, root) {
       None => None
       Some(value) => rs_project(value, fields)
@@ -142,14 +142,14 @@ pub fn rs_peek(heap: RsStore, address: RsAddress): Option(RsValue) {
 }
 
 pub fn rs_load(heap: RsStore, address: RsAddress): Option(RsValue) {
-  ⊢ Option(RsValue) from match rs_peek(heap, address) {
+  match rs_peek(heap, address) {
     None => None
     Some(value) => if rs_complete(value) { Some(value) } else { None }
   }
 }
 
 pub fn rs_save(heap: RsStore, address: RsAddress, value: RsValue): Option(RsStore) {
-  ⊢ Option(RsStore) from match address {
+  match address {
     RsAddr(root, fields) => ⊢ Option(RsStore) from match List::nth(⊢ List(Option(RsValue)) from match heap {
       RsHeap(cells) => cells
     }, root) {
@@ -157,9 +157,9 @@ pub fn rs_save(heap: RsStore, address: RsAddress, value: RsValue): Option(RsStor
       Some(old) => ⊢ Option(RsStore) from match fields {
         Nil => ⊢ Option(RsStore) from match old {
           None => None
-          Some(previous) => Some(rs_store_cell(heap, root, Some(value)))
+          Some(^previous) => Some(rs_store_cell(heap, root, Some(value)))
         }
-        Cons(index, rest) => ⊢ Option(RsStore) from match old {
+        Cons(^index, ^rest) => ⊢ Option(RsStore) from match old {
           None => None
           Some(previous) => ⊢ Option(RsStore) from match rs_replace(previous, fields, value) {
             None => None
@@ -172,20 +172,20 @@ pub fn rs_save(heap: RsStore, address: RsAddress, value: RsValue): Option(RsStor
 }
 
 pub fn rs_reference(value: RsValue): Option(RsAddress) {
-  ⊢ Option(RsAddress) from match value {
-    RsReference(kind, address) => Some(address)
+  match value {
+    RsReference(^kind, address) => Some(address)
     RsUninitialized => None
-    RsScalar(v) => None
-    RsData(tag, is_copy, fields) => None
-    RsGlobal(index) => None
-    RsClosure(kind, arity, captures, body) => None
-    RsSuspended(captures, body) => None
+    RsScalar(^v) => None
+    RsData(^tag, ^is_copy, ^fields) => None
+    RsGlobal(^index) => None
+    RsClosure(^kind, ^arity, ^captures, ^body) => None
+    RsSuspended(^captures, ^body) => None
     RsHandle(index) => Some(RsAddr(index, Nil))
   }
 }
 
 pub fn rs_address(env: List(RsAddress), heap: RsStore, place: RsPlace): Option(RsAddress) {
-  ⊢ Option(RsAddress) from match place {
+  match place {
     RsLocal(index) => ⊢ Option(RsAddress) from match List::nth(env, index) {
       None => None
       Some(root) => Some(root)
@@ -206,30 +206,30 @@ pub fn rs_address(env: List(RsAddress), heap: RsStore, place: RsPlace): Option(R
 
 mutual {
   pub fn rs_can_copy(value: RsValue): Bool {
-    ⊢ Bool from match value {
+    match value {
       RsScalar(lit) => ⊢ Bool from match lit {
-        RsNatural(n) => false
+        RsNatural(^n) => false
         RsUnit => true
-        RsBool(b) => true
-        RsInteger(i, signed, bits) => true
-        RsStr(t) => true
-        RsText(t) => false
-        RsFloat(bits, single) => true
+        RsBool(^b) => true
+        RsInteger(^i, ^signed, ^bits) => true
+        RsStr(^t) => true
+        RsText(^t) => false
+        RsFloat(^bits, ^single) => true
       }
-      RsData(tag, is_copy, fields) => is_copy && rs_fields_copy(fields)
-      RsReference(kind, address) => ⊢ Bool from match kind {
+      RsData(^tag, is_copy, fields) => is_copy && rs_fields_copy(fields)
+      RsReference(kind, ^address) => ⊢ Bool from match kind {
         RsShared => true
         RsUnique => false
       }
-      RsGlobal(index) => true
-      RsClosure(kind, arity, captures, body) => false
-      RsSuspended(captures, body) => false
-      RsHandle(index) => false
+      RsGlobal(^index) => true
+      RsClosure(^kind, ^arity, ^captures, ^body) => false
+      RsSuspended(^captures, ^body) => false
+      RsHandle(^index) => false
       RsUninitialized => false
     }
   }
   pub fn rs_fields_copy(fields: List(RsValue)): Bool {
-    ⊢ Bool from match fields {
+    match fields {
       Nil => true
       Cons(value, rest) => rs_can_copy(value) && rs_fields_copy(rest)
     }
@@ -237,7 +237,7 @@ mutual {
 }
 
 pub fn rs_reference_kind(kind: RsBorrow, value: RsValue): Option(RsAddress) {
-  ⊢ Option(RsAddress) from match value {
+  match value {
     RsReference(actual, address) => ⊢ Option(RsAddress) from match kind {
       RsShared => ⊢ Option(RsAddress) from match actual {
         RsShared => Some(address)
@@ -248,18 +248,18 @@ pub fn rs_reference_kind(kind: RsBorrow, value: RsValue): Option(RsAddress) {
         RsUnique => Some(address)
       }
     }
-    RsScalar(lit) => None
-    RsData(tag, is_copy, fields) => None
-    RsGlobal(index) => None
-    RsClosure(call_kind, arity, captures, body) => None
-    RsSuspended(captures, body) => None
-    RsHandle(index) => None
+    RsScalar(^lit) => None
+    RsData(^tag, ^is_copy, ^fields) => None
+    RsGlobal(^index) => None
+    RsClosure(^call_kind, ^arity, ^captures, ^body) => None
+    RsSuspended(^captures, ^body) => None
+    RsHandle(^index) => None
     RsUninitialized => None
   }
 }
 
 pub fn rs_roots(slots: List(Nat)): List(RsAddress) {
-  ⊢ List(RsAddress) from match slots {
+  match slots {
     Nil => Nil
     Cons(slot, rest) => Cons(RsAddr(slot, Nil), rs_roots(rest))
   }

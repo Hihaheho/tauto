@@ -1,4 +1,4 @@
-import std::Text
+import std::text
 import "../src/types.taut"
 import "../src/bindings.taut"
 import "../src/record_core.taut"
@@ -10,15 +10,15 @@ pub fn rg_record_fields(): List(RustgenRecordField) {
   )
 }
 pub fn rg_record_lookup(): Bool {
-  ⊢ Bool from match rustgen_record_value("fst", rg_record_fields()) {
-    RustgenErr(message) => false
+  match rustgen_record_value("fst", rg_record_fields()) {
+    RustgenErr(^message) => false
     RustgenOk(value) => rustgen_same(value.ty, RustgenText) && value.code == "a"
   }
 }
 pub fn rg_record_missing(): Bool {
-  ⊢ Bool from match rustgen_record_value("other", rg_record_fields()) {
-    RustgenErr(message) => true
-    RustgenOk(value) => false
+  match rustgen_record_value("other", rg_record_fields()) {
+    RustgenErr(^message) => true
+    RustgenOk(^value) => false
   }
 }
 pub theorem rg_record_unique(): rustgen_record_unique(rg_record_fields()) = true { Refl }

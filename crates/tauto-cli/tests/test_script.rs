@@ -1,0 +1,253 @@
+#![cfg(unix)]
+
+//! Test driver boundaries without compiling the workspace recursively: the
+//! driver `scripts/test.taut` runs on this crate's `tauto`, with a stand-in
+//! `cargo` that only records what it was asked.
+use std::fs;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::path::Path;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
+use tauto_test_support::Scratch;
+
+#[test]
+fn driver_guards_checkout_identity_and_keeps_the_full_gate_unfiltered() {
+    tauto_messages::install();
+    let scratch = Scratch::new("tauto-driver");
+    let root = &scratch.0.canonicalize().unwrap();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let cargo = bin.join("cargo");
+    fs::write(&cargo, "#!/bin/bash\nprintf '%s|%s|%s\\n' \"$*\" \"$CARGO_TARGET_DIR\" \"$CARGO_BUILD_BUILD_DIR\" >> \"$TEST_LOG\"\nif [[ $1 == --config ]]; then shift 2; fi\nif [[ ${FAIL_TEST:-} == 1 && $1 == nextest ]]; then exit 17; fi\n").unwrap();
+    fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
+    let scripts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts");
+    let repos = [root.join("one space 日本語"), root.join("two space café")];
+    for repo in &repos {
+        fs::create_dir_all(repo.join("scripts/lib")).unwrap();
+        for file in ["test.taut", "lib/sh.taut"] {
+            fs::copy(scripts.join(file), repo.join("scripts").join(file)).unwrap();
+        }
+        for dir in ["std", "std/prelude", "meta"] {
+            fs::create_dir_all(repo.join(dir)).unwrap();
+        }
+        for file in ["std/a.taut", "std/prelude/p.taut", "meta/m.taut"] {
+            fs::write(repo.join(file), "").unwrap();
+        }
+    }
+    let repos = repos.map(|repo| repo.canonicalize().unwrap());
+    let log = root.join("commands");
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let path = std::env::join_paths(paths).unwrap();
+    let run = |repo: &Path, args: &[&str], overrides: &[(&str, &Path)]| -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tauto"));
+        command
+            .args(["run", "--backend", "vm", "--yes"])
+            .arg(repo.join("scripts/test.taut"))
+            .arg("--")
+            .args(args)
+            .current_dir(repo)
+            .env("PATH", &path)
+            .env("TEST_LOG", &log)
+            .env_remove("CARGO_TARGET_DIR")
+            .env_remove("CARGO_BUILD_BUILD_DIR")
+            .env_remove("TAUTO_TEST_CACHE_ROOT")
+            .env_remove("FAIL_TEST");
+        for (name, value) in overrides {
+            command.env(name, value);
+        }
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("test driver did not terminate: {args:?}");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        child.wait_with_output().unwrap()
+    };
+    let count = || fs::read_to_string(&log).unwrap_or_default().lines().count();
+    let reject = |output: Output| {
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    reject(run(&repos[0], &["full", "--skip", "x"], &[]));
+    reject(run(&repos[0], &["focused"], &[]));
+    for argument in [
+        "--target-dir=x",
+        "--manifest-path=x",
+        "--config=x",
+        "-Cx",
+        "-m",
+        "-mx",
+        "-qm",
+        "-vm",
+        "-qC",
+        "-pvalue",
+    ] {
+        reject(run(&repos[0], &["focused", argument], &[]));
+    }
+    assert_eq!(count(), 0);
+    assert!(
+        run(
+            &repos[0],
+            &["focused", "-p", "tauto-build", "--test", "build_rs"],
+            &[]
+        )
+        .status
+        .success()
+    );
+    assert!(run(&repos[0], &["full"], &[]).status.success());
+    let commands = fs::read_to_string(&log).unwrap();
+    let lines: Vec<_> = commands.lines().collect();
+    assert_eq!(lines.len(), 8);
+    assert!(lines[0].contains(" --locked -p tauto-build --test build_rs|"));
+    assert!(lines[1].contains(" --locked --workspace --exclude selfhost-harness|"));
+    assert!(lines[0].starts_with("nextest run --config "));
+    assert!(lines[1].starts_with("nextest run --config "));
+    assert!(lines[2].contains(" build --locked -p tauto-cli --bin tauto|"));
+    assert!(lines[3].starts_with("nextest run --config "));
+    assert!(
+        lines[3].contains(" --locked --manifest-path tools/selfhost-harness/Cargo.toml --no-run|")
+    );
+    // Each top-level library file is checked by its own parallel process, so their order varies.
+    let mut checked: Vec<_> = lines[4..6]
+        .iter()
+        .map(|line| line.split('|').next().unwrap().rsplit(' ').next().unwrap())
+        .collect();
+    checked.sort();
+    assert_eq!(checked, ["meta/m.taut", "std/a.taut"]);
+    assert!(lines[4..6].iter().all(|line| line.contains(" -- check ")));
+    assert!(lines[6].contains(" -- lint std/a.taut std/prelude/p.taut meta/m.taut|"));
+    assert!(lines[7].contains(" -- fmt --check std/a.taut std/prelude/p.taut meta/m.taut|"));
+    let gate = lines.len();
+    assert_eq!(
+        run(&repos[0], &["full"], &[("FAIL_TEST", Path::new("1"))])
+            .status
+            .code(),
+        Some(17)
+    );
+    assert_eq!(
+        count(),
+        gate + 1,
+        "a failed workspace gate stops later commands"
+    );
+    let target = repos[0].join("target");
+    reject(run(&repos[1], &["full"], &[("CARGO_TARGET_DIR", &target)]));
+    let unowned = root.join("unowned");
+    fs::create_dir(&unowned).unwrap();
+    fs::write(unowned.join("keep"), "preserve").unwrap();
+    reject(run(&repos[0], &["full"], &[("CARGO_TARGET_DIR", &unowned)]));
+    assert_eq!(
+        fs::read_to_string(unowned.join("keep")).unwrap(),
+        "preserve"
+    );
+    assert_eq!(count(), gate + 1);
+    let regular = root.join("not-a-directory");
+    fs::write(&regular, "keep").unwrap();
+    reject(run(&repos[0], &["full"], &[("CARGO_TARGET_DIR", &regular)]));
+    assert_eq!(fs::read_to_string(&regular).unwrap(), "keep");
+    let linked = root.join("linked-marker");
+    fs::create_dir(&linked).unwrap();
+    std::os::unix::fs::symlink(&regular, linked.join(".tauto-checkout")).unwrap();
+    reject(run(&repos[0], &["full"], &[("CARGO_TARGET_DIR", &linked)]));
+    let fifo = root.join("fifo-marker");
+    fs::create_dir(&fifo).unwrap();
+    assert!(
+        Command::new("mkfifo")
+            .arg(fifo.join(".tauto-checkout"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    reject(run(&repos[0], &["full"], &[("CARGO_TARGET_DIR", &fifo)]));
+    assert!(
+        fs::symlink_metadata(fifo.join(".tauto-checkout"))
+            .unwrap()
+            .file_type()
+            .is_fifo()
+    );
+    assert_eq!(count(), gate + 1);
+    let exact = root.join("exact");
+    let build = root.join("build output \"日本語\"");
+    let overrides = [
+        ("CARGO_TARGET_DIR", exact.as_path()),
+        ("CARGO_BUILD_BUILD_DIR", build.as_path()),
+    ];
+    assert!(
+        run(&repos[0], &["focused", "-p", "tauto-build"], &overrides)
+            .status
+            .success()
+    );
+    let last = fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .last()
+        .unwrap()
+        .to_owned();
+    assert!(
+        last.ends_with(&format!("|{}|", exact.display())),
+        "the fixed build-dir environment must not leak to child Cargo: {last}"
+    );
+    assert!(
+        last.contains(&format!("build.build-dir={:?}", build.to_str().unwrap())),
+        "the exact outer build directory is passed as one configuration value: {last}"
+    );
+    reject(run(
+        &repos[1],
+        &["full"],
+        &[("CARGO_BUILD_BUILD_DIR", &build)],
+    ));
+    let shared = root.join("shared");
+    for repo in &repos {
+        assert!(
+            run(repo, &["full"], &[("TAUTO_TEST_CACHE_ROOT", &shared)])
+                .status
+                .success()
+        );
+        let namespace = shared
+            .join("checkouts")
+            .join(repo.strip_prefix("/").unwrap());
+        assert_eq!(
+            fs::read_to_string(namespace.join(".tauto-checkout")).unwrap(),
+            repo.to_str().unwrap()
+        );
+    }
+    let before = count();
+    reject(run(
+        &repos[0],
+        &["full"],
+        &[
+            ("TAUTO_TEST_CACHE_ROOT", &shared),
+            ("CARGO_TARGET_DIR", &exact),
+        ],
+    ));
+    let template = root.join("{workspace-path-hash}");
+    reject(run(
+        &repos[0],
+        &["full"],
+        &[("CARGO_BUILD_BUILD_DIR", &template)],
+    ));
+    assert_eq!(count(), before);
+    assert!(
+        run(
+            &repos[0],
+            &["focused", "-vv", "-p", "tauto-build", "--", "-qm"],
+            &[]
+        )
+        .status
+        .success()
+    );
+}

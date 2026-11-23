@@ -1,0 +1,422 @@
+import std::base
+import std::text
+import std::list
+import std::data
+import std::builtin::par
+import query_flow::codec
+import query_flow::flow
+import query_flow::api
+import query_flow::macros
+import surface::surface
+import parse::parse
+import surface::dump
+import syntax::syntax
+import unicode::classes
+import "statements.taut"
+import "shape.taut"
+import text::text
+import surface::occurrence
+import nibcheck::modules
+import nibcheck::types_run
+import nibcheck::types_classes
+import nibcheck::indices
+import nibcheck::classes_expand
+import nibcheck::classes_evidence
+
+// The build as queries (totes/query-flow, docs/design/query-flow.md). What a
+// build reads from outside is an asset; what it computes is a query. Whether a
+// kept result is used again is decided by query-flow alone: a query runs again
+// only when something it read changed since it last ran.
+
+// The text of a source file, by its path.
+@asset_key!(BuildSource { asset: Text }) => fn BuildSourcePath::codec, fn BuildSource
+pub(open) struct BuildSourcePath { path: Text }
+
+// The source files of the tote in the directory `dir`, in the order they are read.
+@asset_key!(BuildToteFiles { asset: List(Text) }) => fn BuildToteDir::codec, fn BuildToteFiles
+pub(open) struct BuildToteDir { dir: Text }
+
+// The directories of the totes the tote in `dir` depends on.
+@asset_key!(BuildToteDeps { asset: List(Text) }) => fn BuildDepsOf::codec, fn BuildToteDeps
+pub(open) struct BuildDepsOf { dir: Text }
+
+// The statements read from the file at `path`. The query fails when the
+// file is not a program.
+@query!(BuildParse) => fn BuildParse, fn BuildParse::register
+fn build_parse(db: Db, path: Text): BuildStatements ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  let source := Db::asset(db, BuildSource(), BuildSourcePath { path: path })
+  match syntax_tables() {
+    None => Db::fail(db, "the tables of the syntax are damaged")
+    Some(t) => match surface_parse_program(t, unicode_classes(), source, 0) {
+      Some(stmts) => BuildStatements { stmts: stmts }
+      None => Db::fail(db, "not a program")
+    }
+  }
+}
+
+// The name a statement declares, or `None` when it declares none.
+fn build_decl_name(s: SurfaceStmt): Option(Text) {
+  match s {
+    StFn(f) => match f {
+      SurfaceFnMk(n, a, b, c, d, e, g, h, w, st, en, body, ls, gt, f14, vis, rh, slot_unused, slot_unused_generics, slot_unused_params) => Some(n)
+    }
+    StTheorem(t) => match t {
+      SurfaceTheoremMk(n, i, ps, ty, body, st, en, slot_unused, slot_unused_params, t_vis) => Some(n)
+    }
+    StDef(t) => match t {
+      SurfaceTheoremMk(n, i, ps, ty, body, st, en, slot_unused, slot_unused_params, t_vis) => Some(n)
+    }
+    StInductive(d) => match d {
+      SurfaceInductiveMk(n, ps, sort, cs, st, en, vis) => Some(n)
+    }
+    StStruct(d) => match d {
+      SurfaceDataMk(k, n, gs, cs, st, en, co, cf, vis, slot_unused_generics, slot_rows) => Some(n)
+    }
+    StEnum(d) => match d {
+      SurfaceDataMk(k, n, gs, cs, st, en, co, cf, vis, slot_unused_generics, slot_rows) => Some(n)
+    }
+    StEffect(e) => match e {
+      SurfaceEffectMk(n, gs, ps, r, res, st, en, set, slot_unused_generics, slot_bounds, e_vis, slot_rows) => Some(n)
+    }
+    StLet(n, ty, v, b, m, unused, st_stack) => None
+    StVar(n, ty, v, b, unused, st_stack) => None
+    StAssign(n, p, v) => None
+    StCalled(g, c) => None
+    StMutual(ss, st, en) => None
+    StImport(p, st, en) => None
+    StExtern(fs, instances, types, structs, enums, st, en) => None
+    StClass(c) => None
+    StInstance(i) => None
+    StWhile(c, b) => None
+    StReturn(v) => None
+    StExpr(v) => None
+    StOther(w, st, en) => None
+    StLoop(st_body, st, en) => None
+    StModule(mod_name, mod_vis, mod_items, st, en) => None
+    StReexport(re_path, re_names, re_spans, st, en) => None
+    StFor(for_pat, for_src, st_body, st, en) => None
+    StBreak(st_value, st, en) => None
+    StContinue(st, en) => None
+    StMacro(n, f, st, en) => None
+    StSyntax(n, g, st, en) => None
+    StAttributed(n, a, g, s2) => None
+  }
+}
+
+// The statement as its users see it: a function without its body, a theorem
+// without its proof. A `def` keeps its body, which is what it means.
+fn build_signature_of(s: SurfaceStmt): SurfaceStmt {
+  match s {
+    StFn(f) => match f {
+      SurfaceFnMk(n, a, b, c, d, e, g, h, w, st, en, body, ls, gt, f14, vis, rh, slot_unused, slot_unused_generics, slot_unused_params) => StFn(
+        SurfaceFnMk(n, a, b, c, d, e, g, h, w, st, en, surface_term_mk(SkOther("ExternFn"), 0, 0), ls, gt, f14, vis, rh, slot_unused, slot_unused_generics, slot_unused_params)
+      )
+    }
+    StTheorem(t) => match t {
+      SurfaceTheoremMk(n, i, ps, ty, body, st, en, slot_unused, slot_unused_params, t_vis) => StTheorem(SurfaceTheoremMk(n, i, ps, ty, None, st, en, None, Nil, t_vis))
+    }
+    StDef(t) => StDef(t)
+    StInductive(d) => StInductive(d)
+    StStruct(d) => StStruct(d)
+    StEnum(d) => StEnum(d)
+    StEffect(e) => StEffect(e)
+    StLet(n, ty, v, b, m, unused, st_stack) => StLet(n, ty, v, b, m, unused, st_stack)
+    StVar(n, ty, v, b, unused, st_stack) => StVar(n, ty, v, b, unused, st_stack)
+    StAssign(n, p, v) => StAssign(n, p, v)
+    StCalled(g, c) => StCalled(g, c)
+    StMutual(ss, st, en) => StMutual(ss, st, en)
+    StImport(p, st, en) => StImport(p, st, en)
+    StExtern(fs, instances, types, structs, enums, st, en) => StExtern(fs, instances, types, structs, enums, st, en)
+    StClass(c) => StClass(c)
+    StInstance(i) => StInstance(i)
+    StWhile(c, b) => StWhile(c, b)
+    StReturn(v) => StReturn(v)
+    StExpr(v) => StExpr(v)
+    StOther(w, st, en) => StOther(w, st, en)
+    StLoop(st_body, st, en) => StOther("LoopExpr", st, en)
+    StModule(mod_name, mod_vis, mod_items, st, en) => StOther("ModuleDecl", st, en)
+    StReexport(re_path, re_names, re_spans, st, en) => StOther("ReexportDecl", st, en)
+    StFor(for_pat, for_src, st_body, st, en) => StOther("ForStmt", st, en)
+    StBreak(st_value, st, en) => StOther("BreakStmt", st, en)
+    StContinue(st, en) => StOther("ContinueStmt", st, en)
+    StMacro(n, f, st, en) => StMacro(n, f, st, en)
+    StSyntax(n, g, st, en) => StSyntax(n, g, st, en)
+    StAttributed(n, a, g, s2) => StAttributed(n, a, g, s2)
+  }
+}
+
+fn build_names_in(stmts: List(SurfaceStmt), acc: List(Text)): List(Text) {
+  match stmts {
+    Nil => List::reverse(acc)
+    Cons(s, rest) => match build_decl_name(s) {
+      None => build_names_in(rest, acc)
+      Some(n) => build_names_in(rest, Cons(n, acc))
+    }
+  }
+}
+
+fn build_find(stmts: List(SurfaceStmt), name: Text): Option(SurfaceStmt) {
+  match stmts {
+    Nil => None
+    Cons(s, rest) => match build_decl_name(s) {
+      Some(n) => if n == name { Some(s) } else { build_find(rest, name) }
+      None => build_find(rest, name)
+    }
+  }
+}
+
+// The names the file at `path` declares, in order. Changing a body leaves
+// this the same, so what reads it is kept.
+@query!(BuildDecls) => fn BuildDecls, fn BuildDecls::register
+fn build_decls(db: Db, path: Text): List(Text) ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  build_names_in(Db::query(db, BuildParse(path)).stmts, Nil)
+}
+
+// The declaration `name` of the file at `path`.
+@query!(BuildDecl) => fn BuildDecl, fn BuildDecl::register
+fn build_decl(db: Db, path: Text, name: Text): BuildStatements ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  match build_find(Db::query(db, BuildParse(path)).stmts, name) {
+    None => Db::fail(db, concat("no declaration ", name))
+    Some(s) => BuildStatements { stmts: Cons(s, Nil) }
+  }
+}
+
+// The signature of the declaration `name` of the file at `path`
+// (`build_signature_of`). Two signatures are the same when they say the same
+// without where they are written (`shape.taut`): a change to a body, or a
+// move in the file, leaves it the same, so a declaration that uses it is kept
+// (query-flow's early cutoff).
+@query!(BuildSignature { output_eq: build_same_shape }) => fn BuildSignature, fn BuildSignature::register
+fn build_signature(db: Db, path: Text, name: Text): BuildStatements ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  BuildStatements { stmts: List::map((s: SurfaceStmt) => build_signature_of(s), Db::query(db, BuildDecl(path, name)).stmts) }
+}
+
+fn build_same_shape(a: BuildStatements, b: BuildStatements): Bool ! {div} {
+  build_shapes(a.stmts) == build_shapes(b.stmts)
+}
+
+fn build_shapes(ss: List(SurfaceStmt)): Text ! {div} {
+  match ss {
+    Nil => ""
+    Cons(s, rest) => concat(build_shape_of_stmt(s), build_shapes(rest))
+  }
+}
+
+// Where each name the tote in `dir` and the totes it depends on declare is:
+// `name`, a tab, and the path of its file.
+@query!(BuildIndex) => fn BuildIndex, fn BuildIndex::register
+fn build_index(db: Db, dir: Text): List(Text) ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  List::append(
+    build_index_deps(db, Db::asset(db, BuildToteDeps(), BuildDepsOf { dir: dir }), Nil),
+    build_index_files(db, Db::asset(db, BuildToteFiles(), BuildToteDir { dir: dir }), Nil)
+  )
+}
+
+fn build_index_deps(db: Db, dirs: List(Text), acc: List(Text)): List(Text) ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  match dirs {
+    Nil => acc
+    Cons(d, rest) => build_index_deps(db, rest, build_union(acc, Db::query(db, BuildIndex(d))))
+  }
+}
+
+fn build_index_files(db: Db, files: List(Text), acc: List(Text)): List(Text) ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  match files {
+    Nil => acc
+    Cons(f, rest) => build_index_files(
+      db,
+      rest,
+      List::append(acc, List::map((n: Text) => concat(concat(n, "\t"), f), Db::query(db, BuildDecls(f))))
+    )
+  }
+}
+
+fn build_where(index: List(Text), name: Text): Option(Text) {
+  match index {
+    Nil => None
+    Cons(e, rest) => if text_starts_with(e, concat(name, "\t"), 0) {
+      Some(Text::slice_or_empty(e, Text::len(name) + 1, Text::len(e)))
+    } else { build_where(rest, name) }
+  }
+}
+
+// The text of the prelude the checkers read (`tauto::nibstd::PRELUDE`).
+@asset_key!(BuildPreludeText { asset: Text }) => fn BuildPreludeOf::codec, fn BuildPreludeText
+pub(open) struct BuildPreludeOf { name: Text }
+
+// The prelude read and prepared as the type checker reads it.
+@query!(BuildPrelude) => fn BuildPrelude, fn BuildPrelude::register
+fn build_prelude(db: Db, name: Text): BuildStatements ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  let source := Db::asset(db, BuildPreludeText(), BuildPreludeOf { name: name })
+  match syntax_tables() {
+    None => Db::fail(db, "the tables of the syntax are damaged")
+    Some(t) => match surface_parse_program(t, unicode_classes(), source, 2147483648) {
+      None => Db::fail(db, "the prelude does not parse")
+      Some(prelude) => BuildStatements {
+        stmts: ix_prelude(surface_index_program(classes_expand_typed(modules_drop_sets(prelude)), 0)).stmts
+      }
+    }
+  }
+}
+
+// The declaration `name` of the file at `path` in the tote in `dir`, checked
+// by the type checker of `totes/nibcheck`. It reads its own declaration and
+// only the signatures of the declarations it uses, which the checker sees as
+// an `extern` block (functions) or as written (types and effects); so a change
+// to the body of a declaration it uses does not make it run again. Gives the
+// declarations it uses, then the checker's report.
+@query!(BuildCheck) => fn BuildCheck, fn BuildCheck::register
+fn build_check(db: Db, dir: Text, path: Text, name: Text): List(Text) ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  match Db::query(db, BuildDecl(path, name)).stmts {
+    Nil => Nil
+    Cons(s, rest) => {
+      let used := build_uses(db, Db::query(db, BuildIndex(dir)), name, build_names_of_stmt(s), Nil, Nil)
+      let fns := build_extern_fns(used.snd, Nil)
+      let others := build_not_fns(used.snd, Nil)
+      let program := List::append(
+        Cons(StExtern(fns, Nil, Nil, Nil, Nil, 0, 0), others),
+        Cons(s, Nil)
+      )
+      let prelude := Db::query(db, BuildPrelude("prelude")).stmts
+      let resolved := modules_resolve(program)
+      let report := types_check(prelude, surface_index_program(resolved.stmts, 1), resolved.errors)
+      let dump := if report_missing_occurrence(report) { "error: a term has no occurrence\n" } else { types_dump(report) }
+      List::append(used.fst, Cons(dump, Nil))
+    }
+  }
+}
+
+fn build_extern_fns(ss: List(SurfaceStmt), acc: List(SurfaceFn)): List(SurfaceFn) {
+  match ss {
+    Nil => List::reverse(acc)
+    Cons(s, rest) => match s {
+      StFn(f) => build_extern_fns(rest, Cons(f, acc))
+      StTheorem(t) => build_extern_fns(rest, acc)
+      StDef(t) => build_extern_fns(rest, acc)
+      StInductive(i) => build_extern_fns(rest, acc)
+      StStruct(d) => build_extern_fns(rest, acc)
+      StEnum(d) => build_extern_fns(rest, acc)
+      StEffect(e) => build_extern_fns(rest, acc)
+      StLet(n, ty, v, b, m, unused, st_stack) => build_extern_fns(rest, acc)
+      StVar(n, ty, v, b, unused, st_stack) => build_extern_fns(rest, acc)
+      StAssign(n, pl, v) => build_extern_fns(rest, acc)
+      StCalled(g, c) => build_extern_fns(rest, acc)
+      StMutual(xs, st, en) => build_extern_fns(rest, acc)
+      StImport(pa, st, en) => build_extern_fns(rest, acc)
+      StExtern(fs, instances, types, structs, enums, st, en) => build_extern_fns(rest, acc)
+      StClass(c) => build_extern_fns(rest, acc)
+      StInstance(i) => build_extern_fns(rest, acc)
+      StWhile(c, b) => build_extern_fns(rest, acc)
+      StReturn(v) => build_extern_fns(rest, acc)
+      StExpr(v) => build_extern_fns(rest, acc)
+      StOther(w, st, en) => build_extern_fns(rest, acc)
+      StLoop(st_body, st, en) => build_extern_fns(rest, acc)
+      StModule(mod_name, mod_vis, mod_items, st, en) => build_extern_fns(rest, acc)
+      StReexport(re_path, re_names, re_spans, st, en) => build_extern_fns(rest, acc)
+      StFor(for_pat, for_src, st_body, st, en) => build_extern_fns(rest, acc)
+      StBreak(st_value, st, en) => build_extern_fns(rest, acc)
+      StContinue(st, en) => build_extern_fns(rest, acc)
+      StMacro(n, f, st, en) => build_extern_fns(rest, acc)
+      StSyntax(n, g, st, en) => build_extern_fns(rest, acc)
+      StAttributed(n, a, g, s2) => build_extern_fns(rest, acc)
+    }
+  }
+}
+
+fn build_is_fn(s: SurfaceStmt): Bool {
+  match build_extern_fns(Cons(s, Nil), Nil) {
+    Nil => false
+    Cons(f, rest) => true
+  }
+}
+
+fn build_not_fns(ss: List(SurfaceStmt), acc: List(SurfaceStmt)): List(SurfaceStmt) {
+  match ss {
+    Nil => List::reverse(acc)
+    Cons(s, rest) => if build_is_fn(s) { build_not_fns(rest, acc) } else { build_not_fns(rest, Cons(s, acc)) }
+  }
+}
+
+// The names `names` that the index knows, once each, and the signatures of
+// their declarations.
+fn build_uses(
+  db: Db,
+  index: List(Text),
+  self: Text,
+  names: List(Text),
+  acc: List(Text),
+  sigs: List(SurfaceStmt)
+): List(Text) × List(SurfaceStmt) ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  match names {
+    Nil => #(List::reverse(acc), List::reverse(sigs))
+    Cons(n, rest) => if n == self || List::contains((a: Text, b: Text) => a == b, n, acc) {
+      build_uses(db, index, self, rest, acc, sigs)
+    } else {
+      match build_where(index, n) {
+        None => build_uses(db, index, self, rest, acc, sigs)
+        Some(f) => build_uses(
+          db,
+          index,
+          self,
+          rest,
+          Cons(n, acc),
+          List::append(List::reverse(Db::query(db, BuildSignature(f, n)).stmts), sigs)
+        )
+      }
+    }
+  }
+}
+
+// The tote in `dir` checked, declaration by declaration: for each declaration,
+// its name and the declarations it uses. It reads the checks of its own
+// declarations only; the totes it depends on reach it through their signatures.
+@query!(BuildTote) => fn BuildTote, fn BuildTote::register
+fn build_tote(db: Db, dir: Text): List(Text) ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  build_tote_files(db, dir, Db::asset(db, BuildToteFiles(), BuildToteDir { dir: dir }), Nil)
+}
+
+fn build_tote_files(db: Db, dir: Text, files: List(Text), acc: List(Text)): List(Text) ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  match files {
+    Nil => acc
+    Cons(f, rest) => build_tote_files(db, dir, rest, build_tote_decls(db, dir, f, Db::query(db, BuildDecls(f)), acc))
+  }
+}
+
+fn build_tote_decls(db: Db, dir: Text, f: Text, names: List(Text), acc: List(Text)): List(Text) ! {div, halt, overflow, ref_get, ref_new, ref_set} {
+  match names {
+    Nil => acc
+    Cons(n, rest) => build_tote_decls(
+      db,
+      dir,
+      f,
+      rest,
+      List::append(acc, Cons(concat(concat(n, ": "), text_join(Db::query(db, BuildCheck(dir, f, n)), " | ")), Nil))
+    )
+  }
+}
+
+// `xs` and the items of `ys` not in it, in order.
+fn build_union(xs: List(Text), ys: List(Text)): List(Text) ! {div} {
+  match ys {
+    Nil => xs
+    Cons(y, rest) => if List::contains((a: Text, b: Text) => a == b, y, xs) { build_union(xs, rest) } else {
+      build_union(List::append(xs, Cons(y, Nil)), rest)
+    }
+  }
+}
+
+// ---- computing again what was read from disk ------------------------------------------------
+//
+// Each query by its name, made from its encoded arguments (`register_query`), so that a query
+// kept on disk is computed again when what it read changed, and what reads it is kept when it
+// comes out the same.
+
+pub fn build_register(rt: Runtime): Unit ! {ref_get, ref_set} {
+  BuildParse::register(rt)
+  BuildDecls::register(rt)
+  BuildDecl::register(rt)
+  BuildSignature::register(rt)
+  BuildIndex::register(rt)
+  BuildCheck::register(rt)
+  BuildTote::register(rt)
+  BuildPrelude::register(rt)
+}

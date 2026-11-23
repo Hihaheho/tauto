@@ -1,19 +1,20 @@
 import "surface.taut"
 import "occurrence.taut"
+import "../../identity/src/identity.taut"
 
 pub fn surface_occurrence_term_start(value: SurfaceTerm): Nat {
-  ⊢ Nat from match value {
-    SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_occurrence) => slot_start
+  match value {
+    SurfaceTermIndexedMk(^slot_kind, slot_start, ^slot_end, ^slot_occurrence) => slot_start
   }
 }
 pub fn surface_occurrence_term_end(value: SurfaceTerm): Nat {
-  ⊢ Nat from match value {
-    SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_occurrence) => slot_end
+  match value {
+    SurfaceTermIndexedMk(^slot_kind, ^slot_start, slot_end, ^slot_occurrence) => slot_end
   }
 }
 pub fn surface_occurrence_term_id(value: SurfaceTerm): Option(TermOccurrence) {
-  ⊢ Option(TermOccurrence) from match value {
-    SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_occurrence) => slot_occurrence
+  match value {
+    SurfaceTermIndexedMk(^slot_kind, ^slot_start, ^slot_end, slot_occurrence) => slot_occurrence
   }
 }
 
@@ -105,7 +106,7 @@ pub theorem surface_index_equal_span_siblings(
 ): surface_index_surfaceterm(
   surface_term_mk(
     SkApp(
-      surface_term_mk(SkVar(name), start, end),
+      surface_term_mk(SkVar(NameSpelled(name)), start, end),
       Cons(surface_term_mk(SkText(text), start, end), Nil)
     ),
     start,
@@ -116,7 +117,7 @@ pub theorem surface_index_equal_span_siblings(
 ) = SurfaceTermIndexedMk(
   SkApp(
     SurfaceTermIndexedMk(
-      SkVar(name),
+      SkVar(NameSpelled(name)),
       start,
       end,
       Some(TermOccurrenceMk(Cons(0, Cons(0, Cons(0, Nil)))))

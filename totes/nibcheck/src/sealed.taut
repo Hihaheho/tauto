@@ -1,0 +1,264 @@
+import "freevars.taut"
+import "../../surface/src/surface.taut"
+import std::base
+import std::text
+import "checker.taut"
+import "messages.taut"
+import "../../identity/src/identity.taut"
+
+// A constructor of a type the prelude declares without `pub(open)` is not
+// the program's to build or match: outside the file that declares it the type
+// is abstract (`sealed_visibility` of `crates/tauto-surface/src/surface/qualify.rs`,
+// `docs/design/visibility.md`). The surface tree keeps no visibility, but a
+// declaration's span starts at the `pub(open)` written before it, so the
+// prelude's text tells which types are open.
+
+// Whether the declaration that starts at `start` of the file read from `base`
+// is written `pub(open)`.
+pub fn sealed_is_open(src: Text, start: Nat, base: Nat): Bool {
+  let at := Nat::sub(start, base)
+  Text::slice_or_empty(src, at, Nat::add(at, 9)) == "pub(open)"
+}
+
+pub fn sealed_ctor_list(cs: List(SurfaceDataCtor), ty: Text, out: List(Text × Text)): List(Text × Text) {
+  match cs {
+    Nil => out
+    Cons(c, rest) => Cons(#(c.name, ty), sealed_ctor_list(rest, ty, out))
+  }
+}
+
+pub fn sealed_data(
+  d: SurfaceData,
+  src: Text,
+  base: Nat,
+  all: Bool,
+  out: List(Text × Text)
+): List(Text × Text) {
+  if not(all) && sealed_is_open(src, d.start, base) { out } else {
+    sealed_ctor_list(d.constructors, d.name, out)
+  }
+}
+
+// The constructors, with their types, of the declarations `ss` holds: all
+// of them with `all`, else only those written without `pub(open)`.
+mutual {
+  pub fn sealed_collect(
+    ss: List(SurfaceStmt),
+    src: Text,
+    base: Nat,
+    all: Bool,
+    out: List(Text × Text)
+  ): List(Text × Text) {
+    match ss {
+      Nil => out
+      Cons(s, rest) => sealed_collect(rest, src, base, all, sealed_stmt(s, src, base, all, out))
+    }
+  }
+
+  pub fn sealed_stmt(
+    s: SurfaceStmt,
+    src: Text,
+    base: Nat,
+    all: Bool,
+    out: List(Text × Text)
+  ): List(Text × Text) {
+    match s {
+      StStruct(d) => sealed_data(d, src, base, all, out)
+      StEnum(d) => sealed_data(d, src, base, all, out)
+      StMutual(stmts, ^start, ^end) => sealed_collect(stmts, src, base, all, out)
+      StAttributed(^name, ^arg, ^generates, inner) => sealed_stmt(inner, src, base, all, out)
+      _ => out
+    }
+  }
+}
+
+pub fn sealed_find(xs: List(Text × Text), n: Text): Option(Text) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if x.fst == n { Some(x.snd) } else { sealed_find(rest, n) }
+  }
+}
+
+pub fn sealed_error(n: Text, ty: Text, start: Nat, end: Nat): TypeError {
+  TypeError {
+    message: msg_with(
+      "surface-sealed-constructor",
+      Cons(
+        marg("name", n),
+        Cons(marg("ty", ty), Cons(marg_msg("file", msg0("surface-the-prelude")), Nil))
+      )
+    ),
+    start: start,
+    end: end
+  }
+}
+
+// `n` used as a constructor: an error unless the program declares a
+// constructor of that name itself.
+pub fn sealed_use(
+  sealed: List(Text × Text),
+  declared: List(Text × Text),
+  n: Text,
+  start: Nat,
+  end: Nat,
+  out: List(TypeError)
+): List(TypeError) {
+  match sealed_find(sealed, n) {
+    None => out
+    Some(ty) => match sealed_find(declared, n) {
+      Some(^own) => out
+      None => Cons(sealed_error(n, ty, start, end), out)
+    }
+  }
+}
+
+mutual {
+  pub fn sealed_pattern(
+    p: SurfacePattern,
+    sealed: List(Text × Text),
+    declared: List(Text × Text),
+    start: Nat,
+    end: Nat,
+    out: List(TypeError)
+  ): List(TypeError) {
+    match p {
+      PtCtor(name, args) => sealed_patterns(
+        args,
+        sealed,
+        declared,
+        start,
+        end,
+        sealed_use(sealed, declared, surface_name_text(name), start, end, out)
+      )
+      PtRecord(name, fields) => sealed_pattern_fields(
+        fields,
+        sealed,
+        declared,
+        start,
+        end,
+        sealed_use(sealed, declared, name, start, end, out)
+      )
+      _ => out
+    }
+  }
+
+  pub fn sealed_patterns(
+    ps: List(SurfacePattern),
+    sealed: List(Text × Text),
+    declared: List(Text × Text),
+    start: Nat,
+    end: Nat,
+    out: List(TypeError)
+  ): List(TypeError) {
+    match ps {
+      Nil => out
+      Cons(p, rest) => sealed_patterns(
+        rest,
+        sealed,
+        declared,
+        start,
+        end,
+        sealed_pattern(p, sealed, declared, start, end, out)
+      )
+    }
+  }
+
+  pub fn sealed_pattern_fields(
+    fs: List(SurfacePatternField),
+    sealed: List(Text × Text),
+    declared: List(Text × Text),
+    start: Nat,
+    end: Nat,
+    out: List(TypeError)
+  ): List(TypeError) {
+    match fs {
+      Nil => out
+      Cons(f, rest) => sealed_pattern_fields(
+        rest,
+        sealed,
+        declared,
+        start,
+        end,
+        sealed_pattern_field(f, sealed, declared, start, end, out)
+      )
+    }
+  }
+
+  pub fn sealed_pattern_field(
+    f: SurfacePatternField,
+    sealed: List(Text × Text),
+    declared: List(Text × Text),
+    start: Nat,
+    end: Nat,
+    out: List(TypeError)
+  ): List(TypeError) {
+    match f {
+      SurfacePatternFieldMk(^name, pattern) => sealed_pattern(pattern, sealed, declared, start, end, out)
+    }
+  }
+}
+
+pub fn sealed_arms(
+  arms: List(SurfaceArm),
+  sealed: List(Text × Text),
+  declared: List(Text × Text),
+  start: Nat,
+  end: Nat,
+  out: List(TypeError)
+): List(TypeError) {
+  match arms {
+    Nil => out
+    Cons(arm, rest) => sealed_arms(
+      rest,
+      sealed,
+      declared,
+      start,
+      end,
+      sealed_pattern(arm.pattern, sealed, declared, start, end, out)
+    )
+  }
+}
+
+pub fn sealed_term(
+  t: SurfaceTerm,
+  sealed: List(Text × Text),
+  declared: List(Text × Text),
+  out: List(TypeError)
+): List(TypeError) {
+  match t {
+    SurfaceTermIndexedMk(k, start, end, ^occ) => match k {
+      SkVar(name) => sealed_use(sealed, declared, surface_name_text(name), start, end, out)
+      SkRecord(name, ^fields) => sealed_use(sealed, declared, name, start, end, out)
+      SkMatch(^s, ^motive, arms, ^binder, _) => sealed_arms(arms, sealed, declared, start, end, out)
+      _ => out
+    }
+  }
+}
+
+pub fn sealed_terms(
+  ts: List(SurfaceTerm),
+  sealed: List(Text × Text),
+  declared: List(Text × Text),
+  out: List(TypeError)
+): List(TypeError) {
+  match ts {
+    Nil => out
+    Cons(t, rest) => sealed_terms(rest, sealed, declared, sealed_term(t, sealed, declared, out))
+  }
+}
+
+// Each use in the program of a constructor the prelude keeps abstract, in
+// the order of the source.
+pub fn sealed_errors(sealed: List(Text × Text), program: List(SurfaceStmt)): List(TypeError) {
+  match sealed {
+    Nil => Nil
+    Cons(^s, ^more) => List::reverse(
+      sealed_terms(
+        List::reverse(subterms_stmts(program, Nil)),
+        sealed,
+        sealed_collect(program, "", 0, true, Nil),
+        Nil
+      )
+    )
+  }
+}

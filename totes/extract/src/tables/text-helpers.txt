@@ -1,0 +1,49 @@
+fn extract_text_byte(t: Text, i: nat): Option(nat) { match Text::byte(t, U64::of_nat(i)) {
+  Option::Some(b) => Option::Some(Nat::of_u64(U64::of_u8(b)))
+  Option::None => Option::None
+} }
+fn extract_text_all_bytes_at(t: Text, i: u64, n: u64, p: (nat) -> Bool): Bool { if n == 0 { true } else { match Text::byte(t, i) {
+  Option::None => true
+  Option::Some(c) => if p(Nat::of_u64(U64::of_u8(c))) { extract_text_all_bytes_at(t, i + 1, n - 1, p) } else { false }
+} } }
+fn extract_text_all_bytes(t: Text, p: (nat) -> Bool): Bool { extract_text_all_bytes_at(t, 0, Text::len(t), p) }
+fn extract_text_bytes_from(t: Text, i: u64, acc: List(nat)): List(nat) { if i == 0 { acc } else { match Text::byte(t, i - 1) {
+  Option::Some(b) => extract_text_bytes_from(t, i - 1, List::Cons(Nat::of_u64(U64::of_u8(b)), acc))
+  Option::None => acc
+} } }
+fn extract_text_bytes(t: Text): List(nat) { extract_text_bytes_from(t, Text::len(t), List::Nil) }
+fn extract_text_push_all(b: &mut Buf, parts: List(Text)): Unit::Star { match parts {
+  List::Nil => Unit::Star
+  List::Cons(part, rest) => {
+    Buf::push(&mut b, &part)
+    extract_text_push_all(&mut b, rest)
+  }
+} }
+fn extract_text_concat_all(parts: List(Text)): Text {
+  var b := Buf::new()
+  extract_text_push_all(&mut b, parts)
+  Text::of(b)
+}
+fn extract_ordering(c: i64): Ordering { if c < 0 { Ordering::Less } else if c == 0 { Ordering::Equal } else { Ordering::Greater } }
+fn extract_text_of_code_point(c: nat): Option(Text) { if c > 1114111 { Option::None } else { Text::of_code_point(U32::of_u64(U64::of_nat(c))) } }
+fn extract_text_utf8_of_code_point(c: nat): Text { match extract_text_of_code_point(c) {
+  Option::Some(t) => t
+  Option::None => ""
+} }
+fn extract_bytes_reverse_onto(bs: List(u8), acc: List(u8)): List(u8) { match bs {
+  List::Nil => acc
+  List::Cons(b, rest) => extract_bytes_reverse_onto(rest, List::Cons(b, acc))
+} }
+fn extract_bytes_of_onto(bs: List(nat), acc: List(u8)): Option(List(u8)) { match bs {
+  List::Nil => Option::Some(extract_bytes_reverse_onto(acc, List::Nil))
+  List::Cons(b, rest) => if b > 255 { Option::None } else { extract_bytes_of_onto(rest, List::Cons(U8::of_u64(U64::of_nat(b)), acc)) }
+} }
+fn extract_bytes_of(bs: List(nat)): Option(List(u8)) { extract_bytes_of_onto(bs, List::Nil) }
+fn extract_text_of_utf8(bs: List(nat)): Option(Text) { match extract_bytes_of(bs) {
+  Option::Some(r) => Text::of_utf8(r)
+  Option::None => Option::None
+} }
+fn extract_text_of_bytes(bs: List(nat)): Text { match extract_text_of_utf8(bs) {
+  Option::Some(t) => t
+  Option::None => Text::of_u64(U64::of_u8(U8::of_u64(256)))
+} }

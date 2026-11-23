@@ -1,0 +1,544 @@
+import std::base
+import std::nat
+import std::tactic
+import std::text
+
+// Decimal numbers in ASCII bytes. `digits` prints with the standard library's `Nat::digits`, and
+// `num_of_digits` reads digits back, refusing a leading zero; `num_of_digits_digits` proves that
+// reading what was printed gives the number back. Division by 10 is the standard library's
+// `Nat::div` and `Nat::mod`, whose meaning is proved here from `Nat::divmod`.
+
+// ---- division by ten --------------------------------------------------------
+
+fn pair_q(p: Nat × Nat): Nat {
+  match p {
+    #(q, ^r) => q
+  }
+}
+
+fn pair_r(p: Nat × Nat): Nat {
+  match p {
+    #(^q, r) => r
+  }
+}
+
+fn dm_value(b: Nat, p: Nat × Nat): Nat {
+  Nat::add(Nat::mul(pair_q(p), b), pair_r(p))
+}
+
+pub theorem divmod_value(
+  a: Nat,
+  b: Nat,
+  q: Nat,
+  r: Nat
+): dm_value(b, Nat::divmod(a, b, q, r)) = Nat::add(Nat::add(Nat::mul(q, b), r), a) {
+  match a {
+    Zero => Refl
+    Succ(a2) => Bool::cases(
+      (y: Bool) => dm_value(b, ⊢ Nat × Nat from match y {
+        false => Nat::divmod(a2, b, q, Succ(r))
+        true => Nat::divmod(a2, b, Succ(q), Zero)
+      }) = Nat::add(Nat::add(Nat::mul(q, b), r), Succ(a2)),
+      Nat::eq(Succ(r), b),
+      (e: Nat::eq(Succ(r), b) = false) => Eq::trans(
+        divmod_value(a2, b, q, Succ(r)),
+        by nat_norm!(()): (Nat::add(Nat::add(Nat::mul(q, b), Succ(r)), a2) = Nat::add(Nat::add(Nat::mul(q, b), r), Succ(a2))) {}
+      ),
+      (e: Nat::eq(Succ(r), b) = true) => Eq::trans(
+        divmod_value(a2, b, Succ(q), Zero),
+        Eq::subst(
+          Nat,
+          Succ(r),
+          b,
+          (z: Nat) => Nat::add(Nat::add(Nat::mul(Succ(q), z), Zero), a2) = Nat::add(Nat::add(Nat::mul(q, z), r), Succ(a2)),
+          Nat::eq_sound(Succ(r), b, e),
+          by nat_norm!(()): (Nat::add(Nat::add(Nat::mul(Succ(q), Succ(r)), Zero), a2) = Nat::add(Nat::add(Nat::mul(q, Succ(r)), r), Succ(a2))) {}
+        )
+      )
+    )
+  }
+}
+// A digit's byte, read back: `m` for `m < 10`.
+theorem digit_byte_value(
+  m: Nat,
+  h: Nat::lt(m, 10) = true
+): Nat::sub(Nat::add(m, 48), 48) = m {
+  match m {
+    Zero => Refl
+    Succ(k0) => match k0 {
+      Zero => Refl
+      Succ(k1) => match k1 {
+        Zero => Refl
+        Succ(k2) => match k2 {
+          Zero => Refl
+          Succ(k3) => match k3 {
+            Zero => Refl
+            Succ(k4) => match k4 {
+              Zero => Refl
+              Succ(k5) => match k5 {
+                Zero => Refl
+                Succ(k6) => match k6 {
+                  Zero => Refl
+                  Succ(k7) => match k7 {
+                    Zero => Refl
+                    Succ(k8) => match k8 {
+                      Zero => Refl
+                      Succ(k9) => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(k9)), h)))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+theorem lt_succ_of_ne(
+  r: Nat,
+  b: Nat,
+  h: Nat::lt(r, b) = true,
+  ne: Nat::eq(Succ(r), b) = false
+): Nat::lt(Succ(r), b) = true {
+  match r {
+    Zero => match b {
+      Zero => False::elim(false_ne_true(h))
+      Succ(b2) => match b2 {
+        Zero => False::elim(true_ne_false(ne))
+        Succ(b3) => Refl
+      }
+    }
+    Succ(r2) => match b {
+      Zero => False::elim(false_ne_true(h))
+      Succ(b2) => lt_succ_of_ne(r2, b2, h, ne)
+    }
+  }
+}
+
+theorem divmod_rem_lt(
+  a: Nat,
+  b: Nat,
+  q: Nat,
+  r: Nat,
+  h: Nat::lt(r, b) = true
+): Nat::lt(pair_r(Nat::divmod(a, b, q, r)), b) = true {
+  match a {
+    Zero => h
+    Succ(a2) => Bool::cases(
+      (y: Bool) => Nat::lt(pair_r(⊢ Nat × Nat from match y {
+        false => Nat::divmod(a2, b, q, Succ(r))
+        true => Nat::divmod(a2, b, Succ(q), Zero)
+      }), b) = true,
+      Nat::eq(Succ(r), b),
+      (e: Nat::eq(Succ(r), b) = false) => divmod_rem_lt(a2, b, q, Succ(r), lt_succ_of_ne(r, b, h, e)),
+      (
+        e: Nat::eq(Succ(r), b) = true
+      ) => divmod_rem_lt(
+        a2,
+        b,
+        Succ(q),
+        Zero,
+        Eq::subst(Nat, Succ(r), b, (z: Nat) => Nat::lt(Zero, z) = true, Nat::eq_sound(Succ(r), b, e), Refl)
+      )
+    )
+  }
+}
+
+theorem mod10_lt(n: Nat): Nat::lt(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 10) = true {
+  divmod_rem_lt(n, 10, Zero, Zero, Refl)
+}
+
+theorem div10_mod10(n: Nat): Nat::add(Nat::mul(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 10), Nat::rem_nz(n, 10, Nat::succ_ne_zero(9))) = n {
+  Eq::trans(divmod_value(n, 10, Zero, Zero), Nat::add_zero_left(n))
+}
+
+// ---- decimal digits ---------------------------------------------------------
+
+// The decimal digits `n` prints as: `Nat::digits` of the standard library, which extraction maps
+// onto native printing.
+pub fn digits(n: Nat): List(Nat) {
+  Nat::digits(Succ(n), n, Nil)
+}
+
+// The value of digit bytes, after `acc`.
+fn dec_go(l: List(Nat), acc: Nat): Nat {
+  match l {
+    Nil => acc
+    Cons(d, t) => dec_go(t, Nat::add(Nat::mul(acc, 10), Nat::sub(d, 48)))
+  }
+}
+
+pub fn dec_value(acc: Nat, l: List(Nat)): Nat {
+  dec_go(l, acc)
+}
+
+fn first_byte(l: List(Nat)): Nat {
+  match l {
+    Nil => 48
+    Cons(d, ^t) => d
+  }
+}
+
+pub theorem digits_acc(
+  f: Nat,
+  n: Nat,
+  acc: List(Nat)
+): Nat::digits(f, n, acc) = List::append(Nat::digits(f, n, Nil), acc) {
+  match f {
+    Zero => Refl
+    Succ(f2) => Bool::cases(
+      (y: Bool) => (⊢ List(Nat) from match y {
+        true => Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), acc)
+        false => Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), acc))
+      }) = List::append(⊢ List(Nat) from match y {
+        true => Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)
+        false => Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))
+      }, acc),
+      Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0),
+      (
+        e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = false
+      ) => Eq::trans(
+        digits_acc(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), acc)),
+        Eq::sym(
+          Eq::trans(
+            Eq::congr(
+              (z: List(Nat)) => List::append(z, acc),
+              digits_acc(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))
+            ),
+            List::append_assoc(
+              Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Nil),
+              Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil),
+              acc
+            )
+          )
+        )
+      ),
+      (e) => Refl
+    )
+  }
+}
+
+theorem dec_value_append(
+  l: List(Nat),
+  acc: Nat,
+  m: List(Nat)
+): dec_value(acc, List::append(l, m)) = dec_value(dec_value(acc, l), m) {
+  match l {
+    Nil => Refl
+    Cons(d, t) => dec_value_append(t, Nat::add(Nat::mul(acc, 10), Nat::sub(d, 48)), m)
+  }
+}
+
+pub theorem lt_succ_self(a: Nat): Nat::lt(a, Succ(a)) = true {
+  Nat::le_refl(a)
+}
+
+theorem lt_add_succ(a: Nat, k: Nat): Nat::lt(a, Nat::add(a, Succ(k))) = true {
+  match k {
+    Zero => lt_succ_self(a)
+    Succ(
+      k2
+    ) => Nat::lt_trans(
+      a,
+      Nat::add(a, Succ(k2)),
+      Succ(Nat::add(a, Succ(k2))),
+      lt_add_succ(a, k2),
+      lt_succ_self(Nat::add(a, Succ(k2)))
+    )
+  }
+}
+
+theorem lt_mul10(
+  q: Nat,
+  r: Nat,
+  ne: Nat::eq(q, 0) = false
+): Nat::lt(q, Nat::add(Nat::mul(q, 10), r)) = true {
+  match q {
+    Zero => False::elim(true_ne_false(ne))
+    Succ(
+      q2
+    ) => Eq::subst(
+      Nat,
+      Nat::add(Succ(q2), Succ(Nat::add(Nat::mul(q2, 9), Nat::add(8, r)))),
+      Nat::add(Nat::mul(Succ(q2), 10), r),
+      (z: Nat) => Nat::lt(Succ(q2), z) = true,
+      by nat_norm!(
+        #()
+      ): (Nat::add(Succ(q2), Succ(Nat::add(Nat::mul(q2, 9), Nat::add(8, r)))) = Nat::add(Nat::mul(Succ(q2), 10), r)) {},
+      lt_add_succ(Succ(q2), Nat::add(Nat::mul(q2, 9), Nat::add(8, r)))
+    )
+  }
+}
+
+theorem div10_lt(
+  n: Nat,
+  ne: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = false
+): Nat::lt(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), n) = true {
+  Eq::subst(
+    <A: Nat,
+    a: Nat::add(Nat::mul(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 10), Nat::rem_nz(n, 10, Nat::succ_ne_zero(9))),
+    b: n>,
+    (z: Nat) => Nat::lt(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), z) = true,
+    div10_mod10(n),
+    lt_mul10(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), ne)
+  )
+}
+
+pub theorem digits_value(
+  f: Nat,
+  n: Nat,
+  h: Nat::lt(n, f) = true
+): dec_value(0, Nat::digits(f, n, Nil)) = n {
+  match f {
+    Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(n)), h)))
+    Succ(f2) => Bool::cases(
+      (y: Bool) => dec_value(0, ⊢ List(Nat) from match y {
+        true => Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)
+        false => Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))
+      }) = n,
+      Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0),
+      (
+        e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = false
+      ) => Eq::trans(
+        Eq::congr(
+          (z: List(Nat)) => dec_value(0, z),
+          digits_acc(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))
+        ),
+        Eq::trans(
+          dec_value_append(Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Nil), 0, Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)),
+          Eq::trans(
+            Eq::congr(
+              (z: Nat) => Nat::add(Nat::mul(z, 10), Nat::sub(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), 48)),
+              digits_value(
+                f2,
+                Nat::div_nz(n, 10, Nat::succ_ne_zero(9)),
+                Nat::le_trans(Succ(Nat::div_nz(n, 10, Nat::succ_ne_zero(9))), n, f2, div10_lt(n, e), h)
+              )
+            ),
+            Eq::trans(
+              Eq::congr(
+                (z: Nat) => Nat::add(Nat::mul(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 10), z),
+                digit_byte_value(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), mod10_lt(n))
+              ),
+              div10_mod10(n)
+            )
+          )
+        )
+      ),
+      (
+        e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = true
+      ) => Eq::trans(
+        Eq::congr(
+          (z: Nat) => Nat::add(Nat::mul(0, 10), z),
+          digit_byte_value(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), mod10_lt(n))
+        ),
+        Eq::trans(
+          Eq::subst(
+            Nat,
+            0,
+            Nat::div_nz(n, 10, Nat::succ_ne_zero(9)),
+            (z: Nat) => Nat::add(Nat::mul(0, 10), Nat::rem_nz(n, 10, Nat::succ_ne_zero(9))) = Nat::add(Nat::mul(z, 10), Nat::rem_nz(n, 10, Nat::succ_ne_zero(9))),
+            Eq::sym(Nat::eq_sound(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0, e)),
+            Refl
+          ),
+          div10_mod10(n)
+        )
+      )
+    )
+  }
+}
+
+theorem first_byte_append(
+  l: List(Nat),
+  m: List(Nat),
+  nz: Nat::eq(first_byte(l), 48) = false
+): Nat::eq(first_byte(List::append(l, m)), 48) = false {
+  match l {
+    Nil => False::elim(true_ne_false(nz))
+    Cons(d, t) => nz
+  }
+}
+
+// A number other than 0 prints with no leading zero.
+theorem digits_lead(
+  f: Nat,
+  n: Nat,
+  h: Nat::lt(n, f) = true,
+  nz: Nat::eq(n, 0) = false
+): Nat::eq(first_byte(Nat::digits(f, n, Nil)), 48) = false {
+  match f {
+    Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(n)), h)))
+    Succ(f2) => Bool::cases(
+      (y: Bool) => Nat::eq(first_byte(⊢ List(Nat) from match y {
+        true => Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)
+        false => Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))
+      }), 48) = false,
+      Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0),
+      (
+        e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = false
+      ) => Eq::subst(
+        List(Nat),
+        List::append(Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Nil), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)),
+        Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)),
+        (z: List(Nat)) => Nat::eq(first_byte(z), 48) = false,
+        Eq::sym(digits_acc(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))),
+        first_byte_append(
+          Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Nil),
+          Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil),
+          digits_lead(
+            f2,
+            Nat::div_nz(n, 10, Nat::succ_ne_zero(9)),
+            Nat::le_trans(Succ(Nat::div_nz(n, 10, Nat::succ_ne_zero(9))), n, f2, div10_lt(n, e), h),
+            e
+          )
+        )
+      ),
+      (
+        e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = true
+      ) => Eq::subst(
+        Nat,
+        n,
+        Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)),
+        (z: Nat) => Nat::eq(z, 0) = false,
+        Eq::trans(
+          Eq::sym(div10_mod10(n)),
+          Eq::subst(
+            Nat,
+            0,
+            Nat::div_nz(n, 10, Nat::succ_ne_zero(9)),
+            (z: Nat) => Nat::add(Nat::mul(z, 10), Nat::rem_nz(n, 10, Nat::succ_ne_zero(9))) = Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)),
+            Eq::sym(Nat::eq_sound(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0, e)),
+            Nat::add_zero_left(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)))
+          )
+        ),
+        nz
+      )
+    )
+  }
+}
+
+// ---- reading digits ---------------------------------------------------------
+
+pub fn is_digit(c: Nat): Bool {
+  Bool::and(Nat::lt(47, c), Nat::lt(c, 58))
+}
+
+// Every byte of `l` passes `p`.
+pub fn all_p(p: (Nat) -> Bool, l: List(Nat)): Bool {
+  match l {
+    Nil => true
+    Cons(d, t) => Bool::and(p(d), all_p(p, t))
+  }
+}
+
+pub fn all_digits(l: List(Nat)): Bool {
+  all_p(is_digit, l)
+}
+
+theorem all_digits_append(
+  l: List(Nat),
+  m: List(Nat),
+  hl: all_digits(l) = true,
+  hm: all_digits(m) = true
+): all_digits(List::append(l, m)) = true {
+  match l {
+    Nil => hm
+    Cons(
+      d,
+      t
+    ) => Bool::and_intro(
+      is_digit(d),
+      all_digits(List::append(t, m)),
+      And::left(Bool::and_split(is_digit(d), all_digits(t), hl)),
+      all_digits_append(t, m, And::right(Bool::and_split(is_digit(d), all_digits(t), hl)), hm)
+    )
+  }
+}
+
+pub theorem digits_all_digits(f: Nat, n: Nat): all_digits(Nat::digits(f, n, Nil)) = true {
+  match f {
+    Zero => Refl
+    Succ(f2) => Bool::cases(
+      (y: Bool) => all_digits(⊢ List(Nat) from match y {
+        true => Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)
+        false => Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))
+      }) = true,
+      Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0),
+      (
+        e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = false
+      ) => Eq::subst(
+        List(Nat),
+        List::append(Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Nil), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)),
+        Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)),
+        (z: List(Nat)) => all_digits(z) = true,
+        Eq::sym(digits_acc(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))),
+        all_digits_append(
+          Nat::digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Nil),
+          Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil),
+          digits_all_digits(f2, Nat::div_nz(n, 10, Nat::succ_ne_zero(9))),
+          Bool::and_intro(is_digit(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48)), true, mod10_lt(n), Refl)
+        )
+      ),
+      (
+        e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = true
+      ) => Bool::and_intro(is_digit(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48)), true, mod10_lt(n), Refl)
+    )
+  }
+}
+
+// Digit bytes `d` then `t` as a number, given whether `d` is `0`.
+fn num_of_lead(z: Bool, d: Nat, t: List(Nat)): Option(Nat) {
+  match z {
+    true => ⊢ Option(Nat) from match t {
+      Nil => Some(Zero)
+      Cons(^d2, ^t2) => None
+    }
+    false => Some(dec_value(0, Cons(d, t)))
+  }
+}
+
+// Digit bytes as a number: not empty, and no leading zero unless the number is 0.
+pub fn num_of_digits(l: List(Nat)): Option(Nat) {
+  match l {
+    Nil => None
+    Cons(d, t) => num_of_lead(Nat::eq(d, 48), d, t)
+  }
+}
+
+theorem num_of_digits_lead(
+  l: List(Nat),
+  nz: Nat::eq(first_byte(l), 48) = false
+): num_of_digits(l) = Some(dec_value(0, l)) {
+  match l {
+    Nil => False::elim(true_ne_false(nz))
+    Cons(
+      d,
+      t
+    ) => Eq::subst(
+      Bool,
+      false,
+      Nat::eq(d, 48),
+      (w: Bool) => num_of_lead(w, d, t) = Some(dec_value(0, Cons(d, t))),
+      Eq::sym(nz),
+      Refl
+    )
+  }
+}
+
+// Reading back the digits of `n` gives `n`.
+pub theorem num_of_digits_digits(n: Nat): num_of_digits(digits(n)) = Some(n) {
+  match n {
+    Zero => Refl
+    Succ(
+      m
+    ) => Eq::trans(
+      num_of_digits_lead(
+        digits(Succ(m)),
+        digits_lead(Succ(Succ(m)), Succ(m), lt_succ_self(Succ(m)), Refl)
+      ),
+      Eq::congr((z: Nat) => Some(z), digits_value(Succ(Succ(m)), Succ(m), lt_succ_self(Succ(m))))
+    )
+  }
+}

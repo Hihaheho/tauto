@@ -1,49 +1,45 @@
-# 診断の修正の適用（`tauto check --fix`）
+# `tauto check --fix`
 
-`tauto check FILE --fix` は、`tauto check FILE` が検査するプログラムの診断が持つ修正（`tauto check --json` の
-`fix`）を適用する。`--dry-run` を付けると、ファイルを書き換えず、書き換えたはずの内容を unified diff で出す。
-`--tote`、`--json` とは併用しない。
+`tauto check FILE --fix` applies the fixes attached to diagnostics (the `fix`
+of `tauto check --json`). `--dry-run` prints a unified diff instead of
+writing. It cannot be combined with `--tote` or `--json`.
 
-## 修正を持つ診断
+## Fixes
 
-修正は、診断が指す誤りを直す一つの編集で、ファイル、置き換える範囲、書く本文、見出しを持つ。
-編集の範囲は読み込んだ構文木の位置から決まり、ソースの文字列を探して決めることはない。
+A fix is one edit (file, range, text, title) whose range comes from the
+syntax tree, never from searching text. Fixes exist for:
 
-- 見えない名前：名前を宣言するファイルがちょうど一つで、`import` を一つ書けば見えるとき、
-  その `import` を書く編集を持つ。書く場所は、名前を使ったファイルの最後の `import` 文の直後で、
-  `import` 文がなければファイルの先頭。同じ名前を宣言するファイルが複数あるときは、どれを読むかが
-  一つに決まらないので、修正を持たない。
-- ステップの腕のゴール、作られる宣言の一覧（`=> 種別 名前, …`）など、マクロの診断が持つ編集
-  （`macro-steps.md`「展開と検査（`step.rs`）」）。
+- an invisible name declared by exactly one file: insert an `import` after the
+  last `import` (or at the top);
+  A name that several files declare has no fix in `check --fix`, which does not choose
+  between them; the language server offers an import for each of them (the files of
+  the tote that the program of the entry alone does not read included).
+- macro diagnostics such as a step arm's goal or the list of generated
+  declarations ([`macro-steps.md`](macro-steps.md));
+- a row written `!?` ([`syntax.md`](syntax.md#effect-rows)): the edit writes in its place the
+  row the body performs, or takes `!?` away when that row is empty. For functions that call
+  themselves or one another the row is the one the rows check settles on, and the edit stays
+  only if the program with every row written passes the rows check as it is (nothing new in
+  it); one whose row holds what cannot be followed, or that does not pass, keeps its `!?`. The language server offers the same edit as a quick fix at the `!?`.
 
-## 適用の手順
+## Procedure
 
-修正を適用する対象は、入口のファイルと同じ tote のファイル（tote の外では、入口のディレクトリの下の、
-tote に属さないファイル）に限る。標準ライブラリと依存の tote は書き換えない。
+Only files of the entry's tote are edited (outside a tote: files under the
+entry's directory that belong to no tote). Everything happens in memory:
 
-手順はすべてメモリの上で行う。各ファイルの本文をメモリに持ち、検査器には読み込みの際にその本文を渡す。
+1. Check and collect edits, deduplicated. Of overlapping edits in a file, take
+   the first and defer the rest; insertions at the same point do not overlap.
+2. Recheck with all edits. Keep them if the error count drops and no new
+   error (file, declaration, message) appears.
+3. Otherwise try the edits one at a time; drop any that does not reduce errors
+   or adds one. Keep the first that helps and start the next round.
+4. Repeat until no edit applies. The error count strictly decreases, so this
+   terminates.
 
-1. プログラムを検査し、修正を持つ診断から編集を集める。同じ編集は一度にまとめる。
-   一つのファイルで範囲が重なる編集は、先の一つだけをこの回に入れ、残りは次の回に回す。
-   同じ位置への挿入は重ならないものとして扱う。
-2. 集めた編集をすべて適用した本文で、プログラムを検査し直す。エラーの数が減り、
-   前になかったエラー（ファイル、宣言、メッセージの組で数える）が一つも現れなければ、この回の
-   編集を残す。
-3. そうでなければ、この回の編集を一つずつ、残した本文の上で試す。エラーが減らないか、
-   新しいエラーが現れる編集は取り消し、以後は試さない。エラーを減らす編集が見つかれば、
-   それを残して次の回に進む（この回の他の編集は、残した本文の上で次の回に集め直す）。
-4. 適用できる編集がなくなるまで 1 から繰り返す。各回でエラーの数が減るので、手順は終わる。
+Changed files are written once at the end (or diffed with `--dry-run`). The
+procedure counts declaration-check and macro/name errors only; the Nib type
+check is not run inside it.
 
-取り消しはメモリの本文を前の本文に戻すことで、ディスクには何も書かない。手順が終わった後で、
-本文が変わったファイルを、そのファイルの全文として一度だけ書く。`--dry-run` では書かずに、
-変わったファイルごとに元の本文との diff を出す。
-
-## 出力
-
-適用した編集（ファイル、適用したときの行と列、見出し）、取り消した編集（ファイル、見出し、
-前後のエラーの数、新しく現れたエラー）、直らずに残ったエラー（修正を持たないもの、
-修正を取り消したもの）を一行ずつ出し、最後に初めと終わりのエラーの数と各件数をまとめる。
-エラーが残れば終了コードは失敗になる。
-
-手順の検査は、エラーを宣言の検査とマクロ・名前の解決の診断で数える。`tauto check FILE` が
-実行するプログラムとして加える検査（抽出した Nib の型検査）は、手順の中では行わない。
+Output lists applied edits, dropped edits (with error counts and new errors)
+and remaining errors, then a summary. Remaining errors make the exit status
+nonzero.

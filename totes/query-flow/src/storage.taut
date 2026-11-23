@@ -1,9 +1,8 @@
-import std::Base
-import std::Data
-import std::prelude::Shared
-import std::prelude::Par
+import std::base
+import std::data
+import std::builtin::par
 
-// Where `save` and `load` keep the runtime (`docs/design/query-flow.md`「保存先」): named
+// Where `save` and `load` keep the runtime (`docs/design/query-flow.md`「Storage」): named
 // entries of bytes, each read whole and replaced whole. A handler gives them a place: a
 // directory (`storage_fs.taut`) or memory (below).
 
@@ -19,27 +18,25 @@ pub(open) effect store_replace(name: Text, b: Bytes): Result(Unit, Text)
 // Entries held in memory: for tests, and where there is no file system (the browser).
 pub struct MemoryStore { entries: Ref(List(Text × Bytes)) }
 
-module MemoryStore {
-  pub fn new(): MemoryStore { MemoryStore { entries: Ref::new(Nil) } }
+pub fn MemoryStore::new(): MemoryStore ! {ref_new} { MemoryStore { entries: perform ref_new(Nil) } }
 
-  // The entry `name`.
-  pub fn get(
-    m: MemoryStore,
-    name: Text
-  ): Option(Bytes) ! {Div} { find_entry(Ref::get(m.entries), name) }
+// The entry `name`.
+pub fn MemoryStore::get(
+  m: MemoryStore,
+  name: Text
+): Option(Bytes) ! {div, ref_get} { find_entry(perform ref_get(m.entries), name) }
 
-  // Makes the entry `name` hold `b`.
-  pub fn set(m: MemoryStore, name: Text, b: Bytes): Unit ! {Div} {
-    Ref::set(m.entries, Cons(#(name, b), without_entry(Ref::get(m.entries), name)))
-  }
-
-  // Removes the entry `name`, if there is one.
-  pub fn remove(m: MemoryStore, name: Text): Unit ! {Div} {
-    Ref::set(m.entries, without_entry(Ref::get(m.entries), name))
-  }
+// Makes the entry `name` hold `b`.
+pub fn MemoryStore::set(m: MemoryStore, name: Text, b: Bytes): Unit ! {div, ref_get, ref_set} {
+  perform ref_set(m.entries, Cons(#(name, b), without_entry(perform ref_get(m.entries), name)))
 }
 
-fn find_entry(es: List(Text × Bytes), name: Text): Option(Bytes) ! {Div} {
+// Removes the entry `name`, if there is one.
+pub fn MemoryStore::remove(m: MemoryStore, name: Text): Unit ! {div, ref_get, ref_set} {
+  perform ref_set(m.entries, without_entry(perform ref_get(m.entries), name))
+}
+
+fn find_entry(es: List(Text × Bytes), name: Text): Option(Bytes) ! {div} {
   match es {
     Nil => None
     Cons(e, t) => match e {
@@ -48,11 +45,11 @@ fn find_entry(es: List(Text × Bytes), name: Text): Option(Bytes) ! {Div} {
   }
 }
 
-fn without_entry(es: List(Text × Bytes), name: Text): List(Text × Bytes) ! {Div} {
+fn without_entry(es: List(Text × Bytes), name: Text): List(Text × Bytes) ! {div} {
   match es {
     Nil => Nil
     Cons(e, t) => match e {
-      #(n, b) => if n == name { without_entry(t, name) } else { Cons(e, without_entry(t, name)) }
+      #(n, ^b) => if n == name { without_entry(t, name) } else { Cons(e, without_entry(t, name)) }
     }
   }
 }
@@ -60,8 +57,8 @@ fn without_entry(es: List(Text × Bytes), name: Text): List(Text × Bytes) ! {Di
 // Runs `body` with its entries in `m`.
 pub fn with_memory_store<A, !e>(
   m: MemoryStore,
-  &body: () -> A ! {store_read, store_replace} ∪ e
-): A ! {Div} ∪ e {
+  body: &(() -> A ! {store_read, store_replace} ∪ e)
+): A ! {div, ref_get, ref_set} ∪ e {
   handle { body() } with {
     store_read(name), k => k(MemoryStore::get(m, name))
     store_replace(name, b), k => {

@@ -1,0 +1,550 @@
+import "strict.taut"
+import totebag::spec
+import totebag::policy
+import eure::value
+import std::base
+import std::text
+
+// The user's trust policy (`crates/totebag/src/index/policy.rs`): which
+// indexes are trusted, read from where and pinned where, and what adopting a
+// package revision requires of them. A SHA-256 is kept as written.
+
+pub fn tb_max_policy(): u64 { 1048576 }
+pub fn tb_max_items(): u64 { 4096 }
+
+// An index the policy trusts: where it is read from, its ID, and the
+// checkpoint (`pin_rev`, `pin_sha256`) its history is trusted through at first.
+pub(open) struct TbTrusted {
+  alias: Text,
+  url: Text,
+  reference: Text,
+  index: Text,
+  pin_rev: Text,
+  pin_digest: Text,
+  https: Bool,
+}
+
+pub(open) inductive TbWitness: Type {
+  // This machine: it has had the checkpoint for long enough.
+  WitnessLocal: TbWitness
+  // Another index has recorded the checkpoint for long enough.
+  WitnessRemote(t: TbTrusted): TbWitness
+}
+
+pub(open) struct TbRule {
+  observers: List(TbTrusted),
+  witnesses: List(TbWitness),
+  min_age: u64,
+  max_checkpoint_lifetime: u64,
+  max_source_check_age: u64,
+}
+
+pub(open) struct TbPolicy {
+  indexes: List(TbTrusted),
+  defaults: TbRule,
+  // Each project's rule, with the project's SHA-256.
+  rules: List(Text × TbRule),
+}
+
+pub fn tb_rule_for(p: TbPolicy, project: Text): TbRule {
+  var rest := p.rules
+  var going := true
+  while going {
+    match rest {
+      Cons(r, more) => {
+        if r.fst == project {
+          return r.snd
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  p.defaults
+}
+
+pub fn tb_expect(s: Text, want: Text): Result(Text, Text) {
+  if s == want { Ok(s) } else { Err("totebag-expected-value") }
+}
+
+pub fn tb_expect_policy(s: Text): Result(Text, Text) { tb_expect(s, "policy") }
+pub fn tb_expect_closure(s: Text): Result(Text, Text) { tb_expect(s, "dependency-closure") }
+pub fn tb_expect_all(s: Text): Result(Text, Text) { tb_expect(s, "all") }
+
+pub fn tb_check_transport(s: Text): Result(Text, Text) {
+  if s == "https" || s == "local-owned" { Ok(s) } else { Err("totebag-not-transport") }
+}
+
+pub fn tb_check_local_owned(s: Text): Result(Text, Text) {
+  match tb_check_url(s) {
+    Some(_) => {
+      return Err("totebag-bad-url")
+    }
+    None => #()
+  }
+  if tb_starts(s, "file:///") { Ok(s) } else { Err("totebag-local-owned-file") }
+}
+
+pub fn tb_check_rev_text(s: Text): Result(Text, Text) {
+  if tb_check_rev(s) { Ok(s) } else { Err("totebag-bad-rev") }
+}
+
+pub fn tb_rev_trusted(l: List(TbTrusted), acc: List(TbTrusted)): List(TbTrusted) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => tb_rev_trusted(rest, Cons(x, acc))
+  }
+}
+
+pub fn tb_find_trusted(l: List(TbTrusted), alias: Text): Option(TbTrusted) {
+  match l {
+    Nil => None
+    Cons(t, rest) => if t.alias == alias { Some(t) } else { tb_find_trusted(rest, alias) }
+  }
+}
+
+pub fn tb_has_index(l: List(TbTrusted), index: Text): Bool {
+  match l {
+    Nil => false
+    Cons(t, rest) => t.index == index || tb_has_index(rest, index)
+  }
+}
+
+pub fn tb_one_index(n: Node, found: List(TbTrusted)): Result(TbTrusted, Text) {
+  let f0 := match tb_fields(n) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let al := match tb_field_as(f0, "alias", tb_alias) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if al.fst == "local" {
+    return Err("totebag-local-not-index")
+  }
+  let id := match tb_field_as(al.snd, "id", tb_sha256) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let tr := match tb_field_as(id.snd, "transport", tb_check_transport) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let https := tr.fst == "https"
+  let repo := match tb_field_as(tr.snd, "repository", if https { tb_https_url } else { tb_check_local_owned }) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let r := match tb_field_as(repo.snd, "ref", tb_branch) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let pr := match tb_field_as(r.snd, "pin_rev", tb_check_rev_text) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let ps := match tb_field_as(pr.snd, "pin_sha256", tb_sha256) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_finish(ps.snd) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_find_trusted(found, al.fst) {
+    Some(_) => {
+      return Err("totebag-alias-twice")
+    }
+    None => #()
+  }
+  if tb_has_index(found, id.fst) {
+    return Err("totebag-index-twice")
+  }
+  Ok(TbTrusted { alias: al.fst, url: repo.fst, reference: r.fst, index: id.fst, pin_rev: pr.fst, pin_digest: ps.fst, https: https })
+}
+
+// The `indexes` of a policy, in order.
+pub fn tb_read_indexes(items: List(Node)): Result(List(TbTrusted), Text) {
+  var found: List(TbTrusted) := Nil
+  var rest := items
+  var going := true
+  while going {
+    match rest {
+      Cons(n, more) => {
+        match tb_one_index(n, tb_rev_trusted(found, Nil)) {
+          Ok(t) => {
+            found := Cons(t, found)
+          }
+          Err(e) => {
+            return Err(e)
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(tb_rev_trusted(found, Nil))
+}
+
+// The aliases listed under `key`: at least one, none twice.
+pub fn tb_aliases(fs: List(Text × Node), key: Text): Result(List(Text) × List(Text × Node), Text) {
+  let p := match tb_required(fs, key) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let items := match tb_strict_list(p.fst, tb_max_items()) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(tb_at(e))
+    }
+  }
+  var names: List(Text) := Nil
+  var rest := items
+  var going := true
+  while going {
+    match rest {
+      Cons(n, more) => {
+        match tb_strict_text(n) {
+          Ok(t) => {
+            names := Cons(t, names)
+          }
+          Err(e) => {
+            return Err(tb_at(e))
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  let listed := tb_rev_texts(names, Nil)
+  match listed {
+    Nil => {
+      return Err("totebag-names-no-index")
+    }
+    Cons(_, _) => #()
+  }
+  match tb_twice(listed) {
+    Some(_) => Err("totebag-names-twice")
+    None => Ok(#(listed, p.snd))
+  }
+}
+
+pub fn tb_rev_texts(l: List(Text), acc: List(Text)): List(Text) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => tb_rev_texts(rest, Cons(x, acc))
+  }
+}
+
+pub fn tb_observers(names: List(Text), indexes: List(TbTrusted)): Result(List(TbTrusted), Text) {
+  match names {
+    Nil => Ok(Nil)
+    Cons(a, rest) => if a == "local" {
+      Err("totebag-local-does-not-observe")
+    } else {
+      match tb_find_trusted(indexes, a) {
+        Some(t) => match tb_observers(rest, indexes) {
+          Ok(ts) => Ok(Cons(t, ts))
+          Err(e) => Err(e)
+        }
+        None => Err("totebag-no-such-index")
+      }
+    }
+  }
+}
+
+pub fn tb_witnesses(names: List(Text), indexes: List(TbTrusted)): Result(List(TbWitness), Text) {
+  match names {
+    Nil => Ok(Nil)
+    Cons(a, rest) => {
+      let w := if a == "local" {
+        WitnessLocal
+      } else {
+        match tb_find_trusted(indexes, a) {
+          Some(t) => if t.https {
+            WitnessRemote(t)
+          } else {
+            return Err("totebag-witness-local-owned")
+          }
+          None => {
+            return Err("totebag-no-such-index")
+          }
+        }
+      }
+      match tb_witnesses(rest, indexes) {
+        Ok(ws) => Ok(Cons(w, ws))
+        Err(e) => Err(e)
+      }
+    }
+  }
+}
+
+pub fn tb_as_index(t: TbTrusted): TbIndex {
+  MkIndex(t.alias, t.index, t.url, t.reference)
+}
+
+pub fn tb_as_indexes(l: List(TbTrusted)): List(TbIndex) {
+  match l {
+    Nil => Nil
+    Cons(t, rest) => Cons(tb_as_index(t), tb_as_indexes(rest))
+  }
+}
+
+pub fn tb_remote_indexes(l: List(TbWitness)): List(TbIndex) {
+  match l {
+    Nil => Nil
+    Cons(w, rest) => match w {
+      WitnessLocal => tb_remote_indexes(rest)
+      WitnessRemote(t) => Cons(tb_as_index(t), tb_remote_indexes(rest))
+    }
+  }
+}
+
+pub fn tb_field_seconds(fs: List(Text × Node), key: Text): Result(u64 × List(Text × Node), Text) {
+  match tb_field_integer(fs, key) {
+    Ok(p) => match tb_seconds(p.fst) {
+      Ok(n) => Ok(#(n, p.snd))
+      Err(e) => Err(tb_at(e))
+    }
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_rule(fs: List(Text × Node), indexes: List(TbTrusted)): Result(TbRule, Text) {
+  let rq := match tb_field_as(fs, "require", tb_expect_all) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let ob := match tb_aliases(rq.snd, "observers") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let observers := match tb_observers(ob.fst, indexes) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let aw := match tb_aliases(ob.snd, "age_witnesses") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let witnesses := match tb_witnesses(aw.fst, indexes) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_independent(tb_as_indexes(observers), tb_remote_indexes(witnesses)) {
+    Some(_) => {
+      return Err("totebag-witness-not-independent")
+    }
+    None => #()
+  }
+  let a := match tb_field_seconds(aw.snd, "min_age_seconds") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let l := match tb_field_seconds(a.snd, "max_checkpoint_lifetime_seconds") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let s := match tb_field_seconds(l.snd, "max_source_check_age_seconds") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if l.fst == 0 || s.fst == 0 {
+    return Err("totebag-limits-positive")
+  }
+  match tb_finish(s.snd) {
+    Ok(_) => Ok(TbRule { observers: observers, witnesses: witnesses, min_age: a.fst, max_checkpoint_lifetime: l.fst, max_source_check_age: s.fst })
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_has_rule(l: List(Text × TbRule), project: Text): Bool {
+  match l {
+    Nil => false
+    Cons(r, rest) => r.fst == project || tb_has_rule(rest, project)
+  }
+}
+
+pub fn tb_rev_rules(l: List(Text × TbRule), acc: List(Text × TbRule)): List(Text × TbRule) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => tb_rev_rules(rest, Cons(x, acc))
+  }
+}
+
+pub fn tb_parse_policy(bytes: Bytes): Result(TbPolicy, Text) {
+  let f0 := match tb_doc_fields_policy(bytes) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let fm := match tb_field_integer(f0, "format") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if fm.fst != 1 {
+    return Err(tb_at("totebag-unknown-format"))
+  }
+  let k := match tb_field_as(fm.snd, "kind", tb_expect_policy) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let tr := match tb_field_as(k.snd, "track", tb_expect_closure) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let ix := match tb_required(tr.snd, "indexes") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let index_items := match tb_strict_list(ix.fst, tb_max_items()) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(tb_at(e))
+    }
+  }
+  let df := match tb_required(ix.snd, "defaults") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let rt := tb_take(df.snd, "rules")
+  let rule_items := match rt.fst {
+    Some(n) => match tb_strict_list(n, tb_max_items()) {
+      Ok(l) => l
+      Err(e) => {
+        return Err(tb_at(e))
+      }
+    }
+    None => Nil
+  }
+  match tb_finish(rt.snd) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let indexes := match tb_read_indexes(index_items) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let dfs := match tb_fields(df.fst) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let defaults := match tb_rule(dfs, indexes) {
+    Ok(r) => r
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var rules: List(Text × TbRule) := Nil
+  var rest := rule_items
+  var going := true
+  while going {
+    match rest {
+      Cons(n, more) => {
+        match tb_project_rule(n, indexes, rules) {
+          Ok(r) => {
+            rules := Cons(r, rules)
+          }
+          Err(e) => {
+            return Err(e)
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(TbPolicy { indexes: indexes, defaults: defaults, rules: tb_rev_rules(rules, Nil) })
+}
+
+pub fn tb_doc_fields_policy(bytes: Bytes): Result(List(Text × Node), Text) {
+  match tb_strict_parse(bytes, tb_max_policy()) {
+    Ok(d) => tb_fields(d)
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_project_rule(n: Node, indexes: List(TbTrusted), before: List(Text × TbRule)): Result(Text × TbRule, Text) {
+  let fs := match tb_fields(n) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let p := match tb_field_as(fs, "project", tb_sha256) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if tb_has_rule(before, p.fst) {
+    return Err("totebag-one-rule")
+  }
+  match tb_rule(p.snd, indexes) {
+    Ok(r) => Ok(#(p.fst, r))
+    Err(e) => Err(e)
+  }
+}

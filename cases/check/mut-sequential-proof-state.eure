@@ -1,0 +1,165 @@
+// Sequential `&mut` calls whose later proof argument mentions the lent state.
+// After the first call the name is rebound: later proofs refer to the
+// post-call binding; a proof about the input does not type as one about that
+// binding; and `Refl` does not compute the post-call binder even when the
+// callee returns a constant. See `docs/design/effect-proofs.md`「Borrows」
+// and `docs/design/self-host.md`「`&mut` and `var`」.
+
+@ cases.post-state-is-what-later-proof-args-mention
+source = ```tauto
+inductive S: Type {
+  Mk(n: Nat): S
+}
+
+fn n_of(s: S): Nat {
+  match s {
+    Mk(n) => n
+  }
+}
+
+fn step1(v: &mut S): Unit {
+  *v := Mk(Succ(n_of(v)))
+}
+
+fn step2(v: &mut S, h: n_of(v) = n_of(v)): Unit {
+  Star
+}
+
+fn both(v: &mut S): Unit {
+  step1(&mut v)
+  step2(&mut v, Refl)
+}
+
+theorem both_ok(): both(Mk(Zero)) = mut1(Star, Mk(Succ(Zero))) {
+  Refl
+}
+```
+checks_all = "ok"
+
+@ cases.proof-about-input-does-not-type-as-proof-about-post-state
+source = ```tauto
+inductive S: Type {
+  Mk(n: Nat): S
+}
+
+fn n_of(s: S): Nat {
+  match s {
+    Mk(n) => n
+  }
+}
+
+fn step1(v: &mut S): Unit {
+  *v := Mk(Succ(n_of(v)))
+}
+
+fn step2(v: &mut S, h: n_of(v) = Zero): Unit {
+  Star
+}
+
+fn both(v: &mut S, h0: n_of(v) = Zero): Unit {
+  step1(&mut v)
+  step2(&mut v, h0)
+}
+```
+checks.S = "ok"
+checks.n_of = "ok"
+checks.step1 = "ok"
+checks.step2 = "ok"
+checks.both = "error: type mismatch"
+
+@ cases.proof-about-input-does-not-type-as-proof-about-post-state.diagnostics {
+  @ []
+  name = "both"
+  message = "type mismatch: expected `n_of(v) = Zero`, found `n_of(v) = Zero`"
+  span = "step2(&mut v, «h0»)"
+}
+
+@ cases.refl-does-not-compute-post-state-after-mut-call
+source = ```tauto
+inductive S: Type {
+  Mk(n: Nat): S
+}
+
+fn n_of(s: S): Nat {
+  match s {
+    Mk(n) => n
+  }
+}
+
+// Constant return: the failure is the call boundary (opaque post-call binder),
+// not dependence on the pre-call value inside the callee.
+fn step1(v: &mut S): Unit {
+  *v := Mk(Succ(Zero))
+}
+
+fn step2(v: &mut S, h: n_of(v) = Succ(Zero)): Unit {
+  Star
+}
+
+fn both(v: &mut S): Unit {
+  step1(&mut v)
+  step2(&mut v, Refl)
+}
+```
+checks.S = "ok"
+checks.n_of = "ok"
+checks.step1 = "ok"
+checks.step2 = "ok"
+checks.both = "error: type mismatch"
+
+@ cases.refl-does-not-compute-post-state-after-mut-call.diagnostics {
+  @ []
+  name = "both"
+  message = "type mismatch: expected `n_of(v) = Succ(Zero)`, found `n_of(v) = n_of(v)`"
+  span = "step2(&mut v, «Refl»)"
+}
+
+@ cases.sequential-mut-calls-without-proof-args-ok
+source = ```tauto
+inductive S: Type {
+  Mk(n: Nat): S
+}
+
+fn n_of(s: S): Nat {
+  match s {
+    Mk(n) => n
+  }
+}
+
+fn step1(v: &mut S): Unit {
+  *v := Mk(Succ(n_of(v)))
+}
+
+fn both(v: &mut S): Unit {
+  step1(&mut v)
+  step1(&mut v)
+}
+
+theorem both_ok(): both(Mk(Zero)) = mut1(Star, Mk(Succ(Succ(Zero)))) {
+  Refl
+}
+```
+checks_all = "ok"
+
+@ cases.merged-leaf-proof-about-input-only-ok
+source = ```tauto
+inductive S: Type {
+  Mk(n: Nat): S
+}
+
+fn n_of(s: S): Nat {
+  match s {
+    Mk(n) => n
+  }
+}
+
+// One leaf: the proof mentions only the input, never an intermediate `&mut` state.
+fn bump(v: &mut S, h0: n_of(v) = Zero, h: n_of(Mk(Succ(n_of(v)))) = Succ(Zero)): Unit {
+  *v := Mk(Succ(n_of(v)))
+}
+
+theorem bump_ok(): bump(Mk(Zero), Refl, Refl) = mut1(Star, Mk(Succ(Zero))) {
+  Refl
+}
+```
+checks_all = "ok"

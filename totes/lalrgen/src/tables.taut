@@ -9,11 +9,10 @@ import "../../pargen/src/sch.taut"
 import "../../pargen/src/scn.taut"
 import "../../pargen/src/sha.taut"
 import "../../text/src/text.taut"
-import std::Text
-import std::prelude::Affine
+import std::text
 
-pub fn la_tables(source: Text): Text {
-  let m := md_build(par_read(source))
+pub fn la_tables(source: Text, start: Option(Text)): Text ! {div, divzero, fail(Text), out_of_bounds, overflow} {
+  let m := md_build(par_read_from(source, start))
   if not(m.lalr) {
     par_die("the grammar is LL(k); totes/llkgen makes its tables")
   }
@@ -27,7 +26,7 @@ pub fn la_tables(source: Text): Text {
     Cons(
       Text::concat_all(Cons("grammar_sha256 ", Cons(sha256_hex(source), Nil))),
       Cons(
-        "generator lalrgen 0.1.0",
+        Text::concat_all(Cons("generator lalrgen 0.1.0 pargen ", Cons(pargen_revision(), Nil))),
         Cons(
           em_title(m),
           Cons(
@@ -66,8 +65,13 @@ pub fn la_tables(source: Text): Text {
   Text::concat_all(Cons(text_join(lines, text_newline()), Cons(text_newline(), Nil)))
 }
 
-pub fn lalrgen_tables(grammar: Text): Result(Text, Text) {
-  handle { Ok(la_tables(grammar)) } with {
+pub fn lalrgen_tables(grammar: Text): Result(Text, Text) ! {div, divzero, overflow} {
+  lalrgen_tables_from(grammar, None)
+}
+
+// The tables for the start symbol `start` (the first of `%start` when `None`).
+pub fn lalrgen_tables_from(grammar: Text, start: Option(Text)): Result(Text, Text) ! {div, divzero, overflow} {
+  handle { Ok(la_tables(grammar, start)) } with {
     fail<Text>(why) => Err(why)
     out_of_bounds() => Err("lalrgen: an index is out of bounds")
   }
@@ -75,7 +79,7 @@ pub fn lalrgen_tables(grammar: Text): Result(Text, Text) {
 
 // The lines `terminals`, `non_terminals`, `start`, `productions` and `lr`,
 // for development.
-pub fn lalrgen_lr_lines(grammar: Text): Result(Text, Text) {
+pub fn lalrgen_lr_lines(grammar: Text): Result(Text, Text) ! {div, divzero, overflow} {
   handle {
     let m := md_build(par_read(grammar))
     let lines := Cons(

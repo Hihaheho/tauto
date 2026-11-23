@@ -1,0 +1,1746 @@
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import "names.taut"
+import "cps.taut"
+import std::text
+import std::base
+
+// `Syn::parse` at run time (`syntax.rs`): each parser the package names is
+// written as the text the parser of `totes/synrun` reads
+// (`Tables::runtime_text` of `crates/tauto-syntax`), with the constructors
+// of the syntax's types numbered, and, when every constructor of
+// `totes/synrun` it is made of is known, as the value that text reads,
+// made ahead of time (`synvalue.rs`). The compiled `totes/synrun` and the
+// reader of its answers are tables the crate keeps.
+
+pub fn sx_synrun(): Text { include_text!("tables/synrun.js") }
+
+pub fn sx_runtime(): Text { include_text!("tables/syntax-runtime.js") }
+
+// ---------------------------------------------------------------------------
+// The words of a section, read in turn.
+
+pub(open) struct SxCur { ws: List(Text), bad: Bool }
+
+pub fn sx_words(t: Text): List(Text) { sx_nonempty(text_split(t, " ")) }
+
+pub fn sx_nonempty(ws: List(Text)): List(Text) {
+  match ws {
+    Nil => Nil
+    Cons(w, rest) => if w == "" { sx_nonempty(rest) } else { Cons(w, sx_nonempty(rest)) }
+  }
+}
+
+pub fn sx_word(c: &mut SxCur): Text {
+  match c.ws {
+    Nil => {
+      c.bad := true
+      ""
+    }
+    Cons(w, rest) => {
+      c.ws := rest
+      w
+    }
+  }
+}
+
+pub fn sx_num(c: &mut SxCur): Nat {
+  let w := sx_word(&mut c)
+  match text_parse_u64(w) {
+    Some(n) => n
+    None => {
+      c.bad := true
+      0
+    }
+  }
+}
+
+// A signed number as its successor, 0 for a negative one (`plus_one`).
+pub fn sx_plus_one(c: &mut SxCur): Nat {
+  let w := sx_word(&mut c)
+  if text_starts_with(w, "-", 0) {
+    match text_parse_u64(Text::slice_or_empty(w, 1, Text::len(w))) {
+      Some(^n) => 0
+      None => {
+        c.bad := true
+        0
+      }
+    }
+  } else {
+    match text_parse_u64(w) {
+      Some(n) => n + 1
+      None => {
+        c.bad := true
+        0
+      }
+    }
+  }
+}
+
+// A symbol of a production: a non-terminal at or above 0, a terminal `t`
+// as `-t - 1`.
+pub fn sx_sym(c: &mut SxCur): SxSym {
+  let w := sx_word(&mut c)
+  if text_starts_with(w, "-", 0) {
+    match text_parse_u64(Text::slice_or_empty(w, 1, Text::len(w))) {
+      Some(n) => SxTerm(n - 1)
+      None => {
+        c.bad := true
+        SxTerm(0)
+      }
+    }
+  } else {
+    match text_parse_u64(w) {
+      Some(n) => SxNt(n)
+      None => {
+        c.bad := true
+        SxNt(0)
+      }
+    }
+  }
+}
+
+pub fn sx_nums(c: &mut SxCur, n: Nat): List(Nat) ! {div} {
+  var out: List(Nat) := Nil
+  var i := 0
+  while i < n {
+    out := Cons(sx_num(&mut c), out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+// ---------------------------------------------------------------------------
+// What the tables say (`Tables::read`), as far as the parser's text needs.
+
+pub(open) enum SxSym {
+  SxNt(Nat)
+  SxTerm(Nat)
+}
+
+pub(open) struct SxProd { lhs: Nat, attr: Nat, rhs: List(SxSym) }
+
+pub(open) struct SxLook { nt: Nat, prod0: Nat, k: Nat, transitions: List(List(Nat)) }
+
+pub(open) struct SxLr { actions: List(List(Nat)), gotos: List(List(Nat)) }
+
+// A state of a scanner: its accepts (terminal, priority, lookahead kind,
+// lookahead automaton) and its transitions (class, target).
+pub(open) struct SxState { accepts: List(List(Nat)), transitions: List(List(Nat)) }
+
+pub(open) struct SxMode { transitions: List(List(Nat)), states: List(SxState) }
+
+// A terminal written with `%capture` or `%validate`: its terminal, the
+// numbers the scanner's text gives of it before its automata, and its
+// automata (the capture's as its successor, 0 for none).
+pub(open) struct SxDyn { terminal: Nat, head: List(Nat), prefix: Nat, suffix: Nat, capture: Nat }
+
+pub(open) struct SxCtorDef { name: Text, record: Bool }
+
+pub(open) enum SxType {
+  SxStruct(Text)
+  SxEnum(Text, List(SxCtorDef))
+}
+
+pub(open) struct SxTables {
+  terminals: List(Text),
+  non_terminals: Nat,
+  nt_kinds: Array(Nat),
+  start: Nat,
+  prods: List(SxProd),
+  // The type (as its successor, 0 for none) and the constructor each
+  // production builds.
+  prod_types: Array(Nat × Nat),
+  // The symbols dropped from the tree (`^`): production and place.
+  clipped: List(Nat × Nat),
+  looks: List(SxLook),
+  lr: Option(List(SxLr)),
+  skip: List(Nat),
+  classes: List(List(Nat)),
+  modes: List(SxMode),
+  lookahead_dfas: List(List(SxState)),
+  dyn_states: List(List(Nat)),
+  dynamic: List(SxDyn),
+  dynamic_dfas: List(List(SxState)),
+  types: Array(SxType)
+}
+
+// Ascending, as `sort` leaves tuples: each is put into a descending list,
+// which is turned at the end, so that sorted input takes one step each.
+pub fn sx_sort(xs: List(List(Nat))): List(List(Nat)) ! {div} {
+  var down: List(List(Nat)) := Nil
+  var rest := xs
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(x, more) => {
+        rest := more
+        down := sx_insert_down(x, down)
+      }
+    }
+  }
+  List::reverse(down)
+}
+
+pub fn sx_insert_down(x: List(Nat), down: List(List(Nat))): List(List(Nat)) {
+  match down {
+    Nil => [x]
+    Cons(y, rest) => if sx_lex_le(y, x) { Cons(x, down) } else { Cons(y, sx_insert_down(x, rest)) }
+  }
+}
+
+pub fn sx_lex_le(a: List(Nat), b: List(Nat)): Bool {
+  match a {
+    Nil => true
+    Cons(x, ra) => match b {
+      Nil => false
+      Cons(y, rb) => if x < y { true } else if y < x { false } else { sx_lex_le(ra, rb) }
+    }
+  }
+}
+
+pub fn sx_tuples(c: &mut SxCur, n: Nat, width: Nat): List(List(Nat)) ! {div} {
+  var out: List(List(Nat)) := Nil
+  var i := 0
+  while i < n {
+    out := Cons(sx_nums(&mut c, width), out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+pub fn sx_states(c: &mut SxCur): List(SxState) ! {div} {
+  let n := sx_num(&mut c)
+  var out: List(SxState) := Nil
+  var i := 0
+  while i < n {
+    let na := sx_num(&mut c)
+    let accepts := sx_tuples(&mut c, na, 4)
+    let nt := sx_num(&mut c)
+    let transitions := sx_sort(sx_tuples(&mut c, nt, 2))
+    out := Cons(SxState { accepts: accepts, transitions: transitions }, out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+pub fn sx_automata(c: &mut SxCur): List(List(SxState)) ! {div} {
+  let n := sx_num(&mut c)
+  var out: List(List(SxState)) := Nil
+  var i := 0
+  while i < n {
+    out := Cons(sx_states(&mut c), out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+// A field's type, which is read and not kept.
+pub fn sx_field_ty(c: &mut SxCur): Unit ! {div, overflow} {
+  var need := 1
+  while need > 0 {
+    let w := sx_word(&mut c)
+    if w == "L" || w == "O" {
+      #()
+    } else if w == "N" {
+      sx_word(&mut c)
+      need := need - 1
+    } else if w == "K" || w == "E" {
+      need := need - 1
+    } else {
+      c.bad := true
+      need := 0
+    }
+  }
+}
+
+pub fn sx_record(c: &mut SxCur): Unit ! {div, overflow} {
+  let n := sx_num(&mut c)
+  var i := 0
+  while i < n {
+    sx_word(&mut c)
+    sx_field_ty(&mut c)
+    i := i + 1
+  }
+}
+
+pub fn sx_schema(c: &mut SxCur): List(SxType) ! {div, overflow} {
+  let n := sx_num(&mut c)
+  var out: List(SxType) := Nil
+  var i := 0
+  while i < n {
+    let kind := sx_word(&mut c)
+    if kind == "S" {
+      let name := sx_word(&mut c)
+      sx_num(&mut c)
+      sx_record(&mut c)
+      out := Cons(SxStruct(name), out)
+    } else if kind == "E" {
+      let name := sx_word(&mut c)
+      let m := sx_num(&mut c)
+      var ctors: List(SxCtorDef) := Nil
+      var j := 0
+      while j < m {
+        let cname := sx_word(&mut c)
+        sx_num(&mut c)
+        let payload := sx_word(&mut c)
+        if payload == "R" {
+          sx_record(&mut c)
+        } else if payload == "P" {
+          sx_field_ty(&mut c)
+        } else {
+          c.bad := true
+        }
+        ctors := Cons(SxCtorDef { name: cname, record: payload == "R" }, ctors)
+        j := j + 1
+      }
+      out := Cons(SxEnum(name, List::reverse(ctors)), out)
+    } else {
+      c.bad := true
+    }
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+pub fn sx_dynamic(c: &mut SxCur): List(SxDyn) ! {div, overflow} {
+  let n := sx_num(&mut c)
+  var entries: List(SxDyn) := Nil
+  var i := 0
+  while i < n {
+    let terminal := sx_num(&mut c)
+    let op := sx_num(&mut c)
+    let state := sx_num(&mut c)
+    let len := sx_num(&mut c)
+    let unit := sx_nums(&mut c, len)
+    let ranged := sx_num(&mut c)
+    let range := if ranged == 0 { [0] } else { Cons(1, sx_bits(sx_nums(&mut c, 10))) }
+    let prefix := sx_num(&mut c)
+    let suffix := sx_num(&mut c)
+    let capture := sx_plus_one(&mut c)
+    let head := List::append([terminal, op, state, len], List::append(unit, range))
+    entries := Cons(SxDyn { terminal: terminal, head: head, prefix: prefix, suffix: suffix, capture: capture }, entries)
+    i := i + 1
+  }
+  sx_by_terminal(List::reverse(entries))
+}
+
+// The sides of a range, with each flag (the first and fourth of five) as
+// 0 or 1.
+pub fn sx_bits(xs: List(Nat)): List(Nat) ! {div, overflow} {
+  var out: List(Nat) := Nil
+  var i := 0
+  var rest := xs
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(x, more) => {
+        rest := more
+        let flag := i == 0 || i == 3 || i == 5 || i == 8
+        out := Cons(if flag && x != 0 { 1 } else { x }, out)
+        i := i + 1
+      }
+    }
+  }
+  List::reverse(out)
+}
+
+// The entries in the order of their terminals, the last of a terminal kept.
+pub fn sx_by_terminal(ds: List(SxDyn)): List(SxDyn) ! {div} {
+  var down: List(SxDyn) := Nil
+  var rest := ds
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(d, more) => {
+        rest := more
+        down := sx_insert_dyn(d, down)
+      }
+    }
+  }
+  List::reverse(down)
+}
+
+pub fn sx_insert_dyn(d: SxDyn, down: List(SxDyn)): List(SxDyn) {
+  match down {
+    Nil => [d]
+    Cons(e, rest) => if e.terminal < d.terminal {
+      Cons(d, down)
+    } else if e.terminal == d.terminal {
+      Cons(d, rest)
+    } else {
+      Cons(e, sx_insert_dyn(d, rest))
+    }
+  }
+}
+
+pub fn sx_first_word(line: Text): Text × Text {
+  match text_find(line, " ", 0) {
+    Some(at) => #(Text::slice_or_empty(line, 0, at), Text::slice_or_empty(line, at + 1, Text::len(line)))
+    None => #(line, "")
+  }
+}
+
+pub fn sx_read(text: Text): Result(SxTables, Text) ! {div, overflow} {
+  var terminals: List(Text) := Nil
+  var non_terminals := 0
+  var nt_kinds: List(Nat) := Nil
+  var start := 0
+  var prods: List(SxProd) := Nil
+  var prod_types: List(Nat × Nat) := Nil
+  var clipped: List(Nat × Nat) := Nil
+  var looks: List(SxLook) := Nil
+  var lr: Option(List(SxLr)) := None
+  var skip: List(Nat) := Nil
+  var classes: List(List(Nat)) := Nil
+  var modes: List(SxMode) := Nil
+  var lookahead_dfas: List(List(SxState)) := Nil
+  var dyn_states: List(List(Nat)) := Nil
+  var dynamic: List(SxDyn) := Nil
+  var dynamic_dfas: List(List(SxState)) := Nil
+  var types: List(SxType) := Nil
+  var bad: Option(Text) := None
+  var lines := match text_lines(text) {
+    Nil => Nil
+    Cons(magic, rest) => {
+      if magic != "tauto-syntax-tables 1" {
+        bad := Some(concat("unknown header ", magic))
+      }
+      rest
+    }
+  }
+  var going := true
+  while going {
+    match lines {
+      Nil => { going := false }
+      Cons(line, more) => {
+        lines := more
+        match sx_first_word(line) {
+          #(name, rest) => {
+            var c := SxCur { ws: sx_words(rest), bad: false }
+            if name == "terminals" {
+              let n := sx_num(&mut c)
+              var ts: List(Text) := Nil
+              var i := 0
+              while i < n {
+                ts := Cons(sx_word(&mut c), ts)
+                i := i + 1
+              }
+              terminals := List::reverse(ts)
+            } else if name == "non_terminals" {
+              let n := sx_num(&mut c)
+              var i := 0
+              while i < n {
+                sx_word(&mut c)
+                i := i + 1
+              }
+              non_terminals := n
+            } else if name == "nt_kinds" {
+              let count1 := sx_num(&mut c)
+              nt_kinds := sx_nums(&mut c, count1)
+            } else if name == "start" {
+              start := sx_num(&mut c)
+            } else if name == "productions" {
+              let n := sx_num(&mut c)
+              var ps: List(SxProd) := Nil
+              var i := 0
+              while i < n {
+                let lhs := sx_num(&mut c)
+                let attr := sx_num(&mut c)
+                let len := sx_num(&mut c)
+                var rhs: List(SxSym) := Nil
+                var j := 0
+                while j < len {
+                  rhs := Cons(sx_sym(&mut c), rhs)
+                  j := j + 1
+                }
+                ps := Cons(SxProd { lhs: lhs, attr: attr, rhs: List::reverse(rhs) }, ps)
+                i := i + 1
+              }
+              prods := List::reverse(ps)
+            } else if name == "symbol_attrs" {
+              let n := sx_num(&mut c)
+              var i := 0
+              while i < n {
+                let p := sx_num(&mut c)
+                let pos := sx_num(&mut c)
+                let attr := sx_num(&mut c)
+                if attr == 1 {
+                  clipped := Cons(#(p, pos), clipped)
+                }
+                i := i + 1
+              }
+            } else if name == "prod_types" {
+              let n := sx_num(&mut c)
+              var ts: List(Nat × Nat) := Nil
+              var i := 0
+              while i < n {
+                let ty := sx_plus_one(&mut c)
+                let ctor := sx_num(&mut c)
+                ts := Cons(#(ty, ctor), ts)
+                i := i + 1
+              }
+              prod_types := List::reverse(ts)
+            } else if name == "lookahead" {
+              let n := sx_num(&mut c)
+              var ls: List(SxLook) := Nil
+              var i := 0
+              while i < n {
+                let nt := sx_num(&mut c)
+                let prod0 := sx_plus_one(&mut c)
+                let k := sx_num(&mut c)
+                let m := sx_num(&mut c)
+                var ts: List(List(Nat)) := Nil
+                var j := 0
+                while j < m {
+                  let src := sx_num(&mut c)
+                  let term := sx_num(&mut c)
+                  let to := sx_num(&mut c)
+                  let prod := sx_plus_one(&mut c)
+                  ts := Cons([src, term, to, prod], ts)
+                  j := j + 1
+                }
+                ls := Cons(SxLook { nt: nt, prod0: prod0, k: k, transitions: sx_sort(List::reverse(ts)) }, ls)
+                i := i + 1
+              }
+              looks := ls
+            } else if name == "lr" {
+              let n := sx_num(&mut c)
+              var states: List(SxLr) := Nil
+              var i := 0
+              while i < n {
+                let count3 := sx_num(&mut c)
+                let actions := sx_sort(sx_tuples(&mut c, count3, 3))
+                let count4 := sx_num(&mut c)
+                let gotos := sx_sort(sx_tuples(&mut c, count4, 2))
+                states := Cons(SxLr { actions: actions, gotos: gotos }, states)
+                i := i + 1
+              }
+              lr := Some(List::reverse(states))
+            } else if name == "skip" {
+              let n := sx_num(&mut c)
+              var i := 0
+              while i < n {
+                let count2 := sx_num(&mut c)
+                skip := List::append(sx_nums(&mut c, count2), skip)
+                i := i + 1
+              }
+            } else if name == "classes" {
+              let count5 := sx_num(&mut c)
+              classes := sx_sort(sx_tuples(&mut c, count5, 3))
+            } else if name == "modes" {
+              let n := sx_num(&mut c)
+              var ms: List(SxMode) := Nil
+              var i := 0
+              while i < n {
+                sx_word(&mut c)
+                let count6 := sx_num(&mut c)
+                let transitions := sx_tuples(&mut c, count6, 3)
+                let states := sx_states(&mut c)
+                ms := Cons(SxMode { transitions: transitions, states: states }, ms)
+                i := i + 1
+              }
+              modes := List::reverse(ms)
+            } else if name == "lookahead_dfas" {
+              lookahead_dfas := sx_automata(&mut c)
+            } else if name == "dyn_states" {
+              let count7 := sx_num(&mut c)
+              dyn_states := sx_tuples(&mut c, count7, 3)
+            } else if name == "dynamic" {
+              dynamic := sx_dynamic(&mut c)
+            } else if name == "dynamic_dfas" {
+              dynamic_dfas := sx_automata(&mut c)
+            } else if name == "schema" {
+              types := sx_schema(&mut c)
+            } else {
+              c.ws := Nil
+            }
+            if c.bad {
+              bad := Some(concat("section ", name))
+            }
+          }
+        }
+      }
+    }
+  }
+  match bad {
+    Some(e) => Err(concat("bad syntax tables: ", e))
+    None => Ok(SxTables {
+      terminals: terminals,
+      non_terminals: non_terminals,
+      nt_kinds: Array::of_list(nt_kinds),
+      start: start,
+      prods: prods,
+      prod_types: Array::of_list(prod_types),
+      clipped: clipped,
+      looks: looks,
+      lr: lr,
+      skip: skip,
+      classes: classes,
+      modes: modes,
+      lookahead_dfas: lookahead_dfas,
+      dyn_states: dyn_states,
+      dynamic: dynamic,
+      dynamic_dfas: dynamic_dfas,
+      types: Array::of_list(types)
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The scanner's tables as five texts of numbers (`scan_texts`).
+
+pub fn sx_contains(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => x == y || sx_contains(rest, x)
+  }
+}
+
+pub fn sx_index_of(xs: List(Text), x: Text, at: Nat): Option(Nat) {
+  match xs {
+    Nil => None
+    Cons(y, rest) => if x == y { Some(at) } else { sx_index_of(rest, x, at + 1) }
+  }
+}
+
+pub fn sx_nth(xs: List(Nat), i: Nat): Nat {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => if i == 0 { x } else { sx_nth(rest, i - 1) }
+  }
+}
+
+pub fn sx_count_classes(classes: List(List(Nat))): Nat ! {div} {
+  var n := 0
+  var rest := classes
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(c, more) => {
+        rest := more
+        let k := sx_nth(c, 2) + 1
+        if k > n {
+          n := k
+        }
+      }
+    }
+  }
+  n
+}
+
+// The class's target, as its successor, 0 for none: the last transition of
+// the class decides, as a row filled in order does.
+pub fn sx_target(ts: List(List(Nat)), cls: Nat): Nat ! {div} {
+  var out := 0
+  var rest := ts
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(t, more) => {
+        rest := more
+        if sx_nth(t, 0) == cls {
+          out := sx_nth(t, 1) + 1
+        }
+      }
+    }
+  }
+  out
+}
+
+pub(open) struct SxScan { meta: List(Nat), classes: List(Nat), states: List(Nat), rows: List(Nat), dynamic: List(Nat) }
+
+pub fn sx_scan(t: SxTables, dropped: Option(Nat)): SxScan ! {div, overflow} {
+  let n_classes := sx_count_classes(t.classes)
+  let n_modes := List::length(t.modes)
+  let first_dynamic := n_modes + List::length(t.lookahead_dfas)
+  var automata: List(List(SxState)) := Nil
+  var meta: List(Nat) := Nil
+  var ms := t.modes
+  var going := true
+  while going {
+    match ms {
+      Nil => { going := false }
+      Cons(m, more) => {
+        ms := more
+        automata := Cons(m.states, automata)
+      }
+    }
+  }
+  automata := List::append(List::reverse(automata), List::append(t.lookahead_dfas, t.dynamic_dfas))
+  meta := List::reverse([n_classes, n_modes, List::length(automata)])
+  ms := t.modes
+  going := true
+  while going {
+    match ms {
+      Nil => { going := false }
+      Cons(m, more) => {
+        ms := more
+        meta := Cons(List::length(m.transitions), meta)
+        var ts := m.transitions
+        var more_ts := true
+        while more_ts {
+          match ts {
+            Nil => { more_ts := false }
+            Cons(x, rest) => {
+              ts := rest
+              let token := sx_nth(x, 0)
+              let kind := sx_nth(x, 1)
+              let to := if kind == 2 { 0 } else { sx_nth(x, 2) }
+              meta := Cons(to, Cons(token, Cons(kind, meta)))
+            }
+          }
+        }
+      }
+    }
+  }
+  var classes: List(Nat) := [List::length(t.classes)]
+  var cs := t.classes
+  going := true
+  while going {
+    match cs {
+      Nil => { going := false }
+      Cons(x, more) => {
+        cs := more
+        classes := Cons(sx_nth(x, 2), Cons(sx_nth(x, 1), Cons(sx_nth(x, 0), classes)))
+      }
+    }
+  }
+  var states: List(Nat) := Nil
+  var rows: List(Nat) := Nil
+  var at := 0
+  var dfas := automata
+  going := true
+  while going {
+    match dfas {
+      Nil => { going := false }
+      Cons(dfa, more) => {
+        dfas := more
+        states := Cons(List::length(dfa), states)
+        var ss := dfa
+        var more_ss := true
+        while more_ss {
+          match ss {
+            Nil => { more_ss := false }
+            Cons(s, rest) => {
+              ss := rest
+              var kept: List(List(Nat)) := Nil
+              var acs := s.accepts
+              var more_acs := true
+              while more_acs {
+                match acs {
+                  Nil => { more_acs := false }
+                  Cons(a, ra) => {
+                    acs := ra
+                    let keep := at >= n_modes || match dropped {
+                      Some(d) => sx_nth(a, 0) != d
+                      None => true
+                    }
+                    if keep {
+                      kept := Cons(a, kept)
+                    }
+                  }
+                }
+              }
+              kept := List::reverse(kept)
+              states := Cons(List::length(kept), states)
+              var ks := kept
+              var more_ks := true
+              while more_ks {
+                match ks {
+                  Nil => { more_ks := false }
+                  Cons(a, rk) => {
+                    ks := rk
+                    let la_kind := sx_nth(a, 2)
+                    let nested := if la_kind == 0 { 0 } else { n_modes + sx_nth(a, 3) }
+                    states := Cons(nested, Cons(la_kind, Cons(sx_nth(a, 0), states)))
+                  }
+                }
+              }
+              var i := 0
+              while i < n_classes {
+                let v := sx_target(s.transitions, i)
+                var j := i + 1
+                while j < n_classes && sx_target(s.transitions, j) == v {
+                  j := j + 1
+                }
+                rows := Cons(v, Cons(j - i, rows))
+                i := j
+              }
+            }
+          }
+        }
+        at := at + 1
+      }
+    }
+  }
+  var dynamic: List(Nat) := Nil
+  match t.dyn_states {
+    Nil => #()
+    Cons(^first, ^others) => {
+      dynamic := [List::length(t.dyn_states)]
+      var ds := t.dyn_states
+      var more_ds := true
+      while more_ds {
+        match ds {
+          Nil => { more_ds := false }
+          Cons(s, rest) => {
+            ds := rest
+            if sx_nth(s, 0) == 0 {
+              dynamic := Cons(sx_nth(s, 2), Cons(sx_nth(s, 1), Cons(0, dynamic)))
+            } else {
+              dynamic := Cons(0, Cons(0, Cons(1, dynamic)))
+            }
+          }
+        }
+      }
+      dynamic := Cons(List::length(sx_known_dynamic(t.dynamic, List::length(t.terminals))), dynamic)
+      var es := sx_known_dynamic(t.dynamic, List::length(t.terminals))
+      var more_es := true
+      while more_es {
+        match es {
+          Nil => { more_es := false }
+          Cons(e, rest) => {
+            es := rest
+            dynamic := List::append(List::reverse(e.head), dynamic)
+            let capture := if e.capture == 0 { 0 } else { first_dynamic + e.capture }
+            dynamic := Cons(capture, Cons(first_dynamic + e.suffix, Cons(first_dynamic + e.prefix, dynamic)))
+          }
+        }
+      }
+    }
+  }
+  SxScan {
+    meta: List::reverse(meta),
+    classes: List::reverse(classes),
+    states: List::reverse(states),
+    rows: List::reverse(rows),
+    dynamic: List::reverse(dynamic)
+  }
+}
+
+// The entries whose terminal the tables have.
+pub fn sx_known_dynamic(ds: List(SxDyn), n: Nat): List(SxDyn) {
+  match ds {
+    Nil => Nil
+    Cons(d, rest) => if d.terminal < n { Cons(d, sx_known_dynamic(rest, n)) } else { sx_known_dynamic(rest, n) }
+  }
+}
+
+pub fn sx_number_text(xs: List(Nat)): Text ! {div} {
+  var parts: List(Text) := Nil
+  var rest := xs
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(x, more) => {
+        rest := more
+        parts := Cons(Text::of_nat(x), parts)
+      }
+    }
+  }
+  text_join(List::reverse(parts), " ")
+}
+
+// ---------------------------------------------------------------------------
+// The value a parser's text reads (`synvalue.rs`), and the literal that
+// makes it.
+
+pub(open) enum SxV {
+  SvD(Text, Text, List(SxV))
+  SvN(Nat)
+  SvT(Text)
+  SvB(Bool)
+  SvA(List(SxV))
+  SvL(List(SxV))
+}
+
+pub fn sv_nats(xs: List(Nat)): List(SxV) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(SvN(x), sv_nats(rest))
+  }
+}
+
+pub fn sv_bools(xs: List(Bool)): List(SxV) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(SvB(x), sv_bools(rest))
+  }
+}
+
+pub fn sv_texts(xs: List(Text)): List(SxV) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(SvT(x), sv_texts(rest))
+  }
+}
+
+pub fn sv_some(v: SxV): SxV { SvD("Option", "Some", [v]) }
+
+pub fn sv_none(): SxV { SvD("Option", "None", Nil) }
+
+pub fn sv_at(a: Array(Nat), i: Nat): Nat {
+  match Array::get(a, U64::of_nat(i)) {
+    Some(x) => x
+    None => 0
+  }
+}
+
+pub fn sv_range(a: Array(Nat), start: Nat, n: Nat): List(Nat) ! {div} {
+  var out: List(Nat) := Nil
+  var i := 0
+  while i < n {
+    out := Cons(sv_at(a, start + i), out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+pub fn sv_column(c: Array(Nat), k: Nat, n: Nat): List(Nat) ! {div} {
+  var out: List(Nat) := Nil
+  var i := 0
+  while i < n {
+    out := Cons(sv_at(c, k + i * 3), out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+// The class of a code point (`run_class`): one past the class of the run it
+// falls in, 0 for none.
+pub fn sv_run_class(starts: List(Nat), ends: Array(Nat), classes: Array(Nat), code: Nat): Nat ! {div, overflow} {
+  var lo := 0
+  var rest := starts
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(s, more) => if s <= code {
+        rest := more
+        lo := lo + 1
+      } else {
+        going := false
+      }
+    }
+  }
+  if lo == 0 { 0 } else if code <= sv_at(ends, lo - 1) { sv_at(classes, lo - 1) + 1 } else { 0 }
+}
+
+pub fn sv_scan(s: SxScan): SxV ! {div, overflow} {
+  let m := Array::of_list(s.meta)
+  let c := Array::of_list(s.classes)
+  let st := Array::of_list(s.states)
+  let r := Array::of_list(s.rows)
+  let d := Array::of_list(s.dynamic)
+  let n_classes := sv_at(m, 0)
+  let n_runs := sv_at(c, 0)
+  let run_start := sv_column(c, 1, n_runs)
+  let run_end := sv_column(c, 2, n_runs)
+  let run_class := sv_column(c, 3, n_runs)
+  var p := 3
+  var modes: List(SxV) := Nil
+  var i := 0
+  while i < sv_at(m, 1) {
+    let k := sv_at(m, p)
+    var changes: List(SxV) := Nil
+    var j := 0
+    while j < k {
+      changes := Cons(SvD("ScanModeChange", "Mk", sv_nats(sv_range(m, p + 1 + j * 3, 3))), changes)
+      j := j + 1
+    }
+    modes := Cons(SvL(changes), modes)
+    p := p + 1 + k * 3
+    i := i + 1
+  }
+  var sp := 0
+  var rp := 0
+  var total := 0
+  var accepts := 0
+  var dfa_first: List(Nat) := Nil
+  var accept_first: List(Nat) := Nil
+  var token: List(Nat) := Nil
+  var kind: List(Nat) := Nil
+  var dfa: List(Nat) := Nil
+  var rows: List(Nat) := Nil
+  i := 0
+  while i < sv_at(m, 2) {
+    let n := sv_at(st, sp)
+    dfa_first := Cons(total, dfa_first)
+    sp := sp + 1
+    var j := 0
+    while j < n {
+      accept_first := Cons(accepts, accept_first)
+      let k := sv_at(st, sp)
+      sp := sp + 1
+      var a := 0
+      while a < k {
+        token := Cons(sv_at(st, sp), token)
+        kind := Cons(sv_at(st, sp + 1), kind)
+        dfa := Cons(sv_at(st, sp + 2), dfa)
+        sp := sp + 3
+        accepts := accepts + 1
+        a := a + 1
+      }
+      var filled := 0
+      var x := 0
+      while x < n_classes && filled < n_classes {
+        let count := sv_at(r, rp)
+        let v := sv_at(r, rp + 1)
+        let next := if v == 0 { 0 } else { total + v }
+        var y := 0
+        while y < count {
+          rows := Cons(next, rows)
+          y := y + 1
+        }
+        rp := rp + 2
+        filled := filled + count
+        x := x + 1
+      }
+      j := j + 1
+    }
+    total := total + n
+    i := i + 1
+  }
+  accept_first := Cons(accepts, accept_first)
+  let n_states := sv_at(d, 0)
+  var dyn_states: List(SxV) := Nil
+  i := 0
+  while i < n_states {
+    dyn_states := Cons(SvD("ScanDynState", "Mk", sv_nats(sv_range(d, 1 + i * 3, 3))), dyn_states)
+    i := i + 1
+  }
+  var q := 2 + n_states * 3
+  var dyns: List(SxV) := Nil
+  i := 0
+  while i < sv_at(d, 1 + n_states * 3) {
+    let len := sv_at(d, q + 3)
+    let unit := Text::concat_all(sv_code_points(sv_range(d, q + 4, len)))
+    let e := q + 4 + len
+    let ranged := sv_at(d, e)
+    let after := if ranged == 0 { e + 1 } else { e + 11 }
+    dyns := Cons(SvD("ScanDyn", "Mk", [
+      SvN(sv_at(d, q)),
+      SvN(sv_at(d, q + 1)),
+      SvN(sv_at(d, q + 2)),
+      SvT(unit),
+      SvN(ranged),
+      SvA(sv_nats(sv_range(d, e + 1, 10))),
+      SvN(sv_at(d, after)),
+      SvN(sv_at(d, after + 1)),
+      SvN(sv_at(d, after + 2))
+    ]), dyns)
+    q := after + 3
+    i := i + 1
+  }
+  let ends := Array::of_list(run_end)
+  let class_of := Array::of_list(run_class)
+  var ascii: List(Nat) := Nil
+  var code := 0
+  while code < 128 {
+    ascii := Cons(sv_run_class(run_start, ends, class_of, code), ascii)
+    code := code + 1
+  }
+  SvD("ScanTables", "Mk", [
+    SvN(n_classes),
+    SvA(sv_nats(List::reverse(ascii))),
+    SvA(sv_nats(run_start)),
+    SvA(sv_nats(run_end)),
+    SvA(sv_nats(run_class)),
+    SvA(sv_nats(List::reverse(dfa_first))),
+    SvA(sv_nats(List::reverse(accept_first))),
+    SvA(sv_nats(List::reverse(token))),
+    SvA(sv_nats(List::reverse(kind))),
+    SvA(sv_nats(List::reverse(dfa))),
+    SvA(sv_nats(List::reverse(rows))),
+    SvA(List::reverse(modes)),
+    SvL(List::reverse(dyn_states)),
+    SvL(List::reverse(dyns)),
+    SvL(Nil),
+    SvN(0)
+  ])
+}
+
+pub fn sv_code_points(cs: List(Nat)): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(text_code_point(c), sv_code_points(rest))
+  }
+}
+
+// The constructors a literal names, numbered as they are first met, with
+// `List::Cons` 0 and `List::Nil` 1.
+pub(open) struct SvCtors { names: List(Text × Text), count: Nat }
+
+pub fn sv_number(cs: &mut SvCtors, ty: Text, c: Text): Nat {
+  match sv_find(cs.names, ty, c, 0) {
+    Some(n) => n
+    None => {
+      cs.names := List::append(cs.names, [#(ty, c)])
+      cs.count := cs.count + 1
+      cs.count - 1
+    }
+  }
+}
+
+pub fn sv_find(names: List(Text × Text), ty: Text, c: Text, at: Nat): Option(Nat) {
+  match names {
+    Nil => None
+    Cons(p, rest) => match p {
+      #(t, n) => if t == ty && n == c { Some(at) } else { sv_find(rest, ty, c, at + 1) }
+    }
+  }
+}
+
+pub fn sv_write(v: SxV, cs: &mut SvCtors, b: &mut Buf): Unit ! {div, overflow} {
+  match v {
+    SvD(ty, c, fields) => {
+      let n := sv_number(&mut cs, ty, c)
+      Buf::push(&mut b, &concat("[", Text::of_nat(n)))
+      var rest := fields
+      var going := true
+      while going {
+        match rest {
+          Nil => { going := false }
+          Cons(x, more) => {
+            rest := more
+            Buf::push(&mut b, &",")
+            sv_write(x, &mut cs, &mut b)
+          }
+        }
+      }
+      Buf::push(&mut b, &"]")
+    }
+    SvN(n) => Buf::push(&mut b, &concat(Text::of_nat(n), "n"))
+    SvT(t) => Buf::push(&mut b, &js_quote(t))
+    SvB(x) => Buf::push(&mut b, &js_bool(x))
+    SvA(items) => {
+      Buf::push(&mut b, &"{a:")
+      sv_list(items, &mut cs, &mut b)
+      Buf::push(&mut b, &"}")
+    }
+    SvL(items) => {
+      Buf::push(&mut b, &"{l:")
+      sv_list(items, &mut cs, &mut b)
+      Buf::push(&mut b, &"}")
+    }
+  }
+}
+
+pub fn sv_list(items: List(SxV), cs: &mut SvCtors, b: &mut Buf): Unit ! {div, overflow} {
+  Buf::push(&mut b, &"[")
+  var first := true
+  var rest := items
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(x, more) => {
+        rest := more
+        if not(first) {
+          Buf::push(&mut b, &",")
+        }
+        first := false
+        sv_write(x, &mut cs, &mut b)
+      }
+    }
+  }
+  Buf::push(&mut b, &"]")
+}
+
+// The constructor of `totes/synrun` as a parser read ahead of time names
+// it, from the table the crate keeps.
+pub fn sv_synrun_ctor(ty: Text, c: Text): Option(Text) {
+  sv_ctor_in(text_lines(include_text!("tables/synrun-constructors.txt")), ty, c)
+}
+
+pub fn sv_ctor_in(lines: List(Text), ty: Text, c: Text): Option(Text) {
+  match lines {
+    Nil => None
+    Cons(line, rest) => match text_split(line, "\t") {
+      Cons(t, more) => match more {
+        Cons(n, last) => match last {
+          Cons(desc, ^none) => if t == ty && n == c {
+            if desc == "-" { None } else { Some(desc) }
+          } else {
+            sv_ctor_in(rest, ty, c)
+          }
+          Nil => sv_ctor_in(rest, ty, c)
+        }
+        Nil => sv_ctor_in(rest, ty, c)
+      }
+      Nil => sv_ctor_in(rest, ty, c)
+    }
+  }
+}
+
+pub fn sv_descs(names: List(Text × Text)): Option(List(Text)) {
+  match names {
+    Nil => Some(Nil)
+    Cons(p, rest) => match p {
+      #(ty, c) => match sv_synrun_ctor(ty, c) {
+        None => None
+        Some(d) => match sv_descs(rest) {
+          None => None
+          Some(ds) => Some(Cons(d, ds))
+        }
+      }
+    }
+  }
+}
+
+// The literal of a parser read ahead of time, and its constructors
+// (`Tote::parser`); `None` when a constructor is not known.
+pub fn sv_literal(v: SxV): Option(Text) ! {div, overflow} {
+  var cs := SvCtors { names: [#("List", "Cons"), #("List", "Nil")], count: 2 }
+  var b := Buf::new()
+  sv_write(v, &mut cs, &mut b)
+  match sv_descs(cs.names) {
+    None => None
+    Some(ds) => Some(Text::concat_all([Text::of(b), ",[", text_join(ds, ","), "]"]))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The parser's text (`runtime_text`), and the value it reads, together.
+
+pub(open) struct SxOut {
+  parts: List(Text),
+  // The constructors of the program's values a parse makes, numbered.
+  ctors: List(Text),
+  error: Option(Text)
+}
+
+pub fn sx_num_out(o: &mut SxOut, n: Nat): Unit { o.parts := Cons(concat(" ", Text::of_nat(n)), o.parts) }
+
+pub fn sx_yn(o: &mut SxOut, b: Bool): Unit { sx_num_out(&mut o, if b { 1 } else { 0 }) }
+
+pub fn sx_text_out(o: &mut SxOut, t: Text): Unit {
+  o.parts := Cons(Text::concat_all([" t", Text::of_nat(Text::len(t)), " ", t]), o.parts)
+}
+
+pub fn sx_fail(o: &mut SxOut, e: Text): Unit {
+  match o.error {
+    None => { o.error := Some(e) }
+    Some(^x) => #()
+  }
+}
+
+pub fn sx_type_at(t: SxTables, ty: Nat): Option(SxType) { Array::get(t.types, U64::of_nat(ty)) }
+
+pub fn sx_ctor_def(cs: List(SxCtorDef), i: Nat): Option(SxCtorDef) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if i == 0 { Some(c) } else { sx_ctor_def(rest, i - 1) }
+  }
+}
+
+// The schema's type's constructor: the type's name, the constructor's, and
+// whether its first field is the span (`runtime_constructor`).
+pub fn sx_runtime_ctor(t: SxTables, ty: Nat, ctor: Nat): Result(Text × Text × Bool, Text) {
+  match sx_type_at(t, ty) {
+    None => Err("a runtime syntax parser whose tables name no type")
+    Some(found) => match found {
+      SxStruct(name) => Ok(#(name, name, true))
+      SxEnum(name, ctors) => match sx_ctor_def(ctors, ctor) {
+        None => Err("a runtime syntax parser whose tables name no constructor")
+        Some(c) => Ok(#(name, c.name, c.record))
+      }
+    }
+  }
+}
+
+// A constructor of the program's data as `synDecode` makes its values
+// (`ctor`).
+pub fn sx_program_ctor(pkg: NPackage, sp: List(Text), p: NSyntaxParser, data: Text, ctor: Text): Result(Text, Text) ! {div, overflow} {
+  match sx_data_binding(p.datas, data) {
+    None => Err(Text::concat_all(["runtime syntax data ", js_isolate(data), " is not retained"]))
+    Some(bound) => match js_find_data(pkg.datas, bound) {
+      None => Err(Text::concat_all(["runtime syntax data ", js_isolate(data), " is not retained"]))
+      Some(d) => match sx_bound_ctor(d, sx_ctor_binding(p.ctors, data, ctor), d.ctors) {
+        None => Err(Text::concat_all(["schema constructor ", js_isolate(data), "::", js_isolate(ctor)]))
+        Some(c) => Ok(Text::concat_all([
+          "[",
+          js_quote(js_gen_ctor(sp, pkg.datas, c.name)),
+          ",[",
+          text_join(sx_field_names(c.fields), ","),
+          "],",
+          js_bool(d.is_struct),
+          ",",
+          js_quote(js_gen_owner(sp, pkg.datas, d.name)),
+          "]"
+        ]))
+      }
+    }
+  }
+}
+
+// A message argument, as the crate writes it into a message.
+pub fn js_isolate(t: Text): Text { t }
+
+pub fn sx_data_binding(ds: List(NSyntaxData), label: Text): Option(Text) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => if d.label == label { Some(d.name) } else { sx_data_binding(rest, label) }
+  }
+}
+
+pub fn sx_ctor_binding(cs: List(NSyntaxCtor), data: Text, ctor: Text): Option(Text) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if c.data == data && c.ctor == ctor { Some(c.name) } else { sx_ctor_binding(rest, data, ctor) }
+  }
+}
+
+pub fn sx_bound_ctor(d: NData, bound: Option(Text), cs: List(NCtor)): Option(NCtor) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => {
+      let fits := d.is_struct || match bound {
+        Some(n) => n == c.name
+        None => false
+      }
+      if fits { Some(c) } else { sx_bound_ctor(d, bound, rest) }
+    }
+  }
+}
+
+pub fn sx_field_names(fs: List(NField)): List(Text) ! {div, overflow} {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(match f.name {
+      Some(n) => js_quote(n)
+      None => "null"
+    }, sx_field_names(rest))
+  }
+}
+
+pub(open) struct SxCtx { pkg: NPackage, sp: List(Text), parser: NSyntaxParser, tables: SxTables }
+
+// Numbers the constructor `ctor` of the schema's type `ty` (`node`).
+pub fn sx_node(x: SxCtx, o: &mut SxOut, ty: Nat, ctor: Nat): Nat ! {div, overflow} {
+  match sx_runtime_ctor(x.tables, ty, ctor) {
+    Err(e) => {
+      sx_fail(&mut o, e)
+      0
+    }
+    Ok(r) => match r {
+      #(name, cname, ^spanned) => match sx_program_ctor(x.pkg, x.sp, x.parser, Text::concat_all([x.parser.name, "::", name]), cname) {
+        Err(e) => {
+          sx_fail(&mut o, e)
+          0
+        }
+        Ok(desc) => {
+          o.ctors := Cons(desc, o.ctors)
+          List::length(o.ctors) - 1
+        }
+      }
+    }
+  }
+}
+
+// What a node is written as, and the value of it: its number, whether it
+// is spanned, and the values it keeps.
+pub fn sx_node_of(x: SxCtx, o: &mut SxOut, ty: Nat, ctor: Nat, keep: List(Bool)): List(SxV) ! {div, overflow} {
+  let spanned := match sx_runtime_ctor(x.tables, ty, ctor) {
+    Err(e) => {
+      sx_fail(&mut o, e)
+      false
+    }
+    Ok(r) => match r {
+      #(^a, ^b, s) => s
+    }
+  }
+  let n := sx_node(x, &mut o, ty, ctor)
+  sx_num_out(&mut o, n)
+  sx_yn(&mut o, spanned)
+  sx_num_out(&mut o, List::length(keep))
+  var rest := keep
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(k, more) => {
+        rest := more
+        sx_yn(&mut o, k)
+      }
+    }
+  }
+  [SvN(n), SvB(spanned), SvL(sv_bools(keep))]
+}
+
+// Which of the symbols from `skip` on are fields (`keep`).
+pub fn sx_keep(clipped: List(Nat × Nat), p: Nat, width: Nat, skip: Nat): List(Bool) ! {div} {
+  var out: List(Bool) := Nil
+  var i := skip
+  while i < width {
+    out := Cons(not(sx_clipped(clipped, p, i)), out)
+    i := i + 1
+  }
+  List::reverse(out)
+}
+
+pub fn sx_clipped(cs: List(Nat × Nat), p: Nat, i: Nat): Bool {
+  match cs {
+    Nil => false
+    Cons(c, rest) => match c {
+      #(a, b) => (a == p && b == i) || sx_clipped(rest, p, i)
+    }
+  }
+}
+
+// What a production makes of its symbols (`shape`), written, and its value.
+pub fn sx_shape(x: SxCtx, o: &mut SxOut, p: Nat, prod: SxProd): SxV ! {div, overflow} {
+  let t := x.tables
+  let types := match Array::get(t.prod_types, U64::of_nat(p)) {
+    Some(x) => x
+    None => #(0, 0)
+  }
+  let ty := match types {
+    #(a, ^b) => a
+  }
+  let ctor := match types {
+    #(^a, b) => b
+  }
+  let lr := match t.lr {
+    Some(^s) => true
+    None => false
+  }
+  let width := List::length(prod.rhs)
+  let kind := sv_at(t.nt_kinds, prod.lhs)
+  if kind == 2 {
+    if prod.attr == 1 {
+      sx_num_out(&mut o, 4)
+      SvD("SynShape", "ShEmpty", Nil)
+    } else if prod.attr == 2 {
+      sx_num_out(&mut o, 5)
+      SvD("SynShape", "ShMore", [sx_element(x, &mut o, p, width, if lr { 1 } else { 0 }, ty, ctor)])
+    } else {
+      sx_bad(&mut o, "a repetition production without its attribute")
+    }
+  } else if kind == 3 {
+    if prod.attr == 3 {
+      sx_num_out(&mut o, 2)
+      SvD("SynShape", "ShSome", [sx_element(x, &mut o, p, width, 0, ty, ctor)])
+    } else if prod.attr == 4 {
+      sx_num_out(&mut o, 3)
+      SvD("SynShape", "ShNone", Nil)
+    } else {
+      sx_bad(&mut o, "an option production without its attribute")
+    }
+  } else if (kind == 1 && ty == 0) || (kind == 4 && lr && ty == 0 && prod.lhs == t.start) {
+    sx_num_out(&mut o, 1)
+    SvD("SynShape", "ShPass", Nil)
+  } else if ty == 0 {
+    sx_bad(&mut o, "a production builds no type")
+  } else {
+    sx_num_out(&mut o, 0)
+    SvD("SynShape", "ShNode", sx_node_of(x, &mut o, ty - 1, ctor, sx_keep(t.clipped, p, width, 0)))
+  }
+}
+
+pub fn sx_bad(o: &mut SxOut, m: Text): SxV {
+  sx_num_out(&mut o, 6)
+  sx_text_out(&mut o, m)
+  SvD("SynShape", "ShBad", [SvT(m)])
+}
+
+pub fn sx_element(x: SxCtx, o: &mut SxOut, p: Nat, width: Nat, skip: Nat, ty: Nat, ctor: Nat): SxV ! {div, overflow} {
+  if ty == 0 {
+    sx_num_out(&mut o, 0)
+    SvD("SynElem", "SeItem", Nil)
+  } else {
+    sx_num_out(&mut o, 1)
+    SvD("SynElem", "SeNode", sx_node_of(x, &mut o, ty - 1, ctor, sx_keep(x.tables.clipped, p, width, skip)))
+  }
+}
+
+pub fn sx_find_look(ls: List(SxLook), nt: Nat): Option(SxLook) {
+  match ls {
+    Nil => None
+    Cons(l, rest) => if l.nt == nt { Some(l) } else { sx_find_look(rest, nt) }
+  }
+}
+
+pub fn sx_is_skipped(t: SxTables, terminal: Nat): Bool {
+  (terminal >= 1 && terminal <= 4) || sx_contains(t.skip, terminal)
+}
+
+pub fn sx_out_nums(o: &mut SxOut, xs: List(Nat)): Unit ! {div} {
+  var rest := xs
+  var going := true
+  while going {
+    match rest {
+      Nil => { going := false }
+      Cons(n, more) => {
+        rest := more
+        sx_num_out(&mut o, n)
+      }
+    }
+  }
+}
+
+// The parser's text, the constructors it numbers, and the value it reads.
+pub fn sx_parser(x: SxCtx, ids: List(Nat), first: List(Text)): Result(Text × List(Text) × SxV, Text) ! {div, overflow} {
+  let t := x.tables
+  var o := SxOut { parts: Nil, ctors: List::reverse(first), error: None }
+  sx_text_out(&mut o, x.parser.name)
+  let scan := sx_scan(t, sx_index_of(t.terminals, "TautoExpr", 0))
+  sx_text_out(&mut o, sx_number_text(scan.meta))
+  sx_text_out(&mut o, sx_number_text(scan.classes))
+  sx_text_out(&mut o, sx_number_text(scan.states))
+  sx_text_out(&mut o, sx_number_text(scan.rows))
+  sx_text_out(&mut o, sx_number_text(scan.dynamic))
+  let nt := List::length(t.terminals)
+  sx_num_out(&mut o, nt)
+  var ts := t.terminals
+  var going := true
+  while going {
+    match ts {
+      Nil => { going := false }
+      Cons(name, more) => {
+        ts := more
+        sx_text_out(&mut o, name)
+      }
+    }
+  }
+  sx_num_out(&mut o, nt)
+  var skipped: List(Bool) := Nil
+  var i := 0
+  while i < nt {
+    let s := sx_is_skipped(t, i)
+    sx_yn(&mut o, s)
+    skipped := Cons(s, skipped)
+    i := i + 1
+  }
+  sx_num_out(&mut o, t.start)
+  var looks: List(SxV) := Nil
+  var states: List(SxV) := Nil
+  let lr := match t.lr {
+    Some(ss) => {
+      sx_yn(&mut o, true)
+      sx_num_out(&mut o, List::length(ss))
+      var rest := ss
+      var more_ss := true
+      while more_ss {
+        match rest {
+          Nil => { more_ss := false }
+          Cons(s, more) => {
+            rest := more
+            sx_num_out(&mut o, List::length(s.actions))
+            var actions: List(SxV) := Nil
+            var acs := s.actions
+            var more_acs := true
+            while more_acs {
+              match acs {
+                Nil => { more_acs := false }
+                Cons(a, ra) => {
+                  acs := ra
+                  sx_out_nums(&mut o, a)
+                  actions := Cons(SvD("SynAction", "Mk", sv_nats(a)), actions)
+                }
+              }
+            }
+            sx_num_out(&mut o, List::length(s.gotos))
+            var gotos: List(SxV) := Nil
+            var gs := s.gotos
+            var more_gs := true
+            while more_gs {
+              match gs {
+                Nil => { more_gs := false }
+                Cons(g, rg) => {
+                  gs := rg
+                  sx_out_nums(&mut o, g)
+                  gotos := Cons(SvD("SynGoto", "Mk", sv_nats(g)), gotos)
+                }
+              }
+            }
+            states := Cons(SvD("SynState", "Mk", [SvL(List::reverse(actions)), SvL(List::reverse(gotos))]), states)
+          }
+        }
+      }
+      true
+    }
+    None => {
+      sx_yn(&mut o, false)
+      sx_num_out(&mut o, t.non_terminals)
+      var n := 0
+      while n < t.non_terminals {
+        match sx_find_look(t.looks, n) {
+          None => {
+            sx_yn(&mut o, false)
+            looks := Cons(sv_none(), looks)
+          }
+          Some(l) => {
+            sx_yn(&mut o, true)
+            sx_num_out(&mut o, l.prod0)
+            sx_num_out(&mut o, l.k)
+            sx_num_out(&mut o, List::length(l.transitions))
+            var trans: List(SxV) := Nil
+            var rest := l.transitions
+            var more_t := true
+            while more_t {
+              match rest {
+                Nil => { more_t := false }
+                Cons(tr, more) => {
+                  rest := more
+                  sx_out_nums(&mut o, tr)
+                  trans := Cons(SvD("SynTrans", "Mk", sv_nats(tr)), trans)
+                }
+              }
+            }
+            looks := Cons(sv_some(SvD("SynLook", "Mk", [SvN(l.prod0), SvN(l.k), SvL(List::reverse(trans))])), looks)
+          }
+        }
+        n := n + 1
+      }
+      false
+    }
+  }
+  sx_num_out(&mut o, List::length(t.prods))
+  var prods: List(SxV) := Nil
+  var ps := t.prods
+  var p := 0
+  going := true
+  while going {
+    match ps {
+      Nil => { going := false }
+      Cons(prod, more) => {
+        ps := more
+        sx_num_out(&mut o, prod.lhs)
+        sx_num_out(&mut o, List::length(prod.rhs))
+        var syms: List(SxV) := Nil
+        var rs := prod.rhs
+        var more_rs := true
+        while more_rs {
+          match rs {
+            Nil => { more_rs := false }
+            Cons(s, rest) => {
+              rs := rest
+              match s {
+                SxNt(n) => {
+                  sx_yn(&mut o, false)
+                  sx_num_out(&mut o, n)
+                  syms := Cons(SvD("SynSym", "SynN", [SvN(n)]), syms)
+                }
+                SxTerm(n) => {
+                  sx_yn(&mut o, true)
+                  sx_num_out(&mut o, n)
+                  syms := Cons(SvD("SynSym", "SynT", [SvN(n)]), syms)
+                }
+              }
+            }
+          }
+        }
+        let shape := sx_shape(x, &mut o, p, prod)
+        prods := Cons(SvD("SynProd", "Mk", [SvN(prod.lhs), SvL(List::reverse(syms)), shape]), prods)
+        p := p + 1
+      }
+    }
+  }
+  sx_out_nums(&mut o, ids)
+  match o.error {
+    Some(e) => Err(e)
+    None => {
+      let value := sv_some(SvD("SynParser", "Mk", List::append([
+        SvT(x.parser.name),
+        sv_scan(scan),
+        SvA(sv_texts(t.terminals)),
+        SvA(sv_bools(List::reverse(skipped))),
+        SvN(t.start),
+        SvB(lr),
+        SvA(List::reverse(looks)),
+        SvA(List::reverse(states)),
+        SvA(List::reverse(prods))
+      ], sv_nats(ids))))
+      Ok(#(Text::concat_all(List::reverse(o.parts)), List::reverse(o.ctors), value))
+    }
+  }
+}
+
+// The five constructors every parse makes (span, context, token,
+// diagnostic, argument), numbered first.
+pub fn sx_fixed(pkg: NPackage, sp: List(Text), p: NSyntaxParser): Result(List(Text), Text) ! {div, overflow} {
+  sx_fixed_in(pkg, sp, p, ["SynSpan", "SynCtx", "SynToken", "SynDiag", "SynArg"])
+}
+
+pub fn sx_fixed_in(pkg: NPackage, sp: List(Text), p: NSyntaxParser, names: List(Text)): Result(List(Text), Text) ! {div, overflow} {
+  match names {
+    Nil => Ok(Nil)
+    Cons(n, rest) => match sx_program_ctor(pkg, sp, p, n, n) {
+      Err(e) => Err(e)
+      Ok(d) => match sx_fixed_in(pkg, sp, p, rest) {
+        Err(e) => Err(e)
+        Ok(ds) => Ok(Cons(d, ds))
+      }
+    }
+  }
+}
+
+// The parsers' tables and constructors, and the parser of `totes/synrun`
+// they run on (`parsers`): the first goes before the runtime is shaken, the
+// second after.
+pub fn js_syntax_parsers(pkg: NPackage, sp: List(Text)): Result(Text × Text, Text) ! {div, overflow} {
+  match pkg.syntax_parsers {
+    Nil => Ok(#("", ""))
+    Cons(^first, ^others) => {
+      var out: List(Text) := [sx_runtime()]
+      var error: Option(Text) := None
+      var ps := pkg.syntax_parsers
+      var i := 0
+      var going := true
+      while going {
+        match ps {
+          Nil => { going := false }
+          Cons(p, more) => {
+            ps := more
+            match sx_one(pkg, sp, p, i) {
+              Err(e) => {
+                error := Some(e)
+                going := false
+              }
+              Ok(t) => { out := Cons(t, out) }
+            }
+            i := i + 1
+          }
+        }
+      }
+      match error {
+        Some(e) => Err(e)
+        None => Ok(#(Text::concat_all(List::reverse(out)), sx_synrun()))
+      }
+    }
+  }
+}
+
+pub fn sx_one(pkg: NPackage, sp: List(Text), p: NSyntaxParser, i: Nat): Result(Text, Text) ! {div, overflow} {
+  match sx_read(p.tables) {
+    Err(e) => Err(e)
+    Ok(tables) => match sx_fixed(pkg, sp, p) {
+      Err(e) => Err(e)
+      Ok(fixed) => match sx_parser(SxCtx { pkg: pkg, sp: sp, parser: p, tables: tables }, [0, 1, 2, 3, 4], fixed) {
+        Err(e) => Err(e)
+        Ok(r) => match r {
+          #(text, ctors, value) => {
+            let load := match sv_literal(value) {
+              Some(lit) => Text::concat_all(["synTote.build(", lit, ")"])
+              None => Text::concat_all(["synTote.load(", js_quote(text), ")"])
+            }
+            let n := Text::of_nat(i)
+            Ok(Text::concat_all([
+              "const synCtors", n, "=[", text_join(ctors, ","), "];\nlet synParser", n,
+              ";\nfunction synParse", n, "(text){synParser", n, "??=", load,
+              ";return synDecode(synTote.answer(synParser", n, ",text),synCtors", n, ");}\n"
+            ]))
+          }
+        }
+      }
+    }
+  }
+}

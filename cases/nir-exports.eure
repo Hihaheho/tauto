@@ -1,0 +1,610 @@
+// `exports` in a tote's manifest: the functions a host calls by name. Each is
+// a root of the package and an `export` line, whatever its row. The line names
+// it `TOTE::MODULE::FUNCTION`, the tote as its `Tauto.eure` names it, whatever
+// else the program declares; a file outside every tote is `MODULE::FUNCTION`.
+
+@ cases.named-functions-and-a-whole-tote-are-exported
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+dependencies {
+  game { path = "../game" }
+}
+exports = ["game::*", "double"]
+```
+files."app/src/main.taut" = ```tauto
+pub fn double(x: i64): i64 ! {overflow} { x * 2 }
+fn unlisted(x: i64): i64 ! {overflow} { x + 3 }
+#()
+```
+files."game/Tauto.eure" = ```eure
+package {
+  name = "game"
+  version = "0.1.0"
+}
+```
+files."game/src/systems.taut" = ```tauto
+import std::builtin::os
+pub fn step(x: i64): i64 ! {overflow} { x + 1 }
+pub fn report(x: i64): i64 ! {stdout} { print("tick\n"); x }
+fn hidden(x: i64): i64 ! {overflow} { x + 2 }
+pub fn keep<A>(a: A): A { a }
+```
+nir.target = "llvm"
+nir.exports = ```nir
+export "game::systems::step" = step@1 row("overflow") foreign_row("overflow") pure_borrow_callbacks()
+export "game::systems::report" = report@2 row("stdout") foreign_row() pure_borrow_callbacks()
+export "app::main::double" = double@3 row("overflow") foreign_row("overflow") pure_borrow_callbacks()
+```
+
+@ cases.an-unknown-export-is-an-error
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+exports = ["missing"]
+```
+files."app/src/main.taut" = ```tauto
+#()
+```
+nir.error = "exports names `missing`, which is not a function of the program"
+
+@ cases.a-generic-export-is-an-error
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+exports = ["keep"]
+```
+files."app/src/main.taut" = ```tauto
+pub fn keep<A>(a: A): A { a }
+#()
+```
+nir.error = "exports names `keep`, which has generics"
+
+@ cases.an-export-of-a-tote-not-read-is-an-error
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+exports = ["other::*"]
+```
+files."app/src/main.taut" = ```tauto
+#()
+```
+nir.error = "`other` is not a tote the program reads"
+
+// `tauto build FILE`: a file entry reads the `exports` and the dependencies of
+// the tote that holds it, as `--tote` does, and `--export` adds to them. A tote
+// is named as in its `Tauto.eure`: `fire-systems`, with the `-`.
+
+@ cases.file-entry-exports-a-whole-dependency-tote
+files."fire-systems/Tauto.eure" = ```eure
+package {
+  name = "fire-systems"
+  version = "0.1.0"
+}
+```
+files."fire-systems/src/lib.taut" = ```tauto
+pub fn steer(): Text { "fire" }
+pub fn burner(): Text { "burn" }
+```
+files."other/Tauto.eure" = ```eure
+package {
+  name = "other"
+  version = "0.1.0"
+}
+```
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+dependencies {
+  fire-systems { path = "../fire-systems" }
+  other { path = "../other" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os
+import fire_systems::lib { steer }
+fn go(): Unit ! {stdout} { perform stdout(steer()) }
+perform main(() => go())
+```
+entry = "app/src/main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["fire-systems::*"]
+nir.exports = ```nir
+export "fire-systems::lib::steer" = steer@2 row() foreign_row() pure_borrow_callbacks()
+export "fire-systems::lib::burner" = burner@3 row() foreign_row() pure_borrow_callbacks()
+```
+
+// A dependency the entry does not import is exported all the same: the
+// entry's `Tauto.eure` names it, so `TOTE::*` reads its sources.
+@ cases.file-entry-exports-a-dependency-tote-it-does-not-import
+files."fire-systems/Tauto.eure" = ```eure
+package {
+  name = "fire-systems"
+  version = "0.1.0"
+}
+```
+files."fire-systems/src/lib.taut" = ```tauto
+pub fn steer(): Text { "fire" }
+```
+files."other/Tauto.eure" = ```eure
+package {
+  name = "other"
+  version = "0.1.0"
+}
+```
+files."other/src/lib.taut" = ```tauto
+pub fn only_other(): Text { "oo" }
+fn hidden(): Text { "no" }
+```
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+dependencies {
+  fire-systems { path = "../fire-systems" }
+  other { path = "../other" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os
+import fire_systems::lib { steer }
+fn go(): Unit ! {stdout} { perform stdout(steer()) }
+perform main(() => go())
+```
+entry = "app/src/main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["other::*", "fire-systems::*"]
+nir.exports = ```nir
+export "other::lib::only_other" = only_other@3 row() foreign_row() pure_borrow_callbacks()
+export "fire-systems::lib::steer" = steer@2 row() foreign_row() pure_borrow_callbacks()
+```
+
+@ cases.file-entry-export-names-the-totes-read-when-spelled-wrong
+files."fire-systems/Tauto.eure" = ```eure
+package {
+  name = "fire-systems"
+  version = "0.1.0"
+}
+```
+files."fire-systems/src/lib.taut" = ```tauto
+pub fn steer(): Text { "fire" }
+```
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+dependencies {
+  fire-systems { path = "../fire-systems" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os
+import fire_systems::lib { steer }
+fn go(): Unit ! {stdout} { perform stdout(steer()) }
+perform main(() => go())
+```
+entry = "app/src/main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["fire_systems::*"]
+nir.error = "the totes read: app, fire-systems"
+
+@ cases.file-entry-reads-the-manifest-exports
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+exports = ["lonely"]
+```
+files."app/src/u.taut" = ```tauto
+import std::builtin::os
+pub fn lonely(): Text { "lonely" }
+fn go(): Unit ! {stdout} { perform stdout("hi\n") }
+perform main(() => go())
+```
+entry = "app/src/u.taut"
+extract = true
+nir.target = "llvm"
+nir.exports = ```nir
+export "app::u::lonely" = lonely@2 row() foreign_row() pure_borrow_callbacks()
+```
+
+// An imported file's `pub` function nobody calls is a root all the same when
+// it is named: extraction keeps it.
+@ cases.file-entry-exports-uncalled-imported-functions
+files."main.taut" = ```tauto
+import std::builtin::os
+import "a.taut" { steer, burner }
+pub fn lonely(): Text { "lonely" }
+fn go(): Unit ! {stdout} { perform stdout(steer()) }
+perform main(() => go())
+```
+files."a.taut" = ```tauto
+pub fn steer(): Text { "a" }
+pub fn burner(): Text { "burn" }
+```
+entry = "main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["lonely", "steer", "burner"]
+nir.exports = ```nir
+export "main::lonely" = lonely@4 row() foreign_row() pure_borrow_callbacks()
+export "a::steer" = steer@2 row() foreign_row() pure_borrow_callbacks()
+export "a::burner" = burner@3 row() foreign_row() pure_borrow_callbacks()
+```
+
+// A function a macro attribute rewrites, and what the macro makes, are the
+// program's own functions: they are exported by name like any other.
+@ cases.macro-made-functions-are-exported
+files."gen.taut" = ```tauto
+import std::builtin::macro
+
+pub macro fn gen(_e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StFn(f) => {
+      let n := Syn::decl_name(f.name, concat(f.name.name, "_runs"))
+      Cons(s, quote stmts { pub fn $n(): i64 { 42 } })
+    }
+    _ => Syn::error(Syn::call_span(), "expected a function")
+  }
+}
+```
+files."main.taut" = ```tauto
+import std::builtin::os
+import "gen.taut" { gen }
+
+@gen!() => replace fn tick, fn tick_runs
+pub fn tick(): i64 { 1 }
+
+fn go(): Unit ! {stdout} { perform stdout("hi\n") }
+perform main(() => go())
+```
+entry = "main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["tick", "tick_runs"]
+nir.exports = ```nir
+export "main::tick" = tick@2 row() foreign_row() pure_borrow_callbacks()
+export "main::tick_runs" = tick_runs@3 row() foreign_row() pure_borrow_callbacks()
+```
+
+// Two files declare a `steer`: a bare name does not say which, and the error
+// lists the names that do; the name with its file does.
+@ cases.a-name-two-files-declare-is-ambiguous
+files."main.taut" = ```tauto
+import std::builtin::os
+import "a.taut"
+import "b.taut"
+fn go(): Unit ! {stdout} { perform stdout("x") }
+perform main(() => go())
+```
+files."a.taut" = ```tauto
+pub fn steer(): Text { "a" }
+```
+files."b.taut" = ```tauto
+pub fn steer(): Text { "b" }
+```
+entry = "main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["steer"]
+nir.error = "write one of a::steer, b::steer"
+
+@ cases.a-name-with-its-file-is-exported-when-two-files-declare-it
+files."main.taut" = ```tauto
+import std::builtin::os
+import "a.taut"
+import "b.taut"
+fn go(): Unit ! {stdout} { perform stdout("x") }
+perform main(() => go())
+```
+files."a.taut" = ```tauto
+pub fn steer(): Text { "a" }
+```
+files."b.taut" = ```tauto
+pub fn steer(): Text { "b" }
+```
+entry = "main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["a::steer", "b::steer"]
+nir.exports = ```nir
+export "a::steer" = a::steer@2 row() foreign_row() pure_borrow_callbacks()
+export "b::steer" = b::steer@3 row() foreign_row() pure_borrow_callbacks()
+```
+
+// An export names a function whether or not it is `pub`.
+@ cases.a-function-without-pub-is-exported-by-name
+files."main.taut" = ```tauto
+import std::builtin::os
+fn secret(): Text { "s" }
+fn go(): Unit ! {stdout} { perform stdout("x") }
+perform main(() => go())
+```
+entry = "main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["secret"]
+nir.exports = ```nir
+export "main::secret" = main::secret@2 row() foreign_row() pure_borrow_callbacks()
+```
+
+// The name of an export does not change when another tote, or the standard
+// library, declares a function of the same name.
+@ cases.an-export-name-is-the-same-when-another-tote-declares-the-name
+files."fire-systems/Tauto.eure" = ```eure
+package {
+  name = "fire-systems"
+  version = "0.1.0"
+}
+```
+files."fire-systems/src/lib.taut" = ```tauto
+pub fn steer(): Text { "fire" }
+pub fn burner(): Text { "burn" }
+```
+files."other/Tauto.eure" = ```eure
+package {
+  name = "other"
+  version = "0.1.0"
+}
+```
+files."other/src/lib.taut" = ```tauto
+pub fn steer(): Text { "other" }
+pub fn only_other(): Text { "oo" }
+```
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+dependencies {
+  fire-systems { path = "../fire-systems" }
+  other { path = "../other" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os
+import fire_systems::lib { steer }
+import other::lib { only_other }
+fn go(): Unit ! {stdout} { perform stdout(steer()) }
+perform main(() => go())
+```
+entry = "app/src/main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["fire-systems::*", "other::*"]
+nir.exports = ```nir
+export "fire-systems::lib::steer" = fire_systems::src::lib::steer@2 row() foreign_row() pure_borrow_callbacks()
+export "fire-systems::lib::burner" = burner@3 row() foreign_row() pure_borrow_callbacks()
+export "other::lib::steer" = other::src::lib::steer@4 row() foreign_row() pure_borrow_callbacks()
+export "other::lib::only_other" = only_other@5 row() foreign_row() pure_borrow_callbacks()
+```
+
+@ cases.an-export-name-is-the-same-when-the-standard-library-declares-the-name
+files."main.taut" = ```tauto
+import std::builtin::os
+fn secret(): Text { "z" }
+fn go(): Unit ! {stdout} { perform stdout("x") }
+perform main(() => go())
+```
+entry = "main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["secret"]
+nir.exports = ```nir
+export "main::secret" = main::secret@2 row() foreign_row() pure_borrow_callbacks()
+```
+
+// `TOTE::*` exports each method of every instance the tote writes, called or
+// not: an instance has no `pub`. The line names it
+// `TOTE::MODULE::instance CLASS(TYPE)::METHOD`, where the instance is written,
+// the class and the type each named as an export names a declaration, so that
+// a host lists the instances a tote declares from the export lines alone. A
+// builtin type is written as it is. An instance with generics has no code of
+// its own and is left out, as a generic function is.
+@ cases.a-whole-tote-exports-the-methods-of-its-instances
+files."lib/Tauto.eure" = ```eure
+package {
+  name = "lib"
+  version = "0.1.0"
+}
+```
+files."lib/src/lib.taut" = ```tauto
+pub(open) class Named(T: Shared) {
+  fn label(v: T): Text
+}
+
+pub fn describe<T: Shared>(v: T): Text where Named(T) { Named::label(v) }
+```
+files."shapes/Tauto.eure" = ```eure
+package {
+  name = "shapes"
+  version = "0.1.0"
+}
+dependencies {
+  lib { path = "../lib" }
+}
+```
+files."shapes/src/lib.taut" = ```tauto
+import lib::lib { Named, describe }
+
+pub struct Circle { r: i64 }
+pub struct Square { side: i64 }
+pub struct Wrap(A: Shared) { a: A }
+
+instance Named(Circle) { fn label(v: Circle): Text { "circle" } }
+instance Named(Square) { fn label(v: Square): Text { "square" } }
+instance Named(i64) { fn label(v: i64): Text { "int" } }
+instance<A: Shared> Named(Wrap(A)) { fn label(v: Wrap(A)): Text { "wrap" } }
+
+pub fn plain(): Text { "plain" }
+pub fn uses_circle(): Text { describe(Circle { r: 1 }) }
+```
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+dependencies {
+  lib { path = "../lib" }
+  shapes { path = "../shapes" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os
+import shapes::lib { plain, uses_circle }
+
+fn go(): Unit ! {stdout} {
+  perform stdout(plain())
+  perform stdout(uses_circle())
+}
+
+perform main(() => go())
+```
+entry = "app/src/main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["shapes::*"]
+nir.exports = ```nir
+export "shapes::lib::instance lib::lib::Named(shapes::lib::Circle)::label" = $"Named::label@Circle"@2 row() foreign_row() pure_borrow_callbacks()
+export "shapes::lib::instance lib::lib::Named(shapes::lib::Square)::label" = $"Named::label@Square"@3 row() foreign_row() pure_borrow_callbacks()
+export "shapes::lib::instance lib::lib::Named(i64)::label" = $"Named::label@i64"@4 row() foreign_row() pure_borrow_callbacks()
+export "shapes::lib::plain" = plain@5 row() foreign_row() pure_borrow_callbacks()
+export "shapes::lib::uses_circle" = uses_circle@6 row() foreign_row() pure_borrow_callbacks()
+```
+
+// An instance an attribute macro makes is exported as one written there: it is
+// the file of the attribute's.
+@ cases.a-whole-tote-exports-an-instance-a-macro-makes
+files."shapes/Tauto.eure" = ```eure
+package {
+  name = "shapes"
+  version = "0.1.0"
+}
+```
+files."shapes/src/mk.taut" = path`fixtures/attribute-instance-mk.taut`
+files."shapes/src/lib.taut" = ```tauto
+import "mk.taut"
+
+@sized!(0) => instance Size
+pub struct Point { x: Nat }
+
+pub fn plain(): Text { "plain" }
+```
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+dependencies {
+  shapes { path = "../shapes" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os
+import shapes::lib { plain }
+fn go(): Unit ! {stdout} { perform stdout(plain()) }
+perform main(() => go())
+```
+entry = "app/src/main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["shapes::*"]
+nir.exports = ```nir
+export "shapes::lib::instance shapes::mk::Size(shapes::lib::Point)::size" = $"Size::size@Point"@2 row() foreign_row() pure_borrow_callbacks()
+export "shapes::lib::plain" = plain@3 row() foreign_row() pure_borrow_callbacks()
+```
+
+// A function extraction writes out anew (here one that returns a `Text`, with
+// `std::map` in the program) is exported by the tote and module of the file it
+// was written in, like one extraction keeps as it is.
+@ cases.extracted-function-is-exported-by-its-tote-and-module
+files."a/Tauto.eure" = ```eure
+package {
+  name = "a"
+  version = "0.1.0"
+}
+```
+files."a/src/main.taut" = ```tauto
+import std::builtin::os
+import std::map
+import "lib.taut" { count }
+fn go(): Unit ! {stdout} { perform stdout("x") }
+perform main(() => go())
+```
+files."a/src/lib.taut" = ```tauto
+import std::map
+
+pub fn label(): Text { "a" }
+pub fn count(): i64 { 1 }
+```
+entry = "a/src/main.taut"
+extract = true
+nir.target = "llvm"
+nir.export = ["a::*"]
+nir.exports = ```nir
+export "a::lib::label" = label@2 row() foreign_row() pure_borrow_callbacks()
+export "a::lib::count" = count@3 row() foreign_row() pure_borrow_callbacks()
+```
+
+// The export lines are in the order the list gives its entries, whatever
+// order the program reads its files in. A `TOTE::*` brings the tote's
+// functions and instance methods by module path, and in a module in the order
+// they are written. A function two entries bring is where the first puts it.
+@ cases.exports-are-in-the-order-the-list-gives-them
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+dependencies {
+  game { path = "../game" }
+}
+exports = ["double", "game::*", "step"]
+```
+files."app/src/main.taut" = ```tauto
+pub fn double(x: i64): i64 ! {overflow} { x * 2 }
+#()
+```
+files."game/Tauto.eure" = ```eure
+package {
+  name = "game"
+  version = "0.1.0"
+}
+```
+files."game/src/systems.taut" = ```tauto
+pub fn step(x: i64): i64 ! {overflow} { x + 1 }
+pub fn reset(x: i64): i64 { 0 }
+```
+files."game/src/audio.taut" = ```tauto
+pub fn volume(x: i64): i64 { x }
+pub fn mute(x: i64): i64 { 0 }
+```
+nir.target = "llvm"
+nir.exports = ```nir
+export "app::main::double" = double@5 row("overflow") foreign_row("overflow") pure_borrow_callbacks()
+export "game::audio::volume" = volume@1 row() foreign_row() pure_borrow_callbacks()
+export "game::audio::mute" = mute@2 row() foreign_row() pure_borrow_callbacks()
+export "game::systems::step" = step@3 row("overflow") foreign_row("overflow") pure_borrow_callbacks()
+export "game::systems::reset" = reset@4 row() foreign_row() pure_borrow_callbacks()
+```

@@ -2,7 +2,7 @@
 
 @ cases.a-temporary-of-a-macro-does-not-take-the-users-name
 files."swap.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(swp, ```par
 {{par:swap}}```) => struct Pair, fn parse
@@ -21,18 +21,21 @@ import "swap.nib"
 var tmp := 1
 var other := 2
 swap!(`tmp other`)
-perform show("tmp", tmp)
-perform show("other", other)
+show(&tmp)
+show(&other)
 ````
-shows = ["tmp = 2", "other = 1"]
+stdout = ```
+2
+1
+```
 expands = ```nib
 var tmp := 1
 var other := 2
 let tmp#1 := tmp
 tmp := other
 other := tmp#1
-perform show("tmp", tmp)
-perform show("other", other)
+show(&tmp)
+show(&other)
 ```
 trace = ["swap"]
 
@@ -41,7 +44,7 @@ trace = ["swap"]
 // `macro-capture` forbids this in `std/` and `meta/`.
 @ cases.an-anaphoric-name-is-captured-explicitly
 files."aif.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(aif, ```par
 {{par:aif}}```) => struct Aif, fn parse
@@ -63,8 +66,8 @@ import "aif.nib"
 fn lookup(k: u64): Option(u64) { if k == 1 { Some(41) } else { None } }
 let n := aif!(`${lookup(1)} then ${it + 1} else ${0}`)
 let m := aif!(`${lookup(2)} then ${it + 1} else ${0}`)
-perform show("n", n)
-perform show("m", m)
+show(&n)
+show(&m)
 ````
 expands = ```nib
 fn lookup(k: u64): Option(u64) { if k == 1 { Option::Some(41) } else { Option::None } }
@@ -76,16 +79,19 @@ let m := match lookup(2) {
   Option::Some(it) => it + 1
   None => 0
 }
-perform show("n", n)
-perform show("m", m)
+show(&n)
+show(&m)
 ```
-shows = ["n = 42", "m = 0"]
+stdout = ```
+42
+0
+```
 
 // Without `Syn::ident_like` the `it` of the `quote` has the macro's scope, and
 // the user's `it` is not bound by it (running it says `it is not defined`).
 @ cases.a-name-of-a-quote-does-not-bind-the-users-name
 files."aif.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(aif, ```par
 {{par:aif}}```) => struct Aif, fn parse
@@ -122,7 +128,7 @@ pub macro fn length(c: Judgement): SynExpr {
 }
 ````
 files."main.nib" = ````nib
-import std::Text
+import std::text
 import "lib.taut"
 theorem proof_side(): Text::len("abcd") = 4 { Refl }
 fn program_side(): u64 { length!(x) }
@@ -130,13 +136,13 @@ fn program_side(): u64 { length!(x) }
 checks."main.nib::proof_side" = "ok"
 
 // A name the caller wrote in the text of a syntax macro means what it means at the
-// call, whatever the file of the macro imports: `std/proof/Lang.taut` imports the
+// call, whatever the file of the macro imports: `std/proof/lang.taut` imports the
 // prelude's `concat`, and the caller's own `concat` is still the one meant.
 @ cases.a-name-in-the-text-of-a-macro-is-the-callers
 entry = "concat.taut"
 files."concat.taut" = ````tauto
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_we }
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
 
 pub fn concat(a: List(Nat), b: List(Nat)): List(Nat) {
   match a {
@@ -153,3 +159,28 @@ theorem t(b: List(Nat)): concat([], b) = b {
 ````
 checks.t = "ok"
 diagnostics = []
+
+// A parameter the caller wrote in the input of a macro is the parameter in
+// every statement of the body, not only in the first: the effect `ui` the
+// package declares does not take the `ui` of the second statement.
+@ cases.a-parameter-in-a-macro-input-of-a-later-statement-is-the-callers
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lib.taut" = ````tauto
+import std::builtin::macro
+pub effect ui(): i64 direct
+pub macro fn wrap(e: SynExpr): SynExpr {
+  quote { (() => $e)() }
+}
+````
+files."app/src/main.taut" = ````tauto
+import "lib.taut"
+fn f(ui: i64): i64 ! {overflow} {
+  let a := wrap!(ui)
+  wrap!(a + ui)
+}
+perform main(() => {
+  show(&f(21))
+})
+````
+stdout = "42\n"

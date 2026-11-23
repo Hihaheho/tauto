@@ -1,0 +1,72 @@
+import std::base
+import std::nat
+import "occupancy.taut"
+
+pub(open) inductive class Hasher(H: Type) {
+  fn word(h: H, w: Nat): H
+  fn finish(h: H): Nat
+}
+
+pub(open) inductive class Hashing(K: Type, H: Type) {
+  fn feed(a: K, h: H): H
+  fn same(a: K, b: K, ph: Proxy(H)): Bool
+
+  theorem same_refl<a: K, ph: Proxy(H)>(): Hashing::same(a, a, ph) = true
+  theorem feed_same<a: K, b: K, h: H, ph: Proxy(H)>(e: Hashing::same(a, b, ph) = true): Hashing::feed(a, h) = Hashing::feed(b, h)
+}
+
+instance<H> Hashing(Nat, H) where Hasher(H) {
+  fn feed(a: Nat, h: H): H { Hasher::word(h, a) }
+  fn same(a: Nat, b: Nat, ph: Proxy(H)): Bool { Nat::eq(a, b) }
+
+  theorem same_refl<a: Nat, ph: Proxy(H)>(): Hashing::same(a, a, ph) = true {
+    Nat::eq_refl(a)
+  }
+
+  theorem feed_same<a: Nat, b: Nat, h: H, ph: Proxy(H)>(e: Hashing::same(a, b, ph) = true): Hashing::feed(a, h) = Hasher::word(h, b) {
+    Eq::congr(⟦Hasher::word(h, □)⟧, Nat::eq_sound(a, b, e))
+  }
+}
+
+// The other route: the class keeps no generic method; it gives the words, and
+// `feed` is a function outside it.
+pub(open) inductive class Key(K: Type) {
+  fn eq(a: K, b: K): Bool
+  fn words(a: K): List(Nat)
+
+  theorem eq_refl<a: K>(): Key::eq(a, a) = true
+  theorem words_eq<a: K, b: K>(e: Key::eq(a, b) = true): Key::words(a) = Key::words(b)
+}
+
+pub fn feed_words<H>(l: List(Nat), h: H): H where Hasher(H) {
+  match l {
+    Nil => h
+    Cons(w, t) => feed_words(t, Hasher::word(h, w))
+  }
+}
+
+pub fn feed<K, H>(a: K, h: H): H where Key(K), Hasher(H) {
+  feed_words(Key::words(a), h)
+}
+
+pub theorem feed_eq<K: Type, H: Type, a: K, b: K>(e: Key::eq(a, b) = true, h: H): feed(a, h) = feed(b, h) where Key(K), Hasher(H) {
+  Eq::congr(⟦feed_words(□, h)⟧, Key::words_eq(e))
+}
+
+instance Key(Nat) {
+  fn eq(a: Nat, b: Nat): Bool { Nat::eq(a, b) }
+  fn words(a: Nat): List(Nat) { Cons(a, Nil) }
+
+  theorem eq_refl<a: Nat>(): Key::eq(a, a) = true {
+    Nat::eq_refl(a)
+  }
+
+  theorem words_eq<a: Nat, b: Nat>(e: Key::eq(a, b) = true): Key::words(a) = Key::words(b) {
+    Eq::congr(⟦Cons(□, Nil)⟧, Nat::eq_sound(a, b, e))
+  }
+}
+
+// Any hasher, any equal keys: the same hash.
+pub theorem nat_feed_eq<H: Type>(a: Nat, b: Nat, e: Nat::eq(a, b) = true, h: H): feed(a, h) = feed(b, h) where Hasher(H) {
+  feed_eq(<K: Nat, H: H, a: a, b: b>, e, h)
+}

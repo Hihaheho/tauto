@@ -1,0 +1,1143 @@
+description = "Unused assertion `^name`: suppress unused warnings when confirmed unused; error when used; lone `_` is not a binding Ident; `_name` does not suppress; Wild patterns stay; a field nothing reads warns, and `^` on a struct's field asserts it is never read."
+
+@ cases.marked-unused-binding-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let ^x := 1
+  0
+}
+```
+check_errors = []
+
+@ cases.unmarked-unused-binding-warns
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let x := 1
+  0
+}
+```
+check_report = "unused_binding"
+
+@ cases.marked-but-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let ^x := 1
+  x
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.marker-is-not-part-of-the-name
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let ^n := 1
+  let m := n
+  m
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.underscore-prefix-does-not-suppress
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let _x := 1
+  0
+}
+```
+check_report = "unused_binding"
+
+@ cases.marked-underscore-name-suppresses
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let ^_x := 1
+  0
+}
+```
+check_errors = []
+
+@ cases.lone-underscore-let-is-refused
+source = "let _ := 1"
+parses = false
+
+@ cases.caret-underscore-is-refused
+source = "let ^_ := 1"
+parses = false
+
+@ cases.raw-underscore-is-refused
+entry = "main.taut"
+files."main.taut" = "let r#_ := 1"
+load_error = "`r#_` is not a name"
+
+@ cases.wildcard-pattern-still-parses
+source = ```tauto
+fn main(): i64 {
+  match 0 {
+    1 => 0
+    _ => 0
+  }
+}
+```
+parses = true
+
+@ cases.unicode-name-with-marker
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let ^名前 := 1
+  0
+}
+```
+check_errors = []
+
+@ cases.formatter-keeps-marker
+source = ```tauto
+fn main(): i64 {
+  let ^x := 1
+  0
+}
+```
+format = ```tauto
+fn main(): i64 {
+  let ^x := 1
+  0
+}
+```
+
+@ cases.expression-caret-is-not-an-operator
+source = "let y := ^x"
+parses = false
+
+@ cases.kernel-unused-let-not-bypassed
+source = ```tauto
+fn main(): Nat {
+  let ^x := Zero
+  Zero
+}
+```
+checks.main = "error: defined but not used"
+
+@ cases.marked-parameter-of-a-program
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(^a: i64, b: i64): i64 { b }
+let r := f(1, 2)
+```
+check_errors = []
+
+@ cases.used-marked-parameter-of-a-program
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(^a: i64): i64 { a }
+let r := f(1)
+```
+check_report = "unused_marker_used"
+
+@ cases.pub-declaration-marker-is-refused
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub fn ^helper(): i64 { 0 }
+```
+load_error = "`^` is not written on a `pub` declaration"
+
+@ cases.theorem-marked-param-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+theorem identity<P: Prop>(^h: P): P { h }
+```
+check_report = "unused_marker_used"
+
+@ cases.theorem-marked-param-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+theorem drop_hyp<P: Prop, Q: Prop>(^h: P, q: Q): Q { q }
+```
+check_errors = []
+
+@ cases.unmarked-unused-type-param-warns
+description = "An unmarked type parameter unused in the signature and body warns."
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn drop_ty<A>(x: i64): i64 { x }
+let r := drop_ty(0)
+```
+check_report = "unused_binding"
+
+@ cases.marked-unused-type-param-is-ok
+description = "`^A` on an unused type parameter suppresses the unused warning."
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn drop_ty<^A>(x: i64): i64 { x }
+let r := drop_ty(0)
+```
+check_errors = []
+
+@ cases.marked-used-type-param-is-an-error
+description = "`^A` that is used in the signature is unused_marker_used."
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn identity<^A>(x: A): A { x }
+let r := identity(0)
+```
+check_report = "unused_marker_used"
+
+@ cases.unmarked-used-type-param-is-ok
+description = "A used unmarked type parameter does not warn."
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn identity<A>(x: A): A { x }
+let r := identity(0)
+```
+check_errors = []
+
+@ cases.formatter-keeps-generic-marker
+source = ```tauto
+fn drop_ty<^A>(x: i64): i64 { x }
+```
+format = ```tauto
+fn drop_ty<^A>(x: i64): i64 { x }
+```
+
+@ cases.quote-plain-fn-with-generics
+description = "Quoting an unmarked fn with generics succeeds (SynFn.unused_generics)."
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub macro fn mk_id(e: SynExpr): List(SynStmt) {
+  match Syn::ident_of(e) {
+    None => Nil
+    Some(at) => {
+      let name := Syn::decl_name(at, "id")
+      quote stmts {
+        fn $name<A>(x: A): A { x }
+      }
+    }
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import "mk.taut"
+
+mk_id!(here) => fn id
+let r := id(0)
+show(&r)
+````
+stdout = "0\n"
+
+@ cases.quote-fn-keeps-unused-generic-marker
+description = "A quoted `^A` type parameter round-trips through Syn."
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub macro fn mk_drop(e: SynExpr): List(SynStmt) {
+  match Syn::ident_of(e) {
+    None => Nil
+    Some(at) => {
+      let name := Syn::decl_name(at, "drop_ty")
+      quote stmts {
+        fn $name<^A>(x: i64): i64 { x }
+      }
+    }
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import "mk.taut"
+
+mk_drop!(here) => fn drop_ty
+let r := drop_ty(1)
+show(&r)
+````
+stdout = "1\n"
+
+@ cases.macro-generated-used-type-param-marker-is-an-error
+description = "A macro-made `^A` that is used is unused_marker_used after expansion, at the quote."
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub macro fn mk_id(e: SynExpr): List(SynStmt) {
+  match Syn::ident_of(e) {
+    None => Nil
+    Some(at) => {
+      let name := Syn::decl_name(at, "id")
+      quote stmts {
+        fn $name<^A>(x: A): A { x }
+      }
+    }
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import "mk.taut"
+
+mk_id!(here) => fn id
+let r := id(0)
+````
+check_report = "mk.taut:10:18"
+
+@ cases.expanded-used-marker-dedupes-with-as-written
+description = "Expanded deadcode subtracts file base so a written `^A` is not reported twice at EOF."
+files_tote = "app"
+tote_warnings = ["marked unused with `^` but is used"]
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lib.taut" = ````tauto
+import std::base
+pub fn helper(): i64 { 0 }
+````
+files."app/src/main.taut" = ````tauto
+import std::base
+import "lib.taut"
+fn id<^A>(x: A): A { x }
+let r := id(helper())
+````
+
+@ cases.dependency-macro-used-marker-is-kept-on-tote-check
+description = "A tote keeps unused_marker_used for a decl it generated even when the diag displays at a dependency quote."
+files_tote = "app"
+tote_warnings = ["marked unused with `^` but is used"]
+tote_errors = []
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", "lib"]
+}
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+dependencies {
+  lib: workspace
+}
+```
+files."lib/Tauto.eure" = ```eure
+package { name = "lib" version = "0.1.0" }
+workspace = ".."
+```
+files."lib/src/mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub macro fn mk_id(e: SynExpr): List(SynStmt) {
+  match Syn::ident_of(e) {
+    None => Nil
+    Some(at) => {
+      let name := Syn::decl_name(at, "id")
+      quote stmts {
+        fn $name<^A>(x: A): A { x }
+      }
+    }
+  }
+}
+````
+files."app/src/main.taut" = ````tauto
+import std::base
+import lib::mk { mk_id }
+
+mk_id!(here) => fn id
+let r := id(0)
+````
+
+@ cases.quote-data-keeps-unused-generic-marker
+description = "A quoted struct `^A` that is used is unused_marker_used after expand and resolve."
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub macro fn mk_box(e: SynExpr): List(SynStmt) {
+  match Syn::ident_of(e) {
+    None => Nil
+    Some(at) => {
+      let name := Syn::decl_name(at, "Box")
+      quote stmts {
+        struct $name(^A: Type) {
+          x: A,
+        }
+      }
+    }
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import "mk.taut"
+
+mk_box!(here) => struct Box
+````
+check_report = "unused_marker_used"
+
+@ cases.quote-effect-keeps-unused-generic-marker
+description = "A quoted effect `^A` that is used is unused_marker_used after expand and resolve."
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub macro fn mk_ask(e: SynExpr): List(SynStmt) {
+  match Syn::ident_of(e) {
+    None => Nil
+    Some(at) => {
+      let name := Syn::decl_name(at, "ask")
+      quote stmts {
+        effect $name<^A>(): A
+      }
+    }
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import "mk.taut"
+
+mk_ask!(here)
+````
+check_report = "unused_marker_used"
+
+@ cases.type-param-used-only-in-effect-row-is-ok
+description = "A type parameter mentioned only in an effect row is used."
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn only_effects<A>(): i64 ! {fail(A)} { 0 }
+fn go(): i64 ! {fail(Text)} { only_effects() }
+let r: Result(i64, Text) := catch(() => go())
+show(&(match r { Ok(n) => n, Err(_) => 1 }))
+```
+check_errors = []
+
+@ cases.marked-type-param-used-only-in-effect-row-is-an-error
+description = "`^A` used only in an effect row is unused_marker_used."
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn only_effects<^A>(): i64 ! {fail(A)} { 0 }
+```
+check_report = "unused_marker_used"
+
+@ cases.type-param-used-only-in-fn-type-effect-row-is-ok
+description = "A type parameter mentioned only in a function-type effect row is used."
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn uses_pi_row<A>(^f: () -> i64 ! {fail(A)}): i64 { 0 }
+fn main(): i64 {
+  let h: () -> i64 ! {fail(Text)} := () => 0
+  uses_pi_row(h)
+}
+```
+check_errors = []
+
+@ cases.unmarked-unused-data-type-param-warns
+description = "An unmarked unused struct type parameter warns."
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Box(A: Type) {
+  x: i64,
+}
+fn main(): i64 {
+  0
+}
+```
+check_report = "unused_binding"
+
+@ cases.marked-unused-data-type-param-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Box(^A: Type) {
+  x: i64,
+}
+fn main(): i64 {
+  0
+}
+```
+check_errors = []
+
+@ cases.type-atom-wild-parses-as-placeholder
+description = "Lone `_` in a type application is the Wild placeholder name, not a binding Ident."
+source = "instance Functor(Two(_, i64)) {}"
+parses = true
+
+@ cases.unmarked-unused-top-level-fn-warns
+description = "An unmarked unused top-level function in a program still warns as unused_function."
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn helper(): i64 { 0 }
+fn used(): i64 { 1 }
+let r := used()
+```
+check_report = "unused_function"
+
+@ cases.lambda-marked-param-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let f := (^x: i64) => 0
+  f(1)
+}
+```
+check_errors = []
+
+@ cases.lambda-marked-param-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let f := (^x: i64) => x
+  f(1)
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.private-fn-marker-used-by-spelling-twin-is-not-a-false-use
+entry = "lib.taut"
+files."lib.taut" = ```tauto
+fn ^helper(): i64 { 0 }
+fn other(helper: i64): i64 { helper }
+```
+check_errors = []
+
+@ cases.private-fn-marker-used-is-an-error
+entry = "lib.taut"
+files."lib.taut" = ```tauto
+fn ^helper(): i64 { 0 }
+fn other(): i64 { helper() }
+```
+check_report = "unused_marker_used"
+
+@ cases.module-fn-marker-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+module M {
+  fn ^helper(): i64 { 0 }
+  pub fn use_it(): i64 { helper() }
+}
+fn main(): i64 { M::use_it() }
+```
+check_report = "unused_marker_used"
+
+@ cases.lambda-marker-used-in-later-param-type-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let id := (^A: Type, x: A) => 0
+  0
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.formatter-keeps-fn-param-marker
+source = ```tauto
+fn f(^a: i64, b: i64): i64 {
+  b
+}
+```
+format = ```tauto
+fn f(^a: i64, b: i64): i64 {
+  b
+}
+```
+
+@ cases.formatter-keeps-fn-name-marker
+source = ```tauto
+fn ^helper(): i64 {
+  0
+}
+```
+format = ```tauto
+fn ^helper(): i64 {
+  0
+}
+```
+
+@ cases.formatter-keeps-theorem-param-marker
+source = ```tauto
+theorem drop_hyp<P: Prop, Q: Prop>(^h: P, q: Q): Q {
+  q
+}
+```
+format = ```tauto
+theorem drop_hyp<P: Prop, Q: Prop>(^h: P, q: Q): Q {
+  q
+}
+```
+
+@ cases.formatter-keeps-pi-param-marker
+source = ```tauto
+fn main(): Type {
+  (^A: Type) -> Type
+}
+```
+format = ```tauto
+fn main(): Type {
+  (^A: Type) -> Type
+}
+```
+
+@ cases.formatter-keeps-lambda-param-marker
+source = ```tauto
+fn main(): i64 {
+  let f := (^x: i64) => 0
+  f(1)
+}
+```
+format = ```tauto
+fn main(): i64 {
+  let f := (^x: i64) => 0
+  f(1)
+}
+```
+
+@ cases.formatter-keeps-exists-binder-marker
+source = ```tauto
+theorem t(): Prop {
+  ∃ ^n: Nat. True
+}
+```
+format = ```tauto
+theorem t(): Prop {
+  ∃ ^n: Nat. True
+}
+```
+
+@ cases.typed-pattern-marker-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(v: i64 | Bool): i64 {
+  match v {
+    ^x: Bool => 0
+    n: i64 => n
+  }
+}
+```
+check_errors = []
+
+@ cases.typed-pattern-marker-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(v: i64 | Bool): i64 {
+  match v {
+    ^x: Bool => if x { 1 } else { 0 }
+    n: i64 => n
+  }
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.formatter-keeps-typed-pattern-marker
+source = ```tauto
+fn main(v: i64 | Bool): i64 {
+  match v {
+    ^x: Bool => 0
+    n: i64 => n
+  }
+}
+```
+format = ```tauto
+fn main(v: i64 | Bool): i64 {
+  match v {
+    ^x: Bool => 0
+    n: i64 => n
+  }
+}
+```
+
+@ cases.eqn-marker-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(b: Bool): i64 {
+  match b eqn ^h {
+    true => 0
+    false => 1
+  }
+}
+```
+check_errors = []
+
+@ cases.eqn-marker-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(b: Bool): i64 {
+  match b eqn ^h {
+    true => {
+      let u := h
+      0
+    }
+    false => 1
+  }
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.formatter-keeps-eqn-marker
+source = ```tauto
+fn main(b: Bool): i64 {
+  match b eqn ^h {
+    true => 0
+    false => 1
+  }
+}
+```
+format = ```tauto
+fn main(b: Bool): i64 {
+  match b eqn ^h { true => 0, false => 1 }
+}
+```
+
+@ cases.handler-cont-marker-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect ask(): i64
+fn main(): i64 {
+  handle { perform ask() } with {
+    ask(), ^k => 0
+  }
+}
+```
+check_errors = []
+
+@ cases.handler-cont-marker-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect ask(): i64
+fn main(): i64 {
+  handle { perform ask() } with {
+    ask(), ^k => k(1)
+  }
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.formatter-keeps-handler-cont-marker
+source = ```tauto
+effect ask(): i64
+fn main(): i64 {
+  handle { perform ask() } with {
+    ask(), ^k => 0
+  }
+}
+```
+format = ```tauto
+effect ask(): i64
+fn main(): i64 {
+  handle { perform ask() } with {
+    ask(), ^k => 0
+  }
+}
+```
+
+@ cases.step-binder-marker-unused-is-ok
+entry = "main.taut"
+files."lib.taut" = path`fixtures/steps-lib-0ca09a6d.taut`
+files."main.taut" = ```tauto
+import "lib.taut"
+theorem t(): ∀ n: Nat. True {
+  by intro!(): ∀ n: Nat. True {
+    ^m: Nat ⊢ True from Trivial
+  }
+}
+```
+check_errors = []
+
+@ cases.step-binder-marker-used-is-an-error
+entry = "main.taut"
+files."lib.taut" = path`fixtures/steps-lib-0ca09a6d.taut`
+files."main.taut" = ```tauto
+import "lib.taut"
+theorem t(): ∀ n: Nat. True {
+  by intro!(): ∀ n: Nat. True {
+    ^m: Nat ⊢ True from match m {
+      Zero => Trivial
+      Succ(_) => Trivial
+    }
+  }
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.formatter-keeps-step-binder-marker
+source = ```tauto
+theorem t(): ∀ n: Nat. True {
+  by intro!(): ∀ n: Nat. True {
+    ^m: Nat ⊢ True from Trivial
+  }
+}
+```
+format = ```tauto
+theorem t(): ∀ n: Nat. True {
+  by intro!(): ∀ n: Nat. True {
+    ^m: Nat ⊢ True from Trivial
+  }
+}
+```
+
+@ cases.constructor-name-marker-is-refused
+entry = "main.taut"
+files."main.taut" = ```tauto
+enum Opt { None, Some(i64) }
+fn main(v: Opt): i64 {
+  match v {
+    ^Some(x) => x
+    None => 0
+  }
+}
+```
+load_error = "`^` is written only on a binding name"
+differential = "surface"
+
+@ cases.nullary-constructor-marker-is-refused
+description = "After name resolution, `^` on a nullary constructor is refused (not a binding)."
+entry = "main.taut"
+files."main.taut" = ```tauto
+enum Opt { None, Some(i64) }
+fn main(v: Opt): i64 {
+  match v {
+    ^None => 0
+    Some(x) => x
+  }
+}
+```
+macro_error = "`^` is written only on a binding name"
+
+@ cases.field-label-marker-is-refused
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Point { x: i64, y: i64 }
+fn main(p: Point): i64 {
+  match p {
+    Point { ^x: a, y: b } => a + b
+  }
+}
+```
+load_error = "`^` is written only on a binding name"
+differential = "surface"
+
+@ cases.constructor-arg-marker-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+enum Opt { None, Some(i64) }
+fn main(v: Opt): i64 {
+  match v {
+    Some(^x) => 0
+    None => 0
+  }
+}
+```
+check_errors = []
+differential = "surface"
+
+@ cases.constructor-arg-marker-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+enum Opt { None, Some(i64) }
+fn main(v: Opt): i64 {
+  match v {
+    Some(^x) => x
+    None => 0
+  }
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.field-value-marker-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Point { x: i64, y: i64 }
+fn main(p: Point): i64 {
+  match p {
+    Point { x: ^a, y: b } => b
+  }
+}
+```
+check_errors = []
+differential = "surface"
+
+@ cases.field-value-marker-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Point { x: i64, y: i64 }
+fn main(p: Point): i64 {
+  match p {
+    Point { x: ^a, y: b } => a + b
+  }
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.field-shorthand-marker-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Point { x: i64, y: i64 }
+fn main(p: Point): i64 {
+  match p {
+    Point { ^x, y } => y
+  }
+}
+```
+check_errors = []
+differential = "surface"
+
+@ cases.field-shorthand-marker-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Point { x: i64, y: i64 }
+fn main(p: Point): i64 {
+  match p {
+    Point { ^x, y } => x + y
+  }
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.class-method-marker-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+inductive class C(A: Type) {
+  fn m(^a: A): A
+}
+```
+check_errors = []
+
+@ cases.class-method-marker-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+inductive class C(A: Type) {
+  fn m(^a: A): a = a
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.class-law-marker-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+inductive class C(A: Type) {
+  fn m(a: A): A
+  theorem drop(^h: True): True
+}
+```
+check_errors = []
+
+@ cases.class-law-marker-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+inductive class C(A: Type) {
+  fn m(a: A): A
+  theorem uses(^h: True): h = h
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.instance-law-marker-unused-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+inductive class C(A: Type) {
+  fn m(a: A): A
+  theorem drop(^h: True): True
+}
+instance C(Nat) {
+  fn m(a: Nat): Nat { a }
+  theorem drop(^h: True): True { Trivial }
+}
+```
+check_errors = []
+
+@ cases.instance-law-marker-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+inductive class C(A: Type) {
+  fn m(a: A): A
+  theorem drop(^h: True): True
+}
+instance C(Nat) {
+  fn m(a: Nat): Nat { a }
+  theorem drop(^h: True): True { h }
+}
+```
+check_report = "unused_marker_used"
+
+
+@ cases.unmarked-unused-match-arm-binding-warns
+description = "A name a `match` arm binds and nothing reads warns like a `let`."
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct P { x: i64, y: i64 }
+fn main(p: P): i64 {
+  match p {
+    P { x, y } => x
+  }
+}
+```
+check_report = "unused_binding"
+
+@ cases.marked-unused-match-arm-binding-is-ok
+description = "`^y` in a `match` arm says the binding is meant to go unread and silences the warning."
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct P { x: i64, y: i64 }
+fn main(p: P): i64 {
+  match p {
+    P { x, ^y } => x
+  }
+}
+```
+check_errors = []
+
+@ cases.unmarked-unused-ctor-arg-binding-warns
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(o: Option(i64)): i64 {
+  match o {
+    Some(n) => 0
+    None => 1
+  }
+}
+```
+check_report = "unused_binding"
+
+@ cases.used-match-arm-binding-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(o: Option(i64)): i64 {
+  match o {
+    Some(n) => n
+    None => 1
+  }
+}
+```
+check_errors = []
+
+@ cases.unread-field-warns
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct P { x: i64, y: i64 }
+fn main(): i64 {
+  let p := P { x: 1, y: 2 }
+  p.x
+}
+```
+check_report = "main.taut:1:1: the field `y` of `P` is never read"
+
+@ cases.marked-unread-field-is-ok
+files_tote = "app"
+tote_warnings = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+struct P { x: i64, ^y: i64 }
+fn main(): i64 {
+  let p := P { x: 1, y: 2 }
+  p.x
+}
+```
+
+@ cases.read-fields-do-not-warn
+files_tote = "app"
+tote_warnings = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+struct P { x: i64, y: i64, z: i64 }
+fn first(p: P): i64 {
+  match p {
+    P { x, y: _, z: _ } => x
+  }
+}
+fn second(p: P): P {
+  P { x: 0, ..p }
+}
+fn main(): i64 {
+  first(second(P { x: 1, y: 2, z: 3 }))
+}
+```
+
+@ cases.marked-field-read-by-dot-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct P { ^x: i64 }
+fn main(): i64 {
+  let p := P { x: 1 }
+  p.x
+}
+```
+check_report = "main.taut:1:12: `x` is marked unused with `^` but is used"
+
+@ cases.marked-field-read-by-pattern-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct P { ^x: i64 }
+fn main(): i64 {
+  let p := P { x: 1 }
+  match p {
+    P { x } => x
+  }
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.marked-field-taken-by-record-base-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct P { a: i64, ^b: i64 }
+fn main(): i64 {
+  let p := P { a: 1, b: 2 }
+  let q := P { a: 3, ..p }
+  q.a
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.marked-field-read-by-dot-of-shared-name-is-unverifiable
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct P { ^x: i64 }
+struct Q { x: i64 }
+fn main(): i64 {
+  let ^p := P { x: 1 }
+  let q := Q { x: 2 }
+  q.x
+}
+```
+check_report = "unused_marker_unverifiable"
+
+@ cases.marked-field-of-pub-struct-is-refused
+entry = "main.taut"
+files."main.taut" = "pub struct P { ^x: i64 }"
+load_error = "`^` is not written on a `pub` declaration"
+differential = "surface"
+
+@ cases.marked-record-type-member-is-refused
+entry = "main.taut"
+files."main.taut" = "fn f(^r: { ^x: i64 }): i64 { 0 }"
+load_error = "not on a member of a record type"
+differential = "surface"
+
+@ cases.marked-enum-variant-field-is-refused
+entry = "main.taut"
+files."main.taut" = "enum E { A { ^x: i64 } }"
+load_error = "not on a member of a record type"
+differential = "surface"
+
+@ cases.marked-field-of-private-struct-beside-a-pub-one-is-read
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub struct Q { x: i64 }
+struct P { ^y: i64 }
+```
+parses = true
+differential = "surface"
+
+@ cases.unread-field-warns-in-japanese
+lang = "ja"
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct P { ^x: i64, y: i64 }
+fn main(): i64 { 0 }
+```
+check_report = "`P` のフィールド `y` は一度も読まれない"

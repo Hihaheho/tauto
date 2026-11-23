@@ -1,13 +1,14 @@
 import "written_nested_sound.taut"
 import "written_drop_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_sound.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -41,11 +42,11 @@ pub theorem written_term_ordinary(
   )
 ): WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), false, term, t) {
   Eq::subst(
-    (borrow: Bool) => WrittenTerm(
+    (r#borrow: Bool) => WrittenTerm(
       ck_datas_of(c),
       generics,
       frame_constructor_position(c),
-      borrow,
+      r#borrow,
       term,
       t
     ),
@@ -98,7 +99,7 @@ pub theorem written_in_step(
   ck_val(ck_written_in(SurfaceTermIndexedMk(sk, start, end, ast_occurrence), c, generics))
 ) {
   written_transfer(
-    Ty,
+    <A: Ty>,
     (t: Ty) => WrittenTerm(
       ck_datas_of(c),
       generics,

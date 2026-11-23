@@ -1,12 +1,16 @@
+import "../../identity/src/identity.taut"
+import "messages.taut"
+import "rules_literal.taut"
 import "expr_leaf_frame.taut"
 import "diagnostic_sound.taut"
-import std::Row
-import std::Text
+import std::row
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "finish_frame.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "../../text/src/text.taut"
 
@@ -21,8 +25,13 @@ pub(open) inductive NaturalRecorded(
 ): Prop {
   Mk(
     magnitude: Nat,
-    parsed: text_parse_u64(value) = Some(magnitude),
+    parsed: text_parse_i128(value) = Some(magnitude),
     stored: Mem(TyLiteral, natural_literal_record(span, magnitude, ty), literals)
+  ): NaturalRecorded(value, span, ty, literals)  // A numeral read where a `Nat` is expected is that `Nat`, with no record.
+  AsNat(
+    name: Text,
+    fits: numeral_reads_as(value, name) = true,
+    is_nat: ty = TyNamed(NameSpelled(name), Nil)
   ): NaturalRecorded(value, span, ty, literals)
 }
 pub theorem literal_parsed_recorded(
@@ -31,7 +40,7 @@ pub theorem literal_parsed_recorded(
   span: TySpan,
   ty: Ty,
   parsed: Option(Nat),
-  equal: text_parse_u64(value) = parsed,
+  equal: text_parse_i128(value) = parsed,
   clean: DiagnosticClean(ck_st(leaf_literal_parsed(c, value, span, ty, parsed)))
 ): NaturalRecorded(
   value,
@@ -46,11 +55,11 @@ pub theorem literal_parsed_recorded(
     finish_literals(ck_st(leaf_literal_parsed(c, value, span, ty, parsed)))
   ) from match parsed {
     Some(magnitude) => NaturalRecorded::Mk(magnitude, equal, MemHere(finish_literals(c)))
-    None => False::elim(diagnostic_error_impossible(c, cat2(value, " is too large"), span, clean))
+    None => False::elim(diagnostic_error_impossible(c, nat_too_large_message(value), span, clean))
   }
 }
 pub fn literal_value_after(ty: Ty, m: Mut1(Unit, Checker)): Mut1(Ty, Checker) {
-  frame_bind(Unit, Ty, (ignored: Unit, next: Checker) => mut1(ty, next), m)
+  frame_bind(<A: Unit, B: Ty>, (ignored: Unit, next: Checker) => mut1(ty, next), m)
 }
 pub theorem literal_value_recorded(
   value: Text,
@@ -90,13 +99,13 @@ pub theorem leaf_literal_after_recorded(
     value,
     span,
     ty,
-    leaf_literal_parsed(c, value, span, ty, text_parse_u64(value)),
-    accepted => literal_parsed_recorded(c, value, span, ty, text_parse_u64(value), Refl, accepted),
+    leaf_literal_parsed(c, value, span, ty, text_parse_i128(value)),
+    accepted => literal_parsed_recorded(c, value, span, ty, text_parse_i128(value), Refl, accepted),
     clean
   )
 }
 pub fn literal_fresh_after(value: Text, span: TySpan, m: Mut1(Ty, Checker)): Mut1(Ty, Checker) {
-  frame_bind(Ty, Ty, (ty: Ty, next: Checker) => leaf_literal_after(next, value, span, ty), m)
+  frame_bind(<A: Ty, B: Ty>, (ty: Ty, next: Checker) => leaf_literal_after(next, value, span, ty), m)
 }
 pub theorem literal_fresh_recorded(
   value: Text,
@@ -116,16 +125,16 @@ pub theorem literal_fresh_recorded(
     finish_literals(ck_st(literal_fresh_after(value, span, m)))
   ) from match m { mut1(ty, next) => leaf_literal_after_recorded(next, value, span, ty, clean) }
 }
-pub theorem ck_nat_literal_recorded(
+pub theorem ck_int_literal_recorded(
   c: Checker,
   value: Text,
   span: TySpan,
-  clean: DiagnosticClean(ck_st(ck_nat_literal(c, value, span)))
+  clean: DiagnosticClean(ck_st(ck_int_literal(c, value, span)))
 ): NaturalRecorded(
   value,
   span,
-  ck_val(ck_nat_literal(c, value, span)),
-  finish_literals(ck_st(ck_nat_literal(c, value, span)))
+  ck_val(ck_int_literal(c, value, span)),
+  finish_literals(ck_st(ck_int_literal(c, value, span)))
 ) {
   let expanded: DiagnosticClean(
     ck_st(leaf_literal(c, value, span))
@@ -138,5 +147,137 @@ pub theorem ck_nat_literal_recorded(
     (m: Mut1(Ty, Checker)) => NaturalRecorded(value, span, ck_val(m), finish_literals(ck_st(m))),
     Eq::sym(leaf_literal_unf(c, value, span)),
     literal_fresh_recorded(value, span, ck_fresh_int(c), expanded)
+  )
+}
+pub theorem natural_recorded_rewrap(
+  value: Text,
+  span: TySpan,
+  m: Mut1(Ty, Checker),
+  recorded: NaturalRecorded(value, span, ck_val(m), finish_literals(ck_st(m)))
+): NaturalRecorded(value, span, ck_val(ck_rewrap1(m)), finish_literals(ck_st(ck_rewrap1(m)))) {
+  Eq::subst(
+    (r: Mut1(Ty, Checker)) => NaturalRecorded(value, span, ck_val(r), finish_literals(ck_st(r))),
+    Eq::sym(ck_rewrap1_id(m)),
+    recorded
+  )
+}
+pub theorem diagnostic_clean_unwrap(
+  m: Mut1(Ty, Checker),
+  clean: DiagnosticClean(ck_st(ck_rewrap1(m)))
+): DiagnosticClean(ck_st(m)) {
+  Eq::subst((r: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(r)), ck_rewrap1_id(m), clean)
+}
+pub theorem ck_hinted_nat_on_recorded(
+  c: Checker,
+  value: Text,
+  span: TySpan,
+  fits: Bool,
+  name: Text,
+  equal: numeral_reads_as(value, name) = fits,
+  clean: DiagnosticClean(ck_st(ck_hinted_nat_on(c, value, span, fits, name)))
+): NaturalRecorded(
+  value,
+  span,
+  ck_val(ck_hinted_nat_on(c, value, span, fits, name)),
+  finish_literals(ck_st(ck_hinted_nat_on(c, value, span, fits, name)))
+) {
+  ⊢ NaturalRecorded(
+    value,
+    span,
+    ck_val(ck_hinted_nat_on(c, value, span, fits, name)),
+    finish_literals(ck_st(ck_hinted_nat_on(c, value, span, fits, name)))
+  ) from match fits {
+    true => NaturalRecorded::AsNat(name, equal, Refl)
+    false => literal_value_recorded(
+      value,
+      span,
+      TyNamed(NameSpelled(name), Nil),
+      ck_rewrap1(ck_error(c, numeral_not_message(name, value), span)),
+      accepted => False::elim(
+        diagnostic_error_impossible(
+          c,
+          numeral_not_message(name, value),
+          span,
+          Eq::subst(
+            (r: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(r)),
+            ck_rewrap1_id(ck_error(c, numeral_not_message(name, value), span)),
+            accepted
+          )
+        )
+      ),
+      clean
+    )
+  }
+}
+pub theorem ck_nat_literal_on_recorded(
+  c: Checker,
+  value: Text,
+  span: TySpan,
+  hinted: Option(Text),
+  clean: DiagnosticClean(ck_st(ck_nat_literal_on(c, value, span, hinted)))
+): NaturalRecorded(
+  value,
+  span,
+  ck_val(ck_nat_literal_on(c, value, span, hinted)),
+  finish_literals(ck_st(ck_nat_literal_on(c, value, span, hinted)))
+) {
+  ⊢ NaturalRecorded(
+    value,
+    span,
+    ck_val(ck_nat_literal_on(c, value, span, hinted)),
+    finish_literals(ck_st(ck_nat_literal_on(c, value, span, hinted)))
+  ) from match hinted {
+    Some(name) => natural_recorded_rewrap(
+      value,
+      span,
+      ck_hinted_nat_on(c, value, span, numeral_reads_as(value, name), name),
+      ck_hinted_nat_on_recorded(
+        c,
+        value,
+        span,
+        numeral_reads_as(value, name),
+        name,
+        Refl,
+        diagnostic_clean_unwrap(ck_hinted_nat_on(c, value, span, numeral_reads_as(value, name), name), clean)
+      )
+    )
+    None => natural_recorded_rewrap(
+      value,
+      span,
+      ck_int_literal(c, value, span),
+      ck_int_literal_recorded(
+        c,
+        value,
+        span,
+        diagnostic_clean_unwrap(ck_int_literal(c, value, span), clean)
+      )
+    )
+  }
+}
+pub theorem ck_nat_literal_recorded(
+  c: Checker,
+  value: Text,
+  span: TySpan,
+  clean: DiagnosticClean(ck_st(ck_nat_literal(c, value, span)))
+): NaturalRecorded(
+  value,
+  span,
+  ck_val(ck_nat_literal(c, value, span)),
+  finish_literals(ck_st(ck_nat_literal(c, value, span)))
+) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => NaturalRecorded(value, span, ck_val(m), finish_literals(ck_st(m))),
+    Eq::sym(ck_nat_literal_unf(c, value, span)),
+    ck_nat_literal_on_recorded(
+      c,
+      value,
+      span,
+      ck_hint_numeral(c),
+      Eq::subst(
+        (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+        ck_nat_literal_unf(c, value, span),
+        clean
+      )
+    )
   )
 }

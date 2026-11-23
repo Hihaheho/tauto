@@ -6,7 +6,7 @@
 //! [--no-suite] [--no-heavy]`
 //!
 //! For each program: the evaluator's time (parse, check and run), the time to
-//! write the Rust crate (`tauto_nir::compile` and `tauto_rustgen`), the time
+//! write the Rust crate (`tauto::nir::compile` and `tauto_rustgen`), the time
 //! `cargo build` takes (the builds run side by side, so it is only
 //! indicative), and the time the built program takes to run (the process, its
 //! start included). The times of the evaluator and of the program are medians
@@ -83,8 +83,8 @@ struct Built {
 
 fn build_one(p: &Program, work: &Path, target: &Path, release: bool) -> Result<Built, String> {
     let t = Instant::now();
-    let package = tauto_nir::compile(&p.source).map_err(|e| format!("{e:?}"))?;
-    let bindings = tauto_rustgen::Bindings::resolve(&package, None, None)?;
+    let mut package = tauto::nir::compile(&p.source).map_err(|e| format!("{e:?}"))?;
+    let bindings = tauto_rustgen::Bindings::resolve(&mut package, None, None)?;
     let ws = tauto_rustgen::workspace(
         "bench",
         &package,
@@ -120,12 +120,8 @@ fn run_binary(bin: &Path) -> Result<Vec<String>, String> {
 }
 
 fn eval_shows(source: &str) -> Result<Vec<String>, String> {
-    let outcome = tauto::eval::run_with_budget(source, u64::MAX / 4).map_err(|e| e.to_string())?;
-    Ok(outcome
-        .outputs
-        .iter()
-        .map(|(n, v)| format!("{n} = {v}"))
-        .collect())
+    let outcome = tauto::exec::run_with_budget(source, u64::MAX / 4).map_err(|e| e.to_string())?;
+    Ok(outcome.stdout.lines().map(str::to_string).collect())
 }
 
 fn main() {
@@ -139,17 +135,22 @@ fn main() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let root = crate_dir.join("../../cases");
         for c in rust_cases(&root).expect("the cases") {
-            if c.unimplemented || c.rust_shows.is_some() || c.rust_error.is_some() {
+            if !c.opt_outs.is_empty() {
                 continue;
             }
-            if c.shows.is_none() || c.build.is_some() {
+            if c.stdout.is_none() || c.build.is_some() {
                 continue;
             }
             let source = c
                 .compilation_source()
                 .expect("benchmark source")
                 .into_owned();
-            let shows = c.shows.expect("output expectation");
+            let shows = c
+                .stdout
+                .expect("output expectation")
+                .lines()
+                .map(str::to_string)
+                .collect();
             programs.push(Program {
                 name: c.name,
                 source,
@@ -315,114 +316,13 @@ fn main() {
     }
 }
 
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
+/// The inputs these tests read, kept as files under `benches/fixtures`.
 mod case_inputs {
-    pub fn fixture_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            ("backend-bench-inputs.eure", "vec-50000") => {
-                r#"var v := Vec::new()
-var i := 0
-while i < 50000 {
-  Vec::push(&mut v, i)
-  i := i + 1
-}
-var s := 0
-var j := 0
-while j < 50000 {
-  match Vec::get(&v, j) {
-    Some(x) => { s := s + x }
-    None => #()
-  }
-  j := j + 1
-}
-perform show("s", s)
-"#
-            }
-            ("backend-bench-inputs.eure", "list-2000") => {
-                r#"fn build(n: i64): List(i64) { if n == 0 { Nil } else { Cons(n, build(n - 1)) } }
-fn sum(xs: List(i64)): i64 {
-  match xs {
-    Nil => 0
-    Cons(x, r) => x + sum(r)
-  }
-}
-var k := 0
-var t := 0
-while k < 20 {
-  t := t + sum(build(2000))
-  k := k + 1
-}
-perform show("t", t)
-"#
-            }
-            ("backend-bench-inputs.eure", "while-3e6") => {
-                r#"var i := 0
-var s := 0
-while i < 3000000 {
-  s := s + mod(i, 7)
-  i := i + 1
-}
-perform show("s", s)
-"#
-            }
-            ("backend-bench-inputs.eure", "hashmap-5000") => {
-                r#"var m := HashMap::new()
-var i := 0
-while i < 5000 {
-  HashMap::insert(&mut m, Text::of_u64(i), i)
-  i := i + 1
-}
-var s := 0
-var j := 0
-while j < 5000 {
-  match HashMap::get(&m, &Text::of_u64(j)) {
-    Some(x) => { s := s + x }
-    None => #()
-  }
-  j := j + 1
-}
-perform show("s", s)
-"#
-            }
-            ("backend-bench-inputs.eure", "fib-27") => {
-                r#"fn fib(n: i64): i64 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
-perform show("fib", fib(27))
-"#
-            }
-            ("backend-bench-inputs.eure", "direct-effect-2000") => {
-                r#"effect tick(n: i64): i64 direct
-fn go(n: i64, acc: i64): i64 ! {tick, Div} {
-  if n == 0 { acc } else {
-    let v := perform tick(n)
-    go(n - 1, acc + v)
-  }
-}
-let r := handle { go(2000, 0) } with {
-  tick(n), k => k(n)
-}
-perform show("r", r)
-"#
-            }
-            ("backend-bench-inputs.eure", "resume-effect-2000") => {
-                r#"effect tick(n: i64): i64
-fn go(n: i64, acc: i64): i64 ! {tick, Div} {
-  if n == 0 { acc } else {
-    let v := perform tick(n)
-    go(n - 1, acc + v)
-  }
-}
-let r := handle { go(2000, 0) } with {
-  tick(n), k => k(n)
-}
-perform show("r", r)
-"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
+    fn read(path: &str) -> String {
+        let path = format!("{}/benches/fixtures/{path}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"))
     }
-    #[allow(dead_code)]
     pub fn fixture(file: &str, name: &str) -> String {
-        fixture_static(file, name).to_string()
+        read(&format!("{}/{}.taut", file.trim_end_matches(".eure"), name))
     }
 }

@@ -5,10 +5,10 @@ import "fmt.taut"
 import "../../text/src/text.taut"
 import "../../unicode/src/classes.taut"
 import "../../unicode/src/unicode.taut"
-import std::Text
-import std::prelude::Os
+import std::text
+import std::builtin::os
 
-pub fn fmt_main_each(&tables: SyntaxTables, classes: UnicodeClasses, paths: List(Text)): Unit {
+pub fn fmt_main_each(tables: &SyntaxTables, classes: UnicodeClasses, paths: List(Text)): Unit ! {div, fs_read, overflow, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
@@ -17,7 +17,7 @@ pub fn fmt_main_each(&tables: SyntaxTables, classes: UnicodeClasses, paths: List
         Err(e) => print(Text::concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
         Ok(source) => match fmt_format(tables, classes, source) {
           FmtOk(formatted) => print(formatted)
-          FmtErr(e) => print(Text::concat_all(Cons("error", Cons(text_newline(), Nil))))
+          FmtErr(^e) => print(Text::concat_all(Cons("error", Cons(text_newline(), Nil))))
         }
       }
       fmt_main_each(tables, classes, rest)
@@ -25,7 +25,9 @@ pub fn fmt_main_each(&tables: SyntaxTables, classes: UnicodeClasses, paths: List
   }
 }
 
-match syntax_tables() {
-  None => eprint("the tables of the syntax are damaged")
-  Some(tables) => fmt_main_each(tables, unicode_classes(), perform argv())
-}
+perform main(() => {
+  match syntax_tables() {
+    None => eprint("the tables of the syntax are damaged")
+    Some(tables) => fmt_main_each(tables, unicode_classes(), perform argv())
+  }
+})

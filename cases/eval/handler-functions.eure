@@ -1,0 +1,188 @@
+// A function takes a function that performs an effect, answers the effect
+// inside, and gives back a result or a function whose row no longer has it:
+// the parameter's row is the effect and a row variable, `{fail(E)} ∪ e`, and
+// the result's row is `e` (`docs/design/syntax.md`「Effect rows」).
+
+@ cases.a-handler-function-takes-the-effect-out-of-the-row
+llvm.unimplemented = "generate: the LLVM backend does not write the operation `fail@Text` yet"
+source = ```nib
+effect log(s: Text): Unit
+fn to_option<T, E, !e>(body: &(() -> T ! {fail(E)} ∪ e)): Option(T) ! e {
+  handle { Some(body()) } with {
+    fail<E>(why) => None
+  }
+}
+fn risky(n: i64): i64 ! {fail(Text), log, overflow} {
+  perform log("risky")
+  if n > 3 { perform fail("too big") } else { n * 2 }
+}
+fn run(n: i64): Option(i64) ! {log, overflow} { to_option(() => risky(n)) }
+let small := handle { run(1) } with { log(s), k => k(#()) }
+let big := handle { run(9) } with { log(s), k => k(#()) }
+show(&small)
+show(&big)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = ```
+Some(2)
+None
+```
+
+// The functions returned are passed on to the next handler function, in
+// either order, bound by a `let` or not: the `E` of `safe` is read from what
+// the function it is given performs, and the type that waits for it, the
+// `Result(B, E)` given to `quiet`, is determined with it.
+@ cases.handler-functions-that-return-functions-compose
+llvm.unimplemented = "generate: the LLVM backend does not write the operation `fail@Bad` yet"
+source = ```nib
+effect log(s: Text): Unit
+enum Bad { TooBig, Negative }
+fn safe<A, B, E, !e>(f: (x: A) -> B ! {fail(E)} ∪ e): (x: A) -> Result(B, E) ! e {
+  (x: A) => handle { Ok(f(x)) } with {
+    fail<E>(why) => Err(why)
+  }
+}
+fn quiet<A, B, !e>(f: (x: A) -> B ! {log} ∪ e): (x: A) -> B ! e {
+  (x: A) => handle { f(x) } with {
+    log(s), k => k(#())
+  }
+}
+fn risky(n: i64): i64 ! {fail(Bad), log, overflow} {
+  perform log("risky")
+  if n > 3 { perform fail(TooBig) } else { if n < 0 { perform fail(Negative) } else { n * 2 } }
+}
+let nested: (x: i64) -> Result(i64, Bad) ! {overflow} := quiet(safe(risky))
+show(&nested(1))
+show(&nested(9))
+let checked: (x: i64) -> Result(i64, Bad) ! {log, overflow} := safe(risky)
+let bound: (x: i64) -> Result(i64, Bad) ! {overflow} := quiet(checked)
+show(&bound(-1))
+let silent: (x: i64) -> i64 ! {fail(Bad), overflow} := quiet(risky)
+let other: (x: i64) -> Result(i64, Bad) ! {overflow} := safe(silent)
+show(&other(2))
+let last: Result(i64, Bad) := quiet(safe(risky))(9)
+show(&last)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = ```
+Ok(2)
+Err(TooBig)
+Err(Negative)
+Ok(4)
+Err(TooBig)
+```
+
+// The row variable is not bounded: what is left in the row may resume many
+// times. The argument `x` is moved into `f` before `f` can perform `log`, so
+// the function that makes the handler owns nothing when the arm runs.
+@ cases.a-resuming-handler-function-leaves-a-multi-shot-effect-in-the-row
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```nib
+effect log(s: Text): Unit
+effect choose(): Bool resume ω
+fn quiet<A, B, !e>(f: (x: A) -> B ! {log} ∪ e): (x: A) -> B ! e {
+  (x: A) => handle { f(x) } with {
+    log(s), k => k(#())
+  }
+}
+fn pick(n: i64): i64 ! {log, choose, overflow} {
+  perform log("pick")
+  if perform choose() { n } else { n * 10 }
+}
+fn both(n: i64): i64 ! {choose, overflow} {
+  let f := quiet(pick)
+  f(n)
+}
+let sum := handle { both(3) } with {
+  choose(), k => k(true) + k(false)
+}
+show(&sum)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = "33\n"
+
+// The handler keeps its state in a `var`, and the function it returns is
+// called where it is made.
+@ cases.a-handler-function-with-state-is-called-where-it-is-made
+niri.bug = "Leak: a local still owns a value when its function returns"
+llvm.unimplemented = "generate: the LLVM backend does not write the operation `fail@Text` yet"
+source = ```nib
+effect tick(): nat
+fn counted<A, B, !e: <=1>(f: (x: A) -> B ! {tick} ∪ e): (x: A) -> B ! e {
+  (x: A) => {
+    var n: nat := 0
+    handle { f(x) } with {
+      tick(), k => {
+        n := n + 1
+        k(n)
+      }
+    }
+  }
+}
+fn three(limit: nat): nat ! {tick, fail(Text)} {
+  let a := perform tick()
+  let b := perform tick()
+  if b > limit { perform fail("over") } else { a + b + perform tick() }
+}
+let under: Result(nat, Text) := catch(() => counted(three)(5))
+let over: Result(nat, Text) := catch(() => counted(three)(1))
+show(&under)
+show(&over)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = ```
+Ok(6)
+Err("over")
+```
+
+// With two instances of `fail` in the argument's row nothing says which one
+// `safe` answers: the result's type is written.
+@ cases.two-instances-in-the-row-ask-for-the-result-type
+source = ```nib
+enum Bad { TooBig }
+fn safe<A, B, E, !e>(f: (x: A) -> B ! {fail(E)} ∪ e): (x: A) -> Result(B, E) ! e {
+  (x: A) => handle { Ok(f(x)) } with {
+    fail<E>(why) => Err(why)
+  }
+}
+fn risky(n: i64): i64 ! {fail(Bad), fail(Text)} {
+  if n > 3 { perform fail(TooBig) } else { if n < 0 { perform fail("negative") } else { n } }
+}
+let g := safe(risky)
+```
+types = "error: `safe` indexes an effect by `E`: the argument performs it as Bad and Text; write which with the result's type"
+
+@ cases.the-result-type-says-which-instance-each-handler-function-answers
+llvm.unimplemented = "generate: the LLVM backend does not write the operation `fail@Bad` yet"
+source = ```nib
+enum Bad { TooBig }
+fn safe<A, B, E, !e>(f: (x: A) -> B ! {fail(E)} ∪ e): (x: A) -> Result(B, E) ! e {
+  (x: A) => handle { Ok(f(x)) } with {
+    fail<E>(why) => Err(why)
+  }
+}
+fn risky(n: i64): i64 ! {fail(Bad), fail(Text)} {
+  if n > 3 { perform fail(TooBig) } else { if n < 0 { perform fail("negative") } else { n } }
+}
+let inner: (x: i64) -> Result(i64, Bad) ! {fail(Text)} := safe(risky)
+let outer: (x: i64) -> Result(Result(i64, Bad), Text) ! {} := safe(inner)
+show(&outer(1))
+show(&outer(9))
+show(&outer(-1))
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+stdout = ```
+Ok(Ok(1))
+Ok(Err(TooBig))
+Err("negative")
+```

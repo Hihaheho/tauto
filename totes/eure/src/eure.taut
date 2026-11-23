@@ -1,0 +1,38 @@
+import "read.taut"
+import "syntax.taut"
+import "value.taut"
+import std::base
+import std::text
+import "lower.taut"
+import "write.taut"
+import "shape.taut"
+
+// Eure text to documents and back.
+
+// A parse error is `Err(#(at, what))`: `at` is the byte offset of the problem, and `what` is
+// what was expected there.
+
+pub fn parse_lowered(len: Nat, r: Result(Node, Nat × Text)): Result(Node, Nat × Text) {
+  match r {
+    Ok(n) => Ok(n)
+    Err(#(at, what)) => Err(#(Nat::sub(len, at), what))
+  }
+}
+
+pub fn parse_read(len: Nat, r: Rd(List(Stmt))): Result(Node, Nat × Text) {
+  match r {
+    MkRd(ss, ^rest) => parse_lowered(len, lower(ss))
+    RdErr(rest, what) => Err(#(Nat::sub(len, List::length(rest)), what))
+  }
+}
+
+pub fn parse(t: Text): Result(Node, Nat × Text) {
+  parse_read(Text::len(t), read_eure(t))
+}
+
+pub fn parse_doc(t: Text): Option(Node) {
+  match parse(t) {
+    Ok(n) => Some(n)
+    Err(#(^at, ^what)) => None
+  }
+}

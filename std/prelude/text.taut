@@ -1,0 +1,60 @@
+// Text and Buf: builtins the host provides; a program cannot write them
+// itself (`docs/design/self-host.md`).
+// Positions in a Text are UTF-8 bytes. The evaluator implements these
+// `extern` functions; their signatures are trusted.
+
+extern {
+  pub fn Text::len(t: &Text): u64
+  pub fn Text::byte(t: &Text, i: u64): Option(u8)
+  pub fn Text::slice(t: &Text, start: u64, end: u64): Option(Text)
+  pub fn Text::compare(a: &Text, b: &Text): i64
+  pub fn Text::of_code_point(c: u32): Option(Text)
+  // `t` as `Debug` writes it between its quotes: `\\`, `\"`, `\n`, `\r`,
+  // `\t`, `\0`, and `\u{…}` for every other character not printed.
+  pub fn Text::escape_debug(t: &Text): Text
+  pub fn Text::of_utf8(bytes: List(u8)): Option(Text)
+  pub fn Text::of_i64(n: i64): Text
+  pub fn Text::of_u64(n: u64): Text
+  pub fn Text::of_nat(n: nat): Text
+}
+
+// Whether `needle` stands in `t` at byte `i`.
+pub fn Text::occurs_at(t: Text, needle: Text, i: u64): Bool ! {overflow} {
+  Text::slice(&t, i, i + Text::len(&needle)) == Some(needle)
+}
+
+// The first byte at or after `start` where `needle` (not empty) stands in `t`.
+pub fn Text::index_from(t: Text, needle: Text, start: u64): Option(u64) ! {div, overflow} {
+  if start + Text::len(&needle) > Text::len(&t) {
+    None
+  } else if Text::occurs_at(t, needle, start) {
+    Some(start)
+  } else {
+    Text::index_from(t, needle, start + 1)
+  }
+}
+
+// `t` with each `old` (not empty), left to right and not overlapping,
+// replaced by `new`, as `${t//old/new}` in a shell. An empty `old` leaves
+// `t` as it is.
+pub fn Text::replace_all(t: Text, old: Text, new: Text): Text ! {div, overflow} {
+  if Text::len(&old) == 0 {
+    t
+  } else {
+    match Text::index_from(t, old, 0) {
+      None => t
+      Some(i) => match Text::slice(&t, 0, i) {
+        None => t
+        Some(before) => match Text::slice(&t, i + Text::len(&old), Text::len(&t)) {
+          None => t
+          Some(after) => concat(concat(before, new), Text::replace_all(after, old, new))
+        }
+      }
+    }
+  }
+}
+
+extern {
+  pub fn Buf::new(): Buf
+  pub fn Buf::push(b: &mut Buf, t: &Text): Unit
+}

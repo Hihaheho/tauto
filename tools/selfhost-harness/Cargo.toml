@@ -8,39 +8,35 @@ repository = "https://github.com/Hihaheho/tauto"
 description = "Build, run and verify the Tauto implementations of compiler components against their Rust counterparts"
 
 [dependencies]
+tauto-parse = { path = "../../crates/tauto-parse" }
+tauto-nibcheck = { path = "../../crates/tauto-nibcheck" }
 eure-document = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
 eure-reader = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
 tauto = { path = "../../crates/tauto" }
 tauto-kernel = { path = "../../crates/tauto-kernel", features = ["selfhost"] }
 regex-syntax = "=0.8.11"
+icu_normalizer = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
 tauto-syntax = { path = "../../crates/tauto-syntax" }
+tauto-surface = { path = "../../crates/tauto-surface" }
+tauto-analyzer = { path = "../../crates/tauto-analyzer" }
 tauto-parol = { path = "../../crates/tauto-parol" }
+tauto-tables-gen = { path = "../../crates/tauto-tables-gen" }
 tauto-nir = { path = "../../crates/tauto-nir" }
+tauto-llvm = { path = "../../crates/tauto-llvm" }
+tauto-messages = { path = "../../crates/tauto-messages" }
+tauto-message = { path = "../../crates/tauto-message" }
+totebag = { path = "../../crates/totebag" }
+totebag-index = { path = "../../crates/totebag-index" }
 tauto-jsgen = { path = "../../crates/tauto-jsgen" }
 tauto-test-suite = { path = "../tauto-test-suite" }
 serde_json = "1"
 
 [dev-dependencies]
+tauto-macro = { path = "../../crates/tauto-macro" }
+tauto-macro-vm = { path = "../../crates/tauto-macro-vm" }
+tauto-vm = { path = "../../crates/tauto-vm" }
+tauto-niri = { path = "../../crates/tauto-niri" }
 
 [[bench]]
 name = "compiler"
 harness = false
-
-# Its own workspace: the differential tests build the totes with
-# `tauto build --release`, which takes long, so `cargo test --workspace` at the
-# root does not run them. Run them with
-# `cargo test --locked --manifest-path tools/selfhost-harness/Cargo.toml`.
-[workspace]
-
-# The differential tests run the totes on the Rust backend; only
-# tests/evaluator.rs runs a few under the evaluator, which runs much faster
-# optimized.
-[profile.test.package.tauto]
-opt-level = 3
-
-[profile.test.package.tauto-syntax]
-opt-level = 3
-
-# Input discovery parses and resolves the compiler totes before cache lookup.
-[profile.dev.package."*"]
-opt-level = 3

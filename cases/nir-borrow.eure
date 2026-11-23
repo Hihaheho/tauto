@@ -1,0 +1,44 @@
+// `borrow`: a parameter that the function only reads becomes a borrow, and
+// its callers lend it.
+
+@ cases.a-parameter-that-is-only-matched-on-is-borrowed
+source = ```tauto
+fn count(l: List(u64)): u64 ! {div, overflow} {
+  match l { Nil => 0, Cons(_, t) => 1 + count(t) }
+}
+fn both(l: List(u64)): u64 ! {div, overflow} { count(l) + count(l) }
+show(&both([1, 2, 3]))
+```
+stdout = "6\n"
+nir.fns.count = ```nir
+fn count@5(ref l#7: &List(u64)): u64 A = match by_ref &l#7 {
+  List::Nil => 0u64,
+  List::Cons(_, ref t#8: List(u64)) => add<u64>(1u64, count@5((t#8: &List(u64))) tier A tick host: u64),
+}
+```
+nir.fns.both = ```nir
+fn both@2(l#4: List(u64)): u64 A = add<u64>(count@5(&l#4) tier A tick host: u64, count@5(&l#4) tier A tick host: u64)
+```
+
+@ cases.a-parameter-that-is-returned-stays-owned
+source = ```tauto
+fn keep(l: List(u64)): List(u64) { l }
+show(&keep([1]))
+```
+stdout = "[1]\n"
+nir.fns.keep = ```nir
+fn keep@2(l#5: List(u64)): List(u64) S = move l#5
+```
+
+@ cases.a-parameter-whose-part-is-kept-stays-owned
+source = ```tauto
+fn rest(l: List(u64)): List(u64) { match l { Nil => Nil, Cons(_, t) => t } }
+show(&rest([1, 2]))
+```
+stdout = "[2]\n"
+nir.fns.rest = ```nir
+fn rest@2(l#5: List(u64)): List(u64) S = match move l#5 {
+  List::Nil => List::Nil: List(u64),
+  List::Cons(_, t#6: List(u64)) => move t#6,
+}
+```

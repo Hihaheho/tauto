@@ -1,0 +1,1029 @@
+// Macro expansion of a program's files, the smallest form of it
+// (`crates/tauto-macro/src/macros/expand.rs`): each file's `macro fn`
+// declarations register the macros that the files after it call, and a call
+// `name!(arg)` of a macro whose function takes and makes a `SynExpr` is
+// replaced by its expansion, outside in: the argument is lifted with the
+// scopes of the call and of the expansion, the function runs, the output is
+// lowered with the expansion's scope flipped and every node given a span of its
+// own, and a file that expanded something gets its names tied to their binders
+// (`rs_resolve`).
+//
+// The expression runner evaluates a function that returns its argument.
+// The statement runner evaluates a body that returns a statement quotation,
+// including splices of the parameter. Each file sees the macros registered by
+// the earlier files given to the expander.
+import "../../surface/src/surface.taut"
+import "../../surface/src/modules.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
+import "../../parse/src/parse.taut"
+import "node.taut"
+import "lift.taut"
+import "lower.taut"
+import "scope.taut"
+import std::text
+import std::base
+
+pub(open) struct ExMacro {
+  name: Text
+  function: Text
+  file: Nat
+  identity: Bool
+  quotation: Option(Text × List(SurfaceStmt))
+}
+
+pub(open) struct ExState {
+  macros: Vec(ExMacro)
+  // `code start end`, one for each error.
+  errs: Vec(Text)
+  // The expansions made so far; the next one's number is one more.
+  count: Nat
+  file: Nat
+  expanded: Bool
+  // The spans given out so far.
+  issued: Nat
+  capture_values: Bool
+  values: Vec(Node)
+}
+
+pub fn ex_sep(): Text {
+  text_code_point(1)
+}
+
+// The names the built-in macros and `syntax` take.
+pub fn ex_reserved(name: Text): Bool {
+  name == "include_text" || name == "include_bytes" || name == "syntax" || name == "inductive_syntax"
+}
+
+pub fn ex_state(): ExState {
+  ExState { macros: Vec::new(), errs: Vec::new(), count: 0, file: 0, expanded: false, issued: 0, capture_values: false, values: Vec::new() }
+}
+
+pub fn ex_error(st: &mut ExState, code: Text, start: Nat, end: Nat): Unit {
+  Vec::push(
+    &mut st.errs,
+    Text::concat_all([code, " ", Text::of_nat(start), " ", Text::of_nat(end)])
+  )
+}
+
+pub fn ex_find(st: &ExState, name: Text): Option(ExMacro) ! {div, out_of_bounds, overflow} {
+  var i: u64 := 0
+  var found: Option(ExMacro) := None
+  while i < Vec::len(&st.macros) {
+    let m: ExMacro := Vec::index(&st.macros, i)
+    if m.name == name {
+      found := Some(m)
+    }
+    i := i + 1
+  }
+  found
+}
+
+// The function's declaration among the statements of its file.
+pub fn ex_fn_named(xs: List(SurfaceStmt), name: Text): Option(SurfaceFn) {
+  match xs {
+    Nil => None
+    Cons(s, rest) => match s {
+      StFn(f) => if f.name == name { Some(f) } else { ex_fn_named(rest, name) }
+      ^other => ex_fn_named(rest, name)
+    }
+  }
+}
+
+pub fn ex_is_var(t: SurfaceTerm, name: Text): Bool ! {div} {
+  match t.kind {
+    SkVar(n) => surface_name_text(n) == name
+    SkBlock(stmts) => match stmts {
+      Cons(s, Nil) => match s {
+        StExpr(e) => ex_is_var(e, name)
+        ^other => false
+      }
+      ^other => false
+    }
+    ^other => false
+  }
+}
+
+// A function of one parameter whose body is that parameter, written to take
+// and make a `SynExpr`.
+pub fn ex_identity(f: SurfaceFn): Bool ! {div} {
+  match f.params {
+    Cons(p, Nil) => match f.param_types {
+      Cons(Some(ty), Nil) => match f.result {
+        Some(res) => ex_is_var(ty, "SynExpr") && ex_is_var(res, "SynExpr") && ex_is_var(f.body, p)
+        None => false
+      }
+      ^other => false
+    }
+    ^other => false
+  }
+}
+
+fn ex_statement_quote(t: SurfaceTerm): Option(List(SurfaceStmt)) {
+  match t.kind {
+    SkQuote(stmts, body) => if stmts { Some(body) } else { None }
+    SkBlock(Cons(StExpr(value), Nil)) => match value.kind {
+      SkQuote(stmts, body) => if stmts { Some(body) } else { None }
+      _ => None
+    }
+    _ => None
+  }
+}
+
+fn ex_quotation(f: SurfaceFn): Option(Text × List(SurfaceStmt)) ! {div} {
+  match f.params {
+    Cons(param, Nil) => match f.param_types {
+      Cons(Some(ty), Nil) => if ex_is_var(ty, "SynExpr") {
+        match f.result {
+          Some(result) => match result.kind {
+            SkApp(head, Cons(item, Nil)) => if ex_is_var(head, "List") && ex_is_var(item, "SynStmt") {
+              match ex_statement_quote(f.body) {
+                Some(body) => Some(#(param, body))
+                None => None
+              }
+            } else { None }
+            _ => None
+          }
+          None => None
+        }
+      } else { None }
+      _ => None
+    }
+    _ => None
+  }
+}
+
+// Registers the macros of a file (the statements `macro fn` makes) and drops
+// them from the file.
+pub fn ex_register(st: &mut ExState, all: List(SurfaceStmt), xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => match s {
+      StMacro(name, function, start, end) => {
+        if ex_reserved(name) {
+          ex_error(&mut st, "macro.reserved", start, end)
+        } else {
+          match ex_find(&st, name) {
+            Some(^m) => ex_error(&mut st, "macro.duplicate", start, end)
+            None => {
+              let identity := match ex_fn_named(all, function) {
+                Some(f) => ex_identity(f)
+                None => false
+              }
+              let quotation := match ex_fn_named(all, function) {
+                Some(f) => ex_quotation(f)
+                None => None
+              }
+              Vec::push(
+                &mut st.macros,
+                ExMacro { name: name, function: function, file: st.file, identity: identity, quotation: quotation }
+              )
+            }
+          }
+        }
+        ex_register(&mut st, all, rest)
+      }
+      other => Cons(other, ex_register(&mut st, all, rest))
+    }
+  }
+}
+
+// The runner of a macro's function: the one place it plugs in. Only a
+// function that returns its argument is answered.
+pub fn ex_run(m: ExMacro, input: Node): Result(Node, Text) {
+  if m.identity { Ok(input) } else { Err("no runner for the macro function") }
+}
+
+pub fn ex_scopes_of(marks: Text): List(i64) ! {div, overflow} {
+  if marks == "" {
+    Nil
+  } else {
+    lf_scopes_from(marks, 0)
+  }
+}
+
+pub fn ex_append_scope(xs: List(i64), id: i64): List(i64) {
+  match xs {
+    Nil => Cons(id, Nil)
+    Cons(x, rest) => Cons(x, ex_append_scope(rest, id))
+  }
+}
+
+pub fn ex_top(st: &mut ExState, xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
+  let kept := ex_register(&mut st, xs, xs)
+  ex_stmt_list(&mut st, kept)
+}
+
+// One call of a macro: its expansion, or `None` with the error recorded.
+pub fn ex_call(st: &mut ExState, m: ExMacro, marks: Text, arg: SurfaceTerm, t: SurfaceTerm): Option(SurfaceTerm) ! {div, out_of_bounds, overflow} {
+  st.count := st.count + 1
+  let id := I64::of_u64(U64::of_nat(st.count))
+  let scopes := ex_append_scope(ex_scopes_of(marks), id)
+  var errs: LfSt := lf_st_new(false)
+  let input := lf_expr(
+    LfCtx { scopes: scopes, in_quote: false, atoms: Nil, reflip: Some(id) },
+    &mut errs,
+    arg
+  )
+  if Vec::len(&errs.errs) > 0 {
+    ex_error(&mut st, "macro.argument", t.start, t.end)
+    None
+  } else {
+    match ex_run(m, input) {
+      Err(^e) => {
+        ex_error(&mut st, "macro.run", t.start, t.end)
+        None
+      }
+      Ok(out) => {
+        var lw := lw_issuing(st.issued, t.start)
+        let term := lw_expr(LwCtx { scope: id, atoms: Nil }, &mut lw, out)
+        st.issued := lw.next
+        if Vec::len(&lw.errs) > 0 {
+          ex_error(&mut st, "macro.shape", t.start, t.end)
+          None
+        } else {
+          st.expanded := true
+          Some(term)
+        }
+      }
+    }
+  }
+}
+
+// A term: a macro call is expanded as long as the result is one (the
+// output of a macro may be a call), then the term's parts.
+pub fn ex_term(st: &mut ExState, t: SurfaceTerm): SurfaceTerm ! {div, out_of_bounds, overflow} {
+  match t.kind {
+    SkMacroCall(marked, arg) => {
+      let sp := rs_split(ex_sep(), marked)
+      if ex_reserved(sp.plain) {
+        ex_error(&mut st, "macro.include_text", t.start, t.end)
+        t
+      } else {
+        match ex_find(&st, sp.plain) {
+          None => {
+            ex_error(&mut st, "macro.unknown", t.start, t.end)
+            t
+          }
+          Some(m) => if m.file >= st.file {
+            ex_error(&mut st, "macro.same_file", t.start, t.end)
+            t
+          } else {
+            match ex_call(&mut st, m, sp.marks, arg, t) {
+              None => t
+              Some(made) => ex_term(&mut st, made)
+            }
+          }
+        }
+      }
+    }
+    ^other => SurfaceTerm { occurrence: None, kind: ex_kind(&mut st, t.kind), start: t.start, end: t.end }
+  }
+}
+
+pub fn ex_stmt_list(st: &mut ExState, xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => match s {
+      StCalled(generates, call) => {
+        let output := ex_statement_call(&mut st, generates, call)
+        List::append(output, ex_stmt_list(&mut st, rest))
+      }
+      _ => {
+        let output := ex_stmt(&mut st, s)
+        Cons(output, ex_stmt_list(&mut st, rest))
+      }
+    }
+  }
+}
+
+fn ex_statement_call(st: &mut ExState, generates: List(Text), call: SurfaceTerm): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
+  match call.kind {
+    SkMacroCall(written, argument) => {
+      let name := rs_split(ex_sep(), written)
+      match ex_find(&st, name.plain) {
+        None => {
+          ex_error(&mut st, "macro.unknown", call.start, call.end)
+          Nil
+        }
+        Some(macro_value) => if macro_value.file >= st.file {
+          ex_error(&mut st, "macro.same_file", call.start, call.end)
+          Nil
+        } else {
+          match macro_value.quotation {
+            None => {
+              ex_error(&mut st, "macro.run", call.start, call.end)
+              Nil
+            }
+            Some(quoted) => ex_lower_statements(&mut st, generates, quoted, name.marks, argument, call)
+          }
+        }
+      }
+    }
+    _ => {
+      ex_error(&mut st, "macro.shape", call.start, call.end)
+      Nil
+    }
+  }
+}
+
+fn ex_lower_statements(st: &mut ExState, generates: List(Text), quoted: Text × List(SurfaceStmt), marks: Text, argument: SurfaceTerm, call: SurfaceTerm): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
+  st.count := st.count + 1
+  let scope := I64::of_u64(U64::of_nat(st.count))
+  var errors := lf_st_new(false)
+  let input := lf_expr(
+    LfCtx { scopes: ex_append_scope(ex_scopes_of(marks), scope), in_quote: false, atoms: Nil, reflip: Some(scope) },
+    &mut errors, argument
+  )
+  let nodes := lf_stmts(LfCtx { scopes: Nil, in_quote: true, atoms: Nil, reflip: None }, &mut errors, quoted.snd)
+  let values := ex_splice_list(nodes, quoted.fst, input)
+  var lowered := lw_issuing(st.issued, call.start)
+  let statements := lw_stmts(LwCtx { scope: scope, atoms: Nil }, &mut lowered, NList(values))
+  st.issued := lowered.next
+  if Vec::len(&errors.errs) > 0 || Vec::len(&lowered.errs) > 0 {
+    ex_error(&mut st, "macro.shape", call.start, call.end)
+    Nil
+  } else if not(ex_generated_matches(generates, ex_generated_items(statements))) {
+    ex_error(&mut st, "macro.generates", call.start, call.end)
+    Nil
+  } else {
+    st.expanded := true
+    if st.capture_values { Vec::push(&mut st.values, NList(values)) } else { #() }
+    statements
+  }
+}
+
+fn ex_splice_node(node: Node, param: Text, input: Node): Node ! {div} {
+  match node {
+    NSplice(term) => if ex_is_var(term, param) { input } else { NSplice(term) }
+    NList(items) => NList(ex_splice_list(items, param, input))
+    NOpt(Some(item)) => NOpt(Some(ex_splice_node(item, param, input)))
+    NCtor(name, fields) => NCtor(name, ex_splice_fields(fields, param, input))
+    NProduct(members) => NProduct(ex_splice_members(members, param, input))
+    _ => node
+  }
+}
+
+fn ex_splice_list(items: List(Node), param: Text, input: Node): List(Node) ! {div} {
+  match items {
+    Nil => Nil
+    Cons(item, rest) => Cons(ex_splice_node(item, param, input), ex_splice_list(rest, param, input))
+  }
+}
+
+fn ex_splice_fields(fields: List(NField), param: Text, input: Node): List(NField) ! {div} {
+  match fields {
+    Nil => Nil
+    Cons(field, rest) =>
+      Cons(NField { label: field.label, value: ex_splice_node(field.value, param, input) }, ex_splice_fields(rest, param, input))
+  }
+}
+
+fn ex_splice_members(members: List(NMember), param: Text, input: Node): List(NMember) ! {div} {
+  match members {
+    Nil => Nil
+    Cons(member, rest) =>
+      Cons(NMember { label: member.label, ty: member.ty, value: ex_splice_node(member.value, param, input) }, ex_splice_members(rest, param, input))
+  }
+}
+
+fn ex_generated_items(statements: List(SurfaceStmt)): List(Text) ! {div} {
+  let declared := ex_generated_statements("", statements, None)
+  List::append(declared, ex_generated_statements("", statements, Some(declared)))
+}
+
+fn ex_generated_one(kind: Text, prefix: Text, name: Text, aliases: Option(List(Text))): List(Text) {
+  match aliases {
+    Some(^declared) => Nil
+    None => [Text::concat_all([kind, " ", prefix, lw_plain(name)])]
+  }
+}
+
+fn ex_generated_statements(prefix: Text, statements: List(SurfaceStmt), aliases: Option(List(Text))): List(Text) ! {div} {
+  match statements {
+    Nil => Nil
+    Cons(statement, rest) => {
+      let here := match statement {
+        StFn(f) => ex_generated_one("fn", prefix, f.name, aliases)
+        StEffect(e) => ex_generated_one("effect", prefix, e.name, aliases)
+        StTheorem(t) => ex_generated_one("theorem", prefix, t.name, aliases)
+        StDef(t) => ex_generated_one("def", prefix, t.name, aliases)
+        StInductive(i) => ex_generated_one("inductive", prefix, i.name, aliases)
+        StStruct(d) => ex_generated_one("struct", prefix, d.name, aliases)
+        StEnum(d) => ex_generated_one("enum", prefix, d.name, aliases)
+        StClass(c) => ex_generated_one("class", prefix, c.name, aliases)
+        StMutual(items, ^start, ^end) => ex_generated_statements(prefix, items, aliases)
+        StModule(name, ^vis, items, ^start, ^end) => List::append(
+          ex_generated_one("module", prefix, name, aliases),
+          ex_generated_statements(Text::concat_all([prefix, lw_plain(name), "::"]), items, aliases)
+        )
+        StReexport(path, names, ^spans, ^start, ^end) => match aliases {
+          None => Nil
+          Some(declared) => ex_generated_aliases(prefix, Text::concat_all([prefix, lw_plain(path), "::"]), names, declared)
+        }
+        _ => Nil
+      }
+      List::append(here, ex_generated_statements(prefix, rest, aliases))
+    }
+  }
+}
+
+fn ex_generated_aliases(prefix: Text, module_path: Text, names: List(Text), declared: List(Text)): List(Text) {
+  match names {
+    Cons(name, rest) => {
+      let leaf := lw_plain(name)
+      let target := Text::concat(module_path, leaf)
+      let alias := ex_generated_kind(declared, target)
+      Cons(Text::concat_all([alias, " ", prefix, leaf]), ex_generated_aliases(prefix, module_path, rest, declared))
+    }
+    Nil => Nil
+  }
+}
+
+fn ex_generated_kind(declared: List(Text), target: Text): Text {
+  match declared {
+    Nil => ""
+    Cons(item, rest) => match text_split(item, " ") {
+      Cons(kind, Cons(name, Nil)) => if name == target { kind } else { ex_generated_kind(rest, target) }
+      _ => ex_generated_kind(rest, target)
+    }
+  }
+}
+
+fn ex_generated_matches(written: List(Text), actual: List(Text)): Bool {
+  match written {
+    Nil => match actual { Nil => true
+      Cons(^item, ^rest) => false }
+    Cons(item, rest) => match ex_generated_remove(item, actual) {
+      None => false
+      Some(remaining) => ex_generated_matches(rest, remaining)
+    }
+  }
+}
+
+fn ex_generated_remove(item: Text, actual: List(Text)): Option(List(Text)) {
+  match actual {
+    Nil => None
+    Cons(first, rest) => if first == item { Some(rest) } else {
+      match ex_generated_remove(item, rest) {
+        None => None
+        Some(remaining) => Some(Cons(first, remaining))
+      }
+    }
+  }
+}
+
+fn ex_flatten_statements(statements: List(SurfaceStmt), prefix: Text): List(SurfaceStmt) ! {div} {
+  match statements {
+    Nil => Nil
+    Cons(statement, rest) => {
+      let here := match statement {
+        StModule(name, ^vis, members, begin, finish) => ex_flatten_module(name, members, prefix, begin, finish)
+        StReexport(path, names, spans, ^begin, ^finish) => ex_flatten_reexports(names, spans, prefix, ex_scoped_name(path))
+        _ => [statement]
+      }
+      List::append(here, ex_flatten_statements(rest, prefix))
+    }
+  }
+}
+
+fn ex_flatten_module(name: Text, members: List(SurfaceStmt), prefix: Text, start: Nat, end: Nat): List(SurfaceStmt) ! {div} {
+  let path := Text::concat(prefix, ex_scoped_name(name))
+  Cons(StOther(Text::concat("#enter ", path), start, end),
+    List::append(ex_flatten_members(members, path, start, end), [StOther("#leave", end, end)]))
+}
+
+fn ex_scoped_name(name: Text): Text {
+  let split := rs_split(ex_sep(), name)
+  if split.marks == "" { split.plain } else { Text::concat_all([split.plain, "#", split.marks]) }
+}
+
+// The members of the module `owner`; the marks they make take the span of the module.
+fn ex_flatten_members(members: List(SurfaceStmt), owner: Text, start: Nat, end: Nat): List(SurfaceStmt) ! {div} {
+  match members {
+    Cons(member, rest) => {
+      let vis := match surface_stmt_visibility(member) {
+        None => ""
+        Some(v) => surface_written_visibility(v)
+      }
+      let here := ex_flatten_member(vis, member, owner, start, end)
+      List::append(here, ex_flatten_members(rest, owner, start, end))
+    }
+    Nil => Nil
+  }
+}
+
+fn ex_flatten_member(vis: Text, member: SurfaceStmt, owner: Text, start: Nat, end: Nat): List(SurfaceStmt) ! {div} {
+  let prefix := Text::concat(owner, "::")
+  let member_prefix := if vis == "" { Text::concat(prefix, "#") } else { prefix }
+  match member {
+    StFn(f) => {
+      let name := lw_plain(f.name)
+      let target := Text::concat(member_prefix, name)
+      let named := StFn(SurfaceFnMk(target, f.generics, f.bounds, f.params, f.r#borrows, f.param_types, f.result, f.effects, f.wheres, f.start, f.end, f.body, f.lends, f.generic_types, f.bound_starts, f.visibility, f.row_hole, f.unused, f.unused_generics, f.unused_params))
+      ex_member_export(vis, prefix, name, target, start, end, named)
+    }
+    StEffect(e) => {
+      let name := lw_plain(e.name)
+      let target := Text::concat(member_prefix, name)
+      let named := StEffect(SurfaceEffectMk(target, e.generics, e.params, e.result, e.r#resume, e.start, e.end, e.set, e.unused_generics, e.bounds, e.visibility, e.rows))
+      let mode := if vis == "pub(open) " { "open" } else if vis == "pub(handle) " {
+        "handle"
+      } else if vis == "pub " { "pub" } else { "private" }
+      Cons(StOther(Text::concat_all(["#effect-mode ", target, " ", mode]), start, end),
+        ex_member_export(vis, prefix, name, target, start, end, named))
+    }
+    StModule(name, ^module_vis, members, whole_start, whole_end) => ex_flatten_module(name, members, prefix, whole_start, whole_end)
+    StReexport(path, names, spans, ^whole_start, ^whole_end) => ex_flatten_reexports(names, spans, prefix, ex_scoped_name(path))
+    _ => [StOther("unsupported module member", start, end)]
+  }
+}
+
+fn ex_member_export(vis: Text, prefix: Text, name: Text, target: Text, start: Nat, end: Nat, item: SurfaceStmt): List(SurfaceStmt) {
+  if vis == "" { [item] } else {
+    [StOther(Text::concat_all(["#module-export ", prefix, name, " ", target]), start, end), item]
+  }
+}
+
+fn ex_flatten_reexports(names: List(Text), spans: List(SurfaceSpan), prefix: Text, owner: Text): List(SurfaceStmt) {
+  match names {
+    Cons(name, rest) => match spans {
+      Cons(at, more) => {
+        let leaf := lw_plain(name)
+        Cons(StOther(Text::concat_all(["#reexport ", prefix, leaf, " ", prefix, owner, "::", leaf]), at.start, at.end),
+          ex_flatten_reexports(rest, more, prefix, owner))
+      }
+      Nil => Nil
+    }
+    Nil => Nil
+  }
+}
+
+pub fn ex_opt(st: &mut ExState, t: Option(SurfaceTerm)): Option(SurfaceTerm) ! {div, out_of_bounds, overflow} {
+  match t {
+    None => None
+    Some(x) => Some(ex_term(&mut st, x))
+  }
+}
+
+pub fn ex_terms(st: &mut ExState, xs: List(SurfaceTerm)): List(SurfaceTerm) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let y := ex_term(&mut st, x)
+      Cons(y, ex_terms(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_opts(st: &mut ExState, xs: List(Option(SurfaceTerm))): List(Option(SurfaceTerm)) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let y := ex_opt(&mut st, x)
+      Cons(y, ex_opts(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_stmt(st: &mut ExState, s: SurfaceStmt): SurfaceStmt ! {div, out_of_bounds, overflow} {
+  match s {
+    StLet(name, ty, value, a, b, unused, st_stack) => {
+      let ty2 := ex_opt(&mut st, ty)
+      let value2 := ex_term(&mut st, value)
+      StLet(name, ty2, value2, a, b, unused, st_stack)
+    }
+    StVar(name, ty, value, a, unused, st_stack) => {
+      let ty2 := ex_opt(&mut st, ty)
+      let value2 := ex_term(&mut st, value)
+      StVar(name, ty2, value2, a, unused, st_stack)
+    }
+    StAssign(name, place, value) => {
+      let place2 := match place {
+        Some(p) => Some(ex_term(&mut st, p))
+        None => None
+      }
+      StAssign(name, place2, ex_term(&mut st, value))
+    }
+    StCalled(generates, call) => StCalled(generates, ex_term(&mut st, call))
+    StFn(f) => StFn(ex_fn(&mut st, f))
+    StTheorem(d) => StTheorem(ex_theorem(&mut st, d))
+    StDef(d) => StDef(ex_theorem(&mut st, d))
+    StWhile(c, body) => {
+      let c2 := ex_term(&mut st, c)
+      StWhile(c2, ex_term(&mut st, body))
+    }
+    StReturn(e) => StReturn(ex_opt(&mut st, e))
+    StExpr(e) => StExpr(ex_term(&mut st, e))
+    StStruct(d) => StStruct(ex_data(&mut st, d))
+    StEnum(d) => StEnum(ex_data(&mut st, d))
+    StEffect(e) => StEffect(ex_effect(&mut st, e))
+    StMutual(items, a, b) => StMutual(ex_stmt_list(&mut st, items), a, b)
+    StModule(name, vis, items, a, b) => StModule(name, vis, ex_stmt_list(&mut st, items), a, b)
+    StInductive(d) => StInductive(ex_inductive(&mut st, d))
+    other => other
+  }
+}
+
+pub fn ex_fn(st: &mut ExState, f: SurfaceFn): SurfaceFn ! {div, out_of_bounds, overflow} {
+  let gs := ex_named(&mut st, surface_generic_named(f.generics, f.generic_types))
+  let ptypes := ex_opts(&mut st, f.param_types)
+  let result := ex_opt(&mut st, f.result)
+  let wheres := ex_constraints(&mut st, f.wheres)
+  let body := ex_term(&mut st, f.body)
+  SurfaceFn {
+    name: f.name,
+    generics: surface_named_names(gs),
+    bounds: f.bounds,
+    params: f.params,
+    r#borrows: f.r#borrows,
+    param_types: ptypes,
+    result: result,
+    effects: f.effects,
+    wheres: wheres,
+    start: f.start,
+    end: f.end,
+    body: body,
+    lends: f.lends,
+    generic_types: surface_named_types(gs),
+    bound_starts: Nil,
+    visibility: f.visibility,
+    row_hole: f.row_hole,
+    unused: f.unused,
+    unused_generics: f.unused_generics,
+    unused_params: f.unused_params
+  }
+}
+
+pub fn ex_constraints(st: &mut ExState, xs: List(SurfaceConstraint)): List(SurfaceConstraint) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let ty := ex_term(&mut st, c.ty)
+      let arguments := ex_terms(&mut st, c.arguments)
+      let head := SurfaceConstraint {
+        r#class: c.r#class,
+        ty: ty,
+        start: c.start,
+        end: c.end,
+        arguments: arguments
+      }
+      Cons(head, ex_constraints(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_named(st: &mut ExState, xs: List(SurfaceNamed)): List(SurfaceNamed) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ty := ex_term(&mut st, p.ty)
+      Cons(SurfaceNamed { name: p.name, ty: ty }, ex_named(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_theorem(st: &mut ExState, d: SurfaceTheorem): SurfaceTheorem ! {div, out_of_bounds, overflow} {
+  let params := ex_named(&mut st, d.params)
+  let ty := ex_term(&mut st, d.ty)
+  let body := ex_opt(&mut st, d.body)
+  SurfaceTheorem {
+    visibility: d.visibility,
+    name: d.name,
+    implicit: d.implicit,
+    params: params,
+    ty: ty,
+    body: body,
+    start: d.start,
+    end: d.end,
+    unused: d.unused,
+    unused_params: d.unused_params
+  }
+}
+
+pub fn ex_data_fields(st: &mut ExState, xs: List(SurfaceDataField)): List(SurfaceDataField) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let ty := ex_term(&mut st, f.ty)
+      Cons(SurfaceDataField { name: f.name, ty: ty }, ex_data_fields(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_data_ctors(st: &mut ExState, xs: List(SurfaceDataCtor)): List(SurfaceDataCtor) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let fields := ex_data_fields(&mut st, c.fields)
+      Cons(SurfaceDataCtor { name: c.name, fields: fields }, ex_data_ctors(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_data(st: &mut ExState, d: SurfaceData): SurfaceData ! {div, out_of_bounds, overflow} {
+  let cs := ex_data_ctors(&mut st, d.constructors)
+  SurfaceData {
+    kind: d.kind,
+    name: d.name,
+    generics: d.generics,
+    constructors: cs,
+    start: d.start,
+    end: d.end,
+    coerce_level: d.coerce_level,
+    coerce_field: d.coerce_field,
+    visibility: d.visibility,
+  unused_generics: Nil,
+  rows: d.rows
+  }
+}
+
+pub fn ex_effect(st: &mut ExState, e: SurfaceEffect): SurfaceEffect ! {div, out_of_bounds, overflow} {
+  let params := ex_opts(&mut st, e.params)
+  let result := ex_opt(&mut st, e.result)
+  SurfaceEffect {
+    visibility: e.visibility,
+    name: e.name,
+    generics: e.generics,
+    params: params,
+    result: result,
+    r#resume: e.r#resume,
+    start: e.start,
+    end: e.end,
+    set: e.set,
+  unused_generics: Nil,
+  bounds: Nil,
+  rows: e.rows
+  }
+}
+
+pub fn ex_ind_ctors(st: &mut ExState, xs: List(SurfaceCtor)): List(SurfaceCtor) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let params := ex_named(&mut st, c.params)
+      let result := ex_term(&mut st, c.result)
+      Cons(
+        SurfaceCtor { name: c.name, implicit: c.implicit, params: params, result: result },
+        ex_ind_ctors(&mut st, rest)
+      )
+    }
+  }
+}
+
+pub fn ex_inductive(st: &mut ExState, d: SurfaceInductive): SurfaceInductive ! {div, out_of_bounds, overflow} {
+  let params := ex_named(&mut st, d.params)
+  let sort := ex_term(&mut st, d.sort)
+  let cs := ex_ind_ctors(&mut st, d.constructors)
+  SurfaceInductive {
+    name: d.name,
+    params: params,
+    sort: sort,
+    constructors: cs,
+    start: d.start,
+    end: d.end,
+    visibility: d.visibility
+  }
+}
+
+pub fn ex_arms(st: &mut ExState, xs: List(SurfaceArm)): List(SurfaceArm) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let guard := ex_opt(&mut st, a.guard)
+      let goal := ex_opt(&mut st, a.goal)
+      let body := ex_term(&mut st, a.body)
+      Cons(
+        SurfaceArm { pattern: a.pattern, guard: guard, goal: goal, body: body },
+        ex_arms(&mut st, rest)
+      )
+    }
+  }
+}
+
+pub fn ex_step_binders(st: &mut ExState, xs: List(SurfaceField)): List(SurfaceField) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let ty := ex_term(&mut st, f.value)
+      Cons(SurfaceField { name: f.name, value: ty }, ex_step_binders(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_step_arms(st: &mut ExState, xs: List(SurfaceStepArm)): List(SurfaceStepArm) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let binders := ex_step_binders(&mut st, a.binders)
+      let goal := ex_term(&mut st, a.goal)
+      let body := ex_term(&mut st, a.body)
+      let arm := SurfaceStepArm {
+        binders: binders,
+        unused_binders: a.unused_binders,
+        goal: goal,
+        body: body,
+        start: a.start,
+        end: a.end
+      }
+      Cons(arm, ex_step_arms(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_handler(st: &mut ExState, h: SurfaceHandler): SurfaceHandler ! {div, out_of_bounds, overflow} {
+  match h {
+    HdReturn(p, body) => HdReturn(p, ex_term(&mut st, body))
+    HdOperation(eff, hfa, hty, patterns, cont, cont_unused, guard, body) => {
+      let guard2 := ex_opt(&mut st, guard)
+      let body2 := ex_term(&mut st, body)
+      HdOperation(eff, hfa, hty, patterns, cont, cont_unused, guard2, body2)
+    }
+  }
+}
+
+pub fn ex_handlers(st: &mut ExState, xs: List(SurfaceHandler)): List(SurfaceHandler) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(h, rest) => {
+      let h2 := ex_handler(&mut st, h)
+      Cons(h2, ex_handlers(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_pi_params(st: &mut ExState, xs: List(SurfaceParam)): List(SurfaceParam) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ty := ex_term(&mut st, p.ty)
+      Cons(SurfaceParam { name: p.name, ty: ty, unused: p.unused }, ex_pi_params(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_fields(st: &mut ExState, xs: List(SurfaceField)): List(SurfaceField) ! {div, out_of_bounds, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let v := ex_term(&mut st, f.value)
+      Cons(SurfaceField { name: f.name, value: v }, ex_fields(&mut st, rest))
+    }
+  }
+}
+
+pub fn ex_kind(st: &mut ExState, k: SurfaceKind): SurfaceKind ! {div, out_of_bounds, overflow} {
+  match k {
+    SkMacroCall(name, arg) => SkMacroCall(name, ex_term(&mut st, arg))
+    SkSplice(arg) => SkSplice(ex_term(&mut st, arg))
+    SkApp(f, args) => {
+      let f2 := ex_term(&mut st, f)
+      SkApp(f2, ex_terms(&mut st, args))
+    }
+    SkPi(params, result, effects) => {
+      let params2 := ex_pi_params(&mut st, params)
+      SkPi(params2, ex_term(&mut st, result), effects)
+    }
+    SkExists(binder, domain, body, unused) => {
+      let domain2 := ex_term(&mut st, domain)
+      SkExists(binder, domain2, ex_term(&mut st, body), unused)
+    }
+    SkLam(params, body, types, unused) => {
+      let types2 := ex_opts(&mut st, types)
+      SkLam(params, ex_term(&mut st, body), types2, unused)
+    }
+    SkBorrowLam(modes, lam) => SkBorrowLam(modes, ex_term(&mut st, lam))
+    SkUnion(items) => SkUnion(ex_terms(&mut st, items))
+    SkTagged(tag, term) => SkTagged(tag, ex_term(&mut st, term))
+    SkBorrow(m, m_orig, term) => SkBorrow(m, m_orig, ex_term(&mut st, term))
+    SkFnKind(kind, ty) => SkFnKind(kind, ex_term(&mut st, ty))
+    SkIf(c, a, b) => {
+      let c2 := ex_term(&mut st, c)
+      let a2 := ex_term(&mut st, a)
+      SkIf(c2, a2, ex_opt(&mut st, b))
+    }
+    SkField(base, name) => SkField(ex_term(&mut st, base), name)
+    SkBlock(stmts) => SkBlock(ex_stmt_list(&mut st, stmts))
+    SkPerform(eff, args) => SkPerform(eff, ex_terms(&mut st, args))
+    SkHandle(body, handlers) => {
+      let body2 := ex_term(&mut st, body)
+      SkHandle(body2, ex_handlers(&mut st, handlers))
+    }
+    SkBudget(memory, steps, body) => {
+      let steps2 := ex_term(&mut st, steps)
+      SkBudget(memory, steps2, ex_term(&mut st, body))
+    }
+    SkMatch(scrutinee, result, arms, binder, binder_unused) => {
+      let s2 := ex_term(&mut st, scrutinee)
+      let r2 := ex_opt(&mut st, result)
+      SkMatch(s2, r2, ex_arms(&mut st, arms), binder, binder_unused)
+    }
+    SkRecord(name, fields) => SkRecord(name, ex_fields(&mut st, fields))
+    SkStep(tactic, arg, cs, ce, Before, arms) => {
+      let arg2 := ex_term(&mut st, arg)
+      let before2 := ex_opt(&mut st, Before)
+      SkStep(tactic, arg2, cs, ce, before2, ex_step_arms(&mut st, arms))
+    }
+    other => other
+  }
+}
+
+
+// The constructors a bare name in a pattern may be: those of the files so
+// far and of the prelude's own types.
+pub fn ex_prelude_ctors(): List(Text) {
+  ["None", "Some", "Nil", "Cons", "Ok", "Err", "Zero", "Succ", "Pair", "Mk"]
+}
+
+pub fn ex_ctors(xs: List(SurfaceStmt)): List(Text) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => List::append(ex_ctors_of(s), ex_ctors(rest))
+  }
+}
+
+pub fn ex_data_names(cs: List(SurfaceDataCtor)): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(c.name, ex_data_names(rest))
+  }
+}
+
+pub fn ex_ind_names(cs: List(SurfaceCtor)): List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(c.name, ex_ind_names(rest))
+  }
+}
+
+pub fn ex_ctors_of(s: SurfaceStmt): List(Text) ! {div} {
+  match s {
+    StStruct(d) => ex_data_names(d.constructors)
+    StEnum(d) => ex_data_names(d.constructors)
+    StInductive(d) => ex_ind_names(d.constructors)
+    StMutual(items, ^a, ^b) => ex_ctors(items)
+    StModule(^name, ^vis, items, ^a, ^b) => ex_ctors(items)
+    ^other => Nil
+  }
+}
+
+// One file: its macros registered, its calls expanded, and, when it expanded
+// something, its names tied to their binders. `done` are the files before it
+// (their constructors can be named bare).
+pub fn ex_file(st: &mut ExState, done: List(SurfaceStmt), xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
+  st.expanded := false
+  let out := ex_top(&mut st, xs)
+  st.file := st.file + 1
+  if st.expanded {
+    rs_resolve(out, List::append(ex_prelude_ctors(), ex_ctors(List::append(done, out))), ex_sep())
+  } else {
+    out
+  }
+}
+
+// The declarations passed to the elaborator after compile-time functions leave
+// scope. Generated modules are qualified before ordinary name resolution.
+pub fn ex_module_file(st: &mut ExState, xs: List(SurfaceStmt)): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
+  st.expanded := false
+  let registered := ex_omit_macro_functions(xs, ex_register(&mut st, xs, xs))
+  let output := ex_module_calls(&mut st, registered)
+  st.file := st.file + 1
+  let flat := surface_resolve_reexports(ex_flatten_statements(output, ""))
+  if st.expanded { rs_resolve(flat, ex_prelude_ctors(), ex_sep()) } else { flat }
+}
+
+fn ex_module_calls(st: &mut ExState, statements: List(SurfaceStmt)): List(SurfaceStmt) ! {div, out_of_bounds, overflow} {
+  match statements {
+    Nil => Nil
+    Cons(statement, rest) => match statement {
+      StCalled(generates, call) => {
+        let expanded := ex_statement_call(&mut st, generates, call)
+        List::append(expanded, ex_module_calls(&mut st, rest))
+      }
+      _ => Cons(statement, ex_module_calls(&mut st, rest))
+    }
+  }
+}
+
+fn ex_omit_macro_functions(original: List(SurfaceStmt), registered: List(SurfaceStmt)): List(SurfaceStmt) {
+  match registered {
+    Nil => Nil
+    Cons(statement, rest) => {
+      let following := ex_omit_macro_functions(original, rest)
+      match statement {
+        StFn(f) => if ex_is_macro_function(original, f.name) { following } else { Cons(statement, following) }
+        _ => Cons(statement, following)
+      }
+    }
+  }
+}
+
+fn ex_is_macro_function(statements: List(SurfaceStmt), name: Text): Bool {
+  match statements {
+    Nil => false
+    Cons(statement, rest) => match statement {
+      StMacro(^m, function, ^start, ^end) => function == name || ex_is_macro_function(rest, name)
+      _ => ex_is_macro_function(rest, name)
+    }
+  }
+}

@@ -1,8 +1,8 @@
 description = "A function and a macro in another file do not change the identity of the polymorphic show effect."
 @ cases.check-alone
 source = ```tauto
-pub fn check(name: Text, ok: Bool): Unit ! {∀ A. show(A)} {
-  if ok { perform show(name, "ok") } else { perform show(name, "FAILED") }
+pub fn check(name: Text, ok: Bool): Unit ! {Show} {
+  if ok { show(&"ok") } else { show(&"FAILED") }
 }
 ```
 checks.check = "skipped"
@@ -15,13 +15,15 @@ lin = "ok"
 entry = "src/main.taut"
 files."Tauto.eure" = 'package { name = "show-macro-repro" version = "0.1.0" }'
 files."src/check.taut" = ```tauto
-pub fn check(name: Text, ok: Bool): Unit ! {∀ A. show(A)} {
-  if ok { perform show(name, "ok") } else { perform show(name, "FAILED") }
+pub fn check(name: Text, ok: Bool): Unit ! {Show} {
+  if ok { show(&"ok") } else { show(&"FAILED") }
 }
 ```
 files."src/main.taut" = ```tauto
 import "check.taut"
-check("example", true)
+perform main(() => {
+  check("example", true)
+})
 ```
 checks.check = "skipped"
 diagnostics = []
@@ -33,20 +35,22 @@ lin = "ok"
 entry = "src/main.taut"
 files."Tauto.eure" = 'package { name = "show-macro-repro" version = "0.1.0" }'
 files."src/check.taut" = ```tauto
-pub fn check(name: Text, ok: Bool): Unit ! {∀ A. show(A)} {
-  if ok { perform show(name, "ok") } else { perform show(name, "FAILED") }
+pub fn check(name: Text, ok: Bool): Unit ! {Show} {
+  if ok { show(&"ok") } else { show(&"FAILED") }
 }
 ```
 files."src/macros.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 fn show(): Bool { true }
-macro fn example(e: SynExpr): SynExpr { quote { show() } }
+pub macro fn example(e: SynExpr): SynExpr { quote { show() } }
 ```
 files."src/main.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 import "macros.taut"
 import "check.taut"
-check("example", true)
+perform main(() => {
+  check("example", true)
+})
 ```
 checks.check = "skipped"
 diagnostics = []
@@ -58,20 +62,22 @@ lin = "ok"
 entry = "src/main.taut"
 files."Tauto.eure" = 'package { name = "show-macro-repro" version = "0.1.0" }'
 files."src/check.taut" = ```tauto
-pub fn check(name: Text, ok: Bool): Unit ! {∀ A. show(A)} {
-  if ok { perform show(name, "ok") } else { perform show(name, "FAILED") }
+pub fn check(name: Text, ok: Bool): Unit ! {Show} {
+  if ok { show(&"ok") } else { show(&"FAILED") }
 }
 ```
 files."src/macros.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 fn show(): Bool { true }
-macro fn example(e: SynExpr): SynExpr { quote { show() } }
+pub macro fn example(e: SynExpr): SynExpr { quote { show() } }
 ```
 files."src/main.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 import "macros.taut"
 import "check.taut"
-check("example", example!(true))
+perform main(() => {
+  check("example", example!(true))
+})
 ```
 checks.check = "skipped"
 diagnostics = []
@@ -83,8 +89,8 @@ lin = "ok"
 entry = "src/main.taut"
 files."Tauto.eure" = 'package { name = "show-macro-repro" version = "0.1.0" }'
 files."src/check.taut" = ```tauto
-pub fn check(name: Text, ok: Bool): Unit ! {∀ A. show(A)} {
-  if ok { perform show(name, "ok") } else { perform show(name, "FAILED") }
+pub fn check(name: Text, ok: Bool): Unit ! {Show} {
+  if ok { show(&"ok") } else { show(&"FAILED") }
 }
 ```
 files."src/macros.taut" = ```tauto
@@ -93,7 +99,9 @@ fn show(): Bool { true }
 files."src/main.taut" = ```tauto
 import "macros.taut"
 import "check.taut"
-check("example", true)
+perform main(() => {
+  check("example", true)
+})
 ```
 checks.check = "skipped"
 diagnostics = []

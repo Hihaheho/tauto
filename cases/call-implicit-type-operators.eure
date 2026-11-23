@@ -1,0 +1,41 @@
+description = "A named implicit argument takes a product and a function type unparenthesized, as a generic's kind does."
+
+@ cases.product-in-named-implicit
+source = ```tauto
+fn keep<A>(x: A): A { x }
+fn pair(): Nat × Bool { keep(<A: Nat × Bool>, #(1, true)) }
+fn nested(): Nat × Bool × Nat { keep(<A: Nat × Bool × Nat>, #(1, true, 2)) }
+fn same(): Nat × Bool { keep(<A: (Nat × Bool)>, #(1, true)) }
+```
+checks_all = "checked"
+
+@ cases.function-in-named-implicit
+source = ```tauto
+fn keep<A>(x: A): A { x }
+fn run(): Nat { keep(<A: (Nat) -> Nat>, (n: Nat) => n)(1) }
+```
+checks_all = "checked"
+
+@ cases.named-implicit-fixes-the-generic
+source = ```tauto
+fn keep<A>(x: A): A { x }
+fn named(): Nat { keep(<A: Nat>, 1) }
+```
+checks_all = "checked"
+
+@ cases.lambda-in-named-implicit
+description = "A named implicit argument may be a lambda; its body is read as a generic's kind is."
+source = ```tauto
+fn apply<f: (Nat) -> Nat>(n: Nat): Nat { f(n) }
+fn run(): Nat { apply(<f: (x) => x>, 3) }
+fn typed(): Nat { apply(<f: (x: Nat) => x>, 3) }
+theorem runs(): Eq(Nat, run(), 3) { Refl }
+```
+checks_all = "checked"
+
+@ cases.lambda-body-with-greater-than-needs-parentheses
+source = ```tauto
+fn apply<f: (Nat) -> Bool>(n: Nat): Bool { f(n) }
+fn run(): Bool { apply(<f: (x) => (x > 1)>, 3) }
+```
+checks_all = "checked"

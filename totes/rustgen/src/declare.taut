@@ -5,26 +5,42 @@ import "bindings.taut"
 import "generic_core.taut"
 import "model.taut"
 import "../../text/src/text.taut"
-import std::Base
-import std::Text
+import std::base
+import std::text
 
-pub fn rustgen_no_borrows(borrows: List(Option(Bool))): Bool {
-  ⊢ Bool from match borrows {
+pub fn rustgen_no_borrows(r#borrows: List(Option(Bool))): Bool {
+  match r#borrows {
     Nil => true
 
-    Cons(borrow, rest) => ⊢ Bool from match borrow {
+    Cons(r#borrow, rest) => ⊢ Bool from match r#borrow {
       None => rustgen_no_borrows(rest)
 
-      Some(mutable) => false
+      Some(^mutable) => false
     }
   }
 }
 
-pub fn rustgen_no_effects(effects: Option(List(Text))): Bool {
-  ⊢ Bool from match effects {
+// A written row may name only what the generated Rust already does without
+// a handler: checked arithmetic stops the program on `overflow`, and calls may
+// recurse without bound (`div`). Any other effect needs a handler rustgen does
+// not emit.
+pub fn rustgen_runtime_entries(entries: List(RowEntry)): Bool {
+  match entries {
+    Nil => true
+
+    Cons(entry, rest) => ⊢ Bool from match entry {
+      EntryName(name, ^unused) => (name == "div" || name == "overflow") && rustgen_runtime_entries(rest)
+
+      EntryApplied(^name, ^args, ^universal, ^forall, ^unused) => false
+    }
+  }
+}
+
+pub fn rustgen_no_effects(effects: Option(List(RowEntry))): Bool {
+  match effects {
     None => true
 
-    Some(names) => false
+    Some(names) => rustgen_runtime_entries(names)
   }
 }
 
@@ -33,16 +49,16 @@ pub fn rustgen_parameters(
   types: List(Option(SurfaceTerm)),
   done: List(RustgenBinding)
 ): RustgenResult(List(RustgenBinding)) {
-  ⊢ RustgenResult(List(RustgenBinding)) from match names {
+  match names {
     Nil => ⊢ RustgenResult(List(RustgenBinding)) from match types {
       Nil => RustgenOk(List::reverse(done))
 
-      Cons(extra, rest) => RustgenErr("parameter lists differ")
+      Cons(^extra, ^rest) => RustgenErr("parameter lists differ")
     }
 
     Cons(name, more) => ⊢ RustgenResult(List(RustgenBinding)) from match rustgen_find(name, done) {
 
-      Some(existing) => RustgenErr("duplicate parameter")
+      Some(^existing) => RustgenErr("duplicate parameter")
       None => ⊢ RustgenResult(List(RustgenBinding)) from match types {
         Nil => RustgenErr("parameter type required")
 
@@ -64,11 +80,11 @@ pub fn rustgen_parameters(
 }
 
 pub fn rustgen_no_bounds(bounds: List(Option(Text))): Bool {
-  ⊢ Bool from match bounds {
+  match bounds {
     Nil => true
     Cons(b, rest) => ⊢ Bool from match b {
       None => rustgen_no_bounds(rest)
-      Some(name) => false
+      Some(^name) => false
     }
   }
 }
@@ -80,7 +96,7 @@ pub fn rustgen_signature(f: SurfaceFn): RustgenResult(RustgenFunction) {
   ) || not(rustgen_no_bounds(f.bounds)) || List::length(f.wheres) != 0 {
     RustgenErr("duplicate generic parameters or unsupported constraints")
   } else if not(
-    rustgen_no_borrows(f.borrows)
+    rustgen_no_borrows(f.r#borrows)
   ) || not(
     rustgen_no_effects(f.effects)
   ) { RustgenErr("borrows and effects are unsupported") } else {
@@ -122,7 +138,7 @@ pub fn rustgen_declarations_in(
   stmts: List(SurfaceStmt),
   done: List(RustgenFunction)
 ): RustgenResult(List(RustgenFunction)) {
-  ⊢ RustgenResult(List(RustgenFunction)) from match k {
+  match k {
     Zero => RustgenErr("declaration depth exceeded")
     Succ(j) => ⊢ RustgenResult(List(RustgenFunction)) from match stmts {
       Nil => RustgenOk(List::reverse(done))
@@ -130,48 +146,51 @@ pub fn rustgen_declarations_in(
       Cons(stmt, rest) => ⊢ RustgenResult(List(RustgenFunction)) from match stmt {
         StFn(f) => ⊢ RustgenResult(List(RustgenFunction)) from match rustgen_find_function(f.name, done) {
 
-          Some(existing) => RustgenErr("duplicate function")
+          Some(^existing) => RustgenErr("duplicate function")
           None => ⊢ RustgenResult(List(RustgenFunction)) from match rustgen_signature(f) {
             RustgenErr(Message) => RustgenErr(Message)
             RustgenOk(function) => rustgen_declarations_in(j, rest, Cons(function, done))
           }
         }
-        StLet(unused0, unused1, unused2, unused3, unused4) => RustgenErr(
+        StLet(^unused0, ^unused1, ^unused2, ^unused3, ^unused4, ^unused, ^st_stack) => RustgenErr(
           "unsupported declaration: StLet"
         )
-        StVar(unused0, unused1, unused2, unused3) => RustgenErr("unsupported declaration: StVar")
-        StModule(unused0, unused1, unused2, unused3) => RustgenErr(
-          "unsupported declaration: StModule"
-        )
-        StAssign(unused0, unused1, unused2) => RustgenErr("unsupported declaration: StAssign")
-        StCalled(unused0, unused1) => RustgenErr("unsupported declaration: StCalled")
-        StTheorem(unused0) => RustgenErr("unsupported declaration: StTheorem")
-        StDef(unused0) => RustgenErr("unsupported declaration: StDef")
-        StMutual(items, start, end) => rustgen_declarations_in(j, List::append(items, rest), done)
-        StImport(unused0, unused1, unused2) => RustgenErr("unsupported declaration: StImport")
+        StVar(^unused0, ^unused1, ^unused2, ^unused3, ^unused, ^st_stack) => RustgenErr("unsupported declaration: StVar")
+        StAssign(^unused0, ^unused1, ^unused2) => RustgenErr("unsupported declaration: StAssign")
+        StCalled(^unused0, ^unused1) => RustgenErr("unsupported declaration: StCalled")
+        StTheorem(^unused0) => RustgenErr("unsupported declaration: StTheorem")
+        StDef(^unused0) => RustgenErr("unsupported declaration: StDef")
+        StMutual(items, ^start, ^end) => rustgen_declarations_in(j, List::append(items, rest), done)
+        StImport(^unused0, ^unused1, ^unused2) => RustgenErr("unsupported declaration: StImport")
         StInductive(d) => ⊢ RustgenResult(List(RustgenFunction)) from match rustgen_inductive(d, done) {
           RustgenErr(Message) => RustgenErr(Message)
           RustgenOk(next) => rustgen_declarations_in(j, rest, next)
         }
-        StEffect(unused0) => RustgenErr("unsupported declaration: StEffect")
-        StStruct(unused0) => RustgenErr("unsupported declaration: StStruct")
-        StEnum(unused0) => RustgenErr("unsupported declaration: StEnum")
-        StExtern(unused0, unused1, unused2, unused3) => RustgenErr(
+        StEffect(^unused0) => RustgenErr("unsupported declaration: StEffect")
+        StStruct(^unused0) => RustgenErr("unsupported declaration: StStruct")
+        StEnum(^unused0) => RustgenErr("unsupported declaration: StEnum")
+        StExtern(^unused0, ^unused1, ^unused2, ^unused3, ^unused4, ^unused5, ^unused6) => RustgenErr(
           "unsupported declaration: StExtern"
         )
-        StClass(unused0) => RustgenErr("unsupported declaration: StClass")
-        StInstance(unused0) => RustgenErr("unsupported declaration: StInstance")
-        StWhile(unused0, unused1) => RustgenErr("unsupported declaration: StWhile")
-        StReturn(unused0) => RustgenErr("unsupported declaration: StReturn")
-        StExpr(unused0) => RustgenErr("unsupported declaration: StExpr")
-        StOther(unused0, unused1, unused2) => RustgenErr("unsupported declaration: StOther")
-        StMacro(unused0, unused1, unused2, unused3) => RustgenErr(
+        StClass(^unused0) => RustgenErr("unsupported declaration: StClass")
+        StInstance(^unused0) => RustgenErr("unsupported declaration: StInstance")
+        StWhile(^unused0, ^unused1) => RustgenErr("unsupported declaration: StWhile")
+        StReturn(^unused0) => RustgenErr("unsupported declaration: StReturn")
+        StExpr(^unused0) => RustgenErr("unsupported declaration: StExpr")
+        StOther(^unused0, ^unused1, ^unused2) => RustgenErr("unsupported declaration: StOther")
+        StLoop(^st_body, ^unused1, ^unused2) => RustgenErr("unsupported declaration: StOther")
+        StModule(^mod_name, ^mod_vis, ^mod_items, ^unused1, ^unused2) => RustgenErr("unsupported declaration: StOther")
+        StReexport(^re_path, ^re_names, ^re_spans, ^unused1, ^unused2) => RustgenErr("unsupported declaration: StOther")
+        StFor(^for_pat, ^for_src, ^st_body, ^unused1, ^unused2) => RustgenErr("unsupported declaration: StOther")
+        StBreak(^st_value, ^unused1, ^unused2) => RustgenErr("unsupported declaration: StOther")
+        StContinue(^unused1, ^unused2) => RustgenErr("unsupported declaration: StOther")
+        StMacro(^unused0, ^unused1, ^unused2, ^unused3) => RustgenErr(
           "unsupported declaration: StMacro"
         )
-        StAttributed(unused0, unused1, unused2, unused3) => RustgenErr(
+        StAttributed(^unused0, ^unused1, ^unused2, ^unused3) => RustgenErr(
           "unsupported declaration: StAttributed"
         )
-        StSyntax(unused0, unused1, unused2, unused3) => RustgenErr(
+        StSyntax(^unused0, ^unused1, ^unused2, ^unused3) => RustgenErr(
           "unsupported declaration: StSyntax"
         )
       }
@@ -185,7 +204,7 @@ pub fn rustgen_declarations(
 ): RustgenResult(List(RustgenFunction)) { rustgen_declarations_in(10000, stmts, done) }
 
 pub fn rustgen_parameter_code(params: List(RustgenBinding)): List(Text) {
-  ⊢ List(Text) from match params {
+  match params {
     Nil => Nil
     Cons(param, rest) => Cons(
       Text::concat_all(
@@ -201,7 +220,7 @@ pub fn rustgen_functions(
   all: List(RustgenFunction),
   remaining: List(RustgenFunction)
 ): RustgenResult(List(Text)) {
-  ⊢ RustgenResult(List(Text)) from match remaining {
+  match remaining {
     Nil => RustgenOk(Nil)
     Cons(f, rest) => if not(
       rustgen_signature_known(f, all)
@@ -267,10 +286,10 @@ pub fn rustgen_functions(
 }
 
 pub fn rustgen_program(source: Text, stmts: List(SurfaceStmt), entry: Text): RustgenResult(Text) {
-  ⊢ RustgenResult(Text) from match rustgen_declarations(stmts, rustgen_builtin_declarations()) {
+  match rustgen_declarations(stmts, rustgen_builtin_declarations()) {
     RustgenErr(Message) => RustgenErr(Message)
     RustgenOk(declared) => {
-      let functions := rustgen_builtin_pair(declared)
+      let functions := rustgen_builtin_product(declared)
       ⊢ RustgenResult(Text) from match rustgen_find_function(entry, functions) {
         None => RustgenErr("entry function not found")
         Some(f) => if f.kind != 0 || not(

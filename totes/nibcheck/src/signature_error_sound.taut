@@ -2,15 +2,16 @@ import "signature_frame.taut"
 import "written_error_sound.taut"
 import "registration_error_sound.taut"
 import "../../surface/src/surface.taut"
-import std::List
-import std::Map
-import std::Text
+import std::list
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "decl_names_sound.taut"
 import "error_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
@@ -20,7 +21,7 @@ pub theorem signature_wrap_if_frame_errors(
   mutable: Bool,
   borrowed: Bool
 ): CkErrorFrame(c, signature_wrap_if(c, t, mutable, borrowed)) {
-  ⊢ CkErrorFrame(c, signature_wrap_if(c, t, mutable, borrowed)) from match borrowed {
+  match borrowed {
     true => (clean_errors => clean_errors)
     false => (clean_errors => clean_errors)
   }
@@ -30,7 +31,7 @@ pub theorem signature_wrap_frame_errors(
   t: Ty,
   b: Option(Bool)
 ): CkErrorFrame(c, signature_wrap(c, t, b)) {
-  ⊢ CkErrorFrame(c, signature_wrap(c, t, b)) from match b {
+  match b {
     None => (clean_errors => clean_errors)
     Some(m) => signature_wrap_if_frame_errors(c, t, m, ty_is_borrow(t))
   }
@@ -40,7 +41,7 @@ pub theorem ck_sig_written_frame_errors(
   p: Option(SurfaceTerm),
   map: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_sig_written(c, p, map)) {
-  ⊢ CkErrorFrame(c, ck_sig_written(c, p, map)) from match p {
+  match p {
     None => (clean_errors => clean_errors)
     Some(x) => error_frame_rewrap(c, ck_written(c, x, map), ck_written_frame_errors(c, x, map))
   }
@@ -55,8 +56,7 @@ pub theorem ck_sig_param_frame_errors(
     (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
     Eq::sym(signature_param_unf(c, p, b, map)),
     error_frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c,
       (t: Ty, next: Checker) => signature_wrap(next, t, b),
       ck_sig_written(frame_set_under_borrow(c, signature_some_borrow(b)), p, map),
@@ -77,7 +77,7 @@ pub theorem ck_report_frame_errors(
   message: Option(Text),
   span: TySpan
 ): CkErrorFrame(c, ck_report(c, message, span)) {
-  ⊢ CkErrorFrame(c, ck_report(c, message, span)) from match message {
+  match message {
     None => (clean_errors => clean_errors)
     Some(m) => (
       clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
@@ -89,7 +89,7 @@ pub theorem signature_result_k_frame_errors(
   map: Ordmap(Text, Ty),
   p: Option(SurfaceTerm)
 ): CkErrorFrame(c, signature_result_k(c, map, p)) {
-  ⊢ CkErrorFrame(c, signature_result_k(c, map, p)) from match p {
+  match p {
     None => (clean_errors => clean_errors)
     Some(r) => error_frame_rewrap(c, ck_written(c, r, map), ck_written_frame_errors(c, r, map))
   }
@@ -109,11 +109,11 @@ pub theorem ck_sig_result_frame_errors(
 pub theorem signature_pred_duplicate_frame_errors(
   c: Checker,
   w: SurfaceConstraint,
-  preds: List(Pair(Text, Text)),
+  preds: List(Text × Text),
   g: Text,
   dup: Bool
 ): CkErrorFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
-  ⊢ CkErrorFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) from match dup {
+  match dup {
     true => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
     false => (clean_errors => clean_errors)
   }
@@ -122,10 +122,10 @@ pub theorem signature_pred_generic_frame_errors(
   c: Checker,
   w: SurfaceConstraint,
   name: Text,
-  preds: List(Pair(Text, Text)),
+  preds: List(Text × Text),
   o: Option(Text)
 ): CkErrorFrame(c, signature_pred_generic(c, w, name, preds, o)) {
-  ⊢ CkErrorFrame(c, signature_pred_generic(c, w, name, preds, o)) from match o {
+  match o {
     None => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
     Some(g) => signature_pred_duplicate_frame_errors(
       c,
@@ -139,12 +139,12 @@ pub theorem signature_pred_generic_frame_errors(
 pub theorem signature_pred_missing_frame_errors(
   c: Checker,
   w: SurfaceConstraint,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   name: Text,
-  preds: List(Pair(Text, Text)),
+  preds: List(Text × Text),
   missing: Bool
 ): CkErrorFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
-  ⊢ CkErrorFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) from match missing {
+  match missing {
     true => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
     false => signature_pred_generic_frame_errors(
       c,
@@ -158,12 +158,12 @@ pub theorem signature_pred_missing_frame_errors(
 pub theorem ck_where_pred_frame_errors(
   c: Checker,
   w: SurfaceConstraint,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   name: Text,
-  preds: List(Pair(Text, Text))
+  preds: List(Text × Text)
 ): CkErrorFrame(c, ck_where_pred(c, w, gs, name, preds)) {
   Eq::subst(
-    (z: Mut1(List(Pair(Text, Text)), Checker)) => CkErrorFrame(c, z),
+    (z: Mut1(List(Text × Text), Checker)) => CkErrorFrame(c, z),
     Eq::sym(signature_pred_unf(c, w, gs, name, preds)),
     signature_pred_missing_frame_errors(c, w, gs, name, preds, signature_class_missing(c, w))
   )
@@ -173,31 +173,28 @@ pub theorem signature_params_cons_frame_errors(
   p: Option(SurfaceTerm),
   rest: List(Option(SurfaceTerm)),
   c: Checker,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   map: Ordmap(Text, Ty),
   ih: ∀ next: Checker. ∀ bs: List(
     Option(Bool)
   ). CkErrorFrame(next, ck_sig_params(rest, next, bs, map))
-): CkErrorFrame(c, signature_params_cons(p, rest, c, borrows, map)) {
+): CkErrorFrame(c, signature_params_cons(p, rest, c, r#borrows, map)) {
   error_frame_bind(
-    Ty,
-    List(Ty),
+    <A: Ty, B: List(Ty)>,
     c,
     (head: Ty, c1: Checker) => frame_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
-      ck_sig_params(rest, c1, List::tail(borrows), map)
+      ck_sig_params(rest, c1, List::tail(r#borrows), map)
     ),
-    ck_sig_param(c, p, list_head_or_none(borrows), map),
-    ck_sig_param_frame_errors(c, p, list_head_or_none(borrows), map),
+    ck_sig_param(c, p, list_head_or_none(r#borrows), map),
+    ck_sig_param_frame_errors(c, p, list_head_or_none(r#borrows), map),
     head => c1 => error_frame_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       c1,
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
-      ck_sig_params(rest, c1, List::tail(borrows), map),
-      ih(c1, List::tail(borrows)),
+      ck_sig_params(rest, c1, List::tail(r#borrows), map),
+      ih(c1, List::tail(r#borrows)),
       tail => c2 => (clean_errors => clean_errors)
     )
   )
@@ -206,19 +203,19 @@ pub theorem signature_params_cons_frame_errors(
 pub theorem ck_sig_params_frame_errors(
   pts: List(Option(SurfaceTerm)),
   c: Checker,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   map: Ordmap(Text, Ty)
-): CkErrorFrame(c, ck_sig_params(pts, c, borrows, map)) {
-  ⊢ CkErrorFrame(c, ck_sig_params(pts, c, borrows, map)) from match pts {
+): CkErrorFrame(c, ck_sig_params(pts, c, r#borrows, map)) {
+  match pts {
     Nil => (clean_errors => clean_errors)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),
-      Eq::sym(signature_params_unf(p, rest, c, borrows, map)),
+      Eq::sym(signature_params_unf(p, rest, c, r#borrows, map)),
       signature_params_cons_frame_errors(
         p,
         rest,
         c,
-        borrows,
+        r#borrows,
         map,
         next => bs => ck_sig_params_frame_errors(rest, next, bs, map)
       )
@@ -230,18 +227,17 @@ pub theorem signature_preds_cons_frame_errors(
   w: SurfaceConstraint,
   rest: List(SurfaceConstraint),
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   name: Text,
-  preds: List(Pair(Text, Text)),
+  preds: List(Text × Text),
   ih: ∀ next: Checker. ∀ ps: List(
-    Pair(Text, Text)
+    (Text × Text)
   ). CkErrorFrame(next, ck_where_preds(rest, next, gs, name, ps))
 ): CkErrorFrame(c, signature_preds_cons(w, rest, c, gs, name, preds)) {
   error_frame_bind(
-    List(Pair(Text, Text)),
-    List(Pair(Text, Text)),
+    <A: List(Text × Text), B: List(Text × Text)>,
     c,
-    (head: List(Pair(Text, Text)), c1: Checker) => ck_rewrap1(
+    (head: List(Text × Text), c1: Checker) => ck_rewrap1(
       ck_where_preds(rest, c1, gs, name, head)
     ),
     ck_where_pred(c, w, gs, name, preds),
@@ -253,14 +249,14 @@ pub theorem signature_preds_cons_frame_errors(
 pub theorem ck_where_preds_frame_errors(
   ws: List(SurfaceConstraint),
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   name: Text,
-  preds: List(Pair(Text, Text))
+  preds: List(Text × Text)
 ): CkErrorFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
-  ⊢ CkErrorFrame(c, ck_where_preds(ws, c, gs, name, preds)) from match ws {
+  match ws {
     Nil => (clean_errors => clean_errors)
     Cons(w, rest) => Eq::subst(
-      (z: Mut1(List(Pair(Text, Text)), Checker)) => CkErrorFrame(c, z),
+      (z: Mut1(List(Text × Text), Checker)) => CkErrorFrame(c, z),
       Eq::sym(signature_preds_unf(w, rest, c, gs, name, preds)),
       signature_preds_cons_frame_errors(
         w,
@@ -281,70 +277,60 @@ pub theorem signature_read_frame_errors(
   g: SigGenerics
 ): CkErrorFrame(c, signature_read(c, f, g)) {
   error_frame_bind(
-    List(Ty),
-    Scheme,
+    <A: List(Ty), B: Scheme>,
     c,
     (params: List(Ty), c1: Checker) => frame_bind(
-      Ty,
-      Scheme,
+      <A: Ty, B: Scheme>,
       (result: Ty, c2: Checker) => frame_bind(
-        Unit,
-        Scheme,
+        <A: Unit, B: Scheme>,
         (ignored: Unit, c3: Checker) => frame_bind(
-          List(Pair(Text, Text)),
-          Scheme,
-          (preds: List(Pair(Text, Text)), c4: Checker) => mut1(
+          <A: List(Text × Text), B: Scheme>,
+          (preds: List(Text × Text), c4: Checker) => mut1(
             signature_scheme(g, params, result, preds),
             c4
           ),
           ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil)
         ),
-        ck_report(c2, ck_view_result_message(c2, params, result), ck_sig_span(f))
+        ck_report(c2, sig_report_message(c2, f, params, result), sig_report_span(f))
       ),
       ck_sig_result(c1, f, signature_map(g))
     ),
     ck_sig_params(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
     ck_sig_params_frame_errors(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
     params => c1 => error_frame_bind(
-      Ty,
-      Scheme,
+      <A: Ty, B: Scheme>,
       c1,
       (result: Ty, c2: Checker) => frame_bind(
-        Unit,
-        Scheme,
+        <A: Unit, B: Scheme>,
         (ignored: Unit, c3: Checker) => frame_bind(
-          List(Pair(Text, Text)),
-          Scheme,
-          (preds: List(Pair(Text, Text)), c4: Checker) => mut1(
+          <A: List(Text × Text), B: Scheme>,
+          (preds: List(Text × Text), c4: Checker) => mut1(
             signature_scheme(g, params, result, preds),
             c4
           ),
           ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil)
         ),
-        ck_report(c2, ck_view_result_message(c2, params, result), ck_sig_span(f))
+        ck_report(c2, sig_report_message(c2, f, params, result), sig_report_span(f))
       ),
       ck_sig_result(c1, f, signature_map(g)),
       ck_sig_result_frame_errors(c1, f, signature_map(g)),
       result => c2 => error_frame_bind(
-        Unit,
-        Scheme,
+        <A: Unit, B: Scheme>,
         c2,
         (ignored: Unit, c3: Checker) => frame_bind(
-          List(Pair(Text, Text)),
-          Scheme,
-          (preds: List(Pair(Text, Text)), c4: Checker) => mut1(
+          <A: List(Text × Text), B: Scheme>,
+          (preds: List(Text × Text), c4: Checker) => mut1(
             signature_scheme(g, params, result, preds),
             c4
           ),
           ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil)
         ),
-        ck_report(c2, ck_view_result_message(c2, params, result), ck_sig_span(f)),
-        ck_report_frame_errors(c2, ck_view_result_message(c2, params, result), ck_sig_span(f)),
+        ck_report(c2, sig_report_message(c2, f, params, result), sig_report_span(f)),
+        ck_report_frame_errors(c2, sig_report_message(c2, f, params, result), sig_report_span(f)),
         ignored => c3 => error_frame_bind(
-          List(Pair(Text, Text)),
-          Scheme,
+          <A: List(Text × Text), B: Scheme>,
           c3,
-          (preds: List(Pair(Text, Text)), c4: Checker) => mut1(
+          (preds: List(Text × Text), c4: Checker) => mut1(
             signature_scheme(g, params, result, preds),
             c4
           ),
@@ -385,8 +371,7 @@ pub theorem signature_add_frame_errors(
   f: SurfaceFn
 ): CkErrorFrame(c, signature_add(c, f)) {
   error_frame_bind(
-    Scheme,
-    Scheme,
+    <A: Scheme, B: Scheme>,
     c,
     (scheme: Scheme, c1: Checker) => signature_store(c1, f, scheme),
     ck_signature(c, f),
@@ -407,7 +392,7 @@ pub theorem signature_prelude_if_frame_errors(
   f: SurfaceFn,
   take: Bool
 ): CkErrorFrame(c, signature_prelude_if(c, f, take)) {
-  ⊢ CkErrorFrame(c, signature_prelude_if(c, f, take)) from match take {
+  match take {
     true => written_error_return(c, Star, ck_add_fn(c, f), ck_add_fn_frame_errors(c, f))
     false => (clean_errors => clean_errors)
   }
@@ -421,8 +406,7 @@ pub theorem signature_prelude_fns_each_cons_frame_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_prelude_fns_each(rest, next, own))
 ): CkErrorFrame(c, signature_prelude_fns_each_cons(f, rest, c, own)) {
   error_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns_each(rest, c1, own)),
     signature_prelude_if(c, f, not(types_is_own(own, signature_name(f)))),
@@ -436,7 +420,7 @@ pub theorem ck_prelude_fns_each_frame_errors(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, ck_prelude_fns_each(fs, c, own)) {
-  ⊢ CkErrorFrame(c, ck_prelude_fns_each(fs, c, own)) from match fs {
+  match fs {
     Nil => (clean_errors => clean_errors)
     Cons(f, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
@@ -459,8 +443,7 @@ pub theorem signature_extern_fns_cons_frame_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_extern_fns(rest, next))
 ): CkErrorFrame(c, signature_extern_fns_cons(f, rest, c)) {
   error_frame_bind(
-    Scheme,
-    Unit,
+    <A: Scheme, B: Unit>,
     c,
     (ignored: Scheme, c1: Checker) => ck_rewrap1(ck_extern_fns(rest, c1)),
     ck_add_fn(c, f),
@@ -473,7 +456,7 @@ pub theorem ck_extern_fns_frame_errors(
   fs: List(SurfaceFn),
   c: Checker
 ): CkErrorFrame(c, ck_extern_fns(fs, c)) {
-  ⊢ CkErrorFrame(c, ck_extern_fns(fs, c)) from match fs {
+  match fs {
     Nil => (clean_errors => clean_errors)
     Cons(f, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
@@ -493,10 +476,9 @@ pub theorem ck_prelude_fns_one_frame_errors(
   s: SurfaceStmt,
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, ck_prelude_fns_one(c, s, own)) {
-  ⊢ CkErrorFrame(c, ck_prelude_fns_one(c, s, own)) from match s {
-    StLet(name, ty, value, borrow, mutable) => (clean_errors => clean_errors)
-    StVar(name, ty, value, borrow) => (clean_errors => clean_errors)
-    StModule(name, stmts, start, end) => (clean_errors => clean_errors)
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => (clean_errors => clean_errors)
+    StVar(name, ty, value, r#borrow, unused, st_stack) => (clean_errors => clean_errors)
     StAssign(name, name_place, value) => (clean_errors => clean_errors)
     StCalled(name_generates, value) => (clean_errors => clean_errors)
     StFn(f) => Eq::subst(
@@ -516,9 +498,9 @@ pub theorem ck_prelude_fns_one_frame_errors(
     StEffect(e) => (clean_errors => clean_errors)
     StStruct(d) => (clean_errors => clean_errors)
     StEnum(d) => (clean_errors => clean_errors)
-    StExtern(abi, fns, start, end) => Eq::subst(
+    StExtern(fns, instances, types, structs, enums, start, end) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
-      Eq::sym(signature_prelude_fns_one_StExtern_unf(abi, fns, start, end, c, own)),
+      Eq::sym(signature_prelude_fns_one_StExtern_unf(fns, instances, types, structs, enums, start, end, c, own)),
       error_frame_rewrap(
         c,
         ck_prelude_fns_each(fns, c, own),
@@ -531,6 +513,12 @@ pub theorem ck_prelude_fns_one_frame_errors(
     StReturn(value) => (clean_errors => clean_errors)
     StExpr(value) => (clean_errors => clean_errors)
     StOther(what, start, end) => (clean_errors => clean_errors)
+    StLoop(st_body, start, end) => (clean_errors => clean_errors)
+    StModule(mod_name, mod_vis, mod_items, start, end) => (clean_errors => clean_errors)
+    StReexport(re_path, re_names, re_spans, start, end) => (clean_errors => clean_errors)
+    StFor(for_pat, for_src, st_body, start, end) => (clean_errors => clean_errors)
+    StBreak(st_value, start, end) => (clean_errors => clean_errors)
+    StContinue(start, end) => (clean_errors => clean_errors)
     StMacro(name, function, start, end) => (clean_errors => clean_errors)
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => (clean_errors => clean_errors)
     StSyntax(name, grammar, start, end) => (clean_errors => clean_errors)
@@ -541,20 +529,18 @@ pub theorem ck_program_decl_frame_errors(
   c: Checker,
   s: SurfaceStmt
 ): CkErrorFrame(c, ck_program_decl(c, s)) {
-  ⊢ CkErrorFrame(c, ck_program_decl(c, s)) from match s {
-    StLet(name, ty, value, borrow, mutable) => (clean_errors => clean_errors)
-    StVar(name, ty, value, borrow) => (clean_errors => clean_errors)
-    StModule(name, stmts, start, end) => (clean_errors => clean_errors)
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => (clean_errors => clean_errors)
+    StVar(name, ty, value, r#borrow, unused, st_stack) => (clean_errors => clean_errors)
     StAssign(name, name_place, value) => (clean_errors => clean_errors)
     StCalled(name_generates, value) => (clean_errors => clean_errors)
     StFn(f) => Eq::subst(
-      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkErrorFrame(c, z),
+      (z: Mut1(Option(SurfaceFn × Scheme), Checker)) => CkErrorFrame(c, z),
       Eq::sym(signature_program_decl_StFn_unf(f, c)),
       error_frame_bind(
-        Scheme,
-        Option(Pair(SurfaceFn, Scheme)),
+        <A: Scheme, B: Option(SurfaceFn × Scheme)>,
         c,
-        (scheme: Scheme, c1: Checker) => mut1(Some(Pair { fst: f, snd: scheme }), c1),
+        (scheme: Scheme, c1: Checker) => mut1(Some(#(f, scheme)), c1),
         ck_add_fn(c, f),
         ck_add_fn_frame_errors(c, f),
         scheme => c1 => (clean_errors => clean_errors)
@@ -566,11 +552,10 @@ pub theorem ck_program_decl_frame_errors(
     StImport(path, start, end) => (clean_errors => clean_errors)
     StInductive(i) => (clean_errors => clean_errors)
     StEffect(e) => Eq::subst(
-      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkErrorFrame(c, z),
+      (z: Mut1(Option(SurfaceFn × Scheme), Checker)) => CkErrorFrame(c, z),
       Eq::sym(signature_program_decl_StEffect_unf(e, c)),
       error_frame_bind(
-        Unit,
-        Option(Pair(SurfaceFn, Scheme)),
+        <A: Unit, B: Option(SurfaceFn × Scheme)>,
         c,
         (ignored: Unit, c1: Checker) => mut1(None, c1),
         ck_declare_effect(c, e),
@@ -580,12 +565,11 @@ pub theorem ck_program_decl_frame_errors(
     )
     StStruct(d) => (clean_errors => clean_errors)
     StEnum(d) => (clean_errors => clean_errors)
-    StExtern(abi, fns, start, end) => Eq::subst(
-      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkErrorFrame(c, z),
-      Eq::sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+    StExtern(fns, instances, types, structs, enums, start, end) => Eq::subst(
+      (z: Mut1(Option(SurfaceFn × Scheme), Checker)) => CkErrorFrame(c, z),
+      Eq::sym(signature_program_decl_StExtern_unf(fns, instances, types, structs, enums, start, end, c)),
       error_frame_bind(
-        Unit,
-        Option(Pair(SurfaceFn, Scheme)),
+        <A: Unit, B: Option(SurfaceFn × Scheme)>,
         c,
         (ignored: Unit, c1: Checker) => mut1(None, c1),
         ck_extern_fns(fns, c),
@@ -599,6 +583,12 @@ pub theorem ck_program_decl_frame_errors(
     StReturn(value) => (clean_errors => clean_errors)
     StExpr(value) => (clean_errors => clean_errors)
     StOther(what, start, end) => (clean_errors => clean_errors)
+    StLoop(st_body, start, end) => (clean_errors => clean_errors)
+    StModule(mod_name, mod_vis, mod_items, start, end) => (clean_errors => clean_errors)
+    StReexport(re_path, re_names, re_spans, start, end) => (clean_errors => clean_errors)
+    StFor(for_pat, for_src, st_body, start, end) => (clean_errors => clean_errors)
+    StBreak(st_value, start, end) => (clean_errors => clean_errors)
+    StContinue(start, end) => (clean_errors => clean_errors)
     StMacro(name, function, start, end) => (clean_errors => clean_errors)
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => (clean_errors => clean_errors)
     StSyntax(name, grammar, start, end) => (clean_errors => clean_errors)
@@ -613,8 +603,7 @@ pub theorem signature_prelude_fns_cons_frame_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_prelude_fns(rest, next, own))
 ): CkErrorFrame(c, signature_prelude_fns_cons(s, rest, c, own)) {
   error_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (head: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns(rest, c1, own)),
     ck_prelude_fns_one(c, s, own),
@@ -628,7 +617,7 @@ pub theorem ck_prelude_fns_frame_errors(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, ck_prelude_fns(ss, c, own)) {
-  ⊢ CkErrorFrame(c, ck_prelude_fns(ss, c, own)) from match ss {
+  match ss {
     Nil => (clean_errors => clean_errors)
     Cons(s, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
@@ -651,22 +640,19 @@ pub theorem signature_program_decls_cons_frame_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_program_decls(rest, next))
 ): CkErrorFrame(c, signature_program_decls_cons(s, rest, c)) {
   error_frame_bind(
-    Option(Pair(SurfaceFn, Scheme)),
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Option(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
     c,
-    (head: Option(Pair(SurfaceFn, Scheme)), c1: Checker) => frame_bind(
-      List(Pair(SurfaceFn, Scheme)),
-      List(Pair(SurfaceFn, Scheme)),
-      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+    (head: Option(SurfaceFn × Scheme), c1: Checker) => frame_bind(
+      <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+      (tail: List(SurfaceFn × Scheme), c2: Checker) => mut1(opt_cons(head, tail), c2),
       ck_program_decls(rest, c1)
     ),
     ck_program_decl(c, s),
     ck_program_decl_frame_errors(c, s),
     head => c1 => error_frame_bind(
-      List(Pair(SurfaceFn, Scheme)),
-      List(Pair(SurfaceFn, Scheme)),
+      <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
       c1,
-      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+      (tail: List(SurfaceFn × Scheme), c2: Checker) => mut1(opt_cons(head, tail), c2),
       ck_program_decls(rest, c1),
       ih(c1),
       tail => c2 => (clean_errors => clean_errors)
@@ -678,10 +664,10 @@ pub theorem ck_program_decls_frame_errors(
   ss: List(SurfaceStmt),
   c: Checker
 ): CkErrorFrame(c, ck_program_decls(ss, c)) {
-  ⊢ CkErrorFrame(c, ck_program_decls(ss, c)) from match ss {
+  match ss {
     Nil => (clean_errors => clean_errors)
     Cons(s, rest) => Eq::subst(
-      (z: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkErrorFrame(c, z),
+      (z: Mut1(List(SurfaceFn × Scheme), Checker)) => CkErrorFrame(c, z),
       Eq::sym(signature_program_decls_cons_unf(s, rest, c)),
       signature_program_decls_cons_frame_errors(
         s,

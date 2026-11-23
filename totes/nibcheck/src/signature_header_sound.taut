@@ -1,14 +1,15 @@
 import "rules_signature_decl.taut"
 import "signature_body_sound.taut"
 import "signature_generics_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_sound.taut"
 import "signature_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -17,8 +18,8 @@ pub theorem signature_header_bind<A: Type>(
   m: Mut1(A, Checker),
   k: (A, Checker) -> Mut1(Scheme, Checker),
   kept: ∀ value: A. ∀ next: Checker. SignatureHeader(g, ck_val(k(value, next)))
-): SignatureHeader(g, ck_val(frame_bind(A, Scheme, k, m))) {
-  ⊢ SignatureHeader(g, ck_val(frame_bind(A, Scheme, k, m))) from match m {
+): SignatureHeader(g, ck_val(frame_bind(<A: A, B: Scheme>, k, m))) {
+  match m {
     mut1(value, next) => kept(value, next)
   }
 }
@@ -26,13 +27,13 @@ pub theorem signature_finish_preds_header(
   g: SigGenerics,
   params: List(Ty),
   result: Ty,
-  m: Mut1(List(Pair(Text, Text)), Checker)
+  m: Mut1(List(Text × Text), Checker)
 ): SignatureHeader(g, ck_val(signature_finish_preds(g, params, result, m))) {
   signature_header_bind(
-    List(Pair(Text, Text)),
+    <A: List(Text × Text)>,
     g,
     m,
-    (preds: List(Pair(Text, Text)), next: Checker) => mut1(
+    (preds: List(Text × Text), next: Checker) => mut1(
       signature_scheme(g, params, result, preds),
       next
     ),
@@ -47,9 +48,9 @@ pub theorem signature_finish_header(
   result: Ty
 ): SignatureHeader(g, ck_val(signature_finish(c, f, g, params, result))) {
   signature_header_bind(
-    Unit,
+    <A: Unit>,
     g,
-    ck_report(c, ck_view_result_message(c, params, result), ck_sig_span(f)),
+    ck_report(c, sig_report_message(c, f, params, result), sig_report_span(f)),
     (ignored: Unit, next: Checker) => signature_finish_preds(
       g,
       params,
@@ -71,7 +72,7 @@ pub theorem signature_answer_header(
   m: Mut1(Ty, Checker)
 ): SignatureHeader(g, ck_val(signature_answer_after(f, g, params, m))) {
   signature_header_bind(
-    Ty,
+    <A: Ty>,
     g,
     m,
     (result: Ty, next: Checker) => signature_finish(next, f, g, params, result),
@@ -84,7 +85,7 @@ pub theorem signature_read_header(
   g: SigGenerics
 ): SignatureHeader(g, ck_val(signature_read(c, f, g))) {
   signature_header_bind(
-    List(Ty),
+    <A: List(Ty)>,
     g,
     ck_sig_params(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
     (params: List(Ty), next: Checker) => signature_answer_after(

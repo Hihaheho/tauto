@@ -14,26 +14,13 @@
 //! and `f@body` then computes. A program that is run reads the declaration
 //! as written.
 
+use super::inductive::app;
 use super::{Diagnostic, Entry, Kernel, T, Verdict};
 use crate::surface::Name;
 use crate::surface::{FnDecl, Stmt, TermKind, TheoremDecl, walk};
 use std::sync::Arc;
 use tauto_message::{Message, msg};
 use tauto_surface::identity::Generation;
-
-fn app(f: T, args: Vec<T>) -> T {
-    let span = f.span;
-    if args.is_empty() {
-        return f;
-    }
-    T::new(
-        TermKind::App {
-            function: Box::new(f),
-            arguments: args,
-        },
-        span,
-    )
-}
 
 impl Kernel {
     /// The statements with each `opaque fn` made into the declarations it
@@ -66,8 +53,7 @@ impl Kernel {
         let eq_name = self.resolver.generated(&f.name, Generation::OpaqueEquation);
         let made = [("theorem".to_string(), eq_name.to_string())];
         if let Some(listed) = &f.generates {
-            let start =
-                msg!("kernel-opaque-list-mismatch", name = (&f.name).to_string());
+            let start = msg!("kernel-opaque-list-mismatch", name = (&f.name).to_string());
             if let Some(why) = crate::generated::mismatch(start, &listed.items, &made) {
                 let mut d = Diagnostic::new(why, Some(sp));
                 d.fix = Some(crate::generated::fix(listed, &made));
@@ -143,6 +129,8 @@ impl Kernel {
             ty: statement,
             body: Some(proof),
             span: sp,
+            unused: None,
+            unused_params: Vec::new(),
         };
         Ok(vec![Stmt::Fn(inner), Stmt::Fn(outer), Stmt::Theorem(eq)])
     }

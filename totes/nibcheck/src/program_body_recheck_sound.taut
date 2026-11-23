@@ -1,6 +1,6 @@
 import "prepare_data_body_sound.taut"
-import std::Map
-import std::Row
+import std::map
+import std::row
 import "checker.taut"
 import "data_body_recheck_sound.taut"
 import "datas.taut"
@@ -14,6 +14,7 @@ import "field_recheck_sound.taut"
 import "rules_data_body.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "written_app_branch_sound.taut"
@@ -37,7 +38,7 @@ pub theorem body_registered_recheck(
     )
   )
 ): DataBodyChecked(ck_datas_of(c), source) {
-  ⊢ DataBodyChecked(ck_datas_of(c), source) from match registered {
+  match registered {
     Mk(constructors, found, known) => DataBodyChecked::Mk(
       constructors,
       found,
@@ -47,8 +48,7 @@ pub theorem body_registered_recheck(
 }
 pub fn body_recheck_after(rest: List(SurfaceData), m: Mut1(Unit, Checker)): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_datas(rest, next)),
     m
   )
@@ -59,8 +59,7 @@ pub theorem body_recheck_head_clean(
   clean: DiagnosticClean(ck_st(body_recheck_after(rest, m)))
 ): DiagnosticClean(ck_st(m)) {
   written_bind_input_clean(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     m,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_datas(rest, next)),
     ignored => next => error_frame_rewrap(
@@ -93,7 +92,7 @@ pub theorem body_recheck_tail(
   ). DataBodyChecked(ck_datas_of(next), source),
   clean: DiagnosticClean(ck_st(body_recheck_after(rest, m)))
 ): DataBodyChecked(ck_datas_of(c), source) {
-  ⊢ DataBodyChecked(ck_datas_of(c), source) from match m {
+  match m {
     mut1(ignored, next) => Eq::subst(
       (env: Datas) => DataBodyChecked(env, source),
       Eq::congr(frame_read_datas, read),
@@ -121,7 +120,7 @@ pub theorem ck_recheck_datas_body<datas: List(
   position: frame_constructor_position(c) = false,
   clean: DiagnosticClean(ck_st(ck_recheck_datas(datas, c)))
 ): DataBodyChecked(ck_datas_of(c), source) {
-  ⊢ DataBodyChecked(ck_datas_of(c), source) from match member {
+  match member {
     MemHere(rest) => body_registered_recheck(
       c,
       source,

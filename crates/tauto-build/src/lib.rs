@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 
 use tauto_message::msg;
-use tauto_nir::CompileError;
+use tauto_nibcheck::lower::CompileError;
 use tauto_rustgen::{Bindings, Sources};
 
 /// Compiles the tote whose `Tauto.eure` is at `manifest`, and writes
@@ -80,12 +80,6 @@ fn watched(m: &tauto::manifest::Manifest, manifest: &Path) -> Result<Vec<PathBuf
 /// macro stages intact. A build directory need not match the package name.
 pub fn tote_program(dir: &Path) -> Result<tauto::program::Loaded, String> {
     tauto::program::load_tote_for_build(dir)
-}
-
-/// Joins a tote's executable source for display. Compilation uses
-/// [`tote_program`]: joining text alone does not preserve macro stages.
-pub fn tote_source(dir: &Path) -> Result<String, String> {
-    Ok(tote_program(dir)?.source_text())
 }
 
 /// Where the functions of the tote run.
@@ -158,55 +152,61 @@ pub fn generate_for(
     }
     let loaded = tote_program(dir)?;
     let source = loaded.source_text();
-    let mut package = tauto_nir::compile_loaded_with_observer(&loaded, true, false, |_| {})
-        .map_err(|error| {
-            let message = match error {
-                CompileError::Front(m) | CompileError::Build(m) => m,
-                CompileError::Unsupported(u) => {
-                    if let Some((file, line, col)) =
-                        u.span.and_then(|span| loaded.locate(span.start))
-                    {
-                        return format!("{}:{line}:{col}: {u}", file.display());
+    let selection = match &m.exports {
+        Some(list) => Some(tauto_nibcheck::lower::select_exports(
+            &loaded,
+            list,
+            &tauto::program::tote_dirs(dir)?,
+            None,
+        )?),
+        None => None,
+    };
+    let mut package = tauto_nibcheck::lower::compile_loaded_entries_with_observer(
+        &loaded,
+        true,
+        tauto_nir::Target::Rust,
+        None,
+        |_| {},
+    )
+            .map_err(|error| {
+                let message = match error {
+                    CompileError::Front(m) | CompileError::Package(m) | CompileError::Build(m) => m,
+                    CompileError::Unsupported(u) => {
+                        if let Some((file, line, col)) =
+                            u.span.and_then(|span| loaded.locate(span.start))
+                        {
+                            return format!("{}:{line}:{col}: {u}", file.display());
+                        }
+                        u.to_string()
                     }
-                    u.to_string()
+                };
+                // The offset is read from the text of the error, because `tauto-nir`
+                // does not give it as a message.
+                match message
+                    .rsplit_once(" (byte ")
+                    .and_then(|(message, offset)| {
+                        Some((
+                            message,
+                            loaded.locate(offset.trim_end_matches(')').parse().ok()?)?,
+                        ))
+                    }) {
+                    Some((message, (file, line, col))) => {
+                        format!("{}:{line}:{col}: {message}", file.display())
+                    }
+                    None => message,
                 }
-            };
-            // The offset is read from the text of the error, because `tauto-nir`
-            // does not give it as a message.
-            match message
-                .rsplit_once(" (byte ")
-                .and_then(|(message, offset)| {
-                    Some((
-                        message,
-                        loaded.locate(offset.trim_end_matches(')').parse().ok()?)?,
-                    ))
-                }) {
-                Some((message, (file, line, col))) => {
-                    format!("{}:{line}:{col}: {message}", file.display())
-                }
-                None => message,
-            }
-        })?;
-    if let Some(selected) = &m.rust.exports {
-        let mut seen = std::collections::BTreeSet::new();
-        for name in selected {
-            if !seen.insert(name) {
-                return Err(msg!("tautobuild-export-twice", name = name.as_str()).to_string());
-            }
-            if !package.exports.iter().any(|e| &e.name == name) {
-                return Err(msg!("tautobuild-export-unknown", name = name.as_str()).to_string());
-            }
-        }
-        // Lowering already checked the whole package. Selection changes only
-        // the facade, not which helpers are compiled or validated.
-        package.exports.retain(|e| seen.contains(&e.name));
+            })?;
+    // Lowering checked the whole package. Selection changes only the facade,
+    // not which helpers are compiled or validated.
+    if let Some(selection) = &selection {
+        package.exports.retain(|e| selection.names.contains(&e.name));
     }
     let bridge = m
         .rust
         .bridge
         .as_ref()
         .map(|_| format!("{}_bridge", m.package.name.replace('-', "_")));
-    let bindings = Bindings::resolve(&package, Some(&m), bridge.as_deref())?;
+    let bindings = Bindings::resolve(&mut package, Some(&m), bridge.as_deref())?;
     let name = m.package.name.replace('-', "_");
     let sources = Sources {
         file: &manifest.display().to_string(),
@@ -281,7 +281,13 @@ pub fn generate_for(
     }
     let (items, mut warnings) = tauto_rustgen::emit_lib_tokens(&package, &sources, &bindings);
     warnings.extend(fallback);
-    if m.rust.exports.is_some() && !warnings.is_empty() {
+    // A function named in `exports` that the facade cannot carry is an error;
+    // one a `TOTE::*` brought is left out with the warning.
+    let named = m
+        .exports
+        .as_ref()
+        .is_some_and(|list| list.iter().all(|e| !e.ends_with("::*")));
+    if named && !warnings.is_empty() {
         return Err(msg!("tautobuild-exports-invalid", warnings = warnings.join("; ")).to_string());
     }
     let lints = tauto_rustgen::allow_lints();

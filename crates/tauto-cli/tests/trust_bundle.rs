@@ -347,10 +347,10 @@ fn certified_state_example_replays_offline_and_rejects_rehashed_invalid_transiti
     let entry = "examples/certified-state/src/state.taut";
     let sources = [
         entry,
-        "std/Base.taut",
-        "std/Data.taut",
-        "std/Nat.taut",
-        "std/State.taut",
+        "std/base.taut",
+        "std/data.taut",
+        "std/nat.taut",
+        "std/state.taut",
     ];
     for relative in sources {
         let path = f.0.join(relative);
@@ -420,7 +420,7 @@ fn certified_state_example_replays_offline_and_rejects_rehashed_invalid_transiti
     changed["sources"]
         .as_object_mut()
         .unwrap()
-        .remove("std/State.taut");
+        .remove("std/state.taut");
     assert!(!f.verify(&changed).status.success());
 }
 
@@ -429,12 +429,12 @@ fn std_imports_are_bundled_from_the_standard_library_that_comes_with_tauto() {
     let f = Fixture::new();
     f.write(
         "src/main.taut",
-        "import std::Base\nimport std::Nat\ntheorem t(): (Nat::max(Zero, Zero) = Zero) { Refl }\n",
+        "import std::base\nimport std::nat\ntheorem t(): (Nat::max(Zero, Zero) = Zero) { Refl }\n",
     );
     let bundle = f.bundle();
     let sources = bundle["sources"].as_object().unwrap();
     assert!(
-        sources.contains_key("<std>/Nat.taut"),
+        sources.contains_key("<std>/nat.taut"),
         "{:?}",
         sources.keys()
     );

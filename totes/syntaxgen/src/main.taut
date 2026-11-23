@@ -5,32 +5,33 @@ import "../../lalrgen/src/tables.taut"
 import "../../llkgen/src/tables.taut"
 import "../../pargen/src/par.taut"
 import "../../text/src/text.taut"
-import std::Text
-import std::prelude::Os
-import std::prelude::Affine
+import std::text
+import std::builtin::os
 
 fn sg_line(t: Text): Text {
   Text::concat_all(Cons(t, Cons(text_newline(), Nil)))
 }
 
-fn sg_stop(why: Text): Unit {
+fn sg_stop(why: Text): Unit ! {exit, stderr} {
   eprint(sg_line(why))
   perform exit(1)
 }
 
-fn sg_print(r: Result(Text, Text)): Unit {
+fn sg_print(r: Result(Text, Text)): Unit ! {exit, stderr, stdout} {
   match r {
     Ok(t) => print(t)
     Err(why) => sg_stop(why)
   }
 }
 
-fn sg_gen(path: Text): Unit {
+fn sg_gen(path: Text, start: Option(Text)): Unit ! {div, divzero, exit, fs_read, overflow, stderr, stdout} {
   match read_file(path) {
     Err(e) => eprint(sg_line(Text::concat_all(Cons("cannot read: ", Cons(e, Nil)))))
     Ok(grammar) => match pargen_is_lalr(grammar) {
       Err(why) => sg_stop(why)
-      Ok(lalr) => sg_print(if lalr { lalrgen_tables(grammar) } else { llkgen_tables(grammar) })
+      Ok(lalr) => sg_print(
+        if lalr { lalrgen_tables_from(grammar, start) } else { llkgen_tables_from(grammar, start) }
+      )
     }
   }
 }
@@ -38,7 +39,7 @@ fn sg_gen(path: Text): Unit {
 // `--par FILE…` and `--scan FILE…`: for each grammar file, `== FILE` and the
 // lines of its table file that the reading of the grammar (or the scanner)
 // decides.
-fn sg_each(paths: List(Text), scan: Bool): Unit {
+fn sg_each(paths: List(Text), scan: Bool): Unit ! {div, exit, fs_read, overflow, stderr, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
@@ -56,7 +57,7 @@ fn sg_each(paths: List(Text), scan: Bool): Unit {
 
 // `--rx FILE`: the tree of the regular expression that each line of the
 // file is.
-fn sg_rx(path: Text): Unit {
+fn sg_rx(path: Text): Unit ! {div, exit, fs_read, overflow, stderr, stdout} {
   match read_file(path) {
     Err(e) => print(sg_line(Text::concat_all(Cons("cannot read: ", Cons(e, Nil)))))
     Ok(lines) => sg_print(llkgen_rx_trees(lines))
@@ -65,7 +66,7 @@ fn sg_rx(path: Text): Unit {
 
 // `TABLE…`: for each table file, `== TABLE` and the `max_k` and `lookahead`
 // lines made again from its grammar.
-fn sg_tables(paths: List(Text)): Unit {
+fn sg_tables(paths: List(Text)): Unit ! {div, exit, fs_read, overflow, stderr, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
@@ -82,24 +83,29 @@ fn sg_tables(paths: List(Text)): Unit {
   }
 }
 
-// `--gen FILE` is what `tauto syntax gen` runs (`TAUTO_GRAMMAR_GEN` names
+// `--gen FILE [--start NAME]` is what `tauto syntax gen` runs (`TAUTO_GRAMMAR_GEN` names
 // another), granting read on `FILE` alone. With no arguments the grammar is
-// read on standard input, which needs `--allow-read`.
+// read on standard input (`--start NAME` alone too), which needs `--allow-read`. `--start` makes the tables for a start
+// symbol of `%start` other than the first.
 // Every index is below the length it was read with; a slip there says so
 // and stops rather than reading past the end.
-handle {
-  match perform argv() {
-    Nil => sg_gen("/dev/stdin")
-    Cons("--gen", Cons(path, rest)) => sg_gen(path)
-    Cons("--scan", paths) => sg_each(paths, true)
-    Cons("--rx", Cons(path, rest)) => sg_rx(path)
-    Cons("--lr", Cons(path, rest)) => match read_file(path) {
-      Err(e) => print(sg_line(Text::concat_all(Cons("cannot read: ", Cons(e, Nil)))))
-      Ok(grammar) => sg_print(lalrgen_lr_lines(grammar))
+perform main(() => {
+  handle {
+    match perform argv() {
+      Nil => sg_gen("/dev/stdin", None)
+      Cons("--start", Cons(start, Nil)) => sg_gen("/dev/stdin", Some(start))
+      Cons("--gen", Cons(path, Cons("--start", Cons(start, ^rest)))) => sg_gen(path, Some(start))
+      Cons("--gen", Cons(path, ^rest)) => sg_gen(path, None)
+      Cons("--scan", paths) => sg_each(paths, true)
+      Cons("--rx", Cons(path, ^rest)) => sg_rx(path)
+      Cons("--lr", Cons(path, ^rest)) => match read_file(path) {
+        Err(e) => print(sg_line(Text::concat_all(Cons("cannot read: ", Cons(e, Nil)))))
+        Ok(grammar) => sg_print(lalrgen_lr_lines(grammar))
+      }
+      Cons("--par", paths) => sg_each(paths, false)
+      paths => sg_tables(paths)
     }
-    Cons("--par", paths) => sg_each(paths, false)
-    paths => sg_tables(paths)
+  } with {
+    out_of_bounds() => eprint("an index went past the end of a vector")
   }
-} with {
-  out_of_bounds() => eprint("an index went past the end of a vector")
-}
+})

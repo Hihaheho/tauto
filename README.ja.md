@@ -26,7 +26,7 @@ Nib は、Tauto から依存型と証明を除いた言語です。
 | --- | --- |
 | `crates/` | Rust の実装：構文解析、精密化、カーネル、評価器、バックエンド、CLI、エディタ支援 |
 | `totes/` | Tauto で書いた道具とライブラリ：独立カーネル、Nib 検査器、構文解析、フォーマッタ、コード生成器など |
-| `std/` | 標準ライブラリとその証明。`std/prelude/` は import なしで使える宣言で、カーネルも読みます（共有する `enum`・`struct` は帰納型になり、`std/prelude/Ord.taut` は両方のカーネルがすべて検査します。組み込みの型のインスタンスは信頼します） |
+| `std/` | 標準ライブラリとその証明。`std/prelude/` は import なしで使える宣言で、カーネルも読みます（共有する `enum`・`struct` は帰納型になり、`std/builtin/ord.taut` は両方のカーネルがすべて検査します。組み込みの型のインスタンスは信頼します） |
 | `meta/` | 小さな核とカーネルのモデル、およびその性質の証明 |
 | `lean/` | Lean 4 による形式化：参照意味論と証明 |
 | `examples/` | プログラムと証明、Rust・JavaScript との連携例 |
@@ -38,7 +38,7 @@ Nib は、Tauto から依存型と証明を除いた言語です。
 
 ## 対象
 
-検査したプログラムは、Tauto で書いた機械（`totes/vm`）か評価器（`--backend eval`）で走らせるか、次へコンパイルします。
+検査したプログラムは、Tauto で書いた機械（`totes/vm`）で走らせるか、次へコンパイルします。
 
 - **Rust**（`tauto build`、`tauto run --backend rust`）：`tauto-rt` とリンクする Rust のクレート。`unsafe` を含みません。
 - **JavaScript**（`crates/tauto-jsgen`、`tauto build --emit javascript`、`tauto run --backend javascript`）：単独の ES モジュール。既定の対象は Node で、ブラウザでは ES モジュールとして読み込みます（[`docs/design/javascript-backend.md`](docs/design/javascript-backend.md)、ホストの束縛の型は [`docs/design/javascript-host-types.md`](docs/design/javascript-host-types.md)）。
@@ -50,7 +50,7 @@ Nib は、Tauto から依存型と証明を除いた言語です。
 
 ## 必要なもの
 
-- Git と、rustup で入れた Rust。`rust-toolchain.toml` は日付で固定した nightly を指定し、rustup が初回に入れます。nightly が要るのは、`.cargo/config.toml` が crate の公開からの期間を検査し、`-Znext-solver=coherence` を渡すためです。
+- Git と、rustup で入れた Rust。`rust-toolchain.toml` は Rust 1.100 に固定しており、rustup が初回に入れます。`.cargo/config.toml` の crate の公開からの期間の検査を Cargo が強制するのは 1.100 からです。
 - 初回のビルドではネットワーク：Cargo はロック済みの依存を取得し、[Eure](https://github.com/Hihaheho/eure) は Git のコミットを固定しています。
 - 任意：JavaScript バックエンドには Node、Wasm には `rustup target add wasm32-wasip1`（または `wasm32-unknown-unknown`）、形式化には Lean 4.34.1（下記）。
 
@@ -70,10 +70,10 @@ tauto check examples/proofs.taut
 開発時は、リポジトリのルートで検証を実行します。
 
 ```bash
-bash scripts/test.sh full
+tauto gate full
 ```
 
-一部だけを調べる場合は `bash scripts/test.sh focused -p tauto-kernel` を使えます。
+一部だけを調べる場合は `tauto gate focused -p tauto-kernel` を使えます。
 これは全体の検証を代替しません。ツールチェインのキャッシュは
 [`docs/design/build-cache.md`](docs/design/build-cache.md) に、ケースの形式は
 [`docs/design/test-suite.md`](docs/design/test-suite.md) にあります。
@@ -90,13 +90,13 @@ let c := handle { perform ask(5) + 1 } with {
   ask(n), k => k(n) + k(n + 1)
   return v => v
 }
-let d := handle { budget(steps: 3) { 7 } } with {
+let d := handle { perform budget(3, () => { 7 }) } with {
   exceeded(info), k => info.more(100)
 }
 ```
 
 証明は項で書きます。帰納型の値に対する `match` は生成された eliminator に展開され、
-マッチした値のフィールドに対する呼び出しが帰納法の仮定になります（`std/Base.taut`）。
+マッチした値のフィールドに対する呼び出しが帰納法の仮定になります（`std/base.taut`）。
 再帰呼び出しは、マッチした値の型に現れる引数を除いて、どの引数を変えてもかまいません。
 腕の中でフィールドをさらに `match` した先の値（`Cons(a, Cons(b, rest)) => f(rest)` の `rest`）に対しても再帰できます。
 マッチした引数とは別の引数で再帰するときは、`decreasing_by y` でその引数を書きます（`fn` でも `theorem` でも）。
@@ -123,7 +123,7 @@ theorem eq_sound(a: Nat, b: Nat, e: Nat::eq(a, b) = true): (a = b) {
 証明は、ゴールを書いたステップ `by t!(arg): G0 { Δ ⊢ G from p … }` でも書けます。
 タクティク `t` は信用されないマクロです。`G0` はステップの前のゴールで、各腕には
 タクティクが残すゴールを書きます。書いたゴールとタクティクが作った項は、すべて
-カーネルが検査します（`examples/nat/Mul.taut`、記法は `nat!`）。
+カーネルが検査します（`examples/nat/mul.taut`、記法は `nat!`）。
 
 ```
 pub theorem mul_comm(n: Nat, m: Nat): nat!(`$n * $m = $m * $n`) {
@@ -138,9 +138,9 @@ pub theorem mul_comm(n: Nat, m: Nat): nat!(`$n * $m = $m * $n`) {
 }
 ```
 
-等式の連鎖は `std/Calc.taut` の `calc!` で書けます（[`docs/design/syntax.md`](docs/design/syntax.md)）。
+等式の連鎖は `std/calc.taut` の `calc!` で書けます（[`docs/design/syntax.md`](docs/design/syntax.md)）。
 
-標準ライブラリのタクティクは三つです（`std/Tactic.taut`）。`rewrite!(e)` は等式で
+標準ライブラリのタクティクは三つです（`std/tactic.taut`）。`rewrite!(e)` は等式で
 書き換えます。`nat_norm!()` は自然数の半環の等式を、Tauto で健全性を証明した
 正規化で証明します。`nat_le!()` は `l <= r = true` と `l < r = true` を、両辺の正規形の
 項ごとの大小で証明します（仮定は使いません）。
@@ -177,7 +177,7 @@ Tauto は、AI が書き、人間が確かめるための言語です。以下�
   で書きます。タクティクは信用されないマクロで、書かれたゴールと作られた項は
   カーネルが検査します。ゴールを書かないタクティクはありません。
 - `std/` と `meta/` は公理を使わず（例外は商の公理 `Quot::sound` で、関数外延性を置く
-  `std/Quot.taut` だけが使います）、標準のタクティク（`rewrite!`、`nat_norm!`、`nat_le!`）だけを
+  `std/quot.taut` だけが使います）、標準のタクティク（`rewrite!`、`nat_norm!`、`nat_le!`）だけを
   呼び、既定腕 `_ =>` を使わず（言語としては許しますが、`match` がどの構成子を
   覆うかが見えなくなります）、整形済みに保ちます。標準ライブラリに置くタクティクは、
   項では短く言えないことをするものだけです。
@@ -222,7 +222,7 @@ Tauto は、AI が書き、人間が確かめるための言語です。以下�
 | モジュール | 証明していること |
 | --- | --- |
 | `Proto/Kernel/` | 依存型カーネルのモデル：subject reduction、合流性、述語的な核の強正規化と無矛盾性、双方向型検査器の健全性（強正規化のもとでの完全性） |
-| `Proto/Nib/` | Nib の核：深い multi-shot ハンドラを含む型付けと small-step 意味論、preservation と progress、`Div` を含まない行のプログラムの停止性、所有権（使用の検査、借用、貸している間は場所がムーブされないこと、ビューを返す関数） |
+| `Proto/Nib/` | Nib の核：深い multi-shot ハンドラを含む型付けと small-step 意味論、preservation と progress、`div` を含まない行のプログラムの停止性、所有権（使用の検査、借用、貸している間は場所がムーブされないこと、ビューを返す関数） |
 | `Proto/Macro/` | マクロ：スコープ集合による衛生性、燃料つきの展開、型付きマクロの受理 |
 | `lean/Proto/Core.lean`、`Renaming.lean`、`ListSet.lean`、`Tags.lean`、`Effects.lean`、`Choice.lean`、`Budget.lean`、`Syntax.lean` | preservation と progress を持つ小さな非依存の核、名前の付け替え、リストによる有限集合、集合としてのタグと効果の行、共有ステップ予算のモデル |
 
@@ -241,12 +241,12 @@ Lean は **4.34.1** に固定しています（`lean/lean-toolchain`）。公式
 | `darwin` | `60b45c76003a4561fb66d7ec2003569006d255d2860179445e56d3e2a029090e` |
 | `darwin_aarch64` | `9019fcd34e93fddf0ecf9d40d28f05a86ba563ac3b701a9c5116ce1c96379360` |
 
-ハッシュが一致しないときは、そこで止めてください。`scripts/setup-lean-4.34.1.sh` がこの手順を
+ハッシュが一致しないときは、そこで止めてください。`scripts/setup-lean-4.34.1.taut` がこの手順を
 行います：使っている環境のアーカイブを取得し、上のハッシュを確かめ、`.tools/lean-4.34.1`（または引数の
 絶対パス）に展開します。展開したディレクトリを `LEAN_DIR` として：
 
 ```bash
-bash scripts/setup-lean-4.34.1.sh "$PWD/.tools/lean-4.34.1"
+tauto setup-lean "$PWD/.tools/lean-4.34.1"
 LEAN_DIR=$PWD/.tools/lean-4.34.1
 cd lean
 ELAN='' LAKE_OVERRIDE_LEAN=false "$LEAN_DIR/bin/lake" --keep-toolchain --no-cache build
@@ -278,7 +278,7 @@ ELAN='' LAKE_OVERRIDE_LEAN=false "$LEAN_DIR/bin/lake" --keep-toolchain --no-cach
 ## サプライチェーン
 
 - `.cargo/config.toml` は、公開から 14 日経っていないクレートのバージョンを拒否します
-  （`rust-toolchain.toml` で固定した nightly の Cargo が強制します）。
+  （`rust-toolchain.toml` で固定した Cargo 1.100 が強制します）。
 - `.gitignore` は許可リストです。許可したもの以外はすべて無視します。
 
 ## 依存とクレジット
@@ -288,8 +288,8 @@ ELAN='' LAKE_OVERRIDE_LEAN=false "$LEAN_DIR/bin/lake" --keep-toolchain --no-cach
 - [Lean 4](https://lean-lang.org/)：`lean/` の形式化。
 - `query-flow`、`proc-macro2`、`quote`、`serde_json`、`rustdoc-types`、`tauto-rt` の feature の後ろの `tokio`・`reqwest`・`rustls` など。すべては `Cargo.lock` にあります。
 - メッセージは FTL で書きます（`crates/tauto-messages/locales`）。
-- `crates/tauto-syntax`、`totes/pargen`、`totes/llkgen`、`totes/llk`、`totes/scan`、`totes/syntax`、`totes/lr` の文法の記法、LL(k) の表の生成、スキャナーの生成、表の形式、ランタイムの設計は、Jörg Singer による [parol](https://github.com/jsinger67/parol) と [scnr2](https://github.com/jsinger67/scnr2)（MIT OR Apache-2.0）に由来します。
-- `totes/unicode` と `totes/pargen` の Unicode の表は、Rust の標準ライブラリと `regex-syntax` クレートを通して、Unicode Character Database（Unicode License v3）に由来します。
+- `crates/tauto-syntax`、`totes/pargen`、`totes/llkgen`、`totes/llk`、`totes/scan`、`totes/syntax`、`totes/lr`、`totes/synrun` の文法の記法、LL(k) の表の生成、スキャナーの生成、表の形式、ランタイムの設計は、Jörg Singer による [parol](https://github.com/jsinger67/parol) と [scnr2](https://github.com/jsinger67/scnr2)（MIT OR Apache-2.0）に由来します。
+- `totes/unicode` と `totes/pargen` の Unicode の表は、Rust の標準ライブラリと `regex-syntax` クレートを通して、Unicode Character Database（Unicode License v3）に由来します。言語サーバーがバックスラッシュから入力させる記号の名前（`totes/lsp/bridge/src/symbols.txt`）は、Unicode 16.0.0 の `UnicodeData.txt` の文字名から作っています。
 - `totes/lalrgen` は、parol が使う [lalry](https://github.com/jsinger67/lalry) クレート 0.1.0（Jörg Singer、Geoffry Song、MIT OR Apache-2.0）の LALR(1) の表の構築を再現したものです。
 - `totes/fluent/src/plural.taut` の複数形の規則は Unicode CLDR（Unicode License v3）に由来します。
 - `crates/tauto-rt/src/float_math.rs` は `libm` クレート 0.2.11（MIT OR Apache-2.0）に由来し、元の告知を残しています。`crates/tauto-jsgen/src/float.js` は同じ関数を JavaScript に移したものです。

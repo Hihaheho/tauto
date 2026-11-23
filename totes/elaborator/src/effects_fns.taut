@@ -1,0 +1,290 @@
+import "elaborate.taut"
+import "effects_rows.taut"
+import "effects.taut"
+import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::list
+
+// A function with effects as a function into `Comp`. `ElabErr` begins with
+// `skip: ` when the host skips the function too.
+pub fn comp_fn(f: SurfaceFn, effects: List(CompEffect), fns: List(CompFn), owner: Text): ElabResult(SurfaceFn) {
+  ⊢ ElabResult(SurfaceFn) from match f.effects {
+    None => ElabErr("a function without effects")
+    Some(^es) => ⊢ ElabResult(SurfaceFn) from match comp_fn_row(f, effects) {
+      None => ElabErr("a row that is not read here")
+      Some(rr) => if List::length(comp_vars(rr.fst)) > 1 || comp_all_in(comp_var_generics(comp_vars(rr.fst)), f.generics) == false { ElabErr(comp_skip("a row with a row variable the function does not declare, or with two")) } else {
+        ⊢ ElabResult(SurfaceFn) from match f.result {
+          None => ElabErr(comp_skip("a function with effects writes its result type"))
+          Some(result) => ⊢ ElabResult(SurfaceFn) from match comp_some_all(f.param_types) {
+            None => ElabErr(comp_skip("a function with effects writes its parameter types"))
+            Some(ptypes) => if List::length(f.wheres) != 0 { ElabErr(comp_skip("a function with effects has constraints")) } else {
+              if comp_all_none(f.r#borrows) == false || comp_all_none_text(f.bounds) == false { ElabErr("a borrow or a bound in a function with effects is not read here") } else {
+                let fns2 := Cons(comp_fn_entry(f, effects), fns)
+                let cx0 := comp_cx(f, rr.fst, Some(result), ptypes, rr.snd, fns2, owner)
+                ⊢ ElabResult(SurfaceFn) from match comp_param_types(cx0, f, comp_vars(rr.fst), f.params, ptypes) {
+                  ElabErr(e) => ElabErr(e)
+                  ElabOk(pt) => {
+                  let cx := comp_with_locals(comp_with_types(cx0, List::append(comp_zip_types(f.params, pt.fst, comp_v(cx0, "Type")), cx0.types)), pt.snd)
+                  ⊢ ElabResult(SurfaceFn) from match comp_computation(comp_fuel(f.body), comp_ifs(comp_fuel(f.body), f.body), cx) {
+                    ElabErr(e) => ElabErr(e)
+                    ElabOk(body) => ElabOk(comp_fn_done(cx, f, comp_vars(rr.fst), pt.fst, result, body))
+                  }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// `t` with each `if` written as the `match` on `Bool` it stands for, since the
+// read body is checked as it is.
+mutual {
+pub fn comp_ifs(k: Nat, t: SurfaceTerm): SurfaceTerm {
+  match k {
+    Zero => t
+    Succ(j) => ⊢ SurfaceTerm from match t.kind {
+      SkIf(c, a, o) => comp_if_match_at(t, comp_ifs(j, c), comp_ifs(j, a), comp_ifs_opt(j, o))
+      SkApp(h, args) => surface_term_mk(SkApp(comp_ifs(j, h), comp_ifs_all(j, args)), t.start, t.end)
+      SkBlock(stmts) => surface_term_mk(SkBlock(comp_ifs_stmts(j, stmts)), t.start, t.end)
+      SkMatch(s, motive, arms, binder, _) => surface_term_mk(SkMatch(comp_ifs(j, s), motive, comp_ifs_arms(j, arms), binder, None), t.start, t.end)
+      SkLam(ps, b, tys, unused) => surface_term_mk(
+        SkLam(ps, comp_ifs(j, b), tys, unused),
+        t.start,
+        t.end
+      )
+      SkField(v, n) => surface_term_mk(SkField(comp_ifs(j, v), n), t.start, t.end)
+      SkRecord(n, fs) => surface_term_mk(SkRecord(n, comp_ifs_fields(j, fs)), t.start, t.end)
+      SkTagged(tag, v) => surface_term_mk(SkTagged(tag, comp_ifs(j, v)), t.start, t.end)
+      SkBorrow(m, m_orig, v) => surface_term_mk(SkBorrow(m, m_orig, comp_ifs(j, v)), t.start, t.end)
+      SkAscribe(v, ty) => surface_term_mk(SkAscribe(comp_ifs(j, v), ty), t.start, t.end)
+      SkPerform(op, args) => surface_term_mk(SkPerform(op, comp_ifs_all(j, args)), t.start, t.end)
+      SkHandle(b, hs) => surface_term_mk(SkHandle(comp_ifs(j, b), comp_ifs_handlers(j, hs)), t.start, t.end)
+      _ => t
+    }
+  }
+}
+
+pub fn comp_ifs_opt(k: Nat, t: Option(SurfaceTerm)): Option(SurfaceTerm) {
+  match k {
+    Zero => t
+    Succ(j) => ⊢ Option(SurfaceTerm) from match t {
+      None => None
+      Some(b) => Some(comp_ifs(j, b))
+    }
+  }
+}
+
+pub fn comp_ifs_all(k: Nat, ts: List(SurfaceTerm)): List(SurfaceTerm) {
+  match k {
+    Zero => ts
+    Succ(j) => ⊢ List(SurfaceTerm) from match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(comp_ifs(j, t), comp_ifs_all(j, rest))
+    }
+  }
+}
+
+pub fn comp_ifs_fields(k: Nat, fs: List(SurfaceField)): List(SurfaceField) {
+  match k {
+    Zero => fs
+    Succ(j) => ⊢ List(SurfaceField) from match fs {
+      Nil => Nil
+      Cons(f, rest) => Cons(SurfaceFieldMk(f.name, comp_ifs(j, f.value)), comp_ifs_fields(j, rest))
+    }
+  }
+}
+
+pub fn comp_ifs_arms(k: Nat, arms: List(SurfaceArm)): List(SurfaceArm) {
+  match k {
+    Zero => arms
+    Succ(j) => ⊢ List(SurfaceArm) from match arms {
+      Nil => Nil
+      Cons(a, rest) => Cons(SurfaceArmMk(a.pattern, comp_ifs_opt(j, a.guard), a.goal, comp_ifs(j, a.body)), comp_ifs_arms(j, rest))
+    }
+  }
+}
+
+pub fn comp_ifs_handlers(k: Nat, hs: List(SurfaceHandler)): List(SurfaceHandler) {
+  match k {
+    Zero => hs
+    Succ(j) => ⊢ List(SurfaceHandler) from match hs {
+      Nil => Nil
+      Cons(h, rest) => Cons(⊢ SurfaceHandler from match h {
+        HdReturn(pt, b) => HdReturn(pt, comp_ifs(j, b))
+        HdOperation(op, binds, tys, ps, r, _, g, b) => HdOperation(op, binds, tys, ps, r, None, comp_ifs_opt(j, g), comp_ifs(j, b))
+      }, comp_ifs_handlers(j, rest))
+    }
+  }
+}
+
+pub fn comp_ifs_stmts(k: Nat, ss: List(SurfaceStmt)): List(SurfaceStmt) {
+  match k {
+    Zero => ss
+    Succ(j) => ⊢ List(SurfaceStmt) from match ss {
+      Nil => Nil
+      Cons(s, rest) => Cons(⊢ SurfaceStmt from match s {
+        StExpr(e) => StExpr(comp_ifs(j, e))
+        StLet(n, ty, v, b, m, ^unused, st) => StLet(n, ty, comp_ifs(j, v), b, m, None, st)
+        _ => s
+      }, comp_ifs_stmts(j, rest))
+    }
+  }
+}
+}
+
+pub fn comp_if_match_at(t: SurfaceTerm, c: SurfaceTerm, a: SurfaceTerm, o: Option(SurfaceTerm)): SurfaceTerm {
+  let otherwise := ⊢ SurfaceTerm from match o {
+    Some(b) => b
+    None => surface_term_mk(SkVar(NameSpelled("Star")), t.start, t.end)
+  }
+  surface_term_mk(SkMatch(c, None, [SurfaceArmMk(PtBool(true), None, None, a), SurfaceArmMk(PtBool(false), None, None, otherwise)], None, None), t.start, t.end)
+}
+
+// A function without effects whose body handles them or calls a function with
+// them: read as a computation, and its value taken.
+pub fn comp_pure_fn(f: SurfaceFn, effects: List(CompEffect), fns: List(CompFn), owner: Text): ElabResult(SurfaceFn) {
+  ⊢ ElabResult(SurfaceFn) from match f.result {
+    None => ElabErr(comp_skip("a function writes its result type"))
+    Some(result) => ⊢ ElabResult(SurfaceFn) from match comp_some_all(f.param_types) {
+      None => ElabErr(comp_skip("a function writes its parameter types"))
+      Some(ptypes) => if comp_effect_params(ptypes) { ElabErr("a parameter with effects is not read here") } else {
+        if comp_all_none(f.r#borrows) == false { ElabErr("a borrow in a function that handles effects is not read here") } else {
+          let cx := comp_cx(f, Nil, Some(result), ptypes, effects, fns, owner)
+          ⊢ ElabResult(SurfaceFn) from match comp_computation(comp_fuel(f.body), comp_ifs(comp_fuel(f.body), f.body), cx) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(body) => ElabOk(SurfaceFnMk(f.name, f.generics, f.bounds, f.params, f.r#borrows, f.param_types, f.result, f.effects, f.wheres, f.start, f.end, comp_call(cx, "Comp::value", [comp_typed(cx, body, Some(result))]), f.lends, f.generic_types, f.bound_starts, f.visibility, f.row_hole, f.unused, f.unused_generics, f.unused_params))
+          }
+        }
+      }
+    }
+  }
+}
+
+// A function read as a computation is marked, so that one that does not check
+// is skipped as the host skips it.
+pub fn comp_mark(f: SurfaceFn): SurfaceFn {
+  SurfaceFnMk(f.name, f.generics, f.bounds, f.params, f.r#borrows, f.param_types, f.result, f.effects, f.wheres, f.start, f.end, f.body, Some(["#read"]), f.generic_types, f.bound_starts, f.visibility, f.row_hole, f.unused, f.unused_generics, f.unused_params)
+}
+
+pub fn comp_is_read(f: SurfaceFn): Bool {
+  match f.lends {
+    Some(ls) => ⊢ Bool from match ls {
+      Cons(l, ^rest) => l == "#read"
+      Nil => false
+    }
+    None => false
+  }
+}
+
+pub fn comp_has_effects(e: Option(List(RowEntry))): Bool {
+  match e {
+    None => false
+    Some(es) => ⊢ Bool from match es {
+      Nil => false
+      Cons(^x, ^xs) => true
+    }
+  }
+}
+
+// The statements with each function that has effects the proofs read, and
+// each function that handles them, read as computations. `readable` says
+// whether an `effect` declaration is one the kernel reads.
+pub fn comp_effect_mode(stmts: List(SurfaceStmt), target: Text): Text {
+  match stmts {
+    Nil => ""
+    Cons(s, rest) => match s {
+      StOther(what, ^start, ^end) => match text_split(what, " ") {
+        Cons(tag, Cons(name, Cons(mode, Nil))) => if tag == "#effect-mode" && name == target {
+          mode
+        } else { comp_effect_mode(rest, target) }
+        _ => comp_effect_mode(rest, target)
+      }
+      _ => comp_effect_mode(rest, target)
+    }
+  }
+}
+
+pub fn comp_effect_entry(e: SurfaceEffect, mode: Text): CompEffect {
+  CompEffectMk(e.name, List::length(e.params), ⊢ SurfaceTerm from match e.result {
+    Some(r) => r
+    None => surface_term_mk(SkVar(NameSpelled("Unit")), e.start, e.end)
+  }, e.name, e.generics, Nil, mode)
+}
+
+pub fn comp_effect_aliases(stmts: List(SurfaceStmt), effects: List(CompEffect)): List(CompEffect) {
+  match stmts {
+    Nil => effects
+    Cons(s, rest) => match s {
+      StOther(what, ^start, ^end) => match text_split(what, " ") {
+        Cons(tag, Cons(name, Cons(target, Nil))) => if tag == "#alias" {
+          match comp_effect_get(effects, target) {
+            None => comp_effect_aliases(rest, effects)
+            Some(e) => comp_effect_aliases(rest, Cons(CompEffectMk(name, e.arity, e.result, e.head, e.generics, e.args, e.mode), effects))
+          }
+        } else { comp_effect_aliases(rest, effects) }
+        _ => comp_effect_aliases(rest, effects)
+      }
+      _ => comp_effect_aliases(rest, effects)
+    }
+  }
+}
+
+pub fn comp_stmts(stmts: List(SurfaceStmt), effects: List(CompEffect), fns: List(CompFn), readable: (SurfaceEffect) -> Bool): List(SurfaceStmt) {
+  comp_stmts_in(stmts, effects, fns, readable, stmts, Nil)
+}
+
+fn comp_stmts_in(stmts: List(SurfaceStmt), effects: List(CompEffect), fns: List(CompFn), readable: (SurfaceEffect) -> Bool, source: List(SurfaceStmt), owners: List(Text)): List(SurfaceStmt) {
+  match stmts {
+    Nil => Nil
+    Cons(stmt, rest) => ⊢ List(SurfaceStmt) from match stmt {
+      StEffect(e) => if readable(e) {
+        Cons(stmt, comp_stmts_in(rest, List::append(effects, [comp_effect_entry(e, comp_effect_mode(source, e.name))]), fns, readable, source, owners))
+      } else { Cons(stmt, comp_stmts_in(rest, effects, fns, readable, source, owners)) }
+      StOther(what, ^start, ^end) => {
+        let next: List(Text) := if text_starts_with(what, "#enter ", 0) {
+          Cons(Text::slice_or_empty(what, 7, Text::len(what)), owners)
+        } else if what == "#leave" {
+          match owners { Nil => Nil
+            Cons(^previous, outer) => outer }
+        } else { owners }
+        Cons(stmt, comp_stmts_in(rest, comp_effect_aliases([stmt], effects), fns, readable, source, next))
+      }
+      StFn(f) => {
+        let owner: Text := match owners {
+          Nil => ""
+          Cons(current, ^outer) => current
+        }
+        let scoped := comp_scoped_effects(effects, owners)
+        if comp_has_effects(f.effects) {
+        ⊢ List(SurfaceStmt) from match comp_fn(f, scoped, fns, owner) {
+          ElabOk(g) => Cons(StFn(comp_mark(g)), comp_stmts_in(rest, effects, Cons(comp_fn_entry(f, scoped), fns), readable, source, owners))
+          ElabErr(why) => if text_starts_with(why, "skip: ", 0) {
+            Cons(StOther(Text::concat_all(["#skipped ", f.name, ": ", Text::slice_or_empty(why, 6, Text::len(why))]), f.start, f.end), comp_stmts_in(rest, effects, fns, readable, source, owners))
+          } else { Cons(stmt, comp_stmts_in(rest, effects, fns, readable, source, owners)) }
+        }
+      } else {
+        let cx := comp_cx(f, Nil, f.result, Nil, scoped, fns, owner)
+        if (List::length(effects) != 0 || List::length(fns) != 0) && comp_mentions(comp_fuel(f.body), f.body, cx) {
+          ⊢ List(SurfaceStmt) from match comp_pure_fn(f, scoped, fns, owner) {
+            ElabOk(g) => Cons(StFn(comp_mark(g)), comp_stmts_in(rest, effects, fns, readable, source, owners))
+            ElabErr(why) => if text_starts_with(why, "skip: ", 0) {
+              Cons(StOther(Text::concat_all(["#skipped ", f.name, ": ", Text::slice_or_empty(why, 6, Text::len(why))]), f.start, f.end), comp_stmts_in(rest, effects, fns, readable, source, owners))
+            } else { Cons(stmt, comp_stmts_in(rest, effects, fns, readable, source, owners)) }
+          }
+        } else { Cons(stmt, comp_stmts_in(rest, effects, fns, readable, source, owners)) }
+      }
+      }
+      StInductive(i) => Cons(stmt, comp_stmts_in(rest, List::append(effects, [CompEffectMk(Text::concat("#type:", i.name), 0, surface_term_mk(SkVar(NameSpelled("Unit")), i.start, i.end), "#type", Nil, Nil, "")]), fns, readable, source, owners))
+      _ => Cons(stmt, comp_stmts_in(rest, effects, fns, readable, source, owners))
+    }
+  }
+}
+
+

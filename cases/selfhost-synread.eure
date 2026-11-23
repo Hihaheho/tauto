@@ -1,0 +1,402 @@
+// Differential cases for `totes/synread`: the first line of a case's source is `NAME SHA256` (and `.START` for
+// another start symbol) of the tables in `.tauto-syntax`, the rest is the literal. The tote writes the parser's
+// text and the value the literal is read into; `tools/selfhost-harness/tests/synread.rs` compares both with
+// `tauto_syntax` and the host's reader of a literal.
+
+// an lalr sum of numbers
+@ cases.an-lalr-sum-of-numbers
+source = ```synread
+lalr_sum 217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068
+1 + 2 = 3
+```
+differential = "synread"
+
+// a left recursive sum is read left first
+@ cases.a-left-recursive-sum-is-read-left-first
+source = ```synread
+lalr_sum 217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068
+1 + 2 + 3 = 6
+```
+differential = "synread"
+
+// a parenthesised lalr sum
+@ cases.a-parenthesised-lalr-sum
+source = ```synread
+lalr_sum 217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068
+(1 + (2 + 3)) = 4
+```
+differential = "synread"
+
+// an lalr literal that ends too soon
+@ cases.an-lalr-literal-that-ends-too-soon
+source = ```synread
+lalr_sum 217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068
+1 + 2
+```
+differential = "synread"
+
+// an lalr literal with a terminal out of place
+@ cases.an-lalr-literal-with-a-terminal-out-of-place
+source = ```synread
+lalr_sum 217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068
+1 + = 2
+```
+differential = "synread"
+
+// an lalr literal with text that is no token
+@ cases.an-lalr-literal-with-text-that-is-no-token
+source = ```synread
+lalr_sum 217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068
+1 ? 2 = 3
+```
+differential = "synread"
+
+// a repetition of an ll grammar
+@ cases.a-repetition-of-an-ll-grammar
+source = ```synread
+editor_math b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4
+1 + 2 + 3 + (4 + 5) = 15
+```
+differential = "synread"
+
+// an empty repetition of an ll grammar
+@ cases.an-empty-repetition-of-an-ll-grammar
+source = ```synread
+editor_math b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4
+1 = 1
+```
+differential = "synread"
+
+// an ll literal with a terminal out of place
+@ cases.an-ll-literal-with-a-terminal-out-of-place
+source = ```synread
+editor_math b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4
+1 + + 2 = 3
+```
+differential = "synread"
+
+// an ll literal with extra text
+@ cases.an-ll-literal-with-extra-text
+source = ```synread
+editor_math b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4
+1 = 1 = 1
+```
+differential = "synread"
+
+// a literal with a hole grammar and no hole
+@ cases.a-literal-with-a-hole-grammar-and-no-hole
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+1 + (2 + 3) = 6
+```
+differential = "synread"
+
+// a line comment is skipped
+@ cases.a-line-comment-is-skipped
+source = ```synread
+layout 2e8499c8f230bc47970456da5f18d72ede45467a5fa41d1374eb67d9815809ee
+1, abc, // a note
+2
+```
+differential = "synread"
+
+// a single item
+@ cases.a-single-item
+source = ```synread
+layout 2e8499c8f230bc47970456da5f18d72ede45467a5fa41d1374eb67d9815809ee
+7
+```
+differential = "synread"
+
+// unicode names
+@ cases.unicode-names
+source = ```synread
+swap 7a04e69a7f1a1a212182c13e462121e239681beac367537d3edaadcd2ddcd1ae
+héllo wörld
+```
+differential = "synread"
+
+// names in other scripts
+@ cases.names-in-other-scripts
+source = ```synread
+swap 7a04e69a7f1a1a212182c13e462121e239681beac367537d3edaadcd2ddcd1ae
+日本語 _x1
+```
+differential = "synread"
+
+// a second start symbol
+@ cases.a-second-start-symbol
+source = ```synread
+two_starts 22819b6aa5cb0c5679855dff4058a09d82a3aff539abd1fd7c32419c7bbeb380.Extra
+abc
+```
+differential = "synread"
+
+// the first start symbol of the same grammar
+@ cases.the-first-start-symbol-of-the-same-grammar
+source = ```synread
+two_starts 22819b6aa5cb0c5679855dff4058a09d82a3aff539abd1fd7c32419c7bbeb380
+12 34
+```
+differential = "synread"
+
+// clipped symbols are not fields
+@ cases.clipped-symbols-are-not-fields
+source = ```synread
+clip_token 8503f4dd30668355e81af3692cf73a282e3cd316759e6d670d9cc4502dea1431
+a b,c d,e f.
+```
+differential = "synread"
+
+// clipped keywords around a value
+@ cases.clipped-keywords-around-a-value
+source = ```synread
+aux_keywords d47d6b952cf70281395b77d5b02c41432a000a0d194d476decce1cad470cf951
+[ true ]
+```
+differential = "synread"
+
+// a token of text in quotes
+@ cases.a-token-of-text-in-quotes
+source = ```synread
+text_atom e1dab1e9804c071c9fc292b6aab3f1c366113ee50b8654213878f6170b6827ec
+"abc"
+```
+differential = "synread"
+
+// a number where a text could be
+@ cases.a-number-where-a-text-could-be
+source = ```synread
+text_atom e1dab1e9804c071c9fc292b6aab3f1c366113ee50b8654213878f6170b6827ec
+42
+```
+differential = "synread"
+
+// terminals named as the preludes
+@ cases.terminals-named-as-the-preludes
+source = ```synread
+prelude_names 98d0e23137b8703cd6de5a799a0beb0bcdd72c94d168b65cd2cd0f33fa3750bc
+3.14
+```
+differential = "synread"
+
+// a keyword terminal of the prelude names
+@ cases.a-keyword-terminal-of-the-prelude-names
+source = ```synread
+prelude_names 98d0e23137b8703cd6de5a799a0beb0bcdd72c94d168b65cd2cd0f33fa3750bc
+yes
+```
+differential = "synread"
+
+// a hole grammar read from its value start
+@ cases.a-hole-grammar-read-from-its-value-start
+source = ```synread
+ir_holes d83198def02a2761811a05ade29c53d29cbc60ecf9975d1931353e7e2cec6860.Value
+7
+```
+differential = "synread"
+
+// a hole grammar read from its block start
+@ cases.a-hole-grammar-read-from-its-block-start
+source = ```synread
+ir_holes d83198def02a2761811a05ade29c53d29cbc60ecf9975d1931353e7e2cec6860
+1 2 3
+```
+differential = "synread"
+
+// an lalr hole grammar from its value start
+@ cases.an-lalr-hole-grammar-from-its-value-start
+source = ```synread
+ir_holes_lalr a67467f49dde8387a31ea3f19dd979d68277181f59cd2166dd9990a4297b4072.Value
+7
+```
+differential = "synread"
+
+// an lalr hole grammar from its block start
+@ cases.an-lalr-hole-grammar-from-its-block-start
+source = ```synread
+ir_holes_lalr a67467f49dde8387a31ea3f19dd979d68277181f59cd2166dd9990a4297b4072
+1 2 3
+```
+differential = "synread"
+
+// an lalr block of one item
+@ cases.an-lalr-block-of-one-item
+source = ```synread
+ir_holes_lalr a67467f49dde8387a31ea3f19dd979d68277181f59cd2166dd9990a4297b4072
+5
+```
+differential = "synread"
+
+// a token nonterminal
+@ cases.a-token-nonterminal
+source = ```synread
+fibn e2ba41de5699b205420db4659f9b5a729ed2bc4afb80e27847972944f03ccca7
+007
+```
+differential = "synread"
+
+// an identifier with a number
+@ cases.an-identifier-with-a-number
+source = ```synread
+aux_ident 68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011
+x_1 = 12
+```
+differential = "synread"
+
+// a literal that starts late in its file
+@ cases.spans-are-positions-in-the-file
+source = ```synread
+lalr_sum 217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068 1000
+1 + 2 = 3
+```
+differential = "synread"
+
+// the lines of an indented block lost their indentation
+@ cases.spans-follow-the-shifts-of-an-indented-block
+source = ```synread
+lalr_sum 217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068 500 0:0 6:4 12:8
+1 +
+2 +
+3 =
+6
+```
+differential = "synread"
+
+// a braced hole
+@ cases.a-braced-hole
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+${n + 1} = 2
+```
+differential = "synread"
+
+// a hole with a name
+@ cases.a-hole-with-a-name
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+$n + 1 = 2
+```
+differential = "synread"
+
+// a hole with a call
+@ cases.a-hole-with-a-call
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+$add(a, b) + 1 = 2
+```
+differential = "synread"
+
+// a hole with a path and calls
+@ cases.a-hole-with-a-path-and-calls
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+$Nat::add(n, 0) + $f(g(x), 1) = 3
+```
+differential = "synread"
+
+// a parenthesised hole
+@ cases.a-parenthesised-hole
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+$(a + b) = 1
+```
+differential = "synread"
+
+// a braced hole with a closing brace in a string
+@ cases.a-braced-hole-with-a-closing-brace-in-a-string
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+${ if a { "}" } else { 1 } } + 2 = 3
+```
+differential = "synread"
+
+// a hole in a block of holes
+@ cases.a-hole-in-a-block-of-holes
+source = ```synread
+ir_holes d83198def02a2761811a05ade29c53d29cbc60ecf9975d1931353e7e2cec6860
+1 $x ${y} 2
+```
+differential = "synread"
+
+// an lalr block of holes
+@ cases.an-lalr-block-of-holes
+source = ```synread
+ir_holes_lalr a67467f49dde8387a31ea3f19dd979d68277181f59cd2166dd9990a4297b4072
+$a 1 $(b + c) 2
+```
+differential = "synread"
+
+// holes between keywords
+@ cases.holes-between-keywords
+source = ```synread
+aif 778c551c5a28c2f797dbb1435cbd180dd8fd06daa504182b3332b48474de99d4
+$c then ${ a + 1 } else $e
+```
+differential = "synread"
+
+// a hole at the start of a file
+@ cases.a-hole-at-the-start-of-a-file
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791 3000
+${n + 1} = 2
+```
+differential = "synread"
+
+// a hole after an indented block shift
+@ cases.a-hole-after-an-indented-block-shift
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791 40 0:0 7:5
+1 +
+${ a +
+b } = 2
+```
+differential = "synread"
+
+// a braced hole that does not end
+@ cases.a-braced-hole-that-does-not-end
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+${ a + 1 = 2
+```
+differential = "synread"
+
+// a hole that does not read
+@ cases.a-hole-that-does-not-read
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+${ a + } = 2
+```
+differential = "synread"
+
+// a hole where a number is expected
+@ cases.a-hole-where-a-number-is-expected
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+1 + 1 $x
+```
+differential = "synread"
+
+// a path segment in another script
+@ cases.a-path-segment-in-another-script
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+$a::名前(x) + 1 = 2
+```
+differential = "synread"
+
+// a path segment with a numeric character inside
+@ cases.a-path-segment-with-a-numeric-character-inside
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+$a::x² + 1 = 2
+```
+differential = "synread"
+
+// a path segment that starts with a numeric character
+@ cases.a-path-segment-that-starts-with-a-numeric-character
+source = ```synread
+math de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791
+$a::²b + 1 = 2
+```
+differential = "synread"

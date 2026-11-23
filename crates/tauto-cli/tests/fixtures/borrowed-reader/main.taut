@@ -1,0 +1,112 @@
+import std::builtin::os
+import std::base
+import std::text
+
+// A reader in the style of a hand-written parser: it works on the bytes, every
+// reader that calls itself takes fuel, and the fuel is the length of what is
+// left, so each statement counts the rest of the text again.
+inductive Rd(A: Type): Type {
+  MkRd(a: A, rest: List(Nat)): Rd(A)
+  RdErr(rest: List(Nat)): Rd(A)
+}
+
+fn is_space(c: Nat): Bool {
+  Bool::or(Nat::eq(c, 32), Nat::eq(c, 10))
+}
+
+fn skip_fuel(f: Nat, l: List(Nat)): List(Nat) {
+  match f {
+    Zero => l
+    Succ(g) => match l {
+      Nil => Nil
+      Cons(c, t) => if is_space(c) { skip_fuel(g, t) } else { Cons(c, t) }
+    }
+  }
+}
+
+fn skip(l: List(Nat)): List(Nat) {
+  skip_fuel(Succ(List::length(l)), l)
+}
+
+// Bytes up to `stop`, and the bytes after it.
+fn until_fuel(f: Nat, stop: Nat, l: List(Nat)): Rd(Nat) {
+  match f {
+    Zero => RdErr(l)
+    Succ(g) => match l {
+      Nil => RdErr(Nil)
+      Cons(c, t) => if Nat::eq(c, stop) {
+        MkRd(0, t)
+      } else {
+        match until_fuel(g, stop, t) {
+          MkRd(n, rest) => MkRd(Succ(n), rest)
+          RdErr(rest) => RdErr(rest)
+        }
+      }
+    }
+  }
+}
+
+fn until(stop: Nat, l: List(Nat)): Rd(Nat) {
+  until_fuel(Succ(List::length(l)), stop, l)
+}
+
+fn rd_then<A, B>(r: Rd(A), k: (A, List(Nat)) -> Rd(B)): Rd(B) {
+  match r {
+    MkRd(a, rest) => k(a, rest)
+    RdErr(rest) => RdErr(rest)
+  }
+}
+
+// `key = "text"`: the key's and the text's lengths.
+fn statement(l: List(Nat)): Rd(Nat) {
+  rd_then(
+    until(61, skip(l)),
+    (key: Nat, rest: List(Nat)) => rd_then(
+      until(34, skip(rest)),
+      (sp: Nat, r: List(Nat)) => rd_then(
+        until(34, r),
+        (text: Nat, r2: List(Nat)) => MkRd(Nat::add(key, text), r2)
+      )
+    )
+  )
+}
+
+effect tick(): Nat
+
+// One `tick` for each statement, so that the reader runs in the continuation form.
+fn statements(f: Nat, n: Nat, l: List(Nat)): Rd(Nat) ! {tick} {
+  ⊢ Rd(Nat) from match f {
+    Zero => RdErr(l)
+    Succ(g) => match skip(l) {
+      Nil => MkRd(n, Nil)
+      Cons(c, t) => match statement(Cons(c, t)) {
+        RdErr(rest) => RdErr(rest)
+        MkRd(m, rest) => statements(
+          g,
+          Nat::add(Nat::add(n, m), perform tick()),
+          skip_fuel(Succ(List::length(rest)), rest)
+        )
+      }
+    }
+  }
+}
+
+fn doc(n: Nat, acc: Text): Text {
+  match n {
+    Zero => acc
+    Succ(m) => doc(
+      m,
+      Text::concat(acc, Text::concat(Text::concat("k", Text::of_nat(m)), " = \"some text here\"\n"))
+    )
+  }
+}
+
+let bytes := Text::bytes(doc(160, ""))
+let read := handle { statements(Succ(List::length(bytes)), 0, bytes) } with {
+  tick(), k => k(0)
+  return value => value
+}
+match read {
+  MkRd(n, rest) => print(Text::of_nat(n))
+  RdErr(rest) => print("error")
+}

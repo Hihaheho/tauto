@@ -290,6 +290,8 @@ impl Kernel {
                     vis: Default::default(),
                     budget: None,
                     decreasing_by: None,
+                    unused: None,
+                    unused_params: Vec::new(),
                 })
             })
             .collect();

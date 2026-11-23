@@ -1,7 +1,7 @@
 import "../src/reader.taut"
 import "../../surface/src/surface.taut"
 import "../src/loader.taut"
-import std::Base
+import std::base
 
 pub fn reader_zero_fuel_rejected(): Bool {
   var state := RustgenReaderState::Mk("m", 0, Nil, Nil, None)
@@ -24,21 +24,7 @@ pub fn reader_test_constraint(path: Text): SurfaceConstraint {
   SurfaceConstraintMk("C", reader_test_call(path), 10, 20, Nil)
 }
 pub fn reader_test_method(body: SurfaceTerm): SurfaceFn {
-  SurfaceFnMk(
-    "m",
-    Nil,
-    Nil,
-    Cons("x", Nil),
-    Cons(None, Nil),
-    Cons(Some(reader_test_call("d")), Nil),
-    Some(reader_test_call("d")),
-    None,
-    Cons(reader_test_constraint("u"), Nil),
-    0,
-    30,
-    body,
-    Nil
-  )
+  SurfaceFnMk("m", Nil, Nil, Cons("x", Nil), Cons(None, Nil), Cons(Some(reader_test_call("d")), Nil), Some(reader_test_call("d")), None, Cons(reader_test_constraint("u"), Nil), 0, 30, body, None, Nil, Nil, VisPrivate, None, None, Nil, Nil)
 }
 pub fn reader_test_literal(term: SurfaceTerm): Bool {
   term.start == 1 && term.end == 9 && (⊢ Bool from match term.kind {
@@ -47,25 +33,25 @@ pub fn reader_test_literal(term: SurfaceTerm): Bool {
   })
 }
 pub fn reader_test_literal_list(items: List(SurfaceTerm)): Bool {
-  ⊢ Bool from match items {
+  match items {
     Cons(item, rest) => reader_test_literal(item) && List::length(rest) == 0
     Nil => false
   }
 }
 pub fn reader_test_named_literal(items: List(SurfaceNamed)): Bool {
-  ⊢ Bool from match items {
+  match items {
     Cons(item, rest) => item.name == "A" && reader_test_literal(item.ty) && List::length(rest) == 0
     Nil => false
   }
 }
 pub fn reader_test_optional_literal(term: Option(SurfaceTerm)): Bool {
-  ⊢ Bool from match term {
+  match term {
     Some(value) => reader_test_literal(value)
     None => false
   }
 }
 pub fn reader_test_constraint_untouched(items: List(SurfaceConstraint)): Bool {
-  ⊢ Bool from match items {
+  match items {
     Cons(item, rest) => List::length(rest) == 0 && item.r#class == "C" &&
     item.start == 10 && item.end == 20 && item.ty.start == 1 && item.ty.end == 9 &&
     (⊢ Bool from match item.ty.kind {
@@ -79,7 +65,7 @@ pub fn reader_test_constraint_untouched(items: List(SurfaceConstraint)): Bool {
   }
 }
 pub fn reader_test_method_fields(items: List(SurfaceFn), executable: Bool): Bool {
-  ⊢ Bool from match items {
+  match items {
     Cons(method, rest) => {
       let parameter := ⊢ Bool from match method.param_types {
         Cons(item, more) => List::length(more) == 0 && reader_test_optional_literal(item)
@@ -101,17 +87,7 @@ pub fn reader_test_method_fields(items: List(SurfaceFn), executable: Bool): Bool
 pub fn reader_test_class_fields(): Bool {
   var state := reader_test_state()
   let method := reader_test_method(surface_term_mk(SkOther("ExternFn"), 0, 30))
-  let input := SurfaceClassMk(
-    "C",
-    "A",
-    1,
-    None,
-    Cons(method, Nil),
-    Nil,
-    0,
-    40,
-    Cons(SurfaceNamed { name: "A", ty: reader_test_call("d") }, Nil)
-  )
+  let input := SurfaceClassMk("C", "A", 1, None, Cons(method, Nil), Nil, 0, 40, Cons(SurfaceNamed { name: "A", ty: reader_test_call("d") }, Nil), false, Nil, Nil, VisPrivate)
   let output := rustgen_reader_stmt(20, &mut state, StClass(input))
   rustgen_reader_ready(state) && List::length(state.resources) == 3 &&
   (⊢ Bool from match output {
@@ -124,26 +100,18 @@ pub fn reader_test_class_fields(): Bool {
 }
 pub fn reader_test_instance_fields(): Bool {
   var state := reader_test_state()
-  let input := SurfaceInstanceMk(
-    Nil,
-    Nil,
-    "C",
-    reader_test_call("d"),
-    Cons(
+  let input := SurfaceInstanceMk(Nil, Nil, "C", reader_test_call("d"), Cons(
       SurfaceConstraintMk("C", reader_test_call("d"), 10, 20, Cons(reader_test_call("d"), Nil)),
       Nil
-    ),
-    Cons(reader_test_method(reader_test_call("d")), Nil),
-    Nil,
-    0,
-    40,
-    Cons(reader_test_call("d"), Nil),
-    Cons(reader_test_call("d"), Nil)
-  )
+    ), Cons(reader_test_method(reader_test_call("d")), Nil), Nil, 0, 40, Cons(reader_test_call("d"), Nil), Cons(reader_test_call("d"), Nil), Some(InferParameter("A")), Nil)
   let output := rustgen_reader_stmt(20, &mut state, StInstance(input))
   rustgen_reader_ready(state) && List::length(state.resources) == 8 &&
   (⊢ Bool from match output {
     StInstance(value) => {
+      let inference := ⊢ Bool from match value.infer_from {
+        Some(InferParameter(name)) => name == "A"
+        _ => false
+      }
       let constraint := ⊢ Bool from match value.wheres {
         Cons(item, rest) => List::length(rest) == 0 && item.r#class == "C" &&
         item.start == 10 && item.end == 20 && reader_test_literal(
@@ -154,7 +122,7 @@ pub fn reader_test_instance_fields(): Bool {
       value.r#class == "C" && value.start == 0 && value.end == 40 &&
       reader_test_literal(
         value.head
-      ) && constraint && reader_test_literal_list(
+      ) && constraint && inference && reader_test_literal_list(
         value.generic_types
       ) && reader_test_literal_list(value.arguments) &&
       reader_test_method_fields(value.methods, true)
@@ -165,10 +133,14 @@ pub fn reader_test_instance_fields(): Bool {
 pub fn reader_test_extern_fields(): Bool {
   var state := reader_test_state()
   let method := reader_test_method(surface_term_mk(SkOther("ExternFn"), 0, 30))
-  let output := rustgen_reader_stmt(20, &mut state, StExtern("", Cons(method, Nil), 0, 40))
+  let output := rustgen_reader_stmt(
+    20,
+    &mut state,
+    StExtern(Cons(method, Nil), Nil, Nil, Nil, Nil, 0, 40)
+  )
   rustgen_reader_ready(state) && List::length(state.resources) == 2 &&
   (⊢ Bool from match output {
-    StExtern(abi, methods, start, end) => abi == "" && start == 0 && end == 40 &&
+    StExtern(methods, ^instances, ^types, ^structs, ^enums, start, end) => start == 0 && end == 40 &&
     reader_test_method_fields(methods, false)
     _ => false
   })

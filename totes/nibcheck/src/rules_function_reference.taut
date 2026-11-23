@@ -1,10 +1,11 @@
 import "rules_local.taut"
 import "rules_ty.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "ty.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 pub(open) inductive LocalAbsent(name: Text): (List(Local)) -> Prop {
   LocalAbsentNil: LocalAbsent(name, Nil)
@@ -39,12 +40,12 @@ pub(open) inductive MonomorphicFunctionTyping(
   functions: Ordmap(Text, Scheme)
 ): (SurfaceTerm, Ty) -> Prop {
   MonomorphicFunction<result: Ty>(
-    name: Text,
+    name: SurfaceName,
     declared: Ty,
-    ctors: List(Pair(Text, Kind)),
+    ctors: List(Text × Kind),
     start: Nat,
     end: Nat,
-    reference: FunctionReference(env, functions, name, SchemeMk(Nil, declared, Nil, ctors)),
+    reference: FunctionReference(env, functions, surface_name_text(name), SchemeMk(Nil, declared, Nil, ctors)),
     converted: TyEqIn(subst, declared, result)
   ): MonomorphicFunctionTyping(
     subst,

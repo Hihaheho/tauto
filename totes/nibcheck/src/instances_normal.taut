@@ -1,7 +1,8 @@
+import "messages.taut"
 import "classes_normal.taut"
 import "../../surface/src/surface.taut"
-import std::Base
-import std::Text
+import std::base
+import std::text
 import "checker.taut"
 import "classes_frame.taut"
 import "data_fields_sound.taut"
@@ -12,9 +13,14 @@ import "normal_context_frame.taut"
 import "signature_frame.taut"
 import "ty.taut"
 import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
+import "../../identity/src/identity.taut"
 
 pub theorem inf_law_duplicate_normal(
   l: SurfaceLaw,
@@ -28,20 +34,19 @@ pub theorem inf_law_duplicate_normal(
     Text
   ). ∀ next: Checker. CkNormalFrame(next, ck_instance_laws(rest, ns, next, i, decl))
 ): CkNormalFrame(c, inf_law_duplicate(l, rest, seen, c, i, decl, bad)) {
-  ⊢ CkNormalFrame(c, inf_law_duplicate(l, rest, seen, c, i, decl, bad)) from match bad {
+  match bad {
     true => normal_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_laws(rest, seen, c1, i, decl)),
       ck_error(
         c,
-        cat3("the law ", cf_law_name(l), " of the instance is written twice"),
+        instance_law_twice_message(cf_law_name(l)),
         cf_law_span(l)
       ),
       ck_error_normal(
         c,
-        cat3("the law ", cf_law_name(l), " of the instance is written twice"),
+        instance_law_twice_message(cf_law_name(l)),
         cf_law_span(l)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_laws(rest, seen, c1, i, decl), ih(seen, c1))
@@ -66,14 +71,13 @@ pub theorem inf_law_missing_normal(
     Text
   ). ∀ next: Checker. CkNormalFrame(next, ck_instance_laws(rest, ns, next, i, decl))
 ): CkNormalFrame(c, inf_law_missing(l, rest, seen, c, i, decl, bad)) {
-  ⊢ CkNormalFrame(c, inf_law_missing(l, rest, seen, c, i, decl, bad)) from match bad {
+  match bad {
     true => normal_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_laws(rest, seen, c1, i, decl)),
-      ck_error(c, cat3(inf_class(i), " has no law ", cf_law_name(l)), cf_law_span(l)),
-      ck_error_normal(c, cat3(inf_class(i), " has no law ", cf_law_name(l)), cf_law_span(l)),
+      ck_error(c, instance_no_law_message(inf_class(i), cf_law_name(l)), cf_law_span(l)),
+      ck_error_normal(c, instance_no_law_message(inf_class(i), cf_law_name(l)), cf_law_span(l)),
       ignored => c1 => normal_rewrap(c1, ck_instance_laws(rest, seen, c1, i, decl), ih(seen, c1))
     )
     false => inf_law_duplicate_normal(
@@ -96,7 +100,7 @@ pub theorem ck_instance_laws_normal(
   i: SurfaceInstance,
   decl: SurfaceClass
 ): CkNormalFrame(c, ck_instance_laws(ls, seen, c, i, decl)) {
-  ⊢ CkNormalFrame(c, ck_instance_laws(ls, seen, c, i, decl)) from match ls {
+  match ls {
     Nil => normal => normal
     Cons(l, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkNormalFrame(c, z),
@@ -124,19 +128,18 @@ pub theorem inf_extra_cons_normal(
   ih: ∀ next: Checker. CkNormalFrame(next, ck_instance_extra(rest, next, i, decl))
 ): CkNormalFrame(c, inf_extra_cons(m, rest, c, i, decl)) {
   normal_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_extra(rest, c1, i, decl)),
     frame_error_if(
       c,
-      cat3(inf_class(i), " has no method ", signature_name(m)),
+      no_method_message(inf_class(i), signature_name(m)),
       cf_method_span(m),
       not(method_names_have(cf_class_methods(decl), signature_name(m)))
     ),
     normal_error_if(
       c,
-      cat3(inf_class(i), " has no method ", signature_name(m)),
+      no_method_message(inf_class(i), signature_name(m)),
       cf_method_span(m),
       not(method_names_have(cf_class_methods(decl), signature_name(m)))
     ),
@@ -150,7 +153,7 @@ pub theorem ck_instance_extra_normal(
   i: SurfaceInstance,
   decl: SurfaceClass
 ): CkNormalFrame(c, ck_instance_extra(ms, c, i, decl)) {
-  ⊢ CkNormalFrame(c, ck_instance_extra(ms, c, i, decl)) from match ms {
+  match ms {
     Nil => normal => normal
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkNormalFrame(c, z),
@@ -177,8 +180,7 @@ pub theorem inf_same_normal(
   want: SurfaceFn
 ): CkNormalFrame(c, inf_same(c, i, got, scheme, expected, head, want)) {
   normal_bind(
-    Scheme,
-    Unit,
+    <A: Scheme, B: Unit>,
     c,
     (wanted: Scheme, c1: Checker) => frame_error_if(
       c1,
@@ -228,12 +230,10 @@ pub theorem inf_method_found_normal(
   ). CkNormalFrame(next, ck_instance_methods(rest, next, i, decl, ctor, shown, fs))
 ): CkNormalFrame(c, inf_method_found(e, rest, c, i, decl, ctor, shown, out, made)) {
   normal_bind(
-    Scheme,
-    List(SurfaceFn),
+    <A: Scheme, B: List(SurfaceFn)>,
     c,
     (scheme: Scheme, c1: Checker) => frame_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       (ignored: Unit, c2: Checker) => ck_rewrap1(
         ck_instance_methods(
           rest,
@@ -250,8 +250,7 @@ pub theorem inf_method_found_normal(
     ck_signature(c, made),
     ck_signature_normal(c, made),
     scheme => c1 => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c1,
       (ignored: Unit, c2: Checker) => ck_rewrap1(
         ck_instance_methods(
@@ -313,34 +312,21 @@ pub theorem inf_method_get_normal(
     SurfaceFn
   ). CkNormalFrame(next, ck_instance_methods(rest, next, i, decl, ctor, shown, fs))
 ): CkNormalFrame(c, inf_method_get(e, rest, c, i, decl, ctor, shown, out, o)) {
-  ⊢ CkNormalFrame(c, inf_method_get(e, rest, c, i, decl, ctor, shown, out, o)) from match o {
+  match o {
     None => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(
         ck_instance_methods(rest, c1, i, decl, ctor, shown, out)
       ),
       ck_error(
         c,
-        cat5(
-          "the instance ",
-          inf_class(i),
-          cat3("(", shown, ")"),
-          " does not define ",
-          signature_name(e)
-        ),
+        instance_missing_method_message(inf_class(i), shown, signature_name(e)),
         inf_span(i)
       ),
       ck_error_normal(
         c,
-        cat5(
-          "the instance ",
-          inf_class(i),
-          cat3("(", shown, ")"),
-          " does not define ",
-          signature_name(e)
-        ),
+        instance_missing_method_message(inf_class(i), shown, signature_name(e)),
         inf_span(i)
       ),
       ignored => c1 => normal_rewrap(
@@ -373,7 +359,7 @@ pub theorem ck_instance_methods_normal(
   shown: Text,
   out: List(SurfaceFn)
 ): CkNormalFrame(c, ck_instance_methods(expected, c, i, decl, ctor, shown, out)) {
-  ⊢ CkNormalFrame(c, ck_instance_methods(expected, c, i, decl, ctor, shown, out)) from match expected {
+  match expected {
     Nil => normal => normal
     Cons(e, rest) => Eq::subst(
       (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
@@ -399,27 +385,26 @@ pub theorem inf_preds_dup_normal(
   rest: List(SurfaceConstraint),
   c: Checker,
   gs: List(Text),
-  preds: List(Pair(Text, Text)),
+  preds: List(Text × Text),
   g: Text,
   dup: Bool,
   ih: ∀ next: Checker. ∀ ps: List(
-    Pair(Text, Text)
+    (Text × Text)
   ). CkNormalFrame(next, ck_instance_preds(rest, next, gs, ps))
 ): CkNormalFrame(c, inf_preds_dup(w, rest, c, gs, preds, g, dup)) {
-  ⊢ CkNormalFrame(c, inf_preds_dup(w, rest, c, gs, preds, g, dup)) from match dup {
+  match dup {
     true => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
       ck_error(
         c,
-        cat5(signature_constraint_class(w), "(", g, ") is written twice", ""),
+        predicate_written_twice_message(signature_constraint_class(w), g),
         signature_constraint_span(w)
       ),
       ck_error_normal(
         c,
-        cat5(signature_constraint_class(w), "(", g, ") is written twice", ""),
+        predicate_written_twice_message(signature_constraint_class(w), g),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
@@ -430,9 +415,9 @@ pub theorem inf_preds_dup_normal(
         rest,
         c,
         gs,
-        Cons(Pair { fst: signature_constraint_class(w), snd: g }, preds)
+        Cons(#(signature_constraint_class(w), g), preds)
       ),
-      ih(c, Cons(Pair { fst: signature_constraint_class(w), snd: g }, preds))
+      ih(c, Cons(#(signature_constraint_class(w), g), preds))
     )
   }
 }
@@ -442,14 +427,14 @@ pub theorem inf_preds_has_normal(
   rest: List(SurfaceConstraint),
   c: Checker,
   gs: List(Text),
-  preds: List(Pair(Text, Text)),
+  preds: List(Text × Text),
   g: Text,
   has: Bool,
   ih: ∀ next: Checker. ∀ ps: List(
-    Pair(Text, Text)
+    (Text × Text)
   ). CkNormalFrame(next, ck_instance_preds(rest, next, gs, ps))
 ): CkNormalFrame(c, inf_preds_has(w, rest, c, gs, preds, g, has)) {
-  ⊢ CkNormalFrame(c, inf_preds_has(w, rest, c, gs, preds, g, has)) from match has {
+  match has {
     true => inf_preds_dup_normal(
       w,
       rest,
@@ -461,14 +446,13 @@ pub theorem inf_preds_has_normal(
       ih
     )
     false => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
@@ -481,413 +465,370 @@ pub theorem inf_preds_kind_normal(
   rest: List(SurfaceConstraint),
   c: Checker,
   gs: List(Text),
-  preds: List(Pair(Text, Text)),
+  preds: List(Text × Text),
   k: SurfaceKind,
   ih: ∀ next: Checker. ∀ ps: List(
-    Pair(Text, Text)
+    (Text × Text)
   ). CkNormalFrame(next, ck_instance_preds(rest, next, gs, ps))
 ): CkNormalFrame(c, inf_preds_kind(w, rest, c, gs, preds, k)) {
-  ⊢ CkNormalFrame(c, inf_preds_kind(w, rest, c, gs, preds, k)) from match k {
-    SkVar(g) => inf_preds_has_normal(w, rest, c, gs, preds, g, text_list_has(gs, g), ih)
+  match k {
+    SkVar(g) => inf_preds_has_normal(w, rest, c, gs, preds, surface_name_text(g), text_list_has(gs, surface_name_text(g)), ih)
     SkNat(digits) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkText(value) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkBool(value) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkApp(head, args) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkPi(params, result, effects) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
-    SkExists(binder, domain, body) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+    SkExists(binder, domain, body, unused) => normal_bind(
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
-    SkLam(params, body) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+    SkLam(params, body, _, _) => normal_bind(
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkUnion(parts) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkTagged(tag, value) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkIf(cond, then, otherwise) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkField(value, name) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkBlock(stmts) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkPerform(op, args) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkHandle(body, handlers) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkBudget(amount_memory, amount, body) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
-    SkMatch(scrutinee, motive, arms, binder) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+    SkMatch(scrutinee, motive, arms, binder, _) => normal_bind(
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkHole(name) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkRecord(name, fields) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
-    SkBorrow(mutable, value) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+    SkBorrow(mutable, mutable_orig, value) => normal_bind(
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkFnKind(kind, ty) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
-    SkBorrowLam(borrows, lam) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+    SkBorrowLam(r#borrows, lam) => normal_bind(
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkOther(what) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkAscribe(what, what_ty) => normal_bind(
+      <A: Unit, B: List(Text × Text)>,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
+      ck_error_normal(
+        c,
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkRow(what_effects) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkFloat(what) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
-        signature_constraint_span(w)
-      ),
-      ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
-    )
-    SkProduct(what) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
-      c,
-      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
-      ck_error_normal(
-        c,
-        "where constrains only generics of the instance",
-        signature_constraint_span(w)
-      ),
-      ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
-    )
-    SkProject(what, what_ty) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
-      c,
-      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
-      ck_error_normal(
-        c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkMacroCall(name, arg) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkQuote(stmts_form, stmts) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkSplice(value) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkSyntaxLit(name, body) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
     SkStep(tactic, arg, call_start, call_end, before, arms) => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
-      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error(c, where_only_generics_of_instance_message(), signature_constraint_span(w)),
       ck_error_normal(
         c,
-        "where constrains only generics of the instance",
+        where_only_generics_of_instance_message(),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
@@ -900,26 +841,25 @@ pub theorem inf_preds_missing_normal(
   rest: List(SurfaceConstraint),
   c: Checker,
   gs: List(Text),
-  preds: List(Pair(Text, Text)),
+  preds: List(Text × Text),
   missing: Bool,
   ih: ∀ next: Checker. ∀ ps: List(
-    Pair(Text, Text)
+    (Text × Text)
   ). CkNormalFrame(next, ck_instance_preds(rest, next, gs, ps))
 ): CkNormalFrame(c, inf_preds_missing(w, rest, c, gs, preds, missing)) {
-  ⊢ CkNormalFrame(c, inf_preds_missing(w, rest, c, gs, preds, missing)) from match missing {
+  match missing {
     true => normal_bind(
-      Unit,
-      List(Pair(Text, Text)),
+      <A: Unit, B: List(Text × Text)>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
       ck_error(
         c,
-        cat2(signature_constraint_class(w), " is not a class"),
+        not_a_class_message(signature_constraint_class(w)),
         signature_constraint_span(w)
       ),
       ck_error_normal(
         c,
-        cat2(signature_constraint_class(w), " is not a class"),
+        not_a_class_message(signature_constraint_class(w)),
         signature_constraint_span(w)
       ),
       ignored => c1 => normal_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
@@ -932,12 +872,12 @@ pub theorem ck_instance_preds_normal(
   ws: List(SurfaceConstraint),
   c: Checker,
   gs: List(Text),
-  preds: List(Pair(Text, Text))
+  preds: List(Text × Text)
 ): CkNormalFrame(c, ck_instance_preds(ws, c, gs, preds)) {
-  ⊢ CkNormalFrame(c, ck_instance_preds(ws, c, gs, preds)) from match ws {
+  match ws {
     Nil => normal => normal
     Cons(w, rest) => Eq::subst(
-      (z: Mut1(List(Pair(Text, Text)), Checker)) => CkNormalFrame(c, z),
+      (z: Mut1(List(Text × Text), Checker)) => CkNormalFrame(c, z),
       Eq::sym(inf_preds_unf(w, rest, c, gs, preds)),
       inf_preds_missing_normal(
         w,
@@ -958,7 +898,7 @@ pub theorem inf_store_normal(
   ctor: Text,
   g: SigGenerics,
   head: Ty,
-  preds: List(Pair(Text, Text)),
+  preds: List(Text × Text),
   made: List(SurfaceFn)
 ): CkNormalFrame(c, inf_store(c, i, ctor, g, head, preds, made)) { normal => normal }
 
@@ -983,27 +923,22 @@ pub theorem inf_rest_duplicate_normal(
     inf_rest_duplicate(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
   ) from match bad {
     true => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c,
       (ignored: Unit, c1: Checker) => mut1(out, c1),
-      ck_error(c, cat3(inf_class(i), " already has an instance for ", ctor), inf_span(i)),
-      ck_error_normal(c, cat3(inf_class(i), " already has an instance for ", ctor), inf_span(i)),
+      ck_error(c, instance_duplicate_message(inf_class(i), ctor), inf_span(i)),
+      ck_error_normal(c, instance_duplicate_message(inf_class(i), ctor), inf_span(i)),
       ignored => c1 => normal => normal
     )
     false => normal_bind(
-      List(Pair(Text, Text)),
-      List(SurfaceFn),
+      <A: List(Text × Text), B: List(SurfaceFn)>,
       c,
-      (preds: List(Pair(Text, Text)), c1: Checker) => frame_bind(
-        Unit,
-        List(SurfaceFn),
+      (preds: List(Text × Text), c1: Checker) => frame_bind(
+        <A: Unit, B: List(SurfaceFn)>,
         (ignored1: Unit, c2: Checker) => frame_bind(
-          List(SurfaceFn),
-          List(SurfaceFn),
+          <A: List(SurfaceFn), B: List(SurfaceFn)>,
           (made: List(SurfaceFn), c3: Checker) => frame_bind(
-            Unit,
-            List(SurfaceFn),
+            <A: Unit, B: List(SurfaceFn)>,
             (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
             ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info))
           ),
@@ -1022,15 +957,12 @@ pub theorem inf_rest_duplicate_normal(
       ck_instance_preds(inf_wheres(i), c, inf_generics(i), Nil),
       ck_instance_preds_normal(inf_wheres(i), c, inf_generics(i), Nil),
       preds => c1 => normal_bind(
-        Unit,
-        List(SurfaceFn),
+        <A: Unit, B: List(SurfaceFn)>,
         c1,
         (ignored1: Unit, c2: Checker) => frame_bind(
-          List(SurfaceFn),
-          List(SurfaceFn),
+          <A: List(SurfaceFn), B: List(SurfaceFn)>,
           (made: List(SurfaceFn), c3: Checker) => frame_bind(
-            Unit,
-            List(SurfaceFn),
+            <A: Unit, B: List(SurfaceFn)>,
             (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
             ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info))
           ),
@@ -1047,12 +979,10 @@ pub theorem inf_rest_duplicate_normal(
         ck_instance_laws(inf_laws(i), Nil, c1, i, inf_info_decl(info)),
         ck_instance_laws_normal(inf_laws(i), Nil, c1, i, inf_info_decl(info)),
         ignored1 => c2 => normal_bind(
-          List(SurfaceFn),
-          List(SurfaceFn),
+          <A: List(SurfaceFn), B: List(SurfaceFn)>,
           c2,
           (made: List(SurfaceFn), c3: Checker) => frame_bind(
-            Unit,
-            List(SurfaceFn),
+            <A: Unit, B: List(SurfaceFn)>,
             (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
             ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info))
           ),
@@ -1075,8 +1005,7 @@ pub theorem inf_rest_duplicate_normal(
             out
           ),
           made => c3 => normal_bind(
-            Unit,
-            List(SurfaceFn),
+            <A: Unit, B: List(SurfaceFn)>,
             c3,
             (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
             ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info)),
@@ -1110,30 +1039,17 @@ pub theorem inf_rest_orphan_normal(
     inf_rest_orphan(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
   ) from match bad {
     true => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c,
       (ignored: Unit, c1: Checker) => mut1(out, c1),
       ck_error(
         c,
-        cat5(
-          inf_class(i),
-          cat3("(", ctor, ")"),
-          " must be in the tote of ",
-          inf_class(i),
-          cat2(" or of ", ctor)
-        ),
+        instance_orphan_message(inf_class(i), ctor),
         inf_span(i)
       ),
       ck_error_normal(
         c,
-        cat5(
-          inf_class(i),
-          cat3("(", ctor, ")"),
-          " must be in the tote of ",
-          inf_class(i),
-          cat2(" or of ", ctor)
-        ),
+        instance_orphan_message(inf_class(i), ctor),
         inf_span(i)
       ),
       ignored => c1 => normal => normal
@@ -1197,7 +1113,7 @@ pub theorem inf_head_message_normal(
   out: List(SurfaceFn),
   head: Ty,
   ctor: Text,
-  message: Option(Pair(Text, TySpan))
+  message: Option(Text × TySpan)
 ): CkNormalFrame(c, inf_head_message(c, i, info, own_classes, own_types, out, head, ctor, message)) {
   ⊢ CkNormalFrame(
     c,
@@ -1231,8 +1147,7 @@ pub theorem inf_head_message_normal(
       )
     )
     Some(m) => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c,
       (ignored: Unit, c1: Checker) => mut1(out, c1),
       ck_error(c, inf_message_text(m), inf_message_span(m)),
@@ -1257,12 +1172,11 @@ pub theorem inf_head_ctor_normal(
     inf_head_ctor(c, i, info, own_classes, own_types, out, head, found)
   ) from match found {
     None => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c,
       (ignored: Unit, c1: Checker) => mut1(out, c1),
-      ck_error(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
-      ck_error_normal(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
+      ck_error(c, instance_head_distinct_generics_message(), inf_head_span(i)),
+      ck_error_normal(c, instance_head_distinct_generics_message(), inf_head_span(i)),
       ignored => c1 => normal => normal
     )
     Some(ctor) => inf_head_message_normal(
@@ -1288,8 +1202,7 @@ pub fn normal_instance_head_after(
   m: Mut1(Ty, Checker)
 ): Mut1(List(SurfaceFn), Checker) {
   frame_bind(
-    Ty,
-    List(SurfaceFn),
+    <A: Ty, B: List(SurfaceFn)>,
     (head: Ty, next: Checker) => inf_head_ctor(
       frame_set_constructor_position(next, false),
       i,
@@ -1312,7 +1225,7 @@ pub theorem normal_instance_head_after_sound(
   m: Mut1(Ty, Checker),
   ordinary: frame_under_borrow(ck_st(m)) = false
 ): CkNormal(ck_st(normal_instance_head_after(i, info, own_classes, own_types, out, m))) {
-  ⊢ CkNormal(ck_st(normal_instance_head_after(i, info, own_classes, own_types, out, m))) from match m {
+  match m {
     mut1(head, next) => inf_head_ctor_normal(
       frame_set_constructor_position(next, false),
       i,
@@ -1322,7 +1235,7 @@ pub theorem normal_instance_head_after_sound(
       out,
       head,
       ty_constructor(head),
-      Eq::congr((borrow: Bool) => Pair { fst: false, snd: borrow }, ordinary)
+      Eq::congr((r#borrow: Bool) => #(false, r#borrow), ordinary)
     )
   }
 }
@@ -1340,12 +1253,11 @@ pub theorem inf_head_missing_normal(
     inf_head_missing(c, i, info, own_classes, own_types, out, missing)
   ) from match missing {
     Some(name) => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c,
       (ignored: Unit, next: Checker) => mut1(out, next),
-      ck_error(c, cat2(name, " does not appear in the head"), inf_head_span(i)),
-      ck_error_normal(c, cat2(name, " does not appear in the head"), inf_head_span(i)),
+      ck_error(c, generic_not_in_head_message(name), inf_head_span(i)),
+      ck_error_normal(c, generic_not_in_head_message(name), inf_head_span(i)),
       ignored => next => normal => normal
     )
     None => normal => normal_instance_head_after_sound(
@@ -1376,14 +1288,13 @@ pub theorem inf_head_shape_normal(
   out: List(SurfaceFn),
   bad: Bool
 ): CkNormalFrame(c, inf_head_shape(c, i, info, own_classes, own_types, out, bad)) {
-  ⊢ CkNormalFrame(c, inf_head_shape(c, i, info, own_classes, own_types, out, bad)) from match bad {
+  match bad {
     true => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c,
       (ignored: Unit, c1: Checker) => mut1(out, c1),
-      ck_error(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
-      ck_error_normal(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
+      ck_error(c, instance_head_distinct_generics_message(), inf_head_span(i)),
+      ck_error_normal(c, instance_head_distinct_generics_message(), inf_head_span(i)),
       ignored => c1 => normal => normal
     )
     false => inf_head_missing_normal(
@@ -1416,7 +1327,7 @@ pub theorem ck_declare_instance_at_normal(
       own_classes,
       own_types,
       out,
-      not(head_shape_ok(inf_head(i), inf_generics(i)))
+      not(instance_legacy_shape(i))
     )
   )
 }
@@ -1429,14 +1340,13 @@ pub theorem inf_class_lookup_normal(
   out: List(SurfaceFn),
   o: Option(ClassInfo)
 ): CkNormalFrame(c, inf_class_lookup(c, i, own_classes, own_types, out, o)) {
-  ⊢ CkNormalFrame(c, inf_class_lookup(c, i, own_classes, own_types, out, o)) from match o {
+  match o {
     None => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c,
       (ignored: Unit, c1: Checker) => mut1(out, c1),
-      ck_error(c, cat2(inf_class(i), " is not a class"), inf_span(i)),
-      ck_error_normal(c, cat2(inf_class(i), " is not a class"), inf_span(i)),
+      ck_error(c, not_a_class_message(inf_class(i)), inf_span(i)),
+      ck_error_normal(c, not_a_class_message(inf_class(i)), inf_span(i)),
       ignored => c1 => normal => normal
     )
     Some(info) => normal_rewrap(
@@ -1460,14 +1370,13 @@ pub theorem inf_class_structural_normal(
     inf_class_structural(c, i, own_classes, own_types, out, structural)
   ) from match structural {
     true => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c,
       (ignored: Unit, c1: Checker) => mut1(out, c1),
-      ck_error(c, cat2(inf_class(i), " is structural and has no instances to write"), inf_span(i)),
+      ck_error(c, class_structural_no_instances_message(inf_class(i)), inf_span(i)),
       ck_error_normal(
         c,
-        cat2(inf_class(i), " is structural and has no instances to write"),
+        class_structural_no_instances_message(inf_class(i)),
         inf_span(i)
       ),
       ignored => c1 => normal => normal
@@ -1509,8 +1418,7 @@ pub theorem inf_list_cons_normal(
   ). CkNormalFrame(next, ck_declare_instances(rest, next, own_classes, own_types, fs))
 ): CkNormalFrame(c, inf_list_cons(i, rest, c, own_classes, own_types, out)) {
   normal_bind(
-    List(SurfaceFn),
-    List(SurfaceFn),
+    <A: List(SurfaceFn), B: List(SurfaceFn)>,
     c,
     (made: List(SurfaceFn), c1: Checker) => ck_rewrap1(
       ck_declare_instances(rest, c1, own_classes, own_types, made)
@@ -1536,22 +1444,17 @@ pub theorem inf_list_step_normal(
     SurfaceFn
   ). CkNormalFrame(next, ck_declare_instances(rest, next, own_classes, own_types, fs))
 ): CkNormalFrame(c, ck_declare_instances(Cons(s, rest), c, own_classes, own_types, out)) {
-  ⊢ CkNormalFrame(c, ck_declare_instances(Cons(s, rest), c, own_classes, own_types, out)) from match s {
-    StLet(name, ty, value, borrow, mutable) => Eq::subst(
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => Eq::subst(
       (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
       Eq::sym(
-        inf_list_StLet_unf(name, ty, value, borrow, mutable, rest, c, own_classes, own_types, out)
+        inf_list_StLet_unf(name, ty, value, r#borrow, mutable, unused, st_stack, rest, c, own_classes, own_types, out)
       ),
       normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
     )
-    StVar(name, ty, value, borrow) => Eq::subst(
+    StVar(name, ty, value, r#borrow, unused, st_stack) => Eq::subst(
       (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
-      Eq::sym(inf_list_StVar_unf(name, ty, value, borrow, rest, c, own_classes, own_types, out)),
-      normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
-    )
-    StModule(name, stmts, start, end) => Eq::subst(
-      (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
-      Eq::sym(inf_list_StModule_unf(name, stmts, start, end, rest, c, own_classes, own_types, out)),
+      Eq::sym(inf_list_StVar_unf(name, ty, value, r#borrow, unused, st_stack, rest, c, own_classes, own_types, out)),
       normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
     )
     StAssign(name, name_place, value) => Eq::subst(
@@ -1609,9 +1512,9 @@ pub theorem inf_list_step_normal(
       Eq::sym(inf_list_StEnum_unf(d, rest, c, own_classes, own_types, out)),
       normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
     )
-    StExtern(abi, fns, start, end) => Eq::subst(
+    StExtern(fns, instances, types, structs, enums, start, end) => Eq::subst(
       (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
-      Eq::sym(inf_list_StExtern_unf(abi, fns, start, end, rest, c, own_classes, own_types, out)),
+      Eq::sym(inf_list_StExtern_unf(fns, instances, types, structs, enums, start, end, rest, c, own_classes, own_types, out)),
       normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
     )
     StClass(cl) => Eq::subst(
@@ -1642,6 +1545,36 @@ pub theorem inf_list_step_normal(
     StOther(what, start, end) => Eq::subst(
       (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
       Eq::sym(inf_list_StOther_unf(what, start, end, rest, c, own_classes, own_types, out)),
+      normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StLoop(st_body, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
+      Eq::sym(inf_list_StOther_unf("LoopExpr", start, end, rest, c, own_classes, own_types, out)),
+      normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StModule(mod_name, mod_vis, mod_items, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
+      Eq::sym(inf_list_StOther_unf("ModuleDecl", start, end, rest, c, own_classes, own_types, out)),
+      normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StReexport(re_path, re_names, re_spans, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
+      Eq::sym(inf_list_StOther_unf("ReexportDecl", start, end, rest, c, own_classes, own_types, out)),
+      normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StFor(for_pat, for_src, st_body, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
+      Eq::sym(inf_list_StOther_unf("ForStmt", start, end, rest, c, own_classes, own_types, out)),
+      normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StBreak(st_value, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
+      Eq::sym(inf_list_StOther_unf("BreakStmt", start, end, rest, c, own_classes, own_types, out)),
+      normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StContinue(start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
+      Eq::sym(inf_list_StOther_unf("ContinueStmt", start, end, rest, c, own_classes, own_types, out)),
       normal_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
     )
     StMacro(name, function, start, end) => Eq::subst(
@@ -1685,7 +1618,7 @@ pub theorem ck_declare_instances_normal(
   own_types: List(Text),
   out: List(SurfaceFn)
 ): CkNormalFrame(c, ck_declare_instances(ss, c, own_classes, own_types, out)) {
-  ⊢ CkNormalFrame(c, ck_declare_instances(ss, c, own_classes, own_types, out)) from match ss {
+  match ss {
     Nil => normal => normal
     Cons(s, rest) => inf_list_step_normal(
       s,
@@ -1704,15 +1637,12 @@ pub theorem inf_declare_classes_normal(
   program: List(SurfaceStmt)
 ): CkNormalFrame(c, inf_declare_classes(c, program)) {
   normal_bind(
-    List(SurfaceClass),
-    List(SurfaceFn),
+    <A: List(SurfaceClass), B: List(SurfaceFn)>,
     c,
     (declared: List(SurfaceClass), c1: Checker) => frame_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       (ignored: Unit, c2: Checker) => frame_bind(
-        List(SurfaceFn),
-        List(SurfaceFn),
+        <A: List(SurfaceFn), B: List(SurfaceFn)>,
         (fs: List(SurfaceFn), c3: Checker) => mut1(List::reverse(fs), c3),
         ck_declare_instances(
           program,
@@ -1727,12 +1657,10 @@ pub theorem inf_declare_classes_normal(
     ck_declare_class_list(program, c, stmts_type_names(program)),
     ck_declare_class_list_normal(program, c, stmts_type_names(program)),
     declared => c1 => normal_bind(
-      Unit,
-      List(SurfaceFn),
+      <A: Unit, B: List(SurfaceFn)>,
       c1,
       (ignored: Unit, c2: Checker) => frame_bind(
-        List(SurfaceFn),
-        List(SurfaceFn),
+        <A: List(SurfaceFn), B: List(SurfaceFn)>,
         (fs: List(SurfaceFn), c3: Checker) => mut1(List::reverse(fs), c3),
         ck_declare_instances(
           program,
@@ -1745,8 +1673,7 @@ pub theorem inf_declare_classes_normal(
       ck_declare_methods(declared, c1),
       ck_declare_methods_normal(declared, c1),
       ignored => c2 => normal_bind(
-        List(SurfaceFn),
-        List(SurfaceFn),
+        <A: List(SurfaceFn), B: List(SurfaceFn)>,
         c2,
         (fs: List(SurfaceFn), c3: Checker) => mut1(List::reverse(fs), c3),
         ck_declare_instances(
@@ -1777,5 +1704,35 @@ pub theorem ck_declare_classes_normal(
     (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
     Eq::sym(inf_classes_unf(c, program)),
     inf_declare_classes_normal(c, program)
+  )
+}
+
+pub theorem ck_declare_all_classes_normal(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt)
+): CkNormalFrame(c, ck_declare_all_classes(c, prelude, program)) {
+  Eq::subst(
+    (z: Mut1(List(SurfaceFn), Checker)) => CkNormalFrame(c, z),
+    Eq::sym(inf_all_classes_unf(c, prelude, program)),
+    normal_bind(
+      <A: List(SurfaceFn), B: List(SurfaceFn)>,
+      c,
+      (pre: List(SurfaceFn), c1: Checker) => frame_bind(
+        <A: List(SurfaceFn), B: List(SurfaceFn)>,
+        (made: List(SurfaceFn), c2: Checker) => mut1(List::append(pre, made), c2),
+        ck_declare_classes(c1, program)
+      ),
+      ck_declare_classes(c, prelude_class_stmts(prelude, stmts_class_names(program))),
+      ck_declare_classes_normal(c, prelude_class_stmts(prelude, stmts_class_names(program))),
+      pre => c1 => normal_bind(
+        <A: List(SurfaceFn), B: List(SurfaceFn)>,
+        c1,
+        (made: List(SurfaceFn), c2: Checker) => mut1(List::append(pre, made), c2),
+        ck_declare_classes(c1, program),
+        ck_declare_classes_normal(c1, program),
+        made => c2 => normal => normal
+      )
+    )
   )
 }

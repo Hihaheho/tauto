@@ -1,13 +1,14 @@
 import "instantiation_scheme_records.taut"
-import std::Map
-import std::Row
-import std::Text
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "finish_frame.taut"
 import "instantiation_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 
 pub def RequirementState(
@@ -49,8 +50,8 @@ pub theorem requirement_frame_bind<A: Type, B: Type>(
   m: Mut1(A, Checker),
   first: RequirementFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. RequirementFrame(next, k(value, next))
-): RequirementFrame(c, frame_bind(A, B, k, m)) {
-  ⊢ RequirementFrame(c, frame_bind(A, B, k, m)) from match m {
+): RequirementFrame(c, frame_bind(<A: A, B: B>, k, m)) {
+  match m {
     mut1(value, next) => requirement_state_trans(
       c,
       next,
@@ -71,12 +72,12 @@ pub theorem requirement_fresh_frame(
   c: Checker
 ): RequirementFrame(c, ck_fresh(c)) { requirement_state_refl(c) }
 pub fn instance_scalar_bound(
-  g: Pair(Text, Kind),
+  g: Text × Kind,
   value: Ty,
   span: TySpan
 ): TyBound { TyBound {ty: value, kind: g.snd, start: span.start, end: span.end} }
 pub fn instance_constructor_bound(
-  g: Pair(Text, Kind),
+  g: Text × Kind,
   value: Ty,
   name: Text,
   span: TySpan,
@@ -86,13 +87,13 @@ pub fn instance_constructor_bound(
 }
 pub theorem instantiation_bound_frame_requirements(
   c: Checker,
-  g: Pair(Text, Kind),
+  g: Text × Kind,
   value: Ty,
   name: Text,
   span: TySpan,
   arg: Option(Kind)
 ): RequirementFrame(c, instantiation_bound(c, g, value, name, span, arg)) {
-  ⊢ RequirementFrame(c, instantiation_bound(c, g, value, name, span, arg)) from match arg {
+  match arg {
     None => AndIntro(
       (item: TyBound, member: Mem(TyBound, item, finish_bounds(c))) => MemThere(
         instance_scalar_bound(g, value, span),
@@ -112,10 +113,10 @@ pub theorem instantiation_bound_frame_requirements(
   }
 }
 pub theorem instantiation_cons_frame_requirements(
-  g: Pair(Text, Kind),
-  rest: List(Pair(Text, Kind)),
+  g: Text × Kind,
+  rest: List(Text × Kind),
   c: Checker,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan,
   map: Ordmap(Text, Ty),
@@ -125,12 +126,10 @@ pub theorem instantiation_cons_frame_requirements(
   ). RequirementFrame(next, ck_instantiate_map_ctors(rest, next, ctors, name, span, more))
 ): RequirementFrame(c, instantiation_cons(g, rest, c, ctors, name, span, map)) {
   requirement_frame_bind(
-    Ty,
-    Ordmap(Text, Ty),
+    <A: Ty, B: Ordmap(Text, Ty)>,
     c,
     (v: Ty, c1: Checker) => frame_bind(
-      Unit,
-      Ordmap(Text, Ty),
+      <A: Unit, B: Ordmap(Text, Ty)>,
       (ignored: Unit, c2: Checker) => ck_rewrap1(
         ck_instantiate_map_ctors(
           rest,
@@ -146,8 +145,7 @@ pub theorem instantiation_cons_frame_requirements(
     ck_fresh(c),
     requirement_fresh_frame(c),
     v => c1 => requirement_frame_bind(
-      Unit,
-      Ordmap(Text, Ty),
+      <A: Unit, B: Ordmap(Text, Ty)>,
       c1,
       (ignored: Unit, c2: Checker) => ck_rewrap1(
         ck_instantiate_map_ctors(
@@ -185,14 +183,14 @@ pub theorem instantiation_cons_frame_requirements(
 }
 
 pub theorem ck_instantiate_map_ctors_frame_requirements(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
-  ctors: List(Pair(Text, Kind)),
+  ctors: List(Text × Kind),
   name: Text,
   span: TySpan,
   map: Ordmap(Text, Ty)
 ): RequirementFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
-  ⊢ RequirementFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) from match gs {
+  match gs {
     Nil => requirement_state_refl(c)
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => RequirementFrame(c, z),
@@ -218,7 +216,7 @@ pub theorem ck_instantiate_map_ctors_frame_requirements(
   }
 }
 pub theorem ck_instantiate_map_frame_requirements(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
   span: TySpan,
   map: Ordmap(Text, Ty)
@@ -239,12 +237,12 @@ pub theorem ck_pend_frame_requirements(
 
 pub theorem instantiation_pred_frame_requirements(
   c: Checker,
-  p: Pair(Text, Text),
+  p: Text × Text,
   what: Text,
   span: TySpan,
   found: Option(Ty)
 ): RequirementFrame(c, instantiation_pred(c, p, what, span, found)) {
-  ⊢ RequirementFrame(c, instantiation_pred(c, p, what, span, found)) from match found {
+  match found {
     None => requirement_state_refl(c)
     Some(t) => requirement_frame_rewrap(
       c,
@@ -255,8 +253,8 @@ pub theorem instantiation_pred_frame_requirements(
 }
 
 pub theorem instantiation_preds_cons_frame_requirements(
-  p: Pair(Text, Text),
-  rest: List(Pair(Text, Text)),
+  p: Text × Text,
+  rest: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
@@ -264,8 +262,7 @@ pub theorem instantiation_preds_cons_frame_requirements(
   ih: ∀ next: Checker. RequirementFrame(next, ck_pend_preds(rest, next, map, what, span))
 ): RequirementFrame(c, instantiation_preds_cons(p, rest, c, map, what, span)) {
   requirement_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => ck_rewrap1(ck_pend_preds(rest, c1, map, what, span)),
     instantiation_pred(
@@ -287,13 +284,13 @@ pub theorem instantiation_preds_cons_frame_requirements(
 }
 
 pub theorem ck_pend_preds_frame_requirements(
-  ps: List(Pair(Text, Text)),
+  ps: List(Text × Text),
   c: Checker,
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan
 ): RequirementFrame(c, ck_pend_preds(ps, c, map, what, span)) {
-  ⊢ RequirementFrame(c, ck_pend_preds(ps, c, map, what, span)) from match ps {
+  match ps {
     Nil => requirement_state_refl(c)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => RequirementFrame(c, z),
@@ -322,8 +319,7 @@ pub theorem instantiation_named_cons_frame_requirements(
   ). RequirementFrame(next, ck_instantiate_named_map(rest, next, more))
 ): RequirementFrame(c, instantiation_named_cons(g, rest, c, map)) {
   requirement_frame_bind(
-    Ty,
-    Ordmap(Text, Ty),
+    <A: Ty, B: Ordmap(Text, Ty)>,
     c,
     (v: Ty, c1: Checker) => ck_rewrap1(
       ck_instantiate_named_map(rest, c1, Ordmap::insert(map, g, v, Ordmap::compare_text))
@@ -343,7 +339,7 @@ pub theorem ck_instantiate_named_map_frame_requirements(
   c: Checker,
   map: Ordmap(Text, Ty)
 ): RequirementFrame(c, ck_instantiate_named_map(gs, c, map)) {
-  ⊢ RequirementFrame(c, ck_instantiate_named_map(gs, c, map)) from match gs {
+  match gs {
     Nil => requirement_state_refl(c)
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => RequirementFrame(c, z),
@@ -361,13 +357,12 @@ pub theorem ck_instantiate_named_map_frame_requirements(
 
 pub theorem instantiation_ck_instantiate_frame_requirements(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   t: Ty,
   span: TySpan
 ): RequirementFrame(c, instantiation_ck_instantiate(c, gs, t, span)) {
   requirement_frame_bind(
-    Ordmap(Text, Ty),
-    Ty,
+    <A: Ordmap(Text, Ty), B: Ty>,
     c,
     (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
     ck_instantiate_map(gs, c, span, Ordmap::empty()),
@@ -378,7 +373,7 @@ pub theorem instantiation_ck_instantiate_frame_requirements(
 
 pub theorem ck_instantiate_frame_requirements(
   c: Checker,
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   t: Ty,
   span: TySpan
 ): RequirementFrame(c, ck_instantiate(c, gs, t, span)) {
@@ -395,8 +390,7 @@ pub theorem instantiation_ck_instantiate_named_frame_requirements(
   t: Ty
 ): RequirementFrame(c, instantiation_ck_instantiate_named(c, gs, t)) {
   requirement_frame_bind(
-    Ordmap(Text, Ty),
-    Ty,
+    <A: Ordmap(Text, Ty), B: Ty>,
     c,
     (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
     ck_instantiate_named_map(gs, c, Ordmap::empty()),
@@ -424,13 +418,11 @@ pub theorem instantiation_scheme_frame_requirements(
   span: TySpan
 ): RequirementFrame(c, instantiation_scheme(c, name, s, span)) {
   requirement_frame_bind(
-    Ordmap(Text, Ty),
-    Ty,
+    <A: Ordmap(Text, Ty), B: Ty>,
     c,
     (map: Ordmap(Text, Ty), c1: Checker) => frame_bind(
-      Unit,
-      Ty,
-      (ignored: Unit, c2: Checker) => mut1(ty_substitute(instantiation_scheme_ty(s), map), c2),
+      <A: Unit, B: Ty>,
+      (ignored: Unit, c2: Checker) => instantiation_scheme_done(c2, name, s, span, map),
       ck_pend_preds(instantiation_scheme_preds(s), c1, map, name, span)
     ),
     ck_instantiate_map_ctors(
@@ -450,10 +442,9 @@ pub theorem instantiation_scheme_frame_requirements(
       Ordmap::empty()
     ),
     map => c1 => requirement_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c1,
-      (ignored: Unit, c2: Checker) => mut1(ty_substitute(instantiation_scheme_ty(s), map), c2),
+      (ignored: Unit, c2: Checker) => instantiation_scheme_done(c2, name, s, span, map),
       ck_pend_preds(instantiation_scheme_preds(s), c1, map, name, span),
       ck_pend_preds_frame_requirements(instantiation_scheme_preds(s), c1, map, name, span),
       ignored => c2 => requirement_state_refl(c2)

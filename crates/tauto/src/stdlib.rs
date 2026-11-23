@@ -1,7 +1,7 @@
-//! The standard library that comes with tauto: `import std::List` reads
-//! `std/List.taut` as it was when tauto was built, wherever the importing
+//! The standard library that comes with tauto: `import std::list` reads
+//! `std/list.taut` as it was when tauto was built, wherever the importing
 //! file is. The files are read under [`ROOT`], a path that is not on disk, so
-//! the imports between them (`import "Base.taut"`) resolve among themselves.
+//! the imports between them (`import "base.taut"`) resolve among themselves.
 //! The same `import name.Module` names a module of a dependency tote.
 
 use std::path::{Path, PathBuf};
@@ -13,135 +13,205 @@ pub const ROOT: &str = "/<tauto-std>";
 
 /// The parser tables of the syntaxes the standard library declares
 /// (`std/.tauto-syntax/` and `std/proof/.tauto-syntax/`), as they were when
-/// tauto was built: a program that imports `std::Mode` has no
+/// tauto was built: a program that imports `std::mode` has no
 /// `.tauto-syntax` beside the library's files to read them from.
 pub const SYNTAX_TABLES: &[&str] = &[
-    include_str!("../../../std/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables"),
-    include_str!("../../../std/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables"),
-    include_str!("../../../std/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables"),
-    include_str!("../../../std/proof/.tauto-syntax/8ea91dead6c8a3d9aadf0ccad902e4728eac1b7ebe3a984f8a7f12e735dfed0b.tables"),
+    include_str!(
+        "../../../std/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables"
+    ),
+    include_str!(
+        "../../../std/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables"
+    ),
+    include_str!(
+        "../../../std/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables"
+    ),
+    include_str!(
+        "../../../std/.tauto-syntax/f5222940c72652e4c217fdcf23c8b82f4e201785c48817f132edc2944fcbf3a3.tables"
+    ),
+    include_str!(
+        "../../../std/proof/.tauto-syntax/8ea91dead6c8a3d9aadf0ccad902e4728eac1b7ebe3a984f8a7f12e735dfed0b.tables"
+    ),
 ];
+
+/// The JavaScript modules std binds its own replaceable `extern` blocks to,
+/// by file name: a JavaScript build writes them under `host/tauto-std/`.
+pub const JAVASCRIPT_MODULES: &[(&str, &str)] =
+    &[("hashmap.mjs", include_str!("../../../std/host/hashmap.mjs"))];
+
+/// The directory under a JavaScript build's `host/` that holds
+/// [`JAVASCRIPT_MODULES`]; a binding's module path starts with it.
+pub const JAVASCRIPT_DIR: &str = "tauto-std";
+
+/// The members of each replaceable block of std that has a JavaScript binding,
+/// with the binding (`module#export`, the module in [`JAVASCRIPT_DIR`]): the
+/// `HashMap` block of `std/hashmap.taut`. A build binds a block of the program
+/// whose members are among these, unless the program binds any of them itself.
+pub const JAVASCRIPT_BLOCKS: &[&[(&str, &str)]] = &[&[
+    ("HashMap", "tauto-std/hashmap.mjs#release"),
+    ("HashMap::with_seed", "tauto-std/hashmap.mjs#with_seed"),
+    ("HashMap::seed", "tauto-std/hashmap.mjs#seed"),
+    ("HashMap::len", "tauto-std/hashmap.mjs#len"),
+    ("HashMap::get_at", "tauto-std/hashmap.mjs#get_at"),
+    ("HashMap::get_mut_at", "tauto-std/hashmap.mjs#get_mut_at"),
+    ("HashMap::contains_at", "tauto-std/hashmap.mjs#contains_at"),
+    ("HashMap::remove_at", "tauto-std/hashmap.mjs#remove_at"),
+    ("HashMap::insert_at", "tauto-std/hashmap.mjs#insert_at"),
+    ("HashMap::insert_with_at", "tauto-std/hashmap.mjs#insert_with_at"),
+    ("HashMap::each_mut", "tauto-std/hashmap.mjs#each_mut"),
+    ("HashMap::fold", "tauto-std/hashmap.mjs#fold"),
+    ("HashMap::into_vec", "tauto-std/hashmap.mjs#into_vec"),
+]];
 
 /// Each file of `std/` (the prelude aside, which every program has) and its text.
 pub const FILES: &[(&str, &str)] = &[
-("proof/Forms.taut", include_str!("../../../std/proof/Forms.taut")),
-("proof/Lang.taut", include_str!("../../../std/proof/Lang.taut")),
     (
-        "proof/Tooling.taut",
-        include_str!("../../../std/proof/Tooling.taut"),
-    ),
-    ("Array.taut", include_str!("../../../std/Array.taut")),
-    ("Base.taut", include_str!("../../../std/Base.taut")),
-    ("BinNat.taut", include_str!("../../../std/BinNat.taut")),
-    ("Calc.taut", include_str!("../../../std/Calc.taut")),
-    ("Bytes.taut", include_str!("../../../std/Bytes.taut")),
-    ("Data.taut", include_str!("../../../std/Data.taut")),
-    ("Deque.taut", include_str!("../../../std/Deque.taut")),
-    ("Effect.taut", include_str!("../../../std/Effect.taut")),
-    ("Float.taut", include_str!("../../../std/Float.taut")),
-    ("Float32.taut", include_str!("../../../std/Float32.taut")),
-    (
-        "FloatBoundsA.taut",
-        include_str!("../../../std/FloatBoundsA.taut"),
+        "proof/forms.taut",
+        include_str!("../../../std/proof/forms.taut"),
     ),
     (
-        "FloatBoundsB.taut",
-        include_str!("../../../std/FloatBoundsB.taut"),
+        "proof/lang.taut",
+        include_str!("../../../std/proof/lang.taut"),
     ),
     (
-        "FloatBoundsC.taut",
-        include_str!("../../../std/FloatBoundsC.taut"),
+        "proof/tooling.taut",
+        include_str!("../../../std/proof/tooling.taut"),
+    ),
+    ("alloc.taut", include_str!("../../../std/alloc.taut")),
+    ("array.taut", include_str!("../../../std/array.taut")),
+    ("base.taut", include_str!("../../../std/base.taut")),
+    ("bin_nat.taut", include_str!("../../../std/bin_nat.taut")),
+    ("bump.taut", include_str!("../../../std/bump.taut")),
+    ("calc.taut", include_str!("../../../std/calc.taut")),
+    ("bytes.taut", include_str!("../../../std/bytes.taut")),
+    ("data.taut", include_str!("../../../std/data.taut")),
+    ("deque.taut", include_str!("../../../std/deque.taut")),
+    ("effect.taut", include_str!("../../../std/effect.taut")),
+    (
+        "finite_iteration.taut",
+        include_str!("../../../std/finite_iteration.taut"),
+    ),
+    ("float.taut", include_str!("../../../std/float.taut")),
+    ("float32.taut", include_str!("../../../std/float32.taut")),
+    (
+        "float_bounds_a.taut",
+        include_str!("../../../std/float_bounds_a.taut"),
     ),
     (
-        "FloatDecode.taut",
-        include_str!("../../../std/FloatDecode.taut"),
+        "float_bounds_b.taut",
+        include_str!("../../../std/float_bounds_b.taut"),
     ),
     (
-        "FloatEncode.taut",
-        include_str!("../../../std/FloatEncode.taut"),
+        "float_bounds_c.taut",
+        include_str!("../../../std/float_bounds_c.taut"),
     ),
     (
-        "FloatError.taut",
-        include_str!("../../../std/FloatError.taut"),
+        "float_decode.taut",
+        include_str!("../../../std/float_decode.taut"),
     ),
     (
-        "FloatOfRat.taut",
-        include_str!("../../../std/FloatOfRat.taut"),
+        "float_encode.taut",
+        include_str!("../../../std/float_encode.taut"),
     ),
     (
-        "FloatPack.taut",
-        include_str!("../../../std/FloatPack.taut"),
+        "float_error.taut",
+        include_str!("../../../std/float_error.taut"),
     ),
     (
-        "FloatReal.taut",
-        include_str!("../../../std/FloatReal.taut"),
+        "float_of_rat.taut",
+        include_str!("../../../std/float_of_rat.taut"),
     ),
     (
-        "FloatRound.taut",
-        include_str!("../../../std/FloatRound.taut"),
+        "float_pack.taut",
+        include_str!("../../../std/float_pack.taut"),
     ),
-    ("HashMap.taut", include_str!("../../../std/HashMap.taut")),
-    ("Heap.taut", include_str!("../../../std/Heap.taut")),
-    ("Int.taut", include_str!("../../../std/Int.taut")),
-    ("IntLaws.taut", include_str!("../../../std/IntLaws.taut")),
-    ("IntNorm.taut", include_str!("../../../std/IntNorm.taut")),
-    ("IntOrder.taut", include_str!("../../../std/IntOrder.taut")),
-    ("List.taut", include_str!("../../../std/List.taut")),
-    ("Map.taut", include_str!("../../../std/Map.taut")),
-    ("MapLaws.taut", include_str!("../../../std/MapLaws.taut")),
     (
-        "MapRemoveFloor.taut",
-        include_str!("../../../std/MapRemoveFloor.taut"),
+        "float_real.taut",
+        include_str!("../../../std/float_real.taut"),
     ),
-    ("MapText.taut", include_str!("../../../std/MapText.taut")),
-    ("Mode.taut", include_str!("../../../std/Mode.taut")),
-    ("Nat.taut", include_str!("../../../std/Nat.taut")),
-    ("NatDiv.taut", include_str!("../../../std/NatDiv.taut")),
-    ("NatNorm.taut", include_str!("../../../std/NatNorm.taut")),
-    ("Ord.taut", include_str!("../../../std/Ord.taut")),
-    ("Quot.taut", include_str!("../../../std/Quot.taut")),
-    ("Rat.taut", include_str!("../../../std/Rat.taut")),
-    ("RatField.taut", include_str!("../../../std/RatField.taut")),
-    ("RatLaws.taut", include_str!("../../../std/RatLaws.taut")),
-    ("Real.taut", include_str!("../../../std/Real.taut")),
-    ("Refined.taut", include_str!("../../../std/Refined.taut")),
-    ("Rewrite.taut", include_str!("../../../std/Rewrite.taut")),
-    ("Row.taut", include_str!("../../../std/Row.taut")),
-    ("SInt.taut", include_str!("../../../std/SInt.taut")),
-    ("Secret.taut", include_str!("../../../std/Secret.taut")),
-    ("Set.taut", include_str!("../../../std/Set.taut")),
-    ("Sort.taut", include_str!("../../../std/Sort.taut")),
-    ("Stack.taut", include_str!("../../../std/Stack.taut")),
-    ("State.taut", include_str!("../../../std/State.taut")),
-    ("Std.taut", include_str!("../../../std/Std.taut")),
-    ("SynTree.taut", include_str!("../../../std/SynTree.taut")),
-    ("Tactic.taut", include_str!("../../../std/Tactic.taut")),
-    ("Text.taut", include_str!("../../../std/Text.taut")),
-    ("TextOps.taut", include_str!("../../../std/TextOps.taut")),
-    ("UInt.taut", include_str!("../../../std/UInt.taut")),
     (
-        "WellFounded.taut",
-        include_str!("../../../std/WellFounded.taut"),
+        "float_round.taut",
+        include_str!("../../../std/float_round.taut"),
+    ),
+    ("hash.taut", include_str!("../../../std/hash.taut")),
+    ("hash_map.taut", include_str!("../../../std/hash_map.taut")),
+    ("hash_table.taut", include_str!("../../../std/hash_table.taut")),
+    ("hashmap.taut", include_str!("../../../std/hashmap.taut")),
+    ("heap.taut", include_str!("../../../std/heap.taut")),
+    ("indexed_map.taut", include_str!("../../../std/indexed_map.taut")),
+    ("int.taut", include_str!("../../../std/int.taut")),
+    ("key.taut", include_str!("../../../std/key.taut")),
+    ("int_laws.taut", include_str!("../../../std/int_laws.taut")),
+    ("int_norm.taut", include_str!("../../../std/int_norm.taut")),
+    ("int_order.taut", include_str!("../../../std/int_order.taut")),
+    ("iterator.taut", include_str!("../../../std/iterator.taut")),
+    ("list.taut", include_str!("../../../std/list.taut")),
+    ("map.taut", include_str!("../../../std/map.taut")),
+    ("map_laws.taut", include_str!("../../../std/map_laws.taut")),
+    (
+        "map_remove_floor.taut",
+        include_str!("../../../std/map_remove_floor.taut"),
+    ),
+    ("map_text.taut", include_str!("../../../std/map_text.taut")),
+    ("mode.taut", include_str!("../../../std/mode.taut")),
+    ("nat.taut", include_str!("../../../std/nat.taut")),
+    ("nat_div.taut", include_str!("../../../std/nat_div.taut")),
+    ("nat_norm.taut", include_str!("../../../std/nat_norm.taut")),
+    ("ord.taut", include_str!("../../../std/ord.taut")),
+    ("os.taut", include_str!("../../../std/os.taut")),
+    ("pool.taut", include_str!("../../../std/pool.taut")),
+    ("quot.taut", include_str!("../../../std/quot.taut")),
+    ("rat.taut", include_str!("../../../std/rat.taut")),
+    ("rat_field.taut", include_str!("../../../std/rat_field.taut")),
+    ("rat_laws.taut", include_str!("../../../std/rat_laws.taut")),
+    ("real.taut", include_str!("../../../std/real.taut")),
+    ("refined.taut", include_str!("../../../std/refined.taut")),
+    ("rewrite.taut", include_str!("../../../std/rewrite.taut")),
+    ("row.taut", include_str!("../../../std/row.taut")),
+    ("sint.taut", include_str!("../../../std/sint.taut")),
+    ("secret.taut", include_str!("../../../std/secret.taut")),
+    ("set.taut", include_str!("../../../std/set.taut")),
+    ("sort.taut", include_str!("../../../std/sort.taut")),
+    ("slots.taut", include_str!("../../../std/slots.taut")),
+    (
+        "slots_store.taut",
+        include_str!("../../../std/slots_store.taut"),
+    ),
+    ("sse.taut", include_str!("../../../std/sse.taut")),
+    ("stack.taut", include_str!("../../../std/stack.taut")),
+    ("state.taut", include_str!("../../../std/state.taut")),
+    ("std.taut", include_str!("../../../std/std.taut")),
+    ("syn_tree.taut", include_str!("../../../std/syn_tree.taut")),
+    ("tactic.taut", include_str!("../../../std/tactic.taut")),
+    ("template.taut", include_str!("../../../std/template.taut")),
+    ("text.taut", include_str!("../../../std/text.taut")),
+    ("text_ops.taut", include_str!("../../../std/text_ops.taut")),
+    ("uint.taut", include_str!("../../../std/uint.taut")),
+    ("uhost.taut", include_str!("../../../std/uhost.taut")),
+    ("vec.taut", include_str!("../../../std/vec.taut")),
+    (
+        "well_founded.taut",
+        include_str!("../../../std/well_founded.taut"),
     ),
     ("asm.taut", include_str!("../../../std/asm.taut")),
-    // The files of the prelude (`docs/design/visibility.md`「prelude」):
-    // `import std::prelude::Os` reads an empty file, and a file that imports
-    // it sees the names of `std/prelude/Os.taut`. A file sees the core ones
-    // (`Std`, `Text`, `Num`) without the import, unless its tote has no prelude.
-    ("prelude/Affine.taut", ""),
-    ("prelude/Classes.taut", ""),
-    ("prelude/Macro.taut", ""),
-    ("prelude/Num.taut", ""),
-    ("prelude/Ord.taut", ""),
-    ("prelude/Os.taut", ""),
-    ("prelude/Par.taut", ""),
-    ("prelude/Secret.taut", ""),
-    ("prelude/Shared.taut", ""),
-    ("prelude/Std.taut", ""),
-    ("prelude/Text.taut", ""),
+    // The files of the prelude (`docs/design/visibility.md`「Prelude」):
+    // `import std::builtin::os` reads an empty file, and a file that imports
+    // it sees the names of `std/builtin/os.taut`. A file sees the core ones
+    // (`Std`, `Collections`, `Text`, `Num`, `Debug`) without the import, unless its tote has no prelude.
+    ("builtin/classes.taut", ""),
+    ("prelude/collections.taut", ""),
+    ("prelude/debug.taut", ""),
+    ("builtin/macro.taut", ""),
+    ("prelude/num.taut", ""),
+    ("builtin/ord.taut", ""),
+    ("builtin/os.taut", ""),
+    ("builtin/par.taut", ""),
+    ("builtin/region.taut", ""),
+    ("builtin/secret.taut", ""),
+    ("prelude/std.taut", ""),
+    ("prelude/text.taut", ""),
 ];
 
-/// The file the module import `import std::List` names, or why it names none.
+/// The file the module import `import std::list` names, or why it names none.
 /// A name other than `std::` is a dependency of the importing file's tote:
 /// [`import_target`].
 pub fn import_path(name: &str) -> Result<PathBuf, Message> {
@@ -161,15 +231,14 @@ pub fn import_path(name: &str) -> Result<PathBuf, Message> {
             name,
             msg!(
                 "tauto-import-not-dependency",
-                dependency = crate::manifest::tote_of_import_name(
-                    name.split("::").next().unwrap_or(name)
-                )
+                dependency =
+                    crate::manifest::tote_of_import_name(name.split("::").next().unwrap_or(name))
             ),
         )),
     }
 }
 
-/// The file an import in `from` names: `import std::List` from the standard
+/// The file an import in `from` names: `import std::list` from the standard
 /// library, `import text::Utf8` (`Utf8.taut`) from the `src` of
 /// the dependency `text` (`import text::proof::Utf8` from its additional source `proof`) in the `dependencies` of `from`'s tote, and a quoted
 /// path (not `module`) relative to `from`, whatever it is spelled like, and
@@ -178,7 +247,7 @@ pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, M
     if !module {
         let joined = from.parent().unwrap_or(Path::new(".")).join(name);
         // The standard library's files are not on disk, so nothing resolves
-        // `..` in an import such as `import "../Tactic.taut"` from a file of `proof/`: the path
+        // `..` in an import such as `import "../tactic.taut"` from a file of `proof/`: the path
         // is folded here, staying under [`ROOT`].
         if from.starts_with(ROOT) {
             return Ok(fold_parents(&joined));
@@ -187,9 +256,7 @@ pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, M
     }
     // `import self::b::c` in `a.taut` is `a/b/c.taut`: the file's own
     // modules, in the directory named like the file.
-    if let (crate::manifest::SELF_ROOT, rest) =
-        tauto_surface::surface::qualify::module_root(name)
-    {
+    if let (crate::manifest::SELF_ROOT, rest) = tauto_surface::surface::qualify::module_root(name) {
         let Some(rest) = rest else {
             return Err(import_error(name, msg!("tauto-import-self-alone")));
         };
@@ -205,15 +272,6 @@ pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, M
         return Ok(joined);
     }
     let named = import_path(name);
-    if matches!(
-        tauto_surface::surface::qualify::module_root(name),
-        (tauto_surface::surface::qualify::STD_ROOT, Some(_))
-    ) {
-        return named;
-    }
-    let (written, module) = name.split_once("::").unwrap_or((name, ""));
-    let dependency = &crate::manifest::tote_of_import_name(written);
-    let dependency = dependency.as_str();
     let tote = (text(from).is_none())
         .then(|| crate::program::canonical_path(from))
         .and_then(|f| {
@@ -222,6 +280,39 @@ pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, M
                 .find(|d| d.join("Tauto.eure").is_file())
                 .map(Path::to_path_buf)
         });
+    if let (tauto_surface::surface::qualify::STD_ROOT, Some(module)) =
+        tauto_surface::surface::qualify::module_root(name)
+    {
+        // In the tote named `std` (the library's source), `import std::…` reads
+        // that tote's own file, and never the one tauto comes with.
+        // The prelude is not read from files (every program has it), so its
+        // empty files still come from tauto.
+        let Some(tote) =
+            tote.filter(|_| !module.starts_with("prelude::") && !module.starts_with("builtin::"))
+        else {
+            return named;
+        };
+        let manifest = crate::manifest::read(&tote)?;
+        if manifest.package.name != tauto_surface::surface::qualify::STD_ROOT {
+            return named;
+        }
+        let path = tote.join(format!("{}.taut", module.replace("::", "/")));
+        return if path.is_file() {
+            Ok(path)
+        } else {
+            Err(import_error(
+                name,
+                msg!(
+                    "tauto-import-no-own-std-module",
+                    module = module,
+                    path = path.display().to_string()
+                ),
+            ))
+        };
+    }
+    let (written, module) = name.split_once("::").unwrap_or((name, ""));
+    let dependency = &crate::manifest::tote_of_import_name(written);
+    let dependency = dependency.as_str();
     let Some(tote) = tote else {
         return named;
     };
@@ -324,7 +415,7 @@ pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, M
 }
 
 /// For "`nat_max` is not defined", where the standard library declares
-/// `nat_max`: "; it is in the standard library: `import std::Nat`".
+/// `nat_max`: "; it is in the standard library: `import std::nat`".
 pub fn not_imported(message: &str) -> Option<String> {
     let name = message.strip_suffix("` is not defined")?;
     let name = &name[name.rfind('`')? + 1..];
@@ -332,7 +423,7 @@ pub fn not_imported(message: &str) -> Option<String> {
 }
 
 /// For `nat_max`, which the standard library declares: "; it is in the
-/// standard library: `import std::Nat`".
+/// standard library: `import std::nat`".
 pub fn not_imported_name(name: &str) -> Option<tauto_message::Message> {
     let module = module_of(name)?;
     Some(tauto_message::msg!("tauto-in-std", module = module))
@@ -352,7 +443,30 @@ fn declaration_modules() -> &'static std::collections::HashMap<String, &'static 
         let mut modules = std::collections::HashMap::new();
         for (file, text) in FILES {
             let mut current = None;
+            // The type whose constructors the lines are, between its
+            // `inductive T: Type {` and the closing `}`.
+            let mut constructors_of: Option<&str> = None;
             for raw in text.lines() {
+                if let Some(ty) = constructors_of {
+                    if raw.starts_with("}") {
+                        constructors_of = None;
+                        continue;
+                    }
+                    // A constructor is written at the first indent: `Mk(...)` or `Nil: T`.
+                    if raw.starts_with("  ") && !raw.starts_with("   ") {
+                        let word = raw
+                            .trim_start()
+                            .split(|c: char| !tauto_parol::unicode::is_ident_continue(c))
+                            .next()
+                            .unwrap_or("");
+                        if word.chars().next().is_some_and(char::is_uppercase) {
+                            modules
+                                .entry(format!("{ty}::{word}"))
+                                .or_insert_with(|| file.strip_suffix(".taut").unwrap_or(file));
+                        }
+                    }
+                    continue;
+                }
                 if let Some(rest) = raw.strip_prefix("module ") {
                     current = rest.strip_suffix('{').map(str::trim);
                     continue;
@@ -366,8 +480,10 @@ fn declaration_modules() -> &'static std::collections::HashMap<String, &'static 
                     .strip_prefix("pub(open) ")
                     .or_else(|| line.strip_prefix("pub "))
                     .unwrap_or(line);
+                // A name may be written with its prefix (`Nat::add`), which is its full name.
                 let mut words = line
-                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .split(|c: char| !(tauto_parol::unicode::is_ident_continue(c) || c == ':'))
+                    .map(|word| word.trim_end_matches(':'))
                     .filter(|word| !word.is_empty());
                 if matches!(
                     words.next(),
@@ -376,6 +492,9 @@ fn declaration_modules() -> &'static std::collections::HashMap<String, &'static 
                 {
                     let name = current
                         .map_or_else(|| short.to_string(), |module| format!("{module}::{short}"));
+                    if line.starts_with("inductive") && raw.trim_end().ends_with('{') {
+                        constructors_of = Some(short);
+                    }
                     modules
                         .entry(name)
                         .or_insert_with(|| file.strip_suffix(".taut").unwrap_or(file));
@@ -417,7 +536,7 @@ pub fn text(path: &Path) -> Option<&'static str> {
 }
 
 /// The module a path names as a standard library file, `Base` for
-/// `…/Base.taut`, when the standard library has a file of that name.
+/// `…/base.taut`, when the standard library has a file of that name.
 pub fn module_of_path(path: &Path) -> Option<&'static str> {
     let name = path.file_name()?.to_str()?;
     FILES
@@ -435,11 +554,30 @@ pub fn std_copy(path: &Path, text: &str) -> Option<&'static str> {
     let same_text = FILES
         .iter()
         .any(|(f, t)| f.strip_suffix(".taut") == Some(module) && *t == text);
-    let in_std = path
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|d| d == "std");
+    let in_std = in_std_tote(path);
     (same_text || in_std).then_some(module)
+}
+
+/// Whether a file is in the tote named `std`, by its manifest: the directory's
+/// name says nothing of which tote a file is in.
+pub fn in_std_tote(path: &Path) -> bool {
+    path.ancestors()
+        .skip(1)
+        .find_map(|d| {
+            d.join("Tauto.eure")
+                .is_file()
+                .then(|| crate::manifest::read(d).ok())
+                .flatten()
+        })
+        .is_some_and(|m| m.package.name == tauto_surface::surface::qualify::STD_ROOT)
+}
+
+/// Whether a file read by path is one of the standard library's files, the
+/// prelude's stubs among them (their text is empty in [`FILES`], so the text
+/// cannot say): one named as such, in the tote `std`.
+pub fn is_std_file_by_path(path: &Path) -> bool {
+    let named = FILES.iter().any(|(f, _)| path.ends_with(f));
+    named && in_std_tote(path)
 }
 
 /// The text of a source file: the standard library's from tauto, others from disk.
@@ -467,7 +605,24 @@ mod tests {
         };
         FILES.iter().find_map(|(file, text)| {
             let mut current: Option<&str> = None;
+            // The type whose constructors the lines are, as in `declaration_modules`.
+            let mut constructors_of: Option<&str> = None;
             let declares = text.lines().any(|raw| {
+                if let Some(ty) = constructors_of {
+                    if raw.starts_with('}') {
+                        constructors_of = None;
+                        return false;
+                    }
+                    if raw.starts_with("  ") && !raw.starts_with("   ") {
+                        let word = raw
+                            .trim_start()
+                            .split(|c: char| !tauto_parol::unicode::is_ident_continue(c))
+                            .next()
+                            .unwrap_or("");
+                        return module == Some(ty) && word == short;
+                    }
+                    return false;
+                }
                 if let Some(rest) = raw.strip_prefix("module ") {
                     current = rest.strip_suffix('{').map(str::trim);
                     return false;
@@ -476,21 +631,30 @@ mod tests {
                     current = None;
                     return false;
                 }
-                if current != module {
-                    return false;
-                }
                 let line = raw.trim_start();
                 let line = line
                     .strip_prefix("pub(open) ")
                     .or_else(|| line.strip_prefix("pub "))
                     .unwrap_or(line);
                 let mut words = line
-                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .split(|c: char| !(tauto_parol::unicode::is_ident_continue(c) || c == ':'))
+                    .map(|w| w.trim_end_matches(':'))
                     .filter(|w| !w.is_empty());
-                matches!(
+                let declared = if matches!(
                     words.next(),
                     Some("fn" | "theorem" | "def" | "inductive" | "struct" | "class" | "axiom")
-                ) && words.next() == Some(short)
+                ) {
+                    words.next()
+                } else {
+                    None
+                };
+                if line.starts_with("inductive") && raw.trim_end().ends_with('{') {
+                    constructors_of = declared;
+                }
+                declared.is_some_and(|d| match current {
+                    Some(m) => module == Some(m) && d == short,
+                    None => d == name,
+                })
             });
             declares.then(|| file.strip_suffix(".taut").unwrap_or(file))
         })
@@ -532,5 +696,23 @@ mod tests {
             }
         }
         assert_eq!(found, SYNTAX_TABLES.len());
+    }
+
+    /// `FILES` names each file of the prelude with an empty text so that an import of it
+    /// resolves; the files themselves are `nibstd::PRELUDE_FILES`, the one list.
+    #[test]
+    fn the_prelude_entries_are_the_prelude_files() {
+        let mut named: Vec<&str> = FILES
+            .iter()
+            .filter(|(f, t)| t.is_empty() && (f.starts_with("prelude/") || f.starts_with("builtin/")))
+            .map(|(f, _)| *f)
+            .collect();
+        let mut listed: Vec<&str> = crate::nibstd::PRELUDE_FILES
+            .iter()
+            .map(|(p, _)| p.strip_prefix("std/").unwrap())
+            .collect();
+        named.sort();
+        listed.sort();
+        assert_eq!(named, listed);
     }
 }

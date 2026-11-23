@@ -1,5 +1,5 @@
 //! getrandom's source in WebAssembly (`--cfg getrandom_backend="custom"` in
-//! `build.sh`). Only the hash maps under query-flow ask for it, to seed their
+//! `build.taut`). Only the hash maps under query-flow ask for it, to seed their
 //! hashes; nothing secret is made from it, so a fixed sequence will do.
 
 use std::cell::Cell;

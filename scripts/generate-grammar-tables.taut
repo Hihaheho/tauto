@@ -1,0 +1,122 @@
+// Regenerates the tables in crates/tauto-syntax/tests/data from their grammars
+// (math.par, items.par, their LALR(1) copies *_lr.par, and the syntax tauto
+// declaration) with the tote totes/syntaxgen. With --check, fails if the
+// committed files differ.
+//   tauto gen-grammar-tables [--check]
+//
+// The generator is the tote totes/syntaxgen, which runs totes/llkgen or
+// totes/lalrgen (it reads a grammar on standard input).
+// It is compiled into `tauto` (`tauto --tote-main syntaxgen`), so the
+// `tauto` this checkout builds runs it, so no separate release build of the
+// tote is needed.
+import "lib/sh.taut" {
+  sh_arg1,
+  sh_built_tauto,
+  sh_must,
+  sh_process,
+  sh_read,
+  sh_root,
+  sh_same,
+  sh_syntaxgen,
+  sh_table,
+  sh_write
+}
+import std::builtin::os { eprint, exit, fs_create_dir, fs_list_dir, fs_remove }
+import std::prelude::collections
+import std::text { Text }
+import std::text_ops { Text }
+import std::base { List }
+import std::list { List }
+
+let root := sh_root()
+let data := Text::concat(root, "/crates/tauto-syntax/tests/data")
+let script := "gen-grammar-tables"
+let tauto := sh_built_tauto(root)
+let check := sh_arg1() == "--check"
+
+let grammar_args := if check { ["--check"] } else { [] }
+sh_must(
+  sh_process(
+    "tauto",
+    List::append(
+      ["gen-tauto-grammar"],
+      grammar_args
+    ),
+    root,
+    []
+  )
+)
+
+var stale := false
+var names := ["math", "math_lr", "items", "items_lr", "tauto"]
+while names != Nil {
+  match names {
+    Nil => #()
+    Cons(name, rest) => {
+      names := rest
+      let tables := Text::concat_all([data, "/", name, ".tables"])
+      let table := sh_syntaxgen(tauto, Text::concat_all([data, "/", name, ".par"]))
+      let label := Text::concat_all(["crates/tauto-syntax/tests/data/", name, ".tables"])
+      if sh_table(check, tables, table, label, script) { #() } else { stale := true }
+    }
+  }
+}
+// The declared parser uses precisely the table generated for this grammar.
+let tauto_tables := sh_read(Text::concat(data, "/tauto.tables"))
+let sha := match Text::of_bytes(tauto_tables) {
+  None => ""
+  Some(t) => match List::find(
+    (l) => Text::starts_with(l, "grammar_sha256 "),
+    Text::split_on(t, 10)
+  ) {
+    Some(line) => Text::slice_or_empty(line, 15, Text::len(line))
+    None => ""
+  }
+}
+let syntax_dir := Text::concat(root, "/totes/grammar/.tauto-syntax")
+let tote_name := Text::concat(sha, ".tables")
+let tote_table := Text::concat_all([syntax_dir, "/", tote_name])
+if check {
+  if sh_same(Text::concat(data, "/tauto.tables"), tote_table) { #() } else {
+    eprint(Text::concat_all(["totes/grammar/.tauto-syntax/", tote_name, " is out of date\n"]))
+    stale := true
+  }
+} else {
+  let ^created := perform fs_create_dir(syntax_dir)
+  sh_write(tote_table, tauto_tables)
+}
+let entries := match perform fs_list_dir(syntax_dir) {
+  Ok(names) => names
+  Err(_) => []
+}
+var left := entries
+while left != Nil {
+  match left {
+    Nil => #()
+    Cons(entry, rest) => {
+      left := rest
+      if Text::ends_with(
+        entry,
+        ".tables"
+      ) && not(Text::starts_with(entry, ".")) && entry != tote_name {
+        if check {
+          eprint(
+            Text::concat_all(
+              [
+                "totes/grammar/.tauto-syntax/",
+                entry,
+                " has no grammar; run: tauto ",
+                script,
+                "\n"
+              ]
+            )
+          )
+          stale := true
+        } else {
+          let ^removed := perform fs_remove(Text::concat_all([syntax_dir, "/", entry]))
+        }
+      } else { #() }
+    }
+  }
+}
+perform exit(if stale { 1 } else { 0 })

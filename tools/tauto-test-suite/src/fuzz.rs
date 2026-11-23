@@ -1,19 +1,16 @@
-//! Random well-typed programs for the differential fuzzer
-//! (`tests/fuzz.rs`): every program a seed gives is generated from the types
-//! down, so the checker accepts it, and it stops on every backend, so the
-//! evaluator, the Rust backend and the JavaScript backend must agree on what
-//! it shows and on how it ends.
+//! The bridge to the generator of random well-typed programs, which is
+//! written in Tauto (`totes/fuzz`): a pure function from a sequence of
+//! choices to a program. The evaluator runs it, and only the evaluator, so a
+//! backend under test never makes its own inputs. A program of a seed comes
+//! with the choices it took; replaying them gives the same program, and the
+//! tote's shrinker proposes smaller sequences to try when one fails.
 //!
-//! The programs cover integer arithmetic at the edges of `i64` (overflow and
-//! division by zero are run-time errors that every backend must raise at the
-//! same point), `if`, `let` blocks, `struct` and `enum` values and `match`,
-//! first-order functions, `while` loops over `var`s, multi-shot handlers, and
-//! the two uses of `budget` whose answer does not depend on how a backend
-//! counts steps: a body that never stops, answered with `k(v)`, and a body
-//! that stops, resumed with `info.unbounded()`.
-//!
-//! The generator draws from its own small PRNG, so a seed names the same
-//! program on every machine and the fuzzer needs no dependency.
+//! The rest of this module is what the driver (`tests/fuzz.rs`) keeps of a
+//! failure: its signature, whether a case already declares it, the case
+//! snippet it writes, and where it saves them.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 pub mod interactions;
 
@@ -23,7 +20,8 @@ pub fn matches_expected(shows: &[String], succeeded: bool, expected: Option<&[St
     expected.is_none_or(|want| succeeded && shows == want)
 }
 
-/// SplitMix64: small, fast, and the same sequence everywhere.
+/// SplitMix64: small, fast, and the same sequence everywhere. The
+/// interaction families draw their scalars from it.
 pub struct Rng(u64);
 
 impl Rng {
@@ -42,38 +40,12 @@ impl Rng {
     pub fn below(&mut self, n: u64) -> u64 {
         self.next() % n
     }
-
-    fn chance(&mut self, percent: u64) -> bool {
-        self.below(100) < percent
-    }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Ty {
-    Int,
-    Bool,
-    Point,
-    Shape,
-}
-
-const TYPES: [Ty; 4] = [Ty::Int, Ty::Bool, Ty::Point, Ty::Shape];
-
-struct Func {
-    name: String,
-    params: Vec<Ty>,
-    ret: Ty,
-}
-
-struct Gen {
-    rng: Rng,
-    funcs: Vec<Func>,
-    scope: Vec<(String, Ty)>,
-    fresh: usize,
-}
-
-/// The program a seed names: its declarations, then its `show` lines. The
+/// A generated program: its declarations, then its `show` lines. The
 /// text of the first `n` lines after the declarations is a program too, so a
 /// run that fails can be cut down to the shows before the failure.
+#[derive(Clone)]
 pub struct Program {
     pub declarations: String,
     pub shows: Vec<String>,
@@ -88,19 +60,19 @@ impl Program {
         out
     }
 
-    /// A program written by hand: its lines that start with `perform show`
+    /// A program written by hand: its lines that start with `show(`
     /// are its show lines, and the lines before the first of them its
     /// declarations.
     pub fn from_text(text: &str) -> Self {
         let lines: Vec<&str> = text.split_inclusive('\n').collect();
         let at = lines
             .iter()
-            .position(|l| l.starts_with("perform show"))
+            .position(|l| l.starts_with("show("))
             .unwrap_or(lines.len());
         let mut shows: Vec<String> = Vec::new();
         for line in &lines[at..] {
             match shows.last_mut() {
-                Some(last) if !line.starts_with("perform show") => last.push_str(line),
+                Some(last) if !line.starts_with("show(") => last.push_str(line),
                 _ => shows.push(line.to_string()),
             }
         }
@@ -115,323 +87,399 @@ impl Program {
     }
 }
 
-pub fn program(seed: u64) -> Program {
-    let mut g = Gen {
-        rng: Rng::new(seed),
-        funcs: Vec::new(),
-        scope: Vec::new(),
-        fresh: 0,
-    };
-    let mut out = String::from(PRELUDE);
-    let nfuncs = g.rng.below(5);
-    for i in 0..nfuncs {
-        out.push_str(&g.func(i as usize));
-    }
-    let nshows = 1 + g.rng.below(6);
-    let shows = (0..nshows)
-        .map(|i| {
-            let ty = g.ty();
-            let e = g.expr(ty, 4);
-            format!("perform show(\"v{i}\", {e})\n")
-        })
-        .collect();
-    Program {
-        declarations: out,
-        shows,
-    }
+
+/// A program the generator made, with the choices it took.
+pub struct Generated {
+    pub choices: Vec<u64>,
+    pub program: Program,
 }
 
-const PRELUDE: &str = "\
-struct Point { x: i64, y: i64 }
-enum Shape { Dot, Line(i64), Rect(i64, i64) }
-effect ask(n: i64): i64 resume ω
-fn spin(): i64 {
-  while true { }
-  0
+/// The repository's root.
+pub fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
-fn twice(f: (i64) -> i64 ! {Div}, x: i64): i64 {
-  f(f(x))
-}
-fn count(n: i64): i64 {
-  var i := 0
-  var s := 0
-  while i < n {
-    i := i + 1
-    s := s + i
-  }
-  s
-}
-";
 
-impl Gen {
-    fn ty(&mut self) -> Ty {
-        TYPES[self.rng.below(TYPES.len() as u64) as usize]
+/// Run `call` (a Tauto expression of type `Text` over the fuzz tote's
+/// `report.taut`) on the evaluator and read the programs it reports.
+fn generate(call: &str) -> Result<Vec<Generated>, String> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let tote = repo_root().join("totes/fuzz/src");
+    let tote = tote.canonicalize().map_err(|e| format!("{}: {e}", tote.display()))?;
+    let dir = std::env::temp_dir().join(format!(
+        "tauto-fuzz-gen-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("main.taut");
+    let text = format!(
+        "import \"{}\"\nshow(&{call})\n",
+        tote.join("report.taut").display()
+    );
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    let loaded = tauto::program::load(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+    let loaded = loaded.map_err(|e| format!("the generator does not load: {e}"))?;
+    if let Some((error, _)) = loaded.program.errors.first() {
+        return Err(format!("the generator does not check: {error}"));
     }
+    let got = tauto::exec::run_loaded_with(
+        &loaded,
+        u64::MAX,
+        tauto::exec::RunOptions::default(),
+    )
+    .map_err(|e| format!("the generator fails: {e}"))?;
+    let quoted = got.stdout.trim_end();
+    let inner = quoted
+        .strip_prefix('"')
+        .and_then(|q| q.strip_suffix('"'))
+        .ok_or_else(|| format!("the generator shows no text: {quoted}"))?;
+    parse_reports(&unescape(inner))
+}
 
-    fn name(&mut self, prefix: &str) -> String {
-        self.fresh += 1;
-        format!("{prefix}{}", self.fresh)
+/// The programs of the `count` seeds from `first`.
+pub fn seeds(first: u64, count: u64) -> Result<Vec<Generated>, String> {
+    generate(&format!("fz_seeds_report({first}, {count})"))
+}
+
+/// The program a sequence of choices names.
+pub fn replay(choices: &[u64]) -> Result<Generated, String> {
+    generate(&format!("fz_replay_report({})", list(choices)))?
+        .pop()
+        .ok_or_else(|| "the generator reports no program".into())
+}
+
+/// The programs one shrinking step from `choices`, most promising first.
+pub fn shrinks(choices: &[u64]) -> Result<Vec<Generated>, String> {
+    generate(&format!("fz_shrink_report({})", list(choices)))
+}
+
+fn list(choices: &[u64]) -> String {
+    let items: Vec<String> = choices.iter().map(u64::to_string).collect();
+    format!("[{}]", items.join(", "))
+}
+
+/// Text as `Text::escape_debug` writes it, read back.
+pub fn unescape(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('0') => out.push('\0'),
+            Some('u') => {
+                let hex: String = chars
+                    .by_ref()
+                    .skip_while(|&c| c == '{')
+                    .take_while(|&c| c != '}')
+                    .collect();
+                if let Some(c) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                    out.push(c);
+                }
+            }
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
     }
+    out
+}
 
-    fn ty_name(ty: Ty) -> &'static str {
-        match ty {
-            Ty::Int => "i64",
-            Ty::Bool => "Bool",
-            Ty::Point => "Point",
-            Ty::Shape => "Shape",
+/// The generator's report: `choices …`, `decl …`, `show …` lines, then `end`
+/// (`totes/fuzz/src/report.taut`).
+pub fn parse_reports(text: &str) -> Result<Vec<Generated>, String> {
+    let mut out = Vec::new();
+    let mut choices = None;
+    let mut declarations = String::new();
+    let mut shows = Vec::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("choices") {
+            choices = Some(
+                rest.split_whitespace()
+                    .map(|n| n.parse::<u64>().map_err(|e| format!("choice {n}: {e}")))
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+        } else if let Some(rest) = line.strip_prefix("decl ") {
+            declarations = unescape(rest);
+        } else if let Some(rest) = line.strip_prefix("show ") {
+            shows.push(unescape(rest));
+        } else if line == "end" {
+            out.push(Generated {
+                choices: choices.take().ok_or("a report without choices")?,
+                program: Program {
+                    declarations: std::mem::take(&mut declarations),
+                    shows: std::mem::take(&mut shows),
+                },
+            });
+        } else if !line.is_empty() {
+            return Err(format!("unexpected line in the generator's report: {line}"));
+        }
+    }
+    Ok(out)
+}
+
+/// What a backend is seen to do with one program.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Observation {
+    pub shows: Vec<String>,
+    /// `None` for a run that ends normally.
+    pub error: Option<Failure>,
+}
+
+/// How a run did not end normally: the stage that stopped it (`check`,
+/// `compile`, `build`, `run`) and its message, normalized as a case
+/// runner's status is (`coverage::status`).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Failure {
+    pub stage: String,
+    pub message: String,
+}
+
+impl Failure {
+    pub fn new(stage: &str, text: &str) -> Self {
+        let status = crate::coverage::status(stage, &without_places(&error_kind(text)));
+        let message = status
+            .strip_prefix(stage)
+            .and_then(|m| m.strip_prefix(": "))
+            .unwrap_or("")
+            .to_string();
+        Failure {
+            stage: stage.to_string(),
+            message,
         }
     }
 
-    fn func(&mut self, i: usize) -> String {
-        let nparams = self.rng.below(3) as usize;
-        let params: Vec<Ty> = (0..nparams).map(|_| self.ty()).collect();
-        let ret = self.ty();
-        let names: Vec<String> = (0..nparams).map(|j| format!("p{i}_{j}")).collect();
-        self.scope = names.iter().cloned().zip(params.iter().copied()).collect();
-        let body = self.expr(ret, 4);
-        self.scope.clear();
-        let sig = names
+    /// A run-time error every backend must raise at the same point.
+    pub fn is_expected_runtime(&self) -> bool {
+        self.stage == "run" && RUNTIME_KINDS.contains(&self.message.as_str())
+    }
+}
+
+/// A message without what changes from one program to the next: the
+/// scratch file it names, and the line, column and byte it points at. Two
+/// failures of one cause then read the same.
+pub fn without_places(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines() {
+        let mut words = Vec::new();
+        for word in line.split(' ') {
+            // `/tmp/…/main.taut:3:14:` names the scratch file and a place.
+            if let Some(at) = word.find(".taut:") {
+                let file = word[..at + 5].rsplit('/').next().unwrap_or("");
+                words.push(format!("{file}:"));
+                continue;
+            }
+            words.push(word.to_string());
+        }
+        let mut line = words.join(" ");
+        // `(byte 112)`
+        while let Some(at) = line.find("(byte ") {
+            let end = line[at..].find(')').map_or(line.len(), |e| at + e + 1);
+            line.replace_range(at..end, "");
+        }
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
+/// The run-time errors the programs can raise.
+const RUNTIME_KINDS: [&str; 2] = ["the number is too large", "division by zero"];
+
+/// A run-time error by the message every backend gives; any other failure
+/// keeps its text.
+fn error_kind(message: &str) -> String {
+    for kind in RUNTIME_KINDS {
+        if message.contains(kind) {
+            return kind.into();
+        }
+    }
+    message.trim().to_string()
+}
+
+/// What a failure is, so that two failures with the same cause are one: the
+/// backends that do not do what the reference does, and for each its stage
+/// and normalized message. The reference is the evaluator's observation when
+/// it ran, which is only how failures are grouped: no backend is taken to be
+/// right.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Signature(pub BTreeMap<String, String>);
+
+impl Signature {
+    /// `None` when every backend agrees and none fails in a way a program of
+    /// the generator must not.
+    pub fn of(seen: &[(String, Observation)]) -> Option<Self> {
+        let mut out = BTreeMap::new();
+        let reference = seen.iter().find(|(b, _)| b == "eval").or(seen.first())?;
+        for (backend, o) in seen {
+            let differs = o != &reference.1;
+            let bad = o.error.as_ref().is_some_and(|e| !e.is_expected_runtime());
+            if differs || bad {
+                out.insert(backend.clone(), Self::describe(o));
+            }
+        }
+        // When only the reference is off, every other backend differs from
+        // it; name the reference alone.
+        if out.len() > 1 && out.len() == seen.len() - 1 && !out.contains_key(&reference.0) {
+            let others: Vec<&Observation> = seen
+                .iter()
+                .filter(|(b, _)| b != &reference.0)
+                .map(|(_, o)| o)
+                .collect();
+            if others.windows(2).all(|w| w[0] == w[1]) {
+                out = BTreeMap::from([(reference.0.clone(), Self::describe(&reference.1))]);
+            }
+        }
+        (!out.is_empty()).then_some(Signature(out))
+    }
+
+    fn describe(o: &Observation) -> String {
+        match &o.error {
+            Some(e) if e.message.is_empty() => e.stage.clone(),
+            Some(e) => format!("{}: {}", e.stage, e.message),
+            None => "output: differs".to_string(),
+        }
+    }
+
+    /// A short, stable name for the failure's directory.
+    pub fn key(&self) -> String {
+        // FNV-1a over the signature's text.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in self.text().bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        let backends: Vec<&str> = self.0.keys().map(String::as_str).collect();
+        format!("{}-{h:016x}", backends.join("+"))
+    }
+
+    pub fn text(&self) -> String {
+        self.0
             .iter()
-            .zip(&params)
-            .map(|(n, t)| format!("{n}: {}", Self::ty_name(*t)))
+            .map(|(b, d)| format!("{b}: {d}"))
             .collect::<Vec<_>>()
-            .join(", ");
-        let name = format!("f{i}");
-        let text = format!(
-            "fn {name}({sig}): {} {{\n  {body}\n}}\n",
-            Self::ty_name(ret)
-        );
-        self.funcs.push(Func { name, params, ret });
-        text
+            .join("\n")
     }
+}
 
-    fn var(&mut self, ty: Ty) -> Option<String> {
-        let found: Vec<&String> = self
-            .scope
-            .iter()
-            .filter(|(_, t)| *t == ty)
-            .map(|(n, _)| n)
-            .collect();
-        if found.is_empty() {
-            None
-        } else {
-            Some(found[self.rng.below(found.len() as u64) as usize].clone())
-        }
-    }
+/// What the cases already declare a backend fails at: `<backend>.bug` and
+/// `<backend>.unimplemented`, each as `stage: message`.
+pub struct Known(Vec<(String, String, String)>);
 
-    fn int_literal(&mut self) -> String {
-        match self.rng.below(10) {
-            0 => "9223372036854775807".into(),
-            1 => "(0 - 9223372036854775807 - 1)".into(),
-            2 => "4611686018427387904".into(),
-            3 => "(0 - 1)".into(),
-            4 => "0".into(),
-            5 => format!("{}", 3037000499u64 + self.rng.below(3)),
-            _ => format!("{}", self.rng.below(100)),
-        }
-    }
-
-    fn leaf(&mut self, ty: Ty) -> String {
-        if self.rng.chance(50)
-            && let Some(v) = self.var(ty)
-        {
-            return v;
-        }
-        match ty {
-            Ty::Int => self.int_literal(),
-            Ty::Bool => if self.rng.chance(50) { "true" } else { "false" }.into(),
-            Ty::Point => {
-                let x = self.int_literal();
-                let y = self.int_literal();
-                format!("Point {{ x: {x}, y: {y} }}")
+impl Known {
+    pub fn read(cases_dir: &Path) -> Result<Self, String> {
+        let mut out = Vec::new();
+        for case in crate::rust_cases(cases_dir)? {
+            for (backend, what) in &case.opt_outs {
+                out.push((backend.clone(), what.clone(), case.name.clone()));
             }
-            Ty::Shape => match self.rng.below(3) {
-                0 => "Dot".into(),
-                1 => format!("Line({})", self.int_literal()),
-                _ => format!("Rect({}, {})", self.int_literal(), self.int_literal()),
-            },
         }
+        Ok(Known(out))
     }
 
-    /// An expression of `ty`, at most `depth` deep.
-    fn expr(&mut self, ty: Ty, depth: u32) -> String {
-        if depth == 0 || self.rng.chance(20) {
-            return self.leaf(ty);
+    /// The case that already declares this failure, when one does: a case
+    /// that declares each failing backend's stage and message (one contains
+    /// the other, as a case's declaration is the start of a message). The
+    /// evaluator's failures are never declared this way.
+    pub fn declaring(&self, sig: &Signature) -> Option<String> {
+        let mut found = None;
+        for (backend, desc) in &sig.0 {
+            let hit = self.0.iter().find(|(b, what, _)| {
+                b == backend && !what.trim().is_empty() && (desc.contains(what.as_str()) || what.contains(desc.as_str()))
+            })?;
+            found = Some(hit.2.clone());
         }
-        let d = depth - 1;
-        // Forms that give any type.
-        match self.rng.below(10) {
-            0 => return self.if_expr(ty, d),
-            1 => return self.let_expr(ty, d),
-            2 => {
-                if let Some(call) = self.call(ty, d) {
-                    return call;
+        found
+    }
+}
+
+/// A case for `cases/`, written from a failure: the program, what the
+/// evaluator observed as the expectation, and each other failing backend as a
+/// `bug`. The expectation is the evaluator's observation only as a
+/// starting point: a person decides which backend is right before the case
+/// goes in.
+pub fn case_snippet(name: &str, sig: &Signature, text: &str, seen: &[(String, Observation)]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "// Found by the fuzzer ({}). Check which backend is right before adding it.\n",
+        sig.key()
+    ));
+    for (b, o) in seen {
+        out.push_str(&format!("// {b}: {}\n", observed_line(o)));
+    }
+    out.push_str(&format!("@ cases.{name}\n"));
+    for (backend, desc) in &sig.0 {
+        if backend != "eval" {
+            out.push_str(&format!("{backend}.bug = {}\n", eure_string(desc)));
+        }
+    }
+    out.push_str(&format!("source = ```tauto\n{}```\n", text));
+    if let Some((_, eval)) = seen.iter().find(|(b, _)| b == "eval") {
+        match &eval.error {
+            None => {
+                out.push_str(&format!("stdout = ```\n{}\n```\n", eval.shows.join("\n")));
+            }
+            Some(e) if e.stage == "run" => {
+                if !eval.shows.is_empty() {
+                    out.push_str(&format!("stdout = ```\n{}\n```\n", eval.shows.join("\n")));
                 }
+                out.push_str(&format!("run_error = {}\n", eure_string(&e.message)));
             }
-            3 => return self.match_shape(ty, d),
-            _ => {}
-        }
-        match ty {
-            Ty::Int => self.int_expr(d),
-            Ty::Bool => self.bool_expr(d),
-            Ty::Point => {
-                let x = self.expr(Ty::Int, d);
-                let y = self.expr(Ty::Int, d);
-                format!("Point {{ x: {x}, y: {y} }}")
-            }
-            Ty::Shape => match self.rng.below(3) {
-                0 => "Dot".into(),
-                1 => format!("Line({})", self.expr(Ty::Int, d)),
-                _ => format!("Rect({}, {})", self.expr(Ty::Int, d), self.expr(Ty::Int, d)),
-            },
+            Some(_) => {}
         }
     }
+    out
+}
 
-    fn if_expr(&mut self, ty: Ty, d: u32) -> String {
-        let c = self.expr(Ty::Bool, d);
-        let a = self.expr(ty, d);
-        let b = self.expr(ty, d);
-        format!("(if {c} {{ {a} }} else {{ {b} }})")
+fn observed_line(o: &Observation) -> String {
+    let shows = o.shows.join(" | ");
+    match &o.error {
+        None => format!("ok [{shows}]"),
+        Some(e) => format!("{}: {} [{shows}]", e.stage, e.message),
     }
+}
 
-    fn let_expr(&mut self, ty: Ty, d: u32) -> String {
-        let bty = self.ty();
-        let bound = self.expr(bty, d);
-        let name = self.name("x");
-        self.scope.push((name.clone(), bty));
-        let body = self.expr(ty, d);
-        self.scope.pop();
-        format!("{{ let {name} := {bound}\n {body} }}")
-    }
-
-    fn call(&mut self, ty: Ty, d: u32) -> Option<String> {
-        let candidates: Vec<usize> = (0..self.funcs.len())
-            .filter(|&i| self.funcs[i].ret == ty)
-            .collect();
-        if candidates.is_empty() {
-            return None;
-        }
-        let f = candidates[self.rng.below(candidates.len() as u64) as usize];
-        let params = self.funcs[f].params.clone();
-        let args: Vec<String> = params.iter().map(|&t| self.expr(t, d)).collect();
-        Some(format!("{}({})", self.funcs[f].name, args.join(", ")))
-    }
-
-    fn match_shape(&mut self, ty: Ty, d: u32) -> String {
-        let s = self.expr(Ty::Shape, d);
-        let a = self.name("a");
-        let b = self.name("b");
-        let dot = self.expr(ty, d);
-        self.scope.push((a.clone(), Ty::Int));
-        let line = self.expr(ty, d);
-        self.scope.push((b.clone(), Ty::Int));
-        let rect = self.expr(ty, d);
-        self.scope.pop();
-        self.scope.pop();
-        format!("(match {s} {{ Dot => {dot}, Line({a}) => {line}, Rect({a}, {b}) => {rect} }})")
-    }
-
-    fn int_expr(&mut self, d: u32) -> String {
-        match self.rng.below(14) {
-            12 | 13 => {
-                // A closure over the scope, applied directly or through `twice`.
-                let x = self.name("l");
-                self.scope.push((x.clone(), Ty::Int));
-                let body = self.expr(Ty::Int, d);
-                self.scope.pop();
-                let arg = self.expr(Ty::Int, d);
-                if self.rng.chance(50) {
-                    format!("twice(({x}) => {body}, {arg})")
-                } else {
-                    format!("{{ let g{x} := ({x}) => {body}\n g{x}({arg}) }}")
-                }
-            }
-            0..=2 => {
-                let op = ["+", "-", "*"][self.rng.below(3) as usize];
-                let a = self.expr(Ty::Int, d);
-                let b = self.expr(Ty::Int, d);
-                format!("({a} {op} {b})")
-            }
-            3 => {
-                let f = if self.rng.chance(50) { "div" } else { "mod" };
-                let a = self.expr(Ty::Int, d);
-                let b = self.expr(Ty::Int, d);
-                format!("{f}({a}, {b})")
-            }
-            4 => {
-                let field = if self.rng.chance(50) { "x" } else { "y" };
-                format!("{}.{field}", self.expr(Ty::Point, d))
-            }
-            5 => {
-                // A loop of a bounded, generated length.
-                format!("count(mod({}, 50))", self.expr(Ty::Int, d))
-            }
-            6 => self.handle_ask(d),
-            7 => {
-                let v = self.expr(Ty::Int, d);
-                format!(
-                    "(handle {{ budget(steps: {}) {{ spin() }} }} with {{\n  exceeded(info), k => k({v})\n}})",
-                    1 + self.rng.below(200)
-                )
-            }
-            8 => {
-                let body = self.expr(Ty::Int, d);
-                format!(
-                    "(handle {{ budget(steps: {}) {{ count(30) + {body} }} }} with {{\n  exceeded(info), k => info.unbounded()\n}})",
-                    1 + self.rng.below(60)
-                )
-            }
-            _ => self.leaf(Ty::Int),
+fn eure_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
         }
     }
+    out.push('"');
+    out
+}
 
-    /// A handled `ask`: the arm resumes zero, one or two times.
-    fn handle_ask(&mut self, d: u32) -> String {
-        let n = self.name("n");
-        let arg = self.expr(Ty::Int, d);
-        // The body asks once, and uses the answer.
-        let r = self.name("r");
-        self.scope.push((r.clone(), Ty::Int));
-        let after = self.expr(Ty::Int, d);
-        self.scope.pop();
-        self.scope.push((n.clone(), Ty::Int));
-        let arm = match self.rng.below(3) {
-            0 => self.expr(Ty::Int, d),
-            1 => format!("k({})", self.expr(Ty::Int, d)),
-            _ => format!("k({n}) + k({})", self.expr(Ty::Int, d)),
-        };
-        self.scope.pop();
-        let ret = if self.rng.chance(50) {
-            let v = self.name("v");
-            self.scope.push((v.clone(), Ty::Int));
-            let e = self.expr(Ty::Int, d);
-            self.scope.pop();
-            format!("\n  return {v} => {e}")
-        } else {
-            String::new()
-        };
-        format!(
-            "(handle {{ let {r} := perform ask({arg})\n {after} }} with {{\n  ask({n}), k => {arm}{ret}\n}})"
-        )
-    }
+/// Where failures are kept between runs: `.fuzz/findings/<signature>/` in
+/// the repository, which git ignores.
+pub fn findings_dir() -> PathBuf {
+    repo_root().join(".fuzz/findings")
+}
 
-    fn bool_expr(&mut self, d: u32) -> String {
-        match self.rng.below(4) {
-            0 | 1 => {
-                let op = ["<", "<=", "==", ">", ">=", "!="][self.rng.below(6) as usize];
-                let a = self.expr(Ty::Int, d);
-                let b = self.expr(Ty::Int, d);
-                format!("({a} {op} {b})")
-            }
-            2 => {
-                let op = if self.rng.chance(50) { "&&" } else { "||" };
-                let a = self.expr(Ty::Bool, d);
-                let b = self.expr(Ty::Bool, d);
-                format!("({a} {op} {b})")
-            }
-            _ => self.leaf(Ty::Bool),
-        }
+/// Keep a failure under its signature: the smallest program of a signature
+/// stays, a larger one with the same signature is dropped. Returns the
+/// directory and whether this one was kept.
+pub fn save(sig: &Signature, files: &[(&str, &str)], program_len: usize) -> std::io::Result<(PathBuf, bool)> {
+    let dir = findings_dir().join(sig.key());
+    let kept = dir.join("program.taut");
+    if let Ok(old) = std::fs::read_to_string(&kept)
+        && old.len() <= program_len
+    {
+        return Ok((dir, false));
     }
+    std::fs::create_dir_all(&dir)?;
+    for (name, text) in files {
+        std::fs::write(dir.join(name), text)?;
+    }
+    Ok((dir, true))
 }
 
 #[cfg(test)]
@@ -466,5 +514,85 @@ mod oracle_tests {
         assert!(matches_expected(&[], false, None));
         assert!(matches_expected(&[], true, Some(&[])));
         assert!(!matches_expected(&[], false, Some(&[])));
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+
+    fn ok(shows: &[&str]) -> Observation {
+        Observation {
+            shows: shows.iter().map(|s| s.to_string()).collect(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn a_message_names_no_scratch_file_or_place() {
+        assert_eq!(
+            without_places("/tmp/tauto-fuzz-eval-1-2/main.taut:3:14: a thing (byte 112)"),
+            "main.taut: a thing\n"
+        );
+    }
+
+    #[test]
+    fn a_signature_names_the_backends_that_are_off() {
+        let seen = vec![
+            ("eval".to_string(), ok(&["1"])),
+            ("rust".to_string(), ok(&["1"])),
+            ("javascript".to_string(), ok(&["2"])),
+        ];
+        let sig = Signature::of(&seen).unwrap();
+        assert_eq!(sig.text(), "javascript: output: differs");
+        assert!(Signature::of(&seen[..2]).is_none());
+    }
+
+    #[test]
+    fn when_only_the_reference_is_off_the_signature_names_it() {
+        let seen = vec![
+            ("eval".to_string(), ok(&["2"])),
+            ("rust".to_string(), ok(&["1"])),
+            ("javascript".to_string(), ok(&["1"])),
+        ];
+        assert_eq!(Signature::of(&seen).unwrap().text(), "eval: output: differs");
+    }
+
+    #[test]
+    fn an_expected_run_time_error_is_no_failure() {
+        let err = Observation {
+            shows: vec![],
+            error: Some(Failure::new("run", "error: division by zero at …")),
+        };
+        let seen = vec![("eval".to_string(), err.clone()), ("rust".to_string(), err)];
+        assert!(Signature::of(&seen).is_none());
+    }
+
+    #[test]
+    fn a_declared_failure_is_known() {
+        let known = Known(vec![(
+            "javascript".into(),
+            "build: the module does not load".into(),
+            "a/b".into(),
+        )]);
+        let sig = Signature(BTreeMap::from([(
+            "javascript".to_string(),
+            "build: the module does not load: line 3".to_string(),
+        )]));
+        assert_eq!(known.declaring(&sig).as_deref(), Some("a/b"));
+        let other = Signature(BTreeMap::from([(
+            "rust".to_string(),
+            "build: the module does not load".to_string(),
+        )]));
+        assert!(known.declaring(&other).is_none());
+    }
+
+    #[test]
+    fn the_generators_report_reads_back() {
+        let got = parse_reports("choices 1 2\ndecl a\\nb\nshow show(&(1))\\n\nend\n").unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].choices, vec![1, 2]);
+        assert_eq!(got[0].program.full(), "a\nbshow(&(1))\n");
+        assert_eq!(unescape("\\\"\\u{3c9}\\\\"), "\"ω\\");
     }
 }

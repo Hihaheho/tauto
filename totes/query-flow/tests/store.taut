@@ -1,7 +1,6 @@
-import std::Base
-import std::prelude::Shared
-import std::prelude::Par
-import std::prelude::Os
+import std::base
+import std::builtin::par
+import std::builtin::os
 import "../src/codec.taut"
 import "../src/flow.taut"
 import "../src/api.taut"
@@ -16,32 +15,32 @@ import "../src/storage_fs.taut"
 // The directory `cache` of the test's file system: the state file and the temporary file.
 struct Disk { state: Ref(Option(Bytes)), temp: Ref(Option(Bytes)) }
 
-fn new_disk(): Disk { Disk { state: Ref::new(None), temp: Ref::new(None) } }
+fn new_disk(): Disk ! {ref_new} { Disk { state: perform ref_new(None), temp: perform ref_new(None) } }
 
 fn slot_of(disk: Disk, p: Text): Ref(Option(Bytes)) {
   if p == entry_file("cache", state_entry()) { disk.state } else { disk.temp }
 }
 
 // What the test's file system answers, for `body`.
-fn on_disk<A>(
+fn on_disk<A, !e>(
   disk: Disk,
-  body: () -> A ! {fs_read_bytes, fs_create_dir, fs_write_bytes, fs_rename, Div}
-): A ! {Div} {
+  body: () -> A ! {fs_read_bytes, fs_create_dir, fs_write_bytes, fs_rename, div} ∪ e
+): A ! {div, ref_get, ref_set} ∪ e {
   handle { body() } with {
-    fs_read_bytes(p), k => match Ref::get(slot_of(disk, p)) {
+    fs_read_bytes(p), k => match perform ref_get(slot_of(disk, p)) {
       None => k(Err(IoError::Failed(p)))
       Some(b) => k(Ok(b))
     }
-    fs_create_dir(p), k => k(Ok(#()))
+    fs_create_dir(^p), k => k(Ok(#()))
     fs_write_bytes(p, b), k => {
-      Ref::set(slot_of(disk, p), Some(b))
+      perform ref_set(slot_of(disk, p), Some(b))
       k(Ok(#()))
     }
-    fs_rename(src, dst), k => match Ref::get(slot_of(disk, src)) {
+    fs_rename(src, dst), k => match perform ref_get(slot_of(disk, src)) {
       None => k(Err(IoError::Failed(src)))
       Some(x) => {
-        Ref::set(slot_of(disk, src), None)
-        Ref::set(slot_of(disk, dst), Some(x))
+        perform ref_set(slot_of(disk, src), None)
+        perform ref_set(slot_of(disk, dst), Some(x))
         k(Ok(#()))
       }
     }
@@ -58,25 +57,25 @@ pub(open) enum PlaceKind {
   FilesKind
 }
 
-fn new_place(kind: PlaceKind): Place {
+fn new_place(kind: PlaceKind): Place ! {ref_new} {
   match kind {
     MemoryKind => InMemory(MemoryStore::new())
     FilesKind => InFiles(new_disk())
   }
 }
 
-fn save_in(place: Place, rt: Runtime): Bool ! {Div} {
+fn save_in(place: Place, rt: Runtime): Bool ! {div, ref_get, ref_set} {
   let r := match place {
     InMemory(m) => with_memory_store(m, () => save(rt))
     InFiles(disk) => on_disk(disk, () => with_dir_store("cache", () => save(rt)))
   }
   match r {
-    Ok(u) => true
-    Err(why) => false
+    Ok(^u) => true
+    Err(^why) => false
   }
 }
 
-fn load_from(place: Place, rt: Runtime): LoadResult ! {Div} {
+fn load_from(place: Place, rt: Runtime): LoadResult ! {div, ref_get, ref_set} {
   match place {
     InMemory(m) => with_memory_store(m, () => load(rt))
     InFiles(disk) => on_disk(disk, () => with_dir_store("cache", () => load(rt)))
@@ -84,17 +83,17 @@ fn load_from(place: Place, rt: Runtime): LoadResult ! {Div} {
 }
 
 // The bytes of the saved state, and a way to change them.
-fn state_of(place: Place): Option(Bytes) ! {Div} {
+fn state_of(place: Place): Option(Bytes) ! {div, ref_get} {
   match place {
     InMemory(m) => MemoryStore::get(m, state_entry())
-    InFiles(disk) => Ref::get(disk.state)
+    InFiles(disk) => perform ref_get(disk.state)
   }
 }
 
-fn set_state(place: Place, b: Bytes): Unit ! {Div} {
+fn set_state(place: Place, b: Bytes): Unit ! {div, ref_get, ref_set} {
   match place {
     InMemory(m) => MemoryStore::set(m, state_entry(), b)
-    InFiles(disk) => Ref::set(disk.state, Some(b))
+    InFiles(disk) => perform ref_set(disk.state, Some(b))
   }
 }
 
@@ -102,9 +101,9 @@ fn Stored(): AssetKind(Text, i64) {
   make_asset_kind("Stored", Codec::of_text(), Codec::of_i64(), (x: i64, y: i64) => x == y)
 }
 
-fn bump(c: Ref(i64)): Unit { Ref::set(c, Ref::get(c) + 1) }
+fn bump(c: Ref(i64)): Unit ! {overflow, ref_get, ref_set} { perform ref_set(c, perform ref_get(c) + 1) }
 
-fn SSum(runs: Ref(i64)): Query(i64) {
+fn SSum(runs: Ref(i64)): Query(i64) ! {div} {
   make_query("ssum", Nil, (db: Db) => {
     let x := Db::asset(db, Stored(), "a")
     let y := Db::asset(db, Stored(), "b")
@@ -113,7 +112,7 @@ fn SSum(runs: Ref(i64)): Query(i64) {
   }, Codec::of_i64())
 }
 
-fn SSign(runs: Ref(i64)): Query(i64) {
+fn SSign(runs: Ref(i64)): Query(i64) ! {div} {
   make_query("ssign", Nil, (db: Db) => {
     let s := Db::query(db, SSum(runs))
     bump(runs)
@@ -121,7 +120,7 @@ fn SSign(runs: Ref(i64)): Query(i64) {
   }, Codec::of_i64())
 }
 
-fn STwice(runs: Ref(i64)): Query(i64) {
+fn STwice(runs: Ref(i64)): Query(i64) ! {div} {
   make_query("stwice", Nil, (db: Db) => {
     let s := Db::query(db, SSign(runs))
     bump(runs)
@@ -132,26 +131,26 @@ fn STwice(runs: Ref(i64)): Query(i64) {
 fn value_of(a: Answer(i64)): i64 {
   match a {
     Value(v) => v
-    Error(e) => 0 - 1
+    Error(^e) => 0 - 1
     Suspended => 0 - 2
-    Cycle(ks) => 0 - 3
+    Cycle(^ks) => 0 - 3
     Cancelled => 0 - 4
-    DependenciesRemoved(ks) => 0 - 5
+    DependenciesRemoved(^ks) => 0 - 5
   }
 }
 
 fn restored(l: LoadResult): Bool {
   match l {
-    Restored(n) => true
+    Restored(^n) => true
     NoState => false
-    Discarded(why) => false
+    Discarded(^why) => false
   }
 }
 
 // A first process computes `twice` and saves; returns where it saved.
-fn first_process(kind: PlaceKind): Place ! {Div} {
+fn first_process(kind: PlaceKind): Place ! {div, overflow, ref_get, ref_new, ref_set} {
   let place := new_place(kind)
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   resolve_asset(rt, Stored(), "a", 2, Volatile)
   resolve_asset(rt, Stored(), "b", 3, Volatile)
@@ -160,32 +159,32 @@ fn first_process(kind: PlaceKind): Place ! {Div} {
   place
 }
 
-fn reuses_every_result(kind: PlaceKind): Unit ! {fail(Text), Div} {
+fn reuses_every_result(kind: PlaceKind): Unit ! {div, fail(Text), overflow, ref_get, ref_new, ref_set} {
   let place := first_process(kind)
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   expect(restored(load_from(place, rt)), "restored")
   resolve_asset(rt, Stored(), "a", 2, Volatile)
   resolve_asset(rt, Stored(), "b", 3, Volatile)
   expect(value_of(run(rt, STwice(runs))) == 2, "twice is 2")
-  expect(Ref::get(runs) == 0, "nothing ran")
+  expect(perform ref_get(runs) == 0, "nothing ran")
 }
 
-fn waits_for_the_host(kind: PlaceKind): Unit ! {fail(Text), Div} {
+fn waits_for_the_host(kind: PlaceKind): Unit ! {div, fail(Text), overflow, ref_get, ref_new, ref_set} {
   let place := first_process(kind)
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   load_from(place, rt)
   let before := run(rt, STwice(runs))
   resolve_asset(rt, Stored(), "a", 2, Volatile)
   resolve_asset(rt, Stored(), "b", 3, Volatile)
   expect(value_of(before) == 0 - 2, "suspended first")
-  expect(value_of(run(rt, STwice(runs))) == 2 && Ref::get(runs) == 0, "then reused")
+  expect(value_of(run(rt, STwice(runs))) == 2 && perform ref_get(runs) == 0, "then reused")
 }
 
-fn recomputes_a_change(kind: PlaceKind): Unit ! {fail(Text), Div} {
+fn recomputes_a_change(kind: PlaceKind): Unit ! {div, fail(Text), overflow, ref_get, ref_new, ref_set} {
   let place := first_process(kind)
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   load_from(place, rt)
   resolve_asset(rt, Stored(), "a", 7, Volatile)
@@ -193,15 +192,31 @@ fn recomputes_a_change(kind: PlaceKind): Unit ! {fail(Text), Div} {
   // This process does not know yet how to compute `sign` and `sum`: `twice` runs, and reads
   // them; `sum` changed, `sign` did not.
   expect(value_of(run(rt, STwice(runs))) == 2, "twice is 2")
-  expect(Ref::get(runs) == 3, "three runs")
+  expect(perform ref_get(runs) == 3, "three runs")
   // Now it does: a change stops at `sign` (early cutoff).
   resolve_asset(rt, Stored(), "a", 8, Volatile)
   expect(value_of(run(rt, STwice(runs))) == 2, "still 2")
-  expect(Ref::get(runs) == 5, "sum and sign only")
-  expect(value_of(run(rt, SSum(runs))) == 11 && Ref::get(runs) == 5, "sum is 11, cached")
+  expect(perform ref_get(runs) == 5, "sum and sign only")
+  expect(value_of(run(rt, SSum(runs))) == 11 && perform ref_get(runs) == 5, "sum is 11, cached")
 }
 
-fn loads_again(kind: PlaceKind): Unit ! {fail(Text), Div} {
+fn cuts_off_with_registered_queries(kind: PlaceKind): Unit ! {div, fail(Text), overflow, ref_get, ref_new, ref_set} {
+  let place := first_process(kind)
+  let runs := perform ref_new(0)
+  let rt := new_runtime()
+  register_query(rt, "ssum", (args: List(Text)) => Some(SSum(runs)))
+  register_query(rt, "ssign", (args: List(Text)) => Some(SSign(runs)))
+  register_query(rt, "stwice", (args: List(Text)) => Some(STwice(runs)))
+  load_from(place, rt)
+  resolve_asset(rt, Stored(), "a", 7, Volatile)
+  resolve_asset(rt, Stored(), "b", 3, Volatile)
+  // The queries read from disk are made from their names: `sum` and `sign` run again, and
+  // `sign` comes out the same, so `twice` is kept (early cutoff in the first run).
+  expect(value_of(run(rt, STwice(runs))) == 2, "twice is 2")
+  expect(perform ref_get(runs) == 2, "sum and sign only")
+}
+
+fn loads_again(kind: PlaceKind): Unit ! {div, fail(Text), overflow, ref_get, ref_new, ref_set} {
   let place := first_process(kind)
   let rt := new_runtime()
   load_from(place, rt)
@@ -212,17 +227,17 @@ fn loads_again(kind: PlaceKind): Unit ! {fail(Text), Div} {
   expect(List::length(graph_keys(rt2)) == List::length(graph_keys(rt)), "same keys")
 }
 
-fn nothing_saved(kind: PlaceKind): Unit ! {fail(Text), Div} {
+fn nothing_saved(kind: PlaceKind): Unit ! {div, fail(Text), overflow, ref_get, ref_new, ref_set} {
   let place := new_place(kind)
   let rt := new_runtime()
   match load_from(place, rt) {
     NoState => #()
-    Restored(n) => expect(false, "restored")
+    Restored(^n) => expect(false, "restored")
     Discarded(why) => expect(false, why)
   }
 }
 
-fn damaged_is_discarded(kind: PlaceKind): Unit ! {fail(Text), Div} {
+fn damaged_is_discarded(kind: PlaceKind): Unit ! {div, fail(Text), overflow, ref_get, ref_new, ref_set} {
   let place := first_process(kind)
   match state_of(place) {
     None => expect(false, "no state")
@@ -234,17 +249,17 @@ fn damaged_is_discarded(kind: PlaceKind): Unit ! {fail(Text), Div} {
       set_state(place, cut)
       let rt := new_runtime()
       match load_from(place, rt) {
-        Discarded(why) => #()
-        Restored(n) => expect(false, "restored")
+        Discarded(^why) => #()
+        Restored(^n) => expect(false, "restored")
         NoState => expect(false, "no state")
       }
     }
   }
 }
 
-fn locator_confirms(kind: PlaceKind): Unit ! {fail(Text), Div} {
+fn locator_confirms(kind: PlaceKind): Unit ! {div, fail(Text), overflow, ref_get, ref_new, ref_set} {
   let place := first_process(kind)
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   register_asset_locator(
     rt,
@@ -254,12 +269,12 @@ fn locator_confirms(kind: PlaceKind): Unit ! {fail(Text), Div} {
     }
   )
   load_from(place, rt)
-  expect(value_of(run(rt, STwice(runs))) == 2 && Ref::get(runs) == 0, "reused without the host")
+  expect(value_of(run(rt, STwice(runs))) == 2 && perform ref_get(runs) == 0, "reused without the host")
 }
 
-fn durability_kept(kind: PlaceKind): Unit ! {fail(Text), Div} {
+fn durability_kept(kind: PlaceKind): Unit ! {div, fail(Text), overflow, ref_get, ref_new, ref_set} {
   let place := new_place(kind)
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   resolve_asset(rt, Stored(), "a", 2, Stable)
   resolve_asset(rt, Stored(), "b", 3, Stable)
@@ -271,19 +286,19 @@ fn durability_kept(kind: PlaceKind): Unit ! {fail(Text), Div} {
   resolve_asset(rt2, Stored(), "b", 3, Stable)
   resolve_asset(rt2, Stored(), "c", 0, Volatile)
   resolve_asset(rt2, Stored(), "c", 1, Volatile)
-  expect(value_of(run(rt2, SSum(runs))) == 5 && Ref::get(runs) == 1, "not computed again")
+  expect(value_of(run(rt2, SSum(runs))) == 5 && perform ref_get(runs) == 1, "not computed again")
 }
 
 fn is_ok(r: Result(Unit, Text)): Bool {
   match r {
-    Ok(u) => true
-    Err(why) => false
+    Ok(^u) => true
+    Err(^why) => false
   }
 }
 
 fn is_some(o: Option(Bytes)): Bool {
   match o {
-    Some(b) => true
+    Some(^b) => true
     None => false
   }
 }
@@ -299,6 +314,14 @@ perform test(
 perform test(
   "a changed asset after a load recomputes, and early cutoff still holds, in memory",
   () => recomputes_a_change(MemoryKind)
+)
+perform test(
+  "a query read from disk is made again from its name, and early cutoff holds at once, in memory",
+  () => cuts_off_with_registered_queries(MemoryKind)
+)
+perform test(
+  "a query read from disk is made again from its name, and early cutoff holds at once, in files",
+  () => cuts_off_with_registered_queries(FilesKind)
 )
 perform test("a save of a loaded runtime loads again, in memory", () => loads_again(MemoryKind))
 perform test(
@@ -345,6 +368,6 @@ perform test("the directory handler writes a temporary file and renames it over 
   resolve_asset(rt, Stored(), "a", 2, Volatile)
   let r := on_disk(disk, () => with_dir_store("cache", () => save(rt)))
   expect(is_ok(r), "saved")
-  expect(is_some(Ref::get(disk.state)), "the state file")
-  expect(not(is_some(Ref::get(disk.temp))), "no temporary file")
+  expect(is_some(perform ref_get(disk.state)), "the state file")
+  expect(not(is_some(perform ref_get(disk.temp))), "no temporary file")
 })

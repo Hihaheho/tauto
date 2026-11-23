@@ -1,16 +1,17 @@
 import "unify_allocation_sound.taut"
-import std::Base
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Nat
-import std::Text
+import std::base
+import std::map
+import std::map_laws
+import std::map_text
+import std::nat
+import std::text
 import "allocation_generic_map.taut"
 import "allocation_rigid_map.taut"
 import "allocation_state.taut"
 import "allocation_substitution.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "unify_sound.taut"
@@ -25,12 +26,12 @@ pub def InstanceAllocation(
 pub theorem instance_allocation_cons(
   c: Checker,
   next: Checker,
-  generic: Pair(Text, Kind),
+  generic: Text × Kind,
   m: Mut1(Ordmap(Text, Ty), Checker),
   advance: Nat::le(Succ(ck_next_of(c)), ck_next_of(next)) = true,
   tail: InstanceAllocation(next, m)
 ): InstanceAllocation(c, ck_inst_k(generic, TyVar(ck_next_of(c)), m)) {
-  ⊢ InstanceAllocation(c, ck_inst_k(generic, TyVar(ck_next_of(c)), m)) from match m {
+  match m {
     mut1(map, last) => {
       let variable: TypeAllocated(
         ck_next_of(last),
@@ -77,11 +78,11 @@ pub theorem instance_allocation_cons(
   }
 }
 pub theorem ck_instance_of_allocation(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
   state: CheckerAllocation(c)
 ): InstanceAllocation(c, ck_instance_of(gs, c)) {
-  ⊢ InstanceAllocation(c, ck_instance_of(gs, c)) from match gs {
+  match gs {
     Nil => AndIntro(
       Nat::le_refl(ck_next_of(c)),
       AndIntro(
@@ -111,7 +112,7 @@ pub theorem ck_instance_of_allocation(
   }
 }
 pub theorem ck_instance_substitute_allocated(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
   ty: Ty,
   state: CheckerAllocation(c),

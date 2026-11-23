@@ -4,18 +4,23 @@ use std::process::Command;
 
 use tauto_rustgen::{Bindings, Options, Sources, workspace};
 
+/// `Array` is declared by `std::prelude::collections`, which a file imports.
+fn imported(source: &str) -> String {
+    format!("import std::prelude::collections\n{source}")
+}
+
 fn source_source() -> &'static str {
     r#"
 enum Tree { Leaf(Text), Branch(Text, Tree, Tree) }
 struct Entry { tag: u64, text: Text, tree: Tree }
 enum Store { Stored(Array(Entry)) }
-fn borrowed_length(&store: Store): u64 {
+fn borrowed_length(store: &Store): u64 {
   match &store { Stored(values) => Array::len(values) }
 }
-fn borrowed_entry(&store: Store, index: u64): Option(Entry) {
+fn borrowed_entry(store: &Store, index: u64): Option(Entry) {
   match &store { Stored(values) => match Array::get(values, index) { None => None, Some(entry) => Some(entry) } }
 }
-fn borrowed_direct(&store: Store, index: u64): Option(Entry) {
+fn borrowed_direct(store: &Store, index: u64): Option(Entry) {
   match &store { Stored(values) => Array::get(values, index) }
 }
 enum Packed { Payload(Text, Text, Text, Text), Fork(Packed, Packed) }
@@ -77,7 +82,7 @@ fn whole(values: Array(Entry)): Entry {
   }
 }
 fn owned(values: Array(Entry)): Option(Entry) { Array::get(values, 0) }
-fn with_callback(values: Array(Entry), &f: (u64) -> u64): u64 {
+fn with_callback(values: Array(Entry), f: &((u64) -> u64)): u64 {
   match Array::get(values, 0) {
     Some(Entry { tag, text: _, tree: _ }) => f(tag)
     None => 0
@@ -94,13 +99,13 @@ let selected := match Array::get(original, { original := entries("new"); 0 }) {
   Some(Entry { text, tag: _, tree: _ }) => { original := entries("body"); text }
   None => "missing"
 }
-perform show("snapshot", selected)
-perform show("current", whole(original).text)
-perform show("temporary", projected(entries("temporary"), 0))
-perform show("recursive", recursive(original))
-perform show("past-end", projected(original, 1))
+show(&selected)
+show(&(whole(original).text))
+show(&projected(entries("temporary"), 0))
+show(&recursive(original))
+show(&projected(original, 1))
 let captured := capture(entries("captured"))
-perform show("captured", captured())
+show(&captured())
 "#
 }
 
@@ -128,13 +133,13 @@ fn build_example(dir: &Path, name: &str, release: bool) -> std::path::PathBuf {
 #[test]
 fn owned_patterns_public_api_and_clone_counts() {
     tauto_messages::install();
-    let expected = tauto::eval::run(source_source())
+    let expected = tauto::exec::run(&imported(source_source()))
         .unwrap()
         .outputs
         .into_iter()
         .map(|(label, value)| format!("{label} = {value}\n"))
         .collect::<String>();
-    let package = tauto_nir::compile_with(source_source(), true).unwrap();
+    let package = tauto::nir::compile_with(&imported(source_source()), true).unwrap();
     let ws = workspace(
         "array-match",
         &package,
@@ -283,7 +288,9 @@ fn borrowed_results_are_still_rejected() {
         r#"enum Tree { Leaf(Text), Branch(Tree, Tree) }
 fn invalid(values: Array(Tree)): &Tree { match Array::get(values, 0) { Some(tree) => tree, None => Leaf("missing") } }"#,
     ] {
-        let error = tauto_nir::compile(source).unwrap_err().to_string();
+        let error = tauto::nir::compile(&imported(source))
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("borrow"), "{error}");
     }
 }
@@ -299,7 +306,7 @@ fn guards_and_non_immediate_matches_keep_the_owned_lookup() {
 fn f(values: Array(u64)): u64 { match get(values) { Some(x) => x, None => 0 } }"#,
         r#"pub fn f(values: Array(u64)): u64 { let found := Array::get(values, 0); match &found { Some(x) => x, None => 0 } }"#,
     ] {
-        let package = tauto_nir::compile_with(source, true).unwrap();
+        let package = tauto::nir::compile_with(&imported(source), true).unwrap();
         let ws = workspace(
             "array-fallback",
             &package,
@@ -336,7 +343,7 @@ fn nested_matches_have_bounded_generated_size() {
             );
         }
         let source = format!(r#"fn nested(values: Array(u64)): u64 {{ {} }}"#, body);
-        let package = tauto_nir::compile_with(&source, true).unwrap();
+        let package = tauto::nir::compile_with(&imported(&source), true).unwrap();
         let ws = workspace(
             "array-nested",
             &package,
@@ -379,7 +386,7 @@ fn f(values: Array(u64)): u64 { match Array::get(values, 0) { Some(item) => hand
             0,
         ),
     ] {
-        let package = tauto_nir::compile_with(source, true).unwrap();
+        let package = tauto::nir::compile_with(&imported(source), true).unwrap();
         let ws = workspace(
             "array-boundaries",
             &package,
@@ -409,7 +416,7 @@ fn f(values: Array(u64)): u64 { match Array::get(values, 0) { Some(item) => hand
 #[ignore = "runs the native same-build array pattern timing workload"]
 fn time_array_patterns() {
     tauto_messages::install();
-    let package = tauto_nir::compile_with(source_source(), true).unwrap();
+    let package = tauto::nir::compile_with(&imported(source_source()), true).unwrap();
     let ws = workspace(
         "array-timing",
         &package,

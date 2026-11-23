@@ -1,23 +1,23 @@
-import std::Text
+import std::text
 import "../src/types.taut"
 import "../src/bindings.taut"
 import "../src/generic_core.taut"
 import "../src/closure_core.taut"
-import std::Base
+import std::base
 
 pub fn rg_callable_reject(left: RustgenType, right: RustgenType): Bool {
-  ⊢ Bool from match rustgen_unify(100, left, right, Nil) {
-    RustgenErr(message) => true
-    RustgenOk(subst) => false
+  match rustgen_unify(100, left, right, Nil) {
+    RustgenErr(^message) => true
+    RustgenOk(^subst) => false
   }
 }
 pub fn rg_callable_resolves(): Bool {
   let unknown := RustgenCallable(Cons(RustgenMeta("arg"), Nil), RustgenMeta("result"))
   let expected := RustgenCallable(Cons(RustgenInt, Nil), RustgenText)
   ⊢ Bool from match rustgen_unify(100, unknown, expected, Nil) {
-    RustgenErr(message) => false
+    RustgenErr(^message) => false
     RustgenOk(subst) => ⊢ Bool from match rustgen_resolve(100, unknown, subst) {
-      RustgenErr(message) => false
+      RustgenErr(^message) => false
       RustgenOk(actual) => rustgen_same(actual, expected)
     }
   }
@@ -29,7 +29,7 @@ pub fn rg_callable_substitutes(): Bool {
     Cons(RustgenBinding::Mk("B", RustgenInt), Nil)
   )
   ⊢ Bool from match rustgen_substitute(100, ty, bindings) {
-    RustgenErr(message) => false
+    RustgenErr(^message) => false
     RustgenOk(actual) => rustgen_same(
       actual,
       RustgenCallable(Cons(RustgenVar("B"), Nil), RustgenInt)
@@ -45,14 +45,14 @@ pub fn rg_closure_shadow_keeps_inner(): Bool {
   }
 }
 pub fn rg_closure_duplicate_rejects(): Bool {
-  ⊢ Bool from match rustgen_closure_parameters(
+  match rustgen_closure_parameters(
     Cons("value", Cons("value", Nil)),
     Cons(RustgenInt, Cons(RustgenInt, Nil)),
     Nil,
     Nil
   ) {
-    RustgenErr(message) => true
-    RustgenOk(bindings) => false
+    RustgenErr(^message) => true
+    RustgenOk(^bindings) => false
   }
 }
 

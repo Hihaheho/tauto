@@ -1,6 +1,6 @@
 // A constructor of a file's own type means that constructor wherever the
 // file writes its name alone, also when the name is one the language keeps
-// for itself with no declaration in the standard library (`Info`, `Char`,
+// for itself with no declaration in the standard library (`Info`,
 // `Div`, `Exceeded`, `Level`), as it does for a name the library declares
 // (`List`). The library's type of the name still means the type.
 @ cases.constructor-named-like-library
@@ -27,21 +27,19 @@ fn sym(x: Sym): Nat {
   }
 }
 
-fn same(c: Char): Char { c }
-
-perform show("info", rank(info()))
-perform show("level", sym(Level))
-perform show("char", sym(Char))
+show(&rank(info()))
+show(&sym(Level))
+show(&sym(Char))
 ```
-shows = ['info = 1', 'level = 3', 'char = 0']
+stdout = "1\n3\n0\n"
 
-// `#(a, b)` and `#()` are the language's tuples also in a file with a
-// constructor named `Tuple`: the syntax is read as `Tuple`, which stays the
-// library's, so an expression names the constructor with its type
-// (`Atom::Tuple`). A pattern names it alone.
-@ cases.a-constructor-named-tuple-leaves-tuples-alone
+// `#(a, b)` and `#()` are the language's products also in a file with
+// constructors named `Pair` and `Star`: the syntax is read as the library's
+// `Pair::Mk` and `Star`, so an expression names the file's constructor with its
+// type (`Atom::Pair`). A pattern names it alone.
+@ cases.constructors-named-pair-and-star-leave-products-alone
 source = ```tauto
-enum Atom { Name, Tuple(Bool) }
+enum Atom { Star, Pair(Bool) }
 
 fn pair(): Nat × Nat { #(1, 2) }
 
@@ -49,12 +47,43 @@ fn none(): Unit { #() }
 
 fn atom(a: Atom): Bool {
   match a {
-    Name => false
-    Tuple(b) => b
+    Star => false
+    Pair(b) => b
   }
 }
 
-perform show("pair", pair())
-perform show("atom", atom(Atom::Tuple(true)))
+show(&pair())
+show(&atom(Atom::Pair(true)))
 ```
-shows = ['pair = #(1, 2)', 'atom = true']
+stdout = "#(1, 2)\ntrue\n"
+
+// A name written where a type is wanted is the library's type, also when the
+// file has a constructor of that name: a constructor is never a type.
+@ cases.constructors-named-like-types-in-type-position
+source = ```tauto
+enum Sym { Bool, Option, Unit }
+
+fn flip(b: Bool): Bool { not(b) }
+
+fn first(o: Option(Nat)): Nat {
+  match o {
+    Some(n) => n
+    None => 0
+  }
+}
+
+fn nothing(u: Unit): Unit { u }
+
+fn sym(s: Sym): Nat {
+  match s {
+    Bool => 0
+    Option => 1
+    Unit => 2
+  }
+}
+
+show(&flip(true))
+show(&first(Some(3)))
+show(&sym(Unit))
+```
+stdout = "false\n3\n2\n"

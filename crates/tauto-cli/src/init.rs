@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use crate::i18n;
 
-const SOURCE: &str = "perform show(\"hello\", 42)\n";
+const SOURCE: &str = "perform main(() => show(&\"hello\"))\n";
 
 pub fn command(args: &[String]) -> ExitCode {
     if args == ["--help"] || args == ["-h"] {

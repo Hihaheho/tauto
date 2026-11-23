@@ -1,0 +1,42 @@
+// Capacity 25, hash 384: insert / find / remove all start at slot 24
+// (`HT::start_base`). Truncated cap/8 would start at group 0 and miss the
+// element; remove would stop on the empty slot in group 0. One Nat packs
+// insert / find / remove (hundreds / tens / ones) so Debug can print it.
+@ cases.hash-table-partial-group-roundtrip
+stdout = "111\n"
+source = ```tauto
+import std::prelude::std { Option }
+import std::base { Nat, Bool }
+import std::uhost { UHost }
+import std::uint { UInt }
+import std::slots { Byte, SlotsModel, Table }
+import std::hash_table { tb_used, tb_laws, HT }
+
+fn as_nat(b: Bool): Nat {
+  match b {
+    true => 1
+    false => 0
+  }
+}
+
+fn demo(): Nat {
+  var t: SlotsModel(Table, Byte, Nat, tb_used) :=
+    SlotsModel::new(UHost::lit(25, Refl), tb_laws())
+  let h: UInt(64) := UInt::of_nat_mod64(384)
+  let a: Bool := match HT::insert_in(&mut t, h, 7) {
+    None => true
+    Some(x) => false
+  }
+  let b: Bool := match HT::find_in(&t, h, (x: &Nat) => Nat::eq(x, 7)) {
+    Some(x) => Nat::eq(x, 7)
+    None => false
+  }
+  let c: Bool := match HT::remove_in(&mut t, h, (x: &Nat) => Nat::eq(x, 7)) {
+    Some(x) => Nat::eq(x, 7)
+    None => false
+  }
+  Nat::add(Nat::mul(as_nat(a), 100), Nat::add(Nat::mul(as_nat(b), 10), as_nat(c)))
+}
+
+show(&demo())
+```

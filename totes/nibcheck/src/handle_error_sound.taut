@@ -1,14 +1,17 @@
+import "messages.taut"
 import "pattern_read_error_sound.taut"
 import "handle_frame.taut"
 import "written_error_sound.taut"
 import "instantiation_error_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "error_frame.taut"
 import "rows.taut"
+import "rows_base.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_match.taut"
 import "../../surface/src/surface.taut"
 
@@ -22,7 +25,7 @@ pub theorem handle_direct_frame_errors(
 ): CkErrorFrame(c, handle_direct(c, quant, eff, cont, guard, body)) {
   frame_error_if_ok_errors(
     c,
-    cat3(eff, " is direct; every path of its arm must end in k(e)", ""),
+    direct_arm_must_resume_message(eff),
     span_of(body),
     handle_direct_bad(quant, cont, guard, body)
   )
@@ -51,10 +54,9 @@ pub theorem handle_sig_found_frame_errors(
   body: SurfaceTerm,
   found: Option(EffectSig)
 ): CkErrorFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) {
-  ⊢ CkErrorFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) from match found {
+  match found {
     Some(s) => error_frame_bind(
-      Ty,
-      Option(Pair(List(Ty), Ty)),
+      <A: Ty, B: Option(List(Ty) × Ty)>,
       c,
       (ty: Ty, c1: Checker) => mut1(ty_fn_sig(ty), c1),
       ck_instantiate_named(c, handle_effect_generics(s), handle_effect_type(s)),
@@ -62,12 +64,11 @@ pub theorem handle_sig_found_frame_errors(
       ty => c1 => (clean_errors => clean_errors)
     )
     None => error_frame_bind(
-      Unit,
-      Option(Pair(List(Ty), Ty)),
+      <A: Unit, B: Option(List(Ty) × Ty)>,
       c,
       (ignored: Unit, c1: Checker) => mut1(None, c1),
-      ck_error(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
-      ck_error_frame_errors(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
+      ck_error(c, no_effect_declared_message(eff), span_of(body)),
+      ck_error_frame_errors(c, no_effect_declared_message(eff), span_of(body)),
       ignored => c1 => (clean_errors => clean_errors)
     )
   }
@@ -81,7 +82,7 @@ pub theorem handle_sig_frame_errors(
   body: SurfaceTerm,
   exceeded: Bool
 ): CkErrorFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) {
-  ⊢ CkErrorFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) from match exceeded {
+  match exceeded {
     true => (clean_errors => clean_errors)
     false => handle_sig_found_frame_errors(
       c,
@@ -102,7 +103,7 @@ pub theorem ck_handle_sig_frame_errors(
   body: SurfaceTerm
 ): CkErrorFrame(c, ck_handle_sig(c, eff, result, budget_ty, body)) {
   Eq::subst(
-    (z: Mut1(Option(Pair(List(Ty), Ty)), Checker)) => CkErrorFrame(c, z),
+    (z: Mut1(Option(List(Ty) × Ty), Checker)) => CkErrorFrame(c, z),
     Eq::sym(handle_sig_unf(c, eff, result, budget_ty, body)),
     handle_sig_frame_errors(c, eff, result, budget_ty, body, Text::eq(eff, "exceeded"))
   )

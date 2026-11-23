@@ -1,0 +1,234 @@
+import std::text
+import std::data
+
+// The Eure document model: what a document means, after the text is read.
+//
+// A document is a `Node`. Every node has a value and its extensions: the `$name` entries that
+// describe the node without being part of its data (`a.$variant = "x"` puts `variant` among the
+// extensions of `a`). A map's keys are strings, integers or tuples of keys; `name`, `"name"` and
+// `'name'` are the same key.
+
+// Which language a text is in. `"…"` and `: …` are plain text; `` `…` `` and a code block with no
+// language are code in a language left to the reader; `` rust`…` `` names its language.
+pub(open) inductive Lang: Type {
+  Plaintext: Lang
+  Implicit: Lang
+  Named(name: Text): Lang
+}
+
+pub(open) inductive Key: Type {
+  Kstr(t: Text): Key
+  Knum(neg: Bool, n: Nat): Key
+  Ktup(items: List(Key)): Key
+}
+
+mutual {
+  pub(open) inductive Value: Type {
+    // `!` or `!label`: a value still to be filled in.
+    Vhole(label: Option(Text)): Value
+    Vnull: Value
+    Vbool(b: Bool): Value
+    // An integer: its sign (`true` for negative) and its magnitude.
+    Vint(neg: Bool, n: Nat): Value
+    // An exact decimal `± mant × 10^(± exp)`, kept as written: `1.10` is `Vdec(false, 110, true, 2)`
+    // and `1.1` is `Vdec(false, 11, true, 1)`.
+    Vdec(neg: Bool, mant: Nat, eneg: Bool, exp: Nat): Value
+    Vtext(lang: Lang, t: Text): Value
+    Varr(items: List(Node)): Value
+    Vtup(items: List(Node)): Value
+    Vmap(entries: List(Key × Node)): Value
+  }
+  pub(open) inductive Node: Type {
+    Mk(v: Value, ext: List(Text × Node)): Node
+  }
+}
+
+// ---- building ---------------------------------------------------------------------
+
+pub fn leaf(v: Value): Node {
+  Node::Mk(v, Nil)
+}
+
+pub fn str_node(t: Text): Node {
+  Node::Mk(Vtext(Plaintext, t), Nil)
+}
+
+pub fn nat_node(n: Nat): Node {
+  Node::Mk(Vint(false, n), Nil)
+}
+
+pub fn map_node(entries: List(Key × Node)): Node {
+  Node::Mk(Vmap(entries), Nil)
+}
+
+pub fn entry(name: Text, n: Node): Key × Node {
+  #(Kstr(name), n)
+}
+
+// ---- reading --------------------------------------------------------------------
+
+pub fn node_value(n: Node): Value {
+  match n {
+    Mk(v, ^ext) => v
+  }
+}
+
+pub fn node_ext(n: Node): List(Text × Node) {
+  match n {
+    Mk(^v, ext) => ext
+  }
+}
+
+mutual {
+  pub fn key_eq(a: Key, b: Key): Bool {
+    match a {
+      Kstr(s) => ⊢ Bool from match b {
+        Kstr(t) => Text::eq(s, t)
+        Knum(^m, ^k) => false
+        Ktup(^ys) => false
+      }
+      Knum(neg, n) => ⊢ Bool from match b {
+        Kstr(^t) => false
+        Knum(m, k) => Bool::and(Bool::eq(neg, m), Nat::eq(n, k))
+        Ktup(^ys) => false
+      }
+      Ktup(xs) => ⊢ Bool from match b {
+        Kstr(^t) => false
+        Knum(^m, ^k) => false
+        Ktup(ys) => keys_eq(xs, ys)
+      }
+    }
+  }
+  fn keys_eq(xs: List(Key), ys: List(Key)): Bool {
+    match xs {
+      Nil => ⊢ Bool from match ys {
+        Nil => true
+        Cons(^y, ^yt) => false
+      }
+      Cons(x, xt) => ⊢ Bool from match ys {
+        Nil => false
+        Cons(y, yt) => Bool::and(key_eq(x, y), keys_eq(xt, yt))
+      }
+    }
+  }
+}
+
+pub fn assoc_find<K, V>(eq: (&K, &K) -> Bool, k: &K, l: List(K × V)): Option(V) {
+  match l {
+    Nil => None
+    Cons(#(key, value), t) => if eq(&key, k) { Some(value) } else { assoc_find(eq, k, t) }
+  }
+}
+
+// `assoc_find(key_eq, k, l)`, with `key_eq` called rather than passed: the Nib checker takes the
+// mutual recursion of `key_eq` to diverge, which a function passed as a value may not.
+pub fn key_find(k: Key, l: List(Key × Node)): Option(Node) {
+  match l {
+    Nil => None
+    Cons(#(key, value), t) => if key_eq(key, k) { Some(value) } else { key_find(k, t) }
+  }
+}
+
+// The entry of a map node under `k`.
+pub fn get(n: Node, k: Key): Option(Node) {
+  match node_value(n) {
+    Vmap(es) => key_find(k, es)
+    Vhole(^l) => None
+    Vnull => None
+    Vbool(^b) => None
+    Vint(^s, ^m) => None
+    Vdec(^s, ^m, ^es, ^e) => None
+    Vtext(^l, ^t) => None
+    Varr(^xs) => None
+    Vtup(^xs) => None
+  }
+}
+
+pub fn field(n: Node, name: Text): Option(Node) {
+  get(n, Kstr(name))
+}
+
+// The extension `$name` of a node.
+pub fn ext(n: Node, name: Text): Option(Node) {
+  assoc_find(Text::eq, name, node_ext(n))
+}
+
+// The node at a path of field names.
+pub fn at(n: Node, path: List(Text)): Option(Node) {
+  match path {
+    Nil => Some(n)
+    Cons(p, rest) => Option::bind(field(n, p), (m: Node) => at(m, rest))
+  }
+}
+
+pub fn as_text(n: Node): Option(Text) {
+  match node_value(n) {
+    Vtext(^l, t) => Some(t)
+    Vhole(^l) => None
+    Vnull => None
+    Vbool(^b) => None
+    Vint(^s, ^m) => None
+    Vdec(^s, ^m, ^es, ^e) => None
+    Varr(^xs) => None
+    Vtup(^xs) => None
+    Vmap(^es) => None
+  }
+}
+
+pub fn as_bool(n: Node): Option(Bool) {
+  match node_value(n) {
+    Vbool(b) => Some(b)
+    Vhole(^l) => None
+    Vnull => None
+    Vint(^s, ^m) => None
+    Vdec(^s, ^m, ^es, ^e) => None
+    Vtext(^l, ^t) => None
+    Varr(^xs) => None
+    Vtup(^xs) => None
+    Vmap(^es) => None
+  }
+}
+
+// A non-negative integer.
+pub fn as_nat(n: Node): Option(Nat) {
+  match node_value(n) {
+    Vint(s, m) => if s { if Nat::eq(m, 0) { Some(0) } else { None } } else { Some(m) }
+    Vhole(^l) => None
+    Vnull => None
+    Vbool(^b) => None
+    Vdec(^s, ^m, ^es, ^e) => None
+    Vtext(^l, ^t) => None
+    Varr(^xs) => None
+    Vtup(^xs) => None
+    Vmap(^es) => None
+  }
+}
+
+// The items of an array.
+pub fn as_items(n: Node): Option(List(Node)) {
+  match node_value(n) {
+    Varr(xs) => Some(xs)
+    Vhole(^l) => None
+    Vnull => None
+    Vbool(^b) => None
+    Vint(^s, ^m) => None
+    Vdec(^s, ^m, ^es, ^e) => None
+    Vtext(^l, ^t) => None
+    Vtup(^xs) => None
+    Vmap(^es) => None
+  }
+}
+
+pub fn as_entries(n: Node): Option(List(Key × Node)) {
+  match node_value(n) {
+    Vmap(es) => Some(es)
+    Vhole(^l) => None
+    Vnull => None
+    Vbool(^b) => None
+    Vint(^s, ^m) => None
+    Vdec(^s, ^m, ^es2, ^e) => None
+    Vtext(^l, ^t) => None
+    Varr(^xs) => None
+    Vtup(^xs) => None
+  }
+}

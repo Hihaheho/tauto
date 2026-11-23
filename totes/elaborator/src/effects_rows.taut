@@ -1,0 +1,1670 @@
+import "elaborate.taut"
+import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::list
+
+// Functions with effects, read as terms of the proof language, as the host
+// reads them (`crates/tauto-kernel/src/check/effects.rs`): the kernel has no
+// rule for them. `fn f(x: X): A ! {e…}` is `fn f(x: X): Comp(Op, Res, A)`, `Op`
+// and `Res` those of the row; a value is `Comp::ret`, `perform e(a…)` is
+// `Comp::op` on the operation injected into the row, `let x = c; rest` is
+// `Comp::bind`, a call of a function whose row is part of this one is lifted
+// into it by a handler that forwards every operation, and `handle` is
+// `Comp::handle_in`, or `Comp::handle_val` when it leaves no effect. What is read here is what the host reads for effects
+// without `var`s, `&mut` or class bounds; the rest is left as
+// written, for the caller to say unsupported.
+
+// An effect whose operations the proofs read: its arity and the type of its
+// answer. The table lists them in the order they were declared, which is the
+// order of a row.
+// An effect with type generics is listed once, by its own name, with its
+// generics; each instance a function's row or a handler's arm names is listed
+// after it under a key made from the effect and its type arguments
+// (`get(Nat)`), with the effect it is an instance of (`head`), those
+// arguments, and the answer's type at them.
+pub(open) inductive CompEffect: Type {
+  CompEffectMk(name: Text, arity: Nat, result: SurfaceTerm, head: Text, generics: List(Text), args: List(SurfaceTerm), mode: Text): CompEffect
+}
+
+// A function with effects read in proofs: its row, the number of its
+// parameters, and its result type when it has no generics.
+pub(open) inductive CompFn: Type {
+  CompFnMk(
+    name: Text,
+    row: List(Text),
+    arity: Nat,
+    result: Option(SurfaceTerm),
+    poly: Bool,
+    // For a function with generics: they, its parameters' types, and the
+    // instances in its row that name them.
+    generics: List(Text),
+    ptypes: List(SurfaceTerm),
+    insts: List(CompEffect),
+    // The row of each parameter that is a function with effects, canonical.
+    callbacks: List(Option(List(Text)))
+  ): CompFn
+}
+
+// Where a computation is read: its row, the local functions whose calls are
+// computations (the continuations of handlers) with their rows, the variables
+// whose types are known, the type of its value when known, the tables, and
+// how deep it is, for fresh names.
+pub(open) inductive CompCx: Type {
+  CompCxMk(
+    row: List(Text),
+    locals: List((Text × List(Text))),
+    types: List((Text × SurfaceTerm)),
+    expect: Option(SurfaceTerm),
+    effects: List(CompEffect),
+    fns: List(CompFn),
+    depth: Nat,
+    start: Nat,
+    end: Nat,
+    owner: Text
+  ): CompCx
+}
+
+// An error the host also has: it skips the function. Any other error is
+// something not read here.
+pub fn comp_skip(why: Text): Text { Text::concat("skip: ", why) }
+
+pub fn comp_has(xs: List(Text), x: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || comp_has(rest, x)
+  }
+}
+
+pub fn comp_effect_get(es: List(CompEffect), n: Text): Option(CompEffect) {
+  match es {
+    Nil => None
+    Cons(e, rest) => if e.name == n {
+      Some(if e.name != e.head && List::length(e.args) == 0 {
+        CompEffectMk(e.head, e.arity, e.result, e.head, e.generics, e.args, e.mode)
+      } else { e })
+    } else { comp_effect_get(rest, n) }
+  }
+}
+
+fn comp_module_of(name: Text): Text {
+  match text_list_reverse(text_split(name, "::")) {
+    Nil => ""
+    Cons(^leaf, rest) => text_join(text_list_reverse(rest), "::")
+  }
+}
+
+pub fn comp_effect_inside(cx: CompCx, entry: CompEffect): Bool {
+  let owner := comp_module_of(entry.head)
+  cx.owner == owner || text_starts_with(cx.owner, Text::concat(owner, "::"), 0)
+}
+
+pub fn comp_effect_outside(cx: CompCx, e: CompEffect): Bool {
+  e.mode == "imported-handle" || ((e.mode == "private" || e.mode == "handle") && not(comp_effect_inside(cx, e)))
+}
+
+pub fn comp_row_empty(row: List(Text)): Bool {
+  match row {
+    Nil => true
+    Cons(_, _) => false
+  }
+}
+
+fn comp_local_effects(entries: List(CompEffect), owner: Text): List(CompEffect) {
+  match entries {
+    Nil => Nil
+    Cons(e, rest) => {
+      let following := comp_local_effects(rest, owner)
+      if owner != "" && comp_module_of(e.name) == owner && not(text_starts_with(e.mode, "imported-", 0)) {
+        let leaf := Text::slice_or_empty(e.name, Text::len(owner) + 2, Text::len(e.name))
+        let short := if text_starts_with(leaf, "#", 0) {
+          Text::slice_or_empty(leaf, 1, Text::len(leaf))
+        } else { leaf }
+        Cons(CompEffectMk(short, e.arity, e.result, e.head, e.generics, e.args, e.mode), following)
+      } else { following }
+    }
+  }
+}
+
+pub fn comp_scoped_effects(entries: List(CompEffect), owners: List(Text)): List(CompEffect) {
+  match owners {
+    Nil => entries
+    Cons(owner, rest) => List::append(comp_local_effects(entries, owner), comp_scoped_effects(entries, rest))
+  }
+}
+
+pub fn comp_fn_get(fs: List(CompFn), n: Text): Option(CompFn) {
+  match fs {
+    Nil => None
+    Cons(f, rest) => if f.name == n { Some(f) } else { comp_fn_get(rest, n) }
+  }
+}
+
+pub fn comp_local_get(ls: List((Text × List(Text))), n: Text): Option(List(Text)) {
+  match ls {
+    Nil => None
+    Cons(l, rest) => if l.fst == n { Some(l.snd) } else { comp_local_get(rest, n) }
+  }
+}
+
+pub fn comp_type_get(ts: List((Text × SurfaceTerm)), n: Text): Option(SurfaceTerm) {
+  match ts {
+    Nil => None
+    Cons(l, rest) => if l.fst == n { Some(l.snd) } else { comp_type_get(rest, n) }
+  }
+}
+
+pub fn comp_type_remove(ts: List((Text × SurfaceTerm)), n: Text): List((Text × SurfaceTerm)) {
+  match ts {
+    Nil => Nil
+    Cons(l, rest) => if l.fst == n { comp_type_remove(rest, n) } else { Cons(l, comp_type_remove(rest, n)) }
+  }
+}
+
+pub fn comp_local_remove(ls: List((Text × List(Text))), n: Text): List((Text × List(Text))) {
+  match ls {
+    Nil => Nil
+    Cons(l, rest) => if l.fst == n { comp_local_remove(rest, n) } else { Cons(l, comp_local_remove(rest, n)) }
+  }
+}
+
+pub fn comp_is_local(cx: CompCx, n: Text): Bool {
+  match comp_local_get(cx.locals, n) {
+    None => false
+    Some(^r) => true
+  }
+}
+
+pub fn comp_is_typed(cx: CompCx, n: Text): Bool {
+  match comp_type_get(cx.types, n) {
+    None => false
+    Some(^r) => true
+  }
+}
+
+// The effects of a row in the order they were declared, each once.
+pub fn comp_canonical(es: List(CompEffect), names: List(Text)): List(Text) {
+  List::append(List::append(comp_canonical_of(es, names, false), comp_sort_insts(es, comp_canonical_of(es, names, true))), comp_vars(names))
+}
+
+// ---- the order of instances ----------------------------------------------------------
+// The host orders the entries of a row by the declaration of the effect and then by
+// the declaration of the types an entry names, so an effect's instances go in the order
+// their types were declared: `Nat`, `Bool` and `Unit` before the program's own types,
+// which follow in the order they are declared. The table lists the program's types
+// after its effects, as entries `#type:T`, for that order.
+
+pub fn comp_type_pos(es: List(CompEffect), n: Text, i: Nat): Option(Nat) {
+  match es {
+    Nil => None
+    Cons(e, rest) => if e.name == n { Some(i) } else { comp_type_pos(rest, n, i + 1) }
+  }
+}
+
+pub fn comp_type_rank(es: List(CompEffect), t: SurfaceTerm): Option(Nat) {
+  match t.kind {
+    SkVar(n) => if surface_name_text(n) == "Nat" { Some(0) } else {
+      if surface_name_text(n) == "Bool" { Some(1) } else {
+        if surface_name_text(n) == "Unit" { Some(2) } else {
+          ⊢ Option(Nat) from match comp_type_pos(es, Text::concat("#type:", surface_name_text(n)), 0) {
+            Some(i) => Some(i + 3)
+            None => None
+          }
+        }
+      }
+    }
+    _ => None
+  }
+}
+
+pub fn comp_ranks(es: List(CompEffect), ts: List(SurfaceTerm)): Option(List(Nat)) {
+  match ts {
+    Nil => Some(Nil)
+    Cons(t, rest) => ⊢ Option(List(Nat)) from match comp_type_rank(es, t) {
+      None => None
+      Some(r) => ⊢ Option(List(Nat)) from match comp_ranks(es, rest) {
+        None => None
+        Some(more) => Some(Cons(r, more))
+      }
+    }
+  }
+}
+
+pub fn comp_ranks_lt(a: List(Nat), b: List(Nat)): Bool {
+  match a {
+    Nil => false
+    Cons(x, xs) => match b {
+      Nil => false
+      Cons(y, ys) => if x < y { true } else { if y < x { false } else { comp_ranks_lt(xs, ys) } }
+    }
+  }
+}
+
+// Whether the entry `a` goes before `b`: its effect was declared first, or the types it names were.
+pub fn comp_inst_before(es: List(CompEffect), a: Text, b: Text): Bool {
+  match comp_effect_get(es, a) {
+    None => false
+    Some(x) => ⊢ Bool from match comp_effect_get(es, b) {
+      None => false
+      Some(y) => if x.head != y.head {
+        ⊢ Bool from match comp_type_pos(es, x.head, 0) {
+          None => false
+          Some(i) => ⊢ Bool from match comp_type_pos(es, y.head, 0) {
+            None => false
+            Some(j) => i < j
+          }
+        }
+      } else {
+        ⊢ Bool from match comp_ranks(es, x.args) {
+          None => false
+          Some(r) => ⊢ Bool from match comp_ranks(es, y.args) {
+            None => false
+            Some(q) => comp_ranks_lt(r, q)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn comp_insert_inst(es: List(CompEffect), x: Text, ys: List(Text)): List(Text) {
+  match ys {
+    Nil => [x]
+    Cons(y, rest) => if comp_inst_before(es, x, y) { Cons(x, ys) } else { Cons(y, comp_insert_inst(es, x, rest)) }
+  }
+}
+
+pub fn comp_sort_insts(es: List(CompEffect), ns: List(Text)): List(Text) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => comp_insert_inst(es, n, comp_sort_insts(es, rest))
+  }
+}
+
+// A row variable `e` is the entry `|e` of a row, last in it, and stands for the
+// effects of the row that the caller adds.
+pub fn comp_is_var(e: Text): Bool { text_starts_with(e, "|", 0) }
+
+pub fn comp_var_generic(e: Text): Text { Text::slice_or_empty(e, 1, Text::len(e)) }
+
+// The row variables of `names`, each once.
+pub fn comp_vars(names: List(Text)): List(Text) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => if comp_is_var(n) && comp_has(rest, n) == false { Cons(n, comp_vars(rest)) } else { comp_vars(rest) }
+  }
+}
+
+pub fn comp_var_generics(names: List(Text)): List(Text) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(comp_var_generic(n), comp_var_generics(rest))
+  }
+}
+
+pub fn comp_without_vars(names: List(Text)): List(Text) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => if comp_is_var(n) { comp_without_vars(rest) } else { Cons(n, comp_without_vars(rest)) }
+  }
+}
+
+pub fn comp_is_nil(row: List(Text)): Bool {
+  match row {
+    Nil => true
+    Cons(^x, ^rest) => false
+  }
+}
+
+pub fn comp_has_var(names: List(Text)): Bool {
+  match names {
+    Nil => false
+    Cons(n, rest) => comp_is_var(n) || comp_has_var(rest)
+  }
+}
+
+// What of the row of the caller a call adds to the callee's own effects: its row variable and every effect the callee does not have.
+pub fn comp_tail(row: List(Text), callee: List(Text)): List(Text) {
+  match row {
+    Nil => Nil
+    Cons(n, rest) => if comp_is_var(n) || comp_has(callee, n) == false { Cons(n, comp_tail(rest, callee)) } else { comp_tail(rest, callee) }
+  }
+}
+
+pub fn comp_insert_at<A>(xs: List(A), i: Nat, ys: List(A)): List(A) {
+  match i {
+    Zero => List::append(ys, xs)
+    Succ(j) => match xs {
+      Nil => ys
+      Cons(x, rest) => Cons(x, comp_insert_at(rest, j, ys))
+    }
+  }
+}
+
+pub fn comp_index_of(xs: List(Text), x: Text): Nat {
+  match xs {
+    Nil => 0
+    Cons(y, rest) => if y == x { 0 } else { comp_index_of(rest, x) + 1 }
+  }
+}
+
+pub fn comp_drop_at<A>(xs: List(A), i: Nat): List(A) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match i {
+      Zero => rest
+      Succ(j) => Cons(x, comp_drop_at(rest, j))
+    }
+  }
+}
+
+// The row variables a function's row writes.
+pub fn comp_entry_vars(es: List(RowEntry)): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => match e {
+      EntryName(n, ^mark) => if comp_is_var(n) { Cons(n, comp_entry_vars(rest)) } else { comp_entry_vars(rest) }
+      EntryApplied(^n, ^a, ^u, ^f, ^mark) => comp_entry_vars(rest)
+    }
+  }
+}
+
+// The plain effects of a row come first, then the instances of effects with type generics.
+pub fn comp_canonical_of(es: List(CompEffect), names: List(Text), instances: Bool): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => if comp_has(names, e.name) && (List::length(e.args) != 0) == instances { Cons(e.name, comp_canonical_of(rest, names, instances)) } else { comp_canonical_of(rest, names, instances) }
+  }
+}
+
+pub fn comp_all_read(es: List(CompEffect), names: List(Text)): Bool {
+  match names {
+    Nil => true
+    Cons(n, rest) => ⊢ Bool from match comp_effect_get(es, n) {
+      None => comp_is_var(n) && comp_all_read(es, rest)
+      Some(^e) => comp_all_read(es, rest)
+    }
+  }
+}
+
+// ---- instances of effects with type generics ----------------------------------------
+
+pub fn comp_with_effects(cx: CompCx, es: List(CompEffect)): CompCx {
+  CompCxMk(cx.row, cx.locals, cx.types, cx.expect, es, cx.fns, cx.depth, cx.start, cx.end, cx.owner)
+}
+
+pub fn comp_join(ks: List(Text)): Text {
+  match ks {
+    Nil => ""
+    Cons(k, rest) => match rest {
+      Nil => k
+      Cons(^r, ^more) => Text::concat_all([k, ", ", comp_join(rest)])
+    }
+  }
+}
+
+pub fn comp_args_fuel(ts: List(SurfaceTerm)): Nat {
+  match ts {
+    Nil => 2
+    Cons(t, rest) => comp_fuel(t) + comp_args_fuel(rest)
+  }
+}
+
+mutual {
+// The text a type is keyed by, when it is a name, a number or an application of those.
+pub fn comp_type_key(k: Nat, t: SurfaceTerm): Option(Text) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Text) from match t.kind {
+      SkVar(n) => Some(surface_name_text(n))
+      SkNat(d) => Some(d)
+      SkApp(h, args) => ⊢ Option(Text) from match comp_type_key(j, h) {
+        None => None
+        Some(hk) => ⊢ Option(Text) from match comp_type_keys(j, args) {
+          None => None
+          Some(ks) => Some(Text::concat_all([hk, "(", comp_join(ks), ")"]))
+        }
+      }
+      _ => None
+    }
+  }
+}
+
+pub fn comp_type_keys(k: Nat, ts: List(SurfaceTerm)): Option(List(Text)) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(List(Text)) from match ts {
+      Nil => Some(Nil)
+      Cons(t, rest) => ⊢ Option(List(Text)) from match comp_type_key(j, t) {
+        None => None
+        Some(a) => ⊢ Option(List(Text)) from match comp_type_keys(j, rest) {
+          None => None
+          Some(b) => Some(Cons(a, b))
+        }
+      }
+    }
+  }
+}
+
+// `t` with each of `names` replaced by the type at the same place in `vals`.
+pub fn comp_subst(k: Nat, t: SurfaceTerm, names: List(Text), vals: List(SurfaceTerm)): SurfaceTerm {
+  match k {
+    Zero => t
+    Succ(j) => ⊢ SurfaceTerm from match t.kind {
+      SkVar(n) => ⊢ SurfaceTerm from match comp_subst_get(names, vals, surface_name_text(n)) {
+        Some(v) => v
+        None => t
+      }
+      SkApp(h, args) => surface_term_mk(SkApp(comp_subst(j, h, names, vals), comp_subst_all(j, args, names, vals)), t.start, t.end)
+      _ => t
+    }
+  }
+}
+
+pub fn comp_subst_all(k: Nat, ts: List(SurfaceTerm), names: List(Text), vals: List(SurfaceTerm)): List(SurfaceTerm) {
+  match k {
+    Zero => ts
+    Succ(j) => ⊢ List(SurfaceTerm) from match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(comp_subst(j, t, names, vals), comp_subst_all(j, rest, names, vals))
+    }
+  }
+}
+
+// Whether `t` names one of `names`.
+pub fn comp_type_mentions(k: Nat, t: SurfaceTerm, names: List(Text)): Bool {
+  match k {
+    Zero => true
+    Succ(j) => ⊢ Bool from match t.kind {
+      SkVar(n) => comp_has(names, surface_name_text(n))
+      SkApp(h, args) => comp_type_mentions(j, h, names) || comp_types_mention(j, args, names)
+      _ => false
+    }
+  }
+}
+
+pub fn comp_types_mention(k: Nat, ts: List(SurfaceTerm), names: List(Text)): Bool {
+  match k {
+    Zero => true
+    Succ(j) => ⊢ Bool from match ts {
+      Nil => false
+      Cons(t, rest) => comp_type_mentions(j, t, names) || comp_types_mention(j, rest, names)
+    }
+  }
+}
+}
+
+pub fn comp_subst_get(names: List(Text), vals: List(SurfaceTerm), n: Text): Option(SurfaceTerm) {
+  match names {
+    Nil => None
+    Cons(x, rest) => ⊢ Option(SurfaceTerm) from match vals {
+      Nil => None
+      Cons(v, more) => if x == n { Some(v) } else { comp_subst_get(rest, more, n) }
+    }
+  }
+}
+
+// The instance of the effect `t` at `args`.
+pub fn comp_instance(t: CompEffect, args: List(SurfaceTerm)): Option(CompEffect) {
+  if List::length(args) == 0 || List::length(args) != List::length(t.generics) { None } else {
+    let fuel := comp_args_fuel(args)
+    ⊢ Option(CompEffect) from match comp_type_keys(fuel, args) {
+      None => None
+      Some(ks) => Some(CompEffectMk(Text::concat_all([t.name, "(", comp_join(ks), ")"]), t.arity, comp_subst(comp_fuel(t.result) + 2, t.result, t.generics, args), t.name, Nil, args, t.mode))
+    }
+  }
+}
+
+pub fn comp_push(insts: List(CompEffect), i: CompEffect): List(CompEffect) {
+  match comp_effect_get(insts, i.name) {
+    Some(^x) => insts
+    None => List::append(insts, [i])
+  }
+}
+
+pub fn comp_new_for(all: List(CompEffect), insts: List(CompEffect), head: Text): List(CompEffect) {
+  match insts {
+    Nil => Nil
+    Cons(i, rest) => ⊢ List(CompEffect) from match comp_effect_get(all, i.name) {
+      Some(^x) => comp_new_for(all, rest, head)
+      None => if i.head == head { Cons(i, comp_new_for(all, rest, head)) } else { comp_new_for(all, rest, head) }
+    }
+  }
+}
+
+pub fn comp_add_to(es: List(CompEffect), all: List(CompEffect), insts: List(CompEffect)): List(CompEffect) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(e, List::append(comp_new_for(all, insts, e.name), comp_add_to(rest, all, insts)))
+  }
+}
+
+// The table with each of `insts` listed after the effect it is an instance of.
+pub fn comp_add_instances(es: List(CompEffect), insts: List(CompEffect)): List(CompEffect) {
+  comp_add_to(es, es, insts)
+}
+
+// The names of a row, in the order written, and the instances it names.
+pub fn comp_row_entries(es: List(RowEntry), effects: List(CompEffect)): Option((List(Text) × List(CompEffect))) {
+  match es {
+    Nil => Some(#(Nil, Nil))
+    Cons(e, rest) => ⊢ Option((List(Text) × List(CompEffect))) from match comp_row_entries(rest, effects) {
+      None => None
+      Some(more) => ⊢ Option((List(Text) × List(CompEffect))) from match e {
+        EntryName(n, ^mark) => ⊢ Option((List(Text) × List(CompEffect))) from match comp_effect_get(effects, n) {
+          None => Some(#(Cons(n, more.fst), more.snd))
+          Some(x) => if List::length(x.generics) == 0 { Some(#(Cons(x.name, more.fst), more.snd)) } else { None }
+        }
+        EntryApplied(n, args, universal, forall, ^mark) => if universal || List::length(forall) != 0 { None } else {
+          ⊢ Option((List(Text) × List(CompEffect))) from match comp_effect_get(effects, n) {
+            None => None
+            Some(t) => ⊢ Option((List(Text) × List(CompEffect))) from match comp_instance(t, args) {
+              None => None
+              Some(i) => Some(#(Cons(i.name, more.fst), comp_push(more.snd, i)))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// A function's row in the order of the table, and the table with its instances.
+pub fn comp_fn_row(f: SurfaceFn, effects: List(CompEffect)): Option((List(Text) × List(CompEffect))) {
+  match f.effects {
+    None => None
+    Some(es) => ⊢ Option((List(Text) × List(CompEffect))) from match comp_row_entries(es, effects) {
+      None => None
+      Some(r) => {
+        let table := comp_add_instances(effects, r.snd)
+        if comp_all_read(table, r.fst) == false || comp_unordered(table, r.fst) { None } else { Some(#(comp_canonical(table, r.fst), table)) }
+      }
+    }
+  }
+}
+
+// Whether the row has two instances of one effect whose order is not known here: that is the order of their types' declarations, and only `Nat`, `Bool`, `Unit` and the program's own types are placed.
+pub fn comp_unordered(es: List(CompEffect), row: List(Text)): Bool {
+  match row {
+    Nil => false
+    Cons(r, rest) => ⊢ Bool from match comp_effect_get(es, r) {
+      None => comp_unordered(es, rest)
+      Some(x) => ⊢ Bool from match comp_heads(es, rest, x.head) {
+        Nil => comp_unordered(es, rest)
+        Cons(h, more) => if List::length(x.args) != 0 && comp_all_ranked(es, Cons(x.name, Cons(h, more))) == false { true } else { comp_unordered(es, rest) }
+      }
+    }
+  }
+}
+
+pub fn comp_all_ranked(es: List(CompEffect), ns: List(Text)): Bool {
+  match ns {
+    Nil => true
+    Cons(n, rest) => ⊢ Bool from match comp_effect_get(es, n) {
+      None => false
+      Some(x) => ⊢ Bool from match comp_ranks(es, x.args) {
+        None => false
+        Some(^r) => comp_all_ranked(es, rest)
+      }
+    }
+  }
+}
+
+// Whether an entry of the row names one of `generics`.
+pub fn comp_row_poly(es: List(CompEffect), row: List(Text), generics: List(Text)): Bool {
+  match row {
+    Nil => false
+    Cons(r, rest) => ⊢ Bool from match comp_effect_get(es, r) {
+      None => comp_row_poly(es, rest, generics)
+      Some(x) => comp_types_mention(comp_args_fuel(x.args), x.args, generics) || comp_row_poly(es, rest, generics)
+    }
+  }
+}
+
+pub fn comp_poly_insts(es: List(CompEffect), row: List(Text), generics: List(Text)): List(CompEffect) {
+  match row {
+    Nil => Nil
+    Cons(r, rest) => ⊢ List(CompEffect) from match comp_effect_get(es, r) {
+      None => comp_poly_insts(es, rest, generics)
+      Some(x) => if comp_types_mention(comp_args_fuel(x.args), x.args, generics) { Cons(x, comp_poly_insts(es, rest, generics)) } else { comp_poly_insts(es, rest, generics) }
+    }
+  }
+}
+
+mutual {
+// What each of `generics` is in `t`, read off `p`, a type that names them.
+pub fn comp_match_type(k: Nat, p: SurfaceTerm, t: SurfaceTerm, generics: List(Text), found: List((Text × SurfaceTerm))): List((Text × SurfaceTerm)) {
+  match k {
+    Zero => found
+    Succ(j) => ⊢ List((Text × SurfaceTerm)) from match p.kind {
+      SkVar(n) => if comp_has(generics, surface_name_text(n)) {
+        match comp_type_get(found, surface_name_text(n)) {
+          Some(^x) => found
+          None => List::append(found, [#(surface_name_text(n), t)])
+        }
+      } else { found }
+      SkApp(ph, pas) => ⊢ List((Text × SurfaceTerm)) from match t.kind {
+        SkApp(th, tas) => if List::length(pas) == List::length(tas) { comp_match_types(j, pas, tas, generics, comp_match_type(j, ph, th, generics, found)) } else { found }
+        _ => found
+      }
+      _ => found
+    }
+  }
+}
+
+pub fn comp_match_types(k: Nat, ps: List(SurfaceTerm), ts: List(SurfaceTerm), generics: List(Text), found: List((Text × SurfaceTerm))): List((Text × SurfaceTerm)) {
+  match k {
+    Zero => found
+    Succ(j) => ⊢ List((Text × SurfaceTerm)) from match ps {
+      Nil => found
+      Cons(p, prest) => ⊢ List((Text × SurfaceTerm)) from match ts {
+        Nil => found
+        Cons(t, trest) => comp_match_types(j, prest, trest, generics, comp_match_type(j, p, t, generics, found))
+      }
+    }
+  }
+}
+}
+
+pub fn comp_fst_all(xs: List((Text × SurfaceTerm))): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(x.fst, comp_fst_all(rest))
+  }
+}
+
+pub fn comp_snd_all(xs: List((Text × SurfaceTerm))): List(SurfaceTerm) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(x.snd, comp_snd_all(rest))
+  }
+}
+
+// What `f`'s generics are at a call with `args`, read off the types of the arguments.
+pub fn comp_call_generics(cx: CompCx, f: CompFn, ptypes: List(SurfaceTerm), args: List(SurfaceTerm), found: List((Text × SurfaceTerm))): List((Text × SurfaceTerm)) {
+  match ptypes {
+    Nil => found
+    Cons(p, prest) => ⊢ List((Text × SurfaceTerm)) from match args {
+      Nil => found
+      Cons(a, arest) => ⊢ List((Text × SurfaceTerm)) from match comp_guess(comp_fuel(a), a, cx) {
+        None => comp_call_generics(cx, f, prest, arest, found)
+        Some(t) => comp_call_generics(cx, f, prest, arest, comp_match_type(comp_fuel(p) + comp_fuel(t), p, t, f.generics, found))
+      }
+    }
+  }
+}
+
+// The row of a call of `f`: its instances at the generics the arguments give.
+pub fn comp_instantiate(cx: CompCx, f: CompFn, args: List(SurfaceTerm)): ElabResult(List(Text)) {
+  let found := comp_call_generics(cx, f, f.ptypes, args, Nil)
+  comp_inst_row(cx, f, f.row, comp_fst_all(found), comp_snd_all(found))
+}
+
+pub fn comp_inst_row(cx: CompCx, f: CompFn, row: List(Text), names: List(Text), vals: List(SurfaceTerm)): ElabResult(List(Text)) {
+  match row {
+    Nil => ElabOk(Nil)
+    Cons(r, rest) => ⊢ ElabResult(List(Text)) from match comp_inst_row(cx, f, rest, names, vals) {
+      ElabErr(m) => ElabErr(m)
+      ElabOk(more) => ⊢ ElabResult(List(Text)) from match comp_effect_get(f.insts, r) {
+        None => ElabOk(Cons(r, more))
+        Some(x) => ⊢ ElabResult(List(Text)) from match comp_effect_get(cx.effects, x.head) {
+          None => ElabErr("an effect of the call is not read")
+          Some(t) => {
+            let args := comp_subst_all(comp_args_fuel(x.args), x.args, names, vals)
+            if comp_types_mention(comp_args_fuel(args), args, f.generics) { ElabErr(comp_skip("the type of an instance of an effect of the call is not known")) } else {
+              ⊢ ElabResult(List(Text)) from match comp_instance(t, args) {
+                None => ElabErr("an instance of an effect of the call is not read here")
+                Some(i) => ElabOk(Cons(i.name, more))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn comp_fn_entry(f: SurfaceFn, effects: List(CompEffect)): CompFn {
+  let result := ⊢ Option(SurfaceTerm) from match f.generics {
+    Nil => f.result
+    Cons(^g, ^gs) => None
+  }
+  let ptypes := ⊢ List(SurfaceTerm) from match comp_some_all(f.param_types) {
+    Some(ts) => ts
+    None => Nil
+  }
+  ⊢ CompFn from match comp_fn_row(f, effects) {
+    None => CompFnMk(f.name, Nil, List::length(f.params), result, false, f.generics, ptypes, Nil, Nil)
+    Some(rr) => CompFnMk(f.name, rr.fst, List::length(f.params), result, comp_row_poly(rr.snd, rr.fst, f.generics), f.generics, ptypes, comp_poly_insts(rr.snd, rr.fst, f.generics), comp_callback_rows(ptypes, rr.snd))
+  }
+}
+
+// The entry of the table `e` is in the row, an instance of `op` when `op` has type generics.
+pub fn comp_heads(es: List(CompEffect), row: List(Text), op: Text): List(Text) {
+  match row {
+    Nil => Nil
+    Cons(r, rest) => ⊢ List(Text) from match comp_effect_get(es, r) {
+      None => comp_heads(es, rest, op)
+      Some(x) => if x.head == op { Cons(r, comp_heads(es, rest, op)) } else { comp_heads(es, rest, op) }
+    }
+  }
+}
+
+// The entry of the row an `op` of `perform` is: the effect itself or its only instance.
+pub fn comp_instance_in(cx: CompCx, op: Text): Option(Text) {
+  let name := match comp_effect_get(cx.effects, op) {
+    None => op
+    Some(operation) => operation.name
+  }
+  if comp_has(cx.row, name) { Some(name) } else {
+    ⊢ Option(Text) from match comp_heads(cx.effects, cx.row, name) {
+      Cons(k, rest) => ⊢ Option(Text) from match rest {
+        Nil => Some(k)
+        Cons(^a, ^b) => None
+      }
+      Nil => None
+    }
+  }
+}
+
+// ---- building terms ----------------------------------------------------------------
+
+pub fn comp_v(cx: CompCx, n: Text): SurfaceTerm { surface_term_mk(SkVar(NameSpelled(n)), cx.start, cx.end) }
+
+pub fn comp_call(cx: CompCx, f: Text, args: List(SurfaceTerm)): SurfaceTerm {
+  surface_term_mk(SkApp(comp_v(cx, f), args), cx.start, cx.end)
+}
+
+pub fn comp_app(cx: CompCx, f: SurfaceTerm, args: List(SurfaceTerm)): SurfaceTerm {
+  surface_term_mk(SkApp(f, args), cx.start, cx.end)
+}
+
+pub fn comp_lam(cx: CompCx, ps: List(Text), body: SurfaceTerm): SurfaceTerm {
+  surface_term_mk(SkLam(ps, body, Nil, Nil), cx.start, cx.end)
+}
+
+// A name for a binder made here, apart from every name in the source and from
+// those made at other depths.
+pub fn comp_fresh(cx: CompCx, base: Text, i: Nat): Text {
+  Text::concat_all([base, "@", Text::of_nat(cx.depth), "@", Text::of_nat(i)])
+}
+
+// `f` of the effect of the entry `e`, applied to its type arguments and then to `rest`.
+pub fn comp_instance_call(cx: CompCx, suffix: Text, e: Text, rest: List(SurfaceTerm)): SurfaceTerm {
+  match comp_effect_get(cx.effects, e) {
+    None => comp_call_or_var(cx, Text::concat(e, suffix), rest)
+    Some(x) => if suffix == "@args" && List::length(x.args) != 0 {
+      // A constructor of the operations takes the type generics as implicit parameters.
+      let names := ⊢ List(Text) from match comp_effect_get(cx.effects, x.head) {
+        Some(t) => t.generics
+        None => Nil
+      }
+      comp_call(cx, Text::concat(x.head, suffix), Cons(surface_term_mk(SkRecord("@implicits", comp_named(names, x.args)), cx.start, cx.end), rest))
+    } else { comp_call_or_var(cx, Text::concat(x.head, suffix), List::append(x.args, rest)) }
+  }
+}
+
+pub fn comp_named(names: List(Text), vals: List(SurfaceTerm)): List(SurfaceField) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => ⊢ List(SurfaceField) from match vals {
+      Nil => Nil
+      Cons(v, more) => Cons(SurfaceFieldMk(n, v), comp_named(rest, more))
+    }
+  }
+}
+
+pub fn comp_call_or_var(cx: CompCx, f: Text, args: List(SurfaceTerm)): SurfaceTerm {
+  match args {
+    Nil => comp_v(cx, f)
+    Cons(^a, ^rest) => comp_call(cx, f, args)
+  }
+}
+
+// The operations of the entry `e`: `e@op`, or `get@op(Nat)` for `get(Nat)`.
+pub fn comp_op_of(cx: CompCx, e: Text): SurfaceTerm { comp_instance_call(cx, "@op", e, Nil) }
+
+// The answers to the operations of the entry `e`.
+pub fn comp_res_of(cx: CompCx, e: Text): SurfaceTerm {
+  match comp_effect_get(cx.effects, e) {
+    None => comp_v(cx, Text::concat(e, "@res"))
+    Some(x) => match x.args {
+      Nil => comp_v(cx, Text::concat(x.head, "@res"))
+      Cons(^a, ^rest) => comp_lam(cx, ["o''"], comp_instance_call(cx, "@res", e, [comp_v(cx, "o''")]))
+    }
+  }
+}
+
+pub fn comp_deeper(cx: CompCx): CompCx {
+  CompCxMk(cx.row, cx.locals, cx.types, cx.expect, cx.effects, cx.fns, cx.depth + 1, cx.start, cx.end, cx.owner)
+}
+
+pub fn comp_with_row(cx: CompCx, row: List(Text)): CompCx {
+  CompCxMk(row, cx.locals, cx.types, cx.expect, cx.effects, cx.fns, cx.depth, cx.start, cx.end, cx.owner)
+}
+
+pub fn comp_expecting(cx: CompCx, t: Option(SurfaceTerm)): CompCx {
+  CompCxMk(cx.row, cx.locals, cx.types, t, cx.effects, cx.fns, cx.depth, cx.start, cx.end, cx.owner)
+}
+
+pub fn comp_with_locals(cx: CompCx, ls: List((Text × List(Text)))): CompCx {
+  CompCxMk(cx.row, ls, cx.types, cx.expect, cx.effects, cx.fns, cx.depth, cx.start, cx.end, cx.owner)
+}
+
+pub fn comp_with_types(cx: CompCx, ts: List((Text × SurfaceTerm))): CompCx {
+  CompCxMk(cx.row, cx.locals, ts, cx.expect, cx.effects, cx.fns, cx.depth, cx.start, cx.end, cx.owner)
+}
+
+// The operations of a row: `OpSum(e0@op, OpSum(e1@op, … OpNone))`.
+pub fn comp_op_ty(cx: CompCx, row: List(Text)): SurfaceTerm {
+  match row {
+    Nil => comp_v(cx, "OpNone")
+    Cons(e, rest) => if comp_is_var(e) { comp_v(cx, Text::concat(comp_var_generic(e), "@rowop")) } else { comp_call(cx, "OpSum", [comp_op_of(cx, e), comp_op_ty(cx, rest)]) }
+  }
+}
+
+// The answers to the operations of a row.
+pub fn comp_res_fn(cx: CompCx, row: List(Text)): SurfaceTerm {
+  match row {
+    Nil => comp_v(cx, "res_none")
+    Cons(e, rest) => if comp_is_var(e) { comp_v(cx, Text::concat(comp_var_generic(e), "@rowres")) } else {
+      comp_lam(cx, ["o'"], comp_call(cx, "res_sum", [
+        comp_op_of(cx, e),
+        comp_op_ty(cx, rest),
+        comp_res_of(cx, e),
+        comp_res_fn(cx, rest),
+        comp_v(cx, "o'")
+      ]))
+    }
+  }
+}
+
+pub fn comp_op(cx: CompCx): SurfaceTerm { comp_op_ty(cx, cx.row) }
+pub fn comp_res(cx: CompCx): SurfaceTerm { comp_res_fn(cx, cx.row) }
+
+// `<L: l, R: r>`, the parameters of `OpSum` written by name.
+pub fn comp_implicits(cx: CompCx, l: SurfaceTerm, r: SurfaceTerm): SurfaceTerm {
+  surface_term_mk(SkRecord("@implicits", [SurfaceFieldMk("L", l), SurfaceFieldMk("R", r)]), cx.start, cx.end)
+}
+
+// `x`, an operation of `e`, as an operation of `row`, which holds `e` at `p`
+// from the front: `OpHere` for `e`, `OpThere` once for each effect before it.
+pub fn comp_inject_at(cx: CompCx, row: List(Text), e: Text, x: SurfaceTerm): Option(SurfaceTerm) {
+  match row {
+    Nil => None
+    Cons(r, rest) => if r == e && comp_is_var(r) { Some(x) } else { if r == e {
+      Some(comp_call(cx, "OpHere", [comp_implicits(cx, comp_op_of(cx, e), comp_op_ty(cx, rest)), x]))
+    } else {
+      ⊢ Option(SurfaceTerm) from match comp_inject_at(cx, rest, e, x) {
+        None => None
+        Some(t) => Some(comp_call(cx, "OpThere", [comp_implicits(cx, comp_op_of(cx, r), comp_op_ty(cx, rest)), t]))
+      }
+    } }
+  }
+}
+
+// `c` with the type of its value written, when it is known, so that the
+// generics of what is around it are found.
+pub fn comp_typed(cx: CompCx, c: SurfaceTerm, ty: Option(SurfaceTerm)): SurfaceTerm {
+  match ty {
+    None => c
+    Some(t) => comp_call(cx, "the", [comp_call(cx, "Comp", [comp_op(cx), comp_res(cx), t]), c])
+  }
+}
+
+// `c`, a computation of its own row, as a computation of the row of `cx`:
+// every operation forwarded.
+// An arm applied to the operation and the continuation: what it does with them, when it is a function written here.
+pub fn comp_apply_arm(a: SurfaceTerm, args: List(SurfaceTerm), cx: CompCx): SurfaceTerm {
+  match a.kind {
+    SkLam(ps, body, ^tys, _) => comp_subst(comp_fuel(body), body, ps, args)
+    _ => comp_app(cx, a, args)
+  }
+}
+
+pub fn comp_arm_tree(cx: CompCx, row: List(Text), arms: List(SurfaceTerm)): SurfaceTerm {
+  let o := comp_fresh(cx, "o", 0)
+  let k := comp_fresh(cx, "k", 0)
+  let body := ⊢ SurfaceTerm from match row {
+    Nil => comp_call(cx, "arm_none", [comp_v(cx, o), comp_v(cx, k)])
+    Cons(e, rest) => ⊢ SurfaceTerm from match arms {
+      Nil => comp_call(cx, "arm_none", [comp_v(cx, o), comp_v(cx, k)])
+      Cons(a, more) => if comp_is_var(e) { comp_apply_arm(a, [comp_v(cx, o), comp_v(cx, k)], cx) } else { comp_call(cx, "arm_sum", [
+        comp_op_of(cx, e),
+        comp_op_ty(cx, rest),
+        comp_res_of(cx, e),
+        comp_res_fn(cx, rest),
+        a,
+        comp_arm_tree(comp_deeper(cx), rest, more),
+        comp_v(cx, o),
+        comp_v(cx, k)
+      ]) }
+    }
+  }
+  comp_lam(cx, [o, k], body)
+}
+
+// ---- the shape of a term -----------------------------------------------------------
+
+// Whether reading `t` needs `Comp`: it performs, handles, or calls a function
+// with effects.
+mutual {
+pub fn comp_effectful(k: Nat, t: SurfaceTerm, cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match t.kind {
+      SkPerform(^op, ^args) => true
+      SkHandle(^body, ^handlers) => true
+      SkApp(h, args) => ⊢ Bool from match h.kind {
+        SkVar(n) => if comp_is_local(cx, surface_name_text(n)) { true } else {
+          ⊢ Bool from match comp_fn_get(cx.fns, surface_name_text(n)) {
+            Some(^f) => true
+            None => comp_effectful_all(j, args, cx)
+          }
+        }
+        _ => comp_effectful(j, h, cx) || comp_effectful_all(j, args, cx)
+      }
+      SkBlock(stmts) => comp_effectful_stmts(j, stmts, cx)
+      SkIf(c, a, o) => comp_effectful(j, c, cx) || comp_effectful(j, a, cx) || comp_effectful_opt(j, o, cx)
+      SkMatch(s, ^motive, arms, ^binder, _) => comp_effectful(j, s, cx) || comp_effectful_arms(j, arms, cx)
+      SkLam(^ps, b, ^tys, _) => comp_effectful(j, b, cx)
+      SkField(v, ^n) => comp_effectful(j, v, cx)
+      SkRecord(^n, fs) => comp_effectful_fields(j, fs, cx)
+      SkTagged(^tag, v) => comp_effectful(j, v, cx)
+      SkBorrow(^m, ^m_orig, v) => comp_effectful(j, v, cx)
+      SkAscribe(v, ^ty) => comp_effectful(j, v, cx)
+      _ => false
+    }
+  }
+}
+
+pub fn comp_effectful_opt(k: Nat, t: Option(SurfaceTerm), cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match t {
+      None => false
+      Some(b) => comp_effectful(j, b, cx)
+    }
+  }
+}
+
+pub fn comp_effectful_all(k: Nat, ts: List(SurfaceTerm), cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match ts {
+      Nil => false
+      Cons(t, rest) => comp_effectful(j, t, cx) || comp_effectful_all(j, rest, cx)
+    }
+  }
+}
+
+pub fn comp_effectful_fields(k: Nat, fs: List(SurfaceField), cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match fs {
+      Nil => false
+      Cons(f, rest) => comp_effectful(j, f.value, cx) || comp_effectful_fields(j, rest, cx)
+    }
+  }
+}
+
+pub fn comp_effectful_arms(k: Nat, arms: List(SurfaceArm), cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match arms {
+      Nil => false
+      Cons(a, rest) => comp_effectful(j, a.body, cx) || comp_effectful_arms(j, rest, cx)
+    }
+  }
+}
+
+pub fn comp_effectful_stmts(k: Nat, ss: List(SurfaceStmt), cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match ss {
+      Nil => false
+      Cons(s, rest) => ⊢ Bool from match s {
+        StVar(^n, ^ty, ^v, ^b, ^unused, ^st) => true
+        StAssign(^n, ^pl, ^v) => true
+        StExpr(e) => comp_effectful(j, e, cx) || comp_effectful_stmts(j, rest, cx)
+        StLet(^n, ^ty, v, ^b, ^m, ^unused, ^st) => comp_effectful(j, v, cx) || comp_effectful_stmts(j, rest, cx)
+        _ => comp_effectful_stmts(j, rest, cx)
+      }
+    }
+  }
+}
+}
+
+pub fn comp_fuel(t: SurfaceTerm): Nat { t.end - t.start + 2 }
+
+// Whether `t` handles or calls a function with effects: what makes a function
+// without effects a computation too.
+mutual {
+pub fn comp_mentions(k: Nat, t: SurfaceTerm, cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match t.kind {
+      SkHandle(^body, ^handlers) => true
+      SkApp(h, args) => ⊢ Bool from match h.kind {
+        SkVar(n) => ⊢ Bool from match comp_fn_get(cx.fns, surface_name_text(n)) {
+          Some(^f) => true
+          None => comp_mentions_all(j, args, cx)
+        }
+        _ => comp_mentions(j, h, cx) || comp_mentions_all(j, args, cx)
+      }
+      SkBlock(stmts) => comp_mentions_stmts(j, stmts, cx)
+      SkIf(c, a, o) => comp_mentions(j, c, cx) || comp_mentions(j, a, cx) || comp_mentions_opt(j, o, cx)
+      SkMatch(s, ^motive, arms, ^binder, _) => comp_mentions(j, s, cx) || comp_mentions_arms(j, arms, cx)
+      SkLam(^ps, b, ^tys, _) => comp_mentions(j, b, cx)
+      SkField(v, ^n) => comp_mentions(j, v, cx)
+      SkPerform(^op, args) => comp_mentions_all(j, args, cx)
+      _ => false
+    }
+  }
+}
+
+pub fn comp_mentions_opt(k: Nat, t: Option(SurfaceTerm), cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match t {
+      None => false
+      Some(b) => comp_mentions(j, b, cx)
+    }
+  }
+}
+
+pub fn comp_mentions_all(k: Nat, ts: List(SurfaceTerm), cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match ts {
+      Nil => false
+      Cons(t, rest) => comp_mentions(j, t, cx) || comp_mentions_all(j, rest, cx)
+    }
+  }
+}
+
+pub fn comp_mentions_arms(k: Nat, arms: List(SurfaceArm), cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match arms {
+      Nil => false
+      Cons(a, rest) => comp_mentions(j, a.body, cx) || comp_mentions_arms(j, rest, cx)
+    }
+  }
+}
+
+pub fn comp_mentions_stmts(k: Nat, ss: List(SurfaceStmt), cx: CompCx): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match ss {
+      Nil => false
+      Cons(s, rest) => ⊢ Bool from match s {
+        StExpr(e) => comp_mentions(j, e, cx) || comp_mentions_stmts(j, rest, cx)
+        StLet(^n, ^ty, v, ^b, ^m, ^unused, ^st) => comp_mentions(j, v, cx) || comp_mentions_stmts(j, rest, cx)
+        _ => comp_mentions_stmts(j, rest, cx)
+      }
+    }
+  }
+}
+}
+
+// ---- the types of values -----------------------------------------------------------
+
+// The type of the value of `t`, when it is plain to see: a variable of known
+// type, an operation, a call of a function whose result is written, a block
+// ending in one of those.
+mutual {
+pub fn comp_guess(k: Nat, t: SurfaceTerm, cx: CompCx): Option(SurfaceTerm) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(SurfaceTerm) from match t.kind {
+      SkVar(n) => if comp_is_local(cx, surface_name_text(n)) { None } else { comp_type_get(cx.types, surface_name_text(n)) }
+      SkNat(^d) => Some(comp_v(cx, "Nat"))
+      SkPerform(op, ^args) => ⊢ Option(SurfaceTerm) from match comp_instance_in(cx, op) {
+        Some(key) => ⊢ Option(SurfaceTerm) from match comp_effect_get(cx.effects, key) {
+          Some(e) => Some(e.result)
+          None => None
+        }
+        None => None
+      }
+      SkApp(h, args) => ⊢ Option(SurfaceTerm) from match h.kind {
+        SkVar(g) => if comp_is_typed(cx, surface_name_text(g)) || comp_is_local(cx, surface_name_text(g)) { None } else {
+          ⊢ Option(SurfaceTerm) from match comp_fn_get(cx.fns, surface_name_text(g)) {
+            Some(f) => if f.arity == List::length(args) { f.result } else { None }
+            None => None
+          }
+        }
+        _ => None
+      }
+      SkBlock(stmts) => comp_guess_block(j, stmts, cx)
+      SkHandle(body, handlers) => ⊢ Option(SurfaceTerm) from match comp_return_arm(handlers) {
+        None => comp_guess(j, body, cx)
+        Some(r) => ⊢ Option(SurfaceTerm) from match r.fst {
+          PtBind(v, _) => ⊢ Option(SurfaceTerm) from match comp_guess(j, body, cx) {
+            Some(ty) => comp_guess(j, r.snd, comp_with_types(cx, Cons(#(v, ty), comp_type_remove(cx.types, v))))
+            None => comp_guess(j, r.snd, comp_with_types(cx, comp_type_remove(cx.types, v)))
+          }
+          _ => comp_guess(j, r.snd, cx)
+        }
+      }
+      _ => None
+    }
+  }
+}
+
+pub fn comp_guess_block(k: Nat, stmts: List(SurfaceStmt), cx: CompCx): Option(SurfaceTerm) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(SurfaceTerm) from match stmts {
+      Nil => None
+      Cons(s, rest) => ⊢ Option(SurfaceTerm) from match s {
+        StLet(name, ty, value, ^b, ^m, ^unused, ^st) => {
+          let known := ⊢ Option(SurfaceTerm) from match ty {
+            Some(x) => Some(x)
+            None => comp_guess(j, value, cx)
+          }
+          let inner := ⊢ CompCx from match known {
+            Some(x) => comp_with_types(cx, Cons(#(name, x), comp_type_remove(cx.types, name)))
+            None => comp_with_types(cx, comp_type_remove(cx.types, name))
+          }
+          comp_guess_block(j, rest, inner)
+        }
+        StExpr(e) => ⊢ Option(SurfaceTerm) from match rest {
+          Nil => comp_guess(j, e, cx)
+          Cons(^a, ^b) => comp_guess_block(j, rest, cx)
+        }
+        _ => None
+      }
+    }
+  }
+}
+}
+
+// The pattern and body of a handler's `return` arm.
+pub fn comp_return_arm(hs: List(SurfaceHandler)): Option((SurfacePattern × SurfaceTerm)) {
+  match hs {
+    Nil => None
+    Cons(h, rest) => ⊢ Option((SurfacePattern × SurfaceTerm)) from match h {
+      HdReturn(p, b) => Some(#(p, b))
+      _ => comp_return_arm(rest)
+    }
+  }
+}
+
+// ---- reading a computation ---------------------------------------------------------
+
+// What the arms of a `handle` say: the arm for `return`, and an arm for each
+// handled effect.
+pub(open) inductive CompOpArm: Type {
+  CompOpArmMk(name: Text, params: List(Text), cont: Text, body: SurfaceTerm): CompOpArm
+}
+
+pub(open) inductive CompHandlers: Type {
+  CompHandlersMk(ret: Option((Text × SurfaceTerm)), ops: List(CompOpArm), insts: List(CompEffect)): CompHandlers
+}
+
+pub fn comp_op_arm_get(ops: List(CompOpArm), e: Text): Option(CompOpArm) {
+  match ops {
+    Nil => None
+    Cons(o, rest) => if o.name == e { Some(o) } else { comp_op_arm_get(rest, e) }
+  }
+}
+
+// The names an arm's patterns bind, a fresh name for `_`.
+pub fn comp_pattern_names(cx: CompCx, i: Nat, ps: List(SurfacePattern)): ElabResult(List(Text)) {
+  match ps {
+    Nil => ElabOk(Nil)
+    Cons(p, rest) => ⊢ ElabResult(List(Text)) from match comp_pattern_names(cx, i + 1, rest) {
+      ElabErr(e) => ElabErr(e)
+      ElabOk(more) => ⊢ ElabResult(List(Text)) from match p {
+        PtBind(v, _) => ElabOk(Cons(v, more))
+        PtWild => ElabOk(Cons(comp_fresh(cx, "p", i), more))
+        _ => ElabErr(comp_skip("a handler arm's pattern is a name or `_`"))
+      }
+    }
+  }
+}
+
+// The entry an arm answers: the effect, or its instance at the types the arm writes.
+pub fn comp_arm_instance(e: CompEffect, types: List(SurfaceTerm)): Option(CompEffect) {
+  if List::length(e.generics) == 0 { Some(e) } else { comp_instance(e, types) }
+}
+
+pub fn comp_collect(cx: CompCx, i: Nat, hs: List(SurfaceHandler), acc: CompHandlers): ElabResult(CompHandlers) {
+  match hs {
+    Nil => ElabOk(acc)
+    Cons(h, rest) => ⊢ ElabResult(CompHandlers) from match h {
+      HdReturn(p, b) => ⊢ ElabResult(CompHandlers) from match p {
+        PtBind(v, _) => comp_collect(cx, i + 1, rest, CompHandlersMk(Some(#(v, b)), acc.ops, acc.insts))
+        PtWild => comp_collect(cx, i + 1, rest, CompHandlersMk(Some(#(comp_fresh(cx, "v", i), b)), acc.ops, acc.insts))
+        _ => ElabErr(comp_skip("the pattern of `return` is a name or `_`"))
+      }
+      HdOperation(op, binds, types, patterns, cont, _, guard, body) => ⊢ ElabResult(CompHandlers) from match guard {
+        Some(^g) => ElabErr(comp_skip("a handler arm has a guard"))
+        None => ⊢ ElabResult(CompHandlers) from match comp_effect_get(cx.effects, op) {
+          None => ElabErr(comp_skip(Text::concat("the arm's effect is not read: ", op)))
+          Some(e) => if (e.mode == "imported-pub" || ((e.mode == "private" || e.mode == "pub") && not(comp_effect_inside(cx, e)))) {
+            ElabErr("cannot handle an effect outside its declaring module")
+          } else if e.arity != List::length(patterns) { ElabErr(comp_skip(Text::concat("the arm's effect is not read: ", op))) } else {
+            if List::length(binds) != 0 && List::length(e.generics) != 0 { ElabErr(comp_skip(Text::concat("an arm for every instance of ", op))) } else {
+              ⊢ ElabResult(CompHandlers) from match comp_arm_instance(e, types) {
+                None => ElabErr(comp_skip(Text::concat("the arm's types are not those of ", op)))
+                Some(inst) => ⊢ ElabResult(CompHandlers) from match comp_pattern_names(cx, 100 * (i + 1), patterns) {
+                  ElabErr(m) => ElabErr(m)
+                  ElabOk(names) => {
+                    let k := ⊢ Text from match cont {
+                      Some(c) => c
+                      None => comp_fresh(cx, "k", 100 * (i + 1) + 99)
+                    }
+                    match comp_op_arm_get(acc.ops, inst.name) {
+                      Some(^o) => ElabErr(comp_skip(Text::concat("two arms for ", op)))
+                      None => comp_collect(cx, i + 1, rest, CompHandlersMk(acc.ret, Cons(CompOpArmMk(inst.name, names, k, body), acc.ops), if List::length(e.generics) == 0 { acc.insts } else { comp_push(acc.insts, inst) }))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// `if c { a } else { b }` as the `match` on `Bool` it stands for.
+pub fn comp_if_match(cx: CompCx, c: SurfaceTerm, a: SurfaceTerm, o: Option(SurfaceTerm)): SurfaceTerm {
+  let otherwise := ⊢ SurfaceTerm from match o {
+    Some(b) => b
+    None => comp_v(cx, "Star")
+  }
+  surface_term_mk(SkMatch(c, None, [SurfaceArmMk(PtBool(true), None, None, a), SurfaceArmMk(PtBool(false), None, None, otherwise)], None, None), cx.start, cx.end)
+}
+
+// `Comp::bind` on each binding in turn, the first outermost.
+pub fn comp_bind_all(cx: CompCx, binds: List((Text × SurfaceTerm)), c: SurfaceTerm): SurfaceTerm {
+  match binds {
+    Nil => c
+    Cons(b, rest) => comp_call(cx, "Comp::bind", [comp_op(cx), comp_res(cx), b.snd, comp_lam(cx, [b.fst], comp_bind_all(cx, rest, c))])
+  }
+}
+
+// The row of a call of `h`: a function's own, or its instances at the generics the arguments give.
+pub fn comp_callee_row(cx: CompCx, h: SurfaceTerm, args: List(SurfaceTerm), row: List(Text)): ElabResult(List(Text)) {
+  match h.kind {
+    SkVar(g) => ⊢ ElabResult(List(Text)) from match comp_fn_get(cx.fns, surface_name_text(g)) {
+      Some(f) => if comp_is_local(cx, surface_name_text(g)) || f.poly == false { ElabOk(row) } else {
+        ⊢ ElabResult(List(Text)) from match comp_instantiate(cx, f, args) {
+          ElabErr(m) => ElabErr(m)
+          ElabOk(names) => if comp_all_in(comp_without_vars(names), cx.row) { ElabOk(comp_canonical(cx.effects, names)) } else { ElabErr(comp_skip(Text::concat_all(["`", f.name, "` has an effect that the row does not"]))) }
+        }
+      }
+      None => ElabOk(row)
+    }
+    _ => ElabOk(row)
+  }
+}
+
+// `c`, a computation of `row`, in the row of `cx`.
+pub fn comp_lift(cx: CompCx, c: SurfaceTerm, row: List(Text), f: Text): ElabResult(SurfaceTerm) {
+  if row == cx.row { ElabOk(c) } else {
+    if comp_all_in(row, cx.row) == false { ElabErr(comp_skip(Text::concat_all(["`", f, "` has an effect that the row does not"]))) } else {
+      ⊢ ElabResult(SurfaceTerm) from match comp_forward_arms(cx, row, 0) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(arms) => ElabOk(comp_call(cx, "Comp::lift", [comp_op_ty(cx, row), comp_res_fn(cx, row), comp_op(cx), comp_res(cx), c, comp_arm_tree(cx, row, arms)]))
+      }
+    }
+  }
+}
+
+pub fn comp_all_in(xs: List(Text), ys: List(Text)): Bool {
+  match xs {
+    Nil => true
+    Cons(x, rest) => comp_has(ys, x) && comp_all_in(rest, ys)
+  }
+}
+
+// An arm for each effect of `row` that forwards the operation, in `cx`.
+pub fn comp_forward_arms(cx: CompCx, row: List(Text), i: Nat): ElabResult(List(SurfaceTerm)) {
+  match row {
+    Nil => ElabOk(Nil)
+    Cons(e, rest) => {
+      let x := comp_fresh(cx, "x", i)
+      let k := comp_fresh(cx, "k", i)
+      ⊢ ElabResult(List(SurfaceTerm)) from match comp_inject_at(cx, cx.row, e, comp_v(cx, x)) {
+        None => ElabErr(comp_skip("an effect is not in the row"))
+        Some(inj) => ⊢ ElabResult(List(SurfaceTerm)) from match comp_forward_arms(cx, rest, i + 1) {
+          ElabErr(m) => ElabErr(m)
+          ElabOk(more) => ElabOk(Cons(comp_lam(cx, [x, k], comp_call(cx, "Comp::forward", [comp_op(cx), comp_res(cx), inj, comp_v(cx, k)])), more))
+        }
+      }
+    }
+  }
+}
+
+pub fn comp_some_all(xs: List(Option(SurfaceTerm))): Option(List(SurfaceTerm)) {
+  match xs {
+    Nil => Some(Nil)
+    Cons(x, rest) => ⊢ Option(List(SurfaceTerm)) from match x {
+      None => None
+      Some(t) => ⊢ Option(List(SurfaceTerm)) from match comp_some_all(rest) {
+        None => None
+        Some(ts) => Some(Cons(t, ts))
+      }
+    }
+  }
+}
+
+pub fn comp_all_none(bs: List(Option(Bool))): Bool {
+  match bs {
+    Nil => true
+    Cons(b, rest) => ⊢ Bool from match b {
+      None => comp_all_none(rest)
+      Some(^x) => false
+    }
+  }
+}
+
+pub fn comp_all_none_text(bs: List(Option(Text))): Bool {
+  match bs {
+    Nil => true
+    Cons(b, rest) => ⊢ Bool from match b {
+      None => comp_all_none_text(rest)
+      Some(^x) => false
+    }
+  }
+}
+
+// Whether a parameter's type is a function with effects, which is read as a
+// function into `Comp`: not read here.
+pub fn comp_effect_params(ts: List(SurfaceTerm)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => ⊢ Bool from match t.kind {
+      SkPi(^ps, ^r, e) => ⊢ Bool from match e {
+        Some(es) => ⊢ Bool from match es {
+          Nil => comp_effect_params(rest)
+          Cons(^x, ^xs) => true
+        }
+        None => comp_effect_params(rest)
+      }
+      _ => comp_effect_params(rest)
+    }
+  }
+}
+
+// The names with their types, the parameters and the generics.
+pub fn comp_zip_types(names: List(Text), tys: List(SurfaceTerm), fallback: SurfaceTerm): List((Text × SurfaceTerm)) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => ⊢ List((Text × SurfaceTerm)) from match tys {
+      Nil => Cons(#(n, fallback), comp_zip_types(rest, Nil, fallback))
+      Cons(t, more) => Cons(#(n, t), comp_zip_types(rest, more, fallback))
+    }
+  }
+}
+
+pub fn comp_cx(f: SurfaceFn, row: List(Text), expect: Option(SurfaceTerm), ptypes: List(SurfaceTerm), effects: List(CompEffect), fns: List(CompFn), owner: Text): CompCx {
+  let dummy := surface_term_mk(SkVar(NameSpelled("Type")), f.start, f.end)
+  CompCxMk(
+    row,
+    Nil,
+    List::append(comp_zip_types(f.params, ptypes, dummy), comp_zip_types(f.generics, f.generic_types, dummy)),
+    expect,
+    effects,
+    fns,
+    0,
+    f.start,
+    f.end,
+    owner
+  )
+}
+
+// ---- parameters that are functions with effects --------------------------------------
+
+// The row of the function type `t` writes, canonical, when it writes one with an entry.
+pub fn comp_param_row(t: SurfaceTerm, effects: List(CompEffect)): Option(List(Text)) {
+  match t.kind {
+    SkPi(^ps, ^r, e) => ⊢ Option(List(Text)) from match e {
+      None => None
+      Some(es) => ⊢ Option(List(Text)) from match comp_row_entries(es, effects) {
+        None => None
+        Some(rr) => if comp_is_nil(rr.fst) || List::length(rr.snd) != 0 { None } else { Some(comp_canonical(effects, rr.fst)) }
+      }
+    }
+    _ => None
+  }
+}
+
+pub fn comp_callback_rows(ts: List(SurfaceTerm), effects: List(CompEffect)): List(Option(List(Text))) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(comp_param_row(t, effects), comp_callback_rows(rest, effects))
+  }
+}
+
+// The positions of the parameters whose row has the function's row variable.
+pub fn comp_uses(cbs: List(Option(List(Text))), i: Nat): List(Nat) {
+  match cbs {
+    Nil => Nil
+    Cons(c, rest) => ⊢ List(Nat) from match c {
+      None => comp_uses(rest, i + 1)
+      Some(row) => if comp_has_var(row) { Cons(i, comp_uses(rest, i + 1)) } else { comp_uses(rest, i + 1) }
+    }
+  }
+}
+
+pub fn comp_has_nat(xs: List(Nat), n: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => x == n || comp_has_nat(rest, n)
+  }
+}
+
+pub fn comp_add_all(xs: List(Nat), n: Nat): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(x + n, comp_add_all(rest, n))
+  }
+}
+
+// Where the ordinary arguments of a call of `f` start: after the written generics, or after the named ones.
+pub fn comp_prefix(f: CompFn, args: List(SurfaceTerm)): Nat {
+  let gens := ⊢ Nat from match f.generics {
+    Nil => 0
+    Cons(^g, rest) => List::length(rest)
+  }
+  if comp_named_first(args) { 1 } else { if List::length(args) >= f.arity + gens { gens } else { 0 } }
+}
+
+// The callback row at position `i`: what it writes besides its variable.
+pub fn comp_callback_at(cbs: List(Option(List(Text))), i: Nat): Option(List(Text)) {
+  match cbs {
+    Nil => None
+    Cons(c, rest) => match i {
+      Zero => c
+      Succ(j) => comp_callback_at(rest, j)
+    }
+  }
+}
+
+// What the callee handles of what is passed: the effects its callbacks' rows write besides the variable.
+pub fn comp_handled(cbs: List(Option(List(Text))), uses: List(Nat)): List(Text) {
+  match uses {
+    Nil => Nil
+    Cons(i, rest) => ⊢ List(Text) from match comp_callback_at(cbs, i) {
+      None => comp_handled(cbs, rest)
+      Some(row) => List::append(comp_without_vars(row), comp_handled(cbs, rest))
+    }
+  }
+}
+
+pub fn comp_nth(xs: List(SurfaceTerm), i: Nat): Option(SurfaceTerm) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => match i {
+      Zero => Some(x)
+      Succ(j) => comp_nth(rest, j)
+    }
+  }
+}
+
+pub fn comp_drop(xs: List(SurfaceTerm), n: Nat): List(SurfaceTerm) {
+  match n {
+    Zero => xs
+    Succ(j) => match xs {
+      Nil => Nil
+      Cons(^x, rest) => comp_drop(rest, j)
+    }
+  }
+}
+
+// The row of a function passed as an argument: a local's, or a function's without a row variable.
+pub fn comp_passed_row(cx: CompCx, args: List(SurfaceTerm), uses: List(Nat)): Option(List(Text)) {
+  match uses {
+    Nil => None
+    Cons(i, rest) => ⊢ Option(List(Text)) from match comp_nth(args, i) {
+      None => comp_passed_row(cx, args, rest)
+      Some(a) => ⊢ Option(List(Text)) from match a.kind {
+        SkVar(n) => ⊢ Option(List(Text)) from match comp_local_get(cx.locals, surface_name_text(n)) {
+          Some(row) => Some(row)
+          None => ⊢ Option(List(Text)) from match comp_fn_get(cx.fns, surface_name_text(n)) {
+            Some(g) => if comp_has_var(g.row) { comp_passed_row(cx, args, rest) } else { Some(g.row) }
+            None => comp_passed_row(cx, args, rest)
+          }
+        }
+        _ => comp_passed_row(cx, args, rest)
+      }
+    }
+  }
+}
+
+// What a call of `f` leaves of the row variable: the effects of the row passed, or of the caller's, that the callee neither has nor handles.
+pub fn comp_call_tail(cx: CompCx, f: CompFn, args: List(SurfaceTerm), callee: List(Text)): List(Text) {
+  let uses := comp_uses(f.callbacks, 0)
+  let rest := comp_drop(args, comp_prefix(f, args))
+  let passed := ⊢ List(Text) from match comp_passed_row(cx, rest, uses) {
+    Some(row) => row
+    None => cx.row
+  }
+  comp_tail(passed, List::append(callee, comp_handled(f.callbacks, uses)))
+}
+
+// The type of a parameter that is a function with effects, and its row, with each such parameter of `ps` read.
+pub fn comp_param_types(cx: CompCx, f: SurfaceFn, own_vars: List(Text), ps: List(Text), ts: List(SurfaceTerm)): ElabResult((List(SurfaceTerm) × List((Text × List(Text))))) {
+  match ts {
+    Nil => ElabOk(#(Nil, Nil))
+    Cons(t, rest) => ⊢ ElabResult((List(SurfaceTerm) × List((Text × List(Text))))) from match ps {
+      Nil => ElabOk(#(ts, Nil))
+      Cons(p, more) => ⊢ ElabResult((List(SurfaceTerm) × List((Text × List(Text))))) from match comp_param_types(cx, f, own_vars, more, rest) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(done) => ⊢ ElabResult((List(SurfaceTerm) × List((Text × List(Text))))) from match t.kind {
+          SkPi(params, result, e) => ⊢ ElabResult((List(SurfaceTerm) × List((Text × List(Text))))) from match e {
+            None => ElabOk(#(Cons(t, done.fst), done.snd))
+            Some(es) => if comp_is_nil_entries(es) { ElabOk(#(Cons(t, done.fst), done.snd)) } else {
+              ⊢ ElabResult((List(SurfaceTerm) × List((Text × List(Text))))) from match comp_row_entries(es, cx.effects) {
+                None => ElabErr("a row of a parameter is not read here")
+                Some(rr) => if List::length(rr.snd) != 0 { ElabErr("an instance in the row of a parameter is not read here") } else {
+                  if comp_all_in(comp_var_generics(comp_vars(rr.fst)), f.generics) == false || (comp_has_var(rr.fst) && comp_all_in(comp_vars(rr.fst), own_vars) == false) { ElabErr(comp_skip("a parameter's row has a row variable the function does not have")) } else {
+                    if comp_all_read(cx.effects, rr.fst) == false { ElabErr(comp_skip("a parameter's row has an effect that is not read")) } else {
+                      let row := comp_canonical(cx.effects, rr.fst)
+                      let comp := comp_call(cx, "Comp", [comp_op_ty(cx, row), comp_res_fn(cx, row), result])
+                      let made := ⊢ SurfaceTerm from match params {
+                        Nil => comp
+                        Cons(^x, ^xs) => surface_term_mk(SkPi(params, comp, None), t.start, t.end)
+                      }
+                      ElabOk(#(Cons(made, done.fst), Cons(#(p, row), done.snd)))
+                    }
+                  }
+                }
+              }
+            }
+          }
+          _ => ElabOk(#(Cons(t, done.fst), done.snd))
+        }
+      }
+    }
+  }
+}
+
+pub fn comp_is_nil_entries(es: List(RowEntry)): Bool {
+  match es {
+    Nil => true
+    Cons(^x, ^rest) => false
+  }
+}
+
+pub fn comp_some_list(ts: List(SurfaceTerm)): List(Option(SurfaceTerm)) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(Some(t), comp_some_list(rest))
+  }
+}
+
+// Whether the first argument is the named generics `<x: v>`.
+pub fn comp_named_first(args: List(SurfaceTerm)): Bool {
+  match args {
+    Nil => false
+    Cons(a, ^rest) => match a.kind {
+      SkRecord(n, ^fs) => n == "@implicits"
+      _ => false
+    }
+  }
+}
+
+// The effects a call of `h` with `args` passes to its row variable's callbacks: the positions of the arguments that are λs read in the callee's row.
+pub fn comp_keep(cx: CompCx, h: SurfaceTerm, args: List(SurfaceTerm)): List(Nat) {
+  match h.kind {
+    SkVar(g) => if comp_is_local(cx, surface_name_text(g)) { Nil } else {
+      ⊢ List(Nat) from match comp_fn_get(cx.fns, surface_name_text(g)) {
+        Some(f) => if comp_has_var(f.row) { comp_add_all(comp_uses(f.callbacks, 0), comp_prefix(f, args)) } else { Nil }
+        None => Nil
+      }
+    }
+    _ => Nil
+  }
+}
+
+// The types a λ's parameters are written with.
+pub fn comp_lam_types(ps: List(Text), ts: List(Option(SurfaceTerm))): List((Text × SurfaceTerm)) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => ⊢ List((Text × SurfaceTerm)) from match ts {
+      Nil => Nil
+      Cons(t, more) => ⊢ List((Text × SurfaceTerm)) from match t {
+        Some(ty) => Cons(#(p, ty), comp_lam_types(rest, more))
+        None => comp_lam_types(rest, more)
+      }
+    }
+  }
+}
+
+pub fn comp_is_lam(t: SurfaceTerm): Bool {
+  match t.kind {
+    SkLam(^ps, ^b, ^tys, _) => true
+    _ => false
+  }
+}
+
+// The function with its body read: a function into `Comp`, and for a row variable `e` two parameters before the others, the operations of the effects it stands for and their answers.
+pub fn comp_fn_done(cx: CompCx, f: SurfaceFn, vars: List(Text), ptypes: List(SurfaceTerm), result: SurfaceTerm, body: SurfaceTerm): SurfaceFn {
+  let ret := Some(comp_call(cx, "Comp", [comp_op(cx), comp_res(cx), result]))
+  match vars {
+    Nil => SurfaceFnMk(f.name, f.generics, f.bounds, f.params, f.r#borrows, comp_some_list(ptypes), ret, None, f.wheres, f.start, f.end, body, f.lends, f.generic_types, f.bound_starts, f.visibility, f.row_hole, f.unused, f.unused_generics, f.unused_params)
+    Cons(v, ^more) => {
+      let g := comp_var_generic(v)
+      let at := comp_index_of(f.generics, g)
+      let op := Text::concat(g, "@rowop")
+      let ty := comp_v(cx, "Type")
+      let res_ty := surface_term_mk(SkPi([SurfaceParamMk(None, comp_v(cx, op), None)], ty, None), cx.start, cx.end)
+      SurfaceFnMk(
+        f.name, comp_drop_at(f.generics, at), comp_drop_at(f.bounds, at), Cons(op, Cons(Text::concat(g, "@rowres"), f.params)),
+        Cons(None, Cons(None, f.r#borrows)), Cons(Some(ty), Cons(Some(res_ty), comp_some_list(ptypes))),
+        ret, None, f.wheres, f.start, f.end, body, f.lends, comp_drop_at(f.generic_types, at), comp_drop_at(f.bound_starts, at), f.visibility, f.row_hole, f.unused, f.unused_generics, f.unused_params
+      )
+    }
+  }
+}
+
+

@@ -1,38 +1,67 @@
+import "../../identity/src/identity.taut"
+import "messages.taut"
 import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
 import "../../surface/src/surface.taut"
-import std::Base
-import std::Map
-import std::Text
+import "../../surface/src/extern_blocks.taut"
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "rows.taut"
+import "rows_base.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "../../text/src/text.taut"
 
 // The check of a program: declarations first, then the functions, then the
 // statements of the top level (`run` and `finish` of `types.rs`), and the
-// dump, in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
+// dump, in the proof language (`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」).
 
 // What the checker found: the errors, the width of every integer operation,
 // the type of each top-level `let`, of each name a program binds and of each
 // expression, the declarations and the quantity of each operation's resume.
+// A use of a generic function and its generics that nothing determined.
+pub(open) inductive TyUndetermined: Type {
+  TyUndeterminedMk(name: Text, generics: List(Text), start: Nat, end: Nat): TyUndetermined
+}
+
 pub(open) inductive TypeReport: Type {
   TypeReportMk(
     errors: List(TypeError),
     widths: Ordmap(TermAt, Width),
-    lets: List(Pair(Text, Text)),
+    lets: List(Text × Text),
     locals: Ordmap(LocalKey, Ty),
     terms: Ordmap(TermAt, Ty),
     datas: Datas,
-    quants: Ordmap(Text, Quant)
+    quants: Ordmap(Text, Quant),
+    // Every use of a generic function settles its type arguments: one that
+    // nothing fixes would leave each backend to pick its own. The uses whose
+    // generics are left open, oldest first; what the expansion of indexed
+    // effects determines is taken out where the program is known (`main`).
+    undetermined: List(TyUndetermined),
+    // Every use of a generic function, oldest first, with the type each
+    // generic its type mentions was given.
+    uses: List(TyUse),
+    // The operations whose result holds a borrow: they lend what their
+    // handler answers.
+    lending: List(Text),
+    // Those of them whose result may hold a mutable borrow.
+    lending_mut: List(Text),
+    // Each operation's signature, for what reads an arm against it.
+    op_sigs: Ordmap(Text, EffectSig)
   ): TypeReport
 }
 
 pub fn stmt_declares(s: SurfaceStmt): Option(Text) {
-  ⊢ Option(Text) from match s {
+  match s {
     StStruct(d) => Some(d.name)
     StEnum(d) => Some(d.name)
     StFn(f) => Some(f.name)
@@ -42,7 +71,7 @@ pub fn stmt_declares(s: SurfaceStmt): Option(Text) {
 }
 
 pub fn types_own(ss: List(SurfaceStmt), own: Ordmap(Text, Bool)): Ordmap(Text, Bool) {
-  ⊢ Ordmap(Text, Bool) from match ss {
+  match ss {
     Nil => own
     Cons(s, rest) => ⊢ Ordmap(Text, Bool) from match stmt_declares(s) {
       Some(n) => types_own(rest, Ordmap::insert(own, n, true, Ordmap::compare_text))
@@ -56,17 +85,17 @@ pub fn types_is_own(own: Ordmap(Text, Bool), name: Text): Bool {
 }
 
 pub fn data_is_opaque(cs: List(SurfaceDataCtor)): Bool {
-  ⊢ Bool from match cs {
+  match cs {
     Nil => true
     Cons(k, rest) => ⊢ Bool from match k.fields {
       Nil => data_is_opaque(rest)
-      Cons(f, more) => false
+      Cons(^f, ^more) => false
     }
   }
 }
 
-pub fn ck_prelude_data_one(&mut c: Checker, s: SurfaceStmt, own: Ordmap(Text, Bool)): Unit {
-  ⊢ Unit from match s {
+pub fn ck_prelude_data_one(c: &mut Checker, s: SurfaceStmt, own: Ordmap(Text, Bool)): Unit {
+  match s {
     StStruct(d) => if not(types_is_own(own, d.name)) {
       ck_declare_data(&mut c, d, true, data_is_opaque(d.constructors))
     }
@@ -80,8 +109,8 @@ pub fn ck_prelude_data_one(&mut c: Checker, s: SurfaceStmt, own: Ordmap(Text, Bo
   }
 }
 
-pub fn ck_prelude_data(prelude: List(SurfaceStmt), &mut c: Checker, own: Ordmap(Text, Bool)): Unit {
-  ⊢ Unit from match prelude {
+pub fn ck_prelude_data(prelude: List(SurfaceStmt), c: &mut Checker, own: Ordmap(Text, Bool)): Unit {
+  match prelude {
     Nil => #()
     Cons(s, rest) => {
       ck_prelude_data_one(&mut c, s, own)
@@ -90,16 +119,16 @@ pub fn ck_prelude_data(prelude: List(SurfaceStmt), &mut c: Checker, own: Ordmap(
   }
 }
 
-pub fn ck_program_data_one(&mut c: Checker, s: SurfaceStmt): Unit {
-  ⊢ Unit from match s {
+pub fn ck_program_data_one(c: &mut Checker, s: SurfaceStmt): Unit {
+  match s {
     StStruct(d) => ck_declare_data(&mut c, d, true, false)
     StEnum(d) => ck_declare_data(&mut c, d, false, false)
     _ => #()
   }
 }
 
-pub fn ck_program_data(program: List(SurfaceStmt), &mut c: Checker): Unit {
-  ⊢ Unit from match program {
+pub fn ck_program_data(program: List(SurfaceStmt), c: &mut Checker): Unit {
+  match program {
     Nil => #()
     Cons(s, rest) => {
       ck_program_data_one(&mut c, s)
@@ -108,14 +137,14 @@ pub fn ck_program_data(program: List(SurfaceStmt), &mut c: Checker): Unit {
   }
 }
 
-pub fn ck_add_fn(&mut c: Checker, f: SurfaceFn): Scheme {
+pub fn ck_add_fn(c: &mut Checker, f: SurfaceFn): Scheme {
   let scheme := ck_signature(&mut c, f)
   set_to(&mut c.fns, Ordmap::insert(c.fns, f.name, scheme, Ordmap::compare_text))
   scheme
 }
 
-pub fn ck_prelude_fns_each(fns: List(SurfaceFn), &mut c: Checker, own: Ordmap(Text, Bool)): Unit {
-  ⊢ Unit from match fns {
+pub fn ck_prelude_fns_each(fns: List(SurfaceFn), c: &mut Checker, own: Ordmap(Text, Bool)): Unit {
+  match fns {
     Nil => #()
     Cons(f, rest) => {
       if not(types_is_own(own, f.name)) {
@@ -126,16 +155,16 @@ pub fn ck_prelude_fns_each(fns: List(SurfaceFn), &mut c: Checker, own: Ordmap(Te
   }
 }
 
-pub fn ck_prelude_fns_one(&mut c: Checker, s: SurfaceStmt, own: Ordmap(Text, Bool)): Unit {
-  ⊢ Unit from match s {
-    StExtern(n, fns, a, b) => ck_prelude_fns_each(fns, &mut c, own)
+pub fn ck_prelude_fns_one(c: &mut Checker, s: SurfaceStmt, own: Ordmap(Text, Bool)): Unit {
+  match s {
+    StExtern(fns, ^instances, ^types, ^structs, ^enums, ^a, ^b) => ck_prelude_fns_each(fns, &mut c, own)
     StFn(f) => ck_prelude_fns_each(Cons(f, Nil), &mut c, own)
     _ => #()
   }
 }
 
-pub fn ck_prelude_fns(prelude: List(SurfaceStmt), &mut c: Checker, own: Ordmap(Text, Bool)): Unit {
-  ⊢ Unit from match prelude {
+pub fn ck_prelude_fns(prelude: List(SurfaceStmt), c: &mut Checker, own: Ordmap(Text, Bool)): Unit {
+  match prelude {
     Nil => #()
     Cons(s, rest) => {
       ck_prelude_fns_one(&mut c, s, own)
@@ -144,8 +173,8 @@ pub fn ck_prelude_fns(prelude: List(SurfaceStmt), &mut c: Checker, own: Ordmap(T
   }
 }
 
-pub fn ck_extern_fns(fns: List(SurfaceFn), &mut c: Checker): Unit {
-  ⊢ Unit from match fns {
+pub fn ck_extern_fns(fns: List(SurfaceFn), c: &mut Checker): Unit {
+  match fns {
     Nil => #()
     Cons(f, rest) => {
       let scheme := ck_add_fn(&mut c, f)
@@ -156,17 +185,17 @@ pub fn ck_extern_fns(fns: List(SurfaceFn), &mut c: Checker): Unit {
 
 // One statement's declarations: the function with its scheme when it has a
 // body to check.
-pub fn ck_program_decl(&mut c: Checker, s: SurfaceStmt): Option(Pair(SurfaceFn, Scheme)) {
-  ⊢ Option(Pair(SurfaceFn, Scheme)) from match s {
+pub fn ck_program_decl(c: &mut Checker, s: SurfaceStmt): Option(SurfaceFn × Scheme) {
+  match s {
     StEffect(e) => {
       ck_declare_effect(&mut c, e)
       None
     }
     StFn(f) => {
       let scheme := ck_add_fn(&mut c, f)
-      Some(Pair { fst: f, snd: scheme })
+      Some(#(f, scheme))
     }
-    StExtern(n, fns, a, b) => {
+    StExtern(fns, ^instances, ^types, ^structs, ^enums, ^a, ^b) => {
       ck_extern_fns(fns, &mut c)
       None
     }
@@ -174,8 +203,42 @@ pub fn ck_program_decl(&mut c: Checker, s: SurfaceStmt): Option(Pair(SurfaceFn, 
   }
 }
 
+pub fn ck_extern_replaceable_schemes(
+  fns: List(SurfaceFn),
+  c: Checker
+): List(SurfaceFn × Scheme) {
+  match fns {
+    Nil => Nil
+    Cons(f, rest) => ⊢ List(SurfaceFn × Scheme) from match Ordmap::get(
+      c.fns,
+      f.name,
+      Ordmap::compare_text
+    ) {
+      Some(s) => Cons(#(f, s), ck_extern_replaceable_schemes(rest, c))
+      None => ck_extern_replaceable_schemes(rest, c)
+    }
+  }
+}
+
+pub fn ck_program_decl_check_fns(c: Checker, s: SurfaceStmt): List(SurfaceFn × Scheme) {
+  match s {
+    StExtern(fns, instances, types, structs, enums, ^a, ^b) => if extern_is_replaceable(
+      fns,
+      instances,
+      types,
+      structs,
+      enums
+    ) {
+      ck_extern_replaceable_schemes(fns, c)
+    } else {
+      Nil
+    }
+    _ => Nil
+  }
+}
+
 pub fn opt_cons<A>(x: Option(A), xs: List(A)): List(A) {
-  ⊢ List(A) from match x {
+  match x {
     Some(v) => Cons(v, xs)
     None => xs
   }
@@ -186,9 +249,9 @@ pub fn opt_cons<A>(x: Option(A), xs: List(A)): List(A) {
 // schemes, in order, to be checked.
 pub fn ck_program_decls(
   program: List(SurfaceStmt),
-  &mut c: Checker
-): List(Pair(SurfaceFn, Scheme)) {
-  ⊢ List(Pair(SurfaceFn, Scheme)) from match program {
+  c: &mut Checker
+): List(SurfaceFn × Scheme) {
+  match program {
     Nil => Nil
     Cons(s, rest) => {
       let here := ck_program_decl(&mut c, s)
@@ -198,23 +261,36 @@ pub fn ck_program_decls(
   }
 }
 
-// The functions the instances define, with their schemes as declared.
-pub fn ck_synthesized_schemes(fs: List(SurfaceFn), c: Checker): List(Pair(SurfaceFn, Scheme)) {
-  ⊢ List(Pair(SurfaceFn, Scheme)) from match fs {
+pub fn ck_program_replaceable_fns(
+  program: List(SurfaceStmt),
+  c: Checker
+): List(SurfaceFn × Scheme) {
+  match program {
     Nil => Nil
-    Cons(f, rest) => ⊢ List(Pair(SurfaceFn, Scheme)) from match Ordmap::get(
+    Cons(s, rest) => List::append(
+      ck_program_decl_check_fns(c, s),
+      ck_program_replaceable_fns(rest, c)
+    )
+  }
+}
+
+// The functions the instances define, with their schemes as declared.
+pub fn ck_synthesized_schemes(fs: List(SurfaceFn), c: Checker): List(SurfaceFn × Scheme) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => ⊢ List(SurfaceFn × Scheme) from match Ordmap::get(
       c.fns,
       f.name,
       Ordmap::compare_text
     ) {
-      Some(s) => Cons(Pair { fst: f, snd: s }, ck_synthesized_schemes(rest, c))
+      Some(s) => Cons(#(f, s), ck_synthesized_schemes(rest, c))
       None => ck_synthesized_schemes(rest, c)
     }
   }
 }
 
-pub fn ck_check_fns(fns: List(Pair(SurfaceFn, Scheme)), &mut c: Checker): Unit {
-  ⊢ Unit from match fns {
+pub fn ck_check_fns(fns: List(SurfaceFn × Scheme), c: &mut Checker): Unit {
+  match fns {
     Nil => #()
     Cons(p, rest) => {
       ck_check_fn(&mut c, p.fst, p.snd, Nil)
@@ -224,29 +300,29 @@ pub fn ck_check_fns(fns: List(Pair(SurfaceFn, Scheme)), &mut c: Checker): Unit {
 }
 
 pub fn stmt_is_declaration(s: SurfaceStmt): Bool {
-  ⊢ Bool from match s {
-    StFn(f) => true
-    StEffect(e) => true
-    StStruct(d) => true
-    StEnum(d) => true
-    StExtern(n, fns, a, b) => true
+  match s {
+    StFn(^f) => true
+    StEffect(^e) => true
+    StStruct(^d) => true
+    StEnum(^d) => true
+    StExtern(^fns, ^instances, ^types, ^structs, ^enums, ^a, ^b) => true
     _ => false
   }
 }
 
 // A top-level `let` records the type of what it binds, the newest local.
-pub fn ck_top_let(&mut c: Checker, s: SurfaceStmt, env: Scope): Unit {
-  ⊢ Unit from match s {
-    StLet(name, ty, value, borrow, bm) => ⊢ Unit from match env.items {
-      Cons(l, older) => set_to(&mut c.lets, Cons(TyLet { name: name, ty: l.ty }, c.lets))
+pub fn ck_top_let(c: &mut Checker, s: SurfaceStmt, env: Scope): Unit {
+  match s {
+    StLet(name, ^ty, ^value, ^r#borrow, ^bm, ^unused, ^st_stack) => ⊢ Unit from match env.items {
+      Cons(l, ^older) => set_to(&mut c.lets, Cons(TyLet { name: name, ty: l.ty }, c.lets))
       Nil => #()
     }
     _ => #()
   }
 }
 
-pub fn ck_top_level(program: List(SurfaceStmt), &mut c: Checker, &mut env: Scope): Unit {
-  ⊢ Unit from match program {
+pub fn ck_top_level(program: List(SurfaceStmt), c: &mut Checker, env: &mut Scope): Unit {
+  match program {
     Nil => #()
     Cons(s, rest) => {
       if not(stmt_is_declaration(s)) {
@@ -262,7 +338,7 @@ pub fn ck_top_level(program: List(SurfaceStmt), &mut c: Checker, &mut env: Scope
 // are declared and then summarized (`ck_finish_datas`), before any signature
 // is read.
 pub fn ck_prepare_datas(
-  &mut c: Checker,
+  c: &mut Checker,
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool)
@@ -274,41 +350,46 @@ pub fn ck_prepare_datas(
 
 // function names in a single top-level scope, including extern declarations.
 pub fn types_stmt_functions(s: SurfaceStmt): List(SurfaceFn) {
-  ⊢ List(SurfaceFn) from match s {
-    StLet(name, ty, value, borrow, mutable) => Nil
-    StVar(name, ty, value, borrow) => Nil
-    StModule(name, stmts, start, end) => Nil
-    StAssign(name, name_place, value) => Nil
-    StCalled(name_generates, value) => Nil
+  match s {
+    StLet(^name, ^ty, ^value, ^r#borrow, ^mutable, ^unused, ^st_stack) => Nil
+    StVar(^name, ^ty, ^value, ^r#borrow, ^unused, ^st_stack) => Nil
+    StAssign(^name, ^name_place, ^value) => Nil
+    StCalled(^name_generates, ^value) => Nil
     StFn(f) => Cons(f, Nil)
-    StTheorem(t) => Nil
-    StDef(t) => Nil
-    StMutual(stmts, start, end) => Nil
-    StImport(path, start, end) => Nil
-    StInductive(i) => Nil
-    StEffect(e) => Nil
-    StStruct(d) => Nil
-    StEnum(d) => Nil
-    StExtern(abi, fns, start, end) => fns
-    StClass(c) => Nil
-    StInstance(i) => Nil
-    StWhile(cond, body) => Nil
-    StReturn(value) => Nil
-    StExpr(value) => Nil
-    StOther(what, start, end) => Nil
-    StMacro(name, function, start, end) => Nil
-    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Nil
-    StSyntax(name, grammar, start, end) => Nil
+    StTheorem(^t) => Nil
+    StDef(^t) => Nil
+    StMutual(^stmts, ^start, ^end) => Nil
+    StImport(^path, ^start, ^end) => Nil
+    StInductive(^i) => Nil
+    StEffect(^e) => Nil
+    StStruct(^d) => Nil
+    StEnum(^d) => Nil
+    StExtern(fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => fns
+    StClass(^c) => Nil
+    StInstance(^i) => Nil
+    StWhile(^cond, ^body) => Nil
+    StReturn(^value) => Nil
+    StExpr(^value) => Nil
+    StOther(^what, ^start, ^end) => Nil
+    StLoop(^st_body, ^start, ^end) => Nil
+    StModule(^mod_name, ^mod_vis, ^mod_items, ^start, ^end) => Nil
+    StReexport(^re_path, ^re_names, ^re_spans, ^start, ^end) => Nil
+    StFor(^for_pat, ^for_src, ^st_body, ^start, ^end) => Nil
+    StBreak(^st_value, ^start, ^end) => Nil
+    StContinue(^start, ^end) => Nil
+    StMacro(^name, ^function, ^start, ^end) => Nil
+    StAttributed(^attr_name, ^attr_arg, ^attr_generates, ^attr_stmt) => Nil
+    StSyntax(^name, ^grammar, ^start, ^end) => Nil
   }
 }
 pub fn types_function_decls(program: List(SurfaceStmt)): List(SurfaceFn) {
-  ⊢ List(SurfaceFn) from match program {
+  match program {
     Nil => Nil
     Cons(s, rest) => List::append(types_stmt_functions(s), types_function_decls(rest))
   }
 }
 pub fn types_duplicate_fn(fs: List(SurfaceFn), seen: Ordmap(Text, Bool)): Option(SurfaceFn) {
-  ⊢ Option(SurfaceFn) from match fs {
+  match fs {
     Nil => None
     Cons(f, rest) => if Ordmap::contains(seen, f.name, Ordmap::compare_text) {
       Some(f)
@@ -317,53 +398,58 @@ pub fn types_duplicate_fn(fs: List(SurfaceFn), seen: Ordmap(Text, Bool)): Option
     }
   }
 }
-pub fn ck_check_fn_names(&mut c: Checker, fs: List(SurfaceFn)): Unit {
-  ⊢ Unit from match types_duplicate_fn(fs, Ordmap::empty()) {
+pub fn ck_check_fn_names(c: &mut Checker, fs: List(SurfaceFn)): Unit {
+  match types_duplicate_fn(fs, Ordmap::empty()) {
     None => #()
     Some(f) => ck_error(
       &mut c,
-      cat3("function ", f.name, " is declared twice"),
+      function_declared_twice_message(f.name),
       span_at(f.start, f.end)
     )
   }
 }
 
 pub fn types_stmt_data(s: SurfaceStmt): List(SurfaceData) {
-  ⊢ List(SurfaceData) from match s {
-    StLet(name, ty, value, borrow, mutable) => Nil
-    StVar(name, ty, value, borrow) => Nil
-    StModule(name, stmts, start, end) => Nil
-    StAssign(name, name_place, value) => Nil
-    StCalled(name_generates, value) => Nil
-    StFn(f) => Nil
-    StTheorem(t) => Nil
-    StDef(t) => Nil
-    StMutual(stmts, start, end) => Nil
-    StImport(path, start, end) => Nil
-    StInductive(i) => Nil
-    StEffect(e) => Nil
+  match s {
+    StLet(^name, ^ty, ^value, ^r#borrow, ^mutable, ^unused, ^st_stack) => Nil
+    StVar(^name, ^ty, ^value, ^r#borrow, ^unused, ^st_stack) => Nil
+    StAssign(^name, ^name_place, ^value) => Nil
+    StCalled(^name_generates, ^value) => Nil
+    StFn(^f) => Nil
+    StTheorem(^t) => Nil
+    StDef(^t) => Nil
+    StMutual(^stmts, ^start, ^end) => Nil
+    StImport(^path, ^start, ^end) => Nil
+    StInductive(^i) => Nil
+    StEffect(^e) => Nil
     StStruct(d) => Cons(d, Nil)
     StEnum(d) => Cons(d, Nil)
-    StExtern(abi, fns, start, end) => Nil
-    StClass(cl) => Nil
-    StInstance(i) => Nil
-    StWhile(cond, body) => Nil
-    StReturn(value) => Nil
-    StExpr(value) => Nil
-    StOther(what, start, end) => Nil
-    StMacro(name, function, start, end) => Nil
-    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Nil
-    StSyntax(name, grammar, start, end) => Nil
+    StExtern(^fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => Nil
+    StClass(^cl) => Nil
+    StInstance(^i) => Nil
+    StWhile(^cond, ^body) => Nil
+    StReturn(^value) => Nil
+    StExpr(^value) => Nil
+    StOther(^what, ^start, ^end) => Nil
+    StLoop(^st_body, ^start, ^end) => Nil
+    StModule(^mod_name, ^mod_vis, ^mod_items, ^start, ^end) => Nil
+    StReexport(^re_path, ^re_names, ^re_spans, ^start, ^end) => Nil
+    StFor(^for_pat, ^for_src, ^st_body, ^start, ^end) => Nil
+    StBreak(^st_value, ^start, ^end) => Nil
+    StContinue(^start, ^end) => Nil
+    StMacro(^name, ^function, ^start, ^end) => Nil
+    StAttributed(^attr_name, ^attr_arg, ^attr_generates, ^attr_stmt) => Nil
+    StSyntax(^name, ^grammar, ^start, ^end) => Nil
   }
 }
 pub fn types_data_decls(ss: List(SurfaceStmt)): List(SurfaceData) {
-  ⊢ List(SurfaceData) from match ss {
+  match ss {
     Nil => Nil
     Cons(s, rest) => List::append(types_stmt_data(s), types_data_decls(rest))
   }
 }
 pub fn types_duplicate_data(fs: List(SurfaceData), seen: Ordmap(Text, Bool)): Option(SurfaceData) {
-  ⊢ Option(SurfaceData) from match fs {
+  match fs {
     Nil => None
     Cons(f, rest) => if Ordmap::contains(seen, f.name, Ordmap::compare_text) {
       Some(f)
@@ -372,12 +458,12 @@ pub fn types_duplicate_data(fs: List(SurfaceData), seen: Ordmap(Text, Bool)): Op
     }
   }
 }
-pub fn ck_check_data_names(&mut c: Checker, fs: List(SurfaceData)): Unit {
-  ⊢ Unit from match types_duplicate_data(fs, Ordmap::empty()) {
+pub fn ck_check_data_names(c: &mut Checker, fs: List(SurfaceData)): Unit {
+  match types_duplicate_data(fs, Ordmap::empty()) {
     None => #()
     Some(f) => ck_error(
       &mut c,
-      cat3("type ", f.name, " is declared twice"),
+      type_declared_twice_message(f.name),
       span_at(f.start, f.end)
     )
   }
@@ -387,10 +473,10 @@ pub fn ck_check_data_names(&mut c: Checker, fs: List(SurfaceData)): Unit {
 // The registration pass cannot check forward or recursive type arities.
 pub fn ck_recheck_fields(
   fs: List(SurfaceDataField),
-  &mut c: Checker,
+  c: &mut Checker,
   generics: Ordmap(Text, Ty)
 ): Unit {
-  ⊢ Unit from match fs {
+  match fs {
     Nil => #()
     Cons(f, rest) => {
       let checked := ck_written(&mut c, f.ty, generics)
@@ -400,10 +486,10 @@ pub fn ck_recheck_fields(
 }
 pub fn ck_recheck_ctors(
   cs: List(SurfaceDataCtor),
-  &mut c: Checker,
+  c: &mut Checker,
   generics: Ordmap(Text, Ty)
 ): Unit {
-  ⊢ Unit from match cs {
+  match cs {
     Nil => #()
     Cons(k, rest) => {
       ck_recheck_fields(k.fields, &mut c, generics)
@@ -411,8 +497,8 @@ pub fn ck_recheck_ctors(
     }
   }
 }
-pub fn ck_recheck_datas(ds: List(SurfaceData), &mut c: Checker): Unit {
-  ⊢ Unit from match ds {
+pub fn ck_recheck_datas(ds: List(SurfaceData), c: &mut Checker): Unit {
+  match ds {
     Nil => #()
     Cons(d, rest) => {
       ck_recheck_ctors(
@@ -427,35 +513,30 @@ pub fn ck_recheck_datas(ds: List(SurfaceData), &mut c: Checker): Unit {
 
 // Register every callable signature while retaining the completed data summaries.
 pub fn ck_prepare_fns(
-  &mut c: Checker,
+  c: &mut Checker,
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool)
-): List(Pair(SurfaceFn, Scheme)) {
+): List(SurfaceFn × Scheme) {
   ck_check_data_names(&mut c, types_data_decls(program))
   ck_check_fn_names(&mut c, types_function_decls(program))
   ck_recheck_datas(types_data_decls(program), &mut c)
-  let synthesized := ck_declare_classes(&mut c, program)
+  let synthesized := ck_declare_all_classes(&mut c, prelude, program)
   ck_prelude_fns(prelude, &mut c, own)
   let fns := ck_program_decls(program, &mut c)
-  List::append(fns, ck_synthesized_schemes(synthesized, c))
+  List::append(
+    fns,
+    List::append(
+      ck_program_replaceable_fns(program, c),
+      ck_synthesized_schemes(synthesized, c)
+    )
+  )
 }
 
-pub fn ck_run(&mut c: Checker, prelude: List(SurfaceStmt), program: List(SurfaceStmt)): Unit {
-  let sig := EffectSig {
-    generics: Cons("A", Nil),
-    params: Cons(TyText, Cons(TyNamed("A", Nil), Nil)),
-    result: TyUnit
-  }
-  set_to(&mut c.effects, Ordmap::insert(c.effects, "show", sig, Ordmap::compare_text))
+pub fn ck_run(c: &mut Checker, prelude: List(SurfaceStmt), program: List(SurfaceStmt)): Unit {
   set_to(
     &mut c.quants,
-    Ordmap::insert(
-      Ordmap::insert(c.quants, "show", QuantDirect, Ordmap::compare_text),
-      "exceeded",
-      QuantAtMostOne,
-      Ordmap::compare_text
-    )
+    Ordmap::insert(c.quants, "exceeded", QuantAtMostOne, Ordmap::compare_text)
   )
   let own := types_own(program, Ordmap::empty())
   ck_prepare_datas(&mut c, prelude, program, own)
@@ -465,15 +546,15 @@ pub fn ck_run(&mut c: Checker, prelude: List(SurfaceStmt), program: List(Surface
   ck_top_level(program, &mut c, &mut env)
 }
 
-pub fn ck_default_int(&mut c: Checker, v: Nat): Unit {
-  ⊢ Unit from match ck_resolve(&c, TyVar(v)) {
+pub fn ck_default_int(c: &mut Checker, v: Nat): Unit {
+  match ck_resolve(&c, TyVar(v)) {
     TyVar(w) => ck_set_subst(&mut c, w, TyInt(Width64))
     _ => #()
   }
 }
 
-pub fn ck_default_ints(vs: List(Pair(Nat, Bool)), &mut c: Checker): Unit {
-  ⊢ Unit from match vs {
+pub fn ck_default_ints(vs: List(Nat × Bool), c: &mut Checker): Unit {
+  match vs {
     Nil => #()
     Cons(p, rest) => {
       ck_default_int(&mut c, p.fst)
@@ -483,7 +564,7 @@ pub fn ck_default_ints(vs: List(Pair(Nat, Bool)), &mut c: Checker): Unit {
 }
 
 pub fn ck_width_of(c: Checker, o: TyOp, widths: Ordmap(TermAt, Width)): Ordmap(TermAt, Width) {
-  ⊢ Ordmap(TermAt, Width) from match ck_resolve(&c, o.ty) {
+  match ck_resolve(&c, o.ty) {
     TyInt(w) => Ordmap::insert(
       widths,
       TermAt { start: o.start, end: o.end, occurrence: o.occurrence },
@@ -499,31 +580,31 @@ pub fn ck_widths(
   c: Checker,
   widths: Ordmap(TermAt, Width)
 ): Ordmap(TermAt, Width) {
-  ⊢ Ordmap(TermAt, Width) from match ops {
+  match ops {
     Nil => widths
     Cons(o, rest) => ck_widths(rest, c, ck_width_of(c, o, widths))
   }
 }
 
-pub fn ck_check_literal(&mut c: Checker, l: TyLiteral): Unit {
-  ⊢ Unit from match ck_resolve(&c, l.ty) {
+pub fn ck_check_literal(c: &mut Checker, l: TyLiteral): Unit {
+  match ck_resolve(&c, l.ty) {
     TyInt(w) => if not(width_fits(w, l.negative, l.magnitude)) {
       ck_error(
         &mut c,
-        cat3(literal_text(l), " does not fit ", ty_show(TyInt(w))),
+        literal_does_not_fit_message(literal_text(l), ty_show(TyInt(w))),
         TySpan { start: l.start, end: l.end }
       )
     }
     _ => ck_error(
       &mut c,
-      "an integer literal has no integer type",
+      int_literal_no_type_message(),
       TySpan { start: l.start, end: l.end }
     )
   }
 }
 
-pub fn ck_check_literals(ls: List(TyLiteral), &mut c: Checker): Unit {
-  ⊢ Unit from match ls {
+pub fn ck_check_literals(ls: List(TyLiteral), c: &mut Checker): Unit {
+  match ls {
     Nil => #()
     Cons(l, rest) => {
       ck_check_literal(&mut c, l)
@@ -533,33 +614,128 @@ pub fn ck_check_literals(ls: List(TyLiteral), &mut c: Checker): Unit {
 }
 
 pub fn ck_no_view_value(c: Checker, t: Ty): Bool {
-  ⊢ Bool from match ck_view_value(&c, t) {
+  match ck_view_value(&c, t) {
     None => true
-    Some(v) => false
+    Some(^v) => false
   }
 }
 
-// A closure returns a borrow only as a view of duplicable things, which stands
-// for their value (`ck_view_value`); a view whose type still has variables is
-// refused, since what they become might not be duplicable.
-pub fn ck_check_closures(rs: List(TyClosure), &mut c: Checker): Unit {
-  ⊢ Unit from match rs {
-    Nil => #()
-    Cons(r, rest) => {
-      let t := ck_resolve(&c, r.ty)
-      if ck_is_view(&c, t) && (ck_has_vars(&c, t) || ck_no_view_value(c, t)) {
-        ck_error(&mut c, "a closure cannot return a borrow", TySpan { start: r.start, end: r.end })
+// A closure returns a bare borrow only as a view of duplicable things, which
+// stands for their value (`ck_view_value`); a view whose type still has
+// variables is refused, since what they become might not be duplicable. A
+// value that holds a borrow may be returned: the use check gives the result
+// the borrows of the borrowed arguments and of what the closure captured.
+pub fn ck_closure_returns_borrow(c: Checker, r: TyClosure): Bool {
+  let t := ck_resolve(c, r.ty)
+  Bool::and(ty_is_borrow(t), Bool::and(ck_is_view(c, t), Bool::or(ck_has_vars(c, t), ck_no_view_value(c, t))))
+}
+
+// The first capture that inference made stronger than the function kind fixed
+// when the lambda was declared, as its message: inference may not later grant
+// the function weaker ownership. A capture that became a borrow does not count.
+pub fn ck_capture_failure(c: Checker, kind: Kind, xs: List(Text × Ty)): Option(Text) {
+  match xs {
+    Nil => None
+    Cons(p, rest) => {
+      let t := ck_resolve(c, p.snd)
+      let range := datas_kind_range(c.datas, t)
+      if Bool::or(ty_is_borrow(t), kind_fits(range.most, kind)) {
+        ck_capture_failure(c, kind, rest)
+      } else {
+        if kind_eq(range.least, range.most) {
+          Some(capture_kind_fixed_message(p.fst, kind_name(range.most)))
+        } else {
+          Some(capture_kind_undetermined_message(p.fst))
+        }
       }
-      ck_check_closures(rest, &mut c)
     }
   }
+}
+
+pub fn ck_errors_have(es: List(TypeError), message: Text, start: Nat, end: Nat): Bool {
+  match es {
+    Nil => false
+    Cons(e, rest) => if Bool::and(e.message == message, Bool::and(e.start == start, e.end == end)) {
+      true
+    } else {
+      ck_errors_have(rest, message, start, end)
+    }
+  }
+}
+
+pub fn ck_capture_span(r: TyClosure): TySpan { TySpan { start: r.cap.start, end: r.cap.end } }
+
+pub fn ck_capture_text(c: Checker, r: TyClosure): Text {
+  match ck_capture_failure(c, r.cap.kind, r.cap.captures) {
+    None => ""
+    Some(m) => m
+  }
+}
+
+// A capture error is given once for a span.
+pub fn ck_capture_bad(c: Checker, r: TyClosure): Bool {
+  match ck_capture_failure(c, r.cap.kind, r.cap.captures) {
+    None => false
+    Some(m) => not(ck_errors_have(c.errors, m, r.cap.start, r.cap.end))
+  }
+}
+
+pub fn ck_check_closure_results(rs: List(TyClosure), c: &mut Checker): Unit {
+  match rs {
+    Nil => #()
+    Cons(r, rest) => {
+      if ck_closure_returns_borrow(c, r) {
+        ck_error(&mut c, closure_returns_borrow_message(), TySpan { start: r.start, end: r.end })
+      }
+      ck_check_closure_results(rest, &mut c)
+    }
+  }
+}
+
+pub fn ck_check_captures(rs: List(TyClosure), c: &mut Checker): Unit {
+  match rs {
+    Nil => #()
+    Cons(r, rest) => {
+      if ck_capture_bad(c, r) {
+        ck_error(&mut c, ck_capture_text(c, r), ck_capture_span(r))
+      }
+      ck_check_captures(rest, &mut c)
+    }
+  }
+}
+
+// The closures in the order their lambdas start, which is the order they are
+// declared in: a closure is recorded when its body is done, after the ones
+// inside it.
+pub fn closure_insert(r: TyClosure, rs: List(TyClosure)): List(TyClosure) {
+  match rs {
+    Nil => Cons(r, Nil)
+    Cons(x, rest) => if r.cap.start <= x.cap.start {
+      Cons(r, Cons(x, rest))
+    } else {
+      Cons(x, closure_insert(r, rest))
+    }
+  }
+}
+
+pub fn closures_by_start(rs: List(TyClosure)): List(TyClosure) {
+  match rs {
+    Nil => Nil
+    Cons(r, rest) => closure_insert(r, closures_by_start(rest))
+  }
+}
+
+// The results of every closure, then their captures.
+pub fn ck_check_closures(rs: List(TyClosure), c: &mut Checker): Unit {
+  ck_check_closure_results(rs, &mut c)
+  ck_check_captures(closures_by_start(rs), &mut c)
 }
 
 // The rigid generics are still in neither type, with the substitution the
 // checker ends with. (`ck_keep` checks them with the substitution of its
 // time; a variable bound after it can bring a rigid generic in.)
-pub fn ck_check_kept(ks: List(TyKept), &mut c: Checker): Unit {
-  ⊢ Unit from match ks {
+pub fn ck_check_kept(ks: List(TyKept), c: &mut Checker): Unit {
+  match ks {
     Nil => #()
     Cons(k, rest) => {
       if not(ck_rigid_kept(&c, k.kept_generics, k.kept_rigid, k.kept_a, k.kept_b)) {
@@ -570,28 +746,22 @@ pub fn ck_check_kept(ks: List(TyKept), &mut c: Checker): Unit {
   }
 }
 
-pub fn ck_check_bound(&mut c: Checker, b: TyBound): Unit {
+// A type argument that holds a borrow is checked against `NoBorrow` on the
+// report (`report_borrow_checks`).
+pub fn ck_check_bound(c: &mut Checker, b: TyBound): Unit {
   let k := ck_kind(&c, b.ty)
-  if ck_is_view(&c, b.ty) {
-    ck_error(&mut c, "a view cannot be a type argument", TySpan { start: b.start, end: b.end })
-  } else if not(kind_fits(k, b.kind)) {
+  if not(kind_fits(k, b.kind)) {
     let shown := ck_shown(&c, b.ty)
     ck_error(
       &mut c,
-      cat5(
-        kind_name(k),
-        " does not fit ",
-        kind_name(b.kind),
-        ": ",
-        cat2(ty_show(shown), " for a type parameter")
-      ),
+      kind_does_not_fit_bound_message(kind_name(k), kind_name(b.kind), ty_show(shown)),
       TySpan { start: b.start, end: b.end }
     )
   }
 }
 
-pub fn ck_check_bounds(bs: List(TyBound), &mut c: Checker): Unit {
-  ⊢ Unit from match bs {
+pub fn ck_check_bounds(bs: List(TyBound), c: &mut Checker): Unit {
+  match bs {
     Nil => #()
     Cons(b, rest) => {
       ck_check_bound(&mut c, b)
@@ -600,11 +770,11 @@ pub fn ck_check_bounds(bs: List(TyBound), &mut c: Checker): Unit {
   }
 }
 
-pub fn ck_check_ctor_bound(&mut c: Checker, b: TyCtorBound): Unit {
+pub fn ck_check_ctor_bound(c: &mut Checker, b: TyCtorBound): Unit {
   let t := ck_resolve(&c, b.ty)
   let made: Option(Ty) := ⊢ Option(Ty) from match t {
-    TyNamed(n, args) => Some(ty_apply(t, TyParam(kind_name(b.arg), b.arg)))
-    TyParam(n, k) => Some(t)
+    TyNamed(^n, ^args) => Some(ty_apply(t, TyParam(kind_name(b.arg), b.arg)))
+    TyParam(^n, ^k) => Some(t)
     _ => None
   }
   ⊢ Unit from match made {
@@ -614,13 +784,7 @@ pub fn ck_check_ctor_bound(&mut c: Checker, b: TyCtorBound): Unit {
       if not(kind_fits(k, b.result)) {
         ck_error(
           &mut c,
-          cat5(
-            b.what,
-            cat4(" takes constructors from ", kind_name(b.arg), " to ", kind_name(b.result)),
-            ", and ",
-            ty_show(ck_shown(&c, m)),
-            cat2(" is ", kind_name(k))
-          ),
+          constructor_kind_mismatch_message(b.what, kind_name(b.arg), kind_name(b.result), ty_show(ck_shown(&c, m)), kind_name(k)),
           TySpan { start: b.start, end: b.end }
         )
       }
@@ -628,8 +792,8 @@ pub fn ck_check_ctor_bound(&mut c: Checker, b: TyCtorBound): Unit {
   }
 }
 
-pub fn ck_check_ctor_bounds(bs: List(TyCtorBound), &mut c: Checker): Unit {
-  ⊢ Unit from match bs {
+pub fn ck_check_ctor_bounds(bs: List(TyCtorBound), c: &mut Checker): Unit {
+  match bs {
     Nil => #()
     Cons(b, rest) => {
       ck_check_ctor_bound(&mut c, b)
@@ -638,15 +802,15 @@ pub fn ck_check_ctor_bounds(bs: List(TyCtorBound), &mut c: Checker): Unit {
   }
 }
 
-pub fn pending_hint(t: Ty, r#class: Text, shown: Text): Text {
-  ⊢ Text from match t {
-    TyParam(n, k) => cat5(": add where ", r#class, "(", shown, ")")
-    _ => ""
+pub fn pending_message(t: Ty, what: Text, r#class: Text, shown: Text): Text {
+  match t {
+    TyParam(^n, ^k) => needs_class_add_where_message(what, r#class, shown)
+    _ => needs_class_message(what, r#class, shown)
   }
 }
 
-pub fn ck_check_pending(ps: List(TyPending), &mut c: Checker): Unit {
-  ⊢ Unit from match ps {
+pub fn ck_check_pending(ps: List(TyPending), c: &mut Checker): Unit {
+  match ps {
     Nil => #()
     Cons(p, rest) => {
       let t: Ty := ck_resolve(&c, p.ty)
@@ -656,13 +820,7 @@ pub fn ck_check_pending(ps: List(TyPending), &mut c: Checker): Unit {
         let shown: Text := ty_show(ck_shown(&c, t))
         ck_error(
           &mut c,
-          cat5(
-            p.what,
-            " needs ",
-            p.r#class,
-            cat3("(", shown, ")"),
-            pending_hint(t, p.r#class, shown)
-          ),
+          pending_message(t, p.what, p.r#class, shown),
           TySpan { start: p.start, end: p.end }
         )
       }
@@ -674,24 +832,24 @@ pub fn ck_check_pending(ps: List(TyPending), &mut c: Checker): Unit {
 pub fn ck_resolved_lets(
   ls: List(TyLet),
   c: Checker,
-  out: List(Pair(Text, Text))
-): List(Pair(Text, Text)) {
-  ⊢ List(Pair(Text, Text)) from match ls {
+  out: List(Text × Text)
+): List(Text × Text) {
+  match ls {
     Nil => out
     Cons(l, rest) => ck_resolved_lets(
       rest,
       c,
-      Cons(Pair { fst: l.name, snd: ty_show(ck_resolve(&c, l.ty)) }, out)
+      Cons(#(l.name, ty_show(ck_resolve(&c, l.ty))), out)
     )
   }
 }
 
 pub fn ck_resolved_locals(
-  es: List(Pair(LocalKey, Ty)),
+  es: List(LocalKey × Ty),
   c: Checker,
   out: Ordmap(LocalKey, Ty)
 ): Ordmap(LocalKey, Ty) {
-  ⊢ Ordmap(LocalKey, Ty) from match es {
+  match es {
     Nil => out
     Cons(e, rest) => ck_resolved_locals(
       rest,
@@ -703,11 +861,11 @@ pub fn ck_resolved_locals(
 
 // The terms' types, newest first: the first of a span is the one that stands.
 pub fn ck_resolved_terms(
-  es: List(Pair(TermAt, Ty)),
+  es: List(TermAt × Ty),
   c: Checker,
   out: Ordmap(TermAt, Ty)
 ): Ordmap(TermAt, Ty) {
-  ⊢ Ordmap(TermAt, Ty) from match es {
+  match es {
     Nil => out
     Cons(
       e,
@@ -723,7 +881,76 @@ pub fn ck_resolved_terms(
   }
 }
 
-pub fn ck_finish(&mut c: Checker): TypeReport {
+// The generics of a use whose types still have variables.
+pub fn ck_open_generics(gs: List(Text × Ty), c: Checker): List(Text) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => if ck_has_vars_in(c.steps, &c, g.snd) {
+      Cons(g.fst, ck_open_generics(rest, c))
+    } else {
+      ck_open_generics(rest, c)
+    }
+  }
+}
+
+pub fn ck_resolved_generics(gs: List(Text × Ty), c: Checker): List(Text × Ty) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => Cons(#(g.fst, ck_resolve(&c, g.snd)), ck_resolved_generics(rest, c))
+  }
+}
+
+pub fn ck_resolved_uses(us: List(TyUse), c: Checker): List(TyUse) {
+  match us {
+    Nil => Nil
+    Cons(u, rest) => Cons(
+      TyUse {
+        name: u.name,
+        generics: ck_resolved_generics(u.generics, c),
+        start: u.start,
+        end: u.end
+      },
+      ck_resolved_uses(rest, c)
+    )
+  }
+}
+
+pub fn ck_undetermined(us: List(TyUse), c: Checker): List(TyUndetermined) {
+  match us {
+    Nil => Nil
+    Cons(u, rest) => ⊢ List(TyUndetermined) from match ck_open_generics(u.generics, c) {
+      Nil => ck_undetermined(rest, c)
+      Cons(g, more) => Cons(
+        TyUndetermined { name: u.name, generics: Cons(g, more), start: u.start, end: u.end },
+        ck_undetermined(rest, c)
+      )
+    }
+  }
+}
+
+// The operations whose result holds a borrow.
+pub fn ck_lending(es: List(Text × EffectSig), d: Datas): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => ⊢ List(Text) from match datas_view_borrow(d, e.snd.result) {
+      Some(^m) => Cons(e.fst, ck_lending(rest, d))
+      None => ck_lending(rest, d)
+    }
+  }
+}
+
+// The operations whose result may hold a mutable borrow.
+pub fn ck_lending_mut(es: List(Text × EffectSig), d: Datas): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => ⊢ List(Text) from match datas_view_borrow(d, e.snd.result) {
+      Some(m) => if m { Cons(e.fst, ck_lending_mut(rest, d)) } else { ck_lending_mut(rest, d) }
+      None => ck_lending_mut(rest, d)
+    }
+  }
+}
+
+pub fn ck_finish(c: &mut Checker): TypeReport {
   // An integer of unknown width is an `i64`.
   ck_default_ints(Ordmap::entries(c.ints), &mut c)
   let widths := ck_widths(List::reverse(c.ops), c, Ordmap::empty())
@@ -740,13 +967,19 @@ pub fn ck_finish(&mut c: Checker): TypeReport {
     locals: ck_resolved_locals(Ordmap::entries(c.locals), c, Ordmap::empty()),
     terms: ck_resolved_terms(c.terms, c, Ordmap::empty()),
     datas: c.datas,
-    quants: c.quants
+    quants: c.quants,
+    undetermined: ck_undetermined(List::reverse(c.uses), c),
+    uses: ck_resolved_uses(List::reverse(c.uses), c),
+    lending: ck_lending(Ordmap::entries(c.effects), c.datas),
+    lending_mut: ck_lending_mut(Ordmap::entries(c.effects), c.datas),
+    op_sigs: c.effects
   }
 }
 
+
 // What reading the modules found wrong comes first.
-pub fn ck_module_errors(es: List(TypeError), &mut c: Checker): Unit {
-  ⊢ Unit from match es {
+pub fn ck_module_errors(es: List(TypeError), c: &mut Checker): Unit {
+  match es {
     Nil => #()
     Cons(e, rest) => {
       ck_error(&mut c, e.message, TySpan { start: e.start, end: e.end })
@@ -762,7 +995,7 @@ pub fn constructor_use_span(use: TyConstructorUse): TySpan {
   TySpan { start: use.start, end: use.end }
 }
 
-pub fn ck_constructor_errors(uses: List(TyConstructorUse), &mut c: Checker): Unit {
+pub fn ck_constructor_errors(uses: List(TyConstructorUse), c: &mut Checker): Unit {
   match uses {
     Nil => #()
     Cons(use, rest) => {
@@ -772,7 +1005,7 @@ pub fn ck_constructor_errors(uses: List(TyConstructorUse), &mut c: Checker): Uni
   }
 }
 
-pub fn ck_constructor_pass(uses: List(TyConstructorUse), &mut c: Checker): List(TyConstructorUse) {
+pub fn ck_constructor_pass(uses: List(TyConstructorUse), c: &mut Checker): List(TyConstructorUse) {
   match uses {
     Nil => Nil
     Cons(use, rest) => match constructor_resolve(c.datas, use.name, ck_resolve(&c, use.ty)) {
@@ -780,14 +1013,14 @@ pub fn ck_constructor_pass(uses: List(TyConstructorUse), &mut c: Checker): List(
       Some(found) => {
         let span := constructor_use_span(use)
         let actual := ck_constructor_known(&mut c, found.fst, found.snd, span, use.name)
-        ck_expect(&mut c, actual, use.ty, span, "a constructor")
+        ck_expect(&mut c, actual, use.ty, span, what_constructor_message())
         ck_constructor_pass(rest, &mut c)
       }
     }
   }
 }
 
-pub fn ck_constructor_rounds(fuel: Nat, uses: List(TyConstructorUse), &mut c: Checker): Unit {
+pub fn ck_constructor_rounds(fuel: Nat, uses: List(TyConstructorUse), c: &mut Checker): Unit {
   match fuel {
     Zero => ck_constructor_errors(uses, &mut c)
     Succ(rest) => {
@@ -801,24 +1034,24 @@ pub fn ck_constructor_rounds(fuel: Nat, uses: List(TyConstructorUse), &mut c: Ch
   }
 }
 
-pub fn ck_take_constructor_uses(&mut c: Checker): List(TyConstructorUse) {
+pub fn ck_take_constructor_uses(c: &mut Checker): List(TyConstructorUse) {
   let uses := List::reverse(c.constructor_uses)
   set_to(&mut c.constructor_uses, Nil)
   uses
 }
 
-pub fn ck_resolve_constructor_uses(&mut c: Checker): Unit {
+pub fn ck_resolve_constructor_uses(c: &mut Checker): Unit {
   let uses := ck_take_constructor_uses(&mut c)
   ck_constructor_rounds(list_len(uses) + 1, uses, &mut c)
 }
 
-pub fn ck_finalize(&mut c: Checker): TypeReport {
+pub fn ck_finalize(c: &mut Checker): TypeReport {
   ck_resolve_constructor_uses(&mut c)
   ck_finish(&mut c)
 }
 
 pub fn ck_types_run(
-  &mut c: Checker,
+  c: &mut Checker,
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   module_errors: List(TypeError)
@@ -831,31 +1064,58 @@ pub fn ck_types_run(
 // Where a statement ends, past its last byte: the sum over a program bounds
 // the size of every term in it, and so the steps a walk of it takes.
 pub fn stmt_extent(st: SurfaceStmt): Nat {
-  ⊢ Nat from match st {
-    StLet(name, ty, value, borrow, bm) => value.end + 1
-    StVar(name, ty, value, vb) => value.end + 1
-    StAssign(name, name_place, value) => value.end + 1
+  match st {
+    StLet(^name, ^ty, value, ^r#borrow, ^bm, ^unused, ^st_stack) => value.end + 1
+    StVar(^name, ^ty, value, ^vb, ^unused, ^st_stack) => value.end + 1
+    StAssign(^name, ^name_place, value) => value.end + 1
     StExpr(e) => e.end + 1
-    StWhile(c, body) => body.end + 1
+    StWhile(^c, body) => body.end + 1
     StFn(f) => f.end + 1
     StEffect(e) => e.end + 1
     StStruct(d) => d.end + 1
     StEnum(d) => d.end + 1
     StClass(c) => c.end + 1
     StInstance(i) => i.end + 1
-    StExtern(abi, fns, start, end) => end + 1
-    StModule(name, stmts, start, end) => end + 1
-    StMutual(stmts, start, end) => end + 1
-    StOther(what, start, end) => end + 1
+    StExtern(^fns, ^instances, ^types, ^structs, ^enums, ^start, end) => end + 1
+    StMutual(^stmts, ^start, end) => end + 1
+    StOther(^what, ^start, end) => end + 1
+    StLoop(^st_body, ^start, end) => end + 1
+    StModule(^mod_name, ^mod_vis, ^mod_items, ^start, end) => end + 1
+    StReexport(^re_path, ^re_names, ^re_spans, ^start, end) => end + 1
+    StFor(^for_pat, ^for_src, ^st_body, ^start, end) => end + 1
+    StBreak(^st_value, ^start, end) => end + 1
+    StContinue(^start, end) => end + 1
     _ => 0
   }
 }
 
 pub fn program_extent(stmts: List(SurfaceStmt)): Nat {
-  ⊢ Nat from match stmts {
+  match stmts {
     Nil => 0
     Cons(st, rest) => stmt_extent(st) + program_extent(rest)
   }
+}
+
+pub fn extern_diags_as_errors(diags: List(ExternDiag)): List(TypeError) {
+  match diags {
+    Nil => Nil
+    Cons(d, rest) => Cons(
+      TypeError { message: d.message, start: d.start, end: d.end },
+      extern_diags_as_errors(rest)
+    )
+  }
+}
+
+/// Module errors plus replaceable-`extern` validation. Callers that mirror
+/// Rust's `Checker::run` (`nibcheck_types_report`, `nibcheck_lin_try`,
+/// `nibcheck_type_errors`, `nibcheck_expand_program`) fold this into the
+/// errors they pass to `types_check` / `types_check_with`. Those entry points
+/// stay outside `ck_types_run` so its soundness proofs keep the same body.
+pub fn types_errors_with_extern(
+  program: List(SurfaceStmt),
+  module_errors: List(TypeError)
+): List(TypeError) {
+  List::append(extern_diags_as_errors(validate_extern_blocks(program)), module_errors)
 }
 
 pub fn types_check(
@@ -863,8 +1123,20 @@ pub fn types_check(
   program: List(SurfaceStmt),
   module_errors: List(TypeError)
 ): TypeReport {
+  types_check_with(Ordmap::empty(), prelude, program, module_errors)
+}
+
+// `lower` is what `char::to_lowercase` changes beyond ASCII
+// (`unicode_lowercase`); `types_check` knows only ASCII.
+pub fn types_check_with(
+  lower: Ordmap(Nat, List(Nat)),
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  module_errors: List(TypeError)
+): TypeReport {
   // Enough steps for the kinds of the types the program writes.
   var c: Checker := checker_new(16 * (program_extent(prelude) + program_extent(program) + 1))
+  set_to(&mut c.datas, datas_with_lower(c.datas, lower))
   ck_types_run(&mut c, prelude, program, module_errors)
 }
 
@@ -873,7 +1145,7 @@ pub fn dump_line(parts: List(Text)): Text {
 }
 
 pub fn dump_errors(es: List(TypeError)): List(Text) {
-  ⊢ List(Text) from match es {
+  match es {
     Nil => Nil
     Cons(e, rest) => Cons(
       dump_line(
@@ -890,8 +1162,8 @@ pub fn dump_errors(es: List(TypeError)): List(Text) {
   }
 }
 
-pub fn dump_lets(ls: List(Pair(Text, Text))): List(Text) {
-  ⊢ List(Text) from match ls {
+pub fn dump_lets(ls: List(Text × Text)): List(Text) {
+  match ls {
     Nil => Nil
     Cons(l, rest) => Cons(
       dump_line(Cons("let ", Cons(l.fst, Cons(" ", Cons(l.snd, Nil))))),
@@ -900,8 +1172,8 @@ pub fn dump_lets(ls: List(Pair(Text, Text))): List(Text) {
   }
 }
 
-pub fn dump_locals(es: List(Pair(LocalKey, Ty))): List(Text) {
-  ⊢ List(Text) from match es {
+pub fn dump_locals(es: List(LocalKey × Ty)): List(Text) {
+  match es {
     Nil => Nil
     Cons(e, rest) => Cons(
       dump_line(
@@ -937,12 +1209,12 @@ pub fn dump_same_span(a: TermAt, b: TermAt): Bool {
 }
 
 // `x` into `xs`, which is in order; equal ones keep both.
-pub fn dump_insert_ranked(x: Pair(Nat, Text), xs: List(Pair(Nat, Text))): List(Pair(Nat, Text)) {
-  ⊢ List(Pair(Nat, Text)) from match xs {
+pub fn dump_insert_ranked(x: Nat × Text, xs: List(Nat × Text)): List(Nat × Text) {
+  match xs {
     Nil => Cons(x, Nil)
-    Cons(y, ys) => ⊢ List(Pair(Nat, Text)) from match Ordmap::compare_nat(x.fst, y.fst) {
+    Cons(y, ys) => ⊢ List(Nat × Text) from match Ordmap::compare_nat(x.fst, y.fst) {
       Greater => Cons(y, dump_insert_ranked(x, ys))
-      Equal => ⊢ List(Pair(Nat, Text)) from match Ordmap::compare_text(x.snd, y.snd) {
+      Equal => ⊢ List(Nat × Text) from match Ordmap::compare_text(x.snd, y.snd) {
         Greater => Cons(y, dump_insert_ranked(x, ys))
         Equal => Cons(x, xs)
         Less => Cons(x, xs)
@@ -952,8 +1224,8 @@ pub fn dump_insert_ranked(x: Pair(Nat, Text), xs: List(Pair(Nat, Text))): List(P
   }
 }
 
-pub fn dump_ranked_lines(xs: List(Pair(Nat, Text))): List(Text) {
-  ⊢ List(Text) from match xs {
+pub fn dump_ranked_lines(xs: List(Nat × Text)): List(Text) {
+  match xs {
     Nil => Nil
     Cons(x, rest) => Cons(x.snd, dump_ranked_lines(rest))
   }
@@ -964,54 +1236,54 @@ pub fn dump_ranked_lines(xs: List(Pair(Nat, Text))): List(Text) {
 // found, as the report of `types.rs` sorts them; two nodes of one span that
 // found the same keep both lines.
 pub fn dump_term_groups(
-  es: List(Pair(TermAt, Ty)),
+  es: List(TermAt × Ty),
   at: TermAt,
-  group: List(Pair(Nat, Text))
+  group: List(Nat × Text)
 ): List(Text) {
-  ⊢ List(Text) from match es {
+  match es {
     Nil => dump_ranked_lines(group)
     Cons(e, rest) => ⊢ List(Text) from match dump_same_span(at, e.fst) {
       true => dump_term_groups(
         rest,
         at,
-        dump_insert_ranked(Pair { fst: 0, snd: dump_at("term ", e.fst, ty_dump(e.snd)) }, group)
+        dump_insert_ranked(#(0, dump_at("term ", e.fst, ty_dump(e.snd))), group)
       )
       false => List::append(
         dump_ranked_lines(group),
         dump_term_groups(
           rest,
           e.fst,
-          Cons(Pair { fst: 0, snd: dump_at("term ", e.fst, ty_dump(e.snd)) }, Nil)
+          Cons(#(0, dump_at("term ", e.fst, ty_dump(e.snd))), Nil)
         )
       )
     }
   }
 }
 
-pub fn dump_terms(es: List(Pair(TermAt, Ty))): List(Text) {
-  ⊢ List(Text) from match es {
+pub fn dump_terms(es: List(TermAt × Ty)): List(Text) {
+  match es {
     Nil => Nil
     Cons(e, rest) => dump_term_groups(
       rest,
       e.fst,
-      Cons(Pair { fst: 0, snd: dump_at("term ", e.fst, ty_dump(e.snd)) }, Nil)
+      Cons(#(0, dump_at("term ", e.fst, ty_dump(e.snd))), Nil)
     )
   }
 }
 
 pub fn dump_width_groups(
-  es: List(Pair(TermAt, Width)),
+  es: List(TermAt × Width),
   at: TermAt,
-  group: List(Pair(Nat, Text))
+  group: List(Nat × Text)
 ): List(Text) {
-  ⊢ List(Text) from match es {
+  match es {
     Nil => dump_ranked_lines(group)
     Cons(e, rest) => ⊢ List(Text) from match dump_same_span(at, e.fst) {
       true => dump_width_groups(
         rest,
         at,
         dump_insert_ranked(
-          Pair { fst: width_rank(e.snd), snd: dump_at("width ", e.fst, width_name(e.snd)) },
+          #(width_rank(e.snd), dump_at("width ", e.fst, width_name(e.snd))),
           group
         )
       )
@@ -1021,7 +1293,7 @@ pub fn dump_width_groups(
           rest,
           e.fst,
           Cons(
-            Pair { fst: width_rank(e.snd), snd: dump_at("width ", e.fst, width_name(e.snd)) },
+            #(width_rank(e.snd), dump_at("width ", e.fst, width_name(e.snd))),
             Nil
           )
         )
@@ -1030,13 +1302,13 @@ pub fn dump_width_groups(
   }
 }
 
-pub fn dump_widths(es: List(Pair(TermAt, Width))): List(Text) {
-  ⊢ List(Text) from match es {
+pub fn dump_widths(es: List(TermAt × Width)): List(Text) {
+  match es {
     Nil => Nil
     Cons(e, rest) => dump_width_groups(
       rest,
       e.fst,
-      Cons(Pair { fst: width_rank(e.snd), snd: dump_at("width ", e.fst, width_name(e.snd)) }, Nil)
+      Cons(#(width_rank(e.snd), dump_at("width ", e.fst, width_name(e.snd))), Nil)
     )
   }
 }
@@ -1044,22 +1316,22 @@ pub fn dump_widths(es: List(Pair(TermAt, Width))): List(Text) {
 // Whether the report has a type or a width of a term that was never given an
 // occurrence: such a report cannot tell two nodes of one span apart, so it is
 // not shown as if it could.
-pub fn report_missing_terms(es: List(Pair(TermAt, Ty))): Bool {
-  ⊢ Bool from match es {
+pub fn report_missing_terms(es: List(TermAt × Ty)): Bool {
+  match es {
     Nil => false
     Cons(e, rest) => ⊢ Bool from match e.fst.occurrence {
       None => true
-      Some(o) => report_missing_terms(rest)
+      Some(^o) => report_missing_terms(rest)
     }
   }
 }
 
-pub fn report_missing_widths(es: List(Pair(TermAt, Width))): Bool {
-  ⊢ Bool from match es {
+pub fn report_missing_widths(es: List(TermAt × Width)): Bool {
+  match es {
     Nil => false
     Cons(e, rest) => ⊢ Bool from match e.fst.occurrence {
       None => true
-      Some(o) => report_missing_widths(rest)
+      Some(^o) => report_missing_widths(rest)
     }
   }
 }
@@ -1068,8 +1340,8 @@ pub fn report_missing_occurrence(r: TypeReport): Bool {
   report_missing_terms(Ordmap::entries(r.terms)) || report_missing_widths(Ordmap::entries(r.widths))
 }
 
-pub fn dump_quants(es: List(Pair(Text, Quant))): List(Text) {
-  ⊢ List(Text) from match es {
+pub fn dump_quants(es: List(Text × Quant)): List(Text) {
+  match es {
     Nil => Nil
     Cons(e, rest) => Cons(
       dump_line(Cons("quant ", Cons(e.fst, Cons(" ", Cons(quant_name(e.snd), Nil))))),
@@ -1083,21 +1355,21 @@ pub fn dump_bool(b: Bool): Text {
 }
 
 pub fn dump_field_name(f: DataField): Text {
-  ⊢ Text from match f.name {
+  match f.name {
     Some(x) => x
     None => "_"
   }
 }
 
 pub fn dump_data_fields(fs: List(DataField)): List(Text) {
-  ⊢ List(Text) from match fs {
+  match fs {
     Nil => Nil
     Cons(f, rest) => Cons(cat3(dump_field_name(f), ":", ty_dump(f.ty)), dump_data_fields(rest))
   }
 }
 
 pub fn dump_data_ctors(cs: List(DataCtor)): List(Text) {
-  ⊢ List(Text) from match cs {
+  match cs {
     Nil => Nil
     Cons(k, rest) => Cons(
       cat4(k.name, "(", text_join(dump_data_fields(k.fields), ","), ")"),
@@ -1107,7 +1379,7 @@ pub fn dump_data_ctors(cs: List(DataCtor)): List(Text) {
 }
 
 pub fn dump_declared(d: Data): Text {
-  ⊢ Text from match d.declared {
+  match d.declared {
     Some(k) => kind_name(k)
     None => "-"
   }
@@ -1134,7 +1406,7 @@ pub fn dump_data(d: Data): Text {
                     Cons(
                       " ",
                       Cons(
-                        dump_bool(d.builtin),
+                        cat3(dump_bool(d.builtin), " ", dump_bool(d.view)),
                         Cons(
                           " ",
                           Cons(
@@ -1155,15 +1427,15 @@ pub fn dump_data(d: Data): Text {
   )
 }
 
-pub fn dump_datas(es: List(Pair(Text, Data))): List(Text) {
-  ⊢ List(Text) from match es {
+pub fn dump_datas(es: List(Text × Data)): List(Text) {
+  match es {
     Nil => Nil
     Cons(e, rest) => Cons(dump_data(e.snd), dump_datas(rest))
   }
 }
 
 pub fn dump_ctor_visible(d: Datas, name: Text, owner: Text, index: Nat): Bool {
-  ⊢ Bool from match datas_ctor_ambiguous(d, name) {
+  match datas_ctor_ambiguous(d, name) {
     true => false
     false => ⊢ Bool from match datas_constructor(d, owner, index) {
       None => true
@@ -1172,8 +1444,8 @@ pub fn dump_ctor_visible(d: Datas, name: Text, owner: Text, index: Nat): Bool {
   }
 }
 
-pub fn dump_ctors(es: List(Pair(Text, Pair(Text, Nat))), d: Datas): List(Text) {
-  ⊢ List(Text) from match es {
+pub fn dump_ctors(es: List(Text × Text × Nat), d: Datas): List(Text) {
+  match es {
     Nil => Nil
     Cons(e, rest) => ⊢ List(Text) from match dump_ctor_visible(d, e.fst, e.snd.fst, e.snd.snd) {
       false => dump_ctors(rest, d)

@@ -253,4 +253,79 @@ theorem adequate {κ : Val → Tree Op Val} {t : Tm Op Val} {T : Tree Op Val} {v
   cases h
   rfl
 
+/-! ## `&mut` read as states
+
+How tauto reads `&mut` in proofs (`docs/design/effect-proofs.md`, 「借用と
+affine」): each name that is lent `&mut` (a `var`, a `&mut` parameter) is a
+state of its own, read with `get x` and written with `put x`, which a state
+handler passes along by name (`runNames`). How a program runs: the names are
+cells of one store, `loc x` the cell `x` names, and `get`/`put` read and
+write the store (`runStore`).
+
+The two agree when no two names share a cell (`heap_adequate`): `loc` is
+injective, which the ownership checker guarantees for the names live at a
+time (`docs/design/ownership.md`). It is assumed here, not proved; the
+checker's rules are modelled in `Proto/Nib`. Without it the two disagree
+(`alias_disagrees`).
+-/
+
+/-- The operations on the lent names: read `x`, write `x`. -/
+inductive StOp (N : Type) : Type where
+  | get (x : N)
+  | put (x : N)
+
+/-- `f` with `a` at `x`. -/
+def upd {A B : Type} [DecidableEq A] (f : A → B) (x : A) (b : B) : A → B :=
+  fun y => if y = x then b else f y
+
+/-- The reading: each name its own state, passed along by a handler. A
+`put` answers `unit`. -/
+def Tree.runNames {N Val : Type} [DecidableEq N] (unit : Val) :
+    (N → Val) → Tree (StOp N) Val → Val × (N → Val)
+  | γ, .pure v => (v, γ)
+  | γ, .op (.get x) _ k => Tree.runNames unit γ (k (γ x))
+  | γ, .op (.put x) a k => Tree.runNames unit (upd γ x a) (k unit)
+
+/-- The program: the names are cells `loc x` of one store `σ`. -/
+def Tree.runStore {N L Val : Type} [DecidableEq L] (unit : Val) (loc : N → L) :
+    (L → Val) → Tree (StOp N) Val → Val × (L → Val)
+  | σ, .pure v => (v, σ)
+  | σ, .op (.get x) _ k => Tree.runStore unit loc σ (k (σ (loc x)))
+  | σ, .op (.put x) a k => Tree.runStore unit loc (upd σ (loc x) a) (k unit)
+
+theorem upd_comp {N L Val : Type} [DecidableEq N] [DecidableEq L] {loc : N → L}
+    (h : ∀ x y, loc x = loc y → x = y) (σ : L → Val) (x : N) (a : Val) :
+    upd (fun y => σ (loc y)) x a = fun y => upd σ (loc x) a (loc y) := by
+  funext y
+  unfold upd
+  by_cases e : y = x
+  · subst e; simp
+  · have : loc y ≠ loc x := fun h' => e (h y x h')
+    simp [e, this]
+
+/-- With no two names in one cell, the store gives the value the reading
+gives, and the reading's states are the store's cells. -/
+theorem heap_adequate {N L Val : Type} [DecidableEq N] [DecidableEq L] (unit : Val)
+    {loc : N → L} (h : ∀ x y, loc x = loc y → x = y) :
+    ∀ (T : Tree (StOp N) Val) (σ : L → Val),
+      T.runNames unit (fun y => σ (loc y)) =
+        ((T.runStore unit loc σ).1, fun y => (T.runStore unit loc σ).2 (loc y))
+  | .pure v, σ => rfl
+  | .op (.get x) _ k, σ => by
+    simp only [Tree.runNames, Tree.runStore]
+    exact heap_adequate unit h (k (σ (loc x))) σ
+  | .op (.put x) a k, σ => by
+    simp only [Tree.runNames, Tree.runStore]
+    rw [upd_comp h σ x a]
+    exact heap_adequate unit h (k unit) (upd σ (loc x) a)
+
+/-- Two names in one cell: writing one changes what the other reads in
+the store, but not in the reading. -/
+theorem alias_disagrees :
+    let T : Tree (StOp Bool) Nat :=
+      .op (.put true) 1 (fun _ => .op (.get false) 0 (fun v => .pure v))
+    let loc : Bool → Unit := fun _ => ()
+    (T.runNames 0 (fun _ => 0)).1 = 0 ∧ (T.runStore 0 loc (fun _ => 0)).1 = 1 := by
+  simp [Tree.runNames, Tree.runStore, upd]
+
 end Proto.Handlers

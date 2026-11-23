@@ -3,10 +3,11 @@ import Proto.Nib.Row
 /-!
 # Typing of Nib's core
 
-A small core of Nib: functions, calls, `if`, `var` cells,
+A small core of Nib: functions, calls, `if`, `var` places,
 generic functions over types and rows, tags, `struct` and `enum`, `perform`
 and `handle` with patterns and guards, `match`, `budget` with its `info`, and integer
-arithmetic that fails on overflow. The effect rules:
+arithmetic that performs `overflow` or `divzero` when its result does not
+exist. The effect rules:
 
 * A function value performs nothing when it is made; its type carries the row
   it may perform when called. Calling it adds that row.
@@ -22,7 +23,8 @@ arithmetic that fails on overflow. The effect rules:
   is deep: `k` re-enters it).
 * An arm's patterns are matched against the operation's values and then `k`
   (`e(p₁, …, pₙ), k`); a name binds, `_` and literals bind nothing, and a
-  constructor pattern binds what its field patterns bind. A guard
+  constructor pattern binds what its field patterns bind. A typed arm
+  `y: T` on a union binds the value when its head is one of `T`'s. A guard
   is a `Bool` over what the patterns bind that performs nothing.
 * `match` is a handler of `Match(A)` performed on the scrutinee
   (`Tm.mtch`). Its arms are exhaustive when the handler answers `Match(A)`:
@@ -37,13 +39,15 @@ arithmetic that fails on overflow. The effect rules:
   `@a v` to `v` must keep the type (`tagged`). Nib's checker never adds a
   tag; this model also accepts a literal where a tagged type is expected.
 
-The judgment `HasType sg S Γ t A ρ` reads "t has type A and performs at most
-ρ", with `S` the types of the cells made so far. Rows are read as sets, so a
+The judgment `HasType sg Γ t A ρ` reads "t has type A and performs at most
+ρ". There is no store: a `var` is `scope A init body`, a place in the term
+around the body that uses it, and the body names it by a variable of type
+`place A` (`docs/design/semantics.md`「Places」). Rows are read as sets, so a
 larger row is also accepted (`ρ ⊆ ρ'`). A value of a member type is also a
 value of the union, and a tag can be forgotten (`fits`): nothing is
 converted.
 
-`loc`, `run`, `info` and `select` are run-time forms: programs do not write
+`run`, `info` and `select` are run-time forms: programs do not write
 them, steps make them.
 
 Products are given by their subtyping only (`FitsMember`, `FitsProduct`):
@@ -52,8 +56,8 @@ the core has no product terms. Not modeled: `Div` on a kept continuation.
 
 namespace Proto.Nib
 
-/-- Integer operations; each fails (a run-time error) on overflow, and `div`
-and `mod` by zero. -/
+/-- Integer operations; each performs `overflow` when its result does not
+fit, and `div` and `mod` perform `divzero` when divided by zero. -/
 inductive Op where
   | add | sub | mul | div | mod
 
@@ -61,21 +65,21 @@ inductive Op where
 inductive FOp where
   | add | sub | mul | div
 
-/-- `Decimal` arithmetic is exact; `/` by zero is a run-time error. -/
+/-- `Decimal` arithmetic is exact; `/` by zero has no result. -/
 def FOp.dec : FOp → Rat → Rat → Option Rat
   | .add, a, b => some (a + b)
   | .sub, a, b => some (a - b)
   | .mul, a, b => some (a * b)
   | .div, a, b => if b = 0 then none else some (a / b)
 
-/-- `Float` arithmetic is IEEE 754's; `/` by zero is a run-time error. -/
+/-- `Float` arithmetic is IEEE 754's; `/` by zero has no result. -/
 def FOp.flt : FOp → Float → Float → Option Float
   | .add, a, b => some (a + b)
   | .sub, a, b => some (a - b)
   | .mul, a, b => some (a * b)
   | .div, a, b => if b == 0 then none else some (a / b)
 
-/-- `Float32` arithmetic is IEEE 754's; `/` by zero is a run-time error. -/
+/-- `Float32` arithmetic is IEEE 754's; `/` by zero has no result. -/
 def FOp.flt32 : FOp → Float32 → Float32 → Option Float32
   | .add, a, b => some (a + b)
   | .sub, a, b => some (a - b)
@@ -90,16 +94,31 @@ def Op.eval : Op → Int → Int → Option Int
   | .div, a, b => if b = 0 then none else some (a.tdiv b)
   | .mod, a, b => if b = 0 then none else some (a.tmod b)
 
-/-- The result at a width, or `none` for a run-time error. -/
+/-- The result at a width, or `none` when there is none. -/
 def Op.calc (op : Op) (w : Width) (a b : Int) : Option Int :=
   match op.eval a b with
   | some c => if w.fits c then some c else none
   | none => none
 
+/-- What an integer operation whose result does not exist performs:
+`divzero` for `div` or `mod` by zero, `overflow` otherwise. -/
+def Op.fault : Op → Int → Eff
+  | .div, b | .mod, b => if b = 0 then divZeroEff else overflowEff
+  | _, _ => overflowEff
+
+theorem Op.fault_mem (op : Op) (b : Int) : op.fault b ∈ [overflowEff, divZeroEff] := by
+  cases op <;> by_cases h : b = 0 <;> simp [Op.fault, h]
+
 /-- Built-in functions. Their typing is their signature; nothing more. -/
 inductive Prim where
   /-- `budget(steps, body)`: runs `body`; see `Prim.ty`. -/
   | budget
+  /-- `budget(steps, body)` whose stop drops the body: out of steps it
+  performs `Stopped(T)`, which carries nothing. It is the form of a
+  `handle { budget(…) { … } } with { exceeded(_), _ => … }` whose arm uses
+  neither the `info` nor the continuation: the body cannot outlive the
+  handle, so it may borrow (`BLin.runDrop`). -/
+  | budgetDrop
   /-- `a + b`, `a - b`, `a * b`, `div(a, b)`, `mod(a, b)` at a width. -/
   | arith (op : Op) (w : Width)
   /-- `info.more(m)` without its `k`: the suspended body with `m` more steps. -/
@@ -134,23 +153,56 @@ inductive Prim where
 /-- The signature of a built-in at its instance. `budget` is the prelude
 function
 
-    budget<T, e>(steps: i64, body: () -> T ! {Div | e}) -> T ! {Exceeded(T) | e}
+    budget<T, e>(steps: u64, body: () -> T ! {Div | e}) -> T ! {Exceeded(T) | e}
 
 with the row variable `e` taken to be `ρ`. The arithmetic at width `w` is
-`(w, w) -> w`. -/
+`(w, w) -> w ! {overflow, divzero}`, and that of `Decimal`, `Float` and
+`Float32` performs `divzero`: an operator whose result does not exist
+performs one of them (`Op.fault`). -/
 def Prim.ty : Prim → Ty → List Eff → Ty
-  | .budget, T, ρ => .fn [.int .i64, .fn [] T (divEff :: ρ)] T (exceededEff T ρ :: ρ)
-  | .arith _ w, _, _ => .fn [.int w, .int w] (.int w) []
-  | .more, T, ρ => .fn [.info T ρ, .int .i64] T (exceededEff T ρ :: ρ)
+  | .budget, T, ρ => .fn [.int .u64, .fn [] T (divEff :: ρ)] T (exceededEff T ρ :: ρ)
+  | .budgetDrop, T, ρ => .fn [.int .u64, .fn [] T (divEff :: ρ)] T (stoppedEff T :: ρ)
+  | .arith _ w, _, _ => .fn [.int w, .int w] (.int w) [overflowEff, divZeroEff]
+  | .more, T, ρ => .fn [.info T ρ, .int .u64] T (exceededEff T ρ :: ρ)
   | .unbounded, T, ρ => .fn [.info T ρ] T (divEff :: ρ)
-  | .decArith _, _, _ => .fn [.decimal, .decimal] .decimal []
-  | .floatArith _, _, _ => .fn [.float, .float] .float []
-  | .float32Arith _, _, _ => .fn [.float32, .float32] .float32 []
+  | .decArith _, _, _ => .fn [.decimal, .decimal] .decimal [divZeroEff]
+  | .floatArith _, _, _ => .fn [.float, .float] .float [divZeroEff]
+  | .float32Arith _, _, _ => .fn [.float32, .float32] .float32 [divZeroEff]
   | .decimal w, _, _ => .fn [.int w] .decimal []
   | .concat, _, _ => .fn [.text, .text] .text []
   | .reborrow, T, _ => .fn [.brw T] (.brw T) []
   | .reborrowMut, T, _ => .fn [.mbrw T] (.mbrw T) []
   | .vcall _ ps, T, _ => .fn ps T []
+
+/-- The head of a value that a typed arm `y: T` tests: a width, `Bool`,
+`Unit`, `Text`, `Decimal`, `Float`, `Float32`, the declaration of a `struct`
+or `enum` (whatever its type arguments), or a function. A tag does not change
+a value, so it has no head of its own. -/
+inductive Former where
+  | int (w : Width)
+  | bool
+  | unit
+  | text
+  | decimal
+  | float
+  | float32
+  | data (d : Nat)
+  | fn
+  deriving DecidableEq
+
+/-- The head of the values of a type that is neither a union, a tag, a type
+variable, `Never` nor a run-time type. -/
+def Ty.former : Ty → Option Former
+  | .int w => some (.int w)
+  | .bool => some .bool
+  | .unit => some .unit
+  | .text => some .text
+  | .decimal => some .decimal
+  | .float => some .float
+  | .float32 => some .float32
+  | .data d _ => some (.data d)
+  | .fn _ _ _ => some .fn
+  | _ => none
 
 /-- A pattern of an arm, for one value. -/
 inductive Pat where
@@ -167,11 +219,15 @@ inductive Pat where
   /-- Constructor `c` of the `struct` or `enum` `d`, with patterns for its
   fields: `Some(x)`, `Point { x, y: _ }` (fields by position). -/
   | con (d c : Nat) (ps : List Pat)
+  /-- `y: T` on a union: takes a value whose head is one of `hs`, the heads
+  of `T`'s members, and binds it. -/
+  | narrow (hs : List Former)
 
 mutual
   /-- How many variables a pattern binds. -/
   def Pat.binds : Pat → Nat
     | .bind => 1
+    | .narrow _ => 1
     | .con _ _ ps => Pat.count ps
     | _ => 0
 
@@ -203,17 +259,14 @@ mutual
     | app (f : Tm) (args : List Tm)
     /-- `if c { t } else { f }` -/
     | ite (c t f : Tm)
-    /-- `var x = init`: a new cell holding an `A` (the rest of the block is a
-    function of it). The checker gives the type; the core keeps it, so that
-    the type of each cell is fixed by the program. -/
-    | cell (A : Ty) (init : Tm)
-    /-- An owned value: like `cell`, a new place in the state holding `init`,
-    and the place is the value's token. The checker
-    reads an affine or linear constructor `C(…)` as `fresh (C(…))`, and a
-    move out of it (a `match`, a field) as `get`; `Proto/Nib/Lin.lean` lets
-    each such place be used at most once. -/
-    | fresh (A : Ty) (init : Tm)
-    /-- Reading a `var`. -/
+    /-- `{ var x = init; body }`: a place holding an `A`, around `body`,
+    which names it by variable `0`. The checker gives the type; the core
+    keeps it, so that the type of each place is fixed by the program. -/
+    | scope (A : Ty) (init body : Tm)
+    /-- `(ps) => body` as a local function: its body may use the places
+    around it. -/
+    | llam (ps : List Ty) (body : Tm)
+    /-- Reading a `var`: `c` is the variable naming its place. -/
     | get (c : Tm)
     /-- `x := v` -/
     | set (c v : Tm)
@@ -231,20 +284,19 @@ mutual
     | perform (e : Eff) (args : List Tm)
     /-- `handle { body } with { return x => ret; clauses }` -/
     | handle (body : Tm) (ret : Option Tm) (clauses : List Clause)
-    /-- Run time: the cell at `l`. -/
-    | loc (l : Nat)
-    /-- Run time: a `budget` under way, `body` with `n` steps left. -/
-    | run (n : Nat) (T : Ty) (ρ : List Eff) (body : Tm)
+    /-- Run time: a `budget` under way, `body` with `n` steps left; with
+    `drop`, a `budgetDrop`, whose stop drops `body`. -/
+    | run (drop : Bool) (n : Nat) (T : Ty) (ρ : List Eff) (body : Tm)
     /-- Run time: the `info` of a budget out of steps, `body` suspended. -/
     | info (T : Ty) (ρ : List Eff) (body : Tm)
     /-- Run time: the arms `clauses` tried in order for `perform e(vs)`,
     with `k` its continuation. -/
     | select (e : Eff) (vs : List Tm) (k : Tm) (clauses : List Clause)
-    /-- `&x`: a shared borrow of the place `t` (`docs/design/ownership.md`「借用（`Borrow.lean`、`BorrowStep.lean`、`BorrowSafety.lean`）」). The use check lets it name a variable or a place, and only
+    /-- `&x`: a shared borrow of the place named by the variable `n` (`docs/design/ownership.md`「Borrows」). The use check lets it name a variable or a place, and only
     where an argument goes. -/
-    | brw (t : Tm)
-    /-- `&mut x` -/
-    | mbrw (t : Tm)
+    | brw (n : Nat) (π : List Nat)
+    /-- `&mut x.π` -/
+    | mbrw (n : Nat) (π : List Nat)
     /-- `b.f` through a borrow `b`: field `i` of the `struct` the place holds,
     read and left there. -/
     | field (i : Nat) (b : Tm)
@@ -283,6 +335,20 @@ def Tm.lit : Tm → Option Lit
   | .text s => some (.text s)
   | _ => none
 
+/-- What a typed arm sees of a value: its head. -/
+def Tm.former : Tm → Option Former
+  | .int w _ => some (.int w)
+  | .bool _ => some .bool
+  | .unit => some .unit
+  | .text _ => some .text
+  | .dec _ => some .decimal
+  | .flt _ => some .float
+  | .flt32 _ => some .float32
+  | .con d _ _ _ => some (.data d)
+  | .lam _ _ => some .fn
+  | .prim _ _ _ => some .fn
+  | _ => none
+
 /-- What a constructor pattern can see of a value: its type's declaration,
 its constructor and its fields. -/
 def Tm.conView : Tm → Option (Nat × Nat × List Tm)
@@ -301,6 +367,10 @@ mutual
         match v.conView with
         | some (d', c', fs) => if d = d' ∧ c = c' then Pat.takeAll ps fs else none
         | none => none
+    | .narrow hs, v =>
+        match v.former with
+        | some h => if h ∈ hs then some [v] else none
+        | none => none
 
   /-- Matching patterns against values, one each, in order. -/
   def Pat.takeAll : List Pat → List Tm → Option (List Tm)
@@ -311,6 +381,16 @@ mutual
         | _, _ => none
     | _, _ => none
 end
+
+/-- A typed arm binds the value itself. -/
+theorem Pat.take_narrow {hs : List Former} {v : Tm} {bs : List Tm}
+    (h : (Pat.narrow hs).take v = some bs) : bs = [v] := by
+  simp only [Pat.take] at h
+  split at h
+  · split at h
+    · cases h; rfl
+    · cases h
+  · cases h
 
 /-- An arm without a guard for `e` takes the values `vs` (and `k`). -/
 def Takes (cls : List Clause) (e : Eff) (vs : List Tm) : Prop :=
@@ -326,17 +406,17 @@ inductive Value : Tm → Prop where
   | flt32 {f} : Value (.flt32 f)
   | prim {p T ρ} : Value (.prim p T ρ)
   | lam {ps b} : Value (.lam ps b)
-  | loc {l} : Value (.loc l)
+  | llam {ps b} : Value (.llam ps b)
   | info {T ρ b} : Value (.info T ρ b)
   | con {d args c fs} : (∀ v ∈ fs, Value v) → Value (.con d args c fs)
-  | brw {l} : Value (.brw (.loc l))
-  | mbrw {l} : Value (.mbrw (.loc l))
+  | brw {n π} : Value (.brw n π)
+  | mbrw {n π} : Value (.mbrw n π)
 
 /-- A borrow of a place, as a value. -/
-def BorrowVal (v : Tm) : Prop := ∃ l, v = .brw (.loc l) ∨ v = .mbrw (.loc l)
+def BorrowVal (v : Tm) : Prop := ∃ n π, v = .brw n π ∨ v = .mbrw n π
 
 theorem BorrowVal.value {v : Tm} (h : BorrowVal v) : Value v := by
-  obtain ⟨l, rfl | rfl⟩ := h
+  obtain ⟨l, π, rfl | rfl⟩ := h
   · exact .brw
   · exact .mbrw
 
@@ -359,6 +439,52 @@ structure Sig where
   op : Eff → Option (List Ty × Ty)
   defs : Nat → Option (Ty × Tm)
   data : Nat → Option (List (List Ty))
+  /-- The parameters a definition's result may borrow (`borrows(..)`):
+  `none` is every parameter. -/
+  lends : Nat → Option (List Nat) := fun _ => none
+
+/-- The type at the field path `π` inside a value of type `A`: a path goes
+only through the fields of a `struct` of one constructor. -/
+def Ty.at (sg : Sig) (A : Ty) : List Nat → Option Ty
+  | [] => some A
+  | i :: π => match A with
+    | .data d args => match sg.data d with
+      | some [F] => (F[i]?).bind (fun B => Ty.at sg (B.inst (instOf args [])) π)
+      | _ => none
+    | _ => none
+
+theorem Ty.at_append {sg : Sig} : ∀ (A : Ty) (π ρ : List Nat),
+    Ty.at sg A (π ++ ρ) = (Ty.at sg A π).bind (fun B => Ty.at sg B ρ)
+  | A, [], ρ => by simp [Ty.at]
+  | A, i :: π, ρ => by
+      cases A <;> simp only [Ty.at, List.cons_append, Option.bind_none]
+      split <;> try rfl
+      cases (‹List Ty›)[i]? <;> simp [Ty.at_append _ π ρ]
+
+theorem Ty.at_data {sg sg' : Sig} (h : sg.data = sg'.data) : ∀ (A : Ty) (π : List Nat),
+    Ty.at sg A π = Ty.at sg' A π
+  | _, [] => rfl
+  | A, i :: π => by
+      cases A <;> simp only [Ty.at]
+      rw [h]; split <;> try rfl
+      congr 1; funext B; exact Ty.at_data h _ π
+
+theorem Ty.at_inst {sg : Sig} (θ : Inst) : ∀ {A B : Ty} (π : List Nat),
+    Ty.at sg A π = some B → Ty.at sg (A.inst θ) π = some (B.inst θ)
+  | A, B, [], h => by simp only [Ty.at, Option.some.injEq] at h ⊢; exact congrArg _ h
+  | A, B, i :: π, h => by
+      cases A <;> simp only [Ty.at, reduceCtorEq] at h
+      case data d args =>
+        simp only [Ty.inst, Ty.at]
+        split at h
+        · next F hF =>
+            cases hi : F[i]? with
+            | none => simp [hi] at h
+            | some C =>
+                simp only [hi, Option.bind_some] at h ⊢
+                have := Ty.at_inst θ π h
+                rwa [Ty.inst_instOf] at this
+        · simp at h
 
 mutual
   /-- `v` may be a value of type `A`: read off the form of `v`. A type
@@ -373,9 +499,9 @@ mutual
     | flt32 {f} : Inhab sg .float32 (.flt32 f)
     | lam {ps B ρ qs b} : Inhab sg (.fn ps B ρ) (.lam qs b)
     | prim {ps B ρ p T ρ'} : Inhab sg (.fn ps B ρ) (.prim p T ρ')
-    | loc {A l} : Inhab sg (.cell A) (.loc l)
-    | brw {A l} : Inhab sg (.brw A) (.brw (.loc l))
-    | mbrw {A l} : Inhab sg (.mbrw A) (.mbrw (.loc l))
+    | llam {ps B ρ qs b} : Inhab sg (.lfn ps B ρ) (.llam qs b)
+    | brw {A n π} : Inhab sg (.brw A) (.brw n π)
+    | mbrw {A n π} : Inhab sg (.mbrw A) (.mbrw n π)
     | info {T ρ T' ρ' b} : Inhab sg (.info T ρ) (.info T' ρ' b)
     | union {ts t v} : t ∈ ts → Inhab sg t v → Inhab sg (.union ts) v
     | tag {a T v} : Inhab sg T v → Inhab sg (.tag a T) v
@@ -395,6 +521,37 @@ def Covers (sg : Sig) (cls : List Clause) (e : Eff) : Prop :=
   ∃ ps R, sg.op e = some (ps, R) ∧ ∀ vs k, Inhabs sg ps vs → Takes cls e (vs ++ [k])
 
 abbrev Ctx := List Ty
+
+/-- A type whose values may name a place: a place, a borrow, a local
+function, and what holds one (a union member, a tagged type, a field). A
+value of such a type is used where it is made: no place holds it, no
+`scope` gives it, and no first-class function sees it. -/
+inductive Local (sg : Sig) : Ty → Prop where
+  | place {A} : Local sg (.place A)
+  | brw {A} : Local sg (.brw A)
+  | mbrw {A} : Local sg (.mbrw A)
+  | lfn {ps r ρ} : Local sg (.lfn ps r ρ)
+  | hidden : Local sg .hidden
+  | union {ts t} : t ∈ ts → Local sg t → Local sg (.union ts)
+  | tag {a T} : Local sg T → Local sg (.tag a T)
+  | field {d args cs F A} : sg.data d = some cs → F ∈ cs → A ∈ fieldsOf F args →
+      Local sg A → Local sg (.data d args)
+
+/-- A type whose values name no place: they may leave the `scope`s around
+them. A first-class function is one, whatever it takes and gives. -/
+def Portable (sg : Sig) (A : Ty) : Prop := ¬ Local sg A
+
+open Classical in
+/-- How a first-class function's body sees a variable around it: as itself
+if it is plain, and hidden otherwise. -/
+noncomputable def Ty.mask (sg : Sig) (A : Ty) : Ty := if Local sg A then .hidden else A
+
+/-- A variable a term can name as a value: not a place's name, and not
+hidden. -/
+def Ty.Usable : Ty → Prop
+  | .place _ => False
+  | .hidden => False
+  | _ => True
 
 /-- A value of type `a` may be put where `t` is expected. Nothing is
 converted:
@@ -472,45 +629,50 @@ theorem FitsProduct.member {xs ys : List Ty} {T : Ty}
   obtain ⟨x, hx, fxy⟩ := h y hy
   exact ⟨x, hx, Fits.trans fxy fyT⟩
 
-/-- A type that holds the values of `X`: `X`, a union of it, or a tag on
-it. -/
+/-- A type that holds the values of `X`: `X`, or a tag on it. A union does
+not: a constructor or a literal pattern is for a type that is not one. -/
 inductive Holds (X : Ty) : Ty → Prop where
   | refl : Holds X X
-  | union {t ts} : t ∈ ts → Holds X t → Holds X (.union ts)
   | tag {a T} : Holds X T → Holds X (.tag a T)
 
-/-- Whatever types are put for its type variables, the values of `A` built
-by `d` are of `d` at `args`: `A` is made with unions and tags of types
-that are not built by `d`, and `d` at `args`. -/
-inductive Owns (d : Nat) (args : List Ty) : Ty → Prop where
-  | data : Owns d args (.data d args)
-  | other {d' args'} : d' ≠ d → Owns d args (.data d' args')
-  | int {w} : Owns d args (.int w)
-  | bool : Owns d args .bool
-  | unit : Owns d args .unit
-  | text : Owns d args .text
-  | decimal : Owns d args .decimal
-  | float : Owns d args .float
-  | float32 : Owns d args .float32
-  | fn {ps B ρ} : Owns d args (.fn ps B ρ)
-  | cell {A} : Owns d args (.cell A)
-  | brw {A} : Owns d args (.brw A)
-  | mbrw {A} : Owns d args (.mbrw A)
-  | info {T ρ} : Owns d args (.info T ρ)
-  | never : Owns d args .never
-  | tag {a T} : Owns d args T → Owns d args (.tag a T)
-  | union {ts} : (∀ t ∈ ts, Owns d args t) → Owns d args (.union ts)
+/-- The values of `A` have no head among `hs`: a type whose head is not
+among them, a run-time type or `Never` (whose values have no head), and
+tags and unions of such types. A type variable is not apart: any type may
+be put for it. -/
+inductive Apart (hs : List Former) : Ty → Prop where
+  | plain {A f} : A.former = some f → f ∉ hs → Apart hs A
+  | place {A} : Apart hs (.place A)
+  | lfn {ps r ρ} : Apart hs (.lfn ps r ρ)
+  | hidden : Apart hs .hidden
+  | brw {A} : Apart hs (.brw A)
+  | mbrw {A} : Apart hs (.mbrw A)
+  | info {T ρ} : Apart hs (.info T ρ)
+  | never : Apart hs .never
+  | tag {a T} : Apart hs T → Apart hs (.tag a T)
+  | union {ts} : (∀ t ∈ ts, Apart hs t) → Apart hs (.union ts)
+
+/-- The values of `A` whose head is among `hs` are values of `T`: each
+member of `A`, under its tags, fits `T` or is apart from `hs`. A typed arm
+`y: T` on `A`, with `hs` the heads of `T`'s members, binds such a value at
+`T` (`Narrow.value`). -/
+inductive Narrow (hs : List Former) (T : Ty) : Ty → Prop where
+  | fits {A} : Fits A T → Narrow hs T A
+  | apart {A} : Apart hs A → Narrow hs T A
+  | tag {a A} : Narrow hs T A → Narrow hs T (.tag a A)
+  | union {ts} : (∀ t ∈ ts, Narrow hs T t) → Narrow hs T (.union ts)
 
 /-- `B` is `A`, or a type inside `A` that `A`'s values hold or take: the
-parameters and the result of a function, the members of a union, what a cell
-holds, a tagged type, and the fields of a `struct` or `enum` at its type
+parameters and the result of a function (first-class or local), the members of a union, what a
+place holds, a tagged type, and the fields of a `struct` or `enum` at its type
 arguments. An `info` and the effects of a row are not looked into. -/
 inductive Reach (sg : Sig) : Ty → Ty → Prop where
   | refl {A} : Reach sg A A
   | param {ps r ρ p B} : p ∈ ps → Reach sg p B → Reach sg (.fn ps r ρ) B
   | ret {ps r ρ B} : Reach sg r B → Reach sg (.fn ps r ρ) B
+  | lparam {ps r ρ p B} : p ∈ ps → Reach sg p B → Reach sg (.lfn ps r ρ) B
+  | lret {ps r ρ B} : Reach sg r B → Reach sg (.lfn ps r ρ) B
   | union {ts t B} : t ∈ ts → Reach sg t B → Reach sg (.union ts) B
-  | cell {A B} : Reach sg A B → Reach sg (.cell A) B
+  | place {A B} : Reach sg A B → Reach sg (.place A) B
   | brw {A B} : Reach sg A B → Reach sg (.brw A) B
   | mbrw {A B} : Reach sg A B → Reach sg (.mbrw A) B
   | tag {a T B} : Reach sg T B → Reach sg (.tag a T) B
@@ -528,9 +690,11 @@ def DivClosed (sg : Sig) (A : Ty) : Prop :=
 values of the operations of `ρ` that go out of it. They have `Div` on their
 functions (`DivClosed`), so a function made in the body with `Div` cannot
 leave it without `Div` in its type. Each effect of `ρ` is `Div` or a declared
-operation (not a row variable). -/
+operation (not a row variable). The result names no place: the steps run
+out where the budget is written. -/
 def BudgetOk (sg : Sig) (T : Ty) (ρ : List Eff) : Prop :=
-  DivClosed sg T ∧ ∀ e, e ∈ ρ → e = divEff ∨ ∃ ps R, sg.op e = some (ps, R) ∧ ∀ q, q ∈ ps → DivClosed sg q
+  DivClosed sg T ∧ (∀ e, e ∈ ρ → e = divEff ∨ ∃ ps R, sg.op e = some (ps, R) ∧ ∀ q, q ∈ ps → DivClosed sg q) ∧
+    Portable sg T
 
 /-- `&A` or `&mut A`. -/
 def Ty.IsBrw : Ty → Prop
@@ -547,30 +711,35 @@ each at the type the callee expects. -/
 def ViewPass (ps qs : List Ty) (is : List Nat) : Prop :=
   is.length = qs.length ∧ ∀ k x : Nat, is[k]? = some x → ps[x]? = qs[k]?
 
-/-- The body of the view function `d` with parameters `ps` and result `T`:
-it gives back one of the borrowed parameters, which it picks by
+/-- The body of the view function `d` with parameters `ps` and result `T`,
+whose result may borrow only the parameters `bs` (the contract
+`borrows(…)`; without one, all of them): it gives back one of the listed
+parameters, which it picks by
 
-* `param`: the parameter `j`, of the result's type;
+* `param`: the parameter `j`, listed, of the result's type;
 * `ite`: by an `if` on a `bool` parameter;
 * `call`: by a call of a view function declared before (`d' < d`, so no
-  recursion) on parameters of its own.
+  recursion) on parameters of its own, whose listed parameters it passes
+  only listed parameters for.
 
-Whichever it picks, the result is one of the arguments, at the result type. -/
-inductive ViewBody (sg : Sig) : Nat → List Ty → Ty → Tm → Prop where
-  | param {d ps T j} : ps[j]? = some T → ViewBody sg d ps T (.var j)
-  | ite {d ps T c t f} : ps[c]? = some .bool → ViewBody sg d ps T t → ViewBody sg d ps T f →
-      ViewBody sg d ps T (.ite (.var c) t f)
-  | call {d d' ps qs T is b} : d' < d → sg.defs d' = some (.fn qs T [], .lam qs b) →
-      (∀ p ∈ qs, ViewParam p) → ViewPass ps qs is → ViewBody sg d' qs T b →
-      ViewBody sg d ps T (.app (.prim (.vcall d' qs) T []) (is.map .var))
+Whichever it picks, the result is one of the listed arguments, at the result
+type. -/
+inductive ViewBody (sg : Sig) : Nat → List Ty → Ty → List Nat → Tm → Prop where
+  | param {d ps T bs j} : ps[j]? = some T → j ∈ bs → ViewBody sg d ps T bs (.var j)
+  | ite {d ps T bs c t f} : ps[c]? = some .bool → ViewBody sg d ps T bs t → ViewBody sg d ps T bs f →
+      ViewBody sg d ps T bs (.ite (.var c) t f)
+  | call {d d' ps qs T bs bs' is b} : d' < d → sg.defs d' = some (.fn qs T [], .lam qs b) →
+      (∀ p ∈ qs, ViewParam p) → ViewPass ps qs is → ViewBody sg d' qs T bs' b →
+      (∀ k j, k ∈ bs' → is[k]? = some j → j ∈ bs) →
+      ViewBody sg d ps T bs (.app (.prim (.vcall d' qs) T []) (is.map .var))
 
 /-- `d` declares a view function with parameters `ps` and result `B`: every
 parameter is a borrow or a `bool`, the result is a borrow, and the body
-picks one of the parameters (`ViewBody`). So the result is one of the
-borrowed arguments, which the signature alone says (it is derived from
-them, `docs/design/rust-backend.md`). -/
+picks one of the parameters its contract lists (`ViewBody`). So the result
+is one of the listed borrowed arguments, which the signature alone says (it
+is derived from them, `docs/design/rust-backend.md`). -/
 def ViewDecl (sg : Sig) (d : Nat) (ps : List Ty) (B : Ty) : Prop :=
-  (∀ p ∈ ps, ViewParam p) ∧ B.IsBrw ∧ ∃ b, sg.defs d = some (.fn ps B [], .lam ps b) ∧ ViewBody sg d ps B b
+  (∀ p ∈ ps, ViewParam p) ∧ B.IsBrw ∧ ∃ b bs, sg.defs d = some (.fn ps B [], .lam ps b) ∧ ViewBody sg d ps B bs b
 
 /-- The parameter picked by the body `b` of a view function, run on the
 arguments `vs`. The facts about types are in the derivation: the parameter
@@ -591,11 +760,11 @@ theorem ViewRun.ty {sg ps T b vs i} (h : ViewRun sg ps T b vs i) : ps[i]? = some
   | call _ hp _ hi ih => rw [hp.2 _ _ hi]; exact ih
 
 /-- A view function has a parameter: the result is one of them. -/
-theorem ViewBody.ne_nil {sg d ps T b} (h : ViewBody sg d ps T b) : ps ≠ [] := by
+theorem ViewBody.ne_nil {sg d ps T bs b} (h : ViewBody sg d ps T bs b) : ps ≠ [] := by
   induction h with
   | param hj => rintro rfl; simp at hj
   | ite hc => rintro rfl; simp at hc
-  | @call d d' ps qs T is b _ _ _ hp _ ih =>
+  | @call d d' ps qs T bs bs' is b _ _ _ hp _ _ ih =>
       rintro rfl
       have hq : 0 < qs.length := List.length_pos_iff.mpr ih
       have hi : 0 < is.length := by have := hp.1; omega
@@ -604,12 +773,12 @@ theorem ViewBody.ne_nil {sg d ps T b} (h : ViewBody sg d ps T b) : ps ≠ [] := 
 
 /-- A view function's body runs on arguments that have the right shape:
 as many as parameters, and a `bool` where the parameter is one. -/
-theorem ViewBody.run {sg d ps T b} (h : ViewBody sg d ps T b) :
+theorem ViewBody.run {sg d ps T bs b} (h : ViewBody sg d ps T bs b) :
     ∀ vs : List Tm, vs.length = ps.length → (∀ j : Nat, ps[j]? = some Ty.bool → ∃ bb, vs[j]? = some (Tm.bool bb)) →
       ∃ i, ViewRun sg ps T b vs i := by
   induction h with
   | param hj => exact fun _ _ _ => ⟨_, .param hj⟩
-  | @ite d ps T c t f hc _ _ iht ihf =>
+  | @ite d ps T bs c t f hc _ _ iht ihf =>
       intro vs hl hb
       obtain ⟨bb, hbb⟩ := hb c hc
       cases bb
@@ -617,7 +786,7 @@ theorem ViewBody.run {sg d ps T b} (h : ViewBody sg d ps T b) :
         exact ⟨i, .ite hbb hi⟩
       · obtain ⟨i, hi⟩ := iht vs hl hb
         exact ⟨i, .ite hbb hi⟩
-  | @call d d' ps qs T is b hlt hdef hqs hp _ ih =>
+  | @call d d' ps qs T bs bs' is b hlt hdef hqs hp _ _ ih =>
       intro vs hl hb
       have hlen : (is.map (fun x => vs.getD x .unit)).length = qs.length := by simpa using hp.1
       obtain ⟨j, hj⟩ := ih _ hlen (fun k hk => by
@@ -631,17 +800,51 @@ theorem ViewBody.run {sg d ps T b} (h : ViewBody sg d ps T b) :
       have hji : j < is.length := by have := hp.1; omega
       exact ⟨is[j], .call hdef hp hj (by simp)⟩
 
-theorem ViewBody.transfer {sg sg' : Sig} (hdefs : ∀ d x, sg'.defs d = some x → sg.defs d = some x)
-    {d ps T b} (h : ViewBody sg' d ps T b) : ViewBody sg d ps T b := by
+theorem map_var_inj : ∀ {xs ys : List Nat}, xs.map Tm.var = ys.map Tm.var → xs = ys
+  | [], [], _ => rfl
+  | [], _ :: _, h => by simp at h
+  | _ :: _, [], h => by simp at h
+  | x :: xs, y :: ys, h => by
+      simp only [List.map_cons, List.cons.injEq, Tm.var.injEq] at h
+      rw [h.1, map_var_inj h.2]
+
+/-- The parameter a view function's body picks is one its contract lists. -/
+theorem ViewBody.listed {sg d ps T bs b} (h : ViewBody sg d ps T bs b) :
+    ∀ {vs i}, ViewRun sg ps T b vs i → i ∈ bs := by
   induction h with
-  | param hj => exact .param hj
+  | param _ hm => intro vs i hr; cases hr; exact hm
+  | ite _ _ _ iht ihf =>
+      intro vs i hr
+      cases hr with
+      | ite _ hr' =>
+        split at hr'
+        · exact iht hr'
+        · exact ihf hr'
+  | @call d d' ps qs T bs bs' is b _ hdef _ _ _ hbs ih =>
+      intro vs i hr
+      generalize he : Tm.app (.prim (.vcall d' qs) T []) (is.map .var) = t at hr
+      cases hr with
+      | param => cases he
+      | ite => cases he
+      | call hdef' _ hj hi =>
+        simp only [Tm.app.injEq, Tm.prim.injEq, Prim.vcall.injEq] at he
+        obtain ⟨⟨⟨rfl, rfl⟩, -, -⟩, he⟩ := he
+        have := map_var_inj he
+        subst this
+        rw [hdef] at hdef'; cases hdef'
+        exact hbs _ _ (ih hj) hi
+
+theorem ViewBody.transfer {sg sg' : Sig} (hdefs : ∀ d x, sg'.defs d = some x → sg.defs d = some x)
+    {d ps T bs b} (h : ViewBody sg' d ps T bs b) : ViewBody sg d ps T bs b := by
+  induction h with
+  | param hj hm => exact .param hj hm
   | ite hc _ _ ih1 ih2 => exact .ite hc ih1 ih2
-  | call hlt hdef hqs hp _ ih => exact .call hlt (hdefs _ _ hdef) hqs hp ih
+  | call hlt hdef hqs hp _ hbs ih => exact .call hlt (hdefs _ _ hdef) hqs hp ih hbs
 
 theorem ViewDecl.transfer {sg sg' : Sig} (hdefs : ∀ d x, sg'.defs d = some x → sg.defs d = some x)
     {d ps B} (h : ViewDecl sg' d ps B) : ViewDecl sg d ps B := by
-  obtain ⟨hp, hB, b, hdef, hb⟩ := h
-  exact ⟨hp, hB, b, hdefs _ _ hdef, hb.transfer hdefs⟩
+  obtain ⟨hp, hB, b, bs, hdef, hb⟩ := h
+  exact ⟨hp, hB, b, bs, hdefs _ _ hdef, hb.transfer hdefs⟩
 
 /-- `d` is declared as a view function. -/
 def ViewDef (sg : Sig) (d : Nat) : Prop := ∃ ps B, ViewDecl sg d ps B
@@ -650,24 +853,27 @@ def ViewDef (sg : Sig) (d : Nat) : Prop := ∃ ps B, ViewDecl sg d ps B
 of a declared view function, at its type, which has no variable. -/
 def Prim.Ok (sg : Sig) : Prim → Ty → List Eff → Prop
   | .budget, T, ρ => BudgetOk sg T ρ
+  | .budgetDrop, T, ρ => BudgetOk sg T ρ
   | .more, T, ρ => BudgetOk sg T ρ
   | .vcall d ps, T, ρ => ρ = [] ∧ (∀ θ, (Ty.fn ps T []).inst θ = .fn ps T []) ∧ ViewDecl sg d ps T
   | _, _, _ => True
 
 mutual
   /-- A pattern for a value of type `A`, and the types of what it binds. A
-  literal is a value the type holds. A constructor pattern of `d` is for a
-  type that holds `d` at one `args` (also in a union: a `match` on
-  `Shape | i64` may have `Circle(r)` and `-1` arms), with patterns for its
-  fields. -/
+  literal is a value the type holds. A constructor pattern of `d` is for
+  `d` at `args`, under tags, with patterns for its fields. On a union, a
+  typed arm `y: T` takes the values whose head is one of `T`'s, and binds
+  them at `T` (`Narrow`); a `match` on `Shape | i64` narrows to `Shape`
+  first and then matches `Circle(r)` in a `match` of its own. -/
   inductive PatOk (sg : Sig) : Pat → Ty → List Ty → Prop where
     | bind {A} : PatOk sg .bind A [A]
     | wild {A} : PatOk sg .wild A []
     | int {w n A} : w.fits n = true → Holds (.int w) A → PatOk sg (.int w n) A []
     | bool {b A} : Holds .bool A → PatOk sg (.bool b) A []
     | text {s A} : Holds .text A → PatOk sg (.text s) A []
-    | con {c ps A d args cs F Δ} : Holds (.data d args) A → Owns d args A → sg.data d = some cs →
+    | con {c ps A d args cs F Δ} : Holds (.data d args) A → sg.data d = some cs →
         cs[c]? = some F → PatsOk sg ps (fieldsOf F args) Δ → PatOk sg (.con d c ps) A Δ
+    | narrow {hs A T} : Narrow hs T A → PatOk sg (.narrow hs) A [T]
 
   /-- Patterns for values of the types `As`, and the types of what they bind,
   in order. -/
@@ -678,143 +884,163 @@ mutual
 end
 
 mutual
-  inductive HasType : Sig → Ctx → Ctx → Tm → Ty → Row → Prop where
-    | var {sg S Γ i A} : Γ[i]? = some A → HasType sg S Γ (.var i) A []
+  inductive HasType : Sig → Ctx → Tm → Ty → Row → Prop where
+    /-- A variable that names a value; a place's name is read by `get`. -/
+    | var {sg Γ i A} : Γ[i]? = some A → A.Usable → HasType sg Γ (.var i) A []
     /-- `budget` and `more` at `T ! ρ` only where what leaves them has `Div`
     on its functions (rule 5, `Prim.Ok`). -/
-    | prim {sg S Γ p T ρ} : Prim.Ok sg p T ρ → HasType sg S Γ (.prim p T ρ) (p.ty T ρ) []
+    | prim {sg Γ p T ρ} : Prim.Ok sg p T ρ → HasType sg Γ (.prim p T ρ) (p.ty T ρ) []
     /-- A literal is in the range of its width. -/
-    | int {sg S Γ w n} : w.fits n = true → HasType sg S Γ (.int w n) (.int w) []
-    | bool {sg S Γ b} : HasType sg S Γ (.bool b) .bool []
-    | unit {sg S Γ} : HasType sg S Γ .unit .unit []
-    | text {sg S Γ s} : HasType sg S Γ (.text s) .text []
-    | dec {sg S Γ q} : HasType sg S Γ (.dec q) .decimal []
-    | flt {sg S Γ f} : HasType sg S Γ (.flt f) .float []
-    | flt32 {sg S Γ f} : HasType sg S Γ (.flt32 f) .float32 []
-    /-- Making a function performs nothing; the body's row is its latent row. -/
-    | lam {sg S Γ ps body A ρ} :
-        HasType sg S (ps ++ Γ) body A ρ →
-        HasType sg S Γ (.lam ps body) (.fn ps A ρ) []
+    | int {sg Γ w n} : w.fits n = true → HasType sg Γ (.int w n) (.int w) []
+    | bool {sg Γ b} : HasType sg Γ (.bool b) .bool []
+    | unit {sg Γ} : HasType sg Γ .unit .unit []
+    | text {sg Γ s} : HasType sg Γ (.text s) .text []
+    | dec {sg Γ q} : HasType sg Γ (.dec q) .decimal []
+    | flt {sg Γ f} : HasType sg Γ (.flt f) .float []
+    | flt32 {sg Γ f} : HasType sg Γ (.flt32 f) .float32 []
+    /-- Making a function performs nothing; the body's row is its latent row.
+    A first-class function sees the places around it, and what names them,
+    hidden (`Ty.mask`): it may be kept anywhere. -/
+    | lam {sg Γ ps body A ρ} :
+        HasType sg (ps ++ Γ.map (Ty.mask sg)) body A ρ →
+        HasType sg Γ (.lam ps body) (.fn ps A ρ) []
+    /-- A local function sees them: a closure capturing a `var`. -/
+    | llam {sg Γ ps body A ρ} :
+        HasType sg (ps ++ Γ) body A ρ →
+        HasType sg Γ (.llam ps body) (.lfn ps A ρ) []
     /-- A call performs the callee's row, the arguments' rows and the latent row. -/
-    | app {sg S Γ f args ps A ρf ρa ρ} :
-        HasType sg S Γ f (.fn ps A ρ) ρf →
-        HasTypes sg S Γ args ps ρa →
-        HasType sg S Γ (.app f args) A (ρf ++ ρa ++ ρ)
-    | ite {sg S Γ c t f A ρc ρt ρf} :
-        HasType sg S Γ c .bool ρc → HasType sg S Γ t A ρt → HasType sg S Γ f A ρf →
-        HasType sg S Γ (.ite c t f) A (ρc ++ ρt ++ ρf)
-    /-- `var x = init`: what a `var` holds has `Div` on its functions. -/
-    | cell {sg S Γ init A ρ} :
-        HasType sg S Γ init A ρ → DivClosed sg A → HasType sg S Γ (.cell A init) (.cell A) ρ
-    /-- An owned value's place, typed as a cell's. -/
-    | fresh {sg S Γ init A ρ} :
-        HasType sg S Γ init A ρ → DivClosed sg A → HasType sg S Γ (.fresh A init) (.cell A) ρ
-    | get {sg S Γ c A ρ} :
-        HasType sg S Γ c (.cell A) ρ → HasType sg S Γ (.get c) A ρ
-    | set {sg S Γ c v A ρc ρv} :
-        HasType sg S Γ c (.cell A) ρc → HasType sg S Γ v A ρv →
-        HasType sg S Γ (.set c v) .unit (ρc ++ ρv)
-    /-- A generic function at types and rows for its variables. -/
-    | ref {sg S Γ d ts rs A b} :
-        sg.defs d = some (A, b) → HasType sg S Γ (.ref d ts rs) (A.inst (instOf ts rs)) []
+    | app {sg Γ f args ps A ρf ρa ρ} :
+        HasType sg Γ f (.fn ps A ρ) ρf →
+        HasTypes sg Γ args ps ρa →
+        HasType sg Γ (.app f args) A (ρf ++ ρa ++ ρ)
+    | lapp {sg Γ f args ps A ρf ρa ρ} :
+        HasType sg Γ f (.lfn ps A ρ) ρf →
+        HasTypes sg Γ args ps ρa →
+        HasType sg Γ (.app f args) A (ρf ++ ρa ++ ρ)
+    | ite {sg Γ c t f A ρc ρt ρf} :
+        HasType sg Γ c .bool ρc → HasType sg Γ t A ρt → HasType sg Γ f A ρf →
+        HasType sg Γ (.ite c t f) A (ρc ++ ρt ++ ρf)
+    /-- `{ var x = init; body }`: what a `var` holds has `Div` on its
+    functions, and it, like what the block gives, names no place, so it may
+    outlive the places inside the block. -/
+    | scope {sg Γ init body A B ρi ρb} :
+        HasType sg Γ init A ρi → DivClosed sg A → Portable sg A →
+        HasType sg (.place A :: Γ) body B ρb → Portable sg B →
+        HasType sg Γ (.scope A init body) B (ρi ++ ρb)
+    | get {sg Γ i A} :
+        Γ[i]? = some (.place A) → HasType sg Γ (.get (.var i)) A []
+    | set {sg Γ i v A ρ} :
+        Γ[i]? = some (.place A) → Portable sg A → HasType sg Γ v A ρ →
+        HasType sg Γ (.set (.var i) v) .unit ρ
+    /-- A generic function at types and rows for its variables. They name no
+    place: a generic function may keep what has a type variable's type. -/
+    | ref {sg Γ d ts rs A b} :
+        sg.defs d = some (A, b) → (∀ t ∈ ts, Portable sg t) →
+        HasType sg Γ (.ref d ts rs) (A.inst (instOf ts rs)) []
     /-- `@a t` -/
-    | tag {sg S Γ a t A ρ} :
-        HasType sg S Γ t A ρ → HasType sg S Γ (.tag a t) (.tag a A) ρ
+    | tag {sg Γ a t A ρ} :
+        HasType sg Γ t A ρ → HasType sg Γ (.tag a t) (.tag a A) ρ
     /-- A constructor: its fields have their declared types at the type
     arguments. -/
-    | con {sg S Γ d args c fields cs F ρ} :
+    | con {sg Γ d args c fields cs F ρ} :
         sg.data d = some cs → cs[c]? = some F →
-        HasTypes sg S Γ fields (fieldsOf F args) ρ →
-        HasType sg S Γ (.con d args c fields) (.data d args) ρ
+        HasTypes sg Γ fields (fieldsOf F args) ρ →
+        HasType sg Γ (.con d args c fields) (.data d args) ρ
     /-- A field of a `struct`: a declaration with one constructor. -/
-    | proj {sg S Γ i t d args F B ρ} :
+    | proj {sg Γ i t d args F B ρ} :
         sg.data d = some [F] → F[i]? = some B →
-        HasType sg S Γ t (.data d args) ρ →
-        HasType sg S Γ (.proj i t) (B.inst (instOf args [])) ρ
-    | perform {sg S Γ e args ps R ρa} :
-        sg.op e = some (ps, R) →
-        HasTypes sg S Γ args ps ρa →
-        HasType sg S Γ (.perform e args) R (e :: ρa)
+        HasType sg Γ t (.data d args) ρ →
+        HasType sg Γ (.proj i t) (B.inst (instOf args [])) ρ
+    /-- What an operation takes and answers names no place: the arm that
+    gets it runs outside the `scope`s between it and the `perform`. -/
+    | perform {sg Γ e args ps R ρa} :
+        sg.op e = some (ps, R) → (∀ p ∈ ps, Portable sg p) → Portable sg R →
+        HasTypes sg Γ args ps ρa →
+        HasType sg Γ (.perform e args) R (e :: ρa)
     /-- `handle` with the `return` arm. -/
-    | handleRet {sg S Γ body ret clauses B T ρb ρr ρ} :
-        HasType sg S Γ body B ρb →
-        HasType sg S (B :: Γ) ret T ρr →
+    | handleRet {sg Γ body ret clauses B T ρb ρr ρ} :
+        HasType sg Γ body B ρb →
+        HasType sg (B :: Γ) ret T ρr →
         Row.Sub ρr ρ →
         (∀ e, e ∈ ρb → Covers sg clauses e ∨ e ∈ ρ) →
-        (∀ c, c ∈ clauses → ClauseOk sg S Γ T ρ c) →
-        HasType sg S Γ (.handle body (some ret) clauses) T ρ
+        (∀ c, c ∈ clauses → ClauseOk sg Γ T ρ c) →
+        HasType sg Γ (.handle body (some ret) clauses) T ρ
     /-- `handle` without one: the body's value is the result. -/
-    | handle {sg S Γ body clauses B T ρb ρ} :
-        HasType sg S Γ body B ρb →
+    | handle {sg Γ body clauses B T ρb ρ} :
+        HasType sg Γ body B ρb →
         Fits B T →
         (∀ e, e ∈ ρb → Covers sg clauses e ∨ e ∈ ρ) →
-        (∀ c, c ∈ clauses → ClauseOk sg S Γ T ρ c) →
-        HasType sg S Γ (.handle body none clauses) T ρ
-    | loc {sg S Γ l A} : S[l]? = some A → HasType sg S Γ (.loc l) (.cell A) []
-    /-- A borrow of a place. -/
-    | brw {sg S Γ t A ρ} : HasType sg S Γ t (.cell A) ρ → HasType sg S Γ (.brw t) (.brw A) ρ
-    | mbrw {sg S Γ t A ρ} : HasType sg S Γ t (.cell A) ρ → HasType sg S Γ (.mbrw t) (.mbrw A) ρ
+        (∀ c, c ∈ clauses → ClauseOk sg Γ T ρ c) →
+        HasType sg Γ (.handle body none clauses) T ρ
+    /-- A borrow of a place, by its name. -/
+    | brw {sg Γ i π A B} : Γ[i]? = some (.place A) → Ty.at sg A π = some B →
+        HasType sg Γ (.brw i π) (.brw B) []
+    | mbrw {sg Γ i π A B} : Γ[i]? = some (.place A) → Ty.at sg A π = some B →
+        HasType sg Γ (.mbrw i π) (.mbrw B) []
     /-- A field of the `struct` a shared borrow's place holds. -/
-    | field {sg S Γ i b d args F B ρ} :
+    | field {sg Γ i b d args F B ρ} :
         sg.data d = some [F] → F[i]? = some B →
-        HasType sg S Γ b (.brw (.data d args)) ρ →
-        HasType sg S Γ (.field i b) (B.inst (instOf args [])) ρ
-    | write {sg S Γ b v A ρb ρv} :
-        HasType sg S Γ b (.mbrw A) ρb → HasType sg S Γ v A ρv →
-        HasType sg S Γ (.write b v) .unit (ρb ++ ρv)
+        HasType sg Γ b (.brw (.data d args)) ρ →
+        HasType sg Γ (.field i b) (B.inst (instOf args [])) ρ
+    | write {sg Γ b v A ρb ρv} :
+        HasType sg Γ b (.mbrw A) ρb → HasType sg Γ v A ρv →
+        HasType sg Γ (.write b v) .unit (ρb ++ ρv)
     /-- A budget under way: what its body performs, with `Div` taken out and
-    `Exceeded(T)` put in, as the type of `budget` says. -/
-    | run {sg S Γ n T ρ body} :
-        HasType sg S Γ body T (divEff :: ρ) →
-        HasType sg S Γ (.run n T ρ body) T (exceededEff T ρ :: ρ)
-    | info {sg S Γ T ρ body} :
-        HasType sg S Γ body T (divEff :: ρ) →
-        HasType sg S Γ (.info T ρ body) (.info T ρ) []
+    `Exceeded(T)` put in, as the type of `budget` says. The body is that of a
+    first-class function, so it sees the places around it hidden; the
+    suspended body an `info` holds may run elsewhere. -/
+    | run {sg Γ d n T ρ body} :
+        HasType sg (Γ.map (Ty.mask sg)) body T (divEff :: ρ) → Portable sg T →
+        HasType sg Γ (.run d n T ρ body) T (runEff d T ρ :: ρ)
+    | info {sg Γ T ρ body} :
+        HasType sg (Γ.map (Ty.mask sg)) body T (divEff :: ρ) →
+        HasType sg Γ (.info T ρ body) (.info T ρ) []
     /-- The arms tried for `perform e(vs)`: if none takes it, `e` goes on. -/
-    | select {sg S Γ e vs k clauses ps R T ρ ρv ρk} :
-        sg.op e = some (ps, R) →
-        (∀ v ∈ vs, Value v) → HasTypes sg S Γ vs ps ρv →
-        Value k → HasType sg S Γ k (.fn [R] T ρ) ρk →
-        (∀ c, c ∈ clauses → ClauseOk sg S Γ T ρ c) →
+    | select {sg Γ e vs k clauses ps R T ρ ρv ρk} :
+        sg.op e = some (ps, R) → (∀ p ∈ ps, Portable sg p) → Portable sg R →
+        (∀ v ∈ vs, Value v) → HasTypes sg Γ vs ps ρv →
+        Value k → HasType sg Γ k (.lfn [R] T ρ) ρk →
+        (∀ c, c ∈ clauses → ClauseOk sg Γ T ρ c) →
         (Takes clauses e (vs ++ [k]) ∨ e ∈ ρ) →
-        HasType sg S Γ (.select e vs k clauses) T ρ
+        HasType sg Γ (.select e vs k clauses) T ρ
     /-- A bigger row is also fine. -/
-    | weaken {sg S Γ t A ρ ρ'} :
-        HasType sg S Γ t A ρ → Row.Sub ρ ρ' → HasType sg S Γ t A ρ'
+    | weaken {sg Γ t A ρ ρ'} :
+        HasType sg Γ t A ρ → Row.Sub ρ ρ' → HasType sg Γ t A ρ'
     /-- A union holds its members, and a tag can be forgotten. -/
-    | fits {sg S Γ t A T ρ} :
-        HasType sg S Γ t A ρ → Fits A T → HasType sg S Γ t T ρ
+    | fits {sg Γ t A T ρ} :
+        HasType sg Γ t A ρ → Fits A T → HasType sg Γ t T ρ
     /-- A value may be given a tag: it is not changed by it. -/
-    | tagged {sg S Γ t A ρ a} :
-        Value t → HasType sg S Γ t A ρ → HasType sg S Γ t (.tag a A) ρ
+    | tagged {sg Γ t A ρ a} :
+        Value t → HasType sg Γ t A ρ → HasType sg Γ t (.tag a A) ρ
 
   /-- The arguments have the parameter types, in order. -/
-  inductive HasTypes : Sig → Ctx → Ctx → List Tm → List Ty → Row → Prop where
-    | nil {sg S Γ} : HasTypes sg S Γ [] [] []
-    | cons {sg S Γ t ts A As ρ ρs} :
-        HasType sg S Γ t A ρ → HasTypes sg S Γ ts As ρs →
-        HasTypes sg S Γ (t :: ts) (A :: As) (ρ ++ ρs)
+  inductive HasTypes : Sig → Ctx → List Tm → List Ty → Row → Prop where
+    | nil {sg Γ} : HasTypes sg Γ [] [] []
+    | cons {sg Γ t ts A As ρ ρs} :
+        HasType sg Γ t A ρ → HasTypes sg Γ ts As ρs →
+        HasTypes sg Γ (t :: ts) (A :: As) (ρ ++ ρs)
 
   /-- An arm for `e`: it runs outside the handler. Its patterns are for the
-  operation's values and then `k : (R) -> T ! ρ`; with what they bind in
+  operation's values and then `k : (R) -> T ! ρ`, a local function: its
+  frames may use the places around the handler; with what they bind in
   scope, it gives the handle's result type `T`, performing at most the
   handle's row `ρ`. A guard performs nothing. -/
-  inductive ClauseOk : Sig → Ctx → Ctx → Ty → Row → Clause → Prop where
-    | mk {sg S Γ T ρ e pats body ps R Δ ρa A} :
+  inductive ClauseOk : Sig → Ctx → Ty → Row → Clause → Prop where
+    | mk {sg Γ T ρ e pats body ps R Δ ρa A} :
         sg.op e = some (ps, R) →
-        PatsOk sg pats (ps ++ [.fn [R] T ρ]) Δ →
-        HasType sg S (Δ ++ Γ) body A ρa →
+        PatsOk sg pats (ps ++ [.lfn [R] T ρ]) Δ →
+        HasType sg (Δ ++ Γ) body A ρa →
         Fits A T →
         Row.Sub ρa ρ →
-        ClauseOk sg S Γ T ρ (.mk e pats none body)
-    | guarded {sg S Γ T ρ e pats g body ps R Δ ρa A} :
+        ClauseOk sg Γ T ρ (.mk e pats none body)
+    | guarded {sg Γ T ρ e pats g body ps R Δ ρa A} :
         sg.op e = some (ps, R) →
-        PatsOk sg pats (ps ++ [.fn [R] T ρ]) Δ →
-        HasType sg S (Δ ++ Γ) g .bool [] →
-        HasType sg S (Δ ++ Γ) body A ρa →
+        PatsOk sg pats (ps ++ [.lfn [R] T ρ]) Δ →
+        HasType sg (Δ ++ Γ) g .bool [] →
+        HasType sg (Δ ++ Γ) body A ρa →
         Fits A T →
         Row.Sub ρa ρ →
-        ClauseOk sg S Γ T ρ (.mk e pats (some g) body)
+        ClauseOk sg Γ T ρ (.mk e pats (some g) body)
 end
 
 /-! ## `match`

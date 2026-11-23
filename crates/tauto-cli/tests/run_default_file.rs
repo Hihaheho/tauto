@@ -1,5 +1,5 @@
 //! `tauto run` given neither a file nor `--tote` runs the `run.file` of the
-//! nearest `Tauto.eure` (`docs/design/dev.md` 「既定のファイル」).
+//! nearest `Tauto.eure` (`docs/design/dev.md` 「Default entry」).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,12 +16,12 @@ fn project(name: &str, run: &str) -> PathBuf {
     .unwrap();
     fs::write(
         d.join("app/hello.taut"),
-        "import std::prelude::Os\n\nprint(\"hello\\n\")\n",
+        "import std::builtin::os\n\nprint(\"hello\\n\")\n",
     )
     .unwrap();
     fs::write(
         d.join("app/other.taut"),
-        "import std::prelude::Os\n\nprint(\"other\\n\")\n",
+        "import std::builtin::os\n\nprint(\"other\\n\")\n",
     )
     .unwrap();
     d
@@ -45,7 +45,7 @@ fn run_without_a_file_runs_the_manifests_run_file() {
     let d = project("default", "run {\n  file = \"app/hello.taut\"\n}\n");
     for args in [
         &["run"][..],
-        &["run", "--backend", "eval"],
+        &["run", "--backend", "vm"],
         &["run", "--steps", "100000"],
     ] {
         let out = tauto(&d, args);

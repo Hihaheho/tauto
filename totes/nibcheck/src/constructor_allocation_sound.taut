@@ -1,6 +1,7 @@
+import "../../identity/src/identity.taut"
 import "data_field_allocation.taut"
-import std::Nat
-import std::Text
+import std::nat
+import std::text
 import "allocation_advance.taut"
 import "allocation_result.taut"
 import "allocation_state.taut"
@@ -9,11 +10,13 @@ import "datas.taut"
 import "datas_frame.taut"
 import "expr_leaf_frame.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "fresh_allocation_sound.taut"
 import "pattern_frame.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 
@@ -24,7 +27,7 @@ pub theorem allocation_error_if(
   state: CheckerAllocation(c),
   flag: Bool
 ): AllocationAdvance(c, frame_error_if(c, message, span, flag)) {
-  ⊢ AllocationAdvance(c, frame_error_if(c, message, span, flag)) from match flag { true => AndIntro(
+  match flag { true => AndIntro(
     Nat::le_refl(ck_next_of(c)),
     state
   )
@@ -39,11 +42,11 @@ pub theorem constructor_return_allocation(
   args_bound: TypeListAllocated(ck_next_of(c), args),
   fields_bound: FieldsAllocated(ck_next_of(c), fields)
 ): AllocationResult(c, leaf_constructor_return(c, name, args, fields)) {
-  ⊢ AllocationResult(c, leaf_constructor_return(c, name, args, fields)) from match fields {
-    Nil => allocation_result_return(c, TyNamed(name, args), state, args_bound)
+  match fields {
+    Nil => allocation_result_return(c, TyNamed(NameSpelled(name), args), state, args_bound)
     Cons(head, tail) => allocation_result_return(
       c,
-      TyFn(field_tys(Cons(head, tail)), TyNamed(name, args), KindShared),
+      TyFn(field_tys(Cons(head, tail)), TyNamed(NameSpelled(name), args), KindShared),
       state,
       AndIntro(field_tys_allocated(Cons(head, tail), ck_next_of(c), fields_bound), args_bound)
     )
@@ -62,7 +65,7 @@ pub theorem constructor_fields_allocation(
   fields_bound: FieldsAllocated(ck_next_of(c), fields)
 ): AllocationResult(c, leaf_constructor_fields(c, data_name, index, span, name, args, fields)) {
   allocation_result_bind(
-    Unit,
+    <A: Unit>,
     c,
     (ignored: Unit, next: Checker) => leaf_constructor_return(next, data_name, args, fields),
     frame_error_if(
@@ -102,8 +105,7 @@ pub theorem constructor_after_allocation(
 ): AllocationResult(
   c,
   frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     (args: List(Ty), next: Checker) => leaf_constructor_fields(
       next,
       data_name,
@@ -119,8 +121,7 @@ pub theorem constructor_after_allocation(
   ⊢ AllocationResult(
     c,
     frame_bind(
-      List(Ty),
-      Ty,
+      <A: List(Ty), B: Ty>,
       (args: List(Ty), next: Checker) => leaf_constructor_fields(
         next,
         data_name,

@@ -1,0 +1,171 @@
+import std::base
+import std::nat
+import std::uint
+import "uhost.taut"
+import "occupancy.taut"
+import "prefix.taut"
+
+// The policy of a hash table with one control byte per slot. A byte below 128
+// is a filled slot (the value is the tag from the hash), 128 and above is empty
+// (255) or a tombstone (254). The state is the capacity only.
+// A byte as a number below 256. `UInt(8)` cannot be the class's argument here: an
+// instance whose argument is a fixed-width type does not check.
+pub(open) inductive Byte: Type {
+  Mk(val: Nat, ok: val < 256 = true): Byte
+}
+
+pub fn Byte::val(b: Byte): Nat {
+  match b {
+    Mk(v, ^h) => v
+  }
+}
+
+pub(open) inductive Table: Type {
+  Mk(cap: UHost): Table
+}
+
+pub fn Table::cap(s: Table): UHost {
+  match s {
+    Mk(c) => c
+  }
+}
+
+// A byte that marks a filled slot, and one that does not.
+pub fn Table::live(m: Byte): Bool { Nat::lt(Byte::val(m), 128) }
+pub fn Table::dead(m: Byte): Bool { Nat::le(128, Byte::val(m)) }
+
+pub theorem Table::dead_not_live(m: Byte, h: Table::dead(m) = true): Table::live(m) = false {
+  Nat::le_lt_false(Byte::val(m), 128, h)
+}
+
+pub fn Table::used(s: Table, i: UHost, m: Byte): Bool {
+  UHost::lt(i, Table::cap(s)) && Table::live(m)
+}
+
+// `Some` of the same table when the test says so.
+pub fn Table::keep(s: Table, c: Bool): Option(Table) {
+  match c {
+    true => Some(s)
+    false => None
+  }
+}
+
+pub theorem Table::keep_inv(s: Table, c: Bool, t: Table, h: Table::keep(s, c) = Some(t)): And(c = true, t = s) {
+  match c {
+    true => AndIntro(Refl, match h {
+      Refl => Refl
+    })
+    false => match h {
+    }
+  }
+}
+
+// Fill: the slot is in range, its byte was not a filled one, and the new one is.
+pub fn Table::put_test(s: Table, i: UHost, old: Byte, new: Byte): Bool {
+  UHost::lt(i, Table::cap(s)) && (Table::dead(old) && Table::live(new))
+}
+
+// Empty: the slot is in range, its byte was a filled one, and the new one is not.
+pub fn Table::take_test(s: Table, i: UHost, old: Byte, new: Byte): Bool {
+  UHost::lt(i, Table::cap(s)) && (Table::live(old) && Table::dead(new))
+}
+
+instance Occupancy(Table, Byte) {
+  fn empty(c: UHost, pm: Proxy(Byte)): Table { Table::Mk(c) }
+  fn vacant(ps: Proxy(Table), pm: Proxy(Byte)): Byte { Byte::Mk(255, Refl) }
+  fn cap(s: Table, pm: Proxy(Byte)): UHost { Table::cap(s) }
+  fn used(s: Table, i: UHost, m: Byte): Bool { Table::used(s, i, m) }
+  fn put(s: Table, i: UHost, old: Byte, new: Byte): Option(Table) { Table::keep(s, Table::put_test(s, i, old, new)) }
+  fn take(s: Table, i: UHost, old: Byte, new: Byte): Option(Table) { Table::keep(s, Table::take_test(s, i, old, new)) }
+  fn recap(s: Table, c: UHost, pm: Proxy(Byte)): Option(Table) { None }
+  fn full(s: Table, lo: UHost, hi: UHost, pm: Proxy(Byte)): Bool { false }
+
+  theorem empty_free<c: UHost, i: UHost, pm: Proxy(Byte), ps: Proxy(Table)>(): Occupancy::used(the(Table, Occupancy::empty(c, pm)), i, the(Byte, Occupancy::vacant(ps, pm))) = false {
+    Bool::and_false_right(UHost::lt(i, c))
+  }
+
+  theorem empty_cap<c: UHost, pm: Proxy(Byte), ps: Proxy(Table)>(): Occupancy::cap(the(Table, Occupancy::empty(c, pm)), pm) = c {
+    Refl
+  }
+
+  theorem used_below<s: Table, i: UHost, m: Byte, pm: Proxy(Byte), ps: Proxy(Table)>(u: Occupancy::used(s, i, m) = true): UHost::lt(i, Occupancy::cap(s, pm)) = true {
+    Bool::and_true_left(UHost::lt(i, Table::cap(s)), Table::live(m), u)
+  }
+
+  theorem put_fresh<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::put(s, i, old, new) = Some(t)): Occupancy::used(s, i, old) = false {
+    match Table::keep_inv(s, Table::put_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Eq::trans(
+        Eq::congr(⟦UHost::lt(i, Table::cap(s)) && □⟧, Table::dead_not_live(old, Bool::and_true_left(Table::dead(old), Table::live(new), Bool::and_true_right(UHost::lt(i, Table::cap(s)), Table::dead(old) && Table::live(new), c)))),
+        Bool::and_false_right(UHost::lt(i, Table::cap(s)))
+      )
+    }
+  }
+
+  theorem put_same<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::put(s, i, old, new) = Some(t)): Occupancy::used(t, i, new) = true {
+    match Table::keep_inv(s, Table::put_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => match e {
+        Refl => Bool::and_intro(UHost::lt(i, Table::cap(t)), Table::live(new), Bool::and_true_left(UHost::lt(i, Table::cap(t)), Table::dead(old) && Table::live(new), c), Bool::and_true_right(Table::dead(old), Table::live(new), Bool::and_true_right(UHost::lt(i, Table::cap(t)), Table::dead(old) && Table::live(new), c)))
+      }
+    }
+  }
+
+  theorem put_other<s: Table, i: UHost, old: Byte, new: Byte, t: Table, j: UHost, m: Byte, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::put(s, i, old, new) = Some(t), ne: UHost::eq(i, j) = false): Occupancy::used(t, j, m) = Occupancy::used(s, j, m) {
+    match Table::keep_inv(s, Table::put_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Eq::congr(⟦Table::used(□, j, m)⟧, e)
+    }
+  }
+
+  theorem put_cap<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::put(s, i, old, new) = Some(t)): Occupancy::cap(t, pm) = Occupancy::cap(s, pm) {
+    match Table::keep_inv(s, Table::put_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Eq::congr(Table::cap, e)
+    }
+  }
+
+  theorem take_live<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::take(s, i, old, new) = Some(t)): Occupancy::used(s, i, old) = true {
+    match Table::keep_inv(s, Table::take_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Bool::and_intro(UHost::lt(i, Table::cap(s)), Table::live(old), Bool::and_true_left(UHost::lt(i, Table::cap(s)), Table::live(old) && Table::dead(new), c), Bool::and_true_left(Table::live(old), Table::dead(new), Bool::and_true_right(UHost::lt(i, Table::cap(s)), Table::live(old) && Table::dead(new), c)))
+    }
+  }
+
+  theorem take_same<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::take(s, i, old, new) = Some(t)): Occupancy::used(t, i, new) = false {
+    match Table::keep_inv(s, Table::take_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => match e {
+        Refl => Eq::trans(
+          Eq::congr(⟦UHost::lt(i, Table::cap(t)) && □⟧, Table::dead_not_live(new, Bool::and_true_right(Table::live(old), Table::dead(new), Bool::and_true_right(UHost::lt(i, Table::cap(t)), Table::live(old) && Table::dead(new), c)))),
+          Bool::and_false_right(UHost::lt(i, Table::cap(t)))
+        )
+      }
+    }
+  }
+
+  theorem take_other<s: Table, i: UHost, old: Byte, new: Byte, t: Table, j: UHost, m: Byte, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::take(s, i, old, new) = Some(t), ne: UHost::eq(i, j) = false): Occupancy::used(t, j, m) = Occupancy::used(s, j, m) {
+    match Table::keep_inv(s, Table::take_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Eq::congr(⟦Table::used(□, j, m)⟧, e)
+    }
+  }
+
+  theorem take_cap<s: Table, i: UHost, old: Byte, new: Byte, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::take(s, i, old, new) = Some(t)): Occupancy::cap(t, pm) = Occupancy::cap(s, pm) {
+    match Table::keep_inv(s, Table::take_test(s, i, old, new), t, h) {
+      AndIntro(c, e) => Eq::congr(Table::cap, e)
+    }
+  }
+
+  theorem recap_keeps<s: Table, c: UHost, t: Table, i: UHost, m: Byte, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::recap(s, c, pm) = Some(t), old: UHost::lt(i, Occupancy::cap(s, pm)) = true): Occupancy::used(t, i, m) = Occupancy::used(s, i, m) {
+    match h {
+    }
+  }
+
+  theorem recap_fresh<s: Table, c: UHost, t: Table, i: UHost, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::recap(s, c, pm) = Some(t), new: UHost::le(Occupancy::cap(s, pm), i) = true): Occupancy::used(t, i, the(Byte, Occupancy::vacant(ps, pm))) = false {
+    match h {
+    }
+  }
+
+  theorem recap_cap<s: Table, c: UHost, t: Table, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::recap(s, c, pm) = Some(t)): Occupancy::cap(t, pm) = c {
+    match h {
+    }
+  }
+
+  theorem full_used<s: Table, a: UHost, b: UHost, i: UHost, m: Byte, pm: Proxy(Byte), ps: Proxy(Table)>(h: Occupancy::full(s, a, b, pm) = true, lo: UHost::le(a, i) = true, hi: UHost::lt(i, b) = true): Occupancy::used(s, i, m) = true {
+    False::elim(false_ne_true(h))
+  }
+}

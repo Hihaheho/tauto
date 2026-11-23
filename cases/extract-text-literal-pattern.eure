@@ -1,0 +1,24 @@
+description = "A text literal in a pattern of a function the kernel checks: extracted, the part is taken out of the shape and tested with Nib's `==` on texts, as a part on `Nat` is."
+
+@ cases.text-under-list-constructors
+source = ```tauto
+import std::base
+import std::text
+fn route(parts: List(Text)): Nat {
+  match parts {
+    Cons("todo", Nil) => 1
+    Cons("done", Cons(_, Nil)) => 2
+    _ => 0
+  }
+}
+show(&route(["todo"]))
+show(&route(["done", "x"]))
+show(&route(["x"]))
+show(&route([]))
+```
+stdout = ```
+1
+2
+0
+0
+```

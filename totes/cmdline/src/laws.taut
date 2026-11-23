@@ -1,10 +1,10 @@
-import std::Text
+import std::text
 
 import "cmdline.taut"
-import std::Base
-import std::List
-import std::prelude::Ord
-import std::TextOps
+import std::base
+import std::list
+import std::builtin::ord
+import std::text_ops
 import "help.taut"
 
 // What is proved about the parser, with no axioms:
@@ -104,7 +104,7 @@ pub inductive Reads(os: List(Opt)): (Option(Nat), List(Text), List(Item)) -> Pro
 // ---- equalities of the data -----------------------------------------------------
 
 fn nat_pred_or_zero(n: Nat): Nat {
-  ⊢ Nat from match n {
+  match n {
     Zero => Zero
     Succ(k) => k
   }
@@ -115,7 +115,7 @@ theorem succ_inj(a: Nat, b: Nat, e: Succ(a) = Succ(b)): a = b {
 }
 
 theorem zero_ne_succ(k: Nat, e: Zero = Succ(k)): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
@@ -130,13 +130,13 @@ theorem items_cast(
   P: (List(Item), Option(Nat)) -> Prop,
   h: P(xs1, w1)
 ): P(xs2, w2) {
-  ⊢ P(xs2, w2) from match e {
+  match e {
     Refl => h
   }
 }
 
 theorem rest_not_items(xs: List(Item), w: Option(Nat), e: StRest = StItems(xs, w)): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
@@ -146,53 +146,53 @@ theorem fail_not_items(
   w: Option(Nat),
   e: StFail(p) = StItems(xs, w)
 ): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 theorem fail_not_rest(p: Problem, e: StFail(p) = StRest): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 theorem items_not_rest(xs: List(Item), w: Option(Nat), e: StItems(xs, w) = StRest): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 theorem some_not_none<A: Type>(x: A, e: Some(x) = None): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 pub theorem none_not_some<A: Type>(x: A, e: None = Some(x)): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 pub theorem yes_not_no(e: true = false): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 // ---- the short options ------------------------------------------------------------
 
 theorem short_is_sound(s: Option(Nat), c: Nat, e: short_is(s, c) = true): s = Some(c) {
-  ⊢ s = Some(c) from match s {
+  match s {
     None => False::elim(yes_not_no(Eq::sym(e)))
     Some(x) => Eq::congr((y: Nat) => Some(y), Nat::eq_sound(x, c, e))
   }
 }
 
 theorem option_succ_inv(o: Option(Nat), k: Nat, e: option_succ(o) = Some(Succ(k))): o = Some(k) {
-  ⊢ o = Some(k) from match o {
+  match o {
     None => False::elim(none_not_some(Succ(k), e))
     Some(j) => Eq::congr((x: Nat) => Some(x), succ_inj(j, k, Option::some_inj(Succ(j), Succ(k), e)))
   }
 }
 
 theorem option_succ_not_zero(o: Option(Nat), e: option_succ(o) = Some(Zero)): False {
-  ⊢ False from match o {
+  match o {
     None => none_not_some(Zero, e)
     Some(j) => zero_ne_succ(j, Eq::sym(Option::some_inj(Succ(j), Zero, e)))
   }
@@ -208,7 +208,7 @@ theorem lookup_short_sound_cons(
   e: short_step(s, lookup_short(rest, c)) = Some(i),
   ih: ∀ k: Nat. (lookup_short(rest, c) = Some(k)) -> short_at(rest, k) = Some(c)
 ): short_at(Cons(o, rest), i) = Some(c) {
-  ⊢ short_at(Cons(o, rest), i) = Some(c) from match s {
+  match s {
     false => ⊢ short_at(Cons(o, rest), i) = Some(c) from match i {
       Zero => False::elim(option_succ_not_zero(lookup_short(rest, c), e))
       Succ(k) => ih(k, option_succ_inv(lookup_short(rest, c), k, e))
@@ -227,7 +227,7 @@ theorem lookup_short_sound(
   i: Nat,
   e: lookup_short(os, c) = Some(i)
 ): short_at(os, i) = Some(c) {
-  ⊢ short_at(os, i) = Some(c) from match os {
+  match os {
     Nil => False::elim(none_not_some(i, e))
     Cons(o, rest) => lookup_short_sound_cons(
       o,
@@ -244,13 +244,11 @@ theorem lookup_short_sound(
 
 // ---- the long options -------------------------------------------------------------
 
-module Hit {
-  // How the word `w` names the option `slot`, if there is one.
-  fn of(slot: Option(Opt), w: List(Nat)): Option(Hit) {
-    ⊢ Option(Hit) from match slot {
-      None => None
-      Some(o) => Some(long_hit(Text::bytes(Opt::long(o)), w))
-    }
+// How the word `w` names the option `slot`, if there is one.
+fn Hit::of(slot: Option(Opt), w: List(Nat)): Option(Hit) {
+  match slot {
+    None => None
+    Some(o) => Some(long_hit(Text::bytes(Opt::long(o)), w))
   }
 }
 
@@ -260,7 +258,7 @@ theorem found_succ_inv(
   h: Hit,
   e: found_succ(r) = Some(Found::Mk(Succ(k), h))
 ): r = Some(Found::Mk(k, h)) {
-  ⊢ r = Some(Found::Mk(k, h)) from match r {
+  match r {
     None => False::elim(none_not_some(Found::Mk(Succ(k), h), e))
     Some(x) => ⊢ Some(x) = Some(Found::Mk(k, h)) from match x {
       Mk(j, g) => ⊢ Some(Found::Mk(j, g)) = Some(Found::Mk(k, h)) from match e {
@@ -275,7 +273,7 @@ theorem found_succ_not_zero(
   h: Hit,
   e: found_succ(r) = Some(Found::Mk(Zero, h))
 ): False {
-  ⊢ False from match r {
+  match r {
     None => none_not_some(Found::Mk(Zero, h), e)
     Some(x) => ⊢ False from match x {
       Mk(j, g) => ⊢ False from match e {
@@ -297,7 +295,7 @@ theorem lookup_long_sound_cons(
     lookup_long(rest, w) = Some(Found::Mk(k, h))
   ) -> Hit::of(List::nth(rest, k), w) = Some(h)
 ): Hit::of(List::nth(Cons(o, rest), i), w) = Some(h) {
-  ⊢ Hit::of(List::nth(Cons(o, rest), i), w) = Some(h) from match g {
+  match g {
     Miss => ⊢ Hit::of(List::nth(Cons(o, rest), i), w) = Some(h) from match i {
       Zero => False::elim(found_succ_not_zero(lookup_long(rest, w), h, e))
       Succ(k) => ih(k, found_succ_inv(lookup_long(rest, w), k, h, e))
@@ -319,7 +317,7 @@ theorem lookup_long_sound(
   h: Hit,
   e: lookup_long(os, w) = Some(Found::Mk(i, h))
 ): Hit::of(List::nth(os, i), w) = Some(h) {
-  ⊢ Hit::of(List::nth(os, i), w) = Some(h) from match os {
+  match os {
     Nil => False::elim(none_not_some(Found::Mk(i, h), e))
     Cons(o, rest) => lookup_long_sound_cons(
       o,
@@ -353,65 +351,63 @@ theorem cons_congr<A: Type>(
 }
 
 theorem miss_not_exact(e: Miss = Exact): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 theorem miss_not_glue(v: List(Nat), e: Miss = Glue(v)): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 theorem glue_not_exact(v: List(Nat), e: Glue(v) = Exact): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 theorem exact_not_glue(v: List(Nat), e: Exact = Glue(v)): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 theorem glue_inj(u: List(Nat), v: List(Nat), e: Glue(u) = Glue(v)): u = v {
-  ⊢ u = v from match e {
+  match e {
     Refl => Refl
   }
 }
 
-module Hit {
-  theorem after_glue_not_exact(s: Bool, v: List(Nat), e: Hit::after(s, Glue(v)) = Exact): False {
-    ⊢ False from match s {
-      false => miss_not_exact(e)
-      true => glue_not_exact(v, e)
-    }
+theorem Hit::after_glue_not_exact(s: Bool, v: List(Nat), e: Hit::after(s, Glue(v)) = Exact): False {
+  match s {
+    false => miss_not_exact(e)
+    true => glue_not_exact(v, e)
   }
+}
 
-  theorem end_exact(w: List(Nat), e: Hit::end(w) = Exact): w = Nil {
-    ⊢ w = Nil from match w {
-      Nil => Refl
-      Cons(c, v) => False::elim(Hit::after_glue_not_exact(Nat::eq(c, 61), v, e))
-    }
+theorem Hit::end_exact(w: List(Nat), e: Hit::end(w) = Exact): w = Nil {
+  match w {
+    Nil => Refl
+    Cons(c, v) => False::elim(Hit::after_glue_not_exact(Nat::eq(c, 61), v, e))
   }
+}
 
-  theorem end_glue_cons(
-    c: Nat,
-    u: List(Nat),
-    v: List(Nat),
-    q: Bool,
-    eq: Nat::eq(c, 61) = q,
-    e: Hit::after(q, Glue(u)) = Glue(v)
-  ): Cons(c, u) = Cons(61, v) {
-    ⊢ Cons(c, u) = Cons(61, v) from match q {
-      false => False::elim(miss_not_glue(v, e))
-      true => cons_congr(c, 61, u, v, Nat::eq_sound(c, 61, eq), glue_inj(u, v, e))
-    }
+theorem Hit::end_glue_cons(
+  c: Nat,
+  u: List(Nat),
+  v: List(Nat),
+  q: Bool,
+  eq: Nat::eq(c, 61) = q,
+  e: Hit::after(q, Glue(u)) = Glue(v)
+): Cons(c, u) = Cons(61, v) {
+  match q {
+    false => False::elim(miss_not_glue(v, e))
+    true => cons_congr(c, 61, u, v, Nat::eq_sound(c, 61, eq), glue_inj(u, v, e))
   }
+}
 
-  theorem end_glue(w: List(Nat), v: List(Nat), e: Hit::end(w) = Glue(v)): w = Cons(61, v) {
-    ⊢ w = Cons(61, v) from match w {
-      Nil => False::elim(exact_not_glue(v, e))
-      Cons(c, u) => Hit::end_glue_cons(c, u, v, Nat::eq(c, 61), Refl, e)
-    }
+theorem Hit::end_glue(w: List(Nat), v: List(Nat), e: Hit::end(w) = Glue(v)): w = Cons(61, v) {
+  match w {
+    Nil => False::elim(exact_not_glue(v, e))
+    Cons(c, u) => Hit::end_glue_cons(c, u, v, Nat::eq(c, 61), Refl, e)
   }
 }
 
@@ -425,7 +421,7 @@ theorem long_hit_exact_cons(
   e: Hit::after(q, long_hit(xs, ys)) = Exact,
   ih: (long_hit(xs, ys) = Exact) -> ys = xs
 ): Cons(y, ys) = Cons(x, xs) {
-  ⊢ Cons(y, ys) = Cons(x, xs) from match q {
+  match q {
     false => False::elim(miss_not_exact(e))
     true => cons_congr(y, x, ys, xs, Eq::sym(Nat::eq_sound(x, y, eq)), ih(e))
   }
@@ -433,7 +429,7 @@ theorem long_hit_exact_cons(
 
 // A word that names `l` exactly is `l`.
 theorem long_hit_exact(l: List(Nat), w: List(Nat), e: long_hit(l, w) = Exact): w = l {
-  ⊢ w = l from match l {
+  match l {
     Nil => Hit::end_exact(w, e)
     Cons(x, xs) => ⊢ w = Cons(x, xs) from match w {
       Nil => False::elim(miss_not_exact(e))
@@ -462,7 +458,7 @@ theorem long_hit_glue_cons(
   e: Hit::after(q, long_hit(xs, ys)) = Glue(v),
   ih: (long_hit(xs, ys) = Glue(v)) -> ys = List::append(xs, Cons(61, v))
 ): Cons(y, ys) = List::append(Cons(x, xs), Cons(61, v)) {
-  ⊢ Cons(y, ys) = List::append(Cons(x, xs), Cons(61, v)) from match q {
+  match q {
     false => False::elim(miss_not_glue(v, e))
     true => cons_congr(
       y,
@@ -482,7 +478,7 @@ theorem long_hit_glue(
   v: List(Nat),
   e: long_hit(l, w) = Glue(v)
 ): w = List::append(l, Cons(61, v)) {
-  ⊢ w = List::append(l, Cons(61, v)) from match l {
+  match l {
     Nil => Hit::end_glue(w, v, e)
     Cons(x, xs) => ⊢ w = List::append(Cons(x, xs), Cons(61, v)) from match w {
       Nil => False::elim(miss_not_glue(v, e))
@@ -503,179 +499,177 @@ theorem long_hit_glue(
 
 // ---- clusters of short options ----------------------------------------------------
 
-module Cluster {
-  theorem takes_sound(
-    os: List(Opt),
-    i: Nat,
-    o: Opt,
-    ho: List::nth(os, i) = Some(o),
-    c: Nat,
-    hs: Opt::short(o) = Some(c),
-    more: List(Nat),
-    t: Takes,
-    et: Opt::takes(o) = t,
-    r: Step,
-    er: cluster(os, more) = r,
-    xs: List(Item),
-    w: Option(Nat),
-    e: Cluster::takes(i, more, t, r) = StItems(xs, w),
-    ih: ∀ xs1: List(Item). ∀ w1: Option(Nat). (
-      cluster(os, more) = StItems(xs1, w1)
-    ) -> Cluster(os, more, xs1, w1)
-  ): Cluster(os, Cons(c, more), xs, w) {
-    ⊢ Cluster(os, Cons(c, more), xs, w) from match t {
-      Nothing => ⊢ Cluster(os, Cons(c, more), xs, w) from match r {
-        StItems(xs1, w1) => items_cast(
-          Cons(ItemOpt(i, None), xs1),
-          w1,
-          xs,
-          w,
-          e,
-          (x: List(Item), v: Option(Nat)) => Cluster(os, Cons(c, more), x, v),
-          CSwitch(ho, hs, et, ih(xs1, w1, er))
-        )
-        StRest => False::elim(rest_not_items(xs, w, e))
-        StFail(p) => False::elim(fail_not_items(p, xs, w, e))
-      }
-      Value(m) => ⊢ Cluster(os, Cons(c, more), xs, w) from match more {
-        Nil => items_cast(
-          Nil,
-          Some(i),
-          xs,
-          w,
-          e,
-          (x: List(Item), v: Option(Nat)) => Cluster(os, Cons(c, Nil), x, v),
-          CThen(ho, hs, et)
-        )
-        Cons(d, ds) => items_cast(
-          Cons(ItemOpt(i, Some(text(glued(d, ds)))), Nil),
-          None,
-          xs,
-          w,
-          e,
-          (x: List(Item), v: Option(Nat)) => Cluster(os, Cons(c, Cons(d, ds)), x, v),
-          CGlued(ho, hs, et)
-        )
-      }
-    }
-  }
-
-  theorem found(
-    os: List(Opt),
-    c: Nat,
-    more: List(Nat),
-    i: Nat,
-    slot: Option(Opt),
-    eno: List::nth(os, i) = slot,
-    hs: short_of(slot) = Some(c),
-    r: Step,
-    er: cluster(os, more) = r,
-    xs: List(Item),
-    w: Option(Nat),
-    e: Cluster::takes(i, more, takes_of(slot), r) = StItems(xs, w),
-    ih: ∀ xs1: List(Item). ∀ w1: Option(Nat). (
-      cluster(os, more) = StItems(xs1, w1)
-    ) -> Cluster(os, more, xs1, w1)
-  ): Cluster(os, Cons(c, more), xs, w) {
-    ⊢ Cluster(os, Cons(c, more), xs, w) from match slot {
-      None => False::elim(none_not_some(c, hs))
-      Some(o) => Cluster::takes_sound(
-        os,
-        i,
-        o,
-        eno,
-        c,
-        hs,
-        more,
-        Opt::takes(o),
-        Refl,
-        r,
-        er,
+theorem Cluster::takes_sound(
+  os: List(Opt),
+  i: Nat,
+  o: Opt,
+  ho: List::nth(os, i) = Some(o),
+  c: Nat,
+  hs: Opt::short(o) = Some(c),
+  more: List(Nat),
+  t: Takes,
+  et: Opt::takes(o) = t,
+  r: Step,
+  er: cluster(os, more) = r,
+  xs: List(Item),
+  w: Option(Nat),
+  e: Cluster::takes(i, more, t, r) = StItems(xs, w),
+  ih: ∀ xs1: List(Item). ∀ w1: Option(Nat). (
+    cluster(os, more) = StItems(xs1, w1)
+  ) -> Cluster(os, more, xs1, w1)
+): Cluster(os, Cons(c, more), xs, w) {
+  match t {
+    Nothing => ⊢ Cluster(os, Cons(c, more), xs, w) from match r {
+      StItems(xs1, w1) => items_cast(
+        Cons(ItemOpt(i, None), xs1),
+        w1,
         xs,
         w,
         e,
-        ih
+        (x: List(Item), v: Option(Nat)) => Cluster(os, Cons(c, more), x, v),
+        CSwitch(ho, hs, et, ih(xs1, w1, er))
       )
+      StRest => False::elim(rest_not_items(xs, w, e))
+      StFail(p) => False::elim(fail_not_items(p, xs, w, e))
     }
-  }
-
-  theorem at_sound(
-    os: List(Opt),
-    c: Nat,
-    more: List(Nat),
-    l: Option(Nat),
-    el: lookup_short(os, c) = l,
-    r: Step,
-    er: cluster(os, more) = r,
-    xs: List(Item),
-    w: Option(Nat),
-    e: Cluster::at(os, c, more, l, r) = StItems(xs, w),
-    ih: ∀ xs1: List(Item). ∀ w1: Option(Nat). (
-      cluster(os, more) = StItems(xs1, w1)
-    ) -> Cluster(os, more, xs1, w1)
-  ): Cluster(os, Cons(c, more), xs, w) {
-    ⊢ Cluster(os, Cons(c, more), xs, w) from match l {
-      None => False::elim(fail_not_items(Unknown(text(Cons(45, Cons(c, Nil)))), xs, w, e))
-      Some(i) => Cluster::found(
-        os,
-        c,
-        more,
-        i,
-        List::nth(os, i),
-        Refl,
-        lookup_short_sound(os, c, i, el),
-        r,
-        er,
-        xs,
-        w,
-        e,
-        ih
-      )
-    }
-  }
-
-  // What `cluster` reads a cluster as, `Cluster` allows.
-  theorem sound(
-    os: List(Opt),
-    cs: List(Nat),
-    xs: List(Item),
-    w: Option(Nat),
-    e: cluster(os, cs) = StItems(xs, w)
-  ): Cluster(os, cs, xs, w) {
-    ⊢ Cluster(os, cs, xs, w) from match cs {
+    Value(m) => ⊢ Cluster(os, Cons(c, more), xs, w) from match more {
       Nil => items_cast(
         Nil,
+        Some(i),
+        xs,
+        w,
+        e,
+        (x: List(Item), v: Option(Nat)) => Cluster(os, Cons(c, Nil), x, v),
+        CThen(ho, hs, et)
+      )
+      Cons(d, ds) => items_cast(
+        Cons(ItemOpt(i, Some(text(glued(d, ds)))), Nil),
         None,
         xs,
         w,
         e,
-        (x: List(Item), v: Option(Nat)) => Cluster(os, Nil, x, v),
-        CNil
-      )
-      Cons(c, more) => Cluster::at_sound(
-        os,
-        c,
-        more,
-        lookup_short(os, c),
-        Refl,
-        cluster(os, more),
-        Refl,
-        xs,
-        w,
-        e,
-        (xs1: List(Item), w1: Option(Nat), e1: cluster(os, more) = StItems(xs1, w1)) => Cluster::sound(
-          os,
-          more,
-          xs1,
-          w1,
-          e1
-        )
+        (x: List(Item), v: Option(Nat)) => Cluster(os, Cons(c, Cons(d, ds)), x, v),
+        CGlued(ho, hs, et)
       )
     }
   }
-
-  // ---- one word -------------------------------------------------------------------
 }
+
+theorem Cluster::found(
+  os: List(Opt),
+  c: Nat,
+  more: List(Nat),
+  i: Nat,
+  slot: Option(Opt),
+  eno: List::nth(os, i) = slot,
+  hs: short_of(slot) = Some(c),
+  r: Step,
+  er: cluster(os, more) = r,
+  xs: List(Item),
+  w: Option(Nat),
+  e: Cluster::takes(i, more, takes_of(slot), r) = StItems(xs, w),
+  ih: ∀ xs1: List(Item). ∀ w1: Option(Nat). (
+    cluster(os, more) = StItems(xs1, w1)
+  ) -> Cluster(os, more, xs1, w1)
+): Cluster(os, Cons(c, more), xs, w) {
+  match slot {
+    None => False::elim(none_not_some(c, hs))
+    Some(o) => Cluster::takes_sound(
+      os,
+      i,
+      o,
+      eno,
+      c,
+      hs,
+      more,
+      Opt::takes(o),
+      Refl,
+      r,
+      er,
+      xs,
+      w,
+      e,
+      ih
+    )
+  }
+}
+
+theorem Cluster::at_sound(
+  os: List(Opt),
+  c: Nat,
+  more: List(Nat),
+  l: Option(Nat),
+  el: lookup_short(os, c) = l,
+  r: Step,
+  er: cluster(os, more) = r,
+  xs: List(Item),
+  w: Option(Nat),
+  e: Cluster::at(os, c, more, l, r) = StItems(xs, w),
+  ih: ∀ xs1: List(Item). ∀ w1: Option(Nat). (
+    cluster(os, more) = StItems(xs1, w1)
+  ) -> Cluster(os, more, xs1, w1)
+): Cluster(os, Cons(c, more), xs, w) {
+  match l {
+    None => False::elim(fail_not_items(Unknown(text(Cons(45, Cons(c, Nil)))), xs, w, e))
+    Some(i) => Cluster::found(
+      os,
+      c,
+      more,
+      i,
+      List::nth(os, i),
+      Refl,
+      lookup_short_sound(os, c, i, el),
+      r,
+      er,
+      xs,
+      w,
+      e,
+      ih
+    )
+  }
+}
+
+// What `cluster` reads a cluster as, `Cluster` allows.
+theorem Cluster::sound(
+  os: List(Opt),
+  cs: List(Nat),
+  xs: List(Item),
+  w: Option(Nat),
+  e: cluster(os, cs) = StItems(xs, w)
+): Cluster(os, cs, xs, w) {
+  match cs {
+    Nil => items_cast(
+      Nil,
+      None,
+      xs,
+      w,
+      e,
+      (x: List(Item), v: Option(Nat)) => Cluster(os, Nil, x, v),
+      CNil
+    )
+    Cons(c, more) => Cluster::at_sound(
+      os,
+      c,
+      more,
+      lookup_short(os, c),
+      Refl,
+      cluster(os, more),
+      Refl,
+      xs,
+      w,
+      e,
+      (xs1: List(Item), w1: Option(Nat), e1: cluster(os, more) = StItems(xs1, w1)) => Cluster::sound(
+        os,
+        more,
+        xs1,
+        w1,
+        e1
+      )
+    )
+  }
+}
+
+// ---- one word -------------------------------------------------------------------
 
 theorem long_takes_sound(
   os: List(Opt),
@@ -696,7 +690,7 @@ theorem long_takes_sound(
   e: long_takes(a, i, h, t) = StItems(xs, w),
   r: Reads(os, w, rest, ys)
 ): Reads(os, None, Cons(a, rest), List::append(xs, ys)) {
-  ⊢ Reads(os, None, Cons(a, rest), List::append(xs, ys)) from match h {
+  match h {
     Miss => False::elim(fail_not_items(Unknown(a), xs, w, e))
     Exact => ⊢ Reads(os, None, Cons(a, rest), List::append(xs, ys)) from match t {
       Nothing => items_cast(
@@ -789,7 +783,7 @@ theorem long_found(
   e: long_takes(a, i, h, takes_of(slot)) = StItems(xs, w),
   r: Reads(os, w, rest, ys)
 ): Reads(os, None, Cons(a, rest), List::append(xs, ys)) {
-  ⊢ Reads(os, None, Cons(a, rest), List::append(xs, ys)) from match slot {
+  match slot {
     None => False::elim(none_not_some(h, hh))
     Some(o) => long_takes_sound(
       os,
@@ -827,7 +821,7 @@ theorem long_word_sound(
   e: long_word(os, a, f) = StItems(xs, w),
   r: Reads(os, w, rest, ys)
 ): Reads(os, None, Cons(a, rest), List::append(xs, ys)) {
-  ⊢ Reads(os, None, Cons(a, rest), List::append(xs, ys)) from match f {
+  match f {
     None => False::elim(fail_not_items(Unknown(a), xs, w, e))
     Some(x) => ⊢ Reads(os, None, Cons(a, rest), List::append(xs, ys)) from match x {
       Mk(i, h) => long_found(
@@ -890,7 +884,7 @@ theorem after_dash_sound(
   e: after_dash(os, a, d, ds, q) = StItems(xs, w),
   r: Reads(os, w, rest, ys)
 ): Reads(os, None, Cons(a, rest), List::append(xs, ys)) {
-  ⊢ Reads(os, None, Cons(a, rest), List::append(xs, ys)) from match q {
+  match q {
     false => RShort(hb, eq, Cluster::sound(os, Cons(d, ds), xs, w, e), r)
     true => ⊢ Reads(os, None, Cons(a, rest), List::append(xs, ys)) from match ds {
       Nil => False::elim(rest_not_items(xs, w, e))
@@ -920,7 +914,7 @@ theorem dashy_cons_no(
   more: List(Nat),
   eq: Nat::eq(c, 45) = false
 ): dashy(Cons(c, more)) = false {
-  ⊢ dashy(Cons(c, more)) = false from match more {
+  match more {
     Nil => Refl
     Cons(d, ds) => eq
   }
@@ -941,7 +935,7 @@ theorem dash_word_sound(
   e: dash_word(os, a, more, q) = StItems(xs, w),
   r: Reads(os, w, rest, ys)
 ): Reads(os, None, Cons(a, rest), List::append(xs, ys)) {
-  ⊢ Reads(os, None, Cons(a, rest), List::append(xs, ys)) from match q {
+  match q {
     false => positional_sound(
       os,
       a,
@@ -986,7 +980,7 @@ theorem free_word_sound(
   e: free_word(os, a, b) = StItems(xs, w),
   r: Reads(os, w, rest, ys)
 ): Reads(os, None, Cons(a, rest), List::append(xs, ys)) {
-  ⊢ Reads(os, None, Cons(a, rest), List::append(xs, ys)) from match b {
+  match b {
     Nil => positional_sound(os, a, rest, ys, Eq::congr(dashy, hb), xs, w, e, r)
     Cons(c, more) => dash_word_sound(
       os,
@@ -1019,7 +1013,7 @@ theorem value_word_sound(
   e: value_word(i, a, s) = StItems(xs, w),
   r: Reads(os, w, rest, ys)
 ): Reads(os, Some(i), Cons(a, rest), List::append(xs, ys)) {
-  ⊢ Reads(os, Some(i), Cons(a, rest), List::append(xs, ys)) from match s {
+  match s {
     false => items_cast(
       Cons(ItemOpt(i, Some(a)), Nil),
       None,
@@ -1047,7 +1041,7 @@ theorem word_sound(
   e: word(os, w, a) = StItems(xs, w2),
   r: Reads(os, w2, rest, ys)
 ): Reads(os, w, Cons(a, rest), List::append(xs, ys)) {
-  ⊢ Reads(os, w, Cons(a, rest), List::append(xs, ys)) from match w {
+  match w {
     None => free_word_sound(os, a, rest, ys, Text::bytes(a), Refl, xs, w2, e, r)
     Some(i) => value_word_sound(os, i, a, rest, ys, dashy(Text::bytes(a)), Refl, xs, w2, e, r)
   }
@@ -1056,60 +1050,58 @@ theorem word_sound(
 // ---- `--` ---------------------------------------------------------------------------
 
 theorem step_cons_rest(x: Item, r: Step, e: step_cons(x, r) = StRest): r = StRest {
-  ⊢ r = StRest from match r {
+  match r {
     StItems(xs, w) => False::elim(items_not_rest(Cons(x, xs), w, e))
     StRest => Refl
     StFail(p) => False::elim(fail_not_rest(p, e))
   }
 }
 
-module Cluster {
-  theorem takes_not_rest(
-    i: Nat,
-    more: List(Nat),
-    t: Takes,
-    r: Step,
-    e: Cluster::takes(i, more, t, r) = StRest,
-    ih: (r = StRest) -> False
-  ): False {
-    ⊢ False from match t {
-      Nothing => ih(step_cons_rest(ItemOpt(i, None), r, e))
-      Value(m) => ⊢ False from match more {
-        Nil => items_not_rest(Nil, Some(i), e)
-        Cons(d, ds) => items_not_rest(Cons(ItemOpt(i, Some(text(glued(d, ds)))), Nil), None, e)
-      }
+theorem Cluster::takes_not_rest(
+  i: Nat,
+  more: List(Nat),
+  t: Takes,
+  r: Step,
+  e: Cluster::takes(i, more, t, r) = StRest,
+  ih: (r = StRest) -> False
+): False {
+  match t {
+    Nothing => ih(step_cons_rest(ItemOpt(i, None), r, e))
+    Value(m) => ⊢ False from match more {
+      Nil => items_not_rest(Nil, Some(i), e)
+      Cons(d, ds) => items_not_rest(Cons(ItemOpt(i, Some(text(glued(d, ds)))), Nil), None, e)
     }
   }
+}
 
-  theorem at_not_rest(
-    os: List(Opt),
-    c: Nat,
-    more: List(Nat),
-    l: Option(Nat),
-    r: Step,
-    e: Cluster::at(os, c, more, l, r) = StRest,
-    ih: (r = StRest) -> False
-  ): False {
-    ⊢ False from match l {
-      None => fail_not_rest(Unknown(text(Cons(45, Cons(c, Nil)))), e)
-      Some(i) => Cluster::takes_not_rest(i, more, takes_at(os, i), r, e, ih)
-    }
+theorem Cluster::at_not_rest(
+  os: List(Opt),
+  c: Nat,
+  more: List(Nat),
+  l: Option(Nat),
+  r: Step,
+  e: Cluster::at(os, c, more, l, r) = StRest,
+  ih: (r = StRest) -> False
+): False {
+  match l {
+    None => fail_not_rest(Unknown(text(Cons(45, Cons(c, Nil)))), e)
+    Some(i) => Cluster::takes_not_rest(i, more, takes_at(os, i), r, e, ih)
   }
+}
 
-  // A cluster is never `--`.
-  theorem not_rest(os: List(Opt), cs: List(Nat), e: cluster(os, cs) = StRest): False {
-    ⊢ False from match cs {
-      Nil => items_not_rest(Nil, None, e)
-      Cons(c, more) => Cluster::at_not_rest(
-        os,
-        c,
-        more,
-        lookup_short(os, c),
-        cluster(os, more),
-        e,
-        (h: cluster(os, more) = StRest) => Cluster::not_rest(os, more, h)
-      )
-    }
+// A cluster is never `--`.
+theorem Cluster::not_rest(os: List(Opt), cs: List(Nat), e: cluster(os, cs) = StRest): False {
+  match cs {
+    Nil => items_not_rest(Nil, None, e)
+    Cons(c, more) => Cluster::at_not_rest(
+      os,
+      c,
+      more,
+      lookup_short(os, c),
+      cluster(os, more),
+      e,
+      (h: cluster(os, more) = StRest) => Cluster::not_rest(os, more, h)
+    )
   }
 }
 
@@ -1120,7 +1112,7 @@ theorem long_takes_not_rest(
   t: Takes,
   e: long_takes(a, i, h, t) = StRest
 ): False {
-  ⊢ False from match h {
+  match h {
     Miss => fail_not_rest(Unknown(a), e)
     Exact => ⊢ False from match t {
       Nothing => items_not_rest(Cons(ItemOpt(i, None), Nil), None, e)
@@ -1139,7 +1131,7 @@ theorem long_word_not_rest(
   f: Option(Found),
   e: long_word(os, a, f) = StRest
 ): False {
-  ⊢ False from match f {
+  match f {
     None => fail_not_rest(Unknown(a), e)
     Some(x) => ⊢ False from match x {
       Mk(i, h) => long_takes_not_rest(a, i, h, takes_at(os, i), e)
@@ -1158,7 +1150,7 @@ theorem after_dash_rest(
   eq: Nat::eq(d, 45) = q,
   e: after_dash(os, a, d, ds, q) = StRest
 ): Reads(os, None, Cons(a, rest), List::map(positional, rest)) {
-  ⊢ Reads(os, None, Cons(a, rest), List::map(positional, rest)) from match q {
+  match q {
     false => False::elim(Cluster::not_rest(os, Cons(d, ds), e))
     true => ⊢ Reads(os, None, Cons(a, rest), List::map(positional, rest)) from match ds {
       Nil => RRest(
@@ -1180,7 +1172,7 @@ theorem dash_word_rest(
   eq: Nat::eq(c, 45) = q,
   e: dash_word(os, a, more, q) = StRest
 ): Reads(os, None, Cons(a, rest), List::map(positional, rest)) {
-  ⊢ Reads(os, None, Cons(a, rest), List::map(positional, rest)) from match q {
+  match q {
     false => False::elim(items_not_rest(Cons(ItemPos(a), Nil), None, e))
     true => ⊢ Reads(os, None, Cons(a, rest), List::map(positional, rest)) from match more {
       Nil => False::elim(items_not_rest(Cons(ItemPos(a), Nil), None, e))
@@ -1207,14 +1199,14 @@ theorem free_word_rest(
   hb: Text::bytes(a) = b,
   e: free_word(os, a, b) = StRest
 ): Reads(os, None, Cons(a, rest), List::map(positional, rest)) {
-  ⊢ Reads(os, None, Cons(a, rest), List::map(positional, rest)) from match b {
+  match b {
     Nil => False::elim(items_not_rest(Cons(ItemPos(a), Nil), None, e))
     Cons(c, more) => dash_word_rest(os, a, rest, c, more, hb, Nat::eq(c, 45), Refl, e)
   }
 }
 
 theorem value_word_not_rest(i: Nat, a: Text, s: Bool, e: value_word(i, a, s) = StRest): False {
-  ⊢ False from match s {
+  match s {
     false => items_not_rest(Cons(ItemOpt(i, Some(a)), Nil), None, e)
     true => fail_not_rest(NeedsValue(i), e)
   }
@@ -1228,7 +1220,7 @@ theorem word_rest_sound(
   rest: List(Text),
   e: word(os, w, a) = StRest
 ): Reads(os, w, Cons(a, rest), List::map(positional, rest)) {
-  ⊢ Reads(os, w, Cons(a, rest), List::map(positional, rest)) from match w {
+  match w {
     None => free_word_rest(os, a, rest, Text::bytes(a), Refl, e)
     Some(i) => False::elim(value_word_not_rest(i, a, dashy(Text::bytes(a)), e))
   }
@@ -1237,7 +1229,7 @@ theorem word_rest_sound(
 // ---- the whole command line ---------------------------------------------------------
 
 theorem lexed_not_failed(xs: List(Item), p: Problem, e: LexFailed(p) = LexOk(xs)): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
@@ -1255,7 +1247,7 @@ theorem prepend_sound(
   e: lexed_prepend(xs, l) = LexOk(items),
   ih: ∀ ys: List(Item). (lex_from(os, rest, w2) = LexOk(ys)) -> Reads(os, w2, rest, ys)
 ): Reads(os, w, Cons(a, rest), items) {
-  ⊢ Reads(os, w, Cons(a, rest), items) from match l {
+  match l {
     LexOk(ys) => ⊢ Reads(os, w, Cons(a, rest), items) from match e {
       Refl => word_sound(os, w, a, rest, ys, xs, w2, es, ih(ys, el))
     }
@@ -1276,7 +1268,7 @@ theorem join_sound(
     lex_from(os, rest, step_wait(s)) = LexOk(ys)
   ) -> Reads(os, step_wait(s), rest, ys)
 ): Reads(os, w, Cons(a, rest), items) {
-  ⊢ Reads(os, w, Cons(a, rest), items) from match s {
+  match s {
     StItems(xs, w2) => prepend_sound(
       os,
       w,
@@ -1298,56 +1290,54 @@ theorem join_sound(
   }
 }
 
-module Lex {
-  theorem from_sound(
-    os: List(Opt),
-    args: List(Text),
-    w: Option(Nat),
-    items: List(Item),
-    e: lex_from(os, args, w) = LexOk(items)
-  ): Reads(os, w, args, items) {
-    ⊢ Reads(os, w, args, items) from match args {
-      Nil => ⊢ Reads(os, w, Nil, items) from match w {
-        None => ⊢ Reads(os, None, Nil, items) from match e {
-          Refl => REnd
-        }
-        Some(i) => False::elim(lexed_not_failed(items, NeedsValue(i), e))
+theorem Lex::from_sound(
+  os: List(Opt),
+  args: List(Text),
+  w: Option(Nat),
+  items: List(Item),
+  e: lex_from(os, args, w) = LexOk(items)
+): Reads(os, w, args, items) {
+  match args {
+    Nil => ⊢ Reads(os, w, Nil, items) from match w {
+      None => ⊢ Reads(os, None, Nil, items) from match e {
+        Refl => REnd
       }
-      Cons(a, rest) => join_sound(
-        os,
-        w,
-        a,
-        rest,
-        items,
-        word(os, w, a),
-        Refl,
-        e,
-        (ys: List(Item), ey: lex_from(os, rest, step_wait(word(os, w, a))) = LexOk(ys)) => Lex::from_sound(
-          os,
-          rest,
-          step_wait(word(os, w, a)),
-          ys,
-          ey
-        )
-      )
+      Some(i) => False::elim(lexed_not_failed(items, NeedsValue(i), e))
     }
+    Cons(a, rest) => join_sound(
+      os,
+      w,
+      a,
+      rest,
+      items,
+      word(os, w, a),
+      Refl,
+      e,
+      (ys: List(Item), ey: lex_from(os, rest, step_wait(word(os, w, a))) = LexOk(ys)) => Lex::from_sound(
+        os,
+        rest,
+        step_wait(word(os, w, a)),
+        ys,
+        ey
+      )
+    )
   }
-
-  // Whatever `lex` reads the arguments as, the rules of `Reads` allow.
-  pub theorem sound(
-    os: List(Opt),
-    args: List(Text),
-    items: List(Item),
-    e: lex(os, args) = LexOk(items)
-  ): Reads(os, None, args, items) {
-    Lex::from_sound(os, args, None, items, e)
-  }
-
-  // ---- the help shows what the parser reads ------------------------------------------
 }
 
+// Whatever `lex` reads the arguments as, the rules of `Reads` allow.
+pub theorem Lex::sound(
+  os: List(Opt),
+  args: List(Text),
+  items: List(Item),
+  e: lex(os, args) = LexOk(items)
+): Reads(os, None, args, items) {
+  Lex::from_sound(os, args, None, items, e)
+}
+
+// ---- the help shows what the parser reads ------------------------------------------
+
 theorem option_succ_none(o: Option(Nat), e: option_succ(o) = None): o = None {
-  ⊢ o = None from match o {
+  match o {
     None => Refl
     Some(j) => False::elim(some_not_none(Succ(j), e))
   }
@@ -1364,7 +1354,7 @@ theorem lookup_short_complete_cons(
   n: short_step(s, lookup_short(rest, c)) = None,
   ih: ∀ k: Nat. (short_at(rest, k) = Some(c)) -> (lookup_short(rest, c) = None) -> False
 ): False {
-  ⊢ False from match s {
+  match s {
     false => ⊢ False from match i {
       Zero => yes_not_no(
         Eq::trans(
@@ -1386,7 +1376,7 @@ theorem lookup_short_complete(
   h: short_at(os, i) = Some(c),
   n: lookup_short(os, c) = None
 ): False {
-  ⊢ False from match os {
+  match os {
     Nil => none_not_some(c, h)
     Cons(o, rest) => lookup_short_complete_cons(
       o,
@@ -1409,7 +1399,7 @@ theorem lookup_short_complete(
 }
 
 theorem found_succ_none(r: Option(Found), e: found_succ(r) = None): r = None {
-  ⊢ r = None from match r {
+  match r {
     None => Refl
     Some(x) => ⊢ Some(x) = None from match x {
       Mk(j, g) => False::elim(some_not_none(Found::Mk(Succ(j), g), e))
@@ -1430,7 +1420,7 @@ theorem lookup_long_complete_cons(
     Hit::of(List::nth(rest, k), w) = Some(Exact)
   ) -> (lookup_long(rest, w) = None) -> False
 ): False {
-  ⊢ False from match g {
+  match g {
     Miss => ⊢ False from match i {
       Zero => miss_not_exact(
         Eq::trans(Eq::sym(eg), Option::some_inj(long_hit(Text::bytes(Opt::long(o)), w), Exact, h))
@@ -1449,7 +1439,7 @@ theorem lookup_long_complete_at(
   h: Hit::of(List::nth(os, i), w) = Some(Exact),
   n: lookup_long(os, w) = None
 ): False {
-  ⊢ False from match os {
+  match os {
     Nil => none_not_some(Exact, h)
     Cons(o, rest) => lookup_long_complete_cons(
       o,
@@ -1472,7 +1462,7 @@ theorem lookup_long_complete_at(
 }
 
 theorem long_hit_self(l: List(Nat)): long_hit(l, l) = Exact {
-  ⊢ long_hit(l, l) = Exact from match l {
+  match l {
     Nil => Refl
     Cons(x, xs) => Eq::subst(
       (q: Bool) => Hit::after(q, long_hit(xs, xs)) = Exact,
@@ -1505,37 +1495,35 @@ theorem lookup_long_complete(
 
 // Whether a line is there and begins with `p`.
 fn line_begins(line: Option(List(Nat)), p: List(Nat)): Bool {
-  ⊢ Bool from match line {
+  match line {
     None => false
     Some(l) => Bytes::starts_with(l, p)
   }
 }
 
-module Opt {
-  theorem lines_show(
-    w: Nat,
-    os: List(Opt),
-    i: Nat,
-    o: Opt,
-    ho: List::nth(os, i) = Some(o)
-  ): line_begins(List::nth(Opt::lines(w, os), i), Opt::left(o)) = true {
-    ⊢ line_begins(List::nth(Opt::lines(w, os), i), Opt::left(o)) = true from match os {
-      Nil => False::elim(none_not_some(o, ho))
-      Cons(p, rest) => ⊢ line_begins(
-        List::nth(Opt::lines(w, Cons(p, rest)), i),
+theorem Opt::lines_show(
+  w: Nat,
+  os: List(Opt),
+  i: Nat,
+  o: Opt,
+  ho: List::nth(os, i) = Some(o)
+): line_begins(List::nth(Opt::lines(w, os), i), Opt::left(o)) = true {
+  match os {
+    Nil => False::elim(none_not_some(o, ho))
+    Cons(p, rest) => ⊢ line_begins(
+      List::nth(Opt::lines(w, Cons(p, rest)), i),
+      Opt::left(o)
+    ) = true from match i {
+      Zero => ⊢ line_begins(
+        List::nth(Opt::lines(w, Cons(p, rest)), Zero),
         Opt::left(o)
-      ) = true from match i {
-        Zero => ⊢ line_begins(
-          List::nth(Opt::lines(w, Cons(p, rest)), Zero),
-          Opt::left(o)
-        ) = true from match ho {
-          Refl => Bytes::starts_with_append(
-            Opt::left(p),
-            about_after(w, Opt::left(p), Opt::about(p))
-          )
-        }
-        Succ(k) => Opt::lines_show(w, rest, k, o, ho)
+      ) = true from match ho {
+        Refl => Bytes::starts_with_append(
+          Opt::left(p),
+          about_after(w, Opt::left(p), Opt::about(p))
+        )
       }
+      Succ(k) => Opt::lines_show(w, rest, k, o, ho)
     }
   }
 }
@@ -1555,19 +1543,19 @@ theorem help_shows_option(
 // ---- the values `cli!` makes ---------------------------------------------------------
 
 theorem ok_not_failed<T: Type>(x: T, p: Problem, e: Failed(p) = Ok(x)): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 theorem checked_ok<T: Type>(c: Option(Problem), x: T, g: T, e: checked(c, x) = Ok(g)): c = None {
-  ⊢ c = None from match c {
+  match c {
     None => Refl
     Some(p) => False::elim(ok_not_failed(g, p, e))
   }
 }
 
 theorem checked_value<T: Type>(c: Option(Problem), x: T, g: T, e: checked(c, x) = Ok(g)): x = g {
-  ⊢ x = g from match c {
+  match c {
     None => ⊢ x = g from match e {
       Refl => Refl
     }
@@ -1583,7 +1571,7 @@ theorem read_help_ok<T: Type>(
   g: T,
   e: read_help(h, v, c, x) = Ok(g)
 ): checked(c, x) = Ok(g) {
-  ⊢ checked(c, x) = Ok(g) from match h {
+  match h {
     true => False::elim(ok_not_failed(g, AskedHelp, e))
     false => ⊢ checked(c, x) = Ok(g) from match v {
       true => False::elim(ok_not_failed(g, AskedVersion, e))
@@ -1617,9 +1605,9 @@ theorem parse_ok<T: Type>(
 }
 
 fn lexed_items(l: Lexed): List(Item) {
-  ⊢ List(Item) from match l {
+  match l {
     LexOk(xs) => xs
-    LexFailed(p) => Nil
+    LexFailed(^p) => Nil
   }
 }
 
@@ -1632,7 +1620,7 @@ theorem parse_lexed_ok<T: Type>(
   g: T,
   e: parse_lexed(hv, vv, checks, mk, l) = Ok(g)
 ): l = LexOk(lexed_items(l)) {
-  ⊢ l = LexOk(lexed_items(l)) from match l {
+  match l {
     LexOk(xs) => Refl
     LexFailed(p) => False::elim(ok_not_failed(g, p, e))
   }
@@ -1663,7 +1651,7 @@ theorem first_problem_nth(
   h: List::nth(ps, k) = Some(p),
   n: first_problem(ps) = None
 ): p = None {
-  ⊢ p = None from match ps {
+  match ps {
     Nil => False::elim(none_not_some(p, h))
     Cons(q, rest) => ⊢ p = None from match q {
       None => ⊢ p = None from match k {
@@ -1680,7 +1668,7 @@ theorem problem_none_ok<F: Type>(
   d: F,
   e: problem_of(r) = None
 ): r = Ok(parsed_or(r, d)) {
-  ⊢ r = Ok(parsed_or(r, d)) from match r {
+  match r {
     Ok(x) => Refl
     Failed(p) => False::elim(some_not_none(p, e))
   }
@@ -1746,21 +1734,21 @@ pub theorem field_reads<T: Type, F: Type>(
 
 // The name of subcommand `j`.
 fn name_at(subs: List(Spec), j: Nat): Option(Text) {
-  ⊢ Option(Text) from match List::nth(subs, j) {
+  match List::nth(subs, j) {
     None => None
     Some(c) => Some(spec_name(c))
   }
 }
 
 fn named(n: Option(Text), af: List(Text)): List(Text) {
-  ⊢ List(Text) from match n {
+  match n {
     None => af
     Some(x) => Cons(x, af)
   }
 }
 
 fn cmd_words(subs: List(Spec), c: Option(Nat), af: List(Text)): List(Text) {
-  ⊢ List(Text) from match c {
+  match c {
     None => af
     Some(j) => named(name_at(subs, j), af)
   }
@@ -1769,7 +1757,7 @@ fn cmd_words(subs: List(Spec), c: Option(Nat), af: List(Text)): List(Text) {
 // The arguments a split was made from: those before, the subcommand's name,
 // and those after.
 fn unsplit(subs: List(Spec), sp: Split): List(Text) {
-  ⊢ List(Text) from match sp {
+  match sp {
     Mk(b, c, af) => List::append(b, cmd_words(subs, c, af))
   }
 }
@@ -1784,14 +1772,14 @@ theorem bytes_same_step(
   e: Bool::and(q, bytes_same(xs, ys)) = true,
   ih: (bytes_same(xs, ys) = true) -> xs = ys
 ): Cons(x, xs) = Cons(y, ys) {
-  ⊢ Cons(x, xs) = Cons(y, ys) from match q {
+  match q {
     false => False::elim(yes_not_no(Eq::sym(e)))
     true => cons_congr(x, y, xs, ys, Nat::eq_sound(x, y, eq), ih(e))
   }
 }
 
 theorem bytes_same_sound(a: List(Nat), b: List(Nat), e: bytes_same(a, b) = true): a = b {
-  ⊢ a = b from match a {
+  match a {
     Nil => ⊢ Nil = b from match b {
       Nil => Refl
       Cons(y, ys) => False::elim(yes_not_no(Eq::sym(e)))
@@ -1816,61 +1804,59 @@ theorem text_of_bytes_eq(a: Text, b: Text, e: Text::bytes(a) = Text::bytes(b)): 
   Eq::trans(Eq::sym(Text::eta(a)), Eq::trans(Eq::congr(text, e), Text::eta(b)))
 }
 
-module Subcommand {
-  theorem index_sound_cons(
-    c: Spec,
-    rest: List(Spec),
-    a: Text,
-    j: Nat,
-    s: Bool,
-    es: bytes_same(Text::bytes(spec_name(c)), Text::bytes(a)) = s,
-    e: Subcommand::step(s, Subcommand::index(rest, a)) = Some(j),
-    ih: ∀ k: Nat. (Subcommand::index(rest, a) = Some(k)) -> name_at(rest, k) = Some(a)
-  ): name_at(Cons(c, rest), j) = Some(a) {
-    ⊢ name_at(Cons(c, rest), j) = Some(a) from match s {
-      false => ⊢ name_at(Cons(c, rest), j) = Some(a) from match j {
-        Zero => False::elim(option_succ_not_zero(Subcommand::index(rest, a), e))
-        Succ(k) => ih(k, option_succ_inv(Subcommand::index(rest, a), k, e))
-      }
-      true => ⊢ name_at(Cons(c, rest), j) = Some(a) from match j {
-        Zero => Eq::congr(
-          (x: Text) => Some(x),
-          text_of_bytes_eq(
-            spec_name(c),
-            a,
-            bytes_same_sound(Text::bytes(spec_name(c)), Text::bytes(a), es)
-          )
-        )
-        Succ(k) => False::elim(zero_ne_succ(k, Option::some_inj(Zero, Succ(k), e)))
-      }
+theorem Subcommand::index_sound_cons(
+  c: Spec,
+  rest: List(Spec),
+  a: Text,
+  j: Nat,
+  s: Bool,
+  es: bytes_same(Text::bytes(spec_name(c)), Text::bytes(a)) = s,
+  e: Subcommand::step(s, Subcommand::index(rest, a)) = Some(j),
+  ih: ∀ k: Nat. (Subcommand::index(rest, a) = Some(k)) -> name_at(rest, k) = Some(a)
+): name_at(Cons(c, rest), j) = Some(a) {
+  match s {
+    false => ⊢ name_at(Cons(c, rest), j) = Some(a) from match j {
+      Zero => False::elim(option_succ_not_zero(Subcommand::index(rest, a), e))
+      Succ(k) => ih(k, option_succ_inv(Subcommand::index(rest, a), k, e))
     }
-  }
-
-  // The subcommand `Subcommand::index` finds is named by the word.
-  theorem index_sound(
-    subs: List(Spec),
-    a: Text,
-    j: Nat,
-    e: Subcommand::index(subs, a) = Some(j)
-  ): name_at(subs, j) = Some(a) {
-    ⊢ name_at(subs, j) = Some(a) from match subs {
-      Nil => False::elim(none_not_some(j, e))
-      Cons(c, rest) => Subcommand::index_sound_cons(
-        c,
-        rest,
-        a,
-        j,
-        bytes_same(Text::bytes(spec_name(c)), Text::bytes(a)),
-        Refl,
-        e,
-        (k: Nat, ek: Subcommand::index(rest, a) = Some(k)) => Subcommand::index_sound(
-          rest,
+    true => ⊢ name_at(Cons(c, rest), j) = Some(a) from match j {
+      Zero => Eq::congr(
+        (x: Text) => Some(x),
+        text_of_bytes_eq(
+          spec_name(c),
           a,
-          k,
-          ek
+          bytes_same_sound(Text::bytes(spec_name(c)), Text::bytes(a), es)
         )
       )
+      Succ(k) => False::elim(zero_ne_succ(k, Option::some_inj(Zero, Succ(k), e)))
     }
+  }
+}
+
+// The subcommand `Subcommand::index` finds is named by the word.
+theorem Subcommand::index_sound(
+  subs: List(Spec),
+  a: Text,
+  j: Nat,
+  e: Subcommand::index(subs, a) = Some(j)
+): name_at(subs, j) = Some(a) {
+  match subs {
+    Nil => False::elim(none_not_some(j, e))
+    Cons(c, rest) => Subcommand::index_sound_cons(
+      c,
+      rest,
+      a,
+      j,
+      bytes_same(Text::bytes(spec_name(c)), Text::bytes(a)),
+      Refl,
+      e,
+      (k: Nat, ek: Subcommand::index(rest, a) = Some(k)) => Subcommand::index_sound(
+        rest,
+        a,
+        k,
+        ek
+      )
+    )
   }
 }
 
@@ -1879,191 +1865,183 @@ theorem unsplit_cons(
   a: Text,
   r: Split
 ): unsplit(subs, split_cons(a, r)) = Cons(a, unsplit(subs, r)) {
-  ⊢ unsplit(subs, split_cons(a, r)) = Cons(a, unsplit(subs, r)) from match r {
+  match r {
     Mk(b, c, af) => Refl
   }
 }
 
-module Split {
-  theorem keep(
-    subs: List(Spec),
-    a: Text,
-    rest: List(Text),
-    r: Split,
-    ih: unsplit(subs, r) = rest
-  ): unsplit(subs, split_cons(a, r)) = Cons(a, rest) {
-    Eq::trans(unsplit_cons(subs, a, r), Eq::congr((x: List(Text)) => Cons(a, x), ih))
-  }
+theorem Split::keep(
+  subs: List(Spec),
+  a: Text,
+  rest: List(Text),
+  r: Split,
+  ih: unsplit(subs, r) = rest
+): unsplit(subs, split_cons(a, r)) = Cons(a, rest) {
+  Eq::trans(unsplit_cons(subs, a, r), Eq::congr((x: List(Text)) => Cons(a, x), ih))
+}
 
-  theorem word_sound(
-    subs: List(Spec),
-    a: Text,
-    rest: List(Text),
-    p: Bool,
-    k: Option(Nat),
-    ek: Subcommand::index(subs, a) = k,
-    r: Split,
-    ih: unsplit(subs, r) = rest
-  ): unsplit(subs, Split::add_word(a, rest, p, k, r)) = Cons(a, rest) {
-    ⊢ unsplit(subs, Split::add_word(a, rest, p, k, r)) = Cons(a, rest) from match p {
-      false => Split::keep(subs, a, rest, r, ih)
-      true => ⊢ unsplit(subs, Split::add_word(a, rest, true, k, r)) = Cons(a, rest) from match k {
-        None => Split::keep(subs, a, rest, r, ih)
-        Some(j) => Eq::subst(
-          (x: Option(Text)) => named(x, rest) = Cons(a, rest),
-          Eq::sym(Subcommand::index_sound(subs, a, j, ek)),
-          Refl
-        )
-      }
-    }
-  }
-
-  theorem at_sound(
-    subs: List(Spec),
-    s: Step,
-    a: Text,
-    rest: List(Text),
-    k: Option(Nat),
-    ek: Subcommand::index(subs, a) = k,
-    r: Split,
-    ih: unsplit(subs, r) = rest
-  ): unsplit(subs, split_at(s, a, rest, k, r)) = Cons(a, rest) {
-    ⊢ unsplit(subs, split_at(s, a, rest, k, r)) = Cons(a, rest) from match s {
-      StItems(xs, w) => Split::word_sound(subs, a, rest, single_pos(xs, w), k, ek, r, ih)
-      StRest => List::append_nil(Cons(a, rest))
-      StFail(p) => List::append_nil(Cons(a, rest))
-    }
-  }
-
-  // Splitting at a subcommand loses no argument: the arguments before it, its
-  // name and the arguments after it are the command line.
-  theorem sound(
-    os: List(Opt),
-    subs: List(Spec),
-    args: List(Text),
-    w: Option(Nat)
-  ): unsplit(subs, split_from(os, subs, args, w)) = args {
-    ⊢ unsplit(subs, split_from(os, subs, args, w)) = args from match args {
-      Nil => Refl
-      Cons(a, rest) => Split::at_sound(
-        subs,
-        word(os, w, a),
-        a,
-        rest,
-        Subcommand::index(subs, a),
-        Refl,
-        split_from(os, subs, rest, step_wait(word(os, w, a))),
-        Split::sound(os, subs, rest, step_wait(word(os, w, a)))
+theorem Split::word_sound(
+  subs: List(Spec),
+  a: Text,
+  rest: List(Text),
+  p: Bool,
+  k: Option(Nat),
+  ek: Subcommand::index(subs, a) = k,
+  r: Split,
+  ih: unsplit(subs, r) = rest
+): unsplit(subs, Split::add_word(a, rest, p, k, r)) = Cons(a, rest) {
+  match p {
+    false => Split::keep(subs, a, rest, r, ih)
+    true => ⊢ unsplit(subs, Split::add_word(a, rest, true, k, r)) = Cons(a, rest) from match k {
+      None => Split::keep(subs, a, rest, r, ih)
+      Some(j) => Eq::subst(
+        (x: Option(Text)) => named(x, rest) = Cons(a, rest),
+        Eq::sym(Subcommand::index_sound(subs, a, j, ek)),
+        Refl
       )
     }
   }
 }
 
-theorem lexed_inj(xs: List(Item), ys: List(Item), e: LexOk(xs) = LexOk(ys)): xs = ys {
-  ⊢ xs = ys from match e {
-    Refl => Refl
+theorem Split::at_sound(
+  subs: List(Spec),
+  s: Step,
+  a: Text,
+  rest: List(Text),
+  k: Option(Nat),
+  ek: Subcommand::index(subs, a) = k,
+  r: Split,
+  ih: unsplit(subs, r) = rest
+): unsplit(subs, split_at(s, a, rest, k, r)) = Cons(a, rest) {
+  match s {
+    StItems(xs, w) => Split::word_sound(subs, a, rest, single_pos(xs, w), k, ek, r, ih)
+    StRest => List::append_nil(Cons(a, rest))
+    StFail(p) => List::append_nil(Cons(a, rest))
   }
 }
 
-module Lex {
-  // What `Lex::cmd` reads: the items `lex` reads before the subcommand's name
-  // (which `Reads` allows, by `Lex::sound`), and the subcommand with the
-  // arguments after it.
-  theorem cmd_items(
-    os: List(Opt),
-    subs: List(Spec),
-    args: List(Text),
-    items: List(Item),
-    b: List(Text),
-    c: Option(Nat),
-    af: List(Text),
-    es: split_from(os, subs, args, None) = Split::Mk(b, c, af),
-    xs: List(Item),
-    ex: lex(os, b) = LexOk(xs),
-    e: Lex::cmd(os, subs, args) = LexOk(items)
-  ): List::append(xs, Subcommand::items(c, af)) = items {
-    lexed_inj(
-      List::append(xs, Subcommand::items(c, af)),
-      items,
-      Eq::subst(
-        (l: Lexed) => lexed_append(l, Subcommand::items(c, af)) = LexOk(items),
-        ex,
-        Eq::subst((x: Split) => Lex::split(os, x) = LexOk(items), es, e)
-      )
+// Splitting at a subcommand loses no argument: the arguments before it, its
+// name and the arguments after it are the command line.
+theorem Split::sound(
+  os: List(Opt),
+  subs: List(Spec),
+  args: List(Text),
+  w: Option(Nat)
+): unsplit(subs, split_from(os, subs, args, w)) = args {
+  match args {
+    Nil => Refl
+    Cons(a, rest) => Split::at_sound(
+      subs,
+      word(os, w, a),
+      a,
+      rest,
+      Subcommand::index(subs, a),
+      Refl,
+      split_from(os, subs, rest, step_wait(word(os, w, a))),
+      Split::sound(os, subs, rest, step_wait(word(os, w, a)))
     )
   }
 }
 
-module Split {
-  // With no subcommands declared, `Lex::cmd` is `lex`.
-  theorem word_none(
-    a: Text,
-    rest: List(Text),
-    p: Bool,
-    r: Split,
-    er: r = Split::Mk(rest, None, Nil)
-  ): Split::add_word(a, rest, p, None, r) = Split::Mk(Cons(a, rest), None, Nil) {
-    ⊢ Split::add_word(a, rest, p, None, r) = Split::Mk(Cons(a, rest), None, Nil) from match er {
-      Refl => ⊢ Split::add_word(
-        a,
-        rest,
-        p,
-        None,
-        Split::Mk(rest, None, Nil)
-      ) = Split::Mk(Cons(a, rest), None, Nil) from match p {
-        false => Refl
-        true => Refl
-      }
-    }
+theorem lexed_inj(xs: List(Item), ys: List(Item), e: LexOk(xs) = LexOk(ys)): xs = ys {
+  match e {
+    Refl => Refl
   }
+}
 
-  theorem at_none(
-    s: Step,
-    a: Text,
-    rest: List(Text),
-    r: Split,
-    er: r = Split::Mk(rest, None, Nil)
-  ): split_at(s, a, rest, None, r) = Split::Mk(Cons(a, rest), None, Nil) {
-    ⊢ split_at(s, a, rest, None, r) = Split::Mk(Cons(a, rest), None, Nil) from match s {
-      StItems(xs, w) => Split::word_none(a, rest, single_pos(xs, w), r, er)
-      StRest => Refl
-      StFail(p) => Refl
-    }
-  }
+// What `Lex::cmd` reads: the items `lex` reads before the subcommand's name
+// (which `Reads` allows, by `Lex::sound`), and the subcommand with the
+// arguments after it.
+theorem Lex::cmd_items(
+  os: List(Opt),
+  subs: List(Spec),
+  args: List(Text),
+  items: List(Item),
+  b: List(Text),
+  c: Option(Nat),
+  af: List(Text),
+  es: split_from(os, subs, args, None) = Split::Mk(b, c, af),
+  xs: List(Item),
+  ex: lex(os, b) = LexOk(xs),
+  e: Lex::cmd(os, subs, args) = LexOk(items)
+): List::append(xs, Subcommand::items(c, af)) = items {
+  lexed_inj(
+    List::append(xs, Subcommand::items(c, af)),
+    items,
+    Eq::subst(
+      (l: Lexed) => lexed_append(l, Subcommand::items(c, af)) = LexOk(items),
+      ex,
+      Eq::subst((x: Split) => Lex::split(os, x) = LexOk(items), es, e)
+    )
+  )
+}
 
-  theorem no_subs(
-    os: List(Opt),
-    args: List(Text),
-    w: Option(Nat)
-  ): split_from(os, Nil, args, w) = Split::Mk(args, None, Nil) {
-    ⊢ split_from(os, Nil, args, w) = Split::Mk(args, None, Nil) from match args {
-      Nil => Refl
-      Cons(a, rest) => Split::at_none(
-        word(os, w, a),
-        a,
-        rest,
-        split_from(os, Nil, rest, step_wait(word(os, w, a))),
-        Split::no_subs(os, rest, step_wait(word(os, w, a)))
-      )
+// With no subcommands declared, `Lex::cmd` is `lex`.
+theorem Split::word_none(
+  a: Text,
+  rest: List(Text),
+  p: Bool,
+  r: Split,
+  er: r = Split::Mk(rest, None, Nil)
+): Split::add_word(a, rest, p, None, r) = Split::Mk(Cons(a, rest), None, Nil) {
+  match er {
+    Refl => ⊢ Split::add_word(
+      a,
+      rest,
+      p,
+      None,
+      Split::Mk(rest, None, Nil)
+    ) = Split::Mk(Cons(a, rest), None, Nil) from match p {
+      false => Refl
+      true => Refl
     }
   }
 }
 
+theorem Split::at_none(
+  s: Step,
+  a: Text,
+  rest: List(Text),
+  r: Split,
+  er: r = Split::Mk(rest, None, Nil)
+): split_at(s, a, rest, None, r) = Split::Mk(Cons(a, rest), None, Nil) {
+  match s {
+    StItems(xs, w) => Split::word_none(a, rest, single_pos(xs, w), r, er)
+    StRest => Refl
+    StFail(p) => Refl
+  }
+}
+
+theorem Split::no_subs(
+  os: List(Opt),
+  args: List(Text),
+  w: Option(Nat)
+): split_from(os, Nil, args, w) = Split::Mk(args, None, Nil) {
+  match args {
+    Nil => Refl
+    Cons(a, rest) => Split::at_none(
+      word(os, w, a),
+      a,
+      rest,
+      split_from(os, Nil, rest, step_wait(word(os, w, a))),
+      Split::no_subs(os, rest, step_wait(word(os, w, a)))
+    )
+  }
+}
+
 pub theorem lexed_append_nil(l: Lexed): lexed_append(l, Nil) = l {
-  ⊢ lexed_append(l, Nil) = l from match l {
+  match l {
     LexOk(xs) => Eq::congr((ys: List(Item)) => LexOk(ys), List::append_nil(xs))
     LexFailed(p) => Refl
   }
 }
 
-module Lex {
-  pub theorem cmd_no_subs(
-    os: List(Opt),
-    args: List(Text)
-  ): Lex::cmd(os, Nil, args) = lex(os, args) {
-    Eq::trans(
-      Eq::congr((s: Split) => Lex::split(os, s), Split::no_subs(os, args, None)),
-      lexed_append_nil(lex(os, args))
-    )
-  }
+pub theorem Lex::cmd_no_subs(
+  os: List(Opt),
+  args: List(Text)
+): Lex::cmd(os, Nil, args) = lex(os, args) {
+  Eq::trans(
+    Eq::congr((s: Split) => Lex::split(os, s), Split::no_subs(os, args, None)),
+    lexed_append_nil(lex(os, args))
+  )
 }

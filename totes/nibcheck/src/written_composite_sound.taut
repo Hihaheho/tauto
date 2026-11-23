@@ -1,8 +1,8 @@
 import "written_leaf_sound.taut"
 import "written_context_sound.taut"
 import "written_error_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -10,25 +10,27 @@ import "diagnostic_sound.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 // Mapping the result of a state computation does not alter its diagnostics.
 pub fn written_map<A: Type, B: Type>(f: (A) -> B, m: Mut1(A, Checker)): Mut1(B, Checker) {
-  frame_bind(A, B, (value: A, state: Checker) => mut1(f(value), state), m)
+  frame_bind(<A: A, B: B>, (value: A, state: Checker) => mut1(f(value), state), m)
 }
 pub theorem written_map_value<A: Type, B: Type>(
   f: (A) -> B,
   m: Mut1(A, Checker)
 ): ck_val(written_map(f, m)) = f(ck_val(m)) {
-  ⊢ ck_val(written_map(f, m)) = f(ck_val(m)) from match m { mut1(value, state) => Refl }
+  match m { mut1(value, state) => Refl }
 }
 pub theorem written_map_clean<A: Type, B: Type>(
   f: (A) -> B,
   m: Mut1(A, Checker),
   clean: DiagnosticClean(ck_st(written_map(f, m)))
 ): DiagnosticClean(ck_st(m)) {
-  ⊢ DiagnosticClean(ck_st(m)) from match m { mut1(value, state) => clean }
+  match m { mut1(value, state) => clean }
 }
 
 pub theorem written_union_sound(
@@ -72,11 +74,16 @@ pub theorem written_union_sound(
   )
 }
 
+// `A × B`: the prelude's `Pair` of two members.
 pub theorem written_product_sound(
+  ast_occurrence: Option(TermOccurrence),
   parts: List(SurfaceTerm),
   c: Checker,
   generics: Ordmap(Text, Ty),
   under_borrow: Bool,
+  start: Nat,
+  end: Nat,
+  two: list_len(parts) = 2,
   ih: ∀ clean: DiagnosticClean(
     ck_st(ck_written_each(parts, c, generics))
   ). WrittenTerms(
@@ -92,7 +99,7 @@ pub theorem written_product_sound(
   generics,
   frame_constructor_position(c),
   under_borrow,
-  SkProduct(parts),
+  SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("std::prelude::Pair")), start, end, ast_occurrence), parts),
   ck_val(frame_written_product(parts, c, generics))
 ) {
   Eq::subst(
@@ -101,13 +108,16 @@ pub theorem written_product_sound(
       generics,
       frame_constructor_position(c),
       under_borrow,
-      SkProduct(parts),
+      SkApp(SurfaceTermIndexedMk(SkVar(NameSpelled("std::prelude::Pair")), start, end, ast_occurrence), parts),
       t
     ),
     Eq::sym(written_map_value(ty_product, ck_written_each(parts, c, generics))),
     WrittenKindProduct(
       parts,
       ck_val(ck_written_each(parts, c, generics)),
+      start,
+      end,
+      two,
       ih(written_map_clean(ty_product, ck_written_each(parts, c, generics), clean))
     )
   )
@@ -149,8 +159,7 @@ pub theorem written_tagged_sound(
     ),
     Eq::sym(
       written_map_value(
-        Ty,
-        Ty,
+        <A: Ty, B: Ty>,
         (t: Ty) => ty_tagged(Cons(tag, Nil), t),
         ck_written_in(body, c, generics)
       )
@@ -161,8 +170,7 @@ pub theorem written_tagged_sound(
       ck_val(ck_written_in(body, c, generics)),
       ih(
         written_map_clean(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (t: Ty) => ty_tagged(Cons(tag, Nil), t),
           ck_written_in(body, c, generics),
           clean
@@ -174,6 +182,7 @@ pub theorem written_tagged_sound(
 
 pub theorem written_borrow_sound(
   mutable: Bool,
+  mutable_orig: Bool,
   body: SurfaceTerm,
   c: Checker,
   generics: Ordmap(Text, Ty),
@@ -194,7 +203,7 @@ pub theorem written_borrow_sound(
   generics,
   frame_constructor_position(c),
   under_borrow,
-  SkBorrow(mutable, body),
+  SkBorrow(mutable, mutable_orig, body),
   ck_val(frame_written_borrow(mutable, body, c, generics))
 ) {
   Eq::subst(
@@ -203,25 +212,24 @@ pub theorem written_borrow_sound(
       generics,
       frame_constructor_position(c),
       under_borrow,
-      SkBorrow(mutable, body),
+      SkBorrow(mutable, mutable_orig, body),
       t
     ),
     Eq::sym(
       written_map_value(
-        Ty,
-        Ty,
+        <A: Ty, B: Ty>,
         (t: Ty) => TyBorrow(t, mutable),
         ck_written_in(body, frame_set_under_borrow(c, true), generics)
       )
     ),
     WrittenKindBorrow(
       mutable,
+      mutable_orig,
       body,
       ck_val(ck_written_in(body, frame_set_under_borrow(c, true), generics)),
       ih(
         written_map_clean(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (t: Ty) => TyBorrow(t, mutable),
           ck_written_in(body, frame_set_under_borrow(c, true), generics),
           clean
@@ -233,8 +241,7 @@ pub theorem written_borrow_sound(
 
 pub fn written_fnkind_after(spelling: Text, span: TySpan, m: Mut1(Ty, Checker)): Mut1(Ty, Checker) {
   frame_bind(
-    Ty,
-    Ty,
+    <A: Ty, B: Ty>,
     (value: Ty, state: Checker) => ck_written_fn_kind(value, state, spelling, span),
     m
   )
@@ -310,14 +317,12 @@ pub theorem written_fnkind_rewrap(
   span: TySpan,
   m: Mut1(Ty, Checker)
 ): frame_bind(
-  Ty,
-  Ty,
+  <A: Ty, B: Ty>,
   (value: Ty, state: Checker) => ck_rewrap1(ck_written_fn_kind(value, state, spelling, span)),
   m
 ) = written_fnkind_after(spelling, span, m) {
   ⊢ frame_bind(
-    Ty,
-    Ty,
+    <A: Ty, B: Ty>,
     (value: Ty, state: Checker) => ck_rewrap1(ck_written_fn_kind(value, state, spelling, span)),
     m
   ) = written_fnkind_after(spelling, span, m) from match m {

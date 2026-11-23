@@ -1,1149 +1,43 @@
+import "messages.taut"
 import "types_match.taut"
+import "match_written.taut"
 import "../../surface/src/surface.taut"
-import std::Base
-import std::List
-import std::Map
-import std::Text
+import std::base
+import std::list
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "freevars.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "../../text/src/text.taut"
-
-// Statements and expressions (`stmt`, `infer`, `lambda`, `record`, `operator`,
-// `match_expr`, `handle` of `types.rs`), in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
-// A scope is a list of locals, the newest first. The expressions call
-// each other through statements, lambdas, arms and handlers, so they share the
-// checker's steps.
-
-pub fn ck_is_operator(name: Text): Bool {
-  name == "+" || name == "-" || name == "*" || name == "/" || name == "==" || name == "!=" || name == "<" || name == ">" || name == "<=" || name == ">=" || name == "not" || name == "&&" || name == "||"
-}
-
-// `p`'s name for a message, when it is a name or a field path.
-mutual {
-  pub fn place_name(p: SurfaceTerm): Option(Text) {
-    ⊢ Option(Text) from match p {
-      SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => place_name_kind(sk)
-    }
-  }
-
-  pub fn place_name_kind(sk: SurfaceKind): Option(Text) {
-    ⊢ Option(Text) from match sk {
-      SkVar(n) => Some(n)
-      SkField(base, name) => ⊢ Option(Text) from match place_name(base) {
-        Some(b) => Some(cat3(b, ".", name))
-        None => None
-      }
-      _ => None
-    }
-  }
-}
-
-pub fn sk_name(sk: SurfaceKind): Text {
-  ⊢ Text from match sk {
-    SkPi(a, b, e) => "Pi"
-    SkExists(a, b, e) => "Exists"
-    SkUnion(ts) => "Union"
-    SkProduct(ts) => "Product"
-    SkProject(v, t) => "Project"
-    SkHole(n) => "Hole"
-    SkFnKind(a, b) => "FnKind"
-    SkOther(n) => "Other"
-    SkMacroCall(m1, m2) => "Other"
-    SkQuote(m1, m2) => "Other"
-    SkSplice(m1) => "Other"
-    SkSyntaxLit(m1, m2) => "Other"
-    _ => "Term"
-  }
-}
-
-pub fn ck_written_here(&mut c: Checker, t: SurfaceTerm): Ty {
-  let scope := type_scope(c.type_params)
-  ck_written(&mut c, t, scope)
-}
-
-// ----- statements -----
-
-pub fn ck_stmt_ty(
-  &mut c: Checker,
-  ty: Option(SurfaceTerm),
-  v: Ty,
-  value: SurfaceTerm,
-  name: Text
-): Ty {
-  ⊢ Ty from match ty {
-    Some(tt) => {
-      let w := ck_written_here(&mut c, tt)
-      ck_expect(&mut c, v, w, span_of(value), cat3("`", name, "`"))
-      w
-    }
-    None => v
-  }
-}
-
-pub fn ck_stored_borrow(&mut c: Checker, name: Text, resolved: Ty, value: SurfaceTerm): Unit {
-  let shown := ck_shown(&c, resolved)
-  ck_error(
-    &mut c,
-    cat4("a borrow cannot be stored: `", name, "` would hold ", ty_show(shown)),
-    span_of(value)
-  )
-}
-
-// The newest local is a `var &x`.
-pub fn ck_mark_view(&mut env: Scope): Unit {
-  ⊢ Unit from match env.items {
-    Nil => #()
-    Cons(l, rest) => {
-      env := Scope {
-        items: Cons(Local { name: l.name, ty: l.ty, mutable: l.mutable, r#view: true }, rest)
-      }
-    }
-  }
-}
-
-pub fn ck_let_borrow(
-  &mut c: Checker,
-  name: Text,
-  r#view: Bool,
-  bm: Bool,
-  resolved: Ty,
-  value: SurfaceTerm
-): Unit {
-  if r#view {
-    if bm && not(ck_has_mut_borrow(&c, resolved)) {
-      ck_error(
-        &mut c,
-        cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
-        span_of(value)
-      )
-    }
-  } else if bm {
-    ck_error(
-      &mut c,
-      cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
-      span_of(value)
-    )
-  } else {
-    ck_error(
-      &mut c,
-      cat3("`let &", name, "` binds what a function returns as `-> &A`"),
-      span_of(value)
-    )
-  }
-}
-
-pub fn term_is_borrow(t: SurfaceTerm): Bool {
-  ⊢ Bool from match t.kind {
-    SkBorrow(mm, x) => true
-    _ => false
-  }
-}
-
-// A view stored by `let`: the value it stands for, when it has one.
-pub fn ck_let_stored(
-  &mut c: Checker,
-  name: Text,
-  t: Ty,
-  resolved: Ty,
-  value: SurfaceTerm,
-  stored: Bool
-): Ty {
-  if stored {
-    ⊢ Ty from match ck_view_value(&c, resolved) {
-      Some(p) => if term_is_borrow(value) {
-        ck_stored_borrow(&mut c, name, resolved, value)
-        t
-      } else {
-        p
-      }
-      None => {
-        ck_stored_borrow(&mut c, name, resolved, value)
-        t
-      }
-    }
-  } else {
-    t
-  }
-}
-
-pub fn ck_let(
-  &mut c: Checker,
-  &mut env: Scope,
-  name: Text,
-  ty: Option(SurfaceTerm),
-  v: Ty,
-  value: SurfaceTerm,
-  borrow: Bool,
-  bm: Bool
-): Unit {
-  let t0 := ck_stmt_ty(&mut c, ty, v, value, name)
-  let resolved := ck_resolve(&c, t0)
-  let r#view := ck_is_view(&c, resolved)
-  if borrow {
-    ck_let_borrow(&mut c, name, r#view, bm, resolved, value)
-  }
-  let t := ck_let_stored(&mut c, name, t0, resolved, value, not(borrow) && r#view)
-  ck_bind_local(&mut c, &mut env, name, t, false, value.start)
-}
-
-pub fn ck_var_check(&mut c: Checker, name: Text, vb: Bool, resolved: Ty, value: SurfaceTerm): Unit {
-  if vb {
-    if not(ck_is_view(&c, resolved)) {
-      ck_error(
-        &mut c,
-        cat3("`var &", name, "` binds what a function returns as a view"),
-        span_of(value)
-      )
-    }
-  } else if ck_is_view(&c, resolved) {
-    ck_error(&mut c, cat3("a borrow cannot be stored in `var ", name, "`"), span_of(value))
-  } else if kind_eq(ck_kind(&c, resolved), KindLinear) {
-    let shown := ck_shown(&c, resolved)
-    ck_error(
-      &mut c,
-      cat5("a var cannot hold a linear value: `", name, "` is ", ty_show(shown), ""),
-      span_of(value)
-    )
-  }
-}
-
-pub fn ck_var(
-  &mut c: Checker,
-  &mut env: Scope,
-  name: Text,
-  ty: Option(SurfaceTerm),
-  v: Ty,
-  value: SurfaceTerm,
-  vb: Bool
-): Unit {
-  let t := ck_stmt_ty(&mut c, ty, v, value, name)
-  let resolved := ck_resolve(&c, t)
-  ck_var_check(&mut c, name, vb, resolved, value)
-  ck_bind_local(&mut c, &mut env, name, t, true, value.start)
-  if vb {
-    ck_mark_view(&mut env)
-  }
-}
-
-pub fn ck_assign(&mut c: Checker, env: List(Local), name: Text, v: Ty, value: SurfaceTerm): Unit {
-  ⊢ Unit from match env_find(env, name) {
-    Some(l) => if l.r#view {
-      ck_error(&mut c, "a view var cannot be reassigned", span_of(value))
-    } else if l.mutable {
-      ck_expect(&mut c, v, l.ty, span_of(value), cat3("`", name, "`"))
-    } else {
-      ⊢ Unit from match ck_resolve(&c, l.ty) {
-        TyBorrow(inner, m) => if m {
-          ck_expect(&mut c, v, inner, span_of(value), cat3("`", name, "`"))
-        } else {
-          ck_error(&mut c, cat3("`", name, "` is not a var"), span_of(value))
-        }
-        _ => ck_error(&mut c, cat3("`", name, "` is not a var"), span_of(value))
-      }
-    }
-    None => ck_error(&mut c, cat2(name, " is not defined"), span_of(value))
-  }
-}
-
-pub fn ck_return_check(&mut c: Checker, t: Ty, span: TySpan): Unit {
-  ⊢ Unit from match c.returns {
-    Cons(r, rest) => ck_expect(&mut c, t, r, span, "the returned value")
-    Nil => ck_error(&mut c, "`return` outside a function", span)
-  }
-}
-
-pub fn ck_top_level_only(&mut c: Checker, message: Text, start: Nat, end: Nat): Ty {
-  ck_error(&mut c, message, TySpan { start: start, end: end })
-  TyUnit
-}
-
-pub fn ck_stmt_other(&mut c: Checker, s: SurfaceStmt): Ty {
-  ⊢ Ty from match s {
-    StStruct(d) => ck_top_level_only(&mut c, "declare a type at the top level", d.start, d.end)
-    StEnum(d) => ck_top_level_only(&mut c, "declare a type at the top level", d.start, d.end)
-    StExtern(n, fns, a, b) => ck_top_level_only(
-      &mut c,
-      "declare an `extern` block at the top level",
-      a,
-      b
-    )
-    StMacro(m1, m2, a, b) => ck_top_level_only(
-      &mut c,
-      "a syntax or a macro is declared at the top level",
-      a,
-      b
-    )
-    StSyntax(m1, m2, a, b) => ck_top_level_only(
-      &mut c,
-      "a syntax or a macro is declared at the top level",
-      a,
-      b
-    )
-    // An attribute the macros left in place, where it was read as an
-    // `Attribute` statement before attributes had their own statement.
-    StAttributed(m1, arg, gs, inner) => ck_top_level_only(
-      &mut c,
-      "not supported yet: Attribute",
-      span_of(arg).start,
-      span_of(arg).end
-    )
-    StOther(what, a, b) => if what == "LabelDecl" {
-      TyUnit
-    } else {
-      ck_top_level_only(&mut c, cat2("not supported yet: ", what), a, b)
-    }
-    _ => TyUnit
-  }
-}
-
-// The value of a block so far: the last statement's when it is an expression.
-pub fn block_value(s: SurfaceStmt, rest: List(SurfaceStmt), t: Ty): Ty {
-  ⊢ Ty from match rest {
-    Nil => ⊢ Ty from match s {
-      StExpr(e) => t
-      StReturn(e) => t
-      _ => TyUnit
-    }
-    Cons(r, more) => TyUnit
-  }
-}
-
-pub fn field_tys(fs: List(DataField)): List(Ty) {
-  ⊢ List(Ty) from match fs {
-    Nil => Nil
-    Cons(f, rest) => Cons(f.ty, field_tys(rest))
-  }
-}
-
-// A constructor used as a value: a nullary one is its value, one with fields
-// a function from them.
-pub fn ck_constructor_known(&mut c: Checker, d: Text, idx: Nat, span: TySpan, name: Text): Ty {
-  let args := ck_fresh_each(data_generics_of(c.datas, d), &mut c)
-  let fields := datas_fields(c.datas, d, idx, args)
-  if data_is_struct(c.datas, d) {
-    ck_error(&mut c, struct_value_message(name), span)
-  }
-  ⊢ Ty from match fields {
-    Nil => TyNamed(d, args)
-    Cons(f, rest) => TyFn(field_tys(Cons(f, rest)), TyNamed(d, args), KindShared)
-  }
-}
-
-pub fn ck_defer_constructor(&mut c: Checker, name: Text, span: TySpan): Ty {
-  let ty := ck_fresh(&mut c)
-  set_to(
-    &mut c.constructor_uses,
-    Cons(
-      TyConstructorUse { name: name, ty: ty, start: span.start, end: span.end },
-      c.constructor_uses
-    )
-  )
-  ty
-}
-
-pub fn ck_constructor(&mut c: Checker, d: Text, idx: Nat, span: TySpan, name: Text): Ty {
-  if datas_ctor_ambiguous(c.datas, name) {
-    ck_defer_constructor(&mut c, name, span)
-  } else {
-    ck_constructor_known(&mut c, d, idx, span, name)
-  }
-}
-
-// The class a field's base names, when it is a class and no local.
-pub fn class_of_base(c: Checker, base: SurfaceTerm, env: List(Local)): Option(Text) {
-  ⊢ Option(Text) from match base.kind {
-    SkVar(n) => if not(env_has(env, n)) && Ordmap::contains(c.classes, n, Ordmap::compare_text) {
-      Some(n)
-    } else {
-      None
-    }
-    _ => None
-  }
-}
-
-pub fn ck_lookup(&mut c: Checker, name: Text, env: List(Local), span: TySpan): Ty {
-  ⊢ Ty from match env_find(env, name) {
-    Some(l) => l.ty
-    None => ⊢ Ty from match Ordmap::get(c.fns, name, Ordmap::compare_text) {
-      Some(s) => ck_instantiate_scheme(&mut c, name, s, span)
-      None => if name == "div" || name == "mod" {
-        let i := ck_fresh_int(&mut c)
-        TyFn(Cons(i, Cons(i, Nil)), i, KindShared)
-      } else {
-        ⊢ Ty from match datas_ctor(c.datas, name) {
-          Some(dc) => ck_constructor(&mut c, dc.fst, dc.snd, span, name)
-          None => {
-            ck_error(&mut c, cat2(name, " is not defined"), span)
-            ck_fresh(&mut c)
-          }
-        }
-      }
-    }
-  }
-}
-
-pub fn ck_nat_literal(&mut c: Checker, n: Text, span: TySpan): Ty {
-  let t := ck_fresh_int(&mut c)
-  ⊢ Unit from match text_parse_u64(n) {
-    Some(v) => set_to(
-      &mut c.literals,
-      Cons(
-        TyLiteral { start: span.start, end: span.end, negative: false, magnitude: v, ty: t },
-        c.literals
-      )
-    )
-    None => ck_error(&mut c, cat2(n, " is too large"), span)
-  }
-  t
-}
-
-pub fn ck_local_lends(c: Checker, env: List(Local), n: Text): Bool {
-  ⊢ Bool from match env_find(env, n) {
-    Some(l) => l.mutable || (⊢ Bool from match ck_resolve(&c, l.ty) {
-      TyBorrow(x, m) => m
-      _ => false
-    })
-    None => false
-  }
-}
-
-// `&mut p` is allowed: `p` is a `var`, a `&mut` borrow, or a field of one.
-mutual {
-  pub fn ck_mutable_place(p: SurfaceTerm, c: Checker, env: List(Local)): Bool {
-    ⊢ Bool from match p {
-      SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => ck_mutable_place_kind(sk, c, env)
-    }
-  }
-
-  pub fn ck_mutable_place_kind(sk: SurfaceKind, c: Checker, env: List(Local)): Bool {
-    ⊢ Bool from match sk {
-      SkVar(n) => ck_local_lends(c, env, n)
-      SkField(base, name) => ck_mutable_place(base, c, env)
-      _ => false
-    }
-  }
-}
-
-pub fn ck_check_lend(
-  &mut c: Checker,
-  mutable: Bool,
-  inner: SurfaceTerm,
-  env: List(Local),
-  span: TySpan
-): Unit {
-  if mutable && not(ck_mutable_place(inner, c, env)) {
-    let what := ⊢ Text from match place_name(inner) {
-      Some(w) => w
-      None => "this"
-    }
-    ck_error(&mut c, cat2(what, " is not a var: only a var lends `&mut`"), span)
-  }
-}
-
-pub fn ck_borrow_of(c: Checker, t: Ty, mutable: Bool): Ty {
-  ⊢ Ty from match ck_resolve(&c, t) {
-    TyBorrow(x, m) => TyBorrow(x, mutable)
-    _ => TyBorrow(ck_resolve(&c, t), mutable)
-  }
-}
-
-pub fn ck_field_missing(&mut c: Checker, term: SurfaceTerm, t: Ty, name: Text): Ty {
-  ck_error(&mut c, cat4(ty_show(t), " has no field `", name, "`"), span_of(term))
-  ck_fresh(&mut c)
-}
-
-pub fn ck_field_find(fs: List(DataField), name: Text): Option(Ty) {
-  ⊢ Option(Ty) from match fs {
-    Nil => None
-    Cons(f, rest) => ⊢ Option(Ty) from match f.name {
-      Some(n) => if n == name { Some(f.ty) } else { ck_field_find(rest, name) }
-      None => ck_field_find(rest, name)
-    }
-  }
-}
-
-pub fn ck_field_of(&mut c: Checker, term: SurfaceTerm, b: Ty, name: Text): Ty {
-  let resolved := ck_resolve(&c, b)
-  let borrowed := ty_is_borrow(resolved)
-  ⊢ Ty from match ty_unborrowed(resolved) {
-    TyInfo(h) => if name == "more" {
-      TyFn(Cons(TyInt(Width64), Nil), h, KindShared)
-    } else if name == "unbounded" {
-      TyFn(Nil, h, KindShared)
-    } else {
-      ck_field_missing(&mut c, term, TyInfo(h), name)
-    }
-    TyNamed(d, args) => if data_is_struct(c.datas, d) {
-      ⊢ Ty from match ck_field_find(datas_fields(c.datas, d, 0, args), name) {
-        Some(t) => if borrowed && not(kind_dup(ck_kind(&c, t))) { TyBorrow(t, false) } else { t }
-        None => {
-          ck_error(&mut c, cat4(d, " has no field `", name, "`"), span_of(term))
-          ck_fresh(&mut c)
-        }
-      }
-    } else {
-      ck_field_missing(&mut c, term, TyNamed(d, args), name)
-    }
-    _ => ck_field_missing(&mut c, term, ty_unborrowed(resolved), name)
-  }
-}
-
-pub fn ck_budget_answer(&mut c: Checker, t: Ty, span: TySpan): Unit {
-  ⊢ Unit from match c.exceeded {
-    Cons(x, rest) => if not(ck_unify(&mut c, x, t)) {
-      ck_error(&mut c, "budgets answered by one `exceeded` arm give different types", span)
-    }
-    Nil => #()
-  }
-}
-
-pub fn ck_expect_args(tys: List(Ty), &mut c: Checker, ps: List(Ty), args: List(SurfaceTerm)): Unit {
-  ⊢ Unit from match tys {
-    Nil => #()
-    Cons(a, rest) => ⊢ Unit from match ps {
-      Nil => #()
-      Cons(p, more) => ⊢ Unit from match args {
-        Nil => #()
-        Cons(at, atail) => {
-          ck_expect(&mut c, a, p, span_of(at), "an argument")
-          ck_expect_args(rest, &mut c, more, atail)
-        }
-      }
-    }
-  }
-}
-
-pub fn ty_borrowed_of(t: Ty): Option(Ty) {
-  ⊢ Option(Ty) from match t {
-    TyBorrow(x, mutable) => Some(x)
-    _ => None
-  }
-}
-
-// A member of a product as it is held: a borrow of a duplicable type is that
-// type, and a product holds no other borrow.
-pub fn ck_product_member(&mut c: Checker, t: Ty, m: SurfaceTerm): Ty {
-  ⊢ Ty from match ty_borrowed_of(ck_resolve(&c, t)) {
-    None => ck_resolve(&c, t)
-    Some(x) => if kind_dup(ck_kind(&c, x)) {
-      x
-    } else {
-      ck_error(&mut c, "a product does not hold a borrow", span_of(m))
-      ck_fresh(&mut c)
-    }
-  }
-}
-
-pub fn ck_product_add(t: Ty, tys: List(Ty)): List(Ty) {
-  ⊢ List(Ty) from match t {
-    TyProduct(inner) => List::append(tys, inner)
-    TyUnit => tys
-    _ => List::append(tys, Cons(t, Nil))
-  }
-}
-
-pub fn ck_product_members(
-  types: List(Ty),
-  members: List(SurfaceTerm),
-  &mut c: Checker,
-  tys: List(Ty)
-): List(Ty) {
-  ⊢ List(Ty) from match types {
-    Nil => tys
-    Cons(t, rest) => ⊢ List(Ty) from match members {
-      Nil => tys
-      Cons(m, more) => {
-        let x := ck_product_member(&mut c, t, m)
-        ck_product_members(rest, more, &mut c, ck_product_add(x, tys))
-      }
-    }
-  }
-}
-
-pub fn ty_list_has(ts: List(Ty), t: Ty): Bool {
-  ⊢ Bool from match ts {
-    Nil => false
-    Cons(x, rest) => ty_eq(x, t) || ty_list_has(rest, t)
-  }
-}
-
-pub fn ck_product_of(
-  &mut c: Checker,
-  types: List(Ty),
-  members: List(SurfaceTerm),
-  span: TySpan
-): Ty {
-  let tys := ck_product_members(types, members, &mut c, Nil)
-  ty_product(tys)
-}
-
-// Whether `a` and `b` unify, on a copy of the checker.
-pub fn ck_probe_unify(c: Checker, a: Ty, b: Ty): Bool {
-  var d: Checker := c
-  ck_unify(&mut d, a, b)
-}
-
-pub fn ck_project_fits(c: Checker, members: List(Ty), want: Ty): List(Ty) {
-  ⊢ List(Ty) from match members {
-    Nil => Nil
-    Cons(x, rest) => ⊢ List(Ty) from match ck_probe_unify(c, x, want) {
-      true => Cons(x, ck_project_fits(c, rest, want))
-      false => ck_project_fits(c, rest, want)
-    }
-  }
-}
-
-// The only member that `want` unifies with, unified with it.
-pub fn ck_project_only(&mut c: Checker, fits: List(Ty), want: Ty): Option(Ty) {
-  ⊢ Option(Ty) from match fits {
-    Nil => None
-    Cons(one, rest) => ⊢ Option(Ty) from match rest {
-      Nil => {
-        let fitted := ck_unify(&mut c, one, want)
-        Some(ck_resolve(&c, one))
-      }
-      Cons(x, more) => None
-    }
-  }
-}
-
-// The member at the type `want`: the one written so, else the only one it
-// unifies with.
-pub fn ck_project_find(&mut c: Checker, members: List(Ty), want: Ty): Option(Ty) {
-  if ty_list_has(members, want) {
-    Some(want)
-  } else {
-    ck_project_only(&mut c, ck_project_fits(c, members, want), want)
-  }
-}
-
-pub fn ty_product_members(t: Ty): List(Ty) {
-  ⊢ List(Ty) from match t {
-    TyProduct(xs) => xs
-    _ => Cons(t, Nil)
-  }
-}
-
-// `x.(T)`: the member of the product `b` at the type `want`. Through a borrow
-// a member that is not duplicable is borrowed.
-pub fn ck_project_of(&mut c: Checker, b: Ty, want: Ty, span: TySpan): Ty {
-  let resolved := ck_resolve(&c, b)
-  let members := ty_product_members(ty_unborrowed(resolved))
-  ⊢ Ty from match ck_project_find(&mut c, members, want) {
-    Some(t) => if ty_is_borrow(resolved) && not(kind_dup(ck_kind(&c, t))) {
-      TyBorrow(t, false)
-    } else {
-      t
-    }
-    None => {
-      ck_error(
-        &mut c,
-        cat3(ty_show(ck_shown(&c, resolved)), " has no member ", ty_show(want)),
-        span
-      )
-      ck_fresh(&mut c)
-    }
-  }
-}
-
-pub fn ck_perform_of(
-  &mut c: Checker,
-  eff: Text,
-  types: List(Ty),
-  args: List(SurfaceTerm),
-  span: TySpan
-): Ty {
-  ⊢ Ty from match Ordmap::get(c.effects, eff, Ordmap::compare_text) {
-    None => {
-      ck_error(&mut c, cat3("no effect `", eff, "` is declared"), span)
-      ck_fresh(&mut c)
-    }
-    Some(sig) => {
-      let inst := ck_instantiate_named(
-        &mut c,
-        sig.generics,
-        TyFn(sig.params, sig.result, KindShared)
-      )
-      ⊢ Ty from match inst {
-        TyFn(ps, r, fk) => {
-          if not(list_len(ps) == list_len(types)) {
-            ck_error(
-              &mut c,
-              cat5(
-                "`",
-                eff,
-                "` takes ",
-                Text::of_nat(list_len(ps)),
-                cat2(" values, given ", Text::of_nat(list_len(types)))
-              ),
-              span
-            )
-          } else {
-            ck_expect_args(types, &mut c, ps, args)
-          }
-          r
-        }
-        _ => inst
-      }
-    }
-  }
-}
-
-// The parameters of the callee when it takes as many values as given.
-pub fn ck_known_params(c: Checker, f: Ty, n: Nat): Option(List(Ty)) {
-  ⊢ Option(List(Ty)) from match ty_unborrowed(ck_resolve(&c, f)) {
-    TyFn(ps, r, fk) => if list_len(ps) == n { Some(ps) } else { None }
-    _ => None
-  }
-}
-
-pub fn ck_is_lambda(t: SurfaceTerm): Bool {
-  ⊢ Bool from match t.kind {
-    SkLam(ps, b) => true
-    SkBorrowLam(bs, l) => true
-    _ => false
-  }
-}
-
-pub fn ck_expected(known: Option(List(Ty)), i: Nat): Option(Ty) {
-  ⊢ Option(Ty) from match known {
-    Some(ps) => nth_item(ps, i)
-    None => None
-  }
-}
-
-pub fn ck_expect_opt(&mut c: Checker, t: Ty, expected: Option(Ty), a: SurfaceTerm): Unit {
-  ⊢ Unit from match expected {
-    Some(p) => ck_expect(&mut c, t, p, span_of(a), "an argument")
-    None => #()
-  }
-}
-
-pub fn ck_direct_name(function: SurfaceTerm, env: List(Local)): Option(Text) {
-  ⊢ Option(Text) from match function.kind {
-    SkVar(name) => if env_has(env, name) { None } else { Some(name) }
-    _ => None
-  }
-}
-
-pub fn ck_app_result(
-  &mut c: Checker,
-  term: SurfaceTerm,
-  function: SurfaceTerm,
-  arguments: List(SurfaceTerm),
-  f: Ty,
-  known: Option(List(Ty)),
-  args: List(Ty)
-): Ty {
-  let fr := ty_unborrowed(ck_resolve(&c, f))
-  ⊢ Ty from match fr {
-    TyFn(ps, r, fk) => ⊢ Ty from match known {
-      Some(kp) => r
-      None => {
-        if not(list_len(ps) == list_len(args)) {
-          ck_error(
-            &mut c,
-            cat4(
-              "a function of ",
-              Text::of_nat(list_len(ps)),
-              " values is given ",
-              Text::of_nat(list_len(args))
-            ),
-            span_of(term)
-          )
-        } else {
-          ck_expect_args(args, &mut c, ps, arguments)
-        }
-        r
-      }
-    }
-    TyVar(v) => {
-      let r := ck_fresh(&mut c)
-      if not(ck_unify(&mut c, f, TyFn(args, r, KindShared))) {
-        ck_error(&mut c, "cannot infer a function type for this call", span_of(function))
-      }
-      r
-    }
-    _ => {
-      ck_error(&mut c, cat2(ty_show(fr), " is not a function"), span_of(function))
-      ck_fresh(&mut c)
-    }
-  }
-}
-
-// A lambda: its parameters (borrowed where `borrows` says), its result, and
-// its kind, the join of the kinds of what it captures by value.
-pub fn ck_lambda_params(
-  params: List(Text),
-  &mut c: Checker,
-  borrows: List(Option(Bool))
-): List(Ty) {
-  ⊢ List(Ty) from match params {
-    Nil => Nil
-    Cons(p, rest) => {
-      let t := ck_fresh(&mut c)
-      let wrapped := field_under(t, list_head_or_none(borrows))
-      let tl := ck_lambda_params(rest, &mut c, List::tail(borrows))
-      Cons(wrapped, tl)
-    }
-  }
-}
-
-pub fn ck_lambda_hint(ps: List(Ty), &mut c: Checker, hs: List(Ty)): Unit {
-  ⊢ Unit from match ps {
-    Nil => #()
-    Cons(p, rest) => ⊢ Unit from match hs {
-      Nil => #()
-      Cons(h, more) => {
-        let ignored := ck_attempt_unify(&mut c, p, h)
-        ck_lambda_hint(rest, &mut c, more)
-      }
-    }
-  }
-}
-
-pub fn ck_lambda_hint_of(&mut c: Checker, hint: Option(Ty), ps: List(Ty)): Unit {
-  ⊢ Unit from match hint {
-    Some(h) => ⊢ Unit from match ty_unborrowed(ck_resolve(&c, h)) {
-      TyFn(hs, r, fk) => if list_len(hs) == list_len(ps) {
-        ck_lambda_hint(ps, &mut c, hs)
-      }
-      _ => #()
-    }
-    None => #()
-  }
-}
-
-pub fn ck_capture_kind(c: Checker, l: Local, kind: Kind): Kind {
-  if ty_is_borrow(ck_resolve(&c, l.ty)) || l.mutable {
-    kind
-  } else {
-    kind_join(kind, datas_kind(c.datas, ck_resolve(&c, l.ty)))
-  }
-}
-
-pub fn ck_lambda_kind(names: List(Text), c: Checker, env: List(Local), kind: Kind): Kind {
-  ⊢ Kind from match names {
-    Nil => kind
-    Cons(name, rest) => ⊢ Kind from match env_find(env, name) {
-      None => ck_lambda_kind(rest, c, env, kind)
-      Some(l) => ck_lambda_kind(rest, c, env, ck_capture_kind(c, l, kind))
-    }
-  }
-}
-
-// `clone(&x)`: a copy of a value whose type has one.
-pub fn ck_clone_target(&mut c: Checker, t0: Ty, arg: SurfaceTerm): Ty {
-  let r := ck_resolve(&c, t0)
-  ⊢ Ty from match r {
-    TyBorrow(x, m) => x
-    _ => {
-      ck_error(&mut c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg))
-      r
-    }
-  }
-}
-
-pub fn ck_clone_value(&mut c: Checker, t0: Ty, arg: SurfaceTerm, span: TySpan): Ty {
-  let t := ck_clone_target(&mut c, t0, arg)
-  ⊢ Unit from match datas_no_clone(c.datas, t) {
-    Some(why) => ck_error(&mut c, why, span)
-    None => #()
-  }
-  t
-}
-
-pub fn ck_clone_bad(&mut c: Checker, span: TySpan): Ty {
-  ck_error(&mut c, "`clone` takes one borrow, `clone(&x)`", span)
-  ck_fresh(&mut c)
-}
-
-// A field of a record literal of type `v`: whether it is given twice.
-pub fn ck_record_field_check(
-  &mut c: Checker,
-  name: Text,
-  f: SurfaceField,
-  v: Ty,
-  declared: List(DataField),
-  seen: List(Text)
-): Bool {
-  if term_is_borrow(f.value) {
-    ck_error(&mut c, "a borrow cannot be a field", span_of(f.value))
-  }
-  let again := list_has_text(seen, f.name)
-  if again {
-    ck_error(&mut c, cat3("field `", f.name, "` is given twice"), span_of(f.value))
-  }
-  ⊢ Unit from match ck_field_find(declared, f.name) {
-    Some(t) => ck_expect(&mut c, v, t, span_of(f.value), cat3("field `", f.name, "`"))
-    None => ck_error(&mut c, cat4(name, " has no field `", f.name, "`"), span_of(f.value))
-  }
-  again
-}
-
-pub fn seen_with(again: Bool, seen: List(Text), name: Text): List(Text) {
-  if again { seen } else { Cons(name, seen) }
-}
-
-pub fn ck_record_missing_one(
-  &mut c: Checker,
-  name: Text,
-  f: DataField,
-  seen: List(Text),
-  span: TySpan
-): Unit {
-  ⊢ Unit from match f.name {
-    Some(n) => if not(list_has_text(seen, n)) {
-      ck_error(&mut c, cat4("field `", n, "` of ", cat2(name, " is missing")), span)
-    }
-    None => #()
-  }
-}
-
-pub fn ck_record_missing(
-  declared: List(DataField),
-  &mut c: Checker,
-  name: Text,
-  seen: List(Text),
-  span: TySpan
-): Unit {
-  ⊢ Unit from match declared {
-    Nil => #()
-    Cons(f, rest) => {
-      ck_record_missing_one(&mut c, name, f, seen, span)
-      ck_record_missing(rest, &mut c, name, seen, span)
-    }
-  }
-}
-
-// Operands are duplicable: a borrow of one is the value.
-pub fn ty_operand(t: Ty): Ty {
-  ⊢ Ty from match t {
-    TyBorrow(x, m) => x
-    _ => t
-  }
-}
-
-// `t` must be a number; a type not known yet becomes an integer.
-pub fn ck_number(&mut c: Checker, t: Ty, span: TySpan, op: Text): Unit {
-  let r := ck_resolve(&c, t)
-  ⊢ Unit from match r {
-    TyInt(w) => #()
-    TyDecimal => #()
-    TyFloat => #()
-    TyVar(v) => ck_add_int(&mut c, v)
-    _ => ck_error(&mut c, cat5("`", op, "` of ", ty_show(r), ": not a number"), span)
-  }
-}
-
-pub fn ck_record_op(
-  &mut c: Checker,
-  a: Ty,
-  span: TySpan,
-  occurrence: Option(TermOccurrence)
-): Unit {
-  set_to(
-    &mut c.ops,
-    Cons(TyOp { start: span.start, end: span.end, occurrence: occurrence, ty: a }, c.ops)
-  )
-}
-
-pub fn ck_operator_bad(&mut c: Checker, op: Text, span: TySpan): Ty {
-  ck_error(&mut c, cat3("`", op, "` takes other operands"), span)
-  ck_fresh(&mut c)
-}
-
-pub fn first_span(arguments: List(SurfaceTerm), span: TySpan): TySpan {
-  ⊢ TySpan from match arguments {
-    Cons(x, rest) => span_of(x)
-    Nil => span
-  }
-}
-
-pub fn second_span(arguments: List(SurfaceTerm), span: TySpan): TySpan {
-  ⊢ TySpan from match arguments {
-    Cons(x, rest) => first_span(rest, span)
-    Nil => span
-  }
-}
-
-pub fn ck_divide(&mut c: Checker, a: Ty, span: TySpan): Unit {
-  ⊢ Unit from match ck_resolve(&c, a) {
-    TyDecimal => #()
-    TyFloat => #()
-    TyVar(v) => if not(ck_is_int(&c, v)) {
-      ck_error(&mut c, "the operands of `/` have no known type: write it", span)
-    } else {
-      ck_error(
-        &mut c,
-        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
-        span
-      )
-    }
-    _ => ck_error(
-      &mut c,
-      "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
-      span
-    )
-  }
-}
-
-pub fn op_is_arithmetic(op: Text): Bool {
-  op == "+" || op == "-" || op == "*" || op == "/"
-}
-
-// The first operand written as `@tag e`, if any. A label binds tighter
-// than a binary operator, so `@tag a + b` labels only `a`.
-pub fn tagged_operand(arguments: List(SurfaceTerm)): Option(Text) {
-  ⊢ Option(Text) from match arguments {
-    Cons(x, rest) => ⊢ Option(Text) from match x.kind {
-      SkTagged(tag, inner) => Some(tag)
-      _ => tagged_operand(rest)
-    }
-    Nil => None
-  }
-}
-
-// Why the operands of `op` differ, with the reading of a label in an operand.
-pub fn ck_operands_differ(&c: Checker, op: Text, a: Ty, b: Ty, arguments: List(SurfaceTerm)): Text {
-  let message := cat5(
-    "`",
-    op,
-    "` of ",
-    ty_show(ck_shown(&c, a)),
-    cat4(" and ", ty_show(ck_shown(&c, b)), ": the operands differ", "")
-  )
-  ⊢ Text from match tagged_operand(arguments) {
-    Some(tag) => cat5(
-      message,
-      cat5("; `@", tag, "` labels only its operand, since it binds tighter than `", op, "`"),
-      cat5("; to label the result, write `@", tag, " (a ", op, " b)`"),
-      "",
-      ""
-    )
-    None => message
-  }
-}
-
-pub fn ck_binary(
-  &mut c: Checker,
-  op: Text,
-  a: Ty,
-  b: Ty,
-  arguments: List(SurfaceTerm),
-  span: TySpan,
-  occurrence: Option(TermOccurrence)
-): Ty {
-  if op == "&&" || op == "||" {
-    let quoted := cat3("`", op, "`")
-    ck_expect(&mut c, a, TyBool, first_span(arguments, span), quoted)
-    ck_expect(&mut c, b, TyBool, second_span(arguments, span), quoted)
-    TyBool
-  } else if not(ck_unify(&mut c, a, b)) {
-    let message := ck_operands_differ(&c, op, a, b, arguments)
-    ck_error(&mut c, message, span)
-    if op_is_arithmetic(op) { ck_shown(&c, a) } else { TyBool }
-  } else if op == "==" || op == "!=" {
-    ck_pend(&mut c, "PartialEq", a, op, span)
-    TyBool
-  } else if op == "<" || op == ">" || op == "<=" || op == ">=" {
-    ck_number(&mut c, a, span, op)
-    TyBool
-  } else if op == "/" {
-    ck_divide(&mut c, a, span)
-    a
-  } else {
-    ck_number(&mut c, a, span, op)
-    ck_record_op(&mut c, a, span, occurrence)
-    a
-  }
-}
-
-pub fn ck_operator_of(
-  &mut c: Checker,
-  op: Text,
-  args: List(Ty),
-  arguments: List(SurfaceTerm),
-  span: TySpan,
-  occurrence: Option(TermOccurrence)
-): Ty {
-  ⊢ Ty from match args {
-    Cons(a, rest) => ⊢ Ty from match rest {
-      Nil => if op == "not" {
-        ck_expect(&mut c, a, TyBool, span, "`not`")
-        TyBool
-      } else if op == "-" || op == "+" {
-        ck_number(&mut c, a, span, op)
-        ck_record_op(&mut c, a, span, occurrence)
-        a
-      } else {
-        ck_operator_bad(&mut c, op, span)
-      }
-      Cons(b, more) => ⊢ Ty from match more {
-        Nil => ck_binary(&mut c, op, a, b, arguments, span, occurrence)
-        Cons(x, y) => ck_operator_bad(&mut c, op, span)
-      }
-    }
-    Nil => ck_operator_bad(&mut c, op, span)
-  }
-}
-
-// ----- match -----
-
-pub fn ck_join_opt(&mut c: Checker, result: Option(Ty), b: Ty): Ty {
-  ⊢ Ty from match result {
-    None => b
-    Some(r) => ck_join(&mut c, r, b)
-  }
-}
-
-pub fn ty_var_of(t: Ty): Option(Nat) {
-  ⊢ Option(Nat) from match t {
-    TyVar(v) => Some(v)
-    _ => None
-  }
-}
-
-pub fn ck_check_covers(&mut c: Checker, s: Ty, arms: List(SurfaceArm), span: TySpan): Unit {
-  if not(covers(c.datas, ck_resolve(&c, s), open_patterns(arms))) {
-    ck_error(&mut c, "the `match` does not cover every value", span)
-  }
-}
-
-// A callee that takes its type parameters at each call: what the call sees of
-// it is an instance.
-pub fn ck_poly_instance(&mut c: Checker, function: SurfaceTerm, f: Ty): Ty {
-  ⊢ Ty from match ck_resolve(&c, f) {
-    TyPoly(gs, t) => {
-      let fresh := ck_instance_of(gs, &mut c)
-      let inst := ty_substitute(t, fresh)
-      set_to(&mut c.terms, Cons(Pair { fst: term_at_of(function), snd: inst }, c.terms))
-      inst
-    }
-    _ => f
-  }
-}
+import "infer_parts.taut"
+import "../../identity/src/identity.taut"
+
+// The expressions and statements checked, one calling another (`stmt`,
+// `infer`, `lambda`, `handle` of `types.rs`). What they share is in
+// `infer_parts.taut`.
 
 mutual {
-  pub fn ck_infer_in(k: Nat, &mut c: Checker, term: SurfaceTerm, env: List(Local)): Ty {
-    ⊢ Ty from match k {
+  pub fn ck_infer_in(k: Nat, c: &mut Checker, term: SurfaceTerm, env: List(Local)): Ty {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
       }
       Succ(j) => {
         let t := ck_infer_term_in(j, &mut c, term, env)
-        set_to(&mut c.terms, Cons(Pair { fst: term_at_of(term), snd: t }, c.terms))
+        set_to(&mut c.result_hint, None)
+        set_to(&mut c.terms, Cons(#(term_at_of(term), t), c.terms))
         t
       }
     }
   }
 
-  pub fn ck_infer_term_in(k: Nat, &mut c: Checker, term: SurfaceTerm, env: List(Local)): Ty {
-    ⊢ Ty from match k {
+  pub fn ck_infer_term_in(k: Nat, c: &mut Checker, term: SurfaceTerm, env: List(Local)): Ty {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
@@ -1152,12 +46,13 @@ mutual {
         let span := span_of(term)
         ⊢ Ty from match term.kind {
           SkNat(n) => ck_nat_literal(&mut c, n, span)
-          SkText(s) => TyText
-          SkBool(b) => TyBool
-          SkVar(name) => ck_lookup(&mut c, name, env, span)
-          SkLam(params, body) => ck_lambda_in(j, &mut c, term, Nil, env)
-          SkBorrowLam(borrows, lam) => ck_lambda_in(j, &mut c, lam, borrows, env)
-          SkBorrow(mutable, inner) => {
+          SkText(^s) => TyText
+          SkFloat(x) => ck_float_literal(&mut c, x, span)
+          SkBool(^b) => TyBool
+          SkVar(name) => ck_lookup(&mut c, surface_name_text(name), env, span, term.occurrence)
+          SkLam(^params, ^body, _, _) => ck_lambda_in(j, &mut c, term, Nil, env)
+          SkBorrowLam(r#borrows, lam) => ck_lambda_in(j, &mut c, lam, r#borrows, env)
+          SkBorrow(mutable, ^mutable_orig, inner) => {
             ck_check_lend(&mut c, mutable, inner, env, span)
             let t := ck_infer_in(j, &mut c, inner, env)
             ck_borrow_of(c, t, mutable)
@@ -1166,45 +61,55 @@ mutual {
           SkApp(function, arguments) => ck_app_in(j, &mut c, term, function, arguments, env)
           SkField(base, name) => ⊢ Ty from match class_of_base(c, base, env) {
             Some(cn) => {
-              let full := cat3(cn, ".", name)
+              let full := cat3(cn, "::", name)
               if Ordmap::contains(c.fns, full, Ordmap::compare_text) {
-                ck_lookup(&mut c, full, env, span)
+                ck_lookup(&mut c, full, env, span, term.occurrence)
               } else {
-                ck_error(&mut c, cat3(cn, " has no method ", name), span)
+                ck_error(&mut c, no_method_message(cn, name), span)
                 ck_fresh(&mut c)
               }
             }
             None => {
               let b := ck_infer_in(j, &mut c, base, env)
-              ck_field_of(&mut c, term, b, name)
+              ck_field_through(&mut c, term, coerce_place(base), b, name)
             }
           }
           SkIf(condition, th, el) => {
+            let hint := c.result_hint
+            set_to(&mut c.result_hint, None)
             let ct := ck_infer_in(j, &mut c, condition, env)
-            ck_expect(&mut c, ct, TyBool, span_of(condition), "an `if` condition")
+            ck_expect(&mut c, ct, TyBool, span_of(condition), what_if_condition_message())
+            set_to(&mut c.result_hint, ck_result_hint_for(th, hint))
             let t := ck_infer_in(j, &mut c, th, env)
+            set_to(&mut c.result_hint, ck_else_hint(el, hint))
             ck_else_in(j, &mut c, t, el, env)
           }
           SkBlock(stmts) => {
+            let saved := c.arm_hint
+            set_to(&mut c.arm_hint, c.result_hint)
             var inner: Scope := Scope { items: env }
-            ck_block_in(j, &mut c, stmts, &mut inner, false, TyUnit)
+            let t := ck_block_in(j, &mut c, stmts, &mut inner, false, TyUnit)
+            set_to(&mut c.arm_hint, saved)
+            t
           }
-          SkMatch(scrutinee, motive, arms, binder) => ck_match_expr_in(
-            j,
-            &mut c,
-            scrutinee,
-            arms,
-            env,
-            span
-          )
+          SkMatch(scrutinee, motive, arms, ^binder, _) => {
+            let hint := c.result_hint
+            let saved := c.arm_hint
+            let before := ck_match_before(&mut c, motive, arms, env)
+            set_to(&mut c.arm_hint, ck_hint_or_before(before, hint))
+            set_to(&mut c.result_hint, None)
+            let got := ck_match_expr_in(j, &mut c, scrutinee, arms, env, span)
+            set_to(&mut c.arm_hint, saved)
+            ck_match_after(&mut c, before, arms, got, span)
+          }
           SkPerform(eff, args) => {
             let types := ck_infer_each_in(j, &mut c, args, env)
             ck_perform_of(&mut c, eff, types, args, span)
           }
           SkHandle(body, handlers) => ck_handle_in(j, &mut c, body, handlers, env)
-          SkBudget(steps_memory, steps, body) => {
+          SkBudget(^steps_memory, steps, body) => {
             let s := ck_infer_in(j, &mut c, steps, env)
-            ck_expect(&mut c, s, TyInt(Width64), span_of(steps), "a budget's steps")
+            ck_expect(&mut c, s, TyInt(WidthU64), span_of(steps), what_budget_steps_message())
             let t := ck_infer_in(j, &mut c, body, env)
             ck_budget_answer(&mut c, t, span)
             t
@@ -1213,22 +118,13 @@ mutual {
             let t := ck_infer_in(j, &mut c, x, env)
             ty_tagged(Cons(tag, Nil), ck_resolve(&c, t))
           }
-          SkProduct(members) => {
-            let types := ck_infer_each_in(j, &mut c, members, env)
-            ck_product_of(&mut c, types, members, span)
-          }
-          SkProject(base, ty) => {
-            let b := ck_infer_in(j, &mut c, base, env)
-            let want := ck_written_here(&mut c, ty)
-            ck_project_of(&mut c, b, want, span)
-          }
           // `syntax::expand` reported why it is still here.
-          SkSyntaxLit(name, written) => ck_fresh(&mut c)
-          SkMacroCall(name, arg) => ck_fresh(&mut c)
-          SkQuote(stmts_form, stmts) => ck_fresh(&mut c)
-          SkSplice(inner) => ck_fresh(&mut c)
+          SkSyntaxLit(^name, ^written) => ck_fresh(&mut c)
+          SkMacroCall(^name, ^arg) => ck_fresh(&mut c)
+          SkQuote(^stmts_form, ^stmts) => ck_fresh(&mut c)
+          SkSplice(^inner) => ck_fresh(&mut c)
           _ => {
-            ck_error(&mut c, cat2("not supported yet: ", sk_name(term.kind)), span)
+            ck_error(&mut c, not_supported_yet_message(sk_name(term.kind)), span)
             ck_fresh(&mut c)
           }
         }
@@ -1236,8 +132,8 @@ mutual {
     }
   }
 
-  pub fn ck_else_in(k: Nat, &mut c: Checker, t: Ty, el: Option(SurfaceTerm), env: List(Local)): Ty {
-    ⊢ Ty from match k {
+  pub fn ck_else_in(k: Nat, c: &mut Checker, t: Ty, el: Option(SurfaceTerm), env: List(Local)): Ty {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
@@ -1254,11 +150,11 @@ mutual {
 
   pub fn ck_infer_each_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     ts: List(SurfaceTerm),
     env: List(Local)
   ): List(Ty) {
-    ⊢ List(Ty) from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         Nil
@@ -1274,8 +170,8 @@ mutual {
     }
   }
 
-  pub fn ck_guard_in(k: Nat, &mut c: Checker, guard: Option(SurfaceTerm), env: List(Local)): Unit {
-    ⊢ Unit from match k {
+  pub fn ck_guard_in(k: Nat, c: &mut Checker, guard: Option(SurfaceTerm), env: List(Local)): Unit {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         #()
@@ -1283,7 +179,7 @@ mutual {
       Succ(j) => ⊢ Unit from match guard {
         Some(g) => {
           let gt := ck_infer_in(j, &mut c, g, env)
-          ck_expect(&mut c, gt, TyBool, span_of(g), "a guard")
+          ck_expect(&mut c, gt, TyBool, span_of(g), what_guard_message())
         }
         None => #()
       }
@@ -1292,31 +188,48 @@ mutual {
 
   // ----- statements -----
 
-  pub fn ck_stmt_in(k: Nat, &mut c: Checker, s: SurfaceStmt, &mut env: Scope): Ty {
-    ⊢ Ty from match k {
+  pub fn ck_stmt_in(k: Nat, c: &mut Checker, s: SurfaceStmt, env: &mut Scope): Ty {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
       }
       Succ(j) => ⊢ Ty from match s {
-        StLet(name, ty, value, borrow, bm) => {
+        StLet(name, ty, value, r#borrow, bm, ^unused, ^st_stack) => {
+          set_to(&mut c.result_hint, ck_let_hint(ty, value))
           let v := ck_infer_in(j, &mut c, value, env.items)
-          ck_let(&mut c, &mut env, name, ty, v, value, borrow, bm)
+          ck_let(&mut c, &mut env, name, ty, v, value, r#borrow, bm)
           TyUnit
         }
-        StVar(name, ty, value, vb) => {
+        StVar(name, ty, value, vb, ^unused, ^st_stack) => {
           let v := ck_infer_in(j, &mut c, value, env.items)
           ck_var(&mut c, &mut env, name, ty, v, value, vb)
           TyUnit
         }
         StAssign(name, name_place, value) => {
           let v := ck_infer_in(j, &mut c, value, env.items)
-          ck_assign(&mut c, env.items, name, v, value)
-          TyUnit
+          ck_coerce_assign_place(&mut c, env.items, name_place)
+          ⊢ Ty from match ck_assign_field_place(name_place) {
+            None => {
+              ck_assign(&mut c, env.items, name, ck_place_deref(name_place), v, value)
+              TyUnit
+            }
+            Some(place) => ⊢ Ty from match ck_place_ok(&c, env.items, name, place) {
+              true => {
+                let pt := ck_infer_in(j, &mut c, place, env.items)
+                ck_assign_place(&mut c, env.items, name, ck_place_deref(name_place), v, pt, place, value)
+                TyUnit
+              }
+              false => {
+                ck_assign_refuse(&mut c, env.items, name, place, value)
+                TyUnit
+              }
+            }
+          }
         }
         StFn(f) => {
           let scheme := ck_signature(&mut c, f)
-          ck_bind_local(&mut c, &mut env, f.name, scheme.ty, false, f.body.start)
+          ck_bind_local(&mut c, &mut env, f.name, scheme_local_type(scheme), false, f.body.start)
           ck_check_fn_in(j, &mut c, f, scheme, env.items)
           TyUnit
         }
@@ -1326,7 +239,7 @@ mutual {
         }
         StWhile(condition, body) => {
           let t := ck_infer_in(j, &mut c, condition, env.items)
-          ck_expect(&mut c, t, TyBool, span_of(condition), "a `while` condition")
+          ck_expect(&mut c, t, TyBool, span_of(condition), what_while_condition_message())
           let ignored := ck_infer_in(j, &mut c, body, env.items)
           TyUnit
         }
@@ -1344,49 +257,51 @@ mutual {
   // The value `return` gives and where it is written.
   pub fn ck_returned_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     e: Option(SurfaceTerm),
     env: List(Local)
-  ): Pair(Ty, TySpan) {
-    ⊢ Pair(Ty, TySpan) from match k {
+  ): Ty × TySpan {
+    ⊢ (Ty × TySpan) from match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
-        Pair { fst: TyUnit, snd: TySpan { start: 0, end: 0 } }
+        #(TyUnit, TySpan { start: 0, end: 0 })
       }
-      Succ(j) => ⊢ Pair(Ty, TySpan) from match e {
+      Succ(j) => ⊢ (Ty × TySpan) from match e {
         Some(x) => {
+          set_to(&mut c.result_hint, ck_result_hint_for(x, ck_return_hint(c.returns)))
           let t := ck_infer_in(j, &mut c, x, env)
-          Pair { fst: t, snd: span_of(x) }
+          #(t, span_of(x))
         }
-        None => Pair { fst: TyUnit, snd: TySpan { start: 0, end: 0 } }
+        None => #(TyUnit, TySpan { start: 0, end: 0 })
       }
     }
   }
 
   pub fn ck_check_fn_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     f: SurfaceFn,
     scheme: Scheme,
     env: List(Local)
   ): Unit {
-    ⊢ Unit from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         #()
       }
       Succ(j) => ⊢ Unit from match scheme.ty {
-        TyFn(params, result, fk) => {
+        TyFn(params, result, ^fk) => {
           var inner: Scope := Scope { items: env }
           ck_bind_params(f.params, &mut c, &mut inner, params, f.body.start)
           set_to(&mut c.returns, Cons(result, c.returns))
-          let outer: List(Pair(Text, Text)) := c.assume
+          let outer: List(Text × Text) := c.assume
           let outer_types: List(TypeName) := c.type_params
           ck_enter_fn(&mut c, scheme)
+          set_to(&mut c.result_hint, ck_result_hint_for(f.body, Some(result)))
           let body := ck_infer_in(j, &mut c, f.body, inner.items)
           ck_leave_fn(&mut c, outer, outer_types)
           set_to(&mut c.returns, List::tail(c.returns))
-          ck_expect(&mut c, body, result, span_of(f.body), cat3("the result of `", f.name, "`"))
+          ck_expect(&mut c, body, result, span_of(f.body), what_result_of_message(f.name))
         }
         _ => #()
       }
@@ -1395,13 +310,13 @@ mutual {
 
   pub fn ck_block_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     stmts: List(SurfaceStmt),
-    &mut env: Scope,
+    env: &mut Scope,
     stopped: Bool,
     last: Ty
   ): Ty {
-    ⊢ Ty from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
@@ -1409,6 +324,7 @@ mutual {
       Succ(j) => ⊢ Ty from match stmts {
         Nil => if stopped { TyNever } else { last }
         Cons(s, rest) => {
+          set_to(&mut c.result_hint, ck_block_hint_for(s, rest, c.arm_hint))
           let t := ck_stmt_in(j, &mut c, s, &mut env)
           ck_block_in(j, &mut c, rest, &mut env, stopped || ty_is_never(t), block_value(s, rest, t))
         }
@@ -1418,13 +334,13 @@ mutual {
 
   pub fn ck_app_args_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     arguments: List(SurfaceTerm),
     known: Option(List(Ty)),
     env: List(Local),
     i: Nat
   ): List(Ty) {
-    ⊢ List(Ty) from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         Nil
@@ -1435,6 +351,8 @@ mutual {
           let expected := ck_expected(known, i)
           if ck_is_lambda(a) {
             set_to(&mut c.hint, expected)
+          } else {
+            set_to(&mut c.result_hint, ck_result_hint_for(a, expected))
           }
           let t := ck_infer_in(j, &mut c, a, env)
           set_to(&mut c.hint, None)
@@ -1448,25 +366,34 @@ mutual {
 
   pub fn ck_app_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     term: SurfaceTerm,
     function: SurfaceTerm,
     arguments: List(SurfaceTerm),
     env: List(Local)
   ): Ty {
-    ⊢ Ty from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
       }
       Succ(j) => ⊢ Ty from match ck_direct_name(function, env) {
-        Some(name) => if name == "Tuple" && list_len(arguments) == 0 {
-          TyUnit
+        // `#(a, b)`: the prelude's `Pair::Mk` of the two members.
+        Some(name) => if name == "std::prelude::Pair::Mk" {
+          let types := ck_infer_each_in(j, &mut c, arguments, env)
+          ck_product_of(&mut c, types, arguments, span_of(term))
+        } else if name == "#ascribe" {
+          let types := ck_infer_each_in(j, &mut c, ascribe_body(arguments), env)
+          ck_ascribe_of(&mut c, types, term, arguments)
         } else if ck_is_operator(name) {
           let args := ck_operands_in(j, &mut c, arguments, env)
           ck_operator_of(&mut c, name, args, arguments, span_of(term), term.occurrence)
         } else if name == "clone" && not(Ordmap::contains(c.fns, name, Ordmap::compare_text)) {
           ck_clone_of_in(j, &mut c, arguments, env, span_of(term))
+        } else if ck_nullary_call(c, name, arguments) {
+          // A constructor without fields is written without `()`.
+          ck_error(&mut c, constructor_without_fields_message(name), span_of(term))
+          ck_infer_in(j, &mut c, function, env)
         } else {
           ck_app_call_in(j, &mut c, term, function, arguments, env)
         }
@@ -1477,36 +404,39 @@ mutual {
 
   pub fn ck_app_call_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     term: SurfaceTerm,
     function: SurfaceTerm,
     arguments: List(SurfaceTerm),
     env: List(Local)
   ): Ty {
-    ⊢ Ty from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
       }
       Succ(j) => {
+        let hint := c.result_hint
+        set_to(&mut c.result_hint, None)
+        let rest := ck_call_arguments(arguments)
         let inferred := ck_infer_in(j, &mut c, function, env)
-        let f := ck_poly_instance(&mut c, function, inferred)
+        let f := ck_call_instance(&mut c, function, inferred, ck_call_implicits(arguments), hint)
         // A lambda argument learns its parameters' types from the callee's,
         // once the arguments before it are checked.
-        let known := ck_known_params(c, f, list_len(arguments))
-        let args := ck_app_args_in(j, &mut c, arguments, known, env, 0)
-        ck_app_result(&mut c, term, function, arguments, f, known, args)
+        let known := ck_known_params(c, f, list_len(rest))
+        let args := ck_app_args_in(j, &mut c, rest, known, env, 0)
+        ck_app_result(&mut c, term, function, rest, f, known, args)
       }
     }
   }
 
   pub fn ck_operands_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     arguments: List(SurfaceTerm),
     env: List(Local)
   ): List(Ty) {
-    ⊢ List(Ty) from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         Nil
@@ -1525,12 +455,12 @@ mutual {
 
   pub fn ck_clone_of_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     arguments: List(SurfaceTerm),
     env: List(Local),
     span: TySpan
   ): Ty {
-    ⊢ Ty from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
@@ -1541,7 +471,7 @@ mutual {
             let t0 := ck_infer_in(j, &mut c, arg, env)
             ck_clone_value(&mut c, t0, arg, span)
           }
-          Cons(x, more) => ck_clone_bad(&mut c, span)
+          Cons(^x, ^more) => ck_clone_bad(&mut c, span)
         }
         Nil => ck_clone_bad(&mut c, span)
       }
@@ -1550,12 +480,12 @@ mutual {
 
   pub fn ck_lambda_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     lam: SurfaceTerm,
-    borrows: List(Option(Bool)),
+    r#borrows: List(Option(Bool)),
     env: List(Local)
   ): Ty {
-    ⊢ Ty from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
@@ -1564,22 +494,22 @@ mutual {
         let hint := c.hint
         set_to(&mut c.hint, None)
         ⊢ Ty from match lam.kind {
-          SkLam(params, body) => {
-            let ps := ck_lambda_params(params, &mut c, borrows)
-            ck_lambda_hint_of(&mut c, hint, ps)
-            let kind := ck_lambda_kind(free_vars(lam), c, env, KindCopy)
+          SkLam(params, body, types, _) => {
+            let ps := ck_lambda_params(params, &mut c, r#borrows)
+            ck_lambda_hints(&mut c, hint, ps, types)
+            let cap := ck_lambda_captures(lam, c, env)
             var inner: Scope := Scope { items: env }
             ck_bind_params(params, &mut c, &mut inner, ps, body.start)
             let r := ck_fresh(&mut c)
             set_to(&mut c.returns, Cons(r, c.returns))
             let b := ck_infer_in(j, &mut c, body, inner.items)
             set_to(&mut c.returns, List::tail(c.returns))
-            ck_expect(&mut c, b, r, span_of(body), "the result of a function")
+            ck_expect(&mut c, b, r, span_of(body), what_function_result_message())
             set_to(
               &mut c.closure_results,
-              Cons(TyClosure { ty: r, start: body.start, end: body.end }, c.closure_results)
+              Cons(TyClosure { ty: r, start: body.start, end: body.end, cap: cap }, c.closure_results)
             )
-            TyFn(ps, r, kind)
+            TyFn(ps, r, captures_kind(cap))
           }
           _ => ck_fresh(&mut c)
         }
@@ -1589,14 +519,14 @@ mutual {
 
   pub fn ck_record_fields_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     name: Text,
     fields: List(SurfaceField),
     declared: List(DataField),
     env: List(Local),
     seen: List(Text)
   ): List(Text) {
-    ⊢ List(Text) from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         seen
@@ -1614,20 +544,20 @@ mutual {
 
   pub fn ck_record_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     name: Text,
     fields: List(SurfaceField),
     env: List(Local),
     span: TySpan
   ): Ty {
-    ⊢ Ty from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
       }
       Succ(j) => ⊢ Ty from match datas_ctor(c.datas, name) {
         None => {
-          ck_error(&mut c, cat2(name, " is not a struct"), span)
+          ck_error(&mut c, not_a_struct_message(name), span)
           ck_fresh(&mut c)
         }
         Some(dc) => {
@@ -1636,7 +566,7 @@ mutual {
           let declared := datas_fields(c.datas, d, dc.snd, args)
           let seen := ck_record_fields_in(j, &mut c, name, fields, declared, env, Nil)
           ck_record_missing(declared, &mut c, name, seen, span)
-          TyNamed(d, args)
+          TyNamed(NameSpelled(d), args)
         }
       }
     }
@@ -1646,13 +576,13 @@ mutual {
 
   pub fn ck_match_arms_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     arms: List(SurfaceArm),
     s: Ty,
     env: List(Local),
     result: Option(Ty)
   ): Option(Ty) {
-    ⊢ Option(Ty) from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         result
@@ -1663,6 +593,7 @@ mutual {
           var inner: Scope := Scope { items: env }
           ck_pattern(&mut c, arm.pattern, s, &mut inner, span_of(arm.body), arm.body.start)
           ck_guard_in(j, &mut c, arm.guard, inner.items)
+          set_to(&mut c.result_hint, ck_result_hint_for(arm.body, c.arm_hint))
           let b := ck_infer_in(j, &mut c, arm.body, inner.items)
           let joined := ck_join_opt(&mut c, result, b)
           ck_match_arms_in(j, &mut c, rest, s, env, Some(joined))
@@ -1673,19 +604,20 @@ mutual {
 
   pub fn ck_match_expr_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     scrutinee: SurfaceTerm,
     arms: List(SurfaceArm),
     env: List(Local),
     span: TySpan
   ): Ty {
-    ⊢ Ty from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
       }
       Succ(j) => {
-        let s := ck_infer_in(j, &mut c, scrutinee, env)
+        let read := ck_infer_in(j, &mut c, scrutinee, env)
+        let s := ck_coerce_scrutinee(&mut c, read, arms, span_of(scrutinee))
         let result := ck_match_arms_in(j, &mut c, arms, s, env, None)
         ck_check_covers(&mut c, s, arms, span)
         ⊢ Ty from match result {
@@ -1698,12 +630,12 @@ mutual {
 
   pub fn ck_handle_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     body: SurfaceTerm,
     handlers: List(SurfaceHandler),
     env: List(Local)
   ): Ty {
-    ⊢ Ty from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         TyNever
@@ -1730,12 +662,12 @@ mutual {
 
   pub fn ck_handle_first_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     handlers: List(SurfaceHandler),
     b: Ty,
     env: List(Local)
   ): Ty {
-    ⊢ Ty from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         b
@@ -1753,14 +685,14 @@ mutual {
 
   pub fn ck_handle_result_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     handlers: List(SurfaceHandler),
     env: List(Local),
     result: Ty,
     first: Ty,
     budget_ty: Ty
   ): Unit {
-    ⊢ Unit from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         #()
@@ -1780,14 +712,14 @@ mutual {
 
   pub fn ck_handle_arms_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     hs: List(SurfaceHandler),
     env: List(Local),
     result: Ty,
     rv: Option(Nat),
     budget_ty: Ty
   ): Unit {
-    ⊢ Unit from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         #()
@@ -1804,21 +736,21 @@ mutual {
 
   pub fn ck_handle_one_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     h: SurfaceHandler,
     env: List(Local),
     result: Ty,
     rv: Option(Nat),
     budget_ty: Ty
   ): Unit {
-    ⊢ Unit from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         #()
       }
       Succ(j) => ⊢ Unit from match h {
-        HdReturn(p, b) => #()
-        HdOperation(eff, hfa, hty, patterns, cont, guard, body) => ck_handle_arm_in(
+        HdReturn(^p, ^b) => #()
+        HdOperation(eff, hfa, hty, patterns, cont, _, guard, body) => ck_handle_arm_in(
           j,
           &mut c,
           env,
@@ -1839,7 +771,7 @@ mutual {
 
   pub fn ck_handle_arm_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     env: List(Local),
     result: Ty,
     rv: Option(Nat),
@@ -1852,7 +784,7 @@ mutual {
     guard: Option(SurfaceTerm),
     body: SurfaceTerm
   ): Unit {
-    ⊢ Unit from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         #()
@@ -1871,13 +803,7 @@ mutual {
         Some(pa) => if not(list_len(pa.params) == list_len(patterns)) {
           ck_error(
             &mut c,
-            cat5(
-              "`",
-              eff,
-              "` gives ",
-              Text::of_nat(list_len(pa.params)),
-              cat2(" values, the arm takes ", Text::of_nat(list_len(patterns)))
-            ),
+            arm_value_count_message(eff, Text::of_nat(list_len(pa.params)), Text::of_nat(list_len(patterns))),
             span_of(body)
           )
         } else {
@@ -1904,7 +830,7 @@ mutual {
 
   pub fn ck_handle_body_in(
     k: Nat,
-    &mut c: Checker,
+    c: &mut Checker,
     env: List(Local),
     result: Ty,
     rv: Option(Nat),
@@ -1918,7 +844,7 @@ mutual {
     guard: Option(SurfaceTerm),
     body: SurfaceTerm
   ): Unit {
-    ⊢ Unit from match k {
+    match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         #()
@@ -1939,14 +865,14 @@ mutual {
   }
 }
 
-pub fn ck_infer(&mut c: Checker, term: SurfaceTerm, env: List(Local)): Ty {
+pub fn ck_infer(c: &mut Checker, term: SurfaceTerm, env: List(Local)): Ty {
   ck_infer_in(c.steps, &mut c, term, env)
 }
 
-pub fn ck_stmt(&mut c: Checker, s: SurfaceStmt, &mut env: Scope): Ty {
+pub fn ck_stmt(c: &mut Checker, s: SurfaceStmt, env: &mut Scope): Ty {
   ck_stmt_in(c.steps, &mut c, s, &mut env)
 }
 
-pub fn ck_check_fn(&mut c: Checker, f: SurfaceFn, scheme: Scheme, env: List(Local)): Unit {
+pub fn ck_check_fn(c: &mut Checker, f: SurfaceFn, scheme: Scheme, env: List(Local)): Unit {
   ck_check_fn_in(c.steps, &mut c, f, scheme, env)
 }

@@ -1,0 +1,179 @@
+// A type variable may stand for a type that holds a borrow: the generated
+// code gives it no `'static`, so a borrow passes through a generic function,
+// a generic struct and a vector as the checker allows. Only an instance that
+// builds a function value or carries values through an effect keeps
+// `'static`, and its callers need it of what they pass.
+
+@ cases.borrow-through-generic-function
+source = ```tauto
+
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn ident<A>(x: A): A { x }
+let a := F { n: 4 }
+let r := ident(&a)
+show(&size(&r))
+```
+stdout = "4\n"
+
+@ cases.borrow-in-generic-struct
+source = ```tauto
+
+struct(affine) F { n: i64 }
+struct Pair(A: Type, B: Type) { a: A, b: B }
+fn size(f: &F): i64 { f.n }
+fn wrap<A, B>(a: A, b: B): Pair(A, B) { Pair { a: a, b: b } }
+let b := F { n: 2 }
+let p := wrap(&b, 3)
+show(&(size(&p.a) + p.b))
+```
+stdout = "5\n"
+
+@ cases.borrows-in-vector-through-generic-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `Vec` of borrows yet"
+source = ```tauto
+
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn put<A>(v: &mut Vec(A), x: A): Unit { Vec::push(&mut v, x) }
+fn count<A>(v: &Vec(A)): u64 { Vec::len(&v) }
+let a := F { n: 1 }
+let b := F { n: 2 }
+var v := Vec::new()
+put(&mut v, &a)
+put(&mut v, &b)
+let n := match Vec::get(&v, 1) {
+  Some(f) => size(&f)
+  None => 0
+}
+show(&n)
+show(&count(&v))
+```
+stdout = ```
+2
+2
+```
+
+@ cases.shared-no-borrow-bound-through-effect
+source = ```tauto
+
+effect wait_on<A: Shared + NoBorrow, E: Shared + NoBorrow>(e: E): A
+fn read<A: Shared + NoBorrow, E: Shared + NoBorrow>(e: E): A ! {wait_on(A, E)} {
+  let a: A := perform wait_on(e)
+  a
+}
+fn drive<A: Shared + NoBorrow, E: Shared + NoBorrow>(a: A, e: E): A {
+  handle { let r: A := read(e)
+    r } with {
+    wait_on<A, E>(x), k => k(a)
+    return v => v
+  }
+}
+show(&drive((4: i64), (1: u64)))
+```
+stdout = "4\n"
+
+// A closure literal that takes a duplicable value where the callee lends it
+// (`&A ≡ A`) is made for the callee's borrow, as a named function is.
+@ cases.value-lambda-for-a-borrowing-parameter
+source = ```tauto
+fn count(xs: List(i64), p: (&i64) -> Bool): i64 ! {overflow} {
+  match xs {
+    Nil => 0
+    Cons(h, rest) => if p(&h) { 1 + count(rest, p) } else { count(rest, p) }
+  }
+}
+fn big(x: i64): Bool { x > 1 }
+show(&count([1, 2, 3], (x: i64) => x > 1))
+show(&count([1, 2, 3], big))
+```
+stdout = ```
+2
+2
+```
+
+// A function that borrows its argument may stand where one that takes it is
+// expected, whatever the argument's kind: the value is lent for the call and
+// dropped after it.
+@ cases.borrowing-function-for-an-affine-value-parameter
+source = ```tauto
+struct(affine) Tok { t: Text }
+fn apply(f: (Tok) -> u64, k: Tok): u64 { f(k) }
+fn size(k: &Tok): u64 { Text::len(k.t) }
+show(&apply(size, Tok { t: "abc" }))
+show(&apply((k: &Tok) => Text::len(k.t), Tok { t: "ab" }))
+```
+stdout = ```
+3
+2
+```
+
+// The other way needs a copy of what is lent, so an affine argument does not
+// fit.
+@ cases.value-function-for-an-affine-borrow-parameter
+source = ```tauto
+struct(affine) Tok { t: Text }
+fn lend(f: (&Tok) -> u64, k: &Tok): u64 { f(k) }
+fn take(k: Tok): u64 { Text::len(k.t) }
+fn go(k: Tok): u64 { lend(take, &k) }
+```
+types = "error: does not fit"
+
+// A generic function that builds a function value and keeps it inside its
+// call gives the value a region of its own, not `'static`: a borrow passes
+// through its type variable.
+@ cases.borrow-through-generic-function-that-builds-a-closure
+source = ```tauto
+
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn apply<A>(x: A, f: (A) -> i64): i64 {
+  let g := (y: A) => f(y)
+  g(x)
+}
+let a := F { n: 4 }
+show(&apply(&a, (r: &F) => size(r)))
+```
+stdout = "4\n"
+
+// `Option(&A)` of a duplicable `A` is an `Option(A)` (`&A ≡ A`): the value
+// is copied out of its borrow where the `Option` is passed or stored.
+@ cases.borrowed-option-of-duplicable-value-is-its-value
+source = ```tauto
+import std::indexed_map { IndexedMap }
+
+struct V { n: i64 }
+struct Net { m: IndexedMap(u64, V) }
+fn find(net: &Net, k: u64): Option(V) {
+  match IndexedMap::get(&net.m, k) { Some(v) => Some(v), None => None }
+}
+fn size(o: Option(V)): i64 { match o { Some(v) => v.n, None => 0 } }
+var m := IndexedMap::new()
+IndexedMap::insert(&mut m, 1, V { n: 3 })
+let net := Net { m: m }
+show(&size(find(&net, 1)))
+let k: u64 := 1
+let o := IndexedMap::get(&net.m, k)
+show(&size(o))
+var keep := Vec::new()
+Vec::push(&mut keep, o)
+show(&Vec::len(&keep))
+```
+stdout = ```
+3
+3
+1
+```
+
+// A type variable that stands for a function type, taken by borrow: the
+// generic function and the function it calls see one borrowed function.
+@ cases.borrowed-function-through-type-variable
+source = ```tauto
+
+fn app<F: Shared>(f: &F, g: (&F) -> nat): nat { g(f) }
+fn apply(f: &((nat) -> nat)): nat { f(1) }
+fn twice(n: nat): nat { n * 2 }
+let t: (nat) -> nat := twice
+show(&app(&t, apply))
+```
+stdout = "2\n"

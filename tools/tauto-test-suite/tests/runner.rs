@@ -52,11 +52,11 @@ fn validation_is_shared_and_cannot_be_hidden_by_unimplemented() {
     for text in [
         "source = \"\"\nchekcs = \"ok\"",
         "source = \"\"\nchecks {}",
-        "source = \"\"\nunimplemented = true\nchecks.typo = 1",
-        "source = \"\"\nshows = [1]",
+        "source = \"\"\neval.bug = \"x\"\nchecks.typo = 1",
+        "source = \"\"\nstdout = 1",
         "source = \"\"\nchecks_all = \"typo\"",
         "source = \"\"\nbudget = 1",
-        "a = []\nb = []\nequal = true\nshows = []",
+        "a = []\nb = []\nequal = true\nstdout = \"\"",
         "source = \"\"\nbuild = \"typo\"",
         "source = \"\"\nparses = true\nrust = \"typo\"",
         "source = \"\"\ndiagnostics = [{ message => \"\", typo => true }]",
@@ -85,15 +85,69 @@ theorem good(): identity(3) = 3 { Refl }"#,
     f.write("lib/message.txt", "hello");
     f.write(
         "lib/include.taut",
-        r#"perform show("text", include_text!("message.txt"))"#,
+        r#"show(&(include_text!("message.txt")))"#,
     );
     f.passes(
         r#"source = path`lib/include.taut`
-shows = ["text = \"hello\""]"#,
+stdout = "\"hello\"\n""#,
     );
     f.fails(
         "source = path`absent.taut`\nchecks_all = \"ok\"",
         "absent.taut",
+    );
+}
+#[test]
+fn files_real_links_the_repository_file_in_place() {
+    let f = Fixture::new();
+    f.write(
+        "lib/Tauto.eure",
+        "package { name = \"std\"\nversion = \"0.1.0\"\nprelude = false }",
+    );
+    // Named like a prelude stub in `stdlib::FILES`, with real text, so only
+    // path membership under the tote `std` makes it standard.
+    f.write(
+        "lib/builtin/classes.taut",
+        r#"import std::builtin::ord { Ord }
+import std::prelude::std { Ordering }
+
+instance Ord(i64) {
+  fn compare(a: &i64, b: &i64): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+"#,
+    );
+    // The scratch entry imports a `real` link: the check reads the library file
+    // by its repository path, so standard-library path membership applies.
+    // `Marker` has two type parameters so dictionary ownership runs.
+    f.write(
+        "cases/real.eure",
+        r#"files."Tauto.eure" = ```eure
+package { name = "std"
+version = "0.1.0"
+prelude = false }
+```
+files."builtin/classes.taut" = real`../lib/builtin/classes.taut`
+files."probe.taut" = ````tauto
+import "builtin/classes.taut"
+
+class Marker(A: Type, B: Type) {
+  fn mark(a: &A, b: &B): Unit
+}
+
+instance Marker(Bool, Bool) {
+  fn mark(a: &Bool, b: &Bool): Unit { () }
+}
+````
+entry = "probe.taut"
+checks."Ord::inst@i64" = "skipped"
+"#,
+    );
+    let report = run_path(&f.0.join("cases/real.eure"), &f.0, None).unwrap();
+    assert!(!report.failed(), "{:?}", report.error);
+    f.fails(
+        "source = real`lib/main.taut`\nchecks_all = \"ok\"",
+        "real`…` is only for files values",
     );
 }
 #[test]
@@ -158,15 +212,14 @@ diagnostics = [{ stage => "types", message => "", span => "let x: i64 := «true�
 fn runtime_assertions_cover_streams_exit_and_budget() {
     let f = Fixture::new();
     f.passes(
-        r#"source = `perform show("answer", 42)`
-shows = ["answer = 42"]
-stdout = ""
+        r#"source = `show(&42)`
+stdout = "42\n"
 stderr = ""
 exit = 0
 budget = 10000"#,
     );
     f.fails(
-        r#"source = `perform show("answer", 42)`
+        r#"source = `show(&42)`
 stdout = "wrong""#,
         "stdout",
     );
@@ -181,7 +234,7 @@ fn stale_unimplemented_marks_make_the_report_fail() {
     let f = Fixture::new();
     let path = f.write(
         "case.eure",
-        "source = \"\"\nparses = true\nunimplemented = true",
+        "source = \"\"\nparses = true\neval.unimplemented = \"x\"",
     );
     let report = run_path(&path, &f.0, None).unwrap();
     assert!(report.failed());
@@ -203,16 +256,16 @@ fn external_sources_are_resolved_for_the_rust_backend() {
     f.write(
         "lib/main.taut",
         r#"import "helper.taut"
-perform show("answer", twice(21))"#,
+show(&twice(21))"#,
     );
     f.write(
         "case.eure",
-        "source = path`lib/main.taut`\nshows = [\"answer = 42\"]",
+        "source = path`lib/main.taut`\nstdout = \"42\\n\"",
     );
     let cases = tauto_test_suite::rust_cases(&f.0).unwrap();
     let source = cases[0].compilation_source().unwrap();
     assert!(!source.contains("import "));
-    tauto_nir::compile(&source).unwrap();
+    tauto::nir::compile(&source).unwrap();
 }
 #[test]
 fn utf8_diagnostics_use_byte_offsets_and_character_columns() {
@@ -227,7 +280,7 @@ fn runtime_streams_and_nonzero_exit_are_checked() {
     let f = Fixture::new();
     f.passes(
         r#"source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 print("hello"); eprint("warning"); perform exit(7)
 ```
 stdout = "hello"
@@ -264,12 +317,12 @@ fn imports_keep_source_positions_and_work_for_the_backend() {
     let f = Fixture::new();
     f.write("lib/helper.taut", r#"pub fn twice(n: i64): i64 { n + n }"#);
     f.passes(
-        r#"source = `perform show("answer", twice(21))`
+        r#"source = `show(&twice(21))`
 imports = [path`lib/helper.taut`]
-shows = ["answer = 42"]"#,
+stdout = "42\n""#,
     );
     let cases = tauto_test_suite::rust_cases(&f.0).unwrap();
-    tauto_nir::compile(&cases[0].compilation_source().unwrap()).unwrap();
+    tauto::nir::compile(&cases[0].compilation_source().unwrap()).unwrap();
     f.write("lib/proof.taut", r#"theorem identity(n: Nat): Nat { n }"#);
     f.passes(
         r#"source = `theorem bad(): Eq(Nat, 0, 1) { Refl }`
@@ -303,7 +356,7 @@ fn tote_sources_use_the_manifest_and_runtime_assertions() {
     );
     f.write(
         "demo/src/main.taut",
-        "import std::prelude::Os\nprint(\"hello\")",
+        "import std::builtin::os\nprint(\"hello\")",
     );
     f.passes("tote = path`demo`\nstdout = \"hello\"");
 }
@@ -367,28 +420,19 @@ impl Fixture {
 }
 
 #[test]
-fn backend_selection_is_explicit_and_validated() {
+fn every_backend_runs_unless_it_opts_out_with_a_reason() {
     let f = Fixture::new();
-    let case = f.backend_case("source = \"\"\nshows = []\nbackends = [\"javascript\"]");
-    assert!(!case.selects_backend("rust"));
-    assert!(case.selects_backend("javascript"));
-    assert!(!case.explicit_backend("rust"));
-    assert!(case.explicit_backend("javascript"));
-    for backends in ["[]", "[\"other\"]", "[\"rust\", \"rust\"]"] {
-        assert!(matches!(
-            f.outcome(&format!(
-                "source = \"\"\nparses = true\nbackends = {backends}"
-            )),
-            Outcome::Failed(_)
-        ));
+    let case = f.backend_case("source = \"\"\nstdout = \"\"");
+    for backend in ["rust", "javascript", "vm", "llvm", "niri"] {
+        assert!(case.selects_backend(backend));
+        assert!(!case.explicit_backend(backend));
     }
+    let opted = f.backend_case("source = \"\"\nstdout = \"\"\nvm.unimplemented = \"unsupported: missing\"");
+    assert!(opted.selects_backend("vm"));
+    assert!(opted.explicit_backend("vm"));
     f.fails(
-        "source = \"\"\nparses = true\nbackends = [\"rust\"]\ncompile_errors.javascript = \"front: rejected\"",
-        "excluded",
-    );
-    f.fails(
-        "source = \"\"\nparses = true\nbackends = [\"rust\"]\nbackend_known_failure.javascript = \"runtime: unavailable\"",
-        "excluded",
+        "source = \"\"\nstdout = \"\"\nvm.unimplemented = \"runtime: a\"\nvm.bug = \"runtime: b\"",
+        "exactly one",
     );
     assert!(matches!(
         f.outcome("source = \"\"\ncompile_errors.rust = \"front: rejected\""),
@@ -429,7 +473,7 @@ compile_errors.rust = "front: type error""#,
     );
     assert!(case.check_compiled("javascript").is_ok());
     match case.compile("rust") {
-        Err(tauto_nir::CompileError::Front(message)) => {
+        Err(tauto_nibcheck::lower::CompileError::Front(message)) => {
             assert_eq!(
                 case.check_compile_error("rust", "front", &message),
                 Ok(true)
@@ -448,7 +492,9 @@ compile_errors.rust = "front: type error""#,
 #[test]
 fn known_backend_failures_do_not_hide_wrong_errors_or_stale_success() {
     let f = Fixture::new();
-    let compile = f.backend_case("source = \"\"\nparses = true\nbackend_known_failure.rust = \"unsupported: missing feature\"");
+    let compile = f.backend_case(
+        "source = \"\"\nparses = true\nrust.unimplemented = \"unsupported: missing feature\"",
+    );
     assert_eq!(
         compile.check_limitation("rust", "unsupported", "missing feature: details"),
         Ok(true)
@@ -472,7 +518,7 @@ fn known_backend_failures_do_not_hide_wrong_errors_or_stale_success() {
         "a stale compile limitation passed"
     );
 
-    let runtime = f.backend_case("source = \"\"\nshows = []\nbackend_known_failure.rust = \"runtime: unavailable operation\"");
+    let runtime = f.backend_case("source = \"\"\nstdout = \"\"\nrust.unimplemented = \"runtime: unavailable operation\"");
     assert!(runtime.check_compiled("rust").is_ok());
     assert_eq!(
         runtime.check_limitation("rust", "runtime", "unavailable operation: details"),
@@ -484,17 +530,17 @@ fn known_backend_failures_do_not_hide_wrong_errors_or_stale_success() {
             .is_err()
     );
     assert!(
-        runtime.check_output("rust", &[], "", "", Some(0)).is_err(),
+        runtime.check_output("rust", "", "", Some(0)).is_err(),
         "a stale runtime limitation passed"
     );
     for value in ["message only", "unknown: message", "runtime: "] {
         f.fails(
-            &format!("source = \"\"\nparses = true\nbackend_known_failure.rust = {value:?}"),
-            "backend_known_failure",
+            &format!("source = \"\"\nparses = true\nrust.unimplemented = {value:?}"),
+            "opt-out",
         );
     }
     f.fails(
-        "source = \"\"\nparses = true\ncompile_errors.rust = \"front: rejected\"\nbackend_known_failure.rust = \"front: rejected\"",
+        "source = \"\"\nparses = true\ncompile_errors.rust = \"front: rejected\"\nrust.unimplemented = \"front: rejected\"",
         "both",
     );
 }
@@ -537,7 +583,7 @@ fn inferred_expectations_check_names_values_rows_and_kinds() {
     let source = r#"source = ```tauto
 effect ask(): i64
 fn query(): i64 ! {ask} { perform ask() }
-affine struct Resource {}
+struct(affine) Resource {}
 let number: i32 := 1
 ```
 "#;
@@ -585,7 +631,7 @@ fn javascript_row_expectations_use_the_javascript_checker() {
     let f = Fixture::new();
     let source = r#"source = ```tauto
 effect ask(): Text
-extern { fn host(&read: () -> Text): Text }
+extern { fn host(read: &(() -> Text)): Text }
 fn caller(): Text ! {ask} { host(&(() => perform ask())) }
 ```
 "#;
@@ -596,7 +642,11 @@ fn caller(): Text ! {ask} { host(&(() => perform ask())) }
         &format!("{source}rows_javascript = \"error: cannot perform ask\""),
         "rows_javascript",
     );
-    let restricted = source.replace("&read: () -> Text)", "&read: () -> Text ! {})");
+    let restricted = source.replace("read: &(() -> Text)", "read: &(() -> Text ! {})");
+    assert_ne!(
+        restricted, source,
+        "the host's parameter is spelled as the test expects"
+    );
     f.passes(&format!(
         "{restricted}rows_javascript = \"error: its type permits\""
     ));
@@ -647,21 +697,10 @@ lint = []"#,
 #[test]
 fn backend_output_contracts_keep_streams_and_exit_distinct() {
     let f = Fixture::new();
-    let case = f.backend_case("source = \"\"\nshows = [\"common = 1\"]\nrust_shows = [\"rust = 2\"]\njavascript_shows = [\"javascript = 3\"]\nstdout = \"output\"\nstderr = \"warning\"\nexit = 7");
-    let rust = vec!["rust = 2".to_string()];
-    let javascript = vec!["javascript = 3".to_string()];
-    assert!(
-        case.check_output("rust", &rust, "output", "warning", Some(7))
-            .is_ok()
-    );
-    assert!(
-        case.check_output("javascript", &javascript, "output", "warning", Some(7))
-            .is_ok()
-    );
-    assert!(
-        case.check_output("javascript", &rust, "output", "warning", Some(7))
-            .is_err()
-    );
+    let case = f.backend_case("source = \"\"\nstdout = \"output\"\nstderr = \"warning\"\nexit = 7");
+    for backend in ["rust", "javascript", "vm", "llvm", "niri"] {
+        assert_eq!(case.check_output(backend, "output", "warning", Some(7)), Ok(None));
+    }
     for (out, err, exit, wanted) in [
         ("wrong", "warning", Some(7), "stdout"),
         ("output", "wrong", Some(7), "stderr"),
@@ -669,185 +708,36 @@ fn backend_output_contracts_keep_streams_and_exit_distinct() {
         ("output", "warning", None, "exit"),
     ] {
         assert!(
-            case.check_output("rust", &rust, out, err, exit)
+            case.check_output("rust", out, err, exit)
                 .unwrap_err()
                 .contains(wanted)
         );
     }
+    let error = f.backend_case("source = \"\"\nrun_error = \"common failure\"");
+    assert_eq!(error.check_output("javascript", "", "common failure", Some(1)), Ok(None));
+    assert!(error.check_output("rust", "common failure", "", Some(1)).is_err());
+    assert!(error.check_output("rust", "", "common failure", Some(0)).is_err());
+
+    // A backend whose output differs opts out with the part of the mismatch.
+    let differs = f.backend_case("source = \"\"\nstdout = \"1\\n\"\njavascript.bug = \"output: stdout: expected\"");
+    assert!(matches!(differs.check_output("javascript", "2\n", "", Some(0)), Ok(Some(_))));
     assert!(
-        case.check_output("rust", &[], "rust = 2\noutput", "warning", Some(7))
+        differs
+            .check_output("javascript", "1\n", "", Some(0))
             .unwrap_err()
-            .contains("shows")
+            .contains("remove it")
     );
-    let error = f.backend_case("source = \"\"\nrun_error = \"common failure\"\nrust_error = \"rust failure\"\njavascript_error = \"javascript failure\"");
-    assert!(
-        error
-            .check_output("rust", &[], "", "rust failure", Some(1))
-            .is_ok()
-    );
-    assert!(
-        error
-            .check_output("javascript", &[], "", "javascript failure", Some(1))
-            .is_ok()
-    );
-    assert!(
-        error
-            .check_output("javascript", &[], "", "rust failure", Some(1))
-            .is_err()
-    );
-    assert!(
-        error
-            .check_output("rust", &[], "rust failure", "", Some(1))
-            .is_err()
-    );
-    assert!(
-        error
-            .check_output("rust", &[], "", "rust failure", Some(0))
-            .is_err()
-    );
-
-    let partial = f.backend_case("source = \"\"\nrust_error = \"rust failure\"\nrust_shows = [\"partial = 1\"]\nstdout = \"before failure\"\nstderr = \"rust failure: detail\"\nexit = 7");
-    let observations = vec!["partial = 1".to_string()];
-    assert!(
-        partial
-            .check_output(
-                "rust",
-                &observations,
-                "before failure",
-                "rust failure: detail",
-                Some(7)
-            )
-            .is_ok()
-    );
-    for (shows, stdout, stderr, exit, message) in [
-        (
-            &observations[..],
-            "wrong",
-            "rust failure: detail",
-            Some(7),
-            "stdout",
-        ),
-        (
-            &observations[..],
-            "before failure",
-            "rust failure: different",
-            Some(7),
-            "stderr",
-        ),
-        (
-            &observations[..],
-            "before failure",
-            "rust failure: detail",
-            Some(1),
-            "exit",
-        ),
-        (
-            &[][..],
-            "before failure",
-            "rust failure: detail",
-            Some(7),
-            "shows before error",
-        ),
-    ] {
-        assert!(
-            partial
-                .check_output("rust", shows, stdout, stderr, exit)
-                .unwrap_err()
-                .contains(message)
-        );
-    }
-    // An explicit JavaScript success contract overrides inherited failures,
-    // but it does not change what the Rust route must observe.
-    for failure_field in ["rust_error", "run_error"] {
-        let divergent = f.backend_case(&format!(
-            "source = \"\"\n{failure_field} = \"inherited failure\"\njavascript_shows = [\"javascript = 3\"]"
-        ));
-        assert!(
-            divergent
-                .check_output("rust", &[], "", "inherited failure", Some(1))
-                .is_ok()
-        );
-        assert!(
-            divergent
-                .check_output("javascript", &javascript, "", "", Some(0))
-                .is_ok()
-        );
-        assert!(
-            divergent
-                .check_output("javascript", &[], "", "", Some(0))
-                .is_err()
-        );
-        assert!(
-            divergent
-                .check_output("javascript", &javascript, "", "inherited failure", Some(1))
-                .is_err()
-        );
-    }
-    let inherited = f.backend_case(
-        "source = \"\"\nrun_error = \"common failure\"\nrust_error = \"rust failure\"",
-    );
-    assert!(
-        inherited
-            .check_output("javascript", &[], "", "rust failure", Some(1))
-            .is_ok()
-    );
-    assert!(
-        inherited
-            .check_output("javascript", &[], "", "common failure", Some(1))
-            .is_err()
-    );
-    assert!(
-        inherited
-            .check_output("javascript", &[], "", "", Some(0))
-            .is_err()
-    );
-
-    // A JavaScript error remains authoritative even when partial output is
-    // explicit; neither the Rust error nor the success override can mask it.
-    let javascript_partial = f.backend_case("source = \"\"\nrust_error = \"rust failure\"\nrust_shows = [\"partial = 1\"]\njavascript_error = \"javascript failure\"\njavascript_shows = [\"javascript = 3\"]");
-    assert!(
-        javascript_partial
-            .check_output("javascript", &javascript, "", "javascript failure", Some(1))
-            .is_ok()
-    );
-    assert!(
-        javascript_partial
-            .check_output("javascript", &javascript, "", "rust failure", Some(1))
-            .is_err()
-    );
-    assert!(
-        javascript_partial
-            .check_output(
-                "javascript",
-                &observations,
-                "",
-                "javascript failure",
-                Some(1)
-            )
-            .is_err()
-    );
-    assert!(
-        javascript_partial
-            .check_output("javascript", &[], "", "javascript failure", Some(1))
-            .is_err()
-    );
-    assert!(
-        javascript_partial
-            .check_output("javascript", &javascript, "", "", Some(0))
-            .is_err()
-    );
+    assert_eq!(differs.check_output("rust", "1\n", "", Some(0)), Ok(None));
 }
 
 #[test]
-fn evaluator_budget_and_drop_assertions_are_native_coverage_gaps() {
+fn a_budget_is_no_native_coverage_gap() {
     let f = Fixture::new();
-    let case = f.backend_case("source = \"\"\nshows = []\nbudget = 1000\ndrops = []");
-    assert!(case.check_output("rust", &[], "", "", Some(0)).is_ok());
-    let gaps = case.assertion_gaps();
-    assert_eq!(gaps.len(), 2);
-    assert!(gaps.iter().any(|g| g.starts_with("drops:")));
-    assert!(gaps.iter().any(|g| g.starts_with("budget:")));
-    let ordinary = f.backend_case("source = \"\"\nshows = []");
+    // The machine counts budget steps as the backends do, so a budget is no gap.
+    let case = f.backend_case("source = \"\"\nstdout = \"\"\nbudget = 1000");
+    assert!(case.check_output("rust", "", "", Some(0)).is_ok());
+    assert!(case.assertion_gaps().is_empty());
+    let ordinary = f.backend_case("source = \"\"\nstdout = \"\"");
     assert!(ordinary.assertion_gaps().is_empty());
 }
 
@@ -857,19 +747,14 @@ fn multifile_backend_inputs_preserve_imports_and_source_maps() {
     let case = f.backend_case(
         r#"files."main.nib" = ```tauto
 import "lib.nib"
-perform show("answer", twice(21))
+show(&twice(21))
 ```
 files."lib.nib" = `pub fn twice(n: i64): i64 { n + n }`
-shows = ["answer = 42"]
-rust_shows = ["answer = 42"]
+stdout = "42\n"
 build = "ok""#,
     );
     assert!(!case.compilation_source().unwrap().contains("import "));
     assert_eq!(case.build.as_deref(), Some("ok"));
-    assert_eq!(
-        case.rust_shows.as_deref(),
-        Some(["answer = 42".to_string()].as_slice())
-    );
     for backend in ["rust", "javascript"] {
         let package = case.compile(backend).unwrap();
         let sources = package.sources.expect("file boundaries retained");
@@ -882,30 +767,41 @@ build = "ok""#,
 fn extracted_file_and_tote_compilation_keep_kernel_checked_evidence() {
     let f = Fixture::new();
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../std/Base.taut")
+        .join("../../std/base.taut")
         .canonicalize()
         .unwrap();
+    // Each call passes a rebuilt `Succ(j)`, not a part of the parameter: the
+    // kernel accepts the recursion, but the rows of the flattened source,
+    // which see only a call on a part of a parameter as ending
+    // (`rows/structural.rs`), do not. Without the kernel's evidence the
+    // flattened source performs `div`.
     let proof = r#"mutual {
   fn twice(n: Nat): Nat {
     ⊢ Nat from match n {
       Zero => Zero
-      Succ(k) => Succ(Succ(twice_again(k)))
+      Succ(k) => ⊢ Nat from match k {
+        Zero => Succ(Succ(Zero))
+        Succ(j) => Succ(Succ(twice_again(Succ(j))))
+      }
     }
   }
   fn twice_again(n: Nat): Nat {
     ⊢ Nat from match n {
       Zero => Zero
-      Succ(k) => Succ(Succ(twice(k)))
+      Succ(k) => ⊢ Nat from match k {
+        Zero => Succ(Succ(Zero))
+        Succ(j) => Succ(Succ(twice(Succ(j))))
+      }
     }
   }
 }
 pub fn mapped(xs: List(Nat)): List(Nat) { List::map(twice, xs) }
 "#;
     let case = f.backend_case(&format!(
-        "extract = true\nimports = [path`{}`]\nfiles.\"main.tauto\" = {:?}\nentry = \"main.tauto\"\nshows = [\"value = Cons(4, Nil)\"]",
+        "extract = true\nimports = [path`{}`]\nfiles.\"main.tauto\" = {:?}\nentry = \"main.tauto\"\nstdout = \"[4]\\n\"",
         base.display(),
         format!(
-r#"{}perform show("value", mapped(Cons(2, Nil)))
+r#"{}show(&mapped(Cons(2, Nil)))
 "#,
 proof
 )
@@ -914,9 +810,9 @@ proof
     for backend in ["rust", "javascript"] {
         case.compile(backend).unwrap();
         let without_evidence = if backend == "rust" {
-            tauto_nir::compile(&flattened)
+            tauto::nir::compile(&flattened)
         } else {
-            tauto_nir::compile_javascript(&flattened)
+            tauto::nir::compile_javascript(&flattened)
         };
         assert!(
             without_evidence.is_err(),
@@ -942,10 +838,10 @@ proof
     real_tote.write(
         "src/main.tauto",
         r#"import "proof.tauto"
-perform show("value", mapped(Cons(2, Nil)))"#,
+show(&mapped(Cons(2, Nil)))"#,
     );
     let tote = f.backend_case(&format!(
-        "tote = path`{}`\nshows = [\"value = Cons(4, Nil)\"]",
+        "tote = path`{}`\nstdout = \"[4]\\n\"",
         real_tote.0.display()
     ));
     assert_eq!(tote.tote.as_deref(), Some(real_tote.0.as_path()));
@@ -958,11 +854,11 @@ perform show("value", mapped(Cons(2, Nil)))"#,
 fn runtime_arguments_preserve_order_unicode_and_empty_values() {
     let f = Fixture::new();
     let document = r#"source = ```tauto
-import std::prelude::Os
-perform show("args", perform argv())
+import std::builtin::os
+show(&(perform argv()))
 ```
 args = ["first", "日本語", ""]
-shows = ["args = Cons(\"first\", Cons(\"日本語\", Cons(\"\", Nil)))"]"#;
+stdout = "[\"first\", \"日本語\", \"\"]\n""#;
     f.passes(document);
     let case = f.backend_case(document);
     assert_eq!(case.args, ["first", "日本語", ""]);
@@ -971,7 +867,7 @@ shows = ["args = Cons(\"first\", Cons(\"日本語\", Cons(\"\", Nil)))"]"#;
         "args requires a runtime assertion",
     );
     assert!(matches!(
-        f.outcome("source = \"\"\nshows = []\nargs = [1]"),
+        f.outcome("source = \"\"\nstdout = \"\"\nargs = [1]"),
         Outcome::Failed(_)
     ));
 }
@@ -986,14 +882,14 @@ dependencies { support { path = "../support" } }
 ```
 files."app/src/main.taut" = ```tauto
 import support::library
-perform show("value", answer())
+show(&answer())
 ```
-files."app/unlisted.taut" = `perform show("outside declared sources", 0)`
+files."app/unlisted.taut" = `show(&0)`
 files."support/Tauto.eure" = `package { name = "support" }`
 files."support/src/library.tauto" = `pub fn answer(): i64 { 42 }`
-files."support/src/main.taut" = `perform show("dependency taut entry", 0)`
-files."support/src/main.tauto" = `perform show("dependency tauto entry", 0)`
-shows = ["value = 42"]"#;
+files."support/src/main.taut" = `show(&0)`
+files."support/src/main.tauto" = `show(&0)`
+stdout = "42\n""#;
     f.passes(document);
     let case = f.backend_case(document);
     let source = case.compilation_source().unwrap();
@@ -1032,7 +928,7 @@ shows = ["value = 42"]"#;
     let configured_case = f.backend_case(&configured);
     for backend in ["rust", "javascript"] {
         match configured_case.compile(backend) {
-            Err(tauto_nir::CompileError::Front(message)) => assert!(message.contains(
+            Err(tauto_nibcheck::lower::CompileError::Front(message)) => assert!(message.contains(
                 "files_tote backend host configuration needs a retained host fixture or external tote; it is not replaced by defaults"
             )),
             other => panic!("{backend} discarded a virtual tote's host configuration: {other:?}"),
@@ -1046,7 +942,7 @@ shows = ["value = 42"]"#;
         f.fails(&format!("{document}\n{excluded}"), "files_tote");
     }
     f.fails(
-        "source = \"\"\nshows = []\nfiles_tote = \"app\"",
+        "source = \"\"\nstdout = \"\"\nfiles_tote = \"app\"",
         "files_tote",
     );
     for invalid in ["../app", "/app", "app/../app", ""] {
@@ -1069,26 +965,6 @@ shows = ["value = 42"]"#;
     );
 }
 #[test]
-fn every_expectation_is_read_by_a_scenario_the_case_runs() {
-    let f = Fixture::new();
-    for (text, unread) in [
-        (
-            "source = \"\"\nshows = []\nbackends = [\"rust\"]\njavascript_shows = []",
-            "javascript_shows",
-        ),
-        (
-            "source = \"\"\nshows = []\nbackends = [\"javascript\"]\nbuild = \"ok\"",
-            "build",
-        ),
-        (
-            "source = \"\"\ntypes = \"ok\"\nrust = \"skip: eval-only\"",
-            "rust",
-        ),
-    ] {
-        f.fails(text, unread);
-    }
-}
-#[test]
 fn declared_scenarios_must_be_the_ones_that_run() {
     let f = Fixture::new();
     f.passes("source = \"\"\ntypes = \"ok\"\nscenarios = [\"eval\"]");
@@ -1097,11 +973,66 @@ fn declared_scenarios_must_be_the_ones_that_run() {
         "this case runs [\"eval\"]",
     );
     f.fails(
-        "source = \"\"\nshows = []\nscenarios = [\"eval\"]",
-        "this case runs [\"eval\", \"rust\", \"javascript\", \"vm\"]",
+        "source = \"\"\nstdout = \"\"\nscenarios = [\"eval\"]",
+        "this case runs [\"eval\", \"rust\", \"javascript\", \"vm\", \"llvm\", \"niri\"]",
     );
     f.fails(
         "source = \"\"\ntypes = \"ok\"\nscenarios = [\"evl\"]",
         "unknown scenario",
+    );
+}
+
+#[test]
+fn nir_expectations_compare_the_printed_text() {
+    let f = Fixture::new();
+    let text = "fn count@0(n#1: u64): u64 S = if eq(copy n#1, 0u64) then 0u64 else count@0(sub<u64>(copy n#1, 1u64)): u64";
+    let marked = text.replace(")): u64", ")) recur: u64");
+    let case = |source: &str, rest: &str| format!("nir.source = ```nir\n{source}\n```\n{rest}");
+    f.passes(&case(
+        text,
+        &format!("nir.passes = [\"tail\"]\nnir.package = ```nir\n{marked}\n```"),
+    ));
+    // The pass that marks the call was not run.
+    f.fails(
+        &case(text, &format!("nir.package = ```nir\n{marked}\n```")),
+        "nir.package",
+    );
+    f.fails(
+        &case(
+            text,
+            &format!("nir.passes = [\"tail\"]\nnir.fns.other = ```nir\n{marked}\n```"),
+        ),
+        "selects 0 functions",
+    );
+    f.fails(
+        &case(text, "nir.passes = [\"tail\"]\nnir.error = \"x\""),
+        "every pass succeeded",
+    );
+    f.fails(
+        &case(text, "nir.passes = [\"tails\"]\nnir.error = \"x\""),
+        "unknown pass",
+    );
+    f.fails(
+        &case(text, "nir.passes = [\"tail\"]"),
+        "nir needs fns, datas, evidence, package or error",
+    );
+    // A program's NIR is checked beside what the program shows.
+    let program =
+        "source = \"fn one(): u64 { 1 }\\nshow(&one())\"\nstdout = \"1\\n\"\n";
+    let one = "fn one@1(): u64 S = 1u64";
+    f.passes(&format!("{program}nir.fns.one = ```nir\n{one}\n```"));
+    f.fails(
+        &format!(
+            "{program}nir.fns.one = ```nir\n{}\n```",
+            one.replace("1u64", "2u64")
+        ),
+        "nir.fns.one",
+    );
+    f.fails(
+        &case(
+            text,
+            &format!("stdout = \"1\\n\"\nnir.package = ```nir\n{text}\n```"),
+        ),
+        "nir.source is not combined with expectations of a program",
     );
 }

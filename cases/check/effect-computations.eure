@@ -3,17 +3,6 @@
 @ cases.handler-proofs-example
 source = path`../../examples/handler-proofs.taut`
 checks_all = "ok"
-checks."calc_is_white" = "skipped"
-checks."calc_syntax::parse" = "skipped"
-checks."calc_is_rel" = "skipped"
-checks."calc_multiline" = "skipped"
-checks."calc_lay" = "skipped"
-checks."calc_fmt" = "skipped"
-checks."calc_tokens" = "skipped"
-checks."calc_iff" = "skipped"
-checks."calc_last" = "skipped"
-checks."calc_steps" = "skipped"
-checks."calc" = "skipped"
 
 @ cases.a-wrong-handled-result-is-rejected
 source = ```tauto
@@ -76,11 +65,40 @@ fn asked(x: i64): i64 ! {ask} {
 ```
 checks.asked = "skipped"
 
+// With the import, `i64` is the kernel's `SInt(64)`: the effect is read and the
+// handler proved as written.
+@ cases.an-effect-of-machine-integers-is-read-with-their-module
+extract = true
+source = ```tauto
+import std::sint
+
+effect ask(n: i64): i64
+
+fn asked(x: i64): i64 ! {ask} {
+  perform ask(x)
+}
+
+fn answered(x: i64, y: i64): i64 {
+  handle { asked(x) } with {
+    ask(n), k => k(y)
+  }
+}
+
+theorem answered_is(x: SInt(64), y: SInt(64)): answered(x, y) = y { Refl }
+
+// A number at `i64` is the kernel's `SInt::mk64(1, Refl)`: it is checked.
+fn one(): i64 { 1 }
+```
+checks.asked = "checked"
+checks.answered = "checked"
+checks.answered_is = "ok"
+checks.one = "ok"
+
 @ cases.a-function-that-may-diverge-is-not-read
 source = ```tauto
 effect tick(): Unit
 
-fn forever(): Unit ! {tick, Div} {
+fn forever(): Unit ! {tick, div} {
   perform tick()
   forever()
 }
@@ -99,3 +117,134 @@ theorem uses_bump(x: Nat): bump(x) = bump(x) { Refl }
 ```
 checks.bump = "skipped"
 checks.uses_bump = "error: `bump` is not defined in proofs: it is declared earlier, but the kernel did not check it: has effects; not usable in proofs: it has no result type"
+
+@ cases.a-var-of-a-type-generic-is-read
+source = ```tauto
+effect tick(n: Nat): Nat
+
+fn ticks(x: Nat): Nat ! {tick} {
+  let y := perform tick(x)
+  perform tick(y)
+}
+
+fn stepped<S: Shared>(s0: S, f: (S) -> S): S {
+  var s: S := s0
+  handle { ticks(Zero) } with {
+    tick(n), k => {
+      s := f(s)
+      k(n)
+    }
+  }
+  s
+}
+
+fn listed<S: Shared>(x: S): List(S) {
+  var seen: List(S) := Nil
+  handle { ticks(Zero) } with {
+    tick(n), k => {
+      seen := Cons(x, seen)
+      k(n)
+    }
+  }
+  seen
+}
+
+theorem stepped_twice<S: Shared>(s0: S, f: (S) -> S): stepped(s0, f) = f(f(s0)) { Refl }
+theorem stepped_once<S: Shared>(s0: S, f: (S) -> S): stepped(s0, f) = f(s0) { Refl }
+theorem listed_twice<S: Shared>(x: S): listed(x) = Cons(x, Cons(x, Nil)) { Refl }
+```
+checks.stepped_twice = "ok"
+checks.stepped_once = "error: type mismatch"
+checks.listed_twice = "ok"
+
+@ cases.a-var-of-a-higher-kinded-or-indexed-type-is-read
+source = ```tauto
+effect tick(n: Nat): Nat
+
+fn ticks(x: Nat): Nat ! {tick} {
+  perform tick(x)
+}
+
+inductive Tag(n: Nat): Type {
+  MkTag(v: Nat): Tag(n)
+}
+
+fn wrapped<F: (Shared) -> Shared, A: Shared>(x: F(A), f: (F(A)) -> F(A)): F(A) {
+  var s: F(A) := x
+  handle { ticks(Zero) } with {
+    tick(n), k => {
+      s := f(s)
+      k(n)
+    }
+  }
+  s
+}
+
+fn indexed(n: Nat, x: Tag(n), f: (Tag(n)) -> Tag(n)): Tag(n) {
+  var s: Tag(n) := x
+  handle { ticks(Zero) } with {
+    tick(m), k => {
+      s := f(s)
+      k(m)
+    }
+  }
+  s
+}
+
+theorem wrapped_once<F: (Shared) -> Shared, A: Shared>(x: F(A), f: (F(A)) -> F(A)): wrapped(x, f) = f(x) { Refl }
+theorem indexed_once(n: Nat, x: Tag(n), f: (Tag(n)) -> Tag(n)): indexed(n, x, f) = f(x) { Refl }
+```
+checks.wrapped = "ok"
+checks.wrapped_once = "ok"
+checks.indexed = "ok"
+checks.indexed_once = "ok"
+
+@ cases.a-recursive-effectful-function-keeps-its-row
+source = ```tauto
+import std::base
+import std::nat
+
+effect request(): Bool
+
+fn retry(tries: Nat): Bool ! {request} {
+  match tries {
+    Zero => false
+    Succ(rest) => {
+      let accepted := perform request()
+      if accepted { true } else { retry(rest) }
+    }
+  }
+}
+
+fn run(tries: Nat, answer: Bool): Bool {
+  handle { retry(tries) } with { request(), k => k(answer) }
+}
+
+theorem accepts(tries: Nat): run(Succ(tries), true) = true { Refl }
+
+show(&run(3, true))
+show(&run(3, false))
+```
+checks_all = "ok"
+stdout = "true\nfalse\n"
+
+@ cases.an-effectful-recursion-without-decrease-is-not-checked
+source = ```tauto
+effect request(): Unit
+
+fn repeat(n: Nat): Unit ! {request} {
+  match n {
+    Zero => #()
+    Succ(rest) => {
+      perform request()
+      repeat(n)
+    }
+  }
+}
+
+theorem use_repeat(n: Nat): repeat(n) = repeat(n) { Refl }
+```
+// A failed reading leaves the function unavailable to proofs. Referring to
+// it is a proof error, regardless of how that error presents the skip reason.
+checks.repeat = "skipped"
+checks.use_repeat = "error: `repeat` is not defined in proofs"

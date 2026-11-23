@@ -1,78 +1,169 @@
-# 公開範囲：`pub` と `pub(open)`
+# Visibility
 
-宣言は既定で、それを書いたファイルの中でだけ見える。ほかのファイルから使わせる宣言には `pub` を、中身まで見せる型と effect、外のファイルにも instance を書かせる class には `pub(open)` を付ける。
+A declaration is visible only in its own file by default. `pub` exports its
+name; `pub(open)` also exports the inside of a type or effect and lets other
+files write instances of a class.
 
 ```tauto
-fn helper(): i64 { 1 }                       // このファイルの中だけ
+fn helper(): i64 { 1 }                               // this file only
 pub fn escape(t: Text): Html { Html { html: t } }
 
-pub struct Html { html: Text }                 // 外からは型の名前だけ（抽象型）
-pub(open) enum Shape { Circle(i64), Square(i64) }  // 構成子とフィールドも見える
+pub struct Html { html: Text }                       // abstract outside
+pub(open) enum Shape { Circle(i64), Square(i64) }    // constructors and fields too
 
-pub effect session(): UserId               // 外からは perform と行への記載だけ
-pub(open) effect ask(q: Text): i64         // 外のファイルも腕を書ける
+pub effect session(): UserId                         // perform and mention only
+pub(open) effect ask(q: Text): i64                   // others may handle it
 
-pub class Size(A: Type) { fn size(a: A): i64 }      // 外からは where とメソッドの呼び出しだけ
-pub(open) class Ord(A: Linear) { … }                // 外のファイルも instance を書ける
+pub class Size(A: Type) { fn size(a: A): i64 }       // `where` and calls only (sealed)
+pub(open) class Ord(A: Linear) { … }                 // others may write instances
 ```
 
-## 規則
+## Rules
 
-| 書き方 | 名前 | 型の構成子・リテラル・パターン・フィールド | effect の腕 | class の instance |
+| Written | Name | Constructors, literals, patterns, fields | Effect arms | Instances |
 |---|---|---|---|---|
-| なし | 宣言したファイルだけ | 宣言したファイルだけ | 宣言したファイルだけ | 宣言したファイルだけ |
-| `pub` | どのファイルからも | 宣言したファイルだけ | 宣言したファイルだけ | 宣言したファイルだけ |
-| `pub(open)` | どのファイルからも | どのファイルからも | どのファイルからも | どのファイルからも |
+| none | own file | own file | own file | own file |
+| `pub` | everywhere | own file | own file | own file |
+| `pub(open)` | everywhere | everywhere | everywhere | everywhere |
 
-- `pub` を付けられるのは `fn`、`theorem`、`axiom`、`def`、`inductive`、`struct`、`enum`、`effect`、`class` で、`mutual { … }` の中の宣言にも付けられる。それ以外の文の前の `pub` は誤り。
-- 型の `pub` は型の名前だけを見せる。外のファイルは値を受け取り、渡し、行と型に書けるが、作ることも分解することもできない：構成子の呼び出し、構造体のリテラル、構成子と構造体のパターン、`x.f` の読み書き、カーネルが作る `T::rec`・`T::ind`・`T.noconf` は、宣言したファイルの中でだけ書ける。`T::beq` などの等価は型の名前と同じく見える。
-- effect の `pub` は操作の名前を見せる。外のファイルは `perform` でき、関数の行に書け、行変数で素通しできる。`handle` の腕でその操作に答えられるのは宣言したファイルだけである。宣言したファイルが答えを決める関数（`pub fn with_session(user, body)` など）を公開すれば、外のファイルはそれを通して答えを与えられる。それはそのファイルの判断になる。
-- class の `pub` はクラスの名前を見せる。外のファイルは `where C(T)` に書け、メソッドと法則を呼べる。`instance C(…)` を書けるのは宣言したファイルだけである（sealed）。外のファイルにも instance を書かせるときは `pub(open)` を付ける。sealed は名前の解決の検査で、instance の集合が閉じていることを型や証明の推論には使わない：「C を満たす型はこれだけ」という定理も、instance についての場合分けもない（閉じた場合分けが要るなら enum を使う）。宣言したファイルがあとから instance を足しても、外の証明は壊れない。
-- `pub` の関数の `where` に、同じファイルが `pub` なしで宣言した class は書けない。ほかのファイルはその class を名指せず、境界を満たせないからである。
-- 書き方は書く量の多い方が開く。書き忘れは閉じる側に倒れ、閉じすぎはコンパイルエラーで分かる（Safe by Default）。
-- 範囲は tote ではなくファイルである。tote の中の別のファイルにも見せるときは `pub` を付ける。tote の中だけに見せる `pub(tote, open)` のような範囲は、必要な例が出てから括弧の中に足す。
-- 検査はマクロの展開の後に、名前の解決（`crates/tauto-surface/src/surface/qualify.rs`、`sealed_visibility`）で行う。マクロが別のファイルに展開した構成子や腕は、展開先のファイルのものとして検査する。
-- マクロが作る宣言の公開範囲：属性マクロ（`@m!(…) => …`）が作る宣言は、属性を付けた宣言と同じ公開範囲になる。呼び出しのマクロ（`m!(…) => fn a`）と `syntax` が作る宣言は `pub(open)` になる。
+- `pub` applies to `fn`, `theorem`, `axiom`, `def`, `inductive`, `struct`,
+  `enum`, `effect`, `class`, and `module`, also inside `mutual { … }` and
+  `extern { … }`; elsewhere it is an error.
+- A `pub` type can be received, passed and written in types, but outside its
+  file not built or taken apart: constructor calls, struct literals,
+  constructor patterns, `x.f`, and `T::rec`/`T::ind`/`T.noconf`. Equality like
+  `T::beq` is as visible as the name. Whether `x.f` is readable depends on
+  `x`'s type, not on other types having a field `f`.
+- A `pub` effect may be performed, written in rows and passed through row
+  variables; only its file may handle it (it may export a function such as
+  `with_session(user, body)` that does).
+- A `pub(handle)` effect can be named in rows and handled outside its
+  declaring scope. Only code in that scope can perform it. This modifier
+  applies to operation declarations.
+- A `pub` class is sealed: only its file writes instances. Sealing is a
+  name-resolution check only; nothing reasons about the instance set being
+  closed (use an enum for that), so adding instances never breaks outside
+  proofs.
+- A `pub fn`'s `where` cannot name a non-`pub` class of its file.
+- Forgetting a keyword errs on the closed side (Safe by Default). The scope is
+  the file, not the tote; a tote-only scope would be added inside the
+  parentheses if ever needed.
+- The check runs after macro expansion, during name resolution
+  (`sealed_visibility` in `crates/tauto-surface/src/surface/qualify.rs`);
+  expanded code is checked as part of the file it lands in.
+- Declarations made by an attribute macro (`@m!(…) => …`) get the attributed
+  declaration's visibility; those made by call macros (`m!(…) => fn a`) and
+  `syntax` are `pub(open)`. A module made by a macro retains its member
+  visibility.
 
-## 見える範囲
+## Scope
 
-ファイルが見る宣言は、そのファイル自身の宣言、そのファイルが直接 `import` したファイルの `pub` の宣言、prelude の core の宣言だけである（core 以外の prelude のファイルは `import std::prelude::Os` のように import して見る。「prelude」）。import は推移しない：`a` が `b` を import し、`b` が `c` を import していても、`a` から `c` の宣言は見えない（`a` が `c` を使うなら `a` が `c` を import する）。同じ tote のファイルも、プログラムに読み込まれているだけのファイルも、import していなければ見えない。見えない名前を書くとエラーになり、その名前を宣言するファイルが分かるときは、そのファイルを import するよう案内する。
+A file sees its own declarations, the `pub` declarations of files it imports
+directly, and the core prelude. Imports are not transitive, and files of the
+same tote or merely loaded in the program are not visible without import. An
+invisible name is an error that suggests the import when the declaring file is
+known.
 
-import が一覧を書くとき（`import std::Text { Text, concat }`、[`syntax.md`](syntax.md)「import」）、ファイルがその import を通して使えるのは一覧の名前と、一覧の型の構成子と型のために作られる名前、一覧の module の関数だけである。それ以外の名前をその import を通して使うと、一覧に書き足すよう案内するエラーになる。一覧にあって使っていない名前と、import したファイルが `pub` で宣言していない名前もエラーである。一覧が持ち込まない名前はその import からは見えないので、二つのファイルが同じ名前を宣言していても、一方の import の一覧だけがその名前を書くなら曖昧ではない。どの名前がどの import から来るかは名前の解決の結果で決まる。prelude のファイル（`std::prelude::Os`）の一覧に書いた prelude の名前は、使っていなくてもエラーにならない。
+An import with a list (`import std::text { Text, concat }`,
+[`syntax.md`](syntax.md)) brings in only those names, plus listed types'
+constructors and generated names and listed modules' functions. Using another
+name through it, listing an unused name, or listing a non-`pub` name is an
+error (unused names are allowed for prelude files). A name not brought in
+cannot collide.
 
-見える宣言の中で、同じ種類の名前（関数、型、コンストラクタ、module、class）が重なると、どれかを選ぶことはせず、曖昧であるというエラーになる。完全な名前（`a::t`）で書けば、どの宣言かを指せる。ファイル自身の宣言と、import したファイルの `pub` の宣言が同じ名前のときも同じである。module は同じ名前の block を開き直すと中身が合わさるので、module どうしは重ならない。module と class の名前は、入れ子のどの深さでも重ならない。
+Two visible declarations of the same kind (function, type, constructor,
+class) with one name are ambiguous, never chosen between; write the
+full name (`a::t`).
 
-## prelude
+An import at the head of a declaration's body ([`syntax.md`](syntax.md)
+「import」) adds what it brings to what the file sees, in that body only:
+its closures, nested functions and quotes included, the declaration's
+parameters, result and other signature parts excluded. Order of writing has
+no meaning. A name the body sees both through its imports and through the
+file (its own declarations or its imports) is ambiguous, as between two
+imports of the file; the same declaration through both is one.
 
-prelude は、見えるものを core とそれ以外に分ける。
+## Module blocks
 
-- **core** は import なしで見える。リテラルと組み込みの構文が作る、または求めるものだけである：カーネルの prelude（`Nat`、`Bool`、`Eq` など）、リテラルの型（`Text`、固定幅の整数、`Float`）と `Unit`・直積、リスト・直積のリテラルと `perform show`・`test` が使うデータと effect（`Option`、`List`、`Pair`、`Ordering`、`Result`、`fail`、`test`）、整数と `Float` の幅の変換（`std/prelude/Std.taut`、`Text.taut`、`Num.taut`）。
-- それ以外の `std/prelude/` のファイルは、std のほかのファイルと同じく import して見る。`import std::prelude::Os` のように、ファイルの道筋がそのまま module の名前になる：`Affine`（`Vec`、`HashMap`、`Slice`、`Buf`）、`Classes`（`ToText`、`join`）、`Macro`（マクロの作者が使う `Syn*`）、`Ord`、`Os`（標準エフェクト、`IoError`）、`Par`（`Task`、`spawn`、`Mutex`、`MutexGuard`）、`Secret`、`Shared`（`Array`、`Bytes`、`Map`）。import は推移しないので、ファイルが使う prelude のファイルはそのファイルが import する。import していないファイルでその名前を書くと、エラーになり、import するべき module を案内する。
-- import していないファイルが、non-core の prelude と同じ名前の宣言を持つのは構わない：prelude のその名前は見えないので、重ならない。import すると、同じ種類の名前が見える宣言の中で重なり、曖昧であるというエラーになる。
-- prelude のファイルが `pub` なしで宣言した名前（`Par.taut` の `Signal` など）は、そのファイルを import しても見えず、import したファイルの同じ名前の宣言と重ならない。
-- `instance`、`syntax`、`macro` はどこからでも見える（import した module のクラスの instance が、import していないファイルで探索に使われる）。
-- core の名前は常に見える。core の名前と同じ名前の宣言をファイル自身が持つと、そのファイルでは自分の宣言を指す。標準ライブラリのモデル（`std/Text.taut` など）がこの形で組み込みと並ぶ。
-- 例外は prelude を持たない tote である。`Tauto.eure` の `package { prelude = false }` は、その tote のファイルから core のうち `std/prelude/` が宣言する名前（`Option`、`List`、`Pair`、`not` など）を外し、non-core と同じく `import std::prelude::Std`・`Text`・`Num` で見るものにする。カーネルの prelude（`Nat`、`Eq`、`BelowPair` など）と、言語の型（`Bool`、固定幅の整数、`Text` など）は外さない。標準ライブラリ（`std/` と `meta/` を持つ tote と、`import std::…` で読むそのファイル）は prelude を宣言する側なので、prelude を持たない。こうした tote のファイルは使う名前をすべて import から得るので、import のリストで何をどこから使うかを書ける。
-- prelude のファイルの import にリストを書くと、そのファイルの名前のうちリストに書いたものだけが見える（型はその構成子とともに）。
+A module block gives its members a qualified path and confines private members
+to the module. The name introduced by `module` is visible in its file, and
+`pub module` exposes its public members to importing files. A module name
+introduced by quotation carries the expansion's scope.
 
-中身の規則は同じで、prelude が `pub` とだけ書いた型（`Atomic`、`Array`、`Ref`、`Weak`、`Buf`、`Vec`、`HashMap`、`Slice`、`Mutex`、`MutexGuard`、`Pending`）はプログラムから作ることも分解することもできない。prelude のほかの型と、標準エフェクト（`std/prelude/Os.taut`）を含む effect は `pub(open)` で、テストで `handle` によって標準エフェクトを差し替える書き方（[`host-effects.md`](host-effects.md)「誰が答えるか」）はそのまま書ける。
+`pub import M { name }` re-exports a public member of a local module at the
+site of the import. The alias and the member's qualified name resolve to
+the same declaration wherever each is visible. An importing file can select
+the re-export by its short name. Effect aliases preserve operation permissions.
 
-## 構成子とパターンの束縛
+## Prelude
 
-パターンにただ一つ書いた名前は、そのファイルが見る構成子にその名前があれば構成子で、なければ束縛である。そのファイルが直接 import していないファイルの構成子は、名前を取らない。別の tote の `head` という構成子が、`Some(head)` の `head` を構成子に変えることはない。
+- **Core** is visible without import: what literals and built-in syntax make or
+  need. The kernel prelude (`Nat`, `Bool`, `Eq`, …), literal types (`Text`,
+  fixed-width integers, `Float`), `Unit` and products, and `Option`, `List`,
+  `Pair`, `Ordering`, `Result`, `fail`, `test`, the `List` functions `map`,
+  `each`, `fold` and `fold_once`, `Text`'s `concat` and `words`, the width conversions,
+  and the containers `Array`, `Bytes`, `Map`, `Vec`, `Slice` and `Buf`
+  (`std/prelude/std.taut`, `collections.taut`, `text.taut`, `num.taut`): a prelude
+  is what a file sees without an import.
+- The files of `std/builtin/` are the library tauto comes with that a file sees
+  only by importing it, the path being the module name: `classes` (`ToText`,
+  `join`), `macro` (`Syn*`), `ord`, `os` (standard effects, `IoError`), `par`
+  (`Task`, `spawn`, `Mutex`, `MutexGuard`), `region` and `secret`
+  (`import std::builtin::os`). Every file under `std/prelude/` is core, so
+  nothing under `std::prelude` needs an import. Using a builtin name without
+  import is an error naming the module. Declaring the same name without
+  importing is fine; importing then makes it ambiguous. A module of the
+  library is no exception: `import std::ord` beside `import std::builtin::ord`
+  makes `Ord` ambiguous; list what the file uses from the builtin file.
+  Non-`pub` builtin names (e.g. `Par`'s `Signal`) are never visible. Their full
+  names stay `std::prelude::…` (`std::prelude::print`): the files share the
+  prelude's one module, and only how a file imports them differs.
+- The literals are core on the proof side too. A text literal is a `Text` and a
+  float literal a `Float` wherever the file sees the prelude, so a file whose
+  `theorem` or `def` states one reads the model the kernel reads it through
+  (`std/text.taut`, `std/float.taut`) as if it had written `import std::text`
+  or `import std::float`. A tote with `prelude = false` writes the import
+  itself, and a file that imports the model by its path reads it once.
+- A file's own declaration shadows a core name in that file (this is how std
+  models such as `std/text.taut` sit beside built-ins).
+- `package { prelude = false }` in `Tauto.eure` removes the core names
+  declared in `std/prelude/` (`Option`, `List`, `Pair`, `not`, …); import them
+  from `std::prelude::std`, `text`, `num`. The kernel prelude and language types
+  stay. The standard library itself has no prelude.
+- The tote named `std` is the library's source: its files are the modules
+  `std::…`, with the library's privileges (language types, models of
+  builtins). It is checked by itself; a program that reads its files beside
+  another tote's or file's reads them only with the texts tauto comes with.
+- Prelude types that are only `pub` (`Atomic`, `Array`, `Ref`, `Weak`, `Buf`,
+  `Vec`, `Slice`, `Mutex`, `MutexGuard`, `Pending`) cannot be built
+  or taken apart by programs. Other prelude types and all prelude effects,
+  including the standard effects, are `pub(open)`, so tests can handle them
+  ([`host-effects.md`](host-effects.md)).
 
-## 証明とカーネル
+## Other declarations
 
-カーネルは公開範囲を知らない。隠すのは名前の解決の検査だけで、カーネル、Lean のモデル、信頼の核は変えない。外の証明は宣言したファイルが `pub theorem` で出した補題を使う。定義的等価による計算は止めない：抽象は作れないこと・分解できないことの保証であり、表現を秘密にするものではない。
+- `instance`s are visible everywhere.
+- `macro fn` follows functions: only `pub macro fn` may be called from other
+  files (`macro.private` otherwise). Calls written by a macro's output count as
+  made from the macro's file.
+- An `extern` function follows functions: only `pub fn` in an `extern` block
+  may be called from other files. Beyond that, a tote's externs are called only
+  inside the tote ([`host-effects.md`](host-effects.md)).
+- The standard library is no exception: what its files declare without `pub`
+  (the `Host::` functions, the `Os::` externs) only its own files use.
+- There is no `import … as`.
+- A lone name in a pattern is a constructor if the file sees a constructor of
+  that name, otherwise a binder. Constructors of files not imported never
+  capture names.
 
-生成するコード（Rust、JavaScript）では公開範囲を消す。生成物を外の Rust や JavaScript のコードから直接いじることは、`extern` と `trust` の境界の外の話で、型が保証する範囲に入らない。
+## Proofs and backends
 
-## 他の宣言の見え方
+The kernel knows nothing of visibility; only name resolution hides. Outside
+proofs use the `pub theorem`s a file exports. Computation by definitional
+equality is not blocked: abstraction guarantees values cannot be forged or
+taken apart, not that representations are secret. Generated Rust and
+JavaScript erase visibility.
 
-- `extern` の関数の見え方は公開範囲に左右されない（[`host-effects.md`](host-effects.md)「extern はその tote の中でだけ呼べる」）。`pub` を付ける対象ではない。
-- 一覧のない `import` はファイルのすべての `pub` の宣言を修飾なしで見せる。一覧のある `import` は一覧の名前だけを見せる（「見える範囲」）。`as` はない。
-- `syntax`、`macro`、`instance` はどこからでも見える（instance を書ける場所は class の公開範囲で決まる。「規則」）。
+## Undecided
 
-## 未決定
-
-- `pub import`：import したファイルの `pub` の宣言を、import したファイルの宣言として再び公開する書き方。import が推移しないので、複数のファイルの宣言をまとめて見せるファイルは、これで再公開する。
+- Re-exporting declarations of an imported file.

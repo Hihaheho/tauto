@@ -29,14 +29,14 @@ differential = "syntax"
 
 @ cases.tests_statements_and_effects_4
 source = ```tauto
-module checked { fn f(): i64 { 1 } }
+fn checked::f(): i64 { 1 }
 ```
 parses = true
 differential = "syntax"
 
 @ cases.tests_statements_and_effects_5
 source = ```tauto
-let r := budget(steps: 100) { 1 + 2 }
+let r := perform budget(100, () => { 1 + 2 })
 ```
 parses = true
 differential = "syntax"
@@ -237,7 +237,7 @@ differential = "syntax"
 
 @ cases.tests_rejects_what_is_not_in_the_language_10
 source = ```tauto
-for x in xs { }
+fn f(x: i64): i64 { x++ }
 ```
 parses = false
 differential = "syntax"
@@ -273,6 +273,16 @@ differential = "syntax"
 @ cases.tests_a_result_type_depending_on_the_scrutinee
 source = ```tauto
 fn m(v: Vec): i64 { ⊢ motive(v) from match v { Nil => 0, Cons(h, t) => 1 } }
+```
+parses = true
+differential = "syntax"
+
+@ cases.syntax-infer-from-condition
+source = ```tauto
+inductive class Choose(A: Type, S: Type, I: Type) { fn choose(value: A, state: S): I }
+instance Choose(Local, Nat, Bool) infer from A ∧ (S ∨ A) {
+  fn choose(value: Local, state: Nat): Bool { true }
+}
 ```
 parses = true
 differential = "syntax"

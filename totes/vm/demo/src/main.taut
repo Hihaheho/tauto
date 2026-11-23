@@ -1,11 +1,11 @@
 import "../../src/vm.taut"
-import std::prelude::Os
+import std::builtin::os
 
 // Compiles a program of the language of `src/vm.taut` and runs it. Function 0 is
 // Fibonacci; function 1 swaps the parts of a pair and computes with them; function 2 adds
 // a pair to a number, which gets stuck and has no answer.
 
-pub fn show_answer(r: Option(Val)): Unit {
+pub fn show_answer(r: Option(Val)): Unit ! {stdout} {
   match r {
     None => print("no answer\n")
     Some(v) => match v {
@@ -18,7 +18,7 @@ pub fn show_answer(r: Option(Val)): Unit {
   }
 }
 
-pub fn vm_demo(): Unit {
+pub fn vm_demo(): Unit ! {stdout} {
   let fib := XIf(
     XLt(XVar(0), XNat(2)),
     XVar(0),
@@ -36,4 +36,6 @@ pub fn vm_demo(): Unit {
   show_answer(run_program(prog, 1000, 2, VPair(VNat(1), VNat(2))))
 }
 
-vm_demo()
+perform main(() => {
+  vm_demo()
+})

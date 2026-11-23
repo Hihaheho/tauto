@@ -4,15 +4,16 @@ import "../../vm/src/builtins.taut"
 import "../../vm/src/machine.taut"
 import "../../vm/src/mval.taut"
 import "../../vm/src/operations.taut"
-import std::List
-import std::Base
+import std::list
+import std::base
+import std::array
 
 pub theorem e_pop_onto(
   prefix: List(MVal),
   rest: List(MVal),
   acc: List(MVal)
 ): m_pop_onto(List::length(prefix), List::append(prefix, rest), acc) =
-Some(Pair { fst: List::reverse_onto(prefix, acc), snd: rest }) {
+Some(#(List::reverse_onto(prefix, acc), rest)) {
   match prefix {
     Nil => Refl
     Cons(v, tail) => e_pop_onto(tail, rest, Cons(v, acc))
@@ -24,7 +25,7 @@ pub theorem e_pop_arguments(
   args: List(MVal),
   stack: List(MVal)
 ): m_pop(List::length(args), List::append(List::reverse(args), stack)) =
-Some(Pair { fst: args, snd: stack }) {
+Some(#(args, stack)) {
   Eq::trans(
     Eq::congr(
       (n: Nat) => m_pop(n, List::append(List::reverse(args), stack)),
@@ -33,7 +34,7 @@ Some(Pair { fst: args, snd: stack }) {
     Eq::trans(
       e_pop_onto(List::reverse(args), stack, Nil),
       Eq::congr(
-        (values: List(MVal)) => Some(Pair { fst: values, snd: stack }),
+        (values: List(MVal)) => Some(#(values, stack)),
         List::reverse_reverse(args)
       )
     )
@@ -41,7 +42,7 @@ Some(Pair { fst: args, snd: stack }) {
 }
 
 pub theorem e_operation_arity(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
   op: MOp,
   args: List(MVal),
@@ -63,7 +64,7 @@ pub theorem e_operation_step(
   op: MOp,
   args: List(MVal),
   k: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   cx: MCx,
@@ -71,15 +72,15 @@ pub theorem e_operation_step(
 ): step(p, Mstate(McOp(op, k), slots, List::append(List::reverse(args), stack), frames, cx)) =
 m_out(p, m_op(p_ctors(p), cx, op, args), k, slots, stack, frames) {
   let popped: m_pop(m_op_arity(op), List::append(List::reverse(args), stack)) =
-  Some(Pair { fst: args, snd: stack }) :=
+  Some(#(args, stack)) :=
   Eq::trans(
     Eq::congr((n: Nat) => m_pop(n, List::append(List::reverse(args), stack)), arity),
     e_pop_arguments(args, stack)
   )
-  Eq::congr((values: Option(Pair(List(MVal), List(MVal)))) => ⊢ MStep from match values {
+  Eq::congr((values: Option(List(MVal) × List(MVal))) => ⊢ MStep from match values {
     None => m_bad()
     Some(pair) => ⊢ MStep from match pair {
-      Pair { fst: operands, snd: rest } => m_out(p, m_op(p_ctors(p), cx, op, operands), k, slots, rest, frames)
+      #(operands, rest) => m_out(p, m_op(p_ctors(p), cx, op, operands), k, slots, rest, frames)
     }
   }, popped)
 }
@@ -89,7 +90,7 @@ pub theorem e_operation_value_agrees(
   op: MOp,
   args: List(MVal),
   k: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   cx: MCx,
@@ -121,7 +122,7 @@ pub theorem e_operation_error_agrees(
   op: MOp,
   args: List(MVal),
   k: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   cx: MCx,

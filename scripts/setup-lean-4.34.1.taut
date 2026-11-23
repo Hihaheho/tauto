@@ -1,0 +1,206 @@
+// Lean 4.34.1: download a fixed official binary archive and verify its SHA-256.
+// Usage:
+//   tauto setup-lean [ABSOLUTE_INSTALL_DIRECTORY]
+// Default: <current directory>/.tools/lean-4.34.1
+// Requirements: tauto, sh, curl, unzip, and sha256sum or shasum.
+// No sudo, elan, PATH changes, remote installer scripts, or project dependencies.
+// The destination must not already exist. This script does not execute Lean.
+// Pins verified against:
+// https://api.github.com/repos/leanprover/lean4/releases/tags/v4.34.1
+// https://lean-lang.org/doc/reference/latest/releases/v4.34.1/
+// These hashes pin the GitHub assets; they are not an independent signature.
+// Install only in a directory whose parent is controlled by you.
+//
+// Tauto cannot set the umask of the programs it runs, so every program that
+// creates a file runs under `sh -c 'umask 077 && exec "$@"'`: what it
+// creates is private to you, as with `umask 077` in a shell script.
+import "lib/sh.taut" { sh_capture, sh_dirname, sh_exists, sh_has, sh_ok, sh_output, sh_plain_dir, sh_process, sh_pwd, sh_run, sh_status, sh_text }
+import std::builtin::os { Process, argv, environ, eprint, exit, fs_canonicalize, fs_list_dir, fs_read_link, fs_remove, fs_stat, io_message, print, proc_close, proc_run, proc_spawn, proc_wait, stderr, stdout }
+import std::text { Text }
+import std::text_ops { Text }
+import std::base { List }
+
+// Why the script stops: the status to exit with, and a message (none when
+// the program that failed has already said why).
+struct Failure { code: i32, message: Text }
+
+fn private(program: Text, args: List(Text)): Process ! {environ} {
+  sh_process("sh", List::append(["-c", "umask 077 && exec \"$@\"", "sh", program], args), "", [])
+}
+
+fn abort(message: Text): Unit ! {fail(Failure)} {
+  let code: i32 := 1
+  perform fail(Failure { code: code, message: Text::concat("Error: ", message) })
+}
+
+fn need(ok: Bool, message: Text): Unit ! {fail(Failure)} {
+  if ok { #() } else { abort(message) }
+}
+
+// Runs `p` with this run's standard output and error; a failure is a
+// failure of the script.
+fn step(p: Process): Unit ! {fail(Failure), proc_close, proc_spawn, proc_wait, stderr} {
+  let code := sh_run(p)
+  if code == 0 { #() } else {
+    // `set -e`: the script ends with the program's status.
+    perform fail(Failure { code: code, message: "" })
+  }
+}
+
+fn install(version: Text, platform: Text, sha256: Text, install_dir: Text, work_dir: Text): Unit ! {div, environ, exit, fail(Failure), fs_list_dir, fs_read_link, fs_stat, overflow, proc_close, proc_run, proc_spawn, proc_wait, stderr, stdout} {
+  let archive_root := Text::concat_all(["lean-", version, "-", platform])
+  let archive := Text::concat(work_dir, "/archive.zip")
+  let url := Text::concat_all(
+    ["https://github.com/leanprover/lean4/releases/download/v", version, "/", archive_root, ".zip"]
+  )
+  print(Text::concat_all(["Downloading ", archive_root, ".zip (approximately 0.8-0.9 GB)...\n"]))
+  step(
+    private(
+      "curl",
+      [
+        "--disable",
+        "--fail",
+        "--location",
+        "--silent",
+        "--show-error",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+        "--tlsv1.2",
+        "--connect-timeout",
+        "20",
+        "--max-time",
+        "1800",
+        "--retry",
+        "3",
+        "--output",
+        archive,
+        url
+      ]
+    )
+  )
+
+  let hash_command := if sh_has("sha256sum") { ["sha256sum"] } else { ["shasum", "-a", "256"] }
+  let hashed := sh_capture(
+    sh_process("sh", List::append(["-c", "exec \"$@\" < \"$0\"", archive], hash_command), "", [])
+  )
+  let hash_code := sh_status(hashed.status)
+  if hash_code == 0 { #() } else {
+    eprint(hashed.stderr)
+    perform fail(Failure { code: hash_code, message: "" })
+  }
+  // The digest is the output up to its first space, as `${actual%% *}`.
+  let actual_sha256 := match Text::split_on(sh_text(hashed.stdout), 32) {
+    Cons(first, _) => first
+    Nil => ""
+  }
+  need(actual_sha256 == sha256, "SHA-256 mismatch. Nothing was extracted or executed.")
+  print("SHA-256 verified. Extracting...\n")
+
+  // Ignore optional unzip settings inherited from the invoking environment.
+  let unpacked := Text::concat(work_dir, "/unpacked")
+  step(private("env", ["-u", "UNZIP", "-u", "UNZIPOPT", "unzip", "-q", archive, "-d", unpacked]))
+  let source_dir := Text::concat_all([unpacked, "/", archive_root])
+  need(sh_plain_dir(source_dir), "Unexpected archive layout.")
+  need(
+    sh_ok(
+      sh_process("test", ["-x", Text::concat(source_dir, "/bin/lean")], "", [])
+    ) && sh_ok(sh_process("test", ["-x", Text::concat(source_dir, "/bin/lake")], "", [])),
+    "Expected executables are missing."
+  )
+
+  // Reserve a new destination atomically; never merge with an existing install.
+  step(private("mkdir", ["--", install_dir]))
+  let contents := match perform fs_list_dir(source_dir) {
+    Ok(names) => map(names, (n) => Text::concat_all([source_dir, "/", n]))
+    Err(e) => {
+      abort(io_message(e))
+      []
+    }
+  }
+  step(private("mv", Cons("--", List::append(contents, [Text::concat(install_dir, "/")]))))
+  print(
+    Text::concat_all(
+      [
+        "Installed Lean ",
+        version,
+        ". Executable paths:\n",
+        install_dir,
+        "/bin/lean\n",
+        install_dir,
+        "/bin/lake\n"
+      ]
+    )
+  )
+}
+
+fn setup(): Unit ! {div, argv, environ, exit, fail(Failure), fs_canonicalize, fs_list_dir, fs_read_link, fs_remove, fs_stat, overflow, proc_close, proc_run, proc_spawn, proc_wait, stderr, stdout} {
+  let args := perform argv()
+  need(List::length(args) <= 1, "Expected at most one install-directory argument.")
+
+  let version := "4.34.1"
+  let system := sh_output(sh_process("uname", ["-s"], "", []))
+  let machine := sh_output(sh_process("uname", ["-m"], "", []))
+  let pin := match Text::concat_all([system, "/", machine]) {
+    "Linux/x86_64" => Some(
+      #("linux", "3013aba02bb8bf31b1cf8c9d956d60fb95bb1c10920dfe91abcaa59cb461ddac")
+    )
+    "Linux/aarch64" => Some(
+      #("linux_aarch64", "b4bcf1d79f1b5859c04625058d3707701d87a65815f7f0686a1f14df821954c5")
+    )
+    "Linux/arm64" => Some(
+      #("linux_aarch64", "b4bcf1d79f1b5859c04625058d3707701d87a65815f7f0686a1f14df821954c5")
+    )
+    "Darwin/x86_64" => Some(
+      #("darwin", "60b45c76003a4561fb66d7ec2003569006d255d2860179445e56d3e2a029090e")
+    )
+    "Darwin/arm64" => Some(
+      #("darwin_aarch64", "9019fcd34e93fddf0ecf9d40d28f05a86ba563ac3b701a9c5116ce1c96379360")
+    )
+    "Darwin/aarch64" => Some(
+      #("darwin_aarch64", "9019fcd34e93fddf0ecf9d40d28f05a86ba563ac3b701a9c5116ce1c96379360")
+    )
+    other => None
+  }
+  match pin {
+    None => abort("Supported systems: Linux or macOS, x86_64 or arm64.")
+    Some(#(platform, sha256)) => {
+      need(sh_has("curl"), "Required command not found: curl")
+      need(sh_has("unzip"), "Required command not found: unzip")
+      need(sh_has("sha256sum") || sh_has("shasum"), "sha256sum or shasum is required.")
+
+      let install_dir := match args {
+        Cons(dir, _) => dir
+        Nil => Text::concat_all([sh_pwd(), "/.tools/lean-", version])
+      }
+      need(Text::starts_with(install_dir, "/"), "The install directory must be an absolute path.")
+      need(not(sh_exists(install_dir)), Text::concat("Destination already exists: ", install_dir))
+      let parent_dir := sh_dirname(install_dir)
+      step(private("mkdir", ["-p", "--", parent_dir]))
+      let work_dir := sh_output(
+        private("mktemp", ["-d", Text::concat(parent_dir, "/.lean-download.XXXXXXXX")])
+      )
+      // The work directory goes on every way out of `install`, as the
+      // shell's `trap 'rm -rf -- "$work_dir"' EXIT` removed it.
+      let result: Result(
+        Unit,
+        Failure
+      ) := catch(() => install(version, platform, sha256, install_dir, work_dir))
+      let ^removed := perform fs_remove(work_dir)
+      match result {
+        Ok(_) => #()
+        Err(e) => perform fail(e)
+      }
+    }
+  }
+}
+
+let outcome: Result(Unit, Failure) := catch(() => setup())
+match outcome {
+  Ok(_) => #()
+  Err(f) => {
+    if f.message == "" { #() } else { eprint(Text::concat(f.message, "\n")) }
+    perform exit(f.code)
+  }
+}

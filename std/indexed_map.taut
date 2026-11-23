@@ -1,0 +1,379 @@
+import std::prelude::std { Option, concat }
+import std::prelude::debug { Debug }
+import std::prelude::collections { Vec }
+import std::uhost { UHost }
+import std::uint { UInt }
+import std::hash { SipSeed, Sip }
+import std::key { Key }
+import std::slots { Byte, Prefix, SlotsModel, Table }
+import std::vec { VecModel, pf_used }
+import std::hash_table { tb_used, tb_laws, HT }
+
+// A map that walks in the order its keys were put: the entries are a vector of `Option(K × V)` (a
+// removed entry leaves `None`), the table holds the position of each entry under the hash of its key.
+pub inductive struct IndexedMap(
+  K: Type,
+  V: Type
+) {
+  entries: SlotsModel(Prefix, Unit, Option(K × V), pf_used),
+  index: SlotsModel(Table, Byte, UHost, tb_used),
+  live: Nat,
+  seed: SipSeed
+}
+
+pub fn IndexedMap::hash_in<K: Linear>(seed: SipSeed, k: &K): UInt(64) where Key(K) {
+  Sip::finish(Key::feed(k, Sip::start(seed), Sip::step))
+}
+
+pub fn IndexedMap::with_seed<K: Linear, V: Linear>(seed: SipSeed): IndexedMap(K, V) {
+  IndexedMap { entries: VecModel::new(), index: SlotsModel::new(UHost::lit(0, Refl), tb_laws()), live: 0, seed: seed }
+}
+
+// An empty map under a key fixed in the library. The results of an `IndexedMap` (`get`, the order,
+// `len`) do not depend on the key, so the map needs no seed from the host and `new` has no effects.
+// The key is public, so keys chosen to collide make the map slow: for many keys that come from
+// outside, give `with_seed` a seed of your own (from `hash_seed` or `secure_random`), or use
+// `HashMap`.
+pub fn IndexedMap::new<K: Linear, V: Linear>(): IndexedMap(K, V) {
+  IndexedMap::with_seed(SipSeed::of(UInt::of_nat_mod64(8022209483185563171), UInt::of_nat_mod64(5327461245640419083)))
+}
+
+// The hash of the key of the entry at `i` (0 where there is none).
+fn IndexedMap::key_hash<K: Linear, V: Linear>(seed: SipSeed, entries: &SlotsModel(Prefix, Unit, Option(K × V), pf_used), i: &UHost): UInt(64) where Key(K) {
+  match UHost::lt(i, VecModel::len(entries)) eqn q {
+    true => match VecModel::get(entries, i, q) {
+      Some(p) => IndexedMap::hash_of_entry(seed, p)
+      None => UInt::of_nat_mod64(0)
+    }
+    false => UInt::of_nat_mod64(0)
+  }
+}
+
+fn IndexedMap::hash_of_entry<K: Linear, V: Linear>(seed: SipSeed, p: &(K × V)): UInt(64) where Key(K) {
+  match p { #(k, v) => IndexedMap::hash_in(seed, k) }
+}
+
+fn IndexedMap::entry_has<K: Linear, V: Linear>(k: &K, p: &(K × V)): Bool where Key(K) {
+  match p { #(a, b) => Key::eq(a, k) }
+}
+
+// Whether the entry at `i` is for `k`.
+fn IndexedMap::is_at<K: Linear, V: Linear>(entries: &SlotsModel(Prefix, Unit, Option(K × V), pf_used), k: &K, i: &UHost): Bool where Key(K) {
+  match UHost::lt(i, VecModel::len(entries)) eqn q {
+    true => match VecModel::get(entries, i, q) {
+      Some(p) => IndexedMap::entry_has(k, p)
+      None => false
+    }
+    false => false
+  }
+}
+
+fn IndexedMap::value_of<K: Linear, V: Linear>(p: &(K × V)): &V {
+  match p { #(a, b) => b }
+}
+
+fn IndexedMap::value_at<K: Linear, V: Linear>(entries: &SlotsModel(Prefix, Unit, Option(K × V), pf_used), i: &UHost): Option(&V) borrows(entries) {
+  match UHost::lt(i, VecModel::len(entries)) eqn q {
+    true => match VecModel::get(entries, i, q) {
+      Some(p) => Some(IndexedMap::value_of(p))
+      None => None
+    }
+    false => None
+  }
+}
+
+fn IndexedMap::position<K: Linear, V: Linear>(
+  index: &SlotsModel(Table, Byte, UHost, tb_used),
+  entries: &SlotsModel(Prefix, Unit, Option(K × V), pf_used),
+  h: UInt(64),
+  k: &K
+): Option(&UHost) where Key(K) {
+  HT::find_in(index, h, (i: &UHost) => IndexedMap::is_at(entries, k, i))
+}
+
+// The number of entries (the vector may be longer: it keeps a `None` for each removed one).
+pub fn IndexedMap::len<K: Linear, V: Linear>(m: &IndexedMap(K, V)): Nat {
+  m.live
+}
+
+pub fn IndexedMap::get<K: Linear, V: Linear>(m: &IndexedMap(K, V), k: &K): Option(&V) borrows(m) where Key(K) {
+  match IndexedMap::position(&m.index, &m.entries, IndexedMap::hash_in(m.seed, k), k) {
+    None => None
+    Some(i) => IndexedMap::value_at(&m.entries, i)
+  }
+}
+
+fn IndexedMap::value_mut_of<K: Linear, V: Linear>(p: &mut (K × V)): &mut V {
+  match p { #(a, b) => b }
+}
+
+fn IndexedMap::value_mut_at<K: Linear, V: Linear>(
+  entries: &mut SlotsModel(Prefix, Unit, Option(K × V), pf_used),
+  i: UHost
+): Option(&mut V) {
+  match UHost::lt(i, VecModel::len(entries)) eqn q {
+    true => match VecModel::get_mut(entries, i, q) {
+      Some(p) => Some(IndexedMap::value_mut_of(p))
+      None => None
+    }
+    false => None
+  }
+}
+
+// The value of `k`, for writing in place.
+pub fn IndexedMap::get_mut<K: Linear, V: Linear>(m: &mut IndexedMap(K, V), k: &K): Option(&mut V) borrows(m) where Key(K) {
+  match IndexedMap::position_of(&m.index, &m.entries, IndexedMap::hash_in(m.seed, k), k) {
+    None => None
+    Some(i) => IndexedMap::value_mut_at(&mut m.entries, i)
+  }
+}
+
+fn IndexedMap::each_mut_from<K: Linear, V: Linear>(
+  entries: &mut SlotsModel(Prefix, Unit, Option(K × V), pf_used),
+  f: &((k: &K, v: &mut V) -> Unit),
+  i: UHost,
+  left: Nat
+): Unit {
+  match left {
+    Zero => #()
+    Succ(rest) => match UHost::lt(i, VecModel::len(entries)) eqn q {
+      false => #()
+      true => {
+        match VecModel::get_mut(entries, i, q) {
+          slot => match slot {
+            Some(p) => match p { #(a, b) => f(a, b) }
+            None => #()
+          }
+        }
+        IndexedMap::each_mut_from(
+          &mut entries,
+          f,
+          UHost::succ_below_proved(i, VecModel::len(entries), q),
+          rest
+        )
+      }
+    }
+  }
+}
+
+// Calls `f` on every live entry once, in insertion order, for writing the value in place.
+pub fn IndexedMap::each_mut<K: Linear, V: Linear>(
+  m: &mut IndexedMap(K, V),
+  f: &((k: &K, v: &mut V) -> Unit)
+): Unit {
+  IndexedMap::each_mut_from(&mut m.entries, f, UHost::lit(0, Refl), UHost::val(VecModel::len(&m.entries)))
+}
+
+// Inserts `f()` for `k` when the key is missing; gives back the replaced entry
+// and the entry when the allocator left no room. A following `get_mut` writes
+// the value in place (same Mut'k limit as `UHashMap::insert_with`).
+pub fn IndexedMap::insert_with<K: Shared, V: Linear>(
+  m: &mut IndexedMap(K, V),
+  k: K,
+  f: &(() -> V)
+): Option(K × V) × Option(K × V) where Key(K) {
+  match IndexedMap::contains(&m, &k) {
+    true => #(None, None)
+    false => IndexedMap::insert(&mut m, k, f())
+  }
+}
+
+fn IndexedMap::rehash<K: Linear, V: Linear>(
+  seed: SipSeed,
+  entries: &SlotsModel(Prefix, Unit, Option(K × V), pf_used),
+  i: &UHost
+): UInt(64) where Key(K) {
+  IndexedMap::key_hash(seed, entries, i)
+}
+
+// Puts the position `i` into the table under `h`, growing the table when it is full.
+fn IndexedMap::index_put<K: Linear, V: Linear>(
+  index: &mut SlotsModel(Table, Byte, UHost, tb_used),
+  entries: &SlotsModel(Prefix, Unit, Option(K × V), pf_used),
+  seed: SipSeed,
+  h: UInt(64),
+  i: UHost
+): Option(UHost) where Key(K) {
+  HT::insert_grow(&mut index, h, (p: &UHost) => IndexedMap::rehash(seed, entries, p), i)
+}
+
+// The room the allocator is asked for when the vector is full: twice what it has.
+fn IndexedMap::room(cap: UHost): UHost {
+  match HT::host_of(HT::doubled(UHost::to_u64(cap))) {
+    Some(g) => g
+    None => cap
+  }
+}
+
+fn IndexedMap::position_of<K: Linear, V: Linear>(
+  index: &SlotsModel(Table, Byte, UHost, tb_used),
+  entries: &SlotsModel(Prefix, Unit, Option(K × V), pf_used),
+  h: UInt(64),
+  k: &K
+): Option(UHost) where Key(K) {
+  match IndexedMap::position(index, entries, h, k) {
+    None => None
+    Some(i) => Some(i)
+  }
+}
+
+pub fn IndexedMap::contains<K: Linear, V: Linear>(m: &IndexedMap(K, V), k: &K): Bool where Key(K) {
+  match IndexedMap::position(&m.index, &m.entries, IndexedMap::hash_in(m.seed, k), k) {
+    None => false
+    Some(i) => true
+  }
+}
+
+// Puts `v` in the place of the entry at `i`; gives the entry it replaced.
+fn IndexedMap::replace_at<K: Linear, V: Linear>(m: &mut IndexedMap(K, V), i: UHost, k: K, v: V): Option(K × V) × Option(K × V) {
+  match UHost::lt(i, VecModel::len(&m.entries)) eqn q {
+    true => #(VecModel::set_m(&mut m.entries, i, Some(#(k, v)), q), None)
+    false => #(None, Some(#(k, v)))
+  }
+}
+
+// Takes the entry back out of the vector when the table could not hold its position.
+fn IndexedMap::unpush<K: Linear, V: Linear>(m: &mut IndexedMap(K, V)): Option(K × V) {
+  match Nat::eq(UHost::val(VecModel::len(&m.entries)), 0) eqn q {
+    true => None
+    false => VecModel::pop_m(&mut m.entries, q)
+  }
+}
+
+fn IndexedMap::append<K: Linear, V: Linear>(m: &mut IndexedMap(K, V), h: UInt(64), k: K, v: V): Option(K × V) × Option(K × V) where Key(K) {
+  let seed := m.seed
+  let i := VecModel::len(&m.entries)
+  match VecModel::push_m(&mut m.entries, Some(#(k, v)), IndexedMap::room(VecModel::capacity(&m.entries))) {
+    Some(x) => #(None, x)
+    None => match IndexedMap::index_put(&mut m.index, &m.entries, seed, h, i) {
+      None => {
+        m.live := m.live + 1
+        #(None, None)
+      }
+      Some(j) => #(None, IndexedMap::unpush(&mut m))
+    }
+  }
+}
+
+// Puts `k` with `v`. An equal key keeps its place in the order and gives back the entry it had;
+// the second answer is the entry that found no room (a map the allocator cannot grow keeps nothing it was not given).
+pub fn IndexedMap::insert<K: Linear, V: Linear>(m: &mut IndexedMap(K, V), k: K, v: V): Option(K × V) × Option(K × V) where Key(K) {
+  let h := IndexedMap::hash_in(m.seed, &k)
+  match IndexedMap::position_of(&m.index, &m.entries, h, &k) {
+    Some(i) => IndexedMap::replace_at(&mut m, i, k, v)
+    None => IndexedMap::append(&mut m, h, k, v)
+  }
+}
+
+fn IndexedMap::index_take<K: Linear, V: Linear>(
+  index: &mut SlotsModel(Table, Byte, UHost, tb_used),
+  entries: &SlotsModel(Prefix, Unit, Option(K × V), pf_used),
+  h: UInt(64),
+  k: &K
+): Option(UHost) where Key(K) {
+  HT::remove_in(&mut index, h, (i: &UHost) => IndexedMap::is_at(entries, k, i))
+}
+
+// Empties the place at `i`.
+fn IndexedMap::vacate<K: Linear, V: Linear>(m: &mut IndexedMap(K, V), i: UHost): Option(K × V) {
+  match UHost::lt(i, VecModel::len(&m.entries)) eqn q {
+    true => {
+      let old := VecModel::set_m(&mut m.entries, i, None, q)
+      m.live := m.live - 1
+      old
+    }
+    false => None
+  }
+}
+
+pub fn IndexedMap::remove<K: Linear, V: Linear>(m: &mut IndexedMap(K, V), k: &K): Option(K × V) where Key(K) {
+  let h := IndexedMap::hash_in(m.seed, k)
+  match IndexedMap::index_take(&mut m.index, &m.entries, h, k) {
+    None => None
+    Some(i) => IndexedMap::vacate(&mut m, i)
+  }
+}
+
+// Folds `f` over the entries in the order they were put.
+fn IndexedMap::fold_from<K: Linear, V: Linear, B: Shared>(
+  entries: &SlotsModel(Prefix, Unit, Option(K × V), pf_used),
+  init: B,
+  f: &((acc: B, k: &K, v: &V) -> B),
+  i: UHost,
+  left: Nat
+): B {
+  match left {
+    Zero => init
+    Succ(rest) => match UHost::lt(i, VecModel::len(entries)) eqn q {
+      false => init
+      true => match VecModel::get(entries, i, q) {
+        Some(p) => IndexedMap::fold_from(entries, IndexedMap::step(f, init, p), f, UHost::succ_below_proved(i, VecModel::len(entries), q), rest)
+        None => IndexedMap::fold_from(entries, init, f, UHost::succ_below_proved(i, VecModel::len(entries), q), rest)
+      }
+    }
+  }
+}
+
+fn IndexedMap::step<K: Linear, V: Linear, B: Shared>(f: &((acc: B, k: &K, v: &V) -> B), acc: B, p: &(K × V)): B {
+  match p { #(a, b) => f(acc, a, b) }
+}
+
+pub fn IndexedMap::fold<K: Linear, V: Linear, B: Shared>(
+  m: &IndexedMap(K, V),
+  init: B,
+  f: &((acc: B, k: &K, v: &V) -> B)
+): B {
+  IndexedMap::fold_from(&m.entries, init, f, UHost::lit(0, Refl), UHost::val(VecModel::len(&m.entries)))
+}
+
+// Pops entry slots from the end and pushes live pairs onto `out` in insertion order.
+// `VecModel::take_last` keeps the `pop_m` proof in a kernel-checked function.
+fn IndexedMap::drain_entries_into<K: Shared, V: Shared>(
+  entries: &mut SlotsModel(Prefix, Unit, Option(K × V), pf_used),
+  out: &mut Vec(K × V),
+  left: Nat
+): Unit {
+  match left {
+    Zero => #()
+    Succ(rest) => {
+      match VecModel::take_last(&mut entries) {
+        None => #()
+        Some(x) => {
+          IndexedMap::drain_entries_into(&mut entries, &mut out, rest)
+          match x {
+            None => #()
+            Some(e) => Vec::push(&mut out, e)
+          }
+        }
+      }
+    }
+  }
+}
+
+// Every live entry, in insertion order. Empties the map.
+// Shared keys and values: draining uses `var` + `Vec::push` (linear entries need a leaf).
+pub fn IndexedMap::into_vec<K: Shared, V: Shared>(m: IndexedMap(K, V)): Vec(K × V) {
+  var map := m
+  var out: Vec(K × V) := Vec::new()
+  let n := UHost::val(VecModel::len(&map.entries))
+  IndexedMap::drain_entries_into(&mut map.entries, &mut out, n)
+  out
+}
+
+fn IndexedMap::debug_entry<K: Linear, V: Linear>(acc: Bool × Text, k: &K, v: &V): Bool × Text where Debug(K), Debug(V) {
+  match acc {
+    #(first, out) => {
+      let sep := if first { "" } else { ", " }
+      #(false, concat(out, concat(sep, concat(Debug::debug(k), concat(" => ", Debug::debug(v))))))
+    }
+  }
+}
+
+// `IndexedMap["a" => 1, "b" => 2]`: the entries in the order their keys were first put.
+instance<K: Linear, V: Linear> Debug(IndexedMap(K, V)) where Debug(K), Debug(V) {
+  fn debug(m: &IndexedMap(K, V)): Text {
+    match IndexedMap::fold(m, #(true, ""), (acc: Bool × Text, k: &K, v: &V) => IndexedMap::debug_entry(acc, k, v)) {
+      #(_, out) => concat("IndexedMap[", concat(out, "]"))
+    }
+  }
+}

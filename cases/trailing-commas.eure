@@ -1,0 +1,89 @@
+// A comma may follow the last member of a list written in parentheses, brackets or angle brackets,
+// as it may in a struct's fields, an enum's variants, a row's names and an import list.
+
+@ cases.a-call-takes-a-trailing-comma
+description = "Parameters, arguments, type arguments, generics, effect rows, lists, products and patterns take a trailing comma."
+source = ```tauto
+fn add<A: Type,>(x: i64, y: i64,): i64 ! {overflow,} { x + y }
+fn pick(xs: List(i64,),): i64 ! {overflow} {
+  match xs {
+    [a, b,] => a + b
+    _ => 0
+  }
+}
+struct Box(T: Type,) { v: T }
+enum Sh { Pair(i64, i64,), One }
+fn area(s: Sh,): i64 ! {overflow} {
+  match s {
+    Pair(a, b,) => a * b
+    One => 1
+  }
+}
+let xs := [1, 2, 3,]
+show(&add(4, 5,))
+show(&pick([7, 8,],))
+show(&match #(1, 2,) { #(p, q,) => p + q })
+show(&area(Pair(3, 4,),))
+```
+stdout = "9\n15\n3\n12\n"
+
+@ cases.syntax-trailing-comma-in-a-call
+source = ```tauto
+let a := f(1, 2,)
+let b := f(<x: 1>,)
+let c := f(<x: 1>, 2,)
+```
+differential = "syntax"
+
+@ cases.syntax-trailing-comma-in-parameters
+source = ```tauto
+fn f(x: i64, y: i64,): i64 { x }
+fn g<A: Type, B: Type,>(x: A,): A { x }
+fn h(): i64 { 1 }
+```
+differential = "syntax"
+
+@ cases.syntax-trailing-comma-in-lists-and-products
+source = ```tauto
+let a := [1, 2,]
+let b := #(1, 2,)
+let c := (1, 2,)
+let d := perform budget(1, () => { 2 },)
+```
+differential = "syntax"
+
+@ cases.syntax-trailing-comma-in-patterns
+source = ```tauto
+fn f(x: List(i64)): i64 {
+  match x {
+    [a, b,] => a
+    #(a, b,) => a
+    Pair(a, b,) => a
+    _ => 0
+  }
+}
+```
+differential = "syntax"
+
+@ cases.syntax-trailing-comma-in-declarations
+source = ```tauto
+enum E { A(i64, i64,), B }
+struct S(A: Type, B: Type,) { x: A }
+class C(A: Type,) { fn m(x: A,): A }
+instance C(i64,) { fn m(x: i64,): i64 { x } }
+theorem t(x: i64,): x = x { refl }
+inductive I(n: Nat,): Type { K(a: Nat,): I(a) }
+fn f(x: i64): i64 borrows (x,) { x }
+fn g<A>(x: A): A where Eq(A,), Ord(A,) { x }
+effect e(a: i64,): i64
+```
+differential = "syntax"
+
+@ cases.the-formatter-drops-a-trailing-comma
+description = "A trailing comma is dropped as the list is written on one line, including before the `>` of generics and implicit arguments."
+source = ```tauto
+fn f<A: Type, >(x: A, y: A,): A { g(<a: 1,>, [x, y,], #(x, y,)) }
+```
+format = ```tauto
+fn f<A: Type>(x: A, y: A): A { g(<a: 1>, [x, y], #(x, y)) }
+```

@@ -96,14 +96,14 @@ fn since(now: Stats, before: Stats) -> Stats {
 
 fn lib_source() -> &'static str {
     r#"theorem and_swap(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
-  AndIntro(B, A, And::right(A, B, p), And::left(A, B, p))
+  AndIntro(<A: B, B: A>, And::right(<A: A, B: B>, p), And::left(<A: A, B: B>, p))
 }
 
-theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
+pub theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
   a => g(f(a))
 }
 
-theorem id_proof(A: Prop, a: A): A {
+pub theorem id_proof(A: Prop, a: A): A {
   a
 }
 "#
@@ -191,7 +191,7 @@ fn changing_a_proof_checks_that_declaration_only() {
     // Another proof of the same statement.
     let edited = text.replace(
         "  id_proof(A, a)\n",
-        "  And::left(A, A, AndIntro(A, A, a, a))\n",
+        "  And::left(<A: A, B: A>, AndIntro(<A: A, B: A>, a, a))\n",
     );
     assert_ne!(edited, text);
     ws.set_text(&main, edited.clone());
@@ -238,8 +238,8 @@ fn an_edit_in_the_imported_file_reaches_what_imports_it() {
     // `id_proof` is stated differently: everything that calls it is checked
     // again, the rest of the file is not.
     let edited = lib_source().replace(
-        r#"theorem id_proof(A: Prop, a: A): A {"#,
-        r#"theorem id_proof(A: Prop, a: A, extra: A): A {"#,
+        r#"pub theorem id_proof(A: Prop, a: A): A {"#,
+        r#"pub theorem id_proof(A: Prop, a: A, extra: A): A {"#,
     );
     std::fs::write(&lib, &edited).unwrap();
     ws.refresh(&lib);
@@ -255,7 +255,7 @@ fn a_statement_that_only_moved_is_not_checked_again_and_its_places_follow() {
     dir.write("lib.taut", lib_source());
     let text = main_text(
         r#"theorem wrong(): 2 + 2 = 5 {
-  Refl(Nat, 4)
+  Refl(<A: Nat, a: 4>)
 }"#,
     );
     let main = dir.write("main.taut", &text);
@@ -350,7 +350,7 @@ fn with_holes_source() -> &'static str {
 }
 
 theorem second(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
-  AndIntro(B, A, ?right, ?left)
+  AndIntro(<A: B, B: A>, ?right, ?left)
 }
 
 theorem third(A: Prop, a: A): A {
@@ -373,7 +373,9 @@ fn holes_have_their_goals_and_a_candidate_is_tried_without_being_kept() {
     let before = ws.stats(&file);
     let wrong = ws.try_fill(&file, "right", "p").unwrap();
     assert!(!wrong.accepted);
-    let right = ws.try_fill(&file, "right", "And::right(A, B, p)").unwrap();
+    let right = ws
+        .try_fill(&file, "right", "And::right(<A: A, B: B>, p)")
+        .unwrap();
     assert!(right.accepted);
     // Nothing was kept: the holes are all still there, the same ones.
     let (_, holes) = ws.goals(&file, None).unwrap();
@@ -408,7 +410,7 @@ fn suggest_finds_the_constants_of_the_program_as_the_batch_checker_does() {
 }
 
 theorem second(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
-  AndIntro(B, A, ?right, ?left)
+  AndIntro(<A: B, B: A>, ?right, ?left)
 }
 
 theorem third(A: Prop, a: A): A {
@@ -462,7 +464,7 @@ fn a_hole_the_candidate_does_not_fit_is_rejected_and_undone() {
 fn the_checkers_and_the_batch_checker_agree_on_the_standard_library() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let ws = workspace();
-    for file in ["std/List.taut", "std/Nat.taut", "meta/Typing.taut"] {
+    for file in ["std/list.taut", "std/nat.taut", "meta/typing.taut"] {
         let path = root.join(file);
         same(&ws.report(&path), &batch(&path, None));
     }
@@ -471,7 +473,7 @@ fn the_checkers_and_the_batch_checker_agree_on_the_standard_library() {
 #[test]
 fn editing_the_last_theorem_of_a_long_file_checks_one_declaration() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let path = root.join("std/Nat.taut");
+    let path = root.join("std/nat.taut");
     let mut ws = workspace();
     ws.report(&path).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
@@ -492,7 +494,7 @@ fn universe_template_edits_invalidate_nonzero_instances() {
     tauto_messages::install();
     let dir = Dir::new();
     let original = r#"theorem uid<u: Level, A: Type(u)>(x: A): A { x }
-theorem use_uid(): Type { uid(1, Type, Nat) }
+theorem use_uid(): Type { uid(<u: 1, A: Type>, Nat) }
 "#;
     let file = dir.write("universes.taut", original);
     let mut ws = workspace();
@@ -528,4 +530,29 @@ theorem use_box(A: Type1, x: UBox(1, A)): UBox(1, A) { x }
     let incremental = ws.report(&file);
     same(&incremental, &batch(&file, Some(&edited)));
     assert!(incremental.unwrap().text().contains("FAILED"));
+}
+
+#[test]
+fn a_constructor_renamed_in_its_place_is_shown_by_its_new_name() {
+    let dir = Dir::new();
+    let text = |editor: &str| {
+        format!(
+            "enum Role {{ Owner, {editor}, Viewer }}\n\n\
+fn allowed(role: Role): Bool {{\n  match role {{\n    Owner => true\n    {editor} => false\n    Viewer => false\n  }}\n}}\n\n\
+theorem t(): allowed({editor}) = true {{\n  ?goal\n}}\n"
+        )
+    };
+    let main = dir.write("main.taut", &text("Member"));
+    let mut ws = workspace();
+    let (_, holes) = ws.goals(&main, None).unwrap();
+    assert!(format!("{:?}", holes[0].goal).contains("Member"));
+    let edited = text("Editor");
+    ws.set_text(&main, edited.clone());
+    let (report, holes) = ws.goals(&main, None).unwrap();
+    let shown = format!("{:?}", holes[0].goal);
+    assert!(
+        shown.contains("Editor") && !shown.contains("Member"),
+        "{shown}"
+    );
+    same(&Ok::<_, LoadError>(report), &batch(&main, Some(&edited)));
 }

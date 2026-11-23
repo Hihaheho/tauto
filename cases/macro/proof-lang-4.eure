@@ -1,0 +1,229 @@
+@ cases.a-product-in-the-prose
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::data
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
+
+theorem fst_pair(a: Nat, b: Nat): Product::fst(#(a, b)) = a {
+  proof!(```
+    We have Product::fst($#(a, b)) = a.
+  ```)
+}
+````
+checks.fst_pair = "ok"
+diagnostics = []
+
+@ cases.a-list-literal-with-a-rest-and-nested-lists-in-the-prose
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
+
+theorem append_cons<A>(x: A, rest: List(A), ys: List(A)): List::append([x, ..rest], ys) = [x, ..List::append(rest, ys)] {
+  proof!(```
+    We have List::append($[x, ..rest], ys) = $[x, ..List::append(rest, ys)].
+  ```)
+}
+
+theorem append_nested(a: Nat, b: Nat): List::append([[a]], [[b]]) = [[a], [b]] {
+  proof!(```
+    We have List::append($[[a]], $[[b]]) = $[[a], [b]].
+  ```)
+}
+````
+checks.append_cons = "ok"
+checks.append_nested = "ok"
+diagnostics = []
+
+@ cases.an-induction-whose-case-is-a-case-analysis
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case, proof_consider }
+
+pub(open) inductive S: Type {
+  I: S
+  O: S
+}
+
+pub fn count(xs: List(S)): Nat {
+  match xs {
+    Nil => Zero
+    Cons(c, r) => match c {
+      I => Succ(count(r))
+      O => count(r)
+    }
+  }
+}
+
+pub fn cat(a: List(S), b: List(S)): List(S) {
+  match a {
+    Nil => b
+    Cons(c, r) => Cons(c, cat(r, b))
+  }
+}
+
+pub fn plus(n: Nat, m: Nat): Nat {
+  match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+
+theorem count_cat(a: List(S), b: List(S)): count(cat(a, b)) = plus(count(a), count(b)) {
+  proof!(```
+    By induction on a.
+      Case Nil. By Refl.
+      Case Cons(c, r). Consider c.
+        [i] Case I. By Eq::congr.
+        Case O. By ih(b).
+    %%
+    [i] (Succ, ih(b))
+  ```)
+}
+````
+checks.count_cat = "ok"
+diagnostics = []
+
+@ cases.the-induction-hypothesis-over-a-generalized-variable-is-applied-to-it
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case, proof_consider }
+
+pub(open) inductive S: Type {
+  I: S
+  O: S
+}
+
+pub fn count(xs: List(S)): Nat {
+  match xs {
+    Nil => Zero
+    Cons(c, r) => match c {
+      I => Succ(count(r))
+      O => count(r)
+    }
+  }
+}
+
+pub fn cat(a: List(S), b: List(S)): List(S) {
+  match a {
+    Nil => b
+    Cons(c, r) => Cons(c, cat(r, b))
+  }
+}
+
+pub fn plus(n: Nat, m: Nat): Nat {
+  match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+
+theorem count_cat(a: List(S), b: List(S)): count(cat(a, b)) = plus(count(a), count(b)) {
+  proof!(```
+    By induction on a.
+      Case Nil. By Refl.
+      Case Cons(c, r). Consider c.
+        [i] Case I. By Eq::congr.
+        Case O. By the induction hypothesis.
+    %%
+    [i] (Succ, ih(b))
+  ```)
+}
+````
+checks.count_cat = "ok"
+diagnostics = []
+
+@ cases.the-induction-hypothesis-as-a-reason-of-its-own
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
+
+theorem zero_add(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By the induction hypothesis.
+      [succ] Case Succ(k). By Eq::congr.
+    %%
+    [succ] (Succ, ih)
+  ```)
+}
+````
+checks."main.taut::macro" = "error: "
+@ cases.the-induction-hypothesis-as-a-reason-of-its-own.diagnostics[]
+file = "main.taut"
+name = "macro"
+message = "proof!: `By the induction hypothesis.` needs the case to have one"
+
+@ cases.a-sentence-without-its-final-dot-says-what-ends-it
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By Refl
+  ```)
+}
+````
+checks."main.taut::macro" = "error: "
+@ cases.a-sentence-without-its-final-dot-says-what-ends-it.diagnostics[]
+file = "main.taut"
+name = "macro"
+message = "macro.syntax_error: in proof_lang: expected Name or Number or Comma or Colon or Equals or Define or the '.' that ends a sentence or the names of a λ or Line or Space or TautoExpr, found the end of the text"
+
+@ cases.a-tactic-as-a-reason-of-a-sentence
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::tactic { nat_norm }
+import std::rewrite { rewrite }
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_we }
+
+theorem chain(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    We have Nat::add(a, b) = Nat::add(b, a) by $nat_norm!(()).
+  ```)
+}
+
+theorem fact(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    We have h: Nat::add(a, b) = Nat::add(b, a) by $nat_norm!(()). By h.
+  ```)
+}
+
+theorem whole(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    By $nat_norm!(()).
+  ```)
+}
+
+theorem suffices(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    By $rewrite!(Nat::add_comm(a, b)), it suffices to show Nat::add(b, a) = Nat::add(b, a). By Refl.
+  ```)
+}
+
+theorem under(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    By $rewrite!(Nat::add_comm(a, b)).
+      We show Nat::add(b, a) = Nat::add(b, a). By Refl.
+  ```)
+}
+````
+checks."main.taut::chain" = "ok"
+checks."main.taut::fact" = "ok"
+checks."main.taut::whole" = "ok"
+checks."main.taut::suffices" = "ok"
+checks."main.taut::under" = "ok"
+diagnostics = []

@@ -1,7 +1,8 @@
+import "../../identity/src/identity.taut"
 import "literal_typing_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_leaves.taut"
@@ -27,10 +28,10 @@ pub theorem literal_records_bind<A: Type, B: Type>(
   m: Mut1(A, Checker),
   first: LiteralRecordsFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. LiteralRecordsFrame(next, k(value, next))
-): LiteralRecordsFrame(c, frame_bind(A, B, k, m)) {
+): LiteralRecordsFrame(c, frame_bind(<A: A, B: B>, k, m)) {
   ⊢ LiteralRecordsFrame(
     c,
-    frame_bind(A, B, k, m)
+    frame_bind(<A: A, B: B>, k, m)
   ) from match m { mut1(value, next) => Eq::trans(tail(value, next), first) }
 }
 pub theorem literal_records_rewrap<A: Type>(
@@ -48,7 +49,7 @@ pub theorem literal_default_records(
   c: Checker,
   t: Ty
 ): LiteralRecordsFrame(c, finish_default(c, t)) {
-  ⊢ LiteralRecordsFrame(c, finish_default(c, t)) from match t {
+  match t {
     TyInt(w) => Refl
     TyBool => Refl
     TyText => Refl
@@ -56,6 +57,7 @@ pub theorem literal_default_records(
     TyNever => Refl
     TyDecimal => Refl
     TyFloat => Refl
+    TyFloat32 => Refl
     TyFn(ps, result, kind) => Refl
     TyUnion(ys) => Refl
     TyProduct(ys) => Refl
@@ -80,17 +82,16 @@ pub theorem ck_default_int_records(
   )
 }
 pub theorem ck_default_ints_records(
-  vs: List(Pair(Nat, Bool)),
+  vs: List(Nat × Bool),
   c: Checker
 ): LiteralRecordsFrame(c, ck_default_ints(vs, c)) {
-  ⊢ LiteralRecordsFrame(c, ck_default_ints(vs, c)) from match vs {
+  match vs {
     Nil => Refl
     Cons(v, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => LiteralRecordsFrame(c, m),
       Eq::sym(finish_defaults_unf(v, rest, c)),
       literal_records_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_default_ints(rest, next)),
         ck_default_int(c, finish_int_key(v)),
@@ -110,10 +111,6 @@ pub theorem literal_after_defaults_records(
   clean: DiagnosticReportClean(finish_after_defaults(c, widths))
 ): LiteralRecordsFrame(c, finish_after_defaults(c, widths)) {
   Eq::congr(
-    Mut1(TypeReport, Checker),
-    List(TyLiteral),
-    finish_after_defaults(c, widths),
-    mut1(finish_report(c, widths), c),
     (m: Mut1(TypeReport, Checker)) => finish_literals(ck_st(m)),
     And::right(finish_after_defaults_accepts(c, widths, clean))
   )
@@ -124,7 +121,7 @@ pub theorem literal_finish_default_records(
   first: LiteralRecordsFrame(c, m),
   clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
 ): LiteralRecordsFrame(c, diagnostic_finish_default_result(m)) {
-  ⊢ LiteralRecordsFrame(c, diagnostic_finish_default_result(m)) from match m {
+  match m {
     mut1(value, next) => Eq::trans(
       literal_after_defaults_records(
         next,
@@ -202,7 +199,7 @@ pub def NaturalTypingIn(
   ty: Ty
 ): Prop := NaturalTyping(
   s,
-  (gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
+  (gs: List(Text × Kind), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
     s,
     gs,
     rigid,
@@ -219,7 +216,7 @@ pub theorem natural_discharge(
   typed: NaturalTyping(ck_subst_of(c), KeptOk(ck_kept_of(c)), term, ty),
   final: FinalDiagnostics0(c)
 ): NaturalTypingIn(ck_subst_of(c), term, ty) {
-  ⊢ NaturalTypingIn(ck_subst_of(c), term, ty) from match typed {
+  match typed {
     NaturalTyped(value, magnitude, width, start, end, given, parsed, within, equal) => NaturalTyped(
       value,
       magnitude,
@@ -230,6 +227,15 @@ pub theorem natural_discharge(
       parsed,
       within,
       final_type_equality(c, given, TyInt(width), final, equal)
+    )
+    NaturalNatTyped(value, start, end, given, name, fits, equal) => NaturalNatTyped(
+      value,
+      start,
+      end,
+      given,
+      name,
+      fits,
+      final_type_equality(c, given, TyNamed(NameSpelled(name), Nil), final, equal)
     )
   }
 }

@@ -1,4 +1,4 @@
-import std::prelude::Macro
+import std::builtin::macro
 
 
 pub fn add(n: Nat, m: Nat): Nat {
@@ -8,7 +8,7 @@ pub fn add(n: Nat, m: Nat): Nat {
   }
 }
 
-pub fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr): SynExpr ! {macro_error, Div} {
+pub fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr): SynExpr ! {macro_error, div} {
   let a := nat(l)
   let b := nat(r)
   if op == "==" { quote { Eq(Nat, $a, $b) } } else {
@@ -16,7 +16,7 @@ pub fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr): SynExpr ! {macro_e
   }
 }
 
-pub fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr): SynExpr ! {macro_error, Div} {
+pub fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr): SynExpr ! {macro_error, div} {
   match f {
     ExVar(op) => match args {
       Cons(l, rest) => match rest {
@@ -32,7 +32,7 @@ pub fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr): SynExpr ! {macro_er
   }
 }
 
-pub macro fn nat(e: SynExpr): SynExpr ! {macro_error, Div} {
+pub macro fn nat(e: SynExpr): SynExpr ! {macro_error, div} {
   match e {
     ExApp(f, args, _) => nat_app(f, args, e)
     _ => e

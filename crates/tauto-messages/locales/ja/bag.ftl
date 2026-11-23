@@ -1,12 +1,12 @@
 # Totebag のコマンド（add, remove, update, lock, fetch, deps）のメッセージ。
 
 bag-help =
-    使い方: tauto add (--git URL [--branch NAME | --tag NAME] [--dir DIR] [--project ID] | --path DIR) [NAME] [--tote DIR]
+    使い方: tauto add (--git URL [--branch NAME | --tag NAME] [--dir DIR [--sparse]] [--project ID] | --path DIR) [NAME] [--tote DIR]
     {"       "}tauto remove NAME [--tote DIR]
     {"       "}tauto update [NAME…] [--dry-run] [--tote DIR]
     {"       "}tauto lock [--check] [--tote DIR]
     {"       "}tauto fetch [--verify] [--tote DIR]
-    {"       "}tauto deps [--tote DIR]
+    {"       "}tauto deps [--tote DIR] [--json]
     {"       "}tauto audit [--json] [--tote DIR]
 
     {"  "}add      トートに依存する。`Tauto.eure` に書き、ロックし、取得する。
@@ -21,7 +21,8 @@ bag-help =
     {"           "}外す。--check は何も変えず、ネットワークを使わず、`Tauto.lock` が
     {"           "}最新でなければ失敗する。
     {"  "}fetch    `Tauto.lock` が固定するものを取得する。--verify は取得したツリーを読み直す。
-    {"  "}deps     トートが依存するトートを示す。
+    {"  "}deps     トートが依存するトートを示す。--json は `Tauto.eure` の宣言の順に、
+    {"           "}各依存の取得元と解決後のディレクトリを JSON で出す。
     {"  "}audit    トートとその依存の各トートについて、ソースが宣言する extern 関数・
     {"           "}公理・効果、持ち込むホストコード（Rust ブリッジとそのクレート、
     {"           "}JavaScript ソース）、与えるコマンドとプロジェクトがそれに与える許可を
@@ -45,7 +46,7 @@ bag-already = { $name } はすでに依存である。`tauto update { $name }` �
 bag-branch-and-tag = --branch と --tag はどちらかひとつを指定する
 bag-fetching-ref = { $what } { $reference } を取得中
 bag-fetching-rev = { $name } { $rev } を { $url } から取得中
-bag-git-only-flags = --branch, --tag, --dir, --project は --git 用である
+bag-git-only-flags = --branch, --tag, --dir, --sparse, --project は --git 用である
 bag-path-no-manifest = { $from } から見た { $path } に `Tauto.eure` がない
 bag-add-needs-source = add には --git URL か --path DIR が必要である
 bag-self = { $name } はこのトート自身である
@@ -67,9 +68,12 @@ bag-fetch-no-name = fetch は NAME を取らない
 bag-nothing-to-fetch = `Tauto.lock` がない。取得するものはない
 bag-offline = ネットワークがオフである（--offline）
 bag-verified = { $name } { $id }: ok
+bag-verify-not-fetched = { $name } { $id }: まだ取得されていない。`tauto fetch` を実行する
 bag-fetched = { $n } 個のトートを取得した
 bag-deps-no-name = deps は NAME を取らない
 bag-deps-path = パス { $path }
+bag-deps-workspace = workspace { $path }
+bag-deps-workspace-missing = workspace（未解決）
 bag-deps-locked = { $url } { $reference } の { $rev }
 bag-deps-not-fetched = { $url } { $reference } の { $rev }、未取得
 bag-deps-not-locked = { $url } { $reference }、未ロック

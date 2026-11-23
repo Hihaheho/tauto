@@ -1,0 +1,203 @@
+import std::row { Mem }
+import std::prelude::std { List }
+
+// The effects of a body that runs elsewhere are kept in the index of the label
+// that starts it, and the host's question at the start of a run covers every
+// effect the run can ask of the host.
+//
+// A program is a sequence of steps. An effect is a name (`Nat`). `Spawn`
+// starts its body as a task the host runs, under none of the handlers around
+// it. `Sched` is a `spawn` answered by a user's scheduler that calls the body
+// where its arm runs, under the handlers around the arm. `Handle(h, b, r)`
+// answers the effect `h` performed directly in `b`.
+
+pub(open) inductive Prog: Type {
+  Done: Prog
+  Op(n: Nat, rest: Prog): Prog
+  Spawn(body: Prog, rest: Prog): Prog
+  Sched(body: Prog, rest: Prog): Prog
+  Handle(h: Nat, body: Prog, rest: Prog): Prog
+}
+
+// What a run can ask of the host: `Reach(H, p, m)` reads "running `p` under
+// handlers for the names `H` can ask the host for `m`".
+pub(open) inductive Reach: (List(Nat)) -> (Prog) -> (Nat) -> Prop {
+  ROp(H: List(Nat), n: Nat, r: Prog, out: (Mem(Nat, n, H)) -> False): Reach(H, Op(n, r), n)
+  ROpRest(H: List(Nat), n: Nat, r: Prog, m: Nat, k: Reach(H, r, m)): Reach(H, Op(n, r), m)
+  // The host runs a task under no handler.
+  RSpawn(
+    H: List(Nat),
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    k: Reach(Nil(<A: Nat>), b, m)
+  ): Reach(H, Spawn(b, r), m)
+  RSpawnRest(H: List(Nat), b: Prog, r: Prog, m: Nat, k: Reach(H, r, m)): Reach(H, Spawn(b, r), m)
+  // A scheduler's arm calls the body under the handlers around it.
+  RSched(H: List(Nat), b: Prog, r: Prog, m: Nat, k: Reach(H, b, m)): Reach(H, Sched(b, r), m)
+  RSchedRest(H: List(Nat), b: Prog, r: Prog, m: Nat, k: Reach(H, r, m)): Reach(H, Sched(b, r), m)
+  RHandle(
+    H: List(Nat),
+    h: Nat,
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    k: Reach(Cons(h, H), b, m)
+  ): Reach(H, Handle(h, b, r), m)
+  RHandleRest(
+    H: List(Nat),
+    h: Nat,
+    b: Prog,
+    r: Prog,
+    m: Nat,
+    k: Reach(H, r, m)
+  ): Reach(H, Handle(h, b, r), m)
+}
+
+// The row, read as sets. `InRow(p, m)`: the plain label `m` is in the row of
+// `p`. `InIdx(p, m)`: `m` is in the index of a `spawn` label of that row. The
+// index of a `spawn` is folded: it holds the body's plain labels and the
+// indices of the spawns in the body, so an index never holds a `spawn`. Labels
+// of one family with different indices merge by taking the union of their indices.
+mutual {
+  pub(open) inductive InRow: (Prog) -> (Nat) -> Prop {
+    IOp<n: Nat, r: Prog>: InRow(Op(n, r), n)
+    IOpRest<n: Nat, r: Prog, m: Nat>(k: InRow(r, m)): InRow(Op(n, r), m)
+    ISpawnRest<b: Prog, r: Prog, m: Nat>(k: InRow(r, m)): InRow(Spawn(b, r), m)
+    // A scheduler that calls the body counts the body's row where it calls it.
+    ISched<b: Prog, r: Prog, m: Nat>(k: InRow(b, m)): InRow(Sched(b, r), m)
+    ISchedRest<b: Prog, r: Prog, m: Nat>(k: InRow(r, m)): InRow(Sched(b, r), m)
+    // A handler removes its own plain label and nothing else.
+    IHandle<h: Nat, b: Prog, r: Prog, m: Nat>(
+      k: InRow(b, m),
+      other: (Mem(Nat, m, Cons(h, Nil(<A: Nat>)))) -> False
+    ): InRow(Handle(h, b, r), m)
+    IHandleRest<h: Nat, b: Prog, r: Prog, m: Nat>(k: InRow(r, m)): InRow(Handle(h, b, r), m)
+  }
+
+  pub(open) inductive InIdx: (Prog) -> (Nat) -> Prop {
+    XOpRest<n: Nat, r: Prog, m: Nat>(k: InIdx(r, m)): InIdx(Op(n, r), m)
+    // The folded index of a spawn: the body's plain labels and its indices.
+    XSpawnRow<b: Prog, r: Prog, m: Nat>(k: InRow(b, m)): InIdx(Spawn(b, r), m)
+    XSpawnIdx<b: Prog, r: Prog, m: Nat>(k: InIdx(b, m)): InIdx(Spawn(b, r), m)
+    XSpawnRest<b: Prog, r: Prog, m: Nat>(k: InIdx(r, m)): InIdx(Spawn(b, r), m)
+    XSched<b: Prog, r: Prog, m: Nat>(k: InIdx(b, m)): InIdx(Sched(b, r), m)
+    XSchedRest<b: Prog, r: Prog, m: Nat>(k: InIdx(r, m)): InIdx(Sched(b, r), m)
+    // A handler of a plain effect does not touch an index.
+    XHandle<h: Nat, b: Prog, r: Prog, m: Nat>(k: InIdx(b, m)): InIdx(Handle(h, b, r), m)
+    XHandleRest<h: Nat, b: Prog, r: Prog, m: Nat>(k: InIdx(r, m)): InIdx(Handle(h, b, r), m)
+  }
+}
+
+// What `tauto run` asks at the start: the plain labels of the row and the
+// indices of its spawns.
+pub def Asked(p: Prog, m: Nat): Prop := InRow(p, m) ∨ InIdx(p, m)
+
+pub theorem out_of_head<m: Nat, h: Nat, H: List(Nat)>(
+  out: (Mem(Nat, m, Cons(h, H))) -> False
+): (Mem(Nat, m, Cons(h, Nil(<A: Nat>)))) -> False {
+  q => out(match q {
+    MemHere(t) => MemHere(<A: Nat, a: m>, H)
+    MemThere(b, t, q2) => Mem::nil(Mem(Nat, m, Cons(h, H)), q2)
+  })
+}
+
+pub theorem out_of_tail<m: Nat, h: Nat, H: List(Nat)>(
+  out: (Mem(Nat, m, Cons(h, H))) -> False
+): (Mem(Nat, m, H)) -> False {
+  q => out(MemThere(h, H, q))
+}
+
+// What a run under handlers `H` asks of the host is in the row and not
+// handled by `H`, or in an index.
+pub theorem reach_in_row(
+  H: List(Nat),
+  p: Prog,
+  m: Nat,
+  k: Reach(H, p, m)
+): (InRow(p, m) ∧ ((Mem(Nat, m, H)) -> False)) ∨ InIdx(p, m) {
+  match k {
+    ROp(H0, n, r, out) => ⊢ (
+      InRow(Op(n, r), n) ∧ ((Mem(Nat, n, H0)) -> False)
+    ) ∨ InIdx(Op(n, r), n) from OrInl(AndIntro(IOp, out))
+    ROpRest(H0, n, r, m0, k2) => ⊢ (
+      InRow(Op(n, r), m0) ∧ ((Mem(Nat, m0, H0)) -> False)
+    ) ∨ InIdx(
+      Op(n, r),
+      m0
+    ) from Or::elim(
+      reach_in_row(H0, r, m0, k2),
+      a => OrInl(AndIntro(IOpRest(And::left(a)), And::right(a))),
+      x => OrInr(XOpRest(x))
+    )
+    RSpawn(H0, b, r, m0, k2) => ⊢ (
+      InRow(Spawn(b, r), m0) ∧ ((Mem(Nat, m0, H0)) -> False)
+    ) ∨ InIdx(
+      Spawn(b, r),
+      m0
+    ) from Or::elim(
+      reach_in_row(Nil(<A: Nat>), b, m0, k2),
+      a => OrInr(XSpawnRow(And::left(a))),
+      x => OrInr(XSpawnIdx(x))
+    )
+    RSpawnRest(H0, b, r, m0, k2) => ⊢ (
+      InRow(Spawn(b, r), m0) ∧ ((Mem(Nat, m0, H0)) -> False)
+    ) ∨ InIdx(
+      Spawn(b, r),
+      m0
+    ) from Or::elim(
+      reach_in_row(H0, r, m0, k2),
+      a => OrInl(AndIntro(ISpawnRest(And::left(a)), And::right(a))),
+      x => OrInr(XSpawnRest(x))
+    )
+    RSched(H0, b, r, m0, k2) => ⊢ (
+      InRow(Sched(b, r), m0) ∧ ((Mem(Nat, m0, H0)) -> False)
+    ) ∨ InIdx(
+      Sched(b, r),
+      m0
+    ) from Or::elim(
+      reach_in_row(H0, b, m0, k2),
+      a => OrInl(AndIntro(ISched(And::left(a)), And::right(a))),
+      x => OrInr(XSched(x))
+    )
+    RSchedRest(H0, b, r, m0, k2) => ⊢ (
+      InRow(Sched(b, r), m0) ∧ ((Mem(Nat, m0, H0)) -> False)
+    ) ∨ InIdx(
+      Sched(b, r),
+      m0
+    ) from Or::elim(
+      reach_in_row(H0, r, m0, k2),
+      a => OrInl(AndIntro(ISchedRest(And::left(a)), And::right(a))),
+      x => OrInr(XSchedRest(x))
+    )
+    RHandle(H0, h, b, r, m0, k2) => ⊢ (
+      InRow(Handle(h, b, r), m0) ∧ ((Mem(Nat, m0, H0)) -> False)
+    ) ∨ InIdx(
+      Handle(h, b, r),
+      m0
+    ) from Or::elim(
+      reach_in_row(Cons(h, H0), b, m0, k2),
+      a => OrInl(
+        AndIntro(IHandle(And::left(a), out_of_head(And::right(a))), out_of_tail(And::right(a)))
+      ),
+      x => OrInr(XHandle(x))
+    )
+    RHandleRest(H0, h, b, r, m0, k2) => ⊢ (
+      InRow(Handle(h, b, r), m0) ∧ ((Mem(Nat, m0, H0)) -> False)
+    ) ∨ InIdx(
+      Handle(h, b, r),
+      m0
+    ) from Or::elim(
+      reach_in_row(H0, r, m0, k2),
+      a => OrInl(AndIntro(IHandleRest(And::left(a)), And::right(a))),
+      x => OrInr(XHandleRest(x))
+    )
+  }
+}
+
+// Every effect a run can ask of the host is asked at its start: the folded
+// and merged row does not undercount, a handler of a plain effect does not
+// remove a task's effect, and a scheduler that calls the body keeps it counted.
+pub theorem asked_covers_reach(p: Prog, m: Nat, k: Reach(Nil(<A: Nat>), p, m)): Asked(p, m) {
+  Or::elim(reach_in_row(Nil(<A: Nat>), p, m, k), a => OrInl(And::left(a)), x => OrInr(x))
+}

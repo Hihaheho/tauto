@@ -1,0 +1,133 @@
+@ cases.import-fixes-a-name-one-file-of-the-tote-declares
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+```
+files."app/src/util.taut" = ```tauto
+pub fn helper(n: Nat): Nat { n }
+```
+files."app/src/main.taut" = ```tauto
+fn main(): Nat {
+  helper(1)
+}
+```
+entry = "app/src/main.taut"
+
+@ cases.import-fixes-a-name-one-file-of-the-tote-declares.import_fixes[]
+at = "helper"
+fixed_sources = [```tauto
+import "util.taut"
+fn main(): Nat {
+  helper(1)
+}
+```]
+
+@ cases.import-fixes-offers-each-file-that-declares-the-name
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+```
+files."app/src/a.taut" = ```tauto
+pub fn other(n: Nat): Nat { n }
+```
+files."app/src/b.taut" = ```tauto
+pub fn other(n: Nat): Nat { n }
+```
+files."app/src/main.taut" = ```tauto
+fn main(): Nat {
+  other(1)
+}
+```
+entry = "app/src/main.taut"
+
+@ cases.import-fixes-offers-each-file-that-declares-the-name.import_fixes[]
+at = "other"
+fixed_sources = [```tauto
+import "a.taut"
+fn main(): Nat {
+  other(1)
+}
+```, ```tauto
+import "b.taut"
+fn main(): Nat {
+  other(1)
+}
+```]
+
+@ cases.import-fixes-goes-after-the-last-import
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+```
+files."app/src/util.taut" = ```tauto
+pub fn helper(n: Nat): Nat { n }
+```
+files."app/src/base.taut" = ```tauto
+pub fn base(n: Nat): Nat { n }
+```
+files."app/src/main.taut" = ```tauto
+import "base.taut"
+
+fn main(): Nat {
+  base(helper(1))
+}
+```
+entry = "app/src/main.taut"
+
+@ cases.import-fixes-goes-after-the-last-import.import_fixes[]
+at = "helper"
+fixed_sources = [```tauto
+import "base.taut"
+import "util.taut"
+
+fn main(): Nat {
+  base(helper(1))
+}
+```]
+
+@ cases.import-fixes-a-name-no-file-declares-has-none
+files."app/Tauto.eure" = ```eure
+package {
+  name = "app"
+  version = "0.1.0"
+}
+```
+files."app/src/util.taut" = ```tauto
+pub fn helper(n: Nat): Nat { n }
+```
+files."app/src/main.taut" = ```tauto
+fn main(): Nat {
+  nonesuch(1)
+}
+```
+entry = "app/src/main.taut"
+
+@ cases.import-fixes-a-name-no-file-declares-has-none.import_fixes[]
+at = "nonesuch"
+fixed_sources = []
+
+@ cases.import-fixes-a-name-outside-a-tote-comes-from-the-files-beside-it
+files."util.taut" = ```tauto
+pub fn helper(n: Nat): Nat { n }
+```
+files."main.taut" = ```tauto
+fn main(): Nat {
+  helper(1)
+}
+```
+entry = "main.taut"
+
+@ cases.import-fixes-a-name-outside-a-tote-comes-from-the-files-beside-it.import_fixes[]
+at = "helper"
+fixed_sources = [```tauto
+import "util.taut"
+fn main(): Nat {
+  helper(1)
+}
+```]

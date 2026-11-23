@@ -1,0 +1,90 @@
+// `Zero` and `Succ(p)` written on a `Nat` inside another pattern: the
+// executable code holds the `Nat` as a number, and the pattern tests it.
+
+@ cases.succ-under-some-takes-a-value-of-at-least-one
+description = "`Some(Succ(_))` takes `Some(n)` with `n` at least 1, also where the function returns a fixed-width integer."
+source = ```tauto
+fn f(n: Option(Nat)): i64 {
+  match n {
+    Some(Succ(_)) => 1
+    _ => 0
+  }
+}
+show(&f(Some(1)))
+show(&f(Some(0)))
+show(&f(None))
+```
+stdout = "1\n0\n0\n"
+
+@ cases.nested-nat-patterns-bind-and-cover
+description = "`Zero` and `Succ` under `Some` cover every value together, and `k` is two less than the value, also under a borrow."
+source = ```tauto
+fn f(n: Option(Nat)): i64 {
+  match n {
+    Some(Zero) => 10
+    Some(Succ(Succ(k))) => 100
+    Some(Succ(Zero)) => 20
+    None => 30
+  }
+}
+fn above_two(n: &Option(Nat)): i64 {
+  match n {
+    Some(Succ(Succ(k))) => match k {
+      Zero => 0
+      Succ(_) => 1
+    }
+    _ => -1
+  }
+}
+fn g(n: Option(Nat)): i64 {
+  match n {
+    Some(Succ(Succ(Succ(Zero)))) => 3
+    Some(Succ(Succ(_))) => 2
+    _ => 0
+  }
+}
+let two: Option(Nat) := Some(2)
+let three: Option(Nat) := Some(3)
+show(&f(Some(0)))
+show(&f(Some(1)))
+show(&f(Some(7)))
+show(&f(None))
+show(&above_two(&two))
+show(&above_two(&three))
+show(&g(Some(3)))
+show(&g(Some(4)))
+show(&g(Some(1)))
+```
+stdout = "10\n20\n100\n30\n0\n1\n3\n2\n0\n"
+
+@ cases.nested-succ-alone-does-not-cover-zero
+description = "`Some(Succ(Succ(_)))` and `None` leave `Some(0)` and `Some(1)` uncovered."
+source = ```tauto
+fn f(n: Option(Nat)): i64 {
+  match n {
+    Some(Succ(Succ(_))) => 2
+    None => 0
+  }
+}
+```
+types = "error: the `match` does not cover every value"
+
+@ cases.nested-nat-patterns-type-alike-in-rust-and-selfhost
+source = ```tauto
+fn f(n: Option(Nat)): i64 {
+  match n {
+    Some(Zero) => 10
+    Some(Succ(Succ(k))) => 2
+    Some(Succ(Zero)) => 20
+    None => 30
+  }
+}
+fn bad(n: Option(Nat)): i64 {
+  match n {
+    Some(Succ(Succ(_))) => 2
+    None => 0
+  }
+}
+```
+types = "error: the `match` does not cover every value"
+differential = "types"

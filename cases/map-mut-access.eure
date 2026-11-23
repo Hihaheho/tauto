@@ -1,0 +1,98 @@
+description = "Mutable element access on `HashMap`, `IndexedMap` and `VecModel`: `get_mut`, `each_mut`, and insert-then-`get_mut` (the Mut'k stand-in for `get_or_insert_with`)."
+
+@ cases.uhashmap-get-mut-writes-through
+description = "`HashMap::get_mut` lends a value for writing in place."
+source = ```tauto
+import std::builtin::os { hash_seed, HashSeed }
+import std::hashmap { HashMap }
+
+fn demo(): Nat ! {hash_seed} {
+  var m: HashMap(Nat, Nat) := HashMap::new()
+  let ^_a := HashMap::insert(&mut m, 7, 40)
+  match HashMap::get_mut(&mut m, &7) {
+    None => #()
+    Some(v) => {
+      *v := Succ(Succ(v))
+      #()
+    }
+  }
+  match HashMap::get(&m, &7) { None => 0, Some(v) => v }
+}
+show(&handle { demo() } with { hash_seed(), k => k(HashSeed { k0: 3, k1: 4 }) })
+```
+stdout = "42\n"
+
+@ cases.uhashmap-each-mut-bumps-values
+description = "`HashMap::each_mut` writes every value in place."
+source = ```tauto
+import std::builtin::os { hash_seed, HashSeed }
+import std::hashmap { HashMap }
+
+fn bump(_k: &Nat, v: &mut Nat): Unit {
+  *v := Succ(v)
+  #()
+}
+
+fn demo(): Nat ! {hash_seed} {
+  var m: HashMap(Nat, Nat) := HashMap::new()
+  let ^_a := HashMap::insert(&mut m, 1, 10)
+  let ^_b := HashMap::insert(&mut m, 2, 20)
+  HashMap::each_mut(&mut m, bump)
+  let a := match HashMap::get(&m, &1) { None => 0, Some(v) => v }
+  let b := match HashMap::get(&m, &2) { None => 0, Some(v) => v }
+  a * 1000 + b
+}
+show(&handle { demo() } with { hash_seed(), k => k(HashSeed { k0: 1, k1: 2 }) })
+```
+stdout = "11021\n"
+
+@ cases.uhashmap-insert-with-then-get-mut
+description = "`insert_with` then `get_mut` is the place-passing form of get-or-insert-and-write."
+source = ```tauto
+import std::builtin::os { hash_seed, HashSeed }
+import std::hashmap { HashMap }
+
+fn seven(): Nat { 7 }
+
+fn add10(n: Nat): Nat { n + 10 }
+
+fn demo(): Nat ! {hash_seed} {
+  var m: HashMap(Nat, Nat) := HashMap::new()
+  let ^_a := HashMap::insert_with(&mut m, 1, seven)
+  match HashMap::get_mut(&mut m, &1) {
+    None => #()
+    Some(v) => {
+      *v := add10(v)
+      #()
+    }
+  }
+  let ^_b := HashMap::insert_with(&mut m, 1, seven)
+  match HashMap::get(&m, &1) { None => 0, Some(v) => v }
+}
+show(&handle { demo() } with { hash_seed(), k => k(HashSeed { k0: 8, k1: 9 }) })
+```
+stdout = "17\n"
+
+@ cases.vec-model-get-mut-signature
+description = "`VecModel::get_mut` and `get_mut_at` are kernel-checked (runtime demos need proofs the effectful path cannot supply)."
+extract = true
+checks."VecModel::get_mut" = "checked"
+checks."VecModel::get_mut_at" = "checked"
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::uhost { UHost }
+import std::vec { VecModel, pf_used }
+import std::slots { Prefix, SlotsModel }
+fn mut_at(v: &mut SlotsModel(Prefix, Unit, Nat, pf_used), i: UHost): Option(&mut Nat) {
+  VecModel::get_mut_at(v, i)
+}
+fn mut_proved(
+  v: &mut SlotsModel(Prefix, Unit, Nat, pf_used),
+  i: UHost,
+  h: UHost::lt(i, VecModel::len(v)) = true
+): &mut Nat {
+  VecModel::get_mut(v, i, h)
+}
+```
+checks.mut_at = "ok"
+checks.mut_proved = "ok"

@@ -20,7 +20,7 @@ pub(super) fn prefix(
     // range holds an error, so a helper read at offset 0 would be left out
     // for an error in the first file's declaration at the same place.
     let base = original.iter().map(stmt_end).max().map_or(0, |end| end + 1);
-    let mut program = crate::surface::parse_program_unresolved_at(helpers, base)?;
+    let mut program = tauto_parse::parse_program_unresolved_at(helpers, base)?;
     if let Some((error, _)) = program.errors.first() {
         return Err(error.clone());
     }
@@ -30,10 +30,12 @@ pub(super) fn prefix(
         std: plan.std,
         helpers: helper_references(&program.stmts),
         spans: RefCell::new(Default::default()),
+        all_mapped: true,
     };
     let eraser = proof::Eraser {
         mapper: &mapper,
         plan,
+        writer_names: HashMap::new(),
     };
     for statement in statements {
         let mut lowered = Vec::new();
@@ -111,15 +113,19 @@ pub(super) fn assemble(
         .map_or(0, |f| f.base + f.text.len() as u32 + 1);
     let has_extracted = !super::helpers_only(text);
     let std = StdNames::new(&input.sources);
-    let registered = registered_functions(input);
-    let needed = reachable(input, roots, &registered)?;
+    let registered = registered_functions(input, roots);
+    let needed = super::reachable_once(input, roots, &registered)?;
     let mut unused = unused_imported(input, roots, &registered);
     // Lowering can introduce calls absent from the source dependency graph.
     unused.retain(|name| !needed.contains(name));
-    let plan = Extractor {
+    let mut plan = Extractor {
+        app_id: None,
+        lent_locals: std::cell::RefCell::new(HashSet::new()),
+        writers: HashSet::new(),
         field_selections: None,
         dependent: dependent::lower(input, roots, &std)?,
         checked: &input.checked,
+        linear_data: super::linear_data(input.sources.iter().flat_map(|(_, s)| s)),
         generated: generated_nib_names(input),
         out: String::new(),
         fresh: 0,
@@ -149,11 +155,31 @@ pub(super) fn assemble(
         written: HashSet::new(),
         pending: Vec::new(),
         unused,
-        aliases: type_aliases(&input.checked, input.sources.iter().flat_map(|(_, s)| s)),
+        aliases: std::rc::Rc::new(type_aliases(
+            &input.checked,
+            input.sources.iter().flat_map(|(_, s)| s),
+        )),
         proof_takers: HashSet::new(),
         refined_takers: HashSet::new(),
-        module_segments: module_segments(&input.checked),
+        module_segments: module_segments(&input.checked, &file_modules_of(input)),
+        file_modules: file_modules_of(input),
+        module_locals: HashMap::new(),
     };
+    {
+        fn flat(stmts: &[Stmt], out: &mut Vec<Stmt>) {
+            for s in stmts {
+                match s {
+                    Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => flat(items, out),
+                    s => out.push(s.clone()),
+                }
+            }
+        }
+        let mut all = Vec::new();
+        for (_, stmts) in &input.sources {
+            flat(stmts, &mut all);
+        }
+        plan.writers = super::text_writers(&all, &std);
+    }
     let mut helper_source = String::from(HELPERS);
     if input
         .checked
@@ -167,7 +193,7 @@ pub(super) fn assemble(
         .checked
         .families
         .keys()
-        .any(|n| std.of(n) == Some("U64"))
+        .any(|n| std.of(n) == Some("UInt"))
     {
         helper_source.push_str(&uint_helpers());
     }
@@ -175,12 +201,12 @@ pub(super) fn assemble(
         .checked
         .families
         .keys()
-        .any(|n| std.of(n) == Some("I64"))
+        .any(|n| std.of(n) == Some("SInt"))
     {
         helper_source.push_str(&sint_helpers());
     }
     let mut extracted = if has_extracted {
-        let helpers = crate::surface::parse_program_unresolved_at(&helper_source, base)?;
+        let helpers = tauto_parse::parse_program_unresolved_at(&helper_source, base)?;
         if let Some((error, _)) = helpers.errors.first() {
             return Err(error.clone());
         }
@@ -194,7 +220,12 @@ pub(super) fn assemble(
         std: &std,
         helpers: helper_references(&extracted),
         spans: RefCell::new(loaded.spans.clone()),
+        all_mapped: false,
     };
+    // The helpers are written by the compiler: each one ends, and its
+    // arithmetic sits behind the guard that keeps it in range (`i - 1` only
+    // after `i == 0` is ruled out), so it is total like the kernel's own.
+    let helper_names: Vec<Name> = mapper.helpers.values().cloned().collect();
     let mut proof = mapper.proof_statements(input, &plan)?;
     for statement in &mut proof {
         mapper.stmt(statement, &mut HashSet::new())?;
@@ -229,6 +260,52 @@ pub(super) fn assemble(
         extracted.extend(statements);
     }
     let generated = generated_nib_names(input);
+    // A type function is kept only when its body is made of the program's
+    // own structs and enums, the native types and other such functions; any
+    // other (one naming an inductive family or a class's method) is the
+    // kernel's, and the dependent lowering stands in for what the program
+    // runs of it.
+    let mut lowered = dependent_total.clone();
+    let mut allowed: HashSet<Name> = [
+        "nat", "i32", "i64", "u8", "u32", "u64", "Bool", "Text", "Unit", "Never", "Float",
+        "Float32", "Decimal",
+    ]
+    .into_iter()
+    .map(crate::bindings::library_name)
+    .collect();
+    let mut candidates = Vec::new();
+    for (_, stmts) in &input.sources {
+        for s in stmts {
+            match s {
+                Stmt::Struct(d) | Stmt::Enum(d) => {
+                    allowed.insert(d.name.clone());
+                }
+                Stmt::Fn(f) => candidates.push(f),
+                _ => {}
+            }
+        }
+    }
+    // A function is one of them when its body reads only those names, the
+    // ones found so far included.
+    loop {
+        let before = allowed.len();
+        for f in &candidates {
+            let params: HashSet<Name> = f.params.iter().chain(&f.generics).cloned().collect();
+            if !allowed.contains(&f.name)
+                && names_only(&f.body, &|n| params.contains(n) || allowed.contains(n))
+            {
+                allowed.insert(f.name.clone());
+            }
+        }
+        if allowed.len() == before {
+            break;
+        }
+    }
+    for f in candidates {
+        if !allowed.contains(&f.name) {
+            lowered.insert(f.name.clone());
+        }
+    }
     let mut per_file = Vec::new();
     for (_, stmts) in &input.sources {
         let mut kept = Vec::new();
@@ -237,6 +314,8 @@ pub(super) fn assemble(
             &input.checked.runtime,
             &generated,
             &plan.unused,
+            &lowered,
+            &|s| crate::extract::lend_of_mapped(s, mapper.std),
             &mut kept,
         );
         let mut locals = HashSet::new();
@@ -246,7 +325,14 @@ pub(super) fn assemble(
         per_file.push(kept);
     }
     let mut stmts = extracted.clone();
-    stmts.extend(per_file.iter().flatten().cloned());
+    // An import brings a file's declarations: the statements a file's top
+    // level runs are the entry's alone, which is the last file read.
+    let entry = per_file.len().saturating_sub(1);
+    stmts.extend(per_file.iter().enumerate().flat_map(|(i, file)| {
+        file.iter()
+            .filter(move |s| i == entry || !crate::program::runs_at_top_level(s))
+            .cloned()
+    }));
     if has_extracted {
         per_file.push(extracted);
     }
@@ -257,19 +343,31 @@ pub(super) fn assemble(
     loaded.kernel_files = per_file.clone();
     crate::types::expand_type_functions(&mut program, &mut per_file)
         .map_err(|error| format!("native type function: {error}"))?;
-    crate::types::expand_loaded(
+    let imported_now = crate::program::imported_top_of(&per_file, entry);
+    let made = crate::types::expand_loaded_reporting(
         &mut program,
         &mut per_file,
+        &imported_now,
         crate::macros::EXPANSION_BASE + mapper.spans.borrow().len() as u32,
     );
+    // Each term the class expansion made stands at the occurrence it was made
+    // for, so that an error found in it is placed where that is written.
+    for written in made {
+        mapper
+            .spans
+            .borrow_mut()
+            .fresh(written.start, u32::MAX, written.start);
+    }
     let mut declarations = input.bindings.declarations();
     for family in input.checked.families.keys() {
-        if let Some(native) = std.of(family).and_then(mapped_type) {
-            let reference = crate::bindings::library_name(native);
-            declarations.source_alias(
-                native,
-                reference.as_global().expect("library declaration").clone(),
-            );
+        if let Some(builtin) = std.of(family).and_then(mapped_type) {
+            for native in crate::extract::mapped_natives(builtin) {
+                let reference = crate::bindings::library_name(native);
+                declarations.source_alias(
+                    native,
+                    reference.as_global().expect("library declaration").clone(),
+                );
+            }
         }
     }
     for info in input.checked.families.values() {
@@ -287,8 +385,18 @@ pub(super) fn assemble(
         bindings.statements(statements);
     }
     walk::strip_proofs_in(&mut program.stmts);
+    // The generated representations are declared by these bindings: the
+    // sealed-field check compares the owners the types give against them.
+    loaded.bindings = bindings;
     loaded.spans = mapper.spans.into_inner();
     loaded.program = program;
+    // The extracted declarations, when there are any, are after the entry.
+    loaded.imported_top = crate::program::imported_top_of(
+        &per_file,
+        per_file
+            .len()
+            .saturating_sub(1 + usize::from(has_extracted)),
+    );
     loaded.per_file = per_file;
     if has_extracted {
         loaded.files.push(crate::program::SourceFile {
@@ -302,6 +410,7 @@ pub(super) fn assemble(
         .program
         .errors
         .extend(super::dependent_visibility(&loaded, &protected));
+    dependent_total.extend(helper_names);
     Ok((loaded, dependent_total))
 }
 
@@ -315,7 +424,7 @@ fn bind_helpers(statements: &mut [Stmt], std: &StdNames, checked: &Checked) -> R
             uint_helpers(),
             sint_helpers()
         );
-        let program = crate::surface::parse_program_unresolved_at(&source, 0)
+        let program = tauto_parse::parse_program_unresolved_at(&source, 0)
             .expect("compiler helper templates parse");
         crate::bindings::declared_names(&program.stmts)
             .into_iter()
@@ -337,7 +446,7 @@ fn bind_helpers(statements: &mut [Stmt], std: &StdNames, checked: &Checked) -> R
     let mut declarations = crate::bindings::library_bindings();
     for name in &std.std {
         match std.of(name) {
-            Some(label @ ("Int" | "I32::fits" | "I64::fits")) => {
+            Some(label @ ("Int" | "SInt::fits8" | "SInt::fits16" | "SInt::fits32" | "SInt::fits64")) => {
                 declarations.source_alias(
                     label,
                     name.as_global().expect("checked declaration").clone(),
@@ -370,23 +479,66 @@ fn bind_helpers(statements: &mut [Stmt], std: &StdNames, checked: &Checked) -> R
     Ok(())
 }
 
+/// Whether every name `t` reads is one `ok` allows.
+fn names_only(t: &SurfaceTerm, ok: &dyn Fn(&Name) -> bool) -> bool {
+    if let TermKind::Var(n) = &*t.kind
+        && !ok(n)
+    {
+        return false;
+    }
+    let mut all = true;
+    walk::children(&mut t.clone(), &mut |c| all = all && names_only(c, ok));
+    all
+}
+
 fn keep(
     stmts: &[Stmt],
     runtime: &HashSet<Name>,
     generated: &HashSet<Name>,
     unused: &HashSet<Name>,
+    lowered: &HashSet<Name>,
+    swapped: &dyn Fn(&Stmt) -> bool,
     out: &mut Vec<Stmt>,
 ) {
+    let is_type = |ty: &SurfaceTerm| {
+        matches!(&*ty.kind, TermKind::Var(name)
+            if name.sort_symbol() == Some(crate::identity::SortSymbol::Type(0)))
+    };
+    let returns_type = |f: &crate::surface::FnDecl| f.result.as_ref().is_some_and(is_type);
+    // Over types only (`fn BoxType(A: Type): Type`): one with a value
+    // parameter (an instance's `child_type@Nat`) is the kernel's.
+    let type_function = |f: &crate::surface::FnDecl| {
+        returns_type(f)
+            && f.generics.is_empty()
+            && f.param_types
+                .iter()
+                .all(|t| t.as_ref().is_some_and(is_type))
+    };
     for s in stmts {
         match s {
-            Stmt::Mutual { items, .. } => keep(items, runtime, generated, unused, out),
+            Stmt::Mutual { items, .. } => {
+                keep(items, runtime, generated, unused, lowered, swapped, out)
+            }
+            s if swapped(s) => {}
             Stmt::Fn(f)
                 if generated.contains(&f.name)
-                    || (unused.contains(&f.name)
-                        && !f.result.as_ref().is_some_and(|ty| {
-                            matches!(&*ty.kind, TermKind::Var(name)
-                        if name.sort_symbol() == Some(crate::identity::SortSymbol::Type(0)))
-                        })) => {}
+                    || (unused.contains(&f.name) && !returns_type(f)) => {}
+            // A type function over the program's own types (`fn BoxType(A:
+            // Type): Type { Boxed(A) }`) is not run, so the kernel does not
+            // count it as runtime; the annotations that name it are expanded
+            // after extraction (`expand_type_functions`). One the dependent
+            // lowering stands in for is not kept.
+            Stmt::Fn(f) if type_function(f) && !lowered.contains(&f.name) => out.push(s.clone()),
+            // A nullary `def Name(): Type` that names a type the kernel does
+            // not have runs as written (`read/runtime.rs`): it is the type
+            // function it reads as, expanded where it is named like one.
+            Stmt::Def(t) if runtime.contains(&t.name) => {
+                if let Some(f) = super::def_as_fn(t)
+                    && type_function(&f)
+                {
+                    out.push(Stmt::Fn(f));
+                }
+            }
             Stmt::Struct(d) | Stmt::Enum(d) if generated.contains(&d.name) => {}
             Stmt::Macro { .. } | Stmt::Syntax { .. } => {}
             s if executable(s, runtime) => out.push(s.clone()),
@@ -407,6 +559,10 @@ struct Mapper<'a> {
     std: &'a StdNames,
     helpers: HashMap<String, Name>,
     spans: RefCell<crate::macros::origin::SpanMap>,
+    /// Every call of a function of `std/` that a mapping stands for is written as the mapping,
+    /// as the functions a macro runs in are read from declarations that are not written out
+    /// (the program a run extracts writes them in its text).
+    all_mapped: bool,
 }
 
 impl Mapper<'_> {
@@ -442,7 +598,8 @@ impl Mapper<'_> {
             let mut bindings = Vec::new();
             self.nat_pattern(
                 &arm.pattern,
-                SurfaceTerm::var(&subject, span),
+                &subject,
+                span,
                 &mut tests,
                 &mut bindings,
             )?;
@@ -451,14 +608,40 @@ impl Mapper<'_> {
         Some((subject, branches))
     }
 
+    /// `pattern` on the natural number `subject`, as tests and bindings.
     fn nat_pattern(
         &self,
         pattern: &Pattern,
-        subject: SurfaceTerm,
+        subject: &Name,
+        span: tauto_parol::Span,
         tests: &mut Vec<SurfaceTerm>,
         bindings: &mut Vec<Stmt>,
     ) -> Option<()> {
-        let span = subject.span;
+        self.nat_pattern_at(pattern, subject, 0, span, tests, bindings)
+    }
+
+    /// `pattern` on `subject - depth`, the value under `depth` successors.
+    /// Each test and binding gets an occurrence of its own: a term is never
+    /// shared between two places, since the rows check tells calls apart by
+    /// their occurrence.
+    fn nat_pattern_at(
+        &self,
+        pattern: &Pattern,
+        subject: &Name,
+        depth: usize,
+        span: tauto_parol::Span,
+        tests: &mut Vec<SurfaceTerm>,
+        bindings: &mut Vec<Stmt>,
+    ) -> Option<()> {
+        let number = |n: &str| SurfaceTerm::new(TermKind::Nat(n.into()), span);
+        let at = || {
+            let value = SurfaceTerm::var(subject, span);
+            if depth == 0 {
+                value
+            } else {
+                Self::primitive("-", vec![value, number(&depth.to_string())], span)
+            }
+        };
         let mapped = |name: &Name| {
             if let Name::Selection(selection) = name {
                 // The successor arm fixes this match to the natural-number
@@ -482,18 +665,19 @@ impl Mapper<'_> {
                 }
             }
         };
-        let number = |n: &str| SurfaceTerm::new(TermKind::Nat(n.into()), span);
         match pattern {
             Pattern::Wild => {}
-            Pattern::Bind(name) if mapped(name) == Some("Zero") => {
-                tests.push(Self::primitive("==", vec![subject, number("0")], span))
+            Pattern::Bind { name: name, .. } if mapped(name) == Some("Zero") => {
+                tests.push(Self::primitive("==", vec![at(), number("0")], span))
             }
-            Pattern::Bind(name) if name.as_local().is_some() => bindings.push(Stmt::Let {
+            Pattern::Bind { name: name, .. } if name.as_local().is_some() => bindings.push(Stmt::Let {
+                stack: None,
                 name: name.clone(),
                 ty: None,
-                value: subject,
+                value: at(),
                 borrow: false,
                 borrow_mut: false,
+                unused: None,
             }),
             Pattern::Int(value) => {
                 let value = if *value < 0 {
@@ -501,22 +685,20 @@ impl Mapper<'_> {
                 } else {
                     number(&value.to_string())
                 };
-                tests.push(Self::primitive("==", vec![subject, value], span));
+                tests.push(Self::primitive("==", vec![at(), value], span));
             }
             Pattern::Ctor { name, args } => match (mapped(name)?, args.as_slice()) {
-                ("Zero", []) => tests.push(Self::primitive("==", vec![subject, number("0")], span)),
+                ("Zero", []) => tests.push(Self::primitive("==", vec![at(), number("0")], span)),
                 ("Succ", [inner]) => {
                     tests.push(Self::primitive(
                         ">=",
-                        vec![subject.clone(), number("1")],
+                        vec![
+                            SurfaceTerm::var(subject, span),
+                            number(&(depth + 1).to_string()),
+                        ],
                         span,
                     ));
-                    self.nat_pattern(
-                        inner,
-                        Self::primitive("-", vec![subject, number("1")], span),
-                        tests,
-                        bindings,
-                    )?;
+                    self.nat_pattern_at(inner, subject, depth + 1, span, tests, bindings)?;
                 }
                 _ => return None,
             },
@@ -558,12 +740,8 @@ impl Mapper<'_> {
 
     /// These families keep their constructor layout in the executable representation.
     fn native_ctor(&self, name: &Name) -> Option<Name> {
-        let (family, index) = self.checked.families.iter().find_map(|(family, info)| {
-            info.ctors
-                .iter()
-                .position(|ctor| ctor == name)
-                .map(|index| (family, index))
-        })?;
+        let (family, info) = self.checked.family_of_ctor(name)?;
+        let index = info.ctors.iter().position(|ctor| ctor == name)?;
         let native = match self.std.of(family)? {
             native @ ("List" | "Option" | "Pair" | "Ordering") => native,
             _ => return None,
@@ -578,10 +756,7 @@ impl Mapper<'_> {
     }
 
     fn is_ctor(&self, name: &Name) -> bool {
-        self.checked
-            .families
-            .values()
-            .any(|f| f.ctors.iter().any(|c| c == name))
+        self.checked.is_ctor(name)
     }
 
     fn effect(&self, name: &mut Name, locals: &Locals) -> Result<(), Message> {
@@ -609,6 +784,23 @@ impl Mapper<'_> {
             self.effect(effect, locals)?;
         }
         Ok(())
+    }
+
+    /// Whether a call of `n`, the `std/` or prelude function `name`, is written out as its
+    /// mapping: a builtin or an inlined operation of Nib that is not the prelude's own, or a
+    /// function of `std/` that the mapping stands for (`U64::xor`, `Nat::lt`).
+    fn written_out(&self, n: &Name, name: &str) -> bool {
+        if !self.std.prelude.contains(n) && (builtin_name(name) || inline_only(name)) {
+            return true;
+        }
+        // A mapping that calls the builtin of its own name rewrites the declaration of `std/`,
+        // and not the builtin it wrote.
+        self.all_mapped
+            && !builtin_name(name)
+            && !nib_prelude_fn(name)
+            && mapped_fn(name).is_some_and(|source| {
+                !self.std.prelude.contains(n) || !source.starts_with(&format!("{name}("))
+            })
     }
 
     fn stmt(&self, s: &mut Stmt, locals: &mut Locals) -> Result<(), Message> {
@@ -683,7 +875,15 @@ impl Mapper<'_> {
 
     fn pattern(&self, p: &mut Pattern, locals: &mut Locals) {
         match p {
-            Pattern::Bind(n) => {
+            // `#(p, q)`: the product's constructor stays as the reader wrote it.
+            Pattern::Ctor { name, args }
+                if args.len() == 2 && crate::bindings::is_reader_reference(name, "Pair::Mk") =>
+            {
+                for p in args {
+                    self.pattern(p, locals);
+                }
+            }
+            Pattern::Bind { name: n, .. } => {
                 if let Some(native) = self.native_ctor(n) {
                     *n = native;
                     return;
@@ -727,17 +927,13 @@ impl Mapper<'_> {
                     self.pattern(p, locals);
                 }
             }
-            Pattern::Tuple(items) => {
-                for p in items {
-                    self.pattern(p, locals);
-                }
-            }
             _ => {}
         }
     }
 
     fn term(&self, t: &mut SurfaceTerm, locals: &Locals) -> Result<(), Message> {
         let span = t.span;
+        let t_id = t.id();
         match Arc::make_mut(&mut t.kind) {
             TermKind::Row(row) => self.row(row, locals)?,
             TermKind::Pi {
@@ -776,6 +972,7 @@ impl Mapper<'_> {
                 params,
                 types,
                 body,
+                ..
             } => {
                 let mut inner = locals.clone();
                 for (i, n) in params.iter().enumerate() {
@@ -849,11 +1046,13 @@ impl Mapper<'_> {
                         *t = SurfaceTerm::new(
                             TermKind::Block(vec![
                                 Stmt::Let {
+                                    stack: None,
                                     name: subject,
                                     ty: None,
                                     value: (**scrutinee).clone(),
                                     borrow: false,
                                     borrow_mut: false,
+                                    unused: None,
                                 },
                                 Stmt::Expr(body),
                             ]),
@@ -879,6 +1078,7 @@ impl Mapper<'_> {
                             cont,
                             guard,
                             body,
+                            ..
                         } => {
                             inner.extend(instance.forall.iter().cloned());
                             self.effect(effect, &inner)?;
@@ -934,8 +1134,9 @@ impl Mapper<'_> {
                         "Zero" => Some(TermKind::Nat("0".into())),
                         "true" => Some(TermKind::Bool(true)),
                         "false" => Some(TermKind::Bool(false)),
-                        "Star" => Some(TermKind::Tuple(Vec::new())),
+                        "Star" => Some((*SurfaceTerm::unit(span).kind).clone()),
                         _ => mapped_type(m)
+                            .filter(|name| !crate::extract::is_width_family(name))
                             .map(|name| TermKind::Var(crate::bindings::library_name(name))),
                     };
                     if let Some(kind) = mapped {
@@ -948,6 +1149,14 @@ impl Mapper<'_> {
                 arguments,
             } => {
                 if let TermKind::Var(n) = &*function.kind {
+                    // `UInt(64)` is `u64`.
+                    if let Some(m) = self.mapped(n, locals)
+                        && crate::extract::is_width_family(m)
+                        && let Some(native) = crate::extract::mapped_width(m, arguments)
+                    {
+                        *t = SurfaceTerm::var(&crate::bindings::library_name(native), span);
+                        return Ok(());
+                    }
                     if let Some(family) = self.struct_of(n) {
                         let (_, fields) = &self.checked.records[&family];
                         let info = &self.checked.families[&family];
@@ -973,6 +1182,18 @@ impl Mapper<'_> {
                             return Ok(());
                         }
                     }
+                    // `SlotsModel(S, M, A, u)` written in a declaration the
+                    // program keeps as written reads as `Slots(S, M, A)`.
+                    if *n == crate::bindings::library_name("Slots") && arguments.len() == 4 {
+                        *t = SurfaceTerm::new(
+                            TermKind::App {
+                                function: function.clone(),
+                                arguments: arguments[..3].to_vec(),
+                            },
+                            span,
+                        );
+                        return Ok(());
+                    }
                     let slots = arguments
                         .iter()
                         .enumerate()
@@ -987,15 +1208,38 @@ impl Mapper<'_> {
                         .and_then(|name| mapped_ctor(name, &names))
                     {
                         *t = self.template(&source, &slots, span)?;
-                    } else if !self.std.prelude.contains(n)
-                        && self
-                            .mapped(n, locals)
-                            .is_some_and(|name| builtin_name(name) || inline_only(name))
+                    } else if self
+                        .mapped(n, locals)
+                        .is_some_and(|name| self.written_out(n, name))
                     {
                         if let Some(source) = self.mapped(n, locals).and_then(mapped_fn) {
                             let mut source = source.to_string();
+                            // The policy of a `SlotsModel` operation is
+                            // implicit: the checker recorded the values it
+                            // fixed at this call, and they number first.
+                            let mut policy = Vec::new();
+                            if let Some(signature) = self.checked.signatures.get(n)
+                                && signature.implicit > 0
+                                && self.mapped(n, locals).is_some_and(|m| m.starts_with("SlotsModel::"))
+                                && let Some(site) = self
+                                    .checked
+                                    .sites_at(t_id)
+                                    .find(|s| s.written == arguments.len() && &s.callee == n)
+                            {
+                                for (argument, role) in site
+                                    .arguments
+                                    .iter()
+                                    .zip(&signature.params[..signature.implicit])
+                                {
+                                    if *role == Role::Value {
+                                        let mut value = argument.clone();
+                                        self.term(&mut value, locals)?;
+                                        policy.push(value);
+                                    }
+                                }
+                            }
                             let mut slots = Vec::new();
-                            for (i, arg) in arguments.iter().enumerate() {
+                            for (i, arg) in policy.iter().chain(arguments.iter()).enumerate() {
                                 let name = format!("slot_arg_{i}");
                                 source = source.replace(&format!("${i}"), &name);
                                 slots.push((name, arg.clone()));
@@ -1068,7 +1312,7 @@ impl Mapper<'_> {
             t.span = spans.fresh(span.start, 0, span.start);
             walk::children(t, &mut |c| insert(c, slots, bindings, span, spans));
         }
-        let mut t = crate::surface::parse_expr_at(source, 0)?;
+        let mut t = tauto_parse::parse_expr_at(source, 0)?;
         // Fixed templates refer to executable primitives. Bind those references
         // before inserting checked subtrees or entering the proof environment.
         walk::term(&mut t, &mut |term| {
@@ -1077,6 +1321,11 @@ impl Mapper<'_> {
             {
                 if let Some(reference) = self.helpers.get(name.as_str()) {
                     *name = reference.clone();
+                } else if let Some(reference) = self.std.declared(name.as_str()) {
+                    // A `std/` function a template calls (`Int::add` in the mapping of
+                    // `I64::checked_add`) is the one the program reads, which is the
+                    // library's own copy only when the program reads that copy.
+                    *name = reference;
                 } else if let Some(reference) = crate::bindings::library_bindings()
                     .get(name.as_str())
                     .cloned()

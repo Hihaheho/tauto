@@ -8,11 +8,12 @@ use tauto_message::msg;
 
 mod cst;
 mod nib_tables;
+pub mod unicode;
 
 pub use cst::{Cst, CstNode, NodeId, NodeKind, Span, is_trivia};
 pub use node_kind::{NonTerminalKind, TerminalKind};
 
-// Generated from tauto.par by `bash scripts/generate-tauto-parol.sh` and
+// Generated from tauto.par by `tauto gen-tauto-parol` and
 // committed (src/generated/); rerun it after every change to the grammar.
 // The generated parser names these modules by absolute path
 // (`crate::grammar`, `crate::grammar_trait`).
@@ -176,10 +177,8 @@ pub fn parse(source: &str) -> Parsed {
                     }],
                 };
             }
-            Parsed {
-                cst,
-                errors: Vec::new(),
-            }
+            let errors = names_not_nfc(&cst, source);
+            Parsed { cst, errors }
         }
         Err(error) => {
             let mut errors = Vec::new();
@@ -191,6 +190,10 @@ pub fn parse(source: &str) -> Parsed {
                     && let_type_without_assign(&terminals, span.start)
                 {
                     e.message = msg!("parse-let-type-eq").to_string();
+                } else if let Some(span) = e.span
+                    && bang_prefix(&terminals, source, span.start)
+                {
+                    e.message = msg!("parse-bang-prefix").to_string();
                 } else if let Some(span) = e.span
                     && let_destructures(source, span)
                 {
@@ -207,6 +210,44 @@ pub fn parse(source: &str) -> Parsed {
             Parsed { cst, errors }
         }
     }
+}
+
+/// A name that is not in Normalization Form C: names are compared by their
+/// code points, so `é` written as `e` and a combining acute would be another
+/// name than the composed `é`. Names are written composed (UAX #31, UAX #15).
+fn names_not_nfc(cst: &Cst, source: &str) -> Vec<SyntaxError> {
+    let mut out = Vec::new();
+    for (kind, span) in cst.terminals() {
+        let Some(text) = source.get(span.start as usize..span.end as usize) else {
+            continue;
+        };
+        if text.is_ascii() {
+            continue;
+        }
+        let name = match kind {
+            TerminalKind::Ident | TerminalKind::Hole | TerminalKind::MacroName => text,
+            TerminalKind::MacroText
+            | TerminalKind::MacroDelimStart1
+            | TerminalKind::MacroDelimStart2
+            | TerminalKind::MacroDelimStart3
+            | TerminalKind::MacroBlockStart3
+            | TerminalKind::MacroBlockStart4
+            | TerminalKind::MacroBlockStart5
+            | TerminalKind::MacroBlockStart6 => {
+                let body = text.trim_start_matches('`');
+                &body[..body.find(['`', '<', ' ', '\t', '\r', '\n']).unwrap_or(body.len())]
+            }
+            _ => continue,
+        };
+        if !unicode::is_nfc(name) {
+            out.push(SyntaxError {
+                message: msg!("parse-name-not-nfc", name = name).to_string(),
+                span: Some(span),
+                expected: Vec::new(),
+            });
+        }
+    }
+    out
 }
 
 fn location_span(start: u32, end: u32, source: &str) -> Option<Span> {
@@ -256,6 +297,56 @@ fn let_type_without_assign(terminals: &[(TerminalKind, Span)], at: u32) -> bool 
         }
     }
     false
+}
+
+/// Whether the error at `at` stops a `!` written where an operand is expected
+/// (`!ok`, `f(!g(x))`): `!` is no prefix operator (it starts a macro call's `!`
+/// after a name and an effect row after a type), and negation is the function `not`.
+/// In an argument position the parser reads `!g` as a row argument and fails at
+/// the `(` after it, so that case is recognised from the tokens before the error.
+fn bang_prefix(terminals: &[(TerminalKind, Span)], source: &str, at: u32) -> bool {
+    let kinds: Vec<(TerminalKind, Span)> = terminals
+        .iter()
+        .filter(|(k, s)| s.start < at && !is_trivia(*k))
+        .copied()
+        .collect();
+    let operand_expected = |k: Option<&(TerminalKind, Span)>| {
+        matches!(
+            k.map(|(k, _)| *k),
+            None | Some(
+                TerminalKind::LParen
+                    | TerminalKind::Comma
+                    | TerminalKind::Assign
+                    | TerminalKind::Eq
+                    | TerminalKind::EqEq
+                    | TerminalKind::BangEq
+                    | TerminalKind::AmpAmp
+                    | TerminalKind::FatArrow
+                    | TerminalKind::LBrace
+                    | TerminalKind::Nl
+                    | TerminalKind::Semi
+                    | TerminalKind::KwReturn
+            )
+        )
+    };
+    // `!` itself is the token the parser stopped at.
+    if source
+        .get(at as usize..)
+        .is_some_and(|rest| rest.starts_with('!'))
+        && !source[at as usize..].starts_with("!=")
+        && operand_expected(kinds.last())
+    {
+        return true;
+    }
+    // `!name(`: the parser took `!name` as a row and stopped at the `(`.
+    let n = kinds.len();
+    n >= 2
+        && kinds[n - 1].0 == TerminalKind::Ident
+        && kinds[n - 2].0 == TerminalKind::Bang
+        && source
+            .get(at as usize..)
+            .is_some_and(|rest| rest.starts_with('('))
+        && operand_expected(n.checked_sub(3).map(|i| &kinds[i]))
 }
 
 /// Whether the error at `at` is a `let` followed by a pattern
@@ -341,6 +432,15 @@ fn collect_errors(error: parol_runtime::ParolError, source: &str, out: &mut Vec<
             expected: Vec::new(),
         }),
     }
+}
+
+/// Whether the grammar of `tauto.par` accepts `source`, before the checks
+/// that are not the grammar's (the depth, and names in NFC): the grammar's
+/// own parsers (`syntax!(tauto, …)`) say the same.
+pub fn grammar_accepts(source: &str) -> bool {
+    let mut builder = cst::CstBuilder::new();
+    parser::parse_tree(source, &mut builder).is_ok()
+        && builder.build(source).depth() <= MAX_DEPTH
 }
 
 pub fn check(source: &str) -> Result<(), String> {

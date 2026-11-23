@@ -2,8 +2,9 @@ import "../src/eval.taut"
 import "../src/value.taut"
 import "../../vm/src/cps.taut"
 import "../../vm/src/mval.taut"
-import std::Base
-import std::Nat
+import std::base
+import std::array
+import std::nat
 
 // More fuel may resolve exhaustion, but cannot change a completed outcome.
 pub fn e_refines<A>(before: EResult(A), after: EResult(A)): Prop {
@@ -35,9 +36,6 @@ pub theorem e_bind_refines<A, B>(
   match before {
     ErFuel => Trivial
     ErValue(v, cx) => Eq::subst(
-      EResult(A),
-      ErValue(v, cx),
-      after,
       (r: EResult(A)) => e_refines(f(v, cx), e_bind(r, g)),
       input,
       next(v, cx)
@@ -49,8 +47,8 @@ pub theorem e_bind_refines<A, B>(
 
 pub theorem e_branch_more_step(
   f: Nat,
-  ctors: List(MCtor),
-  env: List(Pair(Nat, EBinding)),
+  ctors: Array(MCtor),
+  env: List(Nat × EBinding),
   value: MVal,
   then: Cps,
   otherwise: Cps,
@@ -88,8 +86,8 @@ pub theorem e_branch_more_step(
 mutual {
   pub theorem e_eval_more(
     fuel: Nat,
-    ctors: List(MCtor),
-    env: List(Pair(Nat, EBinding)),
+    ctors: Array(MCtor),
+    env: List(Nat × EBinding),
     e: Cps,
     cx: MCx
   ): e_refines(e_eval(fuel, ctors, env, e, cx), e_eval(Succ(fuel), ctors, env, e, cx)) {
@@ -141,8 +139,9 @@ mutual {
         )
         CSeq(items) => e_sequence_more(f, ctors, env, items, cx)
         CCall(callee, args, ticked) => Refl
-        CTail(inst, args) => Refl
+        CTail(inst, args, ticked) => Refl
         CBuiltin(name, args) => Refl
+        CExtern(name, args) => Refl
         CDefine(id, is_shared, drop, init) => Refl
         CAssign(id, path, through, value) => Refl
         CWhile(cond, body, ticked) => Refl
@@ -152,6 +151,8 @@ mutual {
         CPerform(op, quant, args) => Refl
         CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => Refl
         CBorrow(id, path, through) => Refl
+        CTake(id) => Refl
+        CSweep => Refl
         CBudget(memory, steps, body) => Refl
       }
     }
@@ -159,8 +160,8 @@ mutual {
 
   pub theorem e_branch_more(
     fuel: Nat,
-    ctors: List(MCtor),
-    env: List(Pair(Nat, EBinding)),
+    ctors: Array(MCtor),
+    env: List(Nat × EBinding),
     value: MVal,
     then: Cps,
     otherwise: Cps,
@@ -186,8 +187,8 @@ mutual {
 
   pub theorem e_args_more(
     fuel: Nat,
-    ctors: List(MCtor),
-    env: List(Pair(Nat, EBinding)),
+    ctors: Array(MCtor),
+    env: List(Nat × EBinding),
     es: List(Cps),
     cx: MCx
   ): e_refines(e_args(fuel, ctors, env, es, cx), e_args(Succ(fuel), ctors, env, es, cx)) {
@@ -225,8 +226,8 @@ mutual {
 
   pub theorem e_sequence_more(
     fuel: Nat,
-    ctors: List(MCtor),
-    env: List(Pair(Nat, EBinding)),
+    ctors: Array(MCtor),
+    env: List(Nat × EBinding),
     es: List(Cps),
     cx: MCx
   ): e_refines(e_sequence(fuel, ctors, env, es, cx), e_sequence(Succ(fuel), ctors, env, es, cx)) {
@@ -258,8 +259,8 @@ mutual {
 
 pub theorem e_eval_value_more(
   fuel: Nat,
-  ctors: List(MCtor),
-  env: List(Pair(Nat, EBinding)),
+  ctors: Array(MCtor),
+  env: List(Nat × EBinding),
   e: Cps,
   cx: MCx,
   v: MVal,
@@ -268,9 +269,6 @@ pub theorem e_eval_value_more(
 ): e_eval(Succ(fuel), ctors, env, e, cx) = ErValue(v, cx2) {
   Eq::sym(
     Eq::subst(
-      EResult(MVal),
-      e_eval(fuel, ctors, env, e, cx),
-      ErValue(v, cx2),
       (r: EResult(MVal)) => e_refines(r, e_eval(Succ(fuel), ctors, env, e, cx)),
       done,
       e_eval_more(fuel, ctors, env, e, cx)
@@ -288,25 +286,16 @@ pub theorem e_refines_trans<A>(
   match a {
     ErFuel => Trivial
     ErValue(v, cx) => Eq::subst(
-      EResult(A),
-      b,
-      ErValue(v, cx),
       (r: EResult(A)) => e_refines(r, c),
       Eq::sym(ab),
       bc
     )
     ErError(message) => Eq::subst(
-      EResult(A),
-      b,
-      ErError(message),
       (r: EResult(A)) => e_refines(r, c),
       Eq::sym(ab),
       bc
     )
     ErUnsupported(construct) => Eq::subst(
-      EResult(A),
-      b,
-      ErUnsupported(construct),
       (r: EResult(A)) => e_refines(r, c),
       Eq::sym(ab),
       bc
@@ -317,8 +306,8 @@ pub theorem e_refines_trans<A>(
 pub theorem e_eval_add_fuel(
   extra: Nat,
   fuel: Nat,
-  ctors: List(MCtor),
-  env: List(Pair(Nat, EBinding)),
+  ctors: Array(MCtor),
+  env: List(Nat × EBinding),
   e: Cps,
   cx: MCx
 ): e_refines(e_eval(fuel, ctors, env, e, cx), e_eval(Nat::add(fuel, extra), ctors, env, e, cx)) {
@@ -337,8 +326,8 @@ pub theorem e_eval_add_fuel(
 pub theorem e_eval_value_add_fuel(
   extra: Nat,
   fuel: Nat,
-  ctors: List(MCtor),
-  env: List(Pair(Nat, EBinding)),
+  ctors: Array(MCtor),
+  env: List(Nat × EBinding),
   e: Cps,
   cx: MCx,
   v: MVal,
@@ -347,9 +336,6 @@ pub theorem e_eval_value_add_fuel(
 ): e_eval(Nat::add(fuel, extra), ctors, env, e, cx) = ErValue(v, cx2) {
   Eq::sym(
     Eq::subst(
-      EResult(MVal),
-      e_eval(fuel, ctors, env, e, cx),
-      ErValue(v, cx2),
       (r: EResult(MVal)) => e_refines(r, e_eval(Nat::add(fuel, extra), ctors, env, e, cx)),
       done,
       e_eval_add_fuel(extra, fuel, ctors, env, e, cx)
@@ -360,8 +346,8 @@ pub theorem e_eval_value_add_fuel(
 pub theorem e_eval_deterministic(
   fuel1: Nat,
   fuel2: Nat,
-  ctors: List(MCtor),
-  env: List(Pair(Nat, EBinding)),
+  ctors: Array(MCtor),
+  env: List(Nat × EBinding),
   e: Cps,
   cx: MCx,
   v1: MVal,

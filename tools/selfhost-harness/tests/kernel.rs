@@ -1,8 +1,8 @@
 //! Replays the Rust independent kernel's declaration inputs in totes/kernel.
 use selfhost_harness::{materialize, root, run_tote, run_tote_native};
 use tauto::check::Verdict;
-use tauto::surface::parse_program_as_written;
-use tauto_kernel::check::selfhost::{Recorder, Replay};
+use tauto_parse::parse_program_as_written;
+use tauto_kernel::check::selfhost::Replay;
 
 fn compare(label: &str, replay: Replay, native: bool) {
     assert_eq!(replay.unread, 0, "{label}: an operation was not exported");
@@ -29,7 +29,7 @@ fn compare(label: &str, replay: Replay, native: bool) {
 
 #[test]
 fn kernel_replays_a_declaration_in_the_evaluator() {
-    let mut r = Recorder::new().unwrap();
+    let mut r = selfhost_harness::host_recorder().unwrap();
     assert!(
         r.theorem_written(r#"theorem eval0(A: Prop, a: A): A { a }"#)
             .unwrap()
@@ -49,7 +49,7 @@ fn kernel_replays_a_declaration_in_the_evaluator() {
 
 #[test]
 fn kernel_replays_one_shared_declaration_on_selected_backend() {
-    let mut r = Recorder::new().unwrap();
+    let mut r = selfhost_harness::host_recorder().unwrap();
     assert!(
         r.theorem_written(r#"theorem eval0(A: Prop, a: A): A { a }"#)
             .unwrap()
@@ -72,7 +72,7 @@ fn kernel_replays_one_shared_declaration_on_selected_backend() {
 /// right is the case's own `checks`.
 #[test]
 fn kernel_replays_the_marked_cases() {
-    let mut r = Recorder::new().unwrap();
+    let mut r = selfhost_harness::host_recorder().unwrap();
     for (name, source) in selfhost_harness::differential("kernel") {
         let program = parse_program_as_written(&source).unwrap_or_else(|e| panic!("{name}: {e:?}"));
         r.declare(&program);
@@ -86,13 +86,13 @@ fn kernel_replays_standard_library_and_metatheory() {
         .stack_size(256 << 20)
         .spawn(|| {
             for file in [
-                "std/Nat.taut",
-                "std/List.taut",
-                "std/Quot.taut",
-                "meta/KernelSafe.taut",
+                "std/nat.taut",
+                "std/list.taut",
+                "std/quot.taut",
+                "meta/kernel_safe.taut",
             ] {
                 let loaded = tauto::program::load(&root().join(file)).unwrap();
-                let mut r = Recorder::new().unwrap();
+                let mut r = selfhost_harness::host_recorder().unwrap();
                 for stmts in &loaded.per_file {
                     let p = tauto::surface::Program {
                         stmts: stmts.clone(),
@@ -116,7 +116,7 @@ mod generator;
 #[test]
 fn kernel_matches_generated_terms() {
     generator::with_stack(|| {
-        let mut r = Recorder::new().unwrap();
+        let mut r = selfhost_harness::host_recorder().unwrap();
         for e in r.declare(&parse_program_as_written(&generator::prefix()).unwrap()) {
             assert!(!e.failed(), "{}: {:?}", e.name, e.verdict);
         }
@@ -136,7 +136,7 @@ fn kernel_matches_generated_terms() {
 
 #[test]
 fn kernel_matches_wide_literal_arithmetic() {
-    let mut r = Recorder::new().unwrap();
+    let mut r = selfhost_harness::host_recorder().unwrap();
     let mut rng = generator::Rng(0x39c2_f175_46af_b7d1);
     for i in 0..100 {
         let a = ((rng.next() as u128) << 64) | rng.next() as u128;
@@ -169,6 +169,19 @@ fn kernel_rejects_malformed_input_and_restores_registration() {
     }, true);
 }
 
+/// A value that unfolds to its own name, at once or through another name's
+/// value, is refused. The checker never sends one, so the input is written
+/// here.
+#[test]
+fn kernel_refuses_values_that_unfold_to_themselves() {
+    compare("kernel-value-cycle", Replay {
+        input: "D f p s P s P 0 0\nD g p s P s P 0 0\nV f l a c f b 0\nV g l a c f b 0\nV f l a c g b 0\nV f l b 0\n".into(),
+        expected: "accepted\naccepted\nrejected\naccepted\nrejected\naccepted\n".into(),
+        unread: 0,
+        time: Default::default(),
+    }, true);
+}
+
 #[test]
 fn kernel_export_refuses_unfinished_proofs() {
     let input = materialize(
@@ -189,7 +202,7 @@ fn kernel_export_refuses_unfinished_proofs() {
 
 #[test]
 fn kernel_replays_explicit_recursor_universes() {
-    let mut r = Recorder::new().unwrap();
+    let mut r = selfhost_harness::host_recorder().unwrap();
     for (family, level, good) in [
         ("Nat", 0, true),
         ("Nat", 3, true),
@@ -203,7 +216,7 @@ fn kernel_replays_explicit_recursor_universes() {
     }
     let source = r#"
 inductive UBox(u: Level, A: Type(u)): Type(u) { Ubox(value: A): UBox(u, A) }
-theorem high_box(): Type2 { recursor(UBox(1), 3)(Type, b => Type2, x => Type1, Ubox(1, Type, Nat)) }
+theorem high_box(): Type2 { recursor(UBox(1), 3)(<A: Type>, b => Type2, x => Type1, Ubox(<A: Type>, 1, Nat)) }
 theorem high_nat(): Type2 { recursor(Nat, 3)(n => Type2, Type1, k => ih => ih, 3) }
 theorem high_nat_beta(P: (Type2) -> Prop, p: P(Type1)): P(Type1) {
   let x := recursor(Nat, 3)(n => Type2, Type1, k => ih => ih, 3)
@@ -215,7 +228,7 @@ inductive VecU(u: Level, A: Type(u)): (Nat) -> Type(u) {
   VuCons(n: Nat, x: A, tail: VecU(u, A, n)): VecU(u, A, Succ(n))
 }
 theorem vec_beta(P: (Type2) -> Prop, p: P(Type1)): P(Type1) {
-  let result := recursor(VecU(1), 3)(Type, n => xs => Type2, Type1, n => x => tail => ih => ih, 1, VuCons(1, Type, 0, Nat, VuNil(1, Type)))
+  let result := recursor(VecU(1), 3)(<A: Type>, n => xs => Type2, Type1, n => x => tail => ih => ih, 1, VuCons(<A: Type>, 1, 0, Nat, VuNil(<A: Type>, 1)))
   let proof: P(result) := p
   proof
 }

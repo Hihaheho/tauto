@@ -1,13 +1,14 @@
-import std::prelude::Ord
+import std::builtin::ord
 import "widen_frame.taut"
 import "typing_state_extension.taut"
-import std::Base
-import std::Map
-import std::MapLaws
+import std::base
+import std::map
+import std::map_laws
 import "checker.taut"
 import "checker_frame.taut"
 import "datas_frame.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "rules_ty.taut"
 import "ty.taut"
 import "unify_sound.taut"
@@ -204,8 +205,8 @@ pub theorem except_frame_bind<A: Type, B: Type>(
   tail: ∀ value: A. ∀ next: Checker. ∀ ordered: CkOrdered(
     next
   ). ExceptRunFrame(private, next, k(value, next))
-): ExceptRunFrame(private, c, frame_bind(A, B, k, m)) {
-  ⊢ ExceptRunFrame(private, c, frame_bind(A, B, k, m)) from match m {
+): ExceptRunFrame(private, c, frame_bind(<A: A, B: B>, k, m)) {
+  match m {
     mut1(value, next) => {
       let last: ExceptRunFrame(private, next, k(value, next)) := tail(value, next, And::left(first))
       AndIntro(

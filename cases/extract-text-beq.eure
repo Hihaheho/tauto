@@ -1,0 +1,41 @@
+description = "`Text::beq`, the equality the inductive `Text` of std::text derives, runs as Nib's `==` on texts: its derived body matches `Text::Mk` and calls `List::beq`, which the program at run time does not have."
+
+@ cases.text-beq-of-literals
+source = ```tauto
+import std::base
+import std::text
+fn same(a: Text, b: Text): Bool { Text::beq(a, b) }
+show(&same("ab", "ab"))
+show(&same("ab", "ac"))
+```
+stdout = ```
+true
+false
+```
+
+// A text built from its bytes, as a proof states it, compared at run time.
+@ cases.text-beq-of-bytes
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `U8::of_u64` yet"
+source = ```tauto
+import std::base
+import std::text
+fn is_a(n: Nat): Bool { Text::beq("a", Text::Mk(Cons(n, Nil))) }
+show(&is_a(97))
+show(&is_a(98))
+```
+stdout = ```
+true
+false
+```
+
+// A tote with no program: `tauto check` reads its functions as the program
+// `tauto run` would make of them, and that program has no error.
+@ cases.text-beq-in-a-library-tote
+files_tote = "lib"
+tote_errors = []
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/a.taut" = ```tauto
+import std::base
+import std::text
+fn is_a(n: Nat): Bool { Text::beq("a", Text::Mk(Cons(n, Nil))) }
+```

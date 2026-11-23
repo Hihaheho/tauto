@@ -10,7 +10,7 @@ and DFA of each mode, the character classes and the lookahead automata.
 | `par.taut` | reads the grammar (the subset tauto allows) |
 | `canon.taut` | EBNF into productions, the attributes of the productions |
 | `model.taut` | terminals, names, non-terminals, productions, scanners |
-| `rx.taut`, `uni.taut` | a regular expression into a tree of literals, classes, repetitions, concatenations and alternations, with its simplifications (`rx_concat`, `rx_alternation`, `rx_class`, `rx_repetition`); `\p{L}`, `\p{N}`, `\s` from tables written by `scripts/generate-unicode-tables.sh` |
+| `rx.taut`, `uni.taut` | a regular expression into a tree of literals, classes, repetitions, concatenations and alternations, with its simplifications (`rx_concat`, `rx_alternation`, `rx_class`, `rx_repetition`); `\p{L}`, `\p{N}`, `\s` from tables written by `scripts/generate-unicode-tables.taut` |
 | `nfa.taut` | the NFA of a mode, state for state |
 | `cc.taut` | the disjoint character classes (exclusive integer bounds, 1114112 after the greatest Unicode scalar, surrogates left out) |
 | `sdfa.taut` | the DFA: subset construction and the partition refinement. The order of the states is the one the partition has, so it does not depend on how the subsets were found. |

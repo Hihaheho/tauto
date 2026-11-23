@@ -3,7 +3,7 @@
 // `value : type` as the command writes them (without the text line).
 
 @ cases.eval-shows-the-normal-form
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn byte_class(c: Nat): Nat {
@@ -26,16 +26,14 @@ checks_all = "ok"
 evals."classes([34, 7, 92])" = "List::Cons(1, List::Cons(0, List::Cons(2, List::Nil))) : List(Nat)"
 evals."byte_class(Nat::add(30, 4))" = "1 : Nat"
 
-// A name written with its module means in the expression what it means in
-// the file: `M.double` is the function the module declares.
-@ cases.eval-reads-a-name-with-its-module
-imports = [path`../../std/Base.taut`]
+// A name written with its prefix means in the expression what it means in
+// the file: `M::double` is the function declared as `fn M::double`.
+@ cases.eval-reads-a-name-with-its-prefix
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-module M {
-  pub fn double(n: Nat): Nat { n + n }
-}
+pub fn M::double(n: Nat): Nat { n + n }
 ```
 
 checks_all = "ok"
-evals."M.double(Nat::add(1, 2))" = "6 : Nat"
+evals."M::double(Nat::add(1, 2))" = "6 : Nat"

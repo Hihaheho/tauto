@@ -1,7 +1,8 @@
 import "allocation_state.taut"
-import std::Base
+import std::base
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "unify_sound.taut"
@@ -61,7 +62,7 @@ pub theorem ck_var_set_allocation(
   item: TypeAllocated(ck_next_of(c), TyVar(w)),
   fresh: CheckerAllocation(c)
 ): CheckerAllocation(ck_st(ck_var_set(v, w, ck_int_k(c, w, flag)))) {
-  ⊢ CheckerAllocation(ck_st(ck_var_set(v, w, ck_int_k(c, w, flag)))) from match flag {
+  match flag {
     true => ck_set_subst_allocation(
       ck_st(ck_add_int(c, w)),
       v,
@@ -99,7 +100,7 @@ pub theorem ck_bind_unbound_allocation(
   item: TypeAllocated(ck_next_of(c), t),
   fresh: CheckerAllocation(c)
 ): CheckerAllocation(ck_st(ck_bind_unbound(c, v, t))) {
-  ⊢ CheckerAllocation(ck_st(ck_bind_unbound(c, v, t))) from match t {
+  match t {
     TyVar(w) => allocation_rewrap(
       ck_bind_var(c, v, w),
       ck_bind_var_allocation(c, v, w, ordered, below, item, fresh)
@@ -131,6 +132,10 @@ pub theorem ck_bind_unbound_allocation(
     TyFloat => allocation_rewrap(
       ck_bind_other(c, v, TyFloat),
       ck_bind_other_allocation(c, v, TyFloat, ordered, below, item, fresh)
+    )
+    TyFloat32 => allocation_rewrap(
+      ck_bind_other(c, v, TyFloat32),
+      ck_bind_other_allocation(c, v, TyFloat32, ordered, below, item, fresh)
     )
     TyFn(ps, result, kind) => allocation_rewrap(
       ck_bind_other(c, v, TyFn(ps, result, kind)),

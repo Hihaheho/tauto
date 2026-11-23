@@ -32,7 +32,7 @@ checks."input/main.taut::double_one" = "error: type mismatch"
 @ cases.an-opaque-fn-unfolds-by-a-rewrite-with-its-equation
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-import std::Tactic
+import std::tactic
 opaque fn double(n: Nat): Nat => theorem double::eq {
   match n {
     Zero => Zero
@@ -50,7 +50,7 @@ checks."input/main.taut::double::eq" = "ok"
 checks."input/main.taut::double_one" = "ok"
 
 @ cases.a-match-on-text-literals-with-a-named-last-arm-is-checked
-imports = [path`../../std/Text.taut`]
+imports = [path`../../std/base.taut`, path`../../std/text.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn kind(s: Text): Nat {
@@ -69,7 +69,7 @@ checks."input/main.taut::kind_b" = "ok"
 checks."input/main.taut::kind_other" = "ok"
 
 @ cases.a-match-on-text-literals-without-a-last-arm-is-rejected
-imports = [path`../../std/Text.taut`]
+imports = [path`../../std/text.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn kind(s: Text): Nat {
@@ -85,7 +85,7 @@ checks."input/main.taut::kind" = "error: a kernel match lists constructors"
 @ cases.a-calc-chain-is-the-transitivity-it-stands-for
 entry = "input/main.taut"
 files."input/main.taut" = ````tauto
-import std::Calc { calc }
+import std::calc { calc }
 theorem chain(a: Nat, b: Nat, c: Nat, h1: a = b, h2: b = c): a = c {
   calc!(```
     $a
@@ -101,7 +101,7 @@ checks."input/main.taut::chain" = "ok"
 @ cases.a-calc-step-whose-proof-does-not-fit-is-rejected
 entry = "input/main.taut"
 files."input/main.taut" = ````tauto
-import std::Calc { calc }
+import std::calc { calc }
 theorem chain(a: Nat, b: Nat, c: Nat, h1: a = b, h2: b = c): a = c {
   calc!(```
     $a
@@ -114,12 +114,25 @@ theorem chain(a: Nat, b: Nat, c: Nat, h1: a = b, h2: b = c): a = c {
 checks."input/main.taut::chain" = "error: type mismatch: expected `a = b`, found `b = c`"
 
 @ cases.a-context-with-a-box-is-a-function
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn ctx(x1: Bool, y: Bool): (Bool) -> Bool { ⟦Bool::and(Bool::or(x1, □), y)⟧ }
 theorem cg(x1: Bool, y: Bool, a: Bool, b: Bool, h: a = b): Bool::and(Bool::or(x1, a), y) = Bool::and(Bool::or(x1, b), y) {
-  Eq::congr(Bool, Bool, a, b, ⟦Bool::and(Bool::or(x1, □), y)⟧, h)
+  Eq::congr(<A: Bool, B: Bool, a: a, b: b>, ⟦Bool::and(Bool::or(x1, □), y)⟧, h)
+}
+```
+
+checks."input/main.taut::ctx" = "ok"
+checks."input/main.taut::cg" = "ok"
+
+@ cases.a-context-with-several-boxes-fills-each-with-the-same-term
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn ctx(x: Bool): (Bool) -> Bool { ⟦Bool::and(□, Bool::or(x, □))⟧ }
+theorem cg(x: Bool, a: Bool, b: Bool, h: a = b): Bool::and(a, Bool::or(x, a)) = Bool::and(b, Bool::or(x, b)) {
+  Eq::congr(<A: Bool, B: Bool, a: a, b: b>, ⟦Bool::and(□, Bool::or(x, □))⟧, h)
 }
 ```
 
@@ -127,7 +140,7 @@ checks."input/main.taut::ctx" = "ok"
 checks."input/main.taut::cg" = "ok"
 
 @ cases.a-forall-over-several-names-is-nested-foralls
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 theorem fa(): ∀ x: Nat, y: Nat. Nat::add(x, y) = Nat::add(x, y) { (x: Nat, y: Nat) => Refl }

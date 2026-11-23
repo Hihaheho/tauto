@@ -1,0 +1,119 @@
+// `&Slots` of `std/slots_store.taut` is the lent range of a `Slots`, an
+// ordinary `inductive struct` of the contents in order. A program lends a
+// `Slots` (`&r` where a `&Slots` is expected is `Lend::lend(&orig r)`) and
+// reads the range; what runs is the host's reference to the slots, the
+// compiler maps the type and `lend`, `lent_cap` and `lent_get` onto the host's
+// builtins. The same output on every backend.
+@ cases.slots-lent-run-on-the-host-slots
+stdout = ```
+3
+6
+11
+3
+6
+```
+source = ```tauto
+import std::uhost { UHost }
+import std::slots_store { Slots, Fresh }
+
+instance Fresh(Nat) {
+  fn fresh(): Nat { 0 }
+}
+
+fn filled(): Slots(Nat, Nat, Nat) {
+  let r1 := Slots::put(Slots::new(UHost::lit(3, Refl), 10, 0), UHost::lit(1, Refl), 5, 5, 11, Refl)
+  Slots::put(r1, UHost::lit(2, Refl), 6, 6, 12, Refl)
+}
+
+fn size(l: &Slots(Nat, Nat, Nat)): Nat {
+  UHost::val(Slots::lent_cap(l))
+}
+
+fn second(l: &Slots(Nat, Nat, Nat), h: Slots::lent_filled(l, UHost::lit(2, Refl)) = true): Nat {
+  Slots::lent_get(l, UHost::lit(2, Refl), h)
+}
+
+fn first(l: &Slots(Nat, Nat, Nat), h: Slots::lent_filled(l, UHost::lit(1, Refl)) = true): Nat {
+  Slots::lent_get(l, UHost::lit(1, Refl), h)
+}
+
+// The range lent to two readers in turn: it is copied as the borrow it is.
+fn both(l: &Slots(Nat, Nat, Nat), h1: Slots::lent_filled(l, UHost::lit(1, Refl)) = true, h2: Slots::lent_filled(l, UHost::lit(2, Refl)) = true): Nat {
+  first(l, h1) + second(l, h2)
+}
+
+fn read_second(): Nat {
+  let r := filled()
+  second(Slots::lend_range(&orig r), Refl)
+}
+
+fn read_both(): Nat {
+  let r := filled()
+  both(Slots::lend_range(&orig r), Refl, Refl)
+}
+
+let r := filled()
+show(&size(&r))
+show(&read_second())
+show(&read_both())
+show(&size(&r))
+show(&(UHost::val(Slots::cap(&orig r)) + 3))
+```
+
+// `owned` of `&Slots`: a copy of the range of exactly its capacity, with the
+// filled elements copied and the state and marks given. The host builtin
+// `Slots::copy` makes it; the same output on every backend.
+@ cases.slots-lent-copy-run-on-the-host-slots
+stdout = ```
+3
+0
+0
+6
+```
+source = ```tauto
+import std::uhost { UHost }
+import std::slots_store { Slots, Fresh }
+
+instance Fresh(Nat) {
+  fn fresh(): Nat { 0 }
+}
+
+fn filled(): Slots(Nat, Nat, Nat) {
+  let r1 := Slots::put(Slots::new(UHost::lit(3, Refl), 10, 0), UHost::lit(1, Refl), 5, 5, 11, Refl)
+  Slots::put(r1, UHost::lit(2, Refl), 6, 6, 12, Refl)
+}
+
+// A copy of a lent range, with the state and the mark 0.
+fn own_range(l: &Slots(Nat, Nat, Nat)): Slots(Nat, Nat, Nat) {
+  Slots::own_with(0, 0, l)
+}
+
+fn second(c: &orig Slots(Nat, Nat, Nat), h: Slots::filled(c, UHost::lit(2, Refl)) = true): Nat {
+  Slots::get(c, UHost::lit(2, Refl), h)
+}
+
+fn read_copy(): Nat {
+  let c := own_range(Slots::lend_range(&orig filled()))
+  second(&orig c, Refl)
+}
+
+fn copy_cap(): Nat {
+  let c := own_range(Slots::lend_range(&orig filled()))
+  UHost::val(Slots::cap(&orig c))
+}
+
+fn copy_state(): Nat {
+  let c := own_range(Slots::lend_range(&orig filled()))
+  Slots::state(&orig c)
+}
+
+fn copy_mark(): Nat {
+  let c := own_range(Slots::lend_range(&orig filled()))
+  Slots::mark(&orig c, UHost::lit(1, Refl))
+}
+
+show(&copy_cap())
+show(&copy_state())
+show(&copy_mark())
+show(&read_copy())
+```

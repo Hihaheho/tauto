@@ -1,5 +1,6 @@
+import "coerce_frame.taut"
 import "inference_lists.taut"
-import std::Base
+import std::base
 import "application_frame.taut"
 import "argument_frame.taut"
 import "checker.taut"
@@ -11,6 +12,7 @@ import "expr_checks_frame.taut"
 import "inference_base.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -25,8 +27,7 @@ pub fn inference_call_args(
   known: Option(List(Ty))
 ): Mut1(Ty, Checker) {
   frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     (args: List(Ty), c1: Checker) => ck_rewrap1(
       ck_app_result(c1, term, function, arguments, f, known, args)
     ),
@@ -47,8 +48,7 @@ pub theorem inference_call_args_frame(
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_call_args(j, c, term, function, arguments, env, f, known)) {
   run_frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     c,
     (args: List(Ty), c1: Checker) => ck_rewrap1(
       ck_app_result(c1, term, function, arguments, f, known, args)
@@ -72,24 +72,26 @@ pub fn inference_step_ck_app_call_in(
   env: List(Local)
 ): Mut1(Ty, Checker) {
   frame_bind(
-    Ty,
-    Ty,
-    (t: Ty, c1: Checker) => frame_bind(
-      Ty,
-      Ty,
-      (f: Ty, c2: Checker) => inference_call_args(
-        j,
-        c2,
-        term,
-        function,
-        arguments,
-        env,
-        f,
-        ck_known_params(c2, f, list_len(arguments))
+    <A: Unit, B: Ty>,
+    (cleared: Unit, c0: Checker) => frame_bind(
+      <A: Ty, B: Ty>,
+      (t: Ty, c1: Checker) => frame_bind(
+        <A: Ty, B: Ty>,
+        (f: Ty, c2: Checker) => inference_call_args(
+          j,
+          c2,
+          term,
+          function,
+          ck_call_arguments(arguments),
+          env,
+          f,
+          ck_known_params(c2, f, list_len(ck_call_arguments(arguments)))
+        ),
+        ck_call_instance(c1, function, t, ck_call_implicits(arguments), inference_result_hint(c))
       ),
-      ck_poly_instance(c1, function, t)
+      ck_infer_in(j, c0, function, env)
     ),
-    ck_infer_in(j, c, function, env)
+    inference_set_result_hint(c, None)
   )
 }
 
@@ -104,53 +106,74 @@ pub theorem inference_step_ck_app_call_in_frame(
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_step_ck_app_call_in(j, c, term, function, arguments, env)) {
   run_frame_bind(
-    Ty,
-    Ty,
+    <A: Unit, B: Ty>,
     c,
-    (t: Ty, c1: Checker) => frame_bind(
-      Ty,
-      Ty,
-      (f: Ty, c2: Checker) => inference_call_args(
-        j,
-        c2,
-        term,
-        function,
-        arguments,
-        env,
-        f,
-        ck_known_params(c2, f, list_len(arguments))
+    (cleared: Unit, c0: Checker) => frame_bind(
+      <A: Ty, B: Ty>,
+      (t: Ty, c1: Checker) => frame_bind(
+        <A: Ty, B: Ty>,
+        (f: Ty, c2: Checker) => inference_call_args(
+          j,
+          c2,
+          term,
+          function,
+          ck_call_arguments(arguments),
+          env,
+          f,
+          ck_known_params(c2, f, list_len(ck_call_arguments(arguments)))
+        ),
+        ck_call_instance(c1, function, t, ck_call_implicits(arguments), inference_result_hint(c))
       ),
-      ck_poly_instance(c1, function, t)
+      ck_infer_in(j, c0, function, env)
     ),
-    ck_infer_in(j, c, function, env),
-    inference_use_ck_infer_in(j, c, function, env, ordered, ih),
-    t => c1 => o_c1 => run_frame_bind(
-      Ty,
-      Ty,
-      c1,
-      (f: Ty, c2: Checker) => inference_call_args(
-        j,
-        c2,
-        term,
-        function,
-        arguments,
-        env,
-        f,
-        ck_known_params(c2, f, list_len(arguments))
+    inference_set_result_hint(c, None),
+    run_frame_read(c, inference_set_result_hint(c, None), inference_set_result_hint_frame(c, None), ordered),
+    cleared => c0 => o_c0 => run_frame_bind(
+      <A: Ty, B: Ty>,
+      c0,
+      (t: Ty, c1: Checker) => frame_bind(
+        <A: Ty, B: Ty>,
+        (f: Ty, c2: Checker) => inference_call_args(
+          j,
+          c2,
+          term,
+          function,
+          ck_call_arguments(arguments),
+          env,
+          f,
+          ck_known_params(c2, f, list_len(ck_call_arguments(arguments)))
+        ),
+        ck_call_instance(c1, function, t, ck_call_implicits(arguments), inference_result_hint(c))
       ),
-      ck_poly_instance(c1, function, t),
-      ck_poly_instance_run_frame(c1, function, t, o_c1),
-      f => c2 => o_c2 => inference_call_args_frame(
-        j,
-        c2,
-        term,
-        function,
-        arguments,
-        env,
-        f,
-        ck_known_params(c2, f, list_len(arguments)),
-        ih,
-        o_c2
+      ck_infer_in(j, c0, function, env),
+      inference_use_ck_infer_in(j, c0, function, env, o_c0, ih),
+      t => c1 => o_c1 => run_frame_bind(
+        <A: Ty, B: Ty>,
+        c1,
+        (f: Ty, c2: Checker) => inference_call_args(
+          j,
+          c2,
+          term,
+          function,
+          ck_call_arguments(arguments),
+          env,
+          f,
+          ck_known_params(c2, f, list_len(ck_call_arguments(arguments)))
+        ),
+        ck_call_instance(c1, function, t, ck_call_implicits(arguments), inference_result_hint(c)),
+        ck_call_instance_run_frame(c1, function, t, ck_call_implicits(arguments), inference_result_hint(c), o_c1),
+        f => c2 => o_c2 => inference_call_args_frame(
+          j,
+          c2,
+          term,
+          function,
+          ck_call_arguments(arguments),
+          env,
+          f,
+          ck_known_params(c2, f, list_len(ck_call_arguments(arguments))),
+          ih,
+          o_c2
+        )
       )
     )
   )
@@ -180,14 +203,13 @@ pub fn inference_clone_rest(
   arg: SurfaceTerm,
   rest: List(SurfaceTerm)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match rest {
+  match rest {
     Nil => frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       (t0: Ty, c1: Checker) => ck_rewrap1(ck_clone_value(c1, t0, arg, span)),
       ck_infer_in(j, c, arg, env)
     )
-    Cons(x, more) => ck_rewrap1(ck_clone_bad(c, span))
+    Cons(^x, ^more) => ck_rewrap1(ck_clone_bad(c, span))
   }
 }
 
@@ -201,10 +223,9 @@ pub theorem inference_clone_rest_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_clone_rest(j, c, env, span, arg, rest)) {
-  ⊢ CkRunFrame(c, inference_clone_rest(j, c, env, span, arg, rest)) from match rest {
+  match rest {
     Nil => run_frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c,
       (t0: Ty, c1: Checker) => ck_rewrap1(ck_clone_value(c1, t0, arg, span)),
       ck_infer_in(j, c, arg, env),
@@ -236,7 +257,7 @@ pub fn inference_clone_args(
   span: TySpan,
   arguments: List(SurfaceTerm)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match arguments {
+  match arguments {
     Nil => ck_rewrap1(ck_clone_bad(c, span))
     Cons(arg, rest) => inference_clone_rest(j, c, env, span, arg, rest)
   }
@@ -251,7 +272,7 @@ pub theorem inference_clone_args_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_clone_args(j, c, env, span, arguments)) {
-  ⊢ CkRunFrame(c, inference_clone_args(j, c, env, span, arguments)) from match arguments {
+  match arguments {
     Nil => run_frame_read(
       c,
       ck_rewrap1(ck_clone_bad(c, span)),
@@ -323,9 +344,9 @@ pub fn inference_argument_hint(
   expected: Option(Ty),
   lambda: Bool
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match lambda {
+  match lambda {
     true => inference_set_hint(c, expected)
-    false => mut1(Star, c)
+    false => inference_set_result_hint(c, ck_result_hint_for(a, expected))
   }
 }
 
@@ -352,7 +373,12 @@ pub theorem inference_argument_hint_frame(
       inference_set_hint_frame(c, expected),
       ordered
     )
-    false => run_frame_return(c, Star, ordered)
+    false => run_frame_read(
+      c,
+      inference_set_result_hint(c, ck_result_hint_for(a, expected)),
+      inference_set_result_hint_frame(c, ck_result_hint_for(a, expected)),
+      ordered
+    )
   }
 }
 
@@ -367,20 +393,15 @@ pub fn inference_argument(
   expected: Option(Ty)
 ): Mut1(List(Ty), Checker) {
   frame_bind(
-    Unit,
-    List(Ty),
+    <A: Unit, B: List(Ty)>,
     (ignored: Unit, c1: Checker) => frame_bind(
-      Ty,
-      List(Ty),
+      <A: Ty, B: List(Ty)>,
       (t: Ty, c2: Checker) => frame_bind(
-        Unit,
-        List(Ty),
+        <A: Unit, B: List(Ty)>,
         (cleared: Unit, c3: Checker) => frame_bind(
-          Unit,
-          List(Ty),
+          <A: Unit, B: List(Ty)>,
           (checked: Unit, c4: Checker) => frame_bind(
-            List(Ty),
-            List(Ty),
+            <A: List(Ty), B: List(Ty)>,
             (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
             ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
           ),
@@ -407,21 +428,16 @@ pub theorem inference_argument_frame(
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_argument(j, c, a, rest, known, env, i, expected)) {
   run_frame_bind(
-    Unit,
-    List(Ty),
+    <A: Unit, B: List(Ty)>,
     c,
     (ignored: Unit, c1: Checker) => frame_bind(
-      Ty,
-      List(Ty),
+      <A: Ty, B: List(Ty)>,
       (t: Ty, c2: Checker) => frame_bind(
-        Unit,
-        List(Ty),
+        <A: Unit, B: List(Ty)>,
         (cleared: Unit, c3: Checker) => frame_bind(
-          Unit,
-          List(Ty),
+          <A: Unit, B: List(Ty)>,
           (checked: Unit, c4: Checker) => frame_bind(
-            List(Ty),
-            List(Ty),
+            <A: List(Ty), B: List(Ty)>,
             (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
             ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
           ),
@@ -446,18 +462,14 @@ pub theorem inference_argument_frame(
       ordered
     ),
     ignored => c1 => o_c1 => run_frame_bind(
-      Ty,
-      List(Ty),
+      <A: Ty, B: List(Ty)>,
       c1,
       (t: Ty, c2: Checker) => frame_bind(
-        Unit,
-        List(Ty),
+        <A: Unit, B: List(Ty)>,
         (cleared: Unit, c3: Checker) => frame_bind(
-          Unit,
-          List(Ty),
+          <A: Unit, B: List(Ty)>,
           (checked: Unit, c4: Checker) => frame_bind(
-            List(Ty),
-            List(Ty),
+            <A: List(Ty), B: List(Ty)>,
             (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
             ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
           ),
@@ -468,15 +480,12 @@ pub theorem inference_argument_frame(
       ck_infer_in(j, c1, a, env),
       inference_use_ck_infer_in(j, c1, a, env, o_c1, ih),
       t => c2 => o_c2 => run_frame_bind(
-        Unit,
-        List(Ty),
+        <A: Unit, B: List(Ty)>,
         c2,
         (cleared: Unit, c3: Checker) => frame_bind(
-          Unit,
-          List(Ty),
+          <A: Unit, B: List(Ty)>,
           (checked: Unit, c4: Checker) => frame_bind(
-            List(Ty),
-            List(Ty),
+            <A: List(Ty), B: List(Ty)>,
             (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
             ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
           ),
@@ -485,20 +494,17 @@ pub theorem inference_argument_frame(
         inference_set_hint(c2, None),
         run_frame_read(c2, inference_set_hint(c2, None), inference_set_hint_frame(c2, None), o_c2),
         cleared => c3 => o_c3 => run_frame_bind(
-          Unit,
-          List(Ty),
+          <A: Unit, B: List(Ty)>,
           c3,
           (checked: Unit, c4: Checker) => frame_bind(
-            List(Ty),
-            List(Ty),
+            <A: List(Ty), B: List(Ty)>,
             (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
             ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
           ),
           ck_expect_opt(c3, t, expected, a),
           ck_expect_opt_run_frame(c3, t, expected, a, o_c3),
           checked => c4 => o_c4 => run_frame_bind(
-            List(Ty),
-            List(Ty),
+            <A: List(Ty), B: List(Ty)>,
             c4,
             (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
             ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1)),
@@ -519,7 +525,7 @@ pub fn inference_arguments(
   i: Nat,
   arguments: List(SurfaceTerm)
 ): Mut1(List(Ty), Checker) {
-  ⊢ Mut1(List(Ty), Checker) from match arguments {
+  match arguments {
     Nil => mut1(Nil, c)
     Cons(a, rest) => inference_argument(j, c, a, rest, known, env, i, ck_expected(known, i))
   }
@@ -535,7 +541,7 @@ pub theorem inference_arguments_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_arguments(j, c, known, env, i, arguments)) {
-  ⊢ CkRunFrame(c, inference_arguments(j, c, known, env, i, arguments)) from match arguments {
+  match arguments {
     Nil => run_frame_return(c, Nil, ordered)
     Cons(a, rest) => inference_argument_frame(
       j,
@@ -609,7 +615,7 @@ pub theorem inference_unf_ck_app_args_in(
   } }
 
 pub fn inference_match_answer(j: Nat, c: Checker, result: Option(Ty)): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match result {
+  match result {
     None => mut1(TyNever, c)
     Some(t) => mut1(t, c)
   }
@@ -622,7 +628,7 @@ pub theorem inference_match_answer_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_match_answer(j, c, result)) {
-  ⊢ CkRunFrame(c, inference_match_answer(j, c, result)) from match result {
+  match result {
     None => run_frame_return(c, TyNever, ordered)
     Some(t) => run_frame_return(c, t, ordered)
   }
@@ -637,18 +643,19 @@ pub fn inference_step_ck_match_expr_in(
   span: TySpan
 ): Mut1(Ty, Checker) {
   frame_bind(
-    Ty,
-    Ty,
-    (s: Ty, c1: Checker) => frame_bind(
-      Option(Ty),
-      Ty,
+    <A: Ty, B: Ty>,
+    (read: Ty, c0: Checker) => frame_bind(
+      <A: Ty, B: Ty>,
+      (s: Ty, c1: Checker) => frame_bind(
+      <A: Option(Ty), B: Ty>,
       (result: Option(Ty), c2: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (checked: Unit, c3: Checker) => inference_match_answer(j, c3, result),
         ck_check_covers(c2, s, arms, span)
       ),
       ck_match_arms_in(j, c1, arms, s, env, None)
+    ),
+      ck_coerce_scrutinee(c0, read, arms, span_of(scrutinee))
     ),
     ck_infer_in(j, c, scrutinee, env)
   )
@@ -665,37 +672,49 @@ pub theorem inference_step_ck_match_expr_in_frame(
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_step_ck_match_expr_in(j, c, scrutinee, arms, env, span)) {
   run_frame_bind(
-    Ty,
-    Ty,
+    <A: Ty, B: Ty>,
     c,
-    (s: Ty, c1: Checker) => frame_bind(
-      Option(Ty),
-      Ty,
+    (read: Ty, c0: Checker) => frame_bind(
+      <A: Ty, B: Ty>,
+      (s: Ty, c1: Checker) => frame_bind(
+      <A: Option(Ty), B: Ty>,
       (result: Option(Ty), c2: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (checked: Unit, c3: Checker) => inference_match_answer(j, c3, result),
         ck_check_covers(c2, s, arms, span)
       ),
       ck_match_arms_in(j, c1, arms, s, env, None)
     ),
+      ck_coerce_scrutinee(c0, read, arms, span_of(scrutinee))
+    ),
     ck_infer_in(j, c, scrutinee, env),
     inference_use_ck_infer_in(j, c, scrutinee, env, ordered, ih),
-    s => c1 => o_c1 => run_frame_bind(
-      Option(Ty),
-      Ty,
+    read => c0 => o_c0 => run_frame_bind(
+      <A: Ty, B: Ty>,
+      c0,
+      (s: Ty, c1: Checker) => frame_bind(
+      <A: Option(Ty), B: Ty>,
+      (result: Option(Ty), c2: Checker) => frame_bind(
+        <A: Unit, B: Ty>,
+        (checked: Unit, c3: Checker) => inference_match_answer(j, c3, result),
+        ck_check_covers(c2, s, arms, span)
+      ),
+      ck_match_arms_in(j, c1, arms, s, env, None)
+    ),
+      ck_coerce_scrutinee(c0, read, arms, span_of(scrutinee)),
+      ck_coerce_scrutinee_frame_run(c0, read, arms, span_of(scrutinee), o_c0),
+      s => c1 => o_c1 => run_frame_bind(
+      <A: Option(Ty), B: Ty>,
       c1,
       (result: Option(Ty), c2: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (checked: Unit, c3: Checker) => inference_match_answer(j, c3, result),
         ck_check_covers(c2, s, arms, span)
       ),
       ck_match_arms_in(j, c1, arms, s, env, None),
       inference_use_ck_match_arms_in(j, c1, arms, s, env, None, o_c1, ih),
       result => c2 => o_c2 => run_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c2,
         (checked: Unit, c3: Checker) => inference_match_answer(j, c3, result),
         ck_check_covers(c2, s, arms, span),
@@ -707,6 +726,7 @@ pub theorem inference_step_ck_match_expr_in_frame(
         ),
         checked => c3 => o_c3 => inference_match_answer_frame(j, c3, result, ih, o_c3)
       )
+    )
     )
   )
 }

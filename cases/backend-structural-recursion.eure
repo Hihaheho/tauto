@@ -1,12 +1,10 @@
 // A function the kernel accepts as structurally recursive does not diverge,
-// so a closure that calls it fits a callable type without `Div`, also when
+// so a closure that calls it fits a callable type without `div`, also when
 // the program's top-level statements run under the host.
 @ cases.closure-call-under-host
-backends = ["rust", "javascript"]
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
 fn after(o: Option(Nat), next: (Nat) -> Option(Nat)): Option(Nat) {
   ⊢ Option(Nat) from match o {
@@ -32,9 +30,8 @@ stderr = ""
 exit = 0
 
 @ cases.closure-call-shown
-backends = ["rust", "javascript"]
-extract = true
-imports = [path`../std/Base.taut`]
+stdout = "Some(3)\n"
+imports = [path`../std/base.taut`]
 source = ```tauto
 fn after(o: Option(Nat), next: (Nat) -> Option(Nat)): Option(Nat) {
   ⊢ Option(Nat) from match o {
@@ -50,26 +47,23 @@ fn count(fuel: Nat, n: Nat): Option(Nat) {
   }
 }
 
-perform show("count", count(3, 0))
+show(&count(3, 0))
 ```
-rust_shows = ["count = Some(3)"]
 
 // Functions that call one another, each call on a part of the same argument,
 // end as one function does, so a function value of one fits a callable type
-// without `Div` under the host as well.
+// without `div` under the host as well.
 @ cases.mutual-functions-as-a-function-value-under-host
-backends = ["rust", "javascript"]
-extract = true
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 source = ```tauto
-import std::prelude::Os
+import std::builtin::os
 
 inductive K: Type {
   Leaf(n: Nat): K
   Many(xs: List(K)): K
 }
 
-fn find<A>(eq: (A, A) -> Bool, k: A, l: List(A)): Bool {
+fn find<A: Shared>(eq: (A, A) -> Bool, k: A, l: List(A)): Bool {
   match l {
     Nil => false
     Cons(h, t) => match eq(h, k) {
@@ -119,5 +113,59 @@ match perform argv() {
 }
 ```
 stdout = "found"
+stderr = ""
+exit = 0
+
+// A function the kernel accepts though its recursion is not on a part
+// written as one (`last(Cons(h2, t2))` rebuilds `t`) does not diverge either:
+// a closure that calls it fits a callable type without `div` under the host,
+// as `tauto check` accepts it.
+@ cases.kernel-accepted-recursion-under-host
+source = ```tauto
+import std::list
+import std::builtin::os
+
+fn apply(k: (List(Nat)) -> Bool, l: List(Nat)): Bool { k(l) }
+
+fn ends_with_zero(l: List(Nat)): Bool {
+  match List::last(l) {
+    None => false
+    Some(c) => Nat::eq(c, 0)
+  }
+}
+
+let b := apply((x: List(Nat)) => ends_with_zero(x), [1, 0])
+print(if b { "yes" } else { "no" })
+```
+stdout = "yes"
+stderr = ""
+exit = 0
+
+// The same where another function is copied for the declared function it is
+// given (`twice(succ, 1)`): the copied program is judged with the evidence
+// the program it is made from was judged with.
+@ cases.kernel-accepted-recursion-beside-a-copied-function
+source = ```tauto
+import std::list
+import std::builtin::os
+
+fn apply(k: (List(Nat)) -> Bool, l: List(Nat)): Bool { k(l) }
+
+fn ends_with_zero(l: List(Nat)): Bool {
+  match List::last(l) {
+    None => false
+    Some(c) => Nat::eq(c, 0)
+  }
+}
+
+fn twice(k: (Nat) -> Nat, n: Nat): Nat { k(k(n)) }
+
+fn succ(n: Nat): Nat { Succ(n) }
+
+let b := apply((x: List(Nat)) => ends_with_zero(x), [1, 0])
+print(if b { "yes" } else { "no" })
+print(Text::of_nat(twice(succ, 1)))
+```
+stdout = "yes3"
 stderr = ""
 exit = 0

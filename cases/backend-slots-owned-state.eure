@@ -1,0 +1,36 @@
+// `Slots`: a state and marks that own text. Reading the state is a copy;
+// replacing it (by `put` or `resize`) leaves later reads independent of the
+// value that ended. Growing by `resize` marks the new slots with a copy of
+// the template; a capacity that does not grow still consumes that template
+// and replaces the state.
+@ cases.slots-owned-state-and-resize-marks
+stdout = ```
+"s0"
+"m0"
+"m0"
+"s1"
+"m1"
+"s1"
+"mnew"
+"m1"
+"s2"
+"s3"
+"m1"
+```
+source = ```tauto
+var r: Slots(Text, Text, Text) := Slots::new(2, "s0", "m0")
+show(&Slots::state(&r))
+show(&Slots::mark(&r, 0))
+show(&Slots::mark(&r, 1))
+Slots::put(&mut r, 0, "m1", "a", "s1")
+show(&Slots::state(&r))
+show(&Slots::mark(&r, 0))
+show(&Slots::state(&r))
+Slots::resize(&mut r, 4, "mnew", "s2")
+show(&Slots::mark(&r, 3))
+show(&Slots::mark(&r, 0))
+show(&Slots::state(&r))
+Slots::resize(&mut r, 2, "mkeep", "s3")
+show(&Slots::state(&r))
+show(&Slots::mark(&r, 0))
+```

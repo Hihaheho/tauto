@@ -1,0 +1,81 @@
+// A `fn` without an effect row has the row `! {}`: one whose body loops (a `while`)
+// may perform `div`, which that row leaves out, so it is an error, as it is with
+// `! {}` written.
+@ cases.a-while-in-a-fn-without-a-row-is-an-error
+files."lib.taut" = ```tauto
+import std::text { Text }
+import std::text_ops { Text }
+import std::list { List }
+pub fn member(x: Text, xs: List(Text)): Bool {
+  var rest := xs
+  var found := false
+  var more_left := true
+  while more_left {
+    match rest {
+      Nil => { more_left := false }
+      Cons(y, more) => {
+        if y == x { found := true } else { #() }
+        rest := more
+      }
+    }
+  }
+  found
+}
+```
+files."main.taut" = ```tauto
+import "lib.taut" { member }
+show(&member("a", ["b", "a"]))
+```
+entry = "main.taut"
+rows = "error: `member` may perform div but its row is {}"
+
+// With `! {div}` written, the same function is executable code and runs.
+@ cases.a-while-in-a-fn-with-div-runs
+files."lib.taut" = ```tauto
+import std::text { Text }
+import std::text_ops { Text }
+import std::list { List }
+pub fn member(x: Text, xs: List(Text)): Bool ! {div} {
+  var rest := xs
+  var found := false
+  var more_left := true
+  while more_left {
+    match rest {
+      Nil => { more_left := false }
+      Cons(y, more) => {
+        if y == x { found := true } else { #() }
+        rest := more
+      }
+    }
+  }
+  found
+}
+```
+files."main.taut" = ```tauto
+import "lib.taut" { member }
+show(&member("a", ["b", "a"]))
+```
+entry = "main.taut"
+permissions = ["--allow-div"]
+stdout = "true\n"
+
+// A function that only calls one with a `while` loop runs as written too:
+// running as written reaches the callers through the call graph, and a
+// caller of a caller.
+@ cases.a-caller-of-a-while-fn-runs-as-code
+files."lib.taut" = ```tauto
+import std::nat { Nat }
+pub fn count_to(n: Nat): Nat ! {div} {
+  var i := 0
+  while i < n { i := i + 1 }
+  i
+}
+pub fn one_more(n: Nat): Nat ! {div} { Succ(count_to(n)) }
+pub fn two_more(n: Nat): Nat ! {div} { Succ(one_more(n)) }
+```
+files."main.taut" = ```tauto
+import "lib.taut" { two_more }
+show(&two_more(3))
+```
+entry = "main.taut"
+stdout = "5\n"

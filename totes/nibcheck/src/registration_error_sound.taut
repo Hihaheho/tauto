@@ -1,15 +1,18 @@
+import "messages.taut"
 import "datas_registration.taut"
 import "written_error_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
 import "decl_names_sound.taut"
 import "error_frame.taut"
 import "rows.taut"
+import "rows_base.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "../../surface/src/surface.taut"
 
 pub theorem registration_fields_cons_ok_errors(
@@ -20,62 +23,28 @@ pub theorem registration_fields_cons_ok_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_data_fields(rest, next, generics))
 ): CkErrorFrame(c, registration_fields_cons(field, rest, c, generics)) {
   error_frame_bind(
-    Unit,
-    List(DataField),
+    <A: Ty, B: List(DataField)>,
     c,
-    (ignored: Unit, c1: Checker) => frame_bind(
-      Ty,
-      List(DataField),
-      (ty: Ty, c2: Checker) => frame_bind(
-        List(DataField),
-        List(DataField),
-        (tail: List(DataField), c3: Checker) => mut1(
-          Cons(DataFieldMk(registration_field_name(field), ty), tail),
-          c3
-        ),
-        ck_data_fields(rest, c2, generics)
+    (ty: Ty, c2: Checker) => frame_bind(
+      <A: List(DataField), B: List(DataField)>,
+      (tail: List(DataField), c3: Checker) => mut1(
+        Cons(DataFieldMk(registration_field_name(field), ty), tail),
+        c3
       ),
-      ck_written(c1, registration_field_ty(field), generics)
+      ck_data_fields(rest, c2, generics)
     ),
-    frame_error_if(
-      c,
-      "a borrow cannot be a field",
-      span_of(registration_field_ty(field)),
-      term_has_borrow(registration_field_ty(field))
-    ),
-    frame_error_if_ok_errors(
-      c,
-      "a borrow cannot be a field",
-      span_of(registration_field_ty(field)),
-      term_has_borrow(registration_field_ty(field))
-    ),
-    ignored => c1 => error_frame_bind(
-      Ty,
-      List(DataField),
-      c1,
-      (ty: Ty, c2: Checker) => frame_bind(
-        List(DataField),
-        List(DataField),
-        (tail: List(DataField), c3: Checker) => mut1(
-          Cons(DataFieldMk(registration_field_name(field), ty), tail),
-          c3
-        ),
-        ck_data_fields(rest, c2, generics)
+    ck_written(c, registration_field_ty(field), generics),
+    ck_written_frame_errors(c, registration_field_ty(field), generics),
+    ty => c2 => error_frame_bind(
+      <A: List(DataField), B: List(DataField)>,
+      c2,
+      (tail: List(DataField), c3: Checker) => mut1(
+        Cons(DataFieldMk(registration_field_name(field), ty), tail),
+        c3
       ),
-      ck_written(c1, registration_field_ty(field), generics),
-      ck_written_frame_errors(c1, registration_field_ty(field), generics),
-      ty => c2 => error_frame_bind(
-        List(DataField),
-        List(DataField),
-        c2,
-        (tail: List(DataField), c3: Checker) => mut1(
-          Cons(DataFieldMk(registration_field_name(field), ty), tail),
-          c3
-        ),
-        ck_data_fields(rest, c2, generics),
-        ih(c2),
-        tail => c3 => (clean_errors => clean_errors)
-      )
+      ck_data_fields(rest, c2, generics),
+      ih(c2),
+      tail => c3 => (clean_errors => clean_errors)
     )
   )
 }
@@ -85,7 +54,7 @@ pub theorem ck_data_fields_frame_errors(
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_data_fields(fs, c, generics)) {
-  ⊢ CkErrorFrame(c, ck_data_fields(fs, c, generics)) from match fs {
+  match fs {
     Nil => (clean_errors => clean_errors)
     Cons(field, rest) => Eq::subst(
       (z: Mut1(List(DataField), Checker)) => CkErrorFrame(c, z),
@@ -109,12 +78,10 @@ pub theorem registration_ctors_cons_ok_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_data_ctors(rest, next, generics))
 ): CkErrorFrame(c, registration_ctors_cons(ctor, rest, c, generics)) {
   error_frame_bind(
-    List(DataField),
-    List(DataCtor),
+    <A: List(DataField), B: List(DataCtor)>,
     c,
     (fields: List(DataField), c1: Checker) => frame_bind(
-      List(DataCtor),
-      List(DataCtor),
+      <A: List(DataCtor), B: List(DataCtor)>,
       (tail: List(DataCtor), c2: Checker) => mut1(
         Cons(DataCtorMk(registration_ctor_name(ctor), fields), tail),
         c2
@@ -124,8 +91,7 @@ pub theorem registration_ctors_cons_ok_errors(
     ck_data_fields(registration_ctor_fields(ctor), c, generics),
     ck_data_fields_frame_errors(registration_ctor_fields(ctor), c, generics),
     fields => c1 => error_frame_bind(
-      List(DataCtor),
-      List(DataCtor),
+      <A: List(DataCtor), B: List(DataCtor)>,
       c1,
       (tail: List(DataCtor), c2: Checker) => mut1(
         Cons(DataCtorMk(registration_ctor_name(ctor), fields), tail),
@@ -143,7 +109,7 @@ pub theorem ck_data_ctors_frame_errors(
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_data_ctors(cs, c, generics)) {
-  ⊢ CkErrorFrame(c, ck_data_ctors(cs, c, generics)) from match cs {
+  match cs {
     Nil => (clean_errors => clean_errors)
     Cons(ctor, rest) => Eq::subst(
       (z: Mut1(List(DataCtor), Checker)) => CkErrorFrame(c, z),
@@ -166,7 +132,7 @@ pub theorem ck_effect_param_frame_errors(
   p: Option(SurfaceTerm),
   generics: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_effect_param(c, e, p, generics)) {
-  ⊢ CkErrorFrame(c, ck_effect_param(c, e, p, generics)) from match p {
+  match p {
     None => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
     Some(x) => error_frame_rewrap(
       c,
@@ -185,20 +151,17 @@ pub theorem registration_effect_params_cons_ok_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_effect_params(rest, next, e, generics))
 ): CkErrorFrame(c, registration_effect_params_cons(p, rest, c, e, generics)) {
   error_frame_bind(
-    Ty,
-    List(Ty),
+    <A: Ty, B: List(Ty)>,
     c,
     (head: Ty, c1: Checker) => frame_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
       ck_effect_params(rest, c1, e, generics)
     ),
     ck_effect_param(c, e, p, generics),
     ck_effect_param_frame_errors(c, e, p, generics),
     head => c1 => error_frame_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       c1,
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
       ck_effect_params(rest, c1, e, generics),
@@ -214,7 +177,7 @@ pub theorem ck_effect_params_frame_errors(
   e: SurfaceEffect,
   generics: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_effect_params(ps, c, e, generics)) {
-  ⊢ CkErrorFrame(c, ck_effect_params(ps, c, e, generics)) from match ps {
+  match ps {
     Nil => (clean_errors => clean_errors)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),
@@ -237,7 +200,7 @@ pub theorem registration_quant_parsed_frame_errors(
   q: Text,
   o: Option(Quant)
 ): CkErrorFrame(c, registration_quant_parsed(c, e, q, o)) {
-  ⊢ CkErrorFrame(c, registration_quant_parsed(c, e, q, o)) from match o {
+  match o {
     Some(x) => (clean_errors => clean_errors)
     None => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
   }
@@ -247,7 +210,7 @@ pub theorem registration_quant_resume_frame_errors(
   e: SurfaceEffect,
   r#resume: Option(Text)
 ): CkErrorFrame(c, registration_quant_resume(c, e, r#resume)) {
-  ⊢ CkErrorFrame(c, registration_quant_resume(c, e, r#resume)) from match r#resume {
+  match r#resume {
     None => (clean_errors => clean_errors)
     Some(q) => registration_quant_parsed_frame_errors(c, e, q, quant_parse(q))
   }
@@ -268,7 +231,7 @@ pub theorem registration_effect_result_frame_errors(
   generics: Ordmap(Text, Ty),
   o: Option(SurfaceTerm)
 ): CkErrorFrame(c, registration_effect_result_k(c, generics, o)) {
-  ⊢ CkErrorFrame(c, registration_effect_result_k(c, generics, o)) from match o {
+  match o {
     None => (clean_errors => clean_errors)
     Some(r) => error_frame_rewrap(
       c,
@@ -305,15 +268,12 @@ pub theorem registration_effect_declare_frame_errors(
   e: SurfaceEffect
 ): CkErrorFrame(c, registration_effect_declare(c, e)) {
   error_frame_bind(
-    List(Ty),
-    Unit,
+    <A: List(Ty), B: Unit>,
     c,
     (params: List(Ty), c1: Checker) => frame_bind(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       (result: Ty, c2: Checker) => frame_bind(
-        Quant,
-        Unit,
+        <A: Quant, B: Unit>,
         (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
         ck_effect_quant(c2, e)
       ),
@@ -332,12 +292,10 @@ pub theorem registration_effect_declare_frame_errors(
       ck_named_generics(registration_effect_generics(e), Ordmap::empty())
     ),
     params => c1 => error_frame_bind(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       c1,
       (result: Ty, c2: Checker) => frame_bind(
-        Quant,
-        Unit,
+        <A: Quant, B: Unit>,
         (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
         ck_effect_quant(c2, e)
       ),
@@ -348,8 +306,7 @@ pub theorem registration_effect_declare_frame_errors(
         ck_named_generics(registration_effect_generics(e), Ordmap::empty())
       ),
       result => c2 => error_frame_bind(
-        Quant,
-        Unit,
+        <A: Quant, B: Unit>,
         c2,
         (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
         ck_effect_quant(c2, e),

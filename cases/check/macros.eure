@@ -85,10 +85,10 @@ fn user(): i64 { produced() }
 ```
 
 @ cases.a-definitionally-equal-output-is-accepted-in-a-proof-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 
 pub fn is_const(c: Judgement, name: Text): Bool {
@@ -119,8 +119,9 @@ pub macro fn dzr(c: Judgement): SynExpr {
 }
 ```
 files."input/main.nib" = ```tauto
+import std::std
 import "lib.nib"
-theorem t1(n: Nat): plus(Zero, n) = n { Refl(Nat, dzl!(plus(Zero, n))) }
+theorem t1(n: Nat): plus(Zero, n) = n { Refl(<A: Nat, a: (dzl!(plus(Zero, n)))>) }
 ```
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -141,7 +142,7 @@ checks."input/main.nib::t1" = "ok"
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "math.nib"
-theorem wrong(): math!(`1 + 2 = 4`) { Refl(Nat, 3) }
+theorem wrong(): math!(`1 + 2 = 4`) { Refl(<A: Nat, a: 3>) }
 ```
 files."input/math.nib" = path`../fixtures/macros-math-462c4f99.taut`
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
@@ -164,16 +165,16 @@ checks."input/main.nib::wrong" = "error: "
 file = "input/main.nib"
 name = "wrong"
 message = "type mismatch: expected `1 + 2 = 4`, found `3 = 3`\n  differing part: expected `4`, found `3`\n  expected is written as math!(`1 + 2 = 4`)"
-span = "«Refl(Nat, 3)»"
+span = "«Refl(<A: Nat, a: 3>)»"
 
 @ cases.a-function-that-does-not-check-says-why-it-is-not-defined-0
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "math.nib"
-theorem t(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+theorem t(): math!(`1 + 2 = 3`) { Refl(<A: Nat, a: 3>) }
 ```
 files."input/math.nib" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 %start Eqn
@@ -191,14 +192,14 @@ RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
 
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -208,11 +209,11 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.no_such_field)
   quote { Eq(Nat, $l, $r) }
@@ -240,10 +241,10 @@ name = "macro"
 message = "macro.function: `math`, the function of macro math, is not defined before this file: it does not check (math::Eqn has no field `no_such_field`)"
 
 @ cases.a-macro-asks-whether-two-terms-are-definitionally-equal-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 
 pub macro fn nf(c: Judgement): SynExpr ! {elab} { Judgement::term(Elab::whnf(c)) }
@@ -263,8 +264,9 @@ pub macro fn has_plus(c: Judgement): SynExpr ! {elab} {
 }
 ```
 files."input/main.nib" = ```tauto
+import std::std
 import "lib.nib"
-theorem t(): plus(Zero, Zero) = Zero { Refl(Nat, to_zero!(plus(Zero, Zero))) }
+theorem t(): plus(Zero, Zero) = Zero { Refl(<A: Nat, a: (to_zero!(plus(Zero, Zero)))>) }
 ```
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -282,10 +284,10 @@ checks."input/lib.nib::has_plus" = "skipped"
 checks."input/main.nib::t" = "ok"
 
 @ cases.a-macro-finds-a-declaration-before-it-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 
 pub macro fn nf(c: Judgement): SynExpr ! {elab} { Judgement::term(Elab::whnf(c)) }
@@ -305,8 +307,9 @@ pub macro fn has_plus(c: Judgement): SynExpr ! {elab} {
 }
 ```
 files."input/main.nib" = ```tauto
+import std::std
 import "lib.nib"
-theorem t(): Zero = Zero { Refl(Nat, has_plus!(Zero)) }
+theorem t(): Zero = Zero { Refl(<A: Nat, a: (has_plus!(Zero))>) }
 ```
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -326,10 +329,10 @@ checks."input/main.nib::t" = "ok"
 @ cases.a-macro-function-keeps-model-calls-separate-from-builtins
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::Text
-import std::prelude::Macro
+import std::text
+import std::builtin::macro
 
-pub macro fn strip(e: SynExpr): SynExpr ! {macro_error, Div} {
+pub macro fn strip(e: SynExpr): SynExpr ! {macro_error, div} {
   match e {
     ExVar(v) => {
       let t := v.name
@@ -351,9 +354,9 @@ checks."input/main.nib::f" = "ok"
 @ cases.a-macro-function-names-the-builtin-by-its-full-name-0
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::Text
+import std::text
 
-pub macro fn strip(e: SynExpr): SynExpr ! {macro_error, Div} {
+pub macro fn strip(e: SynExpr): SynExpr ! {macro_error, div} {
   match e {
     ExVar(v) => {
       let t := v.name
@@ -374,19 +377,19 @@ checks."input/main.nib::f" = "ok"
 @ cases.a-macro-function-rejects-a-constructor-of-another-type
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 
 pub(open) inductive Bx: Type { Mk(n: Nat): Bx }
 
-pub fn peel(l: List(Text)): u64 ! {Div} {
+pub fn peel(l: List(Text)): u64 ! {div} {
   match l {
     Nil => 0
     Mk(a) => 1
   }
 }
 
-pub macro fn use_peel(e: SynExpr): SynExpr ! {macro_error, Div} {
+pub macro fn use_peel(e: SynExpr): SynExpr ! {macro_error, div} {
   let k := peel(Nil)
   e
 }
@@ -417,7 +420,7 @@ message = "macro.function: `use_peel`, the function of macro use_peel, is not de
 @ cases.a-macro-is-not-run-in-the-file-that-declares-it-0
 entry = "input/main.nib"
 files."input/main.nib" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 %start Eqn
@@ -435,14 +438,14 @@ RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
 
-fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
   }
 }
 
-fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -452,17 +455,17 @@ fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, 
   }
 }
 
-fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
 }
 
-theorem t(): math!(`1 = 1`) { Refl(Nat, 1) }
+theorem t(): math!(`1 = 1`) { Refl(<A: Nat, a: 1>) }
 ````
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -489,10 +492,10 @@ message = "macro.same_file: macro math is declared in this file; a macro is used
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "math.nib"
-theorem t(): twice!(`1 = 1`) { Refl(Nat, 1) }
+theorem t(): twice!(`1 = 1`) { Refl(<A: Nat, a: 1>) }
 ```
 files."input/math.nib" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 %start Eqn
@@ -510,14 +513,14 @@ RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
 
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -527,17 +530,17 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
 }
 
-pub macro fn twice(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { math!(`1 = 1`) } }
+pub macro fn twice(e: math::Eqn): SynExpr ! {macro_error, div} { quote { math!(`1 = 1`) } }
 ````
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -558,10 +561,10 @@ checks."input/math.nib::twice" = "skipped"
 checks."input/main.nib::t" = "ok"
 
 @ cases.a-macro-reads-the-normal-form-from-the-kernel-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 
 pub macro fn nf(c: Judgement): SynExpr ! {elab} { Judgement::term(Elab::whnf(c)) }
@@ -581,8 +584,9 @@ pub macro fn has_plus(c: Judgement): SynExpr ! {elab} {
 }
 ```
 files."input/main.nib" = ```tauto
+import std::std
 import "lib.nib"
-theorem t(n: Nat): plus(Zero, n) = n { Refl(Nat, nf!(plus(Zero, n))) }
+theorem t(n: Nat): plus(Zero, n) = n { Refl(<A: Nat, a: (nf!(plus(Zero, n)))>) }
 ```
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -603,10 +607,10 @@ checks."input/main.nib::t" = "ok"
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "math.nib"
-theorem t(): rec!(`1 = 1`) { Refl(Nat, 1) }
+theorem t(): rec!(`1 = 1`) { Refl(<A: Nat, a: 1>) }
 ```
 files."input/math.nib" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 %start Eqn
@@ -623,7 +627,7 @@ LParen: '(';
 RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
-pub macro fn rec(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { rec!(`1 = 1`) } }
+pub macro fn rec(e: math::Eqn): SynExpr ! {macro_error, div} { quote { rec!(`1 = 1`) } }
 ````
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -647,10 +651,10 @@ message = "macro.depth_exceeded: macros expand into macros more than 64 deep (re
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "math.nib"
-theorem t(): math!(`1 = 1`) { Refl(Nat, 1) }
+theorem t(): math!(`1 = 1`) { Refl(<A: Nat, a: 1>) }
 ```
 files."input/math.nib" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 %start Eqn
@@ -667,8 +671,8 @@ LParen: '(';
 RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
-pub fn spin(n: i64): i64 ! {Div} { spin(n) }
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { let _ := spin(0)
+pub fn spin(n: i64): i64 ! {div} { spin(n) }
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} { let ^spun := spin(0)
  quote { Eq(Nat, 1, 1) } }
 ````
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
@@ -694,11 +698,11 @@ message = "macro.budget_exceeded: macro math took more than 10000000 steps"
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "math.nib"
-theorem t(): math!(`1 = 1`) { Refl(Nat, 1) }
+theorem t(): math!(`1 = 1`) { Refl(<A: Nat, a: 1>) }
 ```
 files."input/math.nib" = ````tauto
-import std::prelude::Macro
-import std::prelude::Os
+import std::builtin::macro
+import std::builtin::os
 
 syntax!(math, ```par
 %start Eqn
@@ -715,7 +719,7 @@ LParen: '(';
 RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { let _ := read_file("/etc/passwd")
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} { let ^read := read_file("/etc/passwd")
  quote { Eq(Nat, 1, 1) } }
 ````
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
@@ -734,19 +738,19 @@ checks."input/main.nib::macro" = "error: "
 @ cases.a-macro-that-reaches-the-os-is-refused-0.diagnostics[]
 file = "input/main.nib"
 name = "macro"
-message = "macro.row: the function of a macro may perform macro_error, macro_warn, elab and Div, and `math` performs fs_read"
+message = "macro.row: the function of a macro may perform macro_error, macro_warn, elab, div, budget, budget_memory and the operations on a `Ref`, and `math` performs fs_read"
 
 @ cases.a-proof-of-another-statement-is-rejected-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
-import std::Std
+import std::std
+import std::builtin::macro
+import std::std
 
 
 pub theorem plus_n_zero(n: Nat): plus(n, Zero) = n {
   ⊢ plus(n, Zero) = n from match n {
-    Zero => Refl(Nat, Zero)
+    Zero => Refl(<A: Nat, a: Zero>)
     Succ(k) => Eq::congr(x => Succ(x), plus_n_zero(k))
   }
 }
@@ -772,10 +776,11 @@ pub macro fn simp0(c: Judgement): Proved ! {macro_error, elab} {
 }
 
 pub macro fn wrong0(c: Judgement): Proved ! {macro_error, elab} {
-  Proved { term: quote { Zero }, proof: quote { Refl(Nat, Zero) } }
+  Proved { term: quote { Zero }, proof: quote { Refl(<A: Nat, a: Zero>) } }
 }
 ```
 files."input/main.nib" = ```tauto
+import std::std
 import "lib.nib"
 fn f(n: Nat): Nat { wrong0!(plus(n, Zero)) }
 ```
@@ -798,18 +803,18 @@ checks."input/main.nib::macro" = "error: "
 @ cases.a-proof-of-another-statement-is-rejected-0.diagnostics[]
 file = "input/main.nib"
 name = "macro"
-message = "macro.proof_rejected: the proof the macro made is rejected: type mismatch: expected `tauto_lib::std::Std::plus(n, Zero) = Zero`, found `Zero = Zero`\n  differing part: expected `tauto_lib::std::Std::plus(n, Zero)`, found `Zero`"
+message = "macro.proof_rejected: the proof the macro made is rejected: type mismatch: expected `plus(n, Zero) = Zero`, found `Zero = Zero`\n  differing part: expected `plus(n, Zero)`, found `Zero`"
 
 @ cases.a-proved-change-is-used-by-what-follows-0
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
-import std::Std
+import std::builtin::macro
+import std::std
 
 
 pub theorem plus_n_zero(n: Nat): plus(n, Zero) = n {
   ⊢ plus(n, Zero) = n from match n {
-    Zero => Refl(Nat, Zero)
+    Zero => Refl(<A: Nat, a: Zero>)
     Succ(k) => Eq::congr(x => Succ(x), plus_n_zero(k))
   }
 }
@@ -835,14 +840,14 @@ pub macro fn simp0(c: Judgement): Proved ! {macro_error, elab} {
 }
 
 pub macro fn wrong0(c: Judgement): Proved ! {macro_error, elab} {
-  Proved { term: quote { Zero }, proof: quote { Refl(Nat, Zero) } }
+  Proved { term: quote { Zero }, proof: quote { Refl(<A: Nat, a: Zero>) } }
 }
 ```
 files."input/main.nib" = ```tauto
-import std::Std
+import std::std
 import "lib.nib"
 fn f(n: Nat): Nat { simp0!(plus(n, Zero)) }
-theorem f_is_id(n: Nat): f(n) = n { Refl(Nat, n) }
+theorem f_is_id(n: Nat): f(n) = n { Refl(<A: Nat, a: n>) }
 ```
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -865,7 +870,7 @@ checks."input/main.nib::f_is_id" = "ok"
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "math.nib"
-theorem t(): math!(`1 + = 3`) { Refl(Nat, 3) }
+theorem t(): math!(`1 + = 3`) { Refl(<A: Nat, a: 3>) }
 ```
 files."input/math.nib" = path`../fixtures/macros-math-462c4f99.taut`
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
@@ -893,7 +898,7 @@ message = "macro.syntax_error: in math: expected Num or LParen, found Equals"
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "math.nib"
-theorem one_plus_two(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+theorem one_plus_two(): math!(`1 + 2 = 3`) { Refl(<A: Nat, a: 3>) }
 ```
 files."input/math.nib" = path`../fixtures/macros-math-462c4f99.taut`
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
@@ -914,20 +919,17 @@ checks."input/math.nib::math" = "skipped"
 checks."input/main.nib::one_plus_two" = "ok"
 
 @ cases.a-temporary-of-a-macro-does-not-take-the-users-name-0
-entry = "input/macro-entry.taut"
+entry = "input/main.nib"
 files."input/main.nib" = ```tauto
+import "swap.nib"
 var tmp := 1
 var other := 2
 swap!(`tmp other`)
-perform show("tmp", tmp)
-perform show("other", other)
-```
-files."input/macro-entry.taut" = ```tauto
-import "swap.nib"
-import "main.nib"
+show(&tmp)
+show(&other)
 ```
 files."input/swap.nib" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(swp, ```par
 %start Pair
@@ -956,22 +958,23 @@ files."input/.tauto-syntax/7a04e69a7f1a1a212182c13e462121e239681beac367537d3edaa
 files."input/.tauto-syntax/b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4.tables`
 
 budget = 1000000
-shows = ["tmp = 2", "other = 1"]
-stdout = ""
+stdout = "2
+1
+"
 stderr = ""
 exit = 0
 
 @ cases.a-typed-macro-in-a-proof-is-checked-by-the-kernel-0
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 
 pub macro fn same(c: Judgement): SynExpr { Judgement::term(c) }
 ```
 files."input/main.nib" = ```tauto
 import "lib.nib"
-theorem t(): Eq(Nat, 3, 3) { same!(Refl(Nat, 3)) }
+theorem t(): Eq(Nat, 3, 3) { same!(Refl(<A: Nat, a: 3>)) }
 ```
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -989,13 +992,13 @@ checks."input/main.nib::t" = "ok"
 @ cases.a-typed-macro-may-not-add-an-effect-0
 entry = "input/macro-entry.taut"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 
 pub macro fn traced(c: Judgement): SynExpr {
   quote {
     let r := $c
-    perform show("value", r)
+    show(&r)
     r
   }
 }
@@ -1020,16 +1023,16 @@ checks_all = "ok"
 checks."input/lib.nib::traced" = "skipped"
 checks."input/main.nib::area" = "skipped"
 checks."input/main.nib::macro" = "error: "
-macro_error = "macro.row_grew: the macro added the effect show to the expression"
+macro_error = "macro.row_grew: the macro added the effect stdout to the expression"
 @ cases.a-typed-macro-may-not-add-an-effect-0.diagnostics[]
 file = "input/main.nib"
 name = "macro"
-message = "macro.row_grew: the macro added the effect show to the expression"
+message = "macro.row_grew: the macro added the effect stdout to the expression"
 
 @ cases.a-typed-macro-may-not-change-the-type-0
 entry = "input/macro-entry.taut"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 
 pub macro fn to_text(c: Judgement): SynExpr { quote { "no" } }
@@ -1063,13 +1066,13 @@ message = "macro.output_ill_typed: what the macro made does not check: the resul
 @ cases.a-typed-macro-may-not-make-a-wrong-proof-0
 entry = "input/macro-entry.taut"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 
-pub macro fn wrong(c: Judgement): SynExpr { quote { Refl(Nat, 4) } }
+pub macro fn wrong(c: Judgement): SynExpr { quote { Refl(<A: Nat, a: 4>) } }
 ```
 files."input/main.nib" = ```tauto
-pub theorem t(): Eq(Nat, 3, 3) { wrong!(Refl(Nat, 3)) }
+pub theorem t(): Eq(Nat, 3, 3) { wrong!(Refl(<A: Nat, a: 3>)) }
 ```
 files."input/macro-entry.taut" = ```tauto
 import "lib.nib"
@@ -1095,26 +1098,22 @@ name = "macro"
 message = "macro.dependent_use: the output has the type the call had but is not definitionally equal to it, and a type below depends on that equality (type mismatch: expected `3 = 3`, found `4 = 4`\n  differing part: expected `3`, found `4`)"
 
 @ cases.a-typed-macro-unrolls-a-power-0
-entry = "input/macro-entry.taut"
+entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "unroll.nib"
 
-pub fn cube(x: i64): i64 ! {Div} { unroll!(pow(x, 3)) }
-perform show("c", cube(3))
-```
-files."input/macro-entry.taut" = ```tauto
-import "unroll.nib"
-import "main.nib"
+pub fn cube(x: i64): i64 ! {div, overflow} { unroll!(pow(x, 3)) }
+show(&cube(3))
 ```
 files."input/unroll.nib" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 
-pub fn pow(x: i64, n: u64): i64 ! {Div} {
+pub fn pow(x: i64, n: u64): i64 ! {div, overflow} {
   if n == 0 { 1 } else { x * pow(x, n - 1) }
 }
 
-pub fn is_pow_call(f: Judgement): Bool {
+pub fn is_pow_call(f: Judgement): Bool ! {overflow} {
   match Judgement::open(f) {
     VConst(name) => name == "pow"
     _ => false
@@ -1155,15 +1154,15 @@ files."input/.tauto-syntax/7a04e69a7f1a1a212182c13e462121e239681beac367537d3edaa
 files."input/.tauto-syntax/b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4.tables`
 
 budget = 1000000
-shows = ["c = 27"]
-stdout = ""
+stdout = "27
+"
 stderr = ""
 exit = 0
 
 @ cases.an-atom-that-is-not-the-inputs-is-refused-0
 entry = "input/macro-entry.taut"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 
 pub macro fn forge(c: Judgement): SynExpr { ExAtom(999, Judgement::span(c)) }
@@ -1195,14 +1194,14 @@ name = "macro"
 message = "macro.unknown_atom: an atom is not one of the input's"
 
 @ cases.an-attribute-list-must-not-leave-out-what-the-macro-makes-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 
 
-pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "isz_proof")
@@ -1211,12 +1210,15 @@ pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Di
         ty: ExApp(ExVar(Syn::ident_like(d.name, "IsZ")), Cons(quote { Zero }, Nil), d.span)
         body: Some(ExVar(Syn::ident_like(d.name, "IszZero")))
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil)
     _ => Nil
   }
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_proof!(0)
@@ -1253,14 +1255,14 @@ fix = " => theorem isz_proof"
 fix_span = ""
 
 @ cases.an-attribute-list-must-not-name-what-the-macro-does-not-make-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 
 
-pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "isz_proof")
@@ -1269,12 +1271,15 @@ pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Di
         ty: ExApp(ExVar(Syn::ident_like(d.name, "IsZ")), Cons(quote { Zero }, Nil), d.span)
         body: Some(ExVar(Syn::ident_like(d.name, "IszZero")))
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil)
     _ => Nil
   }
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_proof!(0) => theorem isz_proof, fn other
@@ -1311,14 +1316,14 @@ fix = "=> theorem isz_proof"
 fix_span = "=> theorem isz_proof, fn other"
 
 @ cases.an-attribute-list-names-the-kind-as-well-as-the-name-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 
 
-pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "isz_proof")
@@ -1327,12 +1332,15 @@ pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Di
         ty: ExApp(ExVar(Syn::ident_like(d.name, "IsZ")), Cons(quote { Zero }, Nil), d.span)
         body: Some(ExVar(Syn::ident_like(d.name, "IszZero")))
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil)
     _ => Nil
   }
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_proof!(0) => fn isz_proof
@@ -1369,12 +1377,12 @@ fix = "=> theorem isz_proof"
 fix_span = "=> fn isz_proof"
 
 @ cases.a-macro-that-makes-its-declaration-again-says-replace-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
-pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => Cons(StInductive(d), Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "isz_proof")
@@ -1383,12 +1391,15 @@ pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Di
         ty: ExApp(ExVar(Syn::ident_like(d.name, "IsZ")), Cons(quote { Zero }, Nil), d.span)
         body: Some(ExVar(Syn::ident_like(d.name, "IszZero")))
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil))
     _ => Nil
   }
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_again!(0) => theorem isz_proof
@@ -1425,12 +1436,12 @@ fix = "=> replace inductive IsZ, theorem isz_proof"
 fix_span = "=> theorem isz_proof"
 
 @ cases.replace-lets-an-attribute-macro-make-its-declaration-again-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
-pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => Cons(StInductive(d), Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "isz_proof")
@@ -1439,12 +1450,15 @@ pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Di
         ty: ExApp(ExVar(Syn::ident_like(d.name, "IsZ")), Cons(quote { Zero }, Nil), d.span)
         body: Some(ExVar(Syn::ident_like(d.name, "IszZero")))
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil))
     _ => Nil
   }
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_again!(0) => replace inductive IsZ, theorem isz_proof
@@ -1469,12 +1483,12 @@ checks."input/main.taut::IsZ" = "ok"
 checks."input/main.taut::t" = "ok"
 
 @ cases.the-word-before-a-changed-declaration-is-replace-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
-pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => Cons(StInductive(d), Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "isz_proof")
@@ -1483,12 +1497,15 @@ pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Di
         ty: ExApp(ExVar(Syn::ident_like(d.name, "IsZ")), Cons(quote { Zero }, Nil), d.span)
         body: Some(ExVar(Syn::ident_like(d.name, "IszZero")))
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil))
     _ => Nil
   }
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_again!(0) => rewrite inductive IsZ, theorem isz_proof
@@ -1523,12 +1540,12 @@ name = "macro"
 message = "macro.replace: `rewrite` before `inductive IsZ`: an attribute that changes its declaration writes `replace` first"
 
 @ cases.replace-names-the-declaration-the-attribute-is-before-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
-pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => Cons(StInductive(d), Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "isz_proof")
@@ -1537,12 +1554,15 @@ pub macro fn gen_again(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Di
         ty: ExApp(ExVar(Syn::ident_like(d.name, "IsZ")), Cons(quote { Zero }, Nil), d.span)
         body: Some(ExVar(Syn::ident_like(d.name, "IszZero")))
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil))
     _ => Nil
   }
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_again!(0) => replace inductive IsOne, theorem isz_proof
@@ -1577,14 +1597,14 @@ name = "macro"
 message = "macro.replace: `replace inductive IsOne` names a declaration the attribute is not written before; it is before `inductive IsZ`"
 
 @ cases.a-replaced-declaration-is-made-again-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 
 
-pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "isz_proof")
@@ -1593,12 +1613,15 @@ pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Di
         ty: ExApp(ExVar(Syn::ident_like(d.name, "IsZ")), Cons(quote { Zero }, Nil), d.span)
         body: Some(ExVar(Syn::ident_like(d.name, "IszZero")))
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil)
     _ => Nil
   }
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_proof!(0) => replace inductive IsZ, theorem isz_proof
@@ -1633,14 +1656,14 @@ name = "macro"
 message = "macro.replace: the attribute says `replace inductive IsZ`, and the macro did not make it"
 
 @ cases.an-attribute-macro-makes-what-its-list-says-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 
 
-pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "isz_proof")
@@ -1649,12 +1672,15 @@ pub macro fn gen_proof(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Di
         ty: ExApp(ExVar(Syn::ident_like(d.name, "IsZ")), Cons(quote { Zero }, Nil), d.span)
         body: Some(ExVar(Syn::ident_like(d.name, "IszZero")))
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil)
     _ => Nil
   }
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_proof!(0) => theorem isz_proof
@@ -1683,10 +1709,10 @@ checks."input/main.taut::t" = "ok"
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "math.nib"
-theorem succ_eq(n: Nat): math!(`$n + 1 = $n + 1`) { Refl(Nat, n + 1) }
+theorem succ_eq(n: Nat): math!(`$n + 1 = $n + 1`) { Refl(<A: Nat, a: (n + 1)>) }
 ```
 files."input/math.nib" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(math, ```par
 %start Eqn
@@ -1705,7 +1731,7 @@ RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
 
-pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => math_sum(p.sum)
@@ -1713,7 +1739,7 @@ pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
   }
 }
 
-pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
@@ -1723,11 +1749,11 @@ pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_err
   }
 }
 
-pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, div} {
   math_rest(math_term(s.term), s.rep)
 }
 
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} {
   let l := math_sum(e.sum)
   let r := math_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -1751,10 +1777,10 @@ checks."input/math.nib::math" = "skipped"
 checks."input/main.nib::succ_eq" = "ok"
 
 @ cases.an-output-that-is-not-definitionally-equal-breaks-the-use-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.nib"
 files."input/lib.nib" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 
 pub fn is_const(c: Judgement, name: Text): Bool {
@@ -1785,8 +1811,9 @@ pub macro fn dzr(c: Judgement): SynExpr {
 }
 ```
 files."input/main.nib" = ```tauto
+import std::std
 import "lib.nib"
-theorem t2(n: Nat): plus(n, Zero) = plus(n, Zero) { Refl(Nat, dzr!(plus(n, Zero))) }
+theorem t2(n: Nat): plus(n, Zero) = plus(n, Zero) { Refl(<A: Nat, a: (dzr!(plus(n, Zero)))>) }
 ```
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -1812,7 +1839,7 @@ message = "macro.dependent_use: the output has the type the call had but is not 
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "nat.nib"
-theorem shadow(add: Nat): nat!(Zero + add == add) { Refl(Nat, add) }
+theorem shadow(add: Nat): nat!(Zero + add == add) { Refl(<A: Nat, a: add>) }
 ```
 files."input/nat.nib" = path`../fixtures/macros-nat-26c78bac.taut`
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
@@ -1835,9 +1862,9 @@ checks."input/main.nib::shadow" = "ok"
 entry = "input/main.nib"
 files."input/ex.nib" = ```tauto
 import "math.nib"
-import std::prelude::Macro
+import std::builtin::macro
 
-pub macro fn eq_sides(e: SynExpr): SynExpr ! {macro_error, Div} {
+pub macro fn eq_sides(e: SynExpr): SynExpr ! {macro_error, div} {
   match Syn::expand(e) {
     ExApp(f, args, sp) => match f {
       ExVar(id) => if id.name == "Eq" { quote { Eq(Nat, 3, 3) } } else { Syn::error(sp, "not an Eq") }
@@ -1847,12 +1874,12 @@ pub macro fn eq_sides(e: SynExpr): SynExpr ! {macro_error, Div} {
   }
 }
 
-pub macro fn expanded(e: SynExpr): SynExpr ! {macro_error, Div} { Syn::expand(e) }
+pub macro fn expanded(e: SynExpr): SynExpr ! {macro_error, div} { Syn::expand(e) }
 ```
 files."input/main.nib" = ```tauto
 import "ex.nib"
-theorem a(): eq_sides!(math!(`1 + 2 = 3`)) { Refl(Nat, 3) }
-theorem b(): expanded!(math!(`1 + 2 = 3`)) { Refl(Nat, 3) }
+theorem a(): eq_sides!(math!(`1 + 2 = 3`)) { Refl(<A: Nat, a: 3>) }
+theorem b(): expanded!(math!(`1 + 2 = 3`)) { Refl(<A: Nat, a: 3>) }
 ```
 files."input/math.nib" = path`../fixtures/macros-math-462c4f99.taut`
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
@@ -1879,7 +1906,7 @@ checks."input/main.nib::b" = "ok"
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "nat.nib"
-theorem zero_add(b: Nat): nat!(Zero + b == b) { Refl(Nat, b) }
+theorem zero_add(b: Nat): nat!(Zero + b == b) { Refl(<A: Nat, a: b>) }
 ```
 files."input/nat.nib" = path`../fixtures/macros-nat-26c78bac.taut`
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
@@ -1902,7 +1929,7 @@ checks."input/main.nib::zero_add" = "ok"
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "nat.nib"
-theorem lit(b: Nat): nat!(`Zero + b == b`) { Refl(Nat, b) }
+theorem lit(b: Nat): nat!(`Zero + b == b`) { Refl(<A: Nat, a: b>) }
 ```
 files."input/nat.nib" = path`../fixtures/macros-nat-26c78bac.taut`
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
@@ -1929,7 +1956,7 @@ message = "macro.argument: macro nat takes an expression, not a syntax literal"
 entry = "input/main.nib"
 files."input/main.nib" = ```tauto
 import "nat.nib"
-theorem wrong(b: Nat): nat!(b + Zero == Zero) { Refl(Nat, b) }
+theorem wrong(b: Nat): nat!(b + Zero == Zero) { Refl(<A: Nat, a: b>) }
 ```
 files."input/nat.nib" = path`../fixtures/macros-nat-26c78bac.taut`
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
@@ -1951,11 +1978,11 @@ checks."input/main.nib::wrong" = "error: "
 file = "input/main.nib"
 name = "wrong"
 message = "type mismatch: expected `add(b, Zero) = Zero`, found `b = b`\n  differing part: expected `add(b, Zero)`, found `b`"
-span = "«Refl(Nat, b)»"
+span = "«Refl(<A: Nat, a: b>)»"
 
 @ cases.an-ill-typed-input-runs-no-typed-macro
 files."lib.nib" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 pub macro fn same(c: Judgement): SynExpr { Judgement::term(c) }
 ```
@@ -1967,12 +1994,12 @@ trace = []
 types = "error: "
 
 @ cases.a-constructor-of-an-inductive-in-a-quoted-pattern-is-a-constructor-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
-pub macro fn gen_pred(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_pred(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => {
       let name := Syn::decl_name(d.name, "my_pred")
@@ -1990,6 +2017,7 @@ pub macro fn gen_pred(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_pred!(0) => theorem my_pred
@@ -2017,10 +2045,9 @@ checks."input/main.taut::two" = "ok"
 @ cases.a-list-is-put-in-where-a-list-goes-0
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
-import std::prelude::Shared
+import std::builtin::macro
 
-pub macro fn gen_swap(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_swap(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => {
       let name := Syn::decl_name(d.name, "pair_swap")
@@ -2028,7 +2055,7 @@ pub macro fn gen_swap(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div
       let ctor := Syn::decl_name(d.name, concat(d.name.name, "::Mk"))
       let x := Syn::decl_name(d.name, "x")
       let y := Syn::decl_name(d.name, "y")
-      let pats := Cons(PtBind(x), Cons(PtBind(y), Nil))
+      let pats := Cons(PtBind(x, None), Cons(PtBind(y, None), Nil))
       let args := Cons(quote { $y }, Cons(quote { $x }, Nil))
       quote stmts {
         theorem $name(p: $ty): $ty {
@@ -2067,9 +2094,9 @@ checks."input/main.taut::pair_swap" = "ok"
 @ cases.a-proof-that-uses-a-function-that-runs-as-written-says-why-0
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
-pub macro fn gen_show(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_show(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => {
       let name := Syn::decl_name(d.name, "show_path")
@@ -2082,16 +2109,16 @@ pub macro fn gen_show(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div
 }
 ```
 files."input/main.taut" = ```tauto
-import std::Text
+import std::text
 import "lib.taut"
-import std::Text
+import std::text
 
 @gen_show!(0) => fn show_path
 inductive Unit1: Type {
   Mk: Unit1
 }
 
-theorem shown(): show_path(42) = "42" { Refl(Text, "42") }
+theorem shown(): show_path(42) = "42" { Refl(<A: Text, a: "42">) }
 ```
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -2106,15 +2133,15 @@ checks."input/main.taut::shown" = "error: "
 @ cases.a-proof-that-uses-a-function-that-runs-as-written-says-why-0.diagnostics[]
 file = "input/main.taut"
 name = "shown"
-message = "`show_path` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text::of_nat`, which runs as written: it is a built-in of the prelude; it is in the standard library: `import std::Text`; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
+message = "`show_path` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text::of_nat`, which runs as written: it is a built-in of the prelude; it is in the standard library: `import std::text`; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
 span = " «show_path»("
 
 @ cases.a-proof-that-uses-a-function-that-runs-as-written-says-why-1
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::Text
+import std::text
 
-pub macro fn gen_show(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_show(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => {
       let name := Syn::decl_name(d.name, "show_path")
@@ -2127,7 +2154,7 @@ pub macro fn gen_show(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div
 }
 ```
 files."input/main.taut" = ```tauto
-import std::Text
+import std::text
 import "lib.taut"
 
 @gen_show!(0) => fn show_path
@@ -2135,7 +2162,7 @@ inductive Unit1: Type {
   Mk: Unit1
 }
 
-theorem shown(): show_path(42) = "42" { Refl(Text, "42") }
+theorem shown(): show_path(42) = "42" { Refl(<A: Text, a: "42">) }
 ```
 files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
 files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
@@ -2159,7 +2186,7 @@ pub fn fa(): Bool { true }
 let x := fa()
 ```
 files."input/b.taut" = ```tauto
-pub fn same(n: Nat): n = n { Refl(Nat, n) }
+pub fn same(n: Nat): n = n { Refl(<A: Nat, a: n>) }
 let y := same(Zero)
 ```
 files."input/main.taut" = ```tauto
@@ -2172,16 +2199,16 @@ fn z(): Nat { passthrough!(Zero) }
 checks."input/main.taut::z" = "ok"
 
 @ cases.a-pattern-variable-of-another-file-does-not-hide-a-constructor-a-macro-names-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
 pub(open) inductive Arg: Type {
   Mk(n: Nat): Arg
 }
 
-pub macro fn gen_made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => {
       let name := Syn::decl_name(d.name, "made")
@@ -2195,6 +2222,7 @@ pub macro fn gen_made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div
 }
 ```
 files."input/other.taut" = ```tauto
+import std::std
 pub(open) inductive Wrap: Type {
   Mk(n: Nat): Wrap
 }
@@ -2206,6 +2234,7 @@ theorem unwrap(w: Wrap): Nat {
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "other.taut"
 import "lib.taut"
 
@@ -2223,18 +2252,19 @@ checks."input/main.taut::Tag" = "ok"
 checks."input/main.taut::made" = "ok"
 
 @ cases.a-pattern-variable-of-another-file-does-not-hide-a-constructor-a-macro-names-1
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/decl.taut" = ```tauto
+import std::std
 pub(open) inductive Arg: Type {
   Mk(n: Nat): Arg
 }
 ```
 files."input/mac.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 import "decl.taut"
 
-pub macro fn gen_made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StInductive(d) => {
       let name := Syn::decl_name(d.name, "made")
@@ -2248,10 +2278,12 @@ pub macro fn gen_made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div
 }
 ```
 files."input/lib.taut" = ```tauto
+import std::std
 import "decl.taut"
 import "mac.taut"
 ```
 files."input/other.taut" = ```tauto
+import std::std
 pub(open) inductive Wrap: Type {
   Mk(n: Nat): Wrap
 }
@@ -2263,6 +2295,7 @@ theorem unwrap(w: Wrap): Nat {
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "other.taut"
 import "lib.taut"
 
@@ -2286,9 +2319,9 @@ pub fn seven(): Nat { 7 }
 ```
 files."lib.nib" = ```tauto
 import "dep.nib"
-import std::prelude::Macro
+import std::builtin::macro
 
-pub macro fn call_seven(e: SynExpr): SynExpr ! {macro_error, Div} {
+pub macro fn call_seven(e: SynExpr): SynExpr ! {macro_error, div} {
   quote { seven() }
 }
 ```
@@ -2301,12 +2334,12 @@ checks_all = "ok"
 checks.call_seven = "skipped"
 
 @ cases.an-attribute-macro-runs-on-a-struct-and-an-enum-0
-imports = [path`../../std/Std.taut`]
 entry = "input/main.taut"
 files."input/lib.taut" = ```tauto
-import std::prelude::Macro
+import std::std
+import std::builtin::macro
 
-pub macro fn gen_made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+pub macro fn gen_made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {
   ⊢ List(SynStmt) from match s {
     StStruct(d) => Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "made")
@@ -2315,6 +2348,8 @@ pub macro fn gen_made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div
         ty: quote { Nat }
         body: Some(quote { Zero })
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil)
     StEnum(d) => Cons(StTheorem(SynTheorem {
         name: Syn::ident_like(d.name, "made_too")
@@ -2323,12 +2358,15 @@ pub macro fn gen_made(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div
         ty: quote { Nat }
         body: Some(quote { Zero })
         span: d.span
+        unused: None
+        unused_params: Nil
       }), Nil)
     _ => Nil
   }
 }
 ```
 files."input/main.taut" = ```tauto
+import std::std
 import "lib.taut"
 
 @gen_made!(0) => theorem made
@@ -2360,3 +2398,21 @@ checks."input/main.taut::t" = "ok"
 checks."input/main.taut::u" = "ok"
 checks."input/main.taut::made" = "ok"
 checks."input/main.taut::made_too" = "ok"
+
+@ cases.a-type-error-in-what-a-quote-writes-says-the-macro-call
+files."lib.nib" = ```tauto
+import std::builtin::macro
+import std::builtin::classes
+pub struct Q { x: i64 }
+pub macro fn shown(e: SynExpr): SynExpr ! {macro_error, div} {
+  quote { ToText::to_text(&$e) }
+}
+```
+files."main.nib" = ```tauto
+import "lib.nib"
+fn f(q: Q): Text {
+  shown!(q)
+}
+```
+entry = "main.nib"
+check_errors = ["no instance ToText(Q)\n  in the expansion of `shown!` (byte 38)\n  written in the macro at lib.nib:5:11"]

@@ -1,0 +1,121 @@
+@ cases.a-spawned-body-may-own-an-affine-value
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+description = "The host calls a task's body once, so the body may move an affine value it captured."
+source = ```tauto
+import std::builtin::par
+
+struct(affine) Token { value: i64 }
+
+let tok := Token { value: 40 }
+let t := perform spawn(() => {
+  let inner := Task::join(perform spawn(() => 2))
+  match tok { Token { value } => value + inner }
+})
+let s := perform spawn(() => 2 + 3)
+show(&Task::join(t))
+show(&Task::join(s))
+```
+stdout = ```
+42
+5
+```
+
+@ cases.an-affine-body-passes-through-a-parameter-to-spawn-and-par
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+source = ```tauto
+import std::builtin::par
+
+struct(affine) Token { value: i64 }
+
+fn start(f: affine () -> i64 ! {div, wait}): Task(i64) ! {∀ T. spawn(() -> T ! {})} { perform spawn(f) }
+fn two(): i64 { 2 }
+
+let tok := Token { value: 40 }
+let t := start(() => match tok { Token { value } => value })
+let n := perform spawn(two)
+let a := Token { value: 1 }
+let b := Token { value: 2 }
+let p := par(() => match a { Token { value } => value }, () => match b { Token { value } => value })
+show(&(Task::join(t) + Task::join(n)))
+show(&(match p { #(x, y) => x + y }))
+```
+stdout = ```
+42
+3
+```
+
+@ cases.an-affine-value-moves-into-one-task-only
+source = ```tauto
+import std::builtin::par
+
+struct(affine) Token { value: i64 }
+
+let tok := Token { value: 41 }
+let t := perform spawn(() => match tok { Token { value } => value })
+let u := perform spawn(() => match tok { Token { value } => value })
+show(&(Task::join(t) + Task::join(u)))
+```
+types = "ok"
+lin = "error: tok is used after move"
+
+@ cases.a-spawned-body-may-call-a-function-that-spawns
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+description = "A task's body that calls a function which spawns keeps that spawn in its row: the host answers it where it runs the body."
+source = ```tauto
+import std::builtin::par
+
+fn inner(): i64 ! {wait, ∀ T. spawn(() -> T ! {div, wait})} { Task::join(perform spawn(() => 42)) }
+fn outer(): i64 ! {wait, ∀ T. spawn(() -> T ! {div, wait})} { Task::join(perform spawn(() => inner())) }
+
+show(&outer())
+```
+stdout = ```
+42
+```
+
+@ cases.a-spawned-body-may-call-a-function-that-spawns-at-a-row-variable
+description = "The nested spawn's index may be a row variable bounded by Host: the row that names the host's effects permits it."
+source = ```tauto
+import std::builtin::par { Task, spawn }
+import std::builtin::os { Host }
+
+fn inner<!e: Host>(f: () -> Unit ! {div} ∪ e): Unit ! {∀ T. spawn(() -> T ! {div} ∪ e), div} ∪ e {
+  Task::detach(perform spawn(() => f()))
+}
+
+fn outer<!e: Host>(f: () -> Unit ! {div} ∪ e): Unit ! {∀ T. spawn(() -> T ! {div} ∪ e), div} ∪ e {
+  Task::detach(perform spawn(() => inner(f)))
+}
+```
+types = "ok"
+
+@ cases.a-function-with-the-host-row-may-spawn-a-body-that-calls-a-spawning-function
+description = "A declared {Host} row names the spawn label and the effects it holds, so it permits the nested spawn."
+source = ```tauto
+import std::builtin::par { Task, spawn }
+
+fn inner(): Unit ! {∀ T. spawn(() -> T ! {div})} {
+  Task::detach(perform spawn(() => #()))
+}
+
+fn serve(): Unit ! {Host} {
+  Task::detach(perform spawn(() => inner()))
+}
+```
+types = "ok"
+
+@ cases.a-caller-gives-the-row-variable-of-a-spawning-function-its-own-row
+description = "The label of a callee's row variable (`spawn@^e`) is the label of each effect of the row the call gives it, none for an empty one."
+source = ```tauto
+import std::builtin::par { Task, spawn }
+import std::builtin::os { Host }
+
+fn inner<!e: Host>(f: () -> Unit ! {div} ∪ e): Unit ! {∀ T. spawn(() -> T ! {div} ∪ e), div} ∪ e {
+  Task::detach(perform spawn(() => f()))
+}
+
+fn caller(): Unit ! {∀ T. spawn(() -> T ! {div}), div} {
+  inner(() => #())
+}
+```
+types = "ok"

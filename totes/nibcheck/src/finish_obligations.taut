@@ -1,3 +1,4 @@
+import "messages.taut"
 import "diagnostic_lists.taut"
 import "checker.taut"
 import "datas_frame.taut"
@@ -28,7 +29,7 @@ pub theorem ck_check_kept_accepts(
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_check_kept(xs, c)))
 ): DiagnosticItemsResult(DiagnosticKept, xs, c, ck_check_kept(xs, c)) {
-  ⊢ DiagnosticItemsResult(DiagnosticKept, xs, c, ck_check_kept(xs, c)) from match xs {
+  match xs {
     Nil => AndIntro(DiagnosticItemsNil, Refl)
     Cons(k, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => DiagnosticItemsResult(DiagnosticKept, Cons(k, rest), c, z),
@@ -71,60 +72,162 @@ pub theorem ck_check_kept_identity(
 ) { clean => And::right(ck_check_kept_accepts(xs, c, clean)) }
 
 pub def DiagnosticClosures(c: Checker, r: TyClosure): Prop := finish_closure_bad(c, r) = false
-pub theorem diagnostic_closures_unf(
+pub def DiagnosticCaptures(c: Checker, r: TyClosure): Prop := ck_capture_bad(c, r) = false
+// Two checks in a row that are clean leave the checker as it was.
+pub theorem diagnostic_frame_steps(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  k: (Unit, Checker) -> Mut1(Unit, Checker),
+  p: Prop,
+  q: (Checker) -> Prop,
+  first: ∀ clean: DiagnosticClean(ck_st(m)). And(p, m = mut1(Star, c)),
+  second: ∀ v: Unit. ∀ next: Checker. ∀ clean: DiagnosticClean(
+    ck_st(k(v, next))
+  ). And(q(next), k(v, next) = mut1(Star, next)),
+  clean: DiagnosticClean(ck_st(frame_bind(k, m)))
+): And(And(p, q(c)), frame_bind(k, m) = mut1(Star, c)) {
+  match m {
+    mut1(v, next) => {
+      let s: And(q(next), k(v, next) = mut1(Star, next)) := second(v, next, clean)
+      let clean_next: DiagnosticClean(next) := Eq::subst(
+        DiagnosticClean,
+        Eq::congr((z: Mut1(Unit, Checker)) => ck_st(z), And::right(s)),
+        clean
+      )
+      let head: And(p, mut1(v, next) = mut1(Star, c)) := first(clean_next)
+      let same: next = c := Eq::congr((z: Mut1(Unit, Checker)) => ck_st(z), And::right(head))
+      AndIntro(
+        AndIntro(And::left(head), Eq::subst(q, same, And::left(s))),
+        Eq::trans(And::right(s), Eq::congr((state: Checker) => mut1(Star, state), same))
+      )
+    }
+  }
+}
+pub theorem diagnostic_closure_results_unf(
   r: TyClosure,
   rest: List(TyClosure),
   c: Checker
-): ck_check_closures(
-  Cons(r, rest),
-  c
-) = diagnostic_after(
-  (next: Checker) => ck_check_closures(rest, next),
-  frame_error_if(
-    c,
-    "a closure cannot return a borrow",
-    finish_closure_span(r),
-    finish_closure_bad(c, r)
-  )
+): ck_check_closure_results(Cons(r, rest), c) = diagnostic_after(
+  (next: Checker) => ck_check_closure_results(rest, next),
+  frame_error_if(c, closure_returns_borrow_message(), finish_closure_span(r), finish_closure_bad(c, r))
 ) { Refl }
-pub theorem ck_check_closures_accepts(
+pub theorem ck_check_closure_results_accepts(
   xs: List(TyClosure),
   c: Checker,
-  clean: DiagnosticClean(ck_st(ck_check_closures(xs, c)))
-): DiagnosticItemsResult(DiagnosticClosures, xs, c, ck_check_closures(xs, c)) {
-  ⊢ DiagnosticItemsResult(DiagnosticClosures, xs, c, ck_check_closures(xs, c)) from match xs {
+  clean: DiagnosticClean(ck_st(ck_check_closure_results(xs, c)))
+): DiagnosticItemsResult(DiagnosticClosures, xs, c, ck_check_closure_results(xs, c)) {
+  match xs {
     Nil => AndIntro(DiagnosticItemsNil, Refl)
     Cons(r, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => DiagnosticItemsResult(DiagnosticClosures, Cons(r, rest), c, z),
-      Eq::sym(diagnostic_closures_unf(r, rest, c)),
+      Eq::sym(diagnostic_closure_results_unf(r, rest, c)),
       diagnostic_items_cons_accepts(
         DiagnosticClosures,
         r,
         rest,
         c,
-        frame_error_if(
-          c,
-          "a closure cannot return a borrow",
-          finish_closure_span(r),
-          finish_closure_bad(c, r)
-        ),
-        (next: Checker) => ck_check_closures(rest, next),
-        h => diagnostic_if_sound(
-          c,
-          "a closure cannot return a borrow",
-          finish_closure_span(r),
-          finish_closure_bad(c, r),
-          h
-        ),
-        next => h => ck_check_closures_accepts(rest, next, h),
+        frame_error_if(c, closure_returns_borrow_message(), finish_closure_span(r), finish_closure_bad(c, r)),
+        (next: Checker) => ck_check_closure_results(rest, next),
+        h => diagnostic_if_sound(c, closure_returns_borrow_message(), finish_closure_span(r), finish_closure_bad(c, r), h),
+        next => h => ck_check_closure_results_accepts(rest, next, h),
         Eq::subst(
           (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
-          diagnostic_closures_unf(r, rest, c),
+          diagnostic_closure_results_unf(r, rest, c),
           clean
         )
       )
     )
   }
+}
+pub theorem diagnostic_captures_unf(
+  r: TyClosure,
+  rest: List(TyClosure),
+  c: Checker
+): ck_check_captures(Cons(r, rest), c) = diagnostic_after(
+  (next: Checker) => ck_check_captures(rest, next),
+  frame_error_if(c, ck_capture_text(c, r), ck_capture_span(r), ck_capture_bad(c, r))
+) { Refl }
+pub theorem ck_check_captures_accepts(
+  xs: List(TyClosure),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_check_captures(xs, c)))
+): DiagnosticItemsResult(DiagnosticCaptures, xs, c, ck_check_captures(xs, c)) {
+  match xs {
+    Nil => AndIntro(DiagnosticItemsNil, Refl)
+    Cons(r, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => DiagnosticItemsResult(DiagnosticCaptures, Cons(r, rest), c, z),
+      Eq::sym(diagnostic_captures_unf(r, rest, c)),
+      diagnostic_items_cons_accepts(
+        DiagnosticCaptures,
+        r,
+        rest,
+        c,
+        frame_error_if(c, ck_capture_text(c, r), ck_capture_span(r), ck_capture_bad(c, r)),
+        (next: Checker) => ck_check_captures(rest, next),
+        h => diagnostic_if_sound(c, ck_capture_text(c, r), ck_capture_span(r), ck_capture_bad(c, r), h),
+        next => h => ck_check_captures_accepts(rest, next, h),
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          diagnostic_captures_unf(r, rest, c),
+          clean
+        )
+      )
+    )
+  }
+}
+// A clean report also says every capture fits its function's kind; the
+// final diagnostics keep only what the results say.
+pub theorem ck_check_closures_accepts(
+  xs: List(TyClosure),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_check_closures(xs, c)))
+): DiagnosticItemsResult(DiagnosticClosures, xs, c, ck_check_closures(xs, c)) {
+  let both: And(
+    And(
+      DiagnosticItems(TyClosure, DiagnosticClosures, c, xs),
+      DiagnosticItems(TyClosure, DiagnosticCaptures, c, closures_by_start(xs))
+    ),
+    frame_bind(
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_captures(closures_by_start(xs), c1)),
+      ck_check_closure_results(xs, c)
+    ) = mut1(Star, c)
+  ) := diagnostic_frame_steps(
+    c,
+    ck_check_closure_results(xs, c),
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_captures(closures_by_start(xs), c1)),
+    DiagnosticItems(TyClosure, DiagnosticClosures, c, xs),
+    (next: Checker) => DiagnosticItems(TyClosure, DiagnosticCaptures, next, closures_by_start(xs)),
+    h => ck_check_closure_results_accepts(xs, c, h),
+    v => next => h => {
+      let inner: DiagnosticItemsResult(
+        DiagnosticCaptures,
+        closures_by_start(xs),
+        next,
+        ck_check_captures(closures_by_start(xs), next)
+      ) := ck_check_captures_accepts(
+        closures_by_start(xs),
+        next,
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          ck_rewrap1_id(ck_check_captures(closures_by_start(xs), next)),
+          h
+        )
+      )
+      AndIntro(
+        And::left(inner),
+        Eq::trans(ck_rewrap1_id(ck_check_captures(closures_by_start(xs), next)), And::right(inner))
+      )
+    },
+    Eq::subst(
+      (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+      ck_check_closures_unf(xs, c),
+      clean
+    )
+  )
+  AndIntro(
+    And::left(And::left(both)),
+    Eq::trans(ck_check_closures_unf(xs, c), And::right(both))
+  )
 }
 pub theorem ck_check_closures_identity(
   xs: List(TyClosure),

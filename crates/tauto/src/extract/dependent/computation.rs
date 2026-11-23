@@ -60,6 +60,10 @@ impl Eraser<'_> {
     }
 
     fn requests(&self, term: &SurfaceTerm, scope: &Scope) -> bool {
+        self.requests_or_state(term, scope, true)
+    }
+
+    fn requests_or_state(&self, term: &SurfaceTerm, scope: &Scope, state: bool) -> bool {
         match &*term.kind {
             TermKind::Perform { .. } | TermKind::Handle { .. } => true,
             TermKind::Lam { .. } | TermKind::Pi { .. } => false,
@@ -79,19 +83,23 @@ impl Eraser<'_> {
                     }
                     _ => true,
                 };
-                calls || arguments.iter().any(|arg| self.requests(arg, scope))
+                calls
+                    || arguments
+                        .iter()
+                        .any(|arg| self.requests_or_state(arg, scope, state))
             }
             TermKind::Block(stmts)
-                if stmts
-                    .iter()
-                    .any(|s| matches!(s, Stmt::Var { .. } | Stmt::Assign { .. })) =>
+                if state
+                    && stmts
+                        .iter()
+                        .any(|s| matches!(s, Stmt::Var { .. } | Stmt::Assign { .. })) =>
             {
                 true
             }
             _ => {
                 let mut found = false;
                 crate::surface::walk::children(&mut term.clone(), &mut |child| {
-                    found |= self.requests(child, scope)
+                    found |= self.requests_or_state(child, scope, state)
                 });
                 found
             }
@@ -103,6 +111,17 @@ impl Eraser<'_> {
         t: &SurfaceTerm,
         locals: &Scope,
     ) -> Result<String, Message> {
+        // Without a suspension, keep mutable places in the native block.
+        // Packing them into a continuation captures their current values
+        // instead of preserving the places lent to a dependent call.
+        if !locals
+            .bindings
+            .values()
+            .any(|b| matches!(b, Binding::Mutable { .. }))
+            && !self.requests_or_state(t, locals, false)
+        {
+            return self.expr_value(t, locals);
+        }
         if !self.requests(t, locals) {
             if let TermKind::Var(name) = &*t.kind
                 && let Some(Binding::Mutable { pack, .. }) = locals.bindings.get(name)
@@ -182,13 +201,20 @@ impl Eraser<'_> {
                         } else {
                             let roles = self.roles(name)?;
                             let prefix = self
-                                .inserted(t.id(), arguments.len(), Some(name))?
+                                .inserted(
+                                    t.id(),
+                                    crate::extract::explicit_args(arguments).len(),
+                                    Some(name),
+                                )?
                                 .map(|p| p.len())
-                                .unwrap_or(if arguments.len() == roles.len() {
-                                    0
-                                } else {
-                                    sig.implicit
-                                });
+                                .unwrap_or(
+                                    if crate::extract::explicit_args(arguments).len() == roles.len()
+                                    {
+                                        0
+                                    } else {
+                                        sig.implicit
+                                    },
+                                );
                             roles
                                 .get(prefix..)
                                 .unwrap_or_default()
@@ -208,7 +234,12 @@ impl Eraser<'_> {
             TermKind::App { arguments, .. } => arguments
                 .iter()
                 .enumerate()
-                .map(|(i, arg)| erased_slots.get(i) == Some(&true) && !self.requests(arg, locals))
+                .map(|(i, arg)| {
+                    let off = usize::from(crate::extract::is_named_implicits(&arguments[0]));
+                    i >= off
+                        && erased_slots.get(i - off) == Some(&true)
+                        && !self.requests(arg, locals)
+                })
                 .collect(),
             _ => Vec::new(),
         };
@@ -269,7 +300,7 @@ impl Eraser<'_> {
 
     fn handler_name(&mut self, pattern: &Pattern) -> Result<Name, Message> {
         match pattern {
-            Pattern::Bind(name) => Ok(name.clone()),
+            Pattern::Bind { name: name, .. } => Ok(name.clone()),
             Pattern::Wild => Ok(self.fresh("Discard").into()),
             _ => Err("dependent extraction: handler pattern must bind a value".into()),
         }
@@ -316,6 +347,7 @@ impl Eraser<'_> {
                 name,
                 place: None,
                 value,
+                ..
             } if matches!(locals.bindings.get(name), Some(Binding::Mutable { .. })) => {
                 let value = self.expr(value, locals)?;
                 let assigned = self.fresh("Assigned");
@@ -327,6 +359,34 @@ impl Eraser<'_> {
                     "{{ Ref::set({}, {})\n {body} }}",
                     self.symbol(name),
                     unpack.replace("$v", &assigned)
+                );
+                self.bind(&value, &assigned.into(), &body, locals)
+            }
+            // `*r := e` of a borrowed `&mut` parameter: write through the
+            // lend, then continue. Vars use `Ref` above; parameters stay borrows.
+            // A pure right-hand side stays in the same scope so `r` is still the
+            // parameter; an effectful one is bound and the place is captured.
+            Stmt::Assign {
+                name,
+                place: None,
+                value,
+                deref: Some(_),
+                ..
+            } if locals.contains(name) => {
+                let body = self.sequence(rest, locals)?;
+                if !self.requests(value, locals) {
+                    let value = self.expr(value, locals)?;
+                    return Ok(format!(
+                        "{{ *{} := {value}\n {body} }}",
+                        self.symbol(name)
+                    ));
+                }
+                let value = self.expr(value, locals)?;
+                let assigned = self.fresh("Assigned");
+                let body = format!(
+                    "{{ *{} := {}\n {body} }}",
+                    self.symbol(name),
+                    assigned
                 );
                 self.bind(&value, &assigned.into(), &body, locals)
             }

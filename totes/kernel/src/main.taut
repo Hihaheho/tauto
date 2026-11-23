@@ -3,14 +3,14 @@ import "data.taut"
 import "kernel.taut"
 import "wire.taut"
 import "../../text/src/text.taut"
-import std::Text
-import std::Base
-import std::prelude::Os
+import std::text
+import std::base
+import std::builtin::os
 // The parts of `t` between the bytes `sep`, scanned from the end so the
 // list comes out in order without a reverse. `i` counts down to the start,
 // and `end` is where the part being scanned stops.
 pub fn kernel_cut(t: Text, sep: Nat, i: Nat, end: Nat, done: List(Text)): List(Text) {
-  ⊢ List(Text) from match i {
+  match i {
     Zero => Cons(Text::slice_or_empty(t, 0, end), done)
     Succ(j) => ⊢ List(Text) from match Nat::eq(Text::byte_value(t, j), sep) {
       true => kernel_cut(t, sep, j, j, Cons(Text::slice_or_empty(t, Nat::add(j, 1), end), done))
@@ -23,7 +23,7 @@ pub fn kernel_split(t: Text, sep: Nat): List(Text) {
   kernel_cut(t, sep, Text::len(t), Text::len(t), Nil)
 }
 
-pub fn kernel_main_lines(&mut c: KernelCore, lines: List(Text)): Unit {
+pub fn kernel_main_lines(c: &mut KernelCore, lines: List(Text)): Unit ! {stdout} {
   match lines {
     Nil => #()
     Cons(line, rest) => {
@@ -45,12 +45,12 @@ pub fn kernel_main_lines(&mut c: KernelCore, lines: List(Text)): Unit {
   }
 }
 
-pub fn kernel_main_files(paths: List(Text)): Unit {
+pub fn kernel_main_files(paths: List(Text)): Unit ! {fs_read, stdout} {
   match paths {
     Nil => #()
     Cons(path, rest) => {
       match read_file(path) {
-        Err(e) => print(Text::concat("unreadable", text_newline()))
+        Err(^e) => print(Text::concat("unreadable", text_newline()))
         Ok(source) => {
           var c: KernelCore := kernel_new()
           kernel_main_lines(&mut c, kernel_split(source, 10))
@@ -61,4 +61,6 @@ pub fn kernel_main_files(paths: List(Text)): Unit {
   }
 }
 
-kernel_main_files(perform argv())
+perform main(() => {
+  kernel_main_files(perform argv())
+})

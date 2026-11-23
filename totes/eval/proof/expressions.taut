@@ -1,3 +1,4 @@
+import std::array
 import "arguments.taut"
 import "results.taut"
 import "steps.taut"
@@ -9,31 +10,34 @@ import "../../vm/src/compile.taut"
 import "../../vm/src/cps.taut"
 import "../../vm/src/machine.taut"
 import "../../vm/src/mval.taut"
-import std::Base
+import std::base
 
 // The supported expression shape is a property of CPS, not a separate language.
 mutual {
   pub fn EPrimitiveExpr(e: Cps): Prop {
     match e {
-      CPure(v) => True
-      CMap(value, op) => EPrimitiveExpr(value)
-      MkCPrim(op, args) => EPrimitiveArgs(args)
-      CRead(id, deref) => False
-      CCall(callee, args, ticked) => False
-      CTail(inst, args) => False
-      CBuiltin(name, args) => False
-      CBranch(cond, then, otherwise) => False
+      CPure(^v) => True
+      CMap(value, ^op) => EPrimitiveExpr(value)
+      MkCPrim(^op, args) => EPrimitiveArgs(args)
+      CRead(^id, ^deref) => False
+      CCall(^callee, ^args, ^ticked) => False
+      CTail(^inst, ^args, ^ticked) => False
+      CBuiltin(^name, ^args) => False
+      CExtern(^name, ^args) => False
+      CBranch(^cond, ^then, ^otherwise) => False
       CSeq(items) => EPrimitiveArgs(items)
-      CDefine(id, is_shared, drop, init) => False
-      CAssign(id, path, through, value) => False
-      CWhile(cond, body, ticked) => False
-      CReturn(value) => False
-      CMatch(scrut, pats, guards, bodies) => False
-      CClosure(body, params, captures, borrowed, refs) => False
-      CPerform(op, quant, args) => False
-      CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => False
-      CBorrow(id, path, through) => False
-      CBudget(memory, steps, body) => False
+      CDefine(^id, ^is_shared, ^drop, ^init) => False
+      CAssign(^id, ^path, ^through, ^value) => False
+      CWhile(^cond, ^body, ^ticked) => False
+      CReturn(^value) => False
+      CMatch(^scrut, ^pats, ^guards, ^bodies) => False
+      CClosure(^body, ^params, ^captures, ^borrowed, ^refs) => False
+      CPerform(^op, ^quant, ^args) => False
+      CHandle(^body, ^ops, ^pats, ^ks, ^bodies, ^rpats, ^rguards, ^rbodies) => False
+      CBorrow(^id, ^path, ^through) => False
+      CTake(^id) => False
+      CSweep => False
+      CBudget(^memory, ^steps, ^body) => False
     }
   }
 
@@ -50,7 +54,7 @@ pub theorem e_primitive_clears(
   k: MCode,
   cs: CSt,
   shape: EPrimitiveArgs(items)
-): c_clears(items, k, cs) = (Pair { fst: k, snd: cs }) {
+): c_clears(items, k, cs) = (#(k, cs)) {
   match items {
     Nil => Refl
     Cons(item, rest) => match item {
@@ -59,8 +63,9 @@ pub theorem e_primitive_clears(
       MkCPrim(op, args) => e_primitive_clears(rest, k, cs, And::right(shape))
       CRead(id, deref) => e_primitive_clears(rest, k, cs, And::right(shape))
       CCall(callee, args, ticked) => e_primitive_clears(rest, k, cs, And::right(shape))
-      CTail(inst, args) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CTail(inst, args, ticked) => e_primitive_clears(rest, k, cs, And::right(shape))
       CBuiltin(name, args) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CExtern(name, args) => e_primitive_clears(rest, k, cs, And::right(shape))
       CBranch(cond, then, otherwise) => e_primitive_clears(rest, k, cs, And::right(shape))
       CSeq(nested) => e_primitive_clears(rest, k, cs, And::right(shape))
       CDefine(id, is_shared, drop, init) => False::elim(And::left(shape))
@@ -82,6 +87,8 @@ pub theorem e_primitive_clears(
         And::right(shape)
       )
       CBorrow(id, path, through) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CTake(id) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CSweep => e_primitive_clears(rest, k, cs, And::right(shape))
       CBudget(memory, steps, body) => e_primitive_clears(rest, k, cs, And::right(shape))
     }
   }
@@ -90,25 +97,28 @@ pub theorem e_primitive_clears(
 mutual {
   pub fn e_expression_steps(e: Cps): Nat {
     match e {
-      CPure(v) => 1
-      CMap(value, op) => Succ(e_expression_steps(value))
-      MkCPrim(op, args) => Succ(e_arguments_steps(args))
-      CRead(id, deref) => 0
-      CCall(callee, args, ticked) => 0
-      CTail(inst, args) => 0
-      CBuiltin(name, args) => 0
-      CBranch(cond, then, otherwise) => 0
+      CPure(^v) => 1
+      CMap(value, ^op) => Succ(e_expression_steps(value))
+      MkCPrim(^op, args) => Succ(e_arguments_steps(args))
+      CRead(^id, ^deref) => 0
+      CCall(^callee, ^args, ^ticked) => 0
+      CTail(^inst, ^args, ^ticked) => 0
+      CBuiltin(^name, ^args) => 0
+      CExtern(^name, ^args) => 0
+      CBranch(^cond, ^then, ^otherwise) => 0
       CSeq(items) => e_sequence_steps(items)
-      CDefine(id, is_shared, drop, init) => 0
-      CAssign(id, path, through, value) => 0
-      CWhile(cond, body, ticked) => 0
-      CReturn(value) => 0
-      CMatch(scrut, pats, guards, bodies) => 0
-      CClosure(body, params, captures, borrowed, refs) => 0
-      CPerform(op, quant, args) => 0
-      CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => 0
-      CBorrow(id, path, through) => 0
-      CBudget(memory, steps, body) => 0
+      CDefine(^id, ^is_shared, ^drop, ^init) => 0
+      CAssign(^id, ^path, ^through, ^value) => 0
+      CWhile(^cond, ^body, ^ticked) => 0
+      CReturn(^value) => 0
+      CMatch(^scrut, ^pats, ^guards, ^bodies) => 0
+      CClosure(^body, ^params, ^captures, ^borrowed, ^refs) => 0
+      CPerform(^op, ^quant, ^args) => 0
+      CHandle(^body, ^ops, ^pats, ^ks, ^bodies, ^rpats, ^rguards, ^rbodies) => 0
+      CBorrow(^id, ^path, ^through) => 0
+      CTake(^id) => 0
+      CSweep => 0
+      CBudget(^memory, ^steps, ^body) => 0
     }
   }
 
@@ -126,7 +136,7 @@ mutual {
         let later: Nat := e_sequence_steps(rest)
         ⊢ Nat from match rest {
           Nil => e_expression_steps(e)
-          Cons(next, more) => Nat::add(later, Succ(e_expression_steps(e)))
+          Cons(^next, ^more) => Nat::add(later, Succ(e_expression_steps(e)))
         }
       }
     }
@@ -140,13 +150,13 @@ mutual {
     e: Cps,
     shape: EPrimitiveExpr(e),
     p: MProgram,
-    env: List(Pair(Nat, EBinding)),
+    env: List(Nat × EBinding),
     cx: MCx,
     value: MVal,
     final: MCx,
     k: MCode,
     cs: CSt,
-    slots: List(MVal),
+    slots: Array(MVal),
     stack: List(MVal),
     frames: List(MFrame),
     done: e_eval(fuel, p_ctors(p), env, e, cx) = ErValue(value, final)
@@ -379,8 +389,9 @@ mutual {
         }
         CRead(id, deref) => False::elim(shape)
         CCall(callee, args, ticked) => False::elim(shape)
-        CTail(inst, args) => False::elim(shape)
+        CTail(inst, args, ticked) => False::elim(shape)
         CBuiltin(name, args) => False::elim(shape)
+        CExtern(name, args) => False::elim(shape)
         CBranch(cond, then, otherwise) => False::elim(shape)
         CSeq(items) => ⊢ ECodeResult(
           p,
@@ -451,10 +462,10 @@ mutual {
             }
           }
           Cons(first, rest) => Eq::subst(
-            (cleared: Pair(MCode, CSt)) => ECodeResult(
+            (cleared: MCode × CSt) => ECodeResult(
               p,
               e_sequence_steps(Cons(first, rest)),
-              match cleared { Pair { fst: k2, snd: cs2 } => c_seq_from(f, first, rest, k2, cs2) },
+              match cleared { #(k2, cs2) => c_seq_from(f, first, rest, k2, cs2) },
               cs,
               k,
               slots,
@@ -493,6 +504,8 @@ mutual {
         CPerform(op, quant, args) => False::elim(shape)
         CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => False::elim(shape)
         CBorrow(id, path, through) => False::elim(shape)
+        CTake(id) => False::elim(shape)
+        CSweep => False::elim(shape)
         CBudget(memory, steps, body) => False::elim(shape)
       }
     }
@@ -503,13 +516,13 @@ mutual {
     es: List(Cps),
     shape: EPrimitiveArgs(es),
     p: MProgram,
-    env: List(Pair(Nat, EBinding)),
+    env: List(Nat × EBinding),
     cx: MCx,
     values: List(MVal),
     final: MCx,
     k: MCode,
     cs: CSt,
-    slots: List(MVal),
+    slots: Array(MVal),
     stack: List(MVal),
     frames: List(MFrame),
     done: e_args(fuel, p_ctors(p), env, es, cx) = ErValue(values, final)
@@ -720,13 +733,13 @@ mutual {
     rest: List(Cps),
     shape: EPrimitiveArgs(Cons(first, rest)),
     p: MProgram,
-    env: List(Pair(Nat, EBinding)),
+    env: List(Nat × EBinding),
     cx: MCx,
     value: MVal,
     final: MCx,
     k: MCode,
     cs: CSt,
-    slots: List(MVal),
+    slots: Array(MVal),
     stack: List(MVal),
     frames: List(MFrame),
     done: e_sequence(fuel, p_ctors(p), env, Cons(first, rest), cx) = ErValue(value, final)
@@ -877,13 +890,13 @@ pub theorem e_primitive_expr_mrun(
   e: Cps,
   shape: EPrimitiveExpr(e),
   p: MProgram,
-  env: List(Pair(Nat, EBinding)),
+  env: List(Nat × EBinding),
   cx: MCx,
   value: MVal,
   final: MCx,
   k: MCode,
   cs: CSt,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   done: e_eval(fuel, p_ctors(p), env, e, cx) = ErValue(value, final)

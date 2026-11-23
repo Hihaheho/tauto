@@ -1,0 +1,13 @@
+fn extract_nat_sub(a: nat, b: nat): nat { if a < b { 0 } else { a - b } }
+fn extract_float_checked_div(a: Float, b: Float): Option(Float) { if b == 0.0 { Option::None } else { Option::Some(a / b) } }
+fn extract_float_is_infinite(x: Float): Bool { Float::abs(x) > 1.7976931348623157e308 }
+fn extract_float32_checked_div(a: Float32, b: Float32): Option(Float32) { if b == Float32::of_float(0.0) { Option::None } else { Option::Some(a / b) } }
+fn extract_float32_is_infinite(x: Float32): Bool { Float::abs(Float::of_float32(x)) > 1.7976931348623157e308 }
+fn extract_i64_of_float_checked(x: Float): Option(i64) {
+  let t := Float::trunc(x)
+  if t >= -9223372036854775808.0 && t < 9223372036854775808.0 { Option::Some(I64::of_float(t)) } else { Option::None }
+}
+fn extract_nat_div(a: nat, b: nat): nat { if b == 0 { 0 } else { div(a, b) } }
+fn extract_nat_mod(a: nat, b: nat): nat { if b == 0 { a } else { mod(a, b) } }
+fn extract_nat_divmod(a: nat, b: nat, q: nat, r: nat): nat × nat { if b == 0 || r >= b { #(q, r + a) } else { #(q + div(r + a, b), mod(r + a, b)) } }
+fn extract_unreachable<A: Linear>(): A ! {div} { extract_unreachable() }

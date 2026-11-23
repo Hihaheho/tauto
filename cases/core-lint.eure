@@ -1,21 +1,3 @@
-@ cases.a-braced-name-in-a-syntax-literal-is-found
-source = ```tauto
-theorem t(n: Nat): nat!(`${n} + ${Succ(n)} = $n`) { ?x }
-```
-lint = ["a hole `?x`: a finished file has none", "braced-name: write `$n`, not `${n}`", "braced-name: write `$Succ(n)`, not `${Succ(n)}`"]
-
-@ cases.a-braced-operation-in-a-syntax-literal-gets-parentheses
-source = ```tauto
-theorem t(n: Nat): nat!(`${n + 0} = $n`) { ?x }
-```
-lint = ["a hole `?x`: a finished file has none", "braced-name: write `$(n + 0)`, not `${n + 0}`"]
-
-@ cases.braces-around-statements-in-a-syntax-literal-are-fine
-source = ```tauto
-theorem t(n: Nat): nat!(`${ let m := n; m } = $n`) { ?x }
-```
-lint = ["a hole `?x`: a finished file has none"]
-
 @ cases.a-default-arm-is-found
 source = ```tauto
 fn f(n: Nat): Nat { match n { Zero => 1, _ => 0 } }
@@ -36,14 +18,14 @@ lint = ["a hole `?h`: a finished file has none"]
 
 @ cases.a-typed-macro-in-a-proof-is-found
 source = ```tauto
-macro fn m(c: Judgement): SynExpr { c }
+pub macro fn m(c: Judgement): SynExpr { c }
 theorem t(): Eq(Nat, 3, 3) { m!(Refl(Nat, 3)) }
 ```
 lint = ["typed-macro-in-proof: `m!(…)` in a proof; write the expansion (tauto macro expand)"]
 
 @ cases.a-typed-macro-in-a-program-is-fine
 source = ```tauto
-macro fn m(c: Judgement): SynExpr { c }
+pub macro fn m(c: Judgement): SynExpr { c }
 fn g(x: i64): i64 { m!(x) }
 ```
 lint = []
@@ -198,12 +180,6 @@ fn f(s: S): Nat { s.r#view }
 ```
 lint = []
 
-@ cases.a-named-pair-projection-keeps-its-function
-source = ```tauto
-fn f(p: Nat × Nat): Nat { Pair::fst(p) }
-```
-lint = []
-
 @ cases.a-proposition-by-name-is-found
 source = ```tauto
 theorem t(a: Prop, b: Prop, h: And(a, b)): a ∧ b { h }
@@ -238,41 +214,19 @@ lint = []
 
 @ cases.an-import-without-a-list-is-found
 source = ```tauto
-import std::Text
+import std::text
 import "value.taut"
 fn f(): Nat { 0 }
 ```
-lint = ["import-list: `import std::Text` writes no list of the names it brings; `tauto lint --fix` writes it", 'import-list: `import "value.taut"` writes no list of the names it brings; `tauto lint --fix` writes it']
+lint = ["import-list: `import std::text` writes no list of the names it brings; `tauto lint --fix` writes it", 'import-list: `import "value.taut"` writes no list of the names it brings; `tauto lint --fix` writes it']
 
 @ cases.an-import-with-a-list-is-fine
 source = ```tauto
-import std::Text { Text, concat }
+import std::text { Text, concat }
 import "value.taut" { Value }
 fn f(): Nat { 0 }
 ```
 lint = []
-
-@ cases.a-pair-type-written-by-its-name-is-found
-source = ```tauto
-pub def NamedPair(): Type := Pair(Nat, Nat)
-```
-lint = ["pair-name: "]
-
-@ cases.a-pair-record-written-by-its-name-is-found
-source = ```tauto
-fn f(): Nat × Nat { Pair { fst: 1, snd: 2 } }
-```
-lint = ["pair-name: "]
-
-@ cases.a-pair-pattern-written-by-its-name-is-found
-source = ```tauto
-fn f(p: Nat × Nat): Nat {
-  match p {
-    Pair { fst: a, snd: b } => a
-  }
-}
-```
-lint = ["pair-name: "]
 
 @ cases.a-product-and-a-tuple-are-fine
 source = ```tauto
@@ -315,3 +269,24 @@ source = ```tauto
 fn f(p: Nat × Bool): Nat { p.fst }
 ```
 lint = []
+
+@ cases.a-file-name-with-a-capital-letter-is-found
+files."FloatBounds.taut" = ```tauto
+pub fn one(): Nat { Succ(Zero) }
+```
+entry = "FloatBounds.taut"
+lint = ["file-name: `FloatBounds.taut` has a capital letter; a file is a module and its name is lowercase: write `float_bounds.taut`"]
+
+@ cases.a-lowercase-file-name-is-fine
+files."float_bounds.taut" = ```tauto
+pub fn one(): Nat { Succ(Zero) }
+```
+entry = "float_bounds.taut"
+lint = []
+
+@ cases.each-word-of-a-capital-file-name-is-split-by-an-underscore
+files."WordCount.taut" = ```tauto
+pub fn one(): Nat { Succ(Zero) }
+```
+entry = "WordCount.taut"
+lint = ["file-name: `WordCount.taut` has a capital letter; a file is a module and its name is lowercase: write `word_count.taut`"]

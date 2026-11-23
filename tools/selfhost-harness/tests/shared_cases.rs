@@ -127,10 +127,10 @@ fn inferred_reports_use_actual_unique_values_not_expected_values() {
         ));
     }
     assert!(
-        matches!(inferred_values("rows", "function a {Div, ask}\n", &requested), Actual::Value(Value::Map(m)) if m["a"] == Value::Array(vec![Value::Text("Div".into()), Value::Text("ask".into())]))
+        matches!(inferred_values("rows", "function a {div, ask}\n", &requested), Actual::Value(Value::Map(m)) if m["a"] == Value::Array(vec![Value::Text("div".into()), Value::Text("ask".into())]))
     );
     assert!(matches!(
-        inferred_values("rows", "function a Div\n", &requested),
+        inferred_values("rows", "function a div\n", &requested),
         Actual::HarnessFailure(_)
     ));
 }

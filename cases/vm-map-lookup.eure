@@ -1,37 +1,50 @@
 @ cases.text-keys-preserve-replacement-and-borrowed-updates
-backends = ["rust", "javascript", "vm"]
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-var entries: HashMap(Text, i64) := HashMap::new()
-HashMap::insert(&mut entries, "", 1)
-HashMap::insert(&mut entries, "日本語", 2)
-HashMap::insert(&mut entries, "last", 3)
-perform show("old", HashMap::insert(&mut entries, "日本語", 20))
-perform show("first", HashMap::get(&entries, ""))
-perform show("middle", HashMap::get(&entries, "日本語"))
-perform show("last", HashMap::get(&entries, "last"))
-perform show("missing", HashMap::get(&entries, "missing"))
-match HashMap::get_mut(&mut entries, "last") {
-  Some(value) => { value := 30 }
+var entries: IndexedMap(Text, i64) := IndexedMap::new()
+IndexedMap::insert(&mut entries, "", 1)
+IndexedMap::insert(&mut entries, "日本語", 2)
+IndexedMap::insert(&mut entries, "last", 3)
+show(&IndexedMap::insert(&mut entries, "日本語", 20))
+show(&IndexedMap::get(&entries, ""))
+show(&IndexedMap::get(&entries, "日本語"))
+show(&IndexedMap::get(&entries, "last"))
+show(&IndexedMap::get(&entries, "missing"))
+match IndexedMap::get_mut(&mut entries, "last") {
+  Some(value) => { *value := 30 }
   None => #()
 }
-perform show("updated", HashMap::get(&entries, "last"))
-perform show("size", Vec::len(&HashMap::into_vec(entries)))
+show(&IndexedMap::get(&entries, "last"))
+show(&Vec::len(&IndexedMap::into_vec(entries)))
 ```
-shows = ["old = Some(2)", "first = Some(1)", "middle = Some(20)", "last = Some(3)", "missing = None", "updated = Some(30)", "size = 3"]
+stdout = ```
+#(Some(#("日本語", 2)), None)
+Some(1)
+Some(20)
+Some(3)
+None
+Some(30)
+3
+```
 
 @ cases.nontext-keys-use-the-general-comparison
-backends = ["rust", "javascript", "vm"]
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-var entries: HashMap(i64, i64) := HashMap::new()
-HashMap::insert(&mut entries, -2, 7)
-HashMap::insert(&mut entries, 4, 8)
-perform show("old", HashMap::insert(&mut entries, -2, 9))
-perform show("first", HashMap::get(&entries, &(-2)))
-perform show("last", HashMap::get(&entries, &4))
-perform show("missing", HashMap::get(&entries, &0))
+var entries: IndexedMap(i64, i64) := IndexedMap::new()
+IndexedMap::insert(&mut entries, -2, 7)
+IndexedMap::insert(&mut entries, 4, 8)
+show(&IndexedMap::insert(&mut entries, -2, 9))
+show(&IndexedMap::get(&entries, &(-2)))
+show(&IndexedMap::get(&entries, &4))
+show(&IndexedMap::get(&entries, &0))
 ```
-shows = ["old = Some(7)", "first = Some(9)", "last = Some(8)", "missing = None"]
+stdout = ```
+#(Some(#(-2, 7)), None)
+Some(9)
+Some(8)
+None
+```

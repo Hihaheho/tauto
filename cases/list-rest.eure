@@ -35,25 +35,29 @@ differential = "surface"
 
 @ cases.list-rest-runs
 source = ```tauto
-fn sum2(l: List(i64)): i64 {
+fn sum2(l: List(i64)): i64 ! {overflow} {
   match l {
     [] => 0
     [x] => x
     [x, y, ..rest] => x + y + sum2(rest)
   }
 }
-fn len(l: List(i64)): i64 {
+fn len(l: List(i64)): i64 ! {overflow} {
   match l {
     [] => 0
     [_, ..rest] => 1 + len(rest)
   }
 }
 let xs := [3, 4]
-perform show("sum", sum2([1, 2, ..xs]))
-perform show("len", len([0, ..[1, ..xs]]))
-perform show("whole", len([..xs]))
+show(&sum2([1, 2, ..xs]))
+show(&len([0, ..[1, ..xs]]))
+show(&len([..xs]))
 ```
-shows = ["sum = 10", "len = 4", "whole = 2"]
+stdout = ```
+10
+4
+2
+```
 
 // The rest is a constructor's argument, so the implicit `y` is found by
 // first-order matching, as with `Cons(I, Cons(I, y))`.
@@ -78,10 +82,10 @@ checks_all = "checked"
 @ cases.list-rest-is-the-whole-list
 source = ```tauto
 theorem same(l: List(Nat)): [..l] = l {
-  Refl(List(Nat), l)
+  Refl(<A: List(Nat), a: l>)
 }
 theorem cons(a: Nat, l: List(Nat)): [a, ..l] = Cons(a, l) {
-  Refl(List(Nat), Cons(a, l))
+  Refl(<A: List(Nat), a: Cons(a, l)>)
 }
 ```
 checks_all = "checked"

@@ -1,0 +1,282 @@
+import "messages.taut"
+import "../../surface/src/surface.taut"
+import std::base
+import std::list
+import std::map
+import std::text
+import "checker.taut"
+import "datas.taut"
+import "extern_sealed.taut"
+import "freevars.taut"
+import "ty.taut"
+import "types_run.taut"
+import "types_decl.taut"
+import "../../text/src/text.taut"
+import "../../identity/src/identity.taut"
+
+// What `NoBorrow` asks of the report: a generic bounded by it takes no type
+// that holds a borrow, and a value whose type may hold one (a type variable
+// not bounded by `NoBorrow`) is no effect argument. Both are read on the
+// report, once every type is settled, as `types.rs` reads them when it
+// finishes.
+
+// The generics of a function bounded by `NoBorrow`.
+pub fn fn_no_borrow_generics(gs: List(Text), bounds: List(Option(Text))): List(Text) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => ⊢ List(Text) from match bounds {
+      Nil => Nil
+      Cons(b, more) => ⊢ List(Text) from match b {
+        Some(x) => if bound_no_borrow(x) {
+          Cons(g, fn_no_borrow_generics(rest, more))
+        } else {
+          fn_no_borrow_generics(rest, more)
+        }
+        None => fn_no_borrow_generics(rest, more)
+      }
+    }
+  }
+}
+
+// Each function of the statements with the generics it bounds by `NoBorrow`,
+// for those that bound any.
+mutual {
+  pub fn no_borrow_table(ss: List(SurfaceStmt), out: List(Text × List(Text))): List(Text × List(Text)) {
+    match ss {
+      Nil => out
+      Cons(s, rest) => no_borrow_table(rest, no_borrow_stmt(s, out))
+    }
+  }
+
+  pub fn no_borrow_stmt(s: SurfaceStmt, out: List(Text × List(Text))): List(Text × List(Text)) {
+    match s {
+      StFn(f) => ⊢ List(Text × List(Text)) from match fn_no_borrow_generics(f.generics, f.bounds) {
+        Nil => out
+        Cons(g, gs) => Cons(#(f.name, Cons(g, gs)), out)
+      }
+      StMutual(stmts, ^start, ^end) => no_borrow_table(stmts, out)
+      _ => out
+    }
+  }
+}
+
+pub fn no_borrow_of(table: List(Text × List(Text)), name: Text): List(Text) {
+  match table {
+    Nil => Nil
+    Cons(e, rest) => if e.fst == name { e.snd } else { no_borrow_of(rest, name) }
+  }
+}
+
+// A type that holds a borrow: a borrow, a declaration that holds one, or a
+// type applied to one (`is_view` of `types.rs`).
+mutual {
+  pub fn report_is_view(d: Datas, t: Ty): Bool {
+    match t {
+      TyBorrow(^x, ^m) => true
+      TyNamed(n, args) => data_is_view(d, surface_name_text(n)) || report_any_view(d, args)
+      _ => false
+    }
+  }
+
+  pub fn report_any_view(d: Datas, ts: List(Ty)): Bool {
+    match ts {
+      Nil => false
+      Cons(t, rest) => report_is_view(d, t) || report_any_view(d, rest)
+    }
+  }
+}
+
+// The uses that give a generic bounded by `NoBorrow` a type that holds a
+// borrow.
+pub fn use_borrow_errors(
+  d: Datas,
+  plain: List(Text),
+  gs: List(Text × Ty),
+  u: TyUse,
+  out: List(TypeError)
+): List(TypeError) {
+  match gs {
+    Nil => out
+    Cons(g, rest) => if list_has_text(plain, g.fst) && report_is_view(d, g.snd) {
+      use_borrow_errors(
+        d,
+        plain,
+        rest,
+        u,
+        Cons(TypeError { message: view_type_argument_message(), start: u.start, end: u.end }, out)
+      )
+    } else {
+      use_borrow_errors(d, plain, rest, u, out)
+    }
+  }
+}
+
+pub fn uses_borrow_errors(
+  d: Datas,
+  table: List(Text × List(Text)),
+  us: List(TyUse),
+  out: List(TypeError)
+): List(TypeError) {
+  match us {
+    Nil => out
+    Cons(u, rest) => uses_borrow_errors(
+      d,
+      table,
+      rest,
+      use_borrow_errors(d, no_borrow_of(table, u.name), u.generics, u, out)
+    )
+  }
+}
+
+// A type variable in `t` that may stand for a type holding a borrow: one not
+// bounded by `NoBorrow` (`plain`). The rigid types of an arm for every
+// instance (`A#n`) are not: the payload was checked where it was performed,
+// and the arm may perform it again.
+mutual {
+  pub fn ty_borrowing_param(t: Ty, plain: List(Text)): Option(Text) {
+    match t {
+      TyParam(n, ^k) => if list_has_text(plain, n) || option_is_some(text_find(n, "#", 0)) {
+        None
+      } else {
+        Some(n)
+      }
+      TyNamed(^n, args) => tys_borrowing_param(args, plain)
+      TyBorrow(x, ^m) => ty_borrowing_param(x, plain)
+      TyTagged(^tags, x) => ty_borrowing_param(x, plain)
+      TyUnion(ts) => tys_borrowing_param(ts, plain)
+      _ => None
+    }
+  }
+
+  pub fn tys_borrowing_param(ts: List(Ty), plain: List(Text)): Option(Text) {
+    match ts {
+      Nil => None
+      Cons(t, rest) => ⊢ Option(Text) from match ty_borrowing_param(t, plain) {
+        Some(n) => Some(n)
+        None => tys_borrowing_param(rest, plain)
+      }
+    }
+  }
+}
+
+pub fn option_is_some(o: Option(Nat)): Bool {
+  match o {
+    Some(^n) => true
+    None => false
+  }
+}
+
+// The arguments of an operation that may hold a borrow. `show` displays its
+// payload and keeps none of it.
+pub fn effect_argument_errors(
+  terms: Ordmap(TermAt, Ty),
+  plain: List(Text),
+  args: List(SurfaceTerm),
+  out: List(TypeError)
+): List(TypeError) {
+  match args {
+    Nil => out
+    Cons(a, rest) => ⊢ List(TypeError) from match Ordmap::get(terms, term_at_of(a), term_at_compare) {
+      None => effect_argument_errors(terms, plain, rest, out)
+      Some(t) => ⊢ List(TypeError) from match ty_borrowing_param(t, plain) {
+        None => effect_argument_errors(terms, plain, rest, out)
+        Some(n) => effect_argument_errors(
+          terms,
+          plain,
+          rest,
+          Cons(TypeError { message: generic_effect_argument_message(n), start: a.start, end: a.end }, out)
+        )
+      }
+    }
+  }
+}
+
+// The performs among `ts`, which come last first.
+pub fn performs_borrow_errors(
+  terms: Ordmap(TermAt, Ty),
+  plain: List(Text),
+  ts: List(SurfaceTerm),
+  out: List(TypeError)
+): List(TypeError) {
+  match ts {
+    Nil => out
+    Cons(t, rest) => ⊢ List(TypeError) from match t.kind {
+      SkPerform(^eff, args) => performs_borrow_errors(
+        terms,
+        plain,
+        rest,
+        effect_argument_errors(terms, plain, args, out)
+      )
+      _ => performs_borrow_errors(terms, plain, rest, out)
+    }
+  }
+}
+
+// The statements' performs, each read with the generics its function bounds
+// by `NoBorrow`. The errors come newest first.
+mutual {
+  pub fn stmts_effect_errors(
+    terms: Ordmap(TermAt, Ty),
+    ss: List(SurfaceStmt),
+    out: List(TypeError)
+  ): List(TypeError) {
+    match ss {
+      Nil => out
+      Cons(s, rest) => stmts_effect_errors(terms, rest, stmt_effect_errors(terms, s, out))
+    }
+  }
+
+  pub fn stmt_effect_errors(terms: Ordmap(TermAt, Ty), s: SurfaceStmt, out: List(TypeError)): List(TypeError) {
+    match s {
+      StFn(f) => performs_borrow_errors(
+        terms,
+        fn_no_borrow_generics(f.generics, f.bounds),
+        List::reverse(subterms(f.body, Nil)),
+        out
+      )
+      StMutual(stmts, ^start, ^end) => stmts_effect_errors(terms, stmts, out)
+      _ => performs_borrow_errors(terms, Nil, List::reverse(subterms_stmt(s, Nil)), out)
+    }
+  }
+}
+
+// The report with what `NoBorrow` asks of it reported after what the
+// checker found.
+pub fn report_borrow_checks(r: TypeReport, prelude: List(SurfaceStmt), program: List(SurfaceStmt)): TypeReport {
+  let table := no_borrow_table(program, no_borrow_table(prelude, Nil))
+  let found := stmts_effect_errors(r.terms, program, uses_borrow_errors(r.datas, table, r.uses, Nil))
+  TypeReport {
+    errors: List::append(r.errors, List::reverse(found)),
+    widths: r.widths,
+    lets: r.lets,
+    locals: r.locals,
+    terms: r.terms,
+    // A declaration that holds a view is one: the report says so for what reads
+    // it (the use check, the lowering).
+    datas: datas_mark_views(Ordmap::entries(r.datas.decls), r.datas),
+    quants: r.quants,
+    undetermined: r.undetermined,
+    uses: r.uses,
+    lending: r.lending,
+    lending_mut: r.lending_mut,
+    op_sigs: r.op_sigs
+  }
+}
+
+pub fn report_extern_sealed(r: TypeReport, program: List(SurfaceStmt)): TypeReport {
+  let found := extern_sealed_errors(program, r.datas, r.terms)
+  TypeReport {
+    errors: List::append(r.errors, found),
+    widths: r.widths,
+    lets: r.lets,
+    locals: r.locals,
+    terms: r.terms,
+    datas: r.datas,
+    quants: r.quants,
+    undetermined: r.undetermined,
+    uses: r.uses,
+    lending: r.lending,
+    lending_mut: r.lending_mut,
+    op_sigs: r.op_sigs
+  }
+}

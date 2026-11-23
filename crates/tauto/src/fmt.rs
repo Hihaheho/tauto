@@ -243,7 +243,7 @@ enum Node {
 /// commas (`<A, B>`) are plain tokens. A `{ }` closed on the line is a group, and so is any `{ }`
 /// inside a group: there it closes on the line too, so a nested record literal can break in the
 /// same pass as its parent rather than only once its parent's break gives it a line of its own.
-/// An effect row (`! {Div, stdout}`) is never a group: a newline inside it does not parse.
+/// An effect row (`! {div, stdout}`) is a group too: it may span lines and break at its commas.
 /// The commas of a quantifier's binders (`∀ x: A, y: A.`) do not split items either: the
 /// binders are one parameter's type, and a line for each would read as two parameters.
 fn tree(tokens: &[Token], i: &mut usize, in_group: bool) -> Vec<Node> {
@@ -258,10 +258,7 @@ fn tree(tokens: &[Token], i: &mut usize, in_group: bool) -> Vec<Node> {
             Kind::Close if t.text != "}" => return out,
             Kind::Close if in_group && braces == 0 => return out,
             Kind::Comma if in_group && braces == 0 => return out,
-            Kind::Open
-                if t.text != "{"
-                    || (!after_bang(&out) && (in_group || closes_on_line(tokens, *i))) =>
-            {
+            Kind::Open if t.text != "{" || in_group || closes_on_line(tokens, *i) => {
                 let open = t.clone();
                 *i += 1;
                 let mut items = Vec::new();
@@ -274,8 +271,11 @@ fn tree(tokens: &[Token], i: &mut usize, in_group: bool) -> Vec<Node> {
                 }
                 let close = tokens[*i].clone();
                 *i += 1;
-                if items.len() == 1 && items[0].is_empty() {
-                    items.clear();
+                // A trailing comma leaves an empty item; drop it so a one-line group is
+                // written without a trailing comma (`! {div,}` → `! {div}`). An empty
+                // group (`()`, `{}`) is then no items. `same_tokens` allows that comma.
+                while items.last().is_some_and(|item| item.is_empty()) {
+                    items.pop();
                 }
                 out.push(Node::Group { open, items, close });
             }
@@ -303,14 +303,9 @@ fn tree(tokens: &[Token], i: &mut usize, in_group: bool) -> Vec<Node> {
     out
 }
 
-/// Whether the last node is a `!`, so that a `{` after it opens an effect row.
-fn after_bang(nodes: &[Node]) -> bool {
-    matches!(nodes.last(), Some(Node::Tok(t)) if t.text == "!")
-}
-
 /// Whether the `{` at `i` closes on the same line, as a record literal does: then, outside other
 /// brackets (where a newline would not end a field), it is a group
-/// like `( )`, broken at its commas, and not a block.
+/// like `( )`, broken at its commas, and not a block. The same holds for an effect row after `!`.
 fn closes_on_line(tokens: &[Token], i: usize) -> bool {
     let mut depth = 0usize;
     for t in &tokens[i..] {
@@ -335,7 +330,9 @@ fn gap(prev: Option<&str>, t: &Token) -> &'static str {
         Some(",") => " ",
         _ if matches!(t.text.as_str(), ")" | "]" | ",") => "",
         // A macro's `!` is joined to its argument list: `m! (x)` is laid out as `m!(x)`.
-        Some("!") if t.text == "(" => "",
+        // And so is a literal written without them: `m! `x`` is laid out as ``m!`x` ``.
+        // `!?`, a row not written yet, is written together.
+        Some("!") if t.text == "(" || t.text == "?" || t.term == TerminalKind::MacroText => "",
         _ if t.spaced => " ",
         _ => "",
     }
@@ -515,6 +512,9 @@ pub fn escapes(source: &str) -> Vec<(usize, usize)> {
 /// constructing a group, before the final bracket check.
 pub fn format(source: &str) -> Result<String, Message> {
     let mut tokens = lex(source)?;
+    // A comma before the `>` that closes `<...>` (generics, implicit arguments) is a trailing
+    // comma; `<` and `>` are not a group here, so it is dropped as it is.
+    drop_commas_before_angle_close(&mut tokens);
     flatten_control_blocks(source, &mut tokens);
     balanced(&tokens)?;
     join_short_blocks(source, &mut tokens);
@@ -600,6 +600,8 @@ fn continues_list(line: &[Token], next: &Token) -> bool {
                 | TerminalKind::KwInductive
                 | TerminalKind::KwStruct
                 | TerminalKind::KwEnum
+                | TerminalKind::KwClass
+                | TerminalKind::KwInstance
         )
     };
     let arrow = |t: &Token| t.term == TerminalKind::FatArrow;
@@ -628,6 +630,27 @@ fn write_verbatim(source: &str, line: &[Token], indent: usize, out: &mut String)
 mod tests {
     use super::format;
 
+    /// Every word the grammar reserves is in `RESERVED`, or `fmt` strips the `r#` a name needs.
+    /// A word only before what its lookahead says (`budget 1000`) reserves nothing.
+    #[test]
+    fn every_grammar_keyword_is_reserved() {
+        let grammar = include_str!("../../tauto-parol/tauto.par");
+        for line in grammar
+            .lines()
+            .filter(|l| l.starts_with("Kw") && !l.contains("?="))
+        {
+            let Some(word) = line.split('\'').nth(1) else {
+                continue;
+            };
+            if word.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                assert!(
+                    tauto_surface::surface::print::RESERVED.contains(&word),
+                    "`{word}` is a keyword of the grammar but not in RESERVED"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_deep_nesting_is_an_error() {
         tauto_messages::install();
@@ -638,8 +661,21 @@ mod tests {
 }
 
 /// The AST comparison ignores source positions and transparent expression blocks.
+fn drop_commas_before_angle_close(tokens: &mut Vec<Token>) {
+    let mut i = 0;
+    while i + 1 < tokens.len() {
+        if tokens[i].kind == Kind::Comma && tokens[i + 1].text == ">" {
+            let comma = tokens.remove(i);
+            tokens[i].spaced = comma.spaced;
+        } else {
+            i += 1;
+        }
+    }
+}
+
 fn same_ast(before: &str, after: &str) -> bool {
-    use tauto_surface::surface::{dump::formatting_key, parse_program_unresolved_at};
+    use tauto_parse::parse_program_unresolved_at;
+    use tauto_surface::surface::dump::formatting_key;
     // Reading the surface AST traverses nested terms and declarations. Keep
     // this independent of the caller's stack, including editor and test threads.
     std::thread::scope(|scope| {
@@ -663,19 +699,34 @@ fn same_tokens(before: &[Token], after: &[Token]) -> bool {
     let key = |t: &Token| {
         if t.term == TerminalKind::MacroText {
             let source = format!("let x := {}", t.text);
-            if let Some(site) = tauto_surface::surface::lexical(&source).literals.first() {
+            if let Some(site) = tauto_parse::lexical(&source).literals.first() {
                 return format!("{:?}:{}", site.lit.name, site.lit.text);
             }
         }
         t.text.clone()
     };
-    before.len() == after.len() && before.iter().zip(after).all(|(a, b)| key(a) == key(b))
+    // A trailing comma before `)`, `]` or `}` may be dropped on a one-line group
+    // (`! {div,}` → `! {div}`) or kept when the list stays broken across lines.
+    let strip = |ts: &[Token]| {
+        ts.iter()
+            .enumerate()
+            .filter(|(i, t)| {
+                !(t.kind == Kind::Comma
+                    && ts
+                        .get(i + 1)
+                        .is_some_and(|n| matches!(n.text.as_str(), ")" | "]" | "}" | ">")))
+            })
+            .map(|(_, t)| key(t))
+            .collect::<Vec<_>>()
+    };
+    strip(before) == strip(after)
 }
 
 /// The closing fence establishes the literal's indentation. Move it with its
 /// body so that the syntax receives exactly the same text.
 fn block_literal(text: &str, indent: usize) -> Option<String> {
-    use tauto_surface::surface::{LitForm, lexical};
+    use tauto_parse::lexical;
+    use tauto_surface::surface::LitForm;
     let source = format!("let x := {text}");
     let lex = lexical(&source);
     let site = lex.literals.first()?;

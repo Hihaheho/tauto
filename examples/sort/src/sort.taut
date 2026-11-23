@@ -1,12 +1,12 @@
-import "../../../std/Base.taut"
-import std::prelude::Ord
+import std::base
+import std::builtin::ord
 
-// Insertion sort on any type with an order (`Ord(A)`, `std/prelude/Ord.taut`). `proof/sort.taut` proves
+// Insertion sort on any type with an order (`Ord(A)`, `std/builtin/ord.taut`). `proof/sort.taut` proves
 // that `sort(l)` is in order and is a rearrangement of `l`, from the laws of `Ord` alone.
 
 // `x` goes before the first element it is not after (`Less` or `Equal`), so equal elements keep their order.
 pub fn insert<A>(x: A, l: List(A)): List(A) where Ord(A) {
-  ⊢ List(A) from match l {
+  match l {
     Nil => Cons(x, Nil)
     Cons(y, t) => ⊢ List(A) from match Ord::compare(x, y) {
       Less => Cons(x, Cons(y, t))
@@ -17,7 +17,7 @@ pub fn insert<A>(x: A, l: List(A)): List(A) where Ord(A) {
 }
 
 pub fn sort<A>(l: List(A)): List(A) where Ord(A) {
-  ⊢ List(A) from match l {
+  match l {
     Nil => Nil
     Cons(x, t) => insert(x, sort(t))
   }

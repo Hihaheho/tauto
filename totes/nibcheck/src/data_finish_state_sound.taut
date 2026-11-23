@@ -1,7 +1,7 @@
 import "declaration_program_sound.taut"
 import "written_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "decl_names_sound.taut"
@@ -10,21 +10,22 @@ import "error_frame.taut"
 import "summary_sound.taut"
 import "summary_state.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub theorem mark_preserves_view<A: Type>(
-  r#view: (Checker) -> A,
-  replace: ∀ c: Checker. ∀ d: Datas. r#view(summary_replace(c, d)) = r#view(c),
-  entries: List(Pair(Text, Data)),
+  view: (Checker) -> A,
+  replace: ∀ c: Checker. ∀ d: Datas. view(summary_replace(c, d)) = view(c),
+  entries: List(Text × Data),
   c: Checker
-): r#view(ck_st(ck_mark_recursive(entries, c))) = r#view(c) {
-  ⊢ r#view(ck_st(ck_mark_recursive(entries, c))) = r#view(c) from match entries {
+): view(ck_st(ck_mark_recursive(entries, c))) = view(c) {
+  match entries {
     Nil => Refl
     Cons(entry, rest) => Eq::trans(
       Eq::congr(
-        (m: Mut1(Unit, Checker)) => r#view(ck_st(m)),
+        (m: Mut1(Unit, Checker)) => view(ck_st(m)),
         Eq::trans(
           summary_mark_step(entry, rest, c),
           ck_rewrap1_id(
@@ -37,7 +38,7 @@ pub theorem mark_preserves_view<A: Type>(
       ),
       Eq::trans(
         mark_preserves_view(
-          r#view,
+          view,
           replace,
           rest,
           summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(entry)))
@@ -63,7 +64,7 @@ pub theorem finish_datas_after_input_clean(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
 ): DiagnosticClean(ck_st(m)) {
-  ⊢ DiagnosticClean(ck_st(m)) from match m {
+  match m {
     mut1(ignored, next) => finish_stmts_input_clean(
       program,
       summary_replace(next, datas_summarize(ck_datas_of(next))),
@@ -84,7 +85,7 @@ pub theorem ck_finish_datas_errors(
   clean => Eq::trans(
     Eq::sym(
       mark_preserves_view(
-        List(TypeError),
+        <A: List(TypeError)>,
         decl_names_errors,
         state => datas => Refl,
         Ordmap::entries(summary_decls(ck_datas_of(c))),
@@ -107,7 +108,7 @@ pub theorem finish_datas_after_context(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
 ): written_context(ck_st(summary_finish_datas_k(program, m))) = written_context(ck_st(m)) {
-  ⊢ written_context(ck_st(summary_finish_datas_k(program, m))) = written_context(ck_st(m)) from match m {
+  match m {
     mut1(ignored, next) => Eq::congr(
       (r: Mut1(Unit, Checker)) => written_context(ck_st(r)),
       Eq::trans(
@@ -152,7 +153,7 @@ pub theorem ck_finish_datas_context(
         )
       ),
       mark_preserves_view(
-        Pair(Bool, Bool),
+        <A: (Bool × Bool)>,
         written_context,
         state => datas => Refl,
         Ordmap::entries(summary_decls(ck_datas_of(c))),

@@ -1,0 +1,67 @@
+// Parameterized `laws(m)`: vacant in the OccLaws type is `m`. Extraction
+// substitutes the call's `Vac` into the Slots::new policy (application sites
+// on the host; surface subst in the extract tote), so the vacant is
+// `Mark::Vac`, not the declaration binder `m`.
+@ cases.occ-laws-call-substitutes-the-vacant-mark
+differential = "extract"
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::uhost
+import std::uint
+import std::slots { OccLaws, SlotsModel }
+import std::builtin::ord { Option }
+
+inductive Mark: Type {
+  Vac: Mark
+  Live: Mark
+}
+
+inductive Store: Type {
+  Mk(cap: UHost): Store
+}
+
+fn st_used(s: Store, i: UHost, m: Mark): Bool { false }
+fn st_empty(c: UHost): Store { Store::Mk(c) }
+fn st_cap(s: Store): UHost { match s { Mk(c) => c } }
+fn st_put(s: Store, i: UHost, old: Mark, new: Mark): Option(Store) { None }
+fn st_take(s: Store, i: UHost, old: Mark, new: Mark): Option(Store) { None }
+fn st_recap(s: Store, c: UHost): Option(Store) { None }
+fn st_full(s: Store, a: UHost, b: UHost): Bool { false }
+
+theorem base_laws(): OccLaws(
+  Store, Mark, st_used, st_empty, Vac, st_cap, st_put, st_take, st_recap, st_full
+) {
+  OccLaws::Mk(
+    c => i => Refl,
+    c => Refl,
+    s => i => m => h => False::elim(false_ne_true(h)),
+    s => i => old => new => t => h => False::elim(Option::none_ne_some(t, h)),
+    s => i => old => new => t => j => m => h => ne => False::elim(Option::none_ne_some(t, h)),
+    s => i => old => new => t => h => False::elim(Option::none_ne_some(t, h)),
+    s => i => old => new => t => h => False::elim(Option::none_ne_some(t, h)),
+    s => i => old => new => t => h => False::elim(Option::none_ne_some(t, h)),
+    s => i => old => new => t => j => m => h => ne => False::elim(Option::none_ne_some(t, h)),
+    s => i => old => new => t => h => False::elim(Option::none_ne_some(t, h)),
+    s => c => t => i => m => h => o => False::elim(Option::none_ne_some(t, h)),
+    s => c => t => i => h => n => False::elim(Option::none_ne_some(t, h)),
+    s => c => t => h => False::elim(Option::none_ne_some(t, h)),
+    s => a => b => i => m => h => lo => hi => False::elim(false_ne_true(h))
+  )
+}
+
+theorem laws(m: Mark, e: m = Vac): OccLaws(
+  Store, Mark, st_used, st_empty, m, st_cap, st_put, st_take, st_recap, st_full
+) {
+  Eq::subst(
+    (v: Mark) => OccLaws(Store, Mark, st_used, st_empty, v, st_cap, st_put, st_take, st_recap, st_full),
+    Eq::sym(e),
+    base_laws()
+  )
+}
+
+fn make(): SlotsModel(Store, Mark, Nat, st_used) {
+  SlotsModel::new(UHost::lit(1, Refl), laws(Vac, Refl))
+}
+```
+extracted_text = ["Slots::new", "Mark::Vac"]
+extracted_lacks = [", m)", ", m,"]

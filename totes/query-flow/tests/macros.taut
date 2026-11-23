@@ -1,7 +1,6 @@
-import std::Base
-import std::List
-import std::prelude::Shared
-import std::prelude::Par
+import std::base
+import std::list
+import std::builtin::par
 import "../src/codec.taut"
 import "../src/flow.taut"
 import "../src/api.taut"
@@ -16,28 +15,28 @@ pub struct ConfigFile { path: Text }
 @asset_key!(Labeled { asset: Text, keys: [path] }) => fn LabeledFile::codec, fn Labeled
 pub struct LabeledFile { path: Text, label: Text }
 
-@query!(Add) => fn Add
-fn add(db: Db, a: i64, b: i64): i64 ! {halt, Div} { a + b }
+@query!(Add) => fn Add, fn Add::register
+fn add(db: Db, a: i64, b: i64): i64 ! {halt, div, overflow} { a + b }
 
-@query!(Length) => fn Length
-fn length_of(db: Db, path: Text): u64 ! {halt, Div} {
+@query!(Length) => fn Length, fn Length::register
+fn length_of(db: Db, path: Text): u64 ! {halt, div, overflow, ref_get, ref_new, ref_set} {
   let t := Db::asset(db, Config(), ConfigFile { path: path })
   Text::len(t)
 }
 
-fn same_parity(a: i64, b: i64): Bool { mod(a - b, 2) == 0 }
+fn same_parity(a: i64, b: i64): Bool { (mod(a, 2) == 0) == (mod(b, 2) == 0) }
 
-@query!(Parity { output_eq: same_parity }) => fn Parity
-fn parity(db: Db, path: Text): i64 ! {halt, Div} { I64::of_u64(Db::query(db, Length(path))) }
+@query!(Parity { output_eq: same_parity }) => fn Parity, fn Parity::register
+fn parity(db: Db, path: Text): i64 ! {halt, div, overflow, ref_get, ref_new, ref_set} { I64::of_u64(Db::query(db, Length(path))) }
 
 fn is<T: Shared>(a: Answer(T), ok: (T) -> Bool): Bool {
   match a {
     Value(v) => ok(v)
-    Error(e) => false
+    Error(^e) => false
     Suspended => false
-    Cycle(ks) => false
+    Cycle(^ks) => false
     Cancelled => false
-    DependenciesRemoved(ks) => false
+    DependenciesRemoved(^ks) => false
   }
 }
 
@@ -63,7 +62,7 @@ perform test("its pending keys read back", () => {
   let rt := new_runtime()
   run(rt, Length("b.txt"))
   match pending_assets_of(rt, Config()) {
-    Cons(k, rest) => expect(k.path == "b.txt", "b.txt")
+    Cons(k, ^rest) => expect(k.path == "b.txt", "b.txt")
     Nil => expect(false, "none pending")
   }
 })
@@ -82,29 +81,29 @@ perform test("output_eq decides early cutoff", () => {
 
 fn is_suspended<T: Shared>(a: Answer(T)): Bool {
   match a {
-    Value(v) => false
-    Error(e) => false
+    Value(^v) => false
+    Error(^e) => false
     Suspended => true
-    Cycle(ks) => false
+    Cycle(^ks) => false
     Cancelled => false
-    DependenciesRemoved(ks) => false
+    DependenciesRemoved(^ks) => false
   }
 }
 
 // A query whose key is its first argument only: `note` is passed to the function.
 @query!(Tagged { keys: [a] }) => fn Tagged
-fn tagged(db: Db, a: i64, note: Text): i64 ! {halt, Div} { a + I64::of_u64(Text::len(note)) }
+fn tagged(db: Db, a: i64, note: Text): i64 ! {halt, div, overflow} { a + I64::of_u64(Text::len(note)) }
 
-@query!(LabelLength) => fn LabelLength
-fn label_length(db: Db, path: Text, label: Text): u64 ! {halt, Div} {
+@query!(LabelLength) => fn LabelLength, fn LabelLength::register
+fn label_length(db: Db, path: Text, label: Text): u64 ! {halt, div, overflow, ref_get, ref_new, ref_set} {
   Text::len(Db::asset(db, Labeled(), LabeledFile { path: path, label: label }))
 }
 
-@query!(LabelsOf) => fn LabelsOf
+@query!(LabelsOf) => fn LabelsOf, fn LabelsOf::register
 fn labels_of(
   db: Db,
   u: Unit
-): List(Text) ! {halt, Div} { labels(Db::list_asset_keys(db, Labeled())) }
+): List(Text) ! {halt, div, overflow, ref_get, ref_new, ref_set} { labels(Db::list_asset_keys(db, Labeled())) }
 
 fn labels(ks: List(LabeledFile)): List(Text) {
   match ks {
@@ -143,12 +142,12 @@ perform test("keys: a listed key keeps the whole key it was last named by", () =
   resolve_asset(rt, Labeled(), LabeledFile { path: "a", label: "second" }, "y", Volatile)
   resolve_asset(rt, Labeled(), LabeledFile { path: "b", label: "other" }, "z", Volatile)
   match run(rt, LabelsOf(#())) {
-    Value(ls) => expect(List::length(ls) == 2 && List::any((l: Text) => l == "second", ls), "two keys")
+    Value(ls) => expect(List::length(ls) == 2 && List::any((l) => l == "second", ls), "two keys")
     Error(e) => expect(false, e)
     Suspended => expect(false, "suspended")
-    Cycle(ks) => expect(false, "cycle")
+    Cycle(^ks) => expect(false, "cycle")
     Cancelled => expect(false, "cancelled")
-    DependenciesRemoved(ks) => expect(false, "removed")
+    DependenciesRemoved(^ks) => expect(false, "removed")
   }
 })
 

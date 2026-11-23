@@ -1,14 +1,17 @@
+import "messages.taut"
 import "data_fields_context_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
 import "datas_registration.taut"
 import "rows.taut"
+import "rows_base.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
 import "../../surface/src/surface.taut"
@@ -19,7 +22,7 @@ pub theorem ck_effect_param_frame_context(
   p: Option(SurfaceTerm),
   generics: Ordmap(Text, Ty)
 ): CkContextFrame(c, ck_effect_param(c, e, p, generics)) {
-  ⊢ CkContextFrame(c, ck_effect_param(c, e, p, generics)) from match p {
+  match p {
     None => (ordinary => Refl)
     Some(x) => context_rewrap(
       c,
@@ -38,20 +41,17 @@ pub theorem registration_effect_params_cons_ok_context(
   ih: ∀ next: Checker. CkContextFrame(next, ck_effect_params(rest, next, e, generics))
 ): CkContextFrame(c, registration_effect_params_cons(p, rest, c, e, generics)) {
   context_bind(
-    Ty,
-    List(Ty),
+    <A: Ty, B: List(Ty)>,
     c,
     (head: Ty, c1: Checker) => frame_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
       ck_effect_params(rest, c1, e, generics)
     ),
     ck_effect_param(c, e, p, generics),
     ck_effect_param_frame_context(c, e, p, generics),
     head => c1 => context_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       c1,
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
       ck_effect_params(rest, c1, e, generics),
@@ -67,7 +67,7 @@ pub theorem ck_effect_params_frame_context(
   e: SurfaceEffect,
   generics: Ordmap(Text, Ty)
 ): CkContextFrame(c, ck_effect_params(ps, c, e, generics)) {
-  ⊢ CkContextFrame(c, ck_effect_params(ps, c, e, generics)) from match ps {
+  match ps {
     Nil => (ordinary => Refl)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkContextFrame(c, z),
@@ -90,7 +90,7 @@ pub theorem registration_quant_parsed_frame_context(
   q: Text,
   o: Option(Quant)
 ): CkContextFrame(c, registration_quant_parsed(c, e, q, o)) {
-  ⊢ CkContextFrame(c, registration_quant_parsed(c, e, q, o)) from match o {
+  match o {
     Some(x) => (ordinary => Refl)
     None => (ordinary => Refl)
   }
@@ -101,7 +101,7 @@ pub theorem registration_quant_resume_frame_context(
   e: SurfaceEffect,
   r#resume: Option(Text)
 ): CkContextFrame(c, registration_quant_resume(c, e, r#resume)) {
-  ⊢ CkContextFrame(c, registration_quant_resume(c, e, r#resume)) from match r#resume {
+  match r#resume {
     None => (ordinary => Refl)
     Some(q) => registration_quant_parsed_frame_context(c, e, q, quant_parse(q))
   }
@@ -123,7 +123,7 @@ pub theorem registration_effect_result_frame_context(
   generics: Ordmap(Text, Ty),
   o: Option(SurfaceTerm)
 ): CkContextFrame(c, registration_effect_result_k(c, generics, o)) {
-  ⊢ CkContextFrame(c, registration_effect_result_k(c, generics, o)) from match o {
+  match o {
     None => (ordinary => Refl)
     Some(r) => context_rewrap(
       c,
@@ -160,15 +160,12 @@ pub theorem registration_effect_declare_frame_context(
   e: SurfaceEffect
 ): CkContextFrame(c, registration_effect_declare(c, e)) {
   context_bind(
-    List(Ty),
-    Unit,
+    <A: List(Ty), B: Unit>,
     c,
     (params: List(Ty), c1: Checker) => frame_bind(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       (result: Ty, c2: Checker) => frame_bind(
-        Quant,
-        Unit,
+        <A: Quant, B: Unit>,
         (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
         ck_effect_quant(c2, e)
       ),
@@ -187,12 +184,10 @@ pub theorem registration_effect_declare_frame_context(
       ck_named_generics(registration_effect_generics(e), Ordmap::empty())
     ),
     params => c1 => context_bind(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       c1,
       (result: Ty, c2: Checker) => frame_bind(
-        Quant,
-        Unit,
+        <A: Quant, B: Unit>,
         (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
         ck_effect_quant(c2, e)
       ),
@@ -203,8 +198,7 @@ pub theorem registration_effect_declare_frame_context(
         ck_named_generics(registration_effect_generics(e), Ordmap::empty())
       ),
       result => c2 => context_bind(
-        Quant,
-        Unit,
+        <A: Quant, B: Unit>,
         c2,
         (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
         ck_effect_quant(c2, e),
@@ -239,7 +233,7 @@ pub theorem ck_register_ctors_context(
   is_struct: Bool,
   i: Nat
 ): CkContextFrame(c, ck_register_ctors(ctors, c, dname, i)) {
-  ⊢ CkContextFrame(c, ck_register_ctors(ctors, c, dname, i)) from match ctors {
+  match ctors {
     Nil => ordinary => Refl
     Cons(ctor, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
@@ -283,15 +277,12 @@ pub theorem registration_declare_context(
   builtin: Bool
 ): CkContextFrame(c, registration_declare(c, d, is_struct, builtin)) {
   context_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => frame_bind(
-      List(DataCtor),
-      Unit,
+      <A: List(DataCtor), B: Unit>,
       (constructors: List(DataCtor), c2: Checker) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
           d,
@@ -309,7 +300,7 @@ pub theorem registration_declare_context(
     ),
     frame_error_if(
       c,
-      "a view struct has no fields: it is an opaque type",
+      view_decl_message(is_struct),
       registration_span(d),
       Bool::and(
         surface_data_is_view(d),
@@ -318,7 +309,7 @@ pub theorem registration_declare_context(
     ),
     frame_error_if_ok_context(
       c,
-      "a view struct has no fields: it is an opaque type",
+      view_decl_message(is_struct),
       registration_span(d),
       Bool::and(
         surface_data_is_view(d),
@@ -326,12 +317,10 @@ pub theorem registration_declare_context(
       )
     ),
     ignored => c1 => context_bind(
-      List(DataCtor),
-      Unit,
+      <A: List(DataCtor), B: Unit>,
       c1,
       (constructors: List(DataCtor), c2: Checker) => frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,
           d,
@@ -352,8 +341,7 @@ pub theorem registration_declare_context(
         ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
       ),
       constructors => c2 => context_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c2,
         (ignored2: Unit, c3: Checker) => registration_insert(
           c3,

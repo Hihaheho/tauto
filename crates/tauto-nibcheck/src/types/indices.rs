@@ -11,6 +11,7 @@
 
 use crate::surface::Name;
 use std::collections::{HashMap, HashSet};
+use tauto_message::{Message, msg};
 
 use super::{
     ROW_TAIL, ROW_TYPE, Ty, TypeReport, check_program_in, prelude, prelude_for, prelude_report_for,
@@ -20,13 +21,28 @@ use crate::surface::{EffectDecl, FnDecl, Handler, Program, Stmt, SurfaceTerm, Te
 use tauto_parol::Span;
 
 /// Effects the host answers by their names; they are never indexed.
-const HOST: &[&str] = &["show", "exceeded"];
+const HOST: &[&str] = &[
+    "exceeded",
+    "ref_new",
+    "ref_get",
+    "ref_set",
+    "weak_of",
+    "weak_get",
+    "mutex_new",
+    "mutex_claim",
+    "mutex_take_claimed",
+    "mutex_put",
+    "mutex_withdraw",
+];
 
 /// The declaration and arguments of an indexed row entry.
 pub(super) fn application(entry: &Name) -> Option<(Name, Vec<SurfaceTerm>)> {
     match entry {
         Name::Effect(effect) if !effect.is_universal() => {
             Some((effect.effect().clone().into(), effect.arguments().to_vec()))
+        }
+        Name::Written(written) if !written.is_universal() => {
+            Some((Name::from(written.head()), written.arguments().to_vec()))
         }
         Name::Spelled(text) => {
             if text.starts_with(['|', '?', '∀']) || text.contains('@') {
@@ -99,6 +115,80 @@ fn argument_names(arguments: &[SurfaceTerm]) -> HashSet<Name> {
     found
 }
 
+/// The row a written function type writes, its kind (`affine () -> …`) or a
+/// borrow (`&(() -> …)`) around it.
+fn written_row(ty: &SurfaceTerm) -> Option<&Vec<Name>> {
+    match &*ty.kind {
+        TermKind::Pi {
+            effects: Some(row), ..
+        } => Some(row),
+        TermKind::FnKind { ty, .. } => written_row(ty),
+        TermKind::Borrow { term, .. } => written_row(term),
+        _ => None,
+    }
+}
+
+/// The data declarations of the program, by name.
+fn data_decls(program: &Program) -> HashMap<Name, crate::surface::DataDecl> {
+    program
+        .stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Struct(d) => Some((d.name.clone(), d.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The rows the fields of a data type write, where a parameter's written type
+/// `ty` is that data applied to arguments (`ActionOptions(A, B, E, I, R)`):
+/// each field's name and its row's entries, with the data's generics replaced
+/// by the arguments `ty` gives them. A function whose parameter has the data
+/// type writes these rows as surely as one whose parameter has the field's
+/// function type.
+fn field_rows(
+    datas: &HashMap<Name, crate::surface::DataDecl>,
+    ty: &SurfaceTerm,
+) -> Vec<(String, Name, Vec<SurfaceTerm>)> {
+    let (head, args) = match &*ty.kind {
+        TermKind::Var(h) => (h, Vec::new()),
+        TermKind::App {
+            function,
+            arguments,
+        } => match &*function.kind {
+            TermKind::Var(h) => (h, arguments.clone()),
+            _ => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+    let Some(data) = datas.get(head) else {
+        return Vec::new();
+    };
+    if data.generics.len() != args.len() {
+        return Vec::new();
+    }
+    let map: HashMap<Name, SurfaceTerm> = data.generics.iter().cloned().zip(args).collect();
+    let mut out = Vec::new();
+    for constructor in &data.constructors {
+        for (field, written) in &constructor.fields {
+            let Some(field) = field else { continue };
+            let Some(row) = written_row(written) else {
+                continue;
+            };
+            for entry in row {
+                let Some((effect, mut indices)) = application(entry) else {
+                    continue;
+                };
+                for index in &mut indices {
+                    replace_vars(index, &map);
+                }
+                out.push((field.clone(), effect, indices));
+            }
+        }
+    }
+    out
+}
+
 /// Every row of the statement: the written rows of its functions (local ones
 /// too) and of the function types in it.
 fn rows_mut(s: &mut Stmt, f: &mut dyn FnMut(&mut Vec<Name>)) {
@@ -125,6 +215,35 @@ fn rows_mut(s: &mut Stmt, f: &mut dyn FnMut(&mut Vec<Name>)) {
         } => f(row),
         TermKind::Block(stmts) => stmts.iter_mut().for_each(|s| stmt_rows(s, f)),
         _ => {}
+    });
+}
+
+/// Written effect markers of each function in the statement (including nested
+/// ones): specialized with the same substitution as [`rows_mut`].
+fn written_rows_mut(s: &mut Stmt, f: &mut dyn FnMut(&mut Vec<crate::surface::WrittenRowEffect>)) {
+    fn fn_written(d: &mut FnDecl, f: &mut dyn FnMut(&mut Vec<crate::surface::WrittenRowEffect>)) {
+        if let Some(entries) = &mut d.written_effects {
+            f(entries);
+        }
+    }
+    fn stmt_written(s: &mut Stmt, f: &mut dyn FnMut(&mut Vec<crate::surface::WrittenRowEffect>)) {
+        match s {
+            Stmt::Fn(d) => fn_written(d, f),
+            Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
+                items.iter_mut().for_each(|i| stmt_written(i, f))
+            }
+            Stmt::Attributed { stmt, .. } => stmt_written(stmt, f),
+            Stmt::Extern { fns, .. } => fns.iter_mut().for_each(|d| fn_written(d, f)),
+            Stmt::Class(c) => c.methods.iter_mut().for_each(|d| fn_written(d, f)),
+            Stmt::Instance(i) => i.methods.iter_mut().for_each(|d| fn_written(d, f)),
+            _ => {}
+        }
+    }
+    stmt_written(s, f);
+    walk::stmt(s, &mut |t| {
+        if let TermKind::Block(stmts) = std::sync::Arc::make_mut(&mut t.kind) {
+            stmts.iter_mut().for_each(|s| stmt_written(s, f));
+        }
     });
 }
 
@@ -200,14 +319,7 @@ fn typed_generics(programs: &[&Program]) -> HashMap<Name, Vec<Name>> {
             }
         }
     }
-    // The host declares `show<A>: (name: Text, value: A) -> ()`.
-    let mut out = HashMap::from([
-        (Name::from("show"), vec![Name::from("A")]),
-        (
-            tauto_surface::bindings::library_name("show"),
-            vec![Name::from("A")],
-        ),
-    ]);
+    let mut out = HashMap::new();
     for p in programs {
         collect(&p.stmts, &mut out);
     }
@@ -310,37 +422,97 @@ pub(super) fn every_instance(program: &mut Program, per_file: &mut [Vec<Stmt>], 
     for s in &mut program.stmts {
         let span = stmt_span(s).unwrap_or(Span::new(0, 0));
         rows_mut(s, &mut |row| {
+            let mut labels = Vec::new();
             for entry in row.iter_mut() {
-                if let Err(why) = read_entry(entry, &generics) {
+                if let Err(why) = read_entry(entry, &generics, &mut labels) {
                     errors.push((why, span));
                 }
             }
+            row.extend(labels);
         });
     }
     for file in per_file.iter_mut() {
         for s in file.iter_mut() {
             rows_mut(s, &mut |row| {
+                let mut labels = Vec::new();
                 for entry in row.iter_mut() {
-                    let _ = read_entry(entry, &generics);
+                    let _ = read_entry(entry, &generics, &mut labels);
                 }
+                row.extend(labels);
             });
         }
     }
-    program.errors.extend(
-        errors
-            .into_iter()
-            .map(|(t, s): (String, Span)| (t.into(), s)),
-    );
+    program.errors.extend(errors);
 }
 
 /// One entry of [`every_instance`].
-fn read_entry(entry: &mut Name, generics: &HashMap<Name, Vec<Name>>) -> Result<(), String> {
+fn read_entry(
+    entry: &mut Name,
+    generics: &HashMap<Name, Vec<Name>>,
+    labels: &mut Vec<Name>,
+) -> Result<(), Message> {
+    // `spawn(() -> A ! e)`: the label is the family's whatever `A` is, and
+    // the body's row is its index.
+    if let Some((head, arguments)) = match &*entry {
+        Name::Effect(effect) if !effect.is_universal() => Some((
+            Name::from(effect.effect().clone()),
+            effect.arguments().to_vec(),
+        )),
+        Name::Written(written) if !written.is_universal() => {
+            Some((Name::from(written.head()), written.arguments().to_vec()))
+        }
+        _ => None,
+    } && let Some((_, members)) = body_index(&arguments)
+    {
+        labels.extend(index_labels(&head, &members));
+        *entry = head;
+        return Ok(());
+    }
+    // A label of a body's effect writes the body's row: `∀ T. spawn(T)`
+    // would hide it (rule 1).
+    let universal_head = match &*entry {
+        Name::Effect(effect)
+            if effect.is_universal() && body_index(effect.arguments()).is_none() =>
+        {
+            Some(Name::from(effect.effect().clone()))
+        }
+        Name::Written(written)
+            if written.is_universal() && body_index(written.arguments()).is_none() =>
+        {
+            Some(Name::from(written.head()))
+        }
+        _ => None,
+    };
+    if let Some(head) = universal_head
+        && family_of(&head) == "spawn"
+    {
+        return Err(msg!(
+            "nibcheck-index-entry-writes-body-row",
+            entry = entry.to_string(),
+            head = family_of(&head)
+        ));
+    }
     if let Name::Effect(effect) = entry {
         if !effect.is_universal() {
             return Ok(());
         }
         let head: Name = effect.effect().clone().into();
-        let typed = generics.get(&head).map(Vec::as_slice).unwrap_or_default();
+        // `∀ T. spawn(() -> T ! e)`: every instance, with the body's row as
+        // the index.
+        if let Some((result, members)) = body_index(effect.arguments())
+            && effect.parameters().len() == 1
+            && matches!(&*result.kind, TermKind::Var(r) if r.as_local() == Some(&effect.parameters()[0]))
+        {
+            labels.extend(index_labels(&head, &members));
+            *entry = head;
+            return Ok(());
+        }
+        // A head that no effect declares is not an instance to bind: the row
+        // check says what it is (a function, or nothing), as it does for a
+        // bare entry.
+        let Some(typed) = generics.get(&head).map(Vec::as_slice) else {
+            return Ok(());
+        };
         let names = effect.parameters();
         let distinct = names.iter().collect::<HashSet<_>>().len() == names.len();
         let ordered = names.len() == effect.arguments().len() && names.iter().zip(effect.arguments())
@@ -351,30 +523,42 @@ fn read_entry(entry: &mut Name, generics: &HashMap<Name, Vec<Name>>) -> Result<(
                 .map(Name::as_str)
                 .collect::<Vec<_>>()
                 .join(", ");
-            return Err(format!(
-                "`{entry}`: every instance of `{head}` binds each type argument in order: `∀ {want}. {head}({want})`"
+            return Err(msg!(
+                "nibcheck-index-entry-binds-each-type-argument",
+                entry = entry.to_string(),
+                head = head.to_string(),
+                want = want
             ));
         }
         *entry = head;
         return Ok(());
     }
-    if let Name::Spelled(text) = &*entry
-        && let Some(rest) = text.strip_prefix('∀')
+    if let Name::Written(written) = &*entry
+        && written.is_universal()
     {
-        let Some((names, written)) = rest.split_once('.') else {
-            return Err(format!("`{entry}`: write `∀ A. res(A)`"));
+        if let Some((result, members)) = body_index(written.arguments())
+            && written.parameters().len() == 1
+            && matches!(&*result.kind, TermKind::Var(r) if r.as_str() == written.parameters()[0])
+        {
+            let head = Name::from(written.head());
+            labels.extend(index_labels(&head, &members));
+            *entry = head;
+            return Ok(());
+        }
+        let names: Vec<&str> = written.parameters().iter().map(String::as_str).collect();
+        let head = written.head().to_string();
+        let head = head.as_str();
+        let args: Vec<&str> = written
+            .arguments()
+            .iter()
+            .map(|argument| match &*argument.kind {
+                TermKind::Var(name) => name.as_str(),
+                _ => "",
+            })
+            .collect();
+        let Some(typed) = generics.get(&Name::from(head)).map(Vec::as_slice) else {
+            return Ok(());
         };
-        let names: Vec<&str> = names.split(',').map(str::trim).collect();
-        let written = written.trim();
-        let (head, args) = match written.split_once('(') {
-            Some((head, args)) => (head.trim(), args.strip_suffix(')').unwrap_or(args)),
-            None => (written, ""),
-        };
-        let args: Vec<&str> = split_top(args).into_iter().map(str::trim).collect();
-        let typed = generics
-            .get(&Name::from(head))
-            .map(Vec::as_slice)
-            .unwrap_or_default();
         let distinct = names.iter().collect::<HashSet<_>>().len() == names.len();
         if typed.is_empty() || !distinct || names != args || args.len() != typed.len() {
             let want = typed
@@ -382,8 +566,11 @@ fn read_entry(entry: &mut Name, generics: &HashMap<Name, Vec<Name>>) -> Result<(
                 .map(Name::as_str)
                 .collect::<Vec<_>>()
                 .join(", ");
-            return Err(format!(
-                "`{entry}`: every instance of `{head}` binds each type argument in order: `∀ {want}. {head}({want})`"
+            return Err(msg!(
+                "nibcheck-index-entry-binds-each-type-argument",
+                entry = entry.to_string(),
+                head = head.to_string(),
+                want = want
             ));
         }
         *entry = Name::from(head);
@@ -393,31 +580,67 @@ fn read_entry(entry: &mut Name, generics: &HashMap<Name, Vec<Name>>) -> Result<(
         return Ok(());
     }
     match generics.get(entry) {
-        Some(typed) if !typed.is_empty() => {
+        // A host operation is never read by instance: named alone, it is
+        // every instance of it.
+        Some(typed) if !typed.is_empty() && !host(entry) => {
             let want = typed
                 .iter()
                 .map(Name::as_str)
                 .collect::<Vec<_>>()
                 .join(", ");
-            // A host operation is never read by instance, so the only row
-            // that names it is the one for every instance.
-            if host(entry) {
-                return Err(format!(
-                    "write `∀ {want}. {entry}({want})`: a row names every instance of the host's `{entry}`"
-                ));
-            }
-            Err(format!(
-                "write the instance of `{entry}` the row means: `{entry}(…)`, or `∀ {want}. {entry}({want})` for every one"
+            Err(msg!(
+                "nibcheck-row-write-instance",
+                entry = entry.to_string(),
+                want = want
             ))
         }
         _ => Ok(()),
     }
 }
 
+/// What every check reads of its prelude alone: the prelude's
+/// [`indexed_effects`] and [`index_generics`].
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PreludeIndices {
+    pub(super) indexed: HashSet<Name>,
+    pub(super) generics: HashMap<Name, HashSet<Name>>,
+}
+
+/// [`PreludeIndices`] of `prelude`. Both are functions of the program alone,
+/// and a check runs several times for each program a case or a command
+/// compiles (`expand_coercions`, `expand_indices`, the class expansion, the
+/// check itself), each against the same prelude: for one of the preludes kept
+/// for the life of the process ([`super::kept_prelude`]) they are computed
+/// once, and the copy kept is the one every check reads. With
+/// [`super::verify_reuse`] on, each use computes them again and stops on any
+/// difference.
+pub(super) fn prelude_indices(prelude: &Program) -> std::borrow::Cow<'static, PreludeIndices> {
+    use std::borrow::Cow;
+    use std::sync::OnceLock;
+    static KEPT: [OnceLock<PreludeIndices>; 4] = [const { OnceLock::new() }; 4];
+    let compute = || PreludeIndices {
+        indexed: indexed_effects(prelude),
+        generics: index_generics(prelude),
+    };
+    let Some(which) = super::kept_prelude(prelude) else {
+        return Cow::Owned(compute());
+    };
+    let kept = KEPT[which].get_or_init(compute);
+    if super::verify_reuse() {
+        let fresh = compute();
+        assert!(
+            *kept == fresh,
+            "the prelude's indices kept for reuse differ from those computed again:\nkept: {kept:?}\nagain: {fresh:?}"
+        );
+    }
+    Cow::Borrowed(kept)
+}
+
 /// For each top-level function, its generics that a row it writes uses as
 /// an index (`catch`'s `E`): the expansion, not the types, determines them.
 pub(super) fn index_generics(program: &Program) -> HashMap<Name, HashSet<Name>> {
     let indexed = indexed_effects(program);
+    let datas = data_decls(program);
     let mut out = HashMap::new();
     for (name, f) in functions(&program.stmts) {
         let mut found = HashSet::new();
@@ -435,6 +658,17 @@ pub(super) fn index_generics(program: &Program) -> HashMap<Name, HashSet<Name>> 
                 }
             }
         });
+        for ty in f.param_types.iter().flatten() {
+            for (_, head, arguments) in field_rows(&datas, ty) {
+                if indexed.contains(&head) {
+                    found.extend(
+                        argument_names(&arguments)
+                            .into_iter()
+                            .filter(|name| f.generics.contains(name)),
+                    );
+                }
+            }
+        }
         if !found.is_empty() {
             out.insert(name, found);
         }
@@ -442,11 +676,14 @@ pub(super) fn index_generics(program: &Program) -> HashMap<Name, HashSet<Name>> 
     out
 }
 
-fn surface_of(t: &Ty, span: Span) -> Option<SurfaceTerm> {
+pub(super) fn surface_of(t: &Ty, span: Span) -> Option<SurfaceTerm> {
     match t {
-        Ty::Int(_) | Ty::Bool | Ty::Text | Ty::Decimal | Ty::Float | Ty::Float32 => Some(
-            SurfaceTerm::var(&tauto_surface::bindings::library_name(&t.to_string()), span),
-        ),
+        Ty::Int(_) | Ty::Bool | Ty::Text | Ty::Unit | Ty::Decimal | Ty::Float | Ty::Float32 => {
+            Some(SurfaceTerm::var(
+                &tauto_surface::bindings::library_name(&t.to_string()),
+                span,
+            ))
+        }
         Ty::Named(n, args) if args.is_empty() => Some(SurfaceTerm::var(n, span)),
         Ty::Named(n, args) => {
             let args = args
@@ -521,6 +758,16 @@ fn mentions_solved(t: &Ty, solved: &HashMap<usize, SurfaceTerm>) -> bool {
 /// A type argument as text, the same for a written one and an inferred one.
 fn print(t: &SurfaceTerm) -> String {
     match &*t.kind {
+        // `A × B × C` is the type `Pair(A, Pair(B, C))`, as an inferred
+        // product prints.
+        TermKind::App { .. }
+            if let Some(members) = t.product_type_members()
+                && !members.is_empty() =>
+        {
+            let mut members = members.iter().rev().map(|m| print(m));
+            let last = members.next().unwrap_or_default();
+            members.fold(last, |rest, m| format!("Pair({m},{rest})"))
+        }
         TermKind::Var(n) => n.to_string(),
         TermKind::App {
             function,
@@ -535,6 +782,63 @@ fn print(t: &SurfaceTerm) -> String {
         }
         _ => "?".into(),
     }
+}
+
+/// The result type and the row of an index written as a body's function
+/// type, `() -> A ! e`.
+pub(crate) fn body_index(args: &[SurfaceTerm]) -> Option<(SurfaceTerm, Vec<Name>)> {
+    match args {
+        [only] => match &*only.kind {
+            TermKind::Pi {
+                params,
+                result,
+                effects,
+                ..
+            } if params.is_empty() => {
+                Some(((**result).clone(), effects.clone().unwrap_or_default()))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The entries that write `members` as the index of `family`'s label:
+/// `spawn@^env`, which no program can write. Not `@!`: that begins the name
+/// of an instance indexed by a row (`ui@!{}`).
+pub(crate) fn index_labels(family: &Name, members: &[Name]) -> Vec<Name> {
+    // `Host` stands for every effect of the host.
+    members
+        .iter()
+        .flat_map(|m| {
+            if family_of(m) == "Host" {
+                crate::host::HOST_EFFECTS
+                    .iter()
+                    .map(|h| index_label(family, &Name::from(*h)))
+                    .collect::<Vec<_>>()
+            } else {
+                vec![index_label(family, m)]
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn index_label(family: &Name, member: &Name) -> Name {
+    Name::from(format!("{}@^{}", family_of(family), family_of(member)))
+}
+
+/// The family of an effect or of one of its instances: `spawn` for `spawn@i64`.
+pub(crate) fn family_of(effect: &Name) -> String {
+    let text = effect.to_string();
+    let base = text.split('@').next().unwrap_or(&text);
+    base.rsplit("::").next().unwrap_or(base).to_string()
+}
+
+/// The family and the member of an index label.
+pub fn split_index_label(entry: &Name) -> Option<(String, String)> {
+    let text = entry.to_string();
+    let (family, member) = text.split_once("@^")?;
+    Some((family.to_string(), member.to_string()))
 }
 
 fn label(effect: &str, args: &[SurfaceTerm]) -> String {
@@ -654,7 +958,10 @@ pub fn expand_indices(program: &mut Program, per_file: &mut [Vec<Stmt>], is_prel
         }
         if x.made.len() > 4096 {
             errors.push((
-                format!("`{}` is copied for too many indices", from.0),
+                msg!(
+                    "nibcheck-copied-for-too-many-indices",
+                    name = from.0.to_string()
+                ),
                 Span::new(0, 0),
             ));
             break;
@@ -674,11 +981,7 @@ pub fn expand_indices(program: &mut Program, per_file: &mut [Vec<Stmt>], is_prel
         place(file, &made, &decls, first);
         first = false;
     }
-    program.errors.extend(
-        errors
-            .into_iter()
-            .map(|(t, s): (String, Span)| (t.into(), s)),
-    );
+    program.errors.extend(errors);
 }
 
 /// Puts each statement after the declaration it was made from, or first when
@@ -750,18 +1053,25 @@ struct Expander<'a> {
     lambda_rows: HashMap<crate::surface::TermId, Around>,
     /// The written types of the parameters of the function being rewritten.
     env: HashMap<Name, SurfaceTerm>,
+    /// The values of the unannotated `let`s in scope: a name bound by one
+    /// performs what its value performs.
+    values: HashMap<Name, SurfaceTerm>,
+    /// The written types and the values of the program's top-level `let`s
+    /// read so far, which the statements after them see.
+    top_env: HashMap<Name, SurfaceTerm>,
+    top_values: HashMap<Name, SurfaceTerm>,
     /// The type variables of the check that an index decided, in the function
     /// being rewritten: what an unannotated `let` of them is annotated with.
     var_solutions: HashMap<usize, SurfaceTerm>,
     /// The arguments of the `perform`s of the function being rewritten that the
     /// row around them decided.
-    performs: HashMap<crate::surface::TermId, Result<Vec<SurfaceTerm>, String>>,
+    performs: HashMap<crate::surface::TermId, Result<Vec<SurfaceTerm>, Message>>,
 }
 
 /// The instances of indexed effects a row names, with their arguments: what a
 /// call's own row is matched against.
 type Around = Option<Vec<(Name, Vec<SurfaceTerm>)>>;
-type Solved = HashMap<crate::surface::TermId, Result<Vec<SurfaceTerm>, String>>;
+type Solved = HashMap<crate::surface::TermId, Result<Vec<SurfaceTerm>, Message>>;
 
 impl<'a> Expander<'a> {
     fn new(
@@ -802,6 +1112,9 @@ impl<'a> Expander<'a> {
             datas,
             lambda_rows: HashMap::new(),
             env: HashMap::new(),
+            values: HashMap::new(),
+            top_env: HashMap::new(),
+            top_values: HashMap::new(),
             var_solutions: HashMap::new(),
             performs: HashMap::new(),
             prelude: (!is_prelude).then(|| prelude_report_for(program)),
@@ -883,6 +1196,13 @@ impl<'a> Expander<'a> {
                     }
                 }
             });
+            for ty in f.param_types.iter().flatten() {
+                for (_, head, arguments) in field_rows(&self.datas, ty) {
+                    if self.indexed.contains(&head) {
+                        found.extend(argument_names(&arguments));
+                    }
+                }
+            }
             found.retain(|g| generics.contains(g));
             relevant.insert(name.clone(), found);
         }
@@ -933,7 +1253,7 @@ impl<'a> Expander<'a> {
 
     /// The statements with the expansion done where they stand (with no
     /// generic given), and the functions to be copied left out.
-    fn stmts(&mut self, stmts: Vec<Stmt>, errors: &mut Vec<(String, Span)>) -> Vec<Stmt> {
+    fn stmts(&mut self, stmts: Vec<Stmt>, errors: &mut Vec<(Message, Span)>) -> Vec<Stmt> {
         let mut out = Vec::new();
         for mut s in stmts {
             if let Stmt::Fn(f) = &s
@@ -955,20 +1275,22 @@ impl<'a> Expander<'a> {
         id: crate::surface::TermId,
         given: &HashMap<Name, SurfaceTerm>,
         span: Span,
-    ) -> Result<Vec<SurfaceTerm>, String> {
+    ) -> Result<Vec<SurfaceTerm>, Message> {
         let Some(args) = self.effect_args(id).cloned() else {
-            return Err("no type was found".into());
+            return Err(msg!("nibcheck-index-no-type-found"));
         };
         args.iter()
             .map(|t| match t {
-                Ty::Param(p, _) => given
-                    .get(&p.name)
-                    .cloned()
-                    .ok_or_else(|| format!("it is the generic `{}`, which is not given", p.name())),
-                Ty::Var(_) => Err("its type arguments are not known here; annotate them".into()),
+                Ty::Param(p, _) => given.get(&p.name).cloned().ok_or_else(|| {
+                    msg!(
+                        "nibcheck-index-generic-not-given",
+                        name = p.name().to_string()
+                    )
+                }),
+                Ty::Var(_) => Err(msg!("nibcheck-index-arguments-unknown")),
                 _ => self
                     .term_of_ty(t, span, given)
-                    .ok_or_else(|| format!("`{t}` cannot index an effect")),
+                    .ok_or_else(|| msg!("nibcheck-type-cannot-index-effect", ty = t.to_string())),
             })
             .collect()
     }
@@ -1040,6 +1362,15 @@ impl<'a> Expander<'a> {
                 && self.indexed.contains(&head)
                 && argument_names(&args).iter().all(|n| !skip.contains(n))
             {
+                // `spawn(() -> A ! e)`: the instance of `A`, and the body's
+                // row as the label's index, which only the rows check reads.
+                // Its `A` is not an index: the label is the family's, as
+                // `∀ T. spawn(() -> T ! e)` writes it.
+                if let Some((_, members)) = body_index(&args) {
+                    out.extend(index_labels(&head, &members));
+                    out.push(head.clone());
+                    continue;
+                }
                 for a in &mut args {
                     replace_vars(a, map);
                     self.canon_term(a, map, skip);
@@ -1133,7 +1464,7 @@ impl<'a> Expander<'a> {
         &mut self,
         s: &mut Stmt,
         given: &HashMap<Name, SurfaceTerm>,
-        errors: &mut Vec<(String, Span)>,
+        errors: &mut Vec<(Message, Span)>,
     ) {
         let mut pending: Vec<(crate::surface::TermId, Span, Name)> = Vec::new();
         // Collected first: the walk holds the statement.
@@ -1175,15 +1506,35 @@ impl<'a> Expander<'a> {
         self.var_solutions.clear();
         self.performs.clear();
         self.lambda_rows.clear();
-        self.env = match &*s {
-            Stmt::Fn(f) => f
-                .params
-                .iter()
-                .zip(&f.param_types)
-                .filter_map(|(n, t)| Some((n.clone(), t.clone()?)))
-                .collect(),
-            _ => HashMap::new(),
-        };
+        self.env = self.top_env.clone();
+        self.values = self.top_values.clone();
+        if let Stmt::Fn(f) = &*s {
+            for (n, t) in f.params.iter().zip(&f.param_types) {
+                self.values.remove(n);
+                match t {
+                    Some(t) => self.env.insert(n.clone(), t.clone()),
+                    None => self.env.remove(n),
+                };
+            }
+        }
+        match &*s {
+            Stmt::Let {
+                name, ty: Some(ty), ..
+            } => {
+                self.top_values.remove(name);
+                self.top_env.insert(name.clone(), ty.clone());
+            }
+            Stmt::Let {
+                name,
+                ty: None,
+                value,
+                ..
+            } => {
+                self.top_env.remove(name);
+                self.top_values.insert(name.clone(), value.clone());
+            }
+            _ => {}
+        }
         if let Stmt::Fn(f) = &*s {
             let around = f.effects.as_ref().map(|row| self.around(row, given));
             if let Some(result) = &f.result {
@@ -1204,7 +1555,14 @@ impl<'a> Expander<'a> {
                 Ok(args) => {
                     names.insert(id, self.instance_label(&effect, &args));
                 }
-                Err(why) => errors.push((format!("which `{effect}` this is: {why}"), span)),
+                Err(why) => errors.push((
+                    msg!(
+                        "nibcheck-which-effect-this-is",
+                        effect = effect.to_string(),
+                        why = why
+                    ),
+                    span,
+                )),
             }
         }
         let mut call_names = HashMap::new();
@@ -1227,9 +1585,14 @@ impl<'a> Expander<'a> {
         walk::stmt(s, &mut |t| {
             let id = t.id();
             match std::sync::Arc::make_mut(&mut t.kind) {
-                TermKind::Perform { effect, .. } => {
+                TermKind::Perform { effect, args } => {
                     if let Some(n) = names.get(&id) {
                         *effect = n.clone();
+                        // The instance has no generics: its written type
+                        // arguments are now its name.
+                        if super::split_implicits(args).0.is_some() {
+                            args.remove(0);
+                        }
                     }
                 }
                 TermKind::Handle { handlers, .. } => {
@@ -1265,6 +1628,32 @@ impl<'a> Expander<'a> {
         rows_mut(s, &mut |row| {
             *row = self.canon_row(&row.clone(), given, &data_generics, false);
         });
+        // Written markers (`^log(A)`) keep the source application. When this
+        // declaration is copied for concrete generics, specialize their
+        // arguments with `given` the same way the contract row is, so unused
+        // analysis sees `log(Text)` when the body performs it. With an empty
+        // `given`, leave markers alone: re-indexing them would mint another
+        // specialized declaration unequal to the contract's.
+        if !given.is_empty() {
+            written_rows_mut(s, &mut |entries| {
+                for entry in entries {
+                    let mut specialized = self.canon_row(
+                        std::slice::from_ref(&entry.name),
+                        given,
+                        &data_generics,
+                        false,
+                    );
+                    // One specialized instance, or the family head after an
+                    // index-label expansion (labels come first, head last).
+                    if let Some(name) = specialized.pop() {
+                        entry.name = name;
+                    }
+                    if let Some(members) = &mut entry.members {
+                        *members = self.canon_row(members, given, &data_generics, false);
+                    }
+                }
+            });
+        }
         walk::stmt(s, &mut |t| {
             if let TermKind::Row(names) = &*t.kind {
                 let names = self.canon_row(&names.clone(), given, &data_generics, true);
@@ -1408,10 +1797,11 @@ impl<'a> Expander<'a> {
             return HashMap::new();
         };
         // The record names a constructor of the data (`Boundary::Mk`), or the data.
-        let Some(constructor) = data.constructors.iter().find(|c| {
-            c.name.to_string() == record.to_string()
-                || data.constructors.len() == 1 && head.to_string() == record.to_string()
-        }) else {
+        let Some(constructor) = data
+            .constructors
+            .iter()
+            .find(|c| c.name == *record || data.constructors.len() == 1 && head == *record)
+        else {
             return HashMap::new();
         };
         let mut map: HashMap<Name, SurfaceTerm> = HashMap::new();
@@ -1473,12 +1863,25 @@ impl<'a> Expander<'a> {
         if let TermKind::Block(stmts) = &*t.kind {
             for st in stmts {
                 if let Stmt::Let {
+                    name,
                     ty: Some(ty),
                     value,
                     ..
                 } = st
                 {
                     self.note_lambda(value, ty, given);
+                    // A name is bound once, so its written type is read as a
+                    // parameter's is where it is passed or called.
+                    self.env.insert(name.clone(), ty.clone());
+                }
+                if let Stmt::Let {
+                    name,
+                    ty: None,
+                    value,
+                    ..
+                } = st
+                {
+                    self.values.insert(name.clone(), value.clone());
                 }
             }
         }
@@ -1573,8 +1976,9 @@ impl<'a> Expander<'a> {
                         match candidates.len() {
                             1 => Ok(candidates[0].clone()),
                             0 => Err(why),
-                            _ => Err(format!(
-                                "the row around it has two instances of `{effect}`; write which with a type annotation"
+                            _ => Err(msg!(
+                                "nibcheck-row-around-two-instances",
+                                effect = effect.to_string()
                             )),
                         }
                     }
@@ -1616,7 +2020,7 @@ impl<'a> Expander<'a> {
         arguments: &[SurfaceTerm],
         around: &Around,
         given: &HashMap<Name, SurfaceTerm>,
-    ) -> Result<(Vec<SurfaceTerm>, HashMap<Name, SurfaceTerm>), String> {
+    ) -> Result<(Vec<SurfaceTerm>, HashMap<Name, SurfaceTerm>), Message> {
         let scheme = self.scheme(g).expect("a called function");
         let decl = self.fns[g].clone();
         let mut solution: HashMap<Name, SurfaceTerm> = HashMap::new();
@@ -1638,14 +2042,21 @@ impl<'a> Expander<'a> {
                 match self.from_rows(g, &wanted, arguments, given) {
                     Ok(a) => arg = Some(a),
                     Err(Some(why)) => {
-                        return Err(format!("`{g}` indexes an effect by `{wanted}`: {why}"));
+                        return Err(msg!(
+                            "nibcheck-generic-indexes-effect-by-why",
+                            generic = g.to_string(),
+                            wanted = wanted.to_string(),
+                            why = why
+                        ));
                     }
                     Err(None) => {}
                 }
             }
             let Some(arg) = arg else {
-                return Err(format!(
-                    "`{g}` indexes an effect by `{wanted}`, which is not known here"
+                return Err(msg!(
+                    "nibcheck-generic-indexes-effect-by-unknown",
+                    generic = g.to_string(),
+                    wanted = wanted.to_string()
                 ));
             };
             if let Some(Ty::Var(n)) = ty {
@@ -1666,7 +2077,7 @@ impl<'a> Expander<'a> {
         wanted: &Name,
         arguments: &[SurfaceTerm],
         given: &HashMap<Name, SurfaceTerm>,
-    ) -> Result<Option<SurfaceTerm>, String> {
+    ) -> Result<Option<SurfaceTerm>, Message> {
         let mut found: Vec<SurfaceTerm> = Vec::new();
         for (ty, arg) in decl.param_types.iter().zip(arguments) {
             let (Some(ty), TermKind::Var(x)) = (ty, &*arg.kind) else {
@@ -1675,18 +2086,10 @@ impl<'a> Expander<'a> {
             let Some(have) = self.env.get(x).cloned() else {
                 continue;
             };
-            let TermKind::Pi {
-                effects: Some(have_row),
-                ..
-            } = &*have.kind
-            else {
+            let Some(have_row) = written_row(&have) else {
                 continue;
             };
-            let TermKind::Pi {
-                effects: Some(want_row),
-                ..
-            } = &*ty.kind
-            else {
+            let Some(want_row) = written_row(ty) else {
                 continue;
             };
             let around = self.around(have_row, given);
@@ -1714,9 +2117,10 @@ impl<'a> Expander<'a> {
         match found.len() {
             0 => Ok(None),
             1 => Ok(found.pop()),
-            _ => Err(format!(
-                "its arguments' rows name `{wanted}` as {}; write which with a type annotation",
-                found.iter().map(print).collect::<Vec<_>>().join(" and ")
+            _ => Err(msg!(
+                "nibcheck-arguments-rows-name",
+                wanted = wanted.to_string(),
+                found = found.iter().map(print).collect::<Vec<_>>().join(" and ")
             )),
         }
     }
@@ -1728,7 +2132,7 @@ impl<'a> Expander<'a> {
         decl: &FnDecl,
         wanted: &Name,
         around: &Around,
-    ) -> Result<Option<SurfaceTerm>, String> {
+    ) -> Result<Option<SurfaceTerm>, Message> {
         let Some(around) = around else {
             return Ok(None);
         };
@@ -1759,9 +2163,10 @@ impl<'a> Expander<'a> {
         match found.len() {
             0 => Ok(None),
             1 => Ok(found.pop()),
-            _ => Err(format!(
-                "the row around this call has two instances of the effect it indexes by `{wanted}`: {}; write which with a type annotation",
-                found.iter().map(print).collect::<Vec<_>>().join(" and ")
+            _ => Err(msg!(
+                "nibcheck-call-row-two-instances",
+                wanted = wanted.to_string(),
+                found = found.iter().map(print).collect::<Vec<_>>().join(" and ")
             )),
         }
     }
@@ -1776,7 +2181,7 @@ impl<'a> Expander<'a> {
         wanted: &Name,
         arguments: &[SurfaceTerm],
         given: &HashMap<Name, SurfaceTerm>,
-    ) -> Result<SurfaceTerm, Option<String>> {
+    ) -> Result<SurfaceTerm, Option<Message>> {
         let decl = self.fns.get(g).ok_or(None)?.clone();
         let mut found: Vec<SurfaceTerm> = Vec::new();
         let mut first = None;
@@ -1817,13 +2222,50 @@ impl<'a> Expander<'a> {
                     }
                 }
             }
+            // A field of the parameter's data type writes the row
+            // (`options: ActionOptions(A, B, E, I, R)` whose `run` performs
+            // `resource_wait(R, E)`): what the argument's value of that field
+            // performs reads `wanted`, the same rule as for a lambda passed
+            // directly.
+            for (field, head, indices) in field_rows(&self.datas, &ty) {
+                if !self.indexed.contains(&head) {
+                    continue;
+                }
+                let Some(position) = indices.iter().position(
+                    |argument| matches!(&*argument.kind, TermKind::Var(name) if name == wanted),
+                ) else {
+                    continue;
+                };
+                // A record built at the call gives the field's value; another
+                // argument is read whole.
+                let value = match &*arg.kind {
+                    TermKind::Record { fields, .. } => {
+                        match fields.iter().find(|(name, _)| name.to_string() == field) {
+                            Some((_, value)) => value.clone(),
+                            None => continue,
+                        }
+                    }
+                    _ => arg.clone(),
+                };
+                let mut seen = HashSet::new();
+                for instance in self.performed(&value, &head, given, &mut seen) {
+                    if let Some(a) = instance.get(position)
+                        && !found
+                            .iter()
+                            .any(|term| crate::surface::same_term_structure(term, a))
+                    {
+                        found.push(a.clone());
+                        first.get_or_insert(a.clone());
+                    }
+                }
+            }
         }
         match found.len() {
             0 => Err(None),
             1 => Ok(first.expect("found")),
-            _ => Err(Some(format!(
-                "the argument performs it as {}; write which with the result's type",
-                found.iter().map(print).collect::<Vec<_>>().join(" and ")
+            _ => Err(Some(msg!(
+                "nibcheck-argument-performs-it-as",
+                found = found.iter().map(print).collect::<Vec<_>>().join(" and ")
             ))),
         }
     }
@@ -1840,6 +2282,8 @@ impl<'a> Expander<'a> {
         let mut out = Vec::new();
         let mut t = t.clone();
         let mut calls = Vec::new();
+        let mut written = Vec::new();
+        let mut bound = Vec::new();
         walk::term(&mut t, &mut |x| match &*x.kind {
             TermKind::Perform { effect: e, .. } if e == effect => {
                 if let Ok(args) = self.arguments(x.id(), given, x.span) {
@@ -1847,8 +2291,52 @@ impl<'a> Expander<'a> {
                 }
             }
             TermKind::Var(g) if self.fns.contains_key(g) => calls.push((g.clone(), x.id(), x.span)),
+            // A name an unannotated `let` binds performs what its value does.
+            TermKind::Var(x) if self.values.contains_key(x) => bound.push(x.clone()),
+            // A function whose type is written where it is bound performs what
+            // that type's row writes: a parameter or an annotated `let`
+            // (`body()`), or the field of one whose data type writes it
+            // (`(options.run)(input)`).
+            TermKind::App { function, .. } => match &*function.kind {
+                TermKind::Var(x) => {
+                    if let Some(row) = self.env.get(x).and_then(written_row) {
+                        for entry in row {
+                            if let Some((head, args)) = application(entry)
+                                && &head == effect
+                            {
+                                written.push(args);
+                            }
+                        }
+                    }
+                }
+                TermKind::Field { base, name } => {
+                    if let TermKind::Var(x) = &*base.kind
+                        && let Some(ty) = self.env.get(x)
+                    {
+                        for (field, head, args) in field_rows(&self.datas, ty) {
+                            if &field == name && &head == effect {
+                                written.push(args);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         });
+        for mut args in written {
+            for argument in &mut args {
+                replace_vars(argument, given);
+            }
+            out.push(args);
+        }
+        for name in bound {
+            if seen.insert(name.clone())
+                && let Some(value) = self.values.get(&name).cloned()
+            {
+                out.extend(self.performed(&value, effect, given, seen));
+            }
+        }
         for (g, id, span) in calls {
             let decl = self.fns[&g].clone();
             let inst: HashMap<Name, SurfaceTerm> = match (self.instantiation(id), self.scheme(&g)) {
@@ -1876,6 +2364,14 @@ impl<'a> Expander<'a> {
                         if &head != effect {
                             continue;
                         }
+                        // An instance that names a generic of the callee the
+                        // types leave open says nothing here.
+                        if argument_names(&args)
+                            .iter()
+                            .any(|n| decl.generics.contains(n) && !inst.contains_key(n))
+                        {
+                            continue;
+                        }
                         for argument in &mut args {
                             replace_vars(argument, &inst);
                         }
@@ -1895,7 +2391,7 @@ impl<'a> Expander<'a> {
         &mut self,
         name: &Name,
         (f, args): &(Name, Vec<SurfaceTerm>),
-        errors: &mut Vec<(String, Span)>,
+        errors: &mut Vec<(Message, Span)>,
     ) -> Stmt {
         let mut decl = self.fns[f].clone();
         let relevant = self.relevant[f].clone();
@@ -1958,18 +2454,28 @@ impl<'a> Expander<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+mod kept_prelude_tests {
     use super::*;
 
+    /// What a check reads of a kept prelude is computed once and is what
+    /// computing it again gives; any other program's is computed each time.
     #[test]
-    fn bare_host_show_hints_only_every_instance() {
-        let generics = HashMap::from([(Name::from("show"), vec![Name::from("A")])]);
-        let mut entry = Name::from("show".to_string());
-        let why = read_entry(&mut entry, &generics).unwrap_err();
-        assert!(why.contains("∀ A. show(A)"), "{why}");
-        assert!(!why.contains("show(…)"), "{why}");
-        let mut entry = Name::from("∀ A. show(A)".to_string());
-        read_entry(&mut entry, &generics).unwrap();
-        assert_eq!(entry.as_str(), "show");
+    fn the_prelude_indices_are_kept_and_the_same_as_computed_again() {
+        tauto_parse::install();
+        for prelude in [super::super::prelude(), super::super::prelude_source()] {
+            let first = prelude_indices(prelude);
+            assert!(matches!(first, std::borrow::Cow::Borrowed(_)));
+            let again = prelude_indices(prelude);
+            assert!(std::ptr::eq(&*first, &*again));
+            assert_eq!(
+                *first,
+                PreludeIndices {
+                    indexed: indexed_effects(prelude),
+                    generics: index_generics(prelude),
+                }
+            );
+        }
+        let copy = super::super::prelude().clone();
+        assert!(matches!(prelude_indices(&copy), std::borrow::Cow::Owned(_)));
     }
 }

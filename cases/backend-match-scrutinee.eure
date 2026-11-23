@@ -1,7 +1,6 @@
 // A matched local that an arm uses again stays in its slot: the arm's use,
 // not the match, moves it.
 @ cases.arm-passes-the-matched-local-again
-backends = ["rust", "javascript"]
 source = ```nib
 struct Box2 { w: u64, kids: List(u64) }
 enum Lay {
@@ -14,21 +13,23 @@ fn size_of(l: Lay): u64 {
     LLeaf(w, h, g) => w
   }
 }
-fn at(l: Lay): u64 {
+fn at(l: Lay): u64 ! {overflow} {
   match l {
     LLeaf(w, h, g) => size_of(l) + h
     LBox(b, kids) => size_of(l)
   }
 }
-perform show("leaf", at(LLeaf(3, 4, 0)))
-perform show("box", at(LBox(Box2 { w: 5, kids: Nil }, Nil)))
+show(&at(LLeaf(3, 4, 0)))
+show(&at(LBox(Box2 { w: 5, kids: Nil }, Nil)))
 ```
-shows = ["leaf = 7", "box = 5"]
+stdout = ```
+7
+5
+```
 
 // A recursive field that an arm only tests is borrowed, so the arm can still
 // return the whole matched local.
 @ cases.arm-returns-the-local-after-testing-its-tail
-backends = ["rust", "javascript"]
 source = ```nib
 fn single<A: Shared>(l: List(A)): List(A) {
   match l {
@@ -37,13 +38,51 @@ fn single<A: Shared>(l: List(A)): List(A) {
     _ => Nil
   }
 }
-fn len(l: List(u64)): u64 {
+fn len(l: List(u64)): u64 ! {overflow} {
   match l {
     Nil => 0
     Cons(_, t) => 1 + len(t)
   }
 }
-perform show("one", len(single(Cons(7, Nil))))
-perform show("two", len(single(Cons(7, Cons(8, Nil)))))
+show(&len(single(Cons(7, Nil))))
+show(&len(single(Cons(7, Cons(8, Nil)))))
 ```
-shows = ["one = 1", "two = 0"]
+stdout = ```
+1
+0
+```
+
+// An arm that takes a part of the matched local apart moves it into the match,
+// so another arm that reads the local again is not a use after the move: the
+// local is read from where it is held, even when the part is a shared field
+// of a recursive type.
+@ cases.arm-reads-the-matched-field-after-another-arm-takes-it-apart
+source = ```nib
+enum(shared) Sk {
+  SkVar(Text)
+  SkLam(List(Text), Sk, List(Option(Sk)))
+}
+fn len(l: List(Option(Sk))): u64 ! {overflow} {
+  match l {
+    Nil => 0
+    Cons(_, r) => 1 + len(r)
+  }
+}
+fn typed(k: Sk): u64 ! {overflow} {
+  match k {
+    SkLam(ps, body, types) => match types {
+      Cons(Some(w), more) => 100
+      _ => len(types)
+    }
+    SkVar(n) => 0
+  }
+}
+show(&typed(SkLam(Nil, SkVar("a"), Nil)))
+show(&typed(SkLam(Nil, SkVar("a"), Cons(None, Cons(None, Nil)))))
+show(&typed(SkLam(Nil, SkVar("a"), Cons(Some(SkVar("b")), Nil))))
+```
+stdout = ```
+0
+2
+100
+```

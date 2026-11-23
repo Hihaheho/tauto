@@ -1,0 +1,37 @@
+// Writes totes/unicode/src/tables.taut with totes/unicode/src/tables/<name>.txt,
+// from the Unicode data of the Rust toolchain the repository pins
+// (rust-toolchain.toml), and totes/pargen/src/uni.taut with
+// totes/pargen/src/uni/<name>.txt, from the Unicode classes of regular
+// expressions of the regex-syntax crate (the version tools/selfhost-harness
+// pins), which parol reads the regular expressions with when it makes the
+// committed tables that tools/selfhost-harness/tests/llkgen.rs compares
+// totes/llkgen with. With --check, writes nothing and fails if a file is out
+// of date.
+//   tauto gen-unicode-tables [--check]
+import "lib/sh.taut" { sh_process, sh_root, sh_run }
+import std::builtin::os { argv, exit }
+import std::base { List }
+
+let root := sh_root()
+perform exit(
+  sh_run(
+    sh_process(
+      "cargo",
+      List::append(
+        [
+          "run",
+          "--locked",
+          "-q",
+          "--manifest-path",
+          "tools/selfhost-harness/Cargo.toml",
+          "--bin",
+          "write-unicode-tables",
+          "--"
+        ],
+        perform argv()
+      ),
+      root,
+      []
+    )
+  )
+)

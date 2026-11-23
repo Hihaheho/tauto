@@ -1,22 +1,31 @@
 //! Compile an actual compiler module and data programs through the Tauto backend.
 use selfhost_harness::{materialize, root, run_tote_native};
 use std::process::Command;
-use tauto::eval::{RunOptions, run_program_with};
-use tauto::surface::parse_program_as_written;
+use tauto::exec::{RunOptions, run_loaded_with, run_source_with};
 
 #[test]
 fn rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs() {
+    // The modules are joined into one source, so the imports among them (and
+    // of `std::text`, which the prelude already holds) are dropped.
+    let module = |name: &str| {
+        std::fs::read_to_string(root().join("totes/rustgen/src").join(name))
+            .unwrap()
+            .lines()
+            .filter(|line| !line.starts_with("import "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     // Compile the exact production module, not a reduced copy of its declarations.
     let compiler_types = format!(
         "{}\n{}",
-        std::fs::read_to_string(root().join("totes/rustgen/src/types.taut")).unwrap(),
+        module("types.taut"),
         r#"fn answer(): i64 { if rustgen_same(RustgenNamed("Node"), RustgenNamed("Node")) && not(rustgen_same(RustgenInt, RustgenBool)) && rustgen_scalar_name(RustgenText) == "String" { 42 } else { 0 } }"#
     );
     let compiler_core = format!(
         "{}\n{}\n{}\n{}",
-        std::fs::read_to_string(root().join("totes/rustgen/src/types.taut")).unwrap(),
-        std::fs::read_to_string(root().join("totes/rustgen/src/bindings.taut")).unwrap(),
-        std::fs::read_to_string(root().join("totes/rustgen/src/generic_core.taut")).unwrap(),
+        module("types.taut"),
+        module("bindings.taut"),
+        module("generic_core.taut"),
         r#"fn answer(): Nat { ⊢ Nat from match rustgen_unify(100, RustgenApply("List", Cons(RustgenMeta("x"), Nil)), RustgenApply("List", Cons(RustgenText, Nil)), Nil) { RustgenErr(message) => 0
 RustgenOk(subst) => ⊢ Nat from match rustgen_resolve(100, RustgenMeta("x"), subst) { RustgenErr(message) => 1
 RustgenOk(ty) => if rustgen_same(ty, RustgenText) { 42 } else { 2 } } } }"#
@@ -82,18 +91,18 @@ fn answer(): Nat { pred(Succ(42)) }"#,
             "recursive-data",
             r#"inductive Tree: Type { Leaf(n: i64): Tree
 Branch(left: Tree, right: Tree): Tree }
-fn sum(t: Tree): i64 { ⊢ i64 from match t { Leaf(n) => n
+fn sum(t: Tree): i64 ! {overflow} { ⊢ i64 from match t { Leaf(n) => n
 Branch(l, r) => sum(l) + sum(r) } }
-fn answer(): i64 { let t := Branch(Leaf(10), Leaf(11))
+fn answer(): i64 ! {overflow} { let t := Branch(Leaf(10), Leaf(11))
 sum(t) + sum(t) }"#,
         ),
         (
             "recursive-text",
             r#"inductive Words: Type { End: Words
 Word(value: Text, next: Words): Words }
-fn count(w: Words): i64 { ⊢ i64 from match w { End => 0
+fn count(w: Words): Nat { ⊢ Nat from match w { End => 0
 Word(s, rest) => if s == "" { count(rest) } else { 1 + count(rest) } } }
-fn answer(): i64 { let w := Word("日本語", Word("", End))
+fn answer(): Nat { let w := Word("日本語", Word("", End))
 count(w) + count(w) }"#,
         ),
         (
@@ -109,41 +118,46 @@ fn answer(): Bool { same("日本語\n\"") }"#,
         ),
         (
             "bool-parameter",
-            r#"fn choose(b: Bool, n: i64): i64 { if b { -n } else { +n } }
-fn answer(): i64 { choose(false, 42) }"#,
+            r#"fn choose(b: Bool, n: i64): i64 ! {overflow} { if b { -n } else { +n } }
+fn answer(): i64 ! {overflow} { choose(false, 42) }"#,
         ),
         (
             "mutual-recursion",
-            r#"fn even(n: i64): Bool { if n == 0 { true } else { odd(n - 1) } }
-fn odd(n: i64): Bool { if n == 0 { false } else { even(n - 1) } }
-fn answer(): Bool { even(10) }"#,
+            r#"fn even(n: i64): Bool ! {div, overflow} { if n == 0 { true } else { odd(n - 1) } }
+fn odd(n: i64): Bool ! {div, overflow} { if n == 0 { false } else { even(n - 1) } }
+fn answer(): Bool ! {div, overflow} { even(10) }"#,
         ),
         ("literal", r#"fn answer(): i64 { 42 }"#),
         (
+            "zero-argument-call",
+            r#"fn yes(): i64 { 1 }
+fn answer(): i64 { yes() }"#,
+        ),
+        (
             "calls",
-            r#"fn answer(): i64 { twice(21) }
-fn twice(x: i64): i64 { x + x }"#,
+            r#"fn answer(): i64 ! {overflow} { twice(21) }
+fn twice(x: i64): i64 ! {overflow} { x + x }"#,
         ),
         (
             "locals",
-            r#"fn answer(): i64 { let x: i64 := 9
+            r#"fn answer(): i64 ! {overflow} { let x: i64 := 9
 let y := x * 5
 y - 3 }"#,
         ),
         (
             "recursion",
-            r#"fn fact(n: i64): i64 { if n == 0 { 1 } else { n * fact(n - 1) } }
-fn answer(): i64 { fact(5) }"#,
+            r#"fn fact(n: i64): i64 ! {div, overflow} { if n == 0 { 1 } else { n * fact(n - 1) } }
+fn answer(): i64 ! {div, overflow} { fact(5) }"#,
         ),
         ("boolean", r#"fn answer(): Bool { not(2 > 3) && (4 <= 4) }"#),
         (
             "short-circuit",
-            r#"fn answer(): Bool { true || (9223372036854775807 + 1 == 0) }"#,
+            r#"fn answer(): Bool ! {overflow} { true || (9223372036854775807 + 1 == 0) }"#,
         ),
         (
             "unicode",
-            r#"fn 足す(数: i64): i64 { 数 + 1 }
-fn answer(): i64 { 足す(41) }"#,
+            r#"fn 足す(数: i64): i64 ! {overflow} { 数 + 1 }
+fn answer(): i64 ! {overflow} { 足す(41) }"#,
         ),
         (
             "keyword",
@@ -183,8 +197,6 @@ fn answer(): i64 { ⊢ i64 from match A(1) { A(x, y) => x } }"#,
 B: T }
 inductive W: Type { Wrap(x: T): W }
 fn answer(): i64 { ⊢ i64 from match Wrap(B) { Wrap(A) => 1 } }"#,
-        r#"fn yes(): i64 { 1 }
-fn answer(): i64 { yes() }"#,
         r#"inductive T: Type { A: T
 B: T }
 fn answer(): i64 { ⊢ i64 from match A { A => 1 } }"#,
@@ -231,7 +243,7 @@ fn unused(): i64 { 1 / 1 }"#,
 fn answer(): i64 { 2 }"#,
         r#"fn f(x: i64, x: i64): i64 { x }
 fn answer(): i64 { 1 }"#,
-        r#"fn answer(): i64 ! {} { answer() }"#,
+        r#"fn answer(): i64 ! {stdout} { answer() }"#,
         r#"fn answer(x: i64): i64 { x }"#,
         r#"fn answer(): i64 { var x := 1
 x }"#,
@@ -304,8 +316,8 @@ x }"#,
             );
             continue;
         }
-        let reference_source = format!("{source}\n{}", r#"perform show("result", answer())"#);
-        let program = if [
+        let reference_source = format!("{source}\n{}", r#"perform main(() => { show(&answer()) })"#);
+        let reference = if [
             "compiler-types",
             "compiler-core",
             "recursive-text",
@@ -329,19 +341,23 @@ x }"#,
                 format!(
                     r#"import {}
 {}"#,
-                    format!("{:?}", root().join("std/Text.taut")),
+                    format!("{:?}", root().join("std/text.taut")),
                     reference_source
                 ),
             )
             .unwrap();
-            tauto::program::load_tote(&reference_dir).unwrap().program
+            run_loaded_with(
+                &tauto::program::load_tote(&reference_dir).unwrap(),
+                1_000_000,
+                RunOptions::default(),
+            )
         } else {
-            parse_program_as_written(&reference_source).unwrap()
+            run_source_with(&reference_source, 1_000_000, RunOptions::default())
         };
-        let reference = run_program_with(&program, 1_000_000, RunOptions::default()).unwrap();
+        let reference = reference.unwrap();
         assert_eq!(
             String::from_utf8_lossy(&native.stdout).trim(),
-            reference.outputs[0].1,
+            reference.stdout.trim(),
             "{name}"
         );
     }
@@ -392,12 +408,15 @@ x }"#,
         .args(["run", "--offline", "--quiet"])
         .output()
         .unwrap();
-    let program = parse_program_as_written(
-        r#"fn answer(): i64 { 9223372036854775807 + 1 }
-perform show("result", answer())"#,
-    )
-    .unwrap();
-    assert!(run_program_with(&program, 1_000_000, RunOptions::default()).is_err());
+    assert!(
+        run_source_with(
+            r#"fn answer(): i64 { 9223372036854775807 + 1 }
+show(&answer())"#,
+            1_000_000,
+            RunOptions::default()
+        )
+        .is_err()
+    );
     assert_eq!(overflow.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&overflow.stderr).contains("the number is too large"));
 }

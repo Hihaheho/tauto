@@ -1,0 +1,2429 @@
+import "model.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::map
+
+// A function in A-normal form as blocks (`docs/design/nir-text.md` "Blocks"),
+// as `tauto_nir::blocks::lower_body` makes them: control (`if`, `&&`, `||`,
+// `while`), `match`, `handle` and `budget` are terminators of a graph; a call
+// or `perform` that may abort or stop ends its block. The metadata (regions)
+// keeps the node each branch came from with its operands and bodies taken out.
+
+// ---- holes ----
+
+// What stands for an operand or a body taken out of a shell: the numbers
+// `i128::MIN / 4 + i` and `i128::MIN / 2 + k`, typed `Never` for a slot.
+pub fn b_slot_hole(i: Nat): NExpr {
+  NExpr { kind: NIntLit(true, Nat::sub(42535295865117307932921825928971026432, i)), ty: NNever }
+}
+
+pub fn b_closure_hole(k: Nat, ty: NTy): NExpr {
+  NExpr { kind: NIntLit(true, Nat::sub(85070591730234615865843651857942052864, k)), ty: ty }
+}
+
+pub fn b_unit_hole(): NExpr { NExpr { kind: NIntLit(false, 0), ty: NNever } }
+
+// ---- lists ----
+
+pub fn b_snoc<A>(xs: List(A), x: A): List(A) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, b_snoc(rest, x))
+  }
+}
+
+pub fn b_append<A>(xs: List(A), ys: List(A)): List(A) { List::append(xs, ys) }
+
+pub fn b_len<A>(xs: List(A)): Nat { List::length(xs) }
+
+pub fn b_set<A>(slot: &mut A, value: A): Unit {
+  *slot := value
+}
+
+// ---- the shape of an expression ----
+
+pub fn b_is_control(k: NKind): Bool {
+  match k {
+    NIf(^c, ^t, ^o) => true
+    NMatchOf(^m) => true
+    NAnd(^a, ^b) => true
+    NOr(^a, ^b) => true
+    NBlockOf(^b) => true
+    NHandleOf(^h) => true
+    NBudgetOf(^b) => true
+    _ => false
+  }
+}
+
+pub fn b_arg_values(xs: List(NArg)): List(NExpr) {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => Cons(a.value, b_arg_values(rest))
+  }
+}
+
+// The operands of a node that evaluates them first, in order (`operands_mut`).
+pub fn b_operands(e: NExpr): List(NExpr) {
+  match e.kind {
+    NCallOf(c) => match c.callee {
+      NCallValue(f) => Cons(f, c.args)
+      NCallInst(^i) => c.args
+      NCallBuiltin(^n) => c.args
+      NCallExtern(^n) => c.args
+      NCallLocal(^l) => c.args
+      NCallCont(^l) => c.args
+    }
+    NArithOf(^op, ^t, args) => args
+    NCmpOf(^op, args) => args
+    NEqOf(^neg, args) => args
+    NNot(a) => [a]
+    NTempRef(a) => [a]
+    NShownOf(a) => [a]
+    NUnreachable(a) => [a]
+    NFnCast(a) => [a]
+    NCtorOf(^c, args) => b_arg_values(args)
+    NFieldOf(base, ^f, ^u, ^i) => [base]
+    NPerformOf(p) => p.args
+    NInject(^u, ^m, v) => [v]
+    NRemap(^u, ^t, v) => [v]
+    NDeref(v, ^u) => [v]
+    NUnitLit => Nil
+    NIntLit(^n, ^m) => Nil
+    NBoolLit(^b) => Nil
+    NFloatLit(^t) => Nil
+    NTextLit(^t) => Nil
+    NDeclaration(^i) => Nil
+    NFnValue(^i, ^ts) => Nil
+    NClosureOf(^c) => Nil
+    NHandleOf(^h) => Nil
+    NBudgetOf(^b) => Nil
+    NRead(^l, ^u) => Nil
+    NBorrow(^p) => Nil
+    NBorrowMut(^p) => Nil
+    NIf(^c, ^t, ^o) => Nil
+    NBlockOf(^b) => Nil
+    NMatchOf(^m) => Nil
+    NAnd(^a, ^b) => Nil
+    NOr(^a, ^b) => Nil
+  }
+}
+
+// The same operands, replaced in the same order. `news` has as many as
+// `b_operands` gives.
+pub fn b_replace_args(xs: List(NArg), news: List(NExpr)): List(NArg) {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => match news {
+      Nil => xs
+      Cons(n, more) => Cons(NArg { label: a.label, value: n }, b_replace_args(rest, more))
+    }
+  }
+}
+
+pub fn b_head(xs: List(NExpr), or: NExpr): NExpr {
+  match xs {
+    Nil => or
+    Cons(x, ^rest) => x
+  }
+}
+
+pub fn b_tail(xs: List(NExpr)): List(NExpr) {
+  match xs {
+    Nil => Nil
+    Cons(^x, rest) => rest
+  }
+}
+
+pub fn b_with_operands(e: NExpr, news: List(NExpr)): NExpr {
+  let one := b_head(news, e)
+  let kind := match e.kind {
+    NCallOf(c) => match c.callee {
+      NCallValue(^f) => NCallOf(
+        NCall {
+          callee: NCallValue(one),
+          targs: c.targs,
+          args: b_tail(news),
+          tier: c.tier,
+          tick: c.tick,
+          recur: c.recur,
+          unwind: c.unwind
+        }
+      )
+      NCallInst(^i) => NCallOf(
+        NCall {
+          callee: c.callee,
+          targs: c.targs,
+          args: news,
+          tier: c.tier,
+          tick: c.tick,
+          recur: c.recur,
+          unwind: c.unwind
+        }
+      )
+      NCallBuiltin(^n) => NCallOf(
+        NCall {
+          callee: c.callee,
+          targs: c.targs,
+          args: news,
+          tier: c.tier,
+          tick: c.tick,
+          recur: c.recur,
+          unwind: c.unwind
+        }
+      )
+      NCallExtern(^n) => NCallOf(
+        NCall {
+          callee: c.callee,
+          targs: c.targs,
+          args: news,
+          tier: c.tier,
+          tick: c.tick,
+          recur: c.recur,
+          unwind: c.unwind
+        }
+      )
+      NCallLocal(^l) => NCallOf(
+        NCall {
+          callee: c.callee,
+          targs: c.targs,
+          args: news,
+          tier: c.tier,
+          tick: c.tick,
+          recur: c.recur,
+          unwind: c.unwind
+        }
+      )
+      NCallCont(^l) => NCallOf(
+        NCall {
+          callee: c.callee,
+          targs: c.targs,
+          args: news,
+          tier: c.tier,
+          tick: c.tick,
+          recur: c.recur,
+          unwind: c.unwind
+        }
+      )
+    }
+    NArithOf(op, t, ^args) => NArithOf(op, t, news)
+    NCmpOf(op, ^args) => NCmpOf(op, news)
+    NEqOf(neg, ^args) => NEqOf(neg, news)
+    NNot(^a) => NNot(one)
+    NTempRef(^a) => NTempRef(one)
+    NShownOf(^a) => NShownOf(one)
+    NUnreachable(^a) => NUnreachable(one)
+    NFnCast(^a) => NFnCast(one)
+    NCtorOf(c, args) => NCtorOf(c, b_replace_args(args, news))
+    NFieldOf(^base, f, u, i) => NFieldOf(one, f, u, i)
+    NPerformOf(p) => NPerformOf(
+      NPerform {
+        op: p.op,
+        args: news,
+        quant: p.quant,
+        detached: p.detached,
+        inst: p.inst,
+        unwind: p.unwind,
+        result: p.result
+      }
+    )
+    NInject(u, m, ^v) => NInject(u, m, one)
+    NRemap(u, t, ^v) => NRemap(u, t, one)
+    NDeref(^v, u) => NDeref(one, u)
+    other => other
+  }
+  NExpr { kind: kind, ty: e.ty }
+}
+
+pub fn b_any_control(xs: List(NExpr)): Bool ! {div} {
+  match xs {
+    Nil => false
+    Cons(x, rest) => b_has_control(x) || b_any_control(rest)
+  }
+}
+
+// Whether control flow sits in `e` outside the closures in it.
+pub fn b_has_control(e: NExpr): Bool ! {div} {
+  if b_is_control(e.kind) {
+    true
+  } else {
+    match e.kind {
+      NClosureOf(^c) => false
+      ^other => b_any_control(b_operands(e))
+    }
+  }
+}
+
+// Whether control flow sits in an operand of a call.
+pub fn b_has_control_in_args(e: NExpr): Bool ! {div} { b_any_control(b_operands(e)) }
+
+// ---- points ----
+
+// How the point `e` is resumed, when it is a point where a function may stop.
+pub fn b_resumes_of(e: NExpr): Option(NResumes) {
+  match e.kind {
+    NPerformOf(p) => match p.quant {
+      NQZero => Some(NResNever)
+      NQAtMostOne => Some(NResOnce)
+      NQOne => Some(NResOnce)
+      NQMany => Some(NResMany)
+      NQDirect => None
+    }
+    NCallOf(c) => match c.tier {
+      NTierS => None
+      NTierA => Some(NResNever)
+      NTierO => Some(NResOnce)
+      NTierM => Some(NResMany)
+    }
+    ^other => None
+  }
+}
+
+pub fn b_suspends(e: NExpr): Bool {
+  match b_resumes_of(e) {
+    None => false
+    Some(r) => match r {
+      NResNever => false
+      NResOnce => true
+      NResMany => true
+    }
+  }
+}
+
+// Whether a tier stops (`O` or `M`).
+pub fn b_stops(t: NTier): Bool {
+  match t {
+    NTierS => false
+    NTierA => false
+    NTierO => true
+    NTierM => true
+  }
+}
+
+// ---- patterns ----
+
+pub fn b_param(l: NLocal, t: NTy): NParam { NParam { local: l, ty: t } }
+
+pub fn b_pat_binds(p: NPat): List(NParam) {
+  match p {
+    NBind(l, t) => [b_param(l, t)]
+    NCtorPat(^c, fs) => b_pats_binds(fs)
+    NInjectPat(^u, ^v, q) => b_pat_binds(q)
+    ^other => Nil
+  }
+}
+
+pub fn b_pats_binds(ps: List(NPat)): List(NParam) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => b_append(b_pat_binds(p), b_pats_binds(rest))
+  }
+}
+
+pub fn b_irrefutable(p: NPat): Bool {
+  match p {
+    NWild => true
+    NBind(^l, ^t) => true
+    ^other => false
+  }
+}
+
+pub fn b_all_irrefutable(ps: List(NPat)): Bool {
+  match ps {
+    Nil => true
+    Cons(p, rest) => b_irrefutable(p) && b_all_irrefutable(rest)
+  }
+}
+
+// Whether a pattern binds an owned part.
+pub fn b_owns(p: NPat): Bool {
+  match p {
+    NBind(^l, t) => n_needs_drop(t)
+    NCtorPat(^c, fs) => b_owns_any(fs)
+    NInjectPat(^u, ^v, q) => b_owns(q)
+    ^other => false
+  }
+}
+
+pub fn b_owns_any(ps: List(NPat)): Bool {
+  match ps {
+    Nil => false
+    Cons(p, rest) => b_owns(p) || b_owns_any(rest)
+  }
+}
+
+// The paths of every constructor the pattern matches, outermost first.
+pub fn b_unpack_all(p: NPat, at: List(Nat)): List(List(Nat)) {
+  match p {
+    NCtorPat(^c, fs) => Cons(at, b_unpack_fields(fs, at, 0))
+    NInjectPat(^u, ^v, q) => b_unpack_all(q, b_snoc(at, 0))
+    ^other => Nil
+  }
+}
+
+pub fn b_unpack_fields(fs: List(NPat), at: List(Nat), i: Nat): List(List(Nat)) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => b_append(b_unpack_all(f, b_snoc(at, i)), b_unpack_fields(rest, at, i + 1))
+  }
+}
+
+// The paths of the constructors of `p` that hold an owned part, outermost
+// first.
+pub fn b_unpacks_at(p: NPat, at: List(Nat)): List(List(Nat)) {
+  if b_owns(p) { b_unpack_all(p, at) } else { Nil }
+}
+
+pub fn b_unpacks(p: NPat): List(List(Nat)) { b_unpacks_at(p, Nil) }
+
+// ---- pattern matching as a decision tree ----
+
+pub fn b_path_eq(a: List(Nat), b: List(Nat)): Bool {
+  match a {
+    Nil => match b {
+      Nil => true
+      Cons(^y, ^more) => false
+    }
+    Cons(x, rest) => match b {
+      Nil => false
+      Cons(y, more) => x == y && b_path_eq(rest, more)
+    }
+  }
+}
+
+// Paths in the order of their numbers, the shorter first on a common start.
+pub fn b_path_lt(a: List(Nat), b: List(Nat)): Bool {
+  match a {
+    Nil => match b {
+      Nil => false
+      Cons(^y, ^more) => true
+    }
+    Cons(x, rest) => match b {
+      Nil => false
+      Cons(y, more) => if x < y { true } else { if y < x { false } else { b_path_lt(rest, more) } }
+    }
+  }
+}
+
+pub fn b_case_eq(a: NCase, b: NCase): Bool {
+  match a {
+    NCaseCtor(i, n) => match b {
+      NCaseCtor(j, m) => i == j && n == m
+      ^other => false
+    }
+    NCaseInt(ng, n) => match b {
+      NCaseInt(mg, m) => ng == mg && n == m
+      ^other => false
+    }
+    NCaseNat(n) => match b {
+      NCaseNat(m) => n == m
+      ^other => false
+    }
+    NCaseBool(x) => match b {
+      NCaseBool(y) => x == y
+      ^other => false
+    }
+    NCaseText(s) => match b {
+      NCaseText(t) => s == t
+      ^other => false
+    }
+    NCaseVariant(i) => match b {
+      NCaseVariant(j) => i == j
+      ^other => false
+    }
+  }
+}
+
+pub(open) struct BBind { local: NLocal, path: List(Nat) }
+
+pub(open) enum BDec {
+  // No arm matches.
+  BFail
+  BLeaf(Nat, List(BBind))
+  // The arm runs if its guard holds; otherwise the rest.
+  BGuard(Nat, List(BBind), BDec)
+  BSwitch(List(Nat), List(BBranch), Option(BDec))
+}
+
+pub(open) struct BBranch { case: NCase, next: BDec }
+
+pub(open) struct BCol { path: List(Nat), pat: NPat }
+
+pub(open) struct BRow { cols: List(BCol), binds: List(BBind), arm: Nat, guarded: Bool }
+
+// Moves what does not test anything (`_`, a binding) out of the columns.
+pub fn b_settle_cols(cols: List(BCol), binds: List(BBind), kept: List(BCol)): BRowParts {
+  match cols {
+    Nil => BRowParts { cols: kept, binds: binds }
+    Cons(c, rest) => match c.pat {
+      NWild => b_settle_cols(rest, binds, kept)
+      NBind(l, ^t) => b_settle_cols(rest, b_snoc(binds, BBind { local: l, path: c.path }), kept)
+      ^other => b_settle_cols(rest, binds, b_snoc(kept, c))
+    }
+  }
+}
+
+pub(open) struct BRowParts { cols: List(BCol), binds: List(BBind) }
+
+pub fn b_settle(r: BRow): BRow {
+  let parts := b_settle_cols(r.cols, r.binds, Nil)
+  BRow { cols: parts.cols, binds: parts.binds, arm: r.arm, guarded: r.guarded }
+}
+
+pub fn b_settle_all(rows: List(BRow)): List(BRow) {
+  match rows {
+    Nil => Nil
+    Cons(r, rest) => Cons(b_settle(r), b_settle_all(rest))
+  }
+}
+
+pub fn b_case_of(p: NPat): Option(NCase) {
+  match p {
+    NCtorPat(c, fs) => Some(NCaseCtor(c.index, b_len(fs)))
+    NIntPat(ng, n) => Some(NCaseInt(ng, n))
+    NNatPat(n) => Some(NCaseNat(n))
+    NBoolPat(b) => Some(NCaseBool(b))
+    NTextPat(t) => Some(NCaseText(t))
+    NInjectPat(^u, v, ^q) => Some(NCaseVariant(v))
+    NWild => None
+    NBind(^l, ^t) => None
+  }
+}
+
+// The column of a row that looks at `path`: the columns before it, it, and the
+// columns after it.
+pub fn b_find_col(cols: List(BCol), path: List(Nat), before: List(BCol)): Option(List(BCol) × BCol × List(BCol)) {
+  match cols {
+    Nil => None
+    Cons(c, rest) => if b_path_eq(c.path, path) {
+      Some(#(before, c, rest))
+    } else {
+      b_find_col(rest, path, b_snoc(before, c))
+    }
+  }
+}
+
+pub fn b_has_case(cases: List(NCase), c: NCase): Bool {
+  match cases {
+    Nil => false
+    Cons(x, rest) => b_case_eq(x, c) || b_has_case(rest, c)
+  }
+}
+
+// The cases the rows test the part at `path` for, in the order first met.
+pub fn b_cases(rows: List(BRow), path: List(Nat), seen: List(NCase)): List(NCase) {
+  match rows {
+    Nil => seen
+    Cons(r, rest) => match b_find_col(r.cols, path, Nil) {
+      None => b_cases(rest, path, seen)
+      Some(found) => match found {
+        #(^before, col, ^after) => match b_case_of(col.pat) {
+          None => b_cases(rest, path, seen)
+          Some(c) => if b_has_case(seen, c) {
+            b_cases(rest, path, seen)
+          } else {
+            b_cases(rest, path, b_snoc(seen, c))
+          }
+        }
+      }
+    }
+  }
+}
+
+// A constructor's fields as columns of their own, at paths below `path`.
+pub fn b_field_cols(fs: List(NPat), path: List(Nat), i: Nat): List(BCol) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(BCol { path: b_snoc(path, i), pat: f }, b_field_cols(rest, path, i + 1))
+  }
+}
+
+// The rows that go on when the part at `path` is `case` (or, with `None`, none
+// of the cases tested).
+pub fn b_specialize(rows: List(BRow), path: List(Nat), case: Option(NCase)): List(BRow) {
+  match rows {
+    Nil => Nil
+    Cons(r, rest) => match b_find_col(r.cols, path, Nil) {
+      None => Cons(r, b_specialize(rest, path, case))
+      Some(found) => match found {
+        #(before, col, after) => match case {
+          None => b_specialize(rest, path, case)
+          Some(c) => match b_case_of(col.pat) {
+            None => b_specialize(rest, path, case)
+            Some(own) => if b_case_eq(own, c) {
+              let mid := match col.pat {
+                NCtorPat(^k, fs) => b_field_cols(fs, path, 0)
+                NInjectPat(^u, ^v, q) => [BCol { path: b_snoc(path, 0), pat: q }]
+                ^other => Nil
+              }
+              Cons(
+                BRow {
+                  cols: b_append(before, b_append(mid, after)),
+                  binds: r.binds,
+                  arm: r.arm,
+                  guarded: r.guarded
+                },
+                b_specialize(rest, path, case)
+              )
+            } else {
+              b_specialize(rest, path, case)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn b_branches(rows: List(BRow), path: List(Nat), cases: List(NCase)): List(BBranch) ! {div} {
+  match cases {
+    Nil => Nil
+    Cons(c, rest) => Cons(
+      BBranch { case: c, next: b_tree(b_specialize(rows, path, Some(c))) },
+      b_branches(rows, path, rest)
+    )
+  }
+}
+
+pub fn b_tree(rows0: List(BRow)): BDec ! {div} {
+  let rows := b_settle_all(rows0)
+  match rows {
+    Nil => BFail
+    Cons(first, rest) => match first.cols {
+      Nil => if first.guarded {
+        BGuard(first.arm, first.binds, b_tree(rest))
+      } else {
+        BLeaf(first.arm, first.binds)
+      }
+      Cons(c0, ^more) => {
+        let path := c0.path
+        let cases := b_cases(rows, path, Nil)
+        let branches := b_branches(rows, path, cases)
+        let others := b_specialize(rows, path, None)
+        let default := match others {
+          Nil => None
+          Cons(^o, ^os) => Some(b_tree(others))
+        }
+        BSwitch(path, branches, default)
+      }
+    }
+  }
+}
+
+pub fn b_rows(arms: List(NArm), i: Nat): List(BRow) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => Cons(
+      BRow {
+        cols: [BCol { path: Nil, pat: a.pat }],
+        binds: Nil,
+        arm: i,
+        guarded: match a.guard {
+          None => false
+          Some(^g) => true
+        }
+      },
+      b_rows(rest, i + 1)
+    )
+  }
+}
+
+pub fn b_compile(m: NMatch): BDec ! {div} { b_tree(b_rows(m.arms, 0)) }
+
+// ---- taking the operands and bodies out of a node ----
+
+// One operand or body of a branching node, in a fixed order.
+pub(open) struct BTaken { operand: Bool, expr: NExpr }
+
+pub(open) struct BTake { shell: NExpr, slots: List(BTaken) }
+
+pub fn b_taken(operand: Bool, e: NExpr): BTaken { BTaken { operand: operand, expr: e } }
+
+pub fn b_take_arms(arms: List(NArm), i: Nat): List(NArm) × List(BTaken) × Nat {
+  match arms {
+    Nil => #(Nil, Nil, i)
+    Cons(a, rest) => match a.guard {
+      None => match b_take_arms(rest, i + 1) {
+        #(shells, slots, n) => #(
+          Cons(NArm { pat: a.pat, guard: None, body: b_slot_hole(i) }, shells),
+          Cons(b_taken(false, a.body), slots),
+          n
+        )
+      }
+      Some(g) => match b_take_arms(rest, i + 2) {
+        #(shells, slots, n) => #(
+          Cons(NArm { pat: a.pat, guard: Some(b_slot_hole(i)), body: b_slot_hole(i + 1) }, shells),
+          Cons(b_taken(false, g), Cons(b_taken(false, a.body), slots)),
+          n
+        )
+      }
+    }
+  }
+}
+
+pub fn b_take_op_arms(arms: List(NOpArm), i: Nat): List(NOpArm) × List(BTaken) × Nat {
+  match arms {
+    Nil => #(Nil, Nil, i)
+    Cons(a, rest) => match a.guard {
+      None => match b_take_op_arms(rest, i + 1) {
+        #(shells, slots, n) => #(
+          Cons(b_op_arm_with(a, None, b_slot_hole(i)), shells),
+          Cons(b_taken(false, a.body), slots),
+          n
+        )
+      }
+      Some(g) => match b_take_op_arms(rest, i + 2) {
+        #(shells, slots, n) => #(
+          Cons(b_op_arm_with(a, Some(b_slot_hole(i)), b_slot_hole(i + 1)), shells),
+          Cons(b_taken(false, g), Cons(b_taken(false, a.body), slots)),
+          n
+        )
+      }
+    }
+  }
+}
+
+pub fn b_op_arm_with(a: NOpArm, guard: Option(NExpr), body: NExpr): NOpArm {
+  NOpArm {
+    kind: a.kind,
+    op: a.op,
+    pats: a.pats,
+    params: a.params,
+    k_ans: a.k_ans,
+    k: a.k,
+    inst: a.inst,
+    instantiated: a.instantiated,
+    guard: guard,
+    body: body
+  }
+}
+
+// The node with its operands and bodies replaced by holes, and what it held.
+pub fn b_take(e: NExpr): BTake {
+  match e.kind {
+    NIf(c, t, o) => match o {
+      None => BTake {
+        shell: NExpr { kind: NIf(b_slot_hole(0), b_slot_hole(1), None), ty: e.ty },
+        slots: [b_taken(true, c), b_taken(false, t)]
+      }
+      Some(x) => BTake {
+        shell: NExpr { kind: NIf(b_slot_hole(0), b_slot_hole(1), Some(b_slot_hole(2))), ty: e.ty },
+        slots: [b_taken(true, c), b_taken(false, t), b_taken(false, x)]
+      }
+    }
+    NAnd(a, b) => BTake {
+      shell: NExpr { kind: NAnd(b_slot_hole(0), b_slot_hole(1)), ty: e.ty },
+      slots: [b_taken(true, a), b_taken(false, b)]
+    }
+    NOr(a, b) => BTake {
+      shell: NExpr { kind: NOr(b_slot_hole(0), b_slot_hole(1)), ty: e.ty },
+      slots: [b_taken(true, a), b_taken(false, b)]
+    }
+    NBudgetOf(b) => BTake {
+      shell: NExpr {
+        kind: NBudgetOf(
+          NBudget { id: b.id, memory: b.memory, m: b.m, steps: b_slot_hole(0), body: b_slot_hole(1) }
+        ),
+        ty: e.ty
+      },
+      slots: [b_taken(true, b.steps), b_taken(false, b.body)]
+    }
+    NMatchOf(m) => match b_take_arms(m.arms, 1) {
+      #(shells, slots, ^n) => BTake {
+        shell: NExpr {
+          kind: NMatchOf(
+            NMatch { scrut: b_slot_hole(0), by_ref: m.by_ref, exhaustive: m.exhaustive, arms: shells }
+          ),
+          ty: e.ty
+        },
+        slots: Cons(b_taken(true, m.scrut), slots)
+      }
+    }
+    NHandleOf(h) => match h.ret {
+      None => match b_take_op_arms(h.arms, 1) {
+        #(shells, slots, ^n) => BTake {
+          shell: NExpr { kind: NHandleOf(b_handle_with(h, b_slot_hole(0), None, shells)), ty: e.ty },
+          slots: Cons(b_taken(false, h.body), slots)
+        }
+      }
+      Some(r) => match b_take_op_arms(h.arms, 2) {
+        #(shells, slots, ^n) => BTake {
+          shell: NExpr {
+            kind: NHandleOf(
+              b_handle_with(h, b_slot_hole(0), Some(NReturnArm { pat: r.pat, body: b_slot_hole(1) }), shells)
+            ),
+            ty: e.ty
+          },
+          slots: Cons(b_taken(false, h.body), Cons(b_taken(false, r.body), slots))
+        }
+      }
+    }
+    ^other => BTake { shell: e, slots: Nil }
+  }
+}
+
+pub fn b_handle_with(h: NHandle, body: NExpr, ret: Option(NReturnArm), arms: List(NOpArm)): NHandle {
+  NHandle {
+    id: h.id,
+    body_tier: h.body_tier,
+    m: h.m,
+    kept: h.kept,
+    detached: h.detached,
+    host_ret: h.host_ret,
+    captures: h.captures,
+    clones: h.clones,
+    body: body,
+    body_ty: h.body_ty,
+    ret: ret,
+    arms: arms,
+    result: h.result
+  }
+}
+
+// ---- the lowering ----
+
+pub(open) struct LBlock {
+  params: List(NParam),
+  takes: Option(NTy),
+  owner: Option(Nat),
+  joins: Option(Nat),
+  // The instructions, the last first.
+  insts: List(NInst),
+  term: NTerm
+}
+
+pub(open) struct LState {
+  blocks: Ordmap(Nat, LBlock),
+  nblocks: Nat,
+  regions: Ordmap(Nat, Option(NRegion)),
+  nregions: Nat,
+  // The regions whose parts are being lowered, the innermost first.
+  stack: List(Nat),
+  // The tier of the body being lowered, the innermost first.
+  tiers: List(NTier),
+  variants: List(NVariantAt),
+  opaque_count: Nat,
+  refutable_count: Nat,
+  // The bodies of the closures the leaves make, the last first.
+  closures: List(NBlockFn)
+}
+
+pub fn l_tier(st: &mut LState): NTier {
+  match st.tiers {
+    Nil => NTierS
+    Cons(t, ^rest) => t
+  }
+}
+
+pub fn l_pending(owner: Option(Nat)): LBlock {
+  LBlock { params: Nil, takes: None, owner: owner, joins: None, insts: Nil, term: NTPending }
+}
+
+pub fn l_block(st: &mut LState): Nat {
+  let id := st.nblocks
+  let owner := match st.stack {
+    Nil => None
+    Cons(r, ^rest) => Some(r)
+  }
+  b_set(&mut st.blocks, Ordmap::insert(st.blocks, id, l_pending(owner), Ordmap::compare_nat))
+  b_set(&mut st.nblocks, id + 1)
+  id
+}
+
+pub fn l_region(st: &mut LState): Nat {
+  let id := st.nregions
+  b_set(&mut st.regions, Ordmap::insert(st.regions, id, None, Ordmap::compare_nat))
+  b_set(&mut st.nregions, id + 1)
+  id
+}
+
+pub fn l_get(st: &mut LState, id: Nat): LBlock {
+  match Ordmap::get(st.blocks, id, Ordmap::compare_nat) {
+    Some(b) => b
+    None => l_pending(None)
+  }
+}
+
+pub fn l_put(st: &mut LState, id: Nat, b: LBlock): Unit {
+  b_set(&mut st.blocks, Ordmap::insert(st.blocks, id, b, Ordmap::compare_nat))
+}
+
+pub fn l_push(st: &mut LState, id: Nat, i: NInst): Unit {
+  let b := l_get(&mut st, id)
+  l_put(
+    &mut st,
+    id,
+    LBlock { params: b.params, takes: b.takes, owner: b.owner, joins: b.joins, insts: Cons(i, b.insts), term: b.term }
+  )
+}
+
+// The instructions come before the block's own.
+pub fn l_push_front(st: &mut LState, id: Nat, is: List(NInst)): Unit {
+  let b := l_get(&mut st, id)
+  l_put(
+    &mut st,
+    id,
+    LBlock {
+      params: b.params,
+      takes: b.takes,
+      owner: b.owner,
+      joins: b.joins,
+      insts: b_append(b.insts, List::reverse(is)),
+      term: b.term
+    }
+  )
+}
+
+pub fn l_term(st: &mut LState, id: Nat, t: NTerm): Unit {
+  let b := l_get(&mut st, id)
+  l_put(
+    &mut st,
+    id,
+    LBlock { params: b.params, takes: b.takes, owner: b.owner, joins: b.joins, insts: b.insts, term: t }
+  )
+}
+
+pub fn l_params(st: &mut LState, id: Nat, ps: List(NParam)): Unit {
+  let b := l_get(&mut st, id)
+  l_put(
+    &mut st,
+    id,
+    LBlock { params: ps, takes: b.takes, owner: b.owner, joins: b.joins, insts: b.insts, term: b.term }
+  )
+}
+
+// A block where branches meet takes the value of the region.
+pub fn l_joins(st: &mut LState, id: Nat, t: NTy, r: Nat): Unit {
+  let b := l_get(&mut st, id)
+  l_put(
+    &mut st,
+    id,
+    LBlock { params: b.params, takes: Some(t), owner: b.owner, joins: Some(r), insts: b.insts, term: b.term }
+  )
+}
+
+pub fn l_shape(st: &mut LState, r: Nat, shell: NShell, slots: List(NSlot)): Unit {
+  b_set(
+    &mut st.regions,
+    Ordmap::insert(st.regions, r, Some(NRegion { shell: shell, slots: slots }), Ordmap::compare_nat)
+  )
+}
+
+pub fn l_push_stack(st: &mut LState, r: Nat): Unit { b_set(&mut st.stack, Cons(r, st.stack)) }
+
+pub fn l_pop_stack(st: &mut LState): Unit {
+  match st.stack {
+    Nil => ()
+    Cons(^r, rest) => b_set(&mut st.stack, rest)
+  }
+}
+
+// `(region, path)` into the places a `match` tests for a union's variant, in
+// order and once.
+pub fn b_variants_add(xs: List(NVariantAt), v: NVariantAt): List(NVariantAt) {
+  match xs {
+    Nil => [v]
+    Cons(x, rest) => if x.region == v.region && b_path_eq(x.path, v.path) {
+      xs
+    } else {
+      if v.region < x.region || (v.region == x.region && b_path_lt(v.path, x.path)) {
+        Cons(v, xs)
+      } else {
+        Cons(x, b_variants_add(rest, v))
+      }
+    }
+  }
+}
+
+// Takes the closures out of a leaf into blocks of their own.
+pub fn l_closures(st: &mut LState, e: NExpr): NExpr ! {div} {
+  match e.kind {
+    NClosureOf(c) => {
+      let sub := l_body(c.body, NTierM)
+      let k := b_len(st.closures)
+      b_set(&mut st.closures, Cons(sub, st.closures))
+      NExpr {
+        kind: NClosureOf(
+          NClosure {
+            borrowed: c.borrowed,
+            pure: c.pure,
+            params: c.params,
+            ret: c.ret,
+            fn_ty: c.fn_ty,
+            clones: c.clones,
+            refs: c.refs,
+            owned_refs: c.owned_refs,
+            body: b_closure_hole(k, c.body.ty)
+          }
+        ),
+        ty: e.ty
+      }
+    }
+    ^other => b_with_operands(e, l_closures_list(&mut st, b_operands(e)))
+  }
+}
+
+pub fn l_closures_list(st: &mut LState, xs: List(NExpr)): List(NExpr) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let y := l_closures(&mut st, x)
+      Cons(y, l_closures_list(&mut st, rest))
+    }
+  }
+}
+
+pub fn l_leaf(st: &mut LState, e: NExpr): NExpr ! {div} { l_closures(&mut st, e) }
+
+pub fn l_other(st: &mut LState, e: NExpr): NValue ! {div} {
+  if b_has_control(e) {
+    b_set(&mut st.opaque_count, st.opaque_count + 1)
+    NValLeaf(e)
+  } else {
+    NValLeaf(l_leaf(&mut st, e))
+  }
+}
+
+pub fn l_call_here(st: &mut LState, c: NCall, e: NExpr): Bool ! {div} {
+  let stopping_here := match l_tier(&mut st) {
+    NTierS => b_stops(c.tier)
+    NTierA => false
+    NTierO => false
+    NTierM => false
+  }
+  let leaves := match c.tier {
+    NTierS => match c.unwind {
+      Nil => false
+      Cons(^u, ^us) => true
+    }
+    NTierA => true
+    NTierO => true
+    NTierM => true
+  }
+  leaves && not(b_has_control_in_args(e)) && not(stopping_here)
+}
+
+pub fn l_perform_here(p: NPerform, e: NExpr): Bool ! {div} {
+  let not_direct := match p.quant {
+    NQDirect => false
+    NQZero => true
+    NQAtMostOne => true
+    NQOne => true
+    NQMany => true
+  }
+  let leaves := match p.unwind {
+    Nil => b_suspends(e)
+    Cons(^u, ^us) => true
+  }
+  not_direct && leaves && not(b_has_control_in_args(e))
+}
+
+pub fn l_lower(st: &mut LState, e: NExpr, cur: &mut Nat): NValue ! {div} {
+  match e.kind {
+    NBlockOf(b) => {
+      let r := l_region(&mut st)
+      l_push(&mut st, cur, NIOpen(r))
+      let tail := l_stmts(&mut st, b, &mut cur)
+      l_push(&mut st, cur, NIClose(r, tail))
+      l_shape(&mut st, r, NShellBlock(e.ty), Nil)
+      NValRegion(r)
+    }
+    NMatchOf(m) => l_match(&mut st, e, m, &mut cur)
+    NHandleOf(h) => l_handle(&mut st, e, h, &mut cur)
+    NCallOf(c) => if l_call_here(&mut st, c, e) {
+      l_call(&mut st, e, &mut cur)
+    } else {
+      l_other(&mut st, e)
+    }
+    NPerformOf(p) => if l_perform_here(p, e) {
+      l_call(&mut st, e, &mut cur)
+    } else {
+      l_other(&mut st, e)
+    }
+    ^other => if b_is_control(e.kind) { l_control(&mut st, e, &mut cur) } else { l_other(&mut st, e) }
+  }
+}
+
+// The operands come first in every node, so they are in `cur` before the branch.
+pub fn l_operand_slots(st: &mut LState, xs: List(BTaken), cur: &mut Nat): List(NSlot) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if x.operand {
+      let v := l_lower(&mut st, x.expr, &mut cur)
+      Cons(NSlotOperand(v), l_operand_slots(&mut st, rest, &mut cur))
+    } else {
+      l_operand_slots(&mut st, rest, &mut cur)
+    }
+  }
+}
+
+// A body as a block of its own that jumps to `join` with its value.
+pub fn l_child(st: &mut LState, x: NExpr, join: Nat): Nat ! {div} {
+  let entry := l_block(&mut st)
+  var c := entry
+  let v := l_lower(&mut st, x, &mut c)
+  l_term(&mut st, c, NTJump(join, v))
+  entry
+}
+
+// The tier of the body of a `budget`: it stops when its steps run out,
+// whatever tier the code around it has.
+pub fn b_budget_tier(b: NBudget): NTier { if b.m { NTierM } else { NTierO } }
+
+pub fn l_pop_tier(st: &mut LState): Unit {
+  match st.tiers {
+    Nil => ()
+    Cons(^t, rest) => b_set(&mut st.tiers, rest)
+  }
+}
+
+// A body, lowered under the tier of a `budget` when it is the body of one.
+pub fn l_child_in(st: &mut LState, tier: Option(NTier), x: NExpr, join: Nat): Nat ! {div} {
+  match tier {
+    None => l_child(&mut st, x, join)
+    Some(t) => {
+      b_set(&mut st.tiers, Cons(t, st.tiers))
+      let entry := l_child(&mut st, x, join)
+      l_pop_tier(&mut st)
+      entry
+    }
+  }
+}
+
+pub fn l_body_slots(
+  st: &mut LState,
+  xs: List(BTaken),
+  ops: List(NSlot),
+  join: Nat,
+  tier: Option(NTier)
+): List(NSlot) × List(Nat) ! {div} {
+  match xs {
+    Nil => #(Nil, Nil)
+    Cons(x, rest) => if x.operand {
+      match ops {
+        Nil => l_body_slots(&mut st, rest, ops, join, tier)
+        Cons(o, more) => match l_body_slots(&mut st, rest, more, join, tier) {
+          #(slots, succs) => #(Cons(o, slots), succs)
+        }
+      }
+    } else {
+      let entry := l_child_in(&mut st, tier, x.expr, join)
+      match l_body_slots(&mut st, rest, ops, join, tier) {
+        #(slots, succs) => #(Cons(NSlotBody(entry), slots), Cons(entry, succs))
+      }
+    }
+  }
+}
+
+pub fn l_control(st: &mut LState, e: NExpr, cur: &mut Nat): NValue ! {div} {
+  let taken := b_take(e)
+  let r := l_region(&mut st)
+  let join := l_block(&mut st)
+  l_joins(&mut st, join, e.ty, r)
+  let ops := l_operand_slots(&mut st, taken.slots, &mut cur)
+  l_push_stack(&mut st, r)
+  let tier := match e.kind {
+    NBudgetOf(bd) => Some(b_budget_tier(bd))
+    ^other => None
+  }
+  match l_body_slots(&mut st, taken.slots, ops, join, tier) {
+    #(slots, succs) => {
+      l_pop_stack(&mut st)
+      l_term(&mut st, cur, NTControl(r, succs, join))
+      l_shape(&mut st, r, NShellNode(taken.shell), slots)
+      *cur := join
+      NValRegion(r)
+    }
+  }
+}
+
+// A call that may abort ends its block: the abort goes through a block of the
+// drops its frame owes.
+pub fn l_unwind_stmts(st: &mut LState, xs: List(NStmt), c: &mut Nat): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(s, rest) => {
+      l_stmt(&mut st, s, &mut c)
+      l_unwind_stmts(&mut st, rest, &mut c)
+    }
+  }
+}
+
+pub fn l_call(st: &mut LState, e: NExpr, cur: &mut Nat): NValue ! {div} {
+  let unwind := match e.kind {
+    NCallOf(c) => c.unwind
+    NPerformOf(p) => p.unwind
+    ^other => Nil
+  }
+  let bare := match e.kind {
+    NCallOf(c) => NExpr {
+      kind: NCallOf(
+        NCall {
+          callee: c.callee,
+          targs: c.targs,
+          args: c.args,
+          tier: c.tier,
+          tick: c.tick,
+          recur: c.recur,
+          unwind: Nil
+        }
+      ),
+      ty: e.ty
+    }
+    NPerformOf(p) => NExpr {
+      kind: NPerformOf(
+        NPerform {
+          op: p.op,
+          args: p.args,
+          quant: p.quant,
+          detached: p.detached,
+          inst: p.inst,
+          unwind: Nil,
+          result: p.result
+        }
+      ),
+      ty: e.ty
+    }
+    ^other => e
+  }
+  let shell := l_leaf(&mut st, bare)
+  let r := l_region(&mut st)
+  let join := l_block(&mut st)
+  l_joins(&mut st, join, e.ty, r)
+  l_push_stack(&mut st, r)
+  let abort := l_block(&mut st)
+  var c := abort
+  l_unwind_stmts(&mut st, unwind, &mut c)
+  l_term(&mut st, c, NTAbort)
+  l_pop_stack(&mut st)
+  let is_perform := match e.kind {
+    NPerformOf(^p) => true
+    ^other => false
+  }
+  let stops := b_stops(l_tier(&mut st)) || is_perform
+  let term := match b_resumes_of(e) {
+    None => NTCall(r, join, abort)
+    Some(resumes) => match resumes {
+      NResNever => NTCall(r, join, abort)
+      NResOnce => if stops { NTSuspend(r, join, abort, resumes, Nil) } else { NTCall(r, join, abort) }
+      NResMany => if stops { NTSuspend(r, join, abort, resumes, Nil) } else { NTCall(r, join, abort) }
+    }
+  }
+  l_term(&mut st, cur, term)
+  l_shape(&mut st, r, NShellCall(shell), [NSlotBody(abort)])
+  *cur := join
+  NValRegion(r)
+}
+
+pub fn b_nth_nat(xs: List(Nat), i: Nat): Nat {
+  match List::nth(xs, i) {
+    Some(x) => x
+    None => 0
+  }
+}
+
+pub fn b_bind_ty(tys: List(NParam), id: Nat): NTy {
+  match tys {
+    Nil => NNever
+    Cons(p, rest) => if p.local.id == id { p.ty } else { b_bind_ty(rest, id) }
+  }
+}
+
+pub fn l_binds(st: &mut LState, b: Nat, tys: List(NParam), binds: List(BBind), by_ref: Bool): Unit {
+  match binds {
+    Nil => ()
+    Cons(x, rest) => {
+      l_push(&mut st, b, NIBind(x.local, b_bind_ty(tys, x.local.id), x.path, by_ref))
+      l_binds(&mut st, b, tys, rest, by_ref)
+    }
+  }
+}
+
+pub fn l_ends(st: &mut LState, b: Nat, binds: List(BBind)): Unit {
+  match binds {
+    Nil => ()
+    Cons(x, rest) => {
+      l_push(&mut st, b, NIEnd(x.local))
+      l_ends(&mut st, b, rest)
+    }
+  }
+}
+
+pub fn b_arm_at(arms: List(NArm), i: Nat): Option(NArm) { List::nth(arms, i) }
+
+pub fn l_decisions(
+  st: &mut LState,
+  bs: List(BBranch),
+  m: NMatch,
+  arms: List(Nat),
+  guards: &mut Ordmap(Nat, Nat)
+): List(NCaseArm) ! {div} {
+  match bs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let b := l_decision(&mut st, x.next, m, arms, &mut guards)
+      Cons(NCaseArm { case: x.case, block: b }, l_decisions(&mut st, rest, m, arms, &mut guards))
+    }
+  }
+}
+
+pub fn b_has_variant(bs: List(BBranch)): Bool {
+  match bs {
+    Nil => false
+    Cons(x, rest) => match x.case {
+      NCaseVariant(^i) => true
+      ^other => b_has_variant(rest)
+    }
+  }
+}
+
+pub fn l_decision(
+  st: &mut LState,
+  d: BDec,
+  m: NMatch,
+  arms: List(Nat),
+  guards: &mut Ordmap(Nat, Nat)
+): Nat ! {div} {
+  let b := l_block(&mut st)
+  match d {
+    BFail => l_term(&mut st, b, NTUnreachable)
+    BLeaf(arm, binds) => {
+      match b_arm_at(m.arms, arm) {
+        None => ()
+        Some(a) => l_binds(&mut st, b, b_pat_binds(a.pat), binds, m.by_ref)
+      }
+      l_term(&mut st, b, NTGoto(b_nth_nat(arms, arm)))
+    }
+    BGuard(arm, binds, otherwise) => match b_arm_at(m.arms, arm) {
+      None => ()
+      Some(a) => {
+        l_binds(&mut st, b, b_pat_binds(a.pat), binds, m.by_ref)
+        match a.guard {
+          None => ()
+          Some(g) => {
+            var c := b
+            let v := l_lower(&mut st, g, &mut c)
+            let other := l_decision(&mut st, otherwise, m, arms, &mut guards)
+            // A guard that fails ends the names bound for it, then goes on to
+            // the arms below.
+            let els := match binds {
+              Nil => other
+              Cons(^x, ^xs) => {
+                let end := l_block(&mut st)
+                l_ends(&mut st, end, binds)
+                l_term(&mut st, end, NTGoto(other))
+                end
+              }
+            }
+            l_term(&mut st, c, NTBranch(v, b_nth_nat(arms, arm), Some(els)))
+            match Ordmap::get(guards, arm, Ordmap::compare_nat) {
+              Some(^old) => ()
+              None => b_set(&mut guards, Ordmap::insert(guards, arm, b, Ordmap::compare_nat))
+            }
+          }
+        }
+      }
+    }
+    BSwitch(path, cases, default) => {
+      let cs := l_decisions(&mut st, cases, m, arms, &mut guards)
+      let dflt := match default {
+        None => None
+        Some(x) => Some(l_decision(&mut st, x, m, arms, &mut guards))
+      }
+      if b_has_variant(cases) {
+        match st.stack {
+          Nil => ()
+          Cons(r, ^rest) => b_set(&mut st.variants, b_variants_add(st.variants, NVariantAt { region: r, path: path }))
+        }
+      } else {
+        ()
+      }
+      l_term(&mut st, b, NTTest(path, cs, dflt))
+    }
+  }
+  b
+}
+
+// The arms' bodies, each a block that jumps to `join`, with the constructors
+// they take apart at the start.
+pub fn l_arm_entries(st: &mut LState, m: NMatch, xs: List(NArm), join: Nat, i: Nat): List(Nat) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let entry := l_block(&mut st)
+      var c := entry
+      let v := l_lower(&mut st, a.body, &mut c)
+      l_term(&mut st, c, NTJump(join, v))
+      // The constructors the arm takes apart, outermost first: each that holds
+      // an owned part ends here, once the guard has held.
+      if m.by_ref {
+        ()
+      } else {
+        let ups := b_unpacks(a.pat)
+        l_push_front(&mut st, entry, b_unpack_insts(ups, b_len(ups), 0))
+      }
+      Cons(entry, l_arm_entries(&mut st, m, rest, join, i + 1))
+    }
+  }
+}
+
+pub fn b_unpack_insts(ups: List(List(Nat)), n: Nat, i: Nat): List(NInst) {
+  match ups {
+    Nil => Nil
+    Cons(p, rest) => Cons(NIUnpack(p, i + 1 == n), b_unpack_insts(rest, n, i + 1))
+  }
+}
+
+pub fn l_guard_slots(
+  st: &mut LState,
+  xs: List(NArm),
+  arms: List(Nat),
+  guards: &mut Ordmap(Nat, Nat),
+  i: Nat
+): List(NSlot) ! {div} {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let arm_entry := b_nth_nat(arms, i)
+      let tail := match a.guard {
+        None => Nil
+        Some(g) => match Ordmap::get(guards, i, Ordmap::compare_nat) {
+          Some(entry) => [NSlotBody(entry)]
+          None => {
+            let b := l_block(&mut st)
+            var c := b
+            let v := l_lower(&mut st, g, &mut c)
+            l_term(&mut st, c, NTBranch(v, arm_entry, None))
+            [NSlotBody(b)]
+          }
+        }
+      }
+      let here := b_append(tail, [NSlotBody(arm_entry)])
+      let more := l_guard_slots(&mut st, rest, arms, &mut guards, i + 1)
+      b_append(here, more)
+    }
+  }
+}
+
+pub fn l_match(st: &mut LState, e: NExpr, m: NMatch, cur: &mut Nat): NValue ! {div} {
+  let taken := b_take(e)
+  let r := l_region(&mut st)
+  let join := l_block(&mut st)
+  l_joins(&mut st, join, e.ty, r)
+  let scrut := l_lower(&mut st, m.scrut, &mut cur)
+  l_push_stack(&mut st, r)
+  let arms := l_arm_entries(&mut st, m, m.arms, join, 0)
+  var guards: Ordmap(Nat, Nat) := Ordmap::empty()
+  let root := l_decision(&mut st, b_compile(m), m, arms, &mut guards)
+  let slots := Cons(NSlotOperand(scrut), l_guard_slots(&mut st, m.arms, arms, &mut guards, 0))
+  l_pop_stack(&mut st)
+  l_term(&mut st, cur, NTEnter(r, root, join, m.by_ref))
+  l_shape(&mut st, r, NShellNode(taken.shell), slots)
+  *cur := join
+  NValRegion(r)
+}
+
+pub fn b_arm_kind(k: NArmKind): NEdgeKind {
+  match k {
+    NArmDirect => NEdgeDirect
+    NArmAbort => NEdgeAbort
+    NArmSuspend => NEdgeSusp
+  }
+}
+
+pub fn l_count_refutable(st: &mut LState, refutable: Bool): Unit {
+  if refutable { b_set(&mut st.refutable_count, st.refutable_count + 1) } else { () }
+}
+
+// The slots of the handler's arms, from the expressions taken out of the
+// node: for each, the guard (when it has one) and the body.
+// What an arm of the `handle` of region `r` does with what it is given (`pats`,
+// one for each argument): tests, then the names bound, then `goto`; where no
+// test holds, the arm declines. The constructors taken apart end at the start
+// of `taken`, once a guard has held.
+pub fn l_args_insts(pats: List(NPat), i: Nat): List(NInst) {
+  match pats {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ups := b_unpacks_at(p, [i])
+      let release := match ups {
+        Nil => if b_owns(p) { Nil } else { [NIRelease([i])] }
+        Cons(^u, ^us) => Nil
+      }
+      b_append(release, b_append(b_unpack_each(ups), l_args_insts(rest, i + 1)))
+    }
+  }
+}
+
+pub fn b_unpack_each(ups: List(List(Nat))): List(NInst) {
+  match ups {
+    Nil => Nil
+    Cons(p, rest) => Cons(NIUnpack(p, false), b_unpack_each(rest))
+  }
+}
+
+pub fn l_args_cols(pats: List(NPat), i: Nat): List(BCol) {
+  match pats {
+    Nil => Nil
+    Cons(p, rest) => Cons(BCol { path: [i], pat: p }, l_args_cols(rest, i + 1))
+  }
+}
+
+pub fn l_args_decision(st: &mut LState, r: Nat, pats: List(NPat), goto: Nat, taken: Nat): Nat ! {div} {
+  l_push_front(&mut st, taken, l_args_insts(pats, 0))
+  let tys := b_pats_binds(pats)
+  let d := b_tree([BRow { cols: l_args_cols(pats, 0), binds: Nil, arm: 0, guarded: false }])
+  l_args_dec(&mut st, d, r, tys, goto)
+}
+
+pub fn l_args_binds(st: &mut LState, b: Nat, tys: List(NParam), binds: List(BBind)): Unit {
+  match binds {
+    Nil => ()
+    Cons(x, rest) => {
+      l_push(&mut st, b, NIBind(x.local, b_bind_ty(tys, x.local.id), x.path, false))
+      l_args_binds(&mut st, b, tys, rest)
+    }
+  }
+}
+
+pub fn l_args_branches(st: &mut LState, bs: List(BBranch), r: Nat, tys: List(NParam), goto: Nat): List(NCaseArm) {
+  match bs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let b := l_args_dec(&mut st, x.next, r, tys, goto)
+      Cons(NCaseArm { case: x.case, block: b }, l_args_branches(&mut st, rest, r, tys, goto))
+    }
+  }
+}
+
+pub fn l_args_dec(st: &mut LState, d: BDec, r: Nat, tys: List(NParam), goto: Nat): Nat {
+  let b := l_block(&mut st)
+  match d {
+    BFail => l_term(&mut st, b, NTDecline)
+    BLeaf(^arm, binds) => {
+      l_args_binds(&mut st, b, tys, binds)
+      l_term(&mut st, b, NTGoto(goto))
+    }
+    BGuard(^arm, binds, ^otherwise) => {
+      l_args_binds(&mut st, b, tys, binds)
+      l_term(&mut st, b, NTGoto(goto))
+    }
+    BSwitch(path, cases, default) => {
+      let cs := l_args_branches(&mut st, cases, r, tys, goto)
+      let dflt := match default {
+        None => None
+        Some(x) => Some(l_args_dec(&mut st, x, r, tys, goto))
+      }
+      if b_has_variant(cases) {
+        b_set(&mut st.variants, b_variants_add(st.variants, NVariantAt { region: r, path: path }))
+      } else {
+        ()
+      }
+      l_term(&mut st, b, NTTest(path, cs, dflt))
+    }
+  }
+  b
+}
+
+pub fn l_handle_arms(
+  st: &mut LState,
+  xs: List(NOpArm),
+  taken: List(NExpr),
+  join: Nat,
+  r: Nat
+): List(NSlot) × List(NEdge) ! {div} {
+  match xs {
+    Nil => #(Nil, Nil)
+    Cons(a, rest) => {
+      let k_params := match a.k {
+        None => Nil
+        Some(k) => [b_param(k, a.k_ans)]
+      }
+      let params := b_append(k_params, b_pats_binds(a.pats))
+      let refutable := not(b_all_irrefutable(a.pats))
+      l_count_refutable(&mut st, refutable)
+      let has_guard := match a.guard {
+        None => false
+        Some(^g) => true
+      }
+      let guard_x := if has_guard { b_head(taken, b_unit_hole()) } else { b_unit_hole() }
+      let body_x := if has_guard { b_head(b_tail(taken), b_unit_hole()) } else { b_head(taken, b_unit_hole()) }
+      let after := if has_guard { b_tail(b_tail(taken)) } else { b_tail(taken) }
+      let body_entry := l_child(&mut st, body_x, join)
+      l_params(&mut st, body_entry, params)
+      let entry := if has_guard {
+        let ge := l_block(&mut st)
+        var c := ge
+        let v := l_lower(&mut st, guard_x, &mut c)
+        l_term(&mut st, c, NTBranch(v, body_entry, None))
+        l_params(&mut st, ge, params)
+        ge
+      } else {
+        body_entry
+      }
+      let slot_here := if has_guard { [NSlotBody(entry), NSlotBody(body_entry)] } else { [NSlotBody(body_entry)] }
+      let root := l_args_decision(&mut st, r, a.pats, entry, body_entry)
+      let edge := NEdge {
+        kind: b_arm_kind(a.kind),
+        op: Some(a.op),
+        entry: root,
+        params: params,
+        refutable: refutable
+      }
+      match l_handle_arms(&mut st, rest, after, join, r) {
+        #(slots, edges) => #(b_append(slot_here, slots), Cons(edge, edges))
+      }
+    }
+  }
+}
+
+pub fn b_take_exprs(xs: List(BTaken)): List(NExpr) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(x.expr, b_take_exprs(rest))
+  }
+}
+
+pub fn l_handle(st: &mut LState, e: NExpr, h: NHandle, cur: &mut Nat): NValue ! {div} {
+  let taken := b_take(e)
+  let exprs := b_take_exprs(taken.slots)
+  let r := l_region(&mut st)
+  let join := l_block(&mut st)
+  l_joins(&mut st, join, e.ty, r)
+  l_push_stack(&mut st, r)
+  let body_x := b_head(exprs, b_unit_hole())
+  b_set(&mut st.tiers, Cons(h.body_tier, st.tiers))
+  let body_entry := l_child(&mut st, body_x, join)
+  b_set(
+    &mut st.tiers,
+    match st.tiers {
+      Nil => Nil
+      Cons(^t, rest) => rest
+    }
+  )
+  let body_edge := NEdge { kind: NEdgeBody, op: None, entry: body_entry, params: Nil, refutable: false }
+  let rest1 := b_tail(exprs)
+  let ret_part := match h.ret {
+    None => #(rest1, Nil, Nil)
+    Some(ret) => {
+      let entry := l_child(&mut st, b_head(rest1, b_unit_hole()), join)
+      let params := b_pat_binds(ret.pat)
+      let refutable := not(b_irrefutable(ret.pat))
+      l_count_refutable(&mut st, refutable)
+      l_params(&mut st, entry, params)
+      let root := l_args_decision(&mut st, r, [ret.pat], entry, entry)
+      #(
+        b_tail(rest1),
+        [NSlotBody(entry)],
+        [NEdge { kind: NEdgeRet, op: None, entry: root, params: params, refutable: refutable }]
+      )
+    }
+  }
+  match ret_part {
+    #(rest2, ret_slots, ret_edges) => match l_handle_arms(&mut st, h.arms, rest2, join, r) {
+      #(arm_slots, arm_edges) => {
+        l_pop_stack(&mut st)
+        let edges := Cons(body_edge, b_append(ret_edges, arm_edges))
+        let slots := Cons(NSlotBody(body_entry), b_append(ret_slots, arm_slots))
+        l_term(&mut st, cur, NTHandle(r, edges, join))
+        l_shape(&mut st, r, NShellNode(taken.shell), slots)
+        *cur := join
+        NValRegion(r)
+      }
+    }
+  }
+}
+
+pub fn l_stmts(st: &mut LState, b: NBlock, cur: &mut Nat): Option(NValue) ! {div} {
+  l_stmt_list(&mut st, b.stmts, &mut cur)
+  match b.tail {
+    None => None
+    Some(t) => Some(l_lower(&mut st, t, &mut cur))
+  }
+}
+
+pub fn l_stmt_list(st: &mut LState, xs: List(NStmt), cur: &mut Nat): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(s, rest) => {
+      l_stmt(&mut st, s, &mut cur)
+      l_stmt_list(&mut st, rest, &mut cur)
+    }
+  }
+}
+
+pub fn l_stmt(st: &mut LState, s: NStmt, cur: &mut Nat): Unit ! {div} {
+  match s {
+    NLet(local, ty, init, stack) => {
+      let v := l_lower(&mut st, init, &mut cur)
+      l_push(&mut st, cur, NILet(local, ty, v, stack))
+    }
+    NVar(local, ty, init) => {
+      let v := l_lower(&mut st, init, &mut cur)
+      l_push(&mut st, cur, NIVar(local, ty, v))
+    }
+    NAssign(target, value) => {
+      let v := l_lower(&mut st, value, &mut cur)
+      l_push(&mut st, cur, NISet(target, v))
+    }
+    NExprStmt(e) => {
+      let v := l_lower(&mut st, e, &mut cur)
+      l_push(&mut st, cur, NIEval(v))
+    }
+    NWhile(cond, body, tick) => {
+      let r := l_region(&mut st)
+      let join := l_block(&mut st)
+      l_push_stack(&mut st, r)
+      let header := l_block(&mut st)
+      let entry := l_block(&mut st)
+      var c := header
+      let v := l_lower(&mut st, cond, &mut c)
+      l_term(&mut st, c, NTBranch(v, entry, Some(join)))
+      let body_expr := NExpr { kind: NBlockOf(body), ty: NUnit }
+      var d := entry
+      let bv := l_lower(&mut st, body_expr, &mut d)
+      l_term(&mut st, d, NTJump(header, bv))
+      l_pop_stack(&mut st)
+      l_term(&mut st, cur, NTControl(r, [header, entry], join))
+      l_shape(&mut st, r, NShellWhile(tick), [NSlotBody(header), NSlotBody(entry)])
+      *cur := join
+    }
+    NReturn(value) => {
+      let v := match value {
+        None => None
+        Some(x) => Some(l_lower(&mut st, x, &mut cur))
+      }
+      let cont := l_block(&mut st)
+      l_term(&mut st, cur, NTReturn(v, cont))
+      *cur := cont
+    }
+  }
+}
+
+// ---- sets of local numbers, as sorted lists ----
+
+pub fn b_set_has(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => if y == x { true } else { if x < y { false } else { b_set_has(rest, x) } }
+  }
+}
+
+pub fn b_set_add(xs: List(Nat), x: Nat): List(Nat) {
+  match xs {
+    Nil => [x]
+    Cons(y, rest) => if y == x { xs } else { if x < y { Cons(x, xs) } else { Cons(y, b_set_add(rest, x)) } }
+  }
+}
+
+pub fn b_set_union(a: List(Nat), b: List(Nat)): List(Nat) {
+  match b {
+    Nil => a
+    Cons(y, rest) => b_set_union(b_set_add(a, y), rest)
+  }
+}
+
+// What is in `a` and not in `b`.
+pub fn b_set_diff(a: List(Nat), b: List(Nat)): List(Nat) {
+  match a {
+    Nil => Nil
+    Cons(x, rest) => if b_set_has(b, x) { b_set_diff(rest, b) } else { Cons(x, b_set_diff(rest, b)) }
+  }
+}
+
+pub fn b_set_same(a: List(Nat), b: List(Nat)): Bool { b_path_eq(a, b) }
+
+// ---- the locals an expression mentions (`kont::mentions`) ----
+
+pub(open) struct BMention { read: List(Nat), inner: List(Nat) }
+
+pub fn b_read_id(m: &mut BMention, id: Nat): Unit { b_set(&mut m.read, b_set_add(m.read, id)) }
+
+pub fn b_read_ids(m: &mut BMention, ls: List(NLocal)): Unit {
+  match ls {
+    Nil => ()
+    Cons(l, rest) => {
+      b_read_id(&mut m, l.id)
+      b_read_ids(&mut m, rest)
+    }
+  }
+}
+
+pub fn b_refs_ids(m: &mut BMention, rs: List(NCapturedRef)): Unit {
+  match rs {
+    Nil => ()
+    Cons(r, rest) => {
+      b_read_id(&mut m, r.outer.id)
+      b_set(&mut m.inner, b_set_add(m.inner, r.inner.id))
+      b_refs_ids(&mut m, rest)
+    }
+  }
+}
+
+pub fn b_assign_targets(m: &mut BMention, xs: List(NStmt)): Unit {
+  match xs {
+    Nil => ()
+    Cons(s, rest) => {
+      match s {
+        NAssign(target, ^value) => b_read_id(&mut m, target.local.id)
+        NLet(^l, ^t, ^i, ^k) => ()
+        NVar(^l, ^t, ^i) => ()
+        NExprStmt(^e) => ()
+        NWhile(^c, ^b, ^t) => ()
+        NReturn(^v) => ()
+      }
+      b_assign_targets(&mut m, rest)
+    }
+  }
+}
+
+pub fn b_stmt_mentions(s: NStmt): List(Nat) ! {div} {
+  b_mentions(NExpr { kind: NBlockOf(NBlock { stmts: [s], tail: None }), ty: NUnit })
+}
+
+pub fn b_unwind_mentions(m: &mut BMention, xs: List(NStmt)): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(s, rest) => {
+      b_set(&mut m.read, b_set_union(m.read, b_stmt_mentions(s)))
+      b_unwind_mentions(&mut m, rest)
+    }
+  }
+}
+
+pub fn b_visit(m: &mut BMention, e: NExpr): Unit ! {div} {
+  match e.kind {
+    NRead(l, ^u) => b_read_id(&mut m, l.id)
+    NBorrow(p) => b_read_id(&mut m, p.local.id)
+    NBorrowMut(p) => b_read_id(&mut m, p.local.id)
+    NCallOf(c) => {
+      match c.callee {
+        NCallLocal(l) => b_read_id(&mut m, l.id)
+        NCallCont(l) => b_read_id(&mut m, l.id)
+        NCallInst(^i) => ()
+        NCallBuiltin(^n) => ()
+        NCallExtern(^n) => ()
+        NCallValue(^v) => ()
+      }
+      b_unwind_mentions(&mut m, c.unwind)
+    }
+    NPerformOf(p) => b_unwind_mentions(&mut m, p.unwind)
+    NClosureOf(c) => {
+      b_read_ids(&mut m, c.clones)
+      b_refs_ids(&mut m, c.refs)
+      b_read_ids(&mut m, c.owned_refs)
+    }
+    NBlockOf(b) => b_assign_targets(&mut m, b.stmts)
+    ^other => ()
+  }
+}
+
+pub fn b_stmt_children(xs: List(NStmt)): List(NExpr) {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => b_append(
+      match s {
+        NLet(^l, ^t, i, ^k) => [i]
+        NVar(^l, ^t, i) => [i]
+        NAssign(^target, value) => [value]
+        NExprStmt(e) => [e]
+        NWhile(c, b, ^t) => [c, NExpr { kind: NBlockOf(b), ty: NUnit }]
+        NReturn(v) => match v {
+          None => Nil
+          Some(x) => [x]
+        }
+      },
+      b_stmt_children(rest)
+    )
+  }
+}
+
+pub fn b_arms_children(xs: List(NArm)): List(NExpr) {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => b_append(
+      match a.guard {
+        None => [a.body]
+        Some(g) => [g, a.body]
+      },
+      b_arms_children(rest)
+    )
+  }
+}
+
+pub fn b_op_arms_children(xs: List(NOpArm), with_susp: Bool): List(NExpr) {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let here := match a.kind {
+        NArmSuspend => if with_susp { true } else { false }
+        NArmDirect => true
+        NArmAbort => true
+      }
+      let own := if here {
+        match a.guard {
+          None => [a.body]
+          Some(g) => [g, a.body]
+        }
+      } else {
+        Nil
+      }
+      b_append(own, b_op_arms_children(rest, with_susp))
+    }
+  }
+}
+
+// The value subexpressions of a node (`Expr::children`); the arms of a
+// handler that stop only with `with_susp`.
+pub fn b_children(e: NExpr, with_susp: Bool): List(NExpr) {
+  match e.kind {
+    NAnd(a, b) => [a, b]
+    NOr(a, b) => [a, b]
+    NBudgetOf(b) => [b.steps, b.body]
+    NMatchOf(m) => Cons(m.scrut, b_arms_children(m.arms))
+    NIf(c, t, o) => match o {
+      None => [c, t]
+      Some(x) => [c, t, x]
+    }
+    NBlockOf(b) => b_append(
+      b_stmt_children(b.stmts),
+      match b.tail {
+        None => Nil
+        Some(t) => [t]
+      }
+    )
+    NClosureOf(c) => [c.body]
+    NHandleOf(h) => Cons(
+      h.body,
+      b_append(
+        match h.ret {
+          None => Nil
+          Some(r) => [r.body]
+        },
+        b_op_arms_children(h.arms, with_susp)
+      )
+    )
+    ^other => b_operands(e)
+  }
+}
+
+pub fn b_walk_list(m: &mut BMention, xs: List(NExpr)): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      b_walk(&mut m, x)
+      b_walk_list(&mut m, rest)
+    }
+  }
+}
+
+pub fn b_walk(m: &mut BMention, e: NExpr): Unit ! {div} {
+  b_visit(&mut m, e)
+  b_walk_list(&mut m, b_children(e, true))
+}
+
+// The locals of the code around `e` that it reads, calls, borrows, captures or
+// writes.
+pub fn b_mentions(e: NExpr): List(Nat) ! {div} {
+  var m := BMention { read: Nil, inner: Nil }
+  b_walk(&mut m, e)
+  b_set_diff(m.read, m.inner)
+}
+
+pub fn b_value_mentions(v: NValue): List(Nat) ! {div} {
+  match v {
+    NValLeaf(e) => b_mentions(e)
+    NValRegion(^r) => Nil
+  }
+}
+
+// ---- liveness ----
+
+pub fn b_region_at(rs: List(Option(NRegion)), r: Nat): Option(NRegion) {
+  match List::nth(rs, r) {
+    Some(x) => x
+    None => None
+  }
+}
+
+pub fn b_slots_mentions(slots: List(NSlot)): List(Nat) ! {div} {
+  match slots {
+    Nil => Nil
+    Cons(s, rest) => b_set_union(
+      match s {
+        NSlotOperand(v) => b_value_mentions(v)
+        NSlotBody(^b) => Nil
+      },
+      b_slots_mentions(rest)
+    )
+  }
+}
+
+pub fn b_region_mentions(rs: List(Option(NRegion)), r: Nat): List(Nat) ! {div} {
+  match b_region_at(rs, r) {
+    None => Nil
+    Some(reg) => b_set_union(
+      b_slots_mentions(reg.slots),
+      match reg.shell {
+        NShellCall(e) => b_mentions(e)
+        NShellNode(^e) => Nil
+        NShellBlock(^t) => Nil
+        NShellWhile(^t) => Nil
+      }
+    )
+  }
+}
+
+// The locals a block's terminator reads.
+pub fn b_term_mentions(rs: List(Option(NRegion)), t: NTerm): List(Nat) ! {div} {
+  match t {
+    NTJump(^b, v) => b_value_mentions(v)
+    NTDone(v) => b_value_mentions(v)
+    NTBranch(v, ^a, ^o) => b_value_mentions(v)
+    NTReturn(v, ^c) => match v {
+      None => Nil
+      Some(x) => b_value_mentions(x)
+    }
+    NTControl(r, ^ss, ^j) => b_region_mentions(rs, r)
+    NTEnter(r, ^e, ^j, ^w) => b_region_mentions(rs, r)
+    NTCall(r, ^j, ^a) => b_region_mentions(rs, r)
+    NTSuspend(r, ^j, ^a, ^k, ^env) => b_region_mentions(rs, r)
+    NTHandle(r, ^es, ^j) => b_region_mentions(rs, r)
+    NTGoto(^b) => Nil
+    NTTest(^p, ^cs, ^d) => Nil
+    NTAbort => Nil
+    NTUnreachable => Nil
+    NTDecline => Nil
+    NTPending => Nil
+  }
+}
+
+pub fn b_case_blocks(cs: List(NCaseArm)): List(Nat) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(c.block, b_case_blocks(rest))
+  }
+}
+
+pub fn b_edge_blocks(es: List(NEdge)): List(Nat) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(e.entry, b_edge_blocks(rest))
+  }
+}
+
+pub fn b_opt_block(o: Option(Nat)): List(Nat) {
+  match o {
+    None => Nil
+    Some(b) => [b]
+  }
+}
+
+pub fn b_succs(t: NTerm): List(Nat) {
+  match t {
+    NTJump(b, ^v) => [b]
+    NTGoto(b) => [b]
+    NTControl(^r, ss, ^j) => ss
+    NTEnter(^r, e, ^j, ^w) => [e]
+    NTTest(^p, cs, d) => b_append(b_case_blocks(cs), b_opt_block(d))
+    NTHandle(^r, es, ^j) => b_edge_blocks(es)
+    NTCall(^r, j, a) => [a, j]
+    NTSuspend(^r, j, a, ^k, ^env) => [a, j]
+    NTBranch(^v, a, o) => Cons(a, b_opt_block(o))
+    NTReturn(^v, c) => [c]
+    NTAbort => Nil
+    NTUnreachable => Nil
+    NTDecline => Nil
+    NTDone(^v) => Nil
+    NTPending => Nil
+  }
+}
+
+pub(open) struct BGen { gen: List(Nat), kill: List(Nat) }
+
+pub fn b_read_into(g: BGen, m: List(Nat)): BGen {
+  BGen { gen: b_set_union(g.gen, b_set_diff(m, g.kill)), kill: g.kill }
+}
+
+pub fn b_kill_in(g: BGen, id: Nat): BGen { BGen { gen: g.gen, kill: b_set_add(g.kill, id) } }
+
+pub fn b_gen_insts(g: BGen, xs: List(NInst)): BGen ! {div} {
+  match xs {
+    Nil => g
+    Cons(i, rest) => b_gen_insts(
+      match i {
+        NILet(l, ^t, v, ^k) => b_kill_in(b_read_into(g, b_value_mentions(v)), l.id)
+        NIVar(l, ^t, v) => b_kill_in(b_read_into(g, b_value_mentions(v)), l.id)
+        NISet(target, v) => b_read_into(g, b_set_add(b_value_mentions(v), target.local.id))
+        NIEval(v) => b_read_into(g, b_value_mentions(v))
+        NIClose(^r, v) => match v {
+          None => g
+          Some(x) => b_read_into(g, b_value_mentions(x))
+        }
+        NIBind(l, ^t, ^p, ^b) => b_kill_in(g, l.id)
+        NIEnd(^l) => g
+        NIRelease(^p) => g
+        NIUnpack(^p, ^last) => g
+        NIOpen(^r) => g
+      },
+      rest
+    )
+  }
+}
+
+pub fn b_param_ids(ps: List(NParam)): List(Nat) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => b_set_add(b_param_ids(rest), p.local.id)
+  }
+}
+
+pub fn b_gen_kill(rs: List(Option(NRegion)), b: NBBlock): BGen ! {div} {
+  let g := b_gen_insts(BGen { gen: Nil, kill: b_param_ids(b.params) }, b.insts)
+  b_read_into(g, b_term_mentions(rs, b.term))
+}
+
+pub fn b_gen_kills(rs: List(Option(NRegion)), bs: List(NBBlock)): List(BGen) ! {div} {
+  match bs {
+    Nil => Nil
+    Cons(b, rest) => Cons(b_gen_kill(rs, b), b_gen_kills(rs, rest))
+  }
+}
+
+pub fn b_succs_all(bs: List(NBBlock)): List(List(Nat)) {
+  match bs {
+    Nil => Nil
+    Cons(b, rest) => Cons(b_succs(b.term), b_succs_all(rest))
+  }
+}
+
+pub fn b_gens(gs: List(BGen)): List(List(Nat)) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => Cons(g.gen, b_gens(rest))
+  }
+}
+
+pub fn b_nth_set(xs: List(List(Nat)), i: Nat): List(Nat) {
+  match List::nth(xs, i) {
+    Some(x) => x
+    None => Nil
+  }
+}
+
+pub fn b_union_of(live: List(List(Nat)), ss: List(Nat)): List(Nat) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => b_set_union(b_nth_set(live, s), b_union_of(live, rest))
+  }
+}
+
+// One pass over the blocks: each block is live where its successors are, less
+// what it binds. It is the same fixed point whatever the order.
+pub fn b_pass(
+  all: List(List(Nat)),
+  rest: List(List(Nat)),
+  gks: List(BGen),
+  succs: List(List(Nat)),
+  i: Nat
+): List(List(Nat)) {
+  match rest {
+    Nil => Nil
+    Cons(l, more) => {
+      let kill := match List::nth(gks, i) {
+        Some(g) => g.kill
+        None => Nil
+      }
+      let out := b_union_of(all, match List::nth(succs, i) {
+        Some(s) => s
+        None => Nil
+      })
+      Cons(b_set_union(l, b_set_diff(out, kill)), b_pass(all, more, gks, succs, i + 1))
+    }
+  }
+}
+
+pub fn b_lives_same(a: List(List(Nat)), b: List(List(Nat))): Bool {
+  match a {
+    Nil => true
+    Cons(x, rest) => match b {
+      Nil => true
+      Cons(y, more) => b_set_same(x, y) && b_lives_same(rest, more)
+    }
+  }
+}
+
+pub fn b_fixpoint(
+  live: List(List(Nat)),
+  gks: List(BGen),
+  succs: List(List(Nat)),
+  fuel: Nat
+): List(List(Nat)) {
+  match fuel {
+    Zero => live
+    Succ(k) => {
+      let next := b_pass(live, live, gks, succs, 0)
+      if b_lives_same(live, next) { live } else { b_fixpoint(next, gks, succs, k) }
+    }
+  }
+}
+
+// The locals each block reads before it binds them, to a fixed point over the
+// edges.
+pub fn b_live_in(f: NBlockFn): List(List(Nat)) ! {div} {
+  let gks := b_gen_kills(f.regions, f.blocks)
+  b_fixpoint(b_gens(gks), gks, b_succs_all(f.blocks), b_len(f.blocks) + 1)
+}
+
+// ---- the environment of a suspend ----
+
+// The type of each local the function binds: a block's parameters, then what
+// its instructions bind; the last binding of a local stands.
+pub fn b_types_insts(m: Ordmap(Nat, NParam), xs: List(NInst)): Ordmap(Nat, NParam) {
+  match xs {
+    Nil => m
+    Cons(i, rest) => b_types_insts(
+      match i {
+        NILet(l, t, ^v, ^k) => Ordmap::insert(m, l.id, b_param(l, t), Ordmap::compare_nat)
+        NIVar(l, t, ^v) => Ordmap::insert(m, l.id, b_param(l, t), Ordmap::compare_nat)
+        NIBind(l, t, ^p, ^b) => Ordmap::insert(m, l.id, b_param(l, t), Ordmap::compare_nat)
+        NISet(^target, ^v) => m
+        NIEval(^v) => m
+        NIUnpack(^p, ^last) => m
+        NIEnd(^l) => m
+        NIRelease(^p) => m
+        NIOpen(^r) => m
+        NIClose(^r, ^v) => m
+      },
+      rest
+    )
+  }
+}
+
+pub fn b_types_params(m: Ordmap(Nat, NParam), ps: List(NParam)): Ordmap(Nat, NParam) {
+  match ps {
+    Nil => m
+    Cons(p, rest) => b_types_params(Ordmap::insert(m, p.local.id, p, Ordmap::compare_nat), rest)
+  }
+}
+
+pub fn b_local_types(m: Ordmap(Nat, NParam), bs: List(NBBlock)): Ordmap(Nat, NParam) {
+  match bs {
+    Nil => m
+    Cons(b, rest) => b_local_types(b_types_insts(b_types_params(m, b.params), b.insts), rest)
+  }
+}
+
+// A local read but bound nowhere here is read at its own type: the first read.
+pub fn b_note_reads(m: &mut Ordmap(Nat, NParam), e: NExpr): Unit ! {div} {
+  match e.kind {
+    NRead(l, ^u) => match Ordmap::get(m, l.id, Ordmap::compare_nat) {
+      Some(^old) => ()
+      None => b_set(&mut m, Ordmap::insert(m, l.id, b_param(l, e.ty), Ordmap::compare_nat))
+    }
+    ^other => ()
+  }
+  b_note_reads_list(&mut m, b_children(e, false))
+}
+
+pub fn b_note_reads_list(m: &mut Ordmap(Nat, NParam), xs: List(NExpr)): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      b_note_reads(&mut m, x)
+      b_note_reads_list(&mut m, rest)
+    }
+  }
+}
+
+pub fn b_note_value(m: &mut Ordmap(Nat, NParam), v: NValue): Unit ! {div} {
+  match v {
+    NValLeaf(e) => b_note_reads(&mut m, e)
+    NValRegion(^r) => ()
+  }
+}
+
+pub fn b_note_insts(m: &mut Ordmap(Nat, NParam), xs: List(NInst)): Unit ! {div} {
+  match xs {
+    Nil => ()
+    Cons(i, rest) => {
+      match i {
+        NILet(^l, ^t, v, ^k) => b_note_value(&mut m, v)
+        NIVar(^l, ^t, v) => b_note_value(&mut m, v)
+        NISet(^target, v) => b_note_value(&mut m, v)
+        NIEval(v) => b_note_value(&mut m, v)
+        NIBind(^l, ^t, ^p, ^b) => ()
+        NIUnpack(^p, ^last) => ()
+        NIEnd(^l) => ()
+        NIRelease(^p) => ()
+        NIOpen(^r) => ()
+        NIClose(^r, ^v) => ()
+      }
+      b_note_insts(&mut m, rest)
+    }
+  }
+}
+
+pub fn b_note_blocks(m: &mut Ordmap(Nat, NParam), bs: List(NBBlock)): Unit ! {div} {
+  match bs {
+    Nil => ()
+    Cons(b, rest) => {
+      b_note_insts(&mut m, b.insts)
+      b_note_blocks(&mut m, rest)
+    }
+  }
+}
+
+pub fn b_has_suspend(bs: List(NBBlock)): Bool {
+  match bs {
+    Nil => false
+    Cons(b, rest) => match b.term {
+      NTSuspend(^r, ^j, ^a, ^k, ^env) => true
+      ^other => b_has_suspend(rest)
+    }
+  }
+}
+
+pub fn b_env_of(
+  live: List(Nat),
+  types: Ordmap(Nat, NParam),
+  reads: Ordmap(Nat, NParam)
+): List(NParam) {
+  match live {
+    Nil => Nil
+    Cons(id, rest) => match Ordmap::get(types, id, Ordmap::compare_nat) {
+      Some(p) => Cons(p, b_env_of(rest, types, reads))
+      None => match Ordmap::get(reads, id, Ordmap::compare_nat) {
+        Some(p) => Cons(p, b_env_of(rest, types, reads))
+        None => b_env_of(rest, types, reads)
+      }
+    }
+  }
+}
+
+pub fn b_close_blocks(
+  bs: List(NBBlock),
+  live: List(List(Nat)),
+  types: Ordmap(Nat, NParam),
+  reads: Ordmap(Nat, NParam)
+): List(NBBlock) {
+  match bs {
+    Nil => Nil
+    Cons(b, rest) => Cons(
+      match b.term {
+        NTSuspend(r, j, a, k, ^env) => NBBlock {
+          params: b.params,
+          takes: b.takes,
+          owner: b.owner,
+          joins: b.joins,
+          insts: b.insts,
+          term: NTSuspend(r, j, a, k, b_env_of(b_nth_set(live, j), types, reads))
+        }
+        ^other => b
+      },
+      b_close_blocks(rest, live, types, reads)
+    )
+  }
+}
+
+// Fills in the environment of each `suspend` from what is live at its
+// continuation. (The closures' own blocks are closed where they are lowered.)
+pub fn b_close_suspends(f: NBlockFn): NBlockFn ! {div} {
+  if b_has_suspend(f.blocks) {
+    let live := b_live_in(f)
+    let types := b_local_types(Ordmap::empty(), f.blocks)
+    var reads: Ordmap(Nat, NParam) := Ordmap::empty()
+    b_note_blocks(&mut reads, f.blocks)
+    NBlockFn {
+      blocks: b_close_blocks(f.blocks, live, types, reads),
+      regions: f.regions,
+      variants: f.variants,
+      opaque_count: f.opaque_count,
+      refutable_count: f.refutable_count,
+      closures: f.closures
+    }
+  } else {
+    f
+  }
+}
+
+// ---- the function ----
+
+pub fn l_collect_blocks(st: &mut LState, i: Nat, n: Nat): List(NBBlock) ! {div} {
+  if i < n {
+    let b := l_get(&mut st, i)
+    Cons(
+      NBBlock {
+        params: b.params,
+        takes: b.takes,
+        owner: b.owner,
+        joins: b.joins,
+        insts: List::reverse(b.insts),
+        term: b.term
+      },
+      l_collect_blocks(&mut st, i + 1, n)
+    )
+  } else {
+    Nil
+  }
+}
+
+pub fn l_collect_regions(st: &mut LState, i: Nat, n: Nat): List(Option(NRegion)) ! {div} {
+  if i < n {
+    let r := match Ordmap::get(st.regions, i, Ordmap::compare_nat) {
+      Some(x) => x
+      None => None
+    }
+    Cons(r, l_collect_regions(&mut st, i + 1, n))
+  } else {
+    Nil
+  }
+}
+
+// A function body in block form.
+pub fn l_body(body: NExpr, tier: NTier): NBlockFn ! {div} {
+  var st := LState {
+    blocks: Ordmap::empty(),
+    nblocks: 0,
+    regions: Ordmap::empty(),
+    nregions: 0,
+    stack: Nil,
+    tiers: [tier],
+    variants: Nil,
+    opaque_count: 0,
+    refutable_count: 0,
+    closures: Nil
+  }
+  var cur := l_block(&mut st)
+  let v := l_lower(&mut st, body, &mut cur)
+  l_term(&mut st, cur, NTDone(v))
+  let blocks := l_collect_blocks(&mut st, 0, st.nblocks)
+  let regions := l_collect_regions(&mut st, 0, st.nregions)
+  b_close_suspends(
+    NBlockFn {
+      blocks: blocks,
+      regions: regions,
+      variants: st.variants,
+      opaque_count: st.opaque_count,
+      refutable_count: st.refutable_count,
+      closures: List::reverse(st.closures)
+    }
+  )
+}
+
+pub fn b_lower_fn(f: NFn): NFnBlocks ! {div} {
+  NFnBlocks {
+    head: NFn {
+      id: f.id,
+      source: f.source,
+      generics: f.generics,
+      params: f.params,
+      ret: f.ret,
+      tier: f.tier,
+      lends: f.lends,
+      fn_region: f.fn_region,
+      body: NExpr { kind: NUnitLit, ty: NUnit }
+    },
+    body: l_body(f.body, f.tier)
+  }
+}

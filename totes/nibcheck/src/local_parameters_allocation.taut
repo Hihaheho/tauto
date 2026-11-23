@@ -1,9 +1,10 @@
 import "local_allocation_sound.taut"
-import std::Text
+import std::text
 import "allocation_advance.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "pattern_scope.taut"
 import "ty.taut"
 import "type_allocation.taut"
@@ -34,11 +35,10 @@ pub theorem params_cons_allocation(
   types: TypeListAllocated(ck_next_of(c), tys),
   ih: ParametersAllocationIH(rest)
 ): ScopeAllocation(c, pattern_params_cons(name, rest, c, env, site, tys)) {
-  ⊢ ScopeAllocation(c, pattern_params_cons(name, rest, c, env, site, tys)) from match tys {
+  match tys {
     Nil => AndIntro(allocation_advance_return(c, Star, state), locals)
     Cons(ty, more) => scope_allocation_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, next: Checker, nextenv: Scope) => pattern_rewrap(
         ck_bind_params(rest, next, nextenv, more, site)
@@ -77,7 +77,7 @@ pub theorem ck_bind_params_allocation(
   locals: LocalsAllocated(ck_next_of(c), allocation_scope_items(env)),
   types: TypeListAllocated(ck_next_of(c), tys)
 ): ScopeAllocation(c, ck_bind_params(names, c, env, tys, site)) {
-  ⊢ ScopeAllocation(c, ck_bind_params(names, c, env, tys, site)) from match names {
+  match names {
     Nil => AndIntro(allocation_advance_return(c, Star, state), locals)
     Cons(name, rest) => Eq::subst(
       (result: Mut2(Unit, Checker, Scope)) => ScopeAllocation(c, result),

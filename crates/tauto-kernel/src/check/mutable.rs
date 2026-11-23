@@ -4,7 +4,7 @@
 //! returns, with its value, the parameters' last values:
 //!
 //! ```text
-//! fn f(&mut c: C, x: A): R { body }   is   fn f(c: C, x: A): Mut1(R, C) { body' }
+//! fn f(c: &mut C, x: A): R { body }   is   fn f(c: C, x: A): Mut1(R, C) { body' }
 //! ```
 //!
 //! `MutK(R, S1, …, SK)` is a family with the one constructor
@@ -57,8 +57,7 @@ pub(super) fn family(k: usize) -> (Name, Name) {
 }
 
 fn is_unit(t: &T) -> bool {
-    matches!(&*t.kind, TermKind::App { function, arguments }
-        if arguments.is_empty() && matches!(&*function.kind, TermKind::Var(f) if tauto_surface::bindings::is_library(&f, "Tuple")))
+    t.is_unit()
 }
 
 fn any(t: &T, p: &dyn Fn(&T) -> bool) -> bool {
@@ -80,6 +79,10 @@ fn mutates(t: &T) -> bool {
         TermKind::Block(stmts) => changes(stmts),
         _ => false,
     })
+}
+
+fn holds_borrow(t: &T) -> bool {
+    any(t, &|t| matches!(&*t.kind, TermKind::Borrow { .. }))
 }
 
 fn needs(f: &FnDecl) -> bool {
@@ -120,8 +123,9 @@ fn needs(f: &FnDecl) -> bool {
 ///
 /// * `a && b` and `a || b` whose `b` changes the state are matches on `a`,
 ///   so `b` runs only when it would;
-/// * a `match` on a variable that its arms use matches `mut0(x)` instead: a
-///   match on a variable takes it out of scope in the arms.
+/// * a `match` on a variable that an arm changing the state uses matches
+///   `mut0(x)` instead: the rewrite takes the variable out of scope in such
+///   an arm.
 fn prepare(t: &T) -> T {
     let mut t = t.clone();
     crate::surface::walk::term(&mut t, &mut |t: &mut T| {
@@ -159,6 +163,7 @@ fn prepare(t: &T) -> T {
                         sp,
                     ))),
                     arms: vec![arm("true", then), arm("false", otherwise)],
+                    binder_unused: None,
                 });
             }
             TermKind::Match {
@@ -167,7 +172,16 @@ fn prepare(t: &T) -> T {
                 let TermKind::Var(x) = &*scrutinee.kind else {
                     return;
                 };
-                if !arms.iter().any(|a| super::occurs(&a.body, x)) {
+                // Only an arm that changes the state is rebuilt with the
+                // state passed by name, where `x` would be out of scope; an
+                // arm that does not is read as written, and the kernel's own
+                // match reads `x` there. Copying `x` then would only hide
+                // that the match is on `x`, so a recursive call on a part of
+                // it would no longer be structural.
+                if !arms
+                    .iter()
+                    .any(|a| mutates(&a.body) && super::occurs(&a.body, x))
+                {
                     return;
                 }
                 // `match mut0(x) { mut0(x') => match x' { … } }`
@@ -179,6 +193,7 @@ fn prepare(t: &T) -> T {
                         scrutinee: Box::new(var(&copy, sp)),
                         result: None,
                         arms: std::mem::take(arms),
+                        binder_unused: None,
                     },
                     sp,
                 );
@@ -187,7 +202,7 @@ fn prepare(t: &T) -> T {
                     goal: None,
                     pattern: Pattern::Ctor {
                         name: ctor,
-                        args: vec![Pattern::Bind(copy)],
+                        args: vec![Pattern::Bind { name: copy, unused: None }],
                     },
                     guard: None,
                     body: inner,
@@ -236,6 +251,12 @@ impl Rewrite<'_> {
             .map(|(_, t)| t)
     }
 
+    /// Whether the state `name` is a `&mut` parameter, not a `var`.
+    fn borrowed(&self, name: &Name) -> bool {
+        let depth = self.states.iter().rposition(|(n, _)| n == name);
+        depth.is_some_and(|d| d < self.outs.len() && self.outs.contains(name))
+    }
+
     fn ctor(&mut self, k: usize, value: T, states: Vec<T>, span: Span) -> T {
         self.used.insert(k);
         let mut args = vec![value];
@@ -251,8 +272,8 @@ impl Rewrite<'_> {
             rest = match b {
                 Bind::Call { call, value, outs } => {
                     self.used.insert(outs.len());
-                    let mut args = vec![Pattern::Bind(value)];
-                    args.extend(outs.into_iter().map(Pattern::Bind));
+                    let mut args = vec![Pattern::Bind { name: value, unused: None }];
+                    args.extend(outs.into_iter().map(Pattern::bind));
                     T::new(
                         TermKind::Match {
                             binder: None,
@@ -267,6 +288,7 @@ impl Rewrite<'_> {
                                 guard: None,
                                 body: rest,
                             }],
+                            binder_unused: None,
                         },
                         span,
                     )
@@ -274,11 +296,13 @@ impl Rewrite<'_> {
                 Bind::Let { name, ty, value } => T::new(
                     TermKind::Block(vec![
                         Stmt::Let {
+                            stack: None,
                             name,
                             ty,
                             value,
                             borrow: false,
                             borrow_mut: false,
+                            unused: None,
                         },
                         Stmt::Expr(rest),
                     ]),
@@ -330,6 +354,18 @@ impl Rewrite<'_> {
     /// The terms `ts`, evaluated in order, each read before what follows it
     /// changes the state.
     fn all(&mut self, ts: &[T], binds: &mut Vec<Bind>) -> Result<Vec<T>, Diagnostic> {
+        self.all_lending(ts, &[], binds)
+    }
+
+    /// `all`, where `lent[i]` marks a place a call lends `&mut`: the callee
+    /// reads it when it runs, after the arguments to its right, so it is
+    /// read after what they change, as the binary does.
+    fn all_lending(
+        &mut self,
+        ts: &[T],
+        lent: &[bool],
+        binds: &mut Vec<Bind>,
+    ) -> Result<Vec<T>, Diagnostic> {
         let mut parts = Vec::new();
         for t in ts {
             let mut own = Vec::new();
@@ -342,7 +378,8 @@ impl Rewrite<'_> {
             binds.extend(own);
             // Only reads of mutable state can change across later bindings.
             // An immutable recursive field retains its structural identity.
-            let read_early = last_change.is_some_and(|l| i < l)
+            let read_early = !lent.get(i).copied().unwrap_or(false)
+                && last_change.is_some_and(|l| i < l)
                 && self
                     .states
                     .iter()
@@ -385,15 +422,22 @@ impl Rewrite<'_> {
                         arguments,
                     });
                 };
-                // The places `&mut` lends, the values passed for them first.
+                // The places `&mut` lends to a callee's `&mut` parameter, read
+                // when the call runs. A constructor field of type `&mut T`, and
+                // an item-lending callee (`borrows(…)` / borrow result), keep
+                // the place in Nib: erase the borrow without a Mut'k out.
+                let place_call = !self.kernel.ctors.contains_key(g)
+                    && !self.kernel.item_lends.contains(g);
                 let mut places = Vec::new();
                 let mut plain = Vec::new();
+                let mut lent = Vec::new();
                 for a in arguments {
                     match &*a.kind {
                         TermKind::Borrow {
                             mutable: true,
-                            term,
-                        } => {
+                            term,..
+                        } if place_call => {
+                            lent.push(true);
                             let place = match &*term.kind {
                                 TermKind::Var(x) if self.state(x).is_some() => (x.clone(), None),
                                 TermKind::Field { base, name } => match &*base.kind {
@@ -411,10 +455,20 @@ impl Rewrite<'_> {
                             places.push(place);
                             plain.push((**term).clone());
                         }
-                        _ => plain.push(a.clone()),
+                        TermKind::Borrow {
+                            mutable: true,
+                            term,..
+                        } => {
+                            lent.push(false);
+                            plain.push((**term).clone());
+                        }
+                        _ => {
+                            lent.push(false);
+                            plain.push(a.clone());
+                        }
                     }
                 }
-                let arguments = self.all(&plain, binds)?;
+                let arguments = self.all_lending(&plain, &lent, binds)?;
                 let call = same(TermKind::App {
                     function: Box::new(var(g, function.span)),
                     arguments,
@@ -460,11 +514,9 @@ impl Rewrite<'_> {
                 }
                 Ok(var(&value, sp))
             }
-            TermKind::Borrow {
-                mutable: false,
-                term,
-            } => self.expr(term, binds, want),
-            TermKind::Borrow { mutable: true, .. } => err(msg!("kernel-mut-argument"), sp),
+            // `&x` and `&mut x` are the place's value to the kernel. Nib checks
+            // exclusivity; proofs erase the borrow the same way for both.
+            TermKind::Borrow { term, .. } => self.expr(term, binds, want),
             TermKind::Field { base, name } => same(TermKind::Field {
                 base: Box::new(self.expr(base, binds, None)?),
                 name: name.clone(),
@@ -490,6 +542,7 @@ impl Rewrite<'_> {
                 result,
                 binder,
                 arms,
+                ..
             } => {
                 let scrutinee = self.expr(scrutinee, binds, None)?;
                 if self.states.is_empty() || !arms.iter().any(|a| mutates(&a.body)) {
@@ -510,6 +563,7 @@ impl Rewrite<'_> {
                         scrutinee: Box::new(scrutinee),
                         result: result.clone().or(goal.clone().map(Box::new)),
                         arms,
+                        binder_unused: None,
                     });
                 }
                 // The whole state goes in and comes out.
@@ -556,6 +610,7 @@ impl Rewrite<'_> {
                     scrutinee: Box::new(scrutinee),
                     result: Some(Box::new(whole_ty)),
                     arms,
+                    binder_unused: None,
                 })?;
                 let value = self.fresh();
                 binds.push(Bind::Call {
@@ -642,11 +697,48 @@ impl Rewrite<'_> {
                     ty: t,
                     value: v,
                     borrow: false,
+                    ..
                 } => {
                     let t = t.clone();
                     let v = self.expr(v, binds, t.as_ref())?;
                     self.states.push((name.clone(), t));
                     self.assign(name, v, binds);
+                }
+                // `x.f := v` is `x := X { f: v, … }`, the other fields read
+                // from `x`.
+                Stmt::Assign {
+                    name,
+                    place: Some(p),
+                    value: v,
+                    ..
+                } if matches!(&*p.kind, TermKind::Field { base, .. }
+                    if matches!(&*base.kind, TermKind::Var(x) if x == name))
+                    && self.state(name).is_some() =>
+                {
+                    let TermKind::Field { name: field, .. } = &*p.kind else {
+                        unreachable!("matched a field")
+                    };
+                    let sp = p.span;
+                    let v = self.expr(v, binds, None)?;
+                    let (ctor, names) = self.record_of(name, sp)?;
+                    let mut v = Some(v);
+                    let made = names
+                        .iter()
+                        .map(|n| match n.as_str() == field {
+                            true => v.take().expect("one field of that name"),
+                            false => T::new(
+                                TermKind::Field {
+                                    base: Box::new(var(name, sp)),
+                                    name: n.to_string(),
+                                },
+                                sp,
+                            ),
+                        })
+                        .collect();
+                    if v.is_some() {
+                        return err(msg!("kernel-mut-field-family", name = name.to_string()), sp);
+                    }
+                    self.assign(name, app(&ctor, made, sp), binds);
                 }
                 Stmt::Assign { place: Some(p), .. } => {
                     return err(
@@ -657,9 +749,29 @@ impl Rewrite<'_> {
                         p.span,
                     );
                 }
-                Stmt::Assign { name, value: v, .. } => {
+                Stmt::Assign {
+                    name,
+                    value: v,
+                    deref,
+                    ..
+                } => {
                     if self.state(name).is_none() {
                         return err(msg!("kernel-mut-assign", name = (name).to_string()), v.span);
+                    }
+                    // A `&mut` parameter is written through, `*x := v`; a
+                    // `var` is assigned, `x := v`. The state is the same.
+                    let borrow = self.borrowed(name);
+                    if borrow && deref.is_none() {
+                        return err(
+                            msg!("kernel-assign-through-borrow", place = name.to_string()),
+                            v.span,
+                        );
+                    }
+                    if !borrow && deref.is_some() {
+                        return err(
+                            msg!("kernel-deref-needs-mut-borrow", place = name.to_string()),
+                            v.span,
+                        );
                     }
                     let want = self.state(name).cloned().flatten();
                     let v = self.expr(v, binds, want.as_ref())?;
@@ -719,6 +831,7 @@ impl Rewrite<'_> {
                         scrutinee: Box::new(scrutinee),
                         result: goal.cloned().map(Box::new),
                         arms,
+                        binder_unused: None,
                     },
                     sp,
                 );
@@ -803,6 +916,7 @@ pub(super) fn if_match(t: &T) -> T {
             scrutinee: condition.clone(),
             result: None,
             arms: vec![arm("true", (**then).clone()), arm("false", otherwise)],
+            binder_unused: None,
         },
         t.span,
     )
@@ -832,6 +946,15 @@ impl Kernel {
 
     fn mutable_fn(&mut self, f: &FnDecl) -> Result<FnDecl, (Name, Diagnostic)> {
         let failed = |d| (f.name.clone(), d);
+        let mut out_tys = Vec::new();
+        // Methods that lend from a source (`borrows(…)`, or a result that
+        // carries `&` / `&mut`) are not the Mut'k out-parameter encoding.
+        // Erase `&mut` in the body only.
+        let item_lend =
+            f.lends.is_some() || f.result.as_ref().is_some_and(holds_borrow);
+        if item_lend {
+            self.item_lends.insert(f.name.clone());
+        }
         let mut rw = Rewrite {
             kernel: self,
             states: Vec::new(),
@@ -839,9 +962,8 @@ impl Kernel {
             used: HashSet::new(),
             fresh: 0,
         };
-        let mut out_tys = Vec::new();
         for ((p, b), t) in f.params.iter().zip(&f.borrows).zip(&f.param_types) {
-            if *b == Some(true) {
+            if *b == Some(true) && !item_lend {
                 let t = t.clone();
                 rw.states.push((p.clone(), t.clone()));
                 rw.outs.push(p.clone());
@@ -868,6 +990,9 @@ impl Kernel {
                 }
             }
         });
+        if let Some(why) = lent_then_written(&f.body, false) {
+            return Err(failed(why));
+        }
         rw.used.insert(0);
         let body = rw
             .tail(&prepare(&f.body), &outs, result.as_ref())
@@ -881,8 +1006,16 @@ impl Kernel {
         for k in used {
             self.declare_mut(k, f.span).map_err(failed)?;
         }
+        // When no `&mut` parameter became state, only borrows in the body
+        // were erased: keep the written `borrows` so extraction still emits
+        // `&mut TautoErasedValue` and Nib still sees exclusive parameters.
+        let borrows = if outs.is_empty() {
+            f.borrows.clone()
+        } else {
+            vec![None; f.params.len()]
+        };
         Ok(FnDecl {
-            borrows: vec![None; f.params.len()],
+            borrows,
             param_types: f.param_types.clone(),
             result,
             body,
@@ -891,7 +1024,7 @@ impl Kernel {
     }
 
     /// `Mut'k`, unless declared.
-    fn declare_mut(&mut self, k: usize, span: Span) -> Result<(), Diagnostic> {
+    pub(super) fn declare_mut(&mut self, k: usize, span: Span) -> Result<(), Diagnostic> {
         let (name, ctor) = family(k);
         if self.inds.contains_key(&name) {
             return Ok(());
@@ -933,7 +1066,10 @@ impl Kernel {
             unreachable!()
         };
         match self.inductive(decl) {
-            super::Verdict::Checked { .. } => Ok(()),
+            super::Verdict::Checked { .. } => {
+                self.declared_states.push(k);
+                Ok(())
+            }
             super::Verdict::Failed(d) => Err(d),
             v => err(
                 msg!(
@@ -949,4 +1085,75 @@ impl Kernel {
 
 fn r_span(f: &FnDecl) -> Span {
     f.result.as_ref().map(|r| r.span).unwrap_or(f.span)
+}
+
+/// A borrowed argument is read when the callee runs, after the arguments to
+/// its right. The rewrite to `Mut'k` reads a `&mut` place then
+/// (`all_lending`); a `&` one, which the rewrite passes as the value it
+/// borrows, it cannot: the backends do not agree on what such a call sees.
+/// The ownership rule refuses a `&` borrow next to a write of the same place
+/// (`docs/design/ownership.md`, "Conflicts within one call"), and so does
+/// this. `with_mut` also refuses a `&mut` place written by a later argument,
+/// for the reading of functions with effects, which reads it before.
+pub(super) fn lent_then_written(body: &T, with_mut: bool) -> Option<Diagnostic> {
+    let mut overlap = None;
+    crate::surface::walk::term(&mut body.clone(), &mut |t| {
+        if overlap.is_some() {
+            return;
+        }
+        let TermKind::App { arguments, .. } = &*t.kind else {
+            return;
+        };
+        for (i, a) in arguments.iter().enumerate() {
+            let TermKind::Borrow { term, mutable, .. } = &*a.kind else {
+                continue;
+            };
+            if *mutable && !with_mut {
+                continue;
+            }
+            let Some(root) = root(term) else {
+                continue;
+            };
+            if arguments[i + 1..].iter().any(|b| writes(b, root)) {
+                overlap = Some(Diagnostic::new(
+                    msg!("kernel-mut-lent-written", name = root.to_string()),
+                    Some(a.span),
+                ));
+                return;
+            }
+        }
+    });
+    overlap
+}
+
+/// `x` or `x.f`: the name `x`.
+fn root(t: &T) -> Option<&Name> {
+    match &*t.kind {
+        TermKind::Var(x) => Some(x),
+        TermKind::Field { base, .. } => match &*base.kind {
+            TermKind::Var(x) => Some(x),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether `t` writes the place `x`: lends it `&mut`, or assigns it.
+fn writes(t: &T, x: &Name) -> bool {
+    let mut found = false;
+    crate::surface::walk::term(&mut t.clone(), &mut |s| match &*s.kind {
+        TermKind::Borrow {
+            mutable: true,
+            term,..
+        } => {
+            found |= root(term) == Some(x);
+        }
+        TermKind::Block(b) => {
+            found |= b
+                .iter()
+                .any(|s| matches!(s, Stmt::Assign { name, .. } if name == x));
+        }
+        _ => {}
+    });
+    found
 }

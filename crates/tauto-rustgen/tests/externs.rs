@@ -10,15 +10,15 @@ fn a_mismatch_points_at_the_declaration_and_the_binding() {
     let source = r#"extern {
   fn len_of(n: i64): i64
 }
-perform show("n", len_of(3))
+show(&len_of(3))
 "#;
     let manifest = tauto::manifest::parse(
         "rust {\n  extern {\n    len_of = \"str::len\"\n  }\n}\n",
         Path::new("Tauto.eure"),
     )
     .unwrap();
-    let package = tauto_nir::compile(source).unwrap();
-    let bindings = Bindings::resolve(&package, Some(&manifest), None).unwrap();
+    let mut package = tauto::nir::compile(source).unwrap();
+    let bindings = Bindings::resolve(&mut package, Some(&manifest), None).unwrap();
     let ws = workspace(
         "mismatch",
         &package,

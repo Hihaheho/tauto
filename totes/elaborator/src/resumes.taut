@@ -1,0 +1,442 @@
+import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
+import "../../text/src/text.taut"
+import "effects.taut"
+import "effects_rows.taut"
+import std::text
+import std::base
+import std::list
+
+// How many times each `handle` arm calls its continuation, held to the
+// `resume` its effect declares, as the host holds it before it reads a
+// `handle` as a fold. An arm for an effect that is `resume <=1` and calls
+// its continuation on two paths in a row is rejected, not proven about.
+
+// The most calls on one path, `None` for any number.
+pub fn res_add(a: Option(Nat), b: Option(Nat)): Option(Nat) {
+  match a {
+    None => None
+    Some(x) => ⊢ Option(Nat) from match b {
+      None => None
+      Some(y) => Some(x + y)
+    }
+  }
+}
+
+pub fn res_max_nat(x: Nat, y: Nat): Nat {
+  match x {
+    Zero => y
+    Succ(x2) => ⊢ Nat from match y {
+      Zero => x
+      Succ(y2) => Succ(res_max_nat(x2, y2))
+    }
+  }
+}
+
+pub fn res_max(a: Option(Nat), b: Option(Nat)): Option(Nat) {
+  match a {
+    None => None
+    Some(x) => ⊢ Option(Nat) from match b {
+      None => None
+      Some(y) => Some(res_max_nat(x, y))
+    }
+  }
+}
+
+pub fn res_any(a: Option(Nat)): Bool {
+  match a {
+    None => true
+    Some(n) => ⊢ Bool from match n {
+      Zero => false
+      Succ(^m) => true
+    }
+  }
+}
+
+// Whether `c` is more than `most`.
+pub fn res_over(c: Nat, most: Nat): Bool {
+  match c {
+    Zero => false
+    Succ(c2) => ⊢ Bool from match most {
+      Zero => true
+      Succ(m2) => res_over(c2, m2)
+    }
+  }
+}
+
+pub fn res_cont_is(cont: Option(Text), n: Text): Bool {
+  match cont {
+    Some(c) => c == n
+    None => false
+  }
+}
+
+pub fn res_unlimited(r: Option(Text)): Bool {
+  match r {
+    Some(s) => s == "ω"
+    None => false
+  }
+}
+
+pub fn res_most(r: Option(Text)): Nat {
+  match r {
+    Some(s) => if s == "0" { 0 } else { 1 }
+    None => 1
+  }
+}
+
+pub fn res_resume_get(rs: List((Text × Option(Text))), e: Text): Option(Option(Text)) {
+  match rs {
+    Nil => None
+    Cons(r, rest) => if r.fst == e { Some(r.snd) } else { res_resume_get(rest, e) }
+  }
+}
+
+pub fn res_effects(stmts: List(SurfaceStmt)): List((Text × Option(Text))) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List((Text × Option(Text))) from match s {
+      StEffect(e) => Cons(#(e.name, e.r#resume), res_effects(rest))
+      _ => res_effects(rest)
+    }
+  }
+}
+
+// ---- the terms inside a term ---------------------------------------------------------
+
+pub fn res_opt(t: Option(SurfaceTerm)): List(SurfaceTerm) {
+  match t {
+    None => Nil
+    Some(x) => [x]
+  }
+}
+
+pub fn res_param_types(ps: List(SurfaceParam)): List(SurfaceTerm) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => ⊢ List(SurfaceTerm) from match p {
+      SurfaceParamMk(^n, ty, _) => Cons(ty, res_param_types(rest))
+    }
+  }
+}
+
+pub fn res_field_values(fs: List(SurfaceField)): List(SurfaceTerm) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => ⊢ List(SurfaceTerm) from match f {
+      SurfaceFieldMk(^n, v) => Cons(v, res_field_values(rest))
+    }
+  }
+}
+
+pub fn res_arm_terms(arms: List(SurfaceArm)): List(SurfaceTerm) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => ⊢ List(SurfaceTerm) from match a {
+      SurfaceArmMk(^p, g, ^goal, b) => List::append(res_opt(g), Cons(b, res_arm_terms(rest)))
+    }
+  }
+}
+
+pub fn res_handler_terms(hs: List(SurfaceHandler)): List(SurfaceTerm) {
+  match hs {
+    Nil => Nil
+    Cons(h, rest) => ⊢ List(SurfaceTerm) from match h {
+      HdReturn(^p, b) => Cons(b, res_handler_terms(rest))
+      HdOperation(^op, ^binds, ^types, ^pats, ^cont, _, guard, b) => List::append(res_opt(guard), Cons(b, res_handler_terms(rest)))
+    }
+  }
+}
+
+pub fn res_step_terms(arms: List(SurfaceStepArm)): List(SurfaceTerm) {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => ⊢ List(SurfaceTerm) from match a {
+      SurfaceStepArmMk(^bs, _, goal, b, ^s, ^e) => Cons(goal, Cons(b, res_step_terms(rest)))
+    }
+  }
+}
+
+pub fn res_stmt_terms(ss: List(SurfaceStmt)): List(SurfaceTerm) {
+  match ss {
+    Nil => Nil
+    Cons(s, rest) => List::append(⊢ List(SurfaceTerm) from match s {
+      StLet(^n, ^ty, v, ^b, ^m, ^unused, ^st) => [v]
+      StVar(^n, ^ty, v, ^b, ^unused, ^st) => [v]
+      StWhile(c, b) => [c, b]
+      StExpr(e) => [e]
+      StAssign(^n, pl, v) => Cons(v, res_opt(pl))
+      StReturn(v) => res_opt(v)
+      StBreak(v, ^a, ^b) => res_opt(v)
+      StLoop(b, ^a, ^e) => [b]
+      StModule(^mod_name, ^mod_vis, ^mod_items, ^a, ^e) => []
+      StReexport(^re_path, ^re_names, ^re_spans, ^a, ^e) => []
+      StFor(^for_pat, ^for_src, b, ^a, ^e) => [b]
+      _ => Nil
+    }, res_stmt_terms(rest))
+  }
+}
+
+// The terms written directly in `t`.
+pub fn res_subterms(t: SurfaceTerm): List(SurfaceTerm) {
+  match t.kind {
+    SkApp(h, args) => Cons(h, args)
+    SkPi(ps, r, ^e) => Cons(r, res_param_types(ps))
+    SkExists(^b, d, body, ^unused) => [d, body]
+    SkLam(^ps, b, ^tys, _) => [b]
+    SkUnion(parts) => parts
+    SkTagged(^tag, v) => [v]
+    SkIf(c, a, o) => Cons(c, Cons(a, res_opt(o)))
+    SkField(v, ^n) => [v]
+    SkBlock(stmts) => res_stmt_terms(stmts)
+    SkPerform(^op, args) => args
+    SkHandle(body, hs) => Cons(body, res_handler_terms(hs))
+    SkBudget(^m, a, b) => [a, b]
+    SkMatch(s, ^mo, arms, ^binder, _) => Cons(s, res_arm_terms(arms))
+    SkRecord(^n, fs) => res_field_values(fs)
+    SkBorrow(^m, ^m_orig, v) => [v]
+    SkFnKind(^kd, ty) => [ty]
+    SkBorrowLam(^bs, lam) => [lam]
+    SkMacroCall(^n, a) => [a]
+    SkSplice(v) => [v]
+    SkStep(^tac, arg, ^a, ^b, before, arms) => Cons(arg, List::append(res_opt(before), res_step_terms(arms)))
+    SkAscribe(v, ty) => [v, ty]
+    _ => Nil
+  }
+}
+
+// ---- the calls of a continuation --------------------------------------------------------
+
+mutual {
+pub fn res_pat_binds(k: Nat, p: SurfacePattern, n: Text): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match p {
+      PtBind(v, _) => v == n
+      PtCtor(^c, args) => res_pats_bind(j, args, n)
+      PtRecord(^c, fs) => res_fields_bind(j, fs, n)
+      _ => false
+    }
+  }
+}
+
+pub fn res_pats_bind(k: Nat, ps: List(SurfacePattern), n: Text): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match ps {
+      Nil => false
+      Cons(p, rest) => res_pat_binds(j, p, n) || res_pats_bind(j, rest, n)
+    }
+  }
+}
+
+pub fn res_fields_bind(k: Nat, fs: List(SurfacePatternField), n: Text): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match fs {
+      Nil => false
+      Cons(f, rest) => ⊢ Bool from match f {
+        SurfacePatternFieldMk(^fname, p) => res_pat_binds(j, p, n) || res_fields_bind(j, rest, n)
+      }
+    }
+  }
+}
+}
+
+mutual {
+// The calls of `n` on the path through `t` that calls it most.
+pub fn res_uses(k: Nat, t: SurfaceTerm, n: Text): Option(Nat) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Nat) from match t.kind {
+      SkVar(v) => if surface_name_text(v) == n { Some(1) } else { Some(0) }
+      SkIf(c, a, o) => res_add(res_uses(j, c, n), res_max(res_uses(j, a, n), res_uses_opt(j, o, n)))
+      SkMatch(s, ^mo, arms, ^binder, _) => res_add(res_uses(j, s, n), res_uses_arms(j, arms, n))
+      // A closure that holds `n` holds it once, as a move into it.
+      SkLam(ps, b, ^tys, _) => if comp_has(ps, n) { Some(0) } else { if res_any(res_uses(j, b, n)) { Some(1) } else { Some(0) } }
+      SkBlock(stmts) => res_uses_block(j, stmts, n)
+      SkHandle(body, hs) => res_add(res_uses(j, body, n), res_uses_handlers(j, hs, n))
+      _ => res_uses_all(j, res_subterms(t), n)
+    }
+  }
+}
+
+pub fn res_uses_opt(k: Nat, t: Option(SurfaceTerm), n: Text): Option(Nat) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Nat) from match t {
+      None => Some(0)
+      Some(x) => res_uses(j, x, n)
+    }
+  }
+}
+
+pub fn res_uses_all(k: Nat, ts: List(SurfaceTerm), n: Text): Option(Nat) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Nat) from match ts {
+      Nil => Some(0)
+      Cons(t, rest) => res_add(res_uses(j, t, n), res_uses_all(j, rest, n))
+    }
+  }
+}
+
+pub fn res_uses_arms(k: Nat, arms: List(SurfaceArm), n: Text): Option(Nat) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Nat) from match arms {
+      Nil => Some(0)
+      Cons(a, rest) => ⊢ Option(Nat) from match a {
+        SurfaceArmMk(p, g, ^goal, b) => res_max(if res_pat_binds(j, p, n) { Some(0) } else { res_add(res_uses_opt(j, g, n), res_uses(j, b, n)) }, res_uses_arms(j, rest, n))
+      }
+    }
+  }
+}
+
+pub fn res_uses_block(k: Nat, ss: List(SurfaceStmt), n: Text): Option(Nat) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Nat) from match ss {
+      Nil => Some(0)
+      Cons(s, rest) => ⊢ Option(Nat) from match s {
+        StLet(name, ^ty, v, ^b, ^m, ^unused, ^st) => if name == n { res_uses(j, v, n) } else { res_add(res_uses(j, v, n), res_uses_block(j, rest, n)) }
+        StVar(name, ^ty, v, ^b, ^unused, ^st) => if name == n { res_uses(j, v, n) } else { res_add(res_uses(j, v, n), res_uses_block(j, rest, n)) }
+        StWhile(c, b) => if res_any(res_add(res_uses(j, c, n), res_uses(j, b, n))) { None } else { res_uses_block(j, rest, n) }
+        _ => res_add(res_uses_all(j, res_stmt_terms([s]), n), res_uses_block(j, rest, n))
+      }
+    }
+  }
+}
+
+pub fn res_uses_handlers(k: Nat, hs: List(SurfaceHandler), n: Text): Option(Nat) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Nat) from match hs {
+      Nil => Some(0)
+      Cons(h, rest) => {
+        let tail := res_uses_handlers(j, rest, n)
+        ⊢ Option(Nat) from match h {
+          HdReturn(p, b) => if res_pat_binds(j, p, n) { tail } else { res_add(res_uses(j, b, n), tail) }
+          // An operation arm runs once for each operation performed.
+          HdOperation(^op, ^binds, ^types, pats, cont, _, guard, b) => if res_cont_is(cont, n) || res_pats_bind(j, pats, n) { tail } else {
+            res_add(if res_any(res_add(res_uses_opt(j, guard, n), res_uses(j, b, n))) { None } else { Some(0) }, tail)
+          }
+        }
+      }
+    }
+  }
+}
+}
+
+// ---- the arms that call too often ----------------------------------------------------------
+
+// The message for the first arm of `hs` that calls its continuation more
+// often than its effect's `resume` allows.
+pub fn res_check_arms(hs: List(SurfaceHandler), rs: List((Text × Option(Text)))): Option(Text) {
+  match hs {
+    Nil => None
+    Cons(h, rest) => ⊢ Option(Text) from match h {
+      HdReturn(^p, ^b) => res_check_arms(rest, rs)
+      HdOperation(op, ^binds, ^types, ^pats, cont, _, guard, b) => ⊢ Option(Text) from match cont {
+        None => res_check_arms(rest, rs)
+        Some(c) => ⊢ Option(Text) from match res_resume_get(rs, op) {
+          None => res_check_arms(rest, rs)
+          Some(r) => if res_unlimited(r) { res_check_arms(rest, rs) } else {
+            let called := res_add(res_uses_opt(comp_fuel(b) + 4, guard, c), res_uses(comp_fuel(b) + 4, b, c))
+            ⊢ Option(Text) from match called {
+              None => Some(res_message(op, c, "any number of times", r))
+              Some(m) => if res_over(m, res_most(r)) { Some(res_message(op, c, if m == 1 { "once" } else { "more than once" }, r)) } else { res_check_arms(rest, rs) }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn res_written(r: Option(Text)): Text {
+  match r {
+    Some(s) => s
+    None => "<=1"
+  }
+}
+
+pub fn res_message(op: Text, c: Text, times: Text, r: Option(Text)): Text {
+  Text::concat_all(["an arm for `", op, "` may call `", c, "` ", times, ", but `", op, "` is declared `resume ", res_written(r), "`"])
+}
+
+mutual {
+pub fn res_find(k: Nat, t: SurfaceTerm, rs: List((Text × Option(Text)))): Option(Text) {
+  match k {
+    Zero => None
+    Succ(j) => {
+      let here := ⊢ Option(Text) from match t.kind {
+        SkHandle(^body, hs) => res_check_arms(hs, rs)
+        _ => None
+      }
+      ⊢ Option(Text) from match here {
+        Some(m) => Some(m)
+        None => res_find_all(j, res_subterms(t), rs)
+      }
+    }
+  }
+}
+
+pub fn res_find_all(k: Nat, ts: List(SurfaceTerm), rs: List((Text × Option(Text)))): Option(Text) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Text) from match ts {
+      Nil => None
+      Cons(t, rest) => ⊢ Option(Text) from match res_find(j, t, rs) {
+        Some(m) => Some(m)
+        None => res_find_all(j, rest, rs)
+      }
+    }
+  }
+}
+}
+
+// A function, `let` or expression at the top of a program or of a `mutual` block.
+pub fn res_check_leaf(s: SurfaceStmt, rs: List((Text × Option(Text)))): Option(Text) {
+  match s {
+    StFn(f) => res_find(comp_fuel(f.body) + 4, f.body, rs)
+    StLet(^n, ^ty, v, ^b, ^m, ^unused, ^st) => res_find(comp_fuel(v) + 4, v, rs)
+    StExpr(e) => res_find(comp_fuel(e) + 4, e, rs)
+    _ => None
+  }
+}
+
+pub fn res_check_leaves(stmts: List(SurfaceStmt), rs: List((Text × Option(Text)))): Option(Text) {
+  match stmts {
+    Nil => None
+    Cons(s, rest) => {
+      let here := res_check_leaf(s, rs)
+      ⊢ Option(Text) from match here {
+        Some(m) => Some(m)
+        None => res_check_leaves(rest, rs)
+      }
+    }
+  }
+}
+
+pub fn res_check_stmts(stmts: List(SurfaceStmt), rs: List((Text × Option(Text)))): Option(Text) {
+  match stmts {
+    Nil => None
+    Cons(s, rest) => {
+      let here := ⊢ Option(Text) from match s {
+        StMutual(ss, ^a, ^b) => res_check_leaves(ss, rs)
+        _ => res_check_leaf(s, rs)
+      }
+      ⊢ Option(Text) from match here {
+        Some(m) => Some(m)
+        None => res_check_stmts(rest, rs)
+      }
+    }
+  }
+}
+
+// The first arm of a program that calls its continuation more often than
+// its effect's `resume` allows.
+pub fn res_overused(stmts: List(SurfaceStmt)): Option(Text) {
+  res_check_stmts(stmts, res_effects(stmts))
+}

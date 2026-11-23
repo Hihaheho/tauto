@@ -1,0 +1,88 @@
+// A borrowed parameter is written in the type position: `x: &T` and
+// `x: &mut T`. The binder form `&x: T` is an error.
+
+@ cases.borrow-param-in-type-position
+description = "`p: &P` borrows `p`: the body reads its fields and the caller writes `&a`."
+source = ```nib
+struct P { a: i64 }
+fn size(p: &P): i64 { p.a }
+let q := P { a: 3 }
+size(&q) + q.a
+```
+types = "ok"
+
+@ cases.mut-borrow-param-in-type-position
+description = "`v: &mut Vec(i64)` borrows `v` mutably and passes it on as `&mut v`."
+source = ```nib
+fn bump(v: &mut Vec(i64), x: i64) { Vec::push(&mut v, x) }
+var v := Vec::new()
+bump(&mut v, 1)
+bump(&mut v, 2)
+Vec::len(&v)
+```
+types = "ok"
+
+@ cases.closure-borrow-param-in-type-position
+description = "A closure's borrowed parameter is written in its type, `(q: &P) => …`; an untyped one, `(a, b) => …`, borrows when the expected type says so."
+source = ```nib
+struct P { a: i64 }
+let f := (q: &P) => q.a
+let p := P { a: 4 }
+var v := Vec::new()
+Vec::push(&mut v, 2)
+Vec::push(&mut v, 1)
+Vec::sort_by(&mut v, (a, b) => a < b)
+f(&p)
+```
+types = "ok"
+
+@ cases.old-borrow-binder-is-error
+description = "The binder form `&x: T` says where the `&` now goes."
+source = ```nib
+fn size(&p: i64): i64 { p }
+size(&1)
+```
+types = "error: `&x: T` is not a parameter: write `x: &T`"
+
+@ cases.old-mut-borrow-binder-is-error
+description = "The binder form `&mut x: T` says where the `&mut` now goes."
+source = ```nib
+fn bump(&mut v: Vec(i64)) { Vec::push(&mut v, 1) }
+var v := Vec::new()
+bump(&mut v)
+```
+types = "error: `&mut x: T` is not a parameter: write `x: &mut T`"
+
+@ cases.old-borrow-binder-in-a-class-method-is-the-only-error
+description = "The binder form in a class method says where the `&mut` now goes, and no second error says the class parameter is not mentioned."
+source = ```nib
+class Counter(Env: Type) {
+  fn bump(&mut env: Env): Unit
+}
+```
+types = "error: `&mut x: T` is not a parameter: write `x: &mut T`"
+
+@ cases.mut-borrow-binding-cannot-be-var
+description = "A `&mut` binding writes through to what it borrows and is never rebound, so it is not a `var`."
+source = ```nib
+fn g(v: &mut Vec(i64)) {
+  var w: &mut Vec(i64) := v
+  Vec::push(&mut w, 1)
+}
+```
+types = "error: `var x: &mut T`: a `&mut` binding cannot be `var`"
+
+@ cases.thunk-closure-passed-through-borrow-param-does-not-panic
+description = "A zero-parameter closure `() => e` is substituted into a body without a first parameter to rename; the checker used to index `params[0]` and panic."
+source = ```nib
+
+struct(affine) F { n: i64 }
+fn size(f: &F): i64 { f.n }
+fn keep(cb: &(() -> i64 ! {})): () -> i64 ! {} { cb }
+fn make(): () -> i64 ! {} {
+  let b := F { n: 7 }
+  keep(() => size(&b))
+}
+make
+```
+types = "ok"

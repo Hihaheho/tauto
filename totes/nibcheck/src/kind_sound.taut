@@ -1,15 +1,16 @@
+import "../../identity/src/identity.taut"
 import "union_sound.taut"
 import "product_sound.taut"
 import "datas.taut"
-import std::Text
-import std::Base
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Row
+import std::text
+import std::base
+import std::map
+import std::map_laws
+import std::map_text
+import std::row
 import "ty.taut"
 import "ty_eq.taut"
-import std::prelude::Ord
+import std::builtin::ord
 
 // The kinds `datas_kind` gives are sound (`docs/design/self-host.md`
 // 「層 3：種（`src/kind_sound.taut`）」): once the declarations are summarized,
@@ -466,7 +467,7 @@ pub theorem kle_lub(
 }
 
 pub theorem kle_join_l(a: Kind, b: Kind): KLe(a, kind_join(a, b)) {
-  ⊢ KLe(a, kind_join(a, b)) from match a {
+  match a {
     KindCopy => ⊢ KLe(KindCopy, kind_join(KindCopy, b)) from match b {
       KindCopy => Refl
       KindShared => Refl
@@ -495,7 +496,7 @@ pub theorem kle_join_l(a: Kind, b: Kind): KLe(a, kind_join(a, b)) {
 }
 
 pub theorem kle_join_r(a: Kind, b: Kind): KLe(b, kind_join(a, b)) {
-  ⊢ KLe(b, kind_join(a, b)) from match a {
+  match a {
     KindCopy => ⊢ KLe(b, kind_join(KindCopy, b)) from match b {
       KindCopy => Refl
       KindShared => Refl
@@ -524,7 +525,7 @@ pub theorem kle_join_r(a: Kind, b: Kind): KLe(b, kind_join(a, b)) {
 }
 
 pub theorem kle_refl(a: Kind): KLe(a, a) {
-  ⊢ KLe(a, a) from match a {
+  match a {
     KindCopy => Refl
     KindShared => Refl
     KindAffine => Refl
@@ -533,7 +534,7 @@ pub theorem kle_refl(a: Kind): KLe(a, a) {
 }
 
 pub theorem kle_linear(a: Kind): KLe(a, KindLinear) {
-  ⊢ KLe(a, KindLinear) from match a {
+  match a {
     KindCopy => Refl
     KindShared => Refl
     KindAffine => Refl
@@ -542,7 +543,7 @@ pub theorem kle_linear(a: Kind): KLe(a, KindLinear) {
 }
 
 pub theorem kle_copy(a: Kind): KLe(KindCopy, a) {
-  ⊢ KLe(KindCopy, a) from match a {
+  match a {
     KindCopy => Refl
     KindShared => Refl
     KindAffine => Refl
@@ -551,7 +552,7 @@ pub theorem kle_copy(a: Kind): KLe(KindCopy, a) {
 }
 
 pub fn dkl_pick(d: Datas, t: Ty, acc: Kind, p: Bool): Kind {
-  ⊢ Kind from match p {
+  match p {
     true => kind_join(acc, datas_kind(d, t))
     false => acc
   }
@@ -566,7 +567,7 @@ pub fn dkl_k(
   acc: Kind,
   go: Bool
 ): Kind {
-  ⊢ Kind from match go {
+  match go {
     false => acc
     true => datas_kind_list(
       d,
@@ -596,7 +597,7 @@ pub theorem dkl_unf(
 }
 
 pub fn kn_k(d: Datas, n: Text, args: List(Ty), o: Option(Data)): Kind {
-  ⊢ Kind from match o {
+  match o {
     None => KindShared
     Some(data) => datas_kind_list(
       d,
@@ -610,9 +611,9 @@ pub fn kn_k(d: Datas, n: Text, args: List(Ty), o: Option(Data)): Kind {
 
 pub theorem kind_named_unf(
   d: Datas,
-  n: Text,
+  n: SurfaceName,
   args: List(Ty)
-): datas_kind(d, TyNamed(n, args)) = kn_k(d, n, args, datas_decl(d, n)) {
+): datas_kind(d, TyNamed(n, args)) = kn_k(d, surface_name_text(n), args, datas_decl(d, surface_name_text(n))) {
   Refl
 }
 
@@ -629,7 +630,7 @@ pub theorem lht_unf(
 }
 
 pub theorem pick_ge(d: Datas, t: Ty, acc: Kind, p: Bool): KLe(acc, dkl_pick(d, t, acc, p)) {
-  ⊢ KLe(acc, dkl_pick(d, t, acc, p)) from match p {
+  match p {
     true => kle_join_l(acc, datas_kind(d, t))
     false => kle_refl(acc)
   }
@@ -644,7 +645,7 @@ pub theorem pick_le(
   ha: KLe(acc, k),
   ht: KLe(datas_kind(d, t), k)
 ): KLe(dkl_pick(d, t, acc, p), k) {
-  ⊢ KLe(dkl_pick(d, t, acc, p), k) from match p {
+  match p {
     true => kle_lub(acc, datas_kind(d, t), k, ha, ht)
     false => ha
   }
@@ -660,7 +661,7 @@ pub theorem dklk_ge(
   go: Bool,
   ih: ∀ a: Kind. KLe(a, datas_kind_list(d, rest, every, picks_tail(picks), a))
 ): KLe(acc, dkl_k(d, t, rest, every, picks, acc, go)) {
-  ⊢ KLe(acc, dkl_k(d, t, rest, every, picks, acc, go)) from match go {
+  match go {
     false => kle_refl(acc)
     true => kle_trans(
       acc,
@@ -686,7 +687,7 @@ pub theorem dkl_ge_acc(
   picks: List(Bool),
   acc: Kind
 ): KLe(acc, datas_kind_list(d, ts, every, picks, acc)) {
-  ⊢ KLe(acc, datas_kind_list(d, ts, every, picks, acc)) from match ts {
+  match ts {
     Nil => kle_refl(acc)
     Cons(t, rest) => Eq::subst(
       (z: Kind) => KLe(acc, z),
@@ -717,11 +718,11 @@ pub theorem dklk_append(
   h1: KLe(dkl_k(d, t, rest, false, picks, acc, go), k),
   ih: ∀ a: Kind. (
     KLe(datas_kind_list(d, rest, false, picks_tail(picks), a), k)
-  ) -> KLe(datas_kind_list(d, List::append(rest, Cons(b, Nil(Ty))), false, picks_tail(picks), a), k)
-): KLe(dkl_k(d, t, List::append(rest, Cons(b, Nil(Ty))), false, picks, acc, go), k) {
+  ) -> KLe(datas_kind_list(d, List::append(rest, Cons(b, Nil(<A: Ty>))), false, picks_tail(picks), a), k)
+): KLe(dkl_k(d, t, List::append(rest, Cons(b, Nil(<A: Ty>))), false, picks, acc, go), k) {
   (⊢ (
     KLe(dkl_k(d, t, rest, false, picks, acc, go), k)
-  ) -> KLe(dkl_k(d, t, List::append(rest, Cons(b, Nil(Ty))), false, picks, acc, go), k) from match go {
+  ) -> KLe(dkl_k(d, t, List::append(rest, Cons(b, Nil(<A: Ty>))), false, picks, acc, go), k) from match go {
     false => (h: KLe(acc, k)) => h
     true => (h: KLe(datas_kind_list(d, rest, false, picks_tail(picks), dkl_pick(d, t, acc, picks_head(false, picks))), k)) => ih(
       dkl_pick(d, t, acc, picks_head(false, picks)),
@@ -739,8 +740,8 @@ pub theorem dklk_one(
   go: Bool,
   ha: KLe(acc, k),
   hb: KLe(datas_kind(d, b), k)
-): KLe(dkl_k(d, b, Nil(Ty), false, picks, acc, go), k) {
-  ⊢ KLe(dkl_k(d, b, Nil(Ty), false, picks, acc, go), k) from match go {
+): KLe(dkl_k(d, b, Nil(<A: Ty>), false, picks, acc, go), k) {
+  match go {
     false => ha
     true => pick_le(d, b, acc, picks_head(false, picks), k, ha, hb)
   }
@@ -756,16 +757,16 @@ pub theorem dkl_append(
   k: Kind,
   h1: KLe(datas_kind_list(d, xs, false, picks, acc), k),
   hb: KLe(datas_kind(d, b), k)
-): KLe(datas_kind_list(d, List::append(xs, Cons(b, Nil(Ty))), false, picks, acc), k) {
-  ⊢ KLe(datas_kind_list(d, List::append(xs, Cons(b, Nil(Ty))), false, picks, acc), k) from match xs {
+): KLe(datas_kind_list(d, List::append(xs, Cons(b, Nil(<A: Ty>))), false, picks, acc), k) {
+  match xs {
     Nil => Eq::subst(
       (z: Kind) => KLe(z, k),
-      Eq::sym(dkl_unf(d, b, Nil(Ty), false, picks, acc)),
+      Eq::sym(dkl_unf(d, b, Nil(<A: Ty>), false, picks, acc)),
       dklk_one(d, b, picks, acc, k, Bool::or(false, not(Nat::eq(list_len(picks), 0))), h1, hb)
     )
     Cons(t, rest) => Eq::subst(
       (z: Kind) => KLe(z, k),
-      Eq::sym(dkl_unf(d, t, List::append(rest, Cons(b, Nil(Ty))), false, picks, acc)),
+      Eq::sym(dkl_unf(d, t, List::append(rest, Cons(b, Nil(<A: Ty>))), false, picks, acc)),
       dklk_append(
         d,
         t,
@@ -790,16 +791,16 @@ pub theorem dkl_le_all(
   j: Kind,
   ha: KLe(acc, j),
   h: ∀ m: Ty. (Mem(Ty, m, ts)) -> KLe(datas_kind(d, m), j)
-): KLe(datas_kind_list(d, ts, true, Nil(Bool), acc), j) {
-  ⊢ KLe(datas_kind_list(d, ts, true, Nil(Bool), acc), j) from match ts {
+): KLe(datas_kind_list(d, ts, true, Nil(<A: Bool>), acc), j) {
+  match ts {
     Nil => ha
     Cons(t, rest) => dkl_le_all(
       d,
       rest,
       kind_join(acc, datas_kind(d, t)),
       j,
-      kle_lub(acc, datas_kind(d, t), j, ha, h(t, MemHere(Ty, t, rest))),
-      m => mm => h(m, MemThere(Ty, m, t, rest, mm))
+      kle_lub(acc, datas_kind(d, t), j, ha, h(t, MemHere(<A: Ty, a: t>, rest))),
+      m => mm => h(m, MemThere(<A: Ty, a: m>, t, rest, mm))
     )
   }
 }
@@ -811,43 +812,43 @@ pub theorem leaf_le<e: Ty, ys: List(
   l: Leaves(e, ys),
   d: Datas,
   acc: Kind
-): KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(Bool), acc)) {
-  ⊢ KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(Bool), acc)) from match l {
+): KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(<A: Bool>), acc)) {
+  match l {
     LvHere(rest, p) => kle_trans(
       datas_kind(d, e),
       kind_join(acc, datas_kind(d, e)),
-      datas_kind_list(d, rest, true, Nil(Bool), kind_join(acc, datas_kind(d, e))),
+      datas_kind_list(d, rest, true, Nil(<A: Bool>), kind_join(acc, datas_kind(d, e))),
       kle_join_r(acc, datas_kind(d, e)),
-      dkl_ge_acc(d, rest, true, Nil(Bool), kind_join(acc, datas_kind(d, e)))
+      dkl_ge_acc(d, rest, true, Nil(<A: Bool>), kind_join(acc, datas_kind(d, e)))
     )
     LvIn(ys2, rest, l2) => kle_trans(
       datas_kind(d, e),
-      datas_kind_list(d, ys2, true, Nil(Bool), KindCopy),
+      datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy),
       datas_kind_list(
         d,
         rest,
         true,
-        Nil(Bool),
-        kind_join(acc, datas_kind_list(d, ys2, true, Nil(Bool), KindCopy))
+        Nil(<A: Bool>),
+        kind_join(acc, datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy))
       ),
       leaf_le(l2, d, KindCopy),
       kle_trans(
-        datas_kind_list(d, ys2, true, Nil(Bool), KindCopy),
-        kind_join(acc, datas_kind_list(d, ys2, true, Nil(Bool), KindCopy)),
+        datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy),
+        kind_join(acc, datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy)),
         datas_kind_list(
           d,
           rest,
           true,
-          Nil(Bool),
-          kind_join(acc, datas_kind_list(d, ys2, true, Nil(Bool), KindCopy))
+          Nil(<A: Bool>),
+          kind_join(acc, datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy))
         ),
-        kle_join_r(acc, datas_kind_list(d, ys2, true, Nil(Bool), KindCopy)),
+        kle_join_r(acc, datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy)),
         dkl_ge_acc(
           d,
           rest,
           true,
-          Nil(Bool),
-          kind_join(acc, datas_kind_list(d, ys2, true, Nil(Bool), KindCopy))
+          Nil(<A: Bool>),
+          kind_join(acc, datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy))
         )
       )
     )
@@ -863,13 +864,13 @@ pub theorem kind_members_at(
   j: Kind,
   h: ∀ m: Ty. (Mem(Ty, m, ty_members(u))) -> KLe(datas_kind(d, m), j)
 ): KLe(datas_kind(d, u), j) {
-  ⊢ KLe(datas_kind(d, u), j) from match u {
+  match u {
     TyUnion(zs) => dkl_le_all(d, zs, KindCopy, j, kle_copy(j), h)
     TyNever => kle_copy(j)
     _ => Eq::subst(
       (z: Ty) => KLe(datas_kind(d, z), j),
       eu,
-      h(u1, Eq::subst((z: Ty) => Mem(Ty, u1, Cons(z, Nil(Ty))), eu, MemHere(Ty, u1, Nil(Ty))))
+      h(u1, Eq::subst((z: Ty) => Mem(Ty, u1, Cons(z, Nil(<A: Ty>))), eu, MemHere(<A: Ty, a: u1>, Nil(<A: Ty>))))
     )
   }
 }
@@ -879,7 +880,7 @@ pub theorem union_le(
   d: Datas,
   ys: List(Ty),
   k: Kind,
-  hk: KLe(datas_kind_list(d, ys, true, Nil(Bool), KindCopy), k)
+  hk: KLe(datas_kind_list(d, ys, true, Nil(<A: Bool>), KindCopy), k)
 ): KLe(datas_kind(d, ty_union(ys)), k) {
   kind_members_at(
     d,
@@ -889,7 +890,7 @@ pub theorem union_le(
     k,
     m => mm => kle_trans(
       datas_kind(d, m),
-      datas_kind_list(d, ys, true, Nil(Bool), KindCopy),
+      datas_kind_list(d, ys, true, Nil(<A: Bool>), KindCopy),
       k,
       leaf_le(And::left(union_mem(m, ys, mm)), d, KindCopy),
       hk
@@ -904,43 +905,43 @@ pub theorem pleaf_le<e: Ty, ys: List(
   l: PLeaves(e, ys),
   d: Datas,
   acc: Kind
-): KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(Bool), acc)) {
-  ⊢ KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(Bool), acc)) from match l {
-    PlvHere(rest, p) => kle_trans(
+): KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(<A: Bool>), acc)) {
+  match l {
+    PlvHere(rest) => kle_trans(
       datas_kind(d, e),
       kind_join(acc, datas_kind(d, e)),
-      datas_kind_list(d, rest, true, Nil(Bool), kind_join(acc, datas_kind(d, e))),
+      datas_kind_list(d, rest, true, Nil(<A: Bool>), kind_join(acc, datas_kind(d, e))),
       kle_join_r(acc, datas_kind(d, e)),
-      dkl_ge_acc(d, rest, true, Nil(Bool), kind_join(acc, datas_kind(d, e)))
+      dkl_ge_acc(d, rest, true, Nil(<A: Bool>), kind_join(acc, datas_kind(d, e)))
     )
     PlvIn(ys2, rest, l2) => kle_trans(
       datas_kind(d, e),
-      datas_kind_list(d, ys2, true, Nil(Bool), KindCopy),
+      datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy),
       datas_kind_list(
         d,
         rest,
         true,
-        Nil(Bool),
-        kind_join(acc, datas_kind_list(d, ys2, true, Nil(Bool), KindCopy))
+        Nil(<A: Bool>),
+        kind_join(acc, datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy))
       ),
       pleaf_le(l2, d, KindCopy),
       kle_trans(
-        datas_kind_list(d, ys2, true, Nil(Bool), KindCopy),
-        kind_join(acc, datas_kind_list(d, ys2, true, Nil(Bool), KindCopy)),
+        datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy),
+        kind_join(acc, datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy)),
         datas_kind_list(
           d,
           rest,
           true,
-          Nil(Bool),
-          kind_join(acc, datas_kind_list(d, ys2, true, Nil(Bool), KindCopy))
+          Nil(<A: Bool>),
+          kind_join(acc, datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy))
         ),
-        kle_join_r(acc, datas_kind_list(d, ys2, true, Nil(Bool), KindCopy)),
+        kle_join_r(acc, datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy)),
         dkl_ge_acc(
           d,
           rest,
           true,
-          Nil(Bool),
-          kind_join(acc, datas_kind_list(d, ys2, true, Nil(Bool), KindCopy))
+          Nil(<A: Bool>),
+          kind_join(acc, datas_kind_list(d, ys2, true, Nil(<A: Bool>), KindCopy))
         )
       )
     )
@@ -956,13 +957,13 @@ pub theorem pkind_members_at(
   j: Kind,
   h: ∀ m: Ty. (Mem(Ty, m, ty_pmembers(u))) -> KLe(datas_kind(d, m), j)
 ): KLe(datas_kind(d, u), j) {
-  ⊢ KLe(datas_kind(d, u), j) from match u {
+  match u {
     TyProduct(zs) => dkl_le_all(d, zs, KindCopy, j, kle_copy(j), h)
     TyUnit => kle_copy(j)
     _ => Eq::subst(
       (z: Ty) => KLe(datas_kind(d, z), j),
       eu,
-      h(u1, Eq::subst((z: Ty) => Mem(Ty, u1, Cons(z, Nil(Ty))), eu, MemHere(Ty, u1, Nil(Ty))))
+      h(u1, Eq::subst((z: Ty) => Mem(Ty, u1, Cons(z, Nil(<A: Ty>))), eu, MemHere(<A: Ty, a: u1>, Nil(<A: Ty>))))
     )
   }
 }
@@ -971,7 +972,7 @@ pub theorem product_le(
   d: Datas,
   ys: List(Ty),
   k: Kind,
-  hk: KLe(datas_kind_list(d, ys, true, Nil(Bool), KindCopy), k)
+  hk: KLe(datas_kind_list(d, ys, true, Nil(<A: Bool>), KindCopy), k)
 ): KLe(datas_kind(d, ty_product(ys)), k) {
   pkind_members_at(
     d,
@@ -981,9 +982,9 @@ pub theorem product_le(
     k,
     m => mm => kle_trans(
       datas_kind(d, m),
-      datas_kind_list(d, ys, true, Nil(Bool), KindCopy),
+      datas_kind_list(d, ys, true, Nil(<A: Bool>), KindCopy),
       k,
-      pleaf_le(And::left(product_mem(m, ys, mm)), d, KindCopy),
+      pleaf_le(product_mem(m, ys, mm), d, KindCopy),
       hk
     )
   )
@@ -994,14 +995,14 @@ pub theorem kind_tagged_with(
   l: List(Text),
   z: Ty
 ): datas_kind(d, ty_tagged_with(l, z)) = datas_kind(d, z) {
-  ⊢ datas_kind(d, ty_tagged_with(l, z)) = datas_kind(d, z) from match l {
+  match l {
     Nil => Refl
     Cons(tg, rest) => Refl
   }
 }
 
 pub theorem kind_untagged(d: Datas, y: Ty): datas_kind(d, ty_untagged(y)) = datas_kind(d, y) {
-  ⊢ datas_kind(d, ty_untagged(y)) = datas_kind(d, y) from match y {
+  match y {
     TyTagged(tags, x) => Refl
     _ => Refl
   }
@@ -1031,10 +1032,10 @@ pub theorem apply_named(
   k: Kind,
   ha: KLe(kn_k(d, n, args, o), k),
   hb: KLe(datas_kind(d, b), k)
-): KLe(kn_k(d, n, List::append(args, Cons(b, Nil(Ty))), o), k) {
+): KLe(kn_k(d, n, List::append(args, Cons(b, Nil(<A: Ty>))), o), k) {
   (⊢ (
     KLe(kn_k(d, n, args, o), k)
-  ) -> KLe(kn_k(d, n, List::append(args, Cons(b, Nil(Ty))), o), k) from match o {
+  ) -> KLe(kn_k(d, n, List::append(args, Cons(b, Nil(<A: Ty>))), o), k) from match o {
     None => (h: KLe(KindShared, k)) => h
     Some(data) => (h: KLe(datas_kind_list(d, args, false, generics_picked(data.generics, data.holds), data.base), k)) => dkl_append(
       d,
@@ -1061,13 +1062,13 @@ pub theorem apply_le(
   (⊢ (KLe(datas_kind(d, a), k)) -> KLe(datas_kind(d, ty_apply(a, b)), k) from match a {
     TyNamed(n, args) => (h: KLe(datas_kind(d, TyNamed(n, args)), k)) => Eq::subst(
       (z: Kind) => KLe(z, k),
-      Eq::sym(kind_named_unf(d, n, List::append(args, Cons(b, Nil(Ty))))),
+      Eq::sym(kind_named_unf(d, n, List::append(args, Cons(b, Nil(<A: Ty>))))),
       apply_named(
         d,
-        n,
+        surface_name_text(n),
         args,
         b,
-        datas_decl(d, n),
+        datas_decl(d, surface_name_text(n)),
         k,
         Eq::subst((z: Kind) => KLe(z, k), kind_named_unf(d, n, args), h),
         hb
@@ -1079,7 +1080,7 @@ pub theorem apply_le(
 }
 
 pub fn te_k(o: Ordering): Bool {
-  ⊢ Bool from match o {
+  match o {
     Less => false
     Equal => true
     Greater => false
@@ -1133,14 +1134,14 @@ pub theorem kyn_or_true(
 }
 
 pub theorem bool_or_right(x: Bool, y: Bool, e: y = true): Bool::or(x, y) = true {
-  ⊢ Bool::or(x, y) = true from match x {
+  match x {
     true => Refl
     false => e
   }
 }
 
 pub theorem lht_sound(xs: List(Text), x: Text, e: list_has_text(xs, x) = true): Mem(Text, x, xs) {
-  ⊢ Mem(Text, x, xs) from match xs {
+  match xs {
     Nil => False::elim(false_ne_true(e))
     Cons(y, rest) => kyn_or_true(
       Text::eq(y, x),
@@ -1148,7 +1149,7 @@ pub theorem lht_sound(xs: List(Text), x: Text, e: list_has_text(xs, x) = true): 
       Mem(Text, x, Cons(y, rest)),
       Eq::subst((z: Bool) => z = true, lht_unf(y, x, rest), e),
       q => mem_of_eq(x, y, rest, Eq::sym(text_eq_true(y, x, q))),
-      q => MemThere(Text, x, y, rest, lht_sound(rest, x, q))
+      q => MemThere(<A: Text, a: x>, y, rest, lht_sound(rest, x, q))
     )
   }
 }
@@ -1156,7 +1157,7 @@ pub theorem lht_sound(xs: List(Text), x: Text, e: list_has_text(xs, x) = true): 
 pub theorem lht_complete<x: Text, xs: List(
   Text
 )>(m: Mem(Text, x, xs)): list_has_text(xs, x) = true {
-  ⊢ list_has_text(xs, x) = true from match m {
+  match m {
     MemHere(t) => Eq::subst(
       (z: Bool) => Bool::or(z, list_has_text(t, x)) = true,
       Eq::sym(text_eq_refl(x)),
@@ -1167,7 +1168,7 @@ pub theorem lht_complete<x: Text, xs: List(
 }
 
 pub fn ha_k(holds: List(Text), n: Text, b: Bool): List(Text) {
-  ⊢ List(Text) from match b {
+  match b {
     true => holds
     false => Cons(n, holds)
   }
@@ -1186,9 +1187,9 @@ pub theorem hak_has(
   b: Bool,
   eb: list_has_text(holds, n) = b
 ): Mem(Text, n, ha_k(holds, n, b)) {
-  ⊢ Mem(Text, n, ha_k(holds, n, b)) from match b {
+  match b {
     true => lht_sound(holds, n, eb)
-    false => MemHere(Text, n, holds)
+    false => MemHere(<A: Text, a: n>, holds)
   }
 }
 
@@ -1207,9 +1208,9 @@ pub theorem hak_keep(
   g: Text,
   m: Mem(Text, g, holds)
 ): Mem(Text, g, ha_k(holds, n, b)) {
-  ⊢ Mem(Text, g, ha_k(holds, n, b)) from match b {
+  match b {
     true => m
-    false => MemThere(Text, g, n, holds, m)
+    false => MemThere(<A: Text, a: g>, n, holds, m)
   }
 }
 
@@ -1226,10 +1227,10 @@ pub theorem ha_keep(
   )
 }
 
-pub fn fkp_k(n: Text, pk: Kind, holds: List(Text), b: Bool): Pair(Kind, List(Text)) {
-  ⊢ Pair(Kind, List(Text)) from match b {
-    true => Pair { fst: KindCopy, snd: holds_add(holds, n) }
-    false => Pair { fst: pk, snd: holds }
+pub fn fkp_k(n: Text, pk: Kind, holds: List(Text), b: Bool): Kind × List(Text) {
+  ⊢ (Kind × List(Text)) from match b {
+    true => #(KindCopy, holds_add(holds, n))
+    false => #(pk, holds)
   }
 }
 
@@ -1249,16 +1250,16 @@ pub fn fkd_k(
   gs: List(Text),
   holds: List(Text),
   o: Option(Data)
-): Pair(Kind, List(Text)) {
-  ⊢ Pair(Kind, List(Text)) from match o {
-    None => Pair { fst: KindShared, snd: holds }
+): Kind × List(Text) {
+  ⊢ (Kind × List(Text)) from match o {
+    None => #(KindShared, holds)
     Some(data) => field_kind_list(
       d,
       args,
       false,
       generics_picked(data.generics, data.holds),
       gs,
-      Pair { fst: data.base, snd: holds }
+      #(data.base, holds)
     )
   }
 }
@@ -1270,16 +1271,16 @@ pub fn fkn_k(
   gs: List(Text),
   holds: List(Text),
   b: Bool
-): Pair(Kind, List(Text)) {
-  ⊢ Pair(Kind, List(Text)) from match b {
-    true => Pair { fst: KindCopy, snd: holds_add(holds, n) }
+): Kind × List(Text) {
+  ⊢ (Kind × List(Text)) from match b {
+    true => #(KindCopy, holds_add(holds, n))
     false => fkd_k(d, args, gs, holds, datas_decl(d, n))
   }
 }
 
 pub theorem fk_named_unf(
   d: Datas,
-  n: Text,
+  n: SurfaceName,
   args: List(Ty),
   gs: List(Text),
   holds: List(Text)
@@ -1288,7 +1289,7 @@ pub theorem fk_named_unf(
   TyNamed(n, args),
   gs,
   holds
-) = fkn_k(d, n, args, gs, holds, Bool::and(ty_no_args(args), list_has_text(gs, n))) {
+) = fkn_k(d, surface_name_text(n), args, gs, holds, Bool::and(ty_no_args(args), list_has_text(gs, surface_name_text(n)))) {
   Refl
 }
 
@@ -1296,10 +1297,10 @@ pub fn fkl_pick(
   d: Datas,
   t: Ty,
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   p: Bool
-): Pair(Kind, List(Text)) {
-  ⊢ Pair(Kind, List(Text)) from match p {
+): Kind × List(Text) {
+  ⊢ (Kind × List(Text)) from match p {
     true => kind_pair_join(acc, field_kind(d, t, gs, acc.snd))
     false => acc
   }
@@ -1312,10 +1313,10 @@ pub fn fkl_k(
   every: Bool,
   picks: List(Bool),
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   go: Bool
-): Pair(Kind, List(Text)) {
-  ⊢ Pair(Kind, List(Text)) from match go {
+): Kind × List(Text) {
+  ⊢ (Kind × List(Text)) from match go {
     false => acc
     true => field_kind_list(
       d,
@@ -1335,7 +1336,7 @@ pub theorem fkl_unf(
   every: Bool,
   picks: List(Bool),
   gs: List(Text),
-  acc: Pair(Kind, List(Text))
+  acc: (Kind × List(Text))
 ): field_kind_list(
   d,
   Cons(t, rest),
@@ -1347,11 +1348,11 @@ pub theorem fkl_unf(
   Refl
 }
 
-pub fn pfst(p: Pair(Kind, List(Text))): Kind {
+pub fn pfst(p: Kind × List(Text)): Kind {
   p.fst
 }
 
-pub fn psnd(p: Pair(Kind, List(Text))): List(Text) {
+pub fn psnd(p: Kind × List(Text)): List(Text) {
   p.snd
 }
 
@@ -1375,7 +1376,7 @@ pub theorem fkp_grow(
   g: Text,
   m: Mem(Text, g, holds)
 ): Mem(Text, g, psnd(fkp_k(n, pk, holds, b))) {
-  ⊢ Mem(Text, g, psnd(fkp_k(n, pk, holds, b))) from match b {
+  match b {
     true => ha_keep(holds, n, g, m)
     false => m
   }
@@ -1399,12 +1400,12 @@ pub theorem fkd_grow(
         false,
         generics_picked(dgen(data), dholds(data)),
         gs,
-        Pair { fst: dbase(data), snd: holds }
+        #(dbase(data), holds)
       )
     )
   )
 ): Mem(Text, g, psnd(fkd_k(d, args, gs, holds, o))) {
-  ⊢ Mem(Text, g, psnd(fkd_k(d, args, gs, holds, o))) from match o {
+  match o {
     None => m
     Some(data) => ih(data)
   }
@@ -1421,7 +1422,7 @@ pub theorem fkn_grow(
   m: Mem(Text, g, holds),
   ih: Mem(Text, g, psnd(fkd_k(d, args, gs, holds, datas_decl(d, n))))
 ): Mem(Text, g, psnd(fkn_k(d, n, args, gs, holds, b))) {
-  ⊢ Mem(Text, g, psnd(fkn_k(d, n, args, gs, holds, b))) from match b {
+  match b {
     true => ha_keep(holds, n, g, m)
     false => ih
   }
@@ -1431,13 +1432,13 @@ pub theorem fklp_grow(
   d: Datas,
   t: Ty,
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   p: Bool,
   g: Text,
   m: Mem(Text, g, psnd(acc)),
   iht: Mem(Text, g, psnd(field_kind(d, t, gs, psnd(acc))))
 ): Mem(Text, g, psnd(fkl_pick(d, t, gs, acc, p))) {
-  ⊢ Mem(Text, g, psnd(fkl_pick(d, t, gs, acc, p))) from match p {
+  match p {
     true => iht
     false => m
   }
@@ -1450,19 +1451,16 @@ pub theorem fklk_grow(
   every: Bool,
   picks: List(Bool),
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   go: Bool,
   g: Text,
   m: Mem(Text, g, psnd(acc)),
   iht: Mem(Text, g, psnd(field_kind(d, t, gs, psnd(acc)))),
-  ihr: ∀ a: Pair(
-    Kind,
-    List(Text)
-  ). (
+  ihr: ∀ a: (Kind × List(Text)). (
     Mem(Text, g, psnd(a))
   ) -> Mem(Text, g, psnd(field_kind_list(d, rest, every, picks_tail(picks), gs, a)))
 ): Mem(Text, g, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go))) {
-  ⊢ Mem(Text, g, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go))) from match go {
+  match go {
     false => m
     true => ihr(
       fkl_pick(d, t, gs, acc, picks_head(every, picks)),
@@ -1478,14 +1476,14 @@ mutual {
     every: Bool,
     picks: List(Bool),
     gs: List(Text),
-    acc: Pair(Kind, List(Text)),
+    acc: Kind × List(Text),
     g: Text,
     m: Mem(Text, g, psnd(acc))
   ): Mem(Text, g, psnd(field_kind_list(d, ts, every, picks, gs, acc))) {
-    ⊢ Mem(Text, g, psnd(field_kind_list(d, ts, every, picks, gs, acc))) from match ts {
+    match ts {
       Nil => m
       Cons(t, rest) => Eq::subst(
-        (z: Pair(Kind, List(Text))) => Mem(Text, g, psnd(z)),
+        (z: Kind × List(Text)) => Mem(Text, g, psnd(z)),
         Eq::sym(fkl_unf(d, t, rest, every, picks, gs, acc)),
         fklk_grow(
           d,
@@ -1513,7 +1511,7 @@ mutual {
     g: Text,
     m: Mem(Text, g, holds)
   ): Mem(Text, g, psnd(field_kind(d, t, gs, holds))) {
-    ⊢ Mem(Text, g, psnd(field_kind(d, t, gs, holds))) from match t {
+    match t {
       TyInt(w) => m
       TyBool => m
       TyText => m
@@ -1521,29 +1519,30 @@ mutual {
       TyNever => m
       TyDecimal => m
       TyFloat => m
+      TyFloat32 => m
       TyFn(ps, r, k) => m
-      TyUnion(ts) => fkl_grow(d, ts, true, Nil(Bool), gs, Pair { fst: KindCopy, snd: holds }, g, m)
+      TyUnion(ts) => fkl_grow(d, ts, true, Nil(<A: Bool>), gs, #(KindCopy, holds), g, m)
       TyProduct(ts) => fkl_grow(
         d,
         ts,
         true,
-        Nil(Bool),
+        Nil(<A: Bool>),
         gs,
-        Pair { fst: KindCopy, snd: holds },
+        #(KindCopy, holds),
         g,
         m
       )
       TyTagged(tags, x) => fk_grow(d, x, gs, holds, g, m)
       TyNamed(n, args) => Eq::subst(
-        (z: Pair(Kind, List(Text))) => Mem(Text, g, psnd(z)),
+        (z: Kind × List(Text)) => Mem(Text, g, psnd(z)),
         Eq::sym(fk_named_unf(d, n, args, gs, holds)),
         fkn_grow(
           d,
-          n,
+          surface_name_text(n),
           args,
           gs,
           holds,
-          Bool::and(ty_no_args(args), list_has_text(gs, n)),
+          Bool::and(ty_no_args(args), list_has_text(gs, surface_name_text(n))),
           g,
           m,
           fkd_grow(
@@ -1551,7 +1550,7 @@ mutual {
             args,
             gs,
             holds,
-            datas_decl(d, n),
+            datas_decl(d, surface_name_text(n)),
             g,
             m,
             data => fkl_grow(
@@ -1560,7 +1559,7 @@ mutual {
               false,
               generics_picked(dgen(data), dholds(data)),
               gs,
-              Pair { fst: dbase(data), snd: holds },
+              #(dbase(data), holds),
               g,
               m
             )
@@ -1568,7 +1567,7 @@ mutual {
         )
       )
       TyParam(n, pk) => Eq::subst(
-        (z: Pair(Kind, List(Text))) => Mem(Text, g, psnd(z)),
+        (z: Kind × List(Text)) => Mem(Text, g, psnd(z)),
         Eq::sym(fk_param_unf(d, n, pk, gs, holds)),
         fkp_grow(n, pk, holds, list_has_text(gs, n), g, m)
       )
@@ -1592,10 +1591,10 @@ pub theorem fklp_fst(
   d: Datas,
   t: Ty,
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   p: Bool
 ): KLe(pfst(acc), pfst(fkl_pick(d, t, gs, acc, p))) {
-  ⊢ KLe(pfst(acc), pfst(fkl_pick(d, t, gs, acc, p))) from match p {
+  match p {
     true => kle_join_l(pfst(acc), pfst(field_kind(d, t, gs, psnd(acc))))
     false => kle_refl(pfst(acc))
   }
@@ -1608,14 +1607,11 @@ pub theorem fklk_fst(
   every: Bool,
   picks: List(Bool),
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   go: Bool,
-  ihr: ∀ a: Pair(
-    Kind,
-    List(Text)
-  ). KLe(pfst(a), pfst(field_kind_list(d, rest, every, picks_tail(picks), gs, a)))
+  ihr: ∀ a: (Kind × List(Text)). KLe(pfst(a), pfst(field_kind_list(d, rest, every, picks_tail(picks), gs, a)))
 ): KLe(pfst(acc), pfst(fkl_k(d, t, rest, every, picks, gs, acc, go))) {
-  ⊢ KLe(pfst(acc), pfst(fkl_k(d, t, rest, every, picks, gs, acc, go))) from match go {
+  match go {
     false => kle_refl(pfst(acc))
     true => kle_trans(
       pfst(acc),
@@ -1643,12 +1639,12 @@ pub theorem fkl_fst(
   every: Bool,
   picks: List(Bool),
   gs: List(Text),
-  acc: Pair(Kind, List(Text))
+  acc: (Kind × List(Text))
 ): KLe(pfst(acc), pfst(field_kind_list(d, ts, every, picks, gs, acc))) {
-  ⊢ KLe(pfst(acc), pfst(field_kind_list(d, ts, every, picks, gs, acc))) from match ts {
+  match ts {
     Nil => kle_refl(pfst(acc))
     Cons(t, rest) => Eq::subst(
-      (z: Pair(Kind, List(Text))) => KLe(pfst(acc), pfst(z)),
+      (z: Kind × List(Text)) => KLe(pfst(acc), pfst(z)),
       Eq::sym(fkl_unf(d, t, rest, every, picks, gs, acc)),
       fklk_fst(
         d,
@@ -1680,7 +1676,7 @@ pub def MapCover(
   gs: List(Text)
 ): Prop := ∀ n: Text. (
   Mem(Text, n, gs)
-) -> (Ordmap::get(map, n, Ordmap::compare_text) = None(Ty)) -> False
+) -> (Ordmap::get(map, n, Ordmap::compare_text) = None(<A: Ty>)) -> False
 
 // The arguments for the generics in `hs` are below `k`.
 pub def Env(
@@ -1713,7 +1709,7 @@ pub theorem split_r(a: Kind, b: Kind, k: Kind, h: KLe(kind_join(a, b), k)): KLe(
 }
 
 pub fn sn_k(t: Ty, o: Option(Ty)): Ty {
-  ⊢ Ty from match o {
+  match o {
     Some(x) => x
     None => t
   }
@@ -1744,7 +1740,7 @@ pub theorem fk_param_ok(
   hk: KLe(pfst(fkp_k(n, pk, holds, b)), k),
   he: Env(d, map, psnd(fkp_k(n, pk, holds, b)), k)
 ): KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) {
-  ⊢ KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) from match b {
+  match b {
     true => ⊢ KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) from match o {
       Some(x) => he(n, x, ha_has(holds, n), eo)
       None => False::elim(mc(n, lht_sound(gs, n, eb), eo))
@@ -1763,9 +1759,9 @@ pub theorem fk_nil_decl(
   holds: List(Text),
   o: Option(Data),
   k: Kind,
-  hk: KLe(pfst(fkd_k(d, Nil(Ty), gs, holds, o)), k)
-): KLe(kn_k(d, n, Nil(Ty), o), k) {
-  ⊢ KLe(kn_k(d, n, Nil(Ty), o), k) from match o {
+  hk: KLe(pfst(fkd_k(d, Nil(<A: Ty>), gs, holds, o)), k)
+): KLe(kn_k(d, n, Nil(<A: Ty>), o), k) {
+  match o {
     None => hk
     Some(data) => hk
   }
@@ -1773,7 +1769,7 @@ pub theorem fk_nil_decl(
 
 pub theorem fk_name_ok(
   d: Datas,
-  n: Text,
+  n: SurfaceName,
   gs: List(Text),
   holds: List(Text),
   map: Ordmap(Text, Ty),
@@ -1781,24 +1777,24 @@ pub theorem fk_name_ok(
   mk: MapKeys(map, gs),
   mc: MapCover(map, gs),
   c: Bool,
-  ec: list_has_text(gs, n) = c,
+  ec: list_has_text(gs, surface_name_text(n)) = c,
   o: Option(Ty),
-  eo: Ordmap::get(map, n, Ordmap::compare_text) = o,
-  hk: KLe(pfst(fkn_k(d, n, Nil(Ty), gs, holds, c)), k),
-  he: Env(d, map, psnd(fkn_k(d, n, Nil(Ty), gs, holds, c)), k)
-): KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) {
-  ⊢ KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) from match c {
-    true => ⊢ KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) from match o {
-      Some(x) => he(n, x, ha_has(holds, n), eo)
-      None => False::elim(mc(n, lht_sound(gs, n, ec), eo))
+  eo: Ordmap::get(map, surface_name_text(n), Ordmap::compare_text) = o,
+  hk: KLe(pfst(fkn_k(d, surface_name_text(n), Nil(<A: Ty>), gs, holds, c)), k),
+  he: Env(d, map, psnd(fkn_k(d, surface_name_text(n), Nil(<A: Ty>), gs, holds, c)), k)
+): KLe(datas_kind(d, sn_k(TyNamed(n, Nil(<A: Ty>)), o)), k) {
+  match c {
+    true => ⊢ KLe(datas_kind(d, sn_k(TyNamed(n, Nil(<A: Ty>)), o)), k) from match o {
+      Some(x) => he(surface_name_text(n), x, ha_has(holds, surface_name_text(n)), eo)
+      None => False::elim(mc(surface_name_text(n), lht_sound(gs, surface_name_text(n), ec), eo))
     }
-    false => ⊢ KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) from match o {
+    false => ⊢ KLe(datas_kind(d, sn_k(TyNamed(n, Nil(<A: Ty>)), o)), k) from match o {
       None => Eq::subst(
         (z: Kind) => KLe(z, k),
-        Eq::sym(kind_named_unf(d, n, Nil(Ty))),
-        fk_nil_decl(d, n, gs, holds, datas_decl(d, n), k, hk)
+        Eq::sym(kind_named_unf(d, n, Nil(<A: Ty>))),
+        fk_nil_decl(d, surface_name_text(n), gs, holds, datas_decl(d, surface_name_text(n)), k, hk)
       )
-      Some(x) => False::elim(false_ne_true(Eq::trans(Eq::sym(ec), lht_complete(mk(n, x, eo)))))
+      Some(x) => False::elim(false_ne_true(Eq::trans(Eq::sym(ec), lht_complete(mk(surface_name_text(n), x, eo)))))
     }
   }
 }
@@ -1825,7 +1821,7 @@ pub theorem fk_cons_ok(
           false,
           generics_picked(dgen(data), dholds(data)),
           gs,
-          Pair { fst: dbase(data), snd: holds }
+          #(dbase(data), holds)
         )
       ),
       k
@@ -1841,7 +1837,7 @@ pub theorem fk_cons_ok(
           false,
           generics_picked(dgen(data), dholds(data)),
           gs,
-          Pair { fst: dbase(data), snd: holds }
+          #(dbase(data), holds)
         )
       ),
       k
@@ -1857,7 +1853,7 @@ pub theorem fk_cons_ok(
     k
   )
 ): KLe(kn_k(d, n, ty_map_list(args, map), o), k) {
-  ⊢ KLe(kn_k(d, n, ty_map_list(args, map), o), k) from match o {
+  match o {
     None => hk
     Some(data) => ih(
       data,
@@ -1870,7 +1866,7 @@ pub theorem fk_cons_ok(
             false,
             generics_picked(dgen(data), dholds(data)),
             gs,
-            Pair { fst: dbase(data), snd: holds }
+            #(dbase(data), holds)
           )
         ),
         k,
@@ -1880,7 +1876,7 @@ pub theorem fk_cons_ok(
           false,
           generics_picked(dgen(data), dholds(data)),
           gs,
-          Pair { fst: dbase(data), snd: holds }
+          #(dbase(data), holds)
         ),
         hk
       ),
@@ -1890,23 +1886,23 @@ pub theorem fk_cons_ok(
   }
 }
 
-pub fn sub_named_k(n: Text, args: List(Ty), map: Ordmap(Text, Ty), b: Bool): Ty {
-  ⊢ Ty from match b {
-    true => ty_substitute_name(n, map, TyNamed(n, Nil(Ty)))
+pub fn sub_named_k(n: SurfaceName, args: List(Ty), map: Ordmap(Text, Ty), b: Bool): Ty {
+  match b {
+    true => ty_substitute_name(surface_name_text(n), map, TyNamed(n, Nil(<A: Ty>)))
     false => TyNamed(n, ty_map_list(args, map))
   }
 }
 
 pub theorem sub_named_unf(
-  n: Text,
+  n: SurfaceName,
   args: List(Ty),
   map: Ordmap(Text, Ty)
 ): ty_substitute(TyNamed(n, args), map) = sub_named_k(n, args, map, ty_no_args(args)) {
   Refl
 }
 
-pub theorem no_args_nil(args: List(Ty), e: ty_no_args(args) = true): args = Nil(Ty) {
-  ⊢ args = Nil(Ty) from match args {
+pub theorem no_args_nil(args: List(Ty), e: ty_no_args(args) = true): args = Nil(<A: Ty>) {
+  match args {
     Nil => Refl
     Cons(a, more) => False::elim(false_ne_true(e))
   }
@@ -1914,7 +1910,7 @@ pub theorem no_args_nil(args: List(Ty), e: ty_no_args(args) = true): args = Nil(
 
 pub theorem fk_named_ok(
   d: Datas,
-  n: Text,
+  n: SurfaceName,
   args: List(Ty),
   gs: List(Text),
   holds: List(Text),
@@ -1924,8 +1920,8 @@ pub theorem fk_named_ok(
   mc: MapCover(map, gs),
   na: Bool,
   ena: ty_no_args(args) = na,
-  hk: KLe(pfst(fkn_k(d, n, args, gs, holds, Bool::and(na, list_has_text(gs, n)))), k),
-  he: Env(d, map, psnd(fkn_k(d, n, args, gs, holds, Bool::and(na, list_has_text(gs, n)))), k),
+  hk: KLe(pfst(fkn_k(d, surface_name_text(n), args, gs, holds, Bool::and(na, list_has_text(gs, surface_name_text(n))))), k),
+  he: Env(d, map, psnd(fkn_k(d, surface_name_text(n), args, gs, holds, Bool::and(na, list_has_text(gs, surface_name_text(n))))), k),
   ih: ∀ data: Data. (
     KLe(dbase(data), k)
   ) -> (
@@ -1937,7 +1933,7 @@ pub theorem fk_named_ok(
           false,
           generics_picked(dgen(data), dholds(data)),
           gs,
-          Pair { fst: dbase(data), snd: holds }
+          #(dbase(data), holds)
         )
       ),
       k
@@ -1953,7 +1949,7 @@ pub theorem fk_named_ok(
           false,
           generics_picked(dgen(data), dholds(data)),
           gs,
-          Pair { fst: dbase(data), snd: holds }
+          #(dbase(data), holds)
         )
       ),
       k
@@ -1969,10 +1965,10 @@ pub theorem fk_named_ok(
     k
   )
 ): KLe(datas_kind(d, sub_named_k(n, args, map, na)), k) {
-  ⊢ KLe(datas_kind(d, sub_named_k(n, args, map, na)), k) from match na {
+  match na {
     true => Eq::subst(
       (z: Ty) => KLe(datas_kind(d, z), k),
-      Eq::sym(sn_unf(n, map, TyNamed(n, Nil(Ty)))),
+      Eq::sym(sn_unf(surface_name_text(n), map, TyNamed(n, Nil(<A: Ty>)))),
       fk_name_ok(
         d,
         n,
@@ -1982,17 +1978,17 @@ pub theorem fk_named_ok(
         k,
         mk,
         mc,
-        list_has_text(gs, n),
+        list_has_text(gs, surface_name_text(n)),
         Refl,
-        Ordmap::get(map, n, Ordmap::compare_text),
+        Ordmap::get(map, surface_name_text(n), Ordmap::compare_text),
         Refl,
         Eq::subst(
-          (z: List(Ty)) => KLe(pfst(fkn_k(d, n, z, gs, holds, list_has_text(gs, n))), k),
+          (z: List(Ty)) => KLe(pfst(fkn_k(d, surface_name_text(n), z, gs, holds, list_has_text(gs, surface_name_text(n)))), k),
           no_args_nil(args, ena),
           hk
         ),
         Eq::subst(
-          (z: List(Ty)) => Env(d, map, psnd(fkn_k(d, n, z, gs, holds, list_has_text(gs, n))), k),
+          (z: List(Ty)) => Env(d, map, psnd(fkn_k(d, surface_name_text(n), z, gs, holds, list_has_text(gs, surface_name_text(n)))), k),
           no_args_nil(args, ena),
           he
         )
@@ -2001,7 +1997,7 @@ pub theorem fk_named_ok(
     false => Eq::subst(
       (z: Kind) => KLe(z, k),
       Eq::sym(kind_named_unf(d, n, ty_map_list(args, map))),
-      fk_cons_ok(d, n, args, gs, holds, map, k, datas_decl(d, n), hk, he, ih)
+      fk_cons_ok(d, surface_name_text(n), args, gs, holds, map, k, datas_decl(d, surface_name_text(n)), hk, he, ih)
     )
   }
 }
@@ -2010,7 +2006,7 @@ pub theorem fklp_ok(
   d: Datas,
   t: Ty,
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   kacc: Kind,
   map: Ordmap(Text, Ty),
   k: Kind,
@@ -2023,7 +2019,7 @@ pub theorem fklp_ok(
   hk: KLe(pfst(fkl_pick(d, t, gs, acc, p)), k),
   he: Env(d, map, psnd(fkl_pick(d, t, gs, acc, p)), k)
 ): KLe(dkl_pick(d, sigt, kacc, p), k) {
-  ⊢ KLe(dkl_pick(d, sigt, kacc, p), k) from match p {
+  match p {
     true => kle_lub(
       kacc,
       datas_kind(d, sigt),
@@ -2042,7 +2038,7 @@ pub theorem fklk_ok(
   every: Bool,
   picks: List(Bool),
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   kacc: Kind,
   map: Ordmap(Text, Ty),
   k: Kind,
@@ -2053,10 +2049,7 @@ pub theorem fklk_ok(
   iht: (
     KLe(pfst(field_kind(d, t, gs, psnd(acc))), k)
   ) -> (Env(d, map, psnd(field_kind(d, t, gs, psnd(acc))), k)) -> KLe(datas_kind(d, sigt), k),
-  ihr: ∀ a: Pair(
-    Kind,
-    List(Text)
-  ). ∀ ka: Kind. (
+  ihr: ∀ a: (Kind × List(Text)). ∀ ka: Kind. (
     KLe(ka, k)
   ) -> (
     KLe(pfst(field_kind_list(d, rest, every, picks_tail(picks), gs, a)), k)
@@ -2066,7 +2059,7 @@ pub theorem fklk_ok(
   hk: KLe(pfst(fkl_k(d, t, rest, every, picks, gs, acc, go)), k),
   he: Env(d, map, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go)), k)
 ): KLe(dkl_k(d, sigt, sigrest, every, picks, kacc, go), k) {
-  ⊢ KLe(dkl_k(d, sigt, sigrest, every, picks, kacc, go), k) from match go {
+  match go {
     false => hacc
     true => ihr(
       fkl_pick(d, t, gs, acc, picks_head(every, picks)),
@@ -2147,7 +2140,7 @@ mutual {
     every: Bool,
     picks: List(Bool),
     gs: List(Text),
-    acc: Pair(Kind, List(Text)),
+    acc: Kind × List(Text),
     kacc: Kind,
     map: Ordmap(Text, Ty),
     k: Kind,
@@ -2157,7 +2150,7 @@ mutual {
     hk: KLe(pfst(field_kind_list(d, ts, every, picks, gs, acc)), k),
     he: Env(d, map, psnd(field_kind_list(d, ts, every, picks, gs, acc)), k)
   ): KLe(datas_kind_list(d, ty_map_list(ts, map), every, picks, kacc), k) {
-    ⊢ KLe(datas_kind_list(d, ty_map_list(ts, map), every, picks, kacc), k) from match ts {
+    match ts {
       Nil => hacc
       Cons(t, rest) => Eq::subst(
         (z: Kind) => KLe(z, k),
@@ -2195,12 +2188,12 @@ mutual {
             h3
           ),
           Eq::subst(
-            (z: Pair(Kind, List(Text))) => KLe(pfst(z), k),
+            (z: Kind × List(Text)) => KLe(pfst(z), k),
             fkl_unf(d, t, rest, every, picks, gs, acc),
             hk
           ),
           Eq::subst(
-            (z: Pair(Kind, List(Text))) => Env(d, map, psnd(z), k),
+            (z: Kind × List(Text)) => Env(d, map, psnd(z), k),
             fkl_unf(d, t, rest, every, picks, gs, acc),
             he
           )
@@ -2223,7 +2216,7 @@ mutual {
     hk: KLe(pfst(field_kind(d, t, gs, holds)), k),
     he: Env(d, map, psnd(field_kind(d, t, gs, holds)), k)
   ): KLe(datas_kind(d, ty_substitute(t, map)), k) {
-    ⊢ KLe(datas_kind(d, ty_substitute(t, map)), k) from match t {
+    match t {
       TyInt(w) => hk
       TyBool => hk
       TyText => hk
@@ -2231,6 +2224,7 @@ mutual {
       TyNever => hk
       TyDecimal => hk
       TyFloat => hk
+      TyFloat32 => hk
       TyFn(ps, r, fk) => hk
       TyUnion(ts) => union_le(
         d,
@@ -2240,9 +2234,9 @@ mutual {
           d,
           ts,
           true,
-          Nil(Bool),
+          Nil(<A: Bool>),
           gs,
-          Pair { fst: KindCopy, snd: holds },
+          #(KindCopy, holds),
           KindCopy,
           map,
           k,
@@ -2261,9 +2255,9 @@ mutual {
           d,
           ts,
           true,
-          Nil(Bool),
+          Nil(<A: Bool>),
           gs,
-          Pair { fst: KindCopy, snd: holds },
+          #(KindCopy, holds),
           KindCopy,
           map,
           k,
@@ -2295,12 +2289,12 @@ mutual {
           ty_no_args(args),
           Refl,
           Eq::subst(
-            (z: Pair(Kind, List(Text))) => KLe(pfst(z), k),
+            (z: Kind × List(Text)) => KLe(pfst(z), k),
             fk_named_unf(d, n, args, gs, holds),
             hk
           ),
           Eq::subst(
-            (z: Pair(Kind, List(Text))) => Env(d, map, psnd(z), k),
+            (z: Kind × List(Text)) => Env(d, map, psnd(z), k),
             fk_named_unf(d, n, args, gs, holds),
             he
           ),
@@ -2310,7 +2304,7 @@ mutual {
             false,
             generics_picked(dgen(data), dholds(data)),
             gs,
-            Pair { fst: dbase(data), snd: holds },
+            #(dbase(data), holds),
             dbase(data),
             map,
             k,
@@ -2340,12 +2334,12 @@ mutual {
           Ordmap::get(map, n, Ordmap::compare_text),
           Refl,
           Eq::subst(
-            (z: Pair(Kind, List(Text))) => KLe(pfst(z), k),
+            (z: Kind × List(Text)) => KLe(pfst(z), k),
             fk_param_unf(d, n, pk, gs, holds),
             hk
           ),
           Eq::subst(
-            (z: Pair(Kind, List(Text))) => Env(d, map, psnd(z), k),
+            (z: Kind × List(Text)) => Env(d, map, psnd(z), k),
             fk_param_unf(d, n, pk, gs, holds),
             he
           )
@@ -2423,9 +2417,9 @@ pub theorem fields_fst(
   d: Datas,
   fs: List(DataField),
   gs: List(Text),
-  acc: Pair(Kind, List(Text))
+  acc: (Kind × List(Text))
 ): KLe(pfst(acc), pfst(fields_kind(d, fs, gs, acc))) {
-  ⊢ KLe(pfst(acc), pfst(fields_kind(d, fs, gs, acc))) from match fs {
+  match fs {
     Nil => kle_refl(pfst(acc))
     Cons(f, rest) => kle_trans(
       pfst(acc),
@@ -2441,11 +2435,11 @@ pub theorem fields_grow(
   d: Datas,
   fs: List(DataField),
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   g: Text,
   m: Mem(Text, g, psnd(acc))
 ): Mem(Text, g, psnd(fields_kind(d, fs, gs, acc))) {
-  ⊢ Mem(Text, g, psnd(fields_kind(d, fs, gs, acc))) from match fs {
+  match fs {
     Nil => m
     Cons(f, rest) => fields_grow(
       d,
@@ -2462,9 +2456,9 @@ pub theorem ctors_fst(
   d: Datas,
   cs: List(DataCtor),
   gs: List(Text),
-  acc: Pair(Kind, List(Text))
+  acc: (Kind × List(Text))
 ): KLe(pfst(acc), pfst(ctors_kind(d, cs, gs, acc))) {
-  ⊢ KLe(pfst(acc), pfst(ctors_kind(d, cs, gs, acc))) from match cs {
+  match cs {
     Nil => kle_refl(pfst(acc))
     Cons(c, rest) => kle_trans(
       pfst(acc),
@@ -2480,11 +2474,11 @@ pub theorem ctors_grow(
   d: Datas,
   cs: List(DataCtor),
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   g: Text,
   m: Mem(Text, g, psnd(acc))
 ): Mem(Text, g, psnd(ctors_kind(d, cs, gs, acc))) {
-  ⊢ Mem(Text, g, psnd(ctors_kind(d, cs, gs, acc))) from match cs {
+  match cs {
     Nil => m
     Cons(c, rest) => ctors_grow(
       d,
@@ -2503,7 +2497,7 @@ pub theorem fields_ok(
   d: Datas,
   fs: List(DataField),
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   map: Ordmap(Text, Ty),
   k: Kind,
   mk: MapKeys(map, gs),
@@ -2513,7 +2507,7 @@ pub theorem fields_ok(
   f: DataField,
   mf: Mem(DataField, f, fs)
 ): KLe(datas_kind(d, ty_substitute(fty(f), map)), k) {
-  ⊢ KLe(datas_kind(d, ty_substitute(fty(f), map)), k) from match fs {
+  match fs {
     Nil => Mem::nil(KLe(datas_kind(d, ty_substitute(fty(f), map)), k), mf)
     Cons(f0, rest) => Or::elim(
       mem_cons_inv(f0, rest, mf),
@@ -2585,7 +2579,7 @@ pub theorem ctors_ok(
   d: Datas,
   cs: List(DataCtor),
   gs: List(Text),
-  acc: Pair(Kind, List(Text)),
+  acc: Kind × List(Text),
   map: Ordmap(Text, Ty),
   k: Kind,
   mk: MapKeys(map, gs),
@@ -2597,7 +2591,7 @@ pub theorem ctors_ok(
   f: DataField,
   mf: Mem(DataField, f, cfields(c))
 ): KLe(datas_kind(d, ty_substitute(fty(f), map)), k) {
-  ⊢ KLe(datas_kind(d, ty_substitute(fty(f), map)), k) from match cs {
+  match cs {
     Nil => Mem::nil(KLe(datas_kind(d, ty_substitute(fty(f), map)), k), mcs)
     Cons(c0, rest) => Or::elim(
       mem_cons_inv(c0, rest, mcs),
@@ -2650,8 +2644,8 @@ pub theorem ctors_ok(
 }
 
 pub fn opt_is_some(o: Option(Ty)): Bool {
-  ⊢ Bool from match o {
-    Some(x) => true
+  match o {
+    Some(^x) => true
     None => false
   }
 }
@@ -2660,7 +2654,7 @@ pub theorem some_inj(x: Ty, y: Ty, e: Some(x) = Some(y)): x = y {
   Eq::congr((z: Option(Ty)) => sn_k(x, z), e)
 }
 
-pub theorem none_ne_some(x: Ty, e: None(Ty) = Some(x)): False {
+pub theorem none_ne_some(x: Ty, e: None(<A: Ty>) = Some(x)): False {
   false_ne_true(Eq::congr(opt_is_some, e))
 }
 
@@ -2770,7 +2764,7 @@ pub theorem inst_keys(
   hm: MapKeys(m, all),
   sub: ∀ g: Text. (Mem(Text, g, gs)) -> Mem(Text, g, all)
 ): MapKeys(data_instance_from(gs, args, m), all) {
-  ⊢ MapKeys(data_instance_from(gs, args, m), all) from match gs {
+  match gs {
     Nil => hm
     Cons(g, rest) => ⊢ MapKeys(data_instance_from(Cons(g, rest), args, m), all) from match args {
       Nil => hm
@@ -2785,22 +2779,22 @@ pub theorem inst_keys(
           q => Eq::subst(
             (z: Text) => Mem(Text, z, all),
             Eq::sym(And::left(q)),
-            sub(g, MemHere(Text, g, rest))
+            sub(g, MemHere(<A: Text, a: g>, rest))
           ),
           q => hm(n, x, Eq::trans(Eq::sym(q), e))
         ),
-        h => mh => sub(h, MemThere(Text, h, g, rest, mh))
+        h => mh => sub(h, MemThere(<A: Text, a: h>, g, rest, mh))
       )
     }
   }
 }
 
 pub fn args_cover(gs: List(Text), args: List(Ty)): Bool {
-  ⊢ Bool from match gs {
+  match gs {
     Nil => true
-    Cons(g, rest) => ⊢ Bool from match args {
+    Cons(^g, rest) => ⊢ Bool from match args {
       Nil => false
-      Cons(a, more) => args_cover(rest, more)
+      Cons(^a, more) => args_cover(rest, more)
     }
   }
 }
@@ -2811,7 +2805,7 @@ pub def CoverOr(
   cov: List(Text)
 ): Prop := ∀ n: Text. (
   Or(Mem(Text, n, gs), Mem(Text, n, cov))
-) -> (Ordmap::get(map, n, Ordmap::compare_text) = None(Ty)) -> False
+) -> (Ordmap::get(map, n, Ordmap::compare_text) = None(<A: Ty>)) -> False
 
 pub theorem inst_cover_at(
   gs: List(Text),
@@ -2823,9 +2817,9 @@ pub theorem inst_cover_at(
   ha: args_cover(gs, args) = true,
   n: Text,
   o: Or(Mem(Text, n, gs), Mem(Text, n, cov)),
-  e: Ordmap::get(data_instance_from(gs, args, m), n, Ordmap::compare_text) = None(Ty)
+  e: Ordmap::get(data_instance_from(gs, args, m), n, Ordmap::compare_text) = None(<A: Ty>)
 ): False {
-  ⊢ False from match gs {
+  match gs {
     Nil => Or::elim(o, mn => Mem::nil(False, mn), mn => hm(n, mn, e))
     Cons(g, rest) => ⊢ False from match args {
       Nil => false_ne_true(ha)
@@ -2867,7 +2861,7 @@ pub theorem inst_cover_at(
             q => OrInr(mem_of_eq(n, g, cov, q)),
             q => OrInl(q)
           ),
-          mn => OrInr(MemThere(Text, n, g, cov, mn))
+          mn => OrInr(MemThere(<A: Text, a: n>, g, cov, mn))
         ),
         e
       )
@@ -2895,7 +2889,7 @@ pub theorem inst_env_at(
   mn: Mem(Text, n, hs),
   e: Ordmap::get(data_instance_from(gs, args, m), n, Ordmap::compare_text) = Some(x)
 ): KLe(datas_kind(d, x), datas_kind_list(d, args, false, generics_picked(gs, hs), acc)) {
-  ⊢ KLe(datas_kind(d, x), datas_kind_list(d, args, false, generics_picked(gs, hs), acc)) from match gs {
+  match gs {
     Nil => hm(n, x, mn, e)
     Cons(g, rest) => ⊢ KLe(
       datas_kind(d, x),
@@ -2973,7 +2967,7 @@ pub def HoldsOk(
   Mem(
     Text,
     g,
-    psnd(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) }))
+    psnd(ctors_kind(d, dctors(data), dgen(data), #(dbase(data), dholds(data))))
   )
 ) -> Mem(Text, g, dholds(data))
 
@@ -2992,7 +2986,7 @@ pub def DataOk(
   data: Data
 ): Prop := And(
   KLe(
-    pfst(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })),
+    pfst(ctors_kind(d, dctors(data), dgen(data), #(dbase(data), dholds(data)))),
     dbase(data)
   ),
   And(
@@ -3011,12 +3005,12 @@ pub fn inst_bound(d: Datas, data: Data, args: List(Ty)): Kind {
 
 pub theorem kind_inst_eq(
   d: Datas,
-  n: Text,
+  n: SurfaceName,
   data: Data,
   args: List(Ty),
-  ed: datas_decl(d, n) = Some(data)
+  ed: datas_decl(d, surface_name_text(n)) = Some(data)
 ): datas_kind(d, TyNamed(n, args)) = inst_bound(d, data, args) {
-  Eq::trans(kind_named_unf(d, n, args), Eq::congr((o: Option(Data)) => kn_k(d, n, args, o), ed))
+  Eq::trans(kind_named_unf(d, n, args), Eq::congr((o: Option(Data)) => kn_k(d, surface_name_text(n), args, o), ed))
 }
 
 pub theorem empty_keys(all: List(Text)): MapKeys(Ordmap::empty(), all) {
@@ -3047,7 +3041,7 @@ pub theorem inst_map_cover(
     dgen(data),
     args,
     Ordmap::empty(),
-    Nil(Text),
+    Nil(<A: Text>),
     Ordmap::empty_ordered(Ordmap::compare_text),
     n2 => m2 => e2 => Mem::nil(False, m2),
     ha,
@@ -3082,10 +3076,10 @@ pub theorem inst_map_env(
 pub theorem kind_field_le(
   d: Datas,
   ok: SummaryOk(d),
-  n: Text,
+  n: SurfaceName,
   data: Data,
   args: List(Ty),
-  ed: datas_decl(d, n) = Some(data),
+  ed: datas_decl(d, surface_name_text(n)) = Some(data),
   ha: args_cover(dgen(data), args) = true,
   c: DataCtor,
   mcs: Mem(DataCtor, c, dctors(data)),
@@ -3102,26 +3096,26 @@ pub theorem kind_field_le(
       d,
       dctors(data),
       dgen(data),
-      Pair { fst: dbase(data), snd: dholds(data) },
+      #(dbase(data), dholds(data)),
       data_instance(data, args),
       inst_bound(d, data, args),
       inst_map_keys(data, args),
       inst_map_cover(data, args, ha),
       kle_trans(
-        pfst(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })),
+        pfst(ctors_kind(d, dctors(data), dgen(data), #(dbase(data), dholds(data)))),
         dbase(data),
         inst_bound(d, data, args),
-        And::left(ok(n, data, ed)),
+        And::left(ok(surface_name_text(n), data, ed)),
         dkl_ge_acc(d, args, false, generics_picked(dgen(data), dholds(data)), dbase(data))
       ),
       env_sub(
         d,
         data_instance(data, args),
-        psnd(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })),
+        psnd(ctors_kind(d, dctors(data), dgen(data), #(dbase(data), dholds(data)))),
         dholds(data),
         inst_bound(d, data, args),
         inst_map_env(d, data, args),
-        And::left(And::right(ok(n, data, ed)))
+        And::left(And::right(ok(surface_name_text(n), data, ed)))
       ),
       c,
       mcs,
@@ -3135,10 +3129,10 @@ pub theorem kind_field_le(
 pub theorem kind_declared_le(
   d: Datas,
   ok: SummaryOk(d),
-  n: Text,
+  n: SurfaceName,
   data: Data,
   args: List(Ty),
-  ed: datas_decl(d, n) = Some(data)
+  ed: datas_decl(d, surface_name_text(n)) = Some(data)
 ): KLe(data_declared_kind(data), datas_kind(d, TyNamed(n, args))) {
   Eq::subst(
     (z: Kind) => KLe(data_declared_kind(data), z),
@@ -3147,7 +3141,7 @@ pub theorem kind_declared_le(
       data_declared_kind(data),
       dbase(data),
       inst_bound(d, data, args),
-      And::left(And::right(And::right(ok(n, data, ed)))),
+      And::left(And::right(And::right(ok(surface_name_text(n), data, ed)))),
       dkl_ge_acc(d, args, false, generics_picked(dgen(data), dholds(data)), dbase(data))
     )
   )
@@ -3157,10 +3151,10 @@ pub theorem kind_declared_le(
 pub theorem kind_recursive_le(
   d: Datas,
   ok: SummaryOk(d),
-  n: Text,
+  n: SurfaceName,
   data: Data,
   args: List(Ty),
-  ed: datas_decl(d, n) = Some(data),
+  ed: datas_decl(d, surface_name_text(n)) = Some(data),
   er: drec(data) = true
 ): KLe(KindShared, datas_kind(d, TyNamed(n, args))) {
   Eq::subst(
@@ -3170,7 +3164,7 @@ pub theorem kind_recursive_le(
       KindShared,
       dbase(data),
       inst_bound(d, data, args),
-      And::left(And::right(And::right(And::right(ok(n, data, ed)))))(er),
+      And::left(And::right(And::right(And::right(ok(surface_name_text(n), data, ed)))))(er),
       dkl_ge_acc(d, args, false, generics_picked(dgen(data), dholds(data)), dbase(data))
     )
   )
@@ -3181,10 +3175,10 @@ pub theorem kind_recursive_le(
 pub theorem kind_unmentioned_le(
   d: Datas,
   ok: SummaryOk(d),
-  n: Text,
+  n: SurfaceName,
   data: Data,
   args: List(Ty),
-  ed: datas_decl(d, n) = Some(data),
+  ed: datas_decl(d, surface_name_text(n)) = Some(data),
   g: Text,
   mg: Mem(Text, g, dgen(data)),
   un: data_mentions(data, g) = false,
@@ -3198,6 +3192,6 @@ pub theorem kind_unmentioned_le(
       d,
       data,
       args
-    )(g, x, And::right(And::right(And::right(And::right(ok(n, data, ed)))))(g, mg, un), e)
+    )(g, x, And::right(And::right(And::right(And::right(ok(surface_name_text(n), data, ed)))))(g, mg, un), e)
   )
 }

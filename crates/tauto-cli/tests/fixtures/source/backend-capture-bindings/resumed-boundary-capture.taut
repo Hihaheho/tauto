@@ -1,0 +1,20 @@
+effect pause(): Unit resume ω
+fn pure_helper(): Unit { #() }
+fn resumed_plain(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); x } with {
+      pause(), k => resumed_plain(n - 1, () => k(#()))
+    }
+  }
+}
+fn resumed_with_helper(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); pure_helper(); x } with {
+      pause(), k => resumed_with_helper(n - 1, () => k(#()))
+    }
+  }
+}
+show(&resumed_plain(1, () => 99))
+show(&resumed_with_helper(1, () => 99))

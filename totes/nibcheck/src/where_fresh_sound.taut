@@ -1,11 +1,12 @@
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "rules_where.taut"
 import "kind_sound.taut"
-import std::Base
-import std::Row
-import std::Text
+import std::base
+import std::row
+import std::text
 
-pub fn where_pred_test(predicate: Pair(Text, Text), r#class: Text, name: Text): Bool {
+pub fn where_pred_test(predicate: Text × Text, r#class: Text, name: Text): Bool {
   Bool::and(Text::eq(predicate.fst, r#class), Text::eq(predicate.snd, name))
 }
 pub theorem where_pred_self(
@@ -18,11 +19,11 @@ pub theorem where_pred_self(
   )
 }
 pub theorem preds_have_complete<preds: List(
-  Pair(Text, Text)
+  (Text × Text)
 ), r#class: Text, name: Text>(
-  present: Mem(Pair(Text, Text), Pair { fst: r#class, snd: name }, preds)
+  present: Mem(Text × Text, #(r#class, name), preds)
 ): (preds_have(preds, r#class, name) = true) {
-  ⊢ (preds_have(preds, r#class, name) = true) from match present {
+  match present {
     MemHere(rest) => Eq::congr(
       (same: Bool) => Bool::or(same, preds_have(rest, r#class, name)),
       where_pred_self(r#class, name)
@@ -35,11 +36,11 @@ pub theorem preds_have_complete<preds: List(
   }
 }
 pub theorem preds_have_fresh(
-  preds: List(Pair(Text, Text)),
+  preds: List(Text × Text),
   r#class: Text,
   name: Text,
   absent: preds_have(preds, r#class, name) = false,
-  present: Mem(Pair(Text, Text), Pair { fst: r#class, snd: name }, preds)
+  present: Mem(Text × Text, #(r#class, name), preds)
 ): False {
   true_ne_false(Eq::trans(Eq::sym(preds_have_complete(present)), absent))
 }

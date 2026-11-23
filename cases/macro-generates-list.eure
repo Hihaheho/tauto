@@ -1,0 +1,154 @@
+description = "The list of what a declaration makes (`=> theorem half::eq`): `lint --fix` writes it, replaces a wrong one, and the formatter keeps a list where it was broken."
+
+@ cases.the-list-of-a-decreasing-by-is-written-by-lint-fix
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::well_founded { measure }
+import std::nat { Nat }
+
+fn id_nat(n: Nat): Nat { n }
+
+fn half(n: Nat): Nat decreasing_by measure(id_nat) {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => ⊢ Nat from match m {
+      Zero => Zero
+      Succ(k) => Succ(half(k, Nat::le_succ(k)))
+    }
+  }
+}
+```
+check_errors = ["`decreasing_by`: the list of what `half` makes does not match what it made; made but not listed: theorem half::eq"]
+fixes.lint = true
+fixes.applied = ["Write the list of what it makes"]
+fixes.files."main.taut" = ```tauto
+import std::well_founded { measure }
+import std::nat { Nat }
+
+fn id_nat(n: Nat): Nat { n }
+
+fn half(n: Nat): Nat decreasing_by measure(id_nat) => theorem half::eq {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => ⊢ Nat from match m {
+      Zero => Zero
+      Succ(k) => Succ(half(k, Nat::le_succ(k)))
+    }
+  }
+}
+```
+
+@ cases.a-wrong-list-is-replaced-by-lint-fix
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::well_founded { measure }
+import std::nat { Nat }
+
+fn id_nat(n: Nat): Nat { n }
+
+fn half(n: Nat): Nat decreasing_by measure(id_nat) => theorem other {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => ⊢ Nat from match m {
+      Zero => Zero
+      Succ(k) => Succ(half(k, Nat::le_succ(k)))
+    }
+  }
+}
+```
+fixes.lint = true
+fixes.applied = ["Write the list of what it makes"]
+fixes.files."main.taut" = ```tauto
+import std::well_founded { measure }
+import std::nat { Nat }
+
+fn id_nat(n: Nat): Nat { n }
+
+fn half(n: Nat): Nat decreasing_by measure(id_nat) => theorem half::eq {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => ⊢ Nat from match m {
+      Zero => Zero
+      Succ(k) => Succ(half(k, Nat::le_succ(k)))
+    }
+  }
+}
+```
+
+@ cases.the-formatter-keeps-a-list-where-it-was-broken
+source = ````tauto
+inductive_syntax!(arith, ```par
+%start Expr
+%%
+Expr: Prod;
+```) => struct Expr, struct Prod, fn parse, inductive Expr::I,
+  inductive Prod::I
+````
+format = ````tauto
+inductive_syntax!(arith, ```par
+%start Expr
+%%
+Expr: Prod;
+```) => struct Expr, struct Prod, fn parse, inductive Expr::I,
+  inductive Prod::I
+````
+
+@ cases.an-attribute-list-names-a-declaration-named-apart-as-its-file-spells-it
+description = "Two totes each declare `player`, so each is named apart with its file's module before the macros run; the list still names what the attribute makes as the file spells it."
+files_tote = "app"
+stdout = "84\n"
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+dependencies {
+  one { path = "../one" }
+  two { path = "../two" }
+}
+```
+files."macros/Tauto.eure" = 'package { name = "macros" version = "0.1.0" }'
+files."macros/src/attr.taut" = ```tauto
+import std::builtin::macro
+
+pub macro fn register(_e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StFn(f) => {
+      let n := Syn::decl_name(f.name, concat(f.name.name, "::registration"))
+      quote stmts { fn $n(): i64 { 42 } }
+    }
+    _ => Syn::error(Syn::call_span(), "expected a function")
+  }
+}
+```
+files."one/Tauto.eure" = ```eure
+package { name = "one" version = "0.1.0" }
+dependencies {
+  macros { path = "../macros" }
+}
+```
+files."one/src/lib.taut" = ```tauto
+import macros::attr { register }
+
+@register!() => fn player::registration
+fn player(): i64 { 1 }
+
+pub fn result(): i64 { player::registration() }
+```
+files."two/Tauto.eure" = ```eure
+package { name = "two" version = "0.1.0" }
+dependencies {
+  macros { path = "../macros" }
+}
+```
+files."two/src/lib.taut" = ```tauto
+import macros::attr { register }
+
+@register!() => fn player::registration
+fn player(): i64 { 1 }
+
+pub fn second_result(): i64 { player::registration() }
+```
+files."app/src/main.taut" = ```tauto
+import one::lib { result }
+import two::lib { second_result }
+
+perform main(() => show(&(result() + second_result())))
+```

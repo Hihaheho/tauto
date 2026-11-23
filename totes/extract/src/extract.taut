@@ -1,0 +1,1913 @@
+import "names.taut"
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/unicode.taut"
+import "../../identity/src/identity.taut"
+import std::text
+import std::map
+import std::base
+
+// Extraction of what the elaborator checked, as the host extracts it: a
+// family in `Type` becomes a `enum(shared)` (a `struct(shared)` when it has one
+// constructor with fields), its proof fields dropped; a family in `Prop`, a
+// `theorem` and a `def` are dropped; a function keeps its value parameters,
+// a type parameter becomes a generic and a proof parameter is dropped, with
+// the matching argument of every call; a match on a proof is its one arm.
+// Anything else is an error: nothing is passed through unread.
+
+pub(open) inductive ExResult(A: Type): Type {
+  ExOk(value: A): ExResult(A)
+  ExErr(message: Text): ExResult(A)
+}
+
+// What a parameter or field is at run time.
+pub(open) inductive ExRole: Type {
+  RValue: ExRole
+  RProof: ExRole
+  RGeneric: ExRole
+}
+
+pub(open) inductive ExCtor: Type {
+  Mk(name: Text, leaf: Text, roles: List(ExRole), labels: List(Text), types: List(SurfaceTerm)): ExCtor
+}
+
+pub(open) inductive ExFamily: Type {
+  Mk(name: Text, written: Text, prop: Bool, record: Bool, params: List(Text), ctors: List(ExCtor)): ExFamily
+}
+
+pub(open) inductive ExFn: Type {
+  Mk(name: Text, written: Text, roles: List(ExRole)): ExFn
+}
+
+// A binder: its name in the source, its name written, what it is, and the
+// family of its type when it is one.
+pub(open) inductive ExLocal: Type {
+  Mk(name: Text, written: Text, role: ExRole, family: Option(Text), ty: Option(SurfaceTerm)): ExLocal
+}
+
+pub(open) inductive ExEnv: Type {
+  Mk(
+    classes: UnicodeClasses,
+    // A bound on the size of any term: the length of the source.
+    fuel: Nat,
+    families: List(ExFamily),
+    fns: List(ExFn),
+    // The names taken by the library and the declarations.
+    globals: Ordmap(Text, Unit),
+    // What the host maps the declarations of `std/` onto.
+    mapped_fns: Ordmap(Text, Text),
+    mapped_types: Ordmap(Text, Text),
+    // Each `OccLaws` theorem or def: its exact name, the explicit parameter
+    // names, and `em`/`vac` as written in the result type (parameters still
+    // free). A call substitutes the written arguments, as the host's
+    // application sites give the instantiated values.
+    occ_policies: List(ExOccPolicy)
+  ): ExEnv
+}
+
+// An occupancy theorem or def used as a `SlotsModel` policy argument.
+pub(open) inductive ExOccPolicy: Type {
+  Mk(
+    name: Text,
+    params: List(Text),
+    em: SurfaceTerm,
+    vac: SurfaceTerm
+  ): ExOccPolicy
+}
+
+// The names taken in one declaration, and its binders in scope.
+pub(open) inductive ExScope: Type {
+  Mk(taken: Ordmap(Text, Unit), locals: List(ExLocal)): ExScope
+}
+
+pub fn ex_family_get(fs: List(ExFamily), name: Text): Option(ExFamily) {
+  match fs {
+    Nil => None
+    Cons(f, rest) => if f.name == name { Some(f) } else { ex_family_get(rest, name) }
+  }
+}
+
+pub fn ex_fn_get(fs: List(ExFn), name: Text): Option(ExFn) {
+  match fs {
+    Nil => None
+    Cons(f, rest) => if f.name == name { Some(f) } else { ex_fn_get(rest, name) }
+  }
+}
+
+// The name a family is written by: the program's own, else the type of Nib
+// the host maps a family of `std/` onto.
+pub fn ex_family_written(env: ExEnv, name: Text): Option(Text) {
+  match ex_family_get(env.families, name) {
+    Some(f) => Some(f.written)
+    None => ex_mapped_get(env.mapped_types, name)
+  }
+}
+
+pub fn ex_names_declaration(template: Text): Bool {
+  false
+}
+
+// A template with the prelude's path dropped from the names it writes, as the
+// host writes `std::prelude::concat` as `concat`.
+pub fn ex_unprelude(k: Nat, template: Text): Text {
+  match k {
+    Zero => template
+    Succ(j) => ⊢ Text from match text_find(template, "std::prelude::", 0) {
+      None => template
+      Some(p) => ⊢ Text from match Text::slice(template, 0, p) {
+        None => template
+        Some(before) => ⊢ Text from match Text::slice(template, p + 14, Text::len(template)) {
+          None => template
+          Some(after) => Text::concat(before, ex_unprelude(j, after))
+        }
+      }
+    }
+  }
+}
+
+// The number of values a template takes: one more than its highest `$i`.
+pub fn ex_slots_from(k: Nat, template: Text, at: Nat, n: Nat): Nat {
+  match k {
+    Zero => n
+    Succ(j) => ⊢ Nat from match text_find(template, "$", at) {
+      None => n
+      Some(p) => ⊢ Nat from match Text::slice(template, p + 1, p + 2) {
+        None => n
+        Some(d) => ⊢ Nat from match ex_digit(d) {
+          None => ex_slots_from(j, template, p + 1, n)
+          Some(i) => ex_slots_from(j, template, p + 1, if n < i + 1 { i + 1 } else { n })
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_slots(template: Text): Nat { ex_slots_from(Text::len(template) + 1, template, 0, 0) }
+
+// Whether a mapped `SlotsModel` call needs the policy values the checker
+// records at the application (empty state, vacant mark, …). The other leaf
+// operations only read the written arguments, right-aligned under the
+// template's `$i` so the omitted policy slots stay at the front.
+pub fn ex_slots_model_needs_policy(name: Text): Bool {
+  if text_starts_with(name, "SlotsModel::new", 0) {
+    true
+  } else {
+    text_starts_with(name, "SlotsModel::resize", 0)
+  }
+}
+
+// How many leading explicit arguments of a `SlotsModel::*` call are values
+// the template keeps (before `OccLaws` and proof arguments). Proofs must not
+// be right-aligned into `$1`/`$2`.
+pub fn ex_slots_model_written(name: Text): Option(Nat) {
+  if name == "SlotsModel::state" {
+    Some(1)
+  } else {
+    if name == "SlotsModel::mark_at" || name == "SlotsModel::get" || name == "SlotsModel::get_mut" || name == "SlotsModel::new" {
+      if name == "SlotsModel::new" { Some(1) } else { Some(2) }
+    } else {
+      if name == "SlotsModel::take_m" || name == "SlotsModel::take" || name == "SlotsModel::resize" || name == "SlotsModel::resize_m" {
+        if name == "SlotsModel::take_m" || name == "SlotsModel::take" { Some(4) } else { Some(3) }
+      } else {
+        if name == "SlotsModel::put_m" || name == "SlotsModel::put" {
+          Some(5)
+        } else {
+          if name == "SlotsModel::move_m" || name == "SlotsModel::resize_put_m" {
+            Some(7)
+          } else {
+            if name == "SlotsModel::swap_m" {
+              Some(3)
+            } else {
+              None
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_text_ends_with(t: Text, suffix: Text): Bool {
+  match Nat::le(Text::len(suffix), Text::len(t)) {
+    false => false
+    true => text_starts_with(t, suffix, Nat::sub(Text::len(t), Text::len(suffix)))
+  }
+}
+
+// Which parameters of a mapped family stay as arguments of the builtin; the
+// rest are proofs (`SlotsModel` drops the policy's `used`). Empty: every
+// parameter stays.
+pub fn ex_mapped_kept(builtin: Text): List(Bool) {
+  if builtin == "Slots" {
+    Cons(true, Cons(true, Cons(true, Cons(false, Nil))))
+  } else {
+    Nil
+  }
+}
+
+pub fn ex_filter_kept(kept: List(Bool), args: List(SurfaceTerm)): List(SurfaceTerm) {
+  match kept {
+    Nil => args
+    Cons(keep, krest) => ⊢ List(SurfaceTerm) from match args {
+      Nil => Nil
+      Cons(a, arest) => if keep {
+        Cons(a, ex_filter_kept(krest, arest))
+      } else {
+        ex_filter_kept(krest, arest)
+      }
+    }
+  }
+}
+
+// `em` and `vac` from an `OccLaws(…)` type (indices 3 and 4).
+pub fn ex_occ_em_vac(ty: SurfaceTerm): Option((SurfaceTerm × SurfaceTerm)) {
+  match ex_head(ty) {
+    None => None
+    Some(h) => if h.fst == "OccLaws" || ex_text_ends_with(h.fst, "::OccLaws") {
+      match List::nth(h.snd, 3) {
+        None => None
+        Some(em) => match List::nth(h.snd, 4) {
+          None => None
+          Some(vac) => Some(#(em, vac))
+        }
+      }
+    } else {
+      None
+    }
+  }
+}
+
+pub fn ex_occ_param_names(ns: List(SurfaceNamed)): List(Text) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(n.name, ex_occ_param_names(rest))
+  }
+}
+
+pub fn ex_occ_policy_of_theorem(t: SurfaceTheorem): Option(ExOccPolicy) {
+  match ex_occ_em_vac(t.ty) {
+    None => None
+    Some(p) => Some(
+      ExOccPolicy::Mk(t.name, List::drop(t.implicit, ex_occ_param_names(t.params)), p.fst, p.snd)
+    )
+  }
+}
+
+// Theorems and defs whose result is `OccLaws`; callers flatten `mutual` first.
+pub fn ex_collect_occ_policies(stmts: List(SurfaceStmt)): List(ExOccPolicy) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => {
+      let more := ex_collect_occ_policies(rest)
+      ⊢ List(ExOccPolicy) from match s {
+        StTheorem(t) => match ex_occ_policy_of_theorem(t) {
+          None => more
+          Some(p) => Cons(p, more)
+        }
+        StDef(t) => match ex_occ_policy_of_theorem(t) {
+          None => more
+          Some(p) => Cons(p, more)
+        }
+        _ => more
+      }
+    }
+  }
+}
+
+// Exact name only: a short-name / suffix match would pick another module's
+// declaration of the same leaf. Zero or several matches need application sites.
+pub fn ex_occ_policy_matches(ps: List(ExOccPolicy), name: Text): List(ExOccPolicy) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => if p.name == name {
+      Cons(p, ex_occ_policy_matches(rest, name))
+    } else {
+      ex_occ_policy_matches(rest, name)
+    }
+  }
+}
+
+pub fn ex_occ_policy_get(ps: List(ExOccPolicy), name: Text): Option(ExOccPolicy) {
+  match ex_occ_policy_matches(ps, name) {
+    Cons(p, Nil) => Some(p)
+    _ => None
+  }
+}
+
+// The argument for parameter `name`, or `other` when `name` is not one of them.
+pub fn ex_subst_find(
+  params: List(Text),
+  args: List(SurfaceTerm),
+  name: Text,
+  other: SurfaceTerm
+): SurfaceTerm {
+  match params {
+    Nil => other
+    Cons(p, ps) => ⊢ SurfaceTerm from match args {
+      Nil => other
+      Cons(a, as) => if p == name { a } else { ex_subst_find(ps, as, name, other) }
+    }
+  }
+}
+
+mutual {
+  // Replace free parameter names in a policy term by the call's arguments.
+  pub fn ex_subst_policy(
+    k: Nat,
+    params: List(Text),
+    args: List(SurfaceTerm),
+    t: SurfaceTerm
+  ): SurfaceTerm {
+    match k {
+      Zero => t
+      Succ(j) => ⊢ SurfaceTerm from match t.kind {
+        SkVar(n) => ex_subst_find(params, args, surface_name_text(n), t)
+        SkApp(head, as) => SurfaceTermIndexedMk(
+          SkApp(ex_subst_policy(j, params, args, head), ex_subst_policy_list(j, params, args, as)),
+          t.start,
+          t.end,
+          t.occurrence
+        )
+        SkRecord(n, fs) => SurfaceTermIndexedMk(
+          SkRecord(n, ex_subst_policy_fields(j, params, args, fs)),
+          t.start,
+          t.end,
+          t.occurrence
+        )
+        _ => t
+      }
+    }
+  }
+
+  pub fn ex_subst_policy_list(
+    k: Nat,
+    params: List(Text),
+    args: List(SurfaceTerm),
+    ts: List(SurfaceTerm)
+  ): List(SurfaceTerm) {
+    match k {
+      Zero => ts
+      Succ(j) => ⊢ List(SurfaceTerm) from match ts {
+        Nil => Nil
+        Cons(t, rest) => Cons(
+          ex_subst_policy(j, params, args, t),
+          ex_subst_policy_list(j, params, args, rest)
+        )
+      }
+    }
+  }
+
+  pub fn ex_subst_policy_fields(
+    k: Nat,
+    params: List(Text),
+    args: List(SurfaceTerm),
+    fs: List(SurfaceField)
+  ): List(SurfaceField) {
+    match k {
+      Zero => fs
+      Succ(j) => ⊢ List(SurfaceField) from match fs {
+        Nil => Nil
+        Cons(f, rest) => Cons(
+          SurfaceFieldMk(f.name, ex_subst_policy(j, params, args, f.value)),
+          ex_subst_policy_fields(j, params, args, rest)
+        )
+      }
+    }
+  }
+}
+
+// Written arguments of a laws call, without a leading `@implicits` record.
+pub fn ex_laws_args(args: List(SurfaceTerm)): List(SurfaceTerm) {
+  match args {
+    Cons(a, rest) => ⊢ List(SurfaceTerm) from match a.kind {
+      SkRecord(n, ^fs) => if text_starts_with(n, "@", 0) { rest } else { args }
+      _ => args
+    }
+    Nil => Nil
+  }
+}
+
+// Policy empty/vacant from the `OccLaws` argument at this call: look up the
+// unique declaration by its exact name and substitute the written arguments
+// into `em` and `vac` (the host reads the same values from application sites).
+pub fn ex_slots_model_policy_from_laws(
+  env: ExEnv,
+  laws: SurfaceTerm
+): Option((SurfaceTerm × SurfaceTerm)) {
+  match ex_head(laws) {
+    None => None
+    Some(h) => match ex_occ_policy_get(env.occ_policies, h.fst) {
+      None => None
+      Some(p) => {
+        let args := ex_laws_args(h.snd)
+        if List::length(args) == List::length(p.params) {
+          Some(
+            #(
+              ex_subst_policy(env.fuel, p.params, args, p.em),
+              ex_subst_policy(env.fuel, p.params, args, p.vac)
+            )
+          )
+        } else {
+          None
+        }
+      }
+    }
+  }
+}
+
+mutual {
+  // A policy value as Nib writes it: a bare name stays a name (`tb_empty` is
+  // applied by the template), a nullary constructor is `Family::leaf` (as the
+  // host writes `Mark::Vac`), `Star` is Unit, and a record is printed.
+  pub fn ex_policy_value(k: Nat, env: ExEnv, t: SurfaceTerm): ExResult(Text) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult(Text) from match t.kind {
+        SkVar(n) => {
+          let name := surface_name_text(n)
+          if name == "Star" {
+            ExOk("#()")
+          } else {
+            ⊢ ExResult(Text) from match ex_ctor(env, None, name) {
+              Some(fc) => if List::length(fc.snd.roles) == 0 {
+                ExOk(ex_construct(fc.fst, fc.snd, Nil))
+              } else {
+                ExOk(name)
+              }
+              None => ExOk(name)
+            }
+          }
+        }
+        SkNat(digits) => ExOk(digits)
+        SkBool(b) => ExOk(if b { "true" } else { "false" })
+        SkRecord(n, fs) => ⊢ ExResult(Text) from match ex_policy_fields(j, env, fs) {
+          ExErr(m) => ExErr(m)
+          ExOk(body) => ExOk(Text::concat_all([n, " { ", body, " }"]))
+        }
+        SkApp(head, args) => ⊢ ExResult(Text) from match head.kind {
+          SkVar(n) => ⊢ ExResult(Text) from match ex_policy_values(j, env, args) {
+            ExErr(m) => ExErr(m)
+            ExOk(vs) => ExOk(Text::concat_all([surface_name_text(n), "(", ex_join(vs, ", "), ")"]))
+          }
+          _ => ExErr("a SlotsModel policy value extraction does not read")
+        }
+        _ => ExErr("a SlotsModel policy value extraction does not read")
+      }
+    }
+  }
+
+  pub fn ex_policy_values(k: Nat, env: ExEnv, ts: List(SurfaceTerm)): ExResult(List(Text)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult(List(Text)) from match ts {
+        Nil => ExOk(Nil)
+        Cons(t, rest) => ⊢ ExResult(List(Text)) from match ex_policy_value(j, env, t) {
+          ExErr(m) => ExErr(m)
+          ExOk(x) => ⊢ ExResult(List(Text)) from match ex_policy_values(j, env, rest) {
+            ExErr(m) => ExErr(m)
+            ExOk(xs) => ExOk(Cons(x, xs))
+          }
+        }
+      }
+    }
+  }
+
+  pub fn ex_policy_fields(k: Nat, env: ExEnv, fs: List(SurfaceField)): ExResult(Text) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult(Text) from match fs {
+        Nil => ExOk("")
+        Cons(f, rest) => ⊢ ExResult(Text) from match ex_policy_value(j, env, f.value) {
+          ExErr(m) => ExErr(m)
+          ExOk(v) => ⊢ ExResult(Text) from match ex_policy_fields(j, env, rest) {
+            ExErr(m) => ExErr(m)
+            ExOk(more) => if more == "" {
+              ExOk(Text::concat_all([f.name, ": ", v]))
+            } else {
+              ExOk(Text::concat_all([f.name, ": ", v, ", ", more]))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_set_at(vs: List(Text), i: Nat, v: Text): List(Text) {
+  match vs {
+    Nil => Nil
+    Cons(x, rest) => ⊢ List(Text) from match i {
+      Zero => Cons(v, rest)
+      Succ(j) => Cons(x, ex_set_at(rest, j, v))
+    }
+  }
+}
+
+// Overlay empty state (`$1`) and vacant mark (`$2`) from the call's policy.
+pub fn ex_slots_model_with_policy(name: Text, vs: List(Text), em: Text, vac: Text): List(Text) {
+  let marked := ex_set_at(vs, 2, vac)
+  if text_starts_with(name, "SlotsModel::new", 0) {
+    ex_set_at(marked, 1, em)
+  } else {
+    marked
+  }
+}
+
+// `vs` under the last `List::length(vs)` indices of a template of `needed`
+// slots: the leading ones are the omitted policy values.
+pub fn ex_right_align(needed: Nat, vs: List(Text)): Option(List(Text)) {
+  match Nat::le(List::length(vs), needed) {
+    false => None
+    true => ex_pad_front(Succ(needed), needed, vs)
+  }
+}
+
+pub fn ex_pad_front(k: Nat, needed: Nat, vs: List(Text)): Option(List(Text)) {
+  match k {
+    Zero => None
+    Succ(j) => if List::length(vs) == needed {
+      Some(vs)
+    } else {
+      ex_pad_front(j, needed, Cons("", vs))
+    }
+  }
+}
+
+// The value of `$i` in a template.
+pub fn ex_nth(vs: List(Text), i: Nat): Option(Text) {
+  match vs {
+    Nil => None
+    Cons(v, rest) => ⊢ Option(Text) from match i {
+      Zero => Some(v)
+      Succ(j) => ex_nth(rest, j)
+    }
+  }
+}
+
+pub fn ex_digit(d: Text): Option(Nat) {
+  match text_find("0123456789", d, 0) {
+    None => None
+    Some(i) => if Text::len(d) == 1 { Some(i) } else { None }
+  }
+}
+
+// A template filled as the host fills it: each `$i` the `i`th value in
+// parentheses. A template naming a declaration (`A::f`), whose `std/`
+// declarations the host would also write, is an error, as is a `$i` with no
+// value.
+pub fn ex_fill(k: Nat, template: Text, vs: List(Text), at: Nat, out: List(Text)): ExResult(Text) {
+  match k {
+    Zero => ExErr("extraction exhausted")
+    Succ(j) => ⊢ ExResult(Text) from match text_find(template, "$", at) {
+      None => ⊢ ExResult(Text) from match Text::slice(template, at, Text::len(template)) {
+        None => ExErr("a template extraction does not read")
+        Some(tail) => ExOk(Text::concat_all(List::reverse(Cons(tail, out))))
+      }
+      Some(p) => ⊢ ExResult(Text) from match Text::slice(template, at, p) {
+        None => ExErr("a template extraction does not read")
+        Some(before) => ⊢ ExResult(Text) from match Text::slice(template, p + 1, p + 2) {
+          None => ExErr("a template extraction does not read")
+          Some(d) => ⊢ ExResult(Text) from match ex_digit(d) {
+            None => ExErr("a template extraction does not read")
+            Some(i) => ⊢ ExResult(Text) from match ex_nth(vs, i) {
+              None => ExErr("a call must give all the arguments of its template")
+              Some(v) => ex_fill(j, template, vs, p + 2, Cons(v, Cons(before, out)))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The arguments of a call without the implicit ones written by name.
+pub fn ex_explicit(args: List(SurfaceTerm)): List(SurfaceTerm) {
+  match args {
+    Cons(a, rest) => ⊢ List(SurfaceTerm) from match a.kind {
+      SkRecord(n, ^fs) => if text_starts_with(n, "@", 0) { rest } else { args }
+      _ => args
+    }
+    Nil => Nil
+  }
+}
+
+pub fn ex_local_get(ls: List(ExLocal), name: Text): Option(ExLocal) {
+  match ls {
+    Nil => None
+    Cons(l, rest) => if l.name == name { Some(l) } else { ex_local_get(rest, name) }
+  }
+}
+
+pub fn ex_ctor_in(cs: List(ExCtor), name: Text): Option(ExCtor) {
+  match cs {
+    Nil => None
+    Cons(c, rest) => if c.name == name || c.leaf == name { Some(c) } else { ex_ctor_in(rest, name) }
+  }
+}
+
+// The constructors named `name` (`F::C`, or `C` alone) of all families.
+pub fn ex_ctors_named(fs: List(ExFamily), name: Text): List((ExFamily × ExCtor)) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => ⊢ List((ExFamily × ExCtor)) from match ex_ctor_in(f.ctors, name) {
+      None => ex_ctors_named(rest, name)
+      Some(c) => Cons(#(f, c), ex_ctors_named(rest, name))
+    }
+  }
+}
+
+// The constructor a name stands for: of `family` when it is known, else the
+// only one so named.
+pub fn ex_ctor(env: ExEnv, family: Option(Text), name: Text): Option((ExFamily × ExCtor)) {
+  let named := ⊢ List((ExFamily × ExCtor)) from match family {
+    None => ex_ctors_named(env.families, name)
+    Some(f) => ⊢ List((ExFamily × ExCtor)) from match ex_family_get(env.families, f) {
+      None => Nil
+      Some(fam) => ex_ctors_named(Cons(fam, Nil), name)
+    }
+  }
+  ⊢ Option((ExFamily × ExCtor)) from match named {
+    Cons(only, Nil) => Some(only)
+    // The program's own constructor wins over the prelude's of the same name.
+    _ => ⊢ Option((ExFamily × ExCtor)) from match ex_not_prelude(named) {
+      Cons(only, Nil) => Some(only)
+      _ => None
+    }
+  }
+}
+
+pub fn ex_prelude_family(name: Text): Bool {
+  name == "List" || name == "Option" || name == "Ordering"
+}
+
+pub fn ex_not_prelude(named: List((ExFamily × ExCtor))): List((ExFamily × ExCtor)) {
+  match named {
+    Nil => Nil
+    Cons(p, rest) => if ex_prelude_family(p.fst.name) { ex_not_prelude(rest) } else { Cons(p, ex_not_prelude(rest)) }
+  }
+}
+
+pub fn ex_is_sort(name: Text): Bool {
+  name == "Type" || name == "Type0" || name == "Type1" || name == "Type2" || name == "Type3"
+}
+
+// The head name of a type, and its arguments.
+pub fn ex_head(t: SurfaceTerm): Option((Text × List(SurfaceTerm))) {
+  match t.kind {
+    SkVar(n) => Some(#(surface_name_text(n), Nil))
+    SkApp(h, args) => ⊢ Option((Text × List(SurfaceTerm))) from match h.kind {
+      SkVar(n) => Some(#(surface_name_text(n), args))
+      _ => None
+    }
+    _ => None
+  }
+}
+
+// Whether a family's sort, `Prop` or `… -> Prop`, makes it a proposition;
+// `None` when the sort is neither that nor `Type`.
+pub fn ex_sort_prop(k: Nat, t: SurfaceTerm): Option(Bool) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Bool) from match t.kind {
+      SkVar(n) => if surface_name_text(n) == "Prop" { Some(true) } else { if surface_name_text(n) == "Type" { Some(false) } else { None } }
+      SkPi(^ps, r, ^e) => ⊢ Option(Bool) from match ex_sort_prop(j, r) {
+        Some(true) => Some(true)
+        _ => None
+      }
+      _ => None
+    }
+  }
+}
+
+mutual {
+// What a value of type `t` is. `None` for a type extraction does not read.
+pub fn ex_role(k: Nat, env: ExEnv, ls: List(ExLocal), t: SurfaceTerm): Option(ExRole) {
+  match k {
+    Zero => None
+    Succ(j) => ⊢ Option(ExRole) from match t.kind {
+      SkPi(ps, r, e) => ⊢ Option(ExRole) from match e {
+        Some(^es) => None
+        None => ⊢ Option(ExRole) from match ex_role(j, env, ls, r) {
+          Some(RProof) => Some(RProof)
+          Some(RValue) => if ex_params_values(j, env, ls, ps) { Some(RValue) } else { None }
+          _ => None
+        }
+      }
+      SkBorrow(^mutable, ^mutable_orig, inner) => ex_role(j, env, ls, inner)
+      _ => ⊢ Option(ExRole) from match ex_head(t) {
+        None => None
+        Some(h) => if ex_is_sort(h.fst) && List::length(h.snd) == 0 { Some(RGeneric) } else {
+          if h.fst == "=" || h.fst == "Eq" { Some(RProof) } else {
+            ⊢ Option(ExRole) from match ex_local_get(ls, h.fst) {
+              Some(l) => ⊢ Option(ExRole) from match l.role {
+                RGeneric => if List::length(h.snd) == 0 { Some(RValue) } else { None }
+                _ => None
+              }
+              None => ⊢ Option(ExRole) from match ex_family_get(env.families, h.fst) {
+                None => ⊢ Option(ExRole) from match ex_mapped_get(env.mapped_types, h.fst) {
+                  None => None
+                  Some(^m) => Some(RValue)
+                }
+                Some(f) => if f.prop { Some(RProof) } else { Some(RValue) }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_params_values(k: Nat, env: ExEnv, ls: List(ExLocal), ps: List(SurfaceParam)): Bool {
+  match k {
+    Zero => false
+    Succ(j) => ⊢ Bool from match ps {
+      Nil => true
+      Cons(p, rest) => ⊢ Bool from match ex_role(j, env, ls, p.ty) {
+        Some(RValue) => ex_params_values(j, env, ls, rest)
+        _ => false
+      }
+    }
+  }
+}
+}
+
+// The family a value of type `t` belongs to, when its head is one.
+pub fn ex_family_of(env: ExEnv, t: SurfaceTerm): Option(Text) {
+  match ex_head(t) {
+    None => None
+    Some(h) => ⊢ Option(Text) from match ex_family_get(env.families, h.fst) {
+      None => if h.fst == "Bool" { Some("Bool") } else { if h.fst == "Nat" { Some("Nat") } else { None } }
+      Some(f) => Some(f.name)
+    }
+  }
+}
+
+pub fn ex_join(parts: List(Text), sep: Text): Text { text_join(parts, sep) }
+
+pub fn ex_param_types(ps: List(SurfaceParam)): List(SurfaceTerm) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.ty, ex_param_types(rest))
+  }
+}
+
+// The names of a row that are row variables (written `|e`), without the bar.
+pub fn ex_row_vars(es: List(Text)): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => if text_starts_with(e, "|", 0) {
+      Cons(Text::slice_or_empty(e, 1, Text::len(e)), ex_row_vars(rest))
+    } else { ex_row_vars(rest) }
+  }
+}
+
+// The names of a row that are effects.
+pub fn ex_row_effects(es: List(Text)): List(Text) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => if text_starts_with(e, "|", 0) { ex_row_effects(rest) } else { Cons(e, ex_row_effects(rest)) }
+  }
+}
+
+// ` ! {a, b}`, ` ! e` or ` ! {a} ∪ e`: a function type's row as it is
+// written, and nothing for a pure one.
+pub fn ex_row_text(es: Option(List(RowEntry))): Text {
+  match es {
+    None => ""
+    Some(entries) => ⊢ Text from match row_entries_text(entries) {
+      Nil => ""
+      Cons(^first, ^more) => {
+        let row := row_entries_text(entries)
+        let effects := ex_join(ex_row_effects(row), ", ")
+        ⊢ Text from match ex_row_vars(row) {
+          Nil => Text::concat_all([" ! {", effects, "}"])
+          Cons(v, ^vs) => if List::length(ex_row_effects(row)) == 0 {
+            Text::concat(" ! ", v)
+          } else { Text::concat_all([" ! {", effects, "} ∪ ", v]) }
+        }
+      }
+    }
+  }
+}
+
+mutual {
+// A type as it is written in the program: the families and generics by
+// their names written.
+pub fn ex_type(k: Nat, env: ExEnv, ls: List(ExLocal), t: SurfaceTerm): ExResult(Text) {
+  match k {
+    Zero => ExErr("extraction exhausted")
+    Succ(j) => ⊢ ExResult(Text) from match t.kind {
+      SkPi(ps, r, e) => ⊢ ExResult(Text) from match ex_types(j, env, ls, ex_param_types(ps)) {
+        ExErr(m) => ExErr(m)
+        ExOk(ds) => ⊢ ExResult(Text) from match ex_type(j, env, ls, r) {
+          ExErr(m) => ExErr(m)
+          ExOk(rt) => ExOk(Text::concat_all(["(", ex_join(ds, ", "), ") -> ", rt, ex_row_text(e)]))
+        }
+      }
+      // `affine (…) -> R`: Nib writes a function's kind the same way.
+      SkFnKind(kind, inner) => ⊢ ExResult(Text) from match ex_type(j, env, ls, inner) {
+        ExErr(m) => ExErr(m)
+        ExOk(it) => ExOk(Text::concat_all([kind, " ", it]))
+      }
+      // `&A`, `&mut A`: a parameter's type as it is borrowed.
+      SkBorrow(mutable, ^mutable_orig, inner) => ⊢ ExResult(Text) from match ex_type(j, env, ls, inner) {
+        ExErr(m) => ExErr(m)
+        ExOk(it) => ExOk(Text::concat(if mutable { "&mut " } else { "&" }, it))
+      }
+      _ => ⊢ ExResult(Text) from match ex_head(t) {
+        None => ExErr("a type extraction does not read")
+        Some(h) => ⊢ ExResult(Text) from match ex_local_get(ls, h.fst) {
+          Some(l) => if List::length(h.snd) == 0 { ExOk(l.written) } else { ExErr("an applied type variable is unsupported") }
+          None => ⊢ ExResult(Text) from match ex_family_written(env, h.fst) {
+            None => ExErr(Text::concat("a type extraction does not read: ", h.fst))
+            Some(w) => {
+              // `SlotsModel` → `Slots`: drop the policy's `used` (fourth
+              // argument), as the host's `mapped_kept("Slots")`.
+              let kept_args: List(SurfaceTerm) := ⊢ List(SurfaceTerm) from match ex_mapped_get(env.mapped_types, h.fst) {
+                None => h.snd
+                Some(m) => ex_filter_kept(ex_mapped_kept(m), h.snd)
+              }
+              if List::length(kept_args) == 0 { ExOk(w) } else {
+                ⊢ ExResult(Text) from match ex_types(j, env, ls, kept_args) {
+                  ExErr(m) => ExErr(m)
+                  ExOk(as) => ExOk(Text::concat_all([w, "(", ex_join(as, ", "), ")"]))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_types(k: Nat, env: ExEnv, ls: List(ExLocal), ts: List(SurfaceTerm)): ExResult(List(Text)) {
+  match k {
+    Zero => ExErr("extraction exhausted")
+    Succ(j) => ⊢ ExResult(List(Text)) from match ts {
+      Nil => ExOk(Nil)
+      Cons(t, rest) => ⊢ ExResult(List(Text)) from match ex_type(j, env, ls, t) {
+        ExErr(m) => ExErr(m)
+        ExOk(x) => ⊢ ExResult(List(Text)) from match ex_types(j, env, ls, rest) {
+          ExErr(m) => ExErr(m)
+          ExOk(xs) => ExOk(Cons(x, xs))
+        }
+      }
+    }
+  }
+}
+}
+
+// A binder in scope with a fresh name.
+pub fn ex_bind(env: ExEnv, s: ExScope, name: Text, role: ExRole, family: Option(Text), ty: Option(SurfaceTerm)): (Text × ExScope) {
+  let a := ex_allocate(env.classes, s.taken, name, false)
+  #(a.fst, ExScope::Mk(a.snd, Cons(ExLocal::Mk(name, a.fst, role, family, ty), s.locals)))
+}
+
+// A binder extraction drops (a proof's): in scope, but given no name.
+pub fn ex_bind_dropped(s: ExScope, name: Text, role: ExRole, family: Option(Text), ty: Option(SurfaceTerm)): ExScope {
+  ExScope::Mk(s.taken, Cons(ExLocal::Mk(name, "", role, family, ty), s.locals))
+}
+
+// The arguments kept by the roles: the values.
+pub fn ex_kept(args: List(SurfaceTerm), roles: List(ExRole)): Option(List(SurfaceTerm)) {
+  match args {
+    Nil => ⊢ Option(List(SurfaceTerm)) from match roles {
+      Nil => Some(Nil)
+      _ => None
+    }
+    Cons(a, rest) => ⊢ Option(List(SurfaceTerm)) from match roles {
+      Nil => None
+      Cons(r, rs) => ⊢ Option(List(SurfaceTerm)) from match ex_kept(rest, rs) {
+        None => None
+        Some(kept) => ⊢ Option(List(SurfaceTerm)) from match r {
+          RValue => Some(Cons(a, kept))
+          _ => Some(kept)
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_kept_labels(labels: List(Text), roles: List(ExRole)): List(Text) {
+  match labels {
+    Nil => Nil
+    Cons(l, rest) => ⊢ List(Text) from match roles {
+      Nil => Nil
+      Cons(r, rs) => ⊢ List(Text) from match r {
+        RValue => Cons(l, ex_kept_labels(rest, rs))
+        _ => ex_kept_labels(rest, rs)
+      }
+    }
+  }
+}
+
+pub fn ex_fields(labels: List(Text), values: List(Text)): List(Text) {
+  match labels {
+    Nil => Nil
+    Cons(l, rest) => ⊢ List(Text) from match values {
+      Nil => Nil
+      Cons(v, vs) => Cons(Text::concat_all([l, ": ", v]), ex_fields(rest, vs))
+    }
+  }
+}
+
+// A constructor the host rewrites onto a Nib builder (as `mapped_ctor`).
+pub fn ex_mapped_ctor(name: Text, values: List(Text)): Option(Text) {
+  match values {
+    Cons(v, Nil) => if name == "UHost::Mk" {
+      Some(Text::concat_all(["UHost::of_u64_below(U64::of_nat(", v, "))"]))
+    } else if name == "U8::Mk" {
+      Some(Text::concat_all(["U8::of_u64(U64::of_nat(", v, "))"]))
+    } else if name == "U32::Mk" {
+      Some(Text::concat_all(["U32::of_u64(U64::of_nat(", v, "))"]))
+    } else if name == "U64::Mk" {
+      Some(Text::concat_all(["U64::of_nat(", v, ")"]))
+    } else {
+      None
+    }
+    Cons(a, Cons(b, Nil)) => if name == "Pair::Mk" {
+      Some(Text::concat_all(["#(", a, ", ", b, ")"]))
+    } else {
+      None
+    }
+    _ => None
+  }
+}
+
+// A constructor applied to the values kept.
+pub fn ex_construct(f: ExFamily, c: ExCtor, values: List(Text)): Text {
+  match ex_mapped_ctor(c.name, values) {
+    Some(t) => t
+    None => match ex_mapped_ctor(Text::concat_all([f.name, "::", c.leaf]), values) {
+      Some(t) => t
+      None => if f.record {
+        Text::concat_all([f.written, " { ", ex_join(ex_fields(ex_kept_labels(c.labels, c.roles), values), ", "), " }"])
+      } else {
+        let head := Text::concat_all([f.written, "::", c.leaf])
+        ⊢ Text from match values {
+          Nil => head
+          _ => Text::concat_all([head, "(", ex_join(values, ", "), ")"])
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_all_values(rs: List(ExRole)): Bool {
+  match rs {
+    Nil => true
+    Cons(r, rest) => ⊢ Bool from match r {
+      RValue => ex_all_values(rest)
+      _ => false
+    }
+  }
+}
+
+// A binder that is really a constructor without fields: the field's family
+// names it.
+pub fn ex_nested_ctor(env: ExEnv, fam: Option(Text), n: Text): Option((ExFamily × ExCtor)) {
+  match fam {
+    None => None
+    Some(f) => ex_ctor(env, Some(f), n)
+  }
+}
+
+// The family a pattern of a match on a term belongs to: `Bool` for a literal,
+// `Nat` for `Zero` and `Succ`, else the one family with a constructor so named.
+pub fn ex_pattern_family(env: ExEnv, p: SurfacePattern): Option(Text) {
+  match p {
+    PtBool(^v) => Some("Bool")
+    PtInt(^negative, ^magnitude) => Some("Nat")
+    PtCtor(n, ^args) => ex_named_family(env, surface_name_text(n))
+    PtBind(n, _) => ex_named_family(env, n)
+    _ => None
+  }
+}
+
+pub fn ex_named_family(env: ExEnv, n: Text): Option(Text) {
+  if n == "Zero" || n == "Succ" { Some("Nat") } else {
+    ⊢ Option(Text) from match ex_ctor(env, None, n) {
+      None => None
+      Some(fc) => Some(fc.fst.name)
+    }
+  }
+}
+
+pub fn ex_arms_family(env: ExEnv, arms: List(SurfaceArm)): Option(Text) {
+  match arms {
+    Nil => None
+    Cons(a, rest) => ⊢ Option(Text) from match ex_pattern_family(env, a.pattern) {
+      Some(f) => Some(f)
+      None => ex_arms_family(env, rest)
+    }
+  }
+}
+
+// How tightly an operator binds (0 for a name that is not one the host writes
+// between its operands).
+pub fn ex_infix_prec(name: Text): Nat {
+  if name == "||" { 1 } else {
+    if name == "&&" { 2 } else {
+      if name == "==" || name == "<" || name == "<=" { 3 } else {
+        if name == "+" { 4 } else {
+          if name == "*" { 5 } else { 0 }
+        }
+      }
+    }
+  }
+}
+
+// How tightly an operator of a template binds.
+pub fn ex_template_op_prec(op: Text): Nat {
+  if op == "||" { 1 } else {
+    if op == "&&" { 2 } else {
+      if op == "==" || op == "<" || op == "<=" { 3 } else {
+        if op == "+" || op == "-" { 4 } else {
+          if op == "*" { 5 } else { 0 }
+        }
+      }
+    }
+  }
+}
+
+// How tightly a template binds: that of its operator when it is `$0 op $1`.
+pub fn ex_template_prec(template: Text): Nat {
+  match text_split(template, " ") {
+    Cons(a, Cons(op, Cons(b, Nil))) => if a == "$0" && b == "$1" { ex_template_op_prec(op) } else { 0 }
+    _ => 0
+  }
+}
+
+// How tightly a term binds when written between operands: the operator at its
+// head, or the one of the template the host writes its function by; 0 for a
+// term that needs no parentheses.
+pub fn ex_term_prec(env: ExEnv, ls: List(ExLocal), t: SurfaceTerm): Nat {
+  match t.kind {
+    SkApp(h, args) => ⊢ Nat from match h.kind {
+      SkVar(n) => if ex_infix_prec(surface_name_text(n)) > 0 && List::length(args) == 2 { ex_infix_prec(surface_name_text(n)) } else {
+        ⊢ Nat from match ex_local_get(ls, surface_name_text(n)) {
+          Some(^l) => 0
+          None => ⊢ Nat from match ex_fn_lookup(env, ls, surface_name_text(n)) {
+            Some(^f) => 0
+            None => ⊢ Nat from match ex_mapped_lookup(env, ls, surface_name_text(n)) {
+              None => 0
+              Some(template) => ex_template_prec(template)
+            }
+          }
+        }
+      }
+      _ => 0
+    }
+    SkIf(^c, ^th, ^el) => 1
+    _ => 0
+  }
+}
+
+pub fn ex_precs(env: ExEnv, ls: List(ExLocal), ts: List(SurfaceTerm)): List(Nat) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(ex_term_prec(env, ls, t), ex_precs(env, ls, rest))
+  }
+}
+
+pub fn ex_nth_nat(vs: List(Nat), i: Nat): Nat {
+  match vs {
+    Nil => 0
+    Cons(v, rest) => ⊢ Nat from match i {
+      Zero => v
+      Succ(j) => ex_nth_nat(rest, j)
+    }
+  }
+}
+
+// An operand, in parentheses when it binds less tightly than the operator.
+pub fn ex_operand(prec: Nat, right: Bool, p: Nat, text: Text): Text {
+  if p != 0 && (p < prec || (right && p == prec)) { Text::concat_all(["(", text, ")"]) } else { text }
+}
+
+// A template filled as the host writes it: an operator between its two
+// operands (parenthesized where it must be), any other template with its
+// values where the `$i` are.
+pub fn ex_fill_prec(k: Nat, template: Text, vs: List(Text), precs: List(Nat)): ExResult(Text) {
+  let p := ex_template_prec(template)
+  if p > 0 {
+    ⊢ ExResult(Text) from match text_split(template, " ") {
+      Cons(^a, Cons(op, Cons(^b, Nil))) => ⊢ ExResult(Text) from match ex_nth(vs, 0) {
+        None => ExErr("a call must give all the arguments of its template")
+        Some(x) => ⊢ ExResult(Text) from match ex_nth(vs, 1) {
+          None => ExErr("a call must give all the arguments of its template")
+          Some(y) => ExOk(Text::concat_all([ex_operand(p, false, ex_nth_nat(precs, 0), x), " ", op, " ", ex_operand(p, true, ex_nth_nat(precs, 1), y)]))
+        }
+      }
+      _ => ExErr("a template extraction does not read")
+    }
+  } else { ex_fill(k, template, vs, 0, Nil) }
+}
+
+// What a term is, for the message that it is not read.
+pub fn ex_kind_name(k: SurfaceKind): Text {
+  match k {
+    SkVar(^n) => "a name"
+    SkNat(^d) => "a numeral"
+    SkFloat(^d) => "a float"
+    SkRow(^es) => "a row"
+    SkText(^v) => "a text"
+    SkBool(^v) => "a bool"
+    SkApp(^h, ^as) => "a call"
+    SkPi(^ps, ^r, ^e) => "a function type"
+    SkExists(^b, ^d, ^body, ^unused) => "an existential"
+    SkLam(^ps, ^b, ^ts, _) => "a lambda"
+    SkUnion(^ps) => "a union"
+    SkTagged(^t, ^v) => "a tagged value"
+    SkIf(^c, ^t, ^e) => "an if"
+    SkField(^v, ^n) => "a field"
+    SkBlock(^ss) => "a block"
+    SkPerform(^o, ^as) => "a perform"
+    SkHandle(^b, ^hs) => "a handle"
+    SkBudget(^m, ^a, ^b) => "a budget"
+    SkMatch(^s, ^m, ^as, ^b, _) => "a match"
+    SkHole(^n) => "a hole"
+    SkRecord(^n, ^fs) => "a record"
+    SkBorrow(^m, ^m_orig, ^v) => "a borrow"
+    SkFnKind(^k2, ^t) => "a function kind"
+    SkBorrowLam(^bs, ^l) => "a borrowing lambda"
+    SkOther(w) => Text::concat("an other term: ", w)
+    SkMacroCall(^n, ^a) => "a macro call"
+    SkQuote(^f, ^ss) => "a quote"
+    SkSplice(^v) => "a splice"
+    SkSyntaxLit(^n, ^b) => "a syntax literal"
+    SkStep(^t, ^a, ^cs, ^ce, ^b, ^as) => "a step"
+    SkAscribe(^v, ^t) => "an ascription"
+  }
+}
+
+// The arguments of a type written as a family applied to them.
+pub fn ex_type_args(t: Option(SurfaceTerm)): List(SurfaceTerm) {
+  match t {
+    None => Nil
+    Some(x) => ⊢ List(SurfaceTerm) from match ex_head(x) {
+      None => Nil
+      Some(h) => h.snd
+    }
+  }
+}
+
+// A field's type with the family's parameter it is replaced by the argument
+// the matched value's type gives it.
+pub fn ex_instance(params: List(Text), targs: List(SurfaceTerm), t: SurfaceTerm): SurfaceTerm {
+  match t.kind {
+    SkVar(n) => ex_param_arg(params, targs, surface_name_text(n), t)
+    _ => t
+  }
+}
+
+pub fn ex_param_arg(params: List(Text), targs: List(SurfaceTerm), name: Text, other: SurfaceTerm): SurfaceTerm {
+  match params {
+    Nil => other
+    Cons(p, ps) => ⊢ SurfaceTerm from match targs {
+      Nil => other
+      Cons(a, as) => if p == name { a } else { ex_param_arg(ps, as, name, other) }
+    }
+  }
+}
+
+// The family of a bound value: by its type, else by the constructors its match names.
+pub fn ex_local_family(env: ExEnv, l: ExLocal, arms: List(SurfaceArm)): Option(Text) {
+  match l.family {
+    Some(f) => Some(f)
+    None => ex_arms_family(env, arms)
+  }
+}
+
+// A function by the name a call writes it: as it is, or as a sibling in the
+// module of the function being written (recorded as the binder `#module`).
+pub fn ex_fn_lookup(env: ExEnv, ls: List(ExLocal), name: Text): Option(ExFn) {
+  match ex_fn_get(env.fns, name) {
+    // A call of a function whose template is itself is written as the template.
+    Some(f) => if ex_self_named(env, f.name) { None } else { Some(f) }
+    None => ⊢ Option(ExFn) from match ex_local_get(ls, "#module") {
+      None => None
+      Some(m) => ex_fn_get(env.fns, ex_qualify_name(m.written, name))
+    }
+  }
+}
+
+// A function whose template is a call of itself (`Text::of_nat($0)`): the host
+// writes its declaration as that call.
+pub fn ex_self_named(env: ExEnv, name: Text): Bool {
+  match ex_mapped_get(env.mapped_fns, name) {
+    None => false
+    Some(m) => m == Text::concat_all([name, "($0)"])
+  }
+}
+
+// A mapped function by the name a call writes it, or as a sibling in the module
+// being written.
+pub fn ex_mapped_lookup(env: ExEnv, ls: List(ExLocal), name: Text): Option(Text) {
+  match ex_mapped_get(env.mapped_fns, ex_operator_name(name)) {
+    Some(t) => Some(t)
+    None => ⊢ Option(Text) from match ex_local_get(ls, "#module") {
+      None => None
+      Some(m) => ex_mapped_get(env.mapped_fns, ex_qualify_name(m.written, name))
+    }
+  }
+}
+
+// The function an operator reads as once `std/base.taut` is loaded.
+pub fn ex_operator_name(name: Text): Text {
+  if name == "==" { "Nat::eq" } else { if name == "&&" { "Bool::and" } else {
+    if name == "||" { "Bool::or" } else {
+      if name == "<" { "Nat::lt" } else {
+        if name == "<=" { "Nat::le" } else {
+          if name == "-" { "Nat::sub" } else {
+            if name == "+" { "Nat::add" } else {
+              if name == "*" { "Nat::mul" } else { name }
+            }
+          }
+        }
+      }
+    }
+  } }
+}
+
+pub fn ex_qualify_name(prefix: Text, name: Text): Text { Text::concat_all([prefix, "::", name]) }
+
+pub fn ex_nat_has_succ(arms: List(SurfaceArm)): Bool {
+  match arms {
+    Nil => false
+    Cons(a, rest) => ⊢ Bool from match a.pattern {
+      PtCtor(n, ^args) => surface_name_text(n) == "Succ" || ex_nat_has_succ(rest)
+      _ => ex_nat_has_succ(rest)
+    }
+  }
+}
+
+// A text as the host writes a literal: `\`, `"` and the control characters
+// escaped, the rest as it is.
+pub fn ex_hex_digit(d: Nat): Text {
+  if d < 10 { text_code_point(48 + d) } else { text_code_point(87 + d) }
+}
+
+pub fn ex_escape_of(b: Nat): Option(Text) {
+  if b == 92 { Some(Text::concat(text_backslash(), text_backslash())) } else {
+    if b == 34 { Some(Text::concat(text_backslash(), text_quote())) } else {
+      if b == 10 { Some(Text::concat(text_backslash(), "n")) } else {
+        if b == 13 { Some(Text::concat(text_backslash(), "r")) } else {
+          if b == 9 { Some(Text::concat(text_backslash(), "t")) } else {
+            if b == 0 { Some(Text::concat(text_backslash(), "0")) } else {
+              if b < 32 {
+                let high := if b >= 16 { "1" } else { "" }
+                Some(Text::concat_all([text_backslash(), "u{", high, ex_hex_digit(if b >= 16 { b - 16 } else { b }), "}"]))
+              } else { None }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_slice(t: Text, lo: Nat, hi: Nat): Text {
+  match Text::slice(t, lo, hi) {
+    None => ""
+    Some(r) => r
+  }
+}
+
+pub fn ex_escape_in(k: Nat, t: Text, i: Nat, run: Nat, acc: List(Text)): List(Text) {
+  match k {
+    Zero => text_list_reverse(Cons(ex_slice(t, run, Text::len(t)), acc))
+    Succ(j) => if i >= Text::len(t) { text_list_reverse(Cons(ex_slice(t, run, Text::len(t)), acc)) } else {
+      match ex_escape_of(Text::byte_value(t, i)) {
+        None => ex_escape_in(j, t, i + 1, run, acc)
+        Some(e) => ex_escape_in(j, t, i + 1, i + 1, Cons(e, Cons(ex_slice(t, run, i), acc)))
+      }
+    }
+  }
+}
+
+// A body is a block: a block as it is, any other term in braces.
+pub fn ex_braced(t: Text): Text {
+  if text_starts_with(t, "{", 0) { t } else { Text::concat_all(["{ ", t, " }"]) }
+}
+
+// The `else` of an `if`: a chain goes on as `else if`.
+pub fn ex_else(t: Text): Text {
+  if text_starts_with(t, "if ", 0) { t } else { ex_braced(t) }
+}
+
+pub fn ex_text_literal(t: Text): Text {
+  Text::concat_all([text_quote(), Text::concat_all(ex_escape_in(Text::len(t) + 1, t, 0, 0, Nil)), text_quote()])
+}
+
+// The digit of a small number.
+pub fn ex_digit_text(i: Nat): Text {
+  if i == 0 { "0" } else { if i == 1 { "1" } else { if i == 2 { "2" } else { if i == 3 { "3" } else { if i == 4 { "4" } else { if i == 5 { "5" } else { if i == 6 { "6" } else { if i == 7 { "7" } else { if i == 8 { "8" } else { "9" } } } } } } } } }
+}
+
+// A function used as a value, written as the lambda over its parameters.
+pub fn ex_eta(env: ExEnv, s: ExScope, written: Text, k: Nat, i: Nat, names: List(Text), n: Nat): ExResult((Text × ExScope)) {
+  match k {
+    Zero => ExErr("extraction exhausted")
+    Succ(j) => if n > 9 { ExErr("a function of more than nine parameters as a value is unsupported") } else { if i == n {
+      let ps := List::reverse(names)
+      ExOk(#(Text::concat_all([if n == 1 { ex_join(ps, ", ") } else { Text::concat_all(["(", ex_join(ps, ", "), ")"]) }, " => ", written, "(", ex_join(ps, ", "), ")"]), ExScope::Mk(s.taken, s.locals)))
+    } else {
+      let b := ex_bind(env, s, Text::concat("extract_arg_", ex_digit_text(i)), RValue, None, None)
+      ex_eta(env, ExScope::Mk(b.snd.taken, s.locals), written, j, i + 1, Cons(b.fst, names), n)
+    } }
+  }
+}
+
+mutual {
+  // A term as the program computes it. The scope carries the names taken.
+  pub fn ex_term(k: Nat, env: ExEnv, s: ExScope, t: SurfaceTerm): ExResult((Text × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((Text × ExScope)) from match t.kind {
+        SkVar(n) => ⊢ ExResult((Text × ExScope)) from match ex_local_get(s.locals, surface_name_text(n)) {
+          Some(l) => ⊢ ExResult((Text × ExScope)) from match l.role {
+            RValue => ExOk(#(l.written, s))
+            _ => ExErr("a proof or a type used as a value")
+          }
+          None => ⊢ ExResult((Text × ExScope)) from match ex_fn_lookup(env, s.locals, surface_name_text(n)) {
+            Some(f) => if List::length(f.roles) == 0 { ExErr("a function without parameters is called with `()`") } else {
+              if ex_all_values(f.roles) { ex_eta(env, s, f.written, List::length(f.roles) + 1, 0, Nil, List::length(f.roles)) } else { ExErr("a function taking proofs or types as a value is unsupported") }
+            }
+            None => ⊢ ExResult((Text × ExScope)) from match ex_ctor(env, None, surface_name_text(n)) {
+              None => if surface_name_text(n) == "Zero" { ExOk(#("(0: nat)", s)) } else {
+                // `Succ` as a function value, written as the lambda it is.
+                if surface_name_text(n) == "Succ" {
+                  let b := ex_bind(env, s, "extract_arg_0", RValue, None, None)
+                  ExOk(#(Text::concat_all([b.fst, " => ", b.fst, " + 1"]), ExScope::Mk(b.snd.taken, s.locals)))
+                } else { ExErr(Text::concat("a name extraction does not read: ", surface_name_text(n))) }
+              }
+              Some(fc) => if List::length(fc.snd.roles) == 0 && ex_not(fc.fst.record) { ExOk(#(ex_construct(fc.fst, fc.snd, Nil), s)) } else { ExErr("a constructor with fields as a value is unsupported") }
+            }
+          }
+        }
+        SkApp(head, args) => ⊢ ExResult((Text × ExScope)) from match head.kind {
+          SkVar(n) => ⊢ ExResult((Text × ExScope)) from match ex_local_get(s.locals, surface_name_text(n)) {
+            Some(l) => ⊢ ExResult((Text × ExScope)) from match l.role {
+              RValue => ⊢ ExResult((Text × ExScope)) from match ex_terms(j, env, s, args) {
+                ExErr(m) => ExErr(m)
+                ExOk(r) => ExOk(#(Text::concat_all([l.written, "(", ex_join(r.fst, ", "), ")"]), r.snd))
+              }
+              _ => ExErr("a proof or a type applied as a function")
+            }
+            None => ⊢ ExResult((Text × ExScope)) from match ex_fn_lookup(env, s.locals, surface_name_text(n)) {
+              Some(f) => ⊢ ExResult((Text × ExScope)) from match ex_kept(ex_explicit(args), f.roles) {
+                None => ExErr("a call must give all the parameters of the function")
+                Some(kept) => ⊢ ExResult((Text × ExScope)) from match ex_terms(j, env, s, kept) {
+                  ExErr(m) => ExErr(m)
+                  ExOk(r) => ExOk(#(Text::concat_all([f.written, "(", ex_join(r.fst, ", "), ")"]), r.snd))
+                }
+              }
+              None => ⊢ ExResult((Text × ExScope)) from match ex_ctor(env, None, surface_name_text(n)) {
+                None => if ex_infix_prec(surface_name_text(n)) > 0 && List::length(args) == 2 { ex_infix(j, env, s, surface_name_text(n), args) } else { ⊢ ExResult((Text × ExScope)) from match ex_mapped_lookup(env, s.locals, surface_name_text(n)) {
+                  None => ex_succ(j, env, s, surface_name_text(n), args)
+                  Some(template0) => if ex_names_declaration(template0) { ExErr(Text::concat("a mapped function whose template names declarations is unsupported: ", surface_name_text(n))) } else {
+                    let name := surface_name_text(n)
+                    let template := ex_unprelude(Text::len(template0) + 1, template0)
+                    let needed := ex_slots(template)
+                    let explicit := ex_explicit(args)
+                    // `SlotsModel::*`: keep only the value arguments the
+                    // template uses (drop `OccLaws` and proofs), right-align
+                    // them under `$i`, and for `new`/`resize*` fill empty
+                    // state and vacant mark from the `OccLaws` policy of the
+                    // laws argument (as the host does from application sites).
+                    ⊢ ExResult((Text × ExScope)) from match (
+                      if text_starts_with(name, "SlotsModel::", 0) {
+                        match ex_slots_model_written(name) {
+                          None => None
+                          Some(n_keep) => Some(List::take(n_keep, explicit))
+                        }
+                      } else {
+                        Some(List::take(needed, explicit))
+                      }
+                    ) {
+                      None => ExErr(Text::concat("a mapped SlotsModel call is unsupported: ", name))
+                      Some(take0) => {
+                        let want_policy := text_starts_with(name, "SlotsModel::", 0) && ex_slots_model_needs_policy(name)
+                        let policy := if want_policy {
+                          match List::nth(explicit, List::length(take0)) {
+                            None => None
+                            Some(laws) => ex_slots_model_policy_from_laws(env, laws)
+                          }
+                        } else {
+                          None
+                        }
+                        if want_policy && match policy { None => true, Some(^p) => false } {
+                          ExErr(Text::concat("SlotsModel policy implicits need the checker's application sites: ", name))
+                        } else {
+                          ⊢ ExResult((Text × ExScope)) from match ex_terms(j, env, s, take0) {
+                            ExErr(m) => ExErr(m)
+                            ExOk(r) => ⊢ ExResult((Text × ExScope)) from match (
+                              if text_starts_with(name, "SlotsModel::", 0) {
+                                match ex_right_align(needed, r.fst) {
+                                  None => None
+                                  Some(aligned) => Some(aligned)
+                                }
+                              } else if List::length(r.fst) == needed {
+                                Some(r.fst)
+                              } else {
+                                None
+                              }
+                            ) {
+                              None => ExErr("a call must give all the arguments of its template")
+                              Some(aligned) => ⊢ ExResult((Text × ExScope)) from match (
+                                if want_policy {
+                                  match policy {
+                                    None => ExErr(Text::concat("SlotsModel policy implicits need the checker's application sites: ", name))
+                                    Some(p) => ⊢ ExResult(List(Text)) from match ex_policy_value(j, env, p.fst) {
+                                      ExErr(m) => ExErr(m)
+                                      ExOk(em) => ⊢ ExResult(List(Text)) from match ex_policy_value(j, env, p.snd) {
+                                        ExErr(m) => ExErr(m)
+                                        ExOk(vac) => ExOk(ex_slots_model_with_policy(name, aligned, em, vac))
+                                      }
+                                    }
+                                  }
+                                } else {
+                                  ExOk(aligned)
+                                }
+                              ) {
+                                ExErr(m) => ExErr(m)
+                                ExOk(vs) => ⊢ ExResult((Text × ExScope)) from match ex_fill_prec(
+                                  Text::len(template) + 1,
+                                  template,
+                                  vs,
+                                  ex_precs(env, s.locals, take0)
+                                ) {
+                                  ExErr(m) => ExErr(m)
+                                  ExOk(filled) => ExOk(#(filled, r.snd))
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                } }
+                Some(fc) => ⊢ ExResult((Text × ExScope)) from match ex_kept(ex_explicit(args), fc.snd.roles) {
+                  None => ExErr("a constructor must be given all its fields")
+                  Some(kept) => ⊢ ExResult((Text × ExScope)) from match ex_terms(j, env, s, kept) {
+                    ExErr(m) => ExErr(m)
+                    ExOk(r) => ExOk(#(ex_construct(fc.fst, fc.snd, r.fst), r.snd))
+                  }
+                }
+              }
+            }
+          }
+          _ => ExErr("a call of a computed function is unsupported")
+        }
+        SkNat(digits) => ExOk(#(digits, s))
+        SkText(v) => ExOk(#(ex_text_literal(v), s))
+        SkBorrow(mutable, ^mutable_orig, v) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, s, v) {
+          ExErr(m) => ExErr(m)
+          ExOk(r) => ExOk(#(Text::concat(if mutable { "&mut " } else { "&" }, r.fst), r.snd))
+        }
+        SkIf(c, th, el) => ⊢ ExResult((Text × ExScope)) from match el {
+          None => ExErr("an `if` without `else` is unsupported")
+          Some(e) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, s, c) {
+            ExErr(m) => ExErr(m)
+            ExOk(rc) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, rc.snd, th) {
+              ExErr(m) => ExErr(m)
+              ExOk(rt) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, rt.snd, e) {
+                ExErr(m) => ExErr(m)
+                ExOk(re) => ExOk(#(Text::concat_all(["if ", rc.fst, " ", ex_braced(rt.fst), " else ", ex_else(re.fst)]), re.snd))
+              }
+            }
+          }
+        }
+        SkBool(b) => ExOk(#(if b { "true" } else { "false" }, s))
+        SkLam(params, body, types, _) => ⊢ ExResult((Text × ExScope)) from match types {
+          Cons(Some(w), ^more) => ⊢ ExResult((Text × ExScope)) from match ex_type(j, env, s.locals, w) {
+            ExErr(m) => ExErr(m)
+            ExOk(t) => ex_lambda(j, env, s, params, body, "", t)
+          }
+          _ => ex_lambda(j, env, s, params, body, "", "")
+        }
+        // `(x) => e`: the parameter keeps its mark, as the host writes it.
+        SkBorrowLam(lent, lam) => ⊢ ExResult((Text × ExScope)) from match lam.kind {
+          SkLam(params, body, _, _) => ⊢ ExResult((Text × ExScope)) from match lent {
+            Cons(Some(true), Nil) => ex_lambda(j, env, s, params, body, "&mut ", "")
+            Cons(Some(false), Nil) => ex_lambda(j, env, s, params, body, "&", "")
+            Cons(None, Nil) => ex_lambda(j, env, s, params, body, "", "")
+            _ => ExErr("a lambda of several parameters is unsupported")
+          }
+          _ => ExErr("a term extraction does not read")
+        }
+        SkBlock(stmts) => ⊢ ExResult((Text × ExScope)) from match ex_block(j, env, s, stmts) {
+          ExErr(m) => ExErr(m)
+          ExOk(r) => ExOk(#(Text::concat_all(["{", text_newline(), ex_join(r.fst, text_newline()), text_newline(), "}"]), ExScope::Mk(r.snd.taken, s.locals)))
+        }
+        SkMatch(scrutinee, ^motive, arms, binder, _) => ⊢ ExResult((Text × ExScope)) from match binder {
+          Some(^b) => ExErr("a match binder is unsupported")
+          None => ex_match(j, env, s, scrutinee, arms)
+        }
+        _ => ExErr(Text::concat("a term extraction does not read: ", ex_kind_name(t.kind)))
+      }
+    }
+  }
+
+  // An operator written between its operands, as the host writes it: the
+  // operand that binds less tightly is parenthesized.
+  pub fn ex_infix(k: Nat, env: ExEnv, s: ExScope, op: Text, args: List(SurfaceTerm)): ExResult((Text × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((Text × ExScope)) from match args {
+        Cons(l, Cons(r, Nil)) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, s, l) {
+          ExErr(m) => ExErr(m)
+          ExOk(lt) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, lt.snd, r) {
+            ExErr(m) => ExErr(m)
+            ExOk(rt) => ExOk(#(Text::concat_all([ex_operand(ex_infix_prec(op), false, ex_term_prec(env, s.locals, l), lt.fst), " ", op, " ", ex_operand(ex_infix_prec(op), true, ex_term_prec(env, s.locals, r), rt.fst)]), rt.snd))
+          }
+        }
+        _ => ExErr("an operator is given two operands")
+      }
+    }
+  }
+
+  // `Succ(n)` of `Nat`, which Nib writes `n + 1`.
+  pub fn ex_succ(k: Nat, env: ExEnv, s: ExScope, name: Text, args: List(SurfaceTerm)): ExResult((Text × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => if name == "#typed_lam" {
+        // `(x: T) => e`: the parameter keeps its type, as the host writes it.
+        ⊢ ExResult((Text × ExScope)) from match args {
+          Cons(lam, Cons(ty, Nil)) => ⊢ ExResult((Text × ExScope)) from match lam.kind {
+            SkLam(params, body, _, _) => ⊢ ExResult((Text × ExScope)) from match ty.kind {
+              SkHole(^u) => ex_lambda(j, env, s, params, body, "", "")
+              _ => ⊢ ExResult((Text × ExScope)) from match ex_type(j, env, s.locals, ty) {
+                ExErr(m) => ExErr(m)
+                ExOk(t) => ex_lambda(j, env, s, params, body, "", t)
+              }
+            }
+            _ => ExErr("a lambda of several parameters is unsupported")
+          }
+          _ => ExErr("a lambda of several parameters is unsupported")
+        }
+      } else { if name == "Succ" {
+        ⊢ ExResult((Text × ExScope)) from match args {
+          Cons(a, Nil) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, s, a) {
+            ExErr(m) => ExErr(m)
+            ExOk(r) => ExOk(#(Text::concat(r.fst, " + 1"), r.snd))
+          }
+          _ => ExErr("`Succ` is given one argument")
+        }
+      } else {
+        // `Text::Mk(bytes)`: the text of the bytes, by the helper that checks them.
+        if name == "Text::Mk" {
+          ⊢ ExResult((Text × ExScope)) from match args {
+            Cons(a, Nil) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, s, a) {
+              ExErr(m) => ExErr(m)
+              ExOk(r) => ExOk(#(Text::concat_all(["extract_text_of_bytes(", r.fst, ")"]), r.snd))
+            }
+            _ => ExErr("`Text::Mk` is given one argument")
+          }
+        } else if name == "UHost::Mk" || name == "U8::Mk" || name == "U32::Mk" || name == "U64::Mk" {
+          // The host keeps the value field and drops the bound proof.
+          ⊢ ExResult((Text × ExScope)) from match ex_explicit(args) {
+            Cons(a, _) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, s, a) {
+              ExErr(m) => ExErr(m)
+              ExOk(r) => ⊢ ExResult((Text × ExScope)) from match ex_mapped_ctor(name, Cons(r.fst, Nil)) {
+                Some(t) => ExOk(#(t, r.snd))
+                None => ExErr(Text::concat("a name extraction does not read: ", name))
+              }
+            }
+            Nil => ExErr(Text::concat("a name extraction does not read: ", name))
+          }
+        } else { ExErr(Text::concat("a name extraction does not read: ", name)) }
+      } }
+    }
+  }
+
+  // A match on `Nat` that names `Succ`: a chain of tests on the subject, as the
+  // host writes it (`if s >= 1 { let k := s - 1 … } else { … }`).
+  pub fn ex_nat_match(k: Nat, env: ExEnv, s: ExScope, subject: Text, arms: List(SurfaceArm)): ExResult((Text × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => if ex_not(ex_nat_has_succ(arms)) { ExErr("a match on `Nat` that does not name `Succ` is unsupported") } else {
+        let sub := ex_allocate(env.classes, s.taken, "extract_nat", false)
+        ⊢ ExResult((Text × ExScope)) from match ex_nat_arms(j, env, ExScope::Mk(sub.snd, s.locals), sub.fst, arms, 0, List::length(arms)) {
+          ExErr(m) => ExErr(m)
+          ExOk(r) => ExOk(#(Text::concat_all(["{", text_newline(), "let ", sub.fst, " := ", subject, text_newline(), r.fst, text_newline(), "}"]), ExScope::Mk(r.snd.taken, s.locals)))
+        }
+      }
+    }
+  }
+
+  pub fn ex_nat_arms(k: Nat, env: ExEnv, s: ExScope, subject: Text, arms: List(SurfaceArm), at: Nat, total: Nat): ExResult((Text × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((Text × ExScope)) from match arms {
+        Nil => ExOk(#("", s))
+        Cons(a, rest) => ⊢ ExResult((Text × ExScope)) from match a.guard {
+          Some(^g) => ExErr("a guard is unsupported")
+          None => ⊢ ExResult((Text × ExScope)) from match ex_nat_test(j, env, s, a.pattern, subject, Nil, Nil) {
+            ExErr(m) => ExErr(m)
+            ExOk(t) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, t.snd, a.body) {
+              ExErr(m) => ExErr(m)
+              ExOk(b) => ⊢ ExResult((Text × ExScope)) from match ex_nat_arms(j, env, ExScope::Mk(b.snd.taken, s.locals), subject, rest, at + 1, total) {
+                ExErr(m) => ExErr(m)
+                ExOk(more) => {
+                  let tests := ex_join(text_list_reverse(t.fst.fst), " && ")
+                  let binds := ex_join(text_list_reverse(t.fst.snd), text_newline())
+                  let opens := if at + 1 == total {
+                    if at == 0 { "{" } else { "else {" }
+                  } else {
+                    let test := if List::length(t.fst.fst) == 0 { "true" } else { tests }
+                    if at == 0 { Text::concat_all(["if ", test, " {"]) } else { Text::concat_all(["else if ", test, " {"]) }
+                  }
+                  let lead := if List::length(t.fst.snd) == 0 { "" } else { Text::concat(binds, text_newline()) }
+                  ExOk(#(Text::concat_all([opens, text_newline(), lead, b.fst, text_newline(), "} ", more.fst]), more.snd))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // The tests and bindings a pattern on `Nat` makes of the subject `at`.
+  pub fn ex_nat_test(k: Nat, env: ExEnv, s: ExScope, p: SurfacePattern, at: Text, tests: List(Text), binds: List(Text)): ExResult(((List(Text) × List(Text)) × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult(((List(Text) × List(Text)) × ExScope)) from match p {
+        PtWild => ExOk(#(#(tests, binds), s))
+        PtBind(n, _) => if n == "Zero" { ExOk(#(#(Cons(Text::concat(at, " == 0"), tests), binds), s)) } else {
+          let b := ex_bind(env, s, n, RValue, None, None)
+          ExOk(#(#(tests, Cons(Text::concat_all(["let ", b.fst, " := ", at]), binds)), b.snd))
+        }
+        PtInt(negative, magnitude) => if negative { ExErr("a negative literal pattern on `Nat`") } else { ExOk(#(#(Cons(Text::concat_all([at, " == ", Text::of_nat(magnitude)]), tests), binds), s)) }
+        PtCtor(n, args) => if surface_name_text(n) == "Zero" {
+          ExOk(#(#(Cons(Text::concat(at, " == 0"), tests), binds), s))
+        } else {
+          if surface_name_text(n) == "Succ" {
+            ⊢ ExResult(((List(Text) × List(Text)) × ExScope)) from match args {
+              Cons(q, Nil) => ex_nat_test(j, env, s, q, Text::concat(at, " - 1"), Cons(Text::concat(at, " >= 1"), tests), binds)
+              _ => ExErr("`Succ` is matched with one pattern")
+            }
+          } else { ExErr(Text::concat("a pattern on `Nat` extraction does not read: ", surface_name_text(n))) }
+        }
+        _ => ExErr("a pattern on `Nat` extraction does not read")
+      }
+    }
+  }
+
+  // A lambda of one parameter; `mark` is how it receives it (`&`, `&mut ` or
+  // nothing). A marked parameter is written in parentheses, as the host does.
+  pub fn ex_lambda(k: Nat, env: ExEnv, s: ExScope, params: List(Text), body: SurfaceTerm, mark: Text, ann: Text): ExResult((Text × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((Text × ExScope)) from match params {
+        Cons(p, Nil) => {
+          let b := ex_bind(env, s, p, RValue, None, None)
+          let shown: Text := if mark == "" && ann == "" { b.fst } else { if ann == "" { Text::concat_all(["(", mark, b.fst, ")"]) } else { Text::concat_all(["(", mark, b.fst, ": ", ann, ")"]) } }
+          ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, b.snd, body) {
+            ExErr(m) => ExErr(m)
+            ExOk(r) => ExOk(#(Text::concat_all([shown, " => ", r.fst]), ExScope::Mk(r.snd.taken, s.locals)))
+          }
+        }
+        _ => ExErr("a lambda of several parameters is unsupported")
+      }
+    }
+  }
+
+  pub fn ex_terms(k: Nat, env: ExEnv, s: ExScope, ts: List(SurfaceTerm)): ExResult((List(Text) × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((List(Text) × ExScope)) from match ts {
+        Nil => ExOk(#(Nil, s))
+        Cons(t, rest) => ⊢ ExResult((List(Text) × ExScope)) from match ex_term(j, env, s, t) {
+          ExErr(m) => ExErr(m)
+          ExOk(r) => ⊢ ExResult((List(Text) × ExScope)) from match ex_terms(j, env, r.snd, rest) {
+            ExErr(m) => ExErr(m)
+            ExOk(rs) => ExOk(#(Cons(r.fst, rs.fst), rs.snd))
+          }
+        }
+      }
+    }
+  }
+
+  // The statements of a block: `let`s, then the value.
+  pub fn ex_block(k: Nat, env: ExEnv, s: ExScope, stmts: List(SurfaceStmt)): ExResult((List(Text) × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((List(Text) × ExScope)) from match stmts {
+        Nil => ExOk(#(Nil, s))
+        Cons(st, rest) => ⊢ ExResult((List(Text) × ExScope)) from match st {
+          StExpr(v) => ⊢ ExResult((List(Text) × ExScope)) from match rest {
+            Nil => ⊢ ExResult((List(Text) × ExScope)) from match ex_term(j, env, s, v) {
+              ExErr(m) => ExErr(m)
+              ExOk(r) => ExOk(#(Cons(r.fst, Nil), r.snd))
+            }
+            _ => ExErr("a statement before the value of a block is unsupported")
+          }
+          StLet(name, ty, value, r#borrow, mutable, ^unused, ^st_stack) => if r#borrow || mutable { ExErr("a borrowed or mutable `let` is unsupported") } else {
+            ⊢ ExResult((List(Text) × ExScope)) from match ty {
+              None => ExErr("a `let` without its type is unsupported")
+              Some(t) => ⊢ ExResult((List(Text) × ExScope)) from match ex_role(j, env, s.locals, t) {
+                Some(RValue) => ⊢ ExResult((List(Text) × ExScope)) from match ex_type(j, env, s.locals, t) {
+                  ExErr(m) => ExErr(m)
+                  ExOk(tt) => ⊢ ExResult((List(Text) × ExScope)) from match ex_term(j, env, s, value) {
+                    ExErr(m) => ExErr(m)
+                    ExOk(v) => {
+                      let b := ex_bind(env, v.snd, name, RValue, ex_family_of(env, t), Some(t))
+                      ⊢ ExResult((List(Text) × ExScope)) from match ex_block(j, env, b.snd, rest) {
+                        ExErr(m) => ExErr(m)
+                        ExOk(r) => ExOk(#(Cons(Text::concat_all(["let ", b.fst, ": ", tt, " := ", v.fst]), r.fst), r.snd))
+                      }
+                    }
+                  }
+                }
+                _ => ExErr("a `let` of a proof or a type is unsupported")
+              }
+            }
+          }
+          _ => ExErr("a statement extraction does not read")
+        }
+      }
+    }
+  }
+
+  pub fn ex_match(k: Nat, env: ExEnv, s: ExScope, scrutinee: SurfaceTerm, arms: List(SurfaceArm)): ExResult((Text × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((Text × ExScope)) from match scrutinee.kind {
+        SkVar(n) => ⊢ ExResult((Text × ExScope)) from match ex_local_get(s.locals, surface_name_text(n)) {
+          None => ExErr("a match on a name that is not a parameter is unsupported")
+          Some(l) => ⊢ ExResult((Text × ExScope)) from match l.role {
+            // A match on a proof: its one arm, which binds nothing.
+            RProof => ⊢ ExResult((Text × ExScope)) from match arms {
+              Cons(a, Nil) => if ex_binds_nothing(a.pattern) { ex_term(j, env, s, a.body) } else { ExErr("an arm of a match on a proof that binds its fields is unsupported") }
+              _ => ExErr("a match on a proof with other than one arm is unsupported")
+            }
+            RValue => ⊢ ExResult((Text × ExScope)) from match ex_local_family(env, l, arms) {
+              None => ExErr("a match on a value whose family is not known")
+              Some(fam) => if fam == "Nat" { ex_nat_match(j, env, s, l.written, arms) } else { ⊢ ExResult((Text × ExScope)) from match ex_arms(j, env, s, fam, l.ty, arms) {
+                ExErr(m) => ExErr(m)
+                ExOk(r) => ExOk(#(Text::concat_all(["match ", l.written, " {", text_newline(), ex_join(r.fst, text_newline()), text_newline(), "}"]), ExScope::Mk(r.snd.taken, s.locals)))
+              } }
+            }
+            RGeneric => ExErr("a match on a type")
+          }
+        }
+        _ => ⊢ ExResult((Text × ExScope)) from match ex_arms_family(env, arms) {
+          None => ExErr("a match on a term whose family is not known")
+          Some(fam) => ⊢ ExResult((Text × ExScope)) from match ex_term(j, env, s, scrutinee) {
+            ExErr(m) => ExErr(m)
+            ExOk(sc) => if fam == "Nat" { ex_nat_match(j, env, sc.snd, sc.fst, arms) } else {
+              ⊢ ExResult((Text × ExScope)) from match ex_arms(j, env, sc.snd, fam, None, arms) {
+                ExErr(m) => ExErr(m)
+                ExOk(r) => ExOk(#(Text::concat_all(["match ", sc.fst, " {", text_newline(), ex_join(r.fst, text_newline()), text_newline(), "}"]), ExScope::Mk(r.snd.taken, s.locals)))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn ex_arms(k: Nat, env: ExEnv, s: ExScope, fam: Text, sty: Option(SurfaceTerm), arms: List(SurfaceArm)): ExResult((List(Text) × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((List(Text) × ExScope)) from match arms {
+        Nil => ExOk(#(Nil, s))
+        Cons(a, rest) => ⊢ ExResult((List(Text) × ExScope)) from match a.guard {
+          Some(^g) => ExErr("a guard is unsupported")
+          None => ⊢ ExResult((List(Text) × ExScope)) from match ex_pattern(j, env, s, fam, sty, a.pattern) {
+            ExErr(m) => ExErr(m)
+            ExOk(p) => ⊢ ExResult((List(Text) × ExScope)) from match ex_term(j, env, p.snd, a.body) {
+              ExErr(m) => ExErr(m)
+              ExOk(b) => ⊢ ExResult((List(Text) × ExScope)) from match ex_arms(j, env, ExScope::Mk(b.snd.taken, s.locals), fam, sty, rest) {
+                ExErr(m) => ExErr(m)
+                ExOk(r) => ExOk(#(Cons(Text::concat_all([p.fst, " => ", b.fst]), r.fst), r.snd))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // A pattern of the family `fam`: a constructor of it with binders, `_`.
+  pub fn ex_pattern(k: Nat, env: ExEnv, s: ExScope, fam: Text, sty: Option(SurfaceTerm), p: SurfacePattern): ExResult((Text × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((Text × ExScope)) from match p {
+        PtWild => ExOk(#("_", s))
+        PtBool(v) => if fam == "Bool" { ExOk(#(if v { "true" } else { "false" }, s)) } else { ExErr("a `true` or `false` pattern on a value that is not a `Bool`") }
+        PtBind(n, _) => ⊢ ExResult((Text × ExScope)) from match ex_ctor(env, Some(fam), n) {
+          Some(fc) => ex_ctor_pattern(j, env, s, fc.fst, fc.snd, sty, Nil)
+          None => ExErr("a binder pattern is unsupported")
+        }
+        PtCtor(n, args) => ⊢ ExResult((Text × ExScope)) from match ex_ctor(env, Some(fam), surface_name_text(n)) {
+          Some(fc) => ex_ctor_pattern(j, env, s, fc.fst, fc.snd, sty, args)
+          None => ExErr(Text::concat("a constructor extraction does not read: ", surface_name_text(n)))
+        }
+        _ => ExErr("a pattern extraction does not read")
+      }
+    }
+  }
+
+  pub fn ex_ctor_pattern(k: Nat, env: ExEnv, s: ExScope, f: ExFamily, c: ExCtor, sty: Option(SurfaceTerm), args: List(SurfacePattern)): ExResult((Text × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => if List::length(args) != List::length(c.roles) { ExErr("a constructor pattern must bind all its fields") } else {
+        ⊢ ExResult((Text × ExScope)) from match ex_binders(j, env, s, args, c.roles, c.types, f.params, ex_type_args(sty)) {
+          ExErr(m) => ExErr(m)
+          ExOk(r) => ExOk(#(ex_construct(f, c, r.fst), r.snd))
+        }
+      }
+    }
+  }
+
+  // The binders of the value fields; a proof field's binder is dropped.
+  pub fn ex_binders(k: Nat, env: ExEnv, s: ExScope, args: List(SurfacePattern), roles: List(ExRole), types: List(SurfaceTerm), params: List(Text), targs: List(SurfaceTerm)): ExResult((List(Text) × ExScope)) {
+    match k {
+      Zero => ExErr("extraction exhausted")
+      Succ(j) => ⊢ ExResult((List(Text) × ExScope)) from match args {
+        Nil => ExOk(#(Nil, s))
+        Cons(a, rest) => ⊢ ExResult((List(Text) × ExScope)) from match roles {
+          Nil => ExErr("a constructor pattern binds more than its fields")
+          Cons(r, rs) => {
+            let ty := ⊢ Option(SurfaceTerm) from match types {
+              Nil => None
+              Cons(t, ^ts) => Some(ex_instance(params, targs, t))
+            }
+            let tys := ⊢ List(SurfaceTerm) from match types {
+              Nil => Nil
+              Cons(^t, ts) => ts
+            }
+            let fam := ⊢ Option(Text) from match ty {
+              None => None
+              Some(t) => ex_family_of(env, t)
+            }
+            let here: ExResult((Option(Text) × ExScope)) := ⊢ ExResult((Option(Text) × ExScope)) from match a {
+              PtWild => ExOk(#(⊢ Option(Text) from match r {
+                RValue => Some("_")
+                _ => None
+              }, s))
+              PtBind(n, _) => ⊢ ExResult((Option(Text) × ExScope)) from match r {
+                RValue => ⊢ ExResult((Option(Text) × ExScope)) from match ex_nested_ctor(env, fam, n) {
+                  Some(fc) => ⊢ ExResult((Option(Text) × ExScope)) from match ex_ctor_pattern(j, env, s, fc.fst, fc.snd, ty, Nil) {
+                    ExErr(m) => ExErr(m)
+                    ExOk(p) => ExOk(#(Some(p.fst), p.snd))
+                  }
+                  None => {
+                    let b := ex_bind(env, s, n, RValue, fam, ty)
+                    ExOk(#(Some(b.fst), b.snd))
+                  }
+                }
+                _ => ExOk(#(None, ex_bind_dropped(s, n, r, fam, ty)))
+              }
+              // A constructor inside a constructor: the field's family when
+              // it is known, else the only constructor of that name.
+              PtCtor(cn, cargs) => ⊢ ExResult((Option(Text) × ExScope)) from match r {
+                RValue => ⊢ ExResult((Option(Text) × ExScope)) from match ex_ctor(env, fam, surface_name_text(cn)) {
+                  Some(fc) => ⊢ ExResult((Option(Text) × ExScope)) from match ex_ctor_pattern(j, env, s, fc.fst, fc.snd, ty, cargs) {
+                    ExErr(m) => ExErr(m)
+                    ExOk(p) => ExOk(#(Some(p.fst), p.snd))
+                  }
+                  None => ⊢ ExResult((Option(Text) × ExScope)) from match ex_ctor(env, None, surface_name_text(cn)) {
+                    Some(fc) => ⊢ ExResult((Option(Text) × ExScope)) from match ex_ctor_pattern(j, env, s, fc.fst, fc.snd, ty, cargs) {
+                      ExErr(m) => ExErr(m)
+                      ExOk(p) => ExOk(#(Some(p.fst), p.snd))
+                    }
+                    None => ExErr(Text::concat("a constructor extraction does not read: ", surface_name_text(cn)))
+                  }
+                }
+                _ => ExErr("a nested pattern on a proof is unsupported")
+              }
+              _ => ExErr("a nested pattern is unsupported")
+            }
+            ⊢ ExResult((List(Text) × ExScope)) from match here {
+              ExErr(m) => ExErr(m)
+              ExOk(h) => ⊢ ExResult((List(Text) × ExScope)) from match ex_binders(j, env, h.snd, rest, rs, tys, params, targs) {
+                ExErr(m) => ExErr(m)
+                ExOk(more) => ⊢ ExResult((List(Text) × ExScope)) from match h.fst {
+                  None => ExOk(more)
+                  Some(w) => ExOk(#(Cons(w, more.fst), more.snd))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_binds_nothing(p: SurfacePattern): Bool {
+  match p {
+    PtWild => true
+    PtBind(^n, _) => true
+    PtCtor(^n, args) => List::length(args) == 0
+    _ => false
+  }
+}

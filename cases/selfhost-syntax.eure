@@ -1,9 +1,27 @@
 // Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
 
+@ cases.syntax-infer-condition-right-and
+source = ```tauto
+instance Choose(Local, Nat, Bool) infer from A ∧ (I ∧ S) { fn choose(value: Local): Nat { 1 } }
+```
+differential = "syntax"
+
+@ cases.syntax-infer-condition-right-or
+source = ```tauto
+instance Choose(Local, Nat, Bool) infer from A ∨ (I ∨ S) { fn choose(value: Local): Nat { 1 } }
+```
+differential = "syntax"
+
+@ cases.syntax-infer-condition-mixed
+source = ```tauto
+instance Choose(Local, Nat, Bool) infer from A ∧ I ∨ S { fn choose(value: Local): Nat { 1 } }
+```
+differential = "syntax"
+
 // syntax_matches_on_hard_cases
 @ cases.syntax-matches-on-hard-cases-001
 source = ```tauto
-let r := budget(steps: 1) { 2 }
+let r := perform budget(1, () => { 2 })
 ```
 differential = "syntax"
 
@@ -248,9 +266,9 @@ differential = "syntax"
 // syntax_matches_on_hard_cases
 @ cases.syntax-matches-on-hard-cases-036
 source = ```tauto
-affine struct S {}
-linear enum E { A }
-copy struct C {}
+struct(affine) S {}
+enum(linear) E { A }
+struct(copy) C {}
 ```
 differential = "syntax"
 
@@ -272,7 +290,7 @@ differential = "syntax"
 // syntax_matches_on_hard_cases
 @ cases.syntax-matches-on-hard-cases-039
 source = ```tauto
-fn f(&mut x: Vec(i64)): Unit { #() }
+fn f(x: &mut Vec(i64)): Unit { #() }
 ```
 differential = "syntax"
 
@@ -314,5 +332,43 @@ differential = "syntax"
 @ cases.syntax-hard-empty
 source = ```tauto
 
+```
+differential = "syntax"
+
+// Identifiers follow XID_Start and XID_Continue (combining marks, letter numbers, connectors).
+@ cases.syntax-matches-on-xid-identifiers
+source = ```tauto
+let नमस्ते := 1
+let Ⅳ := 2
+let a‿b := 3
+```
+differential = "syntax"
+
+// A superscript digit is not in XID_Continue.
+@ cases.syntax-matches-on-non-xid-identifiers
+source = ```tauto
+let x² := 1
+```
+differential = "syntax"
+
+// A name not in NFC is an error, after the canonical order too; a composition exclusion stays.
+@ cases.syntax-matches-on-names-not-in-nfc
+source = ```tauto
+let café := 1
+```
+differential = "syntax"
+
+@ cases.syntax-matches-on-names-in-nfc
+source = ```tauto
+let café := 1
+let क़ := 2
+let கா := 3
+let 각 := 4
+```
+differential = "syntax"
+
+@ cases.syntax-matches-on-hangul-not-in-nfc
+source = ```tauto
+let 각 := 1
 ```
 differential = "syntax"

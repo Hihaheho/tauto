@@ -37,10 +37,14 @@ fn small_bounds(w: Width) -> String {
     const SAFE: i128 = (1 << 53) - 1;
     let (min, max) = match w {
         Width::Nat => (0, SAFE),
+        Width::W8 => (i8::MIN as i128, i8::MAX as i128),
+        Width::W16 => (i16::MIN as i128, i16::MAX as i128),
+        Width::U16 => (0, u16::MAX as i128),
         Width::W32 => (i32::MIN as i128, i32::MAX as i128),
         Width::W64 => (i64::MIN as i128, i64::MAX as i128),
         Width::U8 => (0, u8::MAX as i128),
-        Width::U32 => (0, u32::MAX as i128),
+        // `uhost` is the 32-bit word of JavaScript (`docs/design/host-effects.md`).
+        Width::U32 | Width::Host => (0, u32::MAX as i128),
         Width::U64 => (0, u64::MAX as i128),
     };
     format!("{},{},{}", min.max(-SAFE), max.min(SAFE), bounds(w))
@@ -106,6 +110,8 @@ impl<'p> Values<'p> {
             // A vector is changed in place only through a mutable borrow, and
             // bytes never are.
             Ty::Vec(a) => self.ty(a),
+            // An array never changes, so it is read as it is.
+            Ty::Array(a) => self.ty(a),
             Ty::Std(name, args) => *name == tauto_nir::StdType::Bytes && args.is_empty(),
             Ty::Buf => true,
             // A generic function's own parameter: its callers check what it
@@ -250,10 +256,15 @@ fn option_pattern(p: &Pat) -> bool {
         Pat::Wild => true,
         Pat::Ctor { ctor, fields } => {
             matches!(ctor.data, DataRef::Option)
-                && (tauto::bindings::is_library(&ctor.name, "Some") && fields.len() == 1
-                    || tauto::bindings::is_library(&ctor.name, "None"))
+                && (ctor.library() == Some(LibraryCtor::Some) && fields.len() == 1
+                    || ctor.library() == Some(LibraryCtor::None))
         }
-        _ => false,
+        Pat::Bind(..)
+        | Pat::Int(_)
+        | Pat::Nat(_)
+        | Pat::Bool(_)
+        | Pat::Text(_)
+        | Pat::Variant { .. } => false,
     }
 }
 
@@ -261,7 +272,8 @@ fn binds_mutably(p: &Pat) -> bool {
     match p {
         Pat::Bind(local, _) => local.storage() == Storage::BorrowMut,
         Pat::Ctor { fields, .. } => fields.iter().any(binds_mutably),
-        _ => false,
+        Pat::Variant { pat, .. } => binds_mutably(pat),
+        Pat::Wild | Pat::Int(_) | Pat::Nat(_) | Pat::Bool(_) | Pat::Text(_) => false,
     }
 }
 
@@ -317,7 +329,9 @@ fn locals(f: &FnInst, values: &Values) -> BTreeMap<u32, Ty> {
                 out.insert(local.id, ty.clone());
             }
             Pat::Ctor { fields, .. } => fields.iter().for_each(|p| pattern(p, values, out)),
-            _ => {}
+            Pat::Variant { pat, .. } => pattern(pat, values, out),
+            Pat::Bind(..) | Pat::Wild | Pat::Int(_) | Pat::Nat(_) | Pat::Bool(_) | Pat::Text(_) => {
+            }
         }
     }
     let mut out: BTreeMap<u32, Ty> = f
@@ -371,6 +385,12 @@ fn builtin(name: &str) -> Option<Builtin> {
         | "Text::slice"
         | "Text::of_code_point"
         | "Text::of_utf8"
+        | "I64::of_i8"
+        | "I64::of_i16"
+        | "I8::of_i64"
+        | "I16::of_i64"
+        | "U64::of_u16"
+        | "U16::of_u64"
         | "I64::of_i32"
         | "I64::of_u64"
         | "I32::of_i64"
@@ -378,16 +398,26 @@ fn builtin(name: &str) -> Option<Builtin> {
         | "U64::of_i64"
         | "U64::of_u32"
         | "U64::of_u8"
+        | "U64::of_uhost"
+        | "UHost::succ_below"
+        | "UHost::pred_nz"
+        | "UHost::add_within"
+        | "UHost::sub"
+        | "UHost::of_u64_below"
         | "U64::of_nat"
         | "U32::of_u64"
         | "U8::of_u64"
         | "U32::rotl"
         | "U32::rotr"
         | "U64::rotl"
-        | "U64::rotr" => Builtin::Pure,
+        | "U64::rotr"
+        | "U64::wrapping_add"
+        | "U64::wrapping_sub"
+        | "U64::wrapping_mul" => Builtin::Pure,
         "Vec::new" | "Vec::len" | "Vec::get" | "Vec::get_mut" | "Vec::last_mut" | "Vec::push"
         | "Vec::pop" | "Vec::clear" | "Vec::truncate" | "replace" | "Bytes::len" | "Bytes::get"
-        | "Buf::new" | "Buf::of" | "Buf::clone" | "Buf::push" | "Text::of" => Builtin::Vector,
+        | "Buf::new" | "Buf::of" | "Buf::clone" | "Buf::push" | "Text::of" | "Array::len"
+        | "Array::get" => Builtin::Vector,
         _ if crate::FLOAT_BUILTINS.contains(&name) => Builtin::Pure,
         _ => return None,
     })
@@ -519,6 +549,7 @@ impl Eligible<'_> {
             Pat::Wild | Pat::Int(_) | Pat::Nat(_) | Pat::Bool(_) | Pat::Text(_) => true,
             Pat::Bind(local, _) => self.locals.contains_key(&local.id),
             Pat::Ctor { fields, .. } => fields.iter().all(|p| self.pattern(p)),
+            Pat::Variant { pat, .. } => self.pattern(pat),
         }
     }
 
@@ -777,7 +808,8 @@ impl Writer<'_> {
                         Some(Builtin::Vector) => match &name[..] {
                             "Vec::new" => "vecNew()".into(),
                             "Vec::len" => format!("{}.items.length", a[0]),
-                            "Vec::get" => format!("vecGet({},{})", a[0], a[1]),
+                            "Vec::get" | "Array::get" => format!("vecGet({},{})", a[0], a[1]),
+                            "Array::len" => format!("{}.items.length", a[0]),
                             // A vector in a vector is the value itself.
                             "Vec::get_mut" | "Vec::last_mut" => {
                                 let object = matches!(&e.ty, Ty::Option(a) if matches!(&**a, Ty::RefMut(inner) if self.values.object(inner)));
@@ -821,7 +853,11 @@ impl Writer<'_> {
                 _ => unreachable!("only direct functions are called"),
             },
             ExprKind::TempRef(v) => self.expr(v)?,
-            ExprKind::Arith { op, args, .. } if e.ty == Ty::Float => {
+            ExprKind::Arith {
+                op,
+                args,
+                num: Num::Float,
+            } => {
                 let a = self.many(args)?;
                 match op {
                     Arith::Add => format!("({}+{})", a[0], a[1]),
@@ -831,7 +867,11 @@ impl Writer<'_> {
                     Arith::Div => format!("floatDiv({},{})", a[0], a[1]),
                 }
             }
-            ExprKind::Arith { op, args, .. } if e.ty == Ty::Float32 => {
+            ExprKind::Arith {
+                op,
+                args,
+                num: Num::Float32,
+            } => {
                 let a = self.many(args)?;
                 match op {
                     Arith::Add => format!("Math.fround({}+{})", a[0], a[1]),
@@ -841,7 +881,11 @@ impl Writer<'_> {
                     Arith::Div => format!("float32Div({},{})", a[0], a[1]),
                 }
             }
-            ExprKind::Arith { op, args, width } => {
+            ExprKind::Arith {
+                op,
+                args,
+                num: Num::Int(width),
+            } => {
                 let a = self.many(args)?;
                 let b = small_bounds(*width);
                 match op {
@@ -990,7 +1034,7 @@ impl Writer<'_> {
             let mut binds = String::new();
             match (&element, &arm.pat) {
                 (Some((ok, item)), Pat::Ctor { ctor, fields }) => {
-                    if tauto::bindings::is_library(&ctor.name, "Some") {
+                    if ctor.library() == Some(LibraryCtor::Some) {
                         tests.push(ok.clone());
                         pattern(self.values.pkg, &fields[0], item, &mut tests, &mut binds);
                     } else {
@@ -1179,6 +1223,10 @@ fn pattern(pkg: &Package, p: &Pat, v: &str, tests: &mut Vec<String>, binds: &mut
             for (i, f) in fields.iter().enumerate() {
                 pattern(pkg, f, &format!("{v}.fields[{i}]"), tests, binds);
             }
+        }
+        Pat::Variant { variant, pat, .. } => {
+            tests.push(format!("{v}.variant==={variant}"));
+            pattern(pkg, pat, &format!("{v}.value"), tests, binds);
         }
     }
 }

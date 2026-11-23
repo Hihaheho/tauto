@@ -1,0 +1,144 @@
+description = "A child dictionary exposes the parent operations and their laws. The child law and an existing parent theorem refer to the same operations."
+
+@ cases.group-reuses-its-monoid
+source = ```tauto
+inductive MonoidOps(A: Type): Type {
+  monoid_ops(unit: A, mul: (A, A) -> A): MonoidOps(A)
+}
+
+fn unit<A: Shared>(ops: MonoidOps(A)): A { match ops { monoid_ops(e, m) => e } }
+fn mul<A: Shared>(ops: MonoidOps(A), x: A, y: A): A { match ops { monoid_ops(e, m) => m(x, y) } }
+
+inductive MonoidLaws(A: Type, ops: MonoidOps(A)): Prop {
+  monoid_laws(
+    left: (x: A) -> mul(ops, unit(ops), x) = x,
+    right: (x: A) -> mul(ops, x, unit(ops)) = x,
+    assoc: (x: A, y: A, z: A) -> mul(ops, mul(ops, x, y), z) = mul(ops, x, mul(ops, y, z))
+  ): MonoidLaws(A, ops)
+}
+
+inductive GroupOps(A: Type): Type {
+  group_ops(parent: MonoidOps(A), inv: (A) -> A): GroupOps(A)
+}
+
+fn parent<A: Shared>(ops: GroupOps(A)): MonoidOps(A) { match ops { group_ops(p, i) => p } }
+fn inv<A: Shared>(ops: GroupOps(A), x: A): A { match ops { group_ops(p, i) => i(x) } }
+
+inductive GroupLaws(A: Type, ops: GroupOps(A)): Prop {
+  group_laws(
+    parent_laws: MonoidLaws(A, parent(ops)),
+    inverse: (x: A) -> mul(parent(ops), x, inv(ops, x)) = unit(parent(ops))
+  ): GroupLaws(A, ops)
+}
+
+fn append_unit<A: Shared>(ops: MonoidOps(A), x: A): A { mul(ops, x, unit(ops)) }
+
+theorem append_unit_eq<A>(ops: MonoidOps(A), x: A, h: MonoidLaws(A, ops)): append_unit(ops, x) = x {
+  match h { monoid_laws(left, right, assoc) => right(x) }
+}
+
+fn round_trip<A: Shared>(ops: GroupOps(A), x: A): A {
+  mul(parent(ops), append_unit(parent(ops), x), inv(ops, x))
+}
+
+theorem round_trip_eq<A>(
+  ops: GroupOps(A),
+  x: A,
+  h: GroupLaws(A, ops)
+): round_trip(ops, x) = unit(parent(ops)) {
+  match h {
+    group_laws(parent_laws, inverse) => Eq::subst(
+      (y: A) => mul(parent(ops), y, inv(ops, x)) = unit(parent(ops)),
+      Eq::sym(append_unit_eq(parent(ops), x, parent_laws)),
+      inverse(x)
+    )
+  }
+}
+
+fn xor(a: Bool, b: Bool): Bool { match a { true => not(b), false => b } }
+
+fn bool_group(): GroupOps(Bool) {
+  group_ops(monoid_ops(false, xor), (b: Bool) => b)
+}
+
+theorem xor_unit_left(x: Bool): mul(parent(bool_group()), unit(parent(bool_group())), x) = x { Refl }
+
+theorem xor_unit_right(x: Bool): mul(parent(bool_group()), x, unit(parent(bool_group()))) = x {
+  match x { true => Refl, false => Refl }
+}
+
+theorem xor_assoc(x: Bool, y: Bool, z: Bool): xor(xor(x, y), z) = xor(x, xor(y, z)) {
+  match x {
+    true => match y {
+      true => match z { true => Refl, false => Refl },
+      false => Refl
+    },
+    false => Refl
+  }
+}
+
+theorem xor_inverse(x: Bool): mul(
+  parent(bool_group()),
+  x,
+  inv(bool_group(), x)
+) = unit(parent(bool_group())) {
+  match x { true => Refl, false => Refl }
+}
+
+theorem bool_group_laws(): GroupLaws(Bool, bool_group()) {
+  group_laws(monoid_laws(xor_unit_left, xor_unit_right, xor_assoc), xor_inverse)
+}
+
+inductive class HasGroup(A: Type) {
+  fn group(x: A): GroupOps(A)
+  theorem group_valid(x: A): GroupLaws(A, HasGroup::group(x))
+}
+
+instance HasGroup(Bool) {
+  fn group(x: Bool): GroupOps(Bool) { bool_group() }
+  theorem group_valid(x: Bool): GroupLaws(Bool, HasGroup::group(x)) { bool_group_laws() }
+}
+
+fn group_round_trip<A: Shared>(x: A): A where HasGroup(A) {
+  round_trip(HasGroup::group(x), x)
+}
+
+theorem group_round_trip_eq<A>(x: A): group_round_trip(x) = unit(
+  parent(HasGroup::group(x))
+) where HasGroup(A) {
+  round_trip_eq(HasGroup::group(x), x, HasGroup::group_valid(x))
+}
+
+theorem concrete(x: Bool): group_round_trip(x) = false {
+  group_round_trip_eq(x)
+}
+
+show(&append_unit(parent(HasGroup::group(true)), true))
+show(&group_round_trip(true))
+```
+checks_all = "ok"
+stdout = "true\nfalse\n"
+
+@ cases.laws-of-a-different-dictionary-are-rejected
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Ops(A: Type): Type {
+  ops(apply: (A) -> A): Ops(A)
+}
+
+fn apply<A>(d: Ops(A), x: A): A { match d { ops(f) => f(x) } }
+
+inductive Involution(A: Type, d: Ops(A)): Prop {
+  involution(h: (x: A) -> apply(d, apply(d, x)) = x): Involution(A, d)
+}
+
+theorem not_twice(x: Bool): apply(ops(not), apply(ops(not), x)) = x {
+  match x { true => Refl, false => Refl }
+}
+
+theorem not_laws(): Involution(Bool, ops(not)) { involution(not_twice) }
+
+theorem wrong_laws(): Involution(Bool, ops((b: Bool) => b)) { not_laws() }
+```
+checks."input/main.taut::not_laws" = "ok"
+checks."input/main.taut::wrong_laws" = "error: type mismatch"

@@ -23,8 +23,9 @@ use crate::{Loc, Op, OpId, Payload, error, messages};
 pub enum Step<'a> {
     /// The computation has delivered its value to the driver.
     Done,
-    /// Go on from here, with the stack unwound.
-    More(Box<dyn FnOnce() -> Step<'a> + 'a>),
+    /// Go on from here, with the stack unwound. The driver gives it its
+    /// handlers: those of the code that runs the computation now.
+    More(Box<dyn FnOnce(&Ev<'_>) -> Step<'a> + 'a>),
     /// An operation no handler in the computation answers: the driver does,
     /// and calls `k` (with `m`) with the answer.
     Escape {
@@ -35,19 +36,24 @@ pub enum Step<'a> {
         m: M<'a>,
     },
     Fail(Abort),
+    /// A call of a function of the O tier, which the driver awaits.
+    Await(Box<dyn Awaited<'a> + 'a>),
     /// An arm's answer when none of its patterns fit: the arguments go back
     /// and the search goes outward.
     NoMatch(Payload),
 }
 
-/// The rest of a computation: called with the handlers in place and a value.
-pub type Kont<'a, T> = Rc<dyn Fn(&M<'a>, T) -> Step<'a> + 'a>;
+/// The rest of a computation: called with the `direct` handlers of the code
+/// that runs it now (`Ev`), the handlers in place and a value. It holds no
+/// `direct` handler of its own: a continuation run again later meets the
+/// handlers of whoever runs it then.
+pub type Kont<'a, T> = Rc<dyn Fn(&Ev<'_>, &M<'a>, T) -> Step<'a> + 'a>;
 
 /// What a handler does for an operation: with the chain outside the handler,
 /// the continuation of the `handle` expression, the operation, its arguments,
 /// and `k`. When no arm's pattern fits the arguments come back.
 pub type ArmFn<'a> =
-    dyn Fn(&M<'a>, Kont<'a, Payload>, Op, Payload, Loc, Resume<'a>) -> Step<'a> + 'a;
+    dyn Fn(&Ev<'_>, &M<'a>, Kont<'a, Payload>, Op, Payload, Loc, Resume<'a>) -> Step<'a> + 'a;
 
 /// A budget in the handlers in place: the steps it has left are shared by every copy of the chain, so a
 /// continuation that runs again goes on from where the count is.
@@ -58,7 +64,7 @@ pub struct BudgetFrame {
     /// cells past which it has run out.
     left: Rc<Cell<u64>>,
     memory: bool,
-    /// The `info` of the `Exceeded` operation, and the way to read what the
+    /// The `info` of the `exceeded` operation, and the way to read what the
     /// arm answers with, for the type of the budget's value.
     info: fn() -> Payload,
     answer: fn(Payload) -> Answer,
@@ -76,6 +82,12 @@ pub struct Frame<'a> {
     pub ops: &'static [OpId],
     budget: Option<BudgetFrame>,
     pub arm: Rc<ArmFn<'a>>,
+    /// The handler's `direct` arms, for code that performs their operations
+    /// with its arguments unboxed ([`bridge`]): `None` for a handler without
+    /// them.
+    direct: Option<Rc<Adapt>>,
+    /// Whether this handler or one outside it has `direct` arms.
+    any_direct: bool,
     /// Where the value of the `handle` expression goes.
     pub target: Kont<'a, Payload>,
     pub outer: M<'a>,
@@ -96,10 +108,25 @@ impl<'a> M<'a> {
         arm: Rc<ArmFn<'a>>,
         target: Kont<'a, Payload>,
     ) -> M<'a> {
+        self.push_direct(ops, arm, target, None)
+    }
+
+    /// [`M::push`] for a handler with `direct` arms: `direct` hands an
+    /// operation performed with its arguments unboxed to the arms
+    /// ([`bridge`]).
+    pub fn push_direct(
+        &self,
+        ops: &'static [OpId],
+        arm: Rc<ArmFn<'a>>,
+        target: Kont<'a, Payload>,
+        direct: Option<Rc<Adapt>>,
+    ) -> M<'a> {
         M(Some(Rc::new(Frame {
             ops,
             budget: None,
             arm,
+            any_direct: direct.is_some() || self.any_direct(),
+            direct,
             target,
             outer: self.clone(),
         })))
@@ -136,10 +163,16 @@ impl<'a> M<'a> {
                 info: crate::budget::info_payload::<T>,
                 answer: crate::budget::answer_of::<T>,
             }),
-            arm: arm(|_, _, _, args, _, _| Step::NoMatch(args)),
+            arm: arm(|_, _, _, _, args, _, _| Step::NoMatch(args)),
+            direct: None,
+            any_direct: self.any_direct(),
             target,
             outer: self.clone(),
         })))
+    }
+
+    fn any_direct(&self) -> bool {
+        self.0.as_ref().is_some_and(|f| f.any_direct)
     }
 
     /// The handler the body is under has ended: the chain outside it, and
@@ -161,6 +194,7 @@ struct Held<'a> {
     ops: &'static [OpId],
     budget: Option<BudgetFrame>,
     arm: Rc<ArmFn<'a>>,
+    direct: Option<Rc<Adapt>>,
     /// Where the value of a `handle` inside the body goes; `None` for the
     /// handler whose arm runs.
     target: Option<Kont<'a, Payload>>,
@@ -179,7 +213,13 @@ pub struct Resume<'a> {
 impl<'a> Resume<'a> {
     /// `k(value)`, called where the handlers are `base`: the body goes on
     /// under the same handlers, and when it ends its value goes to `target`.
-    pub fn call(&self, base: &M<'a>, value: Payload, target: Kont<'a, Payload>) -> Step<'a> {
+    pub fn call(
+        &self,
+        ev: &Ev<'_>,
+        base: &M<'a>,
+        value: Payload,
+        target: Kont<'a, Payload>,
+    ) -> Step<'a> {
         let mut m = base.clone();
         for f in self.prefix.iter().rev() {
             let t = f.target.clone().unwrap_or_else(|| target.clone());
@@ -187,11 +227,13 @@ impl<'a> Resume<'a> {
                 ops: f.ops,
                 budget: f.budget.clone(),
                 arm: f.arm.clone(),
+                any_direct: f.direct.is_some() || m.any_direct(),
+                direct: f.direct.clone(),
                 target: t,
                 outer: m,
             })));
         }
-        (self.kont)(&m, value)
+        (self.kont)(ev, &m, value)
     }
 
     /// The continuation of an operation that was not answered here, kept for
@@ -199,7 +241,7 @@ impl<'a> Resume<'a> {
     fn none() -> Resume<'a> {
         Resume {
             prefix: Rc::new(Vec::new()),
-            kont: Rc::new(|_, _| {
+            kont: Rc::new(|_, _, _| {
                 panic!("tauto: a resume 0 operation was resumed (a bug in the generated code)")
             }),
         }
@@ -207,13 +249,13 @@ impl<'a> Resume<'a> {
 }
 
 /// A continuation, from a closure (which gives the closure its signature).
-pub fn kont<'a, T, F: Fn(&M<'a>, T) -> Step<'a> + 'a>(f: F) -> Kont<'a, T> {
+pub fn kont<'a, T, F: Fn(&Ev<'_>, &M<'a>, T) -> Step<'a> + 'a>(f: F) -> Kont<'a, T> {
     Rc::new(f)
 }
 
 pub fn arm<'a, F>(f: F) -> Rc<ArmFn<'a>>
 where
-    F: Fn(&M<'a>, Kont<'a, Payload>, Op, Payload, Loc, Resume<'a>) -> Step<'a> + 'a,
+    F: Fn(&Ev<'_>, &M<'a>, Kont<'a, Payload>, Op, Payload, Loc, Resume<'a>) -> Step<'a> + 'a,
 {
     Rc::new(f)
 }
@@ -222,21 +264,22 @@ where
 /// it, and the chain of returns of a deep recursion does not grow the stack.
 pub fn ret<'a, T: 'a>(k: &Kont<'a, T>, m: &M<'a>, v: T) -> Step<'a> {
     let (k, m) = (k.clone(), m.clone());
-    Step::More(Box::new(move || k(&m, v)))
+    Step::More(Box::new(move |ev| k(ev, &m, v)))
 }
 
-pub fn more<'a>(f: impl FnOnce() -> Step<'a> + 'a) -> Step<'a> {
+pub fn more<'a>(f: impl FnOnce(&Ev<'_>) -> Step<'a> + 'a) -> Step<'a> {
     Step::More(Box::new(f))
 }
 
 /// A continuation that takes a `T`, for one that takes a `Payload`.
 pub fn erase<'a, T: 'static>(k: Kont<'a, T>) -> Kont<'a, Payload> {
-    Rc::new(move |m, p| k(m, *p.downcast::<T>().expect("tauto: payload type")))
+    Rc::new(move |ev, m, p| k(ev, m, *p.downcast::<T>().expect("tauto: payload type")))
 }
 
 /// `inside`: the operation is a budget's, performed outside it: the handlers
 /// from the top to that budget do not see it (but are part of `k`).
 fn route<'a>(
+    ev: &Ev<'_>,
     m: &M<'a>,
     op: Op,
     mut args: Payload,
@@ -263,6 +306,7 @@ fn route<'a>(
                             ops: f.ops,
                             budget: f.budget.clone(),
                             arm: f.arm.clone(),
+                            direct: f.direct.clone(),
                             target: (i != last).then(|| f.target.clone()),
                         })
                         .collect();
@@ -273,7 +317,7 @@ fn route<'a>(
                 }
                 None => Resume::none(),
             };
-            match (f.arm)(&f.outer, f.target.clone(), op, args, at, res) {
+            match (f.arm)(ev, &f.outer, f.target.clone(), op, args, at, res) {
                 Step::NoMatch(back) => args = back,
                 step => return Ok(step),
             }
@@ -286,8 +330,15 @@ fn route<'a>(
 /// Performs `op`: the nearest handler with an arm that fits runs it, with
 /// `k` the rest of the computation up to that handler. Nothing in the
 /// computation answering is the driver's to do.
-pub fn perform<'a>(m: &M<'a>, op: Op, args: Payload, at: Loc, k: Kont<'a, Payload>) -> Step<'a> {
-    match route(m, op, args, at, Some(&k), None) {
+pub fn perform<'a>(
+    ev: &Ev<'_>,
+    m: &M<'a>,
+    op: Op,
+    args: Payload,
+    at: Loc,
+    k: Kont<'a, Payload>,
+) -> Step<'a> {
+    match route(ev, m, op, args, at, Some(&k), None) {
         Ok(step) => step,
         Err(args) => Step::Escape {
             op,
@@ -299,31 +350,116 @@ pub fn perform<'a>(m: &M<'a>, op: Op, args: Payload, at: Loc, k: Kont<'a, Payloa
     }
 }
 
-/// A `direct` operation in code that holds no handler from around it: a
-/// `direct` handler inside answers it in place; otherwise it goes out, to
-/// the driver, which answers it with the handlers of the code that runs the
-/// computation now.
-pub fn perform_direct<'a>(
+/// How a handler's `direct` arms take an operation that a function value
+/// performs with its arguments unboxed: for the operation's number and the
+/// `Io` of its types (`crate::ev::Io<A, R>`, or `Io<Payload, Payload>`), it
+/// boxes the arguments and hands them to `run`, which answers or gives them
+/// back when no arm fits; it puts the answer in the `Io` and says `true`.
+/// Generated code writes one for each handler of [`M::push_direct`].
+pub type Adapt = dyn Fn(
+    OpId,
+    &mut dyn std::any::Any,
+    &mut dyn FnMut(Op, Payload) -> Result<Payload, Payload>,
+) -> bool;
+
+/// Where [`bridge`] is for a function of a lower tier passed as one of the M
+/// tier: the place of its call is not known there.
+pub const IN_FN_VALUE: Loc = Loc {
+    file: "<function value>",
+    line: 0,
+    col: 0,
+};
+
+/// The `direct` handlers of code of the M tier: the `direct` arms of the
+/// handlers in place (`M::push_direct`), the innermost first, then `ev`, the
+/// handlers of the code that runs the computation now. An operation one in
+/// `m` answers runs its arm in place, to its end. `at` is where the code is.
+pub fn bridge<'b, 'e: 'b, 'a: 'b>(ev: &Ev<'e>, m: &M<'a>, at: Loc) -> Ev<'b> {
+    if !m.any_direct() {
+        return ev.clone();
+    }
+    ev.push(Rc::new(Bridge { m: m.clone(), at }))
+}
+
+struct Bridge<'a> {
+    m: M<'a>,
+    at: Loc,
+}
+
+impl<'a> Bridge<'a> {
+    fn frames(&self) -> impl Iterator<Item = &Frame<'a>> {
+        let mut cur = &self.m;
+        std::iter::from_fn(move || {
+            let f = cur.0.as_deref()?;
+            cur = &f.outer;
+            Some(f)
+        })
+    }
+}
+
+impl crate::ev::DirectHandler for Bridge<'_> {
+    fn handles(&self, op: OpId) -> bool {
+        self.frames()
+            .any(|f| f.direct.is_some() && f.ops.contains(&op))
+    }
+
+    fn handle(&self, outer: &Ev<'_>, op: OpId, io: &mut dyn std::any::Any) -> bool {
+        let Some(adapt) = self
+            .frames()
+            .find(|f| f.ops.contains(&op))
+            .and_then(|f| f.direct.clone())
+        else {
+            return false;
+        };
+        let (m, at) = (&self.m, self.at);
+        adapt(op, io, &mut |op, args| answer_in(outer, m, op, args, at))
+    }
+}
+
+/// Runs the arm of the handler in `m` that answers `op`, to its end: the
+/// operations it performs that nothing in `m` answers go to `ev`.
+fn answer_in<'a>(
     ev: &Ev<'_>,
     m: &M<'a>,
     op: Op,
     args: Payload,
     at: Loc,
-    k: Kont<'a, Payload>,
-) -> Step<'a> {
-    if ev.answers(op.id) {
-        let answer = ev.perform(op, args, at);
-        let m = m.clone();
-        return Step::More(Box::new(move || k(&m, answer)));
+) -> Result<Payload, Payload> {
+    let slot: Slot<Payload> = Rc::new(RefCell::new(None));
+    let s2 = slot.clone();
+    let k: Kont<'a, Payload> = Rc::new(move |_, _, v| {
+        *s2.borrow_mut() = Some(v);
+        Step::Done
+    });
+    let mut step = route(ev, m, op, args, at, Some(&k), None)?;
+    loop {
+        match step {
+            Step::Done => break,
+            Step::More(g) => step = g(ev),
+            Step::Await(call) => step = await_now(ev, call),
+            Step::Fail(a) => crate::a::unhandled(a),
+            Step::Escape { op, args, at, k, m } => {
+                if !ev.answers(op.id) {
+                    error(messages::nothing_handles(op.name), at)
+                }
+                step = k(ev, &m, ev.perform(op, args, at));
+            }
+            Step::NoMatch(_) => {
+                panic!("tauto: an arm answered nothing (a bug in the generated code)")
+            }
+        }
     }
-    perform(m, op, args, at, k)
+    let answer = slot.borrow_mut().take();
+    Ok(answer.unwrap_or_else(|| {
+        panic!("tauto: a direct arm did not answer (a bug in the generated code)")
+    }))
 }
 
 /// An abort (an operation of `resume 0`): the nearest handler with an arm that
 /// fits takes it.
-pub fn abort<'a>(m: &M<'a>, a: Abort) -> Step<'a> {
+pub fn abort<'a>(ev: &Ev<'_>, m: &M<'a>, a: Abort) -> Step<'a> {
     let Abort { op, args, at } = a;
-    match route(m, op, args, at, None, None) {
+    match route(ev, m, op, args, at, None, None) {
         Ok(step) => step,
         Err(args) => Step::Fail(Abort { op, args, at }),
     }
@@ -331,9 +467,9 @@ pub fn abort<'a>(m: &M<'a>, a: Abort) -> Step<'a> {
 
 /// One step of a loop or a call that may not stop, in the M tier: it takes a
 /// step off every budget in the handlers in place; when one has none left,
-/// `Exceeded` is performed outside it, and the computation goes on with `k`
+/// `exceeded` is performed outside it, and the computation goes on with `k`
 /// as the arm answers.
-pub fn tick<'a>(m: &M<'a>, at: Loc, k: Kont<'a, ()>) -> Step<'a> {
+pub fn tick<'a>(ev: &Ev<'_>, m: &M<'a>, at: Loc, k: Kont<'a, ()>) -> Step<'a> {
     let mut ran_out: Option<BudgetFrame> = None;
     let mut cur = m;
     let mut any = false;
@@ -349,7 +485,7 @@ pub fn tick<'a>(m: &M<'a>, at: Loc, k: Kont<'a, ()>) -> Step<'a> {
     }
     if !any {
         crate::host_tick(at);
-        return k(m, ());
+        return k(ev, m, ());
     }
     let Some(b) = ran_out else {
         let mut cur = m;
@@ -362,17 +498,17 @@ pub fn tick<'a>(m: &M<'a>, at: Loc, k: Kont<'a, ()>) -> Step<'a> {
             }
             cur = &f.outer;
         }
-        return k(m, ());
+        return k(ev, m, ());
     };
     let id = b.id;
-    let cont: Kont<'a, Payload> = Rc::new(move |m2, answer| match (b.answer)(answer) {
+    let cont: Kont<'a, Payload> = Rc::new(move |ev, m2, answer| match (b.answer)(answer) {
         Answer::Value(v) => {
             // The budget ends: its value goes where the budget's goes, under
             // the handlers outside it.
             let mut cur = m2;
             while let Some(f) = &cur.0 {
                 if f.budget.as_ref().map(|x| x.id) == Some(id) {
-                    return (f.target)(&f.outer, v);
+                    return (f.target)(ev, &f.outer, v);
                 }
                 cur = &f.outer;
             }
@@ -380,11 +516,12 @@ pub fn tick<'a>(m: &M<'a>, at: Loc, k: Kont<'a, ()>) -> Step<'a> {
         }
         Answer::More(n) => {
             b.left.set(crate::budget::refill(n, b.memory));
-            k(m2, ())
+            k(ev, m2, ())
         }
     });
     let args = (b_info(m, id))();
     match route(
+        ev,
         m,
         crate::budget::OP_EXCEEDED,
         args,
@@ -434,38 +571,111 @@ impl<'a, A, R> OCb<'a, A, R> {
     }
 }
 
-/// A call of an [`OCb`] in code of the M tier: its future is polled here,
-/// with the budgets in the handlers in place counting its steps. When one
-/// runs out, `Exceeded` is performed outside it as [`tick`] does, and the
-/// call goes on (or the budget ends) as the arm answers.
-///
-/// The future borrows the callback, so it cannot outlive this call: the arm
-/// is run to its answer here, and an operation it leaves to the driver
-/// outside must be one `ev` answers.
-pub fn call_o<'a, A, R: 'static>(
-    ev: &Ev<'_>,
+/// What a driver awaits for code of the M tier: a call of a function of the
+/// O tier. The driver starts it with its own handlers and holds its future,
+/// so the call can stop for an operation that is answered outside the
+/// computation, and go on when the driver is polled again. A continuation
+/// never holds the future: one that runs again makes the call again.
+pub trait Awaited<'a> {
+    /// The call, which ends with the step the computation goes on with.
+    fn start<'e>(self: Box<Self>, ev: &'e Ev<'e>) -> crate::o::Fut<'e, Step<'a>>
+    where
+        'a: 'e;
+}
+
+/// A call of an [`OCb`] in code of the M tier: the driver awaits it
+/// ([`Awaited`]), with the budgets in the handlers in place counting its
+/// steps. When one runs out, `exceeded` is performed outside it as [`tick`]
+/// does, and the call goes on (or the budget ends) as the arm answers.
+pub fn call_o<'a, A: 'a, R: 'static>(
     m: &M<'a>,
     at: Loc,
     f: &OCb<'a, A, R>,
     args: A,
     k: Kont<'a, R>,
 ) -> Step<'a> {
-    let outcome = {
-        let mut held = f.0.borrow_mut();
-        poll_o(ev, m, at, held.call(ev, args))
-    };
-    outcome.finish(k)
+    Step::Await(Box::new(CallCb {
+        m: m.clone(),
+        at,
+        f: f.clone(),
+        args,
+        k,
+    }))
 }
 
-/// Polls an owned callback future under the budgets of the M tier.
-pub fn call_o_future<'a, R: 'static>(
-    ev: &Ev<'_>,
-    m: &M<'a>,
+struct CallCb<'a, A, R> {
+    m: M<'a>,
     at: Loc,
-    future: crate::o::Fut<'_, R>,
+    f: OCb<'a, A, R>,
+    args: A,
     k: Kont<'a, R>,
-) -> Step<'a> {
-    poll_o(ev, m, at, future).finish(k)
+}
+
+impl<'a, A: 'a, R: 'static> Awaited<'a> for CallCb<'a, A, R> {
+    fn start<'e>(self: Box<Self>, ev: &'e Ev<'e>) -> crate::o::Fut<'e, Step<'a>>
+    where
+        'a: 'e,
+    {
+        let CallCb { m, at, f, args, k } = *self;
+        Box::pin(async move {
+            let inner = bridge(ev, &m, at);
+            // The call borrows the callback to its end.
+            let mut held = f.0.borrow_mut();
+            let outcome = poll_o(ev, &m, at, held.call(&inner, args)).await;
+            outcome.finish(ev, k)
+        })
+    }
+}
+
+/// A call of a function value of the O tier in code of the M tier, as
+/// [`call_o`]: `call` makes the call with the handlers it is given.
+pub fn call_o_future<'a, R: 'static, F>(m: &M<'a>, at: Loc, call: F, k: Kont<'a, R>) -> Step<'a>
+where
+    F: for<'e> FnOnce(&'e Ev<'e>) -> crate::o::Fut<'e, R> + 'a,
+{
+    Step::Await(Box::new(CallFn {
+        m: m.clone(),
+        at,
+        call,
+        k,
+    }))
+}
+
+struct CallFn<'a, R, F> {
+    m: M<'a>,
+    at: Loc,
+    call: F,
+    k: Kont<'a, R>,
+}
+
+impl<'a, R: 'static, F> Awaited<'a> for CallFn<'a, R, F>
+where
+    F: for<'e> FnOnce(&'e Ev<'e>) -> crate::o::Fut<'e, R> + 'a,
+{
+    fn start<'e>(self: Box<Self>, ev: &'e Ev<'e>) -> crate::o::Fut<'e, Step<'a>>
+    where
+        'a: 'e,
+    {
+        let CallFn { m, at, call, k } = *self;
+        Box::pin(async move {
+            let inner = bridge(ev, &m, at);
+            let outcome = poll_o(ev, &m, at, call(&inner)).await;
+            outcome.finish(ev, k)
+        })
+    }
+}
+
+/// [`Awaited`] in a driver that cannot stop: the call runs to its end here.
+/// Such a driver runs a computation whose operations are all answered inside
+/// it, so the call leaves none to the code outside.
+fn await_now<'a>(ev: &Ev<'_>, call: Box<dyn Awaited<'a> + 'a>) -> Step<'a> {
+    let mut fut = call.start(ev);
+    match crate::o::poll_once(fut.as_mut()) {
+        std::task::Poll::Ready(step) => step,
+        std::task::Poll::Pending => panic!(
+            "tauto: a call stopped for an operation where nothing outside answers (a bug in the generated code)"
+        ),
+    }
 }
 
 enum OOutcome<'a, R> {
@@ -475,26 +685,44 @@ enum OOutcome<'a, R> {
 }
 
 impl<'a, R> OOutcome<'a, R> {
-    fn finish(self, k: Kont<'a, R>) -> Step<'a> {
+    fn finish(self, ev: &Ev<'_>, k: Kont<'a, R>) -> Step<'a> {
         match self {
-            Self::Value(m, value) => k(&m, value),
+            Self::Value(m, value) => k(ev, &m, value),
             Self::Step(step) => step,
-            Self::Target(target, outer, value) => target(&outer, value),
+            Self::Target(target, outer, value) => target(ev, &outer, value),
         }
     }
 }
 
-fn poll_o<'a, R>(
-    ev: &Ev<'_>,
-    m: &M<'a>,
-    at: Loc,
-    mut fut: crate::o::Fut<'_, R>,
-) -> OOutcome<'a, R> {
-    let mut m = m.clone();
-    loop {
+/// How a call of the O tier in code of the M tier stopped.
+enum Stopped<R> {
+    Value(R),
+    /// The budget of this number, one of the handlers in place, ran out.
+    Budget(u32),
+    /// For an operation a handler in place has an arm for; it is in the slot.
+    Request,
+}
+
+/// A call of the O tier polled under the budgets of `m`, up to where it
+/// stops for the handlers in place ([`Stopped`]). An operation none of them
+/// has an arm for is left in the slot for the code outside the computation,
+/// which answers it and polls again.
+struct UnderBudgets<'p, 'f, 'a, R> {
+    fut: &'p mut crate::o::Fut<'f, R>,
+    m: &'p M<'a>,
+}
+
+impl<R> std::future::Future for UnderBudgets<'_, '_, '_, R> {
+    type Output = Stopped<R>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.get_mut();
         let polled = {
             let mut frames = Vec::new();
-            let mut cur = &m;
+            let mut cur = this.m;
             while let Some(fr) = &cur.0 {
                 if let Some(b) = &fr.budget {
                     frames.push(b.clone());
@@ -507,19 +735,83 @@ fn poll_o<'a, R>(
                 .rev()
                 .map(|b| crate::budget::ActiveBudget::enter(b.id, b.left.clone(), b.memory))
                 .collect();
-            crate::o::poll_once(fut.as_mut())
+            this.fut.as_mut().poll(cx)
         };
-        let id = match polled {
-            std::task::Poll::Ready(v) => {
+        use std::task::Poll;
+        match polled {
+            Poll::Ready(v) => Poll::Ready(Stopped::Value(v)),
+            Poll::Pending => match crate::o::peek() {
+                crate::o::Peek::Budget(id) if find_budget(this.m, id).is_some() => {
+                    Poll::Ready(Stopped::Budget(crate::o::take_budget()))
+                }
+                crate::o::Peek::Request(op) if answers(this.m, op.id) => {
+                    Poll::Ready(Stopped::Request)
+                }
+                _ => Poll::Pending,
+            },
+        }
+    }
+}
+
+/// Whether a handler in `m` has an arm for `op`.
+fn answers(m: &M<'_>, op: OpId) -> bool {
+    let mut cur = m;
+    while let Some(f) = &cur.0 {
+        if f.ops.contains(&op) {
+            return true;
+        }
+        cur = &f.outer;
+    }
+    false
+}
+
+async fn poll_o<'a, R>(
+    ev: &Ev<'_>,
+    m: &M<'a>,
+    at: Loc,
+    mut fut: crate::o::Fut<'_, R>,
+) -> OOutcome<'a, R> {
+    let mut m = m.clone();
+    loop {
+        let id = match (UnderBudgets {
+            fut: &mut fut,
+            m: &m,
+        })
+        .await
+        {
+            Stopped::Value(v) => {
                 drop(fut);
                 return OOutcome::Value(m, v);
             }
-            std::task::Poll::Pending => match crate::o::peek() {
-                crate::o::Peek::Budget(_) => crate::o::take_budget(),
-                _ => panic!(
-                    "tauto: a divergent callback suspended for an operation (a bug in the generated code)"
-                ),
-            },
+            Stopped::Budget(id) => id,
+            Stopped::Request => {
+                // The arm runs as for an operation of `resume 0`: the call
+                // is left where it stopped, and ends when the arm is found.
+                // What is left of it is a future, which a continuation of
+                // this tier cannot hold, so an arm that resumes is refused.
+                let (op, args, at) = crate::o::take_request();
+                let name = op.name;
+                let resumed: Kont<'a, Payload> = Rc::new(move |_, _, _| {
+                    error(
+                        format!(
+                            "not supported by the rust backend: `{name}` is resumed by a handler that also answers an operation of `resume ω`, for a function value that is resumed at most once"
+                        ),
+                        at,
+                    )
+                });
+                match route(ev, &m, op, args, at, Some(&resumed), None) {
+                    Ok(step) => {
+                        drop(fut);
+                        return OOutcome::Step(step);
+                    }
+                    Err(args) => {
+                        // No arm's pattern fits: the code outside answers.
+                        crate::o::put_back(op, args, at);
+                        crate::o::forward().await;
+                        continue;
+                    }
+                }
+            }
         };
         let b = find_budget(&m, id).unwrap_or_else(|| {
             panic!("tauto: the budget is not in place (a bug in the generated code)")
@@ -527,12 +819,13 @@ fn poll_o<'a, R>(
         let answered: Rc<RefCell<Option<(M<'a>, Answer)>>> = Rc::new(RefCell::new(None));
         let slot = answered.clone();
         let answer = b.answer;
-        let cont: Kont<'a, Payload> = Rc::new(move |m2, a| {
+        let cont: Kont<'a, Payload> = Rc::new(move |_, m2, a| {
             *slot.borrow_mut() = Some((m2.clone(), answer(a)));
             Step::Done
         });
         let args = (b.info)();
         let mut step = match route(
+            ev,
             &m,
             crate::budget::OP_EXCEEDED,
             args,
@@ -549,13 +842,14 @@ fn poll_o<'a, R>(
         loop {
             match step {
                 Step::Done => break,
-                Step::More(g) => step = g(),
+                Step::More(g) => step = g(ev),
+                Step::Await(call) => step = await_now(ev, call),
                 Step::Fail(a) => return OOutcome::Step(Step::Fail(a)),
                 Step::Escape { op, args, at, k, m } => {
                     if !ev.answers(op.id) {
                         error(messages::nothing_handles(op.name), at)
                     }
-                    step = k(&m, ev.perform(op, args, at));
+                    step = k(ev, &m, ev.perform(op, args, at));
                 }
                 Step::NoMatch(_) => {
                     panic!("tauto: an arm answered nothing (a bug in the generated code)")
@@ -603,31 +897,33 @@ fn find_budget(m: &M<'_>, id: u32) -> Option<BudgetFrame> {
 type Slot<T> = Rc<RefCell<Option<T>>>;
 
 fn start<'a, T: 'static>(
-    start: impl FnOnce(&M<'a>, Kont<'a, T>) -> Step<'a>,
+    ev: &Ev<'_>,
+    start: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>) -> Step<'a>,
 ) -> (Step<'a>, Slot<T>) {
     let slot: Slot<T> = Rc::new(RefCell::new(None));
     let s2 = slot.clone();
-    let fin: Kont<'a, T> = Rc::new(move |_, v| {
+    let fin: Kont<'a, T> = Rc::new(move |_, _, v| {
         *s2.borrow_mut() = Some(v);
         Step::Done
     });
-    (start(&M::empty(), fin), slot)
+    (start(ev, &M::empty(), fin), slot)
 }
 
 fn start_r<'a, T: 'static, R: 'static>(
-    start: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
+    ev: &Ev<'_>,
+    start: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
 ) -> (Step<'a>, Slot<Flow<T, R>>) {
     let slot: Slot<Flow<T, R>> = Rc::new(RefCell::new(None));
     let (s1, s2) = (slot.clone(), slot.clone());
-    let fin: Kont<'a, T> = Rc::new(move |_, v| {
+    let fin: Kont<'a, T> = Rc::new(move |_, _, v| {
         *s1.borrow_mut() = Some(Flow::Value(v));
         Step::Done
     });
-    let fret: Kont<'a, R> = Rc::new(move |_, v| {
+    let fret: Kont<'a, R> = Rc::new(move |_, _, v| {
         *s2.borrow_mut() = Some(Flow::Return(v));
         Step::Done
     });
-    (start(&M::empty(), fin, fret), slot)
+    (start(ev, &M::empty(), fin, fret), slot)
 }
 
 fn finished<T>(slot: &Slot<T>) -> T {
@@ -638,27 +934,31 @@ fn finished<T>(slot: &Slot<T>) -> T {
 
 /// Runs a computation of the M tier in a function of the S tier: every
 /// operation it performs is answered inside it.
-pub fn run<'a, T: 'static>(f: impl FnOnce(&M<'a>, Kont<'a, T>) -> Step<'a>) -> T {
+pub fn run<'a, T: 'static>(f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>) -> Step<'a>) -> T {
     run_in(&Ev::empty(), f)
 }
 
 /// [`run`] in a function of the A tier: an abort no handler of the
 /// computation takes goes on in the caller.
-pub fn run_a<'a, T: 'static>(f: impl FnOnce(&M<'a>, Kont<'a, T>) -> Step<'a>) -> Result<T, Abort> {
+pub fn run_a<'a, T: 'static>(
+    f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>) -> Step<'a>,
+) -> Result<T, Abort> {
     run_a_in(&Ev::empty(), f)
 }
 
 /// [`run`] in a function of the O tier: an operation no handler of the
 /// computation answers is performed in the caller's.
-pub async fn run_o<'a, T: 'static>(f: impl FnOnce(&M<'a>, Kont<'a, T>) -> Step<'a>) -> T {
+pub async fn run_o<'a, T: 'static>(f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>) -> Step<'a>) -> T {
     run_o_in(&Ev::empty(), f).await
 }
 
-/// [`run`] for a computation that holds no `direct` handler from around
-/// it (the body of a `handle` whose `k` is kept as a value): a `direct`
-/// operation it does not answer is answered by `ev`, the handlers of the
-/// code that runs it now.
-pub fn run_in<'a, T: 'static>(ev: &Ev<'_>, f: impl FnOnce(&M<'a>, Kont<'a, T>) -> Step<'a>) -> T {
+/// [`run`] with `ev` the `direct` handlers of the code that runs the
+/// computation: a `direct` operation no handler inside it answers is
+/// answered by `ev`.
+pub fn run_in<'a, T: 'static>(
+    ev: &Ev<'_>,
+    f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>) -> Step<'a>,
+) -> T {
     match run_a_in(ev, f) {
         Ok(v) => v,
         Err(a) => crate::a::unhandled(a),
@@ -667,17 +967,17 @@ pub fn run_in<'a, T: 'static>(ev: &Ev<'_>, f: impl FnOnce(&M<'a>, Kont<'a, T>) -
 
 pub fn run_a_in<'a, T: 'static>(
     ev: &Ev<'_>,
-    f: impl FnOnce(&M<'a>, Kont<'a, T>) -> Step<'a>,
+    f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>) -> Step<'a>,
 ) -> Result<T, Abort> {
-    let (step, slot) = start(f);
+    let (step, slot) = start(ev, f);
     drive_a(ev, step, &slot)
 }
 
 pub async fn run_o_in<'a, T: 'static>(
     ev: &Ev<'_>,
-    f: impl FnOnce(&M<'a>, Kont<'a, T>) -> Step<'a>,
+    f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>) -> Step<'a>,
 ) -> T {
-    let (step, slot) = start(f);
+    let (step, slot) = start(ev, f);
     drive_o(ev, step, &slot).await
 }
 
@@ -691,26 +991,26 @@ pub enum Flow<T, R> {
 /// [`run`] for a computation that may `return`: the second continuation
 /// ends it with the value the function returns.
 pub fn run_r<'a, T: 'static, R: 'static>(
-    f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
+    f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
 ) -> Flow<T, R> {
     run_r_in(&Ev::empty(), f)
 }
 
 pub fn run_ar<'a, T: 'static, R: 'static>(
-    f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
+    f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
 ) -> Result<Flow<T, R>, Abort> {
     run_ar_in(&Ev::empty(), f)
 }
 
 pub async fn run_or<'a, T: 'static, R: 'static>(
-    f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
+    f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
 ) -> Flow<T, R> {
     run_or_in(&Ev::empty(), f).await
 }
 
 pub fn run_r_in<'a, T: 'static, R: 'static>(
     ev: &Ev<'_>,
-    f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
+    f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
 ) -> Flow<T, R> {
     match run_ar_in(ev, f) {
         Ok(v) => v,
@@ -720,17 +1020,17 @@ pub fn run_r_in<'a, T: 'static, R: 'static>(
 
 pub fn run_ar_in<'a, T: 'static, R: 'static>(
     ev: &Ev<'_>,
-    f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
+    f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
 ) -> Result<Flow<T, R>, Abort> {
-    let (step, slot) = start_r(f);
+    let (step, slot) = start_r(ev, f);
     drive_a(ev, step, &slot)
 }
 
 pub async fn run_or_in<'a, T: 'static, R: 'static>(
     ev: &Ev<'_>,
-    f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
+    f: impl FnOnce(&Ev<'_>, &M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
 ) -> Flow<T, R> {
-    let (step, slot) = start_r(f);
+    let (step, slot) = start_r(ev, f);
     drive_o(ev, step, &slot).await
 }
 
@@ -738,13 +1038,14 @@ fn drive_a<'a, T>(ev: &Ev<'_>, mut step: Step<'a>, slot: &Slot<T>) -> Result<T, 
     loop {
         match step {
             Step::Done => return Ok(finished(slot)),
-            Step::More(f) => step = f(),
+            Step::More(f) => step = f(ev),
+            Step::Await(call) => step = await_now(ev, call),
             Step::Fail(a) => return Err(a),
             Step::Escape { op, args, at, k, m } => {
                 if !ev.answers(op.id) {
                     error(messages::nothing_handles(op.name), at)
                 }
-                step = k(&m, ev.perform(op, args, at));
+                step = k(ev, &m, ev.perform(op, args, at));
             }
             Step::NoMatch(_) => {
                 panic!("tauto: an arm answered nothing (a bug in the generated code)")
@@ -757,7 +1058,8 @@ async fn drive_o<'a, T>(ev: &Ev<'_>, mut step: Step<'a>, slot: &Slot<T>) -> T {
     loop {
         match step {
             Step::Done => return finished(slot),
-            Step::More(f) => step = f(),
+            Step::More(f) => step = f(ev),
+            Step::Await(call) => step = call.start(ev).await,
             Step::Fail(a) => crate::o::reraise(a).await,
             Step::NoMatch(_) => {
                 panic!("tauto: an arm answered nothing (a bug in the generated code)")
@@ -768,7 +1070,7 @@ async fn drive_o<'a, T>(ev: &Ev<'_>, mut step: Step<'a>, slot: &Slot<T>) -> T {
                 } else {
                     crate::o::perform(op, args, at).await
                 };
-                step = k(&m, answer);
+                step = k(ev, &m, answer);
             }
         }
     }
@@ -777,15 +1079,15 @@ async fn drive_o<'a, T>(ev: &Ev<'_>, mut step: Step<'a>, slot: &Slot<T>) -> T {
 /// `k(a)` called outside its arm, in code of the S tier: the body goes on
 /// from the operation, under the handler, to the end of the `handle`.
 pub fn resume<'a, A: 'static, R: 'static>(ev: &Ev<'_>, k: &Resume<'a>, a: A) -> R {
-    run_in(ev, |m, fin| k.call(m, Box::new(a), erase(fin)))
+    run_in(ev, |ev, m, fin| k.call(ev, m, Box::new(a), erase(fin)))
 }
 
 pub fn resume_a<'a, A: 'static, R: 'static>(ev: &Ev<'_>, k: &Resume<'a>, a: A) -> Result<R, Abort> {
-    run_a_in(ev, |m, fin| k.call(m, Box::new(a), erase(fin)))
+    run_a_in(ev, |ev, m, fin| k.call(ev, m, Box::new(a), erase(fin)))
 }
 
 pub async fn resume_o<'a, A: 'static, R: 'static>(ev: &Ev<'_>, k: &Resume<'a>, a: A) -> R {
-    run_o_in(ev, |m, fin| k.call(m, Box::new(a), erase(fin))).await
+    run_o_in(ev, |ev, m, fin| k.call(ev, m, Box::new(a), erase(fin))).await
 }
 
 // `k` kept as a value, as a function value of the S or A tier: each call
@@ -794,13 +1096,13 @@ pub async fn resume_o<'a, A: 'static, R: 'static>(ev: &Ev<'_>, k: &Resume<'a>, a
 macro_rules! resume_fn {
     ($rc:ident, $boxed:ident, $run:ident; $r:ty) => {
         pub fn $rc<A: 'static, R: 'static>(k: Resume<'static>) -> Rc<dyn Fn(&Ev<'_>, A) -> $r> {
-            Rc::new(move |ev, a| $run(ev, |m, fin| k.call(m, Box::new(a), erase(fin))))
+            Rc::new(move |ev, a| $run(ev, |ev, m, fin| k.call(ev, m, Box::new(a), erase(fin))))
         }
 
         pub fn $boxed<A: 'static, R: 'static>(
             k: Resume<'static>,
         ) -> Box<dyn FnOnce(&Ev<'_>, A) -> $r> {
-            Box::new(move |ev, a| $run(ev, |m, fin| k.call(m, Box::new(a), erase(fin))))
+            Box::new(move |ev, a| $run(ev, |ev, m, fin| k.call(ev, m, Box::new(a), erase(fin))))
         }
     };
 }
@@ -814,17 +1116,17 @@ resume_fn!(resume_rc_a, resume_box_a, run_a_in; Result<R, Abort>);
 macro_rules! mfn {
     ($rc:ident, $boxed:ident; $($a:ident),*) => {
         #[allow(non_snake_case)]
-        pub fn $rc<'a, R: 'static, $($a: 'static,)* F>(f: F) -> Rc<dyn Fn(&Ev<'a>, &M<'a>, $($a,)* Kont<'a, R>) -> Step<'a> + 'a>
+        pub fn $rc<'a, R: 'static, $($a: 'static,)* F>(f: F) -> Rc<dyn Fn(&Ev<'_>, &M<'a>, $($a,)* Kont<'a, R>) -> Step<'a> + 'a>
         where
-            F: Fn(&Ev<'a>, &M<'a>, $($a,)* Kont<'a, R>) -> Step<'a> + 'a,
+            F: Fn(&Ev<'_>, &M<'a>, $($a,)* Kont<'a, R>) -> Step<'a> + 'a,
         {
             Rc::new(f)
         }
 
         #[allow(non_snake_case)]
-        pub fn $boxed<'a, R: 'static, $($a: 'static,)* F>(f: F) -> Box<dyn FnOnce(&Ev<'a>, &M<'a>, $($a,)* Kont<'a, R>) -> Step<'a> + 'a>
+        pub fn $boxed<'a, R: 'static, $($a: 'static,)* F>(f: F) -> Box<dyn FnOnce(&Ev<'_>, &M<'a>, $($a,)* Kont<'a, R>) -> Step<'a> + 'a>
         where
-            F: FnOnce(&Ev<'a>, &M<'a>, $($a,)* Kont<'a, R>) -> Step<'a> + 'a,
+            F: FnOnce(&Ev<'_>, &M<'a>, $($a,)* Kont<'a, R>) -> Step<'a> + 'a,
         {
             Box::new(f)
         }
@@ -854,21 +1156,22 @@ mod tests {
         let kept: Rc<RefCell<Option<Resume<'static>>>> = Rc::default();
         {
             let into = kept.clone();
-            let target = kont(move |_, _: Payload| {
+            let target = kont(move |_, _, _: Payload| {
                 let _ = &around;
                 Step::Done
             });
-            let a = arm(move |_, _, _, _, _, k| {
+            let a = arm(move |_, _, _, _, _, _, k| {
                 *into.borrow_mut() = Some(k);
                 Step::Done
             });
             let m = M::empty().push(OPS, a, target);
             let step = perform(
+                &Ev::empty(),
                 &m,
                 Op::new(7, "tick"),
                 Box::new(()),
                 at,
-                kont(|_, _| Step::Done),
+                kont(|_, _, _| Step::Done),
             );
             assert!(matches!(step, Step::Done));
         }

@@ -1,0 +1,12 @@
+effect pause(): Unit resume ω
+fn pure_helper(): Unit { #() }
+fn resumed_return(n: i64, previous: &(() -> i64)): i64 ! {div, overflow} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); 7 } with {
+      pause(), k => resumed_return(n - 1, () => k(#()))
+      return value => { pure_helper(); x }
+    }
+  }
+}
+show(&resumed_return(1, () => 99))

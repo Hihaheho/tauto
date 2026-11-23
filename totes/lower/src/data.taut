@@ -1,0 +1,544 @@
+import std::base
+import std::map
+import std::text
+import std::text_ops
+import surface::surface
+import "../../nir/src/model.taut"
+import "../../nibcheck/src/ty.taut"
+import "../../nibcheck/src/datas.taut"
+import "../../identity/src/identity.taut"
+
+// The `data` items of a package (`DataDef` of `crates/tauto-nir`, made by
+// `data_def` of `crates/tauto-nibcheck/src/lower/ty.rs`), from the declared
+// data types. A type the port does not write yet gives `None`.
+
+pub fn lower_width(w: Width): NWidth {
+  match w {
+    Width8 => NW8
+    Width16 => NW16
+    Width32 => NW32
+    Width64 => NW64
+    WidthU8 => NU8
+    WidthU16 => NU16
+    WidthU32 => NU32
+    WidthU64 => NU64
+    WidthHost => NHost
+    WidthNat => NNat
+  }
+}
+
+pub fn lower_kind_word(k: Kind): NKindWord {
+  match k {
+    KindCopy => NKCopy
+    KindShared => NKShared
+    KindAffine => NKAffine
+    KindLinear => NKLinear
+  }
+}
+
+mutual {
+  pub fn lower_tys(ts: List(Ty)): Option(List(NTy)) {
+    match ts {
+      Nil => Some(Nil)
+      Cons(t, rest) => match lower_ty(t) {
+        None => None
+        Some(n) => match lower_tys(rest) {
+          None => None
+          Some(ns) => Some(Cons(n, ns))
+        }
+      }
+    }
+  }
+
+  // `conv` of `lower/ty.rs`, for the types a data field holds.
+  pub fn lower_ty(t: Ty): Option(NTy) {
+    match t {
+      TyInt(w) => Some(NInt(lower_width(w)))
+      TyBool => Some(NBool)
+      TyText => Some(NText)
+      TyUnit => Some(NUnit)
+      TyNever => Some(NNever)
+      TyDecimal => None
+      TyFloat => Some(NFloat)
+      TyFloat32 => Some(NFloat32)
+      TyFn(ps, r, k) => match lower_tys(ps) {
+        None => None
+        Some(params) => match lower_ty(r) {
+          None => None
+          Some(ret) => Some(NFn(params, ret, kind_name(k), "S"))
+        }
+      }
+      TyUnion(ms) => None
+      TyProduct(ms) => match lower_tys(ms) {
+        None => None
+        Some(ns) => match ns {
+          Cons(x, Cons(y, Nil)) => Some(NPair(x, y))
+          Cons(x, rest) => None
+          Nil => None
+        }
+      }
+      TyTagged(tags, inner) => lower_ty(inner)
+      TyNamed(n, args) => match lower_tys(args) {
+        None => None
+        Some(a) => lower_named(surface_name_text(n), a)
+      }
+      TyParam(n, bound) => Some(NParam(n))
+      TyInfo(inner) => None
+      TyBorrow(inner, mutable) => None
+      TyVar(v) => None
+      TyPoly(gs, inner) => None
+      TyApp(head, arg) => None
+    }
+  }
+}
+
+pub fn lower_named(n: Text, a: List(NTy)): Option(NTy) {
+  match a {
+    Nil => if n == "Nat" { Some(NInt(NNat)) } else if n == "Buf" { Some(NBuf) } else if lower_std0(n) {
+      Some(NStd(n, Nil))
+    } else { Some(NData(n, Nil)) }
+    Cons(x, Nil) => if n == "Vec" { Some(NVec(x)) } else if n == "Array" { Some(NArray(x)) } else if n == "Slice" {
+      Some(NSlice(x))
+    } else if n == "Option" { Some(NOption(x)) } else if lower_std1(n) { Some(NStd(n, Cons(x, Nil))) } else if lower_std_empty(n) {
+      Some(NStd(n, Nil))
+    } else { Some(NData(n, a)) }
+    Cons(x, Cons(y, Nil)) => if n == "Result" {
+      Some(NResult(x, y))
+    } else if n == "Pair" { Some(NPair(x, y)) } else { Some(NData(n, a)) }
+    Cons(x, Cons(y, Cons(z, Nil))) => if n == "Slots" { Some(NStd(n, a)) } else { Some(NData(n, a)) }
+    Cons(x, rest) => Some(NData(n, a))
+  }
+}
+
+pub fn lower_std0(n: Text): Bool {
+  n == "SynDeclaration" || n == "Atomic" || n == "Bytes" || n == "Signal" || n == "CancelSource"
+}
+
+pub fn lower_std1(n: Text): Bool {
+  n == "Ref" || n == "Weak" || n == "Mutex" || n == "MutexGuard" || n == "Pending" || n == "Secret" || n == "Place" || n == "RcPlace"
+}
+
+// `Region(A)` and `RcRegion(A)` are written without their argument.
+pub fn lower_std_empty(n: Text): Bool { n == "Region" || n == "RcRegion" }
+
+pub fn lower_params(gs: List(Text), k: Kind): List(Ty) {
+  match gs {
+    Nil => Nil
+    Cons(g, rest) => Cons(TyParam(g, k), lower_params(rest, k))
+  }
+}
+
+mutual {
+  // Whether a value of `t` holds a value of `owner` without an indirection.
+  pub fn lower_reaches(t: Ty, owner: Text): Bool {
+    match t {
+      TyNamed(n, args) => surface_name_text(n) == owner || if surface_name_text(n) == "Option" || surface_name_text(n) == "Result" || surface_name_text(n) == "Pair" {
+        lower_reaches_any(args, owner)
+      } else { false }
+      TyProduct(ms) => lower_reaches_any(ms, owner)
+      TyTagged(tags, inner) => lower_reaches(inner, owner)
+      TyInt(w) => false
+      TyBool => false
+      TyText => false
+      TyUnit => false
+      TyNever => false
+      TyDecimal => false
+      TyFloat => false
+      TyFloat32 => false
+      TyFn(ps, r, k) => false
+      TyUnion(ms) => false
+      TyParam(n, bound) => false
+      TyInfo(inner) => false
+      TyBorrow(inner, mutable) => false
+      TyVar(v) => false
+      TyPoly(gs, inner) => false
+      TyApp(head, arg) => false
+    }
+  }
+
+  pub fn lower_reaches_any(ts: List(Ty), owner: Text): Bool {
+    match ts {
+      Nil => false
+      Cons(t, rest) => lower_reaches(t, owner) || lower_reaches_any(rest, owner)
+    }
+  }
+}
+
+// `&A` of a duplicable `A` is the value `A` (`plain_borrow`).
+pub fn lower_plain_borrow(datas: Datas, t: Ty): Ty {
+  match t {
+    TyBorrow(inner, mutable) => match mutable {
+      true => t
+      false => match datas_kind(datas, inner) {
+        KindCopy => inner
+        KindShared => inner
+        KindAffine => t
+        KindLinear => t
+      }
+    }
+    TyInt(w) => t
+    TyBool => t
+    TyText => t
+    TyUnit => t
+    TyNever => t
+    TyDecimal => t
+    TyFloat => t
+    TyFloat32 => t
+    TyFn(ps, r, k) => t
+    TyUnion(ms) => t
+    TyProduct(ms) => t
+    TyTagged(tags, inner) => t
+    TyNamed(n, args) => t
+    TyParam(n, bound) => t
+    TyInfo(inner) => t
+    TyVar(v) => t
+    TyPoly(gs, inner) => t
+    TyApp(head, arg) => t
+  }
+}
+
+pub fn lower_fields(datas: Datas, fs: List(DataField), owner: Text, owned_shared: Bool): Option(List(NField)) {
+  match fs {
+    Nil => Some(Nil)
+    Cons(f, rest) => match lower_ty(lower_plain_borrow(datas, f.ty)) {
+      None => None
+      Some(ty) => match lower_fields(datas, rest, owner, owned_shared) {
+        None => None
+        Some(more) => Some(
+          Cons(
+            NField {
+              name: f.name,
+              ty: ty,
+              indirect: if lower_reaches(f.ty, owner) {
+                if owned_shared { NShared } else { NUnique }
+              } else { NDirect }
+            },
+            more
+          )
+        )
+      }
+    }
+  }
+}
+
+// A constructor as the package names it: `Owner::Ctor`, and `Owner::Mk` for a
+// struct's.
+pub fn lower_ctor_name(owner: Text, is_struct: Bool, ctor: Text): Text {
+  Text::concat_all(Cons(owner, Cons("::", Cons(if is_struct { "Mk" } else { ctor }, Nil))))
+}
+
+pub fn lower_ctors(datas: Datas, cs: List(DataCtor), owner: Text, is_struct: Bool, owned_shared: Bool): Option(List(NCtor)) {
+  match cs {
+    Nil => Some(Nil)
+    Cons(c, rest) => match lower_fields(datas, c.fields, owner, owned_shared) {
+      None => None
+      Some(fields) => match lower_ctors(datas, rest, owner, is_struct, owned_shared) {
+        None => None
+        Some(more) => Some(Cons(NCtor { name: lower_ctor_name(owner, is_struct, c.name), fields: fields }, more))
+      }
+    }
+  }
+}
+
+pub fn lower_declared_linear(k: Option(Kind)): Bool {
+  match k {
+    None => false
+    Some(kd) => match kd {
+      KindLinear => true
+      KindCopy => false
+      KindShared => false
+      KindAffine => false
+    }
+  }
+}
+
+pub fn lower_is_copy(k: Kind): Bool {
+  match k {
+    KindCopy => true
+    KindShared => false
+    KindAffine => false
+    KindLinear => false
+  }
+}
+
+// Whether values of the data are shared (`shares` of `lower/ty.rs`, without
+// the regions' `Rc` data).
+pub fn lower_shares(datas: Datas, d: Data): Bool {
+  match datas_kind(datas, TyNamed(NameSpelled(d.name), lower_params(d.generics, KindLinear))) {
+    KindCopy => true
+    KindShared => true
+    KindAffine => lower_rc(datas, d)
+    KindLinear => lower_rc(datas, d)
+  }
+}
+
+pub fn lower_has_generics(gs: List(Text)): Bool {
+  match gs {
+    Nil => false
+    Cons(g, rest) => true
+  }
+}
+
+// A recursive data with generics that can be cloned keeps its cells behind an
+// `Rc` (`shared_datas` of `lower/ty.rs`). Not yet read: the types the program
+// builds of it, which take it back to owned cells when they hold a value that
+// cannot be copied.
+pub fn lower_rc(datas: Datas, d: Data): Bool {
+  d.recursive && lower_has_generics(d.generics) && not(d.builtin) && match datas_no_clone(
+    datas,
+    TyNamed(NameSpelled(d.name), lower_params(d.generics, KindShared))
+  ) {
+    None => true
+    Some(why) => false
+  }
+}
+
+pub fn lower_ctors_empty(cs: List(DataCtor)): Bool {
+  match cs {
+    Nil => true
+    Cons(c, rest) => match c.fields {
+      Nil => lower_ctors_empty(rest)
+      Cons(f, more) => false
+    }
+  }
+}
+
+// An opaque view type: one that holds a borrow and has no constructor fields.
+pub fn lower_opaque_view(datas: Datas, n: Text): Bool {
+  match datas_decl(datas, n) {
+    None => false
+    Some(d2) => d2.view && lower_ctors_empty(d2.constructors)
+  }
+}
+
+mutual {
+  // Whether a field holds a borrow other than `&A` of a duplicable `A`.
+  pub fn lower_holds_borrow(datas: Datas, t: Ty): Bool {
+    match t {
+      TyBorrow(inner, mutable) => match lower_plain_borrow(datas, t) {
+        TyBorrow(i, m) => true
+        TyInt(w) => false
+        TyBool => false
+        TyText => false
+        TyUnit => false
+        TyNever => false
+        TyDecimal => false
+        TyFloat => false
+        TyFloat32 => false
+        TyFn(ps, r, k) => false
+        TyUnion(ms) => false
+        TyProduct(ms) => false
+        TyTagged(tags, i) => false
+        TyNamed(n, args) => false
+        TyParam(n, bound) => false
+        TyInfo(i) => false
+        TyVar(v) => false
+        TyPoly(gs, i) => false
+        TyApp(head, arg) => false
+      }
+      TyNamed(n, args) => lower_opaque_view(datas, surface_name_text(n)) || lower_holds_borrow_any(datas, args)
+      TyProduct(ms) => lower_holds_borrow_any(datas, ms)
+      TyTagged(tags, inner) => lower_holds_borrow(datas, inner)
+      TyInt(w) => false
+      TyBool => false
+      TyText => false
+      TyUnit => false
+      TyNever => false
+      TyDecimal => false
+      TyFloat => false
+      TyFloat32 => false
+      TyFn(ps, r, k) => false
+      TyUnion(ms) => false
+      TyParam(n, bound) => false
+      TyInfo(inner) => false
+      TyVar(v) => false
+      TyPoly(gs, inner) => false
+      TyApp(head, arg) => false
+    }
+  }
+
+  pub fn lower_holds_borrow_any(datas: Datas, ts: List(Ty)): Bool {
+    match ts {
+      Nil => false
+      Cons(t, rest) => lower_holds_borrow(datas, t) || lower_holds_borrow_any(datas, rest)
+    }
+  }
+}
+
+pub fn lower_fields_hold_borrow(datas: Datas, fs: List(DataField)): Bool {
+  match fs {
+    Nil => false
+    Cons(f, rest) => lower_holds_borrow(datas, f.ty) || lower_fields_hold_borrow(datas, rest)
+  }
+}
+
+pub fn lower_ctors_hold_borrow(datas: Datas, cs: List(DataCtor)): Bool {
+  match cs {
+    Nil => false
+    Cons(c, rest) => lower_fields_hold_borrow(datas, c.fields) || lower_ctors_hold_borrow(datas, rest)
+  }
+}
+
+// A view holds a borrow the backend sees (`holds_seen_borrow`). The types
+// report of the tote marks only the opaque `type(borrow)` ones `view`, not the
+// structs that hold one (`Placed`), so the fields are read for those.
+pub fn lower_view(datas: Datas, d: Data): Bool {
+  (d.view && lower_ctors_empty(d.constructors)) || lower_ctors_hold_borrow(datas, d.constructors)
+}
+
+pub fn lower_data(datas: Datas, d: Data): Option(NData) {
+  let kind := datas_kind(datas, TyNamed(NameSpelled(d.name), lower_params(d.generics, KindCopy)))
+  match lower_ctors(datas, d.constructors, d.name, d.is_struct, lower_shares(datas, d)) {
+    None => None
+    Some(ctors) => Some(
+      NData {
+        name: d.name,
+        generics: d.generics,
+        kind: lower_kind_word(kind),
+        is_struct: d.is_struct,
+        is_clone: match datas_no_clone(datas, TyNamed(NameSpelled(d.name), lower_params(d.generics, KindShared))) {
+          None => true
+          Some(why) => false
+        },
+        is_copy: lower_is_copy(kind) && not(d.recursive),
+        is_linear: lower_declared_linear(d.declared),
+        is_view: lower_view(datas, d),
+        is_host: false,
+        shown: if d.is_struct { d.name } else { "" },
+        ctors: ctors
+      }
+    )
+  }
+}
+
+// The names of the declared data types, in the order they are declared.
+pub fn lower_data_names(stmts: List(SurfaceStmt)): List(Text) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => match s {
+      StStruct(d) => Cons(d.name, lower_data_names(rest))
+      StEnum(d) => Cons(d.name, lower_data_names(rest))
+      _ => lower_data_names(rest)
+    }
+  }
+}
+
+// The types the package declares: not the evaluator's, the library's
+// `Option`, `Result` and `Pair` (the package never declares them), or the
+// syntax types that only a macro uses. Returns `None` for a type it cannot
+// write yet.
+pub fn lower_datas(datas: Datas, skip: List(Text), names: List(Text)): Option(List(NData)) {
+  match names {
+    Nil => Some(Nil)
+    Cons(n, rest) => match datas_decl(datas, n) {
+      None => lower_datas(datas, skip, rest)
+      Some(d) => if d.builtin || n == "Option" || n == "Result" || n == "Pair" || list_has_text(skip, n) {
+        lower_datas(datas, skip, rest)
+      } else {
+        match lower_data(datas, d) {
+          None => None
+          Some(x) => match lower_datas(datas, skip, rest) {
+            None => None
+            Some(more) => Some(Cons(x, more))
+          }
+        }
+      }
+    }
+  }
+}
+
+// The first declared type the port cannot write, for the answer.
+pub fn lower_first_refused(datas: Datas, skip: List(Text), names: List(Text)): Text {
+  match names {
+    Nil => ""
+    Cons(n, rest) => match datas_decl(datas, n) {
+      None => lower_first_refused(datas, skip, rest)
+      Some(d) => if d.builtin || n == "Option" || n == "Result" || n == "Pair" || list_has_text(skip, n) {
+        lower_first_refused(datas, skip, rest)
+      } else {
+        match lower_data(datas, d) {
+          None => n
+          Some(x) => lower_first_refused(datas, skip, rest)
+        }
+      }
+    }
+  }
+}
+
+mutual {
+  pub fn lower_mentions(t: Ty, names: List(Text)): Bool {
+    match t {
+      TyNamed(n, args) => list_has_text(names, surface_name_text(n)) || lower_mentions_any(args, names)
+      TyProduct(ms) => lower_mentions_any(ms, names)
+      TyUnion(ms) => lower_mentions_any(ms, names)
+      TyTagged(tags, inner) => lower_mentions(inner, names)
+      TyBorrow(inner, mutable) => lower_mentions(inner, names)
+      TyInfo(inner) => lower_mentions(inner, names)
+      TyFn(ps, r, k) => lower_mentions_any(ps, names) || lower_mentions(r, names)
+      TyInt(w) => false
+      TyBool => false
+      TyText => false
+      TyUnit => false
+      TyNever => false
+      TyDecimal => false
+      TyFloat => false
+      TyFloat32 => false
+      TyParam(n, bound) => false
+      TyVar(v) => false
+      TyPoly(gs, inner) => lower_mentions(inner, names)
+      TyApp(head, arg) => lower_mentions(head, names) || lower_mentions(arg, names)
+    }
+  }
+
+  pub fn lower_mentions_any(ts: List(Ty), names: List(Text)): Bool {
+    match ts {
+      Nil => false
+      Cons(t, rest) => lower_mentions(t, names) || lower_mentions_any(rest, names)
+    }
+  }
+}
+
+pub fn lower_fields_mention(fs: List(DataField), names: List(Text)): Bool {
+  match fs {
+    Nil => false
+    Cons(f, rest) => lower_mentions(f.ty, names) || lower_fields_mention(rest, names)
+  }
+}
+
+pub fn lower_ctors_mention(cs: List(DataCtor), names: List(Text)): Bool {
+  match cs {
+    Nil => false
+    Cons(c, rest) => lower_fields_mention(c.fields, names) || lower_ctors_mention(rest, names)
+  }
+}
+
+// The library's syntax types, which only a macro uses, and the library's
+// types that hold one (`macro_only` of `lower/ty.rs`; the types a program's
+// runtime reaches are not read yet).
+pub fn lower_macro_start(names: List(Text), program: List(Text)): List(Text) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => if Text::starts_with(n, "Syn") && not(list_has_text(program, n)) {
+      Cons(n, lower_macro_start(rest, program))
+    } else { lower_macro_start(rest, program) }
+  }
+}
+
+pub fn lower_macro_round(datas: Datas, names: List(Text), program: List(Text), found: List(Text)): List(Text) {
+  match names {
+    Nil => found
+    Cons(n, rest) => match datas_decl(datas, n) {
+      None => lower_macro_round(datas, rest, program, found)
+      Some(d) => if not(list_has_text(found, n)) && not(list_has_text(program, n)) && lower_ctors_mention(d.constructors, found) {
+        lower_macro_round(datas, rest, program, Cons(n, found))
+      } else { lower_macro_round(datas, rest, program, found) }
+    }
+  }
+}
+
+pub fn lower_macro_only(datas: Datas, fuel: Nat, names: List(Text), program: List(Text), found: List(Text)): List(Text) {
+  match fuel {
+    Zero => found
+    Succ(k) => lower_macro_only(datas, k, names, program, lower_macro_round(datas, names, program, found))
+  }
+}

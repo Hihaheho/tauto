@@ -1,96 +1,111 @@
 description = "Pure method-local telescopes retain type and value instantiations through extraction."
 
 @ cases.generic-method-through-runtime-dictionary
-extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
-class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+inductive class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
 instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
 fn apply<A, B>(owner: A, value: B): B where Identity(A) { Identity::apply(owner, value) }
 fn run_nat(value: Nat): Nat { apply(0, value) }
 fn run_bool(value: Bool): Bool { apply(0, value) }
-perform show("nat", run_nat(7))
-perform show("bool", run_bool(true))
+show(&run_nat(7))
+show(&run_bool(true))
 ```
-shows = ["nat = 7", "bool = true"]
-backends = ["rust", "javascript", "vm"]
-rust_shows = ["nat = 7", "bool = true"]
-javascript_shows = ["nat = 7", "bool = true"]
+stdout = ```
+7
+true
+```
 
 @ cases.method-local-term-is-retained-at-runtime
-extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
 inductive Tagged(n: Nat): Type { Mk: Tagged(n) }
-class Read(A: Type) { fn read<n: Nat>(owner: A, value: Tagged(n)): Nat }
+inductive class Read(A: Type) { fn read<n: Nat>(owner: A, value: Tagged(n)): Nat }
 instance Read(Nat) { fn read<index: Nat>(owner: Nat, value: Tagged(index)): Nat { index } }
 fn read<A, n: Nat>(owner: A, value: Tagged(n)): Nat where Read(A) { Read::read(owner, value) }
-fn read_index(index: Nat): Nat { read(0, Tagged::Mk(index)) }
-perform show("index", read_index(7))
+fn read_index(index: Nat): Nat { read(0, Tagged::Mk(<n: index>)) }
+show(&read_index(7))
 ```
-shows = ["index = 7"]
-backends = ["rust", "javascript", "vm"]
-rust_shows = ["index = 7"]
-javascript_shows = ["index = 7"]
+stdout = "7\n"
 
 @ cases.type-generic-method-on-value-indexed-class
-extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
 inductive Tagged(A: Type, key: Nat): Type { Tag(owner: A): Tagged(A, key) }
-class IndexedIdentity(A: Type, key: Nat) { fn apply<B>(owner: Tagged(A, key), value: B): B }
+inductive class IndexedIdentity(A: Type, key: Nat) { fn apply<B>(owner: Tagged(A, key), value: B): B }
 instance IndexedIdentity(Nat, 2) { fn apply<B>(owner: Tagged(Nat, 2), value: B): B { value } }
 fn apply<A, B, key: Nat>(owner: Tagged(A, key), value: B): B where IndexedIdentity(A, key) { IndexedIdentity::apply(owner, value) }
 fn owner(): Tagged(Nat, 2) { Tag(0) }
 fn run_nat(value: Nat): Nat { apply(owner(), value) }
 fn run_bool(value: Bool): Bool { apply(owner(), value) }
-perform show("nat", run_nat(11))
-perform show("bool", run_bool(true))
+show(&run_nat(11))
+show(&run_bool(true))
 ```
-shows = ["nat = 11", "bool = true"]
-backends = ["rust", "javascript", "vm"]
-rust_shows = ["nat = 11", "bool = true"]
-javascript_shows = ["nat = 11", "bool = true"]
+stdout = ```
+11
+true
+```
 
 @ cases.polymorphic-class-keeps-unrelated-native-method
-extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
-class Id(A: Type) { fn id(value: A): A }
+inductive class Id(A: Type) { fn id(value: A): A }
 instance Id(Nat) { fn id(value: Nat): Nat { value } }
 let value: nat := 1
-perform show("direct", Id::id(value))
-class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+show(&Id::id(value))
+inductive class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
 instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
 fn apply<A, B>(owner: A, value: B): B where Identity(A) { Identity::apply(owner, value) }
 fn run_nat(value: Nat): Nat { apply(0, value) }
-perform show("polymorphic", run_nat(7))
+show(&run_nat(7))
 ```
-shows = ["direct = 1", "polymorphic = 7"]
-backends = ["rust", "javascript", "vm"]
-rust_shows = ["direct = 1", "polymorphic = 7"]
-javascript_shows = ["direct = 1", "polymorphic = 7"]
+stdout = ```
+1
+7
+```
 
 @ cases.native-constrained-call-still-needs-checked-wrapper
 extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
-class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+inductive class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
 instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
 fn apply<A, B>(owner: A, value: B): B where Identity(A) { Identity::apply(owner, value) }
-perform show("nat", apply(0, 7))
+show(&apply(0, 7))
 ```
 load_error = "`apply` requires dependent-type constraints"
 
 @ cases.native-term-inference-still-needs-checked-wrapper
 extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
 inductive Tagged(A: Type, key: Nat): Type { Tag(owner: A): Tagged(A, key) }
-class IndexedIdentity(A: Type, key: Nat) { fn apply<B>(owner: Tagged(A, key), value: B): B }
+inductive class IndexedIdentity(A: Type, key: Nat) { fn apply<B>(owner: Tagged(A, key), value: B): B }
 instance IndexedIdentity(Nat, 2) { fn apply<B>(owner: Tagged(Nat, 2), value: B): B { value } }
 fn apply<A, B, key: Nat>(owner: Tagged(A, key), value: B): B where IndexedIdentity(A, key) { IndexedIdentity::apply(owner, value) }
 fn owner(): Tagged(Nat, 2) { Tag(0) }
-perform show("nat", apply(owner(), 11))
+show(&apply(owner(), 11))
 ```
 load_error = "native call cannot infer omitted term generics"
+
+@ cases.borrowed-arguments-of-a-generic-method-run
+imports = [path`../std/nat.taut`]
+source = ```tauto
+inductive class Fold(A: Type) { fn fold<B>(owner: &A, start: B, step: &((B, Nat) -> B)): B }
+instance Fold(Nat) { fn fold<B>(owner: &Nat, start: B, step: &((B, Nat) -> B)): B { step(start, owner) } }
+fn total(owner: Nat, start: Nat): Nat { Fold::fold(&owner, start, &((acc: Nat, word: Nat) => word)) }
+show(&total(3, 7))
+```
+stdout = "3\n"
+
+@ cases.method-where-in-an-inductive-class-runs
+imports = [path`../std/nat.taut`]
+source = ```tauto
+inductive class Mix(H: Type) { fn put(h: H, w: Nat): H }
+inductive class Key(K: Type) { fn digest<H>(a: &K, h: H): H where Mix(H) }
+instance Mix(Nat) { fn put(h: Nat, w: Nat): Nat { w } }
+instance Key(Nat) { fn digest<H>(a: &Nat, h: H): H where Mix(H) { Mix::put(h, a) } }
+fn digest_of(a: Nat): Nat { Key::digest(&a, 0) }
+show(&digest_of(5))
+```
+stdout = "5\n"

@@ -12,6 +12,7 @@ mod ast;
 mod cst;
 mod parse;
 mod runtime;
+mod runtime_text;
 mod scan;
 mod sha256;
 mod shape;
@@ -19,14 +20,16 @@ mod tables;
 
 pub use ast::{Ast, SchemaError, build_ast};
 pub use cst::{Cst, build_cst};
-pub use parse::{Event, Limits, ParseError, SyntaxError, parse};
+pub use parse::{Event, Limits, ParseError, SyntaxError, parse, parse_text_only};
 pub use runtime::{Diagnostic, describe, parse_ast};
 pub use runtime::{EXPECTED_END, EXPECTED_FOUND, LIMIT, NOT_A_TOKEN, SCHEMA, TABLES};
+pub use runtime_text::RuntimeIds;
 pub use scan::{LexError, Token, tokens};
 pub use sha256::{Sha256, sha256_hex};
 pub use shape::{Element, Shape};
 pub use tables::{
-    Ctor, FieldTy, NtKind, Payload, Production, Schema, Sym, TableError, Tables, TypeDef,
+    Ctor, FieldTy, NtKind, PARGEN_REVISION, Payload, Production, Schema, Sym, TableError, Tables,
+    TypeDef, start_symbols, tables_key,
 };
 
 pub const END_OF_INPUT: u32 = 0;

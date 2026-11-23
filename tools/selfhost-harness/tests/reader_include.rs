@@ -1,9 +1,8 @@
 //! Source-reader substitution is not user macro evaluation or compiler completion.
 use selfhost_harness::{RunOutput, root, run_tote_native, source_bundle::BundlePlan};
 use std::{collections::BTreeMap, fs, path::PathBuf};
-use tauto::surface::{
-    SurfaceTerm, TermKind, dump::dump_program, parse_program_unresolved_at, walk,
-};
+use tauto::surface::{SurfaceTerm, TermKind, dump::dump_program, walk};
+use tauto_parse::{parse_program_unresolved_at};
 
 const CASES: &str = "selfhost-reader-include.eure";
 const DATA: &str = "日本語\r\n\0\"\\\nlast";
@@ -72,8 +71,15 @@ fn expected(source: &str, base: u32) -> (String, Vec<(u32, u32)>) {
         walk::stmt(statement, &mut |term| {
             if let TermKind::MacroCall { name, arg } = &*term.kind
                 && name == "include_text"
+                // The host walk also visits `where` constraints, which the
+                // reader leaves unread (`signature_constraints_stay_unread`).
+                && !matches!(&*arg.kind, TermKind::Text(path) if path == "untouched.txt")
             {
-                assert!(matches!(&*arg.kind, TermKind::Text(path) if path == "data.txt"));
+                assert!(
+                    matches!(&*arg.kind, TermKind::Text(path) if path == "data.txt"),
+                    "{:?}",
+                    arg.kind
+                );
                 spans.push((term.span.start - base, term.span.end - base));
                 *term = SurfaceTerm::new(TermKind::Text(DATA.into()), term.span);
             }
@@ -292,7 +298,7 @@ fn compiled_reader_reconstruction_keeps_hidden_fields_and_unread_constraints() {
     let tote = s.0.join("observer");
     fs::create_dir_all(tote.join("src")).unwrap();
     let mut manifest = "package { name=\"reader-observer\" }\ndependencies {\n".to_owned();
-    for name in ["surface", "syntax", "text", "unicode"] {
+    for name in ["parse", "surface", "syntax", "text", "unicode"] {
         manifest.push_str(&format!(
             "  {name} {{ path={:?} }}\n",
             root().join("totes").join(name)
@@ -432,130 +438,13 @@ fn resource_input_limits_are_not_semantic_rejections() {
     assert!(output.stderr.contains("reader.path"));
 }
 
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
+/// The inputs these tests read, kept as files under `tests/fixtures`.
 mod case_inputs {
-    pub fn fixture_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            ("selfhost-reader-include.eure", "step_positions") => {
-                r#"theorem step(): Text {
-  by unimplemented!(include_text!("data.txt")): include_text!("data.txt") {
-    x: include_text!("data.txt") ⊢ include_text!("data.txt") from include_text!("data.txt")
-  }
-}
-"#
-            }
-            ("selfhost-reader-include.eure", "law_metadata") => {
-                r#"class C(A: Type) { theorem valid(): include_text!("data.txt") }"#
-            }
-            ("selfhost-reader-include.eure", "quote_and_opaque_literal") => {
-                r#"let quoted := quote { include_text!("data.txt") }
-let spliced := quote { $(include_text!("data.txt")) }
-let ordinary := unimplemented!(include_text!("data.txt"))
-let opaque := unimplemented!(raw`include_text!("missing.txt")`)
-"#
-            }
-            ("selfhost-reader-include.eure", "decreasing_metadata") => {
-                r#"fn answer(): i64 decreasing_by include_text!("data.txt") { 42 }"#
-            }
-            ("selfhost-reader-include.eure", "attribute_metadata") => {
-                r#"@unimplemented!(include_text!("data.txt"))
-fn answer(): i64 { 42 }
-"#
-            }
-            ("selfhost-reader-include.eure", "signature_constraints_stay_unread") => {
-                r#"fn constrained<A>(x: A): Text where C(include_text!("untouched.txt")) {
-  include_text!("data.txt")
-}
-extern {
-  fn signature<A>(x: A): Text where C(include_text!("untouched.txt"))
-}
-class C(A: Type) {
-  fn method(x: A): Text where C(include_text!("untouched.txt"))
-}
-"#
-            }
-            ("selfhost-reader-include.eure", "structural_observer") => {
-                r#"fn main(): Unit {
-  if reader_test_class_fields() { print("class\n") } else { perform exit(1) }
-  if reader_test_instance_fields() { print("instance\n") } else { perform exit(2) }
-  if reader_test_extern_fields() { print("extern\n") } else { perform exit(3) }
-  if reader_test_function_fields() { print("function\n") } else { perform exit(4) }
-}
-main()
-"#
-            }
-            ("selfhost-reader-include.eure", "literal_forms") => {
-                r#"fn answer(): Text {
-  let a := include_text!("data\u{2e}txt")
-  let b := include_text!('data.txt')
-  let c := include_text!(plaintext`data.txt`)
-  let d := include_text!(("data.txt"))
-  let e := include_text!({ "data.txt" })
-  Text::concat(a, Text::concat(b, Text::concat(c, Text::concat(d, e))))
-}
-"#
-            }
-            ("selfhost-reader-include.eure", "expression_positions") => {
-                r#"fn body(): Text {
-  let x: include_text!("data.txt") := include_text!("data.txt")
-  var y: include_text!("data.txt") := include_text!("data.txt")
-  y := include_text!("data.txt")
-  let f := x => include_text!("data.txt")
-  let borrowed := (&x: Text) => include_text!("data.txt")
-  let record := Record { field: include_text!("data.txt") }
-  let field := include_text!("data.txt").field
-  let app := include_text!("data.txt")(include_text!("data.txt"))
-  let tagged := @reader include_text!("data.txt")
-  let ref := &include_text!("data.txt")
-  let branch := if include_text!("data.txt") { include_text!("data.txt") } else { include_text!("data.txt") }
-  let matched := ⊢ include_text!("data.txt") from match include_text!("data.txt") {
-    Pick if include_text!("data.txt") => ⊢ include_text!("data.txt") from include_text!("data.txt")
-  }
-  while include_text!("data.txt") { let z := include_text!("data.txt") }
-  let budgeted := budget(steps: include_text!("data.txt")) { include_text!("data.txt") }
-  let handled := handle { include_text!("data.txt") } with {
-    ask(), r#resume if include_text!("data.txt") => include_text!("data.txt")
-    return result => include_text!("data.txt")
-  }
-  perform ask(include_text!("data.txt"))
-  return include_text!("data.txt")
-}
-theorem binders(): ∀ x: include_text!("data.txt"). include_text!("data.txt") { include_text!("data.txt") }
-theorem witness(): ∃ x: include_text!("data.txt"). include_text!("data.txt") { include_text!("data.txt") }
-let union: include_text!("data.txt") | include_text!("data.txt") := include_text!("data.txt")
-let callable: affine (include_text!("data.txt")) -> include_text!("data.txt") := include_text!("data.txt")
-"#
-            }
-            ("selfhost-reader-include.eure", "declaration_positions") => {
-                r#"fn f(x: include_text!("data.txt")): include_text!("data.txt") { include_text!("data.txt") }
-theorem proof(x: include_text!("data.txt")): include_text!("data.txt") { include_text!("data.txt") }
-def definition(x: include_text!("data.txt")): include_text!("data.txt") := include_text!("data.txt")
-axiom assumption(x: include_text!("data.txt")): include_text!("data.txt")
-inductive Item(x: include_text!("data.txt")): include_text!("data.txt") {
-  Mk(y: include_text!("data.txt")): include_text!("data.txt")
-}
-struct Record { field: include_text!("data.txt") }
-enum Choice { Pick(include_text!("data.txt")) }
-effect ask(question: include_text!("data.txt")): include_text!("data.txt")
-extern { fn foreign(x: include_text!("data.txt")): include_text!("data.txt") }
-class Read(A: Type) { fn read(x: include_text!("data.txt")): include_text!("data.txt") }
-instance Read(include_text!("data.txt")) where Read(include_text!("data.txt")) {
-  fn read(x: include_text!("data.txt")): include_text!("data.txt") { include_text!("data.txt") }
-}
-module M { fn nested(): Text { include_text!("data.txt") } }
-mutual { fn left(): Text { include_text!("data.txt") }
-  fn right(): Text { include_text!("data.txt") } }
-"#
-            }
-            ("selfhost-reader-include.eure", "generated_metadata") => {
-                r#"inductive Marker: Type => fn Marker::beq { Mk: Marker }"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
+    fn read(path: &str) -> String {
+        let path = format!("{}/tests/fixtures/{path}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"))
     }
-    #[allow(dead_code)]
     pub fn fixture(file: &str, name: &str) -> String {
-        fixture_static(file, name).to_string()
+        read(&format!("{}/{}.taut", file.trim_end_matches(".eure"), name))
     }
 }

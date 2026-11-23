@@ -1,0 +1,1063 @@
+import "../src/lower.taut"
+import "../src/read.taut"
+import "../src/syntax.taut"
+import "../src/value.taut"
+import "../src/write.taut"
+import "doc.taut"
+import "heads.taut"
+import "mono.taut"
+import std::base
+import std::list
+import std::nat
+import std::text
+import "inline.taut"
+
+// `read_value(f, put_node(n, x))` gives `expr_node(n)` for every node `wf_node` accepts, when
+// the fuel covers the bytes the node takes.
+
+pub theorem le_rest1(
+  y: Nat,
+  r: Nat,
+  q: Nat,
+  g: Nat,
+  h: le(y, Nat::add(r, Succ(g))),
+  hq: le(Succ(r), q)
+): le(y, Nat::add(q, g)) {
+  le_rest(
+    y,
+    Succ(r),
+    q,
+    g,
+    Eq::subst(
+      <A: Nat,
+      a: Succ(Nat::add(r, g)),
+      b: Nat::add(Succ(r), g)>,
+      (z: Nat) => le(y, z),
+      Eq::sym(Nat::add_succ_left(r, g)),
+      h
+    ),
+    hq
+  )
+}
+
+// ---- items -----------------------------------------------------------------------------------
+
+theorem items_nil(
+  c: Nat,
+  x: List(Nat),
+  f: Nat,
+  hl: le(List::length(Cons(c, x)), Nat::add(List::length(x), f))
+): read_items(f, c, Cons(c, x)) = MkRd(Nil, x) {
+  match f {
+    Zero => out_of_fuel(
+      List::length(x),
+      List::length(Cons(c, x)),
+      Nat::le_refl(Succ(List::length(x))),
+      hl
+    )
+    Succ(g) => Eq::subst(
+      Bool,
+      true,
+      Nat::eq(c, c),
+      (z: Bool) => Eq(Rd(List(Expr)), ⊢ Rd(List(Expr)) from match z {
+        true => MkRd(Nil, x)
+        false => items_after(g, c, read_value(g, Cons(c, x)))
+      }, MkRd(Nil, x)),
+      Eq::sym(Nat::eq_refl(c)),
+      Refl
+    )
+  }
+}
+
+theorem more_nil(
+  c: Nat,
+  x: List(Nat),
+  f: Nat,
+  hc: close_ok(c) = true,
+  hl: le(List::length(Cons(c, x)), Nat::add(List::length(x), f))
+): read_items_more(f, c, Cons(c, x)) = MkRd(Nil, x) {
+  match f {
+    Zero => out_of_fuel(
+      List::length(x),
+      List::length(Cons(c, x)),
+      Nat::le_refl(Succ(List::length(x))),
+      hl
+    )
+    Succ(g) => Eq::subst(
+      Bool,
+      false,
+      Nat::eq(44, c),
+      (z: Bool) => Eq(Rd(List(Expr)), ⊢ Rd(List(Expr)) from match z {
+        true => read_items(g, c, skip(x))
+        false => ⊢ Rd(List(Expr)) from match Nat::eq(c, c) {
+          true => MkRd(Nil, x)
+          false => RdErr(Cons(c, x), "`,` or the end of the list")
+        }
+      }, MkRd(Nil, x)),
+      Eq::sym(close_not_comma(c, hc)),
+      Eq::subst(
+        Bool,
+        true,
+        Nat::eq(c, c),
+        (z: Bool) => Eq(Rd(List(Expr)), ⊢ Rd(List(Expr)) from match z {
+          true => MkRd(Nil, x)
+          false => RdErr(Cons(c, x), "`,` or the end of the list")
+        }, MkRd(Nil, x)),
+        Eq::sym(Nat::eq_refl(c)),
+        Refl
+      )
+    )
+  }
+}
+
+// One item, from what the node and the items after it read.
+theorem items_cons(
+  y: Node,
+  t: List(Node),
+  c: Nat,
+  x: List(Nat),
+  f: Nat,
+  hc: close_ok(c) = true,
+  hwy: wf_node(y) = true,
+  hn: (
+    g: Nat,
+    hg: le(
+      List::length(put_node(y, put_items(t, false, Cons(c, x)))),
+      Nat::add(List::length(put_items(t, false, Cons(c, x))), g)
+    )
+  ) -> read_value(g, put_node(y, put_items(t, false, Cons(c, x)))) = MkRd(expr_node(y), put_items(t, false, Cons(c, x))),
+  hm: (
+    g: Nat,
+    hg: le(List::length(put_items(t, false, Cons(c, x))), Nat::add(List::length(x), g))
+  ) -> read_items_more(g, c, put_items(t, false, Cons(c, x))) = MkRd(expr_items(t), x),
+  hl: le(List::length(put_node(y, put_items(t, false, Cons(c, x)))), Nat::add(List::length(x), f))
+): read_items(f, c, put_node(y, put_items(t, false, Cons(c, x)))) = MkRd(expr_items(Cons(y, t)), x) {
+  match f {
+    Zero => out_of_fuel(
+      List::length(x),
+      List::length(put_node(y, put_items(t, false, Cons(c, x)))),
+      le_tr(
+        Succ(List::length(x)),
+        List::length(put_items(t, false, Cons(c, x))),
+        List::length(put_node(y, put_items(t, false, Cons(c, x)))),
+        put_items_mono(t, false, Cons(c, x)),
+        strict_weak(
+          put_items(t, false, Cons(c, x)),
+          put_node(y, put_items(t, false, Cons(c, x))),
+          put_node_strict(y, put_items(t, false, Cons(c, x)))
+        )
+      ),
+      hl
+    )
+    Succ(g) => items_step(
+      y,
+      t,
+      c,
+      x,
+      g,
+      hc,
+      node_plain(y, put_items(t, false, Cons(c, x)), hwy),
+      hn(
+        g,
+        le_rest1(
+          List::length(put_node(y, put_items(t, false, Cons(c, x)))),
+          List::length(x),
+          List::length(put_items(t, false, Cons(c, x))),
+          g,
+          hl,
+          put_items_mono(t, false, Cons(c, x))
+        )
+      ),
+      hm(
+        g,
+        le_tr(
+          Succ(List::length(put_items(t, false, Cons(c, x)))),
+          List::length(put_node(y, put_items(t, false, Cons(c, x)))),
+          Nat::add(List::length(x), Succ(g)),
+          put_node_strict(y, put_items(t, false, Cons(c, x))),
+          hl
+        )
+      )
+    )
+  }
+}
+
+// ---- one entry: `path => v, ` ----------------------------------------------------------------
+
+fn ent_k(g: Nat): (Rd(List(Seg))) -> Rd(List(List(Seg) × Expr)) {
+  (q: Rd(List(Seg))) => ⊢ Rd(List(List(Seg) × Expr)) from match q {
+    MkRd(p, r) => read_entry(g, p, skip(r))
+    RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+  }
+}
+
+fn bind_lam(p: List(Seg), e: Expr): (List(List(Seg) × Expr)) -> List(List(Seg) × Expr) {
+  (bs: List(List(Seg) × Expr)) => Cons(#(p, e), bs)
+}
+
+fn entv_k(g: Nat, p: List(Seg)): (Rd(Expr)) -> Rd(List(List(Seg) × Expr)) {
+  (q: Rd(Expr)) => ⊢ Rd(List(List(Seg) × Expr)) from match q {
+    MkRd(e, r) => rd_map(bind_lam(p, e), read_entries(g, after_comma(r)))
+    RdErr(e_rest, e_what) => RdErr(e_rest, e_what)
+  }
+}
+
+fn arrow(w: List(Nat)): List(Nat) {
+  Cons(32, Cons(61, Cons(62, Cons(32, w))))
+}
+
+theorem ent_wl(
+  w: List(Nat),
+  l: List(Nat),
+  hL: le(List::length(arrow(w)), List::length(l))
+): le(List::length(w), List::length(l)) {
+  le_tr(List::length(w), List::length(arrow(w)), List::length(l), cons4_mono(32, 61, 62, 32, w), hL)
+}
+
+theorem ent_rw(
+  rr: List(Nat),
+  w: List(Nat),
+  h: strictly(Cons(44, Cons(32, rr)), w)
+): le(Succ(Succ(List::length(rr))), List::length(w)) {
+  le_down(Succ(Succ(List::length(rr))), List::length(w), h)
+}
+
+theorem entry_read(
+  l: List(Nat),
+  w: List(Nat),
+  rr: List(Nat),
+  r: List(Nat),
+  s: Seg,
+  en: Expr,
+  bs: List(List(Seg) × Expr),
+  f: Nat,
+  hL: le(List::length(arrow(w)), List::length(l)),
+  hp: plain(l) = true,
+  hs: read_seg(l) = MkRd(s, arrow(w)),
+  hW: plain(w) = true,
+  hWs: strictly(Cons(44, Cons(32, rr)), w),
+  hn: (
+    g: Nat,
+    hg: le(List::length(w), Nat::add(List::length(Cons(44, Cons(32, rr))), g))
+  ) -> read_value(g, w) = MkRd(en, Cons(44, Cons(32, rr))),
+  hRs: solid(rr) = true,
+  hrR: le(List::length(r), List::length(rr)),
+  hR: (
+    k: Nat,
+    hk: le(List::length(rr), Nat::add(List::length(r), k))
+  ) -> read_entries(k, rr) = MkRd(bs, r),
+  hl: le(List::length(l), Nat::add(List::length(r), f))
+): read_entries(f, l) = MkRd(Cons(#(Cons(s, Nil), en), bs), r) {
+  match f {
+    Zero => out_of_fuel(
+      List::length(r),
+      List::length(l),
+      le_tr(
+        Succ(List::length(r)),
+        Succ(List::length(rr)),
+        List::length(l),
+        hrR,
+        le_tr(
+          Succ(List::length(rr)),
+          List::length(w),
+          List::length(l),
+          le_down(Succ(List::length(rr)), List::length(w), ent_rw(rr, w, hWs)),
+          ent_wl(w, l, hL)
+        )
+      ),
+      hl
+    )
+    Succ(g) => match g {
+      Zero => False::elim(
+        no_room(
+          List::length(l),
+          Succ(List::length(r)),
+          hl,
+          le_tr(
+            Succ(Succ(List::length(r))),
+            Succ(Succ(List::length(rr))),
+            List::length(l),
+            hrR,
+            le_tr(
+              Succ(Succ(List::length(rr))),
+              List::length(w),
+              List::length(l),
+              ent_rw(rr, w, hWs),
+              ent_wl(w, l, hL)
+            )
+          )
+        )
+      )
+      Succ(g2) => Eq::subst(
+        Bool,
+        false,
+        head_is(125, l),
+        (z: Bool) => Eq(Rd(List(List(Seg) × Expr)), ⊢ Rd(List(List(Seg) × Expr)) from match z {
+          true => MkRd(Nil, List::tail(l))
+          false => ent_k(Succ(g2))(read_path(l))
+        }, MkRd(Cons(#(Cons(s, Nil), en), bs), r)),
+        Eq::sym(plain_not(125, l, hp, Refl)),
+        Eq::trans(
+          Eq::congr(ent_k(Succ(g2)), path_of_seg(l, s, arrow(w), hs, Refl)),
+          Eq::trans(
+            Eq::congr(⟦entv_k(g2, Cons(s, Nil))(read_value(g2, □))⟧, skip_plain(w, hW)),
+            Eq::trans(
+              Eq::congr(
+                entv_k(g2, Cons(s, Nil)),
+                hn(
+                  g2,
+                  le_rest(
+                    List::length(w),
+                    List::length(r),
+                    List::length(Cons(44, Cons(32, rr))),
+                    g2,
+                    ent_wg(w, l, r, g2, hL, hl),
+                    le_tr(List::length(r), List::length(rr), List::length(Cons(44, Cons(32, rr))), hrR, comma_mono(rr))
+                  )
+                )
+              ),
+              Eq::trans(
+                Eq::congr(⟦rd_map(bind_lam(Cons(s, Nil), en), read_entries(g2, □))⟧, skip_solid(rr, hRs)),
+                Eq::congr(
+                  (q: Rd(List(List(Seg) × Expr))) => rd_map(bind_lam(Cons(s, Nil), en), q),
+                  hR(
+                    g2,
+                    le_tr(
+                      List::length(rr),
+                      List::length(w),
+                      Nat::add(List::length(r), g2),
+                      le_down2(List::length(rr), List::length(w), ent_rw(rr, w, hWs)),
+                      ent_wg(w, l, r, g2, hL, hl)
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+}
+
+theorem ent_wg(
+  w: List(Nat),
+  l: List(Nat),
+  r: List(Nat),
+  g2: Nat,
+  hL: le(List::length(arrow(w)), List::length(l)),
+  hl: le(List::length(l), Nat::add(List::length(r), Succ(Succ(g2))))
+): le(List::length(w), Nat::add(List::length(r), g2)) {
+  le_down2(
+    List::length(w),
+    Nat::add(List::length(r), g2),
+    le_tr(List::length(arrow(w)), List::length(l), Nat::add(List::length(r), Succ(Succ(g2))), hL, hl)
+  )
+}
+
+// ---- extensions ---------------------------------------------------------------------------------
+
+theorem exts_nil(
+  x: List(Nat),
+  f: Nat,
+  hl: le(List::length(Cons(125, x)), Nat::add(List::length(x), f))
+): read_entries(f, Cons(125, x)) = MkRd(Nil, x) {
+  match f {
+    Zero => out_of_fuel(
+      List::length(x),
+      List::length(Cons(125, x)),
+      Nat::le_refl(Succ(List::length(x))),
+      hl
+    )
+    Succ(g) => Refl
+  }
+}
+
+theorem ext_tail_le(
+  es: List(Text × Node),
+  x: List(Nat)
+): le(List::length(x), List::length(put_exts(es, Cons(125, x)))) {
+  le_tr(
+    List::length(x),
+    List::length(Cons(125, x)),
+    List::length(put_exts(es, Cons(125, x))),
+    le_self_cons(125, x),
+    put_exts_mono(es, Cons(125, x))
+  )
+}
+
+fn comma(t: List(Nat)): List(Nat) {
+  Cons(44, Cons(32, t))
+}
+
+// A scalar with extensions: `{ = v, $e => w, }`.
+theorem scalar_ext(
+  v: Value,
+  es: List(Text × Node),
+  x: List(Nat),
+  f: Nat,
+  hs: is_scalar(v) = true,
+  hw: wf_value(v) = true,
+  hEX: (
+    k: Nat,
+    hk: le(List::length(put_exts(es, Cons(125, x))), Nat::add(List::length(x), k))
+  ) -> read_entries(k, put_exts(es, Cons(125, x))) = MkRd(ext_binds(es), x),
+  hl: le(
+    List::length(
+      Cons(123, Cons(32, Cons(61, Cons(32, put_scalar(v, comma(put_exts(es, Cons(125, x))))))))
+    ),
+    Nat::add(List::length(x), f)
+  )
+): read_value(
+    f,
+    Cons(123, Cons(32, Cons(61, Cons(32, put_scalar(v, comma(put_exts(es, Cons(125, x))))))))
+  ) = MkRd(Eobj(Cons(#(Nil, Escalar(v)), ext_binds(es))), x) {
+  ext_read(
+    put_scalar(v, comma(put_exts(es, Cons(125, x)))),
+    put_exts(es, Cons(125, x)),
+    x,
+    f,
+    Escalar(v),
+    ext_binds(es),
+    scalar_plain(v, comma(put_exts(es, Cons(125, x))), hs, hw),
+    (
+      g: Nat,
+      hg: le(
+        List::length(put_scalar(v, comma(put_exts(es, Cons(125, x))))),
+        Nat::add(List::length(comma(put_exts(es, Cons(125, x)))), g)
+      )
+    ) => scalar_read(v, comma(put_exts(es, Cons(125, x))), g, hs, hw, Refl, hg),
+    hEX,
+    exts_solid(es, x),
+    ext_tail_le(es, x),
+    put_scalar_strict(v, comma(put_exts(es, Cons(125, x))), hs),
+    hl
+  )
+}
+
+theorem list_strict(
+  xs: List(Node),
+  o: Nat,
+  c: Nat,
+  t: List(Nat)
+): strictly(comma(t), Cons(o, put_items(xs, true, Cons(c, comma(t))))) {
+  le_tr(
+    List::length(comma(t)),
+    List::length(Cons(c, comma(t))),
+    List::length(put_items(xs, true, Cons(c, comma(t)))),
+    le_self_cons(c, comma(t)),
+    put_items_mono(xs, true, Cons(c, comma(t)))
+  )
+}
+
+theorem more_len(
+  y: Node,
+  u: List(Node),
+  c: Nat,
+  x: List(Nat)
+): le(Succ(List::length(x)), List::length(comma(put_node(y, put_items(u, false, Cons(c, x)))))) {
+  le_tr(
+    Succ(List::length(x)),
+    List::length(put_node(y, put_items(u, false, Cons(c, x)))),
+    List::length(comma(put_node(y, put_items(u, false, Cons(c, x))))),
+    le_tr(
+      Succ(List::length(x)),
+      List::length(put_items(u, false, Cons(c, x))),
+      List::length(put_node(y, put_items(u, false, Cons(c, x)))),
+      put_items_mono(u, false, Cons(c, x)),
+      strict_weak(
+        put_items(u, false, Cons(c, x)),
+        put_node(y, put_items(u, false, Cons(c, x))),
+        put_node_strict(y, put_items(u, false, Cons(c, x)))
+      )
+    ),
+    comma_mono(put_node(y, put_items(u, false, Cons(c, x))))
+  )
+}
+
+// ---- parts of `wf` ---------------------------------------------------------------------------
+
+pub theorem ent_key(
+  k: Key,
+  n: Node,
+  p: List(Key × Node),
+  hw: wf_entry(#(k, n), p) = true
+): Key::ok(k) = true {
+  And::left(Bool::and_split(Key::ok(k), Bool::and(not(assoc_has(key_eq, k, p)), wf_node(n)), hw))
+}
+
+pub theorem ent_node(
+  k: Key,
+  n: Node,
+  p: List(Key × Node),
+  hw: wf_entry(#(k, n), p) = true
+): wf_node(n) = true {
+  And::right(
+    Bool::and_split(
+      not(assoc_has(key_eq, k, p)),
+      wf_node(n),
+      And::right(Bool::and_split(Key::ok(k), Bool::and(not(assoc_has(key_eq, k, p)), wf_node(n)), hw))
+    )
+  )
+}
+
+pub theorem ent_head(
+  e: Key × Node,
+  t: List(Key × Node),
+  p: List(Key × Node),
+  hw: wf_entries(Cons(e, t), p) = true
+): wf_entry(e, p) = true {
+  And::left(Bool::and_split(wf_entry(e, p), wf_entries(t, snoc(p, e)), hw))
+}
+
+pub theorem ent_rest(
+  e: Key × Node,
+  t: List(Key × Node),
+  p: List(Key × Node),
+  hw: wf_entries(Cons(e, t), p) = true
+): wf_entries(t, snoc(p, e)) = true {
+  And::right(Bool::and_split(wf_entry(e, p), wf_entries(t, snoc(p, e)), hw))
+}
+
+pub theorem xt_name(
+  k: Text,
+  n: Node,
+  p: List(Text × Node),
+  hw: wf_ext(#(k, n), p) = true
+): is_ident(Text::bytes(k)) = true {
+  And::left(
+    Bool::and_split(is_ident(Text::bytes(k)), Bool::and(not(assoc_has(Text::eq, k, p)), wf_node(n)), hw)
+  )
+}
+
+pub theorem xt_node(
+  k: Text,
+  n: Node,
+  p: List(Text × Node),
+  hw: wf_ext(#(k, n), p) = true
+): wf_node(n) = true {
+  And::right(
+    Bool::and_split(
+      not(assoc_has(Text::eq, k, p)),
+      wf_node(n),
+      And::right(
+        Bool::and_split(
+          is_ident(Text::bytes(k)),
+          Bool::and(not(assoc_has(Text::eq, k, p)), wf_node(n)),
+          hw
+        )
+      )
+    )
+  )
+}
+
+pub theorem xt_head(
+  e: Text × Node,
+  t: List(Text × Node),
+  p: List(Text × Node),
+  hw: wf_exts(Cons(e, t), p) = true
+): wf_ext(e, p) = true {
+  And::left(Bool::and_split(wf_ext(e, p), wf_exts(t, snoc(p, e)), hw))
+}
+
+pub theorem xt_rest(
+  e: Text × Node,
+  t: List(Text × Node),
+  p: List(Text × Node),
+  hw: wf_exts(Cons(e, t), p) = true
+): wf_exts(t, snoc(p, e)) = true {
+  And::right(Bool::and_split(wf_ext(e, p), wf_exts(t, snoc(p, e)), hw))
+}
+
+// ---- the nodes ------------------------------------------------------------------------------------
+
+mutual {
+  pub theorem node_back(
+    n: Node,
+    x: List(Nat),
+    f: Nat,
+    hw: wf_node(n) = true,
+    hx: stops(x) = true,
+    hl: le(List::length(put_node(n, x)), Nat::add(List::length(x), f))
+  ): read_value(f, put_node(n, x)) = MkRd(expr_node(n), x) {
+    match n {
+      Mk(v, ext) => put_v_back(
+        v,
+        ext,
+        x,
+        f,
+        And::left(Bool::and_split(wf_value(v), wf_exts(ext, Nil), hw)),
+        hx,
+        (
+          k: Nat,
+          hk: le(List::length(put_exts(ext, Cons(125, x))), Nat::add(List::length(x), k))
+        ) => exts_back(
+          ext,
+          Nil,
+          x,
+          k,
+          And::right(Bool::and_split(wf_value(v), wf_exts(ext, Nil), hw)),
+          hk
+        ),
+        hl
+      )
+    }
+  }
+  theorem put_v_back(
+    v: Value,
+    ext: List(Text × Node),
+    x: List(Nat),
+    f: Nat,
+    hw: wf_value(v) = true,
+    hx: stops(x) = true,
+    hEX: (
+      k: Nat,
+      hk: le(List::length(put_exts(ext, Cons(125, x))), Nat::add(List::length(x), k))
+    ) -> read_entries(k, put_exts(ext, Cons(125, x))) = MkRd(ext_binds(ext), x),
+    hl: le(
+      List::length(put_v(v, has_ext(ext), put_exts(ext, close_node(v, has_ext(ext), x)))),
+      Nat::add(List::length(x), f)
+    )
+  ): read_value(f, put_v(v, has_ext(ext), put_exts(ext, close_node(v, has_ext(ext), x)))) = MkRd(expr_put(v, has_ext(ext), ext_binds(ext)), x) {
+    match v {
+      Vmap(es) => map_read(
+        put_entries(es, put_exts(ext, Cons(125, x))),
+        x,
+        f,
+        List::append(entry_binds(es), ext_binds(ext)),
+        (
+          g: Nat,
+          hg: le(
+            List::length(put_entries(es, put_exts(ext, Cons(125, x)))),
+            Nat::add(List::length(x), g)
+          )
+        ) => entries_back(
+          es,
+          Nil,
+          put_exts(ext, Cons(125, x)),
+          ext_binds(ext),
+          x,
+          g,
+          hw,
+          exts_solid(ext, x),
+          ext_tail_le(ext, x),
+          hEX,
+          hg
+        ),
+        entries_solid(es, Nil, put_exts(ext, Cons(125, x)), exts_solid(ext, x), hw),
+        le_tr(
+          List::length(x),
+          List::length(put_exts(ext, Cons(125, x))),
+          List::length(put_entries(es, put_exts(ext, Cons(125, x)))),
+          ext_tail_le(ext, x),
+          put_entries_mono(es, put_exts(ext, Cons(125, x)))
+        ),
+        hl
+      )
+      Varr(xs) => match ext {
+        Nil => arr_read(
+          xs,
+          x,
+          f,
+          (
+            g2: Nat,
+            hg2: le(List::length(put_items(xs, true, Cons(93, x))), Nat::add(List::length(x), g2))
+          ) => items_back(xs, 93, x, g2, hw, Refl, hg2),
+          items_skip(xs, 93, x, Refl, hw),
+          hl
+        )
+        Cons(e, es) => ext_read(
+          Cons(91, put_items(xs, true, Cons(93, comma(put_exts(Cons(e, es), Cons(125, x)))))),
+          put_exts(Cons(e, es), Cons(125, x)),
+          x,
+          f,
+          Earr(expr_items(xs)),
+          ext_binds(Cons(e, es)),
+          Refl,
+          (
+            g: Nat,
+            hg: le(
+              List::length(
+                Cons(91, put_items(xs, true, Cons(93, comma(put_exts(Cons(e, es), Cons(125, x))))))
+              ),
+              Nat::add(List::length(comma(put_exts(Cons(e, es), Cons(125, x)))), g)
+            )
+          ) => arr_read(
+            xs,
+            comma(put_exts(Cons(e, es), Cons(125, x))),
+            g,
+            (
+              g2: Nat,
+              hg2: le(
+                List::length(
+                  put_items(xs, true, Cons(93, comma(put_exts(Cons(e, es), Cons(125, x)))))
+                ),
+                Nat::add(List::length(comma(put_exts(Cons(e, es), Cons(125, x)))), g2)
+              )
+            ) => items_back(
+              xs,
+              93,
+              comma(put_exts(Cons(e, es), Cons(125, x))),
+              g2,
+              hw,
+              Refl,
+              hg2
+            ),
+            items_skip(xs, 93, comma(put_exts(Cons(e, es), Cons(125, x))), Refl, hw),
+            hg
+          ),
+          hEX,
+          exts_solid(Cons(e, es), x),
+          ext_tail_le(Cons(e, es), x),
+          list_strict(xs, 91, 93, put_exts(Cons(e, es), Cons(125, x))),
+          hl
+        )
+      }
+      Vtup(xs) => match ext {
+        Nil => tup_read(
+          xs,
+          x,
+          f,
+          (
+            g2: Nat,
+            hg2: le(List::length(put_items(xs, true, Cons(41, x))), Nat::add(List::length(x), g2))
+          ) => items_back(xs, 41, x, g2, hw, Refl, hg2),
+          items_skip(xs, 41, x, Refl, hw),
+          hl
+        )
+        Cons(e, es) => ext_read(
+          Cons(40, put_items(xs, true, Cons(41, comma(put_exts(Cons(e, es), Cons(125, x)))))),
+          put_exts(Cons(e, es), Cons(125, x)),
+          x,
+          f,
+          Etup(expr_items(xs)),
+          ext_binds(Cons(e, es)),
+          Refl,
+          (
+            g: Nat,
+            hg: le(
+              List::length(
+                Cons(40, put_items(xs, true, Cons(41, comma(put_exts(Cons(e, es), Cons(125, x))))))
+              ),
+              Nat::add(List::length(comma(put_exts(Cons(e, es), Cons(125, x)))), g)
+            )
+          ) => tup_read(
+            xs,
+            comma(put_exts(Cons(e, es), Cons(125, x))),
+            g,
+            (
+              g2: Nat,
+              hg2: le(
+                List::length(
+                  put_items(xs, true, Cons(41, comma(put_exts(Cons(e, es), Cons(125, x)))))
+                ),
+                Nat::add(List::length(comma(put_exts(Cons(e, es), Cons(125, x)))), g2)
+              )
+            ) => items_back(
+              xs,
+              41,
+              comma(put_exts(Cons(e, es), Cons(125, x))),
+              g2,
+              hw,
+              Refl,
+              hg2
+            ),
+            items_skip(xs, 41, comma(put_exts(Cons(e, es), Cons(125, x))), Refl, hw),
+            hg
+          ),
+          hEX,
+          exts_solid(Cons(e, es), x),
+          ext_tail_le(Cons(e, es), x),
+          list_strict(xs, 40, 41, put_exts(Cons(e, es), Cons(125, x))),
+          hl
+        )
+      }
+      Vhole(lb) => match ext {
+        Nil => scalar_read(Vhole(lb), x, f, Refl, hw, hx, hl)
+        Cons(e, es) => scalar_ext(Vhole(lb), Cons(e, es), x, f, Refl, hw, hEX, hl)
+      }
+      Vnull => match ext {
+        Nil => scalar_read(Vnull, x, f, Refl, hw, hx, hl)
+        Cons(e, es) => scalar_ext(Vnull, Cons(e, es), x, f, Refl, hw, hEX, hl)
+      }
+      Vbool(b) => match ext {
+        Nil => scalar_read(Vbool(b), x, f, Refl, hw, hx, hl)
+        Cons(e, es) => scalar_ext(Vbool(b), Cons(e, es), x, f, Refl, hw, hEX, hl)
+      }
+      Vint(sg, k) => match ext {
+        Nil => scalar_read(Vint(sg, k), x, f, Refl, hw, hx, hl)
+        Cons(e, es) => scalar_ext(Vint(sg, k), Cons(e, es), x, f, Refl, hw, hEX, hl)
+      }
+      Vdec(sg, k, es2, d) => match ext {
+        Nil => scalar_read(Vdec(sg, k, es2, d), x, f, Refl, hw, hx, hl)
+        Cons(e, es) => scalar_ext(Vdec(sg, k, es2, d), Cons(e, es), x, f, Refl, hw, hEX, hl)
+      }
+      Vtext(lg, t) => match ext {
+        Nil => scalar_read(Vtext(lg, t), x, f, Refl, hw, hx, hl)
+        Cons(e, es) => scalar_ext(Vtext(lg, t), Cons(e, es), x, f, Refl, hw, hEX, hl)
+      }
+    }
+  }
+  theorem items_back(
+    xs: List(Node),
+    c: Nat,
+    x: List(Nat),
+    f: Nat,
+    hw: wf_items(xs) = true,
+    hc: close_ok(c) = true,
+    hl: le(List::length(put_items(xs, true, Cons(c, x))), Nat::add(List::length(x), f))
+  ): read_items(f, c, put_items(xs, true, Cons(c, x))) = MkRd(expr_items(xs), x) {
+    match xs {
+      Nil => items_nil(c, x, f, hl)
+      Cons(y, t) => items_cons(
+        y,
+        t,
+        c,
+        x,
+        f,
+        hc,
+        items_wf_head(y, t, hw),
+        (
+          g: Nat,
+          hg: le(
+            List::length(put_node(y, put_items(t, false, Cons(c, x)))),
+            Nat::add(List::length(put_items(t, false, Cons(c, x))), g)
+          )
+        ) => node_back(
+          y,
+          put_items(t, false, Cons(c, x)),
+          g,
+          items_wf_head(y, t, hw),
+          more_stops(t, c, x, hc),
+          hg
+        ),
+        (
+          g: Nat,
+          hg: le(List::length(put_items(t, false, Cons(c, x))), Nat::add(List::length(x), g))
+        ) => more_back(t, c, x, g, items_wf_tail(y, t, hw), hc, hg),
+        hl
+      )
+    }
+  }
+  theorem more_back(
+    t: List(Node),
+    c: Nat,
+    x: List(Nat),
+    f: Nat,
+    hw: wf_items(t) = true,
+    hc: close_ok(c) = true,
+    hl: le(List::length(put_items(t, false, Cons(c, x))), Nat::add(List::length(x), f))
+  ): read_items_more(f, c, put_items(t, false, Cons(c, x))) = MkRd(expr_items(t), x) {
+    match t {
+      Nil => more_nil(c, x, f, hc, hl)
+      Cons(y, u) => match f {
+        Zero => out_of_fuel(
+          List::length(x),
+          List::length(comma(put_node(y, put_items(u, false, Cons(c, x))))),
+          more_len(y, u, c, x),
+          hl
+        )
+        Succ(g) => Eq::trans(
+          Eq::congr(
+            ⟦read_items(g, c, □)⟧,
+            skip_plain(
+              put_node(y, put_items(u, false, Cons(c, x))),
+              node_plain(y, put_items(u, false, Cons(c, x)), items_wf_head(y, u, hw))
+            )
+          ),
+          items_cons(
+            y,
+            u,
+            c,
+            x,
+            g,
+            hc,
+            items_wf_head(y, u, hw),
+            (
+              g2: Nat,
+              hg2: le(
+                List::length(put_node(y, put_items(u, false, Cons(c, x)))),
+                Nat::add(List::length(put_items(u, false, Cons(c, x))), g2)
+              )
+            ) => node_back(
+              y,
+              put_items(u, false, Cons(c, x)),
+              g2,
+              items_wf_head(y, u, hw),
+              more_stops(u, c, x, hc),
+              hg2
+            ),
+            (
+              g2: Nat,
+              hg2: le(List::length(put_items(u, false, Cons(c, x))), Nat::add(List::length(x), g2))
+            ) => more_back(u, c, x, g2, items_wf_tail(y, u, hw), hc, hg2),
+            le_down(
+              List::length(put_node(y, put_items(u, false, Cons(c, x)))),
+              Nat::add(List::length(x), g),
+              hl
+            )
+          )
+        )
+      }
+    }
+  }
+  theorem entries_back(
+    es: List(Key × Node),
+    p: List(Key × Node),
+    rr: List(Nat),
+    bs: List(List(Seg) × Expr),
+    r: List(Nat),
+    f: Nat,
+    hw: wf_entries(es, p) = true,
+    hRs: solid(rr) = true,
+    hrR: le(List::length(r), List::length(rr)),
+    hR: (
+      k: Nat,
+      hk: le(List::length(rr), Nat::add(List::length(r), k))
+    ) -> read_entries(k, rr) = MkRd(bs, r),
+    hl: le(List::length(put_entries(es, rr)), Nat::add(List::length(r), f))
+  ): read_entries(f, put_entries(es, rr)) = MkRd(List::append(entry_binds(es), bs), r) {
+    match es {
+      Nil => hR(f, hl)
+      Cons(e, t) => entry_back(
+        e,
+        p,
+        put_entries(t, rr),
+        List::append(entry_binds(t), bs),
+        r,
+        f,
+        ent_head(e, t, p, hw),
+        entries_solid(t, snoc(p, e), rr, hRs, ent_rest(e, t, p, hw)),
+        le_tr(
+          List::length(r),
+          List::length(rr),
+          List::length(put_entries(t, rr)),
+          hrR,
+          put_entries_mono(t, rr)
+        ),
+        (
+          k2: Nat,
+          hk2: le(List::length(put_entries(t, rr)), Nat::add(List::length(r), k2))
+        ) => entries_back(t, snoc(p, e), rr, bs, r, k2, ent_rest(e, t, p, hw), hRs, hrR, hR, hk2),
+        hl
+      )
+    }
+  }
+  theorem entry_back(
+    e: Key × Node,
+    p: List(Key × Node),
+    rr: List(Nat),
+    bs: List(List(Seg) × Expr),
+    r: List(Nat),
+    f: Nat,
+    hw: wf_entry(e, p) = true,
+    hRs: solid(rr) = true,
+    hrR: le(List::length(r), List::length(rr)),
+    hR: (
+      k: Nat,
+      hk: le(List::length(rr), Nat::add(List::length(r), k))
+    ) -> read_entries(k, rr) = MkRd(bs, r),
+    hl: le(List::length(put_entry(e, rr)), Nat::add(List::length(r), f))
+  ): read_entries(f, put_entry(e, rr)) = MkRd(Cons(entry_bind(e), bs), r) {
+    match e {
+      #(k, n) => entry_read(
+        put_key(k, arrow(put_node(n, comma(rr)))),
+        put_node(n, comma(rr)),
+        rr,
+        r,
+        Skey(k),
+        expr_node(n),
+        bs,
+        f,
+        put_key_mono(k, arrow(put_node(n, comma(rr)))),
+        Key::plain_put(k, arrow(put_node(n, comma(rr))), ent_key(k, n, p, hw)),
+        Seg::put_key_back(k, arrow(put_node(n, comma(rr))), ent_key(k, n, p, hw), Refl),
+        node_plain(n, comma(rr), ent_node(k, n, p, hw)),
+        put_node_strict(n, comma(rr)),
+        (
+          g: Nat,
+          hg: le(List::length(put_node(n, comma(rr))), Nat::add(List::length(comma(rr)), g))
+        ) => node_back(n, comma(rr), g, ent_node(k, n, p, hw), Refl, hg),
+        hRs,
+        hrR,
+        hR,
+        hl
+      )
+    }
+  }
+  theorem exts_back(
+    es: List(Text × Node),
+    p: List(Text × Node),
+    x: List(Nat),
+    f: Nat,
+    hw: wf_exts(es, p) = true,
+    hl: le(List::length(put_exts(es, Cons(125, x))), Nat::add(List::length(x), f))
+  ): read_entries(f, put_exts(es, Cons(125, x))) = MkRd(ext_binds(es), x) {
+    match es {
+      Nil => exts_nil(x, f, hl)
+      Cons(e, t) => ext_back(
+        e,
+        p,
+        put_exts(t, Cons(125, x)),
+        ext_binds(t),
+        x,
+        f,
+        xt_head(e, t, p, hw),
+        exts_solid(t, x),
+        ext_tail_le(t, x),
+        (
+          k2: Nat,
+          hk2: le(List::length(put_exts(t, Cons(125, x))), Nat::add(List::length(x), k2))
+        ) => exts_back(t, snoc(p, e), x, k2, xt_rest(e, t, p, hw), hk2),
+        hl
+      )
+    }
+  }
+  theorem ext_back(
+    e: Text × Node,
+    p: List(Text × Node),
+    rr: List(Nat),
+    bs: List(List(Seg) × Expr),
+    r: List(Nat),
+    f: Nat,
+    hw: wf_ext(e, p) = true,
+    hRs: solid(rr) = true,
+    hrR: le(List::length(r), List::length(rr)),
+    hR: (
+      k: Nat,
+      hk: le(List::length(rr), Nat::add(List::length(r), k))
+    ) -> read_entries(k, rr) = MkRd(bs, r),
+    hl: le(List::length(put_ext_entry(e, rr)), Nat::add(List::length(r), f))
+  ): read_entries(f, put_ext_entry(e, rr)) = MkRd(Cons(ext_bind(e), bs), r) {
+    match e {
+      #(k, n) => entry_read(
+        put_ext_key(k, arrow(put_node(n, comma(rr)))),
+        put_node(n, comma(rr)),
+        rr,
+        r,
+        Sext(k),
+        expr_node(n),
+        bs,
+        f,
+        le_cons(
+          List::length(arrow(put_node(n, comma(rr)))),
+          36,
+          put_text(k, arrow(put_node(n, comma(rr)))),
+          put_text_mono(k, arrow(put_node(n, comma(rr))))
+        ),
+        Refl,
+        Seg::put_ext(k, arrow(put_node(n, comma(rr))), xt_name(k, n, p, hw), Refl),
+        node_plain(n, comma(rr), xt_node(k, n, p, hw)),
+        put_node_strict(n, comma(rr)),
+        (
+          g: Nat,
+          hg: le(List::length(put_node(n, comma(rr))), Nat::add(List::length(comma(rr)), g))
+        ) => node_back(n, comma(rr), g, xt_node(k, n, p, hw), Refl, hg),
+        hRs,
+        hrR,
+        hR,
+        hl
+      )
+    }
+  }
+}

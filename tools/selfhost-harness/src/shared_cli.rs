@@ -292,7 +292,7 @@ fn selected(config: &Config) -> Result<Vec<String>, String> {
     Ok(names)
 }
 fn pending(config: &Config, id: &str, names: &[String], status: &str, reason: &str) -> Value {
-    json!({"invocation":id,"phase":config.phase(),"status":status,"semantic_execution_verified":false,"summary":{"passed":0,"failed":0,"incomplete":names.len(),"host_harness":0,"explicitly_excluded":0},"cases":names.iter().map(|n|json!({"case":n,"status":"incomplete","reasons":[reason],"observations":[]})).collect::<Vec<_>>(),"reason":reason})
+    json!({"invocation":id,"phase":config.phase(),"status":status,"semantic_execution_verified":false,"summary":{"passed":0,"failed":0,"incomplete":names.len(),"host_harness":0},"cases":names.iter().map(|n|json!({"case":n,"status":"incomplete","reasons":[reason],"observations":[]})).collect::<Vec<_>>(),"reason":reason})
 }
 fn backend() -> Result<Backend, String> {
     match std::env::var("TAUTO_SELFHOST_BACKEND").as_deref() {
@@ -329,28 +329,27 @@ fn worker(config: &Config, id: &str) -> Result<(Value, bool), String> {
         let bytes =
             fs::read(&path).map_err(|e| format!("prepared artifact {}: {e}", path.display()))?;
         (
-            json!({"invocation":id,"phase":"setup","status":"prepared","semantic_execution_verified":false,"summary":{"passed":0,"failed":0,"incomplete":0,"host_harness":0,"explicitly_excluded":0},"cases":[],"prepared":{"component":component,"compiler_backend":backend.name(),"artifact_path":path,"artifact_sha256":tauto_syntax::sha256_hex(&bytes)}}),
+            json!({"invocation":id,"phase":"setup","status":"prepared","semantic_execution_verified":false,"summary":{"passed":0,"failed":0,"incomplete":0,"host_harness":0},"cases":[],"prepared":{"component":component,"compiler_backend":backend.name(),"artifact_path":path,"artifact_sha256":tauto_syntax::sha256_hex(&bytes)}}),
             true,
         )
     } else {
         let target = config.target.unwrap_or(backend);
         let results =
             crate::shared_cases::run(&config.root, backend, target, &config.filter, &config.modes)?;
-        let (mut passed, mut failed, mut incomplete, mut host, mut excluded) = (0, 0, 0, 0, 0);
+        let (mut passed, mut failed, mut incomplete, mut host) = (0, 0, 0, 0);
         let records = results.into_iter().map(|result| {
             let (status, reasons) = match result.verdict {
                 Verdict::Passed => { passed += 1; ("passed", vec![]) },
                 Verdict::Failed(e) => { failed += 1; ("failed", e) },
                 Verdict::Incomplete(e) => { incomplete += 1; ("incomplete", e) },
                 Verdict::HostHarness => { host += 1; ("host-harness", vec![]) },
-                Verdict::Excluded => { excluded += 1; ("explicitly-excluded", vec![]) },
             };
             println!("{}\t{status}\t{}", result.name, reasons.join("; "));
             json!({"case":result.name,"status":status,"reasons":reasons,"artifacts":result.artifacts,"observations":result.observations.iter().map(|o|json!({"requirement":o.requirement,"stage":o.stage,"implementation":format!("{:?}",o.implementation),"compiler_backend":o.compiler_backend.name(),"target_backend":o.target_backend.map(Backend::name),"actual":format!("{:?}",o.actual)})).collect::<Vec<_>>()})
         }).collect::<Vec<_>>();
         let success = failed == 0 && incomplete == 0 && passed > 0;
         (
-            json!({"invocation":id,"phase":"execution","status":"completed","semantic_execution_verified":success,"summary":{"case_root":config.root.canonicalize().ok(),"compiler_root":crate::root().canonicalize().ok(),"compiler_backend":backend.name(),"target_backend":target.name(),"passed":passed,"failed":failed,"incomplete":incomplete,"host_harness":host,"explicitly_excluded":excluded},"cases":records}),
+            json!({"invocation":id,"phase":"execution","status":"completed","semantic_execution_verified":success,"summary":{"case_root":config.root.canonicalize().ok(),"compiler_root":crate::root().canonicalize().ok(),"compiler_backend":backend.name(),"target_backend":target.name(),"passed":passed,"failed":failed,"incomplete":incomplete,"host_harness":host},"cases":records}),
             success,
         )
     };
@@ -402,14 +401,13 @@ pub fn validate_worker_report(
         .get("summary")
         .and_then(Value::as_object)
         .ok_or("worker report has no summary")?;
-    let mut counts = [0u64; 5];
+    let mut counts = [0u64; 4];
     for case in cases {
         let index = match case.get("status").and_then(Value::as_str) {
             Some("passed") => 0,
             Some("failed") => 1,
             Some("incomplete") => 2,
             Some("host-harness") => 3,
-            Some("explicitly-excluded") => 4,
             _ => return Err("unknown worker case status".into()),
         };
         counts[index] += 1;
@@ -419,7 +417,6 @@ pub fn validate_worker_report(
         "failed",
         "incomplete",
         "host_harness",
-        "explicitly_excluded",
     ]
     .iter()
     .enumerate()
@@ -513,7 +510,7 @@ pub fn entry(mut args: Vec<String>) -> Result<bool, String> {
                     {
                         write_report(
                             Path::new(path),
-                            &json!({"invocation":invocation_id(),"phase":"arguments","status":"failed","semantic_execution_verified":false,"summary":{"passed":0,"failed":0,"incomplete":0,"host_harness":0,"explicitly_excluded":0},"cases":[],"reason":error}),
+                            &json!({"invocation":invocation_id(),"phase":"arguments","status":"failed","semantic_execution_verified":false,"summary":{"passed":0,"failed":0,"incomplete":0,"host_harness":0},"cases":[],"reason":error}),
                         )?;
                         return Err(error);
                     }

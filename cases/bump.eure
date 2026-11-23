@@ -1,0 +1,180 @@
+// The bump and pool allocators of std (`std/bump.taut`, `std/pool.taut`): a `Bump` is a scoped region
+// whose places borrow it, an `RcBump` one that counts and whose places borrow
+// nothing. Values are put in them through `Placed` and `RcPlaced`.
+
+@ cases.values-in-a-bump-run-on-every-backend
+llvm.unimplemented = "generate: the LLVM backend does not write a `Region` yet"
+description = "Values placed in a `Bump` inside a handle, of which only a count leaves, runs the same on each backend."
+
+source = ```tauto
+import std::bump
+import std::builtin::region { Placed, place }
+
+struct Node { v: u64 }
+fn build(n: u64): u64 ! {place(Node), overflow} {
+  if n == 0 { 0 } else { let p := Placed::new(Node { v: n }); build(n - 1) + 1 }
+}
+let a := Bump::new(64, 64)
+let s := handle { build(5) } with { place<Node>(), k => k(Bump::place(&a)) }
+show(&s)
+```
+stdout = "5\n"
+
+@ cases.a-value-of-an-rc-bump-leaves-the-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `RcPlace` yet"
+description = "A place of an `RcBump` borrows nothing, so the value may leave."
+
+source = ```tauto
+import std::bump
+import std::builtin::region { RcPlaced, RcPlace, rc_place }
+
+struct Node { v: u64 }
+fn ok(): RcPlaced(Node) {
+  let a := RcBump::new(64, 64)
+  handle { RcPlaced::new(Node { v: 7 }) } with { rc_place<Node>(), k => k(RcBump::place(a)) }
+}
+show(&(ok().v))
+```
+stdout = "7\n"
+
+@ cases.a-value-of-a-bump-does-not-leave-it
+description = "A placed value borrows its `Bump`, so a function cannot return one of its own."
+
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Placed, place }
+
+struct Node { v: u64 }
+fn bad(): Placed(Node) {
+  let a := Bump::new(64, 64)
+  handle { Placed::new(Node { v: 1 }) } with { place<Node>(), k => k(Bump::place(&a)) }
+}
+```
+lin = "error: a borrow of a cannot be returned: the value borrows it through place(Node), whose handle answers with it"
+
+@ cases.a-tree-in-a-bump-runs-on-every-backend
+llvm.unimplemented = "generate: the LLVM backend does not write a `Region` yet"
+description = "A tree whose branches are placed in a `Bump` inside a handle, of which only its size leaves, runs the same on each backend."
+
+source = ```tauto
+import std::bump
+import std::builtin::region { Placed, place }
+
+enum Tree { Leaf, Branch(Placed(Tree), u64) }
+fn size(t: &Tree): u64 ! {overflow} {
+  match t { Leaf => 0, Branch(l, v) => size(&l) + 1 }
+}
+fn build(n: u64): Tree ! {place(Tree), overflow} {
+  if n == 0 { Leaf } else { Branch(Placed::new(build(n - 1)), n) }
+}
+let a := Bump::new(64, 64)
+let s := handle { size(&build(5)) } with { place<Tree>(), k => k(Bump::place(&a)) }
+show(&s)
+```
+stdout = "5\n"
+
+@ cases.a-binary-tree-in-a-bump-runs-on-every-backend
+llvm.unimplemented = "generate: the LLVM backend does not write a `Region` yet"
+description = "A tree with two placed children per branch is built and read inside the handle on each backend."
+
+source = ```tauto
+import std::bump
+import std::builtin::region { Placed, place }
+
+enum Tree { Leaf, Branch(Placed(Tree), u64, Placed(Tree)) }
+fn sum(t: &Tree): u64 ! {overflow} {
+  match t { Leaf => 0, Branch(l, v, r) => sum(&l) + v + sum(&r) }
+}
+fn build(n: u64): Tree ! {place(Tree), overflow} {
+  if n == 0 { Leaf } else { Branch(Placed::new(build(n - 1)), n, Placed::new(build(n - 1))) }
+}
+let a := Bump::new(64, 64)
+let s := handle { sum(&build(6)) } with { place<Tree>(), k => k(Bump::place(&a)) }
+show(&s)
+```
+stdout = "120\n"
+
+// A recursion through a `Placed(T)` field ends as one on the part itself:
+// `sum(&l)` reads as `sum(&l.value)`, and a field of a part is a part. So
+// `sum` does not diverge, a closure that calls it fits a callable type
+// without `div`, and a total build in a region counts no host steps.
+@ cases.a-recursion-through-a-placed-field-is-total
+llvm.unimplemented = "generate: the LLVM backend does not write a `Region` yet"
+description = "A function that recurses on the value of a placed child is total: a closure calling it needs no `div`."
+
+source = ```tauto
+import std::bump
+import std::builtin::region { Placed, place }
+
+enum Tree { Leaf, Branch(Placed(Tree), u64, Placed(Tree)) }
+fn sum(t: &Tree): u64 ! {overflow} {
+  match t { Leaf => 0, Branch(l, v, r) => sum(&l) + v + sum(&r) }
+}
+fn build(n: u64): Tree ! {place(Tree), overflow} {
+  if n == 0 { Leaf } else { Branch(Placed::new(build(n - 1)), n, Placed::new(build(n - 1))) }
+}
+fn apply(k: (u64) -> u64 ! {overflow}, n: u64): u64 ! {overflow} { k(n) }
+let s := apply((n: u64) => {
+  let a := Bump::new(64, 64)
+  handle { sum(&build(n)) } with { place<Tree>(), k => k(Bump::place(&a)) }
+}, 3)
+show(&s)
+```
+stdout = "11\n"
+
+@ cases.values-in-a-pool-run-on-every-backend
+llvm.unimplemented = "generate: the LLVM backend does not write a `Region` yet"
+description = "Values placed in a `Pool` inside a handle, of which only a count leaves, runs the same on each backend."
+
+source = ```tauto
+import std::pool
+import std::builtin::region { Placed, place }
+
+struct Node { v: u64 }
+fn build(n: u64): u64 ! {place(Node), overflow} {
+  if n == 0 { 0 } else { let p := Placed::new(Node { v: n }); build(n - 1) + 1 }
+}
+let a := Pool::new(64, 4)
+let s := handle { build(6) } with { place<Node>(), k => k(Pool::place(&a)) }
+show(&s)
+```
+stdout = "6\n"
+
+@ cases.a-value-of-an-rc-pool-leaves-the-function
+llvm.unimplemented = "generate: the LLVM backend does not write a `RcPlace` yet"
+description = "A place of an `RcPool` borrows nothing, so the value may leave, and values of an `RcBump` and an `RcPool` meet outside."
+
+source = ```tauto
+import std::bump
+import std::pool
+import std::builtin::region { RcPlaced, RcPlace, rc_place }
+
+struct Node { v: u64 }
+fn pooled(): RcPlaced(Node) {
+  let a := RcPool::new(64, 4)
+  handle { RcPlaced::new(Node { v: 7 }) } with { rc_place<Node>(), k => k(RcPool::place(a)) }
+}
+fn bumped(): RcPlaced(Node) {
+  let a := RcBump::new(64, 64)
+  handle { RcPlaced::new(Node { v: 8 }) } with { rc_place<Node>(), k => k(RcBump::place(a)) }
+}
+show(&(pooled().v + bumped().v))
+```
+stdout = "15\n"
+
+@ cases.a-value-of-a-pool-does-not-leave-it
+description = "A placed value borrows its `Pool`, so a function cannot return one of its own."
+
+extract = true
+source = ```tauto
+import std::pool
+import std::builtin::region { Placed, place }
+
+struct Node { v: u64 }
+fn bad(): Placed(Node) {
+  let a := Pool::new(64, 4)
+  handle { Placed::new(Node { v: 1 }) } with { place<Node>(), k => k(Pool::place(&a)) }
+}
+```
+lin = "error: a borrow of a cannot be returned: the value borrows it through place(Node), whose handle answers with it"

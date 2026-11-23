@@ -1,6 +1,6 @@
 import "admission.taut"
 import "history.taut"
-import std::Base
+import std::base
 
 // This entry point is for complete, hash-bound input from the fixed origin.
 // An untrusted mirror or incomplete fetch MUST NOT call it and freeze a ledger.
@@ -10,27 +10,27 @@ pub(open) inductive IxLedger: Type {
 }
 
 pub fn ix_ledger_prefix(ledger: IxLedger): IxState {
-  ⊢ IxState from match ledger {
+  match ledger {
     IxOpen(state) => state
     IxFrozen(prefix) => prefix
   }
 }
 
 pub fn ix_batch_point(batch: IxBatch): IxPoint {
-  ⊢ IxPoint from match batch {
-    Mk(sequence, issued, until, config, parent, point, events) => point
+  match batch {
+    Mk(^sequence, ^issued, ^until, ^config, ^parent, point, ^events) => point
   }
 }
 
 pub fn ix_ingest_new_grounded(state: IxState, batch: IxBatch): IxLedger {
-  ⊢ IxLedger from match ix_ingest(state, batch) {
+  match ix_ingest(state, batch) {
     None => IxFrozen(state)
     Some(next) => IxOpen(next)
   }
 }
 
 pub fn ix_ingest_grounded(ledger: IxLedger, batch: IxBatch): IxLedger {
-  ⊢ IxLedger from match ledger {
+  match ledger {
     IxOpen(state) => ix_choose(
       ix_checkpoint_known(ix_batch_point(batch), state),
       ix_ingest_new_grounded(state, batch),
@@ -41,11 +41,11 @@ pub fn ix_ingest_grounded(ledger: IxLedger, batch: IxBatch): IxLedger {
 }
 
 pub fn ix_open_states(ledgers: List(IxLedger)): List(IxState) {
-  ⊢ List(IxState) from match ledgers {
+  match ledgers {
     Nil => Nil
     Cons(ledger, rest) => ⊢ List(IxState) from match ledger {
       IxOpen(state) => Cons(state, ix_open_states(rest))
-      IxFrozen(prefix) => ix_open_states(rest)
+      IxFrozen(^prefix) => ix_open_states(rest)
     }
   }
 }

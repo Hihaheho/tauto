@@ -2,9 +2,9 @@ import "parse.taut"
 import "bytes.taut"
 import "percent.taut"
 import "url.taut"
-import std::Base
-import std::List
-import std::Text
+import std::base
+import std::list
+import std::text
 
 // Parsing against a base URL (URL Standard, "URL parsing" with a base): an
 // input with its own scheme is parsed on its own; otherwise it is resolved
@@ -12,25 +12,25 @@ import std::Text
 // fragment.
 
 pub fn init(ss: List(List(Nat))): List(List(Nat)) {
-  ⊢ List(List(Nat)) from match ss {
+  match ss {
     Nil => Nil
     Cons(s, rest) => ⊢ List(List(Nat)) from match rest {
       Nil => Nil
-      Cons(s2, more) => Cons(s, init(rest))
+      Cons(^s2, ^more) => Cons(s, init(rest))
     }
   }
 }
 
 pub fn base_segments(p: UrlPath): Option(List(List(Nat))) {
-  ⊢ Option(List(List(Nat))) from match p {
-    Opaque(o) => None
+  match p {
+    Opaque(^o) => None
     Segments(ss) => Some(ss)
   }
 }
 
 pub fn with_fragment(u: Url, f: Option(List(Nat))): Url {
-  ⊢ Url from match u {
-    MkUrl(s, a, p, q, f0) => MkUrl(s, a, p, q, f)
+  match u {
+    MkUrl(s, a, p, q, ^f0) => MkUrl(s, a, p, q, f)
   }
 }
 
@@ -45,7 +45,7 @@ pub fn relative_hier(
   t: Tail,
   h: List(Nat)
 ): Option(Url) {
-  ⊢ Option(Url) from match h {
+  match h {
     Nil => Some(
       MkUrl(
         s,
@@ -72,8 +72,8 @@ pub fn relative_hier(
 }
 
 pub fn relative(base: Url, l: List(Nat)): Option(Url) {
-  ⊢ Option(Url) from match base {
-    MkUrl(s, a, p, q, f) => ⊢ Option(Url) from match base_segments(p) {
+  match base {
+    MkUrl(s, a, p, q, ^f) => ⊢ Option(Url) from match base_segments(p) {
       None => ⊢ Option(Url) from match cut(35, l) {
         None => None
         Some(c) => ⊢ Option(Url) from match is_empty(c.fst) {
@@ -93,7 +93,7 @@ pub fn relative_tail(
   q: Option(List(Nat)),
   t: Tail
 ): Option(Url) {
-  ⊢ Option(Url) from match is_special(s) {
+  match is_special(s) {
     true => relative_hier(s, true, a, ss, q, t, List::map(backslash_to_slash, t.hier))
     false => relative_hier(s, false, a, ss, q, t, t.hier)
   }
@@ -102,7 +102,7 @@ pub fn relative_tail(
 // With the same special scheme as the base and no slash after `:`, the
 // input is relative (`http:x` against `http://a/b` is `http://a/x`).
 pub fn resolve_bytes(base: Url, l: List(Nat)): Option(Url) {
-  ⊢ Option(Url) from match scheme_of(l) {
+  match scheme_of(l) {
     None => relative(base, l)
     Some(p) => ⊢ Option(Url) from match Bool::and(
       is_special(p.fst),

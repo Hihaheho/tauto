@@ -1,17 +1,18 @@
+import "../src/bindings.taut"
 import "../src/generic.taut"
 import "../src/generic_core.taut"
 import "../src/types.taut"
 pub fn rg_test_reject(a: RustgenType, b: RustgenType): Bool {
-  ⊢ Bool from match rustgen_unify(100, a, b, Nil) {
-    RustgenErr(message) => true
-    RustgenOk(subst) => false
+  match rustgen_unify(100, a, b, Nil) {
+    RustgenErr(^message) => true
+    RustgenOk(^subst) => false
   }
 }
 pub fn rg_test_resolution(a: RustgenType, b: RustgenType, wanted: RustgenType): Bool {
-  ⊢ Bool from match rustgen_unify(100, a, b, Nil) {
-    RustgenErr(message) => false
+  match rustgen_unify(100, a, b, Nil) {
+    RustgenErr(^message) => false
     RustgenOk(subst) => ⊢ Bool from match rustgen_resolve(100, a, subst) {
-      RustgenErr(message) => false
+      RustgenErr(^message) => false
       RustgenOk(result) => rustgen_same(result, wanted)
     }
   }
@@ -22,7 +23,7 @@ pub fn rg_test_simultaneous(): Bool {
     Cons(RustgenBinding::Mk("B", RustgenInt), Nil)
   )
   ⊢ Bool from match rustgen_substitute(100, RustgenVar("A"), bindings) {
-    RustgenErr(message) => false
+    RustgenErr(^message) => false
     RustgenOk(result) => rustgen_same(result, RustgenVar("B"))
   }
 }
@@ -32,8 +33,8 @@ pub fn rg_test_cycle_resolution(): Bool {
     Cons(RustgenBinding::Mk("y", RustgenMeta("x")), Nil)
   )
   ⊢ Bool from match rustgen_resolve(10, RustgenMeta("x"), subst) {
-    RustgenErr(message) => true
-    RustgenOk(value) => false
+    RustgenErr(^message) => true
+    RustgenOk(^value) => false
   }
 }
 pub theorem rg_meta_binds(): rg_test_resolution(
@@ -58,16 +59,16 @@ pub theorem rg_arity_reject(): rg_test_reject(
 pub theorem rg_simultaneous(): rg_test_simultaneous() = true { Refl }
 pub theorem rg_cycle(): rg_test_cycle_resolution() = true { Refl }
 pub fn rg_test_indirect_occurs(): Bool {
-  ⊢ Bool from match rustgen_unify(100, RustgenMeta("x"), RustgenMeta("y"), Nil) {
-    RustgenErr(message) => false
+  match rustgen_unify(100, RustgenMeta("x"), RustgenMeta("y"), Nil) {
+    RustgenErr(^message) => false
     RustgenOk(subst) => ⊢ Bool from match rustgen_unify(
       100,
       RustgenMeta("y"),
       RustgenApply("List", Cons(RustgenMeta("x"), Nil)),
       subst
     ) {
-      RustgenErr(message) => true
-      RustgenOk(next) => false
+      RustgenErr(^message) => true
+      RustgenOk(^next) => false
     }
   }
 }
@@ -75,8 +76,8 @@ pub fn rg_test_shared_constraint(): Bool {
   let left := Cons(RustgenMeta("x"), Cons(RustgenMeta("x"), Nil))
   let right := Cons(RustgenInt, Cons(RustgenText, Nil))
   ⊢ Bool from match rustgen_unify_many(100, left, right, Nil) {
-    RustgenErr(message) => true
-    RustgenOk(next) => false
+    RustgenErr(^message) => true
+    RustgenOk(^next) => false
   }
 }
 pub theorem rg_indirect_occurs(): rg_test_indirect_occurs() = true { Refl }
@@ -86,9 +87,9 @@ pub fn rg_test_numeric_refinement(): Bool {
   let xs := Cons(RustgenMeta("A"), Cons(RustgenMeta("A"), Nil))
   let ys := Cons(RustgenNumber("literal:1", 1), Cons(RustgenNat, Nil))
   ⊢ Bool from match rustgen_unify_many(100, xs, ys, Nil) {
-    RustgenErr(message) => false
+    RustgenErr(^message) => false
     RustgenOk(subst) => ⊢ Bool from match rustgen_resolve(100, RustgenMeta("A"), subst) {
-      RustgenErr(message) => false
+      RustgenErr(^message) => false
       RustgenOk(ty) => rustgen_same(ty, RustgenNat)
     }
   }

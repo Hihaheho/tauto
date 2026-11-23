@@ -1,29 +1,29 @@
-import std::Base
-import std::Data
-import std::prelude::Ord
-import "../src/Revision.taut"
-import "../src/Graph.taut"
+import std::base
+import std::data
+import std::builtin::ord
+import "../src/revision.taut"
+import "../src/graph.taut"
 
 // Nodes are named by numbers and carry no data (0). There are three durability levels:
 // 0 for what the user edits, 2 for what almost never changes.
 
 fn put(w: Whale(Nat, Nat), k: Nat, dur: Nat, ids: List(Nat)): Whale(Nat, Nat) {
-  ⊢ Whale(Nat, Nat) from match Whale::register(w, k, Zero, dur, ids) {
+  match Whale::register(w, k, Zero, dur, ids) {
     Done(p) => pfst(p)
-    Absent(ks) => w
+    Absent(^ks) => w
   }
 }
 
 fn same(w: Whale(Nat, Nat), k: Nat, ids: List(Nat)): Whale(Nat, Nat) {
-  ⊢ Whale(Nat, Nat) from match Whale::confirm_unchanged(w, k, ids) {
+  match Whale::confirm_unchanged(w, k, ids) {
     Done(v) => v
-    Absent(ks) => w
+    Absent(^ks) => w
   }
 }
 
 fn absent_ids<A>(o: Outcome(Nat, A)): List(Nat) {
-  ⊢ List(Nat) from match o {
-    Done(a) => Nil
+  match o {
+    Done(^a) => Nil
     Absent(ks) => ks
   }
 }

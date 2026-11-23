@@ -1,0 +1,450 @@
+import std::prelude::std { Option, concat }
+import std::prelude::collections { Vec }
+import std::builtin::os { hash_seed }
+import std::uhost { UHost }
+import std::uint { UInt }
+import std::hash { SipSeed, Sip }
+import std::key { Key }
+import std::slots { Byte, SlotsModel, Table }
+import std::hash_table { tb_used, tb_laws, HT }
+import std::prelude::debug { Debug }
+
+// A hash map of entries `K × V` on the hash table of `std::hash_table`. Keys are told apart by
+// `Key`, hashed by SipHash-1-3 under the map's seed. Growing keeps every entry: a move
+// happens only once its checks have passed.
+pub inductive struct UHashMap(
+  K: Type,
+  V: Type
+) { table: SlotsModel(Table, Byte, K × V, tb_used), seed: SipSeed }
+
+pub fn UHashMap::hash_in<K: Linear>(seed: SipSeed, k: &K): UInt(64) where Key(K) {
+  Sip::finish(Key::feed(k, Sip::start(seed), Sip::step))
+}
+
+// An empty map with a seed of its own.
+pub fn UHashMap::with_seed<K: Linear, V: Linear>(seed: SipSeed): UHashMap(K, V) {
+  UHashMap { table: SlotsModel::new(UHost::lit(0, Refl), tb_laws()), seed: seed }
+}
+
+// An empty map hashing under the seed of this run.
+pub fn UHashMap::new<K: Linear, V: Linear>(): UHashMap(K, V) ! {hash_seed} {
+  let s := perform hash_seed()
+  UHashMap::with_seed(SipSeed::of(s.k0, s.k1))
+}
+
+pub fn UHashMap::len<K: Linear, V: Linear>(m: &UHashMap(K, V)): Nat {
+  HT::count(&m.table)
+}
+
+fn UHashMap::is_with<K: Linear, V: Linear>(
+  same: &((a: &K, b: &K) -> Bool),
+  k: &K,
+  p: &(K × V)
+): Bool {
+  match p { #(a, b) => same(a, k) }
+}
+
+fn UHashMap::value<K: Linear, V: Linear>(p: &(K × V)): &V {
+  match p { #(a, b) => b }
+}
+
+fn UHashMap::find_with<K: Linear, V: Linear>(
+  t: &SlotsModel(Table, Byte, K × V, tb_used),
+  h: UInt(64),
+  same: &((a: &K, b: &K) -> Bool),
+  k: &K
+): Option(&(K × V)) borrows(t) {
+  HT::find_in(t, h, (p: &(K × V)) => UHashMap::is_with(same, k, p))
+}
+
+// The seed the map hashes its keys under.
+pub fn UHashMap::seed<K: Linear, V: Linear>(m: &UHashMap(K, V)): SipSeed { m.seed }
+
+// The `_at` functions take the hash of `k` under the map's seed
+// (`UHashMap::hash_in(UHashMap::seed(m), k)`), worked out by the caller.
+pub fn UHashMap::get_at<K: Linear, V: Linear>(
+  m: &UHashMap(K, V),
+  h: UInt(64),
+  k: &K
+): Option(&V) borrows(m) where Key(K) {
+  match UHashMap::find_with(&m.table, h, Key::eq, k) {
+    None => None
+    Some(p) => Some(UHashMap::value(p))
+  }
+}
+
+pub fn UHashMap::get<K: Linear, V: Linear>(
+  m: &UHashMap(K, V),
+  k: &K
+): Option(&V) borrows(m) where Key(K) {
+  UHashMap::get_at(m, UHashMap::hash_in(m.seed, k), k)
+}
+
+fn UHashMap::value_mut<K: Linear, V: Linear>(p: &mut (K × V)): &mut V {
+  match p { #(a, b) => b }
+}
+
+// The value of `k`, for writing in place.
+pub fn UHashMap::get_mut_at<K: Linear, V: Linear>(
+  m: &mut UHashMap(K, V),
+  h: UInt(64),
+  k: &K
+): Option(&mut V) borrows(m) where Key(K) {
+  match HT::get_mut_in(&mut m.table, h, (p: &(K × V)) => UHashMap::is_key(k, p)) {
+    None => None
+    Some(p) => Some(UHashMap::value_mut(p))
+  }
+}
+
+pub fn UHashMap::get_mut<K: Linear, V: Linear>(
+  m: &mut UHashMap(K, V),
+  k: &K
+): Option(&mut V) borrows(m) where Key(K) {
+  let h := UHashMap::hash_in(m.seed, k)
+  UHashMap::get_mut_at(&mut m, h, k)
+}
+
+pub fn UHashMap::contains_at<K: Linear, V: Linear>(m: &UHashMap(K, V), h: UInt(64), k: &K): Bool where Key(K) {
+  match UHashMap::find_with(&m.table, h, Key::eq, k) {
+    None => false
+    Some(p) => true
+  }
+}
+
+pub fn UHashMap::contains<K: Linear, V: Linear>(m: &UHashMap(K, V), k: &K): Bool where Key(K) {
+  UHashMap::contains_at(m, UHashMap::hash_in(m.seed, k), k)
+}
+
+fn UHashMap::rehash<K: Linear, V: Linear>(seed: SipSeed, p: &(K × V)): UInt(64) where Key(K) {
+  match p { #(k, v) => UHashMap::hash_in(seed, k) }
+}
+
+fn UHashMap::is_key<K: Linear, V: Linear>(k: &K, p: &(K × V)): Bool where Key(K) {
+  match p { #(candidate, value) => Key::eq(candidate, k) }
+}
+
+// Doubles the table and puts every entry where its hash now says.
+pub fn UHashMap::grow<K: Linear, V: Linear>(m: &mut UHashMap(K, V)): Bool where Key(K) {
+  let seed := m.seed
+  HT::grow(&mut m.table, (p: &(K × V)) => UHashMap::rehash(seed, p))
+}
+
+// Puts `k` with `v`, growing the table when it is full. The entry the allocator
+// left no room for comes back (`Some`).
+pub fn UHashMap::put<K: Linear, V: Linear>(
+  m: &mut UHashMap(K, V),
+  k: K,
+  v: V
+): Option(K × V) where Key(K) {
+  let seed := m.seed
+  let h := UHashMap::hash_in(seed, &k)
+  HT::insert_grow(&mut m.table, h, (p: &(K × V)) => UHashMap::rehash(seed, p), #(k, v))
+}
+
+fn UHashMap::slot_of<K: Linear, V: Linear>(
+  t: &SlotsModel(Table, Byte, K × V, tb_used),
+  h: UInt(64),
+  k: &K
+): Option(UHost) where Key(K) {
+  HT::find_idx(t, h, (p: &(K × V)) => UHashMap::is_key(k, p))
+}
+
+fn UHashMap::take_at<K: Linear, V: Linear>(
+  m: &mut UHashMap(K, V),
+  slot: Option(UHost)
+): Option(K × V) {
+  match slot {
+    None => None
+    Some(i) => HT::take_at(&mut m.table, i)
+  }
+}
+
+pub fn UHashMap::remove_at<K: Linear, V: Linear>(
+  m: &mut UHashMap(K, V),
+  h: UInt(64),
+  k: &K
+): Option(K × V) where Key(K) {
+  HT::remove_in(&mut m.table, h, (p: &(K × V)) => UHashMap::is_key(k, p))
+}
+
+pub fn UHashMap::remove<K: Linear, V: Linear>(
+  m: &mut UHashMap(K, V),
+  k: &K
+): Option(K × V) where Key(K) {
+  let h := UHashMap::hash_in(m.seed, k)
+  UHashMap::remove_at(&mut m, h, k)
+}
+
+// Puts `k` with `v` in place of the entry of an equal key. Gives the entry it
+// replaced, and the entry the allocator left no room for (a map that cannot
+// grow holds nothing it was not given).
+pub fn UHashMap::insert<K: Linear, V: Linear>(
+  m: &mut UHashMap(K, V),
+  k: K,
+  v: V
+): Option(K × V) × Option(K × V) where Key(K) {
+  let h := UHashMap::hash_in(m.seed, &k)
+  UHashMap::insert_at(&mut m, h, k, v)
+}
+
+pub fn UHashMap::insert_at<K: Linear, V: Linear>(
+  m: &mut UHashMap(K, V),
+  h: UInt(64),
+  k: K,
+  v: V
+): Option(K × V) × Option(K × V) where Key(K) {
+  let seed := m.seed
+  let old := UHashMap::take_at(&mut m, UHashMap::slot_of(&m.table, h, &k))
+  let rejected := HT::insert_grow(
+    &mut m.table,
+    h,
+    (p: &(K × V)) => UHashMap::rehash(seed, p),
+    #(k, v)
+  )
+  #(old, rejected)
+}
+
+fn UHashMap::each_mut_entry<K: Linear, V: Linear>(
+  f: &((k: &K, v: &mut V) -> Unit),
+  p: &mut (K × V)
+): Unit {
+  match p { #(a, b) => f(a, b) }
+}
+
+fn UHashMap::each_mut_from<K: Linear, V: Linear>(
+  t: &mut SlotsModel(Table, Byte, K × V, tb_used),
+  f: &((k: &K, v: &mut V) -> Unit),
+  base: UInt(64),
+  left: Nat
+): Unit {
+  match left {
+    Zero => #()
+    Succ(rest) => match HT::idx(Table::cap(SlotsModel::state(t)), base) {
+      None => #()
+      Some(i) => {
+        match HT::get_mut_at(t, i) {
+          None => #()
+          Some(p) => UHashMap::each_mut_entry(f, p)
+        }
+        UHashMap::each_mut_from(&mut t, f, UInt::wrapping_add64(base, UInt::of_nat_mod64(1)), rest)
+      }
+    }
+  }
+}
+
+// Calls `f` on every entry once, for writing the value in place.
+pub fn UHashMap::each_mut<K: Linear, V: Linear>(
+  m: &mut UHashMap(K, V),
+  f: &((k: &K, v: &mut V) -> Unit)
+): Unit {
+  UHashMap::each_mut_from(
+    &mut m.table,
+    f,
+    UInt::of_nat_mod64(0),
+    UInt::val64(UHost::to_u64(Table::cap(SlotsModel::state(&m.table))))
+  )
+}
+
+// Inserts `f()` for `k` when the key is missing; gives back the entry when the
+// allocator left no room. A following `get_mut` writes the value in place
+// (`get_or_insert_with` that returns `&mut V` after an insert cannot be one
+// Mut'k function: insert is place-passing and the borrow is item-lending).
+pub fn UHashMap::insert_with<K: Shared, V: Linear>(
+  m: &mut UHashMap(K, V),
+  k: K,
+  f: &(() -> V)
+): Option(K × V) where Key(K) {
+  match UHashMap::contains(&m, &k) {
+    true => None
+    false => UHashMap::put(&mut m, k, f())
+  }
+}
+
+pub fn UHashMap::insert_with_at<K: Shared, V: Linear>(
+  m: &mut UHashMap(K, V),
+  h: UInt(64),
+  k: K,
+  f: &(() -> V)
+): Option(K × V) where Key(K) {
+  match UHashMap::contains_at(&m, h, &k) {
+    true => None
+    false => {
+      let seed := m.seed
+      HT::insert_grow(&mut m.table, h, (p: &(K × V)) => UHashMap::rehash(seed, p), #(k, f()))
+    }
+  }
+}
+
+fn UHashMap::step<K: Linear, V: Linear, B: Shared>(f: &((acc: B, k: &K, v: &V) -> B), acc: B, p: &(K × V)): B {
+  match p { #(a, b) => f(acc, a, b) }
+}
+
+// Folds `f` over every entry once, in slot order (not insertion order).
+pub fn UHashMap::fold<K: Linear, V: Linear, B: Shared>(
+  m: &UHashMap(K, V),
+  init: B,
+  f: &((acc: B, k: &K, v: &V) -> B)
+): B {
+  HT::fold(&m.table, init, (acc: B, p: &(K × V)) => UHashMap::step(f, acc, p))
+}
+
+// Every entry, in slot order (not insertion order). Empties the map.
+// Shared keys and values: draining uses `var` + `Vec::push` (linear entries need a leaf).
+pub fn UHashMap::into_vec<K: Shared, V: Shared>(m: UHashMap(K, V)): Vec(K × V) {
+  HT::into_vec(m.table)
+}
+
+// The map programs use. The block is the part a backend may bind to a native
+// map (the Tauto bodies are the fallback); the representation is closed to it,
+// and the checked `UHashMap` above is what it holds. The keyed operations take
+// the key's hash, which the functions after the block work out in Tauto, and
+// the class `Key` reaches a host as its `eq`: a host map buckets by the hash
+// and tells keys apart by `eq`, so it agrees with `Key` for every key type.
+extern {
+  pub struct(affine) HashMap(K: Type, V: Type) { core: UHashMap(K, V) }
+
+  pub fn HashMap::with_seed<K: Linear, V: Linear>(seed: SipSeed): HashMap(K, V) {
+    HashMap { core: UHashMap::with_seed(seed) }
+  }
+
+  pub fn HashMap::seed<K: Linear, V: Linear>(m: &HashMap(K, V)): SipSeed {
+    UHashMap::seed(&m.core)
+  }
+
+  pub fn HashMap::len<K: Linear, V: Linear>(m: &HashMap(K, V)): Nat {
+    UHashMap::len(&m.core)
+  }
+
+  pub fn HashMap::get_at<K: Linear, V: Linear>(
+    m: &HashMap(K, V),
+    h: UInt(64),
+    k: &K
+  ): Option(&V) borrows(m) where Key(K) {
+    UHashMap::get_at(&m.core, h, k)
+  }
+
+  pub fn HashMap::get_mut_at<K: Linear, V: Linear>(
+    m: &mut HashMap(K, V),
+    h: UInt(64),
+    k: &K
+  ): Option(&mut V) borrows(m) where Key(K) {
+    UHashMap::get_mut_at(&mut m.core, h, k)
+  }
+
+  pub fn HashMap::contains_at<K: Linear, V: Linear>(m: &HashMap(K, V), h: UInt(64), k: &K): Bool where Key(K) {
+    UHashMap::contains_at(&m.core, h, k)
+  }
+
+  pub fn HashMap::remove_at<K: Linear, V: Linear>(m: &mut HashMap(K, V), h: UInt(64), k: &K): Option(K × V) where Key(K) {
+    UHashMap::remove_at(&mut m.core, h, k)
+  }
+
+  pub fn HashMap::insert_at<K: Linear, V: Linear>(
+    m: &mut HashMap(K, V),
+    h: UInt(64),
+    k: K,
+    v: V
+  ): Option(K × V) × Option(K × V) where Key(K) {
+    UHashMap::insert_at(&mut m.core, h, k, v)
+  }
+
+  pub fn HashMap::insert_with_at<K: Shared, V: Linear>(
+    m: &mut HashMap(K, V),
+    h: UInt(64),
+    k: K,
+    f: &(() -> V)
+  ): Option(K × V) where Key(K) {
+    UHashMap::insert_with_at(&mut m.core, h, k, f)
+  }
+
+  pub fn HashMap::each_mut<K: Linear, V: Linear>(
+    m: &mut HashMap(K, V),
+    f: &((k: &K, v: &mut V) -> Unit)
+  ): Unit {
+    UHashMap::each_mut(&mut m.core, f)
+  }
+
+  pub fn HashMap::fold<K: Linear, V: Linear, B: Shared>(
+    m: &HashMap(K, V),
+    init: B,
+    f: &((acc: B, k: &K, v: &V) -> B)
+  ): B {
+    UHashMap::fold(&m.core, init, f)
+  }
+
+  pub fn HashMap::into_vec<K: Shared, V: Shared>(m: HashMap(K, V)): Vec(K × V) {
+    UHashMap::into_vec(m.core)
+  }
+}
+
+// The hash of `k` in `m`.
+pub fn HashMap::hash<K: Linear, V: Linear>(m: &HashMap(K, V), k: &K): UInt(64) where Key(K) {
+  UHashMap::hash_in(HashMap::seed(m), k)
+}
+
+// An empty map hashing under the seed of this run.
+pub fn HashMap::new<K: Linear, V: Linear>(): HashMap(K, V) ! {hash_seed} {
+  let s := perform hash_seed()
+  HashMap::with_seed(SipSeed::of(s.k0, s.k1))
+}
+
+pub fn HashMap::get<K: Linear, V: Linear>(m: &HashMap(K, V), k: &K): Option(&V) borrows(m) where Key(K) {
+  HashMap::get_at(m, HashMap::hash(m, k), k)
+}
+
+pub fn HashMap::get_mut<K: Linear, V: Linear>(
+  m: &mut HashMap(K, V),
+  k: &K
+): Option(&mut V) borrows(m) where Key(K) {
+  let h := HashMap::hash(&m, k)
+  HashMap::get_mut_at(&mut m, h, k)
+}
+
+pub fn HashMap::contains<K: Linear, V: Linear>(m: &HashMap(K, V), k: &K): Bool where Key(K) {
+  HashMap::contains_at(m, HashMap::hash(m, k), k)
+}
+
+pub fn HashMap::remove<K: Linear, V: Linear>(m: &mut HashMap(K, V), k: &K): Option(K × V) where Key(K) {
+  let h := HashMap::hash(&m, k)
+  HashMap::remove_at(&mut m, h, k)
+}
+
+// Puts `k` with `v` in place of the entry of an equal key. Gives the entry it
+// replaced, and the entry the allocator left no room for.
+pub fn HashMap::insert<K: Linear, V: Linear>(
+  m: &mut HashMap(K, V),
+  k: K,
+  v: V
+): Option(K × V) × Option(K × V) where Key(K) {
+  let h := HashMap::hash(&m, &k)
+  HashMap::insert_at(&mut m, h, k, v)
+}
+
+// Inserts `f()` for `k` when the key is missing.
+pub fn HashMap::insert_with<K: Shared, V: Linear>(
+  m: &mut HashMap(K, V),
+  k: K,
+  f: &(() -> V)
+): Option(K × V) where Key(K) {
+  let h := HashMap::hash(&m, &k)
+  HashMap::insert_with_at(&mut m, h, k, f)
+}
+
+fn HashMap::debug_entry<K: Linear, V: Linear>(acc: Bool × Text, k: &K, v: &V): Bool × Text where Debug(K), Debug(V) {
+  match acc {
+    #(first, out) => {
+      let sep := if first { "" } else { ", " }
+      #(false, concat(out, concat(sep, concat(Debug::debug(k), concat(" => ", Debug::debug(v))))))
+    }
+  }
+}
+
+// `HashMap["a" => 1, "b" => 2]`: the entries in the order the map walks them,
+// which follows the seed and so changes from run to run.
+instance<K: Linear, V: Linear> Debug(HashMap(K, V)) where Debug(K), Debug(V) {
+  fn debug(m: &HashMap(K, V)): Text {
+    match HashMap::fold(m, #(true, ""), (acc: Bool × Text, k: &K, v: &V) => HashMap::debug_entry(acc, k, v)) {
+      #(_, out) => concat("HashMap[", concat(out, "]"))
+    }
+  }
+}

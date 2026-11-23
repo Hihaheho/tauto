@@ -1,0 +1,371 @@
+description = "A macro makes a class and an instance with `quote stmts`, and the call lists them (`=> class C, instance C`)."
+
+// The class and its method are named from the call, so the caller uses them.
+@ cases.a-macro-makes-a-class-and-an-instance
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub macro fn make_class(e: SynExpr): List(SynStmt) {
+  match Syn::ident_of(e) {
+    None => Nil
+    Some(at) => {
+      let c := Syn::decl_name(at, "Twice")
+      let m := Syn::decl_name(at, "twice")
+      quote stmts {
+        inductive class $c(A: Type) { fn $m(owner: A): A }
+      }
+    }
+  }
+}
+
+pub macro fn make_instance(e: SynExpr): List(SynStmt) {
+  match Syn::ident_of(e) {
+    None => Nil
+    Some(at) => {
+      let c := Syn::decl_name(at, "Twice")
+      let m := Syn::decl_name(at, "twice")
+      quote stmts {
+        instance $c(Nat) { fn $m(owner: Nat): Nat { owner + owner } }
+      }
+    }
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import "mk.taut"
+
+make_class!(here) => class Twice
+make_instance!(here) => instance Twice
+
+fn go(owner: Nat): Nat { Twice::twice(owner) }
+show(&go(Succ(Succ(Zero))))
+````
+stdout = "4\n"
+
+@ cases.a-macro-class-parameter-label-selects-inference
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub macro fn make_class(e: SynExpr): List(SynStmt) {
+  match Syn::ident_of(e) {
+    None => Nil
+    Some(at) => {
+      let c := Syn::decl_name(at, "Choose")
+      let m := Syn::decl_name(at, "choose")
+      quote stmts {
+        inductive class $c(A: Type, I: Type) { fn $m(value: A): I }
+      }
+    }
+  }
+}
+
+pub macro fn make_instance(e: SynExpr): List(SynStmt) {
+  match Syn::ident_of(e) {
+    None => Nil
+    Some(at) => {
+      let c := Syn::decl_name(at, "Choose")
+      let m := Syn::decl_name(at, "choose")
+      quote stmts {
+        instance $c($e, Nat) infer from A {
+          fn $m(value: $e): Nat { 3 }
+        }
+      }
+    }
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import "mk.taut"
+
+inductive Local: Type { Mk: Local }
+make_class!(Local) => class Choose
+make_instance!(Local) => instance Choose
+
+fn use(value: Local): Nat { Choose::choose(value) }
+show(&use(Local::Mk))
+````
+stdout = "3\n"
+
+@ cases.an-attribute-roundtrips-an-inference-condition
+entry = "main.taut"
+files."keep.taut" = ````tauto
+import std::base
+import std::builtin::macro
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) { Cons(s, Nil) }
+````
+files."main.taut" = ````tauto
+import std::base
+import "keep.taut"
+
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+@keep!(0) => replace instance Choose
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 5 }
+}
+fn use(value: Local): Nat { Choose::choose(value) }
+show(&use(Local::Mk))
+````
+stdout = "5\n"
+
+@ cases.an-attribute-keeps-a-type-owned-by-another-file-of-the-tote
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/types.taut" = ```tauto
+pub(open) inductive Local: Type { Mk: Local }
+```
+files."app/src/keep.taut" = ```tauto
+import std::base
+import std::builtin::macro
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) { Cons(s, Nil) }
+```
+files."app/src/main.taut" = ```tauto
+import "types.taut"
+import "keep.taut"
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+@keep!(0) => replace instance Choose
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 5 }
+}
+fn use(value: Local): Nat { Choose::choose(value) }
+```
+tote_errors = []
+
+@ cases.an-attribute-does-not-own-a-dependency-type
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/types.taut" = ```tauto
+pub(open) inductive Local: Type { Mk: Local }
+```
+files."app/src/keep.taut" = ```tauto
+import std::base
+import std::builtin::macro
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) { Cons(s, Nil) }
+```
+files."app/src/main.taut" = ```tauto
+import lib::types { Local }
+import "keep.taut"
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+@keep!(0) => replace instance Choose
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 5 }
+}
+```
+tote_errors = [
+  "every infer from path must include a named type defined in this tote",
+  "every infer from path must include a named type defined in this tote",
+]
+
+@ cases.an-attribute-reads-a-dependency-inference-rule
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/types.taut" = ```tauto
+pub(open) inductive Local: Type { Mk: Local }
+pub(open) inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 5 }
+}
+```
+files."app/src/keep.taut" = ```tauto
+import std::base
+import std::builtin::macro
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) { Cons(s, Nil) }
+```
+files."app/src/main.taut" = ```tauto
+import lib::types { Local, Choose }
+import "keep.taut"
+@keep!(0) => replace fn use
+fn use(value: Local): Nat { Choose::choose(value) }
+```
+tote_errors = []
+
+// The instances in the two `types.taut` files start at the same byte offset.
+// Their ownership still follows the file each statement came from.
+@ cases.an-attribute-keeps-equal-offset-instances-in-their-totes
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/types.taut" = ```tauto
+import std::base
+pub(open) inductive Local: Type { Mk: Local }
+pub(open) inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 5 }
+}
+```
+files."app/src/types.taut" = ```tauto
+import std::base
+pub(open) inductive Owned: Type { Mk: Owned }
+pub(open) inductive class Select(A: Type, I: Type) { fn choose(value: A): I }
+instance Select(Owned, Nat) infer from A {
+  fn choose(value: Owned): Nat { 7 }
+}
+```
+files."app/src/keep.taut" = ```tauto
+import std::base
+import std::builtin::macro
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) { Cons(s, Nil) }
+```
+files."app/src/main.taut" = ```tauto
+import lib::types
+import "types.taut"
+import "keep.taut"
+@keep!(0) => replace fn use
+fn use(value: Owned): Nat { Select::choose(value) }
+```
+tote_errors = []
+
+@ cases.a-typed-macro-queries-with-an-inference-rule-in-its-prefix
+entry = "main.taut"
+files."normalize.taut" = ```tauto
+import std::base
+import std::builtin::macro
+pub macro fn normalize(c: Judgement): SynExpr ! {elab} {
+  Judgement::term(Elab::whnf(c))
+}
+```
+files."main.taut" = ```tauto
+import std::base
+import "normalize.taut"
+inductive Owned: Type { Mk: Owned }
+inductive class Select(A: Type, I: Type) { fn choose(value: A): I }
+instance Select(Owned, Nat) infer from A {
+  fn choose(value: Owned): Nat { 7 }
+}
+fn use(value: Owned): Nat { normalize!(Select::choose(value)) }
+show(&use(Owned::Mk))
+```
+stdout = "7\n"
+
+@ cases.a-macro-queries-its-own-inference-rule
+entry = "main.taut"
+files."lib.taut" = ```tauto
+import std::base
+import std::builtin::macro
+pub(open) inductive Owned: Type { Mk: Owned }
+pub(open) inductive class Select(A: Type, I: Type) { fn choose(value: A): I }
+instance Select(Owned, Nat) infer from A {
+  fn choose(value: Owned): Nat { 7 }
+}
+pub macro fn normalize(c: Judgement): SynExpr ! {elab, macro_error} {
+  match Elab::check(quote { Select::choose(Owned::Mk) }, c, None) {
+    Ok(value) => if Elab::defeq(value, Elab::whnf(value)) {
+      Judgement::term(value)
+    } else { Syn::error(Judgement::span(c), "normalization changed the value") }
+    Err(d) => Syn::error(Judgement::span(c), d.message)
+  }
+}
+```
+files."main.taut" = ```tauto
+import std::base
+import "lib.taut"
+def use(): Nat := normalize!(7)
+theorem result(): use() = 7 { Refl }
+```
+checks_all = "ok"
+checks."lib.taut::normalize" = "skipped"
+
+// A class written in a `quote` as it is written in a file, without a name
+// from the call, is made once the call lists it.
+@ cases.a-class-written-in-a-quote-is-listed-by-the-call
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub macro fn make_contract(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    class Contract(Env: Type) {
+      fn execute(env: &mut Env): Unit
+    }
+  }
+}
+````
+files."main.taut" = ````tauto
+import "mk.taut"
+
+make_contract!(#()) => class Contract
+show(&1)
+````
+stdout = "1\n"
+
+// A fn written in a `quote stmts` keeps its `where` constraint, so its body
+// can call the class's method on the generic type.
+@ cases.a-fn-in-a-quote-keeps-its-where
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub(open) class Value(A: Type) {
+  fn read(value: &A): Nat
+}
+
+pub macro fn make_reader(e: SynExpr): List(SynStmt) ! {macro_error} {
+  let at := match e {
+    ExVar(id) => id
+    _ => Syn::error(Syn::call_span(), "expected a function name")
+  }
+  let name := Syn::decl_name(at, at.name)
+  quote stmts {
+    fn $name<A>(value: &A): Nat where Value(A) {
+      Value::read(&value)
+    }
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import "mk.taut"
+
+instance Value(Nat) { fn read(value: &Nat): Nat { value } }
+
+make_reader!(read_it) => fn read_it
+
+let three: Nat := 3
+show(&read_it(&three))
+````
+stdout = "3\n"
+
+// An instance a macro makes is listed by its class as the call's file spells it
+// (`instance Said`), though the macro made it with the class of its own file.
+@ cases.an-instance-is-listed-by-its-class-as-the-source-spells-it
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::builtin::macro
+
+pub(open) class Said(A: Type) {}
+
+pub macro fn make_said(e: SynExpr): List(SynStmt) {
+  quote stmts {
+    instance Said(Nat) {}
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import "mk.taut"
+
+make_said!(here) => instance Said
+
+show(&Succ(Zero))
+````
+stdout = "1\n"

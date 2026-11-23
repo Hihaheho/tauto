@@ -1,0 +1,19 @@
+// A handler arm whose argument pattern can fail declines the operation, and
+// the next handler out takes it.
+
+@ cases.a-refutable-operation-argument-declines
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```nib
+effect take(n: i64): i64
+fn run(): i64 ! {overflow} {
+  handle {
+    handle { perform take(1) + perform take(2) } with {
+      take(1), k => k(10)
+    }
+  } with {
+    take(n), k => k(n * 5)
+  }
+}
+show(run())
+```
+stdout = "20\n"

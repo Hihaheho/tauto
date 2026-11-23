@@ -1,0 +1,60 @@
+// A name written in a `quote` that no declaration visible where the macro is defined has is a
+// free name of the quote. A declaration of the same spelling in the program that uses the macro
+// is not what it names, and the use is no use of that file (`docs/design/macro-semantics.md`
+// 「Hygiene」, `docs/design/name-identity.md`「Macros」).
+
+@ cases.a-free-name-in-a-quote-is-not-a-declaration-of-the-program-using-the-macro
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lib.taut" = ```tauto
+import std::builtin::macro
+
+fn id_of(e: SynExpr): SynIdent ! {macro_error} {
+  match Syn::ident_of(e) {
+    Some(i) => i
+    None => Syn::error(Syn::call_span(), "not a name")
+  }
+}
+
+pub macro fn bind_step(value: SynExpr): SynExpr ! {macro_error} {
+  match id_of(quote { step }) {
+    st => value
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import "lib.taut"
+
+fn step(n: Nat): Nat { n }
+fn one(): Nat { bind_step!(1) }
+```
+
+// The self-hosted elaborator does not expand macros, so this one reads the file that holds the
+// quote without calling the macro: the name in the quote is not read against `step` of `main`.
+@ cases.a-free-name-in-an-unexpanded-quote-is-not-a-declaration-of-another-file
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lib.taut" = ```tauto
+import std::builtin::macro
+
+fn id_of(e: SynExpr): SynIdent ! {macro_error} {
+  match Syn::ident_of(e) {
+    Some(i) => i
+    None => Syn::error(Syn::call_span(), "not a name")
+  }
+}
+
+pub macro fn bind_step(value: SynExpr): SynExpr ! {macro_error} {
+  match id_of(quote { step }) {
+    st => value
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import "lib.taut"
+
+fn step(n: Nat): Nat { n }
+```

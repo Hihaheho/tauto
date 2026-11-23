@@ -4,7 +4,7 @@
 
 @ cases.a-list-literal-is-its-constructors
 source = ```nib
-fn len<A>(xs: List(A)): i64 {
+fn len<A>(xs: List(A)): i64 ! {overflow} {
   match xs {
     Nil => 0
     Cons(x, rest) => 1 + len(rest)
@@ -14,28 +14,26 @@ let t := [["aaa", "bbb"], [], [
   "c",
   "d"
 ]]
-perform show("len", len(t))
-perform show("t", t)
+show(&len(t))
+show(&t)
 ```
-shows = [
-  "len = 3",
-  "t = Cons(Cons(\"aaa\", Cons(\"bbb\", Nil)), Cons(Nil, Cons(Cons(\"c\", Cons(\"d\", Nil)), Nil)))",
-]
+stdout = ```
+3
+[["aaa", "bbb"], [], ["c", "d"]]
+```
 
 // Arms that take a list two elements at a time cover it with no `_`: the
 // fields of `Cons` are covered together, so `Cons(x, Cons(y, r))` and
 // `Cons(x, Nil)` between them take every non-empty list.
 @ cases.nested-arms-cover-a-list-without-a-wildcard
 source = ```nib
-fn pairs(xs: List(i64)): List(i64) {
+fn pairs(xs: List(i64)): List(i64) ! {overflow} {
   match xs {
     Cons(a, Cons(b, rest)) => Cons(a + b, pairs(rest))
     Cons(a, Nil) => Cons(a, Nil)
     Nil => Nil
   }
 }
-perform show("p", pairs([1, 2, 3, 4, 5]))
+show(&pairs([1, 2, 3, 4, 5]))
 ```
-shows = [
-  "p = Cons(3, Cons(7, Cons(5, Nil)))",
-]
+stdout = "[3, 7, 5]\n"

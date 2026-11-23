@@ -46,4 +46,3 @@ trust-gate-changed = { $title } は承認後に変わった:
 trust-gate-nothing-trusted = （もう何も信頼されていない）
 trust-gate-file-error = { $path }: { $error }
 trust-gate-trust-section = { $path } の trust セクション
-trust-gate-permissions-file = 権限ファイル { $path }

@@ -1,0 +1,45 @@
+fn grow(n: u64): u64 ! {div, overflow} {
+    var x: u64 := 1
+    var i: u64 := 0
+    while i < n { x := x * 3 + 1; i := i + 1 }
+    x
+}
+fn shrink(x: u64): u64 ! {div, overflow} {
+    var y := x
+    var k: u64 := 0
+    while y > 1 { y := div(y, 7); k := k + 1 }
+    k
+}
+fn signed(a: i64, b: i64): i64 ! {div, overflow, divzero} {
+    div(a, b) * 1000 + mod(a, b)
+}
+fn big_i64(n: u64): i64 ! {div, overflow} {
+    var x: i64 := -1
+    var i: u64 := 0
+    while i < n { x := x * 2; i := i + 1 }
+    x
+}
+fn neg(a: i64): i64 { 0 - a }
+fn nat_pow(n: nat): nat ! {div} {
+    var x: nat := 1
+    var i: nat := 0
+    while i < n { x := x * 10; i := i + 1 }
+    x
+}
+fn classify(n: u64): u64 { match n { 0 => 10, 9007199254740993 => 20, other => 30 } }
+fn same(a: u64, b: u64): Bool { a == b }
+fn wrap(n: u64): Option(u64) ! {div, overflow} { Some(n * 2) }
+fn unwrap(o: Option(u64)): u64 ! {div, overflow} { match o { None => 0, Some(v) => v + 1 } }
+fn shifts(a: u32): u32 { U32::xor(U32::shl(a, 31), U32::shr(a, 33)) }
+show(&grow(40))
+show(&shrink(grow(40)))
+show(&signed(0 - 7, 2))
+show(&signed(7, 0 - 2))
+show(&big_i64(63))
+show(&neg(9007199254740991))
+show(&nat_pow(30))
+show(&classify(9007199254740992 + 1))
+show(&classify(0))
+show(&same(9007199254740992 + 1, 9007199254740993))
+show(&unwrap(wrap(4611686018427387904)))
+show(&shifts(3))

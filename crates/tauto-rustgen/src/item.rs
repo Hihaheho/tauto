@@ -4,8 +4,11 @@ use tauto_message::{Message, msg};
 use tauto_nir::*;
 
 use crate::expr::{Fx, field_ident, lid, variant_ident};
-use crate::tok::{Rs, comma, concat, doc, generics, id, join, lit, num, raw, render};
+use crate::tok::{Rs, comma, concat, doc, generics, id, join, lifetime, lit, num, raw, render};
 use crate::{Bindings, Gen, Pred, Sources};
+
+/// The one lifetime of a view struct's borrows.
+const VIEW_LIFETIME: &str = "'r";
 
 /// The items for a package, to be placed in a module or a crate root: no
 /// inner attributes, so `include!` can take them.
@@ -47,20 +50,33 @@ pub(crate) fn emit_with_borrow_diagnostics(
     for d in &pkg.datas {
         // A program's own `List` shadows the prelude's; what the prelude
         // wrote against its own `List` has no meaning then.
-        if !g.emits(d) {
+        if !g.emits_data(d) {
             continue;
         }
         body.extend(g.data_def(d));
     }
     for u in &pkg.unions {
+        if pkg.host_omitted_unions.contains(&u.id) {
+            continue;
+        }
         body.extend(g.union_def(u));
     }
     for f in &pkg.fns {
-        body.extend(g.fn_def(f, false));
+        if bindings
+            .externalized
+            .iter()
+            .any(|n| n.as_str() == f.source.as_str())
+            || pkg.host_omitted_fns.contains(&f.id)
+        {
+            continue;
+        }
+        let name = g.fn_names[f.id].clone();
+        body.extend(g.fn_def(f, &name, false));
     }
     body.extend(g.contract_bodies());
     for i in g.sync_budget_fns.clone() {
-        body.extend(g.fn_def(&pkg.fns[i], true));
+        let name = g.fn_names[i].clone();
+        body.extend(g.fn_def(&pkg.fns[i], &name, true));
     }
     let mut emitted_owned = std::collections::BTreeSet::new();
     loop {
@@ -77,13 +93,13 @@ pub(crate) fn emit_with_borrow_diagnostics(
         for (key, variant) in pending {
             emitted_owned.insert(key);
             let previous = g.borrowed_budget.owned_active.replace(variant.context);
-            body.extend(g.fn_def(&variant.function, true));
+            body.extend(g.fn_def(&variant.function, &variant.name, true));
             g.borrowed_budget.owned_active = previous;
         }
     }
     for variant in g.borrowed_budget.functions.clone().into_values() {
         let previous = g.borrowed_budget.active.replace(variant.context);
-        body.extend(g.fn_def(&variant.function, true));
+        body.extend(g.fn_def(&variant.function, &variant.name, true));
         g.borrowed_budget.active = previous;
     }
     body.extend(g.syntax_parsers());
@@ -200,7 +216,15 @@ impl Gen<'_> {
     fn field_ty(&self, d: &DataDef, f: &FieldDef) -> Rs {
         let t = match &f.ty {
             Ty::Fn(function) if function.tier == Tier::O => self.stored_fn_ty(function),
-            t => self.ty(t),
+            // A function of the O tier in a type argument of the field
+            // (`Option((Db) -> T ! {div})`) takes any handlers too: the
+            // type has no region for them.
+            t => {
+                let lt = self.o_lt_name.replace("'static");
+                let t = self.ty(t);
+                self.o_lt_name.set(lt);
+                t
+            }
         };
         match (f.indirect, is_link(d, f)) {
             (Indirect::Shared, true) => quote!(tauto_rt::Shared<#t>),
@@ -268,6 +292,16 @@ impl Gen<'_> {
     }
 
     fn data_def(&self, d: &DataDef) -> Rs {
+        if crate::is_rc_placed(&d.name) {
+            let name = Gen::data_name(self.pkg, &d.name);
+            return quote!(pub type #name<T> = tauto_rt::stdlib::RcPlaced<T>;);
+        }
+        if crate::is_placed(&d.name) {
+            // A value in a region: the runtime's, with the same fields
+            // (`value`, `at`) behind `Deref`.
+            let name = Gen::data_name(self.pkg, &d.name);
+            return quote!(pub type #name<'r, T> = tauto_rt::stdlib::Placed<'r, T>;);
+        }
         if let Some(b) = self.bindings.types.get(&d.name) {
             // An extern type is the Rust type `Tauto.eure` names.
             let name = Gen::data_name(self.pkg, &d.name);
@@ -318,7 +352,16 @@ impl Gen<'_> {
         let i = self.data_index[&d.name];
         let [clone, eq, show, hash] = self.flags[i];
         let name = Gen::data_name(self.pkg, &d.name);
-        let gen_decl = generics(crate::tok::idents(&d.generics));
+        let gen_decl = generics(Self::view_lifetime(d, crate::tok::idents(&d.generics)));
+        // A view struct's borrows all live as long as its one lifetime.
+        let outer_refs = self.named_refs.replace(d.view || self.named_refs.get());
+        let outer_lt = self.lt_name.get();
+        let outer_o_lt = self.o_lt_name.get();
+        if d.view {
+            self.lt_name.set(VIEW_LIFETIME);
+            // A field that is itself a view lives as long, too.
+            self.o_lt_name.set(VIEW_LIFETIME);
+        }
         // `derive(Clone)` bounds every parameter by `Clone`, though a
         // parameter seen only through stored functions (`Rc<dyn Fn(A)>`)
         // needs none: such a type gets its own impl, bounded by what its
@@ -429,6 +472,9 @@ impl Gen<'_> {
             Rs::new()
         };
         let unlink = self.unlink_impl(d, &name);
+        self.named_refs.set(outer_refs);
+        self.lt_name.set(outer_lt);
+        self.o_lt_name.set(outer_o_lt);
         quote!(#derives #def #own_clone #show #debug #linear_clone #unlink)
     }
 
@@ -453,7 +499,7 @@ impl Gen<'_> {
                 | Ty::SharedVar(_, a)
                 | Ty::Info(a)
                 | Ty::BudgetAnswer(a) => walk(g, a, out),
-                Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
+                Ty::Result(a, b) | Ty::Pair(a, b) => {
                     walk(g, a, out);
                     walk(g, b, out);
                 }
@@ -469,8 +515,21 @@ impl Gen<'_> {
                 _ => {}
             }
         }
-        if d.host || d.view {
+        if d.host {
             return Vec::new();
+        }
+        if d.view {
+            // A type that holds a borrow takes `'r`; one whose borrow is only
+            // an erased place (`Place(T)` is `()`) uses it nowhere (E0392).
+            let lends = d
+                .ctors
+                .iter()
+                .any(|c| c.fields.iter().any(|f| self.uses_lifetime(&f.ty)));
+            return if lends {
+                Vec::new()
+            } else {
+                vec![VIEW_LIFETIME.to_string()]
+            };
         }
         let mut used = Vec::new();
         for c in &d.ctors {
@@ -485,8 +544,36 @@ impl Gen<'_> {
             .collect()
     }
 
+    /// Whether the Rust type of `t` names the view lifetime.
+    fn uses_lifetime(&self, t: &Ty) -> bool {
+        match t {
+            Ty::Ref(_) | Ty::RefMut(_) => true,
+            Ty::Vec(a)
+            | Ty::Array(a)
+            | Ty::Slice(a)
+            | Ty::Option(a)
+            | Ty::SharedVar(_, a)
+            | Ty::Info(a)
+            | Ty::BudgetAnswer(a) => self.uses_lifetime(a),
+            Ty::Result(a, b) | Ty::Pair(a, b) => self.uses_lifetime(a) || self.uses_lifetime(b),
+            Ty::Std(_, args) => args.iter().any(|a| self.uses_lifetime(a)),
+            Ty::Data(n, args) => {
+                self.data(n).is_some_and(|d| d.view) || args.iter().any(|a| self.uses_lifetime(a))
+            }
+            Ty::Fn(_) => true,
+            Ty::Union(id) => self.pkg.unions[*id]
+                .members
+                .iter()
+                .any(|m| self.uses_lifetime(m)),
+            _ => false,
+        }
+    }
+
     /// The `PhantomData` type that holds `phantom_params`.
     pub(crate) fn phantom_ty(&self, d: &DataDef) -> Rs {
+        if d.view && !d.host && !self.phantom_params(d).is_empty() {
+            return quote!(std::marker::PhantomData<&'r ()>);
+        }
         let ps: Vec<Ident> = self.phantom_params(d).iter().map(|g| id(g)).collect();
         quote!(std::marker::PhantomData<(#(#ps,)*)>)
     }
@@ -510,7 +597,7 @@ impl Gen<'_> {
                 | Ty::SharedVar(_, a)
                 | Ty::Info(a)
                 | Ty::BudgetAnswer(a) => walk(g, a, out),
-                Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
+                Ty::Result(a, b) | Ty::Pair(a, b) => {
                     walk(g, a, out);
                     walk(g, b, out);
                 }
@@ -525,6 +612,10 @@ impl Gen<'_> {
         let mut out = Vec::new();
         for c in &d.ctors {
             for f in &c.fields {
+                // An `Rc<T>` is copied without copying `T`.
+                if matches!(f.indirect, Indirect::Shared) && !is_link(d, f) {
+                    continue;
+                }
                 walk(self, &f.ty, &mut out);
             }
         }
@@ -537,7 +628,10 @@ impl Gen<'_> {
 
     /// `Clone` field by field, with `Clone` asked of `cloned` only.
     fn clone_impl(&self, d: &DataDef, name: &Ident, cloned: &[String]) -> Rs {
-        let impl_gen = generics(
+        // A view (a `struct &T` holding borrows) is cloned as its borrows
+        // are copied, under its lifetime.
+        let impl_gen = generics(Self::view_lifetime(
+            d,
             d.generics
                 .iter()
                 .map(|g| {
@@ -546,8 +640,8 @@ impl Gen<'_> {
                     if bound { quote!(#g: Clone) } else { quote!(#g) }
                 })
                 .collect(),
-        );
-        let ty_gen = generics(crate::tok::idents(&d.generics));
+        ));
+        let ty_gen = generics(Self::view_lifetime(d, crate::tok::idents(&d.generics)));
         let arms = d.ctors.iter().map(|c| {
             let path = if d.is_struct {
                 quote!(#name)
@@ -591,23 +685,26 @@ impl Gen<'_> {
         )
     }
 
+    /// A view struct's generics start with the lifetime of its borrows.
+    fn view_lifetime(d: &DataDef, mut items: Vec<Rs>) -> Vec<Rs> {
+        if d.view {
+            items.insert(0, lifetime(VIEW_LIFETIME));
+        }
+        items
+    }
+
     fn show_impl(&self, d: &DataDef, name: &Ident) -> Rs {
-        let (impl_gen, ty_gen) = if d.generics.is_empty() {
-            (Rs::new(), Rs::new())
-        } else {
-            (
-                generics(
-                    d.generics
-                        .iter()
-                        .map(|g| {
-                            let g = id(g);
-                            quote!(#g: Show)
-                        })
-                        .collect(),
-                ),
-                generics(crate::tok::idents(&d.generics)),
-            )
-        };
+        let impl_gen = generics(Self::view_lifetime(
+            d,
+            d.generics
+                .iter()
+                .map(|g| {
+                    let g = id(g);
+                    quote!(#g: Show)
+                })
+                .collect(),
+        ));
+        let ty_gen = generics(Self::view_lifetime(d, crate::tok::idents(&d.generics)));
         let mut arms = Vec::new();
         for c in &d.ctors {
             let path = if d.is_struct {
@@ -739,15 +836,13 @@ impl Gen<'_> {
         out
     }
 
-    fn has_ref(&self, t: &Ty) -> bool {
+    pub(crate) fn has_ref(&self, t: &Ty) -> bool {
         match t {
             Ty::Ref(a) | Ty::RefMut(a) => !matches!(**a, Ty::Fn(_)),
             Ty::Vec(a) | Ty::Slice(a) | Ty::Option(a) | Ty::Info(a) | Ty::BudgetAnswer(a) => {
                 self.has_ref(a)
             }
-            Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
-                self.has_ref(a) || self.has_ref(b)
-            }
+            Ty::Result(a, b) | Ty::Pair(a, b) => self.has_ref(a) || self.has_ref(b),
             Ty::Data(n, args) => {
                 self.data(n).is_some_and(|d| d.view) || args.iter().any(|a| self.has_ref(a))
             }
@@ -755,7 +850,8 @@ impl Gen<'_> {
         }
     }
 
-    fn fn_def(&mut self, f: &FnInst, sync_budget: bool) -> Rs {
+    fn fn_def(&mut self, f: &FnInst, name: &str, sync_budget: bool) -> Rs {
+        self.scope_generics = f.generics.iter().map(|(g, _)| g.clone()).collect();
         let is_m = f.tier == Tier::M;
         let is_o = !sync_budget && (f.tier == Tier::O || is_m);
         let ret_refs = self.has_ref(&f.ret);
@@ -766,14 +862,43 @@ impl Gen<'_> {
         if is_o || f.params.iter().any(|p| holds_o_fn(&p.ty)) || holds_o_fn(&f.ret) {
             gens.push(quote!('a));
         }
-        if ret_refs && !is_o {
+        // The handlers it is passed (`tauto_nir::evidence`); an answer that
+        // borrows is written with `'r`.
+        let evd: Vec<tauto_nir::OpIndex> = if is_o || is_m {
+            Vec::new()
+        } else {
+            self.pkg.evidence.of_fn(f.id).to_vec()
+        };
+        let evd_refs = evd.iter().any(|op| {
+            let (ps, r) = &self.pkg.evidence.ops[op];
+            ps.iter().any(|p| self.has_ref(p)) || self.has_ref(r)
+        });
+        if (ret_refs || evd_refs) && !is_o {
             gens.push(quote!('r));
         }
+        // A type variable may stand for a type that holds a borrow, so it
+        // takes no `'static`: only the region of the handlers, when the
+        // function has one, since its future and its stored functions carry
+        // the variable's values for that long.
+        let in_region = gens.first().is_some_and(|g| g.to_string() == "'a");
+        // Function values kept inside the call live for `'f`, which the type
+        // variables they may capture outlive.
+        let fn_region = f.fn_region && !is_o;
+        self.fn_region.set(fn_region);
+        if fn_region {
+            gens.push(quote!('f));
+        }
         for (g, bounds) in &f.generics {
-            let mut b = vec![quote!('static)];
+            let mut b = if in_region { vec![quote!('a)] } else { vec![] };
+            if fn_region {
+                b.push(quote!('f));
+            }
             if self.pkg.sync {
                 b.push(quote!(Send));
                 b.push(quote!(Sync));
+            }
+            if bounds.contains(&Bound::Static) {
+                b.push(quote!('static));
             }
             if bounds.contains(&Bound::Clone) {
                 b.push(quote!(Clone));
@@ -784,29 +909,74 @@ impl Gen<'_> {
             if bounds.contains(&Bound::Eq) {
                 b.push(quote!(PartialEq));
             }
-            if bounds.contains(&Bound::Hash) {
-                b.push(quote!(Eq));
-                b.push(quote!(std::hash::Hash));
-            }
             let (g, b) = (id(g), join(b, quote!(+)));
             gens.push(quote!(#g: #b));
         }
+        // A continuation kept as a value in a function of the S or A tier
+        // is held for as long as the code that runs it wants
+        // (`tauto_rt::cps::resume_rc`): the region of the handlers of the
+        // function values it is passed is the whole run.
+        //
+        // In a function of the O tier the region of the handlers is also the
+        // region of its evidence and its future. A kept continuation needs
+        // only the former to be the whole run, so the evidence and the
+        // future take a region of their own, `'e`, which the caller's
+        // evidence gives.
+        let mut ev_lt = quote!('a);
+        if in_region && (!is_o || f.tier == Tier::O) {
+            let mut kept = false;
+            f.body.walk_with_handlers(&mut |e| {
+                kept |= matches!(&e.kind, ExprKind::Handle(h) if h.kept);
+            });
+            if kept {
+                gens[0] = quote!('a: 'static);
+                if is_o {
+                    gens.insert(0, quote!('e));
+                    ev_lt = quote!('e);
+                }
+            }
+        }
         let gens = generics(gens);
         let mut params = vec![if is_o {
-            quote!(ev: &Ev<'a>)
+            quote!(ev: &Ev<#ev_lt>)
         } else {
             quote!(ev: &Ev<'_>)
         }];
-        for p in &f.params {
+        self.evd = evd;
+        let named = self.named_refs.replace(true);
+        for op in self.evd.clone() {
+            let (n, t) = (self.evd_name(op), self.evd_ty(op));
+            params.push(quote!(#n: #t));
+        }
+        self.named_refs.set(named);
+        self.owned_refs.clear();
+        for (i, p) in f.params.iter().enumerate() {
             let x = lid(&p.local);
+            let owned = is_m && self.m_owned_param(f, i);
+            if owned {
+                self.owned_refs.insert(p.local.id);
+            }
             let t = match &p.ty {
-                Ty::Ref(t) | Ty::RefMut(t)
-                    if is_m && crate::expr::m_o_callback(&p.local, &p.ty) =>
-                {
+                Ty::Ref(t) if owned => self.ty(t),
+                Ty::Ref(t) | Ty::RefMut(t) if is_m && crate::expr::m_callback(&p.local, &p.ty) => {
                     let Ty::Fn(ft) = &**t else { unreachable!() };
-                    self.ocb_ty(ft)
+                    self.m_callback_ty(ft)
                 }
-                Ty::Fn(ft) if is_m && crate::expr::m_o_callback(&p.local, &p.ty) => self.ocb_ty(ft),
+                Ty::Fn(ft) if is_m && crate::expr::m_callback(&p.local, &p.ty) => {
+                    self.m_callback_ty(ft)
+                }
+                // `borrows(m)`: a parameter the result does not borrow from
+                // keeps its own lifetime, so it may go away first.
+                _ if !is_o
+                    && f.lends
+                        .as_ref()
+                        .is_some_and(|l| !l.get(i).copied().unwrap_or(true)) =>
+                {
+                    let named = self.named_refs.replace(false);
+                    let t = self.ty(&p.ty);
+                    self.named_refs.set(named);
+                    t
+                }
                 _ => self.ty(&p.ty),
             };
             params.push(quote!(mut #x: #t));
@@ -825,14 +995,14 @@ impl Gen<'_> {
         self.lazy.clear();
         if is_m {
             self.named_refs.set(true);
-            let out = self.fn_def_m(f, &gens, &params[1..], &ret);
+            let out = self.fn_def_m(f, name, &gens, &params[1..], &ret);
             self.named_refs.set(false);
             return out;
         }
         let name = if sync_budget {
-            format!("{}_budget_sync", f.rust_name)
+            format!("{name}_budget_sync")
         } else {
-            f.rust_name.clone()
+            name.to_string()
         };
         let (marker, name) = (doc(&f.source), id(&name));
         if is_o {
@@ -854,7 +1024,7 @@ impl Gen<'_> {
             let params = comma(params);
             return quote!(
                 #marker
-                pub fn #name #gens(#params) -> Fut<'a, #ret> {
+                pub fn #name #gens(#params) -> Fut<#ev_lt, #ret> {
                     let ev = ev.clone();
                     tauto_rt::o::pin(async move {
                         let ev = &ev;
@@ -886,6 +1056,35 @@ impl Gen<'_> {
         } else {
             body
         };
+        // A pure function of no arguments is a constant: its value is
+        // computed on the first call and shared after, as long as sharing
+        // it is a cheap clone that no one can tell from a new value.
+        let body = if !sync_budget
+            && !a
+            && f.tier == Tier::S
+            && f.params.is_empty()
+            && f.generics.is_empty()
+            && self.pkg.top != Some(f.id)
+            && self.trusted_budget_host.is_none()
+            && !ret_refs
+            && self.shared_constant(&f.ret, &mut Vec::new())
+            && self.performs_nothing(f.id, &mut Vec::new())
+        {
+            quote!({
+                thread_local! {
+                    static CONSTANT: std::cell::OnceCell<#ret> = const { std::cell::OnceCell::new() };
+                }
+                if let Some(v) = CONSTANT.with(|c| c.get().cloned()) {
+                    v
+                } else {
+                    let v: #ret = #body;
+                    CONSTANT.with(|c| { let _ = c.set(v.clone()); });
+                    v
+                }
+            })
+        } else {
+            body
+        };
         let (ret, body) = if sync_budget {
             (
                 quote!(Result<#ret, tauto_rt::budget::Interrupted>),
@@ -908,6 +1107,66 @@ impl Gen<'_> {
                 #body
             }
         )
+    }
+
+    /// Whether calling `inst` performs nothing, not even a direct effect:
+    /// its body and the functions it calls by name perform no operation,
+    /// handle none and call nothing else (a closure, a builtin, an extern).
+    fn performs_nothing(&self, inst: InstId, seen: &mut Vec<InstId>) -> bool {
+        if seen.contains(&inst) {
+            return true;
+        }
+        seen.push(inst);
+        let mut callees = Vec::new();
+        let mut ok = true;
+        self.pkg.fns[inst].body.walk(&mut |e| match &e.kind {
+            ExprKind::Perform(_) | ExprKind::Handle(_) => ok = false,
+            ExprKind::Call(c) => match &c.callee {
+                Callee::Inst(i) => callees.push(*i),
+                _ => ok = false,
+            },
+            _ => {}
+        });
+        ok && callees.into_iter().all(|i| self.performs_nothing(i, seen))
+    }
+
+    /// Whether a value of `ty` may be kept and handed out again by `clone`:
+    /// immutable, and cloned by sharing or by copying a few words (no `Vec`,
+    /// map, closure or mutable cell).
+    fn shared_constant(&self, ty: &Ty, seen: &mut Vec<Name>) -> bool {
+        match ty {
+            Ty::Int(_)
+            | Ty::Bool
+            | Ty::Text
+            | Ty::Unit
+            | Ty::Float
+            | Ty::Float32
+            | Ty::Param(_) => true,
+            Ty::Array(t) | Ty::Option(t) => self.shared_constant(t, seen),
+            Ty::Result(a, b) | Ty::Pair(a, b) => {
+                self.shared_constant(a, seen) && self.shared_constant(b, seen)
+            }
+            Ty::Data(n, args) => {
+                if !args.iter().all(|a| self.shared_constant(a, seen)) {
+                    return false;
+                }
+                if seen.contains(n) {
+                    return true;
+                }
+                let Some(d) = self.data(n) else { return false };
+                if !d.clone || d.linear || d.view || d.host {
+                    return false;
+                }
+                seen.push(n.clone());
+                let ok = d
+                    .ctors
+                    .iter()
+                    .all(|c| c.fields.iter().all(|x| self.shared_constant(&x.ty, seen)));
+                seen.pop();
+                ok
+            }
+            _ => false,
+        }
     }
 
     /// The wrappers of the program's `extern`s:
@@ -1054,12 +1313,11 @@ impl Gen<'_> {
         let mut uniffi = Rs::new();
         let mut warnings = Vec::new();
         for e in &self.pkg.exports {
-            let f = &self.pkg.fns[e.inst];
             if let Some(reason) = self.export_issue(e) {
                 warnings.push(reason.to_string());
                 continue;
             }
-            out.extend(self.export_facade(e, &e.name, &f.rust_name, false));
+            out.extend(self.export_facade(e, &e.name, &self.fn_names[e.inst], false));
             if self.bindings.uniffi {
                 match self.uniffi_facade(e) {
                     Some(item) => uniffi.extend(item),
@@ -1076,10 +1334,16 @@ impl Gen<'_> {
                 }
             }
         }
-        let uses = concat(self.pkg.datas.iter().filter(|d| self.emits(d)).map(|d| {
-            let n = Gen::data_name(self.pkg, &d.name);
-            quote!(pub use super::#n;)
-        }));
+        let uses = concat(
+            self.pkg
+                .datas
+                .iter()
+                .filter(|d| self.emits_data(d))
+                .map(|d| {
+                    let n = Gen::data_name(self.pkg, &d.name);
+                    quote!(pub use super::#n;)
+                }),
+        );
         let uniffi = if self.bindings.uniffi {
             quote!(pub mod uniffi_api { use super::*; #uniffi })
         } else {
@@ -1122,7 +1386,12 @@ impl Gen<'_> {
 
     pub(crate) fn export_issue(&self, e: &Export) -> Option<Message> {
         let f = &self.pkg.fns[e.inst];
-        if !e.row.is_empty() {
+        // `budget` is answered where the budget runs, so it asks nothing of
+        // the caller.
+        if e.row
+            .iter()
+            .any(|effect| effect != "budget" && effect != "budget_memory")
+        {
             return Some(msg!(
                 "rustgen-export-performs",
                 name = &e.name,
@@ -1132,11 +1401,11 @@ impl Gen<'_> {
         if f.params
             .iter()
             .enumerate()
-            .any(|(i, p)| has_fn(&p.ty) && self.export_callback(e, i, &p.ty).is_none())
+            .any(|(i, p)| p.ty.has_fn() && self.export_callback(e, i, &p.ty).is_none())
         {
             return Some(msg!("rustgen-export-callback", name = &e.name));
         }
-        if f.tier != Tier::S || self.has_ref(&f.ret) || has_fn(&f.ret) {
+        if f.tier != Tier::S || self.has_ref(&f.ret) || f.ret.has_fn() {
             return Some(msg!("rustgen-export-not-exposed", name = &e.name));
         }
         None
@@ -1189,11 +1458,11 @@ impl Gen<'_> {
             if self.export_issue(export).is_some() {
                 continue;
             }
-            let mut f = self.pkg.fns[export.inst].clone();
+            let f = self.pkg.fns[export.inst].clone();
             let mut counter = self.contract_functions.len();
             let name = loop {
                 let name = format!("__tauto_budget_contract_{counter}");
-                if !self.pkg.fns.iter().any(|f| f.rust_name == name)
+                if !self.fn_names.contains(&name)
                     && !self
                         .pkg
                         .externs
@@ -1205,8 +1474,7 @@ impl Gen<'_> {
                 }
                 counter += 1;
             };
-            f.rust_name = name.clone();
-            self.contract_functions.insert(facade.clone(), name);
+            self.contract_functions.insert(facade.clone(), name.clone());
             let context = self.contract_context(contract);
             let previous = std::mem::replace(&mut self.trusted_budget_callbacks, context);
             let host = self.trusted_budget_host.replace(crate::HostAssumption {
@@ -1215,7 +1483,8 @@ impl Gen<'_> {
                 at: contract.at.clone(),
                 contract: "closed-host-v1",
             });
-            out.extend(self.fn_def(&f, false));
+            out.extend(self.fn_def(&f, &name, false));
+            self.fn_region.set(false);
             self.trusted_budget_callbacks = previous;
             self.trusted_budget_host = host;
         }
@@ -1305,7 +1574,7 @@ impl Gen<'_> {
             | Ty::Buf
             | Ty::Param(_) => true,
             Ty::Vec(t) | Ty::Array(t) | Ty::Option(t) => self.callback_value(t, visiting),
-            Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
+            Ty::Result(a, b) | Ty::Pair(a, b) => {
                 self.callback_value(a, visiting) && self.callback_value(b, visiting)
             }
             Ty::Data(name, args) => {
@@ -1340,6 +1609,14 @@ impl Gen<'_> {
             .all(|c| c.fields.iter().all(|f| self.well_formed(&f.ty)))
     }
 
+    /// Like [`Self::emits`], but also drops types only the replaced fallback
+    /// reached after host selection (unbound hosts and ordinary wrappers).
+    fn emits_data(&self, d: &DataDef) -> bool {
+        self.emits(d)
+            && !self.pkg.host_omitted_datas.contains(&d.name)
+            && !(d.host && !self.bindings.types.contains_key(&d.name))
+    }
+
     /// Whether every `Data` in the type is applied to as many arguments as it
     /// has parameters.
     fn well_formed(&self, ty: &Ty) -> bool {
@@ -1350,9 +1627,7 @@ impl Gen<'_> {
                     && args.iter().all(|a| self.well_formed(a))
             }
             Ty::Vec(a) | Ty::Array(a) | Ty::Slice(a) | Ty::Option(a) => self.well_formed(a),
-            Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
-                self.well_formed(a) && self.well_formed(b)
-            }
+            Ty::Result(a, b) | Ty::Pair(a, b) => self.well_formed(a) && self.well_formed(b),
             Ty::Std(_, args) => args.iter().all(|a| self.well_formed(a)),
             _ => true,
         }
@@ -1405,8 +1680,8 @@ impl Gen<'_> {
                             }
                         }
                     }
-                    pub fn array_to_list<A: Clone>(a: tauto_rt::stdlib::Array<A>) -> List<A> {
-                        vec_into_list(a.to_vec())
+                    pub fn array_to_list<A: Clone>(a: impl AsRef<[A]>) -> List<A> {
+                        vec_into_list(a.as_ref().to_vec())
                     }
                     pub fn text_of_utf8(l: List<u8>) -> Option<Text> {
                         tauto_rt::stdlib::text_of_utf8_vec(array_of_list(l).to_vec())
@@ -1416,6 +1691,9 @@ impl Gen<'_> {
                     }
                     pub fn os_args() -> List<Text> {
                         vec_into_list(tauto_rt::stdlib::os_args_vec())
+                    }
+                    pub fn os_env_names() -> List<Text> {
+                        vec_into_list(tauto_rt::stdlib::os_env_names_vec())
                     }
                     pub fn bytes_of_list(l: List<u8>) -> tauto_rt::stdlib::Bytes {
                         tauto_rt::stdlib::Bytes::from(array_of_list(l).to_vec())
@@ -1433,6 +1711,31 @@ impl Gen<'_> {
                         let headers = array_of_list(headers).to_vec();
                         tauto_rt::stdlib::os_fetch_vec(method, url, address, headers, body)
                             .map(|(items, body)| (body, vec_into_list(items)))
+                    }
+                    pub fn os_entry(what: Text, args: List<Text>) -> List<Text> {
+                        let args = array_of_list(args).to_vec();
+                        vec_into_list(tauto_rt::stdlib::os_entry_vec(what, args))
+                    }
+                    pub fn os_http_open(
+                        method: Text,
+                        url: Text,
+                        address: Text,
+                        headers: List<Text>,
+                    ) -> Result<u64, Text> {
+                        let headers = array_of_list(headers).to_vec();
+                        tauto_rt::http::os_http_open_vec(method, url, address, headers)
+                    }
+                    pub fn os_http_finish(
+                        body: u64,
+                        deadline: Option<i64>,
+                    ) -> Result<Option<List<Text>>, Text> {
+                        tauto_rt::http::os_http_finish_vec(body, deadline).map(|o| {
+                            o.map(|(head, id)| {
+                                let mut items = vec![Text::from(id.to_string())];
+                                items.extend(head);
+                                vec_into_list(items)
+                            })
+                        })
                     }
                     pub fn os_list_dir(path: Text) -> Result<List<Text>, Text> {
                         tauto_rt::stdlib::os_list_dir_vec(path).map(vec_into_list)
@@ -1551,11 +1854,11 @@ impl Gen<'_> {
         // (`o::run_top`): on the reactor, if the program installed one.
         let call = match self.pkg.top {
             Some(t) if self.pkg.fns[t].tier >= Tier::O => {
-                let t = id(&self.pkg.fns[t].rust_name);
+                let t = id(&self.fn_names[t]);
                 quote!(tauto_rt::o::run_top(#t(&ev));)
             }
             Some(t) => {
-                let t = id(&self.pkg.fns[t].rust_name);
+                let t = id(&self.fn_names[t]);
                 quote!(#t(&ev);)
             }
             None => Rs::new(),
@@ -1602,25 +1905,8 @@ fn holds_o_fn(t: &Ty) -> bool {
         | Ty::Option(a)
         | Ty::Info(a)
         | Ty::BudgetAnswer(a) => holds_o_fn(a),
-        Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => holds_o_fn(a) || holds_o_fn(b),
+        Ty::Result(a, b) | Ty::Pair(a, b) => holds_o_fn(a) || holds_o_fn(b),
         Ty::Data(_, args) => args.iter().any(holds_o_fn),
-        _ => false,
-    }
-}
-
-fn has_fn(t: &Ty) -> bool {
-    match t {
-        Ty::Fn(_) => true,
-        Ty::Ref(a)
-        | Ty::RefMut(a)
-        | Ty::Vec(a)
-        | Ty::Array(a)
-        | Ty::Slice(a)
-        | Ty::Option(a)
-        | Ty::Info(a)
-        | Ty::BudgetAnswer(a) => has_fn(a),
-        Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => has_fn(a) || has_fn(b),
-        Ty::Data(_, args) => args.iter().any(has_fn),
         _ => false,
     }
 }
@@ -1726,6 +2012,9 @@ pub fn emit_vm_lib_tokens(
         }
     }
     for u in &pkg.unions {
+        if pkg.host_omitted_unions.contains(&u.id) {
+            continue;
+        }
         body.extend(g.union_def(u));
     }
     let carried = g.vm_carried();
@@ -1746,9 +2035,7 @@ pub fn emit_vm_lib_tokens(
         // the machine, which holds its own values; an extern type's is not.
         let unborrowed = |t: &Ty| -> Ty {
             match t {
-                Ty::Ref(inner)
-                    if !matches!(&**inner, Ty::Data(n, _) if g.data(n).is_some_and(|d| d.host)) =>
-                {
+                Ty::Ref(inner) if !matches!(&**inner, Ty::Data(n, _) if g.data(n).is_some_and(|d| d.host)) => {
                     (**inner).clone()
                 }
                 t => t.clone(),
@@ -1784,7 +2071,7 @@ pub fn emit_vm_lib_tokens(
             }
         ));
     }
-    let uses = concat(pkg.datas.iter().filter(|d| g.emits(d)).map(|d| {
+    let uses = concat(pkg.datas.iter().filter(|d| g.emits_data(d)).map(|d| {
         let n = Gen::data_name(pkg, &d.name);
         quote!(pub use super::#n;)
     }));
@@ -1910,7 +2197,8 @@ impl Gen<'_> {
                         passed.push(quote!(#a));
                     }
                     Pass::Ref => {
-                        let host = matches!(t, Ty::Data(n, _) if self.data(n).is_some_and(|d| d.host));
+                        let host =
+                            matches!(t, Ty::Data(n, _) if self.data(n).is_some_and(|d| d.host));
                         if host {
                             reads.push(quote!(
                                 let #o = tauto_embed::host_ref::<#ty>(&#next)?;
@@ -2006,11 +2294,7 @@ impl Gen<'_> {
                 quote!(#path(#parts))
             };
             let ctor = num(j as u64);
-            let values = comma(
-                binds
-                    .iter()
-                    .map(|b| quote!(TautoVm::into_vm(#b, cx))),
-            );
+            let values = comma(binds.iter().map(|b| quote!(TautoVm::into_vm(#b, cx))));
             into_arms.push(quote!(#pattern => cx.data(#index, #ctor, vec![#values]),));
             let reads = concat(binds.iter().map(|b| {
                 quote!(let #b = TautoVm::from_vm(fields.next().ok_or("a missing field")?, cx)?;)

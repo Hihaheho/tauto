@@ -6,7 +6,7 @@ entry = "main.taut"
 files."main.taut" = ```tauto
 fn len(l: List(Nat)): Nat { List.length(l) }
 ```
-macro_error = "`.` takes a field; write the name of a declaration with `::`"
+check_errors = ["`List` is a type, and a field is read from a value: for `x` of type `List`, write `x.length`"]
 
 @ cases.a-path-after-an-expression-does-not-parse
 source = ```tauto
@@ -25,3 +25,33 @@ source = ```tauto
 fn first(p: @a Nat × @b Nat): Nat { (p: @a Nat) }
 ```
 checks."first" = "ok"
+
+@ cases.a-constructor-pattern-on-a-labelled-value-says-to-label-the-pattern
+description = "`@a List(T)` is a type of its own: a bare `Nil` does not match it, and the error points to `@a Nil` and to the annotation without the label"
+source = ```tauto
+fn len<T>(out: @requests List(T)): Nat {
+  match (out: @requests List(T)) {
+    Nil => Zero
+    Cons(_, t) => Succ(Zero)
+  }
+}
+```
+checks."len" = "error: `List::Nil` is a constructor of `List`, but the value matched is under the label `@requests`"
+
+@ cases.a-label-in-the-pattern-or-off-in-the-annotation-matches-a-labelled-value
+source = ```tauto
+fn by_pattern<T>(out: @requests List(T)): Nat {
+  match out {
+    @requests Nil => Zero
+    @requests Cons(_, t) => Succ(Zero)
+  }
+}
+fn by_annotation<T>(out: @requests List(T)): Nat {
+  match (out: List(T)) {
+    Nil => Zero
+    Cons(_, t) => Succ(Zero)
+  }
+}
+```
+checks."by_pattern" = "ok"
+checks."by_annotation" = "ok"

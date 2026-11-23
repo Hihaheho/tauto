@@ -1,3 +1,4 @@
+import "messages.taut"
 import "handle_frame.taut"
 import "checked_frame.taut"
 import "operation_checked_sound.taut"
@@ -6,11 +7,12 @@ import "pattern_mutual_checked.taut"
 import "written_error_sound.taut"
 import "instantiation_error_sound.taut"
 import "handle_error_sound.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "pattern_scope.taut"
 import "rows.taut"
+import "rows_base.taut"
 import "ty.taut"
 import "types_match.taut"
 import "unify_sound.taut"
@@ -30,11 +32,10 @@ pub theorem handle_patterns_cons_frame_checked(
   ). CkScopeChecked(next, ck_handle_patterns(rest, next, more, env, body)),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, handle_patterns_cons(p, rest, c, inner, body, tys)) {
-  ⊢ CkScopeChecked(c, handle_patterns_cons(p, rest, c, inner, body, tys)) from match tys {
+  match tys {
     Nil => pattern_return_frame_checked(c, inner, Star, ordered)
     Cons(t, more) => pattern_bind_frame_checked(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, c1: Checker, inner1: Scope) => pattern_rewrap(
         ck_handle_patterns(rest, c1, more, inner1, body)
@@ -58,7 +59,7 @@ pub theorem ck_handle_patterns_frame_checked(
   body: SurfaceTerm,
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, ck_handle_patterns(ps, c, tys, inner, body)) {
-  ⊢ CkScopeChecked(c, ck_handle_patterns(ps, c, tys, inner, body)) from match ps {
+  match ps {
     Nil => AndIntro(ordered, (clean_errors => clean_errors))
     Cons(p, rest) => Eq::subst(
       (z: Mut2(Unit, Checker, Scope)) => CkScopeChecked(c, z),
@@ -95,11 +96,10 @@ pub theorem handle_cont_frame_checked(
   cont: Option(Text),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) {
-  ⊢ CkScopeChecked(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) from match cont {
+  match cont {
     None => pattern_return_frame_checked(c, inner, Star, ordered)
     Some(k) => pattern_bind_one_frame_checked(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, c1: Checker) => pattern_rewrap(
         ck_bind_local(
@@ -113,7 +113,7 @@ pub theorem handle_cont_frame_checked(
       ),
       frame_error_if(
         c,
-        cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+        arm_does_not_resume_message(eff, k),
         span_of(body),
         quant_is_zero(quant)
       ),
@@ -121,19 +121,19 @@ pub theorem handle_cont_frame_checked(
         c,
         frame_error_if(
           c,
-          cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+          arm_does_not_resume_message(eff, k),
           span_of(body),
           quant_is_zero(quant)
         ),
         frame_error_if_ok(
           c,
-          cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+          arm_does_not_resume_message(eff, k),
           span_of(body),
           quant_is_zero(quant)
         ),
         frame_error_if_ok_errors(
           c,
-          cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+          arm_does_not_resume_message(eff, k),
           span_of(body),
           quant_is_zero(quant)
         ),

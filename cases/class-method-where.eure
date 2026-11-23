@@ -1,0 +1,100 @@
+description = "A method of a class may carry `where`: the caller supplies the evidence beside the class's own, and the instance's method may rely on it."
+
+@ cases.a-method-where-is-resolved-at-the-call
+source = ```tauto
+import std::base
+class Hasher(H: Type) {
+  fn start(seed: u64): H
+  fn step(h: H, w: u64): H
+  fn finish(h: H): u64
+}
+class Key(K: Type) {
+  fn digest<H>(a: &K, h: H): H where Hasher(H)
+}
+struct Sip { v: u64 }
+instance Hasher(Sip) {
+  fn start(seed: u64): Sip { Sip { v: seed } }
+  fn step(h: Sip, w: u64): Sip { Sip { v: w } }
+  fn finish(h: Sip): u64 { h.v }
+}
+instance Key(u64) {
+  fn digest<H>(a: &u64, h: H): H where Hasher(H) { Hasher::step(h, a) }
+}
+perform test("the instance's method uses the method's evidence", () => {
+  let x: u64 := 5
+  let h: Sip := Key::digest(&x, Hasher::start(1))
+  expect(Hasher::finish(h) == 5, "the last word fed")
+})
+```
+tests = ["the instance's method uses the method's evidence"]
+
+@ cases.a-generic-function-passes-both-evidences
+source = ```tauto
+import std::base
+class Hasher(H: Type) {
+  fn start(seed: u64): H
+  fn step(h: H, w: u64): H
+  fn finish(h: H): u64
+}
+class Key(K: Type) {
+  fn digest<H>(a: &K, h: H): H where Hasher(H)
+}
+struct Sip { v: u64 }
+struct Two { a: u64, b: u64 }
+instance Hasher(Sip) {
+  fn start(seed: u64): Sip { Sip { v: seed } }
+  fn step(h: Sip, w: u64): Sip { Sip { v: w } }
+  fn finish(h: Sip): u64 { h.v }
+}
+instance Key(u64) {
+  fn digest<H>(a: &u64, h: H): H where Hasher(H) { Hasher::step(h, a) }
+}
+instance Key(Two) {
+  fn digest<H>(a: &Two, h: H): H where Hasher(H) {
+    let h := Key::digest(&a.a, h)
+    Key::digest(&a.b, h)
+  }
+}
+fn hash_with<K, H>(k: &K, h: H): u64 where Key(K), Hasher(H) {
+  Hasher::finish(Key::digest(k, h))
+}
+perform test("a function that asks for both classes passes both on", () => {
+  let p := Two { a: 3, b: 9 }
+  let start: Sip := Hasher::start(0)
+  expect(hash_with(&p, start) == 9, "the last word fed")
+})
+```
+tests = ["a function that asks for both classes passes both on"]
+
+@ cases.an-instance-with-where-keeps-the-method-evidence-after-its-own
+source = ```tauto
+import std::base
+class Hasher(H: Type) {
+  fn start(seed: u64): H
+  fn step(h: H, w: u64): H
+  fn finish(h: H): u64
+}
+class Key(K: Type) {
+  fn digest<H>(a: &K, h: H): H where Hasher(H)
+}
+struct Sip { v: u64 }
+struct Boxed(A: Type) { inner: A }
+instance Hasher(Sip) {
+  fn start(seed: u64): Sip { Sip { v: seed } }
+  fn step(h: Sip, w: u64): Sip { Sip { v: w } }
+  fn finish(h: Sip): u64 { h.v }
+}
+instance Key(u64) {
+  fn digest<H>(a: &u64, h: H): H where Hasher(H) { Hasher::step(h, a) }
+}
+instance<A> Key(Boxed(A)) where Key(A) {
+  fn digest<H>(a: &Boxed(A), h: H): H where Hasher(H) { Key::digest(&a.inner, h) }
+}
+perform test("the instance's evidence and the method's evidence both arrive", () => {
+  let four: u64 := 4
+  let b := Boxed { inner: four }
+  let h: Sip := Key::digest(&b, Hasher::start(0))
+  expect(Hasher::finish(h) == 4, "the inner key's word")
+})
+```
+tests = ["the instance's evidence and the method's evidence both arrive"]

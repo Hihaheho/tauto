@@ -1,0 +1,324 @@
+import std::base
+import std::nat
+import std::uint
+import "uhost.taut"
+import "occupancy.taut"
+
+// `j < n + 1` is `j < n` unless `j` is `n`.
+pub theorem Nat::lt_succ_ne_eq(j: Nat, n: Nat, h: Nat::eq(j, n) = false): j < Succ(n) = (j < n) {
+  match j {
+    Zero => ⊢ Zero < Succ(n) = (Zero < n) from match n {
+      Zero => False::elim(true_ne_false(h))
+      Succ(m) => Refl
+    }
+    Succ(j2) => ⊢ Succ(j2) < Succ(n) = (Succ(j2) < n) from match n {
+      Zero => Refl
+      Succ(m) => Nat::lt_succ_ne_eq(j2, m, h)
+    }
+  }
+}
+
+pub theorem Nat::eq_false_comm(a: Nat, b: Nat, h: Nat::eq(a, b) = false): Nat::eq(b, a) = false {
+  match Nat::eq(b, a) eqn e {
+    true => ⊢ true = false from False::elim(
+      true_ne_false(Eq::trans(Eq::sym(Eq::trans(Eq::congr(⟦Nat::eq(a, □)⟧, Nat::eq_sound(b, a, e)), Nat::eq_refl(a))), h))
+    )
+    false => Refl
+  }
+}
+
+// The slots below `len` are filled, and `len` is at most the capacity.
+pub(open) inductive Prefix: Type {
+  Mk(len: UHost, cap: UHost, ok: UHost::le(len, cap) = true): Prefix
+}
+
+pub fn Prefix::len(s: Prefix): UHost {
+  match s {
+    Mk(l, ^c, ^h) => l
+  }
+}
+
+pub fn Prefix::cap(s: Prefix): UHost {
+  match s {
+    Mk(^l, c, ^h) => c
+  }
+}
+
+pub theorem Prefix::ok(s: Prefix): UHost::le(Prefix::len(s), Prefix::cap(s)) = true {
+  match s {
+    Mk(l, c, h) => h
+  }
+}
+
+pub fn Prefix::empty(c: UHost): Prefix {
+  Prefix::Mk(UHost::zero(), c, Nat::le_zero(UHost::val(c)))
+}
+
+pub fn Prefix::used(s: Prefix, i: UHost): Bool {
+  UHost::lt(i, Prefix::len(s))
+}
+
+// The prefix one longer, where `len < cap`.
+pub fn Prefix::grown(s: Prefix, q: UHost::lt(Prefix::len(s), Prefix::cap(s)) = true): Prefix {
+  Prefix::Mk(UHost::succ_below_proved(Prefix::len(s), Prefix::cap(s), q), Prefix::cap(s), q)
+}
+
+// `put`, with the decision `c` of its test given.
+pub fn Prefix::put_of(s: Prefix, i: UHost, c: Bool, h: c = (UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)))): Option(Prefix) {
+  match c {
+    true => Some(Prefix::grown(s, Bool::and_true_right(UHost::eq(i, Prefix::len(s)), UHost::lt(Prefix::len(s), Prefix::cap(s)), Eq::sym(h))))
+    false => None
+  }
+}
+
+pub fn Prefix::put(s: Prefix, i: UHost): Option(Prefix) {
+  Prefix::put_of(s, i, UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)), Refl)
+}
+
+// The prefix one shorter, where `i + 1 = len`.
+pub fn Prefix::shrunk(s: Prefix, i: UHost, e: Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))) = true): Prefix {
+  Prefix::Mk(i, Prefix::cap(s), Nat::le_trans(UHost::val(i), Succ(UHost::val(i)), UHost::val(Prefix::cap(s)), Nat::le_succ(UHost::val(i)), Eq::trans(Eq::congr(⟦□ <= UHost::val(Prefix::cap(s))⟧, Nat::eq_sound(Succ(UHost::val(i)), UHost::val(Prefix::len(s)), e)), Prefix::ok(s))))
+}
+
+pub fn Prefix::take_of(s: Prefix, i: UHost, c: Bool, h: c = Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s)))): Option(Prefix) {
+  match c {
+    true => Some(Prefix::shrunk(s, i, Eq::sym(h)))
+    false => None
+  }
+}
+
+pub fn Prefix::take(s: Prefix, i: UHost): Option(Prefix) {
+  Prefix::take_of(s, i, Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))), Refl)
+}
+
+pub fn Prefix::recap_of(s: Prefix, c: UHost, o: Bool, h: o = UHost::le(Prefix::len(s), c)): Option(Prefix) {
+  match o {
+    true => Some(Prefix::Mk(Prefix::len(s), c, Eq::sym(h)))
+    false => None
+  }
+}
+
+pub fn Prefix::recap(s: Prefix, c: UHost): Option(Prefix) {
+  Prefix::recap_of(s, c, UHost::le(Prefix::len(s), c), Refl)
+}
+
+// ---- what a success says ------------------------------------------------
+
+// A success means the test held, and the result is one longer with the same capacity.
+pub theorem Prefix::put_of_inv(s: Prefix, i: UHost, c: Bool, h: c = (UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s))), t: Prefix, p: Prefix::put_of(s, i, c, h) = Some(t)): And(UHost::eq(i, Prefix::len(s)) = true, And(UHost::lt(Prefix::len(s), Prefix::cap(s)) = true, And(UHost::val(Prefix::len(t)) = Succ(UHost::val(Prefix::len(s))), Prefix::cap(t) = Prefix::cap(s)))) {
+  match c {
+    true => AndIntro(
+      Bool::and_true_left(UHost::eq(i, Prefix::len(s)), UHost::lt(Prefix::len(s), Prefix::cap(s)), Eq::sym(h)),
+      AndIntro(Bool::and_true_right(UHost::eq(i, Prefix::len(s)), UHost::lt(Prefix::len(s), Prefix::cap(s)), Eq::sym(h)), match p {
+        Refl => AndIntro(Refl, Refl)
+      })
+    )
+    false => match p {
+    }
+  }
+}
+
+pub theorem Prefix::take_of_inv(s: Prefix, i: UHost, c: Bool, h: c = Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))), t: Prefix, p: Prefix::take_of(s, i, c, h) = Some(t)): And(Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))) = true, And(Prefix::len(t) = i, Prefix::cap(t) = Prefix::cap(s))) {
+  match c {
+    true => AndIntro(Eq::sym(h), match p {
+      Refl => AndIntro(Refl, Refl)
+    })
+    false => match p {
+    }
+  }
+}
+
+pub theorem Prefix::recap_of_inv(s: Prefix, c: UHost, o: Bool, h: o = UHost::le(Prefix::len(s), c), t: Prefix, p: Prefix::recap_of(s, c, o, h) = Some(t)): And(Prefix::len(t) = Prefix::len(s), Prefix::cap(t) = c) {
+  match o {
+    true => match p {
+      Refl => AndIntro(Refl, Refl)
+    }
+    false => match p {
+    }
+  }
+}
+
+// ---- the successes are exactly the cases the laws leave open --------------
+
+pub theorem Prefix::put_of_ok(s: Prefix, i: UHost, c: Bool, h: c = (UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s))), q: UHost::lt(Prefix::len(s), Prefix::cap(s)) = true, e: c = true): Prefix::put_of(s, i, c, h) = Some(Prefix::grown(s, q)) {
+  match c {
+    true => Refl
+    false => False::elim(false_ne_true(e))
+  }
+}
+
+// `put` at the end is the prefix one longer, with the proof that there is room.
+pub theorem Prefix::put_grown(s: Prefix, q: UHost::lt(Prefix::len(s), Prefix::cap(s)) = true): Prefix::put(s, Prefix::len(s)) = Some(Prefix::grown(s, q)) {
+  Prefix::put_of_ok(s, Prefix::len(s), UHost::eq(Prefix::len(s), Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)), Refl, q, Bool::and_intro(UHost::eq(Prefix::len(s), Prefix::len(s)), UHost::lt(Prefix::len(s), Prefix::cap(s)), UHost::eq_refl(Prefix::len(s)), q))
+}
+
+pub theorem Prefix::take_of_ok(s: Prefix, i: UHost, c: Bool, h: c = Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))), e: c = true): Prefix::take_of(s, i, c, h) = Some(Prefix::shrunk(s, i, Eq::sym(Eq::trans(Eq::sym(e), h)))) {
+  match c {
+    true => Refl
+    false => False::elim(false_ne_true(e))
+  }
+}
+
+// `take` of the last slot is the prefix one shorter.
+pub theorem Prefix::take_shrunk(s: Prefix, i: UHost, e: Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))) = true): Prefix::take(s, i) = Some(Prefix::shrunk(s, i, e)) {
+  Prefix::take_of_ok(s, i, Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))), Refl, e)
+}
+
+pub theorem Prefix::recap_of_ok(s: Prefix, c: UHost, o: Bool, h: o = UHost::le(Prefix::len(s), c), e: o = true): Prefix::recap_of(s, c, o, h) = Some(Prefix::Mk(Prefix::len(s), c, Eq::trans(Eq::sym(h), e))) {
+  match o {
+    true => Refl
+    false => False::elim(false_ne_true(e))
+  }
+}
+
+// `recap` to a capacity of at least the length keeps the length.
+pub theorem Prefix::recap_mk(s: Prefix, c: UHost, h: UHost::le(Prefix::len(s), c) = true): Prefix::recap(s, c) = Some(Prefix::Mk(Prefix::len(s), c, h)) {
+  Prefix::recap_of_ok(s, c, UHost::le(Prefix::len(s), c), Refl, h)
+}
+
+// `i + 1 = len` and `lt(i, len)`.
+pub theorem Prefix::succ_lt(i: Nat, n: Nat, e: Succ(i) = n): i < n = true {
+  Eq::trans(Eq::congr(⟦Succ(i) <= □⟧, Eq::sym(e)), Nat::le_refl(Succ(i)))
+}
+
+// From `eq(i, len)` to the values being the same number.
+pub theorem Prefix::same_val(i: UHost, j: UHost, e: UHost::eq(i, j) = true): UHost::val(i) = UHost::val(j) {
+  Nat::eq_sound(UHost::val(i), UHost::val(j), e)
+}
+
+// `a < b` is false when `b <= a`.
+pub theorem Nat::le_lt_false(a: Nat, b: Nat, h: b <= a = true): a < b = false {
+  match a {
+    Zero => ⊢ Zero < b = false from match b {
+      Zero => Refl
+      Succ(k) => False::elim(false_ne_true(h))
+    }
+    Succ(a2) => ⊢ Succ(a2) < b = false from match b {
+      Zero => Refl
+      Succ(b2) => Nat::le_lt_false(a2, b2, h)
+    }
+  }
+}
+
+// The marks are `Unit`: the policy does not use them.
+instance Occupancy(Prefix, Unit) {
+  fn empty(c: UHost, pm: Proxy(Unit)): Prefix { Prefix::empty(c) }
+  fn vacant(ps: Proxy(Prefix), pm: Proxy(Unit)): Unit { Star }
+  fn cap(s: Prefix, pm: Proxy(Unit)): UHost { Prefix::cap(s) }
+  fn used(s: Prefix, i: UHost, m: Unit): Bool { Prefix::used(s, i) }
+  fn put(s: Prefix, i: UHost, old: Unit, new: Unit): Option(Prefix) { Prefix::put(s, i) }
+  fn take(s: Prefix, i: UHost, old: Unit, new: Unit): Option(Prefix) { Prefix::take(s, i) }
+  fn recap(s: Prefix, c: UHost, pm: Proxy(Unit)): Option(Prefix) { Prefix::recap(s, c) }
+  fn full(s: Prefix, lo: UHost, hi: UHost, pm: Proxy(Unit)): Bool { UHost::le(hi, Prefix::len(s)) }
+
+  theorem empty_free<c: UHost, i: UHost, pm: Proxy(Unit), ps: Proxy(Prefix)>(): Occupancy::used(the(Prefix, Occupancy::empty(c, pm)), i, the(Unit, Occupancy::vacant(ps, pm))) = false {
+    Nat::lt_zero_false(UHost::val(i))
+  }
+
+  theorem empty_cap<c: UHost, pm: Proxy(Unit), ps: Proxy(Prefix)>(): Occupancy::cap(the(Prefix, Occupancy::empty(c, pm)), pm) = c {
+    Refl
+  }
+
+  theorem used_below<s: Prefix, i: UHost, m: Unit, pm: Proxy(Unit), ps: Proxy(Prefix)>(u: Occupancy::used(s, i, m) = true): UHost::lt(i, Occupancy::cap(s, pm)) = true {
+    Nat::le_trans(Succ(UHost::val(i)), UHost::val(Prefix::len(s)), UHost::val(Prefix::cap(s)), u, Prefix::ok(s))
+  }
+
+  theorem put_fresh<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::put(s, i, old, new) = Some(t)): Occupancy::used(s, i, old) = false {
+    match Prefix::put_of_inv(s, i, UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)), Refl, t, h) {
+      AndIntro(e, rest) => Eq::trans(
+        Eq::congr(⟦Nat::lt(□, UHost::val(Prefix::len(s)))⟧, Prefix::same_val(i, Prefix::len(s), e)),
+        Nat::lt_irrefl(UHost::val(Prefix::len(s)))
+      )
+    }
+  }
+
+  theorem put_same<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::put(s, i, old, new) = Some(t)): Occupancy::used(t, i, new) = true {
+    match Prefix::put_of_inv(s, i, UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)), Refl, t, h) {
+      AndIntro(e, AndIntro(q, AndIntro(l, c))) => Eq::trans(
+        Eq::congr(⟦Nat::lt(UHost::val(i), □)⟧, l),
+        Eq::trans(
+          Eq::congr(⟦Nat::lt(□, Succ(UHost::val(Prefix::len(s))))⟧, Prefix::same_val(i, Prefix::len(s), e)),
+          Nat::le_refl(Succ(UHost::val(Prefix::len(s))))
+        )
+      )
+    }
+  }
+
+  theorem put_other<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, j: UHost, m: Unit, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::put(s, i, old, new) = Some(t), ne: UHost::eq(i, j) = false): Occupancy::used(t, j, m) = Occupancy::used(s, j, m) {
+    match Prefix::put_of_inv(s, i, UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)), Refl, t, h) {
+      AndIntro(e, AndIntro(q, AndIntro(l, c))) => Eq::trans(
+        Eq::congr(⟦Nat::lt(UHost::val(j), □)⟧, l),
+        Nat::lt_succ_ne_eq(
+          UHost::val(j),
+          UHost::val(Prefix::len(s)),
+          Nat::eq_false_comm(UHost::val(Prefix::len(s)), UHost::val(j), Eq::trans(Eq::sym(Eq::congr(⟦Nat::eq(□, UHost::val(j))⟧, Prefix::same_val(i, Prefix::len(s), e))), ne))
+        )
+      )
+    }
+  }
+
+  theorem put_cap<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::put(s, i, old, new) = Some(t)): Occupancy::cap(t, pm) = Occupancy::cap(s, pm) {
+    match Prefix::put_of_inv(s, i, UHost::eq(i, Prefix::len(s)) && UHost::lt(Prefix::len(s), Prefix::cap(s)), Refl, t, h) {
+      AndIntro(e, AndIntro(q, AndIntro(l, c))) => c
+    }
+  }
+
+  theorem take_live<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::take(s, i, old, new) = Some(t)): Occupancy::used(s, i, old) = true {
+    match Prefix::take_of_inv(s, i, Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))), Refl, t, h) {
+      AndIntro(e, rest) => Prefix::succ_lt(UHost::val(i), UHost::val(Prefix::len(s)), Nat::eq_sound(Succ(UHost::val(i)), UHost::val(Prefix::len(s)), e))
+    }
+  }
+
+  theorem take_same<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::take(s, i, old, new) = Some(t)): Occupancy::used(t, i, new) = false {
+    match Prefix::take_of_inv(s, i, Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))), Refl, t, h) {
+      AndIntro(e, AndIntro(l, c)) => Eq::trans(
+        Eq::congr(⟦Nat::lt(UHost::val(i), UHost::val(□))⟧, l),
+        Nat::lt_irrefl(UHost::val(i))
+      )
+    }
+  }
+
+  theorem take_other<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, j: UHost, m: Unit, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::take(s, i, old, new) = Some(t), ne: UHost::eq(i, j) = false): Occupancy::used(t, j, m) = Occupancy::used(s, j, m) {
+    match Prefix::take_of_inv(s, i, Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))), Refl, t, h) {
+      AndIntro(e, AndIntro(l, c)) => Eq::trans(
+        Eq::trans(
+          Eq::congr(⟦Nat::lt(UHost::val(j), UHost::val(□))⟧, l),
+          Eq::sym(Nat::lt_succ_ne_eq(UHost::val(j), UHost::val(i), Nat::eq_false_comm(UHost::val(i), UHost::val(j), ne)))
+        ),
+        Eq::congr(⟦Nat::lt(UHost::val(j), □)⟧, Nat::eq_sound(Succ(UHost::val(i)), UHost::val(Prefix::len(s)), e))
+      )
+    }
+  }
+
+  theorem take_cap<s: Prefix, i: UHost, old: Unit, new: Unit, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::take(s, i, old, new) = Some(t)): Occupancy::cap(t, pm) = Occupancy::cap(s, pm) {
+    match Prefix::take_of_inv(s, i, Nat::eq(Succ(UHost::val(i)), UHost::val(Prefix::len(s))), Refl, t, h) {
+      AndIntro(e, AndIntro(l, c)) => c
+    }
+  }
+
+  theorem recap_keeps<s: Prefix, c: UHost, t: Prefix, i: UHost, m: Unit, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::recap(s, c, pm) = Some(t), old: UHost::lt(i, Occupancy::cap(s, pm)) = true): Occupancy::used(t, i, m) = Occupancy::used(s, i, m) {
+    match Prefix::recap_of_inv(s, c, UHost::le(Prefix::len(s), c), Refl, t, h) {
+      AndIntro(l, k) => Eq::congr(⟦UHost::lt(i, □)⟧, l)
+    }
+  }
+
+  // The new slots are empty: the length stays at most the old capacity.
+  theorem recap_fresh<s: Prefix, c: UHost, t: Prefix, i: UHost, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::recap(s, c, pm) = Some(t), new: UHost::le(Occupancy::cap(s, pm), i) = true): Occupancy::used(t, i, the(Unit, Occupancy::vacant(ps, pm))) = false {
+    match Prefix::recap_of_inv(s, c, UHost::le(Prefix::len(s), c), Refl, t, h) {
+      AndIntro(l, k) => Eq::trans(
+        Eq::congr(⟦UHost::lt(i, □)⟧, l),
+        Nat::le_lt_false(UHost::val(i), UHost::val(Prefix::len(s)), Nat::le_trans(UHost::val(Prefix::len(s)), UHost::val(Prefix::cap(s)), UHost::val(i), Prefix::ok(s), new))
+      )
+    }
+  }
+
+  theorem recap_cap<s: Prefix, c: UHost, t: Prefix, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::recap(s, c, pm) = Some(t)): Occupancy::cap(t, pm) = c {
+    match Prefix::recap_of_inv(s, c, UHost::le(Prefix::len(s), c), Refl, t, h) {
+      AndIntro(l, k) => k
+    }
+  }
+
+  theorem full_used<s: Prefix, a: UHost, b: UHost, i: UHost, m: Unit, pm: Proxy(Unit), ps: Proxy(Prefix)>(h: Occupancy::full(s, a, b, pm) = true, lo: UHost::le(a, i) = true, hi: UHost::lt(i, b) = true): Occupancy::used(s, i, m) = true {
+    Nat::le_trans(Succ(UHost::val(i)), UHost::val(b), UHost::val(Prefix::len(s)), hi, h)
+  }
+}

@@ -1,9 +1,10 @@
+import "messages.taut"
 import "data_body_metadata_sound.taut"
 import "data_body_recheck_sound.taut"
 import "registration_data_error_sound.taut"
-import std::Base
-import std::Map
-import std::MapText
+import std::base
+import std::map
+import std::map_text
 import "checker.taut"
 import "data_ctors_sound.taut"
 import "datas.taut"
@@ -17,6 +18,7 @@ import "rules_data_fields.taut"
 import "summary_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_app_branch_sound.taut"
 import "../../surface/src/surface.taut"
@@ -55,8 +57,7 @@ pub fn body_register_after(
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, next: Checker) => registration_insert(
       next,
       source,
@@ -139,8 +140,7 @@ pub theorem body_register_and_store_errors(
   c: Checker
 ): CkErrorFrame(c, body_register_and_store(source, is_struct, builtin, constructors, c)) {
   error_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, next: Checker) => registration_insert(
       next,
@@ -161,8 +161,7 @@ pub fn body_declare_after(
   m: Mut1(List(DataCtor), Checker)
 ): Mut1(Unit, Checker) {
   frame_bind(
-    List(DataCtor),
-    Unit,
+    <A: List(DataCtor), B: Unit>,
     (constructors: List(DataCtor), next: Checker) => body_register_and_store(
       source,
       is_struct,
@@ -209,8 +208,7 @@ pub theorem body_declare_after_errors(
   before: CkErrorFrame(c, m)
 ): CkErrorFrame(c, body_declare_after(source, is_struct, builtin, m)) {
   error_frame_bind(
-    List(DataCtor),
-    Unit,
+    <A: List(DataCtor), B: Unit>,
     c,
     (constructors: List(DataCtor), next: Checker) => body_register_and_store(
       source,
@@ -238,8 +236,7 @@ pub fn body_declare_checked(
   condition: Bool
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, next: Checker) => body_declare_after(
       source,
       is_struct,
@@ -252,7 +249,7 @@ pub fn body_declare_checked(
     ),
     frame_error_if(
       c,
-      "a view struct has no fields: it is an opaque type",
+      view_decl_message(is_struct),
       registration_span(source),
       condition
     )
@@ -268,15 +265,14 @@ pub theorem body_declare_checked_allowed(
 ): (condition = false) {
   written_error_if_false(
     c,
-    "a view struct has no fields: it is an opaque type",
+    view_decl_message(is_struct),
     registration_span(source),
     condition,
     written_bind_input_clean(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       frame_error_if(
         c,
-        "a view struct has no fields: it is an opaque type",
+        view_decl_message(is_struct),
         registration_span(source),
         condition
       ),

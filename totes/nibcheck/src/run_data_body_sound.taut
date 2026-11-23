@@ -1,7 +1,7 @@
 import "registration_all_body_sound.taut"
-import std::Map
-import std::Row
-import std::Text
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "data_names_membership_sound.taut"
 import "datas.taut"
@@ -40,11 +40,9 @@ pub theorem run_after_datas_body(
   let accepted: DiagnosticClean(
     ck_st(ck_prepare_fns(c, prelude, program, own))
   ) := accepted_checked_bind_fact(
-    List(Pair(SurfaceFn, Scheme)),
-    Unit,
-    DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own))),
+    <A: List(SurfaceFn × Scheme), B: Unit, P: DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own)))>,
     ck_prepare_fns(c, prelude, program, own),
-    (fns: List(Pair(SurfaceFn, Scheme)), next: Checker) => names_function_body(next, program, fns),
+    (fns: List(SurfaceFn × Scheme), next: Checker) => names_function_body(next, program, fns),
     frame_subst_ordered(
       c,
       ck_prepare_fns(c, prelude, program, own),
@@ -75,7 +73,7 @@ pub theorem run_after_datas_body(
       And::left(ready),
       And::left(And::right(ready)),
       Eq::subst(
-        (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => DiagnosticClean(ck_st(m)),
+        (m: Mut1(List(SurfaceFn × Scheme), Checker)) => DiagnosticClean(ck_st(m)),
         registration_fns_unf(c, prelude, program, own),
         accepted
       )
@@ -93,7 +91,7 @@ pub theorem run_after_data_result_body(
   prepared: ∀ accepted: DiagnosticClean(ck_st(m)). BodyPreparationReady(program, source, ck_st(m)),
   clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m)))
 ): DataBodyState(source, run_after_data_result(prelude, program, own, m)) {
-  ⊢ DataBodyState(source, run_after_data_result(prelude, program, own, m)) from match m {
+  match m {
     mut1(ignored, next) => run_after_datas_body(
       next,
       prelude,
@@ -121,7 +119,7 @@ pub theorem run_after_builtins_body(
   position: frame_constructor_position(ck_st(m)) = false,
   clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m)))
 ): DataBodyState(source, run_after_builtins(prelude, program, m)) {
-  ⊢ DataBodyState(source, run_after_builtins(prelude, program, m)) from match m {
+  match m {
     mut1(ignored, next) => run_after_data_result_body(
       prelude,
       program,

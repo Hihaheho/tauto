@@ -1,11 +1,12 @@
-import std::prelude::Ord
+import "messages.taut"
+import std::builtin::ord
 import "instances_frame.taut"
 import "rules_decls.taut"
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Row
-import std::Text
+import std::map
+import std::map_laws
+import std::map_text
+import std::row
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "datas_registration.taut"
@@ -15,10 +16,10 @@ import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn data_names_check(c: Checker, duplicate: Option(SurfaceData)): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match duplicate {
+  match duplicate {
     None => mut1(Star, c)
     Some(f) => ck_rewrap1(
-      ck_error(c, cat3("type ", registration_name(f), " is declared twice"), registration_span(f))
+      ck_error(c, type_declared_twice_message(registration_name(f)), registration_span(f))
     )
   }
 }
@@ -26,7 +27,7 @@ pub theorem data_names_check_frame(
   c: Checker,
   duplicate: Option(SurfaceData)
 ): CkReadFrame(c, data_names_check(c, duplicate)) {
-  ⊢ CkReadFrame(c, data_names_check(c, duplicate)) from match duplicate {
+  match duplicate {
     None => Refl
     Some(f) => Refl
   }
@@ -54,9 +55,9 @@ pub def DataNameCover(seen: List(Text), map: Ordmap(Text, Bool)): Prop :=
 ∀ n: Text. ∀ h: Mem(Text, n, seen). Ordmap::get(map, n, Ordmap::compare_text) = Some(true)
 
 pub fn data_names_present(o: Option(Bool)): Bool {
-  ⊢ Bool from match o {
+  match o {
     None => false
-    Some(v) => true
+    Some(^v) => true
   }
 }
 pub theorem data_names_contains(
@@ -155,7 +156,7 @@ pub fn data_names_step(
   map: Ordmap(Text, Bool),
   duplicate: Bool
 ): Option(SurfaceData) {
-  ⊢ Option(SurfaceData) from match duplicate {
+  match duplicate {
     true => Some(f)
     false => types_duplicate_data(
       rest,
@@ -203,7 +204,7 @@ pub theorem data_names_cons_sound(
   clean: data_names_step(f, rest, map, duplicate) = None,
   ih: DataNamesIH(rest)
 ): FreshDataNames(Cons(f, rest), seen) {
-  ⊢ FreshDataNames(Cons(f, rest), seen) from match duplicate {
+  match duplicate {
     true => False::elim(ck_none_ne_some(f, Eq::sym(clean)))
     false => FreshDatasCons(
       f,
@@ -240,7 +241,7 @@ pub theorem types_duplicate_data_sound(
   cover: DataNameCover(seen, map),
   clean: types_duplicate_data(fs, map) = None
 ): FreshDataNames(fs, seen) {
-  ⊢ FreshDataNames(fs, seen) from match fs {
+  match fs {
     Nil => FreshDatasNil(seen)
     Cons(f, rest) => data_names_cons_sound(
       f,
@@ -281,9 +282,9 @@ pub theorem types_data_names_unique(
 }
 pub fn data_names_errors(c: Checker): List(TypeError) { c.errors }
 pub fn data_names_empty(es: List(TypeError)): Bool {
-  ⊢ Bool from match es {
+  match es {
     Nil => true
-    Cons(e, rest) => false
+    Cons(^e, ^rest) => false
   }
 }
 pub theorem data_names_check_clean(
@@ -291,7 +292,7 @@ pub theorem data_names_check_clean(
   duplicate: Option(SurfaceData),
   clean: data_names_errors(ck_st(data_names_check(c, duplicate))) = Nil
 ): duplicate = None {
-  ⊢ duplicate = None from match duplicate {
+  match duplicate {
     None => Refl
     Some(f) => False::elim(false_ne_true(Eq::congr(data_names_empty, clean)))
   }

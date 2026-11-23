@@ -1,9 +1,9 @@
 import "lr.taut"
 import "../../llk/src/llk.taut"
 import "../../scan/src/scan.taut"
-import std::Array
-import std::Stack
-import std::Base
+import std::array
+import std::stack
+import std::base
 
 // A parse that succeeds is a derivation by the tables' productions
 // (`docs/design/self-host.md`). `LrForest(t, syms, done)` reads the parser's
@@ -62,7 +62,7 @@ pub(open) inductive LrForest(t: LrTables): (List(LrSym), List(LlkTok)) -> Prop {
 
 // The tokens before the end of the input, last first, before `done`.
 pub fn lr_upto(tokens: List(LlkTok), done: List(LlkTok)): List(LlkTok) {
-  ⊢ List(LlkTok) from match tokens {
+  match tokens {
     Nil => done
     Cons(token, more) => ⊢ List(LlkTok) from match token.token_type == 0 {
       true => done
@@ -72,7 +72,7 @@ pub fn lr_upto(tokens: List(LlkTok), done: List(LlkTok)): List(LlkTok) {
 }
 
 pub fn lr_upto_at(token: LlkTok, more: List(LlkTok), done: List(LlkTok), c: Bool): List(LlkTok) {
-  ⊢ List(LlkTok) from match c {
+  match c {
     true => done
     false => lr_upto(more, Cons(token, done))
   }
@@ -90,14 +90,14 @@ pub theorem lr_option_cases<A: Type>(
   a: (o = None) -> P(None),
   b: ∀ x: A. (o = Some(x)) -> P(Some(x))
 ): P(o) {
-  ⊢ P(o) from match o {
+  match o {
     None => a(Refl)
     Some(x) => b(x, Refl)
   }
 }
 
 pub fn lr_unwrap<A>(o: Option(A), d: A): A {
-  ⊢ A from match o {
+  match o {
     None => d
     Some(x) => x
   }
@@ -108,12 +108,12 @@ pub theorem lr_some_inj<A: Type>(x: A, y: A, e: Some(x) = Some(y)): x = y {
 }
 
 pub theorem lr_none_ne_some<A: Type>(x: A, e: None = Some(x)): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
 pub theorem lr_sym_eq_sound(a: LrSym, b: LrSym, e: lr_sym_eq(a, b) = true): a = b {
-  ⊢ a = b from match a {
+  match a {
     LrT(x) => ⊢ LrT(x) = b from match b {
       LrT(y) => Eq::congr(LrT, Nat::eq_sound(x, y, e))
       LrN(y) => False::elim(false_ne_true(e))
@@ -126,7 +126,7 @@ pub theorem lr_sym_eq_sound(a: LrSym, b: LrSym, e: lr_sym_eq(a, b) = true): a = 
 }
 
 pub fn lr_pop_at(c: Bool, more: List(LrSym), rest: List(LrSym)): Option(List(LrSym)) {
-  ⊢ Option(List(LrSym)) from match c {
+  match c {
     true => lr_pop(more, rest)
     false => None
   }
@@ -139,7 +139,7 @@ pub theorem lr_pop_sound(
   left: List(LrSym),
   h: lr_pop(pops, syms) = Some(left)
 ): syms = List::append(pops, left) {
-  ⊢ syms = List::append(pops, left) from match pops {
+  match pops {
     Nil => lr_some_inj(syms, left, h)
     Cons(p, more) => ⊢ syms = List::append(Cons(p, more), left) from match syms {
       Nil => False::elim(lr_none_ne_some(left, h))
@@ -171,7 +171,7 @@ pub theorem lr_upto_end(
   done: List(LlkTok),
   e: Nat::eq(llk_next_type(tokens), 0) = true
 ): done = lr_upto(tokens, done) {
-  ⊢ done = lr_upto(tokens, done) from match tokens {
+  match tokens {
     Nil => Refl
     Cons(token, more) => ⊢ done = lr_upto(Cons(token, more), done) from match token {
       Mk(ty, st, en, tr) => Eq::subst(
@@ -184,9 +184,9 @@ pub theorem lr_upto_end(
 }
 
 pub fn lr_is_built(r: LrRun): Bool {
-  ⊢ Bool from match r {
-    LrBuilt(nodes, Root) => true
-    LrStuck(e) => false
+  match r {
+    LrBuilt(^nodes, Root) => true
+    LrStuck(^e) => false
   }
 }
 
@@ -199,7 +199,7 @@ pub fn lr_syms_of(c: LrConf): List(LrSym) {
 }
 
 pub fn lr_after(f: Nat, t: LrTables, n: LrNext): LrRun {
-  ⊢ LrRun from match n {
+  match n {
     LrGo(c) => lr_run(f, t, c)
     LrEnd(r) => r
   }
@@ -223,7 +223,7 @@ pub theorem lr_stuck_case(
   done: List(LlkTok),
   h: lr_is_built(lr_after(f, t, lr_stuck_at(tokens, expected))) = true
 ): lr_goal(t, tokens, done) {
-  ⊢ lr_goal(t, tokens, done) from match tokens {
+  match tokens {
     Nil => False::elim(false_ne_true(h))
     Cons(token, more) => False::elim(false_ne_true(h))
   }
@@ -245,7 +245,7 @@ pub theorem lr_shift_case(
   d: LrForest(t, syms, done),
   h: lr_is_built(lr_after(f, t, lr_shift(tokens, states, syms, kids, nodes, count, to))) = true
 ): lr_goal(t, tokens, done) {
-  ⊢ lr_goal(t, tokens, done) from match tokens {
+  match tokens {
     Nil => False::elim(false_ne_true(h))
     Cons(token, more) => ⊢ lr_goal(t, Cons(token, more), done) from match token {
       Mk(ty, st, en, tr) => Bool::cases(
@@ -322,7 +322,7 @@ pub theorem lr_goto_case(
     lr_after(f, t, lr_goto(tokens, states, rest, kids, nodes, count, node, lhs, go))
   ) = true
 ): lr_goal(t, tokens, done) {
-  ⊢ lr_goal(t, tokens, done) from match go {
+  match go {
     Zero => False::elim(false_ne_true(h))
     Succ(to) => ih(
       LrConf {
@@ -576,7 +576,7 @@ pub theorem lr_left_case(
     lr_after(f, t, lr_accept_pop(t, tokens, kids, nodes, count, p, prod, Some(rest)))
   ) = true
 ): lr_goal(t, tokens, done) {
-  ⊢ lr_goal(t, tokens, done) from match rest {
+  match rest {
     Cons(s, more) => False::elim(false_ne_true(h))
     Nil => lr_whole_case(f, t, tokens, syms, kids, nodes, count, p, prod, done, d, hp, hs, h)
   }
@@ -688,7 +688,7 @@ pub theorem lr_act_case(
     lr_after(f, t, lr_act(t, tokens, states, syms, kids, nodes, count, arg, kind))
   ) = true
 ): lr_goal(t, tokens, done) {
-  ⊢ lr_goal(t, tokens, done) from match kind {
+  match kind {
     Zero => lr_stuck_case(
       f,
       t,
@@ -717,7 +717,7 @@ pub theorem lr_run_sound(
   d: LrForest(t, lr_syms_of(c), done),
   h: lr_is_built(lr_run(fuel, t, c)) = true
 ): lr_goal(t, lr_tokens_of(c), done) {
-  ⊢ lr_goal(t, lr_tokens_of(c), done) from match fuel {
+  match fuel {
     Zero => False::elim(false_ne_true(h))
     Succ(f) => ⊢ lr_goal(t, lr_tokens_of(c), done) from match c {
       Mk(tokens, states, syms, kids, nodes, count) => lr_act_case(
@@ -748,14 +748,14 @@ pub theorem lr_run_sound(
 }
 
 pub fn lr_value1(m: Mut1(LlkResult, Stack(LlkEvent))): LlkResult {
-  ⊢ LlkResult from match m {
-    mut1(v, e) => v
+  match m {
+    mut1(v, ^e) => v
   }
 }
 
 // What the body of `lr_parse` makes of its call of `lr_events_of`.
 pub fn lr_rewrap1(m: Mut1(LlkResult, Stack(LlkEvent))): Mut1(LlkResult, Stack(LlkEvent)) {
-  ⊢ Mut1(LlkResult, Stack(LlkEvent)) from match m {
+  match m {
     mut1(v, e) => mut1(v, e)
   }
 }
@@ -763,13 +763,13 @@ pub fn lr_rewrap1(m: Mut1(LlkResult, Stack(LlkEvent))): Mut1(LlkResult, Stack(Ll
 pub theorem lr_rewrap1_value(
   m: Mut1(LlkResult, Stack(LlkEvent))
 ): lr_value1(lr_rewrap1(m)) = lr_value1(m) {
-  ⊢ lr_value1(lr_rewrap1(m)) = lr_value1(m) from match m {
+  match m {
     mut1(v, e) => Refl
   }
 }
 
 pub theorem lr_failed_ne_parsed(x: LlkError, e: LlkFailed(x) = LlkParsed): False {
-  ⊢ False from match e {
+  match e {
   }
 }
 
@@ -781,7 +781,7 @@ pub theorem lr_built_of(
   r: LrRun,
   h: lr_value1(lr_events_of(t, tokens, r, ev)) = LlkParsed
 ): lr_is_built(r) = true {
-  ⊢ lr_is_built(r) = true from match r {
+  match r {
     LrStuck(e) => False::elim(lr_failed_ne_parsed(e, h))
     LrBuilt(nodes, Root) => Refl
   }

@@ -11,7 +11,7 @@ fn example(file: &str) -> std::path::PathBuf {
 #[test]
 fn the_grammar_file_is_the_one_in_the_library() {
     tauto_messages::install();
-    let lib = std::fs::read_to_string(example("Lib.taut")).unwrap();
+    let lib = std::fs::read_to_string(example("lib.taut")).unwrap();
     let par = std::fs::read_to_string(example("lc.par")).unwrap();
     let start = lib.find("```par\n").expect("a par block") + "```par\n".len();
     let end = start + lib[start..].find("```").expect("the block ends");

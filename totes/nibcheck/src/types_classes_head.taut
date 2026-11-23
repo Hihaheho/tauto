@@ -1,0 +1,287 @@
+import "messages.taut"
+import "types_infer.taut"
+import "infer_parts.taut"
+import "../../surface/src/surface.taut"
+import std::base
+import std::list
+import std::map
+import std::text
+import "checker.taut"
+import "datas.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_decl_head.taut"
+import "../../text/src/text.taut"
+import "classes_expand.taut"
+import "classes_declare.taut"
+import "../../identity/src/identity.taut"
+
+
+// Instances checked (`types/classes.rs`), and a constraint of a class
+// resolved. The classes themselves are declared in `classes_declare.taut`.
+
+// The generics of an instance with their kinds, in order, and the map from
+// their names to type parameters.
+pub fn instance_generics(
+  gs: List(Text),
+  bounds: List(Option(Text)),
+  acc: SigGenerics
+): SigGenerics {
+  match gs {
+    Nil => SigGenerics { generics: List::reverse(acc.generics), map: acc.map, ctors: acc.ctors }
+    Cons(g, rest) => {
+      let k: Kind := ⊢ Kind from match list_head_or_none(bounds) {
+        Some(b) => ⊢ Kind from match kind_parse(b) {
+          Some(x) => x
+          None => KindAffine
+        }
+        None => KindAffine
+      }
+      instance_generics(
+        rest,
+        List::tail(bounds),
+        SigGenerics {
+          generics: Cons(#(g, k), acc.generics),
+          map: Ordmap::insert(acc.map, g, TyParam(g, k), Ordmap::compare_text),
+          ctors: acc.ctors
+        }
+      )
+    }
+  }
+}
+
+// Each argument is a generic of the instance, and no generic is written twice.
+pub fn head_args_ok(args: List(SurfaceTerm), gs: List(Text), before: List(Text)): Bool {
+  match args {
+    Nil => true
+    Cons(a, rest) => ⊢ Bool from match a.kind {
+      SkVar(g) => text_list_has(
+        gs,
+        surface_name_text(g)
+      ) && not(text_list_has(before, surface_name_text(g))) && head_args_ok(rest, gs, Cons(surface_name_text(g), before))
+      _ => false
+    }
+  }
+}
+
+// The head: a type with no arguments, a type constructor applied to
+// distinct generics, as `A × B` is the prelude's `Pair` of two.
+pub fn head_shape_ok(head: SurfaceTerm, gs: List(Text)): Bool {
+  match head.kind {
+    SkVar(v) => not(text_list_has(gs, surface_name_text(v)))
+    SkApp(f, args) => ⊢ Bool from match f.kind {
+      SkVar(^n) => head_args_ok(args, gs, Nil)
+      _ => false
+    }
+    _ => false
+  }
+}
+
+pub fn generic_not_in_head(gs: List(Text), head: SurfaceTerm): Option(Text) {
+  match gs {
+    Nil => None
+    Cons(g, rest) => if term_mentions(head, g) { generic_not_in_head(rest, head) } else { Some(g) }
+  }
+}
+
+pub fn ck_instance_preds(
+  ws: List(SurfaceConstraint),
+  c: &mut Checker,
+  gs: List(Text),
+  preds: List(Text × Text)
+): List(Text × Text) {
+  match ws {
+    Nil => List::reverse(preds)
+    Cons(w, rest) => {
+      let span := span_at(w.start, w.end)
+      if not(
+        class_is_structural(w.r#class)
+      ) && not(Ordmap::contains(c.classes, w.r#class, Ordmap::compare_text)) {
+        ck_error(&mut c, not_a_class_message(w.r#class), span)
+        ck_instance_preds(rest, &mut c, gs, preds)
+      } else {
+        ⊢ List(Text × Text) from match constraint_single_type(w).kind {
+          SkVar(g) => if text_list_has(gs, surface_name_text(g)) {
+            if preds_have(preds, w.r#class, surface_name_text(g)) {
+              ck_error(&mut c, predicate_written_twice_message(w.r#class, surface_name_text(g)), span)
+              ck_instance_preds(rest, &mut c, gs, preds)
+            } else {
+              ck_instance_preds(rest, &mut c, gs, Cons(#(w.r#class, surface_name_text(g)), preds))
+            }
+          } else {
+            ck_error(&mut c, where_only_generics_of_instance_message(), span)
+            ck_instance_preds(rest, &mut c, gs, preds)
+          }
+          _ => {
+            ck_error(&mut c, where_only_generics_of_instance_message(), span)
+            ck_instance_preds(rest, &mut c, gs, preds)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn borrow_prefix(b: Option(Bool)): Text {
+  match b {
+    Some(m) => if m { "&mut " } else { "&" }
+    None => ""
+  }
+}
+
+pub fn list_head_or_none_ty(ts: List(Ty)): Option(Ty) {
+  match ts {
+    Nil => None
+    Cons(t, ^rest) => Some(t)
+  }
+}
+
+// `p: T` for each parameter the class's signature gives the method.
+pub fn shown_params(
+  ps: List(Text),
+  r#borrows: List(Option(Bool)),
+  tys: List(Ty),
+  c: Checker
+): List(Text) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ty: Text := ⊢ Text from match list_head_or_none_ty(tys) {
+        Some(t) => ty_show(ck_shown(&c, ty_unborrowed(t)))
+        None => ""
+      }
+      Cons(
+        cat4(borrow_prefix(list_head_or_none(r#borrows)), p, ": ", ty),
+        shown_params(rest, List::tail(r#borrows), List::tail(tys), c)
+      )
+    }
+  }
+}
+
+// The instance's method has the class's signature, the head in the place of
+// the parameter.
+pub fn ck_same_signature(
+  c: &mut Checker,
+  i: SurfaceInstance,
+  got: SurfaceFn,
+  scheme: Scheme,
+  expected: SurfaceFn,
+  param: Text,
+  head: Text
+): Unit {
+  let want := SurfaceFn {
+    name: got.name,
+    generics: List::append(i.generics, expected.generics),
+    bounds: List::append(
+      opts_resize(list_len(i.generics), i.bounds),
+      opts_resize(list_len(expected.generics), expected.bounds)
+    ),
+    params: expected.params,
+    r#borrows: expected.r#borrows,
+    param_types: opt_terms_replace(expected.param_types, param, i.head),
+    result: opt_term_replace(expected.result, param, i.head),
+    effects: expected.effects,
+    wheres: i.wheres,
+    start: expected.start,
+    end: expected.end,
+    body: expected.body,
+    lends: expected.lends,
+    generic_types: List::append(surface_type_generics(i.generics), expected.generic_types),
+    bound_starts: Nil,
+    visibility: got.visibility,
+    row_hole: got.row_hole,
+    unused: None,
+    unused_generics: Nil,
+    unused_params: Nil
+  }
+  let wanted := ck_signature(&mut c, want)
+  if not(ty_eq(wanted.ty, scheme.ty)) || not(borrows_eq(got.r#borrows, want.r#borrows)) {
+    let tys: List(Ty) := ⊢ List(Ty) from match wanted.ty {
+      TyFn(ps, ^r, ^k) => ps
+      _ => Nil
+    }
+    ck_error(
+      &mut c,
+      cat5(
+        i.r#class,
+        ".",
+        expected.name,
+        cat3(" of ", head, " takes "),
+        text_join(shown_params(want.params, want.r#borrows, tys, c), ", ")
+      ),
+      span_at(got.start, got.end)
+    )
+  }
+}
+
+pub fn ck_instance_methods(
+  expected: List(SurfaceFn),
+  c: &mut Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ctor: Text,
+  shown: Text,
+  out: List(SurfaceFn)
+): List(SurfaceFn) {
+  match expected {
+    Nil => out
+    Cons(e, rest) => ⊢ List(SurfaceFn) from match method_named(i.methods, e.name) {
+      None => {
+        ck_error(
+          &mut c,
+          instance_missing_method_message(i.r#class, shown, e.name),
+          span_at(i.start, i.end)
+        )
+        ck_instance_methods(rest, &mut c, i, decl, ctor, shown, out)
+      }
+      Some(m) => {
+        let f := SurfaceFn {
+          name: instance_fn(i.r#class, m.name, ctor),
+          generics: List::append(i.generics, m.generics),
+          bounds: List::append(
+            opts_resize(list_len(i.generics), i.bounds),
+            opts_resize(list_len(m.generics), m.bounds)
+          ),
+          params: m.params,
+          r#borrows: m.r#borrows,
+          param_types: m.param_types,
+          result: m.result,
+          effects: m.effects,
+          wheres: i.wheres,
+          start: m.start,
+          end: m.end,
+          body: m.body,
+          lends: m.lends,
+          generic_types: List::append(surface_type_generics(i.generics), m.generic_types),
+          bound_starts: List::append(surface_no_starts(surface_type_generics(i.generics)), m.bound_starts),
+          visibility: m.visibility,
+          row_hole: m.row_hole,
+    unused: None,
+    unused_generics: Nil,
+    unused_params: Nil
+  }
+        let scheme := ck_signature(&mut c, f)
+        ck_same_signature(&mut c, i, f, scheme, e, decl.param, shown)
+        set_to(&mut c.fns, Ordmap::insert(c.fns, f.name, scheme, Ordmap::compare_text))
+        ck_instance_methods(rest, &mut c, i, decl, ctor, shown, Cons(f, out))
+      }
+    }
+  }
+}
+
+pub fn ck_instance_extra(
+  ms: List(SurfaceFn),
+  c: &mut Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass
+): Unit {
+  match ms {
+    Nil => #()
+    Cons(m, rest) => {
+      if not(method_names_have(decl.methods, m.name)) {
+        ck_error(&mut c, no_method_message(i.r#class, m.name), span_at(m.start, m.end))
+      }
+      ck_instance_extra(rest, &mut c, i, decl)
+    }
+  }
+}

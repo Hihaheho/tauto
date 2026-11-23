@@ -1,0 +1,96 @@
+// Identifiers follow UAX #31: an identifier starts with `_` or an XID_Start
+// character and goes on with XID_Continue characters.
+
+// Combining marks (Mn, Mc) may continue an identifier: the virama of नमस्ते.
+@ cases.identifier-with-combining-marks
+source = "let नमस्ते := 1"
+parses = true
+
+// A letter number (Nl) may start one.
+@ cases.identifier-starting-with-a-letter-number
+source = "let Ⅳ := 4"
+parses = true
+
+// A connector punctuation other than `_` may continue one.
+@ cases.identifier-with-a-connector
+source = "let a‿b := 1"
+parses = true
+
+// Other numbers (No) are not in XID_Continue.
+@ cases.identifier-with-a-superscript-digit
+source = "let x² := 1"
+parses = false
+
+@ cases.identifier-with-a-circled-digit
+source = "let a① := 1"
+parses = false
+
+// An identifier cannot start with a digit or a combining mark.
+@ cases.identifier-starting-with-a-combining-mark
+source = "let ́a := 1"
+parses = false
+
+@ cases.identifier-starting-with-a-digit
+source = "let 1a := 1"
+parses = false
+
+@ cases.identifier-of-a-type-and-check
+source = ```tauto
+fn नमस्ते(Ⅳ: Nat): Nat { Ⅳ }
+let r := नमस्ते(4)
+```
+types = "ok"
+
+// Names are compared by code point, so a name is written in NFC: `é` as
+// one character, not as `e` and a combining acute.
+@ cases.identifier-in-nfc
+source = "let café := 1"
+parses = true
+
+@ cases.identifier-not-in-nfc
+entry = "main.taut"
+files."main.taut" = "let café := 1"
+load_error = "the name `café` is not in Unicode Normalization Form C (NFC)"
+
+// Composed after the canonical order: `é` and a dot below is `ẹ` and an acute.
+@ cases.identifier-not-in-nfc-after-reordering
+source = "let ẹ́ := 1"
+parses = false
+
+// Tamil கா (KA and the vowel sign AA) is in NFC: the sign composes with no KA.
+@ cases.identifier-in-nfc-tamil
+source = "let கா := 1"
+parses = true
+
+// A composition exclusion stays decomposed: क and a nukta is NFC, क़ is not.
+@ cases.identifier-in-nfc-exclusion
+source = "let क़ := 1"
+parses = true
+
+@ cases.identifier-not-in-nfc-exclusion
+source = "let क़ := 1"
+parses = false
+
+@ cases.hangul-identifier-not-in-nfc
+source = "let 각 := 1"
+parses = false
+
+@ cases.macro-name-not-in-nfc
+source = "let a := café!(x)"
+parses = false
+
+// UTS #39: a name that looks like another name of the file is warned about.
+// The second `а` is Cyrillic.
+@ cases.confusable-names-are-warned-about
+entry = "main.taut"
+files."main.taut" = ```tauto
+let a := 1
+let а := 2
+```
+check_report = "the name `а` looks like `a`, another name of this file"
+
+// A character UTS #39 does not allow in identifiers: Runic ᚠ.
+@ cases.uncommon-codepoints-are-warned-about
+entry = "main.taut"
+files."main.taut" = "let ᚠ := 1"
+check_report = "the name `ᚠ` has `ᚠ` (U+16A0), which UTS #39 does not allow in identifiers"

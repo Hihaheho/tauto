@@ -1,0 +1,236 @@
+// A file sees its own declarations, the declarations of the files it imports directly and
+// the core prelude (`docs/design/visibility.md`「Scope」); the self-hosted elaborator rejects
+// what the host rejects, and elaborates what it accepts (`differential_program`).
+
+@ cases.a-file-does-not-see-a-file-it-does-not-import
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = ["`word` is declared by `app::src::words`, which this file does not import"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/words.taut" = ```tauto
+pub fn word(): Text { "w" }
+```
+files."app/src/mid.taut" = ```tauto
+import "words.taut"
+pub fn mid(): Text { word() }
+```
+files."app/src/main.taut" = ```tauto
+import "mid.taut"
+fn pick(): Text { word() }
+```
+
+// Imports are not transitive: what `mid` imports does not reach `main`.
+@ cases.what-an-imported-file-imports-is-not-seen
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = ["`Local` is declared by `app::src::types`, which this file does not import"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/types.taut" = ```tauto
+pub(open) inductive Local: Type { Mk: Local }
+```
+files."app/src/mid.taut" = ```tauto
+import "types.taut"
+pub fn mid(l: Local): Local { l }
+```
+files."app/src/main.taut" = ```tauto
+import "mid.taut"
+fn keep(l: Local): Local { l }
+```
+
+@ cases.a-binder-of-the-name-of-an-unimported-declaration-is-not-a-use
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/words.taut" = ```tauto
+pub fn word(): Text { "w" }
+```
+files."app/src/mid.taut" = ```tauto
+import "words.taut"
+pub fn mid(): Text { word() }
+```
+files."app/src/main.taut" = ```tauto
+import "mid.taut"
+fn keep(word: Text): Text { word }
+fn bound(): Text { let word := "x"
+  word }
+```
+
+@ cases.a-body-import-is-not-seen-by-another-declaration
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = ["`add_zero` is declared by `app::src::lemmas`, which this file does not import"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lemmas.taut" = ```tauto
+pub theorem add_zero(n: Nat): n + 0 = n { Refl }
+```
+files."app/src/main.taut" = ```tauto
+theorem right_zero(n: Nat): n + 0 = n {
+  import "lemmas.taut"
+  add_zero(n)
+}
+theorem other(n: Nat): n + 0 = n { add_zero(n) }
+```
+
+@ cases.the-signature-does-not-see-a-body-import-in-the-elaborator
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = ["`Local` is declared by `app::src::types`, which this file does not import"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/types.taut" = ```tauto
+pub(open) inductive Local: Type { Mk: Local }
+```
+files."app/src/main.taut" = ```tauto
+fn keep(l: Local): Nat {
+  import "types.taut"
+  0
+}
+```
+
+@ cases.a-name-a-file-declares-without-pub-is-private-to-it
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = ["`helper` is private to"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/words.taut" = ```tauto
+fn helper(): Text { "h" }
+pub fn word(): Text { helper() }
+```
+files."app/src/main.taut" = ```tauto
+import "words.taut"
+fn pick(): Text { helper() }
+```
+
+@ cases.a-name-two-imports-declare-is-ambiguous
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = ["`value` is ambiguous: it is declared as `app::src::a::value` and `app::src::b::value`"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/a.taut" = ```tauto
+pub fn value(): i64 { 1 }
+```
+files."app/src/b.taut" = ```tauto
+pub fn value(): i64 { 2 }
+```
+files."app/src/main.taut" = ```tauto
+import "a.taut"
+fn pick(): i64 {
+  import "b.taut"
+  value()
+}
+```
+
+@ cases.a-name-an-import-list-does-not-write-is-not-brought
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = ["`other` comes through `import"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/words.taut" = ```tauto
+pub fn word(): Text { "w" }
+pub fn other(): Text { "o" }
+```
+files."app/src/main.taut" = ```tauto
+import "words.taut" { word }
+fn pick(): Text { concat(word(), other()) }
+```
+
+@ cases.a-name-in-an-import-list-the-file-does-not-declare-is-an-error
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = ["`missing` is in the list of `import"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/words.taut" = ```tauto
+pub fn word(): Text { "w" }
+```
+files."app/src/main.taut" = ```tauto
+import "words.taut" { word, missing }
+fn pick(): Text { word() }
+```
+
+@ cases.a-listed-type-brings-its-constructors
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/types.taut" = ```tauto
+pub(open) inductive Local: Type { Mk: Local }
+pub fn unused(): Nat { 0 }
+```
+files."app/src/main.taut" = ```tauto
+import "types.taut" { Local }
+fn make(): Local { Local::Mk }
+```
+
+// A name of the standard library is declared by the file that declares it: `List::length` by
+// `std::base`, which `std::list` imports for itself but does not pass on.
+@ cases.a-standard-library-name-comes-through-the-file-that-declares-it
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::base
+theorem t(xs: List(Nat)): Nat { List::length(xs) }
+```
+
+@ cases.a-standard-library-name-does-not-come-through-another-standard-file
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = ["`List::length` is declared by `std::base`, which this file does not import"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::list
+theorem t(xs: List(Nat)): Nat { List::length(xs) }
+```
+
+@ cases.a-pub-type-of-a-dependency-is-seen-through-an-import
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { geo-kit { path = "../geo-kit" } }
+```
+files."geo-kit/Tauto.eure" = 'package { name = "geo-kit" }'
+files."geo-kit/src/shape/side.taut" = ```tauto
+pub inductive Side: Type {
+  L: Side
+  R: Side
+}
+pub fn flip(s: Side): Side {
+  match s {
+    L => R
+    R => L
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import geo_kit::shape::side
+pub fn twice(s: Side): Side { flip(flip(s)) }
+```
+
+@ cases.a-private-type-of-a-dependency-is-not-seen-through-an-import
+differential_program = "elaborator"
+files_tote = "app"
+tote_errors = ["`Side` is private to"]
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { geo-kit { path = "../geo-kit" } }
+```
+files."geo-kit/Tauto.eure" = 'package { name = "geo-kit" }'
+files."geo-kit/src/shape/side.taut" = ```tauto
+inductive Side: Type {
+  L: Side
+  R: Side
+}
+pub fn flip(s: Side): Side {
+  match s {
+    L => R
+    R => L
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import geo_kit::shape::side
+pub fn twice(s: Side): Side { flip(flip(s)) }
+```

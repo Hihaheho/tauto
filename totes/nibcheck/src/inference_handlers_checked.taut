@@ -1,8 +1,9 @@
+import "messages.taut"
 import "inference_handlers.taut"
 import "arm_error_sound.taut"
 import "inference_scopes_checked.taut"
-import std::List
-import std::Text
+import std::list
+import std::text
 import "arm_frame.taut"
 import "checked_frame.taut"
 import "checker.taut"
@@ -16,8 +17,10 @@ import "inference_base.taut"
 import "inference_base_checked.taut"
 import "inference_base_error_sound.taut"
 import "rows.taut"
+import "rows_base.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "written_error_sound.taut"
@@ -42,15 +45,12 @@ pub theorem inference_arm_tail_frame_checked(
   inference_arm_tail(j, c, inner, env, result, rv, eff, rigid, names, guard, body)
 ) {
   checked_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (entered: Unit, c1: Checker) => frame_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (guarded: Unit, c2: Checker) => frame_bind(
-        Ty,
-        Unit,
+        <A: Ty, B: Unit>,
         (a: Ty, c3: Checker) => ck_rewrap1(
           ck_handle_arm_finish(
             c3,
@@ -77,12 +77,10 @@ pub theorem inference_arm_tail_frame_checked(
       ordered
     ),
     entered => c1 => o_c1 => checked_frame_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c1,
       (guarded: Unit, c2: Checker) => frame_bind(
-        Ty,
-        Unit,
+        <A: Ty, B: Unit>,
         (a: Ty, c3: Checker) => ck_rewrap1(
           ck_handle_arm_finish(
             c3,
@@ -101,8 +99,7 @@ pub theorem inference_arm_tail_frame_checked(
       ck_guard_in(j, c1, guard, inference_scope_items(inner)),
       inference_use_ck_guard_in_checked(j, c1, guard, inference_scope_items(inner), o_c1, ih),
       guarded => c2 => o_c2 => checked_frame_bind(
-        Ty,
-        Unit,
+        <A: Ty, B: Unit>,
         c2,
         (a: Ty, c3: Checker) => ck_rewrap1(
           ck_handle_arm_finish(
@@ -189,15 +186,12 @@ pub theorem inference_handle_body_step_frame_checked(
   )
 ) {
   checked_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (r#direct: Unit, c1: Checker) => inference_bind_scope(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (matched: Unit, c2: Checker, inner: Scope) => inference_bind_scope(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (bound: Unit, c3: Checker, inner2: Scope) => inference_arm_tail(
           j,
           c3,
@@ -224,12 +218,10 @@ pub theorem inference_handle_body_step_frame_checked(
       ordered
     ),
     r#direct => c1 => o_c1 => inference_bind_scope_frame_checked(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c1,
       (matched: Unit, c2: Checker, inner: Scope) => inference_bind_scope(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (bound: Unit, c3: Checker, inner2: Scope) => inference_arm_tail(
           j,
           c3,
@@ -248,8 +240,7 @@ pub theorem inference_handle_body_step_frame_checked(
       ck_handle_patterns(patterns, c1, params, ScopeMk(env), body),
       ck_handle_patterns_frame_checked(patterns, c1, params, ScopeMk(env), body, o_c1),
       matched => c2 => inner => o_c2 => inference_bind_scope_frame_checked(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c2,
         (bound: Unit, c3: Checker, inner2: Scope) => inference_arm_tail(
           j,
@@ -406,13 +397,7 @@ pub theorem inference_handler_arity_frame_checked(
       ck_rewrap1(
         ck_error(
           c,
-          cat5(
-            "`",
-            eff,
-            "` gives ",
-            Text::of_nat(list_len(inference_handler_params(pa))),
-            cat2(" values, the arm takes ", Text::of_nat(list_len(patterns)))
-          ),
+          arm_value_count_message(eff, Text::of_nat(list_len(inference_handler_params(pa))), Text::of_nat(list_len(patterns))),
           span_of(body)
         )
       ),
@@ -420,24 +405,12 @@ pub theorem inference_handler_arity_frame_checked(
         c,
         ck_error(
           c,
-          cat5(
-            "`",
-            eff,
-            "` gives ",
-            Text::of_nat(list_len(inference_handler_params(pa))),
-            cat2(" values, the arm takes ", Text::of_nat(list_len(patterns)))
-          ),
+          arm_value_count_message(eff, Text::of_nat(list_len(inference_handler_params(pa))), Text::of_nat(list_len(patterns))),
           span_of(body)
         ),
         ck_error_frame(
           c,
-          cat5(
-            "`",
-            eff,
-            "` gives ",
-            Text::of_nat(list_len(inference_handler_params(pa))),
-            cat2(" values, the arm takes ", Text::of_nat(list_len(patterns)))
-          ),
+          arm_value_count_message(eff, Text::of_nat(list_len(inference_handler_params(pa))), Text::of_nat(list_len(patterns))),
           span_of(body)
         )
       ),
@@ -445,24 +418,12 @@ pub theorem inference_handler_arity_frame_checked(
         c,
         ck_error(
           c,
-          cat5(
-            "`",
-            eff,
-            "` gives ",
-            Text::of_nat(list_len(inference_handler_params(pa))),
-            cat2(" values, the arm takes ", Text::of_nat(list_len(patterns)))
-          ),
+          arm_value_count_message(eff, Text::of_nat(list_len(inference_handler_params(pa))), Text::of_nat(list_len(patterns))),
           span_of(body)
         ),
         ck_error_frame_errors(
           c,
-          cat5(
-            "`",
-            eff,
-            "` gives ",
-            Text::of_nat(list_len(inference_handler_params(pa))),
-            cat2(" values, the arm takes ", Text::of_nat(list_len(patterns)))
-          ),
+          arm_value_count_message(eff, Text::of_nat(list_len(inference_handler_params(pa))), Text::of_nat(list_len(patterns))),
           span_of(body)
         )
       ),
@@ -621,8 +582,7 @@ pub theorem inference_step_ck_handle_arm_in_frame_checked(
   )
 ) {
   checked_frame_bind(
-    Option(ArmSig),
-    Unit,
+    <A: Option(ArmSig), B: Unit>,
     c,
     (signature: Option(ArmSig), c1: Checker) => inference_handler_signature(
       j,
@@ -702,7 +662,7 @@ pub theorem inference_budget_pop_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_budget_pop(j, c, answers)) {
-  ⊢ CkCheckedFrame(c, inference_budget_pop(j, c, answers)) from match answers {
+  match answers {
     true => checked_frame_read(
       c,
       inference_set_exceeded(c, List::tail(inference_exceeded(c))),
@@ -726,24 +686,18 @@ pub theorem inference_handle_budget_frame_checked(
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_handle_budget(j, c, body, handlers, env, budget_ty, answers)) {
   checked_frame_bind(
-    Unit,
-    Ty,
+    <A: Unit, B: Ty>,
     c,
     (pushed: Unit, c1: Checker) => frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       (b: Ty, c2: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (popped: Unit, c3: Checker) => frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (result: Ty, c4: Checker) => frame_bind(
-            Ty,
-            Ty,
+            <A: Ty, B: Ty>,
             (first: Ty, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (finished: Unit, c6: Checker) => mut1(result, c6),
               ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
             ),
@@ -758,21 +712,16 @@ pub theorem inference_handle_budget_frame_checked(
     inference_budget_push(j, c, body, handlers, env, budget_ty, answers),
     inference_budget_push_frame_checked(j, c, body, handlers, env, budget_ty, answers, ih, ordered),
     pushed => c1 => o_c1 => checked_frame_bind(
-      Ty,
-      Ty,
+      <A: Ty, B: Ty>,
       c1,
       (b: Ty, c2: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (popped: Unit, c3: Checker) => frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (result: Ty, c4: Checker) => frame_bind(
-            Ty,
-            Ty,
+            <A: Ty, B: Ty>,
             (first: Ty, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (finished: Unit, c6: Checker) => mut1(result, c6),
               ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
             ),
@@ -785,18 +734,14 @@ pub theorem inference_handle_budget_frame_checked(
       ck_infer_in(j, c1, body, env),
       inference_use_ck_infer_in_checked(j, c1, body, env, o_c1, ih),
       b => c2 => o_c2 => checked_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c2,
         (popped: Unit, c3: Checker) => frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           (result: Ty, c4: Checker) => frame_bind(
-            Ty,
-            Ty,
+            <A: Ty, B: Ty>,
             (first: Ty, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (finished: Unit, c6: Checker) => mut1(result, c6),
               ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
             ),
@@ -807,15 +752,12 @@ pub theorem inference_handle_budget_frame_checked(
         inference_budget_pop(j, c2, answers),
         inference_budget_pop_frame_checked(j, c2, answers, ih, o_c2),
         popped => c3 => o_c3 => checked_frame_bind(
-          Ty,
-          Ty,
+          <A: Ty, B: Ty>,
           c3,
           (result: Ty, c4: Checker) => frame_bind(
-            Ty,
-            Ty,
+            <A: Ty, B: Ty>,
             (first: Ty, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (finished: Unit, c6: Checker) => mut1(result, c6),
               ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
             ),
@@ -824,20 +766,17 @@ pub theorem inference_handle_budget_frame_checked(
           ck_fresh(c3),
           checked_frame_read(c3, ck_fresh(c3), ck_fresh_frame(c3), ck_fresh_frame_errors(c3), o_c3),
           result => c4 => o_c4 => checked_frame_bind(
-            Ty,
-            Ty,
+            <A: Ty, B: Ty>,
             c4,
             (first: Ty, c5: Checker) => frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               (finished: Unit, c6: Checker) => mut1(result, c6),
               ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
             ),
             ck_handle_first_in(j, c4, handlers, b, env),
             inference_use_ck_handle_first_in_checked(j, c4, handlers, b, env, o_c4, ih),
             first => c5 => o_c5 => checked_frame_bind(
-              Unit,
-              Ty,
+              <A: Unit, B: Ty>,
               c5,
               (finished: Unit, c6: Checker) => mut1(result, c6),
               ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty),
@@ -871,8 +810,7 @@ pub theorem inference_step_ck_handle_in_frame_checked(
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_step_ck_handle_in(j, c, body, handlers, env)) {
   checked_frame_bind(
-    Ty,
-    Ty,
+    <A: Ty, B: Ty>,
     c,
     (budget_ty: Ty, c1: Checker) => inference_handle_budget(
       j,

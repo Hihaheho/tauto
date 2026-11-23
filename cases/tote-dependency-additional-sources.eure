@@ -1,0 +1,49 @@
+description = "A dependency is read for its sources: its additional sources (tests, proofs, examples) are not read by the tote that depends on it, unless it imports them."
+
+// The dependency's `extra` holds a file that does not check. The program does
+// not import it, so the program is not affected by it, as `tauto build` and
+// `tauto check` of the tote read the same files.
+@ cases.dependency-additional-sources-are-not-read
+files_tote = "c"
+tote_errors = []
+files."a/Tauto.eure" = ```eure
+package {
+  name = "a"
+  version = "0.1.0"
+  additional-sources = ["extra"]
+}
+```
+files."a/src/lib.taut" = ```tauto
+pub fn one(): i64 { 1 }
+```
+files."a/extra/bad.taut" = ```tauto
+pub fn broken(): i64 { undefined_name }
+```
+files."c/Tauto.eure" = ```eure
+package { name = "c" version = "0.1.0" }
+dependencies {
+  a { path = "../a" }
+}
+```
+files."c/src/main.taut" = ```tauto
+import a::lib { one }
+pub fn two(): i64 { one() }
+```
+
+// The tote's own additional sources are still checked.
+@ cases.own-additional-sources-are-checked
+files_tote = "a"
+tote_errors = ["undefined_name"]
+files."a/Tauto.eure" = ```eure
+package {
+  name = "a"
+  version = "0.1.0"
+  additional-sources = ["extra"]
+}
+```
+files."a/src/lib.taut" = ```tauto
+pub fn one(): i64 { 1 }
+```
+files."a/extra/bad.taut" = ```tauto
+pub fn broken(): i64 { undefined_name }
+```

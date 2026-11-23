@@ -3,9 +3,11 @@
 js-node-failed = cannot run javascript backend (node): { $e }
 js-type-not-extern = javascript type { $name } is not an extern type of the program (declare it as `extern {"{"} type { $name } {"}"}`)
 js-type-unbound = extern type { $name } has no javascript binding (add it to javascript.types in Tauto.eure)
+js-type-ambiguous = extern type { $name } in javascript.types names more than one extern type ({ $candidates }); write the full name of the one it binds
 js-extern-unavailable = extern { $name } is unavailable for javascript target { $target }
 js-builtin-browser = { $name } is unavailable for javascript target browser; supply a user effect and javascript extern binding
-js-async-direct = async extern { $name } is reachable from a direct handler; use a resumable effect
+js-async-direct = waiting extern { $name } is reachable from a direct handler; use a resumable effect
+js-wasm-extern-waits = extern { $name } performs wait, but a Rust extern compiled to Wasm answers at once; bind it to a JavaScript function that returns a Promise
 js-wasm-callback-abandons = Rust wasm extern { $name } receives a callback that may abandon or copy its native frame; handle those effects inside the callback or use a javascript binding (crossing Rust supports direct and resume 1)
 js-extern-binding-form = javascript extern { $name } must be a relative module path followed by #export
 js-extern-no-export = javascript extern { $name } has no export name
@@ -26,22 +28,23 @@ js-wasm-build-errors = Rust externs could not be built for { $target } (install 
     { $stderr }
 js-wasm-callback-direct = a Rust wasm callback must be direct; suspending callbacks need a javascript binding
 js-wasm-unknown-data = unknown wasm data type { $name }
-js-wasm-borrowed-view = borrowed view { $name } cannot cross the wasm ABI; expose owned values or a javascript binding
+js-wasm-borrowed-view = { $name } holds a borrow and cannot cross the wasm ABI; expose owned values or a javascript binding
 js-wasm-type-abi = type { $ty } cannot cross the Rust wasm ABI; expose owned data through a concrete Rust wrapper or javascript.extern
 js-wasm-no-borrowed = no borrowed wasm representation for { $ty }
 
 rust-browser-run = the browser target emits modules; use { $command }
 rust-no-manifest = { $path }: no Tauto.eure
 rust-unsupported = { $place }: not supported by the { $backend } backend: { $what }
-rust-exports-duplicate = { $path }: rust.exports contains duplicate function { $name }
-rust-exports-unknown = { $path }: rust.exports function { $name } is unknown or generic; select a non-generic function
+rust-export-generic-skipped = { $path }: `{ $name }` is not exported: a function with generics has no code of its own
 rust-budget-eligible = { $at }: budget { $budget } in { $function } ({ $variant }): statically eligible; an active outer budget or the runtime sync feature selects the ordinary Future path
 rust-budget-checks = [compiler-checks] control shape, contextual calls, types/lifetimes and handler observers passed; host behavior assertions are listed separately
 rust-budget-ordinary = { $at }: budget { $budget } in { $function } ({ $variant }): ordinary Future path
 rust-budget-assumption = [trusted-assumption] { $kind } { $name } at { $at }: { $contract } (not a compiler or kernel proof)
 rust-wasm-lacks-net = the net effect (its HTTP client blocks a thread)
 rust-target-lacks = { $path }: the { $target } target does not support { $what }
+rust-lock-created = created { $path }
 rust-trusted-code = rust code this program trusts:
 rust-usage = usage: { $run }
     {"       "}{ $build }
 rust-trusted-extern = {"  "}extern { $name } -> { $rust }  ({ $at })
+js-export-row-skipped = { $path }: `{ $name }` is not a method: its row has an effect an instance does not answer

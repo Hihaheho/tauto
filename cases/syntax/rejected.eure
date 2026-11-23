@@ -25,8 +25,9 @@ parses = false
 source = "let t := \"abc"
 
 @ cases.two-operators
+description = "`/` has no prefix form, unlike `*` (a dereference), so a binary operator cannot follow `+`"
 parses = false
-source = "1 + * 2"
+source = "1 + / 2"
 
 @ cases.a-handle-without-a-block-is-rejected
 description = "handle takes a block and then with { arms }; the form handle e { arms } is not read"
@@ -76,10 +77,6 @@ source = "let a := xs[0]"
 parses = false
 source = "let a := 2 ^ 3"
 
-@ cases.no-for-loop
-parses = false
-source = "for x in xs { }"
-
 @ cases.no-rest-or-default-parameters
 parses = false
 source = "fn f(x: i64 = 1, ...xs: i64): i64 { x }"
@@ -91,7 +88,7 @@ source = "fn f(x: Option<i64>): i64 { 0 }"
 
 @ cases.a-struct-without-braces
 parses = false
-source = "affine struct File"
+source = "struct(affine) File"
 
 @ cases.a-kind-on-a-function
 parses = false
@@ -148,7 +145,7 @@ description = "`class Ord(A: Linear)`, never `class Ord<A: Linear>`"
 parses = false
 source = ```tauto
 class Ord<A: Linear> {
-  fn compare(&a: A, &b: A): Ordering
+  fn compare(a: &A, b: &A): Ordering
 }
 ```
 
@@ -156,7 +153,7 @@ class Ord<A: Linear> {
 description = "`<!e: <=1>`, never `<e: <=1>`"
 parses = false
 source = ```nib
-fn with_file<A, e: <=1>(path: Text, &body: (&f: File) -> A ! e): A ! e { body(&f) }
+fn with_file<A, e: <=1>(path: Text, body: &((f: &File) -> A ! e)): A ! e { body(&f) }
 ```
 
 @ cases.a-row-parameter-of-a-type-is-declared-with-a-bang
@@ -279,3 +276,12 @@ source = "fn t(): Nat { f(<x: a + b>, h) }"
 @ cases.a-named-implicit-value-with-a-comparison
 parses = false
 source = "fn t(): Nat { f(<x: a > b>, h) }"
+
+// `let &x` and `var &x` are gone: `let x := &y` binds a borrow.
+@ cases.let-borrow-marker-is-rejected
+parses = false
+source = "let &x := &y"
+
+@ cases.var-borrow-marker-is-rejected
+parses = false
+source = "var &x := f(&y)"

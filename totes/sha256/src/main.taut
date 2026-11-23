@@ -1,0 +1,21 @@
+import std::builtin::os
+import "sha256.taut"
+import std::text
+
+// Prints the SHA-256 of each file named in the arguments, one a line.
+fn each(paths: List(Text)) {
+  match paths {
+    Nil => #()
+    Cons(p, rest) => {
+      match perform fs_read_bytes(p) {
+        Ok(b) => print(Text::concat(sha256_hex(Cons(b, Nil)), "\n"))
+        Err(e) => print(Text::concat(io_message(e), "\n"))
+      }
+      each(rest)
+    }
+  }
+}
+
+perform main(() => {
+  each(perform argv())
+})

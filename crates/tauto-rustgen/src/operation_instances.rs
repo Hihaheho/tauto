@@ -12,7 +12,7 @@ fn unresolved(instance: &OperationInstance) -> bool {
         .iter()
         .chain(&instance.params)
         .chain(std::iter::once(&instance.answer))
-        .any(Ty::has_infer)
+        .any(Ty::has_arm_generic)
 }
 
 fn arm_limitation(arm: &OpArm, operation: &OpDef) -> Option<String> {
@@ -22,19 +22,13 @@ fn arm_limitation(arm: &OpArm, operation: &OpDef) -> Option<String> {
                 .params
                 .iter()
                 .chain(std::iter::once(&arm.k_ans))
-                .any(Ty::has_infer))
+                .any(Ty::has_arm_generic))
         .then(|| "no sealed full operation instance is available".into());
     };
-    if tauto::bindings::is_library(&operation.name, "show") {
-        return (instance.admission != OperationAdmission::BuiltinShow).then(|| {
-            "a user operation named show does not have the builtin erased operation identity".into()
-        });
-    }
     if instance.type_args.is_empty() {
         return None;
     }
     match instance.admission {
-        OperationAdmission::BuiltinShow => None,
         OperationAdmission::Unique => {
             if unresolved(instance) {
                 return Some("the admitted operation signature is unresolved".into());
@@ -48,6 +42,14 @@ fn arm_limitation(arm: &OpArm, operation: &OpDef) -> Option<String> {
         }
         OperationAdmission::Legacy => None,
         OperationAdmission::Incomplete | OperationAdmission::Missing if !unresolved(instance) => {
+            None
+        }
+        // An arm for every instance leaves its payload's type open, and
+        // NIR writes it once for each payload type the program performs the
+        // operation with (`tauto_nir::arms`).
+        OperationAdmission::Incomplete | OperationAdmission::Missing
+            if arm.instantiated || arm.params.iter().any(Ty::has_arm_generic) =>
+        {
             None
         }
         other => Some(
@@ -72,10 +74,7 @@ pub(crate) fn diagnostics(package: &Package) -> TokenStream {
             }
             ExprKind::Perform(perform) => {
                 if let Some(instance) = &perform.instance {
-                    if tauto::bindings::is_library(&package.ops[perform.op].name, "show")
-                        && instance.admission != OperationAdmission::BuiltinShow {
-                        messages.insert(format!("Rust operation instance show at byte {}: a user declaration does not have the builtin erased operation identity", perform.span.start));
-                    } else if instance.admission == OperationAdmission::Unique {
+                    if instance.admission == OperationAdmission::Unique {
                         let payload_matches = perform.args.len() == instance.params.len()
                             && perform.args.iter().zip(&instance.params)
                                 .all(|(actual, formal)| actual.ty == *formal || actual.ty == Ty::Never);
@@ -102,9 +101,20 @@ mod tests {
         let loaded =
             tauto::program::load_texts(vec![("operation-instance.nib".into(), source.into())])
                 .unwrap();
-        let rust = tauto_nir::compile_loaded_with_observer(&loaded, false, false, |_| {}).unwrap();
-        let mut javascript =
-            tauto_nir::compile_loaded_with_observer(&loaded, false, true, |_| {}).unwrap();
+        let rust = tauto_nibcheck::lower::compile_loaded_with_observer(
+            &loaded,
+            false,
+            tauto_nir::Target::Rust,
+            |_| {},
+        )
+        .unwrap();
+        let mut javascript = tauto_nibcheck::lower::compile_loaded_with_observer(
+            &loaded,
+            false,
+            tauto_nir::Target::JavaScript,
+            |_| {},
+        )
+        .unwrap();
         // Each lowering allocates its own synthetic entry declaration.
         if let (Some(a), Some(b)) = (rust.top, javascript.top) {
             let source = rust.fns.iter().find(|f| f.id == a).unwrap().source.clone();
@@ -123,13 +133,9 @@ mod tests {
         for case in [
             "operation-instance-distinct-requests-remain-a-rust-boundary",
             "operation-instance-indeterminate-integers-keep-frontend-behavior",
-            "operation-instance-opaque-callback-keeps-javascript-behavior",
         ] {
-            let source = crate::operation_instances::case_inputs::source_static(
-                "types/operation-instances.eure",
-                case,
-            );
-            let (rust, javascript) = compile_both(source);
+            let source = tauto_case_inputs::source("types/operation-instances.eure", case);
+            let (rust, javascript) = compile_both(&source);
             let emitted = diagnostics(&rust).to_string();
             assert!(emitted.contains("compile_error"), "{case}: {emitted}");
             assert_eq!(
@@ -143,11 +149,8 @@ mod tests {
             "operation-instance-result-only-requests-remain-distinct",
             "operation-instance-phantom-argument-is-not-invented",
         ] {
-            let source = crate::operation_instances::case_inputs::fixture_static(
-                "types/operation-instances.eure",
-                name,
-            );
-            let (rust, javascript) = compile_both(source);
+            let source = tauto_case_inputs::source("types/operation-instances.eure", name);
+            let (rust, javascript) = compile_both(&source);
             assert!(
                 diagnostics(&rust).to_string().contains("compile_error"),
                 "{name}"
@@ -161,8 +164,8 @@ mod tests {
         let source = r#"effect keep<A>(fixed: i64 | Text, value: A): A
 let number: i64 := 7
 let result := handle { perform keep(number, true) } with { ∀ A. keep<A>(_, value), k => k(value) }
-perform show("answer", result)"#;
-        let package = tauto_nir::compile(source).unwrap();
+show(&result)"#;
+        let package = tauto::nir::compile(source).unwrap();
         assert!(diagnostics(&package).is_empty());
         let mut requests = 0;
         let mut arms = 0;
@@ -180,7 +183,8 @@ perform show("answer", result)"#;
                         requests += 1;
                     }
                     ExprKind::Handle(handle) => {
-                        for arm in &handle.susp {
+                        // A tail-form arm is lowered as `direct`.
+                        for arm in handle.susp.iter().chain(&handle.direct) {
                             if package.ops[arm.op].name.as_str() == "keep" {
                                 let instance = arm.instance.as_ref().unwrap();
                                 assert_eq!(arm.params, instance.params);
@@ -193,116 +197,5 @@ perform show("answer", result)"#;
                 });
         }
         assert_eq!((requests, arms), (1, 1));
-    }
-
-    #[test]
-    fn reserved_show_identity_is_not_inferred_from_its_spelling() {
-        let source = r#"effect show<A>(value: A): A
-let result := handle { perform show(7) } with { ∀ A. show<A>(value), k => k(value) }"#;
-        let package = tauto_nir::compile(source).unwrap();
-        assert!(diagnostics(&package).is_empty());
-        let operation = package
-            .ops
-            .iter()
-            .find(|op| op.name.as_str() == "show" && !tauto::bindings::is_library(&op.name, "show"))
-            .unwrap();
-        let mut requests = 0;
-        for function in &package.fns {
-            function.body.walk(&mut |expression| {
-                if let ExprKind::Perform(perform) = &expression.kind
-                    && package.ops[perform.op].name == operation.name
-                {
-                    assert_ne!(
-                        perform.instance.as_ref().unwrap().admission,
-                        OperationAdmission::BuiltinShow
-                    );
-                    requests += 1;
-                }
-            });
-        }
-        assert_eq!(requests, 1);
-    }
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-mod case_inputs {
-    pub fn source_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            (
-                "types/operation-instances.eure",
-                "operation-instance-distinct-requests-remain-a-rust-boundary",
-            ) => {
-                r#"effect identity<A>(value: A): A
-handle {
-  let number: i64 := perform identity(7)
-  let text: Text := perform identity("kept")
-  perform show("number", number)
-  perform show("text", text)
-} with { ∀ A. identity<A>(value), k => k(value) }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-opaque-callback-keeps-javascript-behavior",
-            ) => {
-                r#"effect identity<A>(value: A): A
-let action := () => perform identity(7)
-let result := handle { action() } with { ∀ A. identity<A>(value), k => k(value) }
-perform show("answer", result)"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-indeterminate-integers-keep-frontend-behavior",
-            ) => {
-                r#"effect identity<A>(value: A): A
-let result := handle {
-  if true { perform identity(7) } else { perform identity(8) }
-} with { ∀ A. identity<A>(value), k => k(value) }
-perform show("answer", result)"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
-    pub fn source(file: &str, name: &str) -> String {
-        source_static(file, name).to_string()
-    }
-    pub fn fixture_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            (
-                "types/operation-instances.eure",
-                "operation-instance-phantom-argument-is-not-invented",
-            ) => {
-                r#"effect phantom<A>(value: i64): i64
-let result := handle { perform phantom(7) } with { phantom(value), k => k(value) }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-result-only-requests-remain-distinct",
-            ) => {
-                r#"effect supply<A>(): A
-handle {
-  let number: i64 := perform supply()
-  let text: Text := perform supply()
-  true
-} with { ∀ A. supply<A>(), k => true }"#
-            }
-            (
-                "types/operation-instances.eure",
-                "operation-instance-equal-payloads-have-distinct-answer-arguments",
-            ) => {
-                r#"effect convert<A, B>(value: A): B
-handle {
-  let number: i64 := perform convert(true)
-  let text: Text := perform convert(true)
-  true
-} with { ∀ A, B. convert<A, B>(_), k => true }"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
-    pub fn fixture(file: &str, name: &str) -> String {
-        fixture_static(file, name).to_string()
     }
 }

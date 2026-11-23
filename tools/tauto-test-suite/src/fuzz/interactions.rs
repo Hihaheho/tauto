@@ -40,16 +40,16 @@ impl Interaction {
         let declarations = match self.family {
             0 => format!(
                 r#"effect step(n: i64): i64 resume 1
-fn update(&mut state: i64, n: i64): Unit {{
-  state := state + perform step(n)
-  perform show("state", state)
+fn update(state: &mut i64, n: i64): Unit {{
+  *state := state + perform step(n)
+  show(&state)
 }}
 fn scenario(): i64 {{
   var state: i64 := {start}
   var i: i64 := 0
   while i < {rounds} {{
     handle {{ update(&mut state, {delta}) }} with {{
-      step(n), k => {{ perform show("request", n); k(n + 1) }}
+      step(n), k => {{ show(&n); k(n + 1) }}
     }}
     i := i + 1
   }}
@@ -66,9 +66,9 @@ fn scenario(): i64 {{
   var i: i64 := 0
   while i < {rounds} {{
     let value := handle {{ both((x) => perform step(x + offset), {start}) }} with {{
-      step(n), k => {{ perform show("request", n); k(n + 1) }}
+      step(n), k => {{ show(&n); k(n + 1) }}
     }}
-    perform show("state", value)
+    show(&value)
     total := total + value
     i := i + 1
   }}
@@ -87,10 +87,10 @@ fn scenario(): i64 {{
     let value := handle {{
       let branch := perform choose()
       let branch_value := add(if branch {{ {start} }} else {{ {start} + 1 }})
-      perform show("branch", branch_value)
+      show(&branch_value)
       branch_value
     }} with {{ choose(), k => k(true) + k(false) }}
-    perform show("state", value)
+    show(&value)
     total := total + value
     i := i + 1
   }}
@@ -101,38 +101,33 @@ fn scenario(): i64 {{
         };
         Program {
             declarations,
-            shows: vec!["perform show(\"result\", scenario())\n".into()],
+            shows: vec!["show(&scenario())\n".into()],
         }
     }
 
     /// Independent scalar model. Event order and multiplicity, not just the
-    /// final answer, are observable through the show host effect.
+    /// final answer, are observable through what `show` writes.
     pub fn expected(&self) -> Vec<String> {
         let mut trace = Vec::new();
         let mut state = if self.family == 0 { self.start } else { 0 };
         for _ in 0..self.rounds {
             match self.family {
                 0 => {
-                    trace.push(format!("request = {}", self.delta));
+                    trace.push(format!("{}", self.delta));
                     state += self.delta + 1;
-                    trace.push(format!("state = {state}"));
+                    trace.push(format!("{state}"));
                 }
                 _ => {
                     let a = self.start + self.delta;
-                    let event = if self.family == 1 {
-                        "request"
-                    } else {
-                        "branch"
-                    };
-                    trace.push(format!("{event} = {a}"));
-                    trace.push(format!("{event} = {}", a + 1));
+                    trace.push(format!("{a}"));
+                    trace.push(format!("{}", a + 1));
                     let value = 2 * a + if self.family == 1 { 3 } else { 1 };
-                    trace.push(format!("state = {value}"));
+                    trace.push(format!("{value}"));
                     state += value;
                 }
             }
         }
-        trace.push(format!("result = {state}"));
+        trace.push(format!("{state}"));
         trace
     }
 

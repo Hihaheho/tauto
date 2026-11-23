@@ -5,27 +5,29 @@ The checkers of `crates/tauto-nibcheck/src`, written in tauto: the rows of effec
 
 | File | Port of |
 |---|---|
-| `rows.taut` | `rows.rs`, and `Quant` of `types.rs`, in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」): the analysis follows calls with a number of steps it shares |
+| `rows.taut` | `rows.rs`, and `Quant` of `types.rs`, in the proof language (`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」): the analysis follows calls with a number of steps it shares |
 | `ty.taut` | `Width`, `Kind`, `Ty`: their order, their text, unions and tagged types, in the proof language |
 | `datas.taut` | `Data`, `Datas`: kinds, `clone`, record patterns, fields, in the proof language: kinds and reachability take a number of steps from the size of the program |
-| `checker.taut` | the state of `types.rs`: fresh variables, unification, `fits`, `join`, in the proof language: written with `&mut c: Checker` as in Nib (`docs/design/self-host.md`「`&mut` と `var`（`crates/tauto-kernel/src/check/mutable.rs`）」); resolving, unifying and `fits` take a number of steps from the size of the program |
+| `checker.taut` | the state of `types.rs`: fresh variables, unification, `fits`, `join`, in the proof language: written with `&mut c: Checker` as in Nib (`docs/design/self-host.md`「`&mut` and `var` (`crates/tauto-kernel/src/check/mutable.rs`)」); resolving, unifying and `fits` take a number of steps from the size of the program |
 | `types_decl.taut` | written types, `struct`/`enum`/`effect` declarations, signatures and views, in the proof language |
 | `types_match.taut` | scopes, patterns, what a `match` covers, and the parts of `handle` that check no expression, in the proof language |
 | `types_infer.taut` | statements and expressions, `match` and `handle`, in the proof language: one group that shares the checker's steps |
 | `types_classes.taut` | classes and instances (`types/classes.rs`): their declarations, methods as functions with a `where`, the resolution of a constraint, and the prelude's classes expanded, in the proof language |
 | `direct.taut` | the syntax of a `direct` operation's arm (`crates/tauto-surface/src/direct.rs`), in the proof language |
 | `types_run.taut` | the run of `types.rs` and the dump, in the proof language |
+| `report_borrows.taut` | what `NoBorrow` asks of the report of `types.rs`: a generic bounded by it takes no type that holds a borrow, and a value whose type may hold one is no effect argument |
 | `freevars.taut` | `free_vars`, `used_vars`, `pattern_names`, places and the subterms `visit` walks, of `lin.rs`, in the proof language |
 | `modules.taut` | `module M { … }` and qualified names, flattened where the program is read (`crates/tauto-surface/src/surface/modules.rs`), in the proof language |
 | `lin_state.taut` | the bindings, frames and moves of `lin.rs`, in the proof language |
 | `lin_flow.taut` | effect events, frames and the states paths join with, of `lin.rs`, in the proof language |
 | `lin_arms.taut` | what `match` and `handle` need that walks no expression: pattern names, drops, answers, pinned continuations, direct arms, of `lin.rs`, in the proof language |
 | `lin_value.taut` | the walk of expressions and statements (`value`, `app`, `lend`, `closure`, `block`, `match_expr`, `handle`) of `lin.rs`, on fuel, in the proof language |
+| `debug.taut` | the instances of `Debug` the compiler writes for a program's types (`types/debug.rs`): the source text of each, its `where` by fixpoint, and the groups of recursive types; `api.taut` parses them and the checker reads a program that uses a class with them |
 | `main.taut` | the three modes below |
 | `unify.taut` | the unifier of `checker.taut` against the rules of `rules_ty.taut` |
 
 The proofs about the checker of `types.rs`
-(`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」):
+(`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」):
 
 | File | Proves |
 |---|---|
@@ -68,10 +70,42 @@ Two things to know when reading the code:
   interpreter makes a cycle of that); a field is read through the borrow and
   written back with `set_to(&mut c.field, v)`.
 
-## Constructor resolution boundary
+## Running it, and using it as a library
+
+`tauto run --tote totes/nibcheck` runs the tote on the VM, which is written in
+tauto and takes minutes even for a two-line input (the heap is a persistent
+trie, and the prelude's six thousand lines are read on every run). Run it
+natively instead:
+
+```
+tauto run --backend rust --yes totes/nibcheck -- --types PRELUDE FILE…
+```
+
+The first run builds the native binary (a few minutes); runs after it start from
+the cached build and take about ten seconds for a small input. Calling the built
+binary directly (`totes/nibcheck/target/tauto/target/release/nibcheck --allow-read
+--allow-write -- --types PRELUDE FILE…`) takes under a second. Give every file of
+a corpus to one run, since the prelude is read once per run.
+
+`src/api.taut` is the library entry: `nibcheck_prelude_load` reads and prepares the
+prelude once (`NibcheckPrelude`), and `nibcheck_prelude_types` (which also takes the program with its made instances, `debug_program`) and
+`nibcheck_prelude_rows` return the structured `TypeReport` and `RowReport` of a
+resolved program (`nibcheck_types` and `nibcheck_rows` are their dumps). A tote that
+depends on nibcheck imports `nibcheck::api` and reads the reports directly instead
+of parsing the text dumps of `main.taut`.
+
+## Constructor resolution
 
 The host checker resolves shared constructor names by the scrutinee or expected
-owning type. This tote's constructor table does not implement that resolution;
-its acceptance and report parity do not cover programs with shared constructor
-names. Its proof statements concern the tote's own checker, not the host's
-owner-directed resolver.
+owning type. This tote implements the expected-owner part: each use of a
+constructor name is recorded with its expected type, and
+`ck_resolve_constructor_uses` (run from `ck_finalize`) resolves the uses in
+rounds, picking the candidate whose owning type matches the expected result
+type once inference has determined it. A use whose owner stays unknown after a
+round makes no progress is reported as an ambiguous constructor, with the
+candidates listed as `Owner::name`. The frame lemmas in
+`constructor_resolution_frame.taut` cover this step.
+
+Report parity with the host's owner-directed resolver is not claimed for every
+program with shared constructor names. Proof statements concern the tote's own
+checker.

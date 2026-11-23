@@ -6,7 +6,18 @@ theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
 }
 ```
 checks.swap = "incomplete: ?l, ?r"
-holes = [{ declaration => "swap", name => "l", goal => "B", context => ["A: Prop", "B: Prop", "p: And(A, B)"] }, { declaration => "swap", name => "r", goal => "A", context => ["A: Prop", "B: Prop", "p: And(A, B)"] }]
+
+@ cases.swap-holes.holes[]
+declaration = "swap"
+name = "l"
+goal = "B"
+context = ["A: Prop", "B: Prop", "p: And(A, B)"]
+
+@ cases.swap-holes.holes[]
+declaration = "swap"
+name = "r"
+goal = "A"
+context = ["A: Prop", "B: Prop", "p: And(A, B)"]
 
 @ cases.swap-left-filled
 source = ```tauto
@@ -30,21 +41,21 @@ theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
   AndIntro(And::left(p), ?r)
 }
 ```
-checks.swap = "error: cannot infer the generic `B` of `And::AndIntro`: neither its arguments nor the expected type fix it; write the generics as its first arguments, `And::AndIntro(A, B, …)`"
+checks.swap = "error: cannot infer the generic `B` of `And::AndIntro`: neither its arguments nor the expected type fix it; write them by name, `And::AndIntro(<A: …, B: …>, …)`"
 
 @ cases.trusted-extern
 source = ```tauto
-affine struct File {}
-affine struct IoError {}
+struct(affine) File {}
+struct(affine) IoError {}
 extern {
-  fn file_open(&path: Text): Result(File, IoError)
+  fn file_open(path: &Text): Result(File, IoError)
 }
 ```
 types = "ok"
 
 @ cases.include-cache-before
 files."main.tauto" = ```tauto
-import std::Text
+import std::text
 theorem t(): Eq(Text, include_text!("d.txt"), "a") { Refl }
 ```
 files."d.txt" = 'a'
@@ -53,7 +64,7 @@ entry = "main.tauto"
 
 @ cases.include-cache-after
 files."main.tauto" = ```tauto
-import std::Text
+import std::text
 theorem t(): Eq(Text, include_text!("d.txt"), "a") { Refl }
 ```
 files."d.txt" = 'b'
@@ -62,7 +73,7 @@ entry = "main.tauto"
 
 @ cases.extract-skips-unused-imports
 source = ```tauto
-import std::TextOps
+import std::text_ops
 fn next(c: Nat): Nat { Nat::add(c, 1) }
 ```
 parses = true
@@ -94,7 +105,7 @@ checks.ProofRecord = "checked"
 
 @ cases.extract-record-field-named-like-global
 files."main.tauto" = ```tauto
-import std::Text
+import std::text
 inductive Token: Type {
   Mk(width: Nat, text: Text): Token
 }
@@ -131,10 +142,10 @@ fn twice(n: Nat): Nat {
   }
 }
 fn message(): Text { include_text!("message.txt") }
-perform show("value", twice(2))
+show(&twice(2))
 ```
 files."message.txt" = 'checked text'
-imports = [path`../std/Base.taut`]
+imports = [path`../std/base.taut`]
 entry = "main.tauto"
 checks.twice = "checked"
 

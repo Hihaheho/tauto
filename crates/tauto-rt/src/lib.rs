@@ -1,7 +1,9 @@
 //! The run-time library of Rust code generated from Tauto.
 //! Declaration references share their representation with the compiler.
 
-#![forbid(unsafe_code)]
+// Unsafe code is denied everywhere but in `region`, whose exported API is
+// sound for any safe caller.
+#![deny(unsafe_code)]
 
 use std::any::Any;
 use std::cell::Cell;
@@ -21,8 +23,10 @@ pub mod a;
 pub mod budget;
 pub mod budget_contract;
 pub mod child;
+pub mod clock;
 pub mod cps;
 pub mod ct;
+pub mod entry;
 pub mod ev;
 pub mod exec;
 pub mod float;
@@ -30,15 +34,19 @@ mod float_math;
 pub mod host;
 pub mod int;
 pub mod link;
+pub mod main_thread;
 pub use link::{Owned, Shared, Unlink};
 pub mod messages;
 pub mod nat;
 pub use nat::Nat;
+pub mod http;
 pub mod o;
 pub mod permissions;
 pub mod probe;
 #[cfg(feature = "reactor")]
 pub mod reactor;
+#[allow(unsafe_code)]
+pub mod region;
 pub mod show;
 pub mod shutdown;
 pub mod signal;
@@ -335,14 +343,7 @@ pub fn host_tick(at: Loc) {
         s.get()
     });
     if n > step_limit() {
-        error(
-            format!(
-                "{} after {} steps; `TAUTO_STEP_LIMIT=N` raises it, `--allow-div` lifts it",
-                messages::STEP_LIMIT,
-                step_limit()
-            ),
-            at,
-        );
+        error(messages::step_limit_ran_out(step_limit()), at);
     }
 }
 
@@ -381,7 +382,20 @@ pub fn set_default_stack_mb(mb: usize) {
     DEFAULT_STACK_MB.store(mb, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The stack of the program's threads, its `main`'s, each task's and each
+static ON_MAIN_THREAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Makes [`run_main`] run the program on the calling thread (the process's
+/// main thread, from a generated `main`) instead of on a thread of its own:
+/// `rust.main-thread` in `Tauto.eure`. Host APIs that only work on the main
+/// thread (macOS's AppKit) are then called directly. The program's stack is
+/// the one the OS gave the main thread (8 MiB on Linux and macOS by
+/// default), not [`stack_bytes`]; the threads of tasks still get
+/// [`stack_bytes`].
+pub fn set_run_on_main_thread() {
+    ON_MAIN_THREAD.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The stack of the program's threads, its `main`'s (unless [`set_run_on_main_thread`]), each task's and each
 /// reactor worker's (`TAUTO_STACK_MB`, else the tote's `rust.stack-mb`, else
 /// 1024): a recursion that ends on `main` ends in a task too.
 pub fn stack_bytes() -> usize {
@@ -403,9 +417,20 @@ pub fn stack_bytes() -> usize {
 /// by default; the memory is only used as it is touched): recursion over a long
 /// list is how tauto walks it, and so is dropping one. A target without
 /// threads (wasm32) runs it on the calling thread, whose stack the linker
-/// sized.
+/// sized, and so does a program built with [`set_run_on_main_thread`].
 pub fn run_main(main: impl FnOnce() + Send) -> std::process::ExitCode {
     run_main_with(std::env::args().skip(1).collect(), main)
+}
+
+/// [`run_main`] for a program built with its permissions: `baked` holds
+/// the `--allow-*` flags it was built with, one a line, and the whole command
+/// line is the program's. Whoever starts the binary cannot widen what it may
+/// do.
+pub fn run_main_baked(baked: &str, main: impl FnOnce() + Send) -> std::process::ExitCode {
+    let mut args: Vec<String> = baked.lines().filter(|l| !l.is_empty()).map(String::from).collect();
+    args.push("--".into());
+    args.extend(std::env::args().skip(1));
+    run_main_with(args, main)
 }
 
 /// [`run_main`] for a program that is not the process's own: `args` are what
@@ -427,7 +452,8 @@ pub fn run_main_with(args: Vec<String>, main: impl FnOnce() + Send) -> std::proc
             return std::process::ExitCode::from(2);
         }
     }
-    let code = match catch(main, Some(stack_bytes())) {
+    let stack = (!ON_MAIN_THREAD.load(std::sync::atomic::Ordering::Relaxed)).then(stack_bytes);
+    let code = match catch(main, stack) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(text) => {
             eprintln!("{text}");
@@ -435,17 +461,25 @@ pub fn run_main_with(args: Vec<String>, main: impl FnOnce() + Send) -> std::proc
         }
     };
     // Diagnostics read by the test suite (`tools/tauto-test-suite`, Rust
-    // backend): when set, these print the steps counted against the budget
-    // and the dropped probes on stderr after the program ends. They only
-    // read state and change neither what runs nor the exit code. They are
-    // read at run time rather than behind a feature, because the test suite
-    // runs generated programs built the same way as for users.
-    if std::env::var_os("TAUTO_REPORT_BUDGET_STEPS").is_some() {
+    // backend): when `TAUTO_REPORT` names a file, the steps counted against
+    // the budget and the dropped probes are written there after the program
+    // ends. They go to their own file, not to stderr, so that the program's
+    // stderr stays exactly what the program wrote. They only read state and
+    // change neither what runs nor the exit code. They are read at run time
+    // rather than behind a feature, because the test suite runs generated
+    // programs built the same way as for users.
+    if let Some(path) = std::env::var_os("TAUTO_REPORT") {
         let steps = budget::STEPS.load(std::sync::atomic::Ordering::Relaxed);
-        eprintln!("tauto-budget-steps: {steps}");
-    }
-    if std::env::var_os("TAUTO_REPORT_PROBE_DROPS").is_some() {
-        eprintln!("tauto-probe-drops: {}", probe::dropped().join(","));
+        let report = format!(
+            "tauto-budget-steps: {steps}\ntauto-probe-drops: {}\n",
+            probe::dropped().join(",")
+        );
+        if let Err(e) = std::fs::write(&path, report) {
+            eprintln!(
+                "tauto: cannot write the report to {}: {e}",
+                std::path::Path::new(&path).display()
+            );
+        }
     }
     code
 }
@@ -531,15 +565,23 @@ fn catch(main: impl FnOnce() + Send, stack: Option<usize>) -> Result<(), String>
             eprintln!("{info}");
         }
     }));
+    main_thread::mark();
     let run = move || std::panic::catch_unwind(std::panic::AssertUnwindSafe(main));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match stack {
         Some(bytes) if THREADS => std::thread::scope(|s| {
-            std::thread::Builder::new()
+            // The calling thread waits for the program, running what the
+            // program hands it (`main_thread::run`) meanwhile.
+            let (done, jobs) = main_thread::open();
+            let program = std::thread::Builder::new()
                 .stack_size(bytes)
-                .spawn_scoped(s, run)
-                .expect("a thread for the program")
-                .join()
-                .unwrap_or_else(Err)
+                .spawn_scoped(s, move || {
+                    let result = run();
+                    let _ = done.send(main_thread::Message::Done);
+                    result
+                })
+                .expect("a thread for the program");
+            main_thread::serve(jobs);
+            program.join().unwrap_or_else(Err)
         }),
         _ => run(),
     }));
@@ -561,7 +603,7 @@ fn catch_unwind_payload(payload: Box<dyn Any + Send>) -> Result<(), String> {
     Err(report(&*payload))
 }
 
-fn report(payload: &(dyn Any + Send)) -> String {
+pub(crate) fn report(payload: &(dyn Any + Send)) -> String {
     if let Some(e) = payload.downcast_ref::<TautoError>() {
         match e.at {
             Some(at) => format!("{at}: {}", e.message),

@@ -1,0 +1,104 @@
+// The trusted primitives under the allocators (`std/builtin/region.taut`): a
+// `Region(S)` and an `RcRegion(S)` keep the state of a policy, and a
+// `Place(T)` says where a value goes. No backend manages memory of its own
+// yet, so each puts every value on the heap and runs these as nothing.
+
+@ cases.regions-and-places-run-on-every-backend
+llvm.unimplemented = "generate: the LLVM backend does not write a `Region` yet"
+description = "A region is made from a policy's state, gives places, and runs as nothing on each backend."
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+// The state of a policy; the runtime keeps it and never asks it here.
+let r := Bump::new(64, 64)
+let a: Place(u64) := Region::place(&r)
+let b: Place(Text) := Region::place(&r)
+let s := RcBump::new(64, 64)
+let c: RcPlace(u64) := RcRegion::place(s)
+let d: RcPlace(u64) := RcRegion::place(s)
+let h: RcPlace(u64) := RcPlace::heap()
+show(&5)
+```
+stdout = "5\n"
+
+@ cases.a-region-is-affine
+description = "A `Region(S)` counts nothing, so it is not copied."
+extract = true
+source = ```tauto
+import std::bump
+import std::alloc { BumpPolicy }
+import std::builtin::region { Region }
+
+fn keep(r: Region(BumpPolicy)): Unit { () }
+let r := Bump::new(64, 64)
+keep(r)
+keep(r)
+```
+lin = "error: r is used after move"
+
+@ cases.an-extern-type-that-holds-a-borrow-can-borrow-nothing
+description = "An extern function with no borrowed parameter may return an extern `type(borrow)`: the value borrows nothing, so it may leave the block that made it."
+source = ```nib
+extern {
+  type(borrow) Token
+  fn token(): Token
+  fn spend(t: Token): i64
+}
+fn make(): i64 {
+  let t := { token() }
+  spend(t)
+}
+show(&0)
+```
+lin = "ok"
+
+@ cases.a-borrow-from-nothing-still-needs-a-lender
+description = "Only the extern `type(borrow)` itself may come from no borrowed parameter; a written `&T` still needs one."
+source = ```nib
+extern {
+  fn nowhere(): &i64
+}
+```
+types = "error: -> &i64 needs a borrowed parameter"
+
+@ cases.a-place-of-the-heap-or-a-counted-region-leaves-a-function
+description = "A function without a borrowed parameter may return an `RcPlace`, which borrows nothing: one of the heap, or of a region that counts."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { RcRegion, RcPlace }
+
+fn heap(): RcPlace(u64) { RcPlace::heap() }
+fn counted(): RcPlace(u64) {
+  let r := RcBump::new(64, 64)
+  RcRegion::place(r)
+}
+let a := heap()
+let b := counted()
+```
+lin = "ok"
+
+@ cases.a-place-of-a-scoped-region-does-not-leave-it
+description = "A place of a `Region` borrows it, so a function cannot return one of its own region."
+extract = true
+source = ```tauto
+import std::bump
+import std::builtin::region { Region, Place }
+
+fn leak(): Place(u64) {
+  let r := Bump::new(64, 64)
+  Region::place(&r)
+}
+```
+lin = "error: a borrow of r cannot be returned"
+
+@ cases.a-region-keeps-only-the-state-of-a-policy
+description = "`Region::new` asks for an instance of `Policy`: a state with no proved policy cannot make a region."
+source = ```nib
+import std::builtin::region { Region }
+
+struct Nope { next: u64 }
+let r := Region::new(Nope { next: 0 })
+```
+types = "error: no instance PolicyState(Nope)"

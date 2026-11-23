@@ -1,0 +1,262 @@
+import std::prelude::collections { U64 }
+import std::prelude::num { divzero, overflow }
+import std::prelude::text { Text }
+import std::builtin::os { Os, exit, stdin, stop }
+import std::builtin::par { spawn }
+// The data every program sees before its own declarations: `Option`,
+// `List`, the product `A × B`, `Ordering` and `Result`, and the `fail` effect with
+// `raise` and `catch` between it and a `Result`.
+
+pub(open) inductive enum Option(A: Type) {
+  None
+  Some(A)
+}
+
+pub(open) enum List(A: Type) {
+  Nil
+  Cons(A, List(A))
+}
+
+// The product `A × B`, with `#(a, b)` its value and its pattern and `.fst` and `.snd` its
+// members. It is never written by its name `Pair`: that is the record the checker reads a
+// product as.
+pub(open) struct Pair(A: Type, B: Type) { fst: A, snd: B }
+
+pub(open) enum Ordering {
+  Less
+  Equal
+  Greater
+}
+
+pub(open) inductive enum Result(T: Type, E: Type) {
+  Ok(T)
+  Err(E)
+}
+
+// The negation of a `Bool`: an ordinary function, which a program may declare again.
+pub fn not(b: Bool): Bool {
+  if b { false } else { true }
+}
+
+// `fail(E)` is an effect for each `E`: a row says which (`! {fail(Text)}`).
+pub(open) effect fail<E>(e: E): Never resume 0
+
+pub fn raise<T, E: NoBorrow>(r: Result(T, E)): T ! {fail(E)} {
+  match r {
+    Ok(v) => v
+    Err(e) => perform fail(e)
+  }
+}
+
+// The entries of a module. Evaluating a module's top level only says which entries
+// it has: a command then calls the bodies it chose. `tauto run` calls the body of
+// the one `main`; `tauto test` calls the body of each `test` it selected, on its own,
+// and reports it by name. A body that performs `fail` fails its test, and the run goes on.
+pub(open) effect main(body: () -> Unit ! {Host, overflow, divzero, stdin, exit, stop}): Unit resume <=1
+
+pub(open) effect test(
+  name: Text,
+  body: () -> Unit ! {fail(Text), Host, overflow, divzero, check}
+): Unit resume <=1
+
+// What `tauto check` says of a file: an error, an unfinished proof (`incomplete`)
+// or a warning, with its code when it has one, where it is (lines and columns
+// from 1; all 0 when it has no place) and what it says.
+pub(open) struct Diagnostic {
+  severity: Text,
+  code: Text,
+  line: u64,
+  col: u64,
+  end_line: u64,
+  end_col: u64,
+  message: Text,
+}
+
+// Checks the file at `path`, a path from the directory `tauto test` was given, as
+// `tauto check` does, and gives what it says: none when the file checks. A test
+// asks it of a file that must not check, and looks at what was said.
+pub(open) effect check(path: Text): List(Diagnostic) resume <=1
+
+fn Entry::same(a: Text, b: Text): Bool {
+  Text::compare(&a, &b) == 0
+}
+
+fn Entry::chosen(name: Text, names: List(Text)): Bool {
+  match names {
+    Nil => false
+    Cons(n, rest) => if Entry::same(n, name) { true } else { Entry::chosen(name, rest) }
+  }
+}
+
+fn Entry::number(t: Text): u64 {
+  match U64::of_text(t) {
+    None => 0
+    Some(n) => n
+  }
+}
+
+// The diagnostics the host's answer to `check` lists, seven fields each.
+fn Entry::diagnostics(fields: List(Text)): List(Diagnostic) {
+  match fields {
+    Cons(severity, Cons(code, Cons(line, Cons(col, Cons(end_line, Cons(end_col, Cons(message, rest))))))) => Cons(
+      Diagnostic {
+        severity: severity,
+        code: code,
+        line: Entry::number(line),
+        col: Entry::number(col),
+        end_line: Entry::number(end_line),
+        end_col: Entry::number(end_col),
+        message: message
+      },
+      Entry::diagnostics(rest)
+    )
+    Nil => Nil
+    Cons(_, Nil) => Nil
+    Cons(_, Cons(_, Nil)) => Nil
+    Cons(_, Cons(_, Cons(_, Nil))) => Nil
+    Cons(_, Cons(_, Cons(_, Cons(_, Nil)))) => Nil
+    Cons(_, Cons(_, Cons(_, Cons(_, Cons(_, Nil))))) => Nil
+    Cons(_, Cons(_, Cons(_, Cons(_, Cons(_, Cons(_, Nil)))))) => Nil
+  }
+}
+
+// Runs a module's top level `top` twice. The first time no body is called: the
+// host is told each entry, and answers with the plan (`Os::entry`). The second
+// time the bodies the plan names are called where they are performed. The top
+// level asks nothing of the host but `div`, so both times it does the same.
+pub fn Entry::run(
+  top: &(
+    () -> Unit ! {
+      main(() -> Unit ! {Host, overflow, divzero, stdin, exit, stop}),
+      test(() -> Unit ! {fail(Text), Host, overflow, divzero, check}),
+      div, overflow, divzero
+    }
+  )
+): Unit ! {Host, overflow, divzero, stdin, exit, stop} {
+  handle { top() } with {
+    main(body), k => {
+      let told := Os::entry("found", Cons("main", Nil))
+      k(#())
+    }
+    test(name, body), k => {
+      let told := Os::entry("found", Cons("test", Cons(name, Nil)))
+      k(#())
+    }
+  }
+  match Os::entry("plan", Nil) {
+    Nil => #()
+    Cons(what, names) => if Entry::same(what, "stop") {
+      match names {
+        Nil => perform stop("")
+        Cons(why, rest) => perform stop(why)
+      }
+    } else {
+      handle { top() } with {
+        main(body), k => {
+          if Entry::same(what, "main") { body() } else { #() }
+          k(#())
+        }
+        test(name, body), k => {
+          if Entry::chosen(name, names) {
+            let told := Os::entry("start", Cons(name, Nil))
+            // The host answers a failure with whether the body is called
+            // again (a retry).
+            var again := true
+            while again {
+              let ended: Result(Unit, Text) := handle { Ok(body()) } with {
+                fail<Text>(x) => Err(x)
+                check(path), answer => answer(Entry::diagnostics(Os::entry("check", Cons(path, Nil))))
+              }
+              match ended {
+                Ok(u) => {
+                  let done := Os::entry("passed", Cons(name, Nil))
+                  again := false
+                }
+                Err(why) => match Os::entry("failed", Cons(name, Cons(why, Nil))) {
+                  Nil => { again := false }
+                  Cons(more, rest) => #()
+                }
+              }
+            }
+          } else { #() }
+          k(#())
+        }
+      }
+    }
+  }
+}
+
+pub fn expect(ok: Bool, why: Text): Unit ! {fail(Text)} {
+  if ok { #() } else { perform fail(why) }
+}
+
+pub fn catch<T, E, !e>(body: &(() -> T ! {fail(E)} ∪ e)): Result(T, E) ! e {
+  handle { Ok(body()) } with {
+    fail<E>(x) => Err(x)
+  }
+}
+
+// Two functions on `Text` that the host provides.
+extern {
+  pub fn words(t: Text): List(Text)
+  pub fn concat(a: Text, b: Text): Text
+}
+
+// The functions over a `List` that take what they call by `&f`.
+pub fn map<A: Shared, B: Shared, !e>(xs: List(A), f: &((A) -> B ! e)): List(B) ! e {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(f(x), map(rest, &f))
+  }
+}
+
+pub fn each<A: Shared, !e>(xs: List(A), f: &((A) -> Unit ! e)): Unit ! e {
+  match xs {
+    Nil => #()
+    Cons(x, rest) => {
+      f(x)
+      each(rest, &f)
+    }
+  }
+}
+
+pub fn fold<A: Shared, B: Shared, !e>(xs: List(A), init: B, f: &((B, A) -> B ! e)): B ! e {
+  match xs {
+    Nil => init
+    Cons(x, rest) => fold(rest, f(init, x), &f)
+  }
+}
+
+// The same over a list that is lent: each element is lent to `f`, so the
+// elements need not be duplicable (a `List(Text)` of an affine `Text`), and
+// the list stays with its owner.
+pub fn map_ref<A, B, !e: <=1>(xs: &List(A), f: &((&A) -> B ! e)): List(B) ! e {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(f(x), map_ref(rest, &f))
+  }
+}
+
+pub fn each_ref<A, !e>(xs: &List(A), f: &((&A) -> Unit ! e)): Unit ! e {
+  match xs {
+    Nil => #()
+    Cons(x, rest) => {
+      f(x)
+      each_ref(rest, &f)
+    }
+  }
+}
+
+pub fn fold_ref<A, B, !e>(xs: &List(A), init: B, f: &((B, &A) -> B ! e)): B ! e {
+  match xs {
+    Nil => init
+    Cons(x, rest) => fold_ref(rest, f(init, x), &f)
+  }
+}
+
+pub fn fold_once<A, B, !e: <=1>(xs: List(A), init: B, f: &((B, A) -> B ! e)): B ! e {
+  match xs {
+    Nil => init
+    Cons(x, rest) => fold_once(rest, f(init, x), &f)
+  }
+}

@@ -1,0 +1,215 @@
+// Proofs over sequential `&mut` updates: what a hypothesis about the pre-call
+// state means after a call, and how a post-call state is linked to the
+// callee's result. See `docs/design/effect-proofs.md`「Sequential
+// `&mut` calls and proof arguments」.
+
+@ cases.pre-hypothesis-stays-pre-after-sequential-mut
+// `qg` keeps its meaning about the pre-call `v`. After `step1`, a new
+// expression mentioning `v` is about the post-call binding, so `qg` does not
+// inhabit its premise.
+source = ```tauto
+inductive S: Type {
+  Mk(n: Nat): S
+}
+
+fn n_of(s: S): Nat {
+  match s {
+    Mk(n) => n
+  }
+}
+
+fn step1(v: &mut S): Unit {
+  *v := Mk(Succ(Zero))
+}
+
+fn needs(v: &mut S, q: n_of(v) = Zero): Unit {
+  Star
+}
+
+fn both(v: &mut S, qg: n_of(v) = Zero): Unit {
+  step1(&mut v)
+  needs(&mut v, qg)
+}
+```
+checks.S = "ok"
+checks.n_of = "ok"
+checks.step1 = "ok"
+checks.needs = "ok"
+checks.both = "error: type mismatch"
+
+@ cases.pre-hypothesis-stays-pre-after-sequential-mut.diagnostics {
+  @ []
+  name = "both"
+  message = "type mismatch: expected `n_of(v) = Zero`, found `n_of(v) = Zero`"
+  span = "needs(&mut v, «qg»)"
+}
+
+@ cases.pattern-binder-post-state-is-opaque
+// In a match arm, `Refl` does not prove the post-state binder equals the
+// callee's computed state. The pre-call name remains available for the RHS.
+source = ```tauto
+inductive S: Type {
+  Mk(n: Nat): S
+}
+
+fn n_of(s: S): Nat {
+  match s {
+    Mk(n) => n
+  }
+}
+
+fn step1(v: &mut S): Unit {
+  *v := Mk(Succ(Zero))
+}
+
+fn probe(v: S): Prop {
+  match step1(v) {
+    mut1(u, v2) => {
+      let h: n_of(v2) = Succ(Zero) := Refl
+      h
+    }
+  }
+}
+```
+checks.S = "ok"
+checks.n_of = "ok"
+checks.step1 = "ok"
+checks.probe = "error: type mismatch"
+
+@ cases.pattern-binder-post-state-is-opaque.diagnostics {
+  @ []
+  name = "probe"
+  message = "type mismatch: expected `n_of(v2) = Succ(Zero)`, found `n_of(v2) = n_of(v2)`"
+  span = "let h: n_of(v2) = Succ(Zero) := «Refl»"
+}
+
+@ cases.after-preserves-connection-to-callee-result
+// Binding the post-state as `after(m)` keeps the definitional link that the
+// pattern binder does not. Pre-call `v` stays in scope.
+source = ```tauto
+inductive S: Type {
+  Mk(n: Nat): S
+}
+
+fn n_of(s: S): Nat {
+  match s {
+    Mk(n) => n
+  }
+}
+
+fn step1(v: &mut S): Unit {
+  *v := Mk(Succ(Zero))
+}
+
+fn after(m: Mut1(Unit, S)): S {
+  match m {
+    mut1(u, r) => r
+  }
+}
+
+fn step2(v: &mut S, h: n_of(v) = Succ(Zero)): Unit {
+  Star
+}
+
+fn both(v: S): Mut1(Unit, S) {
+  let m: Mut1(Unit, S) := step1(v)
+  let v2: S := after(m)
+  step2(v2, Refl)
+}
+
+theorem both_ok(): both(Mk(Zero)) = mut1(Star, Mk(Succ(Zero))) {
+  Refl
+}
+```
+checks_all = "ok"
+
+@ cases.mut-body-let-makes-after-opaque
+// Inside an `&mut` function, `let` is read through `mut0`, so `after(m)` bound
+// by `let` is opaque and `Refl` fails.
+source = ```tauto
+inductive S: Type {
+  Mk(n: Nat): S
+}
+
+fn n_of(s: S): Nat {
+  match s {
+    Mk(n) => n
+  }
+}
+
+fn step1(v: &mut S): Unit {
+  *v := Mk(Succ(Zero))
+}
+
+fn after(m: Mut1(Unit, S)): S {
+  match m {
+    mut1(u, r) => r
+  }
+}
+
+fn step2(v: &mut S, h: n_of(v) = Succ(Zero)): Unit {
+  Star
+}
+
+fn both(v: &mut S): Unit {
+  let m: Mut1(Unit, S) := step1(v)
+  let v2: S := after(m)
+  step2(v2, Refl)
+}
+```
+checks.S = "ok"
+checks.n_of = "ok"
+checks.step1 = "ok"
+checks.after = "ok"
+checks.step2 = "ok"
+checks.both = "error: type mismatch"
+
+@ cases.mut-body-let-makes-after-opaque.diagnostics {
+  @ []
+  name = "both"
+  message = "type mismatch: expected `n_of(v2) = Succ(Zero)`, found `n_of(v2) = n_of(v2)`"
+  span = "step2(v2, «Refl»)"
+}
+
+@ cases.thin-mut-wrapper-around-pure-after-split
+// An `&mut` entry may call a pure splitter that uses `after`, then write back.
+source = ```tauto
+inductive S: Type {
+  Mk(n: Nat): S
+}
+
+fn n_of(s: S): Nat {
+  match s {
+    Mk(n) => n
+  }
+}
+
+fn step1(v: &mut S): Unit {
+  *v := Mk(Succ(Zero))
+}
+
+fn after(m: Mut1(Unit, S)): S {
+  match m {
+    mut1(u, r) => r
+  }
+}
+
+fn step2(v: &mut S, h: n_of(v) = Succ(Zero)): Unit {
+  Star
+}
+
+fn both_pure(v: S): Mut1(Unit, S) {
+  let m: Mut1(Unit, S) := step1(v)
+  let v2: S := after(m)
+  step2(v2, Refl)
+}
+
+fn both_mut(v: &mut S): Unit {
+  *v := after(both_pure(v))
+}
+
+theorem both_mut_ok(): both_mut(Mk(Zero)) = mut1(Star, Mk(Succ(Zero))) {
+  Refl
+}
+```
+checks_all = "ok"

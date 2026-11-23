@@ -1,0 +1,207 @@
+import std::prelude::std { List, Option }
+import "finite_iteration.taut" { FiniteStep, IterationControl, fold_finite }
+import "nat.taut" { Nat }
+import std::well_founded { NatLt }
+
+// The source is evaluated once. Its initial state and rank are then carried by
+// the finite fold, whose decrease is checked at every successful step.
+pub(open) inductive class Iterator(A: Type, I: Type, S: Type) {
+  fn start(source: A): Nat × S
+  fn next(remaining: Nat, state: S): FiniteStep(I, S, remaining)
+}
+
+// The nominal source selects the element and state types. The state itself is
+// a list, while the rank is the number of elements not yet consumed.
+pub(open) inductive ListSource(T: Type): Type {
+  FromList(items: List(T)): ListSource(T)
+}
+
+fn list_rank<T>(items: &List(T)): Nat {
+  match items {
+    Nil => Zero
+    Cons(_, rest) => Succ(list_rank(rest))
+  }
+}
+
+instance<T> Iterator(ListSource(T), T, List(T)) infer from A {
+  fn start(source: ListSource(T)): Nat × List(T) {
+    match source {
+      FromList(items) => #(list_rank(&items), items)
+    }
+  }
+
+  fn next(remaining: Nat, state: List(T)): FiniteStep(T, List(T), remaining) {
+    match remaining {
+      Zero => FiniteStep::Done
+      Succ(smaller) => match state {
+        Nil => FiniteStep::Done
+        Cons(item, rest) => FiniteStep::Yield(item, rest, smaller, Nat::le_refl(smaller))
+      }
+    }
+  }
+}
+
+// A list is traversed as it stands: no `ListSource` wrapper is needed to `for`
+// over one.
+instance<T> Iterator(List(T), T, List(T)) infer from A {
+  fn start(source: List(T)): Nat × List(T) {
+    #(list_rank(&source), source)
+  }
+
+  fn next(remaining: Nat, state: List(T)): FiniteStep(T, List(T), remaining) {
+    match remaining {
+      Zero => FiniteStep::Done
+      Succ(smaller) => match state {
+        Nil => FiniteStep::Done
+        Cons(item, rest) => FiniteStep::Yield(item, rest, smaller, Nat::le_refl(smaller))
+      }
+    }
+  }
+}
+
+// An owned source prepared once: the finite fold takes the packed step as an
+// ordinary function, so an effectful caller need not carry the class constraint.
+pub(open) inductive IteratorReady(I: Type, S: Type): Type {
+  Mk(remaining: Nat, state: S, next: (n: Nat, s: S) -> FiniteStep(I, S, n)): IteratorReady(I, S)
+}
+
+pub fn iterator_ready<A, I, S>(source: A): IteratorReady(I, S) where Iterator(A, I, S) {
+  let #(remaining, state) := Iterator::start(<A: A, I: I, S: S>, source)
+  IteratorReady::Mk(remaining, state, (n: Nat, s: S) => Iterator::next(<A: A, I: I, S: S>, n, s))
+}
+
+// What `for` expands to, after `iterator_ready` has prepared the source. Its
+// parameters carry no dependent type (the packed step, whose proof fields only
+// the kernel can check, stays inside), so code the kernel does not check, such
+// as a function over `i64`, can call it.
+pub fn for_ready<I, S, B, !e>(
+  ready: IteratorReady(I, S),
+  init: B,
+  step: (B, I) -> IterationControl(B) ! e
+): B ! e {
+  match ready {
+    Mk(remaining, state, next) => fold_finite(remaining, state, next, init, step)
+  }
+}
+
+// A shared step may lend the source. The old cursor is consumed and its
+// successor is returned as a separate field of the step.
+pub(open) inductive class SharedIterator(A: Type, I: Type, S: Type) {
+  fn start(source: &A): Nat × S
+  fn next(source: &A, remaining: Nat, state: S): FiniteStep(&I, S, remaining) borrows(source)
+}
+
+pub(open) inductive ListCursor: Type {
+  At(index: Nat): ListCursor
+}
+
+fn list_at<T>(items: &List(T), index: Nat): Option(&T) borrows(items) {
+  match items {
+    Nil => None
+    Cons(item, rest) => match index {
+      Zero => Some(item)
+      Succ(previous) => list_at(rest, previous)
+    }
+  }
+}
+
+instance<T> SharedIterator(ListSource(T), T, ListCursor) infer from A {
+  fn start(source: &ListSource(T)): Nat × ListCursor {
+    match source {
+      FromList(items) => #(list_rank(&items), ListCursor::At(Zero))
+    }
+  }
+
+  fn next(
+    source: &ListSource(T),
+    remaining: Nat,
+    state: ListCursor
+  ): FiniteStep(&T, ListCursor, remaining) borrows(source) {
+    match remaining {
+      Zero => FiniteStep::Done
+      Succ(smaller) => match source {
+        FromList(items) => match state {
+          At(index) => match list_at(&items, index) {
+            None => FiniteStep::Done
+            Some(item) => FiniteStep::Yield(
+              item,
+              ListCursor::At(Succ(index)),
+              smaller,
+              Nat::le_refl(smaller)
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+fn list_at_mut<T>(items: &mut List(T), index: Nat): Option(&mut T) borrows(items) {
+  match items {
+    Nil => None
+    Cons(item, rest) => match index {
+      Zero => Some(item)
+      Succ(previous) => list_at_mut(rest, previous)
+    }
+  }
+}
+
+// Exclusive acquisition is indexed by the caller's remaining rank, like
+// `FiniteStep`. The item stays an outer `&mut` so extraction keeps the place.
+pub(open) inductive ExclusiveStep(I: Type, S: Type, remaining: Nat): Type {
+  Done: ExclusiveStep(I, S, remaining)
+  Yield(
+    item: &mut I,
+    state: S,
+    smaller: Nat,
+    progress: NatLt(smaller, remaining)
+  ): ExclusiveStep(I, S, remaining)
+}
+
+pub(open) inductive class ExclusiveIterator(A: Type, I: Type, S: Type) {
+  fn start(source: &A): Nat × S
+  fn next(source: &mut A, remaining: Nat, state: S): ExclusiveStep(I, S, remaining) borrows(source)
+}
+
+pub fn exclusive_list_start<T>(source: &ListSource(T)): Nat × ListCursor {
+  match source {
+    FromList(items) => #(list_rank(&items), ListCursor::At(Zero))
+  }
+}
+
+pub fn exclusive_list_next<T>(
+  source: &mut ListSource(T),
+  remaining: Nat,
+  state: ListCursor
+): ExclusiveStep(T, ListCursor, remaining) borrows(source) {
+  match remaining {
+    Zero => ExclusiveStep::Done
+    Succ(smaller) => match source {
+      FromList(items) => match state {
+        At(index) => match list_at_mut(items, index) {
+          None => ExclusiveStep::Done
+          Some(item) => ExclusiveStep::Yield(
+            item,
+            ListCursor::At(Succ(index)),
+            smaller,
+            Nat::le_refl(smaller)
+          )
+        }
+      }
+    }
+  }
+}
+
+instance<T> ExclusiveIterator(ListSource(T), T, ListCursor) infer from A {
+  fn start(source: &ListSource(T)): Nat × ListCursor {
+    exclusive_list_start(source)
+  }
+
+  fn next(
+    source: &mut ListSource(T),
+    remaining: Nat,
+    state: ListCursor
+  ): ExclusiveStep(T, ListCursor, remaining) borrows(source) {
+    exclusive_list_next(source, remaining, state)
+  }
+}

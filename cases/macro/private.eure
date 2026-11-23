@@ -1,0 +1,27 @@
+// A `macro fn` is seen as a function is: only one declared `pub` is called from another file.
+
+@ cases.a-pub-macro-is-called-from-another-file
+entry = "main.taut"
+files."macro.taut" = ````tauto
+import std::builtin::macro
+pub macro fn answer(value: SynExpr): SynExpr { value }
+````
+files."main.taut" = ````tauto
+import "macro.taut"
+import std::builtin::os
+show(&(answer!(1)))
+````
+stdout = "1\n"
+
+@ cases.a-macro-without-pub-is-not-called-from-another-file
+entry = "main.taut"
+files."macro.taut" = ````tauto
+import std::builtin::macro
+macro fn answer(value: SynExpr): SynExpr { value }
+````
+files."main.taut" = ````tauto
+import "macro.taut"
+import std::builtin::os
+show(&(answer!(1)))
+````
+macro_error = "macro.private"

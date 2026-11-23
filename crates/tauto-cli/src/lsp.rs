@@ -8,5 +8,7 @@
 use std::process::ExitCode;
 
 pub fn command() -> ExitCode {
-    tauto_cli_totes::main("lsp", Vec::new()).unwrap_or(ExitCode::FAILURE)
+    // A server is meant not to stop: its `div` runs without the host's step
+    // limit (`--allow-div`, `docs/design/host-effects.md`).
+    tauto_cli_totes::main("lsp", vec!["--allow-div".to_string()]).unwrap_or(ExitCode::FAILURE)
 }

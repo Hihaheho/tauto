@@ -1,0 +1,509 @@
+import "../../text/src/text.taut"
+import std::text
+import std::base
+
+// A function body in continuation-passing style (`tauto_nir::cps`), and how
+// it is written as the runtime's combinators (`cps.js`). The lowering
+// (`lower.taut`) decides everything that needs the package; what is written
+// here needs only the tree.
+
+pub(open) enum JsValue {
+  JvDeclaration(Nat)
+  JvUnit
+  // An integer: whether it is below zero, and its size.
+  JvInt(Bool, Nat)
+  // A float as JavaScript reads it back.
+  JvFloat(Text)
+  JvBool(Bool)
+  JvText(Text)
+  JvFn(Nat)
+}
+
+pub(open) enum JsStep {
+  JsName(Text)
+  JsIndex(Nat)
+}
+
+pub(open) enum JsPat {
+  JpWild
+  // The local, whether the binding is a borrow, and whether it owns the value.
+  JpBind(Nat, Bool, Bool)
+  JpLiteral(JsValue)
+  // The constructor's tag, the fields, and the owner's symbol.
+  JpCtor(Text, List(JsPat), Text)
+  // A value of a union injected at the variant, and a pattern on what was injected.
+  JpVariant(Nat, JsPat)
+}
+
+pub(open) enum JsUnary {
+  JuNot
+  JuField(Text, Option(Nat))
+  JuShown
+  JuTempRef(Bool)
+  // `copy`, and whether the value is a temporary an extern call gave.
+  JuDeref(Bool, Bool)
+  JuInject(Nat, Nat)
+  JuRemap(Option(Nat), List(Option(Nat)))
+}
+
+pub(open) enum JsPrim {
+  // The operator over `vs` and the bounds of the width.
+  JpChecked(Text, Text)
+  // A value computed of `vs`, written as it is.
+  JpExpr(Text)
+  // A `Float` operator over `vs`: a division by zero performs `divzero`.
+  JpFloat(Text)
+  // A constructor: its tag, the names its fields are written with, the
+  // argument for each field, whether it is a structure, its owner's
+  // symbol, and whether every field can be retained.
+  JpConstruct(Text, List(Option(Text)), List(Nat), Bool, Text, Bool)
+  // The parser by its place.
+  JpSynParse(Nat)
+}
+
+pub(open) struct JsArm { pat: JsPat, guard: JsCps, body: JsCps }
+
+pub(open) struct JsHandlerArm { op: Text, pats: List(JsPat), k: Option(Nat), guard: JsCps, body: JsCps }
+
+pub(open) struct JsClosure {
+  body: JsCps,
+  params: List(Nat),
+  captures: List(Nat),
+  borrowed: Bool,
+  refs: List(Nat × Nat),
+  export_borrows: Bool,
+  owned: List(Bool),
+  moves: List(Nat),
+  once: Bool,
+  owned_refs: List(Nat)
+}
+
+pub(open) enum JsCps {
+  JcPure(JsValue)
+  // The local, `deref`, `copy` and `take`.
+  JcRead(Nat, Bool, Bool, Bool)
+  JcCall(JsCps, List(JsCps), Bool)
+  // The function, the arguments, and whether it counts a step.
+  JcTailSelf(Nat, List(JsCps), Bool)
+  JcExternal(Text, List(JsCps))
+  JcBuiltin(Text, List(JsCps))
+  JcPrim(JsPrim, List(JsCps))
+  JcMap(JsCps, JsUnary)
+  JcBranch(JsCps, JsCps, JsCps)
+  JcSequence(List(JsCps))
+  // The local, `shared`, the value and `immutable`.
+  JcDefine(Nat, Bool, JsCps, Bool)
+  JcAssign(Nat, List(JsStep), Bool, JsCps)
+  JcWhile(JsCps, JsCps, Bool)
+  JcReturn(JsCps)
+  JcMatch(JsCps, List(JsArm))
+  JcClosure(JsClosure)
+  // The operation's symbol, its quantity and the arguments.
+  JcPerform(Text, Text, List(JsCps))
+  JcHandle(JsCps, List(JsHandlerArm), Option(JsArm))
+  JcBorrow(Nat, List(JsStep), Bool, Bool)
+  JcBudget(Nat, Bool, JsCps, JsCps)
+}
+
+// A text as a JSON string literal (`serde_json::to_string`).
+pub fn js_quote(t: Text): Text ! {div, overflow} {
+  var b := Buf::new()
+  Buf::push(&mut b, &text_quote())
+  var i := 0
+  var origin := 0
+  let n := Text::len(t)
+  while i < n {
+    match js_escape_byte(Text::byte_value(t, i)) {
+      None => #()
+      Some(e) => {
+        Buf::push(&mut b, &Text::slice_or_empty(t, origin, i))
+        Buf::push(&mut b, &e)
+        origin := i + 1
+      }
+    }
+    i := i + 1
+  }
+  Buf::push(&mut b, &Text::slice_or_empty(t, origin, n))
+  Buf::push(&mut b, &text_quote())
+  Text::of(b)
+}
+
+pub fn js_hex_digit(n: Nat): Text {
+  match Text::slice("0123456789abcdef", n, n + 1) {
+    Some(d) => d
+    None => "0"
+  }
+}
+
+pub fn js_escape_byte(c: Nat): Option(Text) ! {overflow} {
+  if c == 34 {
+    Some(concat(text_backslash(), text_quote()))
+  } else if c == 92 {
+    Some(concat(text_backslash(), text_backslash()))
+  } else if c == 10 {
+    Some(concat(text_backslash(), "n"))
+  } else if c == 13 {
+    Some(concat(text_backslash(), "r"))
+  } else if c == 9 {
+    Some(concat(text_backslash(), "t"))
+  } else if c == 8 {
+    Some(concat(text_backslash(), "b"))
+  } else if c == 12 {
+    Some(concat(text_backslash(), "f"))
+  } else if c < 32 {
+    Some(Text::concat_all([text_backslash(), "u00", if c >= 16 { "1" } else { "0" }, js_hex_digit(if c >= 16 { c - 16 } else { c })]))
+  } else {
+    None
+  }
+}
+
+pub fn js_bool(b: Bool): Text { if b { "true" } else { "false" } }
+
+pub fn js_nat(n: Nat): Text { Text::of_nat(n) }
+
+pub fn js_int(negative: Bool, n: Nat): Text {
+  if negative && n > 0 { concat("-", Text::of_nat(n)) } else { Text::of_nat(n) }
+}
+
+pub fn js_opt_nat(n: Option(Nat)): Text {
+  match n {
+    Some(k) => Text::of_nat(k)
+    None => "null"
+  }
+}
+
+pub fn js_nats(xs: List(Nat)): Text { text_join(js_nat_list(xs), ",") }
+
+pub fn js_nat_list(xs: List(Nat)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(js_nat(x), js_nat_list(rest))
+  }
+}
+
+pub fn js_bools(xs: List(Bool)): Text { text_join(js_bool_list(xs), ",") }
+
+pub fn js_bool_list(xs: List(Bool)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(js_bool(x), js_bool_list(rest))
+  }
+}
+
+pub fn js_value(v: JsValue): Text ! {div, overflow} {
+  match v {
+    JvUnit => "null"
+    JvInt(neg, n) => concat(js_int(neg, n), "n")
+    JvFloat(x) => x
+    JvBool(b) => js_bool(b)
+    JvDeclaration(slot) => Text::concat_all(["declarationRefs[", js_nat(slot), "]"])
+    JvText(t) => js_quote(t)
+    JvFn(i) => concat("f", js_nat(i))
+  }
+}
+
+pub fn js_pattern(p: JsPat): Text ! {div, overflow} {
+  match p {
+    JpWild => "['wild']"
+    JpBind(id, borrowed, owned) => Text::concat_all(["['bind',", js_nat(id), ",", js_bool(borrowed), ",", js_bool(owned), "]"])
+    JpLiteral(v) => Text::concat_all(["['literal',", js_value(v), "]"])
+    JpCtor(tag, fields, owner) => Text::concat_all([
+      "['ctor',",
+      js_quote(tag),
+      ",[",
+      js_patterns(fields),
+      "],",
+      js_quote(owner),
+      "]"
+    ])
+    JpVariant(k, q) => Text::concat_all(["['variant',", js_nat(k), ",", js_pattern(q), "]"])
+  }
+}
+
+pub fn js_patterns(ps: List(JsPat)): Text ! {div, overflow} { text_join(js_pattern_list(ps), ",") }
+
+pub fn js_pattern_list(ps: List(JsPat)): List(Text) ! {div, overflow} {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(js_pattern(p), js_pattern_list(rest))
+  }
+}
+
+pub fn js_step(s: JsStep): Text ! {div, overflow} {
+  match s {
+    JsIndex(n) => js_nat(n)
+    JsName(n) => js_quote(n)
+  }
+}
+
+pub fn js_path(steps: List(JsStep)): Text ! {div, overflow} {
+  Text::concat_all(["[", text_join(js_step_list(steps), ","), "]"])
+}
+
+pub fn js_step_list(steps: List(JsStep)): List(Text) ! {div, overflow} {
+  match steps {
+    Nil => Nil
+    Cons(x, rest) => Cons(js_step(x), js_step_list(rest))
+  }
+}
+
+pub fn js_cps_all(es: List(JsCps)): Text ! {div, overflow} { text_join(js_cps_list(es), ",") }
+
+pub fn js_cps_list(es: List(JsCps)): List(Text) ! {div, overflow} {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(js_cps(e), js_cps_list(rest))
+  }
+}
+
+pub fn js_arm(a: JsArm): Text ! {div, overflow} {
+  Text::concat_all(["[", js_pattern(a.pat), ",", js_cps(a.guard), ",", js_cps(a.body), "]"])
+}
+
+pub fn js_arms(arms: List(JsArm)): List(Text) ! {div, overflow} {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => Cons(js_arm(a), js_arms(rest))
+  }
+}
+
+pub fn js_handler_arms(arms: List(JsHandlerArm)): List(Text) ! {div, overflow} {
+  match arms {
+    Nil => Nil
+    Cons(a, rest) => Cons(
+      Text::concat_all([
+        "{op:",
+        js_quote(a.op),
+        ",pats:[",
+        js_patterns(a.pats),
+        "],k:",
+        js_opt_nat(a.k),
+        ",guard:",
+        js_cps(a.guard),
+        ",body:",
+        js_cps(a.body),
+        "}"
+      ]),
+      js_handler_arms(rest)
+    )
+  }
+}
+
+pub fn js_is_true(e: JsCps): Bool {
+  match e {
+    JcPure(v) => match v {
+      JvBool(b) => b
+      JvDeclaration(^n) => false
+      JvUnit => false
+      JvInt(^s, ^n) => false
+      JvFloat(^x) => false
+      JvText(^t) => false
+      JvFn(^i) => false
+    }
+    JcRead(^a, ^b, ^c, ^d) => false
+    JcCall(^a, ^b, ^c) => false
+    JcTailSelf(^a, ^b, ^c) => false
+    JcExternal(^a, ^b) => false
+    JcBuiltin(^a, ^b) => false
+    JcPrim(^a, ^b) => false
+    JcMap(^a, ^b) => false
+    JcBranch(^a, ^b, ^c) => false
+    JcSequence(^a) => false
+    JcDefine(^a, ^b, ^c, ^d) => false
+    JcAssign(^a, ^b, ^c, ^d) => false
+    JcWhile(^a, ^b, ^c) => false
+    JcReturn(^a) => false
+    JcMatch(^a, ^b) => false
+    JcClosure(^a) => false
+    JcPerform(^a, ^b, ^c) => false
+    JcHandle(^a, ^b, ^c) => false
+    JcBorrow(^a, ^b, ^c, ^d) => false
+    JcBudget(^a, ^b, ^c, ^d) => false
+  }
+}
+
+pub fn js_arms_guardless(arms: List(JsArm)): Bool {
+  match arms {
+    Nil => true
+    Cons(a, rest) => js_is_true(a.guard) && js_arms_guardless(rest)
+  }
+}
+
+// A moved or copied local: the match's own value.
+pub fn js_owned_scrutinee(e: JsCps): Bool {
+  match e {
+    JcRead(^id, ^deref, copied, take) => copied || take
+    JcPure(^v) => false
+    JcCall(^a, ^b, ^c) => false
+    JcTailSelf(^a, ^b, ^c) => false
+    JcExternal(^a, ^b) => false
+    JcBuiltin(^a, ^b) => false
+    JcPrim(^a, ^b) => false
+    JcMap(^a, ^b) => false
+    JcBranch(^a, ^b, ^c) => false
+    JcSequence(^a) => false
+    JcDefine(^a, ^b, ^c, ^d) => false
+    JcAssign(^a, ^b, ^c, ^d) => false
+    JcWhile(^a, ^b, ^c) => false
+    JcReturn(^a) => false
+    JcMatch(^a, ^b) => false
+    JcClosure(^a) => false
+    JcPerform(^a, ^b, ^c) => false
+    JcHandle(^a, ^b, ^c) => false
+    JcBorrow(^a, ^b, ^c, ^d) => false
+    JcBudget(^a, ^b, ^c, ^d) => false
+  }
+}
+
+pub fn js_values(args: List(JsCps), value: Text): Text ! {div, overflow} {
+  Text::concat_all(["values([", js_cps_all(args), "],(c,vs,k)=>more(()=>k(c,", value, ")))"])
+}
+
+// An operator whose result does not exist performs `overflow` or `divzero`
+// where it stands.
+pub fn js_operated(args: List(JsCps), value: Text): Text ! {div, overflow} {
+  Text::concat_all(["values([", js_cps_all(args), "],(c,vs,k)=>operated(c,k,()=>", value, "))"])
+}
+
+pub fn js_opt_names(xs: List(Option(Text))): List(Text) ! {div, overflow} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(match x {
+      Some(n) => js_quote(n)
+      None => "null"
+    }, js_opt_names(rest))
+  }
+}
+
+pub fn js_opt_nats(xs: List(Option(Nat))): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(js_opt_nat(x), js_opt_nats(rest))
+  }
+}
+
+pub fn js_prim(op: JsPrim, args: List(JsCps)): Text ! {div, overflow} {
+  match op {
+    JpChecked(value, bounds) => js_operated(args, Text::concat_all(["checked(", value, ",", bounds, ")"]))
+    JpExpr(value) => js_values(args, value)
+    JpFloat(value) => js_operated(args, value)
+    JpConstruct(tag, names, order, is_struct, owner, retain) => js_values(args, Text::concat_all([
+      "construct(",
+      js_quote(tag),
+      ",[",
+      text_join(js_opt_names(names), ","),
+      "],vs,[",
+      js_nats(order),
+      "],",
+      js_bool(is_struct),
+      ",",
+      js_quote(owner),
+      ",",
+      js_bool(retain),
+      ")"
+    ]))
+    JpSynParse(i) => Text::concat_all([
+      "values([",
+      js_cps_all(args),
+      "],(c,vs,k)=>more(()=>k(c,synParse",
+      js_nat(i),
+      "(unref(vs[0])))))"
+    ])
+  }
+}
+
+pub fn js_refs(refs: List(Nat × Nat)): List(Text) {
+  match refs {
+    Nil => Nil
+    Cons(r, rest) => Cons(match r {
+      #(inner, outer) => Text::concat_all(["[", js_nat(inner), ",", js_nat(outer), "]"])
+    }, js_refs(rest))
+  }
+}
+
+pub fn js_unary(value: Text, op: JsUnary): Text ! {div, overflow} {
+  match op {
+    JuNot => Text::concat_all(["mapValue(", value, ",v=>!v)"])
+    JuField(name, index) => Text::concat_all(["mapValue(", value, ",v=>field(v,", js_quote(name), ",", js_opt_nat(index), "))"])
+    JuShown => Text::concat_all(["mapValue(", value, ",v=>({kind:'Shown',text:shown(v)}))"])
+    JuTempRef(sh) => Text::concat_all(["mapValue(", value, ",v=>temporaryRef(v,", js_bool(sh), "))"])
+    JuDeref(copied, temporary) => if copied && temporary {
+      Text::concat_all(["mapValue(", value, ",v=>dereferenceTemporary(v))"])
+    } else {
+      Text::concat_all(["mapValue(", value, ",v=>dereference(v,", js_bool(copied), "))"])
+    }
+    JuInject(u, variant) => Text::concat_all(["mapValue(", value, ",value=>({union:", js_nat(u), ",variant:", js_nat(variant), ",value}))"])
+    JuRemap(to, table) => Text::concat_all(["mapValue(", value, ",v=>remapUnion(v,", js_opt_nat(to), ",[", text_join(js_opt_nats(table), ","), "]))"])
+  }
+}
+
+pub fn js_cps(e: JsCps): Text ! {div, overflow} {
+  match e {
+    JcPure(v) => Text::concat_all(["pure(", js_value(v), ")"])
+    JcRead(id, deref, copied, take) => Text::concat_all(["readLocal(", js_nat(id), ",", js_bool(deref), ",", js_bool(copied), ",", js_bool(take), ")"])
+    JcCall(callee, args, ticked) => Text::concat_all(["callFunction(", js_cps(callee), ",[", js_cps_all(args), "],", js_bool(ticked), ")"])
+    // A step of the host's limit is counted where a call is made.
+    JcTailSelf(inst, args, ticked) => if ticked {
+      Text::concat_all(["callFunction(pure(f", js_nat(inst), "),[", js_cps_all(args), "],true)"])
+    } else {
+      Text::concat_all(["tailSelfCall(pure(f", js_nat(inst), "),[", js_cps_all(args), "])"])
+    }
+    JcExternal(name, args) => Text::concat_all(["external(", js_quote(name), ",[", js_cps_all(args), "])"])
+    JcBuiltin(name, args) => Text::concat_all(["builtin(", js_quote(name), ",[", js_cps_all(args), "])"])
+    JcPrim(op, args) => js_prim(op, args)
+    JcMap(value, op) => js_unary(js_cps(value), op)
+    JcBranch(c, t, o) => Text::concat_all(["branch(", js_cps(c), ",", js_cps(t), ",", js_cps(o), ")"])
+    JcSequence(es) => Text::concat_all(["sequence([", js_cps_all(es), "])"])
+    JcDefine(id, sh, init, immutable) => Text::concat_all(["defineLocal(", js_nat(id), ",", js_bool(sh), ",", js_cps(init), ",", js_bool(immutable), ")"])
+    JcAssign(id, path, through, value) => Text::concat_all(["assignPlace(", js_nat(id), ",", js_path(path), ",", js_bool(through), ",", js_cps(value), ")"])
+    JcWhile(c, body, ticked) => Text::concat_all(["loopWhile(", js_cps(c), ",", js_cps(body), ",", js_bool(ticked), ")"])
+    JcReturn(v) => Text::concat_all(["returnValue(", js_cps(v), ")"])
+    JcMatch(scrut, arms) => Text::concat_all([
+      "matchValue(",
+      js_cps(scrut),
+      ",[",
+      text_join(js_arms(arms), ","),
+      "],",
+      js_bool(js_owned_scrutinee(scrut) && js_arms_guardless(arms)),
+      ")"
+    ])
+    JcClosure(c) => Text::concat_all([
+      "closureValue(",
+      js_cps(c.body),
+      ",[",
+      js_nats(c.params),
+      "],[",
+      js_nats(c.captures),
+      "],",
+      js_bool(c.borrowed),
+      ",[",
+      text_join(js_refs(c.refs), ","),
+      "],",
+      js_bool(c.export_borrows),
+      ",[",
+      js_bools(c.owned),
+      "],[",
+      js_nats(c.moves),
+      "],",
+      js_bool(c.once),
+      ",[",
+      js_nats(c.owned_refs),
+      "])"
+    ])
+    JcPerform(op, quant, args) => Text::concat_all(["performValue(", js_quote(op), ",", js_quote(quant), ",[", js_cps_all(args), "])"])
+    JcHandle(body, arms, ret) => Text::concat_all([
+      "handleValue(",
+      js_cps(body),
+      ",[",
+      text_join(js_handler_arms(arms), ","),
+      "],",
+      match ret {
+        Some(r) => js_arm(r)
+        None => "null"
+      },
+      ")"
+    ])
+    JcBorrow(id, path, through, ^mutable) => Text::concat_all(["borrowPlace(", js_nat(id), ",", js_path(path), ",", js_bool(through), ")"])
+    JcBudget(id, memory, steps, body) => Text::concat_all(["budgetValue(", js_nat(id), ", ", js_cps(steps), ", ", js_cps(body), ", ", js_bool(memory), ")"])
+  }
+}

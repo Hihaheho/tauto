@@ -1,0 +1,308 @@
+import std::prelude::std { List, Option, Ordering }
+
+// What programs of the proof language compute with:
+// decisions, comparisons of numbers, and the lemmas that connect them to
+// propositions. Extraction maps `Bool` onto Nib's `Bool`, `Nat` onto `u64`
+// and the comparisons onto Nib's operators; the definitions here are what
+// the proofs see. `Bool`, `Nat::eq`, `Nat::lt`, `Nat::pred`, `Nat::sub`, `Nat::div` and
+// `Nat::rem` are the kernel's own (its prelude): it computes them at once on
+// numerals. `Bool::and`, `Bool::or`, `not`, `Bool::eq` and the lemmas a generated decidable
+// equality uses (`Nat::eq_refl`, `Nat::eq_sound`, `Bool::eq_refl`, `Bool::eq_sound`,
+// `Bool::and_intro`, `Bool::and_split`, `true_ne_false`, `false_ne_true`) are the
+// kernel's prelude too.
+
+pub theorem Bool::cases(
+  P: (Bool) -> Prop,
+  o: Bool,
+  a: (o = false) -> P(false),
+  b: (o = true) -> P(true)
+): P(o) {
+  match o {
+    false => a(Refl)
+    true => b(Refl)
+  }
+}
+
+pub theorem Bool::or_true_left(a: Bool, b: Bool, h: a = true): a || b = true {
+  match a {
+    false => False::elim(false_ne_true(h))
+    true => Refl
+  }
+}
+
+pub theorem Bool::or_true_right(a: Bool, b: Bool, h: b = true): a || b = true {
+  match a { false => h, true => Refl }
+}
+
+pub theorem Bool::or_false_right(a: Bool, b: Bool, h: b = false): a || b = a {
+  match a { false => h, true => Refl }
+}
+
+pub theorem Bool::or_false_split(a: Bool, b: Bool, h: a || b = false): a = false ∧ b = false {
+  match a {
+    false => AndIntro(Refl, h)
+    true => False::elim(true_ne_false(h))
+  }
+}
+
+pub theorem Bool::or_comm(a: Bool, b: Bool): a || b = b || a {
+  match a {
+    false => ⊢ b = b || false from match b { false => Refl, true => Refl }
+    true => ⊢ true = b || true from match b { false => Refl, true => Refl }
+  }
+}
+
+pub theorem Bool::or_assoc(a: Bool, b: Bool, c: Bool): a || b || c = a || (b || c) {
+  match a { false => Refl, true => Refl }
+}
+
+pub theorem Bool::or_absorb(a: Bool, b: Bool): a || (a && b) = a {
+  match a { false => Refl, true => Refl }
+}
+
+pub theorem Bool::and_true_left(a: Bool, b: Bool, h: a && b = true): a = true {
+  match a {
+    false => False::elim(false_ne_true(h))
+    true => Refl
+  }
+}
+
+pub theorem Bool::and_true_right(a: Bool, b: Bool, h: a && b = true): b = true {
+  match a {
+    false => False::elim(false_ne_true(h))
+    true => h
+  }
+}
+
+pub theorem Bool::and_false_right(a: Bool): a && false = false {
+  match a { false => Refl, true => Refl }
+}
+
+pub theorem Bool::and_comm(a: Bool, b: Bool): a && b = b && a {
+  match a {
+    false => ⊢ false = b && false from match b { false => Refl, true => Refl }
+    true => ⊢ b = b && true from match b { false => Refl, true => Refl }
+  }
+}
+
+pub theorem Bool::and_assoc(a: Bool, b: Bool, c: Bool): a && b && c = a && (b && c) {
+  match a { false => Refl, true => Refl }
+}
+
+pub theorem Bool::and_absorb(a: Bool, b: Bool): a && (a || b) = a {
+  match a { false => Refl, true => Refl }
+}
+
+pub theorem Bool::not_true(a: Bool, h: not(a) = true): a = false {
+  match a {
+    false => Refl
+    true => False::elim(false_ne_true(h))
+  }
+}
+
+pub theorem Bool::not_false(a: Bool, h: not(a) = false): a = true {
+  match a {
+    false => False::elim(true_ne_false(h))
+    true => Refl
+  }
+}
+
+pub theorem Bool::not_of_false(a: Bool, h: a = false): not(a) = true {
+  match a {
+    false => Refl
+    true => False::elim(true_ne_false(h))
+  }
+}
+
+pub fn Nat::le(a: Nat, b: Nat): Bool {
+  Nat::lt(a, Succ(b))
+}
+
+// `b` is not 0 when `Nat::eq` says so: the divisor of `Nat::div_nz` and
+// `Nat::rem_nz`, which for a numeral is `ne_zero(64, Refl)`.
+pub theorem Nat::ne_zero(b: Nat, h: Nat::eq(b, 0) = false): ¬(b = 0) {
+  (e: b = 0) => true_ne_false(Eq::trans(Eq::sym(Eq::congr(⟦Nat::eq(□, 0)⟧, e)), h))
+}
+
+pub theorem Nat::succ_ne_zero(k: Nat): ¬(Succ(k) = 0) {
+  Nat::ne_zero(Succ(k), Refl)
+}
+
+pub theorem Nat::ne_zero_of_pos(b: Nat, h: 0 < b = true): ¬(b = 0) {
+  (e: b = 0) => true_ne_false(Eq::trans(Eq::sym(h), Eq::congr(⟦Nat::lt(0, □)⟧, e)))
+}
+
+// `Nat::add` and `Nat::mul` are the kernel's `+` and `*` under another name (and `+` and `*`
+// are never read as anything else). Those recurse on the second operand: `a + Succ(k)` is
+// `Succ(a + k)` and `a * Succ(k)` is `a * k + a`; on two numerals the kernel computes the
+// same value at once. Extraction maps them onto Nib's operators. `Nat::sub` recurses on the
+// second argument too.
+
+pub fn Nat::add(a: Nat, b: Nat): Nat {
+  a + b
+}
+
+pub fn Nat::mul(a: Nat, b: Nat): Nat {
+  a * b
+}
+
+pub fn Nat::max(a: Nat, b: Nat): Nat {
+  match Nat::lt(a, b) { false => a, true => b }
+}
+
+pub fn Nat::min(a: Nat, b: Nat): Nat {
+  match Nat::lt(a, b) { false => b, true => a }
+}
+
+pub theorem Nat::lt_irrefl(a: Nat): Nat::lt(a, a) = false {
+  match a {
+    Zero => Refl
+    Succ(a2) => Nat::lt_irrefl(a2)
+  }
+}
+
+pub theorem Nat::lt_asym(a: Nat, b: Nat, h: Nat::lt(a, b) = true): Nat::lt(b, a) = false {
+  match a {
+    Zero => match b {
+      Zero => Refl
+      Succ(_) => Refl
+    }
+    Succ(a2) => match b {
+      Zero => False::elim(false_ne_true(h))
+      Succ(b2) => Nat::lt_asym(a2, b2, h)
+    }
+  }
+}
+
+pub theorem Nat::lt_trans(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  h1: Nat::lt(a, b) = true,
+  h2: Nat::lt(b, c) = true
+): Nat::lt(a, c) = true {
+  match a {
+    Zero => match c {
+      Zero => match b {
+        Zero => False::elim(false_ne_true(h2))
+        Succ(b2) => False::elim(false_ne_true(h2))
+      }
+      Succ(_) => Refl
+    }
+    Succ(a2) => match b {
+      Zero => False::elim(false_ne_true(h1))
+      Succ(b2) => match c {
+        Zero => False::elim(false_ne_true(h2))
+        Succ(c2) => Nat::lt_trans(a2, b2, c2, h1, h2)
+      }
+    }
+  }
+}
+
+// Neither is less than the other: they are equal.
+pub theorem Nat::lt_total(a: Nat, b: Nat, h1: Nat::lt(a, b) = false, h2: Nat::lt(b, a) = false): a = b {
+  match a {
+    Zero => match b {
+      Zero => Refl
+      Succ(b2) => False::elim(true_ne_false(h1))
+    }
+    Succ(a2) => match b {
+      Zero => False::elim(true_ne_false(h2))
+      Succ(b2) => Eq::congr(Succ, Nat::lt_total(a2, b2, h1, h2))
+    }
+  }
+}
+
+
+pub fn List::length<A>(l: List(A)): Nat {
+  match l {
+    Nil => Zero
+    Cons(h, t) => Succ(List::length(t))
+  }
+}
+
+pub fn List::append<A>(l: List(A), m: List(A)): List(A) {
+  match l {
+    Nil => m
+    Cons(h, t) => Cons(h, List::append(t, m))
+  }
+}
+
+pub fn List::reverse_onto<A>(l: List(A), acc: List(A)): List(A) {
+  match l {
+    Nil => acc
+    Cons(h, t) => List::reverse_onto(t, Cons(h, acc))
+  }
+}
+
+pub fn List::reverse<A>(l: List(A)): List(A) {
+  List::reverse_onto(l, Nil)
+}
+
+pub fn List::map<A, B>(f: (A) -> B, l: List(A)): List(B) {
+  match l {
+    Nil => Nil
+    Cons(h, t) => Cons(f(h), List::map(f, t))
+  }
+}
+
+// The first `n` elements (all of them when there are fewer).
+pub fn List::take<A>(n: Nat, l: List(A)): List(A) {
+  match n {
+    Zero => Nil
+    Succ(k) => ⊢ List(A) from match l {
+      Nil => Nil
+      Cons(h, t) => Cons(h, List::take(k, t))
+    }
+  }
+}
+
+pub fn List::drop<A>(n: Nat, l: List(A)): List(A) {
+  match n {
+    Zero => l
+    Succ(k) => ⊢ List(A) from match l {
+      Nil => Nil
+      Cons(h, t) => List::drop(k, t)
+    }
+  }
+}
+
+// The `i`th element, counted from 0.
+pub fn List::nth<A>(l: List(A), i: Nat): Option(A) {
+  match l {
+    Nil => None
+    Cons(h, t) => ⊢ Option(A) from match i {
+      Zero => Some(h)
+      Succ(j) => List::nth(t, j)
+    }
+  }
+}
+
+pub theorem List::append_assoc<A: Type>(
+  a: List(A),
+  b: List(A),
+  c: List(A)
+): List::append(List::append(a, b), c) = List::append(a, List::append(b, c)) {
+  match a {
+    Nil => Refl
+    Cons(h, t) => Eq::congr(⟦Cons(h, □)⟧, List::append_assoc(t, b, c))
+  }
+}
+
+
+// Case analysis on a term `o`: `P(o)` from each case, given that `o` is it.
+// `P` is written with a `match` on its parameter, so a goal that unfolds to
+// a `match` on `o` is `P(o)`.
+pub theorem Ordering::cases(
+  P: (Ordering) -> Prop,
+  o: Ordering,
+  a: (o = Less) -> P(Less),
+  b: (o = Equal) -> P(Equal),
+  c: (o = Greater) -> P(Greater)
+): P(o) {
+  match o {
+    Less => a(Refl)
+    Equal => b(Refl)
+    Greater => c(Refl)
+  }
+}

@@ -1,0 +1,148 @@
+description = "An exclusive update survives extraction of a finite step whose progress proof is erased."
+
+@ cases.a-checked-step-updates-the-source
+source = ```tauto
+import std::finite_iteration { FiniteStep }
+import std::nat { Nat }
+
+inductive struct Source { value: Nat }
+
+fn next(source: &mut Source, rank: Nat): FiniteStep(Unit, Unit, rank) {
+  match rank {
+    Zero => FiniteStep::Done
+    Succ(smaller) => {
+      *source := Source { value: Succ(source.value) }
+      FiniteStep::Yield(Star, Star, smaller, Nat::le_refl(smaller))
+    }
+  }
+}
+
+fn sample(rank: Nat): Nat {
+  var source: Source := Source { value: Zero }
+  match next(&mut source, rank) {
+    Done => source.value
+    Yield(item, state, remaining, proof) => source.value
+  }
+}
+
+show(&sample(0))
+show(&sample(1))
+```
+stdout = "0\n1\n"
+
+@ cases.a-yielded-exclusive-item-survives-extraction
+source = ```tauto
+import std::iterator { ExclusiveStep, exclusive_list_next, exclusive_list_start, ListSource }
+import std::base { Nat }
+import std::nat { Nat }
+
+fn set_nat(n: &mut Nat, v: Nat): Unit {
+  *n := v
+}
+
+fn write_first(source: &mut ListSource(Nat)): Unit {
+  let #(remaining, state) := exclusive_list_start(&source)
+  match exclusive_list_next(source, remaining, state) {
+    Done => #()
+    Yield(item, newer, smaller, progress) => {
+      set_nat(item, Succ(Succ(item)))
+      #()
+    }
+  }
+}
+
+fn example(): Nat {
+  var source := ListSource::FromList([Zero, Succ(Zero)])
+  write_first(&mut source)
+  match source {
+    FromList(items) => match items {
+      Cons(first, _) => first
+      Nil => Zero
+    }
+  }
+}
+
+show(&example())
+```
+stdout = "2\n"
+
+@ cases.a-class-path-exclusive-update-survives-extraction
+source = ```tauto
+import std::iterator { ExclusiveIterator, ExclusiveStep, ListSource }
+import std::base { Nat }
+import std::nat { Nat }
+
+fn set_nat(n: &mut Nat, v: Nat): Unit {
+  *n := v
+}
+
+fn write_first(source: &mut ListSource(Nat)): Unit {
+  let #(remaining, state) := ExclusiveIterator::start(&source)
+  match ExclusiveIterator::next(&mut source, remaining, state) {
+    Done => #()
+    Yield(item, newer, smaller, progress) => {
+      set_nat(item, Succ(Succ(item)))
+      #()
+    }
+  }
+}
+
+fn example(): Nat {
+  var source := ListSource::FromList([Zero, Succ(Zero)])
+  write_first(&mut source)
+  match source {
+    FromList(items) => match items {
+      Cons(first, _) => first
+      Nil => Zero
+    }
+  }
+}
+
+show(&example())
+```
+stdout = "2\n"
+
+@ cases.an-exclusive-update-cannot-justify-unchanged-rank
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::finite_iteration { FiniteStep }
+import std::nat { Nat }
+
+fn stalled(source: &mut Nat, rank: Nat): FiniteStep(Unit, Unit, rank) {
+  *source := Succ(source)
+  FiniteStep::Yield(Star, Star, rank, Nat::le_refl(rank))
+}
+```
+checks."input/main.taut::stalled" = "error: type mismatch"
+
+@ cases.an-exclusive-step-rejects-a-nondecreasing-yield
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::iterator { ExclusiveStep, ListSource, ListCursor }
+import std::nat { Nat }
+import std::base { Nat }
+
+fn bad_next(
+  source: &mut ListSource(Nat),
+  remaining: Nat,
+  state: ListCursor
+): ExclusiveStep(Nat, ListCursor, remaining) borrows(source) {
+  match remaining {
+    Zero => ExclusiveStep::Done
+    Succ(_) => match source {
+      FromList(items) => match items {
+        Nil => ExclusiveStep::Done
+        Cons(item, _) => match state {
+          At(_) => ExclusiveStep::Yield(
+            item,
+            ListCursor::At(Zero),
+            remaining,
+            Nat::le_refl(remaining)
+          )
+        }
+      }
+    }
+  }
+}
+```
+checks."input/main.taut::bad_next" = "error: type mismatch"

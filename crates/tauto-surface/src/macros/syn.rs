@@ -1,16 +1,16 @@
 //! The surface syntax as a macro's values and back: [`Lift`] reads a term, a statement or a pattern as the `Syn…` values
-//! of `std/prelude/Macro.taut` (what `quote` and `${…}` make), [`Lower`] writes
+//! of `std/builtin/macro.taut` (what `quote` and `${…}` make), [`Lower`] writes
 //! the values a macro returns as the surface syntax again.
 
+use crate::span::Span;
 use tauto_message::msg;
-use tauto_parol::Span;
 
 use super::node::Node;
 use super::scope::{self, flip, mark};
 use crate::surface::{
-    BudgetLimit, Constructor, DataConstructor, DataDecl, EffectDecl, FnDecl, Handler,
-    InductiveDecl, Instance, MatchArm, Name, Pattern, Stmt, SurfaceTerm, SyntaxLit, TermKind,
-    TheoremDecl,
+    BudgetLimit, ClassDecl, Constraint, Constructor, DataConstructor, DataDecl, EffectDecl, FnDecl,
+    Handler, InductiveDecl, InferCondition, Instance, InstanceDecl, LawDecl, MatchArm, Name,
+    Pattern, Stmt, SurfaceTerm, SyntaxLit, TermKind, TheoremDecl,
 };
 
 type R<T> = Result<T, String>;
@@ -126,6 +126,22 @@ pub struct SpanTable {
 }
 
 impl Lift<'_> {
+    fn infer_condition(condition: &InferCondition) -> Node {
+        match condition {
+            InferCondition::Parameter(name) => Node::ctor(
+                "SynInferCondition::InferParameter",
+                vec![Node::text(name.as_str())],
+            ),
+            InferCondition::And(left, right) => Node::ctor(
+                "SynInferCondition::InferAnd",
+                vec![Self::infer_condition(left), Self::infer_condition(right)],
+            ),
+            InferCondition::Or(left, right) => Node::ctor(
+                "SynInferCondition::InferOr",
+                vec![Self::infer_condition(left), Self::infer_condition(right)],
+            ),
+        }
+    }
     fn ctx(&self) -> Node {
         self.ctx_of(self.scopes)
     }
@@ -167,12 +183,21 @@ impl Lift<'_> {
     }
 
     fn ident_at(&self, name: &Name, span: Span, syntax_span: Node) -> Node {
+        // A quote hole is `$` plus one identifier (`$name`, `$r#name`, `${name}`),
+        // not a path: `$name::Ctor` is never a splice.
         if self.quote
             && let Some(var) = name.strip_prefix('$')
+            && !var.contains("::")
         {
             return Node::Splice(Box::new(SurfaceTerm::var(var, span)));
         }
         let reference = name.as_global().cloned().map(Node::Declaration);
+        // A declaration's full name (`app::src::user::Marker`) is written in
+        // place of its spelling only when what else was read makes the short
+        // one ambiguous (another file's `Marker`), so the macro is given the
+        // source spelling of the syntax it reads and finds the declaration in
+        // `declaration`: the name a macro reads does not change with the files
+        // a check reads.
         let display = match name.as_global() {
             Some(reference)
                 if matches!(
@@ -182,7 +207,10 @@ impl Lift<'_> {
             {
                 name.rsplit("::").next().unwrap()
             }
-            _ => name.as_str(),
+            // A quote's own names keep the full name: it is how the code a
+            // macro makes names the declarations of the macro's file.
+            _ if self.quote => name.as_str(),
+            _ => crate::surface::qualify::short(name),
         };
         let (name, ctx) = match self.reflip {
             Some(scope) => {
@@ -238,11 +266,76 @@ impl Lift<'_> {
         Some(Node::SpliceList(Box::new(SurfaceTerm::var(xs, span))))
     }
 
-    fn binder(&self, name: &Name, ty: Option<Node>, span: Span) -> Node {
+    fn binder(
+        &self,
+        name: &Name,
+        ty: Option<Node>,
+        unused: Option<Span>,
+        span: Span,
+    ) -> Node {
         Node::ctor(
             "SynBinder::BName",
-            vec![self.ident(name, span), Node::opt(ty)],
+            vec![
+                self.ident(name, span),
+                Node::opt(ty),
+                Node::opt(unused.map(|u| self.span(u))),
+            ],
         )
+    }
+
+    /// A row as a macro sees it: each entry a `SynRowEntry`, an effect or a row
+    /// variable by its name, or an effect applied to its type arguments as
+    /// expressions. `marks` is where `^` is written before each entry, aligned
+    /// with `row` (a row that keeps no marks passes none).
+    fn row(&self, row: &[Name], marks: &[Option<Span>]) -> R<Node> {
+        row.iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let unused = Node::opt(marks.get(i).copied().flatten().map(|u| self.span(u)));
+                Ok(match entry {
+                    Name::Written(w) => Node::ctor(
+                        "SynRowEntry::EffApplied",
+                        vec![
+                            Node::text(w.head()),
+                            list(
+                                w.arguments()
+                                    .iter()
+                                    .map(|a| self.expr(a))
+                                    .collect::<R<Vec<_>>>()?,
+                            ),
+                            Node::Bool(w.is_universal()),
+                            texts(w.parameters()),
+                            unused,
+                        ],
+                    ),
+                    Name::Effect(e) => Node::ctor(
+                        "SynRowEntry::EffApplied",
+                        vec![
+                            Node::text(e.effect().display()),
+                            list(
+                                e.arguments()
+                                    .iter()
+                                    .map(|a| self.expr(a))
+                                    .collect::<R<Vec<_>>>()?,
+                            ),
+                            Node::Bool(e.is_universal()),
+                            texts(
+                                &e.parameters()
+                                    .iter()
+                                    .map(|p| p.display().to_string())
+                                    .collect::<Vec<_>>(),
+                            ),
+                            unused,
+                        ],
+                    ),
+                    _ => Node::ctor(
+                        "SynRowEntry::EffName",
+                        vec![Node::text(entry.as_str()), unused],
+                    ),
+                })
+            })
+            .collect::<R<Vec<_>>>()
+            .map(list)
     }
 
     pub fn expr(&self, t: &SurfaceTerm) -> R<Node> {
@@ -251,12 +344,17 @@ impl Lift<'_> {
             TermKind::Declaration(_) => {
                 return Err("a declaration capability has no quoted source expression".into());
             }
+            // `#()`, the unit, is a node of its own, though it is read as the variable `Star`.
+            TermKind::Var(_) if t.is_unit() => ex("ExUnit", vec![span]),
             TermKind::Var(n) => {
                 if self.quote && spread(n).is_some() {
                     return Err(msg!("surface-quote-spread-expr", name = n.as_str()).to_string());
-                } else if self.quote && n.starts_with('$') {
+                } else if self.quote
+                    && let Some(var) = n.strip_prefix('$')
+                    && !var.contains("::")
+                {
                     // A name or an expression: `syn_expr_of` takes either.
-                    let inner = SurfaceTerm::var(&n[1..], t.span);
+                    let inner = SurfaceTerm::var(var, t.span);
                     Node::Splice(Box::new(call("Syn::expr_of", vec![inner], t.span)))
                 } else if let Some(atom) = self.atoms.and_then(|a| a.get(n)) {
                     ex("ExAtom", vec![Node::Int(*atom as i64), span])
@@ -275,17 +373,26 @@ impl Lift<'_> {
                 )))
             }
             TermKind::Nat(s) => ex("ExNat", vec![Node::text(s), span]),
-            TermKind::Float(s) => {
-                return Err(msg!("surface-quote-float", literal = s).to_string());
-            }
+            TermKind::Float(s) => ex("ExFloat", vec![Node::text(s), span]),
             TermKind::Text(s) => ex("ExText", vec![Node::text(s), span]),
             TermKind::Bool(b) => ex("ExBool", vec![Node::Bool(*b), span]),
-            // `#()`, the unit, is a node of its own.
-            TermKind::App {
-                function,
-                arguments,
-            } if arguments.is_empty() && crate::surface::is_tuple_head(function) => {
-                ex("ExUnit", vec![span])
+            // `A × B × C` is a node of its own, its members in order.
+            TermKind::App { .. } if let Some(items) = t.product_type_members() => {
+                let items: Vec<SurfaceTerm> = items.into_iter().cloned().collect();
+                ex("ExProduct", vec![self.exprs(&items)?, span])
+            }
+            // `#(a, b)` is quoted as the record of the prelude's `Pair` it is, and read back
+            // from syntax as `#(a, b)` again.
+            TermKind::App { .. } if let Some((fst, snd)) = t.as_pair_value() => {
+                let record = SurfaceTerm::new(
+                    TermKind::Record {
+                        name: quoted_pair().into(),
+                        fields: vec![("fst".into(), fst.clone()), ("snd".into(), snd.clone())],
+                        base: None,
+                    },
+                    t.span,
+                );
+                return self.expr(&record);
             }
             TermKind::App {
                 function,
@@ -296,11 +403,13 @@ impl Lift<'_> {
             ),
             TermKind::Pi {
                 params,
+                unused,
                 result,
                 effects,
             } => {
                 let mut ps = Vec::new();
-                for (name, ty) in params {
+                for (i, (name, ty)) in params.iter().enumerate() {
+                    let mark = unused.get(i).copied().flatten();
                     ps.push(st(
                         "SynParam",
                         vec![
@@ -309,6 +418,7 @@ impl Lift<'_> {
                                 Node::opt(name.as_ref().map(|n| self.ident(n, t.span))),
                             ),
                             ("ty", self.expr(ty)?),
+                            ("unused", Node::opt(mark.map(|u| self.span(u)))),
                         ],
                     ));
                 }
@@ -317,7 +427,7 @@ impl Lift<'_> {
                     vec![
                         list(ps),
                         self.expr(result)?,
-                        Node::opt(effects.as_ref().map(|e| texts(e))),
+                        Node::opt(effects.as_ref().map(|e| self.row(e, &[])).transpose()?),
                         span,
                     ],
                 )
@@ -326,10 +436,11 @@ impl Lift<'_> {
                 binder,
                 domain,
                 body,
+                unused,
             } => ex(
                 "ExExists",
                 vec![
-                    self.binder(binder, None, t.span),
+                    self.binder(binder, None, *unused, t.span),
                     self.expr(domain)?,
                     self.expr(body)?,
                     span,
@@ -339,6 +450,7 @@ impl Lift<'_> {
                 params,
                 body,
                 types,
+                unused_params,
             } => ex(
                 "ExLam",
                 vec![
@@ -351,9 +463,10 @@ impl Lift<'_> {
                                     Some(Some(ty)) => Some(self.expr(ty)?),
                                     _ => None,
                                 };
-                                Ok(self
-                                    .spread_name(p, t.span)
-                                    .unwrap_or_else(|| self.binder(p, ty, t.span)))
+                                let unused = unused_params.get(i).copied().flatten();
+                                Ok(self.spread_name(p, t.span).unwrap_or_else(|| {
+                                    self.binder(p, ty, unused, t.span)
+                                }))
                             })
                             .collect::<R<Vec<_>>>()?,
                     ),
@@ -362,7 +475,6 @@ impl Lift<'_> {
                 ],
             ),
             TermKind::Union(items) => ex("ExUnion", vec![self.exprs(items)?, span]),
-            TermKind::Product(items) => ex("ExProduct", vec![self.exprs(items)?, span]),
             TermKind::Tagged { tag, term } => ex(
                 "ExTagged",
                 vec![self.ident_text(tag), self.expr(term)?, span],
@@ -410,6 +522,7 @@ impl Lift<'_> {
                 scrutinee,
                 result,
                 binder,
+                binder_unused,
                 arms,
             } => {
                 let mut as_ = Vec::new();
@@ -426,6 +539,7 @@ impl Lift<'_> {
                         }),
                         list(as_),
                         Node::opt(binder.as_ref().map(|h| self.ident(h, t.span))),
+                        Node::opt(binder_unused.map(|u| self.span(u))),
                         span,
                     ],
                 )
@@ -434,11 +548,6 @@ impl Lift<'_> {
                 return Err(
                     "a struct literal with `..` is written out before macros see it".into(),
                 );
-            }
-            // `#(a, b)` is quoted as the record of the prelude's `Pair` it is read as
-            // where it is elaborated, and read back from syntax as `#(a, b)` again.
-            TermKind::Tuple(_) => {
-                return self.expr(&crate::surface::qualify::tuple_as_pairs(t, &quoted_pair()));
             }
             TermKind::Record { name, fields, .. } => {
                 let mut fs = Vec::new();
@@ -450,7 +559,7 @@ impl Lift<'_> {
                     vec![self.ident(&name.clone().into(), t.span), list(fs), span],
                 )
             }
-            TermKind::Borrow { mutable, term } => ex(
+            TermKind::Borrow { mutable, term, .. } => ex(
                 "ExBorrow",
                 vec![Node::Bool(*mutable), self.expr(term)?, span],
             ),
@@ -502,8 +611,9 @@ impl Lift<'_> {
                 let mut arms = Vec::new();
                 for arm in &step.arms {
                     let mut binders = Vec::new();
-                    for (name, ty) in &arm.binders {
-                        binders.push(self.binder(name, Some(self.expr(ty)?), arm.span));
+                    for (i, (name, ty)) in arm.binders.iter().enumerate() {
+                        let unused = arm.unused_binders.get(i).copied().flatten();
+                        binders.push(self.binder(name, Some(self.expr(ty)?), unused, arm.span));
                     }
                     arms.push(st(
                         "SynStepArm",
@@ -566,6 +676,8 @@ impl Lift<'_> {
                 value,
                 borrow,
                 borrow_mut,
+                unused,
+                ..
             } => stm(
                 "StLet",
                 vec![
@@ -574,6 +686,7 @@ impl Lift<'_> {
                     self.expr(value)?,
                     Node::Bool(*borrow),
                     Node::Bool(*borrow_mut),
+                    Node::opt(unused.map(|u| self.span(u))),
                     self.span(value.span),
                 ],
             ),
@@ -582,6 +695,8 @@ impl Lift<'_> {
                 ty,
                 value,
                 borrow,
+                unused,
+                ..
             } => stm(
                 "StVar",
                 vec![
@@ -589,11 +704,15 @@ impl Lift<'_> {
                     self.opt_expr(ty)?,
                     self.expr(value)?,
                     Node::Bool(*borrow),
+                    Node::opt(unused.map(|u| self.span(u))),
                     self.span(value.span),
                 ],
             ),
             Stmt::Assign { place: Some(_), .. } => {
                 return Err(msg!("surface-quote-field-assign").to_string());
+            }
+            Stmt::Assign { deref: Some(_), .. } => {
+                return Err(msg!("surface-quote-deref-assign").to_string());
             }
             Stmt::Assign { name, value, .. } => stm(
                 "StAssign",
@@ -625,6 +744,9 @@ impl Lift<'_> {
             Stmt::While { condition, body } => {
                 stm("StWhile", vec![self.expr(condition)?, self.expr(body)?])
             }
+            Stmt::For { .. } | Stmt::Loop { .. } | Stmt::Break(_) | Stmt::Continue => {
+                return Err("`for`, `loop`, `break` and `continue` cannot be quoted yet".into());
+            }
             Stmt::Return(e) => stm("StReturn", vec![self.opt_expr(&e.clone())?]),
             Stmt::Theorem(d) => stm("StTheorem", vec![self.theorem(d)?]),
             Stmt::Def(d) => stm("StDef", vec![self.theorem(d)?]),
@@ -635,13 +757,50 @@ impl Lift<'_> {
             Stmt::Mutual { items, span } => {
                 stm("StMutual", vec![self.stmts(items)?, self.span(*span)])
             }
+            Stmt::Class(d) => stm("StClass", vec![self.class(d)?]),
+            Stmt::Instance(d) => stm("StInstance", vec![self.instance(d)?]),
+            Stmt::Module {
+                name,
+                vis,
+                items,
+                span,
+            } => stm(
+                "StModule",
+                vec![
+                    self.ident(&name.as_str().into(), *span),
+                    Node::Bool(*vis != crate::surface::Vis::Private),
+                    self.stmts(items)?,
+                    list(
+                        items
+                            .iter()
+                            .map(|s| Node::text(s.vis().unwrap_or_default().written()))
+                            .collect(),
+                    ),
+                    self.span(*span),
+                ],
+            ),
+            Stmt::Reexport {
+                module,
+                names,
+                span,
+                ..
+            } => stm(
+                "StReexport",
+                vec![
+                    self.ident(&module.as_str().into(), *span),
+                    list(
+                        names
+                            .iter()
+                            .map(|(n, at)| self.ident(&n.as_str().into(), *at))
+                            .collect(),
+                    ),
+                    self.span(*span),
+                ],
+            ),
             Stmt::Import { .. }
             | Stmt::Extern { .. }
-            | Stmt::Class(_)
-            | Stmt::Instance(_)
             | Stmt::Syntax { .. }
             | Stmt::Macro { .. }
-            | Stmt::Module { .. }
             | Stmt::Attributed { .. }
             | Stmt::Called { .. }
             | Stmt::Other(..) => return Err(msg!("surface-quote-statement").to_string()),
@@ -649,6 +808,12 @@ impl Lift<'_> {
     }
 
     fn fn_decl(&self, f: &FnDecl) -> R<Node> {
+        // A method of a class has no body: the parser gives it an `Other`
+        // term, which a macro sees as `()`.
+        let body = match &*f.body.kind {
+            TermKind::Other(_) => ex("ExUnit", vec![self.span(f.span)]),
+            _ => self.expr(&f.body)?,
+        };
         let mut types = Vec::new();
         for t in &f.param_types {
             types.push(self.opt_expr(t)?);
@@ -691,9 +856,138 @@ impl Lift<'_> {
                 ),
                 ("param_types", list(types)),
                 ("result", self.opt_expr(&f.result)?),
-                ("effects", Node::opt(f.effects.as_ref().map(|e| texts(e)))),
-                ("body", self.expr(&f.body)?),
+                (
+                    "effects",
+                    Node::opt(
+                        f.effects
+                            .as_ref()
+                            .map(|e| {
+                                // The marks of the row as written; they line up with
+                                // the entries while the row is still the one written.
+                                let marks: Vec<Option<Span>> = match &f.written_effects {
+                                    Some(w) if w.len() == e.len() => {
+                                        w.iter().map(|w| w.unused).collect()
+                                    }
+                                    _ => Vec::new(),
+                                };
+                                self.row(e, &marks)
+                            })
+                            .transpose()?,
+                    ),
+                ),
+                ("where_", self.constraints(&f.where_)?),
+                ("body", body),
                 ("span", self.span(f.span)),
+                ("unused", Node::opt(f.unused.map(|u| self.span(u)))),
+                ("unused_generics", self.unused_spans(&f.unused_generics)),
+                ("unused_params", self.unused_spans(&f.unused_params)),
+            ],
+        ))
+    }
+
+    fn laws(&self, laws: &[LawDecl]) -> R<Node> {
+        Ok(list(
+            laws.iter()
+                .map(|l| self.theorem(&l.theorem))
+                .collect::<R<Vec<_>>>()?,
+        ))
+    }
+
+    /// `unused_generics` / `unused_parameters` / `unused_params` as a Syn list.
+    fn unused_spans(&self, marks: &[Option<Span>]) -> Node {
+        list(
+            marks
+                .iter()
+                .map(|u| Node::opt(u.map(|s| self.span(s))))
+                .collect(),
+        )
+    }
+
+    fn class(&self, c: &ClassDecl) -> R<Node> {
+        Ok(st(
+            "SynClass",
+            vec![
+                ("name", self.ident(&c.name, c.span)),
+                ("params", self.params(&c.parameters, c.span)?),
+                ("bound", Node::opt(c.bound.as_ref().map(|b| Node::text(b)))),
+                (
+                    "methods",
+                    list(
+                        c.methods
+                            .iter()
+                            .map(|m| self.fn_decl(m))
+                            .collect::<R<Vec<_>>>()?,
+                    ),
+                ),
+                ("laws", self.laws(&c.laws)?),
+                ("is_inductive", Node::Bool(c.inductive)),
+                ("span", self.span(c.span)),
+                ("parents", self.constraints(&c.parents)?),
+                ("unused_parameters", self.unused_spans(&c.unused_parameters)),
+            ],
+        ))
+    }
+
+    fn constraints(&self, cs: &[Constraint]) -> R<Node> {
+        let mut out = Vec::new();
+        for c in cs {
+            let mut arguments = Vec::new();
+            for a in &c.arguments {
+                arguments.push(self.expr(a)?);
+            }
+            out.push(st(
+                "SynConstraint",
+                vec![
+                    ("class_name", self.ident(&c.class, c.span)),
+                    ("ty", self.expr(&c.ty)?),
+                    ("arguments", list(arguments)),
+                ],
+            ));
+        }
+        Ok(list(out))
+    }
+
+    fn instance(&self, i: &InstanceDecl) -> R<Node> {
+        let exprs = |ts: &[SurfaceTerm]| -> R<Node> {
+            Ok(list(
+                ts.iter().map(|t| self.expr(t)).collect::<R<Vec<_>>>()?,
+            ))
+        };
+        let where_ = self.constraints(&i.where_)?;
+        Ok(st(
+            "SynInstance",
+            vec![
+                ("class_name", self.ident(&i.class, i.span)),
+                ("generic_types", exprs(&i.generic_types)?),
+                ("generics", texts(&i.generics)),
+                (
+                    "bounds",
+                    list(
+                        i.bounds
+                            .iter()
+                            .map(|b| Node::opt(b.as_ref().map(|b| Node::text(b))))
+                            .collect(),
+                    ),
+                ),
+                ("arguments", exprs(&i.arguments)?),
+                ("head", self.expr(&i.head)?),
+                (
+                    "infer_from",
+                    Node::opt(i.infer_from.as_ref().map(Self::infer_condition)),
+                ),
+                ("where_", where_),
+                (
+                    "methods",
+                    list(
+                        i.methods
+                            .iter()
+                            .map(|m| self.fn_decl(m))
+                            .collect::<R<Vec<_>>>()?,
+                    ),
+                ),
+                ("laws", self.laws(&i.laws)?),
+                ("span", self.span(i.span)),
+                ("unused_generics", self.unused_spans(&i.unused_generics)),
             ],
         ))
     }
@@ -712,6 +1006,16 @@ impl Lift<'_> {
                 ("ty", self.expr(&d.ty)?),
                 ("body", self.opt_expr(&d.body)?),
                 ("span", self.span(d.span)),
+                ("unused", Node::opt(d.unused.map(|u| self.span(u)))),
+                (
+                    "unused_params",
+                    list(
+                        d.unused_params
+                            .iter()
+                            .map(|u| Node::opt(u.map(|s| self.span(s))))
+                            .collect(),
+                    ),
+                ),
             ],
         ))
     }
@@ -729,6 +1033,7 @@ impl Lift<'_> {
                 ("generics", generic_texts(&d.generics, &d.rows)),
                 ("ctors", list(ctors)),
                 ("span", self.span(d.span)),
+                ("unused_generics", self.unused_spans(&d.unused_generics)),
             ],
         ))
     }
@@ -800,17 +1105,32 @@ impl Lift<'_> {
                     Node::opt(e.resume.as_ref().map(|r| Node::text(r))),
                 ),
                 ("span", self.span(e.span)),
+                ("unused_generics", self.unused_spans(&e.unused_generics)),
             ],
         ))
     }
 
     fn pattern(&self, p: &Pattern, span: Span) -> R<Node> {
+        // `#(p, q)` is quoted as the record of the prelude's `Pair` it is.
+        if let Some((fst, snd)) = p.as_pair() {
+            let record = Pattern::Record {
+                name: quoted_pair().into(),
+                fields: vec![("fst".into(), fst.clone()), ("snd".into(), snd.clone())],
+            };
+            return self.pattern(&record, span);
+        }
         Ok(match p {
             Pattern::Wild => pt("PtWild", vec![]),
-            Pattern::Bind(n) if self.quote && spread(n).is_some() => {
+            Pattern::Bind { name: n, .. } if self.quote && spread(n).is_some() => {
                 return Err(msg!("surface-quote-spread-pattern", name = n.as_str()).to_string());
             }
-            Pattern::Bind(n) => pt("PtBind", vec![self.ident(n, span)]),
+            Pattern::Bind { name: n, unused } => pt(
+                "PtBind",
+                vec![
+                    self.ident(n, span),
+                    Node::opt(unused.map(|u| self.span(u))),
+                ],
+            ),
             Pattern::Int(i) => pt("PtInt", vec![Node::Int(*i)]),
             Pattern::Bool(b) => pt("PtBool", vec![Node::Bool(*b)]),
             Pattern::Text(t) => pt("PtText", vec![Node::text(t)]),
@@ -818,7 +1138,7 @@ impl Lift<'_> {
                 let mut a = Vec::new();
                 for x in args {
                     match x {
-                        Pattern::Bind(n) if let Some(xs) = self.spread_name(n, span) => a.push(xs),
+                        Pattern::Bind { name: n, .. } if let Some(xs) = self.spread_name(n, span) => a.push(xs),
                         _ => a.push(self.pattern(x, span)?),
                     }
                 }
@@ -831,18 +1151,8 @@ impl Lift<'_> {
                 }
                 pt("PtRecord", vec![self.ident(name, span), list(a)])
             }
-            // `#(p, q)` is quoted as the record of the prelude's `Pair` it is read as
-            // where it is elaborated.
-            Pattern::Tuple(_) => {
-                let pair = format!(
-                    "{}{}Pair",
-                    crate::surface::qualify::PRELUDE_MODULE,
-                    crate::surface::qualify::SEPARATOR
-                );
-                return self.pattern(
-                    &crate::surface::qualify::tuple_pattern_as_pairs(p, &pair),
-                    span,
-                );
+            Pattern::Typed { .. } => {
+                return Err(msg!("surface-quote-pattern", what = "a typed arm").to_string());
             }
             Pattern::Other(n) => return Err(msg!("surface-quote-pattern", what = n).to_string()),
         })
@@ -883,6 +1193,7 @@ impl Lift<'_> {
                 instance,
                 patterns,
                 cont,
+                cont_unused,
                 guard,
                 body,
             } => {
@@ -900,6 +1211,7 @@ impl Lift<'_> {
                         self.ident(effect, span),
                         list(ps),
                         Node::opt(cont.as_ref().map(|c| self.ident(c, span))),
+                        Node::opt(cont_unused.map(|u| self.span(u))),
                         Node::opt(match guard {
                             Some(g) => Some(self.expr(g)?),
                             None => None,
@@ -916,7 +1228,7 @@ impl Lift<'_> {
 
 /// Writes the values of a macro's output as the surface syntax. Every node
 /// gets a span of its own (`origin.rs`), and a name the scopes of the
-/// expansion `scope` flipped (`docs/design/macro.md`「衛生（スコープ集合）」, 5).
+/// expansion `scope` flipped (`docs/design/macro.md`「Hygiene (scope sets)」, 5).
 pub struct Lower<'a> {
     pub scope: u64,
     pub fresh: &'a mut dyn FnMut(u32) -> Span,
@@ -934,6 +1246,23 @@ pub struct Lower<'a> {
 pub const OPEN_ATOM: u64 = 1_000_000_000;
 
 impl Lower<'_> {
+    fn read_infer_condition(&mut self, node: &Node) -> R<InferCondition> {
+        let (kind, _) = self.ctor(node, "SynInferCondition")?;
+        match kind {
+            "InferParameter" => Ok(InferCondition::Parameter(Name::from(
+                self.text(self.field(node, 0)?)?,
+            ))),
+            "InferAnd" => Ok(InferCondition::And(
+                Box::new(self.read_infer_condition(self.field(node, 0)?)?),
+                Box::new(self.read_infer_condition(self.field(node, 1)?)?),
+            )),
+            "InferOr" => Ok(InferCondition::Or(
+                Box::new(self.read_infer_condition(self.field(node, 0)?)?),
+                Box::new(self.read_infer_condition(self.field(node, 1)?)?),
+            )),
+            _ => Err("unknown SynInferCondition variant".into()),
+        }
+    }
     fn span_of(&mut self, n: &Node) -> R<Span> {
         let id = n
             .named("id")
@@ -956,6 +1285,21 @@ impl Lower<'_> {
 
     fn list<'n>(&self, n: &'n Node) -> R<&'n [Node]> {
         n.as_list().ok_or_else(|| "expected a List".to_string())
+    }
+
+    /// Optional `unused_*` Syn list; empty when absent or every mark is none.
+    fn unused_spans_of(&mut self, n: &Node, field: &str) -> R<Vec<Option<Span>>> {
+        let mut out = Vec::new();
+        let Some(list_n) = n.named(field) else {
+            return Ok(out);
+        };
+        for u in self.list(list_n)?.to_vec() {
+            out.push(self.opt(&u, &mut |s, node| s.span_of(node))?);
+        }
+        if out.iter().all(Option::is_none) {
+            out.clear();
+        }
+        Ok(out)
     }
 
     fn text(&self, n: &Node) -> R<String> {
@@ -1021,6 +1365,44 @@ impl Lower<'_> {
         items.iter().map(|i| self.expr(i)).collect()
     }
 
+    /// A row a macro wrote: each `SynRowEntry` the entry it is, the arguments
+    /// of an applied one read as expressions, with where `^` marks it.
+    fn row_marked(&mut self, n: &Node) -> R<Vec<(Name, Option<Span>)>> {
+        let mut out = Vec::new();
+        for e in self.list(n)?.to_vec() {
+            let (ctor, e) = self.ctor(&e, "SynRowEntry")?;
+            let name = match ctor {
+                "EffName" => Name::from(self.text(self.field(e, 0)?)?),
+                "EffApplied" => {
+                    let head = self.text(self.field(e, 0)?)?;
+                    let mut arguments = Vec::new();
+                    for a in self.list(self.field(e, 1)?)?.to_vec() {
+                        arguments.push(self.expr(&a)?);
+                    }
+                    let universal = self.boolean(self.field(e, 2)?)?;
+                    let parameters = self
+                        .list(self.field(e, 3)?)?
+                        .iter()
+                        .map(|p| self.text(p))
+                        .collect::<R<Vec<_>>>()?;
+                    Name::Written(std::sync::Arc::new(crate::identity::WrittenEffect::new(
+                        head, arguments, parameters, universal,
+                    )))
+                }
+                other => return Err(format!("expected a SynRowEntry, found {other}")),
+            };
+            let last = if ctor == "EffName" { 1 } else { 4 };
+            let mark = self.opt(self.field(e, last)?, &mut |s, n| s.span_of(n))?;
+            out.push((name, mark));
+        }
+        Ok(out)
+    }
+
+    /// A row a macro wrote, without its `^` marks.
+    fn row(&mut self, n: &Node) -> R<Vec<Name>> {
+        Ok(self.row_marked(n)?.into_iter().map(|(name, _)| name).collect())
+    }
+
     pub fn expr(&mut self, n: &Node) -> R<SurfaceTerm> {
         let (ctor, _) = self.ctor(n, "SynExpr")?;
         let term = |kind, span| SurfaceTerm::new(kind, span);
@@ -1053,6 +1435,7 @@ impl Lower<'_> {
             }
             "ExNat" => term(TermKind::Nat(self.text(self.field(n, 0)?)?), sp(self, 1)?),
             "ExText" => term(TermKind::Text(self.text(self.field(n, 0)?)?), sp(self, 1)?),
+            "ExFloat" => term(TermKind::Float(self.text(self.field(n, 0)?)?), sp(self, 1)?),
             "ExBool" => term(
                 TermKind::Bool(self.boolean(self.field(n, 0)?)?),
                 sp(self, 1)?,
@@ -1064,6 +1447,8 @@ impl Lower<'_> {
             "ExApp" => {
                 let function = self.expr(self.field(n, 0)?)?;
                 let arguments = self.exprs(self.field(n, 1)?)?;
+                // A call a macro writes is checked as one the source writes: its
+                // implicit arguments are given by name, `f(<x: v>)`, there too.
                 term(
                     TermKind::App {
                         function: Box::new(function),
@@ -1071,9 +1456,11 @@ impl Lower<'_> {
                     },
                     sp(self, 2)?,
                 )
+                .macro_call()
             }
             "ExPi" => {
                 let mut params = Vec::new();
+                let mut unused = Vec::new();
                 for p in self.list(self.field(n, 0)?)?.to_vec() {
                     let name = match p.named("name").ok_or("a SynParam has a name")?.as_option() {
                         Some(Some(id)) => Some(self.local_ident(id)?),
@@ -1083,19 +1470,23 @@ impl Lower<'_> {
                         name,
                         self.expr(p.named("ty").ok_or("a SynParam has a ty")?)?,
                     ));
+                    let mark = match p.named("unused") {
+                        Some(u) => self.opt(u, &mut |s, n| s.span_of(n))?,
+                        None => None,
+                    };
+                    unused.push(mark);
+                }
+                if unused.iter().all(Option::is_none) {
+                    unused.clear();
                 }
                 let result = self.expr(self.field(n, 1)?)?;
-                let effects = self.opt(self.field(n, 2)?, &mut |this, e| {
-                    this.list(e)?
-                        .iter()
-                        .map(|t| this.text(t).map(crate::identity::Name::from))
-                        .collect()
-                })?;
+                let effects = self.opt(self.field(n, 2)?, &mut |this, e| this.row(e))?;
                 term(
                     TermKind::Pi {
                         params,
                         result: Box::new(result),
                         effects,
+                        unused,
                     },
                     sp(self, 3)?,
                 )
@@ -1103,6 +1494,7 @@ impl Lower<'_> {
             "ExLam" => {
                 let mut params = Vec::new();
                 let mut types = Vec::new();
+                let mut unused_params = Vec::new();
                 let depth = self.opened.len();
                 for b in self.list(self.field(n, 0)?)?.to_vec() {
                     // The written type is read outside the parameters.
@@ -1112,10 +1504,14 @@ impl Lower<'_> {
                         }
                         _ => None,
                     });
+                    unused_params.push(self.binder_unused(&b)?);
                     params.push(self.binder(&b)?);
                 }
                 if types.iter().all(Option::is_none) {
                     types.clear();
+                }
+                if unused_params.iter().all(Option::is_none) {
+                    unused_params.clear();
                 }
                 let body = self.expr(self.field(n, 1)?)?;
                 self.opened.truncate(depth);
@@ -1124,6 +1520,7 @@ impl Lower<'_> {
                         params,
                         body: Box::new(body),
                         types,
+                        unused_params,
                     },
                     sp(self, 2)?,
                 )
@@ -1207,14 +1604,16 @@ impl Lower<'_> {
                     arms.push(self.arm(&a)?);
                 }
                 let binder = self.opt(self.field(n, 3)?, &mut |this, x| this.local_ident(x))?;
+                let binder_unused = self.opt(self.field(n, 4)?, &mut |s, x| s.span_of(x))?;
                 term(
                     TermKind::Match {
                         binder: binder.map(crate::identity::Name::from),
+                        binder_unused,
                         scrutinee: Box::new(scrutinee),
                         result: result.map(Box::new),
                         arms,
                     },
-                    sp(self, 4)?,
+                    sp(self, 5)?,
                 )
             }
             "ExRecord" => {
@@ -1238,8 +1637,16 @@ impl Lower<'_> {
                     let mut fields = fields;
                     let snd = fields.pop().expect("two").1;
                     let fst = fields.pop().expect("two").1;
-                    return Ok(term(TermKind::Tuple(vec![fst, snd]), sp(self, 2)?));
+                    return Ok(SurfaceTerm::pair_value(fst, snd, sp(self, 2)?));
                 }
+                // The implicit arguments a macro gives by name, `f(<x: v>)`, are
+                // the record of the internal name whatever scope the macro wrote it in.
+                let name = match &name {
+                    Name::Spelled(spelled) if scope::split(spelled).0 == crate::IMPLICITS => {
+                        crate::IMPLICITS.into()
+                    }
+                    _ => name,
+                };
                 term(
                     TermKind::Record {
                         name: name,
@@ -1254,6 +1661,7 @@ impl Lower<'_> {
                 let inner = self.expr(self.field(n, 1)?)?;
                 term(
                     TermKind::Borrow {
+                        orig: false, rc: false,
                         mutable,
                         term: Box::new(inner),
                     },
@@ -1266,7 +1674,7 @@ impl Lower<'_> {
             }
             "ExProduct" => {
                 let items = self.exprs(self.field(n, 0)?)?;
-                term(TermKind::Product(items), sp(self, 1)?)
+                SurfaceTerm::product_type(items, sp(self, 1)?)
             }
             "ExTagged" => {
                 let tag = self.text(self.field(n, 0)?)?;
@@ -1280,7 +1688,9 @@ impl Lower<'_> {
                 )
             }
             "ExExists" => {
-                let binder = self.binder(self.field(n, 0)?)?;
+                let b = self.field(n, 0)?;
+                let unused = self.binder_unused(b)?;
+                let binder = self.binder(b)?;
                 let domain = self.expr(self.field(n, 1)?)?;
                 let body = self.expr(self.field(n, 2)?)?;
                 term(
@@ -1288,6 +1698,7 @@ impl Lower<'_> {
                         binder,
                         domain: Box::new(domain),
                         body: Box::new(body),
+                        unused,
                     },
                     sp(self, 3)?,
                 )
@@ -1370,6 +1781,7 @@ impl Lower<'_> {
                 for a in self.list(self.field(n, 3)?)?.to_vec() {
                     let depth = self.opened.len();
                     let mut binders = Vec::new();
+                    let mut unused_binders = Vec::new();
                     for b in self
                         .list(a.named("binders").ok_or("a SynStepArm has binders")?)?
                         .to_vec()
@@ -1381,7 +1793,11 @@ impl Lower<'_> {
                             _ => None,
                         }
                         .ok_or("the variable of a step's arm has a type")?;
+                        unused_binders.push(self.binder_unused(&b)?);
                         binders.push((self.binder(&b)?, ty));
+                    }
+                    if unused_binders.iter().all(Option::is_none) {
+                        unused_binders.clear();
                     }
                     let goal = self.expr(a.named("goal").ok_or("a SynStepArm has a goal")?)?;
                     let body = self.expr(a.named("body").ok_or("a SynStepArm has a body")?)?;
@@ -1389,6 +1805,7 @@ impl Lower<'_> {
                     let span = Span::new(goal.span.start, body.span.end.max(goal.span.end));
                     arms.push(crate::surface::StepArm {
                         binders,
+                        unused_binders,
                         goal,
                         body,
                         span,
@@ -1430,6 +1847,17 @@ impl Lower<'_> {
         }
     }
 
+    /// Where `^` was written on a `BName`, when present.
+    fn binder_unused(&mut self, n: &Node) -> R<Option<Span>> {
+        match n.ctor_name() {
+            Some("BName") => match n.field(2) {
+                Some(u) => self.opt(u, &mut |s, n| s.span_of(n)),
+                None => Ok(None),
+            },
+            _ => Ok(None),
+        }
+    }
+
     pub fn stmts(&mut self, n: &Node) -> R<Vec<Stmt>> {
         let items = self.list(n)?.to_vec();
         items.iter().map(|s| self.stmt(s)).collect()
@@ -1443,22 +1871,27 @@ impl Lower<'_> {
         };
         Ok(match ctor {
             "StLet" => Stmt::Let {
+                stack: None,
                 name: self.local_ident(self.field(n, 0)?)?,
                 ty: opt_expr(self, 1)?,
                 value: self.expr(self.field(n, 2)?)?,
                 borrow: self.boolean(self.field(n, 3)?)?,
                 borrow_mut: self.boolean(self.field(n, 4)?)?,
+                unused: self.opt(self.field(n, 5)?, &mut |s, n| s.span_of(n))?,
             },
             "StVar" => Stmt::Var {
+                stack: None,
                 name: self.local_ident(self.field(n, 0)?)?,
                 ty: opt_expr(self, 1)?,
                 value: self.expr(self.field(n, 2)?)?,
                 borrow: self.boolean(self.field(n, 3)?)?,
+                unused: self.opt(self.field(n, 4)?, &mut |s, n| s.span_of(n))?,
             },
             "StAssign" => Stmt::Assign {
                 name: self.ident(self.field(n, 0)?)?,
                 place: None,
                 value: self.expr(self.field(n, 1)?)?,
+                deref: None,
             },
             "StFn" => Stmt::Fn(self.fn_decl(self.field(n, 0)?)?),
             "StExpr" => Stmt::Expr(self.expr(self.field(n, 0)?)?),
@@ -1473,10 +1906,59 @@ impl Lower<'_> {
             "StEnum" => Stmt::Enum(self.data(self.field(n, 0)?)?),
             "StInductive" => Stmt::Inductive(self.inductive(self.field(n, 0)?)?),
             "StEffect" => Stmt::Effect(self.effect(self.field(n, 0)?)?),
+            "StClass" => Stmt::Class(self.class(self.field(n, 0)?)?),
+            "StInstance" => Stmt::Instance(self.instance(self.field(n, 0)?)?),
             "StMutual" => Stmt::Mutual {
                 items: self.stmts(self.field(n, 0)?)?,
                 span: self.span_of(self.field(n, 1)?)?,
             },
+            "StModule" => {
+                use crate::surface::Vis;
+                let name = self.local_ident(self.field(n, 0)?)?.to_string();
+                let vis = if self.boolean(self.field(n, 1)?)? {
+                    Vis::Pub
+                } else {
+                    Vis::Private
+                };
+                let mut items = self.stmts(self.field(n, 2)?)?;
+                let visibility = self.list(self.field(n, 3)?)?;
+                if items.len() != visibility.len() {
+                    return Err("a module has one visibility per statement".into());
+                }
+                for (item, tag) in items.iter_mut().zip(visibility) {
+                    let vis = match self.text(tag)?.as_str() {
+                        "" => Vis::Private,
+                        "pub " => Vis::Pub,
+                        "pub(handle) " if matches!(item, Stmt::Effect(e) if e.set.is_none()) => {
+                            Vis::Handle
+                        }
+                        "pub(open) " => Vis::Open,
+                        _ => return Err("invalid module member visibility".into()),
+                    };
+                    if let Some(v) = item.vis_mut() {
+                        *v = vis;
+                    }
+                }
+                Stmt::Module {
+                    name,
+                    vis,
+                    items,
+                    span: self.span_of(self.field(n, 4)?)?,
+                }
+            }
+            "StReexport" => {
+                let module = self.local_ident(self.field(n, 0)?)?.to_string();
+                let mut names = Vec::new();
+                for id in self.list(self.field(n, 1)?)?.to_vec() {
+                    names.push((self.local_ident(&id)?.to_string(), self.ident_span(&id)?));
+                }
+                Stmt::Reexport {
+                    module,
+                    names,
+                    aliases: None,
+                    span: self.span_of(self.field(n, 2)?)?,
+                }
+            }
             "StMacroCall" => {
                 let expr = self.expr(&Node::ctor(
                     "SynExpr::ExMacroCall",
@@ -1527,17 +2009,36 @@ impl Lower<'_> {
             param_types.push(self.opt(&t, &mut |this, x| this.expr(x))?);
         }
         let result = self.opt(get("result")?, &mut |this, x| this.expr(x))?;
-        let effects = self.opt(get("effects")?, &mut |this, x| {
-            this.list(x)?
-                .iter()
-                .map(|t| this.text(t).map(crate::identity::Name::from))
-                .collect()
-        })?;
+        let marked = self.opt(get("effects")?, &mut |this, x| this.row_marked(x))?;
+        // `^` before an entry is kept as the row written; a row with none keeps no written row.
+        let written_effects = marked
+            .as_ref()
+            .filter(|m| m.iter().any(|(_, mark)| mark.is_some()))
+            .map(|m| {
+                m.iter()
+                    .map(|(name, unused)| crate::surface::WrittenRowEffect {
+                        name: name.clone(),
+                        unused: *unused,
+                        span,
+                        members: None,
+                    })
+                    .collect::<Vec<_>>()
+            });
+        let effects = marked.map(|m| m.into_iter().map(|(name, _)| name).collect::<Vec<_>>());
+        let where_ = self.constraints(get("where_")?, span)?;
         let body = self.expr(get("body")?)?;
+        let unused = match get("unused") {
+            Ok(u) => self.opt(u, &mut |s, n| s.span_of(n))?,
+            Err(_) => None,
+        };
+        let unused_generics = self.unused_spans_of(n, "unused_generics")?;
+        let unused_params = self.unused_spans_of(n, "unused_params")?;
         Ok(FnDecl {
+            lends: None,
             budget: None,
             vis: crate::surface::Vis::Open,
             opaque: false,
+            ghost: false,
             decreasing_by: None,
             generates: None,
             name: name,
@@ -1551,9 +2052,131 @@ impl Lower<'_> {
             param_types,
             result,
             effects,
-            where_: Vec::new(),
+            written_effects,
+            row_hole: None,
+            where_,
             span,
             body,
+            unused,
+            unused_generics,
+            unused_params,
+        })
+    }
+
+    fn laws(&mut self, n: &Node) -> R<Vec<LawDecl>> {
+        let mut laws = Vec::new();
+        for l in self.list(n)?.to_vec() {
+            let theorem = self.theorem(&l)?;
+            laws.push(LawDecl {
+                name: theorem.name.clone(),
+                span: theorem.span,
+                theorem,
+            });
+        }
+        Ok(laws)
+    }
+
+    fn class(&mut self, n: &Node) -> R<ClassDecl> {
+        let get = |k: &str| n.named(k).ok_or_else(|| format!("a SynClass has {k}"));
+        let name = self.ident(get("name")?)?;
+        let span = self.span_of(get("span")?)?;
+        let parameters = self.params(get("params")?)?;
+        let bound = self.opt(get("bound")?, &mut |this, x| this.text(x))?;
+        let mut methods = Vec::new();
+        for m in self.list(get("methods")?)?.to_vec() {
+            let mut method = self.fn_decl(&m)?;
+            // A class method has no body.
+            method.body = SurfaceTerm::new(TermKind::Other("ExternFn".into()), method.span);
+            methods.push(method);
+        }
+        let laws = self.laws(get("laws")?)?;
+        let inductive = self.boolean(get("is_inductive")?)?;
+        let param = parameters
+            .first()
+            .map(|(n, _)| n.clone())
+            .ok_or("a SynClass has a parameter")?;
+        Ok(ClassDecl {
+            parents: self.constraints(get("parents")?, span)?,
+            arity: parameters.len(),
+            parameters,
+            unused_parameters: self.unused_spans_of(n, "unused_parameters")?,
+            name,
+            vis: crate::surface::Vis::Open,
+            param,
+            bound,
+            methods,
+            laws,
+            inductive,
+            span,
+        })
+    }
+
+    fn constraints(&mut self, n: &Node, span: Span) -> R<Vec<Constraint>> {
+        let mut where_ = Vec::new();
+        for c in self.list(n)?.to_vec() {
+            let field = |k: &str| c.named(k).ok_or_else(|| format!("a SynConstraint has {k}"));
+            let mut arguments = Vec::new();
+            for a in self.list(field("arguments")?)?.to_vec() {
+                arguments.push(self.expr(&a)?);
+            }
+            where_.push(Constraint {
+                arguments,
+                class: self.ident(field("class_name")?)?,
+                ty: self.expr(field("ty")?)?,
+                span,
+            });
+        }
+        Ok(where_)
+    }
+
+    fn instance(&mut self, n: &Node) -> R<InstanceDecl> {
+        let get = |k: &str| n.named(k).ok_or_else(|| format!("a SynInstance has {k}"));
+        let class = self.ident(get("class_name")?)?;
+        let span = self.span_of(get("span")?)?;
+        let exprs = |this: &mut Self, k: &str| -> R<Vec<SurfaceTerm>> {
+            let mut out = Vec::new();
+            for e in this.list(get(k)?)?.to_vec() {
+                out.push(this.expr(&e)?);
+            }
+            Ok(out)
+        };
+        let generic_types = exprs(self, "generic_types")?;
+        let arguments = exprs(self, "arguments")?;
+        let generics: Vec<Name> = self
+            .list(get("generics")?)?
+            .iter()
+            .map(|t| self.text(t).map(Name::from))
+            .collect::<R<_>>()?;
+        if !generic_types.is_empty() && generic_types.len() != generics.len() {
+            return Err("SynInstance.generic_types must be empty or match generics".into());
+        }
+        let mut bounds = Vec::new();
+        for b in self.list(get("bounds")?)?.to_vec() {
+            bounds.push(self.opt(&b, &mut |this, x| this.text(x))?.map(Into::into));
+        }
+        let head = self.expr(get("head")?)?;
+        let infer_from = self.opt(get("infer_from")?, &mut |this, n| {
+            this.read_infer_condition(n)
+        })?;
+        let where_ = self.constraints(get("where_")?, span)?;
+        let mut methods = Vec::new();
+        for m in self.list(get("methods")?)?.to_vec() {
+            methods.push(self.fn_decl(&m)?);
+        }
+        let laws = self.laws(get("laws")?)?;
+        Ok(InstanceDecl {
+            generic_types,
+            arguments,
+            generics,
+            unused_generics: self.unused_spans_of(n, "unused_generics")?,
+            bounds,
+            class,
+            head,
+            infer_from,
+            where_,
+            methods,
+            laws,
+            span,
         })
     }
 
@@ -1569,6 +2192,19 @@ impl Lower<'_> {
         }
         let ty = self.expr(get("ty")?)?;
         let body = self.opt(get("body")?, &mut |this, x| this.expr(x))?;
+        let unused = match get("unused") {
+            Ok(u) => self.opt(u, &mut |s, n| s.span_of(n))?,
+            Err(_) => None,
+        };
+        let mut unused_params = Vec::new();
+        if let Ok(list_n) = get("unused_params") {
+            for u in self.list(list_n)?.to_vec() {
+                unused_params.push(self.opt(&u, &mut |s, n| s.span_of(n))?);
+            }
+        }
+        if unused_params.iter().all(Option::is_none) {
+            unused_params.clear();
+        }
         Ok(TheoremDecl {
             budget: None,
             vis: crate::surface::Vis::Open,
@@ -1579,6 +2215,8 @@ impl Lower<'_> {
             ty,
             body,
             span,
+            unused,
+            unused_params,
         })
     }
 
@@ -1651,9 +2289,13 @@ impl Lower<'_> {
             kind,
             name: name,
             generics,
+            unused_generics: self.unused_spans_of(n, "unused_generics")?,
+            unused_fields: Vec::new(),
             rows,
             constructors,
             host: false,
+            borrowed: false,
+            coerce: None,
             span,
         })
     }
@@ -1675,9 +2317,12 @@ impl Lower<'_> {
         let resume = self.opt(get("resume")?, &mut |this, x| this.text(x))?;
         let span = self.span_of(get("span")?)?;
         Ok(EffectDecl {
+            module_scope: None,
             vis: crate::surface::Vis::Open,
             name: name,
             generics,
+            bounds: Vec::new(),
+            unused_generics: self.unused_spans_of(n, "unused_generics")?,
             rows,
             params,
             param_names: Vec::new(),
@@ -1692,7 +2337,14 @@ impl Lower<'_> {
         let (ctor, _) = self.ctor(n, "SynPattern")?;
         Ok(match ctor {
             "PtWild" => Pattern::Wild,
-            "PtBind" => Pattern::Bind(self.local_ident(self.field(n, 0)?)?),
+            "PtBind" => {
+                let name = self.local_ident(self.field(n, 0)?)?;
+                let unused = match n.field(1) {
+                    Some(u) => self.opt(u, &mut |s, n| s.span_of(n))?,
+                    None => None,
+                };
+                Pattern::Bind { name, unused }
+            }
             "PtInt" => Pattern::Int(self.field(n, 0)?.as_int().ok_or("expected an i64")?),
             "PtBool" => Pattern::Bool(self.boolean(self.field(n, 0)?)?),
             "PtText" => Pattern::Text(self.text(self.field(n, 0)?)?),
@@ -1741,22 +2393,24 @@ impl Lower<'_> {
                     patterns.push(self.pattern(&p)?);
                 }
                 let cont = self.opt(self.field(n, 2)?, &mut |this, x| this.local_ident(x))?;
-                let guard = self.opt(self.field(n, 3)?, &mut |this, x| this.expr(x))?;
-                let body = self.expr(self.field(n, 4)?)?;
+                let cont_unused = self.opt(self.field(n, 3)?, &mut |s, x| s.span_of(x))?;
+                let guard = self.opt(self.field(n, 4)?, &mut |this, x| this.expr(x))?;
+                let body = self.expr(self.field(n, 5)?)?;
                 let mut forall = Vec::new();
-                for t in self.list(self.field(n, 5)?)?.to_vec() {
+                for t in self.list(self.field(n, 6)?)?.to_vec() {
                     forall.push(crate::identity::Name::Spelled(self.text(&t)?));
                 }
                 let mut args = Vec::new();
-                for t in self.list(self.field(n, 6)?)?.to_vec() {
+                for t in self.list(self.field(n, 7)?)?.to_vec() {
                     args.push(self.expr(&t)?);
                 }
                 let instance = Instance { forall, args };
                 Handler::Operation {
-                    effect: effect,
+                    effect,
                     instance,
                     patterns,
                     cont: cont.map(crate::identity::Name::from),
+                    cont_unused,
                     guard,
                     body,
                 }
@@ -1764,10 +2418,6 @@ impl Lower<'_> {
             other => return Err(format!("{other} is not a SynHandler")),
         })
     }
-}
-
-pub fn is_marked(name: &str) -> bool {
-    !scope::split(name).1.is_empty()
 }
 
 #[cfg(test)]

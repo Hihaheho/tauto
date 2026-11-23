@@ -1,332 +1,453 @@
-# tauto の構文
+# Syntax
 
-tauto の表面の構文の仕様です。どの構文も読み込みか精密化で既存の項（eliminator の適用、λ、Π）に
-展開され、カーネルは書き下した場合と同じ項を受け取ります。文法は `crates/tauto-parol/tauto.par`、
-受理・拒否・展開・整形・lint の例は `cases/` にあります。
+Every surface form elaborates to existing terms (eliminator applications, λ,
+Π); the kernel receives the same term as the written-out form. Grammar:
+`crates/tauto-parol/tauto.par`. Examples: `cases/`.
 
-**決まっていないことは「未決定」の節にだけ書きます。**それ以外はすべて今の仕様です。
+## Principles
 
----
+1. One symbol, one meaning; distinguish by spelling, not position.
+2. `!` is only macro calls (`name!`) and effect rows (`T ! {E}`, and `T !?` for a row not written yet).
+3. `=` is propositional equality, `:=` binds, `==` is a computed comparison.
+4. `<…>` is inferred implicit arguments, `(…)` explicit ones.
+5. Whitespace and lookahead never change meaning.
+6. `::` references declarations; `.` projects fields of terms.
 
-## 要約
+## Lexical
 
-1. 一つの記号には一つの意味。意味が分かれる記号は、位置ではなく綴りで区別する。
-2. `!` はマクロの呼び出し（`name!`）と effect の行（`T ! {E}`）にだけ使う。
-3. `=` は命題の等号、`:=` は名前に中身を与える、`==` は計算する比較。
-4. `<…>` は推論される暗黙の引数、`(…)` は明示の引数。
-5. 空白と先読みで意味を変えない。予約語は綴りだけで決まる。
-6. 宣言の参照は `::`、項からのフィールドの取り出しは `.`。
+### Keywords
 
----
+`inductive by from eqn opaque ghost copy shared affine linear resume
+direct mut coerce pub module where class instance infer extern type syntax macro quote
+borrows` and statement words (`theorem def fn let match for in while loop break
+continue` …) are reserved by spelling everywhere. Use `r#name` for such a name in any
+position (`struct Token { r#type: Kind }`, `t.r#type`); `r#` is not part of the name and
+`r#_` is invalid.
 
-## 字句
+- `name!` is one token, and so is a macro of a module, `M::name!`; no space
+  before `!`, space after is allowed and
+  `tauto fmt` removes it.
+- ASCII input `\times \land \lor \iff \neg \vdash \omega \forall \exists \cup
+  \llbracket \rrbracket \square` reads as `× ∧ ∨ ↔ ¬ ⊢ ω ∀ ∃ ∪ ⟦ ⟧ □`; `fmt`
+  converts, and lint forbids it in `std/` and `meta/`.
+- Numbers may use `_` separators.
+- A lone `_` is not an Ident. In patterns it is the dedicated Wild token (binds
+  nothing). As a call argument it is the same Wild token, read as the placeholder
+  name `_` (for Nib partial type applications such as `Two(_, i64)`); it does not
+  introduce a binding. Binding sites (`let`, `var`, parameters, binders, λ
+  binders, declaration names) require a real name; write `^name` when the binding
+  is intentionally unused.
+- `^name` is an unused assertion: `^` is metadata on the binding, not part of the
+  name. Resolution, references, and rename use `name`. It may stand on `let` /
+  `var`, parameters (including class methods and class/instance laws), type
+  parameters (`fn f<^A>(…)`, `struct S(^A: Type)`, `class C(^A: Type)`, and
+  the same form on `enum` / `effect` / `instance` / `theorem` / `def`), λ
+  parameters (`(^x: T) => …`), pattern binds (`Some(^x)`, `Point { x: ^y }`,
+  shorthand `Point { ^x }`), the fields of a struct that is not `pub`
+  (`struct Point { x: i64, ^y: i64 }`), and declaration names that are not
+  `pub`. A field of such a struct that nothing in its file reads (no `e.y`, no
+  pattern that names it, no `..e` that takes it; building a value does not read
+  it) is an unused-field warning; a mark suppresses it, and is an error when the
+  field is read. A struct with an attribute macro on it is not checked, and a
+  mark on its field is refused as unverifiable. `^` is refused on a field of a
+  `pub` struct, whose fields other files may read, and on a member of a record
+  type (`{ ^x: i64 }`). An
+  unmarked type parameter that is never mentioned in that declaration's
+  signature or body (beyond its own binder) is an unused-binding warning; a
+  mark suppresses that warning when unused and is an error when the parameter
+  is used. It is refused on `pub` declaration names and on non-binding pattern
+  positions (constructor names with arguments `^Some(x)`, nullary constructors
+  such as `^None` once the name is resolved as a constructor, and field labels
+  `Point { ^x: y }`). `_name` is an ordinary Ident; a leading `_` does not
+  suppress unused diagnostics.
+- `{` and `}` are always separate tokens. `Name {` is a struct literal, which is
+  not allowed (without parentheses) in `if`/`while`/`match`/`for` heads,
+  declaration result types, `match …: G {`, or before a step body.
 
-### 予約語
+## Formatting
 
-`inductive by from eqn opaque budget copy shared affine linear view resume direct mut pub module where
-class instance extern type syntax macro quote` などは綴りだけで決まる予約語で、名前には使えない。`theorem`・`def`・
-`fn`・`let`・`match` などの文の語も同じ。
+`tauto fmt` preserves the surface AST and comments (ignoring positions, treating
+a one-expression block as the expression, filling a macro literal's syntax name
+from the call). It reparses and rejects output that differs; it is idempotent.
 
-- 予約語と同じ綴りの名前は `r#name` と書く（`r#view`）。`r#view` と `view` は同じ名前で、`r#` は名前に含めない。
-  `r#_` は書けない。予約語の綴りはどの位置でも予約語で、名前に使うときは位置によらず `r#` を付ける
-  （`struct Token { r#type: Kind }`、`t.r#type`、`#{ r#view: v }`）。
-- 宣言とクロージャの修飾子 `affine`・`linear` は一つのトークン。
+- Two-space indent per block, width 100. Over-long calls and effect-row
+  literals break per argument or effect, recursively.
+- A `match` arm or `else` whose block holds only one `match`/`if` loses the
+  block. Blocks with bindings, other statements, boundary comments, required
+  `if`/`while` bodies, quotes and macro syntax are kept.
+- A sole multi-line syntax literal argument opens its fence after `(` and closes
+  before `)`; body and closing fence sit two spaces deeper than the call, with
+  relative indentation preserved.
+- A direct literal argument drops its syntax name when it matches the resolved
+  input syntax. Formatting inside literals: `macro.md`「Functions attached to a
+  syntax (`with`)」.
 
-### マクロの名前
+## Names
 
-マクロの名前は `name!` で一つのトークン。名前と `!` の間に空白は置けず、`!` の後ろの空白は許す（`m! (x)`）。
-`tauto fmt` は `m!(x)` に揃える。
-
-### 記号の ASCII 入力
-
-`\times \land \lor \iff \neg \vdash \omega \forall \exists \cup` と `\llbracket \rrbracket \square` は、それぞれ
-`× ∧ ∨ ↔ ¬ ⊢ ω ∀ ∃ ∪` と `⟦ ⟧ □` と同じトークンとして読む。`tauto fmt` は記号に直し、`std/` と `meta/` では lint が禁じる。
-
-### 数のリテラル
-
-数のリテラルは `_` で桁を区切れる（`100_000_000`）。
-
-### 空白と波括弧
-
-`{` と `}` は常に別のトークンで、`{}` と `{ }` は同じ。名前の直後の `{` は名前つきの struct のリテラル。
-`if`・`while`・`match`・`for` の条件と判別対象、宣言の結果の型、`match …: G {` の `G`、ステップのゴールの直前
-（本体の `{` の直前）には名前つきの struct のリテラルを書かない（書くときは括弧で包む）。
-
----
-
-## 整形
-
-`tauto fmt` は表面の AST とコメントを保存する。比較ではソース位置を除き、
-式一つだけのブロックをその式として扱う。マクロのリテラル引数の構文名は、
-呼び出しが要求する構文を補って比較する。整形した結果を再解析して比較し、
-一致しない結果は採用しない。整形は冪等である。
-
-字下げはブロックごとに 2 スペース、行幅は 100 文字とする。呼び出しが行幅を
-超える場合は引数ごとに改行し、内側の呼び出しにも同じ規則を適用する。
-`match` の腕が `match` または `if` 一つだけのブロックなら、外側のブロックを省く。
-`else` が `if` 一つだけのブロックなら、そのブロックを省く。
-束縛や他の文を含むブロック、境界にコメントがあるブロック、構文上必要な
-`if`・`while` の本体のブロックは保持する。引用とマクロに渡す構文のブロックは省かない。
-
-呼び出しの唯一の引数が複数行の構文リテラルなら、開始フェンスを開き括弧に続け、
-閉じフェンスに閉じ括弧を続ける。本文の基準位置と閉じフェンスは呼び出しの行より
-2 スペース深くする。閉じフェンスによる字下げの除去後の本文を保存して移動するため、
-本文が持つ相対的な字下げと先頭空白は変わらない。
-
-構文を読むマクロの直接のリテラル引数では、解決された入力構文と明記された名前が
-一致するときに構文名を省く。解決できない名前、要求された構文と異なる名前、
-単独のリテラルの名前は保持する。リテラル内部の整形は macro.md「構文に付ける関数（`with`）」の
-規則に従う。
-
----
-
-## 名前
-
-- 宣言の参照は `::` で書く（`List::map`、`Option::None`、`M::T::C`、`T::beq`、`f::eq`、`import std::List`）。名前の道筋は
-  一つのトークンで、`::` の左には宣言の名前だけが来て、式は置けない。
-- `.` は項からのフィールドの取り出しだけ（`s.name`、`f(x).len`）。`.` の後ろに宣言の名前を書くと、`::` で書くよう
-  案内するエラーになる。
-- `module M` の中には関数と型（`struct`・`enum`・`inductive`）を置ける。中では `T`、外では `M::T` と書き、
-  コンストラクタの完全な名前は `M::T::C`。
-- 同じ種類の名前（関数、型、コンストラクタ、module、class）が、見える宣言の中で重なるとエラーで、先に見つかったものや後から書かれたものを選ぶことはしない（見える宣言は [`visibility.md`](visibility.md)「見える範囲」）。module と class の名前は、入れ子のどの深さでも重ならない。
-- `module M` の中で書いた名前が、`M`（や内側の module）の宣言と外側の module の宣言の両方を指すときは、曖昧であるというエラーになる。内側の宣言は `M::f`、外側の宣言は `A::f` と module の道筋で書いて選ぶ。module の外で宣言された名前（prelude の宣言と組み込みの型、ファイルの先頭の宣言、import したファイルの先頭の宣言）を、その名前を宣言している module の中で短く書いたときも、曖昧であるというエラーになる。module の宣言は `M::f` と書く。外の宣言には書き分ける道筋がないので、それを使うときは module の宣言を改名する（`module Font { fn u8 … }` の中で `Vec(u8)` と書くとエラー）。名前を宣言するだけではエラーにならず、外にない名前は短く書ける。型と値は一つの名前空間を共有する（型も項なので、書いた位置で読み分けない）。
-- コンストラクタの名前は大文字で始め、引数のないコンストラクタは括弧なしで書く（`Refl`、`Nil`）。
+- `List::map`, `Option::None`, `m::T::C`, `f::eq`, `import std::list`. A path is
+  one token; only declaration names go left of `::`. A declaration name after
+  `.` is an error pointing at `::`.
+- A module block gives declarations a scope and a path. Use lowercase
+  `snake_case` for module names. A member named `T` in `module m { … }` is
+  written `m::T` outside the module when its visibility permits it.
+- A file is an importable module. Tote, directory and file names are lowercase
+  `snake_case` (`std/text.taut`, `std/float_bounds_a.taut`); `import std::text`
+  reads `std/text.taut`, and lint `file-name` flags a file name with a capital
+  letter. Declaration names keep their capitals. A path therefore reads as
+  lowercase for the location and capitalized from the declaration onward:
+  `std::text::Text::len` names `Text::len` in `std/text.taut`, and
+  `std::prelude::Text::len` names the prelude's declaration.
+- Overlapping visible names of one kind (function, type, constructor, module,
+  class) are errors, never resolved by order ([`visibility.md`](visibility.md)
+  「Scope」). Module and class names never overlap at any depth.
+- Inside a module, a short name meaning both an inner and an outer declaration
+  is ambiguous; write `m::f` or `a::f`. A short name declared both in the module
+  and outside it (prelude, builtins, file top level, imported top level) is also
+  ambiguous; the outer one has no path, so rename the module's declaration
+  (`module font { fn u8 … }` makes `Vec(u8)` an error). Types and values share
+  one namespace.
+- Constructors are capitalized; nullary ones take no parentheses.
 
 ### import
 
-- `import std::Text` は標準ライブラリか依存する tote の module を、`import "value.taut"` は import するファイルからの
-  道筋でファイルを指す。二つは同じ規則に従う。
-- `import self::b` はファイル自身の module を指す：`a.taut` の中では、`a.taut` と同じディレクトリにある `a/` の
-  `b.taut` である（`self::b::c` は `a/b/c.taut`）。`a/b.taut` の中の `self::c` は `a/b/c.taut` を指す。
-  子は親の非 `pub` の宣言を見ず、親を import しても子は持ち込まれない（import は推移しない）。`self` だけの import は書けず、`self` という名前のトートは作れない。
-- 依存する tote は、言語の中ではその名前のハイフンをアンダースコアにした名前で書く：tote `query-flow` の module は
-  `import query_flow::flow`。tote の名前（`Tauto.eure` の `package.name` と `dependencies`）はハイフンだけを使いアンダースコアを
-  使わず、言語の中の名前はアンダースコアだけを使いハイフンを使わないので、二つの書き方は一対一に対応する。
-- import は持ち込む名前の一覧を `{ … }` に書ける：`import std::Text { Text, concat }`、`import "value.taut" { Value }`。
-  一覧の名前はコンマか改行で区切る。一覧を書いた import は一覧にある名前だけを持ち込み、一覧を書かない import は
-  import したファイルの `pub` の宣言をすべて持ち込む（[`visibility.md`](visibility.md)「見える範囲」）。
-- 一覧には宣言の名前を書く。型を書けば、その構成子と、型のために作られる名前（`Value::rec` など）も持ち込む。
-  module は名前で書き、その関数（`List::map`）を持ち込む。関数、エフェクト、クラス、マクロ、構文はそれぞれ名前で書く。
-- 一覧は、そのファイルがその import を通して使う名前を書く。使っているのに一覧にない名前と、import したファイルが
-  他のファイルに見せていない名前はエラーである（名前が解決できない）。一覧にあって使っていない名前は警告である。
-  除いてもプログラムの意味は変わらないので、検査を止めない。`std/` のファイルでは一覧を使う名前と一致させるので、
-  これもエラーにする。マクロと構文、言語の型（`Text`）はどこからでも見えるので、一覧になくてもエラーにならず、
-  一覧にあれば使っていなくても警告にならない。
-- 一覧のない import は `tauto lint` の `import-list` が知らせる。`tauto lint --fix` は、名前の解決が読んだとおりに
-  ファイルがその import を通して使う名前から一覧を書く（足りない名前を足し、使っていない名前を除き、名前の順に並べる）。
-  そのファイルが何も使っていない import は書き換えない。`tauto fmt` は書かれた一覧をそのまま整形するだけで、一覧を作らない。
+- `import std::text` names a library or dependency module; `import "value.taut"`
+  a file relative to the importer. Same rules for both.
+- `import self::b` in `a.taut` is `a/b.taut` (`self::b::c` is `a/b/c.taut`).
+  Children don't see parents' non-`pub` declarations and imports are not
+  transitive. Bare `self` imports and totes named `self` are invalid.
+- Tote names use only hyphens, in-language names only underscores:
+  `query-flow` is `import query_flow::flow`.
+- `import std::text { Text, concat }` imports exactly the listed names (comma or
+  newline separated); without a list, all `pub` declarations. A type brings its
+  constructors and generated names (`Value::rec`); a module brings its functions.
+- Using an unlisted or non-exported name is an error; listing an unused name is a
+  warning (an error in `std/`). Macros, syntaxes and language types are visible
+  everywhere and exempt.
+- Lint `import-list` flags missing lists; `tauto lint --fix` writes them
+  (sorted, adds missing, drops unused, skips imports with no uses). `fmt` never
+  creates lists.
+- An `import` is written at the top of a file or at the head of the body of a
+  top-level `fn`, `macro fn`, `theorem` or `def`, before the body's other
+  statements; anywhere else (later in a body, in a closure, a nested `fn`, a
+  `module`, `instance` or `class` block, or a declaration a `quote` makes) it is
+  an error. A body's import has the same forms and rules, lists and lints
+  included; its names are seen in that body only ([`visibility.md`](visibility.md)
+  「Scope」). A file depends on every import it writes.
 
----
+## Operators
 
-## 演算子
+### Term operators
 
-### 項の演算子
+Tightest first: application, `* /`, `+ -`, `== != < <= > >=`, `&&`, `||`, `=`.
+`a && b = true` is `(a && b) = true`. Mixing `&&` and `||` without parentheses
+triggers lint `bool-mix`. `¬` is looser than `=` and tighter than type
+operators. Boolean negation is the ordinary function `not(b)`. `!=` is one token.
 
-強い順に、関数適用、`* /`、`+ -`、比較 `== != < <= > >=`、`&&`、`||`、`=`。`a && b = true` は `(a && b) = true`。
-`&&` と `||` を括弧なしで混ぜた式は lint（`bool-mix`）が括弧を求める。`¬` は `=` より弱く、型の演算子より強い。
+### Type operators
 
-真偽値の否定は std の普通の関数 `not(b)` で、組み込みの演算子ではない（同名の関数を宣言できる）。`!=` は一つの
-トークンで、`!` の役とは別の記号。
+Tightest first: `∧ ×` (right), `∨ |` (right), `->` (right, function types only),
+`↔` (non-associative).
 
-### 型の演算子
+### Propositional equality
 
-強い順に `∧ ×`（右結合）、`∨ |`（右結合）、`->`（右結合）、`↔`（結合しない）。`×` は `∧` と、`|` は `∨` と同じ段にある。
-`->` は関数型だけに使う。
+`a = b` elaborates to `Eq(T, a, b)`, with `T` synthesized from the left, else
+the right, checking the other side against it (`check/implicit.rs`). Forms that
+cannot synthesize: parameterized nullary constructors (`Nil`, `None`), numeric
+literals, `[]`, holes, λ, and `#(…)` with such an element. If both sides are
+such forms, write `Eq(T, a, b)`. Mismatched types are errors; no coercion.
 
-### 命題の等号
+- `a = b = c` is a syntax error.
+- The left side must not start with `(`, `{` or a unary operator; use
+  `Eq(T, a, b)`.
+- Inequality is `¬(a = b)`; there is no `≠`.
+- `a == b` in type positions is the equality-function call, as in terms.
 
-`a = b` は `Eq(T, a, b)` に展開される。`T` は型を合成できる側から決める（左、合成できなければ右。もう片方はその型で
-検査する。`check/implicit.rs`）。そのままでは型を合成できない形は、型パラメータのあるコンストラクタを引数なしで
-書いたもの（`Nil`、`None`）、数値リテラル、`[]`、穴、λ。積の値 `#(a, b)` は要素の型から `A × B` を合成し、要素の
-どれかが合成できない形ならそれも合成できない形。両辺ともこの形なら `Eq(T, a, b)` と書く。両辺の型が食い違えば
-エラーで、変換は挟まない。
+### Negation
 
-- `a = b = c` は構文エラー。
-- 左は名前・呼び出し・演算・リテラル・リスト・`match` など、`(`・`{`・単項演算子で始まらない式。括弧や struct の
-  リテラルで始まる左は `Eq(T, a, b)` と書く。
-- 命題の「等しくない」は `¬(a = b)` と書き、`≠` は置かない。
-- 型の位置（引数・仮定の型、`let` の注釈、`match` の型）の `a == b` は、項の位置と同じく `a` の型の等しさの関数の
-  呼び出しに読む。
+`¬P` is `(P) -> False`; there is no negation inductive. Prove it with a λ, use it
+by application. `(P) -> False` prints as `¬P`.
 
-### 否定
+## Bindings
 
-`¬P` は関数型 `(P) -> False` に読み込みで展開され、カーネルは同じ項を受け取る。否定の帰納型は置かない。
-`¬P` の証明は `(p: P) => …` の λ で書き、`h: ¬P` は `h(p)` と適用して `False` を得る。`(P) -> False` は `¬P` と印字する。
+- `let(stack) x := e` puts `x` in a frame slot ([`ownership.md`](ownership.md)
+  「`let(stack)`」); `stack` is not a keyword.
+- `let`, `var`, `def` and assignment use `:=`. Its left side is a place: `x`,
+  `p.f`, or `*a` / `*p.r` through a `&mut` borrow; `*` appears only there
+  ([`ownership.md`](ownership.md)「Borrowed variables」). In `let x: T = v`, `T = v` is the
+  type; a `let` with `=` that never reaches `:=` gets an error suggesting `:=`.
+- `let` with a pattern, `let #(a, b) := p`, `let Point { x, y } := p`,
+  `let Pair(a, b) := p`, `let [x, ..rest] := l`, is the `match` of its value with that one
+  arm, whose body is the rest of the block: `match p { #(a, b) => rest }`. The kernel sees the
+  `match` written by hand, so the pattern must be exhaustive for the value's type
+  (the error is the `match`'s); a refutable pattern is written as a `match`. The pattern is a
+  product, a list, a label, or a constructor or struct with arguments; a bare name is the
+  plain `let`. `let #(a, b): T := p` gives the value's type as `match p: T` does. `pub`, attributes,
+  `var` and `let(stack)` do not take a pattern, and a pattern `let` is not a declaration of a
+  file's top level. What the pattern binds is visible only in the rest of its block.
+- In kernel-checked bodies, unused `let`s and discarded statement values are
+  errors: the kernel erases `let`, so their types would go unchecked. An unused
+  assertion `^` does not bypass that check; it only governs unused-name lint.
+- `let ^x := e` binds `x` like `let x := e`, with the unused assertion on the
+  binding. The right-hand side is evaluated the same way; ownership, effects,
+  and drop timing do not change.
+- `∀ x: N, y: N. P` is `∀ x: N. ∀ y: N. P`.
+- Type parameters are declared with `(…)` (`enum Option(A: Type)`).
 
----
+### Explicit implicit arguments
 
-## 束縛
+Write them by name, first inside the call parentheses:
+`rule1(<x: [M, I, I, I]>, h)`, universes too (`<u: 0, A: T>`). Unwritten ones are
+inferred.
 
-- `let`・`var`・`def` の束縛と代入は `:=`（`let h: a = b := p`、`x := e`）。型注釈つきの `let` は途中の命題に名前と型を付ける。
-  型注釈の中の `=` は命題の等号なので、`let x: T = v` は `T = v` を型として読み、`:=` が無いところで止まる。`=` を持つ `let` が `:=` に届かず止まったときは、構文エラーが `:=` で書くよう示す。
-- カーネルが検査する関数・定理の本体で、使われない `let` と、値を捨てる文（最後の値の前の式）はエラー。カーネルは項から `let` を消すので、使われない値の型は検査されないまま残るため、検査しないで通さない。
-- `∀ x: N, y: N. P` は `∀ x: N. ∀ y: N. P` と同じ。
-- ジェネリクス `<…>` は推論される暗黙の引数、型パラメータの宣言は `(…)`（`enum Option(A: Type)`）。
-- 暗黙の引数を明示するときは、呼び出しの括弧の先頭に名前つきで書く：`規則1(<x: [M, I, I, I]>, h)`、
-  `規則3(<x: a, y: b>, h)`。名前は宣言のジェネリクスの名前で、書かなかった暗黙の引数はいつもどおり推論する。
-  - `<…>` は明示の引数より前に一つだけ書ける（`f(h, <x: a>)` と `f(<x: a>, <y: b>, h)` は構文エラー）。
-    式は `<` で始まらないので、括弧の後の `<` は一つの字句で暗黙の引数と決まる。
-  - 値は後置式（名前、呼び出し、リテラル、リストなど）。演算は括弧で囲む（`<x: (a + b)>`）。こうすると値の中の
-    `>` が比較に読まれることはない。
-  - 位置で並べる書き方（`<a>`）は置かない。名前で書けば一部だけを渡せ、宣言の暗黙の引数の順や数が変わっても
-    呼び出しの意味は変わらず、読む人は宣言を見なくても何がどの引数に入るかがわかる。
-  - 名前つきで書く呼び出しは、明示の引数をすべて書く。それより後ろの引数は結果に適用する。宣言にない名前、二度
-    書いた名前、暗黙のパラメータのない呼び出しはエラー（`check/implicit.rs`）。
-  - ソースに書いた呼び出しで暗黙の引数を位置で並べる（`規則1([M, I, I, I], h)`）のはエラー。宇宙レベルも名前で
-    書く（`<u: 0, A: T>`）。展開やクラスの展開が作る項は今までどおりすべての引数を位置で並べてよい。
-  - パターンでは `GAlt<n: m>(en, …)` と書く。呼び出しを `f<x: v>(h)` と書かないのは、引数の中の比較と型注釈
-    （`g(f < x: T)`）と型を最後まで読むまで区別できないからで、比較も型注釈もないパターンではこの形のままにする。
+- At most one `<…>`, before explicit arguments. Values are postfix expressions;
+  wrap operators (`<x: (a + b)>`), so `>` never reads as a comparison.
+- No positional form: names allow partial lists, survive reordering, and read
+  without the declaration.
+- Such a call writes all explicit arguments; later arguments apply to the
+  result. Unknown, duplicate, or impossible names are errors.
+- Passing implicits positionally in source is an error; generated terms may.
+- Patterns use `GAlt<n: m>(en, …)`. Calls don't use `f<x: v>(h)` because
+  `g(f < x: T)` is ambiguous until the end; patterns have no comparisons.
 
----
+### Naming the instance of a method
 
-## リテラルと値
+`C(T)::m(…)` calls the method or law `m` of the instance of `C` for `T`, written
+as the constraint `C(T)` is in `where` and `instance`: `Named(Circle)::name()`,
+`Named(A)::name()` in a function `where Named(A)`. It is for a method whose
+arguments do not tell the instance (`fn name(): Text`), and works for any
+other method too.
 
-- リストのリテラル `[a, b]` は `Cons(a, Cons(b, Nil))` に、`[]` は `Nil` に展開される。
-  末尾に `..r` を書くと残りのリストになり、`[a, b, ..r]` は `Cons(a, Cons(b, r))`、`[..r]` は `r` に展開される。
-  `..r` は末尾にだけ書ける（`[..r, a]` は構文エラー。末尾以外の連結は `concat` で、構成子の入れ子ではないため）。
-  構成子の入れ子に展開されるので、`[I, ..y]` から `y` を第一階のマッチングで決められる。
-- 名前のないレコードの値は `#{ x: 1, y: 2 }`、型は `{ x: Nat, y: Nat }`。`{` の後に（改行を挟んでもよく）`x:` が続けばレコードの型で、
-  それ以外の `{` はブロックか宣言の本体（改行を読み飛ばした後の二つの字句で決まる）。
-  レコードはフィールド名の集合ごとの struct で、フィールドの順序は型に含まれない（`{ x: A, y: B }` と
-  `{ y: B, x: A }` は同じ型）。直積とは別の型で、幅の部分型はない。
-  名前つきの `Point { x: 1 }` はそのまま。
-- `inductive struct S { f: A }` はカーネルの帰納型になり（正値性を検査する）、`s.f` とレコードの書き方は `match` への
-  糖衣。普通の `struct` は Nib だけの型。
+- The class's arguments are all given, in its order; the method's own implicit
+  arguments still go by name inside the call (`Sized(Bool)::count(<B: Text>, x)`).
+- `C(T)::m` is always called: as a value it is an error. `::m` after any other
+  call is the name `f::m`, as written.
+- A method whose class's arguments are not determined (`Named::name()`) is an
+  error that shows this form.
 
-### 直積
+## Literals and values
 
-- `A × B` は std の `Pair(A, B)` の糖衣で、値とパターンの `#(a, b)` は `Pair { fst: a, snd: b }` の糖衣（`[a, b]` が `List` の糖衣であるのと同じ）。名前で書いた `Pair` と直積は同じ型で、`Pair` の値にも下の部分型が効く。
-- 値とパターンは `#(a, b)`。成分は書いた順に並び、`A × B` と `B × A` は別の型。値の `#(a, b)` もパターンの `#(x, y)` も、
-  型の成分に位置で当たる。
-- 同じ型の成分はラベル `@a T` で見分けられる。値は `@a e`、パターンは `@a p`（`#(@name n, @value v)`）。`@a T` は精密化が
-  ラベルごとに作る一引数の帰納型 `@label.a(T)`（`@` を含む内部名）で、`T` を `@a T` として書いた位置では包む。
-- 取り出しは期待される型を書いた位置（型注釈、関数の引数、注釈つきの `let`、結果の型）の部分型で書く：
-  `A × B <: A`、`A × B × C <: A × C`、`A × B <: B × A`、`@a T <: T`。部分型は、両辺の成分の型を並べて対応を決め、
-  取り出して組み直す項を書き出す。対応が決まるのは、両辺に未確定の型がなく、それぞれの辺で成分の型（ラベルを含む）が
-  すべて違うときだけで（型変数は一つの型として扱い、型が完全に一致する成分を選ぶ）、そうでなければエラー（位置で同じ順に書くか、ラベルで見分ける）。`List(A × B)` と
-  `List(B × A)` のように別の型の中にある直積は、組み直す値がないので部分型で結べず、別の型である。`Pair` は struct なので `.fst`・`.snd` で取り出せるが、分解（`let #(a, b) := p`）や型での取り出しが明らかに向く場面では lint が知らせる。`=` の両辺のように型を合成する位置では
-  部分型は効かない。
-- 単位の値とパターンは `#()`、型は `Unit`。`Unit` もほかと同じ一つの成分で、`A × Unit` は `A` ではない（`#(a, #())` も `a` ではない）。型の位置の `#()` はエラー。`()` は `() -> T` と `() => e` の空の引数の
-  並びにだけ書く。
-- 成分の順は型の一部で、`tauto fmt` は並べ替えない。
-- カーネルには、成分を書いた順に並べた `Pair` の入れ子が渡る。
-- `A × B × C` は `A × (B × C)`。`(A × B) × C` は別の型で、平らにしない（値の `#(#(a, b), c)` も同じ）。総称の直積の最後の成分が型変数なら、それより長い直積に当たり、その型変数は残りの
-  成分の直積を表す（`fn f<A, B>(p: A × B)` に `i64 × i64 × Bool` を渡すと `B` は `i64 × Bool`、パターン `#(a, b)` の
-  `b` は `#(2, true)` のような残りの成分）。最後でない型変数は一つの成分にだけ当たる。
-- ジェネリクスの型には `×` を括弧なしで書ける（`<p: A × B>`）。`<…>` の中で演算子として書けるのは `×` と `->` だけ
-  （`>` は `<…>` を閉じる）。
+- `[a, b]` is `Cons(a, Cons(b, Nil))`; `[a, ..r]` is `Cons(a, r)`; `..r` only at
+  the end (use `concat` otherwise). First-order matching solves `y` from `[I, ..y]`.
+- Anonymous records: value `#{ x: 1, y: 2 }`, type `{ x: Nat, y: Nat }`. `{`
+  followed (across newlines) by `x:` is a record type; otherwise a block or body.
+  A record is the struct for its field-name set: field order is irrelevant, it is
+  distinct from products, and there is no width subtyping.
+- Kinds go after the keyword: `struct(affine) File {}`, `enum(linear) Handshake`,
+  `type(affine) Regex` in `extern`. Otherwise inferred from structure.
+- Only opaque `extern` types declare borrowing: `type(borrow) Iter(A: Type)`,
+  `type(affine, borrow) Guard` (`borrow` alone implies affine). Structs and enums
+  borrow when a field does.
+- `pub` or `pub(open)` before an opaque `extern` type exports it.
+- A replaceable `extern` block may hold `struct`/`enum` (not `inductive`) and
+  `fn` with bodies; required bodiless signatures do not mix with them
+  ([`extern-fallback.md`](extern-fallback.md)).
+- `borrows(m, x.f)` after the result type (and row), before `where`, narrows what
+  the result borrows ([`ownership.md`](ownership.md)「Freezing」).
+- `&rc e` moves `e` into a counted box and `&rc T` is its type
+  ([`ownership.md`](ownership.md)「Counted references (`&rc T`)」). `&rc` is one
+  token, `&` with `rc` directly after it and no identifier character after `rc`:
+  `rc` is no keyword (`fn rc(…)` is a name), `&rcount` is `&` of `rcount`, and
+  `&r#rc` borrows a name `rc`.
+- `inductive struct S { f: A }` is a kernel inductive (positivity checked); `s.f`
+  and record syntax sugar `match`. Plain `struct` is Nib-only. `inductive struct`
+  and `inductive enum` may take a kind (`inductive struct(affine) S`); the
+  kernel does not see it.
 
----
+### Products
 
-## パターンと `match`
+- `A × B` with value and pattern `#(a, b)`, the only way to write pairs. The
+  prelude `Pair` cannot be named. Components match by position; `A × B` and
+  `B × A` differ.
+- Labels distinguish same-typed components: `@a T`, value `@a e`, pattern `@a p`.
+  `@a T` is the one-field inductive `@label.a(T)`.
+- Projection is subtyping where an expected type is written:
+  `A × B <: A`, `A × B × C <: A × C`, `A × B <: B × A`, `@a T <: T`. It applies
+  only when neither side has unsolved types and each side's component types are
+  pairwise distinct; otherwise error. It does not reach inside other types
+  (`List(A × B)` vs `List(B × A)`) or into synthesizing positions such as `=`.
+- In the kernel a projection is the destructuring `match` a person would write by
+  hand, one `match` taking `A × B × C` apart whatever members it keeps: `(p: C)` is
+  `match p { #(_, _, c) => c }`, and several members are bound by the one `match`
+  and rebuilt in its arm. A labelled member is taken apart in the pattern too
+  (`#(@key _, @value v)`), whether it is kept or not. The `match` does not
+  abstract the hypotheses that mention `p`. Sugar elaborates to the term written out
+  by hand, so a proof that unfolds the function written with the `match` sees the
+  same term; nothing is added to conversion.
+- `.fst` and `.snd` (the rest) also project; lint prefers destructuring or type
+  projection where obvious. In theorem types use `Product::fst`/`snd`
+  (`std/data.taut`).
+- Unit: `#()` with type `Unit`, an ordinary component (`A × Unit` is not `A`).
+  `#()` in a type is an error. `()` only appears in `() -> T` and `() => e`.
+- `A × B × C` is `A × (B × C)`; `(A × B) × C` is not flattened. A trailing type
+  variable in a generic product matches the rest (`B` becomes `i64 × Bool`); other
+  variables match one component.
+- There is no product of its own past the reader: it writes `A × B` as the prelude's
+  `Pair(A, B)`, `#(a, b)` and its pattern as `Pair::Mk(a, b)`, and `#()` as `Star`, by
+  references no program can spell, nested to the right in written order. The checker,
+  Nib, the kernel and the backends see only these.
+- Inside `<…>` only `×` and `->` may appear unparenthesized.
 
-### `match` の型と腕
+## Patterns and `match`
 
-- `match` の型は、`match` の前に目標として `⊢ G from match l { … }` と書く（`⊢ G from match e eqn h { … }`）。
-  `G` が `match` 式全体の型になる。
-- `match l: T { … }` の `:` は判別対象の型注釈で、`match (l: T) { … }` と同じ。結果の型ではない。`eqn` は型注釈の
-  後ろに書く（`match f(x): T eqn h { … }`）。
-- `⊢ G from e` は式として書ける。`e` は `=>` の右と同じく右へ最大まで伸びる。`e` が結果の型を書いていない `match` なら
-  `G` がその型になり、それ以外の `e` は `G` を型として検査する（generics を `G` から決める）。`match` の直後に適用する
-  形は括弧で囲む（`(⊢ M from match d { … })(hd, h)`）。
-- `eqn h` は、変数でない式での場合分けで、各腕の `e = C` の等式に名前を付ける。
-- 腕は `=>` が本体への区切り。目標を書くときは本体を `⊢ G' from p` にする（`C => ⊢ G' from p`）。`from` は書いた目標の
-  証明の項を導く。`⊢` の左には新しく足す仮定だけが来る。
-- 変数でない式の場合分けで `eqn` または腕の `⊢` を書くと、結論の中の判別対象を腕の値に
-  置き換えたものが各腕の目標になる。書いた目標は、カーネルが計算した目標と変換で一致しなければならない。
-  どちらも書かない場合は、目標も仮定も変えない。
-- 置き換えは、関数の引数や含意の前提を含む結論全体に届く。判別対象が字面にない部分は、
-  関数（再帰関数を含む）を展開して判別対象が現れる場合だけ、展開した形で置き換える。
-  展開は8段までで、判別対象自体は展開しない。判別対象が現れない部分は書いたまま残す。
-- 場合分けの前の型注釈つき `let` と、引数・仮定のうち、型が判別対象を字面に含むものは一般化し、
-  各腕では判別対象を腕の値に置き換えた型のまま同じ名前で見える。
-  カーネルが受け取る項は、これらを引数に取る関数として場合分けを書き、元の値を適用したものと同じである。
-  判別対象自身が含む変数や、後ろの変数の型が含む仮定は一般化しない。
-- 結果の型 `⊢ G from` を省けるのは、宣言の本体の直接の `match` で、目標が宣言の結果の型と字面で一致するときだけ（展開や
-  書き換えのあとで一致するもの、入れ子の `match`、ステップの中では省けない）。
-- カーネルの項（定理の型、仮定の型、証明）の `if c { a } else { b }` は `⊢ T from match c { true => a  false => b }` に
-  展開される。`T` は期待される型、なければ型を合成できる枝から決める（`then` の枝、合成できなければ `else` の枝。
-  合成できない形は命題の等号と同じ）。どちらも合成できなければ `⊢ T from match c { … }` と型を書く。`else` のない `if` は
-  カーネルの項にならない。
+### `match` types and arms
 
-### パターン
+- A `match` takes its result type from where it stands: a declaration's body,
+  an arm's body, a λ's body with a known type, an annotated `let`, or an
+  argument whose parameter type is fixed. There no goal is written:
+  `fn pick(a: Nat, b: Bool): Nat { match b { true => a, false => Zero } }`.
+  Where the type is not known, or a proof needs a different goal than the
+  expected one (a generalization, `(⊢ (H) -> G from match x { … })(h)`), it is
+  written as a goal: `⊢ G from match l { … }` (`… match e eqn h { … }`). A goal
+  that repeats the expected type is noise and is not written.
+- `match l: T { … }` annotates the scrutinee (same as `match (l: T)`); `eqn` goes
+  after it.
+- `⊢ G from e` is an expression extending maximally right. For an unannotated
+  `match`, `G` is its type; otherwise `e` is checked against `G`. Applying a
+  `match` immediately needs parentheses.
+- `eqn h` names each arm's `e = C` equation for a non-variable scrutinee.
+- Arms: `C => ⊢ G' from p` to state a goal; `⊢`'s left holds only new
+  hypotheses.
+- With `eqn` or an arm `⊢` on a non-variable scrutinee, each arm's goal is the
+  conclusion with the scrutinee replaced by the arm value; written goals must be
+  convertible to the computed ones. With neither, goals don't change.
+- Replacement reaches the whole conclusion, unfolding functions (up to 8 levels,
+  never the scrutinee) only where that exposes the scrutinee.
+- Annotated `let`s, arguments and hypotheses whose types mention the scrutinee
+  are generalized and visible in each arm with the replaced type, as if the
+  `match` were a function of them applied to the originals. Variables inside the
+  scrutinee and hypotheses mentioned by later types are not generalized.
+- In kernel terms, `if c { a } else { b }` is
+  `⊢ T from match c { true => a  false => b }`, with `T` expected, or synthesized
+  from `then`, else `else`. `if` without `else` is not a kernel term.
 
-- 入れ子パターンは入れ子の `match` に展開される。
-- リストのパターン `[]`・`[x, y]`・`[x, ..rest]` は `Nil`・`Cons(x, Cons(y, Nil))`・`Cons(x, rest)` に展開され、
-  網羅性は展開後のパターンで検査する。`..` の後ろは名前か `_` だけで、末尾にだけ書ける。
-- パターンの中の `_` は束縛しないという意味（`Cons(_, t)`）で、項の位置の推論の穴ではない。
-- パターンには明示の引数だけを書く。暗黙引数が要るときだけ `GAlt<n: m>(en, …)` と名前で取り出す。添字つきの型の
-  `match` では、`std/` と `meta/` の lint（`indexed-arm-goal`）が各腕に目標（`C => ⊢ G' from p`）を求める。
-- 等しさが判定できる基本の型（整数、文字、`Text`）の値のリテラルはパターンに書ける（`x == リテラル` の分岐への糖衣。
-  整数は std の `Int` のコンストラクタに展開する）。最後には名前つきの残りの腕（`other => …`）が要る。`std/` と `meta/`
-  の lint（`rest-arm`）は、名前つきの残りの腕を値が無限にある型のリテラルの後ろに限って許す。
-- 既定腕 `_ =>` は、名前の挙がっていない各コンストラクタの腕に展開する（最後の腕に限り、一つ以上を表すこと。
-  `check/matching.rs`）。最後の腕を `y => e` と書くと、照合した値に名前を付け、各コンストラクタの腕で `y` はその
-  コンストラクタに置き換わる。`std/` と `meta/` の lint は既定腕を禁じる。
+### Patterns
 
----
+- `Red | Green => e` expands to one arm per alternative (guards and goals
+  apply to all). Alternatives bind the same names, cannot be `_`, and only
+  appear at the top of an arm.
+- Nested patterns become nested `match`es. List patterns expand to
+  constructors; exhaustiveness is checked after expansion; `..` takes a name or
+  `_`, at the end.
+- `_` in patterns is Wild: it does not bind and is not a hole. It is not an
+  Ident; binding a name uses an ordinary Ident, optionally with `^` for an
+  unused assertion (`Some(^x)`, `Point { x: ^y }`). `^` on a constructor name
+  (including a nullary one such as `^None` once resolved) or field label is
+  refused.
+- Patterns list explicit arguments only; `GAlt<n: m>(…)` extracts implicits. Lint
+  `indexed-arm-goal` requires arm goals on indexed `match`es in `std/` and
+  `meta/`.
+- Literals of decidable base types (integers, chars, `Text`) are sugar for `==`
+  branches (integers expand to `Int` constructors) and need a final named arm.
+  Lint `rest-arm` allows named rest arms only after literals of infinite types.
+- `y: T => e` is a typed arm, only a whole arm of a `match` on a union: `T`
+  is a member or a braced union of members (`rest: {Text | Bool} => …`), and a
+  `|` after it is not read as alternatives. It is not a pattern inside a
+  constructor, record, product or list, nor an operation's or `return` arm
+  ([`nib.md`](nib.md)「Matching a union」).
+- `_ =>` expands to the unnamed constructors (last arm, at least one;
+  `check/matching.rs`). A last arm `y => e` names the value, replaced by each
+  constructor. Lint forbids `_ =>` in `std/` and `meta/`.
 
-## 証明の構文
+## Proofs
 
-- ステップ `by t!(arg): G0 { Δ ⊢ G from p … }`（[`macro-steps.md`](macro-steps.md)「書き方」）。
-- 等式の連鎖は `std/Calc.taut` の構文マクロ `calc!` で書く（`calc` は予約語ではない）。
-  ````
-  calc!(```
-    $add(add(a, b), c)
-    = $add(a, add(b, c)) from $add_assoc(a, b, c)
-    = $add(add(a, c), b) from $Eq::sym(add_assoc(a, c, b))
-    ```)
-  ````
-  先頭の式に続けて、各行を関係（`=` か `↔`）・次の式・`from`・証明の順に書く。式は `$` の後置の式
-  （`macro.md`「DSL の中の tauto の式」）で、演算子のある式は `$(a + b)` と括弧で囲む。`let` などの文が前に要る証明は
-  `${ … }` と書く。定義から等しいときも `from $Refl` と書く。右結合の `Eq::trans`（`↔` は `Iff::trans`）の入れ子に
-  展開され、各行は型付きの `let` になるので、間違った行はその行で報告される。`=` と `↔` は混ぜられない。
-  使うファイルは `import "Calc.taut" { calc }`（`std` 内）か `import std::Calc { calc }` で読み込む。
-  ライブラリで書けるものは言語に入れない（Minimalism）ので、連鎖の構文は言語にない。
-- 合同の文脈 `⟦and(or(x1, □), y)⟧` は `(z: Bool) => and(or(x1, z), y)` と同じ λ に読み込みで展開される。`□` は
-  `⟦ ⟧` の中に一つだけで、中の束縛の内側には置けない。結果の型が引数に依存する関数には使えず、輸送 `Eq::subst` を
-  明示する。
-- 名前付きの穴 `?h` は書きかけの証明の印。穴を含む宣言は受理されない（`Verdict::Incomplete`）。
+- Steps: `by t!(arg): G0 { Δ ⊢ G from p … }` ([`macro-steps.md`](macro-steps.md)).
+- Equation chains are the library macro `calc!` (`std/calc.taut`): each line is
+  a relation (`=` or `↔`, not mixed), a `$`-expression, `from` and a proof. It
+  expands to `Eq::trans`/`Iff::trans` with one typed `let` per line, so errors
+  point at the line.
+- `⟦and(or(x1, □), y)⟧` is `(z: Bool) => and(or(x1, z), y)`. Each `□` is the same `z` (`⟦f(□, □)⟧` is
+  `(z: T) => f(z, z)`), not under inner binders, not for dependent result types
+  (use `Eq::subst`).
+- `?h` is a hole; declarations with holes are `Verdict::Incomplete`.
+- `!?` after the result of a `fn` is a hole for the row ([Effect rows](#effect-rows)).
 
----
+## Declaration modifiers
 
-## 宣言の修飾
+- `budget 100_000_000` after the result type of a theorem/fn/def sets its kernel
+  step limit. `budget` is a word only there, right before the number; anywhere else
+  it is a name. A runtime budget is the host's operation, performed as any other:
+  `perform budget(n, () => { … })` takes the most steps and then the function to run,
+  and `perform budget_memory(n, f)` the most cells.
+- `opaque fn f` does not unfold in the kernel and generates `f::eq`.
+- `ghost fn f` is a function only proofs and types use. The kernel reads it as it reads
+  `fn` (it unfolds by computation, so `Refl` proves facts about it), extraction never writes it,
+  and executable code that calls it is an error. Its body is not held to what a program
+  must satisfy (a `Linear` value held in a variable, for one). `def` is the other proof-side
+  function: it is written out when executable code needs it, so use `ghost fn` when
+  nothing executable may ever depend on the definition.
+- Restrict construction with `pub` opaque types.
 
-- `budget 100_000_000` は theorem・fn・def の結果の型のあと、本体の前に書き、カーネルはその宣言だけを既定の上限の
-  代わりにこの歩数で検査する。式の `budget(steps: n) { … }` は実行時の予算で、位置で区別する。
-- `opaque fn f` はカーネルで展開されない名前になり、展開の等式 `f::eq` を作る。
-- 作れる範囲を制限したい印は `pub` の不透明な型で書く。
+### Generated declaration lists
 
-### 作られる宣言の一覧
+A declaration that generates others lists them: `=> kind name, …`, matched
+exactly regardless of order. A mismatch is an error showing both missing and
+extra names; `tauto lint --fix` fills the list.
+A statement macro lists its module blocks, the declarations inside each
+block by their qualified names, and the names re-exported from those blocks.
+Applies to `syntax`/`inductive syntax` (type, `parse`, `T::I`, `T::to_i`),
+`decreasing_by` and `opaque fn` (`f::eq`), statement-position macro calls and
+attribute macros, and `inductive` decidable equality (`T::beq`, `T::beq_refl`,
+`T::beq_sound`, `T::deq`, only for written types). Not listed: names fixed by
+the written body (constructors, fields, `C::m`), internal `@` names, and standard
+`inductive` companions (`T::ind`, `T::rec`, `T::nc*`).
 
-宣言が別の宣言を作るときは、宣言に `=> 種別 名前, …` と書く。一覧が作られたものと完全に一致しなければエラーで、
-足りない名前と余った名前を両方出す（`tauto lint --fix` が埋める）。対象は次のとおり。
+## Class declarations
 
-- `syntax`・`inductive syntax`（型・`parse`・`T::I`・`T::to_i`）
-- `decreasing_by` と `opaque fn`（`f::eq`）
-- 文の位置のマクロの呼び出しと属性マクロ
-- `inductive` の決定可能な等しさ（`T::beq`・`T::beq_refl`・`T::beq_sound`・`T::deq`。書いた型にだけ作る）
+An instance may put `infer from` after its class arguments and before `where`.
+Its condition contains class type parameter names, `∧`, `∨`, and parentheses;
+`∧` binds tighter than `∨`. ASCII `\land` and `\lor` format as Unicode.
+See `classes.md`「Instance inference」 for when the condition applies.
 
-書いた宣言の中身から名前が決まるもの（コンストラクタ、フィールド、`class` の `C::m`）、書けない名前（`@` を含む
-内部名）、`inductive` の標準の付属物（`T::ind`、`T::rec`、添字つきの `match` が使う `T::nc*`）は書かない。
+A class may put a single `where` constraint between its parameter list and
+body. The constraint names the parent class and passes the child's sole
+type parameter. See `classes.md`「Superclasses」 for resolution.
 
----
+## Effect rows
 
-## effect の行
+- Row variables are declared only with `!` (`<!e>`, `<!e: <=1>` with a resume
+  bound, `struct Handlers(!e)`) and used without it (`T ! e`, `Answer(e)`).
+  Undeclared names in rows are errors.
+- A `fn` with a body and no row written has the empty row: `fn f(): T { … }` is
+  `fn f(): T ! {} { … }`, in every check, run, test and build. A row is never
+  inferred from the body, except for `!?`. A lambda's row and an `extern` function's
+  are not declarations of this kind.
+- Rows are set expressions after `!`: `T ! {div}`, `T ! {div} ∪ e`; union does
+  not duplicate. At most one row variable; duplicate literals are errors. A
+  literal's members end with a comma or a newline, as fields do, and may end
+  with a trailing separator (`T ! { div, stdout, }`).
+- A name written in a function's row that the body never performs is unused
+  (`warning[unused_effect]`). Distinct operations stay distinct: the same
+  leaf name in another module, or the same operation applied to other type
+  arguments (`fail(Text)` vs `fail(i64)`), is another entry. A universal
+  (`∀ A. log(A)`) is used when any instance is performed. An effect set
+  (`Host`, or a set whose members are applied forms) is unused only when none
+  of its members are performed; naming the set while using some members does
+  not warn. `^name` in a function's written row (`{ ^Host }`, `{ ^stdout, … }`)
+  asserts that entry is unused: it suppresses the unused warning when confirmed
+  unused, and is an error (`unused_marker_used`) when the name (or any member
+  of a marked set) is performed. `^` is refused on a function-type row, a row argument, or an
+  effect-set member. `^` is metadata on the row entry, not part of the name;
+  whitespace does not change meaning, and `tauto fmt` writes `^name`.
+- `|` is only for sum types and patterns, never rows.
+- `fn f(): T !?` asks for its row to be **written**: it is an error of `tauto check` (exit 1,
+  `the row of f is !?`), and the program does not run, test or build. The meaning of a program
+  is always its written rows; `!?` is a request that `tauto check --fix` answers by writing, in
+  its place, the row the body performs (with the handlers'
+  removals and `div`; nothing for the empty row, which takes the `!?` away). The note of the
+  error shows that row (`help: write ! {Log, div}`), so it can be written by hand where `--fix`
+  cannot run. One `--fix` writes every `!?` of the tote; a `!?` function that calls another is
+  answered with the row the body of the other performs. A caller with a written row is checked
+  against that row as usual; a row is never widened silently. A `!?` function that calls itself
+  or a later `!?` function (a cycle) is the same error. `check --fix` writes the row such a group settles on: starting from the empty row, it finds again the row of the body of each function (the rows its callees have now, less what a handler answers, and `div` for a function that recurses) until none changes. The row is kept only if the program with every row written passes the rows check as it is; where it does not settle, holds what cannot be followed, or does not pass, the `!?` stays and the note says to write the row by hand. Self-host reports the same error at the same place; it finds no row and does not fix.
+  Declarations that only use a function with `!?` get no error of their own. `!?` is `!` and
+  `?`, two tokens (`! ?` reads the same); `tauto fmt` writes `T !?`. It is written only after
+  the result of a `fn` with a body, not in a type, a field, an `effect`, an `extern`, a class
+  method declaration or a row argument. It makes no row variable.
+- Row literals passed to types: `Grant(!{pos} ∪ e)`. Data-type row parameters:
+  [`row-parameters.md`](row-parameters.md).
 
-- 行変数は宣言の `!` だけで決まる（`<!e>`、`<!e: <=1>`、`struct Handlers(!e)`）。`:` の右は再開量の上限。使い方から
-  行変数とは推論せず、宣言のない名前や `!` なしで宣言した名前を行に書くとエラー。
-- effect の行は `!` の後ろの集合の式で書く：`T ! {Div}`、`T ! e`、`T ! {Div} ∪ e`。`{Log} ∪ e` は集合の和で、`e` に
-  `Log` が入っていても二重にならない。
-- 一つの行に行変数は高々一つ。集合のリテラルの中で同じ effect を二度書くのはエラー。
-- `|` は和型だけの記号で、行の区切りには使わない。
-- データ型の行パラメータは [`row-parameters.md`](row-parameters.md)「行を引数に書く」。
-- `!{…}` は行のリテラルの書き方。行変数は宣言でだけ `!` を付け（`<!e>`）、使う場所では付けない（`T ! e`、`Answer(e)`）。型の引数に行のリテラルを渡すときは `Grant(!{pos} ∪ e)` と書く。
+## Undecided
 
----
-
-## 未決定
-
-- effect の集合の等式（`{Log} ∪ e = {Log}` は `e` が空でも `{Log}` でも成り立つ）を型の推論でどう解くか。
-- 異なる関係（`=`・`≤`・`<`）の `calc!`。
-- 入れ子の `match` で、期待される型（腕の目標）から motive を作るかどうか。
+- Solving effect-set equations (`{Log} ∪ e = {Log}`) during inference.
+- `calc!` over mixed relations (`=`, `≤`, `<`).
+- Building motives for nested `match` from arm goals.

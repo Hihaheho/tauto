@@ -1,6 +1,6 @@
 import "binding_frame.taut"
-import std::Base
-import std::Text
+import std::base
+import std::text
 import "checker.taut"
 import "checker_frame.taut"
 import "datas_frame.taut"
@@ -8,7 +8,9 @@ import "expr_checks_frame.taut"
 import "instantiation_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -22,14 +24,12 @@ pub fn operator_div(
   occurrence: Option(TermOccurrence),
   div: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match div {
-    true => frame_bind(Unit, Ty, (ignored: Unit, c1: Checker) => mut1(a, c1), ck_divide(c, a, span))
+  match div {
+    true => frame_bind(<A: Unit, B: Ty>, (ignored: Unit, c1: Checker) => mut1(a, c1), ck_divide(c, a, span))
     false => frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       (ignored: Unit, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored2: Unit, c2: Checker) => mut1(a, c2),
         ck_record_op(c1, a, span, occurrence)
       ),
@@ -49,10 +49,9 @@ pub theorem operator_div_frame(
   div: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, operator_div(c, op, a, b, arguments, span, occurrence, div)) {
-  ⊢ CkRunFrame(c, operator_div(c, op, a, b, arguments, span, occurrence, div)) from match div {
+  match div {
     true => run_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => mut1(a, c1),
       ck_divide(c, a, span),
@@ -60,20 +59,17 @@ pub theorem operator_div_frame(
       ignored => c1 => o_c1 => run_frame_return(c1, a, o_c1)
     )
     false => run_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored2: Unit, c2: Checker) => mut1(a, c2),
         ck_record_op(c1, a, span, occurrence)
       ),
       ck_number(c, a, span, op),
       run_frame_read(c, ck_number(c, a, span, op), ck_number_frame(c, a, span, op), ordered),
       ignored => c1 => o_c1 => run_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c1,
         (ignored2: Unit, c2: Checker) => mut1(a, c2),
         ck_record_op(c1, a, span, occurrence),
@@ -99,10 +95,9 @@ pub fn operator_compare(
   occurrence: Option(TermOccurrence),
   cmp: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match cmp {
+  match cmp {
     true => frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       (ignored: Unit, c1: Checker) => mut1(TyBool, c1),
       ck_number(c, a, span, op)
     )
@@ -121,10 +116,9 @@ pub theorem operator_compare_frame(
   cmp: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, operator_compare(c, op, a, b, arguments, span, occurrence, cmp)) {
-  ⊢ CkRunFrame(c, operator_compare(c, op, a, b, arguments, span, occurrence, cmp)) from match cmp {
+  match cmp {
     true => run_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => mut1(TyBool, c1),
       ck_number(c, a, span, op),
@@ -155,10 +149,9 @@ pub fn operator_eq(
   occurrence: Option(TermOccurrence),
   eq: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match eq {
+  match eq {
     true => frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       (ignored: Unit, c1: Checker) => mut1(TyBool, c1),
       ck_pend(c, "PartialEq", a, op, span)
     )
@@ -189,10 +182,9 @@ pub theorem operator_eq_frame(
   eq: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, operator_eq(c, op, a, b, arguments, span, occurrence, eq)) {
-  ⊢ CkRunFrame(c, operator_eq(c, op, a, b, arguments, span, occurrence, eq)) from match eq {
+  match eq {
     true => run_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => mut1(TyBool, c1),
       ck_pend(c, "PartialEq", a, op, span),
@@ -230,7 +222,7 @@ pub fn operator_failed_result(
   span: TySpan,
   arithmetic: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match arithmetic {
+  match arithmetic {
     true => mut1(ck_shown(c, a), c)
     false => mut1(TyBool, c)
   }
@@ -246,7 +238,7 @@ pub theorem operator_failed_result_frame(
   arithmetic: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, operator_failed_result(c, op, a, b, arguments, span, arithmetic)) {
-  ⊢ CkRunFrame(c, operator_failed_result(c, op, a, b, arguments, span, arithmetic)) from match arithmetic {
+  match arithmetic {
     true => run_frame_return(c, ck_shown(c, a), ordered)
     false => run_frame_return(c, TyBool, ordered)
   }
@@ -262,10 +254,9 @@ pub fn operator_unified(
   occurrence: Option(TermOccurrence),
   failed: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match failed {
+  match failed {
     true => frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       (ignored: Unit, c1: Checker) => operator_failed_result(
         c1,
         op,
@@ -301,10 +292,9 @@ pub theorem operator_unified_frame(
   failed: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, operator_unified(c, op, a, b, arguments, span, occurrence, failed)) {
-  ⊢ CkRunFrame(c, operator_unified(c, op, a, b, arguments, span, occurrence, failed)) from match failed {
+  match failed {
     true => run_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => operator_failed_result(
         c1,
@@ -357,21 +347,18 @@ pub fn operator_binary(
   occurrence: Option(TermOccurrence),
   boolean: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match boolean {
+  match boolean {
     true => frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       (ignored: Unit, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored2: Unit, c2: Checker) => mut1(TyBool, c2),
         ck_expect(c1, b, TyBool, second_span(arguments, span), cat3("`", op, "`"))
       ),
       ck_expect(c, a, TyBool, first_span(arguments, span), cat3("`", op, "`"))
     )
     false => frame_bind(
-      Bool,
-      Ty,
+      <A: Bool, B: Ty>,
       (unified: Bool, c1: Checker) => operator_unified(
         c1,
         op,
@@ -398,22 +385,19 @@ pub theorem operator_binary_frame(
   boolean: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, operator_binary(c, op, a, b, arguments, span, occurrence, boolean)) {
-  ⊢ CkRunFrame(c, operator_binary(c, op, a, b, arguments, span, occurrence, boolean)) from match boolean {
+  match boolean {
     true => run_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored2: Unit, c2: Checker) => mut1(TyBool, c2),
         ck_expect(c1, b, TyBool, second_span(arguments, span), cat3("`", op, "`"))
       ),
       ck_expect(c, a, TyBool, first_span(arguments, span), cat3("`", op, "`")),
       ck_expect_run_frame(c, a, TyBool, first_span(arguments, span), cat3("`", op, "`"), ordered),
       ignored => c1 => o_c1 => run_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c1,
         (ignored2: Unit, c2: Checker) => mut1(TyBool, c2),
         ck_expect(c1, b, TyBool, second_span(arguments, span), cat3("`", op, "`")),
@@ -422,8 +406,7 @@ pub theorem operator_binary_frame(
       )
     )
     false => run_frame_bind(
-      Bool,
-      Ty,
+      <A: Bool, B: Ty>,
       c,
       (unified: Bool, c1: Checker) => operator_unified(
         c1,
@@ -515,13 +498,11 @@ pub fn operator_unary_number(
   a: Ty,
   number: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match number {
+  match number {
     true => frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       (ignored: Unit, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored2: Unit, c2: Checker) => mut1(a, c2),
         ck_record_op(c1, a, span, occurrence)
       ),
@@ -541,22 +522,19 @@ pub theorem operator_unary_number_frame(
   number: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, operator_unary_number(c, op, arguments, span, occurrence, a, number)) {
-  ⊢ CkRunFrame(c, operator_unary_number(c, op, arguments, span, occurrence, a, number)) from match number {
+  match number {
     true => run_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored2: Unit, c2: Checker) => mut1(a, c2),
         ck_record_op(c1, a, span, occurrence)
       ),
       ck_number(c, a, span, op),
       run_frame_read(c, ck_number(c, a, span, op), ck_number_frame(c, a, span, op), ordered),
       ignored => c1 => o_c1 => run_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c1,
         (ignored2: Unit, c2: Checker) => mut1(a, c2),
         ck_record_op(c1, a, span, occurrence),
@@ -578,67 +556,6 @@ pub theorem operator_unary_number_frame(
   }
 }
 
-pub fn operator_unary(
-  c: Checker,
-  op: Text,
-  arguments: List(SurfaceTerm),
-  span: TySpan,
-  occurrence: Option(TermOccurrence),
-  a: Ty,
-  negate: Bool
-): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match negate {
-    true => frame_bind(
-      Unit,
-      Ty,
-      (ignored: Unit, c1: Checker) => mut1(TyBool, c1),
-      ck_expect(c, a, TyBool, span, "`not`")
-    )
-    false => operator_unary_number(
-      c,
-      op,
-      arguments,
-      span,
-      occurrence,
-      a,
-      Bool::or(Text::eq(op, "-"), Text::eq(op, "+"))
-    )
-  }
-}
-
-pub theorem operator_unary_frame(
-  c: Checker,
-  op: Text,
-  arguments: List(SurfaceTerm),
-  span: TySpan,
-  occurrence: Option(TermOccurrence),
-  a: Ty,
-  negate: Bool,
-  ordered: CkOrdered(c)
-): CkRunFrame(c, operator_unary(c, op, arguments, span, occurrence, a, negate)) {
-  ⊢ CkRunFrame(c, operator_unary(c, op, arguments, span, occurrence, a, negate)) from match negate {
-    true => run_frame_bind(
-      Unit,
-      Ty,
-      c,
-      (ignored: Unit, c1: Checker) => mut1(TyBool, c1),
-      ck_expect(c, a, TyBool, span, "`not`"),
-      ck_expect_run_frame(c, a, TyBool, span, "`not`", ordered),
-      ignored => c1 => o_c1 => run_frame_return(c1, TyBool, o_c1)
-    )
-    false => operator_unary_number_frame(
-      c,
-      op,
-      arguments,
-      span,
-      occurrence,
-      a,
-      Bool::or(Text::eq(op, "-"), Text::eq(op, "+")),
-      ordered
-    )
-  }
-}
-
 pub fn operator_more(
   c: Checker,
   op: Text,
@@ -649,9 +566,9 @@ pub fn operator_more(
   b: Ty,
   more: List(Ty)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match more {
+  match more {
     Nil => ck_rewrap1(ck_binary(c, op, a, b, arguments, span, occurrence))
-    Cons(x, y) => ck_rewrap1(ck_operator_bad(c, op, span))
+    Cons(^x, ^y) => ck_rewrap1(ck_operator_bad(c, op, span))
   }
 }
 
@@ -666,7 +583,7 @@ pub theorem operator_more_frame(
   more: List(Ty),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, operator_more(c, op, arguments, span, occurrence, a, b, more)) {
-  ⊢ CkRunFrame(c, operator_more(c, op, arguments, span, occurrence, a, b, more)) from match more {
+  match more {
     Nil => run_frame_rewrap(
       c,
       ck_binary(c, op, a, b, arguments, span, occurrence),
@@ -690,8 +607,16 @@ pub fn operator_rest(
   a: Ty,
   rest: List(Ty)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match rest {
-    Nil => operator_unary(c, op, arguments, span, occurrence, a, Text::eq(op, "not"))
+  match rest {
+    Nil => operator_unary_number(
+      c,
+      op,
+      arguments,
+      span,
+      occurrence,
+      a,
+      Bool::or(Text::eq(op, "-"), Text::eq(op, "+"))
+    )
     Cons(b, more) => operator_more(c, op, arguments, span, occurrence, a, b, more)
   }
 }
@@ -706,8 +631,17 @@ pub theorem operator_rest_frame(
   rest: List(Ty),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, operator_rest(c, op, arguments, span, occurrence, a, rest)) {
-  ⊢ CkRunFrame(c, operator_rest(c, op, arguments, span, occurrence, a, rest)) from match rest {
-    Nil => operator_unary_frame(c, op, arguments, span, occurrence, a, Text::eq(op, "not"), ordered)
+  match rest {
+    Nil => operator_unary_number_frame(
+      c,
+      op,
+      arguments,
+      span,
+      occurrence,
+      a,
+      Bool::or(Text::eq(op, "-"), Text::eq(op, "+")),
+      ordered
+    )
     Cons(b, more) => operator_more_frame(c, op, arguments, span, occurrence, a, b, more, ordered)
   }
 }
@@ -720,7 +654,7 @@ pub fn operator_operands(
   occurrence: Option(TermOccurrence),
   args: List(Ty)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match args {
+  match args {
     Nil => ck_rewrap1(ck_operator_bad(c, op, span))
     Cons(a, rest) => operator_rest(c, op, arguments, span, occurrence, a, rest)
   }
@@ -735,7 +669,7 @@ pub theorem operator_operands_frame(
   args: List(Ty),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, operator_operands(c, op, arguments, span, occurrence, args)) {
-  ⊢ CkRunFrame(c, operator_operands(c, op, arguments, span, occurrence, args)) from match args {
+  match args {
     Nil => run_frame_read(
       c,
       ck_rewrap1(ck_operator_bad(c, op, span)),
@@ -746,7 +680,7 @@ pub theorem operator_operands_frame(
   }
 }
 
-pub theorem operator_operands_unf(c: Checker, op: Text, args: List(Ty), arguments: List(SurfaceTerm), span: TySpan, occurrence: Option(TermOccurrence)): ck_operator_of(c, op, args, arguments, span, occurrence) = operator_operands(c, op, arguments, span, occurrence, args) { ⊢ ck_operator_of(c, op, args, arguments, span, occurrence) = operator_operands(c, op, arguments, span, occurrence, args) from match args { Nil => Refl
+pub theorem operator_operands_unf(c: Checker, op: Text, args: List(Ty), arguments: List(SurfaceTerm), span: TySpan, occurrence: Option(TermOccurrence)): ck_operator_of(c, op, args, arguments, span, occurrence) = operator_operands(c, op, arguments, span, occurrence, args) { match args { Nil => Refl
     Cons(a, rest) => Refl } }
 
 pub theorem ck_operator_of_run_frame(

@@ -1,0 +1,300 @@
+// A `match` on a union takes its values apart by member type: `y: T => …` takes the values
+// whose head is one of `T`'s and binds them at `T` (`docs/design/nib.md`「Matching a union」).
+
+@ cases.typed-arms-take-a-union-apart
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
+source = ```nib
+enum Shape { Circle(i64), Rect(i64, i64) }
+fn area(s: Shape): i64 ! {overflow} {
+  match s {
+    Circle(r) => 3 * r * r
+    Rect(w, h) => w * h
+  }
+}
+fn size(v: Shape | i64): i64 ! {overflow} {
+  match v {
+    s: Shape => area(s)
+    n: i64 => n
+  }
+}
+fn peek(v: &{Shape | i64}): i64 ! {overflow} {
+  match v {
+    s: Shape => area(s)
+    n: i64 => n
+  }
+}
+let seven: i64 := 7
+show(&size(Circle(2)))
+show(&size(seven))
+let r: Shape | i64 := Rect(2, 3)
+show(&peek(&r))
+```
+stdout = ```
+12
+7
+6
+```
+
+@ cases.a-typed-arm-of-several-members-binds-their-union
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
+source = ```nib
+fn kind(r: Text | Bool): i64 {
+  match r {
+    t: Text => 1
+    b: Bool => 2
+  }
+}
+fn f(v: i64 | Text | Bool): i64 {
+  match v {
+    n: i64 => n
+    rest: {Text | Bool} => kind(rest)
+  }
+}
+let five: i64 := 5
+show(&f(five))
+show(&f("a"))
+show(&f(true))
+```
+stdout = ```
+5
+1
+2
+```
+
+@ cases.guarded-typed-arms-and-a-name-for-the-rest
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
+source = ```nib
+fn f(v: i64 | Text | Vec(i64)): u64 {
+  match v {
+    n: i64 if n > 10 => 1
+    n: i64 => 2
+    xs: Vec(i64) => Vec::len(&xs)
+    other => 9
+  }
+}
+let big: i64 := 20
+let small: i64 := 2
+show(&f(big))
+show(&f(small))
+show(&f("t"))
+```
+stdout = ```
+1
+2
+9
+```
+
+@ cases.a-typed-arm-on-a-generic-data-member
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
+source = ```nib
+fn f<T: Copy>(v: Option(T) | i64): i64 {
+  match v {
+    n: i64 => n
+    o: Option(T) => 0
+  }
+}
+let n: i64 := 3
+let three: Option(Bool) | i64 := n
+let none: Option(Bool) | i64 := None
+show(&f(three))
+show(&f(none))
+```
+stdout = ```
+3
+0
+```
+
+@ cases.data-of-one-declaration-have-one-head
+source = ```nib
+fn f(v: Option(i64) | Option(Text)): i64 {
+  match v {
+    a: Option(i64) => 0
+    b: Option(Text) => 1
+  }
+}
+```
+types = "error: Option(Text) and Option(i64) have the same head"
+
+@ cases.products-have-one-head
+source = ```nib
+fn f(v: {i64 × Text} | {Bool × Text}): i64 {
+  match v {
+    a: i64 × Text => 0
+    b: Bool × Text => 1
+  }
+}
+```
+types = "error: Bool × Text and i64 × Text have the same head"
+
+@ cases.functions-have-one-head
+source = ```nib
+fn f(v: {(x: i64) -> i64} | {(x: Bool) -> i64}): i64 {
+  match v {
+    a: (x: i64) -> i64 => 0
+    _ => 1
+  }
+}
+```
+types = "error: (Bool) -> i64 and (i64) -> i64 have the same head"
+
+@ cases.a-tag-does-not-change-the-head
+source = ```nib
+fn f(v: @a i64 | @b i64): i64 {
+  match v {
+    x: @a i64 => 0
+    _ => 1
+  }
+}
+```
+types = "error: @b i64 and @a i64 have the same head"
+
+@ cases.a-type-variable-member-has-no-head
+source = ```nib
+fn f<T: Copy>(v: T | i64): i64 {
+  match v {
+    x: i64 => 0
+    _ => 1
+  }
+}
+```
+types = "error: the member T is a type variable"
+
+@ cases.a-typed-arm-needs-a-union
+source = ```nib
+fn f(v: i64): i64 {
+  match v {
+    x: i64 => x
+  }
+}
+```
+types = "error: a typed arm narrows a union; this `match` is on i64"
+
+@ cases.a-typed-arm-takes-members
+source = ```nib
+fn f(v: i64 | Text): i64 {
+  match v {
+    x: Bool => 0
+    _ => 1
+  }
+}
+```
+types = "error: Bool is neither a member of i64 | Text nor a union of its members"
+
+@ cases.a-constructor-does-not-match-a-union
+source = ```nib
+enum S { C(i64) }
+fn f(v: S | Text): i64 {
+  match v {
+    C(r) => r
+    _ => 1
+  }
+}
+```
+types = "error: a constructor or a literal does not match the union Text | S"
+
+@ cases.a-literal-does-not-match-a-union
+source = ```nib
+fn f(v: i64 | Text): i64 {
+  match v {
+    3 => 0
+    _ => 1
+  }
+}
+```
+types = "error: a constructor or a literal does not match the union i64 | Text"
+
+@ cases.typed-arms-cover-each-member
+source = ```nib
+fn f(v: i64 | Text | Bool): i64 {
+  match v {
+    x: i64 => x
+  }
+}
+```
+types = "error: the `match` does not cover the members Bool, Text"
+
+@ cases.a-guarded-typed-arm-covers-nothing
+source = ```nib
+fn f(v: i64 | Text): i64 {
+  match v {
+    x: i64 if x > 0 => x
+    t: Text => 0
+  }
+}
+```
+types = "error: the `match` does not cover the members i64"
+
+@ cases.a-default-arm-after-every-member
+source = ```nib
+fn f(v: i64 | Text): i64 {
+  match v {
+    x: i64 => x
+    t: Text => 0
+    _ => 2
+  }
+}
+```
+types = "error: the default arm `_ =>` matches no value"
+
+@ cases.a-typed-arm-is-not-inside-a-pattern
+entry = "main.nib"
+files."main.nib" = ```nib
+fn f(v: Option(i64 | Text)): i64 {
+  match v {
+    Some(x: i64) => 0
+    _ => 1
+  }
+}
+```
+load_error = "unexpected `:`"
+
+@ cases.a-pattern-on-a-member-of-a-union-is-read-and-printed
+nir.source = ```nir
+union 0 shared (i64, Bool)
+
+fn f@0(v#1: union(0)): i64 S = match move v#1 {
+  inject(0, 0, n#2: i64) => copy n#2,
+  inject(0, 1, b#3: Bool) => 0i64,
+}
+
+top f@0
+```
+nir.passes = ["check-wf"]
+nir.package = ```nir
+union 0 shared (i64, Bool)
+
+fn f@0(v#1: union(0)): i64 S = match move v#1 {
+  inject(0, 0, n#2: i64) => copy n#2,
+  inject(0, 1, b#3: Bool) => 0i64,
+}
+
+top f@0
+```
+
+@ cases.a-name-bound-on-a-member-has-its-type
+nir.source = ```nir
+union 0 shared (i64, Bool)
+
+fn f@0(v#1: union(0)): i64 S = match move v#1 {
+  inject(0, 0, n#2: i64) => copy n#2,
+  inject(0, 1, b#3: i64) => 0i64,
+}
+
+top f@0
+```
+nir.passes = ["check-wf"]
+nir.error = "Type: a name bound on a member of a union is"
+
+@ cases.a-pattern-on-a-member-names-a-variant-of-its-union
+nir.source = ```nir
+union 0 shared (i64, Bool)
+
+fn f@0(v#1: union(0)): i64 S = match move v#1 {
+  inject(0, 0, n#2: i64) => copy n#2,
+  inject(0, 2, b#3: Bool) => 0i64,
+}
+
+top f@0
+```
+nir.passes = ["check-wf"]
+nir.error = "Type: the union 0 has no variant 2"

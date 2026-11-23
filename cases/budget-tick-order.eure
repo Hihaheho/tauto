@@ -1,0 +1,123 @@
+// A budget's step is charged at the call, after its arguments are
+// evaluated and before the callee runs (`docs/design/semantics.md`, "Budget and
+// `div`"). When the budget is exhausted at that step, the arguments' effects
+// have happened and the callee has not run. Every backend agrees.
+
+// A call in the budget's body, with an argument that changes a variable.
+@ cases.budget-tick-after-arguments-direct-call
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+fn descend(n: i64): i64 ! {div, overflow} {
+  if n > 0 { descend(n - 1) + 1 } else { 0 }
+}
+
+fn run(steps: u64): i64 ! {budget, overflow} {
+  var visited := 0
+  let result := handle { perform budget(steps, () => { descend({ visited := visited + 10
+5 }) }) } with { exceeded(info), k => -10 }
+  result * 100 + visited
+}
+
+var fuel := 0
+while fuel < 9 {
+  show(&run(fuel))
+  fuel := fuel + 1
+}
+```
+stdout = ```
+-990
+-990
+-990
+-990
+-990
+-990
+510
+510
+510
+```
+
+// The same through a self tail call: the new arguments are evaluated, then
+// the step is charged, then the parameters take them.
+@ cases.budget-tick-after-arguments-tail-call
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+fn count(n: i64, seen: i64): i64 ! {div, overflow} {
+  if n > 0 { count(n - 1, seen + 1) } else { seen }
+}
+
+fn run(steps: u64): i64 ! {budget, overflow} {
+  var visited := 0
+  let result := handle { perform budget(steps, () => { count(2, { visited := visited + 10
+0 }) }) } with { exceeded(info), k => -10 }
+  result * 100 + visited
+}
+
+var fuel := 0
+while fuel < 5 {
+  show(&run(fuel))
+  fuel := fuel + 1
+}
+```
+stdout = ```
+-990
+-990
+-990
+210
+210
+```
+
+// Several arguments are evaluated in order before the step is charged.
+@ cases.budget-tick-after-arguments-in-order
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+fn add(a: i64, b: i64): i64 ! {div, overflow} { a + b }
+
+fn run(steps: u64): i64 ! {budget, overflow} {
+  var trace := 0
+  let result := handle { perform budget(steps, () => {
+    add({ trace := trace * 10 + 1
+1 }, { trace := trace * 10 + 2
+2 })
+  }) } with { exceeded(info), k => -1 }
+  result * 1000 + trace
+}
+
+show(&run(0))
+show(&run(1))
+```
+stdout = ```
+-988
+3012
+```
+
+// A body that may resume more than once runs on the continuation form of
+// the Rust backend; the step is charged there at the same place.
+@ cases.budget-tick-after-arguments-multi-shot-body
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+import std::builtin::os
+effect choose(): Bool resume ω
+fn id(n: i64): i64 ! {div, overflow} { n }
+
+fn run(steps: u64): i64 ! {budget, overflow, stdout, stdout_flush} {
+  handle { perform budget(steps, () => {
+    let b := perform choose()
+    id({ show(&b)
+if b { 1 } else { 2 } })
+  }) } with {
+    choose(), k => k(true) + k(false)
+    exceeded(info), k => -100
+  }
+}
+
+show(&run(0))
+show(&run(2))
+```
+stdout = ```
+true
+false
+-200
+true
+false
+3
+```

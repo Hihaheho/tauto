@@ -26,12 +26,12 @@ fn build(dir: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-const PROGRAM: &str = r#"import std::prelude::Os
+const PROGRAM: &str = r#"import std::builtin::os
 
 print("hello\n")
 let c := read_file("data.txt")
-perform show("c", c)
-perform show("a", perform argv())
+show(&c)
+show(&(perform argv()))
 eprint("err")
 perform exit(3)
 "#;
@@ -80,7 +80,7 @@ fn a_wasip1_module_asks_the_wasi_host_within_its_permissions() {
     let granted = run(&["--allow-read", "--", "x"]);
     assert_eq!(
         String::from_utf8_lossy(&granted.stdout),
-        "hello\nc = Ok(\"inside\")\na = Cons(\"x\", Nil)\n"
+        "hello\nOk(\"inside\")\nCons(\"x\", Nil)\n"
     );
     assert_eq!(String::from_utf8_lossy(&granted.stderr), "err");
     assert_eq!(granted.status.code(), Some(3));
@@ -134,7 +134,7 @@ fn what_wasm32_lacks_is_refused_before_cargo_runs() {
     let d = temp("refused");
     fs::write(
         d.join("main.taut"),
-        "import std::prelude::Os\n\nperform show(\"r\", http_get(\"https://example.com/\"))\n",
+        "import std::builtin::os\n\nshow(&http_get(\"https://example.com/\"))\n",
     )
     .unwrap();
     let out = build(

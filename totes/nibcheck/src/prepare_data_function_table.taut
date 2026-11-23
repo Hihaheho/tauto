@@ -1,7 +1,7 @@
 import "program_data_function_table.taut"
 import "prepare_data_body_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "data_finish_state_sound.taut"
 import "datas.taut"
@@ -13,6 +13,7 @@ import "signature_table_frame.taut"
 import "summary_sound.taut"
 import "summary_state.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -22,7 +23,7 @@ pub theorem fnt_finish_datas_after(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
 ): fnt_table(ck_st(summary_finish_datas_k(program, m))) = fnt_table(ck_st(m)) {
-  ⊢ fnt_table(ck_st(summary_finish_datas_k(program, m))) = fnt_table(ck_st(m)) from match m {
+  match m {
     mut1(ignored, next) => Eq::congr(
       (r: Mut1(Unit, Checker)) => fnt_table(ck_st(r)),
       Eq::trans(
@@ -67,7 +68,7 @@ pub theorem ck_finish_datas_fns(
         )
       ),
       mark_preserves_view(
-        Ordmap(Text, Scheme),
+        <A: Ordmap(Text, Scheme)>,
         fnt_table,
         state => datas => Refl,
         Ordmap::entries(summary_decls(ck_datas_of(c))),
@@ -82,7 +83,7 @@ pub theorem fnt_finish_after(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_finish_after(program, m)))
 ): fnt_table(ck_st(registration_finish_after(program, m))) = fnt_table(ck_st(m)) {
-  ⊢ fnt_table(ck_st(registration_finish_after(program, m))) = fnt_table(ck_st(m)) from match m {
+  match m {
     mut1(ignored, next) => Eq::trans(
       Eq::congr(
         (r: Mut1(Unit, Checker)) => fnt_table(ck_st(r)),
@@ -102,7 +103,7 @@ pub theorem fnt_program_after(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
 ): fnt_table(ck_st(registration_program_after(program, m))) = fnt_table(ck_st(m)) {
-  ⊢ fnt_table(ck_st(registration_program_after(program, m))) = fnt_table(ck_st(m)) from match m {
+  match m {
     mut1(ignored, next) => Eq::trans(
       fnt_finish_after(program, ck_program_data(program, next), clean),
       fnt_ck_program_data_context(program, next)

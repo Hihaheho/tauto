@@ -507,7 +507,7 @@ B => true } }
 ```
 differential = "rustgen"
 selfhost_entry = 'answer'
-selfhost_compile_error = 'answer: numeric literal requires integer type'
+selfhost_compile_error = 'answer: generic type mismatch'
 
 // rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
 @ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-050
@@ -685,7 +685,7 @@ selfhost_compile_error = 'answer: shadowed locals are unsupported'
 // rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
 @ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-068
 source = ```tauto
-fn answer(): i64 { perform show(1)
+fn answer(): i64 { show(&1)
 1 }
 ```
 differential = "rustgen"
@@ -714,7 +714,7 @@ selfhost_run_error = 'the number is too large'
 @ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-071
 source = ```tauto
 fn answer(): i64 { 9223372036854775807 + 1 }
-perform show("result", answer())
+show(&answer())
 ```
 differential = "rustgen"
 
@@ -737,3 +737,27 @@ fn answer(): Nat { let n: Nat := 9223372036854775807
 differential = "rustgen"
 selfhost_entry = 'answer'
 selfhost_run_error = 'the number is too large'
+
+// A match whose arms are only numeric literals takes the function's result type, as an `if` does.
+@ cases.match-literal-arms-take-the-result-type-074
+source = ```tauto
+fn tag(n: Nat): Nat { match n { Zero => 5
+Succ(k) => 6 } }
+fn kind(o: Option(Nat)): Nat { match o { None => 1
+Some(x) => 2 } }
+fn answer(): Nat { tag(0) + kind(None) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "6\n"
+
+// The same match read as i64 still defaults to i64 when nothing else fixes the type.
+@ cases.match-literal-arms-default-to-i64-075
+source = ```tauto
+fn kind(o: Option(Nat)): i64 { match o { None => 1
+Some(x) => 2 } }
+fn answer(): i64 { kind(Some(3)) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "2\n"

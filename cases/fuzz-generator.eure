@@ -1,0 +1,50 @@
+description = "totes/fuzz turns a sequence of choices into the same program every time, and shrinks a sequence one step at a time; these pin both, so a change to the generator shows here."
+
+// a sequence of zeros is the simplest program, and a replayed sequence keeps only the choices it took
+@ cases.fuzz-replayed-choices
+llvm.unimplemented = "generate: the LLVM backend does not write the standard effect `divzero` yet"
+imports = [path`../totes/fuzz/src/report.taut`]
+source = ```tauto
+show(&fz_replay_report([0]))
+show(&fz_replay_report([1, 0, 1, 3, 0, 9, 0, 0, 1, 0, 0, 0, 1, 0]))
+```
+stdout = ```
+"choices 0 0 0 0 0 0 0 0\ndecl struct Point { x: i64, y: i64 }\\nenum Shape { Dot, Line(i64), Rect(i64, i64) }\\nstruct(affine) Tok { v: i64 }\\nstruct(linear) Lin { v: i64 }\\nstruct View { r: &Tok, k: i64 }\\neffect ask(n: i64): i64 resume ω\\nfn spin(): i64 ! {div} {\\n  while true { }\\n  0\\n}\\nfn twice(f: (i64) -> i64 ! {budget, div, divzero, overflow}, x: i64): i64 ! {budget, div, divzero, overflow} {\\n  f(f(x))\\n}\\nfn count(n: i64): i64 ! {div, overflow} {\\n  var i := 0\\n  var s := 0\\n  while i < n {\\n    i := i + 1\\n    s := s + i\\n  }\\n  s\\n}\\nfn peek(t: &Tok): i64 {\\n  t.v\\n}\\nfn peek_lin(l: &Lin): i64 {\\n  match l { Lin { v } => v }\\n}\\nfn take(t: Tok): i64 {\\n  match t { Tok { v } => v }\\n}\\nfn finish(l: Lin): i64 {\\n  match l { Lin { v } => v }\\n}\\nfn bump(c: &mut i64, d: i64): i64 ! {overflow} {\\n  *c := c + d\\n  c\\n}\\n\nshow show(&(0))\\n\nend\n"
+"choices 1 0 1 3 0 9 0 0 1 0 0 0 1\ndecl struct Point { x: i64, y: i64 }\\nenum Shape { Dot, Line(i64), Rect(i64, i64) }\\nstruct(affine) Tok { v: i64 }\\nstruct(linear) Lin { v: i64 }\\nstruct View { r: &Tok, k: i64 }\\neffect ask(n: i64): i64 resume ω\\nfn spin(): i64 ! {div} {\\n  while true { }\\n  0\\n}\\nfn twice(f: (i64) -> i64 ! {budget, div, divzero, overflow}, x: i64): i64 ! {budget, div, divzero, overflow} {\\n  f(f(x))\\n}\\nfn count(n: i64): i64 ! {div, overflow} {\\n  var i := 0\\n  var s := 0\\n  while i < n {\\n    i := i + 1\\n    s := s + i\\n  }\\n  s\\n}\\nfn peek(t: &Tok): i64 {\\n  t.v\\n}\\nfn peek_lin(l: &Lin): i64 {\\n  match l { Lin { v } => v }\\n}\\nfn take(t: Tok): i64 {\\n  match t { Tok { v } => v }\\n}\\nfn finish(l: Lin): i64 {\\n  match l { Lin { v } => v }\\n}\\nfn bump(c: &mut i64, d: i64): i64 ! {overflow} {\\n  *c := c + d\\n  c\\n}\\nfn f0(): Bool ! {budget, div, divzero, overflow} {\\n  true\\n}\\n\nshow show(&(1))\\n\nend\n"
+```
+
+// a seed draws its choices from SplitMix64 and reports them with its program
+@ cases.fuzz-seeded-choices
+llvm.unimplemented = "generate: the LLVM backend does not write the standard effect `divzero` yet"
+imports = [path`../totes/fuzz/src/report.taut`]
+source = ```tauto
+show(&fz_seed_report(7))
+```
+stdout = ```
+"choices 2 0 2 3 74 5 8 82 2 25 3 16 2 0 90 0 1 91 7 0 43 9 13 15 0 5 6 39 5 65 2 14 72 18 1 51 68 69 0 31 33 0 0 80 2 50 7 2 58 6 0 0 78 42 1 63 6 67 4 2 62 86 50 0 3 67 93 31 7 46 22 0 96 7 0 97 78 4 88 91 1 34 1 8 10 3 82 7 30 41 2 1 13 10 43 2 48 4 88 3 7 55 4 13 78 0 4 49 6 8 62 0 12 85 9 99 2 4 1 27 20 3 50 17 6 0 38 0 50 127 67 5 14 8 10 74 7 62 28 55 8 0 47 2 1 95 39 4 46 0 71 26 0 83 26 5 6 1 0 56 1 3 78 0 0\ndecl struct Point { x: i64, y: i64 }\\nenum Shape { Dot, Line(i64), Rect(i64, i64) }\\nstruct(affine) Tok { v: i64 }\\nstruct(linear) Lin { v: i64 }\\nstruct View { r: &Tok, k: i64 }\\neffect ask(n: i64): i64 resume ω\\nfn spin(): i64 ! {div} {\\n  while true { }\\n  0\\n}\\nfn twice(f: (i64) -> i64 ! {budget, div, divzero, overflow}, x: i64): i64 ! {budget, div, divzero, overflow} {\\n  f(f(x))\\n}\\nfn count(n: i64): i64 ! {div, overflow} {\\n  var i := 0\\n  var s := 0\\n  while i < n {\\n    i := i + 1\\n    s := s + i\\n  }\\n  s\\n}\\nfn peek(t: &Tok): i64 {\\n  t.v\\n}\\nfn peek_lin(l: &Lin): i64 {\\n  match l { Lin { v } => v }\\n}\\nfn take(t: Tok): i64 {\\n  match t { Tok { v } => v }\\n}\\nfn finish(l: Lin): i64 {\\n  match l { Lin { v } => v }\\n}\\nfn bump(c: &mut i64, d: i64): i64 ! {overflow} {\\n  *c := c + d\\n  c\\n}\\nfn f0(): Point ! {budget, div, divzero, overflow} {\\n  Point { x: 4611686018427387904, y: 82 }\\n}\\nfn f1(p1_0: Shape, p1_1: Point): i64 ! {budget, div, divzero, overflow} {\\n  ({ let x8 := (match p1_0 { Dot => 4611686018427387904, Line(a1) => { let t3 := Tok { v: 0 }\\n { let r5 := { let w4 := View { r: &t3, k: peek(&t3) }\\n (a1 + w4.k) }\\n { let u6 := t3\\n (r5 + take(u6)) } } }, Rect(a1, b2) => { let x7 := Point { x: 3037000499, y: 78 }\\n a1 } })\\n (if false { mod(46, x8) } else { { let x9 := (0 - 9223372036854775807 - 1)\\n 0 } }) } - (handle { perform budget(42, () => { (count(30) + 30) }) } with {\\n  exceeded(info), k => info.unbounded()\\n}))\\n}\\n\nshow show(&(true))\\n\nshow show(&(Point { x: (handle { perform budget(128, () => { spin() }) } with {\\n  exceeded(info), k => k({ let gl10 := (l10) => Point { x: 62, y: 12 }.x\\n gl10((match Rect((0 - 9223372036854775807 - 1), 0) { Dot => 9223372036854775807, Line(a11) => 3037000499, Rect(a11, b12) => b12 })) })\\n}), y: { let t13 := Tok { v: 62 }\\n { let r14 := (f1(Line((0 - 9223372036854775807 - 1)), Point { x: 83, y: 3037000500 }) + t13.v)\\n (r14 + take(t13)) } } }))\\n\nshow show(&(Dot))\\n\nend\n"
+```
+
+// a seed whose program owns a `Tok` and a `Lin`, writes a cell through `&mut`, and lends a `&Tok` to a function
+@ cases.fuzz-ownership-program
+llvm.unimplemented = "generate: the LLVM backend does not write the standard effect `divzero` yet"
+imports = [path`../totes/fuzz/src/report.taut`]
+source = ```tauto
+show(&fz_seed_report(17))
+```
+stdout = ```
+"choices 4 1 56 3 2 18 44 7 70 8 20 2 97 2 1 2 31 3 66 7 3 96 5 2 1 35 67 0 29 8 89 16 3 27 4 11 48 5 6 39 3 5 85 40 4 1 94 32 5 11 75 7 3 8 0 22 21 7 76 2 68 19 7 32 6 2 4 6 2 0 3 9 22 1 6 0 0 3 29 3 2 68 2 15 81 81 7 4 73 7 1 92 6 89 3 1 32 80 68 92 8 32 1 2 46 98 25 6 10 41 52 55 8 43 16 29 73 7 21 1 2 10 23 1 3 1 35 5 0 2 59 2 12 80 3 0 20 9 0 0 21 0 20 0 38 1 6 90 52 4 55 5 10 75 2 16 54 45 4 2 38 8 9 50 58 5 98 12 0 44 1 1 52 1 13 72 7 0 53 2 15 83 85 8 95 15 53 65 8 28\ndecl struct Point { x: i64, y: i64 }\\nenum Shape { Dot, Line(i64), Rect(i64, i64) }\\nstruct(affine) Tok { v: i64 }\\nstruct(linear) Lin { v: i64 }\\nstruct View { r: &Tok, k: i64 }\\neffect ask(n: i64): i64 resume ω\\nfn spin(): i64 ! {div} {\\n  while true { }\\n  0\\n}\\nfn twice(f: (i64) -> i64 ! {budget, div, divzero, overflow}, x: i64): i64 ! {budget, div, divzero, overflow} {\\n  f(f(x))\\n}\\nfn count(n: i64): i64 ! {div, overflow} {\\n  var i := 0\\n  var s := 0\\n  while i < n {\\n    i := i + 1\\n    s := s + i\\n  }\\n  s\\n}\\nfn peek(t: &Tok): i64 {\\n  t.v\\n}\\nfn peek_lin(l: &Lin): i64 {\\n  match l { Lin { v } => v }\\n}\\nfn take(t: Tok): i64 {\\n  match t { Tok { v } => v }\\n}\\nfn finish(l: Lin): i64 {\\n  match l { Lin { v } => v }\\n}\\nfn bump(c: &mut i64, d: i64): i64 ! {overflow} {\\n  *c := c + d\\n  c\\n}\\nfn f0(p0_0: Shape): Point ! {budget, div, divzero, overflow} {\\n  Point { x: 70, y: 20 }\\n}\\nfn f1(p1_0: &Tok, p1_1: Bool): Point ! {budget, div, divzero, overflow} {\\n  Point { x: { let x1 := Rect(peek(p1_0), 9223372036854775807)\\n { var c4 := (handle { { let r3 := perform ask(4611686018427387904)\\n (0 - 9223372036854775807 - 1) } } with {\\n  ask(n2), k => k(4611686018427387904)\\n})\\n { bump(&mut c4, { let x5 := x1\\n 76 })\\n (32 + c4) } } }, y: 3037000501 }\\n}\\nfn f2(): Shape ! {budget, div, divzero, overflow} {\\n  Line(3037000499)\\n}\\nfn f3(): Shape ! {budget, div, divzero, overflow} {\\n  Rect(4, { let x6 := (if (false && true) { false } else { (if true { false } else { true }) })\\n 21 })\\n}\\n\nshow show(&(Point { x: 0, y: 9223372036854775807 }))\\n\nshow show(&((twice((l7) => ((match Dot { Dot => l7, Line(a8) => a8, Rect(a8, b9) => a8 }) + (0 - 9223372036854775807 - 1)), { let l10 := Lin { v: (0 - 9223372036854775807 - 1) }\\n { let r11 := peek_lin(&l10)\\n (match l10 { Lin { v: q12 } => { let t13 := Tok { v: 4611686018427387904 }\\n { let r15 := { let w14 := View { r: &t13, k: q12 }\\n (r11 + t13.v) }\\n (r15 + take(t13)) } } }) } }) == { let x16 := 95\\n 28 })))\\n\nend\n"
+```
+
+// the shrinker tries halving, cuts of 8, 4, 2 and 1 choices, then lowering one choice
+@ cases.fuzz-shrink-steps
+imports = [path`../totes/fuzz/src/shrink.taut`]
+source = ```tauto
+show(&fz_shrinks([3, 0, 5]))
+show(&fz_shrinks([]))
+show(&fz_shrinks([7]))
+```
+stdout = ```
+[[3], [5], [3], [0, 5], [3, 5], [3, 0], [2, 0, 5], [1, 0, 5], [0, 0, 5], [3, 0, 4], [3, 0, 2], [3, 0, 0]]
+[]
+[[], [6], [3], [0]]
+```

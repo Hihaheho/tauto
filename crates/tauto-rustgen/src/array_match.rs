@@ -107,6 +107,7 @@ fn owned_pattern(p: &Pat) -> bool {
     match p {
         Pat::Bind(local, _) => local.repr == Repr::Plain,
         Pat::Ctor { ctor, fields } => !ctor.linear && fields.iter().all(owned_pattern),
+        Pat::Variant { pat, .. } => owned_pattern(pat),
         _ => true,
     }
 }
@@ -123,6 +124,7 @@ fn borrow_pattern(p: &mut Pat, owned: &mut Rs) {
                 borrow_pattern(field, owned);
             }
         }
+        Pat::Variant { pat, .. } => borrow_pattern(pat, owned),
         _ => {}
     }
 }

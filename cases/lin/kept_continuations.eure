@@ -2,12 +2,13 @@
 // (`docs/design/shared-levels.md`).
 
 @ cases.a-generator-kept-in-a-mutex-runs
+llvm.unimplemented = "generate: the LLVM backend does not write the standard effect `mutex_new` yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
-effect tick(n: i64): Unit
-affine enum S { Done, More(i64, affine (Unit) -> S ! {}) }
-fn gen(n: i64): S ! {} {
+effect tick(n: nat): Unit
+enum(affine) S { Done, More(nat, affine (Unit) -> S ! {}) }
+fn gen(n: nat): S ! {} {
   handle {
     perform tick(n)
     perform tick(n + 1)
@@ -16,32 +17,37 @@ fn gen(n: i64): S ! {} {
     tick(x), k => More(x, k)
   }
 }
-fn step(m: Mutex(S)): i64 {
+fn step(m: Mutex(S)): nat ! {wait, mutex_claim, mutex_take_claimed, mutex_put} {
   match Mutex::take(m) {
     More(x, k) => {
-      Mutex::put(m, k(#()))
+      perform mutex_put(m, k(#()))
       x
     }
     Done => {
-      Mutex::put(m, Done)
+      perform mutex_put(m, Done)
       0
     }
   }
 }
-let m := Mutex::new(gen(1))
+let m := perform mutex_new(gen(1))
 let a := step(m)
 let b := step(m)
 let c := step(m)
-perform show("a", a)
-perform show("b", b)
-perform show("c", c)
+show(&a)
+show(&b)
+show(&c)
 ```
 lin = "ok"
-shows = ["a = 1", "b = 2", "c = 0"]
+stdout = ```
+1
+2
+0
+```
 
 @ cases.a-multi-shot-continuation-kept-in-a-mutex-runs
+llvm.unimplemented = "generate: the LLVM backend does not write the standard effect `mutex_new` yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
 effect choose(): Bool resume ω
 enum S { Done(i64), More((Bool) -> S ! {}) }
@@ -63,53 +69,65 @@ fn run(s: S, b: Bool): i64 {
     Done(v) => v
   }
 }
-let m := Mutex::new(pick())
+let m := perform mutex_new(pick())
 let s := Mutex::take(m)
-perform show("t", run(s, true))
-perform show("f", run(s, false))
-Mutex::put(m, s)
+show(&run(s, true))
+show(&run(s, false))
+perform mutex_put(m, s)
 ```
 lin = "ok"
-shows = ["t = 10", "f = 20"]
+stdout = ```
+10
+20
+```
 
 @ cases.a-kept-continuation-shows-where-it-is-resumed
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 // What the body performs and does not handle goes to the code that resumes it.
 source = ```nib
+import std::builtin::os
 effect tick(): Unit
-affine enum S { Done, More(affine (Unit) -> S ! {∀ A. show(A)}) }
-fn say(n: i64): Unit ! {∀ A. show(A)} { perform show("b", n) }
-fn gen(): S {
+enum(affine) S { Done, More(affine (Unit) -> S ! {Show}) }
+fn say(n: i64): Unit ! {Show} { show(&n) }
+fn gen(): S ! {stdout, stdout_flush} {
   handle {
-    perform show("a", 1)
+    show(&1)
     perform tick()
     say(2)
     perform tick()
-    perform show("c", 3)
+    show(&3)
     Done
   } with {
     return s => s
     tick(), k => More(k)
   }
 }
-fn step(s: S): S ! {∀ A. show(A)} {
+fn step(s: S): S ! {Show} {
   match s { More(k) => k(#()), Done => Done }
 }
 let s0 := gen()
 let s1 := step(s0)
 let s2 := step(s1)
-perform show("end", 0)
+show(&0)
 ```
 lin = "ok"
-shows = ["a = 1", "b = 2", "c = 3", "end = 0"]
+stdout = ```
+1
+2
+3
+0
+```
 
 @ cases.a-kept-continuation-meets-the-direct-handlers-of-its-resumer
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 // A `direct` handler inside the body is part of the continuation; the one
 // around each resume answers what goes out of it.
 source = ```nib
+import std::builtin::os
 effect tick(): Unit
-effect log(n: i64): Unit direct
-affine enum S { Done, More(affine (Unit) -> S ! {log}) }
-fn gen(): S {
+effect log(n: u64): Unit direct
+enum(affine) S { Done, More(affine (Unit) -> S ! {log}) }
+fn gen(): S ! {log} {
   handle {
     perform log(1)
     perform tick()
@@ -118,7 +136,7 @@ fn gen(): S {
       perform tick()
       perform log(3)
     } with {
-      log(n), k => k(perform log(n * 10))
+      log(n), k => k(perform log(U64::wrapping_mul(n, 10)))
     }
     Done
   } with {
@@ -126,102 +144,184 @@ fn gen(): S {
     tick(), k => More(k)
   }
 }
-fn step(s: S, tag: i64): S {
+fn step(s: S, tag: u64): S ! {stdout, stdout_flush} {
   handle {
     match s { More(k) => k(#()), Done => Done }
   } with {
-    log(n), k => k(perform show("log", tag * 1000 + n))
+    log(n), k => k(show(&(U64::wrapping_add(U64::wrapping_mul(tag, 1000), n))))
   }
 }
-let s0 := handle { gen() } with { log(n), k => k(perform show("first", n)) }
+let s0 := handle { gen() } with { log(n), k => k(show(&n)) }
 let s1 := step(s0, 1)
 let s2 := step(s1, 2)
-perform show("end", 0)
+show(&0)
 ```
 lin = "ok"
-shows = ["first = 1", "log = 1020", "log = 2030", "end = 0"]
+stdout = ```
+1
+1020
+2030
+0
+```
 
 @ cases.a-kept-multi-shot-continuation-shows-each-time
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```nib
+import std::builtin::os
 effect choose(): Bool resume ω
-enum S { Done(i64), More((Bool) -> S ! {∀ A. show(A)}) }
-fn pick(): S {
+enum S { Done(i64), More((Bool) -> S ! {Show}) }
+fn pick(): S ! {stdout, stdout_flush} {
   handle {
     let b := perform choose()
-    perform show("b", b)
+    show(&b)
     if b { 10 } else { 20 }
   } with {
     return v => Done(v)
     choose(), k => More(k)
   }
 }
-fn run(s: S, b: Bool): i64 ! {∀ A. show(A)} {
+fn run(s: S, b: Bool): i64 ! {Show} {
   match s {
     More(k) => match k(b) { Done(v) => v, More(_) => 0 }
     Done(v) => v
   }
 }
 let s := pick()
-perform show("t", run(s, true))
-perform show("f", run(s, false))
+show(&run(s, true))
+show(&run(s, false))
 ```
 lin = "ok"
-shows = ["b = true", "t = 10", "b = false", "f = 20"]
+stdout = ```
+true
+10
+false
+20
+```
 
 @ cases.a-kept-continuation-that-calls-a-showing-function-value
-// The Rust backend gives a function value its handlers at the call, which
-// a kept continuation does not hold.
-backend_known_failure.rust = "unsupported: a function value that performs a direct operation"
+llvm.unimplemented = "unsupported: a function value that performs a direct operation, in a continuation kept as a value"
+// A function value is given its handlers at the call: in a kept
+// continuation, those of the code that resumes it.
 source = ```nib
+import std::builtin::os
 effect tick(): Unit
-affine enum S { Done, More(affine (Unit) -> S ! {∀ A. show(A)}) }
-fn each(f: (i64) -> Unit ! {∀ A. show(A)}): Unit ! {∀ A. show(A)} { f(1); f(2) }
-fn gen(): S {
+enum(affine) S { Done, More(affine (Unit) -> S ! {Show}) }
+fn each(f: (i64) -> Unit ! {Show}): Unit ! {Show} { f(1); f(2) }
+fn gen(): S ! {stdout, stdout_flush} {
   handle {
     perform tick()
-    each((n) => perform show("n", n))
+    each((n) => show(&n))
     Done
   } with {
     return s => s
     tick(), k => More(k)
   }
 }
-match gen() { More(k) => { let _ := k(#()) }, Done => #() }
+match gen() { More(k) => { let ^continued := k(#()) }, Done => #() }
 ```
 lin = "ok"
-shows = ["n = 1", "n = 2"]
+stdout = ```
+1
+2
+```
+
+@ cases.a-multi-shot-continuation-in-a-function-value-reads-a-ref
+llvm.unimplemented = "unsupported: a function value that performs a direct operation, in a continuation kept as a value"
+// The arm hands the body a function value that resumes the body again; the
+// value reads a `Ref` there, which the code that runs it answers.
+source = ```tauto
+import std::builtin::par { Ref, ref_get, ref_new }
+import std::builtin::os { stdout }
+
+effect fork(): Option(() -> Nat ! {ref_get}) resume ω
+
+fn body(r: Ref(Nat)): Nat ! {fork, ref_get} {
+  match perform fork() {
+    None => perform ref_get(r)
+    Some(run) => run() + 1
+  }
+}
+
+fn rooted(r: Ref(Nat)): Nat ! {ref_get} {
+  handle { body(r) } with {
+    fork(), k => k(Some(() => k(None)))
+    return x => x
+  }
+}
+
+let r: Ref(Nat) := perform ref_new(41)
+perform stdout(concat(debug(&rooted(r)), "\n"))
+```
+stdout = ```
+42
+```
+
+@ cases.a-function-value-in-a-kept-continuation-meets-the-direct-handlers-inside-it
+llvm.unimplemented = "unsupported: a function value that performs a direct operation, in a continuation kept as a value"
+// A `direct` handler inside the body answers what a function value called
+// there performs, before the handlers of the code that resumes the body.
+source = ```nib
+import std::builtin::os
+effect fork(): Option(() -> u64 ! {log}) resume ω
+effect log(n: u64): Unit direct
+fn body(): u64 ! {fork, log} {
+  handle {
+    match perform fork() {
+      None => { perform log(1); 1 }
+      Some(run) => { let v := run(); perform log(2); U64::wrapping_add(v, 1) }
+    }
+  } with {
+    log(n), k => k(perform log(U64::wrapping_mul(n, 10)))
+  }
+}
+fn rooted(): u64 ! {log} {
+  handle { body() } with {
+    fork(), k => k(Some(() => { perform log(5); k(None) }))
+    return x => x
+  }
+}
+let r := handle { rooted() } with { log(n), k => k(show(&n)) }
+show(&r)
+```
+lin = "ok"
+stdout = ```
+50
+100
+20
+2
+```
 
 @ cases.a-continuation-whose-body-holds-its-mutex-is-a-cycle
 source = ```nib
 effect tick(): Unit
-affine enum S { Done, More(affine (Unit) -> S ! {}) }
-let m := Mutex::new(Done)
+enum(affine) S { Done, More(affine (Unit) -> S ! {}) }
+let m := perform mutex_new(Done)
 let s := handle {
   perform tick()
-  Mutex::put(m, Done)
+  perform mutex_put(m, Done)
 } with {
   return _ => Done
   tick(), k => More(k)
 }
-Mutex::put(m, s)
+perform mutex_put(m, s)
 ```
 lin = "error: strong reference cycle"
 
 @ cases.a-continuation-holds-the-frames-it-was-performed-in
 source = ```nib
 effect tick(): Unit
-affine enum S { Done, More(affine (Unit) -> S ! {}) }
+enum(affine) S { Done, More(affine (Unit) -> S ! {}) }
 fn inner(q: Mutex(S)): Unit ! {tick} {
   perform tick()
-  Mutex::put(q, Done)
+  perform mutex_put(q, Done)
 }
 fn top(): Unit {
-  let m := Mutex::new(Done)
+  let m := perform mutex_new(Done)
   let s := handle { inner(m) } with {
     return _ => Done
     tick(), k => More(k)
   }
-  Mutex::put(m, s)
+  perform mutex_put(m, s)
 }
 ```
 lin = "error: strong reference cycle"
@@ -230,8 +330,8 @@ lin = "error: strong reference cycle"
 // The frames of the body hold the scope around the `handle`, used or not.
 source = ```nib
 effect tick(): Unit
-affine enum S { Done, More(affine (Unit) -> S ! {}) }
-let m := Mutex::new(Done)
+enum(affine) S { Done, More(affine (Unit) -> S ! {}) }
+let m := perform mutex_new(Done)
 let s := handle {
   perform tick()
   Done
@@ -239,7 +339,7 @@ let s := handle {
   return _ => Done
   tick(), k => More(k)
 }
-Mutex::put(m, s)
+perform mutex_put(m, s)
 ```
 lin = "error: strong reference cycle"
 
@@ -247,15 +347,15 @@ lin = "error: strong reference cycle"
 // A resume reinstalls the handler, and the handler holds the mutex.
 source = ```nib
 effect tick(): Unit
-affine enum S { Done, More(affine (Unit) -> S ! {}) }
+enum(affine) S { Done, More(affine (Unit) -> S ! {}) }
 fn top(): Unit {
-  let m := Mutex::new(Done)
+  let m := perform mutex_new(Done)
   let t := handle {
     perform tick()
     Done
   } with {
     tick(), k => {
-      Mutex::put(m, More(k))
+      perform mutex_put(m, More(k))
       Done
     }
   }
@@ -267,25 +367,25 @@ lin = "error: strong reference cycle"
 // `holder` returned before `tick`, and its row has no effect a kept
 // continuation captures, so its frame is not held.
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 effect tick(): Unit
 effect slot(): Mutex(S) direct
-affine enum S { Done, More(affine (Unit) -> S ! {slot}) }
-fn holder(): Unit ! {slot} { Mutex::put(perform slot(), Done) }
+enum(affine) S { Done, More(affine (Unit) -> S ! {slot, mutex_put}) }
+fn holder(): Unit ! {slot, mutex_put} { perform mutex_put(perform slot(), Done) }
 fn through<!e>(f: () -> Unit ! e): Unit ! e { f() }
-fn body(): S ! {slot, tick} { holder(); perform tick(); Done }
-fn gen(): S ! {slot} {
+fn body(): S ! {slot, tick, mutex_put} { holder(); perform tick(); Done }
+fn gen(): S ! {slot, mutex_put} {
   handle { body() } with {
     return _ => Done
     tick(), k => More(k)
   }
 }
-fn top(): Unit {
-  let m := Mutex::new(Done)
+fn top(): Unit ! {mutex_new, mutex_put} {
+  let m := perform mutex_new(Done)
   let s := handle { gen() } with {
     slot(), k => k(m)
   }
-  Mutex::put(m, s)
+  perform mutex_put(m, s)
 }
 top()
 ```
@@ -294,26 +394,145 @@ lin = "ok"
 @ cases.a-call-that-can-suspend-is-on-the-stack-of-a-kept-continuation
 // `body` performs `tick` while it holds `q`, so `k` holds the mutex.
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 effect tick(): Unit
 effect slot(): Mutex(S) direct
-affine enum S { Done, More(affine (Unit) -> S ! {slot}) }
-fn holder(): Unit ! {slot} { Mutex::put(perform slot(), Done) }
+enum(affine) S { Done, More(affine (Unit) -> S ! {slot, mutex_put}) }
+fn holder(): Unit ! {slot, mutex_put} { perform mutex_put(perform slot(), Done) }
 fn through<!e>(f: () -> Unit ! e): Unit ! e { f() }
-fn body(): S ! {slot, tick} { let q := perform slot(); perform tick(); Mutex::put(q, Done); Done }
-fn gen(): S ! {slot} {
+fn body(): S ! {slot, tick, mutex_put} { let q := perform slot(); perform tick(); perform mutex_put(q, Done); Done }
+fn gen(): S ! {slot, mutex_put} {
   handle { body() } with {
     return _ => Done
     tick(), k => More(k)
   }
 }
-fn top(): Unit {
-  let m := Mutex::new(Done)
+fn top(): Unit ! {mutex_new, mutex_put} {
+  let m := perform mutex_new(Done)
   let s := handle { gen() } with {
     slot(), k => k(m)
   }
-  Mutex::put(m, s)
+  perform mutex_put(m, s)
 }
 top()
 ```
 lin = "error: strong reference cycle"
+
+@ cases.a-kept-continuation-that-calls-a-function-value-is-dropped
+llvm.unimplemented = "unsupported: a function value that performs a direct operation, in a continuation kept as a value"
+vm.unimplemented = "unsupported: the host request Probe::new"
+// The continuation owns what its body holds: run once, or dropped without
+// being run, it drops it.
+files_tote = "p"
+stdout = ```
+1
+2
+0
+```
+probe_drops = ["ran", "kept"]
+
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+struct(affine) Probe {}
+extern {
+  fn Probe::new(name: &Text): Probe
+}
+effect tick(): Unit
+enum(affine) S { Done, More(affine (Unit) -> S ! {Show}) }
+fn each(f: (i64) -> Unit ! {Show}): Unit ! {Show} { f(1); f(2) }
+fn gen(held: Probe): S ! {Show} {
+  handle {
+    let mine := held
+    perform tick()
+    each((n) => show(&n))
+    Done
+  } with {
+    return s => s
+    tick(), k => More(k)
+  }
+}
+perform main(() => {
+  match gen(Probe::new("ran")) { More(k) => { let ^continued := k(#()) }, Done => #() }
+  let kept := gen(Probe::new("kept"))
+  show(&0)
+})
+```
+
+@ cases.a-generic-root-keeps-a-multi-shot-continuation-under-a-direct-handler
+llvm.unimplemented = "unsupported: a function value that performs a direct operation, in a continuation kept as a value"
+// The body is a function value of the M tier, and the value the arm keeps
+// resumes it again: the `direct` handler of the same `handle` answers what
+// the body performs each time, and an operation it does not answer goes to
+// the code that runs the value.
+source = ```tauto
+import std::builtin::par { Ref, ref_get, ref_new }
+import std::builtin::os { stdout }
+
+enum Forked { Child, Parent(() -> Nat ! {ref_get}) }
+enum Out(T: Type) { Built(T), Ran(Nat) }
+effect fork(): Forked resume ω
+effect ui(): Nat direct
+effect done(n: Nat): Never resume 0
+
+fn rooted<T>(t: Nat, body: () -> T ! {ui, fork, done, ref_get}): Option(T) ! {ref_get} {
+  let out := handle { Built(body()) } with {
+    ui(), k => k(t)
+    fork(), k => k(Parent(() => match k(Child) { Ran(n) => n, Built(_) => 0 }))
+    done(n) => Ran(n)
+    return x => x
+  }
+  match out { Built(x) => Some(x), _ => None }
+}
+
+fn build(r: Ref(Nat)): Nat ! {ui, fork, done, ref_get} {
+  match perform fork() {
+    Child => perform done(perform ui() + perform ref_get(r))
+    Parent(run) => run() + 1
+  }
+}
+
+let r: Ref(Nat) := perform ref_new(40)
+match rooted(1, () => build(r)) {
+  Some(n) => perform stdout(concat(debug(&n), "\n"))
+  None => perform stdout("none\n")
+}
+```
+stdout = ```
+42
+```
+
+@ cases.a-kept-continuation-asks-the-handlers-of-whoever-resumes-it
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+// The continuation is made under one `direct` handler of `ask` and resumed
+// under two others: each time, the one around the code that resumes it
+// answers.
+source = ```tauto
+import std::builtin::os { stdout }
+
+enum Kept { Got(Nat), Paused(() -> Nat ! {ask}) }
+effect ask(): Nat direct
+effect pause(): () resume ω
+
+fn start(): Kept ! {ask} {
+  handle {
+    perform pause()
+    Got(perform ask())
+  } with {
+    pause(), k => Paused(() => match k(()) { Got(n) => n, Paused(_) => 0 })
+    return x => x
+  }
+}
+
+let kept := handle { start() } with { ask(), k => k(0) }
+match kept {
+  Paused(run) => {
+    let a := handle { run() } with { ask(), k => k(1) }
+    let b := handle { run() } with { ask(), k => k(2) }
+    perform stdout(concat(debug(&a), concat(" ", concat(debug(&b), "\n"))))
+  }
+  Got(_) => perform stdout("none\n")
+}
+```
+stdout = ```
+1 2
+```

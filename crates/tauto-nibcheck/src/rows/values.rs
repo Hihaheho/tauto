@@ -3,12 +3,20 @@ use super::*;
 
 pub(super) fn value_type(t: &SurfaceTerm) -> Latent {
     match &*t.kind {
+        // `A × B × C`: the prelude's `Pair` it is read as, nested to the right.
+        TermKind::App { .. } if let Some((fst, snd)) = t.as_pair_type() => Latent::Named(
+            tauto_surface::bindings::library_name("Pair"),
+            vec![value_type(fst), value_type(snd)],
+        ),
         TermKind::FnKind { ty, .. } => value_type(ty),
-        TermKind::Borrow { mutable, term } => Latent::Borrow(Box::new(value_type(term)), *mutable),
+        TermKind::Borrow { mutable, term, .. } => {
+            Latent::Borrow(Box::new(value_type(term)), *mutable)
+        }
         TermKind::Pi {
             params,
             result,
             effects,
+            ..
         } => {
             let generics: Vec<_> = params
                 .iter()
@@ -20,7 +28,19 @@ pub(super) fn value_type(t: &SurfaceTerm) -> Latent {
                 })
                 .collect();
             Latent::Known(Callable {
-                row: effects.iter().flatten().cloned().collect(),
+                row: effects
+                    .iter()
+                    .flatten()
+                    .map(|e| {
+                        // An index label is read by its spelling, whatever
+                        // the resolver made of it.
+                        if crate::types::indices::split_index_label(e).is_some() {
+                            Name::from(e.to_string())
+                        } else {
+                            e.clone()
+                        }
+                    })
+                    .collect(),
                 params: params[generics.len()..]
                     .iter()
                     .map(|(_, t)| value_type(t))
@@ -208,6 +228,20 @@ fn substituted_instance(
     crate::types::indices::instance_of_entry(entry, &map).unwrap_or_else(|| entry.clone())
 }
 
+/// An index label whose member is a row variable the call gives a row (`spawn@^e` at
+/// `e = {tcp_read}`): the label of each effect of the row, none for an empty one.
+fn expanded_index_label(entry: &Name, rows: &HashMap<Name, Row>) -> Option<Vec<Name>> {
+    let (family, member) = crate::types::indices::split_index_label(entry)?;
+    let (_, row) = rows
+        .iter()
+        .find(|(var, _)| var.to_string().split('#').next() == Some(member.as_str()))?;
+    let members: Vec<Name> = row.iter().cloned().collect();
+    Some(crate::types::indices::index_labels(
+        &Name::from(family),
+        &members,
+    ))
+}
+
 pub(super) fn substitute(
     value: &Latent,
     types: &HashMap<Name, Latent>,
@@ -238,7 +272,8 @@ pub(super) fn substitute(
             row.iter()
                 .flat_map(|e| match e.row_variable().and_then(|v| rows.get(&v)) {
                     Some(r) => r.iter().cloned().collect::<Vec<_>>(),
-                    None => vec![substituted_instance(e, types, rows)],
+                    None => expanded_index_label(e, rows)
+                        .unwrap_or_else(|| vec![substituted_instance(e, types, rows)]),
                 })
                 .collect(),
         ),
@@ -259,7 +294,8 @@ pub(super) fn substitute(
                 .iter()
                 .flat_map(|e| match e.row_variable().and_then(|v| rows.get(&v)) {
                     Some(r) => r.iter().cloned().collect::<Vec<_>>(),
-                    None => vec![substituted_instance(e, &types, &rows)],
+                    None => expanded_index_label(e, &rows)
+                        .unwrap_or_else(|| vec![substituted_instance(e, &types, &rows)]),
                 })
                 .collect();
             f.params = f
@@ -332,11 +368,11 @@ impl Analysis<'_> {
         match pattern {
             // A bare constructor name in a pattern is that nullary
             // constructor, not a name for the matched value.
-            Pattern::Bind(name)
+            Pattern::Bind { name: name, .. }
                 if self
                     .constructor(name, Some(value))
                     .is_some_and(|(data, index)| data.constructors[index].fields.is_empty()) => {}
-            Pattern::Bind(name) => locals.push((name.clone(), value.clone())),
+            Pattern::Bind { name: name, .. } => locals.push((name.clone(), value.clone())),
             // `@a p`: a label is not on the value, which `p` matches.
             Pattern::Ctor { .. } if let Some((_, inner)) = pattern.label() => {
                 self.bind_value_pattern(inner, value, locals);
@@ -685,18 +721,32 @@ impl Analysis<'_> {
         })
     }
 
-    pub(super) fn diagnostic(&mut self, message: String, span: Span) {
+    pub(super) fn diagnostic(&mut self, message: Message, span: Span) {
+        self.diagnostic_missing(message, span, None);
+    }
+
+    /// A diagnostic of an effect the written row leaves out, with that effect.
+    pub(super) fn diagnostic_missing(
+        &mut self,
+        message: Message,
+        span: Span,
+        missing: Option<MissingEffect>,
+    ) {
         let span = match self.written {
             Some(written) if generated(span) => written,
             _ => span,
         };
-        let message = display_text(&message, &self.row_variables);
+        let message = display_message(message, &self.row_variables);
         if !self
             .found
             .iter()
             .any(|d| d.message == message && d.span == span)
         {
-            self.found.push(RowDiagnostic { message, span });
+            self.found.push(RowDiagnostic {
+                message,
+                span,
+                missing,
+            });
         }
     }
 
@@ -765,6 +815,26 @@ impl Analysis<'_> {
         let outer = self.enter(t);
         let value = self.value_of_written(t, locals, expected);
         self.written = outer;
+        if let Latent::Known(f) = value.unborrowed() {
+            let fact = Some((self.owner, f.row.clone()));
+            self.values
+                .entry(t.id())
+                .and_modify(|seen| {
+                    if *seen != fact {
+                        *seen = None;
+                    }
+                })
+                .or_insert(fact);
+            let fact = RowSignature::of_latent(&value).map(|sig| (self.owner, sig));
+            self.signatures
+                .entry(t.id())
+                .and_modify(|seen| {
+                    if *seen != fact {
+                        *seen = None;
+                    }
+                })
+                .or_insert(fact);
+        }
         value
     }
 
@@ -829,7 +899,7 @@ impl Analysis<'_> {
             TermKind::BorrowLam { lam, .. } | TermKind::Tagged { term: lam, .. } => {
                 self.value_of(lam, locals, expected)
             }
-            TermKind::Borrow { mutable, term } => Latent::Borrow(
+            TermKind::Borrow { mutable, term, .. } => Latent::Borrow(
                 Box::new(self.value_of(term, locals, expected.map(Latent::unborrowed))),
                 *mutable,
             ),
@@ -883,7 +953,7 @@ impl Analysis<'_> {
                         && !self.total.contains(key)
                         && !self.structural.contains(key)
                     {
-                        row.insert(self.intrinsic("Div"));
+                        row.insert(self.intrinsic("div"));
                     }
                     return Latent::Known(self.signature(f, row));
                 }
@@ -901,10 +971,25 @@ impl Analysis<'_> {
                     .and_then(|f| f.into_iter().find(|(n, _)| n == name).map(|(_, v)| v))
                     .unwrap_or(Latent::Unknown)
             }
+            // `#(a, b)`: the prelude's `Pair` record it is read as, so the callables it holds
+            // are followed as a record's are.
+            TermKind::App { .. } if let Some((fst, snd)) = t.as_pair_value() => {
+                let record = SurfaceTerm::new(
+                    TermKind::Record {
+                        name: tauto_surface::bindings::library_name("Pair"),
+                        fields: vec![("fst".into(), fst.clone()), ("snd".into(), snd.clone())],
+                        base: None,
+                    },
+                    t.span,
+                );
+                self.value_of(&record, locals, expected)
+            }
             TermKind::App {
                 function,
                 arguments,
             } => {
+                // `f(<A: T>, x)`: the named type arguments are no argument.
+                let arguments = crate::types::split_implicits(arguments).1;
                 if let TermKind::Var(name) = &*function.kind {
                     if !locals.iter().any(|(local, _)| local == name)
                         && !self.fns.contains_key(name)
@@ -937,11 +1022,32 @@ impl Analysis<'_> {
                 }
                 Latent::Unknown
             }
+            TermKind::Perform { effect, args } if crate::host::is_storage_operation(effect) => {
+                // The host answers an operation on a `Ref` as its `extern`
+                // does: the answer is specialized to the perform's payload.
+                match self.operation_signature(effect) {
+                    Some(f) => {
+                        let (types, rows) = self.call_substitution_as(&f, args, locals, expected);
+                        substitute(&f.result, &types, &rows)
+                    }
+                    None => Latent::Unknown,
+                }
+            }
             TermKind::Perform { effect, .. } => {
                 // The handler's generic answer is not specialized to one
                 // perform site. Only its declared callable contracts survive.
+                // An operation that answers `Never` gives no value: a branch that
+                // performs it is no evidence about the value of its siblings.
                 self.operation_signature(effect)
-                    .map(|signature| *signature.result)
+                    .map(|signature| match *signature.result {
+                        Latent::Named(name, args)
+                            if args.is_empty()
+                                && name == tauto_surface::bindings::library_name("Never") =>
+                        {
+                            Latent::Absent
+                        }
+                        result => result,
+                    })
                     .unwrap_or(Latent::Unknown)
             }
             TermKind::Record { name, fields, .. } => {
@@ -1038,6 +1144,15 @@ impl Analysis<'_> {
                     let mut types = HashMap::new();
                     let mut rows = HashMap::new();
                     self.constrain(&declared, &value, &vars, &mut types, &mut rows, 0);
+                    // A field that nothing fixes, `resources: Nil` beside
+                    // `functions: [answering(f)]`, is read with the row
+                    // parameter of its own type left open, and that
+                    // parameter is no row of the program: every row
+                    // instantiates it, so the row the record's fields fix
+                    // together is the one the other fields give.
+                    for row in rows.values_mut() {
+                        row.retain(|effect| !self.unfixed_row_parameter(effect));
+                    }
                     let inferred = substitute(&declared, &types, &rows);
                     // A row the fields fix together is the one each field
                     // is read against: `App { a: Cons(mk(loud), Nil), b:
@@ -1147,11 +1262,22 @@ impl Analysis<'_> {
                         body,
                         ..
                     } => {
-                        for p in patterns {
-                            self.bind_value_pattern(p, &Latent::Unknown, &mut inner);
+                        // An arm's parameters are the values the operation
+                        // declares: `job(body: () -> Unit ! {fail(Text)})`
+                        // gives `body` that contract. A generic operation's
+                        // parameters are whatever each perform passes, so
+                        // they stay unknown.
+                        let operation = self.operation_signature(effect);
+                        for (j, p) in patterns.iter().enumerate() {
+                            let declared = operation
+                                .as_ref()
+                                .filter(|o| o.generics.is_empty())
+                                .and_then(|o| o.params.get(j).cloned())
+                                .unwrap_or(Latent::Unknown);
+                            self.bind_value_pattern(p, &declared, &mut inner);
                         }
                         let mut k = Callable::simple(self.continuation_row(handle, i));
-                        if let Some(operation) = self.operation_signature(effect) {
+                        if let Some(operation) = operation {
                             k.params.push(*operation.result);
                         }
                         k.result = Box::new(value.clone());
@@ -1339,7 +1465,7 @@ impl Analysis<'_> {
             return;
         }
         if depth > 32 {
-            self.diagnostic("cannot follow nested callable effects".into(), span);
+            self.diagnostic(msg!("rows-nested-callable"), span);
             return;
         }
         if !seen.insert((actual.clone(), expected.clone())) {
@@ -1363,7 +1489,7 @@ impl Analysis<'_> {
                         self.diagnostic(value_performs(effect, &expected), span);
                     }
                 } else {
-                    self.diagnostic("cannot follow an effect row stored in a value".into(), span);
+                    self.diagnostic(msg!("rows-row-stored-in-value"), span);
                 }
             }
             (Latent::Borrow(a, am), Latent::Borrow(e, em)) => {
@@ -1403,10 +1529,7 @@ impl Analysis<'_> {
                         .iter()
                         .any(|(_, bound)| matches!(bound.as_deref(), Some("direct" | "<=1")))
                 {
-                    self.diagnostic(
-                        "cannot erase the bounds of a polymorphic function value".into(),
-                        span,
-                    );
+                    self.diagnostic(msg!("rows-erase-bounds"), span);
                 }
                 if a.host
                     && !e.host
@@ -1414,10 +1537,7 @@ impl Analysis<'_> {
                         .iter()
                         .any(|p| self.has_callable(p, &mut HashSet::new()))
                 {
-                    self.diagnostic(
-                        "cannot erase the callback capabilities of a host function value".into(),
-                        span,
-                    );
+                    self.diagnostic(msg!("rows-erase-callback"), span);
                 }
                 for effect in &a.row {
                     if !self.permits(&e.row, effect) {
@@ -1434,10 +1554,7 @@ impl Analysis<'_> {
                 }
                 self.check_value_inner(&a.result, &e.result, span, depth + 1, seen, active);
             }
-            (_, Latent::Known(_)) => self.diagnostic(
-                "cannot follow the effects of a function value required by its type".into(),
-                span,
-            ),
+            (_, Latent::Known(_)) => self.diagnostic(msg!("rows-function-value-required"), span),
             (
                 Latent::Record(a, _) | Latent::Named(a, _),
                 Latent::Record(e, _) | Latent::Named(e, _),
@@ -1512,7 +1629,7 @@ impl Analysis<'_> {
                 // recurrence with changing arguments is not evidence that the
                 // contracts agree: stop before expanding it again.
                 if !active.insert(a.clone()) {
-                    self.diagnostic("cannot follow nested callable effects".into(), span);
+                    self.diagnostic(msg!("rows-nested-callable"), span);
                     return;
                 }
                 // Only unfold fields that can expose a callable contract.
@@ -1534,10 +1651,9 @@ impl Analysis<'_> {
                 }
                 active.remove(a);
             }
-            (Latent::Unknown, e) if self.has_callable(e, &mut HashSet::new()) => self.diagnostic(
-                "cannot follow the effects stored in a value required by its type".into(),
-                span,
-            ),
+            (Latent::Unknown, e) if self.has_callable(e, &mut HashSet::new()) => {
+                self.diagnostic(msg!("rows-value-required"), span)
+            }
             _ => {}
         }
     }
@@ -1870,7 +1986,7 @@ impl Analysis<'_> {
         self.inferring.extend(vars.iter().cloned());
         for (expected, argument) in f.params.iter().zip(arguments) {
             // What the earlier arguments fixed is what a later one is given:
-            // the callback of `mutex_with(m, (&mut x) => …)` gets what `m`
+            // the callback of `mutex_with(m, (x) => …)` gets what `m`
             // holds.
             let mut given = context_types.clone();
             for (var, ty) in &types {
@@ -1909,10 +2025,7 @@ impl Analysis<'_> {
                 {
                     if matches!(expected.unborrowed(), Latent::Known(callback) if !callback.row_written)
                     {
-                        self.diagnostic(
-                            "a mutable host callback needs an explicit effect row".into(),
-                            arg.span,
-                        );
+                        self.diagnostic(msg!("rows-mutable-callback-row"), arg.span);
                     } else {
                         self.check_term(arg, expected, locals);
                         let actual = self.value_of(arg, locals, Some(expected));
@@ -1959,7 +2072,12 @@ impl Analysis<'_> {
                         let allowed: Row = set.iter().cloned().collect();
                         if !self.permits(&allowed, effect) {
                             self.diagnostic(
-                                format!("{effect} is not in {name}, which bounds {var}"),
+                                msg!(
+                                    "rows-not-in-bound",
+                                    effect = effect.to_string(),
+                                    name = name.to_string(),
+                                    var = var.to_string()
+                                ),
                                 span,
                             );
                         }
@@ -1967,7 +2085,11 @@ impl Analysis<'_> {
                     }
                     if bound.as_deref() == Some("direct") && !self.is_direct(effect) {
                         self.diagnostic(
-                            format!("{effect} is not direct but {var} is direct"),
+                            msg!(
+                                "rows-not-direct",
+                                effect = effect.to_string(),
+                                var = var.to_string()
+                            ),
                             span,
                         );
                     } else if bound.as_deref() == Some("<=1")
@@ -1978,7 +2100,14 @@ impl Analysis<'_> {
                                 })
                             }))
                     {
-                        self.diagnostic(format!("{effect} resumes ω but {var} is <=1"), span);
+                        self.diagnostic(
+                            msg!(
+                                "rows-resumes-many",
+                                effect = effect.to_string(),
+                                var = var.to_string()
+                            ),
+                            span,
+                        );
                     }
                 }
             }
@@ -2026,13 +2155,23 @@ impl Analysis<'_> {
                     if f.generics.iter().any(|(n, _)| n == &var)
                         || !self.row_variables.contains_key(&var)
                     {
-                        return vec![unchecked(&format!("the row variable `{var}`"))];
+                        return vec![unchecked("row-variable", &var)];
                     }
+                }
+                // `spawn@^e` at the row the call gives `e`: the label of each effect of it.
+                if let Some(labels) = expanded_index_label(effect, &rows) {
+                    return labels
+                        .into_iter()
+                        .filter(|l| {
+                            crate::types::indices::split_index_label(l)
+                                .is_none_or(|(_, m)| !self.unfixed_row_parameter(&Name::from(m)))
+                        })
+                        .collect();
                 }
                 vec![effect.clone()]
             })
             .collect();
-        if f.host && self.javascript {
+        if f.host && self.target.promise_callbacks() {
             for arg in arguments {
                 if let Latent::Known(callback) = self.latent_of(arg, locals) {
                     row.extend(callback.row);
@@ -2179,13 +2318,13 @@ impl<'a> Constructors<'a> {
 
 /// What a function value performs that its type does not permit. An effect that could not be
 /// followed (`?…`) says why, not that it is performed.
-fn value_performs(effect: &Name, permitted: &Row) -> String {
+fn value_performs(effect: &Name, permitted: &Row) -> Message {
     match effect.strip_prefix('?') {
         Some(what) => unfollowed(what),
-        None => format!(
-            "a function value may perform {} but its type permits {{{}}}",
-            effect.display_in_row(),
-            show(permitted.iter())
+        None => msg!(
+            "rows-value-performs",
+            effect = effect.display_in_row(),
+            row = show(permitted.iter())
         ),
     }
 }

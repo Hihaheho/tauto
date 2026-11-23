@@ -14,17 +14,21 @@ fn crates_dir() -> PathBuf {
         .to_path_buf()
 }
 
-const SOURCE: &str = r#"import std::prelude::Affine
+const SOURCE: &str = r#"import std::prelude::collections
 struct Point { x: i64, y: i64 }
 enum Shape { Dot(Point), Line(Point, Point), Empty }
-fn add_one(n: i64): i64 { n + 1 }
-fn shift(p: Point, d: i64): Point { Point { x: p.x + d, y: p.y + d } }
+fn add_one(n: i64): i64 { handle { n + 1 } with { overflow() => 0 } }
+fn shift(p: Point, d: i64): Point {
+  handle { Point { x: p.x + d, y: p.y + d } } with { overflow() => p }
+}
 fn width(s: Shape): i64 {
-  match s {
-    Dot(p) => 0,
-    Line(a, b) => b.x - a.x,
-    Empty => 0 - 1
-  }
+  handle {
+    match s {
+      Dot(p) => 0,
+      Line(a, b) => b.x - a.x,
+      Empty => 0 - 1
+    }
+  } with { overflow() => 0 }
 }
 fn greet(name: Text): Text { name }
 fn wrap(xs: Vec(u64)): Vec(u64) { xs }
@@ -198,10 +202,10 @@ fn the_machine_facade_is_written_for_the_tote() {
 const EXTERN_SOURCE: &str = r#"extern {
   type Counter
   fn counter_new(start: i64): Counter
-  fn counter_get(&c: Counter): i64
-  fn upper(&t: Text): Text
+  fn counter_get(c: &Counter): i64
+  fn upper(t: &Text): Text
 }
-fn shouted(&t: Text): Text { upper(&t) }
+fn shouted(t: &Text): Text { upper(&t) }
 fn counted(n: i64): i64 {
   let c := counter_new(n)
   counter_get(&c)

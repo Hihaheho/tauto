@@ -1,0 +1,106 @@
+description = "`std::indexed_map::IndexedMap`: a map that walks in insertion order, on the slots vector and table."
+
+@ cases.indexed-map-insert-replace-get-remove
+description = "An insert replaces the entry of an equal key and gives it back; `get`, `remove` and `len` follow."
+source = ```tauto
+import std::indexed_map { IndexedMap }
+import std::prelude::std { Option }
+
+fn demo(): Nat {
+  var m: IndexedMap(Nat, Nat) := IndexedMap::new()
+  let _a := IndexedMap::insert(&mut m, 7, 42)
+  let _b := IndexedMap::insert(&mut m, 9, 5)
+  let r := IndexedMap::insert(&mut m, 7, 100)
+  let replaced: Nat := match r { #(Some(#(k, v)), _) => v, #(None, _) => 0 }
+  let got: Nat := match IndexedMap::get(&m, &7) { None => 0, Some(v) => v }
+  let gone: Nat := match IndexedMap::remove(&mut m, &9) { None => 0, Some(#(k, v)) => v }
+  replaced * 1000000 + got * 1000 + gone * 10 + IndexedMap::len(&m)
+}
+show(&demo())
+```
+stdout = "42100051\n"
+
+@ cases.indexed-map-keeps-insertion-order-through-growth-and-removal
+description = "Forty inserts pass the first capacities and removals leave the order of the rest (keys 1, 3, 4 after removing 2 from 1..4)."
+source = ```tauto
+import std::indexed_map { IndexedMap }
+import std::prelude::std { Option }
+
+fn fill(m: &mut IndexedMap(Nat, Nat), n: Nat, top: Nat): Nat {
+  match n {
+    Zero => 0
+    Succ(p) => {
+      let _r := IndexedMap::insert(&mut m, top - p, (top - p) * 3)
+      fill(&mut m, p, top)
+    }
+  }
+}
+
+// Removes the even keys 8, 6, 4, 2 and 0 (0 is not in the map).
+fn cut(m: &mut IndexedMap(Nat, Nat), n: Nat): Nat {
+  match n {
+    Zero => 0
+    Succ(p) => {
+      let _r := IndexedMap::remove(&mut m, &(p * 2))
+      cut(&mut m, p)
+    }
+  }
+}
+
+fn digits(acc: Nat, k: &Nat, v: &Nat): Nat { acc * 100 + k }
+
+fn demo(): Nat {
+  var m: IndexedMap(Nat, Nat) := IndexedMap::new()
+  let _f := fill(&mut m, 40, 40)
+  let before := IndexedMap::len(&m)
+  let _c := cut(&mut m, 5)
+  var small: IndexedMap(Nat, Nat) := IndexedMap::new()
+  let _s := fill(&mut small, 4, 4)
+  let _x := IndexedMap::remove(&mut small, &2)
+  before * 100000000 + IndexedMap::len(&m) * 10000 + IndexedMap::fold(&small, 0, digits)
+}
+show(&demo())
+```
+stdout = "4000370304\n"
+
+@ cases.indexed-map-text-and-u64-keys-in-a-pure-function
+description = "`IndexedMap::new` has no effects, and `Text` and `u64` have `Key` instances: a function with an empty row builds and reads maps keyed by both."
+source = ```tauto
+import std::indexed_map { IndexedMap }
+import std::prelude::std { Option }
+import std::text { Text }
+import std::uint { UInt }
+
+fn demo(): Nat {
+  var t: IndexedMap(Text, Nat) := IndexedMap::new()
+  let _a := IndexedMap::insert(&mut t, "apple", 3)
+  let _b := IndexedMap::insert(&mut t, "pear", 4)
+  let _c := IndexedMap::insert(&mut t, "apple", 5)
+  var w: IndexedMap(UInt(64), Nat) := IndexedMap::new()
+  let _d := IndexedMap::insert(&mut w, UInt::of_nat_mod64(18446744073709551615), 7)
+  let apple: Nat := match IndexedMap::get(&t, &"apple") { None => 0, Some(v) => v }
+  let big: Nat := match IndexedMap::get(&w, &UInt::of_nat_mod64(18446744073709551615)) { None => 0, Some(v) => v }
+  apple * 100 + big * 10 + IndexedMap::len(&t)
+}
+show(&demo())
+```
+stdout = "572\n"
+
+@ cases.indexed-map-debug-in-insertion-order
+description = "`Debug` of an `IndexedMap` lists the entries in the order their keys were first put, after a replace and a remove."
+source = ```tauto
+import std::indexed_map { IndexedMap }
+import std::text { Text }
+
+fn demo(): IndexedMap(Text, Nat) {
+  var m: IndexedMap(Text, Nat) := IndexedMap::new()
+  let _a := IndexedMap::insert(&mut m, "b", 1)
+  let _b := IndexedMap::insert(&mut m, "a", 2)
+  let _c := IndexedMap::insert(&mut m, "c", 3)
+  let _d := IndexedMap::insert(&mut m, "b", 4)
+  let _e := IndexedMap::remove(&mut m, &"a")
+  m
+}
+show(&demo())
+```
+stdout = "IndexedMap[\"b\" => 4, \"c\" => 3]\n"

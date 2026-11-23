@@ -1,0 +1,179 @@
+description = "Functions with effects read as computation trees in proofs when they have a `where`, a `decreasing_by`, or effects with type generics."
+
+@ cases.a-function-with-effects-and-a-where-is-read
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+inductive class Pick(A: Type) {
+  fn pick(a: A, b: A): A
+}
+
+instance Pick(Nat) {
+  fn pick(a: Nat, b: Nat): Nat { b }
+}
+
+effect tick(n: Nat): Nat
+
+fn chosen<A>(x: A, y: A): A ! {tick} where Pick(A) {
+  let ^_n := perform tick(Zero)
+  Pick::pick(x, y)
+}
+
+fn run(x: Nat, y: Nat): Nat {
+  handle { chosen(x, y) } with {
+    tick(n), k => k(n)
+  }
+}
+
+theorem run_is(x: Nat, y: Nat): run(x, y) = y { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::run_is" = "ok"
+
+@ cases.a-function-with-effects-and-decreasing-by-is-read
+imports = [path`../../std/well_founded.taut`, path`../../std/nat.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+effect tick(n: Nat): Nat
+
+fn id_nat(n: Nat): Nat { n }
+
+fn down(n: Nat): Nat ! {tick} decreasing_by measure(id_nat) => theorem down::eq {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => {
+      let ^_a := perform tick(m)
+      down(m, Nat::le_refl(m))
+    }
+  }
+}
+
+```
+
+checks_all = "ok"
+checks."input/main.taut::down@step" = "ok"
+checks."input/main.taut::down" = "ok"
+checks."input/main.taut::down::eq" = "ok"
+
+@ cases.a-function-with-effects-whose-call-does-not-descend-is-rejected
+imports = [path`../../std/well_founded.taut`, path`../../std/nat.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+effect ask(): Nat
+
+fn id_nat(n: Nat): Nat { n }
+
+fn wander(n: Nat): Nat ! {ask} decreasing_by measure(id_nat) => theorem wander::eq {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => {
+      let a := perform ask()
+      wander(a, Nat::le_refl(m))
+    }
+  }
+}
+```
+
+checks."input/main.taut::wander@step" = "error: type mismatch"
+
+@ cases.an-effect-with-type-generics-is-read
+source = ```tauto
+effect fail<E>(e: E): Nat
+
+fn guard(x: Nat): Nat ! {fail(Nat)} {
+  ⊢ Nat from match x {
+    Zero => perform fail(Succ(Zero))
+    Succ(m) => m
+  }
+}
+
+fn safe(x: Nat): Nat {
+  handle { guard(x) } with {
+    fail<Nat>(e), k => Succ(e)
+  }
+}
+
+theorem safe_zero(): safe(Zero) = Succ(Succ(Zero)) { Refl }
+theorem safe_succ(m: Nat): safe(Succ(m)) = m { Refl }
+```
+checks_all = "ok"
+
+@ cases.an-instance-at-a-generic-of-the-function-is-read
+source = ```tauto
+effect fail<E>(e: E): Nat
+effect tick(n: Nat): Nat
+
+fn give<E>(e: E, n: Nat): Nat ! {fail(E), tick} {
+  let m := perform tick(n)
+  ⊢ Nat from match m {
+    Zero => perform fail(e)
+    Succ(k) => k
+  }
+}
+
+fn caught<E>(e: E, n: Nat): Nat {
+  handle { give(e, n) } with {
+    fail<E>(x), k => Zero
+    tick(m), k => k(Succ(m))
+  }
+}
+
+theorem caught_is<E>(e: E, n: Nat): caught(e, n) = n { Refl }
+```
+checks_all = "ok"
+
+@ cases.an-arm-for-every-instance-is-not-read
+source = ```tauto
+effect fail<E>(e: E): Nat
+
+fn guard(x: Nat): Nat ! {fail(Nat)} {
+  perform fail(x)
+}
+
+fn safe(x: Nat): Nat {
+  handle { guard(x) } with {
+    ∀ E. fail<E>(e), k => Zero
+  }
+}
+```
+checks.guard = "ok"
+checks.safe = "skipped"
+
+@ cases.a-perform-among-two-instances-is-read
+source = ```tauto
+effect fail<E>(e: E): Nat
+
+fn both(x: Nat): Nat ! {fail(Nat), fail(Bool)} {
+  perform fail(x)
+}
+```
+checks.both = "ok"
+
+@ cases.a-function-with-a-row-variable-and-decreasing-by-is-read
+imports = [path`../../std/well_founded.taut`, path`../../std/nat.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+effect claim(n: Nat): Unit
+
+fn id_nat(n: Nat): Nat { n }
+
+fn each<!e>(n: Nat, act: (i: Nat) -> Unit ! {claim} ∪ e): Unit ! {claim} ∪ e decreasing_by measure(id_nat) => theorem each::eq {
+  ⊢ Unit from match n {
+    Zero => Star
+    Succ(m) => {
+      let u := act(m)
+      each(m, act, Nat::le_refl(m))
+    }
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::each@step" = "ok"
+checks."input/main.taut::each" = "ok"
+checks."input/main.taut::each::eq" = "ok"

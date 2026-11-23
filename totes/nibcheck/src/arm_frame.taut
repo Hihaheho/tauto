@@ -1,13 +1,15 @@
+import "messages.taut"
 import "handler_result_frame.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "checker_frame.taut"
 import "datas_frame.taut"
 import "handle_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -27,7 +29,7 @@ pub theorem ck_enter_fn_frame(c: Checker, scheme: Scheme): CkReadFrame(c, ck_ent
 
 pub theorem ck_leave_fn_frame(
   c: Checker,
-  assume: List(Pair(Text, Text)),
+  assume: List(Text × Text),
   types: List(TypeName)
 ): CkReadFrame(c, ck_leave_fn(c, assume, types)) { Refl }
 
@@ -37,7 +39,7 @@ pub theorem ck_arm_report_frame(
   rv: Option(Nat),
   body: SurfaceTerm
 ): CkReadFrame(c, ck_arm_report(c, why, rv, body)) {
-  ⊢ CkReadFrame(c, ck_arm_report(c, why, rv, body)) from match rv {
+  match rv {
     Some(v) => Refl
     None => Refl
   }
@@ -50,11 +52,10 @@ pub fn arm_fresh_step(
   map: Ordmap(Text, Ty),
   has: Bool
 ): Mut1(Ordmap(Text, Ty), Checker) {
-  ⊢ Mut1(Ordmap(Text, Ty), Checker) from match has {
+  match has {
     true => ck_rewrap1(ck_arm_fresh(c, rest, map))
     false => frame_bind(
-      Ty,
-      Ordmap(Text, Ty),
+      <A: Ty, B: Ordmap(Text, Ty)>,
       (v: Ty, c1: Checker) => ck_rewrap1(
         ck_arm_fresh(c1, rest, Ordmap::insert(map, g, v, Ordmap::compare_text))
       ),
@@ -82,11 +83,10 @@ pub theorem arm_fresh_step_frame(
   has: Bool,
   ih: ∀ next: Checker. ∀ m: Ordmap(Text, Ty). CkReadFrame(next, ck_arm_fresh(next, rest, m))
 ): CkReadFrame(c, arm_fresh_step(c, g, rest, map, has)) {
-  ⊢ CkReadFrame(c, arm_fresh_step(c, g, rest, map, has)) from match has {
+  match has {
     true => frame_rewrap(c, ck_arm_fresh(c, rest, map), ih(c, map))
     false => frame_bind_ok(
-      Ty,
-      Ordmap(Text, Ty),
+      <A: Ty, B: Ordmap(Text, Ty)>,
       c,
       (v: Ty, c1: Checker) => ck_rewrap1(
         ck_arm_fresh(c1, rest, Ordmap::insert(map, g, v, Ordmap::compare_text))
@@ -107,7 +107,7 @@ pub theorem ck_arm_fresh_frame(
   gs: List(Text),
   map: Ordmap(Text, Ty)
 ): CkReadFrame(c, ck_arm_fresh(c, gs, map)) {
-  ⊢ CkReadFrame(c, ck_arm_fresh(c, gs, map)) from match gs {
+  match gs {
     Nil => Refl
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => CkReadFrame(c, z),
@@ -130,13 +130,12 @@ pub theorem ck_arm_given_frame(
   types: List(SurfaceTerm),
   map: Ordmap(Text, Ty)
 ): CkReadFrame(c, ck_arm_given(c, typed, types, map)) {
-  ⊢ CkReadFrame(c, ck_arm_given(c, typed, types, map)) from match typed {
+  match typed {
     Nil => Refl
     Cons(g, gs) => ⊢ CkReadFrame(c, ck_arm_given(c, Cons(g, gs), types, map)) from match types {
       Nil => Refl
       Cons(t, ts) => frame_bind_ok(
-        Ty,
-        Ordmap(Text, Ty),
+        <A: Ty, B: Ordmap(Text, Ty)>,
         c,
         (w: Ty, c1: Checker) => ck_rewrap1(
           ck_arm_given(c1, gs, ts, Ordmap::insert(map, g, w, Ordmap::compare_text))
@@ -155,22 +154,22 @@ pub theorem ck_arm_given_frame(
 
 pub theorem ck_rigid_k_frame(
   c: Checker,
-  g: Pair(Text, Kind),
+  g: Text × Kind,
   t: Ty,
   m: Mut1(Ordmap(Text, Ty), Checker),
   h: CkReadFrame(c, m)
 ): CkReadFrame(c, ck_rigid_k(g, t, m)) {
-  ⊢ CkReadFrame(c, ck_rigid_k(g, t, m)) from match m {
+  match m {
     mut1(x, c2) => h
   }
 }
 
 // Making rigid types only counts them.
 pub theorem ck_rigid_frame(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker
 ): CkReadFrame(c, ck_rigid(gs, c)) {
-  ⊢ CkReadFrame(c, ck_rigid(gs, c)) from match gs {
+  match gs {
     Nil => Refl
     Cons(g, rest) => ck_rigid_k_frame(
       c,
@@ -191,14 +190,12 @@ pub theorem ck_arm_sig_at_frame(
   rv: Option(Nat),
   body: SurfaceTerm
 ): CkReadFrame(c, ck_arm_sig_at(c, s, typed, r#instance, binds, rv, body)) {
-  ⊢ CkReadFrame(c, ck_arm_sig_at(c, s, typed, r#instance, binds, rv, body)) from match r#instance {
+  match r#instance {
     ArmBad(why) => frame_bind_ok(
-      Unit,
-      Option(ArmSig),
+      <A: Unit, B: Option(ArmSig)>,
       c,
       (ignored: Unit, c1: Checker) => frame_bind(
-        Ordmap(Text, Ty),
-        Option(ArmSig),
+        <A: Ordmap(Text, Ty), B: Option(ArmSig)>,
         (fresh: Ordmap(Text, Ty), c2: Checker) => mut1(
           arm_sig_of(ty_substitute(handle_effect_type(s), fresh), Nil, Nil),
           c2
@@ -208,8 +205,7 @@ pub theorem ck_arm_sig_at_frame(
       ck_arm_report(c, why, rv, body),
       ck_arm_report_frame(c, why, rv, body),
       ignored => c1 => frame_bind_ok(
-        Ordmap(Text, Ty),
-        Option(ArmSig),
+        <A: Ordmap(Text, Ty), B: Option(ArmSig)>,
         c1,
         (fresh: Ordmap(Text, Ty), c2: Checker) => mut1(
           arm_sig_of(ty_substitute(handle_effect_type(s), fresh), Nil, Nil),
@@ -221,12 +217,10 @@ pub theorem ck_arm_sig_at_frame(
       )
     )
     ArmOne(written) => frame_bind_ok(
-      Ordmap(Text, Ty),
-      Option(ArmSig),
+      <A: Ordmap(Text, Ty), B: Option(ArmSig)>,
       c,
       (given: Ordmap(Text, Ty), c1: Checker) => frame_bind(
-        Ordmap(Text, Ty),
-        Option(ArmSig),
+        <A: Ordmap(Text, Ty), B: Option(ArmSig)>,
         (fixed: Ordmap(Text, Ty), c2: Checker) => mut1(
           arm_sig_of(ty_substitute(handle_effect_type(s), fixed), Nil, Nil),
           c2
@@ -236,8 +230,7 @@ pub theorem ck_arm_sig_at_frame(
       ck_arm_given(c, typed, written, Ordmap::empty()),
       ck_arm_given_frame(c, typed, written, Ordmap::empty()),
       given => c1 => frame_bind_ok(
-        Ordmap(Text, Ty),
-        Option(ArmSig),
+        <A: Ordmap(Text, Ty), B: Option(ArmSig)>,
         c1,
         (fixed: Ordmap(Text, Ty), c2: Checker) => mut1(
           arm_sig_of(ty_substitute(handle_effect_type(s), fixed), Nil, Nil),
@@ -249,8 +242,7 @@ pub theorem ck_arm_sig_at_frame(
       )
     )
     ArmEvery => frame_bind_ok(
-      Ordmap(Text, Ty),
-      Option(ArmSig),
+      <A: Ordmap(Text, Ty), B: Option(ArmSig)>,
       c,
       (rigid: Ordmap(Text, Ty), c1: Checker) => mut1(
         arm_sig_of(
@@ -260,8 +252,8 @@ pub theorem ck_arm_sig_at_frame(
         ),
         c1
       ),
-      ck_rigid(affine_generics(handle_effect_generics(s)), c),
-      ck_rigid_frame(affine_generics(handle_effect_generics(s)), c),
+      ck_rigid(handle_arm_generics(s), c),
+      ck_rigid_frame(handle_arm_generics(s), c),
       rigid => c1 => Refl
     )
   }
@@ -276,7 +268,7 @@ pub fn arm_sig_found(
   body: SurfaceTerm,
   found: Option(EffectSig)
 ): Mut1(Option(ArmSig), Checker) {
-  ⊢ Mut1(Option(ArmSig), Checker) from match found {
+  match found {
     Some(s) => ck_rewrap1(
       ck_arm_sig_at(
         c,
@@ -289,10 +281,9 @@ pub fn arm_sig_found(
       )
     )
     None => frame_bind(
-      Unit,
-      Option(ArmSig),
+      <A: Unit, B: Option(ArmSig)>,
       (ignored: Unit, c1: Checker) => mut1(None, c1),
-      ck_error(c, cat3("no effect `", eff, "` is declared"), span_of(body))
+      ck_error(c, no_effect_declared_message(eff), span_of(body))
     )
   }
 }
@@ -308,7 +299,7 @@ pub fn arm_sig_step(
   body: SurfaceTerm,
   exceeded: Bool
 ): Mut1(Option(ArmSig), Checker) {
-  ⊢ Mut1(Option(ArmSig), Checker) from match exceeded {
+  match exceeded {
     true => mut1(
       Some(ArmSig { params: Cons(TyInfo(result), Nil), answer: budget_ty, rigid: Nil, bound: Nil }),
       c
@@ -364,7 +355,7 @@ pub theorem arm_sig_found_frame(
   body: SurfaceTerm,
   found: Option(EffectSig)
 ): CkReadFrame(c, arm_sig_found(c, eff, binds, types, rv, body, found)) {
-  ⊢ CkReadFrame(c, arm_sig_found(c, eff, binds, types, rv, body, found)) from match found {
+  match found {
     Some(s) => frame_rewrap(
       c,
       ck_arm_sig_at(
@@ -387,12 +378,11 @@ pub theorem arm_sig_found_frame(
       )
     )
     None => frame_bind_ok(
-      Unit,
-      Option(ArmSig),
+      <A: Unit, B: Option(ArmSig)>,
       c,
       (ignored: Unit, c1: Checker) => mut1(None, c1),
-      ck_error(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
-      ck_error_frame(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
+      ck_error(c, no_effect_declared_message(eff), span_of(body)),
+      ck_error_frame(c, no_effect_declared_message(eff), span_of(body)),
       ignored => c1 => Refl
     )
   }
@@ -443,7 +433,7 @@ pub theorem ck_handle_arm_sig_frame(
   )
 }
 
-pub fn arm_set_types(&mut c: Checker, v: List(TypeName)): Unit {
+pub fn arm_set_types(c: &mut Checker, v: List(TypeName)): Unit {
   set_to(&mut c.type_params, v)
 }
 
@@ -456,15 +446,11 @@ pub fn arm_finish_after(
   span: TySpan,
   out: Bool
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match out {
+  match out {
     true => ck_rewrap1(
       ck_error(
         c,
-        cat3(
-          "the arm of `",
-          eff,
-          "` must work for whatever type arguments it is performed with: they are chosen where it is performed"
-        ),
+        arm_must_be_generic_message(eff),
         span
       )
     )
@@ -484,8 +470,7 @@ pub fn arm_finish(
   span: TySpan
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, c1: Checker) => arm_finish_after(
       c1,
       eff,
@@ -531,7 +516,7 @@ pub theorem arm_finish_after_run_frame(
   out: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, arm_finish_after(c, eff, a, result, rv, span, out)) {
-  ⊢ CkRunFrame(c, arm_finish_after(c, eff, a, result, rv, span, out)) from match out {
+  match out {
     true => run_frame_read(
       c,
       arm_finish_after(c, eff, a, result, rv, span, true),
@@ -539,20 +524,12 @@ pub theorem arm_finish_after_run_frame(
         c,
         ck_error(
           c,
-          cat3(
-            "the arm of `",
-            eff,
-            "` must work for whatever type arguments it is performed with: they are chosen where it is performed"
-          ),
+          arm_must_be_generic_message(eff),
           span
         ),
         ck_error_frame(
           c,
-          cat3(
-            "the arm of `",
-            eff,
-            "` must work for whatever type arguments it is performed with: they are chosen where it is performed"
-          ),
+          arm_must_be_generic_message(eff),
           span
         )
       ),
@@ -582,8 +559,7 @@ pub theorem ck_handle_arm_finish_run_frame(
     (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
     Eq::sym(arm_finish_unf(c, eff, rigid, env, types, a, result, rv, span)),
     run_frame_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, c1: Checker) => arm_finish_after(
         c1,

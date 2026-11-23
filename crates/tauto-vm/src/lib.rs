@@ -9,6 +9,7 @@
 
 pub mod builtins;
 pub mod code;
+pub mod ct;
 pub mod host;
 pub mod hostcall;
 pub mod image;
@@ -33,6 +34,7 @@ pub enum End {
 /// limit.
 pub fn run(program: &Program, host: &mut dyn Host, steps: u64) -> End {
     let mut m = machine::Machine::new(program, host, steps);
+    tauto_rt::entry::start();
     match m.run_top() {
         Ok(_) => End::Done,
         Err(Error::Exit(code)) => End::Exit(code),
@@ -55,4 +57,35 @@ pub fn call(
         Err(Error::Exit(code)) => Err(End::Exit(code)),
         Err(Error::Runtime(message)) => Err(End::Error(message)),
     }
+}
+
+/// What a counted call used: its steps, and the cells it made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Used {
+    pub steps: u64,
+    pub cells: i128,
+}
+
+/// As `call`, with at most `max_cells` cells made in all, and what the call
+/// used whether it answered or not.
+pub fn call_counted(
+    program: &Program,
+    host: &mut dyn Host,
+    inst: u32,
+    args: Vec<Value>,
+    steps: u64,
+    max_cells: Option<i128>,
+) -> (Result<value::Value, End>, Used) {
+    let mut m = machine::Machine::new(program, host, steps);
+    m.max_cells = max_cells;
+    let ran = match m.run_fn(inst, args) {
+        Ok(v) => Ok(v),
+        Err(Error::Exit(code)) => Err(End::Exit(code)),
+        Err(Error::Runtime(message)) => Err(End::Error(message)),
+    };
+    let used = Used {
+        steps: steps - m.fuel_left(),
+        cells: m.cells_made(),
+    };
+    (ran, used)
 }

@@ -1,0 +1,17 @@
+// A function that calls itself with its type argument written by name
+// (`f(<T: T>, …)`) passes its own type on, so extraction keeps it like any
+// other function.
+@ cases.self-call-with-a-named-type-argument-runs
+stdout = ```
+[7, 7]
+```
+imports = [path`../std/base.taut`, path`../std/list.taut`]
+source = ```tauto
+fn pad<T: Shared>(n: Nat, x: T): List(T) {
+  match n {
+    Zero => Nil
+    Succ(m) => Cons(x, pad(<T: T>, m, x))
+  }
+}
+show(&pad(2, 7))
+```

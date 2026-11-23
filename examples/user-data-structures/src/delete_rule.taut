@@ -1,0 +1,237 @@
+import std::base
+import std::nat
+import "slots_model.taut"
+
+// The deletion rule: the removed slot becomes empty when its
+// group (8 slots) already has an empty one, a tombstone otherwise. The search
+// goes group by group and passes a group only when it has no empty slot.
+// A slot is the pair (group, offset), so there is no division.
+
+pub(open) inductive Ctl: Type {
+  Empty: Ctl
+  Tomb: Ctl
+  Full: Ctl
+}
+
+pub fn Ctl::is_empty(c: Ctl): Bool {
+  match c {
+    Empty => true
+    Tomb => false
+    Full => false
+  }
+}
+
+pub fn Ctl::is_full(c: Ctl): Bool {
+  match c {
+    Empty => false
+    Tomb => false
+    Full => true
+  }
+}
+
+// Some of the first `w` slots of group `g` is empty.
+pub fn Table::any_empty(mk: (Nat, Nat) -> Ctl, g: Nat, w: Nat): Bool {
+  match w {
+    Zero => false
+    Succ(k) => Ctl::is_empty(mk(g, k)) || Table::any_empty(mk, g, k)
+  }
+}
+
+pub fn Table::has_empty(mk: (Nat, Nat) -> Ctl, g: Nat): Bool {
+  Table::any_empty(mk, g, 8)
+}
+
+pub theorem Table::or_split(b: Bool, c: Bool, h: b || c = true): Or(b = true, c = true) {
+  match b {
+    false => OrInr(h)
+    true => OrInl(Refl)
+  }
+}
+
+// The empties of `mk2` are empties of `mk`, or are in a group that has an empty in `mk`.
+pub theorem Table::any_empty_mono(mk: (Nat, Nat) -> Ctl, mk2: (Nat, Nat) -> Ctl, g: Nat, hg: ∀ r: Nat. Ctl::is_empty(mk2(g, r)) = true -> Or(Ctl::is_empty(mk(g, r)) = true, Table::has_empty(mk, g) = true), w: Nat, h: Table::any_empty(mk2, g, w) = true): Or(Table::any_empty(mk, g, w) = true, Table::has_empty(mk, g) = true) {
+  match w {
+    Zero => False::elim(false_ne_true(h))
+    Succ(k) => match Table::or_split(Ctl::is_empty(mk2(g, k)), Table::any_empty(mk2, g, k), h) {
+      OrInl(e) => match hg(k, e) {
+        OrInl(e2) => OrInl(Bool::or_true_left(Ctl::is_empty(mk(g, k)), Table::any_empty(mk, g, k), e2))
+        OrInr(e3) => OrInr(e3)
+      }
+      OrInr(e) => match Table::any_empty_mono(mk, mk2, g, hg, k, e) {
+        OrInl(e2) => OrInl(Bool::or_true_right(Ctl::is_empty(mk(g, k)), Table::any_empty(mk, g, k), e2))
+        OrInr(e3) => OrInr(e3)
+      }
+    }
+  }
+}
+
+pub theorem Table::not_true_false(b: Bool, h: b = true -> False): b = false {
+  match b {
+    false => Refl
+    true => False::elim(h(Refl))
+  }
+}
+
+// A group with no empty slot has none after a change that makes empties only
+// where they were, or in a group that had one.
+pub theorem Table::no_empty_stays(mk: (Nat, Nat) -> Ctl, mk2: (Nat, Nat) -> Ctl, g: Nat, hg: ∀ r: Nat. Ctl::is_empty(mk2(g, r)) = true -> Or(Ctl::is_empty(mk(g, r)) = true, Table::has_empty(mk, g) = true), h: Table::has_empty(mk, g) = false): Table::has_empty(mk2, g) = false {
+  Table::not_true_false(Table::has_empty(mk2, g), (e: Table::has_empty(mk2, g) = true) => match Table::any_empty_mono(mk, mk2, g, hg, 8, e) {
+    OrInl(e2) => false_ne_true(Eq::trans(Eq::sym(h), e2))
+    OrInr(e3) => false_ne_true(Eq::trans(Eq::sym(h), e3))
+  })
+}
+
+// The rule. `(dg, dr)` becomes empty when its group has an empty slot, a tombstone otherwise.
+pub fn Table::after_delete(mk: (Nat, Nat) -> Ctl, dg: Nat, dr: Nat): (Nat, Nat) -> Ctl {
+  (g: Nat, r: Nat) => sel(Nat::eq(g, dg) && Nat::eq(r, dr), sel(Table::has_empty(mk, dg), Empty, Tomb), mk(g, r))
+}
+
+// What the rule leaves empty was empty, or is in a group that had an empty slot.
+pub theorem Table::delete_empties_b(mk: (Nat, Nat) -> Ctl, dg: Nat, dr: Nat, g: Nat, r: Nat, b: Bool, hb: b = (Nat::eq(g, dg) && Nat::eq(r, dr))): Ctl::is_empty(sel(b, sel(Table::has_empty(mk, dg), Empty, Tomb), mk(g, r))) = true -> Or(Ctl::is_empty(mk(g, r)) = true, Table::has_empty(mk, g) = true) {
+  match b {
+    true => (x: Ctl::is_empty(sel(true, sel(Table::has_empty(mk, dg), Empty, Tomb), mk(g, r))) = true) => OrInr(Table::empty_group(mk, dg, Table::has_empty(mk, dg), Refl, g, Bool::and_true_left(Nat::eq(g, dg), Nat::eq(r, dr), Eq::sym(hb)), x))
+    false => (x: Ctl::is_empty(sel(false, sel(Table::has_empty(mk, dg), Empty, Tomb), mk(g, r))) = true) => OrInl(x)
+  }
+}
+
+pub theorem Table::empty_group(mk: (Nat, Nat) -> Ctl, dg: Nat, c: Bool, hc: c = Table::has_empty(mk, dg), g: Nat, e: Nat::eq(g, dg) = true, x: Ctl::is_empty(sel(c, Empty, Tomb)) = true): Table::has_empty(mk, g) = true {
+  match c {
+    true => Eq::subst(⟦Table::has_empty(mk, □) = true⟧, Eq::sym(Nat::eq_sound(g, dg, e)), Eq::sym(hc))
+    false => False::elim(false_ne_true(x))
+  }
+}
+
+// The table is probe-closed: every full slot's key, reached at step `kstep` of
+// its group sequence `kseq`, passed only groups with no empty slot.
+pub fn Table::probe_ok(mk: (Nat, Nat) -> Ctl, kseq: (Nat, Nat) -> (Nat) -> Nat, kstep: (Nat, Nat) -> Nat): Prop {
+  ∀ g: Nat. ∀ r: Nat. Ctl::is_full(mk(g, r)) = true -> ∀ i: Nat. i < kstep(g, r) = true -> Table::has_empty(mk, kseq(g, r)(i)) = false
+}
+
+pub theorem Table::delete_empties(mk: (Nat, Nat) -> Ctl, dg: Nat, dr: Nat, g: Nat): ∀ r: Nat. Ctl::is_empty(Table::after_delete(mk, dg, dr)(g, r)) = true -> Or(Ctl::is_empty(mk(g, r)) = true, Table::has_empty(mk, g) = true) {
+  (r: Nat) => Table::delete_empties_b(mk, dg, dr, g, r, Nat::eq(g, dg) && Nat::eq(r, dr), Refl)
+}
+
+// A slot full after the rule was full before (the rule empties or tombs one slot).
+pub theorem Table::full_b(mk: (Nat, Nat) -> Ctl, dg: Nat, g: Nat, r: Nat, b: Bool, c: Bool): Ctl::is_full(sel(b, sel(c, Empty, Tomb), mk(g, r))) = true -> Ctl::is_full(mk(g, r)) = true {
+  match b {
+    true => (x: Ctl::is_full(sel(true, sel(c, Empty, Tomb), mk(g, r))) = true) => match c {
+      true => False::elim(false_ne_true(x))
+      false => False::elim(false_ne_true(x))
+    }
+    false => (x: Ctl::is_full(sel(false, sel(c, Empty, Tomb), mk(g, r))) = true) => x
+  }
+}
+
+// Deleting keeps the table probe-closed.
+pub theorem Table::probe_ok_delete(mk: (Nat, Nat) -> Ctl, kseq: (Nat, Nat) -> (Nat) -> Nat, kstep: (Nat, Nat) -> Nat, dg: Nat, dr: Nat, hi: Table::probe_ok(mk, kseq, kstep)): Table::probe_ok(Table::after_delete(mk, dg, dr), kseq, kstep) {
+  (g: Nat) => (r: Nat) => (f: Ctl::is_full(Table::after_delete(mk, dg, dr)(g, r)) = true) => (i: Nat) => (lt: i < kstep(g, r) = true) => Table::no_empty_stays(mk, Table::after_delete(mk, dg, dr), kseq(g, r)(i), Table::delete_empties(mk, dg, dr, kseq(g, r)(i)), hi(g, r, Table::full_b(mk, dg, g, r, Nat::eq(g, dg) && Nat::eq(r, dr), Table::has_empty(mk, dg), f), i, lt))
+}
+
+// The first slot in group `g` (looking at the first `w` offsets, from the top) that holds a full key the test `hit` accepts.
+pub fn Table::first_hit(mk: (Nat, Nat) -> Ctl, hit: (Nat, Nat) -> Bool, g: Nat, w: Nat): Option(Nat × Nat) {
+  match w {
+    Zero => None
+    Succ(k) => match hit(g, k) && Ctl::is_full(mk(g, k)) {
+      true => Some(#(g, k))
+      false => Table::first_hit(mk, hit, g, k)
+    }
+  }
+}
+
+// One group of the search: a hit answers; a group with an empty slot ends it; otherwise the next group.
+pub fn Table::search_step(o: Option(Nat × Nat), he: Bool, next: Option(Nat × Nat)): Option(Nat × Nat) {
+  match o {
+    Some(s) => Some(s)
+    None => match he {
+      true => None
+      false => next
+    }
+  }
+}
+
+// The search along the group sequence `seq`, at most `fuel` more groups.
+pub fn Table::search(mk: (Nat, Nat) -> Ctl, hit: (Nat, Nat) -> Bool, seq: (Nat) -> Nat, fuel: Nat): Option(Nat × Nat) {
+  match fuel {
+    Zero => Table::search_step(Table::first_hit(mk, hit, seq(0), 8), Table::has_empty(mk, seq(0)), None)
+    Succ(f) => Table::search_step(Table::first_hit(mk, hit, seq(0), 8), Table::has_empty(mk, seq(0)), Table::search(mk, hit, (i: Nat) => seq(Succ(i)), f))
+  }
+}
+
+pub theorem Table::first_hit_some_b(mk: (Nat, Nat) -> Ctl, hit: (Nat, Nat) -> Bool, g: Nat, k: Nat, r: Nat, hr: r < Succ(k) = true, hh: hit(g, r) && Ctl::is_full(mk(g, r)) = true, c: Bool, hc: c = (hit(g, k) && Ctl::is_full(mk(g, k))), d: Bool, hd: d = Nat::eq(r, k), ih: r < k = true -> ∃ s: Nat × Nat. Table::first_hit(mk, hit, g, k) = Some(s)): ∃ s: Nat × Nat. sel(c, Some(#(g, k)), Table::first_hit(mk, hit, g, k)) = Some(s) {
+  match c {
+    true => ExIntro(#(g, k), Refl)
+    false => match d {
+      true => False::elim(false_ne_true(Eq::trans(hc, Eq::subst(y => hit(g, y) && Ctl::is_full(mk(g, y)) = true, Nat::eq_sound(r, k, Eq::sym(hd)), hh))))
+      false => ih(Nat::lt_succ_ne(r, k, hr, Eq::sym(hd)))
+    }
+  }
+}
+
+pub theorem Table::first_hit_some(mk: (Nat, Nat) -> Ctl, hit: (Nat, Nat) -> Bool, g: Nat, w: Nat, r: Nat, hr: r < w = true, hh: hit(g, r) && Ctl::is_full(mk(g, r)) = true): ∃ s: Nat × Nat. Table::first_hit(mk, hit, g, w) = Some(s) {
+  match w {
+    Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(r)), hr)))
+    Succ(k) => Table::first_hit_some_b(mk, hit, g, k, r, hr, hh, hit(g, k) && Ctl::is_full(mk(g, k)), Refl, Nat::eq(r, k), Refl, (l: r < k = true) => Table::first_hit_some(mk, hit, g, k, r, l, hh))
+  }
+}
+
+pub theorem Table::search_hit_now(mk: (Nat, Nat) -> Ctl, hit: (Nat, Nat) -> Bool, seq: (Nat) -> Nat, fuel: Nat, s: Nat × Nat, e: Table::first_hit(mk, hit, seq(0), 8) = Some(s)): Table::search(mk, hit, seq, fuel) = Some(s) {
+  match fuel {
+    Zero => Eq::congr(⟦Table::search_step(□, Table::has_empty(mk, seq(0)), None)⟧, e)
+    Succ(f) => Eq::congr(⟦Table::search_step(□, Table::has_empty(mk, seq(0)), Table::search(mk, hit, (i: Nat) => seq(Succ(i)), f))⟧, e)
+  }
+}
+
+// The search passes a group with no empty slot and no hit.
+pub theorem Table::search_pass(mk: (Nat, Nat) -> Ctl, hit: (Nat, Nat) -> Bool, seq: (Nat) -> Nat, f: Nat, e: Table::first_hit(mk, hit, seq(0), 8) = None(<A: Nat × Nat>), e2: Table::has_empty(mk, seq(0)) = false): Table::search(mk, hit, seq, Succ(f)) = Table::search(mk, hit, (i: Nat) => seq(Succ(i)), f) {
+  Eq::trans(
+    Eq::congr(⟦Table::search_step(□, Table::has_empty(mk, seq(0)), Table::search(mk, hit, (i: Nat) => seq(Succ(i)), f))⟧, e),
+    Eq::congr(⟦Table::search_step(None(<A: Nat × Nat>), □, Table::search(mk, hit, (i: Nat) => seq(Succ(i)), f))⟧, e2)
+  )
+}
+
+pub theorem Table::search_found_b(mk: (Nat, Nat) -> Ctl, hit: (Nat, Nat) -> Bool, seq: (Nat) -> Nat, n: Nat, fuel: Nat, r: Nat, hr: r < 8 = true, hh: hit(seq(n), r) && Ctl::is_full(mk(seq(n), r)) = true, hno: ∀ i: Nat. i < n = true -> Table::has_empty(mk, seq(i)) = false, hf: n <= fuel = true, o: Option(Nat × Nat), ho: Table::first_hit(mk, hit, seq(0), 8) = o): ∃ s: Nat × Nat. Table::search(mk, hit, seq, fuel) = Some(s) decreasing_by n {
+  match o {
+    Some(s) => ExIntro(s, Table::search_hit_now(mk, hit, seq, fuel, s, ho))
+    None => match n {
+      Zero => match Table::first_hit_some(mk, hit, seq(0), 8, r, hr, hh) {
+        ExIntro(s, e) => ExIntro(s, Table::search_hit_now(mk, hit, seq, fuel, s, e))
+      }
+      Succ(n2) => match fuel {
+        Zero => False::elim(false_ne_true(hf))
+        Succ(f) => match Table::search_found_b(mk, hit, (i: Nat) => seq(Succ(i)), n2, f, r, hr, hh, (i: Nat) => (l: i < n2 = true) => hno(Succ(i), l), hf, Table::first_hit(mk, hit, seq(1), 8), Refl) {
+          ExIntro(s, e) => ExIntro(s, Eq::trans(Table::search_pass(mk, hit, seq, f, ho, hno(0, Refl)), e))
+        }
+      }
+    }
+  }
+}
+
+// The search finds some key when the one at step `n` of its sequence passes only groups without empty slots.
+pub theorem Table::search_found(mk: (Nat, Nat) -> Ctl, hit: (Nat, Nat) -> Bool, seq: (Nat) -> Nat, n: Nat, fuel: Nat, r: Nat, hr: r < 8 = true, hh: hit(seq(n), r) && Ctl::is_full(mk(seq(n), r)) = true, hno: ∀ i: Nat. i < n = true -> Table::has_empty(mk, seq(i)) = false, hf: n <= fuel = true): ∃ s: Nat × Nat. Table::search(mk, hit, seq, fuel) = Some(s) {
+  Table::search_found_b(mk, hit, seq, n, fuel, r, hr, hh, hno, hf, Table::first_hit(mk, hit, seq(0), 8), Refl)
+}
+
+pub theorem Table::after_other(mk: (Nat, Nat) -> Ctl, dg: Nat, dr: Nat, g: Nat, r: Nat, hne: Nat::eq(g, dg) && Nat::eq(r, dr) = false): Table::after_delete(mk, dg, dr)(g, r) = mk(g, r) {
+  Eq::congr((b: Bool) => sel(b, sel(Table::has_empty(mk, dg), Empty, Tomb), mk(g, r)), hne)
+}
+
+// The deleted slot is not full any more.
+pub theorem Table::deleted_not_full(mk: (Nat, Nat) -> Ctl, dg: Nat, dr: Nat): Ctl::is_full(Table::after_delete(mk, dg, dr)(dg, dr)) = false {
+  Eq::trans(
+    Eq::congr((b: Bool) => Ctl::is_full(sel(b, sel(Table::has_empty(mk, dg), Empty, Tomb), mk(dg, dr))), Bool::and_intro(Nat::eq(dg, dg), Nat::eq(dr, dr), Nat::eq_refl(dg), Nat::eq_refl(dr))),
+    Table::empty_or_tomb_not_full(Table::has_empty(mk, dg))
+  )
+}
+
+pub theorem Table::empty_or_tomb_not_full(c: Bool): Ctl::is_full(sel(c, Empty, Tomb)) = false {
+  match c {
+    true => Refl
+    false => Refl
+  }
+}
+
+// After the rule, every key still in the table is found by its search:
+// the search does not stop early at a new empty slot.
+pub theorem Table::delete_keeps_found(mk: (Nat, Nat) -> Ctl, kseq: (Nat, Nat) -> (Nat) -> Nat, kstep: (Nat, Nat) -> Nat, hit: (Nat, Nat) -> Bool, dg: Nat, dr: Nat, hi: Table::probe_ok(mk, kseq, kstep), g: Nat, r: Nat, hne: Nat::eq(g, dg) && Nat::eq(r, dr) = false, hfull: Ctl::is_full(mk(g, r)) = true, hhit: hit(g, r) = true, hr: r < 8 = true, hs: kseq(g, r)(kstep(g, r)) = g, fuel: Nat, hf: kstep(g, r) <= fuel = true): ∃ s: Nat × Nat. Table::search(Table::after_delete(mk, dg, dr), hit, kseq(g, r), fuel) = Some(s) {
+  Table::search_found(Table::after_delete(mk, dg, dr), hit, kseq(g, r), kstep(g, r), fuel, r, hr, Eq::subst(y => hit(y, r) && Ctl::is_full(Table::after_delete(mk, dg, dr)(y, r)) = true, Eq::sym(hs), Bool::and_intro(hit(g, r), Ctl::is_full(Table::after_delete(mk, dg, dr)(g, r)), hhit, Eq::trans(Eq::congr(Ctl::is_full, Table::after_other(mk, dg, dr, g, r, hne)), hfull))), (i: Nat) => (l: i < kstep(g, r) = true) => Table::probe_ok_delete(mk, kseq, kstep, dg, dr, hi)(g, r, Eq::trans(Eq::congr(Ctl::is_full, Table::after_other(mk, dg, dr, g, r, hne)), hfull), i, l), hf)
+}

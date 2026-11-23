@@ -2,10 +2,8 @@
 import "../../pargen/src/list.taut"
 import "../../pargen/src/model.taut"
 import "../../pargen/src/par.taut"
-import std::Text
-import std::UInt
-import std::prelude::Shared
-import std::prelude::Affine
+import std::text
+import std::uint
 
 // The LALR(1) table of a grammar, made as the crate lalry 0.1.0 makes it for
 // parol: the LR(0) state machine, its extended grammar, the FIRST and FOLLOW
@@ -56,13 +54,13 @@ pub fn lr_syms_of(g: LrGrammar, p: u64): List(u64) {
   lr_or(g.syms, p, Nil)
 }
 
-pub fn lr_sym_words(xs: List(MSym)): List(u64) {
+pub fn lr_sym_words(xs: List(MSym)): List(u64) ! {overflow} {
   match xs {
     Nil => Nil
     Cons(s, rest) => Cons(
       match s {
-        MN(n) => lr_nt_base() + n
-        MT(t, clipped) => t
+        MN(n, ^clipped) => lr_nt_base() + n
+        MT(t, ^clipped) => t
       },
       lr_sym_words(rest)
     )
@@ -85,7 +83,7 @@ pub fn lr_list_before(xs: List(u64), ys: List(u64)): Bool {
   match xs {
     Nil => match ys {
       Nil => false
-      Cons(y, rest) => true
+      Cons(^y, ^rest) => true
     }
     Cons(x, xr) => match ys {
       Nil => false
@@ -103,7 +101,7 @@ pub fn lr_insert_by(g: LrGrammar, xs: List(u64), p: u64): List(u64) {
   }
 }
 
-pub fn lr_count(n: u64): List(u64) {
+pub fn lr_count(n: u64): List(u64) ! {div, overflow} {
   var out: List(u64) := Nil
   var i := n
   while i > 0 {
@@ -113,7 +111,7 @@ pub fn lr_count(n: u64): List(u64) {
   out
 }
 
-pub fn lr_grammar(m: MModel): LrGrammar {
+pub fn lr_grammar(m: MModel): LrGrammar ! {div, fail(Text), overflow} {
   let n_nts := md_len_text(m.nts)
   var lhs: List(u64) := Nil
   var syms: List(List(u64)) := Nil
@@ -136,7 +134,7 @@ pub fn lr_grammar(m: MModel): LrGrammar {
         syms := Cons(lr_sym_words(x.rhs), syms)
         match Vec::get_mut(&mut prods_of, x.lhs) {
           Some(slot) => {
-            slot := Cons(p, slot)
+            *slot := Cons(p, slot)
           }
           None => par_die("a production's left side is not a non-terminal")
         }
@@ -206,15 +204,15 @@ pub fn lr_grammar(m: MModel): LrGrammar {
         if not(same) {
           match prev {
             None => #()
-            Some(y) => {
+            Some(^y) => {
               r := r + 1
             }
           }
           firsts := Cons(x, firsts)
         }
         match Vec::get_mut(&mut rank, x) {
-          Some(slot) => {
-            slot := r
+          Some(^slot) => {
+            *slot := r
           }
           None => #()
         }
@@ -235,7 +233,7 @@ pub fn lr_grammar(m: MModel): LrGrammar {
   }
 }
 
-pub fn lr_rev_lists(xs: List(List(u64))): List(List(u64)) {
+pub fn lr_rev_lists(xs: List(List(u64))): List(List(u64)) ! {div} {
   var out: List(List(u64)) := Nil
   var rest := xs
   var running := true
@@ -253,19 +251,19 @@ pub fn lr_rev_lists(xs: List(List(u64))): List(List(u64)) {
   out
 }
 
-pub fn lr_item_prod(g: LrGrammar, item: u64): u64 {
+pub fn lr_item_prod(g: LrGrammar, item: u64): u64 ! {divzero} {
   lr_at(g.prod_of_rank, div(item, lr_item_base()))
 }
 
-pub fn lr_item_pos(item: u64): u64 {
+pub fn lr_item_pos(item: u64): u64 ! {divzero} {
   mod(item, lr_item_base())
 }
 
-pub fn lr_next_sym(g: LrGrammar, item: u64): Option(u64) {
+pub fn lr_next_sym(g: LrGrammar, item: u64): Option(u64) ! {divzero, overflow} {
   lr_nth(lr_syms_of(g, lr_item_prod(g, item)), lr_item_pos(item))
 }
 
-pub fn lr_nth(xs: List(u64), i: u64): Option(u64) {
+pub fn lr_nth(xs: List(u64), i: u64): Option(u64) ! {overflow} {
   match xs {
     Nil => None
     Cons(x, rest) => if i == 0 { Some(x) } else { lr_nth(rest, i - 1) }
@@ -281,7 +279,7 @@ pub fn lr_has(xs: List(u64), x: u64): Bool {
 
 // The items of a state: `kernel` and, for each item before a non-terminal,
 // the productions of that non-terminal at position 0, sorted.
-pub fn lr_closure(g: LrGrammar, kernel: List(u64)): List(u64) {
+pub fn lr_closure(g: LrGrammar, kernel: List(u64)): List(u64) ! {div, divzero, overflow} {
   var set := lg_sort(kernel)
   var todo := kernel
   var running := true
@@ -335,7 +333,7 @@ pub fn lr_same(a: List(u64), b: List(u64)): Bool {
   match a {
     Nil => match b {
       Nil => true
-      Cons(y, rest) => false
+      Cons(^y, ^rest) => false
     }
     Cons(x, xs) => match b {
       Nil => false
@@ -344,17 +342,17 @@ pub fn lr_same(a: List(u64), b: List(u64)): Bool {
   }
 }
 
-pub fn lr_vec_list(&v: Vec(List(u64)), i: u64): List(u64) {
+pub fn lr_vec_list(v: &Vec(List(u64)), i: u64): List(u64) {
   match Vec::get(&v, i) {
     Some(x) => {
-      let &y := x
+      let y := x
       y
     }
     None => Nil
   }
 }
 
-pub fn lr_find(&v: Vec(List(u64)), set: List(u64)): Option(u64) {
+pub fn lr_find(v: &Vec(List(u64)), set: List(u64)): Option(u64) ! {div, overflow} {
   var i: u64 := 0
   var out: Option(u64) := None
   while i < Vec::len(&v) {
@@ -369,7 +367,7 @@ pub fn lr_find(&v: Vec(List(u64)), set: List(u64)): Option(u64) {
 }
 
 // The moves out of the items: `symbol * 2^32 + the item advanced`, sorted.
-pub fn lr_moves(g: LrGrammar, items: List(u64)): List(u64) {
+pub fn lr_moves(g: LrGrammar, items: List(u64)): List(u64) ! {div, divzero, overflow} {
   match items {
     Nil => Nil
     Cons(item, rest) => match lr_next_sym(g, item) {
@@ -381,7 +379,7 @@ pub fn lr_moves(g: LrGrammar, items: List(u64)): List(u64) {
 
 // The states in the order lalry numbers them: from the first, each state's
 // targets in the order of their symbols, each new item set a new state.
-pub fn lr_machine(g: LrGrammar): LrMachine {
+pub fn lr_machine(g: LrGrammar): LrMachine ! {div, divzero, overflow} {
   var sets: Vec(List(u64)) := Vec::new()
   var trans: Vec(List(u64)) := Vec::new()
   let first := lr_at(g.rank, lr_at_list(lr_or(g.prods_of, g.start, Nil), 0)) * lr_item_base()
@@ -396,7 +394,7 @@ pub fn lr_machine(g: LrGrammar): LrMachine {
         Nil => {
           running := false
         }
-        Cons(x, more) => {
+        Cons(x, ^more) => {
           let sym := div(x, lr_shift())
           var nub: List(u64) := Nil
           var rest := moves
@@ -434,14 +432,14 @@ pub fn lr_machine(g: LrGrammar): LrMachine {
   LrMachine { sets: Vec::into_array(sets), trans: Vec::into_array(trans) }
 }
 
-pub fn lr_at_list(xs: List(u64), i: u64): u64 {
+pub fn lr_at_list(xs: List(u64), i: u64): u64 ! {overflow} {
   match xs {
     Nil => 0
     Cons(x, rest) => if i == 0 { x } else { lr_at_list(rest, i - 1) }
   }
 }
 
-pub fn lr_target(trans: List(u64), sym: u64): u64 {
+pub fn lr_target(trans: List(u64), sym: u64): u64 ! {divzero} {
   match trans {
     Nil => 0
     Cons(x, rest) => if div(
@@ -464,7 +462,7 @@ pub fn lr_ext_base(): u64 {
 // state where it ends and the production it comes from.
 pub(open) struct LrExt { lhs: u64, syms: List(u64), end: u64, prod: u64 }
 
-pub fn lr_ext_rules(g: LrGrammar, m: LrMachine): List(LrExt) {
+pub fn lr_ext_rules(g: LrGrammar, m: LrMachine): List(LrExt) ! {div, divzero, overflow} {
   var out: List(LrExt) := Nil
   var ix: u64 := 0
   while ix < Array::len(m.sets) {
@@ -518,7 +516,7 @@ pub fn lr_ext_rules(g: LrGrammar, m: LrMachine): List(LrExt) {
   lr_rev_ext(out)
 }
 
-pub fn lr_rev_ext(xs: List(LrExt)): List(LrExt) {
+pub fn lr_rev_ext(xs: List(LrExt)): List(LrExt) ! {div} {
   var out: List(LrExt) := Nil
   var rest := xs
   var running := true
@@ -536,7 +534,7 @@ pub fn lr_rev_ext(xs: List(LrExt)): List(LrExt) {
   out
 }
 
-pub fn lr_ext_lhs(rules: List(LrExt)): List(u64) {
+pub fn lr_ext_lhs(rules: List(LrExt)): List(u64) ! {div} {
   match rules {
     Nil => Nil
     Cons(r, rest) => lg_union(Cons(r.lhs, Nil), lr_ext_lhs(rest))
@@ -544,7 +542,7 @@ pub fn lr_ext_lhs(rules: List(LrExt)): List(u64) {
 }
 
 // Where `key` is in the sorted `keys`.
-pub fn lr_index(keys: Array(u64), key: u64): u64 {
+pub fn lr_index(keys: Array(u64), key: u64): u64 ! {div, overflow} {
   var lo: u64 := 0
   var hi := Array::len(keys)
   while lo + 1 < hi {
@@ -558,19 +556,19 @@ pub fn lr_index(keys: Array(u64), key: u64): u64 {
   lo
 }
 
-pub fn lr_get(&v: Vec(List(u64)), i: u64): List(u64) {
+pub fn lr_get(v: &Vec(List(u64)), i: u64): List(u64) {
   lr_vec_list(&v, i)
 }
 
-pub fn lr_add(&mut v: Vec(List(u64)), i: u64, xs: List(u64)): Bool {
+pub fn lr_add(v: &mut Vec(List(u64)), i: u64, xs: List(u64)): Bool ! {div, overflow} {
   let before := lr_get(&v, i)
   let after := lg_union(before, xs)
   if lg_len(after) == lg_len(before) {
     false
   } else {
     match Vec::get_mut(&mut v, i) {
-      Some(slot) => {
-        slot := after
+      Some(^slot) => {
+        *slot := after
       }
       None => #()
     }
@@ -578,19 +576,19 @@ pub fn lr_add(&mut v: Vec(List(u64)), i: u64, xs: List(u64)): Bool {
   }
 }
 
-pub fn lr_flag(&v: Vec(u64), i: u64): Bool {
+pub fn lr_flag(v: &Vec(u64), i: u64): Bool {
   handle {
-    let &y := Vec::index(&v, i)
+    let y := Vec::index(&v, i)
     y == 1
   } with {
     out_of_bounds() => false
   }
 }
 
-pub fn lr_set_flag(&mut v: Vec(u64), i: u64): Unit {
+pub fn lr_set_flag(v: &mut Vec(u64), i: u64): Unit {
   match Vec::get_mut(&mut v, i) {
-    Some(slot) => {
-      slot := 1
+    Some(^slot) => {
+      *slot := 1
     }
     None => #()
   }
@@ -606,7 +604,7 @@ pub(open) struct LrSets {
 
 // FIRST, nullable, FOLLOW and whether the end of the input follows, for each
 // non-terminal of the extended grammar.
-pub fn lr_sets(rules: List(LrExt), start: u64): LrSets {
+pub fn lr_sets(rules: List(LrExt), start: u64): LrSets ! {div, overflow} {
   let keys := Array::of_list(lr_ext_lhs(rules))
   let n := Array::len(keys)
   var first: Vec(List(u64)) := Vec::new()
@@ -721,7 +719,7 @@ pub fn lr_sets(rules: List(LrExt), start: u64): LrSets {
   LrSets { keys: keys, first: first, nullable: nullable, follow: follow, eof: eof }
 }
 
-pub fn lr_rev_syms(xs: List(u64)): List(u64) {
+pub fn lr_rev_syms(xs: List(u64)): List(u64) ! {div} {
   lg_rev(xs)
 }
 
@@ -731,7 +729,7 @@ pub fn lr_rev_syms(xs: List(u64)): List(u64) {
 // the input is the terminal 0.
 pub(open) struct LrTable { actions: Array(List(u64)), gotos: Array(List(u64)) }
 
-pub fn lr_action_of(row: List(u64), t: u64): Option(u64) {
+pub fn lr_action_of(row: List(u64), t: u64): Option(u64) ! {divzero} {
   match row {
     Nil => None
     Cons(x, rest) => if div(
@@ -741,7 +739,7 @@ pub fn lr_action_of(row: List(u64), t: u64): Option(u64) {
   }
 }
 
-pub fn lr_set_action(row: List(u64), t: u64, a: u64): List(u64) {
+pub fn lr_set_action(row: List(u64), t: u64, a: u64): List(u64) ! {divzero, overflow} {
   match row {
     Nil => Cons(t * lr_shift() + a, Nil)
     Cons(x, rest) => if div(x, lr_shift()) == t {
@@ -754,7 +752,7 @@ pub fn lr_set_action(row: List(u64), t: u64, a: u64): List(u64) {
   }
 }
 
-pub fn lr_name(names: List(Text), at: u64): Text {
+pub fn lr_name(names: List(Text), at: u64): Text ! {overflow} {
   match names {
     Nil => Text::concat_all(Cons("#", Cons(Text::of_u64(at), Nil)))
     Cons(n, rest) => if at == 0 { n } else { lr_name(rest, at - 1) }
@@ -765,7 +763,7 @@ pub fn lr_name(names: List(Text), at: u64): Text {
 // state `state`. Where the state already does something else on `t`, the
 // grammar is not LALR(1): a shift and a reduce, or reduces by two different
 // productions, is an error.
-pub fn lr_reduce(g: LrGrammar, state: u64, row: List(u64), t: u64, p: u64): List(u64) {
+pub fn lr_reduce(g: LrGrammar, state: u64, row: List(u64), t: u64, p: u64): List(u64) ! {divzero, fail(Text), overflow} {
   match lr_action_of(row, t) {
     None => lr_set_action(row, t, p * 4 + 1)
     Some(a) => if mod(a, 4) == 2 {
@@ -778,7 +776,7 @@ pub fn lr_reduce(g: LrGrammar, state: u64, row: List(u64), t: u64, p: u64): List
   }
 }
 
-pub fn lr_production_name(g: LrGrammar, p: u64): Text {
+pub fn lr_production_name(g: LrGrammar, p: u64): Text ! {overflow} {
   match Array::get(g.lhs, p) {
     Some(l) => Text::concat_all(
       Cons("production #", Cons(Text::of_u64(p), Cons(" of ", Cons(lr_name(g.nts, l), Nil))))
@@ -787,7 +785,7 @@ pub fn lr_production_name(g: LrGrammar, p: u64): Text {
   }
 }
 
-pub fn lr_conflict(g: LrGrammar, state: u64, t: u64, a: u64, p: u64): Never {
+pub fn lr_conflict(g: LrGrammar, state: u64, t: u64, a: u64, p: u64): Never ! {fail(Text), overflow} {
   let shifts := mod(a, 4) == 0
   let kind := if shifts { "shift/reduce" } else { "reduce/reduce" }
   let other := if shifts {
@@ -824,20 +822,20 @@ pub fn lr_conflict(g: LrGrammar, state: u64, t: u64, a: u64, p: u64): Never {
 }
 
 // Accepting at the end of the input, where nothing else may be done then.
-pub fn lr_accept(row: List(u64), p: u64): List(u64) {
+pub fn lr_accept(row: List(u64), p: u64): List(u64) ! {divzero, fail(Text), overflow} {
   match lr_action_of(row, 0) {
     None => lr_set_action(row, 0, p * 4 + 2)
-    Some(a) => lr_end_conflict()
+    Some(^a) => lr_end_conflict()
   }
 }
 
-pub fn lr_end_conflict(): Never {
+pub fn lr_end_conflict(): Never ! {fail(Text)} {
   par_die(
     "not LALR(1): at the end of the input, a state both accepts and reduces (the start symbol is used inside the grammar or ends more than one way)"
   )
 }
 
-pub fn lr_table(g: LrGrammar): LrTable {
+pub fn lr_table(g: LrGrammar): LrTable ! {div, divzero, fail(Text), overflow} {
   let m := lr_machine(g)
   let rules := lr_ext_rules(g, m)
   let sets := lr_sets(rules, g.start)
@@ -902,8 +900,8 @@ pub fn lr_table(g: LrGrammar): LrTable {
           }
         }
         match Vec::get_mut(&mut actions, r.end) {
-          Some(slot) => {
-            slot := row
+          Some(^slot) => {
+            *slot := row
           }
           None => #()
         }
@@ -916,7 +914,7 @@ pub fn lr_table(g: LrGrammar): LrTable {
 // The `lr` line: the number of states, then for each its actions (the
 // number, then terminal, kind 0 shift, 1 reduce or 2 accept, and the state
 // or production) and its gotos (the number, then non-terminal and state).
-pub fn lr_line(t: LrTable): Text {
+pub fn lr_line(t: LrTable): Text ! {div, divzero, overflow} {
   var b := Buf::new()
   Buf::push(&mut b, &"lr ")
   Buf::push(&mut b, &Text::of_u64(Array::len(t.actions)))

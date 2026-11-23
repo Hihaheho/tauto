@@ -54,20 +54,20 @@ fn keyword_result(text: Text): Text {
     Err(diag) => diag.code
   }
 }
-perform show("true_field", keyword_result("[true]"))
-perform show("false_field", keyword_result("[false]"))
-perform show("keyword_error", keyword_result("[maybe]"))
-perform show("alias", alias::parse("別名=3"))
-perform show("alias_error", alias::parse("別名="))
-perform show("record", records::parse("((日本語:値))"))
-perform show("single", records::parse("!"))
-perform show("recursive", math::parse("((1+2)+3)=6"))
-perform show("list_some", lists::parse("head first one:two three !"))
-perform show("list_none", lists::parse("~"))
-perform show("japanese", ident::parse("日本語=12"))
-perform show("syntax_error", math::parse("1+=3"))
-perform show("eof", math::parse("1="))
-perform show("lexical", ident::parse("日本語=@"))
+show(&keyword_result("[true]"))
+show(&keyword_result("[false]"))
+show(&keyword_result("[maybe]"))
+show(&alias::parse("別名=3"))
+show(&alias::parse("別名="))
+show(&records::parse("((日本語:値))"))
+show(&records::parse("!"))
+show(&math::parse("((1+2)+3)=6"))
+show(&lists::parse("head first one:two three !"))
+show(&lists::parse("~"))
+show(&ident::parse("日本語=12"))
+show(&math::parse("1+=3"))
+show(&math::parse("1="))
+show(&ident::parse("日本語=@"))
 "#,
     );
     assert_eq!(
@@ -150,27 +150,27 @@ fn keyword_result(text: Text): Text {
     Err(diag) => diag.code
   }
 }
-perform show("true_field", keyword_result("[true]"))
-perform show("false_field", keyword_result("[false]"))
-perform show("keyword_error", keyword_result("[maybe]"))
-perform show("alias", alias::parse("別名=3"))
-perform show("alias_error", alias::parse("別名="))
-perform show("record", records::parse("((日本語:値))"))
-perform show("single", records::parse("!"))
-perform show("recursive", math::parse("((1+2)+3)=6"))
-perform show("list_some", lists::parse("head first one:two three !"))
-perform show("list_none", lists::parse("~"))
-perform show("japanese", ident::parse("日本語=12"))
-perform show("syntax_error", math::parse("1+=3"))
-perform show("eof", math::parse("1="))
-perform show("lexical", ident::parse("日本語=@"))
+show(&keyword_result("[true]"))
+show(&keyword_result("[false]"))
+show(&keyword_result("[maybe]"))
+show(&alias::parse("別名=3"))
+show(&alias::parse("別名="))
+show(&records::parse("((日本語:値))"))
+show(&records::parse("!"))
+show(&math::parse("((1+2)+3)=6"))
+show(&lists::parse("head first one:two three !"))
+show(&lists::parse("~"))
+show(&ident::parse("日本語=12"))
+show(&math::parse("1+=3"))
+show(&math::parse("1="))
+show(&ident::parse("日本語=@"))
 "#
     );
     std::fs::write(dir.join("input/main.taut"), &source).unwrap();
     let (pkg, expected) = tauto::syntax::with_search_dirs(vec![dir.join("input")], || {
         (
-            tauto_nir::compile(&source).unwrap(),
-            tauto::eval::run(&source).unwrap().outputs,
+            tauto::nir::compile(&source).unwrap(),
+            tauto::exec::run(&source).unwrap().outputs,
         )
     });
     let literal_source = r#"syntax!(math, ```par
@@ -251,26 +251,26 @@ fn keyword_result(text: Text): Text {
     Err(diag) => diag.code
   }
 }
-perform show("true_field", keyword_result("[true]"))
-perform show("false_field", keyword_result("[false]"))
-perform show("keyword_error", keyword_result("[maybe]"))
-perform show("alias", alias::parse("別名=3"))
-perform show("alias_error", alias::parse("別名="))
-perform show("record", records::parse("((日本語:値))"))
-perform show("single", records::parse("!"))
-perform show("recursive", math::parse("((1+2)+3)=6"))
-perform show("list_some", lists::parse("head first one:two three !"))
-perform show("list_none", lists::parse("~"))
-perform show("japanese", ident::parse("日本語=12"))
-perform show("syntax_error", math::parse("1+=3"))
-perform show("eof", math::parse("1="))
-perform show("lexical", ident::parse("日本語=@"))
+show(&keyword_result("[true]"))
+show(&keyword_result("[false]"))
+show(&keyword_result("[maybe]"))
+show(&alias::parse("別名=3"))
+show(&alias::parse("別名="))
+show(&records::parse("((日本語:値))"))
+show(&records::parse("!"))
+show(&math::parse("((1+2)+3)=6"))
+show(&lists::parse("head first one:two three !"))
+show(&lists::parse("~"))
+show(&ident::parse("日本語=12"))
+show(&math::parse("1+=3"))
+show(&math::parse("1="))
+show(&ident::parse("日本語=@"))
 
-perform show("literal", keyword_text(keywords`[true]`))
+show(&keyword_text(keywords`[true]`))
 "#;
     assert!(literal_source.starts_with(&source));
     let literal = tauto::syntax::with_search_dirs(vec![dir.join("input")], || {
-        tauto::eval::run(&literal_source).unwrap().outputs
+        tauto::exec::run(&literal_source).unwrap().outputs
     });
     assert_eq!(
         literal.last().unwrap().1,
@@ -335,11 +335,11 @@ fn keyword_syntax_literal_compiles_natively() {
 Root: '['^ Value ']'^;
 Value: 'true' | 'false';
 ```) => struct Root, enum Value, fn parse
-perform show("literal", keywords`[true]`)
+show(&(keywords`[true]`))
 "#;
     assert!(source.contains(&tauto::syntax::generated_clause("keywords", &tables, false)));
     let pkg =
-        tauto::syntax::with_search_dirs(vec![fixtures()], || tauto_nir::compile(&source)).unwrap();
+        tauto::syntax::with_search_dirs(vec![fixtures()], || tauto::nir::compile(&source)).unwrap();
     let dir = std::env::temp_dir().join(format!("tauto-keyword-literal-{}", std::process::id()));
     let ws = workspace(
         "keyword-literal",

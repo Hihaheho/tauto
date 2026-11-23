@@ -30,6 +30,24 @@ $types {
     context = [`text`]
     context.$optional = true
   }
+  host-extern {
+    owner = `text`
+    owner.$optional = true
+    value = `integer`
+    value.$optional = true
+    answers = `text`
+    answers.$optional = true
+    error = `text`
+    error.$optional = true
+    drops_at_call = `integer`
+    drops_at_call.$optional = true
+  }
+  backend-opt-out {
+    unimplemented = `text`
+    unimplemented.$optional = true
+    bug = `text`
+    bug.$optional = true
+  }
   fix-run {
     lint = `boolean`
     lint.$optional = true
@@ -68,8 +86,12 @@ $types {
     occurrence.$optional = true
     contains = [`text`]
     contains.$optional = true
+    lacks = [`text`]
+    lacks.$optional = true
     absent = `boolean`
     absent.$optional = true
+    span = `boolean`
+    span.$optional = true
     proof = `text`
     proof.$optional = true
     proof_file = `text`
@@ -80,9 +102,48 @@ $types {
     key = `text`
     value = `text`
   }
-  unimplemented-mark {
-    $variant = "union"
-    variants = { flag => `boolean`, reason => `text` }
+  import-fix-view {
+    at = `text`
+    at.$optional = true
+    occurrence = `integer`
+    occurrence.$optional = true
+    fixed_sources = [`text`]
+    fixed_sources.$optional = true
+  }
+  nir-run {
+    source = `text`
+    source.$optional = true
+    target = `text`
+    target.$optional = true
+    library = `boolean`
+    library.$optional = true
+    export = [`text`]
+    export.$optional = true
+    passes = [`text`]
+    passes.$optional = true
+    evidence = `text`
+    evidence.$optional = true
+    exports = `text`
+    exports.$optional = true
+    package = `text`
+    package.$optional = true
+    error = `text`
+    error.$optional = true
+    @ fns
+    $variant = "map"
+    $optional = true
+    key = `text`
+    value = `text`
+    @ blocks
+    $variant = "map"
+    $optional = true
+    key = `text`
+    value = `text`
+    @ datas
+    $variant = "map"
+    $optional = true
+    key = `text`
+    value = `text`
   }
   fixture {
     source = `text`
@@ -97,6 +158,12 @@ $types {
     tote.$optional = true
     files_tote = `text`
     files_tote.$optional = true
+    check_tote = `text`
+    check_tote.$optional = true
+    run_tote = `text`
+    run_tote.$optional = true
+    workspace_check = `boolean`
+    workspace_check.$optional = true
     entry = `text`
     entry.$optional = true
     imports = [`text`]
@@ -139,6 +206,10 @@ $types {
     tote_warnings.$optional = true
     tote_errors = [`text`]
     tote_errors.$optional = true
+    check_errors = [`text`]
+    check_errors.$optional = true
+    externs = [`text`]
+    externs.$optional = true
     checks_all = `text`
     checks_all.$optional = true
     declarations = [`text`]
@@ -147,8 +218,6 @@ $types {
     diagnostics.$optional = true
     holes = [`$types.hole`]
     holes.$optional = true
-    shows = [`text`]
-    shows.$optional = true
     tests = [`text`]
     tests.$optional = true
     stdout = `text`
@@ -159,14 +228,14 @@ $types {
     exit.$optional = true
     run_error = `text`
     run_error.$optional = true
-    drops = [`text`]
-    drops.$optional = true
     probe_drops = [`text`]
     probe_drops.$optional = true
     budget = `integer`
     budget.$optional = true
     rust_budget_steps = `integer`
     rust_budget_steps.$optional = true
+    rust_stack_mb = `integer`
+    rust_stack_mb.$optional = true
     args = [`text`]
     args.$optional = true
     permissions = [`text`]
@@ -177,24 +246,38 @@ $types {
     load_error.$optional = true
     expands = `text`
     expands.$optional = true
+    extracted_text = [`text`]
+    extracted_text.$optional = true
+    extracted_lacks = [`text`]
+    extracted_lacks.$optional = true
     trace = [`text`]
     trace.$optional = true
-    rust_shows = [`text`]
-    rust_shows.$optional = true
-    rust_error = `text`
-    rust_error.$optional = true
+    macro_warnings = [`text`]
+    macro_warnings.$optional = true
+    check_report = `text`
+    check_report.$optional = true
     build = `text`
     build.$optional = true
-    rust = `text`
-    rust.$optional = true
-    backends = [`text`]
-    backends.$optional = true
     differential = `text`
     differential.$optional = true
-    javascript_shows = [`text`]
-    javascript_shows.$optional = true
-    javascript_error = `text`
-    javascript_error.$optional = true
+    differential_program = `text`
+    differential_program.$optional = true
+    component_rejects = `boolean`
+    component_rejects.$optional = true
+    eval = `$types.backend-opt-out`
+    eval.$optional = true
+    rust = `$types.backend-opt-out`
+    rust.$optional = true
+    javascript = `$types.backend-opt-out`
+    javascript.$optional = true
+    vm = `$types.backend-opt-out`
+    vm.$optional = true
+    llvm = `$types.backend-opt-out`
+    llvm.$optional = true
+    niri = `$types.backend-opt-out`
+    niri.$optional = true
+    nir_wf = `$types.backend-opt-out`
+    nir_wf.$optional = true
     selfhost_entry = `text`
     selfhost_entry.$optional = true
     selfhost_stdout = `text`
@@ -209,12 +292,20 @@ $types {
     proofs.$optional = true
     hovers = [`$types.hover-view`]
     hovers.$optional = true
-    unimplemented = `$types.unimplemented-mark`
-    unimplemented.$optional = true
+    import_fixes = [`$types.import-fix-view`]
+    import_fixes.$optional = true
+    row_hole_fixes = [`$types.import-fix-view`]
+    row_hole_fixes.$optional = true
+    nir = `$types.nir-run`
+    nir.$optional = true
     scenarios = [`text`]
     scenarios.$optional = true
+    checked_before = [`text`]
+    checked_before.$optional = true
     description = `text`
     description.$optional = true
+    lang = `text`
+    lang.$optional = true
     @ files
     $variant = "map"
     $optional = true
@@ -226,6 +317,11 @@ $types {
     key = `text`
     value = `text`
     @ inferred_rows
+    $variant = "map"
+    $optional = true
+    key = `text`
+    value = [`text`]
+    @ host_origins
     $variant = "map"
     $optional = true
     key = `text`
@@ -245,6 +341,11 @@ $types {
     $optional = true
     key = `text`
     value = `text`
+    @ host
+    $variant = "map"
+    $optional = true
+    key = `text`
+    value = `$types.host-extern`
     @ links
     $variant = "map"
     $optional = true
@@ -256,11 +357,6 @@ $types {
     key = `text`
     value = `text`
     @ compile_errors
-    $variant = "map"
-    $optional = true
-    key = `text`
-    value = `text`
-    @ backend_known_failure
     $variant = "map"
     $optional = true
     key = `text`

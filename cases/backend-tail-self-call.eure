@@ -1,35 +1,57 @@
 // Deep proof-language recursion must not retain discarded tail-call frames.
 @ cases.pure-tail-count
-backends = ["rust", "javascript"]
-extract = true
-imports = [path`../std/Base.taut`]
+stdout = "60000\n"
+imports = [path`../std/base.taut`]
 source = ```tauto
 fn count(n: Nat, done: Nat): Nat {
     ⊢ Nat from match n { Zero => done, Succ(rest) => count(rest, done + 1) }
 }
-perform show("count", count(60000, 0))
+show(&count(60000, 0))
 ```
-rust_shows = ["count = 60000"]
+nir.fns.count = ```nir
+fn count@2(n#4: nat, done#5: nat): nat S = {
+  let extract_nat#6 := move n#4;
+  if eq(clone extract_nat#6, 0nat) then {
+    move done#5
+  } else {
+    let rest#7 := sub<nat>(move extract_nat#6, 1nat);
+    count@2(move rest#7, add<nat>(move done#5, 1nat)) recur: nat
+  }
+}
+```
 
 @ cases.pure-non-tail-count
-backends = ["rust", "javascript"]
-extract = true
-imports = [path`../std/Base.taut`]
+stdout = "32\n"
+imports = [path`../std/base.taut`]
 source = ```tauto
 fn count(n: Nat): Nat {
     ⊢ Nat from match n { Zero => 1, Succ(rest) => 2 * count(rest) }
 }
-perform show("count", count(5))
+show(&count(5))
 ```
-rust_shows = ["count = 32"]
+nir.fns.count = ```nir
+fn count@2(n#4: nat): nat S = {
+  let extract_nat#5 := move n#4;
+  if eq(clone extract_nat#5, 0nat) then {
+    1nat
+  } else {
+    let rest#6 := sub<nat>(move extract_nat#5, 1nat);
+    mul<nat>(2nat, count@2(move rest#6): nat)
+  }
+}
+```
 
 // A function that adds a constant to its own result, as `List::length`
 // does, is compiled with an accumulator: the call becomes a jump, and the
 // depth does not depend on the stack.
 @ cases.accumulated-count
-backends = ["rust", "javascript"]
-extract = true
-imports = [path`../std/Base.taut`]
+llvm.unimplemented = "output: exit: expected 0"
+stdout = ```
+60000
+200000
+13
+```
+imports = [path`../std/base.taut`]
 source = ```tauto
 fn count(n: Nat): Nat {
     ⊢ Nat from match n { Zero => 0, Succ(rest) => 1 + count(rest) }
@@ -40,36 +62,81 @@ fn ones(n: Nat, acc: List(Nat)): List(Nat) {
 fn stop(n: Nat): Nat {
     ⊢ Nat from match n { Zero => 7, Succ(rest) => stop(rest) + 2 }
 }
-perform show("count", count(60000))
-perform show("length", List::length(ones(200000, Nil)))
-perform show("stop", stop(3))
+show(&count(60000))
+show(&List::length(ones(200000, Nil)))
+show(&stop(3))
 ```
-rust_shows = ["count = 60000", "length = 200000", "stop = 13"]
+nir.fns."count@2" = ```nir
+fn count@2(n#4: nat): nat S = count@8(move n#4, 0nat): nat
+```
+nir.fns."count@8" = ```nir
+fn count@8(n#4: nat, acc#19: nat): nat S = {
+  let extract_nat#5 := move n#4;
+  if eq(clone extract_nat#5, 0nat) then {
+    move acc#19
+  } else {
+    let rest#6 := sub<nat>(move extract_nat#5, 1nat);
+    count@8(move rest#6, add<nat>(move acc#19, 1nat)) recur: nat
+  }
+}
+```
+nir.fns.ones = ```nir
+fn ones@5(n#11: nat, acc#12: List(nat)): List(nat) S = {
+  let extract_nat#13 := move n#11;
+  if eq(clone extract_nat#13, 0nat) then {
+    move acc#12
+  } else {
+    let k#14 := sub<nat>(move extract_nat#13, 1nat);
+    ones@5(move k#14, List::Cons(1nat, move acc#12): List(nat)) recur: List(nat)
+  }
+}
+```
+nir.fns."stop@6" = ```nir
+fn stop@6(n#15: nat): nat S = stop@10(move n#15, 0nat): nat
+```
+nir.fns."stop@10" = ```nir
+fn stop@10(n#15: nat, acc#21: nat): nat S = {
+  let extract_nat#16 := move n#15;
+  if eq(clone extract_nat#16, 0nat) then {
+    add<nat>(move acc#21, 7nat)
+  } else {
+    let rest#17 := sub<nat>(move extract_nat#16, 1nat);
+    stop@10(move rest#17, add<nat>(move acc#21, 2nat)) recur: nat
+  }
+}
+```
 
 // A self call in tail position is a jump back to the start of the body, so
-// the depth does not depend on the stack: this counts past what the default
-// stack holds as frames.
+// the depth does not depend on the stack: this counts past what a stack of
+// 8 MiB holds as frames, and past the frames the evaluator lets a call start
+// on.
 @ cases.machine-tail-count
-backends = ["rust"]
+rust_stack_mb = 8
+stdout = "3000000\n"
 source = ```tauto
-fn count(n: u64, done: u64): u64 {
+fn count(n: u64, done: u64): u64 ! {overflow} {
     if n == 0 { done } else { count(n - 1, done + 1) }
 }
-perform show("count", count(50000000, 0))
+show(&count(3000000, 0))
 ```
-rust_shows = ["count = 50000000"]
+nir.fns.count = ```nir
+fn count@2(n#4: u64, done#5: u64): u64 A = if eq(copy n#4, 0u64) then copy done#5 else count@2(sub<u64>(copy n#4, 1u64), add<u64>(copy done#5, 1u64)) tier A recur: u64
+```
 
 // A borrowed parameter that is passed on unchanged stays as it is, and the
-// reader advances one element per call, around the vector, past what the
-// default stack holds as frames.
+// reader advances one element per call, around the vector, past what a
+// stack of 8 MiB holds as frames. Reading an item through the borrow leaves
+// nothing behind, so the memory does not grow with the depth either.
 @ cases.borrowed-tail-reader
-backends = ["rust"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
+rust_stack_mb = 8
+stdout = "4500000\n"
 source = ```tauto
-fn sum_from(&v: Vec(u64), i: u64, left: u64, acc: u64): u64 {
+fn sum_from(v: &Vec(u64), i: u64, left: u64, acc: u64): u64 ! {out_of_bounds, overflow} {
     if left == 0 {
         acc
     } else {
-        let &x := Vec::index(&v, i)
+        let x := Vec::index(&v, i)
         let next := if i + 1 == Vec::len(&v) { 0 } else { i + 1 }
         sum_from(&v, next, left - 1, acc + x)
     }
@@ -78,17 +145,22 @@ var v: Vec(u64) := Vec::new()
 Vec::push(&mut v, 1)
 Vec::push(&mut v, 2)
 // Vec::index performs out_of_bounds, so the program answers it.
-perform show("sum", handle { sum_from(&v, 0, 40000000, 0) } with { out_of_bounds() => 0 })
+show(&(handle { sum_from(&v, 0, 3000000, 0) } with { out_of_bounds() => 0 }))
 ```
-rust_shows = ["sum = 60000000"]
+nir.fns.sum_from = ```nir
+fn sum_from@2(ref v#5: &Vec(u64), i#6: u64, left#7: u64, acc#8: u64): u64 A = if eq(copy left#7, 0u64) then copy acc#8 else {
+  let ref x#9 := Vec::index@5<u64>(&v#5, copy i#6) tier A: &u64;
+  let next#10 := if eq(add<u64>(copy i#6, 1u64), builtin Vec::len(&v#5): u64) then 0u64 else add<u64>(copy i#6, 1u64);
+  sum_from@2(&v#5, copy next#10, sub<u64>(copy left#7, 1u64), add<u64>(copy acc#8, copy x#9)) tier A recur: u64
+}
+```
 
 // A parameter passed on unchanged is also given to another argument of the
 // same call. The next pass reads it again, so that argument takes a clone of
 // it, a function or a list alike, rather than moving it out.
 @ cases.passed-on-also-moved
-backends = ["rust", "javascript"]
-extract = true
-imports = [path`../std/Base.taut`]
+stdout = "15\n"
+imports = [path`../std/base.taut`]
 source = ```tauto
 fn apply(f: (Nat) -> Nat, xs: List(Nat), acc: Nat): Nat {
     ⊢ Nat from match xs { Nil => acc, Cons(x, rest) => acc + f(x) }
@@ -96,17 +168,32 @@ fn apply(f: (Nat) -> Nat, xs: List(Nat), acc: Nat): Nat {
 fn run(f: (Nat) -> Nat, xs: List(Nat), n: Nat, acc: Nat): Nat {
     ⊢ Nat from match n { Zero => acc, Succ(k) => run(f, xs, k, apply(f, xs, acc)) }
 }
-perform show("run", run(x => x + 1, Cons(2, Nil), 5, 0))
+show(&run(x => x + 1, Cons(2, Nil), 5, 0))
 ```
-rust_shows = ["run = 15"]
+nir.fns.apply = ```nir
+fn apply@5(f#13: fn(nat) -> nat shared S, ref xs#14: &List(nat), acc#15: nat): nat S = match by_ref &xs#14 {
+  List::Nil => move acc#15,
+  List::Cons(ref x#16: nat, ref rest#17: List(nat)) => add<nat>(move acc#15, f#13(clone x#16): nat),
+}
+```
+nir.fns.run = ```nir
+fn run@2(f#5: fn(nat) -> nat shared S, xs#6: List(nat), n#7: nat, acc#8: nat): nat S = {
+  let extract_nat#9 := move n#7;
+  if eq(clone extract_nat#9, 0nat) then {
+    move acc#8
+  } else {
+    let k#10 := sub<nat>(move extract_nat#9, 1nat);
+    run@2(clone f#5, clone xs#6, move k#10, apply@5(clone f#5, &xs#6, move acc#8): nat) recur: nat
+  }
+}
+```
 
 // A parameter passed on unchanged is read again inside a call nested in
 // another argument, by a function that is not public. That read also takes a
 // clone, so the next pass still has the parameter.
 @ cases.passed-on-moved-in-nested-call
-backends = ["rust", "javascript"]
-extract = true
-imports = [path`../std/Base.taut`]
+stdout = "4\n"
+imports = [path`../std/base.taut`]
 source = ```tauto
 fn first(xs: List(Nat), d: Nat): Nat {
     ⊢ Nat from match xs { Nil => d, Cons(x, rest) => x }
@@ -128,27 +215,56 @@ fn collect(k: Nat, xs: List(Nat), p: Nat, done: List(List(Nat))): List(List(Nat)
 fn count(l: List(List(Nat)), acc: Nat): Nat {
     ⊢ Nat from match l { Nil => acc, Cons(x, rest) => count(rest, acc + 1) }
 }
-perform show("collect", count(collect(4, Cons(2, Nil), 0, Nil), 0))
+show(&count(collect(4, Cons(2, Nil), 0, Nil), 0))
 ```
-rust_shows = ["collect = 4"]
+nir.fns.wrap = ```nir
+fn wrap@7(n#20: nat, ref xs#21: &List(nat), d#22: nat, out#23: List(nat)): List(nat) S = {
+  let extract_nat#24 := move n#20;
+  if eq(clone extract_nat#24, 0nat) then {
+    move out#23
+  } else {
+    let k#25 := sub<nat>(move extract_nat#24, 1nat);
+    List::Cons(first@6((xs#21: &List(nat)), move d#22): nat, move out#23): List(nat)
+  }
+}
+```
+nir.fns.collect = ```nir
+fn collect@3(k#8: nat, xs#9: List(nat), p#10: nat, done#11: List(List(nat))): List(List(nat)) S = {
+  let extract_nat#12 := move k#8;
+  if eq(clone extract_nat#12, 0nat) then {
+    move done#11
+  } else {
+    let k2#13 := sub<nat>(move extract_nat#12, 1nat);
+    collect@3(move k2#13, clone xs#9, add<nat>(add<nat>(clone p#10, 1nat), mul<nat>(first@6(&xs#9, clone p#10): nat, 3nat)), List::Cons(wrap@7(first@6(&xs#9, clone p#10): nat, tempref(clone xs#9), add<nat>(move p#10, 1nat), List::Nil: List(nat)): List(nat), move done#11): List(List(nat))) recur: List(List(nat))
+  }
+}
+```
 
 // A function that can suspend is a future, and every future between a
 // suspension and its handler is polled again when it resumes. A self call in
 // tail position is a jump here too, so a recursion that suspends at each step
 // does not take time that grows with the square of its depth.
 @ cases.suspending-tail-count
-backends = ["rust"]
+stdout = ```
+1000000
+1000000
+```
 source = ```tauto
 effect tick(): Unit resume 1
-fn count(n: u64, done: u64): u64 ! {tick} {
+fn count(n: u64, done: u64): u64 ! {tick, overflow} {
     if n == 0 { done } else {
         perform tick()
         count(n - 1, done + 1)
     }
 }
 var ticks: u64 := 0
-let n := handle { count(1000000, 0) } with { tick(), k => { ticks := ticks + 1; k(#()) } }
-perform show("count", n)
-perform show("ticks", ticks)
+let n := handle { count(1000000, 0) } with { tick(), k => { ticks := U64::wrapping_add(ticks, 1); k(#()) } }
+show(&n)
+show(&ticks)
 ```
-rust_shows = ["count = 1000000", "ticks = 1000000"]
+nir.fns.count = ```nir
+fn count@1(n#4: u64, done#5: u64): u64 A = if eq(copy n#4, 0u64) then copy done#5 else {
+  perform tick() direct instance() -> Unit legacy: Unit;
+  count@1(sub<u64>(copy n#4, 1u64), add<u64>(copy done#5, 1u64)) tier A recur: u64
+}
+```

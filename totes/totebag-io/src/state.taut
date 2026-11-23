@@ -1,0 +1,536 @@
+import "strict.taut"
+import "ledger.taut"
+import "source.taut"
+import "cache.taut"
+import std::builtin::os
+import totebag::spec
+import eure::value
+import std::base
+import std::text
+
+// What this machine has established about the indexes it trusts
+// (`crates/totebag/src/index/state.rs`): `state.eure`, read and written.
+// A SHA-256 and a revision are kept as written. A writer holds the lock on
+// `state.lock` beside it from reading to writing (`tb_hold`, `tb_save`,
+// `tb_let_go`), the lock Rust takes, and the file is replaced whole.
+
+pub fn tb_state_file(): Text { "state.eure" }
+pub fn tb_max_state(): u64 { 16777216 }
+pub fn tb_max_state_items(): u64 { 65536 }
+
+// A checkpoint: a commit and the SHA-256 of what it holds.
+pub(open) struct TbPoint {
+  rev: Text,
+  digest: Text,
+}
+
+pub(open) struct TbLedger {
+  index: Text,
+  url: Text,
+  reference: Text,
+  pin: TbPoint,
+  prefix: TbPoint,
+  // Why the ledger stopped taking in batches, when it has.
+  frozen: Option(Text),
+  // The latest answer of the index's origin: its head, and when.
+  checked: Option(TbPoint),
+  checked_at: u64,
+}
+
+pub(open) struct TbReceipt {
+  index: Text,
+  url: Text,
+  reference: Text,
+  point: TbPoint,
+  first_seen_at: u64,
+}
+
+pub(open) struct TbState {
+  evaluated_at: u64,
+  ledgers: List(TbLedger),
+  receipts: List(TbReceipt),
+}
+
+pub fn tb_empty_state(): TbState {
+  TbState { evaluated_at: 0, ledgers: Nil, receipts: Nil }
+}
+
+pub fn tb_state_ledger(s: TbState, index: Text): Option(TbLedger) {
+  tb_find_ledger(s.ledgers, index)
+}
+
+pub fn tb_find_ledger(l: List(TbLedger), index: Text): Option(TbLedger) {
+  match l {
+    Nil => None
+    Cons(x, rest) => if x.index == index { Some(x) } else { tb_find_ledger(rest, index) }
+  }
+}
+
+pub fn tb_has_receipt(l: List(TbReceipt), index: Text, url: Text, reference: Text, rev: Text): Bool {
+  match l {
+    Nil => false
+    Cons(r, rest) => (r.index == index && r.url == url && r.reference == reference && r.point.rev == rev) || tb_has_receipt(rest, index, url, reference, rev)
+  }
+}
+
+pub fn tb_snoc_receipt(l: List(TbReceipt), r: TbReceipt): List(TbReceipt) {
+  match l {
+    Nil => Cons(r, Nil)
+    Cons(x, rest) => Cons(x, tb_snoc_receipt(rest, r))
+  }
+}
+
+// Notes that this machine saw `point` of an index at `now`; the first time
+// it was seen stays.
+pub fn tb_receive(s: TbState, index: Text, url: Text, reference: Text, point: TbPoint, now: u64): TbState {
+  if tb_has_receipt(s.receipts, index, url, reference, point.rev) {
+    s
+  } else {
+    TbState { evaluated_at: s.evaluated_at, ledgers: s.ledgers, receipts: tb_snoc_receipt(s.receipts, TbReceipt { index: index, url: url, reference: reference, point: point, first_seen_at: now }) }
+  }
+}
+
+pub fn tb_render_point(name: Text, p: TbPoint): Text {
+  let digest := if name == "rev" { "digest" } else { Text::concat(name, "_digest") }
+  tb_cat(["  ", name, " = \"", p.rev, "\"\n  ", digest, " = \"", p.digest, "\"\n"])
+}
+
+pub fn tb_render_ledger(l: TbLedger): Text {
+  let frozen := match l.frozen {
+    Some(why) => tb_cat(["  frozen = ", tb_quote(why), "\n"])
+    None => ""
+  }
+  let checked := match l.checked {
+    Some(c) => tb_cat([tb_render_point("checked", c), "  checked_at = \"", tb_time_text(l.checked_at), "\"\n"])
+    None => ""
+  }
+  tb_cat(["\n@ indexes[] {\n  index = \"", l.index, "\"\n  git = ", tb_quote(l.url), "\n  ref = ", tb_quote(l.reference), "\n", tb_render_point("pin", l.pin), tb_render_point("prefix", l.prefix), frozen, checked, "}\n"])
+}
+
+pub fn tb_render_receipt(r: TbReceipt): Text {
+  tb_cat(["\n@ receipts[] {\n  index = \"", r.index, "\"\n  git = ", tb_quote(r.url), "\n  ref = ", tb_quote(r.reference), "\n", tb_render_point("rev", r.point), "  first_seen_at = \"", tb_time_text(r.first_seen_at), "\"\n}\n"])
+}
+
+pub fn tb_render_ledgers(l: List(TbLedger)): Text {
+  match l {
+    Nil => ""
+    Cons(x, rest) => Text::concat(tb_render_ledger(x), tb_render_ledgers(rest))
+  }
+}
+
+pub fn tb_render_receipts(l: List(TbReceipt)): Text {
+  match l {
+    Nil => ""
+    Cons(x, rest) => Text::concat(tb_render_receipt(x), tb_render_receipts(rest))
+  }
+}
+
+pub fn tb_render_state(s: TbState): Text {
+  let head := tb_cat(["// Written by tauto: what this machine has established about the indexes\n// it trusts. Do not edit it.\nformat = 1\nkind = \"index-state\"\nevaluated_at = \"", tb_time_text(s.evaluated_at), "\"\n"])
+  let ls := match s.ledgers {
+    Nil => "indexes = []\n"
+    Cons(_, _) => tb_render_ledgers(s.ledgers)
+  }
+  let rs := match s.receipts {
+    Nil => "receipts = []\n"
+    Cons(_, _) => tb_render_receipts(s.receipts)
+  }
+  tb_cat([head, ls, rs])
+}
+
+pub fn tb_check_any_url(s: Text): Result(Text, Text) {
+  match tb_check_url(s) {
+    Some(_) => Err("totebag-bad-url")
+    None => Ok(s)
+  }
+}
+
+pub fn tb_read_point(fs: List(Text × Node), name: Text): Result(TbPoint × List(Text × Node), Text) {
+  let r := match tb_field_as(fs, name, tb_check_rev_state) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_field_as(r.snd, Text::concat(name, "_digest"), tb_sha256) {
+    Ok(d) => Ok(#(TbPoint { rev: r.fst, digest: d.fst }, d.snd))
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_check_rev_state(s: Text): Result(Text, Text) {
+  if tb_check_rev(s) { Ok(s) } else { Err("totebag-bad-rev") }
+}
+
+// `index`, `git` and `ref`.
+pub fn tb_origin(fs: List(Text × Node)): Result(Text × (Text × (Text × List(Text × Node))), Text) {
+  let ix := match tb_field_as(fs, "index", tb_sha256) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let g := match tb_field_as(ix.snd, "git", tb_check_any_url) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_field_as(g.snd, "ref", tb_branch) {
+    Ok(r) => Ok(#(ix.fst, #(g.fst, #(r.fst, r.snd))))
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_state_ledger_of(n: Node, before: List(TbLedger)): Result(TbLedger, Text) {
+  let f0 := match tb_fields(n) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let o := match tb_origin(f0) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let pin := match tb_read_point(o.snd.snd.snd, "pin") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let prefix := match tb_read_point(pin.snd, "prefix") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let fr := tb_take(prefix.snd, "frozen")
+  let frozen := match fr.fst {
+    Some(n) => match tb_strict_text(n) {
+      Ok(t) => Some(t)
+      Err(e) => {
+        return Err(e)
+      }
+    }
+    None => None
+  }
+  let ck := tb_take(fr.snd, "checked")
+  var rest := ck.snd
+  var checked: Option(TbPoint) := None
+  var checked_at: u64 := 0
+  match ck.fst {
+    Some(n) => {
+      let rev := match tb_strict_text(n) {
+        Ok(t) => t
+        Err(e) => {
+          return Err(e)
+        }
+      }
+      if not(tb_check_rev(rev)) {
+        return Err("totebag-bad-rev")
+      }
+      let d := match tb_field_as(rest, "checked_digest", tb_sha256) {
+        Ok(p) => p
+        Err(e) => {
+          return Err(e)
+        }
+      }
+      let at := match tb_field_time(d.snd, "checked_at") {
+        Ok(p) => p
+        Err(e) => {
+          return Err(e)
+        }
+      }
+      checked := Some(TbPoint { rev: rev, digest: d.fst })
+      checked_at := at.fst
+      rest := at.snd
+    }
+    None => #()
+  }
+  match tb_finish(rest) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(tb_at(e))
+    }
+  }
+  match tb_find_ledger(before, o.fst) {
+    Some(_) => {
+      return Err("totebag-state-index-twice")
+    }
+    None => #()
+  }
+  Ok(TbLedger { index: o.fst, url: o.snd.fst, reference: o.snd.snd.fst, pin: pin.fst, prefix: prefix.fst, frozen: frozen, checked: checked, checked_at: checked_at })
+}
+
+pub fn tb_state_receipt_of(n: Node): Result(TbReceipt, Text) {
+  let f0 := match tb_fields(n) {
+    Ok(f) => f
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let o := match tb_origin(f0) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let pt := match tb_read_point_rev(o.snd.snd.snd) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let at := match tb_field_time(pt.snd, "first_seen_at") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_finish(at.snd) {
+    Ok(_) => Ok(TbReceipt { index: o.fst, url: o.snd.fst, reference: o.snd.snd.fst, point: pt.fst, first_seen_at: at.fst })
+    Err(e) => Err(tb_at(e))
+  }
+}
+
+// `rev` and `digest`.
+pub fn tb_read_point_rev(fs: List(Text × Node)): Result(TbPoint × List(Text × Node), Text) {
+  let r := match tb_field_as(fs, "rev", tb_check_rev_state) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  match tb_field_as(r.snd, "digest", tb_sha256) {
+    Ok(d) => Ok(#(TbPoint { rev: r.fst, digest: d.fst }, d.snd))
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_rev_ledgers(l: List(TbLedger), acc: List(TbLedger)): List(TbLedger) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => tb_rev_ledgers(rest, Cons(x, acc))
+  }
+}
+
+pub fn tb_rev_receipts(l: List(TbReceipt), acc: List(TbReceipt)): List(TbReceipt) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => tb_rev_receipts(rest, Cons(x, acc))
+  }
+}
+
+pub fn tb_expect_state(s: Text): Result(Text, Text) {
+  if s == "index-state" { Ok(s) } else { Err("totebag-expected-value") }
+}
+
+pub fn tb_parse_state(bytes: Bytes): Result(TbState, Text) {
+  let f0 := match tb_strict_parse(bytes, tb_max_state()) {
+    Ok(d) => match tb_fields(d) {
+      Ok(f) => f
+      Err(e) => {
+        return Err(e)
+      }
+    }
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let fm := match tb_field_integer(f0, "format") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  if fm.fst != 1 {
+    return Err(tb_at("totebag-unknown-format"))
+  }
+  let k := match tb_field_as(fm.snd, "kind", tb_expect_state) {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let ev := match tb_field_time(k.snd, "evaluated_at") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let ix := match tb_required(ev.snd, "indexes") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let ledger_items := match tb_strict_list(ix.fst, tb_max_state_items()) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(tb_at(e))
+    }
+  }
+  let rc := match tb_required(ix.snd, "receipts") {
+    Ok(p) => p
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  let receipt_items := match tb_strict_list(rc.fst, tb_max_state_items()) {
+    Ok(l) => l
+    Err(e) => {
+      return Err(tb_at(e))
+    }
+  }
+  match tb_finish(rc.snd) {
+    Ok(_) => #()
+    Err(e) => {
+      return Err(e)
+    }
+  }
+  var ledgers: List(TbLedger) := Nil
+  var rest := ledger_items
+  var going := true
+  while going {
+    match rest {
+      Cons(n, more) => {
+        match tb_state_ledger_of(n, ledgers) {
+          Ok(l) => {
+            ledgers := Cons(l, ledgers)
+          }
+          Err(e) => {
+            return Err(e)
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  var receipts: List(TbReceipt) := Nil
+  var more_r := receipt_items
+  going := true
+  while going {
+    match more_r {
+      Cons(n, more) => {
+        match tb_state_receipt_of(n) {
+          Ok(r) => {
+            receipts := Cons(r, receipts)
+          }
+          Err(e) => {
+            return Err(e)
+          }
+        }
+        more_r := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(TbState { evaluated_at: ev.fst, ledgers: tb_rev_ledgers(ledgers, Nil), receipts: tb_rev_receipts(receipts, Nil) })
+}
+
+// Where the state is kept: `$TAUTO_INDEX_STATE`, else
+// `$XDG_STATE_HOME/tauto/index`, else `$HOME/.local/state/tauto/index`.
+pub fn tb_state_dir(): Result(Text, Text) {
+  match perform env("TAUTO_INDEX_STATE") {
+    Ok(Some(v)) => if v != "" {
+      return Ok(v)
+    }
+    Ok(None) => #()
+    Err(_) => #()
+  }
+  match perform env("XDG_STATE_HOME") {
+    Ok(Some(v)) => if v != "" {
+      return Ok(tb_join(v, "tauto/index"))
+    }
+    Ok(None) => #()
+    Err(_) => #()
+  }
+  match perform env("HOME") {
+    Ok(Some(v)) => if v != "" {
+      return Ok(tb_join(v, ".local/state/tauto/index"))
+    }
+    Ok(None) => #()
+    Err(_) => #()
+  }
+  Err("totebag-no-state-place")
+}
+
+// The state read under its lock; the lock is held until `tb_let_go`.
+pub(open) struct TbHeld {
+  lock: FileLock,
+  state: TbState,
+}
+
+// Takes the lock on the state in `dir` and reads it; an empty state when
+// there is none.
+pub fn tb_hold(dir: Text): Result(TbHeld, Text) {
+  match perform fs_create_dir(dir) {
+    Ok(_) => #()
+    Err(_) => {
+      return Err("totebag-at")
+    }
+  }
+  let lock := match perform fs_lock(tb_join(dir, "state.lock")) {
+    Ok(l) => l
+    Err(_) => {
+      return Err("totebag-at")
+    }
+  }
+  let file := tb_join(dir, tb_state_file())
+  let there := match perform fs_stat(file) {
+    Ok(Some(_)) => true
+    Ok(None) => false
+    Err(_) => {
+      perform fs_unlock(lock)
+      return Err("totebag-at")
+    }
+  }
+  if not(there) {
+    return Ok(TbHeld { lock: lock, state: tb_empty_state() })
+  }
+  match perform fs_read_bytes(file) {
+    Ok(b) => match tb_parse_state(b) {
+      Ok(s) => Ok(TbHeld { lock: lock, state: s })
+      Err(e) => {
+        perform fs_unlock(lock)
+        Err(e)
+      }
+    }
+    Err(_) => {
+      perform fs_unlock(lock)
+      Err("totebag-at")
+    }
+  }
+}
+
+// Replaces the state file in `dir` whole with `state`, the lock held.
+pub fn tb_save(dir: Text, state: TbState): Result(Unit, Text) {
+  let file := tb_join(dir, tb_state_file())
+  let tmp := tb_join(dir, Text::concat(".", Text::concat(tb_state_file(), ".tmp")))
+  match perform fs_write(tmp, tb_render_state(state)) {
+    Ok(_) => #()
+    Err(_) => {
+      let ^removed := perform fs_remove(tmp)
+      return Err("totebag-at")
+    }
+  }
+  match perform fs_rename(tmp, file) {
+    Ok(_) => Ok(#())
+    Err(_) => {
+      let ^removed := perform fs_remove(tmp)
+      Err("totebag-at")
+    }
+  }
+}
+
+pub fn tb_let_go(h: TbHeld): Unit {
+  perform fs_unlock(h.lock)
+}

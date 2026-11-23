@@ -2,7 +2,7 @@
 //! apart from the evaluator that makes the real values. A syntax's typed
 //! tree, a `SynExpr` and a `List(SynStmt)` are all [`Node`]s.
 
-use tauto_parol::Span;
+use crate::span::Span;
 
 use crate::surface::{SurfaceTerm, TermKind};
 
@@ -271,7 +271,7 @@ impl Node {
                     at = &p.1;
                 }
                 members.push(at.to_term(span));
-                term(TermKind::Tuple(members))
+                SurfaceTerm::product_value(members, span)
             }
             Node::Ctor(name, fields) => {
                 if fields.is_empty() {
@@ -368,14 +368,6 @@ impl Node {
             )))),
             other => Some(other.clone()),
         }
-    }
-}
-
-/// The key of a product's member: its label and type (`@name SynIdent`), or its type.
-pub fn member_key(label: Option<&str>, ty: &str) -> String {
-    match label {
-        Some(l) => format!("@{l} {ty}"),
-        None => ty.to_string(),
     }
 }
 

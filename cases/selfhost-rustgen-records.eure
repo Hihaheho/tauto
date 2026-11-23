@@ -1,8 +1,8 @@
 
-@ cases.builtin_pair
+@ cases.product
 source = ```tauto
 fn answer(): i64 {
-  let value := Pair { snd: 2, fst: 40 }
+  let value := #(40, 2)
   value.fst + value.snd
 }
 ```
@@ -14,7 +14,7 @@ selfhost_stdout = "42\n"
 source = ```tauto
 inductive Cell(A: Type): Type { Mk(value: A): Cell(A) }
 fn wrap<A>(value: A): Cell(A) { Cell { value: value } }
-fn answer(): Text { wrap(Pair { snd: "語", fst: "日本" }).value.fst }
+fn answer(): Text { wrap(#("日本", "語")).value.fst }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
@@ -35,7 +35,7 @@ selfhost_stdout = "42\n"
 @ cases.empty_values_are_constrained
 source = ```tauto
 fn answer(): Bool {
-  let value: Pair(Option(Nat), List(Text)) := Pair { snd: Nil, fst: None }
+  let value: Option(Nat) × List(Text) := #(None, Nil)
   ⊢ Bool from match (value: Option(Nat)) { None => true
     Some(n) => false }
 }
@@ -72,8 +72,9 @@ selfhost_stdout = "42\n"
 source = ```tauto
 fn first(): i64 { 9223372036854775807 + 1 }
 fn second(): i64 { 9223372036854775807 + 2 }
+inductive Duo: Type { Mk(fst: i64, snd: i64): Duo }
 fn answer(): i64 {
-  let value := Pair { snd: first(), fst: second() }
+  let value := Duo { snd: first(), fst: second() }
   value.fst + value.snd
 }
 ```
@@ -83,7 +84,8 @@ selfhost_run_error = '<input>:1:'
 
 @ cases.missing_field
 source = ```tauto
-fn answer(): i64 { let value := Pair { fst: 42 }; value.fst }
+inductive Duo: Type { Mk(fst: i64, snd: i64): Duo }
+fn answer(): i64 { let value := Duo { fst: 42 }; value.fst }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
@@ -91,7 +93,8 @@ selfhost_compile_error = 'record field count differs'
 
 @ cases.extra_field
 source = ```tauto
-fn answer(): i64 { let value := Pair { fst: 40, snd: 2, extra: 0 }; value.fst }
+inductive Duo: Type { Mk(fst: i64, snd: i64): Duo }
+fn answer(): i64 { let value := Duo { fst: 40, snd: 2, extra: 0 }; value.fst }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
@@ -99,7 +102,8 @@ selfhost_compile_error = 'record field count differs'
 
 @ cases.unknown_field
 source = ```tauto
-fn answer(): i64 { let value := Pair { fst: 40, other: 2 }; value.fst }
+inductive Duo: Type { Mk(fst: i64, snd: i64): Duo }
+fn answer(): i64 { let value := Duo { fst: 40, other: 2 }; value.fst }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
@@ -107,7 +111,8 @@ selfhost_compile_error = 'missing record field'
 
 @ cases.duplicate_field
 source = ```tauto
-fn answer(): i64 { let value := Pair { fst: 40, fst: 2 }; value.fst }
+inductive Duo: Type { Mk(fst: i64, snd: i64): Duo }
+fn answer(): i64 { let value := Duo { fst: 40, fst: 2 }; value.fst }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
@@ -158,7 +163,7 @@ differential = "rustgen"
 selfhost_entry = "answer"
 selfhost_compile_error = 'numeric literal requires integer type'
 
-@ cases.pair_arity
+@ cases.pair_type_is_not_written
 source = ```tauto
 fn consume(value: Pair(i64)): i64 { 42 }
 fn answer(): i64 { 42 }
@@ -189,7 +194,7 @@ selfhost_compile_error = 'data must live in Type'
 source = ```tauto
 effect ask(): i64
 fn read(): i64 ! {ask} { perform ask() }
-fn answer(): i64 { let value := Pair { fst: read(), snd: 0 }; value.fst }
+fn answer(): i64 { let value := #(read(), 0); value.fst }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
@@ -197,7 +202,7 @@ selfhost_compile_error = 'unsupported declaration: StEffect'
 
 @ cases.mutable_field
 source = ```tauto
-fn answer(): i64 { let value := Pair { fst: { var n := 1; n }, snd: 2 }; value.fst }
+fn answer(): i64 { let value := #({ var n := 1; n }, 2); value.fst }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
@@ -205,7 +210,7 @@ selfhost_compile_error = 'unsupported block statement: StVar'
 
 @ cases.borrowed_field
 source = ```tauto
-fn answer(): i64 { let n := 42; let value := Pair { fst: &n, snd: 2 }; value.snd }
+fn answer(): i64 { let n := 42; let value := #(&n, 2); value.snd }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
@@ -213,7 +218,7 @@ selfhost_compile_error = 'borrows are unsupported'
 
 @ cases.projected_away_large_integer
 source = ```tauto
-fn answer(): Bool { Pair { fst: 42, snd: 9223372036854775807 }.fst == 42 }
+fn answer(): Bool { #(42, 9223372036854775807).fst == 42 }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
@@ -221,7 +226,7 @@ selfhost_stdout = "true\n"
 
 @ cases.projected_nat_keeps_its_context
 source = ```tauto
-fn answer(): Nat { Pair { fst: 42, snd: 9223372036854775807 }.fst }
+fn answer(): Nat { #(42, 9223372036854775807).fst }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
@@ -229,8 +234,88 @@ selfhost_stdout = "42\n"
 
 @ cases.projected_away_unresolved_type
 source = ```tauto
-fn answer(): i64 { Pair { fst: 42, snd: None }.fst }
+fn answer(): i64 { #(42, None).fst }
 ```
 differential = "rustgen"
 selfhost_entry = "answer"
 selfhost_compile_error = 'cannot infer a projected-away type parameter'
+
+@ cases.pair_record_is_not_written
+source = ```tauto
+fn answer(): i64 { let value := Pair { fst: 40, snd: 2 }; value.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'unknown record type'
+
+@ cases.product_parameter
+source = ```tauto
+fn sum(value: i64 × i64): i64 { value.fst + value.snd }
+fn answer(): i64 { sum(#(40, 2)) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.product_nests_to_the_right
+source = ```tauto
+fn answer(): Text {
+  let value: i64 × Bool × Text := #(1, true, "右")
+  value.snd.snd
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "右\n"
+
+@ cases.product_members_run_in_written_order
+source = ```tauto
+fn first(): i64 { 9223372036854775807 + 1 }
+fn second(): i64 { 9223372036854775807 + 2 }
+fn answer(): i64 {
+  let value := #(first(), second())
+  value.fst + value.snd
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_run_error = '<input>:1:'
+
+@ cases.product_member_type_mismatch
+source = ```tauto
+fn answer(): i64 { let value: i64 × i64 := #(40, "wrong"); value.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'type mismatch'
+
+@ cases.product_pattern
+source = ```tauto
+fn answer(): i64 {
+  let value := #(40, 2)
+  ⊢ i64 from match value { #(left, right) => left + right }
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.product_pattern_binds_each_member_type
+source = ```tauto
+fn pick(value: Text × i64): Text { ⊢ Text from match value { #(name, count) => name } }
+fn answer(): Text { pick(#("名", 1)) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "名\n"
+
+@ cases.product_pattern_nests_to_the_right
+source = ```tauto
+fn answer(): i64 {
+  let value: i64 × i64 × i64 := #(1, 2, 39)
+  ⊢ i64 from match value { #(a, b, c) => a + b + c }
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'nested patterns are unsupported'

@@ -5,14 +5,73 @@ inductive VecU(u: Level, A: Type(u)): (Nat) -> Type(u) {
   VuCons(n: Nat, x: A, tail: VecU(u, A, n)): VecU(u, A, Succ(n))
 }
 theorem vec_beta(P: (Type2) -> Prop, p: P(Type1)): P(Type1) {
-  let result := recursor(VecU(1), 3)(Type, n => xs => Type2, Type1, n => x => tail => ih => ih, 1, VuCons(1, Type, 0, Nat, VuNil(1, Type)))
+  let result := recursor(VecU(1), 3)(<A: Type>, n => xs => Type2, Type1, n => x => tail => ih => ih, 1, VuCons(<A: Type>, 1, 0, Nat, VuNil(<A: Type>, 1)))
   let proof: P(result) := p
   proof
 }
 theorem eq_large(P: (Type2) -> Prop, p: P(Type1)): P(Type1) {
-  let result := recursor(Eq, 3)(Nat, 0, y => e => Type2, Type1, 0, Refl(Nat, 0))
+  let result := recursor(Eq, 3)(<A: Nat, a: 0>, y => e => Type2, Type1, 0, Refl(<A: Nat, a: 0>))
   let proof: P(result) := p
   proof
 }
 ```
 checks_all = "checked"
+
+@ cases.a-recursive-function-calls-level-polymorphic-definitions-0
+description = "A recursive function over a level-polymorphic family is lowered: its calls of the instances of a definition, a constructor and the family's eliminator are read from the source, with a field of the family's own type, a level written as an expression, and a definition's result passed on to a recursive call."
+source = ```tauto
+pub(open) inductive Pair(u: Level, A: Type(u)): Type(u) {
+  Mk(first: A, second: A): Pair(u, A)
+}
+
+pub def pair_elim<u: Level>(): ∀ A: Type(u). ∀ motive: (Pair(u, A)) -> Type(
+  u
+). (
+  ∀ first: A. ∀ second: A. motive(Pair::Mk(<u: u, A: A>, first, second))
+) -> (∀ p: Pair(u, A). motive(p)) := recursor(Pair(u), u)
+
+pub def pair_first<u: Level, A: Type(u)>(p: Pair(u, A)): A :=
+pair_elim(u, A, q => A, first => second => first, p)
+
+pub def pair_swap<u: Level, A: Type(u)>(p: Pair(u, A)): Pair(u, A) :=
+pair_elim(u, A, q => Pair(u, A), first => second => Pair::Mk(<u: u, A: A>, second, first), p)
+
+pub fn pick<R: Type>(p: Pair(0, R), n: Nat): R {
+  match n {
+    Zero => pair_first(<u: 0, A: R>, pair_swap(<u: 0, A: R>, p))
+    Succ(k) => pick(<R: R>, p, k)
+  }
+}
+
+pub fn make<R: Type>(a: R, b: R, n: Nat): Pair(0, R) {
+  match n {
+    Zero => Pair::Mk(<u: 0, A: R>, a, b)
+    Succ(k) => make(<R: R>, b, a, k)
+  }
+}
+
+pub(open) inductive Chain(u: Level, A: Type(u)): Type(u) {
+  End: Chain(u, A)
+  Link(head: A, tail: Chain(u, A)): Chain(u, A)
+}
+
+pub def chain_elim<u: Level>(): ∀ A: Type(u). ∀ motive: (Chain(u, A)) -> Type(
+  u
+). motive(Chain::End(<u: u, A: A>)) -> (
+  ∀ head: A. ∀ tail: Chain(u, A). motive(tail) -> motive(Chain::Link(<u: u, A: A>, head, tail))
+) -> (∀ c: Chain(u, A). motive(c)) := recursor(Chain(u), u)
+
+pub def chain_len<u: Level, A: Type(u)>(c: Chain(u, A)): Nat :=
+chain_elim(u, A, q => Nat, 0, head => tail => ih => ih + 1, c)
+
+pub fn chain_twice<R: Type>(c: Chain(max(0, 0), R), n: Nat): Nat {
+  match n {
+    Zero => chain_len(<u: max(0, 0), A: R>, c)
+    Succ(k) => chain_twice(<R: R>, c, k)
+  }
+}
+```
+checks_all = "ok"
+checks."main.taut::make" = "ok"
+checks."main.taut::pick" = "ok"
+checks."main.taut::chain_twice" = "ok"

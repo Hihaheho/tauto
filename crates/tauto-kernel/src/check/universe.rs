@@ -79,6 +79,18 @@ fn level_count(d: &TheoremDecl) -> usize {
         .count()
 }
 
+/// Whether the statement takes level parameters.
+fn is_polymorphic(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Theorem(d) | Stmt::Def(d) => level_count(d) > 0,
+        Stmt::Inductive(d) => d
+            .params
+            .first()
+            .is_some_and(|(_, t)| matches!(&*t.kind, TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Level"))),
+        _ => false,
+    }
+}
+
 /// The names of a template's level parameters, in order.
 fn level_names(body: &Body, levels: usize) -> Vec<Name> {
     let params = match body {
@@ -93,10 +105,14 @@ impl Kernel {
     /// as a use of its instance, the instances declared before the statement.
     pub(super) fn level_pass(&mut self, stmts: &[Stmt], entries: &mut Vec<Entry>) -> Vec<Stmt> {
         let mut out = Vec::new();
+        // The names already taken are read only by a level-polymorphic
+        // statement: a batch without one does not walk every global.
+        let any_polymorphic = stmts.iter().any(is_polymorphic);
         let mut occupied: Vec<(String, Option<Name>)> = self
             .globals
             .keys()
             .chain(self.templates.keys())
+            .filter(|_| any_polymorphic)
             .filter(|name| !tauto_surface::bindings::is_library(name, name.as_str()))
             .map(|name| {
                 let owner = self
@@ -118,14 +134,7 @@ impl Kernel {
             .collect();
         for stmt in stmts {
             let source_names = declaration_names(stmt);
-            let polymorphic = match stmt {
-                Stmt::Theorem(d) | Stmt::Def(d) => level_count(d) > 0,
-                Stmt::Inductive(d) => d
-                    .params
-                    .first()
-                    .is_some_and(|(_, t)| matches!(&*t.kind, TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Level"))),
-                _ => false,
-            };
+            let polymorphic = is_polymorphic(stmt);
             let source_slot = |name: &Name| -> String {
                 if let Stmt::Inductive(decl) = stmt
                     && decl.constructors.iter().any(|ctor| ctor.name == *name)
@@ -292,7 +301,11 @@ impl Kernel {
                     // `f(<u: 1, A: T>, x)`: the levels written by name are
                     // taken out of the implicit arguments, in their order.
                     if let Some(first) = arguments.first()
-                        && let TermKind::Record { name: r, fields, base } = &*first.kind
+                        && let TermKind::Record {
+                            name: r,
+                            fields,
+                            base,
+                        } = &*first.kind
                         && r.spelling() == Some(tauto_surface::IMPLICITS)
                     {
                         let wanted = level_names(&tpl.body, tpl.levels);
@@ -323,6 +336,11 @@ impl Kernel {
                                 arguments.push(record);
                             }
                             arguments.extend(tail);
+                        } else if levels.is_empty() && arguments.len() > tpl.levels {
+                            // `f(<A: T>, 1, x)`: the levels are written by
+                            // position after the implicit arguments named.
+                            let record = arguments.remove(0);
+                            arguments.insert(tpl.levels, record);
                         }
                     }
                     if arguments.len() < tpl.levels {
@@ -375,16 +393,16 @@ impl Kernel {
                                 .is_some_and(|t| matches!(t.member, Member::Constructor(_)))
                         };
                         match p {
-                            Pattern::Bind(n) => is_constructor(n),
+                            Pattern::Ctor { .. } if let Some(items) = p.product_members() => {
+                                items.iter().any(|p| template_pattern(p, templates))
+                            }
+                            Pattern::Bind { name: n, .. } => is_constructor(n),
                             Pattern::Ctor { name, args } => {
                                 is_constructor(name)
                                     || args.iter().any(|p| template_pattern(p, templates))
                             }
                             Pattern::Record { fields, .. } => {
                                 fields.iter().any(|(_, p)| template_pattern(p, templates))
-                            }
-                            Pattern::Tuple(items) => {
-                                items.iter().any(|p| template_pattern(p, templates))
                             }
                             _ => false,
                         }
@@ -952,13 +970,12 @@ fn reject_level_shadowing(stmt: &mut Stmt, levels: &[Name]) -> Result<(), Diagno
     use crate::surface::{Handler, Pattern};
     fn pattern(p: &Pattern, levels: &[Name]) -> bool {
         match p {
-            Pattern::Bind(n) => levels.iter().any(|level| level.as_str() == n.as_str()),
+            Pattern::Bind { name: n, .. } => levels.iter().any(|level| level.as_str() == n.as_str()),
             Pattern::Ctor { name, args } => {
                 levels.iter().any(|level| level.as_str() == name.as_str())
                     || args.iter().any(|p| pattern(p, levels))
             }
             Pattern::Record { fields, .. } => fields.iter().any(|(_, p)| pattern(p, levels)),
-            Pattern::Tuple(items) => items.iter().any(|p| pattern(p, levels)),
             Pattern::Other(_) => true,
             _ => false,
         }
@@ -985,6 +1002,7 @@ fn reject_level_shadowing(stmt: &mut Stmt, levels: &[Name]) -> Result<(), Diagno
             Stmt::Expr(_) | Stmt::Return(_) | Stmt::Assign { .. } | Stmt::While { .. } => false,
             // Nested declarations and not-yet-expanded syntax need their own
             // binding semantics; keep them outside this numeric template subset.
+            // `for` / `loop` / `break` / `continue` are lowered before this runs.
             _ => true,
         }
     }
@@ -1041,4 +1059,18 @@ fn reject_level_shadowing(stmt: &mut Stmt, levels: &[Name]) -> Result<(), Diagno
     } else {
         Ok(())
     }
+}
+
+/// The instance of the level-polymorphic declaration `name` at the numeral
+/// `levels`: the reference the kernel declared for it, or the one it will.
+pub fn level_instance(name: &Name, levels: &[u32]) -> Name {
+    let levels: Vec<Level> = levels.iter().map(|n| Level::konst(*n)).collect();
+    mangle(name, &levels)
+}
+
+/// The constructor `ctor` (the `index`th) of the level-polymorphic family
+/// `owner` at the numeral `levels`.
+pub fn level_constructor_instance(owner: &Name, ctor: &Name, index: usize, levels: &[u32]) -> Name {
+    let levels: Vec<Level> = levels.iter().map(|n| Level::konst(*n)).collect();
+    constructor_instance(owner, ctor, index, &levels)
 }

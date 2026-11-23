@@ -1,0 +1,40 @@
+import "../../src/wire.taut"
+import "../../src/compile.taut"
+import "../../src/cps.taut"
+import std::base
+import std::text
+import std::builtin::os
+
+// What the machine does with inputs that a producer might write: it reads each input as
+// `INPUT.md` defines it and compiles it, and decides for itself what it runs. Each input is
+// a program of one function and no constructors; only its body differs.
+
+pub fn verdict(source: Text): Text {
+  match read_program(source) {
+    None => "malformed\n"
+    Some(cp) => match compile(cp) {
+      CUnsupported(what) => Text::concat_all(Cons("refused: ", Cons(what, Cons("\n", Nil))))
+      COk(p) => "compiled\n"
+    }
+  }
+}
+
+perform main(() => {
+  // a body that is `()`
+  print(verdict("1 0 0 0 0 0"))
+  // the secret words: any `Ct::` builtin
+  print(verdict("1 0 4 t7 Ct::add 0 0 0"))
+  print(verdict("1 0 4 t11 Ct::compare 0 0 0"))
+  // a name that is neither a builtin nor a host name
+  print(verdict("1 0 4 t3 foo 0 0 0"))
+  // an extern the machine binds, and ones it does not
+  print(verdict("1 0 21 t10 Probe::new 0 0 0"))
+  print(verdict("1 0 21 t8 Foo::bar 0 0 0"))
+  // the name of a builtin, given as an extern, is not the builtin
+  print(verdict("1 0 21 t5 clone 0 0 0"))
+  // a refusal inside a nested expression
+  print(verdict("1 0 8 2 0 0 4 t7 Ct::add 0 0 0"))
+  // a tag no node has, and an input that ends early
+  print(verdict("1 0 99 0 0 0"))
+  print(verdict("1 0 21 t8 Foo::bar"))
+})

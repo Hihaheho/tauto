@@ -6,7 +6,7 @@
 source = ```nib
 struct P { x: i64, y: i64 }
 enum Shape { Circle(i64), Rect { w: i64, h: i64 }, Empty }
-fn area(s: Shape): i64 {
+fn area(s: Shape): i64 ! {overflow} {
   match s {
     Circle(r) => 3 * r * r
     Rect { w, h } => w * h
@@ -14,17 +14,21 @@ fn area(s: Shape): i64 {
   }
 }
 let p := P { x: 1, y: 2 }
-perform show("p", p)
-perform show("x", p.x)
-perform show("a", area(Circle(2)) + area(Rect { w: 2, h: 5 }) + area(Empty))
+show(&p)
+show(&p.x)
+show(&(area(Circle(2)) + area(Rect { w: 2, h: 5 }) + area(Empty)))
 ```
-shows = ["p = P { x: 1, y: 2 }", "x = 1", "a = 22"]
+stdout = ```
+P { x: 1, y: 2 }
+1
+22
+```
 
 @ cases.vec-and-borrows
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
-import std::prelude::Affine
 
-fn total(&v: Vec(i64)): i64 {
+fn total(v: &Vec(i64)): i64 ! {div, overflow} {
   var s := 0
   var i: u64 := 0
   while i < Vec::len(&v) {
@@ -40,33 +44,38 @@ var v := Vec::new()
 Vec::push(&mut v, 1)
 Vec::push(&mut v, 2)
 Vec::push(&mut v, 3)
-perform show("len", Vec::len(&v))
-perform show("total", total(&v))
-perform show("popped", Vec::pop(&mut v))
-perform show("v", v)
+show(&Vec::len(&v))
+show(&total(&v))
+show(&Vec::pop(&mut v))
+show(&v)
 ```
-shows = ["len = 3", "total = 6", "popped = Some(3)", "v = Vec[1, 2]"]
+stdout = ```
+3
+6
+Some(3)
+Vec[1, 2]
+```
 
 @ cases.a-mutable-borrow-writes-the-owner
 source = ```nib
 struct Counter { n: i64 }
-fn bump(&mut c: Counter): Unit {
-  c := Counter { n: c.n + 1 }
+fn bump(c: &mut Counter): Unit ! {overflow} {
+  *c := Counter { n: c.n + 1 }
 }
 var c := Counter { n: 0 }
 bump(&mut c)
 bump(&mut c)
-perform show("c", c.n)
+show(&c.n)
 ```
-shows = ["c = 2"]
+stdout = "2\n"
 
 @ cases.a-field-is-assigned-through-a-mutable-borrow
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
-import std::prelude::Affine
 
 struct In { k: i64 }
 struct Wl { n: u64, items: Vec(i64), inner: In }
-fn bump(&mut wl: Wl): Unit {
+fn bump(wl: &mut Wl): Unit ! {overflow} {
   wl.n := wl.n + 1
   wl.inner.k := 7
   var v := Vec::new()
@@ -80,33 +89,35 @@ while i < 3 {
   w.n := w.n + i
   i := i + 1
 }
-perform show("w", w)
+show(&w)
 ```
-shows = ["w = Wl { n: 5, items: Vec[3], inner: In { k: 7 } }"]
+stdout = "Wl { n: 5, items: Vec[3], inner: In { k: 7 } }\n"
 
 @ cases.a-field-of-a-var-is-a-place
 source = ```nib
-import std::prelude::Affine
 
 struct Two { a: Vec(i64), b: Vec(i64) }
-fn put(&mut x: Vec(i64), &mut y: Vec(i64)): Unit {
+fn put(x: &mut Vec(i64), y: &mut Vec(i64)): Unit {
   Vec::push(&mut x, 1)
   Vec::push(&mut y, 2)
   Vec::push(&mut y, 3)
 }
 var t := Two { a: Vec::new(), b: Vec::new() }
 put(&mut t.a, &mut t.b)
-perform show("a", Vec::len(&t.a))
-perform show("b", Vec::len(&t.b))
+show(&Vec::len(&t.a))
+show(&Vec::len(&t.b))
 ```
-shows = ["a = 1", "b = 2"]
+stdout = ```
+1
+2
+```
 
 @ cases.replace-and-clone
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
 source = ```nib
-import std::prelude::Affine
 
-affine enum Expr { Lit(Buf), Add(Expr, Expr) }
-fn size(&e: Expr): i64 {
+enum(affine) Expr { Lit(Buf), Add(Expr, Expr) }
+fn size(e: &Expr): i64 ! {overflow} {
   match e {
     Lit(b) => 1
     Add(l, r) => size(l) + size(r)
@@ -115,28 +126,34 @@ fn size(&e: Expr): i64 {
 var e := Add(Lit(Buf::of("a")), Lit(Buf::of("b")))
 let r#copy := clone(&e)
 let old := replace(&mut e, Lit(Buf::of("c")))
-perform show("old", size(&old))
-perform show("copy", size(&r#copy))
-perform show("now", size(&e))
+show(&size(&old))
+show(&size(&r#copy))
+show(&size(&e))
 ```
-shows = ["old = 2", "copy = 2", "now = 1"]
+stdout = ```
+2
+2
+1
+```
 
 @ cases.buffers-and-text
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Shared
 
 let b := Buf::of("hello big world")
 let n := fold(words(Text::of(Buf::clone(&b))), 0, (acc, w) => acc + 1)
-perform show("words", n)
-perform show("text", Text::of(b))
-perform show("joined", concat("a", "b"))
+show(&n)
+show(&Text::of(b))
+show(&concat("a", "b"))
 ```
-shows = ["words = 3", "text = \"hello big world\"", "joined = \"ab\""]
+stdout = ```
+3
+"hello big world"
+"ab"
+```
 
 @ cases.higher-order-functions-take-closures-by-borrow
 source = ```nib
-import std::prelude::Shared
 
 var seen := 0
 let xs := Cons(1, Cons(2, Cons(3, Nil)))
@@ -144,106 +161,120 @@ each(xs, (x) => {
   seen := seen + x
 })
 let ys := map(Cons(1, Cons(2, Nil)), (x) => x * 10)
-perform show("seen", seen)
-perform show("ys", ys)
+show(&seen)
+show(&ys)
 ```
-shows = ["seen = 6", "ys = Cons(10, Cons(20, Nil))"]
+stdout = ```
+6
+[10, 20]
+```
 
 @ cases.a-vec-of-affine-values
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
-import std::prelude::Affine
 
-affine struct Job { id: i64 }
+struct(affine) Job { id: i64 }
 var jobs := Vec::new()
 Vec::push(&mut jobs, Job { id: 1 })
 Vec::push(&mut jobs, Job { id: 2 })
 var sum := 0
-Vec::each(&jobs, (&j) => {
+Vec::each(&jobs, (j) => {
   sum := sum + j.id
 })
 Vec::consume(jobs, (j) => {
   match j {
-    Job { id } => perform show("job", id)
+    Job { id } => show(&id)
   }
 })
-perform show("sum", sum)
+show(&sum)
 ```
-shows = ["job = 1", "job = 2", "sum = 3"]
+stdout = ```
+1
+2
+3
+```
 
 @ cases.sorting-borrows-the-comparison
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
-import std::prelude::Affine
 
 var v := Vec::new()
 Vec::push(&mut v, 3)
 Vec::push(&mut v, 1)
 Vec::push(&mut v, 2)
-Vec::sort_by(&mut v, (&a, &b) => a < b)
-perform show("v", v)
+Vec::sort_by(&mut v, (a, b) => a < b)
+show(&v)
 ```
-shows = ["v = Vec[1, 2, 3]"]
+stdout = "Vec[1, 2, 3]\n"
 
 @ cases.hash-maps
 source = ```nib
-import std::prelude::Affine
+import std::indexed_map { IndexedMap }
 
-var m := HashMap::new()
-let old := HashMap::insert(&mut m, "a", 1)
-let again := HashMap::insert(&mut m, "a", 2)
-let one := handle { HashMap::index(&m, "a") } with {
-  missing() => 0
-}
-let none := handle { HashMap::index(&m, "z") } with {
-  missing() => 0 - 1
-}
-perform show("old", old)
-perform show("again", again)
-perform show("a", one)
-perform show("z", none)
+var m: IndexedMap(Text, i64) := IndexedMap::new()
+let old := IndexedMap::insert(&mut m, "a", 1)
+let again := IndexedMap::insert(&mut m, "a", 2)
+let one := match IndexedMap::get(&m, "a") { Some(v) => v, None => 0 }
+let none := match IndexedMap::get(&m, "z") { Some(v) => v, None => 0 - 1 }
+show(&old)
+show(&again)
+show(&one)
+show(&none)
 ```
-shows = ["old = None", "again = Some(1)", "a = 2", "z = -1"]
+stdout = ```
+#(None, None)
+#(Some(#("a", 1)), None)
+2
+-1
+```
 
 @ cases.persistent-maps
 source = ```nib
-import std::prelude::Shared
 
 let m := Map::insert(Map::insert(Map::empty(), "a", 1), "b", 2)
 let m2 := Map::insert(m, "a", 3)
-perform show("a", Map::get(m, "a"))
-perform show("a2", Map::get(m2, "a"))
-perform show("c", Map::get(m2, "c"))
+show(&Map::get(m, "a"))
+show(&Map::get(m2, "a"))
+show(&Map::get(m2, "c"))
 ```
-shows = ["a = Some(1)", "a2 = Some(3)", "c = None"]
+stdout = ```
+Some(1)
+Some(3)
+None
+```
 
 @ cases.an-extern-is-not-runnable
+llvm.unimplemented = "generate: the LLVM backend does not write an `extern` (the native backend has no host) yet"
 source = ```nib
-affine struct File {}
+struct(affine) File {}
 extern {
-  fn file_open(&path: Text): File
+  fn file_open(path: &Text): File
 }
 let f := file_open("a.txt")
 ```
 run_error = "extern is not runnable"
 build = "error: has no rust binding"
-backend_known_failure.javascript = "unsupported: host extern bindings"
-backend_known_failure.vm = "unsupported: extern functions (the machine has no host bindings)"
+javascript.unimplemented = "unsupported: host extern bindings"
+compile_errors.vm = "generate: the extern file_open, which has no binding on the machine"
 
 @ cases.a-resume-zero-arm-ends-the-handle
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
 effect fail(msg: Text): Never resume 0
-fn safe_div(a: i64, b: i64): i64 ! {fail} {
+fn safe_div(a: i64, b: i64): i64 ! {fail, divzero} {
   if b == 0 { perform fail("zero") } else { div(a, b) }
 }
 let r := handle { safe_div(1, 0) } with {
   fail(m) => 0 - 1
 }
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = -1"]
+stdout = "-1\n"
 
 @ cases.a-linear-value-is-consumed-once
+llvm.unimplemented = "generate: the LLVM backend does not write a `linear` type yet"
 source = ```nib
-linear struct Handshake { id: i64 }
+struct(linear) Handshake { id: i64 }
 fn hello(id: i64): Handshake { Handshake { id: id } }
 fn finish(h: Handshake): i64 {
   match h {
@@ -251,52 +282,56 @@ fn finish(h: Handshake): i64 {
   }
 }
 let h := hello(7)
-perform show("done", finish(h))
+show(&finish(h))
 ```
-shows = ["done = 7"]
+stdout = "7\n"
 
 @ cases.ref-mutex-and-atomic-are-shared-cells
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Par
+import std::builtin::par
 
-let r := Ref::new(1)
-let bump := () => Ref::set(r, Ref::get(r) + 1)
+let r := perform ref_new(1)
+let bump := () => perform ref_set(r, perform ref_get(r) + 1)
 bump()
 bump()
-let m := Mutex::new(Vec::new())
+let m := perform mutex_new(Vec::new())
 {
   var g := Mutex::lock(m)
-  let &mut v := MutexGuard::get_mut(&mut g)
+  let v := MutexGuard::get_mut(&mut g)
   Vec::push(&mut v, 7)
 }
 {
   var g := Mutex::lock(m)
-  let &mut v := MutexGuard::get_mut(&mut g)
+  let v := MutexGuard::get_mut(&mut g)
   Vec::push(&mut v, 8)
 }
 let n := {
   let g := Mutex::lock(m)
-  let &v := MutexGuard::get(&g)
+  let v := MutexGuard::get(&g)
   Vec::len(&v)
 }
-let a := Atomic::new(10)
-let old := Atomic::fetch_add(a, 5)
-perform show("r", Ref::get(r))
-perform show("n", n)
-perform show("a", old + Atomic::load(a))
+let a := perform atomic_new(10)
+let old := perform atomic_fetch_add(a, 5)
+show(&perform ref_get(r))
+show(&n)
+show(&(old + perform atomic_load(a)))
 ```
-shows = ["r = 3", "n = 2", "a = 25"]
+stdout = ```
+3
+2
+25
+```
 
 @ cases.a-slot-assigned-a-call-on-itself-keeps-the-value
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
 source = ```nib
-import std::prelude::Affine
 
 fn same(x: u32, keep: Bool): u32 { if keep { x } else { 7 } }
-fn bump(&mut v: Vec(u32)): Unit {
+fn bump(v: &mut Vec(u32)): Unit {
   match Vec::get_mut(&mut v, 0) {
     Some(slot) => {
-      slot := same(slot, true)
+      *slot := same(slot, true)
     }
     None => #()
   }
@@ -304,18 +339,18 @@ fn bump(&mut v: Vec(u32)): Unit {
 var v := Vec::new()
 Vec::push(&mut v, 5)
 bump(&mut v)
-perform show("v", Vec::get(&v, 0))
+show(&Vec::get(&v, 0))
 ```
-shows = ["v = Some(5)"]
+stdout = "Some(5)\n"
 
 @ cases.a-slot-assigned-data-built-from-itself-keeps-the-value
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
 source = ```nib
-import std::prelude::Affine
 
-fn push(&mut v: Vec(List(u64)), p: u64): Unit {
+fn push(v: &mut Vec(List(u64)), p: u64): Unit {
   match Vec::get_mut(&mut v, 0) {
     Some(slot) => {
-      slot := Cons(p, slot)
+      *slot := Cons(p, slot)
     }
     None => #()
   }
@@ -324,6 +359,29 @@ var v: Vec(List(u64)) := Vec::new()
 Vec::push(&mut v, Nil)
 push(&mut v, 1)
 push(&mut v, 2)
-perform show("v", Vec::get(&v, 0))
+show(&Vec::get(&v, 0))
 ```
-shows = ["v = Some(Cons(2, Cons(1, Nil)))"]
+stdout = "Some([2, 1])\n"
+
+@ cases.a-guard-that-moves-a-bound-name-leaves-the-value-to-the-next-arm
+source = ```nib
+struct(affine) Token { n: i64 }
+fn take(t: Token): Bool {
+  match t {
+    Token { n } => n > 100
+  }
+}
+fn pick(o: Option(Token)): i64 {
+  match o {
+    Some(t) if take(t) => 1
+    Some(u) => match u {
+      Token { n } => n
+    }
+    None => 0
+  }
+}
+show(&pick(Some(Token { n: 7 })))
+```
+stdout = ```
+7
+```

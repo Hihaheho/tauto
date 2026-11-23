@@ -1,6 +1,6 @@
 import "written_app_branch_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -9,6 +9,7 @@ import "error_frame.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_application_sound.taut"
 import "written_context_sound.taut"
@@ -18,8 +19,7 @@ import "../../surface/src/surface.taut"
 
 pub fn written_nested_tail(span: TySpan, inner: Ty, m: Mut1(List(Ty), Checker)): Mut1(Ty, Checker) {
   frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     (types: List(Ty), state: Checker) => frame_app_nested(state, span, types, inner),
     m
   )
@@ -32,8 +32,7 @@ pub theorem written_nested_tail_errors(
   before: CkErrorFrame(c, m)
 ): CkErrorFrame(c, written_nested_tail(span, inner, m)) {
   error_frame_bind(
-    List(Ty),
-    Ty,
+    <A: List(Ty), B: Ty>,
     c,
     (types: List(Ty), state: Checker) => frame_app_nested(state, span, types, inner),
     m,
@@ -435,11 +434,11 @@ pub theorem written_application_kind_sound(
         )
       ),
       inner_clean => Eq::subst(
-        (borrow: Bool) => WrittenTerm(
+        (r#borrow: Bool) => WrittenTerm(
           ck_datas_of(c),
           generics,
           true,
-          borrow,
+          r#borrow,
           SurfaceTermIndexedMk(SkApp(arg_head, arg_args), start, end, ast_occurrence),
           ck_val(
             ck_written_in(
@@ -470,9 +469,9 @@ pub theorem written_application_kind_sound(
       iheach(c, ordinary),
       clean
     )
-    SkExists(arg_binder, arg_domain, arg_body) => written_non_nested_kind_sound(
+    SkExists(arg_binder, arg_domain, arg_body, unused) => written_non_nested_kind_sound(
       ast_occurrence,
-      SkExists(arg_binder, arg_domain, arg_body),
+      SkExists(arg_binder, arg_domain, arg_body, unused),
       c,
       generics,
       args,
@@ -485,9 +484,9 @@ pub theorem written_application_kind_sound(
       iheach(c, ordinary),
       clean
     )
-    SkLam(arg_params, arg_body) => written_non_nested_kind_sound(
+    SkLam(arg_params, arg_body, arg_types, arg_unused_params) => written_non_nested_kind_sound(
       ast_occurrence,
-      SkLam(arg_params, arg_body),
+      SkLam(arg_params, arg_body, arg_types, arg_unused_params),
       c,
       generics,
       args,
@@ -503,21 +502,6 @@ pub theorem written_application_kind_sound(
     SkUnion(arg_parts) => written_non_nested_kind_sound(
       ast_occurrence,
       SkUnion(arg_parts),
-      c,
-      generics,
-      args,
-      under_borrow,
-      start,
-      end,
-      span,
-      ordinary,
-      Refl,
-      iheach(c, ordinary),
-      clean
-    )
-    SkProduct(arg_parts) => written_non_nested_kind_sound(
-      ast_occurrence,
-      SkProduct(arg_parts),
       c,
       generics,
       args,
@@ -635,9 +619,9 @@ pub theorem written_application_kind_sound(
       iheach(c, ordinary),
       clean
     )
-    SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder) => written_non_nested_kind_sound(
+    SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder, arg_unused) => written_non_nested_kind_sound(
       ast_occurrence,
-      SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder),
+      SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder, arg_unused),
       c,
       generics,
       args,
@@ -680,9 +664,9 @@ pub theorem written_application_kind_sound(
       iheach(c, ordinary),
       clean
     )
-    SkBorrow(arg_mutable, arg_value) => written_non_nested_kind_sound(
+    SkBorrow(arg_mutable, arg_mutable_orig, arg_value) => written_non_nested_kind_sound(
       ast_occurrence,
-      SkBorrow(arg_mutable, arg_value),
+      SkBorrow(arg_mutable, arg_mutable_orig, arg_value),
       c,
       generics,
       args,
@@ -740,6 +724,21 @@ pub theorem written_application_kind_sound(
       iheach(c, ordinary),
       clean
     )
+    SkAscribe(arg_what, arg_what_ty) => written_non_nested_kind_sound(
+      ast_occurrence,
+      SkAscribe(arg_what, arg_what_ty),
+      c,
+      generics,
+      args,
+      under_borrow,
+      start,
+      end,
+      span,
+      ordinary,
+      Refl,
+      iheach(c, ordinary),
+      clean
+    )
     SkRow(arg_what_effects) => written_non_nested_kind_sound(
       ast_occurrence,
       SkRow(arg_what_effects),
@@ -758,21 +757,6 @@ pub theorem written_application_kind_sound(
     SkFloat(arg_what) => written_non_nested_kind_sound(
       ast_occurrence,
       SkFloat(arg_what),
-      c,
-      generics,
-      args,
-      under_borrow,
-      start,
-      end,
-      span,
-      ordinary,
-      Refl,
-      iheach(c, ordinary),
-      clean
-    )
-    SkProject(arg_what, arg_what_ty) => written_non_nested_kind_sound(
-      ast_occurrence,
-      SkProject(arg_what, arg_what_ty),
       c,
       generics,
       args,

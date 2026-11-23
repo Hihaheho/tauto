@@ -1,12 +1,13 @@
 import "registration_data_error_sound.taut"
 import "../../surface/src/surface.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_registration.taut"
 import "error_frame.taut"
 import "registration_error_sound.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
@@ -16,7 +17,7 @@ pub theorem registration_if_errors(
   take: Bool,
   h: CkErrorFrame(c, m)
 ): CkErrorFrame(c, registration_if(c, m, take)) {
-  ⊢ CkErrorFrame(c, registration_if(c, m, take)) from match take {
+  match take {
     true => error_frame_rewrap(c, m, h)
     false => clean => clean
   }
@@ -25,10 +26,9 @@ pub theorem ck_program_data_one_errors(
   c: Checker,
   s: SurfaceStmt
 ): CkErrorFrame(c, ck_program_data_one(c, s)) {
-  ⊢ CkErrorFrame(c, ck_program_data_one(c, s)) from match s {
-    StLet(name, ty, value, borrow, mutable) => clean => clean
-    StVar(name, ty, value, borrow) => clean => clean
-    StModule(name, stmts, start, end) => clean => clean
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => clean => clean
+    StVar(name, ty, value, r#borrow, unused, st_stack) => clean => clean
     StAssign(name, name_place, value) => clean => clean
     StCalled(name_generates, value) => clean => clean
     StFn(f) => clean => clean
@@ -38,13 +38,19 @@ pub theorem ck_program_data_one_errors(
     StImport(path, start, end) => clean => clean
     StInductive(i) => clean => clean
     StEffect(e) => clean => clean
-    StExtern(abi, fns, start, end) => clean => clean
+    StExtern(fns, instances, types, structs, enums, start, end) => clean => clean
     StClass(klass) => clean => clean
     StInstance(i) => clean => clean
     StWhile(cond, body) => clean => clean
     StReturn(value) => clean => clean
     StExpr(value) => clean => clean
     StOther(what, start, end) => clean => clean
+    StLoop(st_body, start, end) => clean => clean
+    StModule(mod_name, mod_vis, mod_items, start, end) => clean => clean
+    StReexport(re_path, re_names, re_spans, start, end) => clean => clean
+    StFor(for_pat, for_src, st_body, start, end) => clean => clean
+    StBreak(st_value, start, end) => clean => clean
+    StContinue(start, end) => clean => clean
     StMacro(name, function, start, end) => clean => clean
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => clean => clean
     StSyntax(name, grammar, start, end) => clean => clean
@@ -72,14 +78,13 @@ pub theorem ck_program_data_errors(
   stmts: List(SurfaceStmt),
   c: Checker
 ): CkErrorFrame(c, ck_program_data(stmts, c)) {
-  ⊢ CkErrorFrame(c, ck_program_data(stmts, c)) from match stmts {
+  match stmts {
     Nil => clean => clean
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
       Eq::sym(registration_program_unf(s, rest, c)),
       error_frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
         ck_program_data_one(c, s),
@@ -98,10 +103,9 @@ pub theorem ck_prelude_data_one_errors(
   s: SurfaceStmt,
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, ck_prelude_data_one(c, s, own)) {
-  ⊢ CkErrorFrame(c, ck_prelude_data_one(c, s, own)) from match s {
-    StLet(name, ty, value, borrow, mutable) => clean => clean
-    StVar(name, ty, value, borrow) => clean => clean
-    StModule(name, stmts, start, end) => clean => clean
+  match s {
+    StLet(name, ty, value, r#borrow, mutable, unused, st_stack) => clean => clean
+    StVar(name, ty, value, r#borrow, unused, st_stack) => clean => clean
     StAssign(name, name_place, value) => clean => clean
     StCalled(name_generates, value) => clean => clean
     StFn(f) => clean => clean
@@ -110,13 +114,19 @@ pub theorem ck_prelude_data_one_errors(
     StMutual(stmts, start, end) => clean => clean
     StImport(path, start, end) => clean => clean
     StInductive(i) => clean => clean
-    StExtern(abi, fns, start, end) => clean => clean
+    StExtern(fns, instances, types, structs, enums, start, end) => clean => clean
     StClass(klass) => clean => clean
     StInstance(i) => clean => clean
     StWhile(cond, body) => clean => clean
     StReturn(value) => clean => clean
     StExpr(value) => clean => clean
     StOther(what, start, end) => clean => clean
+    StLoop(st_body, start, end) => clean => clean
+    StModule(mod_name, mod_vis, mod_items, start, end) => clean => clean
+    StReexport(re_path, re_names, re_spans, start, end) => clean => clean
+    StFor(for_pat, for_src, st_body, start, end) => clean => clean
+    StBreak(st_value, start, end) => clean => clean
+    StContinue(start, end) => clean => clean
     StMacro(name, function, start, end) => clean => clean
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => clean => clean
     StSyntax(name, grammar, start, end) => clean => clean
@@ -157,14 +167,13 @@ pub theorem ck_prelude_data_errors(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, ck_prelude_data(stmts, c, own)) {
-  ⊢ CkErrorFrame(c, ck_prelude_data(stmts, c, own)) from match stmts {
+  match stmts {
     Nil => clean => clean
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
       Eq::sym(registration_prelude_unf(s, rest, c, own)),
       error_frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_prelude_data(rest, next, own)),
         ck_prelude_data_one(c, s, own),

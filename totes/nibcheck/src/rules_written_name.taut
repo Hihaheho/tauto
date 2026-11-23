@@ -1,10 +1,14 @@
+import "../../identity/src/identity.taut"
 import "ty.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 
 // The fixed primitive type names; other names are parameters or nominal types.
 pub fn primitive_type_name(n: Text): Option(Ty) {
-  if Text::eq(
+  if Text::eq(n, "Unit") { Some(TyUnit) } else if Text::eq(
+    n,
+    "nat"
+  ) { Some(TyInt(WidthNat)) } else if Text::eq(
     n,
     "i32"
   ) { Some(TyInt(Width32)) } else if Text::eq(
@@ -19,7 +23,10 @@ pub fn primitive_type_name(n: Text): Option(Ty) {
   ) { Some(TyInt(WidthU32)) } else if Text::eq(
     n,
     "u64"
-  ) { Some(TyInt(WidthU64)) } else if Text::eq(
+  ) { Some(TyInt(WidthU64)) } else if Text::eq(n, "i8") { Some(TyInt(Width8)) } else if Text::eq(n, "i16") { Some(TyInt(Width16)) } else if Text::eq(n, "u16") { Some(TyInt(WidthU16)) } else if Text::eq(
+    n,
+    "uhost"
+  ) { Some(TyInt(WidthHost)) } else if Text::eq(
     n,
     "Bool"
   ) { Some(TyBool) } else if Text::eq(
@@ -31,7 +38,7 @@ pub fn primitive_type_name(n: Text): Option(Ty) {
   ) { Some(TyNever) } else if Text::eq(
     n,
     "Decimal"
-  ) { Some(TyDecimal) } else if Text::eq(n, "Float") { Some(TyFloat) } else { None }
+  ) { Some(TyDecimal) } else if Text::eq(n, "Float") { Some(TyFloat) } else if Text::eq(n, "Float32") { Some(TyFloat32) } else { None }
 }
 
 pub(open) inductive WrittenTypeName(generics: Ordmap(Text, Ty), name: Text): (Ty) -> Prop {
@@ -47,5 +54,5 @@ pub(open) inductive WrittenTypeName(generics: Ordmap(Text, Ty), name: Text): (Ty
   WrittenNameNominal(
     ordinary: primitive_type_name(name) = None,
     unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None
-  ): WrittenTypeName(generics, name, TyNamed(name, Nil))
+  ): WrittenTypeName(generics, name, TyNamed(NameSpelled(name), Nil))
 }

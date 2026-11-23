@@ -1,11 +1,11 @@
 import "../src/bst.taut"
-import "../../../std/Ord.taut"
-import "../../../std/Base.taut"
-import std::prelude::Ord
+import std::ord
+import std::base
+import std::builtin::ord
 
 // What the tree operations do, proved for any keys with an order (`Ord(A)`). The proofs use the
-// laws of `Ord` (`std/prelude/Ord.taut`) and nothing about the keys; the examples on `Nat` use
-// `Ord(Nat)` of `std/Ord.taut`. No program imports this file; `tauto check` checks it.
+// laws of `Ord` (`std/builtin/ord.taut`) and nothing about the keys; the examples on `Nat` use
+// `Ord(Nat)` of `std/ord.taut`. No program imports this file; `tauto check` checks it.
 
 pub(open) inductive In(A: Type, x: A): (Tree(A)) -> Prop {
   InHere<l: Tree(A), r: Tree(A)>: In(A, x, MkNode(l, x, r))
@@ -56,7 +56,7 @@ pub theorem bst_left<A>(
   r: Tree(A),
   hb: bst(MkNode(l, k, r))
 ): bst(l) where Ord(A) {
-  ⊢ bst(l) from match hb {
+  match hb {
     BstNode(l2, k2, r2, hl, hr, al, ar) => hl
   }
 }
@@ -67,7 +67,7 @@ pub theorem bst_right<A>(
   r: Tree(A),
   hb: bst(MkNode(l, k, r))
 ): bst(r) where Ord(A) {
-  ⊢ bst(r) from match hb {
+  match hb {
     BstNode(l2, k2, r2, hl, hr, al, ar) => hr
   }
 }
@@ -78,7 +78,7 @@ pub theorem bst_all_less<A>(
   r: Tree(A),
   hb: bst(MkNode(l, k, r))
 ): all_less(l, k) where Ord(A) {
-  ⊢ all_less(l, k) from match hb {
+  match hb {
     BstNode(l2, k2, r2, hl, hr, al, ar) => al
   }
 }
@@ -89,7 +89,7 @@ pub theorem bst_all_greater<A>(
   r: Tree(A),
   hb: bst(MkNode(l, k, r))
 ): all_greater(r, k) where Ord(A) {
-  ⊢ all_greater(r, k) from match hb {
+  match hb {
     BstNode(l2, k2, r2, hl, hr, al, ar) => ar
   }
 }
@@ -244,7 +244,7 @@ pub theorem in_node_inv<A>(
   r: Tree(A),
   h: In(A, y, MkNode(l, k, r))
 ): Or(y = k, Or(In(A, y, l), In(A, y, r))) where Ord(A) {
-  ⊢ Or(y = k, Or(In(A, y, l), In(A, y, r))) from match h {
+  match h {
     InHere(l2, r2) => OrInl(Refl)
     InLeft(l2, k2, r2, h1) => OrInr(OrInl(h1))
     InRight(l2, k2, r2, h1) => OrInr(OrInr(h1))
@@ -252,7 +252,7 @@ pub theorem in_node_inv<A>(
 }
 
 pub theorem not_in_leaf<A>(y: A, h: In(A, y, Leaf)): False where Ord(A) {
-  ⊢ False from match h {
+  match h {
   }
 }
 
@@ -262,7 +262,7 @@ pub theorem in_insert_inv<A>(
   y: A,
   h: In(A, y, tree_insert(x, t))
 ): Or(y = x, In(A, y, t)) where Ord(A) {
-  ⊢ Or(y = x, In(A, y, t)) from match t {
+  match t {
     Leaf => Or::elim(
       in_node_inv(y, Leaf, x, Leaf, h),
       p => OrInl(p),
@@ -312,7 +312,7 @@ pub theorem in_insert_intro<A>(
   y: A,
   p: Or(y = x, In(A, y, t))
 ): In(A, y, tree_insert(x, t)) where Ord(A) {
-  ⊢ In(A, y, tree_insert(x, t)) from match t {
+  match t {
     Leaf => Or::elim(p, e => in_of_key(y, Leaf, x, Leaf, e), q => False::elim(not_in_leaf(y, q)))
     MkNode(l, k, r) => ⊢ In(A, y, tree_insert(x, MkNode(l, k, r))) from match Ord::compare(x, k) eqn e {
       Less => ⊢ In(A, y, MkNode(tree_insert(x, l), k, r)) from Or::elim(
@@ -343,7 +343,7 @@ pub theorem in_insert_intro<A>(
 }
 
 pub theorem insert_bst<A>(x: A, t: Tree(A), h: bst(t)): bst(tree_insert(x, t)) where Ord(A) {
-  ⊢ bst(tree_insert(x, t)) from match t {
+  match t {
     Leaf => bst_build(
       BstLeaf,
       BstLeaf,
@@ -447,7 +447,7 @@ pub theorem member_sound<A>(
   t: Tree(A),
   h: tree_member(x, t) = true
 ): In(A, x, t) where Ord(A) {
-  ⊢ In(A, x, t) from match t {
+  match t {
     Leaf => False::elim(false_ne_true(h))
     MkNode(l, k, r) => Ordering::cases(
       (o: Ordering) => In(A, x, MkNode(l, k, r)),
@@ -539,7 +539,7 @@ pub theorem min_in<A>(
   k: A,
   r: Tree(A)
 ): In(A, tree_min(l, k), MkNode(l, k, r)) where Ord(A) {
-  ⊢ In(A, tree_min(l, k), MkNode(l, k, r)) from match l {
+  match l {
     Leaf => InHere
     MkNode(ll, lk, lr) => InLeft(min_in(ll, lk, lr))
   }
@@ -552,7 +552,7 @@ pub theorem remove_min_cases<A>(
   y: A,
   h: In(A, y, MkNode(l, k, r))
 ): Or(y = tree_min(l, k), In(A, y, tree_remove_min(MkNode(l, k, r)))) where Ord(A) {
-  ⊢ Or(y = tree_min(l, k), In(A, y, tree_remove_min(MkNode(l, k, r)))) from match l {
+  match l {
     Leaf => Or::elim(
       in_node_inv(y, Leaf, k, r, h),
       p => OrInl(p),
@@ -577,7 +577,7 @@ pub theorem remove_min_sub<A>(
   y: A,
   h: In(A, y, tree_remove_min(MkNode(l, k, r)))
 ): In(A, y, MkNode(l, k, r)) where Ord(A) {
-  ⊢ In(A, y, MkNode(l, k, r)) from match l {
+  match l {
     Leaf => InRight(h)
     MkNode(ll, lk, lr) => Or::elim(
       in_node_inv(y, tree_remove_min(MkNode(ll, lk, lr)), k, r, h),
@@ -595,7 +595,7 @@ pub theorem min_least<A>(
   y: A,
   h: In(A, y, MkNode(l, k, r))
 ): Or(tree_min(l, k) = y, lt(tree_min(l, k), y)) where Ord(A) {
-  ⊢ Or(tree_min(l, k) = y, lt(tree_min(l, k), y)) from match l {
+  match l {
     Leaf => Or::elim(
       in_node_inv(y, Leaf, k, r, h),
       p => OrInl(Eq::sym(p)),
@@ -637,7 +637,7 @@ pub theorem remove_min_bst<A>(
   r: Tree(A),
   hb: bst(MkNode(l, k, r))
 ): bst(tree_remove_min(MkNode(l, k, r))) where Ord(A) {
-  ⊢ bst(tree_remove_min(MkNode(l, k, r))) from match l {
+  match l {
     Leaf => bst_right(Leaf, k, r, hb)
     MkNode(ll, lk, lr) => bst_build(
       remove_min_bst(ll, lk, lr, bst_left(MkNode(ll, lk, lr), k, r, hb)),
@@ -661,7 +661,7 @@ pub theorem remove_min_greater<A>(
   y: A,
   h: In(A, y, tree_remove_min(MkNode(l, k, r)))
 ): lt(tree_min(l, k), y) where Ord(A) {
-  ⊢ lt(tree_min(l, k), y) from match l {
+  match l {
     Leaf => bst_all_greater(Leaf, k, r, hb)(y, h)
     MkNode(ll, lk, lr) => Or::elim(
       in_node_inv(y, tree_remove_min(MkNode(ll, lk, lr)), k, r, h),
@@ -691,7 +691,7 @@ pub theorem join_sub<A>(
   y: A,
   h: In(A, y, tree_join(l, r))
 ): Or(In(A, y, l), In(A, y, r)) where Ord(A) {
-  ⊢ Or(In(A, y, l), In(A, y, r)) from match r {
+  match r {
     Leaf => OrInl(h)
     MkNode(rl, rk, rr) => Or::elim(
       in_node_inv(y, l, tree_min(rl, rk), tree_remove_min(MkNode(rl, rk, rr)), h),
@@ -707,7 +707,7 @@ pub theorem join_intro<A>(
   y: A,
   h: Or(In(A, y, l), In(A, y, r))
 ): In(A, y, tree_join(l, r)) where Ord(A) {
-  ⊢ In(A, y, tree_join(l, r)) from match r {
+  match r {
     Leaf => Or::elim(h, h1 => h1, h2 => False::elim(not_in_leaf(y, h2)))
     MkNode(rl, rk, rr) => Or::elim(
       h,
@@ -727,7 +727,7 @@ pub theorem join_bst<A>(
   r: Tree(A),
   hb: bst(MkNode(l, k, r))
 ): bst(tree_join(l, r)) where Ord(A) {
-  ⊢ bst(tree_join(l, r)) from match r {
+  match r {
     Leaf => bst_left(l, k, r, hb)
     MkNode(rl, rk, rr) => bst_build(
       bst_left(l, k, r, hb),
@@ -817,7 +817,7 @@ pub theorem delete_sub<A>(
   y: A,
   h: In(A, y, tree_delete(x, t))
 ): In(A, y, t) where Ord(A) {
-  ⊢ In(A, y, t) from match t {
+  match t {
     Leaf => h
     MkNode(l, k, r) => Ordering::cases(
       (o: Ordering) => In(A, y, MkNode(l, k, r)),
@@ -861,7 +861,7 @@ pub theorem delete_gone<A>(
   h: In(A, y, tree_delete(x, t)),
   e: y = x
 ): False where Ord(A) {
-  ⊢ False from match t {
+  match t {
     Leaf => not_in_leaf(y, h)
     MkNode(l, k, r) => Ordering::cases(
       (o: Ordering) => False,
@@ -942,7 +942,7 @@ pub theorem delete_keeps<A>(
   h: In(A, y, t),
   ne: (y = x) -> False
 ): In(A, y, tree_delete(x, t)) where Ord(A) {
-  ⊢ In(A, y, tree_delete(x, t)) from match t {
+  match t {
     Leaf => h
     MkNode(l, k, r) => Ordering::cases(
       (o: Ordering) => In(A, y, tree_delete(x, MkNode(l, k, r))),
@@ -984,7 +984,7 @@ pub theorem delete_keeps<A>(
 }
 
 pub theorem delete_bst<A>(x: A, t: Tree(A), hb: bst(t)): bst(tree_delete(x, t)) where Ord(A) {
-  ⊢ bst(tree_delete(x, t)) from match t {
+  match t {
     Leaf => BstLeaf
     MkNode(l, k, r) => Ordering::cases(
       (o: Ordering) => bst(tree_delete(x, MkNode(l, k, r))),

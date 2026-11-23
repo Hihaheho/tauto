@@ -1,0 +1,34 @@
+import "map.taut" { Ordmap }
+import "map_laws.taut" { Ordmap }
+import std::builtin::ord { Ord }
+import std::prelude::std { Ordering }
+
+// `Ord` (`std/prelude/Ord::taut`) for `Nat`, which only the proofs have:
+// extraction maps it onto Nib's `Ord(u64)`.
+
+instance Ord(Nat) {
+  fn compare(a: &Nat, b: &Nat): Ordering { Ordmap::compare_nat(a, b) }
+  theorem equal_iff<a: Nat, b: Nat>(): Ord::compare(a, b) = Equal ↔ a = b {
+    IffIntro(
+      (e: Ord::compare(a, b) = Equal) => Ordmap::compare_nat_eq(a, b, e),
+      (e: a = b) => Eq::subst(
+        <A: Nat, a: a, b: b>,
+        (z: Nat) => Ordmap::compare_nat(a, z) = Equal,
+        e,
+        Ordmap::compare_nat_same(a)
+      )
+    )
+  }
+  theorem swap<a: Nat, b: Nat>(): Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater {
+    IffIntro(
+      (e: Ord::compare(a, b) = Less) => Ordmap::compare_nat_flip_less(a, b, e),
+      (e: Ord::compare(b, a) = Greater) => Ordmap::compare_nat_flip_greater(b, a, e)
+    )
+  }
+  theorem trans<a: Nat, b: Nat, c: Nat>(
+    h1: Ord::compare(a, b) = Less,
+    h2: Ord::compare(b, c) = Less
+  ): Ord::compare(a, c) = Less {
+    Ordmap::compare_nat_less_trans(a, b, c, h1, h2)
+  }
+}

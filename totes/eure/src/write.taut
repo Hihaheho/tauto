@@ -1,0 +1,423 @@
+import "decimal.taut"
+import "value.taut"
+import std::base
+import std::text
+import std::list
+import "read.taut"
+
+// Writing a document as Eure text. Maps are written as blocks `key { … }`, one binding a line;
+// everything else is written in place: `key = [1, "a", { k => v }]`. A node with extensions that
+// is not written as a block is written as an object `{ = v, $name => w }`.
+// Every writer puts its bytes in front of `r`, the bytes that follow.
+
+fn put_bytes(bs: List(Nat), r: List(Nat)): List(Nat) {
+  List::append(bs, r)
+}
+
+pub fn put_text(t: Text, r: List(Nat)): List(Nat) {
+  List::append(Text::bytes(t), r)
+}
+
+// ---- strings and keys ------------------------------------------------------------------
+
+// A byte as it is written in `"…"`; the tests say whether it is `"`, `\`, a line feed, a carriage
+// return, a tab or 0.
+pub fn Escape::tested(
+  c: Nat,
+  r: List(Nat),
+  r#quote: Bool,
+  slash: Bool,
+  lf: Bool,
+  cr: Bool,
+  tab: Bool,
+  nul: Bool
+): List(Nat) {
+  match r#quote {
+    true => Cons(92, Cons(34, r))
+    false => ⊢ List(Nat) from match slash {
+      true => Cons(92, Cons(92, r))
+      false => ⊢ List(Nat) from match lf {
+        true => Cons(92, Cons(110, r))
+        false => ⊢ List(Nat) from match cr {
+          true => Cons(92, Cons(114, r))
+          false => ⊢ List(Nat) from match tab {
+            true => Cons(92, Cons(116, r))
+            false => ⊢ List(Nat) from match nul {
+              true => Cons(92, Cons(48, r))
+              false => Cons(c, r)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn escape_byte(c: Nat, r: List(Nat)): List(Nat) {
+  Escape::tested(
+    c,
+    r,
+    Nat::eq(c, 34),
+    Nat::eq(c, 92),
+    Nat::eq(c, 10),
+    Nat::eq(c, 13),
+    Nat::eq(c, 9),
+    Nat::eq(c, 0)
+  )
+}
+
+pub fn escape_bytes(bs: List(Nat), r: List(Nat)): List(Nat) {
+  match bs {
+    Nil => r
+    Cons(c, t) => escape_byte(c, escape_bytes(t, r))
+  }
+}
+
+// `"…"`.
+pub fn put_string(t: Text, r: List(Nat)): List(Nat) {
+  Cons(34, escape_bytes(Text::bytes(t), Cons(34, r)))
+}
+
+// Whether a name can be written without quotes.
+pub fn is_ident(bs: List(Nat)): Bool {
+  match bs {
+    Nil => false
+    Cons(c, t) => Bool::and(ident_start(c), List::all(ident_char, t))
+  }
+}
+
+pub fn put_int(neg: Bool, n: Nat, r: List(Nat)): List(Nat) {
+  match neg {
+    true => Cons(45, List::append(digits(n), r))
+    false => List::append(digits(n), r)
+  }
+}
+
+mutual {
+  // A key inside a tuple key: strings are quoted.
+  pub fn put_key_value(k: Key, r: List(Nat)): List(Nat) {
+    match k {
+      Kstr(t) => put_string(t, r)
+      Knum(neg, n) => put_int(neg, n, r)
+      Ktup(ks) => Cons(40, put_key_items(ks, true, Cons(41, r)))
+    }
+  }
+  pub fn put_key_items(ks: List(Key), first: Bool, r: List(Nat)): List(Nat) {
+    match ks {
+      Nil => r
+      Cons(k, t) => ⊢ List(Nat) from match first {
+        true => put_key_value(k, put_key_items(t, false, r))
+        false => Cons(44, Cons(32, put_key_value(k, put_key_items(t, false, r))))
+      }
+    }
+  }
+}
+
+// A key in a path: a name without quotes when it can be.
+pub fn put_key(k: Key, r: List(Nat)): List(Nat) {
+  match k {
+    Kstr(t) => ⊢ List(Nat) from match is_ident(Text::bytes(t)) {
+      true => put_text(t, r)
+      false => put_string(t, r)
+    }
+    Knum(neg, n) => put_int(neg, n, r)
+    Ktup(^ks) => put_key_value(k, r)
+  }
+}
+
+pub fn put_ext_key(name: Text, r: List(Nat)): List(Nat) {
+  Cons(36, put_text(name, r))
+}
+
+// ---- code ------------------------------------------------------------------------
+
+pub fn lang_name(l: Lang): List(Nat) {
+  match l {
+    Plaintext => Nil
+    Implicit => Nil
+    Named(t) => Text::bytes(t)
+  }
+}
+
+// The longest run of backticks in `bs`, with `cur` the run so far and `best` the longest before it.
+pub fn tick_run(bs: List(Nat), cur: Nat, best: Nat): Nat {
+  match bs {
+    Nil => Nat::max(cur, best)
+    Cons(c, t) => ⊢ Nat from match Nat::eq(c, 96) {
+      true => tick_run(t, Succ(cur), best)
+      false => tick_run(t, 0, Nat::max(cur, best))
+    }
+  }
+}
+
+// Code fits inline when it has no backtick and no line break.
+pub fn fits_inline(bs: List(Nat)): Bool {
+  List::all((c: Nat) => not(Bool::or(Nat::eq(c, 96), Bool::or(Nat::eq(c, 10), Nat::eq(c, 13)))), bs)
+}
+
+// A code block, with one backtick more than the longest run inside, and at least three.
+pub fn put_block(l: Lang, bs: List(Nat), r: List(Nat)): List(Nat) {
+  List::append(
+    List::replicate(Nat::max(3, Succ(tick_run(bs, 0, 0))), 96),
+    List::append(
+      lang_name(l),
+      Cons(
+        10,
+        List::append(bs, List::append(List::replicate(Nat::max(3, Succ(tick_run(bs, 0, 0))), 96), r))
+      )
+    )
+  )
+}
+
+pub fn put_code(l: Lang, t: Text, r: List(Nat)): List(Nat) {
+  match fits_inline(Text::bytes(t)) {
+    true => List::append(lang_name(l), Cons(96, put_text(t, Cons(96, r))))
+    false => put_block(l, Text::bytes(t), r)
+  }
+}
+
+// ---- values --------------------------------------------------------------------------
+
+pub fn put_scalar_text(l: Lang, t: Text, r: List(Nat)): List(Nat) {
+  match l {
+    Plaintext => put_string(t, r)
+    Implicit => put_code(l, t, r)
+    Named(^n) => put_code(l, t, r)
+  }
+}
+
+pub fn put_exp(eneg: Bool, e: Nat, r: List(Nat)): List(Nat) {
+  Cons(101, put_int(eneg, e, r))
+}
+
+pub fn spaces(depth: Nat, r: List(Nat)): List(Nat) {
+  List::append(List::replicate(Nat::mul(2, depth), 32), r)
+}
+
+pub fn put_scalar(v: Value, r: List(Nat)): List(Nat) {
+  match v {
+    Vhole(lb) => ⊢ List(Nat) from match lb {
+      None => Cons(33, r)
+      Some(t) => Cons(33, put_text(t, r))
+    }
+    Vnull => put_text("null", r)
+    Vbool(b) => ⊢ List(Nat) from match b {
+      true => put_text("true", r)
+      false => put_text("false", r)
+    }
+    Vint(neg, k) => put_int(neg, k, r)
+    Vdec(neg, mant, eneg, e) => put_int(neg, mant, put_exp(eneg, e, r))
+    Vtext(lg, t) => put_scalar_text(lg, t, r)
+    Varr(^xs) => r
+    Vtup(^xs) => r
+    Vmap(^entries) => r
+  }
+}
+
+pub fn has_ext(ext: List(Text × Node)): Bool {
+  match ext {
+    Nil => false
+    Cons(^e, ^es) => true
+  }
+}
+
+// `{ = ` before a value with extensions.
+pub fn open_ext(h: Bool, r: List(Nat)): List(Nat) {
+  match h {
+    true => Cons(123, Cons(32, Cons(61, Cons(32, r))))
+    false => r
+  }
+}
+
+// `, ` after a value with extensions; its extensions and `}` follow.
+pub fn mid_ext(h: Bool, r: List(Nat)): List(Nat) {
+  match h {
+    true => Cons(44, Cons(32, r))
+    false => r
+  }
+}
+
+fn close_ext(h: Bool, r: List(Nat)): List(Nat) {
+  match h {
+    true => Cons(125, r)
+    false => r
+  }
+}
+
+pub fn is_map(v: Value): Bool {
+  match v {
+    Vmap(^es) => true
+    Vhole(^lb) => false
+    Vnull => false
+    Vbool(^b) => false
+    Vint(^s, ^k) => false
+    Vdec(^s, ^k, ^es, ^x) => false
+    Vtext(^lg, ^t) => false
+    Varr(^xs) => false
+    Vtup(^xs) => false
+  }
+}
+
+// What closes a node in place: `}` for a map or a node with extensions.
+pub fn close_node(v: Value, h: Bool, r: List(Nat)): List(Nat) {
+  match Bool::or(is_map(v), h) {
+    true => Cons(125, r)
+    false => r
+  }
+}
+
+mutual {
+  // A node in place. A map is `{ k => v, $e => w, }`; any other node with extensions is
+  // `{ = v, $e => w, }`.
+  pub fn put_node(n: Node, r: List(Nat)): List(Nat) {
+    match n {
+      Mk(v, ext) => put_v(v, has_ext(ext), put_exts(ext, close_node(v, has_ext(ext), r)))
+    }
+  }
+  // A value; `tail` is its extensions and what closes the node.
+  pub fn put_v(v: Value, h: Bool, tail: List(Nat)): List(Nat) {
+    match v {
+      Vmap(entries) => Cons(123, Cons(32, put_entries(entries, tail)))
+      Varr(xs) => open_ext(h, Cons(91, put_items(xs, true, Cons(93, mid_ext(h, tail)))))
+      Vtup(xs) => open_ext(h, Cons(40, put_items(xs, true, Cons(41, mid_ext(h, tail)))))
+      Vhole(^lb) => open_ext(h, put_scalar(v, mid_ext(h, tail)))
+      Vnull => open_ext(h, put_scalar(v, mid_ext(h, tail)))
+      Vbool(^b) => open_ext(h, put_scalar(v, mid_ext(h, tail)))
+      Vint(^sg, ^k) => open_ext(h, put_scalar(v, mid_ext(h, tail)))
+      Vdec(^sg, ^k, ^es, ^x) => open_ext(h, put_scalar(v, mid_ext(h, tail)))
+      Vtext(^lg, ^t) => open_ext(h, put_scalar(v, mid_ext(h, tail)))
+    }
+  }
+  pub fn put_items(xs: List(Node), first: Bool, r: List(Nat)): List(Nat) {
+    match xs {
+      Nil => r
+      Cons(x, t) => ⊢ List(Nat) from match first {
+        true => put_node(x, put_items(t, false, r))
+        false => Cons(44, Cons(32, put_node(x, put_items(t, false, r))))
+      }
+    }
+  }
+  // `k => v, ` for each entry of an object.
+  pub fn put_entries(es: List(Key × Node), r: List(Nat)): List(Nat) {
+    match es {
+      Nil => r
+      Cons(e, t) => put_entry(e, put_entries(t, r))
+    }
+  }
+  pub fn put_entry(e: Key × Node, r: List(Nat)): List(Nat) {
+    match e {
+      #(k, n) => put_key(
+        k,
+        Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r)))))))
+      )
+    }
+  }
+  pub fn put_exts(es: List(Text × Node), r: List(Nat)): List(Nat) {
+    match es {
+      Nil => r
+      Cons(e, t) => put_ext_entry(e, put_exts(t, r))
+    }
+  }
+  pub fn put_ext_entry(e: Text × Node, r: List(Nat)): List(Nat) {
+    match e {
+      #(k, n) => put_ext_key(
+        k,
+        Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r)))))))
+      )
+    }
+  }
+}
+
+// ---- statements ----------------------------------------------------------------------------
+
+mutual {
+  // A map under a key already written, as a block.
+  pub fn put_map_block(n: Node, depth: Nat, r: List(Nat)): List(Nat) {
+    match n {
+      Node::Mk(
+        v,
+        ext
+      ) => Cons(
+        32,
+        Cons(
+          123,
+          Cons(
+            10,
+            put_map_stmts(
+              v,
+              Succ(depth),
+              put_stmt_exts(ext, Succ(depth), spaces(depth, Cons(125, Cons(10, r))))
+            )
+          )
+        )
+      )
+    }
+  }
+  pub fn put_map_stmts(v: Value, depth: Nat, r: List(Nat)): List(Nat) {
+    match v {
+      Vmap(es) => put_stmt_entries(es, depth, r)
+      Vhole(^lb) => r
+      Vnull => r
+      Vbool(^b) => r
+      Vint(^sg, ^k) => r
+      Vdec(^sg, ^k, ^es, ^x) => r
+      Vtext(^lg, ^t) => r
+      Varr(^xs) => r
+      Vtup(^xs) => r
+    }
+  }
+  pub fn put_stmt_entries(es: List(Key × Node), depth: Nat, r: List(Nat)): List(Nat) {
+    match es {
+      Nil => r
+      Cons(e, t) => put_stmt_entry(e, depth, put_stmt_entries(t, depth, r))
+    }
+  }
+  pub fn put_stmt_entry(e: Key × Node, depth: Nat, r: List(Nat)): List(Nat) {
+    match e {
+      #(k, n) => spaces(depth, put_key(k, ⊢ List(Nat) from match is_map(node_value(n)) {
+        true => put_map_block(n, depth, r)
+        false => Cons(32, Cons(61, Cons(32, put_node(n, Cons(10, r)))))
+      }))
+    }
+  }
+  pub fn put_stmt_exts(es: List(Text × Node), depth: Nat, r: List(Nat)): List(Nat) {
+    match es {
+      Nil => r
+      Cons(e, t) => put_stmt_ext(e, depth, put_stmt_exts(t, depth, r))
+    }
+  }
+  pub fn put_stmt_ext(e: Text × Node, depth: Nat, r: List(Nat)): List(Nat) {
+    match e {
+      #(k, n) => spaces(depth, put_ext_key(k, ⊢ List(Nat) from match is_map(node_value(n)) {
+        true => put_map_block(n, depth, r)
+        false => Cons(32, Cons(61, Cons(32, put_node(n, Cons(10, r)))))
+      }))
+    }
+  }
+}
+
+// A document: a map is written as its bindings, anything else as `= v`.
+fn write_doc(n: Node): List(Nat) {
+  match n {
+    Mk(v, ext) => ⊢ List(Nat) from match v {
+      Vmap(es) => put_stmt_entries(es, 0, put_stmt_exts(ext, 0, Nil))
+      Vhole(^lb) => Cons(61, Cons(32, put_node(leaf(v), Cons(10, put_stmt_exts(ext, 0, Nil)))))
+      Vnull => Cons(61, Cons(32, put_node(leaf(v), Cons(10, put_stmt_exts(ext, 0, Nil)))))
+      Vbool(^b) => Cons(61, Cons(32, put_node(leaf(v), Cons(10, put_stmt_exts(ext, 0, Nil)))))
+      Vint(^s, ^k) => Cons(61, Cons(32, put_node(leaf(v), Cons(10, put_stmt_exts(ext, 0, Nil)))))
+      Vdec(
+        ^s,
+        ^k,
+        ^es,
+        ^x
+      ) => Cons(61, Cons(32, put_node(leaf(v), Cons(10, put_stmt_exts(ext, 0, Nil)))))
+      Vtext(^lg, ^t) => Cons(61, Cons(32, put_node(leaf(v), Cons(10, put_stmt_exts(ext, 0, Nil)))))
+      Varr(^xs) => Cons(61, Cons(32, put_node(leaf(v), Cons(10, put_stmt_exts(ext, 0, Nil)))))
+      Vtup(^xs) => Cons(61, Cons(32, put_node(leaf(v), Cons(10, put_stmt_exts(ext, 0, Nil)))))
+    }
+  }
+}
+
+pub fn to_text(n: Node): Text {
+  Text::Mk(write_doc(n))
+}

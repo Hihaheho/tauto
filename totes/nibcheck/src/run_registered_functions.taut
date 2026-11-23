@@ -1,9 +1,9 @@
 import "registered_source_functions.taut"
 import "prepare_data_function_table.taut"
 import "run_function_signatures.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -37,8 +37,7 @@ pub theorem fnt_run_module_cons_frame(
   ih: ∀ next: Checker. CkFnsFrame(next, ck_module_errors(rest, next))
 ): CkFnsFrame(c, run_module_cons(e, rest, c)) {
   fnt_frame_bind_ok(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (reported: Unit, c1: Checker) => ck_rewrap1(ck_module_errors(rest, c1)),
     ck_error(c, run_error_message(e), run_error_span(e)),
@@ -51,7 +50,7 @@ pub theorem fnt_ck_module_errors_frame(
   es: List(TypeError),
   c: Checker
 ): CkFnsFrame(c, ck_module_errors(es, c)) {
-  ⊢ CkFnsFrame(c, ck_module_errors(es, c)) from match es {
+  match es {
     Nil => Refl
     Cons(e, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkFnsFrame(c, z),
@@ -78,11 +77,9 @@ pub theorem run_after_datas_registered_functions(
   let accepted: DiagnosticClean(
     ck_st(ck_prepare_fns(c, prelude, program, own))
   ) := accepted_checked_bind_fact(
-    List(Pair(SurfaceFn, Scheme)),
-    Unit,
-    DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own))),
+    <A: List(SurfaceFn × Scheme), B: Unit, P: DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own)))>,
     ck_prepare_fns(c, prelude, program, own),
-    (fns: List(Pair(SurfaceFn, Scheme)), next: Checker) => names_function_body(next, program, fns),
+    (fns: List(SurfaceFn × Scheme), next: Checker) => names_function_body(next, program, fns),
     frame_subst_ordered(
       c,
       ck_prepare_fns(c, prelude, program, own),
@@ -117,7 +114,7 @@ pub theorem run_after_data_result_registered_functions(
   normal: ∀ accepted: DiagnosticClean(ck_st(m)). CkNormal(ck_st(m)),
   clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m)))
 ): RegisteredSourceState(program, run_after_data_result(prelude, program, own, m)) {
-  ⊢ RegisteredSourceState(program, run_after_data_result(prelude, program, own, m)) from match m {
+  match m {
     mut1(ignored, next) => run_after_datas_registered_functions(
       next,
       prelude,
@@ -143,7 +140,7 @@ pub theorem run_after_builtins_registered_functions(
   normal: CkNormal(ck_st(m)),
   clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m)))
 ): RegisteredSourceState(program, run_after_builtins(prelude, program, m)) {
-  ⊢ RegisteredSourceState(program, run_after_builtins(prelude, program, m)) from match m {
+  match m {
     mut1(ignored, next) => run_after_data_result_registered_functions(
       prelude,
       program,
@@ -219,7 +216,7 @@ pub theorem run_module_registered_functions(
   normal: CkNormal(ck_st(m)),
   clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m))
 ): RegisteredSourceReport(program, run_after_module_errors(prelude, program, m)) {
-  ⊢ RegisteredSourceReport(program, run_after_module_errors(prelude, program, m)) from match m {
+  match m {
     mut1(ignored, next) => accepted_data_report(
       (env: Datas) => SourceFunctionsRegistered(env, program),
       ck_run(next, prelude, program),

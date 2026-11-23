@@ -1,0 +1,30 @@
+// Renamings of de Bruijn indices, shared by the object languages of meta/
+// (core.taut, kernel.taut): a renaming under a binder, `upR`, and that it
+// keeps renamings pointwise equal (there is no function extensionality).
+
+pub fn upR(xi: (Nat) -> Nat, n: Nat): Nat {
+  match n {
+    Zero => Zero
+    Succ(m) => Succ(xi(m))
+  }
+}
+
+pub theorem upR_pw_at(
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  h: ∀ i: Nat. xi(i) = zeta(i),
+  i: Nat
+): upR(xi, i) = upR(zeta, i) {
+  match i {
+    Zero => Refl
+    Succ(m) => Eq::congr(Succ, h(m))
+  }
+}
+
+pub theorem upR_pw(
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  h: ∀ i: Nat. xi(i) = zeta(i)
+): ∀ i: Nat. upR(xi, i) = upR(zeta, i) {
+  i => upR_pw_at(xi, zeta, h, i)
+}

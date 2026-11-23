@@ -150,6 +150,7 @@ impl<'a> Matcher<'a> {
                 params,
                 result,
                 effects,
+                unused,
             } => {
                 let depth = shadow.len();
                 let mut out = Vec::new();
@@ -164,6 +165,7 @@ impl<'a> Matcher<'a> {
                         params: out,
                         result: Box::new(result),
                         effects: effects.clone(),
+                        unused: unused.clone(),
                     },
                     sp,
                 )
@@ -172,6 +174,7 @@ impl<'a> Matcher<'a> {
                 params,
                 body,
                 types,
+                unused_params,
             } => {
                 let depth = shadow.len();
                 shadow.extend(params.iter().cloned());
@@ -182,6 +185,7 @@ impl<'a> Matcher<'a> {
                         params: params.clone(),
                         body: Box::new(body),
                         types: types.clone(),
+                        unused_params: unused_params.clone(),
                     },
                     sp,
                 )
@@ -436,7 +440,7 @@ impl By {
         if let Some((name, rest)) = text.split_once("!(")
             && let Some(arg) = rest.strip_suffix(')')
             && !name.is_empty()
-            && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+            && name.chars().all(tauto_parol::unicode::is_ident_continue)
         {
             return Ok(By::Tactic {
                 name: name.to_string(),

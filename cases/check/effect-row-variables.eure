@@ -1,8 +1,7 @@
 description = "Functions whose rows have a variable, read in proofs: the variable is the operations and answers of the effects it stands for, given at claim_each call."
 
 @ cases.a-loop-over-a-row-variable-is-read
-extract = true
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 source = ```tauto
 effect claim(n: Nat): Unit
 effect log(n: Nat): Unit
@@ -41,17 +40,17 @@ fn total(n: Nat): Nat {
 }
 
 theorem total_three(): total(3) = 6 { Refl }
-perform show("total", total(3))
+show(&total(3))
 ```
 checks.claim_each = "checked"
 checks.run = "checked"
 checks.total_three = "checked"
-shows = ["total = 6"]
+stdout = "6\n"
 
 // The variable may stand for no effect, and for effects the caller handles
 // elsewhere: a call in a larger row is forwarded.
 @ cases.a-row-variable-for-no-effect-and-in-a-larger-row
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 source = ```tauto
 effect claim(n: Nat): Unit
 effect log(n: Nat): Unit
@@ -95,7 +94,7 @@ checks.total_wrong = "error: type mismatch"
 // The variable stands for every row, so the function may not perform an
 // effect its row does not name.
 @ cases.a-row-variable-does-not-stand-for-a-performed-effect
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 source = ```tauto
 effect claim(n: Nat): Unit
 effect log(n: Nat): Unit
@@ -105,3 +104,34 @@ fn claim_each<!e>(n: Nat, act: (i: Nat) -> Unit ! {claim} ∪ e): Unit ! {claim}
 }
 ```
 checks.claim_each = "skipped"
+
+// A row variable written `<=1` keeps that bound when the function is checked
+// for what lives across an effect: an affine list may wait while the callback
+// runs once. Without the bound the same function is rejected.
+@ cases.a-row-bound-lets-an-affine-value-live-across-the-callback
+source = ```tauto
+fn consume<A, !e: <=1>(xs: List(A), f: &((x: A) -> Unit ! e)): Unit ! e {
+  match xs {
+    Nil => #()
+    Cons(x, rest) => {
+      f(x)
+      consume(rest, &f)
+    }
+  }
+}
+```
+lin = "ok"
+
+@ cases.an-unbounded-row-variable-rejects-an-affine-value-across-the-callback
+source = ```tauto
+fn consume<A, !e>(xs: List(A), f: &((x: A) -> Unit ! e)): Unit ! e {
+  match xs {
+    Nil => #()
+    Cons(x, rest) => {
+      f(x)
+      consume(rest, &f)
+    }
+  }
+}
+```
+lin = "error: rest is live across e, which resumes ω"

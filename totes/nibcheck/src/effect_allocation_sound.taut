@@ -1,7 +1,13 @@
+import "effect_instance_frame.taut"
+import "allocation_substitution.taut"
+import "instantiation_map_allocation.taut"
+import "allocation_generic_map.taut"
+import "data_field_allocation.taut"
+import "messages.taut"
 import "call_allocation_sound.taut"
-import std::Map
-import std::Nat
-import std::Text
+import std::map
+import std::nat
+import std::text
 import "allocation_advance.taut"
 import "allocation_result.taut"
 import "allocation_state.taut"
@@ -12,18 +18,21 @@ import "checker_frame.taut"
 import "datas.taut"
 import "field_allocation_sound.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "handle_frame.taut"
 import "instantiation_allocation_sound.taut"
 import "instantiation_frame.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn OptionEffectAllocated(limit: Nat, found: Option(EffectSig)): Prop {
-  ⊢ Prop from match found { None => True
+  match found { None => True
     Some(sig) => TypeAllocated(limit, handle_effect_type(sig)) }
 }
 pub def EffectsAllocated(
@@ -44,9 +53,10 @@ pub theorem application_effect_arity_allocation(
   state: CheckerAllocation(c),
   actual: TypeListAllocated(ck_next_of(c), types),
   expected: TypeListAllocated(ck_next_of(c), ps),
-  bad: Bool
+  bad: Bool,
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c))
 ): AllocationAdvance(c, application_effect_arity(c, eff, types, args, span, ps, bad)) {
-  ⊢ AllocationAdvance(c, application_effect_arity(c, eff, types, args, span, ps, bad)) from match bad {
+  match bad {
     true => allocation_advance_rewrap(
       c,
       ck_error(
@@ -65,7 +75,7 @@ pub theorem application_effect_arity_allocation(
     false => allocation_advance_rewrap(
       c,
       ck_expect_args(types, c, ps, args),
-      ck_expect_args_allocation(types, c, ps, args, ordered, state, actual, expected)
+      ck_expect_args_allocation(types, c, ps, args, ordered, state, actual, expected, declarations)
     ) }
 }
 pub theorem application_effect_inst_allocation(
@@ -80,7 +90,8 @@ pub theorem application_effect_inst_allocation(
   actual: TypeListAllocated(ck_next_of(c), types),
   original_bound: TypeAllocated(ck_next_of(c), original),
   inst: Ty,
-  bounded: TypeAllocated(ck_next_of(c), inst)
+  bounded: TypeAllocated(ck_next_of(c), inst),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c))
 ): AllocationResult(c, application_effect_inst(c, eff, types, args, span, original, inst)) {
   ⊢ AllocationResult(
     c,
@@ -93,8 +104,9 @@ pub theorem application_effect_inst_allocation(
     TyNever => allocation_result_return(c, original, state, original_bound)
     TyDecimal => allocation_result_return(c, original, state, original_bound)
     TyFloat => allocation_result_return(c, original, state, original_bound)
+    TyFloat32 => allocation_result_return(c, original, state, original_bound)
     TyFn(ps, r, k) => allocation_result_bind(
-      Unit,
+      <A: Unit>,
       c,
       (ignored: Unit, next: Checker) => mut1(r, next),
       application_effect_arity(
@@ -117,8 +129,8 @@ pub theorem application_effect_inst_allocation(
         state,
         actual,
         And::left(bounded),
-        not(Nat::eq(list_len(ps), list_len(types)))
-      ),
+        not(Nat::eq(list_len(ps), list_len(types))),
+ declarations),
       ignored => next => advanced => current => allocation_result_return(
         next,
         r,
@@ -148,10 +160,11 @@ pub theorem application_effect_found_allocation(
   state: CheckerAllocation(c),
   actual: TypeListAllocated(ck_next_of(c), types),
   found: Option(EffectSig),
-  bounded: OptionEffectAllocated(ck_next_of(c), found)
+  bounded: OptionEffectAllocated(ck_next_of(c), found),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c))
 ): AllocationResult(c, application_effect_found(c, eff, types, args, span, found)) {
-  ⊢ AllocationResult(c, application_effect_found(c, eff, types, args, span, found)) from match found {
-    None => allocation_error_fresh(c, cat3("no effect `", eff, "` is declared"), span, state)
+  match found {
+    None => allocation_error_fresh(c, no_effect_declared_message(eff), span, state)
     Some(sig) => allocation_result_ty_bind(
       c,
       (inst: Ty, next: Checker) => application_effect_inst(
@@ -163,23 +176,22 @@ pub theorem application_effect_found_allocation(
         inst,
         inst
       ),
-      ck_instantiate_named(c, handle_effect_generics(sig), handle_effect_type(sig)),
-      ck_instantiate_named_allocation(
+      ck_instantiate_kinded(c, handle_effect_kinded(sig), span, handle_effect_type(sig)),
+      ck_instantiate_kinded_allocation(
         c,
-        handle_effect_generics(sig),
+        handle_effect_kinded(sig),
+        span,
         handle_effect_type(sig),
         state,
         bounded
       ),
-      And::left(
-        run_frame_read(
-          c,
-          ck_instantiate_named(c, handle_effect_generics(sig), handle_effect_type(sig)),
-          ck_instantiate_named_frame(c, handle_effect_generics(sig), handle_effect_type(sig)),
-          ordered
-        )
+      run_frame_read(
+        c,
+        ck_instantiate_kinded(c, handle_effect_kinded(sig), span, handle_effect_type(sig)),
+        ck_instantiate_kinded_frame(c, handle_effect_kinded(sig), span, handle_effect_type(sig)),
+        ordered
       ),
-      inst => next => advanced => current => order => bound => application_effect_inst_allocation(
+      inst => next => advanced => current => order => bound => same => application_effect_inst_allocation(
         next,
         eff,
         types,
@@ -191,8 +203,12 @@ pub theorem application_effect_found_allocation(
         type_list_allocated_weaken(types, ck_next_of(c), ck_next_of(next), advanced, actual),
         bound,
         inst,
-        bound
-      )
+        bound,
+ Eq::subst(
+   (datas: Datas) => DatasAllocated(ck_next_of(next), datas),
+   Eq::sym(same),
+   datas_allocated_weaken(ck_datas_of(c), ck_next_of(c), ck_next_of(next), advanced, declarations)
+ ))
     ) }
 }
 pub theorem ck_perform_of_allocation(
@@ -204,7 +220,8 @@ pub theorem ck_perform_of_allocation(
   ordered: CkOrdered(c),
   state: CheckerAllocation(c),
   actual: TypeListAllocated(ck_next_of(c), types),
-  effects: EffectsAllocated(ck_next_of(c), handle_effects(c))
+  effects: EffectsAllocated(ck_next_of(c), handle_effects(c)),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c))
 ): AllocationResult(c, ck_perform_of(c, eff, types, args, span)) {
   Eq::subst(
     (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
@@ -219,7 +236,48 @@ pub theorem ck_perform_of_allocation(
       state,
       actual,
       Ordmap::get(handle_effects(c), eff, Ordmap::compare_text),
-      effects(eff)
+      effects(eff),
+ declarations)
+  )
+}
+
+pub theorem ck_instantiate_kinded_allocation(
+  c: Checker,
+  gs: List(Text × Kind),
+  span: TySpan,
+  ty: Ty,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), ty)
+): AllocationResult(c, ck_instantiate_kinded(c, gs, span, ty)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(ck_instantiate_kinded_unf(c, gs, span, ty)),
+    allocation_result_map_bind(
+      c,
+      (map: Ordmap(Text, Ty), next: Checker) => mut1(ty_substitute(ty, map), next),
+      ck_instantiate_map(gs, c, span, Ordmap::empty()),
+      ck_instantiate_map_allocation(
+        gs,
+        c,
+        span,
+        Ordmap::empty(),
+        state,
+        Trivial,
+        generic_map_allocation_empty(ck_next_of(c))
+      ),
+      map => next => advanced => current => ordered => values => allocation_result_return(
+        next,
+        ty_substitute(ty, map),
+        current,
+        allocated_substitute(
+          ty,
+          ck_next_of(next),
+          map,
+          ordered,
+          values,
+          type_allocated_weaken(ty, ck_next_of(c), ck_next_of(next), advanced, bounded)
+        )
+      )
     )
   )
 }

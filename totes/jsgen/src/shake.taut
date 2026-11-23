@@ -1,0 +1,238 @@
+import "../../text/src/text.taut"
+import std::text
+import std::base
+import std::indexed_map { IndexedMap }
+
+// The runtime before the generated code, and the items of it that the
+// generated code reaches (`shake.rs`).
+//
+// Every top-level item of the runtime starts at the beginning of a line with
+// `function`, `async function`, `const`, `let` or `class` and declares one
+// name; a line that starts otherwise belongs to the item above it. An item is
+// kept when its name occurs as a word in the generated code or in a kept item.
+
+pub fn js_prelude(): List(Text) {
+  [
+    include_text!("runtime/runtime.js"),
+    include_text!("runtime/cps.js"),
+    include_text!("runtime/resources.js"),
+    include_text!("runtime/float.js"),
+    include_text!("runtime/builtins.js"),
+    include_text!("runtime/permissions.js")
+  ]
+}
+
+pub fn js_node_options(): Text { include_text!("runtime/node_options.js") }
+
+// Whether byte `b` is part of a word: an ASCII letter or digit, `_` or `$`.
+pub fn js_word_byte(b: Nat): Bool {
+  (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 || b == 36
+}
+
+// The word of `t` from byte `at`.
+pub fn js_word_at(t: Text, at: Nat): Text {
+  Text::slice_or_empty(t, at, js_word_end(Text::len(t), t, at))
+}
+
+// Where the word at `at` ends, looking at most `k` bytes on.
+pub fn js_word_end(k: Nat, t: Text, at: Nat): Nat {
+  match k {
+    Zero => at
+    Succ(k2) => match Text::byte(t, at) {
+      Some(b) => if js_word_byte(b) { js_word_end(k2, t, Succ(at)) } else { at }
+      None => at
+    }
+  }
+}
+
+// The name a line declares.
+pub fn js_declared_line(line: Text): Option(Text) {
+  js_declared_after(line, ["async function ", "function ", "const ", "let ", "class "])
+}
+
+pub fn js_declared_after(line: Text, prefixes: List(Text)): Option(Text) {
+  match prefixes {
+    Nil => None
+    Cons(p, rest) => if text_starts_with(line, p, 0) {
+      let name := js_word_at(line, Text::len(p))
+      if Text::len(name) == 0 { None } else { Some(name) }
+    } else {
+      js_declared_after(line, rest)
+    }
+  }
+}
+
+// The names `text` declares, one a line (`chunks::declared`).
+pub fn js_declared(text: Text): List(Text) {
+  js_declared_lines(text_lines(text))
+}
+
+pub fn js_declared_lines(lines: List(Text)): List(Text) {
+  match lines {
+    Nil => Nil
+    Cons(l, rest) => match js_declared_line(l) {
+      Some(n) => Cons(n, js_declared_lines(rest))
+      None => js_declared_lines(rest)
+    }
+  }
+}
+
+// The lines of `t`, each with its `\n`, as `split_inclusive` gives them.
+pub fn js_lines_inclusive(t: Text): List(Text) {
+  js_lines_with(text_lines(t))
+}
+
+pub fn js_lines_with(parts: List(Text)): List(Text) {
+  match parts {
+    Nil => Nil
+    Cons(p, rest) => match rest {
+      Nil => if Text::len(p) == 0 { Nil } else { [p] }
+      Cons(^q, ^more) => Cons(concat(p, "\n"), js_lines_with(rest))
+    }
+  }
+}
+
+// The words of `t`.
+pub fn js_words(t: Text): List(Text) ! {div} {
+  var out := Nil
+  var at := 0
+  let n := Text::len(t)
+  while at < n {
+    if js_word_byte(Text::byte_value(t, at)) {
+      let w := js_word_at(t, at)
+      out := Cons(w, out)
+      at := at + Text::len(w)
+    } else {
+      at := at + 1
+    }
+  }
+  out
+}
+
+// An item of the runtime: the name it declares, if any, and its lines.
+pub(open) struct JsItem { name: Option(Text), lines: List(Text) }
+
+// The items of the runtime, last first, each with its lines last first.
+pub fn js_items_of(lines: List(Text), items: List(JsItem)): List(JsItem) {
+  match lines {
+    Nil => items
+    Cons(l, rest) => js_items_of(rest, match js_declared_line(l) {
+      Some(n) => Cons(JsItem { name: Some(n), lines: [l] }, items)
+      None => match items {
+        Nil => [JsItem { name: None, lines: [l] }]
+        Cons(top, below) => Cons(JsItem { name: top.name, lines: Cons(l, top.lines) }, below)
+      }
+    })
+  }
+}
+
+pub fn js_items_all(parts: List(Text), items: List(JsItem)): List(JsItem) {
+  match parts {
+    Nil => items
+    Cons(p, rest) => js_items_all(rest, js_items_of(js_lines_inclusive(p), items))
+  }
+}
+
+pub fn js_item_text(i: JsItem): Text { Text::concat_all(List::reverse(i.lines)) }
+
+// The items of `PRELUDE` that `roots` reaches, in their order.
+pub fn js_shake(roots: Text): Text ! {div, overflow} {
+  let items := List::reverse(js_items_all(js_prelude(), Nil))
+  var texts: Vec(Text) := Vec::new()
+  var names: Vec(Option(Text)) := Vec::new()
+  js_shake_fill(items, &mut texts, &mut names)
+  var index: IndexedMap(Text, u64) := IndexedMap::new()
+  var work: Vec(u64) := Vec::new()
+  var i: u64 := 0
+  while i < Vec::len(&names) {
+    match Vec::get(&names, i) {
+      Some(n) => match n {
+        Some(name) => {
+          // The last item that declares a name answers it, as a map
+          // collected in order keeps it.
+          IndexedMap::insert(&mut index, name, i)
+          ()
+        }
+        None => Vec::push(&mut work, i)
+      }
+      None => ()
+    }
+    i := i + 1
+  }
+  var kept: Vec(Bool) := Vec::new()
+  i := 0
+  while i < Vec::len(&names) {
+    Vec::push(&mut kept, false)
+    i := i + 1
+  }
+  js_shake_reach(&index, roots, &mut work)
+  var going := true
+  while going {
+    match Vec::pop(&mut work) {
+      None => { going := false }
+      Some(j) => {
+        let seen: Bool := match Vec::get(&kept, j) {
+          Some(k) => k
+          None => true
+        }
+        if not(seen) {
+          replace_at(&mut kept, j, true)
+          match Vec::get(&texts, j) {
+            Some(t) => js_shake_reach(&index, t, &mut work)
+            None => ()
+          }
+        }
+      }
+    }
+  }
+  var b := Buf::new()
+  i := 0
+  while i < Vec::len(&texts) {
+    match Vec::get(&kept, i) {
+      Some(k) => if k {
+        match Vec::get(&texts, i) {
+          Some(t) => Buf::push(&mut b, &t)
+          None => ()
+        }
+      }
+      None => ()
+    }
+    i := i + 1
+  }
+  Text::of(b)
+}
+
+pub fn replace_at(v: &mut Vec(Bool), i: u64, x: Bool): Unit {
+  match Vec::get_mut(v, i) {
+    Some(slot) => { replace(slot, x); () }
+    None => ()
+  }
+}
+
+pub fn js_shake_fill(items: List(JsItem), texts: &mut Vec(Text), names: &mut Vec(Option(Text))): Unit {
+  match items {
+    Nil => ()
+    Cons(it, rest) => {
+      Vec::push(texts, js_item_text(it))
+      Vec::push(names, it.name)
+      js_shake_fill(rest, texts, names)
+    }
+  }
+}
+
+pub fn js_shake_reach(index: &IndexedMap(Text, u64), text: Text, work: &mut Vec(u64)): Unit ! {div} {
+  js_shake_push(index, js_words(text), work)
+}
+
+pub fn js_shake_push(index: &IndexedMap(Text, u64), words: List(Text), work: &mut Vec(u64)): Unit {
+  match words {
+    Nil => ()
+    Cons(w, rest) => {
+      match IndexedMap::get(index, &w) {
+        Some(i) => Vec::push(work, i)
+        None => ()
+      }
+      js_shake_push(index, rest, work)
+    }
+  }
+}

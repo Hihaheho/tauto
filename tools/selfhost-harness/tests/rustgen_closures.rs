@@ -2,8 +2,8 @@
 use selfhost_harness::{materialize, root, run_tote_native};
 use std::path::Path;
 use std::process::Command;
-use tauto::eval::{RunOptions, run_program_with};
-use tauto::surface::parse_program_as_written;
+use tauto::exec::{RunOptions, run_loaded_with, run_source_with};
+use tauto_parse::parse_program_as_written;
 
 const CASES: &str = "selfhost-rustgen-closures.eure";
 #[derive(Clone, Copy)]
@@ -127,7 +127,7 @@ fn reference_tote(path: &Path) {
 fn runtime_text_library() -> String {
     // Non-mixed extraction retains the standard mapped wrappers (including
     // text_concat); loading an import-only tote prunes them as unreachable.
-    tauto::extract::extract_files(&[root().join("std/Text.taut")])
+    tauto::extract::extract_files(&[root().join("std/text.taut")])
         .expect("the exact standard Text library must extract")
 }
 
@@ -141,49 +141,51 @@ fn check_reference(name: &str, source: &str, text_runtime: &str, reference: &Pat
             .expect("every accepted case has an explicit reference route")
             .1
     };
-    let program = match route {
+    let oracle = match route {
         ReferenceRoute::Extracted => {
             std::fs::write(
                 reference.join("src/main.taut"),
                 format!(
                     r#"import {}
 {}
-perform show("result", answer())"#,
-                    format!("{:?}", root().join("std/Text.taut")),
+show(&answer())"#,
+                    format!("{:?}", root().join("std/text.taut")),
                     source
                 ),
             )
             .unwrap();
-            tauto::program::load_tote(reference)
-                .unwrap_or_else(|error| panic!("{name}: extracted reference: {error}"))
-                .program
+            let loaded = tauto::program::load_tote(reference)
+                .unwrap_or_else(|error| panic!("{name}: extracted reference: {error}"));
+            run_loaded_with(&loaded, 1_000_000, RunOptions::default())
         }
         ReferenceRoute::WrittenRuntime | ReferenceRoute::WrittenText => {
             // Preserve the case verbatim and parse library plus case together,
             // so all source spans belong to the same parse.
-            parse_program_as_written(&format!(
-                r#"{}
+            run_source_with(
+                &format!(
+                    r#"{}
 {}
-perform show("result", answer())"#,
-                text_runtime, source
-            ))
-            .unwrap_or_else(|error| panic!("{name}: written reference: {error}"))
+show(&answer())"#,
+                    text_runtime, source
+                ),
+                1_000_000,
+                RunOptions::default(),
+            )
         }
     };
-    let oracle = run_program_with(&program, 1_000_000, RunOptions::default())
-        .unwrap_or_else(|error| panic!("{name}: host evaluator reference: {error:?}"));
-    assert_eq!(oracle.outputs.len(), 1, "{name}: reference output count");
+    let oracle = oracle.unwrap_or_else(|error| panic!("{name}: machine reference: {error:?}"));
+    assert_eq!(oracle.stdout.lines().count(), 1, "{name}: reference output count");
     let expected = expected_output(name);
     let raw = expected
         .strip_suffix('\n')
         .expect("native output ends in one newline");
-    // `show` uses Value::Display: Text is quoted/escaped, unlike native stdout.
+    // `show` writes `Debug`: Text is quoted/escaped, unlike native stdout.
     // This exact case metadata changes only the observer representation.
     let shown = match route {
-        ReferenceRoute::WrittenText => tauto::eval::Value::Text(raw.into()).to_string(),
+        ReferenceRoute::WrittenText => tauto_vm::value::show(&tauto_vm::Value::Text(raw.into())).unwrap(),
         _ => raw.to_string(),
     };
-    assert_eq!(shown, oracle.outputs[0].1, "{name}: host evaluator oracle");
+    assert_eq!(shown, oracle.stdout.trim_end_matches('\n'), "{name}: machine oracle");
 }
 
 #[test]

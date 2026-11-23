@@ -123,15 +123,15 @@ fn unavailable_or_timed_out_rejection_is_incomplete() {
 #[test]
 fn known_failure_reproduction_is_not_a_success() {
     let c = case(&[(
-        "backend_known_failure",
-        Value::Map(BTreeMap::from([("rust".into(), text("build: broken"))])),
+        "rust",
+        Value::Map(BTreeMap::from([("bug".into(), text("build: broken"))])),
     )]);
     assert!(matches!(
         assess(
             &c,
             Backend::Rust,
             &[observation(
-                "backend_known_failure",
+                "opt_out",
                 "build",
                 Actual::Rejected("broken".into())
             )]
@@ -143,7 +143,7 @@ fn known_failure_reproduction_is_not_a_success() {
             &c,
             Backend::Rust,
             &[observation(
-                "backend_known_failure",
+                "opt_out",
                 "build",
                 Actual::Accepted
             )]
@@ -212,14 +212,10 @@ fn compile_rejection_overrides_host_runtime_error_not_frontend_checks() {
     assert!(!names.contains(&"run_error".into()));
 }
 #[test]
-fn harness_only_and_explicitly_excluded_are_separate_from_passes() {
+fn harness_only_is_separate_from_passes() {
     let mut c = case(&[("parses", Value::Bool(true))]);
     c.host_harness_only = true;
     assert_eq!(assess(&c, Backend::Rust, &[]), Verdict::HostHarness);
-    c.host_harness_only = false;
-    c.fields
-        .insert("backends".into(), Value::Array(vec![text("javascript")]));
-    assert_eq!(assess(&c, Backend::Rust, &[]), Verdict::Excluded);
 }
 
 fn document(text: &str) -> (std::path::PathBuf, Result<Vec<Contract>, String>) {
@@ -351,91 +347,21 @@ fn javascript_compiler_host_may_prove_rust_target_only_when_explicit() {
 }
 
 #[test]
-fn backend_error_overrides_common_shows_but_not_explicit_pre_error_shows() {
-    let mut c = case(&[
-        ("shows", Value::Array(vec![text("host result")])),
-        ("rust_error", text("native error")),
-    ]);
-    assert!(
-        !c.requirements(Backend::Rust)
-            .iter()
-            .any(|r| r.name == "shows")
-    );
-    c.fields.insert(
-        "rust_shows".into(),
-        Value::Array(vec![text("before failure")]),
-    );
-    assert!(
-        c.requirements(Backend::Rust)
-            .iter()
-            .any(|r| r.name == "shows" && r.expected == Value::Array(vec![text("before failure")]))
-    );
-    c.fields.insert(
-        "javascript_shows".into(),
-        Value::Array(vec![text("JS result")]),
-    );
-    assert!(
-        !c.requirements(Backend::Javascript)
-            .iter()
-            .any(|r| r.name == "run_error")
-    );
-}
-
-#[test]
-fn explicit_compile_only_backend_requires_actual_target_acceptance() {
-    let c = case(&[
-        ("parses", Value::Bool(true)),
-        ("backends", Value::Array(vec![text("rust")])),
-    ]);
-    let parsed = observation("parses", "parse", Actual::Value(Value::Bool(true)));
-    assert!(matches!(
-        assess(&c, Backend::Rust, &[parsed.clone()]),
-        Verdict::Incomplete(_)
-    ));
-    assert_eq!(
-        assess(
-            &c,
-            Backend::Rust,
-            &[
-                parsed,
-                observation("target_build", "build", Actual::Accepted)
-            ]
-        ),
-        Verdict::Passed
-    );
-}
-
-#[test]
-fn rust_skip_applies_to_its_target_but_unimplemented_applies_to_all() {
+fn an_eval_mark_leaves_every_target_incomplete() {
     // These observations exercise classification only, not a compiler execution.
-    let mut c = case(&[
-        ("parses", Value::Bool(true)),
-        ("rust", text("skip: eval-only")),
-    ]);
+    let mut c = case(&[("parses", Value::Bool(true))]);
     let rust = observation("parses", "parse", Actual::Value(Value::Bool(true)));
     let mut javascript = rust.clone();
     javascript.compiler_backend = Backend::Javascript;
     javascript.target_backend = Some(Backend::Javascript);
-    assert!(matches!(
-        assess(&c, Backend::Rust, &[rust.clone()]),
-        Verdict::Incomplete(_)
-    ));
-    assert_eq!(
-        assess(&c, Backend::Javascript, &[javascript.clone()]),
-        Verdict::Passed
+    assert_eq!(assess(&c, Backend::Rust, &[rust.clone()]), Verdict::Passed);
+    c.fields.insert(
+        "eval".into(),
+        Value::Map(BTreeMap::from([("unimplemented".into(), text("missing language capability"))])),
     );
-    c.fields
-        .insert("unimplemented".into(), text("missing language capability"));
-    assert!(matches!(
-        assess(&c, Backend::Rust, &[rust]),
-        Verdict::Incomplete(_)
-    ));
-    assert!(matches!(
-        assess(&c, Backend::Javascript, &[javascript]),
-        Verdict::Incomplete(_)
-    ));
+    assert!(matches!(assess(&c, Backend::Rust, &[rust]), Verdict::Incomplete(_)));
+    assert!(matches!(assess(&c, Backend::Javascript, &[javascript]), Verdict::Incomplete(_)));
 }
-
 #[test]
 fn malformed_sibling_envelopes_cannot_disappear_from_discovery() {
     let (dir, valid) = document("source = ''\nparses = true\n");

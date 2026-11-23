@@ -36,7 +36,7 @@ fn member(p: @w Nat × Bool): Nat { (p: Nat) }
 
 fn clash(p: @w Nat × @h Nat): Nat { (p: Nat) }
 
-theorem round(n: Nat): Eq(Nat, ((n: @w Nat): Nat), n) { Refl(Nat, n) }
+theorem round(n: Nat): Eq(Nat, ((n: @w Nat): Nat), n) { Refl(<A: Nat, a: n>) }
 ```
 
 checks_all = "ok"
@@ -49,7 +49,7 @@ checks."input/main.taut::round" = "ok"
 @ cases.a-labelled-value-and-pattern
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-import std::Text
+import std::text
 
 fn attribute(): @name Text × @value Text { #(@name "style", @value "display:contents") }
 
@@ -61,7 +61,7 @@ fn value_of(a: @name Text × @value Text): Text {
 
 fn wrapped(n: Nat): @w Nat { @w n }
 
-theorem read_back(): Eq(Text, value_of(attribute()), "display:contents") { Refl(Text, "display:contents") }
+theorem read_back(): Eq(Text, value_of(attribute()), "display:contents") { Refl(<A: Text, a: "display:contents">) }
 ```
 
 checks_all = "ok"
@@ -73,7 +73,7 @@ checks."input/main.taut::read_back" = "ok"
 @ cases.a-tuple-pattern-takes-its-members-by-position-and-label
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-import std::Data
+import std::data
 
 fn cur(pr: @b Nat × @a Bool): Nat {
   ⊢ Nat from match pr {
@@ -87,7 +87,7 @@ fn rest(pr: @b Nat × @a Bool × Nat): Bool {
   }
 }
 
-theorem read_back(): Eq(Nat, cur(#(@b 7, @a true)), 7) { Refl(Nat, 7) }
+theorem read_back(): Eq(Nat, cur(#(@b 7, @a true)), 7) { Refl(<A: Nat, a: 7>) }
 ```
 
 checks_all = "ok"
@@ -106,7 +106,7 @@ fn value_of(a: @name Nat × @value Nat): Nat {
   }
 }
 
-theorem read_back(): Eq(Nat, value_of(attribute()), 2) { Refl(Nat, 2) }
+theorem read_back(): Eq(Nat, value_of(attribute()), 2) { Refl(<A: Nat, a: 2>) }
 ```
 
 checks_all = "ok"
@@ -145,7 +145,7 @@ checks."input/main.taut::count" = "ok"
 @ cases.a-labelled-pattern-rebuilds-the-product
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-import std::Data
+import std::data
 
 fn step(pr: @cur Nat × @rest Bool): @cur Nat × @rest Bool {
   ⊢ @cur Nat × @rest Bool from match pr {
@@ -163,3 +163,23 @@ fn swap_names(pr: @cur Nat × @rest Bool): @cur Nat × @rest Bool {
 checks_all = "ok"
 checks."input/main.taut::step" = "ok"
 checks."input/main.taut::swap_names" = "ok"
+
+@ cases.a-labelled-pattern-matches-by-position
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn in_order(pr: @b Nat × @a Bool): Nat {
+  ⊢ Nat from match pr {
+    #(@b c, @a r) => c
+  }
+}
+
+fn out_of_order(pr: @b Nat × @a Bool): Nat {
+  ⊢ Nat from match pr {
+    #(@a r, @b c) => c
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::in_order" = "ok"
+checks."input/main.taut::out_of_order" = "error: "

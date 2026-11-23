@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use proc_macro2::Ident;
 use tauto_message::msg;
-use tauto_nir::{DataDef, Name, Package, Span, Ty};
+use tauto_nir::{DataDef, Expr, ExprKind, FnInst, InstId, Name, Package, Repr, Span, Ty};
 
 use crate::tok::{Rs, generics, id, idents, lexes, lifetime};
 use quote::quote;
@@ -19,6 +19,7 @@ mod cps;
 mod direct;
 mod expr;
 mod item;
+mod names;
 mod nonresuming;
 mod operation_instances;
 mod syntax;
@@ -27,10 +28,13 @@ mod tok;
 mod ty;
 
 pub use borrowed_budget::{BorrowDiagnostic, BorrowReason, borrowed_budget_diagnostics};
-pub use cargo::{BuildEvent, Options, WASM_TARGETS, Workspace, WriteStats, workspace};
+pub use cargo::{
+    BuildEvent, JEMALLOC_VERSION, Lock, Options, WASM_TARGETS, Workspace, WriteStats, workspace,
+};
 pub use item::{
     allow_lints, emit_items, emit_lib, emit_lib_tokens, emit_module, emit_vm_lib_tokens,
 };
+pub use names::fn_names;
 pub use nonresuming::{BudgetDiagnostic, BudgetReason, budget_diagnostics};
 pub use tok::render;
 
@@ -40,6 +44,11 @@ pub use tok::render;
 pub struct Bindings {
     pub types: std::collections::BTreeMap<Name, Binding>,
     pub externs: std::collections::BTreeMap<Name, Binding>,
+    /// Replaceable-extern members whose host bindings were selected for this
+    /// build: emit them as externs and skip their Tauto instances.
+    pub externalized: HashSet<Name>,
+    /// Replaceable data types whose host representation was selected.
+    pub externalized_types: HashSet<Name>,
     /// Explicit host promises; these are not inferred from effect rows.
     pub nonresuming_externs: BTreeMap<Name, HostContract>,
     /// Separate Rust facades requiring an explicit whole-embedding host assertion.
@@ -93,16 +102,425 @@ pub struct Binding {
 
 /// The ident of the bridge crate in Rust: `files-demo-bridge` is
 /// `files_demo_bridge`.
+/// A declaration's name without its module (`app::native::Device` is
+/// `Device`): what `rust.types` and a bridge crate call it.
+fn last_segment(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
+}
+
 pub fn bridge_ident(tote: &str) -> String {
     format!("{}_bridge", tote.replace('-', "_"))
+}
+
+/// Turns selected replaceable members into host externs/types on the package
+/// so wrappers and call sites use them, and drops fallback-only host deps.
+/// [`Bindings::resolve`] does this; JavaScript selection calls it on its own.
+pub fn materialize_externalized(pkg: &mut Package, bindings: &Bindings) {
+    for name in &bindings.externalized_types {
+        if let Some(d) = pkg
+            .datas
+            .iter_mut()
+            .find(|d| d.name.as_str() == name.as_str())
+        {
+            d.host = true;
+        }
+    }
+    for name in &bindings.externalized {
+        if pkg.externs.iter().any(|e| e.name.as_str() == name.as_str()) {
+            continue;
+        }
+        let Some(f) = pkg.fns.iter().find(|f| f.source.as_str() == name.as_str()) else {
+            continue;
+        };
+        let waits = pkg
+            .replaceable_externs
+            .iter()
+            .find_map(|b| {
+                b.fn_names
+                    .iter()
+                    .zip(b.fn_waits.iter())
+                    .find(|(n, _)| n.as_str() == name.as_str())
+                    .map(|(_, w)| *w)
+            })
+            .unwrap_or(false);
+        pkg.externs.push(tauto_nir::ExternDef {
+            name: name.clone(),
+            generics: f.generics.iter().map(|(n, _)| n.clone()).collect(),
+            params: f
+                .params
+                .iter()
+                .map(|p| {
+                    (
+                        p.local.name.clone(),
+                        p.ty.clone(),
+                        tauto_nir::pass_of(&p.ty),
+                    )
+                })
+                .collect(),
+            ret: f.ret.clone(),
+            lends: f.lends.clone(),
+            waits,
+            span: f.span,
+        });
+    }
+    prune_unreachable_after_externalize(pkg, &bindings.externalized, &bindings.externalized_types);
+}
+
+/// What remains reachable after treating selected replaceable members as host
+/// leaves (their Tauto bodies are not followed). Includes suspending handler
+/// arms, which ordinary [`Expr::walk`] skips.
+struct HostReachability {
+    fns: HashSet<InstId>,
+    externs: HashSet<String>,
+    /// Data names still mentioned by remaining code, closed over fields.
+    types: HashSet<String>,
+    /// Unions still mentioned by remaining code or those data fields.
+    unions: HashSet<tauto_nir::UnionId>,
+}
+
+fn host_reachability(
+    pkg: &Package,
+    externalized: &HashSet<Name>,
+    externalized_types: &HashSet<Name>,
+) -> HostReachability {
+    let externalized_spellings: HashSet<&str> = externalized.iter().map(|n| n.as_str()).collect();
+    let mut reachable_fns = HashSet::new();
+    let mut stack: Vec<InstId> = Vec::new();
+    if let Some(top) = pkg.top {
+        stack.push(top);
+    }
+    for e in &pkg.exports {
+        stack.push(e.inst);
+    }
+    while let Some(id) = stack.pop() {
+        if !reachable_fns.insert(id) {
+            continue;
+        }
+        let Some(f) = pkg.fns.iter().find(|f| f.id == id) else {
+            continue;
+        };
+        // Host-selected replaceable members do not keep their Tauto bodies.
+        if externalized_spellings.contains(f.source.as_str()) {
+            continue;
+        }
+        f.body.walk_with_handlers(&mut |e| {
+            if let ExprKind::Call(c) = &e.kind
+                && let tauto_nir::Callee::Inst(i) = c.callee
+            {
+                stack.push(i);
+            }
+            if let ExprKind::FnValue { inst, .. } = &e.kind {
+                stack.push(*inst);
+            }
+        });
+    }
+    let mut reachable_externs = HashSet::new();
+    for f in &pkg.fns {
+        if !reachable_fns.contains(&f.id) {
+            continue;
+        }
+        if externalized_spellings.contains(f.source.as_str()) {
+            reachable_externs.insert(f.source.as_str().to_string());
+            continue;
+        }
+        f.body.walk_with_handlers(&mut |e| {
+            if let ExprKind::Call(c) = &e.kind {
+                match &c.callee {
+                    tauto_nir::Callee::Extern(n) => {
+                        reachable_externs.insert(n.as_str().to_string());
+                    }
+                    tauto_nir::Callee::Inst(i) => {
+                        if let Some(g) = pkg.fns.iter().find(|g| g.id == *i)
+                            && externalized_spellings.contains(g.source.as_str())
+                        {
+                            reachable_externs.insert(g.source.as_str().to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+    for name in externalized {
+        reachable_externs.insert(name.as_str().to_string());
+    }
+
+    let mut types = HashSet::new();
+    let mut unions = HashSet::new();
+    let mut note_ty = |ty: &Ty| {
+        ty_type_names(ty, &mut types, &mut unions);
+    };
+    for f in &pkg.fns {
+        if !reachable_fns.contains(&f.id) {
+            continue;
+        }
+        if externalized_spellings.contains(f.source.as_str()) {
+            // Selected members keep only their host signature, which
+            // materialize copies from the instance; collect from that shape.
+            for p in &f.params {
+                note_ty(&p.ty);
+            }
+            note_ty(&f.ret);
+            continue;
+        }
+        for p in &f.params {
+            note_ty(&p.ty);
+        }
+        note_ty(&f.ret);
+        f.body.walk_with_handlers(&mut |e| {
+            note_ty(&e.ty);
+        });
+    }
+    for x in &pkg.externs {
+        if !reachable_externs.contains(x.name.as_str()) {
+            continue;
+        }
+        for (_, ty, _) in &x.params {
+            note_ty(ty);
+        }
+        note_ty(&x.ret);
+    }
+    for name in externalized_types {
+        types.insert(name.as_str().to_string());
+    }
+    close_type_deps(pkg, externalized_types, &mut types, &mut unions);
+
+    HostReachability {
+        fns: reachable_fns,
+        externs: reachable_externs,
+        types,
+        unions,
+    }
+}
+
+fn ty_type_names(ty: &Ty, types: &mut HashSet<String>, unions: &mut HashSet<tauto_nir::UnionId>) {
+    match ty {
+        Ty::Data(name, args) => {
+            types.insert(name.as_str().to_string());
+            for a in args {
+                ty_type_names(a, types, unions);
+            }
+        }
+        Ty::Std(_, args) => {
+            for a in args {
+                ty_type_names(a, types, unions);
+            }
+        }
+        Ty::Vec(a)
+        | Ty::Array(a)
+        | Ty::Slice(a)
+        | Ty::Option(a)
+        | Ty::Ref(a)
+        | Ty::RefMut(a)
+        | Ty::Info(a)
+        | Ty::BudgetAnswer(a)
+        | Ty::SharedVar(_, a) => ty_type_names(a, types, unions),
+        Ty::Result(a, b) | Ty::Pair(a, b) => {
+            ty_type_names(a, types, unions);
+            ty_type_names(b, types, unions);
+        }
+        Ty::Fn(f) => {
+            for p in &f.params {
+                ty_type_names(p, types, unions);
+            }
+            ty_type_names(&f.ret, types, unions);
+        }
+        Ty::Union(id) => {
+            unions.insert(*id);
+        }
+        Ty::Int(_)
+        | Ty::Bool
+        | Ty::Text
+        | Ty::Unit
+        | Ty::Never
+        | Ty::Float
+        | Ty::Float32
+        | Ty::Buf
+        | Ty::Param(_)
+        | Ty::Shown => {}
+    }
+}
+
+/// Adds field / union-member dependencies of types already reached.
+/// Host-selected replaceable types are leaves: their Tauto fields are not
+/// followed (the host representation does not keep them). Type arguments at
+/// use sites are still collected by [`ty_type_names`].
+fn close_type_deps(
+    pkg: &Package,
+    externalized_types: &HashSet<Name>,
+    types: &mut HashSet<String>,
+    unions: &mut HashSet<tauto_nir::UnionId>,
+) {
+    let externalized: HashSet<&str> = externalized_types.iter().map(|n| n.as_str()).collect();
+    loop {
+        let before_types = types.len();
+        let before_unions = unions.len();
+        for d in &pkg.datas {
+            if !types.contains(d.name.as_str()) || externalized.contains(d.name.as_str()) {
+                continue;
+            }
+            for c in &d.ctors {
+                for f in &c.fields {
+                    ty_type_names(&f.ty, types, unions);
+                }
+            }
+        }
+        for u in &pkg.unions {
+            if !unions.contains(&u.id) {
+                continue;
+            }
+            for m in &u.members {
+                ty_type_names(m, types, unions);
+            }
+        }
+        if types.len() == before_types && unions.len() == before_unions {
+            break;
+        }
+    }
+}
+
+/// Drops host externs and marks fallback-only functions and types omitted
+/// after host selection, so generators and binding checks agree.
+fn prune_unreachable_after_externalize(
+    pkg: &mut Package,
+    externalized: &HashSet<Name>,
+    externalized_types: &HashSet<Name>,
+) {
+    if externalized.is_empty() && externalized_types.is_empty() {
+        return;
+    }
+    let reach = host_reachability(pkg, externalized, externalized_types);
+    pkg.externs
+        .retain(|x| reach.externs.contains(x.name.as_str()));
+    let externalized_spellings: HashSet<&str> = externalized.iter().map(|n| n.as_str()).collect();
+    pkg.host_omitted_fns = pkg
+        .fns
+        .iter()
+        .filter(|f| {
+            !reach.fns.contains(&f.id) && !externalized_spellings.contains(f.source.as_str())
+        })
+        .map(|f| f.id)
+        .collect();
+    pkg.host_omitted_datas = pkg
+        .datas
+        .iter()
+        .filter(|d| !reach.types.contains(d.name.as_str()))
+        .map(|d| d.name.clone())
+        .collect();
+    pkg.host_omitted_unions = pkg
+        .unions
+        .iter()
+        .filter(|u| !reach.unions.contains(&u.id))
+        .map(|u| u.id)
+        .collect();
+}
+
+/// Whether a NIR function was selected as a host-backed replaceable member.
+pub fn is_externalized(pkg: &Package, f: &tauto_nir::FnInst) -> bool {
+    pkg.externs
+        .iter()
+        .any(|e| e.name.as_str() == f.source.as_str())
+}
+
+/// Selects replaceable `extern` blocks for the JavaScript backend: a complete
+/// JavaScript set, a complete Rust/Wasm set, or Tauto fallback. Mixing
+/// JavaScript with Rust/Wasm for one block, or a partial set, is an error.
+pub fn apply_javascript_selection(
+    pkg: &mut Package,
+    manifest: Option<&tauto::manifest::Manifest>,
+    target: &str,
+) -> Result<(), String> {
+    if pkg.replaceable_externs.is_empty() {
+        return Ok(());
+    }
+    let Some(m) = manifest else {
+        return Ok(());
+    };
+    let target_bindings = if target == "node" {
+        &m.javascript.node
+    } else {
+        &m.javascript.browser
+    };
+    let js_bound = |n: &str| {
+        let short = n.strip_prefix("main::");
+        target_bindings.contains_key(n)
+            || m.javascript.externs.contains_key(n)
+            || m.javascript.types.contains_key(n)
+            || short.is_some_and(|s| {
+                target_bindings.contains_key(s)
+                    || m.javascript.externs.contains_key(s)
+                    || m.javascript.types.contains_key(s)
+            })
+    };
+    let rust_bound = |n: &str| {
+        let short = n.strip_prefix("main::");
+        m.rust.externs.contains_key(n)
+            || m.rust.types.contains_key(n)
+            || short.is_some_and(|s| m.rust.externs.contains_key(s) || m.rust.types.contains_key(s))
+    };
+    let mut js_members = HashSet::new();
+    let mut rust_members = HashSet::new();
+    for b in &pkg.replaceable_externs {
+        let members: Vec<_> = b.fn_names.iter().chain(b.data_names.iter()).collect();
+        if members.is_empty() {
+            continue;
+        }
+        let js_n = members.iter().filter(|n| js_bound(n.as_str())).count();
+        let rust_n = members.iter().filter(|n| rust_bound(n.as_str())).count();
+        if js_n > 0 && rust_n > 0 {
+            let shown = b.id.replace('\0', ", ");
+            return Err(msg!("surface-extern-mixed-backends", block = shown).to_string());
+        }
+        if js_n > 0 {
+            if js_n != members.len() {
+                let shown = b.id.replace('\0', ", ");
+                return Err(msg!("surface-extern-partial-bindings", block = shown).to_string());
+            }
+            for n in members {
+                js_members.insert((*n).clone());
+            }
+        } else if rust_n > 0 {
+            if rust_n != members.len() {
+                let shown = b.id.replace('\0', ", ");
+                return Err(msg!("surface-extern-partial-bindings", block = shown).to_string());
+            }
+            for n in members {
+                rust_members.insert((*n).clone());
+            }
+        }
+    }
+    let bound: HashSet<_> = js_members
+        .iter()
+        .chain(rust_members.iter())
+        .cloned()
+        .collect();
+    let selection = tauto_nir::select_replaceable_blocks(&pkg.replaceable_externs, &bound)
+        .map_err(|e| e.to_string())?;
+    let mut host = Bindings::default();
+    host.externalized = tauto_nir::external_fn_names(&pkg.replaceable_externs, &selection);
+    host.externalized_types = tauto_nir::external_data_names(&pkg.replaceable_externs, &selection);
+    materialize_externalized(pkg, &host);
+    Ok(())
+}
+
+/// The key a dependency's binding of `full` (`dev::src::render::open`) is
+/// also written under: the declaring tote and the bare name (`dev::open`).
+/// A name of the root module (`main::…`) or a bare name has none.
+fn tote_key(full: &str) -> Option<String> {
+    let (tote, rest) = full.split_once("::")?;
+    if tote == "main" || !rest.contains("::") {
+        return None;
+    }
+    Some(format!("{tote}::{}", last_segment(full)))
 }
 
 impl Bindings {
     /// Looks every extern of `pkg` up in the manifest (`Tauto.eure`, then the
     /// bindings files it names, then the bridge crate), and fails with the
-    /// first one that has no Rust to run.
+    /// first one that has no Rust to run. On success, materializes selected
+    /// replaceable members and drops fallback-only host deps on `pkg`.
     pub fn resolve(
-        pkg: &Package,
+        pkg: &mut Package,
         manifest: Option<&tauto::manifest::Manifest>,
         bridge: Option<&str>,
     ) -> Result<Bindings, String> {
@@ -122,14 +540,66 @@ impl Bindings {
             })
         };
         if let Some(m) = manifest {
+            // A key names a type by its full name, or by its name bare of
+            // the module. A bare name that two declarations share is
+            // ambiguous in general (the declarations are told apart by their
+            // full names, `app::src::native::T`), and then the key means the
+            // one the host answers for: an extern type, or a type an extern
+            // function takes or returns. If that leaves more than one, the
+            // key has to say which, in the full name.
+            let replaceable: HashSet<&str> = pkg
+                .replaceable_externs
+                .iter()
+                .flat_map(|b| b.data_names.iter().map(|n| n.as_str()))
+                .collect();
+            let mut in_externs = HashSet::new();
+            let mut unions = HashSet::new();
+            for x in &pkg.externs {
+                for (_, ty, _) in &x.params {
+                    ty_type_names(ty, &mut in_externs, &mut unions);
+                }
+                ty_type_names(&x.ret, &mut in_externs, &mut unions);
+            }
             for (k, e) in &m.rust.types {
                 lex(e)?;
+                let same: Vec<&Name> = pkg
+                    .datas
+                    .iter()
+                    .filter(|d| last_segment(&d.name) == k)
+                    .map(|d| &d.name)
+                    .collect();
+                let hostish: Vec<&Name> = same
+                    .iter()
+                    .copied()
+                    .filter(|n| {
+                        pkg.datas.iter().any(|d| d.name == **n && d.host)
+                            || replaceable.contains(n.as_str())
+                            || in_externs.contains(n.as_str())
+                    })
+                    .collect();
+                let name = match pkg.datas.iter().find(|d| d.name.as_str() == k) {
+                    Some(d) => d.name.clone(),
+                    None => match (same.as_slice(), hostish.as_slice()) {
+                        ([], _) => Name::from(k),
+                        ([one], _) | (_, [one]) => (*one).clone(),
+                        (_, many) => {
+                            let many = if many.is_empty() { &same[..] } else { many };
+                            return Err(msg!(
+                                "rustgen-type-ambiguous",
+                                name = k.clone(),
+                                at = at(e),
+                                candidates = many
+                                    .iter()
+                                    .map(|n| n.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                            .to_string());
+                        }
+                    },
+                };
                 out.types.insert(
-                    pkg.datas
-                        .iter()
-                        .find(|d| d.name.as_str() == k)
-                        .map(|d| d.name.clone())
-                        .unwrap_or_else(|| Name::from(k)),
+                    name,
                     Binding {
                         rust: e.value.clone(),
                         at: at(e),
@@ -138,9 +608,119 @@ impl Bindings {
                 );
             }
         }
+        // Replaceable blocks: all members bound → host; none → Tauto fallback;
+        // partial → error. Required `pkg.externs` stay mandatory below.
+        {
+            let mut bound = HashSet::new();
+            if let Some(m) = manifest {
+                for b in &pkg.replaceable_externs {
+                    for n in b.fn_names.iter().chain(b.data_names.iter()) {
+                        let short = n.strip_prefix("main::");
+                        let named = |map: &BTreeMap<String, tauto::manifest::Entry>| {
+                            map.contains_key(n.as_str())
+                                || short.is_some_and(|s| map.contains_key(s))
+                                || map.contains_key(last_segment(n))
+                        };
+                        if named(&m.rust.externs) || named(&m.rust.types) {
+                            bound.insert(n.clone());
+                        }
+                    }
+                }
+            }
+            let selection = tauto_nir::select_replaceable_blocks(&pkg.replaceable_externs, &bound)
+                .map_err(|e| e.to_string())?;
+            out.externalized = tauto_nir::external_fn_names(&pkg.replaceable_externs, &selection);
+            out.externalized_types =
+                tauto_nir::external_data_names(&pkg.replaceable_externs, &selection);
+            if let Some(m) = manifest {
+                for name in &out.externalized {
+                    let short = name.strip_prefix("main::");
+                    let e = m
+                        .rust
+                        .externs
+                        .get(name.as_str())
+                        .or_else(|| short.and_then(|s| m.rust.externs.get(s)))
+                        .or_else(|| m.rust.externs.get(&tote_key(name)?))
+                        .ok_or_else(|| {
+                            msg!("rustgen-extern-no-binding", name = name.to_string()).to_string()
+                        })?;
+                    lex(e)?;
+                    out.externs.insert(
+                        name.clone(),
+                        Binding {
+                            rust: e.value.clone(),
+                            at: at(e),
+                            marks: m
+                                .rust
+                                .marks
+                                .get(name.as_str())
+                                .or_else(|| short.and_then(|s| m.rust.marks.get(s)))
+                                .map(|e| e.value.clone())
+                                .unwrap_or_default(),
+                        },
+                    );
+                }
+                for name in &out.externalized_types {
+                    if out.types.contains_key(name) {
+                        continue;
+                    }
+                    let short = name.strip_prefix("main::");
+                    let e = m
+                        .rust
+                        .types
+                        .get(name.as_str())
+                        .or_else(|| short.and_then(|s| m.rust.types.get(s)))
+                        .ok_or_else(|| {
+                            msg!("rustgen-type-no-binding", name = name.to_string()).to_string()
+                        })?;
+                    lex(e)?;
+                    out.types.insert(
+                        name.clone(),
+                        Binding {
+                            rust: e.value.clone(),
+                            at: at(e),
+                            marks: String::new(),
+                        },
+                    );
+                }
+            } else if !out.externalized.is_empty() || !out.externalized_types.is_empty() {
+                return Err(msg!(
+                    "rustgen-extern-no-binding",
+                    name = out
+                        .externalized
+                        .iter()
+                        .chain(out.externalized_types.iter())
+                        .next()
+                        .map(|n| n.to_string())
+                        .unwrap_or_default()
+                )
+                .to_string());
+            }
+        }
+        // After host selection, only what remaining bodies still reach needs
+        // host bindings; fallback-only deps are dropped at materialize time.
+        let reach = if out.externalized.is_empty() && out.externalized_types.is_empty() {
+            None
+        } else {
+            Some(host_reachability(
+                pkg,
+                &out.externalized,
+                &out.externalized_types,
+            ))
+        };
         // An extern type is the host's: `rust.types`, then the bridge crate's
         // type of the same name.
-        for d in pkg.datas.iter().filter(|d| d.host) {
+        for d in pkg.datas.iter().filter(|d| {
+            let hostish = d.host
+                || out
+                    .externalized_types
+                    .iter()
+                    .any(|n| n.as_str() == d.name.as_str());
+            hostish
+                && reach
+                    .as_ref()
+                    .is_none_or(|r| r.types.contains(d.name.as_str()))
+        }) {
             if out.types.contains_key(&d.name) {
                 continue;
             }
@@ -150,13 +730,24 @@ impl Bindings {
             out.types.insert(
                 d.name.clone(),
                 Binding {
-                    rust: format!("{b}::{}", d.name),
+                    rust: format!("{b}::{}", last_segment(&d.name)),
                     at: "the bridge crate".into(),
                     marks: String::new(),
                 },
             );
         }
         for x in &pkg.externs {
+            if reach
+                .as_ref()
+                .is_some_and(|r| !r.externs.contains(x.name.as_str()))
+            {
+                continue;
+            }
+            // A Rust binding answers at once: a call that waits on the host
+            // (`! {wait}`) has no Rust binding yet.
+            if x.waits {
+                return Err(msg!("rustgen-extern-waits", name = x.name.to_string()).to_string());
+            }
             // An extern of the root module whose name the prelude also uses
             // is `main::name`; the manifest may still write it as `name`.
             let short = x.name.strip_prefix("main::");
@@ -165,7 +756,9 @@ impl Bindings {
                 full: &str,
                 short: Option<&str>,
             ) -> Option<&'m tauto::manifest::Entry> {
-                map.get(full).or_else(|| short.and_then(|s| map.get(s)))
+                map.get(full)
+                    .or_else(|| short.and_then(|s| map.get(s)))
+                    .or_else(|| map.get(&tote_key(full)?))
             }
             let bound = manifest.and_then(|m| key(&m.rust.externs, &x.name, short));
             if let Some(e) = bound {
@@ -185,11 +778,14 @@ impl Bindings {
                         },
                     );
                 }
+                // The bridge crate's function is the declared name, which a
+                // program that shares the bare name elsewhere writes in full
+                // (`dev::src::render::open`) without moving the function.
                 (None, Some(b)) => {
                     out.externs.insert(
                         x.name.clone(),
                         Binding {
-                            rust: format!("{b}::{}", x.name),
+                            rust: format!("{b}::{}", last_segment(&x.name)),
                             at: "the bridge crate".into(),
                             marks: String::new(),
                         },
@@ -202,6 +798,7 @@ impl Bindings {
                 }
             }
         }
+        materialize_externalized(pkg, &out);
         if let Some(m) = manifest {
             out.uniffi = m.rust.uniffi;
             for (name, entry) in &m.rust.nonresuming_externs {
@@ -319,12 +916,14 @@ pub(crate) enum Pred {
     Clone,
     Eq,
     Show,
-    /// `Eq` and `Hash` in Rust: a key of `HashMap` (`DecEq` and `Hash`).
+    /// `Eq` and `Hash` in Rust, derived where every part has them.
     Hash,
 }
 
 pub(crate) struct Gen<'a> {
     pub pkg: &'a Package,
+    /// The Rust name of each instance of `pkg` (`names::fn_names`).
+    pub fn_names: Vec<String>,
     pub sources: &'a Sources<'a>,
     pub bindings: &'a Bindings,
     pub union_names: Vec<Rs>,
@@ -340,6 +939,9 @@ pub(crate) struct Gen<'a> {
     pub lt_name: Cell<&'static str>,
     /// A callback's environment region, independent of synchronous result borrows.
     pub o_lt_name: Cell<&'static str>,
+    /// The function being written gives its synchronous function values the
+    /// region `'f` (`FnInst::fn_region`).
+    pub fn_region: Cell<bool>,
     /// Owned O callback aliases needed by local lifetime inference.
     pub o_callback_types: RefCell<std::collections::BTreeSet<(usize, bool)>>,
     /// Complete package identifiers, independent of alias emission order.
@@ -365,6 +967,10 @@ pub(crate) struct Gen<'a> {
     /// While a function's body is written as a loop: the function, whose
     /// calls to itself marked `recur` jump back to the start of the body.
     pub self_tail: Option<tauto_nir::InstId>,
+    /// The generics of the function being written: an arm `tauto_nir::arms`
+    /// wrote at a payload type naming another function's generic (one
+    /// performed inside that function) has no type to be written at here.
+    pub scope_generics: Vec<String>,
     /// The locals of a function type in the function being written (its
     /// parameters and `let`s), with the types they are written with.
     pub fn_locals: HashMap<u32, Ty>,
@@ -373,9 +979,48 @@ pub(crate) struct Gen<'a> {
     /// out (`unrc`) only where a value is needed, and a constructor that
     /// puts the local back into a shared field reuses the cell.
     pub lazy: HashSet<u32>,
+    /// The functions of the program read as a value somewhere, or
+    /// exported: their Rust signature is the one their type says.
+    pub fn_values: HashSet<InstId>,
+    /// The parameters of the M-tier function being written that it takes as
+    /// an owned copy of a borrowed duplicable value (`Gen::m_owned_param`).
+    pub owned_refs: HashSet<u32>,
+    /// The type of each `var` the M-tier code being written declares: a
+    /// `while` that suspends passes the ones its body assigns to each round.
+    pub var_tys: HashMap<u32, Ty>,
+    /// The continuations of the handlers whose body can `return`: the rest
+    /// of the body ends as `Ok(value)` or `Err(returned)`.
+    pub ret_conts: HashSet<u32>,
+    /// The arms being written belong to a handler whose body can `return`.
+    pub arm_returns: Cell<bool>,
+    /// The `direct` operations whose handler is in a local here
+    /// (`evd_<id>`), as `tauto_nir::evidence` resolved it.
+    pub evd: Vec<tauto_nir::OpIndex>,
 }
 
 impl<'a> Gen<'a> {
+    /// Runs `f` where no handler of the function is known (a closure, a
+    /// `budget`, code of a higher tier).
+    pub(crate) fn without_evd<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let saved = std::mem::take(&mut self.evd);
+        let r = f(self);
+        self.evd = saved;
+        r
+    }
+
+    /// The local that holds the handler of `op`.
+    pub(crate) fn evd_name(&self, op: tauto_nir::OpIndex) -> proc_macro2::Ident {
+        quote::format_ident!("evd_{}", self.pkg.ops[op].id)
+    }
+
+    /// The type of a handler passed as evidence: `&dyn Fn(A) -> R`.
+    pub(crate) fn evd_ty(&self, op: tauto_nir::OpIndex) -> proc_macro2::TokenStream {
+        let (params, ret) = &self.pkg.evidence.ops[&op];
+        let tup = self.payload_ty(params);
+        let r = self.ty(ret);
+        quote::quote!(&dyn Fn(#tup) -> #r)
+    }
+
     pub fn new(pkg: &'a Package, sources: &'a Sources<'a>, bindings: &'a Bindings) -> Gen<'a> {
         let mut union_params = Vec::new();
         let mut union_names = Vec::new();
@@ -395,8 +1040,8 @@ impl<'a> Gen<'a> {
             o_callback_reserved.insert(Self::data_name(pkg, &data.name).to_string());
             o_callback_reserved.extend(data.generics.iter().cloned());
         }
-        for function in &pkg.fns {
-            o_callback_reserved.insert(function.rust_name.clone());
+        for (function, name) in pkg.fns.iter().zip(names::fn_names(pkg)) {
+            o_callback_reserved.insert(name);
             o_callback_reserved.extend(function.generics.iter().map(|(name, _)| name.clone()));
         }
         for external in &pkg.externs {
@@ -424,6 +1069,7 @@ impl<'a> Gen<'a> {
             .collect();
         let mut g = Gen {
             pkg,
+            fn_names: names::fn_names(pkg),
             sources,
             bindings,
             union_names,
@@ -435,6 +1081,7 @@ impl<'a> Gen<'a> {
             lazy: HashSet::new(),
             lt_name: Cell::new("'r"),
             o_lt_name: Cell::new("'_"),
+            fn_region: Cell::new(false),
             o_callback_types: RefCell::new(Default::default()),
             o_callback_reserved,
             o_callback_aliases: true,
@@ -449,8 +1096,25 @@ impl<'a> Gen<'a> {
             contract_functions: Default::default(),
             borrowed_budget: Default::default(),
             self_tail: None,
+            scope_generics: Vec::new(),
             fn_locals: HashMap::new(),
+            fn_values: HashSet::new(),
+            owned_refs: HashSet::new(),
+            var_tys: HashMap::new(),
+            ret_conts: HashSet::new(),
+            arm_returns: Cell::new(false),
+            evd: Vec::new(),
         };
+        for e in &pkg.exports {
+            g.fn_values.insert(e.inst);
+        }
+        for f in &pkg.fns {
+            each_expr(&f.body, &mut |e| {
+                if let ExprKind::FnValue { inst, .. } = &e.kind {
+                    g.fn_values.insert(*inst);
+                }
+            });
+        }
         g.settle_flags();
         g
     }
@@ -549,23 +1213,29 @@ impl<'a> Gen<'a> {
         match t {
             Ty::Fn(f) => p == Pred::Clone && f.kind.dup(),
             Ty::Info(_) | Ty::BudgetAnswer(_) => false,
-            // `f64` has no `Eq`, and the runtime's `HashMap` neither
-            // `PartialEq` nor `Hash` (a `HashMap` is not `PartialEq` in
-            // Tauto either).
+            // `f64` has no `Hash`.
             Ty::Float | Ty::Float32 if p == Pred::Hash => false,
-            Ty::HashMap(..) if matches!(p, Pred::Eq | Pred::Hash) => false,
             Ty::Ref(a) | Ty::RefMut(a) => match p {
                 Pred::Clone => matches!(t, Ty::Ref(_)),
                 _ => self.ty_has(a, p),
             },
             Ty::Vec(a) | Ty::Array(a) | Ty::Slice(a) | Ty::Option(a) => self.ty_has(a, p),
-            Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
-                self.ty_has(a, p) && self.ty_has(b, p)
-            }
+            Ty::Result(a, b) | Ty::Pair(a, b) => self.ty_has(a, p) && self.ty_has(b, p),
             // The runtime's shared slots and handles (`Ref`, `Weak`, `Mutex`,
             // `Atomic`, `Pending`) have no `PartialEq`: a copy is another
             // handle on the same slot, so equality of contents is not theirs.
             Ty::Std(_, _) if matches!(p, Pred::Eq | Pred::Hash) => false,
+            // A copy of a `Ref`, `Weak` or `Mutex` is another handle on the
+            // same slot: the runtime's `Clone` copies the handle and asks
+            // nothing of the content, so the handle is `Clone` even when the
+            // content is affine.
+            Ty::Std(
+                tauto_nir::StdType::Ref | tauto_nir::StdType::Weak | tauto_nir::StdType::Mutex,
+                _,
+            ) if p == Pred::Clone => true,
+            // The runtime's slots table owns its cells and has neither a
+            // copy nor a printed form.
+            Ty::Std(tauto_nir::StdType::Slots, _) => false,
             Ty::Std(_, args) => args.iter().all(|a| self.ty_has(a, p)),
             Ty::Data(n, args) => {
                 self.data_index.get(n).is_none_or(|i| self.flags[*i][k])
@@ -587,7 +1257,21 @@ impl<'a> Gen<'a> {
             .as_ref()
             .and_then(|map| map.locate(span.start))
         {
-            return (file.display().to_string(), line as u32, col as u32);
+            // A program given as text is read at a path that is no file of the
+            // caller's: the caller's own name for the text is the place.
+            let file = if file == std::path::Path::new(tauto::nir::TEXT_ENTRY) {
+                self.sources.file.to_owned()
+            } else {
+                file.display().to_string()
+            };
+            return (file, line as u32, col as u32);
+        }
+        // A program read from files places every span through its map: an
+        // offset the map cannot place belongs to none of the entry's text, so
+        // reading the entry at it would name a wrong place, or split a
+        // character.
+        if self.pkg.sources.is_some() && span.start < tauto::surface::PRELUDE_BASE {
+            return (self.sources.file.to_owned(), 0, 0);
         }
         let (prelude, offset) = if span.start >= tauto::surface::PRELUDE_BASE {
             (true, (span.start - tauto::surface::PRELUDE_BASE) as usize)
@@ -599,7 +1283,7 @@ impl<'a> Gen<'a> {
         } else {
             self.sources.text
         };
-        let before = &text[..offset.min(text.len())];
+        let before = &text[..text.floor_char_boundary(offset)];
         let line = before.matches('\n').count() as u32 + 1;
         let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) as u32 + 1;
         (
@@ -704,4 +1388,54 @@ mod identity_tests {
             );
         }
     }
+}
+
+/// `Expr::walk`, the arms of suspending handlers included.
+pub(crate) fn each_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    e.walk(&mut |x| {
+        f(x);
+        if let ExprKind::Handle(h) = &x.kind {
+            for a in &h.susp {
+                if let Some(g) = &a.guard {
+                    each_expr(g, f);
+                }
+                each_expr(&a.body, f);
+            }
+        }
+    });
+}
+
+impl Gen<'_> {
+    /// Whether parameter `i` of `f`, a shared borrow of a duplicable value
+    /// (`&A ≡ A`), is taken as an owned copy. A function of the M tier
+    /// returns its computation before the computation runs, so a borrow it
+    /// takes must outlive the caller's frame; an owned copy has no such
+    /// bound, and the function reads it through a borrow of its own. A
+    /// function read as a value or exported keeps the signature of its type.
+    pub(crate) fn m_owned_param(&self, f: &FnInst, i: usize) -> bool {
+        let Some(p) = f.params.get(i) else {
+            return false;
+        };
+        f.tier == tauto_nir::Tier::M
+            && p.local.repr == Repr::Ref
+            && !self.fn_values.contains(&f.id)
+            && matches!(&p.ty, Ty::Ref(t) if !matches!(**t, Ty::Fn(_)) && self.ty_has(t, crate::Pred::Clone))
+    }
+}
+
+/// Whether `n` is the prelude's `Placed`, which runs as a value in a region
+/// (`tauto_rt::region::Placed`). The checker knows nothing of the name.
+pub(crate) fn is_placed(n: &tauto_nir::Name) -> bool {
+    tauto::bindings::is_library(n, "Placed") || is_rc_placed(n)
+}
+
+/// Whether `n` is the prelude's `RcPlaced`, which runs as a value in a
+/// counted region or on the heap (`tauto_rt::region::RcPlaced`).
+pub(crate) fn is_rc_placed(n: &tauto_nir::Name) -> bool {
+    tauto::bindings::is_library(n, "RcPlaced")
+}
+
+/// Whether `n` is std's `BumpPolicy`, whose regions the runtime cuts by bump.
+pub(crate) fn is_bump_policy(n: &tauto_nir::Name) -> bool {
+    n.as_str().rsplit("::").next() == Some("BumpPolicy")
 }

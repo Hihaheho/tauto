@@ -7,6 +7,6 @@ dev-keeps-running = tauto dev: 実行中の版をそのまま動かし続ける
 dev-running-again = tauto dev: もう一度実行する
 dev-exited = tauto dev: プログラムが終了コード { $code } で終わった
 dev-ended = tauto dev: プログラムが終わった
-dev-interrupted = （{ $steps } ステップで中断。`--steps N` で増やせる）
+dev-interrupted = （{ $steps } ステップ。`--steps N` で増やせる）
 dev-vm-in-process = tauto dev: TAUTO_VM=rust は `tauto run` 用で、`tauto dev` はマシンを別プロセスで動かす
 dev-error = tauto dev: エラー: { $error }

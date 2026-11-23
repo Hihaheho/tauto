@@ -1,16 +1,16 @@
-//! The prelude every program sees, as source (`std/prelude/`): `std/prelude/Std.taut`, the ω library
-//! (`Shared.taut`) and the affine one (`Affine.taut`) of
-//! `docs/design/ownership.md`「標準ライブラリ」.
+//! The prelude every program sees, as source (`std/prelude/`): `std/prelude/std.taut`, and the
+//! containers (`collections.taut`) of
+//! `docs/design/ownership.md`「Standard library」.
 //! Every program sees its declarations before its own; a program's own
 //! declaration of a name hides the library's.
 
-/// `std/prelude/Std.taut`, whose `Option`, `List`, `Pair` and `Ordering`
+/// `std/prelude/std.taut`, whose `Option`, `List`, `Pair` and `Ordering`
 /// the proofs see as families too (`crates/tauto-kernel/src/check.rs`).
-pub const STD: &str = include_str!("../../../std/prelude/Std.taut");
+pub const STD: &str = include_str!("../../../std/prelude/std.taut");
 
-/// `std/prelude/Ord.taut`: the class `Ord` and the instances whose laws the
+/// `std/builtin/ord.taut`: the class `Ord` and the instances whose laws the
 /// kernel proves, which the proofs see too (`crates/tauto-kernel/src/check.rs`).
-pub const ORD: &str = include_str!("../../../std/prelude/Ord.taut");
+pub const ORD: &str = include_str!("../../../std/builtin/ord.taut");
 
 /// The kernel's own inductives (`Nat`, `Eq`, `And`, …): what a macro's
 /// output may name in a pattern before any file declares it.
@@ -25,27 +25,29 @@ pub const KERNEL_MODULES: &[&str] = &[
 ];
 
 pub const PRELUDE: &str = concat!(
-    include_str!("../../../std/prelude/Std.taut"),
+    include_str!("../../../std/prelude/std.taut"),
     "\n",
-    include_str!("../../../std/prelude/Shared.taut"),
+    include_str!("../../../std/prelude/collections.taut"),
     "\n",
-    include_str!("../../../std/prelude/Affine.taut"),
+    include_str!("../../../std/prelude/text.taut"),
     "\n",
-    include_str!("../../../std/prelude/Text.taut"),
+    include_str!("../../../std/prelude/num.taut"),
     "\n",
-    include_str!("../../../std/prelude/Num.taut"),
+    include_str!("../../../std/builtin/os.taut"),
     "\n",
-    include_str!("../../../std/prelude/Os.taut"),
+    include_str!("../../../std/builtin/macro.taut"),
     "\n",
-    include_str!("../../../std/prelude/Macro.taut"),
+    include_str!("../../../std/builtin/ord.taut"),
     "\n",
-    include_str!("../../../std/prelude/Ord.taut"),
+    include_str!("../../../std/builtin/classes.taut"),
     "\n",
-    include_str!("../../../std/prelude/Classes.taut"),
+    include_str!("../../../std/builtin/par.taut"),
     "\n",
-    include_str!("../../../std/prelude/Par.taut"),
+    include_str!("../../../std/builtin/secret.taut"),
     "\n",
-    include_str!("../../../std/prelude/Secret.taut"),
+    include_str!("../../../std/builtin/region.taut"),
+    "\n",
+    include_str!("../../../std/prelude/debug.taut"),
 );
 
 // The functions the evaluator implements are the prelude's `extern`
@@ -54,59 +56,65 @@ pub const PRELUDE: &str = concat!(
 /// The files of [`PRELUDE`], in order, each followed by one `\n`.
 pub const PRELUDE_FILES: &[(&str, &str)] = &[
     (
-        "std/prelude/Std.taut",
-        include_str!("../../../std/prelude/Std.taut"),
+        "std/prelude/std.taut",
+        include_str!("../../../std/prelude/std.taut"),
     ),
     (
-        "std/prelude/Shared.taut",
-        include_str!("../../../std/prelude/Shared.taut"),
+        "std/prelude/collections.taut",
+        include_str!("../../../std/prelude/collections.taut"),
     ),
     (
-        "std/prelude/Affine.taut",
-        include_str!("../../../std/prelude/Affine.taut"),
+        "std/prelude/text.taut",
+        include_str!("../../../std/prelude/text.taut"),
     ),
     (
-        "std/prelude/Text.taut",
-        include_str!("../../../std/prelude/Text.taut"),
+        "std/prelude/num.taut",
+        include_str!("../../../std/prelude/num.taut"),
     ),
     (
-        "std/prelude/Num.taut",
-        include_str!("../../../std/prelude/Num.taut"),
+        "std/builtin/os.taut",
+        include_str!("../../../std/builtin/os.taut"),
     ),
     (
-        "std/prelude/Os.taut",
-        include_str!("../../../std/prelude/Os.taut"),
+        "std/builtin/macro.taut",
+        include_str!("../../../std/builtin/macro.taut"),
     ),
     (
-        "std/prelude/Macro.taut",
-        include_str!("../../../std/prelude/Macro.taut"),
+        "std/builtin/ord.taut",
+        include_str!("../../../std/builtin/ord.taut"),
     ),
     (
-        "std/prelude/Ord.taut",
-        include_str!("../../../std/prelude/Ord.taut"),
+        "std/builtin/classes.taut",
+        include_str!("../../../std/builtin/classes.taut"),
     ),
     (
-        "std/prelude/Classes.taut",
-        include_str!("../../../std/prelude/Classes.taut"),
+        "std/builtin/par.taut",
+        include_str!("../../../std/builtin/par.taut"),
     ),
     (
-        "std/prelude/Par.taut",
-        include_str!("../../../std/prelude/Par.taut"),
+        "std/builtin/secret.taut",
+        include_str!("../../../std/builtin/secret.taut"),
     ),
     (
-        "std/prelude/Secret.taut",
-        include_str!("../../../std/prelude/Secret.taut"),
+        "std/builtin/region.taut",
+        include_str!("../../../std/builtin/region.taut"),
+    ),
+    (
+        "std/prelude/debug.taut",
+        include_str!("../../../std/prelude/debug.taut"),
     ),
 ];
 
 /// The files of [`PRELUDE_FILES`] that are core: seen by every file without an
 /// import. They are the files whose declarations literals, tuples, lists and
-/// `perform show` produce or need (`docs/design/visibility.md`「prelude」); the other
+/// `show` produce or need (`docs/design/visibility.md`「Prelude」); the other
 /// files of `std/prelude/` are seen by importing `std::prelude::<file>`.
 pub const CORE_PRELUDE_FILES: &[&str] = &[
-    "std/prelude/Std.taut",
-    "std/prelude/Text.taut",
-    "std/prelude/Num.taut",
+    "std/prelude/std.taut",
+    "std/prelude/collections.taut",
+    "std/prelude/text.taut",
+    "std/prelude/num.taut",
+    "std/prelude/debug.taut",
 ];
 
 /// Whether the file at `path` of [`PRELUDE_FILES`] is core.
@@ -116,7 +124,7 @@ pub fn is_core_prelude_file(path: &str) -> bool {
 
 /// An error of reading prelude text whose spans start at `base`, with its
 /// ` at byte N` written as the place in the file it is in
-/// (` at std/prelude/Ord.taut:412:20`): a byte past `PRELUDE_BASE` names
+/// (` at std/builtin/ord.taut:412:20`): a byte past `PRELUDE_BASE` names
 /// no file anyone can open. `files` are the files the text is made of, each
 /// followed by one `\n` (a single file is `&[(path, text)]`). An error
 /// without a byte, or with one outside the text, stays as it is.

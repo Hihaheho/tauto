@@ -1,5 +1,5 @@
 //! [`tauto_analyzer::Workspace`] for a browser: the same checker, both
-//! kernels included, compiled to WebAssembly (`build.sh`). Files live only in
+//! kernels included, compiled to WebAssembly (`build.taut`). Files live only in
 //! the workspace: the host gives each file's text with `set_text` (an
 //! absolute path such as `/game/Level1.tauto`), and nothing is read from or
 //! written to a disk.

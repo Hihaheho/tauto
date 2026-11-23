@@ -1,0 +1,76 @@
+// Builds tauto_analyzer.wasm, the checker an editor in a browser loads.
+// Needs the wasm32-unknown-unknown target. Usage:
+//   tauto run crates/tauto-analyzer-wasm/build.taut -- OUT_DIR
+import "../../scripts/lib/sh.taut" { sh_die, sh_env, sh_process, sh_root, sh_run }
+import std::builtin::os { argv, eprint, exit, fs_copy, fs_remove, fs_temp_dir, io_message }
+import std::text { Text }
+
+let root := sh_root()
+let here := Text::concat(root, "/crates/tauto-analyzer-wasm")
+let out := match perform argv() {
+  Cons(o, _) => {
+    if o == "" { sh_die(1, "usage: build.taut OUT_DIR") } else { #() }
+    o
+  }
+  Nil => {
+    sh_die(1, "usage: build.taut OUT_DIR")
+    ""
+  }
+}
+let home := match sh_env("HOME") {
+  Some(h) => h
+  None => ""
+}
+let target := match perform fs_temp_dir() {
+  Ok(d) => d
+  Err(e) => {
+    sh_die(1, io_message(e))
+    ""
+  }
+}
+// getrandom (under query-flow's hash maps) takes its seed from
+// `__getrandom_v03_custom` in src/rand.rs.
+let rustflags := Text::concat_all(
+  [
+    "--cfg getrandom_backend=\"custom\" -C opt-level=s -C strip=symbols --remap-path-prefix=",
+    root,
+    "=. --remap-path-prefix=",
+    home,
+    "=~"
+  ]
+)
+let code := sh_run(
+  sh_process(
+    "cargo",
+    [
+      "build",
+      "--manifest-path",
+      Text::concat(here, "/Cargo.toml"),
+      "--release",
+      "--lib",
+      "--target",
+      "wasm32-unknown-unknown",
+      "--target-dir",
+      target
+    ],
+    "",
+    [#("RUSTFLAGS", rustflags)]
+  )
+)
+let copied := if code == 0 {
+  sh_run(sh_process("mkdir", ["-p", out], "", []))
+} else { code }
+let done := if copied == 0 {
+  match perform fs_copy(
+    Text::concat(target, "/wasm32-unknown-unknown/release/tauto_analyzer_wasm.wasm"),
+    Text::concat(out, "/tauto_analyzer.wasm")
+  ) {
+    Ok(_) => 0
+    Err(e) => {
+      eprint(Text::concat(io_message(e), "\n"))
+      1
+    }
+  }
+} else { copied }
+let ^removed := perform fs_remove(target)
+perform exit(done)

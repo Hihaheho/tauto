@@ -3,48 +3,76 @@
 // name a pattern takes out of the list is called, passed and lent at that
 // tier.
 @ cases.list-literal-elements-take-the-written-tier
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
 source = ```nib
-import std::prelude::Os
+import std::builtin::os
 
-fn run_all(bs: List(() -> u64 ! {sleep})): u64 ! {sleep} {
+fn run_all(bs: List(() -> u64 ! {sleep})): u64 ! {sleep, overflow} {
   match bs {
     Nil => 0
     Cons(f, rest) => f() + run_all(rest)
   }
 }
 let r := run_all([() => { perform sleep(1); 1 }, () => 2])
-perform show("r", r)
+show(&r)
 ```
-shows = ["r = 3"]
+stdout = "3\n"
+nir.fns.run_all = ```nir
+fn run_all@1(bs#5: List(fn() -> u64 shared O)): u64 O = match move bs#5 {
+  List::Nil => 0u64,
+  List::Cons(f#6: fn() -> u64 shared O, rest#7: List(fn() -> u64 shared O)) => add<u64>(f#6() tier O: u64, run_all@1(move rest#7) tier O: u64),
+}
+```
+nir.fns."<top>" = ```nir
+fn $"<top>"@0(): Unit O = handle 0 O do {
+  let r#1 := run_all@1(List::Cons(closure pure() -> u64 as fn() -> u64 copy O => {
+    perform sleep(1u64) resume 1 instance(u64) -> Unit legacy: Unit;
+    1u64
+  }, List::Cons(closure pure() -> u64 as fn() -> u64 copy O => 2u64, List::Nil: List(fn() -> u64 shared S)): List(fn() -> u64 shared O)): List(fn() -> u64 shared O)) tier O: u64;
+  show@2<u64>(&r#1, $"Debug::debug@u64"@3: fn(&u64) -> Text shared S): Unit
+} with {
+  direct stdout(t#2: Text) params(Text) answer Unit => builtin Os::print(clone t#2): Unit,
+  direct stdout_flush() params() answer Unit => builtin Os::flush(): Unit,
+  suspend sleep(ms#3: u64) params(u64) answer Unit k k#4 => resume k#4(Pending::join@4<Unit>(builtin Os::sleep_pending(copy ms#3): std Pending(Unit)) tier O: Unit): Unit,
+}: Unit
+```
 
 @ cases.pattern-bound-function-specializes-a-row-variable
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
 source = ```nib
-import std::prelude::Os
+import std::builtin::os
 
 fn call<!e>(g: () -> u64 ! e): u64 ! e {
   g()
 }
-fn run_all(bs: List(() -> u64 ! {sleep})): u64 ! {sleep} {
+fn run_all(bs: List(() -> u64 ! {sleep})): u64 ! {sleep, overflow} {
   match bs {
     Nil => 0
     Cons(f, rest) => call(f) + run_all(rest)
   }
 }
-perform show("r", run_all([() => { perform sleep(1); 1 }, () => 2]))
+show(&run_all([() => { perform sleep(1); 1 }, () => 2]))
 ```
-shows = ["r = 3"]
+stdout = "3\n"
+nir.fns.call = ```nir
+fn call@6(g#12: fn() -> u64 shared O): u64 O = g#12() tier O: u64
+```
+nir.fns.run_all = ```nir
+fn run_all@2(bs#6: List(fn() -> u64 shared O)): u64 O = match move bs#6 {
+  List::Nil => 0u64,
+  List::Cons(f#7: fn() -> u64 shared O, rest#8: List(fn() -> u64 shared O)) => add<u64>(call@6(move f#7) tier O: u64, run_all@2(move rest#8) tier O: u64),
+}
+```
 
 @ cases.pattern-bound-function-lent-to-a-borrowed-callback
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
 source = ```nib
-import std::prelude::Os
+import std::builtin::os
 
-fn call_ref<!e>(&g: () -> u64 ! e): u64 ! e {
+fn call_ref<!e>(g: &(() -> u64 ! e)): u64 ! e {
   g()
 }
-fn run_all(bs: List(() -> u64 ! {sleep})): u64 ! {sleep} {
+fn run_all(bs: List(() -> u64 ! {sleep})): u64 ! {sleep, overflow} {
   match bs {
     Nil => 0
     Cons(f, rest) => call_ref(&f) + run_all(rest)
@@ -53,7 +81,22 @@ fn run_all(bs: List(() -> u64 ! {sleep})): u64 ! {sleep} {
 fn lend(f: () -> u64 ! {sleep}): u64 ! {sleep} {
   call_ref(&f)
 }
-perform show("r", run_all([() => { perform sleep(1); 4 }, () => 5]))
-perform show("p", lend(() => { perform sleep(1); 6 }))
+show(&run_all([() => { perform sleep(1); 4 }, () => 5]))
+show(&lend(() => { perform sleep(1); 6 }))
 ```
-shows = ["r = 9", "p = 6"]
+stdout = ```
+9
+6
+```
+nir.fns.call_ref = ```nir
+fn call_ref@7(fnref g#13: &fn() -> u64 shared O): u64 O = g#13() tier O: u64
+```
+nir.fns.run_all = ```nir
+fn run_all@2(bs#6: List(fn() -> u64 shared O)): u64 O = match move bs#6 {
+  List::Nil => 0u64,
+  List::Cons(f#7: fn() -> u64 shared O, rest#8: List(fn() -> u64 shared O)) => add<u64>(call_ref@7(&f#7) tier O: u64, run_all@2(move rest#8) tier O: u64),
+}
+```
+nir.fns.lend = ```nir
+fn lend@4(f#10: fn() -> u64 shared O): u64 O = call_ref@7(&f#10) tier O: u64
+```

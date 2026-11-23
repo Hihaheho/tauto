@@ -1,0 +1,46 @@
+// `check-stack`: a `let(stack)` local is owned by the function and its type
+// is laid out with no indirection.
+
+@ cases.an-owned-local-of-a-plain-type-is-placed-in-the-frame
+source = ```tauto
+struct P { x: i64, y: i64 }
+fn sum(p: P): i64 ! {overflow} { p.x + p.y }
+fn main(): i64 ! {overflow} {
+  let(stack) p := P { x: 3, y: 4 }
+  sum(p)
+}
+show(&main())
+```
+stdout = "7\n"
+nir.passes = ["check-stack"]
+nir.fns.main = ```nir
+fn main@2(): i64 A = {
+  let stack p#4 := P::Mk(x = 3i64, y = 4i64): P;
+  sum@5(copy p#4) tier A: i64
+}
+```
+
+// The compiler refuses these before it gives a package; the check is asked
+// about a package written as text.
+@ cases.a-local-shared-with-a-closure-is-refused
+nir.source = ```nir
+fn main@0(): Unit S = {
+  let stack sharedvar x#1 := 1u64;
+}
+```
+nir.passes = ["check-stack"]
+nir.error = "it is not owned by the function"
+
+@ cases.a-type-that-holds-itself-is-refused
+nir.source = ```nir
+data shared enum List<'A> clone {
+  List::Nil,
+  List::Cons('A, shared List('A)),
+}
+
+fn main@0(): Unit S = {
+  let stack x#1 := List::Nil: List(u64);
+}
+```
+nir.passes = ["check-stack"]
+nir.error = "the field List::Cons.1 is stored behind an indirection"

@@ -1,0 +1,111 @@
+// A borrow freezes the field path it was taken from: `&p.a` leaves `p.b`
+// free to write and lend `&mut`, while moving `p` or writing `p.a` waits.
+
+@ cases.borrow-of-a-field-leaves-another-field-free
+description = "While `r` borrows `p.a`, `p.b` may be lent `&mut` and assigned."
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct P { a: F, b: F }
+fn touch(f: &mut F): Unit { }
+fn size(f: &F): i64 { f.n }
+var p := P { a: F { n: 1 }, b: F { n: 2 } }
+let r := &p.a
+touch(&mut p.b)
+p.b := F { n: 3 }
+size(&r)
+```
+lin = "ok"
+
+@ cases.borrow-of-a-field-freezes-the-field
+description = "While `r` borrows `p.a`, writing `p.a` is an error."
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct P { a: F, b: F }
+fn size(f: &F): i64 { f.n }
+var p := P { a: F { n: 1 }, b: F { n: 2 } }
+let r := &p.a
+p.a := F { n: 3 }
+size(&r)
+```
+lin = "error: p is frozen by r"
+
+@ cases.borrow-of-a-field-freezes-the-whole-owner-against-a-move
+description = "Moving the owner moves every field, the one borrowed among them."
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct P { a: F, b: F }
+fn size(f: &F): i64 { f.n }
+let p := P { a: F { n: 1 }, b: F { n: 2 } }
+let r := &p.a
+let q := p
+size(&r)
+```
+lin = "error: p is frozen by r"
+
+@ cases.borrows-field-path-frees-the-other-fields-at-the-call
+description = "A result declared `borrows(p.a)` freezes only `a` of the argument."
+source = ```nib
+
+struct(affine) F { n: i64 }
+struct P { a: F, b: F }
+fn pa(p: &P): &F borrows(p.a) { &p.a }
+fn size(f: &F): i64 { f.n }
+var q := P { a: F { n: 1 }, b: F { n: 2 } }
+let r := pa(&q)
+q.b := F { n: 3 }
+size(&r)
+```
+lin = "ok"
+
+@ cases.borrows-field-path-freezes-the-field-at-the-call
+description = "A result declared `borrows(p.a)` keeps `a` of the argument frozen."
+source = ```tauto
+struct(affine) F { n: i64 }
+struct P { a: F, b: F }
+
+fn pa(p: &P): &F borrows(p.a) { &p.a }
+fn size(f: &F): i64 { f.n }
+var q := P { a: F { n: 1 }, b: F { n: 2 } }
+let r := pa(&q)
+q.a := F { n: 3 }
+size(&r)
+```
+lin = "error: q is frozen by r"
+
+@ cases.body-returning-another-field-than-borrows-names-is-an-error
+description = "A body declared `borrows(p.a)` may not return a borrow of `p.b`."
+source = ```nib
+struct(affine) F { n: i64 }
+struct P { a: F, b: F }
+fn pa(p: &P): &F borrows(p.a) { &p.b }
+```
+lin = "error: the result borrows p.b, which is not in borrows(…)"
+
+// A duplicable field passed by value is copied, so it can be read while
+// another argument of the same call borrows its owner.
+@ cases.copy-field-read-while-owner-lent
+source = ```nib
+struct(affine) M { seed: i64 }
+fn seed_of(n: i64): i64 { n }
+fn get(m: &M, h: i64): i64 { h }
+fn get_in(m: &M): i64 { get(m, seed_of(m.seed)) }
+let a := M { seed: 3 }
+show(&get_in(&a))
+```
+stdout = "3\n"
+
+// A field that is not duplicable is still moved: it cannot leave its owner
+// while another argument of the same call borrows the owner.
+@ cases.affine-field-moved-while-owner-lent
+source = ```nib
+struct(affine) S {}
+struct(affine) M { s: S }
+fn eat(s: S): i64 { 1 }
+fn get(m: &M, h: i64): i64 { h }
+let a := M { s: S {} }
+get(&a, eat(a.s))
+```
+lin = "error: a is moved while it is borrowed in the same call"

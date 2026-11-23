@@ -28,11 +28,13 @@ struct Given {
     module: Option<String>,
     limit: Option<(String, Duration)>,
     standard: bool,
+    /// The files before it whose declarations its macros are not given (`Limits::unseen_files`).
+    unseen: Vec<usize>,
 }
 
 struct Kept {
     given: Vec<Given>,
-    saved: Saved,
+    saved: tauto_surface::identity::Kept<Saved>,
 }
 
 thread_local! {
@@ -67,8 +69,12 @@ pub(super) fn expand(
     limits: Vec<(String, Duration)>,
     bindings: Option<tauto_surface::resolve::Resolver>,
     standard_files: Vec<bool>,
+    unseen_files: Vec<Vec<usize>>,
 ) -> Output {
-    let opts = Options::default();
+    let opts = Options {
+        unseen_files,
+        ..Options::default()
+    };
     // A revision of a program (`load_revision`) is given the identities of the one before; the
     // files kept from before already have theirs, so it goes on from them when they are kept.
     if bindings.is_some() && !KEEP.with(Cell::get) {
@@ -108,6 +114,7 @@ pub(super) fn expand(
             module: modules.get(i).cloned(),
             limit: limits.get(i).cloned(),
             standard: standard_files.get(i).copied().unwrap_or(false),
+            unseen: opts.unseen_files.get(i).cloned().unwrap_or_default(),
         })
         .collect();
     let last = files.len() - 1;
@@ -120,7 +127,7 @@ pub(super) fn expand(
             .max_by_key(|(_, e)| e.given.len())
             .map(|(j, _)| j)?;
         let e = kept.remove(found);
-        let saved = e.saved.clone();
+        let saved = e.saved.get();
         kept.push(e);
         Some(saved)
     });
@@ -149,7 +156,10 @@ pub(super) fn expand(
             if kept.len() >= KEPT {
                 kept.remove(0);
             }
-            kept.push(Kept { given, saved });
+            kept.push(Kept {
+                given,
+                saved: tauto_surface::identity::Kept::new(&saved),
+            });
         });
     }
     out

@@ -1,9 +1,8 @@
 //! `totes/surface` against `tauto::surface` (`docs/design/self-host.md`).
 
-use selfhost_harness::{assert_same_dump, corpus, materialize, run_tote_native};
-use tauto::surface::{
-    dump::dump_program, parse_program, parse_program_unresolved_at as parse_program_at,
-};
+use selfhost_harness::{assert_same_dump, corpus, differential, materialize, run_tote_native};
+use tauto::surface::{dump::dump_program, parse_program};
+use tauto_parse::{parse_program_unresolved_at as parse_program_at};
 
 const STEPS: u64 = 200_000_000_000;
 
@@ -28,7 +27,7 @@ fn compare_at(label: &str, inputs: Vec<(String, String)>, base: u32) {
         args.push(base.to_string());
     }
     args.extend(m.paths.iter().cloned());
-    let out = run_tote_native("surface", &args, STEPS);
+    let out = run_tote_native("parse", &args, STEPS);
     assert_eq!(out.error, None);
     assert_eq!(out.stderr, "");
     let mut rust = String::new();
@@ -102,6 +101,56 @@ fn parse_program_is_the_unresolved_reader_at_base_0() {
     );
 }
 
+/// `coerce` stands before one field of a struct: two in a struct, or one before
+/// a field of an enum variant or a record type, is refused by both readers.
+#[test]
+fn surface_refuses_misplaced_coerce() {
+    let case = |name: &str, source: &str| (name.to_string(), source.to_string());
+    compare(
+        "surface-coerce-refused",
+        vec![
+            case("ok", "struct P { a: i64 }\nstruct W { coerce inner: P, tag: i64 }\n"),
+            case("ok-mut", "struct P { a: i64 }\nstruct W { coerce(mut) inner: P, tag: i64 }\n"),
+            case("twice", "struct P { a: i64 }\nstruct W { coerce a: P, coerce b: P }\n"),
+            case("enum", "enum E { A { coerce x: i64 }, B }\n"),
+            case("record-type", "fn f(p: { coerce x: i64 }): i64 { 0 }\n"),
+            case("in-module", "module m {\n  struct P { a: i64 }\n  struct W { coerce a: P, coerce b: P }\n}\n"),
+        ],
+    );
+}
+
+/// `^` on a constructor name with arguments or a field label is refused by both
+/// readers. Binding sites (`Some(^x)`, `Point { x: ^y }`, shorthand `Point { ^x }`)
+/// keep the mark. Nullary constructors are refused after name resolution, not here.
+/// Inputs: `cases/unused-marker.eure` cases with `differential = "surface"`.
+#[test]
+fn surface_refuses_unused_marker_on_non_bindings() {
+    let inputs: Vec<_> = differential("surface")
+        .into_iter()
+        .filter(|(name, _)| name.contains("unused-marker.eure#"))
+        .collect();
+    assert!(
+        !inputs.is_empty(),
+        "unused-marker.eure has no differential = \"surface\" cases"
+    );
+    compare("surface-unused-marker-not-binding", inputs);
+}
+
+/// A row variable written inside a row literal's braces is refused by both readers.
+/// Inputs: `cases/check/row-variable-in-literal.eure` cases with `differential = "surface"`.
+#[test]
+fn surface_refuses_a_row_variable_in_a_row_literal() {
+    let inputs: Vec<_> = differential("surface")
+        .into_iter()
+        .filter(|(name, _)| name.contains("row-variable-in-literal.eure#"))
+        .collect();
+    assert!(
+        !inputs.is_empty(),
+        "row-variable-in-literal.eure has no differential = \"surface\" cases"
+    );
+    compare("surface-row-variable-in-literal", inputs);
+}
+
 /// The Product grammar node also wraps every expression without a × operator.
 #[test]
 fn surface_preserves_singleton_product_wrappers() {
@@ -132,7 +181,7 @@ fn read(x: Box(u64)): u64 { 0 }
     );
 }
 
-/// Two or more members are a product, and `x.(T)` is a typed projection,
+/// Two or more members are a product, and `(p: T)` takes a member by its type,
 /// read as the Rust reader reads them: never one member, a tuple or a union.
 #[test]
 fn surface_reads_products_and_typed_projections() {

@@ -28,16 +28,18 @@ namespace Proto.Nib
 inductive Width where
   | i32
   | i64
+  | u64
   deriving DecidableEq
 
 /-- The integers of a width: two's complement. -/
 def Width.fits : Width → Int → Bool
   | .i32, n => decide (-2147483648 ≤ n ∧ n ≤ 2147483647)
   | .i64, n => decide (-9223372036854775808 ≤ n ∧ n ≤ 9223372036854775807)
+  | .u64, n => decide (0 ≤ n ∧ n ≤ 18446744073709551615)
 
 mutual
   inductive Ty where
-    /-- `i32`, `i64` -/
+    /-- `i32`, `i64`, `u64` -/
     | int (w : Width)
     | bool
     | unit
@@ -55,9 +57,17 @@ mutual
     | fn (ps : List Ty) (ret : Ty) (row : List Eff)
     /-- A union, kept as written. -/
     | union (ts : List Ty)
-    /-- The cell of a `var` holding an `A`. Programs do not write this type;
-    a `var` is read and written by its name. -/
-    | cell (A : Ty)
+    /-- The place of a `var` holding an `A`: the type of the `var`'s name, and
+    of no term. Programs do not write this type; a `var` is read and written
+    by its name. -/
+    | place (A : Ty)
+    /-- `(ps) -> ret ! row` as a local function: one that may use the places
+    around it (a closure capturing a `var`, a continuation). It is called
+    where it is and never kept. Programs do not write this type. -/
+    | lfn (ps : List Ty) (ret : Ty) (row : List Eff)
+    /-- What a first-class function's body sees in place of a place or a
+    local value around it: something there that it cannot use. -/
+    | hidden
     /-- The `info` an `exceeded` arm receives: the suspended body of a
     `budget` whose result is `T` and that performs `row` besides `Div`. -/
     | info (T : Ty) (row : List Eff)
@@ -105,7 +115,9 @@ mutual
     | .never => .never
     | .fn ps r ρ => .fn (ps.map (·.inst θ)) (r.inst θ) (ρ.flatMap (·.inst θ))
     | .union ts => .union (ts.map (·.inst θ))
-    | .cell A => .cell (A.inst θ)
+    | .place A => .place (A.inst θ)
+    | .lfn ps r ρ => .lfn (ps.map (·.inst θ)) (r.inst θ) (ρ.flatMap (·.inst θ))
+    | .hidden => .hidden
     | .info T ρ => .info (T.inst θ) (ρ.flatMap (·.inst θ))
     | .tvar i => θ.ty i
     | .tag a T => .tag a (T.inst θ)
@@ -173,7 +185,11 @@ mutual
         simp only [Ty.inst]
         rw [Tys.inst_inst θ θ' ps, Ty.inst_inst θ θ' r, Effs.inst_inst θ θ' ρ]
     | .union ts => by simp only [Ty.inst]; rw [Tys.inst_inst θ θ' ts]
-    | .cell A => by simp only [Ty.inst]; rw [Ty.inst_inst θ θ' A]
+    | .place A => by simp only [Ty.inst]; rw [Ty.inst_inst θ θ' A]
+    | .lfn ps r ρ => by
+        simp only [Ty.inst]
+        rw [Tys.inst_inst θ θ' ps, Ty.inst_inst θ θ' r, Effs.inst_inst θ θ' ρ]
+    | .hidden => by simp [Ty.inst]
     | .info T ρ => by
         simp only [Ty.inst]
         rw [Ty.inst_inst θ θ' T, Effs.inst_inst θ θ' ρ]
@@ -266,10 +282,32 @@ def divEff : Eff := .mk divDecl []
 besides `Div`; its one value is the `info` of that body. -/
 def exceededEff (T : Ty) (ρ : List Eff) : Eff := .mk exceededDecl [T, .info T ρ]
 
+def stoppedDecl : Nat := 1003
+
+/-- `Stopped(T)` of a budget whose stop drops its body (`budgetDrop`): it
+carries nothing, and its answer goes on from the budget expression. -/
+def stoppedEff (T : Ty) : Eff := .mk stoppedDecl [T]
+
+/-- What a budget performs when it runs out: `Exceeded(T)` with the body, or,
+when the stop drops the body, `Stopped(T)`. -/
+def runEff : Bool → Ty → List Eff → Eff
+  | false, T, ρ => exceededEff T ρ
+  | true, T, _ => stoppedEff T
+
 /-- A `match` on a value of type `A` is a handler of `Match(A)`, which only
 the `match` performs (`Tm.mtch`). -/
 def matchDecl : Nat := 1002
 
 def matchEff (A : Ty) : Eff := .mk matchDecl [A]
+
+/-- An operator whose result does not exist performs `overflow` (a result
+that does not fit its width) or `divzero` (a division by zero). Each takes
+no arguments and never answers (`resume 0`): an arm that takes it gives the
+value of its `handle`. -/
+def overflowDecl : Nat := 1004
+def divZeroDecl : Nat := 1005
+
+def overflowEff : Eff := .mk overflowDecl []
+def divZeroEff : Eff := .mk divZeroDecl []
 
 end Proto.Nib

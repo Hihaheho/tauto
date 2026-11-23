@@ -1,0 +1,495 @@
+import "ir.taut"
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+
+// How a value of each type is laid out.
+//
+// A value is a row of 64-bit words, and a type says how many: a number, a
+// `Bool`, a borrow and a shown text are one word; `Unit` is none; a product
+// is its members one after another; a type with constructors is a word for
+// which constructor it is, then room for the largest constructor's fields one
+// after another. A field stored behind an indirection is one word: the
+// address of a box, whose first word counts the values that share it and
+// whose other words are the field. Nothing else is on the heap, and every
+// word a constructor does not use is zero, so two values of a type with no
+// box in it are equal when their words are.
+
+// What a type's glue does to a value at an address.
+pub(open) enum LGlue {
+  // Releases what the value holds.
+  LDrop
+  // Makes the words copied from another value a value of its own.
+  LDup
+  // Adds the text `show` gives the value to a text being built.
+  LShow
+}
+
+// What is known of the program while its module is written.
+pub(open) struct LModule {
+  pkg: NPackage,
+  // The glue asked for, each once, the last asked for first.
+  glue: List(LGlue × NTy),
+  // The constant texts, the last made first.
+  strings: List(Text),
+  // The texts of the literals, each in a constant box of its own, the last
+  // made first.
+  boxes: List(Text),
+  // What in the program the backend does not write yet: the first such thing.
+  refused: Option(Text),
+  // The functions of the program's function values, the last numbered
+  // first: the words each takes and gives, and whether it holds what it
+  // captured to drop.
+  closures: List((Nat × Nat) × Bool),
+  // The functions of closures, arms and functions used as values, and what
+  // drops what they captured, the last written first.
+  closure_defs: List(llvm::Item::I),
+  // The number of the function value of each function of the program used
+  // as one.
+  wrappers: List(Nat × Nat),
+  // The signatures function values are called at, the last first called
+  // first.
+  calls: List(Nat × Nat),
+  // Whether a `handle` of the program has an arm of `show`.
+  handles_show: Bool
+}
+
+pub fn l_set<A>(slot: &mut A, value: A): Unit {
+  *slot := value
+}
+
+pub fn l_refuse(m: &mut LModule, what: Text): Unit {
+  match m.refused {
+    Some(^e) => ()
+    None => l_set(&mut m.refused, Some(what))
+  }
+}
+
+// A value of one word.
+pub(open) enum LScalar {
+  // A number: its bits and whether it is signed. The word holds it extended
+  // to 64 bits.
+  LInt(Nat, Bool)
+  LBool
+  // The address of the value a borrow stands for.
+  LBorrow
+  // The address of a text ended with a zero byte, which the value owns.
+  LShown
+  // The address of a `Text`'s box: a count of the values that share it, the
+  // number of bytes, then the bytes, ended with a zero byte.
+  LText
+  // The address of a function value's box: a count of the values that share
+  // it, the number of its function, then what it captured.
+  LFn
+  // The address of a `Vec`'s header, which the value owns: the address of its
+  // elements, how many there are and how many there is room for. The elements
+  // are rows of the words of one element.
+  LVec
+  // The address of the header of a `Slots`, which the value owns: the address
+  // of its elements, the capacity, the address of its flags, the address of its
+  // marks, then the words of its state.
+  LSlots
+}
+
+pub(open) struct LCtor {
+  // The name `show` writes.
+  name: Text,
+  fields: List(NField)
+}
+
+pub(open) enum LShape {
+  LScalarOf(LScalar)
+  LUnit
+  // A product of two members, with no word for a constructor.
+  LPair(NField, NField)
+  // A type with constructors: the first word says which. A `struct` is
+  // shown by the type's name, not the constructor's.
+  LSum(List(LCtor), Bool)
+}
+
+pub fn l_int(m: &mut LModule, w: NWidth): Nat × Bool {
+  match w {
+    NW32 => #(32, true)
+    NW64 => #(64, true)
+    NU8 => #(8, false)
+    NU32 => #(32, false)
+    NU64 => #(64, false)
+    NHost => #(64, false)
+    // A `Nat` is one 64-bit word like a `u64`: the program stops when a
+    // result does not fit, and a number beyond 64 bits is refused.
+    NNat => #(64, false)
+    NW8 => #(8, true)
+    NW16 => #(16, true)
+    NU16 => #(16, false)
+  }
+}
+
+pub fn l_field(ty: NTy): NField { NField { name: None, ty: ty, indirect: NDirect } }
+
+pub fn l_last(parts: List(Text), last: Text): Text {
+  match parts {
+    Nil => last
+    Cons(p, rest) => l_last(rest, p)
+  }
+}
+
+// The last word of a name.
+pub fn l_short(name: Text): Text { l_last(text_split(name, "::"), name) }
+
+pub fn l_find_data(ds: List(NData), name: Text): Option(NData) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => if d.name == name { Some(d) } else { l_find_data(rest, name) }
+  }
+}
+
+pub fn l_len<A>(xs: List(A)): Nat {
+  match xs {
+    Nil => 0
+    Cons(^x, rest) => 1 + l_len(rest)
+  }
+}
+
+pub fn l_subst_param(p: Text, generics: List(Text), args: List(NTy)): NTy {
+  match generics {
+    Nil => NParam(p)
+    Cons(g, rest) => match args {
+      Nil => NParam(p)
+      Cons(a, more) => if g == p { a } else { l_subst_param(p, rest, more) }
+    }
+  }
+}
+
+// `t` with each parameter of `generics` replaced by its argument.
+pub fn l_subst(t: NTy, generics: List(Text), args: List(NTy)): NTy {
+  match t {
+    NInt(^w) => t
+    NBool => t
+    NText => t
+    NUnit => t
+    NNever => t
+    NFloat => t
+    NFloat32 => t
+    NBuf => t
+    NShown => t
+    NVec(a) => NVec(l_subst(a, generics, args))
+    NArray(a) => NArray(l_subst(a, generics, args))
+    NSlice(a) => NSlice(l_subst(a, generics, args))
+    NOption(a) => NOption(l_subst(a, generics, args))
+    NInfo(a) => NInfo(l_subst(a, generics, args))
+    NBudgetAnswer(a) => NBudgetAnswer(l_subst(a, generics, args))
+    NResult(a, b) => NResult(l_subst(a, generics, args), l_subst(b, generics, args))
+    NPair(a, b) => NPair(l_subst(a, generics, args), l_subst(b, generics, args))
+    NSharedVar(c, a) => NSharedVar(c, l_subst(a, generics, args))
+    NStd(n, a) => NStd(n, l_subst_all(a, generics, args))
+    NUnion(^n) => t
+    NFn(p, r, k, x) => NFn(l_subst_all(p, generics, args), l_subst(r, generics, args), k, x)
+    NRef(a) => NRef(l_subst(a, generics, args))
+    NRefMut(a) => NRefMut(l_subst(a, generics, args))
+    NData(n, a) => NData(n, l_subst_all(a, generics, args))
+    NParam(p) => l_subst_param(p, generics, args)
+  }
+}
+
+pub fn l_subst_all(ts: List(NTy), generics: List(Text), args: List(NTy)): List(NTy) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(l_subst(t, generics, args), l_subst_all(rest, generics, args))
+  }
+}
+
+pub fn l_subst_fields(fs: List(NField), generics: List(Text), args: List(NTy)): List(NField) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(
+      NField { name: f.name, ty: l_subst(f.ty, generics, args), indirect: f.indirect },
+      l_subst_fields(rest, generics, args)
+    )
+  }
+}
+
+pub fn l_ctors(d: NData, cs: List(NCtor), args: List(NTy)): List(LCtor) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(
+      LCtor {
+        name: if d.is_struct { d.shown } else { l_short(c.name) },
+        fields: l_subst_fields(c.fields, d.generics, args)
+      },
+      l_ctors(d, rest, args)
+    )
+  }
+}
+
+// The shape of a type, or `LUnit` with the refusal of a type the backend
+// does not lay out.
+pub fn l_shape(m: &mut LModule, t: NTy): LShape {
+  match t {
+    NInt(w) => match l_int(&mut m, w) {
+      #(bits, signed) => LScalarOf(LInt(bits, signed))
+    }
+    NBool => LScalarOf(LBool)
+    NUnit => LUnit
+    NNever => LUnit
+    NRef(a) => l_borrow_shape(&mut m, a)
+    NRefMut(a) => l_borrow_shape(&mut m, a)
+    NShown => LScalarOf(LShown)
+    NPair(a, b) => LPair(l_field(a), l_field(b))
+    NOption(a) => LSum(
+      [LCtor { name: "None", fields: Nil }, LCtor { name: "Some", fields: [l_field(a)] }],
+      false
+    )
+    NResult(a, b) => LSum(
+      [LCtor { name: "Ok", fields: [l_field(a)] }, LCtor { name: "Err", fields: [l_field(b)] }],
+      false
+    )
+    NData(name, args) => match l_find_data(m.pkg.datas, name) {
+      None => l_refused_shape(&mut m, Text::concat_all(["the type `", name, "`"]))
+      Some(d) => if d.is_host {
+        l_refused_shape(&mut m, "an extern type (the native backend has no host)")
+      } else if d.is_linear {
+        l_refused_shape(&mut m, "a `linear` type")
+      } else if l_len(d.generics) == l_len(args) {
+        LSum(l_ctors(d, d.ctors, args), d.is_struct)
+      } else {
+        l_refused_shape(
+          &mut m,
+          Text::concat_all(["the type `", name, "` without all its arguments"])
+        )
+      }
+    }
+    NFloat => l_refused_shape(&mut m, "a `Float`")
+    NFloat32 => l_refused_shape(&mut m, "a `Float`")
+    NText => LScalarOf(LText)
+    NBuf => l_refused_shape(&mut m, "a `Buf`")
+    // An element read through a borrow of the `Vec` would be a borrow of a
+    // borrow, which a value of the backend does not stand for.
+    NVec(a) => match a {
+      NRef(^x) => l_refused_shape(&mut m, "a `Vec` of borrows")
+      NRefMut(^x) => l_refused_shape(&mut m, "a `Vec` of borrows")
+      ^other => LScalarOf(LVec)
+    }
+    NArray(^a) => l_refused_shape(&mut m, "an `Array`")
+    NSlice(^a) => l_refused_shape(&mut m, "a `Slice`")
+    NStd(n, a) => if n == "Slots" {
+      if l_any_borrow_ty(a) {
+        l_refused_shape(&mut m, "a `Slots` of borrows")
+      } else {
+        LScalarOf(LSlots)
+      }
+    } else {
+      l_refused_shape(&mut m, Text::concat_all(["a `", n, "`"]))
+    }
+    NUnion(^n) => l_refused_shape(&mut m, "a union")
+    NFn(^p, ^r, ^k, ^x) => LScalarOf(LFn)
+    NSharedVar(^c, ^a) => l_refused_shape(&mut m, "a `var` shared with a closure")
+    NInfo(^a) => l_refused_shape(&mut m, "a `budget`")
+    NBudgetAnswer(^a) => l_refused_shape(&mut m, "a `budget`")
+    NParam(p) => l_refused_shape(&mut m, Text::concat_all(["the type parameter `", p, "`"]))
+  }
+}
+
+pub fn l_any_borrow_ty(ts: List(NTy)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => l_is_borrow_ty(t) || l_any_borrow_ty(rest)
+  }
+}
+
+pub fn l_is_borrow_ty(t: NTy): Bool {
+  match t {
+    NRef(^x) => true
+    NRefMut(^x) => true
+    ^other => false
+  }
+}
+
+pub fn l_refused_shape(m: &mut LModule, what: Text): LShape {
+  l_refuse(&mut m, what)
+  LUnit
+}
+
+pub fn l_borrow_shape(m: &mut LModule, inner: NTy): LShape {
+  match inner {
+    NFn(^p, ^r, ^k, ^x) => LScalarOf(LBorrow)
+    NSlice(^a) => l_refused_shape(&mut m, "a `Slice`")
+    NInt(^w) => LScalarOf(LBorrow)
+    NBool => LScalarOf(LBorrow)
+    NText => LScalarOf(LBorrow)
+    NUnit => LScalarOf(LBorrow)
+    NNever => LScalarOf(LBorrow)
+    NFloat => LScalarOf(LBorrow)
+    NFloat32 => LScalarOf(LBorrow)
+    NBuf => LScalarOf(LBorrow)
+    NShown => LScalarOf(LBorrow)
+    NVec(^a) => LScalarOf(LBorrow)
+    NArray(^a) => LScalarOf(LBorrow)
+    NOption(^a) => LScalarOf(LBorrow)
+    NInfo(^a) => LScalarOf(LBorrow)
+    NBudgetAnswer(^a) => LScalarOf(LBorrow)
+    NResult(^a, ^b) => LScalarOf(LBorrow)
+    NPair(^a, ^b) => LScalarOf(LBorrow)
+    NSharedVar(^c, ^a) => LScalarOf(LBorrow)
+    NStd(^n, ^a) => LScalarOf(LBorrow)
+    NUnion(^n) => LScalarOf(LBorrow)
+    NRef(^a) => LScalarOf(LBorrow)
+    NRefMut(^a) => LScalarOf(LBorrow)
+    NData(^n, ^a) => LScalarOf(LBorrow)
+    NParam(^n) => LScalarOf(LBorrow)
+  }
+}
+
+pub fn l_is_indirect(i: NIndirect): Bool {
+  match i { NDirect => false, NShared => true, NUnique => true }
+}
+
+pub fn l_max(a: Nat, b: Nat): Nat { if a >= b { a } else { b } }
+
+// How deep a type may hold types without an indirection: past this, a type
+// holds itself with none, and has no size.
+pub fn l_depth(): Nat { 64 }
+
+// The number of words of a value of the type.
+pub fn l_words(m: &mut LModule, t: NTy): Nat ! {div} { l_words_in(&mut m, t, 0) }
+
+pub fn l_field_words(m: &mut LModule, f: NField, depth: Nat): Nat ! {div} {
+  if l_is_indirect(f.indirect) { 1 } else { l_words_in(&mut m, f.ty, depth + 1) }
+}
+
+pub fn l_fields_words(m: &mut LModule, fs: List(NField), depth: Nat): Nat ! {div} {
+  match fs {
+    Nil => 0
+    Cons(f, rest) => {
+      let n := l_field_words(&mut m, f, depth)
+      n + l_fields_words(&mut m, rest, depth)
+    }
+  }
+}
+
+pub fn l_most_words(m: &mut LModule, cs: List(LCtor), depth: Nat): Nat ! {div} {
+  match cs {
+    Nil => 0
+    Cons(c, rest) => {
+      let n := l_fields_words(&mut m, c.fields, depth)
+      l_max(n, l_most_words(&mut m, rest, depth))
+    }
+  }
+}
+
+pub fn l_is_refused(m: &mut LModule): Bool {
+  match m.refused {
+    None => false
+    Some(^what) => true
+  }
+}
+
+pub fn l_words_in(m: &mut LModule, t: NTy, depth: Nat): Nat ! {div} {
+  // Once a type is refused nothing more is written: a type that holds itself
+  // would otherwise be searched along every path to the depth.
+  if l_is_refused(&mut m) {
+    0
+  } else if depth > l_depth() {
+    l_refuse(&mut m, "a type that holds itself with no indirection")
+    0
+  } else {
+    match l_shape(&mut m, t) {
+      LScalarOf(^s) => 1
+      LUnit => 0
+      LPair(a, b) => {
+        let n := l_field_words(&mut m, a, depth)
+        n + l_field_words(&mut m, b, depth)
+      }
+      LSum(cs, ^is_struct) => 1 + l_most_words(&mut m, cs, depth)
+    }
+  }
+}
+
+// The word field `index` starts at in a value: after the constructor's word
+// of a type with constructors, and after the fields before it.
+pub fn l_offset(m: &mut LModule, tagged: Bool, fields: List(NField), index: Nat): Nat ! {div} {
+  let start := if tagged { 1 } else { 0 }
+  start + l_offset_in(&mut m, fields, index)
+}
+
+pub fn l_offset_in(m: &mut LModule, fields: List(NField), index: Nat): Nat ! {div} {
+  match fields {
+    Nil => 0
+    Cons(f, rest) => if index == 0 {
+      0
+    } else {
+      let n := if l_is_indirect(f.indirect) { 1 } else { l_words(&mut m, f.ty) }
+      n + l_offset_in(&mut m, rest, index - 1)
+    }
+  }
+}
+
+// Whether a value of the type holds nothing on the heap: copying its words
+// copies it, and dropping it does nothing.
+pub fn l_plain(m: &mut LModule, t: NTy): Bool ! {div} { l_plain_in(&mut m, t, 0) }
+
+pub fn l_field_plain(m: &mut LModule, f: NField, depth: Nat): Bool ! {div} {
+  if l_is_indirect(f.indirect) { false } else { l_plain_in(&mut m, f.ty, depth + 1) }
+}
+
+pub fn l_fields_plain(m: &mut LModule, fs: List(NField), depth: Nat): Bool ! {div} {
+  match fs {
+    Nil => true
+    Cons(f, rest) => if l_field_plain(
+      &mut m,
+      f,
+      depth
+    ) { l_fields_plain(&mut m, rest, depth) } else { false }
+  }
+}
+
+pub fn l_ctors_plain(m: &mut LModule, cs: List(LCtor), depth: Nat): Bool ! {div} {
+  match cs {
+    Nil => true
+    Cons(c, rest) => if l_fields_plain(
+      &mut m,
+      c.fields,
+      depth
+    ) { l_ctors_plain(&mut m, rest, depth) } else { false }
+  }
+}
+
+pub fn l_plain_in(m: &mut LModule, t: NTy, depth: Nat): Bool ! {div} {
+  if l_is_refused(&mut m) {
+    true
+  } else if depth > l_depth() {
+    l_refuse(&mut m, "a type that holds itself with no indirection")
+    true
+  } else {
+    match l_shape(&mut m, t) {
+      LScalarOf(s) => match s {
+        LShown => false
+        LText => false
+        LFn => false
+        LVec => false
+        LSlots => false
+        LInt(^bits, ^signed) => true
+        LBool => true
+        LBorrow => true
+      }
+      LUnit => true
+      LPair(a, b) => if l_field_plain(
+        &mut m,
+        a,
+        depth
+      ) { l_field_plain(&mut m, b, depth) } else { false }
+      LSum(cs, ^is_struct) => l_ctors_plain(&mut m, cs, depth)
+    }
+  }
+}
+
+// The constructors of a type that has them, and whether a word says which
+// one a value is.
+pub fn l_ctors_of(shape: LShape): Option(Bool × List(LCtor)) {
+  match shape {
+    LPair(a, b) => Some(#(false, [LCtor { name: "", fields: [a, b] }]))
+    LSum(cs, ^is_struct) => Some(#(true, cs))
+    LScalarOf(^s) => None
+    LUnit => None
+  }
+}

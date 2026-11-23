@@ -12,6 +12,11 @@
 //! which is what the ownership rules ask for), and a `Local` carries its representation
 //! (`Repr`) so a use needs no table lookup.
 //!
+//! Every type is written: lowering leaves none for a backend to infer. A
+//! type the checker left open (nothing in the program fixes it, as the
+//! element of a `None` that is only shown) is written `Ty::Never`, which
+//! is one of the types it may be.
+//!
 //! NIR states what the ownership rules decided, not how Rust stores it: a
 //! shared `var` is `Repr::SharedVar`/`Ty::SharedVar`, a field that holds its
 //! own type is `Indirect::Shared` or `Indirect::Unique`, and the Rust
@@ -23,27 +28,103 @@
 //! cannot suspend natively; such a backend only prints that tree.
 
 use std::collections::BTreeSet;
-pub use tauto::bindings::{is_library, library_name};
-pub use tauto::identity::DeclRef;
-pub use tauto::surface::Name;
-pub use tauto::surface::qualify::short as display_name;
 pub(crate) use tauto_message::{Message, msg};
+pub use tauto_surface::bindings::{is_library, library_name};
+pub use tauto_surface::identity::DeclRef;
+pub use tauto_surface::surface::Name;
+pub use tauto_surface::surface::qualify::short as display_name;
 
-pub use tauto::types::{Kind, OperationAdmission, Quant, Width};
 pub use tauto_parol::Span;
+pub use tauto_surface::kinds::{Kind, Quant, Width};
 
-mod accumulate;
-mod borrow;
+pub mod accumulate;
+pub mod anf;
+pub mod arms;
+pub mod blocks;
+pub mod borrow;
+pub mod builtins;
 pub mod cps;
-mod last_use;
-mod lower;
-mod tail;
-pub use lower::{
-    CompileError, CompilePhase, LowerInput, Lowered, compile, compile_javascript,
-    compile_javascript_with_observer, compile_loaded_entries_with_observer,
-    compile_loaded_with_observer, compile_with, compile_with_observer, lower,
+pub mod decision;
+pub mod effects;
+pub mod evidence;
+pub mod glue;
+pub mod kont;
+pub mod last_use;
+pub mod loans;
+pub mod mono;
+pub mod ownership;
+pub mod pass;
+pub mod replaceable_extern;
+pub mod stack;
+pub mod tail;
+pub mod text;
+pub mod wf;
+
+pub use replaceable_extern::{
+    external_data_names, external_fn_names, pass_of, select_replaceable_blocks, ExternSelection,
 };
+
 pub use tail::{mark as mark_tail_calls, passed_on, recurs};
+
+/// The backend a program is checked for, as the capabilities that change
+/// what the checker accepts. A backend states its profile here once, and the
+/// checker and NIR ask the profile, never which backend it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Target {
+    #[default]
+    Rust,
+    JavaScript,
+    /// The LLVM backend: it answers the standard effects itself, so a
+    /// program gets no host's handler outside it.
+    Llvm,
+}
+
+impl Target {
+    /// A host callback crosses a Promise boundary: it may not take an
+    /// effect that resumes more than once or an open row.
+    pub fn promise_callbacks(self) -> bool {
+        matches!(self, Target::JavaScript)
+    }
+}
+
+/// What the bounded, directly executed body establishes about an arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperationAdmission {
+    Legacy,
+    Unique,
+    Incomplete,
+    ExplicitReturn,
+    Missing,
+    Indeterminate,
+    Distinct,
+    Unresolved,
+}
+
+impl OperationAdmission {
+    pub fn limitation(self) -> Option<&'static str> {
+        match self {
+            Self::Legacy | Self::Unique => None,
+            Self::Incomplete => {
+                Some("the handled body has an opaque or storage-sensitive operation context")
+            }
+            Self::ExplicitReturn => {
+                Some("an explicit return arm is outside checked operation-instance admission")
+            }
+            Self::Missing => {
+                Some("the handled body supplies no directly determined operation instance")
+            }
+            Self::Indeterminate => {
+                Some("the handled operation instances are not determined before checking the arm")
+            }
+            Self::Distinct => {
+                Some("the handled body has distinct parameterized operation instances")
+            }
+            Self::Unresolved => {
+                Some("a checked operation instance still has unresolved type arguments")
+            }
+        }
+    }
+}
 
 pub type InstId = usize;
 pub type OpIndex = usize;
@@ -89,13 +170,25 @@ pub enum StdType {
     Secret,
     Signal,
     CancelSource,
+    /// A scoped region (`tauto_rt::region`).
+    Region,
+    /// Where a value goes in a region.
+    Place,
+    /// A counted region (`tauto_rt::region`).
+    RcRegion,
+    /// Where a value goes in a counted region or on the heap.
+    RcPlace,
+    /// Slots of an element with a mark beside each and a state of the whole
+    /// (`std/prelude/collections.taut`), whose arguments are the state, the
+    /// mark and the element.
+    Slots,
     /// A host value no tauto type names (the boundary cannot carry it).
     OpaqueHost,
 }
 
 impl StdType {
-    /// The `tauto_rt::stdlib` item this type is.
-    pub fn rust_name(self) -> &'static str {
+    /// The name of the type in the standard library.
+    pub fn name(self) -> &'static str {
         match self {
             StdType::SynDeclaration => "SynDeclaration",
             StdType::Ref => "Ref",
@@ -108,6 +201,11 @@ impl StdType {
             StdType::Secret => "Secret",
             StdType::Signal => "Signal",
             StdType::CancelSource => "CancelSource",
+            StdType::Region => "Region",
+            StdType::Place => "Place",
+            StdType::RcRegion => "RcRegion",
+            StdType::RcPlace => "RcPlace",
+            StdType::Slots => "Slots",
             StdType::OpaqueHost => "OpaqueHost",
         }
     }
@@ -121,7 +219,7 @@ impl StdType {
 
 impl std::fmt::Display for StdType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.rust_name())
+        f.write_str(self.name())
     }
 }
 
@@ -142,14 +240,11 @@ pub enum Ty {
     /// A shared type of `tauto_rt::stdlib` by name (`Ref`, `Mutex`,
     /// `Atomic`): `tauto_rt::stdlib::<name><args>`.
     Std(StdType, Vec<Ty>),
-    /// `HashMap(K, V)`: `tauto_rt::stdlib::HashMap`, in insertion order as
-    /// the evaluator's is.
-    HashMap(Box<Ty>, Box<Ty>),
     /// `Slice(A)`, behind a borrow only: `[A]`.
     Slice(Box<Ty>),
     Option(Box<Ty>),
     Result(Box<Ty>, Box<Ty>),
-    /// `Pair(A, B)`: a tuple.
+    /// `Pair(A, B)`: a product of two members; a product of more members is nested to the right.
     Pair(Box<Ty>, Box<Ty>),
     /// A struct or enum the generator writes (the program's and the
     /// library's: `List`, `Map`).
@@ -171,8 +266,6 @@ pub enum Ty {
     BudgetAnswer(Box<Ty>),
     /// What `show` carries: the value already shown.
     Shown,
-    /// Left to Rust to infer: `_`.
-    Infer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -184,6 +277,35 @@ pub struct FnTy {
 }
 
 impl Ty {
+    /// Whether a function type occurs anywhere in this type.
+    pub fn has_fn(&self) -> bool {
+        match self {
+            Ty::Fn(_) => true,
+            Ty::Ref(a)
+            | Ty::RefMut(a)
+            | Ty::Vec(a)
+            | Ty::Array(a)
+            | Ty::Slice(a)
+            | Ty::Option(a)
+            | Ty::Info(a)
+            | Ty::BudgetAnswer(a) => a.has_fn(),
+            Ty::Result(a, b) | Ty::Pair(a, b) => a.has_fn() || b.has_fn(),
+            Ty::Data(_, args) | Ty::Std(_, args) => args.iter().any(Ty::has_fn),
+            Ty::SharedVar(_, a) => a.has_fn(),
+            Ty::Int(_)
+            | Ty::Bool
+            | Ty::Text
+            | Ty::Unit
+            | Ty::Never
+            | Ty::Float
+            | Ty::Float32
+            | Ty::Buf
+            | Ty::Union(_)
+            | Ty::Param(_)
+            | Ty::Shown => false,
+        }
+    }
+
     pub fn shared_var(&self) -> Option<&Ty> {
         match self {
             Ty::SharedVar(_, a) => Some(a),
@@ -195,9 +317,12 @@ impl Ty {
         matches!(self, Ty::Unit)
     }
 
-    pub fn has_infer(&self) -> bool {
+    /// Whether the type names the generic of an arm for every instance
+    /// (`∀ A. op<A>(a)`) that no `perform` of the program fixes
+    /// (`arms::instantiate`): the arm has no type to run at.
+    pub fn has_arm_generic(&self) -> bool {
         match self {
-            Ty::Infer => true,
+            Ty::Param(p) => arms::is_skolem(p),
             Ty::Vec(a)
             | Ty::Array(a)
             | Ty::Slice(a)
@@ -205,11 +330,23 @@ impl Ty {
             | Ty::Ref(a)
             | Ty::RefMut(a)
             | Ty::Info(a)
-            | Ty::BudgetAnswer(a) => a.has_infer(),
-            Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => a.has_infer() || b.has_infer(),
-            Ty::Data(_, args) | Ty::Std(_, args) => args.iter().any(Ty::has_infer),
-            Ty::Fn(f) => f.params.iter().any(Ty::has_infer) || f.ret.has_infer(),
-            _ => false,
+            | Ty::BudgetAnswer(a)
+            | Ty::SharedVar(_, a) => a.has_arm_generic(),
+            Ty::Result(a, b) | Ty::Pair(a, b) => {
+                a.has_arm_generic() || b.has_arm_generic()
+            }
+            Ty::Data(_, args) | Ty::Std(_, args) => args.iter().any(Ty::has_arm_generic),
+            Ty::Fn(f) => f.params.iter().any(Ty::has_arm_generic) || f.ret.has_arm_generic(),
+            Ty::Int(_)
+            | Ty::Bool
+            | Ty::Text
+            | Ty::Unit
+            | Ty::Never
+            | Ty::Float
+            | Ty::Float32
+            | Ty::Buf
+            | Ty::Union(_)
+            | Ty::Shown => false,
         }
     }
 
@@ -226,7 +363,7 @@ impl Ty {
             | Ty::RefMut(a)
             | Ty::Info(a)
             | Ty::BudgetAnswer(a) => a.params(out),
-            Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
+            Ty::Result(a, b) | Ty::Pair(a, b) => {
                 a.params(out);
                 b.params(out);
             }
@@ -235,7 +372,17 @@ impl Ty {
                 f.params.iter().for_each(|a| a.params(out));
                 f.ret.params(out);
             }
-            _ => {}
+            Ty::SharedVar(_, a) => a.params(out),
+            Ty::Int(_)
+            | Ty::Bool
+            | Ty::Text
+            | Ty::Unit
+            | Ty::Never
+            | Ty::Float
+            | Ty::Float32
+            | Ty::Buf
+            | Ty::Union(_)
+            | Ty::Shown => {}
         }
     }
 }
@@ -283,11 +430,15 @@ pub struct DataDef {
     pub copy: bool,
     /// A `bomb` field in each constructor.
     pub linear: bool,
-    /// A `view struct`: its Rust type has a lifetime.
+    /// A type that holds a borrow: its Rust type has a lifetime.
     pub view: bool,
     /// An extern type (`extern { type T }`): the host's type, bound by the
     /// backend's configuration; only extern functions make its values.
     pub host: bool,
+    /// The name `show` writes for a value of a `struct`: the type's name as
+    /// the source spells it, with the modules below its file's. Empty for
+    /// an `enum`.
+    pub shown: String,
 }
 
 #[derive(Debug, Clone)]
@@ -309,15 +460,16 @@ pub struct OpDef {
     pub result: Ty,
 }
 
-/// What a type parameter must be, besides `'static`, for the instance to
-/// compile.
+/// What a type parameter must be for the instance to compile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Bound {
     Clone,
     Show,
     Eq,
-    /// A key of `HashMap`: `DecEq` and `Hash`.
-    Hash,
+    /// Holds no borrow, for a host that needs it: the instance builds a
+    /// function value or carries values through an effect. A parameter
+    /// without it may stand for a type that holds a borrow.
+    Static,
 }
 
 #[derive(Debug, Clone)]
@@ -325,11 +477,18 @@ pub struct FnInst {
     pub id: InstId,
     /// The name in the tauto source.
     pub source: Name,
-    pub rust_name: String,
     pub tier: Tier,
     pub generics: Vec<(String, BTreeSet<Bound>)>,
     pub params: Vec<Param>,
     pub ret: Ty,
+    /// `borrows(m)`: for each parameter, whether the result may borrow from
+    /// it. `None` is every borrowed parameter.
+    pub lends: Option<Vec<bool>>,
+    /// Its function values live for a region of the instance's own (`'f`)
+    /// that its type parameters outlive, in place of `'static` on them: it
+    /// builds function values but keeps them inside its call (it returns
+    /// none, stores none in data and hands them only to such instances).
+    pub fn_region: bool,
     pub body: Expr,
     pub span: Span,
 }
@@ -455,6 +614,9 @@ pub enum Stmt {
         ty: Ty,
         init: Expr,
         span: Span,
+        /// `let(stack)`: the local is placed in the frame's slot, with no
+        /// allocation made for it ([`crate::stack`] checks that it can be).
+        stack: bool,
     },
     /// A `var`; `local.repr` says how it is stored.
     Var {
@@ -508,6 +670,26 @@ pub enum Arith {
     Div,
 }
 
+/// The numbers an arithmetic operation is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Num {
+    /// Integers of a width: a result outside it is a run-time error.
+    Int(Width),
+    Float,
+    Float32,
+}
+
+impl Num {
+    /// The type of the operation's operands and result.
+    pub fn ty(self) -> Ty {
+        match self {
+            Num::Int(w) => Ty::Int(w),
+            Num::Float => Ty::Float,
+            Num::Float32 => Ty::Float32,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cmp {
     Lt,
@@ -538,7 +720,7 @@ pub enum ExprKind {
     Arith {
         op: Arith,
         args: Vec<Expr>,
-        width: Width,
+        num: Num,
     },
     Cmp {
         op: Cmp,
@@ -603,7 +785,7 @@ pub enum ExprKind {
 #[derive(Debug, Clone)]
 pub struct BudgetNode {
     pub id: u32,
-    /// `budget(memory: n)`: `steps` is a count of cells.
+    /// `perform budget_memory(n, f)`: `steps` is a count of cells.
     pub memory: bool,
     pub steps: Expr,
     pub body: Expr,
@@ -625,6 +807,49 @@ pub struct CtorRef {
     /// Field names, `None` for a positional constructor.
     pub fields: Vec<Option<String>>,
     pub nullary: bool,
+}
+
+/// The cells a memory budget counts for making a value: one for the
+/// constructor and one for each field, and one for a closure that owns
+/// its environment. This is the one cost model every backend charges by.
+pub fn cells_made(kind: &ExprKind) -> Option<u64> {
+    match kind {
+        ExprKind::Ctor { fields, .. } => Some(1 + fields.len() as u64),
+        ExprKind::Closure(c) if !c.borrowed => Some(1),
+        _ => None,
+    }
+}
+
+impl CtorRef {
+    /// The declared position of the `i`-th field as written, which is by
+    /// name for a named field: a backend lays fields out by this and never
+    /// compares names itself.
+    pub fn slot(&self, i: usize, name: Option<&str>) -> usize {
+        name.and_then(|n| self.fields.iter().position(|x| x.as_deref() == Some(n)))
+            .unwrap_or(i)
+    }
+
+    /// Which constructor of the library's `Option` or `Result` this is, by
+    /// its declared index (`None`, `Some` and `Ok`, `Err` in the prelude's
+    /// order), so that no backend reads it from the name.
+    pub fn library(&self) -> Option<LibraryCtor> {
+        Some(match (&self.data, self.index) {
+            (DataRef::Option, 0) => LibraryCtor::None,
+            (DataRef::Option, _) => LibraryCtor::Some,
+            (DataRef::Result, 0) => LibraryCtor::Ok,
+            (DataRef::Result, _) => LibraryCtor::Err,
+            _ => return None,
+        })
+    }
+}
+
+/// A constructor of the library's `Option` or `Result`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryCtor {
+    None,
+    Some,
+    Ok,
+    Err,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -651,6 +876,13 @@ pub struct CallNode {
     /// parameters and run the body again, counting `tick` at the jump. A
     /// backend that does not reads it as an ordinary call.
     pub recur: bool,
+    /// What the call's frame drops if the call aborts (a call of the tier
+    /// `A` or above), the latest first: the owned values still alive here
+    /// that are not given to the call and were made inside the innermost
+    /// `handle` around it in the function (or anywhere in the function).
+    /// `ownership::insert` writes it; it is on the abort path only, so
+    /// `Expr::walk` and `children` do not visit it. Empty before that pass.
+    pub unwind: Vec<Stmt>,
     pub span: Span,
 }
 
@@ -663,6 +895,9 @@ pub enum Callee {
     Local(Local),
     /// The continuation `k` of an arm of a suspending operation.
     Cont(Local),
+    /// A function value written in place. A value the expression makes (a
+    /// copy of a field, a closure) is taken by the call: it ends when the
+    /// call does, whether the call returns or aborts.
     Value(Box<Expr>),
 }
 
@@ -717,6 +952,9 @@ pub struct PerformNode {
     /// (`Cx::detached`): the handlers it was started under answer it, or
     /// those of whoever runs it now.
     pub detached: bool,
+    /// What the perform's frame drops if an abort arm takes it, the latest
+    /// first, as `CallNode::unwind` says.
+    pub unwind: Vec<Stmt>,
     pub args: Vec<Expr>,
     pub result: Ty,
     pub span: Span,
@@ -734,6 +972,13 @@ pub enum Pat {
     Ctor {
         ctor: CtorRef,
         fields: Vec<Pat>,
+    },
+    /// A value of the union `union` injected at `variant`, with `pat` on what was injected:
+    /// the converse of `ExprKind::Inject`.
+    Variant {
+        union: UnionId,
+        variant: usize,
+        pat: Box<Pat>,
     },
 }
 
@@ -800,7 +1045,7 @@ pub struct ReturnArm {
 pub struct OpArm {
     pub op: OpIndex,
     pub instance: Option<OperationInstance>,
-    /// The operation's payload type (a tuple of its parameters).
+    /// The operation's payload type (a product of its parameters).
     pub params: Vec<Ty>,
     pub pats: Vec<Pat>,
     pub guard: Option<Expr>,
@@ -810,6 +1055,9 @@ pub struct OpArm {
     /// type of the answer it takes.
     pub k: Option<Local>,
     pub k_ans: Ty,
+    /// One of the copies `arms::instantiate` wrote of an arm for every
+    /// instance, at one payload type the program performs.
+    pub instantiated: bool,
     pub span: Span,
 }
 
@@ -826,15 +1074,34 @@ pub struct ExternDef {
     pub generics: Vec<String>,
     pub params: Vec<(String, Ty, Pass)>,
     pub ret: Ty,
+    /// `borrows(m)`: for each parameter, whether the result may borrow
+    /// from it. `None` is every borrowed parameter.
+    pub lends: Option<Vec<bool>>,
+    /// The row is `{wait}`: a call waits on the host (a JavaScript Promise,
+    /// a Rust Future) before it answers.
+    pub waits: bool,
+    pub span: Span,
+}
+
+/// A replaceable `extern` block: Tauto bodies are always checked; host
+/// bindings may replace the whole block's runtime representation.
+#[derive(Debug, Clone)]
+pub struct ReplaceableExternBlock {
+    /// Stable id: sorted member spellings joined by `\0`.
+    pub id: String,
+    pub fn_names: Vec<Name>,
+    /// Whether each member's written row includes `wait`, in `fn_names` order.
+    pub fn_waits: Vec<bool>,
+    pub data_names: Vec<Name>,
     pub span: Span,
 }
 
 /// The program: what the generator writes.
 #[derive(Debug, Clone, Default)]
 pub struct Package {
-    pub declarations: Vec<tauto::identity::DeclRef>,
+    pub declarations: Vec<tauto_surface::identity::DeclRef>,
     /// File boundaries and macro origins for compiled totes.
-    pub sources: Option<tauto::program::SourceMap>,
+    pub sources: Option<tauto_surface::sources::SourceMap>,
     /// Runtime syntax parsers with validated, self-contained tables.
     pub syntax_parsers: Vec<SyntaxParser>,
     pub datas: Vec<DataDef>,
@@ -845,6 +1112,16 @@ pub struct Package {
     /// The functions a Rust crate may call (`compile_with` `lib`).
     pub exports: Vec<Export>,
     pub externs: Vec<ExternDef>,
+    /// Replaceable blocks still using Tauto bodies until host selection.
+    pub replaceable_externs: Vec<ReplaceableExternBlock>,
+    /// Function instances only the replaced Tauto fallback reached after host
+    /// selection. Generators omit them; `InstId`s stay valid for the rest.
+    pub host_omitted_fns: BTreeSet<InstId>,
+    /// Data types only the replaced Tauto fallback reached after host
+    /// selection (including ordinary structs/enums that name omitted hosts).
+    pub host_omitted_datas: BTreeSet<Name>,
+    /// Unions only the replaced Tauto fallback reached after host selection.
+    pub host_omitted_unions: BTreeSet<UnionId>,
     /// The program starts tasks (`perform spawn`): what a task body holds
     /// may cross threads, so shared values are `Arc`s and function values
     /// are `Send + Sync`.
@@ -859,6 +1136,9 @@ pub struct Package {
     /// code of the M tier. The JavaScript backend runs every function with
     /// explicit continuations.
     pub rust_unsupported: Option<Unsupported>,
+    /// The `handle` that answers a `direct` operation where the program
+    /// says it alone (`evidence.rs`).
+    pub evidence: evidence::Evidence,
 }
 
 /// A runtime parser whose syntax name and grammar identity are known at build time.
@@ -878,6 +1158,10 @@ pub struct Export {
     pub inst: InstId,
     pub name: String,
     pub row: Vec<String>,
+    /// The effects of `row` that are not the library's `show`, `div`, `wait`
+    /// or `spawn`: decided by identity when lowering, since the spelling of a
+    /// user effect may equal a library one.
+    pub foreign_row: Vec<String>,
     /// Parameters declared as shared borrows of functions with an empty row.
     /// Recorded before representation optimizations can introduce borrows.
     pub pure_borrow_callbacks: Vec<usize>,
@@ -914,7 +1198,24 @@ impl Expr {
             | ExprKind::Deref { value, .. } => {
                 vec![&mut **value]
             }
-            _ => Vec::new(),
+            ExprKind::Declaration(_)
+            | ExprKind::Unit
+            | ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Text(_)
+            | ExprKind::Read { .. }
+            | ExprKind::FnValue { .. }
+            | ExprKind::Ref(_)
+            | ExprKind::RefMut(_)
+            | ExprKind::Match(_)
+            | ExprKind::If { .. }
+            | ExprKind::Block(_)
+            | ExprKind::Closure(_)
+            | ExprKind::Handle(_)
+            | ExprKind::And(..)
+            | ExprKind::Or(..)
+            | ExprKind::Budget(_) => Vec::new(),
         }
     }
 
@@ -924,6 +1225,22 @@ impl Expr {
     pub fn walk(&self, f: &mut dyn FnMut(&Expr)) {
         f(self);
         self.children(&mut |child| child.walk(f));
+    }
+
+    /// Like `walk`, but also enters the guards and bodies of suspending
+    /// handler arms.
+    pub fn walk_with_handlers(&self, f: &mut dyn FnMut(&Expr)) {
+        self.walk(&mut |node| {
+            f(node);
+            if let ExprKind::Handle(h) = &node.kind {
+                for arm in &h.susp {
+                    if let Some(g) = &arm.guard {
+                        g.walk_with_handlers(f);
+                    }
+                    arm.body.walk_with_handlers(f);
+                }
+            }
+        });
     }
 
     /// Calls `f` on immediate value subexpressions, with the same exclusions
@@ -1017,7 +1334,16 @@ impl Expr {
             ExprKind::Inject { value, .. }
             | ExprKind::Remap { value, .. }
             | ExprKind::Deref { value, .. } => f(value),
-            _ => {}
+            ExprKind::Declaration(_)
+            | ExprKind::Unit
+            | ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Text(_)
+            | ExprKind::Read { .. }
+            | ExprKind::FnValue { .. }
+            | ExprKind::Ref(_)
+            | ExprKind::RefMut(_) => {}
         }
     }
 }
@@ -1049,7 +1375,13 @@ pub fn interface_fingerprint(pkg: &Package) -> u64 {
             .iter()
             .map(|(_, t, pass)| format!("{pass:?} {}", ty_text(t)))
             .collect();
-        let _ = writeln!(text, "extern {} {:?} {}", x.name.as_str(), params, ty_text(&x.ret));
+        let _ = writeln!(
+            text,
+            "extern {} {:?} {}",
+            x.name.as_str(),
+            params,
+            ty_text(&x.ret)
+        );
     }
     for d in &pkg.datas {
         let _ = write!(
@@ -1097,4 +1429,220 @@ fn ty_text(t: &Ty) -> String {
         }
     }
     out
+}
+
+impl Ty {
+    /// Calls `f` on this type and on each type inside it, outermost first;
+    /// a type `f` changes is not looked into again.
+    pub fn each_mut(&mut self, f: &mut dyn FnMut(&mut Ty)) {
+        f(self);
+        match self {
+            Ty::Vec(a)
+            | Ty::Array(a)
+            | Ty::Slice(a)
+            | Ty::Option(a)
+            | Ty::Ref(a)
+            | Ty::RefMut(a)
+            | Ty::Info(a)
+            | Ty::BudgetAnswer(a)
+            | Ty::SharedVar(_, a) => a.each_mut(f),
+            Ty::Result(a, b) | Ty::Pair(a, b) => {
+                a.each_mut(f);
+                b.each_mut(f);
+            }
+            Ty::Data(_, args) | Ty::Std(_, args) => args.iter_mut().for_each(|a| a.each_mut(f)),
+            Ty::Fn(t) => t.each_mut(f),
+            Ty::Int(_)
+            | Ty::Bool
+            | Ty::Text
+            | Ty::Unit
+            | Ty::Never
+            | Ty::Float
+            | Ty::Float32
+            | Ty::Buf
+            | Ty::Union(_)
+            | Ty::Param(_)
+            | Ty::Shown => {}
+        }
+    }
+}
+
+impl FnTy {
+    fn each_mut(&mut self, f: &mut dyn FnMut(&mut Ty)) {
+        self.params.iter_mut().for_each(|p| p.each_mut(f));
+        self.ret.each_mut(f);
+    }
+}
+
+impl Pat {
+    /// Calls `f` on the type of each name the pattern binds.
+    pub fn tys_mut(&mut self, f: &mut dyn FnMut(&mut Ty)) {
+        match self {
+            Pat::Bind(_, t) => t.each_mut(f),
+            Pat::Ctor { fields, .. } => fields.iter_mut().for_each(|p| p.tys_mut(f)),
+            Pat::Variant { pat, .. } => pat.tys_mut(f),
+            Pat::Wild | Pat::Int(_) | Pat::Nat(_) | Pat::Bool(_) | Pat::Text(_) => {}
+        }
+    }
+}
+
+impl OperationInstance {
+    fn tys_mut(&mut self, f: &mut dyn FnMut(&mut Ty)) {
+        self.type_args.iter_mut().for_each(|t| t.each_mut(f));
+        self.params.iter_mut().for_each(|t| t.each_mut(f));
+        self.answer.each_mut(f);
+    }
+}
+
+impl OpArm {
+    /// Calls `f` on every type the arm writes (`Expr::tys_mut`).
+    pub fn tys_mut(&mut self, f: &mut dyn FnMut(&mut Ty)) {
+        if let Some(i) = &mut self.instance {
+            i.tys_mut(f);
+        }
+        self.params.iter_mut().for_each(|t| t.each_mut(f));
+        self.pats.iter_mut().for_each(|p| p.tys_mut(f));
+        if let Some(g) = &mut self.guard {
+            g.tys_mut(f);
+        }
+        self.body.tys_mut(f);
+        self.k_ans.each_mut(f);
+    }
+}
+
+impl Block {
+    fn tys_mut(&mut self, f: &mut dyn FnMut(&mut Ty)) {
+        for s in &mut self.stmts {
+            s.tys_mut(f);
+        }
+        if let Some(t) = &mut self.tail {
+            t.tys_mut(f);
+        }
+    }
+}
+
+impl Stmt {
+    fn tys_mut(&mut self, f: &mut dyn FnMut(&mut Ty)) {
+        match self {
+            Stmt::Let { ty, init, .. } | Stmt::Var { ty, init, .. } => {
+                ty.each_mut(f);
+                init.tys_mut(f);
+            }
+            Stmt::Assign { target, value, .. } => {
+                target.ty.each_mut(f);
+                value.tys_mut(f);
+            }
+            Stmt::Expr(e) => e.tys_mut(f),
+            Stmt::While { cond, body, .. } => {
+                cond.tys_mut(f);
+                body.tys_mut(f);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    v.tys_mut(f);
+                }
+            }
+        }
+    }
+}
+
+impl Expr {
+    /// Calls `f` on every type written in `self`: of each expression, local,
+    /// pattern, place, closure and arm in it (`Ty::each_mut` on each).
+    pub fn tys_mut(&mut self, f: &mut dyn FnMut(&mut Ty)) {
+        self.ty.each_mut(f);
+        match &mut self.kind {
+            ExprKind::FnValue { targs, .. } => targs.iter_mut().for_each(|t| t.each_mut(f)),
+            ExprKind::Call(c) => {
+                if let Callee::Value(v) = &mut c.callee {
+                    v.tys_mut(f);
+                }
+                c.args.iter_mut().for_each(|a| a.tys_mut(f));
+                c.targs.iter_mut().for_each(|t| t.each_mut(f));
+                c.unwind.iter_mut().for_each(|s| s.tys_mut(f));
+            }
+            ExprKind::Arith { args, .. }
+            | ExprKind::Cmp { args, .. }
+            | ExprKind::Eq { args, .. } => args.iter_mut().for_each(|a| a.tys_mut(f)),
+            ExprKind::Not(a)
+            | ExprKind::TempRef(a)
+            | ExprKind::Shown(a)
+            | ExprKind::Unreachable(a)
+            | ExprKind::FnCast(a) => a.tys_mut(f),
+            ExprKind::And(a, b) | ExprKind::Or(a, b) => {
+                a.tys_mut(f);
+                b.tys_mut(f);
+            }
+            ExprKind::Ctor { fields, .. } => fields.iter_mut().for_each(|(_, e)| e.tys_mut(f)),
+            ExprKind::Field { base, .. } => base.tys_mut(f),
+            ExprKind::Match(m) => {
+                m.scrut.tys_mut(f);
+                for a in &mut m.arms {
+                    a.pat.tys_mut(f);
+                    if let Some(g) = &mut a.guard {
+                        g.tys_mut(f);
+                    }
+                    a.body.tys_mut(f);
+                }
+            }
+            ExprKind::If {
+                cond,
+                then,
+                otherwise,
+            } => {
+                cond.tys_mut(f);
+                then.tys_mut(f);
+                if let Some(o) = otherwise {
+                    o.tys_mut(f);
+                }
+            }
+            ExprKind::Block(b) => b.tys_mut(f),
+            ExprKind::Closure(c) => {
+                c.params.iter_mut().for_each(|(_, t)| t.each_mut(f));
+                c.ret.each_mut(f);
+                c.fn_ty.each_mut(f);
+                c.body.tys_mut(f);
+            }
+            ExprKind::Perform(p) => {
+                if let Some(i) = &mut p.instance {
+                    i.tys_mut(f);
+                }
+                p.args.iter_mut().for_each(|a| a.tys_mut(f));
+                p.result.each_mut(f);
+                p.unwind.iter_mut().for_each(|s| s.tys_mut(f));
+            }
+            ExprKind::Handle(h) => {
+                h.body.tys_mut(f);
+                h.body_ty.each_mut(f);
+                h.result.each_mut(f);
+                if let Some(t) = &mut h.host_ret {
+                    t.each_mut(f);
+                }
+                if let Some(r) = &mut h.ret {
+                    r.pat.tys_mut(f);
+                    r.body.tys_mut(f);
+                }
+                for a in h.direct.iter_mut().chain(&mut h.aborts).chain(&mut h.susp) {
+                    a.tys_mut(f);
+                }
+            }
+            ExprKind::Inject { value, .. } | ExprKind::Deref { value, .. } => value.tys_mut(f),
+            ExprKind::Remap { to, value, .. } => {
+                to.each_mut(f);
+                value.tys_mut(f);
+            }
+            ExprKind::Ref(p) | ExprKind::RefMut(p) => p.ty.each_mut(f),
+            ExprKind::Budget(b) => {
+                b.steps.tys_mut(f);
+                b.body.tys_mut(f);
+            }
+            ExprKind::Declaration(_)
+            | ExprKind::Unit
+            | ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Text(_)
+            | ExprKind::Read { .. } => {}
+        }
+    }
 }

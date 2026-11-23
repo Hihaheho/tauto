@@ -1,0 +1,200 @@
+import "base.taut" { Nat }
+import "float.taut" { Float }
+import "float32.taut" { Float, Float32 }
+import "int.taut" { Int }
+import "rat.taut" { Rat }
+import "uint.taut" { Nat }
+import std::prelude::std { Option, Ordering }
+
+// The numbers the bits of a `Float` stand for. `Float` (`std/Float::taut`)
+// is what runs; `Rat` is what a proof reasons about. `Float::val` reads a
+// `Float` as a number, `Float::of_rat` writes a number as the nearest
+// `Float`, ties to even, and the two meet in the rule IEEE 754 states: an
+// operation on finite `Float`s gives the rounding of the exact result
+// (`Float::add(a, b)` is `Float::of_rat(Float::val(a) + Float::val(b))` when it
+// is finite). Nothing here is extracted.
+
+// The number a finite `x` stands for, `None` for NaN and the infinities.
+// Both zeros are 0.
+pub fn Float::val(x: Float): Option(Rat) {
+  match Float::is_nan(x) || Float::is_infinite(x) {
+    true => None
+    false => Some(Float::val_of(Float::raw(x)))
+  }
+}
+
+// `±m * 2^(e - 4000)`.
+pub fn Float::val_of(n: Nat): Rat {
+  match 4000 <= Float::e_of(n) {
+    true => Rat::of_int(Float::signed(Float::sign_of(n), Float::m_of(n) * Nat::pow2(Float::e_of(n) - 4000)))
+    false => Rat::Mk(Float::signed(Float::sign_of(n), Float::m_of(n)), Nat::pow2(4000 - Float::e_of(n)) - 1)
+  }
+}
+
+pub fn Float::finite(x: Float): Bool {
+  not(Float::is_nan(x) || Float::is_infinite(x))
+}
+
+// The nearest `Float` to `r`, ties to even: an infinity when it is too
+// large, `+0` for 0, and a zero with the sign of `r` when `r` rounds to
+// zero.
+pub fn Float::of_rat(r: Rat): Float {
+  match Rat::num(r) {
+    IntOfNat(p) => Float::of_raw(Float::of_frac(0, p, Rat::den(r)))
+    IntNegSucc(p) => Float::of_raw(Float::of_frac(1, Succ(p), Rat::den(r)))
+  }
+}
+
+// The bits of `±p / q`, `q > 0`. The quotient is taken to at least 56
+// binary digits, with a last digit of 1 for a remainder, so that
+// `Float::pack` rounds it as it would the exact quotient. The kernel
+// computes it at once while `q < 2^72`.
+// The number of binary digits of `n`, for every `n`: `len` counts at
+// most 130, enough for what `Float`'s operations compute but not for the
+// parts of a `Rat`.
+pub fn Float::rat_len(n: Nat): Nat {
+  Float::bitlen(n, n)
+}
+
+pub fn Float::of_frac(s: Nat, p: Nat, q: Nat): Nat {
+  match p == 0 {
+    true => 0
+    false => Float::of_scaled(Float::pack, Float::inf_raw(s), s, p, q, 56 + Float::rat_len(q), Float::rat_len(p))
+  }
+}
+
+// `p / q` scaled by `2^(up - down)`, where `up = 56 + len(q)` and
+// `down = len(p)`, and packed by `pack` (`Float::pack` or `Float32::pack`);
+// `inf` is the bits of the infinity with sign `s`.
+pub fn Float::of_scaled(
+  pack: (Nat, Nat, Nat) -> Nat,
+  inf: Nat,
+  s: Nat,
+  p: Nat,
+  q: Nat,
+  up: Nat,
+  down: Nat
+): Nat {
+  match down <= up {
+    // Scaled up by `k = up - down`: the exponent is `4000 - k - 1`, and
+    // what lies below `2^-2100` is far below the smallest subnormal.
+    true => ⊢ Nat from match up - down < 2100 {
+      true => pack(s, Float::sticky(p * Nat::pow2(up - down), q), 3999 - (up - down))
+      false => pack(s, 0, 0)
+    }
+    // Scaled down by `k = down - up`: beyond `2^1100` it is infinite.
+    false => ⊢ Nat from match down - up < 1100 {
+      true => pack(s, Float::sticky(p, q * Nat::pow2(down - up)), 3999 + (down - up))
+      false => inf
+    }
+  }
+}
+
+// `2 * (n / q)`, plus 1 when `q` does not divide `n`. A `q` of 0 (never
+// passed) is read as dividing nothing: 1 for an `n` that is not 0.
+pub fn Float::sticky(n: Nat, q: Nat): Nat {
+  match q == 0 eqn h {
+    true => ⊢ Nat from match n == 0 { true => 0, false => 1 }
+    false => 2 * Nat::div_nz(
+      n,
+      q,
+      Nat::ne_zero(q, h)
+    ) + Float::rem_bit(Nat::rem_nz(n, q, Nat::ne_zero(q, h)))
+  }
+}
+
+// 1 for a remainder, 0 for none.
+pub fn Float::rem_bit(r: Nat): Nat {
+  match r == 0 { true => 0, false => 1 }
+}
+
+pub fn Float::near(y: Float, r: Rat, eps: Rat): Bool {
+  match Float::val(y) {
+    None => false
+    Some(v) => Rat::le(Rat::dist(v, r), eps)
+  }
+}
+
+// IEEE 754's `totalOrder`: `-NaN < -inf < … < -0 < +0 < … < +inf < NaN`.
+// With a single NaN, it is the bits read as a signed number.
+pub fn Float::total_cmp(a: Float, b: Float): Ordering {
+  Float::cmp_nat(Float::total_key(Float::raw(a)), Float::total_key(Float::raw(b)))
+}
+
+pub fn Float::cmp_nat(a: Nat, b: Nat): Ordering {
+  match a < b {
+    true => Less
+    false => ⊢ Ordering from match a == b { true => Equal, false => Greater }
+  }
+}
+
+pub fn Float::total_key(n: Nat): Nat {
+  match Float::sign_of(n) == 0 {
+    true => 9223372036854775808 + n
+    false => 18446744073709551615 - n
+  }
+}
+
+// `0.1 + 0.2` is the rounding of the exact sum of the two numbers, which
+// is not `0.3`.
+pub theorem Float::add_rounds_example(): Float::add(
+  0.1,
+  0.2
+) = Float::of_rat(Rat::add(Rat::of_float_example(0.1), Rat::of_float_example(0.2))) {
+  Refl
+}
+
+// The nearest `Float32` to `r`, as `Float::of_rat` the nearest `Float`.
+pub fn Float32::of_rat(r: Rat): Float32 {
+  match Rat::num(r) {
+    IntOfNat(p) => Float32::of_raw(Float32::of_frac(0, p, Rat::den(r)))
+    IntNegSucc(p) => Float32::of_raw(Float32::of_frac(1, Succ(p), Rat::den(r)))
+  }
+}
+
+pub fn Float32::of_frac(s: Nat, p: Nat, q: Nat): Nat {
+  match p == 0 {
+    true => 0
+    false => Float::of_scaled(
+      Float32::pack,
+      Float32::inf_raw(s),
+      s,
+      p,
+      q,
+      56 + Float::rat_len(q),
+      Float::rat_len(p)
+    )
+  }
+}
+
+// The number a finite `Float32` stands for: that of the same `Float`.
+pub fn Float32::val(x: Float32): Option(Rat) {
+  Float::val(Float::of_float32(x))
+}
+
+// `g` computes `f` to within `eps`: for every finite `x`, `g(x)` is finite
+// and within `eps` of `f` of the number `x` stands for. A proof states the
+// mathematics on `f` and the error of what runs as `Refines(g, f, eps)`.
+pub def Refines(g: (Float) -> Float, f: (Rat) -> Rat, eps: Rat): Prop :=
+∀ x: Float, r: Rat. (Float::val(x) = Some(r)) -> (Float::near(g(x), f(r), eps) = true)
+
+pub fn Rat::of_float_example(x: Float): Rat {
+  match Float::val(x) {
+    None => Rat::of_nat(0)
+    Some(r) => r
+  }
+}
+
+pub theorem Float::of_rat_val_example(): Float::of_rat(
+  Rat::of_float_example(0.30000000000000004)
+) = 0.30000000000000004 {
+  Refl
+}
+
+pub theorem Float::of_rat_third(): Float::of_rat(Rat::frac(IntOfNat(1), 2)) = Float::div(1.0, 3.0, Refl) {
+  Refl
+}
+
+pub theorem Float::total_cmp_zeros(): Float::total_cmp(-0.0, 0.0) = Less {
+  Refl
+}

@@ -1,0 +1,240 @@
+import "ir.taut"
+import "names.taut"
+import "tmpl.taut"
+import "build.taut"
+import "layout.taut"
+import "glue.taut"
+import "func.taut"
+import "walk.taut"
+import "runtime.taut"
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/tables.taut"
+import std::text
+import std::base
+import std::map
+
+// A checked program as IR, which LLVM compiles to machine code.
+//
+// The input is a package with no type parameter left, in A-normal form, with
+// its drops written. The order of evaluation, where each value is dropped
+// and what each `match` tests are read from it; nothing here decides them.
+// `llvm_emit` gives one module, or says what in the program the backend does
+// not write yet: it never writes a program in part.
+
+pub fn e_is_refused(g: &mut FFun): Bool {
+  match g.m.refused {
+    None => false
+    Some(^what) => true
+  }
+}
+
+// The functions of the program, in order, up to the first the backend does
+// not write.
+pub fn e_functions(g: &mut FFun, fns: List(NFn)): List(llvm::Item::I) ! {div} {
+  match fns {
+    Nil => Nil
+    Cons(f, rest) => match f_function(&mut g, f) {
+      None => Nil
+      Some(item) => if e_is_refused(&mut g) { Nil } else { Cons(item, e_functions(&mut g, rest)) }
+    }
+  }
+}
+
+// The glue asked for with this number: the list holds the last asked for
+// first.
+pub fn e_glue_at(glue: List(LGlue × NTy), id: Nat): Option(LGlue × NTy) {
+  match glue {
+    Nil => None
+    Cons(x, rest) => if l_len(rest) == id { Some(x) } else { e_glue_at(rest, id) }
+  }
+}
+
+// The glue functions from the one numbered `done` on: writing one may ask
+// for more.
+pub fn e_glue(g: &mut FFun, done: Nat): List(llvm::Item::I) ! {div} {
+  if e_is_refused(&mut g) {
+    Nil
+  } else {
+    match e_glue_at(g.m.glue, done) {
+      None => Nil
+      Some(x) => match x {
+        #(kind, t) => {
+          let item := g_function(&mut g.m, kind, t)
+          Cons(item, e_glue(&mut g, done + 1))
+        }
+      }
+    }
+  }
+}
+
+// The constant texts, the first made first.
+pub fn e_strings(strings: List(Text), id: Nat): List(llvm::Item::I) {
+  match strings {
+    Nil => Nil
+    Cons(s, rest) => Cons(ll_constant(ll_string(id), s), e_strings(rest, id + 1))
+  }
+}
+
+// The constant boxes of the literals, the first made first.
+pub fn e_boxes(boxes: List(Text), id: Nat): List(llvm::Item::I) {
+  match boxes {
+    Nil => Nil
+    Cons(s, rest) => Cons(ll_box_constant(ll_box(id), s), e_boxes(rest, id + 1))
+  }
+}
+
+// The bytes of a number below 2^32 as four bytes, the lowest first, each
+// written as IR writes a byte of a constant.
+pub fn e_u32_bytes(n: Nat, k: Nat): List(Text) {
+  match k {
+    Zero => Nil
+    Succ(j) => {
+      let b := Nat::rem_nz(n, 256, Nat::ne_zero(256, Refl))
+      Cons(
+        Text::concat_all(
+          [
+            "\\",
+            ll_hex_digit(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl))),
+            ll_hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl)))
+          ]
+        ),
+        e_u32_bytes(Nat::div_nz(n, 256, Nat::ne_zero(256, Refl)), j)
+      )
+    }
+  }
+}
+
+pub fn e_numbers_bytes(numbers: List(Text)): List(Text) {
+  match numbers {
+    Nil => Nil
+    Cons(n, rest) => {
+      let v := match text_parse_u64(n) {
+        Some(v) => v
+        None => 0
+      }
+      f_append(e_u32_bytes(v, 4), e_numbers_bytes(rest))
+    }
+  }
+}
+
+// `@.rt.escaped`: the characters from U+0080 that `show` of a `Text` writes
+// as `\u{…}`, as ranges, each its first and last character as two 32-bit
+// numbers, ended by a first character past every character.
+pub fn e_escaped(): llvm::Item::I {
+  let numbers := f_append(text_split(unicode_table_escaped(), " "), ["4294967295", "4294967295"])
+  let bytes := llvm::Ty::I::ArrayTy_I(
+    llvm::ArrayTy::I::Mk(ll_count(ll_int(4 * l_len(numbers))), llvm::Ty::I::IntTy_I("i8"))
+  )
+  llvm::Item::I::Constant_I(
+    llvm::Constant::I::Mk(
+      "@.rt.escaped",
+      bytes,
+      Text::concat_all(["c\"", Text::concat_all(e_numbers_bytes(numbers)), "\""])
+    )
+  )
+}
+
+// `main`, which runs the program's top level.
+pub fn e_main(top: Nat, words: Nat): llvm::Item::I {
+  let f := ll_fn(top)
+  let of := f_result_type(words)
+  let call := ll!(`call fastcc $of ${f}()`)
+  let run := if words == 0 {
+    match b_call_of(call) {
+      Some(c) => llvm::Instr::I::Call_I(c)
+      None => b_named(ll_result(), call)
+    }
+  } else {
+    b_named(ll_result(), call)
+  }
+  // What the program wrote is written out before it ends.
+  let flush := match b_call_of(ll!(`call void @rt_stdout_flush()`)) {
+    Some(c) => llvm::Instr::I::Call_I(c)
+    None => run
+  }
+  let last := ll!(`ret i32 0`)
+  ll_define_main(llvm::Block::I::Mk(ll_label_def(ll_entry()), [run, flush], last), Nil)
+}
+
+pub fn e_handles_show(pkg: NPackage, ops: List(NOp), op: Nat): Bool ! {div} {
+  match ops {
+    Nil => false
+    Cons(o, rest) => if o.name == "show" {
+      w_fns_handle(pkg.fns, op)
+    } else {
+      e_handles_show(pkg, rest, op + 1)
+    }
+  }
+}
+
+pub fn e_refusal(what: Text): Text {
+  Text::concat_all(["the LLVM backend does not write ", what, " yet"])
+}
+
+// The module of `pkg`, whose `main` runs the program's top level, or what
+// in the program the backend does not write yet.
+pub fn llvm_emit(pkg: NPackage): Result(llvm::Module::I, Text) ! {div} {
+  match pkg.top {
+    None => Err(e_refusal("a package without a top level"))
+    Some(top) => {
+      var g := FFun {
+        m: LModule {
+          pkg: pkg,
+          glue: Nil,
+          strings: Nil,
+          boxes: Nil,
+          refused: None,
+          closures: Nil,
+          closure_defs: Nil,
+          wrappers: Nil,
+          calls: Nil,
+          handles_show: e_handles_show(pkg, pkg.ops, 0)
+        },
+        b: b_new(),
+        locals: Ordmap::empty(),
+        ret: NUnit,
+        ev: None,
+        graph: k_graph(NBlockFn { blocks: Nil, regions: Nil, variants: Nil, opaque_count: 0, refutable_count: 0, closures: Nil })
+      }
+      let fns := e_functions(&mut g, pkg.fns)
+      let glue := e_glue(&mut g, 0)
+      let words := match f_nth(pkg.fns, top) {
+        None => 0
+        Some(f) => f_words(&mut g, f.ret)
+      }
+      match g.m.refused {
+        Some(what) => Err(e_refusal(what))
+        None => {
+          let strings := f_append(
+            e_strings(text_list_reverse(g.m.strings), 0),
+            e_boxes(text_list_reverse(g.m.boxes), 0)
+          )
+          Ok(
+            llvm::Module::I::Mk(
+              f_append(
+                rt_items(),
+                Cons(
+                  e_escaped(),
+                  f_append(
+                    strings,
+                    f_append(
+                      fns,
+                      f_append(
+                        glue,
+                        f_append(
+                          text_list_reverse(g.m.closure_defs),
+                          f_append(f_dispatch(g.m), [e_main(top, words)])
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        }
+      }
+    }
+  }
+}

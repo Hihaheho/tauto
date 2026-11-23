@@ -1,12 +1,13 @@
 import "field_recheck_frame.taut"
 import "written_error_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas_registration.taut"
 import "error_frame.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -19,8 +20,7 @@ pub theorem recheck_fields_cons_frame_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_recheck_fields(rest, next, generics))
 ): CkErrorFrame(c, recheck_fields_cons(f, rest, c, generics)) {
   error_frame_bind(
-    Ty,
-    Unit,
+    <A: Ty, B: Unit>,
     c,
     (ignored: Ty, next: Checker) => ck_rewrap1(ck_recheck_fields(rest, next, generics)),
     ck_written(c, registration_field_ty(f), generics),
@@ -33,7 +33,7 @@ pub theorem ck_recheck_fields_frame_errors(
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_recheck_fields(xs, c, generics)) {
-  ⊢ CkErrorFrame(c, ck_recheck_fields(xs, c, generics)) from match xs {
+  match xs {
     Nil => (clean_errors => clean_errors)
     Cons(f, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
@@ -57,8 +57,7 @@ pub theorem recheck_ctors_cons_frame_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_recheck_ctors(rest, next, generics))
 ): CkErrorFrame(c, recheck_ctors_cons(k, rest, c, generics)) {
   error_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_ctors(rest, next, generics)),
     ck_recheck_fields(registration_ctor_fields(k), c, generics),
@@ -71,7 +70,7 @@ pub theorem ck_recheck_ctors_frame_errors(
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_recheck_ctors(xs, c, generics)) {
-  ⊢ CkErrorFrame(c, ck_recheck_ctors(xs, c, generics)) from match xs {
+  match xs {
     Nil => (clean_errors => clean_errors)
     Cons(k, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
@@ -94,8 +93,7 @@ pub theorem recheck_datas_cons_frame_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_recheck_datas(rest, next))
 ): CkErrorFrame(c, recheck_datas_cons(d, rest, c)) {
   error_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_datas(rest, next)),
     ck_recheck_ctors(
@@ -115,7 +113,7 @@ pub theorem ck_recheck_datas_frame_errors(
   xs: List(SurfaceData),
   c: Checker
 ): CkErrorFrame(c, ck_recheck_datas(xs, c)) {
-  ⊢ CkErrorFrame(c, ck_recheck_datas(xs, c)) from match xs {
+  match xs {
     Nil => (clean_errors => clean_errors)
     Cons(d, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),

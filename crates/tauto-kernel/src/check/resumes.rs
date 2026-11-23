@@ -142,6 +142,8 @@ fn block(stmts: &[Stmt], k: &Name) -> Uses {
                     total = Uses::MANY;
                 }
             }
+            // `lower_fors` / `lower_loops` expand them where the program is read.
+            Stmt::For { .. } | Stmt::Loop { .. } | Stmt::Break(_) | Stmt::Continue => {}
             _ => {
                 let mut s = s.clone();
                 walk::roots(&mut s, &mut |t| total = total.then(uses(t, k)));

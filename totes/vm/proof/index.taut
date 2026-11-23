@@ -1,25 +1,26 @@
+import std::array
 import "../src/builtins.taut"
 
 import "seq.taut"
 import "../src/mval.taut"
-import std::Base
+import std::base
 
 pub theorem m_items_len_correct(v: MVal): m_items_len(v) = List::length(m_as_items(v)) {
   ms_len_correct(MvUnit, m_as_seq(v))
 }
 
 // The reference bounds test includes the whole sequence's length.
-pub fn m_vec_get_reference(ctors: List(MCtor), cx: MCx, r: MVal, i: MVal, index: Bool): MOut {
+pub fn m_vec_get_reference(ctors: Array(MCtor), cx: MCx, r: MVal, i: MVal, index: Bool): MOut {
   let xs := m_as_items(m_get(ctors, cx, r))
   if Bool::and(not(m_is_neg(i)), Nat::lt(m_as_nat(i), List::length(xs))) {
-    match m_item_ref(cx, r, MpathItem(m_as_nat(i))) {
-      Pair { fst: x, snd: cx2 } => MoutVal(if index { x } else { m_some(x) }, cx2)
+    match m_item_ref(ctors, cx, r, MpathItem(m_as_nat(i))) {
+      #(x, cx2) => MoutVal(if index { x } else { m_some(x) }, cx2)
     }
-  } else if index { MoutPerform("out_of_bounds") } else { MoutVal(m_none(), cx) }
+  } else if index { MoutPerform("out_of_bounds", cx) } else { MoutVal(m_none(), cx) }
 }
 
 pub theorem m_vec_get_correct(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
   r: MVal,
   i: MVal,
@@ -27,14 +28,14 @@ pub theorem m_vec_get_correct(
 ): m_vec_get(ctors, cx, r, i, index) = m_vec_get_reference(ctors, cx, r, i, index) {
   Eq::congr(
     (n: Nat) => ⊢ MOut from match Bool::and(not(m_is_neg(i)), Nat::lt(m_as_nat(i), n)) {
-      true => ⊢ MOut from match m_item_ref(cx, r, MpathItem(m_as_nat(i))) {
-        Pair { fst: x, snd: cx2 } => MoutVal(⊢ MVal from match index {
+      true => ⊢ MOut from match m_item_ref(ctors, cx, r, MpathItem(m_as_nat(i))) {
+        #(x, cx2) => MoutVal(⊢ MVal from match index {
           true => x
           false => m_some(x)
         }, cx2)
       }
       false => ⊢ MOut from match index {
-        true => MoutPerform("out_of_bounds")
+        true => MoutPerform("out_of_bounds", cx)
         false => MoutVal(m_none(), cx)
       }
     },

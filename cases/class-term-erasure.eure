@@ -1,17 +1,33 @@
 description = "Value-indexed class dictionaries lower to executable Nib and preserve their method results."
 
+@ cases.instance-infer-from-dictionary-run
+imports = [path`../std/nat.taut`]
+source = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 7 }
+}
+fn use(value: Local): Nat {
+  let number := Choose::choose(value)
+  number
+}
+show(&use(Local::Mk))
+```
+stdout = "7\n"
+
 @ cases.value-indexed-dictionary-run
 files_tote = "app"
 files."app/Tauto.eure" = 'package { name = "app"
 version = "0.1.0" }'
 extract = true
 files."app/src/main.taut" = ```tauto
-import std::Nat
+import std::nat
 
 inductive Tagged(A: Type, key: Nat): Type {
   Tag(value: A): Tagged(A, key)
 }
-class ReadTagged(A: Type, key: Nat) {
+inductive class ReadTagged(A: Type, key: Nat) {
   fn read(value: Tagged(A, key)): A
 }
 instance ReadTagged(Nat, 2) {
@@ -35,67 +51,62 @@ fn demo_three(): Nat {
   let tagged: Tagged(Nat, 3) := Tag(7)
   read_tagged(tagged)
 }
-perform show("result", demo())
-perform show("other", demo_three())
+perform main(() => {
+  show(&demo())
+  show(&demo_three())
+})
 ```
-shows = ["result = 7", "other = 8"]
-backends = ["rust", "javascript", "vm"]
-rust_shows = ["result = 7", "other = 8"]
-javascript_shows = ["result = 7", "other = 8"]
+stdout = ```
+7
+8
+```
 
 @ cases.direct-value-telescope-boundary
-extract = true
-imports = [path`../std/Nat.taut`, path`../std/Text.taut`]
+imports = [path`../std/nat.taut`, path`../std/text.taut`]
 source = ```tauto
 fn remember<n: Nat>(): Nat { n }
 fn message<text: Text>(): Text { text }
-perform show("number", remember(19))
-perform show("text", message("再開"))
+show(&remember(19))
+show(&message("再開"))
 ```
-shows = ["number = 19", 'text = "再開"']
-backends = ["rust", "javascript", "vm"]
-rust_shows = ["number = 19", 'text = "再開"']
-javascript_shows = ["number = 19", 'text = "再開"']
+stdout = "19\n\"再開\"\n"
 
 @ cases.native-div-callback-is-not-a-pure-value
-extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
 fn apply<f: (Nat) -> Nat>(n: Nat): Nat { f(n) }
-fn diverge(n: nat): nat ! {Div} { diverge(n) }
-perform show("bad", apply(diverge, 0))
+fn diverge(n: nat): nat ! {div} { diverge(n) }
+show(&apply(diverge, 0))
 ```
-rows = "error: a function value may perform Div but its type permits {}"
-compile_errors.rust = "front: a function value may perform Div but its type permits {}"
-compile_errors.javascript = "front: a function value may perform Div but its type permits {}"
-compile_errors.vm = "front: a function value may perform Div but its type permits {}"
+rows = "error: a function value may perform div but its type permits {}"
+compile_errors.rust = "front: a function value may perform div but its type permits {}"
+compile_errors.javascript = "front: a function value may perform div but its type permits {}"
+compile_errors.vm = "front: a function value may perform div but its type permits {}"
 
 @ cases.universal-dictionary-captures-runtime-index
-extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
 inductive Tagged(n: Nat): Type { Tag(value: Nat): Tagged(n) }
-class Read(n: Nat) { fn read(value: Tagged(n)): Nat }
+inductive class Read(n: Nat) { fn read(value: Tagged(n)): Nat }
 instance<n: Nat> Read(n) { fn read(value: Tagged(n)): Nat { n } }
 fn read_any<n: Nat>(value: Tagged(n)): Nat { Read::read(value) }
 fn demo(n: Nat): Nat {
   let tagged: Tagged(n) := Tag(9)
   read_any(tagged)
 }
-perform show("first", demo(17))
-perform show("second", demo(29))
+show(&demo(17))
+show(&demo(29))
 ```
-shows = ["first = 17", "second = 29"]
-backends = ["rust", "javascript", "vm"]
-rust_shows = ["first = 17", "second = 29"]
-javascript_shows = ["first = 17", "second = 29"]
+stdout = ```
+17
+29
+```
 
 @ cases.extended-class-runs-a-type-constructor-class-as-written
-extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
 inductive Tagged(n: Nat): Type { Tag(value: Nat): Tagged(n) }
-class Indexed(n: Nat) { fn read(value: Tagged(n)): Nat }
+inductive class Indexed(n: Nat) { fn read(value: Tagged(n)): Nat }
 class Functor(F: (Shared) -> Shared) {
   fn map<A: Shared, B: Shared>(value: F(A), convert: (A) -> B): F(B)
 }
@@ -107,45 +118,36 @@ instance Functor(Option) {
     }
   }
 }
-perform show("legacy", Functor::map(Some(4), (number: i64) => number + 1))
+show(&Functor::map(Some(4), (number: nat) => number + 1))
 ```
-shows = ["legacy = Some(5)"]
+stdout = "Some(5)\n"
 
 @ cases.type-valued-method-is-erased-after-checking
-extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
-class HasChild(Env: Type) { fn child_type(env: Env): Type }
+inductive class HasChild(Env: Type) { fn child_type(env: Env): Type }
 instance HasChild(Nat) { fn child_type(env: Nat): Type { Nat } }
 fn child(): Type { HasChild::child_type(0) }
 fn value(): child() { 7 }
-perform show("child", value())
+show(&value())
 ```
-shows = ["child = 7"]
-backends = ["rust", "javascript", "vm"]
-rust_shows = ["child = 7"]
-javascript_shows = ["child = 7"]
+stdout = "7\n"
 
 @ cases.unrelated-indexed-class-keeps-direct-native-method
-extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
 fn unchanged(value: Nat): Nat { value }
-class Id(A: Type) { fn id(value: A): A }
+inductive class Id(A: Type) { fn id(value: A): A }
 instance Id(Nat) { fn id(value: Nat): Nat { unchanged(value) } }
 let value: nat := 1
-perform show("direct", Id::id(value))
-class Marker(n: Nat) { fn read(value: Nat): Nat }
+show(&Id::id(value))
+inductive class Marker(n: Nat) { fn read(value: Nat): Nat }
 instance Marker(0) { fn read(value: Nat): Nat { unchanged(value) } }
 ```
-shows = ["direct = 1"]
-backends = ["rust", "javascript", "vm"]
-rust_shows = ["direct = 1"]
-javascript_shows = ["direct = 1"]
+stdout = "1\n"
 
 @ cases.higher-kinded-class-runs-as-written
-extract = true
-imports = [path`../std/Nat.taut`]
+imports = [path`../std/nat.taut`]
 source = ```tauto
 class Functor(F: (Shared) -> Shared) {
   fn map<A: Shared, B: Shared>(value: F(A), convert: (A) -> B): F(B)
@@ -158,6 +160,6 @@ instance Functor(Option) {
     }
   }
 }
-perform show("legacy", Functor::map(Some(4), (number: i64) => number + 1))
+show(&Functor::map(Some(4), (number: nat) => number + 1))
 ```
-shows = ["legacy = Some(5)"]
+stdout = "Some(5)\n"

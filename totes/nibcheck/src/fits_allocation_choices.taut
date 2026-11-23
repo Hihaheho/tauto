@@ -1,10 +1,11 @@
 import "fits_allocation_poly.taut"
-import std::Base
+import std::base
 import "allocation_advance.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_allocation_defs.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "unify_allocation_sound.taut"
@@ -22,7 +23,7 @@ pub theorem fits_alloc_c2(
   right: TypeAllocated(ck_next_of(c), b),
   flag: Bool
 ): AllocationAdvance(c, ck_fits_c2(fuel, c, a, b, flag)) {
-  ⊢ AllocationAdvance(c, ck_fits_c2(fuel, c, a, b, flag)) from match flag {
+  match flag {
     true => allocation_advance_rewrap(
       c,
       ck_unify(c, a, b),
@@ -51,7 +52,7 @@ pub theorem fits_alloc_c1(
   right: TypeAllocated(ck_next_of(c), b),
   flag: Bool
 ): AllocationAdvance(c, ck_fits_c1(fuel, c, a, b, flag)) {
-  ⊢ AllocationAdvance(c, ck_fits_c1(fuel, c, a, b, flag)) from match flag {
+  match flag {
     true => allocation_advance_return(c, true, state)
     false => fits_alloc_c2(
       fuel,

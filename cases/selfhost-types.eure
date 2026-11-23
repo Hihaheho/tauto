@@ -35,7 +35,7 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-005
 source = ```tauto
-let values := HashMap::new()
+let values := Vec::new()
 values == values
 ```
 differential = "types"
@@ -103,7 +103,7 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-013
 source = ```tauto
-let d := handle { budget(steps: 50) { 1 } } with {
+let d := handle { perform budget(50, () => { 1 }) } with {
   exceeded(info), k => info.more(100)
 }
 ```
@@ -112,7 +112,7 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-014
 source = ```tauto
-let d := handle { budget(steps: 50) { 1 } } with {
+let d := handle { perform budget(50, () => { 1 }) } with {
   exceeded(info), k => info.unbounded()
   return v => v
 }
@@ -122,9 +122,9 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-015
 source = ```tauto
-let u := perform show("a", 1)
-let v := perform show("b", true)
-let w := perform show(1, 1)
+let u := show(&1)
+let v := show(&true)
+let w := show(&1)
 ```
 differential = "types"
 
@@ -167,13 +167,13 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-020
 source = ```tauto
-affine struct F {}
+struct(affine) F {}
 struct W { f: F }
 struct Q { t: Text }
 enum L { Nil, Cons(i64, L) }
 struct P { x: i64 }
-copy struct R { t: Text }
-copy enum E { A, B(i64) }
+struct(copy) R { t: Text }
+enum(copy) E { A, B(i64) }
 ```
 differential = "types"
 
@@ -218,7 +218,7 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-025
 source = ```tauto
-copy enum T { Leaf, Node(T, T) }
+enum(copy) T { Leaf, Node(T, T) }
 ```
 differential = "types"
 
@@ -254,7 +254,7 @@ differential = "types"
 @ cases.types-match-on-hard-cases-029
 source = ```tauto
 fn dup<A: Copy>(x: A): A { x }
-affine struct F {}
+struct(affine) F {}
 fn mk(): F { F {} }
 let a := dup(mk())
 ```
@@ -273,7 +273,7 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-031
 source = ```tauto
-affine struct F {}
+struct(affine) F {}
 fn use_f(f: F): i64 { 1 }
 fn main(f: F): i64 {
   let g := () => use_f(f)
@@ -285,7 +285,7 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-032
 source = ```tauto
-fn f(&x: i64): i64 { let g := () => x
+fn f(x: &i64): i64 { let g := () => x
  0 }
 ```
 differential = "types"
@@ -293,7 +293,7 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-033
 source = ```tauto
-fn show_it(&t: Text): i64 { 0 }
+fn show_it(t: &Text): i64 { 0 }
 fn f(t: Text): i64 { show_it(&t) }
 fn g(t: Text): i64 { show_it(t) }
 ```
@@ -302,9 +302,9 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-034
 source = ```tauto
-fn pick(&t: Text): &Text { t }
+fn pick(t: &Text): &Text { t }
 fn f(t: Text): i64 {
-  let &r := pick(&t)
+  let r := pick(&t)
   let s := pick(&t)
   0
 }
@@ -369,7 +369,7 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-041
 source = ```tauto
-linear struct L {}
+struct(linear) L {}
 fn mk(): L { L {} }
 fn f(): i64 { var a := mk()
  0 }
@@ -388,9 +388,9 @@ differential = "types"
 // types_match_on_hard_cases
 @ cases.types-match-on-hard-cases-043
 source = ```tauto
-affine struct F { n: i64 }
+struct(affine) F { n: i64 }
 struct S { t: Text }
-fn f(&a: F, &s: S): i64 {
+fn f(a: &F, s: &S): i64 {
   let b := clone(&a)
   let c := clone(&s)
   let d := clone(1)
@@ -654,4 +654,231 @@ differential = "types"
 source = ```tauto
 Nil == Nil
 ```
+differential = "types"
+
+// A constructor's fields are covered jointly: rows split by the first field
+// cover the product when the rest of each row takes every value.
+@ cases.types-match-covers-fields-jointly-product
+source = ```tauto
+fn f(p: Bool × Bool): i64 {
+  match p {
+    #(true, x) => 1
+    #(false, y) => 2
+  }
+}
+```
+differential = "types"
+
+@ cases.types-match-covers-fields-jointly-enum
+source = ```tauto
+enum Two {
+  Mk(Bool, Bool)
+  None2
+}
+fn f(p: Two): i64 {
+  match p {
+    Mk(true, x) => 1
+    Mk(false, y) => 2
+    None2 => 3
+  }
+}
+```
+differential = "types"
+
+@ cases.types-match-misses-a-joint-row
+source = ```tauto
+fn f(p: Bool × Bool × Bool): i64 {
+  match p {
+    #(true, x, true) => 1
+    #(true, y, false) => 2
+    #(false, true, z) => 3
+  }
+}
+```
+differential = "types"
+
+// The prelude's instances for the product `A × B` are `Pair`'s: a class used at a
+// product resolves through them, and `#(…)` covers a product.
+@ cases.types-product-instance-001
+source = ```tauto
+pub fn order(): Ordering { Ord::compare(&#(1, 2), &#(1, 3)) }
+pub fn first(p: i64 × Bool × Text): i64 { match p { #(a, b, c) => a } }
+```
+differential = "types"
+
+// A type of a module is the same type written `T` inside the module and `M::T`
+// outside it: in a field, a signature, a `let` and a record alike.
+@ cases.types-module-type-short-and-qualified
+source = ```tauto
+pub(open) struct J::B { a: u64 }
+pub(open) struct C { ctx: List(J::B) }
+pub fn J::ctx(c: C): List(J::B) { c.ctx }
+pub fn J::first(c: C): Option(J::B) {
+  let bs: List(J::B) := c.ctx
+  match bs { Cons(b, rest) => Some(b), Nil => None }
+}
+pub fn J::make(): J::B { J::B { a: 1 } }
+pub fn J::keep<T>(t: T, b: J::B): J::B { b }
+fn main(): u64 { J::make().a }
+```
+differential = "types"
+
+// A body written as the index of an effect (`spawn(() -> T ! e)`, `main(() -> Unit ! {Host})`)
+// is the family's label with the body's row as its index, not an instance named after a type.
+@ cases.types-body-index-label-001
+source = ```tauto
+pub fn start(f: () -> i64 ! {div, wait}): i64 ! {∀ T. spawn(() -> T ! {div, wait}), wait} {
+  Task::join(perform spawn(f))
+}
+pub fn entry(top: &(() -> Unit ! {main(() -> Unit ! {Host}), div, overflow, divzero})): Unit ! {Host, overflow, divzero} {
+  handle { top() } with { main(body), k => body() }
+}
+```
+differential = "types"
+
+// A row that writes every instance of `spawn` without the body's row hides what the body performs.
+@ cases.types-body-index-label-002
+source = ```tauto
+pub fn start(f: () -> i64 ! {div, wait}): i64 ! {∀ T. spawn(T), wait} {
+  Task::join(perform spawn(f))
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-class-method-where
+source = ```tauto
+class D(H: Type) { fn put(h: H, w: i64): H }
+class C(A: Type) { fn feed<H>(a: &A, h: H): H where D(H) }
+struct S { v: i64 }
+instance D(S) { fn put(h: S, w: i64): S { S { v: w } } }
+instance C(i64) { fn feed<H>(a: &i64, h: H): H where D(H) { D::put(h, a) } }
+let s: S := C::feed(&7, S { v: 0 })
+```
+differential = "types"
+
+// Replaceable extern: field update outside the block is sealed (fn-body StAssign place).
+@ cases.types-replaceable-sealed-assign-outside
+source = ```tauto
+extern {
+  pub struct(affine) Cell {
+    value: i64,
+  }
+
+  pub fn Cell::new(value: i64): Cell {
+    Cell { value: value }
+  }
+}
+
+fn poke(c: &mut Cell): Unit {
+  c.value := 99
+}
+```
+differential = "types"
+
+// Replaceable extern: write-through `*c.r` outside the block is sealed.
+@ cases.types-replaceable-sealed-deref-assign-outside
+source = ```tauto
+extern {
+  pub struct(affine) Cell {
+    r: &mut i64,
+  }
+
+  pub fn Cell::new(r: &mut i64): Cell {
+    Cell { r: r }
+  }
+}
+
+fn poke(c: &mut Cell): Unit {
+  *c.r := 5
+}
+```
+differential = "types"
+
+// Mixing required host signatures with replaceable bodies is refused.
+@ cases.types-replaceable-mix-required
+source = ```tauto
+extern {
+  type(affine) Host
+  fn make(): Host {
+    Host {}
+  }
+}
+```
+differential = "types"
+
+// `pub(open)` on a replaceable extern struct is refused.
+@ cases.types-replaceable-open
+source = ```tauto
+extern {
+  pub(open) struct Cell {
+    value: i64,
+  }
+
+  pub fn Cell::new(value: i64): Cell {
+    Cell { value: value }
+  }
+}
+```
+differential = "types"
+
+// A replaceable enum block type-checks.
+@ cases.types-replaceable-enum
+source = ```tauto
+extern {
+  pub enum Tag {
+    A,
+    B(i64),
+  }
+
+  pub fn Tag::is_a(t: Tag): Bool {
+    match t {
+      A => true,
+      B(n) => false,
+    }
+  }
+}
+```
+differential = "types"
+
+// A bodyful replaceable fn with a type error is refused.
+@ cases.types-replaceable-body-type-error
+source = ```tauto
+extern {
+  pub fn bad(): i64 {
+    true
+  }
+}
+```
+differential = "types"
+
+// `uhost` is an integer type: it is compared and tested for equality as the
+// other widths are, and a literal below 2^32 is one.
+@ cases.types-uhost-compares-as-a-number
+source = ```tauto
+fn lt(a: uhost, b: uhost): Bool { a < b }
+fn eq(a: uhost, b: uhost): Bool { a == b }
+fn lit(a: uhost): Bool { a < 4294967295 }
+```
+types = "ok"
+differential = "types"
+
+// `match (x: T)` and `match x: T` hold the scrutinee to `T` (a member of a
+// product here); `T` is not the type of the whole `match`.
+@ cases.types-match-on-an-ascribed-scrutinee
+source = ```tauto
+fn status(r: Bytes × List(Text)): u64 {
+  match (r: List(Text)) {
+    Cons(s, _) => Text::len(s)
+    Nil => 0
+  }
+}
+fn size(r: Bytes × List(Text)): i64 {
+  match r: List(Text) {
+    Cons(s, _) => 1
+    Nil => 0
+  }
+}
+```
+types = "ok"
 differential = "types"

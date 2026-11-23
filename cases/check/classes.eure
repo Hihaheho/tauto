@@ -1,10 +1,10 @@
 @ cases.a-class-with-laws-has-no-effectful-method-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 
-class C(A: Type) {
-  fn m(a: A): Unit ! {Div}
+inductive class C(A: Type) {
+  fn m(a: A): Unit ! {div}
   theorem l<a: A>(): Zero = Zero
 }
 ```
@@ -15,14 +15,14 @@ checks."input/main.taut::C" = "error: "
 file = "input/main.taut"
 name = "C"
 message = "C::m performs effects, so C cannot have laws"
-span = "«fn m(a: A): Unit ! {Div}»"
+span = "«fn m(a: A): Unit ! {div}»"
 
 @ cases.a-function-with-a-where-is-given-the-method-record-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 
-class Cmp(A: Type) {
+inductive class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
   theorem refl<a: A>(): Cmp::compare(a, a) = Equal
   theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
@@ -83,11 +83,11 @@ checks."input/main.taut::is_less" = "ok"
 checks."input/main.taut::zero_less_than_one" = "ok"
 
 @ cases.a-law-not-written-makes-the-laws-incomplete-and-what-uses-them-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 
-class Cmp(A: Type) {
+inductive class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
   theorem refl<a: A>(): Cmp::compare(a, a) = Equal
   theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
@@ -159,11 +159,11 @@ checks."input/main.taut::still_compares" = "ok"
 holes = [{ declaration => "Cmp::laws@P", file => "input/main.taut", name => "law:Cmp(P)::irrefl", goal => "(a: P) -> (h: Cmp::compare(P, Cmp::inst@P, a, a) = Ordering::Less) -> False", context => [] }]
 
 @ cases.a-law-that-states-another-proposition-fails-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 
-class Cmp(A: Type) {
+inductive class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
   theorem refl<a: A>(): Cmp::compare(a, a) = Equal
   theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
@@ -239,11 +239,11 @@ message = "the law refl of Cmp(Q) states a different proposition"
 span = "«theorem refl<a: Q>(): Cmp::compare(a, a) = Less { ?x }»"
 
 @ cases.a-theorem-uses-the-laws-of-the-class-it-is-given-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 
-class Cmp(A: Type) {
+inductive class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
   theorem refl<a: A>(): Cmp::compare(a, a) = Equal
   theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
@@ -300,11 +300,11 @@ checks."input/main.taut::refl_nat" = "ok"
 checks."input/main.taut::refl_direct" = "ok"
 
 @ cases.a-type-with-no-instance-is-reported-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 
-class Cmp(A: Type) {
+inductive class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
   theorem refl<a: A>(): Cmp::compare(a, a) = Equal
   theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
@@ -366,11 +366,11 @@ message = "no instance of Cmp(R)"
 span = "R): «Cmp::compare»(a,"
 
 @ cases.an-instance-with-a-where-is-found-through-its-records-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 
-class Cmp(A: Type) {
+inductive class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
   theorem refl<a: A>(): Cmp::compare(a, a) = Equal
   theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
@@ -469,11 +469,11 @@ checks."input/main.taut::Cmp::laws@List" = "ok"
 checks."input/main.taut::refl_lists" = "ok"
 
 @ cases.an-instance-with-its-laws-proved-checks-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 
-class Cmp(A: Type) {
+inductive class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
   theorem refl<a: A>(): Cmp::compare(a, a) = Equal
   theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
@@ -525,7 +525,7 @@ checks."input/main.taut::Cmp::laws@Nat" = "ok"
 @ cases.a-class-in-a-file-with-no-imports-reaches-the-kernel-0
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Sg(A: Type) {
+inductive class Sg(A: Type) {
   fn op(a: A, b: A): A
   theorem comm<a: A, b: A>(): Sg::op(a, b) = Sg::op(b, a)
 }
@@ -541,10 +541,10 @@ checks."input/main.taut::Sg::comm" = "ok"
 checks."input/main.taut::comm_generic" = "ok"
 
 @ cases.an-instance-generic-is-not-captured-by-a-caller-generic-of-the-same-name
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-class Tag(A: Type) {
+inductive class Tag(A: Type) {
   fn tag(a: A): Nat
 }
 inductive Two(K: Type, V: Type): Type {
@@ -568,11 +568,11 @@ checks."input/main.taut::f" = "ok"
 checks."input/main.taut::g" = "ok"
 
 @ cases.an-instance-is-found-through-a-type-alias-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 
-class Cmp(A: Type) {
+inductive class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
 }
 
@@ -592,17 +592,33 @@ fn same(a: Reg(Nat), b: Reg(Nat)): Ordering { Cmp::compare(a, b) }
 checks_all = "ok"
 
 @ cases.a-constructor-named-as-its-type-is-reported-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 
-inductive Region: Type {
-  Region(n: Nat): Region
+inductive Zone: Type {
+  Zone(n: Nat): Zone
 }
 ```
 
-checks."input/main.taut::Region" = "error: "
+checks."input/main.taut::Zone" = "error: "
 @ cases.a-constructor-named-as-its-type-is-reported-0.diagnostics[]
 file = "input/main.taut"
-name = "Region"
-message = "constructor `Region` has the name of a type; types and constructors share one namespace, so name it otherwise (as `MkRegion`)"
+name = "Zone"
+message = "constructor `Zone` has the name of a type; types and constructors share one namespace, so name it otherwise (as `MkZone`)"
+
+// `False` eliminates into data: an impossible case of a function over any
+// element type, where `False::elim` (into `Prop`) does not fit.
+@ cases.false-closes-an-impossible-case-of-a-function-returning-data
+imports = [path`../../std/base.taut`]
+source = ```tauto
+fn unwrap<A>(o: Option(A), h: ¬(o = None)): A {
+  match o {
+    Some(x) => x
+    None => False::absurd(h(Refl))
+  }
+}
+fn first(o: Option(Nat), h: ¬(o = None)): Nat { unwrap(o, h) }
+theorem first_some(n: Nat, h: ¬(Some(n) = None)): first(Some(n), h) = n { Refl }
+```
+checks_all = "ok"

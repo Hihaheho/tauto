@@ -1,0 +1,34 @@
+// A macro's function is seen wherever the macro is: it does not hide a syntax of its name.
+
+@ cases.a-macro-function-does-not-hide-a-syntax-of-its-name-in-another-file
+entry = "main.taut"
+files."syntax.taut" = ````tauto
+import std::builtin::macro
+syntax!(view, ```par
+{{par:aif}}```) => struct Aif, fn parse
+pub fn then_of(value: view::Aif): SynExpr { value.tauto_expr }
+````
+files."macro.taut" = ````tauto
+import std::builtin::macro
+import "syntax.taut"
+pub macro fn view(value: view::Aif): SynExpr { value.tauto_expr }
+````
+files."main.taut" = ````tauto
+import "macro.taut"
+import std::builtin::os
+show(&(view!(`${1} then ${2} else ${3}`)))
+````
+stdout = "1\n"
+
+@ cases.the-function-of-a-macro-without-pub-is-private-to-its-file
+entry = "main.taut"
+files."macro.taut" = ````tauto
+import std::builtin::macro
+macro fn view(value: SynExpr): SynExpr { value }
+````
+files."main.taut" = ````tauto
+import std::builtin::macro
+import "macro.taut"
+fn f(e: SynExpr): SynExpr { view(e) }
+````
+checks."main.taut::macro" = "error: `view` is private to the file `macro`; write `pub` before its declaration there to use it from another file"

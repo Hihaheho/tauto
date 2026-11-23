@@ -1,9 +1,9 @@
 import "allocation_substitution.taut"
-import std::Base
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Text
+import std::base
+import std::map
+import std::map_laws
+import std::map_text
+import std::text
 import "allocation_generic_map.taut"
 import "checker.taut"
 import "ty.taut"
@@ -16,13 +16,13 @@ pub def RigidMapAllocation(
 ): Prop := And(Ordmap::ordered(map, Ordmap::compare_text), GenericMapAllocated(limit, map))
 pub theorem rigid_map_allocation_cons(
   limit: Nat,
-  generic: Pair(Text, Kind),
+  generic: Text × Kind,
   value: Ty,
   m: Mut1(Ordmap(Text, Ty), Checker),
   item: TypeAllocated(limit, value),
   tail: RigidMapAllocation(limit, ck_val(m))
 ): RigidMapAllocation(limit, ck_val(ck_rigid_k(generic, value, m))) {
-  ⊢ RigidMapAllocation(limit, ck_val(ck_rigid_k(generic, value, m))) from match m {
+  match m {
     mut1(map, next) => AndIntro(
       Ordmap::insert_ordered(
         Ordmap::compare_text,
@@ -45,11 +45,11 @@ pub theorem rigid_map_allocation_cons(
   }
 }
 pub theorem ck_rigid_map_allocated(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
   limit: Nat
 ): RigidMapAllocation(limit, ck_val(ck_rigid(gs, c))) {
-  ⊢ RigidMapAllocation(limit, ck_val(ck_rigid(gs, c))) from match gs {
+  match gs {
     Nil => AndIntro(Trivial, name => value => found => False::elim(ck_none_ne_some(value, found)))
     Cons(generic, rest) => rigid_map_allocation_cons(
       limit,
@@ -66,7 +66,7 @@ pub theorem ck_rigid_map_allocated(
 }
 // Rigid parameters allocate no inference variables, even at counter zero.
 pub theorem ck_rigid_substitute_allocated(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   c: Checker,
   ty: Ty,
   limit: Nat,

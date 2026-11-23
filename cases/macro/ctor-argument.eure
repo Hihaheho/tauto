@@ -1,0 +1,33 @@
+// A macro call written as an argument of a constructor, with the macro in another file: what
+// extraction writes of the call is the text of the file, and the macro makes its argument again
+// when the file is read again.
+
+@ cases.a-macro-call-is-an-argument-of-a-record-constructor
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::base
+import std::text
+import std::builtin::macro
+
+pub(open) inductive Pair: Type { Mk(left: Text, right: Text): Pair }
+
+// The file is longer than the one that calls the macro, so that a place of this file is no place there.
+// The file is longer than the one that calls the macro, so that a place of this file is no place there.
+// The file is longer than the one that calls the macro, so that a place of this file is no place there.
+// The file is longer than the one that calls the macro, so that a place of this file is no place there.
+
+pub macro fn right(e: SynExpr): SynExpr {
+  quote { "right" }
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import std::text
+import "mk.taut" { Pair, right }
+fn show_pair(p: Pair): Text { match p { Mk(l, r) => Text::concat_all([l, "+", r]) } }
+show(&show_pair(Pair::Mk("a", right!(1))))
+````
+stdout = ```
+"a+right"
+```

@@ -438,8 +438,8 @@ fn a_rename_keeps_the_proofs_checking() {
     for entry in [
         "proofs.taut",
         "handlers.taut",
-        "nat/Add.taut",
-        "nat/Order.taut",
+        "nat/add.taut",
+        "nat/order.taut",
     ] {
         let path = work.join(entry);
         let baseline =

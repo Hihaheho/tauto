@@ -23,7 +23,7 @@ text --tl::parse--> tl::Expr --to_i--> tl::Expr::I --lower_expr--> Term --check_
 
 ```sh
 tauto check --tote examples/typed-lang --fresh
-tauto run --backend eval --tote examples/typed-lang
+tauto run --tote examples/typed-lang
 ```
 
 1 行ずつ式を入力する REPL です。空行は読み飛ばし、`:quit` または入力の終端で終了します。型エラーや構文エラーの後も次の式を入力できます。

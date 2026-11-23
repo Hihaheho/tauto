@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "tools/tauto-test-suite", "totes/lsp/bridge", "totes/fmtcmd/bridge", "totes/vm/bridge", "totes/initcmd/bridge", "tools/lsp-bench"]
+members = ["crates/*", "tools/tauto-test-suite", "totes/lsp/bridge", "totes/fmtcmd/bridge", "totes/initcmd/bridge", "tools/lsp-bench", "tools/selfhost-harness"]
 default-members = ["crates/*"]
 resolver = "3"
 
@@ -26,8 +26,11 @@ eure-schema = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12
 eure-fmt = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
 
 # The tests of tauto check and evaluate whole programs; optimized they take
-# seconds instead of minutes. tools/selfhost-harness is its own workspace (its
-# differential tests build the totes with `tauto build --release`).
+# seconds instead of minutes. tools/selfhost-harness is a member outside the
+# default members, so it shares this target directory (a cold build of it then
+# reuses what `cargo build -p tauto-cli` compiled); `tauto gate full` builds its
+# tests without running them, because they build the totes with
+# `tauto build --release` and run for long.
 [profile.test.package.tauto]
 opt-level = 3
 
@@ -58,13 +61,62 @@ opt-level = 3
 # The build scripts of the tauto-cli-tote-* crates, tauto-analyzer and totebag-index
 # check and build totes with the compiler; it runs at the same speed as `tauto check`, so the
 # per-file time limits mean the same thing there.
+# Line tables only: backtraces keep their files and lines, and the target
+# directory of a build of tauto-cli and the test suite is under a third of the
+# size it is with full debug info. Incremental compilation is off: nearly
+# every crate is optimized (above), where it saves little and its caches
+# take gigabytes.
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
 [profile.dev.build-override]
+opt-level = 3
+# The same debug info as the dev profile, so that a crate both a build script
+# and the `tauto` command use (the compiler crates above, most dependencies)
+# is compiled once and shared; with build-override's default (none) Cargo
+# compiles each of them twice, once per setting.
+debug = "line-tables-only"
+
+# Build scripts are compiled with build-override's opt-level 3; the workspace
+# crates they share with the `tauto` command get the same in the dev profile,
+# or each of them, and every crate above it, is compiled twice.
+[profile.dev.package.tauto-message]
+opt-level = 3
+
+[profile.dev.package.tauto-messages]
+opt-level = 3
+
+[profile.dev.package.tauto-rt]
+opt-level = 3
+
+[profile.dev.package.tauto-rt-signal]
+opt-level = 3
+
+[profile.dev.package.totebag]
+opt-level = 3
+
+[profile.dev.package.tauto-cache]
+opt-level = 3
+
+[profile.dev.package.tauto-workspace-hack]
 opt-level = 3
 
 [profile.release.build-override]
 opt-level = 3
 
 [profile.dev.package.tauto-parol]
+opt-level = 3
+
+# The reader, the macro VM and the binder run on every file `tauto check` reads;
+# unoptimized, parsing alone took about half again as long.
+[profile.dev.package.tauto-parse]
+opt-level = 3
+
+[profile.dev.package.tauto-macro-vm]
+opt-level = 3
+
+[profile.dev.package.tauto-bind]
 opt-level = 3
 
 [profile.dev.package.tauto-nir]
@@ -79,16 +131,10 @@ opt-level = 3
 [profile.test.package.tauto-nibcheck]
 opt-level = 3
 
-[profile.dev.package.tauto-eval]
-opt-level = 3
-
 [profile.dev.package.tauto-vm]
 opt-level = 3
 
 [profile.test.package.tauto-vm]
-opt-level = 3
-
-[profile.test.package.tauto-eval]
 opt-level = 3
 
 [profile.dev.package.tauto-macro]

@@ -1,0 +1,204 @@
+import std::text
+import std::base
+import std::data
+import std::list
+import std::text_ops
+import "value.taut"
+
+// Shapes: what a document is expected to hold, and the places where it does not.
+//
+// A record is written as its fields: `field_s(name, optional, shape, rest)` is a map with the
+// field `name` of shape `shape` (it may be missing when `optional` is `true`) and what `rest`
+// asks of the same map; `fields_end` is any map. `closed_end` is a map with no other keys than
+// the fields before it.
+
+pub(open) inductive Shape: Type {
+  AnyS: Shape
+  TextS: Shape
+  BoolS: Shape
+  IntS: Shape
+  // A non-negative integer.
+  NatS: Shape
+  ArrayS(item: Shape): Shape
+  // A map whose every value has the shape.
+  MapOfS(value: Shape): Shape
+  FieldsEnd: Shape
+  ClosedEnd: Shape
+  FieldS(name: Text, optional: Bool, shape: Shape, rest: Shape): Shape
+}
+
+// A problem: where (a path such as `indexes[0].alias`) and what was expected.
+pub(open) inductive Problem: Type {
+  Mk(at: Text, what: Text): Problem
+}
+
+fn path_field(path: Text, name: Text): Text {
+  match Text::is_empty(path) {
+    true => name
+    false => Text::concat(path, Text::concat(".", name))
+  }
+}
+
+fn path_index(path: Text, i: Nat): Text {
+  Text::concat(path, Text::concat("[", Text::concat(Text::of_nat(i), "]")))
+}
+
+fn key_name(k: Key): Text {
+  match k {
+    Kstr(t) => t
+    Knum(neg, n) => ⊢ Text from match neg {
+      true => Text::concat("-", Text::of_nat(n))
+      false => Text::of_nat(n)
+    }
+    Ktup(^ks) => "(…)"
+  }
+}
+
+fn one(path: Text, what: Text): List(Problem) {
+  Cons(Problem::Mk(path, what), Nil)
+}
+
+fn expect_value(path: Text, what: Text, ok: Bool): List(Problem) {
+  match ok {
+    true => Nil
+    false => one(path, what)
+  }
+}
+
+fn is_some_text(o: Option(Text)): Bool {
+  Option::is_some(o)
+}
+
+// The names a record's fields list, up to its end.
+fn field_names(s: Shape): List(Text) {
+  match s {
+    FieldS(name, ^optional, ^shape, rest) => Cons(name, field_names(rest))
+    AnyS => Nil
+    TextS => Nil
+    BoolS => Nil
+    IntS => Nil
+    NatS => Nil
+    ArrayS(^item) => Nil
+    MapOfS(^v) => Nil
+    FieldsEnd => Nil
+    ClosedEnd => Nil
+  }
+}
+
+fn is_int(n: Node): Bool {
+  match node_value(n) {
+    Vint(^s, ^m) => true
+    Vhole(^l) => false
+    Vnull => false
+    Vbool(^b) => false
+    Vdec(^s, ^m, ^es, ^e) => false
+    Vtext(^l, ^t) => false
+    Varr(^xs) => false
+    Vtup(^xs) => false
+    Vmap(^es) => false
+  }
+}
+
+fn is_map_node(n: Node): Bool {
+  Option::is_some(as_entries(n))
+}
+
+// The keys of a map that are not among `names`.
+fn extra_keys(names: List(Text), es: List(Key × Node)): List(Text) {
+  List::filter(
+    (t: Text) => not(List::contains(Text::eq, t, names)),
+    List::map((e: Key × Node) => key_name((e: Key)), es)
+  )
+}
+
+// A node to check together with the path it sits at.
+inductive Item: Type {
+  MkItem(at: Text, node: Node): Item
+}
+
+fn array_items(path: Text, i: Nat, xs: List(Node)): List(Item) {
+  match xs {
+    Nil => Nil
+    Cons(x, t) => Cons(MkItem(path_index(path, i), x), array_items(path, Succ(i), t))
+  }
+}
+
+fn entry_items(path: Text, es: List(Key × Node)): List(Item) {
+  match es {
+    Nil => Nil
+    Cons(e, t) => Cons(
+      ⊢ Item from match e {
+        #(k, nd) => MkItem(path_field(path, key_name(k)), nd)
+      },
+      entry_items(path, t)
+    )
+  }
+}
+
+// What is wrong with `n` for the shape `s`; `names` are the fields of the record `s` is in.
+fn check_in(s: Shape, names: List(Text), n: Node, path: Text): List(Problem) {
+  match s {
+    AnyS => Nil
+    TextS => expect_value(path, "a text", is_some_text(as_text(n)))
+    BoolS => expect_value(path, "a boolean", Option::is_some(as_bool(n)))
+    IntS => expect_value(path, "an integer", is_int(n))
+    NatS => expect_value(path, "an integer that is not negative", Option::is_some(as_nat(n)))
+    ArrayS(item) => ⊢ List(Problem) from match as_items(n) {
+      None => one(path, "an array")
+      Some(
+        xs
+      ) => List::concat(
+        List::map(
+          (it: Item) => ⊢ List(Problem) from match it {
+            MkItem(at, n) => check_in(item, field_names(item), n, at)
+          },
+          array_items(path, 0, xs)
+        )
+      )
+    }
+    MapOfS(v) => ⊢ List(Problem) from match as_entries(n) {
+      None => one(path, "a map")
+      Some(
+        es
+      ) => List::concat(
+        List::map(
+          (it: Item) => ⊢ List(Problem) from match it {
+            MkItem(at, n) => check_in(v, field_names(v), n, at)
+          },
+          entry_items(path, es)
+        )
+      )
+    }
+    FieldsEnd => expect_value(path, "a map", is_map_node(n))
+    ClosedEnd => ⊢ List(Problem) from match as_entries(n) {
+      None => one(path, "a map")
+      Some(
+        es
+      ) => List::map(
+        (t: Text) => Problem::Mk(path_field(path, t), "no such field"),
+        extra_keys(names, es)
+      )
+    }
+    FieldS(name, optional, shape, rest) => List::append(
+      ⊢ List(Problem) from match field(n, name) {
+        None => ⊢ List(Problem) from match optional {
+          true => Nil
+          false => one(path_field(path, name), "this field")
+        }
+        Some(c) => check_in(shape, field_names(shape), c, path_field(path, name))
+      },
+      check_in(rest, names, n, path)
+    )
+  }
+}
+
+pub fn check(s: Shape, n: Node): List(Problem) {
+  check_in(s, field_names(s), n, "")
+}
+
+pub fn conforms(s: Shape, n: Node): Bool {
+  match check(s, n) {
+    Nil => true
+    Cons(^p, ^t) => false
+  }
+}

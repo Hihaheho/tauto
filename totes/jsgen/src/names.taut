@@ -1,0 +1,226 @@
+import "../../nir/src/model.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::base
+
+// What the package and its names say, as the backend reads them
+// (`lib.rs`). A name read from NIR text is written as it is spelled, so each
+// is the library's when the library spells it so.
+
+// Each spelling a library declaration has (`library_reference`): a name the
+// package spells so is the library's.
+pub fn js_library_spellings(): List(Text) { text_lines(include_text!("tables/library-spellings.txt")) }
+
+pub fn js_is_spelled(spellings: List(Text), name: Text): Bool { js_contains_text(spellings, name) }
+
+// The symbol a data type of the package carries (`owner_symbol`): its name
+// when no library declaration is spelled so and no other data type shares
+// it, else its place.
+pub fn js_gen_owner(spellings: List(Text), ds: List(NData), name: Text): Text {
+  if not(js_is_spelled(spellings, name)) && js_count_data(ds, name) == 1 {
+    name
+  } else {
+    concat("@data:", js_nat_text(js_data_index(ds, name, 0)))
+  }
+}
+
+pub fn js_count_data(ds: List(NData), name: Text): Nat {
+  match ds {
+    Nil => 0
+    Cons(d, rest) => if d.name == name { 1 + js_count_data(rest, name) } else { js_count_data(rest, name) }
+  }
+}
+
+pub fn js_data_index(ds: List(NData), name: Text, at: Nat): Nat {
+  match ds {
+    Nil => at
+    Cons(d, rest) => if d.name == name { at } else { js_data_index(rest, name, at + 1) }
+  }
+}
+
+pub fn js_nat_text(n: Nat): Text { Text::of_nat(n) }
+
+// The tag a constructor of the package carries (`constructor_symbol`).
+pub fn js_gen_ctor(spellings: List(Text), ds: List(NData), name: Text): Text {
+  if js_is_spelled(spellings, name) {
+    name
+  } else {
+    match js_struct_of_ctor(ds, name) {
+      Some(d) => d
+      None => js_last_segment(name)
+    }
+  }
+}
+
+pub fn js_struct_of_ctor(ds: List(NData), name: Text): Option(Text) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => if d.is_struct && js_has_ctor(d.ctors, name) { Some(d.name) } else { js_struct_of_ctor(rest, name) }
+  }
+}
+
+pub fn js_has_ctor(cs: List(NCtor), name: Text): Bool {
+  match cs {
+    Nil => false
+    Cons(c, rest) => c.name == name || js_has_ctor(rest, name)
+  }
+}
+
+// The tag of a library constructor: its name without `::Mk`, else its last
+// segment.
+pub fn js_ctor_symbol(name: Text): Text {
+  let n := Text::len(name)
+  if n >= 4 && text_starts_with(name, "::Mk", n - 4) {
+    Text::slice_or_empty(name, 0, n - 4)
+  } else {
+    js_last_segment(name)
+  }
+}
+
+// The owner and the tag a constructor's values carry.
+pub fn js_ref_owner(spellings: List(Text), ds: List(NData), c: NCtorRef): Text {
+  match c.data {
+    NDataGen(n) => js_gen_owner(spellings, ds, n)
+    NDataOption => "Option"
+    NDataResult => "Result"
+    NDataPair => "Pair"
+  }
+}
+
+pub fn js_ref_tag(spellings: List(Text), ds: List(NData), c: NCtorRef): Text {
+  match c.data {
+    NDataGen(^n) => js_gen_ctor(spellings, ds, c.name)
+    NDataOption => js_ctor_symbol(c.name)
+    NDataResult => js_ctor_symbol(c.name)
+    NDataPair => js_ctor_symbol(c.name)
+  }
+}
+
+// What follows the last `::` of a name.
+pub fn js_last_segment(name: Text): Text {
+  match List::reverse(text_split(name, "::")) {
+    Nil => name
+    Cons(last, ^rest) => last
+  }
+}
+
+pub fn js_data_owner(d: NDataRef): Text {
+  match d {
+    NDataGen(n) => n
+    NDataOption => "Option"
+    NDataResult => "Result"
+    NDataPair => "Pair"
+  }
+}
+
+// How a local is stored (`Storage`): 0 owned, 1 a shared `var`, 2 a borrow,
+// 3 a mutable borrow, 4 a borrowed function, 5 a borrowing closure.
+pub fn js_storage(r: NRepr): Nat {
+  match r {
+    NPlain => 0
+    NSharedVarRepr => 1
+    NSharedVarCopy => 1
+    NRefRepr => 2
+    NRefMutRepr => 3
+    NFnRef => 4
+    NBorrowClosure => 5
+  }
+}
+
+pub fn js_owned(l: NLocal): Bool { js_storage(l.repr) == 0 }
+
+pub fn js_is_borrow(l: NLocal): Bool {
+  let s := js_storage(l.repr)
+  s == 2 || s == 3 || s == 4
+}
+
+pub fn js_find_data(ds: List(NData), name: Text): Option(NData) {
+  match ds {
+    Nil => None
+    Cons(d, rest) => if d.name == name { Some(d) } else { js_find_data(rest, name) }
+  }
+}
+
+pub fn js_is_struct_data(ds: List(NData), name: Text): Bool {
+  match js_find_data(ds, name) {
+    Some(d) => d.is_struct
+    None => false
+  }
+}
+
+pub fn js_find_fn(fs: List(NFn), id: Nat): Option(NFn) {
+  match fs {
+    Nil => None
+    Cons(f, rest) => if f.id == id { Some(f) } else { js_find_fn(rest, id) }
+  }
+}
+
+pub fn js_find_union(us: List(NUnionDef), id: Nat): Option(NUnionDef) {
+  match us {
+    Nil => None
+    Cons(u, rest) => if u.id == id { Some(u) } else { js_find_union(rest, id) }
+  }
+}
+
+// The symbol an operation's performs and arms carry (`operation_symbol`):
+// the place of the first operation spelled as the one at `at`.
+pub fn js_op_name(ops: List(NOp), at: Nat): Text ! {overflow} {
+  concat("@operation:", Text::of_nat(js_first_op(ops, js_op_at(ops, at))))
+}
+
+pub fn js_op_at(ops: List(NOp), at: Nat): Text ! {overflow} {
+  match ops {
+    Nil => ""
+    Cons(o, rest) => if at == 0 { o.name } else { js_op_at(rest, at - 1) }
+  }
+}
+
+pub fn js_first_op(ops: List(NOp), name: Text): Nat {
+  match ops {
+    Nil => 0
+    Cons(o, rest) => if o.name == name { o.id } else { js_first_op(rest, name) }
+  }
+}
+
+pub fn js_contains_nat(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => x == y || js_contains_nat(rest, x)
+  }
+}
+
+pub fn js_contains_text(xs: List(Text), x: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => x == y || js_contains_text(rest, x)
+  }
+}
+
+// Whether a function type's kind lets its value be used more than once.
+pub fn js_kind_dup(kind: Text): Bool { kind == "copy" || kind == "shared" }
+
+// The bounds of a width, as `bounds` writes them.
+pub fn js_bounds(w: NWidth): Text {
+  match w {
+    NNat => "0n,Infinity"
+    NW32 => "-2147483648n,2147483647n"
+    NW64 => "-9223372036854775808n,9223372036854775807n"
+    NU8 => "0n,255n"
+    NU32 => "0n,4294967295n"
+    NU64 => "0n,18446744073709551615n"
+    NHost => "0n,18446744073709551615n"
+    NW8 => "-128n,127n"
+    NW16 => "-32768n,32767n"
+    NU16 => "0n,65535n"
+  }
+}
+
+// A message of `jsgen.ftl` that the backend says of what it does not write.
+pub fn js_unsupported(what: Text): Text {
+  concat("not supported by the javascript backend: ", what)
+}
+
+// A float literal as `{x:?}` writes it.
+pub fn js_float_text(t: Text): Text {
+  if t == "nan" { "NaN" } else { t }
+}

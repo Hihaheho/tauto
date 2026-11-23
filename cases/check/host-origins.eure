@@ -1,0 +1,61 @@
+// Where the standard effects that reach the top level come from
+// (`docs/design/host-effects.md`「Origins」): for each one, the set of
+// functions outside the standard library that perform it, by full name.
+
+// Each function that performs an effect is one of its origins; a call of a
+// function of another module brings that function's origins, not the
+// caller. A call of the standard library (`print`) makes the caller the
+// origin.
+@ cases.each-performing-function-is-an-origin
+entry = "main.taut"
+files."log.taut" = ```tauto
+import std::builtin::os
+
+pub fn info(t: Text): Unit ! {stdout} { print(t) }
+```
+files."clock.taut" = ```tauto
+import std::builtin::os
+
+pub fn today(): Text ! {fs_write} {
+  match perform fs_write("/tmp/x", "y") {
+    _ => "monday"
+  }
+}
+```
+files."main.taut" = ```tauto
+import std::builtin::os
+import "log.taut" { info }
+import "clock.taut" { today }
+
+info("start")
+let d: Text := today()
+perform stdout(d)
+```
+host_origins.fs_write = ["clock::today"]
+host_origins.stdout = ["log::info", "main"]
+
+// A lambda's origin is the named function that holds it, wherever it is
+// called; an arm that answers an effect takes away what its body brings.
+@ cases.a-lambda-keeps-the-origin-of-its-function
+entry = "main.taut"
+files."lib.taut" = ```tauto
+import std::builtin::os
+
+pub fn twice<!e>(f: () -> Unit ! e): Unit ! e { f(); f() }
+pub fn quiet<!e>(f: () -> Unit ! {stdout} ∪ e): Unit ! e {
+  handle { f() } with {
+    stdout(t), k => k(#())
+  }
+}
+```
+files."main.taut" = ```tauto
+import std::builtin::os
+import "lib.taut" { twice, quiet }
+
+fn say(): Unit ! {stdout} {
+  twice(() => perform stdout("hi"))
+}
+say()
+quiet(() => perform stdout("hidden"))
+```
+host_origins.stdout = ["main::say"]

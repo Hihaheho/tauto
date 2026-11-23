@@ -57,11 +57,13 @@ mutual
         simp only [Tm.ren]; rw [Tm.ren_ren f, Tms.ren_ren args]
     | .ite c t f, ξ, ζ => by
         simp only [Tm.ren]; rw [Tm.ren_ren c, Tm.ren_ren t, Tm.ren_ren f]
-    | .cell _ t, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren t]
-    | .fresh _ t, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren t]
+    | .llam ps b, ξ, ζ => by
+        simp only [Tm.ren]; rw [Tm.ren_ren b, upRN_comp]
+    | .scope _ t b, ξ, ζ => by
+        simp only [Tm.ren]; rw [Tm.ren_ren t, Tm.ren_ren b, upR_comp]
     | .get t, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren t]
-    | .brw t, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren t]
-    | .mbrw t, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren t]
+    | .brw _ _, _, _ => by simp [Tm.ren]
+    | .mbrw _ _, _, _ => by simp [Tm.ren]
     | .field _ t, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren t]
     | .set c v, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren c, Tm.ren_ren v]
     | .write c v, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren c, Tm.ren_ren v]
@@ -74,8 +76,7 @@ mutual
         simp only [Tm.ren]; rw [Tm.ren_ren b, Clauses.ren_ren cs]
     | .handle b (some r) cs, ξ, ζ => by
         simp only [Tm.ren]; rw [Tm.ren_ren b, Tm.ren_ren r, Clauses.ren_ren cs, upR_comp]
-    | .loc _, _, _ => by simp [Tm.ren]
-    | .run _ _ _ b, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren b]
+    | .run _ _ _ _ b, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren b]
     | .info _ _ b, ξ, ζ => by simp only [Tm.ren]; rw [Tm.ren_ren b]
     | .select _ vs k cs, ξ, ζ => by
         simp only [Tm.ren]; rw [Tms.ren_ren vs, Tm.ren_ren k, Clauses.ren_ren cs]
@@ -117,11 +118,13 @@ mutual
         simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren f, Tms.subst_ren args]
     | .ite c t f, ξ, σ => by
         simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren c, Tm.subst_ren t, Tm.subst_ren f]
-    | .cell _ t, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren t]
-    | .fresh _ t, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren t]
+    | .llam ps b, ξ, σ => by
+        simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren b, upN_upRN]
+    | .scope _ t b, ξ, σ => by
+        simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren t, Tm.subst_ren b, up_upR]
     | .get t, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren t]
-    | .brw t, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren t]
-    | .mbrw t, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren t]
+    | .brw _ _, _, _ => by simp [Tm.ren, Tm.subst]
+    | .mbrw _ _, _, _ => by simp [Tm.ren, Tm.subst]
     | .field _ t, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren t]
     | .set c v, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren c, Tm.subst_ren v]
     | .write c v, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren c, Tm.subst_ren v]
@@ -134,8 +137,7 @@ mutual
         simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren b, Clauses.subst_ren cs]
     | .handle b (some r) cs, ξ, σ => by
         simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren b, Tm.subst_ren r, Clauses.subst_ren cs, up_upR]
-    | .loc _, _, _ => by simp [Tm.ren, Tm.subst]
-    | .run _ _ _ b, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren b]
+    | .run _ _ _ _ b, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren b]
     | .info _ _ b, ξ, σ => by simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren b]
     | .select _ vs k cs, ξ, σ => by
         simp only [Tm.ren, Tm.subst]; rw [Tms.subst_ren vs, Tm.subst_ren k, Clauses.subst_ren cs]
@@ -159,6 +161,14 @@ mutual
 end
 
 /-! ## Renaming after substitution -/
+
+theorem Tm.brwAt_ren : ∀ (t : Tm) (π : List Nat) (ξ : Nat → Nat),
+    (t.brwAt π).ren ξ = (t.ren ξ).brwAt π := by
+  intro t π ξ; cases t <;> simp [Tm.brwAt, Tm.ren] <;> split <;> simp_all
+
+theorem Tm.mbrwAt_ren : ∀ (t : Tm) (π : List Nat) (ξ : Nat → Nat),
+    (t.mbrwAt π).ren ξ = (t.ren ξ).mbrwAt π := by
+  intro t π ξ; cases t <;> simp [Tm.mbrwAt, Tm.ren] <;> split <;> simp_all
 
 theorem up_ren (σ : Nat → Tm) (ξ : Nat → Nat) :
     (fun i => (up σ i).ren (upR ξ)) = up (fun i => (σ i).ren ξ) := by
@@ -195,11 +205,13 @@ mutual
         simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst f, Tms.ren_subst args]
     | .ite c t f, σ, ξ => by
         simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst c, Tm.ren_subst t, Tm.ren_subst f]
-    | .cell _ t, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst t]
-    | .fresh _ t, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst t]
+    | .llam ps b, σ, ξ => by
+        simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst b, upN_ren]
+    | .scope _ t b, σ, ξ => by
+        simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst t, Tm.ren_subst b, up_ren]
     | .get t, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst t]
-    | .brw t, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst t]
-    | .mbrw t, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst t]
+    | .brw _ π, σ, ξ => by simp only [Tm.subst]; exact Tm.brwAt_ren _ π ξ
+    | .mbrw _ π, σ, ξ => by simp only [Tm.subst]; exact Tm.mbrwAt_ren _ π ξ
     | .field _ t, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst t]
     | .set c v, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst c, Tm.ren_subst v]
     | .write c v, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst c, Tm.ren_subst v]
@@ -212,8 +224,7 @@ mutual
         simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst b, Clauses.ren_subst cs]
     | .handle b (some r) cs, σ, ξ => by
         simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst b, Tm.ren_subst r, Clauses.ren_subst cs, up_ren]
-    | .loc _, _, _ => by simp [Tm.ren, Tm.subst]
-    | .run _ _ _ b, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst b]
+    | .run _ _ _ _ b, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst b]
     | .info _ _ b, σ, ξ => by simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst b]
     | .select _ vs k cs, σ, ξ => by
         simp only [Tm.ren, Tm.subst]; rw [Tms.ren_subst vs, Tm.ren_subst k, Clauses.ren_subst cs]
@@ -237,6 +248,54 @@ mutual
 end
 
 /-! ## Substitution after substitution -/
+
+theorem Tm.brwAt_ne_var (t : Tm) (π : List Nat) (h : ∀ m, t ≠ .var m) : ∀ m, t.brwAt π ≠ .var m := by
+  cases t <;> simp_all [Tm.brwAt]
+
+theorem Tm.mbrwAt_ne_var (t : Tm) (π : List Nat) (h : ∀ m, t ≠ .var m) :
+    ∀ m, t.mbrwAt π ≠ .var m := by
+  cases t <;> simp_all [Tm.mbrwAt]
+
+/-- What is not a variable stays so under a substitution. -/
+theorem Tm.subst_ne_var (t : Tm) (τ : Nat → Tm) (h : ∀ m, t ≠ .var m) :
+    ∀ m, t.subst τ ≠ .var m := by
+  intro m
+  cases t with
+  | var n => exact absurd rfl (h n)
+  | brw n π =>
+      simp only [Tm.subst]
+      cases hτ : τ n with
+      | var k => simp [Tm.brwAt]
+      | _ => simp [Tm.brwAt]
+  | mbrw n π =>
+      simp only [Tm.subst]
+      cases hτ : τ n with
+      | var k => simp [Tm.mbrwAt]
+      | _ => simp [Tm.mbrwAt]
+  | handle b r cs => cases r <;> simp [Tm.subst]
+  | _ => simp [Tm.subst]
+
+theorem Tm.brwAt_subst (t : Tm) (π : List Nat) (τ : Nat → Tm) :
+    (t.brwAt π).subst τ = (t.subst τ).brwAt π := by
+  by_cases hv : ∃ m, t = .var m
+  · obtain ⟨m, rfl⟩ := hv; simp [Tm.brwAt, Tm.mbrwAt, Tm.subst]
+  · have h : ∀ m, t ≠ .var m := fun m e => hv ⟨m, e⟩
+    have h' := Tm.subst_ne_var t τ h
+    have e1 : t.brwAt π = .unit := by cases t <;> simp_all [Tm.brwAt]
+    have e2 : (t.subst τ).brwAt π = .unit := by
+      generalize t.subst τ = u at h'; cases u <;> simp_all [Tm.brwAt]
+    rw [e1, e2]; simp [Tm.subst]
+
+theorem Tm.mbrwAt_subst (t : Tm) (π : List Nat) (τ : Nat → Tm) :
+    (t.mbrwAt π).subst τ = (t.subst τ).mbrwAt π := by
+  by_cases hv : ∃ m, t = .var m
+  · obtain ⟨m, rfl⟩ := hv; simp [Tm.brwAt, Tm.mbrwAt, Tm.subst]
+  · have h : ∀ m, t ≠ .var m := fun m e => hv ⟨m, e⟩
+    have h' := Tm.subst_ne_var t τ h
+    have e1 : t.mbrwAt π = .unit := by cases t <;> simp_all [Tm.mbrwAt]
+    have e2 : (t.subst τ).mbrwAt π = .unit := by
+      generalize t.subst τ = u at h'; cases u <;> simp_all [Tm.mbrwAt]
+    rw [e1, e2]; simp [Tm.subst]
 
 theorem up_subst (σ τ : Nat → Tm) :
     (fun i => (up σ i).subst (up τ)) = up (fun i => (σ i).subst τ) := by
@@ -273,11 +332,13 @@ mutual
         simp only [Tm.subst]; rw [Tm.subst_subst f, Tms.subst_subst args]
     | .ite c t f, σ, τ => by
         simp only [Tm.subst]; rw [Tm.subst_subst c, Tm.subst_subst t, Tm.subst_subst f]
-    | .cell _ t, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst t]
-    | .fresh _ t, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst t]
+    | .llam ps b, σ, τ => by
+        simp only [Tm.subst]; rw [Tm.subst_subst b, upN_subst]
+    | .scope _ t b, σ, τ => by
+        simp only [Tm.subst]; rw [Tm.subst_subst t, Tm.subst_subst b, up_subst]
     | .get t, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst t]
-    | .brw t, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst t]
-    | .mbrw t, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst t]
+    | .brw _ π, σ, τ => by simp only [Tm.subst]; exact Tm.brwAt_subst _ π τ
+    | .mbrw _ π, σ, τ => by simp only [Tm.subst]; exact Tm.mbrwAt_subst _ π τ
     | .field _ t, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst t]
     | .set c v, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst c, Tm.subst_subst v]
     | .write c v, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst c, Tm.subst_subst v]
@@ -290,8 +351,7 @@ mutual
         simp only [Tm.subst]; rw [Tm.subst_subst b, Clauses.subst_subst cs]
     | .handle b (some r) cs, σ, τ => by
         simp only [Tm.subst]; rw [Tm.subst_subst b, Tm.subst_subst r, Clauses.subst_subst cs, up_subst]
-    | .loc _, _, _ => by simp [Tm.subst]
-    | .run _ _ _ b, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst b]
+    | .run _ _ _ _ b, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst b]
     | .info _ _ b, σ, τ => by simp only [Tm.subst]; rw [Tm.subst_subst b]
     | .select _ vs k cs, σ, τ => by
         simp only [Tm.subst]; rw [Tms.subst_subst vs, Tm.subst_subst k, Clauses.subst_subst cs]
@@ -330,11 +390,11 @@ mutual
     | .lam ps b => by simp only [Tm.subst]; rw [upN_var, Tm.subst_var b]
     | .app f args => by simp only [Tm.subst]; rw [Tm.subst_var f, Tms.subst_var args]
     | .ite c t f => by simp only [Tm.subst]; rw [Tm.subst_var c, Tm.subst_var t, Tm.subst_var f]
-    | .cell _ t => by simp only [Tm.subst]; rw [Tm.subst_var t]
-    | .fresh _ t => by simp only [Tm.subst]; rw [Tm.subst_var t]
+    | .llam ps b => by simp only [Tm.subst]; rw [upN_var, Tm.subst_var b]
+    | .scope _ t b => by simp only [Tm.subst]; rw [up_var, Tm.subst_var t, Tm.subst_var b]
     | .get t => by simp only [Tm.subst]; rw [Tm.subst_var t]
-    | .brw t => by simp only [Tm.subst]; rw [Tm.subst_var t]
-    | .mbrw t => by simp only [Tm.subst]; rw [Tm.subst_var t]
+    | .brw _ _ => by simp [Tm.subst, Tm.brwAt]
+    | .mbrw _ _ => by simp [Tm.subst, Tm.mbrwAt]
     | .field _ t => by simp only [Tm.subst]; rw [Tm.subst_var t]
     | .set c v => by simp only [Tm.subst]; rw [Tm.subst_var c, Tm.subst_var v]
     | .write c v => by simp only [Tm.subst]; rw [Tm.subst_var c, Tm.subst_var v]
@@ -346,8 +406,7 @@ mutual
     | .handle b none cs => by simp only [Tm.subst]; rw [Tm.subst_var b, Clauses.subst_var cs]
     | .handle b (some r) cs => by
         simp only [Tm.subst]; rw [up_var, Tm.subst_var b, Tm.subst_var r, Clauses.subst_var cs]
-    | .loc _ => by simp [Tm.subst]
-    | .run _ _ _ b => by simp only [Tm.subst]; rw [Tm.subst_var b]
+    | .run _ _ _ _ b => by simp only [Tm.subst]; rw [Tm.subst_var b]
     | .info _ _ b => by simp only [Tm.subst]; rw [Tm.subst_var b]
     | .select _ vs k cs => by
         simp only [Tm.subst]; rw [Tms.subst_var vs, Tm.subst_var k, Clauses.subst_var cs]

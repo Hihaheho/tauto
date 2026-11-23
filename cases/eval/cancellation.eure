@@ -9,24 +9,29 @@ checks."totes/nibcheck/src/cycle_signal.taut::cy_signal_either_flatten" = "ok"
 checks."totes/nibcheck/src/cycle_signal.taut::cy_signal_listen_flatten" = "ok"
 
 @ cases.request-is-visible-to-existing-and-later-tokens
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
 let source := Cancellation::new()
 let token := Cancellation::token(source)
-perform show("before", CancelToken::is_requested(token))
+show(&CancelToken::is_requested(token))
 Cancellation::request(source)
 Cancellation::request(source)
-perform show("after", CancelToken::is_requested(token))
-perform show("later", CancelToken::is_requested(Cancellation::token(source)))
+show(&CancelToken::is_requested(token))
+show(&CancelToken::is_requested(Cancellation::token(source)))
 perform wait(CancelToken::signal(token))
 ```
-shows = ["before = false", "after = true", "later = true"]
-backends = ["rust", "javascript", "vm"]
+stdout = ```
+false
+true
+true
+```
 
 @ cases.either-observes-both-inputs-and-nested-choices
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
 let left := Cancellation::new()
 let right := Cancellation::new()
@@ -34,40 +39,48 @@ let a := CancelToken::signal(Cancellation::token(left))
 let b := CancelToken::signal(Cancellation::token(right))
 let choice := Signal::either(a, b)
 let nested := Signal::either(choice, choice)
-perform show("before", Signal::is_raised(nested))
+show(&Signal::is_raised(nested))
 Cancellation::request(right)
 perform wait(nested)
-perform show("right", Signal::is_raised(choice))
-perform show("left", Signal::is_raised(a))
-perform show("duplicate", Signal::is_raised(Signal::either(b, b)))
+show(&Signal::is_raised(choice))
+show(&Signal::is_raised(a))
+show(&Signal::is_raised(Signal::either(b, b)))
 ```
-shows = ["before = false", "right = true", "left = false", "duplicate = true"]
-backends = ["rust", "javascript", "vm"]
+stdout = ```
+false
+true
+false
+true
+```
 
 @ cases.a-waiting-task-cleans-up-before-join-returns
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = path`../../examples/cancellation.taut`
-backends = ["rust", "javascript", "vm"]
-rust_shows = ["before = 0", "outcome = Err(Cancelled)", "cleaned = 1"]
-javascript_shows = ["before = 0", "outcome = Err(Cancelled)", "cleaned = 1"]
+stdout = ```
+0
+Err(Cancelled)
+1
+```
 
 @ cases.ready-input-completes-without-a-cancellation-request
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Par
-import std::prelude::Std
+import std::builtin::par
+import std::prelude::std
 
 // The ticket must be consumed on both the normal and cancellation paths.
-linear struct Ticket {}
-fn release(ticket: Ticket, cleaned: Atomic): Unit {
-  match ticket { Ticket {} => Atomic::store(cleaned, 1) }
+struct(linear) Ticket {}
+fn release(ticket: Ticket, cleaned: Atomic): Unit ! {atomic_store} {
+  match ticket { Ticket {} => perform atomic_store(cleaned, 1) }
 }
 
-fn work(cancel: CancelToken, input: Signal, cleaned: Atomic, started: Channel(Unit)): Result(u64, Cancelled) ! {wait} {
+fn work(cancel: CancelToken, input: Signal, cleaned: Atomic, started: Channel(Unit)): Result(u64, Cancelled) ! {wait, overflow, atomic_store, mutex_claim, mutex_put, mutex_take_claimed} {
   let ticket := Ticket {}
   Channel::send(started, #())
   perform wait(Signal::either(input, CancelToken::signal(cancel)))
   if CancelToken::is_requested(cancel) {
     release(ticket, cleaned)
-    Err(Cancelled)
+    Err(Cancelled {})
   } else {
     release(ticket, cleaned)
     Ok(42)
@@ -78,20 +91,22 @@ let cancellation := Cancellation::new()
 let input := Cancellation::new()
 let token := Cancellation::token(cancellation)
 let ready := CancelToken::signal(Cancellation::token(input))
-let cleaned := Atomic::new(0)
+let cleaned := perform atomic_new(0)
 let started: Channel(Unit) := Channel::new(1)
 Cancellation::request(input)
 let task := perform spawn(() => work(token, ready, cleaned, started))
 let outcome := Task::join(task)
-perform show("outcome", outcome)
-perform show("cleaned", Atomic::load(cleaned))
+show(&outcome)
+show(&perform atomic_load(cleaned))
 ```
-shows = ["outcome = Ok(42)", "cleaned = 1"]
-backends = ["rust", "javascript", "vm"]
+stdout = ```
+Ok(42)
+1
+```
 
 @ cases.a-token-signal-is-not-a-source-capability
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
 let cancellation := Cancellation::new()
 let token := Cancellation::token(cancellation)
@@ -100,22 +115,26 @@ Signal::raise(CancelToken::signal(token))
 types = "error: "
 
 @ cases.a-user-type-can-have-the-source-capability-spelling
+llvm.unimplemented = "generate: the LLVM backend does not write a `CancelSource` yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
 struct CancelSource { value: u64 }
 let own := CancelSource { value: 7 }
 let cancellation := Cancellation::new()
 Cancellation::request(cancellation)
-perform show("own", own.value)
-perform show("requested", CancelToken::is_requested(Cancellation::token(cancellation)))
+show(&own.value)
+show(&CancelToken::is_requested(Cancellation::token(cancellation)))
 ```
-shows = ["own = 7", "requested = true"]
-backends = ["rust", "javascript", "vm"]
+stdout = ```
+7
+true
+```
 
 @ cases.requests-do-not-propagate-between-sources
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Par
+import std::builtin::par
 
 let first := Cancellation::new()
 let second := Cancellation::new()
@@ -124,28 +143,32 @@ let b := Cancellation::token(second)
 let choice := Signal::either(CancelToken::signal(a), CancelToken::signal(b))
 Cancellation::request(first)
 perform wait(choice)
-perform show("first", CancelToken::is_requested(a))
-perform show("second", CancelToken::is_requested(b))
-perform show("choice", Signal::is_raised(choice))
+show(&CancelToken::is_requested(a))
+show(&CancelToken::is_requested(b))
+show(&Signal::is_raised(choice))
 ```
-shows = ["first = true", "second = false", "choice = true"]
-backends = ["rust", "javascript", "vm"]
+stdout = ```
+true
+false
+true
+```
 
 @ cases.request-before-spawn-still-runs-the-task-and-its-cleanup
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Par
-import std::prelude::Std
+import std::builtin::par
+import std::prelude::std
 
-linear struct Ticket {}
-fn work(cancel: CancelToken, cleaned: Atomic): Result(u64, Cancelled) ! {wait} {
+struct(linear) Ticket {}
+fn work(cancel: CancelToken, cleaned: Atomic): Result(u64, Cancelled) ! {wait, atomic_store} {
   let ticket := Ticket {}
   perform wait(CancelToken::signal(cancel))
-  match ticket { Ticket {} => Atomic::store(cleaned, 1) }
-  Err(Cancelled)
+  match ticket { Ticket {} => perform atomic_store(cleaned, 1) }
+  Err(Cancelled {})
 }
 
 let cancellation := Cancellation::new()
-let cleaned := Atomic::new(0)
+let cleaned := perform atomic_new(0)
 Cancellation::request(cancellation)
 let token := Cancellation::token(cancellation)
 let task := perform spawn(() => work(token, cleaned))
@@ -154,29 +177,35 @@ let cancelled := match outcome {
   Ok(value) => false
   Err(reason) => true
 }
-perform show("cancelled", cancelled)
-perform show("cleaned", Atomic::load(cleaned))
+show(&cancelled)
+show(&perform atomic_load(cleaned))
 ```
-shows = ["cancelled = true", "cleaned = 1"]
-backends = ["rust", "javascript", "vm"]
+stdout = ```
+true
+1
+```
 
 // A request to end the run from outside (Ctrl-C, SIGTERM) raises the token of
 // `shutdown_token`; until one comes it is not requested, and a fresh token
 // stands apart from the earlier one and from the program's own cancellations.
 @ cases.shutdown-token-is-not-requested-without-a-request-from-outside
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
 source = ```nib
-import std::prelude::Par
-import std::prelude::Os
+import std::builtin::par
+import std::builtin::os
 
 let token := perform shutdown_token()
 let again := perform shutdown_token()
 let own := Cancellation::new()
 Cancellation::request(own)
-perform show("token", CancelToken::is_requested(token))
-perform show("again", CancelToken::is_requested(again))
+show(&CancelToken::is_requested(token))
+show(&CancelToken::is_requested(again))
 let either := Signal::either(CancelToken::signal(token), CancelToken::signal(Cancellation::token(own)))
 perform wait(either)
-perform show("either", Signal::is_raised(either))
+show(&Signal::is_raised(either))
 ```
-shows = ["token = false", "again = false", "either = true"]
-backends = ["rust", "javascript", "vm"]
+stdout = ```
+false
+false
+true
+```

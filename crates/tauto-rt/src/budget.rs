@@ -4,10 +4,10 @@
 //! The driver of a budget polls its body with the budget on a stack; a
 //! [`tick`] takes one step off every budget on the stack, and when one runs
 //! out, puts it in the slot and is `Pending`. The driver then performs
-//! `Exceeded` outside, with an [`Info`] that holds the body, and goes on as
+//! `exceeded` outside, with an [`Info`] that holds the body, and goes on as
 //! the answer says.
 //!
-//! A memory budget (`budget(memory: n)`) counts cells instead: code under a
+//! A memory budget (`perform budget_memory(n, f)`) counts cells instead: code under a
 //! budget calls [`charge`] where it allocates, which only adds to a count,
 //! and a memory budget keeps the count at which it runs out. It is checked
 //! at the same [`tick`]s as steps: a body that allocates without end calls
@@ -23,7 +23,7 @@ use crate::o::{self, Fut, Peek};
 use crate::{Loc, Op};
 
 /// The operation a budget performs when its steps run out.
-pub const OP_EXCEEDED: Op = Op::new(1, "Exceeded");
+pub const OP_EXCEEDED: Op = Op::new(1, "exceeded");
 
 /// No limit: `info.unbounded()`.
 pub(crate) const UNBOUNDED: u64 = u64::MAX;
@@ -165,7 +165,7 @@ impl Future for Tick {
 
 /// One step of a loop or a call that may not stop.
 /// Steps taken at a budget's fuel checks, on either path. The case runner
-/// reads it (`TAUTO_REPORT_BUDGET_STEPS`); it never changes what runs.
+/// reads it (`TAUTO_REPORT`); it never changes what runs.
 pub static STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn tick(at: Loc) -> impl Future<Output = ()> {
@@ -246,26 +246,57 @@ pub async fn run_nonresuming<T: 'static>(
     }
 }
 
-/// The driver of `budget(steps: n) { body }` (budget number `id`); the
-/// `Exceeded` operation is performed outside, and answers with a
+/// The driver of `perform budget(n, () => { body })` (budget number `id`); the
+/// `exceeded` operation is performed outside, and answers with a
 /// [`BudgetAnswer`].
 pub async fn run<'a, T: 'static>(id: u32, steps: u64, body: Fut<'a, T>, at: Loc) -> T {
-    drive(id, steps, false, body, at).await
+    drive(id, steps, false, body, std::convert::identity, at).await
 }
 
-/// The driver of `budget(memory: n) { body }`: as [`run`], counting the
+/// As [`run`], for a body that can leave the enclosing function with
+/// `return`: the body ends in `Ok(value)` or `Err(returned)`, and the caller
+/// returns `returned` from its own function.
+pub async fn run_returning<'a, T: 'static, R: 'static>(
+    id: u32,
+    steps: u64,
+    body: Fut<'a, Result<T, R>>,
+    at: Loc,
+) -> Result<T, R> {
+    drive(id, steps, false, body, Ok, at).await
+}
+
+/// The driver of `perform budget_memory(n, () => { body })`: as [`run`], counting the
 /// cells the body charges.
 pub async fn run_memory<'a, T: 'static>(id: u32, cells: u64, body: Fut<'a, T>, at: Loc) -> T {
-    drive(id, refill(cells, true), true, body, at).await
+    drive(
+        id,
+        refill(cells, true),
+        true,
+        body,
+        std::convert::identity,
+        at,
+    )
+    .await
 }
 
-async fn drive<'a, T: 'static>(
+/// As [`run_returning`], counting the cells the body charges.
+pub async fn run_memory_returning<'a, T: 'static, R: 'static>(
+    id: u32,
+    cells: u64,
+    body: Fut<'a, Result<T, R>>,
+    at: Loc,
+) -> Result<T, R> {
+    drive(id, refill(cells, true), true, body, Ok, at).await
+}
+
+async fn drive<'a, T: 'static, O: 'static>(
     id: u32,
     keep: u64,
     memory: bool,
-    mut body: Fut<'a, T>,
+    mut body: Fut<'a, O>,
+    lift: fn(T) -> O,
     at: Loc,
-) -> T {
+) -> O {
     let left = Rc::new(Cell::new(keep));
     loop {
         let polled = {
@@ -285,7 +316,7 @@ async fn drive<'a, T: 'static>(
                         .downcast::<BudgetAnswer<T>>()
                         .expect("tauto: payload type")
                     {
-                        BudgetAnswer::Value(v) => return v,
+                        BudgetAnswer::Value(v) => return lift(v),
                         BudgetAnswer::More(m) => left.set(refill(m, memory)),
                         BudgetAnswer::Unbounded => left.set(UNBOUNDED),
                     }

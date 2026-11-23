@@ -146,7 +146,7 @@ fn runs(values: &[i64]) -> Vec<i64> {
 }
 
 /// The lookahead automata as a table of `(state, terminal)` entries, each
-/// `to * 1024 + production + 1`, or 0 where the automaton has no transition.
+/// `to * 2048 + production + 1`, or 0 where the automaton has no transition.
 /// The transitions of a state must be a run, in the order of the terminals:
 /// `LookaheadDFA::eval` stops at the first larger terminal.
 fn lookahead_sections(out: &mut Vec<Table>, inputs: &Inputs, n_terminals: usize) {
@@ -183,10 +183,10 @@ fn lookahead_sections(out: &mut Vec<Table>, inputs: &Inputs, n_terminals: usize)
             }
             last = Some((t.0, t.1));
             assert!(
-                t.2 > 0 && t.3 < 1023,
+                t.2 > 0 && t.3 < 2047,
                 "non-terminal {nt}: a transition out of range"
             );
-            cells[base + t.0 * n_terminals + t.1 as usize] = (t.2 as i64) * 1024 + t.3 as i64 + 1;
+            cells[base + t.0 * n_terminals + t.1 as usize] = (t.2 as i64) * 2048 + t.3 as i64 + 1;
         }
     }
     section(
@@ -198,7 +198,7 @@ fn lookahead_sections(out: &mut Vec<Table>, inputs: &Inputs, n_terminals: usize)
     section(
         out,
         "lookahead_cells",
-        "For each non-terminal's states and each terminal, run-length encoded: to * 1024 + production + 1, 0 for none.",
+        "For each non-terminal's states and each terminal, run-length encoded: to * 2048 + production + 1, 0 for none.",
         numbers(runs(&cells)),
     );
 }

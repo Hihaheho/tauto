@@ -1,0 +1,76 @@
+// `Slots` of `std/slots_store.taut` is an ordinary `inductive struct`
+// whose operations the kernel reads as written, and a program that uses it
+// runs on the host's `Slots`: the compiler replaces the type and each of
+// these operations by the builtin. A proof argument is not run. `new`, `put`
+// (into the empty slots below the capacity), `take`, `resize` to a larger
+// capacity, `cap`, `state` and `mark` give the numbers the bodies compute;
+// `get` reads the element of a filled slot, `get_mut` passes the slot on.
+@ cases.slots-store-run-on-the-host-slots
+llvm.unimplemented = "generate: the LLVM backend does not write a number beyond 64 bits yet"
+stdout = ```
+3
+12
+8
+"b"
+5
+9
+9
+7
+14
+"a"
+```
+source = ```tauto
+import std::text
+import std::uhost { UHost }
+import std::slots_store { Slots }
+
+fn filled(): Slots(Nat, Nat, Text) {
+  let r0 := Slots::new(UHost::lit(3, Refl), 10, 0)
+  let r1 := Slots::put(r0, UHost::lit(1, Refl), 7, "a", 11, Refl)
+  Slots::put(r1, UHost::lit(2, Refl), 8, "b", 12, Refl)
+}
+
+fn first(r: &orig Slots(Nat, Nat, Text), h: Slots::filled(r, UHost::lit(1, Refl)) = true): &Text {
+  Slots::get(r, UHost::lit(1, Refl), h)
+}
+
+fn first_mut(r: &mut Slots(Nat, Nat, Text), h: Slots::filled(r, UHost::lit(1, Refl)) = true): &mut Text {
+  Slots::get_mut(r, UHost::lit(1, Refl), h)
+}
+
+fn first_of_filled(): Text {
+  let r := filled()
+  first(&orig r, Refl)
+}
+
+fn taken(): Text {
+  match Slots::take(filled(), UHost::lit(2, Refl), 0, 13, Refl) {
+    #(r3, x) => x
+  }
+}
+
+fn grown(): Slots(Nat, Nat, Text) {
+  Slots::resize(filled(), UHost::lit(5, Refl), 9, 14, Refl)
+}
+
+fn mark_at(r: &orig Slots(Nat, Nat, Text), i: Nat): Nat {
+  match i < 18446744073709551616 eqn q {
+    true => Slots::mark(r, UHost::lit(i, q))
+    false => 0
+  }
+}
+
+let r := filled()
+show(&UHost::val(Slots::cap(&orig r)))
+show(&Slots::state(&orig r))
+show(&mark_at(&orig r, 2))
+show(&taken())
+let g := grown()
+show(&UHost::val(Slots::cap(&orig g)))
+show(&mark_at(&orig g, 4))
+show(&mark_at(&orig g, 9))
+show(&mark_at(&orig g, 1))
+show(&Slots::state(&orig g))
+
+show(&first_of_filled())
+```

@@ -1,0 +1,449 @@
+import "../../scan/src/scan.taut"
+import "syntab.taut"
+import std::int
+import std::base
+import std::array
+import std::text
+
+// The text a parser is written in (`crates/tauto-syntax`: `runtime_text`), and the
+// machine of `totes/vm` writes its programs in: numbers in decimal separated by spaces,
+// each list its length and then its items. A text is `t`, its length in bytes, one space,
+// and the bytes. A malformed input reads as `None`.
+
+pub(open) inductive WTok: Type {
+  WtNum(n: Nat): WTok
+  WtText(t: Text): WTok
+}
+
+pub fn w_space(b: Nat): Bool {
+  Bool::or(Nat::eq(b, 32), Nat::eq(b, 10))
+}
+
+pub fn w_digit(b: Nat): Bool {
+  Bool::and(Nat::le(48, b), Nat::lt(b, 58))
+}
+
+// The tokens of the text from the byte `at` on: `fuel` bounds their count; `t` marks a
+// text, whose length follows. `None` when the text is malformed.
+pub fn w_tokens(fuel: Nat, t: Text, at: Nat): Option(List(WTok)) {
+  w_tokens_onto(fuel, t, at, Nil)
+}
+
+// `w_tokens` with the tokens read so far in `acc`, the last first. Each token is one call
+// to itself in tail position, so a long text (a parser's tables, a program of the machine)
+// is read in a loop and not one stack frame per token.
+pub fn w_tokens_onto(fuel: Nat, t: Text, at: Nat, acc: List(WTok)): Option(List(WTok)) {
+  match fuel {
+    Zero => None
+    Succ(f) => match Text::byte(t, at) {
+      None => Some(List::reverse(acc))
+      Some(b) => if w_space(b) {
+        w_tokens_onto(f, t, at + 1, acc)
+      } else if Nat::eq(b, 116) {
+        match w_number_at(Text::len(t), t, at + 1, 0, false) {
+          None => None
+          Some(r) => match r {
+            #(n, start) => if Nat::le(start + n, Text::len(t)) {
+              w_tokens_onto(f, t, start + n, Cons(WtText(Text::slice_or_empty(t, start, start + n)), acc))
+            } else {
+              None
+            }
+          }
+        }
+      } else {
+        match w_number_at(Text::len(t), t, at, 0, false) {
+          None => None
+          Some(r) => match r {
+            #(n, after) => w_tokens_onto(f, t, after, Cons(WtNum(n), acc))
+          }
+        }
+      }
+    }
+  }
+}
+
+// At most `fuel` digits from the byte `at`, read onto `acc`, and where the bytes after
+// the space that ends them (or the end of the text) start.
+pub fn w_number_at(fuel: Nat, t: Text, at: Nat, acc: Nat, seen: Bool): Option(Nat × Nat) {
+  match fuel {
+    Zero => None
+    Succ(f) => match Text::byte(t, at) {
+      None => if seen { Some(#(acc, at)) } else { None }
+      Some(b) => if w_digit(b) {
+        w_number_at(f, t, at + 1, Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)), true)
+      } else if Bool::and(seen, w_space(b)) { Some(#(acc, at + 1)) } else { None }
+    }
+  }
+}
+
+// The digits at the start, read onto `acc`, and the bytes after the space that ends them.
+pub fn w_number(bs: List(Nat), acc: Nat, seen: Bool): Option(Nat × List(Nat)) {
+  match bs {
+    Nil => if seen { Some(#(acc, Nil)) } else { None }
+    Cons(b, rest) => if w_digit(b) {
+      w_number(rest, Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)), true)
+    } else if Bool::and(seen, w_space(b)) { Some(#(acc, rest)) } else { None }
+  }
+}
+
+pub(open) inductive WS: Type {
+  Ws(tokens: List(WTok), ok: Bool): WS
+}
+
+pub fn w_bad(s: WS): WS {
+  match s {
+    Ws(^tokens, ^ok) => Ws(Nil, false)
+  }
+}
+
+pub fn w_nat(s: WS): Nat × WS {
+  match s {
+    Ws(tokens, ok) => match tokens {
+      Cons(t, rest) => match t {
+        WtNum(n) => #(n, Ws(rest, ok))
+        _ => #(0, w_bad(s))
+      }
+      Nil => #(0, w_bad(s))
+    }
+  }
+}
+
+pub fn w_text(s: WS): Text × WS {
+  match s {
+    Ws(tokens, ok) => match tokens {
+      Cons(t, rest) => match t {
+        WtText(x) => #(x, Ws(rest, ok))
+        _ => #("", w_bad(s))
+      }
+      Nil => #("", w_bad(s))
+    }
+  }
+}
+
+pub fn w_bool(s: WS): Bool × WS {
+  match w_nat(s) {
+    #(n, s2) => #(not(Nat::eq(n, 0)), s2)
+  }
+}
+
+pub fn w_nats(n: Nat, s: WS): List(Nat) × WS {
+  match n {
+    Zero => #(Nil, s)
+    Succ(m) => match w_nat(s) {
+      #(x, s2) => match w_nats(m, s2) {
+        #(xs, s3) => #(Cons(x, xs), s3)
+      }
+    }
+  }
+}
+
+pub fn w_texts(n: Nat, s: WS): List(Text) × WS {
+  match n {
+    Zero => #(Nil, s)
+    Succ(m) => match w_text(s) {
+      #(x, s2) => match w_texts(m, s2) {
+        #(xs, s3) => #(Cons(x, xs), s3)
+      }
+    }
+  }
+}
+
+pub fn w_count_nats(s: WS): List(Nat) × WS {
+  match w_nat(s) {
+    #(n, s2) => w_nats(n, s2)
+  }
+}
+
+pub fn w_bools(n: Nat, s: WS): List(Bool) × WS {
+  match n {
+    Zero => #(Nil, s)
+    Succ(m) => match w_bool(s) {
+      #(x, s2) => match w_bools(m, s2) {
+        #(xs, s3) => #(Cons(x, xs), s3)
+      }
+    }
+  }
+}
+
+pub fn w_count_bools(s: WS): List(Bool) × WS {
+  match w_nat(s) {
+    #(n, s2) => w_bools(n, s2)
+  }
+}
+
+pub fn w_syn_syms(n: Nat, s: WS): List(SynSym) × WS {
+  match n {
+    Zero => #(Nil, s)
+    Succ(m) => match w_bool(s) {
+      #(term, s2) => match w_nat(s2) {
+        #(x, s3) => match w_syn_syms(m, s3) {
+          #(xs, s4) => #(Cons(if term { SynT(x) } else { SynN(x) }, xs), s4)
+        }
+      }
+    }
+  }
+}
+
+pub fn w_syn_node(s: WS): SynElem × WS {
+  match w_nat(s) {
+    #(c, s2) => match w_bool(s2) {
+      #(spanned, s3) => match w_count_bools(s3) {
+        #(keep, s4) => #(SeNode(c, spanned, keep), s4)
+      }
+    }
+  }
+}
+
+pub fn w_syn_elem(s: WS): SynElem × WS {
+  match w_nat(s) {
+    #(tag, s2) => if Nat::eq(tag, 0) {
+      #(SeItem, s2)
+    } else if Nat::eq(tag, 1) { w_syn_node(s2) } else { #(SeItem, w_bad(s2)) }
+  }
+}
+
+pub fn w_syn_shape(s: WS): SynShape × WS {
+  match w_nat(s) {
+    #(tag, s2) => if Nat::eq(tag, 0) {
+      match w_syn_node(s2) {
+        #(e, s3) => match e {
+          SeNode(c, spanned, keep) => #(ShNode(c, spanned, keep), s3)
+          SeItem => #(ShPass, w_bad(s3))
+        }
+      }
+    } else if Nat::eq(tag, 1) {
+      #(ShPass, s2)
+    } else if Nat::eq(tag, 2) {
+      match w_syn_elem(s2) {
+        #(e, s3) => #(ShSome(e), s3)
+      }
+    } else if Nat::eq(tag, 3) {
+      #(ShNone, s2)
+    } else if Nat::eq(tag, 4) {
+      #(ShEmpty, s2)
+    } else if Nat::eq(tag, 5) {
+      match w_syn_elem(s2) {
+        #(e, s3) => #(ShMore(e), s3)
+      }
+    } else if Nat::eq(tag, 6) {
+      match w_text(s2) {
+        #(m, s3) => #(ShBad(m), s3)
+      }
+    } else {
+      #(ShPass, w_bad(s2))
+    }
+  }
+}
+
+pub fn w_syn_prods(n: Nat, s: WS): List(SynProd) × WS {
+  match n {
+    Zero => #(Nil, s)
+    Succ(m) => match w_nat(s) {
+      #(lhs, s2) => match w_nat(s2) {
+        #(width, s3) => match w_syn_syms(width, s3) {
+          #(rhs, s4) => match w_syn_shape(s4) {
+            #(shape, s5) => match w_syn_prods(m, s5) {
+              #(rest, s6) => #(Cons(SynProd { lhs: lhs, rhs: rhs, shape: shape }, rest), s6)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn m_nth_nat(xs: List(Nat), i: Nat): Nat {
+  match List::nth(xs, i) {
+    None => 0
+    Some(x) => x
+  }
+}
+
+pub fn w_syn_transitions(n: Nat, s: WS): List(SynTrans) × WS {
+  match n {
+    Zero => #(Nil, s)
+    Succ(m) => match w_nats(4, s) {
+      #(xs, s2) => match w_syn_transitions(m, s2) {
+        #(rest, s3) => #(Cons(
+            SynTrans {
+              state: m_nth_nat(xs, 0),
+              terminal: m_nth_nat(xs, 1),
+              to: m_nth_nat(xs, 2),
+              production: m_nth_nat(xs, 3)
+            },
+            rest
+          ), s3)
+      }
+    }
+  }
+}
+
+pub fn w_syn_looks(n: Nat, s: WS): List(Option(SynLook)) × WS {
+  match n {
+    Zero => #(Nil, s)
+    Succ(m) => match w_bool(s) {
+      #(has, s2) => if has {
+        match w_nats(3, s2) {
+          #(xs, s3) => match w_syn_transitions(m_nth_nat(xs, 2), s3) {
+            #(ts, s4) => match w_syn_looks(m, s4) {
+              #(rest, s5) => #(Cons(
+                  Some(SynLook { prod0: m_nth_nat(xs, 0), k: m_nth_nat(xs, 1), transitions: ts }),
+                  rest
+                ), s5)
+            }
+          }
+        }
+      } else {
+        match w_syn_looks(m, s2) {
+          #(rest, s3) => #(Cons(None, rest), s3)
+        }
+      }
+    }
+  }
+}
+
+pub fn w_syn_actions(n: Nat, s: WS): List(SynAction) × WS {
+  match n {
+    Zero => #(Nil, s)
+    Succ(m) => match w_nats(3, s) {
+      #(xs, s2) => match w_syn_actions(m, s2) {
+        #(rest, s3) => #(Cons(
+            SynAction { terminal: m_nth_nat(xs, 0), kind: m_nth_nat(xs, 1), arg: m_nth_nat(xs, 2) },
+            rest
+          ), s3)
+      }
+    }
+  }
+}
+
+pub fn w_syn_gotos(n: Nat, s: WS): List(SynGoto) × WS {
+  match n {
+    Zero => #(Nil, s)
+    Succ(m) => match w_nats(2, s) {
+      #(xs, s2) => match w_syn_gotos(m, s2) {
+        #(rest, s3) => #(Cons(SynGoto { non_terminal: m_nth_nat(xs, 0), state: m_nth_nat(xs, 1) }, rest), s3)
+      }
+    }
+  }
+}
+
+pub fn w_syn_states(n: Nat, s: WS): List(SynState) × WS {
+  match n {
+    Zero => #(Nil, s)
+    Succ(m) => match w_nat(s) {
+      #(na, s2) => match w_syn_actions(na, s2) {
+        #(actions, s3) => match w_nat(s3) {
+          #(ng, s4) => match w_syn_gotos(ng, s4) {
+            #(gotos, s5) => match w_syn_states(m, s5) {
+              #(rest, s6) => #(Cons(SynState { actions: actions, gotos: gotos }, rest), s6)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The parse tables: LL(k) lookahead automata per non-terminal, or LALR(1) states, and the
+// tokens after them.
+pub(open) inductive WSynTables: Type {
+  Mk(looks: List(Option(SynLook)), states: List(SynState), rest: WS): WSynTables
+}
+
+pub fn w_syn_tables(lr: Bool, s: WS): WSynTables {
+  match w_nat(s) {
+    #(n, s2) => if lr {
+      match w_syn_states(n, s2) {
+        #(states, s3) => WSynTables {
+          looks: Nil(<A: Option(SynLook)>),
+          states: states,
+          rest: s3
+        }
+      }
+    } else {
+      match w_syn_looks(n, s2) {
+        #(looks, s3) => WSynTables {
+          looks: looks,
+          states: Nil(<A: SynState>),
+          rest: s3
+        }
+      }
+    }
+  }
+}
+
+// The scanner's tables are read as `totes/scan` reads them; tables it cannot read make the
+// program malformed.
+pub fn w_syn_parser(s: WS): Option(SynParser) × WS {
+  match w_text(s) {
+    #(name, s2) => match w_texts(5, s2) {
+      #(scans, s3) => match w_nat(s3) {
+        #(nt, s4) => match w_texts(nt, s4) {
+          #(terminals, s5) => match w_count_bools(s5) {
+            #(skipped, s6) => match w_nat(s6) {
+              #(start, s7) => match w_bool(s7) {
+                #(lr, s8) => match w_syn_tables(lr, s8) {
+                  WSynTables { looks: looks, states: states, rest: s9 } => match w_nat(s9) {
+                    #(np, s10) => match w_syn_prods(np, s10) {
+                      #(prods, s11) => match w_nats(5, s11) {
+                        #(ids, s12) => match scan_tables_read_dynamic(
+                          w_syn_text_at(scans, 0),
+                          w_syn_text_at(scans, 1),
+                          w_syn_text_at(scans, 2),
+                          w_syn_text_at(scans, 3),
+                          w_syn_text_at(scans, 4)
+                        ) {
+                          None => #(None, w_bad(s12))
+                          Some(scan) => #(Some(
+                              SynParser {
+                                name: name,
+                                scan: scan,
+                                terminals: Array::of_list(terminals),
+                                skipped: Array::of_list(skipped),
+                                start: start,
+                                lr: lr,
+                                lookahead: Array::of_list(looks),
+                                states: Array::of_list(states),
+                                productions: Array::of_list(prods),
+                                span: m_nth_nat(ids, 0),
+                                ctx: m_nth_nat(ids, 1),
+                                token: m_nth_nat(ids, 2),
+                                diag: m_nth_nat(ids, 3),
+                                arg: m_nth_nat(ids, 4)
+                              }
+                            ), s12)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn w_syn_text_at(ts: List(Text), i: Nat): Text {
+  match List::nth(ts, i) {
+    None => ""
+    Some(t) => t
+  }
+}
+
+// The parser written in the text, or `None` when the text is malformed.
+pub fn syn_read(t: Text): Option(SynParser) {
+  match w_tokens(Succ(Text::len(t)), t, 0) {
+    None => None
+    Some(tokens) => match w_syn_parser(Ws(tokens, true)) {
+      #(p, s) => match s {
+        Ws(rest, ok) => match rest {
+          Nil => if ok { p } else { None }
+          _ => None
+        }
+      }
+    }
+  }
+}

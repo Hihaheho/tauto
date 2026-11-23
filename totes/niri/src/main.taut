@@ -1,0 +1,84 @@
+// The shell of the NIR interpreter.
+//
+//   niri run FILE...   each FILE is a package as NIR text
+//
+// Each run follows a line `== FILE`. What it wrote to standard output is a
+// line `out N` and then those N bytes; then how the run ended: `end WORD N` and the N bytes of what it says,
+// where WORD is `ok`, `unsupported`, `error` or `violation:KIND`.
+import "eval.taut"
+import "machine.taut"
+import "value.taut"
+import "../../nir/src/syntax.taut"
+import "../../nir/src/model.taut"
+import "../../nir/src/read.taut"
+import "../../text/src/text.taut"
+import std::text
+import std::float
+import std::base
+import std::builtin::os
+
+pub fn niri_line(parts: List(Text)): Unit ! {stdout} {
+  print(Text::concat_all(parts))
+  print(text_newline())
+}
+
+pub fn niri_out(out: Text): Unit ! {stdout} {
+  niri_line(["out ", Text::of_nat(Text::len(out))])
+  niri_line([out])
+}
+
+pub fn niri_end(word: Text, what: Text): Unit ! {stdout} {
+  niri_line(["end ", word, " ", Text::of_nat(Text::len(what))])
+  niri_line([what])
+}
+
+pub fn niri_run_pkg(pkg: NPackage): Unit ! {div, divzero, overflow, stdout} {
+  var m := new_machine(pkg, 2000000)
+  let o := top(&mut m)
+  niri_out(Text::concat_all(l_rev(m.out)))
+  match o {
+    OOk => niri_end("ok", "")
+    OViolation(k, d) => niri_end(Text::concat("violation:", k), d)
+    OUnsupported(w) => niri_end("unsupported", w)
+    OError(e) => niri_end("error", e)
+  }
+}
+
+pub fn niri_run_text(source: Text): Unit ! {div, divzero, overflow, stdout} {
+  match nir::parse(source) {
+    Err(d) => niri_end("error", Text::concat("not NIR text: ", d.message))
+    Ok(tree) => match nir_read(tree) {
+      Err(e) => niri_end("error", Text::concat("not NIR text: ", e))
+      Ok(pkg) => niri_run_pkg(pkg)
+    }
+  }
+}
+
+pub fn niri_main_each(paths: List(Text)): Unit ! {div, divzero, fs_read, overflow, stdout} {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      niri_line(["== ", path])
+      match read_file(path) {
+        Err(e) => niri_end("error", Text::concat("cannot read: ", e))
+        Ok(source) => niri_run_text(source)
+      }
+      niri_main_each(rest)
+    }
+  }
+}
+
+pub fn niri_main(args: List(Text)): Unit ! {div, divzero, fs_read, overflow, stderr, stdout} {
+  match args {
+    Cons(mode, paths) => if mode == "run" {
+      niri_main_each(paths)
+    } else {
+      eprint("usage: niri run FILE...")
+    }
+    Nil => eprint("usage: niri run FILE...")
+  }
+}
+
+perform main(() => {
+  niri_main(perform argv())
+})

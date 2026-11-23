@@ -1,6 +1,6 @@
 import "calc.taut"
 import "../../compiler/src/compiler.taut"
-import std::prelude::Macro
+import std::builtin::macro
 
 pub(open) enum CalcFailure {
   CalcParseFailed(SynDiag)
@@ -10,44 +10,44 @@ pub(open) enum CalcFailure {
 // The generated syntax tree and its diagnostic, before the tree is lowered to the compiler's `Expr`.
 pub fn calc_parse(text: Text): Result(arith::Expr, SynDiag) { arith::parse(text) }
 
-pub fn calc_read(text: Text, steps: i64): Result(Expr, CalcFailure) {
-  if steps <= 0 { Err(CalcBudgetExceeded) } else {
+pub fn calc_read(text: Text, steps: u64): Result(Expr, CalcFailure) ! {budget} {
+  if steps == 0 { Err(CalcBudgetExceeded) } else {
     handle {
-      budget(steps: steps) {
+      perform budget(steps, () => {
         match arith::parse(text) {
           Ok(tree) => Ok(calc_expr_lower(arith::Expr::to_i(tree)))
           Err(diagnostic) => Err(CalcParseFailed(diagnostic))
         }
-      }
+      })
     } with {
-      exceeded(info), continuation => Err(CalcBudgetExceeded)
+      exceeded(^info), continuation => Err(CalcBudgetExceeded)
       return value => value
     }
   }
 }
 
-pub fn calc_fold_bounded(expression: Expr, steps: i64): Result(Expr, CalcFailure) {
-  if steps <= 0 { Err(CalcBudgetExceeded) } else {
-    handle { budget(steps: steps) { Ok(fold_expr(expression)) } } with {
-      exceeded(info), continuation => Err(CalcBudgetExceeded)
+pub fn calc_fold_bounded(expression: Expr, steps: u64): Result(Expr, CalcFailure) ! {budget} {
+  if steps == 0 { Err(CalcBudgetExceeded) } else {
+    handle { perform budget(steps, () => { Ok(fold_expr(expression)) }) } with {
+      exceeded(^info), continuation => Err(CalcBudgetExceeded)
       return value => value
     }
   }
 }
 
-pub fn calc_eval_bounded(expression: Expr, steps: i64): Result(nat, CalcFailure) {
-  if steps <= 0 { Err(CalcBudgetExceeded) } else {
-    handle { budget(steps: steps) { Ok(eval_expr(expression)) } } with {
-      exceeded(info), continuation => Err(CalcBudgetExceeded)
+pub fn calc_eval_bounded(expression: Expr, steps: u64): Result(nat, CalcFailure) ! {budget} {
+  if steps == 0 { Err(CalcBudgetExceeded) } else {
+    handle { perform budget(steps, () => { Ok(eval_expr(expression)) }) } with {
+      exceeded(^info), continuation => Err(CalcBudgetExceeded)
       return value => value
     }
   }
 }
 
-pub fn calc_run_bounded(expression: Expr, steps: i64): Result(Option(List(nat)), CalcFailure) {
-  if steps <= 0 { Err(CalcBudgetExceeded) } else {
-    handle { budget(steps: steps) { Ok(run_code(compile_expr(expression), Nil)) } } with {
-      exceeded(info), continuation => Err(CalcBudgetExceeded)
+pub fn calc_run_bounded(expression: Expr, steps: u64): Result(Option(List(nat)), CalcFailure) ! {budget} {
+  if steps == 0 { Err(CalcBudgetExceeded) } else {
+    handle { perform budget(steps, () => { Ok(run_code(compile_expr(expression), Nil)) }) } with {
+      exceeded(^info), continuation => Err(CalcBudgetExceeded)
       return value => value
     }
   }

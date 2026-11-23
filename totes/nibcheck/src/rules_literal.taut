@@ -1,16 +1,50 @@
+import "../../identity/src/identity.taut"
 import "rules_ty.taut"
 import "checker.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "ty.taut"
 import "../../surface/src/surface.taut"
 import "../../text/src/text.taut"
 
+// The decimal digits of a number below 2^128, the numerals the Rust checker
+// reads as a `Nat`.
+pub fn nat_numeral_fits(n: Text): Bool {
+  let len := Text::len(n)
+  text_all_digits(n, 0, len) && 0 < len && (len < 39 || (len == 39 && text_not_after(
+    n,
+    "340282366920938463463374607431768211455"
+  )))
+}
+
+// A numeral below 2^128 reads as a `Nat` or an `Int` where one is expected.
+pub fn numeral_reads_as(n: Text, name: Text): Bool {
+  nat_numeral_fits(n) && (name == "Nat" || name == "Int")
+}
+
+pub fn text_not_after(a: Text, b: Text): Bool {
+  match Ordmap::compare_text(a, b) {
+    Greater => false
+    _ => true
+  }
+}
+
+pub fn text_all_digits(t: Text, at: Nat, k: Nat): Bool {
+  match k {
+    Zero => true
+    Succ(j) => ⊢ Bool from match text_digit(Text::byte_value(t, at)) {
+      None => false
+      Some(^d) => text_all_digits(t, Succ(at), j)
+    }
+  }
+}
+
 // Decimal natural literal text denotes the parsed magnitude. The selected
 // integer width must contain it; conversion uses the type equality relation.
+// A numeral checked against `Nat` is a `Nat` instead.
 pub(open) inductive NaturalTyping(
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop
 ): (SurfaceTerm, Ty) -> Prop {
   NaturalTyped(
     value: Text,
@@ -19,8 +53,19 @@ pub(open) inductive NaturalTyping(
     start: Nat,
     end: Nat,
     ty: Ty,
-    parsed: text_parse_u64(value) = Some(magnitude),
+    parsed: text_parse_i128(value) = Some(magnitude),
     within: width_fits(width, false, magnitude) = true,
     equal: TyEq(s, ok, ty, TyInt(width))
+  ): NaturalTyping(s, ok, surface_term_mk(SkNat(value), start, end), ty)
+  // Where a `Nat` or an `Int` is expected, the numeral is that type; it is below
+  // 2^128.
+  NaturalNatTyped(
+    value: Text,
+    start: Nat,
+    end: Nat,
+    ty: Ty,
+    name: Text,
+    fits: numeral_reads_as(value, name) = true,
+    equal: TyEq(s, ok, ty, TyNamed(NameSpelled(name), Nil))
   ): NaturalTyping(s, ok, surface_term_mk(SkNat(value), start, end), ty)
 }

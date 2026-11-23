@@ -1,8 +1,9 @@
+import "messages.taut"
 import "checker_frame.taut"
 import "expr_leaf_error_sound.taut"
 import "operation_error_sound.taut"
-import std::Base
-import std::Text
+import std::base
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -11,6 +12,7 @@ import "expr_leaf_frame.taut"
 import "pattern_frame.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
@@ -41,7 +43,7 @@ pub theorem constructor_frame_bind<A: Type, B: Type>(
   first: ConstructorFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. (CkOrdered(next)) -> ConstructorFrame(next, k(value, next))
 ): ConstructorFrame(c, frame_bind(k, m)) {
-  ⊢ ConstructorFrame(c, frame_bind(k, m)) from match m {
+  match m {
     mut1(value, next) => {
       let last: ConstructorFrame(
         next,
@@ -74,8 +76,7 @@ pub fn constructor_error_one(
   rest: List(TyConstructorUse)
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_constructor_errors(rest, next)),
     ck_error(
       c,
@@ -96,14 +97,13 @@ pub theorem ck_constructor_errors_frame(
   c: Checker,
   ordered: CkOrdered(c)
 ): ConstructorFrame(c, ck_constructor_errors(uses, c)) {
-  ⊢ ConstructorFrame(c, ck_constructor_errors(uses, c)) from match uses {
+  match uses {
     Nil => constructor_frame_return(c, Star, ordered)
     Cons(use, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => ConstructorFrame(c, m),
       Eq::sym(constructor_errors_unf(c, use, rest)),
       constructor_frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_constructor_errors(rest, next)),
         ck_error(
@@ -147,10 +147,9 @@ pub fn constructor_pass_known(
   actual: Ty
 ): Mut1(List(TyConstructorUse), Checker) {
   frame_bind(
-    Unit,
-    List(TyConstructorUse),
+    <A: Unit, B: List(TyConstructorUse)>,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_constructor_pass(rest, next)),
-    ck_expect(c, actual, constructor_use_ty(use), constructor_use_span(use), "a constructor")
+    ck_expect(c, actual, constructor_use_ty(use), constructor_use_span(use), what_constructor_message())
   )
 }
 
@@ -158,18 +157,16 @@ pub fn constructor_pass_one(
   c: Checker,
   use: TyConstructorUse,
   rest: List(TyConstructorUse),
-  found: Option(Pair(Text, Nat))
+  found: Option(Text × Nat)
 ): Mut1(List(TyConstructorUse), Checker) {
-  ⊢ Mut1(List(TyConstructorUse), Checker) from match found {
+  match found {
     None => frame_bind(
-      List(TyConstructorUse),
-      List(TyConstructorUse),
+      <A: List(TyConstructorUse), B: List(TyConstructorUse)>,
       (pending: List(TyConstructorUse), next: Checker) => mut1(Cons(use, pending), next),
       ck_constructor_pass(rest, c)
     )
     Some(candidate) => frame_bind(
-      Ty,
-      List(TyConstructorUse),
+      <A: Ty, B: List(TyConstructorUse)>,
       (actual: Ty, next: Checker) => constructor_pass_known(next, use, rest, actual),
       ck_constructor_known(
         c,
@@ -204,17 +201,16 @@ pub theorem constructor_pass_one_frame(
   c: Checker,
   use: TyConstructorUse,
   rest: List(TyConstructorUse),
-  found: Option(Pair(Text, Nat)),
+  found: Option(Text × Nat),
   ordered: CkOrdered(c),
   tail: ∀ next: Checker. (CkOrdered(next)) -> ConstructorFrame(
     next,
     ck_constructor_pass(rest, next)
   )
 ): ConstructorFrame(c, constructor_pass_one(c, use, rest, found)) {
-  ⊢ ConstructorFrame(c, constructor_pass_one(c, use, rest, found)) from match found {
+  match found {
     None => constructor_frame_bind(
-      List(TyConstructorUse),
-      List(TyConstructorUse),
+      <A: List(TyConstructorUse), B: List(TyConstructorUse)>,
       c,
       (pending: List(TyConstructorUse), next: Checker) => mut1(Cons(use, pending), next),
       ck_constructor_pass(rest, c),
@@ -222,8 +218,7 @@ pub theorem constructor_pass_one_frame(
       pending => next => current => constructor_frame_return(next, Cons(use, pending), current)
     )
     Some(candidate) => constructor_frame_bind(
-      Ty,
-      List(TyConstructorUse),
+      <A: Ty, B: List(TyConstructorUse)>,
       c,
       (actual: Ty, next: Checker) => constructor_pass_known(next, use, rest, actual),
       ck_constructor_known(
@@ -259,8 +254,7 @@ pub theorem constructor_pass_one_frame(
         ordered
       ),
       actual => next => current => constructor_frame_bind(
-        Unit,
-        List(TyConstructorUse),
+        <A: Unit, B: List(TyConstructorUse)>,
         next,
         (ignored: Unit, last: Checker) => ck_rewrap1(ck_constructor_pass(rest, last)),
         ck_expect(
@@ -268,7 +262,7 @@ pub theorem constructor_pass_one_frame(
           actual,
           constructor_use_ty(use),
           constructor_use_span(use),
-          "a constructor"
+          what_constructor_message()
         ),
         AndIntro(
           ck_expect_run_frame(
@@ -276,7 +270,7 @@ pub theorem constructor_pass_one_frame(
             actual,
             constructor_use_ty(use),
             constructor_use_span(use),
-            "a constructor",
+            what_constructor_message(),
             current
           ),
           ck_expect_error_frame(
@@ -284,7 +278,7 @@ pub theorem constructor_pass_one_frame(
             actual,
             constructor_use_ty(use),
             constructor_use_span(use),
-            "a constructor",
+            what_constructor_message(),
             current
           )
         ),
@@ -303,8 +297,8 @@ pub theorem ck_constructor_pass_frame(
   c: Checker,
   ordered: CkOrdered(c)
 ): ConstructorFrame(c, ck_constructor_pass(uses, c)) {
-  ⊢ ConstructorFrame(c, ck_constructor_pass(uses, c)) from match uses {
-    Nil => constructor_frame_return(c, Nil(TyConstructorUse), ordered)
+  match uses {
+    Nil => constructor_frame_return(c, Nil(<A: TyConstructorUse>), ordered)
     Cons(use, rest) => Eq::subst(
       (m: Mut1(List(TyConstructorUse), Checker)) => ConstructorFrame(c, m),
       Eq::sym(constructor_pass_unf(c, use, rest)),
@@ -330,7 +324,7 @@ pub fn constructor_rounds_after(
   pending: List(TyConstructorUse),
   stopped: Bool
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match stopped {
+  match stopped {
     true => ck_rewrap1(ck_constructor_errors(pending, c))
     false => ck_rewrap1(ck_constructor_rounds(fuel, pending, c))
   }
@@ -342,13 +336,12 @@ pub fn constructor_rounds_step(
   c: Checker
 ): Mut1(Unit, Checker) {
   frame_bind(
-    List(TyConstructorUse),
-    Unit,
+    <A: List(TyConstructorUse), B: Unit>,
     (pending: List(TyConstructorUse), next: Checker) => constructor_rounds_after(
       fuel,
       next,
       pending,
-      Nat::eq(List::length(TyConstructorUse, pending), List::length(TyConstructorUse, uses))
+      Nat::eq(List::length(<A: TyConstructorUse>, pending), List::length(<A: TyConstructorUse>, uses))
     ),
     ck_constructor_pass(uses, c)
   )
@@ -372,7 +365,7 @@ pub theorem constructor_rounds_after_frame(
     CkOrdered(next)
   ) -> ConstructorFrame(next, ck_constructor_rounds(fuel, inputs, next))
 ): ConstructorFrame(c, constructor_rounds_after(fuel, c, pending, stopped)) {
-  ⊢ ConstructorFrame(c, constructor_rounds_after(fuel, c, pending, stopped)) from match stopped {
+  match stopped {
     true => constructor_frame_rewrap(
       c,
       ck_constructor_errors(pending, c),
@@ -392,7 +385,7 @@ pub theorem ck_constructor_rounds_frame(
   c: Checker,
   ordered: CkOrdered(c)
 ): ConstructorFrame(c, ck_constructor_rounds(fuel, uses, c)) {
-  ⊢ ConstructorFrame(c, ck_constructor_rounds(fuel, uses, c)) from match fuel {
+  match fuel {
     Zero => constructor_frame_rewrap(
       c,
       ck_constructor_errors(uses, c),
@@ -402,14 +395,13 @@ pub theorem ck_constructor_rounds_frame(
       (m: Mut1(Unit, Checker)) => ConstructorFrame(c, m),
       Eq::sym(constructor_rounds_unf(rest, uses, c)),
       constructor_frame_bind(
-        List(TyConstructorUse),
-        Unit,
+        <A: List(TyConstructorUse), B: Unit>,
         c,
         (pending: List(TyConstructorUse), next: Checker) => constructor_rounds_after(
           rest,
           next,
           pending,
-          Nat::eq(List::length(TyConstructorUse, pending), List::length(TyConstructorUse, uses))
+          Nat::eq(List::length(<A: TyConstructorUse>, pending), List::length(<A: TyConstructorUse>, uses))
         ),
         ck_constructor_pass(uses, c),
         ck_constructor_pass_frame(uses, c, ordered),
@@ -417,7 +409,7 @@ pub theorem ck_constructor_rounds_frame(
           rest,
           next,
           pending,
-          Nat::eq(List::length(TyConstructorUse, pending), List::length(TyConstructorUse, uses)),
+          Nat::eq(List::length(<A: TyConstructorUse>, pending), List::length(<A: TyConstructorUse>, uses)),
           current,
           inputs => last => ready => ck_constructor_rounds_frame(rest, inputs, last, ready)
         )
@@ -428,8 +420,7 @@ pub theorem ck_constructor_rounds_frame(
 
 pub fn constructor_resolve_step(c: Checker): Mut1(Unit, Checker) {
   frame_bind(
-    List(TyConstructorUse),
-    Unit,
+    <A: List(TyConstructorUse), B: Unit>,
     (uses: List(TyConstructorUse), next: Checker) => ck_rewrap1(
       ck_constructor_rounds(list_len(uses) + 1, uses, next)
     ),
@@ -449,8 +440,7 @@ pub theorem ck_resolve_constructor_uses_frame(
     (m: Mut1(Unit, Checker)) => ConstructorFrame(c, m),
     Eq::sym(constructor_resolve_unf(c)),
     constructor_frame_bind(
-      List(TyConstructorUse),
-      Unit,
+      <A: List(TyConstructorUse), B: Unit>,
       c,
       (uses: List(TyConstructorUse), next: Checker) => ck_rewrap1(
         ck_constructor_rounds(list_len(uses) + 1, uses, next)

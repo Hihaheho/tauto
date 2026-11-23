@@ -38,7 +38,9 @@ pub(crate) fn id(s: &str) -> Ident {
     if KEYWORDS.contains(&s) {
         return Ident::new_raw(s, Span::call_site());
     }
-    if s.contains("::") || s.contains('@') {
+    // Every punctuation a name can carry is spelled out, so a fresh name
+    // (`Execute#1`) is as writable as an indexed copy (`res@Vec(i64)`).
+    if s.contains(['@', '(', ')', ',', '.', '#', '&']) || s.contains("::") {
         let s = s
             .replace("::", "__")
             .replace('@', "_at_")
@@ -47,7 +49,9 @@ pub(crate) fn id(s: &str) -> Ident {
             .replace(',', "_C")
             // A record's struct, `@record.a.b`.
             .replace('.', "_D")
-            .replace('#', "_H");
+            .replace('#', "_H")
+            // A lent struct, `&Bag`.
+            .replace('&', "_B");
         return Ident::new(&s, Span::call_site());
     }
     Ident::new(s, Span::call_site())

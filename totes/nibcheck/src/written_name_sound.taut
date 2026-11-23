@@ -1,17 +1,19 @@
+import "../../identity/src/identity.taut"
 import "rules_written_name.taut"
 import "types_decl.taut"
-import std::Map
-import std::Text
+import "types_decl_head.taut"
+import std::map
+import std::text
 import "ty.taut"
 
 pub fn written_name_lookup(name: Text, o: Option(Ty)): Ty {
-  ⊢ Ty from match o {
-    None => TyNamed(name, Nil)
+  match o {
+    None => TyNamed(NameSpelled(name), Nil)
     Some(t) => t
   }
 }
 pub fn written_name_primitive_lookup(name: Text, generics: Ordmap(Text, Ty), o: Option(Ty)): Ty {
-  ⊢ Ty from match o {
+  match o {
     None => written_name_lookup(name, Ordmap::get(generics, name, Ordmap::compare_text))
     Some(t) => t
   }
@@ -24,7 +26,7 @@ pub theorem written_name_lookup_sound(
   ordinary: primitive_type_name(name) = None,
   found: Ordmap::get(generics, name, Ordmap::compare_text) = o
 ): WrittenTypeName(generics, name, written_name_lookup(name, o)) {
-  ⊢ WrittenTypeName(generics, name, written_name_lookup(name, o)) from match o {
+  match o {
     None => WrittenNameNominal(ordinary, found)
     Some(t) => WrittenNameParameter(t, ordinary, found)
   }
@@ -36,7 +38,7 @@ pub theorem written_name_primitive_lookup_sound(
   o: Option(Ty),
   builtin: primitive_type_name(name) = o
 ): WrittenTypeName(generics, name, written_name_primitive_lookup(name, generics, o)) {
-  ⊢ WrittenTypeName(generics, name, written_name_primitive_lookup(name, generics, o)) from match o {
+  match o {
     None => written_name_lookup_sound(
       name,
       generics,
@@ -48,7 +50,7 @@ pub theorem written_name_primitive_lookup_sound(
   }
 }
 
-pub fn written_name_choose(t: Ty, rest: Ty, b: Bool): Ty { ⊢ Ty from match b {
+pub fn written_name_choose(t: Ty, rest: Ty, b: Bool): Ty { match b {
     true => t
     false => rest
   } }
@@ -56,7 +58,7 @@ pub fn written_name_choose_option(
   t: Ty,
   rest: Option(Ty),
   b: Bool
-): Option(Ty) { ⊢ Option(Ty) from match b {
+): Option(Ty) { match b {
     true => Some(t)
     false => rest
   } }
@@ -92,8 +94,23 @@ pub theorem written_name_primitive_unf(
   let value0: Ty := written_name_lookup(name, Ordmap::get(generics, name, Ordmap::compare_text))
   let option0: Option(Ty) := None
   let equal0: value0 = written_name_primitive_lookup(name, generics, option0) := Refl
-  let value1: Ty := written_name_choose(TyFloat, value0, Text::eq(name, "Float"))
-  let option1: Option(Ty) := written_name_choose_option(TyFloat, option0, Text::eq(name, "Float"))
+  let value00: Ty := written_name_choose(TyFloat32, value0, Text::eq(name, "Float32"))
+  let option00: Option(Ty) := written_name_choose_option(TyFloat32, option0, Text::eq(name, "Float32"))
+  let equal00: value00 = written_name_primitive_lookup(
+    name,
+    generics,
+    option00
+  ) := written_name_choose_sound(
+    name,
+    generics,
+    TyFloat32,
+    value0,
+    option0,
+    Text::eq(name, "Float32"),
+    equal0
+  )
+  let value1: Ty := written_name_choose(TyFloat, value00, Text::eq(name, "Float"))
+  let option1: Option(Ty) := written_name_choose_option(TyFloat, option00, Text::eq(name, "Float"))
   let equal1: value1 = written_name_primitive_lookup(
     name,
     generics,
@@ -102,10 +119,10 @@ pub theorem written_name_primitive_unf(
     name,
     generics,
     TyFloat,
-    value0,
-    option0,
+    value00,
+    option00,
     Text::eq(name, "Float"),
-    equal0
+    equal00
   )
   let value2: Ty := written_name_choose(TyDecimal, value1, Text::eq(name, "Decimal"))
   let option2: Option(
@@ -169,10 +186,78 @@ pub theorem written_name_primitive_unf(
     Text::eq(name, "Bool"),
     equal4
   )
-  let value6: Ty := written_name_choose(TyInt(WidthU64), value5, Text::eq(name, "u64"))
+  let value5h: Ty := written_name_choose(TyInt(WidthHost), value5, Text::eq(name, "uhost"))
+  let option5h: Option(
+    Ty
+  ) := written_name_choose_option(TyInt(WidthHost), option5, Text::eq(name, "uhost"))
+  let equal5h: value5h = written_name_primitive_lookup(
+    name,
+    generics,
+    option5h
+  ) := written_name_choose_sound(
+    name,
+    generics,
+    TyInt(WidthHost),
+    value5,
+    option5,
+    Text::eq(name, "uhost"),
+    equal5
+  )
+  let value5u16: Ty := written_name_choose(TyInt(WidthU16), value5h, Text::eq(name, "u16"))
+  let option5u16: Option(
+    Ty
+  ) := written_name_choose_option(TyInt(WidthU16), option5h, Text::eq(name, "u16"))
+  let equal5u16: value5u16 = written_name_primitive_lookup(
+    name,
+    generics,
+    option5u16
+  ) := written_name_choose_sound(
+    name,
+    generics,
+    TyInt(WidthU16),
+    value5h,
+    option5h,
+    Text::eq(name, "u16"),
+    equal5h
+  )
+  let value5i16: Ty := written_name_choose(TyInt(Width16), value5u16, Text::eq(name, "i16"))
+  let option5i16: Option(
+    Ty
+  ) := written_name_choose_option(TyInt(Width16), option5u16, Text::eq(name, "i16"))
+  let equal5i16: value5i16 = written_name_primitive_lookup(
+    name,
+    generics,
+    option5i16
+  ) := written_name_choose_sound(
+    name,
+    generics,
+    TyInt(Width16),
+    value5u16,
+    option5u16,
+    Text::eq(name, "i16"),
+    equal5u16
+  )
+  let value5i8: Ty := written_name_choose(TyInt(Width8), value5i16, Text::eq(name, "i8"))
+  let option5i8: Option(
+    Ty
+  ) := written_name_choose_option(TyInt(Width8), option5i16, Text::eq(name, "i8"))
+  let equal5i8: value5i8 = written_name_primitive_lookup(
+    name,
+    generics,
+    option5i8
+  ) := written_name_choose_sound(
+    name,
+    generics,
+    TyInt(Width8),
+    value5i16,
+    option5i16,
+    Text::eq(name, "i8"),
+    equal5i16
+  )
+  let value6: Ty := written_name_choose(TyInt(WidthU64), value5i8, Text::eq(name, "u64"))
   let option6: Option(
     Ty
-  ) := written_name_choose_option(TyInt(WidthU64), option5, Text::eq(name, "u64"))
+  ) := written_name_choose_option(TyInt(WidthU64), option5i8, Text::eq(name, "u64"))
   let equal6: value6 = written_name_primitive_lookup(
     name,
     generics,
@@ -181,10 +266,10 @@ pub theorem written_name_primitive_unf(
     name,
     generics,
     TyInt(WidthU64),
-    value5,
-    option5,
+    value5i8,
+    option5i8,
     Text::eq(name, "u64"),
-    equal5
+    equal5i8
   )
   let value7: Ty := written_name_choose(TyInt(WidthU32), value6, Text::eq(name, "u32"))
   let option7: Option(
@@ -254,7 +339,39 @@ pub theorem written_name_primitive_unf(
     Text::eq(name, "i32"),
     equal9
   )
-  equal10
+  let value11: Ty := written_name_choose(TyInt(WidthNat), value10, Text::eq(name, "nat"))
+  let option11: Option(
+    Ty
+  ) := written_name_choose_option(TyInt(WidthNat), option10, Text::eq(name, "nat"))
+  let equal11: value11 = written_name_primitive_lookup(
+    name,
+    generics,
+    option11
+  ) := written_name_choose_sound(
+    name,
+    generics,
+    TyInt(WidthNat),
+    value10,
+    option10,
+    Text::eq(name, "nat"),
+    equal10
+  )
+  let value12: Ty := written_name_choose(TyUnit, value11, Text::eq(name, "Unit"))
+  let option12: Option(Ty) := written_name_choose_option(TyUnit, option11, Text::eq(name, "Unit"))
+  let equal12: value12 = written_name_primitive_lookup(
+    name,
+    generics,
+    option12
+  ) := written_name_choose_sound(
+    name,
+    generics,
+    TyUnit,
+    value11,
+    option11,
+    Text::eq(name, "Unit"),
+    equal11
+  )
+  equal12
 }
 
 pub theorem ck_written_name_sound(
@@ -273,7 +390,7 @@ pub theorem written_name_nominal_value(
   generics: Ordmap(Text, Ty),
   ordinary: primitive_type_name(name) = None,
   unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None
-): ck_written_name(name, generics) = TyNamed(name, Nil) {
+): ck_written_name(name, generics) = TyNamed(NameSpelled(name), Nil) {
   Eq::trans(
     written_name_primitive_unf(name, generics),
     Eq::trans(

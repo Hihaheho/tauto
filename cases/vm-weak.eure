@@ -1,25 +1,25 @@
 @ cases.weak-upgrades-while-a-strong-handle-remains
-backends = ["rust", "javascript", "vm"]
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
 source = ```nib
-import std::prelude::Par
-let r := Ref::new(5)
-let w := Weak::of(r)
-Ref::set(r, 6)
-let seen := match Weak::get(w) { Some(s) => Ref::get(s), None => 0 }
-perform show("alive", seen + Ref::get(r) - 6)
+import std::builtin::par
+let r := perform ref_new(5)
+let w := perform weak_of(r)
+perform ref_set(r, 6)
+let seen := match perform weak_get(w) { Some(s) => perform ref_get(s), None => 0 }
+show(&(seen + perform ref_get(r) - 6))
 ```
-shows = ["alive = 6"]
+stdout = "6\n"
 
 @ cases.weak-sees-the-slot-the-ref-shares
-backends = ["rust", "javascript", "vm"]
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Ref::new` yet"
 source = ```nib
-import std::prelude::Par
-let r := Ref::new(1)
-let w := Weak::of(r)
-match Weak::get(w) {
-  Some(s) => Ref::set(s, 9)
+import std::builtin::par
+let r := perform ref_new(1)
+let w := perform weak_of(r)
+match perform weak_get(w) {
+  Some(s) => perform ref_set(s, 9)
   None => ()
 }
-perform show("through", Ref::get(r))
+show(&perform ref_get(r))
 ```
-shows = ["through = 9"]
+stdout = "9\n"

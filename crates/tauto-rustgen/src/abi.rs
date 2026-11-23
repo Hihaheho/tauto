@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use quote::quote;
-use tauto_nir::{FnTy, InstId, Ty};
+use tauto_nir::{FnTy, InstId, Tier, Ty};
 
 use crate::Gen;
 use crate::tok::{Rs, comma, id, lit};
@@ -36,7 +36,6 @@ fn substitute(ty: &Ty, arguments: Option<&Arguments>) -> Ty {
         Ty::SharedVar(false, a) => Ty::SharedVar(false, sub(a)),
         Ty::Info(a) => Ty::Info(sub(a)),
         Ty::BudgetAnswer(a) => Ty::BudgetAnswer(sub(a)),
-        Ty::HashMap(a, b) => Ty::HashMap(sub(a), sub(b)),
         Ty::Result(a, b) => Ty::Result(sub(a), sub(b)),
         Ty::Pair(a, b) => Ty::Pair(sub(a), sub(b)),
         Ty::Data(name, args) => Ty::Data(
@@ -61,6 +60,20 @@ fn substitute(ty: &Ty, arguments: Option<&Arguments>) -> Ty {
     }
 }
 
+/// `&F` or `&mut F` where `F` stands for a function type.
+fn fn_through_param(formal: &Ty, arguments: &Arguments) -> Option<FnTy> {
+    let (Ty::Ref(inner) | Ty::RefMut(inner)) = formal else {
+        return None;
+    };
+    let Ty::Param(name) = &**inner else {
+        return None;
+    };
+    match arguments.get(name)? {
+        Ty::Fn(f) => Some((**f).clone()),
+        _ => None,
+    }
+}
+
 fn contains_union(ty: &Ty) -> bool {
     match ty {
         Ty::Union(_) => true,
@@ -74,9 +87,7 @@ fn contains_union(ty: &Ty) -> bool {
         | Ty::SharedVar(false, a)
         | Ty::Info(a)
         | Ty::BudgetAnswer(a) => contains_union(a),
-        Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
-            contains_union(a) || contains_union(b)
-        }
+        Ty::Result(a, b) | Ty::Pair(a, b) => contains_union(a) || contains_union(b),
         Ty::Data(_, args) | Ty::Std(_, args) => args.iter().any(contains_union),
         Ty::Fn(f) => f.params.iter().any(contains_union) || contains_union(&f.ret),
         _ => false,
@@ -91,7 +102,7 @@ fn diagnostic(message: &str) -> Rs {
 impl Gen<'_> {
     fn abi_arguments(&self, inst: InstId, actual: &[Ty]) -> Option<Arguments> {
         let generics = &self.pkg.fns[inst].generics;
-        if generics.len() != actual.len() || actual.iter().any(Ty::has_infer) {
+        if generics.len() != actual.len() || actual.iter().any(Ty::has_arm_generic) {
             return None;
         }
         let arguments: Arguments = generics
@@ -127,9 +138,7 @@ impl Gen<'_> {
             | (Ty::SharedVar(false, a), Ty::SharedVar(false, b))
             | (Ty::Info(a), Ty::Info(b))
             | (Ty::BudgetAnswer(a), Ty::BudgetAnswer(b)) => self.same_abi(a, from_args, b, to_args),
-            (Ty::HashMap(a, b), Ty::HashMap(c, d))
-            | (Ty::Result(a, b), Ty::Result(c, d))
-            | (Ty::Pair(a, b), Ty::Pair(c, d)) => {
+            (Ty::Result(a, b), Ty::Result(c, d)) | (Ty::Pair(a, b), Ty::Pair(c, d)) => {
                 self.same_abi(a, from_args, c, to_args) && self.same_abi(b, from_args, d, to_args)
             }
             (Ty::Data(a, args), Ty::Data(b, other)) => {
@@ -322,7 +331,156 @@ impl Gen<'_> {
                 value
             };
         };
+        if let Some(adapted) =
+            self.adapt_reborrowed_fn_params(value.clone(), actual, &formal.ty, &arguments)
+        {
+            return adapted;
+        }
+        if let Some(adapted) =
+            self.adapt_borrowed_fn_params(value.clone(), actual, &formal.ty, &arguments)
+        {
+            return adapted;
+        }
         self.adapt_union_abi(value, actual, None, &formal.ty, Some(&arguments))
+    }
+
+    /// The function type a declaration parameter `&F` (or `&mut F`) stands
+    /// for at this call, when `F` is instantiated with one. Inside the
+    /// generic declaration such a parameter is a borrow of the function
+    /// value, `&Rc<dyn Fn…>`; a borrowed function written as such is the
+    /// `&mut dyn FnMut` the callee calls.
+    pub(crate) fn borrowed_fn_through_param(
+        &self,
+        inst: InstId,
+        targs: &[Ty],
+        parameter: usize,
+    ) -> Option<FnTy> {
+        let formal = &self.pkg.fns[inst].params.get(parameter)?.ty;
+        let arguments = self.abi_arguments(inst, targs)?;
+        fn_through_param(formal, &arguments)
+    }
+
+    /// A function value whose parameters include a borrowed function that
+    /// the declaration writes as `&F`: it is called with `&Rc<dyn Fn…>`, and
+    /// lends the function it holds to the value as the `&mut dyn FnMut` the
+    /// value takes.
+    /// A function value that takes `&T` where the parameter's function,
+    /// with its type arguments, takes `&A` and `A` stands for `&T` (an
+    /// instance of a class for `T` given for a borrowed `T`, as `Debug` of an
+    /// `Option(&u32)` is given `Debug::debug` of `u32`): a borrow of a borrow
+    /// is the borrow it reads, so the value is called through a closure that
+    /// takes the outer borrow.
+    fn adapt_reborrowed_fn_params(
+        &self,
+        value: Rs,
+        actual: &Ty,
+        formal: &Ty,
+        arguments: &Arguments,
+    ) -> Option<Rs> {
+        let (Ty::Fn(actual), Ty::Fn(formal)) = (actual, formal) else {
+            return None;
+        };
+        if actual.params.len() != formal.params.len()
+            || actual.tier != Tier::S
+            || !actual.kind.dup()
+        {
+            return None;
+        }
+        let mut changed = false;
+        let mut params = vec![quote!(ev: &Ev<'_>)];
+        let mut args = vec![quote!(ev)];
+        for (i, (a, f)) in actual.params.iter().zip(&formal.params).enumerate() {
+            let x = id(&format!("a{i}"));
+            let f = substitute(f, Some(arguments));
+            match (a, &f) {
+                (Ty::Ref(inner), Ty::Ref(outer))
+                    if matches!(**outer, Ty::Ref(_)) && !matches!(**inner, Ty::Ref(_)) =>
+                {
+                    changed = true;
+                    let t = self.ty(&f);
+                    params.push(quote!(#x: #t));
+                    args.push(quote!(*#x));
+                }
+                _ => {
+                    let t = self.ty(a);
+                    params.push(quote!(#x: #t));
+                    args.push(quote!(#x));
+                }
+            }
+        }
+        if !changed {
+            return None;
+        }
+        let (params, args) = (comma(params), comma(args));
+        Some(quote!({
+            let __tauto_reborrowed = #value;
+            std::rc::Rc::new(move |#params| __tauto_reborrowed(#args))
+        }))
+    }
+
+    fn adapt_borrowed_fn_params(
+        &self,
+        value: Rs,
+        actual: &Ty,
+        formal: &Ty,
+        arguments: &Arguments,
+    ) -> Option<Rs> {
+        let (Ty::Fn(actual), Ty::Fn(formal)) = (actual, formal) else {
+            return None;
+        };
+        if actual.params.len() != formal.params.len() {
+            return None;
+        }
+        let through: Vec<Option<FnTy>> = formal
+            .params
+            .iter()
+            .map(|t| fn_through_param(t, arguments))
+            .collect();
+        if through.iter().all(Option::is_none) {
+            return None;
+        }
+        if actual.tier != Tier::S || !actual.kind.dup() {
+            return Some(diagnostic(
+                "tauto: a function value given where a type parameter stands for a borrowed \
+                 function must be shared and of the S tier",
+            ));
+        }
+        let mut params = vec![quote!(ev: &Ev<'_>)];
+        let mut args = vec![quote!(ev)];
+        for (i, (t, f)) in actual.params.iter().zip(&through).enumerate() {
+            let a = id(&format!("a{i}"));
+            match (f, t) {
+                (Some(f), Ty::Ref(_) | Ty::RefMut(_)) if f.tier == Tier::S => {
+                    let value_ty = self.fn_value_ty(f);
+                    params.push(quote!(#a: &#value_ty));
+                    let names: Vec<Rs> = (0..f.params.len())
+                        .map(|j| {
+                            let x = id(&format!("x{j}"));
+                            quote!(#x)
+                        })
+                        .collect();
+                    let call = comma(std::iter::once(quote!(ev)).chain(names.iter().cloned()));
+                    let names = comma(std::iter::once(quote!(ev)).chain(names));
+                    args.push(quote!(&mut |#names| #a(#call)));
+                }
+                (Some(_), _) => {
+                    return Some(diagnostic(
+                        "tauto: a borrowed function of a tier other than S through a type \
+                         parameter is not supported",
+                    ));
+                }
+                (None, t) => {
+                    let t = self.ty(t);
+                    params.push(quote!(#a: #t));
+                    args.push(quote!(#a));
+                }
+            }
+        }
+        let (params, args) = (comma(params), comma(args));
+        Some(quote!({
+            let __tauto_lent = #value;
+            Rc::new(move |#params| __tauto_lent(#args))
+        }))
     }
 
     pub(crate) fn abi_result(&self, value: Rs, inst: InstId, targs: &[Ty], actual: &Ty) -> Rs {
@@ -374,7 +532,6 @@ mod tests {
             fns: vec![FnInst {
                 id: 0,
                 source: "checked".into(),
-                rust_name: "checked__s".into(),
                 tier: Tier::S,
                 generics: vec![
                     ("B".into(), Default::default()),
@@ -389,6 +546,8 @@ mod tests {
                     ty: parameter,
                 }],
                 ret,
+                lends: None,
+                fn_region: false,
                 body: Expr {
                     kind: ExprKind::Unit,
                     ty: Ty::Unit,
@@ -423,7 +582,7 @@ mod tests {
                 vec![],
                 vec![Ty::Text],
                 vec![Ty::Text, Ty::Int(Width::W64), Ty::Bool],
-                vec![Ty::Text, Ty::Infer],
+                vec![Ty::Text, Ty::Param(tauto_nir::arms::skolem(0))],
             ] {
                 assert_diagnostic(
                     generator.abi_argument(quote!(value), &Ty::Union(0), 0, &arguments, 0),
@@ -624,6 +783,7 @@ mod tests {
                 targs: arguments,
                 tick: Tick::None,
                 recur: false,
+                unwind: Vec::new(),
                 span: Span::new(0, 0),
             };
             assert!(generator.borrowed_budget_call(&call).is_none());

@@ -1,3 +1,21 @@
+@ cases.a-product-of-three-members-is-an-argument-to-a-generic-function
+source = ```tauto
+var v: Vec(i64 × Bool × Text) := Vec::new()
+Vec::push(&mut v, #(1, true, "a"))
+var w: Vec(@code i64 × @at i64 × @face i64) := Vec::new()
+let p := #(@code 7, @at 8)
+Vec::push(&mut w, #(@code (p: @code i64), @at (p: @at i64), @face 9))
+let q := match Vec::get(&v, 0) { Some(q) => q, None => #(0, false, "") }
+let r := match Vec::get(&w, 0) { Some(r) => r, None => #(@code 0, @at 0, @face 0) }
+show(&((q: Text)))
+show(&((r: @face i64)))
+```
+types = "ok"
+stdout = ```
+"a"
+9
+```
+
 @ cases.a-product-is-written-with-times
 source = ```tauto
 let p := #(1, "a", true)
@@ -70,14 +88,13 @@ types = "error: an argument: i64 does not fit i64 × Text"
 
 @ cases.a-type-may-be-twice-in-a-product
 source = ```tauto
-fn f(p: i64 × i64): i64 { match p {
+fn f(p: i64 × i64): i64 ! {overflow} { match p {
     #(a, b) => a - b
   } }
-perform show("f", f(#(5, 2)))
+show(&f(#(5, 2)))
 ```
 types = "ok"
-shows = ["f = 3"]
-backends = ["rust", "javascript"]
+stdout = "3\n"
 
 @ cases.members-of-one-type-are-not-taken-by-their-type
 source = ```tauto
@@ -93,6 +110,19 @@ let b: i64 := (p: @y i64)
 ```
 types = "ok"
 inferred_types.p = "@x i64 × @y i64"
+
+@ cases.a-picked-member-is-untagged
+source = ```tauto
+fn key_is(p: @key i64 × @val i64, x: i64): Bool { (p: @key i64) == x }
+let p := #(@key 1, @val 2)
+let k := (p: @key i64)
+let pair := #(@response (p: @key i64), @state (p: @val i64))
+show(&key_is(p, 1))
+```
+types = "ok"
+inferred_types.k = "i64"
+inferred_types.pair = "@response i64 × @state i64"
+stdout = "true\n"
 
 @ cases.times-binds-tighter-than-a-union
 source = ```tauto
@@ -112,47 +142,58 @@ types = "ok"
 @ cases.a-product-runs
 source = ```tauto
 let p := #("a", 1, true)
-perform show("p", p)
-perform show("n", (p: i64))
-perform show("s", (p: Text))
+show(&p)
+show(&((p: i64)))
+show(&((p: Text)))
 ```
-shows = ["p = #(\"a\", 1, true)", "n = 1", "s = \"a\""]
-backends = ["rust", "javascript"]
+stdout = ```
+#("a", #(1, true))
+1
+"a"
+```
 
 @ cases.a-product-forgets-members-when-run
 source = ```tauto
-fn n(x: i64): i64 { x + 1 }
+fn n(x: i64): i64 ! {overflow} { x + 1 }
 fn s(x: Text × Bool): Text × Bool { x }
-perform show("n", n(#(1, "a")))
-perform show("s", s(#(1, "a", true)))
+show(&n(#(1, "a")))
+show(&s(#(1, "a", true)))
 ```
-shows = ["n = 2", "s = #(\"a\", true)"]
-backends = ["rust", "javascript"]
+stdout = ```
+2
+#("a", true)
+```
 
 @ cases.members-are-evaluated-in-the-order-written
 source = ```tauto
-fn t(name: Text, v: i64): i64 { perform show(name, v)
+import std::builtin::os
+fn t(name: Text, v: i64): i64 ! {stdout, stdout_flush} { show(&v)
   v }
 let p := #(@y t("first", 1), @x t("second", 2))
-perform show("p", p)
+show(&p)
 ```
-shows = ["first = 1", "second = 2", "p = #(1, 2)"]
-backends = ["rust", "javascript"]
+stdout = ```
+1
+2
+#(1, 2)
+```
 
 @ cases.tagged-members-run
 source = ```tauto
 let p := #(@x 1, @y 2)
 let a: i64 := (p: @x i64)
 let b: i64 := (p: @y i64)
-perform show("a", a)
-perform show("b", b)
+show(&a)
+show(&b)
 ```
-shows = ["a = 1", "b = 2"]
-backends = ["rust", "javascript"]
+stdout = ```
+1
+2
+```
 
 @ cases.a-product-with-a-linear-member-is-linear
 source = ```tauto
-linear struct Token {}
+struct(linear) Token {}
 fn f(t: Token): i64 { let p := #(t, 1)
   1 }
 ```
@@ -170,76 +211,76 @@ lin = "ok"
 
 @ cases.a-linear-member-is-not-forgotten
 source = ```tauto
-linear struct Token {}
+struct(linear) Token {}
 fn f(t: Token): i64 { #(t, 1) }
 ```
 types = "error: the result of `f`: this forgets the linear member Token"
 
-// Only `#(…)` and `A × B` are products. A `Pair` written by its name is the inductive
-// `Pair`: a `Pair` in its `fst` is one member, not spread into the outer product.
-@ cases.a-pair-written-by-its-name-keeps-a-pair-on-its-left
+// A product on the left of a product is one member, not spread into the outer product.
+@ cases.a-product-on-the-left-is-one-member
 source = ```tauto
-fn f(n: Nat): Pair(Pair(List(Nat), Pair(List(Bool), List(Bool))), Nat) {
-  Pair { fst: Pair { fst: Nil, snd: Pair { fst: Nil, snd: Nil } }, snd: n }
+fn f(n: Nat): (List(Nat) × List(Bool) × List(Bool)) × Nat {
+  #(#(Nil, Nil, Nil), n)
 }
 
-fn g(n: Nat): Pair(Pair(Nat, Bool), Nat) {
-  Pair { fst: Pair { fst: n, snd: true }, snd: n }
+fn g(n: Nat): (Nat × Bool) × Nat {
+  #(#(n, true), n)
 }
 
 theorem g_left(): g(Zero).fst.snd = true {
-  Refl(Bool, true)
+  Refl
 }
 ```
 checks_all = "checked"
 
-@ cases.a-pair-value-is-the-declared-pair
+@ cases.a-product-member-is-taken-by-fst
 source = ```tauto
-fn f(n: u64): Pair(Text, u64) { Pair { fst: "a", snd: n } }
+fn f(n: i64): Text × i64 { #("a", n) }
 let p := f(1)
 let s := p.fst
 ```
 types = "ok"
 inferred_types.s = "Text"
 
-// `#(a, b)` is a value of `Pair`, as `A × B` is `Pair(A, B)`.
-@ cases.a-tuple-is-a-declared-pair
+@ cases.a-product-is-cast-to-a-member-by-its-type
 source = ```tauto
-fn f(n: i64): Pair(Text, i64) { #("a", n) }
-let p := f(1)
-let s := p.fst
-```
-types = "ok"
-inferred_types.s = "Text"
-
-// A product is a `Pair`, so a pair is cast to a member by its type as a product is.
-@ cases.a-pair-is-cast-to-a-member-by-its-type
-source = ```tauto
-fn f(n: i64): Pair(Text, i64) { Pair { fst: "a", snd: n } }
+fn f(n: i64): Text × i64 { #("a", n) }
 let p := f(1)
 let m := (p: i64)
 ```
 types = "ok"
 
-// The kernel sees a product and a `Pair` as one type: a `Pair` stands where a product is written,
-// and is cast to a member as the product is.
-@ cases.a-pair-is-cast-to-its-first-member
+// The product is written `A × B` and `#(…)` only: the prelude's `Pair`, the record the checker
+// reads a product as, is not written by its name, as a type, a value or a pattern.
+@ cases.the-prelude-pair-is-not-written-as-a-type
 source = ```tauto
-theorem t(p: Pair(Nat, Bool)): Nat { (p: Nat) }
+fn f(p: Pair(Nat, Bool)): Nat { 0 }
 ```
-checks.t = "checked"
+types = "error: `Pair` is not written by its name: a product is written `A × B` and `#(a, b)`, and taken apart by `#(…)`, by the type of a member or by `.fst` and `.snd`"
 
-@ cases.a-pair-is-taken-for-a-product
+@ cases.the-prelude-pair-is-not-written-as-a-value
 source = ```tauto
-theorem t(p: Pair(Nat, Bool)): Nat { let q: Nat × Bool := p; (q: Nat) }
+fn f(): Nat × Bool { Pair { fst: 0, snd: true } }
 ```
-checks.t = "checked"
+types = "error: `Pair` is not written by its name: a product is written `A × B` and `#(a, b)`, and taken apart by `#(…)`, by the type of a member or by `.fst` and `.snd`"
 
-@ cases.a-pair-is-a-product-in-a-result
+@ cases.the-prelude-pair-is-not-written-as-a-pattern
 source = ```tauto
-theorem t(p: Pair(Nat, Bool)): Nat × Bool { p }
+fn f(p: Nat × Bool): Nat {
+  match p {
+    Pair { fst: n, snd: b } => n
+  }
+}
 ```
-checks.t = "checked"
+types = "error: `Pair` is not written by its name: a product is written `A × B` and `#(a, b)`, and taken apart by `#(…)`, by the type of a member or by `.fst` and `.snd`"
+
+// A program's own `Pair` is its own declaration, written by its name as any other.
+@ cases.a-program-declares-its-own-pair
+source = ```tauto
+struct Pair(A: Type, B: Type) { left: A, right: B }
+fn f(p: Pair(Nat, Bool)): Nat { p.left }
+```
+types = "ok"
 
 @ cases.a-product-is-cast-to-its-first-member
 source = ```tauto
@@ -248,8 +289,7 @@ theorem t(p: Nat × Bool): Nat { (p: Nat) }
 checks.t = "checked"
 
 // A `match` on a labeled product refines a hypothesis that mentions the matched value: the
-// value the hypothesis is refined with is the product the pattern rebuilds, not a `Pair`
-// written by its name.
+// value the hypothesis is refined with is the product the pattern rebuilds.
 @ cases.a-match-on-a-labeled-product-refines-a-hypothesis
 source = ```tauto
 fn all_ok(ps: List(@name Bool × @value Bool)): Bool {
@@ -271,7 +311,7 @@ theorem t(ps: List(@name Bool × @value Bool), ok: all_ok(ps) = true): true = tr
 checks_all = "checked"
 
 // A member of a `List(A × B)` passed to a parameter `A × B`: the element the kernel reads off
-// the list is a `Pair`, the same type as the product.
+// the list is the product.
 @ cases.a-list-member-of-a-product-is-passed-as-the-product
 source = ```tauto
 fn one(b: List(Nat) × Bool): Nat {
@@ -288,3 +328,96 @@ fn all(bs: List(List(Nat) × Bool)): Nat {
 }
 ```
 checks_all = "checked"
+
+@ cases.a-local-function-uses-the-outer-debug
+source = ```tauto
+import std::builtin::os
+fn outer<A: Shared>(value: A): i64 ! {stdout, stdout_flush} where Debug(A) {
+  fn inner<B: Shared>(other: B): i64 ! {stdout, stdout_flush} where Debug(B) {
+    show(&value)
+    show(&other)
+    7
+  }
+  inner(9)
+}
+show(&outer("text"))
+```
+stdout = ```
+"text"
+9
+7
+```
+
+@ cases.a-function-field-shows-as-dots
+source = ```tauto
+struct Hold { n: i64, f: (i64) -> i64 }
+enum Pick { One(i64, (i64) -> i64) }
+fn id(x: i64): i64 { x }
+show(&Hold { n: 1, f: id })
+show(&Pick::One(2, id))
+```
+stdout = ```
+Hold { n: 1, .. }
+One(2, ..)
+```
+
+@ cases.a-recursive-type-shows-to-a-depth
+source = ```tauto
+enum Tree { Leaf(i64), Node(Tree, Tree) }
+enum Chain(A: Shared) { End, Link(A, Chain(A)) }
+fn long(n: u64, c: Chain(u64)): Chain(u64) ! {div} {
+  if n == 0 { c } else { long(U64::wrapping_sub(n, 1), Link(n, c)) }
+}
+show(&Node(Leaf(1), Node(Leaf(2), Leaf(3))))
+show(&Link("a", Link("b", End)))
+show(&long(66, End))
+```
+stdout = ```
+Node(Leaf(1), Node(Leaf(2), Leaf(3)))
+Link("a", Link("b", End))
+Link(1, Link(2, Link(3, Link(4, Link(5, Link(6, Link(7, Link(8, Link(9, Link(10, Link(11, Link(12, Link(13, Link(14, Link(15, Link(16, Link(17, Link(18, Link(19, Link(20, Link(21, Link(22, Link(23, Link(24, Link(25, Link(26, Link(27, Link(28, Link(29, Link(30, Link(31, Link(32, Link(33, Link(34, Link(35, Link(36, Link(37, Link(38, Link(39, Link(40, Link(41, Link(42, Link(43, Link(44, Link(45, Link(46, Link(47, Link(48, Link(49, Link(50, Link(51, Link(52, Link(53, Link(54, Link(55, Link(56, Link(57, Link(58, Link(59, Link(60, Link(61, Link(62, Link(63, Link(64, ..))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+```
+
+@ cases.a-union-shows-the-member-it-holds
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
+source = ```nib
+enum Shape { Circle(i64), Rect(i64, i64) }
+let a: i64 | Text := "a"
+let b: i64 | Text := 3
+let c: Shape | Bool := Rect(2, 3)
+show(&a)
+show(&b)
+show(&c)
+show(&[a, b])
+```
+stdout = ```
+"a"
+3
+Rect(2, 3)
+["a", 3]
+```
+
+@ cases.a-union-with-a-type-variable-member-is-not-shown
+source = ```nib
+fn f<A: Shared>(x: A | i64): Text where Debug(A) {
+  Debug::debug(&x)
+}
+```
+types = "error: no instance Debug(i64 | A)"
+
+@ cases.types-recursive-through-each-other-show-whole
+source = ```tauto
+enum Tree { Leaf(i64), Node(Forest) }
+struct Forest { kids: List(Tree), extra: Option(Tree) }
+enum Json { Null, Arr(List(Json)), Obj(List(Entry)) }
+struct Entry { key: Text, value: Json }
+enum Env { Empty, Bind(List(Env × Text), u64) }
+show(&Node(Forest { kids: [Leaf(1), Node(Forest { kids: [], extra: None })], extra: Some(Leaf(2)) }))
+show(&Obj([Entry { key: "a", value: Arr([Null, Null]) }, Entry { key: "b", value: Null }]))
+show(&Bind([], 3))
+```
+stdout = ```
+Node(Forest { kids: [Leaf(1), Node(Forest { kids: [], extra: None })], extra: Some(Leaf(2)) })
+Obj([Entry { key: "a", value: Arr([Null, Null]) }, Entry { key: "b", value: Null }])
+Bind(.., 3)
+```

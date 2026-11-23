@@ -1,4 +1,4 @@
-//! `import std::List` reads the standard library that comes with tauto, from
+//! `import std::list` reads the standard library that comes with tauto, from
 //! a file anywhere, and the standard library's own manifest is readable.
 
 use std::path::{Path, PathBuf};
@@ -34,8 +34,8 @@ fn a_file_outside_the_checkout_imports_std_by_name() {
     tauto_messages::install();
     let path = file(
         "nat",
-        r#"import std::Base
-import std::Nat
+        r#"import std::base
+import std::nat
 theorem t(): Nat::max(Zero, Zero) = Zero { Refl }
 "#,
     );
@@ -48,7 +48,7 @@ fn a_string_literal_is_text_with_std_text() {
     tauto_messages::install();
     let path = file(
         "text",
-        r#"import std::Text
+        r#"import std::text
 fn greet(): Text { "hi" }
 "#,
     );
@@ -60,12 +60,12 @@ fn greet(): Text { "hi" }
 fn a_long_string_literal_checks_in_time_linear_in_its_length() {
     tauto_messages::install();
     // Each byte is one `Cons` of the literal: elaborating them must not type
-    // the rest of the list again at every byte. 8 KB took minutes when it did.
+    // the rest of the list again at every byte.
     let bytes = "x".repeat(8000);
     let path = file(
         "long-text",
         &format!(
-            "import std::Text\n\nfn lit(): Text {{ \"{bytes}\" }}\n\ntheorem lit_len(): Text::len(lit()) = 8000 {{ Refl }}\n"
+            "import std::text\n\nfn lit(): Text {{ \"{bytes}\" }}\n\ntheorem lit_len(): Text::len(lit()) = 8000 {{ Refl }}\n"
         ),
     );
     // The list is 8000 terms deep: check it on a stack as deep as the CLI's.
@@ -93,7 +93,7 @@ fn checking_a_text_literal_takes_no_stack_in_proportion_to_its_length() {
     let bytes = "x".repeat(50_000);
     let path = file(
         "deep-text",
-        &format!("import std::Text\n\nfn lit(): Text {{ \"{bytes}\" }}\n"),
+        &format!("import std::text\n\nfn lit(): Text {{ \"{bytes}\" }}\n"),
     );
     std::thread::Builder::new()
         .stack_size(2 << 20)
@@ -110,7 +110,10 @@ fn checking_a_text_literal_takes_no_stack_in_proportion_to_its_length() {
 fn a_constructor_named_like_a_builtin_type_does_not_depend_on_import_order() {
     tauto_messages::install();
     for name in ["std-import-uint-then-tactic", "std-import-tactic-then-uint"] {
-        let path = file(name, case_inputs::fixture_static("inputs/tauto.eure", name));
+        let path = file(
+            name,
+            tauto_case_inputs::source("inputs/tauto.eure", name).as_str(),
+        );
         let report = check_report(&path, None).unwrap();
         assert_eq!(report.status(), Status::Ok, "{name}");
     }
@@ -121,12 +124,12 @@ fn an_unknown_name_is_an_error() {
     tauto_messages::install();
     let missing = file(
         "missing",
-        r#"import std::Nope
+        r#"import std::nope
 "#,
     );
     let e = check_report(&missing, None).err().unwrap();
     let found = within(&e, "tauto-import-no-std-module").unwrap_or_else(|| panic!("{e}"));
-    assert_eq!(found.get("module"), Some(&"Nope".into()));
+    assert_eq!(found.get("module"), Some(&"nope".into()));
     let other = file(
         "other",
         r#"import foo::Bar
@@ -147,9 +150,9 @@ fn every_std_file_comes_with_tauto() {
         .filter(|p| p.extension().is_some_and(|e| e == "taut"))
         .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
         .collect();
-    // The files of the prelude and of `proof`, imported as `std::prelude::NAME`
-    // and `std::proof::NAME`.
-    for dir in ["prelude", "proof"] {
+    // The files of the prelude, of `builtin` and of `proof`, imported as
+    // `std::prelude::NAME`, `std::builtin::NAME` and `std::proof::NAME`.
+    for dir in ["prelude", "builtin", "proof"] {
         on_disk.extend(
             std::fs::read_dir(std.join(dir))
                 .unwrap()
@@ -188,8 +191,8 @@ fn a_tote_imports_std_by_name() {
     .unwrap();
     std::fs::write(
         root.join("src/main.taut"),
-        r#"import std::Base
-import std::Nat
+        r#"import std::base
+import std::nat
 fn main(): Nat { Nat::max(1, 2) }
 "#,
     )
@@ -201,7 +204,7 @@ fn main(): Nat { Nat::max(1, 2) }
 fn a_tote_reports_a_file_that_imports_no_std_module_as_its_entry_file_does() {
     tauto_messages::install();
     // `greet.taut` comes before `main.taut` in the tote and imports nothing,
-    // yet writes `Text::concat`. `main.taut`'s `import std::Text` does not
+    // yet writes `Text::concat`. `main.taut`'s `import std::text` does not
     // reach it, so the program is rejected at `greet.taut`, and run as a
     // directory it is rejected the same way as run from its entry file.
     let root = dir("order").join("app");
@@ -217,16 +220,16 @@ fn a_tote_reports_a_file_that_imports_no_std_module_as_its_entry_file_does() {
     ] {
         std::fs::write(
             root.join("src").join(name),
-            case_inputs::fixture_static("inputs/tauto.eure", fixture),
+            tauto_case_inputs::source("inputs/tauto.eure", fixture),
         )
         .unwrap();
     }
     let from_file = tauto::program::load_extracted(&root.join("src/main.taut"))
         .err()
-        .expect("greet.taut uses std::Text without importing it");
+        .expect("greet.taut uses std::text without importing it");
     assert!(
         from_file.contains("greet.taut:1:31")
-            && from_file.contains("`Text::concat` is declared by `std::Text`"),
+            && from_file.contains("`Text::concat` is declared by `std::text`"),
         "{from_file}"
     );
     let for_build = tauto::program::load_tote_for_build(&root).err();
@@ -283,7 +286,7 @@ fn app_with_lib(name: &str, main: &str) -> PathBuf {
     .unwrap();
     std::fs::write(
         lib.join("src/Greet.taut"),
-        "import std::Text\npub fn greeting(): Text { \"hi\" }\n",
+        "import std::text\npub fn greeting(): Text { \"hi\" }\n",
     )
     .unwrap();
     let path = app.join("src/main.taut");
@@ -296,7 +299,7 @@ fn a_file_imports_a_module_of_its_totes_dependency_by_name() {
     tauto_messages::install();
     let path = app_with_lib(
         "named-dep",
-        "import std::Text\nimport lib::Greet\nfn hello(): Text { greeting() }\n",
+        "import std::text\nimport lib::Greet\nfn hello(): Text { greeting() }\n",
     );
     let report = check_report(&path, None).unwrap();
     assert_eq!(report.status(), Status::Ok);
@@ -321,7 +324,7 @@ fn app_with_hyphenated_lib(name: &str, main: &str) -> PathBuf {
     .unwrap();
     std::fs::write(
         lib.join("src/Greet.taut"),
-        "import std::Text\npub fn greeting(): Text { \"hi\" }\n",
+        "import std::text\npub fn greeting(): Text { \"hi\" }\n",
     )
     .unwrap();
     let path = app.join("src/main.taut");
@@ -334,7 +337,7 @@ fn a_hyphenated_tote_is_imported_with_underscores() {
     tauto_messages::install();
     let path = app_with_hyphenated_lib(
         "hyphen-dep",
-        "import std::Text\nimport greet_lib::Greet\nfn hello(): Text { greeting() }\n",
+        "import std::text\nimport greet_lib::Greet\nfn hello(): Text { greeting() }\n",
     );
     let report = check_report(&path, None).unwrap();
     assert_eq!(report.status(), Status::Ok);
@@ -344,7 +347,14 @@ fn a_hyphenated_tote_is_imported_with_underscores() {
 fn a_hyphenated_tote_is_not_imported_with_hyphens() {
     tauto_messages::install();
     let path = app_with_hyphenated_lib("hyphen-dep-hyphens", "import greet-lib::Greet\n");
-    assert!(check_report(&path, None).is_err());
+    // The hyphen does not parse in a path: the file's report is failed.
+    let report = check_report(&path, None).unwrap();
+    assert_eq!(
+        report.status(),
+        Status::Failed,
+        "{}",
+        report.json().render()
+    );
 }
 
 #[test]
@@ -364,7 +374,7 @@ fn a_missing_module_of_a_dependency_is_an_error() {
 #[test]
 fn a_module_outside_a_dependencys_sources_says_how_to_read_it() {
     tauto_messages::install();
-    let path = app_with_lib("named-dep-outside", "import lib::proof::Laws\n");
+    let path = app_with_lib("named-dep-outside", "import lib::proof::laws\n");
     let lib = path
         .parent()
         .unwrap()
@@ -375,7 +385,7 @@ fn a_module_outside_a_dependencys_sources_says_how_to_read_it() {
         .join("checkout");
     std::fs::create_dir_all(lib.join("proof")).unwrap();
     std::fs::write(
-        lib.join("proof/Laws.taut"),
+        lib.join("proof/laws.taut"),
         "pub theorem t(): Zero = Zero { Refl }\n",
     )
     .unwrap();
@@ -391,7 +401,7 @@ fn a_module_outside_a_dependencys_sources_says_how_to_read_it() {
     .unwrap();
     std::fs::write(
         &path,
-        "import lib::proof::Laws { t }\ntheorem u(): Zero = Zero { t() }\n",
+        "import lib::proof::laws { t }\ntheorem u(): Zero = Zero { t() }\n",
     )
     .unwrap();
     let report = check_report(&path, None).unwrap();
@@ -416,7 +426,7 @@ fn a_name_from_std_that_is_not_imported_says_which_module_has_it() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        text.contains("it is in the standard library: `import std::Base`"),
+        text.contains("it is in the standard library: `import std::base`"),
         "{text}"
     );
 }
@@ -424,11 +434,11 @@ fn a_name_from_std_that_is_not_imported_says_which_module_has_it() {
 #[test]
 fn importing_std_nat_div_keeps_nat_mod_lt_the_one_of_std_nat() {
     tauto_messages::install();
-    // `std::NatDiv` once declared a `nat_mod_lt` of its own, and a file that
-    // imported it read that one where it wrote `std::Nat`'s.
+    // `std::nat_div` once declared a `nat_mod_lt` of its own, and a file that
+    // imported it read that one where it wrote `std::nat`'s.
     let path = file(
         "nat-div",
-        "import std::Base\nimport std::Nat\nimport std::UInt\nimport std::NatDiv\n\ntheorem m(c: Nat): Nat::lt(Nat::rem_nz(c, 256, Nat::ne_zero_of_pos(256, Refl)), 256) = true {\n  Nat::mod_lt(c, 256, Refl)\n}\n",
+        "import std::base\nimport std::nat\nimport std::uint\nimport std::nat_div\n\ntheorem m(c: Nat): Nat::lt(Nat::rem_nz(c, 256, Nat::ne_zero_of_pos(256, Refl)), 256) = true {\n  Nat::mod_lt(c, 256, Refl)\n}\n",
     );
     let report = check_report(&path, None).unwrap();
     assert_eq!(report.status(), Status::Ok);
@@ -459,8 +469,8 @@ fn a_file_may_not_declare_a_name_its_imports_declare() {
 #[test]
 fn a_std_file_loaded_by_path_and_by_name_says_where_each_definition_is() {
     tauto_messages::install();
-    // `std/Base.taut` copied next to the file and imported by path, and
-    // `std::Text` importing the standard library's own `Base.taut`: the same
+    // `std/base.taut` copied next to the file and imported by path, and
+    // `std::text` importing the standard library's own `base.taut`: the same
     // declarations are read twice, from two files.
     let dir = dir("twice");
     std::fs::create_dir_all(dir.join("std")).unwrap();
@@ -470,54 +480,132 @@ fn a_std_file_loaded_by_path_and_by_name_says_where_each_definition_is() {
         std::fs::write(target, text).unwrap();
     }
     let path = dir.join("main.taut");
-    std::fs::write(&path, "import \"std/Base.taut\"\nimport std::Text\n").unwrap();
+    std::fs::write(&path, "import \"std/base.taut\"\nimport std::text\n").unwrap();
     let report = check_report(&path, None).unwrap();
     let text = report.text();
     assert!(
-        text.contains("`std::Base::Bool::or` is already defined (first defined in `"),
+        text.contains("`std::base::Bool::cases` is already defined (first defined in `"),
         "{text}"
     );
-    assert!(text.contains("import std::Base"), "{text}");
+    assert!(text.contains("import std::base"), "{text}");
     assert!(
-        text.contains("Base.taut:15:3: `std::Base::Bool::or`"),
+        text.contains("base.taut:14:1: `std::base::Bool::cases`"),
         "{text}"
     );
 }
 
-/// The inputs these tests read, copied from the shared case files.
-#[allow(dead_code)]
-mod case_inputs {
-    pub fn fixture_static(file: &str, name: &str) -> &'static str {
-        match (file, name) {
-            ("inputs/tauto.eure", "std-import-order-greet") => {
-                r#"pub fn greet(s: Text): Text { Text::concat(s, "!") }
-"#
-            }
-            ("inputs/tauto.eure", "std-import-uint-then-tactic") => {
-                r#"import std::Base
-import std::UInt
-import std::Tactic
-theorem t(a: Nat): Nat::add(a, 0) = a { Refl }
-"#
-            }
-            ("inputs/tauto.eure", "std-import-order-main") => {
-                r#"import std::Text
-import "greet.taut"
-perform show("greeting", greet("tote"))
-"#
-            }
-            ("inputs/tauto.eure", "std-import-tactic-then-uint") => {
-                r#"import std::Base
-import std::Tactic
-import std::UInt
-theorem t(a: Nat): Nat::add(a, 0) = a { Refl }
-"#
-            }
-            _ => panic!("no copied input {file}/{name}"),
-        }
-    }
-    #[allow(dead_code)]
-    pub fn fixture(file: &str, name: &str) -> String {
-        fixture_static(file, name).to_string()
-    }
+#[test]
+fn a_failure_where_two_copies_of_a_std_file_meet_says_first_that_it_is_read_twice() {
+    tauto_messages::install();
+    // `std/base.taut` copied next to the file and imported by path, and
+    // `std::nat` reading the standard library's own: the two copies define
+    // the same names, so the first failure is a duplicate definition. The
+    // path in the message is the copy's, which is why this is not a case.
+    let dir = dir("twice-calc");
+    std::fs::create_dir_all(dir.join("std")).unwrap();
+    let base = tauto::stdlib::FILES
+        .iter()
+        .find(|(f, _)| *f == "base.taut")
+        .unwrap()
+        .1;
+    std::fs::write(dir.join("std/base.taut"), base).unwrap();
+    let path = dir.join("main.taut");
+    std::fs::write(&path, "import \"std/base.taut\"\nimport std::nat\n").unwrap();
+    let report = check_report(&path, None).unwrap();
+    assert_eq!(report.status(), Status::Failed);
+    let text = report.text();
+    // The failure itself says that the file is read twice, in the same
+    // message, rather than leaving the reader to guess why it is redefined.
+    let failed = text
+        .lines()
+        .find(|l| l.contains("is already defined"))
+        .unwrap_or_else(|| panic!("{text}"));
+    assert!(
+        failed.contains("is a copy of the standard library's `base.taut`: write `import std::base` instead of importing it by path, so that it is read once"),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_tote_named_std_reads_import_std_from_its_own_directory() {
+    tauto_messages::install();
+    let root = dir("own-std").join("std");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("Tauto.eure"),
+        "package {\n  name = \"std\"\n  version = \"0.1.0\"\n}\n",
+    )
+    .unwrap();
+    // A module the standard library that comes with tauto does not have.
+    std::fs::write(
+        root.join("mine.taut"),
+        "pub theorem mine(): Zero = Zero { Refl }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("main.taut"),
+        "import std::mine { mine }\ntheorem t(): Zero = Zero { mine() }\n",
+    )
+    .unwrap();
+    let loaded = tauto::program::load_tote(&root).unwrap();
+    assert!(
+        loaded
+            .files
+            .iter()
+            .all(|f| !f.path.starts_with(tauto::stdlib::ROOT)),
+        "the standard library that comes with tauto is not read"
+    );
+    // Its files are the library's modules however they are reached: one
+    // `std::mine`, never a module of another name.
+    let names = tauto::program::module_names(&loaded.files);
+    assert!(names.contains(&"std::mine".to_string()), "{names:?}");
+    assert_eq!(
+        names.iter().filter(|n| n.ends_with("mine")).count(),
+        1,
+        "{names:?}"
+    );
+    let report = check_report(&root.join("main.taut"), None).unwrap();
+    assert_eq!(report.status(), Status::Ok);
+    // A module the directory lacks is an error, not the bundled one.
+    std::fs::write(
+        root.join("main.taut"),
+        "import std::base\ntheorem t(): Zero = Zero { Refl }\n",
+    )
+    .unwrap();
+    let e = tauto::program::load_tote(&root).err().unwrap();
+    assert!(e.contains("own standard library"), "{e}");
+}
+
+#[test]
+fn the_tote_named_std_does_not_read_its_prelude_copy_as_its_files() {
+    tauto_messages::install();
+    let root = dir("own-std-prelude").join("std");
+    std::fs::create_dir_all(root.join("prelude")).unwrap();
+    std::fs::write(
+        root.join("Tauto.eure"),
+        "package {\n  name = \"std\"\n  version = \"0.1.0\"\n  prelude = false\n}\n",
+    )
+    .unwrap();
+    // A copy of the prelude's file: `import std::prelude::…` reads tauto's own.
+    // Without the prelude, `Option` comes only through that import.
+    std::fs::write(
+        root.join("prelude/std.taut"),
+        tauto::stdlib::text(&Path::new(tauto::stdlib::ROOT).join("prelude/std.taut")).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("mine.taut"),
+        "import std::prelude::std { Option }\npub fn none(): Option(Nat) { Option::None }\n",
+    )
+    .unwrap();
+    let own = tauto::program::package_source_files(&root).unwrap();
+    let others = tauto::program::package_other_files(&root).unwrap();
+    assert!(
+        own.iter()
+            .chain(&others)
+            .all(|p| !p.starts_with(root.join("prelude"))),
+        "{own:?} {others:?}"
+    );
+    let report = tauto::report::check_tote_report(&root).unwrap().report;
+    assert_eq!(report.status(), Status::Ok, "{}", report.text());
 }

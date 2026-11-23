@@ -2,6 +2,7 @@ import "unify_allocation_steps.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "unify_sound.taut"
@@ -39,7 +40,7 @@ pub theorem allocation_and_next(
   tail: AllocationRun(next, k(next)),
   flag: Bool
 ): AllocationRun(c, ck_and_k(k, next, flag)) {
-  ⊢ AllocationRun(c, ck_and_k(k, next, flag)) from match flag {
+  match flag {
     false => AndIntro(same, state)
     true => allocation_run_rewrap(
       c,
@@ -60,7 +61,7 @@ pub theorem allocation_and(
     next
   ). ∀ state: CheckerAllocation(next). ∀ order: CkOrdered(next). AllocationRun(next, k(next))
 ): AllocationRun(c, ck_and(k, m)) {
-  ⊢ AllocationRun(c, ck_and(k, m)) from match m {
+  match m {
     mut1(flag, next) => allocation_and_next(
       c,
       next,
@@ -93,7 +94,7 @@ pub theorem allocated_unify_pairs_step(
   left: TypeListAllocated(ck_next_of(c), xs),
   right: TypeListAllocated(ck_next_of(c), ys)
 ): AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, xs, ys)) {
-  ⊢ AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, xs, ys)) from match xs {
+  match xs {
     Nil => AndIntro(Refl, state)
     Cons(x, xr) => ⊢ AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, Cons(x, xr), ys)) from match ys {
       Nil => AndIntro(Refl, state)

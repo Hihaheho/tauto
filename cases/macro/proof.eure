@@ -1,5 +1,5 @@
 @ cases.addition-proofs
-source = path`../../examples/nat/proof/Add.taut`
+source = path`../../examples/nat/proof/add.taut`
 checks.succ_inj = "ok"
 checks.succ_cong = "ok"
 checks.add_zero_r = "ok"
@@ -17,8 +17,8 @@ diagnostics = []
 @ cases.a-false-goal
 entry = "main.taut"
 files."main.taut" = ````tauto
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_by }
+import std::proof::lang { proof }
+import std::proof::forms { proof_by }
 
 theorem t(): Zero = Succ(Zero) {
   proof!(```
@@ -31,8 +31,8 @@ checks.t = "error: type mismatch"
 @ cases.a-false-conversion
 entry = "main.taut"
 files."main.taut" = ````tauto
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_we }
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
 
 theorem t(n: Nat): n = n {
   proof!(```
@@ -45,8 +45,8 @@ checks.t = "error: type mismatch"
 @ cases.a-false-conversion-after-evidence
 entry = "main.taut"
 files."main.taut" = ````tauto
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_we }
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
 
 theorem t(a: Nat, b: Nat, h: a = b): a = a {
   proof!(```
@@ -59,8 +59,8 @@ checks.t = "error: type mismatch"
 @ cases.an-equation-chain
 entry = "main.taut"
 files."main.taut" = ````tauto
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_we }
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
 
 theorem t(a: Nat, b: Nat, c: Nat, h1: a = b, h2: b = c): a = c {
   proof!(```
@@ -74,8 +74,8 @@ diagnostics = []
 @ cases.a-step-by-an-equation-the-other-way
 entry = "main.taut"
 files."main.taut" = ````tauto
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_we }
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
 
 theorem t(a: Nat, b: Nat, h: b = a): a = b {
   proof!(```
@@ -90,13 +90,13 @@ diagnostics = []
 // import that lists it.
 @ cases.a-name-written-only-in-the-prose-uses-its-import
 entry = "main.taut"
-files."Lib.taut" = ```tauto
+files."lib.taut" = ```tauto
 pub theorem lem(n: Nat): n = n { Refl }
 ```
 files."main.taut" = ````tauto
-import "Lib.taut" { lem }
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_by }
+import "lib.taut" { lem }
+import std::proof::lang { proof }
+import std::proof::forms { proof_by }
 
 pub theorem t(n: Nat): n = n {
   proof!(```
@@ -112,16 +112,14 @@ diagnostics = []
 @ cases.a-short-name-in-the-prose-means-the-module-s-declaration
 entry = "main.taut"
 files."main.taut" = ````tauto
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_we }
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
 
-module M {
-  pub fn g(n: Nat): Nat { n }
-  pub theorem t(n: Nat): g(n) = g(n) {
-    proof!(```
-      We have g(n) = g(n).
-      ```)
-  }
+pub fn M::g(n: Nat): Nat { n }
+pub theorem M::t(n: Nat): M::g(n) = M::g(n) {
+  proof!(```
+    We have M::g(n) = M::g(n).
+    ```)
 }
 ````
 checks."M::t" = "ok"
@@ -131,8 +129,8 @@ diagnostics = []
 @ cases.a-sentence-without-its-dot-is-rejected
 entry = "main.taut"
 files."main.taut" = ````tauto
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_we }
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
 
 theorem t(a: Nat, b: Nat, h: a = b): a = b {
   proof!(```
@@ -148,9 +146,9 @@ macro_error = "macro.syntax_error"
 @ cases.format-keeps-the-indentation
 entry = "main.taut"
 files."main.taut" = ````tauto
-import std::Base
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_by, proof_case }
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
 
 theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
   proof!(```
@@ -166,9 +164,9 @@ theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
 }
 ````
 format_literals = ````tauto
-import std::Base
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_by, proof_case }
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
 
 theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
   proof!(```
@@ -187,9 +185,9 @@ format_literals_warnings = []
 @ cases.highlight-forms-labels-and-proof-code
 entry = "main.taut"
 files."main.taut" = ````tauto
-import std::Base
-import std::proof::Lang { proof }
-import std::proof::Forms { proof_by, proof_case }
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case }
 
 theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
   proof!(```

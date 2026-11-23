@@ -1,0 +1,23 @@
+// Writes totes/syntax/src/tables.taut and totes/syntax/src/tables/<name>.txt,
+// the tables of the parser and the scanner of crates/tauto-parol/tauto.par.
+// Run it after every change to the grammar. With --check, writes nothing and
+// fails if a file is out of date.
+//   tauto gen-syntax-tables [--check]
+import "lib/sh.taut" { sh_process, sh_root, sh_run }
+import std::builtin::os { argv, exit }
+import std::base { List }
+
+let root := sh_root()
+perform exit(
+  sh_run(
+    sh_process(
+      "cargo",
+      List::append(
+        ["run", "--locked", "-q", "-p", "tauto-tables-gen", "--bin", "write-syntax-tables", "--"],
+        perform argv()
+      ),
+      root,
+      []
+    )
+  )
+)

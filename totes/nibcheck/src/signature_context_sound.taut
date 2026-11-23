@@ -1,7 +1,7 @@
 import "signature_parameters_sound.taut"
-import std::List
-import std::Map
-import std::Text
+import std::list
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_sound.taut"
@@ -10,6 +10,7 @@ import "signature_frame.taut"
 import "signature_written_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
 import "../../surface/src/surface.taut"
@@ -17,44 +18,41 @@ import "../../surface/src/surface.taut"
 pub theorem ck_sig_param_context(
   c: Checker,
   source: Option(SurfaceTerm),
-  borrow: Option(Bool),
+  r#borrow: Option(Bool),
   generics: Ordmap(Text, Ty)
-): CkContextFrame(c, ck_sig_param(c, source, borrow, generics)) {
+): CkContextFrame(c, ck_sig_param(c, source, r#borrow, generics)) {
   context_reset_frame(
     c,
-    ck_sig_param(c, source, borrow, generics),
-    ck_sig_param_reset(c, source, borrow, generics)
+    ck_sig_param(c, source, r#borrow, generics),
+    ck_sig_param_reset(c, source, r#borrow, generics)
   )
 }
 pub theorem signature_params_cons_context(
   p: Option(SurfaceTerm),
   rest: List(Option(SurfaceTerm)),
   c: Checker,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   map: Ordmap(Text, Ty),
   ih: ∀ next: Checker. ∀ bs: List(
     Option(Bool)
   ). CkContextFrame(next, ck_sig_params(rest, next, bs, map))
-): CkContextFrame(c, signature_params_cons(p, rest, c, borrows, map)) {
+): CkContextFrame(c, signature_params_cons(p, rest, c, r#borrows, map)) {
   context_bind(
-    Ty,
-    List(Ty),
+    <A: Ty, B: List(Ty)>,
     c,
     (head: Ty, c1: Checker) => frame_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
-      ck_sig_params(rest, c1, List::tail(borrows), map)
+      ck_sig_params(rest, c1, List::tail(r#borrows), map)
     ),
-    ck_sig_param(c, p, list_head_or_none(borrows), map),
-    ck_sig_param_context(c, p, list_head_or_none(borrows), map),
+    ck_sig_param(c, p, list_head_or_none(r#borrows), map),
+    ck_sig_param_context(c, p, list_head_or_none(r#borrows), map),
     head => c1 => context_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       c1,
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
-      ck_sig_params(rest, c1, List::tail(borrows), map),
-      ih(c1, List::tail(borrows)),
+      ck_sig_params(rest, c1, List::tail(r#borrows), map),
+      ih(c1, List::tail(r#borrows)),
       tail => c2 => ordinary => Refl
     )
   )
@@ -63,19 +61,19 @@ pub theorem signature_params_cons_context(
 pub theorem ck_sig_params_context(
   pts: List(Option(SurfaceTerm)),
   c: Checker,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   map: Ordmap(Text, Ty)
-): CkContextFrame(c, ck_sig_params(pts, c, borrows, map)) {
-  ⊢ CkContextFrame(c, ck_sig_params(pts, c, borrows, map)) from match pts {
+): CkContextFrame(c, ck_sig_params(pts, c, r#borrows, map)) {
+  match pts {
     Nil => ordinary => Refl
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkContextFrame(c, z),
-      Eq::sym(signature_params_unf(p, rest, c, borrows, map)),
+      Eq::sym(signature_params_unf(p, rest, c, r#borrows, map)),
       signature_params_cons_context(
         p,
         rest,
         c,
-        borrows,
+        r#borrows,
         map,
         next => bs => ck_sig_params_context(rest, next, bs, map)
       )

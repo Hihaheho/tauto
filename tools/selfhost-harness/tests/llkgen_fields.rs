@@ -38,7 +38,6 @@ const KEYWORDS: &[&str] = &[
     "shared",
     "affine",
     "linear",
-    "view",
     "resume",
     "direct",
     "mut",
@@ -83,6 +82,14 @@ fn names(table: &str) -> Vec<String> {
         TypeDef::Struct { fields, .. } => fields.iter().map(|(name, _)| name.clone()).collect(),
         other => panic!("expected struct, got {other:?}"),
     }
+}
+
+#[test]
+fn infer_rule_field_avoids_the_reserved_word() {
+    let table = generate("infer-field", "Root: Infer;\nInfer: 'infer';");
+    assert_eq!(names(&table), ["infer_field"]);
+    let tables = tauto_syntax::Tables::read(&table).unwrap();
+    tauto::surface::parse_program(&tauto::syntax::types_text("words", &tables)).unwrap();
 }
 
 #[test]

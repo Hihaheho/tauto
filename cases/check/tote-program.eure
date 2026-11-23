@@ -4,7 +4,7 @@ files_tote = "app"
 tote_errors = ["the result of `bad`: Text does not fit i64"]
 files."app/Tauto.eure" = 'package { name = "app" }'
 files."app/src/main.taut" = ```tauto
-import std::prelude::Ord
+import std::builtin::ord
 
 fn same<K>(a: K, b: K): Bool where Ord(K) {
   match Ord::compare(a, b) {
@@ -14,7 +14,7 @@ fn same<K>(a: K, b: K): Bool where Ord(K) {
   }
 }
 
-fn bad(n: i64): i64 ! {Div} {
+fn bad(n: i64): i64 ! {div} {
   "not a number"
 }
 
@@ -23,12 +23,12 @@ perform test("bad", () => expect(bad(1) == 1, "bad"))
 ```
 
 @ cases.a-declaration-of-a-name-of-an-imported-prelude-file-is-the-files-own-in-the-program
-description = "A file imports std::prelude::Par and declares Polled itself: the program runs with the file's Polled named apart from the prelude's."
+description = "A file imports std::builtin::par and declares Polled itself: the program runs with the file's Polled named apart from the prelude's."
 files_tote = "app"
 tote_errors = []
 files."app/Tauto.eure" = 'package { name = "app" }'
 files."app/src/main.taut" = ```tauto
-import std::prelude::Par
+import std::builtin::par
 
 pub(open) enum Polled {
   PollA
@@ -40,12 +40,12 @@ perform test("get", () => expect(Nat::eq(get(1), 1), "one"))
 ```
 
 @ cases.a-use-of-a-name-the-file-and-an-imported-prelude-file-declare-is-ambiguous
-description = "Where the file writes Polled, its own declaration and the one of std::prelude::Par are both seen."
+description = "Where the file writes Polled, its own declaration and the one of std::builtin::par are both seen."
 files_tote = "app"
 tote_errors = ["`Polled` is ambiguous: it is declared as `app::src::main::Polled` and `std::prelude::Polled`"]
 files."app/Tauto.eure" = 'package { name = "app" }'
 files."app/src/main.taut" = ```tauto
-import std::prelude::Par
+import std::builtin::par
 
 pub(open) enum Polled {
   PollA
@@ -61,10 +61,10 @@ perform test("get", () => expect(Nat::eq(get(1), 1), "one"))
 @ cases.a-library-alone-is-checked-as-a-program-reads-it
 description = "A tote without a program is checked as Nib all the same: `nat` and `u64` are two types, and a function the kernel does not check, written with `u64`, gets the type error a program depending on the library gets."
 files_tote = "lib"
-tote_errors = ["the result of `size`: expected u64, found nat, a different type; for a number the proofs see too, write `U64` of `std::UInt`"]
+tote_errors = ["the result of `size`: expected u64, found nat, a different type; for a number the proofs see too, write `UInt(64)` of `std::uint`"]
 files."lib/Tauto.eure" = 'package { name = "lib" }'
 files."lib/src/lib.taut" = ```tauto
-import std::Text { Text }
+import std::text { Text }
 
 pub fn size(t: Text): u64 {
   Text::len(t)
@@ -77,8 +77,8 @@ files_tote = "app"
 tote_errors = []
 files."app/Tauto.eure" = 'package { name = "app" }'
 files."app/src/defs.taut" = ````tauto
-import std::prelude::Macro { SynExpr }
-import std::Text { Text }
+import std::builtin::macro { SynExpr }
+import std::text { Text }
 inductive_syntax!(ab, ```par
 %start Word
 %%
@@ -90,7 +90,7 @@ B: 'b';
   enum Letter, struct Word, fn parse, inductive Letter::I, inductive Word::I,
   fn Letter::to_i, fn Word::to_i, fn Letter_list::to_i
 
-fn count(ls: List(ab::Letter)): SynExpr {
+fn count(ls: List(ab::Letter)): SynExpr ! {div} {
   match ls {
     [] => quote { 0 }
     [l, ..rest] => {
@@ -103,7 +103,7 @@ fn count(ls: List(ab::Letter)): SynExpr {
   }
 }
 
-pub macro fn count_a(w: ab::Word): SynExpr { count(w.letter) }
+pub macro fn count_a(w: ab::Word): SynExpr ! {div} { count(w.letter) }
 ````
 files."app/src/use.taut" = ```tauto
 import "defs.taut" { count_a }
@@ -117,7 +117,7 @@ files_tote = "app"
 tote_errors = ["`Letter::I` is a constructor of `Letter`, and `inductive_syntax!` makes `Letter::I` and `Letter::to_i`"]
 files."app/Tauto.eure" = 'package { name = "app" }'
 files."app/src/main.taut" = ````tauto
-import std::Text { Text }
+import std::text { Text }
 inductive_syntax!(miu, ```par
 %start Word
 %%
@@ -138,9 +138,9 @@ files_tote = "app"
 tote_errors = ["`embedded#1`: Text does not fit nat"]
 files."app/Tauto.eure" = 'package { name = "app" }'
 files."app/src/wrap_macro.taut" = ```tauto
-import std::prelude::Macro
+import std::builtin::macro
 
-pub macro fn wrap(e: SynExpr): SynExpr ! {macro_error, Div} {
+pub macro fn wrap(e: SynExpr): SynExpr ! {macro_error, div} {
   quote {
     {
       let embedded: Nat := $e
@@ -152,5 +152,349 @@ pub macro fn wrap(e: SynExpr): SynExpr ! {macro_error, Div} {
 files."app/src/main.taut" = ```tauto
 import "wrap_macro.taut"
 
-let bad := wrap!("x")
+perform main(() => {
+  let bad := wrap!("x")
+})
+```
+
+@ cases.a-macro-of-another-file-calls-a-mutual-block-with-a-function-not-by-match
+description = "A macro of another file calls a `mutual` block whose `count` is not defined by a `match` and calls itself through `one`: the later file checks. The block's functions are functions of the library the macro runs in, and writing out `count` stops at its own call instead of writing it out without end."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/defs.taut" = ````tauto
+import std::builtin::macro { SynExpr }
+import std::text { Text }
+inductive_syntax!(ab, ```par
+%start Word
+%%
+Word: { Letter };
+Letter: A | B;
+A: 'a';
+B: 'b';
+```) =>
+  enum Letter, struct Word, fn parse, inductive Letter::I, inductive Word::I,
+  fn Letter::to_i, fn Word::to_i, fn Letter_list::to_i
+
+mutual {
+  fn count(ls: List(ab::Letter)): SynExpr ! {div} {
+    let none := quote { 0 }
+    match ls {
+      [] => none
+      [l, ..rest] => one(l, rest)
+    }
+  }
+  fn one(l: ab::Letter, rest: List(ab::Letter)): SynExpr ! {div} {
+    match l {
+      A(_) => {
+        let r := count(rest)
+        quote { 1 + $r }
+      }
+      B(_) => count(rest)
+    }
+  }
+}
+
+pub macro fn count_a(w: ab::Word): SynExpr ! {div} { count(w.letter) }
+````
+files."app/src/use.taut" = ```tauto
+import "defs.taut" { count_a }
+theorem t(): count_a!(`aba`) = 2 { Refl }
+```
+files."app/.tauto-syntax/a46f41972cba9ee3fc3b4750b73baabbc9620ed0401bbe6bd0e9b88fe1f8cd05.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/a46f41972cba9ee3fc3b4750b73baabbc9620ed0401bbe6bd0e9b88fe1f8cd05.tables`
+
+@ cases.a-macro-of-another-file-calls-the-length-of-a-text-where-a-nat-is-taken
+description = "A macro of another file calls a `mutual` block that gives `Text::len` of std to `Text::slice_or_empty`: the library the macro runs in has the length as the `nat` that extraction writes at a call, as it has what takes it, and the later file checks."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/defs.taut" = ````tauto
+import std::builtin::macro { SynExpr }
+import std::text { Text }
+inductive_syntax!(ab, ```par
+%start Word
+%%
+Word: { Letter };
+Letter: A | B;
+A: 'a';
+B: 'b';
+```) =>
+  enum Letter, struct Word, fn parse, inductive Letter::I, inductive Word::I,
+  fn Letter::to_i, fn Word::to_i, fn Letter_list::to_i
+
+mutual {
+  fn count(ls: List(ab::Letter)): SynExpr ! {div} {
+    let none := quote { 0 }
+    match ls {
+      [] => none
+      [l, ..rest] => one(l, rest)
+    }
+  }
+  fn one(l: ab::Letter, rest: List(ab::Letter)): SynExpr ! {div} {
+    match l {
+      A(_) => {
+        let r := count(rest)
+        quote { 1 + $r }
+      }
+      B(_) => {
+        let tail := Text::slice_or_empty("xyz", 1, Text::len("xyz"))
+        match tail == "yz" {
+          true => count(rest)
+          false => quote { 0 }
+        }
+      }
+    }
+  }
+}
+
+pub macro fn count_a(w: ab::Word): SynExpr ! {div} { count(w.letter) }
+````
+files."app/src/use.taut" = ```tauto
+import "defs.taut" { count_a }
+theorem t(): count_a!(`aba`) = 2 { Refl }
+```
+files."app/.tauto-syntax/a46f41972cba9ee3fc3b4750b73baabbc9620ed0401bbe6bd0e9b88fe1f8cd05.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/a46f41972cba9ee3fc3b4750b73baabbc9620ed0401bbe6bd0e9b88fe1f8cd05.tables`
+
+@ cases.a-macro-of-another-file-joins-texts-with-text-concat
+description = "A macro of another file calls `Text::concat` of std: its source writes the constructor of `Text`, which the library the macro runs in does not have, so the library has it as the builtin that extraction writes at a call, and the later file checks."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/defs.taut" = ```tauto
+import std::builtin::macro { SynExpr }
+import std::text { Text }
+
+pub macro fn greet(e: SynExpr): SynExpr {
+  let t := Text::concat("a", Text::concat("b", "c"))
+  match t == "abc" {
+    true => quote { 1 }
+    false => quote { 0 }
+  }
+}
+```
+files."app/src/use.taut" = ```tauto
+import "defs.taut" { greet }
+theorem t(): Eq(Nat, greet!(1), 1) { Refl }
+```
+
+@ cases.a-rule-of-a-syntax-named-as-a-declaration-of-a-file-not-imported
+description = "A rule named `Proved` makes the constructor `Stmt::Proved`, and `std::builtin::macro` declares a `Proved` the file does not import: a pattern on a `g::Stmt` reads `Proved` as the matched type's constructor, as it does for an enum written by hand, and a later file uses the macro."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/a.taut" = ````tauto
+import std::builtin::macro { SynExpr }
+import std::syn_tree
+
+inductive_syntax!(g, ```par
+%start Stmt
+%%
+Stmt: Proved | Other;
+Proved: PTok Other;
+Other: 'o';
+PTok: 'p';
+```) => enum Stmt, struct Proved, fn parse, inductive Stmt::I, inductive Proved::I, fn Stmt::to_i, fn Proved::to_i
+
+pub macro fn f(s: g::Stmt): SynExpr {
+  match s {
+    Proved(p) => {
+      let b := quote { 0 }
+      quote { Some($b) }
+    }
+    Other(_) => quote { None }
+  }
+}
+````
+files."app/src/b.taut" = ```tauto
+import "a.taut" { f }
+
+fn t(): Option(Nat) { f!(`po`) }
+```
+files."app/.tauto-syntax/7fde99fa5796565882999e2f84170dad5b511b1025a154b0cce79f92446c3777.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/7fde99fa5796565882999e2f84170dad5b511b1025a154b0cce79f92446c3777.tables`
+
+@ cases.a-name-the-prelude-and-an-imported-library-module-declare-is-ambiguous-when-the-prelude-file-is-imported
+description = "std::prelude::Collections is part of the prelude, which a file sees without an import; a file that imports it as well sees Array from two files it imports, std::array and Collections, on equal terms, and neither wins."
+files_tote = "app"
+tote_errors = ["`Array` is ambiguous: it is declared as `std::array::Array` and `std::prelude::Array`, and this file imports both"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::array
+import std::prelude::collections
+
+pub fn zero(a: Array(Nat)): Nat { 0 }
+```
+
+@ cases.a-name-the-prelude-and-an-imported-library-module-declare-is-the-module-s
+description = "Without importing std::prelude::Collections, Array is the one std::array, which the file imports, declares."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::array
+
+pub fn zero(a: Array(Nat)): Nat { 0 }
+```
+
+@ cases.a-name-a-module-of-the-library-and-an-imported-prelude-file-declare-is-ambiguous-without-the-prelude
+description = "In a tote without the prelude, std::array and std::prelude::Collections, both imported, declare Array: neither wins for being the library's."
+files_tote = "app"
+tote_errors = ["`Array` is ambiguous: it is declared as `std::array::Array` and `std::prelude::Array`"]
+files."app/Tauto.eure" = 'package { name = "app" prelude = false }'
+files."app/src/main.taut" = ```tauto
+import std::array
+import std::prelude::collections
+
+pub fn zero(a: Array(Nat)): Nat { 0 }
+```
+
+@ cases.a-class-of-the-library-keeps-its-laws-where-the-program-declares-a-type-of-its-name
+description = "std::bump uses the class std::alloc::Policy, whose laws name its members as Policy::alloc. A file of the program declares a type Policy too: the class is named by its full name, and its laws still name its own members."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::bump { RcBump }
+
+pub fn make(): Unit {
+  let ^_region := RcBump::new(65536, 65536)
+  #()
+}
+```
+files."app/src/policy.taut" = ```tauto
+pub(open) enum Policy { Keep, Skip }
+```
+
+@ cases.a-list-after-the-prelude-import-leaves-the-library-module-s-name-alone
+description = "Listing what the file uses from std::prelude::Collections keeps its Array out, so Array is the one std::array declares."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::array
+
+pub fn zero(a: Array(Nat)): Nat { 0 }
+```
+
+@ cases.the-tote-named-std-checks-by-itself
+description = "The tote named std is the standard library's source: its files are the library's modules, and it checks by itself."
+files_tote = "lib"
+tote_errors = []
+files."lib/Tauto.eure" = ```eure
+package {
+  name = "std"
+  prelude = false
+}
+```
+files."lib/Small.taut" = ```tauto
+pub inductive Two: Type {
+  One: Two
+  Other: Two
+}
+```
+
+@ cases.the-tote-named-std-reads-its-builtin-files-as-the-prelude
+description = "The tote named std does not read its own copy of `builtin/` as files of its own: they are the prelude every program has, and reading them again would declare the prelude's operations a second time under other identities (a `Mutex` operation in a row would not be the host's)."
+files_tote = "lib"
+tote_errors = []
+files."lib/Tauto.eure" = ```eure
+package {
+  name = "std"
+  prelude = false
+}
+```
+files."lib/builtin/par.taut" = real`../../std/builtin/par.taut`
+files."lib/Small.taut" = ```tauto
+pub inductive Two: Type {
+  One: Two
+  Other: Two
+}
+```
+
+@ cases.another-tote-reads-no-text-of-its-own-as-the-library
+description = "A file of the tote named std is a module of the library, with its privileges: another tote that reaches by a path a file whose text is not the one tauto comes with would hand its declarations those privileges, so it is refused."
+files_tote = "app"
+load_error = "is a file of the tote named `std`, the standard library's source"
+files."lib/Tauto.eure" = ```eure
+package {
+  name = "std"
+  prelude = false
+}
+```
+files."lib/Never.taut" = ```tauto
+pub inductive Never: Type {
+  Mk: Never
+}
+```
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import "../../lib/Never.taut"
+
+pub fn f(): Nat { 1 }
+```
+
+@ cases.a-name-of-a-core-prelude-file-the-file-lists-in-its-import-is-the-preludes
+description = "Another file of the tote declares not too: the file that imports std::prelude::Std { not } reads the prelude's, inside a macro's arguments as well."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/other.taut" = ```tauto
+pub fn not(b: Bool): Bool { b }
+```
+files."app/src/main.taut" = ```tauto
+import std::prelude::std { not }
+
+fn both(a: Bool, b: Bool): Bool { a && not(b) }
+
+perform test("both", () => expect(both(true, false), "both"))
+```
+
+@ cases.a-name-of-a-core-prelude-file-another-file-of-the-tote-declares-is-ambiguous-unless-imported
+description = "Without the import, the bare not is the prelude's and the other file's both."
+files_tote = "app"
+tote_errors = ["`not` is ambiguous: it is declared as `app::src::other::not` and `std::prelude::not`"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/other.taut" = ```tauto
+pub fn not(b: Bool): Bool { b }
+```
+files."app/src/main.taut" = ```tauto
+fn both(a: Bool, b: Bool): Bool { a && not(b) }
+
+perform test("both", () => expect(both(true, false), "both"))
+```
+
+@ cases.a-private-type-of-another-file-does-not-take-the-name-of-a-module
+description = "One imported file has a private inductive Reading, another a public module Reading: Reading::title is the module's function, and the private type is not a candidate."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/a.taut" = ```tauto
+inductive Reading: Type {
+  R1: Reading
+}
+pub fn a_fn(): Nat { 0 }
+```
+files."app/src/c.taut" = ```tauto
+pub fn Reading::title(): Text { "x" }
+```
+files."app/src/main.taut" = ```tauto
+import "a.taut"
+import "c.taut"
+
+pub fn f(): Text { Reading::title() }
+```
+
+@ cases.a-proposition-makes-no-equality-another-file-s-module-may-name
+description = "A proposition KO has no decidable equality, so the kernel makes no KO::eq: another file's module KO may declare eq."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/o1.taut" = ```tauto
+pub(open) inductive KO(K: Type): Prop {
+  Mk(x: K): KO(K)
+}
+```
+files."app/src/main.taut" = ```tauto
+import "o1.taut"
+
+pub theorem KO::eq<K: Type>(w: KO(K)): True { Trivial }
 ```

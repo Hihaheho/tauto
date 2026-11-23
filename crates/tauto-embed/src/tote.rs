@@ -4,7 +4,8 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
-use tauto_nir::{CompileError, Package};
+use tauto_nir::{Package};
+use tauto_nibcheck::lower::{CompileError};
 use tauto_rt::permissions::Permissions;
 use tauto_vm::{Program, Value};
 
@@ -13,6 +14,16 @@ use crate::convert::Cx;
 /// The extern functions of the tote, which the facade binds: extern
 /// function `index` of the package called with `args`.
 pub type Externs = fn(index: u32, args: Vec<Value>, cx: &Cx) -> Result<Value, String>;
+
+/// How a call of the guest ended other than by answering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Failure {
+    /// The guest called `exit` with this code.
+    Exit(i32),
+    /// The run stopped with a run-time error: the message the Rust backend's
+    /// panic would carry.
+    Error(String),
+}
 
 /// The tote of a facade `tauto-build` wrote. The facade keeps one for each
 /// thread (the machine's values are not shared between threads), so a
@@ -62,14 +73,34 @@ impl Tote {
     }
 
     /// Calls the exported function `name`; `args` makes its arguments and
-    /// `answer` reads what it answers. An error of the run panics, as it
-    /// does in the Rust backend's code.
+    /// `answer` reads what it answers. This is the call the facade's
+    /// functions make, and it ends the way the Rust backend's code does: an
+    /// error of the run panics, and the guest's `exit` ends the host process.
+    /// A host that must outlive the guest calls [`try_call`](Self::try_call).
     pub fn call<R>(
         &self,
         name: &str,
         args: impl FnOnce(&Cx) -> Vec<Value>,
         answer: impl FnOnce(Value, &Cx) -> Result<R, String>,
     ) -> R {
+        match self.try_call(name, args, answer) {
+            Ok(r) => r,
+            Err(Failure::Exit(code)) => std::process::exit(code),
+            Err(Failure::Error(message)) => panic!("{message}"),
+        }
+    }
+
+    /// Like [`call`](Self::call), but the host keeps running whichever way the
+    /// guest ends: its `exit` and its run-time errors (a division by zero, an
+    /// overflow) are returned. A missing export, an answer of another type,
+    /// and a tote that does not load are mistakes of the host's build, not of
+    /// the guest's run, and they still panic.
+    pub fn try_call<R>(
+        &self,
+        name: &str,
+        args: impl FnOnce(&Cx) -> Vec<Value>,
+        answer: impl FnOnce(Value, &Cx) -> Result<R, String>,
+    ) -> Result<R, Failure> {
         if self.loaded.borrow().is_none() {
             let loaded = match self.image {
                 Some(bytes) => self.read_image(bytes),
@@ -96,11 +127,11 @@ impl Tote {
             cx: &loaded.cx,
         };
         match tauto_vm::call(&loaded.program, &mut host, inst, args, u64::MAX) {
-            Ok(v) => answer(v, &loaded.cx).unwrap_or_else(|e| {
+            Ok(v) => Ok(answer(v, &loaded.cx).unwrap_or_else(|e| {
                 panic!("tauto-embed: {name} answered a value of another type: {e}")
-            }),
-            Err(tauto_vm::End::Exit(code)) => std::process::exit(code),
-            Err(tauto_vm::End::Error(message)) => panic!("{message}"),
+            })),
+            Err(tauto_vm::End::Exit(code)) => Err(Failure::Exit(code)),
+            Err(tauto_vm::End::Error(message)) => Err(Failure::Error(message)),
             Err(tauto_vm::End::Done) => unreachable!(),
         }
     }
@@ -156,6 +187,8 @@ impl Tote {
 
     /// The program the build compiled, with the build's view of the files.
     fn read_image(&self, bytes: &[u8]) -> Result<Loaded, String> {
+        // The image names the library's declarations, which are read from its text.
+        tauto_parse::install();
         let image = tauto_vm::image::Image::from_bytes(bytes)
             .map_err(|e| format!("{}: the built program: {e}", self.manifest))?;
         let cx = Cx::new(&image.program, &image.datas);
@@ -182,15 +215,32 @@ pub fn hash(path: &Path) -> u64 {
 /// The package as `tauto-build` compiles it, with the exports the manifest
 /// selects.
 fn compile(dir: &Path) -> Result<Package, String> {
+    // The machine reads the standard library's text, so it sets the reader first.
+    tauto_parse::install();
     let m = tauto::manifest::load(dir)?;
     let loaded = tauto::program::load_tote_for_build(dir)?;
-    let mut package = tauto_nir::compile_loaded_with_observer(&loaded, true, false, |_| {})
-        .map_err(|e| match e {
-            CompileError::Front(m) | CompileError::Build(m) => m,
-            CompileError::Unsupported(u) => u.to_string(),
-        })?;
-    if let Some(selected) = &m.rust.exports {
-        package.exports.retain(|e| selected.contains(&e.name));
+    let selection = match &m.exports {
+        Some(list) => Some(tauto_nibcheck::lower::select_exports(
+            &loaded,
+            list,
+            &tauto::program::tote_dirs(dir)?,
+            None,
+        )?),
+        None => None,
+    };
+    let mut package = tauto_nibcheck::lower::compile_loaded_entries_with_observer(
+        &loaded,
+        true,
+        tauto_nir::Target::Rust,
+        None,
+        |_| {},
+    )
+    .map_err(|e| match e {
+        CompileError::Front(m) | CompileError::Package(m) | CompileError::Build(m) => m,
+        CompileError::Unsupported(u) => u.to_string(),
+    })?;
+    if let Some(selection) = &selection {
+        package.exports.retain(|e| selection.names.contains(&e.name));
     }
     Ok(package)
 }

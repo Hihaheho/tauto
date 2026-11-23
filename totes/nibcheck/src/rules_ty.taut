@@ -1,11 +1,12 @@
+import "../../identity/src/identity.taut"
 import "checker.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "datas.taut"
 import "ty.taut"
 
-// The rules (`docs/design/self-host.md`「層 2：`ck_fits`（`src/fits_sound.taut`、規則は `src/rules_ty.taut` の `TySub`）」): when two types are the same type
+// The rules (`docs/design/self-host.md`「Layer 2: `ck_fits` and `ck_join`」): when two types are the same type
 // under a substitution `s` of type variables. These rules define the contracts
 // used by the soundness proofs for unification, compatibility and joins.
 //
@@ -42,11 +43,11 @@ mutual {
     MenUnion<ts: List(Ty)>(h: TyMentionsList(s, n, ts)): TyMentions(s, n, TyUnion(ts))
     MenProduct<ts: List(Ty)>(h: TyMentionsList(s, n, ts)): TyMentions(s, n, TyProduct(ts))
     MenTagged<x: Ty>(tags: List(Text), h: TyMentions(s, n, x)): TyMentions(s, n, TyTagged(tags, x))
-    MenNamed<ts: List(Ty)>(m: Text, h: TyMentionsList(s, n, ts)): TyMentions(s, n, TyNamed(m, ts))
+    MenNamed<ts: List(Ty)>(m: SurfaceName, h: TyMentionsList(s, n, ts)): TyMentions(s, n, TyNamed(m, ts))
     MenInfo<x: Ty>(h: TyMentions(s, n, x)): TyMentions(s, n, TyInfo(x))
     MenBorrow<x: Ty>(m: Bool, h: TyMentions(s, n, x)): TyMentions(s, n, TyBorrow(x, m))
     MenPoly<x: Ty>(
-      gs: List(Pair(Text, Kind)),
+      gs: List(Text × Kind),
       h: TyMentions(s, n, x)
     ): TyMentions(s, n, TyPoly(gs, x))
     MenAppHead<f: Ty>(x: Ty, h: TyMentions(s, n, f)): TyMentions(s, n, TyApp(f, x))
@@ -70,7 +71,7 @@ pub def RigidAbsent(
 // or `b`.
 pub(open) inductive RigidFor(
   s: Ordmap(Nat, Ty),
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   rigid: Ordmap(Text, Ty),
   a: Ty,
   b: Ty
@@ -93,7 +94,7 @@ pub(open) inductive KindSame: (Kind, Kind) -> Prop {
 mutual {
   pub(open) inductive TyEq(
     s: Ordmap(Nat, Ty),
-    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+    ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop
   ): (Ty, Ty) -> Prop {
     TyeqRefl(a: Ty): TyEq(s, ok, a, a)
     TyeqSym<a: Ty, b: Ty>(h: TyEq(s, ok, a, b)): TyEq(s, ok, b, a)
@@ -128,7 +129,7 @@ mutual {
       Ty
     ), ys: List(
       Ty
-    )>(n: Text, h: TyEqList(s, ok, xs, ys)): TyEq(s, ok, TyNamed(n, xs), TyNamed(n, ys))
+    )>(n: SurfaceName, h: TyEqList(s, ok, xs, ys)): TyEq(s, ok, TyNamed(n, xs), TyNamed(n, ys))
     TyeqInfo<x: Ty, y: Ty>(h: TyEq(s, ok, x, y)): TyEq(s, ok, TyInfo(x), TyInfo(y))
     TyeqBorrow<x: Ty, y: Ty>(
       m: Bool,
@@ -140,12 +141,12 @@ mutual {
     ): TyEq(s, ok, TyApp(h1, x1), TyApp(h2, x2))
     TyeqAppNorm(h: Ty, x: Ty): TyEq(s, ok, TyApp(h, x), ty_apply(h, x))
     TyeqPolyBody<x: Ty, y: Ty>(
-      gs: List(Pair(Text, Kind)),
+      gs: List(Text × Kind),
       h: TyEq(s, ok, x, y)
     ): TyEq(s, ok, TyPoly(gs, x), TyPoly(gs, y))
     TyeqPoly<ta: Ty, tb: Ty>(
-      ga: List(Pair(Text, Kind)),
-      gb: List(Pair(Text, Kind)),
+      ga: List(Text × Kind),
+      gb: List(Text × Kind),
       rigid: Ordmap(Text, Ty),
       hk: ty_kinds_match(ga, gb) = true,
       hr: ok(ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb)),
@@ -155,7 +156,7 @@ mutual {
 
   pub(open) inductive TyEqList(
     s: Ordmap(Nat, Ty),
-    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+    ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop
   ): (List(Ty), List(Ty)) -> Prop {
     TyeqNil: TyEqList(s, ok, Nil, Nil)
     TyeqCons<x: Ty, y: Ty, xs: List(
@@ -184,7 +185,7 @@ pub def TyEqIn(
   b: Ty
 ): Prop := TyEq(
   s,
-  (gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), x: Ty, y: Ty) => RigidFor(
+  (gs: List(Text × Kind), rigid: Ordmap(Text, Ty), x: Ty, y: Ty) => RigidFor(
     s,
     gs,
     rigid,
@@ -197,7 +198,7 @@ pub def TyEqIn(
 
 // When a value of type `a` may stand where `b` is expected, under `s`
 // (`docs/design/self-host.md`
-// 「層 2：`ck_fits`（`src/fits_sound.taut`、規則は `src/rules_ty.taut` の `TySub`）」).
+// 「Layer 2: `ck_fits` and `ck_join`」).
 // `ok` is as for `TyEq`; `inst` says which instances of a generic type may be
 // taken (the checker records a kind bound for each, checked at the end); `dup`
 // says which types are duplicable.
@@ -216,6 +217,11 @@ pub def TyEqIn(
 // * Tags are forgotten, never added.
 // * Functions: contravariant in the parameters, covariant in the result, and
 //   a function of a kind may stand for one of a kind it fits (`kind_fits`).
+//   An affine function may be lent as a `&` function (what its body consumes
+//   is the linearity rules'): it fits what the lent function type fits.
+//   A function that borrows its parameter (`&A`) stands for one that takes
+//   `A` whatever its kind: the caller's value is lent for the call and
+//   dropped after it.
 // * A product fits a type that wants some of its members (`A × B <: A`,
 //   `A × B <: B × A`): each member wanted (`ty_wanted_members`) is the same
 //   type as a member of the product.
@@ -229,7 +235,7 @@ pub(open) inductive TyIn: (List(Ty), Ty) -> Prop {
 // Each of `ys` is the same type as a member of `xs`.
 pub(open) inductive ProdFit(
   s: Ordmap(Nat, Ty),
-  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
   xs: List(Ty)
 ): (List(Ty)) -> Prop {
   ProdNil: ProdFit(s, ok, xs, Nil)
@@ -246,8 +252,8 @@ pub(open) inductive ProdFit(
 mutual {
   pub(open) inductive TySub(
     s: Ordmap(Nat, Ty),
-    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
-    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
     dup: (Ty) -> Prop
   ): (Ty, Ty) -> Prop {
     TysubEq<a: Ty, b: Ty>(h: TyEq(s, ok, a, b)): TySub(s, ok, inst, dup, a, b)
@@ -257,14 +263,14 @@ mutual {
     ): TySub(s, ok, inst, dup, a, c)
     TysubNever(b: Ty): TySub(s, ok, inst, dup, TyNever, b)
     TysubPolyR<a: Ty>(
-      gs: List(Pair(Text, Kind)),
+      gs: List(Text × Kind),
       t: Ty,
       rigid: Ordmap(Text, Ty),
       h: TySub(s, ok, inst, dup, a, ty_substitute(t, rigid)),
       hr: ok(gs, rigid, a, TyPoly(gs, t))
     ): TySub(s, ok, inst, dup, a, TyPoly(gs, t))
     TysubPolyL<b: Ty>(
-      gs: List(Pair(Text, Kind)),
+      gs: List(Text × Kind),
       t: Ty,
       map: Ordmap(Text, Ty),
       h: TySub(s, ok, inst, dup, ty_substitute(t, map), b),
@@ -314,6 +320,20 @@ mutual {
       hp: TySubList(s, ok, inst, dup, pb, pa),
       hr: TySub(s, ok, inst, dup, ra, rb)
     ): TySub(s, ok, inst, dup, TyFn(pa, ra, ka), TyFn(pb, rb, kb))
+    TysubLendFn<pa: List(
+      Ty
+    ), pb: List(
+      Ty
+    ), ra: Ty, rb: Ty, y: Ty>(
+      ka: Kind,
+      kb: Kind,
+      mb: Bool,
+      hk: kind_eq(ka, KindAffine) = true,
+      hm: not(mb) = true,
+      hy: TyEq(s, ok, y, TyFn(pb, rb, kb)),
+      hp: TySubList(s, ok, inst, dup, pb, pa),
+      hr: TySub(s, ok, inst, dup, ra, rb)
+    ): TySub(s, ok, inst, dup, TyFn(pa, ra, ka), TyBorrow(y, mb))
     TysubProduct<xs: List(
       Ty
     ), b: Ty>(
@@ -323,8 +343,8 @@ mutual {
 
   pub(open) inductive TySubList(
     s: Ordmap(Nat, Ty),
-    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
-    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
     dup: (Ty) -> Prop
   ): (List(Ty), List(Ty)) -> Prop {
     TysubNil: TySubList(s, ok, inst, dup, Nil, Nil)
@@ -336,12 +356,22 @@ mutual {
       h: TySub(s, ok, inst, dup, x, y),
       hs: TySubList(s, ok, inst, dup, xs, ys)
     ): TySubList(s, ok, inst, dup, Cons(x, xs), Cons(y, ys))
+    // A parameter `&A` takes an `A`: what is passed is lent for the call.
+    TysubLent<x: Ty, y: Ty, inner: Ty, xs: List(
+      Ty
+    ), ys: List(
+      Ty
+    )>(
+      hy: TyEq(s, ok, y, TyBorrow(inner, false)),
+      h: TySub(s, ok, inst, dup, x, inner),
+      hs: TySubList(s, ok, inst, dup, xs, ys)
+    ): TySubList(s, ok, inst, dup, Cons(x, xs), Cons(y, ys))
   }
 
   pub(open) inductive TySubEach(
     s: Ordmap(Nat, Ty),
-    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
-    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
     dup: (Ty) -> Prop
   ): (Ty, List(Ty)) -> Prop {
     TysubEachNil(b: Ty): TySubEach(s, ok, inst, dup, b, Nil)
@@ -355,8 +385,8 @@ mutual {
 
   pub(open) inductive TySubAny(
     s: Ordmap(Nat, Ty),
-    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
-    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    ok: (List(Text × Kind), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Text × Kind), Ordmap(Text, Ty)) -> Prop,
     dup: (Ty) -> Prop
   ): (Ty, List(Ty)) -> Prop {
     TysubAnyHere<a: Ty, y: Ty>(

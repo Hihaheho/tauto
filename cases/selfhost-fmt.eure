@@ -1,5 +1,37 @@
 // Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
 
+@ cases.fmt-raw-infer-identifier
+source = ```tauto
+fn r#infer(x: Nat): Nat { x }
+fn inferred_type(x: Nat): Nat { r#infer(x) }
+```
+differential = "fmt"
+
+@ cases.fmt-infer-condition-right-and
+source = ```tauto
+instance Choose(Local, Nat, Bool) infer from A ∧ (I ∧ S) { fn choose(value: Local): Nat { 1 } }
+```
+differential = "fmt"
+
+@ cases.fmt-infer-condition-right-or
+source = ```tauto
+instance Choose(Local, Nat, Bool) infer from A ∨ (I ∨ S) { fn choose(value: Local): Nat { 1 } }
+```
+differential = "fmt"
+
+@ cases.fmt-infer-condition-mixed
+source = ```tauto
+instance Choose(Local, Nat, Bool) infer from A ∧ I ∨ S { fn choose(value: Local): Nat { 1 } }
+```
+differential = "fmt"
+
+@ cases.fmt-infer-from-condition
+source = ```tauto
+inductive class Choose(A: Type, S: Type, I: Type) { fn choose(value: A, state: S): I }
+instance Choose(Local, Nat, Bool) infer from A∧(S∨A) { fn choose(value: Local, state: Nat): Bool { true } }
+```
+differential = "fmt"
+
 // fmt_matches_on_hard_cases
 @ cases.fmt-matches-on-hard-cases-001
 source = ```tauto
@@ -261,7 +293,7 @@ differential = "fmt"
 source = ```tauto
 fn f(): () {
   let r = Request { method: method, url: target, headers: host_paired_headers(headers), body: body }
-  Pair { fst: a, snd: b } => yn_cases(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, c)
+  #(a, b) => yn_cases(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, c)
   f(Request { method: method, url: target, headers: host_paired_headers(headers), body: body })
 }
 ```
@@ -269,10 +301,10 @@ differential = "fmt"
 
 @ cases.fmt-hard-nested-record-literals
 source = ```tauto
-fn nest(a: List(Nat), b: List(Nat)): Pair(Pair(List(Nat), List(Nat)), Pair(Pair(List(Nat), List(Nat)), Pair(List(Nat), List(Nat)))) {
-  Pair { fst: Pair { fst: Nil, snd: a }, snd: Pair { fst: Pair { fst: Nil, snd: List.map((x: Nat) => x, b) }, snd: Pair { fst: Pair { fst: Nil, snd: List.map((x: Nat) => x, a) }, snd: Pair { fst: Nil, snd: b } } } }
+fn nest(a: List(Nat), b: List(Nat)): (List(Nat) × List(Nat)) × (List(Nat) × List(Nat)) × List(Nat) × List(Nat) {
+  #(#(Nil, a), #(Nil, List.map((x: Nat) => x, b)), #(Nil, List.map((x: Nat) => x, a)), Nil, b)
 }
-fn f(g: () -> Nat ! {Div, stdout, stderr, argv, wall_clock, monotonic_clock, sleep, random, fs_read, fs_write}): Nat {
+fn f(g: () -> Nat ! {div, stdout, stderr, argv, wall_clock, monotonic_clock, sleep, random, fs_read, fs_write}): Nat {
   zero
 }
 ```

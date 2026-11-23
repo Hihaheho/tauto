@@ -1,0 +1,1795 @@
+import std::prelude::num { overflow, divzero }
+import "base.taut" { Nat }
+import "nat.taut" { Nat }
+import std::prelude::std { Option }
+
+// Unsigned integers of a fixed width, as the proofs see them: a `Nat` with a
+// proof that it is below `2^w`. Extraction maps `UInt(8)`, `UInt(16)`, `UInt(32)` and `UInt(64)`
+// onto Nib's `u8`, `u16`, `u32` and `u64`, and the functions marked "Mapped" onto its
+// operators; their definitions here say what those operators do, so a proof
+// about them holds of the program that runs.
+//
+// The arithmetic comes in two kinds:
+//
+// * `UInt::add64(a, b, h)` takes a proof `h` that the result fits. Its value is
+//   the exact sum, and it never fails at run time.
+// * `UInt::checked_add64(a, b)` decides: `Some` of the exact sum when it fits,
+//   `None` when it does not.
+//
+// * `UInt::wrapping_add64(a, b)` is the sum modulo `2^64`, said so in its
+//   name: a wrap is never silent.
+// * `UInt::add_or_overflow64(a, b)` performs `overflow` when it does not fit.
+//   A handler of `overflow` cannot resume (its answer is `Never`), so the
+//   value is the exact sum or nothing.
+//
+// Nothing here wraps silently.
+
+// The type with no values: what `overflow` answers.
+pub(open) inductive Never: Type {
+}
+
+pub fn Never::elim<A>(n: Never): A {
+  match n {
+  }
+}
+
+// The value in `o`, or `divzero` when it is `None`. `Nat::div`, `UInt::div8`,
+// `Int::tdiv`, … are this of `Nat::checked_div`, `UInt::checked_div8`,
+// `Int::checked_tdiv`, …: those decide whether the divisor is 0 and give
+// `div_nz` its proof, and the kernel checks them; the kernel does not check
+// a function that performs an effect, and such code cannot give a proof.
+pub fn or_div_zero<A>(o: Option(A)): A ! {divzero} {
+  ⊢ A from match o {
+    Some(x) => x
+    None => Never::elim(perform divzero())
+  }
+}
+
+// `div`, or `None` when `b` is 0.
+pub fn Nat::checked_div(a: Nat, b: Nat): Option(Nat) {
+  match b == 0 eqn h {
+    false => Some(Nat::div_nz(a, b, Nat::ne_zero(b, h)))
+    true => None
+  }
+}
+
+// `a div b`, rounded down, or `divzero` when `b` is 0.
+pub fn Nat::div(a: Nat, b: Nat): Nat ! {divzero} {
+  or_div_zero(Nat::checked_div(a, b))
+}
+
+// `rem`, or `None` when `b` is 0.
+pub fn Nat::checked_rem(a: Nat, b: Nat): Option(Nat) {
+  match b == 0 eqn h {
+    false => Some(Nat::rem_nz(a, b, Nat::ne_zero(b, h)))
+    true => None
+  }
+}
+
+// The remainder of `div`, or `divzero` when `b` is 0.
+pub fn Nat::rem(a: Nat, b: Nat): Nat ! {divzero} {
+  or_div_zero(Nat::checked_rem(a, b))
+}
+
+// The three forms of `a - b` on `Nat`, whose result does not exist when
+// `b` is larger. `-` performs `overflow` then; `Nat::sub`, the kernel's,
+// stops at 0 and is total.
+
+// `a - b`, where `h` says `b <= a`: the exact difference, with no path
+// that fails.
+pub fn Nat::sub_ge(a: Nat, b: Nat, h: b <= a = true): Nat {
+  Nat::sub(a, b)
+}
+
+// `a - b`, or `None` when `b` is larger.
+pub fn Nat::checked_sub(a: Nat, b: Nat): Option(Nat) {
+  match b <= a eqn h {
+    true => Some(Nat::sub_ge(a, b, h))
+    false => None
+  }
+}
+
+// `a - b`, or `overflow` when `b` is larger: what `-` on `Nat` does.
+pub fn Nat::sub_or_overflow(a: Nat, b: Nat): Nat ! {overflow} {
+  ⊢ Nat from match Nat::checked_sub(a, b) {
+    Some(x) => x
+    None => Never::elim(perform overflow())
+  }
+}
+
+pub theorem Nat::le_lt_trans(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  h1: a <= b = true,
+  h2: b < c = true
+): a < c = true {
+  Nat::le_trans(Succ(a), Succ(b), c, h1, h2)
+}
+
+pub theorem Nat::pred_le(n: Nat): Nat::pred(n) <= n = true {
+  match n {
+    Zero => Refl
+    Succ(k) => Nat::le_succ(k)
+  }
+}
+
+// `a - b` (cut off at 0) is at most `a`.
+pub theorem Nat::sub_le(a: Nat, b: Nat): a - b <= a = true {
+  match b {
+    Zero => Nat::le_refl(a)
+    Succ(k) => ⊢ a - Succ(k) <= a = true from match a {
+      Zero => Refl
+      Succ(j) => Nat::le_trans(j - k, j, Succ(j), Nat::sub_le(j, k), Nat::pred_le(Succ(j)))
+    }
+  }
+}
+
+// ---- bits --------------------------------------------------------------------
+//
+// The bits of a word, written on its value: the low `w` bits of `a` and `b`
+// one at a time, by `Nat::rem_nz(_, 2, _)` and `Nat::div_nz(_, 2, _)`. The kernel computes
+// those on numerals at once, so `Refl` decides an equation between words
+// (a hash's test vector) without unfolding `Nat` to unary.
+
+pub fn Nat::bits_and(w: Nat, a: Nat, b: Nat): Nat {
+  match w {
+    Zero => Zero
+    Succ(k) => Nat::add(
+      Nat::mul(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))),
+      Nat::mul(
+        2,
+        Nat::bits_and(
+          k,
+          Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)),
+          Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))
+        )
+      )
+    )
+  }
+}
+
+pub fn Nat::bits_or(w: Nat, a: Nat, b: Nat): Nat {
+  match w {
+    Zero => Zero
+    Succ(k) => Nat::add(
+      Nat::add(
+        Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)),
+        Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
+      ) - Nat::mul(
+        Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)),
+        Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
+      ),
+      Nat::mul(
+        2,
+        Nat::bits_or(
+          k,
+          Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)),
+          Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))
+        )
+      )
+    )
+  }
+}
+
+pub fn Nat::bits_xor(w: Nat, a: Nat, b: Nat): Nat {
+  match w {
+    Zero => Zero
+    Succ(k) => Nat::add(
+      Nat::rem_nz(
+        Nat::add(
+          Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)),
+          Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
+        ),
+        2,
+        Nat::ne_zero(2, Refl)
+      ),
+      Nat::mul(
+        2,
+        Nat::bits_xor(
+          k,
+          Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)),
+          Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))
+        )
+      )
+    )
+  }
+}
+
+pub fn Nat::pow2(n: Nat): Nat {
+  match n {
+    Zero => 1
+    Succ(k) => Nat::mul(2, Nat::pow2(k))
+  }
+}
+
+pub theorem Nat::double_ne_zero(x: Nat, h: x == 0 = false): Nat::mul(2, x) == 0 = false {
+  match x {
+    Zero => ⊢ Nat::mul(2, Zero) == 0 = false from match true_ne_false(h) {
+    }
+    Succ(y) => Refl
+  }
+}
+
+pub theorem Nat::pow2_eq_zero(n: Nat): Nat::pow2(n) == 0 = false {
+  match n {
+    Zero => Refl
+    Succ(k) => Nat::double_ne_zero(Nat::pow2(k), Nat::pow2_eq_zero(k))
+  }
+}
+
+// `2^n` is not 0: the divisor of a shift.
+pub theorem Nat::pow2_ne_zero(n: Nat): ¬(Nat::pow2(n) = 0) {
+  Nat::ne_zero(Nat::pow2(n), Nat::pow2_eq_zero(n))
+}
+
+// ---- the family ------------------------------------------------------------
+//
+// `UInt(w)`: a `Nat` below `2^w`. It is the one definition of the unsigned
+// integers of every width; `u8`, `u32` and `u64` of a program are
+// `UInt(8)`, `UInt(32)` and `UInt(64)`. The functions with the width in
+// their name (`UInt::add64`) are the same operations with the bound written
+// as a number, which is what extraction maps onto Nib's operators.
+
+pub fn UInt::bound(w: Nat): Nat {
+  Nat::pow2(w)
+}
+
+pub fn UInt::fits(w: Nat, n: Nat): Bool {
+  n < UInt::bound(w)
+}
+
+pub(open) inductive UInt(w: Nat): Type {
+  Mk(val: Nat, ok: UInt::fits(w, val) = true): UInt(w)
+}
+
+pub fn UInt::val<w: Nat>(x: UInt(w)): Nat {
+  match x {
+    Mk(v, h) => v
+  }
+}
+
+pub theorem UInt::ok<w: Nat>(x: UInt(w)): UInt::fits(w, UInt::val(x)) = true {
+  match x {
+    Mk(v, h) => h
+  }
+}
+
+// `UInt(8)` with its bound written as a number: `UInt::fits(8, n)` is
+// `n < 256`, which `fits8_ok` says once, so that a literal or a result is
+// checked against the number without computing `2^8`.
+pub theorem UInt::fits8_ok(n: Nat): UInt::fits(8, n) = (n < 256) {
+  Refl
+}
+
+pub fn UInt::mk8(n: Nat, h: n < 256 = true): UInt(8) {
+  UInt::Mk(n, Eq::trans(UInt::fits8_ok(n), h))
+}
+
+// Mapped: the number a `u8` is.
+pub fn UInt::val8(x: UInt(8)): Nat {
+  UInt::val(x)
+}
+
+pub theorem UInt::ok8(x: UInt(8)): UInt::val8(x) < 256 = true {
+  Eq::trans(Eq::sym(UInt::fits8_ok(UInt::val(x))), UInt::ok(x))
+}
+
+// Mapped: `n` as a `u8` when `o`, the decision of `n < 2^8`, says it fits.
+pub fn UInt::of_decided8(n: Nat, o: Bool, h: n < 256 = o): Option(UInt(8)) {
+  match o {
+    false => None
+    true => Some(UInt::mk8(n, h))
+  }
+}
+
+// Mapped: `n` as a `u8`, or `None` when it is `2^8` or more.
+pub fn UInt::of_nat_checked8(n: Nat): Option(UInt(8)) {
+  UInt::of_decided8(n, n < 256, Refl)
+}
+
+// Mapped: `a + b`, which `h` says fits.
+pub fn UInt::add8(a: UInt(8), b: UInt(8), h: Nat::add(UInt::val8(a), UInt::val8(b)) < 256 = true): UInt(8) {
+  UInt::mk8(Nat::add(UInt::val8(a), UInt::val8(b)), h)
+}
+
+// Mapped: `a - b`, where `h` says `b <= a`.
+pub fn UInt::sub8(a: UInt(8), b: UInt(8), h: UInt::val8(b) <= UInt::val8(a) = true): UInt(8) {
+  UInt::mk8(
+    UInt::val8(a) - UInt::val8(b),
+    Nat::le_lt_trans(
+      UInt::val8(a) - UInt::val8(b),
+      UInt::val8(a),
+      256,
+      Nat::sub_le(UInt::val8(a), UInt::val8(b)),
+      UInt::ok8(a)
+    )
+  )
+}
+
+// Mapped: `a * b`, which `h` says fits.
+pub fn UInt::mul8(a: UInt(8), b: UInt(8), h: Nat::mul(UInt::val8(a), UInt::val8(b)) < 256 = true): UInt(8) {
+  UInt::mk8(Nat::mul(UInt::val8(a), UInt::val8(b)), h)
+}
+
+// Mapped: `a + b`, or `None` when it does not fit.
+pub fn UInt::checked_add8(a: UInt(8), b: UInt(8)): Option(UInt(8)) {
+  UInt::of_nat_checked8(Nat::add(UInt::val8(a), UInt::val8(b)))
+}
+
+// Mapped: `a - b`, or `None` when `b` is larger.
+pub fn UInt::checked_sub8(a: UInt(8), b: UInt(8)): Option(UInt(8)) {
+  match UInt::val8(a) < UInt::val8(b) {
+    false => UInt::of_nat_checked8(UInt::val8(a) - UInt::val8(b))
+    true => None
+  }
+}
+
+// Mapped: `a * b`, or `None` when it does not fit.
+pub fn UInt::checked_mul8(a: UInt(8), b: UInt(8)): Option(UInt(8)) {
+  UInt::of_nat_checked8(Nat::mul(UInt::val8(a), UInt::val8(b)))
+}
+
+// Mapped: the comparisons.
+pub fn UInt::lt8(a: UInt(8), b: UInt(8)): Bool {
+  UInt::val8(a) < UInt::val8(b)
+}
+
+pub fn UInt::le8(a: UInt(8), b: UInt(8)): Bool {
+  UInt::val8(a) <= UInt::val8(b)
+}
+
+pub fn UInt::eq8(a: UInt(8), b: UInt(8)): Bool {
+  UInt::val8(a) == UInt::val8(b)
+}
+
+pub fn UInt::of_nat_mod8(n: Nat): UInt(8) {
+  UInt::mk8(Nat::rem_nz(n, 256, Nat::ne_zero(256, Refl)), Nat::mod_lt(n, 256, Refl))
+}
+
+// Mapped: `a + b` modulo `2^8`.
+pub fn UInt::wrapping_add8(a: UInt(8), b: UInt(8)): UInt(8) {
+  UInt::mk8(
+    Nat::rem_nz(Nat::add(UInt::val8(a), UInt::val8(b)), 256, Nat::ne_zero(256, Refl)),
+    Nat::mod_lt(Nat::add(UInt::val8(a), UInt::val8(b)), 256, Refl)
+  )
+}
+
+// Mapped: `a - b` modulo `2^8`.
+pub fn UInt::wrapping_sub8(a: UInt(8), b: UInt(8)): UInt(8) {
+  UInt::mk8(
+    Nat::rem_nz(Nat::add(UInt::val8(a), 256) - UInt::val8(b), 256, Nat::ne_zero(256, Refl)),
+    Nat::mod_lt(Nat::add(UInt::val8(a), 256) - UInt::val8(b), 256, Refl)
+  )
+}
+
+// Mapped: `a * b` modulo `2^8`.
+pub fn UInt::wrapping_mul8(a: UInt(8), b: UInt(8)): UInt(8) {
+  UInt::mk8(
+    Nat::rem_nz(Nat::mul(UInt::val8(a), UInt::val8(b)), 256, Nat::ne_zero(256, Refl)),
+    Nat::mod_lt(Nat::mul(UInt::val8(a), UInt::val8(b)), 256, Refl)
+  )
+}
+
+pub theorem UInt::wrapping_add_val8(
+  a: UInt(8),
+  b: UInt(8)
+): UInt::val8(
+  UInt::wrapping_add8(a, b)
+) = Nat::rem_nz(Nat::add(UInt::val8(a), UInt::val8(b)), 256, Nat::ne_zero(256, Refl)) {
+  Refl
+}
+
+pub theorem UInt::wrapping_mul_val8(
+  a: UInt(8),
+  b: UInt(8)
+): UInt::val8(
+  UInt::wrapping_mul8(a, b)
+) = Nat::rem_nz(Nat::mul(UInt::val8(a), UInt::val8(b)), 256, Nat::ne_zero(256, Refl)) {
+  Refl
+}
+
+// Mapped: the value in `o`, or `overflow`.
+pub fn UInt::or_overflow8(o: Option(UInt(8))): UInt(8) ! {overflow} {
+  ⊢ UInt(8) from match o {
+    Some(x) => x
+    None => Never::elim(perform overflow())
+  }
+}
+
+pub fn UInt::add_or_overflow8(a: UInt(8), b: UInt(8)): UInt(8) ! {overflow} {
+  UInt::or_overflow8(UInt::checked_add8(a, b))
+}
+
+pub fn UInt::sub_or_overflow8(a: UInt(8), b: UInt(8)): UInt(8) ! {overflow} {
+  UInt::or_overflow8(UInt::checked_sub8(a, b))
+}
+
+pub fn UInt::mul_or_overflow8(a: UInt(8), b: UInt(8)): UInt(8) ! {overflow} {
+  UInt::or_overflow8(UInt::checked_mul8(a, b))
+}
+
+// `a / b` rounded down, for a `b` that `h` says is not 0. The
+// quotient is at most `a`, so `of_nat_checked` always gives it; the `None` arm is
+// never reached.
+pub fn UInt::div_nz8(a: UInt(8), b: UInt(8), h: ¬(UInt::val8(b) = 0)): UInt(8) {
+  match UInt::of_nat_checked8(Nat::div_nz(UInt::val8(a), UInt::val8(b), h)) {
+    Some(q) => q
+    None => a
+  }
+}
+
+// The remainder of `div_nz`, below `b`, so `of_nat_checked` always gives it.
+pub fn UInt::rem_nz8(a: UInt(8), b: UInt(8), h: ¬(UInt::val8(b) = 0)): UInt(8) {
+  match UInt::of_nat_checked8(Nat::rem_nz(UInt::val8(a), UInt::val8(b), h)) {
+    Some(r) => r
+    None => a
+  }
+}
+
+// `div`, or `None` when `b` is 0.
+pub fn UInt::checked_div8(a: UInt(8), b: UInt(8)): Option(UInt(8)) {
+  match UInt::val8(b) == 0 eqn h {
+    false => Some(UInt::div_nz8(a, b, Nat::ne_zero(UInt::val8(b), h)))
+    true => None
+  }
+}
+
+// `a / b` rounded down, or `divzero` when `b` is 0.
+pub fn UInt::div8(a: UInt(8), b: UInt(8)): UInt(8) ! {divzero} {
+  or_div_zero(UInt::checked_div8(a, b))
+}
+
+// `rem`, or `None` when `b` is 0.
+pub fn UInt::checked_rem8(a: UInt(8), b: UInt(8)): Option(UInt(8)) {
+  match UInt::val8(b) == 0 eqn h {
+    false => Some(UInt::rem_nz8(a, b, Nat::ne_zero(UInt::val8(b), h)))
+    true => None
+  }
+}
+
+// The remainder of `div`, or `divzero` when `b` is 0.
+pub fn UInt::rem8(a: UInt(8), b: UInt(8)): UInt(8) ! {divzero} {
+  or_div_zero(UInt::checked_rem8(a, b))
+}
+
+// `overflow` caught as `None`.
+pub fn UInt::catch8(o: Option(UInt(8))): Option(UInt(8)) {
+  handle { Some(UInt::or_overflow8(o)) } with {
+    overflow() => None
+  }
+}
+
+// Catching `overflow` gives back the decision: the effect says no more and
+// no less than the `Option`.
+pub theorem UInt::catch_is8(o: Option(UInt(8))): UInt::catch8(o) = o {
+  match o {
+    Some(x) => Refl
+    None => Refl
+  }
+}
+
+pub theorem UInt::add_val8(
+  a: UInt(8),
+  b: UInt(8),
+  h: Nat::add(UInt::val8(a), UInt::val8(b)) < 256 = true
+): UInt::val8(UInt::add8(a, b, h)) = Nat::add(UInt::val8(a), UInt::val8(b)) {
+  Refl
+}
+
+pub theorem UInt::sub_val8(
+  a: UInt(8),
+  b: UInt(8),
+  h: UInt::val8(b) <= UInt::val8(a) = true
+): UInt::val8(UInt::sub8(a, b, h)) = UInt::val8(a) - UInt::val8(b) {
+  Refl
+}
+
+pub theorem UInt::mul_val8(
+  a: UInt(8),
+  b: UInt(8),
+  h: Nat::mul(UInt::val8(a), UInt::val8(b)) < 256 = true
+): UInt::val8(UInt::mul8(a, b, h)) = Nat::mul(UInt::val8(a), UInt::val8(b)) {
+  Refl
+}
+
+// `UInt(32)` with its bound written as a number: `UInt::fits(32, n)` is
+// `n < 4294967296`, which `fits32_ok` says once, so that a literal or a result is
+// checked against the number without computing `2^32`.
+pub theorem UInt::fits32_ok(n: Nat): UInt::fits(32, n) = (n < 4294967296) {
+  Refl
+}
+
+pub fn UInt::mk32(n: Nat, h: n < 4294967296 = true): UInt(32) {
+  UInt::Mk(n, Eq::trans(UInt::fits32_ok(n), h))
+}
+
+// Mapped: the number a `u32` is.
+pub fn UInt::val32(x: UInt(32)): Nat {
+  UInt::val(x)
+}
+
+pub theorem UInt::ok32(x: UInt(32)): UInt::val32(x) < 4294967296 = true {
+  Eq::trans(Eq::sym(UInt::fits32_ok(UInt::val(x))), UInt::ok(x))
+}
+
+// Mapped: `n` as a `u32` when `o`, the decision of `n < 2^32`, says it fits.
+pub fn UInt::of_decided32(n: Nat, o: Bool, h: n < 4294967296 = o): Option(UInt(32)) {
+  match o {
+    false => None
+    true => Some(UInt::mk32(n, h))
+  }
+}
+
+// Mapped: `n` as a `u32`, or `None` when it is `2^32` or more.
+pub fn UInt::of_nat_checked32(n: Nat): Option(UInt(32)) {
+  UInt::of_decided32(n, n < 4294967296, Refl)
+}
+
+// Mapped: `a + b`, which `h` says fits.
+pub fn UInt::add32(a: UInt(32), b: UInt(32), h: Nat::add(UInt::val32(a), UInt::val32(b)) < 4294967296 = true): UInt(32) {
+  UInt::mk32(Nat::add(UInt::val32(a), UInt::val32(b)), h)
+}
+
+// Mapped: `a - b`, where `h` says `b <= a`.
+pub fn UInt::sub32(a: UInt(32), b: UInt(32), h: UInt::val32(b) <= UInt::val32(a) = true): UInt(32) {
+  UInt::mk32(
+    UInt::val32(a) - UInt::val32(b),
+    Nat::le_lt_trans(
+      UInt::val32(a) - UInt::val32(b),
+      UInt::val32(a),
+      4294967296,
+      Nat::sub_le(UInt::val32(a), UInt::val32(b)),
+      UInt::ok32(a)
+    )
+  )
+}
+
+// Mapped: `a * b`, which `h` says fits.
+pub fn UInt::mul32(a: UInt(32), b: UInt(32), h: Nat::mul(UInt::val32(a), UInt::val32(b)) < 4294967296 = true): UInt(32) {
+  UInt::mk32(Nat::mul(UInt::val32(a), UInt::val32(b)), h)
+}
+
+// Mapped: `a + b`, or `None` when it does not fit.
+pub fn UInt::checked_add32(a: UInt(32), b: UInt(32)): Option(UInt(32)) {
+  UInt::of_nat_checked32(Nat::add(UInt::val32(a), UInt::val32(b)))
+}
+
+// Mapped: `a - b`, or `None` when `b` is larger.
+pub fn UInt::checked_sub32(a: UInt(32), b: UInt(32)): Option(UInt(32)) {
+  match UInt::val32(a) < UInt::val32(b) {
+    false => UInt::of_nat_checked32(UInt::val32(a) - UInt::val32(b))
+    true => None
+  }
+}
+
+// Mapped: `a * b`, or `None` when it does not fit.
+pub fn UInt::checked_mul32(a: UInt(32), b: UInt(32)): Option(UInt(32)) {
+  UInt::of_nat_checked32(Nat::mul(UInt::val32(a), UInt::val32(b)))
+}
+
+// Mapped: the comparisons.
+pub fn UInt::lt32(a: UInt(32), b: UInt(32)): Bool {
+  UInt::val32(a) < UInt::val32(b)
+}
+
+pub fn UInt::le32(a: UInt(32), b: UInt(32)): Bool {
+  UInt::val32(a) <= UInt::val32(b)
+}
+
+pub fn UInt::eq32(a: UInt(32), b: UInt(32)): Bool {
+  UInt::val32(a) == UInt::val32(b)
+}
+
+pub fn UInt::of_nat_mod32(n: Nat): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(n, 4294967296, Nat::ne_zero(4294967296, Refl)),
+    Nat::mod_lt(n, 4294967296, Refl)
+  )
+}
+
+// Mapped: `a + b` modulo `2^32`.
+pub fn UInt::wrapping_add32(a: UInt(32), b: UInt(32)): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(Nat::add(UInt::val32(a), UInt::val32(b)), 4294967296, Nat::ne_zero(4294967296, Refl)),
+    Nat::mod_lt(Nat::add(UInt::val32(a), UInt::val32(b)), 4294967296, Refl)
+  )
+}
+
+// Mapped: `a - b` modulo `2^32`.
+pub fn UInt::wrapping_sub32(a: UInt(32), b: UInt(32)): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(
+      Nat::add(UInt::val32(a), 4294967296) - UInt::val32(b),
+      4294967296,
+      Nat::ne_zero(4294967296, Refl)
+    ),
+    Nat::mod_lt(Nat::add(UInt::val32(a), 4294967296) - UInt::val32(b), 4294967296, Refl)
+  )
+}
+
+// Mapped: `a * b` modulo `2^32`.
+pub fn UInt::wrapping_mul32(a: UInt(32), b: UInt(32)): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(Nat::mul(UInt::val32(a), UInt::val32(b)), 4294967296, Nat::ne_zero(4294967296, Refl)),
+    Nat::mod_lt(Nat::mul(UInt::val32(a), UInt::val32(b)), 4294967296, Refl)
+  )
+}
+
+pub theorem UInt::wrapping_add_val32(
+  a: UInt(32),
+  b: UInt(32)
+): UInt::val32(
+  UInt::wrapping_add32(a, b)
+) = Nat::rem_nz(Nat::add(UInt::val32(a), UInt::val32(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+  Refl
+}
+
+pub theorem UInt::wrapping_mul_val32(
+  a: UInt(32),
+  b: UInt(32)
+): UInt::val32(
+  UInt::wrapping_mul32(a, b)
+) = Nat::rem_nz(Nat::mul(UInt::val32(a), UInt::val32(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+  Refl
+}
+
+// Mapped: the value in `o`, or `overflow`.
+pub fn UInt::or_overflow32(o: Option(UInt(32))): UInt(32) ! {overflow} {
+  ⊢ UInt(32) from match o {
+    Some(x) => x
+    None => Never::elim(perform overflow())
+  }
+}
+
+pub fn UInt::add_or_overflow32(a: UInt(32), b: UInt(32)): UInt(32) ! {overflow} {
+  UInt::or_overflow32(UInt::checked_add32(a, b))
+}
+
+pub fn UInt::sub_or_overflow32(a: UInt(32), b: UInt(32)): UInt(32) ! {overflow} {
+  UInt::or_overflow32(UInt::checked_sub32(a, b))
+}
+
+pub fn UInt::mul_or_overflow32(a: UInt(32), b: UInt(32)): UInt(32) ! {overflow} {
+  UInt::or_overflow32(UInt::checked_mul32(a, b))
+}
+
+// `a / b` rounded down, for a `b` that `h` says is not 0. The
+// quotient is at most `a`, so `of_nat_checked` always gives it; the `None` arm is
+// never reached.
+pub fn UInt::div_nz32(a: UInt(32), b: UInt(32), h: ¬(UInt::val32(b) = 0)): UInt(32) {
+  match UInt::of_nat_checked32(Nat::div_nz(UInt::val32(a), UInt::val32(b), h)) {
+    Some(q) => q
+    None => a
+  }
+}
+
+// The remainder of `div_nz`, below `b`, so `of_nat_checked` always gives it.
+pub fn UInt::rem_nz32(a: UInt(32), b: UInt(32), h: ¬(UInt::val32(b) = 0)): UInt(32) {
+  match UInt::of_nat_checked32(Nat::rem_nz(UInt::val32(a), UInt::val32(b), h)) {
+    Some(r) => r
+    None => a
+  }
+}
+
+// `div`, or `None` when `b` is 0.
+pub fn UInt::checked_div32(a: UInt(32), b: UInt(32)): Option(UInt(32)) {
+  match UInt::val32(b) == 0 eqn h {
+    false => Some(UInt::div_nz32(a, b, Nat::ne_zero(UInt::val32(b), h)))
+    true => None
+  }
+}
+
+// `a / b` rounded down, or `divzero` when `b` is 0.
+pub fn UInt::div32(a: UInt(32), b: UInt(32)): UInt(32) ! {divzero} {
+  or_div_zero(UInt::checked_div32(a, b))
+}
+
+// `rem`, or `None` when `b` is 0.
+pub fn UInt::checked_rem32(a: UInt(32), b: UInt(32)): Option(UInt(32)) {
+  match UInt::val32(b) == 0 eqn h {
+    false => Some(UInt::rem_nz32(a, b, Nat::ne_zero(UInt::val32(b), h)))
+    true => None
+  }
+}
+
+// The remainder of `div`, or `divzero` when `b` is 0.
+pub fn UInt::rem32(a: UInt(32), b: UInt(32)): UInt(32) ! {divzero} {
+  or_div_zero(UInt::checked_rem32(a, b))
+}
+
+// `overflow` caught as `None`.
+pub fn UInt::catch32(o: Option(UInt(32))): Option(UInt(32)) {
+  handle { Some(UInt::or_overflow32(o)) } with {
+    overflow() => None
+  }
+}
+
+// Catching `overflow` gives back the decision: the effect says no more and
+// no less than the `Option`.
+pub theorem UInt::catch_is32(o: Option(UInt(32))): UInt::catch32(o) = o {
+  match o {
+    Some(x) => Refl
+    None => Refl
+  }
+}
+
+pub theorem UInt::add_val32(
+  a: UInt(32),
+  b: UInt(32),
+  h: Nat::add(UInt::val32(a), UInt::val32(b)) < 4294967296 = true
+): UInt::val32(UInt::add32(a, b, h)) = Nat::add(UInt::val32(a), UInt::val32(b)) {
+  Refl
+}
+
+pub theorem UInt::sub_val32(
+  a: UInt(32),
+  b: UInt(32),
+  h: UInt::val32(b) <= UInt::val32(a) = true
+): UInt::val32(UInt::sub32(a, b, h)) = UInt::val32(a) - UInt::val32(b) {
+  Refl
+}
+
+pub theorem UInt::mul_val32(
+  a: UInt(32),
+  b: UInt(32),
+  h: Nat::mul(UInt::val32(a), UInt::val32(b)) < 4294967296 = true
+): UInt::val32(UInt::mul32(a, b, h)) = Nat::mul(UInt::val32(a), UInt::val32(b)) {
+  Refl
+}
+
+// `UInt(16)` with its bound written as a number: `UInt::fits(16, n)` is
+// `n < 65536`, which `fits16_ok` says once, so that a literal or a result is
+// checked against the number without computing `2^16`.
+pub theorem UInt::fits16_ok(n: Nat): UInt::fits(16, n) = (n < 65536) {
+  Refl
+}
+
+pub fn UInt::mk16(n: Nat, h: n < 65536 = true): UInt(16) {
+  UInt::Mk(n, Eq::trans(UInt::fits16_ok(n), h))
+}
+
+// Mapped: the number a `u16` is.
+pub fn UInt::val16(x: UInt(16)): Nat {
+  UInt::val(x)
+}
+
+pub theorem UInt::ok16(x: UInt(16)): UInt::val16(x) < 65536 = true {
+  Eq::trans(Eq::sym(UInt::fits16_ok(UInt::val(x))), UInt::ok(x))
+}
+
+// Mapped: `n` as a `u16` when `o`, the decision of `n < 2^16`, says it fits.
+pub fn UInt::of_decided16(n: Nat, o: Bool, h: n < 65536 = o): Option(UInt(16)) {
+  match o {
+    false => None
+    true => Some(UInt::mk16(n, h))
+  }
+}
+
+// Mapped: `n` as a `u16`, or `None` when it is `2^16` or more.
+pub fn UInt::of_nat_checked16(n: Nat): Option(UInt(16)) {
+  UInt::of_decided16(n, n < 65536, Refl)
+}
+
+// Mapped: `a + b`, which `h` says fits.
+pub fn UInt::add16(a: UInt(16), b: UInt(16), h: Nat::add(UInt::val16(a), UInt::val16(b)) < 65536 = true): UInt(16) {
+  UInt::mk16(Nat::add(UInt::val16(a), UInt::val16(b)), h)
+}
+
+// Mapped: `a - b`, where `h` says `b <= a`.
+pub fn UInt::sub16(a: UInt(16), b: UInt(16), h: UInt::val16(b) <= UInt::val16(a) = true): UInt(16) {
+  UInt::mk16(
+    UInt::val16(a) - UInt::val16(b),
+    Nat::le_lt_trans(
+      UInt::val16(a) - UInt::val16(b),
+      UInt::val16(a),
+      65536,
+      Nat::sub_le(UInt::val16(a), UInt::val16(b)),
+      UInt::ok16(a)
+    )
+  )
+}
+
+// Mapped: `a * b`, which `h` says fits.
+pub fn UInt::mul16(a: UInt(16), b: UInt(16), h: Nat::mul(UInt::val16(a), UInt::val16(b)) < 65536 = true): UInt(16) {
+  UInt::mk16(Nat::mul(UInt::val16(a), UInt::val16(b)), h)
+}
+
+// Mapped: `a + b`, or `None` when it does not fit.
+pub fn UInt::checked_add16(a: UInt(16), b: UInt(16)): Option(UInt(16)) {
+  UInt::of_nat_checked16(Nat::add(UInt::val16(a), UInt::val16(b)))
+}
+
+// Mapped: `a - b`, or `None` when `b` is larger.
+pub fn UInt::checked_sub16(a: UInt(16), b: UInt(16)): Option(UInt(16)) {
+  match UInt::val16(a) < UInt::val16(b) {
+    false => UInt::of_nat_checked16(UInt::val16(a) - UInt::val16(b))
+    true => None
+  }
+}
+
+// Mapped: `a * b`, or `None` when it does not fit.
+pub fn UInt::checked_mul16(a: UInt(16), b: UInt(16)): Option(UInt(16)) {
+  UInt::of_nat_checked16(Nat::mul(UInt::val16(a), UInt::val16(b)))
+}
+
+// Mapped: the comparisons.
+pub fn UInt::lt16(a: UInt(16), b: UInt(16)): Bool {
+  UInt::val16(a) < UInt::val16(b)
+}
+
+pub fn UInt::le16(a: UInt(16), b: UInt(16)): Bool {
+  UInt::val16(a) <= UInt::val16(b)
+}
+
+pub fn UInt::eq16(a: UInt(16), b: UInt(16)): Bool {
+  UInt::val16(a) == UInt::val16(b)
+}
+
+pub fn UInt::of_nat_mod16(n: Nat): UInt(16) {
+  UInt::mk16(
+    Nat::rem_nz(n, 65536, Nat::ne_zero(65536, Refl)),
+    Nat::mod_lt(n, 65536, Refl)
+  )
+}
+
+// Mapped: `a + b` modulo `2^16`.
+pub fn UInt::wrapping_add16(a: UInt(16), b: UInt(16)): UInt(16) {
+  UInt::mk16(
+    Nat::rem_nz(Nat::add(UInt::val16(a), UInt::val16(b)), 65536, Nat::ne_zero(65536, Refl)),
+    Nat::mod_lt(Nat::add(UInt::val16(a), UInt::val16(b)), 65536, Refl)
+  )
+}
+
+// Mapped: `a - b` modulo `2^16`.
+pub fn UInt::wrapping_sub16(a: UInt(16), b: UInt(16)): UInt(16) {
+  UInt::mk16(
+    Nat::rem_nz(
+      Nat::add(UInt::val16(a), 65536) - UInt::val16(b),
+      65536,
+      Nat::ne_zero(65536, Refl)
+    ),
+    Nat::mod_lt(Nat::add(UInt::val16(a), 65536) - UInt::val16(b), 65536, Refl)
+  )
+}
+
+// Mapped: `a * b` modulo `2^16`.
+pub fn UInt::wrapping_mul16(a: UInt(16), b: UInt(16)): UInt(16) {
+  UInt::mk16(
+    Nat::rem_nz(Nat::mul(UInt::val16(a), UInt::val16(b)), 65536, Nat::ne_zero(65536, Refl)),
+    Nat::mod_lt(Nat::mul(UInt::val16(a), UInt::val16(b)), 65536, Refl)
+  )
+}
+
+pub theorem UInt::wrapping_add_val16(
+  a: UInt(16),
+  b: UInt(16)
+): UInt::val16(
+  UInt::wrapping_add16(a, b)
+) = Nat::rem_nz(Nat::add(UInt::val16(a), UInt::val16(b)), 65536, Nat::ne_zero(65536, Refl)) {
+  Refl
+}
+
+pub theorem UInt::wrapping_mul_val16(
+  a: UInt(16),
+  b: UInt(16)
+): UInt::val16(
+  UInt::wrapping_mul16(a, b)
+) = Nat::rem_nz(Nat::mul(UInt::val16(a), UInt::val16(b)), 65536, Nat::ne_zero(65536, Refl)) {
+  Refl
+}
+
+// Mapped: the value in `o`, or `overflow`.
+pub fn UInt::or_overflow16(o: Option(UInt(16))): UInt(16) ! {overflow} {
+  ⊢ UInt(16) from match o {
+    Some(x) => x
+    None => Never::elim(perform overflow())
+  }
+}
+
+pub fn UInt::add_or_overflow16(a: UInt(16), b: UInt(16)): UInt(16) ! {overflow} {
+  UInt::or_overflow16(UInt::checked_add16(a, b))
+}
+
+pub fn UInt::sub_or_overflow16(a: UInt(16), b: UInt(16)): UInt(16) ! {overflow} {
+  UInt::or_overflow16(UInt::checked_sub16(a, b))
+}
+
+pub fn UInt::mul_or_overflow16(a: UInt(16), b: UInt(16)): UInt(16) ! {overflow} {
+  UInt::or_overflow16(UInt::checked_mul16(a, b))
+}
+
+// `a / b` rounded down, for a `b` that `h` says is not 0. The
+// quotient is at most `a`, so `of_nat_checked` always gives it; the `None` arm is
+// never reached.
+pub fn UInt::div_nz16(a: UInt(16), b: UInt(16), h: ¬(UInt::val16(b) = 0)): UInt(16) {
+  match UInt::of_nat_checked16(Nat::div_nz(UInt::val16(a), UInt::val16(b), h)) {
+    Some(q) => q
+    None => a
+  }
+}
+
+// The remainder of `div_nz`, below `b`, so `of_nat_checked` always gives it.
+pub fn UInt::rem_nz16(a: UInt(16), b: UInt(16), h: ¬(UInt::val16(b) = 0)): UInt(16) {
+  match UInt::of_nat_checked16(Nat::rem_nz(UInt::val16(a), UInt::val16(b), h)) {
+    Some(r) => r
+    None => a
+  }
+}
+
+// `div`, or `None` when `b` is 0.
+pub fn UInt::checked_div16(a: UInt(16), b: UInt(16)): Option(UInt(16)) {
+  match UInt::val16(b) == 0 eqn h {
+    false => Some(UInt::div_nz16(a, b, Nat::ne_zero(UInt::val16(b), h)))
+    true => None
+  }
+}
+
+// `a / b` rounded down, or `divzero` when `b` is 0.
+pub fn UInt::div16(a: UInt(16), b: UInt(16)): UInt(16) ! {divzero} {
+  or_div_zero(UInt::checked_div16(a, b))
+}
+
+// `rem`, or `None` when `b` is 0.
+pub fn UInt::checked_rem16(a: UInt(16), b: UInt(16)): Option(UInt(16)) {
+  match UInt::val16(b) == 0 eqn h {
+    false => Some(UInt::rem_nz16(a, b, Nat::ne_zero(UInt::val16(b), h)))
+    true => None
+  }
+}
+
+// The remainder of `div`, or `divzero` when `b` is 0.
+pub fn UInt::rem16(a: UInt(16), b: UInt(16)): UInt(16) ! {divzero} {
+  or_div_zero(UInt::checked_rem16(a, b))
+}
+
+// `overflow` caught as `None`.
+pub fn UInt::catch16(o: Option(UInt(16))): Option(UInt(16)) {
+  handle { Some(UInt::or_overflow16(o)) } with {
+    overflow() => None
+  }
+}
+
+// Catching `overflow` gives back the decision: the effect says no more and
+// no less than the `Option`.
+pub theorem UInt::catch_is16(o: Option(UInt(16))): UInt::catch16(o) = o {
+  match o {
+    Some(x) => Refl
+    None => Refl
+  }
+}
+
+pub theorem UInt::add_val16(
+  a: UInt(16),
+  b: UInt(16),
+  h: Nat::add(UInt::val16(a), UInt::val16(b)) < 65536 = true
+): UInt::val16(UInt::add16(a, b, h)) = Nat::add(UInt::val16(a), UInt::val16(b)) {
+  Refl
+}
+
+pub theorem UInt::sub_val16(
+  a: UInt(16),
+  b: UInt(16),
+  h: UInt::val16(b) <= UInt::val16(a) = true
+): UInt::val16(UInt::sub16(a, b, h)) = UInt::val16(a) - UInt::val16(b) {
+  Refl
+}
+
+pub theorem UInt::mul_val16(
+  a: UInt(16),
+  b: UInt(16),
+  h: Nat::mul(UInt::val16(a), UInt::val16(b)) < 65536 = true
+): UInt::val16(UInt::mul16(a, b, h)) = Nat::mul(UInt::val16(a), UInt::val16(b)) {
+  Refl
+}
+
+// `UInt(64)` with its bound written as a number: `UInt::fits(64, n)` is
+// `n < 18446744073709551616`, which `fits64_ok` says once, so that a literal or a result is
+// checked against the number without computing `2^64`.
+pub theorem UInt::fits64_ok(n: Nat): UInt::fits(64, n) = (n < 18446744073709551616) {
+  Refl
+}
+
+pub fn UInt::mk64(n: Nat, h: n < 18446744073709551616 = true): UInt(64) {
+  UInt::Mk(n, Eq::trans(UInt::fits64_ok(n), h))
+}
+
+// Mapped: the number a `u64` is.
+pub fn UInt::val64(x: UInt(64)): Nat {
+  UInt::val(x)
+}
+
+pub theorem UInt::ok64(x: UInt(64)): UInt::val64(x) < 18446744073709551616 = true {
+  Eq::trans(Eq::sym(UInt::fits64_ok(UInt::val(x))), UInt::ok(x))
+}
+
+// Mapped: `n` as a `u64` when `o`, the decision of `n < 2^64`, says it fits.
+pub fn UInt::of_decided64(n: Nat, o: Bool, h: n < 18446744073709551616 = o): Option(UInt(64)) {
+  match o {
+    false => None
+    true => Some(UInt::mk64(n, h))
+  }
+}
+
+// Mapped: `n` as a `u64`, or `None` when it is `2^64` or more.
+pub fn UInt::of_nat_checked64(n: Nat): Option(UInt(64)) {
+  UInt::of_decided64(n, n < 18446744073709551616, Refl)
+}
+
+// Mapped: `a + b`, which `h` says fits.
+pub fn UInt::add64(
+  a: UInt(64),
+  b: UInt(64),
+  h: Nat::add(UInt::val64(a), UInt::val64(b)) < 18446744073709551616 = true
+): UInt(64) {
+  UInt::mk64(Nat::add(UInt::val64(a), UInt::val64(b)), h)
+}
+
+// Mapped: `a - b`, where `h` says `b <= a`.
+pub fn UInt::sub64(a: UInt(64), b: UInt(64), h: UInt::val64(b) <= UInt::val64(a) = true): UInt(64) {
+  UInt::mk64(
+    UInt::val64(a) - UInt::val64(b),
+    Nat::le_lt_trans(
+      UInt::val64(a) - UInt::val64(b),
+      UInt::val64(a),
+      18446744073709551616,
+      Nat::sub_le(UInt::val64(a), UInt::val64(b)),
+      UInt::ok64(a)
+    )
+  )
+}
+
+// Mapped: `a * b`, which `h` says fits.
+pub fn UInt::mul64(
+  a: UInt(64),
+  b: UInt(64),
+  h: Nat::mul(UInt::val64(a), UInt::val64(b)) < 18446744073709551616 = true
+): UInt(64) {
+  UInt::mk64(Nat::mul(UInt::val64(a), UInt::val64(b)), h)
+}
+
+// Mapped: `a + b`, or `None` when it does not fit.
+pub fn UInt::checked_add64(a: UInt(64), b: UInt(64)): Option(UInt(64)) {
+  UInt::of_nat_checked64(Nat::add(UInt::val64(a), UInt::val64(b)))
+}
+
+// Mapped: `a - b`, or `None` when `b` is larger.
+pub fn UInt::checked_sub64(a: UInt(64), b: UInt(64)): Option(UInt(64)) {
+  match UInt::val64(a) < UInt::val64(b) {
+    false => UInt::of_nat_checked64(UInt::val64(a) - UInt::val64(b))
+    true => None
+  }
+}
+
+// Mapped: `a * b`, or `None` when it does not fit.
+pub fn UInt::checked_mul64(a: UInt(64), b: UInt(64)): Option(UInt(64)) {
+  UInt::of_nat_checked64(Nat::mul(UInt::val64(a), UInt::val64(b)))
+}
+
+// Mapped: the comparisons.
+pub fn UInt::lt64(a: UInt(64), b: UInt(64)): Bool {
+  UInt::val64(a) < UInt::val64(b)
+}
+
+pub fn UInt::le64(a: UInt(64), b: UInt(64)): Bool {
+  UInt::val64(a) <= UInt::val64(b)
+}
+
+pub fn UInt::eq64(a: UInt(64), b: UInt(64)): Bool {
+  UInt::val64(a) == UInt::val64(b)
+}
+
+pub fn UInt::of_nat_mod64(n: Nat): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(n, 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+    Nat::mod_lt(n, 18446744073709551616, Refl)
+  )
+}
+
+// Mapped: `a + b` modulo `2^64`.
+pub fn UInt::wrapping_add64(a: UInt(64), b: UInt(64)): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(
+      Nat::add(UInt::val64(a), UInt::val64(b)),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::mod_lt(Nat::add(UInt::val64(a), UInt::val64(b)), 18446744073709551616, Refl)
+  )
+}
+
+// Mapped: `a - b` modulo `2^64`.
+pub fn UInt::wrapping_sub64(a: UInt(64), b: UInt(64)): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(
+      Nat::add(UInt::val64(a), 18446744073709551616) - UInt::val64(b),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::mod_lt(
+      Nat::add(UInt::val64(a), 18446744073709551616) - UInt::val64(b),
+      18446744073709551616,
+      Refl
+    )
+  )
+}
+
+// Mapped: `a * b` modulo `2^64`.
+pub fn UInt::wrapping_mul64(a: UInt(64), b: UInt(64)): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(
+      Nat::mul(UInt::val64(a), UInt::val64(b)),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::mod_lt(Nat::mul(UInt::val64(a), UInt::val64(b)), 18446744073709551616, Refl)
+  )
+}
+
+pub theorem UInt::wrapping_add_val64(
+  a: UInt(64),
+  b: UInt(64)
+): UInt::val64(
+  UInt::wrapping_add64(a, b)
+) = Nat::rem_nz(
+  Nat::add(UInt::val64(a), UInt::val64(b)),
+  18446744073709551616,
+  Nat::ne_zero(18446744073709551616, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::wrapping_mul_val64(
+  a: UInt(64),
+  b: UInt(64)
+): UInt::val64(
+  UInt::wrapping_mul64(a, b)
+) = Nat::rem_nz(
+  Nat::mul(UInt::val64(a), UInt::val64(b)),
+  18446744073709551616,
+  Nat::ne_zero(18446744073709551616, Refl)
+) {
+  Refl
+}
+
+// Mapped: the value in `o`, or `overflow`.
+pub fn UInt::or_overflow64(o: Option(UInt(64))): UInt(64) ! {overflow} {
+  ⊢ UInt(64) from match o {
+    Some(x) => x
+    None => Never::elim(perform overflow())
+  }
+}
+
+pub fn UInt::add_or_overflow64(a: UInt(64), b: UInt(64)): UInt(64) ! {overflow} {
+  UInt::or_overflow64(UInt::checked_add64(a, b))
+}
+
+pub fn UInt::sub_or_overflow64(a: UInt(64), b: UInt(64)): UInt(64) ! {overflow} {
+  UInt::or_overflow64(UInt::checked_sub64(a, b))
+}
+
+pub fn UInt::mul_or_overflow64(a: UInt(64), b: UInt(64)): UInt(64) ! {overflow} {
+  UInt::or_overflow64(UInt::checked_mul64(a, b))
+}
+
+// `a / b` rounded down, for a `b` that `h` says is not 0. The
+// quotient is at most `a`, so `of_nat_checked` always gives it; the `None` arm is
+// never reached.
+pub fn UInt::div_nz64(a: UInt(64), b: UInt(64), h: ¬(UInt::val64(b) = 0)): UInt(64) {
+  match UInt::of_nat_checked64(Nat::div_nz(UInt::val64(a), UInt::val64(b), h)) {
+    Some(q) => q
+    None => a
+  }
+}
+
+// The remainder of `div_nz`, below `b`, so `of_nat_checked` always gives it.
+pub fn UInt::rem_nz64(a: UInt(64), b: UInt(64), h: ¬(UInt::val64(b) = 0)): UInt(64) {
+  match UInt::of_nat_checked64(Nat::rem_nz(UInt::val64(a), UInt::val64(b), h)) {
+    Some(r) => r
+    None => a
+  }
+}
+
+// `div`, or `None` when `b` is 0.
+pub fn UInt::checked_div64(a: UInt(64), b: UInt(64)): Option(UInt(64)) {
+  match UInt::val64(b) == 0 eqn h {
+    false => Some(UInt::div_nz64(a, b, Nat::ne_zero(UInt::val64(b), h)))
+    true => None
+  }
+}
+
+// `a / b` rounded down, or `divzero` when `b` is 0.
+pub fn UInt::div64(a: UInt(64), b: UInt(64)): UInt(64) ! {divzero} {
+  or_div_zero(UInt::checked_div64(a, b))
+}
+
+// `rem`, or `None` when `b` is 0.
+pub fn UInt::checked_rem64(a: UInt(64), b: UInt(64)): Option(UInt(64)) {
+  match UInt::val64(b) == 0 eqn h {
+    false => Some(UInt::rem_nz64(a, b, Nat::ne_zero(UInt::val64(b), h)))
+    true => None
+  }
+}
+
+// The remainder of `div`, or `divzero` when `b` is 0.
+pub fn UInt::rem64(a: UInt(64), b: UInt(64)): UInt(64) ! {divzero} {
+  or_div_zero(UInt::checked_rem64(a, b))
+}
+
+// `overflow` caught as `None`.
+pub fn UInt::catch64(o: Option(UInt(64))): Option(UInt(64)) {
+  handle { Some(UInt::or_overflow64(o)) } with {
+    overflow() => None
+  }
+}
+
+// Catching `overflow` gives back the decision: the effect says no more and
+// no less than the `Option`.
+pub theorem UInt::catch_is64(o: Option(UInt(64))): UInt::catch64(o) = o {
+  match o {
+    Some(x) => Refl
+    None => Refl
+  }
+}
+
+pub theorem UInt::add_val64(
+  a: UInt(64),
+  b: UInt(64),
+  h: Nat::add(UInt::val64(a), UInt::val64(b)) < 18446744073709551616 = true
+): UInt::val64(UInt::add64(a, b, h)) = Nat::add(UInt::val64(a), UInt::val64(b)) {
+  Refl
+}
+
+pub theorem UInt::sub_val64(
+  a: UInt(64),
+  b: UInt(64),
+  h: UInt::val64(b) <= UInt::val64(a) = true
+): UInt::val64(UInt::sub64(a, b, h)) = UInt::val64(a) - UInt::val64(b) {
+  Refl
+}
+
+pub theorem UInt::mul_val64(
+  a: UInt(64),
+  b: UInt(64),
+  h: Nat::mul(UInt::val64(a), UInt::val64(b)) < 18446744073709551616 = true
+): UInt::val64(UInt::mul64(a, b, h)) = Nat::mul(UInt::val64(a), UInt::val64(b)) {
+  Refl
+}
+
+// Mapped: the bits set in both `a` and `b`.
+pub fn UInt::and64(a: UInt(64), b: UInt(64)): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(
+      Nat::bits_and(64, UInt::val64(a), UInt::val64(b)),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::mod_lt(Nat::bits_and(64, UInt::val64(a), UInt::val64(b)), 18446744073709551616, Refl)
+  )
+}
+
+// Mapped: the bits set in `a` or `b`.
+pub fn UInt::or64(a: UInt(64), b: UInt(64)): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(
+      Nat::bits_or(64, UInt::val64(a), UInt::val64(b)),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::mod_lt(Nat::bits_or(64, UInt::val64(a), UInt::val64(b)), 18446744073709551616, Refl)
+  )
+}
+
+// Mapped: the bits set in one of `a` and `b`.
+pub fn UInt::xor64(a: UInt(64), b: UInt(64)): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(
+      Nat::bits_xor(64, UInt::val64(a), UInt::val64(b)),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::mod_lt(Nat::bits_xor(64, UInt::val64(a), UInt::val64(b)), 18446744073709551616, Refl)
+  )
+}
+
+// Mapped: `a` shifted left by `s` modulo 64, the bits past the top dropped.
+pub fn UInt::shl64(a: UInt(64), s: Nat): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(
+      Nat::mul(UInt::val64(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::mod_lt(
+      Nat::mul(UInt::val64(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+      18446744073709551616,
+      Refl
+    )
+  )
+}
+
+// Mapped: `a` shifted right by `s` modulo 64.
+pub fn UInt::shr64(a: UInt(64), s: Nat): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(
+      Nat::div_nz(
+        UInt::val64(a),
+        Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+        Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+      ),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::mod_lt(
+      Nat::div_nz(
+        UInt::val64(a),
+        Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+        Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+      ),
+      18446744073709551616,
+      Refl
+    )
+  )
+}
+
+// Mapped: `a` rotated left by `s` modulo 64.
+pub fn UInt::rotl64(a: UInt(64), s: Nat): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(
+      Nat::add(
+        Nat::rem_nz(
+          Nat::mul(UInt::val64(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+          18446744073709551616,
+          Nat::ne_zero(18446744073709551616, Refl)
+        ),
+        Nat::div_nz(
+          UInt::val64(a),
+          Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+          Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+        )
+      ),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::mod_lt(
+      Nat::add(
+        Nat::rem_nz(
+          Nat::mul(UInt::val64(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+          18446744073709551616,
+          Nat::ne_zero(18446744073709551616, Refl)
+        ),
+        Nat::div_nz(
+          UInt::val64(a),
+          Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+          Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+        )
+      ),
+      18446744073709551616,
+      Refl
+    )
+  )
+}
+
+// Mapped: `a` rotated right by `s` modulo 64.
+pub fn UInt::rotr64(a: UInt(64), s: Nat): UInt(64) {
+  UInt::mk64(
+    Nat::rem_nz(
+      Nat::add(
+        Nat::div_nz(
+          UInt::val64(a),
+          Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+          Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+        ),
+        Nat::rem_nz(
+          Nat::mul(UInt::val64(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+          18446744073709551616,
+          Nat::ne_zero(18446744073709551616, Refl)
+        )
+      ),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::mod_lt(
+      Nat::add(
+        Nat::div_nz(
+          UInt::val64(a),
+          Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+          Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+        ),
+        Nat::rem_nz(
+          Nat::mul(UInt::val64(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+          18446744073709551616,
+          Nat::ne_zero(18446744073709551616, Refl)
+        )
+      ),
+      18446744073709551616,
+      Refl
+    )
+  )
+}
+
+pub theorem UInt::and_val64(
+  a: UInt(64),
+  b: UInt(64)
+): UInt::val64(
+  UInt::and64(a, b)
+) = Nat::rem_nz(
+  Nat::bits_and(64, UInt::val64(a), UInt::val64(b)),
+  18446744073709551616,
+  Nat::ne_zero(18446744073709551616, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::or_val64(
+  a: UInt(64),
+  b: UInt(64)
+): UInt::val64(
+  UInt::or64(a, b)
+) = Nat::rem_nz(
+  Nat::bits_or(64, UInt::val64(a), UInt::val64(b)),
+  18446744073709551616,
+  Nat::ne_zero(18446744073709551616, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::xor_val64(
+  a: UInt(64),
+  b: UInt(64)
+): UInt::val64(
+  UInt::xor64(a, b)
+) = Nat::rem_nz(
+  Nat::bits_xor(64, UInt::val64(a), UInt::val64(b)),
+  18446744073709551616,
+  Nat::ne_zero(18446744073709551616, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::shl_val64(
+  a: UInt(64),
+  s: Nat
+): UInt::val64(
+  UInt::shl64(a, s)
+) = Nat::rem_nz(
+  Nat::mul(UInt::val64(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+  18446744073709551616,
+  Nat::ne_zero(18446744073709551616, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::shr_val64(
+  a: UInt(64),
+  s: Nat
+): UInt::val64(
+  UInt::shr64(a, s)
+) = Nat::rem_nz(
+  Nat::div_nz(
+    UInt::val64(a),
+    Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+    Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+  ),
+  18446744073709551616,
+  Nat::ne_zero(18446744073709551616, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::rotl_val64(
+  a: UInt(64),
+  s: Nat
+): UInt::val64(
+  UInt::rotl64(a, s)
+) = Nat::rem_nz(
+  Nat::add(
+    Nat::rem_nz(
+      Nat::mul(UInt::val64(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    ),
+    Nat::div_nz(
+      UInt::val64(a),
+      Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+      Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+    )
+  ),
+  18446744073709551616,
+  Nat::ne_zero(18446744073709551616, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::rotr_val64(
+  a: UInt(64),
+  s: Nat
+): UInt::val64(
+  UInt::rotr64(a, s)
+) = Nat::rem_nz(
+  Nat::add(
+    Nat::div_nz(
+      UInt::val64(a),
+      Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+      Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+    ),
+    Nat::rem_nz(
+      Nat::mul(UInt::val64(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    )
+  ),
+  18446744073709551616,
+  Nat::ne_zero(18446744073709551616, Refl)
+) {
+  Refl
+}
+
+// Mapped: the bits set in both `a` and `b`.
+pub fn UInt::and32(a: UInt(32), b: UInt(32)): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(
+      Nat::bits_and(32, UInt::val32(a), UInt::val32(b)),
+      4294967296,
+      Nat::ne_zero(4294967296, Refl)
+    ),
+    Nat::mod_lt(Nat::bits_and(32, UInt::val32(a), UInt::val32(b)), 4294967296, Refl)
+  )
+}
+
+// Mapped: the bits set in `a` or `b`.
+pub fn UInt::or32(a: UInt(32), b: UInt(32)): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(
+      Nat::bits_or(32, UInt::val32(a), UInt::val32(b)),
+      4294967296,
+      Nat::ne_zero(4294967296, Refl)
+    ),
+    Nat::mod_lt(Nat::bits_or(32, UInt::val32(a), UInt::val32(b)), 4294967296, Refl)
+  )
+}
+
+// Mapped: the bits set in one of `a` and `b`.
+pub fn UInt::xor32(a: UInt(32), b: UInt(32)): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(
+      Nat::bits_xor(32, UInt::val32(a), UInt::val32(b)),
+      4294967296,
+      Nat::ne_zero(4294967296, Refl)
+    ),
+    Nat::mod_lt(Nat::bits_xor(32, UInt::val32(a), UInt::val32(b)), 4294967296, Refl)
+  )
+}
+
+// Mapped: `a` shifted left by `s` modulo 32, the bits past the top dropped.
+pub fn UInt::shl32(a: UInt(32), s: Nat): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(
+      Nat::mul(UInt::val32(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+      4294967296,
+      Nat::ne_zero(4294967296, Refl)
+    ),
+    Nat::mod_lt(
+      Nat::mul(UInt::val32(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+      4294967296,
+      Refl
+    )
+  )
+}
+
+// Mapped: `a` shifted right by `s` modulo 32.
+pub fn UInt::shr32(a: UInt(32), s: Nat): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(
+      Nat::div_nz(
+        UInt::val32(a),
+        Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+        Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+      ),
+      4294967296,
+      Nat::ne_zero(4294967296, Refl)
+    ),
+    Nat::mod_lt(
+      Nat::div_nz(
+        UInt::val32(a),
+        Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+        Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+      ),
+      4294967296,
+      Refl
+    )
+  )
+}
+
+// Mapped: `a` rotated left by `s` modulo 32.
+pub fn UInt::rotl32(a: UInt(32), s: Nat): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(
+      Nat::add(
+        Nat::rem_nz(
+          Nat::mul(UInt::val32(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+          4294967296,
+          Nat::ne_zero(4294967296, Refl)
+        ),
+        Nat::div_nz(
+          UInt::val32(a),
+          Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+          Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+        )
+      ),
+      4294967296,
+      Nat::ne_zero(4294967296, Refl)
+    ),
+    Nat::mod_lt(
+      Nat::add(
+        Nat::rem_nz(
+          Nat::mul(UInt::val32(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+          4294967296,
+          Nat::ne_zero(4294967296, Refl)
+        ),
+        Nat::div_nz(
+          UInt::val32(a),
+          Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+          Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+        )
+      ),
+      4294967296,
+      Refl
+    )
+  )
+}
+
+// Mapped: `a` rotated right by `s` modulo 32.
+pub fn UInt::rotr32(a: UInt(32), s: Nat): UInt(32) {
+  UInt::mk32(
+    Nat::rem_nz(
+      Nat::add(
+        Nat::div_nz(
+          UInt::val32(a),
+          Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+          Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+        ),
+        Nat::rem_nz(
+          Nat::mul(UInt::val32(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+          4294967296,
+          Nat::ne_zero(4294967296, Refl)
+        )
+      ),
+      4294967296,
+      Nat::ne_zero(4294967296, Refl)
+    ),
+    Nat::mod_lt(
+      Nat::add(
+        Nat::div_nz(
+          UInt::val32(a),
+          Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+          Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+        ),
+        Nat::rem_nz(
+          Nat::mul(UInt::val32(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+          4294967296,
+          Nat::ne_zero(4294967296, Refl)
+        )
+      ),
+      4294967296,
+      Refl
+    )
+  )
+}
+
+pub theorem UInt::and_val32(
+  a: UInt(32),
+  b: UInt(32)
+): UInt::val32(
+  UInt::and32(a, b)
+) = Nat::rem_nz(
+  Nat::bits_and(32, UInt::val32(a), UInt::val32(b)),
+  4294967296,
+  Nat::ne_zero(4294967296, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::or_val32(
+  a: UInt(32),
+  b: UInt(32)
+): UInt::val32(
+  UInt::or32(a, b)
+) = Nat::rem_nz(
+  Nat::bits_or(32, UInt::val32(a), UInt::val32(b)),
+  4294967296,
+  Nat::ne_zero(4294967296, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::xor_val32(
+  a: UInt(32),
+  b: UInt(32)
+): UInt::val32(
+  UInt::xor32(a, b)
+) = Nat::rem_nz(
+  Nat::bits_xor(32, UInt::val32(a), UInt::val32(b)),
+  4294967296,
+  Nat::ne_zero(4294967296, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::shl_val32(
+  a: UInt(32),
+  s: Nat
+): UInt::val32(
+  UInt::shl32(a, s)
+) = Nat::rem_nz(
+  Nat::mul(UInt::val32(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+  4294967296,
+  Nat::ne_zero(4294967296, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::shr_val32(
+  a: UInt(32),
+  s: Nat
+): UInt::val32(
+  UInt::shr32(a, s)
+) = Nat::rem_nz(
+  Nat::div_nz(
+    UInt::val32(a),
+    Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+    Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+  ),
+  4294967296,
+  Nat::ne_zero(4294967296, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::rotl_val32(
+  a: UInt(32),
+  s: Nat
+): UInt::val32(
+  UInt::rotl32(a, s)
+) = Nat::rem_nz(
+  Nat::add(
+    Nat::rem_nz(
+      Nat::mul(UInt::val32(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+      4294967296,
+      Nat::ne_zero(4294967296, Refl)
+    ),
+    Nat::div_nz(
+      UInt::val32(a),
+      Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+      Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+    )
+  ),
+  4294967296,
+  Nat::ne_zero(4294967296, Refl)
+) {
+  Refl
+}
+
+pub theorem UInt::rotr_val32(
+  a: UInt(32),
+  s: Nat
+): UInt::val32(
+  UInt::rotr32(a, s)
+) = Nat::rem_nz(
+  Nat::add(
+    Nat::div_nz(
+      UInt::val32(a),
+      Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+      Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+    ),
+    Nat::rem_nz(
+      Nat::mul(UInt::val32(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+      4294967296,
+      Nat::ne_zero(4294967296, Refl)
+    )
+  ),
+  4294967296,
+  Nat::ne_zero(4294967296, Refl)
+) {
+  Refl
+}

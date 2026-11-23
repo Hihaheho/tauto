@@ -7,3 +7,4 @@ assumptions-axioms = 公理:   { $names }
 assumptions-externs = extern: { $names }
 assumptions-holes = 穴:     { $names }
 assumptions-uses-incomplete = 使っている未完成の宣言: { $names }
+assumptions-unread = assumptions: { $path } を読めないので、何を信頼しているか分からない: { $error }

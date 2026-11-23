@@ -16,32 +16,17 @@
 
 use crate::surface::Name;
 use crate::surface::same_term_structure;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use tauto_surface::identity::Generation;
 
-use super::inductive::{Ctor, Ind, pi_all};
+use super::inductive::{Ctor, Ind, app, pi_all};
 use super::{
     CtorSite, Ctx, Diagnostic, Kernel, Sort, T, describe, err, expand_numeral, lam, occurs, pi,
 };
 use crate::surface::{Pattern, SurfaceTerm, TermKind};
 use tauto_message::{Message, msg};
 use tauto_parol::Span;
-
-fn app(f: T, args: Vec<T>) -> T {
-    if args.is_empty() {
-        return f;
-    }
-    let span = f.span;
-    T::new(
-        TermKind::App {
-            function: Box::new(f),
-            arguments: args,
-        },
-        span,
-    )
-}
 
 /// The recursive fields of the matched value: each one's value (its
 /// induction hypothesis), its family's place in the group, and how many
@@ -179,7 +164,34 @@ impl FnSpec<'_> {
     }
 }
 
-fn remap_locals(term: &mut T, aliases: &HashMap<Name, Name>) {
+/// The binders a term introduces (a Π's parameters, a λ's, an `∃`'s), in
+/// the order a walk meets them.
+pub(super) fn binders_of(term: &T) -> Vec<Name> {
+    let mut out = Vec::new();
+    crate::surface::walk::term(&mut term.clone(), &mut |part| match &*part.kind {
+        TermKind::Pi { params, .. } => out.extend(params.iter().filter_map(|(n, _)| n.clone())),
+        TermKind::Lam { params, .. } => out.extend(params.iter().cloned()),
+        TermKind::Exists { binder, .. } => out.push(binder.clone()),
+        _ => {}
+    });
+    out
+}
+
+/// `same_term_structure`, with the binders of the two terms read as the
+/// same where they stand at the same place: two parameters typed
+/// `(Nat) -> Prop` are given distinct names for the Π's unnamed parameter.
+pub fn same_up_to_binders(left: &T, right: &T) -> bool {
+    let (from, to) = (binders_of(left), binders_of(right));
+    if from.len() != to.len() {
+        return false;
+    }
+    let aliases: HashMap<Name, Name> = from.into_iter().zip(to).collect();
+    let mut left = left.clone();
+    remap_locals(&mut left, &aliases);
+    same_term_structure(&left, right)
+}
+
+pub(super) fn remap_locals(term: &mut T, aliases: &HashMap<Name, Name>) {
     fn name(name: &mut Name, aliases: &HashMap<Name, Name>) {
         if let Some(replacement) = aliases.get(name) {
             *name = replacement.clone();
@@ -249,7 +261,7 @@ pub(super) struct FnInfo {
     /// does not mention them); a call that changes one of them asks for it
     /// in `wants`, and the group is compiled again.
     movable: Vec<Name>,
-    wants: Rc<RefCell<Vec<Name>>>,
+    wants: Arc<Mutex<Vec<Name>>>,
     /// The family of the matched parameter, as its place in the group.
     fam: usize,
     /// The indices that are not variables, as `(type, index)`: an induction
@@ -417,6 +429,7 @@ impl Kernel {
             result: motive,
             binder: None,
             arms,
+            ..
         } = &*inner.kind
             && self
                 .int_chain(scrutinee, motive.as_deref(), arms, params, inner.span)
@@ -444,6 +457,7 @@ impl Kernel {
             result: motive_result,
             binder,
             arms,
+            ..
         } = &*spec.body.kind
         else {
             return err(msg!("kernel-match-mutual-by-match"), spec.body.span);
@@ -711,8 +725,28 @@ impl Kernel {
     /// mutual inductive group. They share the minor premises, so a call may
     /// pass from one to another on a field of the matched value.
     pub(super) fn compile_group(&mut self, specs: &[FnSpec]) -> Result<Vec<T>, Diagnostic> {
+        let (mut output, aliases) = self.compile_group_aligned(specs)?;
+        for (term, aliases) in output.iter_mut().zip(aliases) {
+            // Only the open parameter context belongs to the caller. Bound
+            // variables in the shared minor premises keep their own identities.
+            for (original, aligned) in aliases {
+                *term = self.subst(term, &aligned, &T::var(&original, term.span));
+            }
+        }
+        Ok(output)
+    }
+
+    /// [`Kernel::compile_group`] with each member's parameters still under the
+    /// names of the slots they share with the other members: the members'
+    /// terms then have the minor premises as the same nodes. With, for each
+    /// member, its parameters' names and the names they are read as.
+    pub(super) fn compile_group_aligned(
+        &mut self,
+        specs: &[FnSpec],
+    ) -> Result<(Vec<T>, Vec<HashMap<Name, Name>>), Diagnostic> {
         if specs.len() < 2 {
-            return self.compile_aligned_group(specs);
+            let output = self.compile_aligned_group(specs)?;
+            return Ok((output, vec![HashMap::new(); specs.len()]));
         }
         // Each function has its own lexical binders. Align compatible slots
         // in the shared elimination context, then restore each output's
@@ -731,7 +765,7 @@ impl Kernel {
                     }
                     let reference = match slots[index]
                         .iter()
-                        .find(|(other, _)| same_term_structure(&ty, other))
+                        .find(|(other, _)| same_up_to_binders(&ty, other))
                     {
                         Some((_, reference)) => reference.clone(),
                         None => {
@@ -765,7 +799,7 @@ impl Kernel {
             })
             .collect();
         let application_mark = self.application_sites.len();
-        let mut output = self.compile_aligned_group(&aligned)?;
+        let output = self.compile_aligned_group(&aligned)?;
         if self.record_sites {
             let mut owners = HashMap::<crate::surface::TermId, Vec<usize>>::new();
             for (index, spec) in specs.iter().enumerate() {
@@ -796,14 +830,7 @@ impl Kernel {
                 }
             }
         }
-        for (term, (_, _, _, aliases)) in output.iter_mut().zip(prepared) {
-            // Only the open parameter context belongs to the caller. Bound
-            // variables in the shared minor premises keep their own identities.
-            for (original, aligned) in aliases {
-                *term = self.subst(term, &aligned, &T::var(&original, term.span));
-            }
-        }
-        Ok(output)
+        Ok((output, prepared.into_iter().map(|p| p.3).collect()))
     }
 
     fn compile_aligned_group(&mut self, specs: &[FnSpec]) -> Result<Vec<T>, Diagnostic> {
@@ -857,7 +884,8 @@ impl Kernel {
             .enumerate()
             .filter_map(|(index, spec)| spec.name.cloned().map(|name| (name, index)))
             .collect();
-        for spec in specs {
+        // A match inside a body names no function: nothing to walk for.
+        for spec in specs.iter().filter(|_| !called.is_empty()) {
             crate::surface::walk::term(&mut spec.body.clone(), &mut |term| {
                 let TermKind::App {
                     function,
@@ -884,7 +912,7 @@ impl Kernel {
             });
         }
         let out = loop {
-            let wants: Vec<Rc<RefCell<Vec<Name>>>> = specs.iter().map(|_| Rc::default()).collect();
+            let wants: Vec<Arc<Mutex<Vec<Name>>>> = specs.iter().map(|_| Arc::default()).collect();
             let tails: Vec<&[SurfaceTerm]> = tails.iter().map(|t| t.as_slice()).collect();
             let noted = self.ctor_sites.len();
             let app_noted = self.application_sites.len();
@@ -894,7 +922,7 @@ impl Kernel {
                 self.ctor_sites.truncate(noted);
                 self.application_sites.truncate(app_noted);
                 for (g, w) in gens.iter_mut().zip(&wants) {
-                    for n in w.borrow().iter() {
+                    for n in w.lock().unwrap().iter() {
                         if !g.contains(n) {
                             g.push(n.clone());
                             more = true;
@@ -913,12 +941,50 @@ impl Kernel {
         out
     }
 
+    /// `J@cases` (`check/inductive.rs`) for a `match` on one member `J` of a
+    /// group with others, when no arm uses an induction hypothesis and the
+    /// recursor would be taken at its own level with nothing generalized:
+    /// the recursor of the whole group asks for a minor for each constructor
+    /// of each member, and the cases only for those of `J`. The two are
+    /// convertible, as `J@cases` unfolds to the recursor.
+    fn cases_eliminator(
+        &mut self,
+        headers: &[Header],
+        group: &[Name],
+        kind: &str,
+        deep: bool,
+        own_ok: bool,
+        own: &[T],
+    ) -> Option<Name> {
+        let [h] = headers else {
+            return None;
+        };
+        if kind != "rec"
+            || deep
+            || !own_ok
+            || group.len() < 2
+            || !h.general.is_empty()
+            || !h.idx_args.is_empty()
+            || h.dictionary_motive_sort
+                .as_ref()
+                .is_some_and(|s| !matches!(s, Sort::Type(l) if l.le(&super::Level::konst(1))))
+            || self
+                .inds
+                .get(&h.family)
+                .is_none_or(|i| i.ctors.len() != own.len())
+        {
+            return None;
+        }
+        let cases = self.resolver.generated(&h.family, Generation::Cases);
+        self.globals.contains_key(&cases).then_some(cases)
+    }
+
     fn compile_group_in(
         &mut self,
         specs: &[FnSpec],
         tails: &[&[SurfaceTerm]],
         gens: &[Vec<Name>],
-        wants: &[Rc<RefCell<Vec<Name>>>],
+        wants: &[Arc<Mutex<Vec<Name>>>],
     ) -> Result<Vec<T>, Diagnostic> {
         let mut headers = Vec::new();
         for (spec, wanted) in specs.iter().zip(gens) {
@@ -993,12 +1059,17 @@ impl Kernel {
                     xpos: h.xpos,
                     idx_params,
                     pre: h.pre.clone(),
-                    post: h
-                        .after
-                        .iter()
-                        .map(|(n, _)| n.clone())
-                        .filter(|n| params[h.xpos + 1..].iter().any(|(m, _)| m == n))
-                        .collect(),
+                    post: {
+                        // A set: both lists are as long as the context, and a
+                        // block's `let`s make that long.
+                        let later: HashSet<&Name> =
+                            params[h.xpos + 1..].iter().map(|(m, _)| m).collect();
+                        h.after
+                            .iter()
+                            .map(|(n, _)| n.clone())
+                            .filter(|n| later.contains(n))
+                            .collect()
+                    },
                     movable: h.movable.clone(),
                     wants: wants[s].clone(),
                     fam: group.iter().position(|g| *g == h.family).unwrap(),
@@ -1086,6 +1157,10 @@ impl Kernel {
         };
 
         let mut minors = Vec::new();
+        // The minors of the one family matched on, without their induction
+        // hypotheses, when none uses them (`cases_eliminator`).
+        let mut own: Vec<T> = Vec::new();
+        let mut own_ok = true;
         for (f, g) in group.iter().enumerate() {
             let ind = self.inds.get(g).cloned().unwrap();
             let here = spec_of_fam[f].clone();
@@ -1122,7 +1197,7 @@ impl Kernel {
                         return err(msg!("kernel-match-guards"), arm.body.span);
                     }
                     let named = match &arm.pattern {
-                        Pattern::Bind(n) if !self.pattern_constructor(n) => Some(n.clone()),
+                        Pattern::Bind { name: n, .. } if !self.pattern_constructor(n) => Some(n.clone()),
                         _ => None,
                     };
                     if arm.pattern == Pattern::Wild || named.is_some() {
@@ -1154,7 +1229,10 @@ impl Kernel {
                             }
                             (name.clone(), self.full_fields(name, args.clone()))
                         }
-                        Pattern::Bind(n) if self.pattern_constructor(n) => (n.clone(), vec![]),
+                        Pattern::Bind { name: n, .. } if self.pattern_constructor(n) => (n.clone(), vec![]),
+                        Pattern::Typed { .. } => {
+                            return err(msg!("kernel-match-typed-arm"), arm.body.span);
+                        }
                         _ => {
                             return err(msg!("kernel-match-lists-ctors"), arm.body.span);
                         }
@@ -1245,10 +1323,25 @@ impl Kernel {
                         // that name wherever one is visible; it binds only
                         // when no constructor has the name.
                         let alone = match &arm.pattern {
-                            Pattern::Bind(_) => true,
+                            Pattern::Bind { .. } => true,
                             Pattern::Ctor { args, .. } => args.is_empty(),
                             _ => false,
                         };
+                        // The value is under a label (`@a T`), whose type is the one
+                        // inductive type `@label.a(T)` and not `T`: a pattern sees `T`
+                        // through the label only when written with it (`@a C`), and the
+                        // annotation `(e: T)` takes the label off (`@a T <: T`).
+                        if let Some(label) = super::sugar::label_of(g) {
+                            return err(
+                                msg!(
+                                    "kernel-match-labelled",
+                                    name = (&cname).to_string(),
+                                    family = (&fam).to_string(),
+                                    label = label
+                                ),
+                                arm.body.span,
+                            );
+                        }
                         let id = if alone {
                             "kernel-match-other-ctor-alone"
                         } else {
@@ -1274,7 +1367,7 @@ impl Kernel {
                     let names = args
                         .iter()
                         .map(|p| match p {
-                            Pattern::Bind(n) => Ok(n.clone()),
+                            Pattern::Bind { name: n, .. } => Ok(n.clone()),
                             Pattern::Wild => Ok(self.fresh_name("_")),
                             _ => err(msg!("kernel-match-field-pattern"), arm.body.span),
                         })
@@ -1551,7 +1644,14 @@ impl Kernel {
                             } else {
                                 shaped
                             };
-                            replace_in(&shaped, &fns, &smaller, true, &rebound)?
+                            replace_in(
+                                &self.written_fields.clone(),
+                                &shaped,
+                                &fns,
+                                &smaller,
+                                true,
+                                &rebound,
+                            )?
                         }
                         _ => shaped,
                     };
@@ -1598,6 +1698,7 @@ impl Kernel {
                             by_function.insert(name.clone(), mine);
                         }
                         CallReplacement {
+                            written: &self.written_fields.clone(),
                             fns: &fns,
                             smaller: &smaller,
                             by_function: Some(&by_function),
@@ -1605,7 +1706,13 @@ impl Kernel {
                         }
                         .term(&shaped, &rebound)?
                     } else {
-                        replace_calls(&shaped, &fns, &smaller, &rebound)?
+                        replace_calls(
+                            &self.written_fields.clone(),
+                            &shaped,
+                            &fns,
+                            &smaller,
+                            &rebound,
+                        )?
                     };
                     // The arm is a minor premise, which an induction hypothesis
                     // runs on a field: in a function being defined, the matched
@@ -1691,14 +1798,31 @@ impl Kernel {
                         .collect();
                     tuple(is_prop, &ts, vals)
                 };
+                if here.len() == 1 && ihs.iter().all(|b| !occurs(&value, b)) {
+                    own.push(names.iter().rev().fold(value.clone(), |acc, b| lam(b, acc)));
+                } else {
+                    own_ok = false;
+                }
                 let with_ihs = ihs.iter().rev().fold(value, |acc, b| lam(b, acc));
                 minors.push(names.iter().rev().fold(with_ihs, |acc, b| lam(b, acc)));
             }
         }
 
         let mut out = Vec::new();
+        let cases = self.cases_eliminator(&headers, &group, kind, deep.is_some(), own_ok, &own);
         for h in &headers {
             let mut args: Vec<T> = h.pargs.clone();
+            if let Some(cases) = &cases {
+                args.push(motives[group.iter().position(|g| *g == h.family).unwrap()].clone());
+                args.extend(own.iter().cloned());
+                args.push(T::var(&h.x, sp));
+                let eliminated = app(T::var(cases, sp), args);
+                out.push(app(
+                    eliminated,
+                    h.after.iter().map(|(n, _)| T::var(n, sp)).collect(),
+                ));
+                continue;
+            }
             args.extend(motives.iter().cloned());
             args.extend(minors.iter().cloned());
             args.extend(h.idx_args.iter().cloned());
@@ -1803,7 +1927,7 @@ impl Kernel {
             || !literals
                 .iter()
                 .all(|a| matches!(a.pattern, Pattern::Int(_)))
-            || !matches!(last.pattern, Pattern::Wild | Pattern::Bind(_))
+            || !matches!(last.pattern, Pattern::Wild | Pattern::Bind { .. })
         {
             return None;
         }
@@ -1826,7 +1950,7 @@ impl Kernel {
         }
         let mut arms = arms.to_vec();
         if let Some(rest) = arms.last_mut()
-            && let Pattern::Bind(other) = &rest.pattern
+            && let Pattern::Bind { name: other, unused: None } = &rest.pattern
         {
             let other = other.clone();
             rest.body = self.subst(&rest.body, &other, scrutinee);
@@ -1853,6 +1977,7 @@ impl Kernel {
                 result,
                 binder: None,
                 arms,
+                ..
             } if (result.is_some() || goal.is_some())
                 && let Some(chain) =
                     self.int_chain(scrutinee, result.as_deref(), arms, ctx, sp) =>
@@ -1864,6 +1989,7 @@ impl Kernel {
                 result,
                 binder,
                 arms,
+                ..
             } if result.is_some() || goal.is_some() => {
                 let result = match (result, goal) {
                     (Some(r), _) => {
@@ -1918,6 +2044,7 @@ impl Kernel {
                         ..
                     } => TermKind::Match {
                         binder,
+                        binder_unused: None,
                         scrutinee,
                         result,
                         arms,
@@ -1927,7 +2054,7 @@ impl Kernel {
                 self.elaborate_at(&SurfaceTerm::new(written, sp), ctx, goal)
             }
             TermKind::Field { base, name } => self.field(t.id(), base, name, ctx, sp),
-            TermKind::Ascribe { term, ty } => self.ascribe(term, ty, ctx, sp),
+            TermKind::Ascribe { term, ty } => self.ascribe(t.id(), term, ty, ctx, sp),
             // `@a e` (the family `@label.a` applied to `e`): for `e` a type, the type
             // `@a e`; for a value, the value wrapped, `@label.a.Mk(e)`, of type `@a T`.
             TermKind::App {
@@ -1948,6 +2075,7 @@ impl Kernel {
                 params,
                 result,
                 effects,
+                ..
             } if has_written_match(t) || has_equality(t) => {
                 let mut inner = ctx.to_vec();
                 let mut shaped = Vec::new();
@@ -1966,11 +2094,17 @@ impl Kernel {
                             params: vec![(n, d)],
                             result: Box::new(acc),
                             effects: effects.clone(),
+                            unused: Vec::new(),
                         },
                         sp,
                     );
                 }
                 Ok(acc)
+            }
+            // `a < b` read as `Nat::lt(a, b)` where `a` is of a fixed-width
+            // family is the family's `lt` (`check/machine.rs`).
+            TermKind::App { .. } if let Some(call) = self.machine_comparison(t, ctx) => {
+                self.elaborate(&call, ctx)
             }
             TermKind::App {
                 function,
@@ -1992,11 +2126,22 @@ impl Kernel {
             TermKind::App {
                 function,
                 arguments,
-            } if arguments
-                .iter()
-                .any(|a| has_match(a) || matches!(&*a.kind, TermKind::If { .. })) =>
+            } if arguments.iter().any(|a| {
+                self.term_facts.has_match(a) || matches!(&*a.kind, TermKind::If { .. })
+            }) =>
             {
-                self.call_with_matches(function, arguments, ctx, goal, sp)
+                let call = self.call_with_matches(
+                    function,
+                    arguments,
+                    t.is_written_call(),
+                    ctx,
+                    goal,
+                    sp,
+                )?;
+                // The call is a new term: its implicit applications are the
+                // source call's.
+                self.retain_ctor_site_origin(t, &call);
+                Ok(call)
             }
             TermKind::App {
                 function,
@@ -2013,6 +2158,7 @@ impl Kernel {
                                 params,
                                 body,
                                 types,
+                                ..
                             },
                             Some(Some(ds)),
                         ) if ds.len() == params.len() => {
@@ -2041,6 +2187,7 @@ impl Kernel {
                 params,
                 body,
                 types,
+                ..
             } => {
                 let mut inner = ctx.to_vec();
                 let mut rest = goal.cloned();
@@ -2094,6 +2241,7 @@ impl Kernel {
                             params: vec![p.clone()],
                             body: Box::new(acc),
                             types: w.into_iter().map(Some).collect(),
+                            unused_params: Vec::new(),
                         },
                         sp,
                     );
@@ -2106,6 +2254,7 @@ impl Kernel {
                 binder,
                 domain,
                 body,
+                ..
             } => {
                 let written = T::new(
                     TermKind::App {
@@ -2120,6 +2269,7 @@ impl Kernel {
                                     params: vec![binder.clone()],
                                     body: body.clone(),
                                     types: vec![Some((**domain).clone())],
+                                    unused_params: Vec::new(),
                                 },
                                 sp,
                             ),
@@ -2128,6 +2278,26 @@ impl Kernel {
                     sp,
                 );
                 self.elaborate_at(&written, ctx, goal)
+            }
+            // `f(<x: v>, …)`: the values of the implicit arguments named are
+            // compiled as any argument is, a projection `t.f` among them.
+            TermKind::Record {
+                name,
+                fields,
+                base: None,
+            } if name.spelling() == Some(tauto_surface::IMPLICITS) => {
+                let fields = fields
+                    .iter()
+                    .map(|(f, v)| Ok((f.clone(), self.elaborate(v, ctx)?)))
+                    .collect::<Result<Vec<_>, Diagnostic>>()?;
+                Ok(t.with_kind(
+                    TermKind::Record {
+                        name: name.clone(),
+                        fields,
+                        base: None,
+                    },
+                    sp,
+                ))
             }
             _ => self.shape(t),
         }
@@ -2226,64 +2396,134 @@ impl Kernel {
         &mut self,
         function: &SurfaceTerm,
         arguments: &[SurfaceTerm],
+        written_call: bool,
         ctx: &[(Name, T)],
         goal: Option<&T>,
         sp: tauto_parol::Span,
     ) -> Result<T, Diagnostic> {
         let domains = self.lambda_domains(function, arguments.len(), ctx);
+        // The goals of the arguments are read from the call as the kernel
+        // gets it (`elab_app_inner`): the implicit arguments named
+        // (`f(<x: v>, …)`) are put first in their order, and a call the
+        // source wrote without them leaves them to be solved, its arguments
+        // past the declared ones applying the result.
+        let generated = (tauto_surface::macros::EXPANSION_BASE
+            ..tauto_surface::surface::PRELUDE_BASE)
+            .contains(&sp.start);
+        let (named_values, implicit_kept) =
+            self.named_implicits(function, arguments, ctx, written_call && !generated)?;
+        let skip = usize::from(named_values.is_some());
+        let lead: Vec<Option<T>> = named_values
+            .unwrap_or_default()
+            .into_iter()
+            .map(Some)
+            .collect();
         let function = self.elaborate(function, ctx)?;
         let mut out: Vec<Option<T>> = Vec::new();
         for a in arguments {
-            out.push(if has_match(a) || matches!(&*a.kind, TermKind::If { .. }) {
-                None
-            } else {
-                Some(self.elaborate(a, ctx)?)
-            });
+            out.push(
+                if self.term_facts.has_match(a) || matches!(&*a.kind, TermKind::If { .. }) {
+                    None
+                } else {
+                    Some(self.elaborate(a, ctx)?)
+                },
+            );
         }
         let mut typing: Ctx = self.defining.clone();
         typing.extend(ctx.iter().cloned());
         // The arguments as the kernel has them, to find the implicit ones by.
         let shaped_function = self.shape(&function).ok();
+        // The arguments that are not a λ come first: a λ has no type of its
+        // own to infer (`elab` hands it back unread), so it is read at the
+        // type the other arguments give its parameter, those after it too
+        // (the major premise fixes the implicit `A` of a written
+        // `List::ind(motive, …, xs)`). The domains after it (`motive(xs)`
+        // in an arm of `List::ind(A, motive, …)`) are then read with its
+        // value in the kernel's terms, the names and notation (`=`) in its
+        // body resolved like the rest; a λ whose type they do not give is
+        // left out like a `match`.
+        let shaped: Vec<Option<T>> = out
+            .iter()
+            .map(|a| a.as_ref().and_then(|a| self.shape(a).ok()))
+            .collect();
+        let is_lam = |a: &T| matches!(&*a.kind, TermKind::Lam { .. });
         let mut written: Vec<Option<T>> = Vec::new();
-        for a in &out {
+        for (j, a) in shaped.iter().enumerate() {
             let Some(a) = a else {
                 written.push(None);
                 continue;
             };
-            let Ok(a) = self.shape(a) else {
-                written.push(None);
+            if !is_lam(a) {
+                written.push(self.elab(&typing, a, None).ok());
                 continue;
-            };
-            // A λ has no type of its own to infer (`elab` hands it back
-            // unread), so it is read at the type the arguments before it
-            // give its parameter. The domains after it (`motive(xs)` in an
-            // arm of `List::ind(A, motive, …)`) are then read with its
-            // value in the kernel's terms, the names and notation (`=`) in
-            // its body resolved like the rest; a λ whose type they do not
-            // give is left out like a `match`.
-            let a = if matches!(&*a.kind, TermKind::Lam { .. }) {
-                let i = written.len();
-                let goal_here = shaped_function.as_ref().and_then(|f| {
-                    let mut prefix = written.clone();
-                    prefix.resize(out.len(), None);
-                    self.argument_goals(&typing, f, &prefix, None)
+            }
+            let i = lead.len() + j - skip;
+            let goal_of = |this: &mut Self, after: &[Option<T>]| {
+                shaped_function.as_ref().and_then(|f| {
+                    let mut all = lead.clone();
+                    all.extend(written.iter().skip(skip).cloned());
+                    all.push(None);
+                    all.extend(after.iter().cloned());
+                    this.argument_goals(&typing, f, &all, None, implicit_kept)
                         .get(i)
                         .cloned()
                         .flatten()
-                });
-                goal_here.and_then(|g| self.elab(&typing, &a, Some(&g)).ok())
-            } else {
-                self.elab(&typing, &a, None).ok()
+                })
             };
-            written.push(a);
+            let mut goal_here = goal_of(self, &vec![None; shaped.len() - j - 1]);
+            // Only when the arguments before it leave its type open, the
+            // ones after it that are not a λ are read too, and then
+            // forgotten: the major premise fixes the implicit `A` of a
+            // written `List::ind(motive, …, xs)`.
+            if goal_here.is_none() && implicit_kept {
+                let saved = self.metas.clone();
+                let after: Vec<Option<T>> = shaped[j + 1..]
+                    .iter()
+                    .map(|b| match b {
+                        Some(b) if !is_lam(b) => self.elab(&typing, b, None).ok(),
+                        _ => None,
+                    })
+                    .collect();
+                self.metas = saved;
+                goal_here = goal_of(self, &after);
+            }
+            written.push(goal_here.and_then(|g| self.elab(&typing, a, Some(&g)).ok()));
         }
         // An argument whose implicit arguments only the others fix
         // (`Refl`) is left out like a `match`: the rest may still fix them.
         let goals = match &shaped_function {
-            Some(f) => self.argument_goals(&typing, f, &written, goal),
+            Some(f) => {
+                let mut all = lead.clone();
+                all.extend(written.iter().skip(skip).cloned());
+                let goals = self.argument_goals(&typing, f, &all, goal, implicit_kept);
+                // The record of the named ones has no goal of its own.
+                std::iter::repeat_n(None, skip)
+                    .chain(goals.into_iter().skip(lead.len()))
+                    .collect()
+            }
             None => vec![None; arguments.len()],
         };
+        // A written call that leaves out the implicit arguments the others
+        // fix gets them written out, so that the call reads as the one an
+        // expansion writes (`elab_app_inner` checks it the same way).
+        // They are kernel terms, where a function without parameters is the
+        // bare constant; the call is elaborated again with them, so they are
+        // put back as written (`esc()`).
+        let implicit_values = match (&shaped_function, implicit_kept) {
+            (Some(f), true) => {
+                self.implicits_fixed(&typing, f, &written, goal)
+                    .map(|vs: Vec<T>| {
+                        vs.iter()
+                            .map(|v| self.calls_written_in(&typing, v))
+                            .collect::<Vec<T>>()
+                    })
+            }
+            _ => None,
+        };
         let mut elaborated = Vec::new();
+        if let Some(values) = &implicit_values {
+            elaborated.extend(values.iter().cloned());
+        }
         for (i, (a, done)) in arguments.iter().zip(out).enumerate() {
             if let Some(done) = done {
                 elaborated.push(done);
@@ -2296,6 +2536,7 @@ impl Kernel {
                         params,
                         body,
                         types,
+                        ..
                     },
                     None,
                     Some(Some(ds)),
@@ -2321,6 +2562,73 @@ impl Kernel {
             },
             sp,
         ))
+    }
+
+    /// For a call of a global with implicit parameters: the values of those
+    /// named first (`f(<x: v>, …)`) in the order of the parameters, when
+    /// every one is named, and whether the call leaves its implicit
+    /// arguments to be solved (a call the source wrote naming none of them).
+    fn named_implicits(
+        &mut self,
+        function: &SurfaceTerm,
+        arguments: &[SurfaceTerm],
+        ctx: &[(Name, T)],
+        written: bool,
+    ) -> Result<(Option<Vec<T>>, bool), Diagnostic> {
+        let TermKind::Var(f) = &*function.kind else {
+            return Ok((None, false));
+        };
+        if ctx.iter().any(|(x, _)| x == f) {
+            return Ok((None, false));
+        }
+        let Some(g) = self.globals.get(f) else {
+            return Ok((None, false));
+        };
+        let implicit = g.implicit;
+        if implicit == 0 {
+            return Ok((None, false));
+        }
+        let mut order = Vec::new();
+        let mut ty = g.ty.clone();
+        while order.len() < implicit {
+            let TermKind::Pi { params, result, .. } = &*ty.kind else {
+                break;
+            };
+            order.push(params[0].0.clone());
+            ty = (**result).clone();
+        }
+        let fields = match arguments.first().map(|a| &*a.kind) {
+            Some(TermKind::Record { name, fields, .. })
+                if name.spelling() == Some(tauto_surface::IMPLICITS) =>
+            {
+                fields.clone()
+            }
+            _ => return Ok((None, written)),
+        };
+        let mut values = Vec::new();
+        for n in &order {
+            let Some(n) = n else { return Ok((None, false)) };
+            let shown = n.to_string();
+            let base = match shown.rsplit_once('\'') {
+                Some((base, k)) if k.chars().all(|c| c.is_ascii_digit()) => base.to_string(),
+                _ => shown,
+            };
+            let Some((_, v)) = fields.iter().find(|(x, _)| x.as_str() == base.as_str()) else {
+                return Ok((None, false));
+            };
+            let v = self.elaborate(v, ctx)?;
+            // Elaborated as the type written on a λ's parameter is
+            // (`written_param_type`): the implicit arguments it leaves out
+            // (`Cons(a, t)` for `Cons(A, a, t)`) are written in, or the
+            // domains the λs given to the call take from it lack them.
+            let mut typing: Ctx = self.defining.clone();
+            typing.extend(ctx.iter().cloned());
+            match self.elab(&typing, &v, None) {
+                Ok(v) => values.push(v),
+                Err(_) => return Ok((None, false)),
+            }
+        }
+        Ok(((values.len() == fields.len()).then_some(values), false))
     }
 
     /// For a call of a global with `n` arguments: for each argument whose
@@ -2444,7 +2752,11 @@ impl Kernel {
         Ok((e, ty))
     }
 
-    fn typed(&mut self, t: &SurfaceTerm, ctx: &[(Name, T)]) -> Result<(T, T), Diagnostic> {
+    pub(super) fn typed(
+        &mut self,
+        t: &SurfaceTerm,
+        ctx: &[(Name, T)],
+    ) -> Result<(T, T), Diagnostic> {
         let e = self.elaborate(t, ctx)?;
         let mut typing: Ctx = self.defining.clone();
         typing.extend(ctx.iter().cloned());
@@ -2453,6 +2765,19 @@ impl Kernel {
         let ty = self.infer(&typing, &e)?;
         let ty = self.whnf_pair(&typing, &ty);
         Ok((e, ty))
+    }
+
+    /// [`Kernel::typed`] with the type also as it is inferred, before it
+    /// is reduced: the scrutinee of [`Kernel::match_on_term`] as it reads it.
+    fn typed_both(&mut self, t: &SurfaceTerm, ctx: &[(Name, T)]) -> Result<(T, T, T), Diagnostic> {
+        let e = self.elaborate(t, ctx)?;
+        let mut typing: Ctx = self.defining.clone();
+        typing.extend(ctx.iter().cloned());
+        let e = self.shape(&e)?;
+        let e = self.elab(&typing, &e, None)?;
+        let ty = self.infer(&typing, &e)?;
+        let reduced = self.whnf_pair(&typing, &ty);
+        Ok((e, ty, reduced))
     }
 
     /// `x.f` for `x` of a family with one constructor: a match on `x` that
@@ -2479,7 +2804,10 @@ impl Kernel {
                 sp,
             );
         }
-        let (_, ty) = self.typed(base, ctx)?;
+        // The base is elaborated once: the match on it below takes it as it
+        // is, not elaborated again. A base that is itself a field of a call
+        // would otherwise be elaborated twice at each level it nests.
+        let (base_e, base_ty, ty) = self.typed_both(base, ctx)?;
         let (family, args) = match &*ty.kind {
             TermKind::App {
                 function,
@@ -2525,12 +2853,15 @@ impl Kernel {
             goal: None,
             pattern: Pattern::Ctor {
                 name: ctor,
-                args: vars.iter().map(|v| Pattern::Bind(v.clone())).collect(),
+                args: vars.iter().map(|v| Pattern::Bind { name: v.clone(), unused: None }).collect(),
             },
             guard: None,
             body: SurfaceTerm::new(TermKind::Var(vars[at].clone()), sp),
         };
-        let term = self.match_on_term(base, &fty, None, &[arm], ctx, sp)?;
+        let term =
+            self.match_on_elaborated(base, Some((base_e, base_ty)), &fty, None, &[arm], ctx, sp)?;
+        self.written_fields
+            .insert(sp, written_field(base, name, &self.written_fields));
         if self.record_sites {
             let occurrences = self
                 .ctor_site_origins
@@ -2559,6 +2890,7 @@ impl Kernel {
     /// `A`, `e` is wrapped as `@label.a.Mk(e)`.
     fn ascribe(
         &mut self,
+        occurrence: crate::surface::TermId,
         term: &SurfaceTerm,
         written: &SurfaceTerm,
         ctx: &[(Name, T)],
@@ -2569,42 +2901,66 @@ impl Kernel {
         let w = self.elaborate(written, ctx)?;
         let w = self.shape(&w)?;
         let w = self.elab(&typing, &w, None)?;
-        self.ascribe_at(term, &w, ctx, sp)
+        self.ascribe_at(Some(occurrence), term, &w, ctx, sp)
     }
 
     /// Whether a term of type `have` meets the expected type `want` only through the
     /// subtyping of products (`ascribe`): one of the two is a product or a labelled type, and
     /// `have` is not already a `want`. A type with a variable still to find (a generic not
     /// fixed yet) is left to the call: a member is not picked by a guess.
-    pub(super) fn needs_ascription(&mut self, typing: &Ctx, have: &T, want: &T) -> bool {
-        if super::implicit::has_meta(have) || super::implicit::has_meta(want) {
-            return false;
+    /// Whether [`Kernel::needs_ascription`] answers no for `want` whatever
+    /// the type found: a `want` with a metavariable, or one that reduces to a
+    /// function type or a sort.
+    /// `None` when it does; otherwise `want` in weak head normal form, for
+    /// [`Kernel::needs_ascription_at`].
+    pub(super) fn ascription_ruled_out(&mut self, typing: &Ctx, want: &T) -> Option<T> {
+        if super::implicit::has_meta(want) {
+            return None;
         }
         let wn = self.whnf(typing, want);
-        if matches!(&*wn.kind, TermKind::Pi { .. }) || super::sort_of(&wn).is_some() {
+        (!matches!(&*wn.kind, TermKind::Pi { .. }) && super::sort_of(&wn).is_none()).then_some(wn)
+    }
+
+    pub(super) fn needs_ascription(&mut self, typing: &Ctx, have: &T, want: &T) -> bool {
+        match self.ascription_ruled_out(typing, want) {
+            Some(wn) => self.needs_ascription_at(typing, have, want, &wn),
+            None => false,
+        }
+    }
+
+    /// [`Kernel::needs_ascription`] with `want` already found not to rule
+    /// it out, `wn` its weak head normal form.
+    pub(super) fn needs_ascription_at(&mut self, typing: &Ctx, have: &T, want: &T, wn: &T) -> bool {
+        if super::implicit::has_meta(have) {
             return false;
         }
-        // A product is told by its own name `Prod`, before it is unfolded to the `Pair` the
-        // kernel sees: a `Pair` written by its name has no members to take.
-        let product = |this: &mut Self, t: &T| {
-            this.product_parts(t).is_some() || {
-                let n = this.whnf(typing, t);
-                this.label_parts(&n).is_some()
-            }
+        // Each type is reduced once, the reduction kept for what follows.
+        let mut hn: Option<T> = None;
+        let have_product = self.product_parts(have).is_some() || {
+            let n = self.whnf(typing, have);
+            let label = self.label_parts(&n).is_some();
+            hn = Some(n);
+            label
         };
-        if !(product(self, have) || product(self, want)) {
+        let want_product =
+            have_product || self.product_parts(want).is_some() || self.label_parts(wn).is_some();
+        if !want_product {
             return false;
         }
         if self.product_parts(have).is_some() && self.product_parts(want).is_some() {
             return !self.conv(typing, have, want);
         }
-        let h = self.whnf(typing, have);
-        !self.subtype(typing, &h, &wn)
+        let h = match hn {
+            Some(h) => h,
+            None => self.whnf(typing, have),
+        };
+        !self.subtype(typing, &h, wn)
     }
 
     /// `term` at the type `w` (elaborated): `ascribe` for a type already read.
     pub(super) fn ascribe_at(
         &mut self,
+        occurrence: Option<crate::surface::TermId>,
         term: &SurfaceTerm,
         w: &T,
         ctx: &[(Name, T)],
@@ -2619,7 +2975,7 @@ impl Kernel {
             Ok(found) => found,
             Err(first) => self.typed_at(term, ctx, &w).map_err(|_| first)?,
         };
-        // The type as written, before `Prod` is unfolded to the `Pair` the kernel sees.
+        // The type as it is inferred, where it is a product.
         let ty = match self.infer(&typing, &e) {
             Ok(written) if self.product_parts(&written).is_some() => written,
             _ => ty,
@@ -2643,10 +2999,10 @@ impl Kernel {
             ));
         }
         let have = self.members(&typing, &ty, term.clone());
-        // A product fitted to a type that a product was unfolded to (the motive of a `match`
-        // on a product, say): that type's `Pair` spine is the product's.
+        // A product fitted to a type that computes to one (the motive of a `match` on a
+        // product, say): that type's `Pair` spine is the product's.
         let w = if self.product_parts(&ty).is_some() && self.product_parts(&w).is_none() {
-            self.as_written_product(&typing, &w)
+            self.product_spine(&typing, &w)
         } else {
             w
         };
@@ -2668,11 +3024,7 @@ impl Kernel {
         // label. A type variable is a type like any other: a member of exactly the type
         // asked for is the one taken.
         if have.len() >= 2 || want.len() >= 2 {
-            let open = |t: &T| {
-                super::free_vars(t)
-                    .iter()
-                    .any(|v| v.starts_with('?'))
-            };
+            let open = |t: &T| super::free_vars(t).iter().any(|v| v.starts_with('?'));
             if open(&ty) || open(&w) {
                 let (a, b) = (describe(&ty), describe(&w));
                 return err(msg!("kernel-ascribe-open", have = &a, want = &b), sp);
@@ -2724,45 +3076,109 @@ impl Kernel {
                 }
             }
         }
+        // The members taken, for an extraction that does not know the types (`Checked::ascription_sites`).
+        if self.record_sites
+            && let Some(occurrence) = occurrence
+        {
+            let occurrences = self
+                .ctor_site_origins
+                .get(&occurrence)
+                .cloned()
+                .unwrap_or_else(|| vec![occurrence]);
+            for occurrence in occurrences {
+                self.ascription_sites.push(super::AscriptionSite {
+                    occurrence,
+                    span: sp,
+                    members: have.len(),
+                    taken: taken.clone(),
+                });
+            }
+        }
+        // The members taken are the ones a written `match` on `term` would bind: a
+        // pick is that `match`, so it is the same term as one written by hand
+        // (`match p { #(_, @value v) => v }`), not a chain of projections. A member taken
+        // through its label binds under the label's constructor.
+        let mut binders: Vec<Option<Name>> = vec![None; have.len()];
+        for (j, i) in taken.iter().enumerate() {
+            binders[*i] = Some(Name::from(format!("pick'{j}")));
+        }
+        let mut patterns = Vec::new();
+        for (i, binder) in binders.iter().enumerate() {
+            patterns.push(match binder {
+                // A member not taken that is labelled is taken apart too, as the
+                // pattern written by hand does (`#(@key _, @value v)`).
+                None => {
+                    let t = self.whnf(&typing, &have[i].0);
+                    match self.label_parts(&t) {
+                        Some((family, _)) => Pattern::Ctor {
+                            name: super::sugar::label_constructor(&family),
+                            args: vec![Pattern::Wild],
+                        },
+                        None => Pattern::Wild,
+                    }
+                }
+                Some(x) => {
+                    let j = taken.iter().position(|t| *t == i).expect("taken");
+                    if unwrap[j] {
+                        let t = self.whnf(&typing, &have[i].0);
+                        let (family, _) = self.label_parts(&t).expect("a label");
+                        Pattern::Ctor {
+                            name: super::sugar::label_constructor(&family),
+                            args: vec![Pattern::Bind { name: x.clone(), unused: None }],
+                        }
+                    } else {
+                        Pattern::Bind { name: x.clone(), unused: None }
+                    }
+                }
+            });
+        }
         let mut picked: Vec<SurfaceTerm> = taken
             .iter()
-            .zip(&unwrap)
-            .map(|(i, u)| {
-                let member = have[*i].1.clone();
-                if *u {
-                    SurfaceTerm::new(
-                        TermKind::Field {
-                            base: Box::new(member),
-                            name: "value".into(),
-                        },
-                        sp,
-                    )
-                } else {
-                    member
-                }
-            })
+            .enumerate()
+            .map(|(j, _)| SurfaceTerm::var(format!("pick'{j}").as_str(), sp))
             .collect();
         let last = picked.pop().expect("one or more");
-        if picked.is_empty() {
-            self.projecting += 1;
-            let taken = self.elaborate_at(&last, ctx, Some(&w));
-            self.projecting -= 1;
-            return taken;
-        }
-        if self.product_parts(&w).is_none() {
-            let (a, b) = (describe(&ty), describe(&w));
-            return err(msg!("kernel-ascribe-mismatch", have = &a, want = &b), sp);
-        }
-        let built = picked.into_iter().rev().fold(last, |snd, fst| {
-            SurfaceTerm::app(
-                &tauto_surface::bindings::library_name("prod_mk"),
-                vec![fst, snd],
-                sp,
-            )
-        });
-        // The members are taken out of the value as the `Pair` it is unfolded to.
+        let body = if picked.is_empty() {
+            last
+        } else {
+            if self.product_parts(&w).is_none() {
+                let (a, b) = (describe(&ty), describe(&w));
+                return err(msg!("kernel-ascribe-mismatch", have = &a, want = &b), sp);
+            }
+            picked.into_iter().rev().fold(last, |snd, fst| {
+                SurfaceTerm::app(
+                    &tauto_surface::bindings::library_name("Pair::Mk"),
+                    vec![fst, snd],
+                    sp,
+                )
+            })
+        };
+        let pick = SurfaceTerm::new(
+            TermKind::Match {
+                scrutinee: Box::new(term.clone()),
+                result: None,
+                binder: None,
+                arms: vec![crate::surface::MatchArm {
+                    pattern: Pattern::product(patterns),
+                    guard: None,
+                    goal: None,
+                    body,
+                }],
+                binder_unused: None,
+            },
+            sp,
+        );
         self.projecting += 1;
-        let taken = self.elaborate_at(&built, ctx, Some(&w));
+        // A pick takes `term` apart where it is: the hypotheses and goals that mention
+        // a variable `term` are not abstracted over it, as a `match` on the variable
+        // does, so a pick is read the same wherever it stands.
+        let TermKind::Match {
+            scrutinee, arms, ..
+        } = &*pick.kind
+        else {
+            unreachable!()
+        };
+        let taken = self.match_on_term(scrutinee, &w, None, arms, ctx, sp);
         self.projecting -= 1;
         taken
     }
@@ -2794,19 +3210,16 @@ impl Kernel {
         }
     }
 
-    /// `ty` (a `Pair` nested to the right, as a product is unfolded to) read back as the
-    /// product `Prod` nested so; a type that is no `Pair` is itself.
-    fn as_written_product(&mut self, typing: &Ctx, ty: &T) -> T {
+    /// `ty` with the `Pair` it computes to put out at each member, as far as the `Pair`s
+    /// nest to the right; a type that computes to no `Pair` is itself.
+    fn product_spine(&mut self, typing: &Ctx, ty: &T) -> T {
         let n = self.whnf_pair(typing, ty);
         match self.pair_family(&n) {
-            Some((_, args)) => {
-                let rest = self.as_written_product(typing, &args[1]);
+            Some((f, args)) => {
+                let rest = self.product_spine(typing, &args[1]);
                 T::new(
                     TermKind::App {
-                        function: Box::new(T::var(
-                            &tauto_surface::bindings::library_name("Prod"),
-                            ty.span,
-                        )),
+                        function: Box::new(T::var(&f, ty.span)),
                         arguments: vec![args[0].clone(), rest],
                     },
                     ty.span,
@@ -2816,8 +3229,7 @@ impl Kernel {
         }
     }
 
-    /// The two members of `ty` when it is the product `Prod(A, B)`, as written: the name
-    /// `Prod` is looked at before it is unfolded to the `Pair` the kernel sees.
+    /// The two members of `ty` when it is the product `Pair(A, B)`.
     pub(super) fn product_parts(&self, ty: &T) -> Option<Vec<T>> {
         let TermKind::App {
             function,
@@ -2829,11 +3241,8 @@ impl Kernel {
         let TermKind::Var(f) = &*function.kind else {
             return None;
         };
-        // `Pair` written by its name is the product it is: the two are one type.
-        (arguments.len() == 2
-            && (tauto_surface::bindings::is_library(f, "Prod")
-                || tauto_surface::bindings::is_library(f, "Pair")))
-        .then(|| arguments.clone())
+        (arguments.len() == 2 && tauto_surface::bindings::is_library(f, "Pair"))
+            .then(|| arguments.clone())
     }
 
     pub(super) fn pair_family(&self, ty: &T) -> Option<(Name, Vec<T>)> {
@@ -2851,9 +3260,9 @@ impl Kernel {
             .then(|| (f.clone(), arguments.clone()))
     }
 
-    /// The members of the product `ty` (`Prod` nested to the right), each with the
-    /// projection out of `base` that gives it; a type that is no product, a `Pair` written by
-    /// its name among them, is its own one member.
+    /// The members of the product `ty` (`Pair` nested to the right), each with the
+    /// projection out of `base` that gives it; a type that is no product is its own one
+    /// member.
     fn members(&mut self, typing: &Ctx, ty: &T, base: SurfaceTerm) -> Vec<(T, SurfaceTerm)> {
         let sp = base.span;
         let project = |b: &SurfaceTerm, name: &str| {
@@ -2888,6 +3297,22 @@ impl Kernel {
         sp: tauto_parol::Span,
     ) -> Result<T, Diagnostic> {
         let (_, ty) = self.typed(a, ctx)?;
+        // At a fixed-width family, `==` is its `eq` (`check/machine.rs`).
+        if let Some(family) = self.machine_family(&ty)
+            && let Some(eq) = self.machine_function(&family, "eq")
+        {
+            let call = SurfaceTerm::app(&eq, vec![a.clone(), b.clone()], sp);
+            let call = if negated {
+                SurfaceTerm::app(
+                    &tauto_surface::bindings::library_name("not"),
+                    vec![call],
+                    sp,
+                )
+            } else {
+                call
+            };
+            return self.elaborate(&call, ctx);
+        }
         let f = match &*ty.kind {
             TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Nat") => "Nat::eq",
             TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Bool") => "Bool::eq",
@@ -2921,6 +3346,10 @@ impl Kernel {
                     ctx,
                 );
             }
+            _ if self.class_equality(&ty, ctx).is_some() => self.class_equality(&ty, ctx).unwrap(),
+            TermKind::Var(n) if n.as_global().is_none() => {
+                return err(msg!("kernel-eq-needs-where", ty = describe(&ty)), sp);
+            }
             _ => {
                 return err(
                     msg!(
@@ -2947,6 +3376,38 @@ impl Kernel {
         self.elaborate(&t, ctx)
     }
 
+    /// The method `a == b` calls on a type that has no equality function of its own, as a
+    /// type variable `A` or a type built on one (`List(A)`): `DecEq::beq` when a `where` gives
+    /// `DecEq` of such a variable, otherwise `PartialEq::beq` when one gives `PartialEq`. The
+    /// record itself is found as for any method (`implicit.rs`): the one of the `where`, or an
+    /// instance applied to it.
+    fn class_equality(&mut self, ty: &T, ctx: &[(Name, T)]) -> Option<&'static str> {
+        let typing: Ctx = ctx.to_vec();
+        let vars = super::free_vars(ty);
+        ["DecEq", "PartialEq"]
+            .into_iter()
+            .find(|class| {
+                let Some(class) = tauto_surface::bindings::library_reference(class) else {
+                    return false;
+                };
+                ctx.iter().any(|(n, t)| {
+                    super::classes::is_dict(n)
+                        && matches!(&*t.kind, TermKind::App { function, arguments }
+                            if matches!(&*function.kind, TermKind::Var(c) if *c == class)
+                                && arguments.len() == 1
+                                && (self.conv(&typing, &arguments[0], ty)
+                                    || matches!(&*arguments[0].kind, TermKind::Var(v) if vars.contains(v))))
+                })
+            })
+            .map(|class| {
+                if class == "DecEq" {
+                    "DecEq::beq"
+                } else {
+                    "PartialEq::beq"
+                }
+            })
+    }
+
     /// `match e: T { … }` on a term that is not a variable: the match is
     /// compiled on a fresh variable `x` of the type of `e`, and `e` is put
     /// for `x`. Unless the match names its equation or writes the arms'
@@ -2962,14 +3423,36 @@ impl Kernel {
         ctx: &[(Name, T)],
         sp: tauto_parol::Span,
     ) -> Result<T, Diagnostic> {
-        let e = self.elaborate(scrutinee, ctx)?;
+        self.match_on_elaborated(scrutinee, None, result, binder, arms, ctx, sp)
+    }
+
+    /// [`Kernel::match_on_term`], with the scrutinee already elaborated and
+    /// its inferred type when the caller has them (`Kernel::typed_both`).
+    #[allow(clippy::too_many_arguments)]
+    fn match_on_elaborated(
+        &mut self,
+        scrutinee: &SurfaceTerm,
+        elaborated: Option<(T, T)>,
+        result: &T,
+        binder: Option<&Name>,
+        arms: &[crate::surface::MatchArm],
+        ctx: &[(Name, T)],
+        sp: tauto_parol::Span,
+    ) -> Result<T, Diagnostic> {
         // The functions being defined are typed as variables here; a call
         // of one becomes its induction hypothesis afterwards.
         let mut typing: Ctx = self.defining.clone();
         typing.extend(ctx.iter().cloned());
-        let e = self.shape(&e)?;
-        let e = self.elab(&typing, &e, None)?;
-        let ty = self.infer(&typing, &e)?;
+        let (e, ty) = match elaborated {
+            Some(found) => found,
+            None => {
+                let e = self.elaborate(scrutinee, ctx)?;
+                let e = self.shape(&e)?;
+                let e = self.elab(&typing, &e, None)?;
+                let ty = self.infer(&typing, &e)?;
+                (e, ty)
+            }
+        };
         let x = self.fresh_name("m");
         // A match that names the equation or writes the arms' goals is one whose
         // result type shows the term; any other is a case analysis only.
@@ -3106,6 +3589,7 @@ impl Kernel {
                 scrutinee: Box::new(T::var(&x, scrutinee.span)),
                 result: None,
                 arms,
+                binder_unused: None,
             },
             sp,
         );
@@ -3170,7 +3654,8 @@ impl Kernel {
         // is left as written: a large closed term (a table, a fixed list) is
         // not computed here.
         let needs = locals_of(typing, e);
-        let (found, hit) = self.put_for(typing, result, e, &key, &by, &needs, 8);
+        let mut missed = Missed::default();
+        let (found, hit) = self.put_for(typing, result, e, &key, &by, &needs, 8, &mut missed);
         if hit {
             return found;
         }
@@ -3207,7 +3692,11 @@ impl Kernel {
         by: &T,
         needs: &[Name],
         depth: usize,
+        missed: &mut Missed,
     ) -> (T, bool) {
+        if missed.has(t, depth) {
+            return (t.clone(), false);
+        }
         if same_term_structure(t, key) {
             return (by.clone(), true);
         }
@@ -3221,7 +3710,7 @@ impl Kernel {
                 let arguments = arguments
                     .iter()
                     .map(|a| {
-                        let (a, h) = self.put_for(typing, a, e, key, by, needs, depth);
+                        let (a, h) = self.put_for(typing, a, e, key, by, needs, depth, missed);
                         hit |= h;
                         a
                     })
@@ -3239,13 +3728,14 @@ impl Kernel {
                 params,
                 result,
                 effects,
+                ..
             } => {
-                let (d, hd) = self.put_for(typing, &params[0].1, e, key, by, needs, depth);
+                let (d, hd) = self.put_for(typing, &params[0].1, e, key, by, needs, depth, missed);
                 let shadow = params[0].0.as_ref().is_some_and(|n| occurs(e, n));
                 let (r, hr) = if shadow {
                     ((**result).clone(), false)
                 } else {
-                    self.put_for(typing, result, e, key, by, needs, depth)
+                    self.put_for(typing, result, e, key, by, needs, depth, missed)
                 };
                 let mut params = params.clone();
                 params[0].1 = d;
@@ -3254,6 +3744,7 @@ impl Kernel {
                         params,
                         result: Box::new(r),
                         effects: effects.clone(),
+                        unused: Vec::new(),
                     },
                     sp,
                 );
@@ -3263,13 +3754,15 @@ impl Kernel {
                 params,
                 body,
                 types,
+                ..
             } if !params.iter().any(|n| occurs(e, n)) => {
-                let (b, hit) = self.put_for(typing, body, e, key, by, needs, depth);
+                let (b, hit) = self.put_for(typing, body, e, key, by, needs, depth, missed);
                 let found = T::new(
                     TermKind::Lam {
                         params: params.clone(),
                         body: Box::new(b),
                         types: types.clone(),
+                        unused_params: Vec::new(),
                     },
                     sp,
                 );
@@ -3286,13 +3779,98 @@ impl Kernel {
             return (t.clone(), false);
         }
         let w = self.whnf(typing, t);
+        let w = self.fold_shared_steps(typing, &w);
         if same_term_structure(&w, t) {
+            missed.add(t, depth);
             return (t.clone(), false);
         }
-        match self.put_for(typing, &w, e, key, by, needs, depth - 1) {
+        match self.put_for(typing, &w, e, key, by, needs, depth - 1, missed) {
             (found, true) => (found, true),
-            _ => (t.clone(), false),
+            _ => {
+                missed.add(t, depth);
+                (t.clone(), false)
+            }
         }
+    }
+
+    /// `t` with each call of a function of a block that shares its steps
+    /// (`check/steps.rs`) put back as written, where unfolding left it as
+    /// `F'get'i(<the read at k>(F'request'f(a⃗)), F'Zero'f(a⃗))`: `f(k, a⃗)`,
+    /// when the two are convertible. Unfolded, such a call is the whole
+    /// block's recursion, which a goal made from it would carry into each arm.
+    fn fold_shared_steps(&mut self, typing: &Ctx, t: &T) -> T {
+        let mut t = t.clone();
+        self.fold_steps_in(typing, &mut t);
+        t
+    }
+
+    fn fold_steps_in(&mut self, typing: &Ctx, t: &mut T) {
+        if let Some(call) = self.shared_steps_call(t)
+            && self.conv(typing, &call, t)
+        {
+            *t = call;
+            if let TermKind::App { arguments, .. } = Arc::make_mut(&mut t.kind) {
+                for a in arguments {
+                    self.fold_steps_in(typing, a);
+                }
+            }
+            return;
+        }
+        crate::surface::walk::children(t, &mut |c| self.fold_steps_in(typing, c));
+    }
+
+    /// The call `f(k, a⃗)` that `t` is the unfolding of, read off its shape.
+    fn shared_steps_call(&self, t: &T) -> Option<T> {
+        let TermKind::App {
+            function,
+            arguments,
+        } = &*t.kind
+        else {
+            return None;
+        };
+        let TermKind::Var(get) = &*function.kind else {
+            return None;
+        };
+        if !matches!(
+            get.as_global()?.generation(),
+            Some(Generation::SharedStepGet(_))
+        ) || arguments.len() != 2
+        {
+            return None;
+        }
+        let TermKind::App {
+            function: zf,
+            arguments: zargs,
+        } = &*arguments[1].kind
+        else {
+            return None;
+        };
+        let TermKind::Var(zero) = &*zf.kind else {
+            return None;
+        };
+        let zero = zero.as_global()?;
+        if zero.generation() != Some(Generation::SharedStepZero) {
+            return None;
+        }
+        let f: Name = zero.owner()?.clone().into();
+        // The read's arguments, its steps next to last and the request last.
+        let mut spine: Vec<&T> = Vec::new();
+        let mut at = &arguments[0];
+        while let TermKind::App {
+            function,
+            arguments,
+        } = &*at.kind
+        {
+            spine.splice(0..0, arguments.iter());
+            at = function;
+        }
+        if spine.len() < 2 {
+            return None;
+        }
+        let k = spine[spine.len() - 2].clone();
+        let mut args = vec![k];
+        args.extend(zargs.iter().cloned());
+        Some(app(T::var(&f, t.span), args))
     }
 
     /// `t` reduced at its head, and then the arguments of what is left (a
@@ -3341,6 +3919,7 @@ impl Kernel {
                         params: params.clone(),
                         body: Box::new(body),
                         types: types.clone(),
+                        unused_params: Vec::new(),
                     },
                     t.span,
                 )
@@ -3465,12 +4044,14 @@ fn link_equations(t: &T, e: &T, x: &Name, h: &Name) -> T {
                     params,
                     body,
                     types,
+                    ..
                 } = &*motive.kind
                     && params.len() == 1
                     && let TermKind::Pi {
                         params: pis,
                         result,
                         effects,
+                        ..
                     } = &*body.kind
                     && let TermKind::App {
                         function: eq,
@@ -3488,6 +4069,7 @@ fn link_equations(t: &T, e: &T, x: &Name, h: &Name) -> T {
                             params: pis,
                             result: result.clone(),
                             effects: effects.clone(),
+                            unused: Vec::new(),
                         },
                         body.span,
                     );
@@ -3496,6 +4078,7 @@ fn link_equations(t: &T, e: &T, x: &Name, h: &Name) -> T {
                             params: params.clone(),
                             body: Box::new(body),
                             types: types.clone(),
+                            unused_params: Vec::new(),
                         },
                         motive.span,
                     );
@@ -3515,6 +4098,7 @@ fn link_equations(t: &T, e: &T, x: &Name, h: &Name) -> T {
             params,
             result,
             effects,
+            ..
         } => {
             let mut params = params.clone();
             for p in &mut params {
@@ -3525,6 +4109,7 @@ fn link_equations(t: &T, e: &T, x: &Name, h: &Name) -> T {
                     params,
                     result: Box::new(link_equations(result, e, x, h)),
                     effects: effects.clone(),
+                    unused: Vec::new(),
                 },
                 sp,
             )
@@ -3533,11 +4118,13 @@ fn link_equations(t: &T, e: &T, x: &Name, h: &Name) -> T {
             params,
             body,
             types,
+            ..
         } if !params.iter().any(|n| n == h || n == x) => T::new(
             TermKind::Lam {
                 params: params.clone(),
                 body: Box::new(link_equations(body, e, x, h)),
                 types: types.clone(),
+                unused_params: Vec::new(),
             },
             sp,
         ),
@@ -3582,6 +4169,7 @@ fn abstract_term(t: &T, of: &T, key: &T, by: &T) -> (T, bool) {
             params,
             result,
             effects,
+            ..
         } => {
             let (d, hd) = abstract_term(&params[0].1, of, key, by);
             let shadow = params[0].0.as_ref().is_some_and(|n| occurs(of, n));
@@ -3598,6 +4186,7 @@ fn abstract_term(t: &T, of: &T, key: &T, by: &T) -> (T, bool) {
                         params,
                         result: Box::new(r),
                         effects: effects.clone(),
+                        unused: Vec::new(),
                     },
                     sp,
                 ),
@@ -3608,6 +4197,7 @@ fn abstract_term(t: &T, of: &T, key: &T, by: &T) -> (T, bool) {
             params,
             body,
             types,
+            ..
         } => {
             if params.iter().any(|n| occurs(of, n)) {
                 return (t.clone(), false);
@@ -3619,6 +4209,7 @@ fn abstract_term(t: &T, of: &T, key: &T, by: &T) -> (T, bool) {
                         params: params.clone(),
                         body: Box::new(b),
                         types: types.clone(),
+                        unused_params: Vec::new(),
                     },
                     sp,
                 ),
@@ -3690,11 +4281,13 @@ fn rebuilt_as(t: &T, fns: &HashMap<Name, FnInfo>, cval: &T, x: &Name) -> T {
             params,
             body,
             types,
+            ..
         } if !params.iter().any(|p| names.contains(p)) => T::new(
             TermKind::Lam {
                 params: params.clone(),
                 body: Box::new(rebuilt_as(body, fns, cval, x)),
                 types: types.clone(),
+                unused_params: Vec::new(),
             },
             sp,
         ),
@@ -3766,6 +4359,7 @@ fn is_recursion(info: &FnInfo, arguments: &[T], smaller: &Smaller) -> bool {
 /// what `decreasing_by` can name; a call that changes nothing makes no
 /// progress, and no choice of parameter fixes that.
 fn not_smaller_hint(
+    written: &HashMap<Span, String>,
     info: &FnInfo,
     function: &T,
     arguments: &[T],
@@ -3789,10 +4383,10 @@ fn not_smaller_hint(
         );
         return msg!(
             "kernel-rec-hint-swapped",
-            part = super::shorten(&describe(&arguments[q])),
+            part = super::shorten(&super::describe_written(&arguments[q], written)),
             param = (x).to_string(),
             other = (&info.params[q]).to_string(),
-            suggestion = super::shorten(&describe(&call))
+            suggestion = super::shorten(&super::describe_written(&call, written))
         );
     }
     let changed: Vec<&Name> = (0..arguments.len())
@@ -3826,17 +4420,19 @@ fn not_smaller_hint(
 /// Calls of the functions being defined on a field of the matched value
 /// become that field's induction hypothesis.
 fn replace_calls(
+    written: &HashMap<Span, String>,
     t: &T,
     fns: &HashMap<Name, FnInfo>,
     smaller: &Smaller,
     rebound: &[Name],
 ) -> Result<T, Diagnostic> {
-    replace_in(t, fns, smaller, false, rebound)
+    replace_in(written, t, fns, smaller, false, rebound)
 }
 
 /// `replace_calls`, or with `partial` only the calls on the variables of
 /// `smaller`, leaving the others to the function's own arms.
 fn replace_in(
+    written: &HashMap<Span, String>,
     t: &T,
     fns: &HashMap<Name, FnInfo>,
     smaller: &Smaller,
@@ -3844,6 +4440,7 @@ fn replace_in(
     rebound: &[Name],
 ) -> Result<T, Diagnostic> {
     CallReplacement {
+        written,
         fns,
         smaller,
         by_function: None,
@@ -3852,9 +4449,19 @@ fn replace_in(
     .term(t, rebound)
 }
 
+/// `x.f` as the program wrote it, for a message.
+fn written_field(base: &SurfaceTerm, name: &str, written: &HashMap<Span, String>) -> String {
+    let base = match &*base.kind {
+        TermKind::Field { base, name } => written_field(base, name, written),
+        _ => super::describe_written(base, written),
+    };
+    format!("{base}.{name}")
+}
+
 /// Each recursive call selects its hypothesis from the matched family once.
 /// Generated projections are not traversed again for the other functions.
 struct CallReplacement<'a> {
+    written: &'a HashMap<Span, String>,
     fns: &'a HashMap<Name, FnInfo>,
     smaller: &'a Smaller,
     by_function: Option<&'a HashMap<Name, Smaller>>,
@@ -3909,7 +4516,7 @@ impl CallReplacement<'_> {
                     unreachable!()
                 };
                 let info = &fns[n];
-                let shown = || super::shorten(&describe(t));
+                let shown = || super::shorten(&super::describe_written(t, self.written));
                 // A call that leaves the generics out passes them unchanged.
                 let left_out = if arguments.len() + info.implicit == info.params.len() {
                     info.implicit
@@ -3949,8 +4556,19 @@ impl CallReplacement<'_> {
                         .map(|(v, _)| v)
                         .collect();
                     others.sort();
-                    let argument = super::shorten(&describe(&arguments[info.xpos]));
-                    let hint = not_smaller_hint(info, function, arguments, left_out, smaller, sp);
+                    let argument = super::shorten(&super::describe_written(
+                        &arguments[info.xpos],
+                        self.written,
+                    ));
+                    let hint = not_smaller_hint(
+                        self.written,
+                        info,
+                        function,
+                        arguments,
+                        left_out,
+                        smaller,
+                        sp,
+                    );
                     let message = match others.first() {
                         Some(v) => msg!(
                             "kernel-rec-not-smaller-group",
@@ -3995,14 +4613,15 @@ impl CallReplacement<'_> {
                     .collect();
                 if !changed_later.is_empty() {
                     // Compiled again with them generalized.
-                    info.wants.borrow_mut().extend(changed_later);
+                    info.wants.lock().unwrap().extend(changed_later);
                     return err(msg!("kernel-rec-changes-later", name = shown()), sp);
                 }
                 if !changed.is_empty() {
                     if changed.iter().all(|n| info.movable.contains(n)) {
                         // Compiled again with them generalized.
                         info.wants
-                            .borrow_mut()
+                            .lock()
+                            .unwrap()
                             .extend(changed.iter().map(|n| (*n).clone()));
                         return err(msg!("kernel-rec-changes-earlier", name = shown()), sp);
                     }
@@ -4092,6 +4711,7 @@ impl CallReplacement<'_> {
                 params: ps,
                 body,
                 types,
+                ..
             } => {
                 let mut inner = rebound.to_vec();
                 inner.extend(ps.iter().cloned());
@@ -4100,6 +4720,7 @@ impl CallReplacement<'_> {
                         params: ps.clone(),
                         body: Box::new(self.term(body, &inner)?),
                         types: types.clone(),
+                        unused_params: Vec::new(),
                     },
                     sp,
                 )
@@ -4109,6 +4730,7 @@ impl CallReplacement<'_> {
                 params,
                 result,
                 effects,
+                ..
             } => {
                 let mut params = params.clone();
                 let mut inner = rebound.to_vec();
@@ -4121,6 +4743,7 @@ impl CallReplacement<'_> {
                         params,
                         result: Box::new(self.term(result, &inner)?),
                         effects: effects.clone(),
+                        unused: Vec::new(),
                     },
                     sp,
                 )
@@ -4131,6 +4754,99 @@ impl CallReplacement<'_> {
 }
 
 impl Kernel {
+    /// `match x: T { … }` on a parameter `x` is `match (x: T) { … }`; when
+    /// `T` is the type of `x` the annotation only restates it, so the body
+    /// is the match on `x` itself and is compiled (and read for its
+    /// structural recursion) as one. An annotation of any other type is left
+    /// for the match on a term to check.
+    pub(super) fn unascribe_param_scrutinee(&mut self, params: &[(Name, T)], body: &T) -> T {
+        let TermKind::Match {
+            scrutinee,
+            result,
+            binder,
+            arms,
+            ..
+        } = &*body.kind
+        else {
+            return body.clone();
+        };
+        let TermKind::Ascribe { term, ty } = &*scrutinee.kind else {
+            return body.clone();
+        };
+        let TermKind::Var(x) = &*term.kind else {
+            return body.clone();
+        };
+        let Some(pos) = params.iter().position(|(n, _)| n == x) else {
+            return body.clone();
+        };
+        let mut typing: Ctx = self.defining.clone();
+        typing.extend(params.iter().cloned());
+        let same = (|| {
+            let w = self.elaborate(ty, params).ok()?;
+            let w = self.shape(&w).ok()?;
+            let w = self.elab(&typing, &w, None).ok()?;
+            Some(self.conv(&typing, &w, &params[pos].1))
+        })();
+        if same != Some(true) {
+            return body.clone();
+        }
+        T::new(
+            TermKind::Match {
+                scrutinee: term.clone(),
+                result: result.clone(),
+                binder: binder.clone(),
+                arms: arms.clone(),
+                binder_unused: None,
+            },
+            body.span,
+        )
+    }
+
+    /// The body of a recursive function that matches a parameter somewhere
+    /// below an `if` (or other term), not as the whole body: the structural
+    /// match on that parameter, with one arm per constructor, each the body
+    /// with the inner match taken as that arm (as for `decreasing_by`), so
+    /// that a call on a field in an arm is the structural recursion. The body
+    /// as written when it does not recur, matches no parameter below its top,
+    /// or the parameter is not of an inductive type.
+    pub(super) fn lift_nested_match(
+        &mut self,
+        function: &Name,
+        params: &[(Name, T)],
+        body: &T,
+    ) -> T {
+        let mut recurs = false;
+        let mut scrutinee = None;
+        let mut probe = body.clone();
+        crate::surface::walk::term(&mut probe, &mut |u: &mut T| match &*u.kind {
+            TermKind::Var(v) if v == function => recurs = true,
+            TermKind::Match {
+                scrutinee: s,
+                binder: None,
+                ..
+            } => {
+                if let TermKind::Var(x) = &*s.kind
+                    && scrutinee.is_none()
+                    && params.iter().any(|(n, _)| n == x)
+                {
+                    scrutinee = Some(s.clone());
+                }
+            }
+            _ => {}
+        });
+        let Some(y) = scrutinee.filter(|_| recurs) else {
+            return body.clone();
+        };
+        // A body that is a match on a parameter is compiled as it is.
+        if matches!(&*peel_applied(body).1.kind, TermKind::Match { scrutinee, .. }
+            if matches!(&*scrutinee.kind, TermKind::Var(x) if params.iter().any(|(n, _)| n == x)))
+        {
+            return body.clone();
+        }
+        self.structural_on(params, body, &y, false)
+            .unwrap_or_else(|_| body.clone())
+    }
+
     /// The body of a function with `decreasing_by y`: a match on `y` with one
     /// arm per constructor, each the body as written with `y` that
     /// constructor, so that a call on one of its fields is the recursion. A
@@ -4141,6 +4857,7 @@ impl Kernel {
         params: &[(Name, T)],
         body: &T,
         y: &T,
+        rewrite_uses: bool,
     ) -> Result<T, Diagnostic> {
         let sp = y.span;
         let TermKind::Var(y) = &*y.kind else {
@@ -4190,11 +4907,17 @@ impl Kernel {
             arms.push(crate::surface::MatchArm {
                 pattern: Pattern::Ctor {
                     name: c.name.clone(),
-                    args: names.iter().map(|n| Pattern::Bind(n.clone())).collect(),
+                    args: names.iter().map(|n| Pattern::Bind { name: n.clone(), unused: None }).collect(),
                 },
                 guard: None,
                 goal: None,
-                body: self.subst(&known, y, &cval),
+                // A use of `y` outside a match stays `y` when lifting a
+                // nested match: a call on the whole value is not smaller.
+                body: if rewrite_uses {
+                    self.subst(&known, y, &cval)
+                } else {
+                    known
+                },
             });
         }
         Ok(T::new(
@@ -4203,6 +4926,7 @@ impl Kernel {
                 result: None,
                 binder: None,
                 arms,
+                binder_unused: None,
             },
             body.span,
         ))
@@ -4222,6 +4946,7 @@ impl Kernel {
                 binder: None,
                 arms,
                 result,
+                ..
             } = &*u.kind
             else {
                 return;
@@ -4246,15 +4971,15 @@ impl Kernel {
                     let args = self.full_fields(c, args.clone());
                     let mut body = a.body.clone();
                     for (p, n) in args.iter().zip(names) {
-                        if let Pattern::Bind(b) = p {
+                        if let Pattern::Bind { name: b, .. } = p {
                             body = self.subst(&body, b, &T::var(n, u.span));
                         }
                     }
                     Some(body)
                 }
-                Pattern::Bind(name) if denotes(name) => Some(a.body.clone()),
+                Pattern::Bind { name: name, .. } if denotes(name) => Some(a.body.clone()),
                 Pattern::Wild => Some(a.body.clone()),
-                Pattern::Bind(v) if !self.pattern_constructor(v) => {
+                Pattern::Bind { name: v, .. } if !self.pattern_constructor(v) => {
                     Some(self.subst(&a.body, v, &T::var(y, u.span)))
                 }
                 _ => None,
@@ -4320,11 +5045,13 @@ impl Kernel {
                 params,
                 body,
                 types,
+                ..
             } => T::new(
                 TermKind::Lam {
                     params: params.clone(),
                     body: Box::new(self.fill_tails(body, filled)),
                     types: types.clone(),
+                    unused_params: Vec::new(),
                 },
                 sp,
             ),
@@ -4332,6 +5059,7 @@ impl Kernel {
                 params,
                 result,
                 effects,
+                ..
             } => {
                 let mut params = params.clone();
                 for (_, d) in &mut params {
@@ -4342,6 +5070,7 @@ impl Kernel {
                         params,
                         result: Box::new(self.fill_tails(result, filled)),
                         effects: effects.clone(),
+                        unused: Vec::new(),
                     },
                     sp,
                 )
@@ -4377,7 +5106,7 @@ impl Kernel {
         for arm in h.arms {
             if let Pattern::Ctor { args, .. } = &arm.pattern {
                 for p in args {
-                    if let Pattern::Bind(n) = p {
+                    if let Pattern::Bind { name: n, .. } = p {
                         fields.push(n.clone());
                     }
                 }
@@ -4666,7 +5395,10 @@ impl Kernel {
         field.as_local().map_or(fresh.clone(), |local| {
             local
                 .generated(tauto_surface::identity::LocalGeneration::InductionHypothesis(index))
-                .with_display(fresh.as_str())
+                // The identity tells the hypotheses apart; the counter of
+                // the checker would put a number that depends on what was
+                // checked before into what is shown (`ih'4163`).
+                .with_display("ih'")
                 .into()
         })
     }
@@ -4810,6 +5542,7 @@ impl Kernel {
                 shaped
             } else {
                 replace_calls(
+                    &self.written_fields.clone(),
                     &shaped,
                     fns,
                     &smaller,
@@ -4858,6 +5591,7 @@ impl Kernel {
             shaped
         } else {
             replace_calls(
+                &self.written_fields.clone(),
                 &shaped,
                 fns,
                 &smaller,
@@ -5072,18 +5806,13 @@ impl Kernel {
     /// The group member standing for `J<args>`, when a nested inductive type
     /// declared one.
     fn nested_member(&self, j: &Name, args: &[T]) -> Option<Name> {
-        // The members were made over the types as the kernel reads them, a product as its
-        // `Pair`; the arguments are compared so too.
-        let key: Vec<T> = args.iter().map(|a| self.kernel_products(a)).collect();
+        let key = args;
         self.inds.iter().find_map(|(n, i)| match &i.alias {
             Some((j2, a2))
                 if j2 == j
                     && a2.len() == key.len()
-                    && a2.iter().zip(&key).all(|(argument, expected)| {
-                        crate::surface::same_term_structure(
-                            &self.kernel_products(argument),
-                            expected,
-                        )
+                    && a2.iter().zip(key).all(|(argument, expected)| {
+                        crate::surface::same_term_structure(argument, expected)
                     }) =>
             {
                 Some(n.clone())
@@ -5092,36 +5821,26 @@ impl Kernel {
         })
     }
 
-    /// `t` with each product `Prod(A, B)` in it as the `Pair(A, B)` it is for the kernel.
-    pub(super) fn kernel_products(&self, t: &T) -> T {
-        let mut out = t.clone();
-        crate::surface::walk::term(&mut out, &mut |t| {
-            if self.product_parts(t).is_none() {
-                return;
-            }
-            if let TermKind::App { function, .. } = std::sync::Arc::make_mut(&mut t.kind) {
-                let pair = tauto_surface::bindings::library_name("Pair");
-                *function = Box::new(T::var(&pair, function.span));
-            }
-        });
-        out
-    }
-
     /// A constructor application: its name and arguments (parameters first).
+    /// Only a fully applied constructor counts: an application missing some
+    /// of its arguments (or carrying extra ones) is left to the caller as
+    /// stuck, so it is reported instead of indexed past its arguments.
     fn ctor_view(&self, t: &T) -> Option<(Name, Vec<T>)> {
-        match &*t.kind {
-            TermKind::Var(n) if self.ctors.contains_key(n) => Some((n.clone(), vec![])),
+        let (n, args) = match &*t.kind {
+            TermKind::Var(n) if self.ctors.contains_key(n) => (n.clone(), vec![]),
             TermKind::App {
                 function,
                 arguments,
             } => match &*function.kind {
-                TermKind::Var(n) if self.ctors.contains_key(n) => {
-                    Some((n.clone(), arguments.clone()))
-                }
-                _ => None,
+                TermKind::Var(n) if self.ctors.contains_key(n) => (n.clone(), arguments.clone()),
+                _ => return None,
             },
-            _ => None,
-        }
+            _ => return None,
+        };
+        let (fam, j) = &self.ctors[&n];
+        let ind = self.inds.get(fam)?;
+        let arity = ind.params.len() + ind.ctors.get(*j)?.args.len();
+        (args.len() == arity).then_some((n, args))
     }
 }
 
@@ -5162,6 +5881,9 @@ pub(super) fn has_match(t: &SurfaceTerm) -> bool {
         TermKind::Pi { params, result, .. } => {
             params.iter().any(|(_, d)| has_match(d)) || has_match(result)
         }
+        TermKind::Record { name, fields, .. } if name.spelling() == Some(tauto_surface::IMPLICITS) => {
+            fields.iter().any(|(_, v)| has_match(v))
+        }
         _ => false,
     }
 }
@@ -5175,6 +5897,11 @@ pub(super) fn has_written_match(t: &SurfaceTerm) -> bool {
         TermKind::Lam { body, .. } => has_written_match(body),
         TermKind::Pi { params, result, .. } => {
             params.iter().any(|(_, d)| has_written_match(d)) || has_written_match(result)
+        }
+        TermKind::Record { name, fields, .. }
+            if name.spelling() == Some(tauto_surface::IMPLICITS) =>
+        {
+            fields.iter().any(|(_, v)| has_written_match(v))
         }
         _ => false,
     }
@@ -5268,6 +5995,7 @@ mod identity_tests {
 
     #[test]
     fn mutual_calls_select_hypotheses_by_function_identity() {
+        tauto_parse::install();
         let span = Span::new(0, 1);
         let parameter: Name = tauto_surface::identity::LocalRef::fresh("parameter").into();
         let field: Name = tauto_surface::identity::LocalRef::fresh("field").into();
@@ -5284,7 +6012,7 @@ mod identity_tests {
             pre: vec![],
             post: vec![],
             movable: vec![],
-            wants: Rc::new(RefCell::new(vec![])),
+            wants: Arc::new(Mutex::new(vec![])),
             fam: 0,
             general: vec![],
             tail: None,
@@ -5311,6 +6039,7 @@ mod identity_tests {
         );
         let shared = HashMap::new();
         let replaced = CallReplacement {
+            written: &HashMap::new(),
             fns: &fns,
             smaller: &shared,
             by_function: Some(&by_function),
@@ -5327,17 +6056,27 @@ mod identity_tests {
 
     #[test]
     fn recursive_call_replacement_shares_unchanged_applications() {
+        tauto_parse::install();
         let function: Name = DeclRef::fresh("function").into();
         let argument: Name = DeclRef::fresh("argument").into();
         let span = Span::new(0, 1);
         let term = app(T::var(&function, span), vec![T::var(&argument, span)]);
-        let replaced = replace_in(&term, &HashMap::new(), &HashMap::new(), false, &[]).unwrap();
+        let replaced = replace_in(
+            &HashMap::new(),
+            &term,
+            &HashMap::new(),
+            &HashMap::new(),
+            false,
+            &[],
+        )
+        .unwrap();
         assert!(std::sync::Arc::ptr_eq(&term.kind, &replaced.kind));
         assert_eq!(term.id(), replaced.id());
     }
 
     #[test]
     fn nested_members_distinguish_equal_display_arguments() {
+        tauto_parse::install();
         let mut kernel = Kernel::new();
         let container: Name = DeclRef::fresh("Container").into();
         let left: Name = DeclRef::fresh("Argument").into();
@@ -5371,5 +6110,33 @@ mod identity_tests {
             kernel.nested_member(&container, &[T::var(&missing, Span::new(0, 1))]),
             None
         );
+    }
+}
+
+/// The parts of a result type that `put_for` has already unfolded without
+/// finding the term, and how many unfoldings down it looked in each. The
+/// unfoldings of one part repeat inside others (a definition applied to the
+/// same arguments in several places), and looking again finds nothing again:
+/// each is unfolded once. A part is known by what it is written as, without
+/// positions.
+#[derive(Default)]
+struct Missed {
+    parts: HashMap<String, usize>,
+}
+
+impl Missed {
+    fn key(t: &T) -> String {
+        let mut t = t.clone();
+        crate::surface::walk::term(&mut t, &mut |part| part.span = tauto_parol::Span::new(0, 0));
+        format!("{t:?}")
+    }
+
+    fn has(&self, t: &T, depth: usize) -> bool {
+        self.parts.get(&Self::key(t)).is_some_and(|d| *d >= depth)
+    }
+
+    fn add(&mut self, t: &T, depth: usize) {
+        let d = self.parts.entry(Self::key(t)).or_insert(depth);
+        *d = (*d).max(depth);
     }
 }

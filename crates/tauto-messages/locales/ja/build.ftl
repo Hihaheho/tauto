@@ -3,9 +3,11 @@
 js-node-failed = javascript バックエンド(node)を実行できない: { $e }
 js-type-not-extern = javascript 型 `{ $name }` はプログラムの extern 型ではない(`extern {"{"} type { $name } {"}"}` と宣言する)
 js-type-unbound = extern 型 `{ $name }` に javascript の束縛がない(Tauto.eure の javascript.types に加える)
+js-type-ambiguous = javascript.types の extern 型 `{ $name }` が複数の extern 型 ({ $candidates }) を指す。束縛する型の完全名で書く
 js-extern-unavailable = extern `{ $name }` は javascript ターゲット { $target } では使えない
 js-builtin-browser = `{ $name }` は javascript ターゲット browser では使えない。ユーザー定義のエフェクトと javascript extern の束縛を用意する
-js-async-direct = async extern `{ $name }` が direct ハンドラから到達できる。再開可能なエフェクトを使う
+js-async-direct = wait を行う extern `{ $name }` が direct ハンドラから到達できる。再開可能なエフェクトを使う
+js-wasm-extern-waits = extern `{ $name }` は wait を行いますが、Wasm にした Rust の extern はすぐに答えます。Promise を返す JavaScript の関数に束縛してください
 js-wasm-callback-abandons = Rust wasm extern `{ $name }` が受け取るコールバックは、ネイティブのフレームを捨てるか複製するおそれがある。そのエフェクトはコールバックの中で処理するか、javascript の束縛を使う(Rust をまたげるのは direct と resume 1 だけである)
 js-extern-binding-form = javascript extern `{ $name }` は、相対モジュールパスに #export を続けた形で書く
 js-extern-no-export = javascript extern `{ $name }` にエクスポート名がない
@@ -26,22 +28,23 @@ js-wasm-build-errors = Rust extern を { $target } 向けにビルドできな�
     { $stderr }
 js-wasm-callback-direct = Rust wasm のコールバックは direct でなければならない。中断するコールバックには javascript の束縛が要る
 js-wasm-unknown-data = 不明な wasm データ型 `{ $name }`
-js-wasm-borrowed-view = 借用ビュー `{ $name }` は wasm ABI をまたげない。所有値か javascript の束縛を公開する
+js-wasm-borrowed-view = `{ $name }` は借用を抱えるので wasm ABI をまたげない。所有値か javascript の束縛を公開する
 js-wasm-type-abi = 型 { $ty } は Rust wasm ABI をまたげない。所有データを具体的な Rust ラッパーか javascript.extern で公開する
 js-wasm-no-borrowed = { $ty } には借用の wasm 表現がない
 
 rust-browser-run = browser ターゲットはモジュールを出力する。`{ $command }` を使う
 rust-no-manifest = { $path }: Tauto.eure がない
 rust-unsupported = { $place }: { $backend } バックエンドでは対応していない: { $what }
-rust-exports-duplicate = { $path }: rust.exports に関数 `{ $name }` が重複している
-rust-exports-unknown = { $path }: rust.exports の関数 `{ $name }` は存在しないか総称的である。総称的でない関数を選ぶ
+rust-export-generic-skipped = { $path }: `{ $name }` は export しない。ジェネリクスを持つ関数には自分のコードがない
 rust-budget-eligible = { $at }: { $function } の budget { $budget }({ $variant }): 静的に適格。外側の budget が有効か、ランタイムの sync 機能があると通常の Future の経路になる
 rust-budget-checks = [compiler-checks] 制御の形、文脈呼び出し、型とライフタイム、ハンドラの観測者を検査した。ホストの振る舞いの前提は別に示す
 rust-budget-ordinary = { $at }: { $function } の budget { $budget }({ $variant }): 通常の Future の経路
 rust-budget-assumption = [trusted-assumption] { $kind } { $name }({ $at }): { $contract }(コンパイラやカーネルによる証明ではない)
 rust-wasm-lacks-net = net エフェクト(その HTTP クライアントはスレッドを止める)
 rust-target-lacks = { $path }: { $target } ターゲットは { $what } に対応していない
+rust-lock-created = { $path } を作った
 rust-trusted-code = このプログラムが信頼する Rust コード:
 rust-usage = 使い方: { $run }
     {"       "}{ $build }
 rust-trusted-extern = {"  "}extern { $name } -> { $rust }（{ $at }）
+js-export-row-skipped = { $path }: `{ $name }` はメソッドにしない。インスタンスが答えない effect が行にある

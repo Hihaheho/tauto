@@ -1,7 +1,7 @@
 import "pattern_mutual.taut"
 import "pattern_frame.taut"
 import "written_error_sound.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "error_frame.taut"
@@ -15,20 +15,17 @@ pub theorem pattern_fresh_cons_frame_errors(
   ih: ∀ next: Checker. CkErrorFrame(next, ck_fresh_each(rest, next))
 ): CkErrorFrame(c, pattern_fresh_cons(g, rest, c)) {
   error_frame_bind(
-    Ty,
-    List(Ty),
+    <A: Ty, B: List(Ty)>,
     c,
     (h: Ty, c1: Checker) => frame_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       (tl: List(Ty), c2: Checker) => mut1(Cons(h, tl), c2),
       ck_fresh_each(rest, c1)
     ),
     ck_fresh(c),
     ck_fresh_frame_errors(c),
     h => c1 => error_frame_bind(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       c1,
       (tl: List(Ty), c2: Checker) => mut1(Cons(h, tl), c2),
       ck_fresh_each(rest, c1),
@@ -42,7 +39,7 @@ pub theorem ck_fresh_each_frame_errors(
   gs: List(Text),
   c: Checker
 ): CkErrorFrame(c, ck_fresh_each(gs, c)) {
-  ⊢ CkErrorFrame(c, ck_fresh_each(gs, c)) from match gs {
+  match gs {
     Nil => (clean_errors => clean_errors)
     Cons(g, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),

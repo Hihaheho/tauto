@@ -1,0 +1,64 @@
+description = "`A | B => e` in a match arm is the arms `A => e` and `B => e`."
+
+@ cases.alternatives_share_one_body
+source = ```tauto
+inductive Color: Type {
+  Red: Color
+  Green: Color
+  Blue: Color
+}
+fn warm(c: Color): Nat {
+  match c {
+    Red | Green => Succ(Zero)
+    Blue => Zero
+  }
+}
+theorem t(): Eq(Nat, warm(Green), Succ(Zero)) {
+  Refl
+}
+```
+checks."warm" = "checked"
+checks."t" = "checked"
+
+@ cases.alternatives_bind_the_same_names
+source = ```tauto
+inductive Pair2: Type {
+  Left(n: Nat): Pair2
+  Right(n: Nat): Pair2
+}
+fn f(p: Pair2): Nat {
+  match p {
+    Left(x) | Right(x) => x
+  }
+}
+```
+checks."f" = "checked"
+
+@ cases.alternatives_with_different_names_are_rejected
+source = ```tauto
+inductive Pair2: Type {
+  Left(n: Nat): Pair2
+  Right(n: Nat): Pair2
+}
+fn f(p: Pair2): Nat {
+  match p {
+    Left(x) | Right(y) => x
+  }
+}
+```
+checks."f" = "error: a kernel match lists constructors"
+
+@ cases.a_wildcard_alternative_is_rejected
+source = ```tauto
+inductive Color: Type {
+  Red: Color
+  Green: Color
+  Blue: Color
+}
+fn f(c: Color): Nat {
+  match c {
+    Red | _ => Zero
+  }
+}
+```
+checks."f" = "error: a kernel match lists constructors"

@@ -8,13 +8,14 @@
 use std::rc::Rc;
 
 use tauto_rt::stdlib::Bytes;
-use tauto_rt::{Text, stdlib, tcp, tls_host};
+use tauto_rt::{Text, http, stdlib, tcp, tls_host};
 
 use crate::builtins::Known;
 use crate::value::{R, Value, fail};
 
 pub enum Reply {
     Unit,
+    U64(u64),
     Text(String),
     Texts(Vec<String>),
     Bytes(Vec<u8>),
@@ -32,6 +33,7 @@ impl Reply {
     pub fn value(self, k: &Known) -> Value {
         match self {
             Reply::Unit => Value::Unit,
+            Reply::U64(n) => Value::Int(n.into()),
             Reply::Text(t) => Value::text(&t),
             Reply::Texts(ts) => k.list(
                 ts.iter()
@@ -79,6 +81,11 @@ pub const NAMES: &[&str] = &[
     "Os::child_close",
     "Os::fetch",
     "Os::resolve",
+    "Os::http_open",
+    "Os::http_write",
+    "Os::http_finish",
+    "Os::http_read",
+    "Os::http_close",
     "Os::tcp_listen",
     "Os::tcp_accept",
     "Os::tcp_connect",
@@ -93,6 +100,8 @@ pub const NAMES: &[&str] = &[
     "Os::tls_write",
     "Os::tls_shutdown",
     "Os::tls_close",
+    "Os::tcp_send",
+    "Os::tls_send",
 ];
 
 fn texts(v: Vec<Text>) -> Vec<String> {
@@ -143,11 +152,14 @@ fn text_list(k: &Known, v: &Value) -> R<Vec<String>> {
 }
 
 pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
-    let text = |i: usize| a[i].as_text().map(|t| t.to_string());
+    let text = |i: usize| crate::value::arg(a, i)?.as_text().map(|t| t.to_string());
     Ok(match name {
         "Os::fetch" => {
             let (method, url, address) = (text(0)?, text(1)?, text(2)?);
-            let (headers, body) = (text_list(k, &a[3])?, bytes_of(&a[4])?);
+            let (headers, body) = (
+                text_list(k, crate::value::arg(&a, 3)?)?,
+                bytes_of(crate::value::arg(&a, 4)?)?,
+            );
             Box::new(move || {
                 let r = stdlib::os_fetch_vec(
                     method.into(),
@@ -164,6 +176,44 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
                 })
             })
         }
+        "Os::http_open" => {
+            let (method, url, address) = (text(0)?, text(1)?, text(2)?);
+            let headers = text_list(k, &a[3])?;
+            Box::new(move || {
+                let r = http::os_http_open_vec(
+                    method.into(),
+                    url.into(),
+                    address.into(),
+                    headers.into_iter().map(Text::from).collect(),
+                );
+                result(r, Reply::U64)
+            })
+        }
+        "Os::http_write" => {
+            let (id, b, d) = (u64_of(&a[0])?, bytes_of(&a[1])?, deadline(k, &a[2])?);
+            Box::new(move || timed(http::os_http_write_vec(id, b, d), |()| Reply::Unit))
+        }
+        "Os::http_finish" => {
+            let (id, d) = (u64_of(&a[0])?, deadline(k, &a[1])?);
+            Box::new(move || {
+                timed(http::os_http_finish_vec(id, d), |(head, body)| {
+                    let mut items = vec![body.to_string()];
+                    items.extend(texts(head));
+                    Reply::Texts(items)
+                })
+            })
+        }
+        "Os::http_read" => {
+            let (id, max, d) = (u64_of(&a[0])?, u64_of(&a[1])?, deadline(k, &a[2])?);
+            Box::new(move || timed(http::os_http_read_vec(id, max, d), Reply::Bytes))
+        }
+        "Os::http_close" => {
+            let id = u64_of(&a[0])?;
+            Box::new(move || {
+                http::os_http_close(id);
+                Reply::Unit
+            })
+        }
         "Os::list_dir" => {
             let path = text(0)?;
             Box::new(move || {
@@ -173,8 +223,12 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::run" => {
-            let (program, args, dir) = (text(0)?, text_list(k, &a[1])?, text(2)?);
-            let (env, stdin) = (text_list(k, &a[3])?, bytes_of(&a[4])?);
+            let (program, args, dir) =
+                (text(0)?, text_list(k, crate::value::arg(&a, 1)?)?, text(2)?);
+            let (env, stdin) = (
+                text_list(k, crate::value::arg(&a, 3)?)?,
+                bytes_of(crate::value::arg(&a, 4)?)?,
+            );
             Box::new(move || {
                 let r = stdlib::os_run_vec(
                     program.into(),
@@ -192,9 +246,13 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::child_spawn" => {
-            let (program, args, dir) = (text(0)?, text_list(k, &a[1])?, text(2)?);
-            let (env, stdin, modes) =
-                (text_list(k, &a[3])?, bytes_of(&a[4])?, text_list(k, &a[5])?);
+            let (program, args, dir) =
+                (text(0)?, text_list(k, crate::value::arg(&a, 1)?)?, text(2)?);
+            let (env, stdin, modes) = (
+                text_list(k, crate::value::arg(&a, 3)?)?,
+                bytes_of(crate::value::arg(&a, 4)?)?,
+                text_list(k, crate::value::arg(&a, 5)?)?,
+            );
             Box::new(move || {
                 let r = tauto_rt::child::os_child_spawn_vec(
                     program.into(),
@@ -209,10 +267,10 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
         }
         "Os::child_read" => {
             let (id, which, max, d) = (
-                u64_of(&a[0])?,
-                u64_of(&a[1])?,
-                u64_of(&a[2])?,
-                deadline(k, &a[3])?,
+                u64_of(crate::value::arg(&a, 0)?)?,
+                u64_of(crate::value::arg(&a, 1)?)?,
+                u64_of(crate::value::arg(&a, 2)?)?,
+                deadline(k, crate::value::arg(&a, 3)?)?,
             );
             Box::new(move || {
                 timed(
@@ -222,7 +280,10 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::child_write" => {
-            let (id, b) = (u64_of(&a[0])?, bytes_of(&a[1])?);
+            let (id, b) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                bytes_of(crate::value::arg(&a, 1)?)?,
+            );
             Box::new(move || {
                 result(tauto_rt::child::os_child_write(id, Bytes::from(b)), |()| {
                     Reply::Unit
@@ -230,11 +291,14 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::child_close_stdin" => {
-            let id = u64_of(&a[0])?;
+            let id = u64_of(crate::value::arg(&a, 0)?)?;
             Box::new(move || result(tauto_rt::child::os_child_close_stdin(id), |()| Reply::Unit))
         }
         "Os::child_wait" => {
-            let (id, d) = (u64_of(&a[0])?, deadline(k, &a[1])?);
+            let (id, d) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                deadline(k, crate::value::arg(&a, 1)?)?,
+            );
             Box::new(move || {
                 timed(tauto_rt::child::os_child_wait_vec(id, d), |v| {
                     Reply::Texts(texts(v))
@@ -242,7 +306,7 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::child_close" => {
-            let id = u64_of(&a[0])?;
+            let id = u64_of(crate::value::arg(&a, 0)?)?;
             Box::new(move || {
                 tauto_rt::child::os_child_close(id);
                 Reply::Unit
@@ -265,11 +329,14 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::tcp_accept" => {
-            let (id, d) = (u64_of(&a[0])?, deadline(k, &a[1])?);
+            let (id, d) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                deadline(k, crate::value::arg(&a, 1)?)?,
+            );
             Box::new(move || timed(tcp::os_tcp_accept_vec(id, d), |v| Reply::Texts(texts(v))))
         }
         "Os::tcp_connect" => {
-            let (address, d) = (text(0)?, deadline(k, &a[1])?);
+            let (address, d) = (text(0)?, deadline(k, crate::value::arg(&a, 1)?)?);
             Box::new(move || {
                 timed(tcp::os_tcp_connect_vec(address.into(), d), |v| {
                     Reply::Texts(texts(v))
@@ -277,41 +344,71 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::tcp_read" => {
-            let (id, max, d) = (u64_of(&a[0])?, u64_of(&a[1])?, deadline(k, &a[2])?);
+            let (id, max, d) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                u64_of(crate::value::arg(&a, 1)?)?,
+                deadline(k, crate::value::arg(&a, 2)?)?,
+            );
             Box::new(move || timed(tcp::os_tcp_read_vec(id, max, d), Reply::Bytes))
         }
         "Os::tcp_write" => {
-            let (id, b, d) = (u64_of(&a[0])?, bytes_of(&a[1])?, deadline(k, &a[2])?);
+            let (id, b, d) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                bytes_of(crate::value::arg(&a, 1)?)?,
+                deadline(k, crate::value::arg(&a, 2)?)?,
+            );
             Box::new(move || timed(tcp::os_tcp_write(id, Bytes::from(b), d), |()| Reply::Unit))
         }
+        "Os::tcp_send" => {
+            let (id, b, d) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                bytes_of(crate::value::arg(&a, 1)?)?,
+                deadline(k, crate::value::arg(&a, 2)?)?,
+            );
+            Box::new(move || timed(tcp::os_tcp_send_vec(id, &b, d), Reply::U64))
+        }
+        "Os::tls_send" => {
+            let (id, b, d) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                bytes_of(crate::value::arg(&a, 1)?)?,
+                deadline(k, crate::value::arg(&a, 2)?)?,
+            );
+            Box::new(move || timed(tls_host::os_tls_send(id, Bytes::from(b), d), Reply::U64))
+        }
         "Os::tcp_shutdown" => {
-            let (id, how) = (u64_of(&a[0])?, u64_of(&a[1])?);
+            let (id, how) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                u64_of(crate::value::arg(&a, 1)?)?,
+            );
             Box::new(move || result(tcp::os_tcp_shutdown(id, how), |()| Reply::Unit))
         }
         "Os::tcp_close" => {
-            let id = u64_of(&a[0])?;
+            let id = u64_of(crate::value::arg(&a, 0)?)?;
             Box::new(move || {
                 tcp::os_tcp_close(id);
                 Reply::Unit
             })
         }
         "Os::tcp_unlisten" => {
-            let id = u64_of(&a[0])?;
+            let id = u64_of(crate::value::arg(&a, 0)?)?;
             Box::new(move || {
                 tcp::os_tcp_unlisten(id);
                 Reply::Unit
             })
         }
         "Os::tls_accept" => {
-            let id = u64_of(&a[0])?;
-            let names = text_list(k, &a[1])?;
+            let id = u64_of(crate::value::arg(&a, 0)?)?;
+            let names = text_list(k, crate::value::arg(&a, 1)?)?;
             let pems = k
-                .items(a[2].clone())?
+                .items(crate::value::arg(&a, 2)?.clone())?
                 .iter()
                 .map(bytes_of)
                 .collect::<R<Vec<_>>>()?;
-            let alpn = text_list(k, &a[3])?;
-            let (roots, d) = (bytes_of(&a[4])?, deadline(k, &a[5])?);
+            let alpn = text_list(k, crate::value::arg(&a, 3)?)?;
+            let (roots, d) = (
+                bytes_of(crate::value::arg(&a, 4)?)?,
+                deadline(k, crate::value::arg(&a, 5)?)?,
+            );
             Box::new(move || {
                 let r = tls_host::os_tls_accept_vec(
                     id,
@@ -330,14 +427,17 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::tls_connect" => {
-            let (id, server) = (u64_of(&a[0])?, text(1)?);
-            let roots = u64_of(&a[2])?;
+            let (id, server) = (u64_of(crate::value::arg(&a, 0)?)?, text(1)?);
+            let roots = u64_of(crate::value::arg(&a, 2)?)?;
             let pems = k
-                .items(a[3].clone())?
+                .items(crate::value::arg(&a, 3)?.clone())?
                 .iter()
                 .map(bytes_of)
                 .collect::<R<Vec<_>>>()?;
-            let (alpn, d) = (text_list(k, &a[4])?, deadline(k, &a[5])?);
+            let (alpn, d) = (
+                text_list(k, crate::value::arg(&a, 4)?)?,
+                deadline(k, crate::value::arg(&a, 5)?)?,
+            );
             Box::new(move || {
                 let r = tls_host::os_tls_connect_vec(
                     id,
@@ -356,7 +456,11 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::tls_read" => {
-            let (id, max, d) = (u64_of(&a[0])?, u64_of(&a[1])?, deadline(k, &a[2])?);
+            let (id, max, d) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                u64_of(crate::value::arg(&a, 1)?)?,
+                deadline(k, crate::value::arg(&a, 2)?)?,
+            );
             Box::new(move || {
                 timed(tls_host::os_tls_read(id, max, d), |b| {
                     Reply::Bytes(b.to_vec())
@@ -364,7 +468,11 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::tls_write" => {
-            let (id, b, d) = (u64_of(&a[0])?, bytes_of(&a[1])?, deadline(k, &a[2])?);
+            let (id, b, d) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                bytes_of(crate::value::arg(&a, 1)?)?,
+                deadline(k, crate::value::arg(&a, 2)?)?,
+            );
             Box::new(move || {
                 timed(tls_host::os_tls_write(id, Bytes::from(b), d), |()| {
                     Reply::Unit
@@ -372,11 +480,14 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
             })
         }
         "Os::tls_shutdown" => {
-            let (id, how) = (u64_of(&a[0])?, u64_of(&a[1])?);
+            let (id, how) = (
+                u64_of(crate::value::arg(&a, 0)?)?,
+                u64_of(crate::value::arg(&a, 1)?)?,
+            );
             Box::new(move || result(tls_host::os_tls_shutdown(id, how), |()| Reply::Unit))
         }
         "Os::tls_close" => {
-            let id = u64_of(&a[0])?;
+            let id = u64_of(crate::value::arg(&a, 0)?)?;
             Box::new(move || {
                 tls_host::os_tls_close(id);
                 Reply::Unit

@@ -13,6 +13,7 @@ kernel-core-numeral-too-large = the numeral `{ $numeral }` is too large
 kernel-core-not-kernel-term = not a kernel term
 kernel-core-quot-has-type = a constant of the quotient has a type
 kernel-core-quot-no-value = `{ $name }` is a constant of the quotient and has no value
+kernel-core-value-cycle = the value of `{ $name }` unfolds to `{ $name }` again: the core accepts recursion only through eliminators
 kernel-core-quot-declared-after = `{ $name }` is declared after { $needs }
 kernel-core-quot-type = `{ $name }` must have the type the core gives it
 kernel-core-bvar-out-of-scope = a bound variable out of scope
@@ -52,11 +53,13 @@ kernel-gave-up-unfolded = gave up after { $seconds }s of checking (unfolded most
 kernel-unfolded-times = `{ $name }` { $count } times
 kernel-out-of-steps = gave up after { $steps } steps of reduction
 kernel-out-of-steps-in = gave up after { $steps } steps of reduction, unfolding `{ $name }` (unfolded most: { $top }); raise the limit of the declaration with `budget`
-kernel-file-time-limit = checking { $file } took more than { $seconds }s and was stopped; to allow it more, list it under check.slow in Tauto.eure with a larger limit
+kernel-file-time-limit = checking { $file } took more than its limit of { $seconds }s and was stopped in this declaration, after { $spent }s of it; the time is the whole file's, not this declaration's own, so make the file faster or split it (check.slow in Tauto.eure gives it a larger limit)
+kernel-file-time-limit-before = checking { $file } took more than its limit of { $seconds }s before this declaration began
+kernel-file-ran-out = not checked: { $file } ran past its limit of { $seconds }s while `{ $name }` was being checked
 kernel-ran-out-of-time = not checked: `{ $name }` ran out of time
-kernel-past-u128 =
+kernel-past-numeral-limit =
     { $message }
-    note: `{ $op }` is past u128 and was left as it is: the kernel does not compute closed numbers that large
+    note: `{ $op }` is past 2^256 and was left as it is: the kernel does not compute closed numbers that large
 kernel-handle-not-read = its `handle` is not read in proofs: { $why }
 kernel-reserved = `{ $name }` is reserved and cannot name a declaration
 kernel-already-defined = `{ $name }` is already defined
@@ -82,7 +85,7 @@ kernel-untyped-param = untyped parameter
 kernel-body-executable = body is executable code, not a kernel term
 kernel-type-not-kernel = its type is not one of the kernel's
 kernel-not-kernel-term-match = not a kernel term: match. A `match` is not written here: define a `fn` whose body is the match and call it
-kernel-not-kernel-term-text = not a kernel term: text (a text literal is read as a kernel term only after `Text` is declared; add `import std::Text`)
+kernel-not-kernel-term-text = not a kernel term: text (a text literal is read as a kernel term only after `Text` is declared; add `import std::text`)
 kernel-not-kernel-term-kind = not a kernel term: { $kind }
 kernel-block-value = a block in a proof ends with its value
 kernel-block-lets = a block in a proof holds only `let x: T := e` before its value
@@ -100,7 +103,7 @@ kernel-mismatch-expected-written = expected is written as { $written }
 kernel-mismatch-found-written = found is written as { $written }
 kernel-hole-twice = the hole `?{ $name }` is written twice
 kernel-underscore-not-value = `_` is not a value
-kernel-float-not-defined = `Float` is not defined in proofs until it is declared; add `import std::Float`
+kernel-float-not-defined = `Float` is not defined in proofs until it is declared; add `import std::float`
 kernel-integer-division = `/` is the division of fractions, and the proofs do not define it on integers; write `Nat::div(a, b)`, `Nat::rem(a, b)`, `Int::tdiv`, `Int::tmod`, `Int::fdiv` or `Int::fmod` (and `U8::div`, `I32::tdiv`, … for the fixed widths), and `Rat::div` for fractions
 kernel-unit-value-as-type = `#()` is the unit value, not a type; write the unit type as `Unit`
 kernel-calls-itself = `{ $name }` calls itself outside a structural match; there is no other termination check
@@ -167,6 +170,7 @@ kernel-match-named-last = the arm `{ $name } =>`, which matches every value, mus
 kernel-match-default-last = the default arm `_ =>` must be the last
 kernel-match-named-indices = an arm `y =>` that names the matched value needs the matched family's indices to be variables; write `_ =>` and use the matched variable
 kernel-match-lists-ctors = a kernel match lists constructors (nested and variable patterns are not supported)
+kernel-match-typed-arm = a typed arm `y: T =>` narrows a Nib union; a kernel match lists constructors
 kernel-match-not-ctor = `{ $name }` is not a constructor
 kernel-match-not-ctor-hint = `{ $name }` is not a constructor; did you mean `{ $hint }`?
 kernel-match-other-ctor = `{ $name }` is a constructor of `{ $family }`, not `{ $matched }`
@@ -191,6 +195,7 @@ kernel-ascribe-mismatch = `{ $have }` is not `{ $want }`, nor a product with its
 kernel-ascribe-no-member = `{ $product }` has no member of the type `{ $member }`
 kernel-ascribe-clash = two members of a product have the type `{ $member }`, so the members cannot be matched by their types; write the members by position, or tell them apart with a label (`@x { $member }`)
 kernel-ascribe-open = `{ $have }` and `{ $want }` are matched by the types of their members only where neither mentions a type variable; write the members in the same order, by position, or give each a label (`@x T`)
+kernel-eq-needs-where = `==` needs PartialEq({ $ty }): add `where PartialEq({ $ty })`, or `where DecEq({ $ty })` to prove from `==`
 kernel-eq-no-deq = `==` is on `Nat`, `Bool`, `Text` or a type with a decidable equality, not `{ $ty }`; an inductive has one when it lists `=> fn { $head }::beq, theorem { $head }::beq_refl, theorem { $head }::beq_sound, theorem { $head }::deq` after its sort
 kernel-eq-type-open = Neither side of `=` has a type to take: a numeric literal, `[]`, a hole, a λ, or a constructor with parameters written without arguments (`Nil`, `None`) leaves it open. Write `Eq(T, a, b)`
 kernel-if-type-open = Neither branch of this `if` has a type to take: a numeric literal, `[]`, a hole, a λ, or a constructor with parameters written without arguments (`Nil`, `None`) leaves it open. Write its type: `⊢ T from match c {"{"} true => a  false => b {"}"}`
@@ -222,7 +227,8 @@ kernel-unify-no-confusion = `{ $name }` has no no-confusion, so its values canno
 kernel-unify-index = cannot unify the index `{ $left }` with `{ $right }` in the match on `{ $family }`
 kernel-unify-cyclic = the indices determine variables in terms of each other; this unification is not supported
 kernel-class-skipped = not a class of the proof language: { $why }
-kernel-class-one-param = it has one parameter of kind `Type`
+kernel-class-not-inductive = it is a `class`, not an `inductive class`
+kernel-class-one-param = it has no parameter
 kernel-class-defined = class `{ $name }` is already defined
 kernel-class-method-effects = `{ $name }` performs effects
 kernel-class-effects-laws = { $class }::{ $method } performs effects, so { $class } cannot have laws
@@ -231,7 +237,11 @@ kernel-class-method-untyped = `{ $name }` has an untyped parameter
 kernel-instance-not-class-skipped = `{ $name }` is not a class of the proof language
 kernel-instance-head = an instance of `{ $name }` is for a type with a name at its head
 kernel-instance-defined = instance { $instance } is already defined
+kernel-instance-infer-condition = infer from must name type parameters of this class
+kernel-instance-infer-owner = every infer from path must include a named type defined in this tote
+kernel-instance-infer-conflict = infer from conflicts with another instance of this class
 kernel-instance-not-class = `{ $name }` is not a class
+kernel-instance-structural = `{ $name }` is structural and has no instances to write: its instance comes from the structure of the type
 kernel-instance-lacks = instance { $instance } lacks the method `{ $method }`
 kernel-instance-method-params = the method `{ $method }` of { $instance } has { $written } parameters, but the class has { $class }
 kernel-instance-not-method = `{ $name }` is not a method of { $class }
@@ -245,7 +255,7 @@ kernel-effect-row-variables = its row has more than one variable
 kernel-effect-unread = its effect `{ $name }` is not one read in proofs
 kernel-effect-no-result = it has no result type
 kernel-effect-untyped-param = a parameter has no type
-kernel-effect-where = it has a `where`
+kernel-effect-where = its `where` names a class the proof language does not have
 kernel-effect-bind-first = { $what } has effects; bind it with `let` first
 kernel-effect-called-function = a called function
 kernel-effect-if-condition = the condition of an `if`
@@ -255,7 +265,8 @@ kernel-effect-not-in-row = it performs `{ $name }`, which is not in its row
 kernel-effect-arity = `{ $name }` takes another number of arguments
 kernel-effect-call-not-in-row = `{ $function }` performs `{ $name }`, which is not in the row
 kernel-effect-block-value = a block with effects ends with its value
-kernel-effect-assign-field = `{ $place } :=` assigns a field, which is not read in proofs yet
+kernel-effect-assign-field = `{ $place } :=` assigns a field of a field, which is not read in proofs yet
+kernel-effect-lend = the state a `&mut` passes back could not be declared: { $why }
 kernel-effect-assign-not-var = `{ $name }` is assigned but is not a `var` of the function
 kernel-effect-block-statement = a block with effects holds a statement not read in proofs
 kernel-effect-var-type = write the type of `var { $name }`
@@ -263,6 +274,10 @@ kernel-effect-block-type = write the type of the value of the block that has `va
 kernel-effect-return-pattern = a `return` arm with a pattern
 kernel-effect-handler-guard = a handler arm with a guard
 kernel-effect-not-read = `{ $name }` is not an effect read in proofs
+kernel-effect-instances = its row has more than one instance of `{ $name }`; which one this `perform` is cannot be told
+kernel-effect-instance-unknown = a call's row has `{ $name }`, whose types the call's arguments do not give
+kernel-effect-handler-forall = an arm `∀ …. { $name }<…>` for every instance of `{ $name }`
+kernel-effect-handler-instance = an arm for `{ $name }` that does not write a type for each of its generics
 kernel-effect-handler-pattern = a handler arm with a pattern
 kernel-effect-two-arms = two arms for `{ $name }`
 kernel-effect-none-read = no effect is read in proofs
@@ -284,6 +299,8 @@ kernel-implicit-nullary = `{ $name }` has no parameters and is named without `()
 kernel-implicit-not-defined = `{ $name }` is not defined
 kernel-implicit-fewer-params = `{ $name }` has fewer parameters than implicit ones
 kernel-implicit-named-unknown = `{ $name }` has no implicit parameter `{ $field }`
+kernel-class-member-not-method = `{ $name }` is not a method or law of a class, so it takes no class arguments `C(T)::m(…)`
+kernel-class-member-argument-count = the class of `{ $name }` takes { $expected } argument(s), not { $given }
 kernel-implicit-named-twice = the implicit argument `{ $field }` is written twice
 kernel-implicit-named-mismatch = the implicit argument `{ $field }` of `{ $name }` disagrees with what the call fixes
 kernel-implicit-named-none = implicit arguments are written by name only in a call to a declaration with implicit parameters
@@ -291,21 +308,25 @@ kernel-implicit-named-partial = a call writing implicit arguments by name writes
 kernel-implicit-positional = `{ $name }` is given more arguments than its explicit parameters: implicit arguments are written by name, `{ $name }(<x: v>, …)`
 kernel-implicit-no-match = cannot infer the implicit arguments of `{ $name }`: `{ $expected }` does not match `{ $found }`
 kernel-implicit-cannot-infer = cannot infer all the implicit arguments of `{ $name }`
-kernel-implicit-generic = cannot infer the generic `{ $generic }` of `{ $name }`: neither its arguments nor the expected type fix it; write the generics as its first arguments, `{ $name }({ $generics }, …)`
+kernel-implicit-generic = cannot infer the generic `{ $generic }` of `{ $name }`: neither its arguments nor the expected type fix it; write them by name, `{ $name }(<{ $generics }>, …)`
 kernel-implicit-class-needed = a class is needed here
 kernel-implicit-laws-of = the laws of { $instance }
 kernel-implicit-class-type = cannot infer the type that `{ $class }` is needed for
 kernel-implicit-no-instance = no instance of { $instance }
-kernel-implicit-no-instance-ord = no instance of { $instance }; it is declared in std, add `import std::Ord`
+kernel-implicit-no-instance-ord = no instance of { $instance }; it is declared in std, add `import std::ord`
 kernel-implicit-instance-types = cannot infer all the types of the instance { $instance }
+kernel-implicit-infer-types = infer from does not determine all required type arguments
 kernel-mut-field-family = `&mut { $name }.…` needs `{ $name }` typed by a family with one constructor
 kernel-mut-lends = `&mut` lends a `var`, a `&mut` parameter or a field of one
+kernel-mut-lent-written = { $name } is borrowed by this call and written by an argument after it; bind that argument with `let` first
 kernel-mut-argument = `&mut` is an argument of a call
 kernel-mut-lambda = a lambda does not change the state
 kernel-mut-match-type = a `match` that changes the state needs its type: `let x: T := match …` or `⊢ T from match e …`
 kernel-mut-var-type = `var { $name }` needs its type to be changed in a `match`: `var { $name }: T := …`
 kernel-mut-term = this term does not change the state in a function in the proof language
 kernel-mut-assign = `{ $name } :=` assigns a `var` or a `&mut` parameter
+kernel-assign-through-borrow = write `*{ $place } := …` to write through the borrow
+kernel-deref-needs-mut-borrow = `*{ $place } := …` writes through a `&mut` borrow, and `{ $place }` is not one
 kernel-mut-block = a block in a function holds `let`, `var`, `:=` and terms
 kernel-mut-param-type = `&mut { $name }` needs its type
 kernel-mut-verdict = `{ $name }`: { $verdict }
@@ -316,9 +337,9 @@ kernel-resume-hint-once = declare it `resume <=1` to resume it
 kernel-resume-hint-many = declare it `resume ω` to resume more than once
 kernel-resume-overused = the arm for `{ $effect }` may call `{ $cont }` { $times }, but `{ $effect }` is declared `resume { $written }`; { $hint }
 kernel-wf-list-mismatch = `decreasing_by`: the list of what `{ $name }` makes does not match what it made
-kernel-wf-needs = `decreasing_by` needs `{ $name }`: import "WellFounded.taut"
+kernel-wf-needs = `decreasing_by` needs `{ $name }`: import "well_founded.taut"
 kernel-wf-no-param = `decreasing_by` recurs on the first parameter, and there is none
-kernel-wf-where = `decreasing_by` does not take `where` or effects
+kernel-wf-where = `decreasing_by` does not take a `where` the proof language cannot read
 kernel-wf-result = `decreasing_by` needs a result type
 kernel-wf-typed = `decreasing_by` needs every parameter typed
 kernel-wf-call-arity = a recursive call of `{ $name }` takes its { $count } arguments and then the proof that the first is below `{ $param }`
@@ -342,3 +363,4 @@ kernel-instance-first-order = instance arguments must be first-order constructor
 kernel-instance-ambiguous = instance selection is ambiguous
 kernel-instance-resolution-cycle = instance resolution contains a cyclic constraint
 kernel-instance-resolution-depth = instance resolution exceeds the nesting limit
+kernel-match-labelled = `{ $name }` is a constructor of `{ $family }`, but the value matched is under the label `@{ $label }`, which is a type of its own: write the pattern with the label (`@{ $label } { $name }`), or take the label off in the annotation of the value (`match (e: { $family }(…))`, as `@{ $label } T <: T`)

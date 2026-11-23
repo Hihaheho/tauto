@@ -1,5 +1,6 @@
 //! What an editor asks of a name (`tauto lsp`): the declaration of a use, a
-//! hover, the uses of a declaration, and renaming one.
+//! hover, the uses of a declaration, and renaming one. A name a macro lists
+//! after `=>` hovers as the declaration that call made.
 //!
 //! The names come from `index`, which reads the text as written. Types come
 //! from `typed`, which loads the program, expands its macros and runs the
@@ -15,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use tauto_parol::Span;
 
-mod index;
+pub mod index;
 mod typed;
 
 pub use index::{DefId, Kind, is_keyword};
@@ -204,6 +205,11 @@ impl<'a> Navigator<'a> {
     pub fn hover(&self, offset: usize, types: Option<&TypeInfo>) -> Option<Hover> {
         let at = offset as u32;
         let own = self.path().to_path_buf();
+        if let Some(types) = types
+            && let Some(hover) = self.generated_hover(at, &own, types)
+        {
+            return Some(hover);
+        }
         let call = self
             .index()
             .macro_calls
@@ -271,6 +277,30 @@ impl<'a> Navigator<'a> {
             }
         }
         Some(Hover { span, contents })
+    }
+
+    /// The declaration a macro made for the name written at `at` in its `=>` list.
+    fn generated_hover(&self, at: u32, own: &Path, types: &TypeInfo) -> Option<Hover> {
+        let hit = self
+            .index()
+            .generated_names
+            .iter()
+            .filter(|g| g.span.contains(at))
+            .min_by_key(|g| g.span.end - g.span.start)?;
+        let run = types.expansion_at(own, hit.call)?;
+        let output = without_scopes(run.expansion.output.trim_end());
+        let body = declaration_text(&output, &hit.kind, &hit.name).unwrap_or(output);
+        let body = body.trim();
+        if body.is_empty() {
+            return None;
+        }
+        Some(Hover {
+            span: hit.span,
+            contents: format!(
+                "expands to ({} steps):\n\n```tauto\n{body}\n```",
+                run.expansion.steps
+            ),
+        })
     }
 
     fn describe(&self, id: DefId, ty: Option<String>, from: Option<&Path>) -> String {
@@ -638,18 +668,123 @@ fn tote_root(file: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// A macro's output with the scope each name carries (`Eq@1`) left out.
+/// The declaration of kind `kind` and name `name` in a macro's printed output,
+/// when that output parses. A `class` and an `instance` may share a name, so
+/// the kind is part of the match. An `effect` is matched directly. A name a
+/// `pub import` reexports is the member it names inside that module.
+fn declaration_text(output: &str, kind: &str, name: &str) -> Option<String> {
+    let program = tauto::surface::parse_program_unresolved_at(output, 0).ok()?;
+    let stmt = find_decl(&program.stmts, kind, name)?;
+    let text = tauto::surface::print::print_stmts(std::slice::from_ref(stmt));
+    let text = without_scopes(text.trim_end());
+    let text = text.trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+fn bare(name: &str) -> &str {
+    tauto::macros::scope::split(name).0
+}
+
+fn find_decl<'a>(
+    stmts: &'a [tauto::surface::Stmt],
+    kind: &str,
+    name: &str,
+) -> Option<&'a tauto::surface::Stmt> {
+    if let Some(stmt) = stmts.iter().find_map(|stmt| match_decl(stmt, kind, name)) {
+        return Some(stmt);
+    }
+    reexport_target(stmts, kind, name)
+}
+
+/// The member `name` of kind `kind` that a `pub import` in `stmts` reexports.
+fn reexport_target<'a>(
+    stmts: &'a [tauto::surface::Stmt],
+    kind: &str,
+    name: &str,
+) -> Option<&'a tauto::surface::Stmt> {
+    use tauto::surface::Stmt;
+    for stmt in stmts {
+        let Stmt::Reexport { module, names, .. } = stmt else {
+            continue;
+        };
+        if !names.iter().any(|(n, _)| bare(n) == name) {
+            continue;
+        }
+        let Some(items) = stmts.iter().find_map(|other| match other {
+            Stmt::Module {
+                name: module_name,
+                items,
+                ..
+            } if bare(module_name) == bare(module) => Some(items.as_slice()),
+            _ => None,
+        }) else {
+            continue;
+        };
+        if let Some(found) = find_decl(items, kind, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn match_decl<'a>(
+    stmt: &'a tauto::surface::Stmt,
+    kind: &str,
+    name: &str,
+) -> Option<&'a tauto::surface::Stmt> {
+    use tauto::surface::Stmt;
+    match stmt {
+        Stmt::Module {
+            name: module,
+            items,
+            ..
+        } => {
+            let module = bare(module);
+            if kind == "module" && module == name {
+                return Some(stmt);
+            }
+            let rest = name.strip_prefix(module)?.strip_prefix("::")?;
+            find_decl(items, kind, rest)
+        }
+        Stmt::Mutual { items, .. } => find_decl(items, kind, name),
+        Stmt::Attributed { stmt, .. } => match_decl(stmt, kind, name),
+        Stmt::Effect(effect) => {
+            (kind == "effect" && bare(effect.name.as_str()) == name).then_some(stmt)
+        }
+        _ => {
+            let mut have = Vec::new();
+            (tauto::generated::declared(stmt, &mut have)
+                && have.iter().any(|(k, n)| k == kind && n == name))
+            .then_some(stmt)
+        }
+    }
+}
+
+/// A macro's output with the scope each name carries left out.
+/// Printed terms write it as `Eq@1`. Printed declarations keep the mark as
+/// `left\u{1}1` (U+0001, then the scope ids, commas between them).
 fn without_scopes(output: &str) -> String {
     let mut out = String::new();
     let mut chars = output.chars().peekable();
     let mut last = ' ';
     while let Some(c) = chars.next() {
-        if c == '@'
-            && (last.is_alphanumeric() || last == '_')
+        if (c == '@' || c == '\u{1}')
+            && tauto_parol::unicode::is_ident_continue(last)
             && chars.peek().is_some_and(char::is_ascii_digit)
         {
             while chars.peek().is_some_and(char::is_ascii_digit) {
                 chars.next();
+            }
+            while chars.peek() == Some(&',') {
+                let mut ahead = chars.clone();
+                ahead.next();
+                if !ahead.peek().is_some_and(char::is_ascii_digit) {
+                    break;
+                }
+                chars.next();
+                while chars.peek().is_some_and(char::is_ascii_digit) {
+                    chars.next();
+                }
             }
             continue;
         }
@@ -666,8 +801,10 @@ fn line_col(text: &str, offset: usize) -> (usize, usize) {
 
 fn check_name(name: &str) -> Result<(), String> {
     let mut chars = name.chars();
-    let ok = chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
-        && chars.all(|c| c.is_alphanumeric() || c == '_');
+    let ok = chars
+        .next()
+        .is_some_and(tauto_parol::unicode::is_ident_start)
+        && chars.all(tauto_parol::unicode::is_ident_continue);
     if !ok {
         return Err(tauto_message::msg!("analyzer-rename-not-a-name", name = name).to_string());
     }
@@ -685,20 +822,6 @@ impl Navigator<'_> {
             .defs
             .iter()
             .filter_map(|d| d.spans.first().map(|s| s.start as usize))
-            .collect()
-    }
-
-    /// The names this file declares, each with where it is written and what it is.
-    #[doc(hidden)]
-    pub fn declared_kinds(&self) -> Vec<(usize, String, Kind)> {
-        self.index()
-            .defs
-            .iter()
-            .filter_map(|d| {
-                d.spans
-                    .first()
-                    .map(|s| (s.start as usize, d.name.clone(), d.kind))
-            })
             .collect()
     }
 

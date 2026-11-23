@@ -1,0 +1,99 @@
+description = "A file that imports a prelude file (`import std::builtin::par`) means the prelude's declaration of a name it brings: a dependency or a file it does not import directly that declares the same name is not ambiguous with it."
+
+// `lib` declares effects `spawn` and `wait`; `app` depends on it but no file
+// of `app` imports it. `wait` of the row is `std::builtin::par`'s.
+@ cases.unimported-dependency-is-not-ambiguous
+files_tote = "app"
+tote_errors = []
+files."lib/Tauto.eure" = ```eure
+package { name = "lib" version = "0.1.0" }
+```
+files."lib/src/sched.taut" = ```tauto
+pub(open) effect spawn(): i64
+pub(open) effect wait(ticks: i64): Unit
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+dependencies {
+  lib { path = "../lib" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::par
+
+pub(open) struct Slot { n: i64 }
+
+fn own_slot(s: &Slot): Slot { s }
+
+fn read_slot(cell: Mutex(Slot)): Slot ! {mutex_claim, wait} {
+  var g := Mutex::lock(cell)
+  own_slot(MutexGuard::get(&g))
+}
+
+pub fn main(): i64 { 0 }
+```
+
+// Imports are not transitive: `main.taut` imports `jobs.taut`, which imports
+// `lib::sched`, and `main.taut` still sees only `std::builtin::par`'s `wait`.
+@ cases.transitively-imported-dependency-is-not-ambiguous
+files_tote = "app"
+tote_errors = []
+files."lib/Tauto.eure" = ```eure
+package { name = "lib" version = "0.1.0" }
+```
+files."lib/src/sched.taut" = ```tauto
+pub(open) effect spawn(): i64
+pub(open) effect wait(ticks: i64): Unit
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+dependencies {
+  lib { path = "../lib" }
+}
+```
+files."app/src/jobs.taut" = ```tauto
+import lib::sched { spawn }
+
+pub fn go(): i64 ! {spawn} { perform spawn() }
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::par
+import "jobs.taut"
+
+pub(open) struct Slot { n: i64 }
+
+fn own_slot(s: &Slot): Slot { s }
+
+fn read_slot(cell: Mutex(Slot)): Slot ! {mutex_claim, wait} {
+  var g := Mutex::lock(cell)
+  own_slot(MutexGuard::get(&g))
+}
+
+pub fn main(): i64 { 0 }
+```
+
+// Imported directly, both are seen and neither wins; the prelude's is named
+// once.
+@ cases.directly-imported-dependency-is-ambiguous
+files_tote = "app"
+tote_errors = ["`wait` is ambiguous: it is declared as `lib::src::sched::wait` and `std::prelude::wait`, and this file imports both", "`wait` is ambiguous: it is declared as `lib::src::sched::wait` and `std::prelude::wait`, and this file imports both"]
+files."lib/Tauto.eure" = ```eure
+package { name = "lib" version = "0.1.0" }
+```
+files."lib/src/sched.taut" = ```tauto
+pub(open) effect wait(ticks: i64): Unit
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+dependencies {
+  lib { path = "../lib" }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::par
+import lib::sched
+
+fn hold(): Unit ! {wait} { () }
+
+pub fn main(): i64 { 0 }
+```

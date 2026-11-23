@@ -1,0 +1,173 @@
+description = "The entries of a module, `main` and `test`: performing one calls nothing, and the bodies a run chose are called after the top level is read."
+
+@ cases.a-run-calls-the-one-main-and-no-test
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```tauto
+import std::builtin::os
+
+perform test("quiet", () => print("a test ran\n"))
+perform main(() => print("main ran\n"))
+```
+stdout = "main ran\n"
+
+@ cases.entries-are-computed-by-the-top-level
+source = ```tauto
+import std::builtin::os
+
+fn pick(n: i64): Bool { n == 2 }
+let chosen := pick(2)
+if chosen { perform main(() => print("second\n")) } else { perform main(() => print("first\n")) }
+```
+stdout = "second\n"
+
+@ cases.a-test-run-calls-each-test-and-not-main
+source = ```tauto
+import std::builtin::os
+
+perform main(() => print("main ran\n"))
+perform test("holds", () => expect(1 + 1 == 2, "sum"))
+perform test("prints", () => print("in a test\n"))
+```
+tests = ["holds", "prints"]
+stdout = "in a test\n"
+
+@ cases.two-mains-are-an-error-before-a-body-is-called
+source = ```tauto
+import std::builtin::os
+
+perform main(() => print("one\n"))
+perform main(() => print("two\n"))
+```
+run_error = "the module performs `main` 2 times"
+
+@ cases.a-top-level-beside-an-entry-asks-nothing-of-the-host
+source = ```tauto
+import std::builtin::os
+
+print("before\n")
+perform main(() => print("main\n"))
+```
+rows = "error: the top level performs stdout beside an entry (`main` or `test`); a module's top level only says which entries it has, so put this in the entry's body"
+
+@ cases.a-loop-at-the-top-level-beside-an-entry-is-allowed
+source = ```tauto
+import std::builtin::os
+
+var i := 0
+while i < 3 { i := i + 1 }
+perform main(() => print("done\n"))
+```
+rows = "ok"
+stdout = "done\n"
+
+@ cases.an-imported-file-brings-declarations-only
+entry = "main.taut"
+files."lib.taut" = ```tauto
+pub fn two(): Nat { 2 }
+let unused := two()
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+show(&two())
+```
+stdout = "2\n"
+
+@ cases.an-import-of-a-script-whose-top-level-asks-the-host-is-an-error
+entry = "main.taut"
+files."lib.taut" = ```tauto
+import std::builtin::os
+pub fn two(): Nat { 2 }
+print("from lib\n")
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+show(&two())
+```
+check_errors = ["the top level of an imported script performs stdout"]
+
+@ cases.an-imported-file-whose-top-level-does-not-type-check-is-an-error
+description = "The statements an imported file's top level would run never run, and are type-checked all the same."
+entry = "main.taut"
+files."lib.taut" = ```tauto
+pub fn two(): Nat { 2 }
+let wrong: i64 := true
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+show(&two())
+```
+check_errors = ["Bool does not fit i64"]
+
+@ cases.a-file-of-a-totes-sources-is-a-module-whether-or-not-a-file-imports-it
+description = "Where a file is decides what it is. A file of a tote's sources is a module, imported or not, and the tote's `main` is one too: its top level asks nothing of the host."
+files_tote = "app"
+tote_errors = ["the top level of a module performs stdout", "the top level of a module performs stdout", "the top level of a module performs stdout"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/alone.taut" = ```tauto
+import std::builtin::os
+print("nobody imports this\n")
+```
+files."app/src/lib.taut" = ```tauto
+import std::builtin::os
+pub fn two(): Nat { 2 }
+print("from lib\n")
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os
+import "lib.taut"
+print("the main is a module\n")
+```
+
+@ cases.the-main-of-a-tote-performs-main
+description = "A tote's `main` is a module: what the program does is the body of its `main`, which may print and `show`."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lib.taut" = ```tauto
+pub fn two(): Nat { 2 }
+```
+files."app/src/main.taut" = ```tauto
+import std::builtin::os
+import "lib.taut"
+perform main(() => {
+  print("the main is a module\n")
+  show(&two())
+})
+```
+
+@ cases.a-module-of-a-tote-is-type-checked-where-it-would-run-nothing
+description = "The statements of a module's top level that the tote's check does not run are type-checked all the same."
+files_tote = "app"
+tote_errors = ["Bool does not fit i64"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/hello.taut" = ```tauto
+let wrong: i64 := true
+```
+files."app/src/main.taut" = ```tauto
+perform main(() => show(&2))
+```
+
+@ cases.a-test-body-may-wait-on-a-call-polymorphic-in-its-row
+description = "The `wait` a `test` body performs through a function whose type is polymorphic in an effect row is the body's, not the top level's: check and test agree."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" version = "0.1.0" }'
+files."app/src/a.taut" = ```tauto
+import std::builtin::par
+pub effect rt { wait }
+pub fn reactive<T, !e>(body: &(() -> T ! {rt} ∪ e)): T ! {wait} ∪ e { body() }
+perform test("a", () => { expect(reactive(() => true), "a") })
+```
+
+@ cases.a-wait-at-the-top-level-of-a-module-is-still-rejected
+description = "Allowing `wait` in a `test` body does not allow it at the top level beside the entry."
+files_tote = "app"
+tote_errors = ["the top level performs wait beside an entry"]
+files."app/Tauto.eure" = 'package { name = "app" version = "0.1.0" }'
+files."app/src/a.taut" = ```tauto
+import std::builtin::par
+pub effect rt { wait }
+pub fn reactive<T, !e>(body: &(() -> T ! {rt} ∪ e)): T ! {wait} ∪ e { body() }
+let x: Bool := reactive(&(() => true))
+perform test("a", () => { expect(true, "a") })
+```

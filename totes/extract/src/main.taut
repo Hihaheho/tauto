@@ -1,0 +1,204 @@
+import "decl.taut"
+import "extract.taut"
+import "reach.taut"
+import "names.taut"
+import "../../elaborator/src/manifest.taut"
+import "../../elaborator/src/program.taut"
+import "../../elaborator/src/elaborate.taut"
+import "../../elaborator/src/prelude.taut"
+import "../../elaborator/src/deq.taut"
+import "../../elaborator/src/manifest.taut"
+import "../../kernel/src/data.taut"
+import "../../surface/src/surface.taut"
+import "../../unicode/src/unicode.taut"
+import "../../parse/src/parse.taut"
+import "../../surface/src/unascribe.taut"
+import "../../syntax/src/syntax.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/classes.taut"
+import std::text
+import std::base
+import std::builtin::os
+
+pub fn ex_main_program(tables: SyntaxTables, classes: UnicodeClasses, size: Nat, library: List(SurfaceStmt), imports: List(SurfaceStmt), stmts: List(SurfaceStmt)): ExResult(Text) ! {div} {
+  match elab_prelude_stmts(tables) {
+    None => ExErr("cannot read the prelude")
+    Some(prelude) => ex_program(
+      classes,
+      size + 16,
+      re_declares(size + 16, library, "Text"),
+      prelude,
+      List::append(re_library(size + 16, ex_mapped_fns(), library, imports, stmts), List::append(re_imports(size + 16, ex_mapped_fns(), library, imports, stmts), stmts)),
+      library
+    )
+  }
+}
+
+// What the files a program imports come to: the files read, the size of their
+// sources, the standard library's modules the program's own files import
+// (the elaborator reads those), the declarations of the files imported by a
+// path and those of the library's, each file's imports first.
+pub(open) inductive ExLoaded: Type {
+  Mk(done: List(Text), size: Nat, library: List(Text), stmts: List(SurfaceStmt), lib_stmts: List(SurfaceStmt)): ExLoaded
+}
+
+pub fn ex_is_library_import(written: Text): Bool {
+  text_starts_with(written, "std::", 0) || text_starts_with(written, "std.", 0)
+}
+
+pub fn ex_library_imports(paths: List(Text)): List(Text) {
+  match paths {
+    Nil => Nil
+    Cons(p, rest) => if ex_is_library_import(p) { Cons(p, ex_library_imports(rest)) } else { ex_library_imports(rest) }
+  }
+}
+
+// The files imported by a path, as the elaborator finds them, each once.
+pub fn ex_load(fuel: Nat, in_lib: Bool, tables: SyntaxTables, classes: UnicodeClasses, roots: ElabRoots, dir: Text, paths: List(Text), done: List(Text)): Result(ExLoaded, Text) ! {div, fs_read} {
+  match fuel {
+    Zero => Err("imports nest too deeply")
+    Succ(j) => match paths {
+      Nil => Ok(ExLoaded::Mk(done, 0, Nil, Nil, Nil))
+      Cons(p, rest) => match elab_import_file(roots, dir, p) {
+        Err(e) => Err(e)
+        Ok(None) => ex_load(j, in_lib, tables, classes, roots, dir, rest, done)
+        Ok(Some(file)) => if elab_text_in(done, file) { ex_load(j, in_lib, tables, classes, roots, dir, rest, done) } else {
+          match read_file(file) {
+            Err(m) => Err(Text::concat_all([file, ": ", m]))
+            Ok(src) => match syntax_parse(tables, src) {
+              None => Err(Text::concat(file, ": cannot parse"))
+              Some(Root) => {
+                let stmts := surface_unascribe(surface_program_of(
+                  SurfaceCtx {
+                    source: src,
+                    base: 0,
+                    classes: classes,
+                    fuel: surface_size(Root) + 1,
+                    lambda_types: true,
+                  own_budget: false,
+                  own_budget_memory: false
+                  },
+                  Root
+                ))
+                match ex_load(j, in_lib || ex_is_library_import(p), tables, classes, roots, elab_dir_of(file), elab_import_paths(stmts), Cons(file, done)) {
+                  Err(e) => Err(e)
+                  Ok(inner) => match ex_load(j, in_lib, tables, classes, roots, dir, rest, inner.done) {
+                    Err(e) => Err(e)
+                    Ok(more) => if in_lib || ex_is_library_import(p) {
+                      Ok(ExLoaded::Mk(more.done, Text::len(src) + inner.size + more.size, if in_lib { more.library } else { Cons(p, more.library) }, List::append(inner.stmts, more.stmts), List::append(inner.lib_stmts, List::append(stmts, more.lib_stmts))))
+                    } else {
+                      Ok(ExLoaded::Mk(more.done, Text::len(src) + inner.size + more.size, List::append(inner.library, more.library), List::append(inner.stmts, List::append(stmts, more.stmts)), List::append(inner.lib_stmts, more.lib_stmts)))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// A file is extracted once the elaborator has checked all of it: a program
+// it does not check is an error, not extracted unchecked.
+pub fn ex_source(k: Nat, lib: Text, path: Text, source: Text): ExResult(Text) ! {div, fs_canonicalize, fs_read} {
+  match syntax_tables() {
+    None => ExErr("invalid syntax tables")
+    Some(tables) => ⊢ ExResult(Text) from match syntax_parse(tables, source) {
+      None => ExErr("cannot parse source")
+      Some(Root) => if elab_unsupported(surface_size(Root) + 1, Cons(Root, Nil)) {
+        ExErr("attributes and generated declarations are unsupported")
+      } else {
+        let classes := unicode_classes()
+        let stmts := surface_unascribe(surface_program_of(
+          SurfaceCtx {
+            source: source,
+            base: 0,
+            classes: classes,
+            fuel: surface_size(Root) + 1,
+            lambda_types: true,
+          own_budget: false,
+          own_budget_memory: false
+          },
+          Root
+        ))
+        var core := kernel_new()
+        ⊢ ExResult(Text) from match elab_prelude_source(k, &mut core, tables) {
+          None => ExErr("cannot read the prelude")
+          // The imports are read as the elaborator reads them; the files
+          // imported by a path are checked with the program and extracted
+          // before it; what is used of the library's is mapped, never
+          // extracted unread.
+          Some(p) => {
+            let derived := dq_derive(k, &mut core, tables, dq_families(), p.fst)
+            ⊢ ExResult(Text) from match ex_load(64, false, tables, classes, ElabRoots::Mk(lib, Nil), elab_dir_of(path), elab_import_paths(stmts), Cons(path, Nil)) {
+              Err(e) => ExErr(e)
+              Ok(loaded) => ⊢ ExResult(Text) from match elab_load(
+                64,
+                k,
+                &mut core,
+                tables,
+                ElabRoots::Mk(lib, Nil),
+                elab_dir_of(path),
+                List::append(loaded.library, ex_library_imports(elab_import_paths(stmts))),
+                ElabImports { files: Nil, bindings: derived, classes: Nil, effects: Nil, visible: Nil }
+              ) {
+                Err(e) => ExErr(e)
+                Ok(r) => {
+                  let all := List::append(loaded.stmts, stmts)
+                  let checked: ElabResult(List(ElabItem)) := elab_program_after(all, k, &mut core, r.bindings)
+                  ⊢ ExResult(Text) from match checked {
+                    ElabErr(m) => ExErr(m)
+                    ElabOk(^items) => ex_main_program(tables, classes, Text::len(source) + loaded.size, loaded.lib_stmts, loaded.stmts, stmts)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_main_files(lib: Text, paths: List(Text)): Unit ! {div, exit, fs_canonicalize, fs_read, stderr, stdout} {
+  match paths {
+    Nil => #()
+    Cons(path, rest) => {
+      match read_file(path) {
+        Err(message) => {
+          eprint(Text::concat_all([path, ": ", message, text_newline()]))
+          perform exit(1)
+        }
+        Ok(source) => match ex_source(2000, lib, path, source) {
+          ExErr(message) => {
+            eprint(Text::concat_all([path, ": ", message, text_newline()]))
+            perform exit(1)
+          }
+          ExOk(text) => print(text)
+        }
+      }
+      ex_main_files(lib, rest)
+    }
+  }
+}
+// `--std DIR` names the standard library that `import std::…` reads.
+pub fn ex_main(args: List(Text)): Unit ! {div, exit, fs_canonicalize, fs_read, stderr, stdout} {
+  match args {
+    Cons(a, rest) => if a == "--std" {
+      match rest {
+        Cons(dir, files) => ex_main_files(dir, files)
+        Nil => {
+          eprint(Text::concat("--std needs a directory", text_newline()))
+          perform exit(1)
+        }
+      }
+    } else { ex_main_files("", args) }
+    Nil => #()
+  }
+}
+
+perform main(() => {
+  ex_main(perform argv())
+})

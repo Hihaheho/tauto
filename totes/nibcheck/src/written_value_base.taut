@@ -1,7 +1,7 @@
 import "written_binder_sound.taut"
 import "written_leaf_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "datas.taut"
 import "rules_written.taut"
 import "rules_written_atomic.taut"
@@ -9,6 +9,7 @@ import "rules_written_binders.taut"
 import "rules_written_name.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "written_name_sound.taut"
 import "../../surface/src/surface.taut"
 
@@ -20,7 +21,7 @@ pub theorem written_name_determined<generics: Ordmap(
 ), name: Text, t: Ty>(
   meaning: WrittenTypeName(generics, name, t)
 ): ck_written_name(name, generics) = t {
-  ⊢ ck_written_name(name, generics) = t from match meaning {
+  match meaning {
     WrittenNamePrimitive(value, builtin) => Eq::trans(
       written_name_primitive_unf(name, generics),
       Eq::congr((o: Option(Ty)) => written_name_primitive_lookup(name, generics, o), builtin)
@@ -46,7 +47,7 @@ pub theorem written_atomic_name<env: Datas, generics: Ordmap(
 ), name: Text, t: Ty>(
   meaning: WrittenAtomicType(env, generics, name, t)
 ): WrittenTypeName(generics, name, t) {
-  ⊢ WrittenTypeName(generics, name, t) from match meaning {
+  match meaning {
     AtomicPrimitive(value, builtin) => WrittenNamePrimitive(value, builtin)
     AtomicParameter(value, ordinary, bound) => WrittenNameParameter(value, ordinary, bound)
     AtomicNominal(ordinary, unbound, arity) => WrittenNameNominal(ordinary, unbound)
@@ -58,13 +59,13 @@ pub theorem written_name_mode_value<env: Datas, generics: Ordmap(
 ), name: Text, partial: Bool, t: Ty>(
   meaning: WrittenNameType(env, generics, name, partial, t)
 ): ck_written_name(name, generics) = t {
-  ⊢ ck_written_name(name, generics) = t from match meaning {
+  match meaning {
     WrittenNameValue(value, atomic) => written_name_determined(written_atomic_name(atomic))
     WrittenNameConstructor(value, named) => written_name_determined(named)
   }
 }
 pub theorem written_binder_map_value<binders: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), initial: Ordmap(
   Text,
   Ty
@@ -72,17 +73,17 @@ pub theorem written_binder_map_value<binders: List(
   Text,
   Ty
 )>(meaning: WrittenBinderMap(binders, initial, final)): binders_map(binders, initial) = final {
-  ⊢ binders_map(binders, initial) = final from match meaning {
+  match meaning {
     WrittenBinderMapNil(map) => Refl
     WrittenBinderMapCons(name, kind, rest, before, after, tail) => written_binder_map_value(tail)
   }
 }
 pub theorem written_poly_value<binders: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), body: Ty, result: Ty>(
   meaning: WrittenPolymorphicType(binders, body, result)
 ): ty_poly_of(binders, body) = result {
-  ⊢ ty_poly_of(binders, body) = result from match meaning {
+  match meaning {
     WrittenMonomorphic(value) => Refl
     WrittenPolymorphic(first, rest, value) => Refl
   }
@@ -90,7 +91,7 @@ pub theorem written_poly_value<binders: List(
 pub theorem written_function_kind_determined<spelling: Text, kind: Kind>(
   meaning: WrittenFunctionKind(spelling, kind)
 ): written_function_kind_value(kind_parse(spelling)) = kind {
-  ⊢ written_function_kind_value(kind_parse(spelling)) = kind from match meaning {
+  match meaning {
     MkWrittenFunctionKind(value, parsed) => Eq::congr(written_function_kind_value, parsed)
     WrittenFunctionKindDefault(absent) => Eq::congr(written_function_kind_value, absent)
   }
@@ -98,11 +99,11 @@ pub theorem written_function_kind_determined<spelling: Text, kind: Kind>(
 
 pub theorem written_binder_missing(
   p: SurfaceParam,
-  o: Option(Pair(Text, Kind)),
+  o: Option(Text × Kind),
   found: pi_binder(p) = o,
-  ordinary: ∀ b: Pair(Text, Kind). (WrittenKindBinder(p, b)) -> False
+  ordinary: ∀ b: (Text × Kind). (WrittenKindBinder(p, b)) -> False
 ): o = None {
-  ⊢ o = None from match o {
+  match o {
     None => Refl
     Some(b) => False::elim(ordinary(b, pi_binder_sound(p, b, found)))
   }
@@ -110,18 +111,18 @@ pub theorem written_binder_missing(
 pub theorem written_prefix_determined<params: List(
   SurfaceParam
 ), binders: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), suffix: List(
   SurfaceParam
 )>(
   meaning: WrittenBindersPrefix(params, binders, suffix)
-): pi_binders(params) = (Pair { fst: binders, snd: suffix }) {
-  ⊢ pi_binders(params) = (Pair { fst: binders, snd: suffix }) from match meaning {
+): pi_binders(params) = (#(binders, suffix)) {
+  match meaning {
     WrittenBindersNil => Refl
     WrittenBindersStop(first, rest, ordinary) => Eq::trans(
       written_binders_unf(first, rest),
       Eq::congr(
-        (o: Option(Pair(Text, Kind))) => written_binders_choice(first, rest, o),
+        (o: Option(Text × Kind)) => written_binders_choice(first, rest, o),
         written_binder_missing(first, pi_binder(first), Refl, ordinary)
       )
     )
@@ -129,11 +130,11 @@ pub theorem written_prefix_determined<params: List(
       written_binders_unf(first, rest),
       Eq::trans(
         Eq::congr(
-          (o: Option(Pair(Text, Kind))) => written_binders_choice(first, rest, o),
+          (o: Option(Text × Kind)) => written_binders_choice(first, rest, o),
           written_binder_complete(head)
         ),
         Eq::congr(
-          (r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))) => written_binders_cons_result(
+          (r: List(Text × Kind) × List(SurfaceParam)) => written_binders_cons_result(
             binder,
             r
           ),

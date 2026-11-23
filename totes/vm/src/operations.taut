@@ -1,35 +1,37 @@
 import "builtins.taut"
-import "syn.taut"
+import "../../synrun/src/syn.taut"
 import "mval.taut"
-import std::Int
-import std::Base
-import std::Float
-import std::Float32
-import std::Text
+import std::int
+import std::base
+import std::array
+import std::float
+import std::float32
+import std::text
 
 pub fn m_op_arity(op: MOp): Nat {
   match op {
-    MoArith(a, w) => if Nat::eq(a, 3) { 1 } else { 2 }
+    MoArith(a, ^w) => if Nat::eq(a, 3) { 1 } else { 2 }
     MoFloat(a) => if Nat::eq(a, 3) { 1 } else { 2 }
     MoFloat32(a) => if Nat::eq(a, 3) { 1 } else { 2 }
-    MoDivide(m, w) => 2
-    MoCmp(c) => 2
-    MoEq(n) => 2
+    MoDivide(^m, ^w) => 2
+    MoCmp(^c) => 2
+    MoEq(^n) => 2
     MoConcat => 2
     MoTextCompare => 2
-    MoConstruct(c, n, order) => n
-    MoProduct(n, picks) => n
+    MoConstruct(^c, n, ^order) => n
+    MoProduct(n, ^picks) => n
     _ => 1
   }
 }
 
+// A result its width does not hold performs `overflow`.
 pub fn m_checked(w: Nat, i: Int, cx: MCx): MOut {
-  if m_fits(w, i) { MoutVal(MvInt(i), cx) } else { MoutErr(m_too_large()) }
+  if m_fits(w, i) { MoutVal(MvInt(i), cx) } else { MoutPerform("overflow", cx) }
 }
 
 // Division and remainder that round toward zero, as Rust's do.
 pub fn m_divide(modulo: Bool, w: Nat, a: Int, b: Int, cx: MCx): MOut {
-  ⊢ MOut from match Nat::eq(m_int_abs(b), 0) eqn hz {
+  match Nat::eq(m_int_abs(b), 0) eqn hz {
     true => MoutErr(m_division_by_zero())
     false => ⊢ MOut from match modulo {
       false => m_checked(
@@ -77,20 +79,77 @@ pub fn m_order(a: MVal, b: MVal): Nat {
 }
 
 pub fn m_member_pick(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
   args: List(MVal),
-  pick: Pair(Nat, Option(Nat))
+  pick: (Nat × Option(Nat))
 ): MVal {
   match pick {
-    Pair { fst: i, snd: m } => match m {
+    #(i, m) => match m {
       None => m_nth_or_unit(args, i)
       Some(j) => m_at(ctors, m_get(ctors, cx, m_nth_or_unit(args, i)), MpathIndex(j))
     }
   }
 }
 
-pub fn m_op(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): MOut {
+pub fn m_is_int(v: MVal): Bool {
+  match v {
+    MvInt(^i) => true
+    _ => false
+  }
+}
+
+pub fn m_is_float(v: MVal): Bool {
+  match v {
+    MvFloat(^x) => true
+    _ => false
+  }
+}
+
+pub fn m_is_float32(v: MVal): Bool {
+  match v {
+    MvFloat32(^x) => true
+    _ => false
+  }
+}
+
+pub fn m_is_text(v: MVal): Bool {
+  match v {
+    MvText(^t) => true
+    MvShown(^t) => true
+    MvBuf(^t) => true
+    _ => false
+  }
+}
+
+// Whether the operands of `op` have the kinds it reads. A checked program
+// never gives it another kind, so a value of another kind stops the run with
+// the malformed-bytecode error (as a malformed operand of `MoNot` does)
+// instead of reaching the default value of `m_as_int` and the other readers.
+pub fn m_operands_ok(ctors: Array(MCtor), cx: MCx, op: MOp, args: List(MVal)): Bool {
+  let x := m_get(ctors, cx, m_nth_or_unit(args, 0))
+  let y := m_get(ctors, cx, m_nth_or_unit(args, 1))
+  match op {
+    MoArith(a, ^w) => m_is_int(x) && (Nat::eq(a, 3) || m_is_int(y))
+    MoFloat(a) => m_is_float(x) && (Nat::eq(a, 3) || m_is_float(y))
+    MoFloat32(a) => m_is_float32(x) && (Nat::eq(a, 3) || m_is_float32(y))
+    MoDivide(^modulo, ^w) => m_is_int(x) && m_is_int(y)
+    MoConcat => m_is_text(x) && m_is_text(y)
+    MoTextOfInt => m_is_int(x)
+    MoTextLen => m_is_text(x)
+    MoTextCompare => m_is_text(x) && m_is_text(y)
+    MoSynParse(^parser) => m_is_text(x)
+    _ => true
+  }
+}
+
+pub fn m_op(ctors: Array(MCtor), cx: MCx, op: MOp, args: List(MVal)): MOut {
+  if m_operands_ok(ctors, cx, op, args) { m_op_run(ctors, cx, op, args) } else {
+    MoutErr(m_internal())
+  }
+}
+
+fn m_op_run(ctors: Array(MCtor), cx: MCx, op: MOp, args: List(MVal)): MOut {
   let a0 := m_nth_or_unit(args, 0)
   let x := m_get(ctors, cx, a0)
   let y := m_get(ctors, cx, m_nth_or_unit(args, 1))
@@ -117,7 +176,7 @@ pub fn m_op(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): MOut {
       let j := m_as_float(y)
       if Nat::eq(a, 4) {
         match Float::checked_div(i, j) {
-          None => MoutErr(m_division_by_zero())
+          None => MoutPerform("divzero", cx)
           Some(q) => MoutVal(MvFloat(q), cx)
         }
       } else {
@@ -144,7 +203,7 @@ pub fn m_op(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): MOut {
       let j := m_as_float32(y)
       if Nat::eq(a, 4) {
         match Float32::checked_div(i, j) {
-          None => MoutErr(m_division_by_zero())
+          None => MoutPerform("divzero", cx)
           Some(q) => MoutVal(MvFloat32(q), cx)
         }
       } else {
@@ -176,7 +235,7 @@ pub fn m_op(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): MOut {
     }
     MoConcat => MoutVal(MvText(Text::concat(m_as_text(x), m_as_text(y))), cx)
     MoTextOfInt => MoutVal(MvText(m_text_of_int(m_as_int(x))), cx)
-    MoTextLen => MoutVal(m_int(List::length(Text::bytes(m_as_text(x)))), cx)
+    MoTextLen => MoutVal(m_int(Text::len(m_as_text(x))), cx)
     MoTextCompare => {
       let o := m_bytes_cmp(Text::bytes(m_as_text(x)), Text::bytes(m_as_text(y)))
       MoutVal(
@@ -184,13 +243,13 @@ pub fn m_op(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): MOut {
         cx
       )
     }
-    MoConstruct(c, n, order) => MoutVal(
+    MoConstruct(c, ^n, order) => MoutVal(
       MvData(c, List::map((i: Nat) => m_nth_or_unit(args, i), order)),
       cx_add_cells(cx, Succ(List::length(order)))
     )
-    MoProduct(n, picks) => MoutVal(
+    MoProduct(^n, picks) => MoutVal(
       MvProduct(
-        List::map((pk: Pair(Nat, Option(Nat))) => m_member_pick(ctors, cx, args, pk), picks)
+        List::map((pk: Nat × Option(Nat)) => m_member_pick(ctors, cx, args, pk), picks)
       ),
       cx
     )
@@ -202,7 +261,7 @@ pub fn m_op(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): MOut {
     }), cx)
     MoInject(u, i) => MoutVal(MvInject(u, i, a0), cx)
     MoRemap(to, table) => match x {
-      MvInject(u, i, inner) => match to {
+      MvInject(^u, i, inner) => match to {
         None => MoutVal(inner, cx)
         Some(t) => match List::nth(table, i) {
           Some(e) => match e {
@@ -215,18 +274,24 @@ pub fn m_op(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): MOut {
       _ => MoutVal(x, cx)
     }
     MoTempRef => match cx_temp(cx, a0) {
-      Pair { fst: r, snd: cx2 } => MoutVal(r, cx2)
+      #(r, cx2) => MoutVal(r, cx2)
     }
     MoDeref => MoutVal(x, cx)
     MoUnbox => match a0 {
       MvRef(cell, path) => MoutVal(m_at_ref(ctors, cx_cell(cx, cell), path), cx)
       _ => MoutVal(a0, cx)
     }
-    MoSynParse(parser) => MoutVal(syn_run(parser, m_as_text(x)), cx)
+    MoSynParse(parser) => MoutVal(
+      match syn_run(parser, m_as_text(x)) {
+        Ok(v) => m_ok(m_of_syn(v))
+        Err(d) => m_errv(m_of_syn(d))
+      },
+      cx
+    )
     MoPath(path) => match a0 {
       MvRef(cell, p0) => MoutVal(MvRef(cell, mr_extend(p0, path)), cx)
       _ => match cx_alloc(cx, MoCell(a0)) {
-        Pair { fst: cell, snd: cx2 } => MoutVal(MvRef(cell, MrPath(List::reverse(path))), cx2)
+        #(cell, cx2) => MoutVal(MvRef(cell, MrPath(List::reverse(path))), cx2)
       }
     }
   }

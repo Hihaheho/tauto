@@ -5,7 +5,7 @@
 //!
 //! * `false` and `true` are the constructors of the prelude's `Bool`, in
 //!   terms and in patterns, as a numeral is `Zero` and `Succ`s.
-//! * Once `std/Text.taut` has declared `inductive Text { Mk(bytes:
+//! * Once `std/text.taut` has declared `inductive Text { Mk(bytes:
 //!   List(Nat)) }`, a literal `"ab"` is `Text.Mk(Cons(Nat, 97, Cons(Nat, 98,
 //!   Nil(Nat))))`: its UTF-8 bytes. The sugar writes `Cons(97, …)` and
 //!   leaves the element type to elaboration, which fills it in from the
@@ -16,13 +16,13 @@
 //!   values is the branches on `==` it stands for (`literal_chain`). So is a
 //!   `match` on an `Int` whose arms are numerals, read where the type is known
 //!   (`matching.rs`): a numeral pattern on a `Nat` is its constructors.
-//! * Once `std/Float.taut` has declared `inductive Float { Mk(bits:
+//! * Once `std/float.taut` has declared `inductive Float { Mk(bits:
 //!   U64) }`, a literal `1.5` is `Float::of_raw(4609434218613702656)`: the
 //!   bits of the nearest `Float`, as Rust's `str::parse` reads it. A literal
 //!   too large for a `Float` is left as it is, and the kernel rejects it.
 //!   `-1.5` is the literal of the negative one.
 //! * The operators on numbers and decisions are functions of the prelude
-//!   and `std/Base.taut`, each read so once its function is declared: `a - b`
+//!   and `std/base.taut`, each read so once its function is declared: `a - b`
 //!   is `Nat::sub(a, b)`, `a < b` is `Nat::lt(a, b)`, `a > b` is
 //!   `Nat::lt(b, a)`, `a && b` is `Bool::and(a, b)`, and so on. (`==` and `!=`
 //!   depend on the type of their operands and are read where it is known, in
@@ -46,23 +46,23 @@ use std::collections::{BTreeSet, HashMap};
 use super::{Kernel, T};
 use crate::surface::{MatchArm, Pattern, Stmt, TermKind};
 
-/// Whether `name` is the constructor `Mk` of some type: `Mk`, `Text::Mk`, `std::Text::Text::Mk`.
+/// Whether `name` is the constructor `Mk` of some type: `Mk`, `Text::Mk`, `std::text::Text::Mk`.
 fn is_mk(name: &str) -> bool {
     let short = tauto_surface::surface::qualify::short(name);
     short == "Mk" || short.ends_with("::Mk")
 }
 
-struct Sugar {
-    /// Whether `#(…)` patterns stay products: extraction writes them back for
-    /// Nib, where a product is not the `Pair` the kernel matches.
-    keep_products: bool,
+pub(super) struct Sugar {
     /// `C::m` for the methods and laws of the classes (`check/classes.rs`):
     /// what `C::m(…)` is written as, a call of the projection.
     members: HashMap<(Name, String), Name>,
     /// The constructor of `Text` a literal is made with, when `Text` is
-    /// declared: `Text::Mk`, or its full name `std::Text::Text::Mk` when another
+    /// declared: `Text::Mk`, or its full name `std::text::Text::Mk` when another
     /// file declares a `Text` constructor of that name too, so a literal still means std's.
     text: Option<Name>,
+    /// The constant of each text literal the kernel has declared one for
+    /// (`Kernel::declare_text_literals`): such a literal is that name.
+    literals: std::sync::Arc<HashMap<(Name, String), Name>>,
     /// `Float::of_raw` (or its full name) beside the constructor of `Float`,
     /// when `Float` is declared.
     float: Option<Name>,
@@ -121,22 +121,26 @@ impl Kernel {
         self.program_sugar_labels(stmt).0
     }
 
-    pub(super) fn program_sugar_labels(&self, stmt: &Stmt) -> (Stmt, BTreeSet<String>) {
-        let text = self
-            .resolver
+    /// The constructor of `Text` a literal is made with, when `Text` is declared.
+    pub(super) fn text_constructor(&self) -> Option<Name> {
+        self.resolver
             .source_reference("Text")
             .as_ref()
             .and_then(|reference| self.inds.get(reference))
             .and_then(|i| match i.ctors.as_slice() {
                 [c] if is_mk(&c.name) => Some(c.name.clone()),
                 _ => None,
-            });
+            })
+    }
+
+    pub(super) fn program_sugar_labels(&self, stmt: &Stmt) -> (Stmt, BTreeSet<String>) {
+        let text = self.text_constructor();
         let float = self
             .resolver
             .source_reference("Float::of_raw")
             .filter(|reference| self.globals.contains_key(reference));
-        // An operator is sugar for a function the program has: `Nat::lt` and
-        // `Bool::and` are the prelude's, `Nat::le` and `Bool::or` are std's.
+        // An operator is sugar for a function the program has: `Nat::lt`,
+        // `Bool::and` and `Bool::or` are the prelude's, `Nat::le` is std's.
         let ops = if self
             .inds
             .contains_key(&tauto_surface::bindings::library_name("Bool"))
@@ -155,9 +159,9 @@ impl Kernel {
             HashMap::new()
         };
         let sugar = Sugar {
-            keep_products: false,
             members: self.classes.member_bindings(),
             text,
+            literals: self.text_literals.clone(),
             float,
             ops,
             bools: true,
@@ -232,9 +236,9 @@ impl Kernel {
 /// has the literals and operators itself.
 pub fn record_sugar(records: &Records, stmt: &Stmt) -> Stmt {
     Sugar {
-        keep_products: true,
         members: HashMap::new(),
         text: None,
+        literals: Default::default(),
         float: None,
         ops: HashMap::new(),
         bools: false,
@@ -305,28 +309,42 @@ impl Sugar {
                 value,
                 borrow,
                 borrow_mut,
+                stack,
+                ..
             } => Stmt::Let {
+                stack: stack.clone(),
                 name: name.clone(),
                 ty: ty.as_ref().map(|t| self.term(t)),
                 value: self.term(value),
                 borrow: *borrow,
                 borrow_mut: *borrow_mut,
+                unused: None,
             },
             Stmt::Var {
                 name,
                 ty,
                 value,
                 borrow,
+                stack,
+                ..
             } => Stmt::Var {
+                stack: stack.clone(),
                 name: name.clone(),
                 ty: ty.as_ref().map(|t| self.term(t)),
                 value: self.term(value),
                 borrow: *borrow,
+                unused: None,
             },
-            Stmt::Assign { name, place, value } => Stmt::Assign {
+            Stmt::Assign {
+                name,
+                place,
+                value,
+                deref,
+            } => Stmt::Assign {
                 name: name.clone(),
                 place: place.as_ref().map(|p| self.term(p)),
                 value: self.term(value),
+                deref: *deref,
             },
             Stmt::Expr(e) => Stmt::Expr(self.term(e)),
             Stmt::Inductive(i) => {
@@ -352,6 +370,17 @@ impl Sugar {
     }
 
     fn literal(&self, ctor: &Name, s: &str, t: &T) -> T {
+        if let Some(name) = self.literals.get(&(ctor.clone(), s.to_string())) {
+            // The constant itself, as the kernel hands it back: a term it
+            // returns names it bare, and a goal made from one is found by
+            // comparing it with this scrutinee's literal.
+            return T::var(name, t.span);
+        }
+        self.bytes_literal(ctor, s, t)
+    }
+
+    /// A text literal as its bytes, `ctor(Cons(Nat, b0, …, Nil(Nat)))`.
+    pub(super) fn bytes_literal(&self, ctor: &Name, s: &str, t: &T) -> T {
         let sp = t.span;
         let mut list = app(
             &tauto_surface::bindings::library_name("Nil"),
@@ -369,7 +398,7 @@ impl Sugar {
     }
 
     /// Each operator, the function it is, and whether its operands are swapped.
-    const OPERATORS: [(&'static str, &'static str, bool); 7] = [
+    pub(super) const OPERATORS: [(&'static str, &'static str, bool); 7] = [
         ("-", "Nat::sub", false),
         ("<", "Nat::lt", false),
         ("<=", "Nat::le", false),
@@ -395,14 +424,7 @@ impl Sugar {
     /// defines, and the diagnostic points to `Unit`.
     fn ty(&self, t: &T) -> T {
         match &*t.kind {
-            TermKind::App {
-                function,
-                arguments,
-            } if arguments.is_empty()
-                && matches!(&*function.kind, TermKind::Var(f) if tauto_surface::bindings::is_library(&f, "Tuple")) =>
-            {
-                T::var(&tauto_surface::bindings::library_name("#()"), t.span)
-            }
+            _ if t.is_unit() => T::var(&tauto_surface::bindings::library_name("#()"), t.span),
             _ => self.term(t),
         }
     }
@@ -417,21 +439,6 @@ impl Sugar {
                 } else {
                     "false"
                 }))
-            }
-            // `#(a, b)` is the product `prod_mk(a, b)` where it is elaborated, never a `Pair`
-            // written by its name; extraction keeps the product.
-            TermKind::Tuple(_) if self.bools => {
-                return self.term(&crate::surface::qualify::tuple_as_products(t));
-            }
-            // `#()` where a value stands is `Star`; in the place of a type, `ty` rejects it.
-            TermKind::App {
-                function,
-                arguments,
-            } if self.bools
-                && arguments.is_empty()
-                && matches!(&*function.kind, TermKind::Var(f) if tauto_surface::bindings::is_library(&f, "Tuple")) =>
-            {
-                TermKind::Var(tauto_surface::bindings::library_name("Star"))
             }
             TermKind::Float(s)
                 if let Some(f) = &self.float
@@ -473,38 +480,6 @@ impl Sugar {
                     arguments,
                 }
             }
-            // `A × B × C` is `Prod(A, Prod(B, C))`, the type `#(a, b, c)` makes, which the
-            // kernel unfolds to `Pair(A, Pair(B, C))`. The members
-            // stand in the order they are written: `A × B` and `B × A` are two types. The names are read after the program's names are
-            // told apart: `Pair` and `Unit` are then the prelude's, as a file's own
-            // declaration of either has its full name.
-            // A member `Unit` gives none: `A × Unit` is `A`, and a product left with no member
-            // is `Unit`. A member that is itself a product stays one member: `(A × B) × C` is
-            // `Prod(Prod(A, B), C)`, the type a `T × C` at `T := A × B` has, and not `A × B × C`.
-            TermKind::Product(items) => {
-                let mut items = crate::surface::qualify::product_type_members(items);
-                if items.len() < 2 {
-                    return match items.pop() {
-                        Some(one) => self.ty(&one),
-                        None => T::var(&tauto_surface::bindings::library_name("Unit"), sp),
-                    };
-                }
-                let mut items: Vec<T> = items.iter().map(|i| self.ty(i)).collect();
-                let last = items.pop().expect("two or more");
-                return items.into_iter().rev().fold(last, |snd, fst| {
-                    let cell = T::new(
-                        TermKind::Var(tauto_surface::bindings::library_name("Prod")),
-                        fst.span,
-                    );
-                    T::new(
-                        TermKind::App {
-                            function: Box::new(cell),
-                            arguments: vec![fst, snd],
-                        },
-                        sp,
-                    )
-                });
-            }
             // `@a e` is `@label.a(e)`. What it holds is read as a term: whether it is the type
             // `@a T` or the value `@a e` is told by its type, when it is elaborated
             // (`matching.rs`), so `@a #()` is the unit labelled.
@@ -526,16 +501,19 @@ impl Sugar {
                 }
                 return out;
             }
-            // `#(@b y, @a x)` and `#(#(a, b), c)` are put in the order of their type's members
-            // where the tuple is read (`tuple_as_pairs`); a `Pair { fst, snd }` written by its
-            // name is the inductive `Pair` and stands as it is written.
+            // `#(…)` stands in the order written, labelled or not (`product_value_as_pair_record`);
+            // a `Pair { fst, snd }` written by its name is the inductive `Pair` and stands as it
+            // is written.
             // `f(<x: v>, h)`: the implicit arguments named, each a term.
             TermKind::Record { name, fields, base }
                 if name.spelling() == Some(tauto_surface::IMPLICITS) =>
             {
                 TermKind::Record {
                     name: name.clone(),
-                    fields: fields.iter().map(|(f, v)| (f.clone(), self.term(v))).collect(),
+                    fields: fields
+                        .iter()
+                        .map(|(f, v)| (f.clone(), self.term(v)))
+                        .collect(),
                     base: base.clone(),
                 }
             }
@@ -573,6 +551,7 @@ impl Sugar {
                 params,
                 result,
                 effects,
+                ..
             } => TermKind::Pi {
                 params: params
                     .iter()
@@ -580,20 +559,24 @@ impl Sugar {
                     .collect(),
                 result: Box::new(self.ty(result)),
                 effects: effects.clone(),
+                unused: Vec::new(),
             },
             TermKind::Exists {
                 binder,
                 domain,
                 body,
+                ..
             } => TermKind::Exists {
                 binder: binder.clone(),
                 domain: Box::new(self.term(domain)),
                 body: Box::new(self.term(body)),
+                unused: None,
             },
             TermKind::Lam {
                 params,
                 body,
                 types,
+                ..
             } => TermKind::Lam {
                 params: params.clone(),
                 body: Box::new(self.term(body)),
@@ -601,6 +584,7 @@ impl Sugar {
                     .iter()
                     .map(|ty| ty.as_ref().map(|ty| self.term(ty)))
                     .collect(),
+                unused_params: Vec::new(),
             },
             // `p if g => e`: the arm of `p` is `match g { true => e false => … }`, where `…` is the
             // `match` of the arms after it (`guard_chain`).
@@ -609,6 +593,7 @@ impl Sugar {
                 result,
                 binder,
                 arms,
+                ..
             } if arms.iter().any(|a| a.guard.is_some()) => {
                 let chain = guard_chain(scrutinee, result.as_deref(), binder.as_ref(), arms, sp);
                 return self.term(&chain);
@@ -618,6 +603,7 @@ impl Sugar {
                 result,
                 binder: None,
                 arms,
+                ..
             } if self.text.is_some()
                 && let Some(chain) =
                     literal_chain(scrutinee, result.as_deref(), arms, Literal::Text, sp) =>
@@ -629,6 +615,7 @@ impl Sugar {
                 result,
                 binder,
                 arms,
+                ..
             } => TermKind::Match {
                 binder: binder.clone(),
                 scrutinee: Box::new(self.term(scrutinee)),
@@ -642,6 +629,7 @@ impl Sugar {
                         body: self.term(&a.body),
                     })
                     .collect(),
+                binder_unused: None,
             },
             TermKind::Block(stmts) => TermKind::Block(stmts.iter().map(|s| self.stmt(s)).collect()),
             // Read by extraction, which sees an `if` and a `&mut` as written.
@@ -654,7 +642,7 @@ impl Sugar {
                 then: Box::new(self.term(then)),
                 otherwise: otherwise.as_ref().map(|o| Box::new(self.term(o))),
             },
-            TermKind::Borrow { mutable, term } => TermKind::Borrow {
+            TermKind::Borrow { mutable, orig, rc, term } => TermKind::Borrow { orig: *orig, rc: *rc,
                 mutable: *mutable,
                 term: Box::new(self.term(term)),
             },
@@ -664,20 +652,6 @@ impl Sugar {
     }
 
     fn pattern(&self, p: &Pattern) -> Pattern {
-        // `#(p, q)` is the prelude's `Pair { fst: p, snd: q }`, as the value is.
-        if let Pattern::Tuple(items) = p
-            && self.keep_products
-        {
-            return Pattern::Tuple(items.iter().map(|q| self.pattern(q)).collect());
-        }
-        if let Pattern::Tuple(_) = p {
-            let pair = tauto_surface::bindings::library_name("Pair");
-            return self.pattern(&crate::surface::qualify::tuple_pattern_as_pairs(p, &pair));
-        }
-        // `#(p, #())` is `p`, as the value is.
-        if let Some(flat) = crate::surface::qualify::flatten_pair_pattern(p) {
-            return self.pattern(&flat);
-        }
         match p {
             Pattern::Record { name, fields } => match self.record(name) {
                 Some((ctor, names)) => Pattern::Ctor {
@@ -781,14 +755,16 @@ pub(super) fn literal_chain(
     };
     let mut chain = match &last.pattern {
         Pattern::Wild => body(last),
-        Pattern::Bind(other) => T::new(
+        Pattern::Bind { name: other, .. } => T::new(
             TermKind::Block(vec![
                 Stmt::Let {
+                    stack: None,
                     name: other.clone(),
                     ty: None,
                     value: scrutinee.clone(),
                     borrow: false,
                     borrow_mut: false,
+                    unused: None,
                 },
                 Stmt::Expr(body(last)),
             ]),
@@ -834,6 +810,7 @@ pub(super) fn literal_chain(
                 result: result.map(|r| Box::new(r.clone())),
                 binder: None,
                 arms: vec![arm("true", body(a)), arm("false", chain)],
+                binder_unused: None,
             },
             sp,
         );
@@ -860,6 +837,7 @@ pub fn guard_chain(
                 result: result.map(|r| Box::new(r.clone())),
                 binder: binder.cloned(),
                 arms: arms.to_vec(),
+                binder_unused: None,
             },
             sp,
         );
@@ -885,6 +863,7 @@ pub fn guard_chain(
                 branch("true", guarded.body.clone()),
                 branch("false", otherwise),
             ],
+            binder_unused: None,
         },
         guarded.body.span,
     );
@@ -895,10 +874,10 @@ pub fn guard_chain(
         goal: guarded.goal.clone(),
         body,
     });
-    let simple = |p: &Pattern| matches!(p, Pattern::Wild | Pattern::Bind(_));
+    let simple = |p: &Pattern| matches!(p, Pattern::Wild | Pattern::Bind { .. });
     for arm in rest {
         let taken = match (&guarded.pattern, &arm.pattern) {
-            (Pattern::Wild | Pattern::Bind(_), _) => true,
+            (Pattern::Wild | Pattern::Bind { .. }, _) => true,
             (Pattern::Ctor { name, args }, Pattern::Ctor { name: other, .. }) => {
                 name == other && args.iter().all(simple)
             }
@@ -931,11 +910,12 @@ mod tests {
 
     #[test]
     fn text_sugar_keeps_the_selected_constructor_reference() {
+        tauto_parse::install();
         let constructor: Name = tauto_surface::identity::DeclRef::fresh("Text::Mk").into();
         let sugar = super::Sugar {
-            keep_products: false,
             members: Default::default(),
             text: Some(constructor.clone()),
+            literals: Default::default(),
             float: None,
             ops: Default::default(),
             bools: false,
@@ -952,6 +932,7 @@ mod tests {
 
     #[test]
     fn label_of_accepts_only_label_families() {
+        tauto_parse::install();
         assert_eq!(label_of(&Name::from("@label.a")), Some("a"));
         let family = label_family("a");
         assert_eq!(label_of(&family), Some("a"));

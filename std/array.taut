@@ -1,0 +1,162 @@
+import "base.taut" { List }
+import std::prelude::std { List, Option }
+
+// Arrays as the proofs see them: a list. Extraction
+// maps `Array` onto Nib's `Array` and the functions here onto its builtins,
+// which read by index in O(1); their definitions here say what those
+// builtins do.
+
+pub(open) inductive Array(A: Type): Type =>
+  fn Array::beq, theorem Array::beq_refl, theorem Array::beq_sound, theorem Array::deq {
+  Mk(items: List(A)): Array(A)
+}
+
+// Mapped: the array of a list's elements.
+pub fn Array::of_list<A>(l: List(A)): Array(A) {
+  Array::Mk(l)
+}
+
+// Mapped: the elements, in order.
+pub fn Array::to_list<A>(a: Array(A)): List(A) {
+  match a {
+    Mk(l) => l
+  }
+}
+
+// Mapped: the element at `i`.
+pub fn Array::get<A: Shared>(a: Array(A), i: Nat): Option(A) {
+  List::nth(Array::to_list(a), i)
+}
+
+// Mapped: the number of elements.
+pub fn Array::len<A>(a: Array(A)): Nat {
+  List::length(Array::to_list(a))
+}
+
+// Mapped: the array with the element at `i` replaced by `x`; the same
+// array when `i` is past the end. A backend writes in place when it holds
+// the only reference to the array, and copies it otherwise.
+pub fn Array::set<A>(a: Array(A), i: Nat, x: A): Array(A) {
+  Array::Mk(Array::set_list(Array::to_list(a), i, x))
+}
+
+// The list with its `i`th element replaced by `x`.
+pub fn Array::set_list<A>(l: List(A), i: Nat, x: A): List(A) {
+  match l {
+    Nil => Nil
+    Cons(h, t) => ⊢ List(A) from match i {
+      Zero => Cons(x, t)
+      Succ(j) => Cons(h, Array::set_list(t, j, x))
+    }
+  }
+}
+
+pub fn Array::get_or<A: Shared>(a: Array(A), i: Nat, d: A): A {
+  match Array::get(a, i) {
+    None => d
+    Some(x) => x
+  }
+}
+
+pub theorem Array::get_of_list<A>(l: List(A), i: Nat): Array::get(Array::of_list(l), i) = List::nth(l, i) {
+  Refl
+}
+
+pub theorem Array::len_of_list<A>(l: List(A)): Array::len(Array::of_list(l)) = List::length(l) {
+  Refl
+}
+
+pub theorem Array::to_list_of_list<A>(l: List(A)): Array::to_list(Array::of_list(l)) = l {
+  Refl
+}
+
+pub theorem Array::nth_set_list_same<A>(
+  l: List(A),
+  i: Nat,
+  x: A,
+  h: i < List::length(l) = true
+): List::nth(Array::set_list(l, i, x), i) = Some(x) {
+  match l {
+    Nil => False::elim(false_ne_true(h))
+    Cons(y, t) => ⊢ List::nth(Array::set_list(Cons(y, t), i, x), i) = Some(x) from match i {
+      Zero => Refl
+      Succ(k) => Array::nth_set_list_same(t, k, x, h)
+    }
+  }
+}
+
+pub theorem Array::nth_set_list_ne<A>(
+  l: List(A),
+  i: Nat,
+  j: Nat,
+  x: A,
+  h: Nat::eq(i, j) = false
+): List::nth(Array::set_list(l, i, x), j) = List::nth(l, j) {
+  match l {
+    Nil => Refl
+    Cons(y, t) => ⊢ List::nth(
+      Array::set_list(Cons(y, t), i, x),
+      j
+    ) = List::nth(Cons(y, t), j) from match i {
+      Zero => ⊢ List::nth(
+        Array::set_list(Cons(y, t), Zero, x),
+        j
+      ) = List::nth(Cons(y, t), j) from match j {
+        Zero => False::elim(true_ne_false(h))
+        Succ(k) => Refl
+      }
+      Succ(i2) => ⊢ List::nth(
+        Array::set_list(Cons(y, t), Succ(i2), x),
+        j
+      ) = List::nth(Cons(y, t), j) from match j {
+        Zero => Refl
+        Succ(j2) => Array::nth_set_list_ne(t, i2, j2, x, h)
+      }
+    }
+  }
+}
+
+pub theorem Array::length_set_list<A>(
+  l: List(A),
+  i: Nat,
+  x: A
+): List::length(Array::set_list(l, i, x)) = List::length(l) {
+  match l {
+    Nil => Refl
+    Cons(y, t) => ⊢ List::length(
+      Array::set_list(Cons(y, t), i, x)
+    ) = List::length(Cons(y, t)) from match i {
+      Zero => Refl
+      Succ(k) => Eq::congr(Succ, Array::length_set_list(t, k, x))
+    }
+  }
+}
+
+// Reading back the index just written gives what was written.
+pub theorem Array::get_set_same<A>(
+  a: Array(A),
+  i: Nat,
+  x: A,
+  h: i < Array::len(a) = true
+): Array::get(Array::set(a, i, x), i) = Some(x) {
+  Array::nth_set_list_same(Array::to_list(a), i, x, h)
+}
+
+// Writing one index leaves every other index as it was.
+pub theorem Array::get_set_ne<A>(
+  a: Array(A),
+  i: Nat,
+  j: Nat,
+  x: A,
+  h: Nat::eq(i, j) = false
+): Array::get(Array::set(a, i, x), j) = Array::get(a, j) {
+  Array::nth_set_list_ne(Array::to_list(a), i, j, x, h)
+}
+
+pub theorem Array::len_set<A>(
+  a: Array(A),
+  i: Nat,
+  x: A
+): Array::len(Array::set(a, i, x)) = Array::len(a) {
+  Array::length_set_list(Array::to_list(a), i, x)
+}

@@ -114,7 +114,13 @@ impl Expander<'_> {
                 // argument is checked, in the typed pass (`typed.rs`).
                 Some(_) if self.step_in_typed(&s) => out.push(s),
                 Some(_) if matches!(s, Stmt::Module { .. }) => {
-                    let Stmt::Module { name, items, span } = s else {
+                    let Stmt::Module {
+                        name,
+                        vis,
+                        items,
+                        span,
+                    } = s
+                    else {
                         unreachable!()
                     };
                     let mut inner = path.to_vec();
@@ -122,7 +128,12 @@ impl Expander<'_> {
                     let mut around = outer.to_vec();
                     around.extend(wrap(path, out.clone()));
                     let items = self.step_items(items, &inner, &around);
-                    out.push(Stmt::Module { name, items, span });
+                    out.push(Stmt::Module {
+                        name,
+                        vis,
+                        items,
+                        span,
+                    });
                 }
                 Some((_, at)) if matches!(s, Stmt::Mutual { .. }) => {
                     self.error("step.fragment", msg!("macro-step-mutual"), at);
@@ -226,6 +237,32 @@ impl Expander<'_> {
                 self.file_steps = k.file_steps;
                 self.file_expanded |= k.file_expanded;
                 let mut out = k.out;
+                // What the declaration made refers to the declarations before it by the
+                // references they had when it was made. They are made again with other
+                // numbers (a declaration is bound once the expansion is over), so those
+                // references are written as they were spelled, to be bound with the rest.
+                let mut before_names: std::collections::HashSet<String> =
+                    tauto_surface::bindings::declared_names(before)
+                        .into_iter()
+                        .map(|n| n.as_str().to_string())
+                        .collect();
+                // What a declaration makes besides itself (`opaque fn f` makes `f::eq`).
+                for stmt in before {
+                    if let Stmt::Fn(f) = stmt
+                        && let Some(g) = &f.generates
+                    {
+                        before_names.extend(g.items.iter().map(|(_, n)| n.clone()));
+                    }
+                }
+                if !before_names.is_empty() {
+                    crate::surface::references::statement(&mut out, &mut |n| {
+                        if let crate::surface::Name::Global(r) = n
+                            && before_names.contains(r.display())
+                        {
+                            *n = crate::surface::Name::Spelled(r.display().to_string());
+                        }
+                    });
+                }
                 crate::surface::shift::moved(&mut out, by);
                 crate::surface::walk::stmt(&mut out, &mut SurfaceTerm::freshen);
                 return out;
@@ -272,8 +309,13 @@ impl Expander<'_> {
     /// and neither are the checks of their goals, as the kernel checks the declaration they
     /// make anyway. What a run makes without an error is put on disk for the next time.
     fn step_decl_stored(&mut self, given: &Stmt, d: Stmt, before: &[Stmt]) -> Stmt {
-        let action = self.stored_action(given);
-        let cache = tauto_cache::BuildCache::from_env().ok();
+        // `TAUTO_CACHE=off` (`tauto check --fresh`) checks as if nothing had been checked
+        // before: the tactics run again, as the proofs are checked again.
+        let fresh = std::env::var("TAUTO_CACHE").is_ok_and(|v| v == "off");
+        let cache = (!fresh)
+            .then(tauto_cache::BuildCache::from_env)
+            .and_then(Result::ok);
+        let action = cache.as_ref().and_then(|c| self.stored_action(given, c));
         if let (Some(action), Some(cache)) = (&action, &cache)
             && let Some(outputs) = cache.get(action)
             && let Some(blob) = outputs.0.get("steps")
@@ -293,7 +335,7 @@ impl Expander<'_> {
             && !texts.is_empty()
             && texts
                 .iter()
-                .all(|t| !t.contains('\u{0}') && crate::surface::parse_expr_at(t, 0).is_ok())
+                .all(|t| !t.contains('\u{0}') && tauto_parse::parse_expr_at(t, 0).is_ok())
             && let (Some(action), Some(cache)) = (&action, &cache)
             && let Ok(blob) = cache.put_blob(texts.join("\u{0}").as_bytes())
         {
@@ -305,18 +347,24 @@ impl Expander<'_> {
     }
 
     /// The action on disk of the steps of `given` in this file, read after the files it is
-    /// read after; none when the files are not known.
-    fn stored_action(&self, given: &Stmt) -> Option<tauto_cache::Action> {
+    /// read after; none when the files are not known. The key holds the running executable,
+    /// so the tactics, the elaborator and the kernel that made a result are the ones that
+    /// would make it now (`docs/design/build-cache.md`); none when that cannot be named.
+    fn stored_action(
+        &self,
+        given: &Stmt,
+        cache: &tauto_cache::BuildCache,
+    ) -> Option<tauto_cache::Action> {
         let sources = SOURCES.with(|s| s.borrow().get(..=self.file).map(|d| d.join("\n")));
         let sources = sources?;
+        let executable = cache.executable_sha256()?;
         let mut d = given.clone();
         let lo = super::stmt_range(&d).map_or(0, |(lo, _)| lo);
         crate::surface::shift::moved(&mut d, -(lo as i64));
         let decl = tauto_identity::refs_in_order(&format!("{d:?}"));
         Some(
             tauto_cache::Action::new("steps", "")
-                .input("expander", include_str!("step.rs").as_bytes())
-                .input("version", env!("CARGO_PKG_VERSION").as_bytes())
+                .input("executable", executable.as_bytes())
                 .input("sources", sources.as_bytes())
                 .input("module", format!("{:?}", self.elab_module).as_bytes())
                 .input("declaration", decl.as_bytes()),
@@ -337,7 +385,17 @@ impl Expander<'_> {
         let mut expanded = false;
         for text in texts {
             let (step, _) = first_step(&d)?;
-            let mut term = crate::surface::parse_expr_at(text, 0).ok()?;
+            // The library is what running the tactic would have built, so that the
+            // macros after this one run in the same library whether or not the
+            // tactics before them were run again.
+            let function = self
+                .macros
+                .get(split(step.tactic.as_str()).0)
+                .map(|r| r.function.clone());
+            if let Some(function) = function {
+                self.library_for(&function);
+            }
+            let mut term = tauto_parse::parse_expr_at(text, 0).ok()?;
             walk::term(&mut term, &mut |t| t.span = step.call);
             let mut found = Vec::new();
             walk::term(&mut term, &mut |t| {
@@ -446,24 +504,33 @@ impl Expander<'_> {
             self.error("step.before", m, at);
             return without_steps(d);
         }
-        let mut all: Vec<Stmt> = self.done.clone();
+        let mut all: Vec<Stmt> = self.seen_done();
         all.extend(before.iter().cloned());
         let (mut prefix, _) = crate::surface::modules::resolve_in_prelude(all);
         self.bindings.statements(&mut prefix);
         self.bindings.statements(std::slice::from_mut(&mut d));
         self.elab_prefix = prefix.clone();
-        let kernel = match self.checker.prefixed(&prefix) {
+        let prefix_files = self.inference_context(before);
+        self.elab_prefix_files = prefix_files.clone();
+        let kernel = match self.checker.prefixed_with_owners(&prefix, &prefix_files) {
             Ok(k) => k,
             Err(m) => {
                 self.error("step.kernel", m, at);
                 return without_steps(d);
             }
         };
-        // The context of the next step, taken from the check of the output of
-        // the one before it.
-        let mut carried: Option<HoleGoal> = None;
+        // The contexts of the steps still to expand, in order, taken from the
+        // check of the declaration that found the first of them; empty when
+        // the declaration must be checked again to find them.
+        let mut carried: Vec<HoleGoal> = Vec::new();
         while let Some((step, _)) = first_step(&d) {
-            match self.one_step(kernel.as_ref(), &d, before, &step, carried.take()) {
+            match self.one_step(
+                kernel.as_ref(),
+                &d,
+                before,
+                &step,
+                std::mem::take(&mut carried),
+            ) {
                 Some((term, next)) => {
                     carried = next;
                     put_first_step(&mut d, term);
@@ -477,27 +544,43 @@ impl Expander<'_> {
     }
 
     /// The term the first step of `d` stands for, or `None` after an error,
-    /// with the hole of the step after it as the check of the output left it.
-    /// `known` is the hole of this step from the check of the step before it;
-    /// without it the declaration is checked with a hole in this step's place.
+    /// with the holes of the steps after it, in order (see `known`).
+    ///
+    /// `known` holds the hole of this step and of each step after it, from
+    /// the check of the declaration that found them; when it is empty the
+    /// declaration is checked with a hole in this step's place, and one in
+    /// the place of each later step (`step'other1`, …). A step's hole does
+    /// not depend on what the steps before it make: each step is the term
+    /// `the(G0, …)` of the goal written before it, so what is in scope there
+    /// and the goal are the same whatever an earlier step expands to. The
+    /// declaration is therefore checked whole once for all its steps, and
+    /// the output of each step is checked only in its own hole's context
+    /// (falling back to the whole declaration when that does not decide it).
+    /// The declaration as expanded is checked whole by the kernel afterwards,
+    /// in the check of its file, so nothing is taken as checked here.
     fn one_step(
         &mut self,
         kernel: &dyn PrefixedChecker,
         d: &Stmt,
         before: &[Stmt],
         step: &Step,
-        known: Option<HoleGoal>,
-    ) -> Option<(SurfaceTerm, Option<HoleGoal>)> {
+        known: Vec<HoleGoal>,
+    ) -> Option<(SurfaceTerm, Vec<HoleGoal>)> {
         let at = step.call;
         let g0 = step.before.clone().expect("filled by fill_before");
         // 1. The variables in scope where the step is: the declaration with a
         // hole in its place.
-        let here = if known.is_some() {
-            known
+        let mut later: Vec<HoleGoal> = Vec::new();
+        let here = if !known.is_empty() {
+            let mut known = known.into_iter();
+            let here = known.next();
+            later = known.collect();
+            here
         } else {
             let probe = with_first_step(d, SurfaceTerm::new(TermKind::Hole(GOAL.into()), at));
             match kernel.verdict(&probe) {
                 Some(Verdict::Incomplete { holes, .. }) => {
+                    later = others(&holes);
                     holes.into_iter().find(|h| h.name == GOAL)
                 }
                 Some(Verdict::Skipped(_)) => {
@@ -588,19 +671,35 @@ impl Expander<'_> {
             );
             return None;
         }
-        let made = SurfaceTerm::app("the", vec![g0.clone(), probe_term.clone()], step.call);
-        let probe = self.resolved(with_first_step(d, made), before);
-        let holes: Vec<HoleGoal> = match kernel.verdict(&probe) {
-            Some(Verdict::Incomplete { holes, .. }) => holes,
-            Some(Verdict::Failed(e)) => {
-                self.error(
-                    "step.output_ill_typed",
-                    msg!("macro-step-output-rejected", message = e.message.clone()),
-                    at,
-                );
-                return None;
+        // 3. What the tactic made has the goal, in the step's context: the
+        // arms' holes are found there. When that check does not accept it (a
+        // name of the context whose value the output needs, which the context
+        // holds only by its type), the declaration is checked with it in place.
+        let local = self.in_context(kernel, before, &here.context, &g0, &probe_term, at);
+        let holes: Vec<HoleGoal> = match local {
+            Some(holes) => holes,
+            None => {
+                let made = SurfaceTerm::app("the", vec![g0.clone(), probe_term.clone()], step.call);
+                let probe = self.resolved(with_first_step(d, made), before);
+                match kernel.verdict(&probe) {
+                    Some(Verdict::Incomplete { holes, .. }) => {
+                        later = others(&holes);
+                        holes
+                    }
+                    Some(Verdict::Failed(e)) => {
+                        self.error(
+                            "step.output_ill_typed",
+                            msg!("macro-step-output-rejected", message = e.message.clone()),
+                            at,
+                        );
+                        return None;
+                    }
+                    _ => {
+                        later = Vec::new();
+                        Vec::new()
+                    }
+                }
             }
-            _ => Vec::new(),
         };
         let is_outer = |name: &crate::surface::Name| {
             let mut reference = name.clone();
@@ -616,7 +715,7 @@ impl Expander<'_> {
         };
         if proposing {
             let visible = self.seeing.get(self.file).cloned().unwrap_or_default();
-            let names = tauto_surface::source_names::SourceNames::new(&self.bindings, &visible);
+            let names = tauto_parse::source_names::SourceNames::new(&self.bindings, &visible);
             let mut arms = Vec::new();
             for k in 1..=count {
                 let Some(hole) = holes.iter().find(|h| h.name == arm_hole(k)) else {
@@ -753,12 +852,39 @@ impl Expander<'_> {
             });
             any
         });
-        let next = if nested {
-            None
-        } else {
-            holes.into_iter().find(|h| h.name == "step'other1")
-        };
+        let next = if nested { Vec::new() } else { later };
         Some((SurfaceTerm::app("the", vec![g0, out], step.call), next))
+    }
+
+    /// The holes left in `term`, checked to have the type `goal` in
+    /// `context`; `None` when that check does not accept it.
+    fn in_context(
+        &self,
+        kernel: &dyn PrefixedChecker,
+        before: &[Stmt],
+        context: &[(crate::surface::Name, SurfaceTerm)],
+        goal: &SurfaceTerm,
+        term: &SurfaceTerm,
+        at: Span,
+    ) -> Option<Vec<HoleGoal>> {
+        let check = Stmt::Theorem(crate::surface::TheoremDecl {
+            budget: None,
+            vis: Default::default(),
+            decreasing_by: None,
+            name: "step'out".into(),
+            implicit: 0,
+            params: context.to_vec(),
+            ty: goal.clone(),
+            body: Some(term.clone()),
+            span: at,
+            unused: None,
+            unused_params: Vec::new(),
+        });
+        match kernel.verdict(&self.resolved(check, before)) {
+            Some(Verdict::Incomplete { holes, .. }) => Some(holes),
+            Some(Verdict::Checked { .. }) => Some(Vec::new()),
+            _ => None,
+        }
     }
 
     fn resolved(&self, d: Stmt, before: &[Stmt]) -> Stmt {
@@ -848,6 +974,8 @@ impl Expander<'_> {
             ty: written.clone(),
             body: Some(SurfaceTerm::var(VALUE, at)),
             span: at,
+            unused: None,
+            unused_params: Vec::new(),
         });
         match kernel.verdict(&self.resolved(check, before)) {
             Some(Verdict::Checked { .. }) => Ok(()),
@@ -877,6 +1005,14 @@ impl Expander<'_> {
             self.error(
                 "macro.same_file",
                 msg!("macro-same-file", name = &name),
+                step.call,
+            );
+            return None;
+        }
+        if !self.sees_macro(&name, step.call) {
+            self.error(
+                "macro.private",
+                msg!("macro-private", name = &name),
                 step.call,
             );
             return None;
@@ -977,6 +1113,7 @@ impl Expander<'_> {
                         lift.expr(&SurfaceTerm::var("Type", goal.span))?,
                     ),
                     (Some("row".into()), Node::List(Vec::new())),
+                    (Some("generics".into()), Node::List(Vec::new())),
                     (Some("ctx".into()), Node::List(ctx)),
                     (Some("fragment".into()), Node::text("Kernel")),
                     (Some("tys".into()), Node::List(Vec::new())),
@@ -1023,7 +1160,7 @@ impl Expander<'_> {
         let mut host = Host::new(self.opts.call_steps, self.opts.allocations);
         host.resolve_global = Some(self.global_resolver(&name));
         host.elab = Some(self.elab_for(id, &atoms));
-        let ran = call_bound_function(
+        let ran = self.opts.runner.call(
             &lib.program,
             &lib.report,
             &info.function,
@@ -1123,6 +1260,20 @@ fn first_step(s: &Stmt) -> Option<(Step, Span)> {
 }
 
 /// `d` with its first step replaced by `by`, and every other step by a hole.
+/// The holes of the later steps of a declaration checked with
+/// [`with_first_step`], in order; empty unless every one was found.
+fn others(holes: &[HoleGoal]) -> Vec<HoleGoal> {
+    let mut out = Vec::new();
+    for k in 1.. {
+        let name = format!("step'other{k}");
+        match holes.iter().find(|h| h.name == name) {
+            Some(h) => out.push(h.clone()),
+            None => break,
+        }
+    }
+    out
+}
+
 fn with_first_step(d: &Stmt, by: SurfaceTerm) -> Stmt {
     let mut d = d.clone();
     let mut by = Some(by);
@@ -1157,6 +1308,7 @@ pub(super) fn wrap(path: &[(String, Span)], items: Vec<Stmt>) -> Vec<Stmt> {
     for (name, span) in path.iter().rev() {
         items = vec![Stmt::Module {
             name: name.clone(),
+            vis: crate::surface::Vis::Private,
             items,
             span: *span,
         }];

@@ -1,334 +1,253 @@
-# tauto のマクロ：形式的な定義
+# Macro semantics (formal)
 
-[`macro.md`](macro.md) の規則を、Lean 4 で書ける形に定義し直したもの。`macro.md` と食い違えば **この文書が正**。
+The rules of [`macro.md`](macro.md) restated so they can be written in Lean 4.
+Where the two disagree, this document is authoritative. The Lean development
+uses no external library (finite sets are `List Nat` with membership).
 
-Lean のモジュールは「Lean のモジュールと証明義務」。Lean の形式化は外部のライブラリを使わないので、有限集合は
-`List Nat` と「すべての要素が含まれる」で書く。
+## Scope
 
----
-
-## 何を定義し、何を定義しないか
-
-| 定義する | 定義しない（外から与える） |
+| Defined | Given from outside |
 |---|---|
-| 構文の値（識別子、スコープ集合、項、文） | 文法の表の生成（`totes/llkgen`）と、その表による解析の正しさ（神託 `parse` として扱う） |
-| 名前の解決、束縛の形のスコープ、展開のスコープの反転 | マクロ関数の中身（任意の全域関数 `μ` として扱う。停止はホストの燃料） |
-| 展開の関係と、燃料による停止 | 評価器の資源の数え方（ステップの数え方は抽象） |
-| 段（ファイル）と、段を越える持ち込み | カーネル・型・行・`lin.rs` の判断（既存の判断を名前で参照する） |
-| `Judgement` の判断、型付きマクロの受理の関係 | 実行時の意味論（既存の `lean/Proto/Nib`） |
-| 保証の定理（衛生、停止、決定性、型・効果・所有権の保存、置換の補題） | ホストを侵害しないこと（Rust の実装の性質。[`macro-security.md`](macro-security.md)） |
+| syntax values (identifiers, scope sets, terms, statements) | table generation (`totes/llkgen`) and parsing correctness (an oracle `parse`) |
+| name resolution, binder scopes, scope flipping | macro function bodies (any total `μ`; termination by host fuel) |
+| the expansion relation and fuel | resource accounting of the machine |
+| stages (files) and cross-stage persistence | kernel, type, row and `lin.rs` judgments (referenced by name) |
+| `Judgement` and acceptance of typed macros | runtime semantics (`lean/Proto/Nib`) |
+| the theorems below | host non-interference ([`macro-security.md`](macro-security.md)) |
 
-## 構文の値
+## Syntax values
 
 ```text
-s, b, t ∈ ℕ                                  スコープ
-S, B ∈ Scopes = 有限集合 ℕ                    スコープ集合
-x ∈ Name                                     名前（文字列）
-n ∈ ℕ                                        原子（Judgement の文脈の変数）
-ι ::= x^S                                    識別子
+s, b, t ∈ ℕ              scopes
+S, B ∈ finite sets of ℕ  scope sets
+x ∈ Name                 names
+n ∈ ℕ                    atoms (Judgement context variables)
+ι ::= x^S                identifiers
 
-e ::= ι | atom n | lit ℓ
-    | e(e₁, …, eₖ)
-    | (ι₁, …, ιₖ) => e                       λ
-    | { σ₁; …; σₖ; e }                       ブロック
-    | match e { p₁ => e₁ | … }
-    | handle e with { h… }
-    | perform ι(e…)
-    | call m ⌜τ⌝                             構文マクロの呼び出し（表面は m!(`τ`)。τ は生の文字列）
-    | tcall m e                              型付きマクロの呼び出し（表面は m!(e)）
-    | …                                      （`macro.md`「構文の値（`std/prelude/Macro.taut`）」の残りの構成子。束縛を作らないものは app と同じ扱い）
-
+e ::= ι | atom n | lit ℓ | e(e₁, …, eₖ) | (ι₁, …, ιₖ) => e | { σ₁; …; σₖ; e }
+    | match e { p₁ => e₁ | … } | handle e with { h… } | perform ι(e…)
+    | call m ⌜τ⌝        syntax macro call (surface m!(`τ`), τ raw text)
+    | tcall m e         typed macro call (surface m!(e))
+    | …                 other constructors; those without binders behave like application
 σ ::= let ι = e | var ι = e | ι := e | fn ι(ι…) { e } | e | call m ⌜τ⌝
 p ::= ι | c(p…) | _ | ℓ
 ```
 
-表面では呼び出しがどれも `m!(…)` と書かれる。どれになるかはマクロ `m` の宣言した種類（関数の入力の型）で決まる：
-構文の型 `S_N` なら `call m ⌜τ⌝`、`SynExpr` なら型なしマクロ（下の「型なしマクロ」）、`Judgement` なら `tcall m e`。
-`ProofStep` なら tactic で、`by` の後でだけ呼べる（`macro-steps.md`。展開は `the` の注釈と穴への代入で、ここでは形式化しない）。
+Every surface call is `m!(…)`; its meaning is fixed by the input type of `m`:
+a syntax type `S_N` gives `call m ⌜τ⌝`, `SynExpr` an untyped macro,
+`Judgement` `tcall m e`, `ProofStep` a tactic after `by`
+([`macro-steps.md`](macro-steps.md), not formalized here).
 
-**束縛の形**：λ の引数、`fn` の引数（と、`fn` の名前は外側のブロックに対して）、`let`・`var`（ブロックの残りに対して）、
-パターンの変数（腕の本体に対して）、ハンドラの腕の変数と `k`、`∀`・`∃`。各束縛の形 `F` に、束縛子の列 `binders(F)` と
-有効範囲 `region(F)`（部分木の列）が決まる。
+**Binding forms**: λ and `fn` parameters (and the `fn` name, for the
+enclosing block), `let`/`var` (for the rest of the block), pattern variables
+(for the arm), handler arm variables and `k`, `∀`/`∃`. Each form `F` has
+`binders(F)` and `region(F)`. Type annotations are read before the binding;
+a `let`/`var` value does not see its own binding; each arm has its own
+environment. **Written identifiers** have the empty expansion scope set.
+Global references are bound to declaration IDs after checking imports and
+visibility and never take part in scope lookup. **Expanded** means containing
+no `call` or `tcall`.
 
-**書かれた識別子**：ソースから読んだ識別子の展開スコープは空集合である。
-大域参照は、定義元の import と可視性を確認して宣言 ID に結び付ける。
-解決した大域参照はスコープによる探索に参加しない。
+## Hygiene
 
-**展開済み**：マクロの呼び出し（`call`・`tcall`）を含まない項。
+The local environment `ρ` lists bindings `(x, B, id)` innermost first, added on
+entering a region and removed on leaving.
 
-## 文脈と束縛
+**Resolution**: `x^S` resolves to the innermost binding with spelling `x` and
+scope set exactly `S`; else to a global generated with the same spelling and
+scopes. Identifiers carrying a declaration reference use it.
 
-局所の環境 `ρ` は、内側から外側の順に並んだ束縛 `(x, B, id)` の列である。
-`x` は綴り、`B` は展開スコープの集合、`id` はその束縛の番号を表す。
-束縛の有効範囲に入ると環境に加え、範囲を出ると取り除く。
-有効範囲は木の構造で表し、束縛の形ごとの印は識別子に加えない。
-
-## 衛生
-
-### 解決
-
-識別子 `x^S` の候補は、環境内で綴りが `x`、展開スコープが `S` と等しい束縛である。
-候補のうち最も内側の束縛に解決する。局所の候補がなければ、同じ綴りと展開スコープで
-生成された大域宣言を参照する。宣言参照を持つ識別子は、その ID をそのまま使う。
-
-### 束縛の形のスコープ
-
-`fn` と λ の引数、ブロックの局所関数、`let`・`var`、パターン、ハンドラの腕、
-`∀`・`∃` の束縛を、各構文が定める有効範囲の環境に登録する。
-型注釈はその束縛より前の環境で読む。`let`・`var` の値の中では、その束縛は見えない。
-各 match の腕とハンドラの腕は独立した環境を持つ。
-
-### 展開のスコープと反転
+**Flipping**:
 
 ```text
-flip_s(S) = S ∖ {s}   if s ∈ S
-          = S ∪ {s}   otherwise
-flip_s(e) = e の中のすべての識別子に flip_s を適用したもの（原子は変えない）
+flip_s(S) = S ∖ {s} if s ∈ S, else S ∪ {s}
+flip_s(e) applies flip_s to every identifier of e (atoms unchanged)
 ```
 
-構文マクロの呼び出し `call m ⌜τ⌝`（呼び出し元の文脈 `S_c`：その位置の書かれた識別子が持つはずのスコープ集合）の一段：
+One step of `call m ⌜τ⌝` at a site whose written identifiers would have scopes
+`S_c`:
 
 ```text
-s ← fresh(path)
-v ← parse_{G(m)}(τ)       各トークンの ctx は S_c ∪ {s}
-r ← μ_m(v)                 マクロ関数（ホストの上で、燃料つき）
-e' ← flip_s(lower(r))      lower は値を構文に戻す（`macro.md`「構文の値（`std/prelude/Macro.taut`）」の型の値を、「構文の値」の項にする）
+s  ← fresh(path)
+v  ← parse_{G(m)}(τ)      every token's ctx is S_c ∪ {s}
+r  ← μ_m(v)                run with fuel on the host
+e' ← flip_s(lower(r))      lower turns values back into terms
 ```
 
-型なしマクロが既存の式を入力として受け取る場合は、その式の各識別子が持つスコープを保ち、
-呼び出しの展開スコープだけを反転する。入れ子の呼び出しでも、呼び出し位置のスコープを
-入力全体へ付け直さない。出力で同じスコープを反転すると、入力由来の識別子のスコープに戻る。
+An untyped macro's input expression keeps its identifiers' scopes and only the
+call's scope is flipped, so input identifiers return to their own scopes in the
+output. In `quote`, identifiers naming globals of the definition (with the imports
+at the head of its declaration's body) get their IDs; locals and declarations created in the quote start with empty scopes.
+`Syn::ident_like` copies scopes but not global references; `Syn::decl_name`
+has none; `Syn::global` carries the reference resolved at the definition.
 
-`quote` の中で定義元の大域宣言を指す識別子は、その宣言 ID を持つ。
-引用内の局所束縛と、引用が生成する宣言の識別子は空の展開スコープから始まる。
-`Syn::ident_like` はモデルのスコープをコピーし、大域参照をコピーしない。
-`Syn::decl_name` も宣言参照を持たない。`Syn::global` は定義元で解決した宣言参照を持つ。
+**Theorems**:
 
-### 衛生の定理
+- **H1**: an input identifier lacking `s` never resolves to a binding the
+  expansion introduced (which has `s`).
+- **H2**: an introduced identifier with `s` never captures a caller binding
+  without `s` (`introduced_not_capture`).
+- **H3**: adding bindings with scopes an input identifier lacks does not
+  change its resolution.
+- **H4**: each expansion gets a distinct scope.
+- **H5**: resolution does not consult source positions.
 
-- **H1**：入力の識別子が展開スコープ `s` を持たず、生成した束縛が `s` を持つなら、
-  入力の識別子はその束縛に解決しない。スコープ集合が等しくないためである。
-- **H2**：生成した識別子が `s` を持ち、呼び出し元の束縛が `s` を持たなければ、
-  その束縛を捕獲しない。`introduced_not_capture` がこの向きを示す。
-- **H3**：入力の識別子が持たないスコープを持つ束縛だけを環境に加えても、
-  入力の識別子の解決結果は変わらない。
-- **H4**：展開ごとに供給器を進め、互いに異なるスコープを割り当てる。
-- **H5**：解決はソース位置を参照しない。
+`Syn::ident_like` can deliberately break H2's premise. Resolved globals keep
+pointing at the same declaration whatever their display or scopes.
 
-`Syn::ident_like` は入力のスコープをコピーできるため、H2 の前提を意図的に外せる。
-解決済みの大域参照にはこれらの探索を行わず、表示やスコープを変えても同じ宣言を指す。
+**Kernel references**: local and global IDs are different kinds; renaming
+keeps IDs, same-spelled bindings have different IDs. Locals become binder
+positions in the kernel, globals point into the declaration table; allocating
+an ID accepts nothing.
 
-### カーネルへの参照
-
-局所参照と大域参照は異なる種別の ID を持つ。束縛の表示名を変えても ID は変わらず、
-同じ綴りの別の束縛は異なる ID を持つ。局所 ID はカーネルへ下ろすときに束縛位置へ変換し、
-大域 ID は宣言表の項を指す。ID の確保だけでは宣言を受理したことにならず、
-カーネルは参照先の宣言と型を検査する。
-
-## 展開の関係
-
-### 一段
+## Expansion
 
 ```text
-⟨P, ρ, φ⟩ ─expand→ ⟨P', ρ', φ'⟩     φ は燃料（自然数）
+⟨P, ρ, φ⟩ ─expand→ ⟨P', ρ', φ'⟩     φ: fuel
 ```
 
-- `P` の最も外側・最も左の `call m ⌜τ⌝` を選ぶ（外側から、文の順）。
-- 「展開のスコープと反転」の一段を行う。`μ_m` は燃料 `φ` で走り、使ったステップ `c ≥ 1` を引く：`φ' = φ − c`。
-- 解析の失敗、`μ_m` の `macro_error`、燃料の不足、深さの超過は、それぞれ診断で止まる。
-- 展開後の木を歩き、束縛の有効範囲ごとに環境を作る。
-  識別子の展開スコープを変えず、同じ集合を持つ束縛だけを候補とする。
-
-- **型なしマクロ**（`macro.md`「型なしマクロ」）：入力の型が `SynExpr` のマクロの呼び出し `m!(e)` は、文法を tauto の `Expr`、`⌜τ⌝` を
-  `e` とした `call m ⌜τ⌝` と同じ一段。`e` の識別子は書かれた識別子（`x^{S_c}`）のまま展開のスコープ `s` が付くので、
-  「展開のスコープと反転」の一段と 「衛生の定理」の H1〜H4 がそのまま成り立つ。新しい定義も証明義務も要らない。
-
-### 全体
+Pick the outermost, leftmost `call` (statements in order), perform one step,
+charging `c ≥ 1` steps (`φ' = φ − c`). Parse failure, `macro_error`, lack of
+fuel or excessive depth stop with a diagnostic. Afterwards environments are
+rebuilt per region without changing identifiers' scopes. An untyped macro
+`m!(e)` is the same step with grammar `Expr` and `⌜τ⌝ = e`, so H1–H4 hold
+unchanged.
 
 ```text
-Expand(P, φ) =  ok P'      if P' は展開済み
-             |  err d      if 診断 d で止まった
+Expand(P, φ) = ok P' (P' expanded) | err d
+Accept(P)  ⟺  Expand(P, φ) = ok P' ∧ Check(P')
 ```
 
-- **E1（停止）**：`Expand` は燃料についての構造的再帰で定義される全域関数。各段は `c ≥ 1` を使うので、
-  段の数は `φ` 以下。
-- **E2（展開済み）**：`Expand(P, φ) = ok P'` なら `P'` は `call` を含まない。
-- **E3（深さ）**：深さの上限 `D` と出力の大きさの上限 `N` は、`φ` と独立に段の数を `N^D` で抑える。
-  （E1 だけで停止は言えるので、E3 は資源の見積もりのため。）
-- **E4（禁止の出力）**：`Expand(P, φ) = ok P'` なら、`P'` の `axiom`・`extern`・`import`・`syntax`・`macro` は
-  すべて `P` に書かれていたもの（由来が展開でない）。
+`Check` is ordinary checking (both kernels, `types`, `rows`, `lin`).
 
-### 展開と型検査
+- **E1 (termination)**: `Expand` is structural in fuel; at most `φ` steps.
+- **E2**: `ok P'` contains no `call`.
+- **E3**: depth limit `D` and output limit `N` bound the steps by `N^D`
+  independently of fuel (a resource estimate).
+- **E4**: every `axiom`, `extern`, `import`, `syntax` and `macro` in `P'` was
+  written in `P`.
+- **E5 (soundness)**: `Accept(P)` means `P` means `P'` and everything checking
+  guarantees for `P'` holds. Macros neither add nor remove guarantees; nothing is
+  trusted for them.
+
+## Stages and determinism
+
+For a tote's files in load order `F₁ … Fₙ` (dependencies first):
 
 ```text
-Accept(P) ⟺ Expand(P, φ) = ok P'  ∧  Check(P')
+M₀ = prelude macros (plaintext)
+Pₖ = Expand_{Mₖ₋₁}(Fₖ)        calls in Fₖ use only Mₖ₋₁
+Mₖ = Mₖ₋₁ ∪ {macros of Fₖ}    after Pₖ is checked and converted
 ```
 
-`Check` は通常の検査（カーネル + 独立カーネル、`types`・`rows`・`lin`）。
+- **S1**: functions run while expanding `Fₖ` reach only `P₁ … Pₖ₋₁`, so no
+  unchecked function ever runs.
+- **S2**: `lift : T → SynExpr` exists only for `T ∈ {iN, uN, Bool, Text, Decimal}`
+  and `lift(v)` evaluates to `v`. Closures, cells, continuations, `Judgement`s
+  and affine or linear values cannot be lifted, by type.
 
-- **E5（展開の健全性）**：`Accept(P)` なら、`P` の意味は `P'` の意味であり、`P'` について既存の検査が保証することが
-  すべて成り立つ。**マクロは保証を足さないし、減らさない**。証明は定義から（`Accept` が `Check(P')` を含む）。
-  E5 の価値は「マクロのために信頼する部分がない」ことを明示すること。
+With `run(f, v, φ) ∈ {ok r, err, out}`:
 
-## 段と決定性
+- **D1**: `run` is a function: macro rows contain no host-answered effect and
+  the host answers none ([`macro-security.md`](macro-security.md)); the
+  macro function `μ` of the model is a function.
+- **D2**: `Expand` is a function (D1, H4).
+- **D3**: calls with equal cache keys (normalized function, input, fuel
+  settings, machine version) have equal outputs.
 
-### 段
-
-tote の読み込み順のファイル `F₁, …, Fₙ`（依存の tote のファイルが先）について：
-
-```text
-M₀ = prelude のマクロ（plaintext）
-Pₖ = Expand_{Mₖ₋₁}(Fₖ)              Fₖ の中の call は Mₖ₋₁ のマクロだけを使える
-Mₖ = Mₖ₋₁ ∪ { Fₖ の macro 宣言 }      Pₖ が検査と変換を終えてから
-```
-
-- **S1（段の分離）**：`Fₖ` の展開で走る関数は `P₁ … Pₖ₋₁` の宣言だけに届く。`Fₖ` の宣言は届かない。
-  だから「まだ検査していない関数を走らせる」ことはない。
-
-### 段を越える持ち込み
+## Typed macros
 
 ```text
-Γ_ct ⊢ v : T   （コンパイル時の値）
-lift : T → SynExpr   が定義されているのは T ∈ {iN, uN, Bool, Text, Decimal} だけ
-⊢ lift(v) : T   （実行時の項として、v と同じ値を表すリテラル）
-```
-
-- **S2（持ち込みの正しさ）**：`lift(v)` を評価すると `v` と等しい値になる（リテラルの意味の定義から）。
-- 閉包、セル、継続、`Judgement`、affine・linear の値に `lift` はない。だから持ち込めない（型で決まる）。
-
-### 決定性
-
-マクロ関数の実行を `run(f, v, φ) ∈ {ok r, err, out}` とする（`out` は燃料切れ）。
-
-- **D1（評価の決定性）**：`run` は関数である（同じ `f`・`v`・`φ` には同じ結果）。根拠：マクロ関数の行にはホストが答える効果がなく、ホストは標準エフェクトに答えない（`macro-security.md`「マクロのホストの標準エフェクト」）。評価器のモデル（`lean/Proto/Nib` の意味論）は関数として定義されている。
-- **D2（展開の決定性）**：`Expand` は関数である。D1 と H4（スコープが経路から決まる）から。
-- **D3（キャッシュの正しさ）**：キャッシュの鍵（`macro.md`「キャッシュと決定性」）が等しい二つの呼び出しは同じ出力を持つ。
-  D1・D2 と、鍵が `run` の引数（関数の正規形、入力、燃料の設定）と評価器の版を含むことから。
-
-## 型付きマクロ
-
-### 判断
-
-既存の判断を名前で使う：
-
-```text
-Γ ⊢_K e : A                     カーネルの断片（check.rs と core.rs の両方が受理）
-Γ ⊢_P e : A ! ε ▷ U             実行されるコード（types・rows・lin が受理）。U は使用の要約
-⊢ D ok                           宣言 D がその断片の検査を通る
-```
-
-`U : Γ → {moved, borrowed, borrowed_mut, unused}`。
-
-### 手札
-
-```text
+Γ ⊢_K e : A              kernel fragment (check.rs and core.rs accept)
+Γ ⊢_P e : A ! ε ▷ U      executed code (types, rows, lin accept); U the usage summary
+⊢ D ok                   D passes its fragment's checks
+U : Γ → {moved, borrowed, borrowed_mut, unused}
 J ::= (Γ ⊢_K e : A) | (Γ ⊢_P e : A ! ε ▷ U)
-judgement(J) : Judgement        J が検査器の出力のときだけ作られる
+judgement(J) : Judgement  exists only as checker output
 ```
 
-- **C1（手札の真実性）**：`judgement(J)` が存在すれば、`J` はそれを作った時点の環境で導出できる。
-  形式化：`Judgement` を `{ J // Derivable(Σ, J) }`（`Σ` は凍結した環境）として定義する。
-- `Judgement::open` の規則（カーネルの断片の例）：
+- **C1**: if `judgement(J)` exists, `J` is derivable in the environment at that
+  time (`Judgement` is `{ J // Derivable(Σ, J) }`, `Σ` frozen). `open` keeps
+  it, by inversion of λ typing:
 
 ```text
 Judgement::open(judgement(Γ ⊢ (x : A) => e : (x : A) -> B))
-  = Lam(n, judgement(Γ ⊢ A : Sort u), judgement(Γ, n : A ⊢ e[n/x] : B[n/x]))     n は新しい原子
+  = Lam(n, judgement(Γ ⊢ A : Sort u), judgement(Γ, n : A ⊢ e[n/x] : B[n/x]))    n fresh
 ```
 
-  `Judgement::open` の結果の手札も導出できる（C1 が保たれる）：λ の型付けの逆転から。
-
-### 受理の関係
-
-宣言 `D` と、その中の型付きマクロの呼び出し `tcall m e`（表面は `m!(e)`）の位置 `C`（一つの穴の文脈 `D = C[tcall m e]`）：
+For `D = C[tcall m e]`:
 
 ```text
 D° = C[e]
-(1)  ⊢ D° ok                                       （素の検査）
-(2)  J = 位置の判断（D° の導出から）               Γ ⊢ e : A ! ε ▷ U
-(3)  run(μ_m, judgement(J), φ) = ok r
-(4)  e' = bind_Γ(flip_s(lower(r)))   が定義される   （原子がすべて Γ か出力の束縛子に結び、持ち出しがない）
-(5)  ⊢ C[e'] ok  かつ  Γ ⊢ e' : A' ! ε' ▷ U'  かつ  Γ ⊢ A' ≡ A  かつ  ε' ⊆ ε
-(6)  sig(C[e']) = sig(D°)                          （推論された行と種）
-(7)  r が Proved(e'', p) なら  Γ ⊢_K p : Eq(A, e, e')
-────────────────────────────────────────────────
+(1) ⊢ D° ok
+(2) J = Γ ⊢ e : A ! ε ▷ U, from D°'s derivation
+(3) run(μ_m, judgement(J), φ) = ok r
+(4) e' = bind_Γ(flip_s(lower(r))) is defined
+(5) ⊢ C[e'] ok, Γ ⊢ e' : A' ! ε' ▷ U', Γ ⊢ A' ≡ A, ε' ⊆ ε
+(6) sig(C[e']) = sig(D°)                     inferred rows and kinds
+(7) if r = Proved(e'', p): Γ ⊢_K p : Eq(A, e, e')
+──────────────────────────────────────────────
 D ⟹_typed C[e']
 ```
 
-`bind_Γ` は原子 `n` を、`Γ` の束縛（`n ∈ dom Γ`）か出力の中の束縛子（`Judgement::open` が開いた原子を束縛子に使ったもの）に
-結ぶ。どちらでもなければ未定義（`macro.unknown_atom` か `macro.scope_extrusion`）。
+`bind_Γ` binds each atom to `Γ` or to a binder of the output opened by
+`Judgement::open`; otherwise `macro.unknown_atom` / `macro.scope_extrusion`.
 
-### 定理
+- **T1**: types are preserved (5).
+- **T2**: `ε' ⊆ ε`, and callers' rows do not change (5, 6).
+- **T3**: `D'` passes `lin` (5), so the usage theorems of
+  [`ownership.md`](ownership.md) hold for it. This does not follow from type
+  equality: `quote { $c + $c }` keeps the type and `lin` rejects it
+  (`a-macro-may-not-use-an-affine-value-twice` in `cases/macro/code.eure`).
+- **T4**: free atoms of `e'` are in `dom Γ`; no name lookup, so no capture.
+- **T5 (substitution, for local rechecking)**: for executed code, if
+  `⊢ C[e] ok`, `Γ ⊢ e : A ! ε ▷ U`, `Γ ⊢ e' : A ! ε' ▷ U'`, `ε' ⊆ ε`, `U' = U` on
+  linear bindings, `moved(U') ⊆ moved(U)` on affine ones,
+  `borrowed_mut(U') ⊆ borrowed_mut(U)` and `q(ε') ⊆ q(ε)` (resume quantities),
+  then `⊢ C[e'] ok`. For the kernel fragment, if `C` does not depend
+  definitionally on `e` (`⊢ C[x] ok` for fresh `x : A`), `Γ ⊢_K e' : A` gives
+  `⊢ C[e'] ok`. Acceptance does not use T5 (it rechecks the declaration);
+  rechecking only the position waits for T5 in Lean.
+- **T6**: (7) proves `e = e'` in the kernel's logic. Reading it as
+  observational equality would need adequacy, which is not shown.
 
-- **T1（型保存）**：`D ⟹_typed D'` なら、位置の型は保たれる：`Γ ⊢ e' : A'` かつ `A' ≡ A`。（5 から直接。）
-- **T2（効果の封じ込め）**：`ε' ⊆ ε`。さらに `sig` が同じなので、`D'` を呼ぶ側の行は変わらない。（5・6 から。）
-- **T3（所有権の健全性）**：`D'` は `lin` の検査を通る（5）。だから `ownership.md`「Lean での証明」の使用の検査の定理（トークンの一意性、
-  CFL の下での継続の複製・破棄の安全）が `D'` について成り立つ。**型が一致することからは出ない**：反例は
-  `quote { $c + $c }`（型は保たれ、`lin` が拒否する。`cases/macro/code.eure` の `a-macro-may-not-use-an-affine-value-twice`）。
-- **T4（スコープ）**：`e'` の自由な原子は `dom Γ` の中にある（4 から）。名前による解決を通らないので、
-  `Γ` の変数は捕獲されない。
-- **T5（置換の補題。局所の再検査の根拠）**：実行されるコードについて、
-  `⊢ C[e] ok`、`Γ ⊢ e : A ! ε ▷ U`、`Γ ⊢ e' : A ! ε' ▷ U'`、`ε' ⊆ ε`、`U' = U`（linear の束縛について）かつ
-  `moved(U') ⊆ moved(U)`（affine の束縛について）、`borrowed_mut(U') ⊆ borrowed_mut(U)`、かつ
-  `q(ε') ⊆ q(ε)`（再開量の集合）なら、`⊢ C[e'] ok`。
-  カーネルの断片について：`C` が `e` に定義的に依存しない（新しい変数 `x : A` で `⊢ C[x] ok`）なら、
-  `Γ ⊢_K e' : A` から `⊢ C[e'] ok`。
-  T5 は正しさのためには使わない（受理は宣言全体の再検査で決める）。T5 を Lean で示してから、
-  再検査を位置に限る最適化を入れる。
-- **T6（証明つきの変換）**：(7) が成り立てば、カーネルの論理で `e = e'`（命題としての等しさ）が証明されている。
-  これを実行の観測の等しさと読むには、カーネルの健全性と、プログラムの意味論との対応（adequacy）が要る。
-  後者は示していない。
+## Keeping guarantees apart
 
-## 保証の区別
-
-一つを示しても他を主張しない。
-
-| 性質 | 定義 | 何で保証するか | 主張しないこと |
+| Property | Definition | Ensured by | Not claimed |
 |---|---|---|---|
-| 構文が文法に従う | `parse_G(τ) = ok v` なら `τ ∈ L(G)` かつ `v` が 「展開のスコープと反転」の型に合う | 表の生成器と駆動部の実装。差分試験 | 健全性への寄与（誤っても E5 で無害） |
-| 生成したコードが型検査に通る | `Check(P')` | 既存の検査器 | マクロが意図した型を作ること |
-| 効果・capability の健全性 | `rows`・`lin` の受理と使用の検査の定理 | 既存の検査器と Lean | 型の一致からの導出（T3） |
-| 変換前後の意味の等しさ | `Proved` のときだけ、カーネルの命題として | カーネル | 実行の観測の等しさ（T6） |
-| マクロの停止 | E1 | ホストの燃料 | マクロ関数そのものの全域性 |
-| 実行の決定性 | D1〜D3 | 行の制限と評価器 | 評価器の版をまたいだステップ数の一致 |
-| ホストを侵害しない | `macro-security.md`「信頼境界」 | Rust の実装と監査 | Lean での証明 |
-| 衛生 | H1〜H4 | 解決の規則 | `syn_ident_like` を使ったときの非捕獲 |
+| syntax follows grammar | `parse_G(τ) = ok v` ⇒ `τ ∈ L(G)`, `v` well-typed | generator and driver, differential tests | any soundness role (E5 makes errors harmless) |
+| generated code checks | `Check(P')` | existing checkers | that it is what the macro meant |
+| effect and capability soundness | `rows`/`lin` acceptance and usage theorems | checkers and Lean | derivation from type equality (T3) |
+| meaning preserved | only for `Proved`, as a kernel proposition | kernel | observational equality (T6) |
+| termination | E1 | host fuel | totality of macro functions |
+| determinism | D1–D3 | rows and the machine | equal step counts across machine versions |
+| no host intrusion | [`macro-security.md`](macro-security.md) | Rust implementation and audit | a Lean proof |
+| hygiene | H1–H4 | resolution rules | non-capture with `syn_ident_like` |
 
-**マクロ全体の健全性とカーネルの健全性を混同しない**：カーネルが展開の結果を検査するので、不正な証明の受理は
-防げる（E5）。しかし停止（E1）、衛生（H1〜H4）、意図した意味の保存（T6 の範囲だけ）は、カーネルとは別の性質で、
-別に示す。
+The kernel stops wrong proofs from being accepted (E5); termination, hygiene
+and meaning preservation are separate properties with separate proofs.
 
-## Lean のモジュールと証明義務
+## Lean modules and obligations
 
-置き場所は `lean/Proto/Macro/`。すべて `sorry` なしで `lake build` が通る。`meta/MacroScope.taut` は `Scope.lean` の
-tauto への移植で、下の「tauto」と書いた定理はそこでもカーネルが検査する。
+In `lean/Proto/Macro/`, all without `sorry`; `meta/macro_scope.taut` ports
+`Scope.lean` to Tauto.
 
-| Lean | 述べること | 番号 |
-|---|---|---|
-| `Scope.lean` `resolve_not_intro` | 入力の識別子は、展開が導入した束縛に解決しない | H1 |
-| `Scope.lean` `introduced_not_capture` | 導入した識別子は、その展開スコープを持たない呼び出し元の束縛を捕獲しない | H2 |
-| `Scope.lean` `input_keeps_binding`、`input_keeps_inner_binding` | 展開が導入した束縛を足しても、入力の識別子の意味は変わらない | H3 |
-| `Scope.lean` `flip_flip`、`flip_other` | `flip_s` を二度行うと（集合として）元に戻り、`s` 以外は変えない |  |
-| `Scope.lean` `fresh_injective`（tauto）、`fresh_lt` | 順に配るスコープは互いに違う | H4 |
-| `Stx.lean` `flip_shape`、`flip_hasCall`、`flip_flip_tm` | 反転は束縛の構造と呼び出しを保つ |  |
-| `Stx.lean` `flip_global`、`Lower.lean` `lower_global`、`Expand.lean` `expand_global` | 解決した宣言参照は、スコープの反転・構文値の変換・展開で同じ ID を保つ |  |
-| `Lower.lean` `lower_binders`、`lower_lift`、`lift_lower` | `lower` は束縛子とその順を保つ。値と項は同じもの |  |
-| `Expand.lean` `expand` | 燃料一つにつき呼び出し一つ。`termination_by (fuel, size)` で全域 | E1 |
-| `Items.lean` `expand_total`、`expand_no_fuel` | 結果は `some` か `none`。燃料がなければ呼び出しを展開しない | E1 |
-| `Expand.lean` `expand_done` | `expand` が返すものは呼び出しを含まない | E2 |
-| `Items.lean` `expand_no_forbidden` | 出力の `axiom`・`extern`・`import`・`syntax`・`macro` は書かれたもの | E4 |
-| `Expand.lean` `expand_deterministic`、`expand_call_free` | 関数である。呼び出しのない項はそれ自身の展開 | D2 |
-| `Names.lean` `nameOf_injective_id`、`names_apart`、`display_independent`、`local_ne_global` | 参照の ID は表示から独立し、局所と大域の参照は混同されない |  |
-| `Judgement.lean` `judgement_derivable`、`judgement_view_true` | `Judgement` は導出を持ち、`Judgement::open` はそれを保つ | C1 |
-| `Judgement.lean` `typed_type_preserving`、`typed_effect_contained`、`apply_scope`、`accept_sound` | 受理の関係が型、行と署名、原子について言うことと、宣言全体が検査されること | T1、T2、T4、E5 |
-| `Plug.lean` `plug_typing`、`plug_type_preserved` | T5 のカーネルの断片の半分：穴の型の項は穴を埋められる | T5 |
-| `Spot.lean` `Spot.replace` | 実行されるコードの T5 の型付けの半分：導出の中の節点 `Γ' ⊢ e : B ! σ` を、型 `B` で行が `σ` の中の項で埋めても、全体は型と行を保つ | T5 |
+| Module | Proves |
+|---|---|
+| `Scope.lean` | H1–H4 (`resolve_not_intro`, `introduced_not_capture`, `input_keeps_binding`, `fresh_injective`), and flipping twice is the identity |
+| `Stx.lean`, `Lower.lean` | flipping and lowering keep binders, calls and resolved references |
+| `Expand.lean`, `Items.lean` | E1 (fuel-bounded and total), E2 (no calls remain), E4 (no forbidden items), D2 (`expand_deterministic`) |
+| `Names.lean` | ids are independent of display; locals and globals never mix |
+| `Judgement.lean` | C1, and acceptance preserves type, row, signature and atoms (T1, T2, T4, E5) |
+| `Plug.lean`, `Spot.lean` | the kernel half and the typing half of T5 |
 
-形式化していないもの：
+Not formalized:
 
-- T5 の使用の検査の半分（`lean/Proto/Nib/Lin.lean`）。`Lin` は部分の型付けの導出（`Quiet`、`Firm`、`Held`、`handle` の型付け）を
-  引くが、それは `Spot` の導出とは別なので、置き換えの補題はそれぞれの枠を運ぶ必要がある。また埋めた部分の
-  `Value`・`Quiet`・`Firm` の条件は行の上界だけからは出ない。型付きマクロの受理は T5 を使わず、宣言全体を検査し直す。
-- 構文全体の束縛環境を作る Rust の走査と Lean の環境の対応の機械的な証明。
-  `Scope.lean` はスコープ集合の一致と内側の束縛の優先を表す。Rust はソート済みの印を
-  比較し、環境を内側から調べる。構文ごとの有効範囲と展開の組み合わせはケースで検査する。
-  `meta/MacroScope.taut` は包含関係による候補の性質を独立に示すもので、この走査の証明ではない。
+- The usage half of T5 (`lean/Proto/Nib/Lin.lean`): `Lin` uses its own
+  sub-derivations (`Quiet`, `Firm`, `Held`, `handle` typing), so replacement
+  lemmas must carry each frame, and `Value`/`Quiet`/`Firm` of the filled part do
+  not follow from row bounds.
+- A mechanical correspondence between Rust's environment construction and
+  Lean's; Rust compares sorted marks and searches inside out, and per-construct
+  regions are covered by cases. `meta/macro_scope.taut` proves candidate
+  properties by inclusion independently.

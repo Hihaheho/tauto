@@ -10,7 +10,7 @@ use tauto_nir::*;
 // field is eligible only when its actual value has an ownership certificate.
 pub(crate) fn retainable_field(ty: &Ty) -> bool {
     match ty {
-        Ty::Ref(_) | Ty::RefMut(_) | Ty::Slice(_) | Ty::Infer => false,
+        Ty::Ref(_) | Ty::RefMut(_) | Ty::Slice(_) => false,
         Ty::Fn(f) => f.kind.dup(),
         _ => true,
     }
@@ -111,6 +111,17 @@ fn host_signatures(pkg: &Package, options: &Options) -> R<String> {
         }
     }
     out.push_str("};\n");
+    // The externs whose row is `{wait}`: only these may answer with a Promise.
+    let waits: Vec<String> = pkg
+        .externs
+        .iter()
+        .filter(|x| x.waits)
+        .map(|x| quote(&x.name))
+        .collect();
+    out.push_str(&format!(
+        "const hostWaits=new Set([{}]);\n",
+        waits.join(",")
+    ));
     Ok(out)
 }
 
@@ -122,19 +133,6 @@ fn reaches_host(
     waits: &BTreeMap<InstId, String>,
     seen: &mut BTreeSet<InstId>,
 ) -> bool {
-    fn visit(e: &Expr, f: &mut dyn FnMut(&Expr)) {
-        e.walk(&mut |node| {
-            f(node);
-            if let ExprKind::Handle(h) = &node.kind {
-                for arm in &h.susp {
-                    if let Some(g) = &arm.guard {
-                        visit(g, f);
-                    }
-                    visit(&arm.body, f);
-                }
-            }
-        });
-    }
     if !seen.insert(id) {
         return false;
     }
@@ -146,7 +144,7 @@ fn reaches_host(
     };
     let mut callees = Vec::new();
     let mut host = false;
-    visit(&f.body, &mut |e| match &e.kind {
+    f.body.walk_with_handlers(&mut |e| match &e.kind {
         ExprKind::Call(call) => match &call.callee {
             Callee::Inst(i) => callees.push(*i),
             Callee::Extern(_) => host = true,
@@ -205,11 +203,11 @@ pub(crate) fn export_table<'p>(pkg: &'p Package, options: &Options) -> R<Vec<Exp
         let Some(export) = pkg.exports.iter().find(|e| &e.name == name) else {
             return Err(msg!("jsgen-export-not-function", name = name.to_string()).to_string());
         };
-        if let Some(effect) = export
-            .row
-            .iter()
-            .find(|e| *e != "show" && *e != "Div" && *e != "wait")
-        {
+        // A task the export starts runs on in the instance after the call
+        // returns, until the instance is disposed. The allowed effects are the
+        // library's `show`, `div`, `wait` and `spawn`, told by identity: a
+        // user effect of the same spelling is not one of them.
+        if let Some(effect) = export.foreign_row.first() {
             return Err(msg!("jsgen-export-performs", name = name, effect = effect).to_string());
         }
         let f = pkg
@@ -333,7 +331,6 @@ fn shown_names(pkg: &Package) -> String {
 pub fn generate_modules(pkg: &Package, options: &Options) -> R<Modules> {
     let entries = crate::chunks::entries(pkg, options)?;
     let owners = crate::chunks::owners(pkg, &entries);
-    let restarts = crate::tail_calls::candidates(pkg);
     // The runtime (`shake.rs`) goes in front once the rest is written.
     let mut out = format!(
         "const declarationRefs=Array.from({{length:{}}},()=>Symbol());\n",
@@ -341,7 +338,8 @@ pub fn generate_modules(pkg: &Package, options: &Options) -> R<Modules> {
     );
     out.push_str(&host_signatures(pkg, options)?);
     out.push_str(&shown_names(pkg));
-    out.push_str(&crate::syntax::parsers(pkg)?);
+    let (parsers, synrun) = crate::syntax::parsers(pkg)?;
+    out.push_str(&parsers);
     // An entry is called through its stub, which may wait, so it and its
     // callers have no direct form.
     let direct = crate::direct::functions(pkg, &entries.keys().copied().collect());
@@ -352,6 +350,30 @@ pub fn generate_modules(pkg: &Package, options: &Options) -> R<Modules> {
         chunks.insert(name.as_str(), String::new());
     }
     for f in &pkg.fns {
+        if pkg.host_omitted_fns.contains(&f.id) {
+            continue;
+        }
+        // Host-selected replaceable members are `external(...)` calls; their
+        // Tauto bodies are not emitted. A thin `fN` stub remains so
+        // `FnValue` / function values still resolve.
+        if pkg
+            .externs
+            .iter()
+            .any(|e| e.name.as_str() == f.source.as_str())
+        {
+            let text = match owners.get(&f.id) {
+                Some(chunk) => chunks
+                    .get_mut(chunk.as_str())
+                    .expect("a chunk of the manifest"),
+                None => &mut out,
+            };
+            text.push_str(&format!(
+                "\nfunction f{}(c,args,k){{return external({},args.map(pure))(c,k);}}\n",
+                f.id,
+                quote(&f.source)
+            ));
+            continue;
+        }
         let text = match owners.get(&f.id) {
             Some(chunk) => chunks
                 .get_mut(chunk.as_str())
@@ -381,10 +403,15 @@ pub fn generate_modules(pkg: &Package, options: &Options) -> R<Modules> {
             .map(|p| (p.local.storage() == Storage::Owned).to_string())
             .collect::<Vec<_>>()
             .join(",");
-        let restart = restarts.contains(&f.id) && tauto_nir::recurs(&f.body);
+        // A call marked `recur` restarts the frame (`tailSelfCall`): the marks
+        // already ask that what it borrows lives outside the frame, that no drop
+        // the frame does early is observable, and that no continuation of the
+        // function resumes twice, so a recursion that borrows or performs runs
+        // in constant stack and memory too.
+        let restart = tauto_nir::recurs(&f.body);
         let body = Print { pkg }
             .cps(&tauto_nir::cps::lower(pkg, f, restart).or_else(|what| unsupported(what))?)?;
-        text.push_str(&format!("\nconst b{} = {body};\nfunction {name}{}(c,args,k){{return enterFunction(b{},[{params}],{{}},c,args,k,false,{export_borrows},[{owned}],{restart});}}\n",f.id,f.id,f.id));
+        text.push_str(&format!("\nconst b{} = {body};\nfunction {name}{}(c,args,k){{return enterFunction(b{},[{params}],null,c,args,k,false,{export_borrows},[{owned}],{restart});}}\n",f.id,f.id,f.id));
     }
     for (id, chunk) in &entries {
         let i = chunk_names
@@ -412,7 +439,7 @@ pub fn generate_modules(pkg: &Package, options: &Options) -> R<Modules> {
     };
     out.push_str(&format!("\nexport async function run(show=console.log, externs={{}}, options={{}}) {{{check}return drive({top},show,externs,options);}}\n"));
     let roots: String = chunks.values().fold(out.clone(), |a, b| a + b);
-    out = crate::shake::shake(&roots) + &out;
+    out = crate::shake::shake(&roots) + &synrun + &out;
     if entries.is_empty() {
         return Ok(Modules {
             program: out,
@@ -494,9 +521,19 @@ impl Print<'_> {
                 self.cps(callee)?,
                 self.all(args)?
             ),
-            Cps::TailSelfCall { inst, args } => {
+            Cps::TailSelfCall {
+                inst,
+                args,
+                ticked: false,
+            } => {
                 format!("tailSelfCall(pure(f{inst}),[{}])", self.all(args)?)
             }
+            // A step of the host's limit is counted where a call is made.
+            Cps::TailSelfCall {
+                inst,
+                args,
+                ticked: true,
+            } => format!("callFunction(pure(f{inst}),[{}],true)", self.all(args)?),
             Cps::External { name, args } => {
                 format!("external({},[{}])", quote(name), self.all(args)?)
             }
@@ -515,6 +552,7 @@ impl Print<'_> {
             }
             Cps::Prim { op, args } => self.prim(op, args)?,
             Cps::Map { value, op } => {
+                let temporary = matches!(&**value, Cps::External { .. });
                 let value = self.cps(value)?;
                 match op {
                     Unary::Not => format!("mapValue({value},v=>!v)"),
@@ -528,6 +566,10 @@ impl Print<'_> {
                     }
                     Unary::TempRef { shared } => {
                         format!("mapValue({value},v=>temporaryRef(v,{shared}))")
+                    }
+                    // The view a call returns is held by nothing once copied.
+                    Unary::Deref { copy: true } if temporary => {
+                        format!("mapValue({value},v=>dereferenceTemporary(v))")
                     }
                     Unary::Deref { copy } => format!("mapValue({value},v=>dereference(v,{copy}))"),
                     Unary::Inject { union, variant } => format!(
@@ -660,6 +702,7 @@ impl Print<'_> {
                 id,
                 path: p,
                 through_borrow,
+                ..
             } => format!("borrowPlace({id},{},{through_borrow})", path(p)),
             Cps::Budget {
                 id,
@@ -674,7 +717,28 @@ impl Print<'_> {
         })
     }
     fn prim(&self, op: &Prim, args: &[Cps]) -> R<String> {
-        let value = match op {
+        if let Prim::SynParse { name, sha, ty } = op {
+            let Some(i) = crate::syntax::parser_index(self.pkg, name, sha, ty) else {
+                return unsupported(msg!("jsgen-what-syn-parse-without-tables"));
+            };
+            return Ok(format!(
+                "values([{}],(c,vs,k)=>more(()=>k(c,synParse{i}(unref(vs[0])))))",
+                self.all(args)?
+            ));
+        }
+        let value = self.prim_value(op)?;
+        // An operator whose result does not exist performs `overflow` or
+        // `divzero` where it stands.
+        if matches!(op, Prim::Arith(..) | Prim::FloatArith(_) | Prim::Float32Arith(_)) {
+            return Ok(format!(
+                "values([{}],(c,vs,k)=>operated(c,k,()=>{value}))",
+                self.all(args)?
+            ));
+        }
+        self.values(args, &value)
+    }
+    fn prim_value(&self, op: &Prim) -> R<String> {
+        Ok(match op {
             Prim::Arith(op, width) => {
                 let value = match op {
                     Arith::Add => "vs[0]+vs[1]",
@@ -738,22 +802,13 @@ impl Print<'_> {
             ),
             Prim::Concat => "vs.join('')".into(),
             Prim::TextOfInt => "String(vs[0])".into(),
-            Prim::TextLen => "BigInt(textBytes(vs[0]).length)".into(),
-            Prim::TextCompare => "compare(vs[0],vs[1])".into(),
+            Prim::TextLen => "BigInt(textBytes(unref(vs[0])).length)".into(),
+            Prim::TextCompare => "compare(unref(vs[0]),unref(vs[1]))".into(),
             Prim::Divide { name, width } => {
                 format!("divide({},vs,{})", quote(name), bounds(*width))
             }
-            Prim::SynParse { name, sha, ty } => {
-                let Some(i) = crate::syntax::parser_index(self.pkg, name, sha, ty) else {
-                    return unsupported(msg!("jsgen-what-syn-parse-without-tables"));
-                };
-                return Ok(format!(
-                    "values([{}],(c,vs,k)=>more(()=>k(c,synParse{i}(unref(vs[0])))))",
-                    self.all(args)?
-                ));
-            }
-        };
-        self.values(args, &value)
+            Prim::SynParse { .. } => unreachable!("a syntax parse is written by `prim`"),
+        })
     }
 }
 fn value(v: &Value) -> String {
@@ -784,7 +839,9 @@ fn quant(q: Quant) -> &'static str {
 fn pattern(pkg: &Package, p: &CpsPat) -> String {
     match p {
         CpsPat::Wild => "['wild']".into(),
-        CpsPat::Bind { id, borrow, owned } => format!("['bind',{id},{borrow},{owned}]"),
+        CpsPat::Bind {
+            id, borrow, owned, ..
+        } => format!("['bind',{id},{borrow},{owned}]"),
         CpsPat::Literal(v) => format!("['literal',{}]", value(v)),
         CpsPat::Ctor { ctor, fields, data } => format!(
             "['ctor',{},[{}],{}]",
@@ -796,6 +853,9 @@ fn pattern(pkg: &Package, p: &CpsPat) -> String {
                 .join(","),
             quote(&crate::owner_symbol(pkg, data))
         ),
+        CpsPat::Variant { variant, pat, .. } => {
+            format!("['variant',{variant},{}]", pattern(pkg, pat))
+        }
     }
 }
 
@@ -813,7 +873,7 @@ fn path(steps: &[PathStep]) -> String {
     )
 }
 
-const BUILTINS: &[&str] = &[
+pub const BUILTINS: &[&str] = &[
     "clone",
     "replace",
     "Buf::new",
@@ -830,8 +890,17 @@ const BUILTINS: &[&str] = &[
     "Vec::as_mut_slice",
     "Vec::clear",
     "Vec::truncate",
-    "Vec::index",
-    "Vec::swap",
+    "Vec::swap_within",
+    "Slots::new",
+    "Slots::copy",
+    "Slots::state",
+    "Slots::cap",
+    "Slots::mark",
+    "Slots::get",
+    "Slots::get_mut",
+    "Slots::put",
+    "Slots::take",
+    "Slots::resize",
     "Vec::get",
     "Vec::get_mut",
     "Vec::last_mut",
@@ -839,6 +908,7 @@ const BUILTINS: &[&str] = &[
     "Vec::into_list",
     "Vec::into_array",
     "Array::get",
+    "Array::set",
     "Array::len",
     "Array::of_list",
     "Array::to_list",
@@ -847,23 +917,30 @@ const BUILTINS: &[&str] = &[
     "Bytes::len",
     "secret",
     "expose",
+    "Region::new",
+    "Region::place",
+    "RcRegion::new",
+    "RcRegion::place",
+    "RcPlace::heap",
     "Bytes::get",
+    "Bytes::find",
     "Bytes::slice",
     "Bytes::concat",
     "Bytes::eq",
     "Bytes::of_text",
     "Text::of_bytes",
-    "HashMap::new",
-    "HashMap::insert",
-    "HashMap::get",
-    "HashMap::get_mut",
-    "HashMap::index",
-    "HashMap::into_vec",
     "Text::byte",
     "Text::slice",
     "Text::of_code_point",
+    "Text::escape_debug",
     "Text::of_utf8",
     "words",
+    "I64::of_i8",
+    "I64::of_i16",
+    "I8::of_i64",
+    "I16::of_i64",
+    "U64::of_u16",
+    "U16::of_u64",
     "I64::of_i32",
     "I32::of_i64",
     "I64::of_u64",
@@ -871,6 +948,12 @@ const BUILTINS: &[&str] = &[
     "U64::of_u32",
     "U32::of_u64",
     "U64::of_u8",
+    "U64::of_uhost",
+    "UHost::succ_below",
+    "UHost::pred_nz",
+    "UHost::add_within",
+    "UHost::sub",
+    "UHost::of_u64_below",
     "U8::of_u64",
     "Nat::of_u64",
     "U64::of_nat",
@@ -888,6 +971,9 @@ const BUILTINS: &[&str] = &[
     "U64::shr",
     "U64::rotl",
     "U64::rotr",
+    "U64::wrapping_add",
+    "U64::wrapping_sub",
+    "U64::wrapping_mul",
     "Ref::new",
     "Ref::get",
     "Ref::set",
@@ -897,6 +983,7 @@ const BUILTINS: &[&str] = &[
     "Mutex::claim",
     "Mutex::take_claimed",
     "Mutex::put",
+    "Mutex::withdraw",
     "MutexGuard::claimed",
     "MutexGuard::get",
     "MutexGuard::get_mut",
@@ -933,6 +1020,9 @@ const BUILTINS: &[&str] = &[
     "Os::read_link",
     "Os::write_new",
     "Os::move_path",
+    "Os::set_mode",
+    "Os::lock",
+    "Os::unlock",
     "Os::copy_file",
     "Os::canonicalize",
     "Os::temp_dir",
@@ -944,16 +1034,34 @@ const BUILTINS: &[&str] = &[
     "Os::flush",
     "Os::on_shutdown",
     "Os::env",
+    "Os::env_names",
     "Os::wall_ms",
     "Os::monotonic_ns",
+    "Os::uhost_add",
+    "Os::uhost_sub",
+    "Os::uhost_mul",
+    "Os::uhost_of_u64",
+    "Os::host_bits",
+    "Os::hash_seed_k0",
+    "Os::hash_seed_k1",
     "Os::sleep_pending",
+    "Os::tcp_ready",
+    "Os::tcp_send",
+    "Os::tls_ready",
+    "Os::tls_send",
     "Os::offload",
     "Os::random",
     "Os::secure_random",
     "Os::status",
+    "Os::entry",
     "Os::check",
     "Os::fetch",
     "Os::resolve",
+    "Os::http_open",
+    "Os::http_write",
+    "Os::http_finish",
+    "Os::http_read",
+    "Os::http_close",
     "Os::child_spawn",
     "Os::child_read",
     "Os::child_write",
@@ -1010,7 +1118,6 @@ mod ownership_tests {
         FnInst {
             id,
             source: format!("caller{id}").into(),
-            rust_name: format!("caller{id}"),
             tier: Tier::S,
             generics: vec![],
             params: vec![Param {
@@ -1018,6 +1125,8 @@ mod ownership_tests {
                 ty: function_type(kind),
             }],
             ret: Ty::Unit,
+            lends: None,
+            fn_region: false,
             body: expr(
                 ExprKind::Call(Box::new(CallNode {
                     callee: Callee::Local(callee),
@@ -1026,6 +1135,7 @@ mod ownership_tests {
                     targs: vec![],
                     tick: Tick::None,
                     recur: false,
+                    unwind: Vec::new(),
                     span: Span::default(),
                 })),
                 Ty::Unit,
@@ -1117,7 +1227,6 @@ mod ownership_tests {
             fns: vec![FnInst {
                 id: 0,
                 source: "f".into(),
-                rust_name: "f".into(),
                 tier: Tier::S,
                 generics: vec![],
                 params: vec![
@@ -1126,6 +1235,8 @@ mod ownership_tests {
                     param(3, Ty::Buf),
                 ],
                 ret: closure.ty.clone(),
+                lends: None,
+                fn_region: false,
                 body: closure,
                 span: Span::default(),
             }],
@@ -1152,11 +1263,12 @@ mod export_tests {
         let function = FnInst {
             id: 0,
             source: name.into(),
-            rust_name: name.into(),
             tier: Tier::O,
             generics: Vec::new(),
             params: Vec::new(),
             ret: Ty::Unit,
+            lends: None,
+            fn_region: false,
             body: Expr {
                 kind: ExprKind::Unit,
                 ty: Ty::Unit,
@@ -1169,6 +1281,11 @@ mod export_tests {
             exports: vec![Export {
                 inst: 0,
                 name: name.into(),
+                foreign_row: row
+                    .iter()
+                    .filter(|e| !matches!(e.as_str(), "show" | "div" | "wait" | "spawn"))
+                    .cloned()
+                    .collect(),
                 row,
                 pure_borrow_callbacks: Vec::new(),
             }],

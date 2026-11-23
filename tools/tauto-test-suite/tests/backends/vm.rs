@@ -19,12 +19,12 @@ fn build_machine(base: &Path) -> Result<PathBuf, String> {
     let source = loaded.source_text();
     let mut manifest = tauto::manifest::load(&tote)?;
     tauto::manifest::add_dependency_rust(&mut manifest, &tote)?;
-    let package = tauto_nir::compile_loaded_with_observer(&loaded, false, false, |_| {})
-        .map_err(|e| format!("{e:?}"))?;
-    // The bridge (`totes/vm/bridge`) answers the externs of `native.taut`.
-    let bindings = tauto_rustgen::Bindings::resolve(&package, Some(&manifest), Some("vm_bridge"))?;
+    let mut package =
+        tauto_nibcheck::lower::compile_loaded_with_observer(&loaded, false, tauto_nir::Target::Rust, |_| {})
+            .map_err(|e| format!("{e:?}"))?;
+    let bindings = tauto_rustgen::Bindings::resolve(&mut package, Some(&manifest), None)?;
     let options = tauto_rustgen::Options::from_manifest(&manifest);
-    let ws = tauto_rustgen::workspace(
+    let mut ws = tauto_rustgen::workspace(
         "vm",
         &package,
         &Sources {
@@ -34,6 +34,20 @@ fn build_machine(base: &Path) -> Result<PathBuf, String> {
         &bindings,
         &options,
     );
+    // The machine runs another program on its thread, so its own entries are
+    // answered apart from the guest's (`tauto-cli-totes` runs it so too).
+    // Without that the guest's top-level `perform main` is a second `main`.
+    let hosted = "tauto_rt::run_main(vm::run)";
+    let mut patched = false;
+    for (_, text) in ws.files.iter_mut() {
+        if text.contains(hosted) {
+            *text = text.replace(hosted, "tauto_rt::run_main(|| tauto_rt::entry::hosting(vm::run))");
+            patched = true;
+        }
+    }
+    if !patched {
+        return Err("the generated main of the machine does not call `tauto_rt::run_main(vm::run)`".into());
+    }
     ws.build("vm", &base.join("ws"), &base.join("target"), true)
 }
 
@@ -72,9 +86,12 @@ fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> 
         Ok(p) => p,
         Err(error) => {
             let (stage, message) = match error {
-                tauto_nir::CompileError::Front(m) => ("front", m),
-                tauto_nir::CompileError::Build(m) => ("build", m),
-                tauto_nir::CompileError::Unsupported(u) => ("unsupported", u.what.to_string()),
+                tauto_nibcheck::lower::CompileError::Front(m)
+                | tauto_nibcheck::lower::CompileError::Package(m) => ("front", m),
+                tauto_nibcheck::lower::CompileError::Build(m) => ("build", m),
+                tauto_nibcheck::lower::CompileError::Unsupported(u) => {
+                    ("unsupported", u.what.to_string())
+                }
             };
             if stage == "unsupported" {
                 return unsupported(case, &message);
@@ -85,12 +102,17 @@ fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> 
     };
     let bytecode = match tauto_vm::wire::write(&pkg) {
         Ok(b) => b,
+        // A refusal the backend decided on, not a gap.
+        Err(what) if tauto_vm::wire::refused(&what) => {
+            return declared_failure(case, "generate", &what)
+                .unwrap_or_else(|| status("fail", &format!("unexpected generate: {what}")));
+        }
         Err(what) => return unsupported(case, &what),
     };
     // The machine compiles the bytecode when it runs it, so a declared
     // `unsupported` failure shows only then.
     let unsupported_at_run = case
-        .backend_known_failure
+        .opt_outs
         .get("vm")
         .is_some_and(|w| w.starts_with("unsupported: "));
     if !unsupported_at_run && let Err(e) = case.check_compiled("vm") {
@@ -127,7 +149,10 @@ fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> 
         let args: Vec<String> = case.args.iter().map(placed).collect();
         match run_machine(machine, work, &bytecode, &flags, steps, &args) {
             Ok(r) => r,
-            Err(e) => return status("fail", &e),
+            Err(e) => {
+                return declared_failure(case, "runtime", &e)
+                    .unwrap_or_else(|| status("fail", &e));
+            }
         }
     } else {
         let missing: Vec<&str> = missing.iter().map(String::as_str).collect();
@@ -140,7 +165,7 @@ fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> 
     {
         return unsupported(case, what.trim_end());
     }
-    if case.backend_known_failure.contains_key("vm") {
+    if case.runtime_opt_out("vm") {
         if exit != 0 {
             return match case.check_limitation("vm", "runtime", &stderr) {
                 Ok(true) => status("todo", &format!("declared runtime: {stderr}")),
@@ -153,8 +178,31 @@ fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> 
             "known failure succeeded; expected precise runtime failure",
         );
     }
-    match case.check_output("vm", &shows, &stdout, &stderr, Some(exit)) {
-        Ok(()) => checked(case, "output checked"),
+    // The machine reports the host values it dropped with what it shows.
+    let mut shows = shows;
+    let probe_drops = shows
+        .iter()
+        .position(|l| l.starts_with("tauto-probe-drops: "))
+        .map(|i| {
+            let line = shows.remove(i);
+            let names = &line["tauto-probe-drops: ".len()..];
+            if names.is_empty() {
+                Vec::new()
+            } else {
+                names.split(',').map(str::to_string).collect::<Vec<_>>()
+            }
+        });
+    if let Some(want) = &case.probe_drops
+        && probe_drops.as_ref().unwrap_or(&Vec::new()) != want
+    {
+        return status(
+            "fail",
+            &format!("probe_drops: expected {want:?}, got {probe_drops:?}"),
+        );
+    }
+    match case.check_output("vm", &stdout, &stderr, Some(exit)) {
+        Ok(Some(e)) => status("todo", &format!("declared output: {e}")),
+        Ok(None) => checked(case, "output checked"),
         Err(e) => status("fail", &e),
     }
 }
@@ -181,6 +229,8 @@ fn run_machine(
             &file,
             steps,
             Some(&shows),
+            None,
+            None,
             args,
         ))
         .stdout(std::fs::File::create(&out_path).map_err(|e| e.to_string())?)

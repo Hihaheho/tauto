@@ -1,0 +1,69 @@
+// A source of choices: the numbers a generator draws. Drawn from a seed, the
+// source keeps what it gave, so the same sequence replayed gives the same
+// program. A replayed sequence that runs out answers 0, and a number too
+// large for what is asked is taken modulo it, so every sequence is a program.
+// A generator puts its simplest choice at 0, so a shorter or smaller sequence
+// gives a simpler program, and one shrinker over sequences serves every
+// generator.
+
+pub struct FzChoices {
+  // The SplitMix64 state, when the choices are drawn from a seed.
+  state: u64,
+  seeded: Bool,
+  // What is left of a replayed sequence.
+  rest: List(u64),
+  // What was given, last first.
+  drawn: List(u64),
+}
+
+pub fn fz_of_seed(seed: u64): FzChoices {
+  FzChoices { state: seed, seeded: true, rest: Nil, drawn: Nil }
+}
+
+pub fn fz_of_list(choices: List(u64)): FzChoices {
+  FzChoices { state: 0, seeded: false, rest: choices, drawn: Nil }
+}
+
+// SplitMix64, the same sequence everywhere.
+pub fn fz_splitmix(s: u64): u64 {
+  let z := U64::wrapping_mul(U64::xor(s, U64::shr(s, 30)), 13787848793156543929)
+  let z := U64::wrapping_mul(U64::xor(z, U64::shr(z, 27)), 10723151780598845931)
+  U64::xor(z, U64::shr(z, 31))
+}
+
+// A number below `n` (0 when `n` is 0).
+pub fn fz_below(c: &mut FzChoices, n: u64): u64 ! {div, divzero} {
+  let raw: u64 := if c.seeded {
+    c.state := U64::wrapping_add(c.state, 11400714819323198485)
+    fz_splitmix(c.state)
+  } else {
+    match c.rest {
+      Nil => 0
+      Cons(x, more) => {
+        c.rest := more
+        x
+      }
+    }
+  }
+  let v: u64 := if n == 0 { 0 } else if raw < n { raw } else { mod(raw, n) }
+  c.drawn := Cons(v, c.drawn)
+  v
+}
+
+// True with `percent` in 100; a 0 is true, so the simplest answer to "take
+// the shortcut?" is yes.
+pub fn fz_chance(c: &mut FzChoices, percent: u64): Bool ! {div, divzero} {
+  fz_below(c, 100) < percent
+}
+
+pub fn fz_reverse(l: List(u64), acc: List(u64)): List(u64) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => fz_reverse(rest, Cons(x, acc))
+  }
+}
+
+// The choices given so far, first first.
+pub fn fz_drawn(c: &FzChoices): List(u64) {
+  fz_reverse(c.drawn, Nil)
+}

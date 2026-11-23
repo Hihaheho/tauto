@@ -1,41 +1,39 @@
 // Syntax macros over LALR(1) grammars (`%grammar_type 'LALR(1)'`). A
 // `{{par:NAME}}` is the grammar in `grammars/NAME.par`; its tables are in
-// `.tauto-syntax`, made by `scripts/generate-syntax-fixtures.sh`.
+// `.tauto-syntax`, made by `scripts/generate-syntax-fixtures.taut`.
 
 // A left recursive rule makes the same kind of typed tree as any rule: an enum
 // with a variant for each alternative, and the declarations listed are the
 // ones made.
 @ cases.a-left-recursive-rule-makes-a-typed-tree
 files."main.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(lalr_sum, ```par
 {{par:lalr_sum}}```) => struct Eqn, struct Paren, enum Sum, enum Term, fn parse
 ````
 expands = ```nib
-module lalr_sum {
-  pub(open) struct Eqn {
-    span: SynSpan, sum: lalr_sum::Sum, equals: SynToken, sum_2: lalr_sum::Sum
-  }
-  pub(open) struct Paren {
-    span: SynSpan, l_paren: SynToken, sum: lalr_sum::Sum, r_paren: SynToken
-  }
-  pub(open) enum Sum {
-    SumPlusTerm { span: SynSpan, sum: lalr_sum::Sum, plus: SynToken, term: lalr_sum::Term }
-    Term(lalr_sum::Term)
-  }
-  pub(open) enum Term {
-    Num(SynToken)
-    Paren(lalr_sum::Paren)
-  }
-  pub(open) fn parse(t: Text): Result(lalr_sum::Eqn, SynDiag) { Syn::parse("lalr_sum", "217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068", t) }
+pub(open) struct lalr_sum::Eqn {
+  span: SynSpan, sum: lalr_sum::Sum, equals: SynToken, sum_2: lalr_sum::Sum
 }
+pub(open) struct lalr_sum::Paren {
+  span: SynSpan, l_paren: SynToken, sum: lalr_sum::Sum, r_paren: SynToken
+}
+pub(open) enum lalr_sum::Sum {
+  SumPlusTerm { span: SynSpan, sum: lalr_sum::Sum, plus: SynToken, term: lalr_sum::Term }
+  Term(lalr_sum::Term)
+}
+pub(open) enum lalr_sum::Term {
+  Num(SynToken)
+  Paren(lalr_sum::Paren)
+}
+pub(open) fn lalr_sum::parse(t: Text): Result(lalr_sum::Eqn, SynDiag) { Syn::parse("lalr_sum", "217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068", t) }
 ```
 
 // The list of the declarations made must be what the grammar makes.
 @ cases.the-declarations-of-an-lalr-grammar-are-listed-in-full
 files."main.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(lalr_sum, ```par
 {{par:lalr_sum}}```) => struct Eqn, struct Paren, enum Term, fn parse
@@ -48,17 +46,17 @@ diagnostics[] {
 // A macro reads the left recursive tree: `1 + 2 + 3` is `(1 + 2) + 3`.
 @ cases.a-macro-folds-a-left-recursive-tree
 files."lalr.nib" = ````nib
-import std::prelude::Macro
+import std::builtin::macro
 syntax!(lalr_sum, ```par
 {{par:lalr_sum}}```) => struct Eqn, struct Paren, enum Sum, enum Term, fn parse
-pub fn ls_term(t: lalr_sum::Term): SynExpr ! {macro_error, Div} {
+pub fn ls_term(t: lalr_sum::Term): SynExpr ! {macro_error, div} {
   match t {
     Num(tok) => Syn::nat(tok)
     Paren(p) => ls_sum(p.sum)
   }
 }
 
-pub fn ls_sum(s: lalr_sum::Sum): SynExpr ! {macro_error, Div} {
+pub fn ls_sum(s: lalr_sum::Sum): SynExpr ! {macro_error, div} {
   match s {
     SumPlusTerm(span, left, plus, term) => {
       let l := ls_sum(left)
@@ -69,7 +67,7 @@ pub fn ls_sum(s: lalr_sum::Sum): SynExpr ! {macro_error, Div} {
   }
 }
 
-pub macro fn lalr_sum(e: lalr_sum::Eqn): SynExpr ! {macro_error, Div} {
+pub macro fn lalr_sum(e: lalr_sum::Eqn): SynExpr ! {macro_error, div} {
   let l := ls_sum(e.sum)
   let r := ls_sum(e.sum_2)
   quote { Eq(Nat, $l, $r) }
@@ -88,11 +86,20 @@ theorem nested(): 1 + 2 + 3 + 4 = 10 { Eq::Refl(Nat, 10) }
 // The parser runs at run time: the tree of `1 + 2 + 3` has the sum of
 // `1 + 2` on its left, and a syntax error says what was expected.
 @ cases.an-lalr-parser-runs
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Syn::parse` yet"
 entry = "main.taut"
-backends = ["rust", "javascript"]
-shows = ["depth = 2", "first = \"1\"", "last = \"3\"", "rhs = \"6\"", "paren_depth = 1", "paren_first = \"paren\"", "error = \"macro-syntax-expected-found\"", "missing = \"macro-syntax-expected-end\""]
+stdout = ```
+2
+"1"
+"3"
+"6"
+1
+"paren"
+"macro-syntax-expected-found"
+"macro-syntax-expected-end"
+```
 files."main.taut" = ````tauto
-import std::prelude::Macro
+import std::builtin::macro
 
 syntax!(lalr_sum, ```par
 {{par:lalr_sum}}```) => struct Eqn, struct Paren, enum Sum, enum Term, fn parse
@@ -105,7 +112,7 @@ fn term_text(t: lalr_sum::Term): Text {
 }
 
 // The sums nest on the left: the number of `+` above the first term.
-fn depth(s: lalr_sum::Sum): u64 {
+fn depth(s: lalr_sum::Sum): u64 ! {overflow} {
   match s {
     SumPlusTerm(span, left, plus, term) => depth(left) + 1
     Term(t) => 0
@@ -128,26 +135,75 @@ fn last(s: lalr_sum::Sum): Text {
 
 match lalr_sum::parse("1 + 2 + 3 = 6") {
   Ok(e) => {
-    perform show("depth", depth(e.sum))
-    perform show("first", first(e.sum))
-    perform show("last", last(e.sum))
-    perform show("rhs", last(e.sum_2))
+    show(&depth(e.sum))
+    show(&first(e.sum))
+    show(&last(e.sum))
+    show(&last(e.sum_2))
   }
-  Err(d) => perform show("unexpected", d.message)
+  Err(d) => show(&d.message)
 }
 match lalr_sum::parse("(1 + 2) + 3 = 3") {
   Ok(e) => {
-    perform show("paren_depth", depth(e.sum))
-    perform show("paren_first", first(e.sum))
+    show(&depth(e.sum))
+    show(&first(e.sum))
   }
-  Err(d) => perform show("unexpected", d.message)
+  Err(d) => show(&d.message)
 }
 match lalr_sum::parse("1 + = 3") {
-  Ok(e) => perform show("unexpected", e.equals.text)
-  Err(d) => perform show("error", d.message)
+  Ok(e) => show(&e.equals.text)
+  Err(d) => show(&d.message)
 }
 match lalr_sum::parse("1 + 2") {
-  Ok(e) => perform show("unexpected", e.equals.text)
-  Err(d) => perform show("missing", d.message)
+  Ok(e) => show(&e.equals.text)
+  Err(d) => show(&d.message)
+}
+````
+
+// A parse at run time reads the program's own data, so a text longer than the
+// limit on a syntax literal (1 MiB) is read: here a number of 2^20 digits, then ` = 2`.
+@ cases.a-run-time-parse-reads-a-text-longer-than-a-macro-input
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Syn::parse` yet"
+entry = "main.taut"
+stdout = ```
+0
+"2"
+```
+// The JavaScript backend's parse of a text this long takes more than node's 2 GB heap.
+javascript.bug = "runtime: JavaScript heap out of memory"
+files."main.taut" = ````tauto
+import std::builtin::macro
+import std::prelude::std { concat }
+
+syntax!(lalr_sum, ```par
+{{par:lalr_sum}}```) => struct Eqn, struct Paren, enum Sum, enum Term, fn parse
+
+fn depth(s: lalr_sum::Sum): u64 ! {overflow} {
+  match s {
+    SumPlusTerm(span, left, plus, term) => depth(left) + 1
+    Term(t) => 0
+  }
+}
+
+fn rhs(s: lalr_sum::Sum): Text {
+  match s {
+    SumPlusTerm(span, left, plus, term) => "sum"
+    Term(t) => match t {
+      Num(tok) => tok.text
+      Paren(p) => "paren"
+    }
+  }
+}
+
+// `t` written 2^n times.
+fn doubled(t: Text, n: u64): Text ! {overflow} {
+  if n == 0 { t } else { doubled(concat(t, t), n - 1) }
+}
+
+match lalr_sum::parse(concat(doubled("1", 20), " = 2")) {
+  Ok(e) => {
+    show(&depth(e.sum))
+    show(&rhs(e.sum_2))
+  }
+  Err(d) => show(&d.message)
 }
 ````

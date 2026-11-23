@@ -1,20 +1,21 @@
 import "finish_frame.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn fuel_errors(c: Checker): List(TypeError) { c.errors }
 pub fn fuel_has_errors(es: List(TypeError)): Bool {
-  ⊢ Bool from match es { Nil => false
-    Cons(e, rest) => true }
+  match es { Nil => false
+    Cons(^e, ^rest) => true }
 }
 pub fn fuel_second_state<A: Type>(m: Mut2(A, Checker, Scope)): Checker {
-  ⊢ Checker from match m { mut2(v, c, env) => c }
+  match m { mut2(^v, c, ^env) => c }
 }
 
 pub theorem ck_infer_in_fuel_error(
@@ -125,9 +126,9 @@ pub theorem ck_clone_of_in_fuel_error(
 pub theorem ck_lambda_in_fuel_error(
   c: Checker,
   lam: SurfaceTerm,
-  borrows: List(Option(Bool)),
+  r#borrows: List(Option(Bool)),
   env: List(Local)
-): fuel_has_errors(fuel_errors(ck_st(ck_lambda_in(Zero, c, lam, borrows, env)))) = true { Refl }
+): fuel_has_errors(fuel_errors(ck_st(ck_lambda_in(Zero, c, lam, r#borrows, env)))) = true { Refl }
 
 pub theorem ck_record_fields_in_fuel_error(
   c: Checker,

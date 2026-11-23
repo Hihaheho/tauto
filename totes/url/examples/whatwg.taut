@@ -2,10 +2,10 @@ import "../src/parse.taut"
 import "../src/valid.taut"
 import "../src/percent.taut"
 import "../src/url.taut"
-import std::Text
+import std::text
 
 fn href(t: Text): Option(Text) {
-  ⊢ Option(Text) from match url_parse(t) {
+  match url_parse(t) {
     None => None
     Some(u) => Some(url_text(u))
   }
@@ -41,7 +41,7 @@ theorem query_quote_plain(): href("foo://a/?'") = Some("foo://a/?'") { Refl }
 theorem decode_mixed(): Text::Mk(pct_decode(Text::bytes("a%41%4g%%2F%"))) = "aA%4g%/%" { Refl }
 
 fn valid_of(t: Text): Option(Bool) {
-  ⊢ Option(Bool) from match url_parse(t) {
+  match url_parse(t) {
     None => None
     Some(u) => Some(url_valid(u))
   }

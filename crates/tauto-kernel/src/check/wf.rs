@@ -1,5 +1,5 @@
 //! `decreasing_by`: well-founded recursion, written out with the library of
-//! `std/WellFounded.taut`. The kernel gets no rule for it; the declaration
+//! `std/well_founded.taut`. The kernel gets no rule for it; the declaration
 //! becomes ordinary ones, read before the kernel checks anything.
 //!
 //! `fn f(x: A, p: P): B decreasing_by W { body }`, where `W` is a `WfRel(A)`,
@@ -19,6 +19,7 @@
 //! constructor. A program that is run reads the declaration as written, with
 //! the proofs left out of the calls.
 
+use super::inductive::app;
 use super::{Diagnostic, Entry, Kernel, T, Verdict};
 use crate::surface::Name;
 use crate::surface::{FnDecl, Stmt, TheoremDecl};
@@ -26,37 +27,24 @@ use crate::surface::{TermKind, walk};
 use std::sync::Arc;
 use tauto_message::{Message, msg};
 
-fn var(n: impl Into<Name>, sp: tauto_parol::Span) -> T {
-    T::new(TermKind::Var(n.into()), sp)
+pub(super) fn var(n: impl Into<Name>, sp: tauto_parol::Span) -> T {
+    T::var(&n.into(), sp)
 }
 
-fn app(f: T, args: Vec<T>) -> T {
-    let span = f.span;
-    if args.is_empty() {
-        return f;
-    }
-    T::new(
-        TermKind::App {
-            function: Box::new(f),
-            arguments: args,
-        },
-        span,
-    )
-}
-
-fn pi(name: Option<&Name>, domain: T, result: T) -> T {
+pub(super) fn pi(name: Option<&Name>, domain: T, result: T) -> T {
     let span = result.span;
     T::new(
         TermKind::Pi {
             params: vec![(name.cloned(), domain)],
             result: Box::new(result),
             effects: None,
+            unused: Vec::new(),
         },
         span,
     )
 }
 
-fn lam(names: &[Name], body: T) -> T {
+pub(super) fn lam(names: &[Name], body: T) -> T {
     names.iter().rev().fold(body, |acc, n| {
         let span = acc.span;
         T::new(
@@ -64,6 +52,7 @@ fn lam(names: &[Name], body: T) -> T {
                 params: vec![n.clone()],
                 body: Box::new(acc),
                 types: Vec::new(),
+                unused_params: Vec::new(),
             },
             span,
         )
@@ -81,12 +70,16 @@ impl Kernel {
         let mut out = Vec::new();
         for stmt in stmts {
             match stmt {
+                // A function with effects is expanded once it is read as a
+                // computation (`effect_pass`): its recursive calls are then in
+                // the continuations of `Comp::bind`.
                 Stmt::Fn(f)
                     if f.decreasing_by
                         .as_ref()
-                        .is_some_and(|y| !super::names_param(f, y)) =>
+                        .is_some_and(|y| !super::names_param(f, y))
+                        && f.effects.as_ref().is_none_or(|e| e.is_empty()) =>
                 {
-                    match self.wf_expand(f) {
+                    match self.wf_expand(f, 0) {
                         Ok(made) => out.extend(made),
                         Err(d) => entries.push(Entry {
                             name: f.name.clone(),
@@ -100,14 +93,22 @@ impl Kernel {
         out
     }
 
-    fn wf_expand(&mut self, f: &FnDecl) -> Result<Vec<Stmt>, Diagnostic> {
+    /// `f` with its `decreasing_by` written out. The first `fixed` parameters
+    /// are passed along unchanged, as the generics are: the row of a function
+    /// with effects read as a computation (`effects.rs`).
+    pub(super) fn wf_expand(&mut self, f: &FnDecl, fixed: usize) -> Result<Vec<Stmt>, Diagnostic> {
         let sp = f.span;
         let fail = |m: Message| Err(Diagnostic::new(m, Some(sp)));
         let Some(w) = &f.decreasing_by else {
             unreachable!("only a function with `decreasing_by` is expanded")
         };
         if let Some(listed) = &f.generates {
-            let made = [("theorem".to_string(), format!("{}::eq", f.name))];
+            // As the source spells the function: the list is written there.
+            let spelled = match &f.name {
+                Name::Global(reference) => reference.source_display().to_string(),
+                name => name.to_string(),
+            };
+            let made = [("theorem".to_string(), format!("{spelled}::eq"))];
             let start = msg!("kernel-wf-list-mismatch", name = (&f.name).to_string());
             if let Some(why) = crate::generated::mismatch(start, &listed.items, &made) {
                 let mut d = Diagnostic::new(why, Some(sp));
@@ -129,7 +130,7 @@ impl Kernel {
         let [wf_fix, wf_fix_eq, wf_rel_lt, wf_rel_wf] = required.as_slice() else {
             unreachable!()
         };
-        if f.params.is_empty() {
+        if f.params.len() <= fixed {
             return fail(msg!("kernel-wf-no-param"));
         }
         if !f.where_.is_empty() || f.effects.as_ref().is_some_and(|e| !e.is_empty()) {
@@ -145,13 +146,25 @@ impl Kernel {
                 None => return fail(msg!("kernel-wf-typed")),
             }
         }
-        let (x, a) = (f.params[0].clone(), types[0].clone());
-        let rest: Vec<(Name, T)> = f.params[1..]
+        let before: Vec<(Name, T)> = f.params[..fixed]
             .iter()
             .cloned()
-            .zip(types[1..].iter().cloned())
+            .zip(types[..fixed].iter().cloned())
             .collect();
-        let generics: Vec<T> = f.generics.iter().map(|g| var(g, sp)).collect();
+        let (x, a) = (f.params[fixed].clone(), types[fixed].clone());
+        let rest: Vec<(Name, T)> = f.params[fixed + 1..]
+            .iter()
+            .cloned()
+            .zip(types[fixed + 1..].iter().cloned())
+            .collect();
+        // The generics, then the fixed parameters: what every use of `f` and
+        // `f@step` starts with.
+        let generics: Vec<T> = f
+            .generics
+            .iter()
+            .chain(before.iter().map(|(p, _)| p))
+            .map(|g| var(g, sp))
+            .collect();
         let step = self.resolver.generated(
             &f.name,
             tauto_surface::identity::Generation::WellFoundedStep,
@@ -200,6 +213,7 @@ impl Kernel {
         let mut body = f.body.clone();
         let mut bad: Option<Diagnostic> = None;
         let arity = f.params.len() + 1;
+        let own = f.params.len() - fixed;
         walk::term(&mut body, &mut |t| match Arc::make_mut(&mut t.kind) {
             TermKind::App {
                 function,
@@ -211,7 +225,7 @@ impl Kernel {
                             msg!(
                                 "kernel-wf-call-arity",
                                 name = (&f.name).to_string(),
-                                count = f.params.len(),
+                                count = own,
                                 param = (&x).to_string()
                             ),
                             Some(t.span),
@@ -220,6 +234,7 @@ impl Kernel {
                     return;
                 }
                 let proof = arguments.pop().expect("one more than the parameters");
+                arguments.drain(..fixed);
                 arguments.insert(1, proof);
                 **function = var(&ih, function.span);
             }
@@ -237,11 +252,14 @@ impl Kernel {
             return Err(d);
         }
 
-        let mut params = vec![x.clone(), crate::surface::Name::Spelled(ih.clone())];
+        let mut params: Vec<Name> = before.iter().map(|(p, _)| p.clone()).collect();
+        params.extend([x.clone(), crate::surface::Name::Spelled(ih.clone())]);
         params.extend(rest.iter().map(|(p, _)| p.clone()));
-        let mut param_types = vec![Some(a.clone()), Some(ih_ty)];
+        let mut param_types: Vec<Option<T>> = before.iter().map(|(_, t)| Some(t.clone())).collect();
+        param_types.extend([Some(a.clone()), Some(ih_ty)]);
         param_types.extend(rest.iter().map(|(_, t)| Some(t.clone())));
         let aux = FnDecl {
+            lends: None,
             budget: None,
             vis: Default::default(),
             generates: None,
@@ -256,11 +274,17 @@ impl Kernel {
             param_types,
             result: Some(result.clone()),
             effects: None,
+            written_effects: None,
+            row_hole: None,
             where_: Vec::new(),
             span: sp,
             opaque: false,
+            ghost: f.ghost,
             decreasing_by: None,
             body,
+            unused: None,
+            unused_generics: Vec::new(),
+            unused_params: Vec::new(),
         };
 
         let motive = lam(&[primed(&x)], tail(self, &primed(&x)));
@@ -280,6 +304,7 @@ impl Kernel {
         let rest_vars: Vec<T> = rest.iter().map(|(p, _)| var(p, sp)).collect();
         let value = app(fixed(vec![step_fn.clone(), var(&x, sp)]), rest_vars.clone());
         let main = FnDecl {
+            lends: None,
             budget: f.budget,
             vis: Default::default(),
             generates: None,
@@ -294,11 +319,17 @@ impl Kernel {
             param_types: f.param_types.clone(),
             result: Some(result.clone()),
             effects: None,
+            written_effects: None,
+            row_hole: f.row_hole,
             where_: Vec::new(),
             span: sp,
             opaque: false,
+            ghost: f.ghost,
             decreasing_by: None,
             body: value,
+            unused: None,
+            unused_generics: Vec::new(),
+            unused_params: Vec::new(),
         };
 
         // The unfolding equation.
@@ -368,6 +399,7 @@ impl Kernel {
             ],
         );
         let mut eq_params: Vec<(Name, T)> = f.generic_parameters();
+        eq_params.extend(before.iter().cloned());
         eq_params.push((x.clone(), a.clone()));
         eq_params.extend(rest.iter().cloned());
         let eq = TheoremDecl {
@@ -380,6 +412,8 @@ impl Kernel {
             ty: statement,
             body: Some(proof),
             span: sp,
+            unused: None,
+            unused_params: Vec::new(),
         };
         Ok(vec![Stmt::Fn(aux), Stmt::Fn(main), Stmt::Theorem(eq)])
     }

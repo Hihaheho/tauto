@@ -11,6 +11,8 @@ import Proto.Nib.Typing
 import Proto.Nib.Safety
 import Proto.Nib.Div
 import Proto.Nib.Subst
+import Proto.Nib.ScopeCore
+import Proto.Nib.LastUse
 import Proto.Nib.Halt
 import Proto.Nib.Good
 import Proto.Nib.Unfold
@@ -18,17 +20,12 @@ import Proto.Nib.Examples
 import Proto.Nib.Kind
 import Proto.Nib.Lin
 import Proto.Nib.Own
-import Proto.Nib.Borrow
-import Proto.Nib.BorrowStep
-import Proto.Nib.BorrowSafety
 import Proto.Nib.Duplicate
-import Proto.Nib.Free
-import Proto.Nib.View
-import Proto.Nib.ViewExample
 import Proto.Kernel.Syntax
 import Proto.Kernel.Reduction
 import Proto.Kernel.Typing
 import Proto.Kernel.Safety
+import Proto.Kernel.Literals
 import Proto.Kernel.SNBase
 import Proto.Kernel.SNCand
 import Proto.Kernel.LR
@@ -55,4 +52,5 @@ import Proto.Handlers
 import Proto.Collect
 import Proto.Analysis
 import Proto.Nib.KeptFrames
+import Proto.Nib.EffectLend
 import Proto.Memory

@@ -84,3 +84,57 @@ mutual {
 ```
 checks."size" = "error: `sizes(xs)` is not structural: `sizes` matches on its parameter `xs`, so the argument for `xs` is a part of the value matched here"
 checks."sizes" = "error: `v` is a part of another type of the group"
+
+@ cases.an_if_that_returns_the_matched_value_keeps_the_recursion_structural
+source = ```tauto
+inductive Tree: Type {
+  Leaf(v: Nat): Tree
+  Node(c: List(Tree)): Tree
+}
+mutual {
+  fn trim(t: Tree): Tree {
+    match t {
+      Leaf(v) => if v == 0 { t } else { Leaf(0) }
+      Node(c) => Node(trims(c))
+    }
+  }
+  fn trims(l: List(Tree)): List(Tree) {
+    match l {
+      Nil => Nil
+      Cons(h, r) => Cons(trim(h), trims(r))
+    }
+  }
+}
+```
+checks."trim" = "checked"
+checks."trims" = "checked"
+
+@ cases.a_call_that_is_not_structural_beside_such_an_if_says_so
+source = ```tauto
+inductive Tree: Type {
+  Leaf(v: Nat): Tree
+  Node(c: List(Tree)): Tree
+}
+fn keep(s: Nat, v: Nat): Nat {
+  v
+}
+mutual {
+  fn trim(s: Nat, t: Tree): Tree {
+    match t {
+      Leaf(v) => {
+        let w := keep(s, v)
+        if w == v { t } else { Leaf(w) }
+      }
+      Node(c) => Node(trims(s, Cons(t, c)))
+    }
+  }
+  fn trims(s: Nat, l: List(Tree)): List(Tree) {
+    match l {
+      Nil => Nil
+      Cons(h, r) => Cons(trim(s, h), trims(s, r))
+    }
+  }
+}
+```
+checks."trim" = "error: `trims(s, List::Cons(t, c))` is not structural"
+checks."trims" = "error: `trims(s, List::Cons(t, c))` is not structural"

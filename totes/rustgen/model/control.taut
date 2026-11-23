@@ -12,8 +12,8 @@ import "core.taut" {
   rs_invoke
 }
 import "store.taut" { rs_alloc_values, rs_cell, rs_initialized, rs_store_cell }
-import "../../../std/Base.taut" { List }
-import "../../../std/Int.taut" { Int }
+import std::base { List }
+import std::int { Int }
 
 pub fn rs_trace(a: List(RsEvent), b: List(RsEvent), c: List(RsEvent)): List(RsEvent) {
   List::append(a, List::append(b, c))
@@ -29,8 +29,8 @@ pub(open) inductive RsAbnormal(A: Type): (RsOutcome(A)) -> Prop {
 }
 
 pub fn rs_abnormal<A, B>(out: RsOutcome(A)): RsOutcome(B) {
-  ⊢ RsOutcome(B) from match out {
-    RsDone(value) => RsPanic
+  match out {
+    RsDone(^value) => RsPanic
     RsReturned(value) => RsReturned(value)
     RsBroken(label, value) => RsBroken(label, value)
     RsContinued(label) => RsContinued(label)
@@ -41,7 +41,7 @@ pub fn rs_abnormal<A, B>(out: RsOutcome(A)): RsOutcome(B) {
 }
 
 pub fn rs_returned(out: RsOutcome(RsValue)): RsOutcome(RsValue) {
-  ⊢ RsOutcome(RsValue) from match out {
+  match out {
     RsDone(value) => RsDone(value)
     RsReturned(value) => RsDone(value)
     RsBroken(label, value) => RsBroken(label, value)
@@ -70,11 +70,11 @@ pub(open) inductive RsUnwinds: (RsOutcome(RsValue)) -> Prop {
 }
 
 pub fn rs_drop_panic(out: RsOutcome(RsValue)): RsOutcome(RsValue) {
-  ⊢ RsOutcome(RsValue) from match out {
-    RsDone(v) => RsPanic
-    RsReturned(v) => RsPanic
-    RsBroken(label, v) => RsPanic
-    RsContinued(label) => RsPanic
+  match out {
+    RsDone(^v) => RsPanic
+    RsReturned(^v) => RsPanic
+    RsBroken(^label, ^v) => RsPanic
+    RsContinued(^label) => RsPanic
     RsPanic => RsAbort
     RsExit(code) => RsExit(code)
     RsAbort => RsAbort
@@ -82,11 +82,11 @@ pub fn rs_drop_panic(out: RsOutcome(RsValue)): RsOutcome(RsValue) {
 }
 
 pub fn rs_drop_result(out: RsOutcome(RsValue), dropped: RsOutcome(RsValue)): RsOutcome(RsValue) {
-  ⊢ RsOutcome(RsValue) from match dropped {
-    RsDone(v) => out
-    RsReturned(v) => RsAbort
-    RsBroken(label, v) => RsAbort
-    RsContinued(label) => RsAbort
+  match dropped {
+    RsDone(^v) => out
+    RsReturned(^v) => RsAbort
+    RsBroken(^label, ^v) => RsAbort
+    RsContinued(^label) => RsAbort
     RsPanic => rs_drop_panic(out)
     RsExit(code) => RsExit(code)
     RsAbort => RsAbort
@@ -94,13 +94,13 @@ pub fn rs_drop_result(out: RsOutcome(RsValue), dropped: RsOutcome(RsValue)): RsO
 }
 
 pub fn rs_unwinding(out: RsOutcome(RsValue)): Bool {
-  ⊢ Bool from match out {
+  match out {
     RsPanic => true
-    RsDone(value) => false
-    RsReturned(value) => false
-    RsBroken(label, value) => false
-    RsContinued(label) => false
-    RsExit(code) => false
+    RsDone(^value) => false
+    RsReturned(^value) => false
+    RsBroken(^label, ^value) => false
+    RsContinued(^label) => false
+    RsExit(^code) => false
     RsAbort => false
   }
 }
@@ -110,7 +110,7 @@ pub fn rs_drop_pending(unwinding: Bool): RsOutcome(RsValue) {
 }
 
 pub fn rs_drop_completed(unwinding: Bool, out: RsOutcome(RsValue)): RsOutcome(RsValue) {
-  ⊢ RsOutcome(RsValue) from match out {
+  match out {
     RsPanic => if unwinding { RsDone(RsScalar(RsUnit)) } else { RsPanic }
     RsDone(value) => RsDone(value)
     RsReturned(value) => RsReturned(value)
@@ -368,7 +368,7 @@ pub(open) inductive RsFinishValues(
 }
 
 pub fn rs_call_store(kind: RsCallable, heap: RsStore, slot: Nat): RsStore {
-  ⊢ RsStore from match kind {
+  match kind {
     RsFn => heap
     RsFnMut => heap
     RsFnOnce => rs_store_cell(heap, slot, None)
@@ -394,7 +394,7 @@ pub(open) inductive RsCallCleanupOrder: (RsCallable, List(Nat), List(Nat), List(
 }
 
 pub fn rs_forget(slots: List(Nat), heap: RsStore): RsStore {
-  ⊢ RsStore from match slots {
+  match slots {
     Nil => heap
     Cons(slot, rest) => rs_forget(rest, rs_store_cell(heap, slot, None))
   }

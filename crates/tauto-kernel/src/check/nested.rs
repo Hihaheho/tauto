@@ -77,6 +77,90 @@ impl Kernel {
         Ok(arms)
     }
 
+    /// A `match` on a product of variables, `match #(a, b) { #(p, q) => … }`,
+    /// is read as the case tree of matches on `a` and then on `b`, so that a
+    /// call on a field of `a` or of `b` is a structural recursion as it is
+    /// when the matches are written one inside the other. Only a body that
+    /// calls `function` is read so, and a `match` that is not of that form
+    /// (a guard, a result type, a binder, an arm that is not a product
+    /// pattern of the same members) is left as written.
+    pub(super) fn split_product_matches(&mut self, function: &Name, body: &T) -> T {
+        let mut recurs = false;
+        let mut probe = body.clone();
+        crate::surface::walk::term(&mut probe, &mut |u: &mut T| {
+            if matches!(&*u.kind, TermKind::Var(v) if v == function) {
+                recurs = true;
+            }
+        });
+        if !recurs {
+            return body.clone();
+        }
+        let mut t = body.clone();
+        crate::surface::walk::term(&mut t, &mut |u: &mut T| {
+            if let Some(split) = self.split_product_match(u) {
+                *u = split;
+            }
+        });
+        t
+    }
+
+    fn split_product_match(&mut self, u: &T) -> Option<T> {
+        let TermKind::Match {
+            scrutinee,
+            result: None,
+            binder: None,
+            arms,
+            ..
+        } = &*u.kind
+        else {
+            return None;
+        };
+        let members = scrutinee.product_value_members()?;
+        let names: Vec<Name> = members
+            .iter()
+            .map(|m| match &*m.kind {
+                TermKind::Var(n) => Some(n.clone()),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        let mut rows = Vec::new();
+        for (at, arm) in arms.iter().enumerate() {
+            if arm.guard.is_some() {
+                return None;
+            }
+            let pattern = if has_numeral(&arm.pattern) {
+                numerals(&arm.pattern, arm.body.span).ok()?
+            } else {
+                arm.pattern.clone()
+            };
+            let default = pattern == Pattern::Wild;
+            let cols: Vec<(Name, Pattern)> = if default {
+                if at + 1 != arms.len() {
+                    return None;
+                }
+                names.iter().map(|n| (n.clone(), Pattern::Wild)).collect()
+            } else {
+                let patterns = pattern.product_members()?;
+                if patterns.len() != names.len() {
+                    return None;
+                }
+                names.iter().cloned().zip(patterns.into_iter().cloned()).collect()
+            };
+            rows.push(Row {
+                cols,
+                body: arm.body.clone(),
+                default,
+            });
+        }
+        let mut used = false;
+        let has_default = rows.last().is_some_and(|r| r.default);
+        let tree = self.tree(rows, u.span, &mut used).ok()?;
+        if has_default && !used {
+            return None;
+        }
+        Some(tree)
+    }
+
     /// The first name in `C<n: m>(…)` that is not an implicit argument of
     /// `C`, if any.
     pub(super) fn unknown_implicit(&self, c: &Name, args: &[Pattern]) -> Option<String> {
@@ -160,7 +244,7 @@ impl Kernel {
     fn as_ctor<'p>(&self, p: &'p Pattern) -> Option<(Name, &'p [Pattern])> {
         let (name, args) = match p {
             Pattern::Ctor { name, args } => (name, args.as_slice()),
-            Pattern::Bind(name) if self.pattern_constructor(name) => (name, &[][..]),
+            Pattern::Bind { name: name, .. } if self.pattern_constructor(name) => (name, &[][..]),
             _ => return None,
         };
         let name = if let Name::Selection(selection) = name {
@@ -218,7 +302,7 @@ impl Kernel {
                 .unwrap_or_else(|| vec![row.body.id()]);
             let mut body = row.body;
             for (name, p) in &row.cols {
-                if let Pattern::Bind(n) = p
+                if let Pattern::Bind { name: n, .. } = p
                     && n != name
                 {
                     body = self.subst(&body, n, &T::var(name, span));
@@ -236,6 +320,7 @@ impl Kernel {
                 scrutinee: Box::new(T::var(&scrutinee, span)),
                 result: None,
                 arms,
+                binder_unused: None,
             },
             span,
         ))
@@ -350,7 +435,7 @@ impl Kernel {
                     .iter()
                     .filter(|r| !r.default)
                     .map(|r| match &r.cols[k].1 {
-                        Pattern::Bind(n) if !self.pattern_constructor(n) => Some(n.clone()),
+                        Pattern::Bind { name: n, .. } if !self.pattern_constructor(n) => Some(n.clone()),
                         _ => None,
                     });
                 let first = binds.next().flatten();
@@ -380,7 +465,7 @@ impl Kernel {
                 goal: None,
                 pattern: Pattern::Ctor {
                     name: c,
-                    args: names.into_iter().map(Pattern::Bind).collect(),
+                    args: names.into_iter().map(Pattern::bind).collect(),
                 },
                 guard: None,
                 body,
@@ -407,7 +492,6 @@ fn has_numeral(p: &Pattern) -> bool {
         Pattern::Int(_) | Pattern::Bool(_) => true,
         Pattern::Ctor { args, .. } => args.iter().any(has_numeral),
         Pattern::Record { fields, .. } => fields.iter().any(|(_, p)| has_numeral(p)),
-        Pattern::Tuple(items) => items.iter().any(has_numeral),
         _ => false,
     }
 }
@@ -434,13 +518,9 @@ fn numerals(p: &Pattern, span: tauto_parol::Span) -> Result<Pattern, Diagnostic>
                 span,
             );
         }
-        Pattern::Bool(b) => Pattern::Bind(tauto_surface::bindings::library_name(if *b {
-            "true"
-        } else {
-            "false"
-        })),
+        Pattern::Bool(b) => Pattern::Bind { name: tauto_surface::bindings::library_name(if *b { "true" } else { "false" }), unused: None },
         Pattern::Int(n) => {
-            let mut q = Pattern::Bind(tauto_surface::bindings::library_name("Zero"));
+            let mut q = Pattern::Bind { name: tauto_surface::bindings::library_name("Zero"), unused: None };
             for _ in 0..*n {
                 q = Pattern::Ctor {
                     name: tauto_surface::bindings::library_name("Succ"),
@@ -463,12 +543,6 @@ fn numerals(p: &Pattern, span: tauto_parol::Span) -> Result<Pattern, Diagnostic>
                 .map(|(f, a)| Ok((f.clone(), numerals(a, span)?)))
                 .collect::<Result<_, Diagnostic>>()?,
         },
-        Pattern::Tuple(items) => Pattern::Tuple(
-            items
-                .iter()
-                .map(|a| numerals(a, span))
-                .collect::<Result<_, _>>()?,
-        ),
         other => other.clone(),
     })
 }

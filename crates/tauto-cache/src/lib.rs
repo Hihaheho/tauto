@@ -160,6 +160,55 @@ impl BuildCache {
         BuildCache { root }
     }
 
+    /// The SHA-256 of the running executable, which holds every checker it
+    /// runs: a key with it names the checker itself, so a result made by
+    /// another build of tauto is not used. The digest is kept under the
+    /// executable's path, size and modification time, so it is computed once
+    /// per executable rather than once per run, and once per process here.
+    pub fn executable_sha256(&self) -> Option<String> {
+        static DIGEST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        DIGEST
+            .get_or_init(|| self.compute_executable_sha256())
+            .clone()
+    }
+
+    fn compute_executable_sha256(&self) -> Option<String> {
+        use std::io::Read;
+        let path = std::env::current_exe().ok()?;
+        let meta = std::fs::metadata(&path).ok()?;
+        let stamp = format!(
+            "{}\0{}\0{:?}",
+            path.display(),
+            meta.len(),
+            meta.modified().ok()?
+        );
+        let action = Action::new("tauto-executable", "").input("stamp", stamp.as_bytes());
+        if let Some(out) = self.get(&action)
+            && let Some(blob) = out.0.get("sha256")
+            && let Some(bytes) = self.get_blob(blob)
+            && let Ok(hex) = String::from_utf8(bytes)
+        {
+            return Some(hex);
+        }
+        let mut file = std::fs::File::open(&path).ok()?;
+        let mut hash = tauto_syntax::Sha256::new();
+        let mut buffer = vec![0u8; 1 << 20];
+        loop {
+            let n = file.read(&mut buffer).ok()?;
+            if n == 0 {
+                break;
+            }
+            hash.update(&buffer[..n]);
+        }
+        let hex = hash.finish_hex();
+        if let Ok(blob) = self.put_blob(hex.as_bytes()) {
+            let mut out = Outputs::default();
+            out.0.insert("sha256".into(), blob);
+            let _ = self.put(&action, &out);
+        }
+        Some(hex)
+    }
+
     pub fn blob_path(&self, d: &BlobDigest) -> PathBuf {
         self.root.join("blobs").join(d.hex())
     }

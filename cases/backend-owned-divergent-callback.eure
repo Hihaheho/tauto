@@ -1,34 +1,34 @@
 @ cases.nested-owned-callback-under-multi-shot-budget
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
-effect ask(): i64 resume ω
-fn twice(f: (i64) -> i64 ! {Div}, x: i64): i64 { f(f(x)) }
+effect ask(): nat resume ω
+fn twice(f: (nat) -> nat ! {div}, x: nat): nat ! {div} { f(f(x)) }
 let value := handle {
   let n := perform ask()
-  handle { budget(steps: 0) { twice(x => x + n, 3) } } with {
+  handle { perform budget(0, () => { twice(x => x + n, 3) }) } with {
     exceeded(info), k => info.unbounded()
   }
 } with {
   ask(), k => k(1) + k(2)
 }
-perform show("value", value)
+show(&value)
 ```
-shows = ["value = 12"]
+stdout = "12\n"
 
 @ cases.owned-callback-in-a-conditional-multi-shot-path
-backends = ["rust", "javascript"]
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
 source = ```tauto
 struct Point { x: i64, y: i64 }
 enum Shape { Dot, Line(i64), Rect(i64, i64) }
 effect ask(n: i64): i64 resume ω
-fn spin(): i64 {
+fn spin(): i64 ! {div} {
   while true { }
   0
 }
-fn twice(f: (i64) -> i64 ! {Div}, x: i64): i64 {
+fn twice(f: (i64) -> i64 ! {budget, div, overflow}, x: i64): i64 ! {budget, div, overflow} {
   f(f(x))
 }
-fn count(n: i64): i64 {
+fn count(n: i64): i64 ! {div, overflow} {
   var i := 0
   var s := 0
   while i < n {
@@ -40,19 +40,19 @@ fn count(n: i64): i64 {
 fn f0(p0_0: i64): Point {
   Point { x: 9223372036854775807, y: 71 }
 }
-fn f1(): Shape {
+fn f1(): Shape ! {overflow} {
   (if false { (if (match Line((0 - 9223372036854775807 - 1)) { Dot => false, Line(a1) => (a1 <= 3037000501), Rect(a1, b2) => (4611686018427387904 != 14) }) { Dot } else { (match (match Line(4611686018427387904) { Dot => Line(0), Line(a3) => Dot, Rect(a3, b4) => Rect(75, 47) }) { Dot => Dot, Line(a5) => Rect(a5, (0 - 9223372036854775807 - 1)), Rect(a5, b6) => Line(3037000500) }) }) } else { Dot })
 }
-fn f2(): i64 {
+fn f2(): i64 ! {budget, div, divzero, overflow} {
   (handle { let r11 := perform ask({ let x9 := { let x8 := false
  (46 < 0) }
  { let x10 := Rect(4611686018427387904, 57)
- (handle { budget(steps: 78) { spin() } } with {
+ (handle { perform budget(78, () => { spin() }) } with {
   exceeded(info), k => k(0)
 }) } })
- (handle { budget(steps: 45) { count(30) + twice((l12) => (handle { budget(steps: 28) { count(30) + 6 } } with {
+ (handle { perform budget(45, () => { count(30) + twice((l12) => (handle { perform budget(28, () => { count(30) + 6 }) } with {
   exceeded(info), k => info.unbounded()
-}), 33) } } with {
+}), 33) }) } with {
   exceeded(info), k => info.unbounded()
 }) } with {
   ask(n7), k => k(mod(3037000501, twice((l13) => { let gl14 := (l14) => (0 - 1)
@@ -62,7 +62,91 @@ fn f2(): i64 {
 fn f3(): Shape {
   Rect((0 - 1), 38)
 }
-perform show("v0", f0((if { let x15 := Dot
+show(&f0((if { let x15 := Dot
  (false && false) } { 19 } else { f2() })))
 ```
-shows = ["v0 = Point { x: 9223372036854775807, y: 71 }"]
+stdout = "Point { x: 9223372036854775807, y: 71 }\n"
+
+@ cases.total-callback-that-runs-a-budget-under-a-budget
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+source = ```tauto
+fn count(n: nat): nat ! {div} {
+  var i: nat := 0
+  while i < n { i := i + 1 }
+  i
+}
+fn bounded(n: nat): nat ! {budget} {
+  handle { perform budget(1000, () => { count(n) }) } with {
+    exceeded(info), k => 0
+  }
+}
+fn apply<A: Shared>(f: (A) -> A ! {budget}, n: A): A ! {budget} { f(n) }
+let value := handle {
+  perform budget(1000, () => { apply((x) => bounded(x), 5) })
+} with {
+  exceeded(info), k => 0
+}
+show(&value)
+```
+stdout = "5\n"
+
+// A function value that is resumed at most once, called in code that an
+// operation of `resume ω` runs again: each run makes the call, and the call
+// stops for its operation until the handler outside answers.
+@ cases.a-function-value-called-under-multi-shot-stops-for-an-outer-handler
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```tauto
+effect ask(): nat
+effect choose(): Bool resume ω
+fn body<!r>(f: () -> nat ! {div} ∪ r): nat ! {choose, div} ∪ r {
+  let b := perform choose()
+  let v := f()
+  if b { v } else { v + 10 }
+}
+fn both(f: () -> nat ! {ask, div}): nat ! {ask, div} {
+  handle { body(f) } with {
+    choose(), k => k(true) + k(false)
+    return x => x
+  }
+}
+show(&(handle { both(() => perform ask() + perform ask()) } with {
+  ask(), k => k(1)
+  return v => v
+}))
+let z := handle { perform budget(1000, () => { 7 }) } with {
+  exceeded(info), k => 0
+}
+show(&z)
+```
+stdout = "14\n7\n"
+
+// The same call ended by an operation of `resume 0` that the handler of the
+// `resume ω` operation takes: the call is dropped where it stopped.
+@ cases.a-function-value-called-under-multi-shot-aborts-to-its-handler
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
+source = ```tauto
+effect stop(n: nat): Never resume 0
+effect ask(): nat
+effect choose(): Bool resume ω
+fn body<!r>(f: () -> nat ! {div} ∪ r): nat ! {choose, div} ∪ r {
+  let b := perform choose()
+  let v := f()
+  if b { v } else { v + 10 }
+}
+fn both(f: () -> nat ! {ask, stop, div}): nat ! {ask, div} {
+  handle { body(f) } with {
+    choose(), k => k(true) + k(false)
+    stop(n) => n
+    return x => x
+  }
+}
+show(&(handle { both(() => { let a := perform ask(); if a > 0 { perform stop(a + 5) } else { a } }) } with {
+  ask(), k => k(1)
+  return v => v
+}))
+let z := handle { perform budget(1000, () => { 7 }) } with {
+  exceeded(info), k => 0
+}
+show(&z)
+```
+stdout = "12\n7\n"

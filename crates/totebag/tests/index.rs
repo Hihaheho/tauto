@@ -2,59 +2,11 @@
 //! each adding one batch, and the digests that chain them.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use tauto_test_support::{Scratch, git};
 
 use totebag::git::Mirror;
 use totebag::index::checkpoint::{self, History};
 use totebag::index::ledger::Event;
-
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(name: &str) -> Scratch {
-        let dir = std::env::temp_dir().join(format!(
-            "totebag-index-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        Scratch(dir)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args([
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@example.org",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "init.defaultBranch=main",
-        ])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
 
 const CONFIG: &str = "format = 1\nkind = \"index\"\nname = \"alice\"\nhistory = \"commit-batches\"\ngit_object_format = \"sha1\"\n";
 const PROJECT: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
@@ -108,7 +60,7 @@ fn read(s: &Scratch, repo: &Path, name: &str) -> Result<History, String> {
 #[test]
 fn a_history_is_read_root_first_and_chained() {
     tauto_messages::install();
-    let s = Scratch::new("chain");
+    let s = Scratch::new("totebag-index-chain");
     let repo = s.0.join("repo");
     let revs = index(&repo);
     let history = read(&s, &repo, "mirror").unwrap();
@@ -158,7 +110,7 @@ fn a_history_is_read_root_first_and_chained() {
 #[test]
 fn a_merge_is_refused() {
     tauto_messages::install();
-    let s = Scratch::new("merge");
+    let s = Scratch::new("totebag-index-merge");
     let repo = s.0.join("repo");
     index(&repo);
     git(&repo, &["checkout", "--quiet", "-b", "side", "HEAD~1"]);
@@ -177,7 +129,7 @@ fn a_merge_is_refused() {
 #[test]
 fn the_config_does_not_change() {
     tauto_messages::install();
-    let s = Scratch::new("config");
+    let s = Scratch::new("totebag-index-config");
     let repo = s.0.join("repo");
     index(&repo);
     commit(&repo, &CONFIG.replace("alice", "mallory"), &batch(3, ""));
@@ -188,7 +140,7 @@ fn the_config_does_not_change() {
 #[test]
 fn the_root_is_an_empty_batch_zero() {
     tauto_messages::install();
-    let s = Scratch::new("root");
+    let s = Scratch::new("totebag-index-root");
     let repo = s.0.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "--quiet"]);
@@ -200,7 +152,7 @@ fn the_root_is_an_empty_batch_zero() {
 #[test]
 fn a_bad_batch_or_a_missing_file_is_refused() {
     tauto_messages::install();
-    let s = Scratch::new("bad");
+    let s = Scratch::new("totebag-index-bad");
     let repo = s.0.join("repo");
     index(&repo);
     commit(

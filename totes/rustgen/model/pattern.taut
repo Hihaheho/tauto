@@ -1,78 +1,78 @@
 import "core.taut" { RsAddress, RsBorrow, RsLiteral, RsPattern, RsStore, RsUse, RsValue }
 import "store.taut" { rs_alloc, rs_can_copy, rs_load, rs_peek, rs_reference_kind, rs_save }
-import "../../../std/Base.taut" { List }
-import "../../../std/Int.taut" { Int }
-import "../../../std/Text.taut" { Text }
+import std::base { List }
+import std::int { Int }
+import std::text { Text }
 
 pub fn rs_literal_eq(a: RsLiteral, b: RsLiteral): Bool {
-  ⊢ Bool from match a {
+  match a {
     RsStr(x) => ⊢ Bool from match b {
       RsStr(y) => Text::eq(x, y)
-      RsNatural(y) => false
+      RsNatural(^y) => false
       RsUnit => false
-      RsBool(y) => false
-      RsInteger(y, s, w) => false
-      RsText(y) => false
-      RsFloat(y, s) => false
+      RsBool(^y) => false
+      RsInteger(^y, ^s, ^w) => false
+      RsText(^y) => false
+      RsFloat(^y, ^s) => false
     }
-    RsNatural(x) => false
+    RsNatural(^x) => false
     RsUnit => ⊢ Bool from match b {
-      RsStr(y) => false
-      RsNatural(y) => false
+      RsStr(^y) => false
+      RsNatural(^y) => false
       RsUnit => true
-      RsBool(y) => false
-      RsInteger(y, s, w) => false
-      RsText(y) => false
-      RsFloat(y, s) => false
+      RsBool(^y) => false
+      RsInteger(^y, ^s, ^w) => false
+      RsText(^y) => false
+      RsFloat(^y, ^s) => false
     }
     RsBool(x) => ⊢ Bool from match b {
-      RsStr(y) => false
-      RsNatural(y) => false
+      RsStr(^y) => false
+      RsNatural(^y) => false
       RsUnit => false
       RsBool(y) => Bool::eq(x, y)
-      RsInteger(y, s, w) => false
-      RsText(y) => false
-      RsFloat(y, s) => false
+      RsInteger(^y, ^s, ^w) => false
+      RsText(^y) => false
+      RsFloat(^y, ^s) => false
     }
     RsInteger(x, sx, wx) => ⊢ Bool from match b {
-      RsStr(y) => false
-      RsNatural(y) => false
+      RsStr(^y) => false
+      RsNatural(^y) => false
       RsUnit => false
-      RsBool(y) => false
+      RsBool(^y) => false
       RsInteger(y, sy, wy) => Int::eq(x, y) && Bool::eq(sx, sy) && Nat::eq(wx, wy)
-      RsText(y) => false
-      RsFloat(y, s) => false
+      RsText(^y) => false
+      RsFloat(^y, ^s) => false
     }
     RsText(x) => ⊢ Bool from match b {
-      RsStr(y) => false
-      RsNatural(y) => false
+      RsStr(^y) => false
+      RsNatural(^y) => false
       RsUnit => false
-      RsBool(y) => false
-      RsInteger(y, s, w) => false
+      RsBool(^y) => false
+      RsInteger(^y, ^s, ^w) => false
       RsText(y) => Text::eq(x, y)
-      RsFloat(y, s) => false
+      RsFloat(^y, ^s) => false
     }
     RsFloat(x, sx) => ⊢ Bool from match b {
-      RsStr(y) => false
-      RsNatural(y) => false
+      RsStr(^y) => false
+      RsNatural(^y) => false
       RsUnit => false
-      RsBool(y) => false
-      RsInteger(y, s, w) => false
-      RsText(y) => false
+      RsBool(^y) => false
+      RsInteger(^y, ^s, ^w) => false
+      RsText(^y) => false
       RsFloat(y, sy) => Nat::eq(x, y) && Bool::eq(sx, sy)
     }
   }
 }
 
 pub fn rs_scalar_eq(lit: RsLiteral, value: RsValue): Bool {
-  ⊢ Bool from match value {
+  match value {
     RsScalar(other) => rs_literal_eq(lit, other)
-    RsData(tag, is_copy, fields) => false
-    RsReference(kind, address) => false
-    RsGlobal(index) => false
-    RsClosure(kind, arity, captures, body) => false
-    RsSuspended(captures, body) => false
-    RsHandle(index) => false
+    RsData(^tag, ^is_copy, ^fields) => false
+    RsReference(^kind, ^address) => false
+    RsGlobal(^index) => false
+    RsClosure(^kind, ^arity, ^captures, ^body) => false
+    RsSuspended(^captures, ^body) => false
+    RsHandle(^index) => false
     RsUninitialized => false
   }
 }
@@ -83,14 +83,14 @@ pub(open) inductive RsMatchMode: Type {
 }
 
 pub fn rs_pattern_move(mode: RsMatchMode, heap: RsStore, addr: RsAddress): Option(RsStore) {
-  ⊢ Option(RsStore) from match mode {
+  match mode {
     RsPreview => Some(heap)
     RsCommit => rs_save(heap, addr, RsUninitialized)
   }
 }
 
 pub fn rs_child_address(addr: RsAddress, field: Nat): RsAddress {
-  ⊢ RsAddress from match addr {
+  match addr {
     RsAddr(root, fields) => RsAddr(root, List::append(fields, Cons(field, Nil)))
   }
 }
@@ -101,10 +101,10 @@ pub fn rs_match_leaf(
   pattern: RsPattern,
   addr: RsAddress
 ): Option(List(RsValue) × RsStore) {
-  ⊢ Option(List(RsValue) × RsStore) from match pattern {
+  match pattern {
     RsIgnore => ⊢ Option(List(RsValue) × RsStore) from match rs_peek(heap, addr) {
       None => None
-      Some(value) => Some(#(Nil, heap))
+      Some(^value) => Some(#(Nil, heap))
     }
     RsBind(kind) => ⊢ Option(List(RsValue) × RsStore) from match rs_load(heap, addr) {
       None => None
@@ -118,14 +118,14 @@ pub fn rs_match_leaf(
     }
     RsBindReference(kind) => ⊢ Option(List(RsValue) × RsStore) from match rs_load(heap, addr) {
       None => None
-      Some(value) => Some(#(Cons(RsReference(kind, addr), Nil), heap))
+      Some(^value) => Some(#(Cons(RsReference(kind, addr), Nil), heap))
     }
     RsConstant(lit) => ⊢ Option(List(RsValue) × RsStore) from match rs_load(heap, addr) {
       None => None
       Some(value) => if rs_scalar_eq(lit, value) { Some(#(Nil, heap)) } else { None }
     }
-    RsConstructor(tag, pats) => None
-    RsDerefPattern(kind, body) => None
+    RsConstructor(^tag, ^pats) => None
+    RsDerefPattern(^kind, ^body) => None
   }
 }
 
@@ -138,7 +138,7 @@ mutual {
     pattern: RsPattern,
     addr: RsAddress
   ): Option(List(RsValue) × RsStore) {
-    ⊢ Option(List(RsValue) × RsStore) from match pattern {
+    match pattern {
       RsDerefPattern(kind, body) => ⊢ Option(List(RsValue) × RsStore) from match rs_load(heap, addr) {
         None => None
         Some(value) => ⊢ Option(List(RsValue) × RsStore) from match rs_reference_kind(kind, value) {
@@ -153,18 +153,18 @@ mutual {
       RsConstructor(tag, pats) => ⊢ Option(List(RsValue) × RsStore) from match rs_peek(heap, addr) {
         None => None
         Some(value) => ⊢ Option(List(RsValue) × RsStore) from match value {
-          RsData(other, is_copy, fields) => if Nat::eq(
+          RsData(other, ^is_copy, fields) => if Nat::eq(
             tag,
             other
           ) && Nat::eq(List::length(pats), List::length(fields)) {
             rs_match_fields_at(mode, heap, pats, addr, 0)
           } else { None }
-          RsScalar(lit) => None
-          RsReference(kind, target) => None
-          RsGlobal(index) => None
-          RsClosure(kind, arity, captures, body) => None
-          RsSuspended(captures, body) => None
-          RsHandle(index) => None
+          RsScalar(^lit) => None
+          RsReference(^kind, ^target) => None
+          RsGlobal(^index) => None
+          RsClosure(^kind, ^arity, ^captures, ^body) => None
+          RsSuspended(^captures, ^body) => None
+          RsHandle(^index) => None
           RsUninitialized => None
         }
       }
@@ -177,7 +177,7 @@ mutual {
     addr: RsAddress,
     index: Nat
   ): Option(List(RsValue) × RsStore) {
-    ⊢ Option(List(RsValue) × RsStore) from match pats {
+    match pats {
       Nil => Some(#(Nil, heap))
       Cons(pat, rest) => ⊢ Option(List(RsValue) × RsStore) from match rs_match_at(
         mode,
@@ -215,15 +215,15 @@ pub fn rs_guard_leaf(
   pattern: RsPattern,
   addr: RsAddress
 ): Option(List(RsGuardBinding)) {
-  ⊢ Option(List(RsGuardBinding)) from match rs_match_leaf(RsPreview, heap, pattern, addr) {
+  match rs_match_leaf(RsPreview, heap, pattern, addr) {
     None => None
-    Some(ignored) => ⊢ Option(List(RsGuardBinding)) from match pattern {
+    Some(^ignored) => ⊢ Option(List(RsGuardBinding)) from match pattern {
       RsIgnore => Some(Nil)
-      RsConstant(lit) => Some(Nil)
-      RsBind(mode) => Some(Cons(RsGuardView(addr), Nil))
+      RsConstant(^lit) => Some(Nil)
+      RsBind(^mode) => Some(Cons(RsGuardView(addr), Nil))
       RsBindReference(kind) => Some(Cons(RsGuardReference(kind, addr), Nil))
-      RsConstructor(tag, fields) => None
-      RsDerefPattern(kind, body) => None
+      RsConstructor(^tag, ^fields) => None
+      RsDerefPattern(^kind, ^body) => None
     }
   }
 }
@@ -234,7 +234,7 @@ mutual {
     pattern: RsPattern,
     addr: RsAddress
   ): Option(List(RsGuardBinding)) {
-    ⊢ Option(List(RsGuardBinding)) from match pattern {
+    match pattern {
       RsIgnore => rs_guard_leaf(heap, RsIgnore, addr)
       RsConstant(lit) => rs_guard_leaf(heap, RsConstant(lit), addr)
       RsBind(mode) => rs_guard_leaf(heap, RsBind(mode), addr)
@@ -249,18 +249,18 @@ mutual {
       RsConstructor(tag, patterns) => ⊢ Option(List(RsGuardBinding)) from match rs_peek(heap, addr) {
         None => None
         Some(value) => ⊢ Option(List(RsGuardBinding)) from match value {
-          RsData(other, is_copy, fields) => if Nat::eq(
+          RsData(other, ^is_copy, fields) => if Nat::eq(
             tag,
             other
           ) && Nat::eq(List::length(patterns), List::length(fields)) {
             rs_guard_fields(heap, patterns, addr, 0)
           } else { None }
-          RsScalar(lit) => None
-          RsReference(kind, target) => None
-          RsGlobal(index) => None
-          RsClosure(kind, arity, captures, body) => None
-          RsSuspended(captures, body) => None
-          RsHandle(index) => None
+          RsScalar(^lit) => None
+          RsReference(^kind, ^target) => None
+          RsGlobal(^index) => None
+          RsClosure(^kind, ^arity, ^captures, ^body) => None
+          RsSuspended(^captures, ^body) => None
+          RsHandle(^index) => None
           RsUninitialized => None
         }
       }
@@ -272,7 +272,7 @@ mutual {
     addr: RsAddress,
     index: Nat
   ): Option(List(RsGuardBinding)) {
-    ⊢ Option(List(RsGuardBinding)) from match patterns {
+    match patterns {
       Nil => Some(Nil)
       Cons(pattern, rest) => ⊢ Option(List(RsGuardBinding)) from match rs_guard_plan(
         heap,
@@ -295,7 +295,7 @@ mutual {
 }
 
 pub fn rs_guard_install(heap: RsStore, bindings: List(RsGuardBinding)): RsGuardScope {
-  ⊢ RsGuardScope from match bindings {
+  match bindings {
     Nil => RsGuardScopeOf(Nil, Nil, heap)
     Cons(binding, rest) => ⊢ RsGuardScope from match binding {
       RsGuardView(addr) => ⊢ RsGuardScope from match rs_guard_install(heap, rest) {
@@ -319,7 +319,7 @@ pub fn rs_guard_install(heap: RsStore, bindings: List(RsGuardBinding)): RsGuardS
 }
 
 pub fn rs_guard_prepare(heap: RsStore, pattern: RsPattern, addr: RsAddress): Option(RsGuardScope) {
-  ⊢ Option(RsGuardScope) from match rs_guard_plan(heap, pattern, addr) {
+  match rs_guard_plan(heap, pattern, addr) {
     None => None
     Some(bindings) => Some(rs_guard_install(heap, bindings))
   }

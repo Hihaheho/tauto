@@ -1,0 +1,13 @@
+import std::builtin::macro
+
+pub macro fn mk(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StFn(f) => {
+      let name := Syn::decl_name(f.name, "E")
+      quote stmts {
+        enum $name { Execute(i64) }
+      }
+    }
+    other => Syn::error(Syn::call_span(), "fn")
+  }
+}

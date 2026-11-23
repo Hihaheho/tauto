@@ -15,10 +15,7 @@ fn f(x: Bool): Nat {
 format = `````tauto
 fn f(x: Bool): Nat {
   match x {
-    true => match x {
-      true => 1
-      false => 2
-    }
+    true => match x { true => 1, false => 2 }
     false => 0
   }
 }
@@ -104,10 +101,7 @@ fn f(x: Bool): Nat {
   match x {
     true => {
       // keep this boundary
-      match x {
-        true => 1
-        false => 2
-      }
+      match x { true => 1, false => 2 }
     }
     false => {
       if x { 3 } else { 4 }
@@ -120,7 +114,7 @@ differential = "fmt"
 
 @ cases.quote-and-macro-input-keep-blocks
 source = `````tauto
-macro fn q(e: SynExpr): SynExpr { quote {
+pub macro fn q(e: SynExpr): SynExpr { quote {
   match x {
     true => {
       match y {
@@ -139,7 +133,7 @@ let x := q!(match z {
 })
 `````
 format = `````tauto
-macro fn q(e: SynExpr): SynExpr { quote {
+pub macro fn q(e: SynExpr): SynExpr { quote {
     match x {
       true => {
         match y {
@@ -235,10 +229,7 @@ fn f(x: Bool): Nat {
 format = `````tauto
 fn f(x: Bool): Nat {
   ⊢ Nat from match x {
-    true => ⊢ Nat from match x {
-      true => 1
-      false => 2
-    }
+    true => ⊢ Nat from match x { true => 1, false => 2 }
     false => 0
   }
 }
@@ -309,3 +300,94 @@ class Ord2(A: Type) {
 }
 `````
 differential = "fmt"
+
+@ cases.raw-borrows-keeps-its-prefix
+source = `````tauto
+struct S {
+  r#borrows: Bool
+}
+`````
+format = `````tauto
+struct S {
+  r#borrows: Bool
+}
+`````
+differential = "fmt"
+
+@ cases.long-effect-row-breaks
+description = "An over-long effect-row literal breaks one effect per line, as a call's arguments do."
+source = `````tauto
+fn f(g: () -> Nat ! {div, stdout, stderr, argv, wall_clock, monotonic_clock, sleep, random, fs_read, fs_write}): Nat {
+  zero
+}
+`````
+format = `````tauto
+fn f(
+  g: () -> Nat ! {
+    div,
+    stdout,
+    stderr,
+    argv,
+    wall_clock,
+    monotonic_clock,
+    sleep,
+    random,
+    fs_read,
+    fs_write
+  }
+): Nat {
+  zero
+}
+`````
+differential = "fmt"
+
+@ cases.multiline-effect-row-kept
+description = "A row literal already broken across lines is left as written."
+source = `````tauto
+fn burn(): Unit ! {
+  query(Flames),
+  query(Kindling),
+  entity_not_found,
+  component_not_found,
+  component_already_exists,
+  insert(Burning),
+  update(Health),
+} {
+  #()
+}
+`````
+format = `````tauto
+fn burn(): Unit ! {
+  query(Flames),
+  query(Kindling),
+  entity_not_found,
+  component_not_found,
+  component_already_exists,
+  insert(Burning),
+  update(Health),
+} {
+  #()
+}
+`````
+differential = "fmt"
+
+@ cases.one-line-effect-row-drops-trailing-comma
+description = "A one-line effect row that ends with a comma loses that comma under `tauto fmt`."
+source = `````tauto
+fn f(): Unit ! {div,} { #() }
+`````
+format = `````tauto
+fn f(): Unit ! {div} { #() }
+`````
+differential = "fmt"
+
+@ cases.orig-borrow-keeps-its-word
+description = "`&orig` in a type and in a term is written back as `&orig`, not as `&`."
+source = `````tauto
+fn first(b: &orig Bag): u64 { b.n }
+let f := first(&orig b)
+`````
+format = `````tauto
+fn first(b: &orig Bag): u64 { b.n }
+let f := first(&orig b)
+`````

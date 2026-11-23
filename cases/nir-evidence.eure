@@ -1,0 +1,21 @@
+// `evidence`: the `handle` that answers a `direct` operation, where the program
+// says it alone.
+
+@ cases.a-perform-under-its-handle-is-answered-by-it
+source = ```tauto
+effect ask(): u64 direct
+fn main(): u64 { handle { perform ask() } with { ask(), k => k(7) } }
+show(&main())
+```
+stdout = "7\n"
+nir.fns.main = ```nir
+fn main@2(): u64 S = handle 1 S do perform ask() direct instance() -> u64 legacy: u64 with {
+  direct ask() params() answer Unit instance() -> u64 legacy => 7u64,
+}: u64
+```
+nir.evidence = ```nir
+evidence op stdout(Text): Unit
+evidence op stdout_flush(): Unit
+evidence op ask(): u64
+evidence handle 1(ask)
+```

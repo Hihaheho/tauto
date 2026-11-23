@@ -1,0 +1,65 @@
+// Writes totes/lsp/bridge/src/symbols.txt, the backslash names of signs the
+// language server offers, from the character names of UnicodeData.txt of the
+// Unicode Character Database 16.0.0, which it fetches from the Unicode
+// Consortium's ICU repository and checks against its SHA-256. With --check,
+// writes nothing and fails if the file is out of date.
+//   tauto gen-symbol-table [--check]
+import "lib/sh.taut" { sh_capture, sh_die, sh_process, sh_root, sh_run, sh_status, sh_text }
+import std::builtin::os { Process, argv, environ, eprint, exit, fs_remove, fs_temp_dir, io_message, print }
+import std::prelude::collections { Bytes }
+import std::text { Text }
+import std::base { List }
+
+let root := sh_root()
+let url := "https://raw.githubusercontent.com/unicode-org/icu/release-76-1/icu4c/source/data/unidata/UnicodeData.txt"
+let sha256 := "ff58e5823bd095166564a006e47d111130813dcf8bf234ef79fa51a870edb48f"
+let dir := match perform fs_temp_dir() {
+  Ok(d) => d
+  Err(e) => {
+    sh_die(1, io_message(e))
+    ""
+  }
+}
+let data := Text::concat(dir, "/UnicodeData.txt")
+// The temporary directory goes on every way out, as with `trap … EXIT`.
+fn finish(dir: Text, code: i32): Unit ! {exit, fs_remove} {
+  let ^removed := perform fs_remove(dir)
+  perform exit(code)
+}
+let fetched := sh_run(sh_process("curl", ["-sSfL", "-o", data, url], "", []))
+if fetched == 0 { #() } else { finish(dir, fetched) }
+let check := sh_capture(Process {
+  program: "sha256sum",
+  args: ["-c", "--quiet"],
+  dir: "",
+  env: perform environ(),
+  stdin: Bytes::of_text(Text::concat_all([sha256, "  ", data, "\n"]))
+})
+print(sh_text(check.stdout))
+eprint(check.stderr)
+let checked := sh_status(check.status)
+if checked == 0 { #() } else { finish(dir, checked) }
+finish(
+  dir,
+  sh_run(
+    sh_process(
+      "cargo",
+      List::append(
+        [
+          "run",
+          "--locked",
+          "-q",
+          "--manifest-path",
+          "tools/selfhost-harness/Cargo.toml",
+          "--bin",
+          "write-symbol-table",
+          "--",
+          data
+        ],
+        perform argv()
+      ),
+      root,
+      []
+    )
+  )
+)

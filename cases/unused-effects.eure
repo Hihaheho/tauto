@@ -1,0 +1,296 @@
+description = "Unused effects in rows: warn when a named effect or whole set is unused; `^` suppresses when unused and errors when used; a set with some members used does not warn."
+
+@ cases.unused-atomic-effect-warns
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::os
+
+fn f(): Unit ! { stdout } {
+  #()
+}
+```
+check_report = "unused_effect"
+
+@ cases.host-with-only-stdout-does-not-warn
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::os
+import std::builtin::par
+
+fn f(): Unit ! { Host } {
+  perform stdout("hi")
+}
+```
+check_errors = []
+
+@ cases.unused-host-set-warns
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::os
+import std::builtin::par
+
+fn f(): Unit ! { Host } {
+  #()
+}
+```
+check_report = "unused_effect"
+
+@ cases.marked-unused-host-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::os
+import std::builtin::par
+
+fn f(): Unit ! { ^Host } {
+  #()
+}
+```
+check_errors = []
+
+@ cases.marked-host-but-member-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::os
+import std::builtin::par
+
+fn f(): Unit ! { ^Host } {
+  perform stdout("x")
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.unused-atomic-among-others-warns
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::os
+
+fn f(): Unit ! { stdout, stderr } {
+  perform stdout("a")
+}
+```
+check_report = "unused_effect"
+
+@ cases.marked-unused-atomic-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::os
+
+fn f(): Unit ! { stdout, ^stderr } {
+  perform stdout("a")
+}
+```
+check_errors = []
+
+@ cases.marked-atomic-but-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::os
+
+fn f(): Unit ! { ^stdout } {
+  perform stdout("a")
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.custom-set-partial-use-does-not-warn
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect log(m: Text): Unit resume 1
+effect other(m: Text): Unit resume 1
+effect Talk { log, other }
+
+fn f(): Unit ! { Talk } {
+  perform log("hi")
+}
+```
+check_errors = []
+
+@ cases.formatter-keeps-effect-marker
+source = ```tauto
+import std::builtin::os
+
+fn f(): Unit ! { ^stdout } {
+  #()
+}
+```
+format = ```tauto
+import std::builtin::os
+
+fn f(): Unit ! { ^stdout } {
+  #()
+}
+```
+
+@ cases.applied-effect-in-row-counts-as-used
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect fail<E>(e: E): Never resume 0
+
+pub fn expect(ok: Bool, why: Text): Unit ! {fail(Text)} {
+  if ok { #() } else { perform fail(why) }
+}
+```
+check_errors = []
+
+@ cases.other-applied-effect-stays-unused
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect fail<E>(e: E): Never resume 0
+
+pub fn expect(ok: Bool, why: Text): Unit ! {fail(Text), fail(i64)} {
+  if ok { #() } else { perform fail(why) }
+}
+```
+check_report = "unused_effect"
+
+@ cases.marked-other-applied-effect-is-ok
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect fail<E>(e: E): Never resume 0
+
+pub fn expect(ok: Bool, why: Text): Unit ! {fail(Text), ^fail(i64)} {
+  if ok { #() } else { perform fail(why) }
+}
+```
+check_errors = []
+
+@ cases.marked-applied-effect-but-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect fail<E>(e: E): Never resume 0
+
+pub fn expect(ok: Bool, why: Text): Unit ! {^fail(Text)} {
+  if ok { #() } else { perform fail(why) }
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.same-leaf-in-other-module-stays-unused
+entry = "main.taut"
+files."main.taut" = ```tauto
+module a {
+  pub(open) effect log(m: Text): Unit resume 1
+}
+module b {
+  pub(open) effect log(m: Text): Unit resume 1
+}
+
+fn f(): Unit ! { a::log, b::log } {
+  perform a::log("hi")
+}
+```
+check_report = "unused_effect"
+
+@ cases.caret-refused-on-function-type-row
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f(g: () -> Unit ! {^stdout}): Unit {
+  #()
+}
+```
+load_error = "`^` marks an unused effect only in a function's written row"
+
+@ cases.caret-refused-on-effect-set-member
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect log(m: Text): Unit resume 1
+effect Talk { ^log }
+```
+load_error = "`^` marks an unused effect only in a function's written row"
+@ cases.marked-set-with-applied-member-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect log<E>(e: E): Unit resume 1
+effect Talk { log(Text) }
+
+fn f(): Unit ! { ^Talk } {
+  perform log("hi")
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.set-with-applied-member-used-does-not-warn
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect log<E>(e: E): Unit resume 1
+effect Talk { log(Text) }
+
+fn f(): Unit ! { Talk } {
+  perform log("hi")
+}
+```
+check_errors = []
+
+@ cases.marked-universal-but-instance-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect log<E>(e: E): Unit resume 1
+
+fn f(): Unit ! { ^∀ A. log(A) } {
+  perform log("hi")
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.universal-instance-used-does-not-warn
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect log<E>(e: E): Unit resume 1
+
+fn f(): Unit ! { ∀ A. log(A) } {
+  perform log("hi")
+}
+```
+check_errors = []
+
+@ cases.fn-type-applied-effect-counts-as-used
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect log<E>(e: E): Unit resume 1
+
+fn f(g: () -> Unit): Unit ! { log(() -> Unit) } {
+  perform log(g)
+}
+```
+check_errors = []
+
+@ cases.marked-fn-type-applied-effect-but-used-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect log<E>(e: E): Unit resume 1
+
+fn f(g: () -> Unit): Unit ! { ^log(() -> Unit) } {
+  perform log(g)
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.marked-generic-applied-effect-specialized-is-an-error
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect log<E>(e: E): Unit resume 1
+
+fn f<A: NoBorrow>(x: A): Unit ! { ^log(A) } {
+  perform log(x)
+}
+
+fn main(): Unit ! { log(Text) } {
+  f("hi")
+}
+```
+check_report = "unused_marker_used"
+
+@ cases.generic-applied-effect-specialized-counts-as-used
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) effect log<E>(e: E): Unit resume 1
+
+fn f<A: NoBorrow>(x: A): Unit ! { log(A) } {
+  perform log(x)
+}
+
+fn main(): Unit ! { log(Text) } {
+  f("hi")
+}
+```
+check_errors = []

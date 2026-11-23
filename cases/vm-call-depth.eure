@@ -1,0 +1,21 @@
+// The machine of `tauto run --backend vm` (`totes/vm`) stops calls that nest
+// deeper than it keeps, as the machine of the cases does, and says so in the
+// language of the user. (A call in tail position keeps no frame, so the sum
+// makes the calls nest.)
+
+@ cases.a-recursion-that-does-not-end-stops-at-the-depth-limit
+lang = "ja"
+source = ```tauto
+fn spin(n: u64): u64 ! {div, overflow} { 1 + spin(n + 1) }
+let r := spin(0)
+```
+budget = 20000000
+run_error = "呼び出しの入れ子が 2097152 段を超えた"
+
+@ cases.a-call-that-ends-below-the-depth-limit-answers
+source = ```tauto
+fn down(n: u64): u64 ! {div, overflow} { if n == 0 { 0 } else { 1 + down(n - 1) } }
+show(&down(100000))
+```
+budget = 20000000
+stdout = "100000\n"

@@ -1,7 +1,7 @@
 import "sort.taut"
-import std::prelude::Os
+import std::builtin::os
 
-pub fn show_list(l: List(u64)): Unit {
+pub fn show_list(l: List(u64)): Unit ! {stdout} {
   match l {
     Nil => print("\n")
     Cons(h, t) => {
@@ -12,12 +12,8 @@ pub fn show_list(l: List(u64)): Unit {
   }
 }
 
-let input := Cons(5, Cons(2, Cons(9, Cons(2, Cons(0, Cons(7, Nil))))))
-show_list(input)
-show_list(sort(input))
-
 // The same `sort`, on words: `Ord(Text)` compares their bytes.
-pub fn show_words(l: List(Text)): Unit {
+pub fn show_words(l: List(Text)): Unit ! {stdout} {
   match l {
     Nil => print("\n")
     Cons(h, t) => {
@@ -28,5 +24,10 @@ pub fn show_words(l: List(Text)): Unit {
   }
 }
 
-let words := Cons("pear", Cons("apple", Cons("fig", Cons("banana", Nil))))
-show_words(sort(words))
+perform main(() => {
+  let input := Cons(5, Cons(2, Cons(9, Cons(2, Cons(0, Cons(7, Nil))))))
+  show_list(input)
+  show_list(sort(input))
+  let words := Cons("pear", Cons("apple", Cons("fig", Cons("banana", Nil))))
+  show_words(sort(words))
+})

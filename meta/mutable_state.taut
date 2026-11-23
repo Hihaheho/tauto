@@ -1,0 +1,428 @@
+import std::effect { Comp, CompEq }
+import std::prelude::std { List }
+
+// State-passing semantics for finite programs with returned places. S is the
+// whole caller state, including every borrowed root; R may contain any number
+// of places. Places are access paths, not copies of their current contents.
+// This model does not implement the surface reader or prove Nib adequacy.
+// Ownership, lifetimes and resumption restrictions are obligations on the
+// source checker; arbitrary terms of Prog need not satisfy those restrictions.
+// mutable_permissions.taut and mutable_conditions.taut model these obligations.
+// Prog has one answer type; mutable_effects.taut models operation-dependent
+// answer families directly with Comp.
+// All trees are inductive: divergence and concurrent heaps are outside this
+// model. translate keeps the state private across operations; shared-state
+// handler boundaries are modeled separately by translate_visible.
+
+pub(open) inductive Pair(A: Type, B: Type): Type {
+  PairOf(first: A, second: B): Pair(A, B)
+}
+
+pub ghost fn first<A: Type, B: Type>(p: Pair(A, B)): A {
+  match p { PairOf(a, b) => a }
+}
+
+pub ghost fn second<A: Type, B: Type>(p: Pair(A, B)): B {
+  match p { PairOf(a, b) => b }
+}
+
+// A place carries both observation and writeback. Its laws are explicit
+// hypotheses, not axioms and not properties of arbitrary function pairs.
+pub(open) inductive Place(S: Type, A: Type): Type {
+  At(get: (S) -> A, put: (S, A) -> S): Place(S, A)
+}
+
+pub ghost fn read<S: Type, A: Type>(p: Place(S, A), s: S): A {
+  match p { At(get, put) => get(s) }
+}
+
+pub ghost fn write<S: Type, A: Type>(p: Place(S, A), s: S, a: A): S {
+  match p { At(get, put) => put(s, a) }
+}
+
+pub def PlaceLaws(S: Type, A: Type, p: Place(S, A)): Prop :=
+(∀ s: S, a: A. read(p, write(p, s, a)) = a) ∧
+(∀ s: S. write(p, s, read(p, s)) = s) ∧
+(∀ s: S, a: A, b: A. write(p, write(p, s, a), b) = write(p, s, b))
+
+pub ghost fn whole(S: Type): Place(S, S) { At(s => s, (s, a) => a) }
+
+pub theorem whole_laws(S: Type): PlaceLaws(S, S, whole(S)) {
+  AndIntro((s, a) => Refl, AndIntro(s => Refl, (s, a, b) => Refl))
+}
+
+pub ghost fn left(A: Type, B: Type): Place(Pair(A, B), A) {
+  At(p => first(p), (p, a) => PairOf(a, second(p)))
+}
+
+pub ghost fn right(A: Type, B: Type): Place(Pair(A, B), B) {
+  At(p => second(p), (p, b) => PairOf(first(p), b))
+}
+
+pub theorem left_laws(A: Type, B: Type): PlaceLaws(Pair(A, B), A, left(A, B)) {
+  AndIntro((s, a) => Refl, AndIntro(s => match s { PairOf(x, y) => Refl }, (s, a, b) => Refl))
+}
+
+pub theorem right_laws(A: Type, B: Type): PlaceLaws(Pair(A, B), B, right(A, B)) {
+  AndIntro((s, a) => Refl, AndIntro(s => match s { PairOf(x, y) => Refl }, (s, a, b) => Refl))
+}
+
+pub ghost fn field<S: Type, A: Type, B: Type>(p: Place(S, A), q: Place(A, B)): Place(S, B) {
+  At(s => read(q, read(p, s)), (s, b) => write(p, s, write(q, read(p, s), b)))
+}
+
+pub theorem field_read_write<S: Type, A: Type, B: Type>(
+  p: Place(S, A),
+  q: Place(A, B),
+  s: S,
+  b: B,
+  hp: PlaceLaws(S, A, p),
+  hq: PlaceLaws(A, B, q)
+): read(field(p, q), write(field(p, q), s, b)) = b {
+  Eq::trans(
+    Eq::congr(x => read(q, x), And::left(hp)(s, write(q, read(p, s), b))),
+    And::left(hq)(read(p, s), b)
+  )
+}
+
+pub theorem field_laws<S: Type, A: Type, B: Type>(
+  p: Place(S, A),
+  q: Place(A, B),
+  hp: PlaceLaws(S, A, p),
+  hq: PlaceLaws(A, B, q)
+): PlaceLaws(S, B, field(p, q)) {
+  AndIntro(
+    (s, b) => field_read_write(p, q, s, b, hp, hq),
+    AndIntro(
+      s => Eq::trans(
+        Eq::congr(x => write(p, s, x), And::left(And::right(hq))(read(p, s))),
+        And::left(And::right(hp))(s)
+      ),
+      (s, a, b) => Eq::trans(
+        Eq::congr(
+          x => write(p, write(field(p, q), s, a), write(q, x, b)),
+          And::left(hp)(s, write(q, read(p, s), a))
+        ),
+        Eq::trans(
+          Eq::congr(
+            x => write(p, write(field(p, q), s, a), x),
+            And::right(And::right(hq))(read(p, s), a, b)
+          ),
+          And::right(And::right(hp))(s, write(q, read(p, s), a), write(q, read(p, s), b))
+        )
+      )
+    )
+  )
+}
+
+// Separate places must preserve each other's observations and commute on
+// writes. Whole/part overlap does not satisfy these obligations in general.
+pub def Separate(S: Type, A: Type, B: Type, p: Place(S, A), q: Place(S, B)): Prop :=
+(∀ s: S, b: B. read(p, write(q, s, b)) = read(p, s)) ∧
+(∀ s: S, a: A. read(q, write(p, s, a)) = read(q, s)) ∧
+(∀ s: S, a: A, b: B. write(p, write(q, s, b), a) = write(q, write(p, s, a), b))
+
+pub theorem siblings_separate(
+  A: Type,
+  B: Type
+): Separate(Pair(A, B), A, B, left(A, B), right(A, B)) {
+  AndIntro((s, b) => Refl, AndIntro((s, a) => Refl, (s, a, b) => Refl))
+}
+
+pub(open) inductive Prog(S: Type, Op: Type, Res: Type, R: Type): Type {
+  Done(r: R): Prog(S, Op, Res, R)
+  Get(k: (S) -> Prog(S, Op, Res, R)): Prog(S, Op, Res, R)
+  Put(s: S, rest: Prog(S, Op, Res, R)): Prog(S, Op, Res, R)
+  Perform(o: Op, k: (Res) -> Prog(S, Op, Res, R)): Prog(S, Op, Res, R)
+}
+
+pub ghost fn translate<S: Type, Op: Type, Res: Type, R: Type>(
+  p: Prog(S, Op, Res, R),
+  s: S
+): Comp(Op, (op: Op) => Res, Pair(R, S)) {
+  match p {
+    Done(r) => CompPure(PairOf(r, s))
+    Get(k) => translate(k(s), s)
+    Put(t, rest) => translate(rest, t)
+    Perform(o, k) => CompOp(o, answer => translate(k(answer), s))
+  }
+}
+
+// Returning a place preserves its identity for reads and writes by the caller.
+pub ghost fn store<S: Type, Op: Type, Res: Type, R: Type, A: Type>(
+  p: Place(S, A),
+  a: A,
+  rest: Prog(S, Op, Res, R)
+): Prog(S, Op, Res, R) {
+  Get(s => Put(write(p, s, a), rest))
+}
+
+pub ghost fn then<S: Type, Op: Type, Res: Type, A: Type, B: Type>(
+  p: Prog(S, Op, Res, A),
+  k: (A) -> Prog(S, Op, Res, B)
+): Prog(S, Op, Res, B) {
+  match p {
+    Done(a) => k(a)
+    Get(g) => Get(s => then(g(s), k))
+    Put(t, rest) => Put(t, then(rest, k))
+    Perform(o, g) => Perform(o, answer => then(g(answer), k))
+  }
+}
+
+pub theorem translate_then<S: Type, Op: Type, Res: Type, A: Type, B: Type>(
+  p: Prog(S, Op, Res, A),
+  k: (A) -> Prog(S, Op, Res, B),
+  s: S
+): CompEq(
+  Op,
+  (op: Op) => Res,
+  Pair(B, S),
+  translate(then(p, k), s),
+  Comp::bind(Op, (op: Op) => Res, translate(p, s), out => translate(k(first(out)), second(out)))
+) {
+  match p {
+    Done(a) => Comp::eq_refl(translate(k(a), s))
+    Get(g) => translate_then(g(s), k, s)
+    Put(t, rest) => translate_then(rest, k, t)
+    Perform(o, g) => CeqOp(
+      o,
+      answer => translate(then(g(answer), k), s),
+      answer => Comp::bind(
+        Op,
+        (op: Op) => Res,
+        translate(g(answer), s),
+        out => translate(k(first(out)), second(out))
+      ),
+      answer => translate_then(g(answer), k, s)
+    )
+  }
+}
+
+// Postconditions can relate the initial state to the result and final state.
+// Every operation answer has its own obligation; no handler is assumed.
+pub ghost fn source_all<S: Type, Op: Type, Res: Type, R: Type>(
+  p: Prog(S, Op, Res, R),
+  s: S,
+  post: (R, S) -> Prop
+): Prop {
+  match p {
+    Done(r) => post(r, s)
+    Get(k) => source_all(k(s), s, post)
+    Put(t, rest) => source_all(rest, t, post)
+    Perform(o, k) => ∀ answer: Res. source_all(k(answer), s, post)
+  }
+}
+
+pub ghost fn tree_all<Op: Type, Res: (Op) -> Type, A: Type>(
+  c: Comp(Op, Res, A),
+  post: (A) -> Prop
+): Prop {
+  match c {
+    CompPure(a) => post(a)
+    CompOp(o, k) => ∀ answer: Res(o). tree_all(k(answer), post)
+  }
+}
+
+pub theorem translate_preserves<S: Type, Op: Type, Res: Type, R: Type>(
+  p: Prog(S, Op, Res, R),
+  s: S,
+  post: (R, S) -> Prop,
+  h: source_all(p, s, post)
+): tree_all(translate(p, s), out => post(first(out), second(out))) {
+  match p {
+    Done(r) => h
+    Get(k) => translate_preserves(k(s), s, post, h)
+    Put(t, rest) => translate_preserves(rest, t, post, h)
+    Perform(o, k) => answer => translate_preserves(k(answer), s, post, h(answer))
+  }
+}
+
+pub theorem translate_reflects<S: Type, Op: Type, Res: Type, R: Type>(
+  p: Prog(S, Op, Res, R),
+  s: S,
+  post: (R, S) -> Prop,
+  h: tree_all(translate(p, s), out => post(first(out), second(out)))
+): source_all(p, s, post) {
+  match p {
+    Done(r) => h
+    Get(k) => translate_reflects(k(s), s, post, h)
+    Put(t, rest) => translate_reflects(rest, t, post, h)
+    Perform(o, k) => answer => translate_reflects(k(answer), s, post, h(answer))
+  }
+}
+
+// A terminating execution records every operation and answer, in order.
+pub(open) inductive Runs(
+  S: Type,
+  Op: Type,
+  Res: Type,
+  R: Type
+): (Prog(S, Op, Res, R), S, List(Pair(Op, Res)), R, S) -> Prop {
+  RDone(r: R, s: S): Runs(S, Op, Res, R, Done(r), s, Nil, r, s)
+  RGet<k: (S) -> Prog(
+    S,
+    Op,
+    Res,
+    R
+  ), s: S, events: List(
+    Pair(Op, Res)
+  ), r: R, final: S>(
+    h: Runs(S, Op, Res, R, k(s), s, events, r, final)
+  ): Runs(S, Op, Res, R, Get(k), s, events, r, final)
+  RPut<s: S, t: S, rest: Prog(
+    S,
+    Op,
+    Res,
+    R
+  ), events: List(
+    Pair(Op, Res)
+  ), r: R, final: S>(
+    h: Runs(S, Op, Res, R, rest, t, events, r, final)
+  ): Runs(S, Op, Res, R, Put(t, rest), s, events, r, final)
+  ROp<o: Op, k: (Res) -> Prog(
+    S,
+    Op,
+    Res,
+    R
+  ), s: S, events: List(
+    Pair(Op, Res)
+  ), r: R, final: S>(
+    answer: Res,
+    h: Runs(S, Op, Res, R, k(answer), s, events, r, final)
+  ): Runs(S, Op, Res, R, Perform(o, k), s, Cons(PairOf(o, answer), events), r, final)
+}
+
+pub(open) inductive TreeRuns(
+  Op: Type,
+  Res: Type,
+  A: Type
+): (Comp(Op, (op: Op) => Res, A), List(Pair(Op, Res)), A) -> Prop {
+  TPure(a: A): TreeRuns(Op, Res, A, CompPure(a), Nil, a)
+  TOp<o: Op, k: (Res) -> Comp(
+    Op,
+    (op: Op) => Res,
+    A
+  ), events: List(
+    Pair(Op, Res)
+  ), a: A>(
+    answer: Res,
+    h: TreeRuns(Op, Res, A, k(answer), events, a)
+  ): TreeRuns(Op, Res, A, CompOp(o, k), Cons(PairOf(o, answer), events), a)
+}
+
+pub theorem execution_preserved<S: Type, Op: Type, Res: Type, R: Type, p: Prog(
+  S,
+  Op,
+  Res,
+  R
+), s: S, events: List(
+  Pair(Op, Res)
+), r: R, final: S>(
+  h: Runs(S, Op, Res, R, p, s, events, r, final)
+): TreeRuns(Op, Res, Pair(R, S), translate(p, s), events, PairOf(r, final)) {
+  match h {
+    RDone(value, state) => ⊢ TreeRuns(
+      Op,
+      Res,
+      Pair(R, S),
+      translate(Done(<S: S, Op: Op, Res: Res>, value), state),
+      Nil,
+      PairOf(value, state)
+    ) from TPure(PairOf(value, state))
+    RGet(g, state, trace, value, last, step) => ⊢ TreeRuns(
+      Op,
+      Res,
+      Pair(R, S),
+      translate(Get(g), state),
+      trace,
+      PairOf(value, last)
+    ) from execution_preserved(step)
+    RPut(state, next, rest, trace, value, last, step) => ⊢ TreeRuns(
+      Op,
+      Res,
+      Pair(R, S),
+      translate(Put(next, rest), state),
+      trace,
+      PairOf(value, last)
+    ) from execution_preserved(step)
+    ROp(o, g, state, trace, value, last, answer, step) => ⊢ TreeRuns(
+      Op,
+      Res,
+      Pair(R, S),
+      translate(Perform(o, g), state),
+      Cons(PairOf(o, answer), trace),
+      PairOf(value, last)
+    ) from TOp(answer, execution_preserved(step))
+  }
+}
+
+// The operation exposes the current state; resumption supplies the state
+// after the handler. Thus an aborting handler can retain preceding writes.
+// This is a model-level protocol, not a surface effect signature change.
+pub ghost fn translate_visible<S: Type, Op: Type, Res: Type, R: Type>(
+  p: Prog(S, Op, Res, R),
+  s: S
+): Comp(Pair(Op, S), (event: Pair(Op, S)) => Pair(Res, S), Pair(R, S)) {
+  match p {
+    Done(r) => CompPure(PairOf(r, s))
+    Get(k) => translate_visible(k(s), s)
+    Put(t, rest) => translate_visible(rest, t)
+    Perform(o, k) => CompOp(
+      PairOf(o, s),
+      reply => translate_visible(k(first(reply)), second(reply))
+    )
+  }
+}
+
+pub ghost fn source_handle<S: Type, Op: Type, Res: Type, R: Type, B: Type>(
+  p: Prog(S, Op, Res, R),
+  s: S,
+  ret: (Pair(R, S)) -> B,
+  arm: (Pair(Op, S), (Pair(Res, S)) -> B) -> B
+): B {
+  match p {
+    Done(r) => ret(PairOf(r, s))
+    Get(k) => source_handle(k(s), s, ret, arm)
+    Put(t, rest) => source_handle(rest, t, ret, arm)
+    Perform(o, k) => arm(
+      PairOf(o, s),
+      reply => source_handle(k(first(reply)), second(reply), ret, arm)
+    )
+  }
+}
+
+// A handler must respect pointwise equality of its continuations. This is an
+// explicit hypothesis, avoiding function extensionality as an axiom.
+pub theorem visible_handler_agrees<S: Type, Op: Type, Res: Type, R: Type, B: Type>(
+  p: Prog(S, Op, Res, R),
+  s: S,
+  ret: (Pair(R, S)) -> B,
+  arm: (Pair(Op, S), (Pair(Res, S)) -> B) -> B,
+  respects: ∀ event: Pair(
+    Op,
+    S
+  ), k1: (
+    Pair(Res, S)
+  ) -> B, k2: (
+    Pair(Res, S)
+  ) -> B. (∀ reply: Pair(Res, S). k1(reply) = k2(reply)) -> (arm(event, k1) = arm(event, k2))
+): Comp::fold(Pair(Op, S), (event: Pair(Op, S)) => Pair(Res, S), ret, arm, translate_visible(p, s)) =
+source_handle(p, s, ret, arm) {
+  match p {
+    Done(r) => Refl
+    Get(k) => visible_handler_agrees(k(s), s, ret, arm, respects)
+    Put(t, rest) => visible_handler_agrees(rest, t, ret, arm, respects)
+    Perform(o, k) => respects(
+      PairOf(o, s),
+      reply => Comp::fold(
+        Pair(Op, S),
+        (event: Pair(Op, S)) => Pair(Res, S),
+        ret,
+        arm,
+        translate_visible(k(first(reply)), second(reply))
+      ),
+      reply => source_handle(k(first(reply)), second(reply), ret, arm),
+      reply => visible_handler_agrees(k(first(reply)), second(reply), ret, arm, respects)
+    )
+  }
+}

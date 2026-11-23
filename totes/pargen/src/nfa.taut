@@ -4,7 +4,7 @@
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
 import "rx.taut"
-import std::Text
+import std::text
 
 // A pattern of a mode: the expression, the terminal it makes, its priority
 // (the place in the mode) and the lookahead, if any (`la_kind` 1 positive, 2
@@ -59,7 +59,7 @@ pub fn nf_append_states(a: List(NSt), b: List(NSt)): List(NSt) {
 }
 
 // The transition added at the end of the transitions of the state `k`.
-pub fn nf_add_tr(xs: List(NSt), k: u64, tr: NTr): List(NSt) {
+pub fn nf_add_tr(xs: List(NSt), k: u64, tr: NTr): List(NSt) ! {overflow} {
   match xs {
     Nil => Nil
     Cons(s, rest) => if k == 0 {
@@ -70,7 +70,7 @@ pub fn nf_add_tr(xs: List(NSt), k: u64, tr: NTr): List(NSt) {
   }
 }
 
-pub fn nf_set_acc(xs: List(NSt), k: u64, p: SPat): List(NSt) {
+pub fn nf_set_acc(xs: List(NSt), k: u64, p: SPat): List(NSt) ! {overflow} {
   match xs {
     Nil => Nil
     Cons(s, rest) => if k == 0 {
@@ -81,7 +81,7 @@ pub fn nf_set_acc(xs: List(NSt), k: u64, p: SPat): List(NSt) {
   }
 }
 
-pub fn nf_shift_trans(ts: List(NTr), off: u64): List(NTr) {
+pub fn nf_shift_trans(ts: List(NTr), off: u64): List(NTr) ! {overflow} {
   match ts {
     Nil => Nil
     Cons(t, rest) => Cons(
@@ -91,7 +91,7 @@ pub fn nf_shift_trans(ts: List(NTr), off: u64): List(NTr) {
   }
 }
 
-pub fn nf_shift_states(ss: List(NSt), off: u64): List(NSt) {
+pub fn nf_shift_states(ss: List(NSt), off: u64): List(NSt) ! {overflow} {
   match ss {
     Nil => Nil
     Cons(s, rest) => Cons(
@@ -101,21 +101,21 @@ pub fn nf_shift_states(ss: List(NSt), off: u64): List(NSt) {
   }
 }
 
-pub fn nf_shift(a: Nfa, off: u64): Nfa {
+pub fn nf_shift(a: Nfa, off: u64): Nfa ! {overflow} {
   Nfa { states: nf_shift_states(a.states, off), n: a.n, start: a.start + off, end: a.end + off }
 }
 
 pub fn nf_is_empty(a: Nfa): Bool {
   a.start == 0 && a.end == 0 && a.n == 1 && match a.states {
-    Cons(s, rest) => match s.trans {
+    Cons(s, ^rest) => match s.trans {
       Nil => true
-      other => false
+      ^other => false
     }
     Nil => false
   }
 }
 
-pub fn nf_new_state(a: Nfa): Nfa {
+pub fn nf_new_state(a: Nfa): Nfa ! {overflow} {
   Nfa {
     states: nf_snoc_state(a.states, NSt { trans: Nil, acc: None })
     n: a.n + 1
@@ -132,11 +132,11 @@ pub fn nf_with_end(a: Nfa, end: u64): Nfa {
   Nfa { states: a.states, n: a.n, start: a.start, end: end }
 }
 
-pub fn nf_with_eps(a: Nfa, r#from: u64, to: u64): Nfa {
+pub fn nf_with_eps(a: Nfa, r#from: u64, to: u64): Nfa ! {overflow} {
   Nfa { states: nf_add_tr(a.states, r#from, nf_epsilon(to)), n: a.n, start: a.start, end: a.end }
 }
 
-pub fn nf_concat(a: Nfa, b: Nfa): Nfa {
+pub fn nf_concat(a: Nfa, b: Nfa): Nfa ! {overflow} {
   if nf_is_empty(a) {
     Nfa { states: b.states, n: b.n, start: b.start, end: b.end }
   } else {
@@ -151,7 +151,7 @@ pub fn nf_concat(a: Nfa, b: Nfa): Nfa {
   }
 }
 
-pub fn nf_alt(a: Nfa, b: Nfa): Nfa {
+pub fn nf_alt(a: Nfa, b: Nfa): Nfa ! {overflow} {
   let b2 := nf_shift(b, a.n)
   let joined := Nfa {
     states: nf_append_states(a.states, b2.states)
@@ -166,13 +166,13 @@ pub fn nf_alt(a: Nfa, b: Nfa): Nfa {
   nf_with_end(nf_with_start(with_end, s), e)
 }
 
-pub fn nf_zero_or_one(a: Nfa): Nfa {
+pub fn nf_zero_or_one(a: Nfa): Nfa ! {overflow} {
   let s := a.n
   let b := nf_with_eps(nf_with_eps(nf_new_state(a), s, a.start), s, a.end)
   nf_with_start(b, s)
 }
 
-pub fn nf_zero_or_more(a: Nfa): Nfa {
+pub fn nf_zero_or_more(a: Nfa): Nfa ! {overflow} {
   let s := a.n
   let b := nf_with_eps(nf_with_eps(nf_new_state(a), s, a.start), s, a.end)
   let e := b.n
@@ -184,7 +184,7 @@ pub fn nf_leaf_tr(leaf: RHir, target: u64): NTr {
   NTr { kind: 1, leaf: leaf, cc: 0, target: target }
 }
 
-pub fn nf_of_hir(h: RHir): Nfa {
+pub fn nf_of_hir(h: RHir): Nfa ! {div, overflow} {
   match h {
     RhEmpty => nf_new()
     RhLit(cs) => {
@@ -213,7 +213,7 @@ pub fn nf_of_hir(h: RHir): Nfa {
       }
       nf_with_end(a, r#from)
     }
-    RhClass(rs) => {
+    RhClass(^rs) => {
       let a := nf_with_end(nf_new_state(nf_new()), 1)
       Nfa {
         states: nf_add_tr(a.states, 0, nf_leaf_tr(h, 1))
@@ -291,13 +291,13 @@ pub fn nf_of_hir(h: RHir): Nfa {
 }
 
 // The NFA of a pattern: it accepts at its end state.
-pub fn nf_build(p: SPat): Nfa {
+pub fn nf_build(p: SPat): Nfa ! {div, fail(Text), overflow} {
   let a := nf_of_hir(rx_parse_named(p.pattern, p.context))
   Nfa { states: nf_set_acc(a.states, a.end, p), n: a.n, start: a.start, end: a.end }
 }
 
 // The NFA of the patterns of a mode: the priority of a pattern is its place.
-pub fn nf_of_patterns(ps: List(SPat)): Nfa {
+pub fn nf_of_patterns(ps: List(SPat)): Nfa ! {div, fail(Text), overflow} {
   var a := nf_new()
   var first := true
   var i: u64 := 0
@@ -334,7 +334,7 @@ pub fn nf_of_patterns(ps: List(SPat)): Nfa {
   a
 }
 
-pub fn nf_lookahead(p: SPat): Nfa {
+pub fn nf_lookahead(p: SPat): Nfa ! {div, fail(Text), overflow} {
   nf_build(
     SPat {
       context: Text::concat("lookahead of ", p.context),

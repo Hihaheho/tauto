@@ -1,3 +1,4 @@
+import std::array
 import "../src/eval.taut"
 import "../../vm/src/compile.taut"
 import "../src/value.taut"
@@ -54,8 +55,8 @@ pub theorem e_unary_compiles(op: CUnary): e_unary(op) = c_unary(op) {
 pub theorem e_lookup_bound(
   id: Nat,
   b: EBinding,
-  env: List(Pair(Nat, EBinding))
-): e_lookup(Cons(Pair { fst: id, snd: b }, env), id) = Some(b) {
+  env: List(Nat × EBinding)
+): e_lookup(Cons(#(id, b), env), id) = Some(b) {
   Eq::congr(
     (same: Bool) => ⊢ Option(EBinding) from match same { true => Some(b), false => e_lookup(env, id) },
     Nat::eq_refl(id)
@@ -63,9 +64,9 @@ pub theorem e_lookup_bound(
 }
 
 pub theorem e_read_bound(
-  ctors: List(MCtor),
+  ctors: Array(MCtor),
   cx: MCx,
-  env: List(Pair(Nat, EBinding)),
+  env: List(Nat × EBinding),
   id: Nat,
   deref: Bool,
   b: EBinding,
@@ -87,7 +88,7 @@ pub theorem e_compile_pure(
 }
 
 pub fn e_code(r: CR): MCode {
-  match r { Cr(code, st) => code }
+  match r { Cr(code, ^st) => code }
 }
 
 // The entire VM state agrees after evaluating a literal, for arbitrary following code.
@@ -97,7 +98,7 @@ pub theorem e_pure_run(
   v: CVal,
   k: MCode,
   cs: CSt,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   cx: MCx
@@ -109,7 +110,7 @@ MstepNext(Mstate(k, slots, Cons(e_value(v), stack), frames, cx)) {
   )
 }
 
-pub fn e_unbox(ctors: List(MCtor), cx: MCx, boxed: Bool, value: MVal): MVal {
+pub fn e_unbox(ctors: Array(MCtor), cx: MCx, boxed: Bool, value: MVal): MVal {
   match boxed {
     false => value
     true => ⊢ MVal from match value {
@@ -139,11 +140,11 @@ pub theorem e_compile_read(
   cs: CSt,
   slot: Nat,
   cs2: CSt,
-  resolved: c_slot(cs, id) = Pair { fst: slot, snd: cs2 }
+  resolved: c_slot(cs, id) = #(slot, cs2)
 ): c_expr(Succ(fuel), CRead(id, deref), k, cs) =
 Cr(e_read_code(c_is_boxed(cs2, id), deref, slot, k), cs2) {
-  Eq::congr((allocation: Pair(Nat, CSt)) => ⊢ CR from match allocation {
-    Pair { fst: position, snd: state } => Cr(e_read_code(c_is_boxed(state, id), deref, position, k), state)
+  Eq::congr((allocation: Nat × CSt) => ⊢ CR from match allocation {
+    #(position, state) => Cr(e_read_code(c_is_boxed(state, id), deref, position, k), state)
   }, resolved)
 }
 
@@ -152,7 +153,7 @@ pub theorem e_unbox_run(
   deref: Bool,
   v: MVal,
   k: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   cx: MCx
@@ -216,7 +217,7 @@ pub theorem e_read_code_run(
   deref: Bool,
   slot: Nat,
   k: MCode,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   cx: MCx
@@ -230,7 +231,7 @@ MstepNext(
     k,
     slots,
     Cons(
-      e_deref(p_ctors(p), cx, deref, e_unbox(p_ctors(p), cx, boxed, m_nth_or_unit(slots, slot))),
+      e_deref(p_ctors(p), cx, deref, e_unbox(p_ctors(p), cx, boxed, m_slot(slots, slot))),
       stack
     ),
     frames,
@@ -252,7 +253,7 @@ MstepNext(
             p_ctors(p),
             cx,
             deref,
-            e_unbox(p_ctors(p), cx, false, m_nth_or_unit(slots, slot))
+            e_unbox(p_ctors(p), cx, false, m_slot(slots, slot))
           ),
           stack
         ),
@@ -270,15 +271,15 @@ MstepNext(
         k,
         slots,
         Cons(
-          e_deref(p_ctors(p), cx, deref, e_unbox(p_ctors(p), cx, true, m_nth_or_unit(slots, slot))),
+          e_deref(p_ctors(p), cx, deref, e_unbox(p_ctors(p), cx, true, m_slot(slots, slot))),
           stack
         ),
         frames,
         cx
       )
     ) from match deref {
-      false => e_unbox_run(p, false, m_nth_or_unit(slots, slot), k, slots, stack, frames, cx)
-      true => e_unbox_run(p, true, m_nth_or_unit(slots, slot), k, slots, stack, frames, cx)
+      false => e_unbox_run(p, false, m_slot(slots, slot), k, slots, stack, frames, cx)
+      true => e_unbox_run(p, true, m_slot(slots, slot), k, slots, stack, frames, cx)
     }
   }
 }
@@ -292,17 +293,17 @@ pub theorem e_bound_read_run(
   cs: CSt,
   slot: Nat,
   cs2: CSt,
-  slots: List(MVal),
+  slots: Array(MVal),
   stack: List(MVal),
   frames: List(MFrame),
   cx: MCx,
   b: EBinding,
-  resolved: c_slot(cs, id) = Pair { fst: slot, snd: cs2 },
+  resolved: c_slot(cs, id) = #(slot, cs2),
   related: e_unbox(
     p_ctors(p),
     cx,
     c_is_boxed(cs2, id),
-    m_nth_or_unit(slots, slot)
+    m_slot(slots, slot)
   ) = e_binding(cx, b)
 ): mrun(
   p,

@@ -1,77 +1,113 @@
-// `Bytes` builtins (`std/prelude/Shared.taut`): read-only bytes whose slices
-// share their storage. `std/Bytes.taut` says what each does.
+// `Bytes` builtins (`std/prelude/collections.taut`): read-only bytes whose slices
+// share their storage. `std/bytes.taut` says what each does.
 
 @ cases.bytes-of-a-list-keep-every-byte
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_list` yet"
 source = ```nib
-import std::prelude::Shared
 
 let b := Bytes::of_list(Cons(0, Cons(255, Cons(128, Nil))))
-perform show("b", b)
-perform show("n", Bytes::len(b))
-perform show("l", Bytes::to_list(b))
+show(&b)
+show(&Bytes::len(b))
+show(&Bytes::to_list(b))
 ```
-shows = ["b = Bytes[0, 255, 128]", "n = 3", "l = Cons(0, Cons(255, Cons(128, Nil)))"]
+stdout = ```
+Bytes[0, 255, 128]
+3
+[0, 255, 128]
+```
 
 @ cases.bytes-get-in-and-out-of-range
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
 source = ```nib
-import std::prelude::Shared
 
 let b := Bytes::of_text("ab")
-perform show("in", Bytes::get(b, 1))
-perform show("out", Bytes::get(b, 2))
+show(&Bytes::get(b, 1))
+show(&Bytes::get(b, 2))
 ```
-shows = ["in = Some(98)", "out = None"]
+stdout = ```
+Some(98)
+None
+```
 
 @ cases.bytes-slice-needs-start-before-end-within-the-length
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
 source = ```nib
-import std::prelude::Shared
 
 let b := Bytes::of_text("hello")
-perform show("s", Bytes::slice(b, 1, 3))
-perform show("empty", Bytes::slice(b, 5, 5))
-perform show("past", Bytes::slice(b, 4, 6))
-perform show("backwards", Bytes::slice(b, 3, 1))
+show(&Bytes::slice(b, 1, 3))
+show(&Bytes::slice(b, 5, 5))
+show(&Bytes::slice(b, 4, 6))
+show(&Bytes::slice(b, 3, 1))
 ```
-shows = [
-  "s = Some(Bytes[101, 108])",
-  "empty = Some(Bytes[])",
-  "past = None",
-  "backwards = None",
-]
+stdout = ```
+Some(Bytes[101, 108])
+Some(Bytes[])
+None
+None
+```
 
 @ cases.a-slice-of-a-slice-counts-from-its-own-start
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
 source = ```nib
-import std::prelude::Shared
 
 let b := Bytes::of_text("abcdef")
 match Bytes::slice(b, 2, 6) {
-  Some(s) => perform show("t", Bytes::slice(s, 1, 2))
+  Some(s) => show(&Bytes::slice(s, 1, 2))
   None => #()
 }
 ```
-shows = ["t = Some(Bytes[100])"]
+stdout = "Some(Bytes[100])\n"
 
 @ cases.text-of-bytes-checks-utf-8
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
 source = ```nib
-import std::prelude::Shared
 
 let b := Bytes::of_text("é")
-perform show("whole", Text::of_bytes(b))
+show(&Text::of_bytes(b))
 match Bytes::slice(b, 0, 1) {
-  Some(half) => perform show("half", Text::of_bytes(half))
+  Some(half) => show(&Text::of_bytes(half))
   None => #()
 }
-perform show("ff", Text::of_bytes(Bytes::of_list(Cons(255, Nil))))
+show(&Text::of_bytes(Bytes::of_list(Cons(255, Nil))))
 ```
-shows = ["whole = Some(\"é\")", "half = None", "ff = None"]
+stdout = ```
+Some("é")
+None
+None
+```
 
 @ cases.bytes-concat-and-eq
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
 source = ```nib
-import std::prelude::Shared
 
 let a := Bytes::concat(Bytes::of_text("h"), Bytes::of_list(Cons(255, Nil)))
-perform show("a", a)
-perform show("same", Bytes::eq(a, Bytes::of_list(Cons(104, Cons(255, Nil)))))
-perform show("other", Bytes::eq(a, Bytes::of_text("h")))
+show(&a)
+show(&Bytes::eq(a, Bytes::of_list(Cons(104, Cons(255, Nil)))))
+show(&Bytes::eq(a, Bytes::of_text("h")))
 ```
-shows = ["a = Bytes[104, 255]", "same = true", "other = false"]
+stdout = ```
+Bytes[104, 255]
+true
+false
+```
+
+@ cases.bytes-find-searches-from-start-before-end
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Bytes::of_text` yet"
+source = ```nib
+
+let b := Bytes::of_text("a:b:c")
+show(&Bytes::find(b, 58, 0, 5))
+show(&Bytes::find(b, 58, 2, 5))
+show(&Bytes::find(b, 58, 2, 3))
+show(&Bytes::find(b, 59, 0, 5))
+show(&Bytes::find(b, 120, 0, 9))
+show(&Bytes::find(b, 97, 5, 5))
+```
+stdout = ```
+1
+3
+3
+5
+9
+5
+```

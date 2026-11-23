@@ -1,0 +1,3298 @@
+import "../../syntax/src/syntax.taut"
+import "../../llk/src/llk.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/unicode.taut"
+import "../../unicode/src/classes.taut"
+import std::base
+import std::map
+import std::stack
+import std::text
+
+// The names of a file: where each is declared and where it is used, from the
+// concrete syntax tree of the text as written (before any macro expands), so
+// every identifier has the span it is written at. Resolution is lexical: a
+// binder is visible after it in its block, a parameter in the rest of its
+// signature and the body, a pattern's names in its arm, and a top-level
+// declaration everywhere, in the file and in the files that import it.
+//
+// What this cannot see it records instead of guessing: an identifier that
+// resolves to nothing (`unresolved`) and the words inside syntax literals and
+// `quote` (`opaque`).
+//
+// Files are numbered in the order they are added; the two preludes are 0 and
+// 1. A file sees the files it imports, transitively, and the preludes.
+
+// A declaration: the file it is in and its place in that file's list.
+pub(open) inductive AnId: Type {
+  Mk(file: Nat, index: Nat): AnId
+}
+
+// What a name is in a frame: a declaration, or the bare name of variants that
+// two enums share, which names neither.
+pub(open) inductive AnSlot: Type {
+  AnTo(id: AnId): AnSlot
+  AnShared: AnSlot
+}
+
+// `kind` is the label a hover shows (`function`, `field`, …). `spans` are
+// where the name is written in its declaration, more than one for a name an
+// or-pattern binds in each alternative. `signature` is what a hover shows,
+// `declared` the type as written. `exported`: visible to other files. `site`:
+// where a type checker keys the name's type. `pinned`: why the name is not
+// renamed, the id of a message.
+pub(open) inductive AnDef: Type {
+  Mk(
+    name: Text,
+    kind: Text,
+    spans: List(CstSpan),
+    signature: Text,
+    declared: Option(Text),
+    exported: Bool,
+    site: Option(Nat),
+    members: List(Nat),
+    parent: Option(Nat),
+    pinned: Option(Text)
+  ): AnDef
+}
+
+// A use of a name. `approximate`: found by the name alone (a field read from
+// a value, a bare variant).
+pub(open) inductive AnRef: Type {
+  Mk(span: CstSpan, target: AnId, approximate: Bool): AnRef
+}
+
+pub(open) inductive AnWord: Type {
+  Mk(span: CstSpan, word: Text): AnWord
+}
+
+// The index of one file. `defs` by their number; `fields` the numbers of the
+// fields by name. `imports` are the paths its `import` statements name (a
+// module such as `std::list` with `true`). `tops` are the top-level
+// statements whole, `macros` the `name!(…)` calls whole, `theorems` the
+// `theorem` keywords with the declaration each introduces. `closure` is the
+// files this one sees, itself last; `toplevel` its top-level names.
+// `broken`: the text did not read as a whole, and nothing else is filled in.
+// `path` and `text` are the file's, as it was added.
+pub(open) inductive AnFile: Type {
+  Mk(
+    path: Text,
+    text: Text,
+    defs: Ordmap(Nat, AnDef),
+    count: Nat,
+    fields: Ordmap(Text, List(Nat)),
+    imports: List(Text × Bool),
+    refs: List(AnRef),
+    unresolved: List(AnWord),
+    opaque_words: List(AnWord),
+    tops: List(CstSpan),
+    macros: List(CstSpan),
+    theorems: List(CstSpan × Nat),
+    closure: List(Nat),
+    toplevel: Ordmap(Text, AnId),
+    broken: Bool
+  ): AnFile
+}
+
+pub(open) inductive AnWorld: Type {
+  Mk(files: Ordmap(Nat, AnFile), count: Nat): AnWorld
+}
+
+// The state of the walk over one file. The lists are the last found first.
+// `frames` are the scopes, the innermost first; `node_def` the declaration
+// made for a node, so reading a block twice makes one; `quoting` is above 0
+// inside a `quote`, where names are not resolved.
+pub(open) struct AnWalk {
+  world: AnWorld,
+  classes: UnicodeClasses,
+  file: Nat,
+  src: Text,
+  defs: Ordmap(Nat, AnDef),
+  count: Nat,
+  fields: Ordmap(Text, List(Nat)),
+  refs: List(AnRef),
+  unresolved: List(AnWord),
+  opaque_words: List(AnWord),
+  tops: List(CstSpan),
+  macros: List(CstSpan),
+  theorems: List(CstSpan × Nat),
+  frames: List(Ordmap(Text, AnSlot)),
+  globals: Ordmap(Text, AnId),
+  global_files: List(Nat),
+  node_def: Ordmap(Text, Nat),
+  quoting: Nat
+}
+
+
+pub fn an_set<A>(slot: &mut A, value: A): Unit {
+  *slot := value
+}
+
+pub fn an_cat(parts: List(Text)): Text {
+  Text::concat_all(parts)
+}
+
+pub fn an_slice(t: Text, start: Nat, end: Nat): Text {
+  Text::slice_or_empty(t, start, end)
+}
+
+// The character at byte `i` and its length in bytes; a byte that starts no
+// character is one character of its own.
+pub fn an_char(t: Text, i: Nat): Nat × Nat {
+  match text_decode(t, i) {
+    Some(#(@code code, @len len)) => #(code, len)
+    None => #(Text::byte_value(t, i), 1)
+  }
+}
+
+pub fn an_is_word_char(classes: UnicodeClasses, c: Nat): Bool {
+  if c < 128 { c == 95 || unicode_is_alphanumeric(classes, c) } else { unicode_in(unicode_xid_continue(), c) }
+}
+
+// The words of `t` from byte `i`, split where `inside` does not hold, with
+// the byte each starts at; `start` is where the word being read starts.
+pub fn an_runs(fuel: Nat,
+  classes: UnicodeClasses,
+  word: Bool,
+  t: Text,
+  i: Nat,
+  start: Option(Nat),
+  done: List(Nat × Text)
+): List(Nat × Text) {
+  match fuel {
+    Zero => Nil
+    Succ(fl) => {
+      if i >= Text::len(t) {
+        let last: List(Nat × Text) := match start {
+          None => done
+          Some(s) => Cons(#(s, an_slice(t, s, i)), done)
+        }
+        text_list_reverse(last)
+      } else {
+        match an_char(t, i) {
+          #(c, n) => {
+            let inside: Bool := if word { an_is_word_char(classes, c) } else { not(unicode_is_whitespace(classes, c)) }
+            if inside {
+              match start {
+                None => an_runs(fl, classes, word, t, i + n, Some(i), done)
+                Some(s) => an_runs(fl, classes, word, t, i + n, Some(s), done)
+              }
+            } else {
+              match start {
+                None => an_runs(fl, classes, word, t, i + n, None, done)
+                Some(s) => an_runs(fl, classes, word, t, i + n, None, Cons(#(s, an_slice(t, s, i)), done))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The identifier-like words of a text (letters, digits and `_`), with the
+// byte offset each starts at.
+pub fn an_words_at(classes: UnicodeClasses, t: Text): List(Nat × Text) {
+  an_runs(Text::len(t) + 1, classes, true, t, 0, None, Nil)
+}
+
+pub fn an_seconds<A, B>(xs: List(A × B)): List(B) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match x {
+      #(^a, b) => Cons(b, an_seconds(rest))
+    }
+  }
+}
+
+// The text with its runs of white space made one space, none at the ends.
+pub fn an_squeeze(classes: UnicodeClasses, t: Text): Text {
+  text_join(an_seconds(an_runs(Text::len(t) + 1, classes, false, t, 0, None, Nil)), " ")
+}
+
+// The number of lines of a text: its line feeds, and one more when the text
+// does not end with one.
+pub fn an_line_count(t: Text): Nat {
+  let feeds := List::length(text_split(t, text_newline())) - 1
+  if Text::len(t) == 0 {
+    0
+  } else if text_starts_with(t, text_newline(), Text::len(t) - 1) {
+    feeds
+  } else {
+    feeds + 1
+  }
+}
+
+pub fn an_drop_quotes_front(fuel: Nat, t: Text, i: Nat, end: Nat): Nat {
+  match fuel {
+    Zero => i
+    Succ(fl) => {
+      if i < end && (Text::byte_value(t, i) == 34 || Text::byte_value(t, i) == 39) {
+        an_drop_quotes_front(fl, t, i + 1, end)
+      } else {
+        i
+      }
+    }
+  }
+}
+
+pub fn an_drop_quotes_back(fuel: Nat, t: Text, start: Nat, end: Nat): Nat {
+  match fuel {
+    Zero => end
+    Succ(fl) => {
+      if start < end && (Text::byte_value(t, end - 1) == 34 || Text::byte_value(t, end - 1) == 39) {
+        an_drop_quotes_back(fl, t, start, end - 1)
+      } else {
+        end
+      }
+    }
+  }
+}
+
+// The text without the `"` and `'` at either end.
+pub fn an_trim_quotes(t: Text): Text {
+  let start := an_drop_quotes_front(Text::len(t) + 1, t, 0, Text::len(t))
+  an_slice(t, start, an_drop_quotes_back(Text::len(t) + 1, t, start, Text::len(t)))
+}
+
+pub fn an_has_text(xs: List(Text), x: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || an_has_text(rest, x)
+  }
+}
+
+pub fn an_has_nat(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || an_has_nat(rest, x)
+  }
+}
+
+pub fn an_insert_nat(x: Nat, xs: List(Nat)): List(Nat) {
+  match xs {
+    Nil => [x]
+    Cons(y, rest) => if x <= y { Cons(x, xs) } else { Cons(y, an_insert_nat(x, rest)) }
+  }
+}
+
+pub fn an_sort_nats(xs: List(Nat)): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => an_insert_nat(x, an_sort_nats(rest))
+  }
+}
+
+pub fn an_append<A>(xs: List(A), ys: List(A)): List(A) {
+  match xs {
+    Nil => ys
+    Cons(x, rest) => Cons(x, an_append(rest, ys))
+  }
+}
+
+pub fn an_span(n: CstNode): CstSpan {
+  CstSpan { start: n.start, end: n.end }
+}
+
+pub fn an_at(start: Nat, end: Nat): CstSpan {
+  CstSpan { start: start, end: end }
+}
+
+// Whether `n` is the non-terminal `kind`.
+pub fn an_is(n: CstNode, kind: Text): Bool {
+  if n.terminal { false } else { n.name == kind }
+}
+
+pub fn an_is_any(n: CstNode, kinds: List(Text)): Bool {
+  if n.terminal { false } else { an_has_text(kinds, n.name) }
+}
+
+pub fn an_find(ns: List(CstNode), kinds: List(Text)): Option(CstNode) {
+  match ns {
+    Nil => None
+    Cons(c, rest) => if an_is_any(c, kinds) { Some(c) } else { an_find(rest, kinds) }
+  }
+}
+
+pub fn an_first(n: CstNode, kind: Text): Option(CstNode) {
+  an_find(n.flat, [kind])
+}
+
+pub fn an_has(n: CstNode, kind: Text): Bool {
+  match an_first(n, kind) {
+    None => false
+    Some(^c) => true
+  }
+}
+
+pub fn an_filter(ns: List(CstNode), kinds: List(Text)): List(CstNode) {
+  match ns {
+    Nil => Nil
+    Cons(c, rest) => if an_is_any(c, kinds) {
+      Cons(c, an_filter(rest, kinds))
+    } else {
+      an_filter(rest, kinds)
+    }
+  }
+}
+
+pub fn an_all(n: CstNode, kind: Text): List(CstNode) {
+  an_filter(n.flat, [kind])
+}
+
+// The type written under `n`: a `Type`, or a `BodyType` where a `{` or `=>`
+// follows it.
+pub fn an_ty(n: CstNode): Option(CstNode) {
+  an_find(n.flat, ["Type", "BodyType"])
+}
+
+pub fn an_tys(n: CstNode): List(CstNode) {
+  an_filter(n.flat, ["Type", "BodyType"])
+}
+
+pub fn an_list_in(fuel: Nat, ns: List(CstNode), item: Text, tail: Text): List(CstNode) {
+  match fuel {
+    Zero => Nil
+    Succ(fl) => {
+      match ns {
+        Nil => Nil
+        Cons(c, rest) => if an_is(c, item) {
+          Cons(c, an_list_in(fl, rest, item, tail))
+        } else if an_is(c, tail) {
+          an_append(an_list_in(fl, c.flat, item, tail), an_list_in(fl, rest, item, tail))
+        } else {
+          an_list_in(fl, rest, item, tail)
+        }
+      }
+    }
+  }
+}
+
+// The items of a list written `{ Sep } [ Item Tail ]`.
+pub fn an_list(fuel: Nat, n: CstNode, item: Text, tail: Text): List(CstNode) {
+  an_list_in(fuel, n.flat, item, tail)
+}
+
+mutual {
+  pub fn an_token_in(fuel: Nat, ns: List(CstNode)): Option(CstSpan) {
+    match fuel {
+      Zero => None
+      Succ(fl) => {
+        match ns {
+          Nil => None
+          Cons(c, rest) => match an_token(fl, c) {
+            Some(s) => Some(s)
+            None => an_token_in(fl, rest)
+          }
+        }
+      }
+    }
+  }
+
+  // The first token under `n` that is not white space or a comment.
+  pub fn an_token(fuel: Nat, n: CstNode): Option(CstSpan) {
+    match fuel {
+      Zero => None
+      Succ(fl) => {
+        if n.terminal {
+          if n.trivia { None } else { Some(an_span(n)) }
+        } else {
+          an_token_in(fl, n.children)
+        }
+      }
+    }
+  }
+}
+
+pub fn an_text(st: &mut AnWalk, s: CstSpan): Text {
+  an_slice(st.src, s.start, s.end)
+}
+
+pub fn an_node_text(st: &mut AnWalk, n: CstNode): Text {
+  an_slice(st.src, n.start, n.end)
+}
+
+pub fn an_squeezed(st: &mut AnWalk, n: CstNode): Text {
+  an_squeeze(st.classes, an_node_text(&mut st, n))
+}
+
+pub fn an_squeezed_opt(st: &mut AnWalk, n: Option(CstNode)): Option(Text) {
+  match n {
+    None => None
+    Some(t) => Some(an_squeezed(&mut st, t))
+  }
+}
+
+// The name an `Ident` node holds and where it is written. `r#name` is the
+// name `name`, written from after the `r#`.
+pub fn an_ident(fuel: Nat, st: &mut AnWalk, n: CstNode): Option(Text × CstSpan) {
+  match an_token(fuel, n) {
+    None => None
+    Some(s) => {
+      let t := an_text(&mut st, s)
+      if text_starts_with(t, "r#", 0) && Text::len(t) > 2 {
+        Some(#(an_slice(t, 2, Text::len(t)), an_at(s.start + 2, s.end)))
+      } else {
+        Some(#(t, s))
+      }
+    }
+  }
+}
+
+pub fn an_first_ident_below_in(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Option(Text × CstSpan) {
+  match fuel {
+    Zero => None
+    Succ(fl) => {
+      match ns {
+        Nil => None
+        Cons(c, rest) => if an_is(c, "Ident") {
+          an_ident(fl, &mut st, c)
+        } else {
+          match an_first_ident_below_in(fl, &mut st, c.flat) {
+            Some(found) => Some(found)
+            None => an_first_ident_below_in(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+}
+
+// The segments of a name written `A::B` and where each is written.
+pub fn an_segments(parts: List(Text), start: Nat): List(Text × CstSpan) {
+  match parts {
+    Nil => Nil
+    Cons(p, rest) => Cons(
+      #(p, an_at(start, start + Text::len(p))),
+      an_segments(rest, start + Text::len(p) + 2)
+    )
+  }
+}
+
+// The segments of a path's names: one token may hold several, each with its
+// own span.
+pub fn an_path_segments(fuel: Nat, st: &mut AnWalk, idents: List(CstNode)): List(Text × CstSpan) {
+  match fuel {
+    Zero => Nil
+    Succ(fl) => {
+      match idents {
+        Nil => Nil
+        Cons(i, rest) => match an_ident(fl, &mut st, i) {
+          None => an_path_segments(fl, &mut st, rest)
+          Some(found) => match found {
+            #(name, span) => an_append(
+              an_segments(text_split(name, "::"), span.start),
+              an_path_segments(fl, &mut st, rest)
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn an_name_of_in(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Option(Text × CstSpan) {
+  match fuel {
+    Zero => None
+    Succ(fl) => {
+      match ns {
+        Nil => None
+        Cons(c, rest) => if an_is(c, "Ident") {
+          an_ident(fl, &mut st, c)
+        } else if an_is(c, "BindName") {
+          // `[Caret] Ident`: the caret is unused-marker metadata, not part of the name.
+          an_name_of_in(fl, &mut st, c.flat)
+        } else if an_is(c, "FnName") {
+          an_name_of_in(fl, &mut st, c.flat)
+        } else {
+          an_name_of_in(fl, &mut st, rest)
+        }
+      }
+    }
+  }
+}
+
+// The first `Ident` among the children, or the one inside a `BindName` / `FnName`.
+pub fn an_name_of(fuel: Nat, st: &mut AnWalk, n: CstNode): Option(Text × CstSpan) {
+  an_name_of_in(fuel, &mut st, n.flat)
+}
+
+pub fn an_wrappers(): List(Text) {
+  ["Stmt", "OtherStmt", "ExternItem", "ClassItem", "InstanceItem", "MutualItem", "MutualMember"]
+}
+
+pub fn an_not_attribute(ns: List(CstNode)): Option(CstNode) {
+  match ns {
+    Nil => None
+    Cons(c, rest) => if an_is_any(c, ["Attribute", "Visibility"]) { an_not_attribute(rest) } else { Some(c) }
+  }
+}
+
+// Follows a statement down to the declaration it holds.
+pub fn an_inner(fuel: Nat, n: CstNode): CstNode {
+  match fuel {
+    Zero => n
+    Succ(fl) => {
+      if an_is_any(n, an_wrappers()) {
+        match an_not_attribute(n.flat) {
+          None => n
+          Some(c) => an_inner(fl, c)
+        }
+      } else {
+        n
+      }
+    }
+  }
+}
+
+pub fn an_inners(fuel: Nat, ns: List(CstNode)): List(CstNode) {
+  match fuel {
+    Zero => Nil
+    Succ(fl) => {
+      match ns {
+        Nil => Nil
+        Cons(n, rest) => Cons(an_inner(fl, n), an_inners(fl, rest))
+      }
+    }
+  }
+}
+
+pub fn an_items(fuel: Nat, n: CstNode, items: Text, item: Text, tail: Text): List(CstNode) {
+  match an_first(n, items) {
+    None => Nil
+    Some(i) => an_inners(fuel, an_list(fuel, i, item, tail))
+  }
+}
+
+// The text from the start of a node to the start of its first child of one of
+// `stop`, on one line.
+pub fn an_header(st: &mut AnWalk, n: CstNode, stop: List(Text)): Text {
+  let end: Nat := match an_find(n.flat, stop) {
+    None => n.end
+    Some(c) => c.start
+  }
+  an_squeeze(st.classes, an_slice(st.src, n.start, end))
+}
+
+// The whole declaration when it has at most 16 lines.
+pub fn an_whole_if_short(st: &mut AnWalk, n: CstNode, fallback: Text): Text {
+  let t := an_node_text(&mut st, n)
+  if an_line_count(t) <= 16 { t } else { fallback }
+}
+
+// The key of a node for `node_def`: its kind and span.
+pub fn an_node_key(n: CstNode): Text {
+  an_cat([n.name, " ", Text::of_nat(n.start), " ", Text::of_nat(n.end)])
+}
+
+pub fn an_pinned_of(kind: Text): Option(Text) {
+  if kind == "field" {
+    Some("analyzer-pinned-field")
+  } else if kind == "syntax" {
+    Some("analyzer-pinned-syntax")
+  } else {
+    None
+  }
+}
+
+pub fn an_no_def(): AnDef {
+  AnDef {
+    name: "",
+    kind: "",
+    spans: Nil,
+    signature: "",
+    declared: None,
+    exported: false,
+    site: None,
+    members: Nil,
+    parent: None,
+    pinned: None
+  }
+}
+
+pub fn an_file_def(f: AnFile, index: Nat): AnDef {
+  match Ordmap::get(f.defs, index, Ordmap::compare_nat) {
+    Some(d) => d
+    None => an_no_def()
+  }
+}
+
+pub fn an_world_file(w: AnWorld, id: Nat): Option(AnFile) {
+  Ordmap::get(w.files, id, Ordmap::compare_nat)
+}
+
+pub fn an_get(st: &mut AnWalk, index: Nat): AnDef {
+  match Ordmap::get(st.defs, index, Ordmap::compare_nat) {
+    Some(d) => d
+    None => an_no_def()
+  }
+}
+
+pub fn an_put(st: &mut AnWalk, index: Nat, d: AnDef): Unit {
+  an_set(&mut st.defs, Ordmap::insert(st.defs, index, d, Ordmap::compare_nat))
+}
+
+pub fn an_def_of(st: &mut AnWalk, id: AnId): AnDef {
+  if id.file == st.file {
+    an_get(&mut st, id.index)
+  } else {
+    match an_world_file(st.world, id.file) {
+      Some(f) => an_file_def(f, id.index)
+      None => an_no_def()
+    }
+  }
+}
+
+pub fn an_me(st: &mut AnWalk, index: Nat): AnId {
+  AnId { file: st.file, index: index }
+}
+
+pub fn an_new_def(st: &mut AnWalk, name: Text, kind: Text, span: CstSpan, signature: Text): Nat {
+  let index := st.count
+  an_put(
+    &mut st,
+    index,
+    AnDef {
+      name: name,
+      kind: kind,
+      spans: [span],
+      signature: signature,
+      declared: None,
+      exported: false,
+      site: None,
+      members: Nil,
+      parent: None,
+      pinned: an_pinned_of(kind)
+    }
+  )
+  an_set(&mut st.count, index + 1)
+  if kind == "field" {
+    let known: List(Nat) := match Ordmap::get(st.fields, name, Ordmap::compare_text) {
+      None => Nil
+      Some(xs) => xs
+    }
+    an_set(&mut st.fields, Ordmap::insert(st.fields, name, Cons(index, known), Ordmap::compare_text))
+  } else {
+    ()
+  }
+  index
+}
+
+pub fn an_with_declared(d: AnDef, declared: Option(Text)): AnDef {
+  AnDef {
+    name: d.name,
+    kind: d.kind,
+    spans: d.spans,
+    signature: d.signature,
+    declared: declared,
+    exported: d.exported,
+    site: d.site,
+    members: d.members,
+    parent: d.parent,
+    pinned: d.pinned
+  }
+}
+
+pub fn an_with_site(d: AnDef, site: Option(Nat)): AnDef {
+  AnDef {
+    name: d.name,
+    kind: d.kind,
+    spans: d.spans,
+    signature: d.signature,
+    declared: d.declared,
+    exported: d.exported,
+    site: site,
+    members: d.members,
+    parent: d.parent,
+    pinned: d.pinned
+  }
+}
+
+pub fn an_with_parent(d: AnDef, parent: Nat): AnDef {
+  AnDef {
+    name: d.name,
+    kind: d.kind,
+    spans: d.spans,
+    signature: d.signature,
+    declared: d.declared,
+    exported: d.exported,
+    site: d.site,
+    members: d.members,
+    parent: Some(parent),
+    pinned: d.pinned
+  }
+}
+
+pub fn an_with_member(d: AnDef, member: Nat): AnDef {
+  AnDef {
+    name: d.name,
+    kind: d.kind,
+    spans: d.spans,
+    signature: d.signature,
+    declared: d.declared,
+    exported: d.exported,
+    site: d.site,
+    members: if an_has_nat(d.members, member) { d.members } else { an_append(d.members, [member]) },
+    parent: d.parent,
+    pinned: d.pinned
+  }
+}
+
+pub fn an_with_exported(d: AnDef): AnDef {
+  AnDef {
+    name: d.name,
+    kind: d.kind,
+    spans: d.spans,
+    signature: d.signature,
+    declared: d.declared,
+    exported: true,
+    site: d.site,
+    members: d.members,
+    parent: d.parent,
+    pinned: d.pinned
+  }
+}
+
+pub fn an_with_span(d: AnDef, span: CstSpan): AnDef {
+  AnDef {
+    name: d.name,
+    kind: d.kind,
+    spans: an_append(d.spans, [span]),
+    signature: d.signature,
+    declared: d.declared,
+    exported: d.exported,
+    site: d.site,
+    members: d.members,
+    parent: d.parent,
+    pinned: d.pinned
+  }
+}
+
+pub fn an_with_pinned(d: AnDef, pinned: Option(Text)): AnDef {
+  AnDef {
+    name: d.name,
+    kind: d.kind,
+    spans: d.spans,
+    signature: d.signature,
+    declared: d.declared,
+    exported: d.exported,
+    site: d.site,
+    members: d.members,
+    parent: d.parent,
+    pinned: pinned
+  }
+}
+
+pub fn an_set_declared(st: &mut AnWalk, index: Nat, declared: Option(Text)): Unit {
+  let hoisted19 := an_get(&mut st, index)
+  an_put(&mut st, index, an_with_declared(hoisted19, declared))
+}
+
+pub fn an_set_site(st: &mut AnWalk, index: Nat, site: Option(Nat)): Unit {
+  let hoisted18 := an_get(&mut st, index)
+  an_put(&mut st, index, an_with_site(hoisted18, site))
+}
+
+// `member` of `owner`, its parent.
+pub fn an_adopt(st: &mut AnWalk, owner: Nat, member: Nat): Unit {
+  let hoisted17 := an_get(&mut st, member)
+  an_put(&mut st, member, an_with_parent(hoisted17, owner))
+  let hoisted16 := an_get(&mut st, owner)
+  an_put(&mut st, owner, an_with_member(hoisted16, member))
+}
+
+mutual {
+  pub fn an_export(fuel: Nat, st: &mut AnWalk, index: Nat): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        let d := an_get(&mut st, index)
+        an_put(&mut st, index, an_with_exported(d))
+        an_export_all(fl, &mut st, d.members)
+      }
+    }
+  }
+
+  pub fn an_export_all(fuel: Nat, st: &mut AnWalk, members: List(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match members {
+          Nil => ()
+          Cons(m, rest) => {
+            an_export(fl, &mut st, m)
+            an_export_all(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+}
+
+// The declaration made for `n`, made once.
+pub fn an_def_once(st: &mut AnWalk, n: CstNode, name: Text, kind: Text, span: CstSpan, sig: Text): Nat {
+  let key := an_node_key(n)
+  match Ordmap::get(st.node_def, key, Ordmap::compare_text) {
+    Some(d) => d
+    None => {
+      let d := an_new_def(&mut st, name, kind, span, sig)
+      an_set(&mut st.node_def, Ordmap::insert(st.node_def, key, d, Ordmap::compare_text))
+      d
+    }
+  }
+}
+
+pub fn an_push(st: &mut AnWalk): Unit {
+  an_set(&mut st.frames, Cons(Ordmap::empty(), st.frames))
+}
+
+// Closes the innermost scope; what it held.
+pub fn an_pop(st: &mut AnWalk): Ordmap(Text, AnSlot) {
+  match st.frames {
+    Nil => Ordmap::empty()
+    Cons(f, rest) => {
+      an_set(&mut st.frames, rest)
+      f
+    }
+  }
+}
+
+pub fn an_close(st: &mut AnWalk): Unit {
+  match st.frames {
+    Nil => #()
+    Cons(^frame, rest) => an_set(&mut st.frames, rest)
+  }
+}
+
+pub fn an_pop_n(st: &mut AnWalk, n: Nat): Unit {
+  match n {
+    Zero => #()
+    Succ(k) => {
+      an_close(&mut st)
+      an_pop_n(&mut st, k)
+    }
+  }
+}
+
+pub fn an_bind(st: &mut AnWalk, key: Text, slot: AnSlot): Unit {
+  match st.frames {
+    Nil => ()
+    Cons(f, rest) => an_set(&mut st.frames, Cons(Ordmap::insert(f, key, slot, Ordmap::compare_text), rest))
+  }
+}
+
+pub fn an_declare(st: &mut AnWalk, key: Text, index: Nat): Unit {
+  let hoisted15 := an_me(&mut st, index)
+  an_bind(&mut st, key, AnTo(hoisted15))
+}
+
+pub fn an_in_frame(st: &mut AnWalk, name: Text): Option(AnSlot) {
+  match st.frames {
+    Nil => None
+    Cons(f, ^rest) => Ordmap::get(f, name, Ordmap::compare_text)
+  }
+}
+
+pub fn an_lookup_in(frames: List(Ordmap(Text, AnSlot)), globals: Ordmap(Text, AnId), name: Text): Option(AnId) {
+  match frames {
+    Nil => Ordmap::get(globals, name, Ordmap::compare_text)
+    Cons(f, rest) => match Ordmap::get(f, name, Ordmap::compare_text) {
+      Some(slot) => match slot {
+        AnTo(d) => Some(d)
+        AnShared => None
+      }
+      None => an_lookup_in(rest, globals, name)
+    }
+  }
+}
+
+pub fn an_lookup(st: &mut AnWalk, name: Text): Option(AnId) {
+  an_lookup_in(st.frames, st.globals, name)
+}
+
+pub fn an_add_ref(st: &mut AnWalk, span: CstSpan, target: AnId, approximate: Bool): Unit {
+  an_set(&mut st.refs, Cons(AnRef { span: span, target: target, approximate: approximate }, st.refs))
+}
+
+pub fn an_unresolved(st: &mut AnWalk, span: CstSpan, name: Text): Unit {
+  an_set(&mut st.unresolved, Cons(AnWord { span: span, word: name }, st.unresolved))
+}
+
+pub fn an_opaque(st: &mut AnWalk, span: CstSpan, name: Text): Unit {
+  an_set(&mut st.opaque_words, Cons(AnWord { span: span, word: name }, st.opaque_words))
+}
+
+pub fn an_reference(st: &mut AnWalk, span: CstSpan, name: Text): Option(AnId) {
+  if st.quoting > 0 {
+    an_opaque(&mut st, span, name)
+    None
+  } else {
+    match an_lookup(&mut st, name) {
+      Some(d) => {
+        an_add_ref(&mut st, span, d, false)
+        Some(d)
+      }
+      None => {
+        an_unresolved(&mut st, span, name)
+        None
+      }
+    }
+  }
+}
+
+pub fn an_reference_node(fuel: Nat, st: &mut AnWalk, n: CstNode): Option(AnId) {
+  match an_ident(fuel, &mut st, n) {
+    None => None
+    Some(found) => match found {
+      #(name, span) => an_reference(&mut st, span, name)
+    }
+  }
+}
+
+pub fn an_member_named(st: &mut AnWalk, file: Nat, members: List(Nat), name: Text): Option(AnId) {
+  match members {
+    Nil => None
+    Cons(m, rest) => {
+      let id := AnId { file: file, index: m }
+      if an_def_of(&mut st, id).name == name { Some(id) } else { an_member_named(&mut st, file, rest, name) }
+    }
+  }
+}
+
+// A use of the member `name` of `owner`: `Shape::Circle`, `File::open`.
+pub fn an_member(st: &mut AnWalk, owner: Option(AnId), span: CstSpan, name: Text): Option(AnId) {
+  let found: Option(AnId) := match owner {
+    None => None
+    Some(o) => {
+      let hoisted14 := an_def_of(&mut st, o)
+      an_member_named(&mut st, o.file, hoisted14.members, name)
+    }
+  }
+  match found {
+    Some(d) => {
+      an_add_ref(&mut st, span, d, false)
+      Some(d)
+    }
+    None => {
+      an_unresolved(&mut st, span, name)
+      None
+    }
+  }
+}
+
+pub fn an_ids(file: Nat, indices: List(Nat)): List(AnId) {
+  match indices {
+    Nil => Nil
+    Cons(i, rest) => Cons(AnId { file: file, index: i }, an_ids(file, rest))
+  }
+}
+
+pub fn an_fields_named(fields: Ordmap(Text, List(Nat)), name: Text): List(Nat) {
+  match Ordmap::get(fields, name, Ordmap::compare_text) {
+    None => Nil
+    Some(xs) => xs
+  }
+}
+
+pub fn an_fields_elsewhere(w: AnWorld, files: List(Nat), name: Text): List(AnId) {
+  match files {
+    Nil => Nil
+    Cons(f, rest) => match an_world_file(w, f) {
+      None => an_fields_elsewhere(w, rest, name)
+      Some(file) => an_append(an_ids(f, an_fields_named(file.fields, name)), an_fields_elsewhere(w, rest, name))
+    }
+  }
+}
+
+// A field read from a value of a type this does not know: found by its name
+// when only one visible declaration has it.
+pub fn an_field_by_name(st: &mut AnWalk, span: CstSpan, name: Text): Option(AnId) {
+  let found := an_append(
+    an_ids(st.file, an_fields_named(st.fields, name)),
+    an_fields_elsewhere(st.world, st.global_files, name)
+  )
+  match found {
+    Cons(d, rest) => match rest {
+      Nil => {
+        an_add_ref(&mut st, span, d, true)
+        Some(d)
+      }
+      Cons(^other, ^more) => {
+        an_unresolved(&mut st, span, name)
+        None
+      }
+    }
+    Nil => {
+      an_unresolved(&mut st, span, name)
+      None
+    }
+  }
+}
+
+pub fn an_stmt_nodes(fuel: Nat, stmts: CstNode): List(CstNode) {
+  an_inners(fuel, an_list(fuel, stmts, "Stmt", "StmtsTail"))
+}
+
+pub fn an_theorem_keywords(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), d: Nat): Unit {
+  match fuel {
+    Zero => #()
+    Succ(fl) => {
+      match ns {
+        Nil => ()
+        Cons(c, rest) => {
+          if an_is(c, "KwTheorem") {
+            an_set(&mut st.theorems, Cons(#(an_span(c), d), st.theorems))
+          } else {
+            ()
+          }
+          an_theorem_keywords(fl, &mut st, rest, d)
+        }
+      }
+    }
+  }
+}
+
+pub fn an_hoist_callable(fuel: Nat, st: &mut AnWalk, n: CstNode, kind: Text, stop: List(Text)): Option(Nat) {
+  match an_name_of(fuel, &mut st, n) {
+    None => None
+    Some(found) => match found {
+      #(name, span) => {
+        let sig := an_header(&mut st, n, stop)
+        let d := an_def_once(&mut st, n, name, kind, span, sig)
+        let declared := an_squeezed_opt(&mut st, an_ty(n))
+        an_set_declared(&mut st, d, declared)
+        if kind == "theorem" { an_theorem_keywords(fuel, &mut st, n.flat, d) } else { () }
+        an_declare(&mut st, name, d)
+        Some(d)
+      }
+    }
+  }
+}
+
+pub fn an_hoist_class_items(fuel: Nat, st: &mut AnWalk, owner: Nat, owner_name: Text, items: List(CstNode)): Unit {
+  match fuel {
+    Zero => #()
+    Succ(fl) => {
+      match items {
+        Nil => ()
+        Cons(i, rest) => {
+          let item := an_inner(fl, i)
+          let shape: Option(Text × List(Text)) := if an_is(item, "ExternFn") {
+            Some(#("method", Nil))
+          } else if an_is(item, "LawDecl") {
+            Some(#("law", ["Block"]))
+          } else {
+            None
+          }
+          ⊢ Unit from match shape {
+            None => ()
+            Some(s) => match s {
+              #(kind, stop) => match an_name_of(fl, &mut st, item) {
+                None => ()
+                Some(found) => match found {
+                  #(mname, mspan) => {
+                    let sig := an_cat([an_header(&mut st, item, stop), text_newline(), "  // of ", owner_name])
+                    let m := an_def_once(&mut st, item, mname, kind, mspan, sig)
+                    let declared := an_squeezed_opt(&mut st, an_ty(item))
+                    let hoisted13 := an_get(&mut st, m)
+                    an_put(&mut st, m, an_with_parent(hoisted13, owner))
+                    an_set_declared(&mut st, m, declared)
+                    let hoisted12 := an_get(&mut st, owner)
+                    an_put(&mut st, owner, an_with_member(hoisted12, m))
+                  }
+                }
+              }
+            }
+          }
+          an_hoist_class_items(fl, &mut st, owner, owner_name, rest)
+        }
+      }
+    }
+  }
+}
+
+pub fn an_hoist_class(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+  match an_name_of(fuel, &mut st, n) {
+    None => ()
+    Some(found) => match found {
+      #(name, span) => {
+        let sig := an_header(&mut st, n, ["ClassBody"])
+        let shown := an_whole_if_short(&mut st, n, sig)
+        let d := an_def_once(&mut st, n, name, "class", span, shown)
+        an_declare(&mut st, name, d)
+        ⊢ Unit from match an_first(n, "ClassBody") {
+          None => ()
+          Some(body) => match an_first(body, "ClassItems") {
+            None => ()
+            Some(items) => an_hoist_class_items(fuel, &mut st, d, name, an_list(fuel, items, "ClassItem", "ClassItemsTail"))
+          }
+        }
+      }
+    }
+  }
+}
+
+// A variant is also written bare, unless that would hide a name (or another
+// variant's, which makes the bare name unusable).
+pub fn an_bare_variant(st: &mut AnWalk, name: Text, m: Nat): Unit {
+  let bare := an_me(&mut st, m)
+  match an_in_frame(&mut st, name) {
+    None => an_bind(&mut st, name, AnTo(bare))
+    Some(prior) => match prior {
+      AnShared => an_bind(&mut st, name, AnShared)
+      AnTo(d) => if d.file == bare.file && d.index == bare.index { () } else { an_bind(&mut st, name, AnShared) }
+    }
+  }
+}
+
+pub fn an_hoist_field_list(fuel: Nat, st: &mut AnWalk, owner: Nat, fs: List(CstNode)): Unit {
+  match fuel {
+    Zero => #()
+    Succ(fl) => {
+      match fs {
+        Nil => ()
+        Cons(f, rest) => {
+          ⊢ Unit from match an_name_of(fl, &mut st, f) {
+            None => ()
+            Some(found) => match found {
+              #(name, span) => {
+                let ty := an_squeezed_opt(&mut st, an_ty(f))
+                let shown: Text := match ty {
+                  None => ""
+                  Some(t) => t
+                }
+                let m := an_def_once(&mut st, f, name, "field", span, an_cat([name, ": ", shown]))
+                let hoisted11 := an_get(&mut st, m)
+                an_put(&mut st, m, an_with_parent(hoisted11, owner))
+                an_set_declared(&mut st, m, ty)
+                let hoisted10 := an_get(&mut st, owner)
+                an_put(&mut st, owner, an_with_member(hoisted10, m))
+              }
+            }
+          }
+          an_hoist_field_list(fl, &mut st, owner, rest)
+        }
+      }
+    }
+  }
+}
+
+pub fn an_hoist_fields(fuel: Nat, st: &mut AnWalk, owner: Nat, fields: CstNode): Unit {
+  an_hoist_field_list(fuel, &mut st, owner, an_list(fuel, fields, "FieldDecl", "FieldsTail"))
+}
+
+// The fields under the `Fields` of the `body` of `n`.
+pub fn an_hoist_body_fields(fuel: Nat, st: &mut AnWalk, owner: Nat, n: CstNode, body: Text): Unit {
+  match an_first(n, body) {
+    None => ()
+    Some(b) => match an_first(b, "Fields") {
+      None => ()
+      Some(fields) => an_hoist_fields(fuel, &mut st, owner, fields)
+    }
+  }
+}
+
+pub fn an_hoist_variants(fuel: Nat, st: &mut AnWalk, owner: Nat, owner_name: Text, vs: List(CstNode)): Unit {
+  match fuel {
+    Zero => #()
+    Succ(fl) => {
+      match vs {
+        Nil => ()
+        Cons(v, rest) => {
+          ⊢ Unit from match an_name_of(fl, &mut st, v) {
+            None => ()
+            Some(found) => match found {
+              #(vname, vspan) => {
+                let sig := an_cat([owner_name, "::", an_squeezed(&mut st, v)])
+                let m := an_def_once(&mut st, v, vname, "variant", vspan, sig)
+                an_adopt(&mut st, owner, m)
+                an_bare_variant(&mut st, vname, m)
+                an_hoist_body_fields(fl, &mut st, m, v, "VariantBody")
+              }
+            }
+          }
+          an_hoist_variants(fl, &mut st, owner, owner_name, rest)
+        }
+      }
+    }
+  }
+}
+
+pub fn an_hoist_enum(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+  match an_name_of(fuel, &mut st, n) {
+    None => ()
+    Some(found) => match found {
+      #(name, span) => {
+        let sig := an_header(&mut st, n, ["LBrace"])
+        let shown := an_whole_if_short(&mut st, n, sig)
+        let d := an_def_once(&mut st, n, name, "enum", span, shown)
+        an_declare(&mut st, name, d)
+        ⊢ Unit from match an_first(n, "Variants") {
+          None => ()
+          Some(vs) => an_hoist_variants(fuel, &mut st, d, name, an_list(fuel, vs, "Variant", "VariantsTail"))
+        }
+      }
+    }
+  }
+}
+
+pub fn an_hoist_constructors(fuel: Nat, st: &mut AnWalk, owner: Nat, cs: List(CstNode)): Unit {
+  match fuel {
+    Zero => #()
+    Succ(fl) => {
+      match cs {
+        Nil => ()
+        Cons(c, rest) => {
+          ⊢ Unit from match an_name_of(fl, &mut st, c) {
+            None => ()
+            Some(found) => match found {
+              #(name, span) => {
+                let sig := an_cat([an_squeezed(&mut st, c), text_newline(), "  // of ", an_get(&mut st, owner).name])
+                let m := an_def_once(&mut st, c, name, "constructor", span, sig)
+                let declared := an_squeezed_opt(&mut st, an_ty(c))
+                let hoisted9 := an_get(&mut st, m)
+                an_put(&mut st, m, an_with_parent(hoisted9, owner))
+                an_set_declared(&mut st, m, declared)
+                let hoisted8 := an_get(&mut st, owner)
+                an_put(&mut st, owner, an_with_member(hoisted8, m))
+                an_declare(&mut st, name, m)
+              }
+            }
+          }
+          an_hoist_constructors(fl, &mut st, owner, rest)
+        }
+      }
+    }
+  }
+}
+
+pub fn an_hoist_inductive(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+  match an_hoist_callable(fuel, &mut st, n, "inductive family", ["LBrace"]) {
+    None => ()
+    Some(d) => match an_first(n, "Constructors") {
+      None => ()
+      Some(cs) => an_hoist_constructors(fuel, &mut st, d, an_list(fuel, cs, "Constructor", "ConstructorsTail"))
+    }
+  }
+}
+
+pub fn an_adopt_all(fuel: Nat, st: &mut AnWalk, owner: Nat, members: List(Nat)): Unit {
+  match fuel {
+    Zero => #()
+    Succ(fl) => {
+      match members {
+        Nil => ()
+        Cons(m, rest) => {
+          an_adopt(&mut st, owner, m)
+          an_adopt_all(fl, &mut st, owner, rest)
+        }
+      }
+    }
+  }
+}
+
+// The declarations of this file that a scope names.
+pub fn an_own_slots(file: Nat, slots: List(AnSlot)): List(Nat) {
+  match slots {
+    Nil => Nil
+    Cons(s, rest) => match s {
+      AnShared => an_own_slots(file, rest)
+      AnTo(d) => if d.file == file { Cons(d.index, an_own_slots(file, rest)) } else { an_own_slots(file, rest) }
+    }
+  }
+}
+
+pub fn an_hoist_struct(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+  match an_name_of(fuel, &mut st, n) {
+    None => ()
+    Some(found) => match found {
+      #(name, span) => {
+        let sig := an_header(&mut st, n, ["StructBody"])
+        let shown := an_whole_if_short(&mut st, n, sig)
+        let d := an_def_once(&mut st, n, name, "struct", span, shown)
+        an_declare(&mut st, name, d)
+        an_hoist_body_fields(fuel, &mut st, d, n, "StructBody")
+      }
+    }
+  }
+}
+
+mutual {
+  pub fn an_hoist_all(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(n, rest) => {
+            an_hoist(fl, &mut st, n)
+            an_hoist_all(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_hoist(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        if an_is_any(n, ["FnDecl", "ExternFn"]) {
+          let ^hoisted := an_hoist_callable(fl, &mut st, n, "function", ["Block"])
+        } else if an_is(n, "TheoremDecl") {
+          let ^hoisted := an_hoist_callable(fl, &mut st, n, "theorem", ["Block"])
+        } else if an_is(n, "AxiomDecl") {
+          let ^hoisted := an_hoist_callable(fl, &mut st, n, "axiom", Nil)
+        } else if an_is(n, "DefDecl") {
+          let ^hoisted := an_hoist_callable(fl, &mut st, n, "definition", ["Assign"])
+        } else if an_is(n, "MutualDecl") {
+          an_hoist_all(fl, &mut st, an_items(fl, n, "MutualItems", "MutualItem", "MutualTail"))
+        } else if an_is(n, "InductiveDecl") {
+          an_hoist_inductive(fl, &mut st, n)
+        } else if an_is(n, "StructDecl") {
+          an_hoist_struct(fl, &mut st, n)
+        } else if an_is(n, "EnumDecl") {
+          an_hoist_enum(fl, &mut st, n)
+        } else if an_is(n, "EffectDecl") {
+          ⊢ Unit from match an_name_of(fl, &mut st, n) {
+            None => ()
+            Some(found) => match found {
+              #(name, span) => {
+                let sig := an_header(&mut st, n, Nil)
+                let d := an_def_once(&mut st, n, name, "effect", span, sig)
+                an_declare(&mut st, name, d)
+              }
+            }
+          }
+        } else if an_is(n, "ExternDecl") {
+          an_hoist_all(fl, &mut st, an_items(fl, n, "ExternItems", "ExternItem", "ExternTail"))
+        } else if an_is(n, "ClassDecl") {
+          an_hoist_class(fl, &mut st, n)
+        } else if an_is(n, "SyntaxDecl") {
+          // `syntax!(NAME, …)`: the first argument is the syntax's name.
+          let found: Option(Text × CstSpan) := match an_first(n, "Expr") {
+            None => None
+            Some(e) => an_first_ident_below_in(fl, &mut st, e.flat)
+          }
+          ⊢ Unit from match found {
+            None => ()
+            Some(f) => match f {
+              #(name, span) => {
+                let key := an_cat(["syntax ", name])
+                let d := an_def_once(&mut st, n, name, "syntax", span, key)
+                an_declare(&mut st, key, d)
+              }
+            }
+          }
+        } else if an_is(n, "MacroFnDecl") {
+          // `macro fn NAME(…) … { … }`: the function, and the macro of the same name.
+          ⊢ Unit from match an_first(n, "FnDecl") {
+            None => ()
+            Some(f) => {
+              an_hoist(fl, &mut st, f)
+              ⊢ Unit from match an_name_of(fl, &mut st, f) {
+                None => ()
+                Some(found) => match found {
+                  #(name, span) => {
+                    let sig := an_header(&mut st, f, ["Block"])
+                    let d := an_def_once(&mut st, n, name, "macro", span, sig)
+                    an_declare(&mut st, an_cat([name, "!"]), d)
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          ()
+        }
+      }
+    }
+  }
+}
+
+// Binds `name` in the arm, once for an or-pattern's alternatives.
+pub fn an_bind_pattern(st: &mut AnWalk, name: Text, span: CstSpan, site: Option(Nat), pinned: Option(Text)): Unit {
+  let prior: Option(Nat) := match an_in_frame(&mut st, name) {
+    None => None
+    Some(slot) => match slot {
+      AnShared => None
+      AnTo(d) => if d.file == st.file && an_get(&mut st, d.index).kind == "pattern variable" { Some(d.index) } else { None }
+    }
+  }
+  match prior {
+    Some(i) => {
+      let hoisted7 := an_get(&mut st, i)
+      an_put(&mut st, i, an_with_span(hoisted7, span))
+      ⊢ Unit from match pinned {
+        None => ()
+        Some(^p) => {
+          let hoisted6 := an_get(&mut st, i)
+          an_put(&mut st, i, an_with_pinned(hoisted6, pinned))
+        }
+      }
+    }
+    None => {
+      let d := an_new_def(&mut st, name, "pattern variable", span, name)
+      an_set_site(&mut st, d, site)
+      let hoisted5 := an_get(&mut st, d)
+      an_put(&mut st, d, an_with_pinned(hoisted5, pinned))
+      an_declare(&mut st, name, d)
+    }
+  }
+}
+
+pub fn an_binds_like_a_name(kind: Text): Bool {
+  kind == "constructor" || kind == "variant" || kind == "struct" || kind == "function" || kind == "definition"
+}
+
+pub fn an_path_steps(fuel: Nat, st: &mut AnWalk, segments: List(Text × CstSpan), first: Bool, cur: Option(AnId)): Option(AnId) {
+  match fuel {
+    Zero => cur
+    Succ(fl) => {
+      match segments {
+        Nil => cur
+        Cons(s, rest) => match s {
+          #(name, span) => {
+            let next: Option(AnId) := if first { an_reference(&mut st, span, name) } else { an_member(&mut st, cur, span, name) }
+            an_path_steps(fl, &mut st, rest, false, next)
+          }
+        }
+      }
+    }
+  }
+}
+
+mutual {
+  pub fn an_path_patterns(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => {
+            if an_is(c, "PathPattern") { an_path_pattern(fl, &mut st, c, site) } else { () }
+            an_path_patterns(fl, &mut st, rest, site)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_pattern_alts(fuel: Nat, st: &mut AnWalk, alts: List(CstNode), site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match alts {
+          Nil => ()
+          Cons(alt, rest) => {
+            an_path_patterns(fl, &mut st, alt.flat, site)
+            an_pattern_alts(fl, &mut st, rest, site)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_pattern(fuel: Nat, st: &mut AnWalk, p: CstNode, site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_pattern_alts(fl, &mut st, an_all(p, "PatternAlt"), site)
+      }
+    }
+  }
+
+  pub fn an_field_patterns(fuel: Nat, st: &mut AnWalk, fps: List(CstNode), cur: Option(AnId), site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match fps {
+          Nil => ()
+          Cons(fp, rest) => {
+            // `FieldPattern` is `BindName [ Colon Pattern ]`; Ident sits under BindName.
+            ⊢ Unit from match an_name_of(fl, &mut st, fp) {
+              None => ()
+              Some(found) => match found {
+                #(name, span) => match an_first(fp, "Pattern") {
+                  Some(sub) => {
+                    let ^member := an_member(&mut st, cur, span, name)
+                    an_pattern(fl, &mut st, sub, site)
+                  }
+                  // `Point { x }` names the field and binds a variable of the same
+                  // name; renaming one would change the other.
+                  None => an_bind_pattern(&mut st, name, span, site, Some("analyzer-pinned-field-pun"))
+                }
+              }
+            }
+            an_field_patterns(fl, &mut st, rest, cur, site)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_pattern_args(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), cur: Option(AnId), site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => {
+            if an_is(c, "Pattern") {
+              an_pattern(fl, &mut st, c, site)
+            } else if an_is(c, "FieldPatterns") {
+              an_field_patterns(fl, &mut st, an_list(fl, c, "FieldPattern", "FieldPatternsTail"), cur, site)
+            } else {
+              ()
+            }
+            an_pattern_args(fl, &mut st, rest, cur, site)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_path_pattern_args(fuel: Nat, st: &mut AnWalk, n: CstNode, segments: List(Text × CstSpan), site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        let cur := an_path_steps(fl, &mut st, segments, true, None)
+        match an_first(n, "PatternArgs") {
+          None => ()
+          Some(args) => an_pattern_args(fl, &mut st, args.flat, cur, site)
+        }
+      }
+    }
+  }
+
+  pub fn an_path_pattern(fuel: Nat, st: &mut AnWalk, n: CstNode, site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        // Lone `_` is the Wild token (binds nothing), not an Ident.
+        if an_has(n, "Wild") && match an_first(n, "PatternArgs") {
+          Some(^a) => false
+          None => match an_first(n, "BindName") {
+            Some(^b) => false
+            None => true
+          }
+        } {
+          ()
+        } else {
+          let idents := ⊢ List(CstNode) from match an_first(n, "BindName") {
+            Some(b) => an_all(b, "Ident")
+            None => an_all(n, "Ident")
+          }
+          let segments := an_path_segments(fl, &mut st, idents)
+          let bare: Option(Text × CstSpan) := match an_first(n, "PatternArgs") {
+            Some(^a) => None
+            None => match segments {
+              Cons(s, rest) => match rest {
+                Nil => Some(s)
+                Cons(^t, ^more) => None
+              }
+              Nil => None
+            }
+          }
+          match bare {
+            None => an_path_pattern_args(fl, &mut st, n, segments, site)
+            Some(s) => match s {
+              // Fallback if an Ident `"_"` remains after the Wild split.
+              #(name, span) => if name == "_" {
+                ()
+              } else {
+                let known: Option(AnId) := match an_lookup(&mut st, name) {
+                  None => None
+                  Some(d) => if an_binds_like_a_name(an_def_of(&mut st, d).kind) { Some(d) } else { None }
+                }
+                ⊢ Unit from match known {
+                  Some(d) => an_add_ref(&mut st, span, d, false)
+                  None => an_bind_pattern(&mut st, name, span, site, None)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn an_last_expr(ns: List(CstNode), found: Option(CstNode)): Option(CstNode) {
+  match ns {
+    Nil => found
+    Cons(c, rest) => an_last_expr(rest, if an_is(c, "Expr") { Some(c) } else { found })
+  }
+}
+
+pub fn an_inner_handler(h: CstNode): CstNode {
+  match h.flat {
+    Nil => h
+    Cons(c, ^rest) => if an_is_any(c, ["OperationHandler", "ReturnHandler"]) { c } else { h }
+  }
+}
+
+pub fn an_one_ident(fuel: Nat, st: &mut AnWalk, idents: List(CstNode)): Option(Text × CstSpan) {
+  match idents {
+    Nil => None
+    Cons(i, rest) => match rest {
+      Nil => an_ident(fuel, &mut st, i)
+      Cons(^j, ^more) => None
+    }
+  }
+}
+
+pub fn an_peelable(): List(Text) {
+  [
+    "Expr", "Seq", "Operand", "Postfix", "Primary", "Cond", "CondOperand", "CondPostfix", "CondPrimary",
+    "Item", "Type", "BodyType"
+  ]
+}
+
+// The node under `n` through the wrappers that hold one child.
+pub fn an_peel(fuel: Nat, n: CstNode): CstNode {
+  match fuel {
+    Zero => n
+    Succ(fl) => {
+      if an_is_any(n, an_peelable()) {
+        match n.flat {
+          Cons(only, rest) => match rest {
+            Nil => an_peel(fl, only)
+            Cons(^c, ^more) => n
+          }
+          Nil => n
+        }
+      } else {
+        n
+      }
+    }
+  }
+}
+
+// The name a lambda parameter is: `x`, or `&v`.
+pub fn an_lambda_one(fuel: Nat, st: &mut AnWalk, e: CstNode): Option(Text × CstSpan) {
+  let id := an_peel(fuel, e)
+  if an_is(id, "PathExpr") {
+    if an_has(id, "RecordBody") { None } else { an_one_ident(fuel, &mut st, an_all(id, "Ident")) }
+  } else if an_is_any(id, ["Operand", "CondOperand"]) {
+    match an_find(id.flat, ["Postfix", "CondPostfix"]) {
+      None => None
+      Some(post) => an_one_ident(fuel, &mut st, an_all(an_peel(fuel, post), "Ident"))
+    }
+  } else {
+    None
+  }
+}
+
+pub fn an_lambda_items(fuel: Nat, st: &mut AnWalk, items: List(CstNode)): Option(List(Text × CstSpan × Option(CstNode))) {
+  match fuel {
+    Zero => None
+    Succ(fl) => {
+      match items {
+        Nil => Some(Nil)
+        Cons(item, rest) => match an_first(item, "Expr") {
+          None => None
+          Some(e) => match an_lambda_one(fl, &mut st, e) {
+            None => None
+            Some(found) => match found {
+              #(name, span) => match an_lambda_items(fl, &mut st, rest) {
+                None => None
+                Some(more) => Some(Cons(#(name, span, an_ty(item)), more))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The parameters a lambda's left side names: `x`, `(x, y)`, `(x: A)`.
+pub fn an_lambda_params(fuel: Nat, st: &mut AnWalk, left: CstNode): Option(List(Text × CstSpan × Option(CstNode))) {
+  let p := an_peel(fuel, left)
+  if an_is(p, "PathExpr") {
+    match an_lambda_one(fuel, &mut st, p) {
+      None => None
+      Some(found) => match found {
+        #(name, span) => Some([#(name, span, None)])
+      }
+    }
+  } else if an_is(p, "Paren") {
+    an_lambda_items(fuel, &mut st, an_all(p, "Item"))
+  } else {
+    None
+  }
+}
+
+pub fn an_last(ns: List(CstNode), last: CstNode): CstNode {
+  match ns {
+    Nil => last
+    Cons(c, rest) => an_last(rest, c)
+  }
+}
+
+// The parenthesized list `n` is, when it is nothing else.
+pub fn an_peel_paren(fuel: Nat, n: CstNode): Option(CstNode) {
+  let p := an_peel(fuel, n)
+  if an_is(p, "Paren") { Some(p) } else { None }
+}
+
+pub fn an_has_members(kind: Text): Bool {
+  kind == "module" || kind == "class" || kind == "enum" || kind == "inductive family" || kind == "struct"
+}
+
+pub fn an_opaque_words(st: &mut AnWalk, base: Nat, words: List(Nat × Text)): Unit {
+  match words {
+    Nil => ()
+    Cons(w, rest) => match w {
+      #(at, word) => {
+        an_opaque(&mut st, an_at(base + at, base + at + Text::len(word)), word)
+        an_opaque_words(&mut st, base, rest)
+      }
+    }
+  }
+}
+
+pub fn an_skip_backticks(fuel: Nat, t: Text, i: Nat): Nat {
+  match fuel {
+    Zero => i
+    Succ(fl) => {
+      if i < Text::len(t) && Text::byte_value(t, i) == 96 { an_skip_backticks(fl, t, i + 1) } else { i }
+    }
+  }
+}
+
+// The end of the word that starts at `i`.
+pub fn an_word_end(fuel: Nat, classes: UnicodeClasses, t: Text, i: Nat): Nat {
+  match fuel {
+    Zero => i
+    Succ(fl) => {
+      if i >= Text::len(t) {
+        i
+      } else {
+        match an_char(t, i) {
+          #(c, n) => if an_is_word_char(classes, c) { an_word_end(fl, classes, t, i + n) } else { i }
+        }
+      }
+    }
+  }
+}
+
+pub fn an_syntax_lit(st: &mut AnWalk, n: CstNode): Unit {
+  let text := an_node_text(&mut st, n)
+  an_opaque_words(&mut st, n.start, an_words_at(st.classes, text))
+  // ``math`1 + 2` `` or `` ```math … ``` ``: the syntax's name leads.
+  let skipped := an_skip_backticks(Text::len(text) + 1, text, 0)
+  let end := an_word_end(Text::len(text) + 1, st.classes, text, skipped)
+  if end > skipped {
+    let name := an_slice(text, skipped, end)
+    ⊢ Unit from match an_lookup(&mut st, an_cat(["syntax ", name])) {
+      None => ()
+      Some(d) => an_add_ref(&mut st, an_at(n.start + skipped, n.start + end), d, false)
+    }
+  } else {
+    ()
+  }
+}
+
+// The node of a declaration's generics: `<A>` of a function or an operation,
+// `(A: Type)` of a type declaration.
+pub fn an_generic_node(n: CstNode): Option(CstNode) {
+  match an_first(n, "Generics") {
+    Some(g) => Some(g)
+    None => an_first(n, "TypeParams")
+  }
+}
+
+mutual {
+  pub fn an_stmt_all(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(n, rest) => {
+            an_stmt(fl, &mut st, n)
+            an_stmt_all(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_walk_all(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(n, rest) => {
+            an_walk(fl, &mut st, n)
+            an_walk_all(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_walk_opt(fuel: Nat, st: &mut AnWalk, n: Option(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match n {
+          None => ()
+          Some(c) => an_walk(fl, &mut st, c)
+        }
+      }
+    }
+  }
+
+  // The statements of a block in the current scope: each is declared before
+  // any is read, so a declaration is visible above itself.
+  pub fn an_stmts_in_frame(fuel: Nat, st: &mut AnWalk, stmts: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        let nodes := an_stmt_nodes(fl, stmts)
+        an_hoist_all(fl, &mut st, nodes)
+        an_stmt_all(fl, &mut st, nodes)
+      }
+    }
+  }
+
+  pub fn an_block(fuel: Nat, st: &mut AnWalk, block: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_push(&mut st)
+        match an_first(block, "Stmts") {
+          None => ()
+          Some(stmts) => an_stmts_in_frame(fl, &mut st, stmts)
+        }
+        an_close(&mut st)
+      }
+    }
+  }
+
+  pub fn an_extern_items(fuel: Nat, st: &mut AnWalk, items: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match items {
+          Nil => ()
+          Cons(item, rest) => {
+            if an_is(item, "ExternInstance") { an_extern_instance(fl, &mut st, item) } else { an_stmt(fl, &mut st, item) }
+            an_extern_items(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_stmt(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        if an_is_any(n, ["LetDecl", "VarDecl"]) {
+          an_let_decl(fl, &mut st, n)
+        } else if an_is_any(n, ["FnDecl", "ExternFn", "TheoremDecl", "AxiomDecl", "DefDecl", "LawDecl"]) {
+          an_callable(fl, &mut st, n, None)
+        } else if an_is(n, "MutualDecl") {
+          an_stmt_all(fl, &mut st, an_items(fl, n, "MutualItems", "MutualItem", "MutualTail"))
+        } else if an_is(n, "InductiveDecl") {
+          an_inductive(fl, &mut st, n)
+        } else if an_is(n, "StructDecl") {
+          an_data(fl, &mut st, n, true)
+        } else if an_is(n, "EnumDecl") {
+          an_data(fl, &mut st, n, false)
+        } else if an_is(n, "EffectDecl") {
+          an_effect(fl, &mut st, n)
+        } else if an_is(n, "ExternDecl") {
+          an_extern_items(fl, &mut st, an_items(fl, n, "ExternItems", "ExternItem", "ExternTail"))
+        } else if an_is(n, "ClassDecl") {
+          an_class(fl, &mut st, n)
+        } else if an_is(n, "InstanceDecl") {
+          an_instance(fl, &mut st, n)
+        } else if an_is(n, "MacroFnDecl") {
+          ⊢ Unit from match an_first(n, "FnDecl") {
+            None => ()
+            Some(f) => an_callable(fl, &mut st, f, None)
+          }
+        } else if an_is_any(n, ["SyntaxDecl", "ImportDecl"]) {
+          ()
+        } else {
+          an_walk(fl, &mut st, n)
+        }
+      }
+    }
+  }
+
+  pub fn an_let_decl(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        let name: Option(Text × CstSpan) := match an_all(n, "Ident") {
+          Nil => None
+          Cons(i, ^rest) => an_ident(fl, &mut st, i)
+        }
+        let ty := an_ty(n)
+        let value := an_first(n, "Expr")
+        an_walk_opt(fl, &mut st, ty)
+        an_walk_opt(fl, &mut st, value)
+        match name {
+          None => ()
+          Some(found) => match found {
+            #(name, span) => {
+              let declared := an_squeezed_opt(&mut st, ty)
+              let kw: Text := match n.flat {
+                Nil => "let"
+                Cons(k, ^rest) => if an_is(k, "KwVar") { "var" } else { "let" }
+              }
+              let sig: Text := match declared {
+                Some(t) => an_cat([kw, " ", name, ": ", t])
+                None => an_cat([kw, " ", name])
+              }
+              let d := an_new_def(&mut st, name, "variable", span, sig)
+              an_set_declared(&mut st, d, declared)
+              an_set_site(&mut st, d, match value {
+                None => None
+                Some(v) => Some(v.start)
+              })
+              an_declare(&mut st, name, d)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_callable_kids(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => {
+            if an_is(c, "Generics") {
+              an_generics(fl, &mut st, c)
+            } else if an_is(c, "Param") {
+              an_param(fl, &mut st, c, site)
+            } else if an_is(c, "Block") {
+              an_block(fl, &mut st, c)
+            } else if an_is_any(c, ["Type", "BodyType", "FnResult", "WhereClause", "Expr"]) {
+              an_walk(fl, &mut st, c)
+            } else {
+              ()
+            }
+            an_callable_kids(fl, &mut st, rest, site)
+          }
+        }
+      }
+    }
+  }
+
+  // A function, theorem, definition or law: its generics and parameters are
+  // visible to the rest of the signature and to the body. `instance_of` is the
+  // class when this is a method an instance gives.
+  pub fn an_callable(fuel: Nat, st: &mut AnWalk, n: CstNode, instance_of: Option(AnId)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_push(&mut st)
+        let site: Option(Nat) := match an_first(n, "Block") {
+          None => None
+          Some(b) => Some(b.start)
+        }
+        match instance_of {
+          None => ()
+          Some(cls) => match an_name_of(fl, &mut st, n) {
+            None => ()
+            Some(found) => match found {
+              #(name, span) => {
+                let ^member := an_member(&mut st, Some(cls), span, name)
+              }
+            }
+          }
+        }
+        an_callable_kids(fl, &mut st, n.flat, site)
+        an_close(&mut st)
+      }
+    }
+  }
+
+  pub fn an_generic_items(fuel: Nat, st: &mut AnWalk, angle: Bool, items: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match items {
+          Nil => ()
+          Cons(g, rest) => {
+            ⊢ Unit from match an_first(g, "GenericKind") {
+              None => ()
+              Some(kind) => {
+                let word := an_squeezed(&mut st, kind)
+                if word == "shared" || word == "linear" || word == "affine" || word == "copy" { () } else { an_walk(fl, &mut st, kind) }
+              }
+            }
+            ⊢ Unit from match an_name_of(fl, &mut st, g) {
+              None => ()
+              Some(found) => match found {
+                #(name, span) => {
+                  let sig := an_squeezed(&mut st, g)
+                  let shown: Text := if angle { an_cat(["<", sig, ">"]) } else { an_cat(["(", sig, ")"]) }
+                  let d := an_new_def(&mut st, name, "generic parameter", span, shown)
+                  an_declare(&mut st, name, d)
+                }
+              }
+            }
+            an_generic_items(fl, &mut st, angle, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_generics(fuel: Nat, st: &mut AnWalk, g: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_generic_items(fl, &mut st, an_is(g, "Generics"), an_append(an_all(g, "Generic"), an_all(g, "TypeParam")))
+      }
+    }
+  }
+
+  pub fn an_param(fuel: Nat, st: &mut AnWalk, p: CstNode, site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        let ty := an_ty(p)
+        an_walk_opt(fl, &mut st, ty)
+        match an_name_of(fl, &mut st, p) {
+          None => ()
+          Some(found) => match found {
+            #(name, span) => {
+              let declared := an_squeezed_opt(&mut st, ty)
+              let sig := an_squeezed(&mut st, p)
+              let d := an_new_def(&mut st, name, "parameter", span, sig)
+              an_set_declared(&mut st, d, declared)
+              an_set_site(&mut st, d, site)
+              an_declare(&mut st, name, d)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_params(fuel: Nat, st: &mut AnWalk, ps: List(CstNode), site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ps {
+          Nil => ()
+          Cons(p, rest) => {
+            an_param(fl, &mut st, p, site)
+            an_params(fl, &mut st, rest, site)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_callables(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), instance_of: Option(AnId)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(n, rest) => {
+            an_callable(fl, &mut st, an_inner(fl, n), instance_of)
+            an_callables(fl, &mut st, rest, instance_of)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_inductive_kids(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => {
+            if an_is(c, "Param") {
+              an_param(fl, &mut st, c, None)
+            } else if an_is_any(c, ["Type", "BodyType"]) {
+              an_walk(fl, &mut st, c)
+            } else {
+              ()
+            }
+            an_inductive_kids(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  // The family's parameters are visible to its result type and to the
+  // constructors.
+  pub fn an_inductive(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_push(&mut st)
+        an_inductive_kids(fl, &mut st, n.flat)
+        match an_first(n, "Constructors") {
+          None => ()
+          Some(cs) => an_callables(fl, &mut st, an_list(fl, cs, "Constructor", "ConstructorsTail"), None)
+        }
+        an_close(&mut st)
+      }
+    }
+  }
+
+  pub fn an_field_types(fuel: Nat, st: &mut AnWalk, fs: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match fs {
+          Nil => ()
+          Cons(f, rest) => {
+            an_walk_opt(fl, &mut st, an_ty(f))
+            an_field_types(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_fields_of(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match an_first(n, "Fields") {
+          None => ()
+          Some(f) => an_field_types(fl, &mut st, an_list(fl, f, "FieldDecl", "FieldsTail"))
+        }
+      }
+    }
+  }
+
+  pub fn an_variant_types(fuel: Nat, st: &mut AnWalk, vs: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match vs {
+          Nil => ()
+          Cons(v, rest) => {
+            ⊢ Unit from match an_first(v, "VariantBody") {
+              None => ()
+              Some(vb) => {
+                an_walk_all(fl, &mut st, an_tys(vb))
+                an_fields_of(fl, &mut st, vb)
+              }
+            }
+            an_variant_types(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_data(fuel: Nat, st: &mut AnWalk, n: CstNode, is_struct: Bool): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_push(&mut st)
+        match an_generic_node(n) {
+          None => ()
+          Some(g) => an_generics(fl, &mut st, g)
+        }
+        if is_struct {
+          ⊢ Unit from match an_first(n, "StructBody") {
+            None => ()
+            Some(b) => an_fields_of(fl, &mut st, b)
+          }
+        } else {
+          ⊢ Unit from match an_first(n, "Variants") {
+            None => ()
+            Some(vs) => an_variant_types(fl, &mut st, an_list(fl, vs, "Variant", "VariantsTail"))
+          }
+        }
+        an_close(&mut st)
+      }
+    }
+  }
+
+  pub fn an_effect(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_push(&mut st)
+        match an_first(n, "Generics") {
+          None => ()
+          Some(g) => an_generics(fl, &mut st, g)
+        }
+        // `effect ask(q: Text): i64` has the operation's parameters in the
+        // parentheses, `effect State(T: Type) {…}` the set's.
+        match an_first(n, "EffectParams") {
+          None => ()
+          Some(ps) => an_params(fl, &mut st, an_all(ps, "Param"), None)
+        }
+        // Names written as effects are uses.
+        an_walk_opt(fl, &mut st, an_first(n, "EffectBody"))
+        an_close(&mut st)
+      }
+    }
+  }
+
+  pub fn an_extern_instance_kids(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => {
+            if an_is(c, "Ident") {
+              let ^refn := an_reference_node(fl, &mut st, c)
+            } else if an_is_any(c, ["Type", "BodyType"]) {
+              an_walk(fl, &mut st, c)
+            } else {
+              ()
+            }
+            an_extern_instance_kids(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_extern_instance(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_extern_instance_kids(fl, &mut st, n.flat)
+      }
+    }
+  }
+
+  pub fn an_class(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_push(&mut st)
+        match an_generic_node(n) {
+          None => ()
+          Some(g) => an_generics(fl, &mut st, g)
+        }
+        match an_first(n, "ClassBody") {
+          None => ()
+          Some(body) => match an_first(body, "ClassItems") {
+            None => ()
+            Some(items) => an_callables(fl, &mut st, an_list(fl, items, "ClassItem", "ClassItemsTail"), None)
+          }
+        }
+        an_close(&mut st)
+      }
+    }
+  }
+
+  // `instance<A> Class(Head) where … { methods }`: the class is the identifier
+  // that is not inside the generics.
+  pub fn an_instance(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_push(&mut st)
+        match an_first(n, "Generics") {
+          None => ()
+          Some(g) => an_generics(fl, &mut st, g)
+        }
+        let cls: Option(AnId) := match an_all(n, "Ident") {
+          Nil => None
+          Cons(i, ^rest) => an_reference_node(fl, &mut st, i)
+        }
+        an_walk_all(fl, &mut st, an_filter(n.flat, ["Type", "BodyType", "WhereClause"]))
+        match an_first(n, "InstanceBody") {
+          None => ()
+          Some(body) => match an_first(body, "InstanceItems") {
+            None => ()
+            Some(items) => an_callables(fl, &mut st, an_list(fl, items, "InstanceItem", "InstanceItemsTail"), cls)
+          }
+        }
+        an_close(&mut st)
+      }
+    }
+  }
+
+  pub fn an_walk(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        if n.terminal {
+          ()
+        } else if an_is(n, "Ident") {
+          let ^refn := an_reference_node(fl, &mut st, n)
+        } else if an_is_any(n, ["PathExpr", "CondPath"]) {
+          let ^pathed := an_path_expr(fl, &mut st, n)
+        } else if an_is_any(n, ["Postfix", "CondPostfix"]) {
+          an_postfix(fl, &mut st, n)
+        } else if an_is(n, "Expr") {
+          if an_has(n, "FatArrow") { an_lambda(fl, &mut st, n) } else { an_walk_all(fl, &mut st, n.flat) }
+        } else if an_is_any(n, ["Seq", "BodyType", "Cond"]) {
+          an_sequence(fl, &mut st, n)
+        } else if an_is_any(n, ["Operand", "CondOperand"]) {
+          let open := an_operand(fl, &mut st, n, false)
+          an_pop_n(&mut st, open)
+        } else if an_is(n, "Block") {
+          an_block(fl, &mut st, n)
+        } else if an_is(n, "BraceBody") && an_has(n, "BraceBody") {
+          // A block in an expression, `Brace: LBrace BraceBody`.
+          an_walk_all(fl, &mut st, n.flat)
+        } else if an_is(n, "BraceBody") && an_has(n, "Stmts") {
+          an_block(fl, &mut st, n)
+        } else if an_is(n, "BraceBody") && not(an_has(n, "RecordType")) {
+          // `{ s … }`: its statements are its own `Stmt` and `StmtsTail`.
+          an_push(&mut st)
+          an_stmts_in_frame(fl, &mut st, n)
+          an_close(&mut st)
+        } else if an_is(n, "MatchExpr") {
+          an_match_expr(fl, &mut st, n)
+        } else if an_is(n, "HandleExpr") {
+          an_handle(fl, &mut st, n)
+        } else if an_is(n, "MacroCall") {
+          an_macro_call(fl, &mut st, n)
+        } else if an_is(n, "QuoteExpr") {
+          an_quote(fl, &mut st, n)
+        } else if an_is(n, "SyntaxLit") {
+          an_syntax_lit(&mut st, n)
+        } else if an_is(n, "TagPrefix") {
+          ⊢ Unit from match an_first(n, "Ident") {
+            None => ()
+            Some(i) => {
+              let ^refn := an_reference_node(fl, &mut st, i)
+            }
+          }
+        } else if an_is_any(n, ["FnDecl", "ExternFn", "TheoremDecl", "LawDecl"]) {
+          an_callable(fl, &mut st, n, None)
+        } else if an_is_any(n, ["Hole", "HoleExpr"]) {
+          ()
+        } else {
+          an_walk_all(fl, &mut st, n.flat)
+        }
+      }
+    }
+  }
+
+  // `A`, `Shape::Circle`, `Point { x: 1 }`; the declaration it names.
+  pub fn an_path_expr(fuel: Nat, st: &mut AnWalk, n: CstNode): Option(AnId) {
+    match fuel {
+      Zero => None
+      Succ(fl) => {
+        let segments := an_path_segments(fl, &mut st, an_all(n, "Ident"))
+        let cur := an_path_steps(fl, &mut st, segments, true, None)
+        match an_first(n, "RecordBody") {
+          None => ()
+          Some(rb) => an_record_body(fl, &mut st, rb, cur)
+        }
+        cur
+      }
+    }
+  }
+
+  pub fn an_field_inits(fuel: Nat, st: &mut AnWalk, fs: List(CstNode), owner: Option(AnId)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match fs {
+          Nil => ()
+          Cons(f, rest) => {
+            ⊢ Unit from match an_first(f, "Ident") {
+              None => ()
+              Some(i) => match an_ident(fl, &mut st, i) {
+                None => ()
+                Some(found) => match found {
+                  #(name, span) => match owner {
+                    Some(^o) => {
+                      let ^member := an_member(&mut st, owner, span, name)
+                    }
+                    None => {
+                      let ^field := an_field_by_name(&mut st, span, name)
+                    }
+                  }
+                }
+              }
+            }
+            an_walk_opt(fl, &mut st, an_first(f, "Expr"))
+            an_field_inits(fl, &mut st, rest, owner)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_record_body(fuel: Nat, st: &mut AnWalk, rb: CstNode, owner: Option(AnId)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        let fields: CstNode := match an_first(rb, "RecordBodyGroup") {
+          Some(g) => g
+          None => rb
+        }
+        an_field_inits(fl, &mut st, an_list(fl, fields, "FieldInit", "RecordTail"), owner)
+      }
+    }
+  }
+
+  pub fn an_postfix_kids(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), first: Bool, cur: Option(AnId)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => {
+            let next: Option(AnId) := if first && an_is_any(c, ["Primary", "CondPrimary"]) {
+              let p := an_peel(fl, c)
+              if an_is_any(p, ["PathExpr", "CondPath"]) {
+                an_path_expr(fl, &mut st, p)
+              } else {
+                an_walk(fl, &mut st, c)
+                cur
+              }
+            } else if an_is(c, "PostOp") {
+              ⊢ Option(AnId) from match c.flat {
+                Nil => cur
+                Cons(op, ^more) => if an_is(op, "Field") {
+                  ⊢ Option(AnId) from match an_first(op, "Ident") {
+                    None => cur
+                    Some(i) => ⊢ Option(AnId) from match an_ident(fl, &mut st, i) {
+                      None => cur
+                      Some(found) => ⊢ Option(AnId) from match found {
+                        #(name, span) => {
+                          let owner_has_members: Bool := match cur {
+                            None => false
+                            Some(d) => an_has_members(an_def_of(&mut st, d).kind)
+                          }
+                          if owner_has_members { an_member(&mut st, cur, span, name) } else { an_field_by_name(&mut st, span, name) }
+                        }
+                      }
+                    }
+                  }
+                } else {
+                  an_walk(fl, &mut st, op)
+                  None
+                }
+              }
+            } else {
+              an_walk(fl, &mut st, c)
+              cur
+            }
+            an_postfix_kids(fl, &mut st, rest, false, next)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_postfix(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_postfix_kids(fl, &mut st, n.flat, true, None)
+      }
+    }
+  }
+
+  pub fn an_lambda_binds(fuel: Nat, st: &mut AnWalk, params: List(Text × CstSpan × Option(CstNode)), site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match params {
+          Nil => ()
+          Cons(p, rest) => {
+            ⊢ Unit from match p {
+              #(name, span, ty) => {
+                an_walk_opt(fl, &mut st, ty)
+                // Lone `_` is not an Ident; keep this branch only as a safety net.
+                if name == "_" {
+                  ()
+                } else {
+                  let declared := an_squeezed_opt(&mut st, ty)
+                  let sig: Text := match declared {
+                    Some(t) => an_cat([name, ": ", t])
+                    None => name
+                  }
+                  let d := an_new_def(&mut st, name, "parameter", span, sig)
+                  an_set_declared(&mut st, d, declared)
+                  an_set_site(&mut st, d, site)
+                  an_declare(&mut st, name, d)
+                }
+              }
+            }
+            an_lambda_binds(fl, &mut st, rest, site)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_lambda(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match n.flat {
+          Nil => ()
+          Cons(left, rest) => {
+            let body := an_last(rest, left)
+            ⊢ Unit from match an_lambda_params(fl, &mut st, left) {
+              None => an_walk_all(fl, &mut st, n.flat)
+              Some(params) => {
+                an_push(&mut st)
+                an_lambda_binds(fl, &mut st, params, Some(body.start))
+                an_walk(fl, &mut st, body)
+                an_close(&mut st)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_sequence_kids(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), open: Nat): Nat {
+    match fuel {
+      Zero => open
+      Succ(fl) => {
+        match ns {
+          Nil => open
+          Cons(c, rest) => if an_is_any(c, ["Operand", "CondOperand"]) {
+            let arrow: Bool := match rest {
+              Nil => false
+              Cons(op, ^more) => an_has(op, "ThinArrow")
+            }
+            let more_open := an_operand(fl, &mut st, c, arrow)
+            an_sequence_kids(fl, &mut st, rest, open + more_open)
+          } else {
+            an_walk(fl, &mut st, c)
+            an_sequence_kids(fl, &mut st, rest, open)
+          }
+        }
+      }
+    }
+  }
+
+  // A flat sequence of operands and operators. A binder `∀ x: A.` scopes over
+  // the rest of the sequence, and the named parameters of `(x: A) -> B` over
+  // what follows.
+  pub fn an_sequence(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        let open := an_sequence_kids(fl, &mut st, n.flat, 0)
+        an_pop_n(&mut st, open)
+      }
+    }
+  }
+
+  pub fn an_operand_kids(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), before_arrow: Bool, open: Nat): Nat {
+    match fuel {
+      Zero => open
+      Succ(fl) => {
+        match ns {
+          Nil => open
+          Cons(c, rest) => if an_is(c, "PrefixOp") {
+            match an_first(c, "Binder") {
+              Some(binder) => {
+                an_binder(fl, &mut st, binder)
+                an_operand_kids(fl, &mut st, rest, before_arrow, open + 1)
+              }
+              None => {
+                an_walk_all(fl, &mut st, c.flat)
+                an_operand_kids(fl, &mut st, rest, before_arrow, open)
+              }
+            }
+          } else if before_arrow && an_is_any(c, ["Postfix", "CondPostfix"]) {
+            match an_peel_paren(fl, c) {
+              Some(paren) => {
+                an_arrow_params(fl, &mut st, paren)
+                an_operand_kids(fl, &mut st, rest, before_arrow, open + 1)
+              }
+              None => {
+                an_walk(fl, &mut st, c)
+                an_operand_kids(fl, &mut st, rest, before_arrow, open)
+              }
+            }
+          } else {
+            an_walk(fl, &mut st, c)
+            an_operand_kids(fl, &mut st, rest, before_arrow, open)
+          }
+        }
+      }
+    }
+  }
+
+  // The operand `n`; the scopes it leaves open for the rest of its sequence.
+  pub fn an_operand(fuel: Nat, st: &mut AnWalk, n: CstNode, before_arrow: Bool): Nat {
+    match fuel {
+      Zero => 0
+      Succ(fl) => {
+        an_operand_kids(fl, &mut st, n.flat, before_arrow, 0)
+      }
+    }
+  }
+
+  // `names` are `BindName` nodes (`[Caret] Ident`), or bare `Ident` as a fallback.
+  pub fn an_binder_names(fuel: Nat, st: &mut AnWalk, names: List(CstNode), tys: List(CstNode), sig: Text): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match names {
+          Nil => ()
+          Cons(name_node, rest) => {
+            let ty: Option(CstNode) := match tys {
+              Nil => None
+              Cons(t, ^more) => Some(t)
+            }
+            let others: List(CstNode) := match tys {
+              Nil => Nil
+              Cons(^t, more) => more
+            }
+            an_walk_opt(fl, &mut st, ty)
+            let ident := ⊢ Option(CstNode) from match an_is(name_node, "BindName") {
+              true => an_first(name_node, "Ident")
+              false => Some(name_node)
+            }
+            ⊢ Unit from match ident {
+              None => ()
+              Some(i) => match an_ident(fl, &mut st, i) {
+                None => ()
+                Some(found) => match found {
+                  #(name, span) => {
+                    let declared := an_squeezed_opt(&mut st, ty)
+                    let d := an_new_def(&mut st, name, "binder", span, sig)
+                    an_set_declared(&mut st, d, declared)
+                    an_declare(&mut st, name, d)
+                  }
+                }
+              }
+            }
+            an_binder_names(fl, &mut st, rest, others, sig)
+          }
+        }
+      }
+    }
+  }
+
+  // `∀ x: A.`: opens the scope of `x`; the caller closes it. `∀ x: A, y: B.`:
+  // each name is in scope in the types after it and in the body.
+  pub fn an_binder(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        let sig := an_squeeze(st.classes, an_header(&mut st, n, ["QDot"]))
+        an_push(&mut st)
+        let binds := an_all(n, "BindName")
+        an_binder_names(
+          fl,
+          &mut st,
+          ⊢ List(CstNode) from match binds {
+            Nil => an_all(n, "Ident")
+            Cons(^b, ^more) => binds
+          },
+          an_tys(n),
+          sig
+        )
+      }
+    }
+  }
+
+  pub fn an_arrow_items(fuel: Nat, st: &mut AnWalk, items: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match items {
+          Nil => ()
+          Cons(item, rest) => {
+            ⊢ Unit from match an_first(item, "Expr") {
+              None => an_walk(fl, &mut st, item)
+              Some(name_expr) => match an_ty(item) {
+                None => an_walk(fl, &mut st, item)
+                Some(ty) => {
+                  an_walk(fl, &mut st, ty)
+                  let p := an_peel(fl, name_expr)
+                  let one: Option(Text × CstSpan) := if an_is(p, "PathExpr") { an_one_ident(fl, &mut st, an_all(p, "Ident")) } else { None }
+                  ⊢ Unit from match one {
+                    None => an_walk(fl, &mut st, name_expr)
+                    Some(found) => match found {
+                      #(name, span) => {
+                        let declared := Some(an_squeezed(&mut st, ty))
+                        let hoisted4 := an_squeezed(&mut st, item)
+                        let d := an_new_def(&mut st, name, "binder", span, hoisted4)
+                        an_set_declared(&mut st, d, declared)
+                        an_declare(&mut st, name, d)
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            an_arrow_items(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  // The parameters of `(x: A, y: &B) -> C`: opens the scope of the names; the
+  // caller closes it.
+  pub fn an_arrow_params(fuel: Nat, st: &mut AnWalk, paren: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_push(&mut st)
+        an_arrow_items(fl, &mut st, an_all(paren, "Item"))
+      }
+    }
+  }
+
+  pub fn an_arms(fuel: Nat, st: &mut AnWalk, arms: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match arms {
+          Nil => ()
+          Cons(a, rest) => {
+            an_arm(fl, &mut st, a)
+            an_arms(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_match_kids(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => {
+            if an_is(c, "Arms") { an_arms(fl, &mut st, an_list(fl, c, "Arm", "ArmsTail")) } else { an_walk(fl, &mut st, c) }
+            an_match_kids(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_match_expr(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_match_kids(fl, &mut st, n.flat)
+      }
+    }
+  }
+
+  pub fn an_arm_kids(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), site: Option(Nat)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => {
+            if an_is(c, "Pattern") {
+              an_pattern(fl, &mut st, c, site)
+            } else if an_is_any(c, ["Cond", "ArmBody"]) {
+              an_walk(fl, &mut st, c)
+            } else {
+              ()
+            }
+            an_arm_kids(fl, &mut st, rest, site)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_arm(fuel: Nat, st: &mut AnWalk, arm: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_push(&mut st)
+        let site: Option(Nat) := match an_first(arm, "ArmBody") {
+          None => None
+          Some(b) => Some(b.start)
+        }
+        an_arm_kids(fl, &mut st, arm.flat, site)
+        an_close(&mut st)
+      }
+    }
+  }
+
+  pub fn an_handlers(fuel: Nat, st: &mut AnWalk, hs: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match hs {
+          Nil => ()
+          Cons(h, rest) => {
+            an_handler(fl, &mut st, an_inner_handler(h))
+            an_handlers(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_handle_withs(fuel: Nat, st: &mut AnWalk, ws: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ws {
+          Nil => ()
+          Cons(w, rest) => {
+            ⊢ Unit from match an_first(w, "Handlers") {
+              None => ()
+              Some(hs) => an_handlers(fl, &mut st, an_list(fl, hs, "Handler", "HandlersTail"))
+            }
+            an_handle_withs(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_handle(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match an_first(n, "HandleSubject") {
+          None => ()
+          Some(subject) => {
+            ⊢ Unit from match an_first(subject, "Block") {
+              None => ()
+              Some(b) => an_block(fl, &mut st, b)
+            }
+            ⊢ Unit from match an_first(subject, "HandleTail") {
+              None => ()
+              Some(tail) => an_handle_withs(fl, &mut st, an_all(tail, "HandleWith"))
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_handler_kids(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), site: Option(Nat), after_paren: Bool): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => if an_is(c, "OperationName") {
+            ⊢ Unit from match an_first(c, "Ident") {
+              None => ()
+              Some(i) => {
+                let ^refn := an_reference_node(fl, &mut st, i)
+              }
+            }
+            an_handler_kids(fl, &mut st, rest, site, after_paren)
+          } else if an_is(c, "Pattern") {
+            an_pattern(fl, &mut st, c, site)
+            an_handler_kids(fl, &mut st, rest, site, after_paren)
+          } else if an_is(c, "RParen") {
+            an_handler_kids(fl, &mut st, rest, site, true)
+          } else if an_is(c, "BindName") && after_paren {
+            // The continuation: `ask(q), k => …` / `ask(q), ^k => …`.
+            ⊢ Unit from match an_name_of(fl, &mut st, c) {
+              None => ()
+              Some(found) => match found {
+                #(name, span) => {
+                  let d := an_new_def(&mut st, name, "parameter", span, an_cat([name, "  // the continuation"]))
+                  an_set_site(&mut st, d, site)
+                  an_declare(&mut st, name, d)
+                }
+              }
+            }
+            an_handler_kids(fl, &mut st, rest, site, after_paren)
+          } else if an_is(c, "Ident") && after_paren {
+            // Fallback if a bare Ident remains after BindName.
+            ⊢ Unit from match an_ident(fl, &mut st, c) {
+              None => ()
+              Some(found) => match found {
+                #(name, span) => {
+                  let d := an_new_def(&mut st, name, "parameter", span, an_cat([name, "  // the continuation"]))
+                  an_set_site(&mut st, d, site)
+                  an_declare(&mut st, name, d)
+                }
+              }
+            }
+            an_handler_kids(fl, &mut st, rest, site, after_paren)
+          } else if an_is_any(c, ["Cond", "Expr"]) {
+            an_walk(fl, &mut st, c)
+            an_handler_kids(fl, &mut st, rest, site, after_paren)
+          } else {
+            an_handler_kids(fl, &mut st, rest, site, after_paren)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_handler(fuel: Nat, st: &mut AnWalk, h: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_push(&mut st)
+        let site: Option(Nat) := match an_last_expr(h.flat, None) {
+          None => None
+          Some(b) => Some(b.start)
+        }
+        an_handler_kids(fl, &mut st, h.flat, site, false)
+        an_close(&mut st)
+      }
+    }
+  }
+
+  pub fn an_macro_group(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_walk_all(fl, &mut st, an_filter(ns, ["Expr", "SyntaxLit"]))
+      }
+    }
+  }
+
+  pub fn an_macro_kids(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => {
+            if an_is(c, "MacroName") {
+              // The token is the name and its `!`; the reference is recorded under
+              // `m!`, with the name's span.
+              let name := an_node_text(&mut st, c)
+              let ^refd := an_reference(&mut st, an_at(c.start, c.end - 1), name)
+            } else if an_is_any(c, ["Expr", "SyntaxLit"]) {
+              an_walk(fl, &mut st, c)
+            } else if an_is(c, "MacroCallGroup") {
+              an_macro_group(fl, &mut st, c.flat)
+            } else {
+              ()
+            }
+            an_macro_kids(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn an_macro_call(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_set(&mut st.macros, Cons(an_span(n), st.macros))
+        an_macro_kids(fl, &mut st, n.flat)
+      }
+    }
+  }
+
+  // `quote { … }`: nothing in it is resolved, except what is filled in: `$x` is
+  // the local `x` of the macro's function and `$(e)` an expression.
+  pub fn an_quote(fuel: Nat, st: &mut AnWalk, n: CstNode): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        an_set(&mut st.quoting, st.quoting + 1)
+        an_quote_nodes(fl, &mut st, n.flat)
+        an_set(&mut st.quoting, st.quoting - 1)
+      }
+    }
+  }
+
+  pub fn an_quote_nodes(fuel: Nat, st: &mut AnWalk, ns: List(CstNode)): Unit {
+    match fuel {
+      Zero => #()
+      Succ(fl) => {
+        match ns {
+          Nil => ()
+          Cons(c, rest) => {
+            if c.terminal {
+              ()
+            } else if an_is(c, "SpliceExpr") {
+              let saved := st.quoting
+              an_set(&mut st.quoting, 0)
+              an_walk_opt(fl, &mut st, an_first(c, "Expr"))
+              an_set(&mut st.quoting, saved)
+            } else if an_is(c, "Ident") {
+              ⊢ Unit from match an_ident(fl, &mut st, c) {
+                None => ()
+                Some(found) => match found {
+                  #(name, span) => if text_starts_with(name, "$", 0) {
+                    let saved := st.quoting
+                    an_set(&mut st.quoting, 0)
+                    let ^refd := an_reference(&mut st, an_at(span.start + 1, span.end), an_slice(name, 1, Text::len(name)))
+                    an_set(&mut st.quoting, saved)
+                  } else {
+                    an_opaque(&mut st, span, name)
+                  }
+                }
+              }
+            } else if an_is(c, "SyntaxLit") {
+              an_syntax_lit(&mut st, c)
+            } else {
+              an_quote_nodes(fl, &mut st, c.flat)
+            }
+            an_quote_nodes(fl, &mut st, rest)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn an_import_names(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), paths: List(Text × Bool), names: List(Text)): List(Text × Bool) × List(Text) {
+  match fuel {
+    Zero => #(paths, names)
+    Succ(fl) => {
+      match ns {
+        Nil => #(paths, names)
+        Cons(t, rest) => if an_is(t, "Text") {
+          let hoisted3 := an_node_text(&mut st, t)
+          an_import_names(fl, &mut st, rest, Cons(#(an_trim_quotes(hoisted3), false), paths), names)
+        } else if an_is(t, "Ident") {
+          let hoisted2 := an_squeezed(&mut st, t)
+          an_import_names(fl, &mut st, rest, paths, Cons(hoisted2, names))
+        } else {
+          an_import_names(fl, &mut st, rest, paths, names)
+        }
+      }
+    }
+  }
+}
+
+// The paths of the `import "…"` statements at the top of a tree, the last
+// found first.
+pub fn an_find_imports(fuel: Nat, st: &mut AnWalk, ns: List(CstNode), out: List(Text × Bool)): List(Text × Bool) {
+  match fuel {
+    Zero => out
+    Succ(fl) => {
+      match ns {
+        Nil => out
+        Cons(c, rest) => if an_is(c, "ImportDecl") {
+          match an_import_names(fl, &mut st, c.flat, out, Nil) {
+            #(paths, names) => {
+              // `import std::list`, as the loader spells it.
+              let more: List(Text × Bool) := match names {
+                Nil => paths
+                Cons(^n, ^others) => Cons(#(text_join(text_list_reverse(names), "::"), true), paths)
+              }
+              an_find_imports(fl, &mut st, rest, more)
+            }
+          }
+        } else if an_is_any(c, ["Root", "Stmts", "StmtsTail", "Stmt", "OtherStmt", "Program"]) {
+          let hoisted1 := an_find_imports(fl, &mut st, c.flat, out)
+          an_find_imports(fl, &mut st, rest, hoisted1)
+        } else {
+          an_find_imports(fl, &mut st, rest, out)
+        }
+      }
+    }
+  }
+}
+
+pub fn an_stmt_spans(ns: List(CstNode), done: List(CstSpan)): List(CstSpan) {
+  match ns {
+    Nil => done
+    Cons(n, rest) => an_stmt_spans(rest, Cons(an_span(n), done))
+  }
+}
+
+pub fn an_toplevel(fuel: Nat, st: &mut AnWalk, entries: List(Text × AnSlot), done: Ordmap(Text, AnId)): Ordmap(Text, AnId) {
+  match entries {
+    Nil => done
+    Cons(e, rest) => match e {
+      #(name, slot) => match slot {
+        AnShared => an_toplevel(fuel, &mut st, rest, done)
+        AnTo(d) => if d.file == st.file {
+          an_export(fuel, &mut st, d.index)
+          an_toplevel(fuel, &mut st, rest, Ordmap::insert(done, name, d, Ordmap::compare_text))
+        } else {
+          an_toplevel(fuel, &mut st, rest, done)
+        }
+      }
+    }
+  }
+}
+
+// Reads the file from its root; its top-level names.
+pub fn an_run(fuel: Nat, st: &mut AnWalk, root: CstNode): Ordmap(Text, AnId) {
+  an_push(&mut st)
+  let program: CstNode := match an_first(root, "Program") {
+    Some(p) => p
+    None => root
+  }
+  match an_first(program, "Stmts") {
+    None => ()
+    Some(stmts) => {
+      an_set(&mut st.tops, an_stmt_spans(an_stmt_nodes(fuel, stmts), Nil))
+      an_stmts_in_frame(fuel, &mut st, stmts)
+    }
+  }
+  let top := an_pop(&mut st)
+  an_toplevel(fuel, &mut st, Ordmap::entries(top), Ordmap::empty())
+}
+
+pub fn an_add_globals(entries: List(Text × AnId), done: Ordmap(Text, AnId)): Ordmap(Text, AnId) {
+  match entries {
+    Nil => done
+    Cons(e, rest) => match e {
+      #(name, d) => an_add_globals(rest, Ordmap::insert(done, name, d, Ordmap::compare_text))
+    }
+  }
+}
+
+// The names the files of `closure` declare at the top, a later file's over
+// an earlier's.
+pub fn an_globals(w: AnWorld, closure: List(Nat), done: Ordmap(Text, AnId)): Ordmap(Text, AnId) {
+  match closure {
+    Nil => done
+    Cons(f, rest) => match an_world_file(w, f) {
+      None => an_globals(w, rest, done)
+      Some(file) => an_globals(w, rest, an_add_globals(Ordmap::entries(file.toplevel), done))
+    }
+  }
+}
+
+// The files the global names are declared in, other than `own`, each once.
+pub fn an_files_of(ids: List(AnId), own: Nat, done: List(Nat)): List(Nat) {
+  match ids {
+    Nil => text_list_reverse(done)
+    Cons(d, rest) => if d.file == own || an_has_nat(done, d.file) {
+      an_files_of(rest, own, done)
+    } else {
+      an_files_of(rest, own, Cons(d.file, done))
+    }
+  }
+}
+
+pub fn an_closure_union(xs: List(Nat), closure: List(Nat)): List(Nat) {
+  match xs {
+    Nil => closure
+    Cons(x, rest) => an_closure_union(rest, if an_has_nat(closure, x) { closure } else { an_append(closure, [x]) })
+  }
+}
+
+pub fn an_closure_add(w: AnWorld, imports: List(Nat), closure: List(Nat)): List(Nat) {
+  match imports {
+    Nil => closure
+    Cons(i, rest) => match an_world_file(w, i) {
+      None => an_closure_add(w, rest, closure)
+      Some(f) => an_closure_add(w, rest, an_closure_union(f.closure, closure))
+    }
+  }
+}
+
+// The tree of `source` with all its children, or `None` when it is not a
+// program of the grammar.
+pub fn an_parse(t: &SyntaxTables, source: Text): Option(CstNode) {
+  var events: Stack(LlkEvent) := Stack::new()
+  ⊢ Option(CstNode) from match syntax_events(&t, source, &mut events) {
+    false => None
+    true => cst_build(&t, true, &mut events)
+  }
+}
+
+pub fn an_empty_file(path: Text, text: Text, closure: List(Nat), broken: Bool): AnFile {
+  AnFile {
+    path: path,
+    text: text,
+    defs: Ordmap::empty(),
+    count: 0,
+    fields: Ordmap::empty(),
+    imports: Nil,
+    refs: Nil,
+    unresolved: Nil,
+    opaque_words: Nil,
+    tops: Nil,
+    macros: Nil,
+    theorems: Nil,
+    closure: closure,
+    toplevel: Ordmap::empty(),
+    broken: broken
+  }
+}
+
+// The index of `source` as the file `id` that sees the files of `closure`
+// (itself left out).
+pub fn an_build(t: &SyntaxTables, classes: UnicodeClasses, w: AnWorld, id: Nat, path: Text, source: Text, closure: List(Nat)): AnFile {
+  let own := an_append(closure, [id])
+  match an_parse(&t, source) {
+    None => an_empty_file(path, source, own, true)
+    Some(root) => {
+      let globals := an_globals(w, closure, Ordmap::empty())
+      var st := AnWalk {
+        world: w,
+        classes: classes,
+        file: id,
+        src: source,
+        defs: Ordmap::empty(),
+        count: 0,
+        fields: Ordmap::empty(),
+        refs: Nil,
+        unresolved: Nil,
+        opaque_words: Nil,
+        tops: Nil,
+        macros: Nil,
+        theorems: Nil,
+        frames: Nil,
+        globals: globals,
+        global_files: an_files_of(an_seconds(Ordmap::entries(globals)), id, Nil),
+        node_def: Ordmap::empty(),
+        quoting: 0
+      }
+      let imports := text_list_reverse(an_find_imports(Nat::mul(64, Text::len(source) + 64), &mut st, [root], Nil))
+      let toplevel := an_run(Nat::mul(64, Text::len(source) + 64), &mut st, root)
+      AnFile {
+        path: path,
+        text: source,
+        defs: st.defs,
+        count: st.count,
+        fields: st.fields,
+        imports: imports,
+        refs: text_list_reverse(st.refs),
+        unresolved: text_list_reverse(st.unresolved),
+        opaque_words: text_list_reverse(st.opaque_words),
+        tops: text_list_reverse(st.tops),
+        macros: text_list_reverse(st.macros),
+        theorems: text_list_reverse(st.theorems),
+        closure: own,
+        toplevel: toplevel,
+        broken: false
+      }
+    }
+  }
+}
+
+pub fn an_world_put(w: AnWorld, f: AnFile): AnWorld {
+  AnWorld { files: Ordmap::insert(w.files, w.count, f, Ordmap::compare_nat), count: w.count + 1 }
+}
+
+// The world of the two preludes: the first sees nothing, the second the
+// first.
+pub fn an_world(t: &SyntaxTables, classes: UnicodeClasses, prelude: Text, kernel_prelude: Text): AnWorld {
+  let empty := AnWorld { files: Ordmap::empty(), count: 0 }
+  let first := an_world_put(empty, an_build(&t, classes, empty, 0, "", prelude, Nil))
+  an_world_put(first, an_build(&t, classes, first, 1, "", kernel_prelude, [0]))
+}
+
+// Adds `source` as a file that imports the files `imports`; the world and the
+// file's id.
+pub fn an_add(t: &SyntaxTables, classes: UnicodeClasses, w: AnWorld, path: Text, source: Text, imports: List(Nat)): AnWorld × Nat {
+  let closure := an_closure_add(w, imports, [0, 1])
+  let id := w.count
+  #(an_world_put(w, an_build(&t, classes, w, id, path, source, closure)), id)
+}

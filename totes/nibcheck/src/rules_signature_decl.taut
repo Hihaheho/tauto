@@ -1,25 +1,26 @@
 import "rules_signature_body.taut"
 import "rules_signature_generics.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "../../surface/src/surface.taut"
 
 // Elaboration records the declared binders and written signature. Constraints,
 // inference-variable discharge, and body checking are separate obligations.
 pub fn signature_source_generics(source: SurfaceFn): List(Text) { source.generics }
 pub fn signature_source_bounds(source: SurfaceFn): List(Option(Text)) { source.bounds }
-pub fn signature_header(scheme: Scheme): Pair(List(Pair(Text, Kind)), List(Pair(Text, Kind))) {
-  Pair { fst: scheme.generics, snd: scheme.ctors }
+pub fn signature_header(scheme: Scheme): List(Text × Kind) × List(Text × Kind) {
+  #(scheme.generics, scheme.ctors)
 }
 pub fn signature_expected_header(
   g: SigGenerics
-): Pair(List(Pair(Text, Kind)), List(Pair(Text, Kind))) {
-  Pair { fst: List::reverse(g.generics), snd: List::reverse(g.ctors) }
+): List(Text × Kind) × List(Text × Kind) {
+  #(List::reverse(g.generics), List::reverse(g.ctors))
 }
 pub def SignatureHeader(
   g: SigGenerics,

@@ -1,4 +1,4 @@
-import "../../../std/Base.taut"
+import std::base
 
 // The outermost cell is the top of the stack.
 pub(open) inductive Shape: Type {
@@ -14,10 +14,10 @@ pub(open) inductive Stack: Type {
 }
 
 pub fn shape(stack: Stack): Shape {
-  ⊢ Shape from match stack {
+  match stack {
     EmptyStack => Empty
-    Number(value, rest) => NumOn(shape(rest))
-    Boolean(value, rest) => BoolOn(shape(rest))
+    Number(^value, rest) => NumOn(shape(rest))
+    Boolean(^value, rest) => BoolOn(shape(rest))
   }
 }
 
@@ -37,15 +37,15 @@ pub(open) inductive Code: Type {
 
 // Failure means an operand is absent or has the wrong kind.
 pub fn run_op(op: Op, stack: Stack): Option(Stack) {
-  ⊢ Option(Stack) from match op {
+  match op {
     PushNum(value) => Some(Number(value, stack))
     PushBool(value) => Some(Boolean(value, stack))
     Add => ⊢ Option(Stack) from match stack {
       EmptyStack => None
-      Boolean(flag, rest) => None
+      Boolean(^flag, ^rest) => None
       Number(right, rest) => ⊢ Option(Stack) from match rest {
         EmptyStack => None
-        Boolean(flag, tail) => None
+        Boolean(^flag, ^tail) => None
         Number(left, tail) => Some(Number(Nat::add(left, right), tail))
       }
     }
@@ -58,20 +58,20 @@ pub fn run_op(op: Op, stack: Stack): Option(Stack) {
 }
 
 pub fn chain(result: Option(Stack), next: (Stack) -> Option(Stack)): Option(Stack) {
-  ⊢ Option(Stack) from match result {
+  match result {
     None => None
     Some(stack) => next(stack)
   }
 }
 
 pub fn run(code: Code, stack: Stack): Option(Stack) {
-  ⊢ Option(Stack) from match code {
+  match code {
     Halt => Some(stack)
     Exec(op) => run_op(op, stack)
     Seq(first, second) => chain(run(first, stack), next => run(second, next))
     Branch(yes, no) => ⊢ Option(Stack) from match stack {
       EmptyStack => None
-      Number(value, rest) => None
+      Number(^value, ^rest) => None
       Boolean(flag, rest) => ⊢ Option(Stack) from match flag {
         true => run(yes, rest)
         false => run(no, rest)

@@ -20,6 +20,10 @@ impl Instant {
         Instant(now())
     }
 
+    pub fn saturating_duration_since(&self, earlier: Instant) -> Duration {
+        self.0.saturating_sub(earlier.0)
+    }
+
     pub fn elapsed(&self) -> Duration {
         now().saturating_sub(self.0)
     }
@@ -70,6 +74,7 @@ mod tests {
 
     #[test]
     fn a_thread_that_waits_spends_no_time() {
+        tauto_parse::install();
         let start = Instant::now();
         std::thread::sleep(Duration::from_millis(200));
         assert!(start.elapsed() < Duration::from_millis(100));
@@ -77,6 +82,7 @@ mod tests {
 
     #[test]
     fn a_thread_that_works_spends_time() {
+        tauto_parse::install();
         let start = Instant::now();
         let mut x = 0u64;
         while start.elapsed() < Duration::from_millis(20) {

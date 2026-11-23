@@ -1,7 +1,8 @@
 import "allocation_normalization.taut"
-import std::Map
+import std::map
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "unify.taut"
@@ -34,7 +35,7 @@ pub theorem allocated_resolve_variable(
   found: Option(Ty),
   equal: Ordmap::get(subst, index, Ordmap::compare_nat) = found
 ): TypeAllocated(limit, ty_resolve_var(fuel, subst, index, found)) {
-  ⊢ TypeAllocated(limit, ty_resolve_var(fuel, subst, index, found)) from match found {
+  match found {
     None => bounded
     Some(value) => ih(value, values(index, value, equal))
   }
@@ -59,7 +60,7 @@ pub theorem allocated_resolve_step(
   ty: Ty,
   allocated: TypeAllocated(limit, ty)
 ): TypeAllocated(limit, ty_resolve_in(Succ(rest), subst, ty)) {
-  ⊢ TypeAllocated(limit, ty_resolve_in(Succ(rest), subst, ty)) from match ty {
+  match ty {
     TyInt(width) => Trivial
     TyBool => Trivial
     TyText => Trivial
@@ -67,6 +68,7 @@ pub theorem allocated_resolve_step(
     TyNever => Trivial
     TyDecimal => Trivial
     TyFloat => Trivial
+    TyFloat32 => Trivial
     TyParam(name, kind) => Trivial
     TyVar(index) => allocated_resolve_variable(
       rest,
@@ -121,7 +123,7 @@ pub theorem allocated_resolve_list_step(
   types: List(Ty),
   allocated: TypeListAllocated(limit, types)
 ): TypeListAllocated(limit, ty_resolve_list_in(Succ(rest), subst, types)) {
-  ⊢ TypeListAllocated(limit, ty_resolve_list_in(Succ(rest), subst, types)) from match types {
+  match types {
     Nil => Trivial
     Cons(head, tail) => AndIntro(
       ty_ih(head, And::left(allocated)),

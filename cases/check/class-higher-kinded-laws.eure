@@ -1,0 +1,65 @@
+description = "An `inductive class` over a type constructor (`F: (Type) -> Type`) is a class of the proof language: it may state laws, and an instance proves them."
+
+@ cases.functor-laws-option
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Maybe(A: Type): Type { None: Maybe(A), Some(value: A): Maybe(A) }
+inductive class Functor(F: (Type) -> Type) {
+  fn map<A: Type, B: Type>(xs: F(A), f: (A) -> B): F(B)
+  theorem identity<A: Type>(xs: F(A)): Functor::map(xs, (x: A) => x) = xs
+  theorem composition<A: Type, B: Type, C: Type>(xs: F(A), f: (A) -> B, g: (B) -> C): Functor::map(Functor::map(xs, f), g) = Functor::map(xs, (x: A) => g(f(x)))
+}
+instance Functor(Maybe) {
+  fn map<A: Type, B: Type>(xs: Maybe(A), f: (A) -> B): Maybe(B) {
+    ⊢ Maybe(B) from match xs { None => None, Some(v) => Some(f(v)) }
+  }
+  theorem identity<A: Type>(xs: Maybe(A)): Functor::map(xs, (x: A) => x) = xs {
+    match xs { None => Refl, Some(v) => Refl }
+  }
+  theorem composition<A: Type, B: Type, C: Type>(xs: Maybe(A), f: (A) -> B, g: (B) -> C): Functor::map(Functor::map(xs, f), g) = Functor::map(xs, (x: A) => g(f(x))) {
+    match xs { None => Refl, Some(v) => Refl }
+  }
+}
+```
+checks_all = "ok"
+
+@ cases.functor-law-wrong-proof-rejected
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Maybe(A: Type): Type { None: Maybe(A), Some(value: A): Maybe(A) }
+inductive class Functor(F: (Type) -> Type) {
+  fn map<A: Type, B: Type>(xs: F(A), f: (A) -> B): F(B)
+  theorem identity<A: Type>(xs: F(A)): Functor::map(xs, (x: A) => x) = xs
+}
+instance Functor(Maybe) {
+  fn map<A: Type, B: Type>(xs: Maybe(A), f: (A) -> B): Maybe(B) { None }
+  theorem identity<A: Type>(xs: Maybe(A)): Functor::map(xs, (x: A) => x) = xs {
+    match xs { None => Refl, Some(v) => Refl }
+  }
+}
+```
+checks."input/main.taut::Functor::identity@Maybe" = "error: type mismatch"
+
+@ cases.functor-generic-use
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Maybe(A: Type): Type { None: Maybe(A), Some(value: A): Maybe(A) }
+inductive class Functor(F: (Type) -> Type) {
+  fn map<A: Type, B: Type>(xs: F(A), f: (A) -> B): F(B)
+  theorem identity<A: Type>(xs: F(A)): Functor::map(xs, (x: A) => x) = xs
+}
+instance Functor(Maybe) {
+  fn map<A: Type, B: Type>(xs: Maybe(A), f: (A) -> B): Maybe(B) {
+    ⊢ Maybe(B) from match xs { None => None, Some(v) => Some(f(v)) }
+  }
+  theorem identity<A: Type>(xs: Maybe(A)): Functor::map(xs, (x: A) => x) = xs {
+    match xs { None => Refl, Some(v) => Refl }
+  }
+}
+theorem map_id<F: (Type) -> Type, A: Type>(xs: F(A)): Functor::map(xs, (x: A) => x) = xs where Functor(F) { Functor::identity(xs) }
+fn bump(xs: Maybe(Nat)): Maybe(Nat) { Functor::map(xs, (n: Nat) => n) }
+```
+checks_all = "ok"

@@ -1,0 +1,67 @@
+description = "A product the syntax writes (`#()`, `#(a, b)`, the `()` of `m!()`) is the library's `Star` and `Pair::Mk`, not the names `Star` and `Pair`: a constructor of that spelling the file sees, its own or one a grammar makes, does not take it over."
+
+// The file declares constructors `Star` and `Pair` and writes the unit and a product.
+@ cases.own-constructors-named-star-and-pair
+source = ```tauto
+pub(open) inductive Atom: Type {
+  Star: Atom
+  Pair(n: Nat): Atom
+}
+
+pub theorem unit_ok(): #() = #() { Refl }
+
+pub theorem product_ok(): Eq(Nat × Nat, #(1, 2), #(1, 2)) { Refl }
+
+pub theorem atom_ok(): Star = Atom::Star { Refl }
+```
+checks."unit_ok" = "ok"
+checks."product_ok" = "ok"
+checks."atom_ok" = "ok"
+diagnostics = []
+
+// A grammar of an imported syntax makes constructors of its own; the `()` of a tactic step is the unit.
+@ cases.grammar-constructors-through-an-import
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base { Nat }
+import std::tactic { nat_norm }
+import std::proof::lang { proof }
+import std::proof::forms { proof_by }
+
+pub theorem comm(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  by nat_norm!(): Nat::add(a, b) = Nat::add(b, a) {}
+}
+
+pub theorem zero_right(n: Nat): Nat::add(n, 0) = n {
+  proof!(```
+    By Refl.
+  ```)
+}
+````
+checks."comm" = "ok"
+checks."zero_right" = "ok"
+diagnostics = []
+
+// A name the file writes in a literal, which a sentence macro puts into its output, is bound in
+// the file's scope: the import that brings it is used.
+@ cases.a-name-in-a-literal-uses-its-import
+entry = "main.taut"
+files."lem.taut" = ```tauto
+import std::base { Nat }
+
+pub theorem lem(n: Nat): Nat::add(n, 0) = n { Refl }
+```
+files."main.taut" = ````tauto
+import std::base { Nat }
+import std::proof::lang { proof }
+import std::proof::forms { proof_by }
+import "lem.taut" { lem }
+
+theorem t(n: Nat): Nat::add(n, 0) = n {
+  proof!(```
+    By lem(n).
+  ```)
+}
+````
+checks."t" = "ok"
+diagnostics = []

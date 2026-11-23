@@ -4,14 +4,14 @@ fn keep<A: Shared>(value: A): A {
   let local: A := value
   local
 }
-perform show("answer", keep("text"))
+show(&keep("text"))
 ```
 types = "ok"
-shows = ['answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.var-uses-function-type-parameter
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Vec::into_list` yet"
 source = ```tauto
-import std::prelude::Affine
 
 fn collect<A: Shared>(first: A, second: A): List(A) {
   var values: Vec(A) := Vec::new()
@@ -19,10 +19,10 @@ fn collect<A: Shared>(first: A, second: A): List(A) {
   Vec::push(&mut values, second)
   Vec::into_list(values)
 }
-perform show("items", collect("a", "b"))
+show(&collect("a", "b"))
 ```
 types = "ok"
-shows = ['items = Cons("a", Cons("b", Nil))']
+stdout = "[\"a\", \"b\"]\n"
 
 @ cases.var-reassignment-keeps-function-type-parameter
 source = ```tauto
@@ -31,10 +31,10 @@ fn replace_local<A: Shared>(first: A, second: A): A {
   local := second
   local
 }
-perform show("answer", replace_local("a", "b"))
+show(&replace_local("a", "b"))
 ```
 types = "ok"
-shows = ['answer = "b"']
+stdout = "\"b\"\n"
 
 @ cases.annotation-keeps-type-constructor-parameter
 source = ```tauto
@@ -53,10 +53,10 @@ fn keep<A: Shared>(value: A): A {
   var result: A := local
   result
 }
-perform show("answer", keep("text"))
+show(&keep("text"))
 ```
 types = "ok"
-shows = ['answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.nested-function-restores-outer-annotation-context
 source = ```tauto
@@ -80,10 +80,10 @@ fn keep<A: Shared>(value: A): A {
   }
   get()
 }
-perform show("answer", keep("text"))
+show(&keep("text"))
 ```
 types = "ok"
-shows = ['answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.function-type-parameters-do-not-leak
 source = ```tauto
@@ -97,10 +97,10 @@ fn nominal(value: A): A {
   local
 }
 let value: A := A { number: 7 }
-perform show("answer", nominal(value).number)
+show(&(nominal(value).number))
 ```
 types = "ok"
-shows = ['answer = 7']
+stdout = "7\n"
 
 @ cases.let-rejects-distinct-type-parameter
 source = ```tauto
@@ -203,33 +203,34 @@ source = ```tauto
 fn outer<A: Shared>(value: A): i64 {
   fn inner<A: Shared>(other: A): i64 {
     let local: A := other
-    perform show("captured", value)
-    perform show("own", local)
+    let seen := value
+    let seen_local := local
     7
   }
   inner(9)
 }
-perform show("answer", outer("text"))
+show(&outer("text"))
 ```
 types = "ok"
 lin = "ok"
-shows = ['captured = "text"', 'own = 9', 'answer = 7']
+stdout = "7\n"
 
 @ cases.nested-generic-instantiates-at-each-use
 source = ```tauto
-fn outer(): Unit {
+import std::builtin::os
+fn outer(): Unit ! {stdout, stdout_flush} {
   fn identity<A: Shared>(value: A): A {
     let local: A := value
     local
   }
-  perform show("number", identity(7))
-  perform show("text", identity("text"))
+  show(&identity(7))
+  show(&identity("text"))
 }
 outer()
 ```
 types = "ok"
 lin = "ok"
-shows = ['number = 7', 'text = "text"']
+stdout = "7\n\"text\"\n"
 
 @ cases.nested-inferred-shadow-call-stays-valid
 source = ```tauto
@@ -237,16 +238,15 @@ fn outer<A: Shared>(value: A): A {
   fn inner<A: Shared>(other: A): A { other }
   inner(value)
 }
-perform show("answer", outer("text"))
+show(&outer("text"))
 ```
 types = "ok"
-shows = ['answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.nested-generic-affine-capture-is-borrowed
 source = ```tauto
-import std::prelude::Affine
 
-fn outer(): u64 {
+fn outer(): u64 ! {overflow} {
   var values := Vec::new()
   Vec::push(&mut values, 7)
   fn size<A: Shared>(marker: A): u64 {
@@ -257,11 +257,11 @@ fn outer(): u64 {
   let second := size(true)
   first + second
 }
-perform show("size", outer())
+show(&outer())
 ```
 types = "ok"
 lin = "ok"
-shows = ['size = 2']
+stdout = "2\n"
 
 @ cases.nested-generic-cannot-move-affine-captured-var
 source = ```tauto
@@ -279,18 +279,19 @@ lin = "error: value is a var and cannot be moved out of a closure"
 
 @ cases.nested-generic-where-is-instantiated-per-call
 source = ```tauto
-fn outer(): Unit {
+import std::builtin::os
+fn outer(): Unit ! {stdout, stdout_flush} {
   fn same<A: Shared>(left: A, right: A): Bool where DecEq(A) {
     let local: A := left
     local == right
   }
-  perform show("number", same(7, 7))
-  perform show("text", same("a", "b"))
+  show(&same(7, 7))
+  show(&same("a", "b"))
 }
 outer()
 ```
 types = "ok"
-shows = ['number = true', 'text = false']
+stdout = "true\nfalse\n"
 
 @ cases.outer-constraint-does-not-constrain-inner-binder
 source = ```tauto
@@ -315,11 +316,11 @@ fn outer<A: Shared>(value: A): Text where Render(A) {
   }
   inner(value)
 }
-perform show("first", outer(7))
-perform show("second", outer("text"))
+show(&outer(7))
+show(&outer("text"))
 ```
 types = "ok"
-shows = ['first = "number"', 'second = "text"']
+stdout = "\"number\"\n\"text\"\n"
 
 @ cases.inner-dictionary-does-not-constrain-captured-outer-binder
 source = ```tauto
@@ -353,70 +354,76 @@ types = "error: the result of `inner`: A does not fit A"
 
 @ cases.nested-same-name-capture-multiple-uses
 source = ```tauto
-fn outer<A: Shared>(value: A): A {
+import std::builtin::os
+fn outer<A: Shared>(value: A): A ! {stdout, stdout_flush} {
   fn inner<A: Shared>(other: A): A {
-    perform show("captured", value)
+    let seen := value
     let local: A := other
     local
   }
-  perform show("number", inner(1))
+  show(&inner(1))
   inner(value)
 }
-perform show("answer", outer("text"))
+show(&outer("text"))
 ```
 types = "ok"
 lin = "ok"
-shows = ['captured = "text"', 'number = 1', 'captured = "text"', 'answer = "text"']
+stdout = ```
+1
+"text"
+```
 
 @ cases.captured-source-name-does-not-shadow-function-value-wrapper
 source = ```tauto
 fn outer<A: Shared>(a0: A): i64 {
   fn inner<B: Shared>(x: B): B {
-    perform show("captured", a0)
+    let seen := a0
     x
   }
   let alias := inner
   alias(7)
 }
-perform show("answer", outer("text"))
+show(&outer("text"))
 ```
 types = "ok"
-shows = ['captured = "text"', 'answer = 7']
+stdout = "7\n"
 
 @ cases.local-function-value-keeps-generic-bound-edges
 source = ```tauto
 fn outer<A: Shared>(value: A): A {
   fn echo<B: Shared>(other: B): B {
-    perform show("echo", other)
+    let seen := other
     other
   }
   let alias := echo
   alias(value)
 }
-perform show("answer", outer("text"))
+show(&outer("text"))
 ```
 types = "ok"
-shows = ['echo = "text"', 'answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.generic-effect-parameters-are-owned-by-their-declaration
+llvm.unimplemented = "generate: the LLVM backend does not write internal: a value of one type where a value of another is read yet"
 source = ```tauto
 effect identity<A>(value: A): A
 let result := handle { perform identity(7) } with {
   ∀ A. identity<A>(value), k => k(value)
 }
-perform show("answer", result)
+show(&result)
 ```
 types = "ok"
-shows = ['answer = 7']
+stdout = "7\n"
 
 @ cases.named-owned-affine-capture-is-used-once
 source = ```tauto
-fn outer(): Unit {
+import std::builtin::os
+fn outer(): Unit ! {stdout, stdout_flush} {
   let text := "text"
   let value := Buf::of(&text)
   fn consume(marker: i64): Text { Text::of(value) }
-  perform show("first", consume(1))
-  perform show("second", consume(2))
+  show(&consume(1))
+  show(&consume(2))
 }
 outer()
 ```
@@ -427,15 +434,16 @@ compile_errors.javascript = "front: consume is used after move"
 
 @ cases.generic-named-owned-affine-capture-is-used-once
 source = ```tauto
-fn outer(): Unit {
+import std::builtin::os
+fn outer(): Unit ! {stdout, stdout_flush} {
   let text := "text"
   let value := Buf::of(&text)
   fn consume<A: Shared>(marker: A): Text {
     let local: A := marker
     Text::of(value)
   }
-  perform show("first", consume(1))
-  perform show("second", consume("again"))
+  show(&consume(1))
+  show(&consume("again"))
 }
 outer()
 ```
@@ -445,8 +453,8 @@ compile_errors.rust = "front: consume is used after move"
 compile_errors.javascript = "front: consume is used after move"
 
 @ cases.named-owned-affine-capture-single-use
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
 source = ```tauto
-import std::prelude::Affine
 
 fn outer(): Text {
   let text := "text"
@@ -454,15 +462,15 @@ fn outer(): Text {
   fn consume(marker: i64): Text { Text::of(value) }
   consume(1)
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
 lin = "ok"
-shows = ['answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.generic-named-owned-affine-capture-single-use
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
 source = ```tauto
-import std::prelude::Affine
 
 fn outer(): Text {
   let text := "text"
@@ -473,23 +481,24 @@ fn outer(): Text {
   }
   consume(1)
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
 lin = "ok"
-shows = ['answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.generic-named-borrowed-affine-capture-can-be-read-repeatedly
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
 source = ```tauto
-import std::prelude::Affine
+import std::builtin::os
 
-fn outer(&value: Buf): Unit {
+fn outer(value: &Buf): Unit ! {stdout, stdout_flush} {
   fn read<A: Shared>(marker: A): Text {
     let local: A := marker
     Text::of(Buf::clone(&value))
   }
-  perform show("first", read(1))
-  perform show("second", read("again"))
+  show(&read(1))
+  show(&read("again"))
 }
 let text := "text"
 let value := Buf::of(&text)
@@ -497,13 +506,13 @@ outer(&value)
 ```
 types = "ok"
 lin = "ok"
-shows = ['first = "text"', 'second = "text"']
+stdout = "\"text\"\n\"text\"\n"
 
 @ cases.generic-named-mutable-cell-capture-stays-shared
 source = ```tauto
-fn outer(): i64 {
+fn outer(): i64 ! {overflow} {
   var count: i64 := 0
-  fn next<A: Shared>(marker: A): i64 {
+  fn next<A: Shared>(marker: A): i64 ! {overflow} {
     let local: A := marker
     count := count + 1
     count
@@ -512,15 +521,15 @@ fn outer(): i64 {
   let second := next(true)
   first + second
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
 lin = "ok"
-shows = ['answer = 3']
+stdout = "3\n"
 
 @ cases.owned-outer-generic-capture-keeps-its-identity-and-kind
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
 source = ```tauto
-import std::prelude::Affine
 
 fn outer<A>(value: A): A {
   fn inner<A: Shared>(marker: A) { value }
@@ -529,27 +538,29 @@ fn outer<A>(value: A): A {
 let text := "payload"
 let value := Buf::of(&text)
 let restored := outer(value)
-perform show("answer", Text::of(restored))
+show(&Text::of(restored))
 ```
 types = "ok"
 lin = "ok"
-shows = ['answer = "payload"']
+stdout = "\"payload\"\n"
 
 @ cases.local-generic-inferred-result-is-instantiated
 source = ```tauto
-fn outer(): Unit {
+import std::builtin::os
+fn outer(): Unit ! {stdout, stdout_flush} {
   fn identity<A: Shared>(value: A) { value }
   let number: i64 := identity(7)
   let text: Text := identity("text")
-  perform show("number", number)
-  perform show("text", text)
+  show(&number)
+  show(&text)
 }
 outer()
 ```
 types = "ok"
-shows = ['number = 7', 'text = "text"']
+stdout = "7\n\"text\"\n"
 
 @ cases.local-generic-union-order-keeps-authoritative-type-arguments
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
 source = ```tauto
 fn outer(): Text {
   fn observe<B: Shared, A: Shared>(known: B, input: B | A): B { known }
@@ -557,10 +568,10 @@ fn outer(): Text {
   let input := if true { number } else { "unseen" }
   observe("known", input)
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
-shows = ['answer = "known"']
+stdout = "\"known\"\n"
 
 @ cases.recursive-local-inferred-result-rejects-wrong-self-argument
 source = ```tauto
@@ -569,7 +580,7 @@ fn outer(): Unit {
     if recurse { bad(7, false) } else { value }
   }
   let text: Text := bad("text", true)
-  perform show("answer", text)
+  show(&text)
 }
 outer()
 ```
@@ -585,7 +596,7 @@ fn outer(): Unit {
     if again { recurse(7, false) } else { value }
   }
   let text: Text := bad("text", true)
-  perform show("answer", text)
+  show(&text)
 }
 outer()
 ```
@@ -601,7 +612,7 @@ fn outer(): Unit {
     if again { helper(7) } else { value }
   }
   let text: Text := bad("text", true)
-  perform show("answer", text)
+  show(&text)
 }
 outer()
 ```
@@ -611,30 +622,30 @@ compile_errors.javascript = "front: an argument: B does not fit A"
 
 @ cases.inferred-local-self-keeps-its-own-binders
 source = ```tauto
-fn outer<A: Shared>(value: A): A {
-  fn repeat<A: Shared>(other: A, again: Bool) {
+fn outer<A: Shared>(value: A): A ! {div} {
+  fn repeat<A: Shared>(other: A, again: Bool) ! {div} {
     if again { repeat(other, false) } else { other }
   }
   repeat(value, false)
 }
-perform show("answer", outer("text"))
+show(&outer("text"))
 ```
 types = "ok"
-shows = ['answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.written-local-self-instantiates-at-each-use
 source = ```tauto
-fn outer(): Text {
-  fn repeat<A: Shared>(value: A, again: Bool): A {
+fn outer(): Text ! {div} {
+  fn repeat<A: Shared>(value: A, again: Bool): A ! {div} {
     if again { let unused := repeat(7, false) }
     value
   }
   repeat("text", false)
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
-shows = ['answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.inferred-local-self-keeps-monomorphic-recursion-boundary
 source = ```tauto
@@ -652,8 +663,8 @@ compile_errors.javascript = "front: an argument: i64 does not fit A"
 
 @ cases.inferred-local-self-keeps-where-evidence
 source = ```tauto
-fn outer<A: Shared>(value: A): A where DecEq(A) {
-  fn repeat<A: Shared>(other: A, again: Bool) where DecEq(A) {
+fn outer<A: Shared>(value: A): A ! {div} where DecEq(A) {
+  fn repeat<A: Shared>(other: A, again: Bool) ! {div} where DecEq(A) {
     if again {
       let same := other == other
       repeat(other, false)
@@ -661,10 +672,10 @@ fn outer<A: Shared>(value: A): A where DecEq(A) {
   }
   repeat(value, false)
 }
-perform show("answer", outer("text"))
+show(&outer("text"))
 ```
 types = "ok"
-shows = ['answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.inferred-local-self-keeps-constructor-bounds
 source = ```tauto
@@ -681,20 +692,20 @@ types = "ok"
 source = ```tauto
 class Render(A: Shared) { fn render(value: A): Text }
 instance Render(Text) { fn render(value: Text): Text { value } }
-fn outer<A: Shared>(value: A): Text where Render(A) {
-  fn repeat<A: Shared>(other: A, again: Bool) where Render(A) {
+fn outer<A: Shared>(value: A): Text ! {div} where Render(A) {
+  fn repeat<A: Shared>(other: A, again: Bool) ! {div} where Render(A) {
     if again { repeat(other, false) } else { Render::render(other) }
   }
   repeat(value, false)
 }
-perform show("answer", outer("text"))
+show(&outer("text"))
 ```
 types = "ok"
-shows = ['answer = "text"']
+stdout = "\"text\"\n"
 
 @ cases.named-owned-capture-keeps-declaration-binding
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
 source = ```tauto
-import std::prelude::Affine
 
 fn outer(): Text {
   let original := "original"
@@ -704,57 +715,59 @@ fn outer(): Text {
   let value := Buf::of(&shadow)
   consume()
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
 lin = "ok"
-shows = ['answer = "original"']
+stdout = "\"original\"\n"
 
 @ cases.named-shared-capture-keeps-declaration-binding
 source = ```tauto
-fn outer(): Text {
+import std::builtin::os
+fn outer(): Text ! {stdout, stdout_flush} {
   let value := "original"
   fn read(): Text { value }
   let value := "shadow"
-  perform show("first", read())
+  show(&read())
   read()
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
 lin = "ok"
-shows = ['first = "original"', 'answer = "original"']
+stdout = "\"original\"\n\"original\"\n"
 
 @ cases.named-borrowed-capture-keeps-declaration-binding
 source = ```tauto
-fn outer(&value: Text): Text {
+fn outer(value: &Text): Text {
   fn read(): Text { clone(value) }
   let value := "shadow"
   read()
 }
-perform show("answer", outer("original"))
+show(&outer("original"))
 ```
 types = "ok"
 lin = "ok"
-shows = ['answer = "original"']
+stdout = "\"original\"\n"
 
 @ cases.named-mutable-capture-keeps-declaration-cell
 source = ```tauto
-fn outer(): Unit {
+import std::builtin::os
+fn outer(): Unit ! {overflow, stdout, stdout_flush} {
   var value: i64 := 0
-  fn next(): i64 { value := value + 1; value }
+  fn next(): i64 ! {overflow} { value := value + 1; value }
   {
     var value: i64 := 100
-    perform show("first", next())
-    perform show("shadow", value)
+    show(&next())
+    show(&value)
   }
-  perform show("second", next())
+  show(&next())
 }
 outer()
 ```
 types = "ok"
 lin = "ok"
-shows = ['first = 1', 'shadow = 100', 'second = 2']
+stdout = "1\n100\n2\n"
 
 @ cases.transitive-shared-capture-keeps-declaration-binding
 source = ```tauto
@@ -765,15 +778,15 @@ fn outer(): Text {
   fn forward(): Text { read() }
   forward()
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
 lin = "ok"
-shows = ['answer = "original"']
+stdout = "\"original\"\n"
 
 @ cases.transitive-owned-capture-keeps-declaration-binding
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
 source = ```tauto
-import std::prelude::Affine
 
 fn outer(): Text {
   let original := "original"
@@ -784,11 +797,11 @@ fn outer(): Text {
   fn forward(): Text { Text::of(take()) }
   forward()
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
 lin = "ok"
-shows = ['answer = "original"']
+stdout = "\"original\"\n"
 
 @ cases.late-kind-generic-helper-named
 source = ```tauto
@@ -796,8 +809,8 @@ fn outer(): Unit {
   fn identity<A>(item: A): A { item }
   let value := identity(factory())
   fn consume() { value }
-  perform show("first", Text::of(consume()))
-  perform show("second", Text::of(consume()))
+  show(&Text::of(consume()))
+  show(&Text::of(consume()))
 }
 fn factory() {
   let text := "text"
@@ -815,8 +828,8 @@ fn outer(): Unit {
   fn identity<A>(item: A): A { item }
   let value := identity(factory())
   let consume := () => value
-  perform show("first", Text::of(consume()))
-  perform show("second", Text::of(consume()))
+  show(&Text::of(consume()))
+  show(&Text::of(consume()))
 }
 fn factory() {
   let text := "text"
@@ -833,8 +846,8 @@ source = ```tauto
 fn outer(): Unit {
   let value := factory()
   fn consume() { value }
-  perform show("first", Text::of(consume()))
-  perform show("second", Text::of(consume()))
+  show(&Text::of(consume()))
+  show(&Text::of(consume()))
 }
 fn factory() {
   let text := "text"
@@ -851,8 +864,8 @@ source = ```tauto
 fn outer(): Unit {
   let value := factory()
   let consume := () => value
-  perform show("first", Text::of(consume()))
-  perform show("second", Text::of(consume()))
+  show(&Text::of(consume()))
+  show(&Text::of(consume()))
 }
 fn factory() {
   let text := "text"
@@ -866,12 +879,13 @@ compile_errors.javascript = "front: capture `value` is inferred as affine after 
 
 @ cases.capture-kind-control-late-shared-named
 source = ```tauto
-fn outer(): Unit {
+import std::builtin::os
+fn outer(): Unit ! {stdout, stdout_flush} {
   fn identity<A>(item: A): A { item }
   let value := identity(factory())
   fn consume() { value }
-  perform show("first", consume())
-  perform show("second", consume())
+  show(&consume())
+  show(&consume())
 }
 fn factory() {
   let text := "text"
@@ -881,16 +895,17 @@ outer()
 ```
 types = "ok"
 lin = "ok"
-shows = ['first = "text"', 'second = "text"']
+stdout = "\"text\"\n\"text\"\n"
 
 @ cases.capture-kind-control-late-shared-lambda
 source = ```tauto
-fn outer(): Unit {
+import std::builtin::os
+fn outer(): Unit ! {stdout, stdout_flush} {
   fn identity<A>(item: A): A { item }
   let value := identity(factory())
   let consume := () => value
-  perform show("first", consume())
-  perform show("second", consume())
+  show(&consume())
+  show(&consume())
 }
 fn factory() {
   let text := "text"
@@ -900,7 +915,7 @@ outer()
 ```
 types = "ok"
 lin = "ok"
-shows = ['first = "text"', 'second = "text"']
+stdout = "\"text\"\n\"text\"\n"
 
 @ cases.capture-kind-control-late-affine-once-named
 source = ```tauto
@@ -908,7 +923,7 @@ fn outer(): Unit {
   fn identity<A>(item: A): A { item }
   let value := identity(factory())
   fn consume() { value }
-  perform show("first", Text::of(consume()))
+  show(&Text::of(consume()))
 }
 fn factory() {
   let text := "text"
@@ -926,7 +941,7 @@ fn outer(): Unit {
   fn identity<A>(item: A): A { item }
   let value := identity(factory())
   let consume := () => value
-  perform show("first", Text::of(consume()))
+  show(&Text::of(consume()))
 }
 fn factory() {
   let text := "text"
@@ -940,12 +955,13 @@ compile_errors.javascript = "front: capture `value` is inferred as affine after 
 
 @ cases.capture-kind-control-annotated-affine-twice-named
 source = ```tauto
-fn outer(): Unit {
+import std::builtin::os
+fn outer(): Unit ! {stdout, stdout_flush} {
   fn identity<A>(item: A): A { item }
   let value: Buf := identity(factory())
   fn consume() { value }
-  perform show("first", Text::of(consume()))
-  perform show("second", Text::of(consume()))
+  show(&Text::of(consume()))
+  show(&Text::of(consume()))
 }
 fn factory() {
   let text := "text"
@@ -960,12 +976,13 @@ compile_errors.javascript = "front: consume is used after move"
 
 @ cases.capture-kind-control-annotated-affine-twice-lambda
 source = ```tauto
-fn outer(): Unit {
+import std::builtin::os
+fn outer(): Unit ! {stdout, stdout_flush} {
   fn identity<A>(item: A): A { item }
   let value: Buf := identity(factory())
   let consume := () => value
-  perform show("first", Text::of(consume()))
-  perform show("second", Text::of(consume()))
+  show(&Text::of(consume()))
+  show(&Text::of(consume()))
 }
 fn factory() {
   let text := "text"
@@ -979,14 +996,15 @@ compile_errors.rust = "front: consume is used after move"
 compile_errors.javascript = "front: consume is used after move"
 
 @ cases.capture-kind-control-annotated-affine-once-named
+llvm.unimplemented = "generate: the LLVM backend does not write a `Buf` yet"
 source = ```tauto
-import std::prelude::Affine
+import std::builtin::os
 
-fn outer(): Unit {
+fn outer(): Unit ! {stdout, stdout_flush} {
   fn identity<A>(item: A): A { item }
   let value: Buf := identity(factory())
   fn consume() { value }
-  perform show("first", Text::of(consume()))
+  show(&Text::of(consume()))
 }
 fn factory() {
   let text := "text"
@@ -996,17 +1014,18 @@ outer()
 ```
 types = "ok"
 lin = "ok"
-shows = ['first = "text"']
+stdout = "\"text\"\n"
 
 @ cases.capture-kind-control-annotated-affine-once-lambda
+llvm.unimplemented = "generate: the LLVM backend does not write a `Buf` yet"
 source = ```tauto
-import std::prelude::Affine
+import std::builtin::os
 
-fn outer(): Unit {
+fn outer(): Unit ! {stdout, stdout_flush} {
   fn identity<A>(item: A): A { item }
   let value: Buf := identity(factory())
   let consume := () => value
-  perform show("first", Text::of(consume()))
+  show(&Text::of(consume()))
 }
 fn factory() {
   let text := "text"
@@ -1016,7 +1035,7 @@ outer()
 ```
 types = "ok"
 lin = "ok"
-shows = ['first = "text"']
+stdout = "\"text\"\n"
 
 @ cases.late-kind-alias-named
 source = ```tauto
@@ -1025,8 +1044,8 @@ fn outer(): Unit {
   let value := identity(factory())
   fn consume() { value }
   let alias := consume
-  perform show("first", Text::of(alias()))
-  perform show("second", Text::of(alias()))
+  show(&Text::of(alias()))
+  show(&Text::of(alias()))
 }
 fn factory() { let text := "text"; Buf::of(&text) }
 outer()
@@ -1042,8 +1061,8 @@ fn outer(): Unit {
   let value := identity(factory())
   let consume := () => value
   let alias := consume
-  perform show("first", Text::of(alias()))
-  perform show("second", Text::of(alias()))
+  show(&Text::of(alias()))
+  show(&Text::of(alias()))
 }
 fn factory() { let text := "text"; Buf::of(&text) }
 outer()
@@ -1059,8 +1078,8 @@ fn outer(): Unit {
   let value := identity(factory())
   fn consume() { value }
   let alias: () -> Buf := consume
-  perform show("first", Text::of(alias()))
-  perform show("second", Text::of(alias()))
+  show(&Text::of(alias()))
+  show(&Text::of(alias()))
 }
 fn factory() { let text := "text"; Buf::of(&text) }
 outer()
@@ -1076,8 +1095,8 @@ fn outer(): Unit {
   let value := identity(factory())
   let consume := () => value
   let alias: () -> Buf := consume
-  perform show("first", Text::of(alias()))
-  perform show("second", Text::of(alias()))
+  show(&Text::of(alias()))
+  show(&Text::of(alias()))
 }
 fn factory() { let text := "text"; Buf::of(&text) }
 outer()
@@ -1093,8 +1112,8 @@ fn outer(): Unit {
   let value := identity(factory())
   fn consume() { value }
   fn duplicate(callback: () -> Buf): Unit {
-    perform show("first", Text::of(callback()))
-    perform show("second", Text::of(callback()))
+    show(&Text::of(callback()))
+    show(&Text::of(callback()))
   }
   duplicate(consume)
 }
@@ -1112,8 +1131,8 @@ fn outer(): Unit {
   let value := identity(factory())
   let consume := () => value
   fn duplicate(callback: () -> Buf): Unit {
-    perform show("first", Text::of(callback()))
-    perform show("second", Text::of(callback()))
+    show(&Text::of(callback()))
+    show(&Text::of(callback()))
   }
   duplicate(consume)
 }
@@ -1149,24 +1168,24 @@ lin = "ok"
 @ cases.kind-range-observes-held-type-parameters
 source = ```tauto
 struct Phantom(A: Type) { callback: (A) -> i64 }
-linear struct LinearBox(A: Type) { item: A }
+struct(linear) LinearBox(A: Type) { item: A }
 ```
 types = "ok"
 
 @ cases.linear-capture-dominates-unresolved-capture-kind
 source = ```tauto
-linear struct Token {}
+struct(linear) Token {}
 fn outer(token: Token): Unit {
   let value := Vec::new()
-  fn consume() { Pair { fst: token, snd: value } }
+  fn consume() { #(token, value) }
   let result := consume()
 }
 ```
 types = "error: the type `A` of `Vec::new` is not determined here: give the value a type, as in `let x: T = ...`"
 
 @ cases.generic-named-owned-capture-keeps-declaration-binding
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::of` yet"
 source = ```tauto
-import std::prelude::Affine
 
 fn outer(): Text {
   let original := "original"
@@ -1176,18 +1195,18 @@ fn outer(): Text {
   let value := Buf::of(&shadow)
   consume(7)
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
 lin = "ok"
-shows = ['answer = "original"']
+stdout = "\"original\"\n"
 
 
 @ cases.recursive-shared-capture-keeps-declaration-binding
 source = ```tauto
-fn outer(): Text {
+fn outer(): Text ! {div, overflow} {
   let value := "original"
-  fn read(count: i64): Text {
+  fn read(count: i64): Text ! {div, overflow} {
     if count == 0 { value } else {
       let value := "shadow"
       read(count - 1)
@@ -1195,12 +1214,11 @@ fn outer(): Text {
   }
   read(1)
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
 lin = "ok"
-rust_shows = ['answer = "original"']
-javascript_shows = ['answer = "original"']
+stdout = "\"original\"\n"
 
 @ cases.transitive-generic-captures-keep-own-and-outer-identities
 source = ```tauto
@@ -1208,13 +1226,15 @@ fn outer<A: Shared>(value: A): A {
   fn first<A: Shared>(marker: A) { value }
   fn forward<A: Shared>(marker: A) { first(marker) }
   let number := forward(7)
-  forward(true)
+  let flag := forward(true)
+  pick(number, flag)
 }
-perform show("answer", outer("original"))
+fn pick<A: Shared>(kept: A, other: A): A { kept }
+show(&outer("original"))
 ```
 types = "ok"
 lin = "ok"
-shows = ['answer = "original"']
+stdout = "\"original\"\n"
 
 @ cases.nominal-owner-provenance-base
 source = ```tauto
@@ -1234,19 +1254,29 @@ let second: Other := Read("original")
 types = "ok"
 
 @ cases.generic-union-results-use-the-callers-representation
+extract = false
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
 source = ```tauto
+import std::builtin::os
 fn choose<B: Shared, A: Shared>(first: B, second: A, pick: Bool): (B | A) {
   if pick { first } else { second }
 }
-perform show("left", choose("known", 7, true))
-perform show("right", choose("known", 7, false))
+fn say(v: i64 | Text): Unit ! {stdout, stdout_flush} {
+  match v {
+    t: Text => show(&t)
+    n: i64 => show(&n)
+  }
+}
+say(choose("known", 7, true))
+say(choose("known", 7, false))
 let alias := choose
-perform show("alias", alias("other", 8, false))
+say(alias("other", 8, false))
 ```
 types = "ok"
-shows = ['left = "known"', 'right = 7', 'alias = 8']
+stdout = "\"known\"\n7\n8\n"
 
 @ cases.local-generic-union-alias-keeps-authoritative-type-arguments
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
 source = ```tauto
 fn outer(): Text {
   fn observe<B: Shared, A: Shared>(known: B, input: B | A): B { known }
@@ -1255,58 +1285,83 @@ fn outer(): Text {
   let input := if true { number } else { "unseen" }
   alias("known", input)
 }
-perform show("answer", outer())
+show(&outer())
 ```
 types = "ok"
-shows = ['answer = "known"']
+stdout = "\"known\"\n"
 
 @ cases.generic-union-collapsed-members-cross-the-abi
+extract = false
 source = ```tauto
 fn choose<B: Shared, A: Shared>(first: B, second: A, pick: Bool): (B | A) {
   if pick { first } else { second }
 }
 fn observe<B: Shared, A: Shared>(known: B, witness: A, input: B | A): B { known }
-perform show("left", choose("left", "right", true))
-perform show("right", choose("left", "right", false))
-perform show("answer", observe("known", "witness", "input"))
+show(&choose("left", "right", true))
+show(&choose("left", "right", false))
+show(&observe("known", "witness", "input"))
 ```
 types = "ok"
-shows = ['left = "left"', 'right = "right"', 'answer = "known"']
+stdout = "\"left\"\n\"right\"\n\"known\"\n"
 
 @ cases.generic-union-abi-keeps-caller-and-callee-parameters-distinct
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
 source = ```tauto
+import std::builtin::os
 fn outer<A: Shared, B: Shared>(left: A, right: B): (A | B) {
   fn choose<B: Shared, A: Shared>(first: B, second: A): (B | A) {
     if true { first } else { second }
   }
   choose(left, right)
 }
-perform show("answer", outer("known", 7))
+fn say(v: i64 | Text): Unit ! {stdout, stdout_flush} {
+  match v {
+    t: Text => show(&t)
+    n: i64 => show(&n)
+  }
+}
+say(outer("known", 7))
 ```
 types = "ok"
-shows = ['answer = "known"']
+stdout = "\"known\"\n"
 
 @ cases.captured-generic-union-alias-adapts-arguments-and-results
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
 source = ```tauto
-fn outer<C: Shared>(captured: C): Unit {
+import std::builtin::os
+fn say(v: i64 | Text): Unit ! {stdout, stdout_flush} {
+  match v {
+    t: Text => show(&t)
+    n: i64 => show(&n)
+  }
+}
+fn outer<C: Shared>(captured: C): Unit ! {stdout, stdout_flush} {
   fn choose<B: Shared, A: Shared>(known: B, witness: A, input: B | A, first: Bool): (B | A) {
-    perform show("captured", captured)
+    let seen := captured
     if first { known } else { input }
   }
   let alias := choose
   let number: i64 := 7
   let input := if true { number } else { "unseen" }
-  perform show("direct", choose("known", number, input, false))
-  perform show("alias", alias("known", number, input, true))
+  say(choose("known", number, input, false))
+  say(alias("known", number, input, true))
 }
 outer("kept")
 ```
 types = "ok"
-shows = ['captured = "kept"', 'direct = 7', 'captured = "kept"', 'alias = "known"']
+stdout = "7\n\"known\"\n"
 
 
 @ cases.generic-union-forwarding-and-catch-keep-inferred-instantiations
+llvm.unimplemented = "generate: the LLVM backend does not write a union yet"
 source = ```tauto
+import std::builtin::os
+fn say(v: i64 | Text): Unit ! {stdout, stdout_flush} {
+  match v {
+    t: Text => show(&t)
+    n: i64 => show(&n)
+  }
+}
 fn forward<T: Shared>(value: T): T ! {} { value }
 fn choose(flag: Bool): (i64 | Text) ! {fail(Text)} {
   let result: Result(i64, Text) := if flag { Ok(7) } else { Err("stopped") }
@@ -1314,12 +1369,20 @@ fn choose(flag: Bool): (i64 | Text) ! {fail(Text)} {
   if flag { number } else { "unseen" }
 }
 let value := if true { 7 } else { "kept" }
-perform show("forward", forward(value))
-perform show("ok", catch(() => choose(true)))
-perform show("bad", catch(() => choose(false)))
+say(forward(value))
+let caught_true: Result(i64 | Text, Text) := catch(() => choose(true))
+match caught_true {
+  Ok(v) => say(v)
+  Err(e) => show(&e)
+}
+let caught_false: Result(i64 | Text, Text) := catch(() => choose(false))
+match caught_false {
+  Ok(v) => say(v)
+  Err(e) => show(&e)
+}
 ```
 types = "ok"
-shows = ['forward = 7', 'ok = Ok(7)', 'bad = Err("stopped")']
+stdout = "7\n7\n\"stopped\"\n"
 
 @ cases.generic-call-with-undetermined-type-argument
 source = ```tauto
@@ -1330,7 +1393,7 @@ fn is_nil<A>(xs: List(A)): Bool {
   }
 }
 fn empty<A>(): List(A) { Nil }
-perform show("empty", is_nil(empty()))
+show(&is_nil(empty()))
 ```
 types = "error: the type `A` of `is_nil` is not determined here: give the value a type, as in `let x: T = ...`"
 compile_errors.rust = "front: the type `A` of `is_nil` is not determined here: give the value a type, as in `let x: T = ...`"
@@ -1346,7 +1409,7 @@ fn is_nil<A>(xs: List(A)): Bool {
 }
 fn empty<A>(): List(A) { Nil }
 let none: List(Bool) := empty()
-perform show("empty", is_nil(none))
+show(&is_nil(none))
 ```
 types = "ok"
-shows = ["empty = true"]
+stdout = "true\n"

@@ -1,0 +1,185 @@
+// A temporary lent to a function, a projection returned from one, a borrowed
+// list walked to depth, and a deep aggregate dropped after its output: what
+// each prints, on every backend.
+@ cases.nested-temporary-borrow
+stdout = ```
+14
+14
+```
+source = ```tauto
+struct(copy) Record { value: i64 }
+fn make_record(): Record { Record { value: 7 } }
+fn read_record(record: &Record): i64 { record.value }
+fn inspect_record(record: &Record): i64 ! {overflow} {
+    let first := read_record(&record);
+    first + record.value
+}
+show(&inspect_record(&make_record()))
+let saved := make_record()
+show(&inspect_record(&saved))
+```
+
+@ cases.temporary-borrow-survives-multi-shot-resumptions
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that keeps its continuation yet"
+stdout = "21\n"
+source = ```tauto
+struct(copy) Record { value: i64 }
+effect choose(): Bool resume ω
+fn make_record(): Record { Record { value: 7 } }
+fn read_record(record: &Record): i64 { record.value }
+fn inspect_record(record: &Record): i64 ! {choose, overflow} {
+    let first := read_record(&record);
+    if perform choose() { first + record.value } else { record.value }
+}
+let result := handle { inspect_record(&make_record()) } with { choose(), k => k(true) + k(false) }
+show(&result)
+```
+
+@ cases.returned-projection-keeps-its-temporary-root
+stdout = "7\n"
+source = ```tauto
+struct(copy) Inner { value: i64 }
+struct(copy) Holder { child: Inner }
+fn get_child(holder: &Holder): &Inner { &holder.child }
+fn read_child(inner: &Inner): i64 { inner.value }
+show(&read_child(get_child(&Holder { child: Inner { value: 7 } })))
+```
+
+@ cases.deep-borrowed-list-traversal
+stdout = "20000\n"
+source = ```tauto
+fn length(items: &List(i64)): i64 ! {div, overflow} {
+    match items { Nil => 0, Cons(head, tail) => 1 + length(&tail) }
+}
+var items: List(i64) := Nil
+var index := 0
+while index < 20000 { items := Cons(index, items); index := index + 1 }
+show(&length(&items))
+```
+
+@ cases.deep-aggregate-drop-after-output
+stdout = "6000\n"
+source = ```tauto
+var items: List(i64) := Nil
+var index := 0
+while index < 6000 { items := Cons(index, items); index := index + 1 }
+show(&index)
+```
+
+// A temporary lent across a wait is released once, after the wait: the host
+// answers `make` with a resource and `wait` later, and no probe is dropped
+// while the wait is pending.
+@ cases.temporary-survives-async-reborrow
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+stdout = "14\n"
+probe_drops = ["Probe"]
+host.make.owner = "Probe"
+host.make.value = 7
+host.wait.answers = "later"
+host.wait.drops_at_call = 0
+rust.unimplemented = "build: error: make has no rust binding (add it to rust.extern in Tauto.eure)"
+eval.unimplemented = "extern make: extern is not runnable: make"
+vm.unimplemented = "generate: the extern make, which has no binding on the machine"
+source = ```tauto
+import std::builtin::par
+struct(affine) Probe { value: i64 }
+extern {
+    fn make(): Probe
+    fn wait(): Unit ! {wait}
+}
+fn read_probe(probe: &Probe): i64 { probe.value }
+fn inspect_probe(probe: &Probe): i64 ! {wait, overflow} {
+    let first := read_probe(&probe);
+    wait();
+    first + probe.value
+}
+show(&inspect_probe(&make()))
+```
+
+// A host answer that fails, whether it throws or comes back as a rejected
+// Promise, ends the run with that failure, and the temporary lent to the call
+// is released once and not before.
+@ cases.temporary-releases-when-the-host-throws
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+run_error = "host failure"
+probe_drops = ["Probe"]
+host.make.owner = "Probe"
+host.make.value = 7
+host.wait.answers = "throws"
+host.wait.error = "host failure"
+host.wait.drops_at_call = 0
+eval.unimplemented = "extern make: extern is not runnable: make"
+rust.unimplemented = "build: error: make has no rust binding (add it to rust.extern in Tauto.eure)"
+vm.unimplemented = "generate: the extern make, which has no binding on the machine"
+source = ```tauto
+import std::builtin::par
+struct(affine) Probe { value: i64 }
+extern {
+    fn make(): Probe
+    fn wait(): Unit ! {wait}
+}
+fn read_probe(probe: &Probe): i64 { probe.value }
+fn inspect_probe(probe: &Probe): i64 ! {wait, overflow} {
+    let first := read_probe(&probe);
+    wait();
+    first + probe.value
+}
+show(&inspect_probe(&make()))
+```
+
+@ cases.temporary-releases-when-the-host-rejects
+llvm.unimplemented = "generate: the LLVM backend does not write a function that may stop (`<top>`) yet"
+run_error = "host failure"
+probe_drops = ["Probe"]
+host.make.owner = "Probe"
+host.make.value = 7
+host.wait.answers = "rejects"
+host.wait.error = "host failure"
+eval.unimplemented = "extern make: extern is not runnable: make"
+rust.unimplemented = "build: error: make has no rust binding (add it to rust.extern in Tauto.eure)"
+vm.unimplemented = "generate: the extern make, which has no binding on the machine"
+source = ```tauto
+import std::builtin::par
+struct(affine) Probe { value: i64 }
+extern {
+    fn make(): Probe
+    fn wait(): Unit ! {wait}
+}
+fn read_probe(probe: &Probe): i64 { probe.value }
+fn inspect_probe(probe: &Probe): i64 ! {wait, overflow} {
+    let first := read_probe(&probe);
+    wait();
+    first + probe.value
+}
+show(&inspect_probe(&make()))
+```
+
+// A host call whose row has no wait cannot be answered later: the run refuses
+// the Promise, and the temporary lent to the call is released once.
+@ cases.temporary-releases-when-a-direct-host-call-refuses-suspension
+llvm.unimplemented = "generate: the LLVM backend does not write an `extern` (the native backend has no host) yet"
+run_error = "returned a Promise but its row has no wait"
+probe_drops = ["Probe"]
+host.make.owner = "Probe"
+host.make.value = 7
+host.wait.answers = "later"
+eval.unimplemented = "extern make: extern is not runnable: make"
+rust.unimplemented = "build: error: make has no rust binding (add it to rust.extern in Tauto.eure)"
+vm.unimplemented = "generate: the extern make, which has no binding on the machine"
+source = ```tauto
+import std::builtin::par
+struct(affine) Probe { value: i64 }
+extern {
+    fn make(): Probe
+    fn wait(): Unit
+}
+fn read_probe(probe: &Probe): i64 { probe.value }
+fn inspect_probe(probe: &Probe): i64 {
+    let first := read_probe(&probe);
+    wait();
+    first
+}
+effect ask(): i64 direct
+let result := handle { perform ask() } with { ask(), k => k(inspect_probe(&make())) }
+show(&result)
+```

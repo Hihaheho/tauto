@@ -2,9 +2,9 @@ import "instances_function_table_ordered.taut"
 import "field_recheck_function_table.taut"
 import "prepare_sound.taut"
 import "prepare_signature_sources.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "data_names_sound.taut"
 import "datas_frame.taut"
@@ -12,6 +12,9 @@ import "decl_names_sound.taut"
 import "function_table_registration.taut"
 import "program_function_table_ordered.taut"
 import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
 import "types_run.taut"
 import "../../surface/src/surface.taut"
 
@@ -26,7 +29,7 @@ pub theorem fnt_data_names_at_step(
   c: Checker,
   duplicate: Option(SurfaceData)
 ): CkFnsStep(c, data_names_check(c, duplicate)) {
-  ⊢ CkFnsStep(c, data_names_check(c, duplicate)) from match duplicate {
+  match duplicate {
     None => ordered => ordered
     Some(source) => ordered => ordered
   }
@@ -45,7 +48,7 @@ pub theorem fnt_fn_names_at_step(
   c: Checker,
   duplicate: Option(SurfaceFn)
 ): CkFnsStep(c, decl_names_check(c, duplicate)) {
-  ⊢ CkFnsStep(c, decl_names_check(c, duplicate)) from match duplicate {
+  match duplicate {
     None => ordered => ordered
     Some(source) => ordered => ordered
   }
@@ -67,34 +70,41 @@ pub theorem registration_fns_after_fields_fns_ordered(
   own: Ordmap(Text, Bool)
 ): CkFnsStep(c, registration_fns_after_fields(c, prelude, program, own)) {
   fnt_step_bind(
-    List(SurfaceFn),
-    List(Pair(SurfaceFn, Scheme)),
+    <A: List(SurfaceFn), B: List(SurfaceFn × Scheme)>,
     c,
     (synthesized: List(SurfaceFn), c1: Checker) => frame_bind(
-      Unit,
-      List(Pair(SurfaceFn, Scheme)),
+      <A: Unit, B: List(SurfaceFn × Scheme)>,
       (ignored: Unit, c2: Checker) => frame_bind(
-        List(Pair(SurfaceFn, Scheme)),
-        List(Pair(SurfaceFn, Scheme)),
-        (fns: List(Pair(SurfaceFn, Scheme)), c3: Checker) => mut1(
-          List::append(fns, ck_synthesized_schemes(synthesized, c3)),
+        <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+        (fns: List(SurfaceFn × Scheme), c3: Checker) => mut1(
+          List::append(
+            fns,
+            List::append(
+              ck_program_replaceable_fns(program, c3),
+              ck_synthesized_schemes(synthesized, c3)
+            )
+          ),
           c3
         ),
         ck_program_decls(program, c2)
       ),
       ck_prelude_fns(prelude, c1, own)
     ),
-    ck_declare_classes(c, program),
-    ck_declare_classes_fns_ordered(c, program),
+    ck_declare_all_classes(c, prelude, program),
+    ck_declare_all_classes_fns_ordered(c, prelude, program),
     synthesized => c1 => fnt_step_bind(
-      Unit,
-      List(Pair(SurfaceFn, Scheme)),
+      <A: Unit, B: List(SurfaceFn × Scheme)>,
       c1,
       (ignored: Unit, c2: Checker) => frame_bind(
-        List(Pair(SurfaceFn, Scheme)),
-        List(Pair(SurfaceFn, Scheme)),
-        (fns: List(Pair(SurfaceFn, Scheme)), c3: Checker) => mut1(
-          List::append(fns, ck_synthesized_schemes(synthesized, c3)),
+        <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+        (fns: List(SurfaceFn × Scheme), c3: Checker) => mut1(
+          List::append(
+            fns,
+            List::append(
+              ck_program_replaceable_fns(program, c3),
+              ck_synthesized_schemes(synthesized, c3)
+            )
+          ),
           c3
         ),
         ck_program_decls(program, c2)
@@ -102,11 +112,16 @@ pub theorem registration_fns_after_fields_fns_ordered(
       ck_prelude_fns(prelude, c1, own),
       ck_prelude_fns_ordered(prelude, c1, own),
       ignored => c2 => fnt_step_bind(
-        List(Pair(SurfaceFn, Scheme)),
-        List(Pair(SurfaceFn, Scheme)),
+        <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
         c2,
-        (fns: List(Pair(SurfaceFn, Scheme)), c3: Checker) => mut1(
-          List::append(fns, ck_synthesized_schemes(synthesized, c3)),
+        (fns: List(SurfaceFn × Scheme), c3: Checker) => mut1(
+          List::append(
+            fns,
+            List::append(
+              ck_program_replaceable_fns(program, c3),
+              ck_synthesized_schemes(synthesized, c3)
+            )
+          ),
           c3
         ),
         ck_program_decls(program, c2),
@@ -124,8 +139,7 @@ pub theorem registration_fns_after_names_fns_ordered(
   own: Ordmap(Text, Bool)
 ): CkFnsStep(c, registration_fns_after_names(c, prelude, program, own)) {
   fnt_step_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     c,
     (ignored: Unit, next: Checker) => registration_fns_after_fields(next, prelude, program, own),
     ck_recheck_datas(types_data_decls(program), c),
@@ -141,8 +155,7 @@ pub theorem registration_fns_after_data_names_fns_ordered(
   own: Ordmap(Text, Bool)
 ): CkFnsStep(c, registration_fns_after_data_names(c, prelude, program, own)) {
   fnt_step_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     c,
     (ignored: Unit, next: Checker) => registration_fns_after_names(next, prelude, program, own),
     ck_check_fn_names(c, types_function_decls(program)),
@@ -158,8 +171,7 @@ pub theorem registration_fns_fns_ordered(
   own: Ordmap(Text, Bool)
 ): CkFnsStep(c, registration_fns(c, prelude, program, own)) {
   fnt_step_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     c,
     (ignored: Unit, next: Checker) => registration_fns_after_data_names(
       next,
@@ -179,7 +191,7 @@ pub theorem ck_prepare_fns_fns_ordered(
   own: Ordmap(Text, Bool)
 ): CkFnsStep(c, ck_prepare_fns(c, prelude, program, own)) {
   Eq::subst(
-    (z: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkFnsStep(c, z),
+    (z: Mut1(List(SurfaceFn × Scheme), Checker)) => CkFnsStep(c, z),
     Eq::sym(registration_fns_unf(c, prelude, program, own)),
     registration_fns_fns_ordered(c, prelude, program, own)
   )

@@ -3,8 +3,8 @@ import "../../text/src/text.taut"
 import "data.taut"
 import "level.taut"
 import "term.taut"
-import std::List
-import std::Base
+import std::list
+import std::base
 
 // The replay format is whitespace-separated prefix terms. Every list carries
 // its length. It contains elaborated terms, never a verdict or trusted metadata.
@@ -12,8 +12,8 @@ pub(open) inductive KernelInput: Type {
   Mk(tokens: List(Text), valid: Bool): KernelInput
 }
 
-pub fn kernel_token(&mut input: KernelInput): Text {
-  ⊢ Text from match input.tokens {
+pub fn kernel_token(input: &mut KernelInput): Text {
+  match input.tokens {
     Nil => {
       kernel_set_to(&mut input.valid, false)
       ""
@@ -25,8 +25,8 @@ pub fn kernel_token(&mut input: KernelInput): Text {
   }
 }
 
-pub fn kernel_number(&mut input: KernelInput): Nat {
-  ⊢ Nat from match text_parse_u64(kernel_token(&mut input)) {
+pub fn kernel_number(input: &mut KernelInput): Nat {
+  match text_parse_u64(kernel_token(&mut input)) {
     None => {
       kernel_set_to(&mut input.valid, false)
       0
@@ -35,7 +35,7 @@ pub fn kernel_number(&mut input: KernelInput): Nat {
   }
 }
 
-pub fn kernel_bit(&mut input: KernelInput): Bool {
+pub fn kernel_bit(input: &mut KernelInput): Bool {
   let n := kernel_number(&mut input)
   if n <= 1 {
     n == 1
@@ -47,7 +47,7 @@ pub fn kernel_bit(&mut input: KernelInput): Bool {
 
 // A numeral of at most 8 base-65536 digits, the least significant first,
 // with no zero digit at the top.
-pub fn kernel_read_numeral(&mut input: KernelInput, ds: List(Nat)): KernelTerm {
+pub fn kernel_read_numeral(input: &mut KernelInput, ds: List(Nat)): KernelTerm {
   if List::length(ds) <= 8 && kernel_digits_valid(ds) { KernelLit(kernel_digits_value(ds)) } else {
     kernel_set_to(&mut input.valid, false)
     KernelLit(0)
@@ -59,7 +59,7 @@ pub fn kernel_digits_valid(ds: List(Nat)): Bool {
     Nil => true
     Cons(d, rest) => d < 65536 && kernel_digits_valid(rest) && match rest {
       Nil => d != 0
-      Cons(e, more) => true
+      Cons(^e, ^more) => true
     }
   }
 }
@@ -72,23 +72,23 @@ pub fn kernel_digits_value(ds: List(Nat)): Nat {
 }
 
 mutual {
-  pub fn kernel_read_level_vars(k: Nat, &mut input: KernelInput, n: Nat): List(Pair(Text, Nat)) {
-    ⊢ List(Pair(Text, Nat)) from match k {
+  pub fn kernel_read_level_vars(k: Nat, input: &mut KernelInput, n: Nat): List(Text × Nat) {
+    match k {
       Zero => { kernel_set_to(&mut input.valid, false)
         Nil }
-      Succ(j) => ⊢ List(Pair(Text, Nat)) from match n {
+      Succ(j) => ⊢ List(Text × Nat) from match n {
         Zero => Nil
         Succ(m) => {
           let name := kernel_token(&mut input)
           let offset := kernel_number(&mut input)
-          Cons(Pair { fst: name, snd: offset }, kernel_read_level_vars(j, &mut input, m))
+          Cons(#(name, offset), kernel_read_level_vars(j, &mut input, m))
         }
       }
     }
   }
 
-  pub fn kernel_read_sort(k: Nat, &mut input: KernelInput): KernelSort {
-    ⊢ KernelSort from match k {
+  pub fn kernel_read_sort(k: Nat, input: &mut KernelInput): KernelSort {
+    match k {
       Zero => { kernel_set_to(&mut input.valid, false)
         KernelProp }
       Succ(j) => {
@@ -103,8 +103,8 @@ mutual {
     }
   }
 
-  pub fn kernel_read_digits(k: Nat, &mut input: KernelInput, n: Nat): List(Nat) {
-    ⊢ List(Nat) from match k {
+  pub fn kernel_read_digits(k: Nat, input: &mut KernelInput, n: Nat): List(Nat) {
+    match k {
       Zero => { kernel_set_to(&mut input.valid, false)
         Nil }
       Succ(j) => ⊢ List(Nat) from match n {
@@ -117,8 +117,8 @@ mutual {
     }
   }
 
-  pub fn kernel_read_term(k: Nat, &mut input: KernelInput): KernelTerm {
-    ⊢ KernelTerm from match k {
+  pub fn kernel_read_term(k: Nat, input: &mut KernelInput): KernelTerm {
+    match k {
       Zero => { kernel_set_to(&mut input.valid, false)
         KernelBVar(0) }
       Succ(j) => {
@@ -137,7 +137,8 @@ mutual {
           kernel_app(function, argument)
         } else if tag == "n" {
           let count := kernel_number(&mut input)
-          kernel_read_numeral(&mut input, kernel_read_digits(j, &mut input, count))
+          let digits := kernel_read_digits(j, &mut input, count)
+          kernel_read_numeral(&mut input, digits)
         } else {
           kernel_set_to(&mut input.valid, false)
           KernelBVar(0)
@@ -146,8 +147,8 @@ mutual {
     }
   }
 
-  pub fn kernel_read_optional(k: Nat, &mut input: KernelInput): Option(KernelTerm) {
-    ⊢ Option(KernelTerm) from match k {
+  pub fn kernel_read_optional(k: Nat, input: &mut KernelInput): Option(KernelTerm) {
+    match k {
       Zero => { kernel_set_to(&mut input.valid, false)
         None }
       Succ(j) => if kernel_bit(&mut input) { Some(kernel_read_term(j, &mut input)) } else { None }
@@ -156,25 +157,25 @@ mutual {
 
   pub fn kernel_read_ctor_specs(
     k: Nat,
-    &mut input: KernelInput,
+    input: &mut KernelInput,
     n: Nat
-  ): List(Pair(Text, KernelTerm)) {
-    ⊢ List(Pair(Text, KernelTerm)) from match k {
+  ): List(Text × KernelTerm) {
+    match k {
       Zero => { kernel_set_to(&mut input.valid, false)
         Nil }
-      Succ(j) => ⊢ List(Pair(Text, KernelTerm)) from match n {
+      Succ(j) => ⊢ List(Text × KernelTerm) from match n {
         Zero => Nil
         Succ(m) => {
           let name := kernel_token(&mut input)
           let ty := kernel_read_term(j, &mut input)
-          Cons(Pair { fst: name, snd: ty }, kernel_read_ctor_specs(j, &mut input, m))
+          Cons(#(name, ty), kernel_read_ctor_specs(j, &mut input, m))
         }
       }
     }
   }
 
-  pub fn kernel_read_families(k: Nat, &mut input: KernelInput, n: Nat): List(KernelFamily) {
-    ⊢ List(KernelFamily) from match k {
+  pub fn kernel_read_families(k: Nat, input: &mut KernelInput, n: Nat): List(KernelFamily) {
+    match k {
       Zero => { kernel_set_to(&mut input.valid, false)
         Nil }
       Succ(j) => ⊢ List(KernelFamily) from match n {
@@ -191,7 +192,7 @@ mutual {
   }
 }
 
-pub fn kernel_read_command(k: Nat, &mut input: KernelInput): KernelCommand {
+pub fn kernel_read_command(k: Nat, input: &mut KernelInput): KernelCommand {
   let tag := kernel_token(&mut input)
   if tag == "D" {
     let name := kernel_token(&mut input)

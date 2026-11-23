@@ -1,0 +1,87 @@
+// `anf`: every operand that computes a value is named first, in the order
+// the operands are evaluated.
+
+@ cases.nested-calls-and-constructors-are-named-in-order
+source = ```tauto
+enum Tree { Leaf(u64), Node(Tree, Tree) }
+fn size(t: Tree): u64 ! {overflow} {
+  match t { Leaf(_) => 1, Node(a, b) => size(a) + size(b) + 1 }
+}
+fn main(): u64 ! {overflow} { size(Node(Node(Leaf(1), Leaf(2)), Leaf(3))) * 2 }
+show(&main())
+```
+stdout = "10\n"
+nir.passes = ["anf", "check-anf"]
+nir.fns.size = ```nir
+fn size@5(ref t#6: &Tree): u64 A = match by_ref &t#6 {
+  Tree::Leaf(_) => 1u64,
+  Tree::Node(ref a#7: Tree, ref b#8: Tree) => {
+    let anf#18 := size@5((a#7: &Tree)) tier A: u64;
+    let anf#19 := size@5((b#8: &Tree)) tier A: u64;
+    let anf#20 := add<u64>(move anf#18, move anf#19);
+    add<u64>(move anf#20, 1u64)
+  },
+}
+```
+nir.fns.main = ```nir
+fn main@2(): u64 A = {
+  let anf#11 := Tree::Leaf(1u64): Tree;
+  let anf#12 := Tree::Leaf(2u64): Tree;
+  let anf#13 := Tree::Node(move anf#11, move anf#12): Tree;
+  let anf#14 := Tree::Leaf(3u64): Tree;
+  let anf#15 := Tree::Node(move anf#13, move anf#14): Tree;
+  let anf#16 := size@5(tempref(move anf#15)) tier A: u64;
+  mul<u64>(move anf#16, 2u64)
+}
+```
+
+@ cases.a-read-before-an-assignment-in-a-later-operand-is-named
+source = ```tauto
+fn pick(a: u64, b: u64): u64 { a }
+fn main(): u64 {
+  var x := 1
+  pick(x, { x := 2; 0 })
+}
+show(&main())
+```
+stdout = "1\n"
+nir.passes = ["anf", "check-anf"]
+nir.fns.main = ```nir
+fn main@2(): u64 S = {
+  var x#4 := 1u64;
+  {
+    let anf#11 := copy x#4;
+    let anf#12 := {
+      set x#4 := 2u64;
+      0u64
+    };
+    pick@5(move anf#11, move anf#12): u64
+  }
+}
+```
+
+@ cases.a-branch-that-is-not-always-taken-names-inside-itself
+source = ```tauto
+fn f(n: u64): u64 { n }
+fn main(b: Bool): u64 ! {overflow} { if b { f(1) + 1 } else { 0 } }
+show(&main(true))
+```
+stdout = "2\n"
+nir.passes = ["anf", "check-anf"]
+nir.fns.main = ```nir
+fn main@2(b#4: Bool): u64 A = if copy b#4 then {
+  let anf#10 := f@5(1u64): u64;
+  add<u64>(move anf#10, 1u64)
+} else 0u64
+```
+
+// The compiler gives nested operands, and `anf` names them: the check is
+// asked about a package that was not normalized.
+@ cases.a-nested-operand-is-not-in-a-normal-form
+source = ```tauto
+fn f(n: u64): u64 { n }
+fn main(): u64 ! {overflow} { f(1) + 1 }
+show(&main())
+```
+nir.passes = ["check-anf"]
+nir.error = "operand 0 of a"

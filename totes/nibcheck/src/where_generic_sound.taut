@@ -1,35 +1,34 @@
 import "rules_where.taut"
 import "written_binder_sound.taut"
 import "kind_sound.taut"
-import std::Row
-import std::Text
+import std::row
+import std::text
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
-pub fn where_generic_name(entry: Pair(Text, Kind)): Text { entry.fst }
-pub fn where_generic_kind(entry: Pair(Text, Kind)): Kind { entry.snd }
+pub fn where_generic_name(entry: Text × Kind): Text { entry.fst }
+pub fn where_generic_kind(entry: Text × Kind): Kind { entry.snd }
 pub theorem where_generic_head(
-  entry: Pair(Text, Kind),
-  rest: List(Pair(Text, Kind)),
+  entry: Text × Kind,
+  rest: List(Text × Kind),
   name: Text,
   equal: where_generic_name(entry) = name
 ): WhereGeneric(Cons(entry, rest), name) {
-  ⊢ WhereGeneric(Cons(entry, rest), name) from match entry {
-    Pair { fst: spelling, snd: kind } => {
+  match entry {
+    #(spelling, kind) => {
       let known: WhereGeneric(
-        Cons(Pair { fst: spelling, snd: kind }, rest),
+        Cons(#(spelling, kind), rest),
         spelling
       ) := WhereGeneric::Mk(
         kind,
-        MemHere(Pair(Text, Kind), Pair { fst: spelling, snd: kind }, rest)
+        MemHere(<A: (Text × Kind), a: #(spelling, kind)>, rest)
       )
       Eq::subst(
-        Text,
-        spelling,
-        name,
-        (n: Text) => WhereGeneric(Cons(Pair { fst: spelling, snd: kind }, rest), n),
+        (n: Text) => WhereGeneric(Cons(#(spelling, kind), rest), n),
         equal,
         known
       )
@@ -37,21 +36,21 @@ pub theorem where_generic_head(
   }
 }
 pub theorem where_generic_tail<rest: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), name: Text>(
   known: WhereGeneric(rest, name),
-  first: Pair(Text, Kind)
+  first: (Text × Kind)
 ): WhereGeneric(Cons(first, rest), name) {
-  ⊢ WhereGeneric(Cons(first, rest), name) from match known {
+  match known {
     Mk(kind, present) => WhereGeneric::Mk(kind, MemThere(first, rest, present))
   }
 }
 pub theorem generics_have_sound(
-  generics: List(Pair(Text, Kind)),
+  generics: List(Text × Kind),
   name: Text,
   found: generics_have(generics, name) = true
 ): WhereGeneric(generics, name) {
-  ⊢ WhereGeneric(generics, name) from match generics {
+  match generics {
     Nil => False::elim(false_ne_true(found))
     Cons(entry, rest) => kyn_or_true(
       Text::eq(where_generic_name(entry), name),
@@ -69,21 +68,21 @@ pub theorem generics_have_sound(
   }
 }
 pub fn where_generic_choice(name: Text, present: Bool): Option(Text) {
-  ⊢ Option(Text) from match present {
+  match present {
     true => Some(name)
     false => None
   }
 }
 pub theorem where_generic_choice_sound(
   ast_occurrence: Option(TermOccurrence),
-  generics: List(Pair(Text, Kind)),
-  spelling: Text,
+  generics: List(Text × Kind),
+  spelling: SurfaceName,
   start: Nat,
   end: Nat,
   name: Text,
   present: Bool,
-  tested: generics_have(generics, spelling) = present,
-  found: where_generic_choice(spelling, present) = Some(name)
+  tested: generics_have(generics, surface_name_text(spelling)) = present,
+  found: where_generic_choice(surface_name_text(spelling), present) = Some(name)
 ): WhereGenericTerm(
   generics,
   SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence),
@@ -104,7 +103,7 @@ pub theorem where_generic_choice_sound(
         spelling,
         start,
         end,
-        generics_have_sound(generics, spelling, tested)
+        generics_have_sound(generics, surface_name_text(spelling), tested)
       )
     }
   }
@@ -115,14 +114,14 @@ pub theorem constraint_generic_shape_sound(
   sk: SurfaceKind,
   start: Nat,
   end: Nat,
-  generics: List(Pair(Text, Kind)),
+  generics: List(Text × Kind),
   name: Text,
   found: constraint_generic(
     SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
     generics
   ) = Some(name)
 ): WhereGenericTerm(generics, SurfaceTermIndexedMk(sk, start, end, ast_occurrence), name) {
-  ⊢ WhereGenericTerm(generics, SurfaceTermIndexedMk(sk, start, end, ast_occurrence), name) from match sk {
+  match sk {
     SkVar(arg_name) => where_generic_choice_sound(
       ast_occurrence,
       generics,
@@ -130,7 +129,7 @@ pub theorem constraint_generic_shape_sound(
       start,
       end,
       name,
-      generics_have(generics, arg_name),
+      generics_have(generics, surface_name_text(arg_name)),
       Refl,
       found
     )
@@ -139,10 +138,9 @@ pub theorem constraint_generic_shape_sound(
     SkBool(arg_value) => False::elim(ck_none_ne_some(name, found))
     SkApp(arg_head, arg_args) => False::elim(ck_none_ne_some(name, found))
     SkPi(arg_params, arg_result, arg_effects) => False::elim(ck_none_ne_some(name, found))
-    SkExists(arg_binder, arg_domain, arg_body) => False::elim(ck_none_ne_some(name, found))
-    SkLam(arg_params, arg_body) => False::elim(ck_none_ne_some(name, found))
+    SkExists(arg_binder, arg_domain, arg_body, unused) => False::elim(ck_none_ne_some(name, found))
+    SkLam(arg_params, arg_body, _, _) => False::elim(ck_none_ne_some(name, found))
     SkUnion(arg_parts) => False::elim(ck_none_ne_some(name, found))
-    SkProduct(arg_parts) => False::elim(ck_none_ne_some(name, found))
     SkTagged(arg_tag, arg_value) => False::elim(ck_none_ne_some(name, found))
     SkIf(arg_cond, arg_then, arg_otherwise) => False::elim(ck_none_ne_some(name, found))
     SkField(arg_value, arg_name) => False::elim(ck_none_ne_some(name, found))
@@ -150,18 +148,18 @@ pub theorem constraint_generic_shape_sound(
     SkPerform(arg_op, arg_args) => False::elim(ck_none_ne_some(name, found))
     SkHandle(arg_body, arg_handlers) => False::elim(ck_none_ne_some(name, found))
     SkBudget(arg_amount_memory, arg_amount, arg_body) => False::elim(ck_none_ne_some(name, found))
-    SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder) => False::elim(
+    SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder, _) => False::elim(
       ck_none_ne_some(name, found)
     )
     SkHole(arg_name) => False::elim(ck_none_ne_some(name, found))
     SkRecord(arg_name, arg_fields) => False::elim(ck_none_ne_some(name, found))
-    SkBorrow(arg_mutable, arg_value) => False::elim(ck_none_ne_some(name, found))
+    SkBorrow(arg_mutable, arg_mutable_orig, arg_value) => False::elim(ck_none_ne_some(name, found))
     SkFnKind(arg_kind, arg_ty) => False::elim(ck_none_ne_some(name, found))
     SkBorrowLam(arg_borrows, arg_lam) => False::elim(ck_none_ne_some(name, found))
     SkOther(arg_what) => False::elim(ck_none_ne_some(name, found))
+    SkAscribe(arg_what, arg_what_ty) => False::elim(ck_none_ne_some(name, found))
     SkRow(arg_what_effects) => False::elim(ck_none_ne_some(name, found))
     SkFloat(arg_what) => False::elim(ck_none_ne_some(name, found))
-    SkProject(arg_what, arg_what_ty) => False::elim(ck_none_ne_some(name, found))
     SkMacroCall(arg_name, arg_arg) => False::elim(ck_none_ne_some(name, found))
     SkQuote(arg_stmts_form, arg_stmts) => False::elim(ck_none_ne_some(name, found))
     SkSplice(arg_value) => False::elim(ck_none_ne_some(name, found))
@@ -173,11 +171,11 @@ pub theorem constraint_generic_shape_sound(
 }
 pub theorem constraint_generic_sound(
   source: SurfaceTerm,
-  generics: List(Pair(Text, Kind)),
+  generics: List(Text × Kind),
   name: Text,
   found: constraint_generic(source, generics) = Some(name)
 ): WhereGenericTerm(generics, source, name) {
-  ⊢ WhereGenericTerm(generics, source, name) from match source {
+  match source {
     SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => constraint_generic_shape_sound(
       ast_occurrence,
       sk,

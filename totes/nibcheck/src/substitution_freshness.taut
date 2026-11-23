@@ -1,11 +1,12 @@
-import std::prelude::Ord
+import std::builtin::ord
 import "widen_substitution_sound.taut"
-import std::Nat
-import std::Base
-import std::Map
-import std::MapLaws
+import std::nat
+import std::base
+import std::map
+import std::map_laws
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "rules_ty.taut"
 import "ty.taut"
 import "types_match.taut"
@@ -37,7 +38,7 @@ pub theorem subst_future_empty_at(
   empty(limit, Nat::le_refl(limit))
 }
 pub theorem fresh_strict_not_self(index: Nat): Nat::le(Succ(index), index) = false {
-  ⊢ Nat::le(Succ(index), index) = false from match index {
+  match index {
     Zero => Refl
     Succ(previous) => fresh_strict_not_self(previous)
   }

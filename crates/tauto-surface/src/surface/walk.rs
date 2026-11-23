@@ -2,7 +2,7 @@
 //! stand (`syntax::expand`, `macros`), and the parts of a program that run, for
 //! the checks of executable code (`rows`, `lin`, `direct`).
 
-use super::program::{Handler, Stmt};
+use super::program::{Handler, Pattern, Stmt};
 use super::{SurfaceTerm, TermKind};
 use std::sync::Arc;
 
@@ -33,6 +33,12 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
             if let Some(r) = &mut d.result {
                 f(r);
             }
+            for c in &mut d.where_ {
+                f(&mut c.ty);
+                for arg in &mut c.arguments {
+                    f(arg);
+                }
+            }
             f(&mut d.body);
         }
         Stmt::Theorem(d) | Stmt::Def(d) => {
@@ -58,7 +64,15 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
             f(condition);
             f(body);
         }
-        Stmt::Return(Some(e)) | Stmt::Expr(e) => f(e),
+        Stmt::For { pattern, source, body } => {
+            if let Pattern::Typed { ty, .. } = pattern {
+                f(ty);
+            }
+            f(source);
+            f(body);
+        }
+        Stmt::Loop { body } => f(body),
+        Stmt::Break(Some(e)) | Stmt::Return(Some(e)) | Stmt::Expr(e) => f(e),
         Stmt::Called { call, .. } => f(call),
         Stmt::Struct(d) | Stmt::Enum(d) => {
             for c in &mut d.constructors {
@@ -91,6 +105,12 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
             for (_, t) in &mut c.parameters {
                 f(t);
             }
+            for parent in &mut c.parents {
+                f(&mut parent.ty);
+                for argument in &mut parent.arguments {
+                    f(argument);
+                }
+            }
             for d in &mut c.methods {
                 for t in &mut d.generic_types {
                     f(t);
@@ -100,6 +120,12 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
                 }
                 if let Some(r) = &mut d.result {
                     f(r);
+                }
+                for c in &mut d.where_ {
+                    f(&mut c.ty);
+                    for arg in &mut c.arguments {
+                        f(arg);
+                    }
                 }
             }
         }
@@ -127,6 +153,12 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
                 if let Some(r) = &mut d.result {
                     f(r);
                 }
+                for c in &mut d.where_ {
+                    f(&mut c.ty);
+                    for arg in &mut c.arguments {
+                        f(arg);
+                    }
+                }
                 f(&mut d.body);
             }
         }
@@ -141,9 +173,23 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
                 if let Some(r) = &mut d.result {
                     f(r);
                 }
+                for c in &mut d.where_ {
+                    f(&mut c.ty);
+                    for arg in &mut c.arguments {
+                        f(arg);
+                    }
+                }
+                // A fallback body is Tauto code like any `fn`'s; a host
+                // placeholder has none to visit.
+                if super::program::extern_fn_has_body(d) {
+                    f(&mut d.body);
+                }
             }
         }
-        Stmt::Return(None)
+        Stmt::Break(None)
+        | Stmt::Continue
+        | Stmt::Return(None)
+        | Stmt::Reexport { .. }
         | Stmt::Import { .. }
         | Stmt::Syntax { .. }
         | Stmt::Macro { .. }
@@ -203,9 +249,7 @@ pub fn children(t: &mut SurfaceTerm, f: &mut dyn FnMut(&mut SurfaceTerm)) {
             f(body);
         }
         TermKind::BorrowLam { lam, .. } => f(lam),
-        TermKind::Union(items) | TermKind::Product(items) | TermKind::Tuple(items) => {
-            items.iter_mut().for_each(|a| f(a))
-        }
+        TermKind::Union(items) => items.iter_mut().for_each(|a| f(a)),
         TermKind::Tagged { term: inner, .. }
         | TermKind::Borrow { term: inner, .. }
         | TermKind::Splice(inner) => f(inner),
@@ -259,6 +303,9 @@ pub fn children(t: &mut SurfaceTerm, f: &mut dyn FnMut(&mut SurfaceTerm)) {
                 f(r);
             }
             for a in arms {
+                if let Pattern::Typed { ty, .. } = &mut a.pattern {
+                    f(ty);
+                }
                 if let Some(g) = &mut a.guard {
                     f(g);
                 }
@@ -301,6 +348,335 @@ pub fn children(t: &mut SurfaceTerm, f: &mut dyn FnMut(&mut SurfaceTerm)) {
         | TermKind::SyntaxLit(_)
         | TermKind::Row(_)
         | TermKind::Other(_) => {}
+    }
+}
+
+/// `f` on `t` and on each term inside it, outermost first, read where they
+/// stand: [`term`] makes each node it enters its own (`Arc::make_mut`), which
+/// copies every node of a term that is shared, so a question that only reads
+/// asks this one. `f` answers whether to go on: the walk stops at the first
+/// `false`, and the answer is whether it went through.
+pub fn visit<'a>(t: &'a SurfaceTerm, f: &mut dyn FnMut(&'a SurfaceTerm) -> bool) -> bool {
+    let mut todo = vec![t];
+    while let Some(t) = todo.pop() {
+        if !f(t) {
+            return false;
+        }
+        let at = todo.len();
+        visit_children(t, &mut |c| todo.push(c));
+        // Outermost first and left to right, as `term` goes.
+        todo[at..].reverse();
+    }
+    true
+}
+
+/// `f` on each term directly inside `t`, read where it stands ([`children`]
+/// without making the node its own).
+pub fn visit_children<'a>(t: &'a SurfaceTerm, f: &mut dyn FnMut(&'a SurfaceTerm)) {
+    match &*t.kind {
+        TermKind::App {
+            function,
+            arguments,
+        } => {
+            f(function);
+            arguments.iter().for_each(|a| f(a));
+        }
+        TermKind::Pi { params, result, .. } => {
+            params.iter().for_each(|(_, p)| f(p));
+            f(result);
+        }
+        TermKind::Exists { domain, body, .. } => {
+            f(domain);
+            f(body);
+        }
+        TermKind::Lam { body, types, .. } => {
+            types.iter().flatten().for_each(|ty| f(ty));
+            f(body);
+        }
+        TermKind::BorrowLam { lam, .. } => f(lam),
+        TermKind::Union(items) => items.iter().for_each(|a| f(a)),
+        TermKind::Tagged { term: inner, .. }
+        | TermKind::Borrow { term: inner, .. }
+        | TermKind::Splice(inner) => f(inner),
+        TermKind::FnKind { ty, .. } => f(ty),
+        TermKind::If {
+            condition,
+            then,
+            otherwise,
+        } => {
+            f(condition);
+            f(then);
+            if let Some(o) = otherwise {
+                f(o);
+            }
+        }
+        TermKind::Field { base, .. } => f(base),
+        TermKind::Ascribe { term, ty } => {
+            f(term);
+            f(ty);
+        }
+        TermKind::Block(stmts) | TermKind::Quote { body: stmts, .. } => {
+            stmts.iter().for_each(|s| visit_roots(s, f))
+        }
+        TermKind::Perform { args, .. } => args.iter().for_each(|a| f(a)),
+        TermKind::Handle { body, handlers } => {
+            f(body);
+            for h in handlers {
+                match h {
+                    Handler::Return { body, .. } => f(body),
+                    Handler::Operation { body, guard, .. } => {
+                        if let Some(g) = guard {
+                            f(g);
+                        }
+                        f(body);
+                    }
+                }
+            }
+        }
+        TermKind::Budget { steps, body, .. } => {
+            f(steps);
+            f(body);
+        }
+        TermKind::Match {
+            scrutinee,
+            result,
+            arms,
+            ..
+        } => {
+            f(scrutinee);
+            if let Some(r) = result {
+                f(r);
+            }
+            for a in arms {
+                if let Pattern::Typed { ty, .. } = &a.pattern {
+                    f(ty);
+                }
+                if let Some(g) = &a.guard {
+                    f(g);
+                }
+                if let Some(g) = &a.goal {
+                    f(g);
+                }
+                f(&a.body);
+            }
+        }
+        TermKind::Record { fields, base, .. } => {
+            fields.iter().for_each(|(_, v)| f(v));
+            if let Some(b) = base {
+                f(b);
+            }
+        }
+        TermKind::Step(s) => {
+            f(&s.arg);
+            if let Some(b) = &s.before {
+                f(b);
+            }
+            for a in &s.arms {
+                a.binders.iter().for_each(|(_, t)| f(t));
+                f(&a.goal);
+                f(&a.body);
+            }
+        }
+        // A macro's literal argument is the macro's to read.
+        TermKind::MacroCall { arg, .. } => {
+            if !matches!(&*arg.kind, TermKind::SyntaxLit(_)) {
+                f(arg)
+            }
+        }
+        TermKind::Var(_)
+        | TermKind::Declaration(_)
+        | TermKind::Nat(_)
+        | TermKind::Float(_)
+        | TermKind::Text(_)
+        | TermKind::Bool(_)
+        | TermKind::Hole(_)
+        | TermKind::SyntaxLit(_)
+        | TermKind::Row(_)
+        | TermKind::Other(_) => {}
+    }
+}
+
+/// [`roots`], read where they stand.
+pub fn visit_roots<'a>(s: &'a Stmt, f: &mut dyn FnMut(&'a SurfaceTerm)) {
+    match s {
+        Stmt::Let { ty, value, .. } | Stmt::Var { ty, value, .. } => {
+            if let Some(t) = ty {
+                f(t);
+            }
+            f(value);
+        }
+        Stmt::Assign { value, .. } => f(value),
+        Stmt::Fn(d) => {
+            for t in &d.generic_types {
+                f(t);
+            }
+            for t in d.param_types.iter().flatten() {
+                f(t);
+            }
+            if let Some(r) = &d.result {
+                f(r);
+            }
+            for c in &d.where_ {
+                f(&c.ty);
+                for arg in &c.arguments {
+                    f(arg);
+                }
+            }
+            f(&d.body);
+        }
+        Stmt::Theorem(d) | Stmt::Def(d) => {
+            for (_, t) in &d.params {
+                f(t);
+            }
+            f(&d.ty);
+            if let Some(b) = &d.body {
+                f(b);
+            }
+        }
+        Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
+            items.iter().for_each(|i| visit_roots(i, f))
+        }
+        // As for a call, an attribute's literal argument is the macro's to read.
+        Stmt::Attributed { arg, stmt, .. } => {
+            if !matches!(&*arg.kind, TermKind::SyntaxLit(_)) {
+                f(arg);
+            }
+            visit_roots(stmt, f);
+        }
+        Stmt::While { condition, body } => {
+            f(condition);
+            f(body);
+        }
+        Stmt::For { pattern, source, body } => {
+            if let Pattern::Typed { ty, .. } = pattern {
+                f(ty);
+            }
+            f(source);
+            f(body);
+        }
+        Stmt::Loop { body } => f(body),
+        Stmt::Break(Some(e)) | Stmt::Return(Some(e)) | Stmt::Expr(e) => f(e),
+        Stmt::Called { call, .. } => f(call),
+        Stmt::Struct(d) | Stmt::Enum(d) => {
+            for c in &d.constructors {
+                for (_, t) in &c.fields {
+                    f(t);
+                }
+            }
+        }
+        Stmt::Effect(e) => {
+            for t in e.params.iter().flatten() {
+                f(t);
+            }
+            if let Some(r) = &e.result {
+                f(r);
+            }
+        }
+        Stmt::Inductive(d) => {
+            for (_, t) in &d.params {
+                f(t);
+            }
+            f(&d.sort);
+            for c in &d.constructors {
+                for (_, t) in &c.params {
+                    f(t);
+                }
+                f(&c.result);
+            }
+        }
+        Stmt::Class(c) => {
+            for (_, t) in &c.parameters {
+                f(t);
+            }
+            for parent in &c.parents {
+                f(&parent.ty);
+                for argument in &parent.arguments {
+                    f(argument);
+                }
+            }
+            for d in &c.methods {
+                for t in &d.generic_types {
+                    f(t);
+                }
+                for t in d.param_types.iter().flatten() {
+                    f(t);
+                }
+                if let Some(r) = &d.result {
+                    f(r);
+                }
+                for c in &d.where_ {
+                    f(&c.ty);
+                    for arg in &c.arguments {
+                        f(arg);
+                    }
+                }
+            }
+        }
+        Stmt::Instance(i) => {
+            for t in &i.generic_types {
+                f(t);
+            }
+            f(&i.head);
+            for arg in &i.arguments {
+                f(arg);
+            }
+            for c in &i.where_ {
+                f(&c.ty);
+                for arg in &c.arguments {
+                    f(arg);
+                }
+            }
+            for d in &i.methods {
+                for t in &d.generic_types {
+                    f(t);
+                }
+                for t in d.param_types.iter().flatten() {
+                    f(t);
+                }
+                if let Some(r) = &d.result {
+                    f(r);
+                }
+                for c in &d.where_ {
+                    f(&c.ty);
+                    for arg in &c.arguments {
+                        f(arg);
+                    }
+                }
+                f(&d.body);
+            }
+        }
+        Stmt::Extern { fns, .. } => {
+            for d in fns {
+                for t in &d.generic_types {
+                    f(t);
+                }
+                for t in d.param_types.iter().flatten() {
+                    f(t);
+                }
+                if let Some(r) = &d.result {
+                    f(r);
+                }
+                for c in &d.where_ {
+                    f(&c.ty);
+                    for arg in &c.arguments {
+                        f(arg);
+                    }
+                }
+                // A fallback body is Tauto code like any `fn`'s; a host
+                // placeholder has none to visit.
+                if super::program::extern_fn_has_body(d) {
+                    f(&d.body);
+                }
+            }
+        }
+        Stmt::Break(None)
+        | Stmt::Continue
+        | Stmt::Return(None)
+        | Stmt::Reexport { .. }
+        | Stmt::Import { .. }
+        | Stmt::Syntax { .. }
+        | Stmt::Macro { .. }
+        | Stmt::Other(..) => {}
     }
 }
 
@@ -388,7 +764,12 @@ pub fn values_stmt<'a>(s: &'a Stmt, f: &mut impl FnMut(Node<'a>)) {
             values(condition, f);
             values(body, f);
         }
-        Stmt::Return(Some(e)) | Stmt::Expr(e) => values(e, f),
+        Stmt::For { source, body, .. } => {
+            values(source, f);
+            values(body, f);
+        }
+        Stmt::Loop { body } => values(body, f),
+        Stmt::Break(Some(e)) | Stmt::Return(Some(e)) | Stmt::Expr(e) => values(e, f),
         _ => {}
     }
 }

@@ -1,0 +1,97 @@
+import "coerce_frame.taut"
+import "tracked_run_frame.taut"
+import "tracked_read_frame.taut"
+import "coerce_sound.taut"
+import "checker.taut"
+import "checker_frame.taut"
+import "datas_frame.taut"
+import "infer_parts.taut"
+import "ty.taut"
+import "unify_sound.taut"
+import "../../surface/src/surface.taut"
+import std::text
+
+pub theorem ck_coerce_scrutinee_report_frame_tracked(
+  c: Checker,
+  s: Ty,
+  want: Ty,
+  found: Option(CoerceFound),
+  span: TySpan,
+  ordered: CkOrdered(c)
+): TrackedRunFrame(c, ck_coerce_scrutinee_report(c, s, want, found, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
+    Eq::sym(scrutinee_report_unf(c, s, want, found, span)),
+    tracked_run_bind(
+      <A: Unit, B: Ty>,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(coerce_scrutinee_ty(s, want, found), c1),
+      frame_error_if(c, coerce_scrutinee_refusal(c, found), span, coerce_scrutinee_refused(c, found)),
+      tracked_run_read(
+      c,
+      frame_error_if(c, coerce_scrutinee_refusal(c, found), span, coerce_scrutinee_refused(c, found)),
+      frame_error_if_ok(c, coerce_scrutinee_refusal(c, found), span, coerce_scrutinee_refused(c, found)),
+      frame_error_if_ok_tracked(c, coerce_scrutinee_refusal(c, found), span, coerce_scrutinee_refused(c, found)),
+      ordered
+    ),
+      ignored => c1 => o1 => tracked_run_return(c1, coerce_scrutinee_ty(s, want, found), o1)
+    )
+  )
+}
+
+pub theorem scrutinee_with_frame_tracked(
+  c: Checker,
+  s: Ty,
+  span: TySpan,
+  target: Option(Ty),
+  ordered: CkOrdered(c)
+): TrackedRunFrame(c, scrutinee_with(c, s, span, target)) {
+  match target {
+    None => tracked_run_return(c, s, ordered)
+    Some(want) => tracked_run_bind(
+      <A: Option(CoerceFound), B: Ty>,
+      c,
+      (found: Option(CoerceFound), c1: Checker) => ck_rewrap1(ck_coerce_scrutinee_report(c1, s, want, found, span)),
+      ck_coerce_fit(c, ck_resolve(c, s), want),
+      tracked_run_grows(c, ck_coerce_fit(c, ck_resolve(c, s), want), ck_coerce_fit_grows(c, ck_resolve(c, s), want, ordered)),
+      found => c1 => o1 => Eq::subst(
+        (z: Mut1(Ty, Checker)) => TrackedRunFrame(c1, z),
+        Eq::sym(ck_rewrap1_id(ck_coerce_scrutinee_report(c1, s, want, found, span))),
+        ck_coerce_scrutinee_report_frame_tracked(c1, s, want, found, span, o1)
+      )
+    )
+  }
+}
+
+pub theorem ck_coerce_scrutinee_frame_tracked(
+  c: Checker,
+  s: Ty,
+  arms: List(SurfaceArm),
+  span: TySpan,
+  ordered: CkOrdered(c)
+): TrackedRunFrame(c, ck_coerce_scrutinee(c, s, arms, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
+    Eq::sym(scrutinee_unf(c, s, arms, span)),
+    scrutinee_with_frame_tracked(c, s, span, coerce_scrutinee_target(c, s, arms), ordered)
+  )
+}
+
+pub theorem ck_coerce_assign_place_frame_tracked(
+  c: Checker,
+  env: List(Local),
+  place: Option(SurfaceTerm),
+  ordered: CkOrdered(c)
+): TrackedRunFrame(c, ck_coerce_assign_place(c, env, place)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
+    Eq::sym(assign_place_unf(c, env, place)),
+    tracked_run_read(
+      c,
+      assign_place_model(c, env, place),
+      frame_error_if_ok(c, option_text_or_empty(coerce_assign_place_message(c, env, place)), coerce_assign_span(place), option_text_some(coerce_assign_place_message(c, env, place))),
+      frame_error_if_ok_tracked(c, option_text_or_empty(coerce_assign_place_message(c, env, place)), coerce_assign_span(place), option_text_some(coerce_assign_place_message(c, env, place))),
+      ordered
+    )
+  )
+}

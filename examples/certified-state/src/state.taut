@@ -1,6 +1,6 @@
-import "../../../std/State.taut"
-import "../../../std/Nat.taut"
-import "../../../std/Base.taut"
+import std::state
+import std::nat
+import std::base
 
 pub(open) inductive GateState: Type {
   GateClosed(balance: Nat): GateState
@@ -12,19 +12,19 @@ pub(open) inductive GateCommand: Type {
   GateSpend: GateCommand
 }
 pub fn gate_balance(state: GateState): Nat {
-  ⊢ Nat from match state {
+  match state {
     GateClosed(n) => n
     GateOpen(n) => n
   }
 }
 pub fn gate_allowed(state: GateState): Bool {
-  ⊢ Bool from match state {
-    GateClosed(n) => false
-    GateOpen(n) => true
+  match state {
+    GateClosed(^n) => false
+    GateOpen(^n) => true
   }
 }
 pub fn gate_step(state: GateState, command: GateCommand): GateState {
-  ⊢ GateState from match command {
+  match command {
     GateAuthorize => GateOpen(gate_balance(state))
     GateRevoke => GateClosed(gate_balance(state))
     GateSpend => ⊢ GateState from match state {
@@ -37,7 +37,7 @@ pub def GateInvariant(capacity: Nat, state: GateState): Prop :=
 Nat::le(gate_balance(state), capacity) = true
 
 pub theorem gate_pred_bound(n: Nat): (Nat::le(Nat::pred(n), n) = true) {
-  ⊢ (Nat::le(Nat::pred(n), n) = true) from match n {
+  match n {
     Zero => Refl
     Succ(k) => Nat::le_succ(k)
   }
@@ -46,7 +46,7 @@ pub theorem gate_step_nonincreasing(
   state: GateState,
   command: GateCommand
 ): (Nat::le(gate_balance(gate_step(state, command)), gate_balance(state)) = true) {
-  ⊢ (Nat::le(gate_balance(gate_step(state, command)), gate_balance(state)) = true) from match command {
+  match command {
     GateAuthorize => Nat::le_refl(gate_balance(state))
     GateRevoke => Nat::le_refl(gate_balance(state))
     GateSpend => match state {

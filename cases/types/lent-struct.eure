@@ -1,0 +1,269 @@
+// `struct &T` declares how `T` is lent, `&orig T` borrows the original value,
+// and `Lend(T)` lends it.
+
+@ cases.lent-struct-is-read-through-its-fields
+description = "A `&Bag` is the `struct &Bag`: functions on it read its fields, and `&b` lends `b`."
+source = ```nib
+struct Bag { items: List(u64), n: u64 }
+struct &Bag { n: u64 }
+instance Lend(Bag) {
+  fn lend(owned: &orig Bag): &Bag { &Bag { n: owned.n } }
+  fn owned(lent: &Bag): Bag { Bag { items: Nil, n: lent.n } }
+}
+fn count(b: &Bag): u64 { b.n }
+fn first(b: &orig Bag): List(u64) { b.items }
+let b := Bag { items: Nil, n: 3 }
+let c := count(&b)
+let f := first(&orig b)
+```
+types = "ok"
+
+@ cases.lent-struct-hides-the-owner-fields
+description = "The owner's fields are not read through `&T`; `&orig T` reads them."
+source = ```nib
+struct Bag { items: List(u64), n: u64 }
+struct &Bag { n: u64 }
+instance Lend(Bag) {
+  fn lend(owned: &orig Bag): &Bag { &Bag { n: owned.n } }
+  fn owned(lent: &Bag): Bag { Bag { items: Nil, n: lent.n } }
+}
+fn first(b: &Bag): List(u64) { b.items }
+```
+types = "error: &Bag has no field `items`"
+
+@ cases.lent-struct-needs-lend
+description = "A `struct &T` without `Lend(T)` in its module is an error."
+source = ```nib
+struct Bag { items: List(u64), n: u64 }
+struct &Bag { n: u64 }
+```
+types = "error: struct &Bag needs an instance of Lend(Bag) in the same module"
+
+@ cases.lent-struct-needs-its-owner
+description = "A `struct &T` needs `T` in the same module."
+source = ```nib
+struct &Bag { n: u64 }
+```
+types = "error: struct &Bag needs a type Bag declared in the same module"
+
+@ cases.lent-struct-fields-are-duplicable-or-borrows
+description = "A field of `struct &T` that is neither duplicable nor a borrow is an error."
+source = ```nib
+struct(affine) F {}
+struct Bag { f: F }
+struct &Bag { f: F }
+instance Lend(Bag) {
+  fn lend(owned: &orig Bag): &Bag { &Bag { f: F {} } }
+  fn owned(lent: &Bag): Bag { Bag { f: F {} } }
+}
+```
+types = "error: field f of struct &Bag is neither duplicable nor a borrow"
+
+@ cases.lent-struct-takes-the-owner-parameters
+description = "`struct &T` takes the type parameters of `T`."
+source = ```nib
+struct Bag(A: Type) { items: List(A) }
+struct &Bag { n: u64 }
+```
+types = "error: struct &Bag takes the same type parameters as Bag"
+
+@ cases.lent-struct-of-generic-borrow
+description = "A generic `&A` with `A` a type that has `struct &T` is that struct."
+source = ```nib
+struct Bag { items: List(u64), n: u64 }
+struct &Bag { n: u64 }
+instance Lend(Bag) {
+  fn lend(owned: &orig Bag): &Bag { &Bag { n: owned.n } }
+  fn owned(lent: &Bag): Bag { Bag { items: Nil, n: lent.n } }
+}
+fn keep<A: Linear>(x: &A): &A { x }
+fn count(b: &Bag): u64 { b.n }
+let b := Bag { items: Nil, n: 3 }
+let c := count(keep(&b))
+```
+types = "ok"
+
+@ cases.lent-struct-freezes-its-owner
+description = "A kept `&T` holds a borrow of its owner, which stays frozen while it is used."
+source = ```nib
+struct Bag { items: List(u64), n: u64 }
+struct &Bag { n: &u64 }
+instance Lend(Bag) {
+  fn lend(owned: &orig Bag): &Bag { &Bag { n: &owned.n } }
+  fn owned(lent: &Bag): Bag { Bag { items: Nil, n: lent.n } }
+}
+var b := Bag { items: Nil, n: 3 }
+let r: &Bag := &b
+b := Bag { items: Nil, n: 4 }
+let used_later := &r
+```
+lin = "error: b is frozen by r"
+
+@ cases.lent-struct-is-lent-by-every-backend
+description = "Every backend lends `&b` as `Lend::lend(&orig b)`."
+source = ```nib
+struct Bag { items: List(u64), n: u64 }
+struct &Bag { n: u64 }
+instance Lend(Bag) {
+  fn lend(owned: &orig Bag): &Bag { &Bag { n: owned.n } }
+  fn owned(lent: &Bag): Bag { Bag { items: Nil, n: lent.n } }
+}
+fn count(b: &Bag): u64 { b.n }
+let b := Bag { items: Nil, n: 3 }
+show(&count(&b))
+```
+stdout = "3\n"
+
+@ cases.lent-struct-is-copied-by-owned
+description = "A `&T` given as a duplicable `T` is copied by `Lend::owned`, so the copy has only what `owned` gives."
+source = ```nib
+struct Bag { n: u64, m: u64 }
+struct &Bag { n: u64 }
+instance Lend(Bag) {
+  fn lend(owned: &orig Bag): &Bag { &Bag { n: owned.n } }
+  fn owned(lent: &Bag): Bag { Bag { n: lent.n, m: 0 } }
+}
+fn take(b: Bag): u64 { b.m }
+fn via(l: &Bag): u64 { take(l) }
+let b := Bag { n: 3, m: 5 }
+show(&via(&b))
+show(&take(b))
+```
+stdout = "0\n5\n"
+
+@ cases.lent-struct-of-a-generic-type-is-lent
+description = "A `struct &T` over type parameters is lent at the arguments of the owner: `Lend::lend` of a generic instance takes `&orig Bag(u64)` as `&orig Bag(A)`."
+source = ```nib
+struct Bag(A: Type) { items: List(A), n: u64 }
+struct &Bag(A: Type) { n: u64 }
+instance<A> Lend(Bag(A)) {
+  fn lend(owned: &orig Bag(A)): &Bag(A) { &Bag { n: owned.n } }
+  fn owned(lent: &Bag(A)): Bag(A) { Bag { items: Nil, n: lent.n } }
+}
+fn count<A>(b: &Bag(A)): u64 { b.n }
+let b: Bag(u64) := Bag { items: Nil, n: 4 }
+show(&count(&b))
+```
+stdout = "4\n"
+
+@ cases.lent-struct-holds-a-list-of-borrows
+description = "A field of `struct &T` may hold borrows inside a duplicable type (`List(Option(&A))`): the `&T` is copied as its borrows are, whatever the kind of `A`."
+source = ```nib
+struct Bag(A: Type) { items: List(Option(A)) }
+struct &Bag(A: Type) { items: List(Option(&A)) }
+fn lend_all<A>(xs: &List(Option(A))): List(Option(&A)) {
+  match xs { Nil => Nil, Cons(x, rest) => Cons(match x { Some(a) => Some(a), None => None }, lend_all(rest)) }
+}
+instance<A> Lend(Bag(A)) {
+  fn lend(owned: &orig Bag(A)): &Bag(A) { &Bag { items: lend_all(&owned.items) } }
+  fn owned(lent: &Bag(A)): Bag(A) { Bag { items: Nil } }
+}
+fn filled<A>(b: &Bag(A)): u64 { match b.items { Nil => 0, Cons(_, rest) => 1 } }
+fn twice<A>(b: &Bag(A)): u64 { let c := b; let x := filled(c); filled(b) }
+let b: Bag(u64) := Bag { items: Cons(Some(1), Cons(None, Nil)) }
+show(&twice(&b))
+```
+stdout = "1\n"
+
+@ cases.lent-struct-list-of-borrows-of-a-copy-type
+description = "A borrow inside a field's type argument stays a borrow, also of a duplicable type (`List(&u64)`)."
+source = ```nib
+struct Bag { items: List(u64) }
+struct &Bag { items: List(&u64) }
+fn lend_all(xs: &List(u64)): List(&u64) {
+  match xs { Nil => Nil, Cons(x, rest) => Cons(x, lend_all(rest)) }
+}
+instance Lend(Bag) {
+  fn lend(owned: &orig Bag): &Bag { &Bag { items: lend_all(&owned.items) } }
+  fn owned(lent: &Bag): Bag { Bag { items: Nil } }
+}
+fn filled(b: &Bag): u64 { match b.items { Nil => 0, Cons(_, _) => 1 } }
+let b := Bag { items: Cons(1, Nil) }
+show(&filled(&b))
+```
+stdout = "1\n"
+
+@ cases.lent-struct-list-of-owned-values-is-an-error
+description = "A field of `struct &T` that holds a non-duplicable value inside a type argument is an error, as one that is that value."
+source = ```nib
+struct(affine) F {}
+struct Bag { f: List(F) }
+struct &Bag { f: List(Option(F)) }
+instance Lend(Bag) {
+  fn lend(owned: &orig Bag): &Bag { &Bag { f: Nil } }
+  fn owned(lent: &Bag): Bag { Bag { f: Nil } }
+}
+```
+types = "error: field f of struct &Bag is neither duplicable nor a borrow"
+
+@ cases.inductive-lent-struct-is-a-kernel-type
+description = "An `inductive struct &T` is its own family to the kernel: `&T(…)` names it and `&T { … }` builds it, so a law of lending is a theorem over it."
+source = ```tauto
+inductive struct Bag(A: Type) { items: List(A), n: Nat }
+inductive struct &Bag(A: Type) { n: Nat }
+instance<A> Lend(Bag(A)) {
+  fn lend(owned: &orig Bag(A)): &Bag(A) { &Bag { n: owned.n } }
+  fn owned(lent: &Bag(A)): Bag(A) { Bag { items: Nil, n: lent.n } }
+}
+fn lend_bag<A: Type>(b: Bag(A)): &Bag(A) { &Bag { n: b.n } }
+fn own_bag<A: Type>(l: &Bag(A)): Bag(A) { Bag { items: Nil, n: l.n } }
+theorem lend_owned<A: Type>(y: &Bag(A)): lend_bag(own_bag(y)) = y {
+  match y { Mk(n) => Refl }
+}
+```
+checks."lend_owned" = "ok"
+
+@ cases.inductive-lent-struct-is-not-the-owner
+description = "The owner's constructor does not build or match an `inductive struct &T`."
+source = ```tauto
+inductive struct Bag(A: Type) { items: List(A), n: Nat }
+inductive struct &Bag(A: Type) { n: Nat }
+instance<A> Lend(Bag(A)) {
+  fn lend(owned: &orig Bag(A)): &Bag(A) { &Bag { n: owned.n } }
+  fn owned(lent: &Bag(A)): Bag(A) { Bag { items: Nil, n: lent.n } }
+}
+fn n_of<A: Type>(y: &Bag(A)): Nat {
+  match y { Bag { items, n } => n }
+}
+```
+checks."n_of" = "error: `Bag::Mk` is a constructor of `Bag`, not `&Bag`"
+
+@ cases.lent-struct-pattern-matches-by-fields
+description = "`&T { f, … }` matches the `struct &T` of `T` by its fields, as `&T { f: e }` builds it."
+source = ```nib
+struct Bag { items: List(u64), n: u64 }
+struct &Bag { n: u64 }
+instance Lend(Bag) {
+  fn lend(owned: &orig Bag): &Bag { &Bag { n: owned.n } }
+  fn owned(lent: &Bag): Bag { Bag { items: Nil, n: lent.n } }
+}
+fn count(b: &Bag): u64 { match b { &Bag { n } => n } }
+let b := Bag { items: Nil, n: 6 }
+show(&count(&b))
+```
+stdout = "6\n"
+
+@ cases.inductive-lent-struct-pattern-is-its-constructor
+description = "To the kernel, `&T { f, … }` is the pattern of the constructor of the `inductive struct &T`, as `Mk(…)` is."
+source = ```tauto
+inductive struct Bag(A: Type) { items: List(A), n: Nat }
+inductive struct &Bag(A: Type) { n: Nat }
+instance<A> Lend(Bag(A)) {
+  fn lend(owned: &orig Bag(A)): &Bag(A) { &Bag { n: owned.n } }
+  fn owned(lent: &Bag(A)): Bag(A) { Bag { items: Nil, n: lent.n } }
+}
+fn lend_bag<A: Type>(b: Bag(A)): &Bag(A) { &Bag { n: b.n } }
+fn own_bag<A: Type>(l: &Bag(A)): Bag(A) { Bag { items: Nil, n: l.n } }
+theorem lend_owned<A: Type>(y: &Bag(A)): lend_bag(own_bag(y)) = y {
+  match y { &Bag { n } => Refl }
+}
+```
+checks."lend_owned" = "ok"
+
+@ cases.lent-struct-pattern-of-a-type-without-one
+description = "`&T { … }` of a `T` without a `struct &T` names no constructor."
+source = ```nib
+struct Bag { n: u64 }
+fn count(b: &Bag): u64 { match b { &Bag { n } => n } }
+```
+types = "error: &Bag is not a constructor"

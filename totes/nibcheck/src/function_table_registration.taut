@@ -1,15 +1,16 @@
-import std::prelude::Ord
+import std::builtin::ord
 import "signature_table_frame.taut"
 import "program_signature_sound.taut"
 import "decl_names_sound.taut"
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Text
+import std::map
+import std::map_laws
+import std::map_text
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "signature_frame.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -38,7 +39,7 @@ pub theorem fnt_step_bind<A: Type, B: Type>(
   head: CkFnsStep(c, m),
   tail: ∀ value: A. ∀ next: Checker. CkFnsStep(next, k(value, next))
 ): CkFnsStep(c, frame_bind(k, m)) {
-  ⊢ CkFnsStep(c, frame_bind(k, m)) from match m {
+  match m {
     mut1(value, next) => ordered => tail(value, next, head(ordered))
   }
 }
@@ -84,8 +85,7 @@ pub theorem signature_add_ordered(
   source: SurfaceFn
 ): CkFnsStep(c, signature_add(c, source)) {
   fnt_step_bind(
-    Scheme,
-    Scheme,
+    <A: Scheme, B: Scheme>,
     c,
     (scheme: Scheme, next: Checker) => signature_store(next, source, scheme),
     ck_signature(c, source),
@@ -229,7 +229,7 @@ pub theorem fnt_preserved_bind<A: Type, B: Type>(
   head: CkFnPreserved(name, c, m),
   tail: ∀ value: A. ∀ next: Checker. CkFnPreserved(name, next, k(value, next))
 ): CkFnPreserved(name, c, frame_bind(k, m)) {
-  ⊢ CkFnPreserved(name, c, frame_bind(k, m)) from match m {
+  match m {
     mut1(value, next) => AndIntro(
       ordered => (And::left(tail(value, next)))((And::left(head))(ordered)),
       ordered => Eq::trans(
@@ -267,8 +267,7 @@ pub theorem signature_add_preserved(
   apart: FnNameApart(name, signature_name(source))
 ): CkFnPreserved(name, c, signature_add(c, source)) {
   fnt_preserved_bind(
-    Scheme,
-    Scheme,
+    <A: Scheme, B: Scheme>,
     name,
     c,
     (scheme: Scheme, next: Checker) => signature_store(next, source, scheme),
@@ -295,8 +294,8 @@ pub theorem fnt_step_return_after<A: Type, B: Type>(
   value: B,
   m: Mut1(A, Checker),
   step: CkFnsStep(c, m)
-): CkFnsStep(c, frame_return(A, B, value, m)) {
-  ⊢ CkFnsStep(c, frame_return(A, B, value, m)) from match m {
+): CkFnsStep(c, frame_return(<A: A, B: B>, value, m)) {
+  match m {
     mut1(ignored, next) => step
   }
 }

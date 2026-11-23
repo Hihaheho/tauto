@@ -5,7 +5,7 @@ pub fn rustgen_closure_append(
   left: List(RustgenBinding),
   right: List(RustgenBinding)
 ): List(RustgenBinding) {
-  ⊢ List(RustgenBinding) from match left {
+  match left {
     Nil => right
     Cons(binding, rest) => Cons(binding, rustgen_closure_append(rest, right))
   }
@@ -15,7 +15,7 @@ pub fn rustgen_closure_reverse(
   bindings: List(RustgenBinding),
   done: List(RustgenBinding)
 ): List(RustgenBinding) {
-  ⊢ List(RustgenBinding) from match bindings {
+  match bindings {
     Nil => done
     Cons(binding, rest) => rustgen_closure_reverse(rest, Cons(binding, done))
   }
@@ -26,10 +26,10 @@ pub fn rustgen_closure_visible(
   locals: List(RustgenBinding),
   seen: List(RustgenBinding)
 ): List(RustgenBinding) {
-  ⊢ List(RustgenBinding) from match locals {
+  match locals {
     Nil => Nil
     Cons(binding, rest) => ⊢ List(RustgenBinding) from match rustgen_find(binding.name, seen) {
-      Some(ty) => rustgen_closure_visible(rest, seen)
+      Some(^ty) => rustgen_closure_visible(rest, seen)
       None => Cons(binding, rustgen_closure_visible(rest, Cons(binding, seen)))
     }
   }
@@ -41,10 +41,10 @@ pub fn rustgen_closure_parameters(
   locals: List(RustgenBinding),
   done: List(RustgenBinding)
 ): RustgenResult(List(RustgenBinding)) {
-  ⊢ RustgenResult(List(RustgenBinding)) from match names {
+  match names {
     Nil => ⊢ RustgenResult(List(RustgenBinding)) from match types {
       Nil => RustgenOk(rustgen_closure_reverse(done, Nil))
-      Cons(ty, rest) => RustgenErr("closure parameter count differs")
+      Cons(^ty, ^rest) => RustgenErr("closure parameter count differs")
     }
     Cons(name, rest) => ⊢ RustgenResult(List(RustgenBinding)) from match types {
       Nil => RustgenErr("closure parameter count differs")
@@ -52,7 +52,7 @@ pub fn rustgen_closure_parameters(
         name,
         rustgen_closure_append(done, locals)
       ) {
-        Some(existing) => RustgenErr("duplicate or shadowed closure parameter")
+        Some(^existing) => RustgenErr("duplicate or shadowed closure parameter")
         None => rustgen_closure_parameters(
           rest,
           more,
@@ -66,24 +66,24 @@ pub fn rustgen_closure_parameters(
 
 mutual {
   pub fn rustgen_capture_concrete(k: Nat, ty: RustgenType): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match ty {
-        RustgenVar(name) => false
-        RustgenMeta(name) => false
-        RustgenNumber(id, value) => false
-        RustgenApply(name, args) => rustgen_capture_types(j, args)
+        RustgenVar(^name) => false
+        RustgenMeta(^name) => false
+        RustgenNumber(^id, ^value) => false
+        RustgenApply(^name, args) => rustgen_capture_types(j, args)
         RustgenCallable(params, result) => rustgen_capture_types(j, Cons(result, params))
         RustgenInt => true
         RustgenNat => true
         RustgenBool => true
         RustgenText => true
-        RustgenNamed(name) => true
+        RustgenNamed(^name) => true
       }
     }
   }
   pub fn rustgen_capture_types(k: Nat, types: List(RustgenType)): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => false
       Succ(j) => ⊢ Bool from match types {
         Nil => true
@@ -93,7 +93,7 @@ mutual {
   }
 }
 pub fn rustgen_captures_concrete(locals: List(RustgenBinding)): Bool {
-  ⊢ Bool from match locals {
+  match locals {
     Nil => true
     Cons(binding, rest) => rustgen_capture_concrete(
       10000,
@@ -104,24 +104,24 @@ pub fn rustgen_captures_concrete(locals: List(RustgenBinding)): Bool {
 
 mutual {
   pub fn rustgen_contains_callable(k: Nat, ty: RustgenType): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => true
       Succ(j) => ⊢ Bool from match ty {
-        RustgenCallable(params, result) => true
-        RustgenApply(name, args) => rustgen_contains_callables(j, args)
-        RustgenVar(name) => false
-        RustgenMeta(name) => true
-        RustgenNumber(id, value) => false
+        RustgenCallable(^params, ^result) => true
+        RustgenApply(^name, args) => rustgen_contains_callables(j, args)
+        RustgenVar(^name) => false
+        RustgenMeta(^name) => true
+        RustgenNumber(^id, ^value) => false
         RustgenInt => false
         RustgenNat => false
         RustgenBool => false
         RustgenText => false
-        RustgenNamed(name) => false
+        RustgenNamed(^name) => false
       }
     }
   }
   pub fn rustgen_contains_callables(k: Nat, types: List(RustgenType)): Bool {
-    ⊢ Bool from match k {
+    match k {
       Zero => true
       Succ(j) => ⊢ Bool from match types {
         Nil => false

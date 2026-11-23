@@ -1,0 +1,210 @@
+// The written types of a `match`: the type of the whole and each arm's goal.
+
+import "types_decl_head.taut"
+import std::base
+import std::list
+import std::text
+import "checker.taut"
+import "messages.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_match.taut"
+import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
+
+// `match e: G { C => ⊢ G' from p }`: the written type is the type of the whole
+// `match`, and an arm's goal the type of its body. A type that depends on a
+// value (it names a local) is a proof's, which Nib does not check.
+mutual {
+  pub fn type_local_named(t: SurfaceTerm, env: List(Local)): Option(Text) {
+    match t {
+      SurfaceTermIndexedMk(k, ^start, ^end, ^occurrence) => type_local_named_kind(k, env)
+    }
+  }
+
+  pub fn type_local_named_kind(k: SurfaceKind, env: List(Local)): Option(Text) {
+    match k {
+      SkVar(n) => if env_has(env, surface_name_text(n)) { Some(surface_name_text(n)) } else { None }
+      SkApp(f, args) => option_or_else_text(
+        type_local_named(f, env),
+        type_local_named_each(args, env)
+      )
+      SkPi(params, result, ^effects) => option_or_else_text(
+        type_local_named_params(params, env),
+        type_local_named(result, env)
+      )
+      SkUnion(ts) => type_local_named_each(ts, env)
+      SkExists(^binder, domain, body, ^unused) => option_or_else_text(
+        type_local_named(domain, env),
+        type_local_named(body, env)
+      )
+      SkTagged(^tag, value) => type_local_named(value, env)
+      SkLam(^params, body, _, _) => type_local_named(body, env)
+      SkBorrowLam(^r#borrows, lam) => type_local_named(lam, env)
+      SkField(base, ^name) => type_local_named(base, env)
+      SkBorrow(^mutable, ^mutable_orig, value) => type_local_named(value, env)
+      SkFnKind(^kind, ty) => type_local_named(ty, env)
+      _ => None
+    }
+  }
+
+  pub fn type_local_named_each(ts: List(SurfaceTerm), env: List(Local)): Option(Text) {
+    match ts {
+      Nil => None
+      Cons(t, rest) => option_or_else_text(
+        type_local_named(t, env),
+        type_local_named_each(rest, env)
+      )
+    }
+  }
+
+  pub fn type_local_named_params(ps: List(SurfaceParam), env: List(Local)): Option(Text) {
+    match ps {
+      Nil => None
+      Cons(p, rest) => option_or_else_text(
+        type_local_named_param(p, env),
+        type_local_named_params(rest, env)
+      )
+    }
+  }
+
+  pub fn type_local_named_param(p: SurfaceParam, env: List(Local)): Option(Text) {
+    match p {
+      SurfaceParamMk(^name, ty, _) => type_local_named(ty, env)
+    }
+  }
+}
+
+pub fn option_or_else_text(a: Option(Text), b: Option(Text)): Option(Text) {
+  match a {
+    Some(^x) => a
+    None => b
+  }
+}
+
+// The type a `match` or its arm is written to have, or `None` (after an
+// error) where it names a local.
+pub fn ck_match_type(c: &mut Checker, t: SurfaceTerm, env: List(Local)): Option(Ty) {
+  match type_local_named(t, env) {
+    Some(n) => {
+      ck_error(&mut c, match_depends_on_value_message(n), span_of(t))
+      None
+    }
+    None => {
+      let scope := type_scope(c.type_params)
+      Some(ck_written(&mut c, t, scope))
+    }
+  }
+}
+
+pub fn ck_match_type_opt(c: &mut Checker, t: Option(SurfaceTerm), env: List(Local)): Option(Ty) {
+  match t {
+    None => None
+    Some(w) => ck_match_type(&mut c, w, env)
+  }
+}
+
+pub fn ck_arm_goals(c: &mut Checker, arms: List(SurfaceArm), env: List(Local)): List(Option(Ty)) {
+  match arms {
+    Nil => Nil
+    Cons(arm, rest) => {
+      let g := ck_match_type_opt(&mut c, arm.goal, env)
+      let gs := ck_arm_goals(&mut c, rest, env)
+      Cons(g, gs)
+    }
+  }
+}
+
+// Each written goal against the type of the whole `match`.
+pub fn ck_arm_goals_fit(
+  c: &mut Checker,
+  goals: List(Option(Ty)),
+  arms: List(SurfaceArm),
+  want: Option(Ty)
+): Unit {
+  match arms {
+    Nil => ()
+    Cons(arm, rest) => {
+      ⊢ Unit from match want {
+        None => ()
+        Some(w) => ⊢ Unit from match goal_head(goals) {
+          None => ()
+          Some(g) => ⊢ Unit from match arm.goal {
+            None => ()
+            Some(written) => ck_expect(&mut c, g, w, span_of(written), what_arm_goal_message())
+          }
+        }
+      }
+      ck_arm_goals_fit(&mut c, List::tail(goals), rest, want)
+    }
+  }
+}
+
+pub fn goal_head(xs: List(Option(Ty))): Option(Ty) {
+  match xs {
+    Nil => None
+    Cons(x, ^rest) => x
+  }
+}
+
+// The type last recorded for the term at `at`.
+pub fn terms_find(ts: List(TermAt × Ty), at: TermAt): Option(Ty) {
+  match ts {
+    Nil => None
+    Cons(e, rest) => ⊢ Option(Ty) from match term_at_compare(e.fst, at) {
+      Equal => Some(e.snd)
+      Less => terms_find(rest, at)
+      Greater => terms_find(rest, at)
+    }
+  }
+}
+
+// Each arm's body against its written goal.
+pub fn ck_arm_bodies_fit(c: &mut Checker, goals: List(Option(Ty)), arms: List(SurfaceArm)): Unit {
+  match arms {
+    Nil => ()
+    Cons(arm, rest) => {
+      ⊢ Unit from match goal_head(goals) {
+        None => ()
+        Some(g) => ⊢ Unit from match terms_find(c.terms, term_at_of(arm.body)) {
+          None => ()
+          Some(b) => ck_expect(&mut c, b, g, span_of(arm.body), what_arm_body_message())
+        }
+      }
+      ck_arm_bodies_fit(&mut c, List::tail(goals), rest)
+    }
+  }
+}
+
+// The written types of a `match` before its arms are checked: the type of the
+// whole and each arm's goal.
+pub fn ck_match_before(
+  c: &mut Checker,
+  motive: Option(SurfaceTerm),
+  arms: List(SurfaceArm),
+  env: List(Local)
+): Option(Ty) × List(Option(Ty)) {
+  let want := ck_match_type_opt(&mut c, motive, env)
+  let goals := ck_arm_goals(&mut c, arms, env)
+  ck_arm_goals_fit(&mut c, goals, arms, want)
+  #(want, goals)
+}
+
+// The bodies against their goals, and the type of the `match`: the written one
+// when there is one.
+pub fn ck_match_after(
+  c: &mut Checker,
+  before: Option(Ty) × List(Option(Ty)),
+  arms: List(SurfaceArm),
+  got: Ty,
+  span: TySpan
+): Ty {
+  ck_arm_bodies_fit(&mut c, before.snd, arms)
+  ⊢ Ty from match before.fst {
+    None => got
+    Some(w) => {
+      ck_expect(&mut c, got, w, span, what_match_result_message())
+      w
+    }
+  }
+}

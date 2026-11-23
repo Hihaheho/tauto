@@ -1,0 +1,180 @@
+import "../src/lower.taut"
+import "../src/read.taut"
+import "../src/syntax.taut"
+import "../src/value.taut"
+import "../src/write.taut"
+import std::base
+import std::text
+import "../src/eure.taut"
+
+// The documents that `to_text` writes and `parse` reads back, and the values the reader gives
+// for what the writer wrote.
+
+// ---- which documents ---------------------------------------------------------------------
+
+// A key the reader reads back from a path: a string or an integer.
+pub fn Key::ok(k: Key): Bool {
+  match k {
+    Kstr(^t) => true
+    Knum(^neg, ^n) => true
+    Ktup(^ks) => false
+  }
+}
+
+// Code is written inline, so it has no backtick and no line break; a language is a name other
+// than `plaintext`.
+pub fn lang_ok(l: Lang): Bool {
+  match l {
+    Plaintext => true
+    Implicit => true
+    Named(n) => Bool::and(is_ident(Text::bytes(n)), not(Text::eq(n, "plaintext")))
+  }
+}
+
+pub fn text_ok(l: Lang, t: Text): Bool {
+  match l {
+    Plaintext => true
+    Implicit => fits_inline(Text::bytes(t))
+    Named(^n) => Bool::and(lang_ok(l), fits_inline(Text::bytes(t)))
+  }
+}
+
+pub fn label_ok(lb: Option(Text)): Bool {
+  match lb {
+    None => true
+    Some(t) => is_ident(Text::bytes(t))
+  }
+}
+
+// `wf_node(n)`: `parse(to_text(n))` gives `n` back. Labels and extension names are names, keys
+// are strings or integers, no key of a map and no extension of a node comes twice, and code is
+// written inline. `P` is the part of a map or of the extensions before the rest.
+mutual {
+  pub fn wf_node(n: Node): Bool {
+    match n {
+      Mk(v, ext) => Bool::and(wf_value(v), wf_exts(ext, Nil))
+    }
+  }
+  pub fn wf_value(v: Value): Bool {
+    match v {
+      Vhole(lb) => label_ok(lb)
+      Vnull => true
+      Vbool(^b) => true
+      Vint(^neg, ^n) => true
+      Vdec(^neg, ^mant, ^eneg, ^e) => true
+      Vtext(lg, t) => text_ok(lg, t)
+      Varr(xs) => wf_items(xs)
+      Vtup(xs) => wf_items(xs)
+      Vmap(es) => wf_entries(es, Nil)
+    }
+  }
+  pub fn wf_items(xs: List(Node)): Bool {
+    match xs {
+      Nil => true
+      Cons(x, t) => Bool::and(wf_node(x), wf_items(t))
+    }
+  }
+  pub fn wf_entries(es: List(Key × Node), p: List(Key × Node)): Bool {
+    match es {
+      Nil => true
+      Cons(e, t) => Bool::and(wf_entry(e, p), wf_entries(t, snoc(p, e)))
+    }
+  }
+  pub fn wf_entry(e: Key × Node, p: List(Key × Node)): Bool {
+    match e {
+      #(k, n) => Bool::and(
+        Key::ok(k),
+        Bool::and(not(assoc_has(key_eq, k, p)), wf_node(n))
+      )
+    }
+  }
+  pub fn wf_exts(es: List(Text × Node), p: List(Text × Node)): Bool {
+    match es {
+      Nil => true
+      Cons(e, t) => Bool::and(wf_ext(e, p), wf_exts(t, snoc(p, e)))
+    }
+  }
+  pub fn wf_ext(e: Text × Node, p: List(Text × Node)): Bool {
+    match e {
+      #(k, n) => Bool::and(
+        is_ident(Text::bytes(k)),
+        Bool::and(not(assoc_has(Text::eq, k, p)), wf_node(n))
+      )
+    }
+  }
+}
+
+// ---- what the reader gives -----------------------------------------------------------------
+
+// A value that has extensions is written `{ = v, $e => w, }`.
+fn wrap_ext(h: Bool, e: Expr, xb: List(List(Seg) × Expr)): Expr {
+  match h {
+    true => Eobj(Cons(#(Nil(<A: Seg>), e), xb))
+    false => e
+  }
+}
+
+mutual {
+  pub fn expr_node(n: Node): Expr {
+    match n {
+      Mk(v, ext) => expr_put(v, has_ext(ext), ext_binds(ext))
+    }
+  }
+  // The value `v` of a node, with `xb` the bindings of its extensions.
+  pub fn expr_put(v: Value, h: Bool, xb: List(List(Seg) × Expr)): Expr {
+    match v {
+      Vmap(es) => Eobj(List::append(entry_binds(es), xb))
+      Varr(xs) => wrap_ext(h, Earr(expr_items(xs)), xb)
+      Vtup(xs) => wrap_ext(h, Etup(expr_items(xs)), xb)
+      Vhole(^lb) => wrap_ext(h, Escalar(v), xb)
+      Vnull => wrap_ext(h, Escalar(v), xb)
+      Vbool(^b) => wrap_ext(h, Escalar(v), xb)
+      Vint(^sg, ^k) => wrap_ext(h, Escalar(v), xb)
+      Vdec(^sg, ^k, ^es, ^x) => wrap_ext(h, Escalar(v), xb)
+      Vtext(^lg, ^t) => wrap_ext(h, Escalar(v), xb)
+    }
+  }
+  pub fn expr_items(xs: List(Node)): List(Expr) {
+    match xs {
+      Nil => Nil
+      Cons(x, t) => Cons(expr_node(x), expr_items(t))
+    }
+  }
+  pub fn entry_binds(es: List(Key × Node)): List(List(Seg) × Expr) {
+    match es {
+      Nil => Nil
+      Cons(e, t) => Cons(entry_bind(e), entry_binds(t))
+    }
+  }
+  pub fn entry_bind(e: Key × Node): List(Seg) × Expr {
+    match e {
+      #(k, n) => #(Cons(Skey(k), Nil), expr_node(n))
+    }
+  }
+  pub fn ext_binds(es: List(Text × Node)): List(List(Seg) × Expr) {
+    match es {
+      Nil => Nil
+      Cons(e, t) => Cons(ext_bind(e), ext_binds(t))
+    }
+  }
+  pub fn ext_bind(e: Text × Node): List(Seg) × Expr {
+    match e {
+      #(k, n) => #(Cons(Sext(k), Nil), expr_node(n))
+    }
+  }
+}
+
+// ---- what follows a value -------------------------------------------------------------------
+
+// A value written in place is followed by `,`, `]`, `)` or a line break, and the bytes after it
+// do not join a string with `\`.
+pub fn stop_byte(c: Nat): Bool {
+  Bool::or(Nat::eq(c, 10), Bool::or(Nat::eq(c, 41), Bool::or(Nat::eq(c, 44), Nat::eq(c, 93))))
+}
+
+pub fn stops(r: List(Nat)): Bool {
+  match r {
+    Nil => false
+    Cons(c, ^t) => Bool::and(stop_byte(c), not(head_is(92, skip(r))))
+  }
+}

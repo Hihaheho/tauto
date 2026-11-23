@@ -1,23 +1,26 @@
+import "../../surface/src/surface.taut"
 import "instantiation_allocation_sound.taut"
 import "local_lookup_sound.taut"
-import std::Base
-import std::Nat
-import std::Text
+import std::base
+import std::nat
+import std::text
 import "allocation_advance.taut"
 import "allocation_result.taut"
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "pattern_scope.taut"
 import "rules_local.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 
 pub fn LocalsAllocated(limit: Nat, env: List(Local)): Prop {
-  ⊢ Prop from match env { Nil => True
+  match env { Nil => True
     Cons(head, rest) => And(
       TypeAllocated(limit, expr_local_ty(head)),
       LocalsAllocated(limit, rest)
@@ -30,7 +33,7 @@ pub theorem locals_allocated_weaken(
   advanced: Nat::le(before, after) = true,
   h: LocalsAllocated(before, env)
 ): LocalsAllocated(after, env) {
-  ⊢ LocalsAllocated(after, env) from match env { Nil => Trivial
+  match env { Nil => Trivial
     Cons(head, rest) => AndIntro(
       type_allocated_weaken(expr_local_ty(head), before, after, advanced, And::left(h)),
       locals_allocated_weaken(rest, before, after, advanced, And::right(h))
@@ -43,7 +46,7 @@ pub theorem local_binding_allocated<env: List(
   limit: Nat,
   bounded: LocalsAllocated(limit, env)
 ): TypeAllocated(limit, expr_local_ty(local)) {
-  ⊢ TypeAllocated(limit, expr_local_ty(local)) from match binding {
+  match binding {
     LocalBindingHere(found, rest) => And::left(bounded)
     LocalBindingLater(rest, key, found, head, different, tail) => local_binding_allocated(
       tail,
@@ -67,14 +70,15 @@ pub theorem ck_lookup_local_allocation(
   name: Text,
   env: List(Local),
   span: TySpan,
+  occurrence: Option(TermOccurrence),
   local: Local,
   state: CheckerAllocation(c),
   bounded: LocalsAllocated(ck_next_of(c), env),
   found: env_find(env, name) = Some(local)
-): AllocationResult(c, ck_lookup(c, name, env, span)) {
+): AllocationResult(c, ck_lookup(c, name, env, span, occurrence)) {
   Eq::subst(
     (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
-    Eq::sym(ck_lookup_local_value(c, name, env, span, local, found)),
+    Eq::sym(ck_lookup_local_value(c, name, env, span, occurrence, local, found)),
     allocation_result_return(
       c,
       expr_local_ty(local),
@@ -85,7 +89,7 @@ pub theorem ck_lookup_local_allocation(
 }
 pub fn allocation_scope_items(scope: Scope): List(Local) { scope.items }
 pub fn allocation_result_scope<A>(m: Mut2(A, Checker, Scope)): Scope {
-  ⊢ Scope from match m { mut2(value, next, env) => env }
+  match m { mut2(^value, ^next, env) => env }
 }
 pub def ScopeAllocation<A: Type>(
   c: Checker,
@@ -108,7 +112,7 @@ pub theorem ck_bind_local_allocation(
   bounded: LocalsAllocated(ck_next_of(c), allocation_scope_items(env)),
   value: TypeAllocated(ck_next_of(c), ty)
 ): ScopeAllocation(c, ck_bind_local(c, env, name, ty, mutable, site)) {
-  ⊢ ScopeAllocation(c, ck_bind_local(c, env, name, ty, mutable, site)) from match env {
+  match env {
     ScopeMk(items) => AndIntro(
       AndIntro(Nat::le_refl(ck_next_of(c)), state),
       AndIntro(value, bounded)
@@ -140,8 +144,8 @@ pub theorem scope_allocation_bind<A: Type, B: Type>(
     ck_next_of(next),
     allocation_scope_items(env)
   ). ScopeAllocation(next, k(value, next, env))
-): ScopeAllocation(c, pattern_bind(A, B, k, m)) {
-  ⊢ ScopeAllocation(c, pattern_bind(A, B, k, m)) from match m {
+): ScopeAllocation(c, pattern_bind(<A: A, B: B>, k, m)) {
+  match m {
     mut2(value, next, env) => {
       let last: ScopeAllocation(
         next,

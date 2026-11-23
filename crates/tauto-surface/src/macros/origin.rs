@@ -3,7 +3,7 @@
 //! own, from [`EXPANSION_BASE`] on, one byte each. The map says which
 //! position was written for it and which expansion made it.
 
-use tauto_parol::Span;
+use crate::span::Span;
 
 /// Where the spans of expansions start; the prelude's start at `1 << 31`.
 pub const EXPANSION_BASE: u32 = 1 << 30;
@@ -12,7 +12,14 @@ pub const EXPANSION_BASE: u32 = 1 << 30;
 pub struct SpanMap {
     /// For each span made: the position as written, and the expansion.
     origins: Vec<(u32, u32)>,
+    /// Texts a declaration made and read at places of their own (the proof side of
+    /// `inductive_syntax!`): the first place, how many bytes, and where the
+    /// declaration was written.
+    texts: Vec<(u32, u32, u32)>,
 }
+
+/// The expansion of a span that a declaration's own text made rather than a macro.
+pub const NO_EXPANSION: u32 = u32::MAX;
 
 impl SpanMap {
     /// A span for a node of expansion `expansion`. `written` 0 is no position of the
@@ -27,6 +34,13 @@ impl SpanMap {
 
     /// The written position and the expansion of a span made here.
     pub fn origin(&self, at: u32) -> Option<(u32, u32)> {
+        if let Some(&(_, _, written)) = self
+            .texts
+            .iter()
+            .find(|&&(start, len, _)| start <= at && at <= start + len)
+        {
+            return Some((written, NO_EXPANSION));
+        }
         let i = at.checked_sub(EXPANSION_BASE)? as usize;
         self.origins.get(i).copied()
     }
@@ -37,6 +51,12 @@ impl SpanMap {
         for (written, _) in self.origins.iter_mut().skip(from) {
             *written = crate::surface::shift::position(*written, by);
         }
+    }
+
+    /// Says that the `len` bytes from `start` are a text the declaration written at
+    /// `written` made, so that a place in it is shown where the declaration is.
+    pub fn text(&mut self, start: u32, len: u32, written: u32) {
+        self.texts.push((start, len, written));
     }
 
     pub fn len(&self) -> usize {

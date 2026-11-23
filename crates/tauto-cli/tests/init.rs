@@ -43,8 +43,8 @@ fn current_directory_template_checks_and_runs() {
     let temp = Temp::new();
     success(cli(&temp.0, &["init"]));
     success(cli(&temp.0, &["check", "src/main.taut"]));
-    let run = cli(&temp.0, &["run", "--tote", "."]);
-    assert!(String::from_utf8_lossy(&run.stdout).contains("42"));
+    let run = cli(&temp.0, &["run", "."]);
+    assert!(String::from_utf8_lossy(&run.stdout).contains("hello"));
     success(run);
     assert!(!temp.0.join(".git").exists());
     assert!(!temp.0.join("Cargo.toml").exists());
@@ -67,7 +67,7 @@ fn new_directory_under_unicode_parent_and_no_external_tools() {
     assert!(manifest.contains("name = \"hello-world\""));
     success(cli(
         &temp.0.join("日本語/hello-world"),
-        &["run", "--tote", "."],
+        &["run", "."],
     ));
 }
 

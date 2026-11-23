@@ -12,12 +12,194 @@ fn is_type(t: &SurfaceTerm) -> bool {
     matches!(&*t.kind, TermKind::Var(n) if n.sort_symbol() == Some(tauto_surface::identity::SortSymbol::Type(0)))
 }
 
+/// The universe a value of type `t` lives in, when `t` says so: a value of
+/// type `Type<n>` (a type) lives in `Type<n + 1>`, one of type `Prop` (a
+/// proposition) in `Type1`, and a function in the universe of what it
+/// returns. `None` for any other type, whose values are not types.
+fn value_universe(t: &SurfaceTerm) -> Option<u32> {
+    use tauto_surface::identity::SortSymbol;
+    match &*t.kind {
+        TermKind::Var(n) => match n.sort_symbol()? {
+            SortSymbol::Proposition => Some(1),
+            SortSymbol::Type(level) => Some(level + 1),
+        },
+        TermKind::Pi { result, .. } => value_universe(result),
+        _ => None,
+    }
+}
+
+/// Whether what `f` returns can be run: only a value of universe `Type0`
+/// (a number, a struct, a function between them) exists when the program
+/// runs. A type or a proposition (`fn child_type(env: &Env): Type`) is
+/// computed only by the kernel.
+pub(super) fn executable(f: &FnDecl) -> bool {
+    f.result
+        .as_ref()
+        .and_then(value_universe)
+        .is_none_or(|universe| universe == 0)
+}
+
+/// The class of the `where` entry that says a generic is what a method that
+/// is not executable gives: `@assoc(H, C::t(G))` is `H = C::t(G)`.
+pub const ASSOC: &str = "@assoc";
+
+/// The methods that are not executable (`fn child_type(env: &Env): Type`)
+/// of each class: inside a function that asks for `C(G)`, `C::t(G)` is an
+/// associated type, a generic `G_t` of the function that `@assoc(G_t,
+/// C::t(G))` relates to `G`. A call gives `G_t` the type the instance for `G`
+/// gives `t`; the class expansion passes it as any generic is passed.
+fn hide_type_projections(stmts: &mut [Stmt]) {
+    let mut classes: HashMap<Name, Vec<(String, Name)>> = HashMap::new();
+    fn collect(stmts: &[Stmt], classes: &mut HashMap<Name, Vec<(String, Name)>>) {
+        for s in stmts {
+            match s {
+                Stmt::Class(c) => {
+                    let types: Vec<(String, Name)> = c
+                        .methods
+                        .iter()
+                        .filter(|m| !executable(m))
+                        .map(|m| (m.name.to_string(), super::classes::member_fn(c, &m.name)))
+                        .collect();
+                    if !types.is_empty() {
+                        classes.insert(c.name.clone(), types);
+                    }
+                }
+                Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => collect(items, classes),
+                _ => {}
+            }
+        }
+    }
+    collect(stmts, &mut classes);
+    if classes.is_empty() {
+        return;
+    }
+    fn go(stmts: &mut [Stmt], classes: &HashMap<Name, Vec<(String, Name)>>) {
+        for s in stmts {
+            match s {
+                Stmt::Fn(f) => hide_in(f, classes),
+                Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => go(items, classes),
+                _ => {}
+            }
+        }
+    }
+    go(stmts, &classes);
+}
+
+fn hide_in(f: &mut FnDecl, classes: &HashMap<Name, Vec<(String, Name)>>) {
+    // (the method's member name, the generic, the associated type)
+    let mut hidden: Vec<(Name, Name, Name)> = Vec::new();
+    for c in &f.where_ {
+        let (TermKind::Var(g), Some(types)) = (&*c.ty.kind, classes.get(&c.class)) else {
+            continue;
+        };
+        for (label, member) in types {
+            let h = Name::from(format!("{g}_{label}"));
+            if !hidden.iter().any(|(_, _, x)| x == &h) {
+                hidden.push((member.clone(), g.clone(), h));
+            }
+        }
+    }
+    if hidden.is_empty() {
+        return;
+    }
+    // The generic an argument of `C::t(…)` stands for: the generic itself,
+    // or the type of the parameter written there.
+    let generic_of = |a: &SurfaceTerm| -> Option<Name> {
+        let TermKind::Var(x) = &*a.kind else {
+            return None;
+        };
+        if f.generics.contains(x) {
+            return Some(x.clone());
+        }
+        let i = f.params.iter().position(|p| p == x)?;
+        match f
+            .param_types
+            .get(i)
+            .cloned()
+            .flatten()
+            .map(|t| t.kind.clone())
+        {
+            Some(kind) => match &*kind {
+                TermKind::Var(g) => Some(g.clone()),
+                _ => None,
+            },
+            None => None,
+        }
+    };
+    let rewrite = |t: &mut SurfaceTerm| {
+        walk::term(t, &mut |t| {
+            let TermKind::App {
+                function,
+                arguments,
+            } = &*t.kind
+            else {
+                return;
+            };
+            let (TermKind::Var(n), [a]) = (&*function.kind, arguments.as_slice()) else {
+                return;
+            };
+            let Some(g) = generic_of(a) else { return };
+            if let Some((_, _, h)) = hidden.iter().find(|(m, x, _)| m == n && *x == g) {
+                *t = t.with_kind(TermKind::Var(h.clone()), t.span);
+            }
+        });
+    };
+    let mut param_types = f.param_types.clone();
+    for t in param_types.iter_mut().flatten() {
+        rewrite(t);
+    }
+    let mut result = f.result.clone();
+    if let Some(r) = &mut result {
+        rewrite(r);
+    }
+    let mut where_ = f.where_.clone();
+    for c in &mut where_ {
+        rewrite(&mut c.ty);
+    }
+    f.param_types = param_types;
+    f.result = result;
+    f.where_ = where_;
+    let span = f.span;
+    for (member, g, h) in hidden {
+        let aligned = f.generic_types.len() == f.generics.len();
+        f.generics.push(h.clone());
+        if aligned {
+            f.generic_types.push(SurfaceTerm::var(
+                &tauto_surface::bindings::library_name("Type"),
+                span,
+            ));
+        }
+        if f.rows.len() + 1 == f.generics.len() {
+            f.rows.push(false);
+        }
+        if f.bounds.len() + 1 == f.generics.len() {
+            f.bounds.push(None);
+        }
+        f.where_.push(crate::surface::Constraint {
+            arguments: vec![SurfaceTerm::new(
+                TermKind::App {
+                    function: Box::new(SurfaceTerm::var(&member, span)),
+                    arguments: vec![SurfaceTerm::var(&g, span)],
+                },
+                span,
+            )],
+            class: Name::from(ASSOC),
+            ty: SurfaceTerm::var(&h, span),
+            span,
+        });
+    }
+}
+
 /// Resolve native type functions in annotations, rejecting value-position uses.
 /// Checked dependent functions have already been erased by the kernel extractor.
 pub fn expand_type_functions(
     program: &mut Program,
     files: &mut [Vec<Stmt>],
 ) -> Result<(), Message> {
+    hide_type_projections(&mut program.stmts);
+    for file in files.iter_mut() {
+        hide_type_projections(file);
+    }
     let mut pass = Pass {
         functions: HashMap::new(),
         declared_functions: HashMap::new(),
@@ -126,9 +308,16 @@ impl Pass {
                 _ => {}
             }
         }
-        for name in ["show", "test", "spawn", "Div", "Exceeded"] {
+        for name in [
+            "test",
+            "spawn",
+            "div",
+            "exceeded",
+            "budget",
+            "budget_memory",
+        ] {
             self.effects
-                .insert(tauto_surface::bindings::library_name(name));
+                .insert(tauto_surface::bindings::library_effect_name(name));
         }
         for n in [
             "nat", "i32", "i64", "u8", "u32", "u64", "Bool", "Text", "Unit", "Never", "Float",
@@ -242,6 +431,7 @@ impl Pass {
                 params,
                 result: body,
                 effects,
+                ..
             } => {
                 if strict {
                     for effect in effects.iter().flatten() {
@@ -260,6 +450,7 @@ impl Pass {
                 result = t.with_kind(
                     TermKind::Pi {
                         params,
+                        unused: Vec::new(),
                         result: Box::new(self.ty(body, scope, stack, strict)?),
                         effects: effects.clone(),
                     },
@@ -268,7 +459,6 @@ impl Pass {
             }
             TermKind::Borrow { .. }
             | TermKind::FnKind { .. }
-            | TermKind::Product(_)
             | TermKind::Union(_)
             | TermKind::Tagged { .. } => {
                 let mut error = None;
@@ -512,7 +702,7 @@ mod tests {
     use super::*;
 
     fn rejects_duplicate(source: &str) {
-        let mut program = crate::surface::parse_program_unresolved_at(source, 0).unwrap();
+        let mut program = tauto_parse::parse_program_unresolved_at(source, 0).unwrap();
         assert!(program.errors.is_empty(), "{:?}", program.errors);
         let original = program.clone();
         let mut files = vec![program.stmts.clone()];
@@ -526,27 +716,27 @@ mod tests {
     #[test]
     fn duplicate_type_function_cannot_hide_invalid_body() {
         rejects_duplicate(
-            "struct Payload { n: nat }\nfn Alias(A: Type): Type { Payload { n: 0 } }\nfn Alias(A: Type): Type { Payload }\nperform show(\"ok\", 1)",
+            "struct Payload { n: nat }\nfn Alias(A: Type): Type { Payload { n: 0 } }\nfn Alias(A: Type): Type { Payload }\nshow(&1)",
         );
     }
 
     #[test]
     fn type_function_cannot_erase_duplicate_runtime_function() {
         rejects_duplicate(
-            "struct Payload { n: nat }\nfn Alias(A: Type): Type { Payload }\nfn Alias(n: nat): nat { n }\nperform show(\"ok\", 1)",
+            "struct Payload { n: nat }\nfn Alias(A: Type): Type { Payload }\nfn Alias(n: nat): nat { n }\nshow(&1)",
         );
         rejects_duplicate(
-            "struct Payload { n: nat }\nfn Alias(n: nat): nat { n }\nfn Alias(A: Type): Type { Payload }\nperform show(\"ok\", 1)",
+            "struct Payload { n: nat }\nfn Alias(n: nat): nat { n }\nfn Alias(A: Type): Type { Payload }\nshow(&1)",
         );
     }
 
     #[test]
     fn type_function_cannot_erase_duplicate_extern_function() {
         rejects_duplicate(
-            "struct Payload { n: nat }\nextern { fn Alias(n: nat): nat }\nfn Alias(A: Type): Type { Payload }\nperform show(\"ok\", 1)",
+            "struct Payload { n: nat }\nextern { fn Alias(n: nat): nat }\nfn Alias(A: Type): Type { Payload }\nshow(&1)",
         );
         rejects_duplicate(
-            "struct Payload { n: nat }\nfn Alias(A: Type): Type { Payload }\nextern { fn Alias(n: nat): nat }\nperform show(\"ok\", 1)",
+            "struct Payload { n: nat }\nfn Alias(A: Type): Type { Payload }\nextern { fn Alias(n: nat): nat }\nshow(&1)",
         );
     }
 }

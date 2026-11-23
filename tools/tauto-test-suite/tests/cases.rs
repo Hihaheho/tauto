@@ -71,7 +71,7 @@ fn run() -> ExitCode {
                 }
                 Outcome::UnexpectedPass => {
                     failed += 1;
-                    println!("  {case}: passes now; take `unimplemented` off");
+                    println!("  {case}: passes now; take `eval.unimplemented`/`eval.bug` off");
                 }
                 Outcome::Passed | Outcome::Todo | Outcome::BackendOnly => {}
             }

@@ -1,8 +1,8 @@
 import "obligation_state_frame.taut"
 import "finish_literal_sound.taut"
-import std::Base
-import std::Map
-import std::Row
+import std::base
+import std::map
+import std::row
 import "checker.taut"
 import "datas_frame.taut"
 import "diagnostic_report.taut"
@@ -14,19 +14,16 @@ import "unify_sound.taut"
 
 pub fn finish_obligations_view(
   c: Checker
-): Pair(
-  List(TyBound),
-  Pair(List(TyPending), List(TyCtorBound))
-) { Pair {fst: c.bounds, snd: Pair {fst: c.pending, snd: c.ctor_bounds}} }
+): List(TyBound) × List(TyPending) × List(TyCtorBound) { #(c.bounds, c.pending, c.ctor_bounds) }
 pub fn finish_obligations_bounds(
-  r#view: Pair(List(TyBound), Pair(List(TyPending), List(TyCtorBound)))
-): List(TyBound) { r#view.fst }
+  view: (List(TyBound) × List(TyPending) × List(TyCtorBound))
+): List(TyBound) { view.fst }
 pub fn finish_obligations_pending(
-  r#view: Pair(List(TyBound), Pair(List(TyPending), List(TyCtorBound)))
-): List(TyPending) { r#view.snd.fst }
+  view: (List(TyBound) × List(TyPending) × List(TyCtorBound))
+): List(TyPending) { view.snd.fst }
 pub fn finish_obligations_ctors(
-  r#view: Pair(List(TyBound), Pair(List(TyPending), List(TyCtorBound)))
-): List(TyCtorBound) { r#view.snd.snd }
+  view: (List(TyBound) × List(TyPending) × List(TyCtorBound))
+): List(TyCtorBound) { view.snd.snd }
 pub def LiteralRecordsFrame_obligations<A: Type>(
   c: Checker,
   m: Mut1(A, Checker)
@@ -37,10 +34,10 @@ pub theorem literal_records_bind_obligations<A: Type, B: Type>(
   m: Mut1(A, Checker),
   first: LiteralRecordsFrame_obligations(c, m),
   tail: ∀ value: A. ∀ next: Checker. LiteralRecordsFrame_obligations(next, k(value, next))
-): LiteralRecordsFrame_obligations(c, frame_bind(A, B, k, m)) {
+): LiteralRecordsFrame_obligations(c, frame_bind(<A: A, B: B>, k, m)) {
   ⊢ LiteralRecordsFrame_obligations(
     c,
-    frame_bind(A, B, k, m)
+    frame_bind(<A: A, B: B>, k, m)
   ) from match m { mut1(value, next) => Eq::trans(tail(value, next), first) }
 }
 pub theorem literal_records_rewrap_obligations<A: Type>(
@@ -58,7 +55,7 @@ pub theorem literal_default_records_obligations(
   c: Checker,
   t: Ty
 ): LiteralRecordsFrame_obligations(c, finish_default(c, t)) {
-  ⊢ LiteralRecordsFrame_obligations(c, finish_default(c, t)) from match t {
+  match t {
     TyInt(w) => Refl
     TyBool => Refl
     TyText => Refl
@@ -66,6 +63,7 @@ pub theorem literal_default_records_obligations(
     TyNever => Refl
     TyDecimal => Refl
     TyFloat => Refl
+    TyFloat32 => Refl
     TyFn(ps, result, kind) => Refl
     TyUnion(ys) => Refl
     TyProduct(ys) => Refl
@@ -90,17 +88,16 @@ pub theorem ck_default_int_records_obligations(
   )
 }
 pub theorem ck_default_ints_records_obligations(
-  vs: List(Pair(Nat, Bool)),
+  vs: List(Nat × Bool),
   c: Checker
 ): LiteralRecordsFrame_obligations(c, ck_default_ints(vs, c)) {
-  ⊢ LiteralRecordsFrame_obligations(c, ck_default_ints(vs, c)) from match vs {
+  match vs {
     Nil => Refl
     Cons(v, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => LiteralRecordsFrame_obligations(c, m),
       Eq::sym(finish_defaults_unf(v, rest, c)),
       literal_records_bind_obligations(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_default_ints(rest, next)),
         ck_default_int(c, finish_int_key(v)),
@@ -120,10 +117,6 @@ pub theorem literal_after_defaults_records_obligations(
   clean: DiagnosticReportClean(finish_after_defaults(c, widths))
 ): LiteralRecordsFrame_obligations(c, finish_after_defaults(c, widths)) {
   Eq::congr(
-    Mut1(TypeReport, Checker),
-    Pair(List(TyBound), Pair(List(TyPending), List(TyCtorBound))),
-    finish_after_defaults(c, widths),
-    mut1(finish_report(c, widths), c),
     (m: Mut1(TypeReport, Checker)) => finish_obligations_view(ck_st(m)),
     And::right(finish_after_defaults_accepts(c, widths, clean))
   )
@@ -134,7 +127,7 @@ pub theorem literal_finish_default_records_obligations(
   first: LiteralRecordsFrame_obligations(c, m),
   clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
 ): LiteralRecordsFrame_obligations(c, diagnostic_finish_default_result(m)) {
-  ⊢ LiteralRecordsFrame_obligations(c, diagnostic_finish_default_result(m)) from match m {
+  match m {
     mut1(value, next) => Eq::trans(
       literal_after_defaults_records_obligations(
         next,

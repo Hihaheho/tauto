@@ -1,0 +1,54 @@
+description = "`ghost fn`: the kernel reads it as it reads `fn`, extraction never writes it, and executable code that calls it is refused."
+
+@ cases.a-ghost-fn-unfolds-in-a-proof-and-is-not-extracted
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+ghost fn twice(n: Nat): Nat { n + n }
+theorem twice_two(): twice(2) = 4 { Refl }
+fn four(): Nat { 4 }
+show(&four())
+```
+stdout = "4\n"
+extracted_lacks = ["twice"]
+
+@ cases.a-ghost-fn-may-name-a-ghost-fn-and-be-named-by-a-proof-argument
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+ghost fn twice(n: Nat): Nat { n + n }
+ghost fn four(): Nat { twice(2) }
+fn pick(n: Nat, h: n = four()): Nat { n }
+theorem four_is(): four() = 4 { Refl }
+fn run(): Nat { pick(4, Refl) }
+show(&run())
+```
+stdout = "4\n"
+extracted_lacks = ["twice", "four"]
+
+@ cases.executable-code-that-calls-a-ghost-fn-is-refused
+extract = true
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+ghost fn twice(n: Nat): Nat { n + n }
+fn four(): Nat { twice(2) }
+show(&four())
+```
+load_error = "`twice` is a `ghost fn`"
+
+@ cases.a-ghost-fn-is-read_by_the_parser_of_both_implementations
+source = ```tauto
+ghost fn twice(n: Nat): Nat { n + n }
+```
+parses = true
+differential = "syntax"
+
+@ cases.a-dependent-function-that-calls-a-ghost-fn-is-refused-as-ghost
+description = "A function whose types depend on its values is extracted as such; when it calls a `ghost fn`, the check says so, as for any executable code."
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Fin2: (Nat) -> Type {
+  FZ(n: Nat): Fin2(Succ(n))
+}
+ghost fn grow(n: Nat, x: Fin2(n)): Fin2(Succ(n)) { FZ(n) }
+fn step(n: Nat, x: Fin2(n)): Fin2(Succ(n)) { grow(n, x) }
+```
+check_errors = ["`grow` is a `ghost fn`"]

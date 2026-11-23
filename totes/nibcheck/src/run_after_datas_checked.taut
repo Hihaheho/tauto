@@ -1,8 +1,8 @@
 import "run_summary.taut"
 import "body_checked_sound.taut"
 import "prepare_error_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checked_frame.taut"
 import "checker.taut"
 import "datas_frame.taut"
@@ -23,15 +23,12 @@ pub theorem run_after_datas_frame_checked(
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, run_after_datas(c, prelude, program, own)) {
   checked_frame_bind(
-    List(Pair(SurfaceFn, Scheme)),
-    Unit,
+    <A: List(SurfaceFn × Scheme), B: Unit>,
     c,
-    (fns: List(Pair(SurfaceFn, Scheme)), c1: Checker) => frame_bind(
-      Unit,
-      Unit,
+    (fns: List(SurfaceFn × Scheme), c1: Checker) => frame_bind(
+      <A: Unit, B: Unit>,
       (checked: Unit, c2: Checker) => inference_bind_scope(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (finished: Unit, c3: Checker, env: Scope) => mut1(finished, c3),
         ck_top_level(program, c2, ScopeMk(Nil))
       ),
@@ -46,20 +43,17 @@ pub theorem run_after_datas_frame_checked(
       ordered
     ),
     fns => c1 => o_c1 => checked_frame_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c1,
       (checked: Unit, c2: Checker) => inference_bind_scope(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (finished: Unit, c3: Checker, env: Scope) => mut1(finished, c3),
         ck_top_level(program, c2, ScopeMk(Nil))
       ),
       ck_check_fns(fns, c1),
       ck_check_fns_frame_checked(fns, c1, o_c1),
       checked => c2 => o_c2 => inference_bind_scope_frame_checked(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c2,
         (finished: Unit, c3: Checker, env: Scope) => mut1(finished, c3),
         ck_top_level(program, c2, ScopeMk(Nil)),
@@ -77,7 +71,7 @@ pub theorem run_after_data_result_ordered(
   m: Mut1(Unit, Checker),
   ordered: CkOrdered(ck_st(m))
 ): CkOrdered(ck_st(run_after_data_result(prelude, program, own, m))) {
-  ⊢ CkOrdered(ck_st(run_after_data_result(prelude, program, own, m))) from match m {
+  match m {
     mut1(value, next) => And::left(
       run_after_datas_frame_checked(next, prelude, program, own, ordered)
     )
@@ -90,7 +84,7 @@ pub theorem run_after_builtins_ordered(
   m: Mut1(Unit, Checker),
   ordered: CkOrdered(ck_st(m))
 ): CkOrdered(ck_st(run_after_builtins(prelude, program, m))) {
-  ⊢ CkOrdered(ck_st(run_after_builtins(prelude, program, m))) from match m {
+  match m {
     mut1(value, next) => run_after_data_result_ordered(
       prelude,
       program,

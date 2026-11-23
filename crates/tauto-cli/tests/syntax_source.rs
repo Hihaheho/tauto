@@ -138,21 +138,27 @@ fn force_is_explicit_and_incompatible_flags_are_rejected() {
     let table = dir
         .join(".tauto-syntax")
         .join(format!("{}.tables", tauto::syntax::grammar_sha(grammar)));
-    fs::write(&table, "old cached table").unwrap();
     let path = dir.to_str().unwrap();
+    // A current table that differs from what the generator writes: only
+    // `--force` replaces it.
+    assert!(run(&["syntax", "gen", path]).status.success());
+    let current = fs::read_to_string(&table).unwrap();
+    let cached = current.replacen("title -", "title cached", 1);
+    assert_ne!(cached, current);
+    fs::write(&table, &cached).unwrap();
     for flags in [
         vec!["syntax", "gen", path],
         vec!["syntax", "gen", "--check", path],
     ] {
         assert!(run(&flags).status.success());
-        assert_eq!(fs::read_to_string(&table).unwrap(), "old cached table");
+        assert_eq!(fs::read_to_string(&table).unwrap(), cached);
     }
     for flags in [
         vec!["syntax", "gen", "--check", "--force", path],
         vec!["syntax", "gen", "--force", "--check", path],
     ] {
         assert_eq!(run(&flags).status.code(), Some(2));
-        assert_eq!(fs::read_to_string(&table).unwrap(), "old cached table");
+        assert_eq!(fs::read_to_string(&table).unwrap(), cached);
     }
     let result = run(&["syntax", "gen", "--force", path]);
     assert!(
@@ -179,5 +185,103 @@ fn force_is_explicit_and_incompatible_flags_are_rejected() {
         String::from_utf8_lossy(&result.stderr)
     );
     assert_eq!(fs::read_to_string(&table).unwrap(), regenerated);
+    // A table the current generator did not make is regenerated without `--force`.
+    fs::write(&table, "old cached table").unwrap();
+    assert_eq!(run(&["syntax", "gen", "--check", path]).status.code(), Some(1));
+    assert!(run(&["syntax", "gen", path]).status.success());
+    assert_eq!(fs::read_to_string(&table).unwrap(), regenerated);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn tables_of_a_subdirectory_are_kept_beside_its_file_and_checked_from_the_root() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("tauto-syntax-subdir-{}", std::process::id()));
+    fs::create_dir_all(dir.join("src/sub")).unwrap();
+    fs::write(dir.join("Tauto.eure"), "package { name = \"test\" }").unwrap();
+    fs::write(
+        dir.join("src/sub/g.taut"),
+        r#"syntax!(tiny, ```par
+%start Start
+%%
+Start: 'a';
+```) => struct Start, fn parse
+"#,
+    )
+    .unwrap();
+    let path = dir.to_str().unwrap();
+    let out = run(&["syntax", "gen", path]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(dir.join("src/sub/.tauto-syntax").is_dir());
+    assert!(!dir.join(".tauto-syntax").exists());
+    let out = run(&["syntax", "gen", "--check", path]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_caret_drops_a_token_non_terminal_from_the_typed_tree() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("tauto-syntax-caret-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let grammar = r#"syntax!(clause, ```par
+%start Clause
+%%
+Clause: Word {Piece} Dot^;
+Piece: Word Comma^ Word;
+Word: /[a-z]+/;
+Dot: '.';
+Comma: ',';
+```) => struct Clause, struct Piece, struct Clause_Rep1, fn parse
+"#;
+    fs::write(dir.join("main.taut"), grammar).unwrap();
+    let path = dir.to_str().unwrap();
+    let generated = run(&["syntax", "gen", path]);
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let shown = run(&["syntax", "show", path, "clause"]);
+    assert!(
+        shown.status.success(),
+        "{}",
+        String::from_utf8_lossy(&shown.stderr)
+    );
+    let shown = String::from_utf8(shown.stdout).unwrap();
+    assert!(shown.contains("word: SynToken"), "{shown}");
+    assert!(!shown.contains("dot"), "{shown}");
+    assert!(!shown.contains("comma"), "{shown}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_non_terminal_defined_twice_is_reported_by_name() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("tauto-syntax-twice-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let grammar = r#"syntax!(twice, ```par
+%start Tick
+%%
+Tick: KwTick^ TickOf;
+TickOf: /[a-z]+/;
+KwTick: 'tick';
+Tick: /'/;
+```) => struct Tick, fn parse
+"#;
+    fs::write(dir.join("main.taut"), grammar).unwrap();
+    let out = run(&["syntax", "gen", dir.to_str().unwrap()]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("the non-terminal Tick is defined twice"), "{err}");
+    assert!(!err.contains("conflict"), "{err}");
     fs::remove_dir_all(dir).unwrap();
 }

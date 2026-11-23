@@ -1,6 +1,6 @@
 //! Proof erasure and filling instance-law holes through the Rust APIs.
 
-const BASE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../std/Base.taut");
+const BASE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../std/base.taut");
 
 #[test]
 fn a_class_is_extracted_as_a_class_with_its_laws_erased() {
@@ -14,12 +14,12 @@ fn a_class_is_extracted_as_a_class_with_its_laws_erased() {
             r#"import "{}"
 {}"#,
             BASE,
-            r#"import std::prelude::Ord
+            r#"import std::builtin::ord
 inductive P: Type {
   Mk: P
 }
 instance Ord(P) {
-  fn compare(&a: P, &b: P): Ordering { Equal }
+  fn compare(a: &P, b: &P): Ordering { Equal }
 }
 fn is_less<A>(a: A, b: A): Bool where Ord(A) {
   ⊢ Bool from match Ord::compare(a, b) {
@@ -36,11 +36,12 @@ fn use_it(a: P, b: P): Bool { is_less(a, b) }
     // The laws of `Ord(P)` are not proved, and the program is extracted all
     // the same: nothing of a law is left in it. `Ord` is the prelude's class,
     // which Nib reads too, so it is not declared again, and its methods borrow.
+    // `A` has no bound in the source and stays affine: `is_less` only lends it.
     let nib = tauto::extract::extract_files(&[path]).unwrap();
     for wanted in [
         r#"instance Ord(P) {"#,
-        r#"fn compare(&a: P, &b: P): Ordering"#,
-        r#"fn is_less<A: Shared>(a: A, b: A): Bool where Ord(A) {"#,
+        r#"fn compare(a: &P, b: &P): Ordering"#,
+        r#"fn is_less<A>(a: A, b: A): Bool where Ord(A) {"#,
         r#"match Ord::compare(&a, &b) {"#,
         r#"is_less(a, b)"#,
     ] {
@@ -63,7 +64,7 @@ fn a_class_of_the_program_is_extracted_as_written() {
             r#"import "{}"
 {}"#,
             BASE,
-            r#"class Key(A: Type) {
+            r#"inductive class Key(A: Type) {
   fn key(a: A): Nat
   theorem same<a: A>(): Key::key(a) = Key::key(a)
 }
@@ -101,7 +102,7 @@ fn a_law_not_written_is_filled_by_writing_it_into_the_instance() {
 {}"#,
             BASE,
             r#"
-class Cmp(A: Type) {
+inductive class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
   theorem refl<a: A>(): Cmp::compare(a, a) = Equal
   theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False

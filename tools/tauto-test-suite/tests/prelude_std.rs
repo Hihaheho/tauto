@@ -1,7 +1,7 @@
 //! The prelude every program sees (`std/prelude/`) is read by tauto's parser. Most of
 //! it is not checked by the kernel (it holds externs and effects), so this is as far
 //! as that part is checked; the data the proofs read as families and
-//! `std/prelude/Ord.taut` are checked by both kernels
+//! `std/builtin/ord.taut` are checked by both kernels
 //! (`crates/tauto-kernel/src/check.rs`).
 
 use std::path::Path;

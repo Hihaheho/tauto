@@ -1,0 +1,225 @@
+// `synread TABLES_DIR FILE…`: for each file, `== FILE` and then what the syntax its first
+// line names (`NAME SHA256 [FROM [LINE:TAKEN…]]`, or `NAME SHA256.START` for another start symbol: the tables
+// of `TABLES_DIR/<it>.tables`; FROM is where the literal starts in its file, the rest its lines'
+// shifts) makes of the rest of the file, as a literal: the parser's
+// text (`text …`), and the value it reads as the host builds it (`node …`, in the form of
+// `Node::show`) or why it does not (`error ID AT …`). The differential test is
+// `tools/selfhost-harness/tests/synread.rs`.
+import std::text
+import std::base
+import std::array
+import std::builtin::os
+
+import "../../synrun/src/read.taut"
+import "../../synrun/src/syn.taut"
+import "../../synrun/src/syntab.taut"
+import "../../scan/src/scan.taut"
+import "../../macros/src/node.taut"
+import "../../text/src/text.taut"
+import "../../parse/src/parse.taut"
+import "../../syntax/src/syntax.taut"
+import "../../unicode/src/classes.taut"
+import "../../unicode/src/unicode.taut"
+import "../../macros/src/lift.taut"
+import "holes.taut"
+import "tables.taut"
+import "build.taut"
+
+pub fn sr_line(parts: List(Text)): Unit ! {stdout} {
+  print(Text::concat_all(List::append(parts, Cons(text_newline(), Nil))))
+}
+
+// The diagnostic of a failed parse: the message's id, where it is, the terminals that would
+// have been taken, and the arguments as `name=value`.
+pub fn sr_diag(d: SynVal): Text {
+  match d {
+    VData(^c, fields) => Text::concat_all([
+      tb_text_of(tb_first(fields)),
+      " ",
+      Text::of_nat(tb_nat_of(tb_second(fields))),
+      " [",
+      match tb_third(fields) {
+        VList(xs) => text_join(sr_texts(xs), ",")
+        ^other => ""
+      },
+      "] ",
+      match tb_fifth(fields) {
+        VList(xs) => text_join(sr_args(xs), ";")
+        ^other => ""
+      }
+    ])
+    ^other => "?"
+  }
+}
+
+pub fn tb_fourth(vs: List(SynVal)): SynVal {
+  match vs {
+    Nil => VNat(0)
+    Cons(^v, rest) => tb_third(rest)
+  }
+}
+
+pub fn tb_fifth(vs: List(SynVal)): SynVal {
+  match vs {
+    Nil => VNat(0)
+    Cons(^v, rest) => tb_fourth(rest)
+  }
+}
+
+pub fn sr_texts(vs: List(SynVal)): List(Text) {
+  match vs {
+    Nil => Nil
+    Cons(v, rest) => Cons(tb_text_of(v), sr_texts(rest))
+  }
+}
+
+pub fn sr_args(vs: List(SynVal)): List(Text) {
+  match vs {
+    Nil => Nil
+    Cons(v, rest) => Cons(match v {
+      VData(^c, fields) => Text::concat_all([tb_text_of(tb_first(fields)), "=", tb_text_of(tb_second(fields))])
+      ^other => "?"
+    }, sr_args(rest))
+  }
+}
+
+pub fn sr_hole_starts(tokens: List(ScanToken), hole: Nat): List(Nat) {
+  match tokens {
+    Nil => Nil
+    Cons(k, rest) => if k.token_type == hole { Cons(k.start, sr_hole_starts(rest, hole)) } else { sr_hole_starts(rest, hole) }
+  }
+}
+
+// What a parse made, as the value it is (`node …`), or why it is not (`error …`).
+pub fn sr_finish(
+  st: &SyntaxTables,
+  name: Text,
+  t: TbTables,
+  start: Nat,
+  shifts: List(Nat × Nat),
+  holes: List(Nat),
+  r: Result(SynVal, SynVal)
+): Unit ! {div, out_of_bounds, overflow, stdout} {
+  let b := TbBuild {
+    nodes: Array::of_list(tb_nodes(name, t)),
+    scopes: Nil,
+    start: start,
+    shifts: shifts,
+    holes: holes
+  }
+  match r {
+    Err(d) => sr_line(["error ", sr_diag(d)])
+    Ok(v) => {
+      var errs: LfSt := lf_st_new(false)
+      let node := tb_node(&b, st, unicode_classes(), &mut errs, v)
+      if Vec::len(&errs.errs) > 0 {
+        sr_line(["error embedded"])
+      } else {
+        sr_line(["node ", nd_show(node)])
+      }
+    }
+  }
+}
+
+pub fn sr_nat(w: Text): Nat {
+  match text_parse_u64(w) {
+    Some(n) => n
+    None => 0
+  }
+}
+
+// `LINE:TAKEN` words.
+pub fn sr_shifts(ws: List(Text)): List(Nat × Nat) {
+  match ws {
+    Nil => Nil
+    Cons(w, rest) => match text_split(w, ":") {
+      Cons(a, Cons(b, Nil)) => Cons(#(sr_nat(a), sr_nat(b)), sr_shifts(rest))
+      Cons(^a, Cons(^b, Cons(^c, ^more))) => sr_shifts(rest)
+      Cons(^a, Nil) => sr_shifts(rest)
+      Nil => sr_shifts(rest)
+    }
+  }
+}
+
+pub fn sr_read(st: &SyntaxTables, dir: Text, header: Text, literal: Text): Unit ! {div, fs_read, out_of_bounds, overflow, stdout} {
+  let words := text_split(header, " ")
+  let extra := match words {
+    Cons(^a, Cons(^b, more)) => more
+    ^other => Nil
+  }
+  let start := match extra {
+    Cons(s, ^more) => sr_nat(s)
+    Nil => 0
+  }
+  let shifts := match extra {
+    Cons(^s, more) => sr_shifts(more)
+    Nil => Nil
+  }
+  match words {
+    Cons(name, Cons(key, ^more)) => match read_file(Text::concat_all([dir, "/", key, ".tables"])) {
+      Err(^e) => sr_line(["tables: cannot read ", key])
+      Ok(tables) => match tb_read(tables) {
+        Err(e) => sr_line(["tables: ", e])
+        Ok(t) => match tb_parser_text(name, t) {
+          Err(e) => sr_line(["text: ", e])
+          Ok(text) => {
+            sr_line(["text", text])
+            match syn_read(text) {
+              None => sr_line(["error the parser's text does not read"])
+              Some(p) => match tb_index_of(t.terminals, "TautoExpr", 0) {
+                None => sr_finish(st, name, t, start, shifts, Nil, syn_run(&p, literal))
+                Some(hole) => match tb_parser_text_of(name, t, false) {
+                  Err(e) => sr_line(["text: ", e])
+                  Ok(text2) => match syn_read(text2) {
+                    None => sr_line(["error the parser's text does not read"])
+                    Some(p2) => {
+                      let tokens := ho_scan_all(&p2.scan, literal, hole, unicode_classes())
+                      sr_finish(st, name, t, start, shifts, sr_hole_starts(tokens, hole), syn_run_tokens(&p2, literal, tokens))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    ^other => sr_line(["the first line is NAME SHA256"])
+  }
+}
+
+pub fn sr_each(st: &SyntaxTables, dir: Text, paths: List(Text)): Unit ! {div, fs_read, out_of_bounds, overflow, stdout} {
+  match paths {
+    Nil => #()
+    Cons(path, rest) => {
+      sr_line(["== ", path])
+      match read_file(path) {
+        Err(e) => sr_line(["cannot read: ", e])
+        Ok(source) => match text_find(source, text_newline(), 0) {
+          None => sr_line(["the first line is NAME SHA256"])
+          Some(at) => sr_read(
+            st,
+            dir,
+            Text::slice_or_empty(source, 0, at),
+            Text::slice_or_empty(source, at + 1, Text::len(source))
+          )
+        }
+      }
+      sr_each(st, dir, rest)
+    }
+  }
+}
+
+perform main(() => {
+  handle {
+    match syntax_tables() {
+      None => eprint("the tables of the syntax are damaged")
+      Some(st) => match perform argv() {
+        Cons(dir, paths) => sr_each(&st, dir, paths)
+        Nil => eprint("synread TABLES_DIR FILE...")
+      }
+    }
+  } with {
+    out_of_bounds() => eprint("an index went past the end of a vector")
+  }
+})

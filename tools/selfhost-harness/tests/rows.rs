@@ -2,13 +2,22 @@
 
 use selfhost_harness::{assert_same_dump, corpus, materialize, run_tote_native};
 use tauto::rows::{check_program_rows, dump_rows};
-use tauto::surface::parse_program_as_written;
+use tauto_parse::parse_program_as_written;
 
 const STEPS: u64 = 200_000_000_000;
 
 /// What the Rust analysis gives, in the form the tote prints: the dump of the
 /// report, or `error` when the source does not parse.
+///
+/// A list literal is nested `Cons` calls, one level for each element, and the
+/// Rust analysis goes down it recursively: the long literal of
+/// `cases/extract-long-list-literal.eure` is deeper than a test thread's
+/// stack. The analysis runs on the stack `tauto` and the case runner give it.
 fn expected(source: &str) -> String {
+    tauto_test_suite::with_deep_stack(|| expected_here(source))
+}
+
+fn expected_here(source: &str) -> String {
     std::panic::catch_unwind(|| {
         parse_program_as_written(source)
             .ok()
@@ -64,4 +73,34 @@ fn rows_match_the_corpus_2() {
 #[test]
 fn rows_match_the_corpus_3() {
     part("rows-3", 3, 4);
+}
+
+/// A function value given for a callback parameter performs only what the
+/// parameter's row names: the errors are at the value, in the order of the
+/// functions around them.
+#[test]
+fn rows_value_performs_matches() {
+    let source = "effect ask(): i64\n\
+        fn apply(f: (i64) -> i64): i64 { f(1) }\n\
+        fn a(): i64 ! {} { perform ask() }\n\
+        fn b(): i64 ! {ask} { apply((x) => perform ask()) }\n\
+        fn c(): i64 ! {} { perform ask() }\n";
+    compare(
+        "rows-value-performs",
+        vec![("value-performs.taut".to_string(), source.to_string())],
+    );
+}
+
+/// Replaceable `extern` validation runs through `--rows` (shared `types_check_with`).
+#[test]
+fn rows_match_replaceable_extern_validate_cases() {
+    let inputs: Vec<_> = corpus()
+        .into_iter()
+        .filter(|(name, _)| {
+            name.starts_with("cases/selfhost-rows.eure#rows-replaceable-mix-required")
+                || name.starts_with("cases/selfhost-rows.eure#rows-replaceable-open")
+        })
+        .collect();
+    assert_eq!(inputs.len(), 2);
+    compare("rows-replaceable-extern-validate", inputs);
 }

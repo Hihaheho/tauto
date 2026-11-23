@@ -24,10 +24,10 @@ fn a_macro_helper_that_does_not_check_is_reported_in_its_file() {
     .unwrap();
     fs::write(
         root.join("src/macro.taut"),
-        "import std::prelude::Macro\n\
+        "import std::builtin::macro\n\
          fn names(ps: List(SynIdent × SynExpr)): List(SynIdent) {\n  \
            match ps {\n    Nil => Nil\n    Cons(p, rest) => Cons(p.third, names(rest))\n  }\n}\n\
-         pub macro fn gen(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {\n  \
+         pub macro fn gen(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, div} {\n  \
            let n := names(Nil)\n  Cons(s, Nil)\n}\n",
     )
     .unwrap();

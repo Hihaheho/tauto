@@ -1,0 +1,14 @@
+import std::builtin::os { stdout, stdout_flush }
+struct(affine) Probe {}
+extern { fn Probe::new(name: &Text): Probe }
+fn outer(): Unit ! {stdout, stdout_flush} {
+  let captured := Probe::new("captured")
+  {
+    fn unused<A: Shared>(marker: A): Probe { captured }
+    #()
+  }
+  show(&1)
+}
+perform main(() => {
+  outer()
+})

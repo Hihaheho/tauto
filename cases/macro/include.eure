@@ -8,17 +8,20 @@
 files."main.nib" = ````nib
 fn greeting(): Text { include_text!("data/greeting.txt") }
 let g := greeting()
-perform show("g", g)
+show(&g)
 ````
 files."data/greeting.txt" = "hello \"world\"\n"
 expands = ```nib
 fn greeting(): Text { "hello \"world\"\n" }
 let g := greeting()
-perform show("g", g)
+show(&g)
 ```
-shows = ["g = \"hello \\\"world\\\"\\n\""]
+stdout = ```
+"hello \"world\"\n"
+```
 
 @ cases.a-file-of-the-tote-is-read-from-a-file-below-it
+llvm.unimplemented = "generate: the LLVM backend does not write a closure that may stop yet"
 files."Tauto.eure" = ```eure
 package {
   name = "t"
@@ -26,18 +29,23 @@ package {
 }
 ```
 files."src/main.nib" = ````nib
-import std::prelude::Shared
 
-let rows := concat("", include_text!("../data/rows.txt"))
-perform show("rows", rows)
+perform main(() => {
+  let rows := concat("", include_text!("../data/rows.txt"))
+  show(&rows)
+})
 ````
 files."data/rows.txt" = "1 2 3"
 entry = "src/main.nib"
 expands = ```nib
-let rows := concat("", "1 2 3")
-perform show("rows", rows)
+perform main(() => {
+  let rows := concat("", "1 2 3")
+  show(&rows)
+})
 ```
-shows = ["rows = \"1 2 3\""]
+stdout = ```
+"1 2 3"
+```
 
 @ cases.a-proof-sees-only-the-literal
 files."main.nib" = ````nib
@@ -108,7 +116,7 @@ macro_error = "macro.reserved"
 // A macro cannot read a file: a call it makes is not read.
 @ cases.a-call-a-macro-makes-is-refused
 files."lib.nib" = ````nib
-pub macro fn reads(e: SynExpr): SynExpr ! {macro_error, Div} {
+pub macro fn reads(e: SynExpr): SynExpr ! {macro_error, div} {
   match Syn::ident_of(e) {
     Some(id) => ExMacroExpr(Syn::ident_like(id, "include_text"), ExText("a.txt", id.span), id.span)
     None => e

@@ -1,0 +1,89 @@
+// The trusted primitives under the allocators: a region keeps the state of a
+// policy (`Policy`, declared in full in `std/alloc.taut`) and the memory of
+// its chunks, and a `Place(T)` says where a value of `T` goes. The checker does not know these
+// names; it reads only what their signatures borrow. Nothing checks their
+// implementations against the laws of `Policy`: the runtime is trusted to
+// keep this contract.
+//
+// - The runtime gets the memory of a chunk when `alloc` answers `Grow`, puts a
+//   value at the position `Fit` gives, keeps the state, and puts the value
+//   on the heap when the answer is `Refuse`. It relies on `placed_chunk`,
+//   `placed_fits`, `placed_aligned` and `placed_fresh` for blocks that do not
+//   overlap; on `placed_marks`, `placed_chunks`, `placed_sizes`,
+//   `placed_span_same`, the `grow_` laws and the `free_` laws for those four to
+//   hold again at the next request; on `placed_span` for a block that holds
+//   the value; and on `grow_once` for its loop over `Grow` to stop. It aligns
+//   the start of each chunk.
+// - `new` asks for an instance of `PolicyState(S)`. An instance written in Nib
+//   has no laws to check, so the runtime still trusts only the policies it
+//   runs itself (`BumpPolicy`) and puts the values of any other on the heap.
+// - A `Region(S)` is affine and counts nothing. `Region::place(r)` borrows `r`
+//   and never calls `free`: the region gives back all its chunks when its
+//   owner's block ends.
+// - An `RcRegion(S)` is shared. `RcRegion::place(r)` borrows nothing: the
+//   runtime calls `free` when a value placed in it dies, and gives back the
+//   chunks when the last value and the last copy of the region are dead.
+// - `Place(T)` and `RcPlace(T)` are duplicable: each says "put it in this
+//   region", and every value put there gets a new block. `RcPlace(T)` holds
+//   no borrow; `RcPlace::heap()` puts the value on the heap.
+//
+// A backend that cannot place a value in memory it manages ignores the place
+// and puts every value on the heap; what the checker accepts is the same.
+
+// That `S` is the state of an allocation policy, as programs see it: a
+// program gets an instance for each instance of `Policy` (`std/alloc.taut`),
+// whose methods and laws the kernel checked, from extraction. A region asks
+// only for this.
+pub(open) class PolicyState(S: Type) {}
+
+pub struct(affine) Region(S: Type) {}
+pub struct(shared) RcRegion(S: Type) {}
+
+extern {
+  pub type(borrow) Place(T: Type)
+  pub type(shared) RcPlace(T: Type)
+}
+
+extern {
+  pub fn Region::new<S>(s: S): Region(S) where PolicyState(S)
+  pub fn Region::place<S, T>(r: &Region(S)): Place(T)
+}
+
+extern {
+  pub fn RcRegion::new<S>(s: S): RcRegion(S) where PolicyState(S)
+  pub fn RcRegion::place<S, T>(r: RcRegion(S)): RcPlace(T)
+}
+
+extern {
+  pub fn RcPlace::heap<T>(): RcPlace(T)
+}
+
+// Where a value goes is chosen by the type that holds it: a `Placed(T)` is put
+// in a scoped region and keeps the borrow of its place; an `RcPlaced(T)` is
+// put where nothing is borrowed (an `RcRegion` or the heap). Each is built
+// only by its `new`, which asks its effect for the place; the types have no
+// effect. Each reads as its `value` (`coerce`). The checker knows none of
+// these names. An arm of `place` or `rc_place` answers `k(e)`, and a row left
+// with one of them at the top level is an error.
+pub(open) effect place<T>(): Place(T) resume 1
+pub(open) effect rc_place<T>(): RcPlace(T) resume 1
+
+pub struct Placed(T: Type) { coerce(mut) value: T, at: Place(T) }
+pub struct RcPlaced(T: Type) { coerce(owned) value: T, at: RcPlace(T) }
+
+// Puts `x` where the handler of `place(T)` says.
+pub fn Placed::new<T>(x: T): Placed(T) ! {place(T)} {
+  Placed { value: x, at: perform place() }
+}
+
+// Puts `x` where the handler of `rc_place(T)` says.
+pub fn RcPlaced::new<T>(x: T): RcPlaced(T) ! {rc_place(T)} {
+  RcPlaced { value: x, at: perform rc_place() }
+}
+
+// Runs `body` with every `RcPlaced(T)` it builds put on the heap.
+pub fn RcPlaced::heap<T, R, !e>(body: &(() -> R ! {rc_place(T)} ∪ e)): R ! e {
+  handle { body() } with {
+    rc_place<T>(), k => k(RcPlace::heap())
+  }
+}

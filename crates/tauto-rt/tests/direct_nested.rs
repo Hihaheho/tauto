@@ -5,7 +5,7 @@
 //!     log(t), k => k(perform log(t))
 //!   }
 //! } with {
-//!   log(t), k => k(perform show("seen", t))
+//!   log(t), k => k(show(&t))
 //! }
 //! ```
 //! The inner arm runs outside the inner handler: its `log` reaches the outer.
@@ -18,8 +18,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use common::*;
-use tauto_rt::ev::{DirectHandler, Ev};
-use tauto_rt::{OP_SHOW, Op, OpId, Payload, Text};
+use std::any::Any;
+
+use tauto_rt::ev::{DirectHandler, Ev, Io};
+use tauto_rt::{OP_SHOW, Op, OpId, Text};
 
 const OP_LOG: Op = Op::new(10, "log");
 
@@ -30,13 +32,17 @@ impl DirectHandler for Inner {
         op == OP_LOG.id
     }
 
-    fn handle(&self, outer: &Ev<'_>, _op: OpId, args: Payload) -> Result<Payload, Payload> {
-        let (t,): (Text,) = match args.downcast::<(Text,)>() {
-            Ok(b) => *b,
-            Err(args) => return Err(args),
+    fn handle(&self, outer: &Ev<'_>, _op: OpId, io: &mut dyn Any) -> bool {
+        let Some(io) = io.downcast_mut::<Io<(Text,), ()>>() else {
+            return false;
+        };
+        let Some((t,)) = io.take_args() else {
+            return false;
         };
         // `k(perform log(t))`: the arm's own perform goes to `outer`.
-        Ok(outer.perform(OP_LOG, Box::new((t,)), L))
+        let () = outer.perform_typed::<(Text,), ()>(OP_LOG, (t,), L);
+        *io = Io::Answer(());
+        true
     }
 }
 
@@ -47,12 +53,16 @@ impl DirectHandler for Outer {
         op == OP_LOG.id
     }
 
-    fn handle(&self, outer: &Ev<'_>, _op: OpId, args: Payload) -> Result<Payload, Payload> {
-        let (t,): (Text,) = match args.downcast::<(Text,)>() {
-            Ok(b) => *b,
-            Err(args) => return Err(args),
+    fn handle(&self, outer: &Ev<'_>, _op: OpId, io: &mut dyn Any) -> bool {
+        let Some(io) = io.downcast_mut::<Io<(Text,), ()>>() else {
+            return false;
         };
-        Ok(outer.perform(OP_SHOW, Box::new((text("seen"), format!("{:?}", t))), L))
+        let Some((t,)) = io.take_args() else {
+            return false;
+        };
+        let _ = outer.perform(OP_SHOW, Box::new((text("seen"), format!("{:?}", t))), L);
+        *io = Io::Answer(());
+        true
     }
 }
 
@@ -63,7 +73,7 @@ fn the_inner_arm_reaches_the_outer_handler() {
     let ev = ev.push(Rc::new(Outer));
     let ev = ev.push(Rc::new(Inner));
     for t in ["a", "b"] {
-        let _ = ev.perform(OP_LOG, Box::new((text(t),)), L);
+        let () = ev.perform_typed::<(Text,), ()>(OP_LOG, (text(t),), L);
     }
-    assert_eq!(*shown.borrow(), ["seen = \"a\"", "seen = \"b\""]);
+    assert_eq!(*shown.borrow(), ["\"a\"", "\"b\""]);
 }

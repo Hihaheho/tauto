@@ -10,10 +10,8 @@ import "bytes.taut"
 import "par.taut"
 import "uni.taut"
 import "../../text/src/text.taut"
-import std::Text
-import std::UInt
-import std::prelude::Affine
-import std::prelude::Shared
+import std::text
+import std::uint
 
 // A range of code points, both ends in.
 pub(open) struct RRange { lo: u64, hi: u64 }
@@ -30,11 +28,11 @@ pub(open) enum RHir {
   RhCap(RHir)
 }
 
-pub fn rx_inc(c: u64): u64 {
+pub fn rx_inc(c: u64): u64 ! {overflow} {
   if c == 55295 { 57344 } else { c + 1 }
 }
 
-pub fn rx_dec(c: u64): u64 {
+pub fn rx_dec(c: u64): u64 ! {overflow} {
   if c == 57344 { 55295 } else { c - 1 }
 }
 
@@ -56,7 +54,7 @@ pub fn rx_insert_range(xs: List(RRange), r: RRange): List(RRange) {
   }
 }
 
-pub fn rx_sort_ranges(xs: List(RRange)): List(RRange) {
+pub fn rx_sort_ranges(xs: List(RRange)): List(RRange) ! {div} {
   var out: List(RRange) := Nil
   var rest := xs
   var running := true
@@ -74,7 +72,7 @@ pub fn rx_sort_ranges(xs: List(RRange)): List(RRange) {
   out
 }
 
-pub fn rx_rev_ranges(xs: List(RRange)): List(RRange) {
+pub fn rx_rev_ranges(xs: List(RRange)): List(RRange) ! {div} {
   var out: List(RRange) := Nil
   var rest := xs
   var running := true
@@ -93,7 +91,7 @@ pub fn rx_rev_ranges(xs: List(RRange)): List(RRange) {
 }
 
 // Sorted, and ranges that touch or overlap made one.
-pub fn rx_canon(xs: List(RRange)): List(RRange) {
+pub fn rx_canon(xs: List(RRange)): List(RRange) ! {div, overflow} {
   var out: List(RRange) := Nil
   var rest := rx_sort_ranges(xs)
   var running := true
@@ -131,7 +129,7 @@ pub fn rx_canon(xs: List(RRange)): List(RRange) {
   rx_rev_ranges(out)
 }
 
-pub fn rx_union(a: List(RRange), b: List(RRange)): List(RRange) {
+pub fn rx_union(a: List(RRange), b: List(RRange)): List(RRange) ! {div, overflow} {
   rx_canon(rx_append_ranges(a, b))
 }
 
@@ -143,7 +141,7 @@ pub fn rx_append_ranges(a: List(RRange), b: List(RRange)): List(RRange) {
 }
 
 // The complement of a canonical set among the code points.
-pub fn rx_negate(xs: List(RRange)): List(RRange) {
+pub fn rx_negate(xs: List(RRange)): List(RRange) ! {div, overflow} {
   match xs {
     Nil => Cons(RRange { lo: 0, hi: rx_max_char() }, Nil)
     Cons(first, rest) => {
@@ -174,7 +172,7 @@ pub fn rx_negate(xs: List(RRange)): List(RRange) {
   }
 }
 
-pub fn rx_intersect(a: List(RRange), b: List(RRange)): List(RRange) {
+pub fn rx_intersect(a: List(RRange), b: List(RRange)): List(RRange) ! {div, overflow} {
   var out: List(RRange) := Nil
   var xs := a
   var running := true
@@ -208,7 +206,7 @@ pub fn rx_intersect(a: List(RRange), b: List(RRange)): List(RRange) {
   rx_canon(out)
 }
 
-pub fn rx_sub_range(x: RRange, y: RRange): List(RRange) {
+pub fn rx_sub_range(x: RRange, y: RRange): List(RRange) ! {div, overflow} {
   if y.hi < x.lo || x.hi < y.lo {
     Cons(x, Nil)
   } else {
@@ -223,26 +221,26 @@ pub fn rx_sub_range(x: RRange, y: RRange): List(RRange) {
   }
 }
 
-pub fn rx_sub_ranges(xs: List(RRange), y: RRange): List(RRange) {
+pub fn rx_sub_ranges(xs: List(RRange), y: RRange): List(RRange) ! {div, overflow} {
   match xs {
     Nil => Nil
     Cons(x, rest) => rx_append_ranges(rx_sub_range(x, y), rx_sub_ranges(rest, y))
   }
 }
 
-pub fn rx_difference(a: List(RRange), b: List(RRange)): List(RRange) {
+pub fn rx_difference(a: List(RRange), b: List(RRange)): List(RRange) ! {div, overflow} {
   match b {
     Nil => a
     Cons(y, rest) => rx_difference(rx_sub_ranges(a, y), rest)
   }
 }
 
-pub fn rx_symmetric(a: List(RRange), b: List(RRange)): List(RRange) {
+pub fn rx_symmetric(a: List(RRange), b: List(RRange)): List(RRange) ! {div, overflow} {
   rx_union(rx_difference(a, b), rx_difference(b, a))
 }
 
 // The ranges that the table of a class holds (pairs of numbers).
-pub fn rx_table_ranges(t: Text): List(RRange) {
+pub fn rx_table_ranges(t: Text): List(RRange) ! {div} {
   var out: List(RRange) := Nil
   var words := text_split(t, " ")
   var running := true
@@ -252,7 +250,7 @@ pub fn rx_table_ranges(t: Text): List(RRange) {
         out := Cons(RRange { lo: rx_nat(a), hi: rx_nat(b) }, out)
         words := rest
       }
-      other => {
+      ^other => {
         running := false
       }
     }
@@ -270,7 +268,7 @@ pub fn rx_nat(t: Text): u64 {
 pub fn rx_class_literal(rs: List(RRange)): Option(u64) {
   match rs {
     Cons(r, Nil) => if r.lo == r.hi { Some(r.lo) } else { None }
-    other => None
+    ^other => None
   }
 }
 
@@ -292,13 +290,13 @@ pub fn rx_append_chars(a: List(u64), b: List(u64)): List(u64) {
 pub fn rx_lit(cs: List(u64)): RHir {
   match cs {
     Nil => RhEmpty
-    other => RhLit(cs)
+    ^other => RhLit(cs)
   }
 }
 
 // A concatenation: concatenations are flattened one level, literals next to
 // each other are one, empty ones are left out.
-pub fn rx_concat(subs: List(RHir)): RHir {
+pub fn rx_concat(subs: List(RHir)): RHir ! {div} {
   var new: List(RHir) := Nil
   var prior: Option(List(u64)) := None
   var rest := subs
@@ -377,7 +375,7 @@ pub fn rx_concat(subs: List(RHir)): RHir {
   }
 }
 
-pub fn rx_rev_hirs(xs: List(RHir)): List(RHir) {
+pub fn rx_rev_hirs(xs: List(RHir)): List(RHir) ! {div} {
   var out: List(RHir) := Nil
   var rest := xs
   var running := true
@@ -406,7 +404,7 @@ pub fn rx_eq_list(a: List(RHir), b: List(RHir)): Bool {
   match a {
     Nil => match b {
       Nil => true
-      Cons(y, ys) => false
+      Cons(^y, ^ys) => false
     }
     Cons(x, xs) => match b {
       Nil => false
@@ -419,7 +417,7 @@ pub fn rx_eq_chars(a: List(u64), b: List(u64)): Bool {
   match a {
     Nil => match b {
       Nil => true
-      Cons(y, ys) => false
+      Cons(^y, ^ys) => false
     }
     Cons(x, xs) => match b {
       Nil => false
@@ -432,7 +430,7 @@ pub fn rx_eq_ranges(a: List(RRange), b: List(RRange)): Bool {
   match a {
     Nil => match b {
       Nil => true
-      Cons(y, ys) => false
+      Cons(^y, ^ys) => false
     }
     Cons(x, xs) => match b {
       Nil => false
@@ -445,7 +443,7 @@ pub fn rx_eq_max(a: Option(u64), b: Option(u64)): Bool {
   match a {
     None => match b {
       None => true
-      Some(y) => false
+      Some(^y) => false
     }
     Some(x) => match b {
       None => false
@@ -458,61 +456,61 @@ pub fn rx_eq(a: RHir, b: RHir): Bool {
   match a {
     RhEmpty => match b {
       RhEmpty => true
-      other => false
+      ^other => false
     }
     RhLit(x) => match b {
       RhLit(y) => rx_eq_chars(x, y)
-      other => false
+      ^other => false
     }
     RhClass(x) => match b {
       RhClass(y) => rx_eq_ranges(x, y)
-      other => false
+      ^other => false
     }
     RhConcat(x) => match b {
       RhConcat(y) => rx_eq_list(x, y)
-      other => false
+      ^other => false
     }
     RhAlt(x) => match b {
       RhAlt(y) => rx_eq_list(x, y)
-      other => false
+      ^other => false
     }
     RhRep(x, lo, hi) => match b {
       RhRep(y, lo2, hi2) => lo == lo2 && rx_eq_max(hi, hi2) && rx_eq(x, y)
-      other => false
+      ^other => false
     }
     RhCap(x) => match b {
       RhCap(y) => rx_eq(x, y)
-      other => false
+      ^other => false
     }
   }
 }
 
-pub fn rx_len_list(xs: List(RHir)): u64 {
+pub fn rx_len_list(xs: List(RHir)): u64 ! {overflow} {
   match xs {
     Nil => 0
-    Cons(x, rest) => 1 + rx_len_list(rest)
+    Cons(^x, rest) => 1 + rx_len_list(rest)
   }
 }
 
-pub fn rx_nth(xs: List(RHir), i: u64): RHir {
+pub fn rx_nth(xs: List(RHir), i: u64): RHir ! {overflow} {
   match xs {
     Nil => RhEmpty
     Cons(x, rest) => if i == 0 { x } else { rx_nth(rest, i - 1) }
   }
 }
 
-pub fn rx_drop(xs: List(RHir), n: u64): List(RHir) {
+pub fn rx_drop(xs: List(RHir), n: u64): List(RHir) ! {overflow} {
   if n == 0 {
     xs
   } else {
     match xs {
       Nil => Nil
-      Cons(x, rest) => rx_drop(rest, n - 1)
+      Cons(^x, rest) => rx_drop(rest, n - 1)
     }
   }
 }
 
-pub fn rx_take(xs: List(RHir), n: u64): List(RHir) {
+pub fn rx_take(xs: List(RHir), n: u64): List(RHir) ! {overflow} {
   if n == 0 {
     Nil
   } else {
@@ -524,7 +522,7 @@ pub fn rx_take(xs: List(RHir), n: u64): List(RHir) {
 }
 
 // The elements of the first concatenation that every alternative starts with.
-pub fn rx_common_len(first: List(RHir), others: List(RHir)): Option(u64) {
+pub fn rx_common_len(first: List(RHir), others: List(RHir)): Option(u64) ! {div, overflow} {
   var len := rx_len_list(first)
   var rest := others
   var ok := true
@@ -561,7 +559,7 @@ pub fn rx_common_len(first: List(RHir), others: List(RHir)): Option(u64) {
             }
             len := same
           }
-          other => {
+          ^other => {
             ok := false
           }
         }
@@ -574,7 +572,7 @@ pub fn rx_common_len(first: List(RHir), others: List(RHir)): Option(u64) {
 
 // The prefix all of `hirs` start with lifted out, if they are all
 // concatenations with one.
-pub fn rx_lift(hirs: List(RHir)): Option(RHir) {
+pub fn rx_lift(hirs: List(RHir)): Option(RHir) ! {div, overflow} {
   match hirs {
     Cons(h0, others) => match h0 {
       RhConcat(first) => match rx_common_len(first, others) {
@@ -593,7 +591,7 @@ pub fn rx_lift(hirs: List(RHir)): Option(RHir) {
                   RhConcat(xs) => {
                     suffixes := Cons(rx_concat(rx_drop(xs, len)), suffixes)
                   }
-                  other => #()
+                  ^other => #()
                 }
                 rest := more
               }
@@ -606,7 +604,7 @@ pub fn rx_lift(hirs: List(RHir)): Option(RHir) {
           )
         }
       }
-      other => None
+      ^other => None
     }
     Nil => None
   }
@@ -616,8 +614,8 @@ pub fn rx_all_singletons(xs: List(RHir)): Bool {
   match xs {
     Nil => true
     Cons(x, rest) => match x {
-      RhLit(Cons(c, Nil)) => rx_all_singletons(rest)
-      other => false
+      RhLit(Cons(^c, Nil)) => rx_all_singletons(rest)
+      ^other => false
     }
   }
 }
@@ -627,7 +625,7 @@ pub fn rx_singleton_ranges(xs: List(RHir)): List(RRange) {
     Nil => Nil
     Cons(x, rest) => match x {
       RhLit(Cons(c, Nil)) => Cons(RRange { lo: c, hi: c }, rx_singleton_ranges(rest))
-      other => rx_singleton_ranges(rest)
+      ^other => rx_singleton_ranges(rest)
     }
   }
 }
@@ -636,25 +634,25 @@ pub fn rx_all_classes(xs: List(RHir)): Bool {
   match xs {
     Nil => true
     Cons(x, rest) => match x {
-      RhClass(rs) => rx_all_classes(rest)
-      other => false
+      RhClass(^rs) => rx_all_classes(rest)
+      ^other => false
     }
   }
 }
 
-pub fn rx_class_ranges_union(xs: List(RHir)): List(RRange) {
+pub fn rx_class_ranges_union(xs: List(RHir)): List(RRange) ! {div, overflow} {
   match xs {
     Nil => Nil
     Cons(x, rest) => match x {
       RhClass(rs) => rx_union(rs, rx_class_ranges_union(rest))
-      other => rx_class_ranges_union(rest)
+      ^other => rx_class_ranges_union(rest)
     }
   }
 }
 
 // An alternation: flattened; characters alone, or classes alone, become
 // one class; a prefix all the alternatives start with is lifted out.
-pub fn rx_alternation(subs: List(RHir)): RHir {
+pub fn rx_alternation(subs: List(RHir)): RHir ! {div, overflow} {
   var new: List(RHir) := Nil
   var rest := subs
   var running := true
@@ -680,7 +678,7 @@ pub fn rx_alternation(subs: List(RHir)): RHir {
   match all {
     Nil => RhClass(Nil)
     Cons(x, Nil) => x
-    other => if rx_all_singletons(all) {
+    ^other => if rx_all_singletons(all) {
       rx_class(rx_canon(rx_singleton_ranges(all)))
     } else if rx_all_classes(all) {
       rx_class(rx_class_ranges_union(all))
@@ -706,7 +704,7 @@ pub fn rx_cannot_match_more(h: RHir): Bool {
     RhCap(x) => rx_cannot_match_more(x)
     RhConcat(xs) => rx_all_empty(xs)
     RhAlt(xs) => rx_all_empty(xs)
-    other => false
+    ^other => false
   }
 }
 
@@ -750,7 +748,7 @@ pub(open) struct REsc { single: Bool, ch: u64, rs: List(RRange), at: u64 }
 // Positions are one-based Unicode scalar positions in the regular expression.
 pub(open) struct RInput { points: Array(u64), context: Text }
 
-pub fn rx_die(cs: RInput, at: u64, why: Text): Never {
+pub fn rx_die(cs: RInput, at: u64, why: Text): Never ! {fail(Text), overflow} {
   par_die(
     Text::concat_all(
       Cons(
@@ -775,7 +773,7 @@ pub fn rx_peek(cs: RInput, i: u64): u64 {
   }
 }
 
-pub fn rx_code_points(p: Text): Array(u64) {
+pub fn rx_code_points(p: Text): Array(u64) ! {div, fail(Text), overflow} {
   var out: List(u64) := Nil
   var at: u64 := 0
   while at < std::prelude::Text::len(p) {
@@ -790,7 +788,7 @@ pub fn rx_code_points(p: Text): Array(u64) {
   Array::of_list(text_u64_reverse(out))
 }
 
-pub fn text_u64_reverse(xs: List(u64)): List(u64) {
+pub fn text_u64_reverse(xs: List(u64)): List(u64) ! {div} {
   var out: List(u64) := Nil
   var rest := xs
   var running := true
@@ -812,7 +810,7 @@ pub fn rx_is_digit(c: u64): Bool {
   c >= 48 && c <= 57
 }
 
-pub fn rx_hex_value(c: u64): Option(u64) {
+pub fn rx_hex_value(c: u64): Option(u64) ! {overflow} {
   if c >= 48 && c <= 57 {
     Some(c - 48)
   } else if c >= 65 && c <= 70 {
@@ -830,7 +828,7 @@ pub fn rx_is_alnum(c: u64): Bool {
 
 pub(open) struct RNum { value: u64, at: u64 }
 
-pub fn rx_hex_digits(cs: RInput, i: u64, count: u64): RNum {
+pub fn rx_hex_digits(cs: RInput, i: u64, count: u64): RNum ! {div, fail(Text), overflow} {
   var v: u64 := 0
   var at := i
   var n: u64 := 0
@@ -847,7 +845,7 @@ pub fn rx_hex_digits(cs: RInput, i: u64, count: u64): RNum {
   RNum { value: v, at: at }
 }
 
-pub fn rx_hex_braced(cs: RInput, i: u64): RNum {
+pub fn rx_hex_braced(cs: RInput, i: u64): RNum ! {div, fail(Text), overflow} {
   var v: u64 := 0
   var at := i + 1
   var n: u64 := 0
@@ -883,7 +881,7 @@ pub fn rx_set_esc(rs: List(RRange), at: u64): REsc {
 }
 
 // Unicode letter, number and identifier properties; the name is at `i` (after `p` or `P`).
-pub fn rx_property(cs: RInput, i: u64, negated: Bool): REsc {
+pub fn rx_property(cs: RInput, i: u64, negated: Bool): REsc ! {div, fail(Text), overflow} {
   var name: List(u64) := Nil
   var at := i
   if rx_peek(cs, i) == 123 {
@@ -917,7 +915,7 @@ pub fn rx_property(cs: RInput, i: u64, negated: Bool): REsc {
   rx_set_esc(if negated { rx_negate(rs) } else { rs }, at)
 }
 
-pub fn rx_text_of(cps: List(u64)): Text {
+pub fn rx_text_of(cps: List(u64)): Text ! {div} {
   var b := Buf::new()
   var rest := cps
   var running := true
@@ -941,7 +939,7 @@ pub fn rx_text_of(cps: List(u64)): Text {
 }
 
 // What follows the backslash at `i - 1`.
-pub fn rx_escape(cs: RInput, i: u64): REsc {
+pub fn rx_escape(cs: RInput, i: u64): REsc ! {div, fail(Text), overflow} {
   let c := rx_peek(cs, i)
   if c == 110 {
     rx_single(10, i + 1)
@@ -996,12 +994,12 @@ pub fn rx_escape(cs: RInput, i: u64): REsc {
   }
 }
 
-pub fn rx_class_op(cs: RInput, i: u64): Bool {
+pub fn rx_class_op(cs: RInput, i: u64): Bool ! {overflow} {
   let c := rx_peek(cs, i)
   (c == 45 || c == 38 || c == 126) && rx_peek(cs, i + 1) == c
 }
 
-pub fn rx_class_run(cs: RInput, i: u64, first0: Bool): RSet {
+pub fn rx_class_run(cs: RInput, i: u64, first0: Bool): RSet ! {div, fail(Text), overflow} {
   var acc: List(RRange) := Nil
   var at := i
   var first := first0
@@ -1065,7 +1063,7 @@ pub fn rx_class_run(cs: RInput, i: u64, first0: Bool): RSet {
 }
 
 // The class after `[`: items, then operators with their right sides, and `]`.
-pub fn rx_bracket(cs: RInput, i: u64): RSet {
+pub fn rx_bracket(cs: RInput, i: u64): RSet ! {div, fail(Text), overflow} {
   var negated := false
   var at := i
   if rx_peek(cs, at) == 94 {
@@ -1097,7 +1095,7 @@ pub fn rx_dot(): RHir {
   rx_class(Cons(RRange { lo: 0, hi: 9 }, Cons(RRange { lo: 11, hi: rx_max_char() }, Nil)))
 }
 
-pub fn rx_atom(cs: RInput, i: u64): RPos {
+pub fn rx_atom(cs: RInput, i: u64): RPos ! {div, fail(Text), overflow} {
   let c := rx_peek(cs, i)
   if c == 40 {
     var capture := true
@@ -1136,7 +1134,7 @@ pub fn rx_atom(cs: RInput, i: u64): RPos {
   }
 }
 
-pub fn rx_number(cs: RInput, i: u64): RNum {
+pub fn rx_number(cs: RInput, i: u64): RNum ! {div, fail(Text), overflow} {
   var v: u64 := 0
   var at := i
   if not(rx_is_digit(rx_peek(cs, at))) {
@@ -1149,7 +1147,7 @@ pub fn rx_number(cs: RInput, i: u64): RNum {
   RNum { value: v, at: at }
 }
 
-pub fn rx_rep(cs: RInput, i: u64): RPos {
+pub fn rx_rep(cs: RInput, i: u64): RPos ! {div, fail(Text), overflow} {
   let a := rx_atom(cs, i)
   var h := a.hir
   var at := a.at
@@ -1205,7 +1203,7 @@ pub fn rx_rep(cs: RInput, i: u64): RPos {
   RPos { hir: h, at: at }
 }
 
-pub fn rx_cat(cs: RInput, i: u64): RPos {
+pub fn rx_cat(cs: RInput, i: u64): RPos ! {div, fail(Text), overflow} {
   var items: List(RHir) := Nil
   var at := i
   var running := true
@@ -1222,7 +1220,7 @@ pub fn rx_cat(cs: RInput, i: u64): RPos {
   RPos { hir: rx_concat(rx_rev_hirs(items)), at: at }
 }
 
-pub fn rx_alt(cs: RInput, i: u64): RPos {
+pub fn rx_alt(cs: RInput, i: u64): RPos ! {div, fail(Text), overflow} {
   var alts: List(RHir) := Nil
   var at := i
   var running := true
@@ -1239,11 +1237,11 @@ pub fn rx_alt(cs: RInput, i: u64): RPos {
   RPos { hir: rx_alternation(rx_rev_hirs(alts)), at: at }
 }
 
-pub fn rx_parse(p: Text): RHir {
+pub fn rx_parse(p: Text): RHir ! {div, fail(Text), overflow} {
   rx_parse_named(p, "pattern")
 }
 
-pub fn rx_parse_named(p: Text, context: Text): RHir {
+pub fn rx_parse_named(p: Text, context: Text): RHir ! {div, fail(Text), overflow} {
   let cs := RInput { points: rx_code_points(p), context: context }
   let r := rx_alt(cs, 0)
   if r.at != Array::len(cs.points) {
@@ -1257,7 +1255,7 @@ pub fn rx_show_chars(cs: List(u64)): Text {
     Nil => ""
     Cons(c, rest) => match rest {
       Nil => Text::of_u64(c)
-      more => Text::concat_all(Cons(Text::of_u64(c), Cons(" ", Cons(rx_show_chars(rest), Nil))))
+      ^more => Text::concat_all(Cons(Text::of_u64(c), Cons(" ", Cons(rx_show_chars(rest), Nil))))
     }
   }
 }
@@ -1271,7 +1269,7 @@ pub fn rx_show_ranges(rs: List(RRange)): Text {
       )
       match rest {
         Nil => one
-        more => Text::concat_all(Cons(one, Cons(" ", Cons(rx_show_ranges(rest), Nil))))
+        ^more => Text::concat_all(Cons(one, Cons(" ", Cons(rx_show_ranges(rest), Nil))))
       }
     }
   }
@@ -1282,7 +1280,7 @@ pub fn rx_show_list(xs: List(RHir)): Text {
     Nil => ""
     Cons(x, rest) => match rest {
       Nil => rx_show(x)
-      more => Text::concat_all(Cons(rx_show(x), Cons(",", Cons(rx_show_list(rest), Nil))))
+      ^more => Text::concat_all(Cons(rx_show(x), Cons(",", Cons(rx_show_list(rest), Nil))))
     }
   }
 }

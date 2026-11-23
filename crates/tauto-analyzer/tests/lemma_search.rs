@@ -95,12 +95,12 @@ theorem t(): Zero = Zero { ?h }"#;
     let f = Fixture::new("imports", source);
     fs::write(
         f.0.join("lemmas.taut"),
-        r#"pub theorem identity(): Zero = Zero { Refl(Nat, Zero) }"#,
+        r#"pub theorem identity(): Zero = Zero { Refl(<A: Nat, a: Zero>) }"#,
     )
     .unwrap();
     fs::write(
         f.0.join("outside.taut"),
-        r#"pub theorem outside(): Zero = Zero { Refl(Nat, Zero) }"#,
+        r#"pub theorem outside(): Zero = Zero { Refl(<A: Nat, a: Zero>) }"#,
     )
     .unwrap();
     let report = check_report(&f.path(), None).unwrap();

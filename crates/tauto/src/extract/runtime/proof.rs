@@ -7,6 +7,9 @@ use crate::surface::{DataConstructor, DataDecl};
 pub(super) struct Eraser<'a, 'p> {
     pub(super) mapper: &'a Mapper<'p>,
     pub(super) plan: &'a Extractor<'p>,
+    /// For each text writer (`Extractor::writers`), the function `f__w` that
+    /// pushes its texts onto a buffer.
+    pub(super) writer_names: HashMap<Name, Name>,
 }
 
 impl Mapper<'_> {
@@ -15,14 +18,28 @@ impl Mapper<'_> {
         input: &crate::read::ExtractionInput,
         plan: &Extractor<'_>,
     ) -> Result<Vec<Stmt>, Message> {
-        let eraser = Eraser { mapper: self, plan };
+        let prelude = bound_kernel_prelude()?.stmts;
+        let eraser = Eraser {
+            mapper: self,
+            plan,
+            writer_names: plan
+                .writers
+                .iter()
+                .map(|n| {
+                    (
+                        n.clone(),
+                        Name::Global(crate::identity::DeclRef::fresh(format!("{n}__w"))),
+                    )
+                })
+                .collect(),
+        };
         let mut statements = Vec::new();
         for (_, source) in &input.sources {
             for statement in source {
                 eraser.statement(statement, &mut statements)?;
             }
         }
-        for statement in bound_kernel_prelude()?.stmts {
+        for statement in prelude {
             if let Stmt::Fn(function) = statement {
                 if plan.needed.contains(&function.name)
                     && !plan.std.of(&function.name).is_some_and(nib_prelude_fn)
@@ -42,6 +59,201 @@ impl Mapper<'_> {
 }
 
 impl Eraser<'_, '_> {
+    /// `f__w(&mut wbuf, …)`, for a text writer `f` erased as `function`: the
+    /// texts `f` puts before its last parameter, pushed onto `wbuf` in order.
+    fn writer_function(
+        &self,
+        source: &FnDecl,
+        function: &FnDecl,
+    ) -> Result<Option<FnDecl>, Message> {
+        let Some(name) = self.writer_names.get(&source.name) else {
+            return Ok(None);
+        };
+        let mut writer = function.clone();
+        let Some(r) = writer.params.pop() else {
+            return Ok(None);
+        };
+        writer.param_types.pop();
+        writer.borrows.pop();
+        let span = source.span;
+        writer.name = name.clone();
+        writer.params.insert(0, Name::Spelled("wbuf".into()));
+        writer.param_types.insert(
+            0,
+            Some(SurfaceTerm::var(
+                &crate::bindings::library_name("Buf"),
+                span,
+            )),
+        );
+        writer.borrows.insert(0, Some(true));
+        writer.result = Some(SurfaceTerm::var(
+            &crate::bindings::library_name("Unit"),
+            span,
+        ));
+        writer.body = self.write_tail(&function.body, &r)?;
+        // The body is a copy of `function`'s: each term gets a place of its
+        // own, so that no call of the two is read as the other.
+        crate::surface::walk::term(&mut writer.body, &mut |t| t.freshen());
+        Ok(Some(writer))
+    }
+
+    /// The erased tail `t` of a text writer whose last parameter is `r`,
+    /// as statements that push its texts onto `wbuf`.
+    fn write_tail(&self, t: &SurfaceTerm, r: &Name) -> Result<SurfaceTerm, Message> {
+        let span = t.span;
+        match &*t.kind {
+            TermKind::Var(v) if v == r => Ok(SurfaceTerm::unit(span)),
+            TermKind::Ascribe { term, .. } => self.write_tail(term, r),
+            TermKind::Match {
+                scrutinee,
+                result,
+                binder,
+                arms,
+                ..
+            } => {
+                let arms = arms
+                    .iter()
+                    .map(|a| {
+                        Ok(MatchArm {
+                            body: self.write_tail(&a.body, r)?,
+                            ..a.clone()
+                        })
+                    })
+                    .collect::<Result<Vec<_>, Message>>()?;
+                let _ = result;
+                Ok(t.with_kind(
+                    TermKind::Match {
+                        scrutinee: scrutinee.clone(),
+                        result: None,
+                        binder: binder.clone(),
+                        arms,
+                        binder_unused: None,
+                    },
+                    span,
+                ))
+            }
+            TermKind::If {
+                condition,
+                then,
+                otherwise: Some(otherwise),
+            } => Ok(t.with_kind(
+                TermKind::If {
+                    condition: condition.clone(),
+                    then: Box::new(self.write_tail(then, r)?),
+                    otherwise: Some(Box::new(self.write_tail(otherwise, r)?)),
+                },
+                span,
+            )),
+            TermKind::App {
+                function,
+                arguments,
+            } => {
+                let TermKind::Var(g) = &*function.kind else {
+                    return Err(format!(
+                        "a text writer's tail is {}",
+                        crate::surface::print::print_term(t)
+                    )
+                    .into());
+                };
+                let (last, rest) = arguments
+                    .split_last()
+                    .ok_or_else(|| Message::from("a text writer's tail takes no argument"))?;
+                if crate::bindings::is_library(g, "Cons") && rest.len() == 1 {
+                    // Texts written one after another are pushed as one.
+                    let (piece, last) = literal_run(&rest[0], last);
+                    let tail = self.write_tail(last, r)?;
+                    return self.template(
+                        "{\n  let wpushed := slot_arg_0\n  Buf::push(&mut wbuf, &wpushed)\n  slot_arg_1\n}",
+                        &[piece, tail],
+                        span,
+                    );
+                }
+                let tail = self.write_tail(last, r)?;
+                let Some(call) = self.writer_call(g, rest, span) else {
+                    return Err(format!("a text writer's tail calls {g}").into());
+                };
+                self.template("{\n  slot_arg_0\n  slot_arg_1\n}", &[call, tail], span)
+            }
+            _ => Err(format!(
+                "a text writer's tail is {}",
+                crate::surface::print::print_term(t)
+            )
+            .into()),
+        }
+    }
+
+    /// `g__w(&mut wbuf, a, …)`.
+    fn writer_call(
+        &self,
+        g: &Name,
+        rest: &[SurfaceTerm],
+        span: tauto_parol::Span,
+    ) -> Option<SurfaceTerm> {
+        let w = self.writer_names.get(g)?;
+        let mut args = vec![SurfaceTerm::new(
+            TermKind::Borrow { orig: false, rc: false,
+                mutable: true,
+                term: Box::new(SurfaceTerm::var(&Name::Spelled("wbuf".into()), span)),
+            },
+            span,
+        )];
+        args.extend(rest.iter().cloned());
+        Some(SurfaceTerm::app(w, args, span))
+    }
+
+    /// Each `Text::concat_all(g(a, …, Nil))` in `t` for a writer `g`, erased
+    /// as `extract_text_concat_all(…)`: one buffer that `g__w` pushes onto.
+    fn written_concats(&self, t: &mut SurfaceTerm) -> Result<(), Message> {
+        if self.writer_names.is_empty() {
+            return Ok(());
+        }
+        let mut problem = None;
+        crate::surface::walk::term(t, &mut |u| {
+            let TermKind::App {
+                function,
+                arguments,
+            } = &*u.kind
+            else {
+                return;
+            };
+            let (TermKind::Var(c), [inner]) = (&*function.kind, arguments.as_slice()) else {
+                return;
+            };
+            if c.to_string().rsplit("::").next() != Some("extract_text_concat_all") {
+                return;
+            }
+            let TermKind::App {
+                function,
+                arguments,
+            } = &*inner.kind
+            else {
+                return;
+            };
+            let TermKind::Var(g) = &*function.kind else {
+                return;
+            };
+            let Some((last, rest)) = arguments.split_last() else {
+                return;
+            };
+            if !matches!(&*last.kind, TermKind::Var(n) if crate::bindings::is_library(n, "Nil")) {
+                return;
+            }
+            let span = u.span;
+            let Some(call) = self.writer_call(g, rest, span) else {
+                return;
+            };
+            match self.template(
+                "{\n  var wbuf := Buf::new()\n  slot_arg_0\n  Text::of(wbuf)\n}",
+                &[call],
+                span,
+            ) {
+                Ok(written) => *u = written,
+                Err(e) => problem = Some(e),
+            }
+        });
+        problem.map_or(Ok(()), Err)
+    }
+
     pub(super) fn statement(&self, statement: &Stmt, out: &mut Vec<Stmt>) -> Result<(), Message> {
         if let Some(dependent) = &self.plan.dependent {
             let omitted = match statement {
@@ -68,12 +280,20 @@ impl Eraser<'_, '_> {
                 out.push(statement.clone())
             }
             statement if executable(statement, &self.plan.checked.runtime) => {}
-            Stmt::Fn(function) => {
-                if let Some(function) = self.function(function)? {
+            Stmt::Fn(source) => {
+                if let Some(function) = self.function(source)? {
+                    if let Some(writer) = self.writer_function(source, &function)? {
+                        out.push(Stmt::Fn(writer));
+                    }
                     out.push(Stmt::Fn(function));
                 }
             }
-            Stmt::Def(theorem) if self.plan.needed.contains(&theorem.name) => {
+            // A def that runs as written is kept as the type function it
+            // reads as (`keep`); the kernel checked nothing of it.
+            Stmt::Def(theorem)
+                if self.plan.needed.contains(&theorem.name)
+                    && !self.plan.checked.runtime.contains(&theorem.name) =>
+            {
                 if let Some(function) = def_as_fn(theorem) {
                     if let Some(function) = self.function(&function)? {
                         out.push(Stmt::Fn(function));
@@ -112,6 +332,9 @@ impl Eraser<'_, '_> {
                 }
                 let mut class = class.clone();
                 class.laws.clear();
+                if self.plan.std.native_key_class(&class.name) {
+                    class.bound = Some("linear".into());
+                }
                 for method in &mut class.methods {
                     for ty in method.param_types.iter_mut().flatten() {
                         *ty = self.ty(ty, &HashMap::new())?;
@@ -135,9 +358,18 @@ impl Eraser<'_, '_> {
                 let mut instance = instance.clone();
                 instance.laws.clear();
                 instance.bounds = vec![Some("shared".into()); instance.generics.len()];
-                let head = head_name(&instance.head)
-                    .ok_or("instance has no checked type head")?
-                    .clone();
+                // A product `A × B` is the instance for the prelude's `Pair` it is read as.
+                let head = match &*instance.head.kind {
+                    _ if instance.head.as_pair_type().is_some() => {
+                        crate::bindings::library_name("Pair")
+                    }
+                    _ => match tauto_kernel::check::numeral_head(&instance.head) {
+                        Some(numeral) => numeral,
+                        None => head_name(&instance.head)
+                            .ok_or("instance has no checked type head")?
+                            .clone(),
+                    },
+                };
                 let offset = instance.generics.len() + self.plan.records_of(&instance.where_);
                 for method in &mut instance.methods {
                     let target = self
@@ -152,12 +384,13 @@ impl Eraser<'_, '_> {
                         .ok_or("instance method has no checked declaration")?;
                     let signature = &self.plan.checked.signatures[target];
                     let mut locals: Locals = instance.generics.iter().cloned().collect();
+                    locals.extend(method.generics.iter().cloned());
                     locals.extend(method.params.iter().cloned());
                     let mut params = Vec::new();
                     let mut types = Vec::new();
                     let mut borrows = Vec::new();
                     for (index, name) in method.params.iter().enumerate() {
-                        if signature.params[offset + index] == Role::Value {
+                        if signature.params[offset + method.generics.len() + index] == Role::Value {
                             params.push(name.clone());
                             types.push(
                                 method.param_types[index]
@@ -190,6 +423,12 @@ impl Eraser<'_, '_> {
                 for constraint in &mut instance.where_ {
                     constraint.ty = self.ty(&constraint.ty, &HashMap::new())?;
                 }
+                if self.plan.std.of(&instance.class).is_some_and(marker_class) {
+                    let mut stands = instance.clone();
+                    stands.class = crate::bindings::library_name(MARKER_PRELUDE_CLASS);
+                    stands.methods.clear();
+                    out.push(Stmt::Instance(stands));
+                }
                 out.push(Stmt::Instance(instance));
             }
             Stmt::Import { .. }
@@ -205,6 +444,11 @@ impl Eraser<'_, '_> {
     }
 
     fn data(&self, source: &InductiveDecl) -> Result<Option<Stmt>, Message> {
+        // A family over universe levels is a template the kernel instantiates; it has
+        // no runtime form (see `Extractor::inductive`).
+        if crate::extract::over_levels(source) {
+            return Ok(None);
+        }
         let family = self
             .plan
             .checked
@@ -234,11 +478,13 @@ impl Eraser<'_, '_> {
                 .struct_fields(&source.constructors[0].name)
                 .is_some();
         let mut constructors = Vec::new();
+        let mut linear = false;
         for constructor in &source.constructors {
             let signature = &self.plan.checked.signatures[&constructor.name];
             let mut fields = Vec::new();
             for (index, (name, ty)) in constructor.params.iter().enumerate() {
                 if signature.params[family.params + index] == Role::Value {
+                    linear |= self.plan.owns_slots(ty);
                     fields.push((
                         structure.then(|| name.to_string()),
                         self.ty(ty, &HashMap::new())?,
@@ -251,13 +497,17 @@ impl Eraser<'_, '_> {
             });
         }
         let data = DataDecl {
-            kind: Some("shared".into()),
+            kind: Some(if linear { "linear" } else { "shared" }.into()),
             name: source.name.clone(),
             vis: source.vis,
             rows: vec![false; generics.len()],
             generics,
+            unused_generics: Vec::new(),
+            unused_fields: Vec::new(),
             constructors,
             host: false,
+            borrowed: false,
+            coerce: None,
             span: source.span,
         };
         Ok(Some(if structure {
@@ -318,9 +568,16 @@ impl Eraser<'_, '_> {
                     if row || generic_uses.contains(&name) {
                         function.generics.push(name.clone());
                         function.rows.push(row);
+                        // A type generic keeps the kind written for it, and
+                        // is affine when none is, as in any function: the
+                        // erased program is checked, so a body that uses a
+                        // value of it twice is rejected where it is written.
+                        // A row variable keeps its bound (`<=1`, `direct`): the
+                        // erased program is checked for what lives across an
+                        // effect against it.
                         function
                             .bounds
-                            .push(if row { None } else { Some("shared".into()) });
+                            .push(source.bounds.get(index).cloned().flatten());
                         function.bound_spans.push(source.span);
                     }
                 }
@@ -379,6 +636,7 @@ impl Eraser<'_, '_> {
         } else {
             self.expr(&function.body, &locals)?
         };
+        self.written_concats(&mut function.body)?;
         Ok(Some(function))
     }
 
@@ -416,7 +674,19 @@ impl Eraser<'_, '_> {
                             environment,
                         );
                     }
-                    let kept = self.plan.kept_params(name);
+                    if let Some(m) = self.plan.mapped_type(name)
+                        && crate::extract::is_width_family(m)
+                        && let Some(native) = crate::extract::mapped_width(m, arguments)
+                    {
+                        return Ok(SurfaceTerm::var(
+                            &crate::bindings::library_name(native),
+                            source.span,
+                        ));
+                    }
+                    let kept = match self.plan.mapped_type(name) {
+                        Some(m) => crate::extract::mapped_kept(m),
+                        None => self.plan.kept_params(name),
+                    };
                     let arguments = arguments
                         .iter()
                         .enumerate()
@@ -447,7 +717,9 @@ impl Eraser<'_, '_> {
         });
         result?;
         if let TermKind::Var(name) = &*term.kind {
-            if let Some(native) = self.plan.mapped_type(name) {
+            if let Some(native) = self.plan.mapped_type(name)
+                && !crate::extract::is_width_family(native)
+            {
                 return Ok(SurfaceTerm::var(
                     &crate::bindings::library_name(native),
                     source.span,
@@ -494,7 +766,7 @@ impl Eraser<'_, '_> {
     fn expr(&self, source: &SurfaceTerm, locals: &Locals) -> Result<SurfaceTerm, Message> {
         let span = source.span;
         if is_unit(source) {
-            return Ok(source.with_kind(TermKind::Tuple(Vec::new()), span));
+            return Ok(SurfaceTerm::unit(span));
         }
         match &*source.kind {
             TermKind::Var(name) if self.plan.thunks.contains(name) => return Ok(source.clone()),
@@ -529,6 +801,7 @@ impl Eraser<'_, '_> {
                                     params,
                                     types,
                                     body,
+                                    ..
                                 } = &*arm.body.kind
                                 else {
                                     return Err(
@@ -557,6 +830,7 @@ impl Eraser<'_, '_> {
                                                 .map(|(ty, _)| ty.clone())
                                                 .collect(),
                                             body: body.clone(),
+                                            unused_params: Vec::new(),
                                         },
                                         arm.body.span,
                                     )
@@ -595,10 +869,39 @@ impl Eraser<'_, '_> {
                     }
                 }
             }
+            TermKind::BorrowLam { borrows, lam } => {
+                let added = if let TermKind::Lam { params, .. } = &*lam.kind {
+                    let mut added = Vec::new();
+                    let mut lent = self.plan.lent_locals.borrow_mut();
+                    for (k, p) in params.iter().enumerate() {
+                        if borrows.get(k).copied().flatten() == Some(false)
+                            && lent.insert(p.clone())
+                        {
+                            added.push(p.clone());
+                        }
+                    }
+                    added
+                } else {
+                    Vec::new()
+                };
+                let erased = self.expr(lam, locals)?;
+                let mut lent = self.plan.lent_locals.borrow_mut();
+                for p in added {
+                    lent.remove(&p);
+                }
+                return Ok(source.with_kind(
+                    TermKind::BorrowLam {
+                        borrows: borrows.clone(),
+                        lam: Box::new(erased),
+                    },
+                    span,
+                ));
+            }
             TermKind::Lam {
                 params,
                 types,
                 body,
+                ..
             } => {
                 let mut inner = locals.clone();
                 inner.extend(params.iter().cloned());
@@ -615,6 +918,7 @@ impl Eraser<'_, '_> {
                         params: params.clone(),
                         types,
                         body: Box::new(self.expr(body, &inner)?),
+                        unused_params: Vec::new(),
                     },
                     span,
                 ));
@@ -625,14 +929,17 @@ impl Eraser<'_, '_> {
                 for statement in statements {
                     match statement {
                         Stmt::Let {
+                            stack,
                             name,
                             ty,
                             value,
                             borrow,
                             borrow_mut,
+                            ..
                         } => {
                             if !ty.as_ref().is_some_and(|ty| self.plan.is_prop(ty)) {
                                 kept.push(Stmt::Let {
+                                    stack: stack.clone(),
                                     name: name.clone(),
                                     ty: ty
                                         .as_ref()
@@ -641,17 +948,21 @@ impl Eraser<'_, '_> {
                                     value: self.expr(value, &inner)?,
                                     borrow: *borrow,
                                     borrow_mut: *borrow_mut,
+                                    unused: None,
                                 });
                             }
                             inner.insert(name.clone());
                         }
                         Stmt::Var {
+                            stack,
                             name,
                             ty,
                             value,
                             borrow,
+                            ..
                         } => {
                             kept.push(Stmt::Var {
+                                stack: stack.clone(),
                                 name: name.clone(),
                                 ty: ty
                                     .as_ref()
@@ -659,16 +970,23 @@ impl Eraser<'_, '_> {
                                     .transpose()?,
                                 value: self.expr(value, &inner)?,
                                 borrow: *borrow,
+                                unused: None,
                             });
                             inner.insert(name.clone());
                         }
-                        Stmt::Assign { name, place, value } => kept.push(Stmt::Assign {
+                        Stmt::Assign {
+                            name,
+                            place,
+                            value,
+                            deref,
+                        } => kept.push(Stmt::Assign {
                             name: name.clone(),
                             place: place
                                 .as_ref()
                                 .map(|place| self.expr(place, &inner))
                                 .transpose()?,
                             value: self.expr(value, &inner)?,
+                            deref: *deref,
                         }),
                         Stmt::Expr(value) => kept.push(Stmt::Expr(self.expr(value, &inner)?)),
                         _ => return Err(
@@ -721,7 +1039,10 @@ impl Eraser<'_, '_> {
                     let mut inner = locals.clone();
                     if literal && matches!(arm.pattern, Pattern::Wild) {
                         arm.pattern =
-                            Pattern::Bind(crate::identity::LocalRef::fresh("extract_rest").into());
+                            Pattern::Bind {
+                                name: crate::identity::LocalRef::fresh("extract_rest").into(),
+                                unused: None,
+                            };
                     }
                     self.pattern(&mut arm.pattern, &mut inner)?;
                     arm.body = self.expr(&arm.body, &inner)?;
@@ -738,6 +1059,7 @@ impl Eraser<'_, '_> {
                         result: None,
                         binder: None,
                         arms,
+                        binder_unused: None,
                     },
                     span,
                 ));
@@ -817,7 +1139,7 @@ impl Eraser<'_, '_> {
             })
             .collect::<Vec<_>>();
         if !shapes.iter().any(|(shape, holes)| {
-            !matches!(shape, Pattern::Bind(n) if n.as_str() == HOLE)
+            !matches!(shape, Pattern::Bind { name: n, .. } if n.as_str() == HOLE)
                 && holes.iter().any(|p| {
                     self.plan
                         .pattern_family(p)
@@ -830,7 +1152,7 @@ impl Eraser<'_, '_> {
         }
         let fallback = arms.last().filter(|arm| {
             matches!(&arm.pattern, Pattern::Wild)
-                || matches!(&arm.pattern, Pattern::Bind(n) if !self.plan.is_ctor(n))
+                || matches!(&arm.pattern, Pattern::Bind { name: n, .. } if !self.plan.is_ctor(n))
         });
         let count = arms.len() - usize::from(fallback.is_some());
         let mut groups: Vec<(Pattern, Vec<usize>)> = Vec::new();
@@ -853,14 +1175,16 @@ impl Eraser<'_, '_> {
             let mut tail = if let Some(fallback) = fallback {
                 let mut scope = inner.clone();
                 let mut bindings = Vec::new();
-                if let Pattern::Bind(name) = &fallback.pattern {
+                if let Pattern::Bind { name: name, .. } = &fallback.pattern {
                     scope.insert(name.clone());
                     bindings.push(Stmt::Let {
+                        stack: None,
                         name: name.clone(),
                         ty: None,
                         value: SurfaceTerm::var(&subject, span),
                         borrow: false,
                         borrow_mut: false,
+                        unused: None,
                     });
                 }
                 bindings.push(Stmt::Expr(self.expr(&fallback.body, &scope)?));
@@ -876,7 +1200,8 @@ impl Eraser<'_, '_> {
                     self.mapper
                         .nat_pattern(
                             pattern,
-                            SurfaceTerm::var(name, span),
+                            name,
+                            span,
                             &mut tests,
                             &mut bindings,
                         )
@@ -914,7 +1239,10 @@ impl Eraser<'_, '_> {
             let mut scope = locals.clone();
             let mut pattern = fallback.pattern.clone();
             if matches!(pattern, Pattern::Wild) {
-                pattern = Pattern::Bind(crate::identity::LocalRef::fresh("extract_rest").into());
+                pattern = Pattern::Bind {
+                    name: crate::identity::LocalRef::fresh("extract_rest").into(),
+                    unused: None,
+                };
             }
             self.pattern(&mut pattern, &mut scope)?;
             outer.push(MatchArm {
@@ -930,17 +1258,20 @@ impl Eraser<'_, '_> {
                 result: None,
                 binder: None,
                 arms: outer,
+                binder_unused: None,
             },
             span,
         );
         Ok(Some(SurfaceTerm::new(
             TermKind::Block(vec![
                 Stmt::Let {
+                    stack: None,
                     name: subject,
                     ty: None,
                     value: self.expr(scrutinee, locals)?,
                     borrow: false,
                     borrow_mut: false,
+                    unused: None,
                 },
                 Stmt::Expr(body),
             ]),
@@ -969,6 +1300,33 @@ impl Eraser<'_, '_> {
                 .map(|argument| self.expr(argument, locals))
                 .collect::<Result<Vec<_>, _>>()?;
             return Ok(SurfaceTerm::app(name, arguments, source.span));
+        }
+        // An operator the kernel read at a fixed width is that width's
+        // function (`check/machine.rs` in the kernel crate).
+        if (crate::bindings::is_library(name, "-")
+            || crate::bindings::is_library_selected(name, "div")
+            || crate::bindings::is_library_selected(name, "mod"))
+            && let Some(callee) = self
+                .plan
+                .checked
+                .sites_at(source.id())
+                .map(|site| site.callee.clone())
+                .find(|callee| {
+                    callee != name
+                        && self
+                            .plan
+                            .std
+                            .of(callee)
+                            .is_some_and(crate::extract::width_function)
+                })
+        {
+            if let [a] = arguments
+                && matches!(&*a.kind, TermKind::Nat(_))
+                && crate::extract::width_literal(self.plan.std.of(&callee))
+            {
+                return Ok(SurfaceTerm::app(name, vec![a.clone()], source.span));
+            }
+            return self.global(&callee, arguments, source, locals);
         }
         if crate::bindings::is_library(name, "-") {
             let values = arguments
@@ -1021,34 +1379,86 @@ impl Eraser<'_, '_> {
                 name = name.to_string()
             ));
         };
+        let ordered = crate::extract::positional_args(
+            arguments,
+            signature
+                .names
+                .get(..signature.implicit)
+                .unwrap_or_default(),
+        );
+        let arguments = &ordered[..];
         let mut roles = signature.params.clone();
-        if let Some(family) = self
-            .plan
-            .checked
-            .families
-            .values()
-            .find(|family| family.ctors.contains(name))
-        {
+        if let Some((_, family)) = self.plan.checked.family_of_ctor(name) {
             for role in &mut roles[..family.params] {
                 if *role == Role::Value {
                     *role = Role::Proof;
                 }
             }
         }
-        let written = if arguments.len() == roles.len() {
-            roles.as_slice()
+        // Class method projections take an implicit dictionary Value. Recover
+        // it from the checked application site so exclusive iterators keep
+        // the instance that holds their `&mut` closures.
+        let inserted = {
+            let id = source.id();
+            let mut choices = self
+                .plan
+                .checked
+                .sites_at(id)
+                .filter(|site| site.written == arguments.len() && site.callee == *name)
+                .map(|site| &site.arguments);
+            let first = choices.next();
+            first.and_then(|first| {
+                if choices.any(|args| {
+                    args.len() != first.len()
+                        || args
+                            .iter()
+                            .zip(first.iter())
+                            .any(|(a, b)| !tauto_kernel::check::same_up_to_binders(a, b))
+                }) {
+                    None
+                } else {
+                    Some(first.as_slice())
+                }
+            })
+        };
+        // A `SlotsModel` operation's policy is emitted separately below.
+        let policy_handled = self.plan.std.of(name).is_some_and(|m| m.starts_with("SlotsModel::"))
+            && self.plan.std.of(name).and_then(mapped_fn).is_some();
+        let (prefix, written): (Vec<&SurfaceTerm>, &[Role]) = if arguments.len() == roles.len() {
+            (Vec::new(), roles.as_slice())
         } else if arguments.len() + signature.implicit == roles.len() {
-            &roles[signature.implicit..]
+            let implicit = &roles[..signature.implicit];
+            if !policy_handled && implicit.iter().any(|role| *role == Role::Value) {
+                let Some(prefix) = inserted else {
+                    return Err(msg!(
+                        "tauto-extract-partial-application-unsupported",
+                        name = name.to_string()
+                    ));
+                };
+                (prefix.iter().collect(), roles.as_slice())
+            } else {
+                (Vec::new(), &roles[signature.implicit..])
+            }
         } else if arguments.is_empty() {
-            &[]
+            (Vec::new(), &[])
         } else {
             return Err(msg!(
                 "tauto-extract-partial-application-unsupported",
                 name = name.to_string()
             ));
         };
+        let supplied: Vec<&SurfaceTerm> = prefix.into_iter().chain(arguments.iter()).collect();
         let wanted = roles.iter().filter(|role| **role == Role::Value).count();
         if arguments.is_empty() && wanted > 0 {
+            if self
+                .plan
+                .checked
+                .class_members
+                .get(name)
+                .is_some_and(|class| self.plan.std.native_key_class(class))
+            {
+                return Ok(source.clone());
+            }
             let params = (0..wanted)
                 .map(|index| {
                     crate::identity::LocalRef::fresh(format!("extract_arg_{index}")).into()
@@ -1063,6 +1473,7 @@ impl Eraser<'_, '_> {
                     params,
                     types: Vec::new(),
                     body: Box::new(self.call(name, &values, source.span)?),
+                    unused_params: Vec::new(),
                 },
                 source.span,
             ));
@@ -1079,11 +1490,44 @@ impl Eraser<'_, '_> {
             .class_members
             .get(name)
             .is_some_and(|class| self.plan.std.of(class).is_some_and(mapped_class));
-        let values = arguments
+        // The policy of a `SlotsModel` operation is implicit: the checker
+        // recorded the values it fixed at this call.
+        let mut policy = Vec::new();
+        if policy_handled {
+            let site = self
+                .plan
+                .checked
+                .sites_at(source.id())
+                .find(|s| s.written == arguments.len() && &s.callee == name)
+                .ok_or_else(|| {
+                    Message::from(format!(
+                        "extract: no application site for the SlotsModel call `{name}`"
+                    ))
+                })?;
+            for (argument, role) in site
+                .arguments
+                .iter()
+                .zip(&signature.params[..signature.implicit])
+            {
+                if *role == Role::Value {
+                    policy.push(self.expr(argument, locals)?);
+                }
+            }
+        }
+        let first = roles.len() - written.len();
+        let values = supplied
             .iter()
             .zip(written)
-            .filter(|(_, role)| **role == Role::Value)
-            .map(|(argument, _)| {
+            .enumerate()
+            .filter(|(_, (_, role))| **role == Role::Value)
+            .map(|(i, (argument, _))| {
+                let lent = self.plan.std.lends_argument(
+                    name,
+                    first + i,
+                    roles.len(),
+                    argument,
+                    &self.plan.lent_locals.borrow(),
+                );
                 let mut value = self.expr(argument, locals)?;
                 if integer_arguments && matches!(&*value.kind, TermKind::Nat(_)) {
                     let family = self
@@ -1096,9 +1540,9 @@ impl Eraser<'_, '_> {
                         .ok_or("integer has no checked family")?;
                     value = SurfaceTerm::app(&family.ctors[0], vec![value], source.span);
                 }
-                if lends && !matches!(&*value.kind, TermKind::Borrow { .. }) {
+                if (lends || lent) && !matches!(&*value.kind, TermKind::Borrow { .. }) {
                     value = SurfaceTerm::new(
-                        TermKind::Borrow {
+                        TermKind::Borrow { orig: false, rc: false,
                             mutable: false,
                             term: Box::new(value),
                         },
@@ -1108,6 +1552,7 @@ impl Eraser<'_, '_> {
                 Ok(value)
             })
             .collect::<Result<Vec<_>, Message>>()?;
+        let values: Vec<SurfaceTerm> = policy.into_iter().chain(values).collect();
         self.call(name, &values, source.span)
     }
 
@@ -1129,9 +1574,11 @@ impl Eraser<'_, '_> {
             return self.template(&source, values, span);
         }
         if values.len() == 1
-            && self.plan.checked.families.iter().any(|(family, info)| {
-                self.plan.std.of(family) == Some("Text") && info.ctors.contains(name)
-            })
+            && self
+                .plan
+                .checked
+                .family_of_ctor(name)
+                .is_some_and(|(family, _)| self.plan.std.of(family) == Some("Text"))
         {
             return self.template("extract_text_of_bytes(slot_arg_0)", values, span);
         }
@@ -1175,17 +1622,23 @@ impl Eraser<'_, '_> {
 
     fn pattern(&self, pattern: &mut Pattern, locals: &mut Locals) -> Result<(), Message> {
         match pattern {
-            Pattern::Bind(name) if !self.plan.is_ctor(name) => {
+            // `#(p, q)`: the product's constructor stays as the reader wrote it.
+            Pattern::Ctor { name, args }
+                if args.len() == 2 && crate::bindings::is_reader_reference(name, "Pair::Mk") =>
+            {
+                for item in args {
+                    self.pattern(item, locals)?;
+                }
+            }
+            Pattern::Bind { name: name, .. } if !self.plan.is_ctor(name) => {
                 locals.insert(name.clone());
             }
             Pattern::Ctor { name, args } => {
                 if let Some(signature) = self.plan.checked.signatures.get(name) {
-                    let family = self
+                    let (_, family) = self
                         .plan
                         .checked
-                        .families
-                        .values()
-                        .find(|family| family.ctors.contains(name))
+                        .family_of_ctor(name)
                         .ok_or("constructor has no family")?;
                     let roles = &signature.params[family.params..];
                     let mut index = 0;
@@ -1207,11 +1660,6 @@ impl Eraser<'_, '_> {
                             .map(|(n, p)| (n.to_string(), p))
                             .collect(),
                     };
-                }
-            }
-            Pattern::Tuple(items) => {
-                for item in items {
-                    self.pattern(item, locals)?;
                 }
             }
             Pattern::Record { name, fields } => {
@@ -1242,4 +1690,29 @@ impl Eraser<'_, '_> {
         }
         Ok(())
     }
+}
+
+/// `head` and the text literals that follow it in `Cons(t, …)`, joined into
+/// one literal when `head` is one, and the list after them.
+fn literal_run<'t>(
+    head: &SurfaceTerm,
+    mut rest: &'t SurfaceTerm,
+) -> (SurfaceTerm, &'t SurfaceTerm) {
+    let TermKind::Text(first) = &*head.kind else {
+        return (head.clone(), rest);
+    };
+    let mut joined = first.clone();
+    while let TermKind::App {
+        function,
+        arguments,
+    } = &*rest.kind
+        && let TermKind::Var(g) = &*function.kind
+        && crate::bindings::is_library(g, "Cons")
+        && let [next, more] = arguments.as_slice()
+        && let TermKind::Text(t) = &*next.kind
+    {
+        joined.push_str(t);
+        rest = more;
+    }
+    (head.with_kind(TermKind::Text(joined), head.span), rest)
 }

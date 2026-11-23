@@ -1,4 +1,4 @@
-//! `Secret(A)` of `std/prelude/Secret.taut` (`docs/design/secret.md`): a
+//! `Secret(A)` of `std/builtin/secret.taut` (`docs/design/secret.md`): a
 //! value whose content a program reads only through the functions here. Each
 //! runs without a branch or a memory access that depends on a secret: a
 //! choice is made with a mask, a comparison with the borrow or the carry of

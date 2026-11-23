@@ -1,0 +1,61 @@
+// `Slots` keeps a state and a mark beside slots that hold no value until they
+// are written: written, read in place, taken, and grown, with the capacity,
+// the marks and the state as they were set.
+@ cases.slots-write-read-take-resize
+stdout = ```
+2
+3
+2
+7
+"b"
+"x"
+"a"
+5
+0
+```
+source = ```tauto
+var s: Slots(u64, u8, Text) := Slots::new(2, 0, 0)
+show(&Slots::cap(&s))
+Slots::put(&mut s, 0, 1, "a", 1)
+Slots::put(&mut s, 1, 2, "b", 2)
+Slots::resize(&mut s, 4, 0, 3)
+show(&Slots::state(&s))
+show(&Slots::mark(&s, 1))
+Slots::put(&mut s, 3, 7, "d", 4)
+show(&Slots::mark(&s, 3))
+show(Slots::get(&s, 1))
+let p := Slots::get_mut(&mut s, 1)
+*p := "x"
+show(Slots::get(&s, 1))
+let t := Slots::take(&mut s, 0, 0, 5)
+show(&t)
+show(&Slots::state(&s))
+show(&Slots::mark(&s, 0))
+```
+
+// Only the slots that hold a value are dropped with the `Slots`, and the one
+// taken out is dropped by its binding.
+@ cases.slots-drop-only-the-written-slots
+llvm.unimplemented = "generate: the LLVM backend does not write an `extern` (the native backend has no host) yet"
+files_tote = "p"
+stdout = "1\n"
+probe_drops = ["a", "b"]
+vm.unimplemented = "unsupported: the host request Probe::new"
+
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+struct(affine) Probe {}
+extern {
+  fn Probe::new(name: &Text): Probe
+}
+fn scope(): u64 {
+  var s: Slots(u64, u8, Probe) := Slots::new(4, 0, 0)
+  Slots::put(&mut s, 0, 1, Probe::new("a"), 1)
+  Slots::put(&mut s, 2, 1, Probe::new("b"), 2)
+  let t := Slots::take(&mut s, 0, 0, 1)
+  Slots::state(&s)
+}
+perform main(() => {
+  show(&scope())
+})
+```

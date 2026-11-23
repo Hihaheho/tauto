@@ -6,11 +6,14 @@ use crate::tok::{Rs, comma, id, lifetime};
 
 pub(crate) fn int_name(w: Width) -> &'static str {
     match w {
+        Width::W8 => "i8",
+        Width::W16 => "i16",
         Width::W32 => "i32",
         Width::W64 => "i64",
         Width::U8 => "u8",
+        Width::U16 => "u16",
         Width::U32 => "u32",
-        Width::U64 => "u64",
+        Width::U64 | Width::Host => "u64",
         Width::Nat => "nat",
     }
 }
@@ -39,17 +42,13 @@ impl Gen<'_> {
                 quote!(tauto_rt::stdlib::Array<#a>)
             }
             Ty::Std(n, args) if args.is_empty() => {
-                let n = id(n.rust_name());
+                let n = id(n.name());
                 quote!(tauto_rt::stdlib::#n)
             }
             Ty::Std(n, args) => {
-                let n = id(n.rust_name());
+                let n = id(n.name());
                 let args = comma(args.iter().map(|a| self.ty(a)));
                 quote!(tauto_rt::stdlib::#n<#args>)
-            }
-            Ty::HashMap(k, v) => {
-                let (k, v) = (self.ty(k), self.ty(v));
-                quote!(tauto_rt::stdlib::HashMap<#k, #v>)
             }
             Ty::Slice(a) => {
                 let a = self.ty(a);
@@ -86,6 +85,15 @@ impl Gen<'_> {
                 }
             }
             Ty::Union(id) => self.union_names[*id].clone(),
+            // The generic of an arm no `perform` reaches: no value of it is
+            // made, and Rust is left to settle the type.
+            Ty::Param(p) if tauto_nir::arms::is_skolem(p) => {
+                if self.infer_unit.get() {
+                    quote!(())
+                } else {
+                    quote!(_)
+                }
+            }
             Ty::Param(p) => {
                 let p = id(p);
                 quote!(#p)
@@ -122,13 +130,6 @@ impl Gen<'_> {
                 quote!(tauto_rt::budget::BudgetAnswer<#a>)
             }
             Ty::Shown => quote!(Shown),
-            Ty::Infer => {
-                if self.infer_unit.get() {
-                    quote!(())
-                } else {
-                    quote!(_)
-                }
-            }
         }
     }
 
@@ -144,7 +145,7 @@ impl Gen<'_> {
     /// The parameter list and result of a function type in a `dyn` bound.
     fn fn_sig(&self, f: &FnTy) -> Rs {
         if f.tier == Tier::M {
-            let mut ps = vec![quote!(&Ev<'a>), quote!(&tauto_rt::cps::M<'a>)];
+            let mut ps = vec![quote!(&Ev<'_>), quote!(&tauto_rt::cps::M<'a>)];
             ps.extend(f.params.iter().map(|p| self.ty(p)));
             let ret = self.ty(&f.ret);
             ps.push(quote!(tauto_rt::cps::Kont<'a, #ret>));
@@ -159,16 +160,56 @@ impl Gen<'_> {
             let ret = self.ty(&f.ret);
             return quote!((#ps) -> Fut<#lt, #ret>);
         }
+        // A result that holds a borrow borrows from every borrowed
+        // argument: one lifetime, bound by the `for<…>` of `fn_binder`.
+        let tied = self.ties_result(f);
+        let saved = (self.named_refs.get(), self.lt_name.get());
+        if tied {
+            self.named_refs.set(true);
+            self.lt_name.set("'tb");
+        } else {
+            // A borrowed argument whose borrow the result does not keep
+            // lasts only for the call: an elided lifetime in the `Fn`
+            // bound stands for every one, so a caller can lend the same
+            // place again after the call returns.
+            self.named_refs.set(false);
+        }
         let mut ps = vec![quote!(&Ev<'_>)];
         ps.extend(f.params.iter().map(|p| self.ty(p)));
         let ps = comma(ps);
-        let r = self.ty(&f.ret);
+        if !tied {
+            self.named_refs.set(saved.0);
+        }
+        // No borrowed argument for the result to borrow from: the value it
+        // returns is an owned copy of what it captured, so its type names
+        // no borrow (an elided lifetime here has nothing to bind to).
+        let r = match &f.ret {
+            Ty::Ref(inner) if !tied && !matches!(**inner, Ty::Fn(_)) => self.ty(inner),
+            ret => self.ty(ret),
+        };
+        self.named_refs.set(saved.0);
+        self.lt_name.set(saved.1);
         let r = if f.tier >= Tier::A {
             quote!(Result<#r, Abort>)
         } else {
             r
         };
         quote!((#ps) -> #r)
+    }
+
+    /// Whether a function of the S or A tier returns a value that holds a
+    /// borrow of its borrowed arguments.
+    pub(crate) fn ties_result(&self, f: &FnTy) -> bool {
+        f.tier < Tier::O && self.has_ref(&f.ret) && f.params.iter().any(|p| self.has_ref(p))
+    }
+
+    /// The `for<'tb>` before `Fn` when `fn_sig` ties the result.
+    fn fn_binder(&self, f: &FnTy) -> Rs {
+        if self.ties_result(f) {
+            quote!(for<'tb>)
+        } else {
+            Rs::new()
+        }
     }
 
     /// A function as a value: `Rc<dyn Fn…>`, or `Box<dyn FnOnce…>` when it
@@ -181,12 +222,15 @@ impl Gen<'_> {
             let ret = self.ty(&f.ret);
             return quote!(#name<#lt, #(#params,)* #ret>);
         }
+        let binder = self.fn_binder(f);
         let mut sig = self.fn_sig(f);
         if f.tier == Tier::O {
             let lt = lifetime(self.o_lt_name.get());
             sig = quote!(#sig + #lt);
         } else if f.tier == Tier::M {
             sig = quote!(#sig + 'a);
+        } else if self.fn_region.get() {
+            sig = quote!(#sig + 'f);
         }
         if f.kind.dup() {
             let send = if self.pkg.sync {
@@ -194,14 +238,14 @@ impl Gen<'_> {
             } else {
                 Rs::new()
             };
-            quote!(Rc<dyn Fn #sig #send>)
+            quote!(Rc<dyn #binder Fn #sig #send>)
         } else {
             let send = if self.pkg.sync {
                 quote!(+ Send)
             } else {
                 Rs::new()
             };
-            quote!(Box<dyn FnOnce #sig #send>)
+            quote!(Box<dyn #binder FnOnce #sig #send>)
         }
     }
 
@@ -281,6 +325,27 @@ impl Gen<'_> {
         quote!(tauto_rt::cps::OCb<'a, (#tuple), #ret>)
     }
 
+    /// A borrowed function of the S or A tier as code of the M tier holds it:
+    /// a shared handle that continuations can hold, made from the captures it
+    /// copies (CFL lets only duplicable values and `&` live across `ω`).
+    pub(crate) fn mcb_ty(&self, f: &FnTy) -> Rs {
+        let named_refs = self.named_refs.replace(false);
+        let binder = self.fn_binder(f);
+        let sig = self.fn_sig(f);
+        self.named_refs.set(named_refs);
+        quote!(Rc<dyn #binder Fn #sig + 'a>)
+    }
+
+    /// A borrowed function as code of the M tier holds it (see
+    /// [`crate::expr::m_callback`]).
+    pub(crate) fn m_callback_ty(&self, f: &FnTy) -> Rs {
+        if f.tier == Tier::O {
+            self.ocb_ty(f)
+        } else {
+            self.mcb_ty(f)
+        }
+    }
+
     pub(crate) fn fn_ref_ty(&self, f: &FnTy) -> Rs {
         if f.tier == Tier::O {
             let ps: Vec<Rs> = f.params.iter().map(|p| self.ty(p)).collect();
@@ -301,9 +366,10 @@ impl Gen<'_> {
         if f.tier < Tier::O {
             self.named_refs.set(false);
         }
+        let binder = self.fn_binder(f);
         let sig = self.fn_sig(f);
         self.named_refs.set(named_refs);
-        quote!(&#lt mut dyn FnMut #sig)
+        quote!(&#lt mut dyn #binder FnMut #sig)
     }
 }
 
@@ -346,15 +412,22 @@ mod tests {
             linear: false,
             view: false,
             host: false,
+            shown: String::new(),
         });
         package.fns.push(FnInst {
             id: 0,
             source: "source".into(),
-            rust_name: "__TautoOFn0__".into(),
             tier: Tier::S,
-            generics: vec![("__TautoOFn0___".into(), Default::default())],
+            // A function's own name ends with its tier (`source__s`), so
+            // only its generics can take an alias's spelling.
+            generics: vec![
+                ("__TautoOFn0__".into(), Default::default()),
+                ("__TautoOFn0___".into(), Default::default()),
+            ],
             params: Vec::new(),
             ret: Ty::Unit,
+            lends: None,
+            fn_region: false,
             body: Expr {
                 kind: ExprKind::Unit,
                 ty: Ty::Unit,
@@ -367,6 +440,8 @@ mod tests {
             generics: vec!["__TautoOFn0____".into()],
             params: Vec::new(),
             ret: Ty::Unit,
+            lends: None,
+            waits: false,
             span: Span::default(),
         });
         package.ops.push(OpDef {

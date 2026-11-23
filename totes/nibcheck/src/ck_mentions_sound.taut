@@ -1,15 +1,15 @@
 import "mentions_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "rules_ty.taut"
 import "ty.taut"
 import "unify_sound.taut"
 
-pub fn mentions_present(o: Option(Ty)): Bool { ⊢ Bool from match o { None => false
-    Some(t) => true } }
+pub fn mentions_present(o: Option(Ty)): Bool { match o { None => false
+    Some(^t) => true } }
 pub theorem mentions_bound(
   c: Checker,
   i: Nat,
@@ -22,7 +22,7 @@ pub theorem mentions_or_left(
   h: a = true
 ): Bool::or(a, b) = true { Eq::subst((x: Bool) => Bool::or(x, b) = true, Eq::sym(h), Refl) }
 pub theorem mentions_or_right(a: Bool, b: Bool, h: b = true): Bool::or(a, b) = true {
-  ⊢ Bool::or(a, b) = true from match a { false => h
+  match a { false => h
     true => Refl }
 }
 
@@ -44,27 +44,28 @@ pub def MentionsListHit(
   ns,
   n
 ) = true. ∀ h: TyMentionsList(ck_subst_of(c), n, ts). ck_mentions_any_in(k, c, ns, ts) = true
-pub fn mentions_kind(j: Nat, c: Checker, ns: List(Text), t: Ty): Bool { ⊢ Bool from match t {
-    TyInt(part_w) => false
+pub fn mentions_kind(j: Nat, c: Checker, ns: List(Text), t: Ty): Bool { match t {
+    TyInt(^part_w) => false
     TyBool => false
     TyText => false
     TyUnit => false
     TyNever => false
     TyDecimal => false
     TyFloat => false
-    TyFn(part_params, part_result, part_kind) => Bool::or(
+    TyFloat32 => false
+    TyFn(part_params, part_result, ^part_kind) => Bool::or(
       ck_mentions_any_in(j, c, ns, part_params),
       ck_mentions_in(j, c, ns, part_result)
     )
     TyUnion(part_members) => ck_mentions_any_in(j, c, ns, part_members)
     TyProduct(part_members) => ck_mentions_any_in(j, c, ns, part_members)
-    TyTagged(part_tags, part_inner) => ck_mentions_in(j, c, ns, part_inner)
-    TyNamed(part_name, part_args) => ck_mentions_any_in(j, c, ns, part_args)
-    TyParam(part_name, part_bound) => list_has_text(ns, part_name)
+    TyTagged(^part_tags, part_inner) => ck_mentions_in(j, c, ns, part_inner)
+    TyNamed(^part_name, part_args) => ck_mentions_any_in(j, c, ns, part_args)
+    TyParam(part_name, ^part_bound) => list_has_text(ns, part_name)
     TyInfo(part_inner) => ck_mentions_in(j, c, ns, part_inner)
-    TyBorrow(part_inner, part_mutable) => ck_mentions_in(j, c, ns, part_inner)
+    TyBorrow(part_inner, ^part_mutable) => ck_mentions_in(j, c, ns, part_inner)
     TyVar(part_v) => ck_is_bound(c, part_v)
-    TyPoly(part_generics, part_inner) => ck_mentions_in(j, c, ns, part_inner)
+    TyPoly(^part_generics, part_inner) => ck_mentions_in(j, c, ns, part_inner)
     TyApp(part_head, part_arg) => Bool::or(
       ck_mentions_in(j, c, ns, part_head),
       ck_mentions_in(j, c, ns, part_arg)
@@ -87,7 +88,7 @@ pub theorem mentions_kind_hit(
   member: list_has_text(ns, n) = true,
   h: TyMentions(ck_subst_of(c), n, t)
 ): mentions_kind(j, c, ns, t) = true {
-  ⊢ mentions_kind(j, c, ns, t) = true from match h {
+  match h {
     MenParam(k) => member
     MenVar(inner, i, eq, inside) => mentions_bound(c, i, inner, eq)
     MenFnParam(ps, r, k, inside) => mentions_or_left(
@@ -130,7 +131,7 @@ pub theorem mentions_list_hit_step(
   member: list_has_text(ns, n) = true,
   h: TyMentionsList(ck_subst_of(c), n, ts)
 ): ck_mentions_any_in(Succ(j), c, ns, ts) = true {
-  ⊢ ck_mentions_any_in(Succ(j), c, ns, ts) = true from match h {
+  match h {
     MenHead(x, rest, inside) => mentions_or_left(
       ck_mentions_in(j, c, ns, x),
       ck_mentions_any_in(j, c, ns, rest),
@@ -144,7 +145,7 @@ pub theorem mentions_list_hit_step(
   }
 }
 pub theorem mentions_hit_all(k: Nat): And(MentionsHit(k), MentionsListHit(k)) {
-  ⊢ And(MentionsHit(k), MentionsListHit(k)) from match k {
+  match k {
     Zero => AndIntro(
       c => ns => n => t => member => h => Refl,
       c => ns => n => ts => member => h => Refl

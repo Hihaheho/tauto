@@ -1,9 +1,9 @@
 //! Shared results and diagnostics of declaration checking.
 
+use crate::span::Span;
 use crate::surface::SurfaceTerm;
 use std::fmt;
 use tauto_message::Message;
-use tauto_parol::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostic {
@@ -14,6 +14,8 @@ pub struct Diagnostic {
     pub detail: Option<Box<Mismatch>>,
     /// An edit of the source that answers this, when there is one.
     pub fix: Option<Fix>,
+    /// What to do about it, when no edit answers it.
+    pub help: Option<Message>,
     /// The other uses in the same declaration of names that are not
     /// defined, in the order of the source. Whether a name is defined does
     /// not depend on any type, so these are found without checking on past
@@ -45,6 +47,7 @@ impl Diagnostic {
             span,
             detail: None,
             fix: None,
+            help: None,
             also: Vec::new(),
         }
     }

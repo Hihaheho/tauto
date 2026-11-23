@@ -1,0 +1,72 @@
+// An entry of a row is read as the one declaration it means, by its
+// reference, whichever way it is written: by its short name, by its full
+// name, or as a set whose members are other declarations.
+
+@ cases.a-row-names-a-library-effect-by-its-full-name
+files."main.taut" = ```tauto
+import std::builtin::os { print, stdout }
+
+fn hello(): Unit ! {std::builtin::os::stdout} {
+  print("hello\n")
+}
+```
+entry = "main.taut"
+check_errors = []
+
+@ cases.a-row-names-the-host-set-by-its-full-name
+files."main.taut" = ```tauto
+import std::builtin::os { print, Host }
+
+fn hello(): Unit ! {std::builtin::os::Host} {
+  print("hello\n")
+}
+```
+entry = "main.taut"
+check_errors = []
+
+@ cases.a-row-that-names-the-host-set-does-not-import-its-members
+description = "Host's members are the prelude's effects, by reference: a file that names the set needs no import of spawn or its other members."
+files."main.taut" = ```tauto
+import std::builtin::os { print }
+
+fn hello(): Unit ! {Host} {
+  print("hello\n")
+}
+```
+entry = "main.taut"
+check_errors = []
+
+@ cases.a-row-names-another-file-s-effect-and-set-by-their-full-names
+description = "The row as written (what the unused-effect check reads) means the same declarations as the row."
+files."lib.taut" = ```tauto
+import std::builtin::os { stdout }
+
+pub effect ping(): Unit
+pub effect Out { stdout, ping }
+```
+files."main.taut" = ```tauto
+import std::builtin::os { print }
+import "lib.taut"
+
+fn a(): Unit ! {lib::ping} { perform ping() }
+fn b(): Unit ! {lib::Out} { print("b\n") }
+```
+entry = "main.taut"
+check_errors = []
+
+@ cases.a-set-named-in-an-instance-row-is-written-out-there
+description = "A set named in the row of an instance's argument (`spawn(() -> T ! {cells})`) means its effects, as it does at the top of a row."
+files."main.taut" = ```tauto
+import std::builtin::par { Task, spawn, wait, ref_new, ref_get, Ref }
+
+effect cells { ref_new, ref_get }
+
+fn start(): Task(i64) ! {∀ T. spawn(() -> T ! {cells})} {
+  perform spawn(() => {
+    let r := perform ref_new(1)
+    perform ref_get(&r)
+  })
+}
+```
+entry = "main.taut"
+check_errors = []

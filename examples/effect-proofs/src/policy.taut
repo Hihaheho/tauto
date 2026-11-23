@@ -1,19 +1,19 @@
-import "../../../std/Base.taut"
+import std::base
 
 pub(open) inductive Resource: Type {
   Mk(generation: Nat, value: Nat): Resource
 }
 pub fn generation(state: Resource): Nat {
-  ⊢ Nat from match state { Mk(n, v) => n }
+  match state { Mk(n, ^v) => n }
 }
 pub fn displayed(state: Resource): Nat {
-  ⊢ Nat from match state { Mk(n, v) => v }
+  match state { Mk(^n, v) => v }
 }
 pub fn begin(state: Resource): Resource {
   Resource::Mk(Succ(generation(state)), displayed(state))
 }
 pub fn complete(state: Resource, token: Nat, value: Nat): Resource {
-  ⊢ Resource from match Nat::eq(token, generation(state)) {
+  match Nat::eq(token, generation(state)) {
     false => state
     true => Resource::Mk(generation(state), value)
   }
@@ -26,7 +26,7 @@ pub theorem stale_ignored(
   value: Nat,
   stale: (token = generation(state)) -> False
 ): (complete(state, token, value) = state) {
-  ⊢ (complete(state, token, value) = state) from match Nat::eq(
+  match Nat::eq(
     token,
     generation(state)
   ) eqn comparison {

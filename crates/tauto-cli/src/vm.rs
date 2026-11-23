@@ -10,7 +10,7 @@ use std::process::ExitCode;
 
 use crate::tote_main::TOTE_FLAG;
 
-use tauto_nir::CompileError;
+use tauto_nibcheck::lower::CompileError;
 use tauto_rt::permissions::{Grant, Permissions};
 
 pub(crate) enum Prepared {
@@ -48,7 +48,7 @@ impl Prepared {
 }
 
 pub fn command(args: &[String]) -> ExitCode {
-    let prepared = match prepare(&args[1..], u64::MAX, None) {
+    let prepared = match prepare(&args[1..], u64::MAX, None, "main-run-interrupted") {
         Ok(p) => p,
         Err(code) => return code,
     };
@@ -78,11 +78,13 @@ pub fn command(args: &[String]) -> ExitCode {
 /// Loads, checks and compiles the program `args` name (the arguments of
 /// `run` after the command, `--backend vm` among them or not); an error is
 /// printed. `unlimited` is the step limit of a run given `--allow-div`,
-/// `default_steps` the one of a run without it (the host's when `None`).
+/// `default_steps` the one of a run without it (the host's when `None`), and
+/// `interrupted_hint` the id of what the message says after the steps run out.
 pub(crate) fn prepare(
     args: &[String],
     unlimited: u64,
     default_steps: Option<u64>,
+    interrupted_hint: &str,
 ) -> Result<Prepared, ExitCode> {
     // `--backend vm` is this backend's; the rest are `run`'s own.
     let mut own = Vec::new();
@@ -107,12 +109,12 @@ pub(crate) fn prepare(
         return Err(ExitCode::from(2));
     }
     let end = own.iter().position(|a| a == "--").unwrap_or(own.len());
-    let flags: Vec<String> = own[..end]
-        .iter()
-        .filter(|a| *a == "-A" || a.starts_with("--allow-"))
-        .cloned()
-        .collect();
-    let path = run.entry();
+    // `--tote NAME` resolves to a member directory; a bare file path stays as written.
+    let path = if run.tote.is_some() {
+        run.tote_dir()?.display().to_string()
+    } else {
+        run.file.clone().ok_or_else(super::usage)?
+    };
     let p = Path::new(&path);
     let tote = if run.tote.is_some() || p.is_dir() {
         Some(p.to_path_buf())
@@ -126,17 +128,47 @@ pub(crate) fn prepare(
     } else {
         None
     };
-    if let Some(dir) = &run.tote
-        && !["src/main.taut", "src/main.tauto"]
-            .iter()
-            .any(|name| Path::new(dir).join(name).is_file())
+    if run.tote.is_some()
+        && !tauto::manifest::tote_entry(p).is_some_and(|entry| entry.is_file())
     {
-        let name = Path::new(dir)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(dir);
+        let name = run.tote.as_deref().unwrap_or(path.as_str());
         eprintln!("{}", crate::i18n::t!("main-run-tote-no-main", name = name));
         return Err(ExitCode::from(2));
+    }
+    // The bytecode of a tote's program and the permissions it needs are kept
+    // with what it was read from (`rust_cache`), as the crate of `--backend
+    // rust` is: while tauto itself, the arguments and every file the reading
+    // depended on are unchanged, the run starts from the kept bytecode instead
+    // of reading, checking and compiling the tote again. A run that lacks a
+    // permission is refused before anything else.
+    let kept = tote.as_ref().and_then(|d| {
+        let key: Vec<String> = own[..end]
+            .iter()
+            .filter(|a| *a != "--yes")
+            .cloned()
+            .collect();
+        super::rust_cache::lookup_outputs("vm-program", d, &key)
+    });
+    if let Some((_, Some(outputs))) = &kept
+        && let Some(Ok(needed)) = outputs
+            .get("permissions")
+            .map(|b| String::from_utf8(b.clone()))
+    {
+        let permissions = run.grant(needed.split('\n').filter(|p| !p.is_empty()))?;
+        if !in_process_vm()
+            && let Some(Ok(bytecode)) = outputs
+                .get("bytecode")
+                .map(|b| String::from_utf8(b.clone()))
+        {
+            return machine(
+                permissions,
+                run,
+                bytecode,
+                unlimited,
+                default_steps,
+                interrupted_hint,
+            );
+        }
     }
     let loaded = match &tote {
         Some(d) => tauto::program::load_tote_for_build(d),
@@ -149,11 +181,17 @@ pub(crate) fn prepare(
             return Err(ExitCode::FAILURE);
         }
     };
+    super::require_entry(&loaded, &path)?;
     // The JavaScript backend's lowering: every function runs with explicit
     // continuations, as the machine runs them.
-    let package = match tauto_nir::compile_loaded_with_observer(&loaded, false, true, |_| {}) {
+    let package = match tauto_nibcheck::lower::compile_loaded_with_observer(
+        &loaded,
+        false,
+        tauto_nir::Target::JavaScript,
+        |_| {},
+    ) {
         Ok(p) => p,
-        Err(CompileError::Front(m)) => {
+        Err(CompileError::Front(m) | CompileError::Package(m)) => {
             eprintln!("{}", super::locate_front(&loaded, &path, &m));
             return Err(ExitCode::FAILURE);
         }
@@ -178,18 +216,15 @@ pub(crate) fn prepare(
     };
     // The permissions of the standard effects that reach the top level: a
     // run without one of them does not start.
-    let permissions = run.permissions;
-    let missing = permissions.missing(package.permissions.iter().map(String::as_str));
-    if !missing.is_empty() {
-        eprintln!("{}", tauto_rt::permissions::missing_message(&missing));
-        return Err(ExitCode::from(2));
-    }
-    let steps = run.steps.unwrap_or(if permissions.div == Grant::All {
-        unlimited
-    } else {
-        default_steps.unwrap_or(tauto_rt::DEFAULT_STEP_LIMIT)
-    });
-    if std::env::var_os("TAUTO_VM").is_some_and(|v| v == "rust") {
+    // What is asked: the package's permissions, and `div` when the top level
+    // may not stop; kept with the bytecode as the same list.
+    let needed: Vec<String> = {
+        let rows = loaded.check_rows(tauto::rows::Target::Rust);
+        super::needed_permissions(&loaded, &rows)
+    };
+    let permissions = run.grant(needed.iter().map(String::as_str))?;
+    if in_process_vm() {
+        let steps = steps_of(&run, &permissions, unlimited, default_steps);
         return Ok(Prepared::InProcess {
             path,
             package: Box::new(package),
@@ -201,13 +236,67 @@ pub(crate) fn prepare(
     let bytecode = match tauto_vm::wire::write(&package) {
         Ok(b) => b,
         Err(what) => {
-            eprintln!(
-                "{}",
-                crate::i18n::t!("vm-unsupported-yet", place = &path, what = &what)
-            );
+            let key = if tauto_vm::wire::refused(&what) {
+                "vm-unsupported"
+            } else {
+                "vm-unsupported-yet"
+            };
+            eprintln!("{}", crate::i18n::t!(key, place = &path, what = &what));
             return Err(ExitCode::FAILURE);
         }
     };
+    if let Some((lookup, _)) = &kept {
+        let needed = needed.join("\n");
+        super::rust_cache::keep_outputs(
+            lookup,
+            &loaded,
+            &[
+                ("permissions".to_string(), needed.as_bytes()),
+                ("bytecode".to_string(), bytecode.as_bytes()),
+            ],
+        );
+    }
+    machine(
+        permissions,
+        run,
+        bytecode,
+        unlimited,
+        default_steps,
+        interrupted_hint,
+    )
+}
+
+/// The step limit of `run`: `unlimited` with `div` allowed, otherwise
+/// `--steps` or `default_steps` (the host's when `None`).
+fn steps_of(
+    run: &super::RunArgs,
+    permissions: &Permissions,
+    unlimited: u64,
+    default_steps: Option<u64>,
+) -> u64 {
+    run.steps.unwrap_or(if permissions.div == Grant::All {
+        unlimited
+    } else {
+        default_steps.unwrap_or(tauto_rt::DEFAULT_STEP_LIMIT)
+    })
+}
+
+/// `TAUTO_VM=rust`: the program runs on the machine of `tauto-vm` in this process.
+fn in_process_vm() -> bool {
+    std::env::var_os("TAUTO_VM").is_some_and(|v| v == "rust")
+}
+
+/// Writes `bytecode` for the machine and gives its arguments.
+fn machine(
+    permissions: Permissions,
+    run: super::RunArgs,
+    bytecode: String,
+    unlimited: u64,
+    default_steps: Option<u64>,
+    interrupted_hint: &str,
+) -> Result<Prepared, ExitCode> {
+    let steps = steps_of(&run, &permissions, unlimited, default_steps);
+    let flags = crate::run_prompt::flags(&permissions);
     static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
         "tauto-vm-{}-{}",
@@ -219,11 +308,26 @@ pub(crate) fn prepare(
         eprintln!("{}: {e}", file.display());
         return Err(ExitCode::FAILURE);
     }
-    if jit_on() {
-        vm_bridge::set_program(package.clone());
-    }
     let limit = (steps != u64::MAX).then_some(steps);
-    let args = tauto_vm::wire::machine_args(&flags, &file, limit, None, &run.program_args);
+    let interrupted = limit.map(|steps| {
+        format!(
+            "{} {}",
+            crate::i18n::t!("eval-step-limit"),
+            crate::i18n::t!(interrupted_hint, steps = steps)
+        )
+    });
+    let args = tauto_vm::wire::machine_args(
+        &flags,
+        &file,
+        limit,
+        None,
+        interrupted.as_deref(),
+        Some(
+            &crate::i18n::t!("eval-too-deep", depth = tauto_vm::wire::MACHINE_MAX_FRAMES)
+                .to_string(),
+        ),
+        &run.program_args,
+    );
     Ok(Prepared::Machine { dir, args })
 }
 
@@ -256,8 +360,16 @@ fn in_process(
         tauto_vm::End::Exit(code) => ExitCode::from(code as u8),
         tauto_vm::End::Error(message) if message == tauto_rt::messages::STEP_LIMIT => {
             eprintln!(
-                "{message} {}",
+                "{} {}",
+                crate::i18n::t!("eval-step-limit"),
                 crate::i18n::t!("main-run-interrupted", steps = steps)
+            );
+            ExitCode::FAILURE
+        }
+        tauto_vm::End::Error(message) if message == tauto_vm::machine::TOO_DEEP => {
+            eprintln!(
+                "{}",
+                crate::i18n::t!("eval-too-deep", depth = tauto_vm::machine::MAX_FRAMES)
             );
             ExitCode::FAILURE
         }
@@ -268,8 +380,73 @@ fn in_process(
     }
 }
 
-/// Whether the machine runs some functions as native code
-/// (`docs/design/jit.md`): unless `TAUTO_JIT` is `0`.
+/// Whether the Rust machine (`TAUTO_VM=rust`) runs some functions as native
+/// code (`docs/design/jit.md`): unless `TAUTO_JIT` is `0`. The machine of
+/// `totes/vm` has no native code.
 fn jit_on() -> bool {
     std::env::var_os("TAUTO_JIT").is_none_or(|v| v != "0")
+}
+
+/// Runs an already loaded and granted program on the machine, without a step
+/// limit (a project's command, `commands.rs`); `path` names it in messages.
+pub(crate) fn run_loaded(
+    loaded: &tauto::program::Loaded,
+    path: &str,
+    permissions: Permissions,
+    program_args: &[String],
+) -> ExitCode {
+    let package = match tauto_nibcheck::lower::compile_loaded_with_observer(
+        loaded,
+        false,
+        tauto_nir::Target::JavaScript,
+        |_| {},
+    ) {
+        Ok(p) => p,
+        Err(CompileError::Front(m) | CompileError::Package(m)) => {
+            eprintln!("{}", super::locate_front(loaded, path, &m));
+            return ExitCode::FAILURE;
+        }
+        Err(CompileError::Unsupported(u)) => {
+            eprintln!(
+                "{}",
+                crate::i18n::t!("vm-unsupported", place = path, what = u.what.clone())
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("{path}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if in_process_vm() {
+        return in_process(path, &package, program_args.to_vec(), permissions, u64::MAX);
+    }
+    let bytecode = match tauto_vm::wire::write(&package) {
+        Ok(b) => b,
+        Err(what) => {
+            let key = if tauto_vm::wire::refused(&what) {
+                "vm-unsupported"
+            } else {
+                "vm-unsupported-yet"
+            };
+            eprintln!("{}", crate::i18n::t!(key, place = path, what = &what));
+            return ExitCode::FAILURE;
+        }
+    };
+    static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "tauto-vm-command-{}-{}",
+        std::process::id(),
+        RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let file = dir.join("program.bc");
+    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&file, bytecode)) {
+        eprintln!("{}: {e}", file.display());
+        return ExitCode::FAILURE;
+    }
+    let flags = crate::run_prompt::flags(&permissions);
+    let args = tauto_vm::wire::machine_args(&flags, &file, None, None, None, None, program_args);
+    let code = tauto_cli_totes::main("vm", args).unwrap_or(ExitCode::FAILURE);
+    let _ = std::fs::remove_dir_all(&dir);
+    code
 }

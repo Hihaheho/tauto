@@ -1,6 +1,6 @@
 # The `tauto` command only. Mount a project at /work to use it:
 #   docker build -t tauto .
-#   docker run --rm -v "$PWD:/work" tauto check meta/KernelSafe.taut
+#   docker run --rm -v "$PWD:/work" tauto check meta/kernel_safe.taut
 
 FROM rust:1-slim-bookworm@sha256:86234e857a413004348b471d11a4ebe1aa92d2eae2b6b143cac68fd1ac3c48be AS build
 # git: the workspace has git dependencies.
@@ -9,7 +9,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
-# rustup installs the nightly pinned in rust-toolchain.toml on first use.
+# rustup installs the toolchain pinned in rust-toolchain.toml on first use.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \

@@ -1,0 +1,27 @@
+import "alloc.taut" { PoolPolicy }
+import std::builtin::region { Region, RcRegion, Place, RcPlace }
+
+// The pool allocators of std, built on the region primitives and the proved
+// policy `PoolPolicy` (`alloc.taut`): a fixed number of slots of one size,
+// and a block that does not fit a free slot goes to the heap. A `Pool` is a
+// scoped region, given back whole when its owner's block ends, and a place of
+// it borrows it. An `RcPool` counts: a slot is free again when the value in
+// it dies, the pool lives until its last value and copy are dead, and a place
+// of it borrows nothing.
+// A region with `n` slots of `slot` bytes.
+pub fn Pool::new(slot: Nat, n: Nat): Region(PoolPolicy) {
+  Region::new(PoolPolicy::new(slot, n))
+}
+
+pub fn Pool::place<T>(p: &Region(PoolPolicy)): Place(T) {
+  Region::place(p)
+}
+
+// A counted region with `n` slots of `slot` bytes.
+pub fn RcPool::new(slot: Nat, n: Nat): RcRegion(PoolPolicy) {
+  RcRegion::new(PoolPolicy::new(slot, n))
+}
+
+pub fn RcPool::place<T>(p: RcRegion(PoolPolicy)): RcPlace(T) {
+  RcRegion::place(p)
+}

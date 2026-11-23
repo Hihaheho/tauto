@@ -199,7 +199,7 @@ fn type_name(s: &Stmt) -> Option<Name> {
 }
 
 /// The names a statement declares.
-fn defines(s: &Stmt) -> Vec<Name> {
+pub(super) fn defines(s: &Stmt) -> Vec<Name> {
     match s {
         Stmt::Theorem(t) | Stmt::Def(t) => vec![t.name.clone()],
         // `f::eq` of `opaque fn f` and of `decreasing_by`.
@@ -261,13 +261,18 @@ fn constructors(stmts: &[Stmt]) -> HashSet<Name> {
 
 fn pattern_binders(p: &Pattern, ctors: &HashSet<Name>, out: &mut Vec<Name>) {
     match p {
-        Pattern::Bind(n) if !ctors.contains(n) => out.push(n.clone()),
+        Pattern::Bind { name: n, .. } if !ctors.contains(n) => out.push(n.clone()),
+        Pattern::Typed { name, .. } => out.push(name.clone()),
         Pattern::Ctor { args, .. } => args.iter().for_each(|a| pattern_binders(a, ctors, out)),
         Pattern::Record { fields, .. } => fields
             .iter()
             .for_each(|(_, f)| pattern_binders(f, ctors, out)),
-        Pattern::Tuple(items) => items.iter().for_each(|a| pattern_binders(a, ctors, out)),
-        _ => {}
+        Pattern::Bind { .. }
+        | Pattern::Wild
+        | Pattern::Int(_)
+        | Pattern::Bool(_)
+        | Pattern::Text(_)
+        | Pattern::Other(_) => {}
     }
 }
 
@@ -318,6 +323,7 @@ fn scan(t: &mut SurfaceTerm, bound: &mut Vec<Name>, ctors: &HashSet<Name>, out: 
             binder,
             domain,
             body,
+            ..
         } => {
             scan(domain, bound, ctors, out);
             bound.push(binder.clone());
@@ -327,6 +333,7 @@ fn scan(t: &mut SurfaceTerm, bound: &mut Vec<Name>, ctors: &HashSet<Name>, out: 
             params,
             body,
             types,
+            ..
         } => {
             for ty in types.iter_mut().flatten() {
                 scan(ty, bound, ctors, out);
@@ -339,6 +346,7 @@ fn scan(t: &mut SurfaceTerm, bound: &mut Vec<Name>, ctors: &HashSet<Name>, out: 
             result,
             binder,
             arms,
+            ..
         } => {
             scan(scrutinee, bound, ctors, out);
             if let Some(r) = result {
@@ -420,6 +428,141 @@ fn scan(t: &mut SurfaceTerm, bound: &mut Vec<Name>, ctors: &HashSet<Name>, out: 
     bound.truncate(depth);
 }
 
+/// The statements of `prefix` that checking `decl` after them can depend on:
+/// those `decl` uses, and those they use in turn; every statement that can
+/// matter to a later one other than through a name it declares, and what it
+/// uses.
+///
+/// A declaration of names (a function, theorem, definition, type, effect,
+/// external function or class, or a `mutual` block of them) changes what a
+/// later statement checks to only where that statement names it, directly or
+/// through what it names; the kernel does not search the declarations it has.
+/// Anything else is kept whether `decl` names it or not: an instance is found
+/// by its class, not by its name, and a statement of another kind (an
+/// attributed one, a top-level `let` or expression) is not known to matter
+/// only by name. A statement that uses a name of `decl` comes after it in the
+/// order the kernel checks in, so it is left out as [`used_later`] leaves it.
+pub(super) fn needed(decl: &Stmt, prefix: &[Stmt]) -> Vec<Stmt> {
+    needed_positions(decl, prefix)
+        .into_iter()
+        .map(|i| prefix[i].clone())
+        .collect()
+}
+
+/// Whether one of `users` may use one of `decls`: mentions a name one of them declares (or a
+/// name generated from it), or `decls` hold a statement found otherwise than by its name (an
+/// instance) or a function an operator stands for. `context` holds the constructors.
+pub(super) fn may_use(users: &[&Stmt], decls: &[&Stmt], context: &[Stmt]) -> bool {
+    let mut owner = Owners::default();
+    for (i, s) in decls.iter().enumerate() {
+        if !by_name(s) {
+            return true;
+        }
+        for name in defines(s) {
+            let shown = name.to_string();
+            if super::sugar::Sugar::OPERATORS
+                .iter()
+                .any(|(_, f, _)| *f == shown)
+            {
+                return true;
+            }
+            owner.names.entry(name).or_insert(i);
+        }
+        if let Some(name) = type_name(s) {
+            owner.types.entry(name).or_insert(i);
+        }
+    }
+    if decls.is_empty() {
+        return false;
+    }
+    let mut all: Vec<Stmt> = context.to_vec();
+    all.extend(users.iter().map(|s| (*s).clone()));
+    let ctors = constructors(&all);
+    users
+        .iter()
+        .any(|u| mentions(u, &ctors).iter().any(|n| owner.find(n).is_some()))
+}
+
+fn by_name(s: &Stmt) -> bool {
+    match s {
+        Stmt::Fn(_)
+        | Stmt::Theorem(_)
+        | Stmt::Def(_)
+        | Stmt::Inductive(_)
+        | Stmt::Struct(_)
+        | Stmt::Enum(_)
+        | Stmt::Effect(_)
+        | Stmt::Extern { .. }
+        | Stmt::Class(_) => true,
+        Stmt::Mutual { items, .. } => items.iter().all(by_name),
+        _ => false,
+    }
+}
+
+pub(super) fn needed_positions(decl: &Stmt, prefix: &[Stmt]) -> Vec<usize> {
+    let mut owner = Owners::default();
+    for (i, s) in prefix.iter().enumerate() {
+        for name in defines(s) {
+            owner.names.entry(name).or_insert(i);
+        }
+        if let Some(name) = type_name(s) {
+            owner.types.entry(name).or_insert(i);
+        }
+    }
+    // An operator is a use of the function it is sugar for (`<=` of
+    // `Nat::le`), which the kernel finds by that name and not by the
+    // operator's.
+    let mut operators: HashMap<&str, usize> = HashMap::new();
+    for (i, s) in prefix.iter().enumerate() {
+        for name in defines(s) {
+            let shown = name.to_string();
+            if let Some((o, _, _)) = super::sugar::Sugar::OPERATORS
+                .iter()
+                .find(|(_, f, _)| *f == shown)
+            {
+                operators.entry(o).or_insert(i);
+            }
+        }
+    }
+    let operator_owner = |name: &Name| -> Option<usize> {
+        super::sugar::Sugar::OPERATORS
+            .iter()
+            .find(|(o, _, _)| tauto_surface::bindings::is_library(name, o))
+            .and_then(|(o, _, _)| operators.get(o).copied())
+    };
+    let mut all = prefix.to_vec();
+    all.push(decl.clone());
+    let ctors = constructors(&all);
+    let own: HashSet<Name> = defines(decl).into_iter().collect();
+    let mut taken = vec![false; prefix.len()];
+    let mut pending = mentions(decl, &ctors);
+    for (i, s) in prefix.iter().enumerate() {
+        if !by_name(s) {
+            taken[i] = true;
+            pending.extend(mentions(s, &ctors));
+        }
+    }
+    while let Some(name) = pending.pop() {
+        let Some(j) = owner.find(&name).or_else(|| operator_owner(&name)) else {
+            continue;
+        };
+        if taken[j] {
+            continue;
+        }
+        let uses = mentions(&prefix[j], &ctors);
+        if uses.iter().any(|n| own.contains(n)) {
+            continue;
+        }
+        taken[j] = true;
+        pending.extend(uses);
+    }
+    taken
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, take)| take.then_some(i))
+        .collect()
+}
+
 /// The declarations of `later` (written after `decl`) that `decl` uses, with
 /// the ones they use in turn, in written order: what the whole file's check
 /// (`dependency_order`) declares ahead of `decl`. A declaration that uses
@@ -459,4 +602,83 @@ pub(super) fn used_later(decl: &Stmt, later: &[Stmt]) -> Vec<Stmt> {
         .zip(taken)
         .filter_map(|(s, t)| t.then(|| s.clone()))
         .collect()
+}
+
+#[cfg(test)]
+mod needed_tests {
+    use super::*;
+
+    const PROGRAM: &str = "class Size(A: Type) { fn size(a: A): Nat }\n\
+        fn one(): Nat { 1 }\n\
+        instance Size(Bool) { fn size(a: Bool): Nat { one() } }\n\
+        fn two(): Nat { 2 }\n\
+        fn three(): Nat { two() + 1 }\n\
+        fn unrelated(): Nat { 7 }\n\
+        theorem unrelated_is(): unrelated() = 7 { Refl }\n\
+        fn uses(): Nat { three() }\n";
+
+    fn split() -> (Vec<Stmt>, Stmt) {
+        let mut stmts = super::super::parse_program(PROGRAM).unwrap().stmts;
+        let decl = stmts.pop().unwrap();
+        (stmts, decl)
+    }
+
+    fn names(stmts: &[Stmt]) -> Vec<String> {
+        stmts
+            .iter()
+            .flat_map(defines)
+            .map(|n| n.to_string())
+            .collect()
+    }
+
+    /// What the declaration names is kept with what that names in turn, and
+    /// the instance is kept though nothing names it, with what it uses; a
+    /// declaration nothing kept names is left out.
+    #[test]
+    fn needed_keeps_what_is_named_and_every_instance() {
+        tauto_parse::install();
+        let (prefix, decl) = split();
+        let kept = names(&needed(&decl, &prefix));
+        for name in ["three", "two", "Size", "one"] {
+            assert!(kept.iter().any(|k| k.ends_with(name)), "{name} in {kept:?}");
+        }
+        assert!(
+            prefix.iter().any(|s| matches!(s, Stmt::Instance(_)))
+                && needed(&decl, &prefix)
+                    .iter()
+                    .any(|s| matches!(s, Stmt::Instance(_)))
+        );
+        for name in ["unrelated", "unrelated_is"] {
+            assert!(
+                !kept.iter().any(|k| k.ends_with(name)),
+                "{name} in {kept:?}"
+            );
+        }
+    }
+
+    /// The declaration checks the same after what is needed as after the
+    /// whole prefix.
+    #[test]
+    fn needed_checks_as_the_whole_prefix() {
+        tauto_parse::install();
+        tauto_messages::install();
+        let (prefix, decl) = split();
+        let whole = super::super::check_in(&prefix, &decl).unwrap();
+        let some = super::super::declare_prefix(&needed(&decl, &prefix))
+            .map(|mut k| {
+                k.declare(
+                    &crate::surface::Program {
+                        stmts: vec![decl.clone()],
+                        errors: Vec::new(),
+                    },
+                    false,
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            whole.iter().map(|e| &e.verdict).collect::<Vec<_>>(),
+            some.iter().map(|e| &e.verdict).collect::<Vec<_>>()
+        );
+        assert!(whole.iter().all(|e| !e.failed()), "{whole:?}");
+    }
 }

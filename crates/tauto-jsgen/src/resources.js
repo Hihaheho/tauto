@@ -51,7 +51,7 @@ function scopeAlias(scope,id,slot){
 }
 function openAliasScope(parent,env){
     const scope=openScope(parent);
-    for(const [id,slot] of Object.entries(env))scopeAlias(scope,Number(id),slot);
+    for(const [id,slot] of envEntries(env))scopeAlias(scope,id,slot);
     return scope;
 }
 function copyScopeAliases(source,target,slots){
@@ -81,15 +81,15 @@ function captureContext(c,boundary,clone,boundaryEnv=null){
     // it moves them under its new caller instead of copying the whole stack
     // at every perform.
     if(!clone){
-        if(boundaryEnv&&frames.length)for(const [id,slot] of Object.entries(boundaryEnv))scopeAlias(frames[frames.length-1],Number(id),slot);
+        if(boundaryEnv&&frames.length)for(const [id,slot] of envEntries(boundaryEnv))scopeAlias(frames[frames.length-1],id,slot);
         return {originals:frames,sourceSlots:slots,frames,env:c.env,inPlace:true};
     }
     for(const s of frames)for(const slot of s.slots)if(clone&&!slot.shared)slots.set(slot,{...slot});
     const copies=frames.map(s=>{const frame={...s,slots:s.slots.map(slot=>slots.get(slot)??slot)};copyScopeAliases(s,frame,slots);return frame;});
     // A resumed body keeps its lexical boundary before its new dynamic caller.
     // Empty raw snapshots have no body frame on which to install a boundary.
-    if(boundaryEnv&&copies.length)for(const [id,slot] of Object.entries(boundaryEnv))scopeAlias(copies[copies.length-1],Number(id),slots.get(slot)??slot);
-    return {originals:frames,sourceSlots:slots,frames:copies,env:Object.fromEntries(Object.entries(c.env).map(([id,slot])=>[id,slots.get(slot)??slot]))};
+    if(boundaryEnv&&copies.length)for(const [id,slot] of envEntries(boundaryEnv))scopeAlias(copies[copies.length-1],id,slots.get(slot)??slot);
+    return {originals:frames,sourceSlots:slots,frames:copies,env:envOf(envEntries(c.env).map(([id,slot])=>[id,slots.get(slot)??slot]))};
 }
 function resumeContext(snapshot,parent,clone){
     slotsRebound=true;
@@ -106,27 +106,58 @@ function resumeContext(snapshot,parent,clone){
     for(let i=snapshot.frames.length-1;i>=0;i--){const s=snapshot.frames[i];scope=registerScope({...s,parent:scope,closed:false,suspended:undefined,slots:s.slots.filter(slot=>!clone||!slot.shared).map(slot=>slots.get(slot)??slot)});copyScopeAliases(s,scope,slots);scopes.set(snapshot.originals[i],scope); }
     // Handler environments must point to this resumption's slots, including temporaries.
     const sourceSlots=new Map([...snapshot.sourceSlots].map(([original,saved])=>[original,slots.get(saved)??saved]));
-    return {scope,scopes,sourceSlots,env:Object.fromEntries(Object.entries(snapshot.env).map(([id,slot])=>[id,slots.get(slot)??slot]))};
+    return {scope,scopes,sourceSlots,env:envOf(envEntries(snapshot.env).map(([id,slot])=>[id,slots.get(slot)??slot]))};
 }
+
+// An environment maps binding ids to slots. A child keeps the environment it
+// extends and holds only the bindings it adds, so binding a name does not copy
+// the bindings around it; a chain longer than `envDepthLimit` is written out
+// flat again, which keeps reads short. Ids are kept in arrays, not as keys of
+// an object: an id is an array index to the engine, and an object keyed by
+// ids far apart gets an element store as long as the largest one, so every
+// call would allocate in proportion to the size of the program.
+const envDepthLimit=16;
+class Env{constructor(parent,depth){this.parent=parent;this.depth=depth;this.ids=[];this.slots=[];}}
+function envNew(){return new Env(null,0);}
+function envGet(env,id){
+    for(let e=env;e;e=e.parent){const ids=e.ids;for(let i=ids.length-1;i>=0;i--)if(ids[i]===id)return e.slots[i];}
+    return undefined;
+}
+function envHas(env,id){return envGet(env,id)!==undefined;}
+function envSet(env,id,slot){const i=env.ids.indexOf(id);if(i>=0)env.slots[i]=slot;else{env.ids.push(id);env.slots.push(slot);}}
+// Each id once, with its innermost binding.
+function envEntries(env){
+    if(!env.parent){const out=new Array(env.ids.length);for(let i=0;i<out.length;i++)out[i]=[env.ids[i],env.slots[i]];return out;}
+    const seen=new Set(),out=[];
+    for(let e=env;e;e=e.parent)for(let i=e.ids.length-1;i>=0;i--){const id=e.ids[i];if(!seen.has(id)){seen.add(id);out.push([id,e.slots[i]]);}}
+    return out;
+}
+function envOf(entries){const out=envNew();for(const [id,slot] of entries){out.ids.push(id);out.slots.push(slot);}return out;}
+function envChild(env){
+    const d=env.depth+1;
+    if(d>envDepthLimit)return envOf(envEntries(env));
+    return new Env(env,d);
+}
+function envWith(env,id,slot){const out=envChild(env);envSet(out,id,slot);return out;}
+// `bindings` is a Map from ids to slots.
+function envWithAll(env,bindings){const out=envChild(env);for(const [id,slot] of bindings)envSet(out,id,slot);return out;}
 
 function restoreEnv(env,scope){
  // Every return runs this, so it allocates only when a slot was replaced.
  // Until an alias or a resumption rebinds an id, every binding is still
  // its own, and the walk is skipped.
  if(!slotsRebound)return env;
- const ids=Object.keys(env),found={};
- let left=ids.length;
+ const entries=envEntries(env),bound=new Map(entries),found=new Map();
+ let left=entries.length;
  for(let s=scope;s&&left;s=s.parent){
-  for(const slot of s.slots)if(slot.id in env&&!(slot.id in found)){found[slot.id]=slot;left--;}
+  for(const slot of s.slots)if(bound.has(slot.id)&&!found.has(slot.id)){found.set(slot.id,slot);left--;}
   const aliases=scopeAliases.get(s);
-  if(aliases)for(const {id,slot} of aliases)if(id in env&&!(id in found)){found[id]=slot;left--;}
+  if(aliases)for(const {id,slot} of aliases)if(bound.has(id)&&!found.has(id)){found.set(id,slot);left--;}
  }
  let same=true;
- for(const id of ids)if(id in found&&found[id]!==env[id]){same=false;break;}
+ for(const [id,slot] of entries)if(found.has(id)&&found.get(id)!==slot){same=false;break;}
  if(same)return env;
- const out={};
- for(const id of ids)out[id]=id in found?found[id]:env[id];
- return out;
+ return envOf(entries.map(([id,slot])=>[id,found.has(id)?found.get(id):slot]));
 }
 
 function exitScope(scope,id){let found=scope;while(found&&found.id!==id)found=found.parent;if(!found)return scope;while(scope){const done=scope.id===id;closeScope(scope);scope=scope.parent;if(done)break;}return scope;}

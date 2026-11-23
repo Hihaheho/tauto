@@ -198,7 +198,7 @@ pub fn poll_once<T>(f: Pin<&mut (dyn Future<Output = T> + '_)>) -> Poll<T> {
     f.poll(&mut cx)
 }
 
-/// The signal of a `wait` (`std/prelude/Os.taut`) left in the slot: the
+/// The signal of a `wait` (`std/builtin/os.taut`) left in the slot: the
 /// host answers it where it runs the task.
 fn waits_for(op: Op, args: Payload, at: Loc) -> Signal {
     if op.name != "wait" {

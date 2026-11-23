@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tauto::eval::{RunError, RunOptions, run_program_with};
+use tauto::exec::{RunError, RunOptions, run_loaded_with};
 use tauto::program::load;
 
 fn dir(name: &str) -> PathBuf {
@@ -17,7 +17,7 @@ fn dir(name: &str) -> PathBuf {
 
 fn shows(entry: &Path) -> Result<Vec<String>, String> {
     let loaded = load(entry)?;
-    let outcome = run_program_with(&loaded.program, 1_000_000, RunOptions::default())
+    let outcome = run_loaded_with(&loaded, 1_000_000, RunOptions::default())
         .map_err(|e| e.to_string())?;
     Ok(outcome
         .outputs
@@ -55,11 +55,11 @@ pub fn two(): i64 { one() + 1 }"#
         d.join("main.nib"),
         &r#"import "a.nib"
 import "b.nib"
-perform show("x", two())"#
+show(&two())"#
             .to_string(),
     )
     .unwrap();
-    assert_eq!(shows(&d.join("main.nib")).unwrap(), ["x = 2"]);
+    assert_eq!(shows(&d.join("main.nib")).unwrap(), ["2"]);
     let loaded = load(&d.join("main.nib")).unwrap();
     assert_eq!(loaded.files.len(), 3);
     let fns = loaded
@@ -87,7 +87,7 @@ let x: i64 := true
     fs::write(
         d.join("main.nib"),
         &r#"import "b.nib"
-perform show("x", 1)"#
+show(&1)"#
             .to_string(),
     )
     .unwrap();
@@ -96,6 +96,44 @@ perform show("x", 1)"#
     assert!(!success);
     let want = format!("{}:3:", d.join("b.nib").display());
     assert!(stderr.starts_with(&want), "{stderr}");
+}
+
+/// A `let(stack)` package failure keeps its file and column through the CLI.
+#[test]
+fn package_error_is_located_in_its_file() {
+    let d = dir("package-located");
+    fs::write(
+        d.join("main.nib"),
+        &r#"struct(shared) Big { a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64 }
+struct(shared) Outer { big: Big }
+fn use_it(): i64 {
+  let(stack) o := Outer { big: Big { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9 } }
+  o.big.a
+}
+show(&use_it())
+"#
+        .to_string(),
+    )
+    .unwrap();
+    let main = d.join("main.nib");
+    let path = main.to_str().unwrap();
+    for args in [
+        ["build", path].as_slice(),
+        ["run", path].as_slice(),
+        ["run", "--backend", "vm", path].as_slice(),
+    ] {
+        let (_, stderr, success) = tauto(args);
+        assert!(!success, "{args:?}: {stderr}");
+        let want = format!("{}:4:", main.display());
+        assert!(
+            stderr.starts_with(&want),
+            "{args:?}: want prefix {want:?}, got {stderr}"
+        );
+        assert!(
+            !stderr.contains("(byte "),
+            "{args:?}: still shows a raw byte offset: {stderr}"
+        );
+    }
 }
 
 #[test]
@@ -111,7 +149,7 @@ fn the_spans_of_files_do_not_overlap() {
     fs::write(
         d.join("main.nib"),
         &r#"import "a.nib"
-perform show("x", one())"#
+show(&one())"#
             .to_string(),
     )
     .unwrap();
@@ -138,7 +176,7 @@ fn the_step_limit_is_given_by_steps() {
     );
     let loaded = load(&main).unwrap();
     assert_eq!(
-        run_program_with(&loaded.program, 1000, RunOptions::default()),
+        run_loaded_with(&loaded, 1000, RunOptions::default()),
         Err(RunError::Interrupted)
     );
 }
@@ -148,19 +186,16 @@ fn steps_still_limit_a_run_that_allows_div() {
     let d = dir("allow-div");
     fs::write(d.join("main.nib"), r#"while true { }"#).unwrap();
     let main = d.join("main.nib");
-    let (_, stderr, success) = tauto(&[
-        "run",
-        "--steps",
-        "1000",
-        "--allow-div",
-        main.to_str().unwrap(),
-    ]);
+    let (_, stderr, success) = tauto(&["run", "--steps", "1000", main.to_str().unwrap()]);
     assert!(!success);
     assert!(
         stderr.contains("interrupted: the step limit ran out"),
         "{stderr}"
     );
-    assert!(stderr.contains("`--allow-div` lifts it"), "{stderr}");
+    assert!(
+        stderr.contains("allowing `div` at the start lifts it"),
+        "{stderr}"
+    );
 }
 
 /// The machine of `tauto-vm` in `tauto` itself (`TAUTO_VM=rust`) stops at
@@ -173,13 +208,7 @@ fn steps_still_limit_an_in_process_vm_run_that_allows_div() {
     let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
         .env("TAUTO_LANG", "en")
         .env("TAUTO_VM", "rust")
-        .args([
-            "run",
-            "--steps",
-            "1000",
-            "--allow-div",
-            main.to_str().unwrap(),
-        ])
+        .args(["run", "--steps", "1000", main.to_str().unwrap()])
         .output()
         .unwrap();
     let stderr = String::from_utf8(out.stderr).unwrap();
@@ -188,7 +217,10 @@ fn steps_still_limit_an_in_process_vm_run_that_allows_div() {
         stderr.contains("interrupted: the step limit ran out after 1000 steps;"),
         "{stderr}"
     );
-    assert!(stderr.contains("`--allow-div` lifts it"), "{stderr}");
+    assert!(
+        stderr.contains("allowing `div` at the start lifts it"),
+        "{stderr}"
+    );
 }
 
 /// A single file runs code written with inductive types, as a tote does: the
@@ -196,14 +228,14 @@ fn steps_still_limit_an_in_process_vm_run_that_allows_div() {
 #[test]
 fn a_file_runs_proof_language_functions() {
     let d = dir("inductive");
-    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/Base.taut");
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/base.taut");
     let file = d.join("main.taut");
     fs::write(
         &file,
         format!(
             r#"import "{}"
 fn plus2(n: Nat): Nat {{ Succ(Succ(n)) }}
-perform show("a", Nat::add(plus2(1), 2))
+show(&Nat::add(plus2(1), 2))
 "#,
             base.canonicalize().unwrap().display().to_string()
         ),
@@ -211,7 +243,7 @@ perform show("a", Nat::add(plus2(1), 2))
     .unwrap();
     let (out, err, ok) = tauto(&["run", file.to_str().unwrap()]);
     assert!(ok, "{err}");
-    assert_eq!(out, "a = 5\n");
+    assert_eq!(out, "5\n");
     let (out, err, ok) = tauto(&["test", d.to_str().unwrap()]);
     assert!(!ok && err.contains("no tests selected"), "{out}{err}");
 }
@@ -226,7 +258,7 @@ fn running_and_proving_effects_agree() {
     let run = d.join("run.taut");
     let shows: String = names
         .iter()
-        .map(|n| format!("perform show(\"{n}\", {n}())\n"))
+        .map(|n| format!("show(&({n}()))\n"))
         .collect();
     fs::write(&run, format!("{source}{shows}")).unwrap();
     let (out, err, ok) = tauto(&["run", run.to_str().unwrap()]);
@@ -259,7 +291,7 @@ fn running_and_proving_effects_agree() {
     assert!(!ok);
 }
 
-const EFFECT_PROGRAMS: &str = r#"import std::Nat
+const EFFECT_PROGRAMS: &str = r#"import std::nat
 effect tick(): Unit
 effect flip(): Bool resume ω
 fn g(n: Nat): Nat { Succ(n) }
@@ -307,27 +339,27 @@ fn text_of_bytes_runs() {
     let f = d.join("t.taut");
     fs::write(
         &f,
-        "import std::Text\nimport std::TextOps\n\
+        "import std::text\nimport std::text_ops\n\
          fn bytes(): Text { Text::Mk(Cons(104, Cons(195, Cons(169, Nil)))) }\n\
          fn slice(): Text { Text::slice_or_empty(\"héllo\", 1, 3) }\n\
          fn joined(): Text { Text::join(\"-\", Text::split_on(\"a,b,c\", 44)) }\n\
          fn decoded(): Option(Text) { Text::of_utf8(Cons(195, Cons(169, Nil))) }\n\
-         perform show(\"bytes\", bytes())\n\
-         perform show(\"slice\", slice())\n\
-         perform show(\"joined\", joined())\n\
-         perform show(\"decoded\", decoded())\n",
+         show(&bytes())\n\
+         show(&slice())\n\
+         show(&joined())\n\
+         show(&decoded())\n",
     )
     .unwrap();
     let (out, err, ok) = tauto(&["run", f.to_str().unwrap()]);
     assert!(ok, "{err}");
     assert_eq!(
         out,
-        "bytes = \"hé\"\nslice = \"é\"\njoined = \"a-b-c\"\ndecoded = Some(\"é\")\n"
+        "\"hé\"\n\"é\"\n\"a-b-c\"\nSome(\"é\")\n"
     );
     // Bytes that are not UTF-8 have no `Text` to run as: the program stops.
     fs::write(
         &f,
-        "import std::Text\nfn bad(): Text { Text::Mk(Cons(255, Nil)) }\nperform show(\"bad\", bad())\n",
+        "import std::text\nfn bad(): Text { Text::Mk(Cons(255, Nil)) }\nshow(&bad())\n",
     )
     .unwrap();
     let (_, _, ok) = tauto(&["run", f.to_str().unwrap()]);
@@ -341,18 +373,18 @@ fn text_of_bytes_in_a_function_value_runs() {
     let f = d.join("t.taut");
     fs::write(
         &f,
-        "import std::Text\n\
+        "import std::text\n\
          fn then_<A, B>(o: Option(A), f: (x: A) -> Option(B)): Option(B) {\n\
          ⊢ Option(B) from match o {\n None => None\n Some(a) => f(a)\n }\n}\n\
          fn mk(o: Option(List(Nat))): Option(Text) {\n\
          then_(o, (bs: List(Nat)) => Some(Text::Mk(bs)))\n}\n\
          fn go(): Option(Text) { mk(Some(Cons(104, Cons(105, Nil)))) }\n\
-         perform show(\"r\", go())\n",
+         show(&go())\n",
     )
     .unwrap();
     let (out, err, ok) = tauto(&["run", f.to_str().unwrap()]);
     assert!(ok, "{err}");
-    assert_eq!(out, "r = Some(\"hi\")\n");
+    assert_eq!(out, "Some(\"hi\")\n");
     fs::remove_dir_all(d).unwrap();
 }
 
@@ -362,7 +394,7 @@ fn an_undefined_name_in_a_checked_function_is_given_by_line_and_column() {
     let f = d.join("e.taut");
     fs::write(
         &f,
-        "fn ones(n: Nat): Nat {\n    ⊢ Nat from match n {\n        Zero => 0\n        Succ(rest) => nope(rest)\n    }\n}\nperform show(\"x\", ones(2))\n",
+        "fn ones(n: Nat): Nat {\n    ⊢ Nat from match n {\n        Zero => 0\n        Succ(rest) => nope(rest)\n    }\n}\nshow(&ones(2))\n",
     )
     .unwrap();
     let (_, err, ok) = tauto(&["run", f.to_str().unwrap()]);
@@ -373,18 +405,18 @@ fn an_undefined_name_in_a_checked_function_is_given_by_line_and_column() {
     fs::remove_dir_all(d).unwrap();
 }
 
-/// A function that runs as written calls the functions of `std/Stack.taut`
+/// A function that runs as written calls the functions of `std/stack.taut`
 /// that extraction writes out at each call, as the proofs' calls are written.
 #[test]
 fn a_function_run_as_written_calls_the_stack_functions() {
     let d = dir("runtime-stack");
-    let stack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/Stack.taut");
+    let stack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/stack.taut");
     let file = d.join("main.taut");
     fs::write(
         &file,
         format!(
-            r#"import std::prelude::Affine
-import std::prelude::Os
+            r#"import std::prelude::collections
+import std::builtin::os
 import "{}"
 fn count(): Nat {{
   var s: Stack(Nat) := Stack::new()
@@ -395,7 +427,7 @@ fn count(): Nat {{
   let empty: Bool := Stack::is_empty(&s)
   Stack::len(&s)
 }}
-perform show("n", count())
+show(&count())
 "#,
             stack.canonicalize().unwrap().display().to_string()
         ),
@@ -403,7 +435,7 @@ perform show("n", count())
     .unwrap();
     let (out, err, ok) = tauto(&["run", file.to_str().unwrap()]);
     assert!(ok, "{err}");
-    assert_eq!(out, "n = 1\n");
+    assert_eq!(out, "1\n");
     assert_eq!(err, "counting\n");
     fs::remove_dir_all(d).unwrap();
 }
@@ -417,7 +449,7 @@ fn run_writes_output_before_the_program_ends() {
     let file = d.join("main.taut");
     fs::write(
         &file,
-        "import std::prelude::Os\n\nperform stderr(\"first\\n\")\nperform sleep(5000)\nperform stderr(\"second\\n\")\n",
+        "import std::builtin::os\n\nperform stderr(\"first\\n\")\nperform sleep(5000)\nperform stderr(\"second\\n\")\n",
     )
     .unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_tauto"))

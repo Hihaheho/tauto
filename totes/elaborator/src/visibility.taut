@@ -1,0 +1,360 @@
+import "modname.taut"
+import "../../kernel/src/data.taut"
+import "../../surface/src/surface.taut"
+import surface::resolve
+import "../../identity/src/identity.taut"
+import "../../text/src/text.taut"
+import std::list
+import std::text
+import std::base
+import std::builtin::os
+
+// What a file sees of the other files of a program (`docs/design/visibility.md`
+// 「Scope」): its own declarations, those of the files it imports directly, and
+// those of the core prelude. What a file it imports imports, and files merely
+// loaded with it, are not seen; the imports at the head of the body of a `fn`,
+// `theorem` or `def` add what they bring to that body only.
+//
+// A file is told apart from another by its path, never by what it declares: the
+// declaring file of a name is the file whose declarations list that spelling,
+// and a file is seen only if it is one the use's file or body imports by path.
+// The uses are those `surface_resolve` leaves unresolved, so a name a binder
+// (parameter, `let`, pattern, closure) or the file itself declares is not one.
+
+// An import of a file that is read: the file by its path, the import as written, and
+// the names its list writes (`import std::text { Text, concat }`); none listed
+// brings every name the file exports.
+pub(open) struct VisImport {
+  file: Text,
+  spelling: Text,
+  listed: Bool,
+  names: List(Text)
+}
+
+// A use the file does not resolve to a declaration of its own: the name as
+// written, its span, and the files the body it is in imports at its head (none
+// outside such a body).
+pub(open) struct VisUse {
+  name: Text,
+  // The file declares it itself: the use is of a declaration of the file.
+  own: Bool,
+  start: Nat,
+  end: Nat,
+  body: List(VisImport)
+}
+
+// A file read: its path, each spelling it declares, the files it imports
+// directly by their paths, and its uses.
+pub(open) struct VisFile {
+  file: Text,
+  declared: List(Text),
+  // The spellings of its functions, theorems, definitions, types and classes: the
+  // names two declarations of which make a use ambiguous.
+  named: List(Text),
+  // Those of its functions and types written without `pub`.
+  private: List(Text),
+  imports: List(VisImport),
+  // Every import of the file that writes a list, those of bodies too.
+  listed: List(VisImport),
+  uses: List(VisUse)
+}
+
+// The span of a declaration's body that has imports at its head, and the files
+// they read.
+pub(open) struct VisBody {
+  start: Nat,
+  end: Nat,
+  files: List(VisImport)
+}
+
+// The files a use sees besides the file's own imports: those of the body that
+// holds the use.
+pub fn vis_body_files(bodies: List(VisBody), start: Nat): List(VisImport) {
+  match bodies {
+    Nil => Nil
+    Cons(b, rest) => if b.start <= start && start < b.end { b.files } else { vis_body_files(rest, start) }
+  }
+}
+
+// The uses among `us` that are names the file does not resolve and writes as
+// they are (not what a desugaring made up), with the body files of each.
+pub fn vis_uses(source: Text, bodies: List(VisBody), us: List(SurfaceUse)): List(VisUse) {
+  match us {
+    Nil => Nil
+    Cons(u, rest) => ⊢ List(VisUse) from match u.name {
+      NameSpelled(^t) => if Text::eq(Text::slice_or_empty(source, u.start, u.end), u.spelling) {
+        Cons(VisUse { name: u.spelling, own: false, start: u.start, end: u.end, body: vis_body_files(bodies, u.start) }, vis_uses(source, bodies, rest))
+      } else {
+        vis_uses(source, bodies, rest)
+      }
+      NameGlobal(^d) => if Text::eq(Text::slice_or_empty(source, u.start, u.end), u.spelling) {
+        Cons(VisUse { name: u.spelling, own: true, start: u.start, end: u.end, body: vis_body_files(bodies, u.start) }, vis_uses(source, bodies, rest))
+      } else {
+        vis_uses(source, bodies, rest)
+      }
+      NameLocal(^l) => vis_uses(source, bodies, rest)
+    }
+  }
+}
+
+// Each spelling a file declares.
+pub fn vis_declared(ds: List(SurfaceDecl)): List(Text) {
+  match ds {
+    Nil => Nil
+    Cons(d, rest) => Cons(d.name, vis_declared(rest))
+  }
+}
+
+// The spellings of the declarations of a kind that can be ambiguous.
+pub fn vis_named(ds: List(SurfaceDecl)): List(Text) {
+  match ds {
+    Nil => Nil
+    Cons(d, rest) => if d.kind == "fn" || d.kind == "theorem" || d.kind == "def" || d.kind == "inductive" || d.kind == "struct" || d.kind == "enum" || d.kind == "class" {
+      Cons(d.name, vis_named(rest))
+    } else { vis_named(rest) }
+  }
+}
+
+pub fn vis_is_private(v: SurfaceVis): Bool {
+  match v {
+    VisPrivate => true
+    VisPub => false
+    VisOpen => false
+    VisHandle => false
+  }
+}
+
+// The names of the functions and types of `stmts` written without `pub`.
+pub fn vis_private(stmts: List(SurfaceStmt)): List(Text) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => {
+      let here: List(Text) := ⊢ List(Text) from match s {
+        StFn(f) => if vis_is_private(f.visibility) { Cons(f.name, Nil) } else { Nil }
+        StInductive(i) => if vis_is_private(i.visibility) { Cons(i.name, Nil) } else { Nil }
+        StStruct(d) => if vis_is_private(d.visibility) { Cons(d.name, Nil) } else { Nil }
+        StEnum(d) => if vis_is_private(d.visibility) { Cons(d.name, Nil) } else { Nil }
+        _ => Nil
+      }
+      List::append(here, vis_private(rest))
+    }
+  }
+}
+
+pub fn vis_has(names: List(Text), name: Text): Bool {
+  match names {
+    Nil => false
+    Cons(n, rest) => Text::eq(n, name) || vis_has(rest, name)
+  }
+}
+
+// Whether the file at `path` declares `name`.
+pub fn vis_file_declares(files: List(VisFile), path: Text, name: Text): Bool {
+  match files {
+    Nil => false
+    Cons(f, rest) => if Text::eq(f.file, path) { vis_has(f.declared, name) } else { vis_file_declares(rest, path, name) }
+  }
+}
+
+// Whether one of the files at `paths` declares `name`.
+pub fn vis_any_declares(files: List(VisFile), imports: List(VisImport), name: Text): Bool {
+  match imports {
+    Nil => false
+    Cons(p, rest) => vis_file_declares(files, p.file, name) || vis_any_declares(files, rest, name)
+  }
+}
+
+// The first file other than `except` that declares `name`.
+pub fn vis_declarer(files: List(VisFile), except: Text, name: Text): Option(Text) {
+  match files {
+    Nil => None
+    Cons(f, rest) => if not(Text::eq(f.file, except)) && vis_has(f.declared, name) { Some(f.file) } else { vis_declarer(rest, except, name) }
+  }
+}
+
+// Whether the core prelude declares `name`: the kernel's and the library's.
+pub fn vis_core(base: KernelCore, prelude: List(Text), name: Text): Bool {
+  match kernel_global_get(base, name) {
+    Some(^g) => true
+    None => ⊢ Bool from match kernel_ind_get(base, name) {
+      Some(^i) => true
+      None => ⊢ Bool from match kernel_ctor_get(base, name) {
+        Some(^c) => true
+        None => vis_has(prelude, name)
+      }
+    }
+  }
+}
+
+// The name before its first `::`.
+pub fn vis_head(name: Text): Text {
+  match text_find(name, "::", 0) {
+    None => name
+    Some(at) => Text::slice_or_empty(name, 0, at)
+  }
+}
+
+// Whether some name of `names` is a type of `declared` with `name` as its constructor.
+pub fn vis_ctor_listed(declared: List(Text), names: List(Text), name: Text): Bool {
+  match names {
+    Nil => false
+    Cons(n, rest) => vis_has(declared, Text::concat_all([n, "::", name])) || vis_ctor_listed(declared, rest, name)
+  }
+}
+
+// Whether the list of an import writes `name`: the name, the type or module it is a
+// member of, or the type it is a constructor of.
+pub fn vis_listed(files: List(VisFile), imp: VisImport, name: Text): Bool {
+  vis_has(imp.names, name) || vis_has(imp.names, vis_head(name)) || vis_file_ctor_listed(files, imp, name)
+}
+
+pub fn vis_file_ctor_listed(files: List(VisFile), imp: VisImport, name: Text): Bool {
+  match files {
+    Nil => false
+    Cons(f, rest) => if Text::eq(f.file, imp.file) { vis_ctor_listed(f.declared, imp.names, name) } else { vis_file_ctor_listed(rest, imp, name) }
+  }
+}
+
+// Whether what an import brings includes `name`.
+pub fn vis_through(files: List(VisFile), imp: VisImport, name: Text): Bool {
+  not(imp.listed) || vis_listed(files, imp, name)
+}
+
+// The first import among `imports` whose file exports `name` and whose list does not write it.
+pub fn vis_unlisted(files: List(VisFile), imports: List(VisImport), name: Text): Option(VisImport) {
+  match imports {
+    Nil => None
+    Cons(p, rest) => if vis_file_exports(files, p.file, name) && not(vis_through(files, p, name)) { Some(p) } else { vis_unlisted(files, rest, name) }
+  }
+}
+
+// Whether the file at `path` declares `item` for other files: a spelling it declares,
+// not one of its private functions or types.
+pub fn vis_file_offers(files: List(VisFile), path: Text, item: Text): Bool {
+  match files {
+    Nil => true
+    Cons(f, rest) => if Text::eq(f.file, path) { vis_has(f.declared, item) && not(vis_has(f.private, item)) } else { vis_file_offers(rest, path, item) }
+  }
+}
+
+// The first name an import's list writes that the file does not offer.
+pub fn vis_list_unknown(files: List(VisFile), imp: VisImport, items: List(Text)): Option(Text) {
+  match items {
+    Nil => None
+    Cons(i, rest) => if vis_file_offers(files, imp.file, i) { vis_list_unknown(files, imp, rest) } else { Some(Text::concat_all(["`", i, "` is in the list of `import ", imp.spelling, "`, but the imported file declares no `", i, "` for other files"])) }
+  }
+}
+
+pub fn vis_lists_unknown(files: List(VisFile), imports: List(VisImport)): Option(Text) {
+  match imports {
+    Nil => None
+    Cons(p, rest) => ⊢ Option(Text) from match vis_list_unknown(files, p, p.names) {
+      Some(m) => Some(m)
+      None => vis_lists_unknown(files, rest)
+    }
+  }
+}
+
+// Whether the file at `path` declares `name` for other files: `pub` or `pub(open)`.
+pub fn vis_file_exports(files: List(VisFile), path: Text, name: Text): Bool {
+  match files {
+    Nil => false
+    Cons(f, rest) => if Text::eq(f.file, path) { vis_has(f.named, name) && not(vis_has(f.private, name)) } else { vis_file_exports(rest, path, name) }
+  }
+}
+
+// The files among `paths`, each once, that declare `name` for other files.
+pub fn vis_exporters(files: List(VisFile), imports: List(VisImport), name: Text, out: List(Text)): List(Text) {
+  match imports {
+    Nil => out
+    Cons(p, rest) => if vis_has(out, p.file) || not(vis_file_exports(files, p.file, name)) || not(vis_through(files, p, name)) { vis_exporters(files, rest, name, out) } else { vis_exporters(files, rest, name, Cons(p.file, out)) }
+  }
+}
+
+// Whether one of the files among `paths` declares `name` but not for other files.
+pub fn vis_hidden_in(files: List(VisFile), imports: List(VisImport), name: Text): Option(Text) {
+  match imports {
+    Nil => None
+    Cons(p, rest) => if vis_file_declares_named(files, p.file, name) { Some(p.file) } else { vis_hidden_in(files, rest, name) }
+  }
+}
+
+pub fn vis_file_declares_named(files: List(VisFile), path: Text, name: Text): Bool {
+  match files {
+    Nil => false
+    Cons(f, rest) => if Text::eq(f.file, path) { vis_has(f.named, name) && vis_has(f.private, name) } else { vis_file_declares_named(rest, path, name) }
+  }
+}
+
+// The names, as full names, of the files that make `name` ambiguous.
+pub fn vis_full_names(paths: List(Text), name: Text): Text ! {div, fs_read} {
+  match paths {
+    Nil => ""
+    Cons(p, rest) => match rest {
+      Nil => Text::concat_all(["`", elab_file_module(p), "::", name, "`"])
+      more => Text::concat_all(["`", elab_file_module(p), "::", name, "`", if List::length(more) == 1 { " and " } else { ", " }, vis_full_names(more, name)])
+    }
+  }
+}
+
+// The first use of a file of a name that only a file it does not import
+// declares, as an error.
+pub fn vis_check_uses(files: List(VisFile), f: VisFile, uses: List(VisUse), base: KernelCore, prelude: List(Text)): Option(Text) ! {div, fs_read} {
+  match uses {
+    Nil => None
+    Cons(u, rest) => ⊢ Option(Text) from match vis_declarer(files, f.file, u.name) {
+      None => vis_check_uses(files, f, rest, base, prelude)
+      Some(^d) => ⊢ Option(Text) from match vis_ambiguous(files, f, u, base, prelude) {
+        Some(m) => Some(m)
+        None => vis_check_use(files, f, u, rest, base, prelude)
+      }
+    }
+  }
+}
+
+// What a use sees through the files it reads: two declarations of its name are
+// ambiguous, one that is not `pub` is private to its file.
+pub fn vis_ambiguous(files: List(VisFile), f: VisFile, u: VisUse, base: KernelCore, prelude: List(Text)): Option(Text) ! {div, fs_read} {
+  let seen := List::append(f.imports, u.body)
+  let found := vis_exporters(files, seen, u.name, Nil)
+  let all := if u.own { Cons(f.file, found) } else { found }
+  match all {
+    Cons(^a, Cons(^b, ^more)) => Some(Text::concat_all(["`", u.name, "` is ambiguous: it is declared as ", vis_full_names(all, u.name), "; write the full name"]))
+    Cons(^a, Nil) => None
+    Nil => ⊢ Option(Text) from match vis_unlisted(files, seen, u.name) {
+      Some(imp) => if vis_core(base, prelude, u.name) { None } else { Some(Text::concat_all(["`", u.name, "` comes through `import ", imp.spelling, "`, whose list does not write it; write `", vis_head(u.name), "` in its list"])) }
+      None => ⊢ Option(Text) from match vis_hidden_in(files, seen, u.name) {
+      Some(p) => if vis_has(f.named, u.name) || vis_core(base, prelude, u.name) { None } else { Some(Text::concat_all(["`", u.name, "` is private to ", elab_file_module(p), "; write `pub` before its declaration there to use it from another file"])) }
+      None => None
+    }
+    }
+  }
+}
+
+pub fn vis_check_use(files: List(VisFile), f: VisFile, u: VisUse, rest: List(VisUse), base: KernelCore, prelude: List(Text)): Option(Text) ! {div, fs_read} {
+  match u.own {
+    true => vis_check_uses(files, f, rest, base, prelude)
+    false => ⊢ Option(Text) from match vis_declarer(files, f.file, u.name) {
+      None => vis_check_uses(files, f, rest, base, prelude)
+      Some(d) => if vis_has(f.declared, u.name) || vis_any_declares(files, f.imports, u.name) || vis_any_declares(files, u.body, u.name) || vis_core(base, prelude, u.name) {
+        vis_check_uses(files, f, rest, base, prelude)
+      } else {
+        Some(Text::concat_all(["`", u.name, "` is declared by `", elab_file_module(d), "`, which this file does not import (what another file or a dependency imports does not reach this one); `import` it in this file"]))
+      }
+    }
+  }
+}
+
+// The first use, in any of `all`, of a name its file does not see.
+pub fn vis_check(files: List(VisFile), all: List(VisFile), base: KernelCore, prelude: List(Text)): Option(Text) ! {div, fs_read} {
+  match files {
+    Nil => None
+    Cons(f, rest) => ⊢ Option(Text) from match vis_lists_unknown(all, f.listed) {
+      Some(m) => Some(Text::concat_all([f.file, ": ", m]))
+      None => ⊢ Option(Text) from match vis_check_uses(all, f, f.uses, base, prelude) {
+        Some(m) => Some(Text::concat_all([f.file, ": ", m]))
+        None => vis_check(rest, all, base, prelude)
+      }
+    }
+  }
+}

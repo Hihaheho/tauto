@@ -1,8 +1,8 @@
 import "../../text/src/text.taut"
-import std::Base
-import std::List
-import std::Text
-import std::prelude::Os
+import std::base
+import std::list
+import std::text
+import std::builtin::os
 
 // `tauto init [PATH]`: makes a local tote, `Tauto.eure` and `src/main.taut`,
 // without overwriting anything and without following a link: each directory
@@ -13,7 +13,7 @@ import std::prelude::Os
 
 extern {
   // The message `key`; `first` and `second` fill its arguments.
-  fn init_message(&key: Text, &first: Text, &second: Text): Text
+  fn init_message(key: &Text, first: &Text, second: &Text): Text
 }
 
 pub fn init_msg(key: Text, first: Text): Text {
@@ -40,7 +40,7 @@ pub fn init_kind(path: Text): Result(InitKind, Text) ! {fs_read_link, fs_stat} {
   match perform fs_read_link(path) {
     Err(e) => Err(init_io(path, e))
     Ok(link) => match link {
-      Some(target) => Ok(InitOther)
+      Some(^target) => Ok(InitOther)
       None => match perform fs_stat(path) {
         Err(e) => Err(init_io(path, e))
         Ok(found) => match found {
@@ -94,7 +94,7 @@ pub fn init_is_component(p: Text): Bool {
 }
 
 pub fn init_components(path: Text): List(Text) {
-  List::filter(init_is_component, text_split(path, "/"))
+  List::filter((x) => init_is_component(x), text_split(path, "/"))
 }
 
 pub fn init_has_parent(parts: List(Text)): Bool {
@@ -126,7 +126,7 @@ pub fn init_strip_slashes(path: Text): Text {
 pub fn init_join(parts: List(Text)): Text {
   match parts {
     Nil => "/"
-    Cons(p, rest) => Text::concat("/", text_join(parts, "/"))
+    Cons(^p, ^rest) => Text::concat("/", text_join(parts, "/"))
   }
 }
 
@@ -137,7 +137,7 @@ pub fn init_walk(done: List(Text), rest: List(Text)): Result(Unit, Text) ! {fs_r
     Nil => Ok(#())
     Cons(p, more) => match more {
       Nil => Ok(#())
-      Cons(next, later) => {
+      Cons(^next, ^later) => {
         let here := List::append(done, Cons(p, Nil))
         let path := init_join(here)
         match init_directory(path) {
@@ -160,16 +160,16 @@ pub fn init_manifest(name: Text): Text {
 }
 
 pub fn init_source(): Text {
-  "perform show(\"hello\", 42)\n"
+  "perform main(() => show(&\"hello\"))\n"
 }
 
 // Takes away what the run made, the files and then the directories (only
 // while they are empty), newest first; the paths that could not be taken.
-pub fn init_undo_files(files: List(Text), failed: List(Text)): List(Text) ! {fs_remove, Div} {
+pub fn init_undo_files(files: List(Text), failed: List(Text)): List(Text) ! {fs_remove, div} {
   match files {
     Nil => failed
     Cons(f, rest) => match perform fs_remove(f) {
-      Ok(u) => init_undo_files(rest, failed)
+      Ok(^u) => init_undo_files(rest, failed)
       Err(e) => init_undo_files(rest, Cons(init_io(f, e), failed))
     }
   }
@@ -178,17 +178,17 @@ pub fn init_undo_files(files: List(Text), failed: List(Text)): List(Text) ! {fs_
 pub fn init_undo_dirs(
   dirs: List(Text),
   failed: List(Text)
-): List(Text) ! {fs_remove, fs_list_dir, Div} {
+): List(Text) ! {fs_remove, fs_list_dir, div} {
   match dirs {
     Nil => failed
     Cons(d, rest) => match perform fs_list_dir(d) {
       Err(e) => init_undo_dirs(rest, Cons(init_io(d, e), failed))
       Ok(entries) => match entries {
         Nil => match perform fs_remove(d) {
-          Ok(u) => init_undo_dirs(rest, failed)
+          Ok(^u) => init_undo_dirs(rest, failed)
           Err(e) => init_undo_dirs(rest, Cons(init_io(d, e), failed))
         }
-        Cons(x, y) => init_undo_dirs(rest, Cons(init_io(d, Failed("directory not empty")), failed))
+        Cons(^x, ^y) => init_undo_dirs(rest, Cons(init_io(d, Failed("directory not empty")), failed))
       }
     }
   }
@@ -198,11 +198,11 @@ pub fn init_fail(
   error: Text,
   dirs: List(Text),
   files: List(Text)
-): Text ! {fs_remove, fs_list_dir, Div} {
+): Text ! {fs_remove, fs_list_dir, div} {
   let failed := List::reverse(init_undo_dirs(dirs, init_undo_files(files, Nil)))
   match failed {
     Nil => error
-    Cons(x, y) => init_message("init-cleanup-failed", error, text_join(failed, ", "))
+    Cons(^x, ^y) => init_message("init-cleanup-failed", error, text_join(failed, ", "))
   }
 }
 
@@ -211,11 +211,11 @@ pub fn init_fail(
 pub fn init_make_dirs(
   todo: List(Text),
   dirs: List(Text)
-): Result(List(Text), InitFailure) ! {fs_create_dir, Div} {
+): Result(List(Text), InitFailure) ! {fs_create_dir, div} {
   match todo {
     Nil => Ok(dirs)
     Cons(d, rest) => match perform fs_create_dir(d) {
-      Ok(u) => init_make_dirs(rest, Cons(d, dirs))
+      Ok(^u) => init_make_dirs(rest, Cons(d, dirs))
       Err(e) => Err(InitFailure { error: io_message(e), made: dirs })
     }
   }
@@ -224,12 +224,12 @@ pub fn init_make_dirs(
 pub fn init_make_files(
   todo: List(InitFile),
   files: List(Text)
-): Result(List(Text), InitFailure) ! {fs_write_new, Div} {
+): Result(List(Text), InitFailure) ! {fs_write_new, div} {
   match todo {
     Nil => Ok(files)
     Cons(item, rest) => match perform fs_write_new(item.path, item.text) {
       Err(e) => Err(InitFailure { error: io_message(e), made: files })
-      Ok(u) => init_make_files(rest, Cons(item.path, files))
+      Ok(^u) => init_make_files(rest, Cons(item.path, files))
     }
   }
 }
@@ -241,7 +241,7 @@ pub fn init_create(
   src_exists: Bool,
   name: Text,
   shown: Text
-): Result(Text, Text) ! {fs_create_dir, fs_write_new, fs_remove, fs_list_dir, Div} {
+): Result(Text, Text) ! {fs_create_dir, fs_write_new, fs_remove, fs_list_dir, div} {
   let want := List::append(
     if root_exists { Nil } else { Cons(root, Nil) },
     if src_exists { Nil } else { Cons(src, Nil) }
@@ -256,7 +256,7 @@ pub fn init_create(
       Nil
     ) {
       Err(failure) => Err(init_fail(failure.error, dirs, failure.made))
-      Ok(files) => Ok(shown)
+      Ok(^files) => Ok(shown)
     }
   }
 }
@@ -277,7 +277,7 @@ pub fn init_run(
 ): Result(
   Text,
   Text
-) ! {fs_read_link, fs_stat, fs_canonicalize, fs_create_dir, fs_write_new, fs_remove, fs_list_dir, Div} {
+) ! {div, fs_canonicalize, fs_create_dir, fs_list_dir, fs_read_link, fs_remove, fs_stat, fs_write_new, overflow} {
   let parts := init_components(path)
   if Text::eq(path, "") || init_has_parent(text_split(path, "/")) {
     Err(init_message("init-bad-path", "", ""))
@@ -300,7 +300,7 @@ pub fn init_run(
         }
         match init_walk(Nil, all) {
           Err(e) => Err(e)
-          Ok(u) => match init_directory(root) {
+          Ok(^u) => match init_directory(root) {
             Err(e) => Err(e)
             Ok(root_exists) => {
               let resolved := if root_exists {
@@ -326,12 +326,12 @@ pub fn init_run(
                         Text::concat(shown, "/Tauto.eure")
                       ) {
                         Err(e) => Err(e)
-                        Ok(a) => match init_absent(
+                        Ok(^a) => match init_absent(
                           Text::concat(src, "/main.taut"),
                           Text::concat(shown, "/src/main.taut")
                         ) {
                           Err(e) => Err(e)
-                          Ok(b) => init_create(root, src, root_exists, src_exists, name, shown)
+                          Ok(^b) => init_create(root, src, root_exists, src_exists, name, shown)
                         }
                       }
                     }
@@ -348,19 +348,19 @@ pub fn init_run(
 
 pub fn init_command(
   args: List(Text)
-): i32 ! {fs_read_link, fs_stat, fs_canonicalize, fs_create_dir, fs_write_new, fs_remove, fs_list_dir, stdout, stderr, Div} {
+): i32 ! {div, fs_canonicalize, fs_create_dir, fs_list_dir, fs_read_link, fs_remove, fs_stat, fs_write_new, overflow, stderr, stdout} {
   let help := Text::concat(init_message("init-help", "", ""), "\n")
   let path := match args {
     Nil => Some(".")
     Cons(a, rest) => match rest {
       Nil => if text_starts_with(a, "-", 0) { None } else { Some(a) }
-      Cons(b, more) => None
+      Cons(^b, ^more) => None
     }
   }
   let one := match args {
     Cons(a, rest) => match rest {
       Nil => Text::eq(a, "--help") || Text::eq(a, "-h")
-      Cons(b, more) => false
+      Cons(^b, ^more) => false
     }
     Nil => false
   }
@@ -388,9 +388,11 @@ pub fn init_command(
   }
 }
 
-let code := init_command(perform argv())
-if code != 0 {
-  perform exit(code)
-} else {
-  #()
-}
+perform main(() => {
+  let code := init_command(perform argv())
+  if code != 0 {
+    perform exit(code)
+  } else {
+    #()
+  }
+})

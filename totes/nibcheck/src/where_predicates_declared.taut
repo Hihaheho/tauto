@@ -1,10 +1,10 @@
 import "where_order_sound.taut"
 import "instantiation_domain_sound.taut"
-import std::Base
-import std::List
-import std::Map
-import std::Row
-import std::Text
+import std::base
+import std::list
+import std::map
+import std::row
+import std::text
 import "checker.taut"
 import "instantiation_frame.taut"
 import "rules_where.taut"
@@ -12,14 +12,11 @@ import "ty.taut"
 import "../../surface/src/surface.taut"
 
 pub def WherePredicatesDeclared(
-  gs: List(Pair(Text, Kind)),
-  ps: List(Pair(Text, Text))
-): Prop := ∀ p: Pair(
-  Text,
-  Text
-). ∀ present: Mem(Pair(Text, Text), p, ps). WhereGeneric(gs, instantiation_parameter(p))
+  gs: List(Text × Kind),
+  ps: List(Text × Text)
+): Prop := ∀ p: (Text × Text). ∀ present: Mem(Text × Text, p, ps). WhereGeneric(gs, instantiation_parameter(p))
 pub theorem where_generic_term_declared<gs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), term: SurfaceTerm, name: Text>(h: WhereGenericTerm(gs, term, name)): WhereGeneric(gs, name) {
   ⊢ WhereGeneric(
     gs,
@@ -27,16 +24,16 @@ pub theorem where_generic_term_declared<gs: List(
   ) from match h { Mk(ctor_ast_occurrence, spelling, start, end, declared) => declared }
 }
 pub theorem where_declared_cons(
-  gs: List(Pair(Text, Kind)),
+  gs: List(Text × Kind),
   r#class: Text,
   name: Text,
-  previous: List(Pair(Text, Text)),
+  previous: List(Text × Text),
   declared: WhereGeneric(gs, name),
   before: WherePredicatesDeclared(gs, previous),
-  p: Pair(Text, Text),
-  present: Mem(Pair(Text, Text), p, Cons(Pair {fst: r#class, snd: name}, previous))
+  p: Text × Text,
+  present: Mem(Text × Text, p, Cons(#(r#class, name), previous))
 ): WhereGeneric(gs, instantiation_parameter(p)) {
-  ⊢ WhereGeneric(gs, instantiation_parameter(p)) from match present {
+  match present {
     MemHere(rest) => declared
     MemThere(head, rest, inside) => before(p, inside)
   }
@@ -45,16 +42,16 @@ pub theorem where_constraint_declares<classes: Ordmap(
   Text,
   ClassInfo
 ), gs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), source: SurfaceConstraint, previous: List(
-  Pair(Text, Text)
+  (Text × Text)
 ), final: List(
-  Pair(Text, Text)
+  (Text × Text)
 )>(
   h: WhereConstraint(classes, gs, source, previous, final),
   before: WherePredicatesDeclared(gs, previous)
 ): WherePredicatesDeclared(gs, final) {
-  ⊢ WherePredicatesDeclared(gs, final) from match h {
+  match h {
     Mk(name, r#class, Generic, Fresh) => p => present => where_declared_cons(
       gs,
       where_source_class(source),
@@ -71,18 +68,18 @@ pub theorem where_constraints_declare<classes: Ordmap(
   Text,
   ClassInfo
 ), gs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), sources: List(
   SurfaceConstraint
 ), previous: List(
-  Pair(Text, Text)
+  (Text × Text)
 ), final: List(
-  Pair(Text, Text)
+  (Text × Text)
 )>(
   h: WhereConstraints(classes, gs, sources, previous, final),
   before: WherePredicatesDeclared(gs, previous)
 ): WherePredicatesDeclared(gs, final) {
-  ⊢ WherePredicatesDeclared(gs, final) from match h {
+  match h {
     WhereConstraintsNil(start) => before
     WhereConstraintsCons(source, rest, start, next, last, head, tail) => where_constraints_declare(
       tail,
@@ -90,23 +87,23 @@ pub theorem where_constraints_declare<classes: Ordmap(
     )
   }
 }
-pub theorem where_predicates_nil(gs: List(Pair(Text, Kind))): WherePredicatesDeclared(gs, Nil) {
+pub theorem where_predicates_nil(gs: List(Text × Kind)): WherePredicatesDeclared(gs, Nil) {
   p => present => ⊢ WhereGeneric(gs, instantiation_parameter(p)) from match present {
   }
 }
 pub theorem where_predicates_unreverse<gs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), ps: List(
-  Pair(Text, Text)
+  (Text × Text)
 )>(
   h: WherePredicatesDeclared(gs, ps),
-  p: Pair(Text, Text),
-  present: Mem(Pair(Text, Text), p, List::reverse(ps))
+  p: Text × Text,
+  present: Mem(Text × Text, p, List::reverse(ps))
 ): WhereGeneric(gs, instantiation_parameter(p)) {
   h(
     p,
     Eq::subst(
-      (items: List(Pair(Text, Text))) => Mem(Pair(Text, Text), p, items),
+      (items: List(Text × Text)) => Mem(Text × Text, p, items),
       List::reverse_reverse(ps),
       where_reverse_member(present)
     )
@@ -116,17 +113,17 @@ pub theorem where_clauses_declare<classes: Ordmap(
   Text,
   ClassInfo
 ), gs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), sources: List(
   SurfaceConstraint
 ), ps: List(
-  Pair(Text, Text)
+  (Text × Text)
 )>(h: WhereClauses(classes, gs, sources, ps)): WherePredicatesDeclared(gs, ps) {
-  ⊢ WherePredicatesDeclared(gs, ps) from match h {
+  match h {
     Mk(Reversed, derived, ordered) => Eq::subst(
-      (items: List(Pair(Text, Text))) => WherePredicatesDeclared(gs, items),
+      (items: List(Text × Text)) => WherePredicatesDeclared(gs, items),
       Eq::sym(ordered),
-      (p: Pair(Text, Text), present: Mem(Pair(Text, Text), p, List::reverse(Reversed))) => where_predicates_unreverse(
+      (p: Text × Text, present: Mem(Text × Text, p, List::reverse(Reversed))) => where_predicates_unreverse(
         where_constraints_declare(derived, where_predicates_nil(gs)),
         p,
         present
@@ -135,13 +132,13 @@ pub theorem where_clauses_declare<classes: Ordmap(
   }
 }
 pub theorem where_generic_in_instance<gs: List(
-  Pair(Text, Kind)
+  (Text × Kind)
 ), name: Text>(
   declared: WhereGeneric(gs, name),
   map: Ordmap(Text, Ty),
   covered: GenericNamesPresent(gs, map)
 ): InstanceNamePresent(map, name) {
-  ⊢ InstanceNamePresent(map, name) from match declared {
-    Mk(kind, present) => covered(Pair {fst: name, snd: kind}, present)
+  match declared {
+    Mk(kind, present) => covered(#(name, kind), present)
   }
 }

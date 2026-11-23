@@ -1,0 +1,196 @@
+// A `macro fn` may import at the head of its body what its `quote`s and `Syn::global`s
+// need; nothing of it reaches the file of the macro or the caller: the output carries
+// declarations, never an import (`docs/design/macro.md`「Hygiene (scope sets)」).
+
+@ cases.a-quote-in-a-macro-sees-what-its-body-imports
+files."words.nib" = ```nib
+pub fn greet(t: Text): Text { concat(t, "!") }
+```
+files."lib.nib" = ```nib
+import std::builtin::macro
+pub macro fn shout(value: SynExpr): SynExpr {
+  import "words.nib"
+  quote { greet($value) }
+}
+```
+files."main.nib" = ```nib
+import "lib.nib"
+show(&(shout!("Hello")))
+```
+stdout = ```
+"Hello!"
+```
+
+// The caller's own `greet` is not the one the quote names.
+@ cases.a-quoted-name-a-body-imports-is-not-the-callers-same-named-declaration
+files."words.nib" = ```nib
+pub fn greet(t: Text): Text { concat(t, "!") }
+```
+files."lib.nib" = ```nib
+import std::builtin::macro
+pub macro fn shout(value: SynExpr): SynExpr {
+  import "words.nib"
+  quote { greet($value) }
+}
+```
+files."main.nib" = ```nib
+import "lib.nib"
+fn greet(t: Text): Text { concat(t, "?") }
+show(&(shout!("Hello")))
+show(&greet("Hello"))
+```
+stdout = ```
+"Hello!"
+"Hello?"
+```
+
+@ cases.another-declaration-of-the-macros-file-does-not-see-its-body-import
+files."words.nib" = ```nib
+pub fn greet(t: Text): Text { concat(t, "!") }
+```
+files."lib.nib" = ```nib
+import std::builtin::macro
+pub macro fn shout(value: SynExpr): SynExpr {
+  import "words.nib"
+  quote { greet($value) }
+}
+pub fn plain(): Text { greet("a") }
+```
+files."main.nib" = ```nib
+import "lib.nib"
+show(&(shout!("Hello")))
+```
+checks.plain = 'error: `greet` is declared by `words`, which this file does not import'
+
+@ cases.syn-global-in-a-macro-sees-what-its-body-imports
+files."words.nib" = ```nib
+pub fn greet(t: Text): Text { concat(t, "!") }
+```
+files."lib.nib" = ```nib
+import std::builtin::macro
+pub macro fn shout(value: SynExpr): SynExpr {
+  import "words.nib"
+  ExApp(ExVar(Syn::global("greet")), [value], Syn::call_span())
+}
+```
+files."main.nib" = ```nib
+import "lib.nib"
+fn greet(t: Text): Text { concat(t, "?") }
+show(&(shout!("Hi")))
+```
+stdout = ```
+"Hi!"
+```
+
+// Another macro of the file does not see the body import: its `Syn::global` is read where
+// it is written.
+@ cases.syn-global-in-another-macro-of-the-file-does-not-see-a-body-import
+files."words.nib" = ```nib
+pub fn greet(t: Text): Text { concat(t, "!") }
+```
+files."lib.nib" = ```nib
+import std::builtin::macro
+pub macro fn shout(value: SynExpr): SynExpr {
+  import "words.nib"
+  quote { greet($value) }
+}
+pub macro fn other(value: SynExpr): SynExpr {
+  ExApp(ExVar(Syn::global("greet")), [value], Syn::call_span())
+}
+```
+files."main.nib" = ```nib
+import "lib.nib"
+show(&(other!("Hi")))
+```
+check_errors = ["macro other: macro.global: greet is not a unique declaration visible in the macro definition"]
+
+// A declaration a quote makes may not import, at the head of its body or anywhere else.
+@ cases.an-import-in-a-declaration-a-quote-makes-is-an-error
+files."words.nib" = ```nib
+pub fn word(): Text { "w" }
+```
+files."lib.nib" = ```nib
+import std::builtin::macro
+pub macro fn make(name: SynExpr): List(SynStmt) {
+  quote stmts {
+    fn made(): Text {
+      import "words.nib"
+      word()
+    }
+  }
+}
+```
+files."main.nib" = ```nib
+import "lib.nib"
+make!(made) => fn made
+show(&made())
+```
+check_errors = ["this statement cannot be written in a quote", "macro.runtime: macro make"]
+
+// A `Syn::global` is read where it is written: a helper that imports at the head of its
+// body reads the names with its imports, whichever macro calls it.
+@ cases.syn-global-in-a-helper-sees-what-the-helpers-body-imports
+files."words.nib" = ```nib
+pub fn greet(t: Text): Text { concat(t, "!") }
+```
+files."lib.nib" = ```nib
+import std::builtin::macro
+pub fn greeting(): SynExpr {
+  import "words.nib"
+  ExVar(Syn::global("greet"))
+}
+pub macro fn shout(value: SynExpr): SynExpr {
+  ExApp(greeting(), [value], Syn::call_span())
+}
+```
+files."main.nib" = ```nib
+import "lib.nib"
+show(&(shout!("Hi")))
+```
+stdout = ```
+"Hi!"
+```
+
+// The name a helper's `Syn::global` is given may be made as the macro runs: it is still read
+// where the `Syn::global` is written.
+@ cases.syn-global-of-a-made-name-in-a-helper-sees-what-the-helpers-body-imports
+files."words.nib" = ```nib
+pub fn greet(t: Text): Text { concat(t, "!") }
+```
+files."lib.nib" = ```nib
+import std::builtin::macro
+pub fn named(name: Text): SynExpr {
+  import "words.nib"
+  ExVar(Syn::global(name))
+}
+pub macro fn shout(value: SynExpr): SynExpr {
+  ExApp(named(concat("gre", "et")), [value], Syn::call_span())
+}
+```
+files."main.nib" = ```nib
+import "lib.nib"
+show(&(shout!("Hi")))
+```
+stdout = ```
+"Hi!"
+```
+
+// A helper without body imports does not see what the macro calling it imports at the head
+// of its body.
+@ cases.syn-global-in-a-helper-does-not-see-the-calling-macros-body-import
+files."words.nib" = ```nib
+pub fn greet(t: Text): Text { concat(t, "!") }
+```
+files."lib.nib" = ```nib
+import std::builtin::macro
+pub fn named(name: Text): SynExpr { ExVar(Syn::global(name)) }
+pub macro fn shout(value: SynExpr): SynExpr {
+  import "words.nib"
+  ExApp(named("greet"), [value], Syn::call_span())
+}
+```
+files."main.nib" = ```nib
+import "lib.nib"
+show(&(shout!("Hi")))
+```
+check_errors = ["macro shout: macro.global: greet is not a unique declaration visible in the macro definition"]

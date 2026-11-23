@@ -11,46 +11,46 @@ fn source_source() -> &'static str {
 struct Inner { values: List(u64) }
 struct Outer { inner: Inner }
 struct Deep { outer: Outer }
-shared struct Wrapped(T: Shared) { item: T }
-fn count(xs: List(u64)): u64 ! {Div} {
+struct(shared) Wrapped(T: Shared) { item: T }
+fn count(xs: List(u64)): u64 ! {div, overflow} {
   match xs {
     Nil => 0
     Cons(head, tail) => 1 + count(tail)
   }
 }
-fn count_generic<T: Shared>(xs: List(T)): u64 ! {Div} {
+fn count_generic<T: Shared>(xs: List(T)): u64 ! {div, overflow} {
   match xs {
     Nil => 0
     Cons(head, tail) => 1 + count_generic(tail)
   }
 }
-fn inspect(value: Outer): u64 ! {Div} { count(value.inner.values) }
-fn inspect_split(value: Outer): u64 ! {Div} {
+fn inspect(value: Outer): u64 ! {div, overflow} { count(value.inner.values) }
+fn inspect_split(value: Outer): u64 ! {div, overflow} {
   let inner := value.inner
   count(inner.values)
 }
-fn inspect_deep(value: Deep): u64 ! {Div} { count(value.outer.inner.values) }
-fn inspect_generic<T: Shared>(value: Wrapped(Wrapped(List(T)))): u64 ! {Div} {
+fn inspect_deep(value: Deep): u64 ! {div, overflow} { count(value.outer.inner.values) }
+fn inspect_generic<T: Shared>(value: Wrapped(Wrapped(List(T)))): u64 ! {div, overflow} {
   count_generic(value.item.item)
 }
-fn inspect_borrowed(&value: Outer): u64 ! {Div} { count(value.inner.values) }
-fn run(value: Outer): u64 {
-  handle { budget(steps: 100) { inspect(value) } } with { exceeded(info), k => 0 }
+fn inspect_borrowed(value: &Outer): u64 ! {div, overflow} { count(value.inner.values) }
+fn run(value: Outer): u64 ! {budget} {
+  handle { perform budget(100, () => { inspect(value) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }
-fn nested_run(steps: i64, value: Outer): u64 {
-  handle { budget(steps: steps) { inspect(value) } } with { exceeded(info), k => 0 }
+fn nested_run(steps: u64, value: Outer): u64 ! {budget} {
+  handle { perform budget(steps, () => { inspect(value) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }
-fn split_run(steps: i64, value: Outer): u64 {
-  handle { budget(steps: steps) { inspect_split(value) } } with { exceeded(info), k => 0 }
+fn split_run(steps: u64, value: Outer): u64 ! {budget} {
+  handle { perform budget(steps, () => { inspect_split(value) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }
-fn deep_run(steps: i64, value: Deep): u64 {
-  handle { budget(steps: steps) { inspect_deep(value) } } with { exceeded(info), k => 0 }
+fn deep_run(steps: u64, value: Deep): u64 ! {budget} {
+  handle { perform budget(steps, () => { inspect_deep(value) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }
-fn generic_run(steps: i64, value: Wrapped(Wrapped(List(u64)))): u64 {
-  handle { budget(steps: steps) { inspect_generic(value) } } with { exceeded(info), k => 0 }
+fn generic_run(steps: u64, value: Wrapped(Wrapped(List(u64)))): u64 ! {budget} {
+  handle { perform budget(steps, () => { inspect_generic(value) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }
-fn borrowed_run(steps: i64, &value: Outer): u64 {
-  handle { budget(steps: steps) { inspect_borrowed(value) } } with { exceeded(info), k => 0 }
+fn borrowed_run(steps: u64, value: &Outer): u64 ! {budget} {
+  handle { perform budget(steps, () => { inspect_borrowed(value) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }
 "#
 }
@@ -98,7 +98,7 @@ fn generic_input(length: u64) -> api::Wrapped<api::Wrapped<api::List<u64>>> {
 }
 fn check(
     name: &str,
-    steps: i64,
+    steps: u64,
     length: u64,
     ordinary: impl FnOnce() -> u64,
     trusted: impl FnOnce() -> u64,
@@ -131,7 +131,7 @@ fn main() {
     let token = TrustedBudgetHost::assert_contract();
     for length in [0, 1, 3, 7, 96, 98, 99] {
         check("run", 100, length, || api::run(input(length)), || api::run_trusted(&token, input(length)));
-        for steps in 0..=(length as i64 + 3) {
+        for steps in 0..=(length + 3) {
             check("nested_run", steps, length, || api::nested_run(steps, input(length)), || api::nested_trusted(&token, steps, input(length)));
             check("split_run", steps, length, || api::split_run(steps, input(length)), || api::split_trusted(&token, steps, input(length)));
             check("deep_run", steps, length, || api::deep_run(steps, api::Deep { outer: input(length) }), || api::deep_trusted(&token, steps, api::Deep { outer: input(length) }));
@@ -205,7 +205,7 @@ pub static REQUESTS: std::sync::Mutex<Vec<(u32, String, u32, u32, u64)>> = std::
 
 #[test]
 fn nested_split_generic_and_borrowed_projections_execute_with_identical_fuel() {
-    let package = tauto_nir::compile_with(source_source(), true).unwrap();
+    let mut package = tauto::nir::compile_with(source_source(), true).unwrap();
     let entries = ENTRIES
         .iter()
         .map(|(function, facade)| format!("{facade} = \"{function}\"\n"))
@@ -215,7 +215,7 @@ fn nested_split_generic_and_borrowed_projections_execute_with_identical_fuel() {
         Path::new("Tauto.eure"),
     )
     .unwrap();
-    let bindings = Bindings::resolve(&package, Some(&manifest), None).unwrap();
+    let bindings = Bindings::resolve(&mut package, Some(&manifest), None).unwrap();
     let sources = Sources {
         file: "nested-projection.taut",
         text: source_source(),
@@ -275,8 +275,8 @@ fn nested_split_generic_and_borrowed_projections_execute_with_identical_fuel() {
             );
             replace_once(
                 file(&mut generated, "Cargo.toml"),
-                "tauto-rt = { path = \"tauto-rt\" }",
-                "tauto-rt = { path = \"tauto-rt\", features = [\"sync\"] }",
+                "[dependencies]\ntauto-rt = { path = \"tauto-rt\" }",
+                "[dependencies]\ntauto-rt = { path = \"tauto-rt\", features = [\"sync\"] }",
             );
         }
         let binary = generated

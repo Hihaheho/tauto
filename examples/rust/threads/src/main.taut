@@ -1,7 +1,7 @@
-import std::prelude::Os
-import std::prelude::Par
+import std::builtin::os
+import std::builtin::par
 
-fn produce(ch: Channel(u64), n: u64): u64 {
+fn produce(ch: Channel(u64), n: u64): u64 ! {div, overflow, wait, mutex_claim, mutex_take_claimed, mutex_put} {
   var i: u64 := 0
   while i < n {
     i := i + 1
@@ -10,18 +10,20 @@ fn produce(ch: Channel(u64), n: u64): u64 {
   Channel::close(ch)
   n
 }
-fn consume(ch: Channel(u64), sum: u64): u64 {
+fn consume(ch: Channel(u64), sum: u64): u64 ! {div, overflow, wait, mutex_claim, mutex_take_claimed, mutex_put} {
   match Channel::recv(ch) {
     Some(v) => consume(ch, sum + v)
     None => sum
   }
 }
-let ch: Channel(u64) := Channel::new(2)
-let r := {
-  let c := perform spawn(() => consume(ch, 0))
-  let p := perform spawn(() => produce(ch, 100))
-  Task::join(p) + Task::join(c)
-}
-perform show("r", r)
-perform sleep(1)
-perform show("slept", true)
+perform main(() => {
+  let ch: Channel(u64) := Channel::new(2)
+  let r := {
+    let c := perform spawn(() => consume(ch, 0))
+    let p := perform spawn(() => produce(ch, 100))
+    Task::join(p) + Task::join(c)
+  }
+  show(&r)
+  perform sleep(1)
+  show(&true)
+})

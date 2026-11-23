@@ -1,0 +1,66 @@
+description = "Colliding hashes reach every group in a Slots-backed hash table, including a partial final group."
+
+@ cases.probe-non-power-of-two-group-count
+source = ```tauto
+import std::hash_table { HT, tb_laws, tb_used }
+import std::slots { Byte, SlotsModel, Table }
+import std::uhost { UHost }
+import std::uint { UInt }
+
+fn zero_hash(_value: &Nat): UInt(64) { UInt::of_nat_mod64(0) }
+
+fn is_one(value: &Nat): Bool { Nat::eq(value, 1) }
+
+fn fill_four(t: &mut SlotsModel(Table, Byte, Nat, tb_used), start: Nat): Unit {
+  let ^_first := HT::insert_in(&mut t, UInt::of_nat_mod64(0), start)
+  let ^_second := HT::insert_in(&mut t, UInt::of_nat_mod64(0), Succ(start))
+  let ^_third := HT::insert_in(&mut t, UInt::of_nat_mod64(0), Succ(Succ(start)))
+  let ^_fourth := HT::insert_in(&mut t, UInt::of_nat_mod64(0), Succ(Succ(Succ(start))))
+  #()
+}
+
+fn insert_one(t: &mut SlotsModel(Table, Byte, Nat, tb_used)): Bool {
+  match HT::insert_in(&mut t, UInt::of_nat_mod64(0), 1) {
+    None => true
+    Some(rejected) => false
+  }
+}
+
+fn lookup(t: &SlotsModel(Table, Byte, Nat, tb_used)): Nat {
+  match HT::find_in(t, UInt::of_nat_mod64(0), is_one) {
+    None => 0
+    Some(found) => found
+  }
+}
+
+fn remove_one(t: &mut SlotsModel(Table, Byte, Nat, tb_used)): Nat {
+  match HT::remove_in(&mut t, UInt::of_nat_mod64(0), is_one) {
+    None => 0
+    Some(removed) => removed
+  }
+}
+
+fn exercise(cap: UHost): Bool × (Nat × (Bool × (Nat × Nat))) {
+  var t: SlotsModel(Table, Byte, Nat, tb_used) := SlotsModel::new(cap, tb_laws())
+  fill_four(&mut t, 2)
+  fill_four(&mut t, 6)
+  fill_four(&mut t, 10)
+  fill_four(&mut t, 14)
+  let inserted := insert_one(&mut t)
+  let before := lookup(&t)
+  let grown := HT::grow(&mut t, zero_hash)
+  let removed := remove_one(&mut t)
+  #(inserted, #(before, #(grown, #(removed, HT::count(&t)))))
+}
+
+fn check_24(): Bool × (Nat × (Bool × (Nat × Nat))) { exercise(UHost::lit(24, Refl)) }
+
+fn check_17(): Bool × (Nat × (Bool × (Nat × Nat))) { exercise(UHost::lit(17, Refl)) }
+
+show(&check_24())
+show(&check_17())
+```
+stdout = ```
+#(true, #(1, #(true, #(1, 16))))
+#(true, #(1, #(true, #(1, 16))))
+```

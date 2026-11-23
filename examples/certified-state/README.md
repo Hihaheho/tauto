@@ -1,6 +1,6 @@
 # Certified state commands
 
-`std/State.taut` describes explicit, total state transitions. `StateHoare`
+`std/state.taut` describes explicit, total state transitions. `StateHoare`
 connects a command's precondition to a postcondition of the **actual** returned
 state. `StatePreserves` is the invariant-preservation obligation for every
 command. `state_run_preserves` proves preservation for every finite command

@@ -3,14 +3,28 @@
 //! kernel is given the inductive family of the same shape ([`family`]) and
 //! checks it as it checks an `inductive`, so no rule is added to the kernel
 //! (`crates/tauto/src/read/runtime.rs`, `docs/design/program-data.md`).
+use crate::span::Span;
 use crate::surface::{Constructor, DataDecl, Generates, InductiveDecl, SurfaceTerm, TermKind};
-use tauto_parol::Span;
 
 /// The kind written before `struct` or `enum` that makes it a family.
 pub const KIND: &str = "inductive";
 
+/// Whether `d` is written `inductive`, alone or with a kind
+/// (`inductive struct(affine)`, read as `inductive, affine`).
 pub fn is_inductive(d: &DataDecl) -> bool {
-    d.kind.as_deref() == Some(KIND)
+    d.kind
+        .as_deref()
+        .is_some_and(|k| k.split(',').any(|w| w.trim() == KIND))
+}
+
+/// The kind written in parentheses after `struct` or `enum`, without the
+/// `inductive` before it: `affine` of `inductive struct(affine)`.
+pub fn written_kind(d: &DataDecl) -> Option<&str> {
+    d.kind
+        .as_deref()?
+        .split(',')
+        .map(str::trim)
+        .find(|w| *w != KIND)
 }
 
 /// The name of the one constructor of a `struct` read as a family: programs
@@ -76,17 +90,46 @@ pub fn family(d: &DataDecl, is_struct: bool) -> InductiveDecl {
 }
 
 /// The proof side's family of a program's type that has another name: the
-/// inverse of extraction's table (`crates/tauto/src/extract.rs`).
+/// inverse of extraction's table (`crates/tauto/src/extract.rs`). A
+/// fixed-width integer is a family applied to its width ([`proof_width`]):
+/// `u64` is `UInt(64)`, `i32` is `SInt(32)`.
 pub fn proof_type(name: &str) -> Option<&'static str> {
     Some(match name {
         "nat" => "Nat",
-        "u8" => "U8",
-        "u32" => "U32",
-        "u64" => "U64",
-        "i32" => "I32",
-        "i64" => "I64",
+        "u8" | "u16" | "u32" | "u64" => "UInt",
+        "uhost" => "UHost",
+        "i8" | "i16" | "i32" | "i64" => "SInt",
         _ => return None,
     })
+}
+
+/// The width a fixed-width integer of the program is to the proofs: the
+/// argument of its [`proof_type`] (`u64` is `UInt(64)`).
+pub fn proof_width(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "u8" | "i8" => "8",
+        "u16" | "i16" => "16",
+        "u32" | "i32" => "32",
+        "u64" | "i64" => "64",
+        _ => return None,
+    })
+}
+
+/// The program's type `name` as the proof side writes it, with the
+/// family's name `family`: the family, or the family applied to the
+/// width (`UInt(64)` for `u64`).
+pub fn proof_term(name: &str, family: crate::surface::Name, span: Span) -> SurfaceTerm {
+    let head = SurfaceTerm::new(TermKind::Var(family), span);
+    match proof_width(name) {
+        Some(w) => SurfaceTerm::new(
+            TermKind::App {
+                function: Box::new(head),
+                arguments: vec![SurfaceTerm::new(TermKind::Nat(w.to_string()), span)],
+            },
+            span,
+        ),
+        None => head,
+    }
 }
 
 /// Why `d`, written `inductive struct` (`is_struct`) or `inductive enum`,

@@ -1,0 +1,59 @@
+import "read.taut"
+import "syn.taut"
+import "syntab.taut"
+import std::base
+import std::text
+
+// `syn_load` and `syn_answer`: what a backend that runs no machine calls to parse at run
+// time. `syn_load` reads the parser from its text (`read.taut`); `syn_answer` parses and
+// writes the value or the diagnostic in the same kind of text: `0` and the value, or `1` and the diagnostic, where a value is
+// `0 C N` and its N fields (a value of the constructor C), `1 N` (a number), `2` and a
+// text, `3 N` and N items (a list), or `4 0` and `4 1` and the value (an option). A parser
+// that does not read gives `2` and nothing else.
+
+mutual {
+  pub fn syn_out(v: SynVal, rest: List(Text)): List(Text) {
+    match v {
+      VData(c, fields) => Cons(
+        " 0 ",
+        Cons(
+          Text::of_nat(c),
+          Cons(" ", Cons(Text::of_nat(List::length(fields)), syn_outs(fields, rest)))
+        )
+      )
+      VNat(n) => Cons(" 1 ", Cons(Text::of_nat(n), rest))
+      VText(t) => Cons(" 2 t", Cons(Text::of_nat(Text::len(t)), Cons(" ", Cons(t, rest))))
+      VList(items) => Cons(" 3 ", Cons(Text::of_nat(List::length(items)), syn_outs(items, rest)))
+      VOpt(o) => syn_out_opt(o, rest)
+    }
+  }
+
+  pub fn syn_outs(vs: List(SynVal), rest: List(Text)): List(Text) {
+    match vs {
+      Nil => rest
+      Cons(v, more) => syn_out(v, syn_outs(more, rest))
+    }
+  }
+
+  pub fn syn_out_opt(o: Option(SynVal), rest: List(Text)): List(Text) {
+    match o {
+      None => Cons(" 4 0", rest)
+      Some(x) => Cons(" 4 1", syn_out(x, rest))
+    }
+  }
+}
+
+// The parser written in the text, read once and given to each parse.
+pub fn syn_load(parser: Text): Option(SynParser) {
+  syn_read(parser)
+}
+
+pub fn syn_answer(parser: Option(SynParser), text: Text): Text {
+  match parser {
+    None => "2"
+    Some(p) => match syn_run(p, text) {
+      Ok(v) => Text::concat_all(Cons("0", syn_out(v, Nil)))
+      Err(d) => Text::concat_all(Cons("1", syn_out(d, Nil)))
+    }
+  }
+}

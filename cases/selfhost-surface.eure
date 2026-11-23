@@ -1,16 +1,43 @@
 // Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
 
+@ cases.surface-infer-condition-right-and
+source = ```tauto
+instance Choose(Local, Nat, Bool) infer from A ∧ (I ∧ S) { fn choose(value: Local): Nat { 1 } }
+```
+differential = "surface"
+
+@ cases.surface-infer-condition-right-or
+source = ```tauto
+instance Choose(Local, Nat, Bool) infer from A ∨ (I ∨ S) { fn choose(value: Local): Nat { 1 } }
+```
+differential = "surface"
+
+@ cases.surface-infer-condition-mixed
+source = ```tauto
+instance Choose(Local, Nat, Bool) infer from A ∧ I ∨ S { fn choose(value: Local): Nat { 1 } }
+```
+differential = "surface"
+
+@ cases.surface-infer-from-condition
+source = ```tauto
+inductive class Choose(A: Type, S: Type, I: Type) { fn choose(value: A, state: S): I }
+instance Choose(Local, Nat, Bool) infer from A ∧ (S ∨ A) {
+  fn choose(value: Local, state: Nat): Bool { true }
+}
+```
+differential = "surface"
+
 // surface_matches_on_hard_cases
 @ cases.surface-matches-on-hard-cases-001
 source = ```tauto
-let &x := f(&v)
+let x := f(&v)
 ```
 differential = "surface"
 
 // surface_matches_on_hard_cases
 @ cases.surface-matches-on-hard-cases-002
 source = ```tauto
-let f := (&v: A, &mut w, x) => v
+let f := (v: &A, w, x) => v
 ```
 differential = "surface"
 
@@ -59,7 +86,7 @@ differential = "surface"
 // surface_matches_on_hard_cases
 @ cases.surface-matches-on-hard-cases-009
 source = ```tauto
-fn f(g: (&x: A, y: B) -> C): Unit { #() }
+fn f(g: (x: &A, y: B) -> C): Unit { #() }
 ```
 differential = "surface"
 
@@ -139,7 +166,7 @@ differential = "surface"
 // surface_matches_on_hard_cases
 @ cases.surface-matches-on-hard-cases-020
 source = ```tauto
-let a := budget(steps: 3) { 1 }
+let a := perform budget(3, () => { 1 })
 ```
 differential = "surface"
 
@@ -203,7 +230,7 @@ differential = "surface"
 // surface_matches_on_hard_cases
 @ cases.surface-matches-on-hard-cases-028
 source = ```tauto
-affine struct S(A: Type) { a: A, b: Nat }
+struct(affine) S(A: Type) { a: A, b: Nat }
 enum E(A: Type) { X, Y(A, A), Z { f: A } }
 ```
 differential = "surface"
@@ -380,5 +407,94 @@ differential = "surface"
 source = ```tauto
 effect cur<A, !e>(): Unit
 fn f<!r>(): Unit { handle { perform cur() } with { cur<Text, !{out} ∪ r>(), k => k(#()) } }
+```
+differential = "surface"
+
+// An `extern` block writes its language as nothing, and a function in it starts after its `pub`.
+@ cases.surface-extern-pub-fn-span
+source = ```tauto
+extern {
+  pub fn host_len(t: Text): u64
+  fn host_byte(t: Text, i: u64): u64
+}
+```
+differential = "surface"
+
+// A `perform budget(…)` is read as the host's budget when the program declares no effect of that name.
+@ cases.surface-host-budget-perform
+source = ```tauto
+fn limited(): Nat { perform budget(3, () => { 1 }) }
+```
+differential = "surface"
+
+// `for p in source { body }` is read with its pattern, its source and its body, not as an unnamed statement.
+@ cases.surface-for-statement
+source = ```tauto
+fn total(xs: List(Nat)): Nat {
+  let mut sum := 0
+  for x in xs { sum = sum + x }
+  sum
+}
+```
+differential = "surface"
+
+// A class method is a signature only: a body on the `class` is refused as the Rust reader refuses it.
+@ cases.surface-class-method-body-refused
+source = ```tauto
+class Test(A: Type) {
+  fn bad(a: A): A { true }
+}
+```
+differential = "surface"
+
+@ cases.surface-pub-name-marker-refused
+source = ```tauto
+pub fn ^helper(): i64 { 0 }
+```
+differential = "surface"
+
+@ cases.surface-effect-marker-in-fn-type-refused
+source = ```tauto
+fn f(g: () -> Unit ! {^stdout}): Unit {
+  #()
+}
+```
+differential = "surface"
+
+@ cases.surface-effect-marker-in-set-refused
+source = ```tauto
+effect log(m: Text): Unit resume 1
+effect Talk { ^log }
+```
+differential = "surface"
+
+@ cases.surface-module-and-reexport
+source = ```tauto
+pub module shapes {
+  pub fn area(x: i64): i64 { x }
+  fn hidden(): i64 { 0 }
+}
+pub import shapes { area }
+```
+differential = "surface"
+
+@ cases.surface-orig-borrow
+description = "`&orig` is kept in the self-hosted surface, in a type and in a term."
+source = ```tauto
+fn first(b: &orig Bag): u64 { b.n }
+let f := first(&orig b)
+```
+differential = "surface"
+
+@ cases.surface-inductive-affine-struct
+source = ```tauto
+inductive struct(affine) Slot { n: Nat }
+inductive enum(linear) Token { One(Nat), Two }
+```
+differential = "surface"
+
+@ cases.surface-lent-struct-pattern
+source = ```tauto
+fn count(b: &Bag): Nat { match b { &Bag { n, items: _ } => n } }
 ```
 differential = "surface"

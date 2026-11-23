@@ -1,5 +1,5 @@
 @ cases.a-recursive-call-with-the-arguments-in-another-order-says-where-to-pass-the-part-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn two(a: Nat, b: Nat): Nat {
@@ -19,7 +19,7 @@ message = "`two(a, k)` is not structural: `two` matches on its parameter `a`, so
 span = "Succ(k) => «two(a, k)»"
 
 @ cases.a-recursive-call-that-puts-its-part-in-a-later-place-shows-the-swapped-call-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn plus_acc(n: Nat, t: Nat): Nat {
@@ -39,7 +39,7 @@ message = "`plus_acc(Succ(t), k)` is not structural: `plus_acc` matches on its p
 span = "Succ(k) => «plus_acc(Succ(t), k)»"
 
 @ cases.a-recursive-call-on-a-part-of-another-parameter-names-decreasing-by-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn sum_to(n: Nat, m: Nat): Nat {
@@ -62,7 +62,7 @@ message = "`sum_to(n, j)` is not structural: `sum_to` matches on its parameter `
 span = "Succ(j) => «sum_to(n, j)»"
 
 @ cases.a-recursive-call-on-the-matched-parameter-itself-makes-no-progress-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn spin(n: Nat): Nat {
@@ -82,7 +82,7 @@ message = "`spin(n)` is not structural: `spin` matches on its parameter `n`, so 
 span = "Succ(k) => «spin(n)»"
 
 @ cases.a-recursive-call-on-a-constant-asks-for-a-variable-of-the-pattern-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
 fn stuck(n: Nat): Nat {
@@ -102,10 +102,10 @@ message = "`stuck(Zero)` is not structural: `stuck` matches on its parameter `n`
 span = "Succ(k) => «stuck(Zero)»"
 
 @ cases.a-recursive-call-of-a-function-with-a-where-passes-a-later-argument-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-import std::prelude::Ord
+import std::builtin::ord
 
 inductive Walk(K: Type): (K, List(K)) -> Prop {
   WHere(c: K): Walk(K, c, Nil)
@@ -128,10 +128,10 @@ checks."input/main.taut::step" = "ok"
 checks."input/main.taut::down" = "ok"
 
 @ cases.a-recursive-call-of-a-function-with-a-where-on-the-same-value-is-rejected-0
-imports = [path`../../std/Base.taut`]
+imports = [path`../../std/base.taut`]
 entry = "input/main.taut"
 files."input/main.taut" = ```tauto
-import std::prelude::Ord
+import std::builtin::ord
 
 inductive Walk(K: Type): (K, List(K)) -> Prop {
   WHere(c: K): Walk(K, c, Nil)
@@ -154,3 +154,32 @@ file = "input/main.taut"
 name = "stay"
 message = "`stay(K, inst@Ord0, inst@Ord0@laws, b, vs, p, h)` is not structural: `stay` matches on its parameter `p`, so the argument for `p` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `p` is not. Every argument of this call is the parameter's own, so the call does not get smaller; give it an argument that is a part of `p`"
 span = "WStep(c, i, vs0, p0) => «stay(b, vs, p, h)»"
+
+@ cases.a-recursive-call-on-a-field-shows-the-field-as-written-0
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+mutual {
+  inductive Pat: Type {
+    Leaf: Pat
+    Fld(f: PField): Pat
+  }
+  inductive PField: Type {
+    MkF(i: Nat, pattern: Pat): PField
+  }
+}
+fn depth(p: Pat, n: Nat): Nat {
+  match p {
+    Leaf => n
+    Fld(f) => depth(f.pattern, Succ(n))
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::depth" = "error: "
+@ cases.a-recursive-call-on-a-field-shows-the-field-as-written-0.diagnostics[]
+file = "input/main.taut"
+name = "depth"
+message = "`depth(f.pattern, Succ(n))` is not structural: `depth` matches on its parameter `p`, so the argument for `p` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `f.pattern` is not. `f` is a part of another type of the group, and a recursion through its parts is a function that matches on that type, together with this one in one `mutual { … }` block. Pass a variable bound by a pattern of the `match` on `p` (a field of the value) for `p`"
+span = "Fld(f) => «depth(f.pattern, Succ(n))»"

@@ -1,0 +1,739 @@
+import "surface.taut"
+import "../../identity/src/identity.taut"
+import "../../text/src/text.taut"
+import std::base
+import std::text
+
+// Name resolution of one program, done once (`docs/design/name-identity.md`):
+// each declaration the program writes gets a `DeclId`, each binding position
+// a `LocalId`, and each variable a `SurfaceName`. What reads the names after
+// this compares ids, not text.
+//
+// A declaration is listed under the name it is written with and, inside
+// `module M`, under `M::name`; a constructor also under `Type::Ctor` and a
+// class method under `Class::method`. These spellings of one declaration
+// share its id.
+//
+// A variable is, in order: the innermost local binding of its spelling in
+// scope; else the one declaration of the program spelled so from the
+// innermost enclosing module outwards (`M::N::x`, `M::x`, `x`); else it stays
+// `NameSpelled`, for what the program does not declare (an import, the
+// prelude) or declares more than once under that spelling (constructors of
+// two types with the same name). A bare pattern spelled as one constructor of
+// the program is that constructor; otherwise it binds.
+//
+// Scope: a parameter, generic or pattern is in scope in what follows it in
+// its declaration, arm or term; `let` and `var` in the statements after them
+// in their block. A term, an arm and a declaration leave the scope as it was.
+
+// A declaration of the program: its id, one of its spellings, its kind and
+// span.
+pub(open) inductive SurfaceDecl: Type {
+  SurfaceDeclMk(id: DeclId, name: Text, kind: Text, start: Nat, end: Nat): SurfaceDecl
+}
+
+// A variable: as written, the module path it is written in (`M::` or
+// empty), what it resolved to, and its span.
+pub(open) inductive SurfaceUse: Type {
+  SurfaceUseMk(spelling: Text, scope: Text, name: SurfaceName, start: Nat, end: Nat): SurfaceUse
+}
+
+pub(open) inductive SurfaceLocal: Type {
+  SurfaceLocalMk(spelling: Text, id: LocalId): SurfaceLocal
+}
+
+// The declarations, and the module paths enclosing the place being read,
+// innermost first, ending with the empty path.
+pub(open) inductive SurfaceResolveEnv: Type {
+  SurfaceResolveEnvMk(decls: List(SurfaceDecl), modules: List(Text)): SurfaceResolveEnv
+}
+
+pub(open) inductive SurfaceResolveAcc: Type {
+  SurfaceResolveAccMk(uses: List(SurfaceUse), scope: List(SurfaceLocal), next: Nat): SurfaceResolveAcc
+}
+
+pub fn surface_resolve_module(s: SurfaceResolveEnv): Text {
+  match s.modules {
+    Nil => ""
+    Cons(m, ^rest) => m
+  }
+}
+
+pub fn surface_resolve_env_in(s: SurfaceResolveEnv, name: Text): SurfaceResolveEnv {
+  SurfaceResolveEnvMk(
+    s.decls,
+    Cons(Text::concat_all(Cons(surface_resolve_module(s), Cons(name, Cons("::", Nil)))), s.modules)
+  )
+}
+
+// What `after` found, with the scope of `before`.
+pub fn surface_resolve_keep(before: SurfaceResolveAcc, after: SurfaceResolveAcc): SurfaceResolveAcc {
+  SurfaceResolveAccMk(after.uses, before.scope, after.next)
+}
+
+pub fn surface_resolve_bind(a: SurfaceResolveAcc, name: Text): SurfaceResolveAcc {
+  SurfaceResolveAccMk(a.uses, Cons(SurfaceLocalMk(name, LocalIdMk(a.next)), a.scope), Succ(a.next))
+}
+
+pub fn surface_resolve_bind_all(a: SurfaceResolveAcc, names: List(Text)): SurfaceResolveAcc {
+  match names {
+    Nil => a
+    Cons(n, rest) => surface_resolve_bind_all(surface_resolve_bind(a, n), rest)
+  }
+}
+
+pub fn surface_resolve_bind_opt(a: SurfaceResolveAcc, name: Option(Text)): SurfaceResolveAcc {
+  match name {
+    None => a
+    Some(n) => surface_resolve_bind(a, n)
+  }
+}
+
+pub fn surface_resolve_local(scope: List(SurfaceLocal), name: Text): Option(LocalId) {
+  match scope {
+    Nil => None
+    Cons(l, rest) => if Text::eq(l.spelling, name) { Some(l.id) } else { surface_resolve_local(rest, name) }
+  }
+}
+
+// The one id among the declarations spelled `full`: `None` when there is
+// none, `Some(None)` when there are two different ones.
+pub fn surface_resolve_decl_from(
+  ds: List(SurfaceDecl),
+  full: Text,
+  found: Option(DeclId)
+): Option(Option(DeclId)) {
+  match ds {
+    Nil => ⊢ Option(Option(DeclId)) from match found {
+      None => None
+      Some(d) => Some(Some(d))
+    }
+    Cons(d, rest) => if Text::eq(d.name, full) {
+      ⊢ Option(Option(DeclId)) from match found {
+        None => surface_resolve_decl_from(rest, full, Some(d.id))
+        Some(e) => if decl_id_eq(d.id, e) { surface_resolve_decl_from(rest, full, found) } else { Some(None) }
+      }
+    } else {
+      surface_resolve_decl_from(rest, full, found)
+    }
+  }
+}
+
+// `name` written in the modules `ms` (innermost first): the declaration of
+// the innermost module that has one; nothing if that one is ambiguous.
+pub fn surface_resolve_decl(ds: List(SurfaceDecl), ms: List(Text), name: Text): Option(DeclId) {
+  match ms {
+    Nil => None
+    Cons(m, rest) => ⊢ Option(DeclId) from match surface_resolve_decl_from(ds, Text::concat(m, name), None) {
+      None => surface_resolve_decl(ds, rest, name)
+      Some(one) => one
+    }
+  }
+}
+
+pub fn surface_resolve_name(a: SurfaceResolveAcc, s: SurfaceResolveEnv, name: Text): SurfaceName {
+  match surface_resolve_local(a.scope, name) {
+    Some(l) => NameLocal(l)
+    None => ⊢ SurfaceName from match surface_resolve_decl(s.decls, s.modules, name) {
+      Some(d) => NameGlobal(d)
+      None => NameSpelled(name)
+    }
+  }
+}
+
+// The uses of a quote's statements that name a declaration or a local. A name no
+// declaration visible where the macro is defined has is a free name of the quote,
+// bound where the quote is expanded: it is no use of this file, and a declaration of
+// the same spelling in another file is not what it names.
+pub fn surface_resolve_quoted_uses(us: List(SurfaceUse)): List(SurfaceUse) {
+  match us {
+    Nil => Nil
+    Cons(u, rest) => ⊢ List(SurfaceUse) from match u.name {
+      NameSpelled(^t) => surface_resolve_quoted_uses(rest)
+      NameGlobal(^d) => Cons(u, surface_resolve_quoted_uses(rest))
+      NameLocal(^l) => Cons(u, surface_resolve_quoted_uses(rest))
+    }
+  }
+}
+
+// `a` with the uses a quote's statements made (`r`, read from no uses) added.
+pub fn surface_resolve_quote(a: SurfaceResolveAcc, r: SurfaceResolveAcc): SurfaceResolveAcc {
+  SurfaceResolveAccMk(List::append(surface_resolve_quoted_uses(r.uses), a.uses), r.scope, r.next)
+}
+
+pub fn surface_resolve_use(a: SurfaceResolveAcc, s: SurfaceResolveEnv, name: Text, start: Nat, end: Nat): SurfaceResolveAcc {
+  SurfaceResolveAccMk(
+    Cons(SurfaceUseMk(name, surface_resolve_module(s), surface_resolve_name(a, s, name), start, end), a.uses),
+    a.scope,
+    a.next
+  )
+}
+
+pub fn surface_resolve_is_ctor(ds: List(SurfaceDecl), d: DeclId): Bool {
+  match ds {
+    Nil => false
+    Cons(x, rest) => (decl_id_eq(x.id, d) && Text::eq(x.kind, "ctor")) || surface_resolve_is_ctor(rest, d)
+  }
+}
+
+// A bare name in a pattern: the constructor it names, which binds nothing,
+// or a new binding. The unused marker `^` is not part of `name` (kept on
+// `PtBind` as `unused`, matching Rust `Pattern::Bind { unused }`).
+pub fn surface_resolve_pattern_name(a: SurfaceResolveAcc, s: SurfaceResolveEnv, name: Text): SurfaceResolveAcc {
+  match surface_resolve_decl(s.decls, s.modules, name) {
+    Some(d) => if surface_resolve_is_ctor(s.decls, d) { a } else { surface_resolve_bind(a, name) }
+    None => surface_resolve_bind(a, name)
+  }
+}
+
+mutual {
+  pub fn surface_resolve_pattern(a: SurfaceResolveAcc, s: SurfaceResolveEnv, p: SurfacePattern): SurfaceResolveAcc {
+    match p {
+      PtWild => a
+      PtBind(n, _) => surface_resolve_pattern_name(a, s, n)
+      PtInt(^neg, ^m) => a
+      PtBool(^v) => a
+      PtText(^v) => a
+      PtCtor(^name, args) => surface_resolve_patterns(a, s, args)
+      PtRecord(^name, fields) => surface_resolve_pattern_fields(a, s, fields)
+      PtTyped(name, ty, _) => surface_resolve_bind(surface_resolve_term(a, s, ty), name)
+      PtOther(^w) => a
+    }
+  }
+
+  pub fn surface_resolve_patterns(a: SurfaceResolveAcc, s: SurfaceResolveEnv, ps: List(SurfacePattern)): SurfaceResolveAcc {
+    match ps {
+      Nil => a
+      Cons(p, rest) => surface_resolve_patterns(surface_resolve_pattern(a, s, p), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_pattern_field(a: SurfaceResolveAcc, s: SurfaceResolveEnv, f: SurfacePatternField): SurfaceResolveAcc {
+    match f {
+      SurfacePatternFieldMk(^name, p) => surface_resolve_pattern(a, s, p)
+    }
+  }
+
+  pub fn surface_resolve_pattern_fields(a: SurfaceResolveAcc, s: SurfaceResolveEnv, fs: List(SurfacePatternField)): SurfaceResolveAcc {
+    match fs {
+      Nil => a
+      Cons(f, rest) => surface_resolve_pattern_fields(surface_resolve_pattern_field(a, s, f), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_term(a: SurfaceResolveAcc, s: SurfaceResolveEnv, t: SurfaceTerm): SurfaceResolveAcc {
+    match t {
+      SurfaceTermIndexedMk(kind, start, end, ^o) => surface_resolve_keep(a, surface_resolve_kind(a, s, kind, start, end))
+    }
+  }
+
+  pub fn surface_resolve_terms(a: SurfaceResolveAcc, s: SurfaceResolveEnv, ts: List(SurfaceTerm)): SurfaceResolveAcc {
+    match ts {
+      Nil => a
+      Cons(t, rest) => surface_resolve_terms(surface_resolve_term(a, s, t), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_opt(a: SurfaceResolveAcc, s: SurfaceResolveEnv, t: Option(SurfaceTerm)): SurfaceResolveAcc {
+    match t {
+      None => a
+      Some(x) => surface_resolve_term(a, s, x)
+    }
+  }
+
+  pub fn surface_resolve_opts(a: SurfaceResolveAcc, s: SurfaceResolveEnv, ts: List(Option(SurfaceTerm))): SurfaceResolveAcc {
+    match ts {
+      Nil => a
+      Cons(t, rest) => surface_resolve_opts(surface_resolve_opt(a, s, t), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_kind(a: SurfaceResolveAcc, s: SurfaceResolveEnv, k: SurfaceKind, start: Nat, end: Nat): SurfaceResolveAcc {
+    match k {
+      SkVar(name) => surface_resolve_use(a, s, surface_name_text(name), start, end)
+      SkNat(^d) => a
+      SkFloat(^d) => a
+      SkRow(^es) => a
+      SkText(^v) => a
+      SkBool(^v) => a
+      SkApp(head, args) => surface_resolve_terms(surface_resolve_term(a, s, head), s, args)
+      SkPi(params, result, ^es) => surface_resolve_term(surface_resolve_params(a, s, params), s, result)
+      SkExists(binder, domain, body, ^unused) => surface_resolve_term(surface_resolve_bind(surface_resolve_term(a, s, domain), binder), s, body)
+      SkLam(params, body, _, _) => surface_resolve_term(surface_resolve_bind_all(a, params), s, body)
+      SkUnion(parts) => surface_resolve_terms(a, s, parts)
+      SkAscribe(value, ty) => surface_resolve_term(surface_resolve_term(a, s, value), s, ty)
+      SkTagged(^tag, value) => surface_resolve_term(a, s, value)
+      SkIf(c, th, o) => surface_resolve_opt(surface_resolve_term(surface_resolve_term(a, s, c), s, th), s, o)
+      SkField(value, ^name) => surface_resolve_term(a, s, value)
+      SkBlock(stmts) => surface_resolve_stmts(a, s, stmts)
+      SkPerform(^op, args) => surface_resolve_terms(a, s, args)
+      SkHandle(body, hs) => surface_resolve_handlers(surface_resolve_term(a, s, body), s, hs)
+      SkBudget(^m, amount, body) => surface_resolve_term(surface_resolve_term(a, s, amount), s, body)
+      SkMatch(scrutinee, motive, arms, binder, _) => surface_resolve_arms(
+        surface_resolve_opt(surface_resolve_bind_opt(surface_resolve_term(a, s, scrutinee), binder), s, motive),
+        s,
+        arms
+      )
+      SkHole(^name) => a
+      SkRecord(^name, fields) => surface_resolve_fields(a, s, fields)
+      SkBorrow(^m, ^m_orig, value) => surface_resolve_term(a, s, value)
+      SkFnKind(^kind, ty) => surface_resolve_term(a, s, ty)
+      SkBorrowLam(^bs, lam) => surface_resolve_term(a, s, lam)
+      SkOther(^w) => a
+      SkMacroCall(^name, arg) => surface_resolve_term(a, s, arg)
+      SkQuote(^f, stmts) => surface_resolve_quote(a, surface_resolve_stmts(SurfaceResolveAccMk(Nil, a.scope, a.next), s, stmts))
+      SkSplice(value) => surface_resolve_term(a, s, value)
+      SkSyntaxLit(^name, ^body) => a
+      SkStep(^tactic, arg, ^cs, ^ce, before, arms) => surface_resolve_step_arms(
+        surface_resolve_opt(surface_resolve_term(a, s, arg), s, before),
+        s,
+        arms
+      )
+    }
+  }
+
+  pub fn surface_resolve_param(a: SurfaceResolveAcc, s: SurfaceResolveEnv, p: SurfaceParam): SurfaceResolveAcc {
+    match p {
+      SurfaceParamMk(name, ty, _) => surface_resolve_term(surface_resolve_bind_opt(a, name), s, ty)
+    }
+  }
+
+  pub fn surface_resolve_params(a: SurfaceResolveAcc, s: SurfaceResolveEnv, ps: List(SurfaceParam)): SurfaceResolveAcc {
+    match ps {
+      Nil => a
+      Cons(p, rest) => surface_resolve_params(surface_resolve_param(a, s, p), s, rest)
+    }
+  }
+
+  // A field of a record, or a binder of a step arm (`binds` then binds
+  // its name).
+  pub fn surface_resolve_field(a: SurfaceResolveAcc, s: SurfaceResolveEnv, binds: Bool, f: SurfaceField): SurfaceResolveAcc {
+    match f {
+      SurfaceFieldMk(name, value) => if binds { surface_resolve_bind(surface_resolve_term(a, s, value), name) } else { surface_resolve_term(a, s, value) }
+    }
+  }
+
+  pub fn surface_resolve_fields_of(a: SurfaceResolveAcc, s: SurfaceResolveEnv, binds: Bool, fs: List(SurfaceField)): SurfaceResolveAcc {
+    match fs {
+      Nil => a
+      Cons(f, rest) => surface_resolve_fields_of(surface_resolve_field(a, s, binds, f), s, binds, rest)
+    }
+  }
+
+  pub fn surface_resolve_fields(a: SurfaceResolveAcc, s: SurfaceResolveEnv, fs: List(SurfaceField)): SurfaceResolveAcc {
+    surface_resolve_fields_of(a, s, false, fs)
+  }
+
+  pub fn surface_resolve_named1(a: SurfaceResolveAcc, s: SurfaceResolveEnv, n: SurfaceNamed): SurfaceResolveAcc {
+    match n {
+      SurfaceNamedMk(name, ty) => surface_resolve_bind(surface_resolve_term(a, s, ty), name)
+    }
+  }
+
+  pub fn surface_resolve_named(a: SurfaceResolveAcc, s: SurfaceResolveEnv, ns: List(SurfaceNamed)): SurfaceResolveAcc {
+    match ns {
+      Nil => a
+      Cons(n, rest) => surface_resolve_named(surface_resolve_named1(a, s, n), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_arm(a: SurfaceResolveAcc, s: SurfaceResolveEnv, arm: SurfaceArm): SurfaceResolveAcc {
+    match arm {
+      SurfaceArmMk(p, guard, goal, body) => surface_resolve_term(surface_resolve_opt(surface_resolve_opt(surface_resolve_pattern(a, s, p), s, guard), s, goal), s, body)
+    }
+  }
+
+  pub fn surface_resolve_arms(a: SurfaceResolveAcc, s: SurfaceResolveEnv, arms: List(SurfaceArm)): SurfaceResolveAcc {
+    match arms {
+      Nil => a
+      Cons(arm, rest) => surface_resolve_arms(surface_resolve_keep(a, surface_resolve_arm(a, s, arm)), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_step_arm(a: SurfaceResolveAcc, s: SurfaceResolveEnv, arm: SurfaceStepArm): SurfaceResolveAcc {
+    match arm {
+      SurfaceStepArmMk(binders, _, goal, body, ^st, ^en) => surface_resolve_term(
+        surface_resolve_term(surface_resolve_fields_of(a, s, true, binders), s, goal),
+        s,
+        body
+      )
+    }
+  }
+
+  pub fn surface_resolve_step_arms(a: SurfaceResolveAcc, s: SurfaceResolveEnv, arms: List(SurfaceStepArm)): SurfaceResolveAcc {
+    match arms {
+      Nil => a
+      Cons(arm, rest) => surface_resolve_step_arms(surface_resolve_keep(a, surface_resolve_step_arm(a, s, arm)), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_handler(a: SurfaceResolveAcc, s: SurfaceResolveEnv, h: SurfaceHandler): SurfaceResolveAcc {
+    match h {
+      HdReturn(p, body) => surface_resolve_term(surface_resolve_pattern(a, s, p), s, body)
+      HdOperation(^op, binds, types, ps, r, _, guard, body) => surface_resolve_term(
+        surface_resolve_opt(surface_resolve_terms(surface_resolve_patterns(surface_resolve_bind_opt(surface_resolve_bind_all(a, binds), r), s, ps), s, types), s, guard),
+        s,
+        body
+      )
+    }
+  }
+
+  pub fn surface_resolve_handlers(a: SurfaceResolveAcc, s: SurfaceResolveEnv, hs: List(SurfaceHandler)): SurfaceResolveAcc {
+    match hs {
+      Nil => a
+      Cons(h, rest) => surface_resolve_handlers(surface_resolve_keep(a, surface_resolve_handler(a, s, h)), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_constraint(a: SurfaceResolveAcc, s: SurfaceResolveEnv, c: SurfaceConstraint): SurfaceResolveAcc {
+    match c {
+      SurfaceConstraintMk(^cl, ty, ^st, ^en, args) => surface_resolve_terms(surface_resolve_term(a, s, ty), s, args)
+    }
+  }
+
+  pub fn surface_resolve_constraints(a: SurfaceResolveAcc, s: SurfaceResolveEnv, cs: List(SurfaceConstraint)): SurfaceResolveAcc {
+    match cs {
+      Nil => a
+      Cons(c, rest) => surface_resolve_constraints(surface_resolve_constraint(a, s, c), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_fn(a: SurfaceResolveAcc, s: SurfaceResolveEnv, f: SurfaceFn): SurfaceResolveAcc {
+    match f {
+      SurfaceFnMk(^name, generics, ^bounds, params, ^r#borrows, types, result, ^es, wheres, ^st, ^en, body, ^lends, gtypes, ^bound_starts, ^visibility, ^row_hole, ^slot_unused, ^slot_unused_generics, ^slot_unused_params) => surface_resolve_terms(
+        surface_resolve_term(
+          surface_resolve_constraints(
+            surface_resolve_opt(surface_resolve_opts(surface_resolve_bind_all(surface_resolve_bind_all(a, generics), params), s, types), s, result),
+            s,
+            wheres
+          ),
+          s,
+          body
+        ),
+        s,
+        gtypes
+      )
+    }
+  }
+
+  pub fn surface_resolve_fns(a: SurfaceResolveAcc, s: SurfaceResolveEnv, fs: List(SurfaceFn)): SurfaceResolveAcc {
+    match fs {
+      Nil => a
+      Cons(f, rest) => surface_resolve_fns(surface_resolve_keep(a, surface_resolve_fn(a, s, f)), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_theorem(a: SurfaceResolveAcc, s: SurfaceResolveEnv, t: SurfaceTheorem): SurfaceResolveAcc {
+    match t {
+      SurfaceTheoremMk(^name, ^implicit, params, ty, body, ^st, ^en, ^slot_unused, ^slot_unused_params, ^t_vis) => surface_resolve_opt(
+        surface_resolve_term(surface_resolve_named(a, s, params), s, ty),
+        s,
+        body
+      )
+    }
+  }
+
+  pub fn surface_resolve_ctor(a: SurfaceResolveAcc, s: SurfaceResolveEnv, c: SurfaceCtor): SurfaceResolveAcc {
+    match c {
+      SurfaceCtorMk(^name, ^implicit, params, result) => surface_resolve_term(surface_resolve_named(a, s, params), s, result)
+    }
+  }
+
+  pub fn surface_resolve_ctors(a: SurfaceResolveAcc, s: SurfaceResolveEnv, cs: List(SurfaceCtor)): SurfaceResolveAcc {
+    match cs {
+      Nil => a
+      Cons(c, rest) => surface_resolve_ctors(surface_resolve_keep(a, surface_resolve_ctor(a, s, c)), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_inductive(a: SurfaceResolveAcc, s: SurfaceResolveEnv, i: SurfaceInductive): SurfaceResolveAcc {
+    match i {
+      SurfaceInductiveMk(^name, params, sort, ctors, ^st, ^en, ^vis) => surface_resolve_ctors(
+        surface_resolve_term(surface_resolve_named(a, s, params), s, sort),
+        s,
+        ctors
+      )
+    }
+  }
+
+  pub fn surface_resolve_effect(a: SurfaceResolveAcc, s: SurfaceResolveEnv, e: SurfaceEffect): SurfaceResolveAcc {
+    match e {
+      SurfaceEffectMk(^name, generics, params, result, ^r, ^st, ^en, ^set, ^slot_unused_generics, ^slot_bounds, ^e_vis, ^slot_rows) => surface_resolve_opt(
+        surface_resolve_opts(surface_resolve_bind_all(a, generics), s, params),
+        s,
+        result
+      )
+    }
+  }
+
+  pub fn surface_resolve_data_field(a: SurfaceResolveAcc, s: SurfaceResolveEnv, f: SurfaceDataField): SurfaceResolveAcc {
+    match f {
+      SurfaceDataFieldMk(^name, ty) => surface_resolve_term(a, s, ty)
+    }
+  }
+
+  pub fn surface_resolve_data_fields(a: SurfaceResolveAcc, s: SurfaceResolveEnv, fs: List(SurfaceDataField)): SurfaceResolveAcc {
+    match fs {
+      Nil => a
+      Cons(f, rest) => surface_resolve_data_fields(surface_resolve_data_field(a, s, f), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_data_ctor(a: SurfaceResolveAcc, s: SurfaceResolveEnv, c: SurfaceDataCtor): SurfaceResolveAcc {
+    match c {
+      SurfaceDataCtorMk(^name, fields) => surface_resolve_data_fields(a, s, fields)
+    }
+  }
+
+  pub fn surface_resolve_data_ctors(a: SurfaceResolveAcc, s: SurfaceResolveEnv, cs: List(SurfaceDataCtor)): SurfaceResolveAcc {
+    match cs {
+      Nil => a
+      Cons(c, rest) => surface_resolve_data_ctors(surface_resolve_data_ctor(a, s, c), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_data(a: SurfaceResolveAcc, s: SurfaceResolveEnv, d: SurfaceData): SurfaceResolveAcc {
+    match d {
+      SurfaceDataMk(^kind, ^name, generics, ctors, ^st, ^en, ^co, ^cf, ^vis, ^slot_unused_generics, ^slot_rows) => surface_resolve_data_ctors(surface_resolve_bind_all(a, generics), s, ctors)
+    }
+  }
+
+  pub fn surface_resolve_class(a: SurfaceResolveAcc, s: SurfaceResolveEnv, c: SurfaceClass): SurfaceResolveAcc {
+    match c {
+      SurfaceClassMk(^name, param, ^arity, ^bound, methods, ^laws, ^st, ^en, parameters, ^proof, parents, ^slot_unused_parameters, ^c_vis) => surface_resolve_fns(
+        surface_resolve_constraints(surface_resolve_named(surface_resolve_bind(a, param), s, parameters), s, parents),
+        s,
+        methods
+      )
+    }
+  }
+
+  pub fn surface_resolve_instance(a: SurfaceResolveAcc, s: SurfaceResolveEnv, i: SurfaceInstance): SurfaceResolveAcc {
+    match i {
+      SurfaceInstanceMk(generics, ^bounds, ^cl, head, wheres, methods, ^laws, ^st, ^en, gtypes, args, ^infer_from, ^slot_unused_generics) => surface_resolve_fns(
+        surface_resolve_terms(
+          surface_resolve_terms(surface_resolve_constraints(surface_resolve_term(surface_resolve_bind_all(a, generics), s, head), s, wheres), s, gtypes),
+          s,
+          args
+        ),
+        s,
+        methods
+      )
+    }
+  }
+
+  pub fn surface_resolve_stmts(a: SurfaceResolveAcc, s: SurfaceResolveEnv, stmts: List(SurfaceStmt)): SurfaceResolveAcc {
+    match stmts {
+      Nil => a
+      Cons(st, rest) => surface_resolve_stmts(surface_resolve_stmt(a, s, st), s, rest)
+    }
+  }
+
+  pub fn surface_resolve_stmt(a: SurfaceResolveAcc, s: SurfaceResolveEnv, st: SurfaceStmt): SurfaceResolveAcc {
+    match st {
+      StLet(name, ty, value, ^b, ^m, ^unused, ^st_stack) => surface_resolve_bind(surface_resolve_term(surface_resolve_opt(a, s, ty), s, value), name)
+      StVar(name, ty, value, ^b, ^unused, ^st_stack) => surface_resolve_bind(surface_resolve_term(surface_resolve_opt(a, s, ty), s, value), name)
+      StAssign(^name, place, value) => surface_resolve_term(surface_resolve_opt(a, s, place), s, value)
+      StCalled(^g, call) => surface_resolve_term(a, s, call)
+      StFn(f) => surface_resolve_keep(a, surface_resolve_fn(a, s, f))
+      StTheorem(t) => surface_resolve_keep(a, surface_resolve_theorem(a, s, t))
+      StDef(t) => surface_resolve_keep(a, surface_resolve_theorem(a, s, t))
+      StMutual(stmts, ^st0, ^en) => surface_resolve_stmts(a, s, stmts)
+      StModule(^name, ^vis, items, ^st0, ^en) => surface_resolve_stmts(a, s, items)
+      StReexport(^path, ^names, ^spans, ^st0, ^en) => a
+      StImport(^path, ^st0, ^en) => a
+      StInductive(i) => surface_resolve_keep(a, surface_resolve_inductive(a, s, i))
+      StEffect(e) => surface_resolve_keep(a, surface_resolve_effect(a, s, e))
+      StStruct(d) => surface_resolve_keep(a, surface_resolve_data(a, s, d))
+      StEnum(d) => surface_resolve_keep(a, surface_resolve_data(a, s, d))
+      StExtern(fns, ^instances, ^types, ^structs, ^enums, ^st0, ^en) => surface_resolve_fns(a, s, fns)
+      StClass(c) => surface_resolve_keep(a, surface_resolve_class(a, s, c))
+      StInstance(i) => surface_resolve_keep(a, surface_resolve_instance(a, s, i))
+      StWhile(c, body) => surface_resolve_term(surface_resolve_term(a, s, c), s, body)
+      StReturn(value) => surface_resolve_opt(a, s, value)
+      StExpr(value) => surface_resolve_term(a, s, value)
+      StOther(^w, ^st0, ^en) => a
+      StLoop(^st_body, ^st0, ^en) => a
+      StFor(^for_pat, ^for_src, ^st_body, ^st0, ^en) => a
+      StBreak(^st_value, ^st0, ^en) => a
+      StContinue(^st0, ^en) => a
+      StMacro(^name, ^function, ^st0, ^en) => a
+      StSyntax(^name, ^grammar, ^st0, ^en) => a
+      StAttributed(^name, arg, ^g, stmt) => surface_resolve_stmt(surface_resolve_term(a, s, arg), s, stmt)
+    }
+  }
+}
+
+
+// The declarations found so far, last first, and the index of the next id.
+pub(open) inductive SurfaceDeclAcc: Type {
+  SurfaceDeclAccMk(decls: List(SurfaceDecl), next: Nat): SurfaceDeclAcc
+}
+
+// `spelling` written in the module path `s`, for the declaration `id`.
+pub fn surface_decl_spelling(o: SurfaceDeclAcc, s: Text, id: DeclId, spelling: Text, kind: Text, start: Nat, end: Nat): SurfaceDeclAcc {
+  SurfaceDeclAccMk(Cons(SurfaceDeclMk(id, Text::concat(s, spelling), kind, start, end), o.decls), o.next)
+}
+
+// A new declaration, spelled `spelling` in `s`.
+pub fn surface_decl_new(o: SurfaceDeclAcc, s: Text, spelling: Text, kind: Text, start: Nat, end: Nat): SurfaceDeclAcc {
+  surface_decl_spelling(SurfaceDeclAccMk(o.decls, Succ(o.next)), s, DeclIdMk(o.next), spelling, kind, start, end)
+}
+
+// A new member `name` of `owner` (empty for none), spelled `name` and `owner::name`.
+pub fn surface_decl_member(o: SurfaceDeclAcc, s: Text, owner: Text, name: Text, kind: Text, start: Nat, end: Nat): SurfaceDeclAcc {
+  let id := DeclIdMk(o.next)
+  let bare := surface_decl_new(o, s, name, kind, start, end)
+  if owner == "" {
+    bare
+  } else {
+    surface_decl_spelling(bare, s, id, Text::concat_all(Cons(owner, Cons("::", Cons(name, Nil)))), kind, start, end)
+  }
+}
+
+pub fn surface_decl_fns(o: SurfaceDeclAcc, s: Text, owner: Text, kind: Text, fs: List(SurfaceFn)): SurfaceDeclAcc {
+  match fs {
+    Nil => o
+    Cons(f, rest) => {
+      // Listed `owner::name` first, then `name`, as the pages list them.
+      let id := DeclIdMk(o.next)
+      let next := SurfaceDeclAccMk(o.decls, Succ(o.next))
+      let qualified := if owner == "" {
+        next
+      } else {
+        surface_decl_spelling(next, s, id, Text::concat_all(Cons(owner, Cons("::", Cons(f.name, Nil)))), kind, f.start, f.end)
+      }
+      surface_decl_fns(surface_decl_spelling(qualified, s, id, f.name, kind, f.start, f.end), s, owner, kind, rest)
+    }
+  }
+}
+
+pub fn surface_decl_ctors(o: SurfaceDeclAcc, s: Text, owner: Text, cs: List(SurfaceCtor), start: Nat, end: Nat): SurfaceDeclAcc {
+  match cs {
+    Nil => o
+    Cons(c, rest) => surface_decl_ctors(surface_decl_member(o, s, owner, c.name, "ctor", start, end), s, owner, rest, start, end)
+  }
+}
+
+pub fn surface_decl_data_ctors(o: SurfaceDeclAcc, s: Text, owner: Text, cs: List(SurfaceDataCtor), start: Nat, end: Nat): SurfaceDeclAcc {
+  match cs {
+    Nil => o
+    Cons(c, rest) => surface_decl_data_ctors(surface_decl_member(o, s, owner, c.name, "ctor", start, end), s, owner, rest, start, end)
+  }
+}
+
+mutual {
+  pub fn surface_decls_of(o: SurfaceDeclAcc, s: Text, stmts: List(SurfaceStmt)): SurfaceDeclAcc {
+    match stmts {
+      Nil => o
+      Cons(st, rest) => surface_decls_of(surface_decls_stmt(o, s, st), s, rest)
+    }
+  }
+
+  pub fn surface_decls_stmt(o: SurfaceDeclAcc, s: Text, st: SurfaceStmt): SurfaceDeclAcc {
+    match st {
+      StFn(f) => surface_decl_new(o, s, f.name, "fn", f.start, f.end)
+      StTheorem(t) => surface_decl_new(o, s, t.name, "theorem", t.start, t.end)
+      StDef(t) => surface_decl_new(o, s, t.name, "def", t.start, t.end)
+      StMutual(stmts, ^start, ^end) => surface_decls_of(o, s, stmts)
+      StInductive(i) => surface_decl_ctors(
+        surface_decl_new(o, s, i.name, "inductive", i.start, i.end),
+        s,
+        i.name,
+        i.constructors,
+        i.start,
+        i.end
+      )
+      StEffect(e) => surface_decl_new(o, s, e.name, "effect", e.start, e.end)
+      StStruct(d) => surface_decl_data_ctors(
+        surface_decl_new(o, s, d.name, "struct", d.start, d.end),
+        s,
+        d.name,
+        d.constructors,
+        d.start,
+        d.end
+      )
+      StEnum(d) => surface_decl_data_ctors(
+        surface_decl_new(o, s, d.name, "enum", d.start, d.end),
+        s,
+        d.name,
+        d.constructors,
+        d.start,
+        d.end
+      )
+      StExtern(fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => surface_decl_fns(o, s, "", "extern fn", fns)
+      StClass(c) => surface_decl_fns(surface_decl_new(o, s, c.name, "class", c.start, c.end), s, c.name, "method", c.methods)
+      StMacro(name, ^function, start, end) => surface_decl_new(o, s, name, "macro", start, end)
+      StSyntax(name, ^grammar, start, end) => surface_decl_new(o, s, name, "syntax", start, end)
+      StAttributed(^name, ^arg, ^g, stmt) => surface_decls_stmt(o, s, stmt)
+      _ => o
+    }
+  }
+}
+
+fn surface_alias_target(decls: List(SurfaceDecl), name: Text): Option(SurfaceDecl) {
+  match decls {
+    Nil => None
+    Cons(d, rest) => if d.name == name { Some(d) } else { surface_alias_target(rest, name) }
+  }
+}
+
+fn surface_decl_aliases(stmts: List(SurfaceStmt), declarations: SurfaceDeclAcc): SurfaceDeclAcc {
+  match stmts {
+    Nil => declarations
+    Cons(stmt, rest) => {
+      let next := match stmt {
+        StOther(what, ^start, ^end) => match text_split(what, " ") {
+          Cons(tag, Cons(alias, Cons(target, Nil))) => if tag == "#alias" {
+            match surface_alias_target(declarations.decls, target) {
+              None => declarations
+              Some(d) => surface_decl_spelling(declarations, "", d.id, alias, d.kind, d.start, d.end)
+            }
+          } else { declarations }
+          _ => declarations
+        }
+        _ => declarations
+      }
+      surface_decl_aliases(rest, next)
+    }
+  }
+}
+
+// The declarations of a program, each spelling once, in the order they are
+// written; ids are given in the same order.
+pub fn surface_decls(stmts: List(SurfaceStmt)): List(SurfaceDecl) {
+  let decls := surface_decls_of(SurfaceDeclAccMk(Nil, 0), "", stmts)
+  text_list_reverse(surface_decl_aliases(stmts, decls).decls)
+}
+
+// The display table of the declarations: each id shown by its first spelling.
+pub fn surface_decl_table_of(t: DeclTable, ds: List(SurfaceDecl)): DeclTable {
+  match ds {
+    Nil => t
+    Cons(d, rest) => if decl_id_index(d.id) < decl_table_size(t) {
+      surface_decl_table_of(t, rest)
+    } else {
+      surface_decl_table_of(decl_table_add(t, d.name), rest)
+    }
+  }
+}
+
+pub fn surface_decl_table(ds: List(SurfaceDecl)): DeclTable {
+  surface_decl_table_of(decl_table_empty(), ds)
+}
+
+// A program resolved: its declarations and its variables, in no particular
+// order.
+pub(open) inductive SurfaceResolved: Type {
+  SurfaceResolvedMk(decls: List(SurfaceDecl), uses: List(SurfaceUse)): SurfaceResolved
+}
+
+pub fn surface_resolve(stmts: List(SurfaceStmt)): SurfaceResolved {
+  let ds := surface_decls(stmts)
+  let acc := surface_resolve_stmts(
+    SurfaceResolveAccMk(Nil, Nil, 0),
+    SurfaceResolveEnvMk(ds, Cons("", Nil)),
+    stmts
+  )
+  SurfaceResolvedMk(ds, acc.uses)
+}

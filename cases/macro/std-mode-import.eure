@@ -1,11 +1,11 @@
-// `import std::Mode` brings the macro `mode` and its syntax tables with it, in a tote that also
+// `import std::mode` brings the macro `mode` and its syntax tables with it, in a tote that also
 // has a module named like a local the library writes (`s`), and runs.
 
 @ cases.a-tote-runs-with-the-mode-macro-imported-from-std-and-a-module-named-s
 files_tote = "r"
 files."r/Tauto.eure" = 'package { name = "r"  version = "0.1.0" }'
 files."r/src/rules.taut" = ````tauto
-import std::Mode { mode }
+import std::mode { mode }
 
 pub(open) inductive Ty: Type {
   TNat: Ty
@@ -21,15 +21,18 @@ pub(open) inductive HasTy: (Ty, Ty) -> Prop {
 }
 ````
 files."r/src/mods.taut" = ````tauto
-module s {
-  pub fn one(): u64 { 1 }
-}
+pub fn s::one(): u64 { 1 }
 ````
 files."r/src/main.taut" = ````tauto
 import "rules.taut" { Ty }
 import "mods.taut" { s }
 
-perform show("x", s::one())
-perform show("t", TNat)
+perform main(() => {
+  show(&s::one())
+  show(&TNat)
+})
 ````
-shows = ["x = 1", "t = TNat"]
+stdout = ```
+1
+TNat
+```

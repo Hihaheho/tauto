@@ -1,0 +1,61 @@
+description = "A recursive call on a field of a component of a tuple scrutinee, `match #(a, b)` over parameters, is structural, as when the matches on `a` and `b` are written one inside the other; a call on the whole component still fails."
+
+@ cases.a-tuple-scrutinee-recurs-on-a-field-of-a-component-0
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+enum T { Leaf, Node(T, T) }
+
+fn both(a: T, b: T): Bool {
+  match #(a, b) {
+    #(Node(l, _), Node(r, _)) => both(l, r)
+    _ => true
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::both" = "ok"
+
+@ cases.a-tuple-scrutinee-of-three-parameters-recurs-0
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+enum T { Leaf, Node(T, T) }
+
+fn all3(a: T, b: T, c: T): Bool {
+  match #(a, b, c) {
+    #(Node(x, _), Node(y, _), Node(z, _)) => all3(x, y, z)
+    #(Leaf, Leaf, Leaf) => true
+    _ => false
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::all3" = "ok"
+
+@ cases.a-tuple-scrutinee-still-rejects-a-call-on-the-whole-component-0
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive T: Type {
+  Leaf: T
+  Node(l: T, r: T): T
+}
+
+fn spin(a: T, b: T): Bool {
+  match #(a, b) {
+    #(Node(l, _), Node(r, _)) => spin(a, r)
+    _ => true
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::spin" = "error: "
+@ cases.a-tuple-scrutinee-still-rejects-a-call-on-the-whole-component-0.diagnostics[]
+file = "input/main.taut"
+name = "spin"
+message = "`spin(a, r)` is not structural: `spin` matches on its parameter `a`, so the argument for `a` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `a` is not. If the recursion is on `b`, which this call changes, name it after the result type: `decreasing_by b`, and match on it in the body (a well-founded measure is `decreasing_by measure(f)`, on the first parameter)"
+span = "#(Node(l, _), Node(r, _)) => «spin(a, r)»"

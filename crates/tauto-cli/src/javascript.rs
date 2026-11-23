@@ -23,12 +23,13 @@ pub fn execute(
     target: &str,
     declarations: bool,
     timings: &mut super::timings::Timings,
-    run_args: &[String],
+    baked: &[String],
+    program_args: &[String],
 ) -> ExitCode {
     let dir = out_dir
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("javascript").join(target).join(name));
-    if let Err(e) = build(pkg, manifest, &dir, target, declarations, timings) {
+    if let Err(e) = build(pkg, manifest, &dir, target, declarations, timings, baked) {
         eprintln!("{e}");
         return ExitCode::FAILURE;
     }
@@ -38,11 +39,12 @@ pub fn execute(
         println!("{}", main.display());
         return ExitCode::SUCCESS;
     }
-    match std::process::Command::new("node")
-        .arg(&main)
-        .args(run_args)
-        .status()
-    {
+    let mut node = std::process::Command::new("node");
+    // A program that runs `tauto` (`proc_run`) runs this one.
+    if let Ok(me) = std::env::current_exe() {
+        node.env("TAUTO_EXE", me);
+    }
+    match node.arg(&main).args(program_args).status() {
         Ok(s) => ExitCode::from(s.code().unwrap_or(1) as u8),
         Err(e) => {
             eprintln!("{}", crate::i18n::t!("js-node-failed", e = e.to_string()));
@@ -51,11 +53,44 @@ pub fn execute(
     }
 }
 
+/// A type binding's key is the type's full name or its name bare of the
+/// module. Where another type shares the bare name, the declarations are told
+/// apart by their full names, and the key means the extern type; two extern
+/// types of the name need the key in full.
+fn full_type_keys(
+    pkg: &Package,
+    types: &BTreeMap<String, tauto::manifest::Entry>,
+) -> Result<BTreeMap<String, tauto::manifest::Entry>, String> {
+    let mut out = BTreeMap::new();
+    for (key, entry) in types {
+        let mut hosts = pkg.datas.iter().filter(|d| {
+            d.host && d.name.as_str() != key && d.name.rsplit("::").next() == Some(key.as_str())
+        });
+        let name = match (pkg.datas.iter().any(|d| d.name.as_str() == key), hosts.next()) {
+            (true, _) | (false, None) => key.clone(),
+            (false, Some(first)) => {
+                if let Some(second) = hosts.next() {
+                    return Err(crate::i18n::t!(
+                        "js-type-ambiguous",
+                        name = key.to_string(),
+                        candidates = format!("{}, {}", first.name, second.name)
+                    ));
+                }
+                first.name.to_string()
+            }
+        };
+        out.insert(name, entry.clone());
+    }
+    Ok(out)
+}
+
 /// The host types are the extern types (`extern { type T }`), each bound in
-/// `javascript.types`.
+/// `javascript.types`; one bound in `rust.types` lives in the Rust bridge,
+/// compiled to Wasm, and has no JavaScript binding.
 fn check_host_types(
     pkg: &Package,
     types: &BTreeMap<String, tauto::manifest::Entry>,
+    rust_types: &BTreeMap<String, tauto::manifest::Entry>,
 ) -> Result<(), String> {
     for name in types.keys() {
         if !pkg.datas.iter().any(|d| d.name.as_str() == name && d.host) {
@@ -65,11 +100,9 @@ fn check_host_types(
             ));
         }
     }
-    if let Some(d) = pkg
-        .datas
-        .iter()
-        .find(|d| d.host && !types.contains_key(d.name.as_str()))
-    {
+    if let Some(d) = pkg.datas.iter().find(|d| {
+        d.host && !types.contains_key(d.name.as_str()) && !rust_types.contains_key(d.name.as_str())
+    }) {
         return Err(crate::i18n::t!(
             "js-type-unbound",
             name = d.name.to_string()
@@ -78,26 +111,13 @@ fn check_host_types(
     Ok(())
 }
 
-fn visit(e: &Expr, f: &mut impl FnMut(&Expr)) {
-    e.walk(&mut |node| {
-        f(node);
-        if let ExprKind::Handle(h) = &node.kind {
-            for arm in &h.susp {
-                if let Some(g) = &arm.guard {
-                    visit(g, f);
-                }
-                visit(&arm.body, f);
-            }
-        }
-    });
-}
 fn direct_externs(
     pkg: &Package,
     e: &Expr,
     seen: &mut BTreeSet<usize>,
     names: &mut BTreeSet<tauto_nir::Name>,
 ) {
-    visit(e, &mut |node| match &node.kind {
+    e.walk_with_handlers(&mut |node| match &node.kind {
         ExprKind::Call(c) => match &c.callee {
             Callee::Extern(n) => {
                 names.insert(n.clone());
@@ -117,6 +137,56 @@ fn direct_externs(
         _ => {}
     });
 }
+/// The manifest with the JavaScript bindings std gives its own replaceable
+/// blocks ([`tauto::stdlib::JAVASCRIPT_BLOCKS`]) for the blocks of the program
+/// that are std's and that the program binds no member of; `None` when there
+/// is none to add. A member's name may carry the `@n` of a copy the lowering
+/// made of it, which the binding is for as well.
+fn std_bindings(pkg: &Package, manifest: Option<&Manifest>) -> Option<Manifest> {
+    let base = |n: &str| n.split('@').next().unwrap_or(n).to_owned();
+    let bound = |n: &str| {
+        manifest.is_some_and(|m| {
+            let js = &m.javascript;
+            [n.to_owned(), base(n)].iter().any(|k| {
+                js.externs.contains_key(k)
+                    || js.node.contains_key(k)
+                    || js.browser.contains_key(k)
+                    || js.types.contains_key(k)
+                    || m.rust.externs.contains_key(k)
+                    || m.rust.types.contains_key(k)
+            })
+        })
+    };
+    let mut out = manifest.cloned().unwrap_or_default();
+    let mut added = false;
+    for b in &pkg.replaceable_externs {
+        let Some(table) = tauto::stdlib::JAVASCRIPT_BLOCKS.iter().find(|t| {
+            b.data_names.iter().chain(b.fn_names.iter()).all(|n| t.iter().any(|(m, _)| *m == base(n.as_str())))
+                && b.data_names.iter().any(|n| t.first().is_some_and(|(m, _)| *m == n.as_str()))
+        }) else {
+            continue;
+        };
+        if b.data_names.iter().chain(b.fn_names.iter()).any(|n| bound(n.as_str())) {
+            continue;
+        }
+        let entry = |value: &str| tauto::manifest::Entry {
+            value: value.to_owned(),
+            file: out.file.clone(),
+            line: 0,
+        };
+        for n in &b.data_names {
+            let (_, v) = table.iter().find(|(m, _)| *m == base(n.as_str()))?;
+            out.javascript.types.insert(n.to_string(), entry(v));
+        }
+        for n in &b.fn_names {
+            let (_, v) = table.iter().find(|(m, _)| *m == base(n.as_str()))?;
+            out.javascript.externs.insert(n.to_string(), entry(v));
+        }
+        added = true;
+    }
+    added.then_some(out)
+}
+
 fn build(
     pkg: &Package,
     manifest: Option<&Manifest>,
@@ -124,10 +194,15 @@ fn build(
     target: &str,
     declarations: bool,
     timings: &mut super::timings::Timings,
+    baked: &[String],
 ) -> Result<(), String> {
     timings.phase("codegen_write");
+    let with_std = std_bindings(pkg, manifest);
+    let manifest = with_std.as_ref().or(manifest);
+    let mut pkg = pkg.clone();
+    tauto_rustgen::apply_javascript_selection(&mut pkg, manifest, target)?;
+    let pkg = &pkg;
     let mut bindings = BTreeMap::new();
-    let mut asynchronous = BTreeSet::new();
     let mut sources = BTreeSet::new();
     if let Some(m) = manifest {
         let target_bindings = if target == "node" {
@@ -141,12 +216,6 @@ fn build(
                 .or_else(|| m.javascript.externs.get(declaration.name.as_str()))
             {
                 bindings.insert(declaration.name.clone(), binding);
-            }
-            if m.javascript
-                .asynchronous
-                .contains(&declaration.name.to_string())
-            {
-                asynchronous.insert(declaration.name.clone());
             }
         }
         sources.extend(m.javascript.sources.iter().cloned());
@@ -163,10 +232,23 @@ fn build(
             }
         }
     }
+    // A call of an extern whose row is `{wait}` waits on the host: its
+    // JavaScript binding answers with a Promise. A Rust extern compiled to
+    // Wasm answers at once, so it may not wait.
+    let mut asynchronous = BTreeSet::new();
+    for x in pkg.externs.iter().filter(|x| x.waits) {
+        if !bindings.contains_key(&x.name) {
+            return Err(crate::i18n::t!(
+                "js-wasm-extern-waits",
+                name = x.name.to_string()
+            ));
+        }
+        asynchronous.insert(x.name.clone());
+    }
     let mut direct = BTreeSet::new();
     let mut unavailable = None;
     for f in &pkg.fns {
-        visit(&f.body, &mut |node| {
+        f.body.walk_with_handlers(&mut |node| {
             if let ExprKind::Handle(h) = &node.kind {
                 for arm in &h.direct {
                     direct_externs(pkg, &arm.body, &mut BTreeSet::new(), &mut direct);
@@ -197,7 +279,7 @@ fn build(
     let pkg = &specialized;
     let mut callback_error = None;
     for f in &pkg.fns {
-        visit(&f.body, &mut |node| {
+        f.body.walk_with_handlers(&mut |node| {
             if let ExprKind::Call(c) = &node.kind
                 && let Callee::Extern(name) = &c.callee
                 && !bindings.contains_key(name)
@@ -219,14 +301,21 @@ fn build(
     if let Some(error) = callback_error {
         return Err(error);
     }
-    let host_types = manifest
-        .map(|m| m.javascript.types.clone())
-        .unwrap_or_default();
-    check_host_types(pkg, &host_types)?;
+    let host_types = full_type_keys(
+        pkg,
+        &manifest
+            .map(|m| m.javascript.types.clone())
+            .unwrap_or_default(),
+    )?;
+    let rust_types = full_type_keys(
+        pkg,
+        &manifest.map(|m| m.rust.types.clone()).unwrap_or_default(),
+    )?;
+    check_host_types(pkg, &host_types, &rust_types)?;
     let options = tauto_jsgen::Options {
         host_types: host_types.keys().cloned().collect(),
         exports: manifest
-            .map(|m| m.javascript.exports.clone())
+            .and_then(|m| m.exports.clone())
             .unwrap_or_default(),
         retain: manifest
             .map(|m| m.javascript.retain.iter().cloned().collect())
@@ -258,18 +347,7 @@ fn build(
         valid_relative(module)?;
         sources.insert(module.to_owned());
         entry.push_str(&format!("import * as host{i} from {};\nconst binding{i} = host{i}[{}];\nif (typeof binding{i} !== 'function') throw new Error({});\n",quote(&format!("./host/{module}")),quote(export),quote(&format!("missing javascript export {export} for {}",x.name))));
-        let check = if asynchronous.contains(&x.name) {
-            String::new()
-        } else {
-            format!(
-                "if (result && typeof result.then === 'function') {{ Promise.resolve(result).catch(()=>{{}});throw new Error({}); }}",
-                quote(&format!(
-                    "extern {} returned a Promise but is not listed in javascript.async",
-                    x.name
-                ))
-            )
-        };
-        entry.push_str(&format!("externs[{}] = (...args) => {{ const result = binding{i}(...args); {check} return result; }};\n",quote(&x.name)));
+        entry.push_str(&format!("externs[{}] = binding{i};\n", quote(&x.name)));
     }
     for (i, (name, binding)) in host_types.iter().enumerate() {
         let (module, export) = binding
@@ -328,11 +406,35 @@ externs[{}] = release{i}[{}];
         let base = m.file.parent().unwrap_or(Path::new("."));
         for source in sources {
             valid_relative(&source)?;
+            if let Some(file) = source
+                .strip_prefix(tauto::stdlib::JAVASCRIPT_DIR)
+                .and_then(|r| r.strip_prefix('/'))
+            {
+                let text = tauto::stdlib::JAVASCRIPT_MODULES
+                    .iter()
+                    .find(|(name, _)| *name == file)
+                    .map(|(_, text)| *text)
+                    .ok_or_else(|| format!("std has no javascript module {file}"))?;
+                let to = dir.join("host").join(tauto::stdlib::JAVASCRIPT_DIR);
+                std::fs::create_dir_all(&to).map_err(|e| e.to_string())?;
+                std::fs::write(to.join(file), text).map_err(|e| e.to_string())?;
+                continue;
+            }
             copy_source(base, &source, &dir.join("host"))?;
         }
     }
     let opts = if target == "node" {
-        entry.push_str(NODE_OPTIONS);
+        // What the program is allowed is fixed when it is built: the entry
+        // reads no `--allow-*` of its own and gives its whole command line to
+        // the program.
+        let flags: Vec<String> = baked.iter().map(|f| quote(f)).collect();
+        let read = "let rest = process.argv.slice(2);";
+        debug_assert!(NODE_OPTIONS.contains(read));
+        entry.push_str(&NODE_OPTIONS.replacen(
+            read,
+            &format!("let rest = [{}, '--', ...process.argv.slice(2)];", flags.join(",")).replace("[, ", "["),
+            1,
+        ));
         "options"
     } else {
         "{}"

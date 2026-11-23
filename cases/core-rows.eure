@@ -15,8 +15,8 @@ rows = "error: `f` may perform ask but its row is {}"
 @ cases.calls-carry-the-callee-row-1
 source = ```tauto
 effect ask(q: i64): i64
-fn f(): i64 { perform ask(1) }
-fn g(): i64 { f() + 1 }
+fn f(): i64 ! {ask} { perform ask(1) }
+fn g(): i64 ! {ask} { f() }
 ```
 rows = "ok"
 inferred_rows.g = ["ask"]
@@ -24,7 +24,7 @@ inferred_rows.g = ["ask"]
 @ cases.handle-removes-what-it-answers-1
 source = ```tauto
 effect ask(q: i64): i64
-fn f(): i64 { perform ask(1) }
+fn f(): i64 ! {ask} { perform ask(1) }
 let r := handle { f() } with {
   ask(q), k => k(q)
   return v => v
@@ -41,25 +41,25 @@ rows = "error: unhandled effect ask at the top level"
 
 @ cases.loops-and-recursion-diverge-and-budget-bounds-them-1
 source = ```tauto
-fn spin(): i64 { while true { }
+fn spin(): i64 ! {div} { while true { }
  0 }
-fn rec(n: i64): i64 { rec(n) }
-let d := handle { budget(steps: 10) { spin() } } with {
+fn rec(n: i64): i64 ! {div} { rec(n) }
+let d := handle { perform budget(10, () => { spin() }) } with {
   exceeded(i), k => 0
   return v => v
 }
 ```
 rows = "ok"
-inferred_rows.spin = ["Div"]
-inferred_rows.rec = ["Div"]
+inferred_rows.spin = ["div"]
+inferred_rows.rec = ["div"]
 
 @ cases.an-unhandled-exceeded-is-reported-1
 source = ```tauto
-fn spin(): i64 { while true { }
+fn spin(): i64 ! {div} { while true { }
  0 }
-let d := budget(steps: 10) { spin() }
+let d := perform budget(10, () => { spin() })
 ```
-rows = "error: unhandled effect Exceeded at the top level"
+rows = "error: unhandled effect exceeded at the top level"
 
 @ cases.a-closure-row-is-latent-1
 source = ```tauto
@@ -150,21 +150,21 @@ rows = "error: `loud` may perform ping but its row is {}"
 source = ```tauto
 fn len(xs: List(i64)): i64 { match xs {
   Nil => 0
-  Cons(x, rest) => 1 + len(rest)
+  Cons(x, rest) => len(rest)
 } }
 fn same(xs: List(i64)): i64 { match xs {
   Nil => 0
   Cons(x, rest) => same(xs)
 } }
-fn down(n: i64): i64 { if n == 0 { 0 } else { down(n - 1) } }
+fn down(n: i64): i64 { if n == 0 { 0 } else { down(n) } }
 ```
 inferred_rows.len = []
-inferred_rows.same = ["Div"]
-inferred_rows.down = ["Div"]
+inferred_rows.same = ["div"]
+inferred_rows.down = ["div"]
 
 @ cases.extracted-nat-recursion-does-not-perform-div
 source = ```tauto
-fn half(n: u64): u64 {
+fn half(n: u64): u64 ! {overflow} {
   if n == 0 { 0 } else {
     let k := (n - 1)
     if k == 0 { 0 } else {
@@ -173,27 +173,27 @@ fn half(n: u64): u64 {
     }
   }
 }
-fn back(n: u64): u64 { if 0 == n { 0 } else { back(n - 2) } }
-fn same(n: u64): u64 { if n == 0 { 0 } else { same(n) } }
-fn up(n: u64): u64 { if n == 0 { 0 } else { up(n + 1) } }
-fn unguarded(n: u64): u64 { if n == 1 { 0 } else { unguarded(n - 1) } }
-fn signed(n: i64): i64 { if n == 0 { 0 } else { let k := (n - 1)
+fn back(n: u64): u64 ! {overflow} { if 0 == n { 0 } else { back(n - 2) } }
+fn same(n: u64): u64 ! {div} { if n == 0 { 0 } else { same(n) } }
+fn up(n: u64): u64 ! {div, overflow} { if n == 0 { 0 } else { up(n + 1) } }
+fn unguarded(n: u64): u64 ! {div, overflow} { if n == 1 { 0 } else { unguarded(n - 1) } }
+fn signed(n: i64): i64 ! {div, overflow} { if n == 0 { 0 } else { let k := (n - 1)
  signed(k) } }
-fn redone(n: u64): u64 { var m: u64 := n
+fn redone(n: u64): u64 ! {div, overflow} { var m: u64 := n
  if m == 0 { 0 } else { redone(m - 1) } }
-fn twice(n: u64): u64 { (half(n) + half((n + 1))) }
-fn apply(f: (u64) -> u64, n: u64): u64 { f(n) }
-fn main(): u64 { apply((c) => twice(c), 3) }
+fn twice(n: u64): u64 ! {overflow} { (half(n) + half((n + 1))) }
+fn apply(f: (u64) -> u64 ! {overflow}, n: u64): u64 ! {overflow} { f(n) }
+fn main(): u64 ! {overflow} { apply((c) => twice(c), 3) }
 ```
 rows = "ok"
-inferred_rows.half = []
-inferred_rows.back = []
-inferred_rows.twice = []
-inferred_rows.same = ["Div"]
-inferred_rows.up = ["Div"]
-inferred_rows.unguarded = ["Div"]
-inferred_rows.signed = ["Div"]
-inferred_rows.redone = ["Div"]
+inferred_rows.half = ["overflow"]
+inferred_rows.back = ["overflow"]
+inferred_rows.twice = ["overflow"]
+inferred_rows.same = ["div"]
+inferred_rows.up = ["div", "overflow"]
+inferred_rows.unguarded = ["div", "overflow"]
+inferred_rows.signed = ["div", "overflow"]
+inferred_rows.redone = ["div", "overflow"]
 
 @ cases.mutual-structural-recursion-with-different-arities-does-not-perform-div
 source = ```tauto
@@ -205,11 +205,11 @@ fn items(f: List(i64), close: i64, l: i64): i64 { match f {
   Nil => close
   Cons(x, g) => val(g, l)
 } }
-fn stuck(f: List(i64), l: i64): i64 { match f {
+fn stuck(f: List(i64), l: i64): i64 ! {div} { match f {
   Nil => l
   Cons(x, g) => stuck_items(g, 1, l)
 } }
-fn stuck_items(f: List(i64), close: i64, l: i64): i64 { match f {
+fn stuck_items(f: List(i64), close: i64, l: i64): i64 ! {div} { match f {
   Nil => close
   Cons(x, g) => stuck(f, l)
 } }
@@ -220,8 +220,8 @@ rows = "ok"
 inferred_rows.val = []
 inferred_rows.items = []
 inferred_rows.main = []
-inferred_rows.stuck = ["Div"]
-inferred_rows.stuck_items = ["Div"]
+inferred_rows.stuck = ["div"]
+inferred_rows.stuck_items = ["div"]
 
 @ cases.ascription-does-not-hide-structural-recursion
 source = ```tauto
@@ -229,7 +229,7 @@ fn walk(xs: List(i64), m: i64): i64 { match xs {
   Nil => m
   Cons(x, rest) => walk((rest: List(i64)), (m: i64))
 } }
-fn same(xs: List(i64)): i64 { match xs {
+fn same(xs: List(i64)): i64 ! {div} { match xs {
   Nil => 0
   Cons(x, rest) => same((xs: List(i64)))
 } }
@@ -239,4 +239,138 @@ fn main(): i64 { apply((c) => walk(Cons(c, Nil), (c: i64)), 3) }
 rows = "ok"
 inferred_rows.walk = []
 inferred_rows.main = []
-inferred_rows.same = ["Div"]
+inferred_rows.same = ["div"]
+
+@ cases.an-effect-the-row-leaves-out-is-written-in-it-1
+source = ```tauto
+effect ask(q: i64): i64
+effect tell(t: i64): Unit
+fn f(): i64 ! {tell} { perform tell(1)
+  perform ask(1) }
+```
+@ cases.an-effect-the-row-leaves-out-is-written-in-it-1.diagnostics[]
+stage = "rows"
+message = "`f` may perform ask but its row is {tell}"
+fix = ", ask"
+fix_span = ""
+fixed_source = ```tauto
+effect ask(q: i64): i64
+effect tell(t: i64): Unit
+fn f(): i64 ! {tell, ask} { perform tell(1)
+  perform ask(1) }
+```
+
+@ cases.an-effect-the-row-leaves-out-is-written-in-it-2
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {} { perform ask(1) }
+```
+@ cases.an-effect-the-row-leaves-out-is-written-in-it-2.diagnostics[]
+stage = "rows"
+message = "`f` may perform ask but its row is {}"
+fixed_source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {ask} { perform ask(1) }
+```
+
+@ cases.an-effect-the-row-leaves-out-is-written-in-it-3
+source = ```tauto
+effect ask(q: i64): i64
+fn apply<!e>(g: () -> i64 ! e): i64 ! e {
+  perform ask(1)
+  g()
+}
+```
+@ cases.an-effect-the-row-leaves-out-is-written-in-it-3.diagnostics[]
+stage = "rows"
+message = "`apply` may perform ask but its row is {|e}"
+fixed_source = ```tauto
+effect ask(q: i64): i64
+fn apply<!e>(g: () -> i64 ! e): i64 ! {ask} ∪ e {
+  perform ask(1)
+  g()
+}
+```
+
+@ cases.an-effect-the-row-leaves-out-is-written-in-it-4
+source = ```tauto
+pub(open) effect fail(why: Text): i64
+fn f(): i64 ! {} { perform fail("no") }
+```
+@ cases.an-effect-the-row-leaves-out-is-written-in-it-4.diagnostics[]
+stage = "rows"
+message = "may perform"
+fixed_source = ```tauto
+pub(open) effect fail(why: Text): i64
+fn f(): i64 ! {fail} { perform fail("no") }
+```
+
+@ cases.mutual-recursion-keeps-the-effects-of-the-function-it-reenters-1
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {div, ask, overflow} { perform ask(1) + g() }
+fn g(): i64 ! {div, ask, overflow} { f() }
+let r := g()
+```
+rows = "error: unhandled effect ask at the top level"
+
+@ cases.mutual-recursion-keeps-the-effects-of-the-function-it-reenters-2
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {div, ask, overflow} { perform ask(1) + g() }
+fn g(): i64 ! {div, ask, overflow} { f() }
+fn h(): i64 ! {div} { g() }
+```
+rows = "error: `h` may perform ask but its row is {div}"
+
+@ cases.mutual-recursion-keeps-the-effects-of-the-function-it-reenters-3
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {div, ask, overflow} { perform ask(1) + g() }
+fn g(): i64 ! {div, ask, overflow} { f() }
+fn h(): i64 ! {div} { f() }
+```
+rows = "error: `h` may perform ask but its row is {div}"
+
+@ cases.mutual-recursion-without-a-decreasing-argument-performs-div
+source = ```tauto
+fn f(n: i64): i64 ! {div} { g(n) }
+fn g(n: i64): i64 ! {} { f(n) }
+```
+rows = "error: `g` may perform div but its row is {}"
+
+@ cases.a-row-entry-must-name-a-declared-effect-1
+source = ```tauto
+fn g(): u64 ! {Nope} { 1 }
+```
+rows = "error: the row of `g` names `Nope`, which is not a declared effect; check the spelling or import it"
+
+@ cases.a-row-entry-must-name-a-declared-effect-2
+source = ```tauto
+effect ping(): u64
+fn g(): u64 ! {ping, Pnig} { perform ping() }
+```
+rows = "error: the row of `g` names `Pnig`, which is not a declared effect; check the spelling or import it"
+
+@ cases.a-declared-effect-the-body-does-not-perform-stays-allowed-1
+source = ```tauto
+effect ping(): u64
+fn g(): u64 ! {ping, div} { 1 }
+```
+rows = "ok"
+
+// A program that does not type check reports its type error from the rows
+// check, with the name it does not have.
+@ cases.a-name-the-program-does-not-have-is-a-type-error-in-rows-1
+source = ```tauto
+fn main(): i64 { foo(1) }
+```
+rows = "error: `foo` is not defined in the program"
+
+@ cases.a-name-the-program-does-not-have-is-a-type-error-in-rows-2
+source = ```tauto
+struct H { f: (i64) -> i64 }
+fn need(h: H, x: i64): i64 { h.f(x) }
+fn main(): i64 { need(rt, 1) }
+```
+rows = "error: `rt` is not defined in the program"

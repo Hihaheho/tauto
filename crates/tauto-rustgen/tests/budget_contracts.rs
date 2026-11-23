@@ -14,7 +14,7 @@ const ENTRY: &str = r#"rust {
   }
 }"#;
 fn callback_source() -> &'static str {
-    r#"fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+    r#"fn sum(read: &((u64) -> u64), size: u64): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < size {
@@ -23,38 +23,38 @@ fn callback_source() -> &'static str {
   }
   total
 }
-fn run(&read: (u64) -> u64, size: u64): Result(u64, Text) {
-  handle { budget(steps: 1000) { Ok(sum(&(index) => read(index), size)) } } with {
-    exceeded(info), k => Err("exhausted")
+fn run(read: &((u64) -> u64), size: u64): Result(u64, Text) ! {budget} {
+  handle { perform budget(1000, () => { Ok(sum((index) => read(index), size)) }) } with {
+    exceeded(info), k => Err("exhausted"), overflow() => Err("exhausted")
   }
 }
 "#
 }
 fn extern_source() -> &'static str {
     r#"extern { fn native_read(value: u64): u64 }
-fn run(size: u64): u64 {
-  handle { budget(steps: 1000) { native_read(size) } } with {
-    exceeded(info), k => 0
+fn run(size: u64): u64 ! {budget} {
+  handle { perform budget(1000, () => { native_read(size) }) } with {
+    exceeded(info), k => 0, overflow() => 0
   }
 }
 "#
 }
 
 fn package(source: &str) -> Package {
-    tauto_nir::compile_with(source, true).unwrap()
+    tauto::nir::compile_with(source, true).unwrap()
 }
 
 fn manifest(text: &str) -> tauto::manifest::Manifest {
     tauto::manifest::parse(text, Path::new(MANIFEST_FILE)).unwrap()
 }
 
-fn resolve(pkg: &Package, text: &str) -> Result<Bindings, String> {
+fn resolve(pkg: &mut Package, text: &str) -> Result<Bindings, String> {
     Bindings::resolve(pkg, Some(&manifest(text)), None)
 }
 
 fn inspect(source: &str, text: &str) -> (Vec<BudgetDiagnostic>, String) {
-    let pkg = package(source);
-    let bindings = resolve(&pkg, text).unwrap();
+    let mut pkg = package(source);
+    let bindings = resolve(&mut pkg, text).unwrap();
     let sources = Sources {
         file: "main.taut",
         text: source,
@@ -90,11 +90,11 @@ fn assert_error(error: String, expected: &str) {
 #[test]
 fn entry_assertions_are_absent_by_default() {
     tauto_messages::install();
-    let pkg = package(callback_source());
+    let mut pkg = package(callback_source());
     for bindings in [
         Bindings::default(),
-        Bindings::resolve(&pkg, None, None).unwrap(),
-        resolve(&pkg, "rust {}").unwrap(),
+        Bindings::resolve(&mut pkg, None, None).unwrap(),
+        resolve(&mut pkg, "rust {}").unwrap(),
     ] {
         assert!(bindings.nonresuming_entries.is_empty());
         assert!(bindings.nonresuming_externs.is_empty());
@@ -116,14 +116,14 @@ fn entry_assertions_are_absent_by_default() {
 #[test]
 fn facade_names_are_validated_before_emission() {
     tauto_messages::install();
-    let pkg = package(r#"pub fn run(): u64 { 7 }"#);
+    let mut pkg = package(r#"pub fn run(): u64 { 7 }"#);
     for name in ["", "_", "9run", "bad-name", "bad.name"] {
         // Mutating a parsed entry isolates binding validation from key syntax.
         let mut input = manifest(ENTRY);
         let entry = input.rust.nonresuming_entries.remove(QUALIFIED).unwrap();
         input.rust.nonresuming_entries.insert(name.into(), entry);
         assert_error(
-            Bindings::resolve(&pkg, Some(&input), None).unwrap_err(),
+            Bindings::resolve(&mut pkg, Some(&input), None).unwrap_err(),
             "invalid Rust nonresuming facade name",
         );
     }
@@ -132,14 +132,18 @@ fn facade_names_are_validated_before_emission() {
 #[test]
 fn facade_names_cannot_collide_after_rust_name_normalization() {
     tauto_messages::install();
-    let pkg = package(r#"pub fn run(): u64 { 7 }"#);
+    let mut pkg = package(r#"pub fn run(): u64 { 7 }"#);
     assert_error(
-        resolve(&pkg, r#"rust { nonresuming { entries { run = "run" } } }"#).unwrap_err(),
+        resolve(
+            &mut pkg,
+            r#"rust { nonresuming { entries { run = "run" } } }"#,
+        )
+        .unwrap_err(),
         "collides with an exported name",
     );
     // A keyword is written raw (`r#type`), so it no longer meets `type_`.
     let text = r#"rust { nonresuming { entries { type = "run" type_ = "run" } } }"#;
-    if let Err(e) = resolve(&pkg, text) {
+    if let Err(e) = resolve(&mut pkg, text) {
         assert!(!e.contains("collides"), "{e}");
     }
 }
@@ -150,7 +154,7 @@ fn entries_name_selected_exports_not_arbitrary_functions() {
     let mut pkg = package(r#"pub fn run(): u64 { 7 }"#);
     assert_error(
         resolve(
-            &pkg,
+            &mut pkg,
             r#"rust { nonresuming { entries { trusted = "missing" } } }"#,
         )
         .unwrap_err(),
@@ -163,7 +167,7 @@ fn entries_name_selected_exports_not_arbitrary_functions() {
     );
     pkg.exports.retain(|export| export.name.as_str() != "run");
     assert_error(
-        resolve(&pkg, ENTRY).unwrap_err(),
+        resolve(&mut pkg, ENTRY).unwrap_err(),
         "unknown or unselected export run",
     );
 }
@@ -171,10 +175,10 @@ fn entries_name_selected_exports_not_arbitrary_functions() {
 #[test]
 fn binding_contracts_reject_unknown_externs_and_versions() {
     tauto_messages::install();
-    let pkg = package(extern_source());
+    let mut pkg = package(extern_source());
     assert_error(
         resolve(
-            &pkg,
+            &mut pkg,
             r#"rust {
   extern { native_read = "bridge::read" }
   nonresuming { extern { missing = "closed-host-v1" } }
@@ -185,7 +189,7 @@ fn binding_contracts_reject_unknown_externs_and_versions() {
     );
     assert_error(
         resolve(
-            &pkg,
+            &mut pkg,
             r#"rust {
   extern { native_read = "bridge::read" }
   nonresuming { extern { native_read = "closed-host-v2" } }
@@ -302,26 +306,26 @@ fn trusted_text_externs_keep_directional_signature_checks() {
 }"#;
     for source in [
         r#"extern { fn native_read(value: Text): u64 }
-fn run(): u64 {
-  handle { budget(steps: 5) { native_read("value") } } with { exceeded(info), k => 0 }
+fn run(): u64 ! {budget} {
+  handle { perform budget(5, () => { native_read("value") }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#,
         r#"extern { fn native_read(value: u64): Text }
-fn run(): Text {
-  handle { budget(steps: 5) { native_read(0) } } with { exceeded(info), k => "exhausted" }
+fn run(): Text ! {budget} {
+  handle { perform budget(5, () => { native_read(0) }) } with { exceeded(info), k => "exhausted", overflow() => "exhausted" }
 }"#,
-        r#"extern { fn native_read(&value: Text): Text }
-fn run(): Text {
-  handle { budget(steps: 5) {
+        r#"extern { fn native_read(value: &Text): Text }
+fn run(): Text ! {budget} {
+  handle { perform budget(5, () => {
     let input := concat("a", "b")
     native_read(&input)
-  } } with { exceeded(info), k => "exhausted" }
+  }) } with { exceeded(info), k => "exhausted", overflow() => "exhausted" }
 }"#,
-        r#"extern { fn native_read(&value: Text): Option(Text) }
-fn run(): Option(Text) {
-  handle { budget(steps: 5) {
+        r#"extern { fn native_read(value: &Text): Option(Text) }
+fn run(): Option(Text) ! {budget} {
+  handle { perform budget(5, () => {
     let input := concat("a", "b")
     native_read(&input)
-  } } with { exceeded(info), k => None }
+  }) } with { exceeded(info), k => None, overflow() => None }
 }"#,
     ] {
         let (reports, rust) = inspect(source, text);
@@ -348,49 +352,49 @@ fn unsupported_trusted_extern_signatures_name_the_boundary_and_type() {
     for (source, location, ty) in [
         (
             r#"extern { fn native_read(value: Option(Text)): u64 }
-fn run(): u64 {
-  handle { budget(steps: 5) { native_read(Some("value")) } } with { exceeded(info), k => 0 }
+fn run(): u64 ! {budget} {
+  handle { perform budget(5, () => { native_read(Some("value")) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#,
             "argument 1",
             "Option",
         ),
         (
-            r#"extern { fn native_read(&value: Option(Text)): u64 }
-fn run(): u64 {
-  handle { budget(steps: 5) {
+            r#"extern { fn native_read(value: &Option(Text)): u64 }
+fn run(): u64 ! {budget} {
+  handle { perform budget(5, () => {
     let input := Some("value")
     native_read(&input)
-  } } with { exceeded(info), k => 0 }
+  }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#,
             "argument 1",
             "Option",
         ),
         (
-            r#"extern { fn native_read(&mut value: Text): u64 }
-fn run(): u64 {
-  handle { budget(steps: 5) {
+            r#"extern { fn native_read(value: &mut Text): u64 }
+fn run(): u64 ! {budget} {
+  handle { perform budget(5, () => {
     var input := "value"
     native_read(&mut input)
-  } } with { exceeded(info), k => 0 }
+  }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#,
             "argument 1",
             "mut",
         ),
         (
             r#"extern { fn native_read(value: u64): Vec(Text) }
-fn run(): u64 {
-  handle { budget(steps: 5) { Vec::len(&native_read(0)) } } with { exceeded(info), k => 0 }
+fn run(): u64 ! {budget} {
+  handle { perform budget(5, () => { Vec::len(&native_read(0)) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#,
             "result",
             "Vec",
         ),
         (
-            r#"extern { fn native_read(&value: Text): &Text }
-fn run(): u64 {
-  handle { budget(steps: 5) {
+            r#"extern { fn native_read(value: &Text): &Text }
+fn run(): u64 ! {budget} {
+  handle { perform budget(5, () => {
     let input := "value"
     Text::len(native_read(&input))
-  } } with { exceeded(info), k => 0 }
+  }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#,
             "result",
             "Text",
@@ -415,13 +419,13 @@ fn run(): u64 {
 fn generated_noncopy_data_requires_whole_embedding_assertion_without_callbacks() {
     tauto_messages::install();
     let source = r#"struct Held { value: Text }
-fn run(): Held {
-  handle { budget(steps: 5) { Held { value: "body" } } } with {
-    exceeded(info), k => Held { value: "exhausted" }
+fn run(): Held ! {budget} {
+  handle { perform budget(5, () => { Held { value: "body" } }) } with {
+    exceeded(info), k => Held { value: "exhausted" }, overflow() => Held { value: "exhausted" }
   }
 }
 "#;
-    let pkg = package(source);
+    let mut pkg = package(source);
     assert!(
         !pkg.datas
             .iter()
@@ -445,22 +449,22 @@ fn run(): Held {
 #[test]
 fn qualified_names_cannot_collide_with_exported_data_or_reserved_name_mappings() {
     tauto_messages::install();
-    let pkg = package(
+    let mut pkg = package(
         r#"struct TrustedBudgetHost { value: u64 }
 fn run(value: TrustedBudgetHost): u64 { value.value }"#,
     );
     assert_error(
         resolve(
-            &pkg,
+            &mut pkg,
             r#"rust { nonresuming { entries { TrustedBudgetHost = "run" } } }"#,
         )
         .unwrap_err(),
         "collides with an exported data name",
     );
-    let pkg = package(r#"pub fn run(): u64 { 7 }"#);
+    let mut pkg = package(r#"pub fn run(): u64 { 7 }"#);
     // `self` is `self_` and `self_` is `self__`: the two stay apart.
     if let Err(e) = resolve(
-        &pkg,
+        &mut pkg,
         r#"rust { nonresuming { entries { self = "run" self_ = "run" } } }"#,
     ) {
         assert!(!e.contains("collides"), "{e}");
@@ -470,14 +474,14 @@ fn run(value: TrustedBudgetHost): u64 { value.value }"#,
 #[test]
 fn invalid_direct_bindings_do_not_report_suppressed_qualified_variants() {
     tauto_messages::install();
-    let source = r#"pub fn run(): u64 { handle { budget(steps: 0) { 7 } } with { exceeded(info), k => 0 } }"#;
+    let source = r#"pub fn run(): u64 ! {budget} { handle { perform budget(0, () => { 7 }) } with { exceeded(info), k => 0, overflow() => 0 } }"#;
     let mut pkg = package(source);
     pkg.exports
         .iter_mut()
         .find(|e| e.name.as_str() == "run")
         .unwrap()
         .row
-        .push("Div".into());
+        .push("div".into());
     let mut bindings = Bindings::default();
     bindings.nonresuming_entries.insert(
         "qualified".into(),

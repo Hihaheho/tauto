@@ -1,0 +1,109 @@
+import "program.taut"
+import "modname.taut"
+import "elaborate.taut"
+import "vary.taut"
+import "prelude.taut"
+import "../../kernel/src/data.taut"
+import "../../surface/src/surface.taut"
+import "../../syntax/src/syntax.taut"
+import "../../text/src/text.taut"
+import std::list
+import std::text
+import std::base
+import std::builtin::os
+
+// A declaration of a file that another declaration of the program or the
+// prelude already names is told apart by its full name, `the module of the
+// file::name`, as the host reads it: the module is the tote's name, the
+// directories under it, and the file.
+
+// The name a declaration declares.
+pub fn elab_decl_names(stmts: List(SurfaceStmt)): List(Text) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(Text) from match elab_decl_name(s) {
+      None => elab_decl_names(rest)
+      Some(n) => Cons(n, elab_decl_names(rest))
+    }
+  }
+}
+
+// What the standard library's prelude declares: the names a file's own
+// declaration must be told apart from.
+pub fn elab_std_prelude_names(tables: SyntaxTables, lib: ElabRoots): List(Text) ! {div, fs_read} {
+  if lib.library == "" { Nil } else {
+    elab_std_prelude_files(tables, lib.library, ["std", "collections", "num", "text", "debug"])
+  }
+}
+
+pub fn elab_std_prelude_files(tables: SyntaxTables, dir: Text, files: List(Text)): List(Text) ! {div, fs_read} {
+  match files {
+    Nil => Nil
+    Cons(f, rest) => List::append(elab_std_prelude_file(tables, Text::concat_all([dir, "/prelude/", f, ".taut"])), elab_std_prelude_files(tables, dir, rest))
+  }
+}
+
+pub fn elab_std_prelude_file(tables: SyntaxTables, file: Text): List(Text) ! {div, fs_read} {
+  match read_file(file) {
+    Err(^m) => Nil
+    Ok(src) => ⊢ List(Text) from match elab_library_stmts(tables, src) {
+      None => Nil
+      Some(stmts) => elab_prelude_names(64, "", stmts)
+    }
+  }
+}
+
+// The names a file declares, under the modules they are in.
+pub fn elab_prelude_names(k: Nat, m: Text, stmts: List(SurfaceStmt)): List(Text) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(Text) from match stmts {
+      Nil => Nil
+      Cons(s, rest) => {
+        let here: List(Text) := ⊢ List(Text) from match s {
+          StExtern(fns, ^instances, ^types, ^structs, ^enums, ^start, ^end) => elab_fn_names(m, fns)
+          StEnum(d) => Cons(elab_in_module(m, d.name), Nil)
+          StStruct(d) => Cons(elab_in_module(m, d.name), Nil)
+          _ => ⊢ List(Text) from match elab_decl_name(s) {
+            None => Nil
+            Some(n) => Cons(elab_in_module(m, n), Nil)
+          }
+        }
+        List::append(here, elab_prelude_names(j, m, rest))
+      }
+    }
+  }
+}
+
+pub fn elab_in_module(m: Text, n: Text): Text { if m == "" { n } else { elab_qualified(m, n) } }
+
+pub fn elab_fn_names(m: Text, fns: List(SurfaceFn)): List(Text) {
+  match fns {
+    Nil => Nil
+    Cons(f, rest) => Cons(elab_in_module(m, f.name), elab_fn_names(m, rest))
+  }
+}
+
+pub fn elab_collides(core: KernelCore, names: List(Text), n: Text): Bool {
+  match kernel_global_get(core, n) {
+    Some(^g) => true
+    None => ⊢ Bool from match kernel_ind_get(core, n) {
+      Some(^i) => true
+      None => elab_text_in(names, n) || (elab_text_member(elab_runtime_types(), elab_first_name(n)) && elab_first_name(n) != "Text" && elab_first_name(n) != "Never")
+    }
+  }
+}
+
+pub fn elab_requalify(stmts: List(SurfaceStmt), core: KernelCore, names: List(Text), m: Text): List(SurfaceStmt) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => {
+      let here: List(SurfaceStmt) := ⊢ List(SurfaceStmt) from match elab_decl_name(s) {
+        None => Cons(s, Nil)
+        Some(n) => if elab_collides(core, names, n) { elab_module_items(2, m, Cons(s, Nil)) } else { Cons(s, Nil) }
+      }
+      List::append(here, elab_requalify(rest, core, names, m))
+    }
+  }
+}
+

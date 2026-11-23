@@ -1,10 +1,10 @@
-import std::prelude::Par
-import std::prelude::Std
+import std::builtin::par
+import std::prelude::std
 
 // The ticket must be consumed on both the normal and cancellation paths.
-linear struct Ticket {}
-fn release(ticket: Ticket, cleaned: Atomic): Unit {
-  match ticket { Ticket {} => Atomic::store(cleaned, 1) }
+struct(linear) Ticket {}
+fn release(ticket: Ticket, cleaned: Atomic): Unit ! {atomic_store} {
+  match ticket { Ticket {} => perform atomic_store(cleaned, 1) }
 }
 
 fn work(
@@ -12,13 +12,13 @@ fn work(
   input: Signal,
   cleaned: Atomic,
   started: Channel(Unit)
-): Result(u64, Cancelled) ! {wait} {
+): Result(u64, Cancelled) ! {wait, atomic_store, mutex_claim, mutex_take_claimed, mutex_put} {
   let ticket := Ticket {}
   Channel::send(started, #())
   perform wait(Signal::either(input, CancelToken::signal(cancel)))
   if CancelToken::is_requested(cancel) {
     release(ticket, cleaned)
-    Err(Cancelled)
+    Err(Cancelled {})
   } else {
     release(ticket, cleaned)
     Ok(42)
@@ -29,12 +29,12 @@ let cancellation := Cancellation::new()
 let input := Cancellation::new()
 let token := Cancellation::token(cancellation)
 let ready := CancelToken::signal(Cancellation::token(input))
-let cleaned := Atomic::new(0)
+let cleaned := perform atomic_new(0)
 let started: Channel(Unit) := Channel::new(1)
 let task := perform spawn(() => work(token, ready, cleaned, started))
 let notice := Channel::recv(started)
-perform show("before", Atomic::load(cleaned))
+show(&perform atomic_load(cleaned))
 Cancellation::request(cancellation)
 let outcome := Task::join(task)
-perform show("outcome", outcome)
-perform show("cleaned", Atomic::load(cleaned))
+show(&outcome)
+show(&perform atomic_load(cleaned))

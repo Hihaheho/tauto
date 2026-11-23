@@ -515,7 +515,7 @@ impl Gen {
     /// A function on `Nat` that recurses, by `decreasing_by` or structurally,
     /// with calls that descend and calls that do not. A `decreasing_by` one
     /// is measured by `id_nat`, which is not in the shared declaration prefix: the program that
-    /// holds it defines `id_nat` and imports `std/WellFounded.taut`.
+    /// holds it defines `id_nat` and imports `std/well_founded.taut`.
     pub(super) fn recursive(&mut self, name: &str) -> String {
         self.recs = 2;
         let wf = self.rng.below(2) == 0;

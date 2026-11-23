@@ -1,0 +1,29 @@
+description = "An inductive class's function head takes a function's first parameter and the function of the rest."
+
+@ cases.recursive-handler
+llvm.unimplemented = "generate: the LLVM backend does not write a guard on a `match` that takes its value apart yet"
+imports = [path`../../std/nat.taut`]
+source = ```tauto
+inductive class Arg(A: Type) { fn arg(n: Nat): A }
+instance Arg(Nat) { fn arg(n: Nat): Nat { n } }
+instance Arg(Bool) { fn arg(n: Nat): Bool { match n { Zero => false, Succ(m) => true } } }
+inductive class Handler(F: Type) { fn call(f: F, n: Nat): Nat }
+instance Handler(Nat) { fn call(f: Nat, n: Nat): Nat { f } }
+instance<A, R> Handler((A) -> R) where Arg(A), Handler(R) {
+  fn call(f: (A) -> R, n: Nat): Nat { Handler::call(f(Arg::arg(n)), n) }
+}
+fn run<F>(f: F, n: Nat): Nat where Handler(F) { Handler::call(f, n) }
+fn one(a: Nat): Nat { Succ(a) }
+fn pick(a: Nat, b: Bool): Nat { match b { true => a, false => 0 } }
+theorem one_runs(): run(one, 3) = 4 { Refl }
+theorem pick_runs(): run(pick, 3) = 3 { Refl }
+theorem pick_zero(): run(pick, 0) = 0 { Refl }
+fn ran_one(): Nat { run(one, 3) }
+fn ran_pick(): Nat { run(pick, 2) }
+show(&ran_one())
+show(&ran_pick())
+```
+stdout = ```
+4
+2
+```

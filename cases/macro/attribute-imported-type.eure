@@ -1,0 +1,40 @@
+// An attribute's declaration that writes a type of another file (`Text` of `std::text`, `Tag` of
+// `tag.taut`) is checked before the macro reads it, with the names its file imports. The
+// declarations the macro makes under the type's name (`=> fn Person::one`) are then made.
+
+@ cases.an-attribute-on-a-declaration-with-imported-types-makes-its-listed-declarations
+entry = "main.taut"
+files."tag.taut" = ````tauto
+pub(open) inductive Tag: Type {
+  T: Tag
+}
+````
+files."mk.taut" = ````tauto
+import std::text
+import std::builtin::macro
+
+pub macro fn one(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match Syn::inductive_of(s) {
+    Some(d) => {
+      let name := Syn::decl_name(d.name, concat(d.name.name, "::one"))
+      quote stmts {
+        fn $name(): Nat { 1 }
+      }
+    }
+    Option::None => Syn::error(Syn::call_span(), "one! goes on an `inductive` type")
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::text
+import "tag.taut" { Tag }
+import "mk.taut"
+
+@one!(0) => fn Person::one
+inductive Person: Type {
+  Mk(name: Text, tag: Tag): Person
+}
+
+show(&Person::one())
+````
+stdout = "1\n"

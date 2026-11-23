@@ -1,0 +1,41 @@
+import "../src/value.taut"
+import "../src/lower.taut"
+import std::base
+import std::data
+import std::list
+
+// `key_find`, `key_has` and `key_set` are `assoc_find`, `assoc_has` and `assoc_set` for `key_eq`.
+
+pub theorem key_find_eq(k: Key, l: List(Key × Node)): key_find(k, l) = assoc_find(key_eq, k, l) {
+  match l {
+    Nil => Refl
+    Cons(p, t) => ⊢ key_find(k, Cons(p, t)) = assoc_find(key_eq, k, Cons(p, t)) from match p {
+      #(pk, pv) => Eq::congr(
+        (o: Option(Node)) => ⊢ Option(Node) from match key_eq(pk, k) {
+          true => Some(pv)
+          false => o
+        },
+        key_find_eq(k, t)
+      )
+    }
+  }
+}
+
+pub theorem key_has_eq(k: Key, l: List(Key × Node)): key_has(k, l) = assoc_has(key_eq, k, l) {
+  Eq::congr(Option::is_some, key_find_eq(k, l))
+}
+
+pub theorem key_set_eq(k: Key, v: Node, l: List(Key × Node)): key_set(k, v, l) = assoc_set(key_eq, k, v, l) {
+  match l {
+    Nil => Refl
+    Cons(p, t) => ⊢ key_set(k, v, Cons(p, t)) = assoc_set(key_eq, k, v, Cons(p, t)) from match p {
+      #(pk, pv) => Eq::congr(
+        (o: List(Key × Node)) => ⊢ List(Key × Node) from match key_eq(pk, k) {
+          true => Cons(#(k, v), t)
+          false => Cons(#(pk, pv), o)
+        },
+        key_set_eq(k, v, t)
+      )
+    }
+  }
+}

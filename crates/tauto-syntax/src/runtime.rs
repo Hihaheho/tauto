@@ -1,7 +1,7 @@
 //! Runtime parsing with the same diagnostics in every execution backend.
 //!
 //! Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
-use crate::{Ast, Limits, ParseError, Tables, build_ast, parse};
+use crate::{Ast, Limits, ParseError, Tables, build_ast};
 
 /// Why a text is not of a syntax. The message is not written here: `message`
 /// is the id of a message of the tools and `args` its arguments, so that each
@@ -46,8 +46,7 @@ pub fn describe(name: &str, tables: &Tables, text: &str, e: &ParseError) -> Diag
         // The scanner's catch-all token (`Error`) is text that is no token
         // of the syntax, not a terminal of it.
         ParseError::Syntax(s)
-            if s
-                .at
+            if s.at
                 .is_some_and(|t| tables.terminals()[t.terminal as usize] == "Error") =>
         {
             Diagnostic {
@@ -91,9 +90,11 @@ pub fn describe(name: &str, tables: &Tables, text: &str, e: &ParseError) -> Diag
     }
 }
 
+/// The parse a program runs on its own data: a text of any length and depth is
+/// read, as a function of the program reads any value it is given.
 pub fn parse_ast(name: &str, tables: &Tables, text: &str) -> Result<Ast, Diagnostic> {
-    let events =
-        parse(tables, text, 0, &Limits::default()).map_err(|e| describe(name, tables, text, &e))?;
+    let events = crate::parse::parse_text_only(tables, text, 0, &Limits::none())
+        .map_err(|e| describe(name, tables, text, &e))?;
     build_ast(tables, &events).map_err(|e| Diagnostic {
         message: SCHEMA.into(),
         at: 0,

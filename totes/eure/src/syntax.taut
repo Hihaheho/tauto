@@ -1,0 +1,35 @@
+import "value.taut"
+
+// The shape of an Eure text before its paths are followed: what the reader gives and the
+// lowering (`lower.taut`) turns into a document.
+
+// One step of a path such as `a."b".$c[].#0`.
+pub(open) inductive Seg: Type {
+  // `a`, `"a"`, `'a'`, an integer or a tuple of keys: a key of a map.
+  Skey(k: Key): Seg
+  // `$a`: an extension.
+  Sext(name: Text): Seg
+  // `[]` (a new item at the end) or `[n]` (item `n`).
+  Sindex(i: Option(Nat)): Seg
+  // `#n`: element `n` of a tuple.
+  Stupidx(n: Nat): Seg
+}
+
+// A value as written.
+pub(open) inductive Expr: Type {
+  // A value with no nodes inside it.
+  Escalar(v: Value): Expr
+  Earr(items: List(Expr)): Expr
+  Etup(items: List(Expr)): Expr
+  // `{ = v, a => 1, b.$c => 2 }`: bindings of paths in a new node. `= v` binds the empty path.
+  Eobj(binds: List(List(Seg) × Expr)): Expr
+}
+
+// A statement. `at` is the text from the statement to its end, so that errors found while
+// lowering can say where they are; its length is counted only for an error.
+pub(open) inductive Stmt: Type {
+  // `a.b = v`, `a.b: Text::Mk`, and `= v` (the empty path).
+  Bind(at: List(Nat), path: List(Seg), e: Expr): Stmt
+  // `a.b { … }`, `@ a.b { … }`, and `@ a.b` followed by bindings up to the next section.
+  Nest(at: List(Nat), path: List(Seg), body: List(Stmt)): Stmt
+}

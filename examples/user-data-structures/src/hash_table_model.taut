@@ -1,0 +1,120 @@
+import std::base
+import std::nat
+import "slots_model.taut"
+
+// A small model of `HashTable(A)`: the stored elements
+// with the hash each was stored under, in a list. `find` and `insert` take the
+// pure closures the design gives them: `is` (the match test) and `rehash` (the
+// hash of an element, used when the table grows).
+pub fn HT::hash_of<A: Shared>(p: Nat × A): Nat {
+  match p {
+    #(h, ^x) => h
+  }
+}
+
+pub fn HT::elem_of<A: Shared>(p: Nat × A): A {
+  match p {
+    #(^h, x) => x
+  }
+}
+
+// The first stored element under `hash` for which `is` holds.
+pub fn HT::find<A: Shared>(t: List(Nat × A), hash: Nat, is: (A) -> Bool): Option(A) {
+  match t {
+    Nil => None
+    Cons(p, rest) => match Nat::eq(HT::hash_of(p), hash) && is(HT::elem_of(p)) {
+      true => Some(HT::elem_of(p))
+      false => HT::find(rest, hash, is)
+    }
+  }
+}
+
+// Every element stored again under its `rehash`.
+pub fn HT::rebuild<A: Shared>(t: List(Nat × A), rehash: (A) -> Nat): List(Nat × A) {
+  match t {
+    Nil => Nil
+    Cons(p, rest) => Cons(#(rehash(HT::elem_of(p)), HT::elem_of(p)), HT::rebuild(rest, rehash))
+  }
+}
+
+pub fn HT::kept<A: Shared>(t: List(Nat × A), rehash: (A) -> Nat, grow: Bool): List(Nat × A) {
+  match grow {
+    true => HT::rebuild(t, rehash)
+    false => t
+  }
+}
+
+// Put `x` under `hash`; when the table `grow`s, all the others are stored again first.
+pub fn HT::insert<A: Shared>(t: List(Nat × A), hash: Nat, x: A, rehash: (A) -> Nat, grow: Bool): List(Nat × A) {
+  Cons(#(hash, x), HT::kept(t, rehash, grow))
+}
+
+// Every element is stored under the hash `h` gives it.
+pub fn HT::inv<A: Shared>(t: List(Nat × A), h: (A) -> Nat): Bool {
+  match t {
+    Nil => true
+    Cons(p, rest) => Nat::eq(HT::hash_of(p), h(HT::elem_of(p))) && HT::inv(rest, h)
+  }
+}
+
+// The head decides when it matches.
+pub theorem HT::find_cons_true<A: Shared>(p: Nat × A, rest: List(Nat × A), hash: Nat, is: (A) -> Bool, e: Nat::eq(HT::hash_of(p), hash) && is(HT::elem_of(p)) = true): HT::find(Cons(p, rest), hash, is) = Some(HT::elem_of(p)) {
+  Eq::congr((b: Bool) => sel(b, Some(HT::elem_of(p)), HT::find(rest, hash, is)), e)
+}
+
+pub theorem HT::find_cons_false<A: Shared>(p: Nat × A, rest: List(Nat × A), hash: Nat, is: (A) -> Bool, e: Nat::eq(HT::hash_of(p), hash) && is(HT::elem_of(p)) = false): HT::find(Cons(p, rest), hash, is) = HT::find(rest, hash, is) {
+  Eq::congr((b: Bool) => sel(b, Some(HT::elem_of(p)), HT::find(rest, hash, is)), e)
+}
+
+// What was inserted is found, whatever the table and whether or not it grew.
+pub theorem HT::find_insert<A: Shared>(t: List(Nat × A), hash: Nat, x: A, rehash: (A) -> Nat, grow: Bool, is: (A) -> Bool, e: is(x) = true): HT::find(HT::insert(t, hash, x, rehash, grow), hash, is) = Some(x) {
+  HT::find_cons_true(#(hash, x), HT::kept(t, rehash, grow), hash, is, Bool::and_intro(Nat::eq(hash, hash), is(x), Nat::eq_refl(hash), e))
+}
+
+// Stored again under the hash it already has, an element does not move.
+pub theorem HT::rebuild_id<A: Shared>(t: List(Nat × A), h: (A) -> Nat, hi: HT::inv(t, h) = true): HT::rebuild(t, h) = t {
+  match t {
+    Nil => Refl
+    Cons(p, rest) => match p {
+      #(a, x) => ⊢ HT::rebuild(Cons(#(a, x), rest), h) = Cons(#(a, x), rest) from Eq::trans(
+        Eq::congr(⟦Cons(#(□, x), HT::rebuild(rest, h))⟧, Eq::sym(Nat::eq_sound(a, h(x), Bool::and_true_left(Nat::eq(a, h(x)), HT::inv(rest, h), hi)))),
+        Eq::congr(⟦Cons(#(a, x), □)⟧, HT::rebuild_id(rest, h, Bool::and_true_right(Nat::eq(a, h(x)), HT::inv(rest, h), hi)))
+      )
+    }
+  }
+}
+
+// Inserting under the hash `h` gives keeps "every element is stored under its hash".
+pub theorem HT::inv_insert<A: Shared>(t: List(Nat × A), hash: Nat, x: A, h: (A) -> Nat, grow: Bool, hi: HT::inv(t, h) = true, hx: hash = h(x)): HT::inv(HT::insert(t, hash, x, h, grow), h) = true {
+  Bool::and_intro(Nat::eq(hash, h(x)), HT::inv(HT::kept(t, h, grow), h), Eq::trans(Eq::congr(⟦Nat::eq(□, h(x))⟧, hx), Nat::eq_refl(h(x))), match grow {
+    true => ⊢ HT::inv(HT::rebuild(t, h), h) = true from Eq::trans(Eq::congr(⟦HT::inv(□, h)⟧, HT::rebuild_id(t, h, hi)), hi)
+    false => hi
+  })
+}
+
+// An insert that does not match the search leaves the search as it was, grown or not.
+pub theorem HT::find_insert_other<A: Shared>(t: List(Nat × A), hash: Nat, x: A, h: (A) -> Nat, grow: Bool, hash2: Nat, is: (A) -> Bool, hi: HT::inv(t, h) = true, hn: Nat::eq(hash, hash2) && is(x) = false): HT::find(HT::insert(t, hash, x, h, grow), hash2, is) = HT::find(t, hash2, is) {
+  Eq::trans(
+    HT::find_cons_false(#(hash, x), HT::kept(t, h, grow), hash2, is, hn),
+    match grow {
+      true => ⊢ HT::find(HT::rebuild(t, h), hash2, is) = HT::find(t, hash2, is) from Eq::congr(⟦HT::find(□, hash2, is)⟧, HT::rebuild_id(t, h, hi))
+      false => Refl
+    }
+  )
+}
+
+// Closures given as lambdas evaluate too.
+pub theorem lambda_example(): HT::find(HT::insert(Nil, 7, 5, (x: Nat) => Nat::add(x, 2), false), 7, (y: Nat) => Nat::eq(y, 5)) = Some(5) {
+  Refl
+}
+
+// The design's borrowed closure parameter, `&((x: &A) -> Bool)`, with `&A` elements.
+pub fn HTB::find<A: Shared>(t: &List(Nat × A), hash: Nat, is: &((x: &A) -> Bool)): Option(A) {
+  match t {
+    Nil => None
+    Cons(p, rest) => match Nat::eq(HT::hash_of(p), hash) && is(HT::elem_of(p)) {
+      true => Some(HT::elem_of(p))
+      false => HTB::find(rest, hash, is)
+    }
+  }
+}

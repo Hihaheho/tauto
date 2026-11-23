@@ -10,6 +10,8 @@
 //! cloned are kept in `Mx::scope`, and the ones a closure's text mentions are
 //! cloned at its start.
 
+use std::collections::BTreeMap;
+
 use proc_macro2::Ident;
 use quote::quote;
 use tauto_nir::*;
@@ -21,6 +23,10 @@ use crate::{Gen, Pred};
 pub(crate) struct Mx {
     /// The locals in scope that a continuation must own a copy of.
     pub scope: Vec<Ident>,
+    /// The borrowed locals in scope whose value can be copied: a
+    /// continuation that uses one owns a copy and borrows it again inside,
+    /// since the borrow it was made from ends with the code that made it.
+    pub refs: Vec<Ident>,
     /// The function's own continuation, which `return` calls.
     pub fk: Option<Ident>,
 }
@@ -29,6 +35,7 @@ impl Mx {
     pub fn new(fk: Option<Ident>) -> Mx {
         Mx {
             scope: Vec::new(),
+            refs: Vec::new(),
             fk,
         }
     }
@@ -58,18 +65,29 @@ impl<'a> Kc<'a> {
     }
 }
 
-/// The arms of a handler of the M tier: the `direct` ones too, where the
-/// code holds no `direct` handler (`HandleNode::detached`).
+/// Whether a value of type `t` holds a function value in a member of an
+/// option, a result or a pair.
+fn fn_inside(t: &Ty) -> bool {
+    match t {
+        Ty::Fn(_) => true,
+        Ty::Option(a) => fn_inside(a),
+        Ty::Result(a, b) | Ty::Pair(a, b) => fn_inside(a) || fn_inside(b),
+        _ => false,
+    }
+}
+
+/// The arms of a handler of the M tier, the `direct` ones too: they are in
+/// the handlers in place (`M::push_direct`), and code of the S tier inside
+/// finds them through `tauto_rt::cps::bridge`.
 fn m_arms(h: &HandleNode) -> impl Iterator<Item = &OpArm> {
-    let direct: &[OpArm] = if h.detached { &h.direct } else { &[] };
-    h.aborts.iter().chain(&h.susp).chain(direct)
+    h.aborts.iter().chain(&h.susp).chain(&h.direct)
 }
 
 /// Whether the expression suspends (or returns), so it is written in
 /// continuation-passing style.
 pub(crate) fn susp(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::Perform(p) => p.quant != Quant::Direct || p.detached || p.args.iter().any(susp),
+        ExprKind::Perform(p) => p.quant != Quant::Direct || p.args.iter().any(susp),
         ExprKind::Call(c) => {
             c.tier == Tier::M
                 || o_callback_call(c)
@@ -134,6 +152,51 @@ fn stmt_susp(s: &Stmt) -> bool {
     }
 }
 
+/// The join of the branches of an `if` or a `match`, and the `var`s it takes
+/// with the value.
+struct Join<'a> {
+    kv: Kc<'a>,
+    names: Vec<Ident>,
+}
+
+/// The `var`s a block assigns, by local number (a field of one counts).
+fn assigned_vars(b: &Block, out: &mut BTreeMap<u32, Local>) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Let { init, .. } | Stmt::Var { init, .. } => assigned_vars_expr(init, out),
+            Stmt::Assign { target, value, .. } => {
+                out.insert(target.local.id, target.local.clone());
+                assigned_vars_expr(value, out);
+            }
+            Stmt::Expr(e) => assigned_vars_expr(e, out),
+            Stmt::While { cond, body, .. } => {
+                assigned_vars_expr(cond, out);
+                assigned_vars(body, out);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    assigned_vars_expr(v, out);
+                }
+            }
+        }
+    }
+    if let Some(t) = &b.tail {
+        assigned_vars_expr(t, out);
+    }
+}
+
+fn assigned_vars_expr(e: &Expr, out: &mut BTreeMap<u32, Local>) {
+    e.walk(&mut |x| {
+        if let ExprKind::Block(b) = &x.kind {
+            for s in &b.stmts {
+                if let Stmt::Assign { target, .. } = s {
+                    out.insert(target.local.id, target.local.clone());
+                }
+            }
+        }
+    });
+}
+
 /// Whether the expression may leave with an `Abort` (it calls a function of
 /// the A tier).
 fn can_abort(e: &Expr) -> bool {
@@ -152,6 +215,7 @@ fn pat_binds(p: &Pat, out: &mut Vec<(Local, Ty)>) {
     match p {
         Pat::Bind(l, t) => out.push((l.clone(), t.clone())),
         Pat::Ctor { fields, .. } => fields.iter().for_each(|f| pat_binds(f, out)),
+        Pat::Variant { pat, .. } => pat_binds(pat, out),
         _ => {}
     }
 }
@@ -169,10 +233,11 @@ impl<'a> Gen<'a> {
     /// Whether a copy of the local is made for each continuation that uses
     /// it.
     fn dup_local(&self, l: &Local, t: &Ty) -> bool {
-        if crate::expr::m_o_callback(l, t) {
+        if crate::expr::m_callback(l, t) {
             return true;
         }
         match l.repr {
+            Repr::Ref if self.owned_refs.contains(&l.id) => true,
             Repr::SharedVar(true) | Repr::SharedVar(false) => true,
             Repr::Plain => self.ty_has(t, Pred::Clone),
             _ => false,
@@ -182,6 +247,22 @@ impl<'a> Gen<'a> {
     fn add_local(&self, mx: &mut Mx, l: &Local, t: &Ty) {
         if self.dup_local(l, t) {
             mx.scope.push(lid(l));
+        } else {
+            self.add_ref(mx, l, t);
+        }
+    }
+
+    /// A borrowed local whose value can be copied.
+    fn add_ref(&self, mx: &mut Mx, l: &Local, t: &Ty) {
+        if l.repr != Repr::Ref {
+            return;
+        }
+        let pointee = match t {
+            Ty::Ref(inner) => inner,
+            t => t,
+        };
+        if !matches!(pointee, Ty::Fn(_)) && self.ty_has(pointee, Pred::Clone) {
+            mx.refs.push(lid(l));
         }
     }
 
@@ -203,18 +284,26 @@ impl<'a> Gen<'a> {
         body: impl FnOnce(&mut Gen<'a>, &mut Mx) -> Rs,
     ) -> Rs {
         let visible = mx.scope.clone();
+        let visible_refs = mx.refs.clone();
         let text = body(self, mx);
         mx.scope = visible.clone();
+        mx.refs = visible_refs.clone();
         let used = mentioned(&visible, &text);
         let outer = clone_each(used.iter().cloned());
         let inner = clone_each_mut(used.iter().cloned());
+        let used_refs = mentioned(&visible_refs, &text);
+        let own_refs: Rs = used_refs
+            .iter()
+            .map(|x| quote!(let #x = (*#x).clone();))
+            .collect();
+        let borrow_refs: Rs = used_refs.iter().map(|x| quote!(let #x = &#x;)).collect();
         let arg = id(arg);
         quote!({
-            let ev_o = ev_o.clone();
             #outer
-            tauto_rt::cps::kont(move |m, #arg: #arg_ty| {
-                let ev = &ev_o;
+            #own_refs
+            tauto_rt::cps::kont(move |ev, m, #arg: #arg_ty| {
                 #inner
+                #borrow_refs
                 #text
             })
         })
@@ -249,8 +338,18 @@ impl<'a> Gen<'a> {
         if long {
             quote!(tauto_rt::cps::ret(&#n, m, #v))
         } else {
-            quote!(#n(m, #v))
+            quote!(#n(ev, m, #v))
         }
+    }
+
+    /// Code of the S tier in code of the M tier: its `direct` operations go
+    /// to the `direct` arms of the handlers in place, then to `ev`, the
+    /// handlers of the code that runs the computation now.
+    pub(crate) fn bridged(&self, code: Rs, at: &impl quote::ToTokens) -> Rs {
+        if mentioned(&[id("ev")], &code).is_empty() {
+            return code;
+        }
+        quote!({ let ev = &tauto_rt::cps::bridge(ev, m, #at); #code })
     }
 
     /// A continuation that is used in more than one place, made a name.
@@ -268,6 +367,79 @@ impl<'a> Gen<'a> {
                 )
             }
         }
+    }
+
+    /// Of the `var`s `found` assigns, the ones a continuation owns a copy of
+    /// (declared outside, in scope, not shared), with their types.
+    fn carried(&self, mx: &Mx, found: BTreeMap<u32, Local>) -> Vec<(Ident, Ty)> {
+        found
+            .into_values()
+            .filter_map(|local| {
+                let x = lid(&local);
+                if local.repr != Repr::Plain || !mx.scope.contains(&x) {
+                    return None;
+                }
+                self.var_tys.get(&local.id).map(|t| (x, t.clone()))
+            })
+            .collect()
+    }
+
+    /// `reify` for the join of the branches of an `if` or a `match`: when
+    /// the branches assign `var`s from outside, the join takes their values
+    /// with the branch's value, since a continuation made before the branches
+    /// holds the values from before them.
+    fn reify_join(
+        &mut self,
+        mx: &mut Mx,
+        k: Kc<'a>,
+        ty: &Ty,
+        found: BTreeMap<u32, Local>,
+    ) -> (Rs, Join<'a>) {
+        let carried = match &k {
+            Kc::Fn(_) => self.carried(mx, found),
+            _ => Vec::new(),
+        };
+        if carried.is_empty() {
+            let (pre, kv) = self.reify(mx, k, ty);
+            return (
+                pre,
+                Join {
+                    kv,
+                    names: Vec::new(),
+                },
+            );
+        }
+        let Kc::Fn(f) = k else { unreachable!() };
+        let name = self.tmp("kk");
+        let t = self.ty_k(ty);
+        let names: Vec<Ident> = carried.iter().map(|(x, _)| x.clone()).collect();
+        let tys: Vec<Rs> = carried.iter().map(|(_, t)| self.ty_k(t)).collect();
+        let jt = quote!((#t, #(#tys,)*));
+        let unpack = quote!(#[allow(unused_mut)] let (v, #(mut #names,)*) = jv;);
+        let clos = self.kont_text(mx, "jv", &jt, move |this, mx| {
+            let rest = f(this, mx, quote!(v));
+            quote!(#unpack #rest)
+        });
+        mx.scope.push(name.clone());
+        (
+            quote!(let #name: tauto_rt::cps::Kont<'_, #jt> = #clos;),
+            Join {
+                kv: Kc::Var(name),
+                names,
+            },
+        )
+    }
+
+    /// The continuation one branch goes on with to the join.
+    fn join_kc(&self, j: &Join<'a>) -> Kc<'a> {
+        if j.names.is_empty() {
+            return j.kv.dup();
+        }
+        let Kc::Var(n) = &j.kv else { unreachable!() };
+        let (n, names) = (n.clone(), j.names.clone());
+        Kc::new(move |this, mx, v| {
+            this.call_kont(mx, &n, &quote!((#v, #(#names.clone(),)*)), false)
+        })
     }
 
     /// The continuation as a `Kont<Payload>`: what `k(v)` of an arm and a
@@ -322,11 +494,18 @@ impl<'a> Gen<'a> {
                     cond,
                     mx,
                     Kc::new(move |this, mx, c| {
-                        let (pre, kv) = this.reify(mx, k, &ty);
-                        let t = this.cps(&then, mx, kv.dup());
+                        let mut found = BTreeMap::new();
+                        assigned_vars_expr(&then, &mut found);
+                        if let Some(o) = &otherwise {
+                            assigned_vars_expr(o, &mut found);
+                        }
+                        let (pre, j) = this.reify_join(mx, k, &ty, found);
+                        let tk = this.join_kc(&j);
+                        let t = this.cps(&then, mx, tk);
+                        let ok = this.join_kc(&j);
                         let o = match &otherwise {
-                            Some(o) => this.cps(o, mx, kv.dup()),
-                            None => this.deliver(mx, kv.dup(), quote!(())),
+                            Some(o) => this.cps(o, mx, ok),
+                            None => this.deliver(mx, ok, quote!(())),
                         };
                         quote!(#pre if #c { #t } else { #o })
                     }),
@@ -376,9 +555,22 @@ impl<'a> Gen<'a> {
         fx.m = true;
         self.m_scope = mx.scope.clone();
         let mut code = self.expr(e, &mut fx);
+        let at = self.loc(e.span);
+        code = self.bridged(code, &at);
         // A closure that goes into a `Payload` is boxed as its own type
         // unless it is given the type of the function value first.
-        if matches!(k, Kc::Erased(_)) && matches!(e.ty, Ty::Fn(_)) && !abort {
+        // So is one inside a value (`Some(f)`), which is boxed when it is
+        // handed to a continuation of the M tier (`k(Some(f))`).
+        let inside = !matches!(e.ty, Ty::Fn(_)) && fn_inside(&e.ty) && !e.ty.has_arm_generic();
+        // A value with type parameters (`Ran(n)` of `Out(T)`) boxed for a
+        // handler's target is written at its type, too: nothing else there
+        // fixes its parameters.
+        let generic = matches!(k, Kc::Erased(_))
+            && matches!(e.ty, Ty::Data(_, ref args) if !args.is_empty())
+            && !e.ty.has_arm_generic();
+        if matches!(k, Kc::Erased(_)) && matches!(e.ty, Ty::Fn(_))
+            || ((inside || generic) && !abort)
+        {
             let t = self.ty(&e.ty);
             code = quote!({ let f: #t = #code; f });
         }
@@ -388,7 +580,7 @@ impl<'a> Gen<'a> {
             quote!(
                 match (|| -> Result<_, Abort> { Ok(#code) })() {
                     Ok(#t) => { #ok }
-                    Err(a) => tauto_rt::cps::abort(m, a),
+                    Err(a) => tauto_rt::cps::abort(ev, m, a),
                 }
             )
         } else {
@@ -397,7 +589,11 @@ impl<'a> Gen<'a> {
     }
 
     fn cps_match(&mut self, m: MatchNode, ty: Ty, scrut: Rs, mx: &mut Mx, k: Kc<'a>) -> Rs {
-        let (pre, kv) = self.reify(mx, k, &ty);
+        let mut found = BTreeMap::new();
+        for arm in &m.arms {
+            assigned_vars_expr(&arm.body, &mut found);
+        }
+        let (pre, j) = self.reify_join(mx, k, &ty, found);
         let scrut = crate::expr::cell_free_scrutinee(&m, scrut);
         let mut arms = Vec::new();
         for arm in &m.arms {
@@ -406,6 +602,12 @@ impl<'a> Gen<'a> {
             let pat = self.pat(&arm.pat, m.by_ref, &mut out);
             if !m.by_ref {
                 self.add_pat(mx, &arm.pat);
+            } else {
+                let mut binds = Vec::new();
+                pat_binds(&arm.pat, &mut binds);
+                for (l, t) in binds {
+                    self.add_ref(mx, &l, &t);
+                }
             }
             let mut guards = out.guards.clone();
             if let Some(g) = &arm.guard {
@@ -413,7 +615,8 @@ impl<'a> Gen<'a> {
                 guards.push(out.user_guard(g));
             }
             let guard = PatOut::guard_clause(&guards);
-            let body = self.cps(&arm.body, mx, kv.dup());
+            let ak = self.join_kc(&j);
+            let body = self.cps(&arm.body, mx, ak);
             let prologue = out.prologue();
             arms.push(quote!(#pat #guard => { #prologue #body }));
             mx.scope = saved;
@@ -505,6 +708,9 @@ impl<'a> Gen<'a> {
 
     fn finish_node(&mut self, e: Expr, mx: &mut Mx, k: Kc<'a>) -> Rs {
         match &e.kind {
+            // A `direct` operation whose arguments are bound is answered in
+            // place, as one whose arguments do not suspend is.
+            ExprKind::Perform(p) if p.quant == Quant::Direct => self.cps_direct(&e, mx, k),
             ExprKind::Perform(p) => self.cps_perform(p, &e, mx, k),
             ExprKind::Call(c)
                 if c.tier == Tier::M
@@ -522,25 +728,29 @@ impl<'a> Gen<'a> {
         let at = self.loc(p.span);
         let mut fx = Fx::new(false);
         fx.m = true;
-        let args: Vec<Rs> = p.args.iter().map(|a| self.expr(a, &mut fx)).collect();
+        let args: Vec<Rs> = p
+            .args
+            .iter()
+            .map(|a| {
+                let a = self.expr(a, &mut fx);
+                self.bridged(a, &at)
+            })
+            .collect();
         let payload = self.boxed_payload(&p.args, &args);
         if p.quant == Quant::Zero {
             return quote!(
-                tauto_rt::cps::abort(m, Abort { op: #opc, args: #payload, at: #at })
+                tauto_rt::cps::abort(ev, m, Abort { op: #opc, args: #payload, at: #at })
             );
         }
         let r = self.ty_k(&e.ty);
         let kont = if p.result == Ty::Never {
-            quote!(tauto_rt::cps::kont(move |m, p: Payload| panic!(
+            quote!(tauto_rt::cps::kont(move |_, _, _p: Payload| panic!(
                 "tauto: a Never was answered"
             )))
         } else {
             self.payload_kont_raw(mx, k, &r)
         };
-        if p.detached {
-            return quote!(tauto_rt::cps::perform_direct(ev, m, #opc, #payload, #at, #kont));
-        }
-        quote!(tauto_rt::cps::perform(m, #opc, #payload, #at, #kont))
+        quote!(tauto_rt::cps::perform(ev, m, #opc, #payload, #at, #kont))
     }
 
     /// The continuation of a `perform`, which takes the answer's `Payload`.
@@ -556,16 +766,32 @@ impl<'a> Gen<'a> {
     fn cps_call(&mut self, c: &CallNode, e: &Expr, mx: &mut Mx, k: Kc<'a>) -> Rs {
         let mut fx = Fx::new(false);
         fx.m = true;
-        let args: Vec<Rs> = c.args.iter().map(|a| self.expr(a, &mut fx)).collect();
+        let call_at = self.loc(c.span);
+        let mut args: Vec<Rs> = c
+            .args
+            .iter()
+            .map(|a| {
+                let a = self.expr(a, &mut fx);
+                self.bridged(a, &call_at)
+            })
+            .collect();
+        // A borrowed duplicable argument the callee takes as an owned copy.
+        if let Callee::Inst(i) = &c.callee {
+            let f = &self.pkg.fns[*i];
+            for (n, a) in args.iter_mut().enumerate() {
+                if self.m_owned_param(f, n) {
+                    *a = quote!((*(#a)).clone());
+                }
+            }
+        }
         match &c.callee {
             Callee::Cont(l) => {
                 let target = self.payload_kont(mx, k, &e.ty);
                 let (x, a0) = (lid(l), &args[0]);
-                quote!(#x.call(m, Box::new(#a0), #target))
+                quote!(#x.call(ev, m, Box::new(#a0), #target))
             }
             Callee::Inst(i) => {
-                let f = &self.pkg.fns[*i];
-                let name = id(&f.rust_name);
+                let name = id(&self.fn_names[*i]);
                 let turbofish = if c.targs.is_empty() {
                     Rs::new()
                 } else {
@@ -573,6 +799,18 @@ impl<'a> Gen<'a> {
                     quote!(::<#ts>)
                 };
                 let ty = e.ty.clone();
+                // A budget's step is charged after the arguments are
+                // evaluated: they are bound before the tick.
+                let mut bound = Rs::new();
+                if c.tick == Tick::Budget {
+                    for (n, a) in args.iter_mut().enumerate() {
+                        let t = id(&format!("__ba{n}"));
+                        bound.extend(quote!(let #t = #a;));
+                        // The tick's continuation may run more than once
+                        // (an `Fn`): each run passes a copy on.
+                        *a = quote!(#t.clone());
+                    }
+                }
                 let call = move |this: &mut Gen<'a>, mx: &mut Mx| {
                     let kont = this.typed_kont(mx, k, &ty);
                     let all = comma(
@@ -592,7 +830,7 @@ impl<'a> Gen<'a> {
                     Tick::Budget => {
                         let at = self.loc(c.span);
                         let inner = self.kont_text(mx, "_t", &quote!(()), call);
-                        quote!(tauto_rt::cps::tick(m, #at, #inner))
+                        quote!({ #bound tauto_rt::cps::tick(ev, m, #at, #inner) })
                     }
                     Tick::None => call(self, mx),
                 }
@@ -603,7 +841,7 @@ impl<'a> Gen<'a> {
                 let kont = self.typed_kont(mx, k, &e.ty);
                 let (x, at) = (lid(l), self.loc(c.span));
                 let args = tuple(&args);
-                quote!(tauto_rt::cps::call_o(ev, m, #at, &#x, #args, #kont))
+                quote!(tauto_rt::cps::call_o(m, #at, &#x, #args, #kont))
             }
             Callee::Local(_) | Callee::Value(_) if o_callback_call(c) => {
                 let kont = self.typed_kont(mx, k, &e.ty);
@@ -613,11 +851,29 @@ impl<'a> Gen<'a> {
                         let name = lid(local);
                         quote!(#name)
                     }
-                    Callee::Value(value) => self.expr(value, &mut fx),
+                    Callee::Value(value) => {
+                        let v = self.expr(value, &mut fx);
+                        self.bridged(v, &at)
+                    }
                     _ => unreachable!(),
                 };
-                let joined = comma(std::iter::once(quote!(ev)).chain(args));
-                quote!(tauto_rt::cps::call_o_future(ev, m, #at, (#function)(#joined), #kont))
+                // The driver makes the call, with the handlers it runs the
+                // computation under: the function and its arguments wait in
+                // the step.
+                let names: Vec<Ident> = (0..args.len()).map(|n| id(&format!("__oa{n}"))).collect();
+                // The continuation takes its copies first: the step owns
+                // the function and the arguments from here on.
+                quote!({
+                    let __ok = #kont;
+                    let __of = #function;
+                    #(let #names = #args;)*
+                    tauto_rt::cps::call_o_future(
+                        m,
+                        #at,
+                        move |ev| (__of)(ev, #(#names),*),
+                        __ok,
+                    )
+                })
             }
             Callee::Local(l) => {
                 let kont = self.typed_kont(mx, k, &e.ty);
@@ -646,6 +902,7 @@ impl<'a> Gen<'a> {
         let s = b.stmts[i].clone();
         match s {
             Stmt::Let {
+                stack: _,
                 local,
                 ty,
                 init,
@@ -666,6 +923,7 @@ impl<'a> Gen<'a> {
                 let mut fx = Fx::new(false);
                 let text = self.stmt(
                     &Stmt::Let {
+                        stack: false,
                         local: local.clone(),
                         ty: ty.clone(),
                         init,
@@ -700,6 +958,7 @@ impl<'a> Gen<'a> {
                 mx,
                 Kc::new(move |this, mx, v| {
                     this.add_local(mx, &local, &ty);
+                    this.var_tys.insert(local.id, ty.clone());
                     let text = this.let_text(&local, &ty, &v, true);
                     let rest = this.cps_block(b, i + 1, mx, k);
                     quote!(#text #rest)
@@ -782,7 +1041,7 @@ impl<'a> Gen<'a> {
     /// `let x = v;` and the like, as `Gen::stmt` writes them.
     fn let_text(&mut self, local: &Local, ty: &Ty, v: &Rs, var: bool) -> Rs {
         let x = lid(local);
-        let annot = if ty.has_infer() || (!var && local.repr != Repr::Plain) {
+        let annot = if ty.has_arm_generic() || (!var && local.repr != Repr::Plain) {
             Rs::new()
         } else {
             let t = self.ty(ty);
@@ -806,6 +1065,19 @@ impl<'a> Gen<'a> {
         mx: &mut Mx,
         k: Kc<'a>,
     ) -> Rs {
+        // The `var`s declared outside the loop that its body assigns: a
+        // continuation owns a copy of each, so the round that comes next and
+        // the code after the loop take the values the round left, not the
+        // ones from where the loop was written.
+        let carried = {
+            let mut found = BTreeMap::new();
+            assigned_vars(&body, &mut found);
+            assigned_vars_expr(&cond, &mut found);
+            self.carried(mx, found)
+        };
+        if !carried.is_empty() {
+            return self.cps_while_carrying(cond, body, tick, span, mx, k, carried);
+        }
         let (pre, kv) = self.reify(mx, k, &Ty::Unit);
         let (pre, after) = match kv {
             Kc::Var(n) => (pre, n),
@@ -839,7 +1111,7 @@ impl<'a> Gen<'a> {
             let again = quote!({
                 let again = #lp2.borrow().as_ref().expect("a round").clone();
                 let m2 = m.clone();
-                tauto_rt::cps::more(move || again(&m2, ()))
+                tauto_rt::cps::more(move |ev| again(ev, &m2, ()))
             });
             let body_expr = Expr {
                 kind: ExprKind::Block(body),
@@ -848,7 +1120,7 @@ impl<'a> Gen<'a> {
             };
             let round = move |this: &mut Gen<'a>, mx: &mut Mx| {
                 let then = this.cps(&body_expr, mx, Kc::new(move |_, _, _| again));
-                let exit = quote!(#after2(m, ()));
+                let exit = quote!(#after2(ev, m, ()));
                 this.cps(
                     &cond,
                     mx,
@@ -859,7 +1131,7 @@ impl<'a> Gen<'a> {
                 // The round goes on when the budgets in place have a step.
                 Some(at) => {
                     let inner = this.kont_text(mx, "_t", &quote!(()), round);
-                    quote!(tauto_rt::cps::tick(m, #at, #inner))
+                    quote!(tauto_rt::cps::tick(ev, m, #at, #inner))
                 }
                 None => {
                     let r = round(this, mx);
@@ -872,7 +1144,86 @@ impl<'a> Gen<'a> {
             let #lp: Rc<RefCell<Option<tauto_rt::cps::Kont<'_, ()>>>> = Rc::new(RefCell::new(None));
             let #round = #step;
             *#lp.borrow_mut() = Some(#round.clone());
-            #round(m, ())
+            #round(ev, m, ())
+        )
+    }
+
+    /// A `while` that suspends and assigns `var`s from outside it: each round
+    /// is a continuation that takes the values of those `var`s, and the code
+    /// after the loop is written where the last round ends, with the values
+    /// it left.
+    #[allow(clippy::too_many_arguments)]
+    fn cps_while_carrying(
+        &mut self,
+        cond: Expr,
+        body: Block,
+        tick: Tick,
+        span: Span,
+        mx: &mut Mx,
+        k: Kc<'a>,
+        carried: Vec<(Ident, Ty)>,
+    ) -> Rs {
+        let names: Vec<Ident> = carried.iter().map(|(x, _)| x.clone()).collect();
+        let tys: Vec<Rs> = carried.iter().map(|(_, t)| self.ty_k(t)).collect();
+        let st_ty = quote!((#(#tys,)*));
+        let pack = {
+            let names = names.clone();
+            move || quote!((#(#names.clone(),)*))
+        };
+        let unpack = quote!(#[allow(unused_mut)] let (#(mut #names,)*) = st;);
+        let lp = self.tmp("lp");
+        let round = self.tmp("round");
+        mx.scope.push(lp.clone());
+        let tick_text = match tick {
+            Tick::Host => {
+                let at = self.loc(span);
+                quote!(tauto_rt::host_tick(#at);)
+            }
+            _ => Rs::new(),
+        };
+        let budget_at = (tick == Tick::Budget).then(|| self.loc(span));
+        let lp2 = lp.clone();
+        let pack2 = pack.clone();
+        let step = self.kont_text(mx, "st", &st_ty, move |this, mx| {
+            let st = pack2();
+            let again = quote!({
+                let again = #lp2.borrow().as_ref().expect("a round").clone();
+                let m2 = m.clone();
+                let st = #st;
+                tauto_rt::cps::more(move |ev| again(ev, &m2, st))
+            });
+            let body_expr = Expr {
+                kind: ExprKind::Block(body),
+                ty: Ty::Unit,
+                span,
+            };
+            let round = move |this: &mut Gen<'a>, mx: &mut Mx| {
+                let then = this.cps(&body_expr, mx, Kc::new(move |_, _, _| again));
+                let exit = this.deliver(mx, k, quote!(()));
+                this.cps(
+                    &cond,
+                    mx,
+                    Kc::new(move |_, _, c| quote!(if #c { #then } else { #exit })),
+                )
+            };
+            match budget_at {
+                // The round goes on when the budgets in place have a step.
+                Some(at) => {
+                    let inner = this.kont_text(mx, "_t", &quote!(()), round);
+                    quote!(#unpack tauto_rt::cps::tick(ev, m, #at, #inner))
+                }
+                None => {
+                    let r = round(this, mx);
+                    quote!(#unpack #tick_text #r)
+                }
+            }
+        });
+        let st0 = pack();
+        quote!(
+            let #lp: Rc<RefCell<Option<tauto_rt::cps::Kont<'_, #st_ty>>>> = Rc::new(RefCell::new(None));
+            let #round = #step;
+            *#lp.borrow_mut() = Some(#round.clone());
+            #round(ev, m, #st0)
         )
     }
 
@@ -916,7 +1267,7 @@ impl<'a> Gen<'a> {
             #pre_k
             let #target: tauto_rt::cps::Kont<'_, Payload> = #erased_target;
             let #kb = #kb_text;
-            let mb = m.#push::<#bty>(#bid, u64::try_from(#steps).unwrap_or(0), #target);
+            let mb = m.#push::<#bty>(#bid, #steps, #target);
             let m = &mb;
             #body_text
         );
@@ -991,11 +1342,11 @@ impl<'a> Gen<'a> {
         }));
 
         mx.scope.push(kb.clone());
-        let direct = if h.direct.is_empty() || h.detached {
-            Rs::new()
+        let adapt = if !h.direct.is_empty() {
+            let a = self.direct_adapt(&h.direct);
+            quote!(Some(#a))
         } else {
-            let names = mx.scope.clone();
-            self.direct_handler(&h.direct, Some(&names))
+            quote!(None)
         };
         let body = self.cps(&h.body, mx, Kc::Var(kb.clone()));
         quote!(
@@ -1003,11 +1354,66 @@ impl<'a> Gen<'a> {
             let #target: tauto_rt::cps::Kont<'_, Payload> = #erased_target;
             let #kb = #kb_text;
             let #armn = #arm_text;
-            let #mn = m.push(&[#ids], #armn, #target);
-            #direct
+            let #mn = m.push_direct(&[#ids], #armn, #target, #adapt);
             let m = &#mn;
             #body
         )
+    }
+
+    /// The [`tauto_rt::cps::Adapt`] of a handler's `direct` arms, in code
+    /// that holds no `direct` handler from around it: an operation a
+    /// function value performs with its arguments of their types goes to
+    /// the arms boxed, and the answer comes back of its type.
+    fn direct_adapt(&mut self, arms: &[OpArm]) -> Rs {
+        let mut ops: Vec<usize> = Vec::new();
+        for a in arms {
+            if !ops.contains(&a.op) {
+                ops.push(a.op);
+            }
+        }
+        let mut body = Rs::new();
+        for op in &ops {
+            let opc = crate::expr::op_const(&self.pkg.ops[*op]);
+            let mine: Vec<&OpArm> = arms.iter().filter(|a| a.op == *op).collect();
+            for (params, group) in self.arm_groups(*op, &mine) {
+                let tup = self.payload_ty(&params);
+                let r = match group.first() {
+                    Some(a) => self.answer_ty(&a.body.ty),
+                    None => quote!(_),
+                };
+                body.extend(quote!(
+                    if op == #opc.id {
+                        if let Some(io) = io.downcast_mut::<tauto_rt::ev::Io<#tup, #r>>() {
+                            if let Some(a) = io.take_args() {
+                                match run(#opc, Box::new(a)) {
+                                    Ok(r) => {
+                                        *io = tauto_rt::ev::Io::Answer(tauto_rt::ev::answer::<#r>(r));
+                                        return true;
+                                    }
+                                    Err(a) => { *io = tauto_rt::ev::Io::Args(tauto_rt::ev::answer::<#tup>(a)); }
+                                }
+                            }
+                        } else if let Some(io) = io.downcast_mut::<tauto_rt::ev::Io<Payload, Payload>>() {
+                            if let Some(a) = io.take_args() {
+                                match run(#opc, a) {
+                                    Ok(r) => { *io = tauto_rt::ev::Io::Answer(r); return true; }
+                                    Err(a) => { *io = tauto_rt::ev::Io::Args(a); }
+                                }
+                            }
+                        }
+                    }
+                ));
+            }
+        }
+        quote!({
+            let adapt: std::rc::Rc<tauto_rt::cps::Adapt> = std::rc::Rc::new(
+                |op: u32, io: &mut dyn std::any::Any, run: &mut dyn FnMut(tauto_rt::Op, Payload) -> Result<Payload, Payload>| -> bool {
+                    #body
+                    false
+                },
+            );
+            adapt
+        })
     }
 
     /// The closure that runs the arm of an operation the handler takes.
@@ -1031,71 +1437,75 @@ impl<'a> Gen<'a> {
         for op in &ops {
             let opc = crate::expr::op_const(&self.pkg.ops[*op]);
             let mine: Vec<OpArm> = m_arms(h).filter(|a| a.op == *op).cloned().collect();
-            let tup = self.payload_ty(&mine[0].params);
-            let mut tries = Rs::new();
-            for arm in &mine {
-                let inner_saved = mx.scope.clone();
-                let mut out = PatOut::default();
-                let pats: Vec<Rs> = arm
-                    .pats
-                    .iter()
-                    .map(|p| self.pat(p, false, &mut out))
-                    .collect();
-                for p in &arm.pats {
-                    self.add_pat(mx, p);
-                }
-                let pat = tuple(&pats);
-                let mut guards = out.guards.clone();
-                if let Some(gd) = &arm.guard {
-                    let gd = self.expr(gd, &mut Fx::new(false));
-                    guards.push(out.user_guard(gd));
-                }
-                let guard = PatOut::guard_clause(&guards);
-                let kdef = match &arm.k {
-                    Some(k) => {
-                        mx.scope.push(lid(k));
-                        self.conts.insert(k.id);
-                        let k = lid(k);
-                        quote!(let #k = #res.clone();)
+            let refs: Vec<&OpArm> = mine.iter().collect();
+            for (params, group) in self.arm_groups(*op, &refs) {
+                let tup = self.payload_ty(&params);
+                let mut tries = Rs::new();
+                for arm in group {
+                    let inner_saved = mx.scope.clone();
+                    let mut out = PatOut::default();
+                    let pats: Vec<Rs> = arm
+                        .pats
+                        .iter()
+                        .map(|p| self.pat(p, false, &mut out))
+                        .collect();
+                    for p in &arm.pats {
+                        self.add_pat(mx, p);
                     }
-                    None => Rs::new(),
-                };
-                // A `direct` arm's value is the answer: `k(e)` without the
-                // `k`.
-                let reply = if h.detached && h.direct.iter().any(|d| d.op == arm.op) {
-                    let (res, tgt) = (res.clone(), tgt.clone());
-                    Kc::new(
-                        move |_, _, v| quote!(#res.call(m, Box::new(#v) as Payload, #tgt.clone())),
-                    )
-                } else {
-                    Kc::Erased(tgt.clone())
-                };
-                let code = self.cps(&arm.body, mx, reply);
-                let prologue = out.prologue();
-                tries.extend(quote!(
-                    match a {
-                        #pat #guard => {
-                            #prologue
-                            #kdef
-                            return { #code };
+                    let pat = tuple(&pats);
+                    let mut guards = out.guards.clone();
+                    if let Some(gd) = &arm.guard {
+                        let gd = self.expr(gd, &mut Fx::new(false));
+                        let gd = self.bridged(gd, &quote!(at));
+                        guards.push(out.user_guard(gd));
+                    }
+                    let guard = PatOut::guard_clause(&guards);
+                    let kdef = match &arm.k {
+                        Some(k) => {
+                            mx.scope.push(lid(k));
+                            self.conts.insert(k.id);
+                            let k = lid(k);
+                            quote!(let #k = #res.clone();)
                         }
-                        other => { a = other; }
+                        None => Rs::new(),
+                    };
+                    // A `direct` arm's value is the answer: `k(e)` without the
+                    // `k`.
+                    let reply = if h.direct.iter().any(|d| d.op == arm.op) {
+                        let (res, tgt) = (res.clone(), tgt.clone());
+                        Kc::new(
+                            move |_, _, v| quote!(#res.call(ev, m, Box::new(#v) as Payload, #tgt.clone())),
+                        )
+                    } else {
+                        Kc::Erased(tgt.clone())
+                    };
+                    let code = self.cps(&arm.body, mx, reply);
+                    let prologue = out.prologue();
+                    tries.extend(quote!(
+                        match a {
+                            #pat #guard => {
+                                #prologue
+                                #kdef
+                                return { #code };
+                            }
+                            other => { a = other; }
+                        }
+                    ));
+                    mx.scope = inner_saved;
+                }
+                groups.extend(quote!(
+                    if op.id == #opc.id {
+                        match args.downcast::<#tup>() {
+                            Ok(b) => {
+                                let mut a = *b;
+                                #tries
+                                args = Box::new(a);
+                            }
+                            Err(b) => { args = b; }
+                        }
                     }
                 ));
-                mx.scope = inner_saved;
             }
-            groups.extend(quote!(
-                if op.id == #opc.id {
-                    match args.downcast::<#tup>() {
-                        Ok(b) => {
-                            let mut a = *b;
-                            #tries
-                            args = Box::new(a);
-                        }
-                        Err(b) => { args = b; }
-                    }
-                }
-            ));
         }
         let text = quote!(#groups tauto_rt::cps::Step::NoMatch(args));
         mx.scope = saved;
@@ -1103,10 +1513,8 @@ impl<'a> Gen<'a> {
         let outer = clone_each(used.iter().cloned());
         let inner = clone_each_mut(used.iter().cloned());
         quote!({
-            let ev_o = ev_o.clone();
             #outer
-            tauto_rt::cps::arm(move |#mo, #tgt, op, mut args, at, #res| {
-                let ev = &ev_o;
+            tauto_rt::cps::arm(move |ev, #mo, #tgt, op, mut args, at, #res| {
                 let m = #mo;
                 #inner
                 #text
@@ -1117,6 +1525,10 @@ impl<'a> Gen<'a> {
     /// A `handle` in a function of another tier: the computation is run by a
     /// driver.
     pub(crate) fn handle_host_m(&mut self, h: &HandleNode, fx: &mut Fx) -> Rs {
+        self.without_evd(|g| g.handle_host_m_inner(h, fx))
+    }
+
+    pub(crate) fn handle_host_m_inner(&mut self, h: &HandleNode, fx: &mut Fx) -> Rs {
         let mut mx = Mx::new(None);
         mx.scope = h.clones.iter().map(lid).collect();
         let ty = h.result.clone();
@@ -1138,30 +1550,11 @@ impl<'a> Gen<'a> {
         } else {
             ("run", "run_a", "run_o")
         };
-        // The continuation of a kept `k` holds no handler from here: the
-        // driver answers the `direct` operations, with the handlers of
-        // whoever runs it.
-        let kept = h.kept;
+        // The computation runs with the handlers of this code; a kept `k`
+        // takes the handlers of whoever resumes it.
         let driver = |name: &str| {
-            if kept {
-                let name = id(&format!("{name}_in"));
-                quote!(
-                    tauto_rt::cps::#name(ev, |m, #ks| {
-                        let ev_o = Ev::empty();
-                        let ev = &ev_o;
-                        #body
-                    })
-                )
-            } else {
-                let name = id(name);
-                quote!(
-                    tauto_rt::cps::#name(|m, #ks| {
-                        let ev_o = ev.clone();
-                        let ev = &ev_o;
-                        #body
-                    })
-                )
-            }
+            let name = id(&format!("{name}_in"));
+            quote!(tauto_rt::cps::#name(ev, |ev, m, #ks| { #body }))
         };
         let call = if fx.o {
             let d = driver(run_o);
@@ -1188,25 +1581,30 @@ impl<'a> Gen<'a> {
         }
     }
 
-    pub(crate) fn fn_def_m(&mut self, f: &FnInst, gens: &Rs, params: &[Rs], ret: &Rs) -> Rs {
+    pub(crate) fn fn_def_m(
+        &mut self,
+        f: &FnInst,
+        name: &str,
+        gens: &Rs,
+        params: &[Rs],
+        ret: &Rs,
+    ) -> Rs {
         let mut mx = Mx::new(Some(id("fk")));
         mx.scope.push(id("fk"));
         for p in &f.params {
             self.add_local(&mut mx, &p.local, &p.ty);
         }
         let body = self.cps(&f.body, &mut mx, Kc::Var(id("fk")));
-        let mut ps = vec![quote!(ev: &Ev<'a>), quote!(m: &tauto_rt::cps::M<'a>)];
+        let mut ps = vec![quote!(ev: &Ev<'_>), quote!(m: &tauto_rt::cps::M<'a>)];
         ps.extend(params.iter().cloned());
         ps.push(quote!(fk: tauto_rt::cps::Kont<'a, #ret>));
         let ps = comma(ps);
-        let (doc, name) = (crate::tok::doc(&f.source), id(&f.rust_name));
+        let (doc, name) = (crate::tok::doc(&f.source), id(name));
         quote!(
             #doc
             pub fn #name #gens(#ps) -> tauto_rt::cps::Step<'a> {
-                let ev_o = ev.clone();
                 let m_o = m.clone();
-                tauto_rt::cps::more(move || {
-                    let ev = &ev_o;
+                tauto_rt::cps::more(move |ev| {
                     let m = &m_o;
                     #body
                 })
@@ -1226,13 +1624,27 @@ impl<'a> Gen<'a> {
         let mut params = vec![quote!(ev), quote!(m)];
         for (l, t) in &c.params {
             self.add_local(&mut mx, l, t);
+            self.note_fn_local(l, t);
             let (x, t) = (lid(l), self.ty(t));
             params.push(quote!(#x: #t));
         }
         params.push(quote!(fk));
         let params = comma(params);
         let body = self.cps(&c.body, &mut mx, Kc::Var(id("fk")));
-        let used = mentioned(&outer, &body);
+        // The closure's own `fk` shadows any outer one: it is not captured,
+        // and a closure made outside the M tier has none to capture.
+        let own = id("fk");
+        let outer: Vec<Ident> = outer.into_iter().filter(|n| *n != own).collect();
+        let mut used = mentioned(&outer, &body);
+        // Made outside the M tier, the closure has no chain in scope: what
+        // it captures is what the closure node says, cloned as in
+        // `closure_raw` (`ClosureNode::clones`).
+        for l in &c.clones {
+            let x = lid(l);
+            if !used.contains(&x) {
+                used.push(x);
+            }
+        }
         let inner = clone_each_mut(used.iter().cloned());
         let outer_clones = clone_each(used.iter().cloned());
         let kind = if c.fn_ty.kind.dup() { "rc" } else { "box" };
@@ -1240,8 +1652,6 @@ impl<'a> Gen<'a> {
         quote!({
             #outer_clones
             tauto_rt::cps::#helper(move |#params| {
-                let ev_o = ev.clone();
-                let ev = &ev_o;
                 #inner
                 #body
             })

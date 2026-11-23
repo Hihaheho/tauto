@@ -23,7 +23,7 @@ Whale::confirm_unchanged(w, b, Cons(a, Nil))              // b を計算し直�
 - **早期打ち切り**（early cutoff）: 計算し直して値が同じなら `Whale::confirm_unchanged` を呼ぶ。`verified_at` だけを上げ `changed_at` は残すので、それを読むノードは有効なまま。値が変わったなら `Whale::confirm_changed`。どちらかを比較関数で決めるのが `Whale::update`。
 - **逆辺**: 各ノードは自分を読むノードの一覧を持ち、書き込みのたびに付け替える。`Whale::remove_if_unused` は誰にも読まれていないノードだけを外す（GC 用）。`Whale::has_cycle` は読みの連鎖が自分に戻るかを調べる。
 
-## API（`src/Graph.taut`）
+## API（`src/graph.taut`）
 
 | 関数 | 内容 |
 | --- | --- |
@@ -40,11 +40,11 @@ Whale::confirm_unchanged(w, b, Cons(a, Nil))              // b を計算し直�
 
 ## 証明
 
-- `src/Revision.taut`: カウンタは下がらない（`Revision::bump_mono`）、段 `d` の変更は `d` より上の段に触れない（`Revision::bump_above`）、段 `d` があればそのカウンタは前の時計を越える（`Revision::bump_at`）。だから変更で書いたノードの `changed_at` は、段がどれでも、それより前に読んだ側が覚えている値より大きい。
-- `src/Laws.taut`: どのキーの順序（`Ord`）でも置いた値がそのキーで読め、他のキーは変わらない。API の各操作について、書いたノードは有効（`register_valid`・`changed_valid`・`update_valid` など）、データと `changed_at` の値、他のノードは不変（`*_other`）、変更なしの確認は `changed_at` を保ち依存側を有効のまま残す（早期打ち切り、`unchanged_readers`・`update_unchanged_readers`）、存在しない依存があれば何も変えず拒否する（`*_refused`）、削除・未使用時の GC、検証済みの印の単調性。
-- `src/Cycle.taut`: `Whale::has_cycle` は依存グラフに循環があるとき、かつそのときに限り yes を返す（`has_cycle_sound`・`has_cycle_complete`、鳩の巣原理による）。
-- `src/Reads.taut`: 記録される読み取りはすべて新鮮で、要求した依存の id と一致する。耐久性は要求値と読んだノードのどれ以下、段は読んだノードのどれより上。
-- `src/Edges.taut`: 逆辺。登録したノードは、読む各ノード（存在するもの）の dependents に入る（`register_links`・`store_links`）。もう読まないノードの dependents からは外れ（`store_unlinks`）、削除したノードは読んでいた各ノードの dependents から外れる（`remove_unlinks`）。
+- `src/revision.taut`: カウンタは下がらない（`Revision::bump_mono`）、段 `d` の変更は `d` より上の段に触れない（`Revision::bump_above`）、段 `d` があればそのカウンタは前の時計を越える（`Revision::bump_at`）。だから変更で書いたノードの `changed_at` は、段がどれでも、それより前に読んだ側が覚えている値より大きい。
+- `src/laws.taut`: どのキーの順序（`Ord`）でも置いた値がそのキーで読め、他のキーは変わらない。API の各操作について、書いたノードは有効（`register_valid`・`changed_valid`・`update_valid` など）、データと `changed_at` の値、他のノードは不変（`*_other`）、変更なしの確認は `changed_at` を保ち依存側を有効のまま残す（早期打ち切り、`unchanged_readers`・`update_unchanged_readers`）、存在しない依存があれば何も変えず拒否する（`*_refused`）、削除・未使用時の GC、検証済みの印の単調性。
+- `src/cycle.taut`: `Whale::has_cycle` は依存グラフに循環があるとき、かつそのときに限り yes を返す（`has_cycle_sound`・`has_cycle_complete`、鳩の巣原理による）。
+- `src/reads.taut`: 記録される読み取りはすべて新鮮で、要求した依存の id と一致する。耐久性は要求値と読んだノードのどれ以下、段は読んだノードのどれより上。
+- `src/edges.taut`: 逆辺。登録したノードは、読む各ノード（存在するもの）の dependents に入る（`register_links`・`store_links`）。もう読まないノードの dependents からは外れ（`store_unlinks`）、削除したノードは読んでいた各ノードの dependents から外れる（`remove_unlinks`）。
 - `examples/basic.taut`: 具体的なグラフでの早期打ち切りの連鎖、耐久性（段を変えて書き直した入力を読む側が無効になることも）、拒否、逆辺、GC、循環をカーネルの計算で確かめる。
 
 公理は使っていない（`tauto check --json` で確認）。

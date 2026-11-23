@@ -1,7 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use tauto::eval::RunOptions;
 use tauto::program::{self, Loaded};
 use tauto::report::{self, Status};
 
@@ -18,14 +17,18 @@ mod i18n;
 mod index;
 mod init;
 mod javascript;
+mod llvm;
 mod lsp;
 mod macros;
+mod niri;
 mod permission_file;
 mod proof;
 mod proof_status;
 mod publish;
 mod publish_crates;
+mod run_prompt;
 mod rust;
+mod rust_cache;
 mod syntax;
 mod test;
 mod timings;
@@ -48,7 +51,16 @@ fn with_deep_stack(f: impl FnOnce() -> ExitCode + Send) -> ExitCode {
     })
 }
 
+// Checking allocates and frees many small terms; jemalloc makes `tauto check` of a large tote
+// about a third faster than the system allocator.
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 fn main() -> ExitCode {
+    // The name tables of the standard library are read from its texts by
+    // this reader, also when the command reads no program of its own.
+    tauto_parse::install();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     // A tote compiled into this executable, run as a program of its own.
     if args.first().is_some_and(|a| a == tote_main::TOTE_FLAG) {
@@ -93,15 +105,16 @@ fn main() -> ExitCode {
     // `tauto NAME ARGS…`, NAME none of tauto's own commands: a command of the
     // project (`docs/design/commands.md`). Every argument after NAME is the
     // command's, so none of them is read as tauto's own option below; only
-    // `--offline` and `--fresh` before NAME are.
+    // `--offline`, `--fresh` and `--approve-trust` before NAME are.
     let lead = args
         .iter()
-        .take_while(|a| *a == "--offline" || *a == "--fresh")
+        .take_while(|a| *a == "--offline" || *a == "--fresh" || *a == "--approve-trust")
         .count();
     if let Some(name) = args.get(lead)
         && commands::is_name(name)
     {
-        for flag in &args[..lead] {
+        let approve = args[..lead].iter().any(|a| a == "--approve-trust");
+        for flag in args[..lead].iter().filter(|a| *a != "--approve-trust") {
             let (key, value) = match flag.as_str() {
                 "--offline" => ("TAUTO_OFFLINE", "1"),
                 _ => ("TAUTO_CACHE", "off"),
@@ -109,7 +122,7 @@ fn main() -> ExitCode {
             // SAFETY: no other thread runs yet.
             unsafe { std::env::set_var(key, value) };
         }
-        if let Some(code) = commands::run(name, &args[lead + 1..]) {
+        if let Some(code) = commands::run(name, &args[lead + 1..], approve) {
             return code;
         }
         eprintln!("{}", i18n::t!("no-command", name = name));
@@ -304,50 +317,49 @@ fn main() -> ExitCode {
         eprintln!("{e}");
         return ExitCode::from(2);
     }
-    // What the run is trusted with is approved by the user whenever it changes.
+    // `tauto run` and `dev` take no flags that grant permissions: what the
+    // program's effects need is asked at its start (`run_prompt`).
+    if args.first().is_some_and(|a| a == "run" || a == "dev")
+        && let Some(flag) = removed_flag(&args[1..])
+    {
+        eprintln!("{}", i18n::t!("run-flag-removed", flag = flag));
+        return ExitCode::from(2);
+    }
+    // What the run is trusted with is approved by the user whenever it
+    // changes, and what is granted is what was approved.
     if args
         .first()
         .is_some_and(|a| a == "run" || a == "dev" || a == "build")
-        && let Err(e) = trust_gate::check(&mut args)
     {
-        eprintln!("{e}");
-        return ExitCode::from(2);
-    }
-    if args.first().is_some_and(|a| a == "run" || a == "dev") {
-        args = match permission_file::expand(&args) {
-            Ok(args) => args,
+        match trust_gate::check(&mut args) {
+            Ok(()) => {}
             Err(e) => {
                 eprintln!("{e}");
                 return ExitCode::from(2);
             }
-        };
+        }
     }
     // The backend is chosen by tauto's own `--backend`, never by one the
     // program takes after `--`. `run` and `dev` run on the machine written
-    // in Tauto unless another is named; `--backend eval` is the evaluator.
-    let own = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    // in Tauto unless another is named.
+    let mut own = args.iter().position(|a| a == "--").unwrap_or(args.len());
     let backend = args[..own]
         .windows(2)
         .find(|w| w[0] == "--backend")
         .map(|w| w[1].clone())
-        // The ownership check is the evaluator's: asking for it without a
-        // backend runs on the evaluator.
+        // The ownership check runs on niri: asking for it without a backend
+        // runs there.
         .or_else(|| {
             args[..own]
                 .iter()
                 .any(|a| a == "--check-ownership")
-                .then(|| "eval".to_string())
+                .then(|| "niri".to_string())
         });
-    if args.first().is_some_and(|a| a == "run" || a == "dev") && backend.as_deref() == Some("eval")
-    {
+    if args.first().is_some_and(|a| a == "run") && backend.as_deref() == Some("niri") {
         if let Some(at) = args[..own].iter().position(|a| a == "--backend") {
             args.drain(at..at + 2);
         }
-        return if args[0] == "run" {
-            with_deep_stack(|| run_command(&args[1..]))
-        } else {
-            dev::command(&args[1..], dev::Backend::Eval)
-        };
+        return with_deep_stack(|| niri::command(&args[1..]));
     }
     if args.first().is_some_and(|a| a == "run") && backend.as_deref().is_none_or(|b| b == "vm") {
         return with_deep_stack(|| vm::command(&args));
@@ -358,6 +370,23 @@ fn main() -> ExitCode {
             Some(_) => usage(),
         };
     }
+    // `build --verify`: the dependencies are checked against `Tauto.lock`
+    // before anything is built.
+    if args.first().is_some_and(|a| a == "build")
+        && let Some(at) = args[..own].iter().position(|a| a == "--verify")
+    {
+        args.remove(at);
+        own -= 1;
+        if let Err(code) = verify_build_deps(&args[1..own]) {
+            return code;
+        }
+    }
+    if args.first().is_some_and(|a| a == "build") && backend.as_deref() == Some("llvm") {
+        if let Some(at) = args[..own].iter().position(|a| a == "--backend") {
+            args.drain(at..at + 2);
+        }
+        return with_deep_stack(|| llvm::command(&args[1..]));
+    }
     if args.first().is_some_and(|a| a == "build") || args.first().is_some_and(|a| a == "run") {
         return with_deep_stack(|| rust::command(&args));
     }
@@ -365,6 +394,49 @@ fn main() -> ExitCode {
         return lint_paths(&args[1..]);
     }
     usage()
+}
+
+/// The tote `tauto build` builds: the one `--tote NAME` names, or the one
+/// that holds the path given, or the current directory's. Its `Tauto.lock`
+/// is checked against the cache ([`bag::verify_for_build`]).
+fn verify_build_deps(args: &[String]) -> Result<(), ExitCode> {
+    let cwd = std::env::current_dir().map_err(|e| {
+        eprintln!("{e}");
+        ExitCode::from(2)
+    })?;
+    let named = args
+        .windows(2)
+        .find(|w| w[0] == "--tote")
+        .map(|w| w[1].clone());
+    let dir = match named {
+        Some(name) => tauto::workspace::tote_flag_dir(&cwd, &name).map_err(|e| {
+            eprintln!("{e}");
+            ExitCode::from(2)
+        })?,
+        None => {
+            let path = args
+                .iter()
+                .rev()
+                .map(Path::new)
+                .find(|p| !p.to_string_lossy().starts_with('-') && p.exists());
+            match path {
+                Some(p) if p.join("Tauto.eure").is_file() => p.to_path_buf(),
+                Some(p) => match tauto::manifest::enclosing_tote_dir(p) {
+                    Some(d) => d,
+                    None => return Ok(()),
+                },
+                None if cwd.join("Tauto.eure").is_file() => cwd,
+                None => match tauto::manifest::enclosing_tote_dir(&cwd.join(".")) {
+                    Some(d) => d,
+                    None => return Ok(()),
+                },
+            }
+        }
+    };
+    bag::verify_for_build(&dir).map_err(|e| {
+        eprintln!("{e}");
+        ExitCode::FAILURE
+    })
 }
 
 /// `tauto run` and `tauto dev` given neither a file nor `--tote` run the
@@ -483,7 +555,7 @@ fn lint_paths(paths: &[String]) -> ExitCode {
                 return ExitCode::from(2);
             }
         };
-        let (found, error) = match tauto::lint::lint(&source) {
+        let (found, error) = match tauto::lint::lint_path(file, &source) {
             Ok(found) => (found.iter().map(|f| f.to_string()).collect(), false),
             Err(error) => (vec![error.to_string()], true),
         };
@@ -625,9 +697,10 @@ fn proof_command(args: &[String]) -> ExitCode {
     let mut verbose = false;
     let (mut by, mut limit, mut write) = (None, 20usize, false);
     let (mut using, mut verify) = (Vec::new(), false);
-    let mut tote = false;
+    let mut tote_flag = false;
     let (mut fix, mut dry_run) = (false, false);
     let mut summary = false;
+    let mut lines = false;
     let mut timings = None;
     let mut rest = args[1..].iter();
     while let Some(a) = rest.next() {
@@ -642,10 +715,12 @@ fn proof_command(args: &[String]) -> ExitCode {
                 None => return usage(),
             },
             "--write" => write = true,
-            "--tote" if command == "check" => tote = true,
+            "--tote" if command == "check" => tote_flag = true,
             "--fix" if command == "check" => fix = true,
             "--dry-run" if command == "check" => dry_run = true,
             "--summary" if command == "check" => summary = true,
+            // What a test's `check` reads: a line for each problem.
+            "--lines" if command == "check" => lines = true,
             "--timings" if command == "check" => timings = Some(false),
             "--timings=json" if command == "check" => timings = Some(true),
             "--verify" if command == "suggest" => verify = true,
@@ -666,8 +741,11 @@ fn proof_command(args: &[String]) -> ExitCode {
         return usage();
     };
     let path = std::path::Path::new(&path);
-    // A directory is checked as a tote.
-    let tote = tote || (command == "check" && path.is_dir());
+    // A directory is checked as a tote; `--tote NAME` names a workspace member.
+    let tote = tote_flag || (command == "check" && path.is_dir());
+    if lines {
+        return check_lines(path);
+    }
     let run = |result: Result<ExitCode, tauto_message::Message>| match result {
         Ok(code) => code,
         // Errors reading the program already name the file they are in.
@@ -705,16 +783,28 @@ fn proof_command(args: &[String]) -> ExitCode {
         return run(fix_command(path, dry_run));
     }
     match (command, hole, with) {
-        ("check", None, None) if tote => run(report::check_tote_report(path).map(|r| {
-            if json {
-                println!("{}", r.report.json().render());
-            } else if verbose || summary {
-                print!("{}", r.text(verbose));
-            } else {
-                print!("{}", check_text(&r.report));
-            }
-            status_code(r.report.status())
-        })),
+        ("check", None, None) if tote => {
+            let (checked, phases) = tauto::phases::recorded(|| {
+                let dirs = report::check_tote_dirs(path, tote_flag)?;
+                report::check_totes_report(&dirs)
+            });
+            run(checked.map(|r| {
+                if json {
+                    println!("{}", r.report.json().render());
+                } else if verbose || summary {
+                    print!("{}", r.text(verbose));
+                } else {
+                    print!("{}", check_text(&r.report));
+                }
+                // On stderr, so that what `check` prints stays as it is.
+                match timings {
+                    Some(false) => eprint!("{}", phase_timings_text(&phases)),
+                    Some(true) => eprintln!("{}", phase_timings_json(&phases).render()),
+                    None => {}
+                }
+                status_code(r.report.status())
+            }))
+        }
         ("check", None, None) => run(report::check_report(path, None).map(|r| {
             if json {
                 println!("{}", r.json().render());
@@ -1093,8 +1183,8 @@ pub(crate) fn locate_in(loaded: &Loaded, entry: &str, shown: &str) -> String {
     }
 }
 
-/// Frontend type diagnostics already carry their file; row and use
-/// diagnostics retain byte offsets until the CLI renders them.
+/// Frontend type diagnostics already carry their file; row, use, and package
+/// (`let(stack)`, …) diagnostics retain byte offsets until the CLI renders them.
 pub(crate) fn locate_front(loaded: &Loaded, entry: &str, shown: &str) -> String {
     if split_offset(shown).is_some() {
         locate_in(loaded, entry, shown)
@@ -1103,15 +1193,26 @@ pub(crate) fn locate_front(loaded: &Loaded, entry: &str, shown: &str) -> String 
     }
 }
 
-/// `tauto run [--check-ownership] [--steps N] [--allow-KIND[=…]]… (FILE | --tote DIR) [-- ARGS…]`.
+/// `tauto run [--backend niri] [--check-ownership] [--steps N] [--yes] (FILE | --tote NAME) [-- ARGS…]`.
 /// What `tauto run` and `tauto dev` read from their arguments.
 pub(crate) struct RunArgs {
     pub check_ownership: bool,
     pub steps: Option<u64>,
     pub file: Option<String>,
+    /// Workspace member `package.name` (or the standalone tote's own name).
     pub tote: Option<String>,
     pub program_args: Vec<String>,
-    pub permissions: tauto_rt::permissions::Permissions,
+    /// `--yes`: allow what the program needs without asking, for this run.
+    pub yes: bool,
+}
+
+/// A flag before `--` that granted permissions before they were asked at
+/// the start of a run.
+pub(crate) fn removed_flag(args: &[String]) -> Option<String> {
+    args.iter()
+        .take_while(|a| *a != "--")
+        .find(|a| *a == "-A" || a.starts_with("--allow-") || a.starts_with("--permissions"))
+        .map(|a| a.split('=').next().unwrap_or(a).to_string())
 }
 
 pub(crate) fn parse_run_args(args: &[String]) -> Result<RunArgs, ExitCode> {
@@ -1121,26 +1222,23 @@ pub(crate) fn parse_run_args(args: &[String]) -> Result<RunArgs, ExitCode> {
         file: None,
         tote: None,
         program_args: Vec::new(),
-        permissions: tauto_rt::permissions::Permissions::default(),
+        yes: false,
     };
+    if let Some(flag) = removed_flag(args) {
+        eprintln!("{}", i18n::t!("run-flag-removed", flag = flag));
+        return Err(ExitCode::from(2));
+    }
     let mut rest = args.iter();
     while let Some(a) = rest.next() {
-        match out.permissions.parse_flag(a) {
-            Ok(true) => continue,
-            Ok(false) => {}
-            Err(e) => {
-                eprintln!("{e}");
-                return Err(ExitCode::from(2));
-            }
-        }
         match a.as_str() {
             "--check-ownership" => out.check_ownership = true,
+            "--yes" => out.yes = true,
             "--steps" => match rest.next().and_then(|n| n.parse::<u64>().ok()) {
                 Some(n) if n > 0 => out.steps = Some(n),
                 _ => return Err(usage()),
             },
             "--tote" => match rest.next() {
-                Some(dir) => out.tote = Some(dir.clone()),
+                Some(name) => out.tote = Some(name.clone()),
                 None => return Err(usage()),
             },
             "--" => {
@@ -1159,31 +1257,88 @@ pub(crate) fn parse_run_args(args: &[String]) -> Result<RunArgs, ExitCode> {
 }
 
 impl RunArgs {
+    /// The permissions a run that needs the kinds `needed` starts with: what
+    /// `trust.run` of the program's project grants (approved with the rest
+    /// of `trust`), and each other kind as the user allows it at the start
+    /// (`run_prompt`). An error is printed.
+    pub(crate) fn grant<'n>(
+        &self,
+        needed: impl IntoIterator<Item = &'n str>,
+    ) -> Result<tauto_rt::permissions::Permissions, ExitCode> {
+        // A run given `--steps` has its limit whatever `div` would allow.
+        let bounded = self.steps.is_some();
+        grant(
+            &self.entry(),
+            needed.into_iter().filter(|k| !(bounded && *k == "div")),
+            self.yes,
+        )
+    }
+
     /// The path errors are located against.
     pub(crate) fn entry(&self) -> String {
-        self.file
-            .clone()
-            .or_else(|| self.tote.clone())
-            .unwrap_or_default()
+        if let Some(file) = &self.file {
+            return file.clone();
+        }
+        self.tote_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| self.tote.clone().unwrap_or_default())
+    }
+
+    /// Directory of `--tote NAME` from the working directory.
+    pub(crate) fn tote_dir(&self) -> Result<PathBuf, ExitCode> {
+        let name = self.tote.as_deref().ok_or_else(usage)?;
+        let cwd = std::env::current_dir().map_err(|e| {
+            eprintln!("{e}");
+            ExitCode::from(2)
+        })?;
+        tauto::workspace::tote_flag_dir(&cwd, name).map_err(|e| {
+            eprintln!("{e}");
+            ExitCode::from(2)
+        })
     }
 
     /// Loads and checks the program; an error is printed.
     pub(crate) fn load(&self) -> Result<Loaded, ExitCode> {
+        self.load_granted(false, false).map(|(loaded, _)| loaded)
+    }
+
+    /// [`RunArgs::load`], and with `grant` the permissions the run starts
+    /// with ([`RunArgs::grant`]) for what the standard effects reaching its
+    /// top level need; `div` only with `ask_div` (`tauto dev` has no step
+    /// limit to lift).
+    pub(crate) fn load_granted(
+        &self,
+        grant: bool,
+        ask_div: bool,
+    ) -> Result<(Loaded, tauto_rt::permissions::Permissions), ExitCode> {
+        self.load_granted_exporting(grant, ask_div, &[])
+    }
+
+    /// [`RunArgs::load`] for a build that exports functions: a file entry
+    /// keeps the functions its tote's `exports` and `added` (`--export`) name.
+    pub(crate) fn load_exporting(&self, added: &[String]) -> Result<Loaded, ExitCode> {
+        self.load_granted_exporting(false, false, added)
+            .map(|(loaded, _)| loaded)
+    }
+
+    fn load_granted_exporting(
+        &self,
+        grant: bool,
+        ask_div: bool,
+        added: &[String],
+    ) -> Result<(Loaded, tauto_rt::permissions::Permissions), ExitCode> {
         let loaded = match (&self.file, &self.tote) {
-            (Some(path), None) => program::load_extracted(Path::new(path)),
-            (None, Some(dir)) => {
-                let name = Path::new(dir)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(dir);
-                if !["src/main.taut", "src/main.tauto"]
-                    .iter()
-                    .any(|name| Path::new(dir).join(name).is_file())
-                {
-                    eprintln!("{}", i18n::t!("main-run-tote-no-main", name = name));
+            (Some(path), None) => program::load_extracted_exporting(Path::new(path), added),
+            (None, Some(name)) => {
+                let dir = self.tote_dir()?;
+                if !tauto::manifest::tote_entry(&dir).is_some_and(|p| p.is_file()) {
+                    eprintln!(
+                        "{}",
+                        i18n::t!("main-run-tote-no-main", name = name.as_str())
+                    );
                     return Err(ExitCode::from(2));
                 }
-                program::load_tote(Path::new(dir))
+                program::load_tote(&dir)
             }
             _ => return Err(usage()),
         };
@@ -1194,60 +1349,165 @@ impl RunArgs {
                 return Err(ExitCode::from(2));
             }
         };
-        let rows = loaded.check_rows(false);
+        let rows = loaded.check_rows(tauto::rows::Target::Rust);
         if !rows.errors.is_empty() {
             for e in rows.errors {
                 eprintln!("{}", locate_in(&loaded, &self.entry(), &e.to_string()));
             }
             return Err(ExitCode::FAILURE);
         }
-        Ok(loaded)
+        if !grant {
+            return Ok((loaded, tauto_rt::permissions::Permissions::default()));
+        }
+        let needed = needed_permissions(&loaded, &rows);
+        let permissions = self.grant(
+            needed
+                .iter()
+                .map(String::as_str)
+                .filter(|k| ask_div || *k != "div"),
+        )?;
+        Ok((loaded, permissions))
     }
 }
 
-fn run_command(args: &[String]) -> ExitCode {
-    let run = match parse_run_args(args) {
-        Ok(run) => run,
-        Err(code) => return code,
+/// [`RunArgs::grant`] for the program at `entry`; `yes` allows without asking.
+pub(crate) fn grant<'n>(
+    entry: &str,
+    needed: impl IntoIterator<Item = &'n str>,
+    yes: bool,
+) -> Result<tauto_rt::permissions::Permissions, ExitCode> {
+    let fail = |e: String| {
+        eprintln!("{e}");
+        ExitCode::from(2)
     };
-    let loaded = match run.load() {
-        Ok(loaded) => loaded,
-        Err(code) => return code,
-    };
-    // `--allow-div`: a program whose job is not to stop runs without the
-    // host's limit, unless `--steps` gives one.
-    let steps = run.steps.unwrap_or(
-        if run.permissions.div == tauto_rt::permissions::Grant::All {
-            u64::MAX
-        } else {
-            tauto::eval::DEFAULT_BUDGET
-        },
-    );
-    let options = RunOptions {
-        check_ownership: run.check_ownership,
-        args: run.program_args.clone(),
-        permissions: run.permissions.clone(),
-        // Written as the program writes it, as the compiled programs do: a
-        // program that never ends still shows what it has written.
-        live: true,
-        ..RunOptions::default()
-    };
-    match tauto::eval::run_loaded_with(&loaded, steps, options) {
-        Ok(outcome) => {
-            print!("{}", outcome.stdout);
-            eprint!("{}", outcome.stderr);
-            ExitCode::from(outcome.exit.map_or(0, |code| code as u8))
+    let (mut granted, patterns) = match project_of(Path::new(entry)) {
+        Some(dir) => {
+            let file = dir.join("Tauto.eure");
+            let text = std::fs::read_to_string(&file)
+                .map_err(|e| fail(format!("{}: {e}", file.display())))?;
+            let (flags, patterns) = permission_file::run_trust_patterns(&text, &dir)
+                .map_err(|e| fail(format!("{}: {e}", file.display())))?;
+            let granted = tauto_rt::permissions::Permissions::from_args(&flags)
+                .map_err(fail)?
+                .0;
+            (granted, patterns)
         }
-        Err(error) => {
-            let mut message = locate_in(&loaded, &run.entry(), &error.to_string());
-            if matches!(error, tauto::eval::RunError::Interrupted) {
-                message.push(' ');
-                message.push_str(&i18n::t!("main-run-interrupted", steps = steps));
+        None => (tauto_rt::permissions::Permissions::default(), Vec::new()),
+    };
+    // What `trust.run` grants is granted to the origins its keys name
+    // (`"write(app::*)"`; a kind alone, to every origin); the rest is asked
+    // for each origin (`kind(origin)`), so that a function newly asking for
+    // a kind is asked about.
+    let asked: Vec<&str> = needed
+        .into_iter()
+        .filter(|n| !granted.interactive && !patterns.iter().any(|p| run_prompt::covers(p, n)))
+        .collect();
+    let allowed = run_prompt::grant(entry, asked.iter().copied(), yes).map_err(fail)?;
+    let kinds: std::collections::BTreeSet<&str> =
+        asked.iter().map(|n| run_prompt::kind_of(n)).collect();
+    // What the user allows here is narrow by default: reading and writing
+    // under the folder the run starts in, and no variable or host at all,
+    // since those are named in `trust.run` (`docs/design/host-effects.md`
+    // 「Safe defaults」).
+    let here = std::env::current_dir()
+        .map_err(|e| fail(e.to_string()))?
+        .display()
+        .to_string();
+    for k in kinds {
+        if allowed.grant(k) == &tauto_rt::permissions::Grant::Denied {
+            continue;
+        }
+        let flag = match k {
+            "read" | "write" => format!("--allow-{k}={here}"),
+            "env" | "net" => return Err(fail(i18n::t!("run-grant-needs-list", kind = k))),
+            _ => format!("--allow-{k}"),
+        };
+        granted.parse_flag(&flag).map_err(fail)?;
+    }
+    Ok(granted)
+}
+
+/// What a run of `loaded` with `rows` is asked for: each kind of
+/// [`needed_kinds`] for each function it comes from, `kind(origin)`
+/// (`docs/design/host-effects.md`「Origins」); a kind no origin is known of,
+/// as `div`, alone.
+pub(crate) fn needed_permissions(
+    loaded: &tauto::program::Loaded,
+    rows: &tauto::rows::RowReport,
+) -> Vec<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let mut covered = std::collections::BTreeSet::new();
+    for (effect, origins) in loaded.host_origins(rows) {
+        for kind in tauto::host::permissions([&effect]) {
+            covered.insert(kind);
+            for o in &origins {
+                out.insert(format!("{kind}({o})"));
             }
-            eprintln!("{message}");
-            ExitCode::FAILURE
         }
     }
+    for k in needed_kinds(rows) {
+        if !covered.contains(k) {
+            out.insert(k.to_string());
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// The kinds a run of a program with `rows` is asked for: those of the
+/// standard effects reaching its top level, and `div` when its top level may
+/// not stop (`div`), which lifts the host's step limit.
+pub(crate) fn needed_kinds(rows: &tauto::rows::RowReport) -> Vec<&'static str> {
+    let mut kinds: Vec<&'static str> = tauto::host::permissions(rows.host_effects.iter())
+        .into_iter()
+        .collect();
+    if rows
+        .top_rows
+        .iter()
+        .any(|(row, _)| row.iter().any(|e| tauto::bindings::is_divergence(e)))
+    {
+        kinds.push("div");
+    }
+    kinds
+}
+
+/// The folder of the nearest `Tauto.eure` above `path`.
+fn project_of(path: &Path) -> Option<PathBuf> {
+    let start = std::fs::canonicalize(path).ok()?;
+    let mut dir = if start.is_dir() {
+        Some(start.as_path())
+    } else {
+        start.parent()
+    };
+    while let Some(d) = dir {
+        if d.join("Tauto.eure").is_file() {
+            return Some(d.to_path_buf());
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+/// A run starts at the top-level statements that are not declarations. A
+/// program with none has no entry: it is an error, not a run that ends with
+/// code 0 having done nothing.
+pub(crate) fn require_entry(loaded: &tauto::program::Loaded, path: &str) -> Result<(), ExitCode> {
+    use tauto::surface::Stmt;
+    if loaded.program.stmts.iter().any(|s| {
+        matches!(
+            s,
+            Stmt::Let { .. }
+                | Stmt::Var { .. }
+                | Stmt::Assign { .. }
+                | Stmt::While { .. }
+                | Stmt::Return(_)
+                | Stmt::Expr(_)
+                | Stmt::Called { .. }
+        )
+    }) {
+        return Ok(());
+    }
+    eprintln!("{}", i18n::t!("main-run-no-entry", path = path));
+    Err(ExitCode::from(2))
 }
 
 /// `tauto extract FILE…`: the Nib that `run` makes of the files' programs,
@@ -1281,6 +1541,19 @@ fn expand_command(args: &[String]) -> ExitCode {
                 "{}",
                 tauto::surface::print::print_stmts(&loaded.program.stmts)
             );
+            // What the expansion left as written, and why (a typed macro on a
+            // declaration that does not check), so the output is not read as
+            // what the macros made of it.
+            for (message, at) in &loaded.warnings {
+                let place = match loaded.locate(at.start) {
+                    Some((file, line, col)) => format!("{}:{line}:{col}", file.display()),
+                    None => "?".into(),
+                };
+                eprintln!(
+                    "{place}: {}",
+                    i18n::t!("macros-warning", message = message.to_string())
+                );
+            }
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -1291,10 +1564,10 @@ fn expand_command(args: &[String]) -> ExitCode {
 }
 
 /// The syntax of every command, one entry per ` | `; its prose is in `usage_text`.
-const USAGE: &str = "tauto run [--check-ownership] [--steps N] [--allow-(read|write|env|net|run)[=…] | --allow-all | --allow-interactive | --permissions FILE]… [--approve-trust] (FILE | --tote DIR) [-- ARGS…] | tauto lint [--json] [--fix] PATH… | tauto fmt [--check] FILE…\n       \
-         tauto dev [--backend vm|eval] [--check-ownership] [--steps N] [--allow-(read|write|env|net|run)[=…] | --allow-all | --allow-interactive | --permissions FILE]… [--approve-trust] (FILE | --tote DIR) [-- ARGS…]\n       \
+const USAGE: &str = "tauto run [--backend niri] [--check-ownership] [--steps N] [--yes] [--approve-trust] (FILE | --tote NAME) [-- ARGS…] | tauto lint [--json] [--fix] PATH… | tauto fmt [--check] FILE…\n       \
+         tauto dev [--backend vm] [--steps N] [--yes] [--approve-trust] (FILE | --tote NAME) [-- ARGS…]\n       \
          tauto init [DIR]\n       \
-         tauto add (--git URL [--branch NAME | --tag NAME] [--dir DIR] [--project ID] | --path DIR) [NAME] | tauto remove NAME\n       \
+         tauto add (--git URL [--branch NAME | --tag NAME] [--dir DIR [--sparse]] [--project ID] | --path DIR) [NAME] | tauto remove NAME\n       \
          tauto update [NAME…] [--dry-run] | tauto lock [--check] | tauto fetch [--verify] | tauto deps | tauto audit [--json]\n       \
          tauto index (sync | status | check [NAME…] | new DIR | observe NAME | decide NAME accept|reject | withdraw NAME | publish)\n       \
          tauto test [PATH] [--filter TEXT] [--json] | tauto bench PATH [OPTIONS] | tauto doc PATH [-o DIR]\n       \
@@ -1306,9 +1579,10 @@ const USAGE: &str = "tauto run [--check-ownership] [--steps N] [--allow-(read|wr
          tauto try FILE --hole NAME --with EXPR [--json] | tauto fill FILE --hole NAME --with EXPR [--json]\n       \
          tauto suggest FILE --hole NAME [--using NAME]... [--verify] [--limit N] [--json] | tauto library FILE [--json]\n       \
          tauto expand FILE --hole NAME --by (intro | match(x) | induction(x) | NAME!(arg)) [--write] [--json]\n       \
-         tauto run --backend (vm | eval | rust | javascript) [--explain-budget] PATH\n       \
+         tauto run --backend (vm | rust | javascript) [--explain-budget] PATH\n       \
          tauto COMMAND [ARGS…]\n       \
-         tauto build [--backend rust|javascript] [--emit rust|javascript] [--target node|browser|wasm32-wasip1|wasm32-unknown-unknown] [--declarations] [--explain-budget] [--release] [--timings[=json]] [-o DIR] PATH\n       \
+         tauto build --backend llvm [--emit llvm|nir] [--export ENTRY]... [--verify] [-o FILE] (FILE | --tote NAME)\n       \
+         tauto build [--backend rust|javascript] [--emit rust|javascript] [--target node|browser|wasm32-wasip1|wasm32-unknown-unknown] [--declarations] [--explain-budget] [--export ENTRY]... [--release] [--timings[=json]] [--verify] [-o DIR] PATH\n       \
          tauto trust (bundle ROOT ENTRY | verify BUNDLE [--axiom-free])\n       \
          tauto syntax (gen [--check] [DIR] | source DIR NAME | show DIR NAME)\n       \
          tauto macro (expand | trace | inspect) FILE [OPTIONS] | tauto bind [OPTIONS]\n       \
@@ -1422,4 +1696,79 @@ fn fix_command(path: &std::path::Path, dry_run: bool) -> Result<ExitCode, tauto_
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// `tauto check --lines FILE`: a line for each problem of the file, its
+/// fields apart by tabs as a test report's are (`tauto_rt::entry::line`): the
+/// severity (`error`, `incomplete`, `warning`), the code, the line, column,
+/// end line and end column from 1 (0 for a problem with no place), and the
+/// message. A file that cannot be read is one error.
+fn check_lines(path: &std::path::Path) -> ExitCode {
+    let report = match tauto::report::check_report(path, None) {
+        Ok(report) => report,
+        Err(error) => {
+            print!(
+                "{}",
+                tauto_rt::entry::line(&[
+                    "error",
+                    &error.id,
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                    &error.to_string()
+                ])
+            );
+            return ExitCode::SUCCESS;
+        }
+    };
+    for p in report.problems() {
+        let severity = p.severity.split('[').next().unwrap_or_default();
+        let place = |offset: Option<u32>| match offset {
+            Some(offset) => report.place(p.file, offset as usize),
+            None => (0, 0),
+        };
+        let (line, col) = place(p.span.map(|s| s.start));
+        let (end_line, end_col) = place(p.span.map(|s| s.end));
+        print!(
+            "{}",
+            tauto_rt::entry::line(&[
+                severity,
+                &p.code,
+                &line.to_string(),
+                &col.to_string(),
+                &end_line.to_string(),
+                &end_col.to_string(),
+                &p.message,
+            ])
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+/// The phases of reading and checking a tote (`tauto check DIR --timings`), each with the time
+/// since the one before it.
+fn phase_timings_text(phases: &[(&'static str, std::time::Duration)]) -> String {
+    let total: std::time::Duration = phases.iter().map(|(_, d)| *d).sum();
+    let mut out = format!("phases: {:.3}s in all\n", total.as_secs_f64());
+    for (name, d) in phases {
+        out.push_str(&format!("{:>9.3}s  {name}\n", d.as_secs_f64()));
+    }
+    out
+}
+
+/// `--timings=json` of a tote: the phases, in order.
+fn phase_timings_json(phases: &[(&'static str, std::time::Duration)]) -> report::Json {
+    use report::Json;
+    Json::Arr(
+        phases
+            .iter()
+            .map(|(name, d)| {
+                Json::Obj(vec![
+                    ("phase", Json::Str((*name).to_string())),
+                    ("micros", Json::Num(d.as_micros() as usize)),
+                ])
+            })
+            .collect(),
+    )
 }

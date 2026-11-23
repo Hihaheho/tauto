@@ -1,0 +1,652 @@
+import "ir.taut"
+import "names.taut"
+import std::text
+import std::builtin::macro
+import std::std
+import std::base
+
+// The macro `ll!`: a piece of IR written as IR, where `$x` stands for a
+// value of the program that builds it. The macro reads the piece by the
+// grammar of `ir.taut` and gives the `llvm::…::I` value it is, so a piece that
+// is not IR is an error where it is written.
+
+fn lift_token(tok: SynToken): SynExpr { Syn::lift_text(tok.text, tok.span) }
+
+fn lift_flag(o: Option(SynToken)): SynExpr {
+  match o {
+    None => quote { None }
+    Some(tok) => {
+      let s := lift_token(tok)
+      quote { Some($s) }
+    }
+  }
+}
+
+fn lift_int(i: llvm::IntOf): SynExpr {
+  match i {
+    Int(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::IntOf::I::Int_I($s) }
+    }
+    Hole(e) => quote { ll_count($e) }
+  }
+}
+
+fn lift_label(l: llvm::LabelRef): SynExpr {
+  match l {
+    Local(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::LabelRef::I::Local_I($s) }
+    }
+    Hole(e) => quote { ll_label_ref($e) }
+  }
+}
+
+fn lift_callee(c: llvm::Callee): SynExpr {
+  match c {
+    Global(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Callee::I::Global_I($s) }
+    }
+    Hole(e) => quote { ll_callee($e) }
+    Asm(a) => {
+      let text := lift_token(a.str)
+      let constraints := lift_token(a.str_2)
+      quote { llvm::Callee::I::Asm_I(llvm::Asm::I::Mk($text, $constraints)) }
+    }
+  }
+}
+
+fn lift_ty(t: llvm::Ty): SynExpr ! {div} {
+  match t {
+    Void(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Ty::I::Void_I($s) }
+    }
+    IntTy(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Ty::I::IntTy_I($s) }
+    }
+    Ptr(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Ty::I::Ptr_I($s) }
+    }
+    ArrayTy(a) => {
+      let n := lift_int(a.int_of)
+      let of := lift_ty(a.ty)
+      quote { llvm::Ty::I::ArrayTy_I(llvm::ArrayTy::I::Mk($n, $of)) }
+    }
+    StructTy(st) => {
+      let first := lift_ty(st.ty)
+      let rest := lift_struct_rest(st.rep)
+      quote { llvm::Ty::I::StructTy_I(llvm::StructTy::I::Mk($first, $rest)) }
+    }
+    Named(n) => {
+      let s := lift_token(n.local)
+      quote { llvm::Ty::I::Named_I(llvm::Named::I::Mk($s)) }
+    }
+    Hole(e) => e
+  }
+}
+
+fn lift_struct_rest(xs: List(llvm::StructTy_Rep1)): SynExpr ! {div} {
+  match xs {
+    Nil => quote { Nil }
+    Cons(x, rest) => {
+      let of := lift_ty(x.ty)
+      let tail := lift_struct_rest(rest)
+      quote { Cons(llvm::StructTy_Rep1::I::Mk($of), $tail) }
+    }
+  }
+}
+
+fn lift_value(v: llvm::Value): SynExpr {
+  match v {
+    Local(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Value::I::Local_I($s) }
+    }
+    Global(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Value::I::Global_I($s) }
+    }
+    Int(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Value::I::Int_I($s) }
+    }
+    Null(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Value::I::Null_I($s) }
+    }
+    True(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Value::I::True_I($s) }
+    }
+    False(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Value::I::False_I($s) }
+    }
+    Poison(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Value::I::Poison_I($s) }
+    }
+    Zero(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Value::I::Zero_I($s) }
+    }
+    Hole(e) => e
+  }
+}
+
+fn lift_ty_value(tv: llvm::TyValue): SynExpr ! {div} {
+  let of := lift_ty(tv.ty)
+  let v := lift_value(tv.value)
+  quote { llvm::TyValue::I::Mk($of, $v) }
+}
+
+fn lift_args_rest(xs: List(llvm::Args_Rep1)): SynExpr ! {div} {
+  match xs {
+    Nil => quote { Nil }
+    Cons(x, rest) => {
+      let tv := lift_ty_value(x.ty_value)
+      let tail := lift_args_rest(rest)
+      quote { Cons(llvm::Args_Rep1::I::Mk($tv), $tail) }
+    }
+  }
+}
+
+fn lift_args(a: llvm::ArgsOf): SynExpr ! {div} {
+  match a {
+    Args(l) => match l.opt {
+      None => quote { llvm::ArgsOf::I::Args_I(llvm::Args::I::Mk(None)) }
+      Some(o) => {
+        let first := lift_ty_value(o.ty_value)
+        let rest := lift_args_rest(o.rep)
+        quote {
+          llvm::ArgsOf::I::Args_I(llvm::Args::I::Mk(Some(llvm::Args_Opt1::I::Mk($first, $rest))))
+        }
+      }
+    }
+    Hole(e) => quote { ll_args_of($e) }
+  }
+}
+
+fn lift_param_ty(p: llvm::ParamTy): SynExpr ! {div} {
+  match p {
+    Ty(t) => {
+      let of := lift_ty(t)
+      quote { llvm::ParamTy::I::Ty_I($of) }
+    }
+    Ellipsis(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::ParamTy::I::Ellipsis_I($s) }
+    }
+  }
+}
+
+fn lift_param_tys_rest(xs: List(llvm::ParamTys_Rep1)): SynExpr ! {div} {
+  match xs {
+    Nil => quote { Nil }
+    Cons(x, rest) => {
+      let p := lift_param_ty(x.param_ty)
+      let tail := lift_param_tys_rest(rest)
+      quote { Cons(llvm::ParamTys_Rep1::I::Mk($p), $tail) }
+    }
+  }
+}
+
+fn lift_param_tys(ps: llvm::ParamTys): SynExpr ! {div} {
+  match ps.opt {
+    None => quote { llvm::ParamTys::I::Mk(None) }
+    Some(o) => {
+      let first := lift_param_ty(o.param_ty)
+      let rest := lift_param_tys_rest(o.rep)
+      quote { llvm::ParamTys::I::Mk(Some(llvm::ParamTys_Opt1::I::Mk($first, $rest))) }
+    }
+  }
+}
+
+fn lift_call(c: llvm::Call): SynExpr ! {div} {
+  let cc := lift_flag(c.fast_cc)
+  let of := lift_ty(c.ty)
+  let f := lift_callee(c.callee)
+  let args := lift_args(c.args_of)
+  let sig := match c.sig {
+    None => quote { None }
+    Some(x) => {
+      let tys := lift_param_tys(x.param_tys)
+      quote { Some(llvm::Sig::I::Mk($tys)) }
+    }
+  }
+  quote { llvm::Call::I::Mk($cc, $of, $sig, $f, $args) }
+}
+
+fn lift_indices(xs: List(llvm::Gep_Rep1)): SynExpr ! {div} {
+  match xs {
+    Nil => quote { Nil }
+    Cons(x, rest) => {
+      let tv := lift_ty_value(x.ty_value)
+      let tail := lift_indices(rest)
+      quote { Cons(llvm::Gep_Rep1::I::Mk($tv), $tail) }
+    }
+  }
+}
+
+fn lift_bin_op(x: llvm::BinOp): SynExpr {
+  match x {
+    OpAdd(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpAdd_I($s) }
+    }
+    OpSub(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpSub_I($s) }
+    }
+    OpMul(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpMul_I($s) }
+    }
+    OpShl(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpShl_I($s) }
+    }
+    OpLshr(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpLshr_I($s) }
+    }
+    OpAnd(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpAnd_I($s) }
+    }
+    OpOr(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpOr_I($s) }
+    }
+    OpXor(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpXor_I($s) }
+    }
+    OpSdiv(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpSdiv_I($s) }
+    }
+    OpUdiv(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpUdiv_I($s) }
+    }
+    OpSrem(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpSrem_I($s) }
+    }
+    OpUrem(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::BinOp::I::OpUrem_I($s) }
+    }
+  }
+}
+
+fn lift_pred(x: llvm::Pred): SynExpr {
+  match x {
+    PredEq(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::Pred::I::PredEq_I($s) }
+    }
+    PredNe(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::Pred::I::PredNe_I($s) }
+    }
+    PredSlt(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::Pred::I::PredSlt_I($s) }
+    }
+    PredSgt(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::Pred::I::PredSgt_I($s) }
+    }
+    PredSle(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::Pred::I::PredSle_I($s) }
+    }
+    PredSge(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::Pred::I::PredSge_I($s) }
+    }
+    PredUlt(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::Pred::I::PredUlt_I($s) }
+    }
+    PredUgt(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::Pred::I::PredUgt_I($s) }
+    }
+    PredUle(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::Pred::I::PredUle_I($s) }
+    }
+    PredUge(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::Pred::I::PredUge_I($s) }
+    }
+  }
+}
+
+fn lift_cast_op(x: llvm::CastOp): SynExpr {
+  match x {
+    OpTrunc(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::CastOp::I::OpTrunc_I($s) }
+    }
+    OpZext(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::CastOp::I::OpZext_I($s) }
+    }
+    OpSext(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::CastOp::I::OpSext_I($s) }
+    }
+    OpIntToPtr(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::CastOp::I::OpIntToPtr_I($s) }
+    }
+    OpPtrToInt(tok) => {
+      let s := Syn::lift_text(tok.text, tok.span)
+      quote { llvm::CastOp::I::OpPtrToInt_I($s) }
+    }
+  }
+}
+
+fn lift_rhs(r: llvm::Rhs): SynExpr ! {div} {
+  match r {
+    Alloca(a) => {
+      let of := lift_ty(a.ty)
+      quote { llvm::Rhs::I::Alloca_I(llvm::Alloca::I::Mk($of)) }
+    }
+    Load(l) => {
+      let of := lift_ty(l.ty)
+      let p := lift_value(l.value)
+      quote { llvm::Rhs::I::Load_I(llvm::Load::I::Mk($of, $p)) }
+    }
+    Gep(g) => {
+      let of := lift_ty(g.ty)
+      let p := lift_value(g.value)
+      let at := lift_indices(g.rep)
+      quote { llvm::Rhs::I::Gep_I(llvm::Gep::I::Mk($of, $p, $at)) }
+    }
+    Bin(b) => {
+      let op := lift_bin_op(b.bin_op)
+      let of := lift_ty(b.ty)
+      let x := lift_value(b.value)
+      let y := lift_value(b.value_2)
+      quote { llvm::Rhs::I::Bin_I(llvm::Bin::I::Mk($op, $of, $x, $y)) }
+    }
+    Icmp(c) => {
+      let op := lift_pred(c.pred)
+      let of := lift_ty(c.ty)
+      let x := lift_value(c.value)
+      let y := lift_value(c.value_2)
+      quote { llvm::Rhs::I::Icmp_I(llvm::Icmp::I::Mk($op, $of, $x, $y)) }
+    }
+    Cast(c) => {
+      let op := lift_cast_op(c.cast_op)
+      let source := lift_ty(c.ty)
+      let x := lift_value(c.value)
+      let target := lift_ty(c.ty_2)
+      quote { llvm::Rhs::I::Cast_I(llvm::Cast::I::Mk($op, $source, $x, $target)) }
+    }
+    Call(c) => {
+      let call := lift_call(c)
+      quote { llvm::Rhs::I::Call_I($call) }
+    }
+    ExtractValue(x) => {
+      let of := lift_ty(x.ty)
+      let v := lift_value(x.value)
+      let at := lift_int(x.int_of)
+      quote { llvm::Rhs::I::ExtractValue_I(llvm::ExtractValue::I::Mk($of, $v, $at)) }
+    }
+    InsertValue(x) => {
+      let of := lift_ty(x.ty)
+      let v := lift_value(x.value)
+      let part := lift_ty(x.ty_2)
+      let w := lift_value(x.value_2)
+      let at := lift_int(x.int_of)
+      quote { llvm::Rhs::I::InsertValue_I(llvm::InsertValue::I::Mk($of, $v, $part, $w, $at)) }
+    }
+  }
+}
+
+fn lift_store(st: llvm::Store): SynExpr ! {div} {
+  let of := lift_ty(st.ty)
+  let v := lift_value(st.value)
+  let p := lift_value(st.value_2)
+  quote { llvm::Instr::I::Store_I(llvm::Store::I::Mk($of, $v, $p)) }
+}
+
+fn lift_case(c: llvm::Case): SynExpr ! {div} {
+  let of := lift_ty(c.ty)
+  let v := lift_value(c.value)
+  let l := lift_label(c.label_ref)
+  quote { llvm::Case::I::Mk($of, $v, $l) }
+}
+
+fn lift_case_list(xs: List(llvm::Case)): SynExpr ! {div} {
+  match xs {
+    Nil => quote { Nil }
+    Cons(x, rest) => {
+      let c := lift_case(x)
+      let tail := lift_case_list(rest)
+      quote { Cons($c, $tail) }
+    }
+  }
+}
+
+fn lift_cases(cs: Option(llvm::CasesOf)): SynExpr ! {div} {
+  match cs {
+    None => quote { None }
+    Some(of) => match of {
+      Cases(l) => {
+        let c := lift_case(l.case)
+        let tail := lift_case_list(l.case_2)
+        quote { Some(llvm::CasesOf::I::Cases_I(llvm::Cases::I::Mk($c, $tail))) }
+      }
+      Hole(e) => quote { ll_cases($e) }
+    }
+  }
+}
+
+fn lift_term(t: llvm::Term): SynExpr ! {div} {
+  match t {
+    Ret(r) => {
+      let of := lift_ty(r.ty)
+      match r.value {
+        None => quote { llvm::Term::I::Ret_I(llvm::Ret::I::Mk($of, None)) }
+        Some(x) => {
+          let v := lift_value(x)
+          quote { llvm::Term::I::Ret_I(llvm::Ret::I::Mk($of, Some($v))) }
+        }
+      }
+    }
+    Br(b) => {
+      let l := lift_label(b.label_ref)
+      quote { llvm::Term::I::Br_I(llvm::Br::I::Mk($l)) }
+    }
+    CondBr(c) => {
+      let of := lift_ty(c.ty)
+      let v := lift_value(c.value)
+      let yes := lift_label(c.label_ref)
+      let no := lift_label(c.label_ref_2)
+      quote { llvm::Term::I::CondBr_I(llvm::CondBr::I::Mk($of, $v, $yes, $no)) }
+    }
+    Switch(sw) => {
+      let of := lift_ty(sw.ty)
+      let v := lift_value(sw.value)
+      let other := lift_label(sw.label_ref)
+      let cases := lift_cases(sw.cases_of)
+      quote { llvm::Term::I::Switch_I(llvm::Switch::I::Mk($of, $v, $other, $cases)) }
+    }
+    Unreachable(tok) => {
+      let s := lift_token(tok)
+      quote { llvm::Term::I::Unreachable_I($s) }
+    }
+  }
+}
+
+fn lift_param(p: llvm::Param): SynExpr ! {div} {
+  let of := lift_ty(p.ty)
+  let name := lift_token(p.local)
+  quote { llvm::Param::I::Mk($of, $name) }
+}
+
+fn lift_params_rest(xs: List(llvm::Params_Rep1)): SynExpr ! {div} {
+  match xs {
+    Nil => quote { Nil }
+    Cons(x, rest) => {
+      let p := lift_param(x.param)
+      let tail := lift_params_rest(rest)
+      quote { Cons(llvm::Params_Rep1::I::Mk($p), $tail) }
+    }
+  }
+}
+
+fn lift_params(ps: llvm::Params): SynExpr ! {div} {
+  match ps.opt {
+    None => quote { llvm::Params::I::Mk(None) }
+    Some(o) => {
+      let first := lift_param(o.param)
+      let rest := lift_params_rest(o.rep)
+      quote { llvm::Params::I::Mk(Some(llvm::Params_Opt1::I::Mk($first, $rest))) }
+    }
+  }
+}
+
+fn lift_instr(i: llvm::Instr): SynExpr ! {div} {
+  match i {
+    Def(d) => {
+      let name := lift_token(d.local)
+      let rhs := lift_rhs(d.rhs)
+      quote { llvm::Instr::I::Def_I(llvm::Def::I::Mk($name, $rhs)) }
+    }
+    Store(st) => lift_store(st)
+    Call(c) => {
+      let call := lift_call(c)
+      quote { llvm::Instr::I::Call_I($call) }
+    }
+  }
+}
+
+fn lift_instrs(xs: List(llvm::Instr)): SynExpr ! {div} {
+  match xs {
+    Nil => quote { Nil }
+    Cons(x, rest) => {
+      let i := lift_instr(x)
+      let tail := lift_instrs(rest)
+      quote { Cons($i, $tail) }
+    }
+  }
+}
+
+fn lift_block(b: llvm::Block): SynExpr ! {div} {
+  let label := lift_token(b.label_def)
+  let instrs := lift_instrs(b.instr)
+  let last := lift_term(b.term)
+  quote { llvm::Block::I::Mk($label, $instrs, $last) }
+}
+
+fn lift_blocks(xs: List(llvm::Block)): SynExpr ! {div} {
+  match xs {
+    Nil => quote { Nil }
+    Cons(x, rest) => {
+      let b := lift_block(x)
+      let tail := lift_blocks(rest)
+      quote { Cons($b, $tail) }
+    }
+  }
+}
+
+fn lift_item(i: llvm::Item): SynExpr ! {div} {
+  match i {
+    Declare(d) => {
+      let of := lift_ty(d.ty)
+      let name := lift_token(d.global)
+      let tys := lift_param_tys(d.param_tys)
+      let never := lift_flag(d.no_return)
+      quote { llvm::Item::I::Declare_I(llvm::Declare::I::Mk($of, $name, $tys, $never)) }
+    }
+    TypeDef(t) => {
+      let name := lift_token(t.local)
+      let of := lift_ty(t.ty)
+      quote { llvm::Item::I::TypeDef_I(llvm::TypeDef::I::Mk($name, $of)) }
+    }
+    Constant(c) => {
+      let name := lift_token(c.global)
+      let of := lift_ty(c.ty)
+      let bytes := lift_token(c.c_string)
+      quote { llvm::Item::I::Constant_I(llvm::Constant::I::Mk($name, $of, $bytes)) }
+    }
+    Boxed(c) => {
+      let name := lift_token(c.global)
+      let of := lift_ty(c.ty)
+      let bytes := lift_token(c.c_string)
+      let align := lift_int(c.int_of)
+      quote { llvm::Item::I::Boxed_I(llvm::Boxed::I::Mk($name, $of, $bytes, $align)) }
+    }
+    Variable(v) => {
+      let name := lift_token(v.global)
+      let internal := lift_token(v.internal)
+      let of := lift_ty(v.ty)
+      let value := lift_value(v.value)
+      quote { llvm::Item::I::Variable_I(llvm::Variable::I::Mk($name, $internal, $of, $value)) }
+    }
+    Define(d) => {
+      let internal := lift_flag(d.internal)
+      let cc := lift_flag(d.fast_cc)
+      let of := lift_ty(d.ty)
+      let name := lift_token(d.global)
+      let params := lift_params(d.params)
+      let never := lift_flag(d.no_return)
+      let bare := lift_flag(d.naked)
+      let entry := lift_block(d.block)
+      let rest := lift_blocks(d.block_2)
+      quote {
+        llvm::Item::I::Define_I(
+          llvm::Define::I::Mk($internal, $cc, $of, $name, $params, $never, $bare, $entry, $rest)
+        )
+      }
+    }
+  }
+}
+
+fn lift_item_list(xs: List(llvm::Item)): SynExpr ! {div} {
+  match xs {
+    Nil => quote { Nil }
+    Cons(x, rest) => {
+      let i := lift_item(x)
+      let tail := lift_item_list(rest)
+      quote { Cons($i, $tail) }
+    }
+  }
+}
+
+fn lift_items(xs: llvm::Items): SynExpr ! {div} {
+  let first := lift_item(xs.item)
+  let rest := lift_item_list(xs.item_2)
+  quote { Cons($first, $rest) }
+}
+
+// A piece of IR as the value it is: an operation that gives a value
+// (`llvm::Rhs::I`), a `store` (`llvm::Instr::I`), a block's last instruction
+// (`llvm::Term::I`), a type (`llvm::Ty::I`), a case of a `switch`
+// (`llvm::Case::I`) or the items of a module (`List(llvm::Item::I)`). A hole
+// `$x` is a value (`llvm::Value::I`), a type (`llvm::Ty::I`), a label
+// (`LlLabel`), a function (`LlGlobal`), a number (`LlInt`), the arguments of
+// a call (`List(llvm::TyValue::I)`) or the cases of a `switch`
+// (`List(llvm::Case::I)`), by where it stands.
+pub macro fn ll(f: llvm::Frag): SynExpr ! {div} {
+  match f.piece {
+    Rhs(r) => lift_rhs(r)
+    Store(st) => lift_store(st)
+    Term(t) => lift_term(t)
+    Ty(t) => lift_ty(t)
+    Case(c) => lift_case(c)
+    Items(xs) => lift_items(xs)
+  }
+}

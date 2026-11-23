@@ -140,6 +140,10 @@ inductive Occ : Bool → Ty → Key → Prop where
   | ret {ps B ρ p k} : divEff ∉ ρ → Occ p B k → Occ p (.fn ps B ρ) k
   | args {ps B ρ e} : divEff ∉ ρ → e ∈ ρ → Occ true (.fn ps B ρ) (.args e)
   | ans {ps B ρ e} : divEff ∉ ρ → e ∈ ρ → Occ false (.fn ps B ρ) (.ans e)
+  | lparam {ps B ρ q p k} : divEff ∉ ρ → q ∈ ps → Occ p q k → Occ (!p) (.lfn ps B ρ) k
+  | lret {ps B ρ p k} : divEff ∉ ρ → Occ p B k → Occ p (.lfn ps B ρ) k
+  | largs {ps B ρ e} : divEff ∉ ρ → e ∈ ρ → Occ true (.lfn ps B ρ) (.args e)
+  | lans {ps B ρ e} : divEff ∉ ρ → e ∈ ρ → Occ false (.lfn ps B ρ) (.ans e)
   | union {ts t p k} : t ∈ ts → Occ p t k → Occ p (.union ts) k
   | tag {a T p k} : Occ p T k → Occ p (.tag a T) k
 
@@ -150,15 +154,19 @@ variable {sg : Sig}
 
 theorem Comp.interp_mono {I I' : Interp} {ρ} {P Q : World → Tm → Prop}
     (ha : ∀ e ∈ ρ, ∀ S vs, I.args S e vs → I'.args S e vs)
-    (hn : ∀ e ∈ ρ, ∀ S w, I'.ans S e w → I.ans S e w) (hPQ : ∀ S v, P S v → Q S v) {S μ t}
-    (h : Comp sg I ρ P S μ t) : Comp sg I' ρ Q S μ t := by
+    (hn : ∀ e ∈ ρ, ∀ S w, I'.ans S e w → I.ans S e w) (hPQ : ∀ S v, P S v → Q S v) {S t}
+    (h : Comp sg I ρ P S t) : Comp sg I' ρ Q S t := by
   induction h with
-  | val hv hs hp => exact .val hv hs (hPQ _ _ hp)
-  | step s hS _ ih => exact .step s hS ih
-  | perform hs hE hh hv he hargs _ ih =>
-      exact .perform hs hE hh hv he (ha _ he _ _ hargs)
-        fun S' w μ' hS' hs' hw => ih S' w μ' hS' hs' (hn _ he _ _ hw)
-  | fault hf => exact .fault hf
+  | val hv hp => exact .val hv (hPQ _ _ hp)
+  | step s _ ih => exact .step s ih
+  | perform hE hh hv he hop hargs _ ih =>
+      exact .perform hE hh hv he hop (ha _ he _ _ hargs)
+        fun S' ξ w hξ hw => ih S' ξ w hξ (hn _ he _ _ hw)
+  | get hE hk hS _ ih => exact .get hE hk hS fun w hw ht => ih w hw ht
+  | set hE hk hS hv ht _ ih => exact .set hE hk hS hv ht ih
+  | field hE hk hS hex _ ih =>
+      exact .field hE hk hS hex fun u d args c fs w hu hut hg hw => ih u d args c fs w hu hut hg hw
+  | write hE hk hS hv hex _ ih => exact .write hE hk hS hv hex ih
 
 mutual
   /-- With more of what `A` uses the same way and less of what it uses the
@@ -173,14 +181,16 @@ mutual
     | .float, _, _, _, _, _, _, h => h
     | .float32, _, _, _, _, _, _, h => h
     | .never, _, _, _, _, _, _, h => h
-    | .cell _, _, _, _, _, _, _, h => h
+    | .place _, _, _, _, _, _, _, h => h
+    | .hidden, _, _, _, _, _, _, h => h
     | .brw _, _, _, _, _, _, _, h => h
     | .mbrw _, _, _, _, _, _, _, h => h
     | .info _ _, _, _, _, _, _, _, h => h
     | .tvar _, _, _, _, _, _, _, h => h
     | .data d a, _, _, hp, _, _, _, h => by
-        obtain ⟨S₀, h0, h⟩ := h
-        exact ⟨S₀, h0, hp (.data d a) .data _ _ h⟩
+        rcases h with ⟨hP, h⟩ | ⟨hP, S₀, ξ, v₀, hw, rfl, h⟩
+        · exact .inl ⟨hP, hp (.data d a) .data _ _ h⟩
+        · exact .inr ⟨hP, S₀, ξ, v₀, hw, rfl, hp (.data d a) .data _ _ h⟩
     | .tag _ T, _, _, hp, hn, _, v, h =>
         Sem.interp_mono T (fun k hk => hp k (.tag hk)) (fun k hk => hn k (.tag hk)) v h
     | .union ts, _, _, hp, hn, _, v, h =>
@@ -191,14 +201,27 @@ mutual
         refine ⟨h.1, h.2.1, h.2.2.1, ?_⟩
         by_cases hd : divEff ∈ ρ
         · exact .inl hd
-        refine .inr fun S' args hS hargs μ hs => ?_
+        refine .inr fun S' args hargs => ?_
         have hargs' := Sems.interp_mono ps (I := I') (I' := I)
           (fun q hq k hk => hn k (.param (p := true) hd hq hk))
           (fun q hq k hk => hp k (.param (p := false) hd hq hk)) args hargs
         exact Comp.interp_mono (fun e he S vs h => hp (.args e) (.args hd he) S vs h)
           (fun e he S w h => hn (.ans e) (.ans hd he) S w h)
           (fun _ => Sem.interp_mono B (fun k hk => hp k (.ret hd hk)) (fun k hk => hn k (.ret hd hk)))
-          ((h.2.2.2.resolve_left hd) S' args hS hargs' μ hs)
+          ((h.2.2.2.resolve_left hd) S' args hargs')
+    | .lfn ps B ρ, I, I', hp, hn, _, v, h => by
+        simp only [Sem] at h ⊢
+        refine ⟨h.1, h.2.1, ?_⟩
+        by_cases hd : divEff ∈ ρ
+        · exact .inl hd
+        refine .inr fun S' ξ args hξ hargs => ?_
+        have hargs' := Sems.interp_mono ps (I := I') (I' := I)
+          (fun q hq k hk => hn k (.lparam (p := true) hd hq hk))
+          (fun q hq k hk => hp k (.lparam (p := false) hd hq hk)) args hargs
+        exact Comp.interp_mono (fun e he S vs h => hp (.args e) (.largs hd he) S vs h)
+          (fun e he S w h => hn (.ans e) (.lans hd he) S w h)
+          (fun _ => Sem.interp_mono B (fun k hk => hp k (.lret hd hk)) (fun k hk => hn k (.lret hd hk)))
+          ((h.2.2.resolve_left hd) S' ξ args hξ hargs')
 
   theorem Sems.interp_mono : ∀ (As : List Ty) {I I' : Interp},
       (∀ A ∈ As, ∀ k, Occ true A k → k.Le I I') → (∀ A ∈ As, ∀ k, Occ false A k → k.Le I' I) →
@@ -325,6 +348,16 @@ theorem Occ.rank_le {p A k} (h : Occ p A k) : k.rank ≤ 2 * A.size := by
   | @ans ps B _ _ _ he =>
       have := Ty.size_fn_eff (qs := ps) (B := B) he
       simp only [Key.rank]; omega
+  | lparam _ hq _ ih =>
+      have := Tys.size_le hq
+      simp only [Ty.size] at this ⊢; omega
+  | lret _ _ ih => simp only [Ty.size] at ih ⊢; omega
+  | largs _ he =>
+      have := Effs.size_le he
+      simp only [Key.rank, Ty.size]; omega
+  | lans _ he =>
+      have := Effs.size_le he
+      simp only [Key.rank, Ty.size]; omega
   | union ht _ ih =>
       have := Tys.size_le ht
       simp only [Ty.size]; omega
@@ -346,9 +379,9 @@ theorem Strat.good {sg : Sig} (h : Strat sg) : ∃ I, Good sg I := by
 /-- There are finitely many `struct`s and `enum`s. -/
 def DataFin (sg : Sig) : Prop := ∃ n, ∀ d, n ≤ d → sg.data d = none
 
-/-- `A` holds a function without `Div` that performs `e`. -/
+/-- `A` holds a function (first-class or local) without `Div` that performs `e`. -/
 def Perf (sg : Sig) (A : Ty) (e : Eff) : Prop :=
-  ∃ qs B ρ, Reach sg A (.fn qs B ρ) ∧ divEff ∉ ρ ∧ e ∈ ρ
+  ∃ qs B ρ, FnReach sg A qs B ρ ∧ divEff ∉ ρ ∧ e ∈ ρ
 
 /-- Rule 3, for a function that a type of `e` holds. -/
 def EffBelow (sg : Sig) (r : Eff → Eff → Prop) : Prop :=
@@ -356,7 +389,7 @@ def EffBelow (sg : Sig) (r : Eff → Eff → Prop) : Prop :=
 
 theorem EffOk.below {sg : Sig} {r : Eff → Eff → Prop}
     (h : ∀ e ps R, sg.op e = some (ps, R) → ∀ A, A ∈ R :: ps → ∀ qs B ρ,
-      Reach sg A (.fn qs B ρ) → divEff ∈ ρ ∨ ∀ e', e' ∈ ρ → r e' e) : EffBelow sg r := by
+      FnReach sg A qs B ρ → divEff ∈ ρ ∨ ∀ e', e' ∈ ρ → r e' e) : EffBelow sg r := by
   intro e ps R he A hA e' ⟨qs, B, ρ, hr, hd, he'⟩
   exact (h e ps R he A hA qs B ρ hr).resolve_left hd e' he'
 

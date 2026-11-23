@@ -1,7 +1,7 @@
 import "existing_data_sound.taut"
 import "../../surface/src/surface.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "data_presence_sound.taut"
 import "datas_frame.taut"
@@ -10,6 +10,7 @@ import "finish_data_presence_sound.taut"
 import "registration_presence_sound.taut"
 import "summary_sound.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 
@@ -43,8 +44,7 @@ pub theorem registered_after_prefix(
   d,
   ck_st(
     frame_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
       m
     )
@@ -54,8 +54,7 @@ pub theorem registered_after_prefix(
     d,
     ck_st(
       frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
         m
       )
@@ -123,17 +122,14 @@ pub theorem registered_tail(
   decl,
   ck_st(
     frame_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(tail, next)),
       ck_program_data_one(c, stmt)
     )
   )
 ) {
   registration_bind_present(
-    Unit,
-    Unit,
-    registration_name(decl),
+    <A: Unit, B: Unit, n: registration_name(decl)>,
     (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(tail, next)),
     ck_program_data_one(c, stmt),
     ck_program_data_one_ordered(c, stmt, ordered),
@@ -157,8 +153,7 @@ pub theorem registered_cons(
   d,
   ck_st(
     frame_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
       ck_program_data_one(c, s)
     )
@@ -168,8 +163,7 @@ pub theorem registered_cons(
     d,
     ck_st(
       frame_bind(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
         ck_program_data_one(c, s)
       )
@@ -208,7 +202,7 @@ pub theorem ck_program_data_registers(
   ordered: CkDatasOrdered(c),
   h: DeclaresData(ss, d)
 ): RegisteredData(d, ck_st(ck_program_data(ss, c))) {
-  ⊢ RegisteredData(d, ck_st(ck_program_data(ss, c))) from match ss {
+  match ss {
     Nil => ⊢ RegisteredData(d, ck_st(ck_program_data(Nil, c))) from match h {
     }
     Cons(s, rest) => Eq::subst(
@@ -234,7 +228,7 @@ pub theorem registration_finish_after_present(
   ordered: CkDatasOrdered(ck_st(m)),
   present: RegisteredData(d, ck_st(m))
 ): RegisteredData(d, ck_st(registration_finish_after(program, m))) {
-  ⊢ RegisteredData(d, ck_st(registration_finish_after(program, m))) from match m {
+  match m {
     mut1(ignored, next) => Eq::subst(
       (z: Mut1(Unit, Checker)) => RegisteredData(d, ck_st(z)),
       Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
@@ -250,7 +244,7 @@ pub theorem registration_program_after_present(
   ordered: CkDatasOrdered(ck_st(m)),
   h: DeclaresData(program, d)
 ): RegisteredData(d, ck_st(registration_program_after(program, m))) {
-  ⊢ RegisteredData(d, ck_st(registration_program_after(program, m))) from match m {
+  match m {
     mut1(ignored, next) => registration_finish_after_present(
       program,
       d,

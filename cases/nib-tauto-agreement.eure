@@ -50,12 +50,11 @@ types = "error: depends on the value `b`"
 
 // `(p: Bool)` on `Bool × Unit`: the member the elaboration takes is what runs.
 @ cases.a-member-taken-by-its-type-is-extracted
-extract = true
 source = ```tauto
 fn f(p: Bool × Unit): Bool { (p: Bool) }
-perform show("f", f(#(true, #())))
+show(&f(#(true, #())))
 ```
-shows = ["f = true"]
+stdout = "true\n"
 
 // `@a x`: the value with a label, the same in Nib and in a proof.
 @ cases.a-labelled-value
@@ -66,14 +65,13 @@ fn g(y: @a Bool): Bool {
     @a z => z
   }
 }
-perform show("g", g(f(true)))
+show(&g(f(true)))
 ```
 types = "ok"
 checks_all = "ok"
-shows = ["g = true"]
+stdout = "true\n"
 
 @ cases.a-labelled-value-runs-after-extraction
-extract = true
 source = ```tauto
 fn f(x: Bool): @a Bool { @a x }
 fn g(y: @a Bool): Bool {
@@ -81,26 +79,24 @@ fn g(y: @a Bool): Bool {
     @a z => z
   }
 }
-perform show("g", g(f(true)))
+show(&g(f(true)))
 ```
-shows = ["g = true"]
+stdout = "true\n"
 
 // `@a p` takes the label off the type of what `p` binds, after extraction as in the
 // kernel: the bound value is a `Nat` again, which `+` takes.
 @ cases.a-labelled-pattern-unwraps-after-extraction
-extract = true
 source = ```tauto
 fn f(x: @a Nat): Nat {
   match x {
     @a n => n + 1
   }
 }
-perform show("f", f(@a 4))
+show(&f(@a 4))
 ```
-shows = ["f = 5"]
+stdout = "5\n"
 
 @ cases.a-labelled-argument-pattern-unwraps-after-extraction
-extract = true
 source = ```tauto
 fn f(o: Option(@b Nat)): Nat {
   match o {
@@ -108,9 +104,9 @@ fn f(o: Option(@b Nat)): Nat {
     None => 0
   }
 }
-perform show("f", f(Some(@b 4)))
+show(&f(Some(@b 4)))
 ```
-shows = ["f = 5"]
+stdout = "5\n"
 
 // A value is wrapped where `@a T` is expected for a `T`, in one application of the constructor.
 @ cases.wrapping-in-a-label-ends
@@ -166,11 +162,11 @@ fn g(b: Bool × Unit): Bool {
     #(x, #()) => x
   }
 }
-perform show("g", g(f()))
+show(&g(f()))
 ```
 types = "ok"
 checks_all = "ok"
-shows = ["g = true"]
+stdout = "true\n"
 
 // `×` nests to the right: `Bool × (Nat × Text)` is `Bool × Nat × Text`.
 @ cases.a-product-nests-to-the-right
@@ -202,11 +198,11 @@ fn f(): (Bool × Option(Bool)) × Option(Option(Bool)) { #(#(true, Some(false)),
 fn g(p: (Bool × Option(Bool)) × Option(Option(Bool))): Option(Bool) {
   match p { #(#(_, o), _) => o }
 }
-perform show("g", g(f()))
+show(&g(f()))
 ```
 types = "ok"
 checks_all = "ok"
-shows = ["g = Some(false)"]
+stdout = "Some(false)\n"
 
 // Labels are a set: `@a @b T` and `@b @a T` are one type, in either order of the patterns.
 @ cases.labels-are-a-set
@@ -217,11 +213,11 @@ fn g(y: @b @a Bool): Bool {
     @a @b z => z
   }
 }
-perform show("g", g(f(true)))
+show(&g(f(true)))
 ```
 types = "ok"
 checks_all = "ok"
-shows = ["g = true"]
+stdout = "true\n"
 
 // `@a p` takes off `@a` only: `p` is matched against the value with the other labels.
 @ cases.a-label-pattern-keeps-the-other-labels
@@ -275,14 +271,13 @@ fn j(o: Option(Bool), c: Bool): Bool {
 }
 theorem kept(): j(Some(true), true) = true { Refl }
 theorem passed(): j(Some(true), false) = false { Refl }
-perform show("j", j(Some(true), true))
+show(&j(Some(true), true))
 ```
 types = "ok"
 checks_all = "ok"
-shows = ["j = true"]
+stdout = "true\n"
 
 @ cases.a-guard-runs-after-extraction
-extract = true
 source = ```tauto
 fn j(o: Option(Bool), c: Bool): Bool {
   match o {
@@ -291,10 +286,13 @@ fn j(o: Option(Bool), c: Bool): Bool {
     None => c
   }
 }
-perform show("j", j(Some(true), true))
-perform show("k", j(Some(true), false))
+show(&j(Some(true), true))
+show(&j(Some(true), false))
 ```
-shows = ["j = true", "k = false"]
+stdout = ```
+true
+false
+```
 
 // A numeral is a `Nat` where a `Nat` is expected, in Nib as in a proof.
 @ cases.a-numeral-is-a-nat

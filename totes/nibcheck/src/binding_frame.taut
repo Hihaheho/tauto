@@ -1,5 +1,7 @@
+import "messages.taut"
 import "application_frame.taut"
-import std::Text
+import std::base
+import std::text
 import "checker.taut"
 import "checker_frame.taut"
 import "datas_frame.taut"
@@ -9,7 +11,9 @@ import "handle_frame.taut"
 import "pattern_scope.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -21,18 +25,18 @@ pub fn binding_let_mode(
   value: SurfaceTerm,
   bm: Bool
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match bm {
+  match bm {
     true => ck_rewrap1(
       ck_error(
         c,
-        cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
+        let_mut_borrow_binds_return_message(name),
         span_of(value)
       )
     )
     false => ck_rewrap1(
       ck_error(
         c,
-        cat3("`let &", name, "` binds what a function returns as `-> &A`"),
+        let_borrow_binds_return_message(name),
         span_of(value)
       )
     )
@@ -46,17 +50,17 @@ pub theorem binding_let_mode_frame(
   value: SurfaceTerm,
   bm: Bool
 ): CkReadFrame(c, binding_let_mode(c, name, resolved, value, bm)) {
-  ⊢ CkReadFrame(c, binding_let_mode(c, name, resolved, value, bm)) from match bm {
+  match bm {
     true => frame_rewrap(
       c,
       ck_error(
         c,
-        cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
+        let_mut_borrow_binds_return_message(name),
         span_of(value)
       ),
       ck_error_frame(
         c,
-        cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
+        let_mut_borrow_binds_return_message(name),
         span_of(value)
       )
     )
@@ -64,12 +68,12 @@ pub theorem binding_let_mode_frame(
       c,
       ck_error(
         c,
-        cat3("`let &", name, "` binds what a function returns as `-> &A`"),
+        let_borrow_binds_return_message(name),
         span_of(value)
       ),
       ck_error_frame(
         c,
-        cat3("`let &", name, "` binds what a function returns as `-> &A`"),
+        let_borrow_binds_return_message(name),
         span_of(value)
       )
     )
@@ -82,12 +86,12 @@ pub fn binding_let_view(
   bm: Bool,
   resolved: Ty,
   value: SurfaceTerm,
-  r#view: Bool
+  view: Bool
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match r#view {
+  match view {
     true => frame_error_if(
       c,
-      cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
+      let_mut_borrow_binds_return_message(name),
       span_of(value),
       Bool::and(bm, not(ck_has_mut_borrow(c, resolved)))
     )
@@ -101,12 +105,12 @@ pub theorem binding_let_view_frame(
   bm: Bool,
   resolved: Ty,
   value: SurfaceTerm,
-  r#view: Bool
-): CkReadFrame(c, binding_let_view(c, name, bm, resolved, value, r#view)) {
-  ⊢ CkReadFrame(c, binding_let_view(c, name, bm, resolved, value, r#view)) from match r#view {
+  view: Bool
+): CkReadFrame(c, binding_let_view(c, name, bm, resolved, value, view)) {
+  match view {
     true => frame_error_if_ok(
       c,
-      cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
+      let_mut_borrow_binds_return_message(name),
       span_of(value),
       Bool::and(bm, not(ck_has_mut_borrow(c, resolved)))
     )
@@ -114,21 +118,21 @@ pub theorem binding_let_view_frame(
   }
 }
 
-pub theorem binding_let_borrow_unf(c: Checker, name: Text, r#view: Bool, bm: Bool, resolved: Ty, value: SurfaceTerm): ck_let_borrow(c, name, r#view, bm, resolved, value) = binding_let_view(c, name, bm, resolved, value, r#view) { ⊢ ck_let_borrow(c, name, r#view, bm, resolved, value) = binding_let_view(c, name, bm, resolved, value, r#view) from match r#view { true => Refl
+pub theorem binding_let_borrow_unf(c: Checker, name: Text, view: Bool, bm: Bool, resolved: Ty, value: SurfaceTerm): ck_let_borrow(c, name, view, bm, resolved, value) = binding_let_view(c, name, bm, resolved, value, view) { match view { true => Refl
     false => Refl } }
 
 pub theorem ck_let_borrow_frame(
   c: Checker,
   name: Text,
-  r#view: Bool,
+  view: Bool,
   bm: Bool,
   resolved: Ty,
   value: SurfaceTerm
-): CkReadFrame(c, ck_let_borrow(c, name, r#view, bm, resolved, value)) {
+): CkReadFrame(c, ck_let_borrow(c, name, view, bm, resolved, value)) {
   Eq::subst(
     (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
-    Eq::sym(binding_let_borrow_unf(c, name, r#view, bm, resolved, value)),
-    binding_let_view_frame(c, name, bm, resolved, value, r#view)
+    Eq::sym(binding_let_borrow_unf(c, name, view, bm, resolved, value)),
+    binding_let_view_frame(c, name, bm, resolved, value, view)
   )
 }
 
@@ -139,15 +143,10 @@ pub fn binding_stored_borrow(
   resolved: Ty,
   value: SurfaceTerm,
   p: Ty,
-  borrow: Bool
+  r#borrow: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match borrow {
-    true => frame_bind(
-      Unit,
-      Ty,
-      (ignored: Unit, c1: Checker) => mut1(t, c1),
-      ck_stored_borrow(c, name, resolved, value)
-    )
+  match r#borrow {
+    true => mut1(t, c)
     false => mut1(p, c)
   }
 }
@@ -159,18 +158,10 @@ pub theorem binding_stored_borrow_frame(
   resolved: Ty,
   value: SurfaceTerm,
   p: Ty,
-  borrow: Bool
-): CkReadFrame(c, binding_stored_borrow(c, name, t, resolved, value, p, borrow)) {
-  ⊢ CkReadFrame(c, binding_stored_borrow(c, name, t, resolved, value, p, borrow)) from match borrow {
-    true => frame_bind_ok(
-      Unit,
-      Ty,
-      c,
-      (ignored: Unit, c1: Checker) => mut1(t, c1),
-      ck_stored_borrow(c, name, resolved, value),
-      ck_stored_borrow_frame(c, name, resolved, value),
-      ignored => c1 => Refl
-    )
+  r#borrow: Bool
+): CkReadFrame(c, binding_stored_borrow(c, name, t, resolved, value, p, r#borrow)) {
+  match r#borrow {
+    true => Refl
     false => Refl
   }
 }
@@ -183,13 +174,8 @@ pub fn binding_stored_found(
   value: SurfaceTerm,
   found: Option(Ty)
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match found {
-    None => frame_bind(
-      Unit,
-      Ty,
-      (ignored: Unit, c1: Checker) => mut1(t, c1),
-      ck_stored_borrow(c, name, resolved, value)
-    )
+  match found {
+    None => mut1(t, c)
     Some(p) => binding_stored_borrow(c, name, t, resolved, value, p, term_is_borrow(value))
   }
 }
@@ -202,16 +188,8 @@ pub theorem binding_stored_found_frame(
   value: SurfaceTerm,
   found: Option(Ty)
 ): CkReadFrame(c, binding_stored_found(c, name, t, resolved, value, found)) {
-  ⊢ CkReadFrame(c, binding_stored_found(c, name, t, resolved, value, found)) from match found {
-    None => frame_bind_ok(
-      Unit,
-      Ty,
-      c,
-      (ignored: Unit, c1: Checker) => mut1(t, c1),
-      ck_stored_borrow(c, name, resolved, value),
-      ck_stored_borrow_frame(c, name, resolved, value),
-      ignored => c1 => Refl
-    )
+  match found {
+    None => Refl
     Some(p) => binding_stored_borrow_frame(c, name, t, resolved, value, p, term_is_borrow(value))
   }
 }
@@ -224,7 +202,7 @@ pub fn binding_stored(
   value: SurfaceTerm,
   stored: Bool
 ): Mut1(Ty, Checker) {
-  ⊢ Mut1(Ty, Checker) from match stored {
+  match stored {
     true => binding_stored_found(c, name, t, resolved, value, ck_view_value(c, resolved))
     false => mut1(t, c)
   }
@@ -238,7 +216,7 @@ pub theorem binding_stored_frame(
   value: SurfaceTerm,
   stored: Bool
 ): CkReadFrame(c, binding_stored(c, name, t, resolved, value, stored)) {
-  ⊢ CkReadFrame(c, binding_stored(c, name, t, resolved, value, stored)) from match stored {
+  match stored {
     true => binding_stored_found_frame(c, name, t, resolved, value, ck_view_value(c, resolved))
     false => Refl
   }
@@ -279,54 +257,28 @@ pub fn binding_var_view(
   c: Checker,
   name: Text,
   resolved: Ty,
-  value: SurfaceTerm,
-  r#view: Bool
+  value: SurfaceTerm
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match r#view {
-    true => ck_rewrap1(
-      ck_error(c, cat3("a borrow cannot be stored in `var ", name, "`"), span_of(value))
-    )
-    false => frame_error_if(
+  frame_error_if(
       c,
-      cat5(
-        "a var cannot hold a linear value: `",
-        name,
-        "` is ",
-        ty_show(ck_shown(c, resolved)),
-        ""
-      ),
+      var_holds_linear_message(name, ty_show(ck_shown(c, resolved))),
       span_of(value),
       kind_eq(ck_kind(c, resolved), KindLinear)
     )
-  }
 }
 
 pub theorem binding_var_view_frame(
   c: Checker,
   name: Text,
   resolved: Ty,
-  value: SurfaceTerm,
-  r#view: Bool
-): CkReadFrame(c, binding_var_view(c, name, resolved, value, r#view)) {
-  ⊢ CkReadFrame(c, binding_var_view(c, name, resolved, value, r#view)) from match r#view {
-    true => frame_rewrap(
+  value: SurfaceTerm
+): CkReadFrame(c, binding_var_view(c, name, resolved, value)) {
+  frame_error_if_ok(
       c,
-      ck_error(c, cat3("a borrow cannot be stored in `var ", name, "`"), span_of(value)),
-      ck_error_frame(c, cat3("a borrow cannot be stored in `var ", name, "`"), span_of(value))
-    )
-    false => frame_error_if_ok(
-      c,
-      cat5(
-        "a var cannot hold a linear value: `",
-        name,
-        "` is ",
-        ty_show(ck_shown(c, resolved)),
-        ""
-      ),
+      var_holds_linear_message(name, ty_show(ck_shown(c, resolved))),
       span_of(value),
       kind_eq(ck_kind(c, resolved), KindLinear)
     )
-  }
 }
 
 pub fn binding_var_mode(
@@ -336,14 +288,14 @@ pub fn binding_var_mode(
   value: SurfaceTerm,
   vb: Bool
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match vb {
+  match vb {
     true => frame_error_if(
       c,
-      cat3("`var &", name, "` binds what a function returns as a view"),
+      var_borrow_binds_view_message(name),
       span_of(value),
       not(ck_is_view(c, resolved))
     )
-    false => binding_var_view(c, name, resolved, value, ck_is_view(c, resolved))
+    false => binding_var_view(c, name, resolved, value)
   }
 }
 
@@ -354,18 +306,18 @@ pub theorem binding_var_mode_frame(
   value: SurfaceTerm,
   vb: Bool
 ): CkReadFrame(c, binding_var_mode(c, name, resolved, value, vb)) {
-  ⊢ CkReadFrame(c, binding_var_mode(c, name, resolved, value, vb)) from match vb {
+  match vb {
     true => frame_error_if_ok(
       c,
-      cat3("`var &", name, "` binds what a function returns as a view"),
+      var_borrow_binds_view_message(name),
       span_of(value),
       not(ck_is_view(c, resolved))
     )
-    false => binding_var_view_frame(c, name, resolved, value, ck_is_view(c, resolved))
+    false => binding_var_view_frame(c, name, resolved, value)
   }
 }
 
-pub theorem binding_var_check_unf(c: Checker, name: Text, vb: Bool, resolved: Ty, value: SurfaceTerm): ck_var_check(c, name, vb, resolved, value) = binding_var_mode(c, name, resolved, value, vb) { ⊢ ck_var_check(c, name, vb, resolved, value) = binding_var_mode(c, name, resolved, value, vb) from match vb { true => Refl
+pub theorem binding_var_check_unf(c: Checker, name: Text, vb: Bool, resolved: Ty, value: SurfaceTerm): ck_var_check(c, name, vb, resolved, value) = binding_var_mode(c, name, resolved, value, vb) { match vb { true => Refl
     false => Refl } }
 
 pub theorem ck_var_check_frame(
@@ -383,20 +335,20 @@ pub theorem ck_var_check_frame(
 }
 
 pub fn binding_scope_only<A>(c: Checker, m: Mut1(A, Scope)): Mut2(A, Checker, Scope) {
-  ⊢ Mut2(A, Checker, Scope) from match m { mut1(v, env) => mut2(v, c, env) }
+  match m { mut1(v, env) => mut2(v, c, env) }
 }
 pub theorem binding_scope_only_frame<A: Type>(
   c: Checker,
   m: Mut1(A, Scope),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, binding_scope_only(c, m)) {
-  ⊢ CkScopeFrame(c, binding_scope_only(c, m)) from match m {
+  match m {
     mut1(v, env) => AndIntro(ordered, Refl)
   }
 }
 
 pub fn binding_mark(c: Checker, env: Scope, vb: Bool): Mut2(Unit, Checker, Scope) {
-  ⊢ Mut2(Unit, Checker, Scope) from match vb {
+  match vb {
     true => binding_scope_only(c, ck_mark_view(env))
     false => mut2(Star, c, env)
   }
@@ -408,7 +360,7 @@ pub theorem binding_mark_frame(
   vb: Bool,
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, binding_mark(c, env, vb)) {
-  ⊢ CkScopeFrame(c, binding_mark(c, env, vb)) from match vb {
+  match vb {
     true => binding_scope_only_frame(c, ck_mark_view(env), ordered)
     false => pattern_return_frame(c, env, Star, ordered)
   }
@@ -423,11 +375,9 @@ pub fn binding_var_after(
   t: Ty
 ): Mut2(Unit, Checker, Scope) {
   pattern_bind_one(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, c1: Checker) => pattern_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (ignored2: Unit, c2: Checker, env2: Scope) => binding_mark(c2, env2, vb),
       ck_bind_local(c1, env, name, t, true, handle_body_start(value))
     ),
@@ -445,12 +395,10 @@ pub theorem binding_var_after_frame(
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, binding_var_after(c, env, name, value, vb, t)) {
   pattern_bind_one_frame(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker) => pattern_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (ignored2: Unit, c2: Checker, env2: Scope) => binding_mark(c2, env2, vb),
       ck_bind_local(c1, env, name, t, true, handle_body_start(value))
     ),
@@ -462,8 +410,7 @@ pub theorem binding_var_after_frame(
       ordered
     ),
     ignored => c1 => o_c1 => pattern_bind_frame(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c1,
       (ignored2: Unit, c2: Checker, env2: Scope) => binding_mark(c2, env2, vb),
       ck_bind_local(c1, env, name, t, true, handle_body_start(value)),
@@ -483,9 +430,8 @@ pub fn binding_var(
   vb: Bool
 ): Mut2(Unit, Checker, Scope) {
   pattern_bind_one(
-    Ty,
-    Unit,
-    (t: Ty, c1: Checker) => binding_var_after(c1, env, name, value, vb, t),
+    <A: Ty, B: Unit>,
+    (t: Ty, c1: Checker) => binding_var_after(c1, env, name, value, Bool::or(vb, ck_is_view(c1, ck_resolve(c1, t))), t),
     ck_stmt_ty(c, ty, v, value, name)
   )
 }
@@ -501,13 +447,12 @@ pub theorem binding_var_frame(
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, binding_var(c, env, name, ty, v, value, vb)) {
   pattern_bind_one_frame(
-    Ty,
-    Unit,
+    <A: Ty, B: Unit>,
     c,
-    (t: Ty, c1: Checker) => binding_var_after(c1, env, name, value, vb, t),
+    (t: Ty, c1: Checker) => binding_var_after(c1, env, name, value, Bool::or(vb, ck_is_view(c1, ck_resolve(c1, t))), t),
     ck_stmt_ty(c, ty, v, value, name),
     ck_stmt_ty_run_frame(c, ty, v, value, name, ordered),
-    t => c1 => o_c1 => binding_var_after_frame(c1, env, name, value, vb, t, o_c1)
+    t => c1 => o_c1 => binding_var_after_frame(c1, env, name, value, Bool::or(vb, ck_is_view(c1, ck_resolve(c1, t))), t, o_c1)
   )
 }
 
@@ -542,14 +487,14 @@ pub fn binding_let_if(
   c: Checker,
   env: Scope,
   name: Text,
-  r#view: Bool,
+  view: Bool,
   bm: Bool,
   resolved: Ty,
   value: SurfaceTerm,
-  borrow: Bool
+  r#borrow: Bool
 ): Mut2(Unit, Checker, Scope) {
-  ⊢ Mut2(Unit, Checker, Scope) from match borrow {
-    true => pattern_lift(env, ck_let_borrow(c, name, r#view, bm, resolved, value))
+  match r#borrow {
+    true => pattern_lift(env, ck_let_borrow(c, name, view, bm, resolved, value))
     false => mut2(Star, c, env)
   }
 }
@@ -558,22 +503,22 @@ pub theorem binding_let_if_frame(
   c: Checker,
   env: Scope,
   name: Text,
-  r#view: Bool,
+  view: Bool,
   bm: Bool,
   resolved: Ty,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   ordered: CkOrdered(c)
-): CkScopeFrame(c, binding_let_if(c, env, name, r#view, bm, resolved, value, borrow)) {
-  ⊢ CkScopeFrame(c, binding_let_if(c, env, name, r#view, bm, resolved, value, borrow)) from match borrow {
+): CkScopeFrame(c, binding_let_if(c, env, name, view, bm, resolved, value, r#borrow)) {
+  match r#borrow {
     true => pattern_lift_frame(
       c,
       env,
-      ck_let_borrow(c, name, r#view, bm, resolved, value),
+      ck_let_borrow(c, name, view, bm, resolved, value),
       run_frame_read(
         c,
-        ck_let_borrow(c, name, r#view, bm, resolved, value),
-        ck_let_borrow_frame(c, name, r#view, bm, resolved, value),
+        ck_let_borrow(c, name, view, bm, resolved, value),
+        ck_let_borrow_frame(c, name, view, bm, resolved, value),
         ordered
       )
     )
@@ -587,23 +532,21 @@ pub fn binding_let_after(
   name: Text,
   t0: Ty,
   resolved: Ty,
-  r#view: Bool,
+  view: Bool,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   bm: Bool
 ): Mut2(Unit, Checker, Scope) {
   pattern_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, c1: Checker, env1: Scope) => pattern_bind_one(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       (t: Ty, c2: Checker) => pattern_rewrap(
         ck_bind_local(c2, env1, name, t, false, handle_body_start(value))
       ),
-      ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(borrow), r#view))
+      ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(r#borrow), view))
     ),
-    binding_let_if(c, env, name, r#view, bm, resolved, value, borrow)
+    binding_let_if(c, env, name, view, bm, resolved, value, r#borrow)
   )
 }
 
@@ -613,38 +556,35 @@ pub theorem binding_let_after_frame(
   name: Text,
   t0: Ty,
   resolved: Ty,
-  r#view: Bool,
+  view: Bool,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   bm: Bool,
   ordered: CkOrdered(c)
-): CkScopeFrame(c, binding_let_after(c, env, name, t0, resolved, r#view, value, borrow, bm)) {
+): CkScopeFrame(c, binding_let_after(c, env, name, t0, resolved, view, value, r#borrow, bm)) {
   pattern_bind_frame(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, c1: Checker, env1: Scope) => pattern_bind_one(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       (t: Ty, c2: Checker) => pattern_rewrap(
         ck_bind_local(c2, env1, name, t, false, handle_body_start(value))
       ),
-      ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(borrow), r#view))
+      ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(r#borrow), view))
     ),
-    binding_let_if(c, env, name, r#view, bm, resolved, value, borrow),
-    binding_let_if_frame(c, env, name, r#view, bm, resolved, value, borrow, ordered),
+    binding_let_if(c, env, name, view, bm, resolved, value, r#borrow),
+    binding_let_if_frame(c, env, name, view, bm, resolved, value, r#borrow, ordered),
     ignored => c1 => env1 => o_c1 => pattern_bind_one_frame(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       c1,
       (t: Ty, c2: Checker) => pattern_rewrap(
         ck_bind_local(c2, env1, name, t, false, handle_body_start(value))
       ),
-      ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(borrow), r#view)),
+      ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(r#borrow), view)),
       run_frame_read(
         c1,
-        ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(borrow), r#view)),
-        ck_let_stored_frame(c1, name, t0, resolved, value, Bool::and(not(borrow), r#view)),
+        ck_let_stored(c1, name, t0, resolved, value, Bool::and(not(r#borrow), view)),
+        ck_let_stored_frame(c1, name, t0, resolved, value, Bool::and(not(r#borrow), view)),
         o_c1
       ),
       t => c2 => o_c2 => pattern_rewrap_frame(
@@ -663,12 +603,11 @@ pub fn binding_let(
   ty: Option(SurfaceTerm),
   v: Ty,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   bm: Bool
 ): Mut2(Unit, Checker, Scope) {
   pattern_bind_one(
-    Ty,
-    Unit,
+    <A: Ty, B: Unit>,
     (t0: Ty, c1: Checker) => binding_let_after(
       c1,
       env,
@@ -677,7 +616,7 @@ pub fn binding_let(
       ck_resolve(c1, t0),
       ck_is_view(c1, ck_resolve(c1, t0)),
       value,
-      borrow,
+      r#borrow,
       bm
     ),
     ck_stmt_ty(c, ty, v, value, name)
@@ -691,13 +630,12 @@ pub theorem binding_let_frame(
   ty: Option(SurfaceTerm),
   v: Ty,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   bm: Bool,
   ordered: CkOrdered(c)
-): CkScopeFrame(c, binding_let(c, env, name, ty, v, value, borrow, bm)) {
+): CkScopeFrame(c, binding_let(c, env, name, ty, v, value, r#borrow, bm)) {
   pattern_bind_one_frame(
-    Ty,
-    Unit,
+    <A: Ty, B: Unit>,
     c,
     (t0: Ty, c1: Checker) => binding_let_after(
       c1,
@@ -707,7 +645,7 @@ pub theorem binding_let_frame(
       ck_resolve(c1, t0),
       ck_is_view(c1, ck_resolve(c1, t0)),
       value,
-      borrow,
+      r#borrow,
       bm
     ),
     ck_stmt_ty(c, ty, v, value, name),
@@ -720,7 +658,7 @@ pub theorem binding_let_frame(
       ck_resolve(c1, t0),
       ck_is_view(c1, ck_resolve(c1, t0)),
       value,
-      borrow,
+      r#borrow,
       bm,
       o_c1
     )
@@ -734,7 +672,7 @@ pub theorem binding_let_unf(
   ty: Option(SurfaceTerm),
   v: Ty,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   bm: Bool
 ): ck_let(
   c,
@@ -743,9 +681,9 @@ pub theorem binding_let_unf(
   ty,
   v,
   value,
-  borrow,
+  r#borrow,
   bm
-) = binding_let(c, env, name, ty, v, value, borrow, bm) { Refl }
+) = binding_let(c, env, name, ty, v, value, r#borrow, bm) { Refl }
 
 pub theorem ck_let_scope_frame(
   c: Checker,
@@ -754,56 +692,72 @@ pub theorem ck_let_scope_frame(
   ty: Option(SurfaceTerm),
   v: Ty,
   value: SurfaceTerm,
-  borrow: Bool,
+  r#borrow: Bool,
   bm: Bool,
   ordered: CkOrdered(c)
-): CkScopeFrame(c, ck_let(c, env, name, ty, v, value, borrow, bm)) {
+): CkScopeFrame(c, ck_let(c, env, name, ty, v, value, r#borrow, bm)) {
   Eq::subst(
     (z: Mut2(Unit, Checker, Scope)) => CkScopeFrame(c, z),
-    Eq::sym(binding_let_unf(c, env, name, ty, v, value, borrow, bm)),
-    binding_let_frame(c, env, name, ty, v, value, borrow, bm, ordered)
+    Eq::sym(binding_let_unf(c, env, name, ty, v, value, r#borrow, bm)),
+    binding_let_frame(c, env, name, ty, v, value, r#borrow, bm, ordered)
   )
 }
 
-pub fn binding_local_view(l: Local): Bool { l.r#view }
 pub fn binding_local_mutable(l: Local): Bool { l.mutable }
 
 pub fn binding_assign_borrow(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   inner: Ty,
   mutable: Bool
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match mutable {
-    true => ck_rewrap1(ck_expect(c, v, inner, span_of(value), cat3("`", name, "`")))
-    false => ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value)))
+  match mutable {
+    true => ⊢ Mut1(Unit, Checker) from match deref {
+      true => ck_rewrap1(ck_expect(c, v, inner, span_of(value), cat3("`", name, "`")))
+      false => ck_rewrap1(ck_error(c, assign_through_borrow_message(name), span_of(value)))
+    }
+    false => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
   }
 }
 
 pub theorem binding_assign_borrow_frame(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   inner: Ty,
   mutable: Bool,
   ordered: CkOrdered(c)
-): CkRunFrame(c, binding_assign_borrow(c, name, v, value, inner, mutable)) {
-  ⊢ CkRunFrame(c, binding_assign_borrow(c, name, v, value, inner, mutable)) from match mutable {
-    true => run_frame_rewrap(
-      c,
-      ck_expect(c, v, inner, span_of(value), cat3("`", name, "`")),
-      ck_expect_run_frame(c, v, inner, span_of(value), cat3("`", name, "`"), ordered)
-    )
+): CkRunFrame(c, binding_assign_borrow(c, name, deref, v, value, inner, mutable)) {
+  match mutable {
+    true => ⊢ CkRunFrame(c, binding_assign_borrow(c, name, deref, v, value, inner, true)) from match deref {
+      true => run_frame_rewrap(
+        c,
+        ck_expect(c, v, inner, span_of(value), cat3("`", name, "`")),
+        ck_expect_run_frame(c, v, inner, span_of(value), cat3("`", name, "`"), ordered)
+      )
+      false => run_frame_read(
+        c,
+        ck_rewrap1(ck_error(c, assign_through_borrow_message(name), span_of(value))),
+        frame_rewrap(
+          c,
+          ck_error(c, assign_through_borrow_message(name), span_of(value)),
+          ck_error_frame(c, assign_through_borrow_message(name), span_of(value))
+        ),
+        ordered
+      )
+    }
     false => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
@@ -813,44 +767,46 @@ pub theorem binding_assign_borrow_frame(
 pub fn binding_assign_type(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   t: Ty
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match t {
-    TyInt(pat_w) => ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value)))
-    TyBool => ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value)))
-    TyText => ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value)))
-    TyUnit => ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value)))
-    TyNever => ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value)))
-    TyDecimal => ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value)))
-    TyFloat => ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value)))
-    TyFn(pat_params, pat_result, pat_kind) => ck_rewrap1(
-      ck_error(c, cat3("`", name, "` is not a var"), span_of(value))
+  match t {
+    TyInt(^pat_w) => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
+    TyBool => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
+    TyText => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
+    TyUnit => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
+    TyNever => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
+    TyDecimal => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
+    TyFloat => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
+    TyFloat32 => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
+    TyFn(^pat_params, ^pat_result, ^pat_kind) => ck_rewrap1(
+      ck_error(c, binding_refused_message(name, deref), span_of(value))
     )
-    TyUnion(pat_members) => ck_rewrap1(
-      ck_error(c, cat3("`", name, "` is not a var"), span_of(value))
+    TyUnion(^pat_members) => ck_rewrap1(
+      ck_error(c, binding_refused_message(name, deref), span_of(value))
     )
-    TyProduct(pat_members) => ck_rewrap1(
-      ck_error(c, cat3("`", name, "` is not a var"), span_of(value))
+    TyProduct(^pat_members) => ck_rewrap1(
+      ck_error(c, binding_refused_message(name, deref), span_of(value))
     )
-    TyTagged(pat_tags, pat_inner) => ck_rewrap1(
-      ck_error(c, cat3("`", name, "` is not a var"), span_of(value))
+    TyTagged(^pat_tags, ^pat_inner) => ck_rewrap1(
+      ck_error(c, binding_refused_message(name, deref), span_of(value))
     )
-    TyNamed(pat_name, pat_args) => ck_rewrap1(
-      ck_error(c, cat3("`", name, "` is not a var"), span_of(value))
+    TyNamed(^pat_name, ^pat_args) => ck_rewrap1(
+      ck_error(c, binding_refused_message(name, deref), span_of(value))
     )
-    TyParam(pat_name, pat_bound) => ck_rewrap1(
-      ck_error(c, cat3("`", name, "` is not a var"), span_of(value))
+    TyParam(^pat_name, ^pat_bound) => ck_rewrap1(
+      ck_error(c, binding_refused_message(name, deref), span_of(value))
     )
-    TyInfo(pat_inner) => ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value)))
-    TyBorrow(inner, m) => binding_assign_borrow(c, name, v, value, inner, m)
-    TyVar(pat_v) => ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value)))
-    TyPoly(pat_generics, pat_inner) => ck_rewrap1(
-      ck_error(c, cat3("`", name, "` is not a var"), span_of(value))
+    TyInfo(^pat_inner) => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
+    TyBorrow(inner, m) => binding_assign_borrow(c, name, deref, v, value, inner, m)
+    TyVar(^pat_v) => ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value)))
+    TyPoly(^pat_generics, ^pat_inner) => ck_rewrap1(
+      ck_error(c, binding_refused_message(name, deref), span_of(value))
     )
-    TyApp(pat_head, pat_arg) => ck_rewrap1(
-      ck_error(c, cat3("`", name, "` is not a var"), span_of(value))
+    TyApp(^pat_head, ^pat_arg) => ck_rewrap1(
+      ck_error(c, binding_refused_message(name, deref), span_of(value))
     )
   }
 }
@@ -858,180 +814,191 @@ pub fn binding_assign_type(
 pub theorem binding_assign_type_frame(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   t: Ty,
   ordered: CkOrdered(c)
-): CkRunFrame(c, binding_assign_type(c, name, v, value, t)) {
-  ⊢ CkRunFrame(c, binding_assign_type(c, name, v, value, t)) from match t {
+): CkRunFrame(c, binding_assign_type(c, name, deref, v, value, t)) {
+  match t {
     TyInt(pat_w) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyBool => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyText => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyUnit => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyNever => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyDecimal => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyFloat => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
+      ),
+      ordered
+    )
+    TyFloat32 => run_frame_read(
+      c,
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
+      frame_rewrap(
+        c,
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyFn(pat_params, pat_result, pat_kind) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyUnion(pat_members) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyProduct(pat_members) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyTagged(pat_tags, pat_inner) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyNamed(pat_name, pat_args) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyParam(pat_name, pat_bound) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyInfo(pat_inner) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
-    TyBorrow(inner, m) => binding_assign_borrow_frame(c, name, v, value, inner, m, ordered)
+    TyBorrow(inner, m) => binding_assign_borrow_frame(c, name, deref, v, value, inner, m, ordered)
     TyVar(pat_v) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyPoly(pat_generics, pat_inner) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
     TyApp(pat_head, pat_arg) => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
+      ck_rewrap1(ck_error(c, binding_refused_message(name, deref), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat3("`", name, "` is not a var"), span_of(value)),
-        ck_error_frame(c, cat3("`", name, "` is not a var"), span_of(value))
+        ck_error(c, binding_refused_message(name, deref), span_of(value)),
+        ck_error_frame(c, binding_refused_message(name, deref), span_of(value))
       ),
       ordered
     )
@@ -1041,107 +1008,88 @@ pub theorem binding_assign_type_frame(
 pub fn binding_assign_mutable(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   l: Local,
   mutable: Bool
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match mutable {
-    true => ck_rewrap1(ck_expect(c, v, leaf_local_ty(l), span_of(value), cat3("`", name, "`")))
-    false => binding_assign_type(c, name, v, value, ck_resolve(c, leaf_local_ty(l)))
+  match mutable {
+    true => ⊢ Mut1(Unit, Checker) from match deref {
+      true => ck_rewrap1(ck_error(c, deref_needs_mut_borrow_message(name), span_of(value)))
+      false => ck_rewrap1(ck_expect(c, v, leaf_local_ty(l), span_of(value), cat3("`", name, "`")))
+    }
+    false => binding_assign_type(c, name, deref, v, value, ck_resolve(c, leaf_local_ty(l)))
   }
 }
 
 pub theorem binding_assign_mutable_frame(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   l: Local,
   mutable: Bool,
   ordered: CkOrdered(c)
-): CkRunFrame(c, binding_assign_mutable(c, name, v, value, l, mutable)) {
-  ⊢ CkRunFrame(c, binding_assign_mutable(c, name, v, value, l, mutable)) from match mutable {
-    true => run_frame_rewrap(
-      c,
-      ck_expect(c, v, leaf_local_ty(l), span_of(value), cat3("`", name, "`")),
-      ck_expect_run_frame(c, v, leaf_local_ty(l), span_of(value), cat3("`", name, "`"), ordered)
-    )
-    false => binding_assign_type_frame(c, name, v, value, ck_resolve(c, leaf_local_ty(l)), ordered)
-  }
-}
-
-pub fn binding_assign_view(
-  c: Checker,
-  name: Text,
-  v: Ty,
-  value: SurfaceTerm,
-  l: Local,
-  r#view: Bool
-): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match r#view {
-    true => ck_rewrap1(ck_error(c, "a view var cannot be reassigned", span_of(value)))
-    false => binding_assign_mutable(c, name, v, value, l, binding_local_mutable(l))
-  }
-}
-
-pub theorem binding_assign_view_frame(
-  c: Checker,
-  name: Text,
-  v: Ty,
-  value: SurfaceTerm,
-  l: Local,
-  r#view: Bool,
-  ordered: CkOrdered(c)
-): CkRunFrame(c, binding_assign_view(c, name, v, value, l, r#view)) {
-  ⊢ CkRunFrame(c, binding_assign_view(c, name, v, value, l, r#view)) from match r#view {
-    true => run_frame_read(
-      c,
-      ck_rewrap1(ck_error(c, "a view var cannot be reassigned", span_of(value))),
-      frame_rewrap(
+): CkRunFrame(c, binding_assign_mutable(c, name, deref, v, value, l, mutable)) {
+  match mutable {
+    true => ⊢ CkRunFrame(c, binding_assign_mutable(c, name, deref, v, value, l, true)) from match deref {
+      true => run_frame_read(
         c,
-        ck_error(c, "a view var cannot be reassigned", span_of(value)),
-        ck_error_frame(c, "a view var cannot be reassigned", span_of(value))
-      ),
-      ordered
-    )
-    false => binding_assign_mutable_frame(c, name, v, value, l, binding_local_mutable(l), ordered)
+        ck_rewrap1(ck_error(c, deref_needs_mut_borrow_message(name), span_of(value))),
+        frame_rewrap(
+          c,
+          ck_error(c, deref_needs_mut_borrow_message(name), span_of(value)),
+          ck_error_frame(c, deref_needs_mut_borrow_message(name), span_of(value))
+        ),
+        ordered
+      )
+      false => run_frame_rewrap(
+        c,
+        ck_expect(c, v, leaf_local_ty(l), span_of(value), cat3("`", name, "`")),
+        ck_expect_run_frame(c, v, leaf_local_ty(l), span_of(value), cat3("`", name, "`"), ordered)
+      )
+    }
+    false => binding_assign_type_frame(c, name, deref, v, value, ck_resolve(c, leaf_local_ty(l)), ordered)
   }
 }
 
 pub fn binding_assign(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   found: Option(Local)
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match found {
-    None => ck_rewrap1(ck_error(c, cat2(name, " is not defined"), span_of(value)))
-    Some(l) => binding_assign_view(c, name, v, value, l, binding_local_view(l))
+  match found {
+    None => ck_rewrap1(ck_error(c, not_defined_message(name), span_of(value)))
+    Some(l) => binding_assign_mutable(c, name, deref, v, value, l, binding_local_mutable(l))
   }
 }
 
 pub theorem binding_assign_frame(
   c: Checker,
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   found: Option(Local),
   ordered: CkOrdered(c)
-): CkRunFrame(c, binding_assign(c, name, v, value, found)) {
-  ⊢ CkRunFrame(c, binding_assign(c, name, v, value, found)) from match found {
+): CkRunFrame(c, binding_assign(c, name, deref, v, value, found)) {
+  match found {
     None => run_frame_read(
       c,
-      ck_rewrap1(ck_error(c, cat2(name, " is not defined"), span_of(value))),
+      ck_rewrap1(ck_error(c, not_defined_message(name), span_of(value))),
       frame_rewrap(
         c,
-        ck_error(c, cat2(name, " is not defined"), span_of(value)),
-        ck_error_frame(c, cat2(name, " is not defined"), span_of(value))
+        ck_error(c, not_defined_message(name), span_of(value)),
+        ck_error_frame(c, not_defined_message(name), span_of(value))
       ),
       ordered
     )
-    Some(l) => binding_assign_view_frame(c, name, v, value, l, binding_local_view(l), ordered)
+    Some(l) => binding_assign_mutable_frame(c, name, deref, v, value, l, binding_local_mutable(l), ordered)
   }
 }
 
@@ -1149,27 +1097,284 @@ pub theorem binding_assign_unf(
   c: Checker,
   env: List(Local),
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm
 ): ck_assign(
   c,
   env,
   name,
+  deref,
   v,
   value
-) = binding_assign(c, name, v, value, env_find(env, name)) { Refl }
+) = binding_assign(c, name, deref, v, value, env_find(env, name)) { Refl }
 
 pub theorem ck_assign_run_frame(
   c: Checker,
   env: List(Local),
   name: Text,
+  deref: Bool,
   v: Ty,
   value: SurfaceTerm,
   ordered: CkOrdered(c)
-): CkRunFrame(c, ck_assign(c, env, name, v, value)) {
+): CkRunFrame(c, ck_assign(c, env, name, deref, v, value)) {
   Eq::subst(
     (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
-    Eq::sym(binding_assign_unf(c, env, name, v, value)),
-    binding_assign_frame(c, name, v, value, env_find(env, name), ordered)
+    Eq::sym(binding_assign_unf(c, env, name, deref, v, value)),
+    binding_assign_frame(c, name, deref, v, value, env_find(env, name), ordered)
+  )
+}
+
+pub fn binding_local_view(l: Local): Bool { l.view }
+
+pub fn binding_assign_place_deref(
+  c: Checker,
+  inner: Option(Ty),
+  v: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm
+): Mut1(Unit, Checker) {
+  match inner {
+    Some(t) => ck_rewrap1(ck_expect(c, v, t, span_of(value), cat3("`", place_label(place), "`")))
+    None => ck_rewrap1(
+      ck_error(c, deref_needs_mut_borrow_message(place_label(place)), span_of(place))
+    )
+  }
+}
+
+pub fn binding_assign_place_plain(
+  c: Checker,
+  through: Bool,
+  v: Ty,
+  pt: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm
+): Mut1(Unit, Checker) {
+  match through {
+    true => ck_rewrap1(
+      ck_error(c, assign_through_borrow_message(place_label(place)), span_of(place))
+    )
+    false => ck_rewrap1(
+      ck_expect(c, v, ty_unborrowed(ck_resolve(c, pt)), span_of(value), cat3("`", place_label(place), "`"))
+    )
+  }
+}
+
+pub fn binding_assign_place(
+  c: Checker,
+  borrowed: Bool,
+  deref: Bool,
+  v: Ty,
+  pt: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm
+): Mut1(Unit, Checker) {
+  match deref {
+    true => binding_assign_place_deref(c, ty_mut_inner(ck_declared_place(c, borrowed, pt)), v, place, value)
+    false => binding_assign_place_plain(c, ty_is_borrow(ck_declared_place(c, borrowed, pt)), v, pt, place, value)
+  }
+}
+
+pub fn binding_assign_refuse_local(
+  c: Checker,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  view: Bool
+): Mut1(Unit, Checker) {
+  match view {
+    true => ck_rewrap1(ck_error(c, view_var_field_assigned_message(), span_of(value)))
+    false => ck_rewrap1(
+      ck_error(c, assigns_field_of_var_message(cat3("`", place_label(place), "`")), span_of(place))
+    )
+  }
+}
+
+pub fn binding_assign_refuse(
+  c: Checker,
+  name: Text,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  found: Option(Local)
+): Mut1(Unit, Checker) {
+  match found {
+    None => ck_rewrap1(ck_error(c, not_defined_message(name), span_of(place)))
+    Some(l) => binding_assign_refuse_local(c, place, value, binding_local_view(l))
+  }
+}
+
+pub theorem binding_assign_place_unf(
+  c: Checker,
+  env: List(Local),
+  name: Text,
+  deref: Bool,
+  v: Ty,
+  pt: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm
+): ck_assign_place(c, env, name, deref, v, pt, place, value) = binding_assign_place(c, ck_root_borrowed(c, env, name), deref, v, pt, place, value) { Refl }
+
+pub theorem binding_assign_refuse_unf(
+  c: Checker,
+  env: List(Local),
+  name: Text,
+  place: SurfaceTerm,
+  value: SurfaceTerm
+): ck_assign_refuse(c, env, name, place, value) = binding_assign_refuse(c, name, place, value, env_find(env, name)) { Refl }
+
+pub theorem binding_assign_place_deref_frame(
+  c: Checker,
+  inner: Option(Ty),
+  v: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, binding_assign_place_deref(c, inner, v, place, value)) {
+  match inner {
+    Some(t) => run_frame_rewrap(
+      c,
+      ck_expect(c, v, t, span_of(value), cat3("`", place_label(place), "`")),
+      ck_expect_run_frame(c, v, t, span_of(value), cat3("`", place_label(place), "`"), ordered)
+    )
+    None => run_frame_read(
+    c,
+    ck_rewrap1(ck_error(c, deref_needs_mut_borrow_message(place_label(place)), span_of(place))),
+    frame_rewrap(
+      c,
+      ck_error(c, deref_needs_mut_borrow_message(place_label(place)), span_of(place)),
+      ck_error_frame(c, deref_needs_mut_borrow_message(place_label(place)), span_of(place))
+    ),
+    ordered
+  )
+  }
+}
+
+pub theorem binding_assign_place_plain_frame(
+  c: Checker,
+  through: Bool,
+  v: Ty,
+  pt: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, binding_assign_place_plain(c, through, v, pt, place, value)) {
+  match through {
+    true => run_frame_read(
+    c,
+    ck_rewrap1(ck_error(c, assign_through_borrow_message(place_label(place)), span_of(place))),
+    frame_rewrap(
+      c,
+      ck_error(c, assign_through_borrow_message(place_label(place)), span_of(place)),
+      ck_error_frame(c, assign_through_borrow_message(place_label(place)), span_of(place))
+    ),
+    ordered
+  )
+    false => run_frame_rewrap(
+      c,
+      ck_expect(c, v, ty_unborrowed(ck_resolve(c, pt)), span_of(value), cat3("`", place_label(place), "`")),
+      ck_expect_run_frame(c, v, ty_unborrowed(ck_resolve(c, pt)), span_of(value), cat3("`", place_label(place), "`"), ordered)
+    )
+  }
+}
+
+pub theorem binding_assign_place_frame(
+  c: Checker,
+  borrowed: Bool,
+  deref: Bool,
+  v: Ty,
+  pt: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, binding_assign_place(c, borrowed, deref, v, pt, place, value)) {
+  match deref {
+    true => binding_assign_place_deref_frame(c, ty_mut_inner(ck_declared_place(c, borrowed, pt)), v, place, value, ordered)
+    false => binding_assign_place_plain_frame(c, ty_is_borrow(ck_declared_place(c, borrowed, pt)), v, pt, place, value, ordered)
+  }
+}
+
+pub theorem binding_assign_refuse_local_frame(
+  c: Checker,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  view: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, binding_assign_refuse_local(c, place, value, view)) {
+  match view {
+    true => run_frame_read(
+    c,
+    ck_rewrap1(ck_error(c, view_var_field_assigned_message(), span_of(value))),
+    frame_rewrap(
+      c,
+      ck_error(c, view_var_field_assigned_message(), span_of(value)),
+      ck_error_frame(c, view_var_field_assigned_message(), span_of(value))
+    ),
+    ordered
+  )
+    false => run_frame_read(
+    c,
+    ck_rewrap1(ck_error(c, assigns_field_of_var_message(cat3("`", place_label(place), "`")), span_of(place))),
+    frame_rewrap(
+      c,
+      ck_error(c, assigns_field_of_var_message(cat3("`", place_label(place), "`")), span_of(place)),
+      ck_error_frame(c, assigns_field_of_var_message(cat3("`", place_label(place), "`")), span_of(place))
+    ),
+    ordered
+  )
+  }
+}
+
+pub theorem binding_assign_refuse_frame(
+  c: Checker,
+  name: Text,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  found: Option(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, binding_assign_refuse(c, name, place, value, found)) {
+  match found {
+    None => run_frame_read(
+    c,
+    ck_rewrap1(ck_error(c, not_defined_message(name), span_of(place))),
+    frame_rewrap(
+      c,
+      ck_error(c, not_defined_message(name), span_of(place)),
+      ck_error_frame(c, not_defined_message(name), span_of(place))
+    ),
+    ordered
+  )
+    Some(l) => binding_assign_refuse_local_frame(c, place, value, binding_local_view(l), ordered)
+  }
+}
+
+pub theorem ck_assign_place_run_frame(
+  c: Checker,
+  env: List(Local),
+  name: Text,
+  deref: Bool,
+  v: Ty,
+  pt: Ty,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_assign_place(c, env, name, deref, v, pt, place, value)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(binding_assign_place_unf(c, env, name, deref, v, pt, place, value)),
+    binding_assign_place_frame(c, ck_root_borrowed(c, env, name), deref, v, pt, place, value, ordered)
+  )
+}
+
+pub theorem ck_assign_refuse_run_frame(
+  c: Checker,
+  env: List(Local),
+  name: Text,
+  place: SurfaceTerm,
+  value: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_assign_refuse(c, env, name, place, value)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(binding_assign_refuse_unf(c, env, name, place, value)),
+    binding_assign_refuse_frame(c, name, place, value, env_find(env, name), ordered)
   )
 }

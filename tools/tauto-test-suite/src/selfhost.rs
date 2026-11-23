@@ -116,11 +116,15 @@ fn raw_input(doc: &EureDocument, node: NodeId) -> Result<RawInput, String> {
     };
     let field = |name: &str| map.get_node_id(&name.into());
     let text = |id: NodeId| match &doc.node(id).content {
-        NodeValue::Primitive(PrimitiveValue::Text(t)) => Ok(if t.language.is_other("path") {
-            InputText::Path(PathBuf::from(t.as_str()))
-        } else {
-            InputText::Inline(t.as_str().into())
-        }),
+        NodeValue::Primitive(PrimitiveValue::Text(t)) => Ok(
+            if t.language.is_other("path") || t.language.is_other("real") {
+                // `path` copies and `real` links in place in the Rust runner; both name a
+                // file relative to the case. Self-host reads the text either way.
+                InputText::Path(PathBuf::from(t.as_str()))
+            } else {
+                InputText::Inline(t.as_str().into())
+            },
+        ),
         _ => Err("case input is not text".to_string()),
     };
     let plain = |id: NodeId| match &doc.node(id).content {
@@ -198,12 +202,6 @@ impl Contract {
     pub fn text(&self, field: &str) -> Option<&str> {
         self.fields.get(field).and_then(Value::text)
     }
-    pub fn excluded(&self, backend: Backend) -> bool {
-        self.fields.get("backends").is_some_and(|v| match v {
-            Value::Array(bs) => !bs.iter().any(|b| b.text() == Some(backend.name())),
-            _ => unreachable!("schema validated"),
-        })
-    }
     /// Component adapters may check inline input directly. A path-tagged file
     /// has loader semantics even when it declares no extra case-level imports;
     /// checking just its raw bytes must not stand in for checking that program.
@@ -219,7 +217,7 @@ impl Contract {
     }
 
     pub fn requirements(&self, backend: Backend) -> Vec<Requirement> {
-        if self.host_harness_only || self.excluded(backend) {
+        if self.host_harness_only {
             return Vec::new();
         }
         let compile_rejection = matches!(self.fields.get("compile_errors"), Some(Value::Map(m)) if m.contains_key(backend.name()));
@@ -266,7 +264,9 @@ impl Contract {
                 "load_error" => ("load", Matcher::Error),
                 "macro_error" => ("macro", Matcher::Error),
                 "expands" | "trace" => ("macro", Matcher::Exact),
-                "extracted_nib" => ("extraction", Matcher::Pending),
+                "extracted_nib" | "extracted_text" | "extracted_lacks" => {
+                    ("extraction", Matcher::Pending)
+                }
                 "lint" => ("lint", Matcher::Exact),
                 "inferred_types" => ("types", Matcher::Exact),
                 "inferred_kinds" => ("types", Matcher::Pending),
@@ -274,7 +274,6 @@ impl Contract {
                 "checks" | "checks_all" | "declarations" | "holes" | "diagnostics" => {
                     ("checks", Matcher::Pending)
                 }
-                "drops" => ("ownership-runtime", Matcher::Exact),
                 "budget" => ("evaluator-fuel", Matcher::Pending),
                 "args" => ("runtime-arguments", Matcher::Exact),
                 "differential" => ("component", Matcher::Differential),
@@ -292,70 +291,22 @@ impl Contract {
             };
             add(&mut out, name, &stage, v, matcher);
         }
-        let js_success =
-            backend == Backend::Javascript && self.fields.contains_key("javascript_shows");
-        let shows = if backend == Backend::Javascript {
-            self.fields.get("javascript_shows")
-        } else {
-            None
-        }
-        .or_else(|| self.fields.get("rust_shows"));
-        let error = if backend == Backend::Javascript {
-            self.fields.get("javascript_error")
-        } else {
-            None
-        }
-        .or_else(|| {
-            (!js_success)
-                .then(|| {
-                    self.fields
-                        .get("rust_error")
-                        .or_else(|| self.fields.get("run_error"))
-                })
-                .flatten()
-        });
+        let error = self.fields.get("run_error");
         if let Some(v) = error.filter(|_| !compile_rejection) {
             add(&mut out, "run_error", "target-runtime", v, Matcher::Error);
         }
-        // Backend rejection overrides common successful evaluator shows; explicit
-        // backend pre-error observations remain required, as in RustCase.
-        let shows = shows.or_else(|| error.is_none().then(|| self.fields.get("shows")).flatten());
-        if let Some(v) = shows.filter(|_| !compile_rejection) {
-            add(&mut out, "shows", "target-runtime", v, Matcher::Exact);
-        }
-        for (field, matcher) in [
-            ("compile_errors", Matcher::Error),
-            ("backend_known_failure", Matcher::KnownFailure),
-        ] {
-            if let Some(Value::Map(map)) = self.fields.get(field)
-                && let Some(want) = map.get(backend.name())
-            {
-                let (stage, message) = want.text().unwrap().split_once(": ").unwrap();
-                add(
-                    &mut out,
-                    field,
-                    stage,
-                    &Value::Text(message.into()),
-                    matcher,
-                );
-            }
-        }
-        // An explicit backend selects target acceptance even for a parse-only
-        // case. A component observation alone cannot satisfy this request.
-        if self.fields.contains_key("backends")
-            && !out.iter().any(|r| {
-                ["target-runtime", "selfhost-compile", "build"].contains(&r.stage.as_str())
-                    || r.name == "compile_errors"
-                    || r.name == "backend_known_failure"
-            })
+        if let Some(Value::Map(map)) = self.fields.get("compile_errors")
+            && let Some(want) = map.get(backend.name())
         {
-            add(
-                &mut out,
-                "target_build",
-                "build",
-                &Value::Text("ok".into()),
-                Matcher::Status,
-            );
+            let (stage, message) = want.text().unwrap().split_once(": ").unwrap();
+            add(&mut out, "compile_errors", stage, &Value::Text(message.into()), Matcher::Error);
+        }
+        // `<backend>.unimplemented` and `<backend>.bug` declare a failure today.
+        if let Some(Value::Map(opt_out)) = self.fields.get(backend.name())
+            && let Some(want) = opt_out.get("unimplemented").or(opt_out.get("bug"))
+        {
+            let (stage, message) = want.text().unwrap().split_once(": ").unwrap();
+            add(&mut out, "opt_out", stage, &Value::Text(message.into()), Matcher::KnownFailure);
         }
         // A successful runtime assertion must not conceal a failed process.
         if out
@@ -466,7 +417,6 @@ pub enum Verdict {
     Failed(Vec<String>),
     Incomplete(Vec<String>),
     HostHarness,
-    Excluded,
 }
 impl Verdict {
     pub fn passed(&self) -> bool {
@@ -491,9 +441,6 @@ pub fn assess_route(
     let backend = target_backend;
     if case.host_harness_only {
         return Verdict::HostHarness;
-    }
-    if case.excluded(backend) {
-        return Verdict::Excluded;
     }
     let required = case.requirements(backend);
     let mut failed = Vec::new();
@@ -556,14 +503,14 @@ pub fn assess_route(
         let matches = match (&r.matcher, &o.actual) {
             (Matcher::Exact, Actual::Value(v)) => v == &r.expected,
             (Matcher::Error | Matcher::KnownFailure, Actual::Rejected(message)) => {
-                r.expected.text().is_some_and(|want| message.contains(want))
+                r.expected.text().is_some_and(|want| in_english(message).contains(want))
             }
             (Matcher::Status, Actual::Accepted) => r.expected.text() == Some("ok"),
             (Matcher::Status, Actual::Rejected(first)) => r
                 .expected
                 .text()
                 .and_then(|s| s.strip_prefix("error: "))
-                .is_some_and(|part| first.contains(part)),
+                .is_some_and(|part| in_english(first).contains(part)),
             (Matcher::Differential, Actual::Differential { reference, actual }) => {
                 reference == actual
             }
@@ -595,10 +542,7 @@ pub fn assess_route(
     if required.is_empty() {
         incomplete.push("no observable semantic requirement".into());
     }
-    for mark in ["rust", "unimplemented"] {
-        if mark == "rust" && backend != Backend::Rust {
-            continue;
-        }
+    for mark in ["eval"] {
         if case
             .fields
             .get(mark)
@@ -613,5 +557,15 @@ pub fn assess_route(
         Verdict::Incomplete(incomplete)
     } else {
         Verdict::Passed
+    }
+}
+
+/// A self-hosted checker says a diagnostic as `id(name: "value", …)`, the form
+/// that matches the Rust checker id for id; the cases say what a person reads,
+/// so the id is written in English here, once, for both to be compared as text.
+fn in_english(message: &str) -> String {
+    match tauto_message::Message::from_debug(message) {
+        Some(m) if m.id.contains('-') => tauto_messages::english(&m),
+        _ => message.to_string(),
     }
 }

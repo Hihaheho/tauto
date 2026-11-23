@@ -7,9 +7,9 @@ use tauto_rustgen::{Bindings, BudgetDiagnostic, Sources, budget_diagnostics, emi
 const ENTRY: &str = r#"rust { nonresuming { entries { run_trusted = "run" } } }"#;
 
 fn inspect(source: &str, manifest: &str) -> (Vec<BudgetDiagnostic>, String) {
-    let package = tauto_nir::compile_with(source, true).unwrap();
+    let mut package = tauto::nir::compile_with(source, true).unwrap();
     let manifest = tauto::manifest::parse(manifest, Path::new("Tauto.eure")).unwrap();
-    let bindings = Bindings::resolve(&package, Some(&manifest), None).unwrap();
+    let bindings = Bindings::resolve(&mut package, Some(&manifest), None).unwrap();
     let sources = Sources {
         file: "proof-context.taut",
         text: source,
@@ -37,24 +37,24 @@ fn qualified_only(source: &str) {
 fn concrete_generic_arguments_are_proved_only_in_the_qualified_context() {
     tauto_messages::install();
     for source in [
-        r#"pub fn linger<T>(value: T, size: i64): T ! {Div} {
+        r#"pub fn linger<T>(value: T, size: i64): T ! {div, overflow} {
   var index := 0
   while index < size { index := index + 1 }
   value
 }
 
-fn run(steps: i64): i64 {
-  handle { budget(steps: steps) { linger(42, 3) } } with { exceeded(info), k => -1 }
+fn run(steps: u64): i64 ! {budget} {
+  handle { perform budget(steps, () => { linger(42, 3) }) } with { exceeded(info), k => -1, overflow() => -1 }
 }"#,
-        r#"pub fn linger<T: Shared>(items: List(T), size: i64): List(T) ! {Div} {
+        r#"pub fn linger<T: Shared>(items: List(T), size: i64): List(T) ! {div, overflow} {
   var index := 0
   while index < size { index := index + 1 }
   items
 }
-fn forward<U: Shared>(items: List(U)): List(U) ! {Div} { linger(items, 3) }
-fn run(steps: i64): List(Text) {
-  handle { budget(steps: steps) { forward(Cons("a", Cons("b", Nil))) } } with {
-    exceeded(info), k => Nil
+fn forward<U: Shared>(items: List(U)): List(U) ! {div, overflow} { linger(items, 3) }
+fn run(steps: u64): List(Text) ! {budget} {
+  handle { perform budget(steps, () => { forward(Cons("a", Cons("b", Nil))) }) } with {
+    exceeded(info), k => Nil, overflow() => Nil
   }
 }"#,
     ] {
@@ -66,16 +66,19 @@ fn run(steps: i64): List(Text) {
 fn prelude_list_map_and_generic_callback_forwarding_share_concrete_evidence() {
     tauto_messages::install();
     for body in [
-        r#"map(Cons("a", Nil), &size)"#,
-        r#"forward(Cons("a", Nil), &size)"#,
+        r#"let read := size
+map(Cons("a", Nil), &read)"#,
+        r#"let read := size
+forward(Cons("a", Nil), &read)"#,
     ] {
         let source = format!(
-            r#"fn size(value: Text): u64 {{ Text::len(value) }}
-fn forward<A: Shared, B: Shared>(items: List(A), &read: (A) -> B): List(B) {{
+            r#"
+fn size(value: Text): u64 {{ Text::len(value) }}
+fn forward<A: Shared, B: Shared>(items: List(A), read: &((A) -> B)): List(B) {{
   map(items, read)
 }}
-fn run(steps: i64): List(u64) {{
-  handle {{ budget(steps: steps) {{ {} }} }} with {{ exceeded(info), k => Nil }}
+fn run(steps: u64): List(u64) ! {{budget}} {{
+  handle {{ perform budget(steps, () => {{ {} }}) }} with {{ exceeded(info), k => Nil, overflow() => Nil }}
 }}"#,
             body
         );
@@ -88,9 +91,9 @@ fn one_concrete_signature_does_not_bless_another_instantiation() {
     tauto_messages::install();
     let source = r#"extern { fn native_value<T>(value: T): u64 }
 fn read<T>(value: T): u64 { native_value(value) }
-fn run(): u64 {
-  handle { budget(steps: 10) { read("value") + read(Some("value")) } } with {
-    exceeded(info), k => 0
+fn run(): u64 ! {budget} {
+  handle { perform budget(10, () => { read("value") + read(Some("value")) }) } with {
+    exceeded(info), k => 0, overflow() => 0
   }
 }"#;
     let manifest = r#"rust {
@@ -117,8 +120,8 @@ fn run(): u64 {
 }
 
 fn borrowed_source() -> &'static str {
-    r#"fn offset(value: u64): u64 { value + 1 }
-fn repeat(&read: (u64) -> u64): u64 ! {Div} {
+    r#"fn offset(value: u64): u64 { U64::wrapping_add(value, 1) }
+fn repeat(read: &((u64) -> u64)): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < 3 {
@@ -134,15 +137,18 @@ fn repeat(&read: (u64) -> u64): u64 ! {Div} {
 fn stateless_immutable_aliases_keep_their_origin() {
     tauto_messages::install();
     let borrowed = borrowed_source();
-    for initializer in [r#"offset"#, r#"(value: u64) => value + 1"#] {
+    for initializer in [
+        r#"offset"#,
+        r#"(value: u64) => U64::wrapping_add(value, 1)"#,
+    ] {
         let source = format!(
             r#"{}
-fn run(steps: i64): u64 {{
-  handle {{ budget(steps: steps) {{
+fn run(steps: u64): u64 ! {{budget}} {{
+  handle {{ perform budget(steps, () => {{
     let first := {}
     let second := first
     repeat(&second)
-  }} }} with {{ exceeded(info), k => 0 }}
+  }}) }} with {{ exceeded(info), k => 0, overflow() => 0 }}
 }}"#,
             borrowed, initializer
         );
@@ -153,8 +159,8 @@ fn run(steps: i64): u64 {{
 #[test]
 fn stateless_owned_arguments_forward_through_internal_helpers() {
     tauto_messages::install();
-    let source = r#"pub fn offset(value: u64): u64 { value + 1 }
-fn repeat(read: (u64) -> u64): u64 ! {Div} {
+    let source = r#"pub fn offset(value: u64): u64 { U64::wrapping_add(value, 1) }
+fn repeat(read: (u64) -> u64): u64 ! {div, overflow} {
   var index: u64 := 0
   var total: u64 := 0
   while index < 3 {
@@ -163,9 +169,10 @@ fn repeat(read: (u64) -> u64): u64 ! {Div} {
   }
   total
 }
-fn forward(read: (u64) -> u64): u64 ! {Div} { repeat(read) }
-fn run(steps: i64): u64 {
-  handle { budget(steps: steps) { forward(offset) } } with { exceeded(info), k => 0 }
+fn forward(read: (u64) -> u64): u64 ! {div, overflow} { repeat(read) }
+fn run(steps: u64): u64 ! {budget} {
+  handle { perform budget(steps, () => { let read := offset
+forward(read) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#;
     qualified_only(source);
 }
@@ -174,11 +181,11 @@ fn run(steps: i64): u64 {
 fn existing_direct_borrowed_origins_are_still_proved_without_a_contract() {
     tauto_messages::install();
     let borrowed = borrowed_source();
-    for callback in [r#"&offset"#, r#"&(value) => offset(value)"#] {
+    for callback in [r#"&offset"#, r#"(value) => offset(value)"#] {
         let source = format!(
             r#"{}
-fn run(steps: i64): u64 {{
-  handle {{ budget(steps: steps) {{ repeat({}) }} }} with {{ exceeded(info), k => 0 }}
+fn run(steps: u64): u64 ! {{budget}} {{
+  handle {{ perform budget(steps, () => {{ repeat({}) }}) }} with {{ exceeded(info), k => 0, overflow() => 0 }}
 }}"#,
             borrowed, callback
         );
@@ -194,15 +201,15 @@ fn captured_or_mutable_callable_aliases_remain_unproven() {
     let borrowed = borrowed_source();
     for body in [
         r#"let captured: u64 := 5
-let read := (value: u64) => value + captured
+let read := (value: u64) => U64::wrapping_add(value, captured)
 repeat(&read)"#,
         r#"var read := offset
 repeat(&read)"#,
     ] {
         let source = format!(
             r#"{}
-fn run(steps: i64): u64 {{
-  handle {{ budget(steps: steps) {{ {} }} }} with {{ exceeded(info), k => 0 }}
+fn run(steps: u64): u64 ! {{budget}} {{
+  handle {{ perform budget(steps, () => {{ {} }}) }} with {{ exceeded(info), k => 0, overflow() => 0 }}
 }}"#,
             borrowed, body
         );
@@ -224,22 +231,22 @@ fn run(steps: i64): u64 {{
 fn known_callable_origins_do_not_escape_as_results_or_storage() {
     tauto_messages::install();
     for source in [
-        r#"pub fn offset(value: u64): u64 { value + 1 }
+        r#"pub fn offset(value: u64): u64 { U64::wrapping_add(value, 1) }
 fn escape(read: (u64) -> u64): ((u64) -> u64) { read }
-fn run(): u64 {
-  handle { budget(steps: 10) {
+fn run(): u64 ! {budget} {
+  handle { perform budget(10, () => {
     let read := escape(offset)
     0
-  } } with { exceeded(info), k => 0 }
+  }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#,
-        r#"shared struct Holder { read: (u64) -> u64 }
-fn offset(value: u64): u64 { value + 1 }
-fn run(): u64 {
-  handle { budget(steps: 10) {
+        r#"struct(shared) Holder { read: (u64) -> u64 }
+fn offset(value: u64): u64 { U64::wrapping_add(value, 1) }
+fn run(): u64 ! {budget} {
+  handle { perform budget(10, () => {
     let read := offset
     let stored := Holder { read: read }
     0
-  } } with { exceeded(info), k => 0 }
+  }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#,
     ] {
         let (reports, rust) = inspect(source, ENTRY);
@@ -259,10 +266,10 @@ fn run(): u64 {
 #[test]
 fn observer_callback_proofs_stay_stricter_than_body_proofs() {
     tauto_messages::install();
-    let source = r#"pub fn offset(value: u64): u64 { value + 1 }
-fn apply(&read: (u64) -> u64, value: u64): u64 { read(value) }
-fn run(value: u64): u64 {
-  handle { budget(steps: 0) { apply(&offset, value) } } with {
+    let source = r#"pub fn offset(value: u64): u64 { U64::wrapping_add(value, 1) }
+fn apply(read: &((u64) -> u64), value: u64): u64 { read(value) }
+fn run(value: u64): u64 ! {budget} {
+  handle { perform budget(0, () => { apply(&offset, value) }) } with {
     exceeded(info), k => {
       let read := offset
       apply(&read, value)
@@ -293,7 +300,20 @@ fn single_budget_call(expr: &mut tauto_nir::Expr) -> &mut tauto_nir::CallNode {
     }
 }
 
-fn inspect_package(package: &tauto_nir::Package, source: &str) -> Vec<BudgetDiagnostic> {
+fn let_init(expr: &tauto_nir::Expr) -> tauto_nir::Expr {
+    use tauto_nir::{ExprKind, Stmt};
+    match &expr.kind {
+        ExprKind::Block(block) => match block.stmts.first() {
+            Some(Stmt::Let { init, .. }) => init.clone(),
+            _ => let_init(block.tail.as_deref().unwrap()),
+        },
+        ExprKind::Handle(handler) => let_init(&handler.body),
+        ExprKind::Budget(budget) => let_init(&budget.body),
+        other => panic!("unexpected fixture expression: {other:?}"),
+    }
+}
+
+fn inspect_package(package: &mut tauto_nir::Package, source: &str) -> Vec<BudgetDiagnostic> {
     let manifest = tauto::manifest::parse(ENTRY, Path::new("Tauto.eure")).unwrap();
     let bindings = Bindings::resolve(package, Some(&manifest), None).unwrap();
     budget_diagnostics(
@@ -311,17 +331,16 @@ fn missing_or_unresolved_lowered_type_arguments_fail_closed() {
     tauto_messages::install();
     use tauto_nir::Ty;
     let source = r#"pub fn linger<T>(value: T): T { value }
-fn run(): i64 {
-  handle { budget(steps: 10) { linger(42) } } with { exceeded(info), k => -1 }
+fn run(): i64 ! {budget} {
+  handle { perform budget(10, () => { linger(42) }) } with { exceeded(info), k => -1, overflow() => -1 }
 }"#;
     for arguments in [
         Vec::new(),
-        vec![Ty::Infer],
         vec![Ty::Param("Unknown".into())],
         vec![Ty::SharedVar(true, Box::new(Ty::Param("Unknown".into())))],
         vec![Ty::SharedVar(false, Box::new(Ty::Param("Unknown".into())))],
     ] {
-        let mut package = tauto_nir::compile_with(source, true).unwrap();
+        let mut package = tauto::nir::compile_with(source, true).unwrap();
         let run = package
             .exports
             .iter()
@@ -329,7 +348,7 @@ fn run(): i64 {
             .unwrap()
             .inst;
         single_budget_call(&mut package.fns[run].body).targs = arguments;
-        let reports = inspect_package(&package, source);
+        let reports = inspect_package(&mut package, source);
         let qualified = report(&reports, "run_trusted");
         assert!(!qualified.eligible(), "{qualified:?}");
         assert!(
@@ -346,21 +365,25 @@ fn run(): i64 {
 fn a_lowered_callable_cast_does_not_acquire_origin_evidence() {
     tauto_messages::install();
     use tauto_nir::ExprKind;
-    let source = r#"pub fn offset(value: u64): u64 { value + 1 }
+    let source = r#"pub fn offset(value: u64): u64 { U64::wrapping_add(value, 1) }
 fn apply(read: (u64) -> u64): u64 { read(1) }
-fn run(): u64 {
-  handle { budget(steps: 10) { apply(offset) } } with { exceeded(info), k => 0 }
+fn run(): u64 ! {budget} {
+  handle { perform budget(10, () => { let read := offset
+apply(read) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#;
-    let mut package = tauto_nir::compile_with(source, true).unwrap();
+    let mut package = tauto::nir::compile_with(source, true).unwrap();
     let run = package
         .exports
         .iter()
         .find(|export| export.name.as_str() == "run")
         .unwrap()
         .inst;
+    // The `let` keeps `offset` a function value at the call: `specialize`
+    // would otherwise call it directly. The cast wraps that value itself.
+    let offset = let_init(&package.fns[run].body);
     let argument = &mut single_budget_call(&mut package.fns[run].body).args[0];
-    argument.kind = ExprKind::FnCast(Box::new(argument.clone()));
-    let reports = inspect_package(&package, source);
+    argument.kind = ExprKind::FnCast(Box::new(offset));
+    let reports = inspect_package(&mut package, source);
     let qualified = report(&reports, "run_trusted");
     assert!(!qualified.eligible(), "{qualified:?}");
     assert!(
@@ -377,13 +400,14 @@ fn run(): u64 {
 fn a_synchronous_callable_with_a_lowered_loop_is_not_a_callback_proof() {
     tauto_messages::install();
     use tauto_nir::{Block, Expr, ExprKind, Stmt, Tick, Ty};
-    let source = r#"pub fn offset(value: u64): u64 { value + 1 }
+    let source = r#"pub fn offset(value: u64): u64 { U64::wrapping_add(value, 1) }
 fn apply(read: (u64) -> u64): u64 { read(1) }
-fn run(): u64 {
-  handle { budget(steps: 10) { apply(offset) } } with { exceeded(info), k => 0 }
+fn run(): u64 ! {budget} {
+  handle { perform budget(10, () => { let read := offset
+apply(read) }) } with { exceeded(info), k => 0, overflow() => 0 }
 }"#;
     for tick in [Tick::None, Tick::Host, Tick::Budget] {
-        let mut package = tauto_nir::compile_with(source, true).unwrap();
+        let mut package = tauto::nir::compile_with(source, true).unwrap();
         let mut changed = false;
         for function in &mut package.fns {
             if function.source.as_str() == "offset" {
@@ -408,7 +432,7 @@ fn run(): u64 {
             }
         }
         assert!(changed);
-        let reports = inspect_package(&package, source);
+        let reports = inspect_package(&mut package, source);
         let qualified = report(&reports, "run_trusted");
         assert!(!qualified.eligible(), "{qualified:?}");
         assert!(
@@ -419,4 +443,27 @@ fn run(): u64 {
             "{qualified:?}"
         );
     }
+}
+
+#[test]
+fn a_declared_function_argument_is_specialized_into_a_direct_call() {
+    tauto_messages::install();
+    // `specialize` copies `forward` and `repeat` for `offset`, so no function
+    // value reaches the budget: the ordinary proof holds without a contract.
+    let source = r#"pub fn offset(value: u64): u64 { U64::wrapping_add(value, 1) }
+fn repeat(read: (u64) -> u64): u64 ! {div, overflow} {
+  var index: u64 := 0
+  var total: u64 := 0
+  while index < 3 {
+    total := total + read(index)
+    index := index + 1
+  }
+  total
+}
+fn forward(read: (u64) -> u64): u64 ! {div, overflow} { repeat(read) }
+fn run(steps: u64): u64 ! {budget} {
+  handle { perform budget(steps, () => { forward(offset) }) } with { exceeded(info), k => 0, overflow() => 0 }
+}"#;
+    let (reports, _) = inspect(source, ENTRY);
+    assert!(report(&reports, "ordinary").eligible(), "{reports:?}");
 }

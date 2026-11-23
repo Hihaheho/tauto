@@ -1,0 +1,29 @@
+description = "A function that only puts texts before its last parameter runs, extracted, as a writer that pushes them onto a buffer. The buffer is the prelude's `Buf` even when the program imports `std::prelude::Collections`, which declares `Buf` again, so the writer's parameter and its push name the same `Buf` and the classes of the program are expanded."
+
+@ cases.writer-beside-a-class-with-affine-imported
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
+source = ```tauto
+import std::prelude::collections
+import std::base
+import std::text
+
+pub class Shown(F: Type) {
+  fn shown(x: F): Text
+}
+instance Shown(Text) {
+  fn shown(x: Text): Text { x }
+}
+pub fn shown_of<F: Type>(x: F): Text where Shown(F) { Shown::shown(x) }
+
+fn put(b: Bool, r: List(Text)): List(Text) {
+  match b { true => Cons("yes", r), false => Cons("no", r) }
+}
+fn said(b: Bool): Text { Text::concat_all(put(b, Nil)) }
+
+show(&shown_of("a"))
+show(&said(true))
+```
+stdout = ```
+"a"
+"yes"
+```

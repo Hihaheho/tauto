@@ -1,7 +1,11 @@
 import "substitution_freshness.taut"
 import "argument_sound.taut"
+import "coerce_rules_sound.taut"
+import "rules_coerce.taut"
+import "datas.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "types_match.taut"
 import "typing_state_extension.taut"
@@ -30,6 +34,40 @@ pub theorem ck_handle_widen_typing_snapshot(
     )
   )
 }
+// What the arguments fit stays as the substitution and the records grow;
+// the declarations are the same.
+pub theorem typing_state_arg_fits(
+  c: Checker,
+  next: Checker,
+  extension: TypingStateExt(c, next),
+  actual: List(Ty),
+  expected: List(Ty),
+  h: ArgFitList(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), ck_datas_of(c), actual, expected)
+): ArgFitList(ck_subst_of(next), KeptOk(ck_kept_of(next)), InstAt(next), DupAt(next), ck_datas_of(c), actual, expected) {
+  arg_fit_move(
+    ck_subst_of(c),
+    KeptOk(ck_kept_of(c)),
+    InstAt(c),
+    DupAt(c),
+    ck_subst_of(next),
+    KeptOk(ck_kept_of(next)),
+    InstAt(next),
+    DupAt(next),
+    ck_datas_of(c),
+    And::left(extension),
+    And::left(And::right(extension)),
+    gs => map => instantiated => inst_by_move(
+      ck_bounds_of(c),
+      ck_bounds_of(next),
+      And::left(And::right(And::right(extension))),
+      gs,
+      map,
+      instantiated
+    ),
+    ty => proof => typing_state_dup(c, next, extension, ty, proof),
+    h
+  )
+}
 pub theorem ck_handle_widen_preserves_arguments(
   snapshot: Checker,
   c: Checker,
@@ -42,12 +80,25 @@ pub theorem ck_handle_widen_preserves_arguments(
   prior: TypingStateExt(snapshot, c),
   arguments: ArgumentTypes(snapshot, actual, expected)
 ): ArgumentTypes(ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot))), actual, expected) {
-  typing_state_arguments(
-    snapshot,
-    ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot))),
-    ck_handle_widen_typing_snapshot(snapshot, c, a, result, ordered, fresh, prior),
-    actual,
-    expected,
-    arguments
+  Eq::subst(
+    (datas: Datas) => ArgFitList(
+      ck_subst_of(ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot)))),
+      KeptOk(ck_kept_of(ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot))))),
+      InstAt(ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot)))),
+      DupAt(ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot)))),
+      datas,
+      actual,
+      expected
+    ),
+    And::right(And::right(And::right(ck_handle_widen_typing_snapshot(snapshot, c, a, result, ordered, fresh, prior)))),
+    typing_state_arg_fits(
+      snapshot,
+      ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot))),
+      ck_handle_widen_typing_snapshot(snapshot, c, a, result, ordered, fresh, prior),
+      actual,
+      expected,
+      arguments
+    )
   )
+
 }

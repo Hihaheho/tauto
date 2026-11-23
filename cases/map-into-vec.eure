@@ -1,0 +1,80 @@
+description = "`into_vec` for `HashMap`, `IndexedMap` and `VecModel`: drain owned maps/vectors into a built-in `Vec`."
+
+@ cases.uhashmap-into-vec-len-and-sum
+description = "`HashMap::into_vec` yields every entry once (order is slot order)."
+source = ```tauto
+import std::builtin::os { hash_seed, HashSeed }
+import std::hashmap { HashMap }
+
+fn pair_weight(p: &(Nat × Nat)): Nat {
+  match p { #(k, v) => k * 100 + v }
+}
+
+fn at(v: &Vec(Nat × Nat), i: u64): Nat {
+  match Vec::get(v, i) {
+    None => 0
+    Some(p) => pair_weight(p)
+  }
+}
+
+fn demo(): Nat × u64 ! {hash_seed} {
+  var m: HashMap(Nat, Nat) := HashMap::new()
+  let ^_a := HashMap::insert(&mut m, 1, 10)
+  let ^_b := HashMap::insert(&mut m, 2, 20)
+  let ^_c := HashMap::insert(&mut m, 3, 30)
+  let v := HashMap::into_vec(m)
+  #(at(&v, 0) + at(&v, 1) + at(&v, 2), Vec::len(&v))
+}
+show(&handle { demo() } with { hash_seed(), k => k(HashSeed { k0: 3, k1: 4 }) })
+```
+stdout = "#(660, 3)\n"
+
+@ cases.indexed-map-into-vec-insertion-order
+description = "`IndexedMap::into_vec` keeps insertion order and skips removed slots."
+source = ```tauto
+import std::indexed_map { IndexedMap }
+
+fn key_at(v: &Vec(Nat × Nat), i: u64): Nat {
+  match Vec::get(v, i) {
+    None => 0
+    Some(p) => match p { #(k, v2) => k }
+  }
+}
+
+fn val_at(v: &Vec(Nat × Nat), i: u64): Nat {
+  match Vec::get(v, i) {
+    None => 0
+    Some(p) => match p { #(k, v2) => v2 }
+  }
+}
+
+fn demo(): Nat × u64 {
+  var m: IndexedMap(Nat, Nat) := IndexedMap::new()
+  let ^_a := IndexedMap::insert(&mut m, 1, 10)
+  let ^_b := IndexedMap::insert(&mut m, 2, 20)
+  let ^_c := IndexedMap::insert(&mut m, 3, 30)
+  let ^_d := IndexedMap::remove(&mut m, &2)
+  let v := IndexedMap::into_vec(m)
+  #(
+    key_at(&v, 0) * 1000000 + val_at(&v, 0) * 10000 + key_at(&v, 1) * 100 + val_at(&v, 1),
+    Vec::len(&v)
+  )
+}
+show(&demo())
+```
+stdout = "#(1100330, 2)\n"
+
+@ cases.vec-model-into-vec-signature
+description = "`VecModel::into_vec` type-checks against a `Vec` result. It runs as written (it uses `Vec`), so the kernel skips it; its `pop_m` proof lives in the kernel-checked `VecModel::take_last`."
+extract = true
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::vec { VecModel, pf_used }
+import std::slots { Prefix, SlotsModel }
+import std::prelude::collections { Vec }
+
+fn drain(v: SlotsModel(Prefix, Unit, Nat, pf_used)): Vec(Nat) {
+  VecModel::into_vec(v)
+}
+```
+checks.drain = "skipped"

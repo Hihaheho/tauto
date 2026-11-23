@@ -1,0 +1,101 @@
+// The arithmetic of `uhost` is the host's effects (`uhost_add`, `uhost_sub`,
+// `uhost_mul`, `uhost_of_u64`), `host_width` and `hash_seed`
+// (`docs/design/host-effects.md`).
+
+@ cases.a-handler-answers-uhost-add
+description = "`+` on `uhost` performs `uhost_add`; a handler around it answers it."
+source = ```tauto
+import std::builtin::os
+fn next(x: uhost): uhost ! {uhost_add} { x + 1 }
+let r := handle { next(41) } with { uhost_add(a, b), k => k(7) }
+show(&(r == 7))
+```
+stdout = "true\n"
+
+@ cases.a-handler-answers-uhost-sub-and-mul
+description = "`-` and `*` on `uhost` perform `uhost_sub` and `uhost_mul`."
+source = ```tauto
+import std::builtin::os
+fn d(x: uhost, y: uhost): uhost ! {uhost_sub} { x - y }
+fn m(x: uhost, y: uhost): uhost ! {uhost_mul} { x * y }
+show(&(handle { d(5, 3) } with { uhost_sub(a, b), k => k(100) } == 100))
+show(&(handle { m(5, 3) } with { uhost_mul(a, b), k => k(200) } == 200))
+```
+stdout = "true\ntrue\n"
+
+@ cases.the-host-answers-uhost-arithmetic
+description = "A `uhost_add` nothing handles is answered by the host, in the word of the target."
+source = ```tauto
+import std::builtin::os
+fn next(x: uhost): uhost ! {uhost_add} { x + 1 }
+show(&(next(41) == 42))
+```
+stdout = "true\n"
+
+@ cases.a-uhost-result-that-does-not-fit-stops-the-program
+llvm.unimplemented = 'output: run_error: expected "a word of"'
+niri.unimplemented = "output: word of the host"
+description = "The host stops the run, without resuming, when a `uhost` result does not fit its word (each backend words the error its own way, so the case matches the part they share)."
+source = ```tauto
+import std::builtin::os
+fn d(x: uhost, y: uhost): uhost ! {uhost_sub} { x - y }
+show(&(d(1, 2) == 0))
+```
+run_error = "a word of"
+
+@ cases.a-uhost-operator-names-its-effect-in-the-row
+description = "`+` on `uhost` may perform `uhost_add`, so a function that uses it and declares an empty row is an error."
+source = ```tauto
+import std::builtin::os
+fn next(x: uhost): uhost ! {} { x + 1 }
+show(&(next(41) == 42))
+```
+rows = "error: `next` may perform uhost_add but its row is {}"
+
+@ cases.host-width-is-an-effect
+description = "`host_width` answers the width of the target's word, and a handler may answer it."
+source = ```tauto
+import std::builtin::os
+fn name(): Text ! {host_width} {
+  match perform host_width() {
+    W32 => "32"
+    W64 => "64"
+  }
+}
+show(&handle { name() } with { host_width(), k => k(W32) })
+```
+stdout = "\"32\"\n"
+
+@ cases.hash-seed-is-an-effect-the-program-may-fix
+description = "`hash_seed` answers a seed; a handler fixes it."
+source = ```tauto
+import std::builtin::os { hash_seed, HashSeed }
+fn first(): u64 ! {hash_seed} { (perform hash_seed()).k0 }
+show(&handle { first() } with { hash_seed(), k => k(HashSeed { k0: 5, k1: 6 }) })
+```
+stdout = "5\n"
+
+@ cases.the-host-answers-one-hash-seed-for-the-run
+description = "The host answers `hash_seed` with the same seed every time within a run."
+source = ```tauto
+import std::builtin::os
+fn same(): Bool ! {hash_seed} {
+  let a := perform hash_seed()
+  let b := perform hash_seed()
+  a.k0 == b.k0 && a.k1 == b.k1
+}
+show(&same())
+```
+stdout = "true\n"
+
+@ cases.a-uhost-is-shown-and-converted
+description = "`show` writes a `uhost`, `U64::of_uhost` converts it, and `<` orders it."
+source = ```tauto
+import std::builtin::os
+fn next(x: uhost): uhost ! {uhost_add} { x + 1 }
+let n := next(41)
+show(&n)
+show(&(U64::of_uhost(n) + 1))
+show(&(n < next(n)))
+```
+stdout = "42\n43\ntrue\n"

@@ -1,7 +1,5 @@
 import "analysis.taut"
 import "ktuple.taut"
-import std::prelude::Shared
-import std::prelude::Affine
 
 // FOLLOW(k) and the deciding of k for each non-terminal.
 //
@@ -18,7 +16,7 @@ pub(open) struct LgEq { at: u64, target: u64, source: u64, parts: List(LgFPart) 
 
 pub(open) struct LgFollow { last: List(LgSet), nts: List(LgSet) }
 
-pub fn lg_follow_parts(raw: List(LgRawAt), k: u64): List(LgFPart) {
+pub fn lg_follow_parts(raw: List(LgRawAt), k: u64): List(LgFPart) ! {div, overflow} {
   var out: List(LgFPart) := Nil
   var rest := raw
   var running := true
@@ -39,7 +37,7 @@ pub fn lg_follow_parts(raw: List(LgRawAt), k: u64): List(LgFPart) {
   lg_rev_fpart(out)
 }
 
-pub fn lg_rev_fpart(xs: List(LgFPart)): List(LgFPart) {
+pub fn lg_rev_fpart(xs: List(LgFPart)): List(LgFPart) ! {div} {
   var out: List(LgFPart) := Nil
   var rest := xs
   var running := true
@@ -57,7 +55,7 @@ pub fn lg_rev_fpart(xs: List(LgFPart)): List(LgFPart) {
   out
 }
 
-pub fn lg_rev_eq(xs: List(LgEq)): List(LgEq) {
+pub fn lg_rev_eq(xs: List(LgEq)): List(LgEq) ! {div} {
   var out: List(LgEq) := Nil
   var rest := xs
   var running := true
@@ -75,7 +73,7 @@ pub fn lg_rev_eq(xs: List(LgEq)): List(LgEq) {
   out
 }
 
-pub fn lg_follow_equations(g: LgGrammar, k: u64): List(LgEq) {
+pub fn lg_follow_equations(g: LgGrammar, k: u64): List(LgEq) ! {div, overflow} {
   var out: List(LgEq) := Nil
   var p: u64 := 0
   let n := lg_n_prods(g)
@@ -102,7 +100,7 @@ pub fn lg_follow_equations(g: LgGrammar, k: u64): List(LgEq) {
                 out
               )
             }
-            LgRawT(run) => #()
+            LgRawT(^run) => #()
           }
           rest := after
         }
@@ -115,7 +113,7 @@ pub fn lg_follow_equations(g: LgGrammar, k: u64): List(LgEq) {
 
 // FOLLOW(k): the fixpoint, from what FOLLOW(k - 1) gave (or from nothing);
 // the start symbol is followed by the end of the input.
-pub fn lg_follow(g: LgGrammar, k: u64, first: LgFirst, prev: Option(LgFollow)): LgFollow {
+pub fn lg_follow(g: LgGrammar, k: u64, first: LgFirst, prev: Option(LgFollow)): LgFollow ! {div, out_of_bounds, overflow} {
   let n_nts := lg_n_nts(g)
   let equations := lg_follow_equations(g, k)
   let first_nts := Array::of_list(first.nts)
@@ -182,7 +180,7 @@ pub fn lg_follow(g: LgGrammar, k: u64, first: LgFirst, prev: Option(LgFollow)): 
   LgFollow { last: latest, nts: nts }
 }
 
-pub fn lg_len_eq(xs: List(LgEq)): u64 {
+pub fn lg_len_eq(xs: List(LgEq)): u64 ! {div, overflow} {
   var n: u64 := 0
   var rest := xs
   var running := true
@@ -191,7 +189,7 @@ pub fn lg_len_eq(xs: List(LgEq)): u64 {
       Nil => {
         running := false
       }
-      Cons(x, more) => {
+      Cons(^x, more) => {
         n := n + 1
         rest := more
       }
@@ -200,15 +198,15 @@ pub fn lg_len_eq(xs: List(LgEq)): u64 {
   n
 }
 
-pub fn lg_vec_get(&v: Vec(LgSet), i: u64): LgSet {
-  let &x := Vec::index(&v, i)
+pub fn lg_vec_get(v: &Vec(LgSet), i: u64): LgSet ! {out_of_bounds} {
+  let x := Vec::index(&v, i)
   x
 }
 
-pub fn lg_vec_set(&mut v: Vec(LgSet), i: u64, x: LgSet): Unit {
+pub fn lg_vec_set(v: &mut Vec(LgSet), i: u64, x: LgSet): Unit {
   match Vec::get_mut(&mut v, i) {
-    Some(slot) => {
-      slot := x
+    Some(^slot) => {
+      *slot := x
     }
     None => #()
   }
@@ -217,24 +215,24 @@ pub fn lg_vec_set(&mut v: Vec(LgSet), i: u64, x: LgSet): Unit {
 // The sets FIRST(k) and FOLLOW(k) for k = 0, 1, … as far as they are made.
 pub(open) struct LgCache { firsts: List(LgFirst), follows: List(LgFollow) }
 
-pub fn lg_nth_first(xs: List(LgFirst), i: u64): LgFirst {
+pub fn lg_nth_first(xs: List(LgFirst), i: u64): LgFirst ! {overflow} {
   match xs {
     Nil => LgFirst { prods: Nil, nts: Nil }
     Cons(x, rest) => if i == 0 { x } else { lg_nth_first(rest, i - 1) }
   }
 }
 
-pub fn lg_nth_follow(xs: List(LgFollow), i: u64): LgFollow {
+pub fn lg_nth_follow(xs: List(LgFollow), i: u64): LgFollow ! {overflow} {
   match xs {
     Nil => LgFollow { last: Nil, nts: Nil }
     Cons(x, rest) => if i == 0 { x } else { lg_nth_follow(rest, i - 1) }
   }
 }
 
-pub fn lg_len_first(xs: List(LgFirst)): u64 {
+pub fn lg_len_first(xs: List(LgFirst)): u64 ! {overflow} {
   match xs {
     Nil => 0
-    Cons(x, rest) => 1 + lg_len_first(rest)
+    Cons(^x, rest) => 1 + lg_len_first(rest)
   }
 }
 
@@ -252,7 +250,7 @@ pub fn lg_append_follow(xs: List(LgFollow), x: LgFollow): List(LgFollow) {
   }
 }
 
-pub fn lg_cache_upto(g: LgGrammar, c: LgCache, k: u64): LgCache {
+pub fn lg_cache_upto(g: LgGrammar, c: LgCache, k: u64): LgCache ! {div, out_of_bounds, overflow} {
   var cache := c
   var made := lg_len_first(cache.firsts)
   while made <= k {
@@ -275,7 +273,7 @@ pub fn lg_cache_upto(g: LgGrammar, c: LgCache, k: u64): LgCache {
   cache
 }
 
-pub fn lg_nth_set(xs: List(LgSet), i: u64): LgSet {
+pub fn lg_nth_set(xs: List(LgSet), i: u64): LgSet ! {overflow} {
   match xs {
     Nil => lg_set_empty(0)
     Cons(x, rest) => if i == 0 { x } else { lg_nth_set(rest, i - 1) }
@@ -284,11 +282,11 @@ pub fn lg_nth_set(xs: List(LgSet), i: u64): LgSet {
 
 // The tuples of the productions of `nt` at `k`: FIRST(k) of the production
 // followed by FOLLOW(k) of the non-terminal (the pairs: production, tuples).
-pub fn lg_tuples_of(g: LgGrammar, c: LgCache, nt: u64, k: u64): List(Pair(u64, LgSet)) {
+pub fn lg_tuples_of(g: LgGrammar, c: LgCache, nt: u64, k: u64): List(u64 × LgSet) ! {div, overflow} {
   let first := lg_nth_first(c.firsts, k)
   let follow := lg_nth_follow(c.follows, k)
   let follow_nt := lg_nth_set(follow.nts, nt)
-  var out: List(Pair(u64, LgSet)) := Nil
+  var out: List(u64 × LgSet) := Nil
   var ps := lg_nt_prods_at(g, nt)
   var running := true
   while running {
@@ -298,7 +296,7 @@ pub fn lg_tuples_of(g: LgGrammar, c: LgCache, nt: u64, k: u64): List(Pair(u64, L
       }
       Cons(p, rest) => {
         out := Cons(
-          Pair { fst: p, snd: lg_set_concat(lg_nth_set(first.prods, p), follow_nt, k) },
+          #(p, lg_set_concat(lg_nth_set(first.prods, p), follow_nt, k)),
           out
         )
         ps := rest
@@ -308,8 +306,8 @@ pub fn lg_tuples_of(g: LgGrammar, c: LgCache, nt: u64, k: u64): List(Pair(u64, L
   lg_rev_pairs(out)
 }
 
-pub fn lg_rev_pairs(xs: List(Pair(u64, LgSet))): List(Pair(u64, LgSet)) {
-  var out: List(Pair(u64, LgSet)) := Nil
+pub fn lg_rev_pairs(xs: List(u64 × LgSet)): List(u64 × LgSet) ! {div} {
+  var out: List(u64 × LgSet) := Nil
   var rest := xs
   var running := true
   while running {
@@ -326,14 +324,14 @@ pub fn lg_rev_pairs(xs: List(Pair(u64, LgSet))): List(Pair(u64, LgSet)) {
   out
 }
 
-pub fn lg_pairwise_disjoint(xs: List(Pair(u64, LgSet))): Bool {
+pub fn lg_pairwise_disjoint(xs: List(u64 × LgSet)): Bool ! {div} {
   match xs {
     Nil => true
     Cons(x, rest) => lg_disjoint_from(x, rest) && lg_pairwise_disjoint(rest)
   }
 }
 
-pub fn lg_disjoint_from(x: Pair(u64, LgSet), ys: List(Pair(u64, LgSet))): Bool {
+pub fn lg_disjoint_from(x: u64 × LgSet, ys: List(u64 × LgSet)): Bool ! {div} {
   match ys {
     Nil => true
     Cons(y, rest) => lg_disjoint(x.snd.tuples, y.snd.tuples) && lg_disjoint_from(x, rest)
@@ -343,9 +341,9 @@ pub fn lg_disjoint_from(x: Pair(u64, LgSet), ys: List(Pair(u64, LgSet))): Bool {
 pub fn lg_has_many(xs: List(u64)): Bool {
   match xs {
     Nil => false
-    Cons(x, rest) => match rest {
+    Cons(^x, rest) => match rest {
       Nil => false
-      Cons(y, more) => true
+      Cons(^y, ^more) => true
     }
   }
 }
@@ -354,7 +352,7 @@ pub fn lg_has_many(xs: List(u64)): Bool {
 // `nt` are told apart (0 when it has one), or `None`.
 pub(open) struct LgDecided { k: u64, cache: LgCache }
 
-pub fn lg_decide(g: LgGrammar, c: LgCache, nt: u64, max_k: u64): Option(LgDecided) {
+pub fn lg_decide(g: LgGrammar, c: LgCache, nt: u64, max_k: u64): Option(LgDecided) ! {div, out_of_bounds, overflow} {
   if not(lg_has_many(lg_nt_prods_at(g, nt))) {
     Some(LgDecided { k: 0, cache: c })
   } else {
@@ -379,6 +377,6 @@ pub fn lg_decide(g: LgGrammar, c: LgCache, nt: u64, max_k: u64): Option(LgDecide
 pub fn lg_is_none(o: Option(u64)): Bool {
   match o {
     None => true
-    Some(x) => false
+    Some(^x) => false
   }
 }

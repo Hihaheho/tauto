@@ -1,132 +1,192 @@
-// `Text` and `Buf` builtins (`std/prelude/Text.taut`). Positions are UTF-8 bytes.
+// `Text` and `Buf` builtins (`std/prelude/text.taut`). Positions are UTF-8 bytes.
 
 @ cases.text-len-counts-bytes
 source = ```nib
-perform show("n", Text::len("aあ"))
+show(&Text::len("aあ"))
 ```
-shows = ["n = 4"]
+stdout = "4\n"
 
 @ cases.text-byte-in-range
 source = ```nib
-perform show("b", Text::byte("ab", 1))
+show(&Text::byte("ab", 1))
 ```
-shows = ["b = Some(98)"]
+stdout = "Some(98)\n"
 
 @ cases.text-byte-out-of-range
 source = ```nib
-perform show("b", Text::byte("ab", 2))
+show(&Text::byte("ab", 2))
 ```
-shows = ["b = None"]
+stdout = "None\n"
 
 @ cases.text-slice-ok
 source = ```nib
-perform show("s", Text::slice("hello", 1, 3))
+show(&Text::slice("hello", 1, 3))
 ```
-shows = ["s = Some(\"el\")"]
+stdout = ```
+Some("el")
+```
 
 @ cases.text-slice-not-boundary
 source = ```nib
-perform show("s", Text::slice("あ", 0, 1))
+show(&Text::slice("あ", 0, 1))
 ```
-shows = ["s = None"]
+stdout = "None\n"
 
 @ cases.text-slice-reversed
 source = ```nib
-perform show("s", Text::slice("ab", 2, 1))
+show(&Text::slice("ab", 2, 1))
 ```
-shows = ["s = None"]
+stdout = "None\n"
 
 @ cases.text-slice-past-the-end
 source = ```nib
-perform show("s", Text::slice("ab", 0, 3))
+show(&Text::slice("ab", 0, 3))
 ```
-shows = ["s = None"]
+stdout = "None\n"
 
 @ cases.text-compare
 source = ```nib
-perform show("lt", Text::compare("a", "b"))
-perform show("gt", Text::compare("b", "a"))
-perform show("eq", Text::compare("a", "a"))
-perform show("prefix", Text::compare("a", "ab"))
-perform show("empty", Text::compare("", ""))
-perform show("empty-first", Text::compare("", "😀"))
-perform show("empty-last", Text::compare("😀", ""))
-perform show("scalar-order", Text::compare("\u{e000}", "\u{10000}"))
-perform show("reverse-scalar-order", Text::compare("\u{10000}", "\u{e000}"))
-perform show("non-bmp-equal", Text::compare("😀あ", "😀あ"))
-perform show("non-bmp-prefix", Text::compare("😀", "😀あ"))
-perform show("reverse-non-bmp-prefix", Text::compare("😀あ", "😀"))
-perform show("late", Text::compare("😀あ😀あx", "😀あ😀あy"))
-perform show("not-normalized", Text::compare("e\u{301}", "é"))
+show(&Text::compare("a", "b"))
+show(&Text::compare("b", "a"))
+show(&Text::compare("a", "a"))
+show(&Text::compare("a", "ab"))
+show(&Text::compare("", ""))
+show(&Text::compare("", "😀"))
+show(&Text::compare("😀", ""))
+show(&Text::compare("\u{e000}", "\u{10000}"))
+show(&Text::compare("\u{10000}", "\u{e000}"))
+show(&Text::compare("😀あ", "😀あ"))
+show(&Text::compare("😀", "😀あ"))
+show(&Text::compare("😀あ", "😀"))
+show(&Text::compare("😀あ😀あx", "😀あ😀あy"))
+show(&Text::compare("e\u{301}", "é"))
 ```
-shows = ["lt = -1", "gt = 1", "eq = 0", "prefix = -1", "empty = 0", "empty-first = -1", "empty-last = 1", "scalar-order = -1", "reverse-scalar-order = 1", "non-bmp-equal = 0", "non-bmp-prefix = -1", "reverse-non-bmp-prefix = 1", "late = -1", "not-normalized = -1"]
+stdout = ```
+-1
+1
+0
+-1
+0
+-1
+1
+-1
+1
+0
+-1
+1
+-1
+-1
+```
 
 @ cases.text-of-code-point
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Text::of_code_point` yet"
 source = ```nib
-perform show("a", Text::of_code_point(12354))
-perform show("surrogate", Text::of_code_point(55296))
-perform show("beyond", Text::of_code_point(1114112))
+show(&Text::of_code_point(12354))
+show(&Text::of_code_point(55296))
+show(&Text::of_code_point(1114112))
 ```
-shows = ["a = Some(\"あ\")", "surrogate = None", "beyond = None"]
+stdout = ```
+Some("あ")
+None
+None
+```
 
 @ cases.text-of-i64
 source = ```nib
-perform show("t", Text::of_i64(0 - 12))
+show(&Text::of_i64(0 - 12))
 ```
-shows = ["t = \"-12\""]
+stdout = ```
+"-12"
+```
 
 @ cases.text-of-u64
 source = ```nib
-perform show("t", Text::of_u64(12))
+show(&Text::of_u64(12))
 ```
-shows = ["t = \"12\""]
+stdout = ```
+"12"
+```
 
 @ cases.buf-push
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Buf::new` yet"
 source = ```nib
-import std::prelude::Affine
 
 var b := Buf::new()
 Buf::push(&mut b, &"ab")
 Buf::push(&mut b, &"c")
-perform show("t", Text::of(b))
+show(&Text::of(b))
 ```
-shows = ["t = \"abc\""]
+stdout = ```
+"abc"
+```
 
 // Text literals: `"…"` resolves escapes, `'…'` and plaintext`…` are taken as written.
 
 @ cases.escapes-in-double-quotes
 source = ```nib
-perform show("a", "x\ny\t\"z\" \\ \u{e9}\0")
+show(&"x\ny\t\"z\" \\ \u{e9}\0")
 ```
-shows = ["a = \"x\\ny\\t\\\"z\\\" \\\\ é\\0\""]
+stdout = ```
+"x\ny\t\"z\" \\ é\0"
+```
 
 @ cases.single-quotes-have-no-escapes
 source = ```nib
-perform show("b", 'a\nb')
+show(&('a\nb'))
 ```
-shows = ["b = \"a\\\\nb\""]
+stdout = ```
+"a\\nb"
+```
 
 @ cases.plaintext-has-no-escapes
 source = ```nib
-perform show("c", plaintext`a\nb "q"`)
+show(&(plaintext`a\nb "q"`))
 ```
-shows = ["c = \"a\\\\nb \\\"q\\\"\""]
+stdout = ```
+"a\\nb \"q\""
+```
 
 @ cases.the-three-forms-agree
 source = ```nib
-import std::prelude::Shared
 
-perform show("d", concat("a\\b", 'c') == concat(plaintext`a\b`, "c"))
+show(&(concat("a\\b", 'c') == concat(plaintext`a\b`, "c")))
 ```
-shows = ["d = true"]
+stdout = "true\n"
 
 @ cases.text-of-utf8
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Text::of_utf8` yet"
 source = ```nib
-perform show("ok", Text::of_utf8(Cons(104, Cons(227, Cons(129, Cons(130, Nil))))))
-perform show("empty", Text::of_utf8(Nil))
-perform show("cut", Text::of_utf8(Cons(227, Cons(129, Nil))))
-perform show("overlong", Text::of_utf8(Cons(192, Cons(175, Nil))))
-perform show("surrogate", Text::of_utf8(Cons(237, Cons(160, Cons(128, Nil)))))
-perform show("beyond", Text::of_utf8(Cons(244, Cons(144, Cons(128, Cons(128, Nil))))))
+show(&Text::of_utf8(Cons(104, Cons(227, Cons(129, Cons(130, Nil))))))
+show(&Text::of_utf8(Nil))
+show(&Text::of_utf8(Cons(227, Cons(129, Nil))))
+show(&Text::of_utf8(Cons(192, Cons(175, Nil))))
+show(&Text::of_utf8(Cons(237, Cons(160, Cons(128, Nil)))))
+show(&Text::of_utf8(Cons(244, Cons(144, Cons(128, Cons(128, Nil))))))
 ```
-shows = ["ok = Some(\"hあ\")", "empty = Some(\"\")", "cut = None", "overlong = None", "surrogate = None", "beyond = None"]
+stdout = ```
+Some("hあ")
+Some("")
+None
+None
+None
+None
+```
+
+// `Text::replace_all` replaces each occurrence, left to right and not
+// overlapping, as `${t//old/new}` does; an empty `old` changes nothing.
+@ cases.text-replace-all
+llvm.unimplemented = "generate: the LLVM backend does not write `==` on a type stored in a box yet"
+source = ```nib
+show(&Text::replace_all("a\\b\\c", "\\", "\\\\"))
+show(&Text::replace_all("aaa", "aa", "b"))
+show(&Text::replace_all("abc", "x", "y"))
+show(&Text::replace_all("abc", "", "y"))
+show(&Text::replace_all("a-b-c", "-", "<->"))
+```
+stdout = ```
+"a\\\\b\\\\c"
+"ba"
+"abc"
+"abc"
+"a<->b<->c"
+```

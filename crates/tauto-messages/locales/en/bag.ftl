@@ -1,12 +1,12 @@
 # The messages of Totebag's commands: add, remove, update, lock, fetch, deps.
 
 bag-help =
-    usage: tauto add (--git URL [--branch NAME | --tag NAME] [--dir DIR] [--project ID] | --path DIR) [NAME] [--tote DIR]
+    usage: tauto add (--git URL [--branch NAME | --tag NAME] [--dir DIR [--sparse]] [--project ID] | --path DIR) [NAME] [--tote DIR]
     {"       "}tauto remove NAME [--tote DIR]
     {"       "}tauto update [NAME…] [--dry-run] [--tote DIR]
     {"       "}tauto lock [--check] [--tote DIR]
     {"       "}tauto fetch [--verify] [--tote DIR]
-    {"       "}tauto deps [--tote DIR]
+    {"       "}tauto deps [--tote DIR] [--json]
     {"       "}tauto audit [--json] [--tote DIR]
 
     {"  "}add      depend on a tote: write it in Tauto.eure, lock it and fetch it.
@@ -21,7 +21,9 @@ bag-help =
     {"           "}the ones no longer used. --check changes nothing, uses no network,
     {"           "}and fails when Tauto.lock is not up to date.
     {"  "}fetch    fetch what Tauto.lock fixes. --verify reads the fetched trees again.
-    {"  "}deps     show the totes the tote depends on.
+    {"  "}deps     show the totes the tote depends on. --json prints them as JSON,
+    {"           "}in the order Tauto.eure declares them, each with its source
+    {"           "}and the directory it resolves to.
     {"  "}audit    for the tote and each tote it depends on: the extern functions,
     {"           "}axioms and effects its sources declare, the host code it
     {"           "}brings (a Rust bridge and its crates, JavaScript sources), and
@@ -46,7 +48,7 @@ bag-already = { $name } is already a dependency; `tauto update { $name }` moves 
 bag-branch-and-tag = give --branch or --tag, not both
 bag-fetching-ref = Fetching { $what } { $reference }
 bag-fetching-rev = Fetching { $name } { $rev } from { $url }
-bag-git-only-flags = --branch, --tag, --dir and --project are for --git
+bag-git-only-flags = --branch, --tag, --dir, --sparse and --project are for --git
 bag-path-no-manifest = { $path } has no Tauto.eure, seen from { $from }
 bag-add-needs-source = add needs --git URL or --path DIR
 bag-self = { $name } is this tote itself
@@ -68,12 +70,15 @@ bag-fetch-no-name = fetch takes no NAME
 bag-nothing-to-fetch = no Tauto.lock: nothing to fetch
 bag-offline = the network is off (--offline)
 bag-verified = { $name } { $id }: ok
+bag-verify-not-fetched = { $name } { $id }: not fetched; run `tauto fetch`
 bag-fetched = { $n } { $n ->
         [one] tote
        *[other] totes
     } fetched
 bag-deps-no-name = deps takes no NAME
 bag-deps-path = path { $path }
+bag-deps-workspace = workspace { $path }
+bag-deps-workspace-missing = workspace (unresolved)
 bag-deps-locked = { $url } { $reference } at { $rev }
 bag-deps-not-fetched = { $url } { $reference } at { $rev }, not fetched
 bag-deps-not-locked = { $url } { $reference }, not locked

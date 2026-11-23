@@ -1,8 +1,7 @@
 //! The core kernel: every declaration the named checker accepts is checked
-//! again here, over locally nameless terms, before it is added. The one
-//! exception is a theorem's proof found in the proof cache (`cache.rs`, keyed
-//! by the checker's source, the proof text and the interfaces of what it
-//! names), which is taken as checked; `TAUTO_CACHE=off` checks everything.
+//! again here, over locally nameless terms, before it is added, with no
+//! exception: a term read from the proof cache (`cache.rs`) is checked here
+//! as any other is, so the cache is outside the trusted base.
 //!
 //! The named checker (`check.rs`) elaborates surface terms whose global and
 //! local references have distinct identities. This module reads local IDs as
@@ -22,9 +21,10 @@
 
 use crate::surface::Name;
 use std::collections::{HashMap, HashSet};
-use std::rc::{Rc, Weak};
+use std::sync::{Arc, Weak};
 
 use super::derivation::{Derivation, InferenceRule};
+use super::num::Num;
 use super::{Ctx, Sort, T, sort_named, sort_term};
 use crate::surface::TermKind;
 use tauto_message::{Message, msg};
@@ -33,7 +33,7 @@ use tauto_surface::identity::DeclRef;
 /// Source spellings used at the named-to-core boundary. This index is not
 /// evidence of acceptance; only entries in `Core::globals` have a checked type.
 #[derive(Clone, Default)]
-struct SourceNames(HashMap<String, DeclRef>);
+struct SourceNames(tauto_identity::ForkedMap<String, DeclRef>);
 
 impl SourceNames {
     fn reserve(&mut self, name: &str) -> DeclRef {
@@ -70,9 +70,9 @@ impl SourceNames {
     }
 }
 
-type R = Rc<Tm>;
+type R = Arc<Tm>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Eq, Hash)]
 pub(super) enum Tm {
     /// A variable bound by an enclosing `Pi` or `Lam`, counted outwards.
     BVar(usize),
@@ -84,7 +84,55 @@ pub(super) enum Tm {
     Pi(Hint, R, R),
     Lam(Hint, R),
     App(R, R),
-    Lit(u128),
+    Lit(Num),
+}
+
+/// Structural equality, hints aside. Terms share their nodes (reducing
+/// `x * 2` gives `x * 1 + x` with one `x`), so the same pair of nodes can be
+/// met many times: walking the tree the nodes make, as a derived equality
+/// does, can take time exponential in the size of the terms. Here each pair of
+/// nodes is compared once, and a node is equal to itself at once.
+impl PartialEq for Tm {
+    fn eq(&self, other: &Tm) -> bool {
+        // Small terms are compared without keeping the pairs met.
+        const KEEP_AFTER: usize = 64;
+        let mut steps = 0;
+        // Keyed by addresses, as the node tables are (`AddrHasher`).
+        let mut seen: HashSet<(*const Tm, *const Tm), AddrBuild> = HashSet::default();
+        let mut todo: Vec<(&Tm, &Tm)> = vec![(self, other)];
+        while let Some((a, b)) = todo.pop() {
+            if std::ptr::eq(a, b) {
+                continue;
+            }
+            steps += 1;
+            if steps > KEEP_AFTER && matches!(a, App(..) | Pi(..) | Lam(..)) && !seen.insert((a, b))
+            {
+                continue;
+            }
+            match (a, b) {
+                (BVar(x), BVar(y)) if x == y => {}
+                (FVar(x), FVar(y)) if x == y => {}
+                (Sort(x), Sort(y)) if x == y => {}
+                (Const(x), Const(y)) if x == y => {}
+                (Lit(x), Lit(y)) if x == y => {}
+                (Pi(_, x, y), Pi(_, z, w)) => {
+                    todo.push((y, w));
+                    todo.push((x, z));
+                }
+                // The argument is compared first: two applications of an
+                // eliminator that differ mostly differ in the value it is
+                // applied to, which is the last argument, while the cases
+                // before it can be large copies of the same terms.
+                (App(x, y), App(z, w)) => {
+                    todo.push((x, z));
+                    todo.push((y, w));
+                }
+                (Lam(_, x), Lam(_, y)) => todo.push((x, y)),
+                _ => return false,
+            }
+        }
+        true
+    }
 }
 
 /// The source binder retained for writing terms and hole contexts back to
@@ -128,7 +176,7 @@ pub mod selfhost;
 impl Drop for Tm {
     fn drop(&mut self) {
         thread_local! {
-            static LEAF: R = Rc::new(Lit(0));
+            static LEAF: R = Arc::new(Lit(Num::ZERO));
         }
         // The parts of an application this drop would free: those no other
         // term shares. A shared part only loses a count.
@@ -136,9 +184,9 @@ impl Drop for Tm {
             if let App(f, a) = t {
                 for r in [f, a] {
                     // While the thread is ending, the drop is the compiler's.
-                    if Rc::strong_count(r) == 1
+                    if Arc::strong_count(r) == 1
                         && matches!(**r, App(..))
-                        && let Ok(leaf) = LEAF.try_with(Rc::clone)
+                        && let Ok(leaf) = LEAF.try_with(Arc::clone)
                     {
                         next.push(std::mem::replace(r, leaf));
                     }
@@ -149,7 +197,7 @@ impl Drop for Tm {
         take(self, &mut next);
         while let Some(r) = next.pop() {
             poll_deadline();
-            if let Ok(mut t) = Rc::try_unwrap(r) {
+            if let Ok(mut t) = Arc::try_unwrap(r) {
                 take(&mut t, &mut next);
             }
         }
@@ -166,7 +214,7 @@ impl Tm {
 }
 
 fn app(f: Tm, a: Tm) -> Tm {
-    App(Rc::new(f), Rc::new(a))
+    App(Arc::new(f), Arc::new(a))
 }
 
 fn apps(f: Tm, args: impl IntoIterator<Item = Tm>) -> Tm {
@@ -192,13 +240,20 @@ fn numeric_arity(c: &str) -> usize {
     }
 }
 
-/// `x op y` on two numerals, or `None` past `u128`.
-fn lit_op(op: &str, x: u128, y: u128) -> Option<u128> {
+/// `x op y` on two numerals, or `None` past the largest numeral.
+fn lit_op(op: &str, x: Num, y: Num) -> Option<Num> {
     match op {
         "+" => x.checked_add(y),
         "*" => x.checked_mul(y),
         _ => Some(x.saturating_sub(y)),
     }
+}
+
+/// One step of [`Core::conv_nodes`]: the answer, or the pair of nodes whose
+/// answer it is.
+enum Conv {
+    Is(bool),
+    Below(R, R),
 }
 
 fn primitive_operator(reference: &DeclRef) -> Option<&'static str> {
@@ -215,7 +270,7 @@ fn konst(n: &str) -> Tm {
 /// Indices inside `v` refer only to its own binders, so no shifting is needed.
 /// A part that does not change is shared with `t`, not copied.
 fn inst_at(t: &Tm, d: usize, v: &Tm) -> Tm {
-    inst_at_rc(t, d, &Rc::new(v.clone()))
+    inst_at_rc(t, d, &Arc::new(v.clone()))
 }
 
 /// [`inst_at`] with `v` shared: every place the variable was is the same
@@ -239,16 +294,111 @@ fn inst_tm(t: &Tm, d: usize, v: &R) -> Option<Tm> {
             let (f2, a2) = (inst_rc(f, d, v), inst_rc(a, d, v));
             share2(f, a, f2, a2).map(|(f, a)| App(f, a))
         }
-        _ => None,
+        BVar(_) | FVar(_) | Sort(_) | Const(_) | Lit(_) => None,
     }
 }
 
 fn inst_rc(t: &R, d: usize, v: &R) -> Option<R> {
     match &**t {
         BVar(i) if *i == d => Some(v.clone()),
-        BVar(_) => inst_tm(t, d, v).map(Rc::new),
+        BVar(_) => inst_tm(t, d, v).map(Arc::new),
         Pi(..) | Lam(..) | App(..) if loose(t) <= d => None,
-        _ => inst_tm(t, d, v).map(Rc::new),
+        _ => inst_tm(t, d, v).map(Arc::new),
+    }
+}
+
+/// `t` with the variables bound at depths `d .. d + vals.len()` replaced
+/// at once by the locally closed `vals`, the first of them outermost: the
+/// variable at depth `d + i` becomes `vals[vals.len() - 1 - i]`, and a
+/// variable bound further out loses `vals.len()`. It is the term that
+/// [`inst_at`] gives when the values are put in one at a time, the first
+/// outermost at depth `d + vals.len() - 1` and the last at `d`, but it walks
+/// `t` once instead of once per value: the type of a function applied to
+/// many arguments is a telescope, and putting each argument into the whole
+/// rest of it in turn walks the telescope once per argument. A part that does
+/// not change is shared with `t`, and every place a value goes is that value's
+/// node, as with [`inst_at_rc`].
+fn inst_env(t: &R, d: usize, vals: &[R]) -> R {
+    if vals.is_empty() {
+        return t.clone();
+    }
+    inst_env_rc(t, d, vals).unwrap_or_else(|| t.clone())
+}
+
+/// `None` when `t` does not change.
+fn inst_env_tm(t: &Tm, d: usize, vals: &[R]) -> Option<Tm> {
+    poll_deadline();
+    let n = vals.len();
+    match t {
+        BVar(i) if *i >= d && *i < d + n => Some((*vals[n - 1 - (i - d)]).clone()),
+        BVar(i) if *i >= d + n => Some(BVar(i - n)),
+        Pi(h, a, b) => {
+            let (a2, b2) = (inst_env_rc(a, d, vals), inst_env_rc(b, d + 1, vals));
+            share2(a, b, a2, b2).map(|(a, b)| Pi(h.clone(), a, b))
+        }
+        Lam(h, b) => inst_env_rc(b, d + 1, vals).map(|b| Lam(h.clone(), b)),
+        App(f, a) => {
+            let (f2, a2) = (inst_env_rc(f, d, vals), inst_env_rc(a, d, vals));
+            share2(f, a, f2, a2).map(|(f, a)| App(f, a))
+        }
+        BVar(_) | FVar(_) | Sort(_) | Const(_) | Lit(_) => None,
+    }
+}
+
+fn inst_env_rc(t: &R, d: usize, vals: &[R]) -> Option<R> {
+    let n = vals.len();
+    match &**t {
+        BVar(i) if *i >= d && *i < d + n => Some(vals[n - 1 - (i - d)].clone()),
+        BVar(_) => inst_env_tm(t, d, vals).map(Arc::new),
+        Pi(..) | Lam(..) | App(..) if loose(t) <= d => None,
+        _ => inst_env_tm(t, d, vals).map(Arc::new),
+    }
+}
+
+/// The names reduced on the way to a comparison (`Core::conv_unfolded`),
+/// in the order they were met, each with the binders gone under where it
+/// was. For each name the least of those binders so far is kept too, so
+/// that whether it was met outside the binders in hand (`Core::conv_cut`)
+/// is one look. Scanning the list instead takes as long as the list, and a
+/// comparison down a stuck chain `n` long meets the eliminator once per
+/// link: `n` scans of up to `n` entries.
+#[derive(Clone, Default)]
+struct Unfolded {
+    met: Vec<DeclRef>,
+    /// For each name, the least binders among its first `k` entries, for
+    /// each `k`.
+    least: HashMap<DeclRef, Vec<usize>>,
+}
+
+impl Unfolded {
+    fn len(&self) -> usize {
+        self.met.len()
+    }
+
+    fn push(&mut self, (f, at): (DeclRef, usize)) {
+        let least = self.least.entry(f.clone()).or_default();
+        least.push(least.last().map_or(at, |&l| l.min(at)));
+        self.met.push(f);
+    }
+
+    fn truncate(&mut self, len: usize) {
+        while self.met.len() > len {
+            let f = self.met.pop().unwrap();
+            if let Some(least) = self.least.get_mut(&f) {
+                least.pop();
+                if least.is_empty() {
+                    self.least.remove(&f);
+                }
+            }
+        }
+    }
+
+    /// Whether `f` was met under fewer binders than `binders`.
+    fn below(&self, f: &DeclRef, binders: usize) -> bool {
+        self.least
+            .get(f)
+            .and_then(|l| l.last())
+            .is_some_and(|&l| l < binders)
     }
 }
 
@@ -284,13 +434,17 @@ fn poll_deadline() {
     }
 }
 
-/// A hasher for the tables keyed by a node's address (a `usize`). Only
+/// A hasher for the tables keyed by a node's address (a `usize`), and for
+/// those keyed by a declaration or an atom, which hash as one number (a
+/// declaration's id, an atom's index) and are looked up at each step of
+/// reduction. Only
 /// `HashMap` lookups use it: a table's answers do not depend on how its keys
 /// are hashed (the hash only chooses where a key is stored, and equal keys
 /// always hash alike), so swapping the hasher changes how fast the table is,
 /// never what it holds or returns. It multiplies the key by an odd constant
 /// and folds the well-mixed high bits of the product into the low ones;
 /// addresses are aligned, so their low bits alone would collide.
+/// Nothing reads these tables in the order of their entries.
 #[derive(Default, Clone, Copy)]
 struct AddrHasher(u64);
 
@@ -322,6 +476,29 @@ struct NodeTable<V> {
     entries: HashMap<usize, (Weak<Tm>, V), AddrBuild>,
     /// The size at which [`sweep`] next looks for the entries whose node is gone.
     sweep_at: usize,
+}
+
+/// The number of entries from which a table a declaration filled is
+/// dropped on a thread of its own ([`drop_aside`]).
+const DROP_ASIDE_FROM: usize = 1 << 16;
+
+/// Drops what reducing a declaration remembered (`Core::shared`). A table
+/// of a long reduction holds as many nodes as it took steps, and freeing
+/// them takes seconds after the declaration's answer, also when it is
+/// "out of time": a declaration stopped at its deadline went on that long
+/// past it. A large table is freed on another thread, which changes no
+/// answer: the nodes are unreachable once taken out. Where no thread can be
+/// started (a check in a browser) it is freed here.
+fn drop_aside(table: NodeTable<Tm>) {
+    if table.entries.len() < DROP_ASIDE_FROM {
+        return;
+    }
+    // Where the thread does not start, the table is freed with the
+    // closure that held it.
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = std::thread::Builder::new()
+        .name("tauto-kernel-drop".into())
+        .spawn(move || drop(table));
 }
 
 /// The size of a [`NodeTable`] below which [`sweep`] does not run.
@@ -368,23 +545,41 @@ thread_local! {
 /// it leaves none). A substitution at a depth at or above it changes
 /// nothing in `t`, so it is not walked again.
 fn loose(t: &R) -> usize {
-    let key = Rc::as_ptr(t) as *const () as usize;
-    if let Some(n) = LOOSE.with(|m| m.borrow().get(&key).map(|e| e.1)) {
-        return n;
+    // A node without parts is read at once: keeping it in the table would
+    // cost more than reading it, and leaves are about half of the nodes.
+    match &**t {
+        BVar(i) => i + 1,
+        FVar(_) | Sort(_) | Const(_) | Lit(_) => 0,
+        Pi(..) | Lam(..) | App(..) => LOOSE.with(|m| {
+            // The table is taken once for the whole walk, not at each node.
+            let mut m = m.borrow_mut();
+            let n = loose_in(&mut m, t);
+            sweep(&mut m);
+            n
+        }),
+    }
+}
+
+/// [`loose`] with the table in hand.
+fn loose_in(m: &mut NodeTable<usize>, t: &R) -> usize {
+    let part = |m: &mut NodeTable<usize>, r: &R| match &**r {
+        BVar(i) => i + 1,
+        FVar(_) | Sort(_) | Const(_) | Lit(_) => 0,
+        Pi(..) | Lam(..) | App(..) => loose_in(m, r),
+    };
+    let key = Arc::as_ptr(t) as *const () as usize;
+    if let Some(e) = m.get(&key) {
+        return e.1;
     }
     poll_deadline();
     let n = match &**t {
+        Pi(_, a, b) => part(m, a).max(part(m, b).saturating_sub(1)),
+        Lam(_, b) => part(m, b).saturating_sub(1),
+        App(f, a) => part(m, f).max(part(m, a)),
         BVar(i) => i + 1,
-        Pi(_, a, b) => loose(a).max(loose(b).saturating_sub(1)),
-        Lam(_, b) => loose(b).saturating_sub(1),
-        App(f, a) => loose(f).max(loose(a)),
         _ => 0,
     };
-    LOOSE.with(|m| {
-        let mut m = m.borrow_mut();
-        m.insert(key, (Rc::downgrade(t), n));
-        sweep(&mut m);
-    });
+    m.insert(key, (Arc::downgrade(t), n));
     n
 }
 
@@ -445,21 +640,25 @@ fn abstract_tm(t: &Tm, d: usize, x: u64) -> Option<Tm> {
             let (f2, a2) = (abstract_rc(f, d, x), abstract_rc(a, d, x));
             share2(f, a, f2, a2).map(|(f, a)| App(f, a))
         }
-        _ => None,
+        FVar(_) | BVar(_) | Sort(_) | Const(_) | Lit(_) => None,
     }
 }
 
 fn abstract_rc(t: &R, d: usize, x: u64) -> Option<R> {
-    abstract_tm(t, d, x).map(Rc::new)
+    abstract_tm(t, d, x).map(Arc::new)
 }
 
 /// `Pi (x: dom). body`, with the atom `x` of `body` bound.
 fn pi_over(x: u64, dom: Tm, body: &Tm) -> Tm {
-    Pi(Hint::none(), Rc::new(dom), Rc::new(abstract_at(body, 0, x)))
+    Pi(
+        Hint::none(),
+        Arc::new(dom),
+        Arc::new(abstract_at(body, 0, x)),
+    )
 }
 
 fn lam_over(x: u64, body: &Tm) -> Tm {
-    Lam(Hint::none(), Rc::new(abstract_at(body, 0, x)))
+    Lam(Hint::none(), Arc::new(abstract_at(body, 0, x)))
 }
 
 fn has_loose(t: &Tm, d: usize) -> bool {
@@ -468,7 +667,7 @@ fn has_loose(t: &Tm, d: usize) -> bool {
         Pi(_, a, b) => has_loose(a, d) || has_loose(b, d + 1),
         Lam(_, b) => has_loose(b, d + 1),
         App(f, a) => has_loose(f, d) || has_loose(a, d),
-        _ => false,
+        FVar(_) | Sort(_) | Const(_) | Lit(_) => false,
     }
 }
 
@@ -478,8 +677,26 @@ fn mentions_const(t: &Tm, names: &[DeclRef]) -> bool {
         Pi(_, a, b) => mentions_const(a, names) || mentions_const(b, names),
         Lam(_, b) => mentions_const(b, names),
         App(f, a) => mentions_const(f, names) || mentions_const(a, names),
-        _ => false,
+        BVar(_) | FVar(_) | Sort(_) | Lit(_) => false,
     }
+}
+
+/// A small closed term that is not a numeral itself (`p()`,
+/// `Nat::sub(p(), two_pow(130))`): one that may compute to a numeral, told
+/// apart by walking at most 64 of its nodes.
+fn constant_on_numerals(t: &Tm) -> bool {
+    fn walk(t: &Tm, left: &mut usize) -> bool {
+        if *left == 0 {
+            return false;
+        }
+        *left -= 1;
+        match t {
+            Const(_) | Lit(_) | Sort(_) => true,
+            App(f, a) => walk(f, left) && walk(a, left),
+            FVar(_) | BVar(_) | Pi(..) | Lam(..) => false,
+        }
+    }
+    matches!(t, Const(_) | App(..)) && walk(t, &mut 64)
 }
 
 fn mentions_fvar(t: &Tm) -> bool {
@@ -488,12 +705,148 @@ fn mentions_fvar(t: &Tm) -> bool {
         Pi(_, a, b) => mentions_fvar(a) || mentions_fvar(b),
         Lam(_, b) => mentions_fvar(b),
         App(f, a) => mentions_fvar(f) || mentions_fvar(a),
-        _ => false,
+        BVar(_) | Sort(_) | Const(_) | Lit(_) => false,
     }
 }
 
-/// The numeral from which `Core::offset_view` takes `x + n` off at once.
-const LARGE_OFFSET: u128 = 1 << 12;
+/// The numeral from which `Core::offset_view` takes `x + n` off at once, and
+/// from which the turns of a loop over a number are taken at once
+/// ([`Core::repeat`]).
+const LARGE_OFFSET: Num = Num::small(1 << 12);
+
+/// How many reductions may wait one inside another, each for the weak head
+/// normal form of a part it reduces on (the major premise of an eliminator,
+/// an operand), as calls on the stack. A reduction that needs one more is
+/// set aside with those that wait for it ([`Deep`]) and they are taken up
+/// again one at a time ([`Core::drive`]), so the depth of the reductions a
+/// term asks for is bounded by the memory, not by the stack.
+const DEPTH: usize = 64;
+
+/// How many turns of loops may be tried one inside another
+/// ([`Core::repeat`]).
+const TRIALS: usize = 8;
+
+/// How far a reduction goes: with every name unfolded (the weak head normal
+/// form), without unfolding names, or without unfolding names and leaving an
+/// eliminator as it is when its major premise is a constructor only once
+/// names are unfolded ([`Core::whnf_lazy`]).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Mode {
+    Full,
+    Head,
+    Lazy,
+}
+
+/// A reduction of a node at its head, as far as it has gone: the state of
+/// the loop of [`Core::whnf_steps`], which goes on from it when it is taken
+/// up again.
+struct Task {
+    /// What the node has become.
+    t: R,
+    mode: Mode,
+    /// The shared nodes it went through as the whole term: each reduces to
+    /// what the reduction ends in.
+    became: Vec<R>,
+    /// Whether the head of `t` was just replaced by what it was found to
+    /// reduce to (`Core::recalled_head`).
+    recalled: bool,
+    /// Where the reduction stops short of a weak head normal form
+    /// ([`Core::repeat`]), and whether it stopped there.
+    watch: Option<Box<Watch>>,
+    met: bool,
+}
+
+impl Task {
+    fn new(t: R, mode: Mode) -> Self {
+        Task {
+            t,
+            mode,
+            became: Vec::new(),
+            recalled: false,
+            watch: None,
+            met: false,
+        }
+    }
+}
+
+/// The turn of a loop a reduction is run up to: the eliminator `rec` applied
+/// again to the same parameters, motives and minor premises (`before`, the
+/// nodes themselves), with the atom `major` as its major premise.
+struct Watch {
+    rec: DeclRef,
+    before: Vec<R>,
+    major: u64,
+}
+
+impl Watch {
+    fn met(&self, c: &DeclRef, args: &[R]) -> bool {
+        *c == self.rec
+            && args.len() > self.before.len()
+            && args
+                .iter()
+                .zip(&self.before)
+                .all(|(a, b)| Arc::ptr_eq(a, b))
+            && matches!(&*args[self.before.len()], FVar(x) if *x == self.major)
+    }
+}
+
+/// A number written with a numeral: `more`, or `base + more`.
+struct Counted {
+    base: Option<R>,
+    more: Num,
+}
+
+impl Counted {
+    /// `t` as such a number, when it is written as one: a numeral, a sum
+    /// whose second operand is a numeral, or the `Succ` of one of them (what
+    /// such a sum reduces to).
+    fn read(t: &Tm) -> Option<Counted> {
+        let (t, succ) = match t {
+            App(f, x) if matches!(&**f, Const(c) if c.is_primitive("Succ")) => (&**x, 1),
+            _ => (t, 0),
+        };
+        match t {
+            Lit(n) => Some(Counted {
+                base: None,
+                more: n.checked_add(Num::small(succ))?,
+            }),
+            App(f, n) => match (&**f, &**n) {
+                (App(p, base), Lit(n)) if matches!(&**p, Const(c) if c.is_primitive("+")) => {
+                    Some(Counted {
+                        base: Some(base.clone()),
+                        more: n.checked_add(Num::small(succ))?,
+                    })
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The number with `k` less of its numeral.
+    fn less(&self, k: Num) -> R {
+        let more = Lit(self.more - k);
+        Arc::new(match &self.base {
+            None => more,
+            Some(base) => App(
+                Arc::new(App(Arc::new(konst("+")), base.clone())),
+                Arc::new(more),
+            ),
+        })
+    }
+}
+
+/// A reduction that needs the weak head normal form of `want` with
+/// [`DEPTH`] reductions already waiting on the stack: those reductions,
+/// innermost first, each with the node it reduces.
+struct Deep {
+    want: R,
+    mode: Mode,
+    tasks: Vec<(R, Task)>,
+}
+
+/// What a step of reduction gives, or the reductions set aside ([`Deep`]).
+type Step<X> = Result<X, Box<Deep>>;
 
 /// The head of an application and its arguments.
 /// [`spine`] with the arguments as the nodes they are, not copies.
@@ -506,6 +859,29 @@ fn spine_rc(t: &Tm) -> (&Tm, Vec<R>) {
     }
     args.reverse();
     (head, args)
+}
+
+/// What [`Core::write`] found about the nodes of the term it writes, by
+/// address: the levels of the scope a node refers to (`Core::levels`), and
+/// whether it uses a name (`Core::mentions`). The term is borrowed for the
+/// whole writing, so no address is reused while the memo is there.
+#[derive(Default)]
+struct WriteMemo<'a> {
+    levels: HashMap<(usize, usize), Arc<Vec<usize>>>,
+    mentions: HashMap<usize, Arc<HashSet<String>>>,
+    /// The whole term being written.
+    root: Option<&'a Tm>,
+}
+
+/// A last argument [`Core::infer_unrecorded`] types in its loop: where the
+/// path comes back to, the argument, its domain, and the rest of the
+/// telescope with the arguments before it, which take its variables.
+struct Pending {
+    mark: (usize, usize),
+    arg: R,
+    dom: R,
+    cod: R,
+    env: Vec<R>,
 }
 
 /// A pair the conversion found not to be convertible by their arguments,
@@ -544,11 +920,11 @@ impl std::hash::Hash for ConvKey {
 fn tree_hash(t: &Tm, seen: &mut HashMap<*const Tm, u64>) -> u64 {
     use std::hash::{Hash, Hasher};
     let child = |r: &R, seen: &mut HashMap<*const Tm, u64>| {
-        if let Some(h) = seen.get(&Rc::as_ptr(r)) {
+        if let Some(h) = seen.get(&Arc::as_ptr(r)) {
             return *h;
         }
         let h = tree_hash(r, seen);
-        seen.insert(Rc::as_ptr(r), h);
+        seen.insert(Arc::as_ptr(r), h);
         h
     };
     let mut s = std::collections::hash_map::DefaultHasher::new();
@@ -578,13 +954,13 @@ fn pruned(t: &Tm, budget: &mut usize) -> Tm {
     match t {
         App(f, a) => {
             let f = pruned(f, budget);
-            App(Rc::new(f), Rc::new(pruned(a, budget)))
+            App(Arc::new(f), Arc::new(pruned(a, budget)))
         }
         Pi(h, d, r) => {
             let d = pruned(d, budget);
-            Pi(h.clone(), Rc::new(d), Rc::new(pruned(r, budget)))
+            Pi(h.clone(), Arc::new(d), Arc::new(pruned(r, budget)))
         }
-        Lam(h, b) => Lam(h.clone(), Rc::new(pruned(b, budget))),
+        Lam(h, b) => Lam(h.clone(), Arc::new(pruned(b, budget))),
         t => t.clone(),
     }
 }
@@ -593,19 +969,19 @@ fn pruned(t: &Tm, budget: &mut usize) -> Tm {
 /// written with the constructors.
 fn unfold_lit(t: Tm) -> Tm {
     match t {
-        Lit(0) => konst("Zero"),
-        Lit(k) => App(Rc::new(konst("Succ")), Rc::new(Lit(k - 1))),
+        Lit(Num::ZERO) => konst("Zero"),
+        Lit(k) => App(Arc::new(konst("Succ")), Arc::new(Lit(k - Num::ONE))),
         t => t,
     }
 }
 
 /// `f` applied to `args`; `f` itself, the same node, when there are none.
 fn apps_node(f: R, args: impl IntoIterator<Item = R>) -> R {
-    args.into_iter().fold(f, |f, a| Rc::new(App(f, a)))
+    args.into_iter().fold(f, |f, a| Arc::new(App(f, a)))
 }
 
 fn apps_rc(f: Tm, args: impl IntoIterator<Item = R>) -> Tm {
-    args.into_iter().fold(f, |f, a| App(Rc::new(f), a))
+    args.into_iter().fold(f, |f, a| App(Arc::new(f), a))
 }
 
 /// The most nodes a reduced term is written out with (`whnf_in`).
@@ -617,7 +993,7 @@ const WRITTEN_LIMIT: usize = 1 << 20;
 /// size of `t` in the core, not written out.
 fn written_size(t: &Tm, seen: &mut HashMap<usize, usize, AddrBuild>) -> usize {
     let part = |r: &R, seen: &mut HashMap<usize, usize, AddrBuild>| {
-        let key = Rc::as_ptr(r) as usize;
+        let key = Arc::as_ptr(r) as usize;
         if let Some(&n) = seen.get(&key) {
             return n;
         }
@@ -727,6 +1103,7 @@ struct Open<'a> {
     /// those whose types it rewrites to mention them.)
     visible: usize,
     types: Vec<(u64, Tm)>,
+    values: Vec<(u64, Arc<Tm>)>,
     opaque: Vec<(u64, T)>,
     /// The names the binders entered while typing are shown under.
     named: Vec<(u64, Name)>,
@@ -735,6 +1112,19 @@ struct Open<'a> {
     outer: Option<Declared<'a>>,
     declared: Vec<(Name, u64)>,
     next: u64,
+    /// Whether known parts are read as atoms (`Core::known`), and whether
+    /// the term being read is the question's own (never read as one).
+    known: bool,
+    top: bool,
+    /// The context of the last part `known_part` found typed in this
+    /// question's context: the next part typed there is not compared again.
+    known_ctx: std::cell::Cell<Option<*const usize>>,
+}
+
+/// The context's types by address, as `Core::known` keeps them.
+pub(super) fn ctx_addresses(ctx: &Ctx) -> impl Iterator<Item = usize> + '_ {
+    ctx.iter()
+        .map(|(_, c)| Arc::as_ptr(&c.kind) as *const () as usize)
 }
 
 impl<'a> Open<'a> {
@@ -744,11 +1134,15 @@ impl<'a> Open<'a> {
             atoms: vec![None; ctx.len()],
             visible: ctx.len(),
             types: Vec::new(),
+            values: Vec::new(),
             opaque: Vec::new(),
             named: Vec::new(),
             outer: None,
             declared: Vec::new(),
             next: u64::MAX,
+            known: false,
+            top: false,
+            known_ctx: std::cell::Cell::new(None),
         }
     }
 
@@ -810,10 +1204,10 @@ pub(super) struct Budget {
     out_of_steps: bool,
     /// The name unfolded last before the step past the limit.
     last_unfold: Option<DeclRef>,
-    unfolds: HashMap<DeclRef, u64>,
-    /// The first sum or product of two numerals past `u128` met, which is
-    /// left as it is ([`Core::past_u128`]).
-    past_u128: Option<String>,
+    unfolds: HashMap<DeclRef, u64, AddrBuild>,
+    /// The first sum or product of two numerals past the largest numeral met, which is
+    /// left as it is ([`Core::past_limit`]).
+    past_limit: Option<String>,
 }
 
 /// What [`Core::end_budget`] says of the declaration just checked.
@@ -826,8 +1220,8 @@ pub(super) struct Spent {
     pub reached_in: Option<String>,
     /// The names unfolded most, with how often.
     pub top: Vec<(String, u64)>,
-    /// A sum or product of two numerals past `u128` that was left as it is.
-    pub past_u128: Option<String>,
+    /// A sum or product of two numerals past the largest numeral that was left as it is.
+    pub past_limit: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -840,20 +1234,23 @@ enum Elimination {
 #[derive(Clone)]
 pub(super) struct Core {
     names: SourceNames,
-    globals: HashMap<DeclRef, Global>,
+    globals: tauto_identity::ForkedMap<DeclRef, Global, AddrBuild>,
     /// Shared across eliminator steps without copying constructors.
-    inds: HashMap<DeclRef, Rc<IndInfo>>,
+    inds: tauto_identity::ForkedMap<DeclRef, Arc<IndInfo>, AddrBuild>,
     /// Constructor → (family it builds, place among its constructors).
-    ctors: HashMap<DeclRef, (DeclRef, usize)>,
+    ctors: tauto_identity::ForkedMap<DeclRef, (DeclRef, usize), AddrBuild>,
     /// Eliminator → (family, whether it is `_rec`).
-    recs: HashMap<DeclRef, DeclRef>,
-    rec_targets: HashMap<DeclRef, Vec<DeclRef>>,
-    eliminators: HashMap<(DeclRef, Elimination), DeclRef>,
+    recs: tauto_identity::ForkedMap<DeclRef, DeclRef, AddrBuild>,
+    rec_targets: tauto_identity::ForkedMap<DeclRef, Vec<DeclRef>, AddrBuild>,
+    eliminators: tauto_identity::ForkedMap<(DeclRef, Elimination), DeclRef>,
     /// The quotient's constants declared so far, each without a value and
     /// with the type [`quot_type`] gives it (`Core::quot_iota`).
-    quot: HashSet<DeclRef>,
+    quot: tauto_identity::ForkedSet<DeclRef, AddrBuild>,
     /// The types of the atoms in scope.
-    lctx: HashMap<u64, Tm>,
+    lctx: HashMap<u64, Tm, AddrBuild>,
+    /// The values of the atoms in scope that stand for a known part
+    /// (`Core::known`): such an atom unfolds to its value, as a name does.
+    lvals: HashMap<u64, Arc<Tm>, AddrBuild>,
     next: u64,
     /// Applications of the same name found not convertible argument by
     /// argument, during the outermost `conv`: unfolding them can meet them
@@ -869,21 +1266,47 @@ pub(super) struct Core {
     /// The names that lay open calls of themselves reduced on both sides on
     /// the way to the comparison in hand, each with `conv_binders` where it
     /// was (`Core::conv_cut`).
-    conv_unfolded: Vec<(DeclRef, usize)>,
+    conv_unfolded: Unfolded,
     /// The height and recursion of each name with a value, found when first
     /// asked for (`Core::def`).
     defs: HashMap<DeclRef, Def>,
+    /// The names whose values were found, by [`Core::no_unfolding_cycle`],
+    /// to reach only names in `cycle_names` (their own included), and the
+    /// names so reached: a value that reaches such a name reaches through it
+    /// only names of `cycle_names`. A change to any global of `cycle_names`
+    /// (a value given, taken or replaced, a name added again or removed)
+    /// forgets both ([`Core::touch`]).
+    cycle_free: HashSet<DeclRef>,
+    cycle_names: HashSet<DeclRef>,
     /// How much reduction the declaration in hand has done, and whether it ran
     /// out of time (`Kernel::set_timeout`).
     budget: Budget,
     /// What nodes reduced to, for the declaration in hand (`whnf_shared`).
     shared: NodeTable<Tm>,
-    /// `Nat::eq`, `Nat::lt`, `Nat::div_nz` and `Nat::rem_nz` are unfolded, not computed
-    /// (a test compares the two).
+    /// `Nat::eq`, `Nat::lt`, `Nat::div_nz` and `Nat::rem_nz` are unfolded, not computed,
+    /// and a loop is reduced a turn at a time (a test compares the two).
     numeric_off: bool,
     /// While [`Core::whnf_lazy`] reduces: an eliminator whose major premise
     /// is a constructor only once names are unfolded is left as it is.
     lazy_iota: bool,
+    /// How many reductions wait on the stack, one inside another, since the
+    /// outermost ([`Core::need`]).
+    depth: usize,
+    /// How many of [`Core::drive`] are running, one inside another.
+    drives: usize,
+    /// How many turns of loops are being tried, one inside another
+    /// ([`Core::repeat`]).
+    trials: usize,
+    /// What the nodes that reductions set aside waited for reduce to
+    /// ([`Core::drive`]), by address, for each [`Mode`]. Each node is held, so
+    /// its address is not reused while the entry is there.
+    forced: [HashMap<usize, (R, Tm), AddrBuild>; 3],
+    /// The loops found not to come round to themselves ([`Core::repeat`]),
+    /// for the declaration in hand: the minor premise of `Succ`, by address,
+    /// with which of the arguments after the major premise were numbers and
+    /// how far the reduction went ([`Mode`]). The node is held, so its
+    /// address is not reused while the entry is there.
+    no_repeat: HashMap<(usize, u64), R>,
     /// While a question of the named checker is typed: where the typing is
     /// (`at`), the binders entered on the way (`bound`), and the holes met.
     track: Option<Track>,
@@ -892,6 +1315,21 @@ pub(super) struct Core {
     /// every level (`check/universe.rs`): `Type(u + 1)` reads as a sort only
     /// over these, and no declaration outside that check sees one.
     pub(super) level_vars: Vec<Name>,
+    /// Parts of terms this core has already typed for the named checker, by
+    /// address: the part, the context's types (by address) it was typed in,
+    /// and the type the core gave it. While `use_known` is set, a question
+    /// reads such a part as an atom of that type instead of typing it again.
+    pub(super) known: HashMap<usize, (T, Arc<[usize]>, T)>,
+    /// The context (by address) a part was last put into `known` in: the
+    /// parts typed in one context share it, so that a question in that
+    /// context compares it once, not once for each part.
+    pub(super) known_at: Option<Arc<[usize]>>,
+    /// The parts of terms whose binders the named checker has found to be
+    /// the core's (`kernel_binders`), by address, each held so its address
+    /// is not reused: a term typed again inside a larger one is not walked
+    /// again.
+    pub(super) binders_checked: HashMap<usize, T>,
+    pub(super) use_known: bool,
     #[cfg(feature = "selfhost")]
     replay: Option<Vec<(String, bool)>>,
     #[cfg(feature = "selfhost")]
@@ -899,6 +1337,65 @@ pub(super) struct Core {
     /// The time spent in the recorded operations, to compare with a replay.
     #[cfg(feature = "selfhost")]
     replay_time: std::time::Duration,
+}
+
+impl Core {
+    /// Starts the atoms this core makes up `by` further on, so that a copy's
+    /// atoms are not another copy's (`check/fork.rs`).
+    /// Leaves in this copy only what it added since it was made of `base`.
+    pub(super) fn subtract(&mut self, since: u64) {
+        self.forget_cycles();
+        self.globals.subtract(since);
+        self.inds.subtract(since);
+        self.ctors.subtract(since);
+        self.recs.subtract(since);
+        self.rec_targets.subtract(since);
+        self.eliminators.subtract(since);
+        self.quot.subtract(since);
+        // A spelling two copies reserved is two fresh references: taking
+        // both in is said like any other key both wrote.
+        self.names.0.subtract(since);
+    }
+
+    /// Lets go of what [`Core::absorb`] does not take in: what was worked
+    /// out while declaring, kept only to be faster later.
+    pub(super) fn settle(&mut self) {
+        self.lctx = Default::default();
+        self.lvals = Default::default();
+        self.conv_no = Default::default();
+        self.conv_fail = Default::default();
+        self.known = Default::default();
+        self.known_at = None;
+        self.binders_checked = Default::default();
+        self.shared = NodeTable::default();
+        self.derivation = None;
+    }
+
+    pub(super) fn offset_counter(&mut self, by: u64) {
+        self.next += by;
+    }
+
+    /// Takes in the declarations a copy of this core added (`check/fork.rs`).
+    /// What holds for the declaration in hand only is left as it is.
+    pub(super) fn absorb(&mut self, other: Core) -> bool {
+        let mut alone = self.names.0.absorb(other.names.0);
+        self.forget_cycles();
+        alone &= self.globals.absorb_any(other.globals);
+        alone &= self.inds.absorb_any(other.inds);
+        alone &= self.ctors.absorb(other.ctors);
+        alone &= self.recs.absorb(other.recs);
+        alone &= self.rec_targets.absorb(other.rec_targets);
+        alone &= self.eliminators.absorb(other.eliminators);
+        alone &= self.quot.absorb(other.quot);
+        // What a definition unfolds to is worked out when asked for, from
+        // the globals it reaches, which every copy has alike: the first
+        // worked out is kept.
+        for (k, v) in other.defs {
+            self.defs.entry(k).or_insert(v);
+        }
+        self.next = self.next.max(other.next);
+        alone
+    }
 }
 
 #[derive(Clone)]
@@ -1033,16 +1530,34 @@ pub(super) struct FamSpec {
 /// they prove nothing the core without them does not.
 const QUOT: &[&str] = &["Quot", "Quot::mk", "Quot::lift", "Quot::ind"];
 
+/// The equality `Quot::lift` is stated with: the type of the family `eq`
+/// and of its one constructor.
+fn eq_type(eq: &DeclRef) -> (Tm, Tm) {
+    let pi = |a: Tm, b: Tm| Pi(Hint::none(), Arc::new(a), Arc::new(b));
+    let ty = || Sort(Sort::ty(0));
+    // (A: Type, a: A, b: A): Prop
+    let family = pi(ty(), pi(BVar(0), pi(BVar(1), Sort(Sort::Prop))));
+    // <A: Type, a: A>: Eq(A, a, a)
+    let refl = pi(
+        ty(),
+        pi(
+            BVar(0),
+            apps(Const(eq.clone()), [BVar(1), BVar(0), BVar(0)]),
+        ),
+    );
+    (family, refl)
+}
+
 /// The type each constant of [`QUOT`] must be declared with.
 fn quot_type(name: &str) -> Option<Tm> {
-    let ty = || Rc::new(Sort(Sort::ty(0)));
-    let prop = || Rc::new(Sort(Sort::Prop));
-    let pi = |a: Tm, b: Tm| Pi(Hint::none(), Rc::new(a), Rc::new(b));
+    let ty = || Arc::new(Sort(Sort::ty(0)));
+    let prop = || Arc::new(Sort(Sort::Prop));
+    let pi = |a: Tm, b: Tm| Pi(Hint::none(), Arc::new(a), Arc::new(b));
     let v = BVar;
     // `(A, A) -> Prop` where `A` is the variable `a`.
-    let rel = |a: usize| pi(v(a), Pi(Hint::none(), Rc::new(v(a + 1)), prop()));
+    let rel = |a: usize| pi(v(a), Pi(Hint::none(), Arc::new(v(a + 1)), prop()));
     let quot = |a: usize, r: usize| apps(konst("Quot"), [v(a), v(r)]);
-    let over_a_r = |rest: Tm| Pi(Hint::none(), ty(), Rc::new(pi(rel(0), rest)));
+    let over_a_r = |rest: Tm| Pi(Hint::none(), ty(), Arc::new(pi(rel(0), rest)));
     Some(match name {
         // (A: Type, r: (A, A) -> Prop): Type
         "Quot" => over_a_r(Sort(Sort::ty(0))),
@@ -1053,7 +1568,7 @@ fn quot_type(name: &str) -> Option<Tm> {
         "Quot::lift" => over_a_r(Pi(
             Hint::none(),
             ty(),
-            Rc::new(pi(
+            Arc::new(pi(
                 pi(v(2), v(1)),
                 pi(
                     pi(
@@ -1073,7 +1588,7 @@ fn quot_type(name: &str) -> Option<Tm> {
         // <A, r>(P: (Quot(A, r)) -> Prop, m: ∀ a. P(quot_mk(A, r, a)),
         //   q: Quot(A, r)): P(q)
         "Quot::ind" => over_a_r(pi(
-            Pi(Hint::none(), Rc::new(quot(1, 0)), prop()),
+            Pi(Hint::none(), Arc::new(quot(1, 0)), prop()),
             pi(
                 pi(v(2), app(v(1), apps(konst("Quot::mk"), [v(3), v(2), v(0)]))),
                 pi(quot(3, 2), app(v(2), v(0))),
@@ -1087,28 +1602,40 @@ impl Core {
     pub(super) fn new() -> Self {
         let mut c = Core {
             names: SourceNames::default(),
-            globals: HashMap::new(),
-            inds: HashMap::new(),
-            ctors: HashMap::new(),
-            recs: HashMap::new(),
-            rec_targets: HashMap::new(),
-            eliminators: HashMap::new(),
-            quot: HashSet::new(),
-            lctx: HashMap::new(),
+            globals: Default::default(),
+            inds: Default::default(),
+            ctors: Default::default(),
+            recs: Default::default(),
+            rec_targets: Default::default(),
+            eliminators: Default::default(),
+            quot: Default::default(),
+            lctx: HashMap::default(),
+            lvals: HashMap::default(),
             next: 0,
             conv_no: HashSet::new(),
             conv_fail: HashMap::new(),
             conv_depth: 0,
             conv_binders: 0,
-            conv_unfolded: Vec::new(),
-            defs: HashMap::new(),
+            conv_unfolded: Unfolded::default(),
+            defs: Default::default(),
+            cycle_free: Default::default(),
+            cycle_names: Default::default(),
             budget: Budget::default(),
             shared: NodeTable::default(),
             numeric_off: false,
             lazy_iota: false,
+            depth: 0,
+            drives: 0,
+            trials: 0,
+            forced: Default::default(),
+            no_repeat: HashMap::new(),
             track: None,
             derivation: None,
             level_vars: Vec::new(),
+            known: HashMap::new(),
+            known_at: None,
+            binders_checked: HashMap::new(),
+            use_known: false,
             #[cfg(feature = "selfhost")]
             replay: None,
             #[cfg(feature = "selfhost")]
@@ -1119,10 +1646,12 @@ impl Core {
         let nat = konst("Nat");
         let binary = Pi(
             Hint::none(),
-            Rc::new(nat.clone()),
-            Rc::new(Pi(Hint::none(), Rc::new(nat.clone()), Rc::new(nat))),
+            Arc::new(nat.clone()),
+            Arc::new(Pi(Hint::none(), Arc::new(nat.clone()), Arc::new(nat))),
         );
         for op in ["+", "*", "-"] {
+            c.cycle_free.clear();
+            c.cycle_names.clear();
             c.globals.insert(
                 c.names.reserve(op),
                 Global {
@@ -1146,26 +1675,7 @@ impl Core {
             .replay
             .as_ref()
             .and_then(|_| selfhost::encode_decl(self, name, ty, value, transparent));
-        let result = self.timed(|c| c.add_decl_inner(name, ty, value, transparent, true));
-        self.record(input, result.is_ok());
-        result
-    }
-
-    /// [`Core::add_decl`] for a value this checker has checked before
-    /// (`check/cache.rs`): only its type is checked.
-    #[cfg(feature = "selfhost")]
-    pub(super) fn add_decl_checked_before(
-        &mut self,
-        name: &Name,
-        ty: &T,
-        value: Option<&T>,
-        transparent: bool,
-    ) -> Res<()> {
-        let input = self
-            .replay
-            .as_ref()
-            .and_then(|_| selfhost::encode_decl(self, name, ty, value, transparent));
-        let result = self.timed(|c| c.add_decl_inner(name, ty, value, transparent, false));
+        let result = self.timed(|c| c.add_decl_inner(name, ty, value, transparent));
         self.record(input, result.is_ok());
         result
     }
@@ -1213,20 +1723,7 @@ impl Core {
         value: Option<&T>,
         transparent: bool,
     ) -> Res<()> {
-        self.add_decl_inner(name, ty, value, transparent, true)
-    }
-
-    /// [`Core::add_decl`] for a value this checker has checked before
-    /// (`check/cache.rs`): only its type is checked.
-    #[cfg(not(feature = "selfhost"))]
-    pub(super) fn add_decl_checked_before(
-        &mut self,
-        name: &Name,
-        ty: &T,
-        value: Option<&T>,
-        transparent: bool,
-    ) -> Res<()> {
-        self.add_decl_inner(name, ty, value, transparent, false)
+        self.add_decl_inner(name, ty, value, transparent)
     }
 
     #[cfg(not(feature = "selfhost"))]
@@ -1247,6 +1744,8 @@ impl Core {
         let result = match self
             .names
             .reference(name)
+            .cloned()
+            .inspect(|id| self.touch(id))
             .and_then(|id| self.globals.get_mut(&id))
         {
             Some(g) => {
@@ -1265,6 +1764,9 @@ impl Core {
     /// Stops a name declared just now from unfolding: a theorem. Nothing
     /// has unfolded it yet, so the caches stay. Only conversions are lost.
     pub(super) fn seal_fresh(&mut self, name: &Name) {
+        if let Some(id) = self.names.reference(name).cloned() {
+            self.touch(&id);
+        }
         if let Some(g) = self
             .names
             .reference(name)
@@ -1309,8 +1811,11 @@ impl Core {
         (l.as_const().is_none() && bound).then_some(Sort::Type(l))
     }
 
-    /// [`T::last_argument_spine`], stopping at a sort over level variables.
-    fn sort_spine<'t>(&self, t: &'t T) -> (Vec<&'t T>, &'t T) {
+    /// [`T::last_argument_spine`], stopping at a sort over level variables,
+    /// and at a last argument `stop` says is to be read whole: then the
+    /// spine's end is that argument (and the flag is set), not an
+    /// application whose function is read.
+    fn sort_spine<'t>(&self, t: &'t T, stop: impl Fn(&T) -> bool) -> (Vec<&'t T>, &'t T, bool) {
         let mut spine = Vec::new();
         let mut t = t;
         while let TermKind::App { arguments, .. } = &*t.kind
@@ -1319,14 +1824,70 @@ impl Core {
         {
             spine.push(t);
             t = last;
+            if stop(t) {
+                return (spine, t, true);
+            }
         }
-        (spine, t)
+        (spine, t, false)
+    }
+
+    /// Whether `t` is a part the core has typed before, in any context.
+    fn is_known(&self, t: &T) -> bool {
+        self.known
+            .get(&(Arc::as_ptr(&t.kind) as *const () as usize))
+            .is_some_and(|(was, _, _)| Arc::ptr_eq(&was.kind, &t.kind))
+    }
+
+    /// The type the core gave `t` when it typed it as a part before in the
+    /// context `o` reads (`Core::known`), where `t` is read with nothing
+    /// bound: `t` is then read as an atom of that type.
+    fn known_part<'k>(&'k self, t: &T, scope: &[Name], o: &Open<'_>) -> Option<&'k T> {
+        if !o.known || !scope.is_empty() {
+            return None;
+        }
+        let (was, at, ty) = self
+            .known
+            .get(&(Arc::as_ptr(&t.kind) as *const () as usize))?;
+        if !Arc::ptr_eq(&was.kind, &t.kind) || at.len() != o.ctx.len() {
+            return None;
+        }
+        // The question's context does not change while it is read, so a
+        // context once found equal to it stays so.
+        if o.known_ctx.get() == Some(at.as_ptr()) {
+            return Some(ty);
+        }
+        at.iter()
+            .copied()
+            .eq(ctx_addresses(o.ctx))
+            .then(|| o.known_ctx.set(Some(at.as_ptr())))
+            .map(|()| ty)
     }
 
     /// `t` read with `scope`, the names bound so far (innermost last). With
     /// `open`, a question of the named checker: its context's names are
     /// atoms, and what the core cannot read is an atom of no type.
     fn read_in(&self, t: &T, scope: &mut Vec<Name>, mut open: Option<&mut Open<'_>>) -> Res<Tm> {
+        if let Some(o) = open.as_deref_mut()
+            && o.known
+        {
+            if std::mem::take(&mut o.top) {
+            } else if let Some(ty) = self.known_part(t, scope, o) {
+                let x = o.atom();
+                o.opaque.push((x, t.clone()));
+                o.known = false;
+                let ty = self.read_open(ty, o);
+                let value = self.read_in(t, scope, Some(o))?;
+                o.known = true;
+                o.types.push((x, ty));
+                o.values.push((x, Arc::new(value)));
+                return Ok(FVar(x));
+            }
+        }
+        self.read_parts(t, scope, open)
+    }
+
+    /// [`Self::read_in`] past its reading of known parts.
+    fn read_parts(&self, t: &T, scope: &mut Vec<Name>, mut open: Option<&mut Open<'_>>) -> Res<Tm> {
         let opaque = |open: Option<&mut Open<'_>>, why: Message| match open {
             Some(o) => Ok(o.opaque(t)),
             None => Err(why),
@@ -1389,9 +1950,9 @@ impl Core {
                     );
                 }
             }
-            TermKind::Nat(n) => match n.parse::<u128>() {
-                Ok(k) => Lit(k),
-                Err(_) => return opaque(open, msg!("kernel-core-numeral-too-large", numeral = n)),
+            TermKind::Nat(n) => match Num::parse(n) {
+                Some(k) => Lit(k),
+                None => return opaque(open, msg!("kernel-core-numeral-too-large", numeral = n)),
             },
             // `false` and `true` are the constructors of the prelude's `Bool`.
             TermKind::Bool(b) => konst(if *b { "true" } else { "false" }),
@@ -1399,7 +1960,18 @@ impl Core {
                 // In a loop along the last arguments (`last_argument_spine`),
                 // reading the parts in the order the recursion would. A sort
                 // over level variables is one part, not an application.
-                let (spine, under) = self.sort_spine(t);
+                // A last argument the core has typed before is read as the
+                // atom it is (`known_part`), as the recursion would read it.
+                let (spine, under, whole) = match open.as_deref() {
+                    Some(o) => self.sort_spine(t, |a| {
+                        if o.known {
+                            self.known_part(a, scope, o).is_some()
+                        } else {
+                            scope.is_empty() && self.is_known(a)
+                        }
+                    }),
+                    None => self.sort_spine(t, |_| false),
+                };
                 let mut heads = Vec::with_capacity(spine.len());
                 for s in &spine {
                     let TermKind::App {
@@ -1416,7 +1988,7 @@ impl Core {
                     heads.push(acc);
                 }
                 let mut acc = match &*under.kind {
-                    _ if self.level_sort(under).is_some() => {
+                    _ if whole || self.level_sort(under).is_some() => {
                         self.read_in(under, scope, open.as_deref_mut())?
                     }
                     TermKind::App { function, .. } => {
@@ -1448,7 +2020,7 @@ impl Core {
                 let mut acc = self.read_in(result, scope, open)?;
                 scope.truncate(depth);
                 for (h, d) in doms.into_iter().rev() {
-                    acc = Pi(h, Rc::new(d), Rc::new(acc));
+                    acc = Pi(h, Arc::new(d), Arc::new(acc));
                 }
                 acc
             }
@@ -1464,7 +2036,7 @@ impl Core {
                 let mut acc = self.read_in(body, scope, open)?;
                 scope.truncate(depth);
                 for n in params.iter().rev() {
-                    acc = Lam(Hint::named(n), Rc::new(acc));
+                    acc = Lam(Hint::named(n), Arc::new(acc));
                 }
                 acc
             }
@@ -1491,8 +2063,8 @@ impl Core {
                 // `b + k` against `c + j` (`Core::offset_view`): the bases
                 // when `k` and `j` are the same, else these two, rather than
                 // taking `Succ` off one at a time.
-                if let Some((p, k)) = c.offset_view(&Rc::new(x.clone()))
-                    && let Some((q, j)) = c.offset_view(&Rc::new(y.clone()))
+                if let Some((p, k)) = c.offset_view_top(&Arc::new(x.clone()))
+                    && let Some((q, j)) = c.offset_view_top(&Arc::new(y.clone()))
                 {
                     if k != j {
                         break;
@@ -1590,9 +2162,9 @@ impl Core {
     fn nf(&mut self, t: &Tm) -> Tm {
         let w = self.whnf(t);
         match &w {
-            Pi(h, a, b) => Pi(h.clone(), Rc::new(self.nf(a)), Rc::new(self.nf(b))),
-            Lam(h, b) => Lam(h.clone(), Rc::new(self.nf(b))),
-            App(f, x) => App(Rc::new(self.nf(f)), Rc::new(self.nf(x))),
+            Pi(h, a, b) => Pi(h.clone(), Arc::new(self.nf(a)), Arc::new(self.nf(b))),
+            Lam(h, b) => Lam(h.clone(), Arc::new(self.nf(b))),
+            App(f, x) => App(Arc::new(self.nf(f)), Arc::new(self.nf(x))),
             _ => w,
         }
     }
@@ -1604,7 +2176,7 @@ impl Core {
     /// `t` reduced at its head; a name with a value is unfolded only when
     /// `delta`.
     fn whnf_with(&mut self, t: &Tm, delta: bool) -> Tm {
-        self.whnf_node(Rc::new(t.clone()), delta)
+        self.whnf_node(Arc::new(t.clone()), delta)
     }
 
     /// [`Core::whnf_with`] of a node. With `delta`, reduction is call by
@@ -1619,18 +2191,133 @@ impl Core {
         // `delta` on the way (an operand of `+`, a numeral) reduces fully: what
         // it finds is kept as the node's weak head normal form (`remember`),
         // and an eliminator left there would be found again stuck.
-        let lazy = delta && std::mem::replace(&mut self.lazy_iota, false);
-        let mut became: Vec<R> = Vec::new();
-        let t = self.whnf_steps(t, delta, &mut became);
-        if lazy {
-            self.lazy_iota = true;
-        }
-        if delta && !self.budget.out {
-            for n in became {
-                self.remember(n, t.clone());
+        let mode = match (delta, self.lazy_iota) {
+            (true, _) => Mode::Full,
+            (false, true) => Mode::Lazy,
+            (false, false) => Mode::Head,
+        };
+        self.drive(t, mode, None).0
+    }
+
+    /// The reduction of `t` taken to its end, and whether it ended where
+    /// `watch` says.
+    ///
+    /// A reduction waits for the weak head normal form of a part of its
+    /// term wherever it reduces on one: the major premise of an eliminator,
+    /// an operand of `+`. The part is reduced in a call inside the
+    /// reduction that waits ([`Core::need`]), up to [`DEPTH`] of them one
+    /// inside another. One more is not called: the reductions that wait are
+    /// set aside as they stand ([`Deep`]) and kept here, outermost first,
+    /// while the part is reduced from here; each is then taken up again
+    /// where it stopped, and finds what it waited for in `forced`. A term
+    /// whose reduction goes through a million of them, one waiting for the
+    /// next (`f(n)` that matches on `f(n - 1)`), takes a million entries
+    /// here, and no more of the stack than [`DEPTH`] calls.
+    fn drive(&mut self, t: R, mode: Mode, watch: Option<Watch>) -> (Tm, bool) {
+        let depth = std::mem::replace(&mut self.depth, 1);
+        self.drives += 1;
+        // The reductions set aside, each with the node it reduces; the one
+        // asked for here (the first) has none.
+        let mut waiting: Vec<(Option<R>, Task)> = Vec::new();
+        let mut node: Option<R> = None;
+        let mut task = Task::new(t, mode);
+        task.watch = watch.map(Box::new);
+        let out = loop {
+            match self.run(&mut task) {
+                Ok(w) => {
+                    let Some(n) = node.take() else {
+                        break (w, task.met);
+                    };
+                    self.forced[task.mode as usize].insert(Arc::as_ptr(&n) as usize, (n, w));
+                    (node, task) = waiting.pop().expect("the reduction that waited");
+                }
+                Err(deep) => {
+                    let Deep { want, mode, tasks } = *deep;
+                    waiting.push((node.take(), task));
+                    waiting.extend(tasks.into_iter().rev().map(|(n, t)| (Some(n), t)));
+                    task = Task::new(want.clone(), mode);
+                    node = Some(want);
+                }
+            }
+        };
+        self.drives -= 1;
+        // What was kept for the reductions set aside is of no use once the
+        // outermost of these loops ends.
+        if self.drives == 0 {
+            for kept in &mut self.forced {
+                if !kept.is_empty() {
+                    kept.clear();
+                }
             }
         }
-        t
+        self.depth = depth;
+        out
+    }
+
+    /// The weak head normal form of `node` (as far as `mode` goes) for a
+    /// reduction that reduces on it. It is found in a call here, unless
+    /// [`DEPTH`] reductions already wait on the stack: then nothing is
+    /// reduced, and the reduction that asked is set aside ([`Deep`]) until
+    /// [`Core::drive`] has reduced `node`.
+    fn need(&mut self, node: &R, mode: Mode) -> Step<Tm> {
+        let forced = &self.forced[mode as usize];
+        if !forced.is_empty()
+            && let Some((_, w)) = forced.get(&(Arc::as_ptr(node) as usize))
+        {
+            return Ok(w.clone());
+        }
+        // Outside any reduction: nothing waits, and nothing can be set aside.
+        if self.depth == 0 {
+            return Ok(self.drive(node.clone(), mode, None).0);
+        }
+        if self.depth >= DEPTH {
+            return Err(Box::new(Deep {
+                want: node.clone(),
+                mode,
+                tasks: Vec::new(),
+            }));
+        }
+        let mut task = Task::new(node.clone(), mode);
+        self.depth += 1;
+        let r = self.run(&mut task);
+        self.depth -= 1;
+        r.map_err(|mut deep| {
+            deep.tasks.push((node.clone(), task));
+            deep
+        })
+    }
+
+    /// `f`, which reduces parts of terms as a step of reduction does
+    /// ([`Core::need`]), run outside any reduction: every part is reduced to
+    /// its end before `f` goes on, so nothing is set aside. `None` only if
+    /// something was, which gives the declaration up (`budget.out`).
+    fn top<X>(&mut self, f: impl FnOnce(&mut Self) -> Step<X>) -> Option<X> {
+        let depth = std::mem::replace(&mut self.depth, 0);
+        let r = f(self);
+        self.depth = depth;
+        match r {
+            Ok(x) => Some(x),
+            Err(_) => {
+                self.budget.out = true;
+                None
+            }
+        }
+    }
+
+    /// The steps of `task` to their end ([`Core::whnf_steps`]). What they end
+    /// in is kept as the weak head normal form of the shared nodes on the
+    /// way, when the reduction unfolds every name and did not stop short.
+    fn run(&mut self, task: &mut Task) -> Step<Tm> {
+        let lazy = std::mem::replace(&mut self.lazy_iota, task.mode == Mode::Lazy);
+        let r = self.whnf_steps(task);
+        self.lazy_iota = lazy;
+        let w = r?;
+        if task.mode == Mode::Full && !task.met && !self.budget.out {
+            for n in std::mem::take(&mut task.became) {
+                self.remember(n, w.clone());
+            }
+        }
+        Ok(w)
     }
 
     /// Keeps `w`, the weak head normal form of `n`, for as long as `n` is
@@ -1640,91 +2327,130 @@ impl Core {
     /// are dropped as the table grows, with what they reduced to.
     fn remember(&mut self, n: R, w: Tm) {
         poll_deadline();
-        let key = Rc::as_ptr(&n) as usize;
-        self.shared.insert(key, (Rc::downgrade(&n), w));
+        let key = Arc::as_ptr(&n) as usize;
+        self.shared.insert(key, (Arc::downgrade(&n), w));
         sweep(&mut self.shared);
     }
 
     fn recall(&self, n: &R) -> Option<Tm> {
         self.shared
-            .get(&(Rc::as_ptr(n) as usize))
+            .get(&(Arc::as_ptr(n) as usize))
             .map(|e| e.1.clone())
     }
 
-    fn whnf_steps(&mut self, mut t: R, delta: bool, became: &mut Vec<R>) -> Tm {
+    /// The steps of reduction at the head of `task.t`, until none applies.
+    /// A step that reduces on a part of the term asks for the part's weak
+    /// head normal form ([`Core::need`]); when that sets the reduction aside
+    /// (`Err`), `task` stands at the step that asked, which is taken again
+    /// when the reduction is taken up.
+    fn whnf_steps(&mut self, task: &mut Task) -> Step<Tm> {
+        let delta = task.mode == Mode::Full;
         // A head just replaced is in weak head normal form: the next step is
         // one of reduction, so a head is never replaced twice in a row.
-        let mut recalled = false;
         loop {
             if self.spend() {
-                return (*t).clone();
+                return Ok((*task.t).clone());
             }
             // What a node was found to reduce to is a reduct of it with
             // or without `delta`; only with `delta` is what is found kept, as
             // the weak head normal form that unfolds every name.
-            if Rc::weak_count(&t) > 0
-                && let Some(w) = self.recall(&t)
+            if Arc::weak_count(&task.t) > 0
+                && let Some(w) = self.recall(&task.t)
             {
-                return w;
+                return Ok(w);
             }
-            // A node only this loop holds cannot be met again.
-            if delta && Rc::strong_count(&t) > 1 {
-                became.push(t.clone());
+            // A node only this loop holds cannot be met again. (A reduction
+            // taken up again stands at a node it has noted already.)
+            if delta
+                && Arc::strong_count(&task.t) > 1
+                && !task.became.last().is_some_and(|b| Arc::ptr_eq(b, &task.t))
+            {
+                task.became.push(task.t.clone());
             }
             // A shared head reduced before goes on as what it became:
             // the same reduction, its first steps not taken again.
-            if !recalled && let Some(next) = self.recalled_head(&t) {
-                t = Rc::new(next);
-                recalled = true;
+            if !task.recalled
+                && let Some(next) = self.recalled_head(&task.t)
+            {
+                task.t = Arc::new(next);
+                task.recalled = true;
                 continue;
             }
-            recalled = false;
-            let (head, args) = spine_rc(&t);
+            task.recalled = false;
+            let (head, args) = spine_rc(&task.t);
             match head {
+                FVar(x) if self.lvals.contains_key(x) => {
+                    if !delta {
+                        return Ok(Self::stopped(&task.t, &mut task.became));
+                    }
+                    task.t = apps_node(self.lvals[x].clone(), args);
+                }
                 Lam(_, body) if !args.is_empty() => {
                     // `inst_rc` gives the argument itself for a body that is
                     // its variable, so that node is still the one met again.
-                    let body = inst_rc(body, 0, &args[0]).unwrap_or_else(|| body.clone());
-                    t = apps_node(body, args.into_iter().skip(1));
+                    // The λs at the head that have an argument each are
+                    // gone under together and their values put in at once
+                    // (`inst_env`): putting them in one at a time walks the
+                    // body once per argument, and the body of a function
+                    // that matches is every case of the eliminator.
+                    let mut inner = body;
+                    let mut taken = 1;
+                    while taken < args.len()
+                        && let Lam(_, b) = &**inner
+                    {
+                        inner = b;
+                        taken += 1;
+                    }
+                    let body = if taken == 1 {
+                        inst_rc(body, 0, &args[0]).unwrap_or_else(|| body.clone())
+                    } else {
+                        inst_env(inner, 0, &args[..taken])
+                    };
+                    task.t = apps_node(body, args.into_iter().skip(taken));
                 }
                 Const(c) => {
+                    // The turn of the loop this reduction is run up to.
+                    if task.watch.as_ref().is_some_and(|w| w.met(c, &args)) {
+                        task.met = true;
+                        return Ok((*task.t).clone());
+                    }
                     // A shortcut for unfolding the name, so only with `delta`:
                     // without it, the arguments are not reduced either.
-                    if delta && let Some(next) = self.numeric(c, &args) {
-                        t = Rc::new(next);
+                    if delta && let Some(next) = self.numeric(c, &args)? {
+                        task.t = Arc::new(next);
                         continue;
                     }
                     if let Some(v) = self.globals.get(c).and_then(|g| g.value.clone()) {
                         if !delta {
-                            return Self::stopped(t, became);
+                            return Ok(Self::stopped(&task.t, &mut task.became));
                         }
                         *self.budget.unfolds.entry(c.clone()).or_default() += 1;
                         self.budget.last_unfold = Some(c.clone());
-                        t = apps_node(v, args);
+                        task.t = apps_node(v, args);
                         continue;
                     }
                     let c = c.clone();
                     if let Some(op) = primitive_operator(&c)
-                        && let Some(next) = self.arith(op, &args)
+                        && let Some(next) = self.arith(op, &args)?
                     {
-                        t = Rc::new(next);
+                        task.t = Arc::new(next);
                         continue;
                     }
                     if self.recs.contains_key(&c)
-                        && let Some(next) = self.iota(&c, &args)
+                        && let Some(next) = self.iota(&c, &args, task.mode)?
                     {
-                        t = next;
+                        task.t = next;
                         continue;
                     }
                     if self.quot.contains(&c)
-                        && let Some(next) = self.quot_iota(&c, &args)
+                        && let Some(next) = self.quot_iota(&c, &args)?
                     {
-                        t = next;
+                        task.t = next;
                         continue;
                     }
-                    return Self::stopped(t, became);
+                    return Ok(Self::stopped(&task.t, &mut task.became));
                 }
-                _ => return Self::stopped(t, became),
+                _ => return Ok(Self::stopped(&task.t, &mut task.became)),
             }
         }
     }
@@ -1732,28 +2458,63 @@ impl Core {
     /// `t` with the functions at its head applied to their arguments, and
     /// nothing else reduced: a prefix of [`Core::whnf`].
     fn beta_head(&mut self, t: &Tm) -> Tm {
-        let mut t = t.clone();
+        // The term reached is `apps(inst_env(cur, env), args)`, the
+        // arguments not yet taken in `args` from the last: a step of
+        // reduction takes the first of them into `env` and goes under the
+        // λ, and the body is written out with every value taken only where
+        // reduction stops. Putting each argument into the body as it is
+        // taken would walk the rest of the body once per step, and a chain of
+        // `let`s is one step per `let`. The steps are those of reducing the
+        // head one redex at a time, the budget spent at each as there.
+        let mut cur: R = Arc::new(t.clone());
+        let mut env: Vec<R> = Vec::new();
+        let mut args: Vec<R> = Vec::new();
         loop {
+            // The head of the term reached, its arguments taken out.
+            loop {
+                match &*cur {
+                    App(..) => {
+                        let mut f = cur.clone();
+                        let mut own = Vec::new();
+                        while let App(g, a) = &*f.clone() {
+                            own.push(inst_env(a, 0, &env));
+                            f = g.clone();
+                        }
+                        args.extend(own);
+                        cur = f;
+                    }
+                    BVar(i) if *i < env.len() => {
+                        cur = env[env.len() - 1 - i].clone();
+                        env.clear();
+                    }
+                    _ => break,
+                }
+            }
             if self.spend() {
-                return t;
+                break;
             }
-            let (head, args) = spine_rc(&t);
-            let Lam(_, body) = head else { return t };
-            if args.is_empty() {
-                return t;
+            match (&*cur, args.pop()) {
+                (Lam(_, body), Some(a)) => {
+                    env.push(a);
+                    cur = body.clone();
+                }
+                (_, Some(a)) => {
+                    args.push(a);
+                    break;
+                }
+                (_, None) => break,
             }
-            let body = inst_at_rc(body, 0, &args[0]);
-            t = apps_rc(body, args.into_iter().skip(1));
         }
+        apps_rc((*inst_env(&cur, 0, &env)).clone(), args.into_iter().rev())
     }
 
     /// `t`, where reduction stopped. It reduces to itself, which is not
     /// kept: a node is kept only with what it became by taking steps.
-    fn stopped(t: R, became: &mut Vec<R>) -> Tm {
-        if became.last().is_some_and(|b| Rc::ptr_eq(b, &t)) {
+    fn stopped(t: &R, became: &mut Vec<R>) -> Tm {
+        if became.last().is_some_and(|b| Arc::ptr_eq(b, t)) {
             became.pop();
         }
-        (*t).clone()
+        (**t).clone()
     }
 
     /// `t` with its head replaced by what it was found to reduce to, when a
@@ -1764,7 +2525,7 @@ impl Core {
         while let App(f, a) = &**node {
             args.push(a.clone());
             node = f;
-            if Rc::weak_count(node) > 0
+            if Arc::weak_count(node) > 0
                 && let Some(w) = self.recall(node)
             {
                 args.reverse();
@@ -1784,10 +2545,7 @@ impl Core {
         // stuck on a major premise that needs unfolding would be found again, as
         // if it were normal, by the next to read the node (the operand of `*`
         // that is `Zero` only once a name is unfolded).
-        let lazy = std::mem::replace(&mut self.lazy_iota, false);
-        let w = self.whnf_node(t.clone(), true);
-        self.lazy_iota = lazy;
-        w
+        self.drive(t.clone(), Mode::Full, None).0
     }
 
     /// One step of reduction; true once the limit on the steps is reached or
@@ -1855,7 +2613,8 @@ impl Core {
         let b = std::mem::take(&mut self.budget);
         DEADLINE.with(|d| d.set(None));
         PASSED.with(|p| p.set(false));
-        self.shared.clear();
+        drop_aside(std::mem::take(&mut self.shared));
+        self.no_repeat.clear();
         forget_loose();
         let mut top: Vec<(String, u64)> = b
             .unfolds
@@ -1873,37 +2632,103 @@ impl Core {
                 .filter(|_| b.out_of_steps)
                 .map(|n| n.to_string()),
             top,
-            past_u128: b.past_u128,
+            past_limit: b.past_limit,
         }
     }
 
     /// `t` reduced, except that `+`, `*` and `-` are only computed on
     /// numerals: reducing them otherwise can go as deep as their number
-    /// (`a * b` past `u128` unfolds `b` times), and the steps of [`Self::arith`]
+    /// (`a * b` past the largest numeral unfolds `b` times), and the steps of [`Self::arith`]
     /// take them one at a time instead.
-    fn literal_or_whnf(&mut self, t: &R) -> Tm {
+    /// `a` and `b` the same `+` or `*` stuck on its operands, and the pairs
+    /// of operands they are as convertible as. `+` and `*` reduce on their
+    /// second operand: when it is stuck on a variable on both sides, so is
+    /// each side, on an eliminator whose arguments hold the operands.
+    /// `x * k` against `y * k` with the same numeral `k > 0` and stuck `x`
+    /// and `y` is as convertible as `x` and `y`: `*` unfolds on `k` to
+    /// `x * (k - 1) + x`, stuck on `x`. Reducing them instead to compare
+    /// what they reduce to goes as deep as `k`, and for a large `k` (a
+    /// limb's `2147483648`) overflows the stack.
+    fn stuck_arith(&mut self, a: &R, b: &R) -> Option<Vec<(R, R)>> {
+        let ((Const(f), xs), (Const(g), ys)) = (spine_rc(a), spine_rc(b)) else {
+            return None;
+        };
+        let p = self.arith_op(f)?;
+        if self.arith_op(g)? != p || xs.len() != 2 || ys.len() != 2 {
+            return None;
+        }
+        if matches!(p, "+" | "*") && self.stuck_number(&xs[1]) && self.stuck_number(&ys[1]) {
+            return Some(vec![
+                (xs[0].clone(), ys[0].clone()),
+                (xs[1].clone(), ys[1].clone()),
+            ]);
+        }
+        if p == "*"
+            && matches!(
+                (self.number_top(&xs[1]), self.number_top(&ys[1])),
+                (Some(k), Some(j)) if k == j && !k.is_zero()
+            )
+            && self.stuck_number(&xs[0])
+            && self.stuck_number(&ys[0])
+        {
+            return Some(vec![(xs[0].clone(), ys[0].clone())]);
+        }
+        None
+    }
+
+    /// Whether the number `t` reduces to a term stuck on a variable: neither
+    /// a numeral, `Zero` nor `Succ`. A `+` or `*`, which
+    /// [`Self::literal_or_whnf`] leaves as it is, is stuck when its second
+    /// operand, the one it reduces on, is.
+    fn stuck_number(&mut self, t: &R) -> bool {
+        let mut t = t.clone();
+        loop {
+            let Some(w) = self.top(|c| c.literal_or_whnf(&t)) else {
+                return false;
+            };
+            let (head, args) = spine_rc(&w);
+            let Const(c) = head else {
+                return matches!(head, FVar(_));
+            };
+            if c.is_primitive("Succ") || c.is_primitive("Zero") {
+                return false;
+            }
+            match self.arith_op(c) {
+                None => return true,
+                Some("+" | "*") if args.len() == 2 => t = args[1].clone(),
+                Some(_) => return false,
+            }
+        }
+    }
+
+    fn literal_or_whnf(&mut self, t: &R) -> Step<Tm> {
         let (head, args) = spine_rc(t);
         if let Const(c) = head
             && let Some(op) = primitive_operator(c)
         {
+            // The second operand first: when it is not a numeral the first is
+            // not looked at. Unfolding `pow2(k + 31)` gives `x * 1 + x` with
+            // `x` shared; reading both operands of each node goes through the
+            // shared `x` twice per level, `2^31` times.
             if let [x, y] = args.as_slice()
-                && let (Some(x), Some(y)) = (self.number(x), self.number(y))
+                && let Some(y) = self.number(y)?
+                && let Some(x) = self.number(x)?
             {
                 match lit_op(op, x, y) {
-                    Some(n) => return Lit(n),
-                    None => self.past_u128(op, x, y),
+                    Some(n) => return Ok(Lit(n)),
+                    None => self.past_limit(op, x, y),
                 }
             }
-            return (**t).clone();
+            return Ok((**t).clone());
         }
-        self.whnf_shared(t)
+        self.need(t, Mode::Full)
     }
 
     /// The number `t` is when [`Core::literal_or_whnf`] gives a numeral, or a
     /// numeral written with a few constructors (`Succ(Zero)`).
-    fn number(&mut self, t: &R) -> Option<u128> {
-        match self.literal_or_whnf(t) {
-            Lit(x) => Some(x),
+    fn number(&mut self, t: &R) -> Step<Option<Num>> {
+        match self.literal_or_whnf(t)? {
+            Lit(x) => Ok(Some(x)),
             w => self.numeral_of(w),
         }
     }
@@ -1916,72 +2741,162 @@ impl Core {
     /// * `a - Zero = a`, `a - Succ(k) = pred(a - k)`.
     ///
     /// Two numerals are computed at once, which is what these equations give
-    /// (a sum or product past `u128` is left to them). Otherwise the second
+    /// (a sum or product past the largest numeral is left to them). Otherwise the second
     /// operand must be `Zero` or `Succ(k)` (a numeral reads as one); when it
     /// is not, the term stays as it is.
-    fn arith(&mut self, op: &str, args: &[R]) -> Option<Tm> {
+    fn arith(&mut self, op: &str, args: &[R]) -> Step<Option<Tm>> {
         if args.len() < 2 {
-            return None;
+            return Ok(None);
         }
-        let b = self.whnf_shared(&args[1]);
-        let rest = args[2..].iter().cloned();
-        let mut a = (*args[0]).clone();
-        if let Lit(y) = b {
+        let b = self.need(&args[1], Mode::Full)?;
+        let a = if matches!(b, Lit(_)) {
             // Reduced once here, so that the steps below do not reduce it again.
-            a = self.literal_or_whnf(&args[0]);
+            self.literal_or_whnf(&args[0])?
+        } else {
+            (*args[0]).clone()
+        };
+        self.arith_with(op, a, b, &args[2..])
+    }
+
+    /// [`Core::arith`] with its operands in hand: `a` as it reads the first,
+    /// `b` the second reduced, and `rest` what the operation is applied to
+    /// after them.
+    fn arith_with(&mut self, op: &str, a: Tm, b: Tm, rest: &[R]) -> Step<Option<Tm>> {
+        let rest = rest.iter().cloned();
+        if let Lit(y) = b {
             let x = match &a {
                 Lit(x) => Some(*x),
                 // `Succ(Zero)` and the like: a numeral written with constructors.
-                _ => self.numeral_of(a.clone()),
+                _ => self.numeral_of(a.clone())?,
             };
             if let Some(x) = x {
                 match lit_op(op, x, y) {
-                    Some(n) => return Some(apps_rc(Lit(n), rest)),
+                    Some(n) => return Ok(Some(apps_rc(Lit(n), rest))),
                     // Taking it one `Succ` at a time would not end: the term
-                    // stays as it is (`Core::past_u128`).
+                    // stays as it is (`Core::past_limit`).
                     None => {
-                        self.past_u128(op, x, y);
-                        return None;
+                        self.past_limit(op, x, y);
+                        return Ok(None);
                     }
                 }
             }
         }
-        let out = match (op, self.nat_view(&b)?) {
+        let Some(view) = self.nat_view(&b) else {
+            return Ok(None);
+        };
+        let out = match (op, view) {
             ("+" | "-", None) => a,
-            (_, None) => Lit(0),
+            (_, None) => Lit(Num::ZERO),
             ("+", Some(k)) => app(konst("Succ"), apps(konst("+"), [a, k])),
             ("*", Some(k)) => apps(konst("+"), [apps(konst("*"), [a.clone(), k]), a]),
-            (_, Some(k)) => {
-                let d = self.whnf(&apps(konst("-"), [a, k.clone()]));
-                match self.nat_view(&d) {
-                    Some(None) => Lit(0),
-                    Some(Some(j)) => j,
-                    // `pred` of a difference that does not reduce: it stays `a - b`.
-                    None => return None,
+            (_, Some(k)) => match self.minus(a, k)? {
+                Some(out) => out,
+                // `pred` of a difference that does not reduce: it stays `a - b`.
+                None => return Ok(None),
+            },
+        };
+        Ok(Some(apps_rc(out, rest)))
+    }
+
+    /// `pred(a - k)`: what `a - Succ(k)` reduces to, or `None` when it does
+    /// not reduce. By the equations of `-` it is one `pred` for each `Succ`
+    /// of `k`, and one more, of `a`; each `pred` reduces on what is below
+    /// it. They are counted going down `k` and taken coming back up, in two
+    /// loops, where taking each inside the next goes as deep as `k`. A
+    /// `pred` of what is neither `Zero` nor a `Succ` does not reduce, and
+    /// then none above it does.
+    fn minus(&mut self, a: Tm, k: Tm) -> Step<Option<Tm>> {
+        let mut a = Arc::new(a);
+        let mut k = Arc::new(k);
+        // The `pred`s met going down, the one this is not counted.
+        let mut preds: Num = Num::ZERO;
+        // `a - k` at the bottom, reduced.
+        let mut d = loop {
+            if self.timed_out() {
+                return Ok(None);
+            }
+            let b = self.need(&k, Mode::Full)?;
+            if let Lit(y) = b {
+                // The first operand is read as `Core::arith` reads it.
+                let read = self.literal_or_whnf(&a)?;
+                let x = match &read {
+                    Lit(x) => Some(*x),
+                    _ => self.numeral_of(read.clone())?,
+                };
+                if let Some(x) = x {
+                    break Lit(x.saturating_sub(y));
+                }
+                let Some(total) = preds.checked_add(y) else {
+                    // Leave the difference unreduced when the count cannot be represented.
+                    return Ok(None);
+                };
+                preds = total;
+                a = Arc::new(read);
+                break self.need(&a, Mode::Full)?;
+            }
+            match self.nat_view_node(&b) {
+                None => return Ok(None),
+                Some(None) => break self.need(&a, Mode::Full)?,
+                Some(Some(j)) => {
+                    preds = preds + Num::ONE;
+                    k = j;
                 }
             }
         };
-        Some(apps_rc(out, rest))
+        while !preds.is_zero() {
+            if self.timed_out() {
+                return Ok(None);
+            }
+            // Nothing is below zero, however many `pred`s are left.
+            if let Lit(n) = d {
+                d = Lit(n.saturating_sub(preds));
+                break;
+            }
+            match self.nat_view_node(&d) {
+                None => return Ok(None),
+                Some(None) => {
+                    d = Lit(Num::ZERO);
+                    break;
+                }
+                Some(Some(j)) => d = self.need(&j, Mode::Full)?,
+            }
+            preds = preds - Num::ONE;
+        }
+        Ok(match self.nat_view(&d) {
+            None => None,
+            Some(None) => Some(Lit(Num::ZERO)),
+            Some(Some(j)) => Some(j),
+        })
     }
 
-    /// Notes that `x op y`, two numerals whose result is past `u128`, is left
+    /// Notes that `x op y`, two numerals whose result is past the largest numeral, is left
     /// as it is. Computing it by the equations of [`Core::arith`] takes a step
     /// for each `Succ` of the result, which does not end. A term that is not
     /// reduced is never convertible to more than it is, so leaving it is
     /// sound; a comparison that needed its value fails, and the failure says
-    /// why ([`Spent::past_u128`]).
-    fn past_u128(&mut self, op: &str, x: u128, y: u128) {
+    /// why ([`Spent::past_limit`]).
+    fn past_limit(&mut self, op: &str, x: Num, y: Num) {
         self.budget
-            .past_u128
+            .past_limit
             .get_or_insert_with(|| format!("{x} {op} {y}"));
     }
 
     /// The number `t` reduces to when it is a numeral, or `Succ`s of one
     /// (`nat_le(a, b)` is `nat_lt(a, Succ(b))`, `list_length(l)` is a
     /// `Succ` for each element).
-    fn numeral(&mut self, t: &R) -> Option<u128> {
-        let w = self.whnf_shared(t);
+    fn numeral(&mut self, t: &R) -> Step<Option<Num>> {
+        let w = self.need(t, Mode::Full)?;
         self.numeral_of(w)
+    }
+
+    /// [`Core::number`], asked outside any reduction ([`Core::top`]).
+    fn number_top(&mut self, t: &R) -> Option<Num> {
+        self.top(|c| c.number(t)).flatten()
+    }
+
+    /// [`Core::offset_view`], asked outside any reduction ([`Core::top`]).
+    fn offset_view_top(&mut self, t: &R) -> Option<(Tm, Num)> {
+        self.top(|c| c.offset_view(t)).flatten()
     }
 
     /// [`Core::numeral`] of a term already in weak head normal form.
@@ -1992,21 +2907,24 @@ impl Core {
     /// ([`Core::literal_or_whnf`]): `x + 1000` with an unknown `x` reduces to
     /// `Succ(x + 999)`, and it stops there instead of unfolding the sum once
     /// for each `Succ`.
-    fn numeral_of(&mut self, mut w: Tm) -> Option<u128> {
-        let mut more: u128 = 0;
+    fn numeral_of(&mut self, mut w: Tm) -> Step<Option<Num>> {
+        let mut more: Num = Num::ZERO;
         loop {
             if self.timed_out() {
-                return None;
+                return Ok(None);
             }
             match &w {
-                Lit(k) => return k.checked_add(more),
-                Const(c) if c.is_primitive("Zero") => return Some(more),
+                Lit(k) => return Ok(k.checked_add(more)),
+                Const(c) if c.is_primitive("Zero") => return Ok(Some(more)),
                 App(f, x) if matches!(&**f, Const(c) if c.is_primitive("Succ")) => {
-                    more = more.checked_add(1)?;
+                    let Some(next) = more.checked_add(Num::ONE) else {
+                        return Ok(None);
+                    };
+                    more = next;
                     let x = x.clone();
-                    w = self.literal_or_whnf(&x);
+                    w = self.literal_or_whnf(&x)?;
                 }
-                _ => return None,
+                _ => return Ok(None),
             }
         }
     }
@@ -2015,49 +2933,99 @@ impl Core {
     /// `t` taken off, counted in `k` at once (`x + 9007199254740992` is one
     /// step, not that many `Succ`s). `base` is a weak head normal form that
     /// is neither of those nor a numeral; `None` when `t` is a numeral, when
-    /// `k` passes `u128`, or when no `+ n` was taken off (a few `Succ`s are
+    /// `k` passes the largest numeral, or when no `+ n` was taken off (a few `Succ`s are
     /// compared as they are). Nothing is reduced unless `t`, under its
     /// `Succ`s, is applied last to a numeral of at least [`LARGE_OFFSET`]
     /// (`x + n` or `Nat::add(x, n)`): below that, `Succ` by `Succ` is as good.
-    fn offset_view(&mut self, t: &R) -> Option<(Tm, u128)> {
+    fn offset_view(&mut self, t: &R) -> Step<Option<(Tm, Num)>> {
         let mut s: &Tm = t;
         while let App(f, x) = s
             && matches!(&**f, Const(c) if c.is_primitive("Succ"))
         {
             s = x;
         }
-        if !matches!(s, App(_, n) if matches!(**n, Lit(n) if n >= LARGE_OFFSET)) {
-            return None;
+        // `x + (y + n)` ends in `n` as well: it is `x + y` with `n` more `Succ`s.
+        let mut last = s;
+        while let (Const(c), args) = spine_rc(last)
+            && c.is_primitive("+")
+            && let [_, y] = args.as_slice()
+            && matches!(spine_rc(y).0, Const(d) if d.is_primitive("+"))
+        {
+            let App(_, y) = last else { break };
+            last = y;
+        }
+        // The numeral may be a `let` of one (`m := 2^53` in `x + m`), or a
+        // closed term that computes to one (`x + p()`).
+        let large = match last {
+            App(_, n) => match &**n {
+                Lit(k) => *k >= LARGE_OFFSET,
+                FVar(x) if self.lvals.contains_key(x) => {
+                    matches!(self.literal_or_whnf(n)?, Lit(k) if k >= LARGE_OFFSET)
+                }
+                Const(_) | App(..) if constant_on_numerals(n) => {
+                    matches!(self.literal_or_whnf(n)?, Lit(k) if k >= LARGE_OFFSET)
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !large {
+            return Ok(None);
         }
         // Only a sum is taken apart: `Nat::lt(x + n, m)` also ends in a
         // numeral, but reducing it to read a `Succ` off runs `lt` down `n`
         // steps, one `Succ` of each side at a time.
         if !matches!(spine_rc(s).0, Const(c) if self.is_sum(c)) {
-            return None;
+            return Ok(None);
         }
-        let mut k: u128 = 0;
+        let mut k: Num = Num::ZERO;
         let mut plus = false;
         let mut t = t.clone();
         loop {
             if self.timed_out() {
-                return None;
+                return Ok(None);
             }
             if let (Const(c), args) = spine_rc(&t)
                 && c.is_primitive("+")
                 && let [x, y] = args.as_slice()
-                && let Lit(n) = self.literal_or_whnf(y)
+                && let Lit(n) = self.literal_or_whnf(y)?
             {
-                k = k.checked_add(n)?;
+                let Some(sum) = k.checked_add(n) else {
+                    return Ok(None);
+                };
+                k = sum;
                 plus = true;
                 t = x.clone();
                 continue;
             }
-            let w = self.whnf_shared(&t);
+            // `x + (y + n)` reduces as `x + y` does below `n` `Succ`s: the
+            // second operand `y + n` is `n` `Succ`s on `y + 0`, which reduces
+            // as `y` does.
+            if let (Const(c), args) = spine_rc(&t)
+                && c.is_primitive("+")
+                && let [x, y] = args.as_slice()
+                && let (Const(d), inner) = spine_rc(y)
+                && d.is_primitive("+")
+                && let [y, n] = inner.as_slice()
+                && let Lit(n) = self.literal_or_whnf(n)?
+            {
+                let Some(sum) = k.checked_add(n) else {
+                    return Ok(None);
+                };
+                k = sum;
+                plus = true;
+                t = Arc::new(apps(konst("+"), [(**x).clone(), (**y).clone()]));
+                continue;
+            }
+            let w = self.need(&t, Mode::Full)?;
             match &w {
-                Lit(_) => return None,
-                Const(c) if c.is_primitive("Zero") => return None,
+                Lit(_) => return Ok(None),
+                Const(c) if c.is_primitive("Zero") => return Ok(None),
                 App(f, x) if matches!(&**f, Const(c) if c.is_primitive("Succ")) => {
-                    k = k.checked_add(1)?;
+                    let Some(sum) = k.checked_add(Num::ONE) else {
+                        return Ok(None);
+                    };
+                    k = sum;
                     t = x.clone();
                 }
                 _ => {
@@ -2066,10 +3034,10 @@ impl Core {
                         && args.len() == 2
                         && w != *t
                     {
-                        t = Rc::new(w);
+                        t = Arc::new(w);
                         continue;
                     }
-                    return plus.then_some((w, k));
+                    return Ok(plus.then_some((w, k)));
                 }
             }
         }
@@ -2115,17 +3083,26 @@ impl Core {
     /// the definition gives (`numeric_agrees_with_unfolding` checks it). A
     /// program cannot declare these names again, so they are always these
     /// definitions.
-    fn numeric(&mut self, c: &DeclRef, args: &[R]) -> Option<Tm> {
+    fn numeric(&mut self, c: &DeclRef, args: &[R]) -> Step<Option<Tm>> {
         if self.numeric_off {
-            return None;
+            return Ok(None);
         }
-        let operation = NUMERIC.iter().copied().find(|n| c.is_primitive(n))?;
+        if c.is_primitive("Nat::divmod") {
+            return self.divmod_offset(c, args);
+        }
+        let Some(operation) = NUMERIC.iter().copied().find(|n| c.is_primitive(n)) else {
+            return Ok(None);
+        };
         let arity = numeric_arity(operation);
         if args.len() < arity {
-            return None;
+            return Ok(None);
         }
-        let x = self.numeral(&args[0])?;
-        let y = self.numeral(&args[1])?;
+        let Some(x) = self.numeral(&args[0])? else {
+            return Ok(None);
+        };
+        let Some(y) = self.numeral(&args[1])? else {
+            return Ok(None);
+        };
         let yn = |b: bool| konst(if b { "true" } else { "false" });
         let out = match operation {
             "Nat::eq" => yn(x == y),
@@ -2134,23 +3111,76 @@ impl Core {
             // A divisor of 0 comes only with a proof of `¬(0 = 0)`, under a
             // false assumption; `Nat::divmod` then never meets a remainder
             // equal to zero: the quotient is 0 and the remainder `a`.
-            "Nat::div_nz" => Lit(x.checked_div(y).unwrap_or(0)),
+            "Nat::div_nz" => Lit(x.checked_div(y).unwrap_or(Num::ZERO)),
             _ => Lit(x.checked_rem(y).unwrap_or(x)),
         };
         *self.budget.unfolds.entry(c.clone()).or_default() += 1;
         self.budget.last_unfold = Some(c.clone());
-        Some(apps_rc(out, args[arity..].iter().cloned()))
+        Ok(Some(apps_rc(out, args[arity..].iter().cloned())))
+    }
+
+    /// `Nat::divmod(x + n, b, q, r)` with numerals `n`, `b`, `q` and `r`,
+    /// taken `n` steps at once to `Nat::divmod(x, b, q', r')`. Each step of
+    /// the definition takes one `Succ` off the first argument and counts the
+    /// remainder up, carrying into the quotient when it reaches `b`; `n` of
+    /// them from `r < b` leave `q' = q + (r + n) / b` and `r' = (r + n) % b`.
+    /// With `b = 0` or `r >= b` the remainder never reaches `b`, so it is
+    /// `r + n`. Unfolding instead goes `n` steps, and `x + 2^32` modulo
+    /// `2^32` would take `2^32` of them. Only an offset of at least
+    /// [`LARGE_OFFSET`] is taken this way ([`Core::offset_view`]).
+    fn divmod_offset(&mut self, c: &DeclRef, args: &[R]) -> Step<Option<Tm>> {
+        if args.len() < 4 {
+            return Ok(None);
+        }
+        let (Some(b), Some(q), Some(r)) = (
+            self.numeral(&args[1])?,
+            self.numeral(&args[2])?,
+            self.numeral(&args[3])?,
+        ) else {
+            return Ok(None);
+        };
+        let Some((base, n)) = self.offset_view(&args[0])? else {
+            return Ok(None);
+        };
+        let Some(t) = r.checked_add(n) else {
+            return Ok(None);
+        };
+        let (q, r) = if !b.is_zero() && r < b {
+            let Some(q) = q.checked_add(t.checked_div(b).expect("nonzero")) else {
+                return Ok(None);
+            };
+            (q, t.checked_rem(b).expect("nonzero"))
+        } else {
+            (q, t)
+        };
+        *self.budget.unfolds.entry(c.clone()).or_default() += 1;
+        self.budget.last_unfold = Some(c.clone());
+        let head = apps(Const(c.clone()), [base, Lit(b), Lit(q), Lit(r)]);
+        Ok(Some(apps_rc(head, args[4..].iter().cloned())))
     }
 
     /// `Some(None)` for a weak-head normal `t` that is zero, `Some(Some(k))`
     /// for one that is `Succ(k)`; a numeral is read as `Zero`/`Succ`.
     fn nat_view(&self, t: &Tm) -> Option<Option<Tm>> {
         match t {
-            Lit(0) => Some(None),
-            Lit(k) => Some(Some(Lit(k - 1))),
+            Lit(Num::ZERO) => Some(None),
+            Lit(k) => Some(Some(Lit(*k - Num::ONE))),
             Const(c) if c.is_primitive("Zero") => Some(None),
             App(f, x) if matches!(&**f, Const(c) if c.is_primitive("Succ")) => {
                 Some(Some((**x).clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// [`Core::nat_view`] with the number under a `Succ` as the node it is.
+    fn nat_view_node(&self, t: &Tm) -> Option<Option<R>> {
+        match t {
+            Lit(Num::ZERO) => Some(None),
+            Lit(k) => Some(Some(Arc::new(Lit(*k - Num::ONE)))),
+            Const(c) if c.is_primitive("Zero") => Some(None),
+            App(f, x) if matches!(&**f, Const(c) if c.is_primitive("Succ")) => {
+                Some(Some(x.clone()))
             }
             _ => None,
         }
@@ -2167,10 +3197,13 @@ impl Core {
             {
                 return None;
             }
-            return Some(if *k == 0 {
+            return Some(if k.is_zero() {
                 (DeclRef::primitive("Zero")?, vec![])
             } else {
-                (DeclRef::primitive("Succ")?, vec![Rc::new(Lit(k - 1))])
+                (
+                    DeclRef::primitive("Succ")?,
+                    vec![Arc::new(Lit(*k - Num::ONE))],
+                )
             });
         }
         let (head, args) = spine_rc(t);
@@ -2180,38 +3213,219 @@ impl Core {
         }
     }
 
-    fn iota(&mut self, rec: &DeclRef, shared: &[R]) -> Option<R> {
-        let args: Vec<Tm> = shared.iter().map(|a| (**a).clone()).collect();
-        let family = self.recs.get(rec)?.clone();
-        let ind = self.inds.get(&family)?.clone();
-        let np = ind.params;
-        let nf = ind.group.len();
+    /// The step of the eliminator `rec` applied to `shared`: its major
+    /// premise is reduced, and when that is a constructor the minor premise
+    /// of the constructor is applied to its fields and to the eliminator on
+    /// the fields that recur.
+    fn iota(&mut self, rec: &DeclRef, shared: &[R], mode: Mode) -> Step<Option<R>> {
+        let Some((family, ind)) = self
+            .recs
+            .get(rec)
+            .and_then(|f| Some((f.clone(), self.inds.get(f)?.clone())))
+        else {
+            return Ok(None);
+        };
         let counts: Vec<usize> = ind
             .group
             .iter()
             .map(|g| self.inds.get(g).map_or(0, |i| i.ctors.len()))
             .collect();
+        // The major premise comes after the parameters, the motives, the
+        // minor premises and the indices.
+        let major_at = ind.params + ind.group.len() + counts.iter().sum::<usize>() + ind.indices;
+        let Some(major) = shared.get(major_at) else {
+            return Ok(None);
+        };
+        let major = if self.lazy_iota {
+            self.need(major, Mode::Lazy)?
+        } else {
+            self.need(major, Mode::Full)?
+        };
+        if family.is_primitive("Nat")
+            && let Some(next) = self.repeat(rec, shared, major_at, &major, mode)?
+        {
+            return Ok(Some(next));
+        }
+        Ok(self.iota_on(rec, shared, &major, &family, &ind, &counts))
+    }
+
+    /// Many turns of a loop over a number, taken at once.
+    ///
+    /// `rec` is an eliminator of `Nat` applied to `shared`, with its major
+    /// premise (at `major_at`, reduced to `major`) a number written with a
+    /// numeral of at least [`LARGE_OFFSET`]: `n`, or `x + n`. A function
+    /// that takes a `Succ` off its arguments together (`lt(Succ(a),
+    /// Succ(b))` is `lt(a, b)`) reduces to this eliminator applied to those
+    /// arguments, and each turn of it reduces to the same eliminator on one
+    /// `Succ` less of each. Whether `rec` does is found by taking one turn
+    /// with unknowns: the major premise is `Succ(a)` for an atom `a`, each
+    /// argument after it that is such a number too is `Succ(b)` for an atom
+    /// of its own, and the others are as they are. When the reduction
+    /// comes to `rec` on the same parameters, motive and minor premises with
+    /// `a` as its major premise, each `Succ(b)` either now `b` or as it
+    /// was, and the other arguments the same, that is one turn, and it did
+    /// not look at what `a` and the `b`s are: reduction is the same whatever
+    /// is put for an atom. So the turn can be taken again with a `Succ` less
+    /// on each number that came round one less, as often as every one of
+    /// them still has a `Succ`: `k` times, for the least `k` among their
+    /// numerals, which leaves each with its numeral `k` less. This is the term that `k` turns taken one at a time reduce
+    /// to, so nothing is convertible that was not.
+    ///
+    /// `None` when the turn does not come round (the loop does something
+    /// else with its arguments, as `a + b` does), which is noted for the
+    /// minor premise (`no_repeat`) and not tried again.
+    fn repeat(
+        &mut self,
+        rec: &DeclRef,
+        shared: &[R],
+        major_at: usize,
+        major: &Tm,
+        mode: Mode,
+    ) -> Step<Option<R>> {
+        let large = |n: &Counted| n.more >= LARGE_OFFSET;
+        let Some(count) = Counted::read(major).filter(large) else {
+            return Ok(None);
+        };
+        let after = &shared[major_at + 1..];
+        // A turn tried inside a turn that is tried, further than loops are
+        // written one inside another, is left to the steps.
+        if major_at == 0 || after.len() > 60 || self.trials >= TRIALS || self.numeric_off {
+            return Ok(None);
+        }
+        // The arguments after the major premise that are such numbers.
+        let mut counts: Vec<Option<Counted>> = Vec::with_capacity(after.len());
+        for a in after {
+            let read = match Counted::read(a) {
+                Some(n) => Some(n),
+                None => match self.offset_view(a)? {
+                    Some((base, more)) => Some(Counted {
+                        base: Some(Arc::new(base)),
+                        more,
+                    }),
+                    None => match &**a {
+                        FVar(x) if self.lvals.contains_key(x) => {
+                            Counted::read(&self.literal_or_whnf(a)?)
+                        }
+                        _ => None,
+                    },
+                },
+            };
+            counts.push(read.filter(large));
+        }
+        let which = counts
+            .iter()
+            .enumerate()
+            .fold((mode as u64) << 60, |m, (i, n)| {
+                m | (u64::from(n.is_some()) << i)
+            });
+        // The minor premise of `Succ` is the last argument before the major
+        // premise: `Nat` has no index.
+        let minor = &shared[major_at - 1];
+        let key = (Arc::as_ptr(minor) as usize, which);
+        if self.no_repeat.contains_key(&key) {
+            return Ok(None);
+        }
+        let nat = konst("Nat");
+        let succ = |x: u64| Arc::new(app(konst("Succ"), FVar(x)));
+        let a = self.fresh(nat.clone());
+        let bs: Vec<Option<u64>> = counts
+            .iter()
+            .map(|n| n.as_ref().map(|_| self.fresh(nat.clone())))
+            .collect();
+        let mut turn: Vec<R> = shared[..major_at].to_vec();
+        turn.push(succ(a));
+        turn.extend(
+            after
+                .iter()
+                .zip(&bs)
+                .map(|(arg, b)| b.map_or_else(|| arg.clone(), succ)),
+        );
+        let watch = Watch {
+            rec: rec.clone(),
+            before: shared[..major_at].to_vec(),
+            major: a,
+        };
+        let head = Arc::new(Const(rec.clone()));
+        self.trials += 1;
+        let (w, met) = self.drive(apps_node(head.clone(), turn.clone()), mode, Some(watch));
+        self.trials -= 1;
+        self.lctx.remove(&a);
+        for b in bs.iter().flatten() {
+            self.lctx.remove(b);
+        }
+        // Whether each number among the arguments came round one less
+        // (`Some(true)`) or as it was.
+        let mut less: Vec<Option<bool>> = Vec::with_capacity(after.len());
+        let came_round = met && {
+            let (_, args) = spine_rc(&w);
+            args.len() == shared.len()
+                && args[major_at + 1..]
+                    .iter()
+                    .zip(&turn[major_at + 1..])
+                    .zip(&bs)
+                    .all(|((got, given), b)| {
+                        let one_less = matches!((&**got, b), (FVar(x), Some(b)) if x == b);
+                        less.push(b.map(|_| one_less));
+                        one_less || Arc::ptr_eq(got, given) || got == given
+                    })
+        };
+        if !came_round {
+            if !self.budget.out {
+                self.no_repeat.insert(key, minor.clone());
+            }
+            return Ok(None);
+        }
+        let k = counts
+            .iter()
+            .zip(&less)
+            .filter(|(_, less)| **less == Some(true))
+            .filter_map(|(n, _)| n.as_ref())
+            .map(|n| n.more)
+            .fold(count.more, Num::min);
+        let mut next: Vec<R> = shared[..major_at].to_vec();
+        next.push(count.less(k));
+        next.extend(
+            after
+                .iter()
+                .zip(&counts)
+                .zip(&less)
+                .map(|((arg, n), less)| match (n, less) {
+                    (Some(n), Some(true)) => n.less(k),
+                    _ => arg.clone(),
+                }),
+        );
+        Ok(Some(apps_node(head, next)))
+    }
+
+    /// [`Core::iota`] with the major premise reduced to `major`, for the
+    /// eliminator of `family` (`ind`), whose group has `counts` constructors.
+    fn iota_on(
+        &mut self,
+        rec: &DeclRef,
+        shared: &[R],
+        major: &Tm,
+        family: &DeclRef,
+        ind: &IndInfo,
+        counts: &[usize],
+    ) -> Option<R> {
+        let np = ind.params;
+        let nf = ind.group.len();
         let nc: usize = counts.iter().sum();
         let major_at = np + nf + nc + ind.indices;
-        let major = if self.lazy_iota {
-            self.whnf_node(shared.get(major_at)?.clone(), false)
-        } else {
-            self.whnf_shared(shared.get(major_at)?)
-        };
         let (of, cnp) = match &ind.alias {
             Some((j, a)) => (j.clone(), a.len()),
             None => (family.clone(), np),
         };
-        let (cname, cargs) = match self.as_ctor(&major, &of) {
+        let (cname, cargs) = match self.as_ctor(major, &of) {
             Some(found) => found,
             None if self.lazy_iota => return None,
             None => {
                 // An `Eq`-like proof reduces whenever the indices agree.
                 let want = ind.k_like.clone()?;
-                let params: Vec<Tm> = args[..np].to_vec();
+                let params: Vec<Tm> = shared[..np].iter().map(|a| (**a).clone()).collect();
                 for (k, w) in want.iter().enumerate() {
                     let w = inst_many(w, &params);
-                    if !self.conv(&w, &args[major_at - ind.indices + k]) {
+                    if !self.conv(&w, &shared[major_at - ind.indices + k]) {
                         return None;
                     }
                 }
@@ -2236,21 +3450,21 @@ impl Core {
         let mut applied = actual.clone();
         for r in &c.recs {
             let ys: Vec<u64> = (0..r.ys).map(|_| self.fresh(Sort(Sort::Prop))).collect();
-            let mut env: Vec<Tm> = args[..np].to_vec();
+            let mut env: Vec<Tm> = shared[..np].iter().map(|a| (**a).clone()).collect();
             env.extend(actual.iter().map(|a| (**a).clone()));
             env.extend(ys.iter().map(|y| FVar(*y)));
             let mut call: Vec<R> = shared[..np + nf + nc].to_vec();
-            call.extend(r.idx.iter().map(|t| Rc::new(inst_many(t, &env))));
+            call.extend(r.idx.iter().map(|t| Arc::new(inst_many(t, &env))));
             call.push(if ys.is_empty() {
                 actual[r.arg].clone()
             } else {
-                Rc::new(apps((*actual[r.arg]).clone(), ys.iter().map(|y| FVar(*y))))
+                Arc::new(apps((*actual[r.arg]).clone(), ys.iter().map(|y| FVar(*y))))
             });
             let mut ih = apps_rc(Const(targets.get(r.fam)?.clone()), call);
             for y in ys.iter().rev() {
                 ih = lam_over(*y, &ih);
             }
-            applied.push(Rc::new(ih));
+            applied.push(Arc::new(ih));
         }
         Some(apps_node(
             apps_node(minor, applied),
@@ -2288,37 +3502,74 @@ impl Core {
         if *ty != want {
             return fail(msg!("kernel-core-quot-type", name = name));
         }
+        // `Quot::lift` states its side condition with `Eq`: that name must be
+        // the equality, not whatever was declared under it.
+        if name == "Quot::lift" && !self.is_equality(&DeclRef::primitive("Eq").expect("Eq")) {
+            return fail(msg!(
+                "kernel-core-quot-declared-after",
+                name = name,
+                needs = "Eq"
+            ));
+        }
         Ok(true)
+    }
+
+    /// Whether `eq` is declared as the equality of [`eq_type`]: the family
+    /// `(A: Type, a: A): (A) -> Prop` with the one constructor
+    /// `Refl: Eq(A, a, a)`.
+    fn is_equality(&self, eq: &DeclRef) -> bool {
+        let Some(info) = self.inds.get(eq) else {
+            return false;
+        };
+        let Some(g) = self.globals.get(eq) else {
+            return false;
+        };
+        let [refl] = info.ctors.as_slice() else {
+            return false;
+        };
+        let Some(r) = self.globals.get(&refl.name) else {
+            return false;
+        };
+        let (want_ty, want_refl) = eq_type(eq);
+        info.params == 2
+            && info.indices == 1
+            && info.alias.is_none()
+            && refl.nargs == 0
+            && g.ty == want_ty
+            && r.ty == want_refl
     }
 
     /// `Quot_lift(A, r, B, f, h, quot_mk(A', r', a))` is `f(a)`, and
     /// `Quot::ind(A, r, P, m, quot_mk(A', r', a))` is `m(a)`: the value under
     /// `quot_mk` is passed to the function, whatever the relation.
-    fn quot_iota(&mut self, c: &DeclRef, args: &[R]) -> Option<R> {
+    fn quot_iota(&mut self, c: &DeclRef, args: &[R]) -> Step<Option<R>> {
         let (f, major) = if c.is_primitive("Quot::lift") {
             (3, 5)
         } else if c.is_primitive("Quot::ind") {
             (3, 4)
         } else {
-            return None;
+            return Ok(None);
         };
-        let q = self.whnf_shared(args.get(major)?);
+        let Some(q) = args.get(major) else {
+            return Ok(None);
+        };
+        let q = self.need(q, Mode::Full)?;
         let (head, inner) = spine_rc(&q);
         match head {
             Const(m) if m.is_primitive("Quot::mk") && self.quot.contains(m) && inner.len() == 3 => {
             }
-            _ => return None,
+            _ => return Ok(None),
         }
-        Some(apps_node(
+        Ok(Some(apps_node(
             apps_node(args[f].clone(), [inner[2].clone()]),
             args[major + 1..].iter().cloned(),
-        ))
+        )))
     }
 
     fn expand_lit(t: Tm) -> Tm {
         match t {
-            Lit(0) => konst("Zero"),
-            Lit(k) => app(konst("Succ"), Lit(k - 1)),
+            Lit(Num::ZERO) => konst("Zero"),
+            Lit(k) => app(konst("Succ"), Lit(k - Num::ONE)),
             other => other,
         }
     }
@@ -2339,7 +3590,7 @@ impl Core {
             return r;
         }
         self.conv_depth += 1;
-        let (a, b) = (Rc::new(a.clone()), Rc::new(b.clone()));
+        let (a, b) = (Arc::new(a.clone()), Arc::new(b.clone()));
         let r = self.conv_node(&a, &b) || self.conv_typed(&a, &b, None);
         self.conv_depth -= 1;
         if self.conv_depth == 0 {
@@ -2367,9 +3618,11 @@ impl Core {
         if self.conv_no.contains(&key) {
             return Some(false);
         }
-        let w = self.whnf_shared(&Rc::new(other.clone()));
+        let w = self.whnf_shared(&Arc::new(other.clone()));
         let w = match (lit, w) {
-            (Lit(_), w @ App(..)) | (Lit(_), w @ Const(_)) => Lit(self.numeral_of(w)?),
+            (Lit(_), w @ App(..)) | (Lit(_), w @ Const(_)) => {
+                Lit(self.top(|c| c.numeral_of(w)).flatten()?)
+            }
             (_, w) => w,
         };
         let same = match (lit, &w) {
@@ -2420,10 +3673,16 @@ impl Core {
         }
         // `b + k` against `c + j` (`Core::offset_view`), as in `conv_nodes`:
         // the bases are compared once rather than `Succ` by `Succ`.
-        if let Some((x, k)) = self.offset_view(a)
-            && let Some((y, j)) = self.offset_view(b)
+        if let Some((x, k)) = self.offset_view_top(a)
+            && let Some((y, j)) = self.offset_view_top(b)
         {
-            return k == j && self.conv_typed(&Rc::new(x), &Rc::new(y), ty);
+            return k == j && self.conv_typed(&Arc::new(x), &Arc::new(y), ty);
+        }
+        // `+` and `*` stuck on their operands (`Core::stuck_arith`): the
+        // operands, numbers, are compared rather than what the two reduce to.
+        if let Some(pairs) = self.stuck_arith(a, b) {
+            let nat = konst("Nat");
+            return pairs.iter().all(|(x, y)| self.conv_typed(x, y, Some(&nat)));
         }
         // The same recursive name on both sides is compared argument by
         // argument without unfolding it, where `Core::conv_cut` says so.
@@ -2471,8 +3730,8 @@ impl Core {
                 let x = self.fresh((**d1).clone());
                 self.under_binder(|c| {
                     c.conv_typed(
-                        &Rc::new(inst(r1, &FVar(x))),
-                        &Rc::new(inst(r2, &FVar(x))),
+                        &Arc::new(inst(r1, &FVar(x))),
+                        &Arc::new(inst(r2, &FVar(x))),
                         None,
                     )
                 })
@@ -2484,8 +3743,8 @@ impl Core {
                 let x = self.fresh((*dom).clone());
                 self.under_binder(|c| {
                     c.conv_typed(
-                        &Rc::new(inst(r1, &FVar(x))),
-                        &Rc::new(inst(r2, &FVar(x))),
+                        &Arc::new(inst(r1, &FVar(x))),
+                        &Arc::new(inst(r2, &FVar(x))),
                         Some(&inst(&cod, &FVar(x))),
                     )
                 })
@@ -2495,10 +3754,10 @@ impl Core {
                     return false;
                 };
                 let x = self.fresh((*dom).clone());
-                let applied = Rc::new(app(other.clone(), FVar(x)));
+                let applied = Arc::new(app(other.clone(), FVar(x)));
                 self.under_binder(|c| {
                     c.conv_typed(
-                        &Rc::new(inst(r, &FVar(x))),
+                        &Arc::new(inst(r, &FVar(x))),
                         &applied,
                         Some(&inst(&cod, &FVar(x))),
                     )
@@ -2555,7 +3814,7 @@ impl Core {
         // On numerals, what unfolding `Nat::rem_nz` and the like gives. The
         // arguments are reduced only here, once the two sides were found to
         // differ without it.
-        if let Some(n) = self.numeric(c, &args) {
+        if let Some(n) = self.top(|k| k.numeric(c, &args)).flatten() {
             return Some(n);
         }
         let v = self.globals.get(c).and_then(|g| g.value.clone())?;
@@ -2636,7 +3895,7 @@ impl Core {
         let mut out: Vec<DeclRef> = Vec::new();
         let mut todo: Vec<R> = vec![v];
         while let Some(n) = todo.pop() {
-            if !seen.insert(Rc::as_ptr(&n) as usize) {
+            if !seen.insert(Arc::as_ptr(&n) as usize) {
                 continue;
             }
             match &*n {
@@ -2678,11 +3937,7 @@ impl Core {
     /// reduction although its arguments are not convertible; such a "no" is
     /// kept in `conv_fail` like any other until the outermost `conv` ends.
     fn conv_cut(&mut self, f: &DeclRef) -> bool {
-        self.lays_open_itself(f)
-            && self
-                .conv_unfolded
-                .iter()
-                .any(|(g, at)| g == f && *at < self.conv_binders)
+        self.lays_open_itself(f) && self.conv_unfolded.below(f, self.conv_binders)
     }
 
     /// Whether `f` can lay open calls of itself: a name whose value uses it,
@@ -2710,23 +3965,57 @@ impl Core {
         r
     }
 
+    /// The value of the atom `head` when it is a `let`-like part of the typing
+    /// (`Core::lvals`) and `other` is not that same atom.
+    fn atom_value(&self, head: &Tm, other: &Tm) -> Option<R> {
+        match head {
+            FVar(x) if other != head => self.lvals.get(x).cloned(),
+            _ => None,
+        }
+    }
+
     fn conv_plain(&mut self, a: &Tm, b: &Tm) -> bool {
-        self.conv_node(&Rc::new(a.clone()), &Rc::new(b.clone()))
+        self.conv_node(&Arc::new(a.clone()), &Arc::new(b.clone()))
     }
 
     /// [`Core::conv_plain`] of two nodes: the parts compared are the nodes
     /// of the terms, so that what reducing them gave is found again.
+    ///
+    /// Two sides that reduce to `Succ(x)` and `Succ(y)` are as convertible
+    /// as `x` and `y` ([`Conv::Below`]): the pair below is compared here, in
+    /// a loop, and not in a call inside the comparison of the pair above. A
+    /// numeral against a sum with a numeral operand lays open a `Succ` at a
+    /// time, as many as the numeral, which would otherwise be as many calls
+    /// one inside another. Each pair on the way is noted as different
+    /// (`conv_fail`) when the answer is no, as each call would note it.
     fn conv_node(&mut self, a: &R, b: &R) -> bool {
-        let key = (Rc::as_ptr(a) as usize, Rc::as_ptr(b) as usize);
-        if self.conv_fail.contains_key(&key) {
-            return false;
-        }
-        let unfolded = self.conv_unfolded.len();
-        let same = self.conv_nodes(a, b);
-        self.conv_unfolded.truncate(unfolded);
+        let (mut a, mut b) = (a.clone(), b.clone());
+        let mut met: Vec<(R, R)> = Vec::new();
+        let same = loop {
+            let key = (Arc::as_ptr(&a) as usize, Arc::as_ptr(&b) as usize);
+            if self.conv_fail.contains_key(&key) {
+                break false;
+            }
+            let unfolded = self.conv_unfolded.len();
+            let step = self.conv_nodes(&a, &b);
+            self.conv_unfolded.truncate(unfolded);
+            met.push((a, b));
+            match step {
+                Conv::Is(same) => break same,
+                Conv::Below(x, y) => {
+                    if self.timed_out() {
+                        break false;
+                    }
+                    (a, b) = (x, y);
+                }
+            }
+        };
         if !same && !self.budget.out {
-            self.conv_fail
-                .insert(key, (Rc::downgrade(a), Rc::downgrade(b)));
+            for (a, b) in met {
+                let key = (Arc::as_ptr(&a) as usize, Arc::as_ptr(&b) as usize);
+                self.conv_fail
+                    .insert(key, (Arc::downgrade(&a), Arc::downgrade(&b)));
+            }
         }
         same
     }
@@ -2758,18 +4047,18 @@ impl Core {
         changed
     }
 
-    fn conv_nodes(&mut self, a: &R, b: &R) -> bool {
-        if Rc::ptr_eq(a, b) || a == b {
-            return true;
+    fn conv_nodes(&mut self, a: &R, b: &R) -> Conv {
+        if Arc::ptr_eq(a, b) || a == b {
+            return Conv::Is(true);
         }
         if let Some(r) = self.conv_value(a, b) {
-            return r;
+            return Conv::Is(r);
         }
         // An eliminator reduces below without unfolding anything: whether
         // the comparison is cut is asked before (`Core::conv_cut`).
         if let Some((f, xs, ys)) = self.same_recursive(a, b) {
             if self.conv_cut(&f) {
-                return xs.iter().zip(&ys).all(|(x, y)| self.conv_node(x, y));
+                return Conv::Is(xs.iter().zip(&ys).all(|(x, y)| self.conv_node(x, y)));
             }
             self.conv_unfolded.push((f, self.conv_binders));
         }
@@ -2778,10 +4067,10 @@ impl Core {
         // and `j` differ (one is `Succ` where the other is not), else when
         // `b` and `c` are. Taking `Succ` off one at a time instead goes as
         // deep as the numeral.
-        if let Some((x, k)) = self.offset_view(a)
-            && let Some((y, j)) = self.offset_view(b)
+        if let Some((x, k)) = self.offset_view_top(a)
+            && let Some((y, j)) = self.offset_view_top(b)
         {
-            return k == j && self.conv_plain(&x, &y);
+            return Conv::Is(k == j && self.conv_plain(&x, &y));
         }
         // `+`, `*` and `-` of convertible operands are convertible, also when
         // one side names the operator (`Nat::add(x, y)` against `x + y`). Asked
@@ -2793,9 +4082,15 @@ impl Core {
             && p == q
             && xs.len() == 2
             && ys.len() == 2
-            && xs.iter().zip(&ys).all(|(x, y)| self.conv_node(x, y))
         {
-            return true;
+            if xs.iter().zip(&ys).all(|(x, y)| self.conv_node(x, y)) {
+                return Conv::Is(true);
+            }
+            // Saying no here decides it when the two are stuck on the
+            // operands just compared (`Core::stuck_arith`).
+            if let Some(pairs) = self.stuck_arith(a, b) {
+                return Conv::Is(pairs.iter().all(|(x, y)| self.conv_node(x, y)));
+            }
         }
         let (na, nb) = (a.clone(), b.clone());
         // Names are unfolded one at a time, both sides together, and before
@@ -2806,18 +4101,51 @@ impl Core {
         let mut b = self.whnf_lazy(b.clone());
         loop {
             if a == b {
-                return true;
+                return Conv::Is(true);
             }
             let ((ha, xs), (hb, ys)) = (spine_rc(&a), spine_rc(&b));
+            // A part the typing read as an atom stands for its value (a
+            // `let`): when the other side is not that atom, the value is put in
+            // before a name is unfolded. `f(g(c))` against `f(x)` with
+            // `x := g(c)` is the same by its arguments; unfolding `f` on both
+            // sides first computes with arguments that are not seen to be the
+            // same, as far as `f` goes, which for a decision procedure is all of
+            // a run on stuck input.
+            {
+                let (za, zb) = (self.atom_value(ha, hb), self.atom_value(hb, ha));
+                if za.is_some() || zb.is_some() {
+                    if let Some(v) = za {
+                        a = self.whnf_lazy(apps_node(v, xs));
+                    }
+                    if let Some(v) = zb {
+                        b = self.whnf_lazy(apps_node(v, ys));
+                    }
+                    continue;
+                }
+            }
             if let (Const(f), Const(g)) = (ha, hb)
                 && f == g
                 && xs.len() == ys.len()
             {
+                // `Succ(x)` against `Succ(y)`: neither unfolds, so they are
+                // as convertible as `x` and `y`, which `Core::conv_node`
+                // compares next (`Conv::Below`). What reaching here found is
+                // kept as below, where neither side unfolds.
+                if f.is_primitive("Succ") && xs.len() == 1 {
+                    if !self.budget.out {
+                        for (n, w) in [(na, &a), (nb, &b)] {
+                            if Arc::strong_count(&n) > 1 {
+                                self.remember(n, w.clone());
+                            }
+                        }
+                    }
+                    return Conv::Below(xs[0].clone(), ys[0].clone());
+                }
                 // The arguments are nodes: a pair found different before is
                 // answered at once (`conv_fail`), so trying them again at
                 // the next unfolding costs one look per argument.
                 if xs.iter().zip(&ys).all(|(x, y)| self.conv_node(x, y)) {
-                    return true;
+                    return Conv::Is(true);
                 }
                 let f = f.clone();
                 if self.conv_cut(&f) {
@@ -2826,7 +4154,7 @@ impl Core {
                     if self.force_both(&mut a, &mut b) {
                         continue;
                     }
-                    return false;
+                    return Conv::Is(false);
                 }
                 if self.lays_open_itself(&f) {
                     self.conv_unfolded.push((f, self.conv_binders));
@@ -2852,7 +4180,7 @@ impl Core {
                     // form, found again wherever the node is met.
                     if !self.budget.out {
                         for (n, w) in [(na, &a), (nb, &b)] {
-                            if Rc::strong_count(&n) > 1 {
+                            if Arc::strong_count(&n) > 1 {
                                 self.remember(n, w.clone());
                             }
                         }
@@ -2861,10 +4189,10 @@ impl Core {
                 }
                 (ua, ub) => {
                     if let Some(x) = ua {
-                        a = self.whnf_lazy(Rc::new(x));
+                        a = self.whnf_lazy(Arc::new(x));
                     }
                     if let Some(y) = ub {
-                        b = self.whnf_lazy(Rc::new(y));
+                        b = self.whnf_lazy(Arc::new(y));
                     }
                 }
             }
@@ -2873,7 +4201,7 @@ impl Core {
             a = Self::expand_lit(a);
             b = Self::expand_lit(b);
         }
-        match (&a, &b) {
+        Conv::Is(match (&a, &b) {
             (BVar(x), BVar(y)) => x == y,
             (FVar(x), FVar(y)) => x == y,
             (Sort(x), Sort(y)) => x == y,
@@ -2882,7 +4210,7 @@ impl Core {
             (App(f, x), App(g, y)) => self.conv_node(f, g) && self.conv_node(x, y),
             (Pi(_, d1, r1), Pi(_, d2, r2)) => {
                 if !self.conv_node(d1, d2) {
-                    return false;
+                    return Conv::Is(false);
                 }
                 let x = self.fresh((**d1).clone());
                 self.under_binder(|c| c.conv_plain(&inst(r1, &FVar(x)), &inst(r2, &FVar(x))))
@@ -2898,7 +4226,7 @@ impl Core {
                 self.under_binder(|c| c.conv_plain(&inst(r, &FVar(x)), &applied))
             }
             _ => false,
-        }
+        })
     }
 
     fn subtype(&mut self, a: &Tm, b: &Tm) -> bool {
@@ -3002,55 +4330,118 @@ impl Core {
         result
     }
 
+    /// [`Core::infer`] without a derivation. An application is typed along
+    /// its spine: the head's type is read once, and its telescope is walked
+    /// with the arguments met so far kept aside (`env`) and put in at once
+    /// ([`inst_env`]): into each domain when that argument is checked, and
+    /// into the rest when the telescope ends or the spine does. This is the
+    /// type that `infer_one` finds one application at a time, where each
+    /// argument is put into the whole rest of the telescope, but each part of
+    /// the telescope is walked once instead of once per argument after it.
+    /// The rules are taken in the same order as there, along the same path
+    /// (`enter`), so a term that fails fails in the same place: the head
+    /// first, then the arguments from the first, each checked against its
+    /// domain. A function's type that is not a `Π` as it stands is put in
+    /// and reduced to one (`whnf`), as `infer_one` does at each argument (a
+    /// `Π` is its own weak head normal form). A last argument checked by its
+    /// type (neither a λ nor a hole) is typed in the loop rather than in a
+    /// call: a list literal, or a text literal's bytes, nests there once per
+    /// element and would recurse as deep.
     fn infer_unrecorded(&mut self, t: &Tm) -> Result<Tm, Box<Fault>> {
-        // For each application entered: where the path comes back to, its
-        // argument, and the domain and codomain of its function's type.
-        let mut pending: Vec<((usize, usize), R, R, R)> = Vec::new();
+        let base = self.enter_none();
+        let mut pending: Vec<Pending> = Vec::new();
         let mut t = t.clone();
-        let inner = loop {
-            match &t {
-                App(f, a)
-                    if !matches!(spine(&t).0, Lam(_, _))
-                        && !matches!(**a, Lam(_, _))
-                        && !self.is_hole(a) =>
-                {
-                    let ft = match self.down(0, None, |c| c.infer(f)) {
-                        Ok(ft) => ft,
-                        Err(e) => break Err(e),
-                    };
-                    let Some((_, dom, cod)) = self.whnf(&ft).pi_parts() else {
-                        break Err(self.fault(Why::NotFunction));
-                    };
-                    let mark = self.enter(1, None);
-                    let a = a.clone();
-                    pending.push((mark, a.clone(), dom, cod));
-                    t = (*a).clone();
-                }
-                _ => break self.infer_one(&t),
+        let inner = 'term: loop {
+            if !matches!(t, App(..)) {
+                break self.infer_one(&t);
             }
+            let (head, args) = spine_rc(&t);
+            if matches!(head, Lam(_, _)) {
+                break self.infer_one(&t);
+            }
+            let head = head.clone();
+            let n = args.len();
+            // `marks[j]`: the path at the application with `n - j`
+            // arguments, `j` steps to the function below the whole spine.
+            let marks: Vec<(usize, usize)> = (0..n).map(|_| self.enter(0, None)).collect();
+            let mut cod: R = match self.infer(&head) {
+                Ok(ty) => Arc::new(ty),
+                Err(e) => break Err(e),
+            };
+            let mut env: Vec<R> = Vec::new();
+            for (k, a) in args.into_iter().enumerate() {
+                self.leave(marks[n - 1 - k]);
+                if !matches!(*cod, Pi(..)) {
+                    let full = inst_env(&cod, 0, &env);
+                    env.clear();
+                    let w = self.whnf(&full);
+                    if !matches!(w, Pi(..)) {
+                        break 'term Err(self.fault(Why::NotFunction));
+                    }
+                    cod = Arc::new(w);
+                }
+                let Pi(_, dom, body) = &*cod else {
+                    unreachable!("a Π was just found")
+                };
+                let dom = inst_env(dom, 0, &env);
+                let body = body.clone();
+                if k + 1 == n && !matches!(*a, Lam(_, _)) && !self.is_hole(&a) {
+                    let mark = self.enter(1, None);
+                    pending.push(Pending {
+                        mark,
+                        arg: a.clone(),
+                        dom,
+                        cod: body,
+                        env,
+                    });
+                    t = (*a).clone();
+                    continue 'term;
+                }
+                if let Err(e) = self.down(1, None, |c| c.check(&a, &dom)) {
+                    break 'term Err(e);
+                }
+                env.push(a);
+                cod = body;
+            }
+            self.leave(marks[0]);
+            break Ok((*inst_env(&cod, 0, &env)).clone());
         };
         let mut ty = match inner {
             Ok(ty) => ty,
             Err(e) => {
-                if let Some((mark, ..)) = pending.first() {
-                    self.leave(*mark);
-                }
+                self.leave(base);
                 return Err(e);
             }
         };
-        while let Some((mark, a, dom, cod)) = pending.pop() {
+        while let Some(Pending {
+            mark,
+            arg,
+            dom,
+            cod,
+            mut env,
+        }) = pending.pop()
+        {
             if !self.subtype(&ty, &dom) {
                 let e = self.fault(Why::Mismatch {
                     expected: (*dom).clone(),
                     found: ty,
                 });
-                self.leave(pending.first().map_or(mark, |(m, ..)| *m));
+                self.leave(base);
                 return Err(e);
             }
             self.leave(mark);
-            ty = inst(&cod, &a);
+            env.push(arg);
+            ty = (*inst_env(&cod, 0, &env)).clone();
         }
         Ok(ty)
+    }
+
+    /// Where the path is now, for `leave` to come back to.
+    fn enter_none(&self) -> (usize, usize) {
+        match &self.track {
+            Some(tr) => (tr.at.len(), tr.bound.len()),
+            None => (0, 0),
+        }
     }
 
     /// Whether `check` takes `t` as a hole of the tracked question.
@@ -3074,6 +4465,7 @@ impl Core {
                 None => Err(self.fault(Why::Said("kernel-core-name-not-defined"))),
             },
             Lit(_) => Ok(konst("Nat")),
+            Pi(..) if self.derivation.is_none() => self.infer_telescope(t),
             Pi(h, a, b) => {
                 let s1 = self.down(0, None, |c| c.infer_sort(a))?;
                 let x = self.fresh((**a).clone());
@@ -3192,7 +4584,102 @@ impl Core {
         }
     }
 
+    /// The sort of the `Π`s nested at the head of `t`, as `infer_one` finds
+    /// it one `Π` at a time: each domain's sort under the binders before it,
+    /// then the sort of what is under them all. The atoms of the binders
+    /// wait (`env`) and are put into each domain as it is read, and into the
+    /// rest only where the `Π`s end: putting each into the whole rest of the
+    /// telescope walks it once per binder. The path is the one `infer_one`
+    /// takes (`enter`), so a part that fails fails in the same place.
+    fn infer_telescope(&mut self, t: &Tm) -> Result<Tm, Box<Fault>> {
+        let base = self.enter_none();
+        let mut env: Vec<R> = Vec::new();
+        let mut sorts: Vec<Sort> = Vec::new();
+        let mut cur = t;
+        let last = loop {
+            match cur {
+                Pi(h, a, b) => {
+                    let a = inst_env(a, 0, &env);
+                    let s = match self.down(0, None, |c| c.infer_sort(&a)) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            self.leave(base);
+                            return Err(e);
+                        }
+                    };
+                    sorts.push(s);
+                    let x = self.fresh((*a).clone());
+                    self.enter(1, Some((x, h)));
+                    env.push(Arc::new(FVar(x)));
+                    cur = b;
+                }
+                _ => {
+                    let rest = Arc::new(cur.clone());
+                    let r = self.infer_sort(&inst_env(&rest, 0, &env));
+                    break r;
+                }
+            }
+        };
+        self.leave(base);
+        let mut s = last?;
+        while let Some(d) = sorts.pop() {
+            s = sort_max(d, s);
+        }
+        Ok(Sort(s))
+    }
+
+    /// `t`, the λs nested at its head, checked against `expected` as
+    /// `check_unrecorded` checks them one at a time: each λ against the `Π`
+    /// its expected type reduces to, then the body under them all against
+    /// what is under the `Π`s. The atoms of the binders wait (`env`) and are
+    /// put into the body and the expected type only where the λs end, and
+    /// into each domain as it is read: putting each into the whole rest of
+    /// the body walks it once per binder. An expected type that is not a `Π`
+    /// as it stands is put in and reduced (`whnf`), as there at each λ.
+    fn check_lams(&mut self, t: &Tm, expected: &Tm) -> Result<(), Box<Fault>> {
+        let base = self.enter_none();
+        let mut env_t: Vec<R> = Vec::new();
+        let mut env_e: Vec<R> = Vec::new();
+        let mut cod: R = Arc::new(expected.clone());
+        let mut cur = t;
+        let result = loop {
+            let Lam(h, body) = cur else {
+                let rest = Arc::new(cur.clone());
+                break self.check(&inst_env(&rest, 0, &env_t), &inst_env(&cod, 0, &env_e));
+            };
+            if !matches!(*cod, Pi(..)) {
+                let full = inst_env(&cod, 0, &env_e);
+                env_e.clear();
+                let normal = self.whnf(&full);
+                if !matches!(normal, Pi(..)) {
+                    break Err(self.fault(Why::NoPi((*full).clone())));
+                }
+                cod = Arc::new(normal);
+            } else {
+                // A `Π` is its own weak head normal form: the reduction
+                // `check_unrecorded` asks for takes one step of the budget.
+                let _ = self.spend();
+            }
+            let Pi(_, dom, rest) = &*cod else {
+                unreachable!("a Π was just found")
+            };
+            let dom = inst_env(dom, 0, &env_e);
+            let rest = rest.clone();
+            let x = self.fresh((*dom).clone());
+            self.enter(0, Some((x, h)));
+            env_t.push(Arc::new(FVar(x)));
+            env_e.push(Arc::new(FVar(x)));
+            cod = rest;
+            cur = body;
+        };
+        self.leave(base);
+        result
+    }
+
     fn check_unrecorded(&mut self, t: &Tm, expected: &Tm) -> Result<(), Box<Fault>> {
+        if matches!(t, Lam(..)) && self.derivation.is_none() {
+            return self.check_lams(t, expected);
+        }
         if let Lam(h, body) = t {
             let normal = self.whnf(expected);
             let Some((_, dom, cod)) = normal.pi_parts() else {
@@ -3250,7 +4737,9 @@ impl Core {
         let x = o.atom();
         o.atoms[i] = Some(x);
         let visible = std::mem::replace(&mut o.visible, i);
+        let known = std::mem::replace(&mut o.known, false);
         let ty = self.read_open(&o.ctx[i].1, o);
+        o.known = known;
         o.visible = visible;
         o.types.push((x, ty));
         x
@@ -3266,7 +4755,9 @@ impl Core {
         let x = o.atom();
         o.declared.push((n.clone(), x));
         let visible = std::mem::replace(&mut o.visible, 0);
+        let known = std::mem::replace(&mut o.known, false);
         let ty = self.read_open(&ty, o);
+        o.known = known;
         o.visible = visible;
         o.types.push((x, ty));
         Some(x)
@@ -3299,10 +4790,19 @@ impl Core {
     ) -> X {
         let mut o = Open::new(ctx);
         o.outer = outer;
-        let read: Vec<Tm> = terms.iter().map(|t| self.read_open(t, &mut o)).collect();
+        o.known = self.use_known;
+        let read: Vec<Tm> = terms
+            .iter()
+            .map(|t| {
+                o.top = o.known;
+                self.read_open(t, &mut o)
+            })
+            .collect();
         self.lctx.extend(o.types.drain(..));
+        self.lvals.extend(o.values.drain(..));
         let x = f(self, &read, &o);
         self.lctx.clear();
+        self.lvals.clear();
         x
     }
 
@@ -3524,6 +5024,7 @@ impl Core {
                     params: introduced.iter().map(|(n, _)| n.clone()).collect(),
                     types: Vec::new(),
                     body: Box::new(body.term.clone()),
+                    unused_params: Vec::new(),
                 },
                 span,
             );
@@ -3665,6 +5166,20 @@ impl Core {
     /// body uses; one written without a name that its body needs is `x`. The
     /// same term is written the same way wherever it is.
     fn write(t: &Tm, o: &Open<'_>, scope: &mut Vec<Name>, span: tauto_parol::Span) -> T {
+        let mut memo = WriteMemo::default();
+        memo.root = Some(t);
+        Self::write_in(t, o, scope, span, &mut memo)
+    }
+
+    /// [`Core::write`], with what was found about the nodes met kept in
+    /// `memo` for the binders written after.
+    fn write_in(
+        t: &Tm,
+        o: &Open<'_>,
+        scope: &mut Vec<Name>,
+        span: tauto_parol::Span,
+        memo: &mut WriteMemo<'_>,
+    ) -> T {
         let kind = match t {
             BVar(i) => TermKind::Var(scope[scope.len() - 1 - i].clone()),
             FVar(x) => o
@@ -3674,39 +5189,49 @@ impl Core {
             Const(c) => TermKind::Var(Name::Global(c.clone())),
             Lit(k) => TermKind::Nat(k.to_string()),
             App(..) => {
-                let (head, args) = spine(t);
+                // The spine is read in place: the memo knows a node by its
+                // address, which a copy would not keep.
+                let mut head = t;
+                let mut args: Vec<&Tm> = Vec::new();
+                while let App(f, a) = head {
+                    args.push(a);
+                    head = f;
+                }
+                args.reverse();
                 TermKind::App {
-                    function: Box::new(Self::write(head, o, scope, span)),
+                    function: Box::new(Self::write_in(head, o, scope, span, memo)),
                     arguments: args
-                        .iter()
-                        .map(|a| Self::write(a, o, scope, span))
+                        .into_iter()
+                        .map(|a| Self::write_in(a, o, scope, span, memo))
                         .collect(),
                 }
             }
             Pi(h, d, r) => {
-                let d = Self::write(d, o, scope, span);
+                let d = Self::write_in(d, o, scope, span, memo);
                 let name = match &h.0 {
-                    Some(n) => Some(Self::binder(n, r, o, scope)),
-                    None => has_loose(r, 0).then(|| Self::binder("x", r, o, scope)),
+                    Some(n) => Some(Self::binder(n, r, o, scope, memo)),
+                    None => has_loose(r, 0).then(|| Self::binder("x", r, o, scope, memo)),
                 };
                 scope.push(name.clone().unwrap_or_else(|| "_".into()));
-                let r = Self::write(r, o, scope, span);
+                let r = Self::write_in(r, o, scope, span, memo);
                 scope.pop();
                 TermKind::Pi {
                     params: vec![(name, d)],
                     result: Box::new(r),
                     effects: None,
+                    unused: Vec::new(),
                 }
             }
             Lam(h, b) => {
-                let name = Self::binder(h.0.as_deref().unwrap_or("x"), b, o, scope);
+                let name = Self::binder(h.0.as_deref().unwrap_or("x"), b, o, scope, memo);
                 scope.push(name.clone());
-                let b = Self::write(b, o, scope, span);
+                let b = Self::write_in(b, o, scope, span, memo);
                 scope.pop();
                 TermKind::Lam {
                     params: vec![name],
                     body: Box::new(b),
                     types: Vec::new(),
+                    unused_params: Vec::new(),
                 }
             }
         };
@@ -3714,52 +5239,114 @@ impl Core {
     }
 
     /// `base`, or the first of `base'1`, `base'2`, … that is not a name
-    /// `body` (the body of the binder, under `scope`) uses.
-    fn binder(base: &str, body: &Tm, o: &Open<'_>, scope: &[Name]) -> Name {
-        let mut names = Vec::new();
-        Self::names(body, 1, o, scope, &mut names);
+    /// `body` (the body of the binder, under `scope`) uses: its globals, its
+    /// context variables, the free names of its unread parts, and the
+    /// variables of `scope` it refers to. What a node uses is found once per
+    /// node and kept in `memo` (by address), not walked again for each binder
+    /// above it: a term with many binders, or one that shares its parts, would
+    /// be walked once per binder, as a tree far larger than its nodes.
+    fn binder(
+        base: &str,
+        body: &Tm,
+        o: &Open<'_>,
+        scope: &[Name],
+        memo: &mut WriteMemo<'_>,
+    ) -> Name {
+        // What the body uses is among what the whole term uses and the
+        // names in scope: a name that is neither is not used, and is taken
+        // without reading the body.
+        if let Some(root) = memo.root {
+            let all = Self::mentions(root, o, memo);
+            if !all.contains(base) && !scope.iter().any(|n| n.to_string() == base) {
+                return tauto_surface::identity::LocalRef::fresh(base.to_string()).into();
+            }
+        }
+        let l = scope.len();
+        let levels = Self::levels(body, l + 1, memo);
+        let used = Self::mentions(body, o, memo);
         (0..)
             .map(|i| match i {
                 0 => base.to_string(),
                 i => format!("{base}'{i}"),
             })
-            .find(|n| !names.contains(n))
+            .find(|n| {
+                !levels.iter().any(|&v| v < l && scope[v].to_string() == *n) && !used.contains(n)
+            })
             .map(|display| tauto_surface::identity::LocalRef::fresh(display).into())
             .expect("a fresh name")
     }
 
-    /// The names a term at `depth` binders under `scope` uses: its globals,
-    /// its context variables, the free names of its unread parts, and the
-    /// variables of `scope` it refers to.
-    fn names(t: &Tm, depth: usize, o: &Open<'_>, scope: &[Name], out: &mut Vec<String>) {
+    /// The variables of the scope that `t` refers to, by level (the
+    /// outermost 0), where `t` sits `at` levels in (the scope's length plus
+    /// the binders between it and `t`): a variable `i` there is the one at
+    /// level `at - 1 - i`. Only the ones bound outside `t` are kept, below
+    /// `at`. The levels do not depend on where in the term a binder is
+    /// written from, so a node is read once for each level it sits at.
+    fn levels(t: &Tm, at: usize, memo: &mut WriteMemo<'_>) -> Arc<Vec<usize>> {
+        let parts = |memo: &mut WriteMemo<'_>, ps: &[(&Tm, usize)]| -> Arc<Vec<usize>> {
+            let mut out: Vec<usize> = Vec::new();
+            for (p, a) in ps {
+                out.extend(Self::levels(p, *a, memo).iter().filter(|&&v| v < at));
+            }
+            out.sort_unstable();
+            out.dedup();
+            Arc::new(out)
+        };
         match t {
-            BVar(i) if *i >= depth => {
-                if let Some(n) = scope.get(scope.len().wrapping_sub(1 + i - depth)) {
-                    out.push(n.to_string());
+            BVar(i) => Arc::new((at > *i).then(|| at - 1 - i).into_iter().collect()),
+            Pi(_, a, b) | App(a, b) | Lam(_, a @ b) => {
+                let key = (t as *const Tm as usize, at);
+                if let Some(v) = memo.levels.get(&key) {
+                    return v.clone();
+                }
+                poll_deadline();
+                let v = match t {
+                    Pi(..) => parts(memo, &[(a, at), (b, at + 1)]),
+                    Lam(..) => parts(memo, &[(b, at + 1)]),
+                    _ => parts(memo, &[(a, at), (b, at)]),
+                };
+                memo.levels.insert(key, v.clone());
+                v
+            }
+            _ => Arc::new(Vec::new()),
+        }
+    }
+
+    /// The names `t` uses as globals, context variables, or free names of
+    /// its unread parts. They do not depend on the binders above `t`, so they
+    /// are found once for each node.
+    fn mentions(t: &Tm, o: &Open<'_>, memo: &mut WriteMemo<'_>) -> Arc<HashSet<String>> {
+        let key = t as *const Tm as usize;
+        if let Some(v) = memo.mentions.get(&key) {
+            return v.clone();
+        }
+        poll_deadline();
+        let v = match t {
+            FVar(x) => Arc::new(match o.back(*x) {
+                Some(TermKind::Var(m)) => [m.to_string()].into_iter().collect(),
+                Some(kind) => super::free_vars(&T::new(kind, Default::default()))
+                    .into_iter()
+                    .map(|m| m.to_string())
+                    .collect(),
+                None => HashSet::new(),
+            }),
+            Const(c) => Arc::new([c.to_string()].into_iter().collect()),
+            Lam(_, b) => Self::mentions(b, o, memo),
+            Pi(_, a, b) | App(a, b) => {
+                let (x, y) = (Self::mentions(a, o, memo), Self::mentions(b, o, memo));
+                let (big, small) = if x.len() >= y.len() { (x, y) } else { (y, x) };
+                if small.iter().all(|n| big.contains(n)) {
+                    big
+                } else {
+                    let mut u = (*big).clone();
+                    u.extend(small.iter().cloned());
+                    Arc::new(u)
                 }
             }
-            FVar(x) => match o.back(*x) {
-                Some(TermKind::Var(n)) => out.push(n.to_string()),
-                Some(kind) => out.extend(
-                    super::free_vars(&T::new(kind, Default::default()))
-                        .into_iter()
-                        .map(|n| n.to_string()),
-                ),
-                None => {}
-            },
-            Const(c) => out.push(c.to_string()),
-            Pi(_, a, b) | App(a, b) => {
-                Self::names(a, depth, o, scope, out);
-                let inner = if matches!(t, Pi(..)) {
-                    depth + 1
-                } else {
-                    depth
-                };
-                Self::names(b, inner, o, scope, out);
-            }
-            Lam(_, b) => Self::names(b, depth + 1, o, scope, out),
-            _ => {}
-        }
+            _ => Arc::new(HashSet::new()),
+        };
+        memo.mentions.insert(key, v.clone());
+        v
     }
 
     // ---- declarations -----------------------------------------------------
@@ -3786,7 +5373,6 @@ impl Core {
         ty: &T,
         value: Option<&T>,
         transparent: bool,
-        check_value: bool,
     ) -> Res<()> {
         self.fresh_name(name)?;
         let ty = self.read(ty)?;
@@ -3795,24 +5381,30 @@ impl Core {
         let value = match value {
             Some(v) => {
                 let v = self.read(v)?;
-                if check_value {
-                    self.check(&v, &ty)?;
-                }
+                self.check(&v, &ty)?;
                 Some(v)
             }
             None => None,
         };
         self.lctx.clear();
+        if let Some(id) = self.names.reference(name).cloned() {
+            self.touch(&id);
+        }
+        if let (Some(v), true) = (&value, transparent) {
+            self.no_unfolding_cycle(name, v)?;
+        }
         let again = self
             .names
             .reference(name)
             .is_some_and(|id| self.globals.contains_key(&id));
+        let id = self.names.register(name);
+        self.touch(&id);
         self.globals.insert(
             self.names.register(name),
             Global {
                 ty,
                 value: if transparent {
-                    value.map(Rc::new)
+                    value.map(Arc::new)
                 } else {
                     None
                 },
@@ -3837,7 +5429,8 @@ impl Core {
         if let Some(trace) = &mut self.replay {
             trace.push((format!("F {name}"), true));
         }
-        if let Some(id) = self.names.reference(name) {
+        if let Some(id) = self.names.reference(name).cloned() {
+            self.touch(&id);
             self.globals.remove(&id);
             self.quot.remove(&id);
         }
@@ -3851,11 +5444,17 @@ impl Core {
         let v = self.read(value)?;
         let ty = self.infer(&v)?;
         self.lctx.clear();
+        if let Some(id) = self.names.reference(name).cloned() {
+            self.touch(&id);
+        }
+        self.no_unfolding_cycle(name, &v)?;
+        let id = self.names.register(name);
+        self.touch(&id);
         self.globals.insert(
             self.names.register(name),
             Global {
                 ty,
-                value: Some(Rc::new(v)),
+                value: Some(Arc::new(v)),
             },
         );
         self.shared.clear();
@@ -3881,16 +5480,85 @@ impl Core {
             .ok_or_else(|| msg!("kernel-core-not-defined", name = (name).to_string()))?;
         self.check(&v, &ty)?;
         self.lctx.clear();
+        if let Some(id) = self.names.reference(name).cloned() {
+            self.touch(&id);
+        }
+        self.no_unfolding_cycle(name, &v)?;
         if let Some(g) = self
             .names
             .reference(name)
             .and_then(|id| self.globals.get_mut(&id))
         {
-            g.value = Some(Rc::new(v));
+            g.value = Some(Arc::new(v));
         }
         self.shared.clear();
         self.defs.clear();
         Ok(())
+    }
+
+    /// Termination of unfolding. Recursion reaches the core only through
+    /// eliminators (`check/matching.rs` compiles structural recursion to
+    /// them, `check/wf.rs` well-founded recursion to `wf_fix`), so no value
+    /// needs to reach its own name. A value that does, at once or through the
+    /// values of other names, is a definition the core has no reason to
+    /// believe terminates: `f := λn. Succ(f n)` would make `f 0 ≡ Succ(f 0)`
+    /// hold by reflexivity. Such a value is refused here, by the core itself,
+    /// whatever the named checker decided.
+    fn no_unfolding_cycle(&mut self, name: &Name, v: &Tm) -> Res<()> {
+        let Some(target) = self.names.reference(name).cloned() else {
+            return Ok(());
+        };
+        // `target` is not among `cycle_names`: giving it a value, or adding it,
+        // touched it first. So a name of `cycle_free` does not reach it.
+        debug_assert!(!self.cycle_names.contains(&target));
+        let mut seen_nodes: HashSet<usize> = HashSet::new();
+        let mut seen_names: HashSet<DeclRef> = HashSet::new();
+        let mut todo: Vec<R> = vec![Arc::new(v.clone())];
+        while let Some(n) = todo.pop() {
+            if !seen_nodes.insert(Arc::as_ptr(&n) as usize) {
+                continue;
+            }
+            match &*n {
+                Const(d) => {
+                    if *d == target {
+                        return fail(msg!("kernel-core-value-cycle", name = (name).to_string()));
+                    }
+                    if !self.cycle_free.contains(d)
+                        && seen_names.insert(d.clone())
+                        && let Some(w) = self.globals.get(d).and_then(|g| g.value.clone())
+                    {
+                        todo.push(w);
+                    }
+                }
+                Pi(_, a, b) | App(a, b) => {
+                    todo.push(a.clone());
+                    todo.push(b.clone());
+                }
+                Lam(_, b) => todo.push(b.clone()),
+                _ => {}
+            }
+        }
+        // Every name met had its value followed to the end, or was of
+        // `cycle_free`: what each reaches is among the names met and
+        // `cycle_names`. So is what `target`'s value reaches.
+        self.cycle_free.extend(seen_names.iter().cloned());
+        self.cycle_names.extend(seen_names);
+        self.cycle_free.insert(target.clone());
+        self.cycle_names.insert(target);
+        Ok(())
+    }
+
+    /// Before a change to the global `id`: what [`Core::no_unfolding_cycle`]
+    /// found is forgotten when `id` is among the names it reached.
+    fn touch(&mut self, id: &DeclRef) {
+        if self.cycle_names.contains(id) {
+            self.forget_cycles();
+        }
+    }
+
+    fn forget_cycles(&mut self) {
+        self.cycle_free.clear();
+        self.cycle_names.clear();
     }
 
     /// An inductive declaration (a `mutual` group when there are several
@@ -3917,6 +5585,7 @@ impl Core {
                 self.eliminators,
                 self.names,
             ) = saved;
+            self.forget_cycles();
         }
         self.lctx.clear();
         self.shared.clear();
@@ -3933,6 +5602,8 @@ impl Core {
             let ty = self.read(&f.ty)?;
             self.infer_sort(&ty)?;
             fam_tys.push(ty.clone());
+            let id = self.names.register(&f.name);
+            self.touch(&id);
             self.globals
                 .insert(self.names.register(&f.name), Global { ty, value: None });
         }
@@ -4148,6 +5819,7 @@ impl Core {
                 for x in params.iter().rev() {
                     ty = pi_over(*x, self.lctx[x].clone(), &ty);
                 }
+                self.touch(&c.name.clone());
                 self.globals
                     .insert(c.name.clone(), Global { ty, value: None });
                 self.ctors.insert(c.name.clone(), (m.name.clone(), j));
@@ -4184,6 +5856,7 @@ impl Core {
             }
         }
         for (name, k, ty) in elims {
+            self.touch(&name);
             self.globals
                 .insert(name.clone(), Global { ty, value: None });
             self.recs.insert(name, members[k].name.clone());
@@ -4225,7 +5898,7 @@ impl Core {
             }
             self.inds.insert(
                 m.name.clone(),
-                Rc::new(IndInfo {
+                Arc::new(IndInfo {
                     params: np,
                     indices: m.indices,
                     group: group_names.clone(),
@@ -4253,7 +5926,7 @@ impl Core {
             return Ok(Pi(
                 h.clone(),
                 a.clone(),
-                Rc::new(self.nest(b, np, group, aliases)?),
+                Arc::new(self.nest(b, np, group, aliases)?),
             ));
         }
         let (head, args) = spine(d);
@@ -4483,11 +6156,18 @@ fn inst_many(t: &Tm, vals: &[Tm]) -> Tm {
 
 #[cfg(test)]
 mod tests {
+    /// The numeral `n`.
+    fn lit(n: u128) -> Tm {
+        Tm::Lit(Num::of_u128(n))
+    }
+    /// [`LARGE_OFFSET`] as a `u128`.
+    const LARGE: u128 = 1 << 12;
     use super::super::{Kernel, Stmt, T, parse_program};
     use super::*;
 
     #[test]
     fn a_global_reference_cannot_be_used_as_a_lexical_binder() {
+        tauto_parse::install();
         let mut core = Core::new();
         let reference = DeclRef::fresh("x");
         let name: Name = reference.clone().into();
@@ -4502,7 +6182,6 @@ mod tests {
             ),
             None,
             false,
-            true,
         )
         .unwrap();
         let term = T::var(&name, span);
@@ -4518,6 +6197,7 @@ mod tests {
                 params: vec![name],
                 types: Vec::new(),
                 body: Box::new(term),
+                unused_params: Vec::new(),
             },
             span,
         );
@@ -4526,6 +6206,7 @@ mod tests {
 
     #[test]
     fn open_declaration_assumptions_require_exact_identity_and_do_not_escape() {
+        tauto_parse::install();
         let mut core = Core::new();
         let name: Name = DeclRef::fresh("recursive").into();
         let other: Name = DeclRef::fresh("recursive").into();
@@ -4551,12 +6232,18 @@ mod tests {
 
     #[test]
     fn intrinsic_dispatch_requires_the_primitive_reference() {
+        tauto_parse::install();
         let mut core = Core::new();
         let impostor = DeclRef::fresh("Nat::eq");
-        let args = [Rc::new(Lit(3)), Rc::new(Lit(3))];
-        assert!(core.numeric(&impostor, &args).is_none());
+        let args = [Arc::new(lit(3)), Arc::new(lit(3))];
         assert!(
-            core.numeric(&DeclRef::primitive("Nat::eq").unwrap(), &args)
+            core.top(|c| c.numeric(&impostor, &args))
+                .flatten()
+                .is_none()
+        );
+        assert!(
+            core.top(|c| c.numeric(&DeclRef::primitive("Nat::eq").unwrap(), &args))
+                .flatten()
                 .is_some()
         );
         assert_eq!(primitive_operator(&DeclRef::fresh("+")), None);
@@ -4570,13 +6257,14 @@ mod tests {
 
     #[test]
     fn equal_display_names_cannot_cross_core_environments() {
+        tauto_parse::install();
         let mut left = Core::new();
         let mut right = Core::new();
         let ty = T::var("Type", Default::default());
-        left.add_decl_inner(&Name::from("Item"), &ty, None, false, true)
+        left.add_decl_inner(&Name::from("Item"), &ty, None, false)
             .unwrap();
         right
-            .add_decl_inner(&Name::from("Item"), &ty, None, false, true)
+            .add_decl_inner(&Name::from("Item"), &ty, None, false)
             .unwrap();
         let reference = left.names.get("Item").unwrap().clone();
         assert_eq!(
@@ -4613,6 +6301,13 @@ mod tests {
         let body = k
             .shape(&k.lambda_of(&t.params, t.body.as_ref().unwrap()).unwrap())
             .unwrap();
+        // A proof that writes implicit arguments by name (`Refl(<A: Nat, a: 4>)`) has them
+        // filled in as the checker does; any other body reaches the core as written.
+        let body = if src.contains("(<") {
+            k.elab(&Vec::new(), &body, Some(&ty)).unwrap()
+        } else {
+            body
+        };
         (ty, body)
     }
 
@@ -4636,6 +6331,7 @@ mod tests {
     /// is what unfolding their definitions in the prelude gives.
     #[test]
     fn numeric_agrees_with_unfolding() {
+        tauto_parse::install();
         let mut k = kernel();
         let c = &mut k.core;
         let mut pairs: Vec<(u128, u128)> = Vec::new();
@@ -4656,7 +6352,7 @@ mod tests {
             for op in NUMERIC {
                 // The proof that the divisor is not 0 is not looked at.
                 let proof = (numeric_arity(op) == 3).then(|| FVar(42));
-                let t = apps(konst(op), [Lit(x), Lit(y)].into_iter().chain(proof));
+                let t = apps(konst(op), [lit(x), lit(y)].into_iter().chain(proof));
                 c.numeric_off = false;
                 let fast = c.whnf(&t);
                 c.numeric_off = true;
@@ -4675,24 +6371,166 @@ mod tests {
         c.numeric_off = false;
     }
 
+    /// `Nat::divmod(x + n, b, q, r)` with a large numeral `n` is taken to
+    /// `Nat::divmod(x, b, q', r')` at once, and what it is taken to is what
+    /// unfolding the definition `n` times gives.
+    #[test]
+    fn divmod_of_a_large_offset_agrees_with_unfolding() {
+        tauto_parse::install();
+        let mut k = kernel();
+        let c = &mut k.core;
+        let n: u128 = LARGE + 3;
+        for (i, (b, q, r)) in [
+            (7, 3, 6),
+            (0, 0, 3),
+            (7, 0, 0),
+            (64, 0, 0),
+            (5001, 1, 2),
+            (3, 0, 9),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let t = (r + n, q);
+            let (q2, r2) = if b > 0 && r < b {
+                (q + t.0 / b, t.0 % b)
+            } else {
+                (q, t.0)
+            };
+            let x = apps(konst("+"), [FVar(0), lit(n)]);
+            let a = apps(konst("Nat::divmod"), [x, lit(b), lit(q), lit(r)]);
+            let e = apps(konst("Nat::divmod"), [FVar(0), lit(b), lit(q2), lit(r2)]);
+            // Unfolding takes `n` steps on each side, so it is done for two only.
+            for off in [false, true] {
+                if off && i >= 2 {
+                    continue;
+                }
+                c.numeric_off = off;
+                c.shared.clear();
+                c.start_budget(None, None);
+                assert!(
+                    c.conv(&a, &e),
+                    "divmod(x + {n}, {b}, {q}, {r}), unfolding: {off}"
+                );
+                let steps = c.end_budget().steps;
+                if !off {
+                    assert!(steps < 1000, "{steps} steps");
+                }
+            }
+        }
+        c.numeric_off = false;
+    }
+
+    /// `Nat::lt`, `Nat::eq` and `Nat::sub` of `x + n` and a numeral, with a
+    /// large `n`, take the `Succ`s both have off at once ([`Core::repeat`]),
+    /// to what unfolding gives.
+    #[test]
+    fn comparison_with_a_large_offset_agrees_with_unfolding() {
+        tauto_parse::install();
+        let mut k = kernel();
+        let c = &mut k.core;
+        // Large with 5 less too.
+        let n: u128 = LARGE + 8;
+        let x = || apps(konst("+"), [FVar(0), lit(n)]);
+        let yn = |b: bool| konst(if b { "true" } else { "false" });
+        let cases = [
+            (
+                apps(konst("Nat::lt"), [x(), lit(n + 5)]),
+                apps(konst("Nat::lt"), [FVar(0), lit(5)]),
+            ),
+            (apps(konst("Nat::lt"), [x(), lit(n - 5)]), yn(false)),
+            (
+                apps(konst("Nat::lt"), [lit(n + 5), x()]),
+                apps(konst("Nat::lt"), [lit(5), FVar(0)]),
+            ),
+            (apps(konst("Nat::lt"), [lit(n - 5), x()]), yn(true)),
+            (
+                apps(konst("Nat::eq"), [x(), lit(n + 5)]),
+                apps(konst("Nat::eq"), [FVar(0), lit(5)]),
+            ),
+            (
+                apps(konst("Nat::eq"), [lit(n + 5), x()]),
+                apps(konst("Nat::eq"), [lit(5), FVar(0)]),
+            ),
+            (apps(konst("Nat::eq"), [x(), lit(n - 5)]), yn(false)),
+            (apps(konst("Nat::eq"), [lit(n - 5), x()]), yn(false)),
+            (
+                apps(konst("Nat::sub"), [x(), lit(n - 5)]),
+                apps(konst("+"), [FVar(0), lit(5)]),
+            ),
+            (
+                apps(konst("Nat::sub"), [x(), lit(n + 5)]),
+                apps(konst("Nat::sub"), [FVar(0), lit(5)]),
+            ),
+            (apps(konst("Nat::sub"), [lit(n - 5), x()]), lit(0)),
+        ];
+        for (i, (a, e)) in cases.iter().enumerate() {
+            for off in [false, true] {
+                // Unfolding takes `n` steps, so it is done for a few only.
+                if off && i % 3 != 0 {
+                    continue;
+                }
+                c.numeric_off = off;
+                c.shared.clear();
+                c.start_budget(None, None);
+                assert!(c.conv(a, e), "case {i}, unfolding: {off}");
+                let steps = c.end_budget().steps;
+                if !off {
+                    assert!(steps < 1000, "case {i}: {steps} steps");
+                }
+            }
+        }
+        c.numeric_off = false;
+    }
+
+    /// Two terms that share their nodes are compared once per pair of nodes:
+    /// `x * 1 + x` nested 64 deep is a tree of `2^64` nodes.
+    #[test]
+    fn equality_of_shared_terms_is_linear() {
+        tauto_parse::install();
+        let mut a = Arc::new(FVar(0));
+        let mut b = Arc::new(FVar(0));
+        for _ in 0..64 {
+            a = Arc::new(apps_rc(
+                konst("+"),
+                [
+                    Arc::new(apps_rc(konst("*"), [a.clone(), Arc::new(lit(1))])),
+                    a,
+                ],
+            ));
+            b = Arc::new(apps_rc(
+                konst("+"),
+                [
+                    Arc::new(apps_rc(konst("*"), [b.clone(), Arc::new(lit(1))])),
+                    b,
+                ],
+            ));
+        }
+        assert!(*a == *b);
+        let c = Arc::new(apps_rc(konst("+"), [a.clone(), Arc::new(lit(2))]));
+        let d = Arc::new(apps_rc(konst("+"), [b.clone(), Arc::new(lit(3))]));
+        assert!(*c != *d);
+    }
+
     /// A number written with many `Succ`s (as `list_length` gives) is read
     /// as a numeral, so `Nat::div_nz` and `*` are computed at once instead of
     /// unfolding; an unknown sum stops at its first `Succ`.
     #[test]
     fn a_long_succ_chain_is_a_numeral() {
+        tauto_parse::install();
         let mut k = kernel();
         let c = &mut k.core;
         let chain = (0..300).fold(konst("Zero"), |t, _| app(konst("Succ"), t));
         c.start_budget(None, None);
         let t = apps(
             konst("Nat::div_nz"),
-            [apps(konst("*"), [chain, Lit(8)]), Lit(7), FVar(42)],
+            [apps(konst("*"), [chain, lit(8)]), lit(7), FVar(42)],
         );
-        assert_eq!(c.whnf(&t), Lit(342));
+        assert_eq!(c.whnf(&t), lit(342));
         assert!(c.end_budget().steps < 2000);
         c.start_budget(None, None);
-        let open = Rc::new(apps(konst("+"), [FVar(0), Lit(1_000_000)]));
-        assert_eq!(c.numeral(&open), None);
+        let open = Arc::new(apps(konst("+"), [FVar(0), lit(1_000_000)]));
+        assert_eq!(c.top(|c| c.numeral(&open)).flatten(), None);
         assert!(c.end_budget().steps < 100);
     }
 
@@ -4709,13 +6547,14 @@ mod tests {
 
     #[test]
     fn the_memo_of_loose_agrees_with_the_plain_walk() {
-        let shared: R = Rc::new(app(BVar(3), BVar(0)));
+        tauto_parse::install();
+        let shared: R = Arc::new(app(BVar(3), BVar(0)));
         let terms = [
-            Lit(1),
+            lit(1),
             BVar(0),
             BVar(7),
-            app(BVar(2), Lit(4)),
-            Lam(Hint::named("_"), Rc::new(app(BVar(0), BVar(4)))),
+            app(BVar(2), lit(4)),
+            Lam(Hint::named("_"), Arc::new(app(BVar(0), BVar(4)))),
             Pi(Hint::named("_"), shared.clone(), shared.clone()),
             apps(
                 Const(DeclRef::fresh("f")),
@@ -4723,7 +6562,7 @@ mod tests {
             ),
         ];
         for t in terms {
-            let r = Rc::new(t);
+            let r = Arc::new(t);
             // The first call fills the memo, the second reads it.
             assert_eq!(loose(&r), loose_plain(&r));
             assert_eq!(loose(&r), loose_plain(&r));
@@ -4733,6 +6572,7 @@ mod tests {
 
     #[test]
     fn the_address_hasher_keeps_every_key_apart() {
+        tauto_parse::install();
         let mut m: HashMap<usize, usize, AddrBuild> = HashMap::default();
         for i in 0..10_000usize {
             m.insert(i * 16, i);
@@ -4745,6 +6585,7 @@ mod tests {
 
     #[test]
     fn iota_shares_the_inductive_and_gives_the_same_term() {
+        tauto_parse::install();
         let mut k = kernel();
         let c = &mut k.core;
         c.start_budget(None, None);
@@ -4753,7 +6594,7 @@ mod tests {
             .get(&DeclRef::primitive("Nat").unwrap())
             .unwrap()
             .clone();
-        let before = Rc::strong_count(&nat);
+        let before = Arc::strong_count(&nat);
         let t = apps(
             Const(
                 DeclRef::primitive("Nat")
@@ -4762,37 +6603,38 @@ mod tests {
             ),
             [
                 Sort(Sort::ty(0)),
-                Lit(0),
+                lit(0),
                 Lam(
                     Hint::named("_"),
-                    Rc::new(Lam(
+                    Arc::new(Lam(
                         Hint::named("_"),
-                        Rc::new(app(konst("Succ"), app(konst("Succ"), BVar(0)))),
+                        Arc::new(app(konst("Succ"), app(konst("Succ"), BVar(0)))),
                     )),
                 ),
-                Lit(3),
+                lit(3),
             ],
         );
         let _ = c.whnf(&t);
         // The lookup of `iota` took no copy of the inductive that stays.
-        assert_eq!(Rc::strong_count(&nat), before);
+        assert_eq!(Arc::strong_count(&nat), before);
         c.end_budget();
     }
 
     #[test]
     fn a_passed_deadline_seen_by_a_loop_without_steps_ends_the_budget() {
+        tauto_parse::install();
         let mut k = kernel();
         let c = &mut k.core;
         c.start_budget(None, Some(crate::clock::Instant::now()));
-        let r: R = Rc::new(app(BVar(0), BVar(1)));
+        let r: R = Arc::new(app(BVar(0), BVar(1)));
         for _ in 0..4096 {
-            let _ = inst_tm(&r, 0, &Rc::new(Lit(0)));
+            let _ = inst_tm(&r, 0, &Arc::new(lit(0)));
         }
         assert!(c.budget_out());
         assert!(c.end_budget().out);
         c.start_budget(None, None);
         for _ in 0..4096 {
-            let _ = inst_tm(&r, 0, &Rc::new(Lit(0)));
+            let _ = inst_tm(&r, 0, &Arc::new(lit(0)));
         }
         assert!(!c.budget_out());
         assert!(!c.end_budget().out);
@@ -4819,20 +6661,23 @@ mod tests {
 
     #[test]
     fn proofs_are_checked() {
+        tauto_parse::install();
         accepts(&r#"theorem t(A: Prop, a: A): A { a }"#.to_string());
-        accepts(&r#"theorem t(): 2 + 2 = 4 { Refl(Nat, 4) }"#.to_string());
+        accepts(&r#"theorem t(): 2 + 2 = 4 { Refl(<A: Nat, a: 4>) }"#.to_string());
         accepts(
-            &r#"theorem t(n: Nat): n + 2 = Succ(Succ(n)) { Refl(Nat, Succ(Succ(n))) }"#.to_string(),
+            &r#"theorem t(n: Nat): n + 2 = Succ(Succ(n)) { Refl(<A: Nat, a: Succ(Succ(n))>) }"#
+                .to_string(),
         );
-        rejects(&r#"theorem t(): 2 + 2 = 5 { Refl(Nat, 4) }"#.to_string());
+        rejects(&r#"theorem t(): 2 + 2 = 5 { Refl(<A: Nat, a: 4>) }"#.to_string());
         rejects(&r#"theorem t(A: Prop, B: Prop, a: A): B { a }"#.to_string());
         rejects(&r#"theorem t(): False { Trivial }"#.to_string());
-        accepts(&r#"theorem t(): Nat::rec(k => Nat, 0, k => ih => Succ(Succ(ih)), 3) = 6 { Refl(Nat, 6) }"#.to_string());
-        accepts(&r#"theorem t(e: Eq(Nat, 1, 1)): Eq::rec(Nat, 1, y => p => Nat, 7, 1, e) = 7 { Refl(Nat, 7) }"#.to_string());
+        accepts(&r#"theorem t(): Nat::rec(k => Nat, 0, k => ih => Succ(Succ(ih)), 3) = 6 { Refl(<A: Nat, a: 6>) }"#.to_string());
+        accepts(&r#"theorem t(e: Eq(Nat, 1, 1)): Eq::rec(<A: Nat, a: 1>, y => p => Nat, 7, 1, e) = 7 { Refl(<A: Nat, a: 7>) }"#.to_string());
     }
 
     #[test]
     fn a_false_equation_is_rejected_without_unfolding_twice() {
+        tauto_parse::install();
         // `conv` compares the arguments of two applications of the same name
         // before unfolding it; remembering the pairs that failed keeps that
         // from being exponential.
@@ -4850,7 +6695,8 @@ fn add2(a: Nat, b: Nat): Nat { ⊢ Nat from match a { Zero => b
         }
         let (ty, body) = read(
             &mut k,
-            &r#"theorem t(): double(20) = add2(23, 20) { Refl(Nat, double(20)) }"#.to_string(),
+            &r#"theorem t(): double(20) = add2(23, 20) { Refl(<A: Nat, a: double(20)>) }"#
+                .to_string(),
         );
         assert!(
             k.core
@@ -4879,6 +6725,7 @@ fn add2(a: Nat, b: Nat): Nat { ⊢ Nat from match a { Zero => b
 
     #[test]
     fn a_redex_is_typed_without_computing() {
+        tauto_parse::install();
         // The motive applied to a number in the statement is typed by its
         // argument and its body, not by computing `fib(24)`.
         let (steps, ok) = steps_for(
@@ -4887,7 +6734,7 @@ fn add2(a: Nat, b: Nat): Nat { ⊢ Nat from match a { Zero => b
 fn fib(n: Nat): Nat { ⊢ Nat from match n { Zero => 1
  Succ(m) => ⊢ Nat from match m { Zero => 1
  Succ(p) => add2(fib(m), fib(p)) } } }"#,
-            r#"theorem t(): ((k) => fib(k))(24) = fib(24) { Refl(Nat, fib(24)) }"#,
+            r#"theorem t(): ((k) => fib(k))(24) = fib(24) { Refl(<A: Nat, a: fib(24)>) }"#,
         );
         assert!(ok);
         assert!(steps < 10_000, "{steps} steps");
@@ -4895,10 +6742,11 @@ fn fib(n: Nat): Nat { ⊢ Nat from match n { Zero => 1
 
     #[test]
     fn a_deep_wrong_argument_is_rejected_in_linear_steps() {
+        tauto_parse::install();
         // `big(big(r))` against `big(r)`: both reduce to a chain of 400
         // stuck `2 * pow2(…)`. The typed comparison goes down the chain after
-        // the untyped one failed; comparing copies, each link compared and
-        // reduced again all of the chain below it, about two million steps.
+        // the untyped one failed. Comparing copies would compare each link and
+        // reduce again all of the chain below it, quadratic in its length.
         let defs = r#"fn pow2(n: Nat): Nat { ⊢ Nat from match n { Zero => 1
  Succ(k) => 2 * pow2(k) } }
 fn big(s: Nat): Nat { pow2(s + 400) }
@@ -4920,6 +6768,7 @@ fn pos(x: Nat): Prop { is_zero(x) = false }"#;
 
     #[test]
     fn an_argument_is_reduced_once() {
+        tauto_parse::install();
         // `m(n)` is `mx(n, n)`, whose arms are its arguments: the arm taken
         // is the argument's own node, whose value was found when `nat_lt`
         // compared it, so thirty `m`s reduce each argument once.
@@ -4927,7 +6776,7 @@ fn pos(x: Nat): Prop { is_zero(x) = false }"#;
             r#"fn mx(a: Nat, b: Nat): Nat { ⊢ Nat from match Nat::lt(a, b) { false => a
  true => b } }
 fn m(n: Nat): Nat { mx(n, n) }"#,
-            r#"theorem t(): m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(20)))))))))))))))))))))))))))))) = 20 { Refl(Nat, 20) }"#,
+            r#"theorem t(): m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(20)))))))))))))))))))))))))))))) = 20 { Refl(<A: Nat, a: 20>) }"#,
         );
         assert!(ok);
         assert!(steps < 5_000, "{steps} steps");
@@ -4935,13 +6784,14 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
             r#"fn mx(a: Nat, b: Nat): Nat { ⊢ Nat from match Nat::lt(a, b) { false => a
  true => b } }
 fn m(n: Nat): Nat { mx(n, n) }"#,
-            r#"theorem t(): m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(20)))))))))))))))))))))))))))))) = 21 { Refl(Nat, 20) }"#,
+            r#"theorem t(): m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(20)))))))))))))))))))))))))))))) = 21 { Refl(<A: Nat, a: 20>) }"#,
         );
         assert!(!ok);
     }
 
     #[test]
     fn a_wrong_number_is_rejected_by_its_value() {
+        tauto_parse::install();
         // A number compared with a literal is computed once and compared as a
         // value; a wrong literal costs about what the right one does.
         let defs = r#"fn h(n: Nat): Nat { ⊢ Nat from match n { Zero => 123456789
@@ -4949,8 +6799,14 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
    Zero => False
    Succ(_) => True
  }, e, Trivial)) } }"#;
-        let right = steps_for(defs, r#"theorem t(): h(30) = 456210 { Refl(Nat, h(30)) }"#);
-        let wrong = steps_for(defs, r#"theorem t(): h(30) = 456211 { Refl(Nat, h(30)) }"#);
+        let right = steps_for(
+            defs,
+            r#"theorem t(): h(30) = 456210 { Refl(<A: Nat, a: h(30)>) }"#,
+        );
+        let wrong = steps_for(
+            defs,
+            r#"theorem t(): h(30) = 456211 { Refl(<A: Nat, a: h(30)>) }"#,
+        );
         assert!(right.1 && !wrong.1);
         assert!(
             wrong.0 <= 3 * right.0,
@@ -4962,13 +6818,14 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
 
     #[test]
     fn a_table_forgets_the_nodes_that_are_gone() {
+        tauto_parse::install();
         let mut m: NodeTable<()> = NodeTable::default();
-        let kept = Rc::new(Lit(0));
-        m.insert(Rc::as_ptr(&kept) as usize, (Rc::downgrade(&kept), ()));
+        let kept = Arc::new(lit(0));
+        m.insert(Arc::as_ptr(&kept) as usize, (Arc::downgrade(&kept), ()));
         let mut gone = Vec::new();
         while m.len() < 4096 {
-            let n = Rc::new(Lit(m.len() as u128));
-            m.insert(Rc::as_ptr(&n) as usize, (Rc::downgrade(&n), ()));
+            let n = Arc::new(lit(m.len() as u128));
+            m.insert(Arc::as_ptr(&n) as usize, (Arc::downgrade(&n), ()));
             gone.push(n);
         }
         drop(gone);
@@ -4978,18 +6835,19 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
 
     #[test]
     fn a_table_that_kept_its_nodes_is_not_walked_again_until_it_doubles() {
+        tauto_parse::install();
         let mut m: NodeTable<()> = NodeTable::default();
-        let nodes: Vec<R> = (0..SWEEP_FROM).map(|i| Rc::new(Lit(i as u128))).collect();
+        let nodes: Vec<R> = (0..SWEEP_FROM).map(|i| Arc::new(lit(i as u128))).collect();
         for n in &nodes {
-            m.insert(Rc::as_ptr(n) as usize, (Rc::downgrade(n), ()));
+            m.insert(Arc::as_ptr(n) as usize, (Arc::downgrade(n), ()));
         }
         sweep(&mut m);
         assert_eq!(m.len(), SWEEP_FROM);
         assert_eq!(m.sweep_at, 2 * SWEEP_FROM);
         // Inserting again under a key it has (as `remember` does) walks nothing.
         m.insert(
-            Rc::as_ptr(&nodes[0]) as usize,
-            (Rc::downgrade(&nodes[0]), ()),
+            Arc::as_ptr(&nodes[0]) as usize,
+            (Arc::downgrade(&nodes[0]), ()),
         );
         sweep(&mut m);
         assert_eq!(m.sweep_at, 2 * SWEEP_FROM);
@@ -4997,12 +6855,11 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
 
     #[test]
     fn names_are_read_by_their_binders() {
-        // A binder named like a sort or `_` is just a binder here: names are
-        // resolved by their binders, not by their spelling.
+        tauto_parse::install();
+        // A binder named like a sort is just a binder here: names are
+        // resolved by their binders, not by their spelling. (A lone `_` is not
+        // a name at all and does not parse.)
         rejects(&r#"theorem t(Type: Prop): Type { Nat }"#.to_string());
-        rejects(
-            &r#"theorem t(): ∀ x: Prop. ∀ y: Prop. ∀ h: y. x { _ => _ => h => h }"#.to_string(),
-        );
         rejects(
             &r#"theorem t(): ∀ x: Prop. ∀ y: Prop. ∀ h: y. x { a => b => h => h }"#.to_string(),
         );
@@ -5010,6 +6867,7 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
 
     #[test]
     fn a_redex_types_its_argument() {
+        tauto_parse::install();
         // `(fun x => 0)(Ω)` with an ill-typed argument.
         rejects(
             &r#"theorem t(): Nat { (x => 0)(Trivial(Trivial)) }
@@ -5019,10 +6877,76 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
         accepts(&r#"theorem t(): Nat { (x => 0)(Trivial) }"#.to_string());
     }
 
+    /// A value that unfolds to its own name, at once or through another
+    /// name's value, is refused by the core itself: `f := λn. Succ(f n)`
+    /// would make `f 0 ≡ Succ(f 0)` hold by reflexivity. The named checker
+    /// never sends one, so this goes to the core directly.
+    #[test]
+    fn values_that_unfold_to_themselves_are_refused() {
+        tauto_parse::install();
+        let mut k = kernel();
+        let (ty, plain) = read(&mut k, "theorem plain(n: Nat): Nat { n }");
+        let (fr, gr) = (DeclRef::fresh("f"), DeclRef::fresh("g"));
+        k.source_alias("f", &fr);
+        k.source_alias("g", &gr);
+        let (f, g) = (Name::Global(fr), Name::Global(gr));
+        k.core.add_decl(&f, &ty, None, false).unwrap();
+        k.core.add_decl(&g, &ty, None, false).unwrap();
+        let (_, own) = read(&mut k, "theorem own(n: Nat): Nat { Succ(f(n)) }");
+        let err = k.core.set_value(&f, &own).unwrap_err();
+        assert_eq!(err.id, "kernel-core-value-cycle", "{err:?}");
+        // Through another name's value.
+        let (_, via_f) = read(&mut k, "theorem via_f(n: Nat): Nat { f(n) }");
+        let (_, via_g) = read(&mut k, "theorem via_g(n: Nat): Nat { Succ(g(n)) }");
+        k.core.set_value(&g, &via_f).unwrap();
+        let err = k.core.set_value(&f, &via_g).unwrap_err();
+        assert_eq!(err.id, "kernel-core-value-cycle", "{err:?}");
+        // A value that reaches other names but not its own is kept.
+        k.core.set_value(&f, &plain).unwrap();
+    }
+
+    /// What a check for cycles found is not used once a name it reached
+    /// changes: a name met without a value that is given one later, or a
+    /// value taken and given again, is followed again.
+    #[test]
+    fn a_cycle_through_a_name_given_a_value_later_is_refused() {
+        tauto_parse::install();
+        let mut k = kernel();
+        let (ty, _) = read(&mut k, "theorem plain(n: Nat): Nat { n }");
+        let (fr, hr, jr) = (
+            DeclRef::fresh("f"),
+            DeclRef::fresh("h"),
+            DeclRef::fresh("j"),
+        );
+        k.source_alias("f", &fr);
+        k.source_alias("h", &hr);
+        k.source_alias("j", &jr);
+        let (f, h, j) = (Name::Global(fr), Name::Global(hr), Name::Global(jr));
+        for n in [&f, &h, &j] {
+            k.core.add_decl(n, &ty, None, false).unwrap();
+        }
+        // `h` reaches `f` while `f` has no value.
+        let (_, via_f) = read(&mut k, "theorem via_f(n: Nat): Nat { Succ(f(n)) }");
+        k.core.set_value(&h, &via_f).unwrap();
+        // `j` reaches `h`, and so `f`, after that was found.
+        let (_, via_h) = read(&mut k, "theorem via_h(n: Nat): Nat { h(n) }");
+        k.core.set_value(&j, &via_h).unwrap();
+        let (_, via_j) = read(&mut k, "theorem via_j(n: Nat): Nat { j(n) }");
+        let err = k.core.set_value(&f, &via_j).unwrap_err();
+        assert_eq!(err.id, "kernel-core-value-cycle", "{err:?}");
+        // A value taken (`seal`) and given again is followed again.
+        let (_, plain) = read(&mut k, "theorem plain2(n: Nat): Nat { n }");
+        k.core.set_value(&f, &plain).unwrap();
+        k.core.seal(&h).unwrap();
+        let (_, via_j2) = read(&mut k, "theorem via_j2(n: Nat): Nat { Succ(j(n)) }");
+        k.core.set_value(&h, &via_j2).unwrap_err();
+    }
+
     /// The quotient's constants are declared once, in order, with the type
     /// the core gives them and no value.
     #[test]
     fn quotient_constants_are_fixed() {
+        tauto_parse::install();
         let mut k = kernel();
         let (ty, body) = read(&mut k, "theorem t(n: Nat): Nat { n }");
         assert!(
@@ -5043,6 +6967,10 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
             .add_decl(&Name::from("Quot"), &ty, None, false)
             .unwrap_err();
         assert_eq!(err.id, "kernel-core-quot-type", "{err:?}");
+        // `Quot::lift` is stated with `Eq`, which must be the equality.
+        let eq = DeclRef::primitive("Eq").unwrap();
+        assert!(kernel().core.is_equality(&eq));
+        assert!(!Core::new().is_equality(&eq));
     }
 
     fn inductive(src: &str) -> Result<(), Message> {
@@ -5087,8 +7015,27 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
         k.core.add_inductive(&[spec], params.len(), out)
     }
 
+    /// A part the typing read as an atom (`Core::lvals`) is convertible with
+    /// its value, alone and at the head of an application, and an atom is not
+    /// taken for another one.
+    #[test]
+    fn an_atom_with_a_value_is_convertible_with_its_value() {
+        tauto_parse::install();
+        let mut core = Core::new();
+        let x = core.fresh(Sort(Sort::Prop));
+        let y = core.fresh(Sort(Sort::Prop));
+        let value = Lam(Hint(None), Arc::new(BVar(0)));
+        core.lvals.insert(x, Arc::new(value.clone()));
+        assert!(core.conv(&FVar(x), &value));
+        assert!(core.conv(&value, &FVar(x)));
+        let arg = Sort(Sort::Prop);
+        assert!(core.conv(&app(FVar(x), arg.clone()), &arg));
+        assert!(!core.conv(&FVar(x), &FVar(y)));
+    }
+
     #[test]
     fn inductive_declarations_are_read_again() {
+        tauto_parse::install();
         inductive(
             &r#"inductive L(A: Type): Type {
   Nil: L(A)
@@ -5252,13 +7199,13 @@ impl Core {
                     return Ok(Pi(
                         h.clone(),
                         dom.clone(),
-                        Rc::new(change(cod, skip - 1, count, level)?),
+                        Arc::new(change(cod, skip - 1, count, level)?),
                     ));
                 }
                 fn result_sort(t: &Tm, level: &super::Level) -> Res<Tm> {
                     match t {
                         Pi(h, a, b) => {
-                            Ok(Pi(h.clone(), a.clone(), Rc::new(result_sort(b, level)?)))
+                            Ok(Pi(h.clone(), a.clone(), Arc::new(result_sort(b, level)?)))
                         }
                         Sort(super::Sort::Type(_)) => Ok(Sort(super::Sort::Type(level.clone()))),
                         _ => fail(msg!("kernel-core-invalid-motive")),
@@ -5266,8 +7213,8 @@ impl Core {
                 }
                 Ok(Pi(
                     h.clone(),
-                    Rc::new(result_sort(dom, level)?),
-                    Rc::new(change(cod, 0, count - 1, level)?),
+                    Arc::new(result_sort(dom, level)?),
+                    Arc::new(change(cod, 0, count - 1, level)?),
                 ))
             }
             let ty = change(&ty, info.params, info.group.len(), level)?;
@@ -5288,6 +7235,7 @@ impl Core {
             self.rec_targets.insert(name.clone(), targets.clone());
         }
         for (name, member, ty) in pending {
+            self.touch(&name);
             self.globals
                 .insert(name.clone(), Global { ty, value: None });
             self.recs.insert(name, member);

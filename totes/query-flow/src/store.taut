@@ -1,10 +1,9 @@
-import std::Base
-import std::Data
-import std::prelude::Shared
-import std::prelude::Par
-import std::prelude::Ord
-import whale::Revision
-import whale::Graph
+import std::base
+import std::data
+import std::builtin::par
+import std::builtin::ord
+import whale::revision
+import whale::graph
 import "codec.taut"
 import "flow.taut"
 import "storage.taut"
@@ -29,9 +28,9 @@ pub fn format_version(): Text { "1" }
 // ---- the checksum -------------------------------------------------------------------------
 
 // FNV-1a (32 bits) of the bytes of `t`, to tell a file cut short or changed by hand.
-pub fn checksum(t: Text): u64 ! {Div} { fnv_from(t, 0, 2166136261) }
+pub fn checksum(t: Text): u64 ! {div, overflow} { fnv_from(t, 0, 2166136261) }
 
-fn fnv_from(t: Text, i: u64, h: u64): u64 ! {Div} {
+fn fnv_from(t: Text, i: u64, h: u64): u64 ! {div, overflow} {
   match Text::byte(t, i) {
     None => h
     Some(b) => fnv_from(t, i + 1, mod(U64::xor(h, U64::of_u8(b)) * 16777619, 4294967296))
@@ -55,23 +54,23 @@ fn slot_fields(s: Slot): List(Text) {
   }
 }
 
-fn nats(ns: List(Nat)): List(Text) ! {Div} {
+fn nats(ns: List(Nat)): List(Text) ! {div} {
   match ns {
     Nil => Nil
     Cons(n, t) => Cons(nat_text(n), nats(t))
   }
 }
 
-fn dep_fields(ds: List(Dep(Text))): List(Text) ! {Div} {
+fn dep_fields(ds: List(Dep(Text))): List(Text) ! {div} {
   match ds {
     Nil => Nil
     Cons(d, t) => Cons(dep_id(d), Cons(nat_text(dep_seen(d)), dep_fields(t)))
   }
 }
 
-fn count<A: Shared>(l: List(A)): Text { nat_text(List::length(l)) }
+fn count<A: Shared>(l: List(A)): Text ! {div} { nat_text(List::length(l)) }
 
-fn node_fields(k: Text, n: Node(Text, Slot)): List(Text) ! {Div} {
+fn node_fields(k: Text, n: Node(Text, Slot)): List(Text) ! {div} {
   List::append(
     Cons(k, slot_fields(Node::data(n))),
     List::append(
@@ -92,7 +91,7 @@ fn node_fields(k: Text, n: Node(Text, Slot)): List(Text) ! {Div} {
   )
 }
 
-fn nodes_fields(ns: List(Text × Node(Text, Slot))): List(Text) ! {Div} {
+fn nodes_fields(ns: List(Text × Node(Text, Slot))): List(Text) ! {div} {
   match ns {
     Nil => Nil
     Cons(e, t) => match e {
@@ -102,7 +101,7 @@ fn nodes_fields(ns: List(Text × Node(Text, Slot))): List(Text) ! {Div} {
 }
 
 // The text of a graph in the format of `state.qflow`.
-pub fn encode_graph(w: Whale(Text, Slot)): Text ! {Div} {
+pub fn encode_graph(w: Whale(Text, Slot)): Text ! {div, overflow} {
   let r := Whale::revision(w)
   let ns := Whale::nodes(w)
   let body := fields(List::append(Cons(count(r), nats(r)), Cons(count(ns), nodes_fields(ns))))
@@ -113,8 +112,14 @@ pub fn encode_graph(w: Whale(Text, Slot)): Text ! {Div} {
 }
 
 // Replaces the storage entry `state.qflow` with the runtime's graph, at once.
-pub fn save(rt: Runtime): Result(Unit, Text) ! {store_replace, Div} {
-  perform store_replace(state_entry(), Bytes::of_text(encode_graph(current_graph(rt))))
+// A graph whose numbers do not fit a `u64` is not saved.
+pub fn save(rt: Runtime): Result(Unit, Text) ! {div, store_replace, ref_get} {
+  handle {
+    let bytes := Bytes::of_text(encode_graph(current_graph(rt)))
+    perform store_replace(state_entry(), bytes)
+  } with {
+    overflow() => Err("the graph does not fit")
+  }
 }
 
 // ---- reading ------------------------------------------------------------------------------
@@ -138,7 +143,7 @@ fn take(ts: List(Text)): Option(Text × List(Text)) {
   }
 }
 
-fn take_nat(ts: List(Text)): Option(Nat × List(Text)) ! {Div} {
+fn take_nat(ts: List(Text)): Option(Nat × List(Text)) ! {div} {
   match take(ts) {
     None => None
     Some(p) => match p {
@@ -150,7 +155,7 @@ fn take_nat(ts: List(Text)): Option(Nat × List(Text)) ! {Div} {
   }
 }
 
-fn take_nats(n: Nat, ts: List(Text), acc: List(Nat)): Option(List(Nat) × List(Text)) ! {Div} {
+fn take_nats(n: Nat, ts: List(Text), acc: List(Nat)): Option(List(Nat) × List(Text)) ! {div, overflow} {
   match n {
     Zero => Some(#(List::reverse(acc), ts))
     Succ(m) => match take_nat(ts) {
@@ -162,7 +167,7 @@ fn take_nats(n: Nat, ts: List(Text), acc: List(Nat)): Option(List(Nat) × List(T
   }
 }
 
-fn take_texts(n: Nat, ts: List(Text), acc: List(Text)): Option(List(Text) × List(Text)) ! {Div} {
+fn take_texts(n: Nat, ts: List(Text), acc: List(Text)): Option(List(Text) × List(Text)) ! {div, overflow} {
   match n {
     Zero => Some(#(List::reverse(acc), ts))
     Succ(m) => match take(ts) {
@@ -178,7 +183,7 @@ fn take_deps(
   n: Nat,
   ts: List(Text),
   acc: List(Dep(Text))
-): Option(List(Dep(Text)) × List(Text)) ! {Div} {
+): Option(List(Dep(Text)) × List(Text)) ! {div, overflow} {
   match n {
     Zero => Some(#(List::reverse(acc), ts))
     Succ(m) => match take(ts) {
@@ -226,7 +231,7 @@ fn nat_at(l: List(Nat), i: Nat): Nat {
   }
 }
 
-fn take_node(ts: List(Text)): Option(Text × Node(Text, Slot) × List(Text)) ! {Div} {
+fn take_node(ts: List(Text)): Option(Text × Node(Text, Slot) × List(Text)) ! {div, overflow} {
   match take(ts) {
     None => None
     Some(p) => match p {
@@ -283,7 +288,7 @@ fn take_nodes(
   n: Nat,
   ts: List(Text),
   acc: List(Text × Node(Text, Slot))
-): Option(List(Text × Node(Text, Slot)) × List(Text)) ! {Div} {
+): Option(List(Text × Node(Text, Slot)) × List(Text)) ! {div, overflow} {
   match n {
     Zero => Some(#(List::reverse(acc), ts))
     Succ(m) => match take_node(ts) {
@@ -296,25 +301,25 @@ fn take_nodes(
 }
 
 // No key twice, as whale keeps them.
-fn keys_distinct(ns: List(Text × Node(Text, Slot))): Bool ! {Div} {
+fn keys_distinct(ns: List(Text × Node(Text, Slot))): Bool ! {div} {
   match ns {
     Nil => true
     Cons(e, t) => match e {
-      #(k, n) => if has_node(t, k) { false } else { keys_distinct(t) }
+      #(k, ^n) => if has_node(t, k) { false } else { keys_distinct(t) }
     }
   }
 }
 
-fn has_node(ns: List(Text × Node(Text, Slot)), k: Text): Bool ! {Div} {
+fn has_node(ns: List(Text × Node(Text, Slot)), k: Text): Bool ! {div} {
   match ns {
     Nil => false
     Cons(e, t) => match e {
-      #(x, n) => if x == k { true } else { has_node(t, k) }
+      #(x, ^n) => if x == k { true } else { has_node(t, k) }
     }
   }
 }
 
-fn deps_present(all: List(Text × Node(Text, Slot)), ds: List(Dep(Text))): Bool ! {Div} {
+fn deps_present(all: List(Text × Node(Text, Slot)), ds: List(Dep(Text))): Bool ! {div} {
   match ds {
     Nil => true
     Cons(d, t) => if has_node(all, dep_id(d)) { deps_present(all, t) } else { false }
@@ -325,17 +330,17 @@ fn deps_present(all: List(Text × Node(Text, Slot)), ds: List(Dep(Text))): Bool 
 fn reads_present(
   all: List(Text × Node(Text, Slot)),
   ns: List(Text × Node(Text, Slot))
-): Bool ! {Div} {
+): Bool ! {div} {
   match ns {
     Nil => true
     Cons(e, t) => match e {
-      #(k, n) => if deps_present(all, Node::deps(n)) { reads_present(all, t) } else { false }
+      #(^k, n) => if deps_present(all, Node::deps(n)) { reads_present(all, t) } else { false }
     }
   }
 }
 
 // The graph a text holds, or why it is not one.
-pub fn decode_graph(text: Text): Result(Whale(Text, Slot), Text) ! {Div} {
+pub fn decode_graph(text: Text): Result(Whale(Text, Slot), Text) ! {div, overflow} {
   match read_fields(text) {
     None => Err("not a sequence of fields")
     Some(all) => match take_texts(3, all, Nil) {
@@ -347,7 +352,7 @@ pub fn decode_graph(text: Text): Result(Whale(Text, Slot), Text) ! {Div} {
             Nil => Err("no header")
             Cons(version, h2) => match h2 {
               Nil => Err("no header")
-              Cons(sum, h3) => if name == format_name() {
+              Cons(sum, ^h3) => if name == format_name() {
                 if version == format_version() {
                   let body := fields(body_fields)
                   if Text::of_u64(checksum(body)) == sum { decode_body(body_fields) } else {
@@ -363,7 +368,7 @@ pub fn decode_graph(text: Text): Result(Whale(Text, Slot), Text) ! {Div} {
   }
 }
 
-fn decode_body(ts: List(Text)): Result(Whale(Text, Slot), Text) ! {Div} {
+fn decode_body(ts: List(Text)): Result(Whale(Text, Slot), Text) ! {div, overflow} {
   match take_nat(ts) {
     None => Err("no revision")
     Some(p) => match p {
@@ -377,7 +382,7 @@ fn decode_body(ts: List(Text)): Result(Whale(Text, Slot), Text) ! {Div} {
                 None => Err("a node is not well formed")
                 Some(v) => match v {
                   #(ns, rest) => match rest {
-                    Cons(x, y) => Err("fields after the nodes")
+                    Cons(^x, ^y) => Err("fields after the nodes")
                     Nil => if List::length(rev) == 4 {
                       if keys_distinct(ns) {
                         if reads_present(ns, ns) { Ok(Whale::Mk(ns, rev)) } else {
@@ -404,10 +409,10 @@ fn assets_of(ns: List(Text × Node(Text, Slot))): List(Text) {
       #(k, n) => match Node::data(n) {
         AssetSlot(l) => match l {
           Loading => assets_of(t)
-          Loaded(v) => Cons(k, assets_of(t))
-          LoadFailed(f) => Cons(k, assets_of(t))
+          Loaded(^v) => Cons(k, assets_of(t))
+          LoadFailed(^f) => Cons(k, assets_of(t))
         }
-        Memo(m) => assets_of(t)
+        Memo(^m) => assets_of(t)
         Cleared => assets_of(t)
       }
     }
@@ -417,7 +422,12 @@ fn assets_of(ns: List(Text × Node(Text, Slot))): List(Text) {
 // Reads the storage entry `state.qflow` into the runtime, in place of its graph. Each asset with
 // a value is unconfirmed until the host resolves it again or its locator gives it again: the
 // same value keeps its revision and what read it stays valid; a different one is a change.
-pub fn load(rt: Runtime): LoadResult ! {store_read, Div} {
+// A state whose numbers do not fit a `u64` is discarded.
+pub fn load(rt: Runtime): LoadResult ! {div, store_read, ref_set} {
+  handle { load_state(rt) } with { overflow() => Discarded("a number does not fit") }
+}
+
+fn load_state(rt: Runtime): LoadResult ! {div, overflow, store_read, ref_set} {
   match perform store_read(state_entry()) {
     None => NoState
     Some(bytes) => match Text::of_bytes(bytes) {

@@ -1,0 +1,18 @@
+description = "Expanding a macro in a file that imports a library whose class method has a `NoBorrow` type parameter: the macro runtime reads the class's dictionary as the checker does."
+
+@ cases.macro-beside-no-borrow-class-method
+entry = "main.taut"
+files."lib.taut" = ````tauto
+import std::builtin::macro
+pub(open) struct(shared) Box(T: Shared + NoBorrow) { v: T }
+pub class Readable(F: (Shared) -> Shared) { fn read<T: Shared + NoBorrow>(s: F(T)): T }
+instance Readable(Box) { fn read<T: Shared + NoBorrow>(s: Box(T)): T { s.v } }
+pub fn get<F: (Shared) -> Shared, T: Shared + NoBorrow>(s: F(T)): T where Readable(F) { Readable::read(s) }
+pub macro fn m(e: SynExpr): SynExpr { quote { 1 } }
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+let x := m!(0)
+show(&get(Box { v: x }))
+````
+stdout = "1\n"

@@ -1,7 +1,7 @@
 import "run_declaration_kind_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "body_checked_sound.taut"
 import "checked_frame.taut"
 import "checker.taut"
@@ -32,7 +32,7 @@ pub theorem accepted_bind_fact<A: Type, B: Type, P: Prop>(
   after: ∀ v: A. ∀ next: Checker. CkErrorFrame(next, k(v, next)),
   clean: DiagnosticClean(ck_st(frame_bind(k, m)))
 ): P {
-  ⊢ P from match m { mut1(v, next) => first(after(v, next, clean)) }
+  match m { mut1(v, next) => first(after(v, next, clean)) }
 }
 pub theorem accepted_checked_bind_fact<A: Type, B: Type, P: Prop>(
   m: Mut1(A, Checker),
@@ -42,7 +42,7 @@ pub theorem accepted_checked_bind_fact<A: Type, B: Type, P: Prop>(
   after: ∀ v: A. ∀ next: Checker. ∀ ord: CkOrdered(next). CkCheckedFrame(next, k(v, next)),
   clean: DiagnosticClean(ck_st(frame_bind(k, m)))
 ): P {
-  ⊢ P from match m { mut1(v, next) => first(And::right(after(v, next, ordered))(clean)) }
+  match m { mut1(v, next) => first(And::right(after(v, next, ordered))(clean)) }
 }
 pub theorem ck_prepare_fns_data_names_unique(
   c: Checker,
@@ -52,9 +52,7 @@ pub theorem ck_prepare_fns_data_names_unique(
   clean: DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own)))
 ): UniqueDataNames(types_data_decls(program)) {
   accepted_bind_fact(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
-    UniqueDataNames(types_data_decls(program)),
+    <A: Unit, B: List(SurfaceFn × Scheme), P: UniqueDataNames(types_data_decls(program))>,
     ck_check_data_names(c, types_data_decls(program)),
     (ignored: Unit, next: Checker) => registration_fns_after_data_names(
       next,
@@ -65,7 +63,7 @@ pub theorem ck_prepare_fns_data_names_unique(
     accepted => ck_check_data_names_sound(c, types_data_decls(program), accepted),
     ignored => next => registration_fns_after_data_names_frame_errors(next, prelude, program, own),
     Eq::subst(
-      (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => DiagnosticClean(ck_st(m)),
+      (m: Mut1(List(SurfaceFn × Scheme), Checker)) => DiagnosticClean(ck_st(m)),
       registration_fns_unf(c, prelude, program, own),
       clean
     )
@@ -75,14 +73,12 @@ pub theorem ck_prepare_fns_data_names_unique(
 pub fn names_function_body(
   c: Checker,
   program: List(SurfaceStmt),
-  fns: List(Pair(SurfaceFn, Scheme))
+  fns: List(SurfaceFn × Scheme)
 ): Mut1(Unit, Checker) {
   frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     (ignored: Unit, next: Checker) => inference_bind_scope(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (finished: Unit, final: Checker, env: Scope) => mut1(finished, final),
       ck_top_level(program, next, ScopeMk(Nil))
     ),
@@ -92,24 +88,21 @@ pub fn names_function_body(
 pub theorem names_function_body_checked(
   c: Checker,
   program: List(SurfaceStmt),
-  fns: List(Pair(SurfaceFn, Scheme)),
+  fns: List(SurfaceFn × Scheme),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, names_function_body(c, program, fns)) {
   checked_frame_bind(
-    Unit,
-    Unit,
+    <A: Unit, B: Unit>,
     c,
     (ignored: Unit, next: Checker) => inference_bind_scope(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (finished: Unit, final: Checker, env: Scope) => mut1(finished, final),
       ck_top_level(program, next, ScopeMk(Nil))
     ),
     ck_check_fns(fns, c),
     ck_check_fns_frame_checked(fns, c, ordered),
     ignored => next => ord => inference_bind_scope_frame_checked(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       next,
       (finished: Unit, final: Checker, env: Scope) => mut1(finished, final),
       ck_top_level(program, next, ScopeMk(Nil)),
@@ -129,9 +122,8 @@ pub theorem names_after_datas_unf(
   program,
   own
 ) = frame_bind(
-  List(Pair(SurfaceFn, Scheme)),
-  Unit,
-  (fns: List(Pair(SurfaceFn, Scheme)), next: Checker) => names_function_body(next, program, fns),
+  <A: List(SurfaceFn × Scheme), B: Unit>,
+  (fns: List(SurfaceFn × Scheme), next: Checker) => names_function_body(next, program, fns),
   ck_prepare_fns(c, prelude, program, own)
 ) { Refl }
 pub theorem run_finish_after_fact<P: Prop>(
@@ -157,14 +149,12 @@ pub theorem run_after_datas_prepared_fact<P: Prop>(
   own: Ordmap(Text, Bool),
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(run_after_datas(c, prelude, program, own))),
-  prepared: PreparedProgramFact(P, prelude, program)
+  prepared: PreparedProgramFact(<P: P>, prelude, program)
 ): P {
   accepted_checked_bind_fact(
-    List(Pair(SurfaceFn, Scheme)),
-    Unit,
-    P,
+    <A: List(SurfaceFn × Scheme), B: Unit, P: P>,
     ck_prepare_fns(c, prelude, program, own),
-    (fns: List(Pair(SurfaceFn, Scheme)), next: Checker) => names_function_body(next, program, fns),
+    (fns: List(SurfaceFn × Scheme), next: Checker) => names_function_body(next, program, fns),
     frame_subst_ordered(
       c,
       ck_prepare_fns(c, prelude, program, own),
@@ -187,11 +177,11 @@ pub theorem run_after_data_result_prepared_fact<P: Prop>(
   m: Mut1(Unit, Checker),
   ordered: CkOrdered(ck_st(m)),
   clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m))),
-  prepared: PreparedProgramFact(P, prelude, program)
+  prepared: PreparedProgramFact(<P: P>, prelude, program)
 ): P {
-  ⊢ P from match m {
+  match m {
     mut1(v, next) => run_after_datas_prepared_fact(
-      P,
+      <P: P>,
       next,
       prelude,
       program,
@@ -208,11 +198,11 @@ pub theorem run_after_builtins_prepared_fact<P: Prop>(
   m: Mut1(Unit, Checker),
   ordered: CkOrdered(ck_st(m)),
   clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m))),
-  prepared: PreparedProgramFact(P, prelude, program)
+  prepared: PreparedProgramFact(<P: P>, prelude, program)
 ): P {
-  ⊢ P from match m {
+  match m {
     mut1(v, next) => run_after_data_result_prepared_fact(
-      P,
+      <P: P>,
       prelude,
       program,
       types_own(program, Ordmap::empty()),
@@ -235,10 +225,10 @@ pub theorem ck_run_prepared_fact<P: Prop>(
   program: List(SurfaceStmt),
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(ck_run(c, prelude, program))),
-  prepared: PreparedProgramFact(P, prelude, program)
+  prepared: PreparedProgramFact(<P: P>, prelude, program)
 ): P {
   run_after_builtins_prepared_fact(
-    P,
+    <P: P>,
     prelude,
     program,
     run_builtins(c),
@@ -257,14 +247,14 @@ pub theorem run_after_module_errors_prepared_fact<P: Prop>(
   m: Mut1(Unit, Checker),
   ordered: CkOrdered(ck_st(m)),
   clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m)),
-  prepared: PreparedProgramFact(P, prelude, program)
+  prepared: PreparedProgramFact(<P: P>, prelude, program)
 ): P {
-  ⊢ P from match m {
+  match m {
     mut1(v, next) => run_finish_after_fact(
-      P,
+      <P: P>,
       ck_run(next, prelude, program),
       ck_run_ordered(next, prelude, program, ordered),
-      accepted => ck_run_prepared_fact(P, next, prelude, program, ordered, accepted, prepared),
+      accepted => ck_run_prepared_fact(<P: P>, next, prelude, program, ordered, accepted, prepared),
       clean
     )
   }
@@ -276,10 +266,10 @@ pub theorem ck_types_run_prepared_fact<P: Prop>(
   errors: List(TypeError),
   ordered: CkOrdered(c),
   clean: DiagnosticReportClean(ck_types_run(c, prelude, program, errors)),
-  prepared: PreparedProgramFact(P, prelude, program)
+  prepared: PreparedProgramFact(<P: P>, prelude, program)
 ): P {
   run_after_module_errors_prepared_fact(
-    P,
+    <P: P>,
     prelude,
     program,
     ck_module_errors(errors, c),
@@ -293,10 +283,10 @@ pub theorem types_check_prepared_fact<P: Prop>(
   program: List(SurfaceStmt),
   errors: List(TypeError),
   clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil,
-  prepared: PreparedProgramFact(P, prelude, program)
+  prepared: PreparedProgramFact(<P: P>, prelude, program)
 ): P {
   ck_types_run_prepared_fact(
-    P,
+    <P: P>,
     checker_new(
       Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))
     ),
@@ -315,7 +305,7 @@ pub theorem types_check_data_names_unique(
   clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
 ): UniqueDataNames(types_data_decls(program)) {
   types_check_prepared_fact(
-    UniqueDataNames(types_data_decls(program)),
+    <P: UniqueDataNames(types_data_decls(program))>,
     prelude,
     program,
     errors,
@@ -330,7 +320,7 @@ pub theorem accepted_bind_tail_fact<A: Type, B: Type, P: Prop>(
   after: ∀ v: A. ∀ next: Checker. ∀ clean: DiagnosticClean(ck_st(k(v, next))). P,
   clean: DiagnosticClean(ck_st(frame_bind(k, m)))
 ): P {
-  ⊢ P from match m { mut1(v, next) => after(v, next, clean) }
+  match m { mut1(v, next) => after(v, next, clean) }
 }
 pub theorem registration_after_data_names_functions_unique(
   c: Checker,
@@ -340,9 +330,7 @@ pub theorem registration_after_data_names_functions_unique(
   clean: DiagnosticClean(ck_st(registration_fns_after_data_names(c, prelude, program, own)))
 ): UniqueFunctionNames(types_function_decls(program)) {
   accepted_bind_fact(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
-    UniqueFunctionNames(types_function_decls(program)),
+    <A: Unit, B: List(SurfaceFn × Scheme), P: UniqueFunctionNames(types_function_decls(program))>,
     ck_check_fn_names(c, types_function_decls(program)),
     (ignored: Unit, next: Checker) => registration_fns_after_names(next, prelude, program, own),
     accepted => ck_check_fn_names_sound(c, types_function_decls(program), accepted),
@@ -358,9 +346,7 @@ pub theorem ck_prepare_fns_function_names_unique(
   clean: DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own)))
 ): UniqueFunctionNames(types_function_decls(program)) {
   accepted_bind_tail_fact(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
-    UniqueFunctionNames(types_function_decls(program)),
+    <A: Unit, B: List(SurfaceFn × Scheme), P: UniqueFunctionNames(types_function_decls(program))>,
     ck_check_data_names(c, types_data_decls(program)),
     (ignored: Unit, next: Checker) => registration_fns_after_data_names(
       next,
@@ -376,7 +362,7 @@ pub theorem ck_prepare_fns_function_names_unique(
       accepted
     ),
     Eq::subst(
-      (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => DiagnosticClean(ck_st(m)),
+      (m: Mut1(List(SurfaceFn × Scheme), Checker)) => DiagnosticClean(ck_st(m)),
       registration_fns_unf(c, prelude, program, own),
       clean
     )
@@ -389,7 +375,7 @@ pub theorem types_check_function_names_unique(
   clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
 ): UniqueFunctionNames(types_function_decls(program)) {
   types_check_prepared_fact(
-    UniqueFunctionNames(types_function_decls(program)),
+    <P: UniqueFunctionNames(types_function_decls(program))>,
     prelude,
     program,
     errors,

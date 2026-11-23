@@ -25,14 +25,14 @@ checks.stops = "ok"
 @ cases.an-unannotated-lambda-before-a-match-argument-reads-its-notation
 entry = "main.taut"
 files."main.taut" = ```tauto
-import std::Base
+import std::base
 fn len(l: List(Nat)): Nat { List::length(l) }
 theorem len_self(l: List(Nat)): len(l) = len(l) {
   List::ind(
     Nat,
     (k) => len(k) = len(k),
     Refl,
-    (h, t, ih) => match h: len(Cons(h, t)) = len(Cons(h, t)) {
+    (h, t, ih) => ⊢ len(Cons(h, t)) = len(Cons(h, t)) from match h {
       Zero => Refl
       Succ(p) => Refl
     },
@@ -41,3 +41,179 @@ theorem len_self(l: List(Nat)): len(l) = len(l) {
 }
 ```
 checks.len_self = "ok"
+
+@ cases.an-unannotated-lambda-before-a-match-argument-reads-its-notation-naming-the-implicit-argument
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::base
+fn len(l: List(Nat)): Nat { List::length(l) }
+theorem len_self_named(l: List(Nat)): len(l) = len(l) {
+  List::ind(
+    <A: Nat>,
+    (k) => len(k) = len(k),
+    Refl,
+    (h, t, ih) => ⊢ len(Cons(h, t)) = len(Cons(h, t)) from match h {
+      Zero => Refl
+      Succ(p) => Refl
+    },
+    l
+  )
+}
+```
+checks.len_self_named = "ok"
+
+@ cases.an-unannotated-lambda-before-a-match-argument-reads-its-notation-leaving-out-the-implicit-argument
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::base
+fn len(l: List(Nat)): Nat { List::length(l) }
+theorem len_self_left(l: List(Nat)): len(l) = len(l) {
+  List::ind(
+    (k) => len(k) = len(k),
+    Refl,
+    (h, t, ih) => ⊢ len(Cons(h, t)) = len(Cons(h, t)) from match h {
+      Zero => Refl
+      Succ(p) => Refl
+    },
+    l
+  )
+}
+```
+checks.len_self_left = "ok"
+
+@ cases.a-written-eliminator-call-without-its-implicit-argument-types-the-binders-of-its-cases
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::base
+inductive S: Type {
+  I: S
+  O: S
+}
+fn count(l: List(S)): Nat {
+  match l {
+    Nil => Zero
+    Cons(c, r) => match c {
+      I => Succ(count(r))
+      O => count(r)
+    }
+  }
+}
+fn cat(a: List(S), b: List(S)): List(S) {
+  match a {
+    Nil => b
+    Cons(c, r) => Cons(c, cat(r, b))
+  }
+}
+fn plus(a: Nat, b: Nat): Nat {
+  match a {
+    Zero => b
+    Succ(p) => Succ(plus(p, b))
+  }
+}
+theorem count_cat_left(a: List(S), b: List(S)): count(cat(a, b)) = plus(count(a), count(b)) {
+  List::ind(
+    t => (b2: List(S)) -> count(cat(t, b2)) = plus(count(t), count(b2)),
+    b3 => Refl,
+    (c, r, ih: (b4: List(S)) -> count(cat(r, b4)) = plus(count(r), count(b4)), b6) =>
+      ⊢ count(cat(Cons(c, r), b6)) = plus(count(Cons(c, r)), count(b6)) from match c {
+        I => Eq::congr(Succ, ih(b6))
+        O => ih(b6)
+      },
+    a,
+    b
+  )
+}
+```
+checks.count_cat_left = "ok"
+
+@ cases.a-written-eliminator-call-naming-its-implicit-argument-types-the-binders-of-its-cases
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::base
+inductive S: Type {
+  I: S
+  O: S
+}
+fn count(l: List(S)): Nat {
+  match l {
+    Nil => Zero
+    Cons(c, r) => match c {
+      I => Succ(count(r))
+      O => count(r)
+    }
+  }
+}
+fn cat(a: List(S), b: List(S)): List(S) {
+  match a {
+    Nil => b
+    Cons(c, r) => Cons(c, cat(r, b))
+  }
+}
+fn plus(a: Nat, b: Nat): Nat {
+  match a {
+    Zero => b
+    Succ(p) => Succ(plus(p, b))
+  }
+}
+theorem count_cat_named(a: List(S), b: List(S)): count(cat(a, b)) = plus(count(a), count(b)) {
+  List::ind(
+    <A: S>,
+    t => (b2: List(S)) -> count(cat(t, b2)) = plus(count(t), count(b2)),
+    b3 => Refl,
+    (c, r, ih: (b4: List(S)) -> count(cat(r, b4)) = plus(count(r), count(b4)), b6) =>
+      ⊢ count(cat(Cons(c, r), b6)) = plus(count(Cons(c, r)), count(b6)) from match c {
+        I => Eq::congr(Succ, ih(b6))
+        O => ih(b6)
+      },
+    a,
+    b
+  )
+}
+```
+checks.count_cat_named = "ok"
+
+@ cases.a-written-eliminator-call-writing-its-implicit-argument-out-types-the-binders-of-its-cases
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::base
+inductive S: Type {
+  I: S
+  O: S
+}
+fn count(l: List(S)): Nat {
+  match l {
+    Nil => Zero
+    Cons(c, r) => match c {
+      I => Succ(count(r))
+      O => count(r)
+    }
+  }
+}
+fn cat(a: List(S), b: List(S)): List(S) {
+  match a {
+    Nil => b
+    Cons(c, r) => Cons(c, cat(r, b))
+  }
+}
+fn plus(a: Nat, b: Nat): Nat {
+  match a {
+    Zero => b
+    Succ(p) => Succ(plus(p, b))
+  }
+}
+theorem count_cat_out(a: List(S), b: List(S)): count(cat(a, b)) = plus(count(a), count(b)) {
+  List::ind(
+    S,
+    t => (b2: List(S)) -> count(cat(t, b2)) = plus(count(t), count(b2)),
+    b3 => Refl,
+    (c, r, ih: (b4: List(S)) -> count(cat(r, b4)) = plus(count(r), count(b4)), b6) =>
+      ⊢ count(cat(Cons(c, r), b6)) = plus(count(Cons(c, r)), count(b6)) from match c {
+        I => Eq::congr(Succ, ih(b6))
+        O => ih(b6)
+      },
+    a,
+    b
+  )
+}
+```
+checks.count_cat_out = "ok"

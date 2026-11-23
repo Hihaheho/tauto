@@ -95,7 +95,7 @@ LParen: '(';
 RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { not_declared } }
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, div} { quote { not_declared } }
 "#
     .to_string();
     let original = r#"import "math.nib"

@@ -1,0 +1,86 @@
+// Calling a closure whose result holds a borrow: the result borrows every
+// borrowed argument's owners and what the closure captured, and freezes them
+// while it lives. The body's result may borrow only those.
+
+@ cases.closure-result-freezes-argument-owner
+source = ```nib
+struct(affine) F {}
+struct Holder { r: &F }
+fn take(f: F): i64 { 1 }
+let wrap := (x: &F) => Holder { r: &x }
+let a := F {}
+let h := wrap(&a)
+take(a)
+let used_later := &h
+```
+lin = "error: a is frozen by h"
+
+@ cases.closure-result-freezes-captured-owner
+source = ```nib
+struct(affine) F {}
+struct Holder { r: &F }
+fn take(f: F): i64 { 1 }
+var a := F {}
+let get := () => Holder { r: &a }
+let h := get()
+take(a)
+let used_later := &h
+```
+lin = "error: a is frozen by h"
+
+@ cases.closure-result-cannot-borrow-body-local
+source = ```nib
+struct(affine) F {}
+struct Holder { r: &F }
+let make := () => {
+  let b := F {}
+  Holder { r: &b }
+}
+```
+lin = "error: a borrow of b cannot be returned"
+
+@ cases.closure-result-outlives-argument-owner-is-error
+source = ```nib
+struct(affine) F {}
+struct Holder { r: &F }
+let wrap := (x: &F) => Holder { r: &x }
+let b := F {}
+var h := wrap(&b)
+{
+  let a := F {}
+  h := wrap(&a)
+}
+let used_later := &h
+```
+lin = "error: a does not live as long as h"
+
+@ cases.named-fn-as-closure-borrows-all-arguments
+source = ```nib
+struct(affine) F {}
+struct Holder { r: &F }
+fn take(f: F): i64 { 1 }
+fn first(x: &F, y: &F): Holder { Holder { r: &x } }
+let pick := first
+let a := F {}
+let b := F {}
+let h := pick(&a, &b)
+take(b)
+let used_later := &h
+```
+lin = "error: b is frozen by h"
+
+@ cases.closure-result-released-after-holder-scope-is-ok
+source = ```nib
+struct(affine) F { n: i64 }
+struct Holder { r: &F }
+fn take(f: F): i64 { f.n }
+fn size(f: &F): i64 { f.n }
+let wrap := (x: &F) => Holder { r: &x }
+let a := F { n: 4 }
+let n := {
+  let h := wrap(&a)
+  size(&h.r)
+}
+show(&(n + take(a)))
+```
+stdout = "8\n"

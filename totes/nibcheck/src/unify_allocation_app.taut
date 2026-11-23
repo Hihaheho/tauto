@@ -1,15 +1,17 @@
+import "../../identity/src/identity.taut"
 import "unify_allocation_sequence.taut"
-import std::Text
+import std::text
 import "allocation_state.taut"
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "type_allocation.taut"
 import "unify_allocation_steps.taut"
 import "unify_sound.taut"
 
-pub fn allocated_split(limit: Nat, result: Option(Pair(List(Ty), Ty))): Prop {
-  ⊢ Prop from match result { None => True
+pub fn allocated_split(limit: Nat, result: Option(List(Ty) × Ty)): Prop {
+  match result { None => True
     Some(pair) => And(
       TypeListAllocated(limit, pair_fst_lt(pair)),
       TypeAllocated(limit, pair_snd_lt(pair))
@@ -19,13 +21,13 @@ pub theorem allocated_split_cons(
   limit: Nat,
   head: Ty,
   item: TypeAllocated(limit, head),
-  result: Option(Pair(List(Ty), Ty)),
+  result: Option(List(Ty) × Ty),
   rest: allocated_split(limit, result)
 ): allocated_split(limit, ck_split_k(head, result)) {
-  ⊢ allocated_split(limit, ck_split_k(head, result)) from match result {
+  match result {
     None => AndIntro(Trivial, item)
     Some(pair) => ⊢ allocated_split(limit, ck_split_k(head, Some(pair))) from match pair {
-      Pair { fst: initial, snd: last } => AndIntro(
+      #(initial, last) => AndIntro(
         AndIntro(item, And::left(rest)),
         And::right(rest)
       )
@@ -37,7 +39,7 @@ pub theorem allocated_split_last(
   limit: Nat,
   h: TypeListAllocated(limit, args)
 ): allocated_split(limit, ty_split_last(args)) {
-  ⊢ allocated_split(limit, ty_split_last(args)) from match args {
+  match args {
     Nil => Trivial
     Cons(head, tail) => allocated_split_cons(
       limit,
@@ -54,15 +56,15 @@ pub theorem allocated_unify_app_choice(
   c: Checker,
   head: Ty,
   arg: Ty,
-  name: Text,
+  name: SurfaceName,
   ordered: CkOrdered(c),
   state: CheckerAllocation(c),
   fn_type: TypeAllocated(ck_next_of(c), head),
   arg_type: TypeAllocated(ck_next_of(c), arg),
-  result: Option(Pair(List(Ty), Ty)),
+  result: Option(List(Ty) × Ty),
   split: allocated_split(ck_next_of(c), result)
 ): AllocationRun(c, ck_app_k(fuel, c, head, arg, name, result)) {
-  ⊢ AllocationRun(c, ck_app_k(fuel, c, head, arg, name, result)) from match result {
+  match result {
     None => AndIntro(Refl, state)
     Some(pair) => allocation_and(
       c,
@@ -88,7 +90,7 @@ pub theorem allocated_unify_app_step(
   c: Checker,
   head: Ty,
   arg: Ty,
-  name: Text,
+  name: SurfaceName,
   args: List(Ty),
   ordered: CkOrdered(c),
   state: CheckerAllocation(c),

@@ -1,0 +1,11 @@
+effect tick(n: i64): i64 direct
+fn go(n: i64, acc: i64): i64 ! {tick, div} {
+  if n == 0 { acc } else {
+    let v := perform tick(n)
+    go(n - 1, acc + v)
+  }
+}
+let r := handle { go(2000, 0) } with {
+  tick(n), k => k(n)
+}
+show(&r)

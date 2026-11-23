@@ -16,6 +16,7 @@ totebag-asking-default-branch = { $url } に既定のブランチを問い合わ
 totebag-no-default-branch = { $url } は既定のブランチを示していない。--branch か --tag で選ぶこと
 totebag-fetching = { $source } を取得中
 totebag-fetching-from = { $url } から { $reference } を取得中
+totebag-fetching-files = { $source } のファイルを取得中
 totebag-finding = { $name } を探索中
 totebag-reading-commit = コミット { $rev } を読み込み中
 totebag-no-commit = { $url } にコミット { $rev } がない
@@ -72,6 +73,8 @@ totebag-bad-source-id = { $id } はソース ID（sha256:<64 hex>）ではない
 
 totebag-lock-too-large = ロックは 4 MiB 以下である
 totebag-lock-format = format は 1 である
+totebag-lock-sparse = sparse は書くなら true である
+totebag-sparse-needs-dir = sparse には dir が要る。そのディレクトリだけを取ってくる
 totebag-lock-no-format = format がない
 totebag-lock-totes-list = totes は `@ totes[]` ブロックのリストである
 totebag-locked-twice = { $name } が二度ロックされている

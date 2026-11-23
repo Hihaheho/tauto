@@ -1,0 +1,66 @@
+import std::row { Equiv, Sub, append, append_comm, nil_sub }
+import std::prelude::std { List }
+
+// A port of the types and effects of lean/Proto/Nib/Row.lean. An effect is
+// its declaration with its type arguments (`Get(I64)` and `Get(Text)` are two
+// effects); a function type carries the row it may perform. `Ty` and `Eff`
+// are mutually recursive and nest `List`, so this needs both mutual and
+// nested inductive types.
+
+pub(open) inductive Width: Type { I32: Width, I64: Width }
+
+mutual {
+  pub(open) inductive Ty: Type {
+    Tint(w: Width): Ty
+    Tbool: Ty
+    Tunit: Ty
+    // The type of an expression that never gives a value (`div`'s result).
+    Tnever: Ty
+    Tfn(ps: List(Ty), ret: Ty, row: List(Eff)): Ty
+    // A union, kept as written.
+    Tunion(ts: List(Ty)): Ty
+  }
+
+  pub(open) inductive Eff: Type {
+    Mk(decl: Nat, args: List(Ty)): Eff
+  }
+}
+
+// `div` and `Exceeded(T)` are declared by Nib's standard library; here they are
+// given fixed numbers.
+pub fn divDecl(): Nat { 1000 }
+pub fn exceededDecl(): Nat { 1001 }
+
+pub fn divEff(): Eff { Eff::Mk(1000, Nil) }
+
+pub fn exceededEff(T: Ty): Eff { Eff::Mk(1001, Cons(T, Nil)) }
+
+// A row is read as a set, so the lemmas of `row.taut` apply to rows of
+// effects: the row of a handled call is below the row with the handler.
+pub theorem row_order_irrelevant(
+  a: List(Eff),
+  b: List(Eff)
+): Equiv(Eff, append(Eff, a, b), append(Eff, b, a)) {
+  append_comm(a, b)
+}
+
+pub theorem pure_below_all(r: List(Eff)): Sub(Eff, Nil(<A: Eff>), r) {
+  nil_sub(r)
+}
+
+pub fn decl_of(e: Eff): Nat {
+  match e {
+    Mk(d, ^args) => d
+  }
+}
+
+pub theorem Nat_ne_succ(n: Nat, e: n = Succ(n)): False {
+  match n {
+    Zero => Nat::noconf(False, Zero, Succ(Zero), e)
+    Succ(k) => Nat::noconf(False, Succ(k), Succ(Succ(k)), e, h => Nat_ne_succ(k, h))
+  }
+}
+
+pub theorem div_is_not_exceeded<T: Ty>(e: divEff() = exceededEff(T)): False {
+  Nat_ne_succ(1000, Eq::congr(decl_of, e))
+}

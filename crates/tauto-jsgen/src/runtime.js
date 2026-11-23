@@ -1,8 +1,23 @@
 // The runtime of the JavaScript backend, written by hand and copied into
 // the generated programs. Integers retain their complete declared range.
+// An operator whose result does not exist: the operation it performs, with what
+// the host says when nothing handles it.
+class OpFail extends Error {
+    constructor(op, message) { super(message); this.op = op; }
+}
 function checked(n, min, max) {
-    if (n < min || n > max) throw new Error('the number is too large');
+    if (n < min || n > max) throw new OpFail('overflow', 'the number is too large');
     return n;
+}
+// An operator's value in CPS code: a result that does not exist performs
+// `overflow` or `divzero` where the operator stands.
+function operated(c, k, f) {
+    let r;
+    try { r = f(); } catch (e) {
+        if (e instanceof OpFail) return route(c, e.op, 'zero', [], k);
+        throw e;
+    }
+    return more(() => k(c, r));
 }
 function divide(op, [a, b], min, max) {
     if (b === 0n) throw new Error('division by zero');
@@ -42,19 +57,26 @@ function compare(a,b) {
     return i<a.length?1n:j<b.length?-1n:0n;
 }
 function field(v,name,index) {if(v?.project){const part=v.project(index??name,false);try{return dereference(part,true);}finally{part.release();}}const obj=unref(v);const i=index??obj.names.indexOf(name);return copyValue(unref(obj.fields[i]));}
+// Compares with a stack of its own, not the host's: a long list is a deep
+// chain of constructors, and a recursive walk would overflow the host stack.
 function equal(a,b) {
-    a=unref(a);b=unref(b);
-    if(a?.union!==undefined)a=a.value;
-    if(b?.union!==undefined)b=b.value;
-    requireDataOwner(a);requireDataOwner(b);
-    if(a===b)return true;
-    if(a?.hostType!==undefined||b?.hostType!==undefined)return false;
-    if(!a||!b||typeof a!=='object'||typeof b!=='object')return false;
-    if(a.kind!==b.kind||a.tag!==b.tag||a.owner!==b.owner)return false;
-    if(a.kind==='Buf')return a.text===b.text;
-    if(a.kind==='Bytes')return a.bytes.length===b.bytes.length&&a.bytes.every((x,i)=>x===b.bytes[i]);
-    const x=Array.isArray(a)?a:a.fields??a.items,y=Array.isArray(b)?b:b.fields??b.items;
-    return Array.isArray(x)&&Array.isArray(y)&&x.length===y.length&&x.every((v,i)=>equal(v,y[i]));
+    const work=[a,b];
+    while(work.length){
+        b=unref(work.pop());a=unref(work.pop());
+        if(a?.union!==undefined)a=a.value;
+        if(b?.union!==undefined)b=b.value;
+        requireDataOwner(a);requireDataOwner(b);
+        if(a===b)continue;
+        if(a?.hostType!==undefined||b?.hostType!==undefined)return false;
+        if(!a||!b||typeof a!=='object'||typeof b!=='object')return false;
+        if(a.kind!==b.kind||a.tag!==b.tag||a.owner!==b.owner)return false;
+        if(a.kind==='Buf'){if(a.text!==b.text)return false;continue;}
+        if(a.kind==='Bytes'){if(a.bytes.length!==b.bytes.length||!a.bytes.every((x,i)=>x===b.bytes[i]))return false;continue;}
+        const x=Array.isArray(a)?a:a.fields??a.items,y=Array.isArray(b)?b:b.fields??b.items;
+        if(!Array.isArray(x)||!Array.isArray(y)||x.length!==y.length)return false;
+        for(let i=x.length-1;i>=0;i--)work.push(x[i],y[i]);
+    }
+    return true;
 }
 function shown(v) {
     v=unref(v);
@@ -63,7 +85,6 @@ function shown(v) {
         case 'Shown':return v.text;
         case 'Buf':return 'Buf('+quoteText(v.text)+')';
         case 'Vec':case 'Array':return v.kind+'['+v.items.map(shown).join(', ')+']';
-        case 'HashMap':return 'HashMap{'+v.items.map(([k,x])=>shown(k)+': '+shown(x)).join(', ')+'}';
         case 'Ref':return 'Ref('+shown(v.value)+')';
         case 'Atomic':return 'Atomic('+v.value+')';
         case 'Bytes':return 'Bytes['+Array.from(v.bytes).join(', ')+']';
@@ -138,14 +159,19 @@ const provenanceDescriptor=Object.getOwnPropertyDescriptor,provenancePrototype=O
 const provenanceOwn=Object.hasOwn,provenanceIsArray=Array.isArray;
 const provenanceArrayMethods=['map','every','push','pop','indexOf',Symbol.iterator].map(key=>[key,provenanceDescriptor(provenanceArrayPrototype,key).value]);
 const provenanceSpecies=provenanceDescriptor(provenanceArray,Symbol.species);
-function ordinaryArrayMethods(value){
-    if(Array!==provenanceArray||!provenanceIsArray(value)
-        ||provenancePrototype(value)!==provenanceArrayPrototype
-        ||provenancePrototype(provenanceArrayPrototype)!==provenanceObjectPrototype
-        ||provenancePrototype(provenanceObjectPrototype)!==null
+function ordinaryArrayMethods(value){return ordinaryArrayValue(value)&&ordinaryArrayGlobals();}
+// Both arrays are ordinary; the shared prototypes are checked once.
+function ordinaryArrayPair(a,b){return ordinaryArrayValue(a)&&ordinaryArrayValue(b)&&ordinaryArrayGlobals();}
+function ordinaryArrayValue(value){
+    if(!provenanceIsArray(value)||provenancePrototype(value)!==provenanceArrayPrototype
         ||provenanceDescriptor(value,'constructor')!==undefined)return false;
     const ownMap=provenanceDescriptor(value,'map');
-    if(ownMap!==undefined&&ownMap.value!==provenanceArrayMethods[0][1])return false;
+    return ownMap===undefined||ownMap.value===provenanceArrayMethods[0][1];
+}
+function ordinaryArrayGlobals(){
+    if(Array!==provenanceArray
+        ||provenancePrototype(provenanceArrayPrototype)!==provenanceObjectPrototype
+        ||provenancePrototype(provenanceObjectPrototype)!==null)return false;
     for(let i=0;i<provenanceArrayMethods.length;i++){
         const key=provenanceArrayMethods[i][0],method=provenanceArrayMethods[i][1];
         if(provenanceDescriptor(provenanceArrayPrototype,key)?.value!==method)return false;
@@ -218,10 +244,32 @@ function share(value){
     while(pending.length){
         const v=pending.pop();
         if(v===null||typeof v!=='object'||sharedData.has(v))continue;
+        if(v.kind==='Array'&&provenanceIsArray(v.items)){
+            sharedFreeze(v.items);sharedFreeze(v);sharedData.add(v);
+            for(let i=0;i<v.items.length;i++)pending.push(v.items[i]);
+            continue;
+        }
+        if(!v.fields)continue;
         sharedFreeze(v.names);sharedFreeze(v.fields);sharedFreeze(v);sharedData.add(v);
         for(let i=0;i<v.fields.length;i++)pending.push(v.fields[i]);
     }
     return value;
+}
+// An `Array` cannot change after it is made, so one whose items need no copy,
+// are shared, or are proven graphs (which are shared with it, as a copy would
+// share them) is shared as a proven graph is: a copy of it is itself, not a
+// walk over every item.
+function shareArray(array){
+    const items=array.items;
+    for(let i=0;i<items.length;i++){
+        const x=items[i];
+        if(x!==null&&typeof x==='object'&&!sharedData.has(x)
+            &&!(stableAggregate(x)&&ordinaryArrayValue(x.fields)))return array;
+    }
+    if(!ordinaryArrayGlobals())return array;
+    for(let i=0;i<items.length;i++){const x=items[i];if(x!==null&&typeof x==='object')share(x);}
+    sharedFreeze(items);sharedFreeze(array);sharedData.add(array);
+    return array;
 }
 // Gives the host a value it may change: shared parts are copied, once per
 // occurrence like any copy, and other parts are kept.
@@ -241,11 +289,14 @@ function thaw(value){
         }
         dropValue(value);return top;
     }
+    // A shared `Array` (`shareArray`) holds only values that need no copy.
+    const unshare=v=>v.fields?{...v,fields:v.fields.slice()}:{...v,items:v.items.slice()};
     const copyShared=root=>{
-        const top={...root,fields:root.fields.slice()},pending=[top];
+        const top=unshare(root),pending=[top];
         while(pending.length){
-            const v=pending.pop(),fields=v.fields;
-            for(let i=0;i<fields.length;i++){const f=fields[i];if(sharedData.has(f)){fields[i]={...f,fields:f.fields.slice()};pending.push(fields[i]);}}
+            const fields=pending.pop().fields;
+            if(!fields)continue;
+            for(let i=0;i<fields.length;i++){const f=fields[i];if(sharedData.has(f)){fields[i]=unshare(f);pending.push(fields[i]);}}
         }
         return top;
     };
@@ -278,7 +329,13 @@ function construct(tag, names, fields, order, isStruct, owner, retainable=false)
     }finally{if(!ordinary)forgetStableData();}
 }
 function tick(ev) {
-    if (ev.fuel.left-- <= 0) throw new Error('interrupted: the step limit ran out');
+    if (ev.fuel.left-- <= 0) throw stepLimitError(ev);
+}
+// The host's step limit ran out, in the language of `options.lang` (`ja`,
+// `ja_JP.UTF-8`, `ja-JP`), else English: the words of `eval-step-limit`.
+function stepLimitError(host) {
+    const ja = /^ja([-_.@]|$)/i.test(host?.options?.lang ?? '');
+    return new Error(ja ? '中断: ステップの上限に達した' : 'interrupted: the step limit ran out');
 }
 
 function quoteText(text) {

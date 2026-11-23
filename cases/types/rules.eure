@@ -72,15 +72,11 @@ types = "error: Text does not fit i64"
 
 @ cases.info-more-gives-the-handle-type
 source = ```nib
-let d: i64 := handle { budget(steps: 10) { 1 } } with {
+let d: i64 := handle { perform budget(10, () => { 1 }) } with {
   exceeded(info), k => info.more(10)
 }
 ```
 types = "ok"
-
-@ cases.show-takes-a-name
-source = "perform show(1, 2)"
-types = "error: i64 does not fit Text"
 
 @ cases.a-tag-is-forgotten
 source = ```nib
@@ -92,6 +88,30 @@ types = "ok"
 @ cases.a-tag-is-added-where-it-is-written
 source = ```nib
 fn f(x: i64): @price i64 { x }
+```
+types = "ok"
+
+// A tag is taken off once: what it holds is taken whole, and a product under a tag keeps
+// its members, as the kernel's ascription reads `@a T <: T`.
+@ cases.a-tag-is-taken-off-once
+source = ```nib
+fn f(x: @value (Text × i64)): Text { (x: Text) }
+```
+types = "error: a type ascription: "
+
+@ cases.a-tag-under-a-tag-is-taken-off-once
+source = ```nib
+fn f(x: @a @b (Text × i64)): @a Text { (x: @a Text) }
+```
+types = "error: a type ascription: "
+
+@ cases.what-a-tag-holds-is-taken-whole
+source = ```nib
+fn f(x: @value (Text × i64)): Text × i64 { (x: Text × i64) }
+fn g(x: @value (Text × i64)): Text {
+  let v: Text × i64 := x
+  (v: Text)
+}
 ```
 types = "ok"
 
@@ -132,57 +152,76 @@ types = "error: cannot infer a function type for this call"
 
 @ cases.a-type-cannot-have-extra-arguments
 source = ```nib
-shared struct Box(A: Shared) { value: A }
+struct(shared) Box(A: Shared) { value: A }
 fn unused(x: Box(i64, Bool)): Unit { #() }
 ```
 types = "error: Box takes 1 arguments"
 
 @ cases.data-declaration-names-are-unique
 source = ```nib
-shared struct Repeated { value: i64 }
-shared struct Repeated { value: Bool }
+struct(shared) Repeated { value: i64 }
+struct(shared) Repeated { value: Bool }
 ```
 types = "error: type Repeated is declared twice"
 
 @ cases.struct-and-enum-names-are-unique
 source = ```nib
-shared struct Repeated { value: i64 }
-shared enum Repeated { First, Second }
+struct(shared) Repeated { value: i64 }
+enum(shared) Repeated { First, Second }
 ```
 types = "error: type Repeated is declared twice"
+
+@ cases.an-enum-variant-cannot-have-the-name-of-its-type
+source = ```nib
+enum A { A }
+```
+types = "error: constructor `A` has the name of a type"
+
+@ cases.an-enum-variant-with-fields-cannot-have-the-name-of-its-type
+source = ```nib
+enum Item { Item(Text) }
+```
+types = "error: constructor `Item` has the name of a type"
+
+@ cases.a-struct-keeps-the-name-of-its-type-for-its-constructor
+source = ```nib
+struct Item { text: Text }
+let item: Item := Item { text: "kept" }
+```
+types = "ok"
 
 // A type of a module is `m::E`: it is not `E`, so `E` and its constructors keep their meaning.
 @ cases.a-type-in-a-module-does-not-replace-a-type
 source = ```nib
 enum E { L(i64), A(E, E) }
-module m { pub struct E { x: i64 } }
+pub struct m::E { x: i64 }
 fn ev(e: E): i64 { match e { L(n) => n, A(a, b) => ev(a) + ev(b) } }
 ```
 types = "ok"
 
 @ cases.forward-field-type-arguments-are-checked
 source = ```nib
-shared struct Outer { inner: Later(i64, Bool) }
-shared struct Later(A: Shared) { value: A }
+struct(shared) Outer { inner: Later(i64, Bool) }
+struct(shared) Later(A: Shared) { value: A }
 ```
 types = "error: Later takes 1 arguments"
 
 @ cases.recursive-field-type-arguments-are-checked
 source = ```nib
-shared enum Chain(A: Shared) { End(A), Next(Chain(A, Bool)) }
+enum(shared) Chain(A: Shared) { End(A), Next(Chain(A, Bool)) }
 ```
 types = "error: Chain takes 1 arguments"
 
 @ cases.a-borrowed-inferred-parameter-does-not-borrow-the-result
 source = ```nib
-extern { fn bad(&x): Slice(i32) }
+extern { fn bad<A>(x: &A): Slice(i32) }
 ```
 types = "error: Slice(A) can only be borrowed"
 
 @ cases.a-borrowed-inferred-parameter-does-not-borrow-the-next-signature
 source = ```nib
 extern {
-  fn first(&x)
+  fn first<A>(x: &A)
   fn second(): Slice(i32)
 }
 ```
@@ -190,7 +229,7 @@ types = "error: Slice(A) can only be borrowed"
 
 @ cases.an-explicitly-borrowed-result-after-an-inferred-parameter
 source = ```nib
-extern { fn valid(&x): &Slice(i32) }
+extern { fn valid<A>(x: &A): &Slice(i32) }
 ```
 types = "ok"
 
@@ -198,7 +237,7 @@ types = "ok"
 source = ```nib
 struct K { s: Secret(u64) }
 let a := K { s: secret(U64::of_nat(1)) }
-perform show("e", a == a)
+show(&(a == a))
 ```
 types = "error: == needs PartialEq(K)"
 

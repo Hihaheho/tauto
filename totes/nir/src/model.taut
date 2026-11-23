@@ -1,0 +1,842 @@
+import std::text
+import std::base
+
+// A package as a backend reads it: every expression with its type, every
+// constructor with its place in its type, every local with how it is stored.
+// Everything the text states is kept, so the package prints as the same
+// text (`nir_print`).
+
+pub(open) enum NWidth {
+  NW32
+  NW64
+  NU8
+  NU32
+  NU64
+  NHost
+  NNat
+  NW8
+  NW16
+  NU16
+}
+
+pub(open) enum NTy {
+  NInt(NWidth)
+  NBool
+  NText
+  NUnit
+  NNever
+  NFloat
+  NFloat32
+  NBuf
+  NShown
+  NVec(NTy)
+  NArray(NTy)
+  NSlice(NTy)
+  NOption(NTy)
+  NInfo(NTy)
+  NBudgetAnswer(NTy)
+  NResult(NTy, NTy)
+  NPair(NTy, NTy)
+  NSharedVar(Bool, NTy)
+  NStd(Text, List(NTy))
+  NUnion(Nat)
+  NFn(List(NTy), NTy, Text, Text)
+  NRef(NTy)
+  NRefMut(NTy)
+  NData(Text, List(NTy))
+  NParam(Text)
+}
+
+pub(open) enum NRepr {
+  NPlain
+  NSharedVarRepr
+  NSharedVarCopy
+  NRefRepr
+  NRefMutRepr
+  NBorrowClosure
+  NFnRef
+}
+
+pub(open) struct NLocal { id: Nat, name: Text, repr: NRepr }
+
+pub(open) enum NUse {
+  NMove
+  NCopy
+  NClone
+  NPlace
+}
+
+pub(open) enum NIndirect {
+  NDirect
+  NShared
+  NUnique
+}
+
+// How a data type, a union or a function type may be used.
+pub(open) enum NKindWord {
+  NKCopy
+  NKShared
+  NKAffine
+  NKLinear
+}
+
+pub(open) enum NTier {
+  NTierS
+  NTierA
+  NTierO
+  NTierM
+}
+
+// How many times an operation resumes, or `direct`.
+pub(open) enum NQuant {
+  NQZero
+  NQAtMostOne
+  NQOne
+  NQMany
+  NQDirect
+}
+
+// What a loop or a call counts against.
+pub(open) enum NTick {
+  NTickNone
+  NTickHost
+  NTickBudget
+}
+
+pub(open) struct NFieldRef { name: Text, index: Option(Nat), indirect: NIndirect }
+
+// A local and the fields taken from it; `ty` is the type of the value there.
+pub(open) struct NPlaceOf { local: NLocal, path: List(NFieldRef), ty: NTy }
+
+pub(open) struct NField { name: Option(Text), ty: NTy, indirect: NIndirect }
+
+pub(open) struct NCtor { name: Text, fields: List(NField) }
+
+pub(open) struct NData {
+  name: Text,
+  generics: List(Text),
+  kind: NKindWord,
+  is_struct: Bool,
+  is_clone: Bool,
+  is_copy: Bool,
+  is_linear: Bool,
+  is_view: Bool,
+  is_host: Bool,
+  // The name `show` writes for a value of a `struct`.
+  shown: Text,
+  ctors: List(NCtor)
+}
+
+// The data type a constructor belongs to: one the package declares, or the
+// library's `Option`, `Result` or `Pair`.
+pub(open) enum NDataRef {
+  NDataGen(Text)
+  NDataOption
+  NDataResult
+  NDataPair
+}
+
+// A constructor where it is used: its data type, its declared position, its
+// fields' labels and storage, whether its type is linear, and whether it
+// takes no fields in an enum.
+pub(open) struct NCtorRef {
+  data: NDataRef,
+  name: Text,
+  index: Nat,
+  labels: List(Option(Text)),
+  indirect: List(NIndirect),
+  is_linear: Bool,
+  nullary: Bool
+}
+
+pub(open) enum NPat {
+  NWild
+  NBind(NLocal, NTy)
+  NCtorPat(NCtorRef, List(NPat))
+  NIntPat(Bool, Nat)
+  NNatPat(Nat)
+  NBoolPat(Bool)
+  NTextPat(Text)
+  // A value of the union injected at the variant, and a pattern on what was injected.
+  NInjectPat(Nat, Nat, NPat)
+}
+
+pub(open) enum NArith {
+  NAdd
+  NSub
+  NMul
+  NNeg
+  NDivide
+}
+
+pub(open) enum NCmp {
+  NLt
+  NGt
+  NLe
+  NGe
+}
+
+pub(open) enum NCallee {
+  NCallInst(Nat)
+  NCallBuiltin(Text)
+  NCallExtern(Text)
+  // A local that holds a function.
+  NCallLocal(NLocal)
+  // A continuation an arm is given.
+  NCallCont(NLocal)
+  // Any other expression that gives a function.
+  NCallValue(NExpr)
+}
+
+pub(open) struct NExpr { kind: NKind, ty: NTy }
+
+pub(open) struct NArg { label: Option(Text), value: NExpr }
+
+pub(open) struct NArm { pat: NPat, guard: Option(NExpr), body: NExpr }
+
+pub(open) struct NBlock { stmts: List(NStmt), tail: Option(NExpr) }
+
+pub(open) enum NStmt {
+  // The local, its type, the initializer, and whether it is `let stack`.
+  NLet(NLocal, NTy, NExpr, Bool)
+  NVar(NLocal, NTy, NExpr)
+  NAssign(NPlaceOf, NExpr)
+  NExprStmt(NExpr)
+  NWhile(NExpr, NBlock, NTick)
+  NReturn(Option(NExpr))
+}
+
+pub(open) struct NCall {
+  callee: NCallee,
+  targs: List(NTy),
+  args: List(NExpr),
+  tier: NTier,
+  tick: NTick,
+  recur: Bool,
+  unwind: List(NStmt)
+}
+
+// The admission of an operation instance, as its word.
+pub(open) struct NInstance {
+  type_args: List(NTy),
+  params: List(NTy),
+  answer: NTy,
+  admission: Text
+}
+
+pub(open) struct NPerform {
+  // The operation by its place in the package.
+  op: Nat,
+  args: List(NExpr),
+  quant: NQuant,
+  detached: Bool,
+  inst: Option(NInstance),
+  unwind: List(NStmt),
+  result: NTy
+}
+
+// A borrow a closure takes of a local of the function it is made in.
+pub(open) struct NCapturedRef { inner: NLocal, outer: NLocal, mutable: Bool }
+
+pub(open) struct NClosure {
+  borrowed: Bool,
+  pure: Bool,
+  params: List(NParam),
+  ret: NTy,
+  fn_ty: NTy,
+  clones: List(NLocal),
+  refs: List(NCapturedRef),
+  owned_refs: List(NLocal),
+  body: NExpr
+}
+
+pub(open) struct NReturnArm { pat: NPat, body: NExpr }
+
+pub(open) enum NArmKind {
+  NArmDirect
+  NArmAbort
+  NArmSuspend
+}
+
+pub(open) struct NOpArm {
+  kind: NArmKind,
+  op: Nat,
+  pats: List(NPat),
+  params: List(NTy),
+  k_ans: NTy,
+  k: Option(NLocal),
+  inst: Option(NInstance),
+  instantiated: Bool,
+  guard: Option(NExpr),
+  body: NExpr
+}
+
+pub(open) struct NHandle {
+  id: Nat,
+  body_tier: NTier,
+  m: Bool,
+  kept: Bool,
+  detached: Bool,
+  host_ret: Option(NTy),
+  captures: List(NLocal),
+  clones: List(NLocal),
+  body: NExpr,
+  body_ty: NTy,
+  ret: Option(NReturnArm),
+  // The arms in the order they are written: `direct`, then `abort`, then
+  // `suspend`.
+  arms: List(NOpArm),
+  result: NTy
+}
+
+pub(open) struct NBudget { id: Nat, memory: Bool, m: Bool, steps: NExpr, body: NExpr }
+
+pub(open) struct NMatch {
+  scrut: NExpr,
+  by_ref: Bool,
+  // `false` when the match is written `partial`.
+  exhaustive: Bool,
+  arms: List(NArm)
+}
+
+pub(open) enum NKind {
+  NUnitLit
+  // A number: whether it is below zero, and its size.
+  NIntLit(Bool, Nat)
+  NBoolLit(Bool)
+  // A float as the text writes it: `nan`, `inf`, `-inf` or its digits.
+  NFloatLit(Text)
+  NTextLit(Text)
+  NDeclaration(Nat)
+  NFnValue(Nat, List(NTy))
+  NClosureOf(NClosure)
+  NHandleOf(NHandle)
+  NBudgetOf(NBudget)
+  // The union, the member, and the value.
+  NInject(Nat, Nat, NExpr)
+  // The union of the value, the type it becomes, and the value.
+  NRemap(Nat, NTy, NExpr)
+  NFnCast(NExpr)
+  NRead(NLocal, NUse)
+  NBorrow(NPlaceOf)
+  NBorrowMut(NPlaceOf)
+  NTempRef(NExpr)
+  NDeref(NExpr, NUse)
+  // The base, the field, how it is used, and how it is read when that is
+  // not how the field is stored.
+  NFieldOf(NExpr, NFieldRef, NUse, NIndirect)
+  // The operator, the number type it computes in, and the operands.
+  NArithOf(NArith, NTy, List(NExpr))
+  NCmpOf(NCmp, List(NExpr))
+  NEqOf(Bool, List(NExpr))
+  NNot(NExpr)
+  NAnd(NExpr, NExpr)
+  NOr(NExpr, NExpr)
+  NIf(NExpr, NExpr, Option(NExpr))
+  NBlockOf(NBlock)
+  NCtorOf(NCtorRef, List(NArg))
+  NMatchOf(NMatch)
+  NCallOf(NCall)
+  NShownOf(NExpr)
+  NPerformOf(NPerform)
+  NUnreachable(NExpr)
+}
+
+pub(open) struct NParam { local: NLocal, ty: NTy }
+
+pub(open) struct NGeneric { name: Text, bounds: List(Text) }
+
+pub(open) struct NFn {
+  id: Nat,
+  source: Text,
+  generics: List(NGeneric),
+  params: List(NParam),
+  ret: NTy,
+  tier: NTier,
+  lends: Option(List(Bool)),
+  fn_region: Bool,
+  body: NExpr
+}
+
+pub(open) struct NUnionDef { id: Nat, kind: NKindWord, members: List(NTy) }
+
+pub(open) struct NOp {
+  id: Nat,
+  name: Text,
+  generics: List(Text),
+  params: List(NTy),
+  result: NTy,
+  quant: NQuant
+}
+
+pub(open) enum NPass {
+  NPassValue
+  NPassRef
+  NPassRefMut
+}
+
+pub(open) struct NExternParam { name: Text, ty: NTy, pass: NPass }
+
+pub(open) struct NExtern {
+  name: Text,
+  generics: List(Text),
+  params: List(NExternParam),
+  ret: NTy,
+  lends: Option(List(Bool)),
+  waits: Bool
+}
+
+pub(open) struct NExport {
+  name: Text,
+  inst: Nat,
+  row: List(Text),
+  foreign_row: List(Text),
+  pure_borrow_callbacks: List(Nat)
+}
+
+// A data binding is a label and a name; a constructor binding is a data
+// label, a constructor label and a name.
+pub(open) struct NSyntaxData { label: Text, name: Text }
+
+pub(open) struct NSyntaxCtor { data: Text, ctor: Text, name: Text }
+
+pub(open) struct NSyntaxParser {
+  name: Text,
+  sha: Text,
+  result: NTy,
+  tables: Text,
+  datas: List(NSyntaxData),
+  ctors: List(NSyntaxCtor)
+}
+
+// A message: its id and its arguments. A number is kept as it is written.
+pub(open) enum NMessageValue {
+  NMsgNum(Text)
+  NMsgText(Text)
+  NMsgOf(NMessage)
+}
+
+pub(open) struct NMessageArg { key: Text, value: NMessageValue }
+
+pub(open) struct NMessage { id: Text, args: List(NMessageArg) }
+
+// What the package says of the effects: an operation's parameter and answer
+// types, the operations a function or a `handle` is passed.
+pub(open) struct NEvidenceOp { op: Nat, params: List(NTy), answer: NTy }
+
+pub(open) struct NEvidenceFn { inst: Nat, ops: List(Nat) }
+
+pub(open) struct NEvidenceHandle { id: Nat, ops: List(Nat) }
+
+// ---- NIR block form (docs/design/nir-text.md "Blocks") ----
+
+// What an instruction or a terminator carries: an expression with no control
+// flow in it, or the value the region of that number made.
+pub(open) enum NValue {
+  NValLeaf(NExpr)
+  NValRegion(Nat)
+}
+
+// What a `test` looks for at a place.
+pub(open) enum NCase {
+  NCaseCtor(Nat, Nat)
+  NCaseInt(Bool, Nat)
+  NCaseNat(Nat)
+  NCaseBool(Bool)
+  NCaseText(Text)
+  NCaseVariant(Nat)
+}
+
+pub(open) struct NCaseArm { case: NCase, block: Nat }
+
+// Whether a point is resumed: `never`, `once` or `many`.
+pub(open) enum NResumes {
+  NResNever
+  NResOnce
+  NResMany
+}
+
+pub(open) enum NEdgeKind {
+  NEdgeBody
+  NEdgeRet
+  NEdgeDirect
+  NEdgeAbort
+  NEdgeSusp
+}
+
+// An edge of a `handle`: its kind and operation, the block it enters, what
+// that block binds, and whether its pattern tests something.
+pub(open) struct NEdge {
+  kind: NEdgeKind,
+  op: Option(Nat),
+  entry: Nat,
+  params: List(NParam),
+  refutable: Bool
+}
+
+pub(open) enum NInst {
+  // The local, its type, the value, and whether it is `let stack`.
+  NILet(NLocal, NTy, NValue, Bool)
+  NIVar(NLocal, NTy, NValue)
+  NISet(NPlaceOf, NValue)
+  NIEval(NValue)
+  // The local, its type, the part's path, and whether it borrows the part.
+  NIBind(NLocal, NTy, List(Nat), Bool)
+  // The path, and whether it is the arm's last.
+  NIUnpack(List(Nat), Bool)
+  NIEnd(NLocal)
+  // The value at the path (an argument an arm is given) is taken by no name.
+  NIRelease(List(Nat))
+  NIOpen(Nat)
+  NIClose(Nat, Option(NValue))
+}
+
+pub(open) enum NTerm {
+  NTJump(Nat, NValue)
+  NTGoto(Nat)
+  // The region, the entries of its parts, and the block where they meet.
+  NTControl(Nat, List(Nat), Nat)
+  // The region, its entry, the block where it ends, and whether it is `by_ref`.
+  NTEnter(Nat, Nat, Nat, Bool)
+  NTTest(List(Nat), List(NCaseArm), Option(Nat))
+  NTHandle(Nat, List(NEdge), Nat)
+  // The region, the block that takes the result, and the block on an abort.
+  NTCall(Nat, Nat, Nat)
+  // As `NTCall`, and what it resumes with and the locals it keeps.
+  NTSuspend(Nat, Nat, Nat, NResumes, List(NParam))
+  NTAbort
+  NTBranch(NValue, Nat, Option(Nat))
+  NTUnreachable
+  // The arm of a `handle` does not apply: the next arm is tried.
+  NTDecline
+  // The value, and the block of what is written after it.
+  NTReturn(Option(NValue), Nat)
+  NTDone(NValue)
+  NTPending
+}
+
+pub(open) struct NBBlock {
+  params: List(NParam),
+  // The type of the value a block takes where branches meet.
+  takes: Option(NTy),
+  owner: Option(Nat),
+  joins: Option(Nat),
+  insts: List(NInst),
+  term: NTerm
+}
+
+pub(open) enum NSlot {
+  NSlotOperand(NValue)
+  NSlotBody(Nat)
+}
+
+pub(open) enum NShell {
+  NShellNode(NExpr)
+  NShellBlock(NTy)
+  NShellCall(NExpr)
+  NShellWhile(NTick)
+}
+
+pub(open) struct NRegion { shell: NShell, slots: List(NSlot) }
+
+// Where a `match` tests for a union's variant: the region and the path.
+pub(open) struct NVariantAt { region: Nat, path: List(Nat) }
+
+pub(open) struct NBlockFn {
+  blocks: List(NBBlock),
+  regions: List(Option(NRegion)),
+  variants: List(NVariantAt),
+  opaque_count: Nat,
+  refutable_count: Nat,
+  closures: List(NBlockFn)
+}
+
+// A function written in blocks: its head (the body is a unit) and its blocks.
+pub(open) struct NFnBlocks { head: NFn, body: NBlockFn }
+
+pub(open) struct NPackage {
+  declarations: List(Text),
+  syntax_parsers: List(NSyntaxParser),
+  datas: List(NData),
+  unions: List(NUnionDef),
+  ops: List(NOp),
+  externs: List(NExtern),
+  fns: List(NFn),
+  top: Option(Nat),
+  exports: List(NExport),
+  sync: Bool,
+  permissions: List(Text),
+  unsupported: Option(NMessage),
+  evidence_ops: List(NEvidenceOp),
+  evidence_fns: List(NEvidenceFn),
+  evidence_handles: List(NEvidenceHandle),
+  // The functions written in blocks, after the package.
+  block_fns: List(NFnBlocks)
+}
+
+pub fn n_tier_is_s(t: NTier): Bool {
+  match t {
+    NTierS => true
+    NTierA => false
+    NTierO => false
+    NTierM => false
+  }
+}
+
+pub fn n_tick_budget(t: NTick): Bool {
+  match t {
+    NTickNone => false
+    NTickHost => false
+    NTickBudget => true
+  }
+}
+
+// The functions that are passed a handler.
+pub fn n_handled(pkg: NPackage): List(Nat) { n_handled_of(pkg.evidence_fns) }
+
+pub fn n_handled_of(xs: List(NEvidenceFn)): List(Nat) {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => match f.ops {
+      Nil => n_handled_of(rest)
+      Cons(^o, ^more) => Cons(f.inst, n_handled_of(rest))
+    }
+  }
+}
+
+// The names of the operations, in order.
+pub fn n_op_names(xs: List(NOp)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(o, rest) => Cons(o.name, n_op_names(rest))
+  }
+}
+
+// The place of a type's form among the forms, to tell two forms apart.
+pub fn n_ty_form(t: NTy): Nat {
+  match t {
+    NInt(^w) => 0
+    NBool => 1
+    NText => 2
+    NUnit => 3
+    NNever => 4
+    NFloat => 5
+    NFloat32 => 6
+    NBuf => 7
+    NShown => 8
+    NVec(^a) => 9
+    NArray(^a) => 10
+    NSlice(^a) => 11
+    NOption(^a) => 12
+    NInfo(^a) => 13
+    NBudgetAnswer(^a) => 14
+    NResult(^a, ^b) => 16
+    NPair(^a, ^b) => 17
+    NSharedVar(^c, ^a) => 18
+    NStd(^n, ^a) => 19
+    NUnion(^n) => 20
+    NFn(^p, ^r, ^k, ^x) => 21
+    NRef(^a) => 22
+    NRefMut(^a) => 23
+    NData(^n, ^a) => 24
+    NParam(^n) => 25
+  }
+}
+
+// The types a type is made of, in order.
+pub fn n_ty_parts(t: NTy): List(NTy) {
+  match t {
+    NInt(^w) => Nil
+    NBool => Nil
+    NText => Nil
+    NUnit => Nil
+    NNever => Nil
+    NFloat => Nil
+    NFloat32 => Nil
+    NBuf => Nil
+    NShown => Nil
+    NVec(a) => [a]
+    NArray(a) => [a]
+    NSlice(a) => [a]
+    NOption(a) => [a]
+    NInfo(a) => [a]
+    NBudgetAnswer(a) => [a]
+    NResult(a, b) => [a, b]
+    NPair(a, b) => [a, b]
+    NSharedVar(^c, a) => [a]
+    NStd(^n, a) => a
+    NUnion(^n) => Nil
+    NFn(p, r, ^k, ^x) => Cons(r, p)
+    NRef(a) => [a]
+    NRefMut(a) => [a]
+    NData(^n, a) => a
+    NParam(^n) => Nil
+  }
+}
+
+// What a type says besides its form and its parts.
+pub fn n_ty_word(t: NTy): Text {
+  match t {
+    NInt(w) => match w {
+      NW32 => "i32"
+      NW64 => "i64"
+      NU8 => "u8"
+      NU32 => "u32"
+      NU64 => "u64"
+      NHost => "uhost"
+      NNat => "nat"
+      NW8 => "i8"
+      NW16 => "i16"
+      NU16 => "u16"
+    }
+    NBool => ""
+    NText => ""
+    NUnit => ""
+    NNever => ""
+    NFloat => ""
+    NFloat32 => ""
+    NBuf => ""
+    NShown => ""
+    NVec(^a) => ""
+    NArray(^a) => ""
+    NSlice(^a) => ""
+    NOption(^a) => ""
+    NInfo(^a) => ""
+    NBudgetAnswer(^a) => ""
+    NResult(^a, ^b) => ""
+    NPair(^a, ^b) => ""
+    NSharedVar(c, ^a) => if c { "copy" } else { "" }
+    NStd(n, ^a) => n
+    NUnion(n) => Text::of_nat(n)
+    NFn(^p, ^r, k, x) => Text::concat_all([k, " ", x])
+    NRef(^a) => ""
+    NRefMut(^a) => ""
+    NData(n, ^a) => n
+    NParam(n) => n
+  }
+}
+
+pub fn n_ty_eq(a: NTy, b: NTy): Bool ! {div} {
+  n_ty_form(a) == n_ty_form(b) && n_ty_word(a) == n_ty_word(b) && n_tys_eq(
+    n_ty_parts(a),
+    n_ty_parts(b)
+  )
+}
+
+pub fn n_tys_eq(xs: List(NTy), ys: List(NTy)): Bool ! {div} {
+  match xs {
+    Nil => match ys {
+      Nil => true
+      Cons(^y, ^more) => false
+    }
+    Cons(x, rest) => match ys {
+      Nil => false
+      Cons(y, more) => n_ty_eq(x, y) && n_tys_eq(rest, more)
+    }
+  }
+}
+
+// The type a borrow stands for.
+pub fn n_borrowed(t: NTy): Option(NTy) {
+  match t {
+    NRef(a) => Some(a)
+    NRefMut(a) => Some(a)
+    NInt(^w) => None
+    NBool => None
+    NText => None
+    NUnit => None
+    NNever => None
+    NFloat => None
+    NFloat32 => None
+    NBuf => None
+    NShown => None
+    NVec(^a) => None
+    NArray(^a) => None
+    NSlice(^a) => None
+    NOption(^a) => None
+    NInfo(^a) => None
+    NBudgetAnswer(^a) => None
+    NResult(^a, ^b) => None
+    NPair(^a, ^b) => None
+    NSharedVar(^c, ^a) => None
+    NStd(^n, ^a) => None
+    NUnion(^n) => None
+    NFn(^p, ^r, ^k, ^x) => None
+    NData(^n, ^a) => None
+    NParam(^n) => None
+  }
+}
+
+// The size of a number type.
+pub fn n_int_width(t: NTy): Option(NWidth) {
+  match t {
+    NInt(w) => Some(w)
+    NBool => None
+    NText => None
+    NUnit => None
+    NNever => None
+    NFloat => None
+    NFloat32 => None
+    NBuf => None
+    NShown => None
+    NVec(^a) => None
+    NArray(^a) => None
+    NSlice(^a) => None
+    NOption(^a) => None
+    NInfo(^a) => None
+    NBudgetAnswer(^a) => None
+    NResult(^a, ^b) => None
+    NPair(^a, ^b) => None
+    NSharedVar(^c, ^a) => None
+    NStd(^n, ^a) => None
+    NUnion(^n) => None
+    NFn(^p, ^r, ^k, ^x) => None
+    NRef(^a) => None
+    NRefMut(^a) => None
+    NData(^n, ^a) => None
+    NParam(^n) => None
+  }
+}
+
+// Whether a value of the type may hold something that is released when the
+// value ends.
+pub fn n_needs_drop(t: NTy): Bool {
+  match t {
+    NInt(w) => match w {
+      NW32 => false
+      NW64 => false
+      NU8 => false
+      NU32 => false
+      NU64 => false
+      NHost => false
+      NNat => true
+      NW8 => false
+      NW16 => false
+      NU16 => false
+    }
+    NBool => false
+    NUnit => false
+    NNever => false
+    NFloat => false
+    NFloat32 => false
+    NRef(^a) => false
+    NRefMut(^a) => false
+    NSlice(^a) => false
+    NText => true
+    NBuf => true
+    NShown => true
+    NVec(^a) => true
+    NArray(^a) => true
+    NOption(^a) => true
+    NInfo(^a) => true
+    NBudgetAnswer(^a) => true
+    NResult(^a, ^b) => true
+    NPair(^a, ^b) => true
+    NSharedVar(^c, ^a) => true
+    NStd(^n, ^a) => true
+    NUnion(^n) => true
+    NFn(^p, ^r, ^k, ^x) => true
+    NData(^n, ^a) => true
+    NParam(^n) => true
+  }
+}

@@ -1,3 +1,4 @@
+import "messages.taut"
 import "argument_frame.taut"
 import "argument_error_sound.taut"
 import "expr_leaf_checked_sound.taut"
@@ -8,6 +9,7 @@ import "error_frame.taut"
 import "operation_checked_sound.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "written_error_sound.taut"
 import "../../surface/src/surface.taut"
@@ -26,15 +28,14 @@ pub theorem argument_terms_frame_checked(
   ). ∀ ordered: CkOrdered(next). CkCheckedFrame(next, ck_expect_args(rest, next, ps, args)),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, argument_terms(a, rest, c, p, more, args)) {
-  ⊢ CkCheckedFrame(c, argument_terms(a, rest, c, p, more, args)) from match args {
+  match args {
     Nil => checked_frame_return(c, Star, ordered)
     Cons(at, atail) => checked_frame_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_expect_args(rest, c1, more, atail)),
-      ck_expect(c, a, p, span_of(at), "an argument"),
-      ck_expect_run_frame_checked(c, a, p, span_of(at), "an argument", ordered),
+      ck_expect(c, a, p, span_of(at), what_argument_message()),
+      ck_expect_run_frame_checked(c, a, p, span_of(at), what_argument_message(), ordered),
       ignored => c1 => o_c1 => checked_frame_rewrap(
         c1,
         ck_expect_args(rest, c1, more, atail),
@@ -57,7 +58,7 @@ pub theorem argument_params_frame_checked(
   ). ∀ ordered: CkOrdered(next). CkCheckedFrame(next, ck_expect_args(rest, next, ps, args)),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, argument_params(a, rest, c, args, ps)) {
-  ⊢ CkCheckedFrame(c, argument_params(a, rest, c, args, ps)) from match ps {
+  match ps {
     Nil => checked_frame_return(c, Star, ordered)
     Cons(p, more) => argument_terms_frame_checked(a, rest, c, p, more, args, ih, ordered)
   }
@@ -70,7 +71,7 @@ pub theorem ck_expect_args_run_frame_checked(
   args: List(SurfaceTerm),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, ck_expect_args(tys, c, ps, args)) {
-  ⊢ CkCheckedFrame(c, ck_expect_args(tys, c, ps, args)) from match tys {
+  match tys {
     Nil => checked_frame_return(c, Star, ordered)
     Cons(a, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkCheckedFrame(c, z),
@@ -104,11 +105,10 @@ pub theorem argument_hint_cons_frame_checked(
   ). ∀ ordered: CkOrdered(next). CkCheckedFrame(next, ck_lambda_hint(rest, next, hs)),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, argument_hint_cons(p, rest, c, hs)) {
-  ⊢ CkCheckedFrame(c, argument_hint_cons(p, rest, c, hs)) from match hs {
+  match hs {
     Nil => checked_frame_return(c, Star, ordered)
     Cons(h, more) => checked_frame_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       c,
       (ignored: Bool, c1: Checker) => ck_rewrap1(ck_lambda_hint(rest, c1, more)),
       ck_attempt_unify(c, p, h),
@@ -128,7 +128,7 @@ pub theorem ck_lambda_hint_run_frame_checked(
   hs: List(Ty),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, ck_lambda_hint(ps, c, hs)) {
-  ⊢ CkCheckedFrame(c, ck_lambda_hint(ps, c, hs)) from match ps {
+  match ps {
     Nil => checked_frame_return(c, Star, ordered)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkCheckedFrame(c, z),
@@ -152,12 +152,12 @@ pub theorem argument_expected_frame_checked(
   expected: Option(Ty),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, argument_expected(c, t, a, expected)) {
-  ⊢ CkCheckedFrame(c, argument_expected(c, t, a, expected)) from match expected {
+  match expected {
     None => checked_frame_return(c, Star, ordered)
     Some(p) => checked_frame_rewrap(
       c,
-      ck_expect(c, t, p, span_of(a), "an argument"),
-      ck_expect_run_frame_checked(c, t, p, span_of(a), "an argument", ordered)
+      ck_expect(c, t, p, span_of(a), what_argument_message()),
+      ck_expect_run_frame_checked(c, t, p, span_of(a), what_argument_message(), ordered)
     )
   }
 }
@@ -182,26 +182,26 @@ pub theorem argument_return_frame_checked(
   returns: List(Ty),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, argument_return(c, t, span, returns)) {
-  ⊢ CkCheckedFrame(c, argument_return(c, t, span, returns)) from match returns {
+  match returns {
     Nil => checked_frame_read(
       c,
-      ck_rewrap1(ck_error(c, "`return` outside a function", span)),
+      ck_rewrap1(ck_error(c, return_outside_function_message(), span)),
       frame_rewrap(
         c,
-        ck_error(c, "`return` outside a function", span),
-        ck_error_frame(c, "`return` outside a function", span)
+        ck_error(c, return_outside_function_message(), span),
+        ck_error_frame(c, return_outside_function_message(), span)
       ),
       error_frame_rewrap(
         c,
-        ck_error(c, "`return` outside a function", span),
-        ck_error_frame_errors(c, "`return` outside a function", span)
+        ck_error(c, return_outside_function_message(), span),
+        ck_error_frame_errors(c, return_outside_function_message(), span)
       ),
       ordered
     )
     Cons(r, rest) => checked_frame_rewrap(
       c,
-      ck_expect(c, t, r, span, "the returned value"),
-      ck_expect_run_frame_checked(c, t, r, span, "the returned value", ordered)
+      ck_expect(c, t, r, span, what_returned_value_message()),
+      ck_expect_run_frame_checked(c, t, r, span, what_returned_value_message(), ordered)
     )
   }
 }
@@ -230,19 +230,19 @@ pub theorem argument_budget_after_frame_checked(
     c,
     frame_error_if(
       c,
-      "budgets answered by one `exceeded` arm give different types",
+      budget_arms_differ_message(),
       span,
       not(same)
     ),
     frame_error_if_ok(
       c,
-      "budgets answered by one `exceeded` arm give different types",
+      budget_arms_differ_message(),
       span,
       not(same)
     ),
     frame_error_if_ok_errors(
       c,
-      "budgets answered by one `exceeded` arm give different types",
+      budget_arms_differ_message(),
       span,
       not(same)
     ),
@@ -257,11 +257,10 @@ pub theorem argument_budget_frame_checked(
   exceeded: List(Ty),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, argument_budget(c, t, span, exceeded)) {
-  ⊢ CkCheckedFrame(c, argument_budget(c, t, span, exceeded)) from match exceeded {
+  match exceeded {
     Nil => checked_frame_return(c, Star, ordered)
     Cons(x, rest) => checked_frame_bind(
-      Bool,
-      Unit,
+      <A: Bool, B: Unit>,
       c,
       (same: Bool, c1: Checker) => argument_budget_after(c1, t, span, same),
       ck_unify(c, x, t),

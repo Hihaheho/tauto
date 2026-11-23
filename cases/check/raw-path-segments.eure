@@ -1,0 +1,30 @@
+// A name written with `r#` on any segment of a path (`Elab::r#class`) is the name without it,
+// the same as a raw name alone: a reserved word is a name wherever it stands.
+
+@ cases.a-raw-segment-in-a-path-is-the-name
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub fn Elab::r#class(i: Nat): Nat {
+  Succ(i)
+}
+
+enum Kind {
+  r#type
+  plain
+}
+
+fn kind_rank(k: Kind): Nat {
+  ⊢ Nat from match k {
+    Kind::r#type => 1
+    Kind::plain => 0
+  }
+}
+
+theorem call(): Elab::r#class(1) = 2 { Refl }
+theorem plain_path(): Elab::class(1) = 2 { Refl }
+theorem raw_head(): r#Elab::r#class(1) = 2 { Refl }
+theorem variant(): kind_rank(Kind::r#type) = 1 { Refl }
+```
+
+checks_all = "ok"

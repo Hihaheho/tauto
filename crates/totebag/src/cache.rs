@@ -58,6 +58,19 @@ impl Cache {
             .join(format!("{}.git", tauto_syntax::sha256_hex(url.as_bytes())))
     }
 
+    /// The bare repository a source is fetched into. A sparse source has its
+    /// own, because it holds commits whose files were left on the server.
+    pub fn mirror_for(&self, source: &crate::spec::GitSource) -> PathBuf {
+        if source.sparse {
+            self.root.join("git").join(format!(
+                "{}-sparse.git",
+                tauto_syntax::sha256_hex(source.url.as_bytes())
+            ))
+        } else {
+            self.mirror_dir(&source.url)
+        }
+    }
+
     /// Writes `tree` under its ID, unless it is there already.
     pub fn install(&self, tree: &Tree) -> Result<PathBuf, String> {
         let dest = self.source_dir(&tree.id);

@@ -1,12 +1,14 @@
 import "ty.taut"
-import std::MapText
-import std::Base
-import std::Map
-import std::MapLaws
-import std::Text
-import std::prelude::Ord
+import "../../identity/src/identity.taut"
+import "../../identity/src/order.taut"
+import std::map_text
+import std::base
+import std::map
+import std::map_laws
+import std::text
+import std::builtin::ord
 
-// `ty_eq` says two types are the same only when they are (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」, the types
+// `ty_eq` says two types are the same only when they are (`docs/design/self-host.md`「nibcheck soundness (`totes/nibcheck/src/`)」, the types
 // layer): `ty_compare` is `Equal` only on equal types.
 
 pub theorem ty_then_equal(
@@ -14,7 +16,7 @@ pub theorem ty_then_equal(
   b: Ordering,
   e: ty_then(a, b) = Equal
 ): And(a = Equal, b = Equal) {
-  ⊢ And(a = Equal, b = Equal) from match a {
+  match a {
     Less => False::elim(less_ne_equal(e))
     Equal => AndIntro(Refl, e)
     Greater => False::elim(greater_ne_equal(e))
@@ -28,46 +30,131 @@ pub theorem ty_nat_ne(x: Nat, y: Nat, e: x = y, h: Nat::eq(x, y) = false): False
 }
 
 pub theorem width_rank_inj(a: Width, b: Width, e: width_rank(a) = width_rank(b)): a = b {
-  ⊢ a = b from match a {
+  match a {
+    Width8 => ⊢ Width8 = b from match b {
+      Width8 => Refl
+      Width16 => False::elim(ty_nat_ne(0, 1, e, Refl))
+      Width32 => False::elim(ty_nat_ne(0, 2, e, Refl))
+      Width64 => False::elim(ty_nat_ne(0, 3, e, Refl))
+      WidthU8 => False::elim(ty_nat_ne(0, 4, e, Refl))
+      WidthU16 => False::elim(ty_nat_ne(0, 5, e, Refl))
+      WidthU32 => False::elim(ty_nat_ne(0, 6, e, Refl))
+      WidthU64 => False::elim(ty_nat_ne(0, 7, e, Refl))
+      WidthNat => False::elim(ty_nat_ne(0, 8, e, Refl))
+      WidthHost => False::elim(ty_nat_ne(0, 9, e, Refl))
+    }
+    Width16 => ⊢ Width16 = b from match b {
+      Width8 => False::elim(ty_nat_ne(1, 0, e, Refl))
+      Width16 => Refl
+      Width32 => False::elim(ty_nat_ne(1, 2, e, Refl))
+      Width64 => False::elim(ty_nat_ne(1, 3, e, Refl))
+      WidthU8 => False::elim(ty_nat_ne(1, 4, e, Refl))
+      WidthU16 => False::elim(ty_nat_ne(1, 5, e, Refl))
+      WidthU32 => False::elim(ty_nat_ne(1, 6, e, Refl))
+      WidthU64 => False::elim(ty_nat_ne(1, 7, e, Refl))
+      WidthNat => False::elim(ty_nat_ne(1, 8, e, Refl))
+      WidthHost => False::elim(ty_nat_ne(1, 9, e, Refl))
+    }
     Width32 => ⊢ Width32 = b from match b {
+      Width8 => False::elim(ty_nat_ne(2, 0, e, Refl))
+      Width16 => False::elim(ty_nat_ne(2, 1, e, Refl))
       Width32 => Refl
-      Width64 => False::elim(ty_nat_ne(0, 1, e, Refl))
-      WidthU8 => False::elim(ty_nat_ne(0, 2, e, Refl))
-      WidthU32 => False::elim(ty_nat_ne(0, 3, e, Refl))
-      WidthU64 => False::elim(ty_nat_ne(0, 4, e, Refl))
+      Width64 => False::elim(ty_nat_ne(2, 3, e, Refl))
+      WidthU8 => False::elim(ty_nat_ne(2, 4, e, Refl))
+      WidthU16 => False::elim(ty_nat_ne(2, 5, e, Refl))
+      WidthU32 => False::elim(ty_nat_ne(2, 6, e, Refl))
+      WidthU64 => False::elim(ty_nat_ne(2, 7, e, Refl))
+      WidthNat => False::elim(ty_nat_ne(2, 8, e, Refl))
+      WidthHost => False::elim(ty_nat_ne(2, 9, e, Refl))
     }
     Width64 => ⊢ Width64 = b from match b {
-      Width32 => False::elim(ty_nat_ne(1, 0, e, Refl))
+      Width8 => False::elim(ty_nat_ne(3, 0, e, Refl))
+      Width16 => False::elim(ty_nat_ne(3, 1, e, Refl))
+      Width32 => False::elim(ty_nat_ne(3, 2, e, Refl))
       Width64 => Refl
-      WidthU8 => False::elim(ty_nat_ne(1, 2, e, Refl))
-      WidthU32 => False::elim(ty_nat_ne(1, 3, e, Refl))
-      WidthU64 => False::elim(ty_nat_ne(1, 4, e, Refl))
+      WidthU8 => False::elim(ty_nat_ne(3, 4, e, Refl))
+      WidthU16 => False::elim(ty_nat_ne(3, 5, e, Refl))
+      WidthU32 => False::elim(ty_nat_ne(3, 6, e, Refl))
+      WidthU64 => False::elim(ty_nat_ne(3, 7, e, Refl))
+      WidthNat => False::elim(ty_nat_ne(3, 8, e, Refl))
+      WidthHost => False::elim(ty_nat_ne(3, 9, e, Refl))
     }
     WidthU8 => ⊢ WidthU8 = b from match b {
-      Width32 => False::elim(ty_nat_ne(2, 0, e, Refl))
-      Width64 => False::elim(ty_nat_ne(2, 1, e, Refl))
+      Width8 => False::elim(ty_nat_ne(4, 0, e, Refl))
+      Width16 => False::elim(ty_nat_ne(4, 1, e, Refl))
+      Width32 => False::elim(ty_nat_ne(4, 2, e, Refl))
+      Width64 => False::elim(ty_nat_ne(4, 3, e, Refl))
       WidthU8 => Refl
-      WidthU32 => False::elim(ty_nat_ne(2, 3, e, Refl))
-      WidthU64 => False::elim(ty_nat_ne(2, 4, e, Refl))
+      WidthU16 => False::elim(ty_nat_ne(4, 5, e, Refl))
+      WidthU32 => False::elim(ty_nat_ne(4, 6, e, Refl))
+      WidthU64 => False::elim(ty_nat_ne(4, 7, e, Refl))
+      WidthNat => False::elim(ty_nat_ne(4, 8, e, Refl))
+      WidthHost => False::elim(ty_nat_ne(4, 9, e, Refl))
+    }
+    WidthU16 => ⊢ WidthU16 = b from match b {
+      Width8 => False::elim(ty_nat_ne(5, 0, e, Refl))
+      Width16 => False::elim(ty_nat_ne(5, 1, e, Refl))
+      Width32 => False::elim(ty_nat_ne(5, 2, e, Refl))
+      Width64 => False::elim(ty_nat_ne(5, 3, e, Refl))
+      WidthU8 => False::elim(ty_nat_ne(5, 4, e, Refl))
+      WidthU16 => Refl
+      WidthU32 => False::elim(ty_nat_ne(5, 6, e, Refl))
+      WidthU64 => False::elim(ty_nat_ne(5, 7, e, Refl))
+      WidthNat => False::elim(ty_nat_ne(5, 8, e, Refl))
+      WidthHost => False::elim(ty_nat_ne(5, 9, e, Refl))
     }
     WidthU32 => ⊢ WidthU32 = b from match b {
-      Width32 => False::elim(ty_nat_ne(3, 0, e, Refl))
-      Width64 => False::elim(ty_nat_ne(3, 1, e, Refl))
-      WidthU8 => False::elim(ty_nat_ne(3, 2, e, Refl))
+      Width8 => False::elim(ty_nat_ne(6, 0, e, Refl))
+      Width16 => False::elim(ty_nat_ne(6, 1, e, Refl))
+      Width32 => False::elim(ty_nat_ne(6, 2, e, Refl))
+      Width64 => False::elim(ty_nat_ne(6, 3, e, Refl))
+      WidthU8 => False::elim(ty_nat_ne(6, 4, e, Refl))
+      WidthU16 => False::elim(ty_nat_ne(6, 5, e, Refl))
       WidthU32 => Refl
-      WidthU64 => False::elim(ty_nat_ne(3, 4, e, Refl))
+      WidthU64 => False::elim(ty_nat_ne(6, 7, e, Refl))
+      WidthNat => False::elim(ty_nat_ne(6, 8, e, Refl))
+      WidthHost => False::elim(ty_nat_ne(6, 9, e, Refl))
     }
     WidthU64 => ⊢ WidthU64 = b from match b {
-      Width32 => False::elim(ty_nat_ne(4, 0, e, Refl))
-      Width64 => False::elim(ty_nat_ne(4, 1, e, Refl))
-      WidthU8 => False::elim(ty_nat_ne(4, 2, e, Refl))
-      WidthU32 => False::elim(ty_nat_ne(4, 3, e, Refl))
+      Width8 => False::elim(ty_nat_ne(7, 0, e, Refl))
+      Width16 => False::elim(ty_nat_ne(7, 1, e, Refl))
+      Width32 => False::elim(ty_nat_ne(7, 2, e, Refl))
+      Width64 => False::elim(ty_nat_ne(7, 3, e, Refl))
+      WidthU8 => False::elim(ty_nat_ne(7, 4, e, Refl))
+      WidthU16 => False::elim(ty_nat_ne(7, 5, e, Refl))
+      WidthU32 => False::elim(ty_nat_ne(7, 6, e, Refl))
       WidthU64 => Refl
+      WidthNat => False::elim(ty_nat_ne(7, 8, e, Refl))
+      WidthHost => False::elim(ty_nat_ne(7, 9, e, Refl))
+    }
+    WidthNat => ⊢ WidthNat = b from match b {
+      Width8 => False::elim(ty_nat_ne(8, 0, e, Refl))
+      Width16 => False::elim(ty_nat_ne(8, 1, e, Refl))
+      Width32 => False::elim(ty_nat_ne(8, 2, e, Refl))
+      Width64 => False::elim(ty_nat_ne(8, 3, e, Refl))
+      WidthU8 => False::elim(ty_nat_ne(8, 4, e, Refl))
+      WidthU16 => False::elim(ty_nat_ne(8, 5, e, Refl))
+      WidthU32 => False::elim(ty_nat_ne(8, 6, e, Refl))
+      WidthU64 => False::elim(ty_nat_ne(8, 7, e, Refl))
+      WidthNat => Refl
+      WidthHost => False::elim(ty_nat_ne(8, 9, e, Refl))
+    }
+    WidthHost => ⊢ WidthHost = b from match b {
+      Width8 => False::elim(ty_nat_ne(9, 0, e, Refl))
+      Width16 => False::elim(ty_nat_ne(9, 1, e, Refl))
+      Width32 => False::elim(ty_nat_ne(9, 2, e, Refl))
+      Width64 => False::elim(ty_nat_ne(9, 3, e, Refl))
+      WidthU8 => False::elim(ty_nat_ne(9, 4, e, Refl))
+      WidthU16 => False::elim(ty_nat_ne(9, 5, e, Refl))
+      WidthU32 => False::elim(ty_nat_ne(9, 6, e, Refl))
+      WidthU64 => False::elim(ty_nat_ne(9, 7, e, Refl))
+      WidthNat => False::elim(ty_nat_ne(9, 8, e, Refl))
+      WidthHost => Refl
     }
   }
 }
 pub theorem kind_rank_inj(a: Kind, b: Kind, e: kind_rank(a) = kind_rank(b)): a = b {
-  ⊢ a = b from match a {
+  match a {
     KindCopy => ⊢ KindCopy = b from match b {
       KindCopy => Refl
       KindShared => False::elim(ty_nat_ne(0, 1, e, Refl))
@@ -95,7 +182,7 @@ pub theorem kind_rank_inj(a: Kind, b: Kind, e: kind_rank(a) = kind_rank(b)): a =
   }
 }
 pub theorem bool_rank_inj(a: Bool, b: Bool, e: bool_rank(a) = bool_rank(b)): a = b {
-  ⊢ a = b from match a {
+  match a {
     false => ⊢ false = b from match b {
       false => Refl
       true => False::elim(ty_nat_ne(0, 1, e, Refl))
@@ -107,7 +194,7 @@ pub theorem bool_rank_inj(a: Bool, b: Bool, e: bool_rank(a) = bool_rank(b)): a =
   }
 }
 pub theorem cmp_text_list_eq(a: List(Text), b: List(Text), e: cmp_text_list(a, b) = Equal): a = b {
-  ⊢ a = b from match a {
+  match a {
     Nil => ⊢ Nil = b from match b {
       Nil => Refl
       Cons(y, ys) => False::elim(less_ne_equal(e))
@@ -137,11 +224,11 @@ pub theorem cmp_text_list_eq(a: List(Text), b: List(Text), e: cmp_text_list(a, b
 }
 
 pub theorem cmp_generics_eq(
-  a: List(Pair(Text, Kind)),
-  b: List(Pair(Text, Kind)),
+  a: List(Text × Kind),
+  b: List(Text × Kind),
   e: cmp_generics(a, b) = Equal
 ): a = b {
-  ⊢ a = b from match a {
+  match a {
     Nil => ⊢ Nil = b from match b {
       Nil => Refl
       Cons(y, ys) => False::elim(less_ne_equal(e))
@@ -149,10 +236,10 @@ pub theorem cmp_generics_eq(
     Cons(x, xs) => ⊢ Cons(x, xs) = b from match b {
       Nil => False::elim(greater_ne_equal(e))
       Cons(y, ys) => ⊢ Cons(x, xs) = Cons(y, ys) from match x {
-        Pair { fst: xn, snd: xk } => ⊢ Cons(Pair { fst: xn, snd: xk }, xs) = Cons(y, ys) from match y {
-          Pair { fst: yn, snd: yk } => Eq::trans(
+        #(xn, xk) => ⊢ Cons(#(xn, xk), xs) = Cons(y, ys) from match y {
+          #(yn, yk) => Eq::trans(
             Eq::congr(
-              (z: Text) => Cons(Pair { fst: z, snd: xk }, xs),
+              (z: Text) => Cons(#(z, xk), xs),
               Ordmap::compare_text_eq(
                 xn,
                 yn,
@@ -176,7 +263,7 @@ pub theorem cmp_generics_eq(
             ),
             Eq::trans(
               Eq::congr(
-                (z: Kind) => Cons(Pair { fst: yn, snd: z }, xs),
+                (z: Kind) => Cons(#(yn, z), xs),
                 kind_rank_inj(
                   xk,
                   yk,
@@ -203,7 +290,7 @@ pub theorem cmp_generics_eq(
                 )
               ),
               Eq::congr(
-                (z: List(Pair(Text, Kind))) => Cons(Pair { fst: yn, snd: yk }, z),
+                (z: List(Text × Kind)) => Cons(#(yn, yk), z),
                 cmp_generics_eq(
                   xs,
                   ys,
@@ -233,7 +320,7 @@ mutual {
     b: List(Ty),
     e: ty_compare_list(a, b) = Equal
   ): a = b {
-    ⊢ a = b from match a {
+    match a {
       Nil => ⊢ Nil = b from match b {
         Nil => Refl
         Cons(y, ys) => False::elim(less_ne_equal(e))
@@ -263,7 +350,7 @@ mutual {
   }
 
   pub theorem ty_compare_eq(a: Ty, b: Ty, e: ty_compare(a, b) = Equal): a = b {
-    ⊢ a = b from match a {
+    match a {
       TyInt(wa) => ⊢ TyInt(wa) = b from match b {
         TyInt(wb) => Eq::congr(
           (z: Width) => TyInt(z),
@@ -275,6 +362,7 @@ mutual {
         TyNever => False::elim(less_ne_equal(e))
         TyDecimal => False::elim(less_ne_equal(e))
         TyFloat => False::elim(less_ne_equal(e))
+        TyFloat32 => False::elim(less_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(less_ne_equal(e))
         TyUnion(xb) => False::elim(less_ne_equal(e))
         TyProduct(xb) => False::elim(less_ne_equal(e))
@@ -295,6 +383,7 @@ mutual {
         TyNever => False::elim(less_ne_equal(e))
         TyDecimal => False::elim(less_ne_equal(e))
         TyFloat => False::elim(less_ne_equal(e))
+        TyFloat32 => False::elim(less_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(less_ne_equal(e))
         TyUnion(xb) => False::elim(less_ne_equal(e))
         TyProduct(xb) => False::elim(less_ne_equal(e))
@@ -315,6 +404,7 @@ mutual {
         TyNever => False::elim(less_ne_equal(e))
         TyDecimal => False::elim(less_ne_equal(e))
         TyFloat => False::elim(less_ne_equal(e))
+        TyFloat32 => False::elim(less_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(less_ne_equal(e))
         TyUnion(xb) => False::elim(less_ne_equal(e))
         TyProduct(xb) => False::elim(less_ne_equal(e))
@@ -335,6 +425,7 @@ mutual {
         TyNever => False::elim(less_ne_equal(e))
         TyDecimal => False::elim(less_ne_equal(e))
         TyFloat => False::elim(less_ne_equal(e))
+        TyFloat32 => False::elim(less_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(less_ne_equal(e))
         TyUnion(xb) => False::elim(less_ne_equal(e))
         TyProduct(xb) => False::elim(less_ne_equal(e))
@@ -355,6 +446,7 @@ mutual {
         TyNever => Refl
         TyDecimal => False::elim(less_ne_equal(e))
         TyFloat => False::elim(less_ne_equal(e))
+        TyFloat32 => False::elim(less_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(less_ne_equal(e))
         TyUnion(xb) => False::elim(less_ne_equal(e))
         TyProduct(xb) => False::elim(less_ne_equal(e))
@@ -375,6 +467,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => Refl
         TyFloat => False::elim(less_ne_equal(e))
+        TyFloat32 => False::elim(less_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(less_ne_equal(e))
         TyUnion(xb) => False::elim(less_ne_equal(e))
         TyProduct(xb) => False::elim(less_ne_equal(e))
@@ -395,6 +488,28 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => Refl
+        TyFloat32 => False::elim(less_ne_equal(e))
+        TyFn(pb, rb, kb) => False::elim(less_ne_equal(e))
+        TyUnion(xb) => False::elim(less_ne_equal(e))
+        TyProduct(xb) => False::elim(less_ne_equal(e))
+        TyTagged(tb, xb) => False::elim(less_ne_equal(e))
+        TyNamed(nb, xb) => False::elim(less_ne_equal(e))
+        TyParam(nb, kb) => False::elim(less_ne_equal(e))
+        TyInfo(xb) => False::elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False::elim(less_ne_equal(e))
+        TyVar(vb) => False::elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False::elim(less_ne_equal(e))
+        TyApp(hb, xb) => False::elim(less_ne_equal(e))
+      }
+      TyFloat32 => ⊢ TyFloat32 = b from match b {
+        TyInt(wb) => False::elim(greater_ne_equal(e))
+        TyBool => False::elim(greater_ne_equal(e))
+        TyText => False::elim(greater_ne_equal(e))
+        TyUnit => False::elim(greater_ne_equal(e))
+        TyNever => False::elim(greater_ne_equal(e))
+        TyDecimal => False::elim(greater_ne_equal(e))
+        TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => Refl
         TyFn(pb, rb, kb) => False::elim(less_ne_equal(e))
         TyUnion(xb) => False::elim(less_ne_equal(e))
         TyProduct(xb) => False::elim(less_ne_equal(e))
@@ -415,6 +530,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => Eq::trans(
           Eq::congr(
             (z: List(Ty)) => TyFn(z, ra, ka),
@@ -502,6 +618,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(greater_ne_equal(e))
         TyUnion(xb) => Eq::congr((z: List(Ty)) => TyUnion(z), ty_compare_list_eq(xa, xb, e))
         TyProduct(xb) => False::elim(less_ne_equal(e))
@@ -522,6 +639,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(greater_ne_equal(e))
         TyUnion(xb) => False::elim(greater_ne_equal(e))
         TyProduct(xb) => Eq::congr((z: List(Ty)) => TyProduct(z), ty_compare_list_eq(xa, xb, e))
@@ -542,6 +660,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(greater_ne_equal(e))
         TyUnion(xb) => False::elim(greater_ne_equal(e))
         TyProduct(xb) => False::elim(greater_ne_equal(e))
@@ -579,17 +698,18 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(greater_ne_equal(e))
         TyUnion(xb) => False::elim(greater_ne_equal(e))
         TyProduct(xb) => False::elim(greater_ne_equal(e))
         TyTagged(tb, xb) => False::elim(greater_ne_equal(e))
         TyNamed(nb, xb) => Eq::trans(
           Eq::congr(
-            (z: Text) => TyNamed(z, xa),
-            Ordmap::compare_text_eq(
+            (z: SurfaceName) => TyNamed(z, xa),
+            surface_name_compare_eq(
               na,
               nb,
-              And::left(ty_then_equal(Ordmap::compare_text(na, nb), ty_compare_list(xa, xb), e))
+              And::left(ty_then_equal(surface_name_compare(na, nb), ty_compare_list(xa, xb), e))
             )
           ),
           Eq::congr(
@@ -597,7 +717,7 @@ mutual {
             ty_compare_list_eq(
               xa,
               xb,
-              And::right(ty_then_equal(Ordmap::compare_text(na, nb), ty_compare_list(xa, xb), e))
+              And::right(ty_then_equal(surface_name_compare(na, nb), ty_compare_list(xa, xb), e))
             )
           )
         )
@@ -616,6 +736,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(greater_ne_equal(e))
         TyUnion(xb) => False::elim(greater_ne_equal(e))
         TyProduct(xb) => False::elim(greater_ne_equal(e))
@@ -669,6 +790,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(greater_ne_equal(e))
         TyUnion(xb) => False::elim(greater_ne_equal(e))
         TyProduct(xb) => False::elim(greater_ne_equal(e))
@@ -689,6 +811,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(greater_ne_equal(e))
         TyUnion(xb) => False::elim(greater_ne_equal(e))
         TyProduct(xb) => False::elim(greater_ne_equal(e))
@@ -742,6 +865,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(greater_ne_equal(e))
         TyUnion(xb) => False::elim(greater_ne_equal(e))
         TyProduct(xb) => False::elim(greater_ne_equal(e))
@@ -762,6 +886,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(greater_ne_equal(e))
         TyUnion(xb) => False::elim(greater_ne_equal(e))
         TyProduct(xb) => False::elim(greater_ne_equal(e))
@@ -773,7 +898,7 @@ mutual {
         TyVar(vb) => False::elim(greater_ne_equal(e))
         TyPoly(gb, xb) => Eq::trans(
           Eq::congr(
-            (z: List(Pair(Text, Kind))) => TyPoly(z, xa),
+            (z: List(Text × Kind)) => TyPoly(z, xa),
             cmp_generics_eq(
               ga,
               gb,
@@ -799,6 +924,7 @@ mutual {
         TyNever => False::elim(greater_ne_equal(e))
         TyDecimal => False::elim(greater_ne_equal(e))
         TyFloat => False::elim(greater_ne_equal(e))
+        TyFloat32 => False::elim(greater_ne_equal(e))
         TyFn(pb, rb, kb) => False::elim(greater_ne_equal(e))
         TyUnion(xb) => False::elim(greater_ne_equal(e))
         TyProduct(xb) => False::elim(greater_ne_equal(e))
@@ -833,7 +959,7 @@ mutual {
 }
 
 pub fn ty_eq_step(o: Ordering): Bool {
-  ⊢ Bool from match o {
+  match o {
     Equal => true
     _ => false
   }

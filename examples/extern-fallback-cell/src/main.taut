@@ -1,0 +1,28 @@
+extern {
+  pub struct(affine) Cell {
+    value: i64,
+  }
+
+  pub fn Cell::new(value: i64): Cell {
+    Cell { value: value }
+  }
+
+  pub fn Cell::get(c: &Cell): i64 {
+    c.value
+  }
+
+  pub fn Cell::set(c: &mut Cell, value: i64): Unit {
+    c.value := value
+  }
+}
+
+pub fn Cell::bump(c: &mut Cell): Unit ! {overflow} {
+  Cell::set(c, Cell::get(c) + 1)
+}
+
+perform main(() => {
+  var c := Cell::new(40)
+  Cell::bump(&mut c)
+  Cell::bump(&mut c)
+  show(&Cell::get(&c))
+})

@@ -1,94 +1,42 @@
-# 開発用の実行（`tauto dev`）
+# `tauto dev`
 
-`tauto dev` はプログラムを `tauto run` と同じく Tauto で書いたマシン
-（`totes/vm`）で起動し、ソースが変わるたびに最初から起動し直す。引数は
-`tauto run` と同じで、`(FILE | --tote DIR)`、`--allow-*`、`--steps N`、
-`-- ARGS…` を受け付ける。`--backend eval` を付けると評価器で動かし、
-`--check-ownership` は評価器にしかないので、`--backend` を付けずに
-指定すると評価器で動かす。
-
-マシンは別のプロセスで動くので、再起動のたびにプロセスを止めて起動し直す。
-サーバーの listener は再起動をまたいで残らない。評価器（`--backend eval`）
-では同じプロセスの中で動かし直すので、listener が残る。
+`tauto dev` runs a program like `tauto run` (same arguments, on the machine
+`totes/vm`) and restarts it from scratch whenever its sources change. What
+its effects need is asked once, at the first start; an answer of "this time
+only" covers every restart until `tauto dev` exits.
+`--check-ownership` is refused: the dynamic ownership check runs only with
+`tauto run --backend niri`.
 
 ```bash
-tauto dev --allow-net=127.0.0.1 --tote .
+tauto dev --tote .
 ```
 
-## 既定のファイル
+## Default entry
 
-`tauto run` と `tauto dev` に `FILE` も `--tote DIR` も書かないときは、
-カレントディレクトリから上へ探して最初に見つかる `Tauto.eure` の `run.file` を
-`FILE` として走らせる。パスはその `Tauto.eure` のあるディレクトリから読む。
-`run` のキーは `file` だけで、ほかのキーは誤りにする。`run.file` が無ければ
-引数の誤りになる。コマンドラインに書いた `FILE` や `--tote DIR` が常に優先する。
+With neither `FILE` nor `--tote`, `tauto run` and `tauto dev` run the `run.file`
+of the nearest `Tauto.eure` above the working directory, relative to it. `file`
+is the only key of `run`.
 
 ```eure
-run {
-  file = "app/main.taut"
-}
+run { file = "app/main.taut" }
 ```
 
-## 監視するファイル
+## Watching and restarting
 
-`--tote DIR` なら `DIR`、`FILE` ならそのファイルのあるディレクトリの下を
-再帰的に見る。対象は `.taut`、`.tauto`、`.eure` で、隠しディレクトリと
-`target` は除く。変更は 250 ミリ秒ごとの更新時刻の polling で見つける。
-OS のファイル監視 API には依存しない（依存を増やさず、どの OS でも同じ挙動に
-するため）。ファイルの追加・削除・書き込みのどれでも再起動する。
-監視範囲の外から import したファイル（別ディレクトリの依存 tote や標準
-ライブラリ）の変更は見ない。
+The tote directory, or the file's directory, is polled every 250 ms for
+changes to `.taut`, `.tauto` and `.eure` files, skipping hidden directories and
+`target`. Imports outside it (dependency totes, std) are not watched.
 
-## 再起動の手順
+On a change the new version is loaded and checked while the old one keeps
+running. If the check fails, the error is printed and the old version keeps
+serving. If it passes, the run is stopped and the new `main` starts. A version
+that does not check never runs. The machine runs as a process of its own,
+which is killed on a change; the program never sees an error.
 
-1. 変更を見つけたら、走っている実行はそのままにして、新しい版の読み込みと
-   検査（型、行、`tauto run` と同じ検査）をする。
-2. 検査を通らなければ、エラーを出して古い版を動かし続け、次の変更を待つ。
-   エラーを直している間もサーバーは古い版で要求に答え続ける。
-3. 通れば、走っている実行を止める。マシンはプロセスを止める。評価器は 1024 step ごとに
-   合図を見て、`tcp_accept` の待ちは 10 ミリ秒ごとに合図を見る。止められた
-   実行は、プログラムに失敗を見せずにそこで終わる（`tcp_accept` がエラーを
-   返してプログラムがそれを処理する、ということはない）。
-4. 実行のスレッドが終わるのを待ち、新しい版の `main` を最初から実行する。
+No program state carries over, so each restart behaves like `tauto run`.
 
-検査を通らない版は決して実行しない。古い版は検査を通った版なので、
-それを動かし続けても検査されていないコードが動くことはない。
-起動時の版が検査を通らなければ、何も動かさずに変更を待つ。
+## Output
 
-## 引き継ぐ状態
-
-プログラムの値（変数、ヒープ、途中の継続）は引き継がない。毎回最初から
-動くので、再起動後の振る舞いは `tauto run` で同じ版を起動した場合と同じで、
-古い版の値が新しい版の型で読まれることはない。
-
-引き継ぐのは `tcp_listen` の待ち受けだけ。`tauto dev` の間は待ち受けが
-実行をまたいで残り、新しい実行が同じアドレスを求めると同じ待ち受けが返る。止める実行の `tcp_*` のストリームはすべて閉じるので、待っている
-`tcp_read` も終わり、`tcp_accept` は 10 ミリ秒ごとに合図を見る。そのため再起動のたびにポートが使用中になって失敗する
-ことがなく、クライアントの接続も拒否されない。返事を待っていた接続は
-再起動で閉じる。新しい版が聞かなくなったポートは `tauto dev` が終わるまで
-開いたまま残る。
-
-## 出力とエラー
-
-`tauto run` は出力を実行の終わりにまとめて出すが、`tauto dev` では
-`show`、`print`、`eprint` を起きた時点でそのまま標準出力・標準エラーに書く
-（サーバーのように終わらないプログラムのため）。
-
-`tauto dev` 自身の知らせは `tauto dev:` で始めて標準エラーに出す。
-
-- 起動時: 監視するディレクトリ
-- 変更時: 変わったファイル。検査を通れば起動し直すこと、通らなければ古い版が動き続けること
-- プログラムが終わったとき: 終了（0 以外の終了コードならその値）と、変更待ちであること
-- 検査や実行のエラー: `tauto run` と同じ `FILE:LINE:COL: message` の形
-
-## step 上限
-
-`--steps N` を付けなければ step 数に上限を置かない（サーバーは変更されるまで
-動き続けるため）。`--steps N` を付ければ `tauto run` と同じく、その数で止まる。
-権限は `tauto run` と同じで、何も渡さなければ何も許さない。
-
-## 止められないもの
-
-標準入力の読み込み、`sleep`、外への HTTP 要求のような、評価器の外で
-待っている処理は途中で止められない。再起動はそれが返るまで待つ。
-`tauto dev` 自体は Ctrl-C で終える。
+`show`, `print` and `eprint` are written immediately. `tauto dev`'s own
+messages go to stderr prefixed `tauto dev:`. Without `--steps` there is no
+step limit. Permissions are as in `tauto run`.

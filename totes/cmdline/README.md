@@ -109,7 +109,7 @@ Options:
   -h, --help        Print help
   -V, --version     Print version
 
-$ greet --lod Ryo
+$ greet --lod World
 error: unexpected argument '--lod' found
 
   tip: a similar argument exists: '--loud'

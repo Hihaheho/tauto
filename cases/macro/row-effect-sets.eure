@@ -1,0 +1,84 @@
+// A row a macro writes names effect sets as a hand-written row does: the set
+// is written out to its effects in the same declarations.
+
+@ cases.a-macro-written-row-names-the-prelude-host-set
+files."mac.taut" = ```tauto
+import std::builtin::macro
+
+pub macro fn on_host(tag: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StFn(f) => Cons(StFn(SynFn {
+      name: f.name,
+      generics: f.generics,
+      generic_types: f.generic_types,
+      bounds: f.bounds,
+      params: f.params,
+      r#borrows: f.r#borrows,
+      param_types: f.param_types,
+      result: f.result,
+      effects: Some(Cons(EffName("Host", None), Nil)),
+      where_: f.where_,
+      body: f.body,
+      span: f.span,
+      unused: f.unused,
+      unused_generics: f.unused_generics,
+      unused_params: f.unused_params
+    }), Nil)
+    other => Syn::error(Syn::call_span(), "on a fn")
+  }
+}
+```
+files."main.taut" = ```tauto
+import std::builtin::os { print }
+import "mac.taut" { on_host }
+
+@on_host!(0) => replace fn hello
+fn hello(): Unit {
+  print("hello\n")
+}
+
+```
+entry = "main.taut"
+check_errors = []
+
+@ cases.a-macro-written-row-names-a-set-the-calling-file-declares
+files."mac.taut" = ```tauto
+import std::builtin::macro
+
+pub macro fn on_out(tag: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  match s {
+    StFn(f) => Cons(StFn(SynFn {
+      name: f.name,
+      generics: f.generics,
+      generic_types: f.generic_types,
+      bounds: f.bounds,
+      params: f.params,
+      r#borrows: f.r#borrows,
+      param_types: f.param_types,
+      result: f.result,
+      effects: Some(Cons(EffName("Out", None), Nil)),
+      where_: f.where_,
+      body: f.body,
+      span: f.span,
+      unused: f.unused,
+      unused_generics: f.unused_generics,
+      unused_params: f.unused_params
+    }), Nil)
+    other => Syn::error(Syn::call_span(), "on a fn")
+  }
+}
+```
+files."main.taut" = ```tauto
+import std::builtin::os { print, stdout }
+import "mac.taut" { on_out }
+
+effect Out { stdout }
+
+@on_out!(0) => replace fn hello
+fn hello(): Unit {
+  print("hello\n")
+}
+
+```
+entry = "main.taut"
+check_errors = []

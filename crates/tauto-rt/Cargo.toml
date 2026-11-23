@@ -9,7 +9,7 @@ description = "The run-time library of Rust code generated from tauto: handlers,
 
 [features]
 sync = []
-# `net` of the standard effects (`std/prelude/Os.taut`): an HTTP client.
+# `net` of the standard effects (`std/builtin/os.taut`): an HTTP client.
 net = ["dep:reqwest", "dep:url"]
 # The reactor (`src/reactor.rs`): many tasks on each of a few threads.
 reactor = ["sync", "dep:tokio"]
@@ -30,11 +30,15 @@ getrandom = "=0.3.4"
 
 # `openat` with `O_NOFOLLOW`, for reads that stay under a root.
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "=1.1.2", default-features = false, features = ["std", "fs"] }
+rustix = { version = "=1.1.2", default-features = false, features = ["std", "fs", "event", "net"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-tokio = { version = "=1.53.3", optional = true, default-features = false, features = ["rt", "time", "sync"] }
+tokio = { version = "=1.53.3", optional = true, default-features = false, features = ["rt", "time", "sync", "net"] }
 
 [dev-dependencies]
 rustls = { version = "=0.23.46", default-features = false, features = ["aws_lc_rs", "std"] }
 rcgen = { version = "=0.14.10", default-features = false, features = ["aws_lc_rs", "pem"] }
+
+[[test]]
+name = "main_thread"
+harness = false

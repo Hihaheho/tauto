@@ -1,9 +1,9 @@
 import "field_recheck_frame.taut"
 import "data_names_sound.taut"
 import "decl_names_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas_frame.taut"
 import "datas_registration.taut"
@@ -11,6 +11,9 @@ import "instances_frame.taut"
 import "signature_frame.taut"
 import "summary_state.taut"
 import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
@@ -22,25 +25,28 @@ pub fn registration_fns_after_fields(
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    List(SurfaceFn),
-    List(Pair(SurfaceFn, Scheme)),
+    <A: List(SurfaceFn), B: List(SurfaceFn × Scheme)>,
     (synthesized: List(SurfaceFn), c1: Checker) => frame_bind(
-      Unit,
-      List(Pair(SurfaceFn, Scheme)),
+      <A: Unit, B: List(SurfaceFn × Scheme)>,
       (ignored: Unit, c2: Checker) => frame_bind(
-        List(Pair(SurfaceFn, Scheme)),
-        List(Pair(SurfaceFn, Scheme)),
-        (fns: List(Pair(SurfaceFn, Scheme)), c3: Checker) => mut1(
-          List::append(fns, ck_synthesized_schemes(synthesized, c3)),
+        <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+        (fns: List(SurfaceFn × Scheme), c3: Checker) => mut1(
+          List::append(
+            fns,
+            List::append(
+              ck_program_replaceable_fns(program, c3),
+              ck_synthesized_schemes(synthesized, c3)
+            )
+          ),
           c3
         ),
         ck_program_decls(program, c2)
       ),
       ck_prelude_fns(prelude, c1, own)
     ),
-    ck_declare_classes(c, program)
+    ck_declare_all_classes(c, prelude, program)
   )
 }
 
@@ -51,34 +57,41 @@ pub theorem registration_fns_after_fields_frame(
   own: Ordmap(Text, Bool)
 ): CkReadFrame(c, registration_fns_after_fields(c, prelude, program, own)) {
   frame_bind_ok(
-    List(SurfaceFn),
-    List(Pair(SurfaceFn, Scheme)),
+    <A: List(SurfaceFn), B: List(SurfaceFn × Scheme)>,
     c,
     (synthesized: List(SurfaceFn), c1: Checker) => frame_bind(
-      Unit,
-      List(Pair(SurfaceFn, Scheme)),
+      <A: Unit, B: List(SurfaceFn × Scheme)>,
       (ignored: Unit, c2: Checker) => frame_bind(
-        List(Pair(SurfaceFn, Scheme)),
-        List(Pair(SurfaceFn, Scheme)),
-        (fns: List(Pair(SurfaceFn, Scheme)), c3: Checker) => mut1(
-          List::append(fns, ck_synthesized_schemes(synthesized, c3)),
+        <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+        (fns: List(SurfaceFn × Scheme), c3: Checker) => mut1(
+          List::append(
+            fns,
+            List::append(
+              ck_program_replaceable_fns(program, c3),
+              ck_synthesized_schemes(synthesized, c3)
+            )
+          ),
           c3
         ),
         ck_program_decls(program, c2)
       ),
       ck_prelude_fns(prelude, c1, own)
     ),
-    ck_declare_classes(c, program),
-    ck_declare_classes_frame(c, program),
+    ck_declare_all_classes(c, prelude, program),
+    ck_declare_all_classes_frame(c, prelude, program),
     synthesized => c1 => frame_bind_ok(
-      Unit,
-      List(Pair(SurfaceFn, Scheme)),
+      <A: Unit, B: List(SurfaceFn × Scheme)>,
       c1,
       (ignored: Unit, c2: Checker) => frame_bind(
-        List(Pair(SurfaceFn, Scheme)),
-        List(Pair(SurfaceFn, Scheme)),
-        (fns: List(Pair(SurfaceFn, Scheme)), c3: Checker) => mut1(
-          List::append(fns, ck_synthesized_schemes(synthesized, c3)),
+        <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+        (fns: List(SurfaceFn × Scheme), c3: Checker) => mut1(
+          List::append(
+            fns,
+            List::append(
+              ck_program_replaceable_fns(program, c3),
+              ck_synthesized_schemes(synthesized, c3)
+            )
+          ),
           c3
         ),
         ck_program_decls(program, c2)
@@ -86,11 +99,16 @@ pub theorem registration_fns_after_fields_frame(
       ck_prelude_fns(prelude, c1, own),
       ck_prelude_fns_frame(prelude, c1, own),
       ignored => c2 => frame_bind_ok(
-        List(Pair(SurfaceFn, Scheme)),
-        List(Pair(SurfaceFn, Scheme)),
+        <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
         c2,
-        (fns: List(Pair(SurfaceFn, Scheme)), c3: Checker) => mut1(
-          List::append(fns, ck_synthesized_schemes(synthesized, c3)),
+        (fns: List(SurfaceFn × Scheme), c3: Checker) => mut1(
+          List::append(
+            fns,
+            List::append(
+              ck_program_replaceable_fns(program, c3),
+              ck_synthesized_schemes(synthesized, c3)
+            )
+          ),
           c3
         ),
         ck_program_decls(program, c2),
@@ -106,10 +124,9 @@ pub fn registration_fns_after_names(
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     (ignored: Unit, next: Checker) => registration_fns_after_fields(next, prelude, program, own),
     ck_recheck_datas(types_data_decls(program), c)
   )
@@ -121,8 +138,7 @@ pub theorem registration_fns_after_names_frame(
   own: Ordmap(Text, Bool)
 ): CkReadFrame(c, registration_fns_after_names(c, prelude, program, own)) {
   frame_bind_ok(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     c,
     (ignored: Unit, next: Checker) => registration_fns_after_fields(next, prelude, program, own),
     ck_recheck_datas(types_data_decls(program), c),
@@ -136,10 +152,9 @@ pub fn registration_fns_after_data_names(
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     (ignored: Unit, next: Checker) => registration_fns_after_names(next, prelude, program, own),
     ck_check_fn_names(c, types_function_decls(program))
   )
@@ -151,8 +166,7 @@ pub theorem registration_fns_after_data_names_frame(
   own: Ordmap(Text, Bool)
 ): CkReadFrame(c, registration_fns_after_data_names(c, prelude, program, own)) {
   frame_bind_ok(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     c,
     (ignored: Unit, next: Checker) => registration_fns_after_names(next, prelude, program, own),
     ck_check_fn_names(c, types_function_decls(program)),
@@ -166,10 +180,9 @@ pub fn registration_fns(
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     (ignored: Unit, next: Checker) => registration_fns_after_data_names(
       next,
       prelude,
@@ -186,8 +199,7 @@ pub theorem registration_fns_frame(
   own: Ordmap(Text, Bool)
 ): CkReadFrame(c, registration_fns(c, prelude, program, own)) {
   frame_bind_ok(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     c,
     (ignored: Unit, next: Checker) => registration_fns_after_data_names(
       next,
@@ -214,7 +226,7 @@ pub theorem ck_prepare_fns_frame(
   own: Ordmap(Text, Bool)
 ): CkReadFrame(c, ck_prepare_fns(c, prelude, program, own)) {
   Eq::subst(
-    (z: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkReadFrame(c, z),
+    (z: Mut1(List(SurfaceFn × Scheme), Checker)) => CkReadFrame(c, z),
     Eq::sym(registration_fns_unf(c, prelude, program, own)),
     registration_fns_frame(c, prelude, program, own)
   )
@@ -239,10 +251,9 @@ pub fn registration_after_datas(
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     (ignored: Unit, next: Checker) => ck_prepare_fns(next, prelude, program, own),
     ck_prepare_datas(c, prelude, program, own)
   )
@@ -256,8 +267,7 @@ pub theorem registration_after_datas_ok(
 ): CkSummaryOk(
   ck_st(
     frame_bind(
-      Unit,
-      List(Pair(SurfaceFn, Scheme)),
+      <A: Unit, B: List(SurfaceFn × Scheme)>,
       (ignored: Unit, next: Checker) => ck_prepare_fns(next, prelude, program, own),
       m
     )
@@ -266,8 +276,7 @@ pub theorem registration_after_datas_ok(
   ⊢ CkSummaryOk(
     ck_st(
       frame_bind(
-        Unit,
-        List(Pair(SurfaceFn, Scheme)),
+        <A: Unit, B: List(SurfaceFn × Scheme)>,
         (ignored: Unit, next: Checker) => ck_prepare_fns(next, prelude, program, own),
         m
       )

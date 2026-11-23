@@ -1,8 +1,8 @@
 import "rules_where.taut"
 import "kind_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 
@@ -13,37 +13,26 @@ pub theorem where_class_structural(
   structural: class_is_structural(name) = true
 ): WhereClass(classes, name) {
   kyn_or_true(
-    Bool::or(Text::eq(name, "PartialEq"), Text::eq(name, "DecEq")),
-    Text::eq(name, "Hash"),
+    Text::eq(name, "PartialEq"),
+    Text::eq(name, "DecEq"),
     WhereClass(classes, name),
     structural,
-    first => kyn_or_true(
-      Text::eq(name, "PartialEq"),
-      Text::eq(name, "DecEq"),
-      WhereClass(classes, name),
-      first,
-      partial => Eq::subst(
-        (n: Text) => WhereClass(classes, n),
-        Eq::sym(text_eq_true(name, "PartialEq", partial)),
-        WhereClassPartialEq
-      ),
-      decidable => Eq::subst(
-        (n: Text) => WhereClass(classes, n),
-        Eq::sym(text_eq_true(name, "DecEq", decidable)),
-        WhereClassDecEq
-      )
-    ),
-    hashed => Eq::subst(
+    partial => Eq::subst(
       (n: Text) => WhereClass(classes, n),
-      Eq::sym(text_eq_true(name, "Hash", hashed)),
-      WhereClassHash
+      Eq::sym(text_eq_true(name, "PartialEq", partial)),
+      WhereClassPartialEq
+    ),
+    decidable => Eq::subst(
+      (n: Text) => WhereClass(classes, n),
+      Eq::sym(text_eq_true(name, "DecEq", decidable)),
+      WhereClassDecEq
     )
   )
 }
 pub fn where_class_present(info: Option(ClassInfo)): Bool {
-  ⊢ Bool from match info {
+  match info {
     None => false
-    Some(decl) => true
+    Some(^decl) => true
   }
 }
 pub theorem where_class_lookup(
@@ -53,7 +42,7 @@ pub theorem where_class_lookup(
   found: Ordmap::get(classes, name, Ordmap::compare_text) = info,
   present: where_class_present(info) = true
 ): WhereClass(classes, name) {
-  ⊢ WhereClass(classes, name) from match info {
+  match info {
     None => False::elim(false_ne_true(present))
     Some(decl) => WhereClassDeclared(name, decl, found)
   }
@@ -74,7 +63,7 @@ pub theorem where_class_allowed(
   declared: Ordmap::contains(classes, name, Ordmap::compare_text) = present,
   allowed: Bool::and(not(structural), not(present)) = false
 ): WhereClass(classes, name) {
-  ⊢ WhereClass(classes, name) from match structural {
+  match structural {
     true => where_class_structural(classes, name, built_in)
     false => ⊢ WhereClass(classes, name) from match present {
       true => where_class_contains(classes, name, declared)

@@ -1,0 +1,926 @@
+import std::prelude::std { Option }
+import std::prelude::collections { Vec }
+import std::base { Nat }
+import std::nat { Nat }
+import std::uhost { UHost }
+import std::slots { OccLaws, Prefix, Proxy, SlotsModel, occ_laws, sel_true }
+
+// `Prefix` as the functions `SlotsModel` takes (the class's methods at
+// `Prefix`, `Unit`), and its laws as one value.
+pub fn pf_used(s: Prefix, i: UHost, m: Unit): Bool { Prefix::used(s, i) }
+pub fn pf_empty(c: UHost): Prefix { Prefix::empty(c) }
+pub fn pf_cap(s: Prefix): UHost { Prefix::cap(s) }
+pub fn pf_put(s: Prefix, i: UHost, old: Unit, new: Unit): Option(Prefix) { Prefix::put(s, i) }
+pub fn pf_take(s: Prefix, i: UHost, old: Unit, new: Unit): Option(Prefix) { Prefix::take(s, i) }
+pub fn pf_recap(s: Prefix, c: UHost): Option(Prefix) { Prefix::recap(s, c) }
+pub fn pf_full(s: Prefix, lo: UHost, hi: UHost): Bool { UHost::le(hi, Prefix::len(s)) }
+
+pub theorem pf_laws(): OccLaws(
+  Prefix,
+  Unit,
+  pf_used,
+  pf_empty,
+  Star,
+  pf_cap,
+  pf_put,
+  pf_take,
+  pf_recap,
+  pf_full
+) {
+  occ_laws(<S: Prefix, M: Unit>, Proxy::Mk, Proxy::Mk)
+}
+
+// A vector as the proofs see it: slots whose policy is `Prefix`, and whose
+// every slot below the length has an element (the model's proof field).
+// The operations take the vector and give it back, as the program's `&mut`
+// reads. Every function has an empty row: no `uhost_*` effect appears.
+pub fn VecModel::new<A: Linear>(): SlotsModel(Prefix, Unit, A, pf_used) {
+  SlotsModel::new(UHost::zero(), pf_laws())
+}
+
+pub fn VecModel::len<A: Linear>(v: &SlotsModel(Prefix, Unit, A, pf_used)): UHost {
+  Prefix::len(SlotsModel::state(v))
+}
+
+pub fn VecModel::capacity<A: Linear>(v: &SlotsModel(Prefix, Unit, A, pf_used)): UHost {
+  Prefix::cap(SlotsModel::state(v))
+}
+
+// The element at `i`, given that `i < len`.
+pub fn VecModel::get<A: Linear>(
+  v: &SlotsModel(Prefix, Unit, A, pf_used),
+  i: UHost,
+  h: UHost::lt(i, VecModel::len(v)) = true
+): &A {
+  SlotsModel::get(v, i, h)
+}
+
+// The element at `i`, for writing in place, given that `i < len`.
+pub fn VecModel::get_mut<A: Linear>(
+  v: &mut SlotsModel(Prefix, Unit, A, pf_used),
+  i: UHost,
+  h: UHost::lt(i, VecModel::len(v)) = true
+): &mut A {
+  SlotsModel::get_mut(v, i, h)
+}
+
+// The element at `i`, for writing in place, when `i` is in range.
+pub fn VecModel::get_mut_at<A: Linear>(
+  v: &mut SlotsModel(Prefix, Unit, A, pf_used),
+  i: UHost
+): Option(&mut A) {
+  match UHost::lt(i, VecModel::len(v)) eqn q {
+    true => Some(VecModel::get_mut(v, i, q))
+    false => None
+  }
+}
+
+// Calls `f` on each index from `i`, at most `left` of them, for writing in place.
+pub fn VecModel::each_mut_from<A: Linear>(
+  v: &mut SlotsModel(Prefix, Unit, A, pf_used),
+  f: &((x: &mut A) -> Unit),
+  i: UHost,
+  left: Nat
+): Unit {
+  match left {
+    Zero => #()
+    Succ(rest) => match UHost::lt(i, VecModel::len(v)) eqn q {
+      false => #()
+      true => {
+        match VecModel::get_mut(v, i, q) {
+          x => f(x)
+        }
+        VecModel::each_mut_from(&mut v, f, UHost::succ_below_proved(i, VecModel::len(v), q), rest)
+      }
+    }
+  }
+}
+
+// Calls `f` on every element once, for writing in place.
+pub fn VecModel::each_mut<A: Linear>(
+  v: &mut SlotsModel(Prefix, Unit, A, pf_used),
+  f: &((x: &mut A) -> Unit)
+): Unit {
+  VecModel::each_mut_from(&mut v, f, UHost::lit(0, Refl), UHost::val(VecModel::len(v)))
+}
+
+// All the elements: the function from a number below the length.
+pub fn VecModel::as_slice<A: Linear>(
+  v: &SlotsModel(Prefix, Unit, A, pf_used)
+): ∀ j: UHost. (UHost::le(UHost::zero(), j) = true) -> (UHost::lt(j, VecModel::len(v)) = true) -> A {
+  SlotsModel::slice(
+    v,
+    UHost::zero(),
+    VecModel::len(v),
+    pf_laws(),
+    Nat::le_refl(UHost::val(VecModel::len(v)))
+  )
+}
+
+// The vector with the capacity the allocator granted, `g` at least the length.
+pub ghost fn VecModel::regrown<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  g: UHost,
+  qg: UHost::lt(VecModel::len(v), g) = true
+): SlotsModel(Prefix, Unit, A, pf_used) {
+  SlotsModel::resize(
+    v,
+    g,
+    Prefix::Mk(
+      VecModel::len(v),
+      g,
+      Nat::le_trans(
+        UHost::val(VecModel::len(v)),
+        Succ(UHost::val(VecModel::len(v))),
+        UHost::val(g),
+        Nat::le_succ(UHost::val(VecModel::len(v))),
+        qg
+      )
+    ),
+    pf_laws(),
+    Prefix::recap_mk(
+      SlotsModel::state(v),
+      g,
+      Nat::le_trans(
+        UHost::val(VecModel::len(v)),
+        Succ(UHost::val(VecModel::len(v))),
+        UHost::val(g),
+        Nat::le_succ(UHost::val(VecModel::len(v))),
+        qg
+      )
+    )
+  )
+}
+
+// Put at the end, where there is room.
+pub ghost fn VecModel::put_end<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true
+): SlotsModel(Prefix, Unit, A, pf_used) {
+  SlotsModel::put(
+    v,
+    VecModel::len(v),
+    Star,
+    x,
+    Prefix::grown(SlotsModel::state(v), q),
+    pf_laws(),
+    Prefix::put_grown(SlotsModel::state(v), q)
+  )
+}
+
+// The element at the end, then: `push` into a vector that has no room.
+pub ghost fn VecModel::grow_put<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  qg: UHost::lt(VecModel::len(v), g) = true
+): SlotsModel(Prefix, Unit, A, pf_used) {
+  VecModel::put_end(VecModel::regrown(v, g, qg), x, qg)
+}
+
+// `push`, with the decisions of its two tests given: whether there is room,
+// and whether the granted capacity `g` (asked for by the program, answered by
+// the allocator) is above the length. `None` is the allocation that gave too little.
+pub ghost fn VecModel::push_of<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  b: Bool,
+  hb: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = b,
+  b2: Bool,
+  hb2: UHost::lt(VecModel::len(v), g) = b2
+): Option(SlotsModel(Prefix, Unit, A, pf_used)) {
+  match b {
+    true => Some(VecModel::put_end(v, x, hb))
+    false => match b2 {
+      true => Some(VecModel::grow_put(v, x, g, hb2))
+      false => None
+    }
+  }
+}
+
+pub ghost fn VecModel::push<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost
+): Option(SlotsModel(Prefix, Unit, A, pf_used)) {
+  let b := UHost::lt(VecModel::len(v), VecModel::capacity(v))
+  let b2 := UHost::lt(VecModel::len(v), g)
+  VecModel::push_of(v, x, g, b, Refl, b2, Refl)
+}
+
+pub theorem VecModel::push_of_room<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  b: Bool,
+  hb: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = b,
+  b2: Bool,
+  hb2: UHost::lt(VecModel::len(v), g) = b2,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true,
+  e: b = true
+): VecModel::push_of(v, x, g, b, hb, b2, hb2) = Some(VecModel::put_end(v, x, q)) {
+  match b {
+    true => Refl
+    false => False::elim(false_ne_true(e))
+  }
+}
+
+pub theorem VecModel::push_of_grow<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  b: Bool,
+  hb: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = b,
+  b2: Bool,
+  hb2: UHost::lt(VecModel::len(v), g) = b2,
+  qg: UHost::lt(VecModel::len(v), g) = true,
+  e: b = false,
+  e2: b2 = true
+): VecModel::push_of(v, x, g, b, hb, b2, hb2) = Some(VecModel::grow_put(v, x, g, qg)) {
+  match b {
+    true => False::elim(true_ne_false(e))
+    false => match b2 {
+      true => Refl
+      false => False::elim(false_ne_true(e2))
+    }
+  }
+}
+
+pub theorem VecModel::push_of_none<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  b: Bool,
+  hb: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = b,
+  b2: Bool,
+  hb2: UHost::lt(VecModel::len(v), g) = b2,
+  e: b = false,
+  e2: b2 = false
+): VecModel::push_of(v, x, g, b, hb, b2, hb2) = None(<A: SlotsModel(Prefix, Unit, A, pf_used)>) {
+  match b {
+    true => False::elim(true_ne_false(e))
+    false => match b2 {
+      true => False::elim(true_ne_false(e2))
+      false => Refl
+    }
+  }
+}
+
+// Room: `push` is the `put` at the end.
+pub theorem VecModel::push_room<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true
+): VecModel::push(v, x, g) = Some(VecModel::put_end(v, x, q)) {
+  VecModel::push_of_room(
+    v,
+    x,
+    g,
+    UHost::lt(VecModel::len(v), VecModel::capacity(v)),
+    Refl,
+    UHost::lt(VecModel::len(v), g),
+    Refl,
+    q,
+    q
+  )
+}
+
+// No room, and the allocator gave more than the length: the `put` at the end of the regrown vector.
+pub theorem VecModel::push_grow<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  q0: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = false,
+  qg: UHost::lt(VecModel::len(v), g) = true
+): VecModel::push(v, x, g) = Some(VecModel::grow_put(v, x, g, qg)) {
+  VecModel::push_of_grow(
+    v,
+    x,
+    g,
+    UHost::lt(VecModel::len(v), VecModel::capacity(v)),
+    Refl,
+    UHost::lt(VecModel::len(v), g),
+    Refl,
+    qg,
+    q0,
+    qg
+  )
+}
+
+// No room, and the allocator gave too little: `None`.
+pub theorem VecModel::push_full<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  q0: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = false,
+  q1: UHost::lt(VecModel::len(v), g) = false
+): VecModel::push(v, x, g) = None(<A: SlotsModel(Prefix, Unit, A, pf_used)>) {
+  VecModel::push_of_none(
+    v,
+    x,
+    g,
+    UHost::lt(VecModel::len(v), VecModel::capacity(v)),
+    Refl,
+    UHost::lt(VecModel::len(v), g),
+    Refl,
+    q0,
+    q1
+  )
+}
+
+// `push` makes the vector one longer, with the same-or-regrown capacity.
+pub theorem VecModel::put_end_len<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true
+): UHost::val(VecModel::len(VecModel::put_end(v, x, q))) = Succ(UHost::val(VecModel::len(v))) {
+  Refl
+}
+
+pub theorem VecModel::grow_put_len<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  qg: UHost::lt(VecModel::len(v), g) = true
+): UHost::val(VecModel::len(VecModel::grow_put(v, x, g, qg))) = Succ(UHost::val(VecModel::len(v))) {
+  Refl
+}
+
+pub theorem VecModel::grow_put_cap<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  qg: UHost::lt(VecModel::len(v), g) = true
+): VecModel::capacity(VecModel::grow_put(v, x, g, qg)) = g {
+  Refl
+}
+
+// The element pushed is at the old length.
+pub theorem VecModel::put_end_get<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true,
+  h: UHost::lt(VecModel::len(v), VecModel::len(VecModel::put_end(v, x, q))) = true
+): VecModel::get(VecModel::put_end(v, x, q), VecModel::len(v), h) = x {
+  SlotsModel::get_put_same(
+    v,
+    VecModel::len(v),
+    Star,
+    x,
+    Prefix::grown(SlotsModel::state(v), q),
+    pf_laws(),
+    Prefix::put_grown(SlotsModel::state(v), q),
+    h
+  )
+}
+
+pub theorem VecModel::grow_put_get<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  qg: UHost::lt(VecModel::len(v), g) = true,
+  h: UHost::lt(VecModel::len(v), VecModel::len(VecModel::grow_put(v, x, g, qg))) = true
+): VecModel::get(VecModel::grow_put(v, x, g, qg), VecModel::len(v), h) = x {
+  SlotsModel::get_put_same(
+    VecModel::regrown(v, g, qg),
+    VecModel::len(v),
+    Star,
+    x,
+    Prefix::grown(SlotsModel::state(VecModel::regrown(v, g, qg)), qg),
+    pf_laws(),
+    Prefix::put_grown(SlotsModel::state(VecModel::regrown(v, g, qg)), qg),
+    h
+  )
+}
+
+pub theorem VecModel::succ_pred_eq(
+  k: Nat,
+  q0: Nat::eq(k, 0) = false
+): Nat::eq(Succ(Nat::pred(k)), k) = true {
+  match k {
+    Zero => False::elim(true_ne_false(q0))
+    Succ(k2) => Nat::eq_refl(Succ(k2))
+  }
+}
+
+// The number of the last element, in a vector that is not empty.
+pub fn VecModel::last_index<A: Linear>(
+  v: &SlotsModel(Prefix, Unit, A, pf_used),
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false
+): UHost {
+  UHost::pred_nz_proved(VecModel::len(v), Nat::ne_zero(UHost::val(VecModel::len(v)), q0))
+}
+
+pub theorem VecModel::last_ok<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false
+): Nat::eq(Succ(UHost::val(VecModel::last_index(v, q0))), UHost::val(VecModel::len(v))) = true {
+  VecModel::succ_pred_eq(UHost::val(VecModel::len(v)), q0)
+}
+
+pub theorem VecModel::last_lt<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false
+): UHost::lt(VecModel::last_index(v, q0), VecModel::len(v)) = true {
+  Prefix::succ_lt(
+    UHost::val(VecModel::last_index(v, q0)),
+    UHost::val(VecModel::len(v)),
+    Nat::eq_sound(
+      Succ(UHost::val(VecModel::last_index(v, q0))),
+      UHost::val(VecModel::len(v)),
+      VecModel::last_ok(v, q0)
+    )
+  )
+}
+
+// The vector without its last element...
+pub fn VecModel::pop_rest<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false
+): SlotsModel(Prefix, Unit, A, pf_used) {
+  SlotsModel::take_rest(
+    v,
+    VecModel::last_index(v, q0),
+    Star,
+    Prefix::shrunk(SlotsModel::state(v), VecModel::last_index(v, q0), VecModel::last_ok(v, q0)),
+    pf_laws(),
+    Prefix::take_shrunk(SlotsModel::state(v), VecModel::last_index(v, q0), VecModel::last_ok(v, q0))
+  )
+}
+
+// ... and the last element.
+pub fn VecModel::pop_elem<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false
+): A {
+  SlotsModel::take_elem(
+    v,
+    VecModel::last_index(v, q0),
+    Star,
+    Prefix::shrunk(SlotsModel::state(v), VecModel::last_index(v, q0), VecModel::last_ok(v, q0)),
+    pf_laws(),
+    Prefix::take_shrunk(SlotsModel::state(v), VecModel::last_index(v, q0), VecModel::last_ok(v, q0))
+  )
+}
+
+// `pop`, with the decision of `len = 0` given. `None` is the empty vector.
+pub fn VecModel::pop_of<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  b: Bool,
+  hb: Nat::eq(UHost::val(VecModel::len(v)), 0) = b
+): Option(SlotsModel(Prefix, Unit, A, pf_used) × A) {
+  match b {
+    true => None
+    false => Some(#(VecModel::pop_rest(v, hb), VecModel::pop_elem(v, hb)))
+  }
+}
+
+pub fn VecModel::pop<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used)
+): Option(SlotsModel(Prefix, Unit, A, pf_used) × A) {
+  VecModel::pop_of(v, Nat::eq(UHost::val(VecModel::len(v)), 0), Refl)
+}
+
+pub theorem VecModel::pop_of_some<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  b: Bool,
+  hb: Nat::eq(UHost::val(VecModel::len(v)), 0) = b,
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false,
+  e: b = false
+): VecModel::pop_of(v, b, hb) = Some(#(VecModel::pop_rest(v, q0), VecModel::pop_elem(v, q0))) {
+  match b {
+    true => False::elim(true_ne_false(e))
+    false => Refl
+  }
+}
+
+pub theorem VecModel::pop_of_none<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  b: Bool,
+  hb: Nat::eq(UHost::val(VecModel::len(v)), 0) = b,
+  e: b = true
+): VecModel::pop_of(v, b, hb) = None(<A: SlotsModel(Prefix, Unit, A, pf_used) × A>) {
+  match b {
+    true => Refl
+    false => False::elim(false_ne_true(e))
+  }
+}
+
+// A vector that is not empty: `pop` is its last element and the rest.
+pub theorem VecModel::pop_some<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false
+): VecModel::pop(v) = Some(#(VecModel::pop_rest(v, q0), VecModel::pop_elem(v, q0))) {
+  VecModel::pop_of_some(v, Nat::eq(UHost::val(VecModel::len(v)), 0), Refl, q0, q0)
+}
+
+// An empty vector: `pop` is `None`.
+pub theorem VecModel::pop_empty<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  q1: Nat::eq(UHost::val(VecModel::len(v)), 0) = true
+): VecModel::pop(v) = None(<A: SlotsModel(Prefix, Unit, A, pf_used) × A>) {
+  VecModel::pop_of_none(v, Nat::eq(UHost::val(VecModel::len(v)), 0), Refl, q1)
+}
+
+// The rest is one shorter.
+pub theorem VecModel::pop_rest_len<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false
+): UHost::val(VecModel::len(VecModel::pop_rest(v, q0))) = Nat::pred(UHost::val(VecModel::len(v))) {
+  Refl
+}
+
+// The last element is the one `get` gives at the last number.
+pub theorem VecModel::pop_elem_is_get<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false
+): VecModel::pop_elem(
+  v,
+  q0
+) = VecModel::get(v, VecModel::last_index(v, q0), VecModel::last_lt(v, q0)) {
+  Refl
+}
+
+// The element popped from a vector just pushed to is the one pushed.
+pub theorem VecModel::pop_elem_put_end<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true
+): VecModel::pop_elem(VecModel::put_end(v, x, q), Refl) = x {
+  SlotsModel::get_eq(
+    VecModel::put_end(v, x, q),
+    VecModel::last_index(VecModel::put_end(v, x, q), Refl),
+    VecModel::last_lt(VecModel::put_end(v, x, q), Refl),
+    x,
+    sel_true(
+      UHost::eq(VecModel::len(v), VecModel::last_index(VecModel::put_end(v, x, q), Refl)),
+      Some(x),
+      SlotsModel::at(v)(VecModel::last_index(VecModel::put_end(v, x, q), Refl)),
+      Nat::eq_refl(UHost::val(VecModel::len(v)))
+    )
+  )
+}
+
+// Push then pop: the element comes back, and the rest is the vector as it was
+// in length.
+pub theorem VecModel::pop_put_end<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true
+): VecModel::pop(
+  VecModel::put_end(v, x, q)
+) = Some(#(VecModel::pop_rest(VecModel::put_end(v, x, q), Refl), x)) {
+  Eq::trans(
+    VecModel::pop_some(VecModel::put_end(v, x, q), Refl),
+    Eq::congr(
+      ⟦Some(#(VecModel::pop_rest(VecModel::put_end(v, x, q), Refl), □))⟧,
+      VecModel::pop_elem_put_end(v, x, q)
+    )
+  )
+}
+
+pub theorem VecModel::pop_put_end_len<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true
+): UHost::val(
+  VecModel::len(VecModel::pop_rest(VecModel::put_end(v, x, q), Refl))
+) = UHost::val(VecModel::len(v)) {
+  Refl
+}
+
+// `push` into a vector with room, then `pop`.
+pub theorem VecModel::push_pop_room<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true
+): (
+  VecModel::push(
+    v,
+    x,
+    g
+  ) = Some(
+    VecModel::put_end(v, x, q)
+  ) ∧ (
+    (
+      VecModel::pop(
+        VecModel::put_end(v, x, q)
+      ) = Some(
+        #(VecModel::pop_rest(VecModel::put_end(v, x, q), Refl), x)
+      ) ∧ UHost::val(
+        VecModel::len(VecModel::pop_rest(VecModel::put_end(v, x, q), Refl))
+      ) = UHost::val(VecModel::len(v))
+    )
+  )
+) {
+  AndIntro(
+    VecModel::push_room(v, x, g, q),
+    AndIntro(VecModel::pop_put_end(v, x, q), VecModel::pop_put_end_len(v, x, q))
+  )
+}
+
+// `push` into a full vector, regrown to `g`, then `pop`.
+pub theorem VecModel::push_pop_grow<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  q0: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = false,
+  qg: UHost::lt(VecModel::len(v), g) = true
+): (
+  VecModel::push(
+    v,
+    x,
+    g
+  ) = Some(
+    VecModel::grow_put(v, x, g, qg)
+  ) ∧ (
+    (
+      VecModel::pop(
+        VecModel::grow_put(v, x, g, qg)
+      ) = Some(
+        #(VecModel::pop_rest(VecModel::grow_put(v, x, g, qg), Refl), x)
+      ) ∧ UHost::val(
+        VecModel::len(VecModel::pop_rest(VecModel::grow_put(v, x, g, qg), Refl))
+      ) = UHost::val(VecModel::len(v))
+    )
+  )
+) {
+  AndIntro(
+    VecModel::push_grow(v, x, g, q0, qg),
+    AndIntro(
+      VecModel::pop_put_end(VecModel::regrown(v, g, qg), x, qg),
+      VecModel::pop_put_end_len(VecModel::regrown(v, g, qg), x, qg)
+    )
+  )
+}
+
+// Not only a law: the computation evaluates. A new vector has no room, so the
+// first push regrows to the granted capacity 4, puts, and the pop reads it back.
+pub ghost fn first_back(x: Nat): Option(Nat) {
+  match VecModel::push(VecModel::new(), x, UHost::lit(4, Refl)) {
+    Some(v) => match VecModel::pop(v) {
+      Some(#(rest, y)) => Some(y)
+      None => None
+    }
+    None => None
+  }
+}
+
+pub theorem first_back_is(x: Nat): first_back(x) = Some(x) {
+  Refl
+}
+
+pub ghost fn lengths(x: Nat): Option(Nat × Nat) {
+  match VecModel::push(VecModel::new(), x, UHost::lit(4, Refl)) {
+    Some(v) => Some(#(UHost::val(VecModel::len(v)), UHost::val(VecModel::capacity(v))))
+    None => None
+  }
+}
+
+pub theorem lengths_are(x: Nat): lengths(x) = Some(#(1, 4)) {
+  Refl
+}
+
+// ---- the total operations through `&mut`, with proofs about the lent vector ----
+
+// A push that has room: the proof of room is an argument about the lent vector.
+pub fn VecModel::push_room_m<A: Linear>(
+  v: &mut SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true
+): Unit {
+  SlotsModel::put_m(
+    &mut v,
+    VecModel::len(v),
+    Star,
+    x,
+    Prefix::grown(SlotsModel::state(v), q),
+    pf_laws(),
+    Prefix::put_grown(SlotsModel::state(v), q)
+  )
+}
+
+// The state `regrown` gives: the length as it is, the capacity `g`.
+pub fn VecModel::regrown_state<A: Linear>(
+  v: &SlotsModel(Prefix, Unit, A, pf_used),
+  g: UHost,
+  qg: UHost::lt(VecModel::len(v), g) = true
+): Prefix {
+  Prefix::Mk(
+    VecModel::len(v),
+    g,
+    Nat::le_trans(
+      UHost::val(VecModel::len(v)),
+      Succ(UHost::val(VecModel::len(v))),
+      UHost::val(g),
+      Nat::le_succ(UHost::val(VecModel::len(v))),
+      qg
+    )
+  )
+}
+
+// A push into a full vector, regrown to the granted capacity `g` (above the length).
+pub fn VecModel::push_grow_m<A: Linear>(
+  v: &mut SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  qg: UHost::lt(VecModel::len(v), g) = true
+): Unit {
+  SlotsModel::resize_put_m(
+    &mut v,
+    g,
+    VecModel::regrown_state(v, g, qg),
+    VecModel::len(v),
+    Star,
+    x,
+    Prefix::grown(VecModel::regrown_state(v, g, qg), qg),
+    pf_laws(),
+    Prefix::recap_mk(
+      SlotsModel::state(v),
+      g,
+      Nat::le_trans(
+        UHost::val(VecModel::len(v)),
+        Succ(UHost::val(VecModel::len(v))),
+        UHost::val(g),
+        Nat::le_succ(UHost::val(VecModel::len(v))),
+        qg
+      )
+    ),
+    Prefix::put_grown(VecModel::regrown_state(v, g, qg), qg)
+  )
+}
+
+// A read whose precondition is a proof about the lent vector.
+pub fn VecModel::get_m<A: Linear>(
+  v: &SlotsModel(Prefix, Unit, A, pf_used),
+  i: UHost,
+  h: UHost::lt(i, VecModel::len(v)) = true
+): &A {
+  VecModel::get(v, i, h)
+}
+
+// Replaces the element at `i` with `x` and gives the old one; the length is as it was.
+pub fn VecModel::set_m<A: Linear>(
+  v: &mut SlotsModel(Prefix, Unit, A, pf_used),
+  i: UHost,
+  x: A,
+  h: UHost::lt(i, VecModel::len(v)) = true
+): A {
+  SlotsModel::swap_m(&mut v, i, x, h)
+}
+
+// A pop of a vector known not to be empty: the last element, the vector one shorter.
+pub fn VecModel::pop_m<A: Linear>(
+  v: &mut SlotsModel(Prefix, Unit, A, pf_used),
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false
+): A {
+  SlotsModel::take_m(
+    &mut v,
+    VecModel::last_index(v, q0),
+    Star,
+    Prefix::shrunk(SlotsModel::state(v), VecModel::last_index(v, q0), VecModel::last_ok(v, q0)),
+    pf_laws(),
+    Prefix::take_shrunk(SlotsModel::state(v), VecModel::last_index(v, q0), VecModel::last_ok(v, q0))
+  )
+}
+
+pub fn VecModel::after<A, R>(m: Mut1(R, A)): A {
+  match m {
+    mut1(u, r2) => r2
+  }
+}
+
+pub fn VecModel::result<A, R>(m: Mut1(R, A)): R {
+  match m {
+    mut1(u, r2) => u
+  }
+}
+
+pub theorem VecModel::push_room_m_is<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true
+): VecModel::after(VecModel::push_room_m(v, x, q)) = VecModel::put_end(v, x, q) {
+  Refl
+}
+
+pub theorem VecModel::push_grow_m_is<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost,
+  qg: UHost::lt(VecModel::len(v), g) = true
+): VecModel::after(VecModel::push_grow_m(v, x, g, qg)) = VecModel::grow_put(v, x, g, qg) {
+  Refl
+}
+
+pub theorem VecModel::get_m_is<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  i: UHost,
+  h: UHost::lt(i, VecModel::len(v)) = true
+): VecModel::get_m(v, i, h) = VecModel::get(v, i, h) {
+  Refl
+}
+
+pub theorem VecModel::pop_m_is<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  q0: Nat::eq(UHost::val(VecModel::len(v)), 0) = false
+): (
+  VecModel::after(VecModel::pop_m(v, q0)) = VecModel::pop_rest(v, q0)
+) ∧ (VecModel::result(VecModel::pop_m(v, q0)) = VecModel::pop_elem(v, q0)) {
+  AndIntro(Refl, Refl)
+}
+
+// Through `&mut`: push into a vector with room, and what `get` reads is the pushed element.
+pub theorem VecModel::push_room_m_get<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true,
+  h: UHost::lt(
+    VecModel::len(v),
+    VecModel::len(VecModel::after(VecModel::push_room_m(v, x, q)))
+  ) = true
+): VecModel::get_m(VecModel::after(VecModel::push_room_m(v, x, q)), VecModel::len(v), h) = x {
+  VecModel::put_end_get(v, x, q, h)
+}
+
+// Through `&mut`: push into a vector with room, then pop, gives the element
+// back and the old length.
+pub theorem VecModel::push_pop_m<A: Linear>(
+  v: SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  q: UHost::lt(VecModel::len(v), VecModel::capacity(v)) = true
+): (
+  VecModel::result(VecModel::pop_m(VecModel::after(VecModel::push_room_m(v, x, q)), Refl)) = x
+) ∧ (
+  UHost::val(
+    VecModel::len(
+      VecModel::after(VecModel::pop_m(VecModel::after(VecModel::push_room_m(v, x, q)), Refl))
+    )
+  ) = UHost::val(VecModel::len(v))
+) {
+  AndIntro(VecModel::pop_elem_put_end(v, x, q), VecModel::pop_put_end_len(v, x, q))
+}
+
+// A push that tests for room itself and calls the total operations with the
+// proofs the tests give. The element is given back when the allocator granted
+// too little (`Some(x)`): a linear element is not dropped.
+pub fn VecModel::push_m<A: Linear>(
+  v: &mut SlotsModel(Prefix, Unit, A, pf_used),
+  x: A,
+  g: UHost
+): Option(A) {
+  match UHost::lt(VecModel::len(v), VecModel::capacity(v)) eqn q {
+    true => {
+      VecModel::push_room_m(&mut v, x, q)
+      None
+    }
+    false => match UHost::lt(VecModel::len(v), g) eqn qg {
+      true => {
+        VecModel::push_grow_m(&mut v, x, g, qg)
+        None
+      }
+      false => Some(x)
+    }
+  }
+}
+
+// Pops the last element when the vector is not empty. Kernel-checked (no `Vec`):
+// proofs for `pop_m` stay here; `Vec`-using drains call this.
+pub fn VecModel::take_last<A: Shared>(v: &mut SlotsModel(Prefix, Unit, A, pf_used)): Option(A) {
+  match Nat::eq(UHost::val(VecModel::len(v)), 0) eqn q {
+    true => None
+    false => Some(VecModel::pop_m(&mut v, q))
+  }
+}
+
+// Pops the last `left` elements into `out` so the earliest index is pushed first.
+// `A` is Shared so `var` may hold `Vec(A)` and lend `&mut`.
+pub fn VecModel::drain_into<A: Shared>(
+  v: &mut SlotsModel(Prefix, Unit, A, pf_used),
+  out: &mut Vec(A),
+  left: Nat
+): Unit {
+  match left {
+    Zero => #()
+    Succ(rest) => match VecModel::take_last(&mut v) {
+      None => #()
+      Some(x) => {
+        VecModel::drain_into(&mut v, &mut out, rest)
+        Vec::push(&mut out, x)
+      }
+    }
+  }
+}
+
+// Every element, in index order. Empties the vector.
+pub fn VecModel::into_vec<A: Shared>(v: SlotsModel(Prefix, Unit, A, pf_used)): Vec(A) {
+  var slots := v
+  var out: Vec(A) := Vec::new()
+  let n := UHost::val(VecModel::len(&slots))
+  VecModel::drain_into(&mut slots, &mut out, n)
+  out
+}

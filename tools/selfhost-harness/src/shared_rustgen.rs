@@ -130,7 +130,13 @@ pub fn bundle_result(output: &crate::RunOutput) -> Result<BundleResult, String> 
         .stderr
         .split_once('\n')
         .and_then(|(head, tail)| head.strip_prefix(PREFIX).map(|status| (status, tail)))
-        .ok_or("compiler did not emit the v2 stage-tagged contract protocol")?;
+        .ok_or_else(|| {
+            let head: String = output.stderr.chars().take(400).collect();
+            format!(
+                "compiler did not emit the v2 stage-tagged contract protocol (exit {:?}, stderr {head:?})",
+                output.exit
+            )
+        })?;
     if diagnostic.contains("TAUTO-RUSTGEN-CONTRACT/") {
         return Err("duplicate compiler contract record".into());
     }

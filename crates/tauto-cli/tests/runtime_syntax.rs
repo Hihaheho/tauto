@@ -24,12 +24,12 @@ fn rust_backend_runs_a_runtime_parser_tote() {
         tables.source(),
     )
     .unwrap();
-    let source = r#"import std::prelude::Macro
+    let source = r#"import std::builtin::macro
 
 syntax!(math, ```par
 {grammar}```) {}
-perform show("tree", math::parse("(1+2)=3"))
-perform show("error", math::parse("1+="))
+show(&math::parse("(1+2)=3"))
+show(&math::parse("1+="))
 "#
     .replacen(
         "{}",
@@ -39,7 +39,7 @@ perform show("error", math::parse("1+="))
     .replace("{grammar}", &grammar);
     assert_eq!(
         source,
-        r#"import std::prelude::Macro
+        r#"import std::builtin::macro
 
 syntax!(math, ```par
 %start Eqn
@@ -55,20 +55,19 @@ Plus: '+';
 LParen: '(';
 RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term, fn parse
-perform show("tree", math::parse("(1+2)=3"))
-perform show("error", math::parse("1+="))
+show(&math::parse("(1+2)=3"))
+show(&math::parse("1+="))
 "#
     );
     fs::write(dir.join("src/main.taut"), &source).unwrap();
     let run = |backend: &str| {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_tauto"));
         if backend == "rust" {
-            cmd.args(["run", "--backend", "rust"]);
+            cmd.args(["run", "--backend", "rust"]).arg(&dir);
         } else {
-            cmd.args(["run", "--backend", "eval", "--tote"]);
+            cmd.current_dir(&dir).args(["run", "--backend", "vm", "."]);
         }
         let out = cmd
-            .arg(&dir)
             .env("TAUTO_TARGET_DIR", dir.join("target"))
             .output()
             .unwrap();
@@ -80,6 +79,6 @@ perform show("error", math::parse("1+="))
         );
         out.stdout
     };
-    assert_eq!(run("rust"), run("eval"));
+    assert_eq!(run("rust"), run("vm"));
     fs::remove_dir_all(dir).unwrap();
 }

@@ -1,6 +1,5 @@
-import std::Base
-import std::prelude::Shared
-import std::prelude::Par
+import std::base
+import std::builtin::par
 import "../src/codec.taut"
 import "../src/flow.taut"
 import "../src/api.taut"
@@ -12,9 +11,9 @@ fn Val(): AssetKind(Text, i64) {
   make_asset_kind("Val", Codec::of_text(), Codec::of_i64(), (x: i64, y: i64) => x == y)
 }
 
-fn bump(c: Ref(i64)): Unit { Ref::set(c, Ref::get(c) + 1) }
+fn bump(c: Ref(i64)): Unit ! {overflow, ref_get, ref_set} { perform ref_set(c, perform ref_get(c) + 1) }
 
-fn Sum(runs: Ref(i64)): Query(i64) {
+fn Sum(runs: Ref(i64)): Query(i64) ! {div} {
   make_query("sum", Nil, (db: Db) => {
     let x := Db::asset(db, Val(), "a")
     let y := Db::asset(db, Val(), "b")
@@ -23,7 +22,7 @@ fn Sum(runs: Ref(i64)): Query(i64) {
   }, Codec::of_i64())
 }
 
-fn Sign(runs: Ref(i64)): Query(i64) {
+fn Sign(runs: Ref(i64)): Query(i64) ! {div} {
   make_query("sign", Nil, (db: Db) => {
     let s := Db::query(db, Sum(runs))
     bump(runs)
@@ -31,7 +30,7 @@ fn Sign(runs: Ref(i64)): Query(i64) {
   }, Codec::of_i64())
 }
 
-fn Twice(runs: Ref(i64)): Query(i64) {
+fn Twice(runs: Ref(i64)): Query(i64) ! {div} {
   make_query("twice", Nil, (db: Db) => {
     let s := Db::query(db, Sign(runs))
     bump(runs)
@@ -42,75 +41,75 @@ fn Twice(runs: Ref(i64)): Query(i64) {
 fn is_value(a: Answer(i64), x: i64): Bool {
   match a {
     Value(v) => v == x
-    Error(e) => false
+    Error(^e) => false
     Suspended => false
-    Cycle(ks) => false
+    Cycle(^ks) => false
     Cancelled => false
-    DependenciesRemoved(ks) => false
+    DependenciesRemoved(^ks) => false
   }
 }
 
 fn is_suspended(a: Answer(i64)): Bool {
   match a {
-    Value(v) => false
-    Error(e) => false
+    Value(^v) => false
+    Error(^e) => false
     Suspended => true
-    Cycle(ks) => false
+    Cycle(^ks) => false
     Cancelled => false
-    DependenciesRemoved(ks) => false
+    DependenciesRemoved(^ks) => false
   }
 }
 
-fn both(rt: Runtime, a: i64, b: i64, d: Durability): Unit ! {Div} {
+fn both(rt: Runtime, a: i64, b: i64, d: Durability): Unit ! {div, overflow, ref_get, ref_set} {
   resolve_asset(rt, Val(), "a", a, d)
   resolve_asset(rt, Val(), "b", b, d)
 }
 
 perform test("a query computes from its assets", () => {
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   both(rt, 2, 3, Volatile)
-  expect(is_value(run(rt, Sum(runs)), 5) && Ref::get(runs) == 1, "5, one run")
+  expect(is_value(run(rt, Sum(runs)), 5) && perform ref_get(runs) == 1, "5, one run")
 })
 
 perform test("a second read is cached", () => {
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   both(rt, 2, 3, Volatile)
   run(rt, Twice(runs))
-  expect(is_value(run(rt, Twice(runs)), 2) && Ref::get(runs) == 3, "three runs")
+  expect(is_value(run(rt, Twice(runs)), 2) && perform ref_get(runs) == 3, "three runs")
 })
 
 perform test("an asset change recomputes what read it", () => {
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   both(rt, 2, 3, Volatile)
   run(rt, Sum(runs))
   resolve_asset(rt, Val(), "a", 10, Volatile)
-  expect(is_value(run(rt, Sum(runs)), 13) && Ref::get(runs) == 2, "13, two runs")
+  expect(is_value(run(rt, Sum(runs)), 13) && perform ref_get(runs) == 2, "13, two runs")
 })
 
 perform test("resolving the same value changes nothing", () => {
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   both(rt, 2, 3, Volatile)
   run(rt, Sum(runs))
   resolve_asset(rt, Val(), "a", 2, Volatile)
-  expect(is_value(run(rt, Sum(runs)), 5) && Ref::get(runs) == 1, "one run")
+  expect(is_value(run(rt, Sum(runs)), 5) && perform ref_get(runs) == 1, "one run")
 })
 
 perform test("early cutoff stops at an unchanged output", () => {
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   both(rt, 2, 3, Volatile)
   run(rt, Twice(runs))
   // sum and sign run again; sign is still 1, so twice does not.
   resolve_asset(rt, Val(), "a", 7, Volatile)
-  expect(is_value(run(rt, Twice(runs)), 2) && Ref::get(runs) == 5, "five runs")
+  expect(is_value(run(rt, Twice(runs)), 2) && perform ref_get(runs) == 5, "five runs")
 })
 
 perform test("a missing asset suspends", () => {
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   resolve_asset(rt, Val(), "a", 2, Volatile)
   let first := run(rt, Sum(runs))
@@ -122,7 +121,7 @@ perform test("a missing asset suspends", () => {
 })
 
 perform test("an invalidated asset suspends until resolved", () => {
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   both(rt, 2, 3, Volatile)
   run(rt, Sum(runs))
@@ -133,11 +132,11 @@ perform test("an invalidated asset suspends until resolved", () => {
 })
 
 perform test("a durable query skips checking after a volatile change", () => {
-  let runs := Ref::new(0)
+  let runs := perform ref_new(0)
   let rt := new_runtime()
   both(rt, 2, 3, Stable)
   resolve_asset(rt, Val(), "c", 0, Volatile)
   run(rt, Sum(runs))
   resolve_asset(rt, Val(), "c", 1, Volatile)
-  expect(is_value(run(rt, Sum(runs)), 5) && Ref::get(runs) == 1, "one run")
+  expect(is_value(run(rt, Sum(runs)), 5) && perform ref_get(runs) == 1, "one run")
 })

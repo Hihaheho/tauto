@@ -1,0 +1,202 @@
+description = "A `class` runs as written with its instances; a method whose result is not a value of universe Type0 is not run, and a signature that applies it is the type the instance gives."
+
+@ cases.a-method-returns-a-borrow-of-a-field
+source = ```tauto
+import std::base
+struct Inner { n: Nat }
+struct Outer { inner: Inner }
+class Part(A: Type) {
+  fn part(a: &mut A): &mut Inner
+}
+instance Part(Outer) {
+  fn part(a: &mut Outer): &mut Inner { &mut a.inner }
+}
+perform test("a write through the borrow reaches the field", () => {
+  var o := Outer { inner: Inner { n: 0 } }
+  {
+    let p := Part::part(&mut o)
+    p.n := 1
+  }
+  expect(o.inner.n == 1, "the field is written")
+})
+```
+tests = ["a write through the borrow reaches the field"]
+
+@ cases.a-type-method-beside-a-borrow-method-is-not-run
+source = ```tauto
+import std::base
+struct Inner { n: Nat }
+struct Outer { inner: Inner }
+class Part(A: Type) {
+  fn part_type(a: &A): Type
+  fn part(a: &mut A): &mut Inner
+}
+instance Part(Outer) {
+  fn part_type(a: &Outer): Type { Inner }
+  fn part(a: &mut Outer): &mut Inner { &mut a.inner }
+}
+perform test("the type method is not run", () => {
+  var o := Outer { inner: Inner { n: 0 } }
+  {
+    let p := Part::part(&mut o)
+    p.n := 1
+  }
+  expect(o.inner.n == 1, "the field is written")
+})
+```
+tests = ["the type method is not run"]
+
+@ cases.a-type-method-in-a-signature-is-the-type-the-instance-gives
+source = ```tauto
+import std::base
+struct Inner { n: Nat }
+struct Outer { inner: Inner }
+class Part(A: Type) {
+  fn part_type(a: &A): Type
+  fn part(a: &mut A): &mut Part::part_type(a)
+}
+instance Part(Outer) {
+  fn part_type(a: &Outer): Type { Inner }
+  fn part(a: &mut Outer): &mut Inner { &mut a.inner }
+}
+perform test("the result has the instance's type", () => {
+  var o := Outer { inner: Inner { n: 0 } }
+  {
+    let p := Part::part(&mut o)
+    p.n := 1
+  }
+  expect(o.inner.n == 1, "the field is written")
+})
+```
+tests = ["the result has the instance's type"]
+
+@ cases.a-generic-function-constrains-an-associated-type
+source = ```tauto
+import std::base
+struct Inner { n: Nat }
+struct Outer { inner: Inner }
+class Part(A: Type) {
+  fn part_type(a: &A): Type
+  fn part(a: &mut A): &mut Part::part_type(a)
+}
+instance Part(Outer) {
+  fn part_type(a: &Outer): Type { Inner }
+  fn part(a: &mut Outer): &mut Inner { &mut a.inner }
+}
+class Bump(A: Type) {
+  fn add(a: &mut A, k: Nat): Unit
+}
+instance Bump(Inner) {
+  fn add(a: &mut Inner, k: Nat): Unit { a.n := a.n + k }
+}
+fn bump_twice<A>(a: &mut A): Unit where Bump(A) {
+  Bump::add(&mut a, 1)
+  Bump::add(&mut a, 10)
+}
+fn bump_part<A>(a: &mut A): Unit where Part(A), Bump(Part::part_type(a)) {
+  let p := Part::part(&mut a)
+  bump_twice(&mut p)
+}
+perform test("the associated type is the instance's", () => {
+  var o := Outer { inner: Inner { n: 0 } }
+  bump_part(&mut o)
+  expect(o.inner.n == 11, "both steps run in order")
+})
+```
+tests = ["the associated type is the instance's"]
+
+@ cases.a-generic-instance-gives-a-type-over-its-generic
+source = ```tauto
+import std::base
+struct Inner { n: Nat }
+struct Box1(A: Shared) { inner: A }
+class Part(A: Type) {
+  fn part_type(a: &A): Type
+  fn part(a: &mut A): &mut Part::part_type(a)
+}
+instance<A: Shared> Part(Box1(A)) {
+  fn part_type(a: &Box1(A)): Type { A }
+  fn part(a: &mut Box1(A)): &mut A { &mut a.inner }
+}
+perform test("the generic is the head's argument", () => {
+  var b := Box1 { inner: Inner { n: 0 } }
+  {
+    let p := Part::part(&mut b)
+    p.n := 3
+  }
+  expect(b.inner.n == 3, "the field is written")
+})
+```
+tests = ["the generic is the head's argument"]
+
+// A dictionary function that returns a borrow of its argument is the
+// method for every lifetime of the borrow it is lent, as the class says.
+@ cases.a-generic-function-writes-through-a-method-s-borrow
+source = ```tauto
+class Holder(Place: Type) {
+  fn inner(env: &mut Place): &mut Text
+}
+struct Box1 { t: Text }
+instance Holder(Box1) {
+  fn inner(env: &mut Box1): &mut Text { &mut env.t }
+}
+fn put(t: &mut Text): Unit {
+  *t := "set"
+}
+fn set_inner<Place>(env: &mut Place): Unit where Holder(Place) {
+  put(Holder::inner(&mut env))
+}
+var b := Box1 { t: "" }
+set_inner(&mut b)
+show(&b.t)
+```
+stdout = ```
+"set"
+```
+
+// A method whose result keeps no borrow lends its argument only for the
+// call, so a function with effects can lend the same place again.
+@ cases.a-function-with-effects-lends-a-method-the-same-place-twice
+source = ```tauto
+effect tick(): Unit
+class Counter(Place: Type) {
+  fn bump(env: &mut Place): Unit
+}
+struct Box1 { n: nat }
+instance Counter(Box1) {
+  fn bump(env: &mut Box1): Unit {
+    env.n := env.n + 1
+  }
+}
+fn twice<Place>(env: &mut Place): Unit ! {tick} where Counter(Place) {
+  perform tick()
+  Counter::bump(&mut env)
+  Counter::bump(&mut env)
+}
+fn run(): nat {
+  var b := Box1 { n: 0 }
+  handle { twice(&mut b) } with {
+    tick(), k => k(#())
+  }
+  b.n
+}
+show(&run())
+```
+stdout = "2\n"
+
+// `ToText` is a class of the standard library the proofs do not read, so
+// an instance of it runs as written.
+@ cases.an-instance-of-to-text-runs-in-a-test
+source = ```tauto
+import std::base
+import std::builtin::classes
+struct P { n: Text }
+instance ToText(P) {
+  fn to_text(a: &P): Text { a.n }
+}
+perform test("the instance is run", () => {
+  let p := P { n: "hi" }
+  expect(ToText::to_text(&p) == "hi", "the method is the instance's")
+})
+```
+tests = ["the instance is run"]

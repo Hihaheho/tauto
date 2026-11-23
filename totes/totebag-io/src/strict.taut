@@ -1,0 +1,617 @@
+import totebag::spec
+import eure::eure
+import eure::value
+import std::base
+import std::text
+
+// Reading an Eure document strictly (`crates/totebag/src/index/strict.rs`):
+// every key known, none twice, no hole, no extension, no code literal, and a
+// value only of the type asked for. An error is the message ID
+// `crates/totebag` gives.
+
+pub fn tb_max_depth(): u64 {
+  64
+}
+
+pub fn tb_depth_ok(n: Node, depth: u64): Result(Unit, Text) {
+  if depth > tb_max_depth() {
+    return Err("totebag-too-deep")
+  }
+  match node_ext(n) {
+    Cons(_, _) => {
+      return Err("totebag-no-extension")
+    }
+    Nil => #()
+  }
+  match node_value(n) {
+    Vmap(es) => tb_depth_all(map_values(es), depth + 1)
+    Varr(xs) => tb_depth_all(xs, depth + 1)
+    Vtup(_) => Err("totebag-unread-value")
+    Vhole(_) => Err("totebag-no-hole")
+    Vnull => Ok(#())
+    Vbool(_) => Ok(#())
+    Vint(_, _) => Ok(#())
+    Vdec(_, _, _, _) => Ok(#())
+    Vtext(_, _) => Ok(#())
+  }
+}
+
+pub fn map_values(es: List(Key × Node)): List(Node) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(e.snd, map_values(rest))
+  }
+}
+
+pub fn tb_depth_all(xs: List(Node), depth: u64): Result(Unit, Text) {
+  var rest := xs
+  var going := true
+  while going {
+    match rest {
+      Cons(x, more) => {
+        match tb_depth_ok(x, depth) {
+          Ok(_) => #()
+          Err(e) => {
+            return Err(e)
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(#())
+}
+
+// The document in `bytes`, at most `max` bytes of UTF-8.
+pub fn tb_strict_parse(bytes: Bytes, max: u64): Result(Node, Text) {
+  if Bytes::len(bytes) > max {
+    return Err("totebag-file-too-large")
+  }
+  let text := match Text::of_bytes(bytes) {
+    Some(t) => t
+    None => {
+      return Err("totebag-file-not-utf8")
+    }
+  }
+  let doc := match parse(text) {
+    Ok(d) => d
+    Err(_) => {
+      return Err("totebag-at")
+    }
+  }
+  // `crates/totebag` gives these under `totebag-at`, naming the file.
+  match tb_depth_ok(doc, 0) {
+    Ok(_) => Ok(doc)
+    Err(_) => Err("totebag-at")
+  }
+}
+
+// The fields of a block, by name, in document order.
+pub fn tb_fields(n: Node): Result(List(Text × Node), Text) {
+  match node_value(n) {
+    Vmap(es) => tb_named_fields(es)
+    Vhole(_) => Err("totebag-is-a-block")
+    Vnull => Err("totebag-is-a-block")
+    Vbool(_) => Err("totebag-is-a-block")
+    Vint(_, _) => Err("totebag-is-a-block")
+    Vdec(_, _, _, _) => Err("totebag-is-a-block")
+    Vtext(_, _) => Err("totebag-is-a-block")
+    Varr(_) => Err("totebag-is-a-block")
+    Vtup(_) => Err("totebag-is-a-block")
+  }
+}
+
+pub fn tb_named_fields(es: List(Key × Node)): Result(List(Text × Node), Text) {
+  var out: List(Text × Node) := Nil
+  var rest := es
+  var going := true
+  while going {
+    match rest {
+      Cons(e, more) => {
+        match e.fst {
+          Kstr(k) => {
+            out := Cons(#(k, e.snd), out)
+          }
+          Knum(_, _) => {
+            return Err("totebag-key-is-a-name")
+          }
+          Ktup(_) => {
+            return Err("totebag-key-is-a-name")
+          }
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  Ok(tb_rev_fields(out, Nil))
+}
+
+pub fn tb_rev_fields(l: List(Text × Node), acc: List(Text × Node)): List(Text × Node) {
+  match l {
+    Nil => acc
+    Cons(x, rest) => tb_rev_fields(rest, Cons(x, acc))
+  }
+}
+
+// The field `key` of `fs`, and the fields left once it is taken.
+pub fn tb_take(fs: List(Text × Node), key: Text): Option(Node) × List(Text × Node) {
+  var kept: List(Text × Node) := Nil
+  var found: Option(Node) := None
+  var rest := fs
+  var going := true
+  while going {
+    match rest {
+      Cons(e, more) => {
+        if e.fst == key {
+          found := Some(e.snd)
+        } else {
+          kept := Cons(e, kept)
+        }
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  #(found, tb_rev_fields(kept, Nil))
+}
+
+pub fn tb_required(fs: List(Text × Node), key: Text): Result(Node × List(Text × Node), Text) {
+  let t := tb_take(fs, key)
+  match t.fst {
+    Some(n) => Ok(#(n, t.snd))
+    None => Err("totebag-has-no")
+  }
+}
+
+// Fails on a field not taken.
+pub fn tb_finish(fs: List(Text × Node)): Result(Unit, Text) {
+  match fs {
+    Nil => Ok(#())
+    Cons(_, _) => Err("totebag-unknown-key-in")
+  }
+}
+
+pub fn tb_strict_text(n: Node): Result(Text, Text) {
+  match node_value(n) {
+    Vtext(Plaintext, t) => Ok(t)
+    Vtext(Implicit, _) => Err("totebag-expected-quoted-text")
+    Vtext(Named(_), _) => Err("totebag-expected-quoted-text")
+    Vhole(_) => Err("totebag-expected-quoted-text")
+    Vnull => Err("totebag-expected-quoted-text")
+    Vbool(_) => Err("totebag-expected-quoted-text")
+    Vint(_, _) => Err("totebag-expected-quoted-text")
+    Vdec(_, _, _, _) => Err("totebag-expected-quoted-text")
+    Varr(_) => Err("totebag-expected-quoted-text")
+    Vtup(_) => Err("totebag-expected-quoted-text")
+    Vmap(_) => Err("totebag-expected-quoted-text")
+  }
+}
+
+pub fn tb_strict_integer(n: Node): Result(u64, Text) {
+  match node_value(n) {
+    Vint(neg, m) => if neg || m > 18446744073709551615 {
+      Err("totebag-integer-range")
+    } else {
+      match U64::of_text(Text::of_nat(m)) {
+        Some(x) => Ok(x)
+        None => Err("totebag-integer-range")
+      }
+    }
+    Vtext(_, _) => Err("totebag-expected-integer")
+    Vhole(_) => Err("totebag-expected-integer")
+    Vnull => Err("totebag-expected-integer")
+    Vbool(_) => Err("totebag-expected-integer")
+    Vdec(_, _, _, _) => Err("totebag-expected-integer")
+    Varr(_) => Err("totebag-expected-integer")
+    Vtup(_) => Err("totebag-expected-integer")
+    Vmap(_) => Err("totebag-expected-integer")
+  }
+}
+
+pub fn tb_list_len(l: List(Node)): u64 {
+  var k: u64 := 0
+  var rest := l
+  var going := true
+  while going {
+    match rest {
+      Cons(_, more) => {
+        k := k + 1
+        rest := more
+      }
+      Nil => {
+        going := false
+      }
+    }
+  }
+  k
+}
+
+pub fn tb_strict_list(n: Node, max: u64): Result(List(Node), Text) {
+  match node_value(n) {
+    Varr(xs) => if tb_list_len(xs) <= max { Ok(xs) } else { Err("totebag-too-many-items") }
+    Vtext(_, _) => Err("totebag-expected-list")
+    Vhole(_) => Err("totebag-expected-list")
+    Vnull => Err("totebag-expected-list")
+    Vbool(_) => Err("totebag-expected-list")
+    Vint(_, _) => Err("totebag-expected-list")
+    Vdec(_, _, _, _) => Err("totebag-expected-list")
+    Vtup(_) => Err("totebag-expected-list")
+    Vmap(_) => Err("totebag-expected-list")
+  }
+}
+
+// ---- values -----------------------------------------------------------------
+
+pub fn tb_byte_at(b: Bytes, i: u64): u64 {
+  match Bytes::get(b, i) {
+    Some(c) => U64::of_u8(c)
+    None => 256
+  }
+}
+
+pub fn tb_is_digit(c: u64): Bool {
+  c >= 48 && c <= 57
+}
+
+// The digits of `b` from `s` to `e`, if all are digits.
+pub fn tb_num(b: Bytes, s: u64, e: u64): Option(u64) {
+  var n: u64 := 0
+  var i := s
+  while i < e {
+    let c := tb_byte_at(b, i)
+    if not(tb_is_digit(c)) {
+      return None
+    }
+    n := n * 10 + (c - 48)
+    i := i + 1
+  }
+  Some(n)
+}
+
+// The digits from `s` to `e`, or 100000, out of every range read, when one is not a digit.
+pub fn tb_num_or(b: Bytes, s: u64, e: u64): u64 {
+  match tb_num(b, s, e) {
+    Some(n) => n
+    None => 100000
+  }
+}
+
+// `sha256:<64 lowercase hex>`.
+pub fn tb_sha256(s: Text): Result(Text, Text) {
+  let b := Bytes::of_text(s)
+  if Bytes::len(b) != 71 {
+    return Err("totebag-bad-sha256")
+  }
+  let pre := match Bytes::slice(b, 0, 7) {
+    Some(p) => p
+    None => {
+      return Err("totebag-bad-sha256")
+    }
+  }
+  let pre_ok := match Text::of_bytes(pre) {
+    Some(t) => t == "sha256:"
+    None => false
+  }
+  if not(pre_ok) {
+    return Err("totebag-bad-sha256")
+  }
+  var i: u64 := 7
+  while i < 71 {
+    let c := tb_byte_at(b, i)
+    if not(tb_is_digit(c) || (c >= 97 && c <= 102)) {
+      return Err("totebag-bad-sha256")
+    }
+    i := i + 1
+  }
+  Ok(s)
+}
+
+// `a` divided by `b` (not 0): the quotient and the remainder, by long
+// division in powers of ten, u64 having no division of its own.
+pub fn tb_divmod(a: u64, b: u64): u64 × u64 {
+  var m := b
+  var p: u64 := 1
+  while m <= 1000000000000000000 && m * 10 <= a {
+    m := m * 10
+    p := p * 10
+  }
+  var q: u64 := 0
+  var r := a
+  var going := true
+  while going {
+    while r >= m {
+      r := r - m
+      q := q + p
+    }
+    if p == 1 {
+      going := false
+    } else {
+      m := tb_divmod_down(m)
+      p := tb_divmod_down(p)
+    }
+  }
+  #(q, r)
+}
+
+// `n` (a multiple of 10) divided by 10.
+pub fn tb_divmod_down(n: u64): u64 {
+  var lo: u64 := 0
+  var step: u64 := 1000000000000000000
+  var going := true
+  while going {
+    while (lo + step) * 10 <= n && lo + step <= 1844674407370955161 {
+      lo := lo + step
+    }
+    if step == 1 {
+      going := false
+    } else {
+      step := tb_tenth(step)
+    }
+  }
+  lo
+}
+
+// A power of ten above 1, divided by 10.
+pub fn tb_tenth(p: u64): u64 {
+  var x: u64 := 1
+  while x * 10 < p {
+    x := x * 10
+  }
+  x
+}
+
+pub fn tb_rem(a: u64, b: u64): u64 {
+  tb_divmod(a, b).snd
+}
+
+pub fn tb_div(a: u64, b: u64): u64 {
+  tb_divmod(a, b).fst
+}
+
+pub fn tb_is_leap(y: u64): Bool {
+  (tb_rem(y, 4) == 0 && tb_rem(y, 100) != 0) || tb_rem(y, 400) == 0
+}
+
+pub fn tb_month_days(y: u64, mo: u64): u64 {
+  if mo == 2 {
+    if tb_is_leap(y) { 29 } else { 28 }
+  } else {
+    if mo == 4 || mo == 6 || mo == 9 || mo == 11 { 30 } else { 31 }
+  }
+}
+
+// `YYYY-MM-DDTHH:MM:SSZ` in UTC, 1970 to 9999, as seconds since 1970.
+pub fn tb_time(s: Text): Result(u64, Text) {
+  let b := Bytes::of_text(s)
+  if Bytes::len(b) != 20 || tb_byte_at(b, 4) != 45 || tb_byte_at(b, 7) != 45 || tb_byte_at(b, 10) != 84 || tb_byte_at(b, 13) != 58 || tb_byte_at(b, 16) != 58 || tb_byte_at(b, 19) != 90 {
+    return Err("totebag-bad-time")
+  }
+  let y := tb_num_or(b, 0, 4)
+  let mo := tb_num_or(b, 5, 7)
+  let d := tb_num_or(b, 8, 10)
+  let h := tb_num_or(b, 11, 13)
+  let mi := tb_num_or(b, 14, 16)
+  let se := tb_num_or(b, 17, 19)
+  if y < 1970 || y > 9999 || mo < 1 || mo > 12 || d == 0 || d > tb_month_days(y, mo) || h > 23 || mi > 59 || se > 59 {
+    return Err("totebag-bad-time")
+  }
+  var days: u64 := 0
+  var year: u64 := 1970
+  while year < y {
+    days := days + (if tb_is_leap(year) { 366 } else { 365 })
+    year := year + 1
+  }
+  var m: u64 := 1
+  while m < mo {
+    days := days + tb_month_days(y, m)
+    m := m + 1
+  }
+  days := days + d - 1
+  Ok(days * 86400 + h * 3600 + mi * 60 + se)
+}
+
+pub fn tb_pad(n: u64, width: u64): Text {
+  var t := Text::of_u64(n)
+  while Bytes::len(Bytes::of_text(t)) < width {
+    t := Text::concat("0", t)
+  }
+  t
+}
+
+// Seconds since 1970 as `YYYY-MM-DDTHH:MM:SSZ`, the form `tb_time` reads.
+pub fn tb_time_text(secs: u64): Text {
+  let dm := tb_divmod(secs, 86400)
+  var days := dm.fst
+  let rest := dm.snd
+  var y: u64 := 1970
+  var going := true
+  while going {
+    let n := if tb_is_leap(y) { 366 } else { 365 }
+    if days >= n {
+      days := days - n
+      y := y + 1
+    } else {
+      going := false
+    }
+  }
+  var mo: u64 := 1
+  going := true
+  while going {
+    let n := tb_month_days(y, mo)
+    if days < n || mo == 12 {
+      going := false
+    } else {
+      days := days - n
+      mo := mo + 1
+    }
+  }
+  Text::concat(tb_pad(y, 4), Text::concat("-", Text::concat(tb_pad(mo, 2), Text::concat("-",
+    Text::concat(tb_pad(days + 1, 2), Text::concat("T", Text::concat(tb_pad(tb_div(rest, 3600), 2),
+    Text::concat(":", Text::concat(tb_pad(tb_div(tb_rem(rest, 3600), 60), 2), Text::concat(":",
+    Text::concat(tb_pad(tb_rem(rest, 60), 2), "Z")))))))))))
+}
+
+// A length of time in seconds, at most ten years.
+pub fn tb_seconds(n: u64): Result(u64, Text) {
+  if n <= 315360000 { Ok(n) } else { Err("totebag-too-many-seconds") }
+}
+
+pub fn tb_alias(s: Text): Result(Text, Text) {
+  if tb_valid_name(s) { Ok(s) } else { Err("totebag-bad-alias") }
+}
+
+pub fn tb_reason(s: Text): Result(Text, Text) {
+  let n := Bytes::len(Bytes::of_text(s))
+  if n >= 1 && n <= 4096 { Ok(s) } else { Err("totebag-reason-length") }
+}
+
+pub fn tb_package_rev(s: Text): Result(Text, Text) {
+  let b := Bytes::of_text(s)
+  let n := Bytes::len(b)
+  if n < 1 || n > 256 {
+    return Err("totebag-bad-package-rev")
+  }
+  var i: u64 := 0
+  while i < n {
+    let c := tb_byte_at(b, i)
+    let ok := tb_is_digit(c) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 46 || c == 95 || c == 58 || c == 43 || c == 45
+    if not(ok) {
+      return Err("totebag-bad-package-rev")
+    }
+    i := i + 1
+  }
+  Ok(s)
+}
+
+pub fn tb_starts(s: Text, p: Text): Bool {
+  let b := Bytes::of_text(s)
+  let pb := Bytes::of_text(p)
+  match Bytes::slice(b, 0, Bytes::len(pb)) {
+    Some(x) => match Text::of_bytes(x) {
+      Some(t) => t == p
+      None => false
+    }
+    None => false
+  }
+}
+
+pub fn tb_https_url(s: Text): Result(Text, Text) {
+  match tb_check_url(s) {
+    Some(_) => {
+      return Err("totebag-bad-url")
+    }
+    None => #()
+  }
+  if tb_starts(s, "https://") { Ok(s) } else { Err("totebag-index-https") }
+}
+
+pub fn tb_branch(s: Text): Result(Text, Text) {
+  if not(tb_check_ref(s)) {
+    return Err("totebag-bad-ref")
+  }
+  if tb_starts(s, "refs/heads/") { Ok(s) } else { Err("totebag-index-branch") }
+}
+
+// ---- fields read one by one -------------------------------------------------
+//
+// As `Fields::read` does, an error in a field's value comes back under
+// `totebag-at`, written `totebag-at <the value's error>`; a missing field is
+// `totebag-has-no`.
+
+pub fn tb_at(e: Text): Text {
+  Text::concat("totebag-at ", e)
+}
+
+// The text of the required field `key`, and the fields left.
+pub fn tb_field_text(fs: List(Text × Node), key: Text): Result(Text × List(Text × Node), Text) {
+  match tb_required(fs, key) {
+    Ok(p) => match tb_strict_text(p.fst) {
+      Ok(t) => Ok(#(t, p.snd))
+      Err(e) => Err(tb_at(e))
+    }
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_field_integer(fs: List(Text × Node), key: Text): Result(u64 × List(Text × Node), Text) {
+  match tb_required(fs, key) {
+    Ok(p) => match tb_strict_integer(p.fst) {
+      Ok(n) => Ok(#(n, p.snd))
+      Err(e) => Err(tb_at(e))
+    }
+    Err(e) => Err(e)
+  }
+}
+
+// A field's text, checked by `check`.
+pub fn tb_field_as(fs: List(Text × Node), key: Text, check: (Text) -> Result(Text, Text) ! {div, overflow}): Result(Text × List(Text × Node), Text) ! {div, overflow} {
+  match tb_field_text(fs, key) {
+    Ok(p) => match check(p.fst) {
+      Ok(t) => Ok(#(t, p.snd))
+      Err(e) => Err(tb_at(e))
+    }
+    Err(e) => Err(e)
+  }
+}
+
+pub fn tb_field_time(fs: List(Text × Node), key: Text): Result(u64 × List(Text × Node), Text) {
+  match tb_field_text(fs, key) {
+    Ok(p) => match tb_time(p.fst) {
+      Ok(n) => Ok(#(n, p.snd))
+      Err(e) => Err(tb_at(e))
+    }
+    Err(e) => Err(e)
+  }
+}
+
+// `s` as an Eure quoted text, as `crates/totebag/src/index/ledger.rs`
+// writes it: `"`, `\`, a line break and a tab escaped, and any other control
+// character as `\u{…}`.
+pub fn tb_quote(s: Text): Text {
+  let b := Bytes::of_text(s)
+  let n := Bytes::len(b)
+  var out := "\""
+  var start: u64 := 0
+  var i: u64 := 0
+  while i < n {
+    let c := tb_byte_at(b, i)
+    let c2 := tb_byte_at(b, i + 1)
+    let esc := if c == 34 { "\\\"" } else { if c == 92 { "\\\\" } else { if c == 10 { "\\n" } else { if c == 9 { "\\t" } else { if c < 32 || c == 127 { Text::concat("\\u{", Text::concat(tb_hex_digits(c), "}")) } else { if c == 194 && c2 >= 128 && c2 <= 159 { Text::concat("\\u{", Text::concat(tb_hex_digits(c2), "}")) } else { "" } } } } } }
+    if esc != "" {
+      out := Text::concat(out, Text::concat(tb_piece(b, start, i), esc))
+      i := if c == 194 { i + 2 } else { i + 1 }
+      start := i
+    } else {
+      i := i + 1
+    }
+  }
+  Text::concat(out, Text::concat(tb_piece(b, start, n), "\""))
+}
+
+pub fn tb_piece(b: Bytes, s: u64, e: u64): Text {
+  match Bytes::slice(b, s, e) {
+    Some(p) => match Text::of_bytes(p) {
+      Some(t) => t
+      None => ""
+    }
+    None => ""
+  }
+}
+
+pub fn tb_hex_digit(d: u64): Text {
+  tb_piece(Bytes::of_text("0123456789abcdef"), d, d + 1)
+}
+
+// `c` (below 256) in lowercase hex, without leading zeros.
+pub fn tb_hex_digits(c: u64): Text {
+  let dm := tb_divmod(c, 16)
+  if dm.fst == 0 { tb_hex_digit(dm.snd) } else { Text::concat(tb_hex_digit(dm.fst), tb_hex_digit(dm.snd)) }
+}

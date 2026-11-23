@@ -1,7 +1,7 @@
 # macros
 
 The macro system's hygiene in Nib (`crates/tauto-surface/src/macros/scope.rs`,
-`docs/design/macro.md`「衛生（スコープ集合）」). The directory is `totes/macros` because
+`docs/design/macro.md`「Hygiene (scope sets)」). The directory is `totes/macros` because
 `macro` is a keyword of Rust, which the tote is built through.
 
 `src/scope.taut` is `scope::resolve` on the surface syntax of `totes/surface`:
@@ -34,5 +34,10 @@ A macro call on a literal is `skip`ped: the reader here does not keep where the
 literal's text starts. The test lifts and lowers the corpus the same way in Rust
 and compares.
 
-The expansion itself, which runs the macro's function in the evaluator, is
-not in this tote.
+`src/expand.taut` is the smallest form of the expansion (`macros --expand FILE…`, the files in order as one program):
+the `macro fn` declarations of a file register the macros the files after it call, and a call of a macro whose function takes and makes a
+`SynExpr` is replaced by its expansion, outside in (the argument lifted with the scopes of the call and of the expansion, the output
+lowered with each node given a span of its own, `rs_resolve` on a file that expanded something). Statement macros, macros that read a syntax's text,
+typed and attribute macros, `syn_expand`, `at_call_site` and `pub` are not there; every macro is seen by the later files. The macro's function
+runs through `ex_run`, which answers only a function that returns its argument: running a function is not in this tote yet.
+`tools/selfhost-harness/tests/macros_expand.rs` compares it with `tauto::macros::expand_files` on such macros.

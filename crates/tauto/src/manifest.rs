@@ -39,6 +39,8 @@ use eure_document::document::NodeId;
 use eure_document::document::node::NodeValue;
 use eure_document::value::PrimitiveValue as P;
 
+use crate::workspace;
+
 /// A Rust path (or a dependency's version) and where `Tauto.eure` or a
 /// bindings file says it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,21 +77,51 @@ pub struct Package {
     /// `compiler::compiler`).
     pub additional_sources: Vec<String>,
     /// `prelude = false`: the files of the tote see no name of the library's prelude
-    /// (`std/prelude/`) without importing its file (`import std::prelude::Std`); the
+    /// (`std/prelude/`) without importing its file (`import std::prelude::std`); the
     /// kernel's prelude stays seen. The standard library declares the prelude, so it
     /// does not see it before its own files.
     pub no_prelude: bool,
+    /// `include-from`: directories besides the tote's own that its files may read
+    /// with `include_text!` and `include_bytes!`, by path from the manifest's
+    /// directory (a file of the same project, such as the kernel's prelude). It
+    /// counts only when the tote is part of the project being read: a dependency
+    /// fetched from elsewhere reads inside itself.
+    pub include_from: Vec<String>,
+    /// `entry = "app/start.taut"`: the file whose top level runs when the tote
+    /// is run or checked as a program, by path from the manifest's directory.
+    /// Not written, it is `src/main.taut` (or `src/main.tauto`).
+    pub entry: Option<String>,
 }
+
+/// The entry files a tote has when `package.entry` is not written.
+pub const DEFAULT_ENTRIES: [&str; 2] = ["src/main.taut", "src/main.tauto"];
 
 /// The default source directory every tote has, not written in `Tauto.eure`.
 pub const DEFAULT_SOURCE: &str = "src";
 
 impl Package {
+    /// The tote's entry in `dir`, the file whose top level runs: `entry` when it
+    /// is written, whether or not the file is there, else the first default
+    /// entry that is a file. None for a library, a tote without one.
+    pub fn entry_file(&self, dir: &Path) -> Option<PathBuf> {
+        match &self.entry {
+            Some(entry) => Some(dir.join(entry)),
+            None => DEFAULT_ENTRIES
+                .iter()
+                .map(|name| dir.join(name))
+                .find(|p| p.is_file()),
+        }
+    }
+
     /// Every source of the tote, by path from its directory: `src`, then the
-    /// additional sources.
+    /// additional sources, and the tote's directory itself in the tote named
+    /// `std` (the library's source).
     pub fn source_paths(&self) -> Vec<String> {
         std::iter::once(DEFAULT_SOURCE.to_string())
             .chain(self.additional_sources.iter().cloned())
+            .chain(
+                (self.name == tauto_surface::surface::qualify::STD_ROOT).then(|| ".".to_string()),
+            )
             .collect()
     }
 }
@@ -104,8 +136,10 @@ pub struct RustSection {
     /// generated `main` sets in place of the runtime's 1024. `TAUTO_STACK_MB`
     /// at run time still wins over it.
     pub stack_mb: Option<u32>,
-    /// Optional function allowlist for the tauto-build Rust facade.
-    pub exports: Option<Vec<String>>,
+    /// `rust.main-thread`: the program's `main` runs on the process's main
+    /// thread, whose stack the OS sized, instead of on a thread of its own.
+    /// For host APIs that only work there (macOS's AppKit).
+    pub main_thread: bool,
     /// Whether tauto-build also writes UniFFI exports of the facade.
     pub uniffi: bool,
     pub bindings: Vec<String>,
@@ -127,12 +161,10 @@ pub struct JavaScriptSection {
     pub externs: BTreeMap<String, Entry>,
     pub node: BTreeMap<String, Entry>,
     pub browser: BTreeMap<String, Entry>,
-    pub asynchronous: Vec<String>,
     pub sources: Vec<String>,
     /// Fieldless structs whose values are host objects, each with the
     /// binding that runs when Tauto drops its last reference.
     pub types: BTreeMap<String, Entry>,
-    pub exports: Vec<String>,
     /// Externs whose callbacks the first host value argument keeps.
     pub retain: Vec<String>,
     /// Modules loaded on the first call of one of their entry functions:
@@ -145,8 +177,13 @@ pub struct Manifest {
     pub package: Package,
     pub check: CheckSection,
     pub dependencies: Vec<(String, Dependency)>,
+    /// Workspace affiliation and/or this tote's own `workspace.members`.
+    pub workspace: Option<WorkspaceSection>,
     pub rust: RustSection,
     pub javascript: JavaScriptSection,
+    /// `exports = ["f", "tote::*"]`: the functions a host calls by name, for
+    /// every backend. None when it is not written.
+    pub exports: Option<Vec<String>>,
     /// The dependency totes whose `extern` functions this project accepts:
     /// `trust { extern = ["name"] }`. An extern's IO is not in any effect
     /// row, so `--allow-*` cannot see it; a dependency that declares one is
@@ -156,14 +193,36 @@ pub struct Manifest {
     /// project that has the tote as a direct dependency, or is the tote.
     pub commands: BTreeMap<String, Command>,
     /// What the project grants the commands it runs, by command name:
-    /// `trust { commands { bk { tote = "bikkuri", read = ["src"] } } }`. Only
+    /// `trust { commands { bk { tote = "myapp", read = ["src"] } } }`. Only
     /// the project's own manifest is read for it, as for `trust_extern`.
     pub trust_commands: BTreeMap<String, CommandTrust>,
     /// `run { file = "app/main.taut" }`: the program `tauto run` and
     /// `tauto dev` run when they are given neither a file nor `--tote`, by
     /// path from the manifest's directory.
     pub run_file: Option<String>,
+    /// `test { retries = 2 }`: how many times `tauto test` calls a test that
+    /// failed again. None when it is not written.
+    pub test_retries: Option<usize>,
     pub file: PathBuf,
+}
+
+/// `workspace = "../.."` or `workspace { parent = "…", members = […] }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceSection {
+    /// Member affiliation only: `workspace = "../.."`.
+    Affiliate(String),
+    /// A workspace root (optionally nested under `parent`).
+    Root {
+        parent: Option<String>,
+        members: Vec<MemberSpec>,
+    },
+}
+
+/// One `workspace.members` entry: a plain path or a `glob`…`` pattern.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MemberSpec {
+    Path(String),
+    Glob(String),
 }
 
 /// A command a tote gives: `commands { bk { main = "cmd/bk.taut", about = "…" } }`.
@@ -190,6 +249,8 @@ pub struct CommandTrust {
 pub enum Dependency {
     /// A directory, from the depending tote: `text { path = "../text" }`.
     Path(String),
+    /// A member of the depending tote's workspace: `engine: workspace`.
+    Workspace,
     /// A tote in a Git repository, fetched by `tauto lock` and fixed in
     /// `Tauto::lock`: `semver { git = "https://…" ref = "refs/heads/main" dir = "semver" }`,
     /// a binding a line.
@@ -220,12 +281,33 @@ pub fn dependency_dir(dir: &Path, name: &str, dependency: &Dependency) -> Result
             }
             Ok(target)
         }
+        Dependency::Workspace => {
+            let target = workspace::dependency_member(dir, name)?;
+            if let Ok(cache) = totebag::cache::Cache::from_env()
+                && let Some(tree) = cache.tree_of(dir)
+                && !crate::program::canonical_path(&target).starts_with(&tree)
+            {
+                return Err(msg!(
+                    "tauto-manifest-dep-leaves",
+                    name = name,
+                    path = target.display().to_string(),
+                    tree = tree.display().to_string()
+                ));
+            }
+            Ok(target)
+        }
         Dependency::Git(source) => crate::project::git_dependency(dir, name, source),
     }
 }
 
 /// Reads `Tauto.eure` in `dir` alone: the bindings it names are not read.
 pub fn read(dir: &Path) -> Result<Manifest, Message> {
+    read_with_text(dir).map(|(_, m)| m)
+}
+
+/// [`read`], with the text the manifest was read from: what is approved of
+/// it is then the text that is granted from.
+pub fn read_with_text(dir: &Path) -> Result<(String, Manifest), Message> {
     let file = dir.join("Tauto.eure");
     let text = std::fs::read_to_string(&file).map_err(|e| {
         msg!(
@@ -236,7 +318,7 @@ pub fn read(dir: &Path) -> Result<Manifest, Message> {
     })?;
     let m = parse(&text, &file)?;
     check_sources(dir, &m)?;
-    Ok(m)
+    Ok((text, m))
 }
 
 /// Reads `Tauto.eure` in `dir`, and the bindings it names.
@@ -351,6 +433,10 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, Message> {
                         "additional-sources" => {
                             out.package.additional_sources = list_of(&doc, v).map_err(&fail)?;
                         }
+                        "entry" => out.package.entry = Some(text_of(&doc, v).map_err(&fail)?),
+                        "include-from" => {
+                            out.package.include_from = list_of(&doc, v).map_err(&fail)?;
+                        }
                         "prelude" => match &doc.node(v).content {
                             NodeValue::Primitive(P::Bool(b)) => out.package.no_prelude = !*b,
                             _ => return Err(fail(msg!("tauto-manifest-prelude"))),
@@ -401,66 +487,133 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, Message> {
             }
             "dependencies" => {
                 for (dependency, node) in map(&doc, id).map_err(&fail)? {
-                    let (mut path, mut git, mut reference, mut dir) = (None, None, None, None);
-                    let mut project = None;
-                    for (k, v) in map(&doc, node).map_err(&fail)? {
-                        let value = Some(text_of(&doc, v).map_err(&fail)?);
-                        match k.as_str() {
-                            "path" => path = value,
-                            "git" => git = value,
-                            "ref" => reference = value,
-                            "dir" => dir = value,
-                            "project" => project = value,
-                            other => {
-                                return Err(msg!("tauto-manifest-unknown-key", key = other));
-                            }
-                        }
-                    }
                     if !totebag::valid_name(&dependency) {
                         return Err(fail(msg!(
                             "tauto-manifest-not-tote-name",
                             name = dependency.as_str()
                         )));
                     }
-                    let found = match (path, git) {
-                        (Some(path), None)
-                            if reference.is_none() && dir.is_none() && project.is_none() =>
-                        {
-                            Dependency::Path(path)
+                    let found = match &doc.node(node).content {
+                        NodeValue::Primitive(P::Text(t)) if t.as_str() == "workspace" => {
+                            Dependency::Workspace
                         }
-                        (None, Some(url)) => {
-                            let source = totebag::spec::GitSource {
-                                url,
-                                reference: reference.ok_or_else(|| {
-                                    fail(msg!("tauto-manifest-no-ref", name = dependency.as_str()))
-                                })?,
-                                dir: dir.unwrap_or_default(),
-                                project,
-                            };
-                            source.check().map_err(|e| {
-                                fail(msg!(
-                                    "tauto-dep-error",
-                                    name = dependency.as_str(),
-                                    error = e.to_string()
-                                ))
-                            })?;
-                            Dependency::Git(source)
-                        }
-                        (None, None) => {
-                            return Err(fail(msg!(
-                                "tauto-manifest-no-source",
-                                name = dependency.as_str()
-                            )));
+                        NodeValue::Map(_) => {
+                            let (mut path, mut git, mut reference, mut dir) =
+                                (None, None, None, None);
+                            let mut project = None;
+                            let mut sparse = false;
+                            let mut workspace_marker = false;
+                            for (k, v) in map(&doc, node).map_err(&fail)? {
+                                if k == "sparse" {
+                                    match &doc.node(v).content {
+                                        NodeValue::Primitive(P::Bool(b)) => sparse = *b,
+                                        _ => {
+                                            return Err(msg!(
+                                                "tauto-manifest-expected-bool",
+                                                key = "sparse"
+                                            ));
+                                        }
+                                    }
+                                    continue;
+                                }
+                                if k == "workspace" {
+                                    match &doc.node(v).content {
+                                        NodeValue::Primitive(P::Bool(true)) => {
+                                            workspace_marker = true
+                                        }
+                                        NodeValue::Primitive(P::Text(t))
+                                            if t.as_str() == "workspace"
+                                                || t.as_str().is_empty() =>
+                                        {
+                                            workspace_marker = true
+                                        }
+                                        _ => {
+                                            return Err(fail(msg!(
+                                                "tauto-manifest-workspace-marker",
+                                                name = dependency.as_str()
+                                            )));
+                                        }
+                                    }
+                                    continue;
+                                }
+                                let value = Some(text_of(&doc, v).map_err(&fail)?);
+                                match k.as_str() {
+                                    "path" => path = value,
+                                    "git" => git = value,
+                                    "ref" => reference = value,
+                                    "dir" => dir = value,
+                                    "project" => project = value,
+                                    other => {
+                                        return Err(msg!(
+                                            "tauto-manifest-unknown-key",
+                                            key = other
+                                        ));
+                                    }
+                                }
+                            }
+                            if workspace_marker {
+                                return Err(fail(msg!(
+                                    "tauto-manifest-path-and-workspace",
+                                    name = dependency.as_str()
+                                )));
+                            }
+                            match (path, git) {
+                                (Some(path), None)
+                                    if reference.is_none()
+                                        && dir.is_none()
+                                        && project.is_none()
+                                        && !sparse =>
+                                {
+                                    Dependency::Path(path)
+                                }
+                                (None, Some(url)) => {
+                                    let source = totebag::spec::GitSource {
+                                        url,
+                                        reference: reference.ok_or_else(|| {
+                                            fail(msg!(
+                                                "tauto-manifest-no-ref",
+                                                name = dependency.as_str()
+                                            ))
+                                        })?,
+                                        dir: dir.unwrap_or_default(),
+                                        sparse,
+                                        project,
+                                    };
+                                    source.check().map_err(|e| {
+                                        fail(msg!(
+                                            "tauto-dep-error",
+                                            name = dependency.as_str(),
+                                            error = e.to_string()
+                                        ))
+                                    })?;
+                                    Dependency::Git(source)
+                                }
+                                (None, None) => {
+                                    return Err(fail(msg!(
+                                        "tauto-manifest-no-source",
+                                        name = dependency.as_str()
+                                    )));
+                                }
+                                _ => {
+                                    return Err(fail(msg!(
+                                        "tauto-manifest-path-and-git",
+                                        name = dependency.as_str()
+                                    )));
+                                }
+                            }
                         }
                         _ => {
                             return Err(fail(msg!(
-                                "tauto-manifest-path-and-git",
+                                "tauto-manifest-no-source",
                                 name = dependency.as_str()
                             )));
                         }
                     };
                     out.dependencies.push((dependency, found));
                 }
+            }
+            "workspace" => {
+                out.workspace = Some(workspace_section(&doc, id).map_err(&fail)?);
             }
             "trust" => {
                 for (k, v) in map(&doc, id).map_err(&fail)? {
@@ -478,6 +631,10 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, Message> {
                                 out.trust_commands.insert(name, grant);
                             }
                         }
+                        // What `tauto run` of the project's programs is
+                        // granted, narrowed to paths or hosts: read by the
+                        // CLI (`run_prompt`), which reports its errors.
+                        "run" => {}
                         other => {
                             return Err(msg!("tauto-manifest-unknown-trust-key", key = other));
                         }
@@ -490,6 +647,26 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, Message> {
                         "file" => out.run_file = Some(text_of(&doc, v).map_err(&fail)?),
                         other => {
                             return Err(fail(msg!("tauto-manifest-unknown-run-key", key = other)));
+                        }
+                    }
+                }
+            }
+            "exports" => out.exports = Some(list_of(&doc, id).map_err(&fail)?),
+            "test" => {
+                for (k, v) in map(&doc, id).map_err(&fail)? {
+                    match k.as_str() {
+                        "retries" => {
+                            let n = match &doc.node(v).content {
+                                NodeValue::Primitive(P::Integer(n)) => {
+                                    n.to_string().parse::<usize>().ok()
+                                }
+                                _ => None,
+                            };
+                            out.test_retries =
+                                Some(n.ok_or_else(|| fail(msg!("tauto-manifest-test-retries")))?);
+                        }
+                        other => {
+                            return Err(fail(msg!("tauto-manifest-unknown-test-key", key = other)));
                         }
                     }
                 }
@@ -522,10 +699,10 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, Message> {
                         "browser" => {
                             out.javascript.browser = entries(&doc, v, text, file, "browser")?
                         }
-                        "async" => out.javascript.asynchronous = list_of(&doc, v).map_err(&fail)?,
+                        // Whether a call waits is the extern's row (`! {wait}`).
+                        "async" => return Err(fail(msg!("tauto-manifest-js-async"))),
                         "sources" => out.javascript.sources = list_of(&doc, v).map_err(&fail)?,
                         "types" => out.javascript.types = entries(&doc, v, text, file, "types")?,
-                        "exports" => out.javascript.exports = list_of(&doc, v).map_err(&fail)?,
                         "retain" => out.javascript.retain = list_of(&doc, v).map_err(&fail)?,
                         "chunks" => {
                             for (name, entries) in map(&doc, v).map_err(&fail)? {
@@ -563,8 +740,11 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, Message> {
                             out.rust.stack_mb =
                                 Some(mb.ok_or_else(|| fail(msg!("tauto-manifest-stack-mb")))?);
                         }
+                        "main-thread" => match &doc.node(v).content {
+                            NodeValue::Primitive(P::Bool(b)) => out.rust.main_thread = *b,
+                            _ => return Err(fail(msg!("tauto-manifest-main-thread"))),
+                        },
                         "bindings" => out.rust.bindings = list_of(&doc, v).map_err(&fail)?,
-                        "exports" => out.rust.exports = Some(list_of(&doc, v).map_err(&fail)?),
                         "uniffi" => match &doc.node(v).content {
                             NodeValue::Primitive(P::Bool(b)) => out.rust.uniffi = *b,
                             _ => return Err(fail(msg!("tauto-manifest-uniffi"))),
@@ -603,14 +783,6 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, Message> {
     if !out.package.name.is_empty() && !valid_name(&out.package.name) {
         return Err(fail(msg!(
             "tauto-manifest-bad-tote-name",
-            name = &out.package.name
-        )));
-    }
-    // `std` is the root of the standard library's modules (`std::List`): a tote
-    // that took it would have modules the library's cannot be told from.
-    if out.package.name == tauto_surface::surface::qualify::STD_ROOT {
-        return Err(fail(msg!(
-            "tauto-manifest-reserved-tote-name",
             name = &out.package.name
         )));
     }
@@ -697,6 +869,54 @@ fn text_of(doc: &EureDocument, id: NodeId) -> Result<String, Message> {
         NodeValue::Primitive(P::Text(t)) => Ok(t.as_str().to_string()),
         _ => Err(msg!("tauto-manifest-expected-text")),
     }
+}
+
+/// `workspace = "../.."` or `workspace { parent = "…", members = […] }`.
+fn workspace_section(doc: &EureDocument, id: NodeId) -> Result<WorkspaceSection, Message> {
+    match &doc.node(id).content {
+        NodeValue::Primitive(P::Text(t)) => {
+            let path = t.as_str().to_string();
+            if path.is_empty() {
+                return Err(msg!("tauto-workspace-bad-path", path = path.as_str()));
+            }
+            Ok(WorkspaceSection::Affiliate(path))
+        }
+        NodeValue::Map(_) => {
+            let mut parent = None;
+            let mut members = None;
+            for (k, v) in map(doc, id)? {
+                match k.as_str() {
+                    "parent" => parent = Some(text_of(doc, v)?),
+                    "members" => members = Some(member_specs(doc, v)?),
+                    other => {
+                        return Err(msg!("tauto-manifest-unknown-workspace-key", key = other));
+                    }
+                }
+            }
+            let members = members.ok_or_else(|| msg!("tauto-manifest-workspace-members"))?;
+            if members.is_empty() {
+                return Err(msg!("tauto-manifest-workspace-members"));
+            }
+            Ok(WorkspaceSection::Root { parent, members })
+        }
+        _ => Err(msg!("tauto-manifest-workspace-form")),
+    }
+}
+
+fn member_specs(doc: &EureDocument, id: NodeId) -> Result<Vec<MemberSpec>, Message> {
+    let NodeValue::Array(items) = &doc.node(id).content else {
+        return Err(msg!("tauto-manifest-expected-texts"));
+    };
+    items
+        .iter()
+        .map(|i| match &doc.node(*i).content {
+            NodeValue::Primitive(P::Text(t)) if t.language.is_other("glob") => {
+                Ok(MemberSpec::Glob(t.as_str().to_string()))
+            }
+            NodeValue::Primitive(P::Text(t)) => Ok(MemberSpec::Path(t.as_str().to_string())),
+            _ => Err(msg!("tauto-manifest-expected-text")),
+        })
+        .collect()
 }
 
 /// A positive, finite number of seconds, written as an integer or a decimal.
@@ -862,6 +1082,20 @@ fn merge_dependency(
             },
         );
     }
+    // A dependency's extern is named by its full name
+    // (`dev::src::render::open`) when another declaration in the build shares
+    // its bare name, so each binding is also keyed by the tote that declares
+    // it (`dev::open`); two totes binding one bare name stay apart.
+    for key in [&mut rust.externs, &mut rust.marks] {
+        let qualified: Vec<(String, Entry)> = key
+            .iter()
+            .filter(|(name, _)| !name.contains("::"))
+            .map(|(name, e)| (format!("{}::{name}", dep.package.name), e.clone()))
+            .collect();
+        for (name, e) in qualified {
+            key.entry(name).or_insert(e);
+        }
+    }
     for (i, (into, from)) in [
         (&mut m.rust.types, rust.types),
         (&mut m.rust.externs, rust.externs),
@@ -1015,7 +1249,7 @@ fn command(doc: &EureDocument, id: NodeId) -> Result<Command, Message> {
     Ok(Command { main, about })
 }
 
-/// `{ tote = "bikkuri", read = ["src"], net = true }`: the keys of a
+/// `{ tote = "myapp", read = ["src"], net = true }`: the keys of a
 /// permissions file but `all`, and the tote the grant belongs to.
 fn command_trust(doc: &EureDocument, id: NodeId) -> Result<CommandTrust, Message> {
     let mut out = CommandTrust::default();
@@ -1193,24 +1427,9 @@ fn bundled_check_policy() -> Result<&'static CheckSection, Message> {
     POLICY
         .get_or_init(|| {
             let file = Path::new(crate::stdlib::ROOT).join("Tauto.eure");
-            let mut check = parse(include_str!("../../../Tauto.eure"), &file)?.check;
-            check.axioms = check.axioms.map(|allowed| {
-                allowed
-                    .into_iter()
-                    .filter_map(|(path, names)| {
-                        path.strip_prefix("std/")
-                            .map(|name| (name.to_string(), names))
-                    })
-                    .collect()
-            });
-            check.slow = check
-                .slow
-                .into_iter()
-                .filter_map(|(path, limit)| {
-                    path.strip_prefix("std/")
-                        .map(|name| (name.to_string(), limit))
-                })
-                .collect();
+            // The library is its own tote: its policy is `std/Tauto.eure`, whose
+            // paths are already relative to the library's directory.
+            let check = parse(include_str!("../../../std/Tauto.eure"), &file)?.check;
             Ok(check)
         })
         .as_ref()
@@ -1302,4 +1521,24 @@ mod stack_mb_tests {
             assert!(rust_section(bad).is_err(), "{bad} is not a stack size");
         }
     }
+}
+
+/// The entry of the tote in `dir` ([`Package::entry_file`]); a directory whose
+/// manifest cannot be read has the default entries.
+pub fn tote_entry(dir: &Path) -> Option<PathBuf> {
+    read(dir)
+        .map(|m| m.package)
+        .unwrap_or_default()
+        .entry_file(dir)
+}
+
+/// The tote a source file belongs to: the nearest directory above `file`
+/// that holds a `Tauto.eure`, if any. A file built on its own still reads the
+/// `exports` and the dependencies of the tote that holds it.
+pub fn enclosing_tote_dir(file: &Path) -> Option<PathBuf> {
+    let file = std::fs::canonicalize(file).ok()?;
+    file.ancestors()
+        .skip(1)
+        .find(|dir| dir.join("Tauto.eure").is_file())
+        .map(Path::to_path_buf)
 }

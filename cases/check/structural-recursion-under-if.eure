@@ -1,0 +1,44 @@
+description = "A recursive call on a field of a parameter matched below an `if` is structural; a call on something that is not a part of the matched value still fails."
+
+@ cases.a-match-below-an-if-recurs-on-its-field-0
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive L: Type {
+  Nl: L
+  Cs(rest: L): L
+}
+
+fn skip(xs: L, n: Nat): Nat {
+  if n == 0 { 0 } else {
+    match xs {
+      Nl => 0
+      Cs(rest) => skip(rest, n - 1)
+    }
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::skip" = "ok"
+
+@ cases.a-match-below-an-if-still-rejects-a-call-on-the-whole-value-0
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive L: Type {
+  Nl: L
+  Cs(rest: L): L
+}
+
+fn spin(xs: L, n: Nat): Nat {
+  if n == 0 { 0 } else {
+    match xs {
+      Nl => 0
+      Cs(rest) => spin(xs, n - 1)
+    }
+  }
+}
+```
+
+checks."input/main.taut::spin" = "error: "

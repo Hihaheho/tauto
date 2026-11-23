@@ -1,6 +1,6 @@
 import "written_list_sound.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -8,6 +8,7 @@ import "diagnostic_sound.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_composite_sound.taut"
 import "written_context_sound.taut"
@@ -52,11 +53,9 @@ pub fn written_parameters_after(
   m: Mut1(Ty, Checker)
 ): Mut1(List(Ty), Checker) {
   frame_bind(
-    Ty,
-    List(Ty),
+    <A: Ty, B: List(Ty)>,
     (head: Ty, next: Checker) => written_map(
-      List(Ty),
-      List(Ty),
+      <A: List(Ty), B: List(Ty)>,
       (tail: List(Ty)) => Cons(head, tail),
       ck_written_params(rest, next, generics, 0)
     ),
@@ -67,6 +66,7 @@ pub theorem written_parameters_after_sound(
   c: Checker,
   name: Option(Text),
   first: SurfaceTerm,
+  unused: Option(SurfaceSpan),
   rest: List(SurfaceParam),
   generics: Ordmap(Text, Ty),
   m: Mut1(Ty, Checker),
@@ -91,22 +91,21 @@ pub theorem written_parameters_after_sound(
   ck_datas_of(c),
   generics,
   frame_constructor_position(c),
-  Cons(SurfaceParamMk(name, first), rest),
+  Cons(SurfaceParamMk(name, first, unused), rest),
   ck_val(written_parameters_after(rest, generics, m))
 ) {
   ⊢ WrittenParameters(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
-    Cons(SurfaceParamMk(name, first), rest),
+    Cons(SurfaceParamMk(name, first, unused), rest),
     ck_val(written_parameters_after(rest, generics, m))
   ) from match m {
     mut1(head, next) => {
       let tail_clean: DiagnosticClean(
         ck_st(ck_written_params(rest, next, generics, 0))
       ) := written_map_clean(
-        List(Ty),
-        List(Ty),
+        <A: List(Ty), B: List(Ty)>,
         (tail: List(Ty)) => Cons(head, tail),
         ck_written_params(rest, next, generics, 0),
         clean
@@ -116,13 +115,12 @@ pub theorem written_parameters_after_sound(
           ck_datas_of(c),
           generics,
           frame_constructor_position(c),
-          Cons(SurfaceParamMk(name, first), rest),
+          Cons(SurfaceParamMk(name, first, unused), rest),
           types
         ),
         Eq::sym(
           written_map_value(
-            List(Ty),
-            List(Ty),
+            <A: List(Ty), B: List(Ty)>,
             (tail: List(Ty)) => Cons(head, tail),
             ck_written_params(rest, next, generics, 0)
           )
@@ -130,6 +128,7 @@ pub theorem written_parameters_after_sound(
         WrittenParametersCons(
           name,
           first,
+          unused,
           rest,
           head,
           ck_val(ck_written_params(rest, next, generics, 0)),
@@ -153,17 +152,19 @@ pub theorem written_parameters_after_sound(
 pub theorem written_parameter_value(
   name: Option(Text),
   body: SurfaceTerm,
+  unused: Option(SurfaceSpan),
   c: Checker,
   generics: Ordmap(Text, Ty)
-): ck_written_param(SurfaceParamMk(name, body), c, generics) = ck_written_in(body, c, generics) {
+): ck_written_param(SurfaceParamMk(name, body, unused), c, generics) = ck_written_in(body, c, generics) {
   Eq::trans(
-    frame_written_param_unf(name, body, c, generics),
+    frame_written_param_unf(name, body, unused, c, generics),
     ck_rewrap1_id(ck_written_in(body, c, generics))
   )
 }
 pub theorem written_parameters_cons_sound(
   name: Option(Text),
   body: SurfaceTerm,
+  unused: Option(SurfaceSpan),
   rest: List(SurfaceParam),
   c: Checker,
   generics: Ordmap(Text, Ty),
@@ -189,28 +190,29 @@ pub theorem written_parameters_cons_sound(
     ck_val(ck_written_params(rest, next, generics, 0))
   ),
   clean: DiagnosticClean(
-    ck_st(frame_written_params_cons(SurfaceParamMk(name, body), rest, c, generics, 0))
+    ck_st(frame_written_params_cons(SurfaceParamMk(name, body, unused), rest, c, generics, 0))
   )
 ): WrittenParameters(
   ck_datas_of(c),
   generics,
   frame_constructor_position(c),
-  Cons(SurfaceParamMk(name, body), rest),
-  ck_val(frame_written_params_cons(SurfaceParamMk(name, body), rest, c, generics, 0))
+  Cons(SurfaceParamMk(name, body, unused), rest),
+  ck_val(frame_written_params_cons(SurfaceParamMk(name, body, unused), rest, c, generics, 0))
 ) {
   Eq::subst(
     (m: Mut1(Ty, Checker)) => WrittenParameters(
       ck_datas_of(c),
       generics,
       frame_constructor_position(c),
-      Cons(SurfaceParamMk(name, body), rest),
+      Cons(SurfaceParamMk(name, body, unused), rest),
       ck_val(written_parameters_after(rest, generics, m))
     ),
-    Eq::sym(written_parameter_value(name, body, c, generics)),
+    Eq::sym(written_parameter_value(name, body, unused, c, generics)),
     written_parameters_after_sound(
       c,
       name,
       body,
+      unused,
       rest,
       generics,
       ck_written_in(body, c, generics),
@@ -222,7 +224,7 @@ pub theorem written_parameters_cons_sound(
         (m: Mut1(Ty, Checker)) => DiagnosticClean(
           ck_st(written_parameters_after(rest, generics, m))
         ),
-        written_parameter_value(name, body, c, generics),
+        written_parameter_value(name, body, unused, c, generics),
         clean
       )
     )

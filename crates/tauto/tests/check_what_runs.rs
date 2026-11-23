@@ -10,7 +10,13 @@ use tauto::report::{Report, Status, check_report, check_tote_report};
 const NAT_IN_U64_FIELD: &str = "struct Box { n: u64 }\n\n\
 fn count(k: Nat): Nat {\n  k\n}\n\n\
 let b := Box { n: count(3) }\n\
-perform show(\"n\", b.n)\n";
+show(&b.n)\n";
+
+/// The same mistake inside `main`: the top level of a tote's module may not
+/// perform (`show` writes to stdout), so a tote's source puts it in an entry.
+const NAT_IN_U64_FIELD_IN_MAIN: &str = "struct Box { n: u64 }\n\n\
+fn count(k: Nat): Nat {\n  k\n}\n\n\
+fn main(): Unit {\n  let b := Box { n: count(3) }\n  show(&b.n)\n}\n";
 
 fn dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("tauto-check-runs-{}-{name}", std::process::id()));
@@ -56,7 +62,7 @@ fn a_nat_passed_for_a_u64_is_rejected() {
         &path,
         "fn count(k: Nat): Nat {\n  k\n}\n\n\
          fn f(x: u64): u64 {\n  x\n}\n\n\
-         perform show(\"n\", f(count(3)))\n",
+         show(&f(count(3)))\n",
     )
     .unwrap();
     let report = check_report(&path, None).unwrap();
@@ -78,7 +84,7 @@ fn a_nat_kept_in_a_nat_field_checks() {
         "struct Box { n: Nat }\n\n\
          fn count(k: Nat): Nat {\n  k\n}\n\n\
          let b := Box { n: count(3) }\n\
-         perform show(\"n\", b.n)\n",
+         show(&b.n)\n",
     )
     .unwrap();
     let report = check_report(&path, None).unwrap();
@@ -95,7 +101,7 @@ fn a_tote_is_rejected_as_run_reads_it() {
         "package {\n  name = \"box-tote\"\n  version = \"0.1.0\"\n}\n",
     )
     .unwrap();
-    std::fs::write(root.join("src/main.taut"), NAT_IN_U64_FIELD).unwrap();
+    std::fs::write(root.join("src/main.taut"), NAT_IN_U64_FIELD_IN_MAIN).unwrap();
     let report = check_tote_report(&root).unwrap().report;
     assert_eq!(
         report.status(),
@@ -146,7 +152,7 @@ fn a_top_level_let_does_not_take_a_name_of_an_imported_file() {
     let path = d.join("main.taut");
     std::fs::write(
         &path,
-        "import \"lib.taut\"\n\nlet marked := 1\nperform show(\"marked\", marked)\n",
+        "import \"lib.taut\"\n\nlet marked := 1\nshow(&marked)\n",
     )
     .unwrap();
     let report = check_report(&path, None).unwrap();
@@ -217,14 +223,13 @@ fn a_stray_pub_is_rejected() {
     tauto_messages::install();
     let path = dir("stray-pub").join("main.taut");
     std::fs::write(&path, "pub // a comment\nfn main(): Unit {\n  ()\n}\n").unwrap();
-    let Err(message) = check_report(&path, None) else {
-        panic!("a stray `pub` was checked");
-    };
+    // A file that does not parse is a failed report of its own, at the place of the error.
+    let report = check_report(&path, None).unwrap();
+    assert_eq!(report.status(), Status::Failed, "a stray `pub` was checked");
+    let json = report.json().render();
     assert!(
-        message
-            .to_string()
-            .contains("`pub` is a keyword and cannot be used as a name"),
-        "{message}"
+        json.contains("`pub` is a keyword and cannot be used as a name"),
+        "{json}"
     );
 }
 
@@ -232,7 +237,7 @@ fn a_stray_pub_is_rejected() {
 fn invalid_native_type_function_is_reported_by_check() {
     tauto_messages::install();
     let path = dir("native-type-function").join("main.taut");
-    std::fs::write(&path, "struct Payload { value: nat }\nfn Broken(A: Type): Type { Payload { value: 0 } }\nperform show(\"value\", 0)\n").unwrap();
+    std::fs::write(&path, "struct Payload { value: nat }\nfn Broken(A: Type): Type { Payload { value: 0 } }\nshow(&0)\n").unwrap();
     let report = check_report(&path, None).unwrap();
     assert_eq!(
         report.status(),
@@ -244,5 +249,92 @@ fn invalid_native_type_function_is_reported_by_check() {
         failure(&report).contains("native type function body must be a type expression"),
         "{}",
         report.json().render()
+    );
+}
+
+/// A class method used at a type parameter the instance needs to be shared is
+/// found in the call the program writes, not in the code the class expansion
+/// makes for it: the error has a place in the file.
+#[test]
+fn an_affine_type_parameter_for_an_instance_is_placed_at_its_call() {
+    tauto_messages::install();
+    let path = dir("instance-bound").join("main.taut");
+    std::fs::write(
+        &path,
+        "import std::base\n\n\
+         pub(open) class Merge(A: Type) {\n  fn merge(a: A, b: A): A\n}\n\n\
+         pub(open) inductive Box(K: Type): Type {\n  Mk(items: List(K)): Box(K)\n}\n\n\
+         instance<K: Shared> Merge(Box(K)) {\n  fn merge(a: Box(K), b: Box(K)): Box(K) {\n    a\n  }\n}\n\n\
+         pub fn put<K>(a: Box(K), b: Box(K)): Box(K) {\n  Merge::merge(a, b)\n}\n",
+    )
+    .unwrap();
+    let report = check_report(&path, None).unwrap();
+    assert_eq!(
+        report.status(),
+        Status::Failed,
+        "{}",
+        report.json().render()
+    );
+    let entry = report
+        .entries
+        .iter()
+        .find_map(|e| match &e.entry.verdict {
+            Verdict::Failed(d) => Some(d),
+            _ => None,
+        })
+        .expect("a failed entry");
+    assert!(
+        entry
+            .message
+            .to_string()
+            .contains("affine does not fit shared: K for a type parameter"),
+        "{}",
+        report.json().render()
+    );
+    let at = entry.span.expect("the error has a place");
+    let source = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        source[at.start as usize..]
+            .lines()
+            .next()
+            .unwrap()
+            .trim_start(),
+        "Merge::merge(a, b)"
+    );
+}
+
+/// A text literal in a file that does not import `std::text` runs as
+/// written, though another file imports it: the file is checked with the
+/// files it imports only, so its kernel has no `Text`, whether the files are
+/// declared one at a time or side by side.
+#[test]
+fn a_text_literal_in_a_file_without_std_text_runs_as_written() {
+    tauto_messages::install();
+    let root = dir("text-without-import").join("tables-tote");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("Tauto.eure"),
+        "package {\n  name = \"tables-tote\"\n  version = \"0.1.0\"\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/tables.taut"),
+        "pub fn Tables::words(): List(Text) {\n  Cons(\"a\", Cons(\"b\", Nil))\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/main.taut"),
+        "import std::base\nimport std::list\nimport std::text\nimport \"tables.taut\"\n\
+         pub fn n(): Nat { List::length(Tables::words()) }\n\
+         pub fn start(): Unit { () }\n\
+         start()\n",
+    )
+    .unwrap();
+    let checked = check_tote_report(&root).unwrap();
+    assert_eq!(
+        checked.report.status(),
+        Status::Ok,
+        "{}",
+        checked.report.json().render()
     );
 }

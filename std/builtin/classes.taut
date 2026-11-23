@@ -1,0 +1,216 @@
+// Type classes of the standard library. The classes
+// are expanded where a program is read, so the library's functions that ask
+// for one take its methods as arguments. `Ord` and its instances for the
+// data of `std/prelude/std.taut` are in `std/builtin/ord.taut`, which the
+// proofs read too; the instances here are for the builtin types, which the
+// kernel does not see, and their laws are trusted.
+
+import std::builtin::ord { Ord }
+import std::prelude::collections { Vec }
+import std::prelude::num { I64, U64, overflow }
+import std::prelude::std { List, Option, Ordering, concat }
+import std::prelude::text { Text }
+
+pub(open) class ToText(A: Linear) {
+  fn to_text(a: &A): Text
+}
+
+instance Ord(i64) {
+  fn compare(a: &i64, b: &i64): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+
+instance Ord(i8) {
+  fn compare(a: &i8, b: &i8): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+
+instance Ord(i16) {
+  fn compare(a: &i16, b: &i16): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+
+instance Ord(u16) {
+  fn compare(a: &u16, b: &u16): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+
+instance Ord(i32) {
+  fn compare(a: &i32, b: &i32): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+
+instance Ord(u8) {
+  fn compare(a: &u8, b: &u8): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+
+instance Ord(u32) {
+  fn compare(a: &u32, b: &u32): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+
+instance Ord(u64) {
+  fn compare(a: &u64, b: &u64): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+
+instance Ord(uhost) {
+  fn compare(a: &uhost, b: &uhost): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+
+instance Ord(nat) {
+  fn compare(a: &nat, b: &nat): Ordering {
+    if a < b { Less } else if a == b { Equal } else { Greater }
+  }
+}
+
+instance Ord(Bool) {
+  fn compare(a: &Bool, b: &Bool): Ordering {
+    if a == b { Equal } else if b { Less } else { Greater }
+  }
+}
+
+// Byte by byte, from the first; a text that is a prefix of the other is the
+// smaller.
+instance Ord(Text) {
+  fn compare(a: &Text, b: &Text): Ordering {
+    let c := Text::compare(a, b)
+    if c < 0 { Less } else if c == 0 { Equal } else { Greater }
+  }
+}
+
+instance ToText(i64) {
+  fn to_text(a: &i64): Text { Text::of_i64(a) }
+}
+
+instance ToText(i8) {
+  fn to_text(a: &i8): Text { Text::of_i64(I64::of_i8(a)) }
+}
+
+instance ToText(i16) {
+  fn to_text(a: &i16): Text { Text::of_i64(I64::of_i16(a)) }
+}
+
+instance ToText(u16) {
+  fn to_text(a: &u16): Text { Text::of_u64(U64::of_u16(a)) }
+}
+
+instance ToText(i32) {
+  fn to_text(a: &i32): Text { Text::of_i64(I64::of_i32(a)) }
+}
+
+instance ToText(u8) {
+  fn to_text(a: &u8): Text { Text::of_u64(U64::of_u8(a)) }
+}
+
+instance ToText(u32) {
+  fn to_text(a: &u32): Text { Text::of_u64(U64::of_u32(a)) }
+}
+
+instance ToText(u64) {
+  fn to_text(a: &u64): Text { Text::of_u64(a) }
+}
+
+instance ToText(uhost) {
+  fn to_text(a: &uhost): Text { Text::of_u64(U64::of_uhost(a)) }
+}
+
+instance ToText(nat) {
+  fn to_text(a: &nat): Text { Text::of_nat(a) }
+}
+
+instance ToText(Bool) {
+  fn to_text(a: &Bool): Text { if a { "true" } else { "false" } }
+}
+
+instance ToText(Text) {
+  fn to_text(a: &Text): Text { a }
+}
+
+instance<A> ToText(List(A)) where ToText(A) {
+  fn to_text(a: &List(A)): Text {
+    concat("[", concat(Text::items(&a), "]"))
+  }
+}
+
+// The elements, `, ` between them.
+pub fn Text::items<A: Linear>(xs: &List(A)): Text where ToText(A) {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => concat(ToText::to_text(&x), Text::items_after(&rest))
+  }
+}
+
+pub fn Text::items_after<A: Linear>(xs: &List(A)): Text where ToText(A) {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => concat(", ", concat(ToText::to_text(&x), Text::items_after(&rest)))
+  }
+}
+
+instance<A> ToText(Option(A)) where ToText(A) {
+  fn to_text(a: &Option(A)): Text {
+    match a {
+      None => "None"
+      Some(x) => concat("Some(", concat(ToText::to_text(&x), ")"))
+    }
+  }
+}
+
+instance<A, B> ToText(A × B) where ToText(A), ToText(B) {
+  fn to_text(a: &(A × B)): Text {
+    concat("(", concat(ToText::to_text(&a.fst), concat(", ", concat(ToText::to_text(&a.snd), ")"))))
+  }
+}
+
+// In place, smallest first; equal elements keep their order.
+pub fn Vec::sort<A: Linear>(v: &mut Vec(A)): Unit ! {overflow} where Ord(A) {
+  Vec::sort_by(&mut v, (a, b) => Ord::compare(&a, &b) == Less)
+}
+
+// The greatest element; of equal ones, the last.
+pub fn List::max<A: Shared>(xs: List(A)): Option(A) where Ord(A) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => match List::max(rest) {
+      None => Some(x)
+      Some(m) => if Ord::compare(&m, &x) == Less { Some(x) } else { Some(m) }
+    }
+  }
+}
+
+// The smallest element; of equal ones, the last.
+pub fn List::min<A: Shared>(xs: List(A)): Option(A) where Ord(A) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => match List::min(rest) {
+      None => Some(x)
+      Some(m) => if Ord::compare(&x, &m) == Less { Some(x) } else { Some(m) }
+    }
+  }
+}
+
+pub fn join<A>(xs: List(A), sep: Text): Text where ToText(A) {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => concat(ToText::to_text(&x), join_after(rest, sep))
+  }
+}
+
+pub fn join_after<A>(xs: List(A), sep: Text): Text where ToText(A) {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => concat(sep, concat(ToText::to_text(&x), join_after(rest, sep)))
+  }
+}

@@ -1,0 +1,141 @@
+// The module a file's declarations are in, and a library file that declares a
+// type the language has, which the host names by that module.
+import "program.taut"
+import "elaborate.taut"
+import "vary.taut"
+import "../../kernel/src/data.taut"
+import "../../kernel/src/term.taut"
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import std::list
+import std::text
+import std::base
+import std::builtin::os
+
+// A declaration whose first name is one of `roots` is told apart by the full
+// name of its file, `module::name`, as the host reads a library file that
+// declares a type the language has.
+pub fn elab_requalify_roots(stmts: List(SurfaceStmt), roots: List(Text), m: Text): List(SurfaceStmt) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => {
+      let here: List(SurfaceStmt) := ⊢ List(SurfaceStmt) from match s {
+        StOther(what, start, end) => if text_starts_with(what, "#enter ", 0) && elab_text_member(roots, elab_first_name(Text::slice_or_empty(what, 7, Text::len(what)))) {
+          Cons(StOther(Text::concat_all(["#enter ", m, "::", Text::slice_or_empty(what, 7, Text::len(what))]), start, end), Nil)
+        } else { Cons(s, Nil) }
+        _ => ⊢ List(SurfaceStmt) from match elab_decl_name(s) {
+          None => Cons(s, Nil)
+          Some(n) => if elab_text_member(roots, elab_first_name(n)) { elab_module_items(2, m, Cons(s, Nil)) } else { Cons(s, Nil) }
+        }
+      }
+      List::append(here, elab_requalify_roots(rest, roots, m))
+    }
+  }
+}
+
+// The types the language has that a file's inductives declare.
+pub fn elab_declared_runtime(stmts: List(SurfaceStmt)): List(Text) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(Text) from match s {
+      StInductive(i) => if elab_text_member(elab_runtime_types(), i.name) && i.name != "Text" && i.name != "Never" { Cons(i.name, elab_declared_runtime(rest)) } else { elab_declared_runtime(rest) }
+      _ => elab_declared_runtime(rest)
+    }
+  }
+}
+
+pub fn elab_alias_bindings(roots: List(Text), m: Text, env: List(ElabBinding)): List(ElabBinding) {
+  match roots {
+    Nil => env
+    Cons(r, rest) => elab_alias_bindings(rest, m, Cons(ElabBinding::Mk(Text::concat("#alias ", r), KernelConst(Text::concat_all([m, "::", r])), KernelLit(0)), elab_unskip(env, r)))
+  }
+}
+
+pub fn elab_unskip(env: List(ElabBinding), name: Text): List(ElabBinding) {
+  match env {
+    Nil => Nil
+    Cons(b, rest) => ⊢ List(ElabBinding) from match b.value {
+      KernelConst(n) => if b.name == "#skipped" && n == name { elab_unskip(rest, name) } else { Cons(b, elab_unskip(rest, name)) }
+      _ => Cons(b, elab_unskip(rest, name))
+    }
+  }
+}
+
+// The module of the file at `path`.
+pub fn elab_file_module(path: Text): Text ! {fs_read} {
+  let parts := text_split(path, "/")
+  let n := List::length(parts)
+  let last := elab_last_text(parts, path)
+  let stem := ⊢ Text from match text_find(last, ".", 0) {
+    None => last
+    Some(at) => Text::slice_or_empty(last, 0, at)
+  }
+  elab_module_up(n, parts, n - 1, stem)
+}
+
+pub fn elab_module_up(k: Nat, parts: List(Text), at: Nat, stem: Text): Text ! {fs_read} {
+  match k {
+    Zero => stem
+    Succ(j) => if at == 0 { stem } else {
+      let dir := text_join(elab_take_text(parts, at), "/")
+      ⊢ Text from match read_file(Text::concat(dir, "/Tauto.eure")) {
+        Ok(src) => ⊢ Text from match elab_tote_name(src) {
+          Some(name) => text_join(List::append(Cons(name, elab_take_text(elab_drop_text(parts, at), List::length(parts) - at - 1)), Cons(stem, Nil)), "::")
+          None => stem
+        }
+        Err(^m) => elab_module_up(j, parts, at - 1, stem)
+      }
+    }
+  }
+}
+
+pub fn elab_tote_name(src: Text): Option(Text) {
+  match text_find(src, "name = \"", 0) {
+    None => None
+    Some(at) => ⊢ Option(Text) from match text_find(src, "\"", at + 8) {
+      None => None
+      Some(e) => Some(Text::slice_or_empty(src, at + 8, e))
+    }
+  }
+}
+
+pub fn elab_take_text(xs: List(Text), n: Nat): List(Text) {
+  match n {
+    Zero => Nil
+    Succ(m) => ⊢ List(Text) from match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(x, elab_take_text(rest, m))
+    }
+  }
+}
+
+pub fn elab_drop_text(xs: List(Text), n: Nat): List(Text) {
+  match n {
+    Zero => xs
+    Succ(m) => ⊢ List(Text) from match xs {
+      Nil => Nil
+      Cons(^x, rest) => elab_drop_text(rest, m)
+    }
+  }
+}
+
+pub fn elab_last_text(xs: List(Text), none: Text): Text {
+  match xs {
+    Nil => none
+    Cons(x, rest) => match rest {
+      Nil => x
+      Cons(^y, ^more) => elab_last_text(rest, none)
+    }
+  }
+}
+
+pub fn elab_decl_name(s: SurfaceStmt): Option(Text) {
+  match s {
+    StDef(d) => Some(d.name)
+    StTheorem(d) => Some(d.name)
+    StFn(f) => Some(f.name)
+    StInductive(i) => Some(i.name)
+    _ => None
+  }
+}
+

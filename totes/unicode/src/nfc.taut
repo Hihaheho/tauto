@@ -1,0 +1,276 @@
+import std::base
+import std::map
+import "../../text/src/text.taut"
+import "tables.taut"
+
+// Whether a name is in Normalization Form C (UAX #15), as `tauto-parol`'s
+// `unicode::is_nfc` says: the canonical decomposition, the canonical order
+// of the combining marks, then the canonical composition, and the result
+// compared with the name. The tables are those of `tables.taut`; Hangul
+// syllables are decomposed and composed by arithmetic.
+
+pub(open) inductive UnicodeNfc: Type {
+  UnicodeNfcWith(
+    classes: Ordmap(Nat, Nat × Nat),
+    decomposition: Ordmap(Nat, Nat × Nat),
+    composition: Ordmap(Nat, Nat)
+  ): UnicodeNfc
+}
+
+// The key of the pair `a b` of the table of compositions.
+pub fn unicode_pair(a: Nat, b: Nat): Nat {
+  Nat::add(Nat::mul(a, 1114112), b)
+}
+
+// The triples `a b c` of a table, by `a`, as `(b, c)`.
+pub fn unicode_triples(
+  fuel: Nat,
+  ns: List(Nat),
+  done: Ordmap(Nat, Nat × Nat)
+): Ordmap(Nat, Nat × Nat) {
+  match fuel {
+    Zero => done
+    Succ(f) => ⊢ Ordmap(Nat, Nat × Nat) from match ns {
+      Cons(a, Cons(b, Cons(c, rest))) => unicode_triples(
+        f,
+        rest,
+        Ordmap::insert(done, a, #(b, c), Ordmap::compare_nat)
+      )
+      _ => done
+    }
+  }
+}
+
+// The triples `a b c` of the table of compositions, by the pair `a b`.
+pub fn unicode_pairs(fuel: Nat, ns: List(Nat), done: Ordmap(Nat, Nat)): Ordmap(Nat, Nat) {
+  match fuel {
+    Zero => done
+    Succ(f) => ⊢ Ordmap(Nat, Nat) from match ns {
+      Cons(a, Cons(b, Cons(c, rest))) => unicode_pairs(
+        f,
+        rest,
+        Ordmap::insert(done, unicode_pair(a, b), c, Ordmap::compare_nat)
+      )
+      _ => done
+    }
+  }
+}
+
+pub fn unicode_nfc_of(classes: Text, decomposition: Text, composition: Text): UnicodeNfc {
+  let cs := text_number_list(classes)
+  let ds := text_number_list(decomposition)
+  let ps := text_number_list(composition)
+  UnicodeNfcWith(
+    unicode_triples(List::length(cs), cs, Ordmap::empty()),
+    unicode_triples(List::length(ds), ds, Ordmap::empty()),
+    unicode_pairs(List::length(ps), ps, Ordmap::empty())
+  )
+}
+
+pub fn unicode_nfc(): UnicodeNfc {
+  unicode_nfc_of(
+    unicode_table_combining_class(),
+    unicode_table_decomposition(),
+    unicode_table_composition()
+  )
+}
+
+// The canonical combining class of `c`.
+pub fn unicode_class(t: UnicodeNfc, c: Nat): Nat {
+  match t {
+    UnicodeNfcWith(classes, ^decomposition, ^composition) => ⊢ Nat from match Ordmap::floor(
+      classes,
+      c,
+      Ordmap::compare_nat
+    ) {
+      None => 0
+      Some(entry) => ⊢ Nat from match entry {
+        #(^first, rest) => ⊢ Nat from match rest {
+          #(last, k) => if Nat::le(c, last) { k } else { 0 }
+        }
+      }
+    }
+  }
+}
+
+pub fn unicode_is_hangul(c: Nat): Bool {
+  Bool::and(Nat::le(44032, c), Nat::le(c, 55203))
+}
+
+// The canonical decomposition of `c` onto `done` (the last first). `fuel`
+// bounds the depth; a decomposition is at most four steps deep.
+pub fn unicode_decompose(fuel: Nat, t: UnicodeNfc, c: Nat, done: List(Nat)): List(Nat) {
+  match fuel {
+    Zero => Cons(c, done)
+    Succ(f) => if unicode_is_hangul(c) {
+      let s := Nat::sub(c, 44032)
+      let l := Nat::add(4352, Nat::div_nz(s, 588, Nat::ne_zero(588, Refl)))
+      let v := Nat::add(
+        4449,
+        Nat::div_nz(Nat::rem_nz(s, 588, Nat::ne_zero(588, Refl)), 28, Nat::ne_zero(28, Refl))
+      )
+      let tail := Nat::rem_nz(s, 28, Nat::ne_zero(28, Refl))
+      if Nat::eq(tail, 0) {
+        Cons(v, Cons(l, done))
+      } else {
+        Cons(Nat::add(4519, tail), Cons(v, Cons(l, done)))
+      }
+    } else {
+      ⊢ List(Nat) from match t {
+        UnicodeNfcWith(^classes, decomposition, ^composition) => ⊢ List(Nat) from match Ordmap::get(
+          decomposition,
+          c,
+          Ordmap::compare_nat
+        ) {
+          None => Cons(c, done)
+          Some(ab) => ⊢ List(Nat) from match ab {
+            #(a, b) => if Nat::eq(b, 0) {
+              unicode_decompose(f, t, a, done)
+            } else {
+              unicode_decompose(f, t, b, unicode_decompose(f, t, a, done))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// `c` of class `k` (not 0) put into `done` (the last first) after the
+// characters of class at most `k`: the canonical order, stable.
+pub fn unicode_order_insert(t: UnicodeNfc, c: Nat, k: Nat, done: List(Nat)): List(Nat) {
+  match done {
+    Nil => Cons(c, Nil)
+    Cons(x, rest) => ⊢ List(Nat) from match Nat::lt(k, unicode_class(t, x)) {
+      true => Cons(x, unicode_order_insert(t, c, k, rest))
+      false => Cons(c, done)
+    }
+  }
+}
+
+// The canonical decomposition of `cs` in canonical order, onto `done` (the
+// last first).
+pub fn unicode_decompose_all(t: UnicodeNfc, cs: List(Nat), done: List(Nat)): List(Nat) {
+  match cs {
+    Nil => done
+    Cons(c, rest) => unicode_decompose_all(
+      t,
+      rest,
+      unicode_order_all(t, List::reverse(unicode_decompose(8, t, c, Nil)), done)
+    )
+  }
+}
+
+pub fn unicode_order_all(t: UnicodeNfc, cs: List(Nat), done: List(Nat)): List(Nat) {
+  match cs {
+    Nil => done
+    Cons(c, rest) => {
+      let k := unicode_class(t, c)
+      unicode_order_all(
+        t,
+        rest,
+        if Nat::eq(k, 0) { Cons(c, done) } else { unicode_order_insert(t, c, k, done) }
+      )
+    }
+  }
+}
+
+// The canonical composition of `a` and `b`, Hangul by arithmetic.
+pub fn unicode_compose(t: UnicodeNfc, a: Nat, b: Nat): Option(Nat) {
+  if Bool::and(
+    Bool::and(Nat::le(4352, a), Nat::le(a, 4370)),
+    Bool::and(Nat::le(4449, b), Nat::le(b, 4469))
+  ) {
+    Some(Nat::add(44032, Nat::mul(Nat::add(Nat::mul(Nat::sub(a, 4352), 21), Nat::sub(b, 4449)), 28)))
+  } else {
+    if Bool::and(
+      Bool::and(unicode_is_hangul(a), Nat::eq(Nat::rem_nz(Nat::sub(a, 44032), 28, Nat::ne_zero(28, Refl)), 0)),
+      Bool::and(Nat::le(4520, b), Nat::le(b, 4546))
+    ) {
+      Some(Nat::sub(Nat::add(a, b), 4519))
+    } else {
+      ⊢ Option(Nat) from match t {
+        UnicodeNfcWith(^classes, ^decomposition, composition) => Ordmap::get(
+          composition,
+          unicode_pair(a, b),
+          Ordmap::compare_nat
+        )
+      }
+    }
+  }
+}
+
+// `pending` (the last first) after `starter`, onto `done` (the last first).
+pub fn unicode_flush(starter: Option(Nat), pending: List(Nat), done: List(Nat)): List(Nat) {
+  let before := ⊢ List(Nat) from match starter {
+    None => done
+    Some(s) => Cons(s, done)
+  }
+  List::append(pending, before)
+}
+
+// The canonical composition of `cs`: `starter` is the last starter,
+// `pending` the characters kept after it (the last first), `last` the class
+// of the last character kept (256 when there is no starter to compose with).
+pub fn unicode_compose_all(
+  t: UnicodeNfc,
+  cs: List(Nat),
+  starter: Option(Nat),
+  pending: List(Nat),
+  last: Nat,
+  done: List(Nat)
+): List(Nat) {
+  match cs {
+    Nil => List::reverse(unicode_flush(starter, pending, done))
+    Cons(c, rest) => {
+      let k := unicode_class(t, c)
+      let composed := ⊢ Option(Nat) from match starter {
+        None => None
+        Some(s) => if Bool::or(Nat::lt(last, k), Nat::eq(last, 0)) {
+          unicode_compose(t, s, c)
+        } else {
+          None
+        }
+      }
+      ⊢ List(Nat) from match composed {
+        Some(x) => unicode_compose_all(t, rest, Some(x), pending, last, done)
+        None => if Nat::eq(k, 0) {
+          unicode_compose_all(t, rest, Some(c), Nil, 0, unicode_flush(starter, pending, done))
+        } else {
+          unicode_compose_all(t, rest, starter, Cons(c, pending), k, done)
+        }
+      }
+    }
+  }
+}
+
+// The code points of `cs` in Normalization Form C.
+pub fn unicode_nfc_points(t: UnicodeNfc, cs: List(Nat)): List(Nat) {
+  unicode_compose_all(t, List::reverse(unicode_decompose_all(t, cs, Nil)), None, Nil, 256, Nil)
+}
+
+pub fn unicode_points_eq(a: List(Nat), b: List(Nat)): Bool {
+  match a {
+    Nil => ⊢ Bool from match b {
+      Nil => true
+      Cons(^y, ^ys) => false
+    }
+    Cons(x, xs) => ⊢ Bool from match b {
+      Nil => false
+      Cons(y, ys) => Bool::and(Nat::eq(x, y), unicode_points_eq(xs, ys))
+    }
+  }
+}
+
+pub fn unicode_all_ascii(cs: List(Nat)): Bool {
+  match cs {
+    Nil => true
+    Cons(c, rest) => Bool::and(Nat::lt(c, 128), unicode_all_ascii(rest))
+  }
+}
+
+// Whether `name` is in Normalization Form C.
+pub fn unicode_is_nfc(t: UnicodeNfc, name: Text): Bool {
+  let cs := text_code_points(name)
+  Bool::or(unicode_all_ascii(cs), unicode_points_eq(unicode_nfc_points(t, cs), cs))
+}

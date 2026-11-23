@@ -35,7 +35,7 @@ use tauto::program::canonical_path;
 use tauto::report::{Attempt, Hole, Report, find_hole, splice};
 use tauto_parol::Span;
 
-use queries::{CheckDecl, Ctx, Epoch, Library, LoadShape, SourceText};
+use queries::{CheckDecl, Ctx, Epoch, FileText, Library, LoadShape, SourceText};
 
 pub use queries::{Decl, Shape};
 
@@ -179,6 +179,12 @@ impl Workspace {
         let ctx = self.ctx(entry);
         let shape = self.ask(LoadShape(ctx.clone()))?;
         if let Some(error) = &shape.error {
+            // A file that does not parse is a failed report at its place, as `tauto check`
+            // gives it.
+            let text = self.ask(FileText(ctx.entry.clone()))?;
+            if let Some(report) = tauto::report::syntax_report(&ctx.entry, Some(&text)) {
+                return Ok(report);
+            }
             return Err(error.clone());
         }
         let mut entries: Vec<FileEntry> = Vec::new();
@@ -214,7 +220,11 @@ impl Workspace {
             }
             entries.extend(decl.entries.iter().map(|e| shifted(e, delta)));
         }
-        entries.extend(shape.macro_failures.iter().cloned());
+        session::with(ctx.ws, &ctx.entry, |session| {
+            if let Some(loaded) = session.loaded.as_ref() {
+                tauto::check::attach_macro_failures(loaded, &mut entries);
+            }
+        });
         let sources: BTreeMap<PathBuf, String> = shape
             .files
             .iter()

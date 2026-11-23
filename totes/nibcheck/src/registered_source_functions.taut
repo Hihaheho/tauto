@@ -1,8 +1,8 @@
 import "rules_registered_source_functions.taut"
 import "prepare_function_registered.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "rules_program_signature_sources.taut"
@@ -10,17 +10,17 @@ import "rules_registered_signatures.taut"
 import "../../surface/src/surface.taut"
 
 pub theorem fnt_registered_prefix(
-  prefix: List(Pair(SurfaceFn, Scheme)),
-  suffix: List(Pair(SurfaceFn, Scheme)),
+  prefix: List(SurfaceFn × Scheme),
+  suffix: List(SurfaceFn × Scheme),
   table: Ordmap(Text, Scheme),
   registered: RegisteredSignatures(table, List::append(prefix, suffix))
 ): RegisteredSignatures(table, prefix) {
-  ⊢ RegisteredSignatures(table, prefix) from match prefix {
+  match prefix {
     Nil => RegisteredSignaturesNil
     Cons(entry, rest) => ⊢ RegisteredSignatures(table, Cons(entry, rest)) from match entry {
-      Pair {fst: source, snd: scheme} => ⊢ RegisteredSignatures(
+      #(source, scheme) => ⊢ RegisteredSignatures(
         table,
-        Cons(Pair {fst: source, snd: scheme}, rest)
+        Cons(#(source, scheme), rest)
       ) from match registered {
         RegisteredSignaturesCons(stored_source, stored_scheme, stored_rest, found, tail) => RegisteredSignaturesCons(
           source,
@@ -36,13 +36,13 @@ pub theorem fnt_registered_prefix(
 pub theorem prepared_source_registered<env: Datas, program: List(
   SurfaceStmt
 ), schemes: List(
-  Pair(SurfaceFn, Scheme)
+  (SurfaceFn × Scheme)
 )>(
   prepared: PreparedSourceSignatures(env, program, schemes),
   table: Ordmap(Text, Scheme),
   registered: RegisteredSignatures(table, schemes)
 ): SourceFunctionsRegistered(env, program) {
-  ⊢ SourceFunctionsRegistered(env, program) from match prepared {
+  match prepared {
     Mk(own, generated, combined, sources, derived) => SourceFunctionsRegistered::Mk(
       table,
       own,
@@ -53,7 +53,7 @@ pub theorem prepared_source_registered<env: Datas, program: List(
         generated,
         table,
         Eq::subst(
-          (values: List(Pair(SurfaceFn, Scheme))) => RegisteredSignatures(table, values),
+          (values: List(SurfaceFn × Scheme)) => RegisteredSignatures(table, values),
           combined,
           registered
         )

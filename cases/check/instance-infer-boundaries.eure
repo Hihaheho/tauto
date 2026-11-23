@@ -1,0 +1,61 @@
+description = "Instance inference respects prerequisites and first-order information boundaries."
+
+@ cases.instance-infer-does-not-filter-by-where
+extract = false
+differential = "elaborator"
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Need(A: Type) { fn need(value: A): Nat }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A where Need(Nat) {
+  fn choose(value: Local): Nat { 3 }
+}
+instance Choose(Local, Bool) {
+  fn choose(value: Local): Bool { true }
+}
+fn discard<T: Type>(value: T): Nat { 0 }
+fn test(): Nat {
+  let result := Choose::choose(Local::Mk)
+  discard(result)
+}
+```
+checks_all = "ok"
+checks."input/main.taut::test" = "error: no instance"
+
+@ cases.instance-infer-does-not-invent-generic-output
+extract = false
+differential = "elaborator"
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local(A: Type): Type { Mk(value: A): Local(A) }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): Nat }
+instance<T: Type, U: Type> Choose(Local(T), List(U)) infer from A {
+  fn choose(value: Local(T)): Nat { 3 }
+}
+fn use<A: Type, I: Type>(value: A): Nat where Choose(A, I) {
+  Choose::choose(<A: A, I: I>, value)
+}
+fn test(value: Local(Nat)): Nat { use(value) }
+```
+checks_all = "ok"
+checks."input/main.taut::test" = "error: infer from does not determine all required type arguments"
+
+@ cases.instance-infer-generic-output-from-known-input
+differential = "elaborator"
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local(A: Type): Type { Mk(value: A): Local(A) }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance<T: Type> Choose(Local(T), List(T)) infer from A {
+  fn choose(value: Local(T)): List(T) { Nil }
+}
+fn test(value: Local(Nat)): List(Nat) {
+  let result := Choose::choose(value)
+  result
+}
+```
+checks_all = "ok"

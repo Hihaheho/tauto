@@ -1,6 +1,6 @@
 import "rules_signature_body.taut"
 import "signature_context_sound.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "datas_frame.taut"
@@ -13,6 +13,7 @@ import "signature_frame.taut"
 import "signature_parameters_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
 import "written_list_sound.taut"
@@ -22,12 +23,11 @@ pub fn signature_finish_preds(
   g: SigGenerics,
   params: List(Ty),
   result: Ty,
-  m: Mut1(List(Pair(Text, Text)), Checker)
+  m: Mut1(List(Text × Text), Checker)
 ): Mut1(Scheme, Checker) {
   frame_bind(
-    List(Pair(Text, Text)),
-    Scheme,
-    (preds: List(Pair(Text, Text)), next: Checker) => mut1(
+    <A: List(Text × Text), B: Scheme>,
+    (preds: List(Text × Text), next: Checker) => mut1(
       signature_scheme(g, params, result, preds),
       next
     ),
@@ -38,7 +38,7 @@ pub theorem signature_finish_preds_type(
   g: SigGenerics,
   params: List(Ty),
   result: Ty,
-  m: Mut1(List(Pair(Text, Text)), Checker)
+  m: Mut1(List(Text × Text), Checker)
 ): signature_scheme_ty(
   ck_val(signature_finish_preds(g, params, result, m))
 ) = TyFn(params, result, KindShared) {
@@ -56,8 +56,7 @@ pub fn signature_finish_report(
   m: Mut1(Unit, Checker)
 ): Mut1(Scheme, Checker) {
   frame_bind(
-    Unit,
-    Scheme,
+    <A: Unit, B: Scheme>,
     (ignored: Unit, next: Checker) => signature_finish_preds(
       g,
       params,
@@ -99,7 +98,7 @@ pub fn signature_finish(
     g,
     params,
     result,
-    ck_report(c, ck_view_result_message(c, params, result), ck_sig_span(f))
+    ck_report(c, sig_report_message(c, f, params, result), sig_report_span(f))
   )
 }
 pub theorem signature_finish_errors(
@@ -110,8 +109,7 @@ pub theorem signature_finish_errors(
   result: Ty
 ): CkErrorFrame(c, signature_finish(c, f, g, params, result)) {
   error_frame_bind(
-    Unit,
-    Scheme,
+    <A: Unit, B: Scheme>,
     c,
     (ignored: Unit, next: Checker) => signature_finish_preds(
       g,
@@ -119,13 +117,12 @@ pub theorem signature_finish_errors(
       result,
       ck_where_preds(signature_wheres(f), next, signature_gens(g), signature_name(f), Nil)
     ),
-    ck_report(c, ck_view_result_message(c, params, result), ck_sig_span(f)),
-    ck_report_frame_errors(c, ck_view_result_message(c, params, result), ck_sig_span(f)),
+    ck_report(c, sig_report_message(c, f, params, result), sig_report_span(f)),
+    ck_report_frame_errors(c, sig_report_message(c, f, params, result), sig_report_span(f)),
     ignored => next => error_frame_bind(
-      List(Pair(Text, Text)),
-      Scheme,
+      <A: List(Text × Text), B: Scheme>,
       next,
-      (preds: List(Pair(Text, Text)), final: Checker) => mut1(
+      (preds: List(Text × Text), final: Checker) => mut1(
         signature_scheme(g, params, result, preds),
         final
       ),
@@ -148,8 +145,7 @@ pub fn signature_answer_after(
   m: Mut1(Ty, Checker)
 ): Mut1(Scheme, Checker) {
   frame_bind(
-    Ty,
-    Scheme,
+    <A: Ty, B: Scheme>,
     (result: Ty, next: Checker) => signature_finish(next, f, g, params, result),
     m
   )
@@ -195,7 +191,7 @@ pub theorem signature_answer_after_sound(
           g,
           params,
           result,
-          ck_report(next, ck_view_result_message(next, params, result), ck_sig_span(f))
+          ck_report(next, sig_report_message(next, f, params, result), sig_report_span(f))
         )
       ),
       SignatureBody::Mk(
@@ -214,8 +210,7 @@ pub theorem signature_answer_after_errors(
   params: List(Ty)
 ): CkErrorFrame(c, signature_answer_after(f, g, params, ck_sig_result(c, f, signature_map(g)))) {
   error_frame_bind(
-    Ty,
-    Scheme,
+    <A: Ty, B: Scheme>,
     c,
     (result: Ty, next: Checker) => signature_finish(next, f, g, params, result),
     ck_sig_result(c, f, signature_map(g)),
@@ -282,8 +277,7 @@ pub fn signature_parameters_finish(
   m: Mut1(List(Ty), Checker)
 ): Mut1(Scheme, Checker) {
   frame_bind(
-    List(Ty),
-    Scheme,
+    <A: List(Ty), B: Scheme>,
     (params: List(Ty), next: Checker) => signature_answer_after(
       f,
       g,

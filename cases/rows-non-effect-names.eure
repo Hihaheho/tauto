@@ -1,0 +1,57 @@
+// A row lists effects. A function written in one (a callback's
+// `() -> A ! {…}`, or the function's own row) gets its own diagnostic that
+// says what a row lists and what to write instead; a name that is nothing
+// declared keeps the spelling-or-import hint.
+@ cases.rows-non-effect-function-in-callback-row
+source = ```tauto
+effect ask(): i64
+fn helper(): i64 { 1 }
+fn run<A>(body: () -> A ! {ask, helper}): A ! {ask} { body() }
+```
+rows = "error: the row of `run` names `helper`, which is a function, not an effect; a row lists the effects a body may perform, and a function is called, so write the effects it performs (or leave it out) instead"
+
+@ cases.rows-non-effect-function-in-own-row
+source = ```tauto
+effect ask(): i64
+fn helper(): i64 { 1 }
+fn g(): i64 ! {ask, helper} { perform ask() }
+```
+rows = "error: the row of `g` names `helper`, which is a function, not an effect; a row lists the effects a body may perform, and a function is called, so write the effects it performs (or leave it out) instead"
+
+@ cases.rows-non-effect-unknown-name-in-callback-row
+source = ```tauto
+effect ask(): i64
+fn run<A>(body: () -> A ! {ask, Pnig}): A ! {ask} { body() }
+```
+rows = "error: the row of `run` names `Pnig`, which is not a declared effect; check the spelling or import it"
+
+@ cases.rows-effect-in-callback-row-is-fine
+source = ```tauto
+effect ask(): i64
+fn run<A>(body: () -> A ! {ask}): A ! {ask} { body() }
+```
+rows = "ok"
+
+// A function and an effect are separate namespaces. A row entry that
+// writes type arguments (`∀ A. show(A)`) names an effect, so one whose name
+// only a function has is not read as an effect whose type arguments are
+// bound wrongly.
+@ cases.rows-non-effect-function-with-type-arguments
+source = ```tauto
+fn show_it(): Bool { true }
+fn g(): Unit ! {∀ A. show_it(A)} { () }
+```
+rows = "error: the row of `g` names `∀ A. show_it(A)`, which is a function, not an effect; a row lists the effects a body may perform, and a function is called, so write the effects it performs (or leave it out) instead"
+
+@ cases.rows-non-effect-unknown-name-with-type-arguments
+source = ```tauto
+fn g(): Unit ! {∀ A. nosuch(A)} { () }
+```
+rows = "error: the row of `g` writes type arguments (∀ A. nosuch(A)); a row names effects without them"
+
+@ cases.rows-user-function-does-not-hide-a-library-effect
+source = ```tauto
+fn fail(): Bool { true }
+fn g(): Unit ! {∀ E. fail(E)} { () }
+```
+rows = "ok"

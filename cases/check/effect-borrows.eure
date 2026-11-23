@@ -1,0 +1,42 @@
+// `&mut` and `&` in functions with effects, read as values passed along
+// (`docs/design/effect-proofs.md`, 「借用と affine」).
+
+@ cases.borrow-proofs-example
+source = path`../../examples/borrow-proofs.taut`
+checks_all = "ok"
+
+@ cases.a-wrong-passed-back-value-is-rejected
+source = ```tauto
+effect tick(): Nat
+
+fn bump(c: &mut Nat): Nat ! {tick} {
+  let n := perform tick()
+  *c := c + n
+  n
+}
+
+fn twice(start: Nat): Nat ! {tick} {
+  var c: Nat := start
+  let a := bump(&mut c)
+  let b := bump(&mut c)
+  c + a + b
+}
+
+fn run(start: Nat): Nat {
+  handle { twice(start) } with {
+    tick(), k => k(1)
+  }
+}
+
+theorem right(): run(5) = 9 { Refl }
+theorem wrong(): run(5) = 7 { Refl }
+```
+checks.bump = "ok"
+checks.twice = "ok"
+checks.right = "ok"
+checks.wrong = "error: type mismatch"
+
+@ cases.a-type-without-inductive-that-cannot-be-read-runs-as-written
+source = path`../../examples/borrow-proofs-runtime.taut`
+checks.Tok = "ok"
+checks.width = "skipped"

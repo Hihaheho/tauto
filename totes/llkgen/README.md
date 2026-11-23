@@ -1,7 +1,7 @@
 # llkgen
 
 The LL(k) table generator: the table file of a tauto `syntax`, written in Nib
-(`docs/design/macro.md`「`tauto.par` との共通性と self-host」). Its output is
+(`docs/design/macro.md`「Tauto's own grammar」). Its output is
 checked character by character against the reference tables committed in the
 repository (`crates/tauto-syntax/tests/data`, the syntax fixtures, the
 examples), so the numbering of the states of an automaton is fixed: it is the

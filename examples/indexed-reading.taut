@@ -1,25 +1,25 @@
-// チャンネル番号を型に持つ測定値。I64 の範囲の証明は抽出時に消去される。
-import std::Nat
-import std::Int
-import std::SInt
+// チャンネル番号を型に持つ測定値。SInt(64) の範囲の証明は抽出時に消去される。
+import std::nat
+import std::int
+import std::sint
 
 inductive Reading: (Nat) -> Type {
-  Capture(channel: Nat, value: I64): Reading(channel)
+  Capture(channel: Nat, value: SInt(64)): Reading(channel)
 }
 
-fn channel_three(reading: Reading(3)): I64 {
-  ⊢ I64 from match reading {
-    Capture(channel, value) => value
+fn channel_three(reading: Reading(3)): SInt(64) {
+  match reading {
+    Capture(^channel, value) => value
   }
 }
 
-fn temperature(): I64 {
-  let sample := Capture(3, I64::Mk(IntOfNat(21), Refl))
+fn temperature(): SInt(64) {
+  let sample := Capture(3, SInt::mk64(IntOfNat(21), Refl))
   channel_three(sample)
 }
 
-theorem temperature_correct(): I64::val(temperature()) = IntOfNat(21) {
+theorem temperature_correct(): SInt::val64(temperature()) = IntOfNat(21) {
   Refl
 }
 
-perform show("temperature", temperature())
+show(&temperature())

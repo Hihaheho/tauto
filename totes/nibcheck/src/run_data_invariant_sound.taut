@@ -1,8 +1,8 @@
 import "finish_error_sound.taut"
 import "run_summary.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "checker_frame.taut"
 import "constructor_resolution_frame.taut"
@@ -39,7 +39,7 @@ pub theorem run_data_invariant_after(
   m: Mut1(Unit, Checker),
   ready: DataInvariantReady(p, ck_st(m))
 ): DataInvariantReady(p, ck_st(run_after_data_result(prelude, program, own, m))) {
-  ⊢ DataInvariantReady(p, ck_st(run_after_data_result(prelude, program, own, m))) from match m {
+  match m {
     mut1(v, next) => {
       let frame: CkRunFrame(
         next,
@@ -59,7 +59,7 @@ pub theorem run_data_invariant_builtins(
   decls: CkDatasOrdered(ck_st(m)),
   prepared: PreparedDataInvariant(p, prelude, program)
 ): DataInvariantReady(p, ck_st(run_after_builtins(prelude, program, m))) {
-  ⊢ DataInvariantReady(p, ck_st(run_after_builtins(prelude, program, m))) from match m {
+  match m {
     mut1(v, next) => run_data_invariant_after(
       p,
       prelude,
@@ -114,7 +114,7 @@ pub theorem run_data_invariant_finish_known(
   m: Mut1(Unit, Checker),
   ready: DataInvariantReady(p, ck_st(m))
 ): DataReportInvariant(p, run_finish_known(m)) {
-  ⊢ DataReportInvariant(p, run_finish_known(m)) from match m {
+  match m {
     mut1(v, next) => Eq::subst(
       (z: Mut1(TypeReport, Checker)) => DataReportInvariant(p, z),
       Eq::sym(ck_rewrap1_id(ck_finish(next))),
@@ -135,7 +135,7 @@ pub theorem run_finish_known_input_clean(
   m: Mut1(Unit, Checker),
   clean: DiagnosticReportClean(run_finish_known(m))
 ): DiagnosticClean(ck_st(m)) {
-  ⊢ DiagnosticClean(ck_st(m)) from match m {
+  match m {
     mut1(value, next) => ck_finish_input_clean(
       next,
       Eq::subst(DiagnosticReportClean, ck_rewrap1_id(ck_finish(next)), clean)
@@ -204,7 +204,7 @@ pub theorem run_data_invariant_modules(
   decls: CkDatasOrdered(ck_st(m)),
   prepared: PreparedDataInvariant(p, prelude, program)
 ): DataReportInvariant(p, run_after_module_errors(prelude, program, m)) {
-  ⊢ DataReportInvariant(p, run_after_module_errors(prelude, program, m)) from match m {
+  match m {
     mut1(v, next) => run_data_invariant_finish(
       p,
       ck_run(next, prelude, program),

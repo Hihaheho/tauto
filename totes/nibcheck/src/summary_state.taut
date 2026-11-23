@@ -1,14 +1,16 @@
 import "summary_sound.taut"
 import "join_sound.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "../../surface/src/surface.taut"
-import std::Map
-import std::MapLaws
-import std::MapText
-import std::Text
+import std::map
+import std::map_laws
+import std::map_text
+import std::text
 import "checker.taut"
 import "datas.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "kind_sound.taut"
 import "ty.taut"
 import "unify_sound.taut"
@@ -59,19 +61,23 @@ pub fn summary_replace(c: Checker, d: Datas): Checker {
     assume: c.assume,
     pending: c.pending,
     constructor_uses: c.constructor_uses,
+    uses: c.uses,
     locals: c.locals,
     terms: c.terms,
     closure_results: c.closure_results,
     hint: c.hint,
+    result_hint: c.result_hint,
+    arm_hint: c.arm_hint,
     under_borrow: c.under_borrow,
     type_params: c.type_params,
     widen_products: c.widen_products,
-    steps: c.steps
+    steps: c.steps,
+    decl_table: c.decl_table
   }
 }
 
 pub fn summary_mark_k(d: Datas, n: Text, o: Option(Data)): Datas {
-  ⊢ Datas from match o {
+  match o {
     None => d
     Some(data) => datas_with_decls(
       d,
@@ -96,7 +102,7 @@ pub theorem summary_mark_ordered_k(
   o: Option(Data),
   ordered: SummaryOrdered(d)
 ): SummaryOrdered(summary_mark_k(d, n, o)) {
-  ⊢ SummaryOrdered(summary_mark_k(d, n, o)) from match o {
+  match o {
     None => ordered
     Some(data) => Ordmap::insert_ordered(
       Ordmap::compare_text,
@@ -122,8 +128,8 @@ pub theorem summary_mark_ordered(
 }
 
 pub theorem summary_mark_step(
-  e: Pair(Text, Data),
-  rest: List(Pair(Text, Data)),
+  e: Text × Data,
+  rest: List(Text × Data),
   c: Checker
 ): ck_mark_recursive(
   Cons(e, rest),
@@ -133,11 +139,11 @@ pub theorem summary_mark_step(
 ) { Refl }
 
 pub theorem ck_mark_summary_ordered(
-  es: List(Pair(Text, Data)),
+  es: List(Text × Data),
   c: Checker,
   ordered: SummaryOrdered(ck_datas_of(c))
 ): SummaryOrdered(ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
-  ⊢ SummaryOrdered(ck_datas_of(ck_st(ck_mark_recursive(es, c)))) from match es {
+  match es {
     Nil => ordered
     Cons(e, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => SummaryOrdered(ck_datas_of(ck_st(z))),
@@ -162,7 +168,7 @@ pub theorem ck_mark_summary_ordered(
 }
 
 pub fn summary_finish_decl_k(c: Checker, d: SurfaceData, o: Option(Text)): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match o {
+  match o {
     None => mut1(Star, c)
     Some(m) => ck_rewrap1(ck_error(c, m, TySpan { start: d.start, end: d.end }))
   }
@@ -178,7 +184,7 @@ pub theorem summary_finish_decl_k_same(
   d: SurfaceData,
   o: Option(Text)
 ): ck_datas_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_datas_of(c) {
-  ⊢ ck_datas_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_datas_of(c) from match o {
+  match o {
     None => Refl
     Some(m) => Refl
   }
@@ -198,10 +204,9 @@ pub theorem ck_finish_stmt_datas(
   c: Checker,
   s: SurfaceStmt
 ): ck_datas_of(ck_st(ck_finish_stmt(c, s))) = ck_datas_of(c) {
-  ⊢ ck_datas_of(ck_st(ck_finish_stmt(c, s))) = ck_datas_of(c) from match s {
-    StLet(n, ty, v, b, m) => Refl
-    StVar(n, ty, v, b) => Refl
-    StModule(n, ss, start, end) => Refl
+  match s {
+    StLet(n, ty, v, b, m, unused, st_stack) => Refl
+    StVar(n, ty, v, b, unused, st_stack) => Refl
     StAssign(n, n_place, v) => Refl
     StCalled(n_generates, v) => Refl
     StFn(f) => Refl
@@ -225,13 +230,19 @@ pub theorem ck_finish_stmt_datas(
       ),
       ck_finish_decl_datas(c, d)
     )
-    StExtern(abi, fs, start, end) => Refl
+    StExtern(fs, instances, types, structs, enums, start, end) => Refl
     StClass(cl) => Refl
     StInstance(i) => Refl
     StWhile(cond, body) => Refl
     StReturn(v) => Refl
     StExpr(v) => Refl
     StOther(what, start, end) => Refl
+    StLoop(st_body, start, end) => Refl
+    StModule(mod_name, mod_vis, mod_items, start, end) => Refl
+    StReexport(re_path, re_names, re_spans, start, end) => Refl
+    StFor(for_pat, for_src, st_body, start, end) => Refl
+    StBreak(st_value, start, end) => Refl
+    StContinue(start, end) => Refl
     StMacro(n, f, start, end) => Refl
     StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Refl
     StSyntax(n, grammar, start, end) => Refl
@@ -242,8 +253,8 @@ pub fn summary_finish_stmts_k(
   rest: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match m {
-    mut1(v, next) => ck_rewrap1(ck_finish_stmts(rest, next))
+  match m {
+    mut1(^v, next) => ck_rewrap1(ck_finish_stmts(rest, next))
   }
 }
 
@@ -258,7 +269,7 @@ pub theorem summary_finish_stmts_k_same(
   m: Mut1(Unit, Checker),
   ih: ∀ c: Checker. ck_datas_of(ck_st(ck_finish_stmts(rest, c))) = ck_datas_of(c)
 ): ck_datas_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_datas_of(ck_st(m)) {
-  ⊢ ck_datas_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_datas_of(ck_st(m)) from match m {
+  match m {
     mut1(v, next) => Eq::trans(
       Eq::congr(
         (z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)),
@@ -273,7 +284,7 @@ pub theorem ck_finish_stmts_datas(
   ss: List(SurfaceStmt),
   c: Checker
 ): ck_datas_of(ck_st(ck_finish_stmts(ss, c))) = ck_datas_of(c) {
-  ⊢ ck_datas_of(ck_st(ck_finish_stmts(ss, c))) = ck_datas_of(c) from match ss {
+  match ss {
     Nil => Refl
     Cons(s, rest) => Eq::trans(
       Eq::congr(
@@ -296,8 +307,8 @@ pub fn summary_finish_datas_k(
   program: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
-  ⊢ Mut1(Unit, Checker) from match m {
-    mut1(v, next) => ck_rewrap1(
+  match m {
+    mut1(^v, next) => ck_rewrap1(
       ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
     )
   }
@@ -319,7 +330,7 @@ pub theorem summary_finish_datas_k_ok(
   m: Mut1(Unit, Checker),
   ordered: SummaryOrdered(ck_datas_of(ck_st(m)))
 ): CkSummaryOk(ck_st(summary_finish_datas_k(program, m))) {
-  ⊢ CkSummaryOk(ck_st(summary_finish_datas_k(program, m))) from match m {
+  match m {
     mut1(v, next) => Eq::subst(
       SummaryOk,
       Eq::sym(

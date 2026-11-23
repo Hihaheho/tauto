@@ -29,7 +29,7 @@ pub mod generated {
         #![doc = " does. The generator writes the impls for the"]
         #![doc = " program's own types."]
         use tauto_rt::stdlib::{
-            Atomic, Bytes, HashMap, Mutex, MutexGuard, Pending, Ref, Secret, Signal,
+            Atomic, Bytes, Mutex, MutexGuard, Pending, Place, Placed, Ref, Region, Secret, Signal,
             SynDeclaration, Weak, atomic_load, ref_with,
         };
         use tauto_rt::{Nat, Never, Owned, Rc, Shared, Text, Unlink};
@@ -160,15 +160,6 @@ pub mod generated {
                 format!("Vec[{}]", items.join(", "))
             }
         }
-        impl<K: Show, V: Show> Show for HashMap<K, V> {
-            fn show(&self) -> String {
-                let items: Vec<String> = self
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k.show(), v.show()))
-                    .collect();
-                format!("HashMap{{{}}}", items.join(", "))
-            }
-        }
         impl<T: Show> Show for Ref<T> {
             fn show(&self) -> String {
                 format!("Ref({})", ref_with(self, |v| v.show()))
@@ -199,6 +190,21 @@ pub mod generated {
                 "Signal".to_string()
             }
         }
+        impl Show for Region {
+            fn show(&self) -> String {
+                "Region".to_string()
+            }
+        }
+        impl<T> Show for Place<T> {
+            fn show(&self) -> String {
+                "()".to_string()
+            }
+        }
+        impl<T: Show> Show for Placed<'_, T> {
+            fn show(&self) -> String {
+                format!("Placed {{ value: {}, at: () }}", self.value.show())
+            }
+        }
         impl Show for Bytes {
             fn show(&self) -> String {
                 let items: Vec<String> = self.iter().map(|b| b.to_string()).collect();
@@ -221,740 +227,720 @@ pub mod generated {
             }
         }
     }
-    pub const LM100383: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/bytes.taut",
-        line: 61,
-        col: 55,
+    pub const LM1073741827: Loc = Loc {
+        file: "/<tauto-std>/base.taut",
+        line: 220,
+        col: 19,
     };
-    pub const LM100789: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/bytes.taut",
-        line: 73,
-        col: 42,
-    };
-    pub const LM102068: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/bytes.taut",
-        line: 127,
-        col: 14,
-    };
-    pub const LM1073742709: Loc = Loc {
-        file: "/<tauto-std>/Base.taut",
-        line: 271,
-        col: 21,
-    };
-    pub const LM1073742746: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/bytes.taut",
+    pub const LM1073741872: Loc = Loc {
+        file: "../../totes/totebag/../url/src/bytes.taut",
         line: 128,
         col: 13,
     };
-    pub const LM1073742884: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
+    pub const LM1073742006: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
         line: 101,
         col: 13,
     };
-    pub const LM1073742886: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
+    pub const LM1073742008: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
         line: 102,
         col: 14,
     };
-    pub const LM1073742914: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
+    pub const LM1073742036: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
         line: 153,
         col: 33,
     };
-    pub const LM1073742916: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
+    pub const LM1073742038: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
         line: 153,
         col: 24,
     };
-    pub const LM1073742954: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
+    pub const LM1073742074: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
         line: 93,
         col: 20,
     };
-    pub const LM1073742960: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
+    pub const LM1073742080: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
         line: 96,
         col: 14,
     };
-    pub const LM1073742964: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
+    pub const LM1073742084: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
         line: 111,
         col: 37,
     };
-    pub const LM1073742968: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
+    pub const LM1073742088: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
         line: 111,
         col: 28,
     };
-    pub const LM1073743246: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/round.taut",
-        line: 443,
-        col: 30,
-    };
-    pub const LM1073743250: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/round.taut",
-        line: 443,
-        col: 21,
-    };
-    pub const LM1073743590: Loc = Loc {
+    pub const LM1073742632: Loc = Loc {
         file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 85,
+        line: 90,
         col: 50,
     };
-    pub const LM1073743598: Loc = Loc {
+    pub const LM1073742642: Loc = Loc {
         file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 140,
+        line: 155,
         col: 22,
     };
-    pub const LM1073743600: Loc = Loc {
+    pub const LM1073742644: Loc = Loc {
         file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 145,
+        line: 160,
         col: 3,
     };
-    pub const LM11098: Loc = Loc {
-        file: "/<tauto-std>/Calc.taut",
-        line: 47,
-        col: 7,
-    };
-    pub const LM11250: Loc = Loc {
-        file: "/<tauto-std>/Calc.taut",
-        line: 50,
-        col: 7,
-    };
-    pub const LM11262: Loc = Loc {
-        file: "/<tauto-std>/Calc.taut",
-        line: 50,
-        col: 19,
-    };
-    pub const LM11277: Loc = Loc {
-        file: "/<tauto-std>/Calc.taut",
-        line: 50,
-        col: 34,
-    };
-    pub const LM11398: Loc = Loc {
-        file: "/<tauto-std>/Calc.taut",
-        line: 56,
-        col: 8,
-    };
-    pub const LM116018: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
-        line: 100,
-        col: 14,
-    };
-    pub const LM116168: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
-        line: 107,
-        col: 22,
-    };
-    pub const LM116256: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
-        line: 109,
-        col: 33,
-    };
-    pub const LM116378: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
-        line: 111,
-        col: 35,
-    };
-    pub const LM116605: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
-        line: 120,
-        col: 20,
-    };
-    pub const LM11767: Loc = Loc {
-        file: "/<tauto-std>/Calc.taut",
-        line: 65,
-        col: 75,
-    };
-    pub const LM118090: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
-        line: 179,
-        col: 33,
-    };
-    pub const LM118245: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
-        line: 183,
-        col: 35,
-    };
-    pub const LM118349: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
-        line: 185,
-        col: 44,
-    };
-    pub const LM118645: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/percent.taut",
-        line: 192,
-        col: 51,
-    };
-    pub const LM11892: Loc = Loc {
-        file: "/<tauto-std>/Calc.taut",
-        line: 67,
-        col: 74,
-    };
-    pub const LM11930: Loc = Loc {
-        file: "/<tauto-std>/Calc.taut",
-        line: 69,
-        col: 7,
-    };
-    pub const LM131613: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 37,
-        col: 21,
-    };
-    pub const LM131711: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 39,
-        col: 32,
-    };
-    pub const LM131815: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 41,
-        col: 34,
-    };
-    pub const LM131919: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 43,
-        col: 36,
-    };
-    pub const LM132029: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 45,
-        col: 38,
-    };
-    pub const LM132142: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 47,
-        col: 40,
-    };
-    pub const LM132926: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 82,
-        col: 24,
-    };
-    pub const LM133134: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 90,
-        col: 20,
-    };
-    pub const LM133197: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 92,
-        col: 33,
-    };
-    pub const LM133699: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 110,
-        col: 38,
-    };
-    pub const LM134376: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 140,
-        col: 20,
-    };
-    pub const LM135132: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 167,
-        col: 39,
-    };
-    pub const LM135454: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/url.taut",
-        line: 180,
-        col: 38,
-    };
-    pub const LM136918: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 25,
-        col: 36,
-    };
-    pub const LM139535: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 123,
-        col: 33,
-    };
-    pub const LM139929: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 139,
-        col: 34,
-    };
-    pub const LM141316: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 192,
-        col: 28,
-    };
-    pub const LM141629: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 201,
-        col: 28,
-    };
-    pub const LM141853: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 208,
-        col: 28,
-    };
-    pub const LM142034: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 215,
-        col: 30,
-    };
-    pub const LM142320: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 224,
-        col: 43,
-    };
-    pub const LM143254: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 259,
-        col: 44,
-    };
-    pub const LM143341: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 261,
-        col: 41,
-    };
-    pub const LM143602: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 267,
-        col: 53,
-    };
-    pub const LM144951: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 316,
-        col: 26,
-    };
-    pub const LM145149: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 323,
-        col: 26,
-    };
-    pub const LM145344: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 330,
-        col: 26,
-    };
-    pub const LM146527: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 373,
-        col: 14,
-    };
-    pub const LM146717: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 382,
-        col: 36,
-    };
-    pub const LM147821: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 424,
-        col: 41,
-    };
-    pub const LM148890: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 468,
-        col: 41,
-    };
-    pub const LM149195: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 477,
-        col: 26,
-    };
-    pub const LM151103: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 542,
-        col: 41,
-    };
-    pub const LM151533: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 553,
-        col: 43,
-    };
-    pub const LM152000: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 566,
-        col: 22,
-    };
-    pub const LM152764: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/parse.taut",
-        line: 588,
-        col: 58,
-    };
-    pub const LM154814: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/resolve.taut",
-        line: 61,
-        col: 41,
-    };
-    pub const LM154960: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/resolve.taut",
-        line: 63,
-        col: 34,
-    };
-    pub const LM155113: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/resolve.taut",
-        line: 65,
-        col: 36,
-    };
-    pub const LM155987: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/resolve.taut",
-        line: 96,
-        col: 22,
-    };
-    pub const LM160628: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/valid.taut",
-        line: 141,
-        col: 28,
-    };
-    pub const LM22896: Loc = Loc {
-        file: "/<tauto-std>/List.taut",
-        line: 12,
-        col: 36,
-    };
-    pub const LM292616: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/normal.taut",
-        line: 1382,
-        col: 24,
-    };
-    pub const LM308229: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/text.taut",
-        line: 11,
-        col: 47,
-    };
-    pub const LM311160: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/spec.taut",
-        line: 47,
-        col: 44,
-    };
-    pub const LM311476: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/spec.taut",
-        line: 57,
-        col: 53,
-    };
-    pub const LM311574: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/spec.taut",
-        line: 59,
-        col: 44,
-    };
-    pub const LM311790: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/spec.taut",
-        line: 68,
-        col: 31,
-    };
-    pub const LM312540: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/spec.taut",
-        line: 90,
-        col: 31,
-    };
-    pub const LM312683: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/spec.taut",
-        line: 92,
-        col: 41,
-    };
-    pub const LM317200: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/tree.taut",
-        line: 38,
-        col: 32,
-    };
-    pub const LM317330: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/tree.taut",
-        line: 40,
-        col: 42,
-    };
-    pub const LM317463: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/tree.taut",
-        line: 42,
-        col: 45,
-    };
-    pub const LM317573: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/tree.taut",
-        line: 44,
-        col: 47,
-    };
-    pub const LM318744: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/tree.taut",
-        line: 88,
-        col: 51,
-    };
-    pub const LM318867: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/tree.taut",
-        line: 90,
-        col: 44,
-    };
-    pub const LM319602: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/tree.taut",
-        line: 112,
-        col: 42,
-    };
-    pub const LM319930: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/tree.taut",
-        line: 122,
-        col: 48,
-    };
-    pub const LM323099: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 68,
-        col: 46,
-    };
-    pub const LM323895: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 98,
-        col: 15,
-    };
-    pub const LM325691: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 162,
-        col: 40,
-    };
-    pub const LM326351: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 186,
-        col: 44,
-    };
-    pub const LM327694: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 225,
-        col: 17,
-    };
-    pub const LM327760: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 226,
-        col: 27,
-    };
-    pub const LM327831: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 228,
-        col: 30,
-    };
-    pub const LM327931: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 230,
-        col: 31,
-    };
-    pub const LM328069: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 236,
-        col: 28,
-    };
-    pub const LM328163: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/lock.taut",
-        line: 238,
-        col: 29,
-    };
-    pub const LM329038: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/policy.taut",
-        line: 24,
-        col: 42,
-    };
-    pub const LM329793: Loc = Loc {
-        file: "../../totes/totebag/proof/../src/policy.taut",
-        line: 50,
-        col: 54,
-    };
-    pub const LM339709: Loc = Loc {
+    pub const LM107750: Loc = Loc {
         file: "extracted.taut",
         line: 4,
         col: 25,
     };
-    pub const LM339821: Loc = Loc {
+    pub const LM107862: Loc = Loc {
         file: "extracted.taut",
         line: 8,
         col: 36,
     };
-    pub const LM339882: Loc = Loc {
+    pub const LM107923: Loc = Loc {
         file: "extracted.taut",
         line: 12,
         col: 3,
     };
-    pub const LM340008: Loc = Loc {
+    pub const LM108049: Loc = Loc {
         file: "extracted.taut",
         line: 16,
         col: 11,
     };
-    pub const LM340052: Loc = Loc {
+    pub const LM108093: Loc = Loc {
         file: "extracted.taut",
         line: 16,
         col: 55,
     };
-    pub const LM340117: Loc = Loc {
+    pub const LM108158: Loc = Loc {
         file: "extracted.taut",
         line: 20,
         col: 3,
     };
-    pub const LM340128: Loc = Loc {
+    pub const LM108169: Loc = Loc {
         file: "extracted.taut",
         line: 20,
         col: 14,
     };
-    pub const LM340246: Loc = Loc {
+    pub const LM108287: Loc = Loc {
         file: "extracted.taut",
         line: 24,
         col: 12,
     };
-    pub const LM340272: Loc = Loc {
+    pub const LM108313: Loc = Loc {
         file: "extracted.taut",
         line: 25,
         col: 11,
     };
-    pub const LM340331: Loc = Loc {
+    pub const LM108372: Loc = Loc {
         file: "extracted.taut",
         line: 25,
         col: 70,
     };
-    pub const LM340435: Loc = Loc {
+    pub const LM108476: Loc = Loc {
         file: "extracted.taut",
         line: 29,
         col: 26,
     };
-    pub const LM340517: Loc = Loc {
+    pub const LM108558: Loc = Loc {
         file: "extracted.taut",
         line: 33,
         col: 26,
     };
-    pub const LM340652: Loc = Loc {
+    pub const LM108674: Loc = Loc {
         file: "extracted.taut",
         line: 38,
-        col: 25,
+        col: 10,
     };
-    pub const LM340687: Loc = Loc {
+    pub const LM108698: Loc = Loc {
         file: "extracted.taut",
         line: 40,
-        col: 17,
+        col: 7,
     };
-    pub const LM340691: Loc = Loc {
+    pub const LM108702: Loc = Loc {
         file: "extracted.taut",
         line: 40,
-        col: 21,
+        col: 11,
     };
-    pub const LM340695: Loc = Loc {
+    pub const LM108706: Loc = Loc {
         file: "extracted.taut",
         line: 40,
-        col: 25,
+        col: 15,
     };
-    pub const LM340711: Loc = Loc {
+    pub const LM108717: Loc = Loc {
         file: "extracted.taut",
         line: 40,
-        col: 41,
+        col: 26,
     };
-    pub const LM340715: Loc = Loc {
+    pub const LM108721: Loc = Loc {
         file: "extracted.taut",
         line: 40,
-        col: 45,
+        col: 30,
     };
-    pub const LM341013: Loc = Loc {
+    pub const LM109018: Loc = Loc {
         file: "extracted.taut",
         line: 51,
         col: 9,
     };
-    pub const LM341027: Loc = Loc {
+    pub const LM109033: Loc = Loc {
         file: "extracted.taut",
         line: 51,
-        col: 23,
+        col: 24,
     };
-    pub const LM341065: Loc = Loc {
+    pub const LM109071: Loc = Loc {
         file: "extracted.taut",
         line: 52,
         col: 21,
     };
-    pub const LM341077: Loc = Loc {
+    pub const LM109083: Loc = Loc {
         file: "extracted.taut",
         line: 52,
         col: 33,
     };
-    pub const LM341233: Loc = Loc {
+    pub const LM109339: Loc = Loc {
         file: "extracted.taut",
-        line: 61,
+        line: 63,
         col: 11,
     };
-    pub const LM341247: Loc = Loc {
+    pub const LM109400: Loc = Loc {
         file: "extracted.taut",
-        line: 61,
-        col: 25,
+        line: 65,
+        col: 23,
     };
-    pub const LM341300: Loc = Loc {
+    pub const LM109412: Loc = Loc {
         file: "extracted.taut",
-        line: 62,
+        line: 65,
+        col: 35,
+    };
+    pub const LM109467: Loc = Loc {
+        file: "extracted.taut",
+        line: 66,
+        col: 38,
+    };
+    pub const LM109474: Loc = Loc {
+        file: "extracted.taut",
+        line: 66,
         col: 45,
     };
-    pub const LM341312: Loc = Loc {
+    pub const LM109629: Loc = Loc {
         file: "extracted.taut",
-        line: 62,
-        col: 57,
+        line: 75,
+        col: 35,
     };
-    pub const LM341324: Loc = Loc {
+    pub const LM109766: Loc = Loc {
         file: "extracted.taut",
-        line: 62,
-        col: 69,
+        line: 82,
+        col: 11,
     };
-    pub const LM341450: Loc = Loc {
+    pub const LM109781: Loc = Loc {
         file: "extracted.taut",
-        line: 69,
-        col: 30,
-    };
-    pub const LM341597: Loc = Loc {
-        file: "extracted.taut",
-        line: 76,
-        col: 7,
-    };
-    pub const LM341742: Loc = Loc {
-        file: "extracted.taut",
-        line: 83,
-        col: 12,
-    };
-    pub const LM341794: Loc = Loc {
-        file: "extracted.taut",
-        line: 85,
-        col: 3,
-    };
-    pub const LM342011: Loc = Loc {
-        file: "extracted.taut",
-        line: 96,
-        col: 5,
-    };
-    pub const LM342031: Loc = Loc {
-        file: "extracted.taut",
-        line: 96,
-        col: 25,
-    };
-    pub const LM342043: Loc = Loc {
-        file: "extracted.taut",
-        line: 96,
-        col: 37,
-    };
-    pub const LM342742: Loc = Loc {
-        file: "extracted.taut",
-        line: 122,
-        col: 40,
-    };
-    pub const LM342753: Loc = Loc {
-        file: "extracted.taut",
-        line: 122,
-        col: 51,
-    };
-    pub const LM342981: Loc = Loc {
-        file: "extracted.taut",
-        line: 133,
-        col: 16,
-    };
-    pub const LM343458: Loc = Loc {
-        file: "extracted.taut",
-        line: 146,
-        col: 13,
-    };
-    pub const LM343471: Loc = Loc {
-        file: "extracted.taut",
-        line: 146,
+        line: 82,
         col: 26,
     };
-    pub const LM343482: Loc = Loc {
+    pub const LM109834: Loc = Loc {
         file: "extracted.taut",
-        line: 146,
+        line: 83,
+        col: 45,
+    };
+    pub const LM109846: Loc = Loc {
+        file: "extracted.taut",
+        line: 83,
+        col: 57,
+    };
+    pub const LM109858: Loc = Loc {
+        file: "extracted.taut",
+        line: 83,
+        col: 69,
+    };
+    pub const LM109984: Loc = Loc {
+        file: "extracted.taut",
+        line: 90,
+        col: 30,
+    };
+    pub const LM110132: Loc = Loc {
+        file: "extracted.taut",
+        line: 97,
+        col: 7,
+    };
+    pub const LM110277: Loc = Loc {
+        file: "extracted.taut",
+        line: 104,
+        col: 12,
+    };
+    pub const LM110329: Loc = Loc {
+        file: "extracted.taut",
+        line: 106,
+        col: 3,
+    };
+    pub const LM110546: Loc = Loc {
+        file: "extracted.taut",
+        line: 117,
+        col: 5,
+    };
+    pub const LM110566: Loc = Loc {
+        file: "extracted.taut",
+        line: 117,
+        col: 25,
+    };
+    pub const LM110578: Loc = Loc {
+        file: "extracted.taut",
+        line: 117,
         col: 37,
     };
-    pub const LM98960: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/bytes.taut",
-        line: 8,
-        col: 15,
+    pub const LM111277: Loc = Loc {
+        file: "extracted.taut",
+        line: 143,
+        col: 40,
     };
-    pub const LM99510: Loc = Loc {
-        file: "../../totes/totebag/../url/proof/../src/bytes.taut",
+    pub const LM111288: Loc = Loc {
+        file: "extracted.taut",
+        line: 143,
+        col: 51,
+    };
+    pub const LM111516: Loc = Loc {
+        file: "extracted.taut",
+        line: 154,
+        col: 16,
+    };
+    pub const LM111993: Loc = Loc {
+        file: "extracted.taut",
+        line: 167,
+        col: 13,
+    };
+    pub const LM112006: Loc = Loc {
+        file: "extracted.taut",
+        line: 167,
+        col: 26,
+    };
+    pub const LM112017: Loc = Loc {
+        file: "extracted.taut",
+        line: 167,
+        col: 37,
+    };
+    pub const LM16302: Loc = Loc {
+        file: "/<tauto-std>/list.taut",
+        line: 11,
+        col: 34,
+    };
+    pub const LM37025: Loc = Loc {
+        file: "../../totes/totebag/../url/src/bytes.taut",
+        line: 8,
+        col: 3,
+    };
+    pub const LM37509: Loc = Loc {
+        file: "../../totes/totebag/../url/src/bytes.taut",
         line: 29,
-        col: 61,
+        col: 56,
+    };
+    pub const LM38194: Loc = Loc {
+        file: "../../totes/totebag/../url/src/bytes.taut",
+        line: 61,
+        col: 50,
+    };
+    pub const LM38543: Loc = Loc {
+        file: "../../totes/totebag/../url/src/bytes.taut",
+        line: 73,
+        col: 42,
+    };
+    pub const LM39733: Loc = Loc {
+        file: "../../totes/totebag/../url/src/bytes.taut",
+        line: 127,
+        col: 3,
+    };
+    pub const LM43052: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
+        line: 100,
+        col: 3,
+    };
+    pub const LM43181: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
+        line: 107,
+        col: 3,
+    };
+    pub const LM43269: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
+        line: 109,
+        col: 33,
+    };
+    pub const LM43391: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
+        line: 111,
+        col: 35,
+    };
+    pub const LM43599: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
+        line: 120,
+        col: 3,
+    };
+    pub const LM45012: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
+        line: 179,
+        col: 33,
+    };
+    pub const LM45167: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
+        line: 183,
+        col: 35,
+    };
+    pub const LM45271: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
+        line: 185,
+        col: 44,
+    };
+    pub const LM45567: Loc = Loc {
+        file: "../../totes/totebag/../url/src/percent.taut",
+        line: 192,
+        col: 51,
+    };
+    pub const LM46641: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 37,
+        col: 3,
+    };
+    pub const LM46739: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 39,
+        col: 32,
+    };
+    pub const LM46843: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 41,
+        col: 34,
+    };
+    pub const LM46947: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 43,
+        col: 36,
+    };
+    pub const LM47057: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 45,
+        col: 38,
+    };
+    pub const LM47170: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 47,
+        col: 40,
+    };
+    pub const LM47904: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 82,
+        col: 3,
+    };
+    pub const LM48093: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 90,
+        col: 3,
+    };
+    pub const LM48156: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 92,
+        col: 33,
+    };
+    pub const LM48637: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 110,
+        col: 38,
+    };
+    pub const LM49240: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 140,
+        col: 3,
+    };
+    pub const LM49941: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 167,
+        col: 39,
+    };
+    pub const LM50246: Loc = Loc {
+        file: "../../totes/totebag/../url/src/url.taut",
+        line: 180,
+        col: 38,
+    };
+    pub const LM51653: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 25,
+        col: 36,
+    };
+    pub const LM54216: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 123,
+        col: 33,
+    };
+    pub const LM54598: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 139,
+        col: 34,
+    };
+    pub const LM55964: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 192,
+        col: 3,
+    };
+    pub const LM56250: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 201,
+        col: 3,
+    };
+    pub const LM56447: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 208,
+        col: 3,
+    };
+    pub const LM56599: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 215,
+        col: 3,
+    };
+    pub const LM56856: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 224,
+        col: 43,
+    };
+    pub const LM57713: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 259,
+        col: 44,
+    };
+    pub const LM57800: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 261,
+        col: 41,
+    };
+    pub const LM58061: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 267,
+        col: 53,
+    };
+    pub const LM59327: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 316,
+        col: 3,
+    };
+    pub const LM59500: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 323,
+        col: 3,
+    };
+    pub const LM59671: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 330,
+        col: 3,
+    };
+    pub const LM60805: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 373,
+        col: 3,
+    };
+    pub const LM60976: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 382,
+        col: 36,
+    };
+    pub const LM62003: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 424,
+        col: 41,
+    };
+    pub const LM62987: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 468,
+        col: 41,
+    };
+    pub const LM63267: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 477,
+        col: 3,
+    };
+    pub const LM64984: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 542,
+        col: 41,
+    };
+    pub const LM65393: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 553,
+        col: 43,
+    };
+    pub const LM65839: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 566,
+        col: 3,
+    };
+    pub const LM66522: Loc = Loc {
+        file: "../../totes/totebag/../url/src/parse.taut",
+        line: 588,
+        col: 53,
+    };
+    pub const LM68443: Loc = Loc {
+        file: "../../totes/totebag/../url/src/resolve.taut",
+        line: 61,
+        col: 41,
+    };
+    pub const LM68589: Loc = Loc {
+        file: "../../totes/totebag/../url/src/resolve.taut",
+        line: 63,
+        col: 34,
+    };
+    pub const LM68742: Loc = Loc {
+        file: "../../totes/totebag/../url/src/resolve.taut",
+        line: 65,
+        col: 36,
+    };
+    pub const LM69575: Loc = Loc {
+        file: "../../totes/totebag/../url/src/resolve.taut",
+        line: 96,
+        col: 3,
+    };
+    pub const LM74084: Loc = Loc {
+        file: "../../totes/totebag/../url/src/valid.taut",
+        line: 141,
+        col: 28,
+    };
+    pub const LM75460: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/text.taut",
+        line: 11,
+        col: 47,
+    };
+    pub const LM78293: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/spec.taut",
+        line: 47,
+        col: 44,
+    };
+    pub const LM78580: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/spec.taut",
+        line: 57,
+        col: 54,
+    };
+    pub const LM78678: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/spec.taut",
+        line: 59,
+        col: 44,
+    };
+    pub const LM78864: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/spec.taut",
+        line: 68,
+        col: 3,
+    };
+    pub const LM79554: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/spec.taut",
+        line: 90,
+        col: 3,
+    };
+    pub const LM79697: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/spec.taut",
+        line: 92,
+        col: 41,
+    };
+    pub const LM84102: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/tree.taut",
+        line: 38,
+        col: 3,
+    };
+    pub const LM84232: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/tree.taut",
+        line: 40,
+        col: 42,
+    };
+    pub const LM84365: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/tree.taut",
+        line: 42,
+        col: 45,
+    };
+    pub const LM84475: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/tree.taut",
+        line: 44,
+        col: 47,
+    };
+    pub const LM85589: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/tree.taut",
+        line: 88,
+        col: 51,
+    };
+    pub const LM85712: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/tree.taut",
+        line: 90,
+        col: 44,
+    };
+    pub const LM86391: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/tree.taut",
+        line: 112,
+        col: 42,
+    };
+    pub const LM86691: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/tree.taut",
+        line: 122,
+        col: 48,
+    };
+    pub const LM89863: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 73,
+        col: 46,
+    };
+    pub const LM90608: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 103,
+        col: 3,
+    };
+    pub const LM90735: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 110,
+        col: 3,
+    };
+    pub const LM92552: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 177,
+        col: 40,
+    };
+    pub const LM93174: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 201,
+        col: 44,
+    };
+    pub const LM94501: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 240,
+        col: 3,
+    };
+    pub const LM94567: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 241,
+        col: 27,
+    };
+    pub const LM94638: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 243,
+        col: 30,
+    };
+    pub const LM94738: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 245,
+        col: 31,
+    };
+    pub const LM94876: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 251,
+        col: 28,
+    };
+    pub const LM94970: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/lock.taut",
+        line: 253,
+        col: 29,
+    };
+    pub const LM95812: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/policy.taut",
+        line: 24,
+        col: 42,
+    };
+    pub const LM96521: Loc = Loc {
+        file: "../../totes/totebag/proof/../src/policy.taut",
+        line: 50,
+        col: 54,
     };
     #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
     pub enum List<A> {
@@ -991,6 +977,40 @@ pub mod generated {
                 Ordering::Less => "Less".to_string(),
                 Ordering::Equal => "Equal".to_string(),
                 Ordering::Greater => "Greater".to_string(),
+            }
+        }
+    }
+    #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
+    pub struct Diagnostic {
+        pub severity: Text,
+        pub code: Text,
+        pub line: u64,
+        pub col: u64,
+        pub end_line: u64,
+        pub end_col: u64,
+        pub message: Text,
+    }
+    impl Show for Diagnostic {
+        fn show(&self) -> String {
+            match self {
+                Diagnostic {
+                    severity: f0,
+                    code: f1,
+                    line: f2,
+                    col: f3,
+                    end_line: f4,
+                    end_col: f5,
+                    message: f6,
+                } => format!(
+                    "Diagnostic {{ severity: {}, code: {}, line: {}, col: {}, end_line: {}, end_col: {}, message: {} }}",
+                    f0.show(),
+                    f1.show(),
+                    f2.show(),
+                    f3.show(),
+                    f4.show(),
+                    f5.show(),
+                    f6.show()
+                ),
             }
         }
     }
@@ -1040,6 +1060,7 @@ pub mod generated {
         pub kind: FileKind,
         pub size: u64,
         pub modified_ms: u64,
+        pub executable: bool,
     }
     impl Show for FileStat {
         fn show(&self) -> String {
@@ -1048,11 +1069,13 @@ pub mod generated {
                     kind: f0,
                     size: f1,
                     modified_ms: f2,
+                    executable: f3,
                 } => format!(
-                    "FileStat {{ kind: {}, size: {}, modified_ms: {} }}",
+                    "FileStat {{ kind: {}, size: {}, modified_ms: {}, executable: {} }}",
                     f0.show(),
                     f1.show(),
-                    f2.show()
+                    f2.show(),
+                    f3.show()
                 ),
             }
         }
@@ -1115,6 +1138,17 @@ pub mod generated {
         fn show(&self) -> String {
             match self {
                 Child { id: f0 } => format!("Child {{ id: {} }}", f0.show()),
+            }
+        }
+    }
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub struct FileLock {
+        pub id: u64,
+    }
+    impl Show for FileLock {
+        fn show(&self) -> String {
+            match self {
+                FileLock { id: f0 } => format!("FileLock {{ id: {} }}", f0.show()),
             }
         }
     }
@@ -1214,6 +1248,126 @@ pub mod generated {
         }
     }
     #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
+    pub struct RequestHead {
+        pub method: Text,
+        pub url: Text,
+        pub headers: List<(Text, Text)>,
+    }
+    impl Show for RequestHead {
+        fn show(&self) -> String {
+            match self {
+                RequestHead {
+                    method: f0,
+                    url: f1,
+                    headers: f2,
+                } => format!(
+                    "RequestHead {{ method: {}, url: {}, headers: {} }}",
+                    f0.show(),
+                    f1.show(),
+                    f2.show()
+                ),
+            }
+        }
+    }
+    #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
+    pub struct ResponseHead {
+        pub status: u64,
+        pub headers: List<(Text, Text)>,
+    }
+    impl Show for ResponseHead {
+        fn show(&self) -> String {
+            match self {
+                ResponseHead {
+                    status: f0,
+                    headers: f1,
+                } => format!(
+                    "ResponseHead {{ status: {}, headers: {} }}",
+                    f0.show(),
+                    f1.show()
+                ),
+            }
+        }
+    }
+    #[derive(PartialEq, Eq, std :: hash :: Hash)]
+    pub struct RequestBody {
+        pub id: u64,
+    }
+    impl Show for RequestBody {
+        fn show(&self) -> String {
+            match self {
+                RequestBody { id: f0 } => format!("RequestBody {{ id: {} }}", f0.show()),
+            }
+        }
+    }
+    #[derive(PartialEq, Eq, std :: hash :: Hash)]
+    pub struct ResponseBody {
+        pub id: u64,
+    }
+    impl Show for ResponseBody {
+        fn show(&self) -> String {
+            match self {
+                ResponseBody { id: f0 } => format!("ResponseBody {{ id: {} }}", f0.show()),
+            }
+        }
+    }
+    #[derive(PartialEq, Eq, std :: hash :: Hash)]
+    pub struct Opened {
+        pub head: ResponseHead,
+        pub body: ResponseBody,
+    }
+    impl Show for Opened {
+        fn show(&self) -> String {
+            match self {
+                Opened { head: f0, body: f1 } => {
+                    format!("Opened {{ head: {}, body: {} }}", f0.show(), f1.show())
+                }
+            }
+        }
+    }
+    #[derive(PartialEq, Eq, std :: hash :: Hash)]
+    pub enum Finished {
+        Responded(Opened),
+        Unanswered(RequestBody),
+        NoResponse(IoError),
+    }
+    impl Show for Finished {
+        fn show(&self) -> String {
+            match self {
+                Finished::Responded(f0) => format!("Responded({})", f0.show()),
+                Finished::Unanswered(f0) => format!("Unanswered({})", f0.show()),
+                Finished::NoResponse(f0) => format!("NoResponse({})", f0.show()),
+            }
+        }
+    }
+    #[derive(PartialEq, Eq, std :: hash :: Hash)]
+    pub struct Written {
+        pub body: RequestBody,
+        pub result: Result<(), IoError>,
+    }
+    impl Show for Written {
+        fn show(&self) -> String {
+            match self {
+                Written {
+                    body: f0,
+                    result: f1,
+                } => format!("Written {{ body: {}, result: {} }}", f0.show(), f1.show()),
+            }
+        }
+    }
+    pub struct Piece {
+        pub body: ResponseBody,
+        pub got: Result<tauto_rt::stdlib::Bytes, IoError>,
+    }
+    impl Show for Piece {
+        fn show(&self) -> String {
+            match self {
+                Piece { body: f0, got: f1 } => {
+                    format!("Piece {{ body: {}, got: {} }}", f0.show(), f1.show())
+                }
+            }
+        }
+    }
+    #[derive(PartialEq, Eq, std :: hash :: Hash)]
     pub struct TcpListener {
         pub id: u64,
         pub address: Text,
@@ -1232,7 +1386,7 @@ pub mod generated {
             }
         }
     }
-    #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
+    #[derive(PartialEq, Eq, std :: hash :: Hash)]
     pub struct TcpStream {
         pub id: u64,
         pub local: Text,
@@ -1250,6 +1404,80 @@ pub mod generated {
                     f0.show(),
                     f1.show(),
                     f2.show()
+                ),
+            }
+        }
+    }
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub struct TcpStopper {
+        pub id: u64,
+    }
+    impl Show for TcpStopper {
+        fn show(&self) -> String {
+            match self {
+                TcpStopper { id: f0 } => format!("TcpStopper {{ id: {} }}", f0.show()),
+            }
+        }
+    }
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub struct ListenStopper {
+        pub id: u64,
+    }
+    impl Show for ListenStopper {
+        fn show(&self) -> String {
+            match self {
+                ListenStopper { id: f0 } => format!("ListenStopper {{ id: {} }}", f0.show()),
+            }
+        }
+    }
+    #[derive(PartialEq, Eq, std :: hash :: Hash)]
+    pub struct TcpAccepted {
+        pub listener: TcpListener,
+        pub got: Result<TcpStream, IoError>,
+    }
+    impl Show for TcpAccepted {
+        fn show(&self) -> String {
+            match self {
+                TcpAccepted {
+                    listener: f0,
+                    got: f1,
+                } => format!(
+                    "TcpAccepted {{ listener: {}, got: {} }}",
+                    f0.show(),
+                    f1.show()
+                ),
+            }
+        }
+    }
+    pub struct TcpRead {
+        pub stream: TcpStream,
+        pub got: Result<tauto_rt::stdlib::Bytes, IoError>,
+    }
+    impl Show for TcpRead {
+        fn show(&self) -> String {
+            match self {
+                TcpRead {
+                    stream: f0,
+                    got: f1,
+                } => format!("TcpRead {{ stream: {}, got: {} }}", f0.show(), f1.show()),
+            }
+        }
+    }
+    #[derive(PartialEq, Eq, std :: hash :: Hash)]
+    pub struct TcpWritten {
+        pub stream: TcpStream,
+        pub result: Result<(), IoError>,
+    }
+    impl Show for TcpWritten {
+        fn show(&self) -> String {
+            match self {
+                TcpWritten {
+                    stream: f0,
+                    result: f1,
+                } => format!(
+                    "TcpWritten {{ stream: {}, result: {} }}",
+                    f0.show(),
+                    f1.show()
                 ),
             }
         }
@@ -1369,7 +1597,6 @@ pub mod generated {
             }
         }
     }
-    #[derive(Clone)]
     pub struct TlsStream {
         pub id: u64,
         pub alpn: Option<Text>,
@@ -1395,751 +1622,71 @@ pub mod generated {
         }
     }
     #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
-    pub struct SynSpan {
+    pub struct TlsStopper {
         pub id: u64,
     }
-    impl Show for SynSpan {
+    impl Show for TlsStopper {
         fn show(&self) -> String {
             match self {
-                SynSpan { id: f0 } => format!("SynSpan {{ id: {} }}", f0.show()),
+                TlsStopper { id: f0 } => format!("TlsStopper {{ id: {} }}", f0.show()),
             }
         }
     }
-    impl std::fmt::Debug for SynSpan {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str(&Show::show(self))
-        }
+    pub struct TlsRead {
+        pub stream: TlsStream,
+        pub got: Result<tauto_rt::stdlib::Bytes, IoError>,
     }
-    #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
-    pub struct SynCtx {
-        pub scopes: List<u64>,
-    }
-    impl Show for SynCtx {
+    impl Show for TlsRead {
         fn show(&self) -> String {
             match self {
-                SynCtx { scopes: f0 } => format!("SynCtx {{ scopes: {} }}", f0.show()),
+                TlsRead {
+                    stream: f0,
+                    got: f1,
+                } => format!("TlsRead {{ stream: {}, got: {} }}", f0.show(), f1.show()),
             }
         }
     }
-    #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
-    pub struct SynToken {
-        pub text: Text,
-        pub span: SynSpan,
-        pub ctx: SynCtx,
+    pub struct TlsWritten {
+        pub stream: TlsStream,
+        pub result: Result<(), IoError>,
     }
-    impl Show for SynToken {
+    impl Show for TlsWritten {
         fn show(&self) -> String {
             match self {
-                SynToken {
-                    text: f0,
-                    span: f1,
-                    ctx: f2,
+                TlsWritten {
+                    stream: f0,
+                    result: f1,
                 } => format!(
-                    "SynToken {{ text: {}, span: {}, ctx: {} }}",
+                    "TlsWritten {{ stream: {}, result: {} }}",
                     f0.show(),
-                    f1.show(),
-                    f2.show()
+                    f1.show()
                 ),
             }
         }
     }
-    #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
-    pub struct SynTok {
-        pub kind: Text,
-        pub text: Text,
-        pub start: u64,
-        pub end: u64,
-        pub skipped: bool,
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub enum Width {
+        W32,
+        W64,
     }
-    impl Show for SynTok {
+    impl Show for Width {
         fn show(&self) -> String {
             match self {
-                SynTok {
-                    kind: f0,
-                    text: f1,
-                    start: f2,
-                    end: f3,
-                    skipped: f4,
-                } => format!(
-                    "SynTok {{ kind: {}, text: {}, start: {}, end: {}, skipped: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show()
-                ),
+                Width::W32 => "W32".to_string(),
+                Width::W64 => "W64".to_string(),
             }
         }
     }
-    #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
-    pub struct SynHighlight {
-        pub start: u64,
-        pub end: u64,
-        pub kind: Text,
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub struct HashSeed {
+        pub k0: u64,
+        pub k1: u64,
     }
-    impl Show for SynHighlight {
+    impl Show for HashSeed {
         fn show(&self) -> String {
             match self {
-                SynHighlight {
-                    start: f0,
-                    end: f1,
-                    kind: f2,
-                } => format!(
-                    "SynHighlight {{ start: {}, end: {}, kind: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynIdent {
-        pub name: Text,
-        pub ctx: SynCtx,
-        pub span: SynSpan,
-        pub declaration: Option<tauto_rt::stdlib::SynDeclaration>,
-    }
-    impl Show for SynIdent {
-        fn show(&self) -> String {
-            match self {
-                SynIdent {
-                    name: f0,
-                    ctx: f1,
-                    span: f2,
-                    declaration: f3,
-                } => format!(
-                    "SynIdent {{ name: {}, ctx: {}, span: {}, declaration: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub enum SynBinder {
-        BName(Rc<SynIdent>, Rc<Option<SynExpr>>),
-        BAtom(u64, Rc<Option<SynExpr>>),
-    }
-    impl Show for SynBinder {
-        fn show(&self) -> String {
-            match self {
-                SynBinder::BName(f0, f1) => format!("BName({}, {})", f0.show(), f1.show()),
-                SynBinder::BAtom(f0, f1) => format!("BAtom({}, {})", f0.show(), f1.show()),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynParam {
-        pub name: Option<SynIdent>,
-        pub ty: Rc<SynExpr>,
-    }
-    impl Show for SynParam {
-        fn show(&self) -> String {
-            match self {
-                SynParam { name: f0, ty: f1 } => {
-                    format!("SynParam {{ name: {}, ty: {} }}", f0.show(), f1.show())
-                }
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub enum SynExpr {
-        ExVar(Rc<SynIdent>),
-        ExAtom(u64, SynSpan),
-        ExNat(Text, SynSpan),
-        ExText(Text, SynSpan),
-        ExBool(bool, SynSpan),
-        ExApp(tauto_rt::Shared<SynExpr>, Rc<List<SynExpr>>, SynSpan),
-        ExPi(
-            Rc<List<SynParam>>,
-            tauto_rt::Shared<SynExpr>,
-            Option<List<Text>>,
-            SynSpan,
-        ),
-        ExLam(Rc<List<SynBinder>>, tauto_rt::Shared<SynExpr>, SynSpan),
-        ExIf(
-            tauto_rt::Shared<SynExpr>,
-            tauto_rt::Shared<SynExpr>,
-            Rc<Option<SynExpr>>,
-            SynSpan,
-        ),
-        ExField(tauto_rt::Shared<SynExpr>, Text, SynSpan),
-        ExBlock(Rc<List<SynStmt>>, SynSpan),
-        ExPerform(Rc<SynIdent>, Rc<List<SynExpr>>, SynSpan),
-        ExHandle(tauto_rt::Shared<SynExpr>, Rc<List<SynHandler>>, SynSpan),
-        ExBudget(
-            tauto_rt::Shared<SynExpr>,
-            tauto_rt::Shared<SynExpr>,
-            SynSpan,
-        ),
-        ExBudgetMemory(
-            tauto_rt::Shared<SynExpr>,
-            tauto_rt::Shared<SynExpr>,
-            SynSpan,
-        ),
-        ExMatch(
-            tauto_rt::Shared<SynExpr>,
-            Rc<Option<SynExpr>>,
-            Rc<List<SynArm>>,
-            Option<SynIdent>,
-            SynSpan,
-        ),
-        ExRecord(Rc<SynIdent>, Rc<List<(SynExpr, Text)>>, SynSpan),
-        ExBorrow(bool, tauto_rt::Shared<SynExpr>, SynSpan),
-        ExUnion(Rc<List<SynExpr>>, SynSpan),
-        ExProduct(Rc<List<SynExpr>>, SynSpan),
-        ExTagged(Text, tauto_rt::Shared<SynExpr>, SynSpan),
-        ExExists(
-            Rc<SynBinder>,
-            tauto_rt::Shared<SynExpr>,
-            tauto_rt::Shared<SynExpr>,
-            SynSpan,
-        ),
-        ExFnKind(Text, tauto_rt::Shared<SynExpr>, SynSpan),
-        ExBorrowLam(List<Option<bool>>, tauto_rt::Shared<SynExpr>, SynSpan),
-        ExMacroCall(Rc<SynIdent>, Text, SynSpan),
-        ExMacroExpr(Rc<SynIdent>, tauto_rt::Shared<SynExpr>, SynSpan),
-        ExStep(
-            Rc<SynIdent>,
-            tauto_rt::Shared<SynExpr>,
-            Rc<Option<SynExpr>>,
-            Rc<List<SynStepArm>>,
-            SynSpan,
-        ),
-        ExHole(Text, SynSpan),
-        ExUnit(SynSpan),
-    }
-    impl Show for SynExpr {
-        fn show(&self) -> String {
-            match self {
-                SynExpr::ExVar(f0) => format!("ExVar({})", f0.show()),
-                SynExpr::ExAtom(f0, f1) => format!("ExAtom({}, {})", f0.show(), f1.show()),
-                SynExpr::ExNat(f0, f1) => format!("ExNat({}, {})", f0.show(), f1.show()),
-                SynExpr::ExText(f0, f1) => format!("ExText({}, {})", f0.show(), f1.show()),
-                SynExpr::ExBool(f0, f1) => format!("ExBool({}, {})", f0.show(), f1.show()),
-                SynExpr::ExApp(f0, f1, f2) => {
-                    format!("ExApp({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExPi(f0, f1, f2, f3) => format!(
-                    "ExPi({}, {}, {}, {})",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show()
-                ),
-                SynExpr::ExLam(f0, f1, f2) => {
-                    format!("ExLam({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExIf(f0, f1, f2, f3) => format!(
-                    "ExIf({}, {}, {}, {})",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show()
-                ),
-                SynExpr::ExField(f0, f1, f2) => {
-                    format!("ExField({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExBlock(f0, f1) => format!("ExBlock({}, {})", f0.show(), f1.show()),
-                SynExpr::ExPerform(f0, f1, f2) => {
-                    format!("ExPerform({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExHandle(f0, f1, f2) => {
-                    format!("ExHandle({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExBudget(f0, f1, f2) => {
-                    format!("ExBudget({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExBudgetMemory(f0, f1, f2) => format!(
-                    "ExBudgetMemory({}, {}, {})",
-                    f0.show(),
-                    f1.show(),
-                    f2.show()
-                ),
-                SynExpr::ExMatch(f0, f1, f2, f3, f4) => format!(
-                    "ExMatch({}, {}, {}, {}, {})",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show()
-                ),
-                SynExpr::ExRecord(f0, f1, f2) => {
-                    format!("ExRecord({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExBorrow(f0, f1, f2) => {
-                    format!("ExBorrow({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExUnion(f0, f1) => format!("ExUnion({}, {})", f0.show(), f1.show()),
-                SynExpr::ExProduct(f0, f1) => format!("ExProduct({}, {})", f0.show(), f1.show()),
-                SynExpr::ExTagged(f0, f1, f2) => {
-                    format!("ExTagged({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExExists(f0, f1, f2, f3) => format!(
-                    "ExExists({}, {}, {}, {})",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show()
-                ),
-                SynExpr::ExFnKind(f0, f1, f2) => {
-                    format!("ExFnKind({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExBorrowLam(f0, f1, f2) => {
-                    format!("ExBorrowLam({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExMacroCall(f0, f1, f2) => {
-                    format!("ExMacroCall({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExMacroExpr(f0, f1, f2) => {
-                    format!("ExMacroExpr({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynExpr::ExStep(f0, f1, f2, f3, f4) => format!(
-                    "ExStep({}, {}, {}, {}, {})",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show()
-                ),
-                SynExpr::ExHole(f0, f1) => format!("ExHole({}, {})", f0.show(), f1.show()),
-                SynExpr::ExUnit(f0) => format!("ExUnit({})", f0.show()),
-            }
-        }
-    }
-    impl tauto_rt::Unlink for SynExpr {
-        fn unlink(&mut self, cells: &mut tauto_rt::link::Cells<Self>) {
-            match self {
-                SynExpr::ExApp { 0: l0, .. } => {
-                    cells.shared(l0);
-                }
-                SynExpr::ExPi { 1: l1, .. } => {
-                    cells.shared(l1);
-                }
-                SynExpr::ExLam { 1: l1, .. } => {
-                    cells.shared(l1);
-                }
-                SynExpr::ExIf { 0: l0, 1: l1, .. } => {
-                    cells.shared(l0);
-                    cells.shared(l1);
-                }
-                SynExpr::ExField { 0: l0, .. } => {
-                    cells.shared(l0);
-                }
-                SynExpr::ExHandle { 0: l0, .. } => {
-                    cells.shared(l0);
-                }
-                SynExpr::ExBudget { 0: l0, 1: l1, .. } => {
-                    cells.shared(l0);
-                    cells.shared(l1);
-                }
-                SynExpr::ExBudgetMemory { 0: l0, 1: l1, .. } => {
-                    cells.shared(l0);
-                    cells.shared(l1);
-                }
-                SynExpr::ExMatch { 0: l0, .. } => {
-                    cells.shared(l0);
-                }
-                SynExpr::ExBorrow { 1: l1, .. } => {
-                    cells.shared(l1);
-                }
-                SynExpr::ExTagged { 1: l1, .. } => {
-                    cells.shared(l1);
-                }
-                SynExpr::ExExists { 1: l1, 2: l2, .. } => {
-                    cells.shared(l1);
-                    cells.shared(l2);
-                }
-                SynExpr::ExFnKind { 1: l1, .. } => {
-                    cells.shared(l1);
-                }
-                SynExpr::ExBorrowLam { 1: l1, .. } => {
-                    cells.shared(l1);
-                }
-                SynExpr::ExMacroExpr { 1: l1, .. } => {
-                    cells.shared(l1);
-                }
-                SynExpr::ExStep { 1: l1, .. } => {
-                    cells.shared(l1);
-                }
-                _ => {}
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub enum SynPattern {
-        PtWild,
-        PtBind(Rc<SynIdent>),
-        PtInt(i64),
-        PtBool(bool),
-        PtText(Text),
-        PtCtor(Rc<SynIdent>, Rc<List<SynPattern>>),
-        PtRecord(Rc<SynIdent>, Rc<List<(SynPattern, Text)>>),
-    }
-    impl Show for SynPattern {
-        fn show(&self) -> String {
-            match self {
-                SynPattern::PtWild => "PtWild".to_string(),
-                SynPattern::PtBind(f0) => format!("PtBind({})", f0.show()),
-                SynPattern::PtInt(f0) => format!("PtInt({})", f0.show()),
-                SynPattern::PtBool(f0) => format!("PtBool({})", f0.show()),
-                SynPattern::PtText(f0) => format!("PtText({})", f0.show()),
-                SynPattern::PtCtor(f0, f1) => format!("PtCtor({}, {})", f0.show(), f1.show()),
-                SynPattern::PtRecord(f0, f1) => format!("PtRecord({}, {})", f0.show(), f1.show()),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynStepArm {
-        pub binders: Rc<List<SynBinder>>,
-        pub goal: Rc<SynExpr>,
-        pub body: Rc<SynExpr>,
-    }
-    impl Show for SynStepArm {
-        fn show(&self) -> String {
-            match self {
-                SynStepArm {
-                    binders: f0,
-                    goal: f1,
-                    body: f2,
-                } => format!(
-                    "SynStepArm {{ binders: {}, goal: {}, body: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynArm {
-        pub pattern: Rc<SynPattern>,
-        pub guard: Rc<Option<SynExpr>>,
-        pub goal: Rc<Option<SynExpr>>,
-        pub body: Rc<SynExpr>,
-    }
-    impl Show for SynArm {
-        fn show(&self) -> String {
-            match self {
-                SynArm {
-                    pattern: f0,
-                    guard: f1,
-                    goal: f2,
-                    body: f3,
-                } => format!(
-                    "SynArm {{ pattern: {}, guard: {}, goal: {}, body: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub enum SynHandler {
-        HReturn(Rc<SynPattern>, Rc<SynExpr>),
-        HOp(
-            Rc<SynIdent>,
-            Rc<List<SynPattern>>,
-            Option<SynIdent>,
-            Rc<Option<SynExpr>>,
-            Rc<SynExpr>,
-            List<Text>,
-            Rc<List<SynExpr>>,
-        ),
-    }
-    impl Show for SynHandler {
-        fn show(&self) -> String {
-            match self {
-                SynHandler::HReturn(f0, f1) => format!("HReturn({}, {})", f0.show(), f1.show()),
-                SynHandler::HOp(f0, f1, f2, f3, f4, f5, f6) => format!(
-                    "HOp({}, {}, {}, {}, {}, {}, {})",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show(),
-                    f5.show(),
-                    f6.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynFn {
-        pub name: Rc<SynIdent>,
-        pub generics: List<Text>,
-        pub generic_types: Rc<List<SynExpr>>,
-        pub bounds: List<Option<Text>>,
-        pub params: Rc<List<SynIdent>>,
-        pub borrows: List<Option<bool>>,
-        pub param_types: Rc<List<Option<SynExpr>>>,
-        pub result: Rc<Option<SynExpr>>,
-        pub effects: Option<List<Text>>,
-        pub body: Rc<SynExpr>,
-        pub span: SynSpan,
-    }
-    impl Show for SynFn {
-        fn show(&self) -> String {
-            match self {
-                SynFn {
-                    name: f0,
-                    generics: f1,
-                    generic_types: f2,
-                    bounds: f3,
-                    params: f4,
-                    borrows: f5,
-                    param_types: f6,
-                    result: f7,
-                    effects: f8,
-                    body: f9,
-                    span: f10,
-                } => format!(
-                    "SynFn {{ name: {}, generics: {}, generic_types: {}, bounds: {}, params: {}, borrows: {}, param_types: {}, result: {}, effects: {}, body: {}, span: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show(),
-                    f5.show(),
-                    f6.show(),
-                    f7.show(),
-                    f8.show(),
-                    f9.show(),
-                    f10.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynTheorem {
-        pub name: Rc<SynIdent>,
-        pub implicit: u64,
-        pub params: Rc<List<(SynExpr, SynIdent)>>,
-        pub ty: Rc<SynExpr>,
-        pub body: Rc<Option<SynExpr>>,
-        pub span: SynSpan,
-    }
-    impl Show for SynTheorem {
-        fn show(&self) -> String {
-            match self {
-                SynTheorem {
-                    name: f0,
-                    implicit: f1,
-                    params: f2,
-                    ty: f3,
-                    body: f4,
-                    span: f5,
-                } => format!(
-                    "SynTheorem {{ name: {}, implicit: {}, params: {}, ty: {}, body: {}, span: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show(),
-                    f5.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynCtor {
-        pub name: Rc<SynIdent>,
-        pub fields: Rc<List<(Option<SynIdent>, SynExpr)>>,
-    }
-    impl Show for SynCtor {
-        fn show(&self) -> String {
-            match self {
-                SynCtor {
-                    name: f0,
-                    fields: f1,
-                } => format!("SynCtor {{ name: {}, fields: {} }}", f0.show(), f1.show()),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynIndCtor {
-        pub name: Rc<SynIdent>,
-        pub implicit: u64,
-        pub params: Rc<List<(SynExpr, SynIdent)>>,
-        pub result: Rc<SynExpr>,
-    }
-    impl Show for SynIndCtor {
-        fn show(&self) -> String {
-            match self {
-                SynIndCtor {
-                    name: f0,
-                    implicit: f1,
-                    params: f2,
-                    result: f3,
-                } => format!(
-                    "SynIndCtor {{ name: {}, implicit: {}, params: {}, result: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynInductive {
-        pub name: Rc<SynIdent>,
-        pub params: Rc<List<(SynExpr, SynIdent)>>,
-        pub sort: Rc<SynExpr>,
-        pub ctors: Rc<List<SynIndCtor>>,
-        pub span: SynSpan,
-    }
-    impl Show for SynInductive {
-        fn show(&self) -> String {
-            match self {
-                SynInductive {
-                    name: f0,
-                    params: f1,
-                    sort: f2,
-                    ctors: f3,
-                    span: f4,
-                } => format!(
-                    "SynInductive {{ name: {}, params: {}, sort: {}, ctors: {}, span: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynData {
-        pub kind: Option<Text>,
-        pub name: Rc<SynIdent>,
-        pub generics: List<Text>,
-        pub ctors: Rc<List<SynCtor>>,
-        pub span: SynSpan,
-    }
-    impl Show for SynData {
-        fn show(&self) -> String {
-            match self {
-                SynData {
-                    kind: f0,
-                    name: f1,
-                    generics: f2,
-                    ctors: f3,
-                    span: f4,
-                } => format!(
-                    "SynData {{ kind: {}, name: {}, generics: {}, ctors: {}, span: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct SynEffect {
-        pub name: Rc<SynIdent>,
-        pub generics: List<Text>,
-        pub params: Rc<List<Option<SynExpr>>>,
-        pub result: Rc<Option<SynExpr>>,
-        pub resume: Option<Text>,
-        pub span: SynSpan,
-    }
-    impl Show for SynEffect {
-        fn show(&self) -> String {
-            match self {
-                SynEffect {
-                    name: f0,
-                    generics: f1,
-                    params: f2,
-                    result: f3,
-                    resume: f4,
-                    span: f5,
-                } => format!(
-                    "SynEffect {{ name: {}, generics: {}, params: {}, result: {}, resume: {}, span: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show(),
-                    f5.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub enum SynStmt {
-        StLet(
-            Rc<SynIdent>,
-            Rc<Option<SynExpr>>,
-            Rc<SynExpr>,
-            bool,
-            bool,
-            SynSpan,
-        ),
-        StVar(
-            Rc<SynIdent>,
-            Rc<Option<SynExpr>>,
-            Rc<SynExpr>,
-            bool,
-            SynSpan,
-        ),
-        StAssign(Rc<SynIdent>, Rc<SynExpr>, SynSpan),
-        StFn(Rc<SynFn>),
-        StExpr(Rc<SynExpr>),
-        StWhile(Rc<SynExpr>, Rc<SynExpr>),
-        StReturn(Rc<Option<SynExpr>>),
-        StTheorem(Rc<SynTheorem>),
-        StDef(Rc<SynTheorem>),
-        StStruct(Rc<SynData>),
-        StEnum(Rc<SynData>),
-        StInductive(Rc<SynInductive>),
-        StEffect(Rc<SynEffect>),
-        StMutual(Rc<List<SynStmt>>, SynSpan),
-        StMacroCall(Rc<SynIdent>, Text, SynSpan),
-    }
-    impl Show for SynStmt {
-        fn show(&self) -> String {
-            match self {
-                SynStmt::StLet(f0, f1, f2, f3, f4, f5) => format!(
-                    "StLet({}, {}, {}, {}, {}, {})",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show(),
-                    f5.show()
-                ),
-                SynStmt::StVar(f0, f1, f2, f3, f4) => format!(
-                    "StVar({}, {}, {}, {}, {})",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show(),
-                    f4.show()
-                ),
-                SynStmt::StAssign(f0, f1, f2) => {
-                    format!("StAssign({}, {}, {})", f0.show(), f1.show(), f2.show())
-                }
-                SynStmt::StFn(f0) => format!("StFn({})", f0.show()),
-                SynStmt::StExpr(f0) => format!("StExpr({})", f0.show()),
-                SynStmt::StWhile(f0, f1) => format!("StWhile({}, {})", f0.show(), f1.show()),
-                SynStmt::StReturn(f0) => format!("StReturn({})", f0.show()),
-                SynStmt::StTheorem(f0) => format!("StTheorem({})", f0.show()),
-                SynStmt::StDef(f0) => format!("StDef({})", f0.show()),
-                SynStmt::StStruct(f0) => format!("StStruct({})", f0.show()),
-                SynStmt::StEnum(f0) => format!("StEnum({})", f0.show()),
-                SynStmt::StInductive(f0) => format!("StInductive({})", f0.show()),
-                SynStmt::StEffect(f0) => format!("StEffect({})", f0.show()),
-                SynStmt::StMutual(f0, f1) => format!("StMutual({}, {})", f0.show(), f1.show()),
-                SynStmt::StMacroCall(f0, f1, f2) => {
-                    format!("StMacroCall({}, {}, {})", f0.show(), f1.show(), f2.show())
+                HashSeed { k0: f0, k1: f1 } => {
+                    format!("HashSeed {{ k0: {}, k1: {} }}", f0.show(), f1.show())
                 }
             }
         }
@@ -2179,17 +1726,6 @@ pub mod generated {
         fn show(&self) -> String {
             match self {
                 CancelToken { signal: f0 } => format!("CancelToken {{ signal: {} }}", f0.show()),
-            }
-        }
-    }
-    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
-    pub enum Cancelled {
-        Cancelled,
-    }
-    impl Show for Cancelled {
-        fn show(&self) -> String {
-            match self {
-                Cancelled::Cancelled => "Cancelled".to_string(),
             }
         }
     }
@@ -2279,6 +1815,21 @@ pub mod generated {
             }
         }
     }
+    #[derive(PartialEq, Eq, std :: hash :: Hash)]
+    pub enum Received<A> {
+        Arrived(A),
+        Closed,
+        NotYet,
+    }
+    impl<A: Show> Show for Received<A> {
+        fn show(&self) -> String {
+            match self {
+                Received::Arrived(f0) => format!("Arrived({})", f0.show()),
+                Received::Closed => "Closed".to_string(),
+                Received::NotYet => "NotYet".to_string(),
+            }
+        }
+    }
     #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
     pub struct Fifo<A> {
         pub front: Vec<A>,
@@ -2301,115 +1852,8 @@ pub mod generated {
             }
         }
     }
-    #[derive(Clone)]
-    pub struct calc_syntax__Chain {
-        pub span: SynSpan,
-        pub tauto_expr: Rc<SynExpr>,
-        pub step: Rc<calc_syntax__Step>,
-        pub step_2: Rc<List<calc_syntax__Step>>,
-    }
-    impl Show for calc_syntax__Chain {
-        fn show(&self) -> String {
-            match self {
-                calc_syntax__Chain {
-                    span: f0,
-                    tauto_expr: f1,
-                    step: f2,
-                    step_2: f3,
-                } => format!(
-                    "calc_syntax::Chain {{ span: {}, tauto_expr: {}, step: {}, step_2: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
-    pub enum calc_syntax__Rel {
-        EqSign(SynToken),
-        IffSign(SynToken),
-    }
-    impl Show for calc_syntax__Rel {
-        fn show(&self) -> String {
-            match self {
-                calc_syntax__Rel::EqSign(f0) => format!("EqSign({})", f0.show()),
-                calc_syntax__Rel::IffSign(f0) => format!("IffSign({})", f0.show()),
-            }
-        }
-    }
-    #[derive(Clone)]
-    pub struct calc_syntax__Step {
-        pub span: SynSpan,
-        pub rel: calc_syntax__Rel,
-        pub tauto_expr: Rc<SynExpr>,
-        pub tauto_expr_2: Rc<SynExpr>,
-    }
-    impl Show for calc_syntax__Step {
-        fn show(&self) -> String {
-            match self {
-                calc_syntax__Step {
-                    span: f0,
-                    rel: f1,
-                    tauto_expr: f2,
-                    tauto_expr_2: f3,
-                } => format!(
-                    "calc_syntax::Step {{ span: {}, rel: {}, tauto_expr: {}, tauto_expr_2: {} }}",
-                    f0.show(),
-                    f1.show(),
-                    f2.show(),
-                    f3.show()
-                ),
-            }
-        }
-    }
-    #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
-    pub enum NatExpr {
-        NeConst(tauto_rt::nat::Nat),
-        NeVar(tauto_rt::nat::Nat),
-        NeAdd(tauto_rt::Shared<NatExpr>, tauto_rt::Shared<NatExpr>),
-        NeMul(tauto_rt::Shared<NatExpr>, tauto_rt::Shared<NatExpr>),
-    }
-    impl Show for NatExpr {
-        fn show(&self) -> String {
-            match self {
-                NatExpr::NeConst(f0) => format!("NeConst({})", f0.show()),
-                NatExpr::NeVar(f0) => format!("NeVar({})", f0.show()),
-                NatExpr::NeAdd(f0, f1) => format!("NeAdd({}, {})", f0.show(), f1.show()),
-                NatExpr::NeMul(f0, f1) => format!("NeMul({}, {})", f0.show(), f1.show()),
-            }
-        }
-    }
-    impl tauto_rt::Unlink for NatExpr {
-        fn unlink(&mut self, cells: &mut tauto_rt::link::Cells<Self>) {
-            match self {
-                NatExpr::NeAdd { 0: l0, 1: l1, .. } => {
-                    cells.shared(l0);
-                    cells.shared(l1);
-                }
-                NatExpr::NeMul { 0: l0, 1: l1, .. } => {
-                    cells.shared(l0);
-                    cells.shared(l1);
-                }
-                _ => {}
-            }
-        }
-    }
-    #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
-    pub struct NmTerm {
-        pub c: tauto_rt::nat::Nat,
-        pub m: List<tauto_rt::nat::Nat>,
-    }
-    impl Show for NmTerm {
-        fn show(&self) -> String {
-            match self {
-                NmTerm { c: f0, m: f1 } => {
-                    format!("NmTerm {{ c: {}, m: {} }}", f0.show(), f1.show())
-                }
-            }
-        }
-    }
+    pub type Placed<'r, T> = tauto_rt::stdlib::Placed<'r, T>;
+    pub type RcPlaced<T> = tauto_rt::stdlib::RcPlaced<T>;
     #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
     pub enum Escape {
         Plain,
@@ -2612,6 +2056,7 @@ pub mod generated {
         pub git: Text,
         pub reference: Text,
         pub dir: Text,
+        pub sparse: bool,
         pub project: Option<Text>,
         pub rev: Text,
         pub source: Text,
@@ -2624,18 +2069,20 @@ pub mod generated {
                     git: f1,
                     reference: f2,
                     dir: f3,
-                    project: f4,
-                    rev: f5,
-                    source: f6,
+                    sparse: f4,
+                    project: f5,
+                    rev: f6,
+                    source: f7,
                 } => format!(
-                    "TbLocked {{ name: {}, git: {}, reference: {}, dir: {}, project: {}, rev: {}, source: {} }}",
+                    "TbLocked {{ name: {}, git: {}, reference: {}, dir: {}, sparse: {}, project: {}, rev: {}, source: {} }}",
                     f0.show(),
                     f1.show(),
                     f2.show(),
                     f3.show(),
                     f4.show(),
                     f5.show(),
-                    f6.show()
+                    f6.show(),
+                    f7.show()
                 ),
             }
         }
@@ -2723,7 +2170,7 @@ pub mod generated {
         }
     }
     #[doc = " <top>"]
-    pub fn top__s(ev: &Ev<'_>) -> () {
+    pub fn _top___s(ev: &Ev<'_>) -> () {
         let _ = { () };
     }
     #[doc = " extract_nat_sub"]
@@ -2735,7 +2182,7 @@ pub mod generated {
         if (a_1.clone() < b_2.clone()) {
             tauto_rt::nat::Nat::from_u64(0_u64)
         } else {
-            tauto_rt::int::sub_nat(a_1, b_2, LM339709)
+            tauto_rt::int::sub_nat(a_1, b_2, LM107750)
         }
     }
     #[doc = " extract_float_checked_div"]
@@ -2743,7 +2190,7 @@ pub mod generated {
         if (b_4 == 0.0_f64) {
             None
         } else {
-            Some(tauto_rt::float::float_div(a_3, b_4, LM339821))
+            Some(tauto_rt::float::float_div(a_3, b_4, LM107862))
         }
     }
     #[doc = " extract_float_is_infinite"]
@@ -2755,7 +2202,7 @@ pub mod generated {
         if (b_7 == tauto_rt::float::float32_of_float(0.0_f64)) {
             None
         } else {
-            Some(tauto_rt::float::float32_div(a_6, b_7, LM340052))
+            Some(tauto_rt::float::float32_div(a_6, b_7, LM108093))
         }
     }
     #[doc = " extract_float32_is_infinite"]
@@ -2768,7 +2215,7 @@ pub mod generated {
         {
             let mut t_10: f64 = tauto_rt::float::float_trunc(x_9);
             if ((t_10 >= (-9.223372036854776e18_f64)) && (t_10 < 9.223372036854776e18_f64)) {
-                Some(tauto_rt::float::i64_of_float(t_10, LM340331))
+                Some(tauto_rt::float::i64_of_float(t_10, LM108372))
             } else {
                 None
             }
@@ -2783,7 +2230,7 @@ pub mod generated {
         if (b_12.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
             tauto_rt::nat::Nat::from_u64(0_u64)
         } else {
-            tauto_rt::int::div_nat(a_11, b_12, LM340435)
+            tauto_rt::int::div_nat(a_11, b_12, LM108476)
         }
     }
     #[doc = " extract_nat_mod"]
@@ -2795,7 +2242,7 @@ pub mod generated {
         if (b_14.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
             a_13
         } else {
-            tauto_rt::int::rem_nat(a_13, b_14, LM340517)
+            tauto_rt::int::rem_nat(a_13, b_14, LM108558)
         }
     }
     #[doc = " extract_nat_divmod"]
@@ -2808,22 +2255,22 @@ pub mod generated {
     ) -> (tauto_rt::nat::Nat, tauto_rt::nat::Nat) {
         if ((b_16.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) || (r_18.clone() >= b_16.clone()))
         {
-            (q_17, tauto_rt::int::add_nat(r_18, a_15, LM340652))
+            (q_17, tauto_rt::int::add_nat(r_18, a_15, LM108674))
         } else {
             (
                 tauto_rt::int::add_nat(
                     q_17,
                     tauto_rt::int::div_nat(
-                        tauto_rt::int::add_nat(r_18.clone(), a_15.clone(), LM340695),
+                        tauto_rt::int::add_nat(r_18.clone(), a_15.clone(), LM108706),
                         b_16.clone(),
-                        LM340691,
+                        LM108702,
                     ),
-                    LM340687,
+                    LM108698,
                 ),
                 tauto_rt::int::rem_nat(
-                    tauto_rt::int::add_nat(r_18, a_15, LM340715),
+                    tauto_rt::int::add_nat(r_18, a_15, LM108721),
                     b_16,
-                    LM340711,
+                    LM108717,
                 ),
             )
         }
@@ -2834,70 +2281,120 @@ pub mod generated {
         mut t_19: Text,
         mut i_20: tauto_rt::nat::Nat,
     ) -> Option<tauto_rt::nat::Nat> {
-        match (tauto_rt::stdlib::text_byte(t_19, tauto_rt::stdlib::u64_of_nat(i_20, LM341027))) {
+        match (tauto_rt::stdlib::text_byte(&t_19, tauto_rt::stdlib::u64_of_nat(i_20, LM109033))) {
             Some(mut b_21) => Some(tauto_rt::stdlib::nat_of_u64(tauto_rt::stdlib::u64_of_u8(
-                b_21, LM341077,
+                b_21, LM109083,
             ))),
             None => None,
         }
     }
-    #[doc = " extract_text_bytes_from"]
-    pub fn extract_text_bytes_from__s(
+    #[doc = " extract_text_all_bytes_at"]
+    pub fn extract_text_all_bytes_at__s(
         ev: &Ev<'_>,
         mut t_22: Text,
         mut i_23: u64,
-        mut acc_24: List<tauto_rt::nat::Nat>,
+        mut n_24: u64,
+        mut p_25: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+    ) -> bool {
+        'tauto_tail: loop {
+            break if (n_24 == 0_u64) {
+                true
+            } else {
+                match (tauto_rt::stdlib::text_byte(&t_22, i_23)) {
+                    None => true,
+                    Some(mut c_26) => {
+                        if p_25(
+                            ev,
+                            tauto_rt::stdlib::nat_of_u64(tauto_rt::stdlib::u64_of_u8(
+                                c_26, LM109412,
+                            )),
+                        ) {
+                            {
+                                let tail1 = tauto_rt::int::add_u64(i_23, 1_u64, LM109467);
+                                let tail2 = tauto_rt::int::sub_u64(n_24, 1_u64, LM109474);
+                                i_23 = tail1;
+                                n_24 = tail2;
+                                continue 'tauto_tail;
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                }
+            };
+        }
+    }
+    #[doc = " extract_text_all_bytes"]
+    pub fn extract_text_all_bytes__s(
+        ev: &Ev<'_>,
+        mut t_27: Text,
+        mut p_28: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+    ) -> bool {
+        extract_text_all_bytes_at__s(
+            ev,
+            t_27.clone(),
+            0_u64,
+            tauto_rt::stdlib::text_len(&t_27),
+            p_28,
+        )
+    }
+    #[doc = " extract_text_bytes_from"]
+    pub fn extract_text_bytes_from__s(
+        ev: &Ev<'_>,
+        mut t_29: Text,
+        mut i_30: u64,
+        mut acc_31: List<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
         'tauto_tail: loop {
-            break if (i_23 == 0_u64) {
-                acc_24
+            break if (i_30 == 0_u64) {
+                acc_31
             } else {
                 match (tauto_rt::stdlib::text_byte(
-                    t_22.clone(),
-                    tauto_rt::int::sub_u64(i_23, 1_u64, LM341247),
+                    &t_29,
+                    tauto_rt::int::sub_u64(i_30, 1_u64, LM109781),
                 )) {
-                    Some(mut b_25) => {
-                        let tail1 = tauto_rt::int::sub_u64(i_23, 1_u64, LM341300);
+                    Some(mut b_32) => {
+                        let tail1 = tauto_rt::int::sub_u64(i_30, 1_u64, LM109834);
                         let tail2 = List::Cons(
                             tauto_rt::stdlib::nat_of_u64(tauto_rt::stdlib::u64_of_u8(
-                                b_25, LM341324,
+                                b_32, LM109858,
                             )),
-                            Rc::new(acc_24).into(),
+                            Rc::new(acc_31).into(),
                         );
-                        i_23 = tail1;
-                        acc_24 = tail2;
+                        i_30 = tail1;
+                        acc_31 = tail2;
                         continue 'tauto_tail;
                     }
-                    None => acc_24,
+                    None => acc_31,
                 }
             };
         }
     }
     #[doc = " extract_text_bytes"]
-    pub fn extract_text_bytes__s(ev: &Ev<'_>, mut t_26: Text) -> List<tauto_rt::nat::Nat> {
+    pub fn extract_text_bytes__s(ev: &Ev<'_>, mut t_33: Text) -> List<tauto_rt::nat::Nat> {
         extract_text_bytes_from__s(
             ev,
-            t_26.clone(),
-            tauto_rt::stdlib::text_len(t_26),
+            t_33.clone(),
+            tauto_rt::stdlib::text_len(&t_33),
             List::Nil,
         )
     }
     #[doc = " extract_text_push_all"]
     pub fn extract_text_push_all__s(
         ev: &Ev<'_>,
-        mut b_27: &mut String,
-        mut parts_28: List<Text>,
+        mut b_34: &mut String,
+        mut parts_35: List<Text>,
     ) -> () {
         'tauto_tail: loop {
-            break match (parts_28) {
+            break match (parts_35) {
                 List::Nil => (),
-                List::Cons(mut part_29, b_t1) => {
-                    let mut rest_30 = b_t1;
+                List::Cons(mut part_36, b_t1) => {
+                    let mut rest_37 = b_t1;
                     {
-                        tauto_rt::stdlib::buf_push(&mut (*b_27), &part_29);
+                        tauto_rt::stdlib::buf_push(&mut (*b_34), &part_36);
                         {
-                            let tail1 = tauto_rt::unrc(rest_30);
-                            parts_28 = tail1;
+                            let tail1 = tauto_rt::unrc(rest_37);
+                            parts_35 = tail1;
                             continue 'tauto_tail;
                         }
                     }
@@ -2906,19 +2403,19 @@ pub mod generated {
         }
     }
     #[doc = " extract_text_concat_all"]
-    pub fn extract_text_concat_all__s(ev: &Ev<'_>, mut parts_31: List<Text>) -> Text {
+    pub fn extract_text_concat_all__s(ev: &Ev<'_>, mut parts_38: List<Text>) -> Text {
         {
-            let mut b_32: String = tauto_rt::stdlib::buf_new();
-            extract_text_push_all__s(ev, &mut b_32, parts_31);
-            tauto_rt::stdlib::text_of(b_32)
+            let mut b_39: String = tauto_rt::stdlib::buf_new();
+            extract_text_push_all__s(ev, &mut b_39, parts_38);
+            tauto_rt::stdlib::text_of(b_39)
         }
     }
     #[doc = " extract_ordering"]
-    pub fn extract_ordering__s(ev: &Ev<'_>, mut c_33: i64) -> Ordering {
-        if (c_33 < 0_i64) {
+    pub fn extract_ordering__s(ev: &Ev<'_>, mut c_40: i64) -> Ordering {
+        if (c_40 < 0_i64) {
             Ordering::Less
         } else {
-            if (c_33 == 0_i64) {
+            if (c_40 == 0_i64) {
                 Ordering::Equal
             } else {
                 Ordering::Greater
@@ -2928,40 +2425,40 @@ pub mod generated {
     #[doc = " extract_text_of_code_point"]
     pub fn extract_text_of_code_point__s(
         ev: &Ev<'_>,
-        mut c_34: tauto_rt::nat::Nat,
+        mut c_41: tauto_rt::nat::Nat,
     ) -> Option<Text> {
-        if (c_34.clone() > tauto_rt::nat::Nat::from_u64(1114111_u64)) {
+        if (c_41.clone() > tauto_rt::nat::Nat::from_u64(1114111_u64)) {
             None
         } else {
             tauto_rt::stdlib::text_of_code_point(tauto_rt::stdlib::u32_of_u64(
-                tauto_rt::stdlib::u64_of_nat(c_34, LM342043),
-                LM342031,
+                tauto_rt::stdlib::u64_of_nat(c_41, LM110578),
+                LM110566,
             ))
         }
     }
     #[doc = " extract_text_utf8_of_code_point"]
-    pub fn extract_text_utf8_of_code_point__s(ev: &Ev<'_>, mut c_35: tauto_rt::nat::Nat) -> Text {
-        match (extract_text_of_code_point__s(ev, c_35)) {
-            Some(mut t_36) => t_36,
+    pub fn extract_text_utf8_of_code_point__s(ev: &Ev<'_>, mut c_42: tauto_rt::nat::Nat) -> Text {
+        match (extract_text_of_code_point__s(ev, c_42)) {
+            Some(mut t_43) => t_43,
             None => Text::lit(""),
         }
     }
     #[doc = " extract_bytes_reverse_onto"]
     pub fn extract_bytes_reverse_onto__s(
         ev: &Ev<'_>,
-        mut bs_37: List<u8>,
-        mut acc_38: List<u8>,
+        mut bs_44: List<u8>,
+        mut acc_45: List<u8>,
     ) -> List<u8> {
         'tauto_tail: loop {
-            break match (bs_37) {
-                List::Nil => acc_38,
-                List::Cons(mut b_39, b_t2) => {
-                    let mut rest_40 = b_t2;
+            break match (bs_44) {
+                List::Nil => acc_45,
+                List::Cons(mut b_46, b_t2) => {
+                    let mut rest_47 = b_t2;
                     {
-                        let tail0 = tauto_rt::unrc(rest_40);
-                        let tail1 = List::Cons(b_39, Rc::new(acc_38).into());
-                        bs_37 = tail0;
-                        acc_38 = tail1;
+                        let tail0 = tauto_rt::unrc(rest_47);
+                        let tail1 = List::Cons(b_46, Rc::new(acc_45).into());
+                        bs_44 = tail0;
+                        acc_45 = tail1;
                         continue 'tauto_tail;
                     }
                 }
@@ -2971,28 +2468,28 @@ pub mod generated {
     #[doc = " extract_bytes_of_onto"]
     pub fn extract_bytes_of_onto__s(
         ev: &Ev<'_>,
-        mut bs_41: List<tauto_rt::nat::Nat>,
-        mut acc_42: List<u8>,
+        mut bs_48: List<tauto_rt::nat::Nat>,
+        mut acc_49: List<u8>,
     ) -> Option<List<u8>> {
         'tauto_tail: loop {
-            break match (bs_41) {
-                List::Nil => Some(extract_bytes_reverse_onto__s(ev, acc_42, List::Nil)),
-                List::Cons(mut b_43, b_t3) => {
-                    let mut rest_44 = b_t3;
-                    if (b_43.clone() > tauto_rt::nat::Nat::from_u64(255_u64)) {
+            break match (bs_48) {
+                List::Nil => Some(extract_bytes_reverse_onto__s(ev, acc_49, List::Nil)),
+                List::Cons(mut b_50, b_t3) => {
+                    let mut rest_51 = b_t3;
+                    if (b_50.clone() > tauto_rt::nat::Nat::from_u64(255_u64)) {
                         None
                     } else {
                         {
-                            let tail0 = tauto_rt::unrc(rest_44);
+                            let tail0 = tauto_rt::unrc(rest_51);
                             let tail1 = List::Cons(
                                 tauto_rt::stdlib::u8_of_u64(
-                                    tauto_rt::stdlib::u64_of_nat(b_43, LM342753),
-                                    LM342742,
+                                    tauto_rt::stdlib::u64_of_nat(b_50, LM111288),
+                                    LM111277,
                                 ),
-                                Rc::new(acc_42).into(),
+                                Rc::new(acc_49).into(),
                             );
-                            bs_41 = tail0;
-                            acc_42 = tail1;
+                            bs_48 = tail0;
+                            acc_49 = tail1;
                             continue 'tauto_tail;
                         }
                     }
@@ -3003,48 +2500,48 @@ pub mod generated {
     #[doc = " extract_bytes_of"]
     pub fn extract_bytes_of__s(
         ev: &Ev<'_>,
-        mut bs_45: List<tauto_rt::nat::Nat>,
+        mut bs_52: List<tauto_rt::nat::Nat>,
     ) -> Option<List<u8>> {
-        extract_bytes_of_onto__s(ev, bs_45, List::Nil)
+        extract_bytes_of_onto__s(ev, bs_52, List::Nil)
     }
     #[doc = " extract_text_of_utf8"]
     pub fn extract_text_of_utf8__s(
         ev: &Ev<'_>,
-        mut bs_46: List<tauto_rt::nat::Nat>,
+        mut bs_53: List<tauto_rt::nat::Nat>,
     ) -> Option<Text> {
-        match (extract_bytes_of__s(ev, bs_46)) {
-            Some(mut r_47) => text_of_utf8(r_47),
+        match (extract_bytes_of__s(ev, bs_53)) {
+            Some(mut r_54) => text_of_utf8(r_54),
             None => None,
         }
     }
     #[doc = " extract_text_of_bytes"]
-    pub fn extract_text_of_bytes__s(ev: &Ev<'_>, mut bs_48: List<tauto_rt::nat::Nat>) -> Text {
-        match (extract_text_of_utf8__s(ev, bs_48)) {
-            Some(mut t_49) => t_49,
+    pub fn extract_text_of_bytes__s(ev: &Ev<'_>, mut bs_55: List<tauto_rt::nat::Nat>) -> Text {
+        match (extract_text_of_utf8__s(ev, bs_55)) {
+            Some(mut t_56) => t_56,
             None => tauto_rt::stdlib::text_of_u64(tauto_rt::stdlib::u64_of_u8(
-                tauto_rt::stdlib::u8_of_u64(256_u64, LM343482),
-                LM343471,
+                tauto_rt::stdlib::u8_of_u64(256_u64, LM112017),
+                LM112006,
             )),
         }
     }
     #[doc = " below"]
     pub fn below__s(
         ev: &Ev<'_>,
-        mut n_50: tauto_rt::nat::Nat,
-        mut p_51: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+        mut n_57: tauto_rt::nat::Nat,
+        mut p_58: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
     ) -> bool {
         {
-            let mut extract_nat_52: tauto_rt::nat::Nat = n_50;
-            if (extract_nat_52.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
+            let mut extract_nat_59: tauto_rt::nat::Nat = n_57;
+            if (extract_nat_59.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
                 { true }
             } else {
                 {
-                    let mut k_53: tauto_rt::nat::Nat = tauto_rt::int::sub_nat(
-                        extract_nat_52,
+                    let mut k_60: tauto_rt::nat::Nat = tauto_rt::int::sub_nat(
+                        extract_nat_59,
                         tauto_rt::nat::Nat::from_u64(1_u64),
-                        LM98960,
+                        LM37025,
                     );
-                    (p_51(ev, k_53.clone()) && below__s(ev, k_53, p_51))
+                    (p_58(ev, k_60.clone()) && below__s(ev, k_60, p_58))
                 }
             }
         }
@@ -3052,35 +2549,135 @@ pub mod generated {
     #[doc = " all_bytes"]
     pub fn all_bytes__s(
         ev: &Ev<'_>,
-        mut p_54: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
-        mut l_55: List<tauto_rt::nat::Nat>,
+        mut p_61: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+        mut l_62: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        match (l_55) {
+        match (l_62) {
             List::Nil => true,
-            List::Cons(mut b_56, b_t4) => {
-                let mut t_57 = b_t4;
-                (p_54(ev, b_56) && all_bytes__s(ev, p_54, tauto_rt::unrc(t_57)))
+            List::Cons(mut b_63, b_t4) => {
+                let mut t_64 = b_t4;
+                (p_61(ev, b_63) && all_bytes__s(ev, p_61, tauto_rt::unrc(t_64)))
+            }
+        }
+    }
+    #[doc = " all_bytes@0"]
+    pub fn all_bytes_0__s(ev: &Ev<'_>, mut l_65: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_65) {
+            List::Nil => true,
+            List::Cons(mut b_66, b_t5) => {
+                let mut t_67 = b_t5;
+                (scheme_byte__s(ev, b_66) && all_bytes_0__s(ev, tauto_rt::unrc(t_67)))
+            }
+        }
+    }
+    #[doc = " all_bytes@1"]
+    pub fn all_bytes_1__s(ev: &Ev<'_>, mut l_68: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_68) {
+            List::Nil => true,
+            List::Cons(mut b_69, b_t6) => {
+                let mut t_70 = b_t6;
+                (is_hex__s(ev, b_69) && all_bytes_1__s(ev, tauto_rt::unrc(t_70)))
+            }
+        }
+    }
+    #[doc = " all_bytes@2"]
+    pub fn all_bytes_2__s(ev: &Ev<'_>, mut l_71: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_71) {
+            List::Nil => true,
+            List::Cons(mut b_72, b_t7) => {
+                let mut t_73 = b_t7;
+                (is_digit__s(ev, b_72) && all_bytes_2__s(ev, tauto_rt::unrc(t_73)))
+            }
+        }
+    }
+    #[doc = " all_bytes@3"]
+    pub fn all_bytes_3__s(ev: &Ev<'_>, mut l_74: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_74) {
+            List::Nil => true,
+            List::Cons(mut b_75, b_t8) => {
+                let mut t_76 = b_t8;
+                (is_digit__s(ev, b_75) && all_bytes_3__s(ev, tauto_rt::unrc(t_76)))
+            }
+        }
+    }
+    #[doc = " all_bytes@4"]
+    pub fn all_bytes_4__s(ev: &Ev<'_>, mut l_77: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_77) {
+            List::Nil => true,
+            List::Cons(mut b_78, b_t9) => {
+                let mut t_79 = b_t9;
+                (domain_byte__s(ev, b_78) && all_bytes_4__s(ev, tauto_rt::unrc(t_79)))
+            }
+        }
+    }
+    #[doc = " all_bytes@22"]
+    pub fn all_bytes_22__s(ev: &Ev<'_>, mut l_80: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_80) {
+            List::Nil => true,
+            List::Cons(mut b_81, b_t10) => {
+                let mut t_82 = b_t10;
+                (tb_name_byte__s(ev, b_81) && all_bytes_22__s(ev, tauto_rt::unrc(t_82)))
+            }
+        }
+    }
+    #[doc = " all_bytes@23"]
+    pub fn all_bytes_23__s(ev: &Ev<'_>, mut l_83: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_83) {
+            List::Nil => true,
+            List::Cons(mut b_84, b_t11) => {
+                let mut t_85 = b_t11;
+                (tb_plain_byte__s(ev, b_84) && all_bytes_23__s(ev, tauto_rt::unrc(t_85)))
+            }
+        }
+    }
+    #[doc = " all_bytes@25"]
+    pub fn all_bytes_25__s(ev: &Ev<'_>, mut l_86: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_86) {
+            List::Nil => true,
+            List::Cons(mut b_87, b_t12) => {
+                let mut t_88 = b_t12;
+                (tb_plain_byte__s(ev, b_87) && all_bytes_25__s(ev, tauto_rt::unrc(t_88)))
+            }
+        }
+    }
+    #[doc = " all_bytes@26"]
+    pub fn all_bytes_26__s(ev: &Ev<'_>, mut l_89: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_89) {
+            List::Nil => true,
+            List::Cons(mut b_90, b_t13) => {
+                let mut t_91 = b_t13;
+                (tb_dir_byte__s(ev, b_90) && all_bytes_26__s(ev, tauto_rt::unrc(t_91)))
+            }
+        }
+    }
+    #[doc = " all_bytes@28"]
+    pub fn all_bytes_28__s(ev: &Ev<'_>, mut l_92: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_92) {
+            List::Nil => true,
+            List::Cons(mut b_93, b_t14) => {
+                let mut t_94 = b_t14;
+                (tb_lower_hex__s(ev, b_93) && all_bytes_28__s(ev, tauto_rt::unrc(t_94)))
             }
         }
     }
     #[doc = " is_byte"]
-    pub fn is_byte__s(ev: &Ev<'_>, mut b_58: tauto_rt::nat::Nat) -> bool {
-        (b_58 < tauto_rt::nat::Nat::from_u64(256_u64))
+    pub fn is_byte__s(ev: &Ev<'_>, mut b_95: tauto_rt::nat::Nat) -> bool {
+        (b_95 < tauto_rt::nat::Nat::from_u64(256_u64))
     }
     #[doc = " cut"]
     pub fn cut__s(
         ev: &Ev<'_>,
-        mut c_59: tauto_rt::nat::Nat,
-        mut l_60: List<tauto_rt::nat::Nat>,
+        mut c_96: tauto_rt::nat::Nat,
+        mut l_97: List<tauto_rt::nat::Nat>,
     ) -> Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)> {
-        match (l_60) {
+        match (l_97) {
             List::Nil => None,
-            List::Cons(mut b_61, b_t5) => {
-                let mut t_62 = b_t5;
-                match (b_61.clone() == c_59.clone()) {
-                    true => Some((List::Nil, tauto_rt::unrc(t_62))),
-                    false => cut_after__s(ev, b_61, cut__s(ev, c_59, tauto_rt::unrc(t_62))),
-                    _ => tauto_rt::no_arm(LM99510),
+            List::Cons(mut b_98, b_t15) => {
+                let mut t_99 = b_t15;
+                match (b_98.clone() == c_96.clone()) {
+                    true => Some((List::Nil, tauto_rt::unrc(t_99))),
+                    false => cut_after__s(ev, b_98, cut__s(ev, c_96, tauto_rt::unrc(t_99))),
+                    _ => tauto_rt::no_arm(LM37509),
                 }
             }
         }
@@ -3088,33 +2685,33 @@ pub mod generated {
     #[doc = " cut_after"]
     pub fn cut_after__s(
         ev: &Ev<'_>,
-        mut b_63: tauto_rt::nat::Nat,
-        mut o_64: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+        mut b_100: tauto_rt::nat::Nat,
+        mut o_101: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
     ) -> Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)> {
-        match (o_64) {
+        match (o_101) {
             None => None,
-            Some(mut p_65) => Some((
-                List::Cons(b_63, Rc::new(p_65.0.clone()).into()),
-                p_65.1.clone(),
+            Some(mut p_102) => Some((
+                List::Cons(b_100, Rc::new(p_102.0.clone()).into()),
+                p_102.1.clone(),
             )),
         }
     }
     #[doc = " rcut"]
     pub fn rcut__s(
         ev: &Ev<'_>,
-        mut c_66: tauto_rt::nat::Nat,
-        mut l_67: List<tauto_rt::nat::Nat>,
+        mut c_103: tauto_rt::nat::Nat,
+        mut l_104: List<tauto_rt::nat::Nat>,
     ) -> Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)> {
-        match (l_67) {
+        match (l_104) {
             List::Nil => None,
-            List::Cons(mut b_68, b_t6) => {
-                let mut t_69 = b_t6;
+            List::Cons(mut b_105, b_t16) => {
+                let mut t_106 = b_t16;
                 rcut_step__s(
                     ev,
-                    c_66.clone(),
-                    b_68,
-                    (*t_69).clone(),
-                    rcut__s(ev, c_66, tauto_rt::unrc(t_69)),
+                    c_103.clone(),
+                    b_105,
+                    (*t_106).clone(),
+                    rcut__s(ev, c_103, tauto_rt::unrc(t_106)),
                 )
             }
         }
@@ -3122,43 +2719,45 @@ pub mod generated {
     #[doc = " rcut_step"]
     pub fn rcut_step__s(
         ev: &Ev<'_>,
-        mut c_70: tauto_rt::nat::Nat,
-        mut b_71: tauto_rt::nat::Nat,
-        mut t_72: List<tauto_rt::nat::Nat>,
-        mut o_73: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+        mut c_107: tauto_rt::nat::Nat,
+        mut b_108: tauto_rt::nat::Nat,
+        mut t_109: List<tauto_rt::nat::Nat>,
+        mut o_110: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
     ) -> Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)> {
-        match (o_73) {
-            None => match (b_71 == c_70) {
-                true => Some((List::Nil, t_72)),
+        match (o_110) {
+            None => match (b_108 == c_107) {
+                true => Some((List::Nil, t_109)),
                 false => None,
-                _ => tauto_rt::no_arm(LM100383),
+                _ => tauto_rt::no_arm(LM38194),
             },
-            Some(mut p_74) => Some((
-                List::Cons(b_71, Rc::new(p_74.0.clone()).into()),
-                p_74.1.clone(),
+            Some(mut p_111) => Some((
+                List::Cons(b_108, Rc::new(p_111.0.clone()).into()),
+                p_111.1.clone(),
             )),
         }
     }
     #[doc = " split_all"]
     pub fn split_all__s(
         ev: &Ev<'_>,
-        mut c_75: tauto_rt::nat::Nat,
-        mut l_76: List<tauto_rt::nat::Nat>,
+        mut c_112: tauto_rt::nat::Nat,
+        mut l_113: List<tauto_rt::nat::Nat>,
     ) -> List<List<tauto_rt::nat::Nat>> {
-        match (l_76) {
+        match (l_113) {
             List::Nil => List::Cons(List::Nil, {
                 thread_local! { static N : Rc < List < List < tauto_rt :: nat :: Nat > > > = Rc :: new (List :: Nil) ; }
                 N.with(Rc::clone).into()
             }),
-            List::Cons(mut b_77, b_t7) => {
-                let mut t_78 = b_t7;
-                match (b_77.clone() == c_75.clone()) {
+            List::Cons(mut b_114, b_t17) => {
+                let mut t_115 = b_t17;
+                match (b_114.clone() == c_112.clone()) {
                     true => List::Cons(
                         List::Nil,
-                        Rc::new(split_all__s(ev, c_75, tauto_rt::unrc(t_78))).into(),
+                        Rc::new(split_all__s(ev, c_112, tauto_rt::unrc(t_115))).into(),
                     ),
-                    false => push_front__s(ev, b_77, split_all__s(ev, c_75, tauto_rt::unrc(t_78))),
-                    _ => tauto_rt::no_arm(LM100789),
+                    false => {
+                        push_front__s(ev, b_114, split_all__s(ev, c_112, tauto_rt::unrc(t_115)))
+                    }
+                    _ => tauto_rt::no_arm(LM38543),
                 }
             }
         }
@@ -3166,12 +2765,12 @@ pub mod generated {
     #[doc = " push_front"]
     pub fn push_front__s(
         ev: &Ev<'_>,
-        mut b_79: tauto_rt::nat::Nat,
-        mut ps_80: List<List<tauto_rt::nat::Nat>>,
+        mut b_116: tauto_rt::nat::Nat,
+        mut ps_117: List<List<tauto_rt::nat::Nat>>,
     ) -> List<List<tauto_rt::nat::Nat>> {
-        match (ps_80) {
+        match (ps_117) {
             List::Nil => List::Cons(
-                List::Cons(b_79, {
+                List::Cons(b_116, {
                     thread_local! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; }
                     N.with(Rc::clone).into()
                 }),
@@ -3180,11 +2779,11 @@ pub mod generated {
                     N.with(Rc::clone).into()
                 },
             ),
-            List::Cons(mut p_81, b_t8) => {
-                let mut rest_82 = b_t8;
+            List::Cons(mut p_118, b_t18) => {
+                let mut rest_119 = b_t18;
                 List::Cons(
-                    List::Cons(b_79, Rc::new(p_81).into()),
-                    tauto_rt::relink(rest_82),
+                    List::Cons(b_116, Rc::new(p_118).into()),
+                    tauto_rt::relink(rest_119),
                 )
             }
         }
@@ -3192,34 +2791,34 @@ pub mod generated {
     #[doc = " url::src::bytes::join"]
     pub fn url__src__bytes__join__s(
         ev: &Ev<'_>,
-        mut c_83: tauto_rt::nat::Nat,
-        mut ps_84: List<List<tauto_rt::nat::Nat>>,
+        mut c_120: tauto_rt::nat::Nat,
+        mut ps_121: List<List<tauto_rt::nat::Nat>>,
     ) -> List<tauto_rt::nat::Nat> {
-        match (ps_84) {
+        match (ps_121) {
             List::Nil => List::Nil,
-            List::Cons(mut p_85, b_t9) => {
-                let mut rest_86 = b_t9;
-                join_rest__s(ev, c_83, p_85, tauto_rt::unrc(rest_86))
+            List::Cons(mut p_122, b_t19) => {
+                let mut rest_123 = b_t19;
+                join_rest__s(ev, c_120, p_122, tauto_rt::unrc(rest_123))
             }
         }
     }
     #[doc = " join_rest"]
     pub fn join_rest__s(
         ev: &Ev<'_>,
-        mut c_87: tauto_rt::nat::Nat,
-        mut p_88: List<tauto_rt::nat::Nat>,
-        mut rest_89: List<List<tauto_rt::nat::Nat>>,
+        mut c_124: tauto_rt::nat::Nat,
+        mut p_125: List<tauto_rt::nat::Nat>,
+        mut rest_126: List<List<tauto_rt::nat::Nat>>,
     ) -> List<tauto_rt::nat::Nat> {
-        match (rest_89) {
-            List::Nil => p_88,
-            List::Cons(mut q_90, b_t10) => {
-                let mut more_91 = b_t10;
+        match (rest_126) {
+            List::Nil => p_125,
+            List::Cons(mut q_127, b_t20) => {
+                let mut more_128 = b_t20;
                 List__append__s::<tauto_rt::nat::Nat>(
                     ev,
-                    &p_88,
+                    p_125,
                     List::Cons(
-                        c_87.clone(),
-                        Rc::new(join_rest__s(ev, c_87, q_90, tauto_rt::unrc(more_91))).into(),
+                        c_124.clone(),
+                        Rc::new(join_rest__s(ev, c_124, q_127, tauto_rt::unrc(more_128))).into(),
                     ),
                 )
             }
@@ -3228,90 +2827,90 @@ pub mod generated {
     #[doc = " starts_with"]
     pub fn starts_with__s(
         ev: &Ev<'_>,
-        mut c_92: tauto_rt::nat::Nat,
-        mut l_93: List<tauto_rt::nat::Nat>,
+        mut c_129: tauto_rt::nat::Nat,
+        mut l_130: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        match (l_93) {
+        match (l_130) {
             List::Nil => false,
-            List::Cons(mut b_94, b_t11) => {
-                let mut t_95 = b_t11;
-                (b_94 == c_92)
+            List::Cons(mut b_131, b_t21) => {
+                let mut t_132 = b_t21;
+                (b_131 == c_129)
             }
         }
     }
     #[doc = " is_upper"]
-    pub fn is_upper__s(ev: &Ev<'_>, mut b_96: tauto_rt::nat::Nat) -> bool {
-        ((tauto_rt::nat::Nat::from_u64(65_u64) <= b_96.clone())
-            && (b_96 <= tauto_rt::nat::Nat::from_u64(90_u64)))
+    pub fn is_upper__s(ev: &Ev<'_>, mut b_133: tauto_rt::nat::Nat) -> bool {
+        ((tauto_rt::nat::Nat::from_u64(65_u64) <= b_133.clone())
+            && (b_133 <= tauto_rt::nat::Nat::from_u64(90_u64)))
     }
     #[doc = " is_lower"]
-    pub fn is_lower__s(ev: &Ev<'_>, mut b_97: tauto_rt::nat::Nat) -> bool {
-        ((tauto_rt::nat::Nat::from_u64(97_u64) <= b_97.clone())
-            && (b_97 <= tauto_rt::nat::Nat::from_u64(122_u64)))
+    pub fn is_lower__s(ev: &Ev<'_>, mut b_134: tauto_rt::nat::Nat) -> bool {
+        ((tauto_rt::nat::Nat::from_u64(97_u64) <= b_134.clone())
+            && (b_134 <= tauto_rt::nat::Nat::from_u64(122_u64)))
     }
     #[doc = " is_alpha"]
-    pub fn is_alpha__s(ev: &Ev<'_>, mut b_98: tauto_rt::nat::Nat) -> bool {
-        (is_upper__s(ev, b_98.clone()) || is_lower__s(ev, b_98))
+    pub fn is_alpha__s(ev: &Ev<'_>, mut b_135: tauto_rt::nat::Nat) -> bool {
+        (is_upper__s(ev, b_135.clone()) || is_lower__s(ev, b_135))
     }
     #[doc = " is_digit"]
-    pub fn is_digit__s(ev: &Ev<'_>, mut b_99: tauto_rt::nat::Nat) -> bool {
-        ((tauto_rt::nat::Nat::from_u64(48_u64) <= b_99.clone())
-            && (b_99 <= tauto_rt::nat::Nat::from_u64(57_u64)))
+    pub fn is_digit__s(ev: &Ev<'_>, mut b_136: tauto_rt::nat::Nat) -> bool {
+        ((tauto_rt::nat::Nat::from_u64(48_u64) <= b_136.clone())
+            && (b_136 <= tauto_rt::nat::Nat::from_u64(57_u64)))
     }
     #[doc = " lower_byte"]
-    pub fn lower_byte__s(ev: &Ev<'_>, mut b_100: tauto_rt::nat::Nat) -> tauto_rt::nat::Nat {
-        match (is_upper__s(ev, b_100.clone())) {
+    pub fn lower_byte__s(ev: &Ev<'_>, mut b_137: tauto_rt::nat::Nat) -> tauto_rt::nat::Nat {
+        match (is_upper__s(ev, b_137.clone())) {
             true => {
-                tauto_rt::int::add_nat(b_100, tauto_rt::nat::Nat::from_u64(32_u64), LM1073742746)
+                tauto_rt::int::add_nat(b_137, tauto_rt::nat::Nat::from_u64(32_u64), LM1073741872)
             }
-            false => b_100,
-            _ => tauto_rt::no_arm(LM102068),
+            false => b_137,
+            _ => tauto_rt::no_arm(LM39733),
         }
     }
     #[doc = " lower"]
-    pub fn lower__s(ev: &Ev<'_>, mut l_101: List<tauto_rt::nat::Nat>) -> List<tauto_rt::nat::Nat> {
+    pub fn lower__s(ev: &Ev<'_>, mut l_138: List<tauto_rt::nat::Nat>) -> List<tauto_rt::nat::Nat> {
         List__map__s::<tauto_rt::nat::Nat, tauto_rt::nat::Nat>(
             ev,
             {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> tauto_rt :: nat :: Nat > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_102 : tauto_rt :: nat :: Nat | -> tauto_rt :: nat :: Nat { lower_byte__s (ev , extract_arg_0_102 . clone ()) }) ; }
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> tauto_rt :: nat :: Nat > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_139 : tauto_rt :: nat :: Nat | -> tauto_rt :: nat :: Nat { lower_byte__s (ev , extract_arg_0_139 . clone ()) }) ; }
                 F.with(Rc::clone)
             },
-            &l_101,
+            l_138,
         )
     }
     #[doc = " bytes_eq"]
     pub fn bytes_eq__s(
         ev: &Ev<'_>,
-        mut a_103: List<tauto_rt::nat::Nat>,
-        mut b_104: List<tauto_rt::nat::Nat>,
+        mut a_140: List<tauto_rt::nat::Nat>,
+        mut b_141: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        match (a_103) {
-            List::Nil => match (b_104) {
+        match (a_140) {
+            List::Nil => match (b_141) {
                 List::Nil => true,
-                List::Cons(mut y_105, b_t12) => {
-                    let mut u_106 = b_t12;
+                List::Cons(mut y_142, b_t22) => {
+                    let mut u_143 = b_t22;
                     false
                 }
             },
-            List::Cons(mut x_107, b_t13) => {
-                let mut t_108 = b_t13;
-                match (b_104) {
+            List::Cons(mut x_144, b_t23) => {
+                let mut t_145 = b_t23;
+                match (b_141) {
                     List::Nil => false,
-                    List::Cons(mut y_109, b_t14) => {
-                        let mut u_110 = b_t14;
-                        ((x_107 == y_109)
-                            && bytes_eq__s(ev, tauto_rt::unrc(t_108), tauto_rt::unrc(u_110)))
+                    List::Cons(mut y_146, b_t24) => {
+                        let mut u_147 = b_t24;
+                        ((x_144 == y_146)
+                            && bytes_eq__s(ev, tauto_rt::unrc(t_145), tauto_rt::unrc(u_147)))
                     }
                 }
             }
         }
     }
     #[doc = " is_empty"]
-    pub fn is_empty__s(ev: &Ev<'_>, mut l_111: List<tauto_rt::nat::Nat>) -> bool {
-        match (l_111) {
+    pub fn is_empty__s(ev: &Ev<'_>, mut l_148: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_148) {
             List::Nil => true,
-            List::Cons(mut b_112, b_t15) => {
-                let mut t_113 = b_t15;
+            List::Cons(mut b_149, b_t25) => {
+                let mut t_150 = b_t25;
                 false
             }
         }
@@ -3319,175 +2918,163 @@ pub mod generated {
     #[doc = " all_pieces"]
     pub fn all_pieces__s(
         ev: &Ev<'_>,
-        mut p_114: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
-        mut ps_115: List<List<tauto_rt::nat::Nat>>,
+        mut p_151: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+        mut ps_152: List<List<tauto_rt::nat::Nat>>,
     ) -> bool {
-        match (ps_115) {
+        match (ps_152) {
             List::Nil => true,
-            List::Cons(mut x_116, b_t16) => {
-                let mut rest_117 = b_t16;
-                (all_bytes__s(ev, p_114.clone(), x_116)
-                    && all_pieces__s(ev, p_114, tauto_rt::unrc(rest_117)))
+            List::Cons(mut x_153, b_t26) => {
+                let mut rest_154 = b_t26;
+                (all_bytes__s(ev, p_151.clone(), x_153)
+                    && all_pieces__s(ev, p_151, tauto_rt::unrc(rest_154)))
             }
         }
     }
     #[doc = " is_empty_list"]
-    pub fn is_empty_list__s(ev: &Ev<'_>, mut l_118: List<List<tauto_rt::nat::Nat>>) -> bool {
-        match (l_118) {
+    pub fn is_empty_list__s(ev: &Ev<'_>, mut l_155: List<List<tauto_rt::nat::Nat>>) -> bool {
+        match (l_155) {
             List::Nil => true,
-            List::Cons(mut x_119, b_t17) => {
-                let mut t_120 = b_t17;
+            List::Cons(mut x_156, b_t27) => {
+                let mut t_157 = b_t27;
                 false
             }
         }
     }
-    #[doc = " ne"]
-    pub fn ne__s(
-        ev: &Ev<'_>,
-        mut c_121: tauto_rt::nat::Nat,
-    ) -> Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool> {
-        {
-            let c_121 = c_121.clone();
-            Rc::new(move |ev: &Ev<'_>, b_122: tauto_rt::nat::Nat| -> bool {
-                not__s(ev, (b_122.clone() == c_121.clone()))
-            })
-        }
-    }
     #[doc = " c0_control_set"]
-    pub fn c0_control_set__s(ev: &Ev<'_>, mut b_123: tauto_rt::nat::Nat) -> bool {
-        ((b_123.clone() < tauto_rt::nat::Nat::from_u64(32_u64))
-            || (tauto_rt::nat::Nat::from_u64(126_u64) < b_123))
+    pub fn c0_control_set__s(ev: &Ev<'_>, mut b_158: tauto_rt::nat::Nat) -> bool {
+        ((b_158.clone() < tauto_rt::nat::Nat::from_u64(32_u64))
+            || (tauto_rt::nat::Nat::from_u64(126_u64) < b_158))
     }
     #[doc = " fragment_extra"]
-    pub fn fragment_extra__s(ev: &Ev<'_>, mut b_124: tauto_rt::nat::Nat) -> bool {
-        ((b_124.clone() == tauto_rt::nat::Nat::from_u64(32_u64))
-            || ((b_124.clone() == tauto_rt::nat::Nat::from_u64(34_u64))
-                || ((b_124.clone() == tauto_rt::nat::Nat::from_u64(60_u64))
-                    || ((b_124.clone() == tauto_rt::nat::Nat::from_u64(62_u64))
-                        || (b_124 == tauto_rt::nat::Nat::from_u64(96_u64))))))
+    pub fn fragment_extra__s(ev: &Ev<'_>, mut b_159: tauto_rt::nat::Nat) -> bool {
+        ((b_159.clone() == tauto_rt::nat::Nat::from_u64(32_u64))
+            || ((b_159.clone() == tauto_rt::nat::Nat::from_u64(34_u64))
+                || ((b_159.clone() == tauto_rt::nat::Nat::from_u64(60_u64))
+                    || ((b_159.clone() == tauto_rt::nat::Nat::from_u64(62_u64))
+                        || (b_159 == tauto_rt::nat::Nat::from_u64(96_u64))))))
     }
     #[doc = " fragment_set"]
-    pub fn fragment_set__s(ev: &Ev<'_>, mut b_125: tauto_rt::nat::Nat) -> bool {
-        (c0_control_set__s(ev, b_125.clone()) || fragment_extra__s(ev, b_125))
+    pub fn fragment_set__s(ev: &Ev<'_>, mut b_160: tauto_rt::nat::Nat) -> bool {
+        (c0_control_set__s(ev, b_160.clone()) || fragment_extra__s(ev, b_160))
     }
     #[doc = " query_extra"]
-    pub fn query_extra__s(ev: &Ev<'_>, mut b_126: tauto_rt::nat::Nat) -> bool {
-        ((b_126.clone() == tauto_rt::nat::Nat::from_u64(32_u64))
-            || ((b_126.clone() == tauto_rt::nat::Nat::from_u64(34_u64))
-                || ((b_126.clone() == tauto_rt::nat::Nat::from_u64(35_u64))
-                    || ((b_126.clone() == tauto_rt::nat::Nat::from_u64(60_u64))
-                        || (b_126 == tauto_rt::nat::Nat::from_u64(62_u64))))))
+    pub fn query_extra__s(ev: &Ev<'_>, mut b_161: tauto_rt::nat::Nat) -> bool {
+        ((b_161.clone() == tauto_rt::nat::Nat::from_u64(32_u64))
+            || ((b_161.clone() == tauto_rt::nat::Nat::from_u64(34_u64))
+                || ((b_161.clone() == tauto_rt::nat::Nat::from_u64(35_u64))
+                    || ((b_161.clone() == tauto_rt::nat::Nat::from_u64(60_u64))
+                        || (b_161 == tauto_rt::nat::Nat::from_u64(62_u64))))))
     }
     #[doc = " query_set"]
-    pub fn query_set__s(ev: &Ev<'_>, mut b_127: tauto_rt::nat::Nat) -> bool {
-        (c0_control_set__s(ev, b_127.clone()) || query_extra__s(ev, b_127))
+    pub fn query_set__s(ev: &Ev<'_>, mut b_162: tauto_rt::nat::Nat) -> bool {
+        (c0_control_set__s(ev, b_162.clone()) || query_extra__s(ev, b_162))
     }
     #[doc = " special_query_extra"]
-    pub fn special_query_extra__s(ev: &Ev<'_>, mut b_128: tauto_rt::nat::Nat) -> bool {
-        (query_extra__s(ev, b_128.clone()) || (b_128 == tauto_rt::nat::Nat::from_u64(39_u64)))
+    pub fn special_query_extra__s(ev: &Ev<'_>, mut b_163: tauto_rt::nat::Nat) -> bool {
+        (query_extra__s(ev, b_163.clone()) || (b_163 == tauto_rt::nat::Nat::from_u64(39_u64)))
     }
     #[doc = " special_query_set"]
-    pub fn special_query_set__s(ev: &Ev<'_>, mut b_129: tauto_rt::nat::Nat) -> bool {
-        (c0_control_set__s(ev, b_129.clone()) || special_query_extra__s(ev, b_129))
+    pub fn special_query_set__s(ev: &Ev<'_>, mut b_164: tauto_rt::nat::Nat) -> bool {
+        (c0_control_set__s(ev, b_164.clone()) || special_query_extra__s(ev, b_164))
     }
     #[doc = " path_extra"]
-    pub fn path_extra__s(ev: &Ev<'_>, mut b_130: tauto_rt::nat::Nat) -> bool {
-        (query_extra__s(ev, b_130.clone())
-            || ((b_130.clone() == tauto_rt::nat::Nat::from_u64(63_u64))
-                || ((b_130.clone() == tauto_rt::nat::Nat::from_u64(94_u64))
-                    || ((b_130.clone() == tauto_rt::nat::Nat::from_u64(96_u64))
-                        || ((b_130.clone() == tauto_rt::nat::Nat::from_u64(123_u64))
-                            || (b_130 == tauto_rt::nat::Nat::from_u64(125_u64)))))))
+    pub fn path_extra__s(ev: &Ev<'_>, mut b_165: tauto_rt::nat::Nat) -> bool {
+        (query_extra__s(ev, b_165.clone())
+            || ((b_165.clone() == tauto_rt::nat::Nat::from_u64(63_u64))
+                || ((b_165.clone() == tauto_rt::nat::Nat::from_u64(94_u64))
+                    || ((b_165.clone() == tauto_rt::nat::Nat::from_u64(96_u64))
+                        || ((b_165.clone() == tauto_rt::nat::Nat::from_u64(123_u64))
+                            || (b_165 == tauto_rt::nat::Nat::from_u64(125_u64)))))))
     }
     #[doc = " path_set"]
-    pub fn path_set__s(ev: &Ev<'_>, mut b_131: tauto_rt::nat::Nat) -> bool {
-        (c0_control_set__s(ev, b_131.clone()) || path_extra__s(ev, b_131))
+    pub fn path_set__s(ev: &Ev<'_>, mut b_166: tauto_rt::nat::Nat) -> bool {
+        (c0_control_set__s(ev, b_166.clone()) || path_extra__s(ev, b_166))
     }
     #[doc = " userinfo_extra"]
-    pub fn userinfo_extra__s(ev: &Ev<'_>, mut b_132: tauto_rt::nat::Nat) -> bool {
-        (path_extra__s(ev, b_132.clone())
-            || ((b_132.clone() == tauto_rt::nat::Nat::from_u64(47_u64))
-                || ((b_132.clone() == tauto_rt::nat::Nat::from_u64(58_u64))
-                    || ((b_132.clone() == tauto_rt::nat::Nat::from_u64(59_u64))
-                        || ((b_132.clone() == tauto_rt::nat::Nat::from_u64(61_u64))
-                            || ((b_132.clone() == tauto_rt::nat::Nat::from_u64(64_u64))
-                                || (((tauto_rt::nat::Nat::from_u64(91_u64) <= b_132.clone())
-                                    && (b_132.clone()
+    pub fn userinfo_extra__s(ev: &Ev<'_>, mut b_167: tauto_rt::nat::Nat) -> bool {
+        (path_extra__s(ev, b_167.clone())
+            || ((b_167.clone() == tauto_rt::nat::Nat::from_u64(47_u64))
+                || ((b_167.clone() == tauto_rt::nat::Nat::from_u64(58_u64))
+                    || ((b_167.clone() == tauto_rt::nat::Nat::from_u64(59_u64))
+                        || ((b_167.clone() == tauto_rt::nat::Nat::from_u64(61_u64))
+                            || ((b_167.clone() == tauto_rt::nat::Nat::from_u64(64_u64))
+                                || (((tauto_rt::nat::Nat::from_u64(91_u64) <= b_167.clone())
+                                    && (b_167.clone()
                                         <= tauto_rt::nat::Nat::from_u64(93_u64)))
-                                    || (b_132 == tauto_rt::nat::Nat::from_u64(124_u64)))))))))
+                                    || (b_167 == tauto_rt::nat::Nat::from_u64(124_u64)))))))))
     }
     #[doc = " userinfo_set"]
-    pub fn userinfo_set__s(ev: &Ev<'_>, mut b_133: tauto_rt::nat::Nat) -> bool {
-        (c0_control_set__s(ev, b_133.clone()) || userinfo_extra__s(ev, b_133))
+    pub fn userinfo_set__s(ev: &Ev<'_>, mut b_168: tauto_rt::nat::Nat) -> bool {
+        (c0_control_set__s(ev, b_168.clone()) || userinfo_extra__s(ev, b_168))
     }
     #[doc = " component_extra"]
-    pub fn component_extra__s(ev: &Ev<'_>, mut b_134: tauto_rt::nat::Nat) -> bool {
-        (userinfo_extra__s(ev, b_134.clone())
-            || (((tauto_rt::nat::Nat::from_u64(36_u64) <= b_134.clone())
-                && (b_134.clone() <= tauto_rt::nat::Nat::from_u64(38_u64)))
-                || ((b_134.clone() == tauto_rt::nat::Nat::from_u64(43_u64))
-                    || (b_134 == tauto_rt::nat::Nat::from_u64(44_u64)))))
+    pub fn component_extra__s(ev: &Ev<'_>, mut b_169: tauto_rt::nat::Nat) -> bool {
+        (userinfo_extra__s(ev, b_169.clone())
+            || (((tauto_rt::nat::Nat::from_u64(36_u64) <= b_169.clone())
+                && (b_169.clone() <= tauto_rt::nat::Nat::from_u64(38_u64)))
+                || ((b_169.clone() == tauto_rt::nat::Nat::from_u64(43_u64))
+                    || (b_169 == tauto_rt::nat::Nat::from_u64(44_u64)))))
     }
     #[doc = " component_set"]
-    pub fn component_set__s(ev: &Ev<'_>, mut b_135: tauto_rt::nat::Nat) -> bool {
-        (c0_control_set__s(ev, b_135.clone()) || component_extra__s(ev, b_135))
+    pub fn component_set__s(ev: &Ev<'_>, mut b_170: tauto_rt::nat::Nat) -> bool {
+        (c0_control_set__s(ev, b_170.clone()) || component_extra__s(ev, b_170))
     }
     #[doc = " hex_digit"]
-    pub fn hex_digit__s(ev: &Ev<'_>, mut d_136: tauto_rt::nat::Nat) -> tauto_rt::nat::Nat {
-        match (d_136.clone() < tauto_rt::nat::Nat::from_u64(10_u64)) {
+    pub fn hex_digit__s(ev: &Ev<'_>, mut d_171: tauto_rt::nat::Nat) -> tauto_rt::nat::Nat {
+        match (d_171.clone() < tauto_rt::nat::Nat::from_u64(10_u64)) {
             true => {
-                tauto_rt::int::add_nat(d_136, tauto_rt::nat::Nat::from_u64(48_u64), LM1073742884)
+                tauto_rt::int::add_nat(d_171, tauto_rt::nat::Nat::from_u64(48_u64), LM1073742006)
             }
             false => {
-                tauto_rt::int::add_nat(d_136, tauto_rt::nat::Nat::from_u64(55_u64), LM1073742886)
+                tauto_rt::int::add_nat(d_171, tauto_rt::nat::Nat::from_u64(55_u64), LM1073742008)
             }
-            _ => tauto_rt::no_arm(LM116018),
+            _ => tauto_rt::no_arm(LM43052),
         }
     }
     #[doc = " hex_value"]
-    pub fn hex_value__s(ev: &Ev<'_>, mut b_137: tauto_rt::nat::Nat) -> Option<tauto_rt::nat::Nat> {
-        match (is_digit__s(ev, b_137.clone())) {
+    pub fn hex_value__s(ev: &Ev<'_>, mut b_172: tauto_rt::nat::Nat) -> Option<tauto_rt::nat::Nat> {
+        match (is_digit__s(ev, b_172.clone())) {
             true => Some(extract_nat_sub__s(
                 ev,
-                b_137,
+                b_172,
                 tauto_rt::nat::Nat::from_u64(48_u64),
             )),
             false => {
-                match ((tauto_rt::nat::Nat::from_u64(65_u64) <= b_137.clone())
-                    && (b_137.clone() <= tauto_rt::nat::Nat::from_u64(70_u64)))
+                match ((tauto_rt::nat::Nat::from_u64(65_u64) <= b_172.clone())
+                    && (b_172.clone() <= tauto_rt::nat::Nat::from_u64(70_u64)))
                 {
                     true => Some(extract_nat_sub__s(
                         ev,
-                        b_137,
+                        b_172,
                         tauto_rt::nat::Nat::from_u64(55_u64),
                     )),
                     false => {
-                        match ((tauto_rt::nat::Nat::from_u64(97_u64) <= b_137.clone())
-                            && (b_137.clone() <= tauto_rt::nat::Nat::from_u64(102_u64)))
+                        match ((tauto_rt::nat::Nat::from_u64(97_u64) <= b_172.clone())
+                            && (b_172.clone() <= tauto_rt::nat::Nat::from_u64(102_u64)))
                         {
                             true => Some(extract_nat_sub__s(
                                 ev,
-                                b_137,
+                                b_172,
                                 tauto_rt::nat::Nat::from_u64(87_u64),
                             )),
                             false => None,
-                            _ => tauto_rt::no_arm(LM116378),
+                            _ => tauto_rt::no_arm(LM43391),
                         }
                     }
-                    _ => tauto_rt::no_arm(LM116256),
+                    _ => tauto_rt::no_arm(LM43269),
                 }
             }
-            _ => tauto_rt::no_arm(LM116168),
+            _ => tauto_rt::no_arm(LM43181),
         }
     }
     #[doc = " pct_byte"]
     pub fn pct_byte__s(
         ev: &Ev<'_>,
-        mut set_138: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
-        mut b_139: tauto_rt::nat::Nat,
-        mut rest_140: List<tauto_rt::nat::Nat>,
+        mut set_173: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+        mut b_174: tauto_rt::nat::Nat,
+        mut rest_175: List<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
-        match (set_138(ev, b_139.clone())) {
+        match (set_173(ev, b_174.clone())) {
             true => List::Cons(
                 tauto_rt::nat::Nat::from_u64(37_u64),
                 Rc::new(List::Cons(
@@ -3497,7 +3084,7 @@ pub mod generated {
                             ev,
                             extract_nat_div__s(
                                 ev,
-                                b_139.clone(),
+                                b_174.clone(),
                                 tauto_rt::nat::Nat::from_u64(16_u64),
                             ),
                             tauto_rt::nat::Nat::from_u64(16_u64),
@@ -3506,62 +3093,512 @@ pub mod generated {
                     Rc::new(List::Cons(
                         hex_digit__s(
                             ev,
-                            extract_nat_mod__s(ev, b_139, tauto_rt::nat::Nat::from_u64(16_u64)),
+                            extract_nat_mod__s(ev, b_174, tauto_rt::nat::Nat::from_u64(16_u64)),
                         ),
-                        Rc::new(rest_140).into(),
+                        Rc::new(rest_175).into(),
                     ))
                     .into(),
                 ))
                 .into(),
             ),
-            false => List::Cons(b_139, Rc::new(rest_140).into()),
-            _ => tauto_rt::no_arm(LM116605),
+            false => List::Cons(b_174, Rc::new(rest_175).into()),
+            _ => tauto_rt::no_arm(LM43599),
+        }
+    }
+    #[doc = " pct_byte@30"]
+    pub fn pct_byte_30__s(
+        ev: &Ev<'_>,
+        mut b_176: tauto_rt::nat::Nat,
+        mut rest_177: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (c0_control_set__s(ev, b_176.clone())) {
+            true => List::Cons(
+                tauto_rt::nat::Nat::from_u64(37_u64),
+                Rc::new(List::Cons(
+                    hex_digit__s(
+                        ev,
+                        extract_nat_mod__s(
+                            ev,
+                            extract_nat_div__s(
+                                ev,
+                                b_176.clone(),
+                                tauto_rt::nat::Nat::from_u64(16_u64),
+                            ),
+                            tauto_rt::nat::Nat::from_u64(16_u64),
+                        ),
+                    ),
+                    Rc::new(List::Cons(
+                        hex_digit__s(
+                            ev,
+                            extract_nat_mod__s(ev, b_176, tauto_rt::nat::Nat::from_u64(16_u64)),
+                        ),
+                        Rc::new(rest_177).into(),
+                    ))
+                    .into(),
+                ))
+                .into(),
+            ),
+            false => List::Cons(b_176, Rc::new(rest_177).into()),
+            _ => tauto_rt::no_arm(LM43599),
+        }
+    }
+    #[doc = " pct_byte@31"]
+    pub fn pct_byte_31__s(
+        ev: &Ev<'_>,
+        mut b_178: tauto_rt::nat::Nat,
+        mut rest_179: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (path_set__s(ev, b_178.clone())) {
+            true => List::Cons(
+                tauto_rt::nat::Nat::from_u64(37_u64),
+                Rc::new(List::Cons(
+                    hex_digit__s(
+                        ev,
+                        extract_nat_mod__s(
+                            ev,
+                            extract_nat_div__s(
+                                ev,
+                                b_178.clone(),
+                                tauto_rt::nat::Nat::from_u64(16_u64),
+                            ),
+                            tauto_rt::nat::Nat::from_u64(16_u64),
+                        ),
+                    ),
+                    Rc::new(List::Cons(
+                        hex_digit__s(
+                            ev,
+                            extract_nat_mod__s(ev, b_178, tauto_rt::nat::Nat::from_u64(16_u64)),
+                        ),
+                        Rc::new(rest_179).into(),
+                    ))
+                    .into(),
+                ))
+                .into(),
+            ),
+            false => List::Cons(b_178, Rc::new(rest_179).into()),
+            _ => tauto_rt::no_arm(LM43599),
+        }
+    }
+    #[doc = " pct_byte@32"]
+    pub fn pct_byte_32__s(
+        ev: &Ev<'_>,
+        mut b_180: tauto_rt::nat::Nat,
+        mut rest_181: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (fragment_set__s(ev, b_180.clone())) {
+            true => List::Cons(
+                tauto_rt::nat::Nat::from_u64(37_u64),
+                Rc::new(List::Cons(
+                    hex_digit__s(
+                        ev,
+                        extract_nat_mod__s(
+                            ev,
+                            extract_nat_div__s(
+                                ev,
+                                b_180.clone(),
+                                tauto_rt::nat::Nat::from_u64(16_u64),
+                            ),
+                            tauto_rt::nat::Nat::from_u64(16_u64),
+                        ),
+                    ),
+                    Rc::new(List::Cons(
+                        hex_digit__s(
+                            ev,
+                            extract_nat_mod__s(ev, b_180, tauto_rt::nat::Nat::from_u64(16_u64)),
+                        ),
+                        Rc::new(rest_181).into(),
+                    ))
+                    .into(),
+                ))
+                .into(),
+            ),
+            false => List::Cons(b_180, Rc::new(rest_181).into()),
+            _ => tauto_rt::no_arm(LM43599),
+        }
+    }
+    #[doc = " pct_byte@33"]
+    pub fn pct_byte_33__s(
+        ev: &Ev<'_>,
+        mut b_182: tauto_rt::nat::Nat,
+        mut rest_183: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (userinfo_set__s(ev, b_182.clone())) {
+            true => List::Cons(
+                tauto_rt::nat::Nat::from_u64(37_u64),
+                Rc::new(List::Cons(
+                    hex_digit__s(
+                        ev,
+                        extract_nat_mod__s(
+                            ev,
+                            extract_nat_div__s(
+                                ev,
+                                b_182.clone(),
+                                tauto_rt::nat::Nat::from_u64(16_u64),
+                            ),
+                            tauto_rt::nat::Nat::from_u64(16_u64),
+                        ),
+                    ),
+                    Rc::new(List::Cons(
+                        hex_digit__s(
+                            ev,
+                            extract_nat_mod__s(ev, b_182, tauto_rt::nat::Nat::from_u64(16_u64)),
+                        ),
+                        Rc::new(rest_183).into(),
+                    ))
+                    .into(),
+                ))
+                .into(),
+            ),
+            false => List::Cons(b_182, Rc::new(rest_183).into()),
+            _ => tauto_rt::no_arm(LM43599),
+        }
+    }
+    #[doc = " pct_byte@34"]
+    pub fn pct_byte_34__s(
+        ev: &Ev<'_>,
+        mut b_184: tauto_rt::nat::Nat,
+        mut rest_185: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (userinfo_set__s(ev, b_184.clone())) {
+            true => List::Cons(
+                tauto_rt::nat::Nat::from_u64(37_u64),
+                Rc::new(List::Cons(
+                    hex_digit__s(
+                        ev,
+                        extract_nat_mod__s(
+                            ev,
+                            extract_nat_div__s(
+                                ev,
+                                b_184.clone(),
+                                tauto_rt::nat::Nat::from_u64(16_u64),
+                            ),
+                            tauto_rt::nat::Nat::from_u64(16_u64),
+                        ),
+                    ),
+                    Rc::new(List::Cons(
+                        hex_digit__s(
+                            ev,
+                            extract_nat_mod__s(ev, b_184, tauto_rt::nat::Nat::from_u64(16_u64)),
+                        ),
+                        Rc::new(rest_185).into(),
+                    ))
+                    .into(),
+                ))
+                .into(),
+            ),
+            false => List::Cons(b_184, Rc::new(rest_185).into()),
+            _ => tauto_rt::no_arm(LM43599),
+        }
+    }
+    #[doc = " pct_byte@35"]
+    pub fn pct_byte_35__s(
+        ev: &Ev<'_>,
+        mut b_186: tauto_rt::nat::Nat,
+        mut rest_187: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (userinfo_set__s(ev, b_186.clone())) {
+            true => List::Cons(
+                tauto_rt::nat::Nat::from_u64(37_u64),
+                Rc::new(List::Cons(
+                    hex_digit__s(
+                        ev,
+                        extract_nat_mod__s(
+                            ev,
+                            extract_nat_div__s(
+                                ev,
+                                b_186.clone(),
+                                tauto_rt::nat::Nat::from_u64(16_u64),
+                            ),
+                            tauto_rt::nat::Nat::from_u64(16_u64),
+                        ),
+                    ),
+                    Rc::new(List::Cons(
+                        hex_digit__s(
+                            ev,
+                            extract_nat_mod__s(ev, b_186, tauto_rt::nat::Nat::from_u64(16_u64)),
+                        ),
+                        Rc::new(rest_187).into(),
+                    ))
+                    .into(),
+                ))
+                .into(),
+            ),
+            false => List::Cons(b_186, Rc::new(rest_187).into()),
+            _ => tauto_rt::no_arm(LM43599),
+        }
+    }
+    #[doc = " pct_byte@36"]
+    pub fn pct_byte_36__s(
+        ev: &Ev<'_>,
+        mut b_188: tauto_rt::nat::Nat,
+        mut rest_189: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (c0_control_set__s(ev, b_188.clone())) {
+            true => List::Cons(
+                tauto_rt::nat::Nat::from_u64(37_u64),
+                Rc::new(List::Cons(
+                    hex_digit__s(
+                        ev,
+                        extract_nat_mod__s(
+                            ev,
+                            extract_nat_div__s(
+                                ev,
+                                b_188.clone(),
+                                tauto_rt::nat::Nat::from_u64(16_u64),
+                            ),
+                            tauto_rt::nat::Nat::from_u64(16_u64),
+                        ),
+                    ),
+                    Rc::new(List::Cons(
+                        hex_digit__s(
+                            ev,
+                            extract_nat_mod__s(ev, b_188, tauto_rt::nat::Nat::from_u64(16_u64)),
+                        ),
+                        Rc::new(rest_189).into(),
+                    ))
+                    .into(),
+                ))
+                .into(),
+            ),
+            false => List::Cons(b_188, Rc::new(rest_189).into()),
+            _ => tauto_rt::no_arm(LM43599),
+        }
+    }
+    #[doc = " pct_byte@45"]
+    pub fn pct_byte_45__s(
+        ev: &Ev<'_>,
+        mut b_190: tauto_rt::nat::Nat,
+        mut rest_191: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (special_query_set__s(ev, b_190.clone())) {
+            true => List::Cons(
+                tauto_rt::nat::Nat::from_u64(37_u64),
+                Rc::new(List::Cons(
+                    hex_digit__s(
+                        ev,
+                        extract_nat_mod__s(
+                            ev,
+                            extract_nat_div__s(
+                                ev,
+                                b_190.clone(),
+                                tauto_rt::nat::Nat::from_u64(16_u64),
+                            ),
+                            tauto_rt::nat::Nat::from_u64(16_u64),
+                        ),
+                    ),
+                    Rc::new(List::Cons(
+                        hex_digit__s(
+                            ev,
+                            extract_nat_mod__s(ev, b_190, tauto_rt::nat::Nat::from_u64(16_u64)),
+                        ),
+                        Rc::new(rest_191).into(),
+                    ))
+                    .into(),
+                ))
+                .into(),
+            ),
+            false => List::Cons(b_190, Rc::new(rest_191).into()),
+            _ => tauto_rt::no_arm(LM43599),
+        }
+    }
+    #[doc = " pct_byte@46"]
+    pub fn pct_byte_46__s(
+        ev: &Ev<'_>,
+        mut b_192: tauto_rt::nat::Nat,
+        mut rest_193: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (query_set__s(ev, b_192.clone())) {
+            true => List::Cons(
+                tauto_rt::nat::Nat::from_u64(37_u64),
+                Rc::new(List::Cons(
+                    hex_digit__s(
+                        ev,
+                        extract_nat_mod__s(
+                            ev,
+                            extract_nat_div__s(
+                                ev,
+                                b_192.clone(),
+                                tauto_rt::nat::Nat::from_u64(16_u64),
+                            ),
+                            tauto_rt::nat::Nat::from_u64(16_u64),
+                        ),
+                    ),
+                    Rc::new(List::Cons(
+                        hex_digit__s(
+                            ev,
+                            extract_nat_mod__s(ev, b_192, tauto_rt::nat::Nat::from_u64(16_u64)),
+                        ),
+                        Rc::new(rest_193).into(),
+                    ))
+                    .into(),
+                ))
+                .into(),
+            ),
+            false => List::Cons(b_192, Rc::new(rest_193).into()),
+            _ => tauto_rt::no_arm(LM43599),
         }
     }
     #[doc = " pct_encode"]
     pub fn pct_encode__s(
         ev: &Ev<'_>,
-        mut set_141: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
-        mut l_142: List<tauto_rt::nat::Nat>,
+        mut set_194: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+        mut l_195: List<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
-        match (l_142) {
+        match (l_195) {
             List::Nil => List::Nil,
-            List::Cons(mut b_143, b_t18) => {
-                let mut t_144 = b_t18;
+            List::Cons(mut b_196, b_t28) => {
+                let mut t_197 = b_t28;
                 pct_byte__s(
                     ev,
-                    set_141.clone(),
-                    b_143,
-                    pct_encode__s(ev, set_141, tauto_rt::unrc(t_144)),
+                    set_194.clone(),
+                    b_196,
+                    pct_encode__s(ev, set_194, tauto_rt::unrc(t_197)),
                 )
             }
         }
     }
+    #[doc = " pct_encode@5"]
+    pub fn pct_encode_5__s(
+        ev: &Ev<'_>,
+        mut l_198: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (l_198) {
+            List::Nil => List::Nil,
+            List::Cons(mut b_199, b_t29) => {
+                let mut t_200 = b_t29;
+                pct_byte_30__s(ev, b_199, pct_encode_5__s(ev, tauto_rt::unrc(t_200)))
+            }
+        }
+    }
+    #[doc = " pct_encode@6"]
+    pub fn pct_encode_6__s(
+        ev: &Ev<'_>,
+        mut l_201: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (l_201) {
+            List::Nil => List::Nil,
+            List::Cons(mut b_202, b_t30) => {
+                let mut t_203 = b_t30;
+                pct_byte_31__s(ev, b_202, pct_encode_6__s(ev, tauto_rt::unrc(t_203)))
+            }
+        }
+    }
+    #[doc = " pct_encode@7"]
+    pub fn pct_encode_7__s(
+        ev: &Ev<'_>,
+        mut l_204: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (l_204) {
+            List::Nil => List::Nil,
+            List::Cons(mut b_205, b_t31) => {
+                let mut t_206 = b_t31;
+                pct_byte_32__s(ev, b_205, pct_encode_7__s(ev, tauto_rt::unrc(t_206)))
+            }
+        }
+    }
+    #[doc = " pct_encode@8"]
+    pub fn pct_encode_8__s(
+        ev: &Ev<'_>,
+        mut l_207: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (l_207) {
+            List::Nil => List::Nil,
+            List::Cons(mut b_208, b_t32) => {
+                let mut t_209 = b_t32;
+                pct_byte_33__s(ev, b_208, pct_encode_8__s(ev, tauto_rt::unrc(t_209)))
+            }
+        }
+    }
+    #[doc = " pct_encode@9"]
+    pub fn pct_encode_9__s(
+        ev: &Ev<'_>,
+        mut l_210: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (l_210) {
+            List::Nil => List::Nil,
+            List::Cons(mut b_211, b_t33) => {
+                let mut t_212 = b_t33;
+                pct_byte_34__s(ev, b_211, pct_encode_9__s(ev, tauto_rt::unrc(t_212)))
+            }
+        }
+    }
+    #[doc = " pct_encode@10"]
+    pub fn pct_encode_10__s(
+        ev: &Ev<'_>,
+        mut l_213: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (l_213) {
+            List::Nil => List::Nil,
+            List::Cons(mut b_214, b_t34) => {
+                let mut t_215 = b_t34;
+                pct_byte_35__s(ev, b_214, pct_encode_10__s(ev, tauto_rt::unrc(t_215)))
+            }
+        }
+    }
+    #[doc = " pct_encode@11"]
+    pub fn pct_encode_11__s(
+        ev: &Ev<'_>,
+        mut l_216: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (l_216) {
+            List::Nil => List::Nil,
+            List::Cons(mut b_217, b_t35) => {
+                let mut t_218 = b_t35;
+                pct_byte_36__s(ev, b_217, pct_encode_11__s(ev, tauto_rt::unrc(t_218)))
+            }
+        }
+    }
+    #[doc = " pct_encode@43"]
+    pub fn pct_encode_43__s(
+        ev: &Ev<'_>,
+        mut l_219: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (l_219) {
+            List::Nil => List::Nil,
+            List::Cons(mut b_220, b_t36) => {
+                let mut t_221 = b_t36;
+                pct_byte_45__s(ev, b_220, pct_encode_43__s(ev, tauto_rt::unrc(t_221)))
+            }
+        }
+    }
+    #[doc = " pct_encode@44"]
+    pub fn pct_encode_44__s(
+        ev: &Ev<'_>,
+        mut l_222: List<tauto_rt::nat::Nat>,
+    ) -> List<tauto_rt::nat::Nat> {
+        match (l_222) {
+            List::Nil => List::Nil,
+            List::Cons(mut b_223, b_t37) => {
+                let mut t_224 = b_t37;
+                pct_byte_46__s(ev, b_223, pct_encode_44__s(ev, tauto_rt::unrc(t_224)))
+            }
+        }
+    }
     #[doc = " is_hex"]
-    pub fn is_hex__s(ev: &Ev<'_>, mut b_145: tauto_rt::nat::Nat) -> bool {
-        match (hex_value__s(ev, b_145)) {
+    pub fn is_hex__s(ev: &Ev<'_>, mut b_225: tauto_rt::nat::Nat) -> bool {
+        match (hex_value__s(ev, b_225)) {
             None => false,
-            Some(mut v_146) => true,
+            Some(mut v_226) => true,
         }
     }
     #[doc = " hex_pair"]
     pub fn hex_pair__s(
         ev: &Ev<'_>,
-        mut h1_147: tauto_rt::nat::Nat,
-        mut h2_148: tauto_rt::nat::Nat,
+        mut h1_227: tauto_rt::nat::Nat,
+        mut h2_228: tauto_rt::nat::Nat,
     ) -> Option<tauto_rt::nat::Nat> {
-        match (hex_value__s(ev, h1_147)) {
+        match (hex_value__s(ev, h1_227)) {
             None => None,
-            Some(mut v1_149) => match (hex_value__s(ev, h2_148)) {
+            Some(mut v1_229) => match (hex_value__s(ev, h2_228)) {
                 None => None,
-                Some(mut v2_150) => Some(tauto_rt::int::add_nat(
+                Some(mut v2_230) => Some(tauto_rt::int::add_nat(
                     tauto_rt::int::mul_nat(
-                        v1_149,
+                        v1_229,
                         tauto_rt::nat::Nat::from_u64(16_u64),
-                        LM1073742914,
+                        LM1073742036,
                     ),
-                    v2_150,
-                    LM1073742916,
+                    v2_230,
+                    LM1073742038,
                 )),
             },
         }
@@ -3569,57 +3606,46 @@ pub mod generated {
     #[doc = " pct_decode"]
     pub fn pct_decode__s(
         ev: &Ev<'_>,
-        mut l_151: List<tauto_rt::nat::Nat>,
+        mut l_231: List<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
-        decode_from__s(ev, Escape::Plain, l_151)
+        decode_from__s(ev, Escape::Plain, l_231)
     }
     #[doc = " decode_from"]
     pub fn decode_from__s(
         ev: &Ev<'_>,
-        mut st_152: Escape,
-        mut l_153: List<tauto_rt::nat::Nat>,
+        mut st_232: Escape,
+        mut l_233: List<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
         'tauto_tail: loop {
-            break match (l_153) { List :: Nil => { match (st_152) { Escape :: Plain => { List :: Nil } , Escape :: Percent => { List :: Cons (tauto_rt :: nat :: Nat :: from_u64 (37_u64) , { thread_local ! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; } N . with (Rc :: clone) . into () }) } , Escape :: Digit (mut h_154) => { List :: Cons (tauto_rt :: nat :: Nat :: from_u64 (37_u64) , Rc :: new (List :: Cons (h_154 , { thread_local ! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; } N . with (Rc :: clone) . into () })) . into ()) } } } , List :: Cons (mut b_155 , b_t19) => { let mut t_156 = b_t19 ; match (st_152) { Escape :: Plain => { match ((b_155 . clone () == tauto_rt :: nat :: Nat :: from_u64 (37_u64))) { true => { { let tail0 = Escape :: Percent ; let tail1 = tauto_rt :: unrc (t_156) ; st_152 = tail0 ; l_153 = tail1 ; continue 'tauto_tail ; } } , false => { List :: Cons (b_155 , Rc :: new (decode_from__s (ev , Escape :: Plain , tauto_rt :: unrc (t_156))) . into ()) } , _ => tauto_rt :: no_arm (LM118090) } } , Escape :: Percent => { match (is_hex__s (ev , b_155 . clone ())) { true => { { let tail0 = Escape :: Digit (b_155) ; let tail1 = tauto_rt :: unrc (t_156) ; st_152 = tail0 ; l_153 = tail1 ; continue 'tauto_tail ; } } , false => { List :: Cons (tauto_rt :: nat :: Nat :: from_u64 (37_u64) , Rc :: new (match ((b_155 . clone () == tauto_rt :: nat :: Nat :: from_u64 (37_u64))) { true => { decode_from__s (ev , Escape :: Percent , tauto_rt :: unrc (t_156)) } , false => { List :: Cons (b_155 , Rc :: new (decode_from__s (ev , Escape :: Plain , tauto_rt :: unrc (t_156))) . into ()) } , _ => tauto_rt :: no_arm (LM118349) }) . into ()) } , _ => tauto_rt :: no_arm (LM118245) } } , Escape :: Digit (mut h_157) => { match (hex_pair__s (ev , h_157 . clone () , b_155 . clone ())) { Some (mut v_158) => { List :: Cons (v_158 , Rc :: new (decode_from__s (ev , Escape :: Plain , tauto_rt :: unrc (t_156))) . into ()) } , None => { List :: Cons (tauto_rt :: nat :: Nat :: from_u64 (37_u64) , Rc :: new (List :: Cons (h_157 , Rc :: new (match ((b_155 . clone () == tauto_rt :: nat :: Nat :: from_u64 (37_u64))) { true => { decode_from__s (ev , Escape :: Percent , tauto_rt :: unrc (t_156)) } , false => { List :: Cons (b_155 , Rc :: new (decode_from__s (ev , Escape :: Plain , tauto_rt :: unrc (t_156))) . into ()) } , _ => tauto_rt :: no_arm (LM118645) }) . into ())) . into ()) } } } } } } ;
-        }
-    }
-    #[doc = " opt_is"]
-    pub fn opt_is__s(
-        ev: &Ev<'_>,
-        mut o_159: Option<tauto_rt::nat::Nat>,
-        mut v_160: tauto_rt::nat::Nat,
-    ) -> bool {
-        match (o_159) {
-            None => false,
-            Some(mut w_161) => (w_161 == v_160),
+            break match (l_233) { List :: Nil => { match (st_232) { Escape :: Plain => { List :: Nil } , Escape :: Percent => { List :: Cons (tauto_rt :: nat :: Nat :: from_u64 (37_u64) , { thread_local ! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; } N . with (Rc :: clone) . into () }) } , Escape :: Digit (mut h_234) => { List :: Cons (tauto_rt :: nat :: Nat :: from_u64 (37_u64) , Rc :: new (List :: Cons (h_234 , { thread_local ! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; } N . with (Rc :: clone) . into () })) . into ()) } } } , List :: Cons (mut b_235 , b_t38) => { let mut t_236 = b_t38 ; match (st_232) { Escape :: Plain => { match ((b_235 . clone () == tauto_rt :: nat :: Nat :: from_u64 (37_u64))) { true => { { let tail0 = Escape :: Percent ; let tail1 = tauto_rt :: unrc (t_236) ; st_232 = tail0 ; l_233 = tail1 ; continue 'tauto_tail ; } } , false => { List :: Cons (b_235 , Rc :: new (decode_from__s (ev , Escape :: Plain , tauto_rt :: unrc (t_236))) . into ()) } , _ => tauto_rt :: no_arm (LM45012) } } , Escape :: Percent => { match (is_hex__s (ev , b_235 . clone ())) { true => { { let tail0 = Escape :: Digit (b_235) ; let tail1 = tauto_rt :: unrc (t_236) ; st_232 = tail0 ; l_233 = tail1 ; continue 'tauto_tail ; } } , false => { List :: Cons (tauto_rt :: nat :: Nat :: from_u64 (37_u64) , Rc :: new (match ((b_235 . clone () == tauto_rt :: nat :: Nat :: from_u64 (37_u64))) { true => { decode_from__s (ev , Escape :: Percent , tauto_rt :: unrc (t_236)) } , false => { List :: Cons (b_235 , Rc :: new (decode_from__s (ev , Escape :: Plain , tauto_rt :: unrc (t_236))) . into ()) } , _ => tauto_rt :: no_arm (LM45271) }) . into ()) } , _ => tauto_rt :: no_arm (LM45167) } } , Escape :: Digit (mut h_237) => { match (hex_pair__s (ev , h_237 . clone () , b_235 . clone ())) { Some (mut v_238) => { List :: Cons (v_238 , Rc :: new (decode_from__s (ev , Escape :: Plain , tauto_rt :: unrc (t_236))) . into ()) } , None => { List :: Cons (tauto_rt :: nat :: Nat :: from_u64 (37_u64) , Rc :: new (List :: Cons (h_237 , Rc :: new (match ((b_235 . clone () == tauto_rt :: nat :: Nat :: from_u64 (37_u64))) { true => { decode_from__s (ev , Escape :: Percent , tauto_rt :: unrc (t_236)) } , false => { List :: Cons (b_235 , Rc :: new (decode_from__s (ev , Escape :: Plain , tauto_rt :: unrc (t_236))) . into ()) } , _ => tauto_rt :: no_arm (LM45567) }) . into ())) . into ()) } } } } } } ;
         }
     }
     #[doc = " scheme_kind"]
-    pub fn scheme_kind__s(ev: &Ev<'_>, mut s_162: List<tauto_rt::nat::Nat>) -> SchemeKind {
+    pub fn scheme_kind__s(ev: &Ev<'_>, mut s_239: List<tauto_rt::nat::Nat>) -> SchemeKind {
         match (bytes_eq__s(
             ev,
-            s_162.clone(),
+            s_239.clone(),
             extract_text_bytes__s(ev, Text::lit("http")),
         )) {
             true => SchemeKind::Special(tauto_rt::nat::Nat::from_u64(80_u64)),
             false => {
                 match (bytes_eq__s(
                     ev,
-                    s_162.clone(),
+                    s_239.clone(),
                     extract_text_bytes__s(ev, Text::lit("https")),
                 )) {
                     true => SchemeKind::Special(tauto_rt::nat::Nat::from_u64(443_u64)),
                     false => {
                         match (bytes_eq__s(
                             ev,
-                            s_162.clone(),
+                            s_239.clone(),
                             extract_text_bytes__s(ev, Text::lit("ws")),
                         )) {
                             true => SchemeKind::Special(tauto_rt::nat::Nat::from_u64(80_u64)),
                             false => {
                                 match (bytes_eq__s(
                                     ev,
-                                    s_162.clone(),
+                                    s_239.clone(),
                                     extract_text_bytes__s(ev, Text::lit("wss")),
                                 )) {
                                     true => {
@@ -3628,7 +3654,7 @@ pub mod generated {
                                     false => {
                                         match (bytes_eq__s(
                                             ev,
-                                            s_162.clone(),
+                                            s_239.clone(),
                                             extract_text_bytes__s(ev, Text::lit("ftp")),
                                         )) {
                                             true => SchemeKind::Special(
@@ -3637,103 +3663,95 @@ pub mod generated {
                                             false => {
                                                 match (bytes_eq__s(
                                                     ev,
-                                                    s_162,
+                                                    s_239,
                                                     extract_text_bytes__s(ev, Text::lit("file")),
                                                 )) {
                                                     true => SchemeKind::File,
                                                     false => SchemeKind::NotSpecial,
-                                                    _ => tauto_rt::no_arm(LM132142),
+                                                    _ => tauto_rt::no_arm(LM47170),
                                                 }
                                             }
-                                            _ => tauto_rt::no_arm(LM132029),
+                                            _ => tauto_rt::no_arm(LM47057),
                                         }
                                     }
-                                    _ => tauto_rt::no_arm(LM131919),
+                                    _ => tauto_rt::no_arm(LM46947),
                                 }
                             }
-                            _ => tauto_rt::no_arm(LM131815),
+                            _ => tauto_rt::no_arm(LM46843),
                         }
                     }
-                    _ => tauto_rt::no_arm(LM131711),
+                    _ => tauto_rt::no_arm(LM46739),
                 }
             }
-            _ => tauto_rt::no_arm(LM131613),
+            _ => tauto_rt::no_arm(LM46641),
         }
     }
     #[doc = " is_special"]
-    pub fn is_special__s(ev: &Ev<'_>, mut s_163: List<tauto_rt::nat::Nat>) -> bool {
-        match (scheme_kind__s(ev, s_163)) {
-            SchemeKind::Special(mut d_164) => true,
+    pub fn is_special__s(ev: &Ev<'_>, mut s_240: List<tauto_rt::nat::Nat>) -> bool {
+        match (scheme_kind__s(ev, s_240)) {
+            SchemeKind::Special(mut d_241) => true,
             SchemeKind::File => true,
             SchemeKind::NotSpecial => false,
         }
     }
     #[doc = " scheme_byte"]
-    pub fn scheme_byte__s(ev: &Ev<'_>, mut b_165: tauto_rt::nat::Nat) -> bool {
-        (is_lower__s(ev, b_165.clone())
-            || (is_digit__s(ev, b_165.clone())
-                || ((b_165.clone() == tauto_rt::nat::Nat::from_u64(43_u64))
-                    || ((b_165.clone() == tauto_rt::nat::Nat::from_u64(45_u64))
-                        || (b_165 == tauto_rt::nat::Nat::from_u64(46_u64))))))
+    pub fn scheme_byte__s(ev: &Ev<'_>, mut b_242: tauto_rt::nat::Nat) -> bool {
+        (is_lower__s(ev, b_242.clone())
+            || (is_digit__s(ev, b_242.clone())
+                || ((b_242.clone() == tauto_rt::nat::Nat::from_u64(43_u64))
+                    || ((b_242.clone() == tauto_rt::nat::Nat::from_u64(45_u64))
+                        || (b_242 == tauto_rt::nat::Nat::from_u64(46_u64))))))
     }
     #[doc = " scheme_ok"]
-    pub fn scheme_ok__s(ev: &Ev<'_>, mut s_166: List<tauto_rt::nat::Nat>) -> bool {
-        match (s_166) {
+    pub fn scheme_ok__s(ev: &Ev<'_>, mut s_243: List<tauto_rt::nat::Nat>) -> bool {
+        match (s_243) {
             List::Nil => false,
-            List::Cons(mut b_167, b_t20) => {
-                let mut t_168 = b_t20;
-                (is_lower__s(ev, b_167)
-                    && all_bytes__s(
-                        ev,
-                        {
-                            thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_169 : tauto_rt :: nat :: Nat | -> bool { scheme_byte__s (ev , extract_arg_0_169 . clone ()) }) ; }
-                            F.with(Rc::clone)
-                        },
-                        tauto_rt::unrc(t_168),
-                    ))
+            List::Cons(mut b_244, b_t39) => {
+                let mut t_245 = b_t39;
+                (is_lower__s(ev, b_244) && all_bytes_0__s(ev, tauto_rt::unrc(t_245)))
             }
         }
     }
     #[doc = " query_set_of"]
     pub fn query_set_of__s(
         ev: &Ev<'_>,
-        mut s_170: List<tauto_rt::nat::Nat>,
+        mut s_246: List<tauto_rt::nat::Nat>,
     ) -> Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool> {
-        match (is_special__s(ev, s_170)) {
+        match (is_special__s(ev, s_246)) {
             true => {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_171 : tauto_rt :: nat :: Nat | -> bool { special_query_set__s (ev , extract_arg_0_171 . clone ()) }) ; }
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_247 : tauto_rt :: nat :: Nat | -> bool { special_query_set__s (ev , extract_arg_0_247 . clone ()) }) ; }
                 F.with(Rc::clone)
             }
             false => {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_172 : tauto_rt :: nat :: Nat | -> bool { query_set__s (ev , extract_arg_0_172 . clone ()) }) ; }
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_248 : tauto_rt :: nat :: Nat | -> bool { query_set__s (ev , extract_arg_0_248 . clone ()) }) ; }
                 F.with(Rc::clone)
             }
-            _ => tauto_rt::no_arm(LM132926),
+            _ => tauto_rt::no_arm(LM47904),
         }
     }
     #[doc = " decimal"]
     pub fn decimal__s(
         ev: &Ev<'_>,
-        mut fuel_173: tauto_rt::nat::Nat,
-        mut n_174: tauto_rt::nat::Nat,
+        mut fuel_249: tauto_rt::nat::Nat,
+        mut n_250: tauto_rt::nat::Nat,
     ) -> List<tauto_rt::nat::Nat> {
         {
-            let mut extract_nat_175: tauto_rt::nat::Nat = fuel_173;
-            if (extract_nat_175.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
+            let mut extract_nat_251: tauto_rt::nat::Nat = fuel_249;
+            if (extract_nat_251.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
                 { List::Nil }
             } else {
                 {
-                    let mut k_176: tauto_rt::nat::Nat = tauto_rt::int::sub_nat(
-                        extract_nat_175,
+                    let mut k_252: tauto_rt::nat::Nat = tauto_rt::int::sub_nat(
+                        extract_nat_251,
                         tauto_rt::nat::Nat::from_u64(1_u64),
-                        LM133134,
+                        LM48093,
                     );
-                    match (n_174.clone() < tauto_rt::nat::Nat::from_u64(10_u64)) {
+                    match (n_250.clone() < tauto_rt::nat::Nat::from_u64(10_u64)) {
                         true => List::Cons(
                             tauto_rt::int::add_nat(
-                                n_174,
+                                n_250,
                                 tauto_rt::nat::Nat::from_u64(48_u64),
-                                LM1073742954,
+                                LM1073742074,
                             ),
                             {
                                 thread_local! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; }
@@ -3742,24 +3760,24 @@ pub mod generated {
                         ),
                         false => List__append__s::<tauto_rt::nat::Nat>(
                             ev,
-                            &(decimal__s(
+                            decimal__s(
                                 ev,
-                                k_176,
+                                k_252,
                                 extract_nat_div__s(
                                     ev,
-                                    n_174.clone(),
+                                    n_250.clone(),
                                     tauto_rt::nat::Nat::from_u64(10_u64),
                                 ),
-                            )),
+                            ),
                             List::Cons(
                                 tauto_rt::int::add_nat(
                                     extract_nat_mod__s(
                                         ev,
-                                        n_174,
+                                        n_250,
                                         tauto_rt::nat::Nat::from_u64(10_u64),
                                     ),
                                     tauto_rt::nat::Nat::from_u64(48_u64),
-                                    LM1073742960,
+                                    LM1073742080,
                                 ),
                                 {
                                     thread_local! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; }
@@ -3767,45 +3785,45 @@ pub mod generated {
                                 },
                             ),
                         ),
-                        _ => tauto_rt::no_arm(LM133197),
+                        _ => tauto_rt::no_arm(LM48156),
                     }
                 }
             }
         }
     }
     #[doc = " port_text"]
-    pub fn port_text__s(ev: &Ev<'_>, mut n_177: tauto_rt::nat::Nat) -> List<tauto_rt::nat::Nat> {
-        decimal__s(ev, tauto_rt::nat::Nat::from_u64(5_u64), n_177)
+    pub fn port_text__s(ev: &Ev<'_>, mut n_253: tauto_rt::nat::Nat) -> List<tauto_rt::nat::Nat> {
+        decimal__s(ev, tauto_rt::nat::Nat::from_u64(5_u64), n_253)
     }
     #[doc = " digits_value"]
     pub fn digits_value__s(
         ev: &Ev<'_>,
-        mut acc_178: tauto_rt::nat::Nat,
-        mut l_179: List<tauto_rt::nat::Nat>,
+        mut acc_254: tauto_rt::nat::Nat,
+        mut l_255: List<tauto_rt::nat::Nat>,
     ) -> Option<tauto_rt::nat::Nat> {
         'tauto_tail: loop {
-            break match (l_179) {
-                List::Nil => Some(acc_178),
-                List::Cons(mut b_180, b_t21) => {
-                    let mut t_181 = b_t21;
-                    match (is_digit__s(ev, b_180.clone())) {
+            break match (l_255) {
+                List::Nil => Some(acc_254),
+                List::Cons(mut b_256, b_t40) => {
+                    let mut t_257 = b_t40;
+                    match (is_digit__s(ev, b_256.clone())) {
                         true => {
                             let tail0 = tauto_rt::int::add_nat(
                                 tauto_rt::int::mul_nat(
-                                    acc_178,
+                                    acc_254,
                                     tauto_rt::nat::Nat::from_u64(10_u64),
-                                    LM1073742964,
+                                    LM1073742084,
                                 ),
-                                extract_nat_sub__s(ev, b_180, tauto_rt::nat::Nat::from_u64(48_u64)),
-                                LM1073742968,
+                                extract_nat_sub__s(ev, b_256, tauto_rt::nat::Nat::from_u64(48_u64)),
+                                LM1073742088,
                             );
-                            let tail1 = tauto_rt::unrc(t_181);
-                            acc_178 = tail0;
-                            l_179 = tail1;
+                            let tail1 = tauto_rt::unrc(t_257);
+                            acc_254 = tail0;
+                            l_255 = tail1;
                             continue 'tauto_tail;
                         }
                         false => None,
-                        _ => tauto_rt::no_arm(LM133699),
+                        _ => tauto_rt::no_arm(LM48637),
                     }
                 }
             };
@@ -3814,39 +3832,39 @@ pub mod generated {
     #[doc = " opt_bytes"]
     pub fn opt_bytes__s(
         ev: &Ev<'_>,
-        mut c_182: tauto_rt::nat::Nat,
-        mut o_183: Option<List<tauto_rt::nat::Nat>>,
+        mut c_258: tauto_rt::nat::Nat,
+        mut o_259: Option<List<tauto_rt::nat::Nat>>,
     ) -> List<tauto_rt::nat::Nat> {
-        match (o_183) {
+        match (o_259) {
             None => List::Nil,
-            Some(mut x_184) => List::Cons(c_182, Rc::new(x_184).into()),
+            Some(mut x_260) => List::Cons(c_258, Rc::new(x_260).into()),
         }
     }
     #[doc = " port_part"]
     pub fn port_part__s(
         ev: &Ev<'_>,
-        mut o_185: Option<tauto_rt::nat::Nat>,
+        mut o_261: Option<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
-        match (o_185) {
+        match (o_261) {
             None => List::Nil,
-            Some(mut n_186) => List::Cons(
+            Some(mut n_262) => List::Cons(
                 tauto_rt::nat::Nat::from_u64(58_u64),
-                Rc::new(port_text__s(ev, n_186)).into(),
+                Rc::new(port_text__s(ev, n_262)).into(),
             ),
         }
     }
     #[doc = " pass_part"]
     pub fn pass_part__s(
         ev: &Ev<'_>,
-        mut pass_187: List<tauto_rt::nat::Nat>,
+        mut pass_263: List<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
-        match (pass_187.clone()) {
+        match (pass_263.clone()) {
             List::Nil => List::Nil,
-            List::Cons(mut b_188, b_t22) => {
-                let mut t_189 = b_t22;
+            List::Cons(mut b_264, b_t41) => {
+                let mut t_265 = b_t41;
                 List::Cons(
                     tauto_rt::nat::Nat::from_u64(58_u64),
-                    Rc::new(pass_187).into(),
+                    Rc::new(pass_263).into(),
                 )
             }
         }
@@ -3854,56 +3872,56 @@ pub mod generated {
     #[doc = " cred_part"]
     pub fn cred_part__s(
         ev: &Ev<'_>,
-        mut user_190: List<tauto_rt::nat::Nat>,
-        mut pass_191: List<tauto_rt::nat::Nat>,
+        mut user_266: List<tauto_rt::nat::Nat>,
+        mut pass_267: List<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
-        match (is_empty__s(ev, user_190.clone()) && is_empty__s(ev, pass_191.clone())) {
+        match (is_empty__s(ev, user_266.clone()) && is_empty__s(ev, pass_267.clone())) {
             true => List::Nil,
             false => List__append__s::<tauto_rt::nat::Nat>(
                 ev,
-                &user_190,
+                user_266,
                 List__append__s::<tauto_rt::nat::Nat>(
                     ev,
-                    &(pass_part__s(ev, pass_191)),
+                    pass_part__s(ev, pass_267),
                     List::Cons(tauto_rt::nat::Nat::from_u64(64_u64), {
                         thread_local! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; }
                         N.with(Rc::clone).into()
                     }),
                 ),
             ),
-            _ => tauto_rt::no_arm(LM134376),
+            _ => tauto_rt::no_arm(LM49240),
         }
     }
     #[doc = " auth_part"]
-    pub fn auth_part__s(ev: &Ev<'_>, mut a_192: Authority) -> List<tauto_rt::nat::Nat> {
-        match (a_192) {
+    pub fn auth_part__s(ev: &Ev<'_>, mut a_268: Authority) -> List<tauto_rt::nat::Nat> {
+        match (a_268) {
             Authority {
-                user: mut user_193,
-                pass: mut pass_194,
-                host: mut host_195,
-                port: mut port_196,
+                user: mut user_269,
+                pass: mut pass_270,
+                host: mut host_271,
+                port: mut port_272,
             } => List__append__s::<tauto_rt::nat::Nat>(
                 ev,
-                &(cred_part__s(ev, user_193, pass_194)),
-                List__append__s::<tauto_rt::nat::Nat>(ev, &host_195, port_part__s(ev, port_196)),
+                cred_part__s(ev, user_269, pass_270),
+                List__append__s::<tauto_rt::nat::Nat>(ev, host_271, port_part__s(ev, port_272)),
             ),
         }
     }
     #[doc = " segments_part"]
     pub fn segments_part__s(
         ev: &Ev<'_>,
-        mut ss_197: List<List<tauto_rt::nat::Nat>>,
+        mut ss_273: List<List<tauto_rt::nat::Nat>>,
     ) -> List<tauto_rt::nat::Nat> {
-        match (ss_197.clone()) {
+        match (ss_273.clone()) {
             List::Nil => List::Nil,
-            List::Cons(mut s_198, b_t23) => {
-                let mut rest_199 = b_t23;
+            List::Cons(mut s_274, b_t42) => {
+                let mut rest_275 = b_t42;
                 List::Cons(
                     tauto_rt::nat::Nat::from_u64(47_u64),
                     Rc::new(url__src__bytes__join__s(
                         ev,
                         tauto_rt::nat::Nat::from_u64(47_u64),
-                        ss_197,
+                        ss_273,
                     ))
                     .into(),
                 )
@@ -3913,22 +3931,22 @@ pub mod generated {
     #[doc = " dot_prefix"]
     pub fn dot_prefix__s(
         ev: &Ev<'_>,
-        mut ss_200: List<List<tauto_rt::nat::Nat>>,
+        mut ss_276: List<List<tauto_rt::nat::Nat>>,
     ) -> List<tauto_rt::nat::Nat> {
-        match (ss_200) {
+        match (ss_276) {
             List::Nil => List::Nil,
-            List::Cons(mut s_201, b_t24) => {
-                let mut rest_202 = b_t24;
-                match (is_empty__s(ev, s_201)) {
+            List::Cons(mut s_277, b_t43) => {
+                let mut rest_278 = b_t43;
+                match (is_empty__s(ev, s_277)) {
                     false => List::Nil,
-                    true => match (tauto_rt::unrc(rest_202)) {
+                    true => match (tauto_rt::unrc(rest_278)) {
                         List::Nil => List::Nil,
-                        List::Cons(mut s2_203, b_t25) => {
-                            let mut more_204 = b_t25;
+                        List::Cons(mut s2_279, b_t44) => {
+                            let mut more_280 = b_t44;
                             List :: Cons (tauto_rt :: nat :: Nat :: from_u64 (47_u64) , Rc :: new (List :: Cons (tauto_rt :: nat :: Nat :: from_u64 (46_u64) , { thread_local ! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; } N . with (Rc :: clone) . into () })) . into ())
                         }
                     },
-                    _ => tauto_rt::no_arm(LM135132),
+                    _ => tauto_rt::no_arm(LM49941),
                 }
             }
         }
@@ -3936,38 +3954,38 @@ pub mod generated {
     #[doc = " path_part"]
     pub fn path_part__s(
         ev: &Ev<'_>,
-        mut has_auth_205: bool,
-        mut p_206: UrlPath,
+        mut has_auth_281: bool,
+        mut p_282: UrlPath,
     ) -> List<tauto_rt::nat::Nat> {
-        match (p_206) {
-            UrlPath::Opaque(mut o_207) => o_207,
-            UrlPath::Segments(mut ss_208) => match (has_auth_205) {
-                true => segments_part__s(ev, ss_208),
+        match (p_282) {
+            UrlPath::Opaque(mut o_283) => o_283,
+            UrlPath::Segments(mut ss_284) => match (has_auth_281) {
+                true => segments_part__s(ev, ss_284),
                 false => List__append__s::<tauto_rt::nat::Nat>(
                     ev,
-                    &(dot_prefix__s(ev, ss_208.clone())),
-                    segments_part__s(ev, ss_208),
+                    dot_prefix__s(ev, ss_284.clone()),
+                    segments_part__s(ev, ss_284),
                 ),
-                _ => tauto_rt::no_arm(LM135454),
+                _ => tauto_rt::no_arm(LM50246),
             },
         }
     }
     #[doc = " hier_part"]
     pub fn hier_part__s(
         ev: &Ev<'_>,
-        mut a_209: Option<Authority>,
-        mut p_210: UrlPath,
+        mut a_285: Option<Authority>,
+        mut p_286: UrlPath,
     ) -> List<tauto_rt::nat::Nat> {
-        match (a_209) {
-            None => path_part__s(ev, false, p_210),
-            Some(mut x_211) => List::Cons(
+        match (a_285) {
+            None => path_part__s(ev, false, p_286),
+            Some(mut x_287) => List::Cons(
                 tauto_rt::nat::Nat::from_u64(47_u64),
                 Rc::new(List::Cons(
                     tauto_rt::nat::Nat::from_u64(47_u64),
                     Rc::new(List__append__s::<tauto_rt::nat::Nat>(
                         ev,
-                        &(auth_part__s(ev, x_211)),
-                        path_part__s(ev, true, p_210),
+                        auth_part__s(ev, x_287),
+                        path_part__s(ev, true, p_286),
                     ))
                     .into(),
                 ))
@@ -3976,26 +3994,26 @@ pub mod generated {
         }
     }
     #[doc = " serialize"]
-    pub fn serialize__s(ev: &Ev<'_>, mut u_212: Url) -> List<tauto_rt::nat::Nat> {
-        match (u_212) {
+    pub fn serialize__s(ev: &Ev<'_>, mut u_288: Url) -> List<tauto_rt::nat::Nat> {
+        match (u_288) {
             Url {
-                scheme: mut scheme_213,
-                auth: mut auth_214,
-                path: mut path_215,
-                query: mut query_216,
-                fragment: mut fragment_217,
+                scheme: mut scheme_289,
+                auth: mut auth_290,
+                path: mut path_291,
+                query: mut query_292,
+                fragment: mut fragment_293,
             } => List__append__s::<tauto_rt::nat::Nat>(
                 ev,
-                &scheme_213,
+                scheme_289,
                 List::Cons(
                     tauto_rt::nat::Nat::from_u64(58_u64),
                     Rc::new(List__append__s::<tauto_rt::nat::Nat>(
                         ev,
-                        &(hier_part__s(ev, auth_214, path_215)),
+                        hier_part__s(ev, auth_290, path_291),
                         List__append__s::<tauto_rt::nat::Nat>(
                             ev,
-                            &(opt_bytes__s(ev, tauto_rt::nat::Nat::from_u64(63_u64), query_216)),
-                            opt_bytes__s(ev, tauto_rt::nat::Nat::from_u64(35_u64), fragment_217),
+                            opt_bytes__s(ev, tauto_rt::nat::Nat::from_u64(63_u64), query_292),
+                            opt_bytes__s(ev, tauto_rt::nat::Nat::from_u64(35_u64), fragment_293),
                         ),
                     ))
                     .into(),
@@ -4004,37 +4022,37 @@ pub mod generated {
         }
     }
     #[doc = " url_text"]
-    pub fn url_text__s(ev: &Ev<'_>, mut u_218: Url) -> Text {
-        extract_text_of_bytes__s(ev, serialize__s(ev, u_218))
+    pub fn url_text__s(ev: &Ev<'_>, mut u_294: Url) -> Text {
+        extract_text_of_bytes__s(ev, serialize__s(ev, u_294))
     }
     #[doc = " is_tab_or_newline"]
-    pub fn is_tab_or_newline__s(ev: &Ev<'_>, mut b_219: tauto_rt::nat::Nat) -> bool {
-        ((b_219.clone() == tauto_rt::nat::Nat::from_u64(9_u64))
-            || ((b_219.clone() == tauto_rt::nat::Nat::from_u64(10_u64))
-                || (b_219 == tauto_rt::nat::Nat::from_u64(13_u64))))
+    pub fn is_tab_or_newline__s(ev: &Ev<'_>, mut b_295: tauto_rt::nat::Nat) -> bool {
+        ((b_295.clone() == tauto_rt::nat::Nat::from_u64(9_u64))
+            || ((b_295.clone() == tauto_rt::nat::Nat::from_u64(10_u64))
+                || (b_295 == tauto_rt::nat::Nat::from_u64(13_u64))))
     }
     #[doc = " is_c0_or_space"]
-    pub fn is_c0_or_space__s(ev: &Ev<'_>, mut b_220: tauto_rt::nat::Nat) -> bool {
-        (b_220 < tauto_rt::nat::Nat::from_u64(33_u64))
+    pub fn is_c0_or_space__s(ev: &Ev<'_>, mut b_296: tauto_rt::nat::Nat) -> bool {
+        (b_296 < tauto_rt::nat::Nat::from_u64(33_u64))
     }
     #[doc = " drop_c0_space"]
     pub fn drop_c0_space__s(
         ev: &Ev<'_>,
-        mut l_221: List<tauto_rt::nat::Nat>,
+        mut l_297: List<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
         'tauto_tail: loop {
-            break match (l_221.clone()) {
+            break match (l_297.clone()) {
                 List::Nil => List::Nil,
-                List::Cons(mut b_222, b_t26) => {
-                    let mut t_223 = b_t26;
-                    match (is_c0_or_space__s(ev, b_222)) {
+                List::Cons(mut b_298, b_t45) => {
+                    let mut t_299 = b_t45;
+                    match (is_c0_or_space__s(ev, b_298)) {
                         true => {
-                            let tail0 = tauto_rt::unrc(t_223);
-                            l_221 = tail0;
+                            let tail0 = tauto_rt::unrc(t_299);
+                            l_297 = tail0;
                             continue 'tauto_tail;
                         }
-                        false => l_221,
-                        _ => tauto_rt::no_arm(LM136918),
+                        false => l_297,
+                        _ => tauto_rt::no_arm(LM51653),
                     }
                 }
             };
@@ -4043,80 +4061,79 @@ pub mod generated {
     #[doc = " preprocess"]
     pub fn preprocess__s(
         ev: &Ev<'_>,
-        mut l_224: List<tauto_rt::nat::Nat>,
+        mut l_300: List<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
         List__filter__s::<tauto_rt::nat::Nat>(
             ev,
-            {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_225 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , is_tab_or_newline__s (ev , b_225 . clone ())) }) ; }
-                F.with(Rc::clone)
-            },
-            &(List__reverse__s::<tauto_rt::nat::Nat>(
+            Rc::new(move |ev: &Ev<'_>, b_301: &tauto_rt::nat::Nat| -> bool {
+                not__s(ev, is_tab_or_newline__s(ev, b_301.clone()))
+            }),
+            List__reverse__s::<tauto_rt::nat::Nat>(
                 ev,
-                &(drop_c0_space__s(
+                drop_c0_space__s(
                     ev,
-                    List__reverse__s::<tauto_rt::nat::Nat>(ev, &(drop_c0_space__s(ev, l_224))),
-                )),
-            )),
+                    List__reverse__s::<tauto_rt::nat::Nat>(ev, drop_c0_space__s(ev, l_300)),
+                ),
+            ),
         )
     }
     #[doc = " forbidden_host"]
-    pub fn forbidden_host__s(ev: &Ev<'_>, mut b_226: tauto_rt::nat::Nat) -> bool {
-        ((b_226.clone() == tauto_rt::nat::Nat::from_u64(0_u64))
-            || (is_tab_or_newline__s(ev, b_226.clone())
-                || ((b_226.clone() == tauto_rt::nat::Nat::from_u64(32_u64))
-                    || ((b_226.clone() == tauto_rt::nat::Nat::from_u64(35_u64))
-                        || ((b_226.clone() == tauto_rt::nat::Nat::from_u64(47_u64))
-                            || ((b_226.clone() == tauto_rt::nat::Nat::from_u64(58_u64))
-                                || ((b_226.clone() == tauto_rt::nat::Nat::from_u64(60_u64))
-                                    || ((b_226.clone()
+    pub fn forbidden_host__s(ev: &Ev<'_>, mut b_302: tauto_rt::nat::Nat) -> bool {
+        ((b_302.clone() == tauto_rt::nat::Nat::from_u64(0_u64))
+            || (is_tab_or_newline__s(ev, b_302.clone())
+                || ((b_302.clone() == tauto_rt::nat::Nat::from_u64(32_u64))
+                    || ((b_302.clone() == tauto_rt::nat::Nat::from_u64(35_u64))
+                        || ((b_302.clone() == tauto_rt::nat::Nat::from_u64(47_u64))
+                            || ((b_302.clone() == tauto_rt::nat::Nat::from_u64(58_u64))
+                                || ((b_302.clone() == tauto_rt::nat::Nat::from_u64(60_u64))
+                                    || ((b_302.clone()
                                         == tauto_rt::nat::Nat::from_u64(62_u64))
-                                        || ((b_226.clone()
+                                        || ((b_302.clone()
                                             == tauto_rt::nat::Nat::from_u64(63_u64))
-                                            || ((b_226.clone()
+                                            || ((b_302.clone()
                                                 == tauto_rt::nat::Nat::from_u64(64_u64))
                                                 || (((tauto_rt::nat::Nat::from_u64(
                                                     91_u64,
-                                                ) <= b_226.clone())
-                                                    && (b_226.clone()
+                                                ) <= b_302.clone())
+                                                    && (b_302.clone()
                                                         <= tauto_rt::nat::Nat::from_u64(
                                                             94_u64,
                                                         )))
-                                                    || (b_226
+                                                    || (b_302
                                                         == tauto_rt::nat::Nat::from_u64(
                                                             124_u64,
                                                         )))))))))))))
     }
     #[doc = " domain_byte"]
-    pub fn domain_byte__s(ev: &Ev<'_>, mut b_227: tauto_rt::nat::Nat) -> bool {
-        ((tauto_rt::nat::Nat::from_u64(32_u64) < b_227.clone())
-            && ((b_227.clone() < tauto_rt::nat::Nat::from_u64(127_u64))
-                && (not__s(ev, forbidden_host__s(ev, b_227.clone()))
-                    && not__s(ev, (b_227 == tauto_rt::nat::Nat::from_u64(37_u64))))))
+    pub fn domain_byte__s(ev: &Ev<'_>, mut b_303: tauto_rt::nat::Nat) -> bool {
+        ((tauto_rt::nat::Nat::from_u64(32_u64) < b_303.clone())
+            && ((b_303.clone() < tauto_rt::nat::Nat::from_u64(127_u64))
+                && (not__s(ev, forbidden_host__s(ev, b_303.clone()))
+                    && not__s(ev, (b_303 == tauto_rt::nat::Nat::from_u64(37_u64))))))
     }
     #[doc = " is_ace"]
-    pub fn is_ace__s(ev: &Ev<'_>, mut l_228: List<tauto_rt::nat::Nat>) -> bool {
-        match (l_228) {
+    pub fn is_ace__s(ev: &Ev<'_>, mut l_304: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_304) {
             List::Nil => false,
-            List::Cons(mut a_229, b_t27) => {
-                let mut t_230 = b_t27;
-                match (tauto_rt::unrc(t_230)) {
+            List::Cons(mut a_305, b_t46) => {
+                let mut t_306 = b_t46;
+                match (tauto_rt::unrc(t_306)) {
                     List::Nil => false,
-                    List::Cons(mut b_231, b_t28) => {
-                        let mut t2_232 = b_t28;
-                        match (tauto_rt::unrc(t2_232)) {
+                    List::Cons(mut b_307, b_t47) => {
+                        let mut t2_308 = b_t47;
+                        match (tauto_rt::unrc(t2_308)) {
                             List::Nil => false,
-                            List::Cons(mut c_233, b_t29) => {
-                                let mut t3_234 = b_t29;
-                                match (tauto_rt::unrc(t3_234)) {
+                            List::Cons(mut c_309, b_t48) => {
+                                let mut t3_310 = b_t48;
+                                match (tauto_rt::unrc(t3_310)) {
                                     List::Nil => false,
-                                    List::Cons(mut d_235, b_t30) => {
-                                        let mut t4_236 = b_t30;
-                                        ((a_229 == tauto_rt::nat::Nat::from_u64(120_u64))
-                                            && ((b_231 == tauto_rt::nat::Nat::from_u64(110_u64))
-                                                && ((c_233
+                                    List::Cons(mut d_311, b_t49) => {
+                                        let mut t4_312 = b_t49;
+                                        ((a_305 == tauto_rt::nat::Nat::from_u64(120_u64))
+                                            && ((b_307 == tauto_rt::nat::Nat::from_u64(110_u64))
+                                                && ((c_309
                                                     == tauto_rt::nat::Nat::from_u64(45_u64))
-                                                    && (d_235
+                                                    && (d_311
                                                         == tauto_rt::nat::Nat::from_u64(45_u64)))))
                                     }
                                 }
@@ -4130,20 +4147,20 @@ pub mod generated {
     #[doc = " last_piece"]
     pub fn last_piece__s(
         ev: &Ev<'_>,
-        mut ps_237: List<List<tauto_rt::nat::Nat>>,
+        mut ps_313: List<List<tauto_rt::nat::Nat>>,
     ) -> List<tauto_rt::nat::Nat> {
         'tauto_tail: loop {
-            break match (ps_237) {
+            break match (ps_313) {
                 List::Nil => List::Nil,
-                List::Cons(mut p_238, b_t31) => {
-                    let mut rest_239 = b_t31;
-                    match ((*rest_239).clone()) {
-                        List::Nil => p_238,
-                        List::Cons(mut q_240, b_t32) => {
-                            let mut more_241 = b_t32;
+                List::Cons(mut p_314, b_t50) => {
+                    let mut rest_315 = b_t50;
+                    match ((*rest_315).clone()) {
+                        List::Nil => p_314,
+                        List::Cons(mut q_316, b_t51) => {
+                            let mut more_317 = b_t51;
                             {
-                                let tail0 = tauto_rt::unrc(rest_239);
-                                ps_237 = tail0;
+                                let tail0 = tauto_rt::unrc(rest_315);
+                                ps_313 = tail0;
                                 continue 'tauto_tail;
                             }
                         }
@@ -4155,28 +4172,28 @@ pub mod generated {
     #[doc = " last_label"]
     pub fn last_label__s(
         ev: &Ev<'_>,
-        mut ps_242: List<List<tauto_rt::nat::Nat>>,
+        mut ps_318: List<List<tauto_rt::nat::Nat>>,
     ) -> List<tauto_rt::nat::Nat> {
         'tauto_tail: loop {
-            break match (ps_242) {
+            break match (ps_318) {
                 List::Nil => List::Nil,
-                List::Cons(mut p_243, b_t33) => {
-                    let mut rest_244 = b_t33;
-                    match ((*rest_244).clone()) {
-                        List::Nil => p_243,
-                        List::Cons(mut q_245, b_t34) => {
-                            let mut more_246 = b_t34;
-                            match (tauto_rt::unrc(more_246)) {
-                                List::Nil => match (is_empty__s(ev, q_245.clone())) {
-                                    true => p_243,
-                                    false => q_245,
-                                    _ => tauto_rt::no_arm(LM139535),
+                List::Cons(mut p_319, b_t52) => {
+                    let mut rest_320 = b_t52;
+                    match ((*rest_320).clone()) {
+                        List::Nil => p_319,
+                        List::Cons(mut q_321, b_t53) => {
+                            let mut more_322 = b_t53;
+                            match (tauto_rt::unrc(more_322)) {
+                                List::Nil => match (is_empty__s(ev, q_321.clone())) {
+                                    true => p_319,
+                                    false => q_321,
+                                    _ => tauto_rt::no_arm(LM54216),
                                 },
-                                List::Cons(mut r_247, b_t35) => {
-                                    let mut more2_248 = b_t35;
+                                List::Cons(mut r_323, b_t54) => {
+                                    let mut more2_324 = b_t54;
                                     {
-                                        let tail0 = tauto_rt::unrc(rest_244);
-                                        ps_242 = tail0;
+                                        let tail0 = tauto_rt::unrc(rest_320);
+                                        ps_318 = tail0;
                                         continue 'tauto_tail;
                                     }
                                 }
@@ -4188,36 +4205,22 @@ pub mod generated {
         }
     }
     #[doc = " is_number"]
-    pub fn is_number__s(ev: &Ev<'_>, mut l_249: List<tauto_rt::nat::Nat>) -> bool {
-        match (l_249.clone()) {
+    pub fn is_number__s(ev: &Ev<'_>, mut l_325: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_325.clone()) {
             List::Nil => false,
-            List::Cons(mut a_250, b_t36) => {
-                let mut t_251 = b_t36;
-                match (tauto_rt::unrc(t_251)) {
-                    List::Nil => is_digit__s(ev, a_250),
-                    List::Cons(mut b_252, b_t37) => {
-                        let mut t2_253 = b_t37;
-                        match ((a_250 == tauto_rt::nat::Nat::from_u64(48_u64))
-                            && ((b_252.clone() == tauto_rt::nat::Nat::from_u64(120_u64))
-                                || (b_252 == tauto_rt::nat::Nat::from_u64(88_u64))))
+            List::Cons(mut a_326, b_t55) => {
+                let mut t_327 = b_t55;
+                match (tauto_rt::unrc(t_327)) {
+                    List::Nil => is_digit__s(ev, a_326),
+                    List::Cons(mut b_328, b_t56) => {
+                        let mut t2_329 = b_t56;
+                        match ((a_326 == tauto_rt::nat::Nat::from_u64(48_u64))
+                            && ((b_328.clone() == tauto_rt::nat::Nat::from_u64(120_u64))
+                                || (b_328 == tauto_rt::nat::Nat::from_u64(88_u64))))
                         {
-                            true => all_bytes__s(
-                                ev,
-                                {
-                                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_254 : tauto_rt :: nat :: Nat | -> bool { is_hex__s (ev , extract_arg_0_254 . clone ()) }) ; }
-                                    F.with(Rc::clone)
-                                },
-                                tauto_rt::unrc(t2_253),
-                            ),
-                            false => all_bytes__s(
-                                ev,
-                                {
-                                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_255 : tauto_rt :: nat :: Nat | -> bool { is_digit__s (ev , extract_arg_0_255 . clone ()) }) ; }
-                                    F.with(Rc::clone)
-                                },
-                                l_249,
-                            ),
-                            _ => tauto_rt::no_arm(LM139929),
+                            true => all_bytes_1__s(ev, tauto_rt::unrc(t2_329)),
+                            false => all_bytes_2__s(ev, l_325),
+                            _ => tauto_rt::no_arm(LM54598),
                         }
                     }
                 }
@@ -4225,165 +4228,152 @@ pub mod generated {
         }
     }
     #[doc = " ipv4_part"]
-    pub fn ipv4_part__s(ev: &Ev<'_>, mut l_256: List<tauto_rt::nat::Nat>) -> bool {
-        match (l_256.clone()) {
+    pub fn ipv4_part__s(ev: &Ev<'_>, mut l_330: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_330.clone()) {
             List::Nil => false,
-            List::Cons(mut a_257, b_t38) => {
-                let mut t_258 = b_t38;
-                (all_bytes__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_259 : tauto_rt :: nat :: Nat | -> bool { is_digit__s (ev , extract_arg_0_259 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    l_256.clone(),
-                ) && ((is_empty__s(ev, tauto_rt::unrc(t_258))
-                    || not__s(ev, (a_257 == tauto_rt::nat::Nat::from_u64(48_u64))))
-                    && ((List__length__s::<tauto_rt::nat::Nat>(ev, &l_256)
-                        < tauto_rt::nat::Nat::from_u64(4_u64))
-                        && match (digits_value__s(ev, tauto_rt::nat::Nat::from_u64(0_u64), l_256)) {
-                            None => false,
-                            Some(mut v_260) => (v_260 < tauto_rt::nat::Nat::from_u64(256_u64)),
-                        })))
+            List::Cons(mut a_331, b_t57) => {
+                let mut t_332 = b_t57;
+                (all_bytes_3__s(ev, l_330.clone())
+                    && ((is_empty__s(ev, tauto_rt::unrc(t_332))
+                        || not__s(ev, (a_331 == tauto_rt::nat::Nat::from_u64(48_u64))))
+                        && ((List__length__s::<tauto_rt::nat::Nat>(ev, &l_330)
+                            < tauto_rt::nat::Nat::from_u64(4_u64))
+                            && match (digits_value__s(
+                                ev,
+                                tauto_rt::nat::Nat::from_u64(0_u64),
+                                l_330,
+                            )) {
+                                None => false,
+                                Some(mut v_333) => (v_333 < tauto_rt::nat::Nat::from_u64(256_u64)),
+                            })))
             }
         }
     }
     #[doc = " ipv4_canonical"]
-    pub fn ipv4_canonical__s(ev: &Ev<'_>, mut ps_261: List<List<tauto_rt::nat::Nat>>) -> bool {
-        ((List__length__s::<List<tauto_rt::nat::Nat>>(ev, &ps_261)
+    pub fn ipv4_canonical__s(ev: &Ev<'_>, mut ps_334: List<List<tauto_rt::nat::Nat>>) -> bool {
+        ((List__length__s::<List<tauto_rt::nat::Nat>>(ev, &ps_334)
             == tauto_rt::nat::Nat::from_u64(4_u64))
             && List__all__s::<List<tauto_rt::nat::Nat>>(
                 ev,
-                {
-                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , List < tauto_rt :: nat :: Nat >) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_262 : List < tauto_rt :: nat :: Nat > | -> bool { ipv4_part__s (ev , extract_arg_0_262 . clone ()) }) ; }
-                    F.with(Rc::clone)
-                },
-                &ps_261,
+                Rc::new(
+                    move |ev: &Ev<'_>, x_335: &List<tauto_rt::nat::Nat>| -> bool {
+                        ipv4_part__s(ev, x_335.clone())
+                    },
+                ),
+                &ps_334,
             ))
     }
     #[doc = " domain_ok"]
-    pub fn domain_ok__s(ev: &Ev<'_>, mut l_263: List<tauto_rt::nat::Nat>) -> bool {
-        (not__s(ev, is_empty__s(ev, l_263.clone()))
-            && (all_bytes__s(
-                ev,
-                {
-                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_264 : tauto_rt :: nat :: Nat | -> bool { domain_byte__s (ev , extract_arg_0_264 . clone ()) }) ; }
-                    F.with(Rc::clone)
-                },
-                l_263.clone(),
-            ) && (not__s(
-                ev,
-                List__any__s::<List<tauto_rt::nat::Nat>>(
+    pub fn domain_ok__s(ev: &Ev<'_>, mut l_336: List<tauto_rt::nat::Nat>) -> bool {
+        (not__s(ev, is_empty__s(ev, l_336.clone()))
+            && (all_bytes_4__s(ev, l_336.clone())
+                && (not__s(
                     ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , List < tauto_rt :: nat :: Nat >) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_265 : List < tauto_rt :: nat :: Nat > | -> bool { is_ace__s (ev , extract_arg_0_265 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    &(split_all__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), l_263.clone())),
-                ),
-            ) && (not__s(
-                ev,
-                is_number__s(
-                    ev,
-                    last_label__s(
+                    List__any__s::<List<tauto_rt::nat::Nat>>(
                         ev,
-                        split_all__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), l_263.clone()),
+                        Rc::new(
+                            move |ev: &Ev<'_>, x_337: &List<tauto_rt::nat::Nat>| -> bool {
+                                is_ace__s(ev, x_337.clone())
+                            },
+                        ),
+                        &(split_all__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), l_336.clone())),
                     ),
-                ),
-            ) || ipv4_canonical__s(
-                ev,
-                split_all__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), l_263),
-            )))))
+                ) && (not__s(
+                    ev,
+                    is_number__s(
+                        ev,
+                        last_label__s(
+                            ev,
+                            split_all__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), l_336.clone()),
+                        ),
+                    ),
+                ) || ipv4_canonical__s(
+                    ev,
+                    split_all__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), l_336),
+                )))))
     }
     #[doc = " host_special"]
     pub fn host_special__s(
         ev: &Ev<'_>,
-        mut h_266: List<tauto_rt::nat::Nat>,
+        mut h_338: List<tauto_rt::nat::Nat>,
     ) -> Option<List<tauto_rt::nat::Nat>> {
-        match (domain_ok__s(ev, lower__s(ev, h_266.clone()))) {
-            true => Some(lower__s(ev, h_266)),
+        match (domain_ok__s(ev, lower__s(ev, h_338.clone()))) {
+            true => Some(lower__s(ev, h_338)),
             false => None,
-            _ => tauto_rt::no_arm(LM141316),
+            _ => tauto_rt::no_arm(LM55964),
         }
     }
     #[doc = " host_opaque"]
     pub fn host_opaque__s(
         ev: &Ev<'_>,
-        mut h_267: List<tauto_rt::nat::Nat>,
+        mut h_339: List<tauto_rt::nat::Nat>,
     ) -> Option<List<tauto_rt::nat::Nat>> {
         match (all_bytes__s(
             ev,
             {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_268 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , forbidden_host__s (ev , b_268 . clone ())) }) ; }
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_340 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , forbidden_host__s (ev , b_340 . clone ())) }) ; }
                 F.with(Rc::clone)
             },
-            h_267.clone(),
+            h_339.clone(),
         )) {
-            true => Some(pct_encode__s(
-                ev,
-                {
-                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_269 : tauto_rt :: nat :: Nat | -> bool { c0_control_set__s (ev , extract_arg_0_269 . clone ()) }) ; }
-                    F.with(Rc::clone)
-                },
-                h_267,
-            )),
+            true => Some(pct_encode_5__s(ev, h_339)),
             false => None,
-            _ => tauto_rt::no_arm(LM141629),
+            _ => tauto_rt::no_arm(LM56250),
         }
     }
     #[doc = " host_of"]
     pub fn host_of__s(
         ev: &Ev<'_>,
-        mut special_270: bool,
-        mut h_271: List<tauto_rt::nat::Nat>,
+        mut special_341: bool,
+        mut h_342: List<tauto_rt::nat::Nat>,
     ) -> Option<List<tauto_rt::nat::Nat>> {
-        match (special_270) {
-            true => host_special__s(ev, h_271),
-            false => host_opaque__s(ev, h_271),
-            _ => tauto_rt::no_arm(LM141853),
+        match (special_341) {
+            true => host_special__s(ev, h_342),
+            false => host_opaque__s(ev, h_342),
+            _ => tauto_rt::no_arm(LM56447),
         }
     }
     #[doc = " port_value"]
     pub fn port_value__s(
         ev: &Ev<'_>,
-        mut default_272: Option<tauto_rt::nat::Nat>,
-        mut v_273: tauto_rt::nat::Nat,
+        mut default_343: Option<tauto_rt::nat::Nat>,
+        mut v_344: tauto_rt::nat::Nat,
     ) -> Option<Option<tauto_rt::nat::Nat>> {
-        match (v_273.clone() < tauto_rt::nat::Nat::from_u64(65536_u64)) {
+        match (v_344.clone() < tauto_rt::nat::Nat::from_u64(65536_u64)) {
             false => None,
-            true => port_value_after__s(ev, default_272, v_273),
-            _ => tauto_rt::no_arm(LM142034),
+            true => port_value_after__s(ev, default_343, v_344),
+            _ => tauto_rt::no_arm(LM56599),
         }
     }
     #[doc = " port_value_after"]
     pub fn port_value_after__s(
         ev: &Ev<'_>,
-        mut default_274: Option<tauto_rt::nat::Nat>,
-        mut v_275: tauto_rt::nat::Nat,
+        mut default_345: Option<tauto_rt::nat::Nat>,
+        mut v_346: tauto_rt::nat::Nat,
     ) -> Option<Option<tauto_rt::nat::Nat>> {
-        match (default_274) {
-            None => Some(Some(v_275)),
-            Some(mut d_276) => match (v_275.clone() == d_276) {
+        match (default_345) {
+            None => Some(Some(v_346)),
+            Some(mut d_347) => match (v_346.clone() == d_347) {
                 true => Some(None),
-                false => Some(Some(v_275)),
-                _ => tauto_rt::no_arm(LM142320),
+                false => Some(Some(v_346)),
+                _ => tauto_rt::no_arm(LM56856),
             },
         }
     }
     #[doc = " port_of"]
     pub fn port_of__s(
         ev: &Ev<'_>,
-        mut default_277: Option<tauto_rt::nat::Nat>,
-        mut l_278: List<tauto_rt::nat::Nat>,
+        mut default_348: Option<tauto_rt::nat::Nat>,
+        mut l_349: List<tauto_rt::nat::Nat>,
     ) -> Option<Option<tauto_rt::nat::Nat>> {
-        match (l_278.clone()) {
+        match (l_349.clone()) {
             List::Nil => Some(None),
-            List::Cons(mut b_279, b_t39) => {
-                let mut t_280 = b_t39;
+            List::Cons(mut b_350, b_t58) => {
+                let mut t_351 = b_t58;
                 port_digits__s(
                     ev,
-                    default_277,
-                    digits_value__s(ev, tauto_rt::nat::Nat::from_u64(0_u64), l_278),
+                    default_348,
+                    digits_value__s(ev, tauto_rt::nat::Nat::from_u64(0_u64), l_349),
                 )
             }
         }
@@ -4391,21 +4381,21 @@ pub mod generated {
     #[doc = " port_digits"]
     pub fn port_digits__s(
         ev: &Ev<'_>,
-        mut default_281: Option<tauto_rt::nat::Nat>,
-        mut o_282: Option<tauto_rt::nat::Nat>,
+        mut default_352: Option<tauto_rt::nat::Nat>,
+        mut o_353: Option<tauto_rt::nat::Nat>,
     ) -> Option<Option<tauto_rt::nat::Nat>> {
-        match (o_282) {
+        match (o_353) {
             None => None,
-            Some(mut v_283) => port_value__s(ev, default_281, v_283),
+            Some(mut v_354) => port_value__s(ev, default_352, v_354),
         }
     }
     #[doc = " default_port"]
     pub fn default_port__s(
         ev: &Ev<'_>,
-        mut s_284: List<tauto_rt::nat::Nat>,
+        mut s_355: List<tauto_rt::nat::Nat>,
     ) -> Option<tauto_rt::nat::Nat> {
-        match (scheme_kind__s(ev, s_284)) {
-            SchemeKind::Special(mut d_285) => Some(d_285),
+        match (scheme_kind__s(ev, s_355)) {
+            SchemeKind::Special(mut d_356) => Some(d_356),
             SchemeKind::File => None,
             SchemeKind::NotSpecial => None,
         }
@@ -4413,58 +4403,58 @@ pub mod generated {
     #[doc = " is_dot_byte"]
     pub fn is_dot_byte__s(
         ev: &Ev<'_>,
-        mut l_286: List<tauto_rt::nat::Nat>,
+        mut l_357: List<tauto_rt::nat::Nat>,
     ) -> Option<List<tauto_rt::nat::Nat>> {
-        match (l_286) {
+        match (l_357) {
             List::Nil => None,
-            List::Cons(mut a_287, b_t40) => {
-                let mut t_288 = b_t40;
-                match (a_287.clone() == tauto_rt::nat::Nat::from_u64(46_u64)) {
-                    true => Some(tauto_rt::unrc(t_288)),
-                    false => match (a_287 == tauto_rt::nat::Nat::from_u64(37_u64)) {
+            List::Cons(mut a_358, b_t59) => {
+                let mut t_359 = b_t59;
+                match (a_358.clone() == tauto_rt::nat::Nat::from_u64(46_u64)) {
+                    true => Some(tauto_rt::unrc(t_359)),
+                    false => match (a_358 == tauto_rt::nat::Nat::from_u64(37_u64)) {
                         false => None,
-                        true => match (tauto_rt::unrc(t_288)) {
+                        true => match (tauto_rt::unrc(t_359)) {
                             List::Nil => None,
-                            List::Cons(mut b_289, b_t41) => {
-                                let mut t2_290 = b_t41;
-                                match (tauto_rt::unrc(t2_290)) {
+                            List::Cons(mut b_360, b_t60) => {
+                                let mut t2_361 = b_t60;
+                                match (tauto_rt::unrc(t2_361)) {
                                     List::Nil => None,
-                                    List::Cons(mut c_291, b_t42) => {
-                                        let mut t3_292 = b_t42;
-                                        match ((b_289 == tauto_rt::nat::Nat::from_u64(50_u64))
-                                            && ((c_291.clone()
+                                    List::Cons(mut c_362, b_t61) => {
+                                        let mut t3_363 = b_t61;
+                                        match ((b_360 == tauto_rt::nat::Nat::from_u64(50_u64))
+                                            && ((c_362.clone()
                                                 == tauto_rt::nat::Nat::from_u64(101_u64))
-                                                || (c_291 == tauto_rt::nat::Nat::from_u64(69_u64))))
+                                                || (c_362 == tauto_rt::nat::Nat::from_u64(69_u64))))
                                         {
-                                            true => Some(tauto_rt::unrc(t3_292)),
+                                            true => Some(tauto_rt::unrc(t3_363)),
                                             false => None,
-                                            _ => tauto_rt::no_arm(LM143602),
+                                            _ => tauto_rt::no_arm(LM58061),
                                         }
                                     }
                                 }
                             }
                         },
-                        _ => tauto_rt::no_arm(LM143341),
+                        _ => tauto_rt::no_arm(LM57800),
                     },
-                    _ => tauto_rt::no_arm(LM143254),
+                    _ => tauto_rt::no_arm(LM57713),
                 }
             }
         }
     }
     #[doc = " dots"]
-    pub fn dots__s(ev: &Ev<'_>, mut s_293: List<tauto_rt::nat::Nat>) -> tauto_rt::nat::Nat {
-        match (is_dot_byte__s(ev, s_293)) {
+    pub fn dots__s(ev: &Ev<'_>, mut s_364: List<tauto_rt::nat::Nat>) -> tauto_rt::nat::Nat {
+        match (is_dot_byte__s(ev, s_364)) {
             None => tauto_rt::nat::Nat::from_u64(0_u64),
-            Some(mut t_294) => match (t_294.clone()) {
+            Some(mut t_365) => match (t_365.clone()) {
                 List::Nil => tauto_rt::nat::Nat::from_u64(1_u64),
-                List::Cons(mut b_295, b_t43) => {
-                    let mut u_296 = b_t43;
-                    match (is_dot_byte__s(ev, t_294)) {
+                List::Cons(mut b_366, b_t62) => {
+                    let mut u_367 = b_t62;
+                    match (is_dot_byte__s(ev, t_365)) {
                         None => tauto_rt::nat::Nat::from_u64(0_u64),
-                        Some(mut t2_297) => match (t2_297) {
+                        Some(mut t2_368) => match (t2_368) {
                             List::Nil => tauto_rt::nat::Nat::from_u64(2_u64),
-                            List::Cons(mut c_298, b_t44) => {
-                                let mut v_299 = b_t44;
+                            List::Cons(mut c_369, b_t63) => {
+                                let mut v_370 = b_t63;
                                 tauto_rt::nat::Nat::from_u64(0_u64)
                             }
                         },
@@ -4476,44 +4466,37 @@ pub mod generated {
     #[doc = " pop"]
     pub fn pop__s(
         ev: &Ev<'_>,
-        mut stack_300: List<List<tauto_rt::nat::Nat>>,
+        mut stack_371: List<List<tauto_rt::nat::Nat>>,
     ) -> List<List<tauto_rt::nat::Nat>> {
-        match (stack_300) {
+        match (stack_371) {
             List::Nil => List::Nil,
-            List::Cons(mut s_301, b_t45) => {
-                let mut rest_302 = b_t45;
-                tauto_rt::unrc(rest_302)
+            List::Cons(mut s_372, b_t64) => {
+                let mut rest_373 = b_t64;
+                tauto_rt::unrc(rest_373)
             }
         }
     }
     #[doc = " walk"]
     pub fn walk__s(
         ev: &Ev<'_>,
-        mut stack_303: List<List<tauto_rt::nat::Nat>>,
-        mut segs_304: List<List<tauto_rt::nat::Nat>>,
+        mut stack_374: List<List<tauto_rt::nat::Nat>>,
+        mut segs_375: List<List<tauto_rt::nat::Nat>>,
     ) -> List<List<tauto_rt::nat::Nat>> {
         'tauto_tail: loop {
-            break match (segs_304) {
-                List::Nil => stack_303,
-                List::Cons(mut s_305, b_t46) => {
-                    let mut rest_306 = b_t46;
+            break match (segs_375) {
+                List::Nil => stack_374,
+                List::Cons(mut s_376, b_t65) => {
+                    let mut rest_377 = b_t65;
                     {
                         let tail0 = walk_step__s(
                             ev,
-                            stack_303,
-                            pct_encode__s(
-                                ev,
-                                {
-                                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_307 : tauto_rt :: nat :: Nat | -> bool { path_set__s (ev , extract_arg_0_307 . clone ()) }) ; }
-                                    F.with(Rc::clone)
-                                },
-                                s_305,
-                            ),
-                            is_empty_list__s(ev, (*rest_306).clone()),
+                            stack_374,
+                            pct_encode_6__s(ev, s_376),
+                            is_empty_list__s(ev, (*rest_377).clone()),
                         );
-                        let tail1 = tauto_rt::unrc(rest_306);
-                        stack_303 = tail0;
-                        segs_304 = tail1;
+                        let tail1 = tauto_rt::unrc(rest_377);
+                        stack_374 = tail0;
+                        segs_375 = tail1;
                         continue 'tauto_tail;
                     }
                 }
@@ -4523,22 +4506,22 @@ pub mod generated {
     #[doc = " walk_step"]
     pub fn walk_step__s(
         ev: &Ev<'_>,
-        mut stack_308: List<List<tauto_rt::nat::Nat>>,
-        mut e_309: List<tauto_rt::nat::Nat>,
-        mut last_310: bool,
+        mut stack_378: List<List<tauto_rt::nat::Nat>>,
+        mut e_379: List<tauto_rt::nat::Nat>,
+        mut last_380: bool,
     ) -> List<List<tauto_rt::nat::Nat>> {
         {
-            let mut extract_nat_311: tauto_rt::nat::Nat = dots__s(ev, e_309.clone());
-            if (extract_nat_311.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
-                { List::Cons(e_309, Rc::new(stack_308).into()) }
+            let mut extract_nat_381: tauto_rt::nat::Nat = dots__s(ev, e_379.clone());
+            if (extract_nat_381.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
+                { List::Cons(e_379, Rc::new(stack_378).into()) }
             } else {
                 {
-                    let mut k_312: tauto_rt::nat::Nat = tauto_rt::int::sub_nat(
-                        extract_nat_311,
+                    let mut k_382: tauto_rt::nat::Nat = tauto_rt::int::sub_nat(
+                        extract_nat_381,
                         tauto_rt::nat::Nat::from_u64(1_u64),
-                        LM144951,
+                        LM59327,
                     );
-                    walk_dots__s(ev, k_312, stack_308, last_310)
+                    walk_dots__s(ev, k_382, stack_378, last_380)
                 }
             }
         }
@@ -4546,22 +4529,22 @@ pub mod generated {
     #[doc = " walk_dots"]
     pub fn walk_dots__s(
         ev: &Ev<'_>,
-        mut k_313: tauto_rt::nat::Nat,
-        mut stack_314: List<List<tauto_rt::nat::Nat>>,
-        mut last_315: bool,
+        mut k_383: tauto_rt::nat::Nat,
+        mut stack_384: List<List<tauto_rt::nat::Nat>>,
+        mut last_385: bool,
     ) -> List<List<tauto_rt::nat::Nat>> {
         {
-            let mut extract_nat_316: tauto_rt::nat::Nat = k_313;
-            if (extract_nat_316.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
-                { push_last__s(ev, stack_314, last_315) }
+            let mut extract_nat_386: tauto_rt::nat::Nat = k_383;
+            if (extract_nat_386.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
+                { push_last__s(ev, stack_384, last_385) }
             } else {
                 {
-                    let mut k2_317: tauto_rt::nat::Nat = tauto_rt::int::sub_nat(
-                        extract_nat_316,
+                    let mut k2_387: tauto_rt::nat::Nat = tauto_rt::int::sub_nat(
+                        extract_nat_386,
                         tauto_rt::nat::Nat::from_u64(1_u64),
-                        LM145149,
+                        LM59500,
                     );
-                    push_last__s(ev, pop__s(ev, stack_314), last_315)
+                    push_last__s(ev, pop__s(ev, stack_384), last_385)
                 }
             }
         }
@@ -4569,129 +4552,234 @@ pub mod generated {
     #[doc = " push_last"]
     pub fn push_last__s(
         ev: &Ev<'_>,
-        mut stack_318: List<List<tauto_rt::nat::Nat>>,
-        mut last_319: bool,
+        mut stack_388: List<List<tauto_rt::nat::Nat>>,
+        mut last_389: bool,
     ) -> List<List<tauto_rt::nat::Nat>> {
-        match (last_319) {
-            true => List::Cons(List::Nil, Rc::new(stack_318).into()),
-            false => stack_318,
-            _ => tauto_rt::no_arm(LM145344),
+        match (last_389) {
+            true => List::Cons(List::Nil, Rc::new(stack_388).into()),
+            false => stack_388,
+            _ => tauto_rt::no_arm(LM59671),
         }
     }
     #[doc = " path_of"]
     pub fn path_of__s(
         ev: &Ev<'_>,
-        mut base_320: List<List<tauto_rt::nat::Nat>>,
-        mut l_321: List<tauto_rt::nat::Nat>,
+        mut base_390: List<List<tauto_rt::nat::Nat>>,
+        mut l_391: List<tauto_rt::nat::Nat>,
     ) -> List<List<tauto_rt::nat::Nat>> {
         List__reverse__s::<List<tauto_rt::nat::Nat>>(
             ev,
-            &(walk__s(
+            walk__s(
                 ev,
-                List__reverse__s::<List<tauto_rt::nat::Nat>>(ev, &base_320),
-                split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), l_321),
-            )),
+                List__reverse__s::<List<tauto_rt::nat::Nat>>(ev, base_390),
+                split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), l_391),
+            ),
         )
     }
     #[doc = " tail_of"]
     pub fn tail_of__s(
         ev: &Ev<'_>,
-        mut qset_322: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
-        mut l_323: List<tauto_rt::nat::Nat>,
+        mut qset_392: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+        mut l_393: List<tauto_rt::nat::Nat>,
     ) -> Tail {
         tail_cut__s(
             ev,
-            qset_322,
-            l_323.clone(),
-            cut__s(ev, tauto_rt::nat::Nat::from_u64(35_u64), l_323),
+            qset_392,
+            l_393.clone(),
+            cut__s(ev, tauto_rt::nat::Nat::from_u64(35_u64), l_393),
+        )
+    }
+    #[doc = " tail_of@12"]
+    pub fn tail_of_12__s(ev: &Ev<'_>, mut l_394: List<tauto_rt::nat::Nat>) -> Tail {
+        tail_cut_37__s(
+            ev,
+            l_394.clone(),
+            cut__s(ev, tauto_rt::nat::Nat::from_u64(35_u64), l_394),
+        )
+    }
+    #[doc = " tail_of@13"]
+    pub fn tail_of_13__s(ev: &Ev<'_>, mut l_395: List<tauto_rt::nat::Nat>) -> Tail {
+        tail_cut_38__s(
+            ev,
+            l_395.clone(),
+            cut__s(ev, tauto_rt::nat::Nat::from_u64(35_u64), l_395),
         )
     }
     #[doc = " tail_cut"]
     pub fn tail_cut__s(
         ev: &Ev<'_>,
-        mut qset_324: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
-        mut l_325: List<tauto_rt::nat::Nat>,
-        mut o_326: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+        mut qset_396: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+        mut l_397: List<tauto_rt::nat::Nat>,
+        mut o_398: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
     ) -> Tail {
-        match (o_326) {
-            None => tail_query__s(ev, qset_324, l_325, None),
-            Some(mut p_327) => tail_query__s(
+        match (o_398) {
+            None => tail_query__s(ev, qset_396, l_397, None),
+            Some(mut p_399) => tail_query__s(
                 ev,
-                qset_324,
-                p_327.0.clone(),
-                Some(pct_encode__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_328 : tauto_rt :: nat :: Nat | -> bool { fragment_set__s (ev , extract_arg_0_328 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    p_327.1.clone(),
-                )),
+                qset_396,
+                p_399.0.clone(),
+                Some(pct_encode_7__s(ev, p_399.1.clone())),
+            ),
+        }
+    }
+    #[doc = " tail_cut@37"]
+    pub fn tail_cut_37__s(
+        ev: &Ev<'_>,
+        mut l_400: List<tauto_rt::nat::Nat>,
+        mut o_401: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+    ) -> Tail {
+        match (o_401) {
+            None => tail_query_39__s(ev, l_400, None),
+            Some(mut p_402) => tail_query_39__s(
+                ev,
+                p_402.0.clone(),
+                Some(pct_encode_7__s(ev, p_402.1.clone())),
+            ),
+        }
+    }
+    #[doc = " tail_cut@38"]
+    pub fn tail_cut_38__s(
+        ev: &Ev<'_>,
+        mut l_403: List<tauto_rt::nat::Nat>,
+        mut o_404: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+    ) -> Tail {
+        match (o_404) {
+            None => tail_query_40__s(ev, l_403, None),
+            Some(mut p_405) => tail_query_40__s(
+                ev,
+                p_405.0.clone(),
+                Some(pct_encode_7__s(ev, p_405.1.clone())),
             ),
         }
     }
     #[doc = " tail_query"]
     pub fn tail_query__s(
         ev: &Ev<'_>,
-        mut qset_329: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
-        mut l_330: List<tauto_rt::nat::Nat>,
-        mut f_331: Option<List<tauto_rt::nat::Nat>>,
+        mut qset_406: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+        mut l_407: List<tauto_rt::nat::Nat>,
+        mut f_408: Option<List<tauto_rt::nat::Nat>>,
     ) -> Tail {
         tail_query_cut__s(
             ev,
-            qset_329,
-            l_330.clone(),
-            f_331,
-            cut__s(ev, tauto_rt::nat::Nat::from_u64(63_u64), l_330),
+            qset_406,
+            l_407.clone(),
+            f_408,
+            cut__s(ev, tauto_rt::nat::Nat::from_u64(63_u64), l_407),
+        )
+    }
+    #[doc = " tail_query@39"]
+    pub fn tail_query_39__s(
+        ev: &Ev<'_>,
+        mut l_409: List<tauto_rt::nat::Nat>,
+        mut f_410: Option<List<tauto_rt::nat::Nat>>,
+    ) -> Tail {
+        tail_query_cut_41__s(
+            ev,
+            l_409.clone(),
+            f_410,
+            cut__s(ev, tauto_rt::nat::Nat::from_u64(63_u64), l_409),
+        )
+    }
+    #[doc = " tail_query@40"]
+    pub fn tail_query_40__s(
+        ev: &Ev<'_>,
+        mut l_411: List<tauto_rt::nat::Nat>,
+        mut f_412: Option<List<tauto_rt::nat::Nat>>,
+    ) -> Tail {
+        tail_query_cut_42__s(
+            ev,
+            l_411.clone(),
+            f_412,
+            cut__s(ev, tauto_rt::nat::Nat::from_u64(63_u64), l_411),
         )
     }
     #[doc = " tail_query_cut"]
     pub fn tail_query_cut__s(
         ev: &Ev<'_>,
-        mut qset_332: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
-        mut l_333: List<tauto_rt::nat::Nat>,
-        mut f_334: Option<List<tauto_rt::nat::Nat>>,
-        mut o_335: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+        mut qset_413: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+        mut l_414: List<tauto_rt::nat::Nat>,
+        mut f_415: Option<List<tauto_rt::nat::Nat>>,
+        mut o_416: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
     ) -> Tail {
-        match (o_335) {
+        match (o_416) {
             None => Tail {
-                hier: l_333,
+                hier: l_414,
                 query: None,
-                fragment: f_334,
+                fragment: f_415,
             },
-            Some(mut p_336) => Tail {
-                hier: p_336.0.clone(),
-                query: Some(pct_encode__s(ev, qset_332, p_336.1.clone())),
-                fragment: f_334,
+            Some(mut p_417) => Tail {
+                hier: p_417.0.clone(),
+                query: Some(pct_encode__s(ev, qset_413, p_417.1.clone())),
+                fragment: f_415,
+            },
+        }
+    }
+    #[doc = " tail_query_cut@41"]
+    pub fn tail_query_cut_41__s(
+        ev: &Ev<'_>,
+        mut l_418: List<tauto_rt::nat::Nat>,
+        mut f_419: Option<List<tauto_rt::nat::Nat>>,
+        mut o_420: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+    ) -> Tail {
+        match (o_420) {
+            None => Tail {
+                hier: l_418,
+                query: None,
+                fragment: f_419,
+            },
+            Some(mut p_421) => Tail {
+                hier: p_421.0.clone(),
+                query: Some(pct_encode_43__s(ev, p_421.1.clone())),
+                fragment: f_419,
+            },
+        }
+    }
+    #[doc = " tail_query_cut@42"]
+    pub fn tail_query_cut_42__s(
+        ev: &Ev<'_>,
+        mut l_422: List<tauto_rt::nat::Nat>,
+        mut f_423: Option<List<tauto_rt::nat::Nat>>,
+        mut o_424: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+    ) -> Tail {
+        match (o_424) {
+            None => Tail {
+                hier: l_422,
+                query: None,
+                fragment: f_423,
+            },
+            Some(mut p_425) => Tail {
+                hier: p_425.0.clone(),
+                query: Some(pct_encode_44__s(ev, p_425.1.clone())),
+                fragment: f_423,
             },
         }
     }
     #[doc = " backslash_to_slash"]
-    pub fn backslash_to_slash__s(ev: &Ev<'_>, mut b_337: tauto_rt::nat::Nat) -> tauto_rt::nat::Nat {
-        match (b_337.clone() == tauto_rt::nat::Nat::from_u64(92_u64)) {
+    pub fn backslash_to_slash__s(ev: &Ev<'_>, mut b_426: tauto_rt::nat::Nat) -> tauto_rt::nat::Nat {
+        match (b_426.clone() == tauto_rt::nat::Nat::from_u64(92_u64)) {
             true => tauto_rt::nat::Nat::from_u64(47_u64),
-            false => b_337,
-            _ => tauto_rt::no_arm(LM146527),
+            false => b_426,
+            _ => tauto_rt::no_arm(LM60805),
         }
     }
     #[doc = " drop_slashes"]
     pub fn drop_slashes__s(
         ev: &Ev<'_>,
-        mut l_338: List<tauto_rt::nat::Nat>,
+        mut l_427: List<tauto_rt::nat::Nat>,
     ) -> List<tauto_rt::nat::Nat> {
         'tauto_tail: loop {
-            break match (l_338.clone()) {
+            break match (l_427.clone()) {
                 List::Nil => List::Nil,
-                List::Cons(mut b_339, b_t47) => {
-                    let mut t_340 = b_t47;
-                    match (b_339 == tauto_rt::nat::Nat::from_u64(47_u64)) {
+                List::Cons(mut b_428, b_t66) => {
+                    let mut t_429 = b_t66;
+                    match (b_428 == tauto_rt::nat::Nat::from_u64(47_u64)) {
                         true => {
-                            let tail0 = tauto_rt::unrc(t_340);
-                            l_338 = tail0;
+                            let tail0 = tauto_rt::unrc(t_429);
+                            l_427 = tail0;
                             continue 'tauto_tail;
                         }
-                        false => l_338,
-                        _ => tauto_rt::no_arm(LM146717),
+                        false => l_427,
+                        _ => tauto_rt::no_arm(LM60976),
                     }
                 }
             };
@@ -4700,313 +4788,289 @@ pub mod generated {
     #[doc = " user_pass"]
     pub fn user_pass__s(
         ev: &Ev<'_>,
-        mut c_341: List<tauto_rt::nat::Nat>,
+        mut c_430: List<tauto_rt::nat::Nat>,
     ) -> (List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>) {
         user_pass_cut__s(
             ev,
-            c_341.clone(),
-            cut__s(ev, tauto_rt::nat::Nat::from_u64(58_u64), c_341),
+            c_430.clone(),
+            cut__s(ev, tauto_rt::nat::Nat::from_u64(58_u64), c_430),
         )
     }
     #[doc = " user_pass_cut"]
     pub fn user_pass_cut__s(
         ev: &Ev<'_>,
-        mut c_342: List<tauto_rt::nat::Nat>,
-        mut o_343: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+        mut c_431: List<tauto_rt::nat::Nat>,
+        mut o_432: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
     ) -> (List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>) {
-        match (o_343) {
-            None => (
-                pct_encode__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_344 : tauto_rt :: nat :: Nat | -> bool { userinfo_set__s (ev , extract_arg_0_344 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    c_342,
-                ),
-                List::Nil,
-            ),
-            Some(mut p_345) => (
-                pct_encode__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_346 : tauto_rt :: nat :: Nat | -> bool { userinfo_set__s (ev , extract_arg_0_346 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    p_345.0.clone(),
-                ),
-                pct_encode__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_347 : tauto_rt :: nat :: Nat | -> bool { userinfo_set__s (ev , extract_arg_0_347 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    p_345.1.clone(),
-                ),
+        match (o_432) {
+            None => (pct_encode_8__s(ev, c_431), List::Nil),
+            Some(mut p_433) => (
+                pct_encode_9__s(ev, p_433.0.clone()),
+                pct_encode_10__s(ev, p_433.1.clone()),
             ),
         }
     }
     #[doc = " host_port"]
     pub fn host_port__s(
         ev: &Ev<'_>,
-        mut special_348: bool,
-        mut default_349: Option<tauto_rt::nat::Nat>,
-        mut user_350: List<tauto_rt::nat::Nat>,
-        mut pass_351: List<tauto_rt::nat::Nat>,
-        mut hp_352: List<tauto_rt::nat::Nat>,
+        mut special_434: bool,
+        mut default_435: Option<tauto_rt::nat::Nat>,
+        mut user_436: List<tauto_rt::nat::Nat>,
+        mut pass_437: List<tauto_rt::nat::Nat>,
+        mut hp_438: List<tauto_rt::nat::Nat>,
     ) -> Option<Authority> {
         host_port_cut__s(
             ev,
-            special_348,
-            default_349,
-            user_350,
-            pass_351,
-            hp_352.clone(),
-            cut__s(ev, tauto_rt::nat::Nat::from_u64(58_u64), hp_352),
+            special_434,
+            default_435,
+            user_436,
+            pass_437,
+            hp_438.clone(),
+            cut__s(ev, tauto_rt::nat::Nat::from_u64(58_u64), hp_438),
         )
     }
     #[doc = " host_port_cut"]
     pub fn host_port_cut__s(
         ev: &Ev<'_>,
-        mut special_353: bool,
-        mut default_354: Option<tauto_rt::nat::Nat>,
-        mut user_355: List<tauto_rt::nat::Nat>,
-        mut pass_356: List<tauto_rt::nat::Nat>,
-        mut hp_357: List<tauto_rt::nat::Nat>,
-        mut o_358: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+        mut special_439: bool,
+        mut default_440: Option<tauto_rt::nat::Nat>,
+        mut user_441: List<tauto_rt::nat::Nat>,
+        mut pass_442: List<tauto_rt::nat::Nat>,
+        mut hp_443: List<tauto_rt::nat::Nat>,
+        mut o_444: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
     ) -> Option<Authority> {
-        match (o_358) {
-            None => host_with_port__s(ev, special_353, user_355, pass_356, hp_357, Some(None)),
-            Some(mut p_359) => match (is_empty__s(ev, p_359.0.clone())) {
+        match (o_444) {
+            None => host_with_port__s(ev, special_439, user_441, pass_442, hp_443, Some(None)),
+            Some(mut p_445) => match (is_empty__s(ev, p_445.0.clone())) {
                 true => None,
                 false => host_with_port__s(
                     ev,
-                    special_353,
-                    user_355,
-                    pass_356,
-                    p_359.0.clone(),
-                    port_of__s(ev, default_354, p_359.1.clone()),
+                    special_439,
+                    user_441,
+                    pass_442,
+                    p_445.0.clone(),
+                    port_of__s(ev, default_440, p_445.1.clone()),
                 ),
-                _ => tauto_rt::no_arm(LM147821),
+                _ => tauto_rt::no_arm(LM62003),
             },
         }
     }
     #[doc = " host_with_port"]
     pub fn host_with_port__s(
         ev: &Ev<'_>,
-        mut special_360: bool,
-        mut user_361: List<tauto_rt::nat::Nat>,
-        mut pass_362: List<tauto_rt::nat::Nat>,
-        mut h_363: List<tauto_rt::nat::Nat>,
-        mut port_364: Option<Option<tauto_rt::nat::Nat>>,
+        mut special_446: bool,
+        mut user_447: List<tauto_rt::nat::Nat>,
+        mut pass_448: List<tauto_rt::nat::Nat>,
+        mut h_449: List<tauto_rt::nat::Nat>,
+        mut port_450: Option<Option<tauto_rt::nat::Nat>>,
     ) -> Option<Authority> {
-        match (port_364) {
+        match (port_450) {
             None => None,
-            Some(mut pt_365) => with_host__s(
+            Some(mut pt_451) => with_host__s(
                 ev,
-                user_361,
-                pass_362,
-                pt_365,
-                host_of__s(ev, special_360, h_363),
+                user_447,
+                pass_448,
+                pt_451,
+                host_of__s(ev, special_446, h_449),
             ),
         }
     }
     #[doc = " with_host"]
     pub fn with_host__s(
         ev: &Ev<'_>,
-        mut user_366: List<tauto_rt::nat::Nat>,
-        mut pass_367: List<tauto_rt::nat::Nat>,
-        mut pt_368: Option<tauto_rt::nat::Nat>,
-        mut o_369: Option<List<tauto_rt::nat::Nat>>,
+        mut user_452: List<tauto_rt::nat::Nat>,
+        mut pass_453: List<tauto_rt::nat::Nat>,
+        mut pt_454: Option<tauto_rt::nat::Nat>,
+        mut o_455: Option<List<tauto_rt::nat::Nat>>,
     ) -> Option<Authority> {
-        match (o_369) {
+        match (o_455) {
             None => None,
-            Some(mut host_370) => Some(Authority {
-                user: user_366,
-                pass: pass_367,
-                host: host_370,
-                port: pt_368,
+            Some(mut host_456) => Some(Authority {
+                user: user_452,
+                pass: pass_453,
+                host: host_456,
+                port: pt_454,
             }),
         }
     }
     #[doc = " authority_of"]
     pub fn authority_of__s(
         ev: &Ev<'_>,
-        mut special_371: bool,
-        mut default_372: Option<tauto_rt::nat::Nat>,
-        mut a_373: List<tauto_rt::nat::Nat>,
+        mut special_457: bool,
+        mut default_458: Option<tauto_rt::nat::Nat>,
+        mut a_459: List<tauto_rt::nat::Nat>,
     ) -> Option<Authority> {
         authority_cut__s(
             ev,
-            special_371,
-            default_372,
-            a_373.clone(),
-            rcut__s(ev, tauto_rt::nat::Nat::from_u64(64_u64), a_373),
+            special_457,
+            default_458,
+            a_459.clone(),
+            rcut__s(ev, tauto_rt::nat::Nat::from_u64(64_u64), a_459),
         )
     }
     #[doc = " authority_cut"]
     pub fn authority_cut__s(
         ev: &Ev<'_>,
-        mut special_374: bool,
-        mut default_375: Option<tauto_rt::nat::Nat>,
-        mut a_376: List<tauto_rt::nat::Nat>,
-        mut o_377: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+        mut special_460: bool,
+        mut default_461: Option<tauto_rt::nat::Nat>,
+        mut a_462: List<tauto_rt::nat::Nat>,
+        mut o_463: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
     ) -> Option<Authority> {
-        match (o_377) {
-            None => host_port__s(ev, special_374, default_375, List::Nil, List::Nil, a_376),
-            Some(mut p_378) => match (is_empty__s(ev, p_378.1.clone())) {
+        match (o_463) {
+            None => host_port__s(ev, special_460, default_461, List::Nil, List::Nil, a_462),
+            Some(mut p_464) => match (is_empty__s(ev, p_464.1.clone())) {
                 true => None,
                 false => host_port__s(
                     ev,
-                    special_374,
-                    default_375,
-                    (user_pass__s(ev, p_378.0.clone())).0.clone(),
-                    (user_pass__s(ev, p_378.0.clone())).1.clone(),
-                    p_378.1.clone(),
+                    special_460,
+                    default_461,
+                    (user_pass__s(ev, p_464.0.clone())).0.clone(),
+                    (user_pass__s(ev, p_464.0.clone())).1.clone(),
+                    p_464.1.clone(),
                 ),
-                _ => tauto_rt::no_arm(LM148890),
+                _ => tauto_rt::no_arm(LM62987),
             },
         }
     }
     #[doc = " empty_path"]
-    pub fn empty_path__s(ev: &Ev<'_>, mut special_379: bool) -> List<List<tauto_rt::nat::Nat>> {
-        match (special_379) {
+    pub fn empty_path__s(ev: &Ev<'_>, mut special_465: bool) -> List<List<tauto_rt::nat::Nat>> {
+        match (special_465) {
             true => List::Cons(List::Nil, {
                 thread_local! { static N : Rc < List < List < tauto_rt :: nat :: Nat > > > = Rc :: new (List :: Nil) ; }
                 N.with(Rc::clone).into()
             }),
             false => List::Nil,
-            _ => tauto_rt::no_arm(LM149195),
+            _ => tauto_rt::no_arm(LM63267),
         }
     }
     #[doc = " auth_path"]
     pub fn auth_path__s(
         ev: &Ev<'_>,
-        mut special_380: bool,
-        mut default_381: Option<tauto_rt::nat::Nat>,
-        mut l_382: List<tauto_rt::nat::Nat>,
+        mut special_466: bool,
+        mut default_467: Option<tauto_rt::nat::Nat>,
+        mut l_468: List<tauto_rt::nat::Nat>,
     ) -> Option<(Authority, List<List<tauto_rt::nat::Nat>>)> {
         auth_path_cut__s(
             ev,
-            special_380,
-            default_381,
-            l_382.clone(),
-            cut__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), l_382),
+            special_466,
+            default_467,
+            l_468.clone(),
+            cut__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), l_468),
         )
     }
     #[doc = " auth_path_cut"]
     pub fn auth_path_cut__s(
         ev: &Ev<'_>,
-        mut special_383: bool,
-        mut default_384: Option<tauto_rt::nat::Nat>,
-        mut l_385: List<tauto_rt::nat::Nat>,
-        mut o_386: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+        mut special_469: bool,
+        mut default_470: Option<tauto_rt::nat::Nat>,
+        mut l_471: List<tauto_rt::nat::Nat>,
+        mut o_472: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
     ) -> Option<(Authority, List<List<tauto_rt::nat::Nat>>)> {
-        match (o_386) {
+        match (o_472) {
             None => with_path__s(
                 ev,
-                authority_of__s(ev, special_383, default_384, l_385),
-                empty_path__s(ev, special_383),
+                authority_of__s(ev, special_469, default_470, l_471),
+                empty_path__s(ev, special_469),
             ),
-            Some(mut p_387) => with_path__s(
+            Some(mut p_473) => with_path__s(
                 ev,
-                authority_of__s(ev, special_383, default_384, p_387.0.clone()),
-                path_of__s(ev, List::Nil, p_387.1.clone()),
+                authority_of__s(ev, special_469, default_470, p_473.0.clone()),
+                path_of__s(ev, List::Nil, p_473.1.clone()),
             ),
         }
     }
     #[doc = " with_path"]
     pub fn with_path__s(
         ev: &Ev<'_>,
-        mut a_388: Option<Authority>,
-        mut ss_389: List<List<tauto_rt::nat::Nat>>,
+        mut a_474: Option<Authority>,
+        mut ss_475: List<List<tauto_rt::nat::Nat>>,
     ) -> Option<(Authority, List<List<tauto_rt::nat::Nat>>)> {
-        match (a_388) {
+        match (a_474) {
             None => None,
-            Some(mut x_390) => Some((x_390, ss_389)),
+            Some(mut x_476) => Some((x_476, ss_475)),
         }
     }
     #[doc = " ends_with_space"]
-    pub fn ends_with_space__s(ev: &Ev<'_>, mut l_391: List<tauto_rt::nat::Nat>) -> bool {
-        first_is_space__s(ev, List__reverse__s::<tauto_rt::nat::Nat>(ev, &l_391))
+    pub fn ends_with_space__s(ev: &Ev<'_>, mut l_477: List<tauto_rt::nat::Nat>) -> bool {
+        first_is_space__s(ev, List__reverse__s::<tauto_rt::nat::Nat>(ev, l_477))
     }
     #[doc = " first_is_space"]
-    pub fn first_is_space__s(ev: &Ev<'_>, mut l_392: List<tauto_rt::nat::Nat>) -> bool {
-        match (l_392) {
+    pub fn first_is_space__s(ev: &Ev<'_>, mut l_478: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_478) {
             List::Nil => false,
-            List::Cons(mut b_393, b_t48) => {
-                let mut t_394 = b_t48;
-                (b_393 == tauto_rt::nat::Nat::from_u64(32_u64))
+            List::Cons(mut b_479, b_t67) => {
+                let mut t_480 = b_t67;
+                (b_479 == tauto_rt::nat::Nat::from_u64(32_u64))
             }
         }
     }
     #[doc = " mk"]
     pub fn mk__s(
         ev: &Ev<'_>,
-        mut scheme_395: List<tauto_rt::nat::Nat>,
-        mut ap_396: Option<(Authority, List<List<tauto_rt::nat::Nat>>)>,
-        mut t_397: Tail,
+        mut scheme_481: List<tauto_rt::nat::Nat>,
+        mut ap_482: Option<(Authority, List<List<tauto_rt::nat::Nat>>)>,
+        mut t_483: Tail,
     ) -> Option<Url> {
-        match (ap_396) {
+        match (ap_482) {
             None => None,
-            Some(mut p_398) => Some(Url {
-                scheme: scheme_395,
-                auth: Some(p_398.0.clone()),
-                path: UrlPath::Segments(p_398.1.clone()),
-                query: t_397.query.clone(),
-                fragment: t_397.fragment.clone(),
+            Some(mut p_484) => Some(Url {
+                scheme: scheme_481,
+                auth: Some(p_484.0.clone()),
+                path: UrlPath::Segments(p_484.1.clone()),
+                query: t_483.query.clone(),
+                fragment: t_483.fragment.clone(),
             }),
         }
     }
     #[doc = " parse_special"]
     pub fn parse_special__s(
         ev: &Ev<'_>,
-        mut scheme_399: List<tauto_rt::nat::Nat>,
-        mut d_400: tauto_rt::nat::Nat,
-        mut t_401: Tail,
+        mut scheme_485: List<tauto_rt::nat::Nat>,
+        mut d_486: tauto_rt::nat::Nat,
+        mut t_487: Tail,
     ) -> Option<Url> {
         mk__s(
             ev,
-            scheme_399,
+            scheme_485,
             auth_path__s(
                 ev,
                 true,
-                Some(d_400),
+                Some(d_486),
                 drop_slashes__s(
                     ev,
                     List__map__s::<tauto_rt::nat::Nat, tauto_rt::nat::Nat>(
                         ev,
                         {
-                            thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> tauto_rt :: nat :: Nat > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_402 : tauto_rt :: nat :: Nat | -> tauto_rt :: nat :: Nat { backslash_to_slash__s (ev , extract_arg_0_402 . clone ()) }) ; }
+                            thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> tauto_rt :: nat :: Nat > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_488 : tauto_rt :: nat :: Nat | -> tauto_rt :: nat :: Nat { backslash_to_slash__s (ev , extract_arg_0_488 . clone ()) }) ; }
                             F.with(Rc::clone)
                         },
-                        &t_401.hier,
+                        t_487.hier.clone(),
                     ),
                 ),
             ),
-            t_401,
+            t_487,
         )
     }
     #[doc = " parse_plain"]
     pub fn parse_plain__s(
         ev: &Ev<'_>,
-        mut scheme_403: List<tauto_rt::nat::Nat>,
-        mut t_404: Tail,
+        mut scheme_489: List<tauto_rt::nat::Nat>,
+        mut t_490: Tail,
     ) -> Option<Url> {
-        match (t_404.hier.clone()) {
+        match (t_490.hier.clone()) {
             List::Nil => Some(Url {
-                scheme: scheme_403,
+                scheme: scheme_489,
                 auth: None,
                 path: UrlPath::Opaque(List::Nil),
-                query: t_404.query.clone(),
-                fragment: t_404.fragment.clone(),
+                query: t_490.query.clone(),
+                fragment: t_490.fragment.clone(),
             }),
-            List::Cons(mut b_405, b_t49) => {
-                let mut rest_406 = b_t49;
-                match (b_405 == tauto_rt::nat::Nat::from_u64(47_u64)) {
-                    false => parse_opaque__s(ev, scheme_403, t_404),
-                    true => plain_slash__s(ev, scheme_403, tauto_rt::unrc(rest_406), t_404),
-                    _ => tauto_rt::no_arm(LM151103),
+            List::Cons(mut b_491, b_t68) => {
+                let mut rest_492 = b_t68;
+                match (b_491 == tauto_rt::nat::Nat::from_u64(47_u64)) {
+                    false => parse_opaque__s(ev, scheme_489, t_490),
+                    true => plain_slash__s(ev, scheme_489, tauto_rt::unrc(rest_492), t_490),
+                    _ => tauto_rt::no_arm(LM64984),
                 }
             }
         }
@@ -5014,35 +5078,35 @@ pub mod generated {
     #[doc = " plain_slash"]
     pub fn plain_slash__s(
         ev: &Ev<'_>,
-        mut scheme_407: List<tauto_rt::nat::Nat>,
-        mut rest_408: List<tauto_rt::nat::Nat>,
-        mut t_409: Tail,
+        mut scheme_493: List<tauto_rt::nat::Nat>,
+        mut rest_494: List<tauto_rt::nat::Nat>,
+        mut t_495: Tail,
     ) -> Option<Url> {
-        match (rest_408.clone()) {
+        match (rest_494.clone()) {
             List::Nil => Some(Url {
-                scheme: scheme_407,
+                scheme: scheme_493,
                 auth: None,
                 path: UrlPath::Segments(path_of__s(ev, List::Nil, List::Nil)),
-                query: t_409.query.clone(),
-                fragment: t_409.fragment.clone(),
+                query: t_495.query.clone(),
+                fragment: t_495.fragment.clone(),
             }),
-            List::Cons(mut b2_410, b_t50) => {
-                let mut rest2_411 = b_t50;
-                match (b2_410 == tauto_rt::nat::Nat::from_u64(47_u64)) {
+            List::Cons(mut b2_496, b_t69) => {
+                let mut rest2_497 = b_t69;
+                match (b2_496 == tauto_rt::nat::Nat::from_u64(47_u64)) {
                     true => mk__s(
                         ev,
-                        scheme_407,
-                        auth_path__s(ev, false, None, tauto_rt::unrc(rest2_411)),
-                        t_409,
+                        scheme_493,
+                        auth_path__s(ev, false, None, tauto_rt::unrc(rest2_497)),
+                        t_495,
                     ),
                     false => Some(Url {
-                        scheme: scheme_407,
+                        scheme: scheme_493,
                         auth: None,
-                        path: UrlPath::Segments(path_of__s(ev, List::Nil, rest_408)),
-                        query: t_409.query.clone(),
-                        fragment: t_409.fragment.clone(),
+                        path: UrlPath::Segments(path_of__s(ev, List::Nil, rest_494)),
+                        query: t_495.query.clone(),
+                        fragment: t_495.fragment.clone(),
                     }),
-                    _ => tauto_rt::no_arm(LM151533),
+                    _ => tauto_rt::no_arm(LM65393),
                 }
             }
         }
@@ -5050,130 +5114,102 @@ pub mod generated {
     #[doc = " parse_opaque"]
     pub fn parse_opaque__s(
         ev: &Ev<'_>,
-        mut scheme_412: List<tauto_rt::nat::Nat>,
-        mut t_413: Tail,
+        mut scheme_498: List<tauto_rt::nat::Nat>,
+        mut t_499: Tail,
     ) -> Option<Url> {
         opaque_path__s(
             ev,
-            scheme_412,
-            pct_encode__s(
-                ev,
-                {
-                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_414 : tauto_rt :: nat :: Nat | -> bool { c0_control_set__s (ev , extract_arg_0_414 . clone ()) }) ; }
-                    F.with(Rc::clone)
-                },
-                t_413.hier.clone(),
-            ),
-            t_413,
+            scheme_498,
+            pct_encode_11__s(ev, t_499.hier.clone()),
+            t_499,
         )
     }
     #[doc = " opaque_path"]
     pub fn opaque_path__s(
         ev: &Ev<'_>,
-        mut scheme_415: List<tauto_rt::nat::Nat>,
-        mut o_416: List<tauto_rt::nat::Nat>,
-        mut t_417: Tail,
+        mut scheme_500: List<tauto_rt::nat::Nat>,
+        mut o_501: List<tauto_rt::nat::Nat>,
+        mut t_502: Tail,
     ) -> Option<Url> {
-        match (ends_with_space__s(ev, o_416.clone())) {
+        match (ends_with_space__s(ev, o_501.clone())) {
             true => None,
             false => Some(Url {
-                scheme: scheme_415,
+                scheme: scheme_500,
                 auth: None,
-                path: UrlPath::Opaque(o_416),
-                query: t_417.query.clone(),
-                fragment: t_417.fragment.clone(),
+                path: UrlPath::Opaque(o_501),
+                query: t_502.query.clone(),
+                fragment: t_502.fragment.clone(),
             }),
-            _ => tauto_rt::no_arm(LM152000),
+            _ => tauto_rt::no_arm(LM65839),
         }
     }
     #[doc = " parse_after_scheme"]
     pub fn parse_after_scheme__s(
         ev: &Ev<'_>,
-        mut s_418: List<tauto_rt::nat::Nat>,
-        mut rest_419: List<tauto_rt::nat::Nat>,
+        mut s_503: List<tauto_rt::nat::Nat>,
+        mut rest_504: List<tauto_rt::nat::Nat>,
     ) -> Option<Url> {
-        match (scheme_kind__s(ev, s_418.clone())) {
-            SchemeKind::Special(mut d_420) => parse_special__s(
-                ev,
-                s_418,
-                d_420,
-                tail_of__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_421 : tauto_rt :: nat :: Nat | -> bool { special_query_set__s (ev , extract_arg_0_421 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    rest_419,
-                ),
-            ),
+        match (scheme_kind__s(ev, s_503.clone())) {
+            SchemeKind::Special(mut d_505) => {
+                parse_special__s(ev, s_503, d_505, tail_of_12__s(ev, rest_504))
+            }
             SchemeKind::File => None,
-            SchemeKind::NotSpecial => parse_plain__s(
-                ev,
-                s_418,
-                tail_of__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_422 : tauto_rt :: nat :: Nat | -> bool { query_set__s (ev , extract_arg_0_422 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    rest_419,
-                ),
-            ),
+            SchemeKind::NotSpecial => parse_plain__s(ev, s_503, tail_of_13__s(ev, rest_504)),
         }
     }
     #[doc = " scheme_of"]
     pub fn scheme_of__s(
         ev: &Ev<'_>,
-        mut l_423: List<tauto_rt::nat::Nat>,
+        mut l_506: List<tauto_rt::nat::Nat>,
     ) -> Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)> {
-        scheme_cut__s(ev, cut__s(ev, tauto_rt::nat::Nat::from_u64(58_u64), l_423))
+        scheme_cut__s(ev, cut__s(ev, tauto_rt::nat::Nat::from_u64(58_u64), l_506))
     }
     #[doc = " scheme_cut"]
     pub fn scheme_cut__s(
         ev: &Ev<'_>,
-        mut o_424: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+        mut o_507: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
     ) -> Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)> {
-        match (o_424) {
+        match (o_507) {
             None => None,
-            Some(mut p_425) => match (scheme_ok__s(ev, lower__s(ev, p_425.0.clone()))) {
-                true => Some((lower__s(ev, p_425.0.clone()), p_425.1.clone())),
+            Some(mut p_508) => match (scheme_ok__s(ev, lower__s(ev, p_508.0.clone()))) {
+                true => Some((lower__s(ev, p_508.0.clone()), p_508.1.clone())),
                 false => None,
-                _ => tauto_rt::no_arm(LM152764),
+                _ => tauto_rt::no_arm(LM66522),
             },
         }
     }
     #[doc = " parse_bytes"]
-    pub fn parse_bytes__s(ev: &Ev<'_>, mut l_426: List<tauto_rt::nat::Nat>) -> Option<Url> {
-        parse_scheme__s(ev, scheme_of__s(ev, l_426))
+    pub fn parse_bytes__s(ev: &Ev<'_>, mut l_509: List<tauto_rt::nat::Nat>) -> Option<Url> {
+        parse_scheme__s(ev, scheme_of__s(ev, l_509))
     }
     #[doc = " parse_scheme"]
     pub fn parse_scheme__s(
         ev: &Ev<'_>,
-        mut o_427: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
+        mut o_510: Option<(List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>)>,
     ) -> Option<Url> {
-        match (o_427) {
+        match (o_510) {
             None => None,
-            Some(mut p_428) => parse_after_scheme__s(ev, p_428.0.clone(), p_428.1.clone()),
+            Some(mut p_511) => parse_after_scheme__s(ev, p_511.0.clone(), p_511.1.clone()),
         }
     }
     #[doc = " url_parse"]
-    pub fn url_parse__s(ev: &Ev<'_>, mut t_429: Text) -> Option<Url> {
-        parse_bytes__s(ev, preprocess__s(ev, extract_text_bytes__s(ev, t_429)))
+    pub fn url_parse__s(ev: &Ev<'_>, mut t_512: Text) -> Option<Url> {
+        parse_bytes__s(ev, preprocess__s(ev, extract_text_bytes__s(ev, t_512)))
     }
     #[doc = " init"]
     pub fn init__s(
         ev: &Ev<'_>,
-        mut ss_430: List<List<tauto_rt::nat::Nat>>,
+        mut ss_513: List<List<tauto_rt::nat::Nat>>,
     ) -> List<List<tauto_rt::nat::Nat>> {
-        match (ss_430) {
+        match (ss_513) {
             List::Nil => List::Nil,
-            List::Cons(mut s_431, b_t51) => {
-                let mut rest_432 = b_t51;
-                match ((*rest_432).clone()) {
+            List::Cons(mut s_514, b_t70) => {
+                let mut rest_515 = b_t70;
+                match ((*rest_515).clone()) {
                     List::Nil => List::Nil,
-                    List::Cons(mut s2_433, b_t52) => {
-                        let mut more_434 = b_t52;
-                        List::Cons(s_431, Rc::new(init__s(ev, tauto_rt::unrc(rest_432))).into())
+                    List::Cons(mut s2_516, b_t71) => {
+                        let mut more_517 = b_t71;
+                        List::Cons(s_514, Rc::new(init__s(ev, tauto_rt::unrc(rest_515))).into())
                     }
                 }
             }
@@ -5182,116 +5218,116 @@ pub mod generated {
     #[doc = " base_segments"]
     pub fn base_segments__s(
         ev: &Ev<'_>,
-        mut p_435: UrlPath,
+        mut p_518: UrlPath,
     ) -> Option<List<List<tauto_rt::nat::Nat>>> {
-        match (p_435) {
-            UrlPath::Opaque(mut o_436) => None,
-            UrlPath::Segments(mut ss_437) => Some(ss_437),
+        match (p_518) {
+            UrlPath::Opaque(mut o_519) => None,
+            UrlPath::Segments(mut ss_520) => Some(ss_520),
         }
     }
     #[doc = " with_fragment"]
     pub fn with_fragment__s(
         ev: &Ev<'_>,
-        mut u_438: Url,
-        mut f_439: Option<List<tauto_rt::nat::Nat>>,
+        mut u_521: Url,
+        mut f_522: Option<List<tauto_rt::nat::Nat>>,
     ) -> Url {
-        match (u_438) {
+        match (u_521) {
             Url {
-                scheme: mut s_440,
-                auth: mut a_441,
-                path: mut p_442,
-                query: mut q_443,
-                fragment: mut f0_444,
+                scheme: mut s_523,
+                auth: mut a_524,
+                path: mut p_525,
+                query: mut q_526,
+                fragment: mut f0_527,
             } => Url {
-                scheme: s_440,
-                auth: a_441,
-                path: p_442,
-                query: q_443,
-                fragment: f_439,
+                scheme: s_523,
+                auth: a_524,
+                path: p_525,
+                query: q_526,
+                fragment: f_522,
             },
         }
     }
     #[doc = " relative_hier"]
     pub fn relative_hier__s(
         ev: &Ev<'_>,
-        mut s_445: List<tauto_rt::nat::Nat>,
-        mut special_446: bool,
-        mut a_447: Option<Authority>,
-        mut base_448: List<List<tauto_rt::nat::Nat>>,
-        mut bq_449: Option<List<tauto_rt::nat::Nat>>,
-        mut t_450: Tail,
-        mut h_451: List<tauto_rt::nat::Nat>,
+        mut s_528: List<tauto_rt::nat::Nat>,
+        mut special_529: bool,
+        mut a_530: Option<Authority>,
+        mut base_531: List<List<tauto_rt::nat::Nat>>,
+        mut bq_532: Option<List<tauto_rt::nat::Nat>>,
+        mut t_533: Tail,
+        mut h_534: List<tauto_rt::nat::Nat>,
     ) -> Option<Url> {
-        match (h_451.clone()) {
+        match (h_534.clone()) {
             List::Nil => Some(Url {
-                scheme: s_445,
-                auth: a_447,
-                path: UrlPath::Segments(base_448),
-                query: match (t_450.query.clone()) {
-                    None => bq_449,
-                    Some(mut q_452) => Some(q_452),
+                scheme: s_528,
+                auth: a_530,
+                path: UrlPath::Segments(base_531),
+                query: match (t_533.query.clone()) {
+                    None => bq_532,
+                    Some(mut q_535) => Some(q_535),
                 },
-                fragment: t_450.fragment.clone(),
+                fragment: t_533.fragment.clone(),
             }),
-            List::Cons(mut b_453, b_t53) => {
-                let mut rest_454 = b_t53;
-                match (b_453 == tauto_rt::nat::Nat::from_u64(47_u64)) {
+            List::Cons(mut b_536, b_t72) => {
+                let mut rest_537 = b_t72;
+                match (b_536 == tauto_rt::nat::Nat::from_u64(47_u64)) {
                     false => Some(Url {
-                        scheme: s_445,
-                        auth: a_447,
-                        path: UrlPath::Segments(path_of__s(ev, init__s(ev, base_448), h_451)),
-                        query: t_450.query.clone(),
-                        fragment: t_450.fragment.clone(),
+                        scheme: s_528,
+                        auth: a_530,
+                        path: UrlPath::Segments(path_of__s(ev, init__s(ev, base_531), h_534)),
+                        query: t_533.query.clone(),
+                        fragment: t_533.fragment.clone(),
                     }),
                     true => {
                         match (starts_with__s(
                             ev,
                             tauto_rt::nat::Nat::from_u64(47_u64),
-                            (*rest_454).clone(),
+                            (*rest_537).clone(),
                         )) {
                             false => Some(Url {
-                                scheme: s_445,
-                                auth: a_447,
+                                scheme: s_528,
+                                auth: a_530,
                                 path: UrlPath::Segments(path_of__s(
                                     ev,
                                     List::Nil,
-                                    tauto_rt::unrc(rest_454),
+                                    tauto_rt::unrc(rest_537),
                                 )),
-                                query: t_450.query.clone(),
-                                fragment: t_450.fragment.clone(),
+                                query: t_533.query.clone(),
+                                fragment: t_533.fragment.clone(),
                             }),
-                            true => match (special_446) {
+                            true => match (special_529) {
                                 true => mk__s(
                                     ev,
-                                    s_445.clone(),
+                                    s_528.clone(),
                                     auth_path__s(
                                         ev,
                                         true,
-                                        default_port__s(ev, s_445),
-                                        drop_slashes__s(ev, tauto_rt::unrc(rest_454)),
+                                        default_port__s(ev, s_528),
+                                        drop_slashes__s(ev, tauto_rt::unrc(rest_537)),
                                     ),
-                                    t_450,
+                                    t_533,
                                 ),
                                 false => mk__s(
                                     ev,
-                                    s_445,
+                                    s_528,
                                     auth_path__s(
                                         ev,
                                         false,
                                         None,
                                         List__tail__s::<tauto_rt::nat::Nat>(
                                             ev,
-                                            tauto_rt::unrc(rest_454),
+                                            tauto_rt::unrc(rest_537),
                                         ),
                                     ),
-                                    t_450,
+                                    t_533,
                                 ),
-                                _ => tauto_rt::no_arm(LM155113),
+                                _ => tauto_rt::no_arm(LM68742),
                             },
-                            _ => tauto_rt::no_arm(LM154960),
+                            _ => tauto_rt::no_arm(LM68589),
                         }
                     }
-                    _ => tauto_rt::no_arm(LM154814),
+                    _ => tauto_rt::no_arm(LM68443),
                 }
             }
         }
@@ -5299,295 +5335,351 @@ pub mod generated {
     #[doc = " relative_tail"]
     pub fn relative_tail__s(
         ev: &Ev<'_>,
-        mut s_455: List<tauto_rt::nat::Nat>,
-        mut a_456: Option<Authority>,
-        mut ss_457: List<List<tauto_rt::nat::Nat>>,
-        mut q_458: Option<List<tauto_rt::nat::Nat>>,
-        mut t_459: Tail,
+        mut s_538: List<tauto_rt::nat::Nat>,
+        mut a_539: Option<Authority>,
+        mut ss_540: List<List<tauto_rt::nat::Nat>>,
+        mut q_541: Option<List<tauto_rt::nat::Nat>>,
+        mut t_542: Tail,
     ) -> Option<Url> {
-        match (is_special__s(ev, s_455.clone())) {
+        match (is_special__s(ev, s_538.clone())) {
             true => relative_hier__s(
                 ev,
-                s_455,
+                s_538,
                 true,
-                a_456,
-                ss_457,
-                q_458,
-                t_459.clone(),
+                a_539,
+                ss_540,
+                q_541,
+                t_542.clone(),
                 List__map__s::<tauto_rt::nat::Nat, tauto_rt::nat::Nat>(
                     ev,
                     {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> tauto_rt :: nat :: Nat > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_460 : tauto_rt :: nat :: Nat | -> tauto_rt :: nat :: Nat { backslash_to_slash__s (ev , extract_arg_0_460 . clone ()) }) ; }
+                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> tauto_rt :: nat :: Nat > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_543 : tauto_rt :: nat :: Nat | -> tauto_rt :: nat :: Nat { backslash_to_slash__s (ev , extract_arg_0_543 . clone ()) }) ; }
                         F.with(Rc::clone)
                     },
-                    &t_459.hier,
+                    t_542.hier.clone(),
                 ),
             ),
             false => relative_hier__s(
                 ev,
-                s_455,
+                s_538,
                 false,
-                a_456,
-                ss_457,
-                q_458,
-                t_459.clone(),
-                t_459.hier.clone(),
+                a_539,
+                ss_540,
+                q_541,
+                t_542.clone(),
+                t_542.hier.clone(),
             ),
-            _ => tauto_rt::no_arm(LM155987),
+            _ => tauto_rt::no_arm(LM69575),
         }
     }
     #[doc = " clean"]
     pub fn clean__s(
         ev: &Ev<'_>,
-        mut set_461: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
-        mut x_462: List<tauto_rt::nat::Nat>,
+        mut set_544: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
+        mut x_545: List<tauto_rt::nat::Nat>,
     ) -> bool {
         all_bytes__s(
             ev,
             {
-                let set_461 = set_461.clone();
-                Rc::new(move |ev: &Ev<'_>, b_463: tauto_rt::nat::Nat| -> bool {
-                    not__s(ev, set_461(ev, b_463.clone()))
+                let set_544 = set_544.clone();
+                Rc::new(move |ev: &Ev<'_>, b_546: tauto_rt::nat::Nat| -> bool {
+                    not__s(ev, set_544(ev, b_546.clone()))
                 })
             },
-            x_462,
+            x_545,
+        )
+    }
+    #[doc = " clean@14"]
+    pub fn clean_14__s(ev: &Ev<'_>, mut x_547: List<tauto_rt::nat::Nat>) -> bool {
+        all_bytes__s(
+            ev,
+            {
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_548 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , path_set__s (ev , b_548 . clone ())) }) ; }
+                F.with(Rc::clone)
+            },
+            x_547,
+        )
+    }
+    #[doc = " clean@15"]
+    pub fn clean_15__s(ev: &Ev<'_>, mut x_549: List<tauto_rt::nat::Nat>) -> bool {
+        all_bytes__s(
+            ev,
+            {
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_550 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , host_set__s (ev , b_550 . clone ())) }) ; }
+                F.with(Rc::clone)
+            },
+            x_549,
+        )
+    }
+    #[doc = " clean@16"]
+    pub fn clean_16__s(ev: &Ev<'_>, mut x_551: List<tauto_rt::nat::Nat>) -> bool {
+        all_bytes__s(
+            ev,
+            {
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_552 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , userinfo_set__s (ev , b_552 . clone ())) }) ; }
+                F.with(Rc::clone)
+            },
+            x_551,
+        )
+    }
+    #[doc = " clean@17"]
+    pub fn clean_17__s(ev: &Ev<'_>, mut x_553: List<tauto_rt::nat::Nat>) -> bool {
+        all_bytes__s(
+            ev,
+            {
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_554 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , userinfo_set__s (ev , b_554 . clone ())) }) ; }
+                F.with(Rc::clone)
+            },
+            x_553,
+        )
+    }
+    #[doc = " clean@18"]
+    pub fn clean_18__s(ev: &Ev<'_>, mut x_555: List<tauto_rt::nat::Nat>) -> bool {
+        all_bytes__s(
+            ev,
+            {
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_556 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , c0_control_set__s (ev , b_556 . clone ())) }) ; }
+                F.with(Rc::clone)
+            },
+            x_555,
+        )
+    }
+    #[doc = " clean@19"]
+    pub fn clean_19__s(ev: &Ev<'_>, mut x_557: List<tauto_rt::nat::Nat>) -> bool {
+        all_bytes__s(
+            ev,
+            {
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_558 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , special_query_set__s (ev , b_558 . clone ())) }) ; }
+                F.with(Rc::clone)
+            },
+            x_557,
+        )
+    }
+    #[doc = " clean@20"]
+    pub fn clean_20__s(ev: &Ev<'_>, mut x_559: List<tauto_rt::nat::Nat>) -> bool {
+        all_bytes__s(
+            ev,
+            {
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_560 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , query_set__s (ev , b_560 . clone ())) }) ; }
+                F.with(Rc::clone)
+            },
+            x_559,
+        )
+    }
+    #[doc = " clean@21"]
+    pub fn clean_21__s(ev: &Ev<'_>, mut x_561: List<tauto_rt::nat::Nat>) -> bool {
+        all_bytes__s(
+            ev,
+            {
+                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_562 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , fragment_set__s (ev , b_562 . clone ())) }) ; }
+                F.with(Rc::clone)
+            },
+            x_561,
         )
     }
     #[doc = " opt_list_is"]
     pub fn opt_list_is__s(
         ev: &Ev<'_>,
-        mut o_464: Option<List<tauto_rt::nat::Nat>>,
-        mut x_465: List<tauto_rt::nat::Nat>,
+        mut o_563: Option<List<tauto_rt::nat::Nat>>,
+        mut x_564: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        match (o_464) {
+        match (o_563) {
             None => false,
-            Some(mut y_466) => bytes_eq__s(ev, y_466, x_465),
+            Some(mut y_565) => bytes_eq__s(ev, y_565, x_564),
         }
     }
     #[doc = " implies"]
-    pub fn implies__s(ev: &Ev<'_>, mut a_467: bool, mut b_468: bool) -> bool {
-        (not__s(ev, a_467) || b_468)
+    pub fn implies__s(ev: &Ev<'_>, mut a_566: bool, mut b_567: bool) -> bool {
+        (not__s(ev, a_566) || b_567)
     }
     #[doc = " seg_ok"]
     pub fn seg_ok__s(
         ev: &Ev<'_>,
-        mut special_469: bool,
-        mut s_470: List<tauto_rt::nat::Nat>,
+        mut special_568: bool,
+        mut s_569: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        (clean__s(
-            ev,
-            {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_471 : tauto_rt :: nat :: Nat | -> bool { path_set__s (ev , extract_arg_0_471 . clone ()) }) ; }
-                F.with(Rc::clone)
-            },
-            s_470.clone(),
-        ) && (all_bytes__s(
-            ev,
-            {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_472 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , (b_472 . clone () == tauto_rt :: nat :: Nat :: from_u64 (47_u64))) }) ; }
-                F.with(Rc::clone)
-            },
-            s_470.clone(),
-        ) && ((dots__s(ev, s_470.clone()) == tauto_rt::nat::Nat::from_u64(0_u64))
-            && implies__s(
+        (clean_14__s(ev, s_569.clone())
+            && (all_bytes__s(
                 ev,
-                special_469,
-                all_bytes__s(
+                {
+                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_570 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , (b_570 . clone () == tauto_rt :: nat :: Nat :: from_u64 (47_u64))) }) ; }
+                    F.with(Rc::clone)
+                },
+                s_569.clone(),
+            ) && ((dots__s(ev, s_569.clone()) == tauto_rt::nat::Nat::from_u64(0_u64))
+                && implies__s(
                     ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_473 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , (b_473 . clone () == tauto_rt :: nat :: Nat :: from_u64 (92_u64))) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    s_470,
-                ),
-            ))))
+                    special_568,
+                    all_bytes__s(
+                        ev,
+                        {
+                            thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_571 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , (b_571 . clone () == tauto_rt :: nat :: Nat :: from_u64 (92_u64))) }) ; }
+                            F.with(Rc::clone)
+                        },
+                        s_569,
+                    ),
+                ))))
     }
     #[doc = " segs_ok"]
     pub fn segs_ok__s(
         ev: &Ev<'_>,
-        mut special_474: bool,
-        mut ss_475: List<List<tauto_rt::nat::Nat>>,
+        mut special_572: bool,
+        mut ss_573: List<List<tauto_rt::nat::Nat>>,
     ) -> bool {
-        match (ss_475) {
+        match (ss_573) {
             List::Nil => true,
-            List::Cons(mut s_476, b_t54) => {
-                let mut rest_477 = b_t54;
-                (seg_ok__s(ev, special_474, s_476)
-                    && segs_ok__s(ev, special_474, tauto_rt::unrc(rest_477)))
+            List::Cons(mut s_574, b_t73) => {
+                let mut rest_575 = b_t73;
+                (seg_ok__s(ev, special_572, s_574)
+                    && segs_ok__s(ev, special_572, tauto_rt::unrc(rest_575)))
             }
         }
     }
     #[doc = " host_set"]
-    pub fn host_set__s(ev: &Ev<'_>, mut b_478: tauto_rt::nat::Nat) -> bool {
-        (c0_control_set__s(ev, b_478.clone()) || forbidden_host__s(ev, b_478))
+    pub fn host_set__s(ev: &Ev<'_>, mut b_576: tauto_rt::nat::Nat) -> bool {
+        (c0_control_set__s(ev, b_576.clone()) || forbidden_host__s(ev, b_576))
     }
     #[doc = " host_ok"]
     pub fn host_ok__s(
         ev: &Ev<'_>,
-        mut special_479: bool,
-        mut h_480: List<tauto_rt::nat::Nat>,
+        mut special_577: bool,
+        mut h_578: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        (clean__s(
-            ev,
-            {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_481 : tauto_rt :: nat :: Nat | -> bool { host_set__s (ev , extract_arg_0_481 . clone ()) }) ; }
-                F.with(Rc::clone)
-            },
-            h_480.clone(),
-        ) && opt_list_is__s(ev, host_of__s(ev, special_479, h_480.clone()), h_480))
+        (clean_15__s(ev, h_578.clone())
+            && opt_list_is__s(ev, host_of__s(ev, special_577, h_578.clone()), h_578))
     }
     #[doc = " not_default"]
     pub fn not_default__s(
         ev: &Ev<'_>,
-        mut default_482: Option<tauto_rt::nat::Nat>,
-        mut n_483: tauto_rt::nat::Nat,
+        mut default_579: Option<tauto_rt::nat::Nat>,
+        mut n_580: tauto_rt::nat::Nat,
     ) -> bool {
-        match (default_482) {
+        match (default_579) {
             None => true,
-            Some(mut d_484) => not__s(ev, (n_483 == d_484)),
+            Some(mut d_581) => not__s(ev, (n_580 == d_581)),
         }
     }
     #[doc = " port_ok"]
     pub fn port_ok__s(
         ev: &Ev<'_>,
-        mut default_485: Option<tauto_rt::nat::Nat>,
-        mut o_486: Option<tauto_rt::nat::Nat>,
+        mut default_582: Option<tauto_rt::nat::Nat>,
+        mut o_583: Option<tauto_rt::nat::Nat>,
     ) -> bool {
-        match (o_486) {
+        match (o_583) {
             None => true,
-            Some(mut n_487) => {
-                ((n_487.clone() < tauto_rt::nat::Nat::from_u64(65536_u64))
-                    && not_default__s(ev, default_485, n_487))
+            Some(mut n_584) => {
+                ((n_584.clone() < tauto_rt::nat::Nat::from_u64(65536_u64))
+                    && not_default__s(ev, default_582, n_584))
             }
         }
     }
     #[doc = " cred_ok"]
     pub fn cred_ok__s(
         ev: &Ev<'_>,
-        mut user_488: List<tauto_rt::nat::Nat>,
-        mut pass_489: List<tauto_rt::nat::Nat>,
+        mut user_585: List<tauto_rt::nat::Nat>,
+        mut pass_586: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        (clean__s(
-            ev,
-            {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_490 : tauto_rt :: nat :: Nat | -> bool { userinfo_set__s (ev , extract_arg_0_490 . clone ()) }) ; }
-                F.with(Rc::clone)
-            },
-            user_488,
-        ) && clean__s(
-            ev,
-            {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_491 : tauto_rt :: nat :: Nat | -> bool { userinfo_set__s (ev , extract_arg_0_491 . clone ()) }) ; }
-                F.with(Rc::clone)
-            },
-            pass_489,
-        ))
+        (clean_16__s(ev, user_585) && clean_17__s(ev, pass_586))
     }
     #[doc = " cred_empty"]
     pub fn cred_empty__s(
         ev: &Ev<'_>,
-        mut user_492: List<tauto_rt::nat::Nat>,
-        mut pass_493: List<tauto_rt::nat::Nat>,
+        mut user_587: List<tauto_rt::nat::Nat>,
+        mut pass_588: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        (is_empty__s(ev, user_492) && is_empty__s(ev, pass_493))
+        (is_empty__s(ev, user_587) && is_empty__s(ev, pass_588))
     }
     #[doc = " is_none"]
-    pub fn is_none__s(ev: &Ev<'_>, mut o_494: Option<tauto_rt::nat::Nat>) -> bool {
-        match (o_494) {
+    pub fn is_none__s(ev: &Ev<'_>, mut o_589: Option<tauto_rt::nat::Nat>) -> bool {
+        match (o_589) {
             None => true,
-            Some(mut n_495) => false,
+            Some(mut n_590) => false,
         }
     }
     #[doc = " cred_has_host"]
     pub fn cred_has_host__s(
         ev: &Ev<'_>,
-        mut user_496: List<tauto_rt::nat::Nat>,
-        mut pass_497: List<tauto_rt::nat::Nat>,
-        mut host_498: List<tauto_rt::nat::Nat>,
-        mut port_499: Option<tauto_rt::nat::Nat>,
+        mut user_591: List<tauto_rt::nat::Nat>,
+        mut pass_592: List<tauto_rt::nat::Nat>,
+        mut host_593: List<tauto_rt::nat::Nat>,
+        mut port_594: Option<tauto_rt::nat::Nat>,
     ) -> bool {
         implies__s(
             ev,
-            (not__s(ev, cred_empty__s(ev, user_496, pass_497))
-                || not__s(ev, is_none__s(ev, port_499))),
-            not__s(ev, is_empty__s(ev, host_498)),
+            (not__s(ev, cred_empty__s(ev, user_591, pass_592))
+                || not__s(ev, is_none__s(ev, port_594))),
+            not__s(ev, is_empty__s(ev, host_593)),
         )
     }
     #[doc = " auth_fields_ok"]
     pub fn auth_fields_ok__s(
         ev: &Ev<'_>,
-        mut special_500: bool,
-        mut default_501: Option<tauto_rt::nat::Nat>,
-        mut user_502: List<tauto_rt::nat::Nat>,
-        mut pass_503: List<tauto_rt::nat::Nat>,
-        mut host_504: List<tauto_rt::nat::Nat>,
-        mut port_505: Option<tauto_rt::nat::Nat>,
+        mut special_595: bool,
+        mut default_596: Option<tauto_rt::nat::Nat>,
+        mut user_597: List<tauto_rt::nat::Nat>,
+        mut pass_598: List<tauto_rt::nat::Nat>,
+        mut host_599: List<tauto_rt::nat::Nat>,
+        mut port_600: Option<tauto_rt::nat::Nat>,
     ) -> bool {
-        (cred_ok__s(ev, user_502.clone(), pass_503.clone())
-            && (host_ok__s(ev, special_500, host_504.clone())
-                && (port_ok__s(ev, default_501, port_505.clone())
-                    && cred_has_host__s(ev, user_502, pass_503, host_504, port_505))))
+        (cred_ok__s(ev, user_597.clone(), pass_598.clone())
+            && (host_ok__s(ev, special_595, host_599.clone())
+                && (port_ok__s(ev, default_596, port_600.clone())
+                    && cred_has_host__s(ev, user_597, pass_598, host_599, port_600))))
     }
     #[doc = " auth_ok"]
     pub fn auth_ok__s(
         ev: &Ev<'_>,
-        mut special_506: bool,
-        mut default_507: Option<tauto_rt::nat::Nat>,
-        mut a_508: Authority,
+        mut special_601: bool,
+        mut default_602: Option<tauto_rt::nat::Nat>,
+        mut a_603: Authority,
     ) -> bool {
-        match (a_508) {
+        match (a_603) {
             Authority {
-                user: mut user_509,
-                pass: mut pass_510,
-                host: mut host_511,
-                port: mut port_512,
+                user: mut user_604,
+                pass: mut pass_605,
+                host: mut host_606,
+                port: mut port_607,
             } => auth_fields_ok__s(
                 ev,
-                special_506,
-                default_507,
-                user_509,
-                pass_510,
-                host_511,
-                port_512,
+                special_601,
+                default_602,
+                user_604,
+                pass_605,
+                host_606,
+                port_607,
             ),
         }
     }
     #[doc = " opaque_ok"]
-    pub fn opaque_ok__s(ev: &Ev<'_>, mut o_513: List<tauto_rt::nat::Nat>) -> bool {
-        (clean__s(
-            ev,
-            {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_514 : tauto_rt :: nat :: Nat | -> bool { c0_control_set__s (ev , extract_arg_0_514 . clone ()) }) ; }
-                F.with(Rc::clone)
-            },
-            o_513.clone(),
-        ) && (all_bytes__s(
-            ev,
-            {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_515 : tauto_rt :: nat :: Nat | -> bool { (not__s (ev , (b_515 . clone () == tauto_rt :: nat :: Nat :: from_u64 (35_u64))) && not__s (ev , (b_515 . clone () == tauto_rt :: nat :: Nat :: from_u64 (63_u64)))) }) ; }
-                F.with(Rc::clone)
-            },
-            o_513.clone(),
-        ) && (not__s(
-            ev,
-            starts_with__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), o_513.clone()),
-        ) && not__s(ev, ends_with_space__s(ev, o_513)))))
+    pub fn opaque_ok__s(ev: &Ev<'_>, mut o_608: List<tauto_rt::nat::Nat>) -> bool {
+        (clean_18__s(ev, o_608.clone())
+            && (all_bytes__s(
+                ev,
+                {
+                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_609 : tauto_rt :: nat :: Nat | -> bool { (not__s (ev , (b_609 . clone () == tauto_rt :: nat :: Nat :: from_u64 (35_u64))) && not__s (ev , (b_609 . clone () == tauto_rt :: nat :: Nat :: from_u64 (63_u64)))) }) ; }
+                    F.with(Rc::clone)
+                },
+                o_608.clone(),
+            ) && (not__s(
+                ev,
+                starts_with__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), o_608.clone()),
+            ) && not__s(ev, ends_with_space__s(ev, o_608)))))
     }
     #[doc = " path_ok"]
     pub fn path_ok__s(
         ev: &Ev<'_>,
-        mut special_516: bool,
-        mut has_auth_517: bool,
-        mut p_518: UrlPath,
+        mut special_610: bool,
+        mut has_auth_611: bool,
+        mut p_612: UrlPath,
     ) -> bool {
-        match (p_518) {
-            UrlPath::Opaque(mut o_519) => (not__s(ev, has_auth_517) && opaque_ok__s(ev, o_519)),
-            UrlPath::Segments(mut ss_520) => {
-                (segs_ok__s(ev, special_516, ss_520.clone())
+        match (p_612) {
+            UrlPath::Opaque(mut o_613) => (not__s(ev, has_auth_611) && opaque_ok__s(ev, o_613)),
+            UrlPath::Segments(mut ss_614) => {
+                (segs_ok__s(ev, special_610, ss_614.clone())
                     && implies__s(
                         ev,
-                        (special_516 || not__s(ev, has_auth_517)),
-                        not__s(ev, is_empty_list__s(ev, ss_520)),
+                        (special_610 || not__s(ev, has_auth_611)),
+                        not__s(ev, is_empty_list__s(ev, ss_614)),
                     ))
             }
         }
@@ -5595,385 +5687,104 @@ pub mod generated {
     #[doc = " query_ok"]
     pub fn query_ok__s(
         ev: &Ev<'_>,
-        mut special_521: bool,
-        mut q_522: Option<List<tauto_rt::nat::Nat>>,
+        mut special_615: bool,
+        mut q_616: Option<List<tauto_rt::nat::Nat>>,
     ) -> bool {
-        match (q_522) {
+        match (q_616) {
             None => true,
-            Some(mut x_523) => match (special_521) {
-                true => clean__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_524 : tauto_rt :: nat :: Nat | -> bool { special_query_set__s (ev , extract_arg_0_524 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    x_523,
-                ),
-                false => clean__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_525 : tauto_rt :: nat :: Nat | -> bool { query_set__s (ev , extract_arg_0_525 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    x_523,
-                ),
-                _ => tauto_rt::no_arm(LM160628),
+            Some(mut x_617) => match (special_615) {
+                true => clean_19__s(ev, x_617),
+                false => clean_20__s(ev, x_617),
+                _ => tauto_rt::no_arm(LM74084),
             },
         }
     }
     #[doc = " fragment_ok"]
-    pub fn fragment_ok__s(ev: &Ev<'_>, mut f_526: Option<List<tauto_rt::nat::Nat>>) -> bool {
-        match (f_526) {
+    pub fn fragment_ok__s(ev: &Ev<'_>, mut f_618: Option<List<tauto_rt::nat::Nat>>) -> bool {
+        match (f_618) {
             None => true,
-            Some(mut x_527) => clean__s(
-                ev,
-                {
-                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_528 : tauto_rt :: nat :: Nat | -> bool { fragment_set__s (ev , extract_arg_0_528 . clone ()) }) ; }
-                    F.with(Rc::clone)
-                },
-                x_527,
-            ),
+            Some(mut x_619) => clean_21__s(ev, x_619),
         }
     }
     #[doc = " auth_opt_ok"]
     pub fn auth_opt_ok__s(
         ev: &Ev<'_>,
-        mut special_529: bool,
-        mut default_530: Option<tauto_rt::nat::Nat>,
-        mut a_531: Option<Authority>,
+        mut special_620: bool,
+        mut default_621: Option<tauto_rt::nat::Nat>,
+        mut a_622: Option<Authority>,
     ) -> bool {
-        match (a_531) {
-            None => not__s(ev, special_529),
-            Some(mut x_532) => auth_ok__s(ev, special_529, default_530, x_532),
+        match (a_622) {
+            None => not__s(ev, special_620),
+            Some(mut x_623) => auth_ok__s(ev, special_620, default_621, x_623),
         }
     }
     #[doc = " is_file"]
-    pub fn is_file__s(ev: &Ev<'_>, mut s_533: List<tauto_rt::nat::Nat>) -> bool {
-        match (scheme_kind__s(ev, s_533)) {
-            SchemeKind::Special(mut d_534) => false,
+    pub fn is_file__s(ev: &Ev<'_>, mut s_624: List<tauto_rt::nat::Nat>) -> bool {
+        match (scheme_kind__s(ev, s_624)) {
+            SchemeKind::Special(mut d_625) => false,
             SchemeKind::File => true,
             SchemeKind::NotSpecial => false,
         }
     }
     #[doc = " is_some_auth"]
-    pub fn is_some_auth__s(ev: &Ev<'_>, mut a_535: Option<Authority>) -> bool {
-        match (a_535) {
+    pub fn is_some_auth__s(ev: &Ev<'_>, mut a_626: Option<Authority>) -> bool {
+        match (a_626) {
             None => false,
-            Some(mut x_536) => true,
+            Some(mut x_627) => true,
         }
     }
     #[doc = " url_valid"]
-    pub fn url_valid__s(ev: &Ev<'_>, mut u_537: Url) -> bool {
-        match (u_537) {
+    pub fn url_valid__s(ev: &Ev<'_>, mut u_628: Url) -> bool {
+        match (u_628) {
             Url {
-                scheme: mut s_538,
-                auth: mut a_539,
-                path: mut p_540,
-                query: mut q_541,
-                fragment: mut f_542,
+                scheme: mut s_629,
+                auth: mut a_630,
+                path: mut p_631,
+                query: mut q_632,
+                fragment: mut f_633,
             } => {
-                (scheme_ok__s(ev, s_538.clone())
-                    && (not__s(ev, is_file__s(ev, s_538.clone()))
+                (scheme_ok__s(ev, s_629.clone())
+                    && (not__s(ev, is_file__s(ev, s_629.clone()))
                         && (auth_opt_ok__s(
                             ev,
-                            is_special__s(ev, s_538.clone()),
-                            default_port__s(ev, s_538.clone()),
-                            a_539.clone(),
+                            is_special__s(ev, s_629.clone()),
+                            default_port__s(ev, s_629.clone()),
+                            a_630.clone(),
                         ) && (path_ok__s(
                             ev,
-                            is_special__s(ev, s_538.clone()),
-                            is_some_auth__s(ev, a_539),
-                            p_540,
-                        ) && (query_ok__s(ev, is_special__s(ev, s_538), q_541)
-                            && fragment_ok__s(ev, f_542))))))
+                            is_special__s(ev, s_629.clone()),
+                            is_some_auth__s(ev, a_630),
+                            p_631,
+                        ) && (query_ok__s(ev, is_special__s(ev, s_629), q_632)
+                            && fragment_ok__s(ev, f_633))))))
             }
-        }
-    }
-    #[doc = " opt_clean"]
-    pub fn opt_clean__s(
-        ev: &Ev<'_>,
-        mut set_543: Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool>,
-        mut o_544: Option<List<tauto_rt::nat::Nat>>,
-    ) -> bool {
-        match (o_544) {
-            None => true,
-            Some(mut x_545) => clean__s(ev, set_543, x_545),
-        }
-    }
-    #[doc = " port_check"]
-    pub fn port_check__s(
-        ev: &Ev<'_>,
-        mut l_546: List<tauto_rt::nat::Nat>,
-        mut n_547: tauto_rt::nat::Nat,
-    ) -> bool {
-        match (l_546.clone()) {
-            List::Nil => false,
-            List::Cons(mut b_548, b_t55) => {
-                let mut t_549 = b_t55;
-                (opt_is__s(
-                    ev,
-                    digits_value__s(ev, tauto_rt::nat::Nat::from_u64(0_u64), l_546.clone()),
-                    n_547,
-                ) && all_bytes__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_550 : tauto_rt :: nat :: Nat | -> bool { is_digit__s (ev , extract_arg_0_550 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    l_546,
-                ))
-            }
-        }
-    }
-    #[doc = " opt_snoc"]
-    pub fn opt_snoc__s(
-        ev: &Ev<'_>,
-        mut o_551: Option<tauto_rt::nat::Nat>,
-        mut c_552: tauto_rt::nat::Nat,
-    ) -> Option<tauto_rt::nat::Nat> {
-        match (o_551) {
-            None => None,
-            Some(mut m_553) => Some(tauto_rt::int::add_nat(
-                tauto_rt::int::mul_nat(m_553, tauto_rt::nat::Nat::from_u64(10_u64), LM1073743246),
-                extract_nat_sub__s(ev, c_552, tauto_rt::nat::Nat::from_u64(48_u64)),
-                LM1073743250,
-            )),
-        }
-    }
-    #[doc = " port_byte"]
-    pub fn port_byte__s(ev: &Ev<'_>, mut b_554: tauto_rt::nat::Nat) -> bool {
-        ((b_554.clone() < tauto_rt::nat::Nat::from_u64(59_u64))
-            && ((b_554.clone() == tauto_rt::nat::Nat::from_u64(58_u64)) || is_digit__s(ev, b_554)))
-    }
-    #[doc = " auth_rest"]
-    pub fn auth_rest__s(
-        ev: &Ev<'_>,
-        mut sp_555: bool,
-        mut d_556: Option<tauto_rt::nat::Nat>,
-        mut u_557: List<tauto_rt::nat::Nat>,
-        mut p_558: List<tauto_rt::nat::Nat>,
-        mut h_559: List<tauto_rt::nat::Nat>,
-        mut pt_560: Option<tauto_rt::nat::Nat>,
-    ) -> bool {
-        (host_ok__s(ev, sp_555, h_559.clone())
-            && (port_ok__s(ev, d_556, pt_560.clone())
-                && cred_has_host__s(ev, u_557, p_558, h_559, pt_560)))
-    }
-    #[doc = " hbyte"]
-    pub fn hbyte__s(ev: &Ev<'_>, mut b_561: tauto_rt::nat::Nat) -> bool {
-        (ptbyte__s(ev, b_561.clone())
-            && (not__s(ev, (b_561.clone() == tauto_rt::nat::Nat::from_u64(35_u64)))
-                && not__s(ev, (b_561 == tauto_rt::nat::Nat::from_u64(63_u64)))))
-    }
-    #[doc = " ptbyte"]
-    pub fn ptbyte__s(ev: &Ev<'_>, mut b_562: tauto_rt::nat::Nat) -> bool {
-        ((tauto_rt::nat::Nat::from_u64(32_u64) < b_562.clone())
-            && (b_562 < tauto_rt::nat::Nat::from_u64(127_u64)))
-    }
-    #[doc = " hbyte_sp"]
-    pub fn hbyte_sp__s(ev: &Ev<'_>, mut b_563: tauto_rt::nat::Nat) -> bool {
-        (hbyte__s(ev, b_563.clone()) && not__s(ev, (b_563 == tauto_rt::nat::Nat::from_u64(92_u64))))
-    }
-    #[doc = " abyte"]
-    pub fn abyte__s(ev: &Ev<'_>, mut b_564: tauto_rt::nat::Nat) -> bool {
-        (hbyte_sp__s(ev, b_564.clone())
-            && not__s(ev, (b_564 == tauto_rt::nat::Nat::from_u64(47_u64))))
-    }
-    #[doc = " opaque_edge"]
-    pub fn opaque_edge__s(ev: &Ev<'_>, mut o_565: List<tauto_rt::nat::Nat>) -> bool {
-        (not__s(
-            ev,
-            starts_with__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), o_565.clone()),
-        ) && not__s(ev, ends_with_space__s(ev, o_565)))
-    }
-    #[doc = " opaque_inner"]
-    pub fn opaque_inner__s(ev: &Ev<'_>, mut o_566: List<tauto_rt::nat::Nat>) -> bool {
-        all_bytes__s(
-            ev,
-            {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_567 : tauto_rt :: nat :: Nat | -> bool { (not__s (ev , (b_567 . clone () == tauto_rt :: nat :: Nat :: from_u64 (35_u64))) && not__s (ev , (b_567 . clone () == tauto_rt :: nat :: Nat :: from_u64 (63_u64)))) }) ; }
-                F.with(Rc::clone)
-            },
-            o_566,
-        )
-    }
-    #[doc = " opaque_rest"]
-    pub fn opaque_rest__s(ev: &Ev<'_>, mut o_568: List<tauto_rt::nat::Nat>) -> bool {
-        (opaque_inner__s(ev, o_568.clone()) && opaque_edge__s(ev, o_568))
-    }
-    #[doc = " v_qf"]
-    pub fn v_qf__s(
-        ev: &Ev<'_>,
-        mut sp_569: bool,
-        mut q_570: Option<List<tauto_rt::nat::Nat>>,
-        mut f_571: Option<List<tauto_rt::nat::Nat>>,
-    ) -> bool {
-        (query_ok__s(ev, sp_569, q_570) && fragment_ok__s(ev, f_571))
-    }
-    #[doc = " v_pqf"]
-    pub fn v_pqf__s(
-        ev: &Ev<'_>,
-        mut sp_572: bool,
-        mut a_573: Option<Authority>,
-        mut p_574: UrlPath,
-        mut q_575: Option<List<tauto_rt::nat::Nat>>,
-        mut f_576: Option<List<tauto_rt::nat::Nat>>,
-    ) -> bool {
-        (path_ok__s(ev, sp_572, is_some_auth__s(ev, a_573), p_574)
-            && v_qf__s(ev, sp_572, q_575, f_576))
-    }
-    #[doc = " v_apqf"]
-    pub fn v_apqf__s(
-        ev: &Ev<'_>,
-        mut sp_577: bool,
-        mut dp_578: Option<tauto_rt::nat::Nat>,
-        mut a_579: Option<Authority>,
-        mut p_580: UrlPath,
-        mut q_581: Option<List<tauto_rt::nat::Nat>>,
-        mut f_582: Option<List<tauto_rt::nat::Nat>>,
-    ) -> bool {
-        (auth_opt_ok__s(ev, sp_577, dp_578, a_579.clone())
-            && v_pqf__s(ev, sp_577, a_579, p_580, q_581, f_582))
-    }
-    #[doc = " rest_of"]
-    pub fn rest_of__s(
-        ev: &Ev<'_>,
-        mut a_583: Option<Authority>,
-        mut p_584: UrlPath,
-        mut q_585: Option<List<tauto_rt::nat::Nat>>,
-        mut f_586: Option<List<tauto_rt::nat::Nat>>,
-    ) -> List<tauto_rt::nat::Nat> {
-        List__append__s::<tauto_rt::nat::Nat>(
-            ev,
-            &(hier_part__s(ev, a_583, p_584)),
-            List__append__s::<tauto_rt::nat::Nat>(
-                ev,
-                &(opt_bytes__s(ev, tauto_rt::nat::Nat::from_u64(63_u64), q_585)),
-                opt_bytes__s(ev, tauto_rt::nat::Nat::from_u64(35_u64), f_586),
-            ),
-        )
-    }
-    #[doc = " v_after"]
-    pub fn v_after__s(
-        ev: &Ev<'_>,
-        mut s_587: List<tauto_rt::nat::Nat>,
-        mut a_588: Option<Authority>,
-        mut p_589: UrlPath,
-        mut q_590: Option<List<tauto_rt::nat::Nat>>,
-        mut f_591: Option<List<tauto_rt::nat::Nat>>,
-    ) -> bool {
-        (not__s(ev, is_file__s(ev, s_587.clone()))
-            && v_apqf__s(
-                ev,
-                is_special__s(ev, s_587.clone()),
-                default_port__s(ev, s_587),
-                a_588,
-                p_589,
-                q_590,
-                f_591,
-            ))
-    }
-    #[doc = " domain_rest"]
-    pub fn domain_rest__s(ev: &Ev<'_>, mut l_592: List<tauto_rt::nat::Nat>) -> bool {
-        (not__s(
-            ev,
-            List__any__s::<List<tauto_rt::nat::Nat>>(
-                ev,
-                {
-                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , List < tauto_rt :: nat :: Nat >) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_593 : List < tauto_rt :: nat :: Nat > | -> bool { is_ace__s (ev , extract_arg_0_593 . clone ()) }) ; }
-                    F.with(Rc::clone)
-                },
-                &(split_all__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), l_592.clone())),
-            ),
-        ) && (not__s(
-            ev,
-            is_number__s(
-                ev,
-                last_label__s(
-                    ev,
-                    split_all__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), l_592.clone()),
-                ),
-            ),
-        ) || ipv4_canonical__s(
-            ev,
-            split_all__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), l_592),
-        )))
-    }
-    #[doc = " domain_bytes"]
-    pub fn domain_bytes__s(ev: &Ev<'_>, mut l_594: List<tauto_rt::nat::Nat>) -> bool {
-        (all_bytes__s(
-            ev,
-            {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_595 : tauto_rt :: nat :: Nat | -> bool { domain_byte__s (ev , extract_arg_0_595 . clone ()) }) ; }
-                F.with(Rc::clone)
-            },
-            l_594.clone(),
-        ) && domain_rest__s(ev, l_594))
-    }
-    #[doc = " not_forbidden"]
-    pub fn not_forbidden__s(ev: &Ev<'_>, mut b_596: tauto_rt::nat::Nat) -> bool {
-        not__s(ev, forbidden_host__s(ev, b_596))
-    }
-    #[doc = " pfst"]
-    pub fn pfst__s(
-        ev: &Ev<'_>,
-        mut p_597: (List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>),
-    ) -> List<tauto_rt::nat::Nat> {
-        p_597.0.clone()
-    }
-    #[doc = " psnd"]
-    pub fn psnd__s(
-        ev: &Ev<'_>,
-        mut p_598: (List<tauto_rt::nat::Nat>, List<tauto_rt::nat::Nat>),
-    ) -> List<tauto_rt::nat::Nat> {
-        p_598.1.clone()
-    }
-    #[doc = " any_byte"]
-    pub fn any_byte__s(ev: &Ev<'_>, mut b_599: tauto_rt::nat::Nat) -> bool {
-        true
-    }
-    #[doc = " match_qset"]
-    pub fn match_qset__s(
-        ev: &Ev<'_>,
-        mut sp_600: bool,
-    ) -> Rc<dyn Fn(&Ev<'_>, tauto_rt::nat::Nat) -> bool> {
-        match (sp_600) {
-            true => {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_601 : tauto_rt :: nat :: Nat | -> bool { special_query_set__s (ev , extract_arg_0_601 . clone ()) }) ; }
-                F.with(Rc::clone)
-            }
-            false => {
-                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_602 : tauto_rt :: nat :: Nat | -> bool { query_set__s (ev , extract_arg_0_602 . clone ()) }) ; }
-                F.with(Rc::clone)
-            }
-            _ => tauto_rt::no_arm(LM292616),
         }
     }
     #[doc = " tb_strip"]
     pub fn tb_strip__s(
         ev: &Ev<'_>,
-        mut p_603: List<tauto_rt::nat::Nat>,
-        mut l_604: List<tauto_rt::nat::Nat>,
+        mut p_634: List<tauto_rt::nat::Nat>,
+        mut l_635: List<tauto_rt::nat::Nat>,
     ) -> Option<List<tauto_rt::nat::Nat>> {
         'tauto_tail: loop {
-            break match (p_603) {
-                List::Nil => Some(l_604),
-                List::Cons(mut x_605, b_t56) => {
-                    let mut ps_606 = b_t56;
-                    match (l_604) {
+            break match (p_634) {
+                List::Nil => Some(l_635),
+                List::Cons(mut x_636, b_t74) => {
+                    let mut ps_637 = b_t74;
+                    match (l_635) {
                         List::Nil => None,
-                        List::Cons(mut y_607, b_t57) => {
-                            let mut ls_608 = b_t57;
-                            match (x_605 == y_607) {
+                        List::Cons(mut y_638, b_t75) => {
+                            let mut ls_639 = b_t75;
+                            match (x_636 == y_638) {
                                 true => {
-                                    let tail0 = tauto_rt::unrc(ps_606);
-                                    let tail1 = tauto_rt::unrc(ls_608);
-                                    p_603 = tail0;
-                                    l_604 = tail1;
+                                    let tail0 = tauto_rt::unrc(ps_637);
+                                    let tail1 = tauto_rt::unrc(ls_639);
+                                    p_634 = tail0;
+                                    l_635 = tail1;
                                     continue 'tauto_tail;
                                 }
                                 false => None,
-                                _ => tauto_rt::no_arm(LM308229),
+                                _ => tauto_rt::no_arm(LM75460),
                             }
                         }
                     }
@@ -5984,409 +5795,400 @@ pub mod generated {
     #[doc = " tb_begins"]
     pub fn tb_begins__s(
         ev: &Ev<'_>,
-        mut p_609: List<tauto_rt::nat::Nat>,
-        mut l_610: List<tauto_rt::nat::Nat>,
+        mut p_640: List<tauto_rt::nat::Nat>,
+        mut l_641: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        match (tb_strip__s(ev, p_609, l_610)) {
+        match (tb_strip__s(ev, p_640, l_641)) {
             None => false,
-            Some(mut rest_611) => true,
+            Some(mut rest_642) => true,
         }
     }
     #[doc = " tb_ends"]
     pub fn tb_ends__s(
         ev: &Ev<'_>,
-        mut p_612: List<tauto_rt::nat::Nat>,
-        mut l_613: List<tauto_rt::nat::Nat>,
+        mut p_643: List<tauto_rt::nat::Nat>,
+        mut l_644: List<tauto_rt::nat::Nat>,
     ) -> bool {
         tb_begins__s(
             ev,
-            List__reverse__s::<tauto_rt::nat::Nat>(ev, &p_612),
-            List__reverse__s::<tauto_rt::nat::Nat>(ev, &l_613),
+            List__reverse__s::<tauto_rt::nat::Nat>(ev, p_643),
+            List__reverse__s::<tauto_rt::nat::Nat>(ev, l_644),
         )
     }
     #[doc = " tb_infix"]
     pub fn tb_infix__s(
         ev: &Ev<'_>,
-        mut p_614: List<tauto_rt::nat::Nat>,
-        mut l_615: List<tauto_rt::nat::Nat>,
+        mut p_645: List<tauto_rt::nat::Nat>,
+        mut l_646: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        match (l_615.clone()) {
-            List::Nil => is_empty__s(ev, p_614),
-            List::Cons(mut b_616, b_t58) => {
-                let mut t_617 = b_t58;
-                (tb_begins__s(ev, p_614.clone(), l_615)
-                    || tb_infix__s(ev, p_614, tauto_rt::unrc(t_617)))
+        match (l_646.clone()) {
+            List::Nil => is_empty__s(ev, p_645),
+            List::Cons(mut b_647, b_t76) => {
+                let mut t_648 = b_t76;
+                (tb_begins__s(ev, p_645.clone(), l_646)
+                    || tb_infix__s(ev, p_645, tauto_rt::unrc(t_648)))
             }
         }
     }
     #[doc = " tb_has_byte"]
     pub fn tb_has_byte__s(
         ev: &Ev<'_>,
-        mut c_618: tauto_rt::nat::Nat,
-        mut l_619: List<tauto_rt::nat::Nat>,
+        mut c_649: tauto_rt::nat::Nat,
+        mut l_650: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        match (l_619) {
+        match (l_650) {
             List::Nil => false,
-            List::Cons(mut b_620, b_t59) => {
-                let mut t_621 = b_t59;
-                ((b_620 == c_618.clone()) || tb_has_byte__s(ev, c_618, tauto_rt::unrc(t_621)))
+            List::Cons(mut b_651, b_t77) => {
+                let mut t_652 = b_t77;
+                ((b_651 == c_649.clone()) || tb_has_byte__s(ev, c_649, tauto_rt::unrc(t_652)))
             }
         }
     }
     #[doc = " tb_some_piece"]
     pub fn tb_some_piece__s(
         ev: &Ev<'_>,
-        mut p_622: Rc<dyn Fn(&Ev<'_>, List<tauto_rt::nat::Nat>) -> bool>,
-        mut ps_623: List<List<tauto_rt::nat::Nat>>,
+        mut p_653: Rc<dyn Fn(&Ev<'_>, List<tauto_rt::nat::Nat>) -> bool>,
+        mut ps_654: List<List<tauto_rt::nat::Nat>>,
     ) -> bool {
-        match (ps_623) {
+        match (ps_654) {
             List::Nil => false,
-            List::Cons(mut x_624, b_t60) => {
-                let mut rest_625 = b_t60;
-                (p_622(ev, x_624) || tb_some_piece__s(ev, p_622, tauto_rt::unrc(rest_625)))
+            List::Cons(mut x_655, b_t78) => {
+                let mut rest_656 = b_t78;
+                (p_653(ev, x_655) || tb_some_piece__s(ev, p_653, tauto_rt::unrc(rest_656)))
+            }
+        }
+    }
+    #[doc = " tb_some_piece@24"]
+    pub fn tb_some_piece_24__s(ev: &Ev<'_>, mut ps_657: List<List<tauto_rt::nat::Nat>>) -> bool {
+        match (ps_657) {
+            List::Nil => false,
+            List::Cons(mut x_658, b_t79) => {
+                let mut rest_659 = b_t79;
+                (tb_ref_component_bad__s(ev, x_658)
+                    || tb_some_piece_24__s(ev, tauto_rt::unrc(rest_659)))
+            }
+        }
+    }
+    #[doc = " tb_some_piece@29"]
+    pub fn tb_some_piece_29__s(ev: &Ev<'_>, mut ps_660: List<List<tauto_rt::nat::Nat>>) -> bool {
+        match (ps_660) {
+            List::Nil => false,
+            List::Cons(mut x_661, b_t80) => {
+                let mut rest_662 = b_t80;
+                (tb_path_component_bad__s(ev, x_661)
+                    || tb_some_piece_29__s(ev, tauto_rt::unrc(rest_662)))
             }
         }
     }
     #[doc = " tb_at_most"]
     pub fn tb_at_most__s(
         ev: &Ev<'_>,
-        mut n_626: tauto_rt::nat::Nat,
-        mut l_627: List<tauto_rt::nat::Nat>,
+        mut n_663: tauto_rt::nat::Nat,
+        mut l_664: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        (List__length__s::<tauto_rt::nat::Nat>(ev, &l_627) <= n_626)
+        (List__length__s::<tauto_rt::nat::Nat>(ev, &l_664) <= n_663)
     }
     #[doc = " tb_plain_byte"]
-    pub fn tb_plain_byte__s(ev: &Ev<'_>, mut b_628: tauto_rt::nat::Nat) -> bool {
-        ((tauto_rt::nat::Nat::from_u64(33_u64) <= b_628.clone())
-            && ((b_628.clone() <= tauto_rt::nat::Nat::from_u64(126_u64))
-                && (not__s(ev, (b_628.clone() == tauto_rt::nat::Nat::from_u64(34_u64)))
-                    && not__s(ev, (b_628 == tauto_rt::nat::Nat::from_u64(92_u64))))))
+    pub fn tb_plain_byte__s(ev: &Ev<'_>, mut b_665: tauto_rt::nat::Nat) -> bool {
+        ((tauto_rt::nat::Nat::from_u64(33_u64) <= b_665.clone())
+            && ((b_665.clone() <= tauto_rt::nat::Nat::from_u64(126_u64))
+                && (not__s(ev, (b_665.clone() == tauto_rt::nat::Nat::from_u64(34_u64)))
+                    && not__s(ev, (b_665 == tauto_rt::nat::Nat::from_u64(92_u64))))))
     }
     #[doc = " tb_lower_hex"]
-    pub fn tb_lower_hex__s(ev: &Ev<'_>, mut b_629: tauto_rt::nat::Nat) -> bool {
-        (is_digit__s(ev, b_629.clone())
-            || ((tauto_rt::nat::Nat::from_u64(97_u64) <= b_629.clone())
-                && (b_629 <= tauto_rt::nat::Nat::from_u64(102_u64))))
+    pub fn tb_lower_hex__s(ev: &Ev<'_>, mut b_666: tauto_rt::nat::Nat) -> bool {
+        (is_digit__s(ev, b_666.clone())
+            || ((tauto_rt::nat::Nat::from_u64(97_u64) <= b_666.clone())
+                && (b_666 <= tauto_rt::nat::Nat::from_u64(102_u64))))
     }
     #[doc = " tb_dots"]
-    pub fn tb_dots__s(ev: &Ev<'_>, mut c_630: List<tauto_rt::nat::Nat>) -> bool {
-        (bytes_eq__s(ev, c_630.clone(), extract_text_bytes__s(ev, Text::lit(".")))
-            || bytes_eq__s(ev, c_630, extract_text_bytes__s(ev, Text::lit(".."))))
+    pub fn tb_dots__s(ev: &Ev<'_>, mut c_667: List<tauto_rt::nat::Nat>) -> bool {
+        (bytes_eq__s(ev, c_667.clone(), extract_text_bytes__s(ev, Text::lit(".")))
+            || bytes_eq__s(ev, c_667, extract_text_bytes__s(ev, Text::lit(".."))))
     }
     #[doc = " tb_name_byte"]
-    pub fn tb_name_byte__s(ev: &Ev<'_>, mut b_631: tauto_rt::nat::Nat) -> bool {
-        (is_lower__s(ev, b_631.clone())
-            || (is_digit__s(ev, b_631.clone()) || (b_631 == tauto_rt::nat::Nat::from_u64(45_u64))))
+    pub fn tb_name_byte__s(ev: &Ev<'_>, mut b_668: tauto_rt::nat::Nat) -> bool {
+        (is_lower__s(ev, b_668.clone())
+            || (is_digit__s(ev, b_668.clone()) || (b_668 == tauto_rt::nat::Nat::from_u64(45_u64))))
     }
     #[doc = " tb_name"]
-    pub fn tb_name__s(ev: &Ev<'_>, mut l_632: List<tauto_rt::nat::Nat>) -> bool {
-        match (l_632.clone()) {
+    pub fn tb_name__s(ev: &Ev<'_>, mut l_669: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_669.clone()) {
             List::Nil => false,
-            List::Cons(mut b_633, b_t61) => {
-                let mut t_634 = b_t61;
-                (tb_at_most__s(ev, tauto_rt::nat::Nat::from_u64(64_u64), l_632)
-                    && (is_lower__s(ev, b_633)
-                        && all_bytes__s(
-                            ev,
-                            {
-                                thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_635 : tauto_rt :: nat :: Nat | -> bool { tb_name_byte__s (ev , extract_arg_0_635 . clone ()) }) ; }
-                                F.with(Rc::clone)
-                            },
-                            tauto_rt::unrc(t_634),
-                        )))
+            List::Cons(mut b_670, b_t81) => {
+                let mut t_671 = b_t81;
+                (tb_at_most__s(ev, tauto_rt::nat::Nat::from_u64(64_u64), l_669)
+                    && (is_lower__s(ev, b_670) && all_bytes_22__s(ev, tauto_rt::unrc(t_671))))
             }
         }
     }
     #[doc = " tb_valid_name"]
-    pub fn tb_valid_name__s(ev: &Ev<'_>, mut t_636: Text) -> bool {
-        tb_name__s(ev, extract_text_bytes__s(ev, t_636))
+    pub fn tb_valid_name__s(ev: &Ev<'_>, mut t_672: Text) -> bool {
+        tb_name__s(ev, extract_text_bytes__s(ev, t_672))
     }
     #[doc = " tb_https_normal"]
     pub fn tb_https_normal__s(
         ev: &Ev<'_>,
-        mut l_637: List<tauto_rt::nat::Nat>,
+        mut l_673: List<tauto_rt::nat::Nat>,
     ) -> Option<TbUrlProblem> {
-        match (parse_bytes__s(ev, l_637.clone())) {
+        match (parse_bytes__s(ev, l_673.clone())) {
             None => Some(TbUrlProblem::UrlNotNormal),
-            Some(mut u_638) => match (bytes_eq__s(ev, serialize__s(ev, u_638), l_637)) {
+            Some(mut u_674) => match (bytes_eq__s(ev, serialize__s(ev, u_674), l_673)) {
                 true => None,
                 false => Some(TbUrlProblem::UrlNotNormal),
-                _ => tauto_rt::no_arm(LM311160),
+                _ => tauto_rt::no_arm(LM78293),
             },
         }
     }
     #[doc = " tb_https"]
     pub fn tb_https__s(
         ev: &Ev<'_>,
-        mut whole_639: List<tauto_rt::nat::Nat>,
-        mut rest_640: List<tauto_rt::nat::Nat>,
+        mut whole_675: List<tauto_rt::nat::Nat>,
+        mut rest_676: List<tauto_rt::nat::Nat>,
     ) -> Option<TbUrlProblem> {
-        match (split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), rest_640)) {
+        match (split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), rest_676)) {
             List::Nil => Some(TbUrlProblem::UrlNoHost),
-            List::Cons(mut host_641, b_t62) => {
-                let mut path_642 = b_t62;
-                match (is_empty__s(ev, host_641.clone())) {
+            List::Cons(mut host_677, b_t82) => {
+                let mut path_678 = b_t82;
+                match (is_empty__s(ev, host_677.clone())) {
                     true => Some(TbUrlProblem::UrlNoHost),
                     false => {
-                        match (tb_has_byte__s(ev, tauto_rt::nat::Nat::from_u64(64_u64), host_641)) {
+                        match (tb_has_byte__s(ev, tauto_rt::nat::Nat::from_u64(64_u64), host_677)) {
                             true => Some(TbUrlProblem::UrlCredentials),
-                            false => tb_https_normal__s(ev, whole_639),
-                            _ => tauto_rt::no_arm(LM311574),
+                            false => tb_https_normal__s(ev, whole_675),
+                            _ => tauto_rt::no_arm(LM78678),
                         }
                     }
-                    _ => tauto_rt::no_arm(LM311476),
+                    _ => tauto_rt::no_arm(LM78580),
                 }
             }
         }
     }
     #[doc = " tb_file"]
-    pub fn tb_file__s(ev: &Ev<'_>, mut path_643: List<tauto_rt::nat::Nat>) -> Option<TbUrlProblem> {
-        match (starts_with__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), path_643.clone())
+    pub fn tb_file__s(ev: &Ev<'_>, mut path_679: List<tauto_rt::nat::Nat>) -> Option<TbUrlProblem> {
+        match (starts_with__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), path_679.clone())
             && not__s(
                 ev,
                 tb_some_piece__s(
                     ev,
                     {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , List < tauto_rt :: nat :: Nat >) -> bool > = Rc :: new (move | ev : & Ev < '_ > , c_644 : List < tauto_rt :: nat :: Nat > | -> bool { bytes_eq__s (ev , c_644 . clone () , extract_text_bytes__s (ev , Text :: lit (".."))) }) ; }
+                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , List < tauto_rt :: nat :: Nat >) -> bool > = Rc :: new (move | ev : & Ev < '_ > , c_680 : List < tauto_rt :: nat :: Nat > | -> bool { bytes_eq__s (ev , c_680 . clone () , extract_text_bytes__s (ev , Text :: lit (".."))) }) ; }
                         F.with(Rc::clone)
                     },
-                    split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), path_643),
+                    split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), path_679),
                 ),
             )) {
             true => None,
             false => Some(TbUrlProblem::UrlFilePath),
-            _ => tauto_rt::no_arm(LM311790),
+            _ => tauto_rt::no_arm(LM78864),
         }
     }
     #[doc = " tb_url_scheme"]
     pub fn tb_url_scheme__s(
         ev: &Ev<'_>,
-        mut l_645: List<tauto_rt::nat::Nat>,
+        mut l_681: List<tauto_rt::nat::Nat>,
     ) -> Option<TbUrlProblem> {
         match (tb_strip__s(
             ev,
             extract_text_bytes__s(ev, Text::lit("https://")),
-            l_645.clone(),
+            l_681.clone(),
         )) {
-            Some(mut rest_646) => tb_https__s(ev, l_645, rest_646),
+            Some(mut rest_682) => tb_https__s(ev, l_681, rest_682),
             None => {
-                match (tb_strip__s(ev, extract_text_bytes__s(ev, Text::lit("file://")), l_645)) {
-                    Some(mut path_647) => tb_file__s(ev, path_647),
+                match (tb_strip__s(ev, extract_text_bytes__s(ev, Text::lit("file://")), l_681)) {
+                    Some(mut path_683) => tb_file__s(ev, path_683),
                     None => Some(TbUrlProblem::UrlScheme),
                 }
             }
         }
     }
     #[doc = " tb_url"]
-    pub fn tb_url__s(ev: &Ev<'_>, mut l_648: List<tauto_rt::nat::Nat>) -> Option<TbUrlProblem> {
-        match (tb_at_most__s(ev, tauto_rt::nat::Nat::from_u64(2048_u64), l_648.clone())
-            && all_bytes__s(
-                ev,
-                {
-                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_649 : tauto_rt :: nat :: Nat | -> bool { tb_plain_byte__s (ev , extract_arg_0_649 . clone ()) }) ; }
-                    F.with(Rc::clone)
-                },
-                l_648.clone(),
-            )) {
+    pub fn tb_url__s(ev: &Ev<'_>, mut l_684: List<tauto_rt::nat::Nat>) -> Option<TbUrlProblem> {
+        match (tb_at_most__s(ev, tauto_rt::nat::Nat::from_u64(2048_u64), l_684.clone())
+            && all_bytes_23__s(ev, l_684.clone()))
+        {
             false => Some(TbUrlProblem::UrlCharacters),
             true => {
-                match (tb_has_byte__s(ev, tauto_rt::nat::Nat::from_u64(63_u64), l_648.clone())
-                    || tb_has_byte__s(ev, tauto_rt::nat::Nat::from_u64(35_u64), l_648.clone()))
+                match (tb_has_byte__s(ev, tauto_rt::nat::Nat::from_u64(63_u64), l_684.clone())
+                    || tb_has_byte__s(ev, tauto_rt::nat::Nat::from_u64(35_u64), l_684.clone()))
                 {
                     true => Some(TbUrlProblem::UrlQuery),
-                    false => tb_url_scheme__s(ev, l_648),
-                    _ => tauto_rt::no_arm(LM312683),
+                    false => tb_url_scheme__s(ev, l_684),
+                    _ => tauto_rt::no_arm(LM79697),
                 }
             }
-            _ => tauto_rt::no_arm(LM312540),
+            _ => tauto_rt::no_arm(LM79554),
         }
     }
     #[doc = " tb_check_url"]
-    pub fn tb_check_url__s(ev: &Ev<'_>, mut t_650: Text) -> Option<TbUrlProblem> {
-        tb_url__s(ev, extract_text_bytes__s(ev, t_650))
+    pub fn tb_check_url__s(ev: &Ev<'_>, mut t_685: Text) -> Option<TbUrlProblem> {
+        tb_url__s(ev, extract_text_bytes__s(ev, t_685))
     }
     #[doc = " tb_ref_forbidden"]
-    pub fn tb_ref_forbidden__s(ev: &Ev<'_>, mut b_651: tauto_rt::nat::Nat) -> bool {
-        ((b_651.clone() == tauto_rt::nat::Nat::from_u64(126_u64))
-            || ((b_651.clone() == tauto_rt::nat::Nat::from_u64(94_u64))
-                || ((b_651.clone() == tauto_rt::nat::Nat::from_u64(58_u64))
-                    || ((b_651.clone() == tauto_rt::nat::Nat::from_u64(63_u64))
-                        || ((b_651.clone() == tauto_rt::nat::Nat::from_u64(42_u64))
-                            || (b_651 == tauto_rt::nat::Nat::from_u64(91_u64)))))))
+    pub fn tb_ref_forbidden__s(ev: &Ev<'_>, mut b_686: tauto_rt::nat::Nat) -> bool {
+        ((b_686.clone() == tauto_rt::nat::Nat::from_u64(126_u64))
+            || ((b_686.clone() == tauto_rt::nat::Nat::from_u64(94_u64))
+                || ((b_686.clone() == tauto_rt::nat::Nat::from_u64(58_u64))
+                    || ((b_686.clone() == tauto_rt::nat::Nat::from_u64(63_u64))
+                        || ((b_686.clone() == tauto_rt::nat::Nat::from_u64(42_u64))
+                            || (b_686 == tauto_rt::nat::Nat::from_u64(91_u64)))))))
     }
     #[doc = " tb_ref_component_bad"]
-    pub fn tb_ref_component_bad__s(ev: &Ev<'_>, mut c_652: List<tauto_rt::nat::Nat>) -> bool {
-        (is_empty__s(ev, c_652.clone())
-            || (starts_with__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), c_652.clone())
-                || tb_ends__s(ev, extract_text_bytes__s(ev, Text::lit(".lock")), c_652)))
+    pub fn tb_ref_component_bad__s(ev: &Ev<'_>, mut c_687: List<tauto_rt::nat::Nat>) -> bool {
+        (is_empty__s(ev, c_687.clone())
+            || (starts_with__s(ev, tauto_rt::nat::Nat::from_u64(46_u64), c_687.clone())
+                || tb_ends__s(ev, extract_text_bytes__s(ev, Text::lit(".lock")), c_687)))
     }
     #[doc = " tb_ref_name"]
     pub fn tb_ref_name__s(
         ev: &Ev<'_>,
-        mut r_653: List<tauto_rt::nat::Nat>,
-        mut name_654: List<tauto_rt::nat::Nat>,
+        mut r_688: List<tauto_rt::nat::Nat>,
+        mut name_689: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        (not__s(ev, is_empty__s(ev, name_654.clone()))
+        (not__s(ev, is_empty__s(ev, name_689.clone()))
             && (not__s(
                 ev,
                 tb_infix__s(
                     ev,
                     extract_text_bytes__s(ev, Text::lit("..")),
-                    r_653.clone(),
+                    r_688.clone(),
                 ),
             ) && (not__s(
                 ev,
                 tb_infix__s(
                     ev,
                     extract_text_bytes__s(ev, Text::lit("@{")),
-                    r_653.clone(),
+                    r_688.clone(),
                 ),
             ) && (all_bytes__s(
                 ev,
                 {
-                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_655 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , tb_ref_forbidden__s (ev , b_655 . clone ())) }) ; }
+                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , b_690 : tauto_rt :: nat :: Nat | -> bool { not__s (ev , tb_ref_forbidden__s (ev , b_690 . clone ())) }) ; }
                     F.with(Rc::clone)
                 },
-                r_653.clone(),
+                r_688.clone(),
             ) && (not__s(
                 ev,
-                tb_ends__s(ev, extract_text_bytes__s(ev, Text::lit(".")), r_653.clone()),
+                tb_ends__s(ev, extract_text_bytes__s(ev, Text::lit(".")), r_688.clone()),
             ) && (not__s(
                 ev,
-                tb_ends__s(ev, extract_text_bytes__s(ev, Text::lit(".lock")), r_653),
+                tb_ends__s(ev, extract_text_bytes__s(ev, Text::lit(".lock")), r_688),
             ) && not__s(
                 ev,
-                tb_some_piece__s(
+                tb_some_piece_24__s(
                     ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , List < tauto_rt :: nat :: Nat >) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_656 : List < tauto_rt :: nat :: Nat > | -> bool { tb_ref_component_bad__s (ev , extract_arg_0_656 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), name_654),
+                    split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), name_689),
                 ),
             )))))))
     }
     #[doc = " tb_ref_branch_or_tag"]
-    pub fn tb_ref_branch_or_tag__s(ev: &Ev<'_>, mut r_657: List<tauto_rt::nat::Nat>) -> bool {
+    pub fn tb_ref_branch_or_tag__s(ev: &Ev<'_>, mut r_691: List<tauto_rt::nat::Nat>) -> bool {
         match (tb_strip__s(
             ev,
             extract_text_bytes__s(ev, Text::lit("refs/heads/")),
-            r_657.clone(),
+            r_691.clone(),
         )) {
-            Some(mut name_658) => tb_ref_name__s(ev, r_657, name_658),
+            Some(mut name_692) => tb_ref_name__s(ev, r_691, name_692),
             None => {
                 match (tb_strip__s(
                     ev,
                     extract_text_bytes__s(ev, Text::lit("refs/tags/")),
-                    r_657.clone(),
+                    r_691.clone(),
                 )) {
-                    Some(mut name_659) => tb_ref_name__s(ev, r_657, name_659),
+                    Some(mut name_693) => tb_ref_name__s(ev, r_691, name_693),
                     None => false,
                 }
             }
         }
     }
     #[doc = " tb_ref"]
-    pub fn tb_ref__s(ev: &Ev<'_>, mut r_660: List<tauto_rt::nat::Nat>) -> bool {
-        (tb_at_most__s(ev, tauto_rt::nat::Nat::from_u64(1024_u64), r_660.clone())
-            && (all_bytes__s(
-                ev,
-                {
-                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_661 : tauto_rt :: nat :: Nat | -> bool { tb_plain_byte__s (ev , extract_arg_0_661 . clone ()) }) ; }
-                    F.with(Rc::clone)
-                },
-                r_660.clone(),
-            ) && tb_ref_branch_or_tag__s(ev, r_660)))
+    pub fn tb_ref__s(ev: &Ev<'_>, mut r_694: List<tauto_rt::nat::Nat>) -> bool {
+        (tb_at_most__s(ev, tauto_rt::nat::Nat::from_u64(1024_u64), r_694.clone())
+            && (all_bytes_25__s(ev, r_694.clone()) && tb_ref_branch_or_tag__s(ev, r_694)))
     }
     #[doc = " tb_check_ref"]
-    pub fn tb_check_ref__s(ev: &Ev<'_>, mut t_662: Text) -> bool {
-        tb_ref__s(ev, extract_text_bytes__s(ev, t_662))
+    pub fn tb_check_ref__s(ev: &Ev<'_>, mut t_695: Text) -> bool {
+        tb_ref__s(ev, extract_text_bytes__s(ev, t_695))
     }
     #[doc = " tb_dir_byte"]
-    pub fn tb_dir_byte__s(ev: &Ev<'_>, mut b_663: tauto_rt::nat::Nat) -> bool {
-        (is_alpha__s(ev, b_663.clone())
-            || (is_digit__s(ev, b_663.clone())
-                || ((b_663.clone() == tauto_rt::nat::Nat::from_u64(46_u64))
-                    || ((b_663.clone() == tauto_rt::nat::Nat::from_u64(95_u64))
-                        || (b_663 == tauto_rt::nat::Nat::from_u64(45_u64))))))
+    pub fn tb_dir_byte__s(ev: &Ev<'_>, mut b_696: tauto_rt::nat::Nat) -> bool {
+        (is_alpha__s(ev, b_696.clone())
+            || (is_digit__s(ev, b_696.clone())
+                || ((b_696.clone() == tauto_rt::nat::Nat::from_u64(46_u64))
+                    || ((b_696.clone() == tauto_rt::nat::Nat::from_u64(95_u64))
+                        || (b_696 == tauto_rt::nat::Nat::from_u64(45_u64))))))
     }
     #[doc = " tb_dir_component"]
-    pub fn tb_dir_component__s(ev: &Ev<'_>, mut c_664: List<tauto_rt::nat::Nat>) -> bool {
-        (not__s(ev, is_empty__s(ev, c_664.clone()))
-            && (not__s(ev, tb_dots__s(ev, c_664.clone()))
-                && all_bytes__s(
-                    ev,
-                    {
-                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_665 : tauto_rt :: nat :: Nat | -> bool { tb_dir_byte__s (ev , extract_arg_0_665 . clone ()) }) ; }
-                        F.with(Rc::clone)
-                    },
-                    c_664,
-                )))
+    pub fn tb_dir_component__s(ev: &Ev<'_>, mut c_697: List<tauto_rt::nat::Nat>) -> bool {
+        (not__s(ev, is_empty__s(ev, c_697.clone()))
+            && (not__s(ev, tb_dots__s(ev, c_697.clone())) && all_bytes_26__s(ev, c_697)))
     }
     #[doc = " tb_all_components"]
     pub fn tb_all_components__s(
         ev: &Ev<'_>,
-        mut p_666: Rc<dyn Fn(&Ev<'_>, List<tauto_rt::nat::Nat>) -> bool>,
-        mut cs_667: List<List<tauto_rt::nat::Nat>>,
+        mut p_698: Rc<dyn Fn(&Ev<'_>, List<tauto_rt::nat::Nat>) -> bool>,
+        mut cs_699: List<List<tauto_rt::nat::Nat>>,
     ) -> bool {
-        match (cs_667) {
+        match (cs_699) {
             List::Nil => true,
-            List::Cons(mut c_668, b_t63) => {
-                let mut rest_669 = b_t63;
-                (p_666(ev, c_668) && tb_all_components__s(ev, p_666, tauto_rt::unrc(rest_669)))
+            List::Cons(mut c_700, b_t83) => {
+                let mut rest_701 = b_t83;
+                (p_698(ev, c_700) && tb_all_components__s(ev, p_698, tauto_rt::unrc(rest_701)))
+            }
+        }
+    }
+    #[doc = " tb_all_components@27"]
+    pub fn tb_all_components_27__s(
+        ev: &Ev<'_>,
+        mut cs_702: List<List<tauto_rt::nat::Nat>>,
+    ) -> bool {
+        match (cs_702) {
+            List::Nil => true,
+            List::Cons(mut c_703, b_t84) => {
+                let mut rest_704 = b_t84;
+                (tb_dir_component__s(ev, c_703)
+                    && tb_all_components_27__s(ev, tauto_rt::unrc(rest_704)))
             }
         }
     }
     #[doc = " tb_dir"]
-    pub fn tb_dir__s(ev: &Ev<'_>, mut d_670: List<tauto_rt::nat::Nat>) -> bool {
-        match (d_670.clone()) {
+    pub fn tb_dir__s(ev: &Ev<'_>, mut d_705: List<tauto_rt::nat::Nat>) -> bool {
+        match (d_705.clone()) {
             List::Nil => true,
-            List::Cons(mut b_671, b_t64) => {
-                let mut t_672 = b_t64;
-                (tb_at_most__s(ev, tauto_rt::nat::Nat::from_u64(1024_u64), d_670.clone())
-                    && tb_all_components__s(
+            List::Cons(mut b_706, b_t85) => {
+                let mut t_707 = b_t85;
+                (tb_at_most__s(ev, tauto_rt::nat::Nat::from_u64(1024_u64), d_705.clone())
+                    && tb_all_components_27__s(
                         ev,
-                        {
-                            thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , List < tauto_rt :: nat :: Nat >) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_673 : List < tauto_rt :: nat :: Nat > | -> bool { tb_dir_component__s (ev , extract_arg_0_673 . clone ()) }) ; }
-                            F.with(Rc::clone)
-                        },
-                        split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), d_670),
+                        split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), d_705),
                     ))
             }
         }
     }
     #[doc = " tb_check_dir"]
-    pub fn tb_check_dir__s(ev: &Ev<'_>, mut t_674: Text) -> bool {
-        tb_dir__s(ev, extract_text_bytes__s(ev, t_674))
+    pub fn tb_check_dir__s(ev: &Ev<'_>, mut t_708: Text) -> bool {
+        tb_dir__s(ev, extract_text_bytes__s(ev, t_708))
     }
     #[doc = " tb_hex"]
     pub fn tb_hex__s(
         ev: &Ev<'_>,
-        mut n_675: tauto_rt::nat::Nat,
-        mut l_676: List<tauto_rt::nat::Nat>,
+        mut n_709: tauto_rt::nat::Nat,
+        mut l_710: List<tauto_rt::nat::Nat>,
     ) -> bool {
-        ((List__length__s::<tauto_rt::nat::Nat>(ev, &l_676) == n_675)
-            && all_bytes__s(
-                ev,
-                {
-                    thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , tauto_rt :: nat :: Nat) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_677 : tauto_rt :: nat :: Nat | -> bool { tb_lower_hex__s (ev , extract_arg_0_677 . clone ()) }) ; }
-                    F.with(Rc::clone)
-                },
-                l_676,
-            ))
+        ((List__length__s::<tauto_rt::nat::Nat>(ev, &l_710) == n_709) && all_bytes_28__s(ev, l_710))
     }
     #[doc = " tb_rev"]
-    pub fn tb_rev__s(ev: &Ev<'_>, mut l_678: List<tauto_rt::nat::Nat>) -> bool {
+    pub fn tb_rev__s(ev: &Ev<'_>, mut l_711: List<tauto_rt::nat::Nat>) -> bool {
         match (tb_strip__s(
             ev,
             extract_text_bytes__s(ev, Text::lit("sha1:")),
-            l_678.clone(),
+            l_711.clone(),
         )) {
-            Some(mut hex_679) => tb_hex__s(ev, tauto_rt::nat::Nat::from_u64(40_u64), hex_679),
+            Some(mut hex_712) => tb_hex__s(ev, tauto_rt::nat::Nat::from_u64(40_u64), hex_712),
             None => {
-                match (tb_strip__s(ev, extract_text_bytes__s(ev, Text::lit("sha256:")), l_678)) {
-                    Some(mut hex_680) => {
-                        tb_hex__s(ev, tauto_rt::nat::Nat::from_u64(64_u64), hex_680)
+                match (tb_strip__s(ev, extract_text_bytes__s(ev, Text::lit("sha256:")), l_711)) {
+                    Some(mut hex_713) => {
+                        tb_hex__s(ev, tauto_rt::nat::Nat::from_u64(64_u64), hex_713)
                     }
                     None => false,
                 }
@@ -6394,138 +6196,134 @@ pub mod generated {
         }
     }
     #[doc = " tb_check_rev"]
-    pub fn tb_check_rev__s(ev: &Ev<'_>, mut t_681: Text) -> bool {
-        tb_rev__s(ev, extract_text_bytes__s(ev, t_681))
+    pub fn tb_check_rev__s(ev: &Ev<'_>, mut t_714: Text) -> bool {
+        tb_rev__s(ev, extract_text_bytes__s(ev, t_714))
     }
     #[doc = " tb_source_id"]
-    pub fn tb_source_id__s(ev: &Ev<'_>, mut l_682: List<tauto_rt::nat::Nat>) -> bool {
-        match (tb_strip__s(ev, extract_text_bytes__s(ev, Text::lit("sha256:")), l_682)) {
-            Some(mut hex_683) => tb_hex__s(ev, tauto_rt::nat::Nat::from_u64(64_u64), hex_683),
+    pub fn tb_source_id__s(ev: &Ev<'_>, mut l_715: List<tauto_rt::nat::Nat>) -> bool {
+        match (tb_strip__s(ev, extract_text_bytes__s(ev, Text::lit("sha256:")), l_715)) {
+            Some(mut hex_716) => tb_hex__s(ev, tauto_rt::nat::Nat::from_u64(64_u64), hex_716),
             None => false,
         }
     }
     #[doc = " tb_check_source_id"]
-    pub fn tb_check_source_id__s(ev: &Ev<'_>, mut t_684: Text) -> bool {
-        tb_source_id__s(ev, extract_text_bytes__s(ev, t_684))
+    pub fn tb_check_source_id__s(ev: &Ev<'_>, mut t_717: Text) -> bool {
+        tb_source_id__s(ev, extract_text_bytes__s(ev, t_717))
     }
     #[doc = " tb_control"]
-    pub fn tb_control__s(ev: &Ev<'_>, mut l_685: List<tauto_rt::nat::Nat>) -> bool {
-        match (l_685) {
+    pub fn tb_control__s(ev: &Ev<'_>, mut l_718: List<tauto_rt::nat::Nat>) -> bool {
+        match (l_718) {
             List::Nil => false,
-            List::Cons(mut b_686, b_t65) => {
-                let mut t_687 = b_t65;
-                ((b_686.clone() < tauto_rt::nat::Nat::from_u64(32_u64))
-                    || ((b_686.clone() == tauto_rt::nat::Nat::from_u64(127_u64))
-                        || (((b_686 == tauto_rt::nat::Nat::from_u64(194_u64))
-                            && match ((*t_687).clone()) {
+            List::Cons(mut b_719, b_t86) => {
+                let mut t_720 = b_t86;
+                ((b_719.clone() < tauto_rt::nat::Nat::from_u64(32_u64))
+                    || ((b_719.clone() == tauto_rt::nat::Nat::from_u64(127_u64))
+                        || (((b_719 == tauto_rt::nat::Nat::from_u64(194_u64))
+                            && match ((*t_720).clone()) {
                                 List::Nil => false,
-                                List::Cons(mut c_688, b_t66) => {
-                                    let mut u_689 = b_t66;
-                                    ((tauto_rt::nat::Nat::from_u64(128_u64) <= c_688.clone())
-                                        && (c_688 <= tauto_rt::nat::Nat::from_u64(159_u64)))
+                                List::Cons(mut c_721, b_t87) => {
+                                    let mut u_722 = b_t87;
+                                    ((tauto_rt::nat::Nat::from_u64(128_u64) <= c_721.clone())
+                                        && (c_721 <= tauto_rt::nat::Nat::from_u64(159_u64)))
                                 }
                             })
-                            || tb_control__s(ev, tauto_rt::unrc(t_687)))))
+                            || tb_control__s(ev, tauto_rt::unrc(t_720)))))
             }
         }
     }
     #[doc = " tb_path_component_bad"]
-    pub fn tb_path_component_bad__s(ev: &Ev<'_>, mut c_690: List<tauto_rt::nat::Nat>) -> bool {
-        (is_empty__s(ev, c_690.clone()) || tb_dots__s(ev, c_690))
+    pub fn tb_path_component_bad__s(ev: &Ev<'_>, mut c_723: List<tauto_rt::nat::Nat>) -> bool {
+        (is_empty__s(ev, c_723.clone()) || tb_dots__s(ev, c_723))
     }
     #[doc = " tb_path"]
-    pub fn tb_path__s(ev: &Ev<'_>, mut p_691: List<tauto_rt::nat::Nat>) -> Option<TbPathProblem> {
-        match (not__s(ev, is_empty__s(ev, p_691.clone()))
-            && tb_at_most__s(ev, tauto_rt::nat::Nat::from_u64(4096_u64), p_691.clone()))
+    pub fn tb_path__s(ev: &Ev<'_>, mut p_724: List<tauto_rt::nat::Nat>) -> Option<TbPathProblem> {
+        match (not__s(ev, is_empty__s(ev, p_724.clone()))
+            && tb_at_most__s(ev, tauto_rt::nat::Nat::from_u64(4096_u64), p_724.clone()))
         {
             false => Some(TbPathProblem::PathLength),
             true => {
-                match (tb_has_byte__s(ev, tauto_rt::nat::Nat::from_u64(92_u64), p_691.clone())
-                    || tb_control__s(ev, p_691.clone()))
+                match (tb_has_byte__s(ev, tauto_rt::nat::Nat::from_u64(92_u64), p_724.clone())
+                    || tb_control__s(ev, p_724.clone()))
                 {
                     true => Some(TbPathProblem::PathCharacters),
                     false => {
                         match (starts_with__s(
                             ev,
                             tauto_rt::nat::Nat::from_u64(47_u64),
-                            p_691.clone(),
+                            p_724.clone(),
                         )) {
                             true => Some(TbPathProblem::PathAbsolute),
                             false => {
-                                match (tb_some_piece__s(
+                                match (tb_some_piece_29__s(
                                     ev,
-                                    {
-                                        thread_local! { static F : Rc < dyn Fn (& Ev < '_ > , List < tauto_rt :: nat :: Nat >) -> bool > = Rc :: new (move | ev : & Ev < '_ > , extract_arg_0_692 : List < tauto_rt :: nat :: Nat > | -> bool { tb_path_component_bad__s (ev , extract_arg_0_692 . clone ()) }) ; }
-                                        F.with(Rc::clone)
-                                    },
-                                    split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), p_691),
+                                    split_all__s(ev, tauto_rt::nat::Nat::from_u64(47_u64), p_724),
                                 )) {
                                     true => Some(TbPathProblem::PathComponents),
                                     false => None,
-                                    _ => tauto_rt::no_arm(LM317573),
+                                    _ => tauto_rt::no_arm(LM84475),
                                 }
                             }
-                            _ => tauto_rt::no_arm(LM317463),
+                            _ => tauto_rt::no_arm(LM84365),
                         }
                     }
-                    _ => tauto_rt::no_arm(LM317330),
+                    _ => tauto_rt::no_arm(LM84232),
                 }
             }
-            _ => tauto_rt::no_arm(LM317200),
+            _ => tauto_rt::no_arm(LM84102),
         }
     }
     #[doc = " tb_check_path"]
-    pub fn tb_check_path__s(ev: &Ev<'_>, mut t_693: Text) -> Option<TbPathProblem> {
-        tb_path__s(ev, extract_text_bytes__s(ev, t_693))
+    pub fn tb_check_path__s(ev: &Ev<'_>, mut t_725: Text) -> Option<TbPathProblem> {
+        tb_path__s(ev, extract_text_bytes__s(ev, t_725))
     }
     #[doc = " tb_folded"]
-    pub fn tb_folded__s(ev: &Ev<'_>, mut p_694: TbTreePath) -> Text {
-        match (p_694) {
+    pub fn tb_folded__s(ev: &Ev<'_>, mut p_726: TbTreePath) -> Text {
+        match (p_726) {
             TbTreePath {
-                path: mut path_695,
-                folded: mut folded_696,
-            } => folded_696,
+                path: mut path_727,
+                folded: mut folded_728,
+            } => folded_728,
         }
     }
     #[doc = " tb_path_of"]
-    pub fn tb_path_of__s(ev: &Ev<'_>, mut p_697: TbTreePath) -> Text {
-        match (p_697) {
+    pub fn tb_path_of__s(ev: &Ev<'_>, mut p_729: TbTreePath) -> Text {
+        match (p_729) {
             TbTreePath {
-                path: mut path_698,
-                folded: mut folded_699,
-            } => path_698,
+                path: mut path_730,
+                folded: mut folded_731,
+            } => path_730,
         }
     }
     #[doc = " tb_clash"]
     pub fn tb_clash__s(
         ev: &Ev<'_>,
-        mut p_700: TbTreePath,
-        mut seen_701: List<TbTreePath>,
+        mut p_732: TbTreePath,
+        mut seen_733: List<TbTreePath>,
     ) -> Option<TbTreeProblem> {
         'tauto_tail: loop {
-            break match (seen_701) {
+            break match (seen_733) {
                 List::Nil => None,
-                List::Cons(mut q_702, b_t67) => {
-                    let mut rest_703 = b_t67;
-                    match (tb_folded__s(ev, q_702.clone()) == tb_folded__s(ev, p_700.clone())) {
+                List::Cons(mut q_734, b_t88) => {
+                    let mut rest_735 = b_t88;
+                    match (tb_folded__s(ev, q_734.clone()) == tb_folded__s(ev, p_732.clone())) {
                         false => {
-                            let tail1 = tauto_rt::unrc(rest_703);
-                            seen_701 = tail1;
+                            let tail1 = tauto_rt::unrc(rest_735);
+                            seen_733 = tail1;
                             continue 'tauto_tail;
                         }
                         true => {
-                            match (tb_path_of__s(ev, q_702.clone())
-                                == tb_path_of__s(ev, p_700.clone()))
+                            match (tb_path_of__s(ev, q_734.clone())
+                                == tb_path_of__s(ev, p_732.clone()))
                             {
-                                true => Some(TbTreeProblem::PathTwice(tb_path_of__s(ev, p_700))),
+                                true => Some(TbTreeProblem::PathTwice(tb_path_of__s(ev, p_732))),
                                 false => Some(TbTreeProblem::PathCaseClash(
-                                    tb_path_of__s(ev, q_702),
-                                    tb_path_of__s(ev, p_700),
+                                    tb_path_of__s(ev, q_734),
+                                    tb_path_of__s(ev, p_732),
                                 )),
-                                _ => tauto_rt::no_arm(LM318867),
+                                _ => tauto_rt::no_arm(LM85712),
                             }
                         }
-                        _ => tauto_rt::no_arm(LM318744),
+                        _ => tauto_rt::no_arm(LM85589),
                     }
                 }
             };
@@ -6534,21 +6332,21 @@ pub mod generated {
     #[doc = " tb_clashes"]
     pub fn tb_clashes__s(
         ev: &Ev<'_>,
-        mut ps_704: List<TbTreePath>,
-        mut seen_705: List<TbTreePath>,
+        mut ps_736: List<TbTreePath>,
+        mut seen_737: List<TbTreePath>,
     ) -> Option<TbTreeProblem> {
         'tauto_tail: loop {
-            break match (ps_704) {
+            break match (ps_736) {
                 List::Nil => None,
-                List::Cons(mut p_706, b_t68) => {
-                    let mut rest_707 = b_t68;
-                    match (tb_clash__s(ev, p_706.clone(), seen_705.clone())) {
-                        Some(mut problem_708) => Some(problem_708),
+                List::Cons(mut p_738, b_t89) => {
+                    let mut rest_739 = b_t89;
+                    match (tb_clash__s(ev, p_738.clone(), seen_737.clone())) {
+                        Some(mut problem_740) => Some(problem_740),
                         None => {
-                            let tail0 = tauto_rt::unrc(rest_707);
-                            let tail1 = List::Cons(p_706, Rc::new(seen_705).into());
-                            ps_704 = tail0;
-                            seen_705 = tail1;
+                            let tail0 = tauto_rt::unrc(rest_739);
+                            let tail1 = List::Cons(p_738, Rc::new(seen_737).into());
+                            ps_736 = tail0;
+                            seen_737 = tail1;
                             continue 'tauto_tail;
                         }
                     }
@@ -6559,32 +6357,32 @@ pub mod generated {
     #[doc = " tb_dirs_of"]
     pub fn tb_dirs_of__s(
         ev: &Ev<'_>,
-        mut l_709: List<tauto_rt::nat::Nat>,
-        mut at_710: List<tauto_rt::nat::Nat>,
+        mut l_741: List<tauto_rt::nat::Nat>,
+        mut at_742: List<tauto_rt::nat::Nat>,
     ) -> List<List<tauto_rt::nat::Nat>> {
         'tauto_tail: loop {
-            break match (l_709) {
+            break match (l_741) {
                 List::Nil => List::Nil,
-                List::Cons(mut b_711, b_t69) => {
-                    let mut t_712 = b_t69;
-                    match (b_711.clone() == tauto_rt::nat::Nat::from_u64(47_u64)) {
+                List::Cons(mut b_743, b_t90) => {
+                    let mut t_744 = b_t90;
+                    match (b_743.clone() == tauto_rt::nat::Nat::from_u64(47_u64)) {
                         true => List::Cons(
-                            List__reverse__s::<tauto_rt::nat::Nat>(ev, &at_710),
+                            List__reverse__s::<tauto_rt::nat::Nat>(ev, at_742.clone()),
                             Rc::new(tb_dirs_of__s(
                                 ev,
-                                tauto_rt::unrc(t_712),
-                                List::Cons(b_711, Rc::new(at_710).into()),
+                                tauto_rt::unrc(t_744),
+                                List::Cons(b_743, Rc::new(at_742).into()),
                             ))
                             .into(),
                         ),
                         false => {
-                            let tail0 = tauto_rt::unrc(t_712);
-                            let tail1 = List::Cons(b_711, Rc::new(at_710).into());
-                            l_709 = tail0;
-                            at_710 = tail1;
+                            let tail0 = tauto_rt::unrc(t_744);
+                            let tail1 = List::Cons(b_743, Rc::new(at_742).into());
+                            l_741 = tail0;
+                            at_742 = tail1;
                             continue 'tauto_tail;
                         }
-                        _ => tauto_rt::no_arm(LM319602),
+                        _ => tauto_rt::no_arm(LM86391),
                     }
                 }
             };
@@ -6593,26 +6391,26 @@ pub mod generated {
     #[doc = " tb_file_at"]
     pub fn tb_file_at__s(
         ev: &Ev<'_>,
-        mut d_713: List<tauto_rt::nat::Nat>,
-        mut all_714: List<TbTreePath>,
+        mut d_745: List<tauto_rt::nat::Nat>,
+        mut all_746: List<TbTreePath>,
     ) -> Option<TbTreePath> {
         'tauto_tail: loop {
-            break match (all_714) {
+            break match (all_746) {
                 List::Nil => None,
-                List::Cons(mut q_715, b_t70) => {
-                    let mut rest_716 = b_t70;
+                List::Cons(mut q_747, b_t91) => {
+                    let mut rest_748 = b_t91;
                     match (bytes_eq__s(
                         ev,
-                        extract_text_bytes__s(ev, tb_folded__s(ev, q_715.clone())),
-                        d_713.clone(),
+                        extract_text_bytes__s(ev, tb_folded__s(ev, q_747.clone())),
+                        d_745.clone(),
                     )) {
-                        true => Some(q_715),
+                        true => Some(q_747),
                         false => {
-                            let tail1 = tauto_rt::unrc(rest_716);
-                            all_714 = tail1;
+                            let tail1 = tauto_rt::unrc(rest_748);
+                            all_746 = tail1;
                             continue 'tauto_tail;
                         }
-                        _ => tauto_rt::no_arm(LM319930),
+                        _ => tauto_rt::no_arm(LM86691),
                     }
                 }
             };
@@ -6621,23 +6419,23 @@ pub mod generated {
     #[doc = " tb_file_on_way"]
     pub fn tb_file_on_way__s(
         ev: &Ev<'_>,
-        mut p_717: TbTreePath,
-        mut dirs_718: List<List<tauto_rt::nat::Nat>>,
-        mut all_719: List<TbTreePath>,
+        mut p_749: TbTreePath,
+        mut dirs_750: List<List<tauto_rt::nat::Nat>>,
+        mut all_751: List<TbTreePath>,
     ) -> Option<TbTreeProblem> {
         'tauto_tail: loop {
-            break match (dirs_718) {
+            break match (dirs_750) {
                 List::Nil => None,
-                List::Cons(mut d_720, b_t71) => {
-                    let mut rest_721 = b_t71;
-                    match (tb_file_at__s(ev, d_720, all_719.clone())) {
-                        Some(mut file_722) => Some(TbTreeProblem::FileAndDirectory(
-                            tb_path_of__s(ev, file_722),
-                            tb_path_of__s(ev, p_717),
+                List::Cons(mut d_752, b_t92) => {
+                    let mut rest_753 = b_t92;
+                    match (tb_file_at__s(ev, d_752, all_751.clone())) {
+                        Some(mut file_754) => Some(TbTreeProblem::FileAndDirectory(
+                            tb_path_of__s(ev, file_754),
+                            tb_path_of__s(ev, p_749),
                         )),
                         None => {
-                            let tail1 = tauto_rt::unrc(rest_721);
-                            dirs_718 = tail1;
+                            let tail1 = tauto_rt::unrc(rest_753);
+                            dirs_750 = tail1;
                             continue 'tauto_tail;
                         }
                     }
@@ -6648,28 +6446,28 @@ pub mod generated {
     #[doc = " tb_files_on_way"]
     pub fn tb_files_on_way__s(
         ev: &Ev<'_>,
-        mut ps_723: List<TbTreePath>,
-        mut all_724: List<TbTreePath>,
+        mut ps_755: List<TbTreePath>,
+        mut all_756: List<TbTreePath>,
     ) -> Option<TbTreeProblem> {
         'tauto_tail: loop {
-            break match (ps_723) {
+            break match (ps_755) {
                 List::Nil => None,
-                List::Cons(mut p_725, b_t72) => {
-                    let mut rest_726 = b_t72;
+                List::Cons(mut p_757, b_t93) => {
+                    let mut rest_758 = b_t93;
                     match (tb_file_on_way__s(
                         ev,
-                        p_725.clone(),
+                        p_757.clone(),
                         tb_dirs_of__s(
                             ev,
-                            extract_text_bytes__s(ev, tb_folded__s(ev, p_725)),
+                            extract_text_bytes__s(ev, tb_folded__s(ev, p_757)),
                             List::Nil,
                         ),
-                        all_724.clone(),
+                        all_756.clone(),
                     )) {
-                        Some(mut problem_727) => Some(problem_727),
+                        Some(mut problem_759) => Some(problem_759),
                         None => {
-                            let tail0 = tauto_rt::unrc(rest_726);
-                            ps_723 = tail0;
+                            let tail0 = tauto_rt::unrc(rest_758);
+                            ps_755 = tail0;
                             continue 'tauto_tail;
                         }
                     }
@@ -6678,95 +6476,102 @@ pub mod generated {
         }
     }
     #[doc = " tb_check_tree"]
-    pub fn tb_check_tree__s(ev: &Ev<'_>, mut ps_728: List<TbTreePath>) -> Option<TbTreeProblem> {
-        match (tb_clashes__s(ev, ps_728.clone(), List::Nil)) {
-            Some(mut problem_729) => Some(problem_729),
-            None => tb_files_on_way__s(ev, ps_728.clone(), ps_728),
+    pub fn tb_check_tree__s(ev: &Ev<'_>, mut ps_760: List<TbTreePath>) -> Option<TbTreeProblem> {
+        match (tb_clashes__s(ev, ps_760.clone(), List::Nil)) {
+            Some(mut problem_761) => Some(problem_761),
+            None => tb_files_on_way__s(ev, ps_760.clone(), ps_760),
         }
     }
     #[doc = " tb_locked_name"]
-    pub fn tb_locked_name__s(ev: &Ev<'_>, mut l_730: TbLocked) -> Text {
-        match (l_730) {
+    pub fn tb_locked_name__s(ev: &Ev<'_>, mut l_762: TbLocked) -> Text {
+        match (l_762) {
             TbLocked {
-                name: mut name_731,
-                git: mut git_732,
-                reference: mut reference_733,
-                dir: mut dir_734,
-                project: mut project_735,
-                rev: mut rev_736,
-                source: mut source_737,
-            } => name_731,
+                name: mut name_763,
+                git: mut git_764,
+                reference: mut reference_765,
+                dir: mut dir_766,
+                sparse: mut sparse_767,
+                project: mut project_768,
+                rev: mut rev_769,
+                source: mut source_770,
+            } => name_763,
         }
     }
     #[doc = " tb_text_option_eq"]
     pub fn tb_text_option_eq__s(
         ev: &Ev<'_>,
-        mut a_738: Option<Text>,
-        mut b_739: Option<Text>,
+        mut a_771: Option<Text>,
+        mut b_772: Option<Text>,
     ) -> bool {
-        match (a_738) {
-            None => match (b_739) {
+        match (a_771) {
+            None => match (b_772) {
                 None => true,
-                Some(mut y_740) => false,
+                Some(mut y_773) => false,
             },
-            Some(mut x_741) => match (b_739) {
+            Some(mut x_774) => match (b_772) {
                 None => false,
-                Some(mut y_742) => (x_741 == y_742),
+                Some(mut y_775) => (x_774 == y_775),
             },
         }
     }
     #[doc = " tb_same_source"]
-    pub fn tb_same_source__s(ev: &Ev<'_>, mut a_743: TbLocked, mut b_744: TbLocked) -> bool {
-        match (a_743) {
+    pub fn tb_same_source__s(ev: &Ev<'_>, mut a_776: TbLocked, mut b_777: TbLocked) -> bool {
+        match (a_776) {
             TbLocked {
-                name: mut n1_745,
-                git: mut u1_746,
-                reference: mut r1_747,
-                dir: mut d1_748,
-                project: mut p1_749,
-                rev: mut v1_750,
-                source: mut s1_751,
-            } => match (b_744) {
+                name: mut n1_778,
+                git: mut u1_779,
+                reference: mut r1_780,
+                dir: mut d1_781,
+                sparse: mut k1_782,
+                project: mut p1_783,
+                rev: mut v1_784,
+                source: mut s1_785,
+            } => match (b_777) {
                 TbLocked {
-                    name: mut n2_752,
-                    git: mut u2_753,
-                    reference: mut r2_754,
-                    dir: mut d2_755,
-                    project: mut p2_756,
-                    rev: mut v2_757,
-                    source: mut s2_758,
+                    name: mut n2_786,
+                    git: mut u2_787,
+                    reference: mut r2_788,
+                    dir: mut d2_789,
+                    sparse: mut k2_790,
+                    project: mut p2_791,
+                    rev: mut v2_792,
+                    source: mut s2_793,
                 } => {
-                    ((u1_746 == u2_753)
-                        && ((r1_747 == r2_754)
-                            && ((d1_748 == d2_755) && tb_text_option_eq__s(ev, p1_749, p2_756))))
+                    ((u1_779 == u2_787)
+                        && ((r1_780 == r2_788)
+                            && ((d1_781 == d2_789)
+                                && ((k1_782 == k2_790)
+                                    && tb_text_option_eq__s(ev, p1_783, p2_791)))))
                 }
             },
         }
     }
     #[doc = " tb_locked_eq"]
-    pub fn tb_locked_eq__s(ev: &Ev<'_>, mut a_759: TbLocked, mut b_760: TbLocked) -> bool {
-        match (a_759.clone()) {
+    pub fn tb_locked_eq__s(ev: &Ev<'_>, mut a_794: TbLocked, mut b_795: TbLocked) -> bool {
+        match (a_794.clone()) {
             TbLocked {
-                name: mut n1_761,
-                git: mut u1_762,
-                reference: mut r1_763,
-                dir: mut d1_764,
-                project: mut p1_765,
-                rev: mut v1_766,
-                source: mut s1_767,
-            } => match (b_760.clone()) {
+                name: mut n1_796,
+                git: mut u1_797,
+                reference: mut r1_798,
+                dir: mut d1_799,
+                sparse: mut k1_800,
+                project: mut p1_801,
+                rev: mut v1_802,
+                source: mut s1_803,
+            } => match (b_795.clone()) {
                 TbLocked {
-                    name: mut n2_768,
-                    git: mut u2_769,
-                    reference: mut r2_770,
-                    dir: mut d2_771,
-                    project: mut p2_772,
-                    rev: mut v2_773,
-                    source: mut s2_774,
+                    name: mut n2_804,
+                    git: mut u2_805,
+                    reference: mut r2_806,
+                    dir: mut d2_807,
+                    sparse: mut k2_808,
+                    project: mut p2_809,
+                    rev: mut v2_810,
+                    source: mut s2_811,
                 } => {
-                    ((n1_761 == n2_768)
-                        && (tb_same_source__s(ev, a_759, b_760)
-                            && ((v1_766 == v2_773) && (s1_767 == s2_774))))
+                    ((n1_796 == n2_804)
+                        && (tb_same_source__s(ev, a_794, b_795)
+                            && ((v1_802 == v2_810) && (s1_803 == s2_811))))
                 }
             },
         }
@@ -6774,148 +6579,156 @@ pub mod generated {
     #[doc = " tb_get"]
     pub fn tb_get__s(
         ev: &Ev<'_>,
-        mut lock_775: List<TbLocked>,
-        mut name_776: Text,
+        mut lock_812: List<TbLocked>,
+        mut name_813: Text,
     ) -> Option<TbLocked> {
         'tauto_tail: loop {
-            break match (lock_775) {
+            break match (lock_812) {
                 List::Nil => None,
-                List::Cons(mut l_777, b_t73) => {
-                    let mut rest_778 = b_t73;
-                    match (tb_locked_name__s(ev, l_777.clone()) == name_776.clone()) {
-                        true => Some(l_777),
+                List::Cons(mut l_814, b_t94) => {
+                    let mut rest_815 = b_t94;
+                    match (tb_locked_name__s(ev, l_814.clone()) == name_813.clone()) {
+                        true => Some(l_814),
                         false => {
-                            let tail0 = tauto_rt::unrc(rest_778);
-                            lock_775 = tail0;
+                            let tail0 = tauto_rt::unrc(rest_815);
+                            lock_812 = tail0;
                             continue 'tauto_tail;
                         }
-                        _ => tauto_rt::no_arm(LM323099),
+                        _ => tauto_rt::no_arm(LM89863),
                     }
                 }
             };
         }
     }
     #[doc = " tb_has"]
-    pub fn tb_has__s(ev: &Ev<'_>, mut lock_779: List<TbLocked>, mut name_780: Text) -> bool {
-        match (tb_get__s(ev, lock_779, name_780)) {
+    pub fn tb_has__s(ev: &Ev<'_>, mut lock_816: List<TbLocked>, mut name_817: Text) -> bool {
+        match (tb_get__s(ev, lock_816, name_817)) {
             None => false,
-            Some(mut l_781) => true,
+            Some(mut l_818) => true,
         }
     }
     #[doc = " tb_put"]
     pub fn tb_put__s(
         ev: &Ev<'_>,
-        mut lock_782: List<TbLocked>,
-        mut l_783: TbLocked,
+        mut lock_819: List<TbLocked>,
+        mut l_820: TbLocked,
     ) -> List<TbLocked> {
-        match (lock_782.clone()) {
-            List::Nil => List::Cons(l_783, {
+        match (lock_819.clone()) {
+            List::Nil => List::Cons(l_820, {
                 thread_local! { static N : Rc < List < TbLocked > > = Rc :: new (List :: Nil) ; }
                 N.with(Rc::clone).into()
             }),
-            List::Cons(mut m_784, b_t74) => {
-                let mut rest_785 = b_t74;
+            List::Cons(mut m_821, b_t95) => {
+                let mut rest_822 = b_t95;
                 match (extract_ordering__s(
                     ev,
                     tauto_rt::stdlib::text_compare(
-                        tb_locked_name__s(ev, l_783.clone()),
-                        tb_locked_name__s(ev, m_784.clone()),
+                        &(tb_locked_name__s(ev, l_820.clone())),
+                        &(tb_locked_name__s(ev, m_821.clone())),
                     ),
                 )) {
-                    Ordering::Less => List::Cons(l_783, Rc::new(lock_782).into()),
-                    Ordering::Equal => List::Cons(l_783, tauto_rt::relink(rest_785)),
+                    Ordering::Less => List::Cons(l_820, Rc::new(lock_819).into()),
+                    Ordering::Equal => List::Cons(l_820, tauto_rt::relink(rest_822)),
                     Ordering::Greater => List::Cons(
-                        m_784,
-                        Rc::new(tb_put__s(ev, tauto_rt::unrc(rest_785), l_783)).into(),
+                        m_821,
+                        Rc::new(tb_put__s(ev, tauto_rt::unrc(rest_822), l_820)).into(),
                     ),
                 }
             }
         }
     }
     #[doc = " tb_line"]
-    pub fn tb_line__s(ev: &Ev<'_>, mut key_786: Text, mut value_787: Text) -> Text {
-        extract_text_concat_all__s (ev , List :: Cons (Text :: lit ("  ") , Rc :: new (List :: Cons (key_786 , Rc :: new (List :: Cons (Text :: lit (" = \"") , Rc :: new (List :: Cons (value_787 , Rc :: new (List :: Cons (Text :: lit ("\"\n") , { thread_local ! { static N : Rc < List < Text > > = Rc :: new (List :: Nil) ; } N . with (Rc :: clone) . into () })) . into ())) . into ())) . into ())) . into ()))
+    pub fn tb_line__s(ev: &Ev<'_>, mut key_823: Text, mut value_824: Text) -> Text {
+        extract_text_concat_all__s (ev , List :: Cons (Text :: lit ("  ") , Rc :: new (List :: Cons (key_823 , Rc :: new (List :: Cons (Text :: lit (" = \"") , Rc :: new (List :: Cons (value_824 , Rc :: new (List :: Cons (Text :: lit ("\"\n") , { thread_local ! { static N : Rc < List < Text > > = Rc :: new (List :: Nil) ; } N . with (Rc :: clone) . into () })) . into ())) . into ())) . into ())) . into ()))
     }
     #[doc = " tb_dir_line"]
-    pub fn tb_dir_line__s(ev: &Ev<'_>, mut dir_788: Text) -> Text {
-        match (dir_788.clone() == Text::lit("")) {
+    pub fn tb_dir_line__s(ev: &Ev<'_>, mut dir_825: Text) -> Text {
+        match (dir_825.clone() == Text::lit("")) {
             true => Text::lit(""),
-            false => tb_line__s(ev, Text::lit("dir"), dir_788),
-            _ => tauto_rt::no_arm(LM323895),
+            false => tb_line__s(ev, Text::lit("dir"), dir_825),
+            _ => tauto_rt::no_arm(LM90608),
+        }
+    }
+    #[doc = " tb_sparse_line"]
+    pub fn tb_sparse_line__s(ev: &Ev<'_>, mut sparse_826: bool) -> Text {
+        match (sparse_826) {
+            true => Text::lit("  sparse = true\n"),
+            false => Text::lit(""),
+            _ => tauto_rt::no_arm(LM90735),
         }
     }
     #[doc = " tb_project_line"]
-    pub fn tb_project_line__s(ev: &Ev<'_>, mut project_789: Option<Text>) -> Text {
-        match (project_789) {
+    pub fn tb_project_line__s(ev: &Ev<'_>, mut project_827: Option<Text>) -> Text {
+        match (project_827) {
             None => Text::lit(""),
-            Some(mut p_790) => tb_line__s(ev, Text::lit("project"), p_790),
+            Some(mut p_828) => tb_line__s(ev, Text::lit("project"), p_828),
         }
     }
     #[doc = " tb_render_one"]
-    pub fn tb_render_one__s(ev: &Ev<'_>, mut l_791: TbLocked) -> Text {
-        match (l_791) { TbLocked { name : mut name_792 , git : mut git_793 , reference : mut reference_794 , dir : mut dir_795 , project : mut project_796 , rev : mut rev_797 , source : mut source_798 } => { extract_text_concat_all__s (ev , List :: Cons (Text :: lit ("\n@ totes[] {\n") , Rc :: new (List :: Cons (tb_line__s (ev , Text :: lit ("name") , name_792) , Rc :: new (List :: Cons (tb_line__s (ev , Text :: lit ("git") , git_793) , Rc :: new (List :: Cons (tb_line__s (ev , Text :: lit ("ref") , reference_794) , Rc :: new (List :: Cons (tb_dir_line__s (ev , dir_795) , Rc :: new (List :: Cons (tb_project_line__s (ev , project_796) , Rc :: new (List :: Cons (tb_line__s (ev , Text :: lit ("rev") , rev_797) , Rc :: new (List :: Cons (tb_line__s (ev , Text :: lit ("source") , source_798) , Rc :: new (List :: Cons (Text :: lit ("}\n") , { thread_local ! { static N : Rc < List < Text > > = Rc :: new (List :: Nil) ; } N . with (Rc :: clone) . into () })) . into ())) . into ())) . into ())) . into ())) . into ())) . into ())) . into ())) . into ())) } }
+    pub fn tb_render_one__s(ev: &Ev<'_>, mut l_829: TbLocked) -> Text {
+        match (l_829) { TbLocked { name : mut name_830 , git : mut git_831 , reference : mut reference_832 , dir : mut dir_833 , sparse : mut sparse_834 , project : mut project_835 , rev : mut rev_836 , source : mut source_837 } => { extract_text_concat_all__s (ev , List :: Cons (Text :: lit ("\n@ totes[] {\n") , Rc :: new (List :: Cons (tb_line__s (ev , Text :: lit ("name") , name_830) , Rc :: new (List :: Cons (tb_line__s (ev , Text :: lit ("git") , git_831) , Rc :: new (List :: Cons (tb_line__s (ev , Text :: lit ("ref") , reference_832) , Rc :: new (List :: Cons (tb_dir_line__s (ev , dir_833) , Rc :: new (List :: Cons (tb_sparse_line__s (ev , sparse_834) , Rc :: new (List :: Cons (tb_project_line__s (ev , project_835) , Rc :: new (List :: Cons (tb_line__s (ev , Text :: lit ("rev") , rev_836) , Rc :: new (List :: Cons (tb_line__s (ev , Text :: lit ("source") , source_837) , Rc :: new (List :: Cons (Text :: lit ("}\n") , { thread_local ! { static N : Rc < List < Text > > = Rc :: new (List :: Nil) ; } N . with (Rc :: clone) . into () })) . into ())) . into ())) . into ())) . into ())) . into ())) . into ())) . into ())) . into ())) . into ())) } }
     }
     #[doc = " tb_render_all"]
-    pub fn tb_render_all__s(ev: &Ev<'_>, mut lock_799: List<TbLocked>) -> Text {
-        match (lock_799) {
+    pub fn tb_render_all__s(ev: &Ev<'_>, mut lock_838: List<TbLocked>) -> Text {
+        match (lock_838) {
             List::Nil => Text::lit(""),
-            List::Cons(mut l_800, b_t75) => {
-                let mut rest_801 = b_t75;
+            List::Cons(mut l_839, b_t96) => {
+                let mut rest_840 = b_t96;
                 tauto_rt::stdlib::concat(
-                    tb_render_one__s(ev, l_800),
-                    tb_render_all__s(ev, tauto_rt::unrc(rest_801)),
+                    tb_render_one__s(ev, l_839),
+                    tb_render_all__s(ev, tauto_rt::unrc(rest_840)),
                 )
             }
         }
     }
     #[doc = " tb_render"]
-    pub fn tb_render__s(ev: &Ev<'_>, mut lock_802: List<TbLocked>) -> Text {
+    pub fn tb_render__s(ev: &Ev<'_>, mut lock_841: List<TbLocked>) -> Text {
         tauto_rt::stdlib::concat(
             Text::lit(
                 "// Written by `tauto lock` and `tauto update`: the exact commit and content\n// of each tote fetched from Git. Commit it with the project.\nformat = 1\n",
             ),
-            tb_render_all__s(ev, lock_802),
+            tb_render_all__s(ev, lock_841),
         )
     }
     #[doc = " tb_added_or_moved"]
     pub fn tb_added_or_moved__s(
         ev: &Ev<'_>,
-        mut before_803: List<TbLocked>,
-        mut after_804: List<TbLocked>,
+        mut before_842: List<TbLocked>,
+        mut after_843: List<TbLocked>,
     ) -> List<TbChange> {
         'tauto_tail: loop {
-            break match (after_804) {
+            break match (after_843) {
                 List::Nil => List::Nil,
-                List::Cons(mut l_805, b_t76) => {
-                    let mut rest_806 = b_t76;
-                    match (tb_get__s(ev, before_803.clone(), tb_locked_name__s(ev, l_805.clone())))
+                List::Cons(mut l_844, b_t97) => {
+                    let mut rest_845 = b_t97;
+                    match (tb_get__s(ev, before_842.clone(), tb_locked_name__s(ev, l_844.clone())))
                     {
                         None => List::Cons(
-                            TbChange::Added(Rc::new(l_805).into()),
+                            TbChange::Added(Rc::new(l_844).into()),
                             Rc::new(tb_added_or_moved__s(
                                 ev,
-                                before_803,
-                                tauto_rt::unrc(rest_806),
+                                before_842,
+                                tauto_rt::unrc(rest_845),
                             ))
                             .into(),
                         ),
-                        Some(mut o_807) => {
-                            match (tb_locked_eq__s(ev, o_807.clone(), l_805.clone())) {
+                        Some(mut o_846) => {
+                            match (tb_locked_eq__s(ev, o_846.clone(), l_844.clone())) {
                                 true => {
-                                    let tail1 = tauto_rt::unrc(rest_806);
-                                    after_804 = tail1;
+                                    let tail1 = tauto_rt::unrc(rest_845);
+                                    after_843 = tail1;
                                     continue 'tauto_tail;
                                 }
                                 false => List::Cons(
-                                    TbChange::Moved(Rc::new(o_807).into(), Rc::new(l_805).into()),
+                                    TbChange::Moved(Rc::new(o_846).into(), Rc::new(l_844).into()),
                                     Rc::new(tb_added_or_moved__s(
                                         ev,
-                                        before_803,
-                                        tauto_rt::unrc(rest_806),
+                                        before_842,
+                                        tauto_rt::unrc(rest_845),
                                     ))
                                     .into(),
                                 ),
-                                _ => tauto_rt::no_arm(LM325691),
+                                _ => tauto_rt::no_arm(LM92552),
                             }
                         }
                     }
@@ -6924,49 +6737,49 @@ pub mod generated {
         }
     }
     #[doc = " tb_named"]
-    pub fn tb_named__s(ev: &Ev<'_>, mut names_808: List<Text>, mut name_809: Text) -> bool {
-        match (names_808) {
+    pub fn tb_named__s(ev: &Ev<'_>, mut names_847: List<Text>, mut name_848: Text) -> bool {
+        match (names_847) {
             List::Nil => false,
-            List::Cons(mut n_810, b_t77) => {
-                let mut rest_811 = b_t77;
-                ((n_810 == name_809.clone()) || tb_named__s(ev, tauto_rt::unrc(rest_811), name_809))
+            List::Cons(mut n_849, b_t98) => {
+                let mut rest_850 = b_t98;
+                ((n_849 == name_848.clone()) || tb_named__s(ev, tauto_rt::unrc(rest_850), name_848))
             }
         }
     }
     #[doc = " tb_removed"]
     pub fn tb_removed__s(
         ev: &Ev<'_>,
-        mut before_812: List<TbLocked>,
-        mut after_813: List<TbLocked>,
-        mut unlocked_814: List<Text>,
+        mut before_851: List<TbLocked>,
+        mut after_852: List<TbLocked>,
+        mut unlocked_853: List<Text>,
     ) -> List<TbChange> {
         'tauto_tail: loop {
-            break match (before_812) {
+            break match (before_851) {
                 List::Nil => List::Nil,
-                List::Cons(mut o_815, b_t78) => {
-                    let mut rest_816 = b_t78;
-                    match (tb_has__s(ev, after_813.clone(), tb_locked_name__s(ev, o_815.clone()))
+                List::Cons(mut o_854, b_t99) => {
+                    let mut rest_855 = b_t99;
+                    match (tb_has__s(ev, after_852.clone(), tb_locked_name__s(ev, o_854.clone()))
                         || tb_named__s(
                             ev,
-                            unlocked_814.clone(),
-                            tb_locked_name__s(ev, o_815.clone()),
+                            unlocked_853.clone(),
+                            tb_locked_name__s(ev, o_854.clone()),
                         )) {
                         true => {
-                            let tail0 = tauto_rt::unrc(rest_816);
-                            before_812 = tail0;
+                            let tail0 = tauto_rt::unrc(rest_855);
+                            before_851 = tail0;
                             continue 'tauto_tail;
                         }
                         false => List::Cons(
-                            TbChange::Removed(Rc::new(o_815).into()),
+                            TbChange::Removed(Rc::new(o_854).into()),
                             Rc::new(tb_removed__s(
                                 ev,
-                                tauto_rt::unrc(rest_816),
-                                after_813,
-                                unlocked_814,
+                                tauto_rt::unrc(rest_855),
+                                after_852,
+                                unlocked_853,
                             ))
                             .into(),
                         ),
-                        _ => tauto_rt::no_arm(LM326351),
+                        _ => tauto_rt::no_arm(LM93174),
                     }
                 }
             };
@@ -6975,122 +6788,122 @@ pub mod generated {
     #[doc = " tb_changes"]
     pub fn tb_changes__s(
         ev: &Ev<'_>,
-        mut before_817: List<TbLocked>,
-        mut after_818: List<TbLocked>,
-        mut unlocked_819: List<Text>,
+        mut before_856: List<TbLocked>,
+        mut after_857: List<TbLocked>,
+        mut unlocked_858: List<Text>,
     ) -> List<TbChange> {
         List__append__s::<TbChange>(
             ev,
-            &(tb_added_or_moved__s(ev, before_817.clone(), after_818.clone())),
-            tb_removed__s(ev, before_817, after_818, unlocked_819),
+            tb_added_or_moved__s(ev, before_856.clone(), after_857.clone()),
+            tb_removed__s(ev, before_856, after_857, unlocked_858),
         )
     }
     #[doc = " tb_plan"]
     pub fn tb_plan__s(
         ev: &Ev<'_>,
-        mut moves_820: bool,
-        mut report_only_821: bool,
-        mut offline_822: bool,
-        mut locked_823: bool,
-        mut cached_824: bool,
+        mut moves_859: bool,
+        mut report_only_860: bool,
+        mut offline_861: bool,
+        mut locked_862: bool,
+        mut cached_863: bool,
     ) -> TbPlan {
-        match (locked_823 && not__s(ev, moves_820)) {
-            true => match (cached_824) {
+        match (locked_862 && not__s(ev, moves_859)) {
+            true => match (cached_863) {
                 true => TbPlan::KeepLocked,
-                false => match (report_only_821 || offline_822) {
+                false => match (report_only_860 || offline_861) {
                     false => TbPlan::FetchLocked,
-                    true => match (report_only_821) {
+                    true => match (report_only_860) {
                         true => TbPlan::KeepUnread,
                         false => TbPlan::LockedNotFetched,
-                        _ => tauto_rt::no_arm(LM327931),
+                        _ => tauto_rt::no_arm(LM94738),
                     },
-                    _ => tauto_rt::no_arm(LM327831),
+                    _ => tauto_rt::no_arm(LM94638),
                 },
-                _ => tauto_rt::no_arm(LM327760),
+                _ => tauto_rt::no_arm(LM94567),
             },
-            false => match (report_only_821 || offline_822) {
+            false => match (report_only_860 || offline_861) {
                 false => TbPlan::FetchHead,
-                true => match (report_only_821) {
+                true => match (report_only_860) {
                     true => TbPlan::ReportUnlocked,
                     false => TbPlan::NeedsNetwork,
-                    _ => tauto_rt::no_arm(LM328163),
+                    _ => tauto_rt::no_arm(LM94970),
                 },
-                _ => tauto_rt::no_arm(LM328069),
+                _ => tauto_rt::no_arm(LM94876),
             },
-            _ => tauto_rt::no_arm(LM327694),
+            _ => tauto_rt::no_arm(LM94501),
         }
     }
     #[doc = " tb_index_alias"]
-    pub fn tb_index_alias__s(ev: &Ev<'_>, mut i_825: TbIndex) -> Text {
-        match (i_825) {
+    pub fn tb_index_alias__s(ev: &Ev<'_>, mut i_864: TbIndex) -> Text {
+        match (i_864) {
             TbIndex {
-                alias: mut alias_826,
-                id: mut id_827,
-                repository: mut repository_828,
-                reference: mut reference_829,
-            } => alias_826,
+                alias: mut alias_865,
+                id: mut id_866,
+                repository: mut repository_867,
+                reference: mut reference_868,
+            } => alias_865,
         }
     }
     #[doc = " tb_twice"]
-    pub fn tb_twice__s(ev: &Ev<'_>, mut names_830: List<Text>) -> Option<Text> {
+    pub fn tb_twice__s(ev: &Ev<'_>, mut names_869: List<Text>) -> Option<Text> {
         'tauto_tail: loop {
-            break match (names_830) {
+            break match (names_869) {
                 List::Nil => None,
-                List::Cons(mut n_831, b_t79) => {
-                    let mut rest_832 = b_t79;
-                    match (tb_named__s(ev, (*rest_832).clone(), n_831.clone())) {
-                        true => Some(n_831),
+                List::Cons(mut n_870, b_t100) => {
+                    let mut rest_871 = b_t100;
+                    match (tb_named__s(ev, (*rest_871).clone(), n_870.clone())) {
+                        true => Some(n_870),
                         false => {
-                            let tail0 = tauto_rt::unrc(rest_832);
-                            names_830 = tail0;
+                            let tail0 = tauto_rt::unrc(rest_871);
+                            names_869 = tail0;
                             continue 'tauto_tail;
                         }
-                        _ => tauto_rt::no_arm(LM329038),
+                        _ => tauto_rt::no_arm(LM95812),
                     }
                 }
             };
         }
     }
     #[doc = " tb_same_index"]
-    pub fn tb_same_index__s(ev: &Ev<'_>, mut a_833: TbIndex, mut b_834: TbIndex) -> bool {
-        match (a_833) {
+    pub fn tb_same_index__s(ev: &Ev<'_>, mut a_872: TbIndex, mut b_873: TbIndex) -> bool {
+        match (a_872) {
             TbIndex {
-                alias: mut a1_835,
-                id: mut i1_836,
-                repository: mut r1_837,
-                reference: mut b1_838,
-            } => match (b_834) {
+                alias: mut a1_874,
+                id: mut i1_875,
+                repository: mut r1_876,
+                reference: mut b1_877,
+            } => match (b_873) {
                 TbIndex {
-                    alias: mut a2_839,
-                    id: mut i2_840,
-                    repository: mut r2_841,
-                    reference: mut b2_842,
-                } => ((i1_836 == i2_840) || ((r1_837 == r2_841) && (b1_838 == b2_842))),
+                    alias: mut a2_878,
+                    id: mut i2_879,
+                    repository: mut r2_880,
+                    reference: mut b2_881,
+                } => ((i1_875 == i2_879) || ((r1_876 == r2_880) && (b1_877 == b2_881))),
             },
         }
     }
     #[doc = " tb_observer_of"]
     pub fn tb_observer_of__s(
         ev: &Ev<'_>,
-        mut w_843: TbIndex,
-        mut observers_844: List<TbIndex>,
+        mut w_882: TbIndex,
+        mut observers_883: List<TbIndex>,
     ) -> Option<TbNotIndependent> {
         'tauto_tail: loop {
-            break match (observers_844) {
+            break match (observers_883) {
                 List::Nil => None,
-                List::Cons(mut o_845, b_t80) => {
-                    let mut rest_846 = b_t80;
-                    match (tb_same_index__s(ev, o_845.clone(), w_843.clone())) {
+                List::Cons(mut o_884, b_t101) => {
+                    let mut rest_885 = b_t101;
+                    match (tb_same_index__s(ev, o_884.clone(), w_882.clone())) {
                         true => Some(TbNotIndependent {
-                            witness: tb_index_alias__s(ev, w_843),
-                            observer: tb_index_alias__s(ev, o_845),
+                            witness: tb_index_alias__s(ev, w_882),
+                            observer: tb_index_alias__s(ev, o_884),
                         }),
                         false => {
-                            let tail1 = tauto_rt::unrc(rest_846);
-                            observers_844 = tail1;
+                            let tail1 = tauto_rt::unrc(rest_885);
+                            observers_883 = tail1;
                             continue 'tauto_tail;
                         }
-                        _ => tauto_rt::no_arm(LM329793),
+                        _ => tauto_rt::no_arm(LM96521),
                     }
                 }
             };
@@ -7099,19 +6912,19 @@ pub mod generated {
     #[doc = " tb_independent"]
     pub fn tb_independent__s(
         ev: &Ev<'_>,
-        mut observers_847: List<TbIndex>,
-        mut witnesses_848: List<TbIndex>,
+        mut observers_886: List<TbIndex>,
+        mut witnesses_887: List<TbIndex>,
     ) -> Option<TbNotIndependent> {
         'tauto_tail: loop {
-            break match (witnesses_848) {
+            break match (witnesses_887) {
                 List::Nil => None,
-                List::Cons(mut w_849, b_t81) => {
-                    let mut rest_850 = b_t81;
-                    match (tb_observer_of__s(ev, w_849, observers_847.clone())) {
-                        Some(mut found_851) => Some(found_851),
+                List::Cons(mut w_888, b_t102) => {
+                    let mut rest_889 = b_t102;
+                    match (tb_observer_of__s(ev, w_888, observers_886.clone())) {
+                        Some(mut found_890) => Some(found_890),
                         None => {
-                            let tail1 = tauto_rt::unrc(rest_850);
-                            witnesses_848 = tail1;
+                            let tail1 = tauto_rt::unrc(rest_889);
+                            witnesses_887 = tail1;
                             continue 'tauto_tail;
                         }
                     }
@@ -7120,14 +6933,15 @@ pub mod generated {
         }
     }
     #[doc = " semver"]
-    pub fn semver__s(ev: &Ev<'_>, mut rev_852: Text) -> TbLocked {
+    pub fn semver__s(ev: &Ev<'_>, mut rev_891: Text) -> TbLocked {
         TbLocked {
             name: Text::lit("semver"),
             git: Text::lit("https://example.com/tauto/monorepo"),
             reference: Text::lit("refs/heads/main"),
             dir: Text::lit("semver"),
+            sparse: false,
             project: None,
-            rev: rev_852,
+            rev: rev_891,
             source: Text::lit(
                 "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             ),
@@ -7135,313 +6949,250 @@ pub mod generated {
     }
     #[doc = " text_tote"]
     pub fn text_tote__s(ev: &Ev<'_>) -> TbLocked {
-        TbLocked {
-            name: Text::lit("text"),
-            git: Text::lit("file:///srv/git/text.git"),
-            reference: Text::lit("refs/tags/v1"),
-            dir: Text::lit(""),
-            project: None,
-            rev: Text::lit("sha1:1111111111111111111111111111111111111111"),
-            source: Text::lit(
-                "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-            ),
+        {
+            thread_local! { static CONSTANT : std :: cell :: OnceCell < TbLocked > = const { std :: cell :: OnceCell :: new () } ; }
+            if let Some(v) = CONSTANT.with(|c| c.get().cloned()) {
+                v
+            } else {
+                let v: TbLocked = TbLocked {
+                    name: Text::lit("text"),
+                    git: Text::lit("file:///srv/git/text.git"),
+                    reference: Text::lit("refs/tags/v1"),
+                    dir: Text::lit(""),
+                    sparse: false,
+                    project: None,
+                    rev: Text::lit("sha1:1111111111111111111111111111111111111111"),
+                    source: Text::lit(
+                        "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                    ),
+                };
+                CONSTANT.with(|c| {
+                    let _ = c.set(v.clone());
+                });
+                v
+            }
+        }
+    }
+    #[doc = " draw_typeset"]
+    pub fn draw_typeset__s(ev: &Ev<'_>) -> TbLocked {
+        {
+            thread_local! { static CONSTANT : std :: cell :: OnceCell < TbLocked > = const { std :: cell :: OnceCell :: new () } ; }
+            if let Some(v) = CONSTANT.with(|c| c.get().cloned()) {
+                v
+            } else {
+                let v: TbLocked = TbLocked {
+                    name: Text::lit("typeset"),
+                    git: Text::lit("https://example.com/tauto/draw"),
+                    reference: Text::lit("refs/heads/main"),
+                    dir: Text::lit("totes/typeset"),
+                    sparse: true,
+                    project: None,
+                    rev: Text::lit("sha1:1111111111111111111111111111111111111111"),
+                    source: Text::lit(
+                        "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                    ),
+                };
+                CONSTANT.with(|c| {
+                    let _ = c.set(v.clone());
+                });
+                v
+            }
         }
     }
     #[doc = " tp"]
-    pub fn tp__s(ev: &Ev<'_>, mut p_853: Text, mut f_854: Text) -> TbTreePath {
+    pub fn tp__s(ev: &Ev<'_>, mut p_892: Text, mut f_893: Text) -> TbTreePath {
         TbTreePath {
-            path: p_853,
-            folded: f_854,
+            path: p_892,
+            folded: f_893,
         }
     }
     #[doc = " alice"]
     pub fn alice__s(ev: &Ev<'_>) -> TbIndex {
-        TbIndex {
-            alias: Text::lit("alice"),
-            id: Text::lit("1"),
-            repository: Text::lit("https://example.org/alice/index"),
-            reference: Text::lit("refs/heads/main"),
+        {
+            thread_local! { static CONSTANT : std :: cell :: OnceCell < TbIndex > = const { std :: cell :: OnceCell :: new () } ; }
+            if let Some(v) = CONSTANT.with(|c| c.get().cloned()) {
+                v
+            } else {
+                let v: TbIndex = TbIndex {
+                    alias: Text::lit("alice"),
+                    id: Text::lit("1"),
+                    repository: Text::lit("https://example.org/alice/index"),
+                    reference: Text::lit("refs/heads/main"),
+                };
+                CONSTANT.with(|c| {
+                    let _ = c.set(v.clone());
+                });
+                v
+            }
         }
     }
     #[doc = " bob"]
     pub fn bob__s(ev: &Ev<'_>) -> TbIndex {
-        TbIndex {
-            alias: Text::lit("bob"),
-            id: Text::lit("2"),
-            repository: Text::lit("https://example.org/bob/index"),
-            reference: Text::lit("refs/heads/main"),
+        {
+            thread_local! { static CONSTANT : std :: cell :: OnceCell < TbIndex > = const { std :: cell :: OnceCell :: new () } ; }
+            if let Some(v) = CONSTANT.with(|c| c.get().cloned()) {
+                v
+            } else {
+                let v: TbIndex = TbIndex {
+                    alias: Text::lit("bob"),
+                    id: Text::lit("2"),
+                    repository: Text::lit("https://example.org/bob/index"),
+                    reference: Text::lit("refs/heads/main"),
+                };
+                CONSTANT.with(|c| {
+                    let _ = c.set(v.clone());
+                });
+                v
+            }
         }
     }
     #[doc = " alice_mirror"]
     pub fn alice_mirror__s(ev: &Ev<'_>) -> TbIndex {
-        TbIndex {
-            alias: Text::lit("mirror"),
-            id: Text::lit("3"),
-            repository: Text::lit("https://example.org/alice/index"),
-            reference: Text::lit("refs/heads/main"),
-        }
-    }
-    #[doc = " calc_is_white"]
-    pub fn calc_is_white__s(ev: &Ev<'_>, mut t_855: SynTok) -> bool {
-        ((t_855.kind.clone() == Text::lit("Whitespace"))
-            || (t_855.kind.clone() == Text::lit("Newline")))
-    }
-    #[doc = " calc_is_rel"]
-    pub fn calc_is_rel__s(ev: &Ev<'_>, mut t_856: SynTok) -> bool {
-        ((t_856.kind.clone() == Text::lit("EqSign"))
-            || (t_856.kind.clone() == Text::lit("IffSign")))
-    }
-    #[doc = " calc_multiline"]
-    pub fn calc_multiline__s(ev: &Ev<'_>, mut ts_857: List<SynTok>) -> bool {
-        'tauto_tail: loop {
-            break match (ts_857) {
-                List::Nil => false,
-                List::Cons(mut t_858, b_t82) => {
-                    let mut rest_859 = b_t82;
-                    if (t_858.kind.clone() == Text::lit("Newline")) {
-                        true
-                    } else {
-                        {
-                            let tail0 = tauto_rt::unrc(rest_859);
-                            ts_857 = tail0;
-                            continue 'tauto_tail;
-                        }
-                    }
-                }
-            };
-        }
-    }
-    #[doc = " calc_lay"]
-    pub fn calc_lay__s(
-        ev: &Ev<'_>,
-        mut ts_860: List<SynTok>,
-        mut lines_861: bool,
-        mut first_862: bool,
-    ) -> Text {
-        'tauto_tail: loop {
-            break match (ts_860) {
-                List::Nil => Text::lit(""),
-                List::Cons(mut t_863, b_t83) => {
-                    let mut rest_864 = b_t83;
-                    if calc_is_white__s(ev, t_863.clone()) {
-                        {
-                            tauto_rt::host_tick(LM11098);
-                            let tail0 = tauto_rt::unrc(rest_864);
-                            ts_860 = tail0;
-                            continue 'tauto_tail;
-                        }
-                    } else {
-                        {
-                            let mut sep_865: Text = if first_862 {
-                                Text::lit("")
-                            } else {
-                                if calc_is_rel__s(ev, t_863.clone()) {
-                                    if lines_861 {
-                                        Text::lit("\n")
-                                    } else {
-                                        Text::lit(" ")
-                                    }
-                                } else {
-                                    Text::lit(" ")
-                                }
-                            };
-                            tauto_rt::stdlib::concat(
-                                sep_865,
-                                tauto_rt::stdlib::concat(t_863.text.clone(), {
-                                    tauto_rt::host_tick(LM11277);
-                                    calc_lay__s(ev, tauto_rt::unrc(rest_864), lines_861, false)
-                                }),
-                            )
-                        }
-                    }
-                }
-            };
-        }
-    }
-    #[doc = " calc_fmt"]
-    pub fn calc_fmt__s(ev: &Ev<'_>, mut ts_866: List<SynTok>, mut width_867: u64) -> Option<Text> {
-        Some({
-            tauto_rt::host_tick(LM11398);
-            calc_lay__s(ev, ts_866.clone(), calc_multiline__s(ev, ts_866), true)
-        })
-    }
-    #[doc = " calc_tokens"]
-    pub fn calc_tokens__s(ev: &Ev<'_>, mut ts_868: List<SynTok>) -> List<SynHighlight> {
-        'tauto_tail: loop {
-            break match (ts_868) {
-                List::Nil => List::Nil,
-                List::Cons(mut t_869, b_t84) => {
-                    let mut rest_870 = b_t84;
-                    if calc_is_rel__s(ev, t_869.clone()) {
-                        List::Cons(
-                            SynHighlight {
-                                start: t_869.start,
-                                end: t_869.end,
-                                kind: Text::lit("operator"),
-                            },
-                            Rc::new({
-                                tauto_rt::host_tick(LM11767);
-                                calc_tokens__s(ev, tauto_rt::unrc(rest_870))
-                            })
-                            .into(),
-                        )
-                    } else {
-                        if (t_869.text.clone() == Text::lit("from")) {
-                            List::Cons(
-                                SynHighlight {
-                                    start: t_869.start,
-                                    end: t_869.end,
-                                    kind: Text::lit("keyword"),
-                                },
-                                Rc::new({
-                                    tauto_rt::host_tick(LM11892);
-                                    calc_tokens__s(ev, tauto_rt::unrc(rest_870))
-                                })
-                                .into(),
-                            )
-                        } else {
-                            {
-                                tauto_rt::host_tick(LM11930);
-                                let tail0 = tauto_rt::unrc(rest_870);
-                                ts_868 = tail0;
-                                continue 'tauto_tail;
-                            }
-                        }
-                    }
-                }
-            };
+        {
+            thread_local! { static CONSTANT : std :: cell :: OnceCell < TbIndex > = const { std :: cell :: OnceCell :: new () } ; }
+            if let Some(v) = CONSTANT.with(|c| c.get().cloned()) {
+                v
+            } else {
+                let v: TbIndex = TbIndex {
+                    alias: Text::lit("mirror"),
+                    id: Text::lit("3"),
+                    repository: Text::lit("https://example.org/alice/index"),
+                    reference: Text::lit("refs/heads/main"),
+                };
+                CONSTANT.with(|c| {
+                    let _ = c.set(v.clone());
+                });
+                v
+            }
         }
     }
     #[doc = " List::append"]
-    pub fn List__append__s<A: 'static + Clone>(
+    pub fn List__append__s<A: Clone>(
         ev: &Ev<'_>,
-        mut l_871: &List<A>,
-        mut m_872: List<A>,
+        mut l_894: List<A>,
+        mut m_895: List<A>,
     ) -> List<A> {
-        match (&(*l_871)) {
-            List::Nil => m_872,
-            List::Cons(h_873, b_t85) => {
-                let t_874 = &**b_t85;
+        match (l_894) {
+            List::Nil => m_895,
+            List::Cons(mut h_896, b_t103) => {
+                let mut t_897 = b_t103;
                 List::Cons(
-                    h_873.clone(),
-                    Rc::new(List__append__s::<A>(ev, t_874, m_872)).into(),
+                    h_896,
+                    Rc::new(List__append__s::<A>(ev, tauto_rt::unrc(t_897), m_895)).into(),
                 )
             }
         }
     }
     #[doc = " List::map"]
-    pub fn List__map__s<A: 'static + Clone, B: 'static + Clone>(
+    pub fn List__map__s<A: Clone, B: Clone>(
         ev: &Ev<'_>,
-        mut f_875: Rc<dyn Fn(&Ev<'_>, A) -> B>,
-        mut l_876: &List<A>,
+        mut f_898: Rc<dyn Fn(&Ev<'_>, A) -> B>,
+        mut l_899: List<A>,
     ) -> List<B> {
-        match (&(*l_876)) {
+        match (l_899) {
             List::Nil => List::Nil,
-            List::Cons(h_877, b_t86) => {
-                let t_878 = &**b_t86;
+            List::Cons(mut h_900, b_t104) => {
+                let mut t_901 = b_t104;
                 List::Cons(
-                    f_875(ev, h_877.clone()),
-                    Rc::new(List__map__s::<A, B>(ev, f_875, t_878)).into(),
+                    f_898(ev, h_900),
+                    Rc::new(List__map__s::<A, B>(ev, f_898, tauto_rt::unrc(t_901))).into(),
                 )
             }
         }
     }
-    #[doc = " not"]
-    pub fn not__s(ev: &Ev<'_>, mut b_879: bool) -> bool {
-        if b_879 { false } else { true }
-    }
     #[doc = " List::filter"]
-    pub fn List__filter__s<A: 'static + Clone>(
+    pub fn List__filter__s<A: Clone>(
         ev: &Ev<'_>,
-        mut p_880: Rc<dyn Fn(&Ev<'_>, A) -> bool>,
-        mut l_881: &List<A>,
+        mut p_902: Rc<dyn Fn(&Ev<'_>, &A) -> bool>,
+        mut l_903: List<A>,
     ) -> List<A> {
         'tauto_tail: loop {
-            break match (&(*l_881)) {
+            break match (l_903) {
                 List::Nil => List::Nil,
-                List::Cons(h_882, b_t87) => {
-                    let t_883 = &**b_t87;
-                    match (p_880(ev, h_882.clone())) {
+                List::Cons(mut h_904, b_t105) => {
+                    let mut t_905 = b_t105;
+                    match (p_902(ev, &h_904)) {
                         false => {
-                            let tail1 = t_883;
-                            l_881 = tail1;
+                            let tail1 = tauto_rt::unrc(t_905);
+                            l_903 = tail1;
                             continue 'tauto_tail;
                         }
                         true => List::Cons(
-                            h_882.clone(),
-                            Rc::new(List__filter__s::<A>(ev, p_880, t_883)).into(),
+                            h_904,
+                            Rc::new(List__filter__s::<A>(ev, p_902, tauto_rt::unrc(t_905))).into(),
                         ),
-                        _ => tauto_rt::no_arm(LM22896),
+                        _ => tauto_rt::no_arm(LM16302),
                     }
                 }
             };
         }
     }
+    #[doc = " not"]
+    pub fn not__s(ev: &Ev<'_>, mut b_906: bool) -> bool {
+        if b_906 { false } else { true }
+    }
     #[doc = " List::reverse"]
-    pub fn List__reverse__s<A: 'static + Clone>(ev: &Ev<'_>, mut l_884: &List<A>) -> List<A> {
-        List__reverse_onto__s::<A>(ev, l_884, List::Nil)
+    pub fn List__reverse__s<A: Clone>(ev: &Ev<'_>, mut l_907: List<A>) -> List<A> {
+        List__reverse_onto__s::<A>(ev, l_907, List::Nil)
     }
     #[doc = " List::length"]
-    pub fn List__length__s<A: 'static + Clone>(
-        ev: &Ev<'_>,
-        mut l_885: &List<A>,
-    ) -> tauto_rt::nat::Nat {
-        List__length__s__acc::<A>(ev, l_885, tauto_rt::nat::Nat::from_u64(0_u64))
+    pub fn List__length__s<A: Clone>(ev: &Ev<'_>, mut l_908: &List<A>) -> tauto_rt::nat::Nat {
+        List__length__s_2::<A>(ev, l_908, tauto_rt::nat::Nat::from_u64(0_u64))
     }
     #[doc = " List::all"]
-    pub fn List__all__s<A: 'static + Clone>(
+    pub fn List__all__s<A: Clone>(
         ev: &Ev<'_>,
-        mut p_888: Rc<dyn Fn(&Ev<'_>, A) -> bool>,
-        mut l_889: &List<A>,
+        mut p_911: Rc<dyn Fn(&Ev<'_>, &A) -> bool>,
+        mut l_912: &List<A>,
     ) -> bool {
-        match (&(*l_889)) {
+        match (&(*l_912)) {
             List::Nil => true,
-            List::Cons(h_890, b_t88) => {
-                let t_891 = &**b_t88;
-                (p_888(ev, h_890.clone()) && List__all__s::<A>(ev, p_888, t_891))
+            List::Cons(h_913, b_t106) => {
+                let t_914 = &**b_t106;
+                (p_911(ev, &(*h_913)) && List__all__s::<A>(ev, p_911, &(*t_914)))
             }
         }
     }
     #[doc = " List::any"]
-    pub fn List__any__s<A: 'static + Clone>(
+    pub fn List__any__s<A: Clone>(
         ev: &Ev<'_>,
-        mut p_892: Rc<dyn Fn(&Ev<'_>, A) -> bool>,
-        mut l_893: &List<A>,
+        mut p_915: Rc<dyn Fn(&Ev<'_>, &A) -> bool>,
+        mut l_916: &List<A>,
     ) -> bool {
-        match (&(*l_893)) {
+        match (&(*l_916)) {
             List::Nil => false,
-            List::Cons(h_894, b_t89) => {
-                let t_895 = &**b_t89;
-                (p_892(ev, h_894.clone()) || List__any__s::<A>(ev, p_892, t_895))
+            List::Cons(h_917, b_t107) => {
+                let t_918 = &**b_t107;
+                (p_915(ev, &(*h_917)) || List__any__s::<A>(ev, p_915, &(*t_918)))
             }
         }
     }
     #[doc = " List::tail"]
-    pub fn List__tail__s<A: 'static + Clone>(ev: &Ev<'_>, mut l_896: List<A>) -> List<A> {
-        match (l_896) {
+    pub fn List__tail__s<A: Clone>(ev: &Ev<'_>, mut l_919: List<A>) -> List<A> {
+        match (l_919) {
             List::Nil => List::Nil,
-            List::Cons(mut h_897, b_t90) => {
-                let mut t_898 = b_t90;
-                tauto_rt::unrc(t_898)
+            List::Cons(mut h_920, b_t108) => {
+                let mut t_921 = b_t108;
+                tauto_rt::unrc(t_921)
             }
         }
     }
     #[doc = " List::reverse_onto"]
-    pub fn List__reverse_onto__s<A: 'static + Clone>(
+    pub fn List__reverse_onto__s<A: Clone>(
         ev: &Ev<'_>,
-        mut l_899: &List<A>,
-        mut acc_900: List<A>,
+        mut l_922: List<A>,
+        mut acc_923: List<A>,
     ) -> List<A> {
         'tauto_tail: loop {
-            break match (&(*l_899)) {
-                List::Nil => acc_900,
-                List::Cons(h_901, b_t91) => {
-                    let t_902 = &**b_t91;
+            break match (l_922) {
+                List::Nil => acc_923,
+                List::Cons(mut h_924, b_t109) => {
+                    let mut t_925 = b_t109;
                     {
-                        let tail0 = t_902;
-                        let tail1 = List::Cons(h_901.clone(), Rc::new(acc_900).into());
-                        l_899 = tail0;
-                        acc_900 = tail1;
+                        let tail0 = tauto_rt::unrc(t_925);
+                        let tail1 = List::Cons(h_924, Rc::new(acc_923).into());
+                        l_922 = tail0;
+                        acc_923 = tail1;
                         continue 'tauto_tail;
                     }
                 }
@@ -7449,25 +7200,25 @@ pub mod generated {
         }
     }
     #[doc = " List::length"]
-    pub fn List__length__s__acc<A: 'static + Clone>(
+    pub fn List__length__s_2<A: Clone>(
         ev: &Ev<'_>,
-        mut l_885: &List<A>,
-        mut acc_903: tauto_rt::nat::Nat,
+        mut l_908: &List<A>,
+        mut acc_926: tauto_rt::nat::Nat,
     ) -> tauto_rt::nat::Nat {
         'tauto_tail: loop {
-            break match (&(*l_885)) {
-                List::Nil => acc_903,
-                List::Cons(h_886, b_t92) => {
-                    let t_887 = &**b_t92;
+            break match (&(*l_908)) {
+                List::Nil => acc_926,
+                List::Cons(h_909, b_t110) => {
+                    let t_910 = &**b_t110;
                     {
-                        let tail0 = t_887;
+                        let tail0 = t_910;
                         let tail1 = tauto_rt::int::add_nat(
-                            acc_903,
+                            acc_926,
                             tauto_rt::nat::Nat::from_u64(1_u64),
-                            LM1073742709,
+                            LM1073741827,
                         );
-                        l_885 = tail0;
-                        acc_903 = tail1;
+                        l_908 = tail0;
+                        acc_926 = tail1;
                         continue 'tauto_tail;
                     }
                 }
@@ -7494,8 +7245,8 @@ pub mod generated {
             }
         }
     }
-    pub fn array_to_list<A: Clone>(a: tauto_rt::stdlib::Array<A>) -> List<A> {
-        vec_into_list(a.to_vec())
+    pub fn array_to_list<A: Clone>(a: impl AsRef<[A]>) -> List<A> {
+        vec_into_list(a.as_ref().to_vec())
     }
     pub fn text_of_utf8(l: List<u8>) -> Option<Text> {
         tauto_rt::stdlib::text_of_utf8_vec(array_of_list(l).to_vec())
@@ -7505,6 +7256,9 @@ pub mod generated {
     }
     pub fn os_args() -> List<Text> {
         vec_into_list(tauto_rt::stdlib::os_args_vec())
+    }
+    pub fn os_env_names() -> List<Text> {
+        vec_into_list(tauto_rt::stdlib::os_env_names_vec())
     }
     pub fn bytes_of_list(l: List<u8>) -> tauto_rt::stdlib::Bytes {
         tauto_rt::stdlib::Bytes::from(array_of_list(l).to_vec())
@@ -7522,6 +7276,28 @@ pub mod generated {
         let headers = array_of_list(headers).to_vec();
         tauto_rt::stdlib::os_fetch_vec(method, url, address, headers, body)
             .map(|(items, body)| (body, vec_into_list(items)))
+    }
+    pub fn os_entry(what: Text, args: List<Text>) -> List<Text> {
+        let args = array_of_list(args).to_vec();
+        vec_into_list(tauto_rt::stdlib::os_entry_vec(what, args))
+    }
+    pub fn os_http_open(
+        method: Text,
+        url: Text,
+        address: Text,
+        headers: List<Text>,
+    ) -> Result<u64, Text> {
+        let headers = array_of_list(headers).to_vec();
+        tauto_rt::http::os_http_open_vec(method, url, address, headers)
+    }
+    pub fn os_http_finish(body: u64, deadline: Option<i64>) -> Result<Option<List<Text>>, Text> {
+        tauto_rt::http::os_http_finish_vec(body, deadline).map(|o| {
+            o.map(|(head, id)| {
+                let mut items = vec![Text::from(id.to_string())];
+                items.extend(head);
+                vec_into_list(items)
+            })
+        })
     }
     pub fn os_list_dir(path: Text) -> Result<List<Text>, Text> {
         tauto_rt::stdlib::os_list_dir_vec(path).map(vec_into_list)
@@ -7627,55 +7403,45 @@ pub mod generated {
         pub use super::Authority;
         pub use super::CancelToken;
         pub use super::Cancellation;
-        pub use super::Cancelled;
         pub use super::Channel;
         pub use super::Child;
         pub use super::ChildStream;
+        pub use super::Diagnostic;
         pub use super::Escape;
         pub use super::Fifo;
         pub use super::FileKind;
+        pub use super::FileLock;
         pub use super::FileStat;
+        pub use super::Finished;
+        pub use super::HashSeed;
         pub use super::IoError;
         pub use super::Judgement__Use;
         pub use super::List;
+        pub use super::ListenStopper;
         pub use super::Map;
         pub use super::Mutex;
         pub use super::MutexGuard;
-        pub use super::NatExpr;
-        pub use super::NmTerm;
+        pub use super::Opened;
         pub use super::Ordering;
         pub use super::Pending;
+        pub use super::Piece;
+        pub use super::Placed;
         pub use super::Polled;
         pub use super::Process;
         pub use super::ProcessIo;
         pub use super::ProcessOutput;
+        pub use super::RcPlaced;
+        pub use super::Received;
         pub use super::Request;
+        pub use super::RequestBody;
+        pub use super::RequestHead;
         pub use super::Response;
+        pub use super::ResponseBody;
+        pub use super::ResponseHead;
         pub use super::SchemeKind;
         pub use super::Semaphore;
         pub use super::Shutdown;
         pub use super::Stdio;
-        pub use super::SynArm;
-        pub use super::SynBinder;
-        pub use super::SynCtor;
-        pub use super::SynCtx;
-        pub use super::SynData;
-        pub use super::SynEffect;
-        pub use super::SynExpr;
-        pub use super::SynFn;
-        pub use super::SynHandler;
-        pub use super::SynHighlight;
-        pub use super::SynIdent;
-        pub use super::SynIndCtor;
-        pub use super::SynInductive;
-        pub use super::SynParam;
-        pub use super::SynPattern;
-        pub use super::SynSpan;
-        pub use super::SynStepArm;
-        pub use super::SynStmt;
-        pub use super::SynTheorem;
-        pub use super::SynTok;
-        pub use super::SynToken;
         pub use super::Tail;
         pub use super::Task;
         pub use super::TbChange;
@@ -7687,81 +7453,87 @@ pub mod generated {
         pub use super::TbTreePath;
         pub use super::TbTreeProblem;
         pub use super::TbUrlProblem;
+        pub use super::TcpAccepted;
         pub use super::TcpListener;
+        pub use super::TcpRead;
+        pub use super::TcpStopper;
         pub use super::TcpStream;
+        pub use super::TcpWritten;
         pub use super::TlsCert;
         pub use super::TlsClient;
         pub use super::TlsClientCert;
+        pub use super::TlsRead;
         pub use super::TlsRoots;
         pub use super::TlsServer;
+        pub use super::TlsStopper;
         pub use super::TlsStream;
+        pub use super::TlsWritten;
         pub use super::Url;
         pub use super::UrlPath;
-        pub use super::calc_syntax__Chain;
-        pub use super::calc_syntax__Rel;
-        pub use super::calc_syntax__Step;
+        pub use super::Width;
+        pub use super::Written;
         use super::*;
-        pub fn tb_valid_name(t_636: Text) -> bool {
-            super::tb_valid_name__s(&Ev::empty(), t_636)
+        pub fn tb_valid_name(t_672: Text) -> bool {
+            super::tb_valid_name__s(&Ev::empty(), t_672)
         }
-        pub fn tb_check_url(t_650: Text) -> Option<TbUrlProblem> {
-            super::tb_check_url__s(&Ev::empty(), t_650)
+        pub fn tb_check_url(t_685: Text) -> Option<TbUrlProblem> {
+            super::tb_check_url__s(&Ev::empty(), t_685)
         }
-        pub fn tb_check_ref(t_662: Text) -> bool {
-            super::tb_check_ref__s(&Ev::empty(), t_662)
+        pub fn tb_check_ref(t_695: Text) -> bool {
+            super::tb_check_ref__s(&Ev::empty(), t_695)
         }
-        pub fn tb_check_dir(t_674: Text) -> bool {
-            super::tb_check_dir__s(&Ev::empty(), t_674)
+        pub fn tb_check_dir(t_708: Text) -> bool {
+            super::tb_check_dir__s(&Ev::empty(), t_708)
         }
-        pub fn tb_check_rev(t_681: Text) -> bool {
-            super::tb_check_rev__s(&Ev::empty(), t_681)
+        pub fn tb_check_rev(t_714: Text) -> bool {
+            super::tb_check_rev__s(&Ev::empty(), t_714)
         }
-        pub fn tb_check_source_id(t_684: Text) -> bool {
-            super::tb_check_source_id__s(&Ev::empty(), t_684)
+        pub fn tb_check_source_id(t_717: Text) -> bool {
+            super::tb_check_source_id__s(&Ev::empty(), t_717)
         }
-        pub fn tb_check_path(t_693: Text) -> Option<TbPathProblem> {
-            super::tb_check_path__s(&Ev::empty(), t_693)
+        pub fn tb_check_path(t_725: Text) -> Option<TbPathProblem> {
+            super::tb_check_path__s(&Ev::empty(), t_725)
         }
-        pub fn tb_check_tree(ps_728: List<TbTreePath>) -> Option<TbTreeProblem> {
-            super::tb_check_tree__s(&Ev::empty(), ps_728)
+        pub fn tb_check_tree(ps_760: List<TbTreePath>) -> Option<TbTreeProblem> {
+            super::tb_check_tree__s(&Ev::empty(), ps_760)
         }
-        pub fn tb_put(lock_782: List<TbLocked>, l_783: TbLocked) -> List<TbLocked> {
-            super::tb_put__s(&Ev::empty(), lock_782, l_783)
+        pub fn tb_put(lock_819: List<TbLocked>, l_820: TbLocked) -> List<TbLocked> {
+            super::tb_put__s(&Ev::empty(), lock_819, l_820)
         }
-        pub fn tb_render(lock_802: List<TbLocked>) -> Text {
-            super::tb_render__s(&Ev::empty(), lock_802)
+        pub fn tb_render(lock_841: List<TbLocked>) -> Text {
+            super::tb_render__s(&Ev::empty(), lock_841)
         }
         pub fn tb_changes(
-            before_817: List<TbLocked>,
-            after_818: List<TbLocked>,
-            unlocked_819: List<Text>,
+            before_856: List<TbLocked>,
+            after_857: List<TbLocked>,
+            unlocked_858: List<Text>,
         ) -> List<TbChange> {
-            super::tb_changes__s(&Ev::empty(), before_817, after_818, unlocked_819)
+            super::tb_changes__s(&Ev::empty(), before_856, after_857, unlocked_858)
         }
         pub fn tb_plan(
-            moves_820: bool,
-            report_only_821: bool,
-            offline_822: bool,
-            locked_823: bool,
-            cached_824: bool,
+            moves_859: bool,
+            report_only_860: bool,
+            offline_861: bool,
+            locked_862: bool,
+            cached_863: bool,
         ) -> TbPlan {
             super::tb_plan__s(
                 &Ev::empty(),
-                moves_820,
-                report_only_821,
-                offline_822,
-                locked_823,
-                cached_824,
+                moves_859,
+                report_only_860,
+                offline_861,
+                locked_862,
+                cached_863,
             )
         }
-        pub fn tb_twice(names_830: List<Text>) -> Option<Text> {
-            super::tb_twice__s(&Ev::empty(), names_830)
+        pub fn tb_twice(names_869: List<Text>) -> Option<Text> {
+            super::tb_twice__s(&Ev::empty(), names_869)
         }
         pub fn tb_independent(
-            observers_847: List<TbIndex>,
-            witnesses_848: List<TbIndex>,
+            observers_886: List<TbIndex>,
+            witnesses_887: List<TbIndex>,
         ) -> Option<TbNotIndependent> {
-            super::tb_independent__s(&Ev::empty(), observers_847, witnesses_848)
+            super::tb_independent__s(&Ev::empty(), observers_886, witnesses_887)
         }
     }
     pub fn run() {
@@ -7771,7 +7543,7 @@ pub mod generated {
                 .expect("tauto: the payload of show");
             println!("{name} = {}", value.0);
         });
-        top__s(&ev);
+        _top___s(&ev);
     }
 }
 #[allow(unused_imports)]

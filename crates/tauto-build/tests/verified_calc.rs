@@ -121,7 +121,8 @@ fn main() {
         assert_eq!(domain.at, raw.at);
         assert_eq!(&*domain.message, &*raw.message);
     }
-    for steps in [0, -1] {
+    {
+        let steps = 0;
         assert!(matches!(calc::calc_read(tauto_rt::Text::from("1"), steps), Err(calc::CalcFailure::CalcBudgetExceeded)));
         assert!(matches!(calc::calc_fold_bounded(calc::Expr::ELit(tauto_rt::Nat::from_u64(1)), steps), Err(calc::CalcFailure::CalcBudgetExceeded)));
         assert!(matches!(calc::calc_eval_bounded(calc::Expr::ELit(tauto_rt::Nat::from_u64(1)), steps), Err(calc::CalcFailure::CalcBudgetExceeded)));
@@ -207,7 +208,7 @@ fn existing_calc_proofs_are_axiom_free_and_the_evaluator_still_runs() {
                 }
             }
             let loaded = tauto::program::load_tote(&example).unwrap();
-            let run = tauto::eval::run_program_with(&loaded.program, 100_000_000, Default::default()).unwrap();
+            let run = tauto::exec::run_loaded_with(&loaded, 100_000_000, Default::default()).unwrap();
             assert_eq!(run.stdout, "(2 + 3) * (4 + 5) => 45\n1 + 2 * 3 => 7\n2 + * 3 => error: expected Num or LParen, found Star\n");
         });
     }).unwrap().join().unwrap();

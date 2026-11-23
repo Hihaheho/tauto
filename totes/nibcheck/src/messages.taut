@@ -1,0 +1,936 @@
+import std::base
+import std::text
+
+// A diagnostic is a message of the toolchain: an id and its arguments, which
+// `crates/tauto-messages/locales` writes in each language. The tote does not
+// write the text: it gives the message as `id(name: "value", …)`, the form
+// `tauto_message::Message` has when no writer is set, so that it matches what
+// the Rust checker says id for id and argument for argument.
+
+// The bytes of a text as a Rust `{:?}` writes them: `"`, `\` and the line
+// breaks escaped.
+pub fn msg_escape(bs: List(Nat)): List(Nat) {
+  match bs {
+    Nil => Nil
+    Cons(b, rest) => if b == 34 {
+      Cons(92, Cons(34, msg_escape(rest)))
+    } else {
+      if b == 92 {
+        Cons(92, Cons(92, msg_escape(rest)))
+      } else {
+        if b == 10 {
+          Cons(92, Cons(110, msg_escape(rest)))
+        } else {
+          if b == 13 {
+            Cons(92, Cons(114, msg_escape(rest)))
+          } else {
+            if b == 9 { Cons(92, Cons(116, msg_escape(rest))) } else { Cons(b, msg_escape(rest)) }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn msg_quote(t: Text): Text {
+  match Text::of_utf8(msg_escape(Text::bytes(t))) {
+    Some(e) => Text::concat_all(Cons("\"", Cons(e, Cons("\"", Nil))))
+    None => "\"\""
+  }
+}
+
+// `id`, for a message without arguments.
+pub fn msg0(id: Text): Text {
+  id
+}
+
+// `name: "value"`, an argument that is a text.
+pub fn marg(name: Text, value: Text): Text {
+  Text::concat_all(Cons(name, Cons(": ", Cons(msg_quote(value), Nil))))
+}
+
+// `name: id(…)`, an argument that is a message.
+pub fn marg_msg(name: Text, message: Text): Text {
+  Text::concat_all(Cons(name, Cons(": ", Cons(message, Nil))))
+}
+
+// `name: 3`, an argument that is a number.
+pub fn marg_num(name: Text, value: Nat): Text {
+  Text::concat_all(Cons(name, Cons(": ", Cons(Text::of_nat(value), Nil))))
+}
+
+pub fn msg_join(args: List(Text)): Text {
+  match args {
+    Nil => ""
+    Cons(a, rest) => ⊢ Text from match rest {
+      Nil => a
+      Cons(^b, ^more) => Text::concat_all(Cons(a, Cons(", ", Cons(msg_join(rest), Nil))))
+    }
+  }
+}
+
+// `id(arg, …)`, with the arguments made by `marg`, `marg_msg` and `marg_num`.
+pub fn msg_with(id: Text, args: List(Text)): Text {
+  Text::concat_all(Cons(id, Cons("(", Cons(msg_join(args), Cons(")", Nil)))))
+}
+
+pub fn msg1(id: Text, a: Text): Text {
+  msg_with(id, Cons(a, Nil))
+}
+
+pub fn msg2(id: Text, a: Text, b: Text): Text {
+  msg_with(id, Cons(a, Cons(b, Nil)))
+}
+
+pub fn msg3(id: Text, a: Text, b: Text, c: Text): Text {
+  msg_with(id, Cons(a, Cons(b, Cons(c, Nil))))
+}
+
+pub fn msg4(id: Text, a: Text, b: Text, c: Text, d: Text): Text {
+  msg_with(id, Cons(a, Cons(b, Cons(c, Cons(d, Nil)))))
+}
+
+pub fn msg5(id: Text, a: Text, b: Text, c: Text, d: Text, e: Text): Text {
+  msg_with(id, Cons(a, Cons(b, Cons(c, Cons(d, Cons(e, Nil))))))
+}
+
+pub fn view_var_field_assigned_message(): Text {
+  msg0("nibcheck-view-var-field-assigned")
+}
+
+pub fn assigns_field_of_var_message(target: Text): Text {
+  msg1("nibcheck-assigns-field-of-var", marg("target", target))
+}
+
+pub fn not_defined_message(name: Text): Text {
+  msg1("nibcheck-not-defined", marg("name", name))
+}
+
+pub fn not_a_var_message(name: Text): Text {
+  msg1("nibcheck-not-a-var", marg("name", name))
+}
+
+pub fn assign_through_borrow_message(name: Text): Text {
+  msg1("nibcheck-assign-through-borrow", marg("place", name))
+}
+
+pub fn deref_needs_mut_borrow_message(name: Text): Text {
+  msg1("nibcheck-deref-needs-mut-borrow", marg("place", name))
+}
+
+// What refuses `name := v` (`deref` false) or `*name := v` (`deref` true) where `name` is
+// neither a `var` nor a `&mut` borrow.
+pub fn binding_refused_message(name: Text, deref: Bool): Text {
+  match deref {
+    true => deref_needs_mut_borrow_message(name)
+    false => not_a_var_message(name)
+  }
+}
+
+pub fn type_declared_twice_message(name: Text): Text {
+  msg1("nibcheck-type-declared-twice", marg("name", name))
+}
+
+pub fn function_declared_twice_message(name: Text): Text {
+  msg1("nibcheck-function-declared-twice", marg("name", name))
+}
+
+pub fn constructor_without_fields_message(name: Text): Text {
+  msg1("nibcheck-constructor-without-fields", marg("name", name))
+}
+
+pub fn not_a_function_message(found: Text): Text {
+  msg1("nibcheck-not-a-function", marg("found", found))
+}
+
+pub fn no_method_message(owner: Text, name: Text): Text {
+  msg2("nibcheck-no-method", marg("owner", owner), marg("name", name))
+}
+
+pub fn no_field_message(name: Text, field: Text): Text {
+  msg2("nibcheck-no-field", marg("name", name), marg("field", field))
+}
+
+pub fn not_a_struct_message(name: Text): Text {
+  msg1("nibcheck-not-a-struct", marg("name", name))
+}
+
+pub fn field_given_twice_message(field: Text): Text {
+  msg1("nibcheck-field-given-twice", marg("field", field))
+}
+
+pub fn field_missing_message(field: Text, name: Text): Text {
+  msg2("nibcheck-field-missing", marg("field", field), marg("name", name))
+}
+
+pub fn not_a_nat_message(value: Text): Text {
+  msg1("nibcheck-not-a-nat", marg("value", value))
+}
+
+pub fn not_an_int_message(value: Text): Text {
+  msg1("nibcheck-not-an-int", marg("value", value))
+}
+
+// What a numeral that does not read as `name` (`Nat` or `Int`) is reported as.
+pub fn numeral_not_message(name: Text, value: Text): Text {
+  match name == "Int" {
+    true => not_an_int_message(value)
+    false => not_a_nat_message(value)
+  }
+}
+
+pub fn float_too_large_message(value: Text): Text {
+  msg1("nibcheck-float-too-large", marg("value", value))
+}
+
+pub fn nat_too_large_message(value: Text): Text {
+  msg1("nibcheck-nat-too-large", marg("value", value))
+}
+
+pub fn not_a_var_for_lend_message(what: Text): Text {
+  msg1("nibcheck-not-a-var-for-lend", marg("what", what))
+}
+
+pub fn quote_splice_type_message(found: Text): Text {
+  msg1("nibcheck-quote-splice-type", marg("found", found))
+}
+
+pub fn not_a_class_message(name: Text): Text {
+  msg1("nibcheck-not-a-class", marg("name", name))
+}
+
+pub fn int_literal_no_type_message(): Text {
+  msg0("nibcheck-int-literal-no-type")
+}
+
+pub fn capture_kind_fixed_message(name: Text, kind: Text): Text {
+  msg2("nibcheck-capture-kind-fixed", marg("name", name), marg("kind", kind))
+}
+
+pub fn capture_kind_undetermined_message(name: Text): Text {
+  msg1("nibcheck-capture-kind-undetermined", marg("name", name))
+}
+
+pub fn closure_returns_borrow_message(): Text {
+  msg0("nibcheck-closure-returns-borrow")
+}
+
+pub fn view_type_argument_message(): Text {
+  msg0("nibcheck-view-type-argument")
+}
+
+pub fn takes_arguments_message(name: Text, count: Text): Text {
+  msg2("nibcheck-takes-arguments", marg("name", name), marg("count", count))
+}
+
+pub fn type_constructor_variable_one_argument_message(name: Text): Text {
+  msg1("nibcheck-type-constructor-variable-one-argument", marg("name", name))
+}
+
+pub fn slice_only_borrowed_message(): Text {
+  msg0("nibcheck-slice-only-borrowed")
+}
+
+pub fn not_a_type_message(): Text {
+  msg0("nibcheck-not-a-type")
+}
+
+pub fn not_a_type_of_program_message(): Text {
+  msg0("nibcheck-not-a-type-of-program")
+}
+
+pub fn kind_of_function_type_message(kind: Text): Text {
+  msg1("nibcheck-kind-of-function-type", marg("kind", kind))
+}
+
+pub fn parameter_has_no_type_message(name: Text): Text {
+  msg1("nibcheck-parameter-has-no-type", marg("name", name))
+}
+
+pub fn resume_quantity_message(quantity: Text): Text {
+  msg1("nibcheck-resume-quantity", marg("quantity", quantity))
+}
+
+pub fn borrow_only_extern_type_message(): Text {
+  msg0("nibcheck-borrow-only-extern-type")
+}
+
+pub fn borrow_field_message(): Text {
+  msg0("nibcheck-borrow-field")
+}
+
+pub fn declared_shared_holds_itself_message(declared: Text, name: Text): Text {
+  msg2("nibcheck-declared-shared-holds-itself", marg("declared", declared), marg("name", name))
+}
+
+pub fn return_needs_mut_parameter_message(ty: Text): Text {
+  msg1("nibcheck-return-needs-mut-parameter", marg("ty", ty))
+}
+
+pub fn borrows_result_holds_no_borrow_message(ty: Text): Text {
+  msg1("nibcheck-borrows-result-holds-no-borrow", marg("ty", ty))
+}
+
+pub fn borrows_not_a_borrowed_parameter_message(name: Text): Text {
+  msg1("nibcheck-borrows-not-a-borrowed-parameter", marg("name", name))
+}
+
+pub fn return_needs_borrowed_parameter_message(ty: Text): Text {
+  msg1("nibcheck-return-needs-borrowed-parameter", marg("ty", ty))
+}
+
+pub fn predicate_written_twice_message(cls: Text, argument: Text): Text {
+  msg2("nibcheck-predicate-written-twice", marg("class", cls), marg("argument", argument))
+}
+
+pub fn let_mut_borrow_binds_return_message(name: Text): Text {
+  msg1("nibcheck-let-mut-borrow-binds-return", marg("name", name))
+}
+
+pub fn let_borrow_binds_return_message(name: Text): Text {
+  msg1("nibcheck-let-borrow-binds-return", marg("name", name))
+}
+
+pub fn borrow_cannot_be_stored_message(name: Text, ty: Text): Text {
+  msg2("nibcheck-borrow-cannot-be-stored", marg("name", name), marg("ty", ty))
+}
+
+pub fn var_borrow_binds_view_message(name: Text): Text {
+  msg1("nibcheck-var-borrow-binds-view", marg("name", name))
+}
+
+pub fn var_holds_linear_message(name: Text, ty: Text): Text {
+  msg2("nibcheck-var-holds-linear", marg("name", name), marg("ty", ty))
+}
+
+pub fn return_outside_function_message(): Text {
+  msg0("nibcheck-return-outside-function")
+}
+
+pub fn declare_type_at_top_level_message(): Text {
+  msg0("nibcheck-declare-type-at-top-level")
+}
+
+pub fn declare_extern_at_top_level_message(): Text {
+  msg0("nibcheck-declare-extern-at-top-level")
+}
+
+pub fn declare_syntax_at_top_level_message(): Text {
+  msg0("nibcheck-declare-syntax-at-top-level")
+}
+
+pub fn not_supported_yet_message(what: Text): Text {
+  msg1("nibcheck-not-supported-yet", marg("what", what))
+}
+
+pub fn cannot_infer_function_type_message(): Text {
+  msg0("nibcheck-cannot-infer-function-type")
+}
+
+// The host answers a budget, as it does `wait`: no program's `handle` has an
+// arm for it.
+pub fn no_effect_declared_message(eff: Text): Text {
+  match eff == "budget" || eff == "budget_memory" {
+    true => msg1("nibcheck-host-answers", marg("effect", eff))
+    false => msg1("nibcheck-no-effect-declared", marg("effect", eff))
+  }
+}
+
+pub fn budget_arms_differ_message(): Text {
+  msg0("nibcheck-budget-arms-differ")
+}
+
+pub fn clone_takes_borrow_message(): Text {
+  msg0("nibcheck-clone-takes-borrow")
+}
+
+pub fn division_operands_unknown_message(): Text {
+  msg0("nibcheck-division-operands-unknown")
+}
+
+pub fn integer_division_message(): Text {
+  msg0("nibcheck-integer-division")
+}
+
+pub fn operator_other_operands_message(op: Text): Text {
+  msg1("nibcheck-operator-other-operands", marg("op", op))
+}
+
+pub fn operator_not_a_number_message(op: Text, ty: Text): Text {
+  msg2("nibcheck-operator-not-a-number", marg("op", op), marg("ty", ty))
+}
+
+pub fn label_not_on_message(tag: Text, ty: Text): Text {
+  msg2("nibcheck-label-not-on", marg("tag", tag), marg("ty", ty))
+}
+
+pub fn pattern_cannot_match_message(pattern: Text, target: Text): Text {
+  msg2("nibcheck-pattern-cannot-match", marg("pattern", pattern), marg("target", target))
+}
+
+pub fn product_pattern_cannot_match_message(ty: Text): Text {
+  msg1("nibcheck-product-pattern-cannot-match", marg("ty", ty))
+}
+
+pub fn match_not_exhaustive_message(): Text {
+  msg0("nibcheck-match-not-exhaustive")
+}
+
+pub fn match_literals_need_rest_arm_message(): Text {
+  msg0("nibcheck-match-literals-need-rest-arm")
+}
+
+pub fn default_arm_last_message(): Text {
+  msg0("nibcheck-default-arm-last")
+}
+
+pub fn default_arm_unreachable_message(): Text {
+  msg0("nibcheck-default-arm-unreachable")
+}
+
+pub fn direct_arm_must_resume_message(eff: Text): Text {
+  msg1("nibcheck-direct-arm-must-resume", marg("effect", eff))
+}
+
+pub fn arm_does_not_resume_message(eff: Text, k: Text): Text {
+  msg2("nibcheck-arm-does-not-resume", marg("effect", eff), marg("k", k))
+}
+
+pub fn function_argument_count_message(expected: Text, given: Text): Text {
+  msg2("nibcheck-function-argument-count", marg("expected", expected), marg("given", given))
+}
+
+pub fn pattern_field_count_message(name: Text, fields: Text, pattern: Text): Text {
+  msg3("nibcheck-pattern-field-count", marg("name", name), marg("fields", fields), marg("pattern", pattern))
+}
+
+pub fn arm_must_be_generic_message(eff: Text): Text {
+  msg1("nibcheck-arm-must-be-generic", marg("effect", eff))
+}
+
+pub fn arm_value_count_message(eff: Text, expected: Text, given: Text): Text {
+  msg3("nibcheck-arm-value-count", marg("effect", eff), marg("expected", expected), marg("given", given))
+}
+
+pub fn pattern_not_supported_message(what: Text): Text {
+  msg1("nibcheck-pattern-not-supported", marg("what", what))
+}
+
+pub fn class_built_in_message(name: Text): Text {
+  msg1("nibcheck-class-built-in", marg("name", name))
+}
+
+pub fn class_declared_twice_message(name: Text): Text {
+  msg1("nibcheck-class-declared-twice", marg("name", name))
+}
+
+pub fn class_already_type_message(name: Text): Text {
+  msg1("nibcheck-class-already-type", marg("name", name))
+}
+
+pub fn class_parameter_count_message(name: Text, count: Text): Text {
+  msg2("nibcheck-class-parameter-count", marg("name", name), marg("count", count))
+}
+
+pub fn not_a_kind_message(name: Text): Text {
+  msg1("nibcheck-not-a-kind", marg("name", name))
+}
+
+pub fn class_member_declared_twice_message(cls: Text, name: Text): Text {
+  msg2("nibcheck-class-member-declared-twice", marg("class", cls), marg("name", name))
+}
+
+pub fn class_method_where_cycle_message(path: Text): Text {
+  msg1("nibcheck-class-method-where-cycle", marg("path", path))
+}
+
+pub fn class_method_performs_effects_message(cls: Text, name: Text): Text {
+  msg2("nibcheck-class-method-performs-effects", marg("class", cls), marg("name", name))
+}
+
+pub fn class_structural_no_instances_message(name: Text): Text {
+  msg1("nibcheck-class-structural-no-instances", marg("name", name))
+}
+
+pub fn instance_head_distinct_generics_message(): Text {
+  msg0("nibcheck-instance-head-distinct-generics")
+}
+
+pub fn generic_not_in_head_message(name: Text): Text {
+  msg1("nibcheck-generic-not-in-head", marg("name", name))
+}
+
+pub fn constructor_kind_mismatch_message(what: Text, arg: Text, result: Text, shown: Text, kind: Text): Text {
+  msg5("nibcheck-constructor-kind-mismatch", marg("what", what), marg("arg", arg), marg("result", result), marg("shown", shown), marg("kind", kind))
+}
+
+pub fn instance_needs_constructor_message(cls: Text, shown: Text): Text {
+  msg2("nibcheck-instance-needs-constructor", marg("class", cls), marg("shown", shown))
+}
+
+pub fn instance_type_kind_message(cls: Text, bound: Text, shown: Text, kind: Text): Text {
+  msg4("nibcheck-instance-type-kind", marg("class", cls), marg("bound", bound), marg("shown", shown), marg("kind", kind))
+}
+
+pub fn instance_orphan_message(cls: Text, ctor: Text): Text {
+  msg2("nibcheck-instance-orphan", marg("class", cls), marg("ctor", ctor))
+}
+
+pub fn instance_duplicate_message(cls: Text, ctor: Text): Text {
+  msg2("nibcheck-instance-duplicate", marg("class", cls), marg("ctor", ctor))
+}
+
+pub fn where_only_generics_of_instance_message(): Text {
+  msg0("nibcheck-where-only-generics-of-instance")
+}
+
+pub fn instance_no_law_message(cls: Text, name: Text): Text {
+  msg2("nibcheck-instance-no-law", marg("class", cls), marg("name", name))
+}
+
+pub fn instance_law_twice_message(name: Text): Text {
+  msg1("nibcheck-instance-law-twice", marg("name", name))
+}
+
+pub fn instance_missing_method_message(cls: Text, ty: Text, name: Text): Text {
+  msg3("nibcheck-instance-missing-method", marg("class", cls), marg("ty", ty), marg("name", name))
+}
+
+pub fn index_entry_binds_each_type_argument_message(entry: Text, head: Text, want: Text): Text {
+  msg3("nibcheck-index-entry-binds-each-type-argument", marg("entry", entry), marg("head", head), marg("want", want))
+}
+
+pub fn index_entry_writes_body_row_message(entry: Text, head: Text): Text {
+  msg2("nibcheck-index-entry-writes-body-row", marg("entry", entry), marg("head", head))
+}
+
+pub fn row_write_instance_message(entry: Text, want: Text): Text {
+  msg2("nibcheck-row-write-instance", marg("entry", entry), marg("want", want))
+}
+
+pub fn index_generic_not_given_message(name: Text): Text {
+  msg1("nibcheck-index-generic-not-given", marg("name", name))
+}
+
+pub fn type_cannot_index_effect_message(ty: Text): Text {
+  msg1("nibcheck-type-cannot-index-effect", marg("ty", ty))
+}
+
+pub fn copied_for_too_many_indices_message(name: Text): Text {
+  msg1("nibcheck-copied-for-too-many-indices", marg("name", name))
+}
+
+pub fn index_arguments_unknown_message(): Text {
+  msg0("nibcheck-index-arguments-unknown")
+}
+
+pub fn index_no_type_found_message(): Text {
+  msg0("nibcheck-index-no-type-found")
+}
+
+pub fn which_effect_this_is_message(eff: Text, why: Text): Text {
+  msg2("nibcheck-which-effect-this-is", marg("effect", eff), marg_msg("why", why))
+}
+
+pub fn type_is_linear_message(ty: Text): Text {
+  msg1("nibcheck-type-is-linear", marg("ty", ty))
+}
+
+pub fn type_has_no_clone_message(ty: Text): Text {
+  msg1("nibcheck-type-has-no-clone", marg("ty", ty))
+}
+
+pub fn needs_class_message(what: Text, cls: Text, ty: Text): Text {
+  msg3("nibcheck-needs-class", marg("what", what), marg("class", cls), marg("ty", ty))
+}
+
+pub fn needs_class_add_where_message(what: Text, cls: Text, ty: Text): Text {
+  msg3("nibcheck-needs-class-add-where", marg("what", what), marg("class", cls), marg("ty", ty))
+}
+
+pub fn no_instance_message(cls: Text, ty: Text): Text {
+  msg2("nibcheck-no-instance", marg("class", cls), marg("ty", ty))
+}
+
+pub fn type_not_determined_message(generics: List(Text), name: Text): Text {
+  msg2(
+    "nibcheck-type-not-determined",
+    marg("generics", type_not_determined_quoted(generics)),
+    marg("name", name)
+  )
+}
+
+pub fn type_not_determined_quoted(gs: List(Text)): Text {
+  match gs {
+    Nil => ""
+    Cons(g, rest) => ⊢ Text from match rest {
+      Nil => Text::concat_all(Cons("`", Cons(g, Cons("`", Nil))))
+      Cons(^h, ^more) => Text::concat_all(
+        Cons("`", Cons(g, Cons("`, ", Cons(type_not_determined_quoted(rest), Nil))))
+      )
+    }
+  }
+}
+
+pub fn class_type_undetermined_message(cls: Text): Text {
+  msg1("nibcheck-class-type-undetermined", marg("class", cls))
+}
+
+pub fn what_constructor_message(): Text {
+  msg0("nibcheck-what-constructor")
+}
+
+pub fn what_result_of_message(name: Text): Text {
+  msg1("nibcheck-what-result-of", marg("name", name))
+}
+
+pub fn what_field_message(field: Text): Text {
+  msg1("nibcheck-what-field", marg("field", field))
+}
+
+pub fn what_while_condition_message(): Text {
+  msg0("nibcheck-what-while-condition")
+}
+
+pub fn what_if_condition_message(): Text {
+  msg0("nibcheck-what-if-condition")
+}
+
+pub fn what_ascription_message(): Text {
+  msg0("nibcheck-what-ascription")
+}
+
+pub fn what_returned_value_message(): Text {
+  msg0("nibcheck-what-returned-value")
+}
+
+pub fn what_argument_message(): Text {
+  msg0("nibcheck-what-argument")
+}
+
+pub fn what_budget_steps_message(): Text {
+  msg0("nibcheck-what-budget-steps")
+}
+
+pub fn what_function_result_message(): Text {
+  msg0("nibcheck-what-function-result")
+}
+
+pub fn what_guard_message(): Text {
+  msg0("nibcheck-what-guard")
+}
+
+pub fn what_arm_goal_message(): Text {
+  msg0("nibcheck-what-arm-goal")
+}
+
+pub fn what_arm_body_message(): Text {
+  msg0("nibcheck-what-arm-body")
+}
+
+pub fn what_match_result_message(): Text {
+  msg0("nibcheck-what-match-result")
+}
+
+pub fn match_depends_on_value_message(name: Text): Text {
+  msg1("nibcheck-match-depends-on-value", marg("name", name))
+}
+
+pub fn what_handler_arm_message(): Text {
+  msg0("nibcheck-what-handler-arm")
+}
+
+pub fn mismatch_message(what: Text, found: Text, expected: Text): Text {
+  msg3("nibcheck-mismatch", marg_msg("what", what), marg("found", found), marg("expected", expected))
+}
+
+pub fn mismatch_lend_message(what: Text, found: Text, expected: Text): Text {
+  msg3("nibcheck-mismatch-lend", marg_msg("what", what), marg("found", found), marg("expected", expected))
+}
+
+pub fn mismatch_closure_kind_message(what: Text, found: Text, expected: Text): Text {
+  msg3("nibcheck-mismatch-closure-kind", marg_msg("what", what), marg("found", found), marg("expected", expected))
+}
+
+pub fn mismatch_open_product_message(what: Text, found: Text, expected: Text): Text {
+  msg3("nibcheck-mismatch-open-product", marg_msg("what", what), marg("found", found), marg("expected", expected))
+}
+
+pub fn mismatch_product_clash_message(what: Text, member: Text): Text {
+  msg2("nibcheck-mismatch-product-clash", marg_msg("what", what), marg("member", member))
+}
+
+pub fn not_an_application_message(ty: Text): Text {
+  msg1("nibcheck-not-an-application", marg("ty", ty))
+}
+
+pub fn literal_does_not_fit_message(literal: Text, ty: Text): Text {
+  msg2("nibcheck-literal-does-not-fit", marg("literal", literal), marg("ty", ty))
+}
+
+pub fn kind_does_not_fit_bound_message(kind: Text, bound: Text, ty: Text): Text {
+  msg3("nibcheck-kind-does-not-fit-bound", marg("kind", kind), marg("bound", bound), marg("ty", ty))
+}
+
+// A pattern's constructor that names no constructor, as `ctor_pattern` of
+// `types.rs` says it when no constructor of the type is spelled near it.
+pub fn not_a_constructor_message(name: Text): Text {
+  msg1("nibcheck-not-a-constructor-plain", marg("name", name))
+}
+
+pub fn not_a_constructor_hint_message(name: Text, hint: Text): Text {
+  msg2("nibcheck-not-a-constructor-hint", marg("name", name), marg("hint", hint))
+}
+
+pub fn ambiguous_constructor_message(name: Text, candidates: Text): Text {
+  msg2("nibcheck-ambiguous-constructor", marg("name", name), marg("candidates", candidates))
+}
+
+pub fn pattern_field_missing_message(field: Text): Text {
+  msg1("nibcheck-pattern-field-missing", marg("field", field))
+}
+
+pub fn effect_takes_no_type_arguments_message(eff: Text): Text {
+  msg1("nibcheck-effect-takes-no-type-arguments", marg("effect", eff))
+}
+
+pub fn no_type_argument_named_message(name: Text): Text {
+  msg1("nibcheck-call-no-type-argument-named", marg("name", name))
+}
+
+pub fn arm_write_instance_message(eff: Text, every: Text): Text {
+  msg2("nibcheck-arm-write-instance", marg("effect", eff), marg("every", every))
+}
+
+pub fn effect_type_argument_count_message(eff: Text, expected: Nat, given: Nat): Text {
+  msg3(
+    "nibcheck-effect-type-argument-count",
+    marg("effect", eff),
+    marg_num("expected", expected),
+    marg_num("given", given)
+  )
+}
+
+pub fn arm_binds_each_type_argument_message(every: Text): Text {
+  msg1("nibcheck-arm-binds-each-type-argument", marg("every", every))
+}
+
+pub fn lin_class_shared_message(): Text {
+  msg0("nibcheck-lin-class-shared")
+}
+
+pub fn lin_class_affine_message(): Text {
+  msg0("nibcheck-lin-class-affine")
+}
+
+pub fn lin_class_linear_message(): Text {
+  msg0("nibcheck-lin-class-linear")
+}
+
+pub fn lin_class_var_message(cls: Text): Text {
+  msg1("nibcheck-lin-class-var", marg_msg("class", cls))
+}
+
+pub fn lin_what_mut_borrow_message(): Text {
+  msg0("nibcheck-lin-what-mut-borrow")
+}
+
+pub fn lin_what_borrowing_closure_message(): Text {
+  msg0("nibcheck-lin-what-borrowing-closure")
+}
+
+pub fn lin_arm_captures_message(what: Text, name: Text): Text {
+  msg2("nibcheck-lin-arm-captures", marg_msg("what", what), marg("name", name))
+}
+
+pub fn lin_destructure_message(name: Text, cls: Text, root: Text): Text {
+  msg3("nibcheck-lin-destructure", marg("name", name), marg_msg("class", cls), marg("root", root))
+}
+
+pub fn lin_outer_var_across_many_message(name: Text, shown: Text): Text {
+  msg2("nibcheck-lin-outer-var-across-many", marg("name", name), marg("shown", shown))
+}
+
+pub fn lin_live_across_many_message(name: Text, shown: Text): Text {
+  msg2("nibcheck-lin-live-across-many", marg("name", name), marg("shown", shown))
+}
+
+pub fn lin_live_across_may_not_resume_message(name: Text, shown: Text): Text {
+  msg2("nibcheck-lin-live-across-may-not-resume", marg("name", name), marg("shown", shown))
+}
+
+pub fn lin_live_across_may_not_resume_div_message(name: Text, shown: Text): Text {
+  msg2("nibcheck-lin-live-across-may-not-resume-div", marg("name", name), marg("shown", shown))
+}
+
+pub fn lin_borrowed_by_arm_message(name: Text, op: Text): Text {
+  msg2("nibcheck-lin-borrowed-by-arm", marg("name", name), marg("op", op))
+}
+
+pub fn lin_frozen_by_message(name: Text, r#by: Text): Text {
+  msg2("nibcheck-lin-frozen-by", marg("name", name), marg("by", r#by))
+}
+
+pub fn lin_holds_borrow_of_message(name: Text): Text {
+  msg1("nibcheck-lin-holds-borrow-of", marg("name", name))
+}
+
+pub fn lin_shares_var_message(name: Text): Text {
+  msg1("nibcheck-lin-shares-var", marg("name", name))
+}
+
+pub fn lin_continuation_only_in_arm_message(name: Text, why: Text): Text {
+  msg2("nibcheck-lin-continuation-only-in-arm", marg("name", name), marg_msg("why", why))
+}
+
+pub fn cycle_unchecked_message(what: Text, why: Text): Text {
+  msg2("nibcheck-cycle-unchecked", marg("what", what), marg("why", why))
+}
+
+pub fn cycle_self_message(what: Text): Text {
+  msg2("nibcheck-cycle-self", marg("what", what), marg("path", ""))
+}
+
+pub fn cycle_among_message(names: Text): Text {
+  msg2("nibcheck-cycle-among", marg("names", names), marg("path", ""))
+}
+
+pub fn lin_not_used_message(name: Text): Text {
+  msg1("nibcheck-lin-not-used", marg("name", name))
+}
+
+pub fn lin_closure_borrows_cannot_store_message(name: Text, r#borrows: Text): Text {
+  msg2("nibcheck-lin-closure-borrows-cannot-store", marg("name", name), marg("borrows", r#borrows))
+}
+
+pub fn lin_consumes_captured_message(name: Text): Text {
+  msg1("nibcheck-lin-consumes-captured", marg("name", name))
+}
+
+pub fn lin_borrowed_in_argument_message(name: Text): Text {
+  msg1("nibcheck-lin-borrowed-in-argument", marg("name", name))
+}
+
+pub fn lin_overwrite_message(name: Text): Text {
+  msg1("nibcheck-lin-overwrite", marg("name", name))
+}
+
+pub fn lin_borrowed_cannot_move_message(name: Text): Text {
+  msg1("nibcheck-lin-borrowed-cannot-move", marg("name", name))
+}
+
+pub fn lin_lent_function_kept_message(): Text {
+  msg0("nibcheck-lin-lent-function-kept")
+}
+
+pub fn lin_lent_function_to_generic_message(): Text {
+  msg0("nibcheck-lin-lent-function-to-generic")
+}
+
+pub fn lin_var_moved_out_of_closure_message(name: Text): Text {
+  msg1("nibcheck-lin-var-moved-out-of-closure", marg("name", name))
+}
+
+pub fn lin_used_after_move_message(name: Text): Text {
+  msg1("nibcheck-lin-used-after-move", marg("name", name))
+}
+
+pub fn lin_moved_in_loop_message(name: Text): Text {
+  msg1("nibcheck-lin-moved-in-loop", marg("name", name))
+}
+
+pub fn lin_used_some_paths_message(name: Text): Text {
+  msg1("nibcheck-lin-used-some-paths", marg("name", name))
+}
+
+pub fn lin_this_closure_borrows_message(names: Text): Text {
+  msg1("nibcheck-lin-this-closure-borrows", marg("names", names))
+}
+
+pub fn lin_borrowed_in_budget_message(name: Text): Text {
+  msg1("nibcheck-lin-borrowed-in-budget", marg("name", name))
+}
+
+pub fn lin_borrowed_after_move_message(name: Text): Text {
+  msg1("nibcheck-lin-borrowed-after-move", marg("name", name))
+}
+
+pub fn lin_moved_while_borrowed_message(name: Text): Text {
+  msg1("nibcheck-lin-moved-while-borrowed", marg("name", name))
+}
+
+pub fn lin_borrowed_twice_message(name: Text): Text {
+  msg1("nibcheck-lin-borrowed-twice", marg("name", name))
+}
+
+pub fn lin_drops_linear_message(ty: Text): Text {
+  msg1("nibcheck-lin-drops-linear", marg("ty", ty))
+}
+
+pub fn lin_lend_to_borrowed_parameter_message(): Text {
+  msg0("nibcheck-lin-lend-to-borrowed-parameter")
+}
+
+pub fn lin_borrow_effect_argument_message(): Text {
+  msg0("nibcheck-lin-borrow-effect-argument")
+}
+
+pub fn lin_arm_moves_many_times_message(op: Text, name: Text): Text {
+  msg2("nibcheck-lin-arm-moves-many-times", marg("op", op), marg("name", name))
+}
+
+pub fn generic_effect_argument_message(name: Text): Text {
+  msg1("nibcheck-generic-effect-argument", marg("name", name))
+}
+
+pub fn lin_not_in_borrows_message(name: Text): Text {
+  msg1("nibcheck-lin-not-in-borrows", marg("name", name))
+}
+
+pub fn lin_borrow_returned_message(name: Text): Text {
+  msg1("nibcheck-lin-borrow-returned", marg("name", name))
+}
+
+pub fn lin_does_not_live_long_enough_message(owner: Text, name: Text): Text {
+  msg2("nibcheck-lin-does-not-live-long-enough", marg("owner", owner), marg("name", name))
+}
+
+// What a declaration that says it holds a borrow but is not an opaque extern
+// type is told. The grammar writes `borrow` only on an extern `type`.
+pub fn view_decl_message(is_struct: Bool): Text { borrow_only_extern_type_message() }
+
+pub fn lin_borrow_returned_through_message(name: Text, eff: Text): Text {
+  msg2("nibcheck-lin-borrow-returned-through", marg("name", name), marg("effect", eff))
+}
+
+pub fn lin_lending_operation_resumes_once_message(name: Text): Text {
+  msg1("nibcheck-lin-lending-operation-resumes-once", marg("name", name))
+}
+
+// A struct read through its `coerce` fields (`docs/design/ownership.md`
+// 「Coercing structs (`coerce`)」).
+pub fn coerce_own_field_message(field: Text, ty: Text, place: Text): Text {
+  msg3("nibcheck-coerce-own-field", marg("field", field), marg("ty", ty), marg("place", place))
+}
+
+pub fn coerce_move_message(ty: Text, target: Text, allowed: Text): Text {
+  msg3("nibcheck-coerce-move", marg("ty", ty), marg("target", target), marg("allowed", allowed))
+}
+
+pub fn coerce_lend_mut_message(ty: Text, target: Text): Text {
+  msg2("nibcheck-coerce-lend-mut", marg("ty", ty), marg("target", target))
+}
+
+pub fn coerce_assign_message(ty: Text, target: Text): Text {
+  msg2("nibcheck-coerce-assign", marg("ty", ty), marg("target", target))
+}
+
+pub fn coerce_duplicable_message(ty: Text, target: Text): Text {
+  msg2("nibcheck-coerce-duplicable", marg("ty", ty), marg("target", target))
+}
+pub fn value_indexed_classes_message(): Text {
+  msg0("nibcheck-value-indexed-classes")
+}
+pub fn term_generic_needs_extraction_message(name: Text): Text {
+  msg1("nibcheck-term-generic-needs-extraction", marg("name", name))
+}

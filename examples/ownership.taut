@@ -1,16 +1,15 @@
-import std::prelude::Affine
 
 // Ownership and borrowing. A `Vec` is owned by one variable; `&v` lends it for reading and
 // `&mut v` for writing, and a function can return a borrow of its argument (a view).
 
 // A view: the result is a borrow of `v` itself, not a copy of the number.
-pub fn first(&v: Vec(i64)): &i64 ! {out_of_bounds} { Vec::index(&v, 0) }
+pub fn first(v: &Vec(i64)): &i64 ! {out_of_bounds} { Vec::index(&v, 0) }
 
 // A view that writes through: the caller changes `x` by changing the result.
-pub fn same(&mut x: i64): &mut i64 { x }
+pub fn same(x: &mut i64): &mut i64 { x }
 
 // Takes the vector by value: the caller cannot use `v` afterwards.
-pub fn total(v: Vec(i64)): i64 ! {out_of_bounds, Div} {
+pub fn total(v: Vec(i64)): i64 ! {out_of_bounds, div, overflow} {
   var sum := 0
   var i := 0
   while i < Vec::len(&v) {
@@ -25,24 +24,24 @@ Vec::push(&mut v, 3)
 Vec::push(&mut v, 4)
 
 let head := handle {
-  let &r := first(&v)
+  let r := first(&v)
   r
 } with {
   out_of_bounds() => 0
 }
-perform show("first", head)
+show(&head)
 
 // The borrow ended, so `v` can change again.
 Vec::push(&mut v, 5)
 
 var n := 1
 {
-  let &mut m := same(&mut n)
-  m := 9
+  let m := same(&mut n)
+  *m := 9
 }
-perform show("n", n)
+show(&n)
 
 let sum := handle { total(v) } with {
   out_of_bounds() => 0
 }
-perform show("total", sum)
+show(&sum)

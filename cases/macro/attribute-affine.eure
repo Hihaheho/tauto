@@ -1,0 +1,50 @@
+// Attribute precheck sees a declaration after the same surface expansion a
+// bare file gets: kinds such as `affine` are erased for the kernel, so a
+// pass-through attribute on an affine function type runs.
+
+@ cases.an-attribute-on-an-affine-function-type-runs
+entry = "main.taut"
+files."keep.taut" = ````tauto
+import std::builtin::macro
+
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  Cons(s, Nil)
+}
+````
+files."main.taut" = ````tauto
+import "keep.taut" { keep }
+
+@keep!(1) => replace fn f
+fn f(k: affine (i64) -> i64): i64 { k(1) }
+
+fn id(n: i64): i64 { n }
+
+show(&f(id))
+````
+stdout = "1\n"
+
+// A declaration that still fails after expansion is not given to the macro.
+@ cases.an-attribute-on-a-kernel-rejected-declaration-does-not-run
+entry = "main.taut"
+files."keep.taut" = ````tauto
+import std::builtin::macro
+
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error} {
+  Cons(s, Nil)
+}
+````
+files."main.taut" = ````tauto
+import std::base
+import "keep.taut" { keep }
+
+@keep!(1) => replace theorem t
+theorem t(): False { Zero }
+````
+diagnostics[] {
+  stage = "checks"
+  message = "type mismatch"
+}
+diagnostics[] {
+  stage = "checks"
+  message = "was not run"
+}

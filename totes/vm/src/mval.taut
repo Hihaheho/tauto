@@ -1,12 +1,12 @@
 import "seq.taut"
-import "syntab.taut"
-import std::Base
-import std::Int
-import std::Text
-import std::Bytes
-import std::Float
-import std::Float32
-import std::prelude::Shared
+import "../../synrun/src/syntab.taut"
+import std::base
+import std::array
+import std::int
+import std::text
+import std::bytes
+import std::float
+import std::float32
 
 // The values of the machine of `machine.taut`, its code, its frames and its state, and what
 // reads and writes them: the heap, the places a borrow names, equality and `show`.
@@ -38,13 +38,13 @@ pub fn mt_set<A>(fuel: Nat, t: MTrie(A), n: Nat, x: Option(A)): MTrie(A) {
   match fuel {
     Zero => t
     Succ(f) => {
-      let parts := ⊢ Pair(Option(A), Pair(MTrie(A), MTrie(A))) from match t {
-        MtLeaf => Pair { fst: None, snd: Pair { fst: MtLeaf, snd: MtLeaf } }
-        MtNode(v, l, r) => Pair { fst: v, snd: Pair { fst: l, snd: r } }
+      let parts := ⊢ (Option(A) × MTrie(A) × MTrie(A)) from match t {
+        MtLeaf => #(None, MtLeaf, MtLeaf)
+        MtNode(v, l, r) => #(v, l, r)
       }
       match parts {
-        Pair { fst: v, snd: lr } => match lr {
-          Pair { fst: l, snd: r } => if Nat::eq(n, 0) {
+        #(v, lr) => match lr {
+          #(l, r) => if Nat::eq(n, 0) {
             MtNode(x, l, r)
           } else if Nat::eq(Nat::rem_nz(n, 2, Nat::ne_zero(2, Refl)), 1) {
             MtNode(v, mt_set(f, l, Nat::div_nz(n, 2, Nat::ne_zero(2, Refl)), x), r)
@@ -57,85 +57,110 @@ pub fn mt_set<A>(fuel: Nat, t: MTrie(A), n: Nat, x: Option(A)): MTrie(A) {
   }
 }
 
-// A step of a place's path: a field or member by index, a field by name, an item of a
-// `Vec` or `Array`, or the value of an entry of a `HashMap`.
+// A step of a place's path: a field or member by index, a field by name, or an item
+// of a `Vec` or `Array`.
 pub(open) inductive MPath: Type {
   MpathIndex(i: Nat): MPath
   MpathName(n: Text): MPath
   MpathItem(i: Nat): MPath
-  MpathEntry(i: Nat): MPath
+  // What a union's value holds.
+  MpathPayload: MPath
 }
 
-// A borrowed path stores its most recent step first, so extending it shares the prefix.
-pub(open) inductive MRefPath: Type {
-  MrPath(reversed: List(MPath)): MRefPath
+mutual {
+  // A borrowed path stores its most recent step first, so extending it shares the prefix.
+  // `MrSeen` also keeps the value the path named when cells had been written `writes` times
+  // (`cx_writes`). Until a cell is written again the path names that same value, so a read
+  // takes it instead of walking the path from the cell: a borrow that goes down a list one
+  // step at a time reads each step at once, not in time that grows with how deep it is.
+  pub(open) inductive MRefPath: Type {
+    MrPath(reversed: List(MPath)): MRefPath
+    MrSeen(reversed: List(MPath), at: MVal, writes: Nat): MRefPath
+  }
+
+  pub(open) inductive MVal: Type {
+    MvDeclaration(slot: Nat): MVal
+    MvUnit: MVal
+    MvBool(b: Bool): MVal
+    MvInt(i: Int): MVal
+    MvFloat(x: Float): MVal
+    MvFloat32(x: Float32): MVal
+    MvText(t: Text): MVal
+    // A value already written as `show` writes it.
+    MvShown(t: Text): MVal
+    MvBuf(t: Text): MVal
+    MvData(ctor: Nat, fields: List(MVal)): MVal
+    MvProduct(members: List(MVal)): MVal
+    MvInject(union: Nat, variant: Nat, v: MVal): MVal
+    // The `f`-th function of the program, and a closure: a function with the values it
+    // captured after its parameters.
+    MvFn(f: Nat): MVal
+    MvClosure(f: Nat, captures: List(MVal)): MVal
+    // The continuation in the heap at `id`; `many` when it may resume more than once.
+    MvCont(id: Nat): MVal
+    MvVec(items: MSeq(MVal)): MVal
+    MvArray(items: MSeq(MVal)): MVal
+    MvBytes(bytes: Bytes): MVal
+    // `Slots`: the state, the mark of a vacant slot, then the marks and the slots (a slot
+    // that holds no value is `MvMoved`).
+    MvSlots(state: MVal, vacant: MVal, marks: MSeq(MVal), items: MSeq(MVal)): MVal
+    // A borrow of the place: the cell `cell` of the heap, then the path.
+    MvRef(cell: Nat, path: MRefPath): MVal
+    // `Ref` (kind 0), `Atomic` (kind 1) or `Weak` (kind 2, on the cell of a `Ref`): a value shared
+    // through the cell.
+    MvShared(kind: Nat, cell: Nat): MVal
+    MvSignal(id: Nat): MVal
+    MvPending(id: Nat): MVal
+    MvMutex(id: Nat): MVal
+    // A locked mutex's content: the mutex, and the cell that holds the content until the
+    // guard is dropped.
+    MvGuard(mutex: Nat, cell: Nat): MVal
+    // What `exceeded` is performed with, and its answers.
+    MvInfo: MVal
+    MvAnswer(v: MVal): MVal
+    MvMore(n: Option(Int)): MVal
+    MvSecret(v: MVal): MVal
+    MvMoved: MVal
+    // A value of the host (`host.taut`): the object `id` of the heap.
+    MvHost(id: Nat): MVal
+  }
+}
+
+pub fn mr_reversed(path: MRefPath): List(MPath) {
+  match path {
+    MrPath(reversed) => reversed
+    MrSeen(reversed, ^at, ^writes) => reversed
+  }
 }
 
 pub fn mr_steps(path: MRefPath): List(MPath) {
-  match path { MrPath(reversed) => List::reverse(reversed) }
+  List::reverse(mr_reversed(path))
 }
 
 pub fn mr_child(path: MRefPath, s: MPath): MRefPath {
-  match path { MrPath(reversed) => MrPath(Cons(s, reversed)) }
+  MrPath(Cons(s, mr_reversed(path)))
 }
 
+// Extending by no step is the same path, and keeps what it names.
 pub fn mr_extend(path: MRefPath, suffix: List(MPath)): MRefPath {
-  match path { MrPath(reversed) => MrPath(List::reverse_onto(suffix, reversed)) }
-}
-
-pub(open) inductive MVal: Type {
-  MvDeclaration(slot: Nat): MVal
-  MvUnit: MVal
-  MvBool(b: Bool): MVal
-  MvInt(i: Int): MVal
-  MvFloat(x: Float): MVal
-  MvFloat32(x: Float32): MVal
-  MvText(t: Text): MVal
-  // A value already written as `show` writes it.
-  MvShown(t: Text): MVal
-  MvBuf(t: Text): MVal
-  MvData(ctor: Nat, fields: List(MVal)): MVal
-  MvProduct(members: List(MVal)): MVal
-  MvInject(union: Nat, variant: Nat, v: MVal): MVal
-  // The `f`-th function of the program, and a closure: a function with the values it
-  // captured after its parameters.
-  MvFn(f: Nat): MVal
-  MvClosure(f: Nat, captures: List(MVal)): MVal
-  // The continuation in the heap at `id`; `many` when it may resume more than once.
-  MvCont(id: Nat): MVal
-  MvVec(items: MSeq(MVal)): MVal
-  MvArray(items: MSeq(MVal)): MVal
-  MvBytes(bytes: Bytes): MVal
-  MvMap(entries: List(Pair(MVal, MVal))): MVal
-  // A borrow of the place: the cell `cell` of the heap, then the path.
-  MvRef(cell: Nat, path: MRefPath): MVal
-  // `Ref` (kind 0), `Atomic` (kind 1) or `Weak` (kind 2, on the cell of a `Ref`): a value shared
-  // through the cell.
-  MvShared(kind: Nat, cell: Nat): MVal
-  MvSignal(id: Nat): MVal
-  MvPending(id: Nat): MVal
-  MvMutex(id: Nat): MVal
-  // A locked mutex's content: the mutex, and the cell that holds the content until the
-  // guard is dropped.
-  MvGuard(mutex: Nat, cell: Nat): MVal
-  // What `exceeded` is performed with, and its answers.
-  MvInfo: MVal
-  MvAnswer(v: MVal): MVal
-  MvMore(n: Option(Int)): MVal
-  MvSecret(v: MVal): MVal
-  MvMoved: MVal
+  match suffix {
+    Nil => path
+    Cons(^s, ^more) => MrPath(List::reverse_onto(suffix, mr_reversed(path)))
+  }
 }
 
 pub(open) inductive MPat: Type {
   MpWild: MPat
   // Writes the value to the slot; with `borrow`, a borrow of it.
-  MpBind(slot: Nat, borrow: Bool): MPat
+  MpBind(slot: Nat, r#borrow: Bool): MPat
   MpLit(v: MVal): MPat
   MpCtor(ctor: Nat, fields: List(MPat)): MPat
+  // A value of a union injected at `variant`, and a pattern on what was injected.
+  MpVariant(variant: Nat, p: MPat): MPat
   MpProduct(members: List(MPat)): MPat
 }
 
-// The widths of integers: 0 `i32`, 1 `i64`, 2 `u8`, 3 `u32`, 4 `u64`, 5 `nat`. A result
+// The widths of integers: 0 `i32`, 1 `i64`, 2 `u8`, 3 `u32`, 4 `u64`, 5 `nat`, 7 `i8`, 8 `i16`, 9 `u16`. A result
 // outside its width is a run-time error. Arithmetic: 0 `+`, 1 `-`, 2 `*`, 3 negation,
 // 4 `/` (of floats). Comparisons: 0 `<`, 1 `<=`, 2 `>`, 3 `>=`.
 pub(open) inductive MOp: Type {
@@ -153,7 +178,7 @@ pub(open) inductive MOp: Type {
   // Takes `n` arguments; field `i` of the value is the argument `order[i]`.
   MoConstruct(ctor: Nat, n: Nat, order: List(Nat)): MOp
   // Takes `n` arguments; each member is an argument, or a member of one.
-  MoProduct(n: Nat, picks: List(Pair(Nat, Option(Nat)))): MOp
+  MoProduct(n: Nat, picks: List(Nat × Option(Nat))): MOp
   MoMember(i: Nat): MOp
   MoField(step: MPath): MOp
   MoShown: MOp
@@ -199,6 +224,10 @@ pub(open) inductive MCode: Type {
   // Takes the value on top of the stack and runs the body of the first arm whose
   // pattern fits and whose guard gives `true`.
   McMatch(pats: List(MPat), guards: List(MCode), bodies: List(MCode), k: MCode): MCode
+  // A `match` whose value is a constructor's: `table[c]` is the `mc_match` of the arms from
+  // the first that a value of constructor `c` can fit, so the arms before it are not
+  // tried; a value of another constructor, or no constructor's, runs `all`.
+  McSwitch(table: Array(MCode), all: MCode): MCode
   McClosure(f: Nat, n: Nat, k: MCode): MCode
   // Performs `op` with the `n` values on top. Quantities: 0 none, 1 once, 2 many,
   // 3 `direct`.
@@ -221,6 +250,8 @@ pub(open) inductive MCode: Type {
   McBuiltin(b: Nat, n: Nat, k: MCode): MCode
   // A request of the host with the `n` values on top: the shell answers it.
   McAsk(name: Text, n: Nat, k: MCode): MCode
+  // Drops each host value that nothing reaches (`host.taut`).
+  McSweep(k: MCode): MCode
 }
 
 // How `show` writes a constructor: by its name, and when `named`, its fields by theirs.
@@ -233,14 +264,15 @@ pub(open) inductive MFn: Type {
 }
 
 pub(open) inductive MProgram: Type {
-  Mprogram(fns: List(MFn), ctors: List(MCtor), main: Nat): MProgram
+  Mprogram(fns: Array(MFn), ctors: Array(MCtor), main: Nat): MProgram
 }
 
 pub(open) inductive MFrame: Type {
-  MfCall(k: MCode, slots: List(MVal), st: List(MVal)): MFrame
+  // `depth` is how many calls nest in it, this one included.
+  MfCall(k: MCode, slots: Array(MVal), st: List(MVal), depth: Nat): MFrame
   // A call of a continuation: as `mf_call`, but a `return` in the continuation returns from
   // the function whose `handle` it reaches, so it goes on under this frame.
-  MfResume(k: MCode, slots: List(MVal), st: List(MVal)): MFrame
+  MfResume(k: MCode, slots: Array(MVal), st: List(MVal)): MFrame
   MfBlock(k: MCode, st: List(MVal)): MFrame
   MfCond(c: MCode, b: MCode, k: MCode, st: List(MVal)): MFrame
   MfBody(c: MCode, b: MCode, k: MCode, st: List(MVal)): MFrame
@@ -276,7 +308,7 @@ pub(open) inductive MFrame: Type {
 pub(open) inductive MTask: Type {
   Mtask(
     MkCode: MCode,
-    slots: List(MVal),
+    slots: Array(MVal),
     st: List(MVal),
     fr: List(MFrame),
     wait: Option(Nat),
@@ -291,24 +323,114 @@ pub(open) inductive MPend: Type {
   // There once the clock reads `at` milliseconds.
   MpendTimer(at: Int): MPend
   MpendTaken: MPend
+  // The task ended with this runtime error: whoever takes the result fails with it.
+  MpendFailed(message: Text): MPend
 }
 
 pub(open) inductive MObj: Type {
   MoCell(v: MVal): MObj
-  MoCont(code: MCode, slots: List(MVal), st: List(MVal), fr: List(MFrame)): MObj
+  MoCont(code: MCode, slots: Array(MVal), st: List(MVal), fr: List(MFrame)): MObj
   MoSignal(raised: Bool, handed: Option(MVal)): MObj
   MoChoice(inputs: List(Nat)): MObj
   MoPending(state: MPend, signal: Nat): MObj
-  MoMutex(value: Option(MVal), waiting: List(Nat)): MObj
+  // `taker` is the pending of the task that took the content, while it has it.
+  MoMutex(value: Option(MVal), waiting: List(Nat), taker: Option(Nat)): MObj
+  // A task that held the mutex's content failed: taking from it fails.
+  MoPoisoned: MObj
+  // A value of the host that is not dropped yet; `name` is what its drop writes down.
+  MoHost(name: Text): MObj
+}
+
+// A heap indexed by a number `n`: the cells are kept in chunks of 16, the chunk `n div 16`
+// at the slot `n rem 16`. The chunks are the nodes of a trie of 16-way nodes over the hex
+// digits of the chunk's number, least significant first: the chunk 0 is the node's own, the
+// digit `d` of the number (`m rem 16`) picks the child `d`, which holds `m div 16`. A node
+// keeps its chunk and its children in `Array`s, which a backend writes in place when the node
+// is the only holder: a write replaces about four nodes of a heap of a million cells without
+// copying them, where a binary trie copied some twenty. A node with no child has no array
+// for them.
+pub(open) inductive MHeap: Type {
+  MhLeaf: MHeap
+  MhNode(chunk: Option(Array(Option(MObj))), kids: Array(MHeap)): MHeap
+}
+
+pub fn mh_blank_kids(n: Nat, kids: List(MHeap)): List(MHeap) {
+  match n {
+    Zero => kids
+    Succ(m) => mh_blank_kids(m, Cons(MhLeaf, kids))
+  }
+}
+
+pub fn mh_blank_chunk(n: Nat, items: List(Option(MObj))): List(Option(MObj)) {
+  match n {
+    Zero => items
+    Succ(m) => mh_blank_chunk(m, Cons(None, items))
+  }
+}
+
+// `fuel` bounds the depth: 64 levels hold every chunk below 2^256.
+pub fn mh_get(fuel: Nat, t: MHeap, m: Nat, s: Nat): Option(MObj) {
+  match fuel {
+    Zero => None
+    Succ(f) => match t {
+      MhLeaf => None
+      MhNode(chunk, kids) => if Nat::eq(m, 0) {
+        match chunk {
+          None => None
+          Some(items) => Array::get_or(items, s, None)
+        }
+      } else {
+        mh_get(
+          f,
+          Array::get_or(kids, Nat::rem_nz(m, 16, Nat::ne_zero(16, Refl)), MhLeaf),
+          Nat::div_nz(m, 16, Nat::ne_zero(16, Refl)),
+          s
+        )
+      }
+    }
+  }
+}
+
+pub fn mh_set(fuel: Nat, t: MHeap, m: Nat, s: Nat, x: Option(MObj)): MHeap {
+  match fuel {
+    Zero => t
+    Succ(f) => {
+      let parts := ⊢ (Option(Array(Option(MObj))) × Array(MHeap)) from match t {
+        MhLeaf => #(None, Array::of_list(Nil))
+        MhNode(chunk, kids) => #(chunk, kids)
+      }
+      match parts {
+        #(chunk, kids) => if Nat::eq(m, 0) {
+          let items := match chunk {
+            None => Array::of_list(mh_blank_chunk(16, Nil))
+            Some(items) => items
+          }
+          MhNode(Some(Array::set(items, s, x)), kids)
+        } else {
+          let all := if Nat::eq(Array::len(kids), 0) { Array::of_list(mh_blank_kids(16, Nil)) } else { kids }
+          let d := Nat::rem_nz(m, 16, Nat::ne_zero(16, Refl))
+          // The child is taken out of `all` before it is written, so that it is held once.
+          let child := Array::get_or(all, d, MhLeaf)
+          let emptied := Array::set(all, d, MhLeaf)
+          MhNode(
+            chunk,
+            Array::set(emptied, d, mh_set(f, child, Nat::div_nz(m, 16, Nat::ne_zero(16, Refl)), s, x))
+          )
+        }
+      }
+    }
+  }
 }
 
 // What a run has besides the running code: the heap and the next free number in it, the
 // host's limit of steps (`None` for none), the cells made so far, the clock in
 // milliseconds as the host last said, the tasks that do not run, where the running task's
-// result goes, the timers, and whether the top level has ended.
+// result goes, the timers, whether the top level has ended, and how many times a cell has
+// been written, against which `MrSeen` checks what it keeps, and whether a budget has ever
+// begun, so that a step with none to count skips looking through the frames for one.
 pub(open) inductive MCx: Type {
   Mcx(
-    MkHeap: MTrie(MObj),
+    MkHeap: MHeap,
     next: Nat,
     left: Option(Nat),
     cells: Int,
@@ -316,12 +438,21 @@ pub(open) inductive MCx: Type {
     tasks: List(MTask),
     result: Option(Nat),
     timers: List(Nat),
-    top_done: Bool
+    top_done: Bool,
+    writes: Nat,
+    hosts: MHosts,
+    budgeted: Bool
   ): MCx
 }
 
+// The host values of a run: those not dropped yet, the newest first, and the names of
+// those dropped, the last dropped first.
+pub(open) inductive MHosts: Type {
+  Mhosts(live: List(Nat), dropped: List(Text)): MHosts
+}
+
 pub(open) inductive MState: Type {
-  Mstate(code: MCode, slots: List(MVal), st: List(MVal), fr: List(MFrame), cx: MCx): MState
+  Mstate(code: MCode, slots: Array(MVal), st: List(MVal), fr: List(MFrame), cx: MCx): MState
 }
 
 pub fn m_too_large(): Text {
@@ -340,12 +471,27 @@ pub fn m_step_limit(): Text {
   "interrupted: the step limit ran out"
 }
 
+// The most calls that nest, one inside another, that a run keeps (2^21). A recursion that
+// does not end stops here with `m_too_deep` rather than running the host out of memory or
+// through its whole limit of steps. A tail call reuses its frame, so it is not counted.
+pub fn m_max_frames(): Nat {
+  2097152
+}
+
+pub fn m_too_deep(): Text {
+  "the calls nest too deep"
+}
+
 pub fn m_deadlock(): Text {
   "deadlock: a wait for a signal that no task can raise"
 }
 
 pub fn m_nothing_handles(op: Text): Text {
   Text::concat("nothing handles ", op)
+}
+
+pub fn m_poisoned(): Text {
+  "the Mutex is poisoned: a task that held its content failed"
 }
 
 pub fn m_internal(): Text {
@@ -369,6 +515,11 @@ pub fn m_nth_or_unit(l: List(MVal), i: Nat): MVal {
   }
 }
 
+// The value in slot `i` of a frame: the unit past the end.
+pub fn m_slot(slots: Array(MVal), i: Nat): MVal {
+  Array::get_or(slots, i, MvUnit)
+}
+
 pub fn m_units(n: Nat): List(MVal) {
   match n {
     Zero => Nil
@@ -377,9 +528,9 @@ pub fn m_units(n: Nat): List(MVal) {
 }
 
 // The `n` values on top of the stack, the deepest first, and the stack under them.
-pub fn m_pop_onto(n: Nat, st: List(MVal), acc: List(MVal)): Option(Pair(List(MVal), List(MVal))) {
+pub fn m_pop_onto(n: Nat, st: List(MVal), acc: List(MVal)): Option(List(MVal) × List(MVal)) {
   match n {
-    Zero => Some(Pair { fst: acc, snd: st })
+    Zero => Some(#(acc, st))
     Succ(j) => match st {
       Nil => None
       Cons(v, rest) => m_pop_onto(j, rest, Cons(v, acc))
@@ -387,16 +538,13 @@ pub fn m_pop_onto(n: Nat, st: List(MVal), acc: List(MVal)): Option(Pair(List(MVa
   }
 }
 
-pub fn m_pop(n: Nat, st: List(MVal)): Option(Pair(List(MVal), List(MVal))) {
+pub fn m_pop(n: Nat, st: List(MVal)): Option(List(MVal) × List(MVal)) {
   m_pop_onto(n, st, Nil)
 }
 
 pub fn m_bytes_eq(a: List(Nat), b: List(Nat)): Bool {
   match a {
-    Nil => match b {
-      Nil => true
-      _ => false
-    }
+    Nil => match b { Nil => true, _ => false }
     Cons(x, xs) => match b {
       Nil => false
       Cons(y, ys) => Bool::and(Nat::eq(x, y), m_bytes_eq(xs, ys))
@@ -407,10 +555,7 @@ pub fn m_bytes_eq(a: List(Nat), b: List(Nat)): Bool {
 // 0 when `a` is before `b` byte by byte, 1 when they are the same, 2 when after.
 pub fn m_bytes_cmp(a: List(Nat), b: List(Nat)): Nat {
   match a {
-    Nil => match b {
-      Nil => 1
-      _ => 0
-    }
+    Nil => match b { Nil => 1, _ => 0 }
     Cons(x, xs) => match b {
       Nil => 2
       Cons(y, ys) => if Nat::lt(x, y) { 0 } else if Nat::lt(y, x) { 2 } else { m_bytes_cmp(xs, ys) }
@@ -431,8 +576,8 @@ pub fn m_int_abs(i: Int): Nat {
 
 pub fn m_int_neg(i: Int): Bool {
   match i {
-    IntOfNat(n) => false
-    IntNegSucc(n) => true
+    IntOfNat(^n) => false
+    IntNegSucc(^n) => true
   }
 }
 
@@ -451,14 +596,22 @@ pub fn m_fits(w: Nat, i: Int): Bool {
   match i {
     IntNegSucc(n) => if Nat::eq(w, 0) {
       Nat::lt(n, 2147483648)
-    } else if Nat::eq(w, 1) { Nat::lt(n, 9223372036854775808) } else { false }
+    } else if Nat::eq(w, 1) {
+      Nat::lt(n, 9223372036854775808)
+    } else if Nat::eq(w, 7) { Nat::lt(n, 128) } else if Nat::eq(w, 8) { Nat::lt(n, 32768) } else { false }
     IntOfNat(n) => if Nat::eq(w, 0) {
       Nat::lt(n, 2147483648)
     } else if Nat::eq(w, 1) {
       Nat::lt(n, 9223372036854775808)
     } else if Nat::eq(w, 2) { Nat::lt(n, 256) } else if Nat::eq(w, 3) {
       Nat::lt(n, 4294967296)
-    } else if Nat::eq(w, 4) { Nat::lt(n, Nat::mul(4294967296, 4294967296)) } else { true }
+    } else if Nat::eq(w, 4) {
+      Nat::lt(n, Nat::mul(4294967296, 4294967296))
+    } else if Nat::eq(w, 7) {
+      Nat::lt(n, 128)
+    } else if Nat::eq(w, 8) {
+      Nat::lt(n, 32768)
+    } else if Nat::eq(w, 9) { Nat::lt(n, 65536) } else { true }
   }
 }
 
@@ -469,20 +622,17 @@ pub fn m_text_of_int(i: Int): Text {
   }
 }
 
-pub fn cx_heap(cx: MCx): MTrie(MObj) {
+// Whether a budget has begun in the run: until one has, no frame is a budget.
+pub fn cx_budgeted(cx: MCx): Bool {
   match cx {
-    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => MkHeap
+    Mcx(MkHeap, ^next, ^left, ^cells, ^now, ^tasks, ^result, Timers, TopDone, ^writes, Hosts, budgeted) => budgeted
   }
 }
 
-pub fn cx_obj(cx: MCx, id: Nat): Option(MObj) {
-  mt_get(64, cx_heap(cx), id)
-}
-
-pub fn cx_put(cx: MCx, id: Nat, o: MObj): MCx {
+pub fn cx_begin_budget(cx: MCx): MCx {
   match cx {
-    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => Mcx(
-      mt_set(64, MkHeap, id, Some(o)),
+    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone, writes, Hosts, ^budgeted) => Mcx(
+      MkHeap,
       next,
       left,
       cells,
@@ -490,23 +640,70 @@ pub fn cx_put(cx: MCx, id: Nat, o: MObj): MCx {
       tasks,
       result,
       Timers,
-      TopDone
+      TopDone,
+      writes,
+      Hosts,
+      true
     )
+  }
+}
+
+pub fn cx_heap(cx: MCx): MHeap {
+  match cx {
+    Mcx(MkHeap, ^next, ^left, ^cells, ^now, ^tasks, ^result, Timers, TopDone, ^writes, Hosts, ^budgeted) => MkHeap
+  }
+}
+
+pub fn cx_obj(cx: MCx, id: Nat): Option(MObj) {
+  mh_get(64, cx_heap(cx), Nat::div_nz(id, 16, Nat::ne_zero(16, Refl)), Nat::rem_nz(id, 16, Nat::ne_zero(16, Refl)))
+}
+
+// Where the running task's result goes; none on the top level.
+pub fn cx_running(cx: MCx): Option(Nat) {
+  match cx {
+    Mcx(MkHeap, ^next, ^left, ^cells, ^now, ^tasks, result, Timers, TopDone, ^writes, Hosts, ^budgeted) => result
+  }
+}
+
+pub fn cx_put(cx: MCx, id: Nat, o: MObj): MCx {
+  match cx {
+    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone, writes, Hosts, budgeted) => Mcx(
+      mh_set(64, MkHeap, Nat::div_nz(id, 16, Nat::ne_zero(16, Refl)), Nat::rem_nz(id, 16, Nat::ne_zero(16, Refl)), Some(o)),
+      next,
+      left,
+      cells,
+      now,
+      tasks,
+      result,
+      Timers,
+      TopDone,
+      Succ(writes),
+      Hosts,
+      budgeted
+    )
+  }
+}
+
+// How many times a cell has been written. Making a cell does not count: a new cell is
+// one that no borrow named before.
+pub fn cx_writes(cx: MCx): Nat {
+  match cx {
+    Mcx(MkHeap, ^next, ^left, ^cells, ^now, ^tasks, ^result, Timers, TopDone, writes, Hosts, ^budgeted) => writes
   }
 }
 
 pub fn cx_next(cx: MCx): Nat {
   match cx {
-    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => next
+    Mcx(MkHeap, next, ^left, ^cells, ^now, ^tasks, ^result, Timers, TopDone, ^writes, Hosts, ^budgeted) => next
   }
 }
 
-pub fn cx_alloc(cx: MCx, o: MObj): Pair(Nat, MCx) {
+pub fn cx_alloc(cx: MCx, o: MObj): Nat × MCx {
   match cx {
-    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => Pair {
-      fst: next,
-      snd: Mcx(
-        mt_set(64, MkHeap, next, Some(o)),
+    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone, writes, Hosts, budgeted) => #(
+      next,
+      Mcx(
+        mh_set(64, MkHeap, Nat::div_nz(next, 16, Nat::ne_zero(16, Refl)), Nat::rem_nz(next, 16, Nat::ne_zero(16, Refl)), Some(o)),
         Succ(next),
         left,
         cells,
@@ -514,21 +711,24 @@ pub fn cx_alloc(cx: MCx, o: MObj): Pair(Nat, MCx) {
         tasks,
         result,
         Timers,
-        TopDone
+        TopDone,
+        writes,
+        Hosts,
+        budgeted
       )
-    }
+    )
   }
 }
 
 pub fn cx_cells(cx: MCx): Int {
   match cx {
-    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => cells
+    Mcx(MkHeap, ^next, ^left, cells, ^now, ^tasks, ^result, Timers, TopDone, ^writes, Hosts, ^budgeted) => cells
   }
 }
 
 pub fn cx_add_cells(cx: MCx, n: Nat): MCx {
   match cx {
-    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => Mcx(
+    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone, writes, Hosts, budgeted) => Mcx(
       MkHeap,
       next,
       left,
@@ -537,20 +737,23 @@ pub fn cx_add_cells(cx: MCx, n: Nat): MCx {
       tasks,
       result,
       Timers,
-      TopDone
+      TopDone,
+      writes,
+      Hosts,
+      budgeted
     )
   }
 }
 
 pub fn cx_now(cx: MCx): Int {
   match cx {
-    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => now
+    Mcx(MkHeap, ^next, ^left, ^cells, now, ^tasks, ^result, Timers, TopDone, ^writes, Hosts, ^budgeted) => now
   }
 }
 
 pub fn cx_set_now(cx: MCx, t: Int): MCx {
   match cx {
-    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => Mcx(
+    Mcx(MkHeap, next, left, cells, ^now, tasks, result, Timers, TopDone, writes, Hosts, budgeted) => Mcx(
       MkHeap,
       next,
       left,
@@ -559,20 +762,23 @@ pub fn cx_set_now(cx: MCx, t: Int): MCx {
       tasks,
       result,
       Timers,
-      TopDone
+      TopDone,
+      writes,
+      Hosts,
+      budgeted
     )
   }
 }
 
 pub fn cx_left(cx: MCx): Option(Nat) {
   match cx {
-    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => left
+    Mcx(MkHeap, ^next, left, ^cells, ^now, ^tasks, ^result, Timers, TopDone, ^writes, Hosts, ^budgeted) => left
   }
 }
 
 pub fn cx_set_left(cx: MCx, l: Option(Nat)): MCx {
   match cx {
-    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => Mcx(
+    Mcx(MkHeap, next, ^left, cells, now, tasks, result, Timers, TopDone, writes, Hosts, budgeted) => Mcx(
       MkHeap,
       next,
       l,
@@ -581,7 +787,35 @@ pub fn cx_set_left(cx: MCx, l: Option(Nat)): MCx {
       tasks,
       result,
       Timers,
-      TopDone
+      TopDone,
+      writes,
+      Hosts,
+      budgeted
+    )
+  }
+}
+
+pub fn cx_hosts(cx: MCx): MHosts {
+  match cx {
+    Mcx(MkHeap, ^next, ^left, ^cells, ^now, ^tasks, ^result, Timers, TopDone, ^writes, Hosts, ^budgeted) => Hosts
+  }
+}
+
+pub fn cx_with_hosts(cx: MCx, h: MHosts): MCx {
+  match cx {
+    Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone, writes, Hosts, budgeted) => Mcx(
+      MkHeap,
+      next,
+      left,
+      cells,
+      now,
+      tasks,
+      result,
+      Timers,
+      TopDone,
+      writes,
+      h,
+      budgeted
     )
   }
 }
@@ -596,14 +830,14 @@ pub fn cx_cell(cx: MCx, id: Nat): MVal {
   }
 }
 
-pub fn cx_temp(cx: MCx, v: MVal): Pair(MVal, MCx) {
+pub fn cx_temp(cx: MCx, v: MVal): MVal × MCx {
   match cx_alloc(cx, MoCell(v)) {
-    Pair { fst: id, snd: cx2 } => Pair { fst: MvRef(id, MrPath(Nil)), snd: cx2 }
+    #(id, cx2) => #(MvRef(id, MrPath(Nil)), cx2)
   }
 }
 
-pub fn m_ctor_of(ctors: List(MCtor), c: Nat): MCtor {
-  match List::nth(ctors, c) {
+pub fn m_ctor_of(ctors: Array(MCtor), c: Nat): MCtor {
+  match Array::get(ctors, c) {
     None => Mctor("?", false, Nil)
     Some(x) => x
   }
@@ -618,14 +852,14 @@ pub fn m_index_of(names: List(Text), n: Text, at: Nat): Option(Nat) {
 
 // The index a step names in the value: a field by name is looked up among the
 // constructor's.
-pub fn m_step_index(ctors: List(MCtor), v: MVal, s: MPath): Option(Nat) {
+pub fn m_step_index(ctors: Array(MCtor), v: MVal, s: MPath): Option(Nat) {
   match s {
     MpathIndex(i) => Some(i)
     MpathItem(i) => Some(i)
-    MpathEntry(i) => Some(i)
+    MpathPayload => None
     MpathName(n) => match v {
-      MvData(c, fs) => match m_ctor_of(ctors, c) {
-        Mctor(name, named, names) => m_index_of(names, n, 0)
+      MvData(c, ^fs) => match m_ctor_of(ctors, c) {
+        Mctor(^name, ^named, names) => m_index_of(names, n, 0)
       }
       _ => None
     }
@@ -635,22 +869,19 @@ pub fn m_step_index(ctors: List(MCtor), v: MVal, s: MPath): Option(Nat) {
 // An indexed projection does not need the constructor table.
 pub fn m_at_index(v: MVal, i: Nat): MVal {
   match v {
-    MvInject(u, j, x) => m_at_index(x, i)
-    MvData(c, fs) => m_nth_or_unit(fs, i)
+    MvInject(^u, ^j, x) => m_at_index(x, i)
+    MvData(^c, fs) => m_nth_or_unit(fs, i)
     MvProduct(ms) => m_nth_or_unit(ms, i)
     MvVec(xs) => ms_get_or(MvUnit, xs, i)
     MvArray(xs) => ms_get_or(MvUnit, xs, i)
-    MvMap(es) => match List::nth(es, i) {
-      None => MvUnit
-      Some(e) => match e { Pair { fst: k, snd: x } => x }
-    }
+    MvSlots(^s, ^vac, ^ms, xs) => ms_get_or(MvMoved, xs, i)
     _ => MvUnit
   }
 }
 
-pub fn m_at_name(ctors: List(MCtor), v: MVal, n: Text): MVal {
+pub fn m_at_name(ctors: Array(MCtor), v: MVal, n: Text): MVal {
   match v {
-    MvInject(u, j, x) => m_at_name(ctors, x, n)
+    MvInject(^u, ^j, x) => m_at_name(ctors, x, n)
     _ => match m_step_index(ctors, v, MpathName(n)) {
       None => MvUnit
       Some(i) => m_at_index(v, i)
@@ -658,18 +889,29 @@ pub fn m_at_name(ctors: List(MCtor), v: MVal, n: Text): MVal {
   }
 }
 
-pub fn m_at(ctors: List(MCtor), v: MVal, s: MPath): MVal {
+// What a union's value holds; another value is itself.
+pub fn m_payload(v: MVal): MVal {
+  match v {
+    MvInject(^u, ^j, x) => x
+    _ => v
+  }
+}
+
+pub fn m_at(ctors: Array(MCtor), v: MVal, s: MPath): MVal {
   match s {
+    MpathPayload => m_payload(v)
     MpathIndex(i) => m_at_index(v, i)
     MpathItem(i) => m_at_index(v, i)
-    MpathEntry(i) => m_at_index(v, i)
     MpathName(n) => m_at_name(ctors, v, n)
   }
 }
 
-pub fn m_with(ctors: List(MCtor), v: MVal, s: MPath, x: MVal): MVal {
+pub fn m_with(ctors: Array(MCtor), v: MVal, s: MPath, x: MVal): MVal {
   match v {
-    MvInject(u, j, inner) => MvInject(u, j, m_with(ctors, inner, s, x))
+    MvInject(u, j, inner) => match s {
+      MpathPayload => MvInject(u, j, x)
+      _ => MvInject(u, j, m_with(ctors, inner, s, x))
+    }
     _ => match m_step_index(ctors, v, s) {
       None => v
       Some(i) => match v {
@@ -677,19 +919,14 @@ pub fn m_with(ctors: List(MCtor), v: MVal, s: MPath, x: MVal): MVal {
         MvProduct(ms) => MvProduct(m_set(ms, i, x))
         MvVec(xs) => MvVec(ms_put(xs, i, x))
         MvArray(xs) => MvArray(ms_put(xs, i, x))
-        MvMap(es) => match List::nth(es, i) {
-          None => v
-          Some(e) => match e {
-            Pair { fst: k, snd: old } => MvMap(m_set(es, i, Pair { fst: k, snd: x }))
-          }
-        }
+        MvSlots(s, vac, ms, xs) => MvSlots(s, vac, ms, ms_put(xs, i, x))
         _ => v
       }
     }
   }
 }
 
-pub fn m_at_path(ctors: List(MCtor), v: MVal, path: List(MPath)): MVal {
+pub fn m_at_path(ctors: Array(MCtor), v: MVal, path: List(MPath)): MVal {
   match path {
     Nil => v
     Cons(s, rest) => m_at_path(ctors, m_at(ctors, v, s), rest)
@@ -697,23 +934,41 @@ pub fn m_at_path(ctors: List(MCtor), v: MVal, path: List(MPath)): MVal {
 }
 
 // Walks the prefix before applying its last step, without constructing a forward path.
-pub fn m_at_reversed(ctors: List(MCtor), v: MVal, reversed: List(MPath)): MVal {
+pub fn m_at_reversed(ctors: Array(MCtor), v: MVal, reversed: List(MPath)): MVal {
   match reversed {
     Nil => v
     Cons(s, rest) => match s {
       MpathIndex(i) => m_at_index(m_at_reversed(ctors, v, rest), i)
       MpathItem(i) => m_at_index(m_at_reversed(ctors, v, rest), i)
-      MpathEntry(i) => m_at_index(m_at_reversed(ctors, v, rest), i)
+      MpathPayload => m_payload(m_at_reversed(ctors, v, rest))
       MpathName(n) => m_at_name(ctors, m_at_reversed(ctors, v, rest), n)
     }
   }
 }
 
-pub fn m_at_ref(ctors: List(MCtor), v: MVal, path: MRefPath): MVal {
-  match path { MrPath(reversed) => m_at_reversed(ctors, v, reversed) }
+pub fn m_at_ref(ctors: Array(MCtor), v: MVal, path: MRefPath): MVal {
+  m_at_reversed(ctors, v, mr_reversed(path))
 }
 
-pub fn m_with_path(ctors: List(MCtor), v: MVal, path: List(MPath), x: MVal): MVal {
+// The value the borrow of `path` in `cell` names: the one `MrSeen` keeps while no cell has
+// been written since, else the one at the end of the path.
+pub fn m_ref_at(ctors: Array(MCtor), cx: MCx, cell: Nat, path: MRefPath): MVal {
+  match path {
+    MrPath(reversed) => m_at_reversed(ctors, cx_cell(cx, cell), reversed)
+    MrSeen(reversed, at, writes) => if Nat::eq(writes, cx_writes(cx)) {
+      at
+    } else {
+      m_at_reversed(ctors, cx_cell(cx, cell), reversed)
+    }
+  }
+}
+
+// The path one step `s` further down, keeping the value it names.
+pub fn mr_child_seen(ctors: Array(MCtor), cx: MCx, cell: Nat, path: MRefPath, s: MPath): MRefPath {
+  MrSeen(Cons(s, mr_reversed(path)), m_at(ctors, m_ref_at(ctors, cx, cell, path), s), cx_writes(cx))
+}
+
+pub fn m_with_path(ctors: Array(MCtor), v: MVal, path: List(MPath), x: MVal): MVal {
   match path {
     Nil => x
     Cons(s, rest) => m_with(ctors, v, s, m_with_path(ctors, m_at(ctors, v, s), rest, x))
@@ -721,11 +976,11 @@ pub fn m_with_path(ctors: List(MCtor), v: MVal, path: List(MPath), x: MVal): MVa
 }
 
 // The value a borrow names, following borrows it holds. `fuel` bounds the chain.
-pub fn m_get_fuel(fuel: Nat, ctors: List(MCtor), cx: MCx, v: MVal): MVal {
+pub fn m_get_fuel(fuel: Nat, ctors: Array(MCtor), cx: MCx, v: MVal): MVal {
   match fuel {
     Zero => v
     Succ(f) => match v {
-      MvRef(cell, path) => m_get_fuel(f, ctors, cx, m_at_ref(ctors, cx_cell(cx, cell), path))
+      MvRef(cell, path) => m_get_fuel(f, ctors, cx, m_ref_at(ctors, cx, cell, path))
       _ => v
     }
   }
@@ -735,29 +990,29 @@ pub fn m_get_fuel(fuel: Nat, ctors: List(MCtor), cx: MCx, v: MVal): MVal {
 // and the callers do not pass the heap for it.
 pub fn m_is_ref(v: MVal): Bool {
   match v {
-    MvRef(cell, path) => true
+    MvRef(^cell, ^path) => true
     _ => false
   }
 }
 
-pub fn m_get(ctors: List(MCtor), cx: MCx, v: MVal): MVal {
+pub fn m_get(ctors: Array(MCtor), cx: MCx, v: MVal): MVal {
   m_get_fuel(1000, ctors, cx, v)
 }
 
-pub fn m_get_all(ctors: List(MCtor), cx: MCx, vs: List(MVal)): List(MVal) {
+pub fn m_get_all(ctors: Array(MCtor), cx: MCx, vs: List(MVal)): List(MVal) {
   List::map((v: MVal) => m_get(ctors, cx, v), vs)
 }
 
-pub fn m_put(ctors: List(MCtor), cx: MCx, cell: Nat, path: MRefPath, x: MVal): MCx {
+pub fn m_put(ctors: Array(MCtor), cx: MCx, cell: Nat, path: MRefPath, x: MVal): MCx {
   cx_put(cx, cell, MoCell(m_with_path(ctors, cx_cell(cx, cell), mr_steps(path), x)))
 }
 
 // A borrow of a part of what `r` names; a value that is not a borrow is put in a new cell.
-pub fn m_child(cx: MCx, r: MVal, s: MPath): Pair(MVal, MCx) {
+pub fn m_child(cx: MCx, r: MVal, s: MPath): MVal × MCx {
   match r {
-    MvRef(cell, path) => Pair { fst: MvRef(cell, mr_child(path, s)), snd: cx }
+    MvRef(cell, path) => #(MvRef(cell, mr_child(path, s)), cx)
     _ => match cx_alloc(cx, MoCell(r)) {
-      Pair { fst: id, snd: cx2 } => Pair { fst: MvRef(id, MrPath(Cons(s, Nil))), snd: cx2 }
+      #(id, cx2) => #(MvRef(id, MrPath(Cons(s, Nil))), cx2)
     }
   }
 }
@@ -767,154 +1022,167 @@ pub fn m_child(cx: MCx, r: MVal, s: MPath): Pair(MVal, MCx) {
 // be elaborated once for each constructor it stands for.
 pub fn m_inj(v: MVal): Option(MVal) {
   match v {
-    MvInject(u, i, x) => Some(x)
+    MvInject(^u, ^i, x) => Some(x)
     _ => None
   }
 }
 
-mutual {
-  pub fn m_eq_fuel(fuel: Nat, ctors: List(MCtor), cx: MCx, a0: MVal, b0: MVal): Bool {
-    match fuel {
-      Zero => false
-      Succ(f) => {
-        let a := m_get(ctors, cx, a0)
-        let b := m_get(ctors, cx, b0)
-        match m_inj(a) {
-          Some(x) => m_eq_fuel(f, ctors, cx, x, b)
-          None => match m_inj(b) {
-            Some(y) => m_eq_fuel(f, ctors, cx, a, y)
-            None => match a {
-              MvDeclaration(x) => match b {
-                MvDeclaration(y) => Nat::eq(x, y)
-                _ => false
-              }
-              MvUnit => match b {
-                MvUnit => true
-                _ => false
-              }
-              MvBool(x) => match b {
-                MvBool(y) => Bool::eq(x, y)
-                _ => false
-              }
-              MvInt(x) => match b {
-                MvInt(y) => Int::eq(x, y)
-                _ => false
-              }
-              MvFloat(x) => match b {
-                MvFloat(y) => Float::eq(x, y)
-                _ => false
-              }
-              MvFloat32(x) => match b {
-                MvFloat32(y) => Float32::eq(x, y)
-                _ => false
-              }
-              MvText(x) => match b {
-                MvText(y) => m_text_eq(x, y)
-                _ => false
-              }
-              MvBuf(x) => match b {
-                MvBuf(y) => m_text_eq(x, y)
-                _ => false
-              }
-              MvShown(x) => match b {
-                MvShown(y) => m_text_eq(x, y)
-                _ => false
-              }
-              MvBytes(x) => match b {
-                MvBytes(y) => Bytes::eq(x, y)
-                _ => false
-              }
-              MvData(c, xs) => match b {
-                MvData(d, ys) => Bool::and(Nat::eq(c, d), m_eq_list(f, ctors, cx, xs, ys))
-                _ => false
-              }
-              MvProduct(xs) => match b {
-                MvProduct(ys) => m_eq_list(f, ctors, cx, xs, ys)
-                _ => false
-              }
-              MvVec(xs) => match b {
-                MvVec(ys) => m_eq_list(f, ctors, cx, ms_to_list(MvUnit, xs), ms_to_list(MvUnit, ys))
-                _ => false
-              }
-              MvArray(xs) => match b {
-                MvArray(ys) => m_eq_list(
-                  f,
-                  ctors,
-                  cx,
-                  ms_to_list(MvUnit, xs),
-                  ms_to_list(MvUnit, ys)
-                )
-                _ => false
-              }
-              MvMap(xs) => match b {
-                MvMap(ys) => m_eq_entries(f, ctors, cx, xs, ys)
-                _ => false
-              }
-              MvShared(k, x) => match b {
-                MvShared(j, y) => Nat::eq(x, y)
-                _ => false
-              }
-              MvSignal(x) => match b {
-                MvSignal(y) => Nat::eq(x, y)
-                _ => false
-              }
-              MvMutex(x) => match b {
-                MvMutex(y) => Nat::eq(x, y)
-                _ => false
-              }
-              MvGuard(m, x) => match b {
-                MvGuard(n, y) => Nat::eq(x, y)
-                _ => false
-              }
-              _ => false
-            }
-          }
+// Each pair `#(x, y)` of `ys` onto `rest`, when the lists are as long; `None` otherwise.
+pub fn m_eq_pairs(
+  xs: List(MVal),
+  ys: List(MVal),
+  rest: List(MVal × MVal)
+): Option(List(MVal × MVal)) {
+  match xs {
+    Nil => match ys {
+      Nil => Some(rest)
+      _ => None
+    }
+    Cons(x, xs2) => match ys {
+      Nil => None
+      Cons(y, ys2) => m_eq_pairs(xs2, ys2, Cons(#(x, y), rest))
+    }
+  }
+}
+
+// The keys and the values of two maps' entries, paired as `m_eq_pairs` pairs them.
+pub fn m_eq_entry_pairs(
+  xs: List(MVal × MVal),
+  ys: List(MVal × MVal),
+  rest: List(MVal × MVal)
+): Option(List(MVal × MVal)) {
+  match xs {
+    Nil => match ys {
+      Nil => Some(rest)
+      _ => None
+    }
+    Cons(x, xs2) => match ys {
+      Nil => None
+      Cons(y, ys2) => match x {
+        #(k1, v1) => match y {
+          #(k2, v2) => m_eq_entry_pairs(xs2, ys2, Cons(#(k1, k2), Cons(#(v1, v2), rest)))
         }
       }
     }
   }
+}
 
-  pub fn m_eq_list(fuel: Nat, ctors: List(MCtor), cx: MCx, xs: List(MVal), ys: List(MVal)): Bool {
-    match fuel {
-      Zero => false
-      Succ(f) => match xs {
-        Nil => match ys {
-          Nil => true
-          _ => false
-        }
-        Cons(x, xs2) => match ys {
-          Nil => false
-          Cons(y, ys2) => Bool::and(
-            m_eq_fuel(f, ctors, cx, x, y),
-            m_eq_list(f, ctors, cx, xs2, ys2)
-          )
-        }
-      }
-    }
+// Whether two values with no parts of their own are equal; `None` when they have parts,
+// which `m_eq_parts` pairs instead.
+pub fn m_eq_leaf(a: MVal, b: MVal): Option(Bool) {
+  match a {
+    MvDeclaration(x) => Some(match b {
+      MvDeclaration(y) => Nat::eq(x, y)
+      _ => false
+    })
+    MvUnit => Some(match b {
+      MvUnit => true
+      _ => false
+    })
+    MvBool(x) => Some(match b {
+      MvBool(y) => Bool::eq(x, y)
+      _ => false
+    })
+    MvInt(x) => Some(match b {
+      MvInt(y) => Int::eq(x, y)
+      _ => false
+    })
+    MvFloat(x) => Some(match b {
+      MvFloat(y) => Float::eq(x, y)
+      _ => false
+    })
+    MvFloat32(x) => Some(match b {
+      MvFloat32(y) => Float32::eq(x, y)
+      _ => false
+    })
+    MvText(x) => Some(match b {
+      MvText(y) => m_text_eq(x, y)
+      _ => false
+    })
+    MvBuf(x) => Some(match b {
+      MvBuf(y) => m_text_eq(x, y)
+      _ => false
+    })
+    MvShown(x) => Some(match b {
+      MvShown(y) => m_text_eq(x, y)
+      _ => false
+    })
+    MvBytes(x) => Some(match b {
+      MvBytes(y) => Bytes::eq(x, y)
+      _ => false
+    })
+    MvShared(^k, x) => Some(match b {
+      MvShared(^j, y) => Nat::eq(x, y)
+      _ => false
+    })
+    MvSignal(x) => Some(match b {
+      MvSignal(y) => Nat::eq(x, y)
+      _ => false
+    })
+    MvMutex(x) => Some(match b {
+      MvMutex(y) => Nat::eq(x, y)
+      _ => false
+    })
+    MvGuard(^m, x) => Some(match b {
+      MvGuard(^n, y) => Nat::eq(x, y)
+      _ => false
+    })
+    _ => None
   }
+}
 
-  pub fn m_eq_entries(
-    fuel: Nat,
-    ctors: List(MCtor),
-    cx: MCx,
-    xs: List(Pair(MVal, MVal)),
-    ys: List(Pair(MVal, MVal))
-  ): Bool {
-    match fuel {
-      Zero => false
-      Succ(f) => match xs {
-        Nil => match ys {
-          Nil => true
-          _ => false
-        }
-        Cons(x, xs2) => match ys {
-          Nil => false
-          Cons(y, ys2) => match x {
-            Pair { fst: k1, snd: v1 } => match y {
-              Pair { fst: k2, snd: v2 } => Bool::and(
-                Bool::and(m_eq_fuel(f, ctors, cx, k1, k2), m_eq_fuel(f, ctors, cx, v1, v2)),
-                m_eq_entries(f, ctors, cx, xs2, ys2)
-              )
+// The parts of two values that have parts, paired onto `rest`; `None` when they differ in
+// kind, constructor or number of parts.
+pub fn m_eq_parts(a: MVal, b: MVal, rest: List(MVal × MVal)): Option(List(MVal × MVal)) {
+  match a {
+    MvData(c, xs) => match b {
+      MvData(d, ys) => if Nat::eq(c, d) { m_eq_pairs(xs, ys, rest) } else { None }
+      _ => None
+    }
+    MvProduct(xs) => match b {
+      MvProduct(ys) => m_eq_pairs(xs, ys, rest)
+      _ => None
+    }
+    MvVec(xs) => match b {
+      MvVec(ys) => m_eq_pairs(ms_to_list(MvUnit, xs), ms_to_list(MvUnit, ys), rest)
+      _ => None
+    }
+    MvArray(xs) => match b {
+      MvArray(ys) => m_eq_pairs(ms_to_list(MvUnit, xs), ms_to_list(MvUnit, ys), rest)
+      _ => None
+    }
+    _ => None
+  }
+}
+
+// Whether every pair of `work` is equal. The pairs still to compare are a list, not the
+// call stack, so a long list takes no stack space in proportion to its length. A value of
+// the machine is finite and a shared one is compared by its identity, so the work ends;
+// `fuel` only says so to the checker and is more steps than any run takes.
+pub fn m_eq_work(fuel: Nat, ctors: Array(MCtor), cx: MCx, work: List(MVal × MVal)): Bool {
+  match fuel {
+    Zero => false
+    Succ(f) => match work {
+      Nil => true
+      Cons(pair, rest) => match pair {
+        #(a0, b0) => {
+          let a := m_get(ctors, cx, a0)
+          let b := m_get(ctors, cx, b0)
+          match m_inj(a) {
+            Some(x) => m_eq_work(f, ctors, cx, Cons(#(x, b), rest))
+            None => match m_inj(b) {
+              Some(y) => m_eq_work(f, ctors, cx, Cons(#(a, y), rest))
+              None => match m_eq_leaf(a, b) {
+                // The last pair answers itself, so `m_eq` of two leaves is their comparison.
+                Some(same) => match rest {
+                  Nil => same
+                  _ => if same { m_eq_work(f, ctors, cx, rest) } else { false }
+                }
+                None => match m_eq_parts(a, b, rest) {
+                  Some(more) => m_eq_work(f, ctors, cx, more)
+                  None => false
+                }
+              }
             }
           }
         }
@@ -923,9 +1191,8 @@ mutual {
   }
 }
 
-// `fuel` bounds the depth of the values and the length of their lists together.
-pub fn m_eq(ctors: List(MCtor), cx: MCx, a: MVal, b: MVal): Bool {
-  m_eq_fuel(1000000, ctors, cx, a, b)
+pub fn m_eq(ctors: Array(MCtor), cx: MCx, a: MVal, b: MVal): Bool {
+  m_eq_work(18446744073709551616, ctors, cx, Cons(#(a, b), Nil))
 }
 
 pub fn m_hex_digit(n: Nat): Nat {
@@ -981,10 +1248,7 @@ pub fn m_quote(t: Text): Text {
 }
 
 pub fn m_bool_text(b: Bool): Text {
-  match b {
-    true => "true"
-    false => "false"
-  }
+  match b { true => "true", false => "false" }
 }
 
 pub fn m_join(parts: List(Text), sep: Text): Text {
@@ -997,8 +1261,25 @@ pub fn m_join(parts: List(Text), sep: Text): Text {
   }
 }
 
+// A `Pair`, which `#(a, b)` is: its fields are `fst` and `snd`.
+pub fn m_is_pair(name: Text, names: List(Text)): Bool {
+  Bool::and(
+    m_text_eq(name, "Pair"),
+    match names {
+      Cons(a, rest) => match rest {
+        Cons(b, tail) => match tail {
+          Nil => Bool::and(m_text_eq(a, "fst"), m_text_eq(b, "snd"))
+          _ => false
+        }
+        Nil => false
+      }
+      Nil => false
+    }
+  )
+}
+
 mutual {
-  pub fn m_show_fuel(fuel: Nat, ctors: List(MCtor), cx: MCx, v0: MVal): Text {
+  pub fn m_show_fuel(fuel: Nat, ctors: Array(MCtor), cx: MCx, v0: MVal): Text {
     match fuel {
       Zero => "…"
       Succ(f) => match m_get(ctors, cx, v0) {
@@ -1011,7 +1292,7 @@ mutual {
         MvText(t) => m_quote(t)
         MvShown(t) => t
         MvBuf(t) => Text::concat("Buf(", Text::concat(m_quote(t), ")"))
-        MvInject(u, i, x) => m_show_fuel(f, ctors, cx, x)
+        MvInject(^u, ^i, x) => m_show_fuel(f, ctors, cx, x)
         MvProduct(ms) => m_join(m_show_list(f, ctors, cx, ms), " × ")
         MvVec(xs) => Text::concat(
           "Vec[",
@@ -1025,33 +1306,32 @@ mutual {
           "Bytes[",
           Text::concat(m_join(List::map((b: Nat) => Text::of_nat(b), Bytes::values(bs)), ", "), "]")
         )
-        MvMap(es) => Text::concat(
-          "HashMap{",
-          Text::concat(m_join(m_show_entries(f, ctors, cx, es), ", "), "}")
-        )
         MvShared(k, cell) => if Nat::eq(k, 2) { "Weak" } else {
           Text::concat(
             if Nat::eq(k, 0) { "Ref(" } else { "Atomic(" },
             Text::concat(m_show_fuel(f, ctors, cx, cx_cell(cx, cell)), ")")
           )
         }
-        MvMutex(m) => "Mutex"
-        MvGuard(m, c) => "MutexGuard"
-        MvSignal(s) => "Signal"
-        MvPending(p) => "Pending"
-        MvSecret(x) => "Secret"
+        MvMutex(^m) => "Mutex"
+        MvSlots(^s, ^vac, ^ms, ^xs) => "Slots"
+        MvGuard(^m, ^c) => "MutexGuard"
+        MvSignal(^s) => "Signal"
+        MvPending(^p) => "Pending"
+        MvSecret(^x) => "Secret"
         MvData(c, fs) => match m_ctor_of(ctors, c) {
           Mctor(name, named, names) => match named {
-            true => match fs {
-              Nil => Text::concat(name, " {}")
-              _ => Text::concat(
-                name,
-                Text::concat(
-                  " { ",
-                  Text::concat(m_join(m_show_named(f, ctors, cx, names, fs), ", "), " }")
+            true => if m_is_pair(name, names) {
+              Text::concat("#(", Text::concat(m_show_members(f, ctors, cx, v0), ")"))
+            } else { match fs {
+                Nil => Text::concat(name, " {}")
+                _ => Text::concat(
+                  name,
+                  Text::concat(
+                    " { ",
+                    Text::concat(m_join(m_show_named(f, ctors, cx, names, fs), ", "), " }")
+                  )
                 )
-              )
-            }
+              } }
             false => match fs {
               Nil => name
               _ => Text::concat(
@@ -1066,7 +1346,32 @@ mutual {
     }
   }
 
-  pub fn m_show_list(fuel: Nat, ctors: List(MCtor), cx: MCx, vs: List(MVal)): List(Text) {
+  // The members of `#(…)`: a pair is its first member and the members of its
+  // second, as `#(a, b, c)` is nested pairs.
+  pub fn m_show_members(fuel: Nat, ctors: Array(MCtor), cx: MCx, v: MVal): Text {
+    match fuel {
+      Zero => "…"
+      Succ(f) => match m_get(ctors, cx, v) {
+        MvData(c, fs) => match m_ctor_of(ctors, c) {
+          Mctor(name, named, names) => if Bool::and(named, m_is_pair(name, names)) {
+            match fs {
+              Cons(a, rest) => match rest {
+                Cons(b, _) => Text::concat(
+                  m_show_fuel(f, ctors, cx, a),
+                  Text::concat(", ", m_show_members(f, ctors, cx, b))
+                )
+                Nil => m_show_fuel(f, ctors, cx, v)
+              }
+              Nil => m_show_fuel(f, ctors, cx, v)
+            }
+          } else { m_show_fuel(f, ctors, cx, v) }
+        }
+        _ => m_show_fuel(f, ctors, cx, v)
+      }
+    }
+  }
+
+  pub fn m_show_list(fuel: Nat, ctors: Array(MCtor), cx: MCx, vs: List(MVal)): List(Text) {
     match fuel {
       Zero => Nil
       Succ(f) => match vs {
@@ -1078,7 +1383,7 @@ mutual {
 
   pub fn m_show_named(
     fuel: Nat,
-    ctors: List(MCtor),
+    ctors: Array(MCtor),
     cx: MCx,
     names: List(Text),
     vs: List(MVal)
@@ -1100,16 +1405,16 @@ mutual {
 
   pub fn m_show_entries(
     fuel: Nat,
-    ctors: List(MCtor),
+    ctors: Array(MCtor),
     cx: MCx,
-    es: List(Pair(MVal, MVal))
+    es: List(MVal × MVal)
   ): List(Text) {
     match fuel {
       Zero => Nil
       Succ(f) => match es {
         Nil => Nil
         Cons(e, rest) => match e {
-          Pair { fst: k, snd: v } => Cons(
+          #(k, v) => Cons(
             Text::concat(
               m_show_fuel(f, ctors, cx, k),
               Text::concat(": ", m_show_fuel(f, ctors, cx, v))
@@ -1122,6 +1427,6 @@ mutual {
   }
 }
 
-pub fn m_show(ctors: List(MCtor), cx: MCx, v: MVal): Text {
+pub fn m_show(ctors: Array(MCtor), cx: MCx, v: MVal): Text {
   m_show_fuel(1000000, ctors, cx, v)
 }

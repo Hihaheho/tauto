@@ -1,6 +1,5 @@
 import "ktuple.taut"
 import "../../pargen/src/list.taut"
-import std::prelude::Shared
 
 // The lookahead analysis: the grammar it reads and FIRST(k). FOLLOW(k) and
 // the deciding of k are in `follow.taut`.
@@ -27,7 +26,7 @@ pub(open) enum LgRaw {
 
 pub(open) struct LgRawAt { at: u64, raw: LgRaw }
 
-pub fn lg_raw_parts(rhs: List(LgSym)): List(LgRawAt) {
+pub fn lg_raw_parts(rhs: List(LgSym)): List(LgRawAt) ! {div, overflow} {
   var parts: List(LgRawAt) := Nil
   var run: List(u64) := Nil
   var run_at: u64 := 0
@@ -44,7 +43,7 @@ pub fn lg_raw_parts(rhs: List(LgSym)): List(LgRawAt) {
           LgN(n) => {
             match run {
               Nil => #()
-              Cons(t, before) => {
+              Cons(^t, ^before) => {
                 parts := Cons(LgRawAt { at: run_at, raw: LgRawT(lg_rev(run)) }, parts)
                 run := Nil
               }
@@ -56,7 +55,7 @@ pub fn lg_raw_parts(rhs: List(LgSym)): List(LgRawAt) {
               Nil => {
                 run_at := i + 1
               }
-              Cons(u, before) => #()
+              Cons(^u, ^before) => #()
             }
             run := Cons(t, run)
           }
@@ -68,14 +67,14 @@ pub fn lg_raw_parts(rhs: List(LgSym)): List(LgRawAt) {
   }
   match run {
     Nil => #()
-    Cons(t, before) => {
+    Cons(^t, ^before) => {
       parts := Cons(LgRawAt { at: run_at, raw: LgRawT(lg_rev(run)) }, parts)
     }
   }
   lg_rev_parts(parts)
 }
 
-pub fn lg_rev_parts(xs: List(LgRawAt)): List(LgRawAt) {
+pub fn lg_rev_parts(xs: List(LgRawAt)): List(LgRawAt) ! {div} {
   var out: List(LgRawAt) := Nil
   var rest := xs
   var running := true
@@ -121,7 +120,7 @@ pub(open) enum LgPart {
 
 pub(open) struct LgFirst { prods: List(LgSet), nts: List(LgSet) }
 
-pub fn lg_first_parts(raw: List(LgRawAt), k: u64): List(LgPart) {
+pub fn lg_first_parts(raw: List(LgRawAt), k: u64): List(LgPart) ! {div, overflow} {
   var out: List(LgPart) := Nil
   var rest := raw
   var running := true
@@ -142,7 +141,7 @@ pub fn lg_first_parts(raw: List(LgRawAt), k: u64): List(LgPart) {
   lg_rev_part(out)
 }
 
-pub fn lg_rev_part(xs: List(LgPart)): List(LgPart) {
+pub fn lg_rev_part(xs: List(LgPart)): List(LgPart) ! {div} {
   var out: List(LgPart) := Nil
   var rest := xs
   var running := true
@@ -168,7 +167,7 @@ pub fn lg_n_nts(g: LgGrammar): u64 {
   Array::len(g.nt_prods)
 }
 
-pub fn lg_set_eq_list(a: List(LgSet), b: List(LgSet)): Bool {
+pub fn lg_set_eq_list(a: List(LgSet), b: List(LgSet)): Bool ! {div} {
   var x := a
   var y := b
   var same := true
@@ -178,7 +177,7 @@ pub fn lg_set_eq_list(a: List(LgSet), b: List(LgSet)): Bool {
       Nil => {
         same := match y {
           Nil => true
-          Cons(q, more) => false
+          Cons(^q, ^more) => false
         }
         running := false
       }
@@ -200,7 +199,7 @@ pub fn lg_set_eq_list(a: List(LgSet), b: List(LgSet)): Bool {
   same
 }
 
-pub fn lg_rev_set(xs: List(LgSet)): List(LgSet) {
+pub fn lg_rev_set(xs: List(LgSet)): List(LgSet) ! {div} {
   var out: List(LgSet) := Nil
   var rest := xs
   var running := true
@@ -218,7 +217,7 @@ pub fn lg_rev_set(xs: List(LgSet)): List(LgSet) {
   out
 }
 
-pub fn lg_set_k_all(xs: List(LgSet), k: u64): List(LgSet) {
+pub fn lg_set_k_all(xs: List(LgSet), k: u64): List(LgSet) ! {div} {
   var out: List(LgSet) := Nil
   var rest := xs
   var running := true
@@ -237,7 +236,7 @@ pub fn lg_set_k_all(xs: List(LgSet), k: u64): List(LgSet) {
 }
 
 // FIRST(k): the fixpoint, from what FIRST(k - 1) gave (or from nothing).
-pub fn lg_first(g: LgGrammar, k: u64, prev: Option(LgFirst)): LgFirst {
+pub fn lg_first(g: LgGrammar, k: u64, prev: Option(LgFirst)): LgFirst ! {div, overflow} {
   let n_prods := lg_n_prods(g)
   let n_nts := lg_n_nts(g)
   var eqs: List(List(LgPart)) := Nil
@@ -320,7 +319,7 @@ pub fn lg_first(g: LgGrammar, k: u64, prev: Option(LgFirst)): LgFirst {
   cur
 }
 
-pub fn lg_rev_eqs(xs: List(List(LgPart))): List(List(LgPart)) {
+pub fn lg_rev_eqs(xs: List(List(LgPart))): List(List(LgPart)) ! {div} {
   var out: List(List(LgPart)) := Nil
   var rest := xs
   var running := true
@@ -338,7 +337,7 @@ pub fn lg_rev_eqs(xs: List(List(LgPart))): List(List(LgPart)) {
   out
 }
 
-pub fn lg_repeat_set(s: LgSet, n: u64): List(LgSet) {
+pub fn lg_repeat_set(s: LgSet, n: u64): List(LgSet) ! {div, overflow} {
   var out: List(LgSet) := Nil
   var i: u64 := 0
   while i < n {

@@ -1,0 +1,89 @@
+// The kernel reads `Slots` of `std/slots_store.taut` as written: a proof
+// computes what `new`, `put`, `take`, `resize`, `cap`, `state`, `mark` and
+// `get` give from the fields behind them, and uses the theorems the file
+// proves of them. The fields themselves are the file's (`pub` without
+// `open`), so a proof in another file goes through these functions.
+@ cases.slots-store-are-read-by-the-kernel
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::uhost { UHost }
+import std::slots_store { Slots }
+
+fn empty(): Slots(Nat, Nat, Nat) {
+  Slots::new(UHost::lit(3, Refl), 10, 0)
+}
+
+fn two(): Slots(Nat, Nat, Nat) {
+  let r1 := Slots::put(empty(), UHost::lit(1, Refl), 7, 5, 11, Refl)
+  Slots::put(r1, UHost::lit(2, Refl), 8, 6, 12, Refl)
+}
+
+theorem empty_cap(): UHost::val(Slots::cap(&orig empty())) = 3 { Refl }
+
+theorem empty_state(): Slots::state(&orig empty()) = 10 { Refl }
+
+theorem two_state(): Slots::state(&orig two()) = 12 { Refl }
+
+theorem two_cap(): UHost::val(Slots::cap(&orig two())) = 3 { Refl }
+
+theorem two_mark(): Slots::mark(&orig two(), UHost::lit(1, Refl)) = 7 { Refl }
+
+theorem two_mark_other(): Slots::mark(&orig two(), UHost::lit(0, Refl)) = 0 { Refl }
+
+theorem two_get(): Slots::get(&orig two(), UHost::lit(2, Refl), Refl) = 6 { Refl }
+
+theorem two_take(): Slots::take(two(), UHost::lit(1, Refl), 0, 13, Refl).snd = 5 { Refl }
+
+theorem two_vacant(): Slots::vacant(&orig two(), UHost::lit(0, Refl)) = true { Refl }
+
+theorem two_resize_cap(): UHost::val(Slots::cap(&orig Slots::resize(two(), UHost::lit(5, Refl), 9, 14, Refl))) = 5 { Refl }
+
+theorem two_resize_mark(): Slots::mark(&orig Slots::resize(two(), UHost::lit(5, Refl), 9, 14, Refl), UHost::lit(4, Refl)) = 9 { Refl }
+
+theorem new_state(c: UHost, s: Nat, m: Nat): Slots::state(&orig Slots::new(<S: Nat, M: Nat, A: Nat>, c, s, m)) = s {
+  Slots::state_new(c, s, m)
+}
+
+theorem new_mark(c: UHost, s: Nat, m: Nat, i: UHost): Slots::mark(&orig Slots::new(<S: Nat, M: Nat, A: Nat>, c, s, m), i) = m {
+  Slots::mark_new(c, s, m, i)
+}
+
+theorem put_state(r: Slots(Nat, Nat, Nat), i: UHost, m: Nat, x: Nat, t: Nat, h: Slots::vacant(&orig r, i) = true): Slots::state(&orig Slots::put(r, i, m, x, t, h)) = t {
+  Slots::state_put(r, i, m, x, t, h)
+}
+
+theorem put_fills(r: Slots(Nat, Nat, Nat), i: UHost, m: Nat, x: Nat, t: Nat, h: Slots::vacant(&orig r, i) = true): Slots::filled(&orig Slots::put(r, i, m, x, t, h), i) = true {
+  Slots::filled_put(r, i, m, x, t, h)
+}
+```
+
+checks_all = "ok"
+
+// `struct &Slots` is the lent range: the contents in order. The kernel reads
+// `lend` and `owned` as written and checks the law of `Lend` over them.
+@ cases.slots-store-lent-range-obeys-the-lend-law
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::uhost { UHost }
+import std::slots_store { Slots }
+
+fn two(): Slots(Nat, Nat, Nat) {
+  let r1 := Slots::put(Slots::new(UHost::lit(3, Refl), 10, 0), UHost::lit(1, Refl), 7, 5, 11, Refl)
+  Slots::put(r1, UHost::lit(2, Refl), 8, 6, 12, Refl)
+}
+
+// The lent range lists the three slots, the empty one as `None`.
+theorem lent_items(): Slots::lent_cap(Slots::lend_range(&orig two())) = UHost::lit(3, Refl) { Refl }
+
+theorem lent_get(): Slots::lent_get(Slots::lend_range(&orig two()), UHost::lit(2, Refl), Refl) = 6 { Refl }
+
+// The law of `Lend`, for any state and mark `owned` gives its copy.
+theorem law(e: Nat, v: Nat, y: &Slots(Nat, Nat, Nat)): Slots::lend_range(&orig Slots::own_with(e, v, y)) = y {
+  Slots::lend_owned(e, v, y)
+}
+
+// The copy is exactly as large as the range.
+theorem owned_cap(e: Nat, v: Nat): Slots::lent_cap(Slots::lend_range(&orig Slots::own_with(e, v, Slots::lend_range(&orig two())))) = UHost::lit(3, Refl) { Refl }
+```
+
+checks_all = "ok"

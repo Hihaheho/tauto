@@ -6,7 +6,7 @@ kernels, the standard library, and nothing faked. The files are only in
 memory; the host gives their text and nothing reads or writes a disk.
 
 ```bash
-bash crates/tauto-analyzer-wasm/build.sh OUT_DIR   # writes OUT_DIR/tauto_analyzer.wasm
+tauto run crates/tauto-analyzer-wasm/build.taut -- OUT_DIR   # writes OUT_DIR/tauto_analyzer.wasm
 ```
 
 It needs the `wasm32-unknown-unknown` target. The module imports nothing.

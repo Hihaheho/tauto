@@ -10,7 +10,7 @@ fn plus(n: Nat, m: Nat): Nat {
     Succ(k) => Succ(plus(k, m))
   }
 }
-theorem two_plus_three(): plus(2, 3) = 5 { Refl(Nat, 5) }
+theorem two_plus_three(): plus(2, 3) = 5 { Refl(<A: Nat, a: 5>) }
 ```
 checks.plus = "ok"
 checks.two_plus_three = "ok"
@@ -26,8 +26,8 @@ fn plus(n: Nat, m: Nat): Nat {
 }
 theorem plus_zero(n: Nat): plus(n, Zero) = n {
   ⊢ plus(n, Zero) = n from match n {
-    Zero => Refl(Nat, Zero)
-    Succ(k) => Eq::subst(Nat, plus(k, Zero), k, y => Succ(plus(k, Zero)) = Succ(y), plus_zero(k), Refl(Nat, Succ(plus(k, Zero))))
+    Zero => Refl(<A: Nat, a: Zero>)
+    Succ(k) => Eq::subst(<A: Nat, a: plus(k, Zero), b: k>, y => Succ(plus(k, Zero)) = Succ(y), plus_zero(k), Refl(<A: Nat, a: Succ(plus(k, Zero))>))
   }
 }
 ```
@@ -48,7 +48,7 @@ checks.again = "error: not structural"
 @ cases.a-wrong-theorem-is-rejected
 parses = true
 source = ```tauto
-theorem bad(): 2 + 2 = 5 { Refl(Nat, 4) }
+theorem bad(): 2 + 2 = 5 { Refl(<A: Nat, a: 4>) }
 ```
 checks.bad = "error: type mismatch"
 
@@ -56,7 +56,7 @@ checks.bad = "error: type mismatch"
 parses = true
 source = ```tauto
 theorem sym(A: Type, a: A, b: A, e: a = b): b = a {
-  Eq::subst(A, a, b, y => y = a, e, Refl(A, a))
+  Eq::subst(<A: A, a: a, b: b>, y => y = a, e, Refl(<A: A, a: a>))
 }
 ```
 checks.sym = "ok"
@@ -69,9 +69,9 @@ inductive Vec(A: Type): (Nat) -> Type {
   Vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, Succ(n))
 }
 fn head(A: Type, n: Nat, v: Vec(A, Succ(n))): A {
-  Vec::rec(A, m => w => Nat::rec(q => Type, Unit, k => ih => A, m), Star, k => h => t => ih => h, Succ(n), v)
+  Vec::rec(<A: A>, m => w => Nat::rec(q => Type, Unit, k => ih => A, m), Star, k => h => t => ih => h, Succ(n), v)
 }
-theorem first(): head(Nat, 0, Vcons(Nat, 0, 7, Vnil(Nat))) = 7 { Refl(Nat, 7) }
+theorem first(): head(Nat, 0, Vcons(<A: Nat>, 0, 7, Vnil(<A: Nat>))) = 7 { Refl(<A: Nat, a: 7>) }
 ```
 checks.head = "ok"
 checks.first = "ok"
@@ -81,8 +81,8 @@ parses = true
 source = ```tauto
 theorem t(n: Nat): n = n {
   ⊢ n = n from match n {
-    Zero => Refl(Nat, Zero)
-    Succ(k) => Refl(Nat, Zero)
+    Zero => Refl(<A: Nat, a: Zero>)
+    Succ(k) => Refl(<A: Nat, a: Zero>)
   }
 }
 ```
@@ -250,12 +250,12 @@ fn second(A: Type, n: Nat, v: Vec(A, Succ(Succ(n)))): A {
     }
   }
 }
-theorem only(A: Type, v: Vec(A, 0)): v = Vnil(A) {
-  ⊢ v = Vnil(A) from match v {
-    Vnil => Refl(Vec(A, 0), Vnil(A))
+theorem only(A: Type, v: Vec(A, 0)): v = Vnil(<A: A>) {
+  ⊢ v = Vnil(<A: A>) from match v {
+    Vnil => Refl(<A: Vec(A, 0), a: Vnil(<A: A>)>)
   }
 }
-theorem snd(): second(Nat, 0, Vcons(Nat, 1, 4, Vcons(Nat, 0, 9, Vnil(Nat)))) = 9 { Refl(Nat, 9) }
+theorem snd(): second(Nat, 0, Vcons(<A: Nat>, 1, 4, Vcons(<A: Nat>, 0, 9, Vnil(<A: Nat>)))) = 9 { Refl(<A: Nat, a: 9>) }
 ```
 checks.head = "ok"
 checks.second = "ok"

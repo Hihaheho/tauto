@@ -1,0 +1,37 @@
+// Two chains stuck on a variable, `my_sub(x, of_nat(n))` against one a step
+// longer, are compared a link at a time, and at each link the comparison
+// asks whether the eliminator it meets was met before outside the binders
+// in hand. That question is one look whatever the depth, so the comparison
+// takes time linear in `n`.
+
+@ cases.a-stuck-chain-a-step-longer-is-different
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive My: Type {
+  Z: My
+  S(n: My): My
+}
+fn of_nat(n: Nat): My {
+  ⊢ My from match n {
+    Zero => Z
+    Succ(k) => S(of_nat(k))
+  }
+}
+fn my_pred(n: My): My {
+  ⊢ My from match n {
+    Z => Z
+    S(k) => k
+  }
+}
+fn my_sub(a: My, b: My): My {
+  ⊢ My from match b {
+    Z => a
+    S(k) => my_pred(my_sub(a, k))
+  }
+}
+theorem longer(x: My, h: my_sub(x, of_nat(5000)) = Z): my_sub(x, of_nat(5001)) = Z { h }
+theorem same(x: My, h: my_pred(my_sub(x, of_nat(5000))) = Z): my_sub(x, of_nat(5001)) = Z { h }
+```
+
+checks_all = "ok"
+checks."input/main.taut::longer" = "error: type mismatch"

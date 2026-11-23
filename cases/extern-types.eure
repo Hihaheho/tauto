@@ -6,10 +6,10 @@ description = "The extern block keeps its types when it is formatted, and the fu
 parses = true
 source = ```tauto
 extern {
-  affine type Tally
+  type(affine) Tally
   type Mark
   fn tally_new(n: i64): Tally
-  fn tally_get(&t: Tally): i64
+  fn tally_get(t: &Tally): i64
   fn mark(): Mark
 }
 fn tally(n: i64): i64 {
@@ -19,10 +19,10 @@ fn tally(n: i64): i64 {
 ```
 format = ```
 extern {
-  affine type Tally
+  type(affine) Tally
   type Mark
   fn tally_new(n: i64): Tally
-  fn tally_get(&t: Tally): i64
+  fn tally_get(t: &Tally): i64
   fn mark(): Mark
 }
 fn tally(n: i64): i64 {
@@ -33,14 +33,13 @@ fn tally(n: i64): i64 {
 
 @ cases.a-program-cannot-make-a-value-of-an-extern-type
 description = "Only extern functions make a value of an extern type, on every backend."
-backends = ["rust", "javascript"]
 source = ```tauto
 extern {
-  affine type Tally
-  fn tally_get(&t: Tally): i64
+  type(affine) Tally
+  fn tally_get(t: &Tally): i64
 }
 let t := Tally {}
-perform show("n", tally_get(&t))
+show(&tally_get(&t))
 ```
 compile_errors.rust = "build: Tally is an extern type; only extern functions make its values"
 compile_errors.javascript = "build: Tally is an extern type; only extern functions make its values"

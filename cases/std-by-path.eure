@@ -1,0 +1,70 @@
+description = "A prelude stub of the standard library read by its real path is standard: ownership accepts its instances. files real`…` links the repository file in place so the check sees that path."
+
+@ cases.prelude-stub-by-real-path-accepts-instances
+files."Tauto.eure" = ```eure
+package { name = "std"
+version = "0.1.0"
+prelude = false }
+```
+files."builtin/classes.taut" = real`../std/builtin/classes.taut`
+files."probe.taut" = ````tauto
+import "builtin/classes.taut"
+
+// Two type parameters: dictionary ownership runs for the compilation unit.
+class Marker(A: Type, B: Type) {
+  fn mark(a: &A, b: &B): Unit
+}
+
+instance Marker(Bool, Bool) {
+  fn mark(a: &Bool, b: &Bool): Unit { () }
+}
+````
+entry = "probe.taut"
+checks."Ord::inst@i64" = "skipped"
+check_report = "skipped Ord::compare@i64"
+
+@ cases.std-vec-by-path-checks
+description = "`std/vec.taut` checks by its real path. The drains that fill a `Vec` run as written: the kernel has no `Vec`, so they are not its declarations."
+source = path`../std/vec.taut`
+checks."VecModel::drain_into" = "skipped"
+checks."VecModel::into_vec" = "skipped"
+checks_all = "ok"
+
+@ cases.std-tote-instance-on-prelude-type-infers
+description = "In the tote named `std`, the prelude's types are the tote's own: an instance on `List` may say `infer from`, as `std/iterator.taut` does."
+files."Tauto.eure" = ```eure
+package { name = "std"
+version = "0.1.0"
+prelude = false }
+```
+files."probe.taut" = ````tauto
+import std::prelude::std { List }
+
+inductive class Head(S: Type, T: Type) {
+  fn first(s: List(T)): Bool
+}
+
+instance<T> Head(List(T), T) infer from S {
+  fn first(s: List(T)): Bool {
+    match s {
+      Nil => false
+      Cons(x, rest) => true
+    }
+  }
+}
+````
+entry = "probe.taut"
+check_errors = []
+
+@ cases.std-laws-that-call-int-norm-check
+description = "The helpers `int_norm!` and `nat_norm!` run write the rows they perform, so the laws that call the macros check."
+files."input/Tauto.eure" = ```eure
+package { name = "laws" version = "0.1.0" }
+```
+files."input/src/main.taut" = ```tauto
+import std::rat_laws
+import std::int_laws
+import std::syn_tree
+```
+entry = "input/src/main.taut"
+check_errors = []

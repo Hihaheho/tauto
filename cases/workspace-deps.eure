@@ -1,0 +1,457 @@
+description = "Workspace membership, NAME: workspace resolution, and mismatch errors."
+
+@ cases.workspace-dependency-resolves-by-package-name
+files_tote = "app"
+tote_errors = []
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", "lib"]
+}
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+dependencies {
+  lib: workspace
+}
+```
+files."lib/Tauto.eure" = ```eure
+package { name = "lib" version = "0.1.0" }
+workspace = ".."
+```
+files."lib/src/a.taut" = ```tauto
+import std::base
+pub fn two(): Nat { Succ(Succ(Zero)) }
+```
+files."app/src/main.taut" = ```tauto
+import lib::a { two }
+theorem t(): two() = Succ(Succ(Zero)) { Refl }
+```
+
+@ cases.workspace-dependency-from-non-member-is-refused
+files_tote = "app"
+load_error = "is not a workspace member"
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+dependencies {
+  lib: workspace
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::base
+fn one(): Nat { Succ(Zero) }
+```
+
+@ cases.plain-members-path-without-affiliation-is-a-mismatch
+files_tote = "app"
+load_error = "is not affiliated"
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", "orphan"]
+}
+```
+files."orphan/Tauto.eure" = ```eure
+package { name = "orphan" version = "0.1.0" }
+```
+files."orphan/src/a.taut" = ```tauto
+import std::base
+fn one(): Nat { Succ(Zero) }
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+dependencies {
+  orphan: workspace
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::base
+fn one(): Nat { Succ(Zero) }
+```
+
+@ cases.glob-candidate-without-affiliation-is-dropped
+files_tote = "app"
+tote_errors = []
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", glob`pkgs/*`]
+}
+```
+files."pkgs/skip/Tauto.eure" = ```eure
+package { name = "skip" version = "0.1.0" }
+```
+files."pkgs/skip/src/a.taut" = ```tauto
+import std::base
+fn one(): Nat { Succ(Zero) }
+```
+files."pkgs/lib/Tauto.eure" = ```eure
+package { name = "lib" version = "0.1.0" }
+workspace = "../.."
+```
+files."pkgs/lib/src/a.taut" = ```tauto
+import std::base
+pub fn two(): Nat { Succ(Succ(Zero)) }
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+dependencies {
+  lib: workspace
+}
+```
+files."app/src/main.taut" = ```tauto
+import lib::a { two }
+theorem t(): two() = Succ(Succ(Zero)) { Refl }
+```
+
+@ cases.path-and-workspace-on-one-entry-is-refused
+files_tote = "app"
+load_error = "cannot be combined"
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", "lib"]
+}
+```
+files."lib/Tauto.eure" = ```eure
+package { name = "lib" version = "0.1.0" }
+workspace = ".."
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+dependencies {
+  lib {
+    path = "../lib"
+    workspace = true
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::base
+fn one(): Nat { Succ(Zero) }
+```
+
+@ cases.nested-workspace-member-via-path-keeps-its-own-resolution
+files_tote = "game"
+tote_errors = []
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["game", "nested"]
+}
+```
+files."game/Tauto.eure" = ```eure
+package { name = "game" version = "0.1.0" }
+workspace = ".."
+dependencies {
+  demo { path = "../nested/demo" }
+}
+```
+files."game/src/main.taut" = ```tauto
+import demo::a { one }
+theorem t(): one() = Succ(Zero) { Refl }
+```
+files."nested/Tauto.eure" = ```eure
+package { name = "nested" version = "0.1.0" }
+workspace {
+  parent = ".."
+  members = ["demo"]
+}
+```
+files."nested/src/a.taut" = ```tauto
+import std::base
+fn unused(): Nat { Zero }
+```
+files."nested/demo/Tauto.eure" = ```eure
+package { name = "demo" version = "0.1.0" }
+workspace = ".."
+```
+files."nested/demo/src/a.taut" = ```tauto
+import std::base
+pub fn one(): Nat { Succ(Zero) }
+```
+
+@ cases.glob-starstar-finds-nested-member-directories
+files_tote = "app"
+tote_errors = []
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", glob`plugins/**`]
+}
+```
+files."plugins/fire/Tauto.eure" = ```eure
+package { name = "fire" version = "0.1.0" }
+workspace = "../.."
+```
+files."plugins/fire/src/a.taut" = ```tauto
+import std::base
+pub fn spark(): Nat { Succ(Zero) }
+```
+files."plugins/ice/deep/Tauto.eure" = ```eure
+package { name = "iced" version = "0.1.0" }
+workspace = "../../.."
+```
+files."plugins/ice/deep/src/a.taut" = ```tauto
+import std::base
+pub fn chill(): Nat { Succ(Succ(Zero)) }
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+dependencies {
+  fire: workspace
+  iced: workspace
+}
+```
+files."app/src/main.taut" = ```tauto
+import fire::a { spark }
+import iced::a { chill }
+theorem t(): spark() = Succ(Zero) { Refl }
+theorem u(): chill() = Succ(Succ(Zero)) { Refl }
+```
+@ cases.path-and-glob-naming-the-same-directory-are-one-member
+files_tote = "app"
+tote_errors = []
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", "lib", glob`*`]
+}
+```
+files."lib/Tauto.eure" = ```eure
+package { name = "lib" version = "0.1.0" }
+workspace = ".."
+```
+files."lib/src/a.taut" = ```tauto
+import std::base
+pub fn two(): Nat { Succ(Succ(Zero)) }
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+dependencies {
+  lib: workspace
+}
+```
+files."app/src/main.taut" = ```tauto
+import lib::a { two }
+theorem t(): two() = Succ(Succ(Zero)) { Refl }
+```
+
+@ cases.sibling-member-not-depended-on-is-not-loaded
+files_tote = "app"
+tote_errors = []
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", "broken"]
+}
+```
+files."broken/Tauto.eure" = ```eure
+package { name = "broken" version = "0.1.0" }
+workspace = ".."
+```
+files."broken/src/a.taut" = ```tauto
+import std::base
+fn bad(): Nat { true }
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+```
+files."app/src/main.taut" = ```tauto
+import std::base
+theorem t(): Succ(Zero) = Succ(Zero) { Refl }
+```
+
+@ cases.check-tote-selects-one-member-by-name
+check_tote = "app"
+tote_errors = []
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", "lib", "broken"]
+}
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+dependencies {
+  lib: workspace
+}
+```
+files."app/src/main.taut" = ```tauto
+import lib::a { two }
+theorem t(): two() = Succ(Succ(Zero)) { Refl }
+```
+files."lib/Tauto.eure" = ```eure
+package { name = "lib" version = "0.1.0" }
+workspace = ".."
+```
+files."lib/src/a.taut" = ```tauto
+import std::base
+pub fn two(): Nat { Succ(Succ(Zero)) }
+```
+files."broken/Tauto.eure" = ```eure
+package { name = "broken" version = "0.1.0" }
+workspace = ".."
+```
+files."broken/src/a.taut" = ```tauto
+import std::base
+fn bad(): Nat { true }
+```
+
+@ cases.workspace-check-reports-every-member
+workspace_check = true
+tote_errors = ["type mismatch"]
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", "broken"]
+}
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+```
+files."app/src/main.taut" = ```tauto
+import std::base
+theorem t(): Succ(Zero) = Succ(Zero) { Refl }
+```
+files."broken/Tauto.eure" = ```eure
+package { name = "broken" version = "0.1.0" }
+workspace = ".."
+```
+files."broken/src/a.taut" = ```tauto
+import std::base
+fn bad(): Nat { true }
+```
+
+@ cases.run-tote-selects-member-by-name
+run_tote = "app"
+stdout = "2\n"
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app", "lib"]
+}
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+```
+files."app/src/main.taut" = ```tauto
+perform main(() => show(&2))
+```
+files."lib/Tauto.eure" = ```eure
+package { name = "lib" version = "0.1.0" }
+workspace = ".."
+```
+files."lib/src/a.taut" = ```tauto
+import std::base
+fn unused(): Nat { Zero }
+```
+
+@ cases.check-tote-unknown-member-is-refused
+check_tote = "missing"
+load_error = "not a member"
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app"]
+}
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+```
+files."app/src/main.taut" = ```tauto
+import std::base
+theorem t(): Succ(Zero) = Succ(Zero) { Refl }
+```
+
+@ cases.check-tote-path-is-refused
+check_tote = "./app"
+load_error = "package name"
+files."Tauto.eure" = ```eure
+workspace {
+  members = ["app"]
+}
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+```
+files."app/src/main.taut" = ```tauto
+import std::base
+theorem t(): Succ(Zero) = Succ(Zero) { Refl }
+```
+
+@ cases.check-tote-standalone-own-name-is-refused
+check_tote = "alone"
+load_error = "not a member"
+files."Tauto.eure" = ```eure
+package { name = "alone" version = "0.1.0" }
+```
+files."src/main.taut" = ```tauto
+import std::base
+theorem t(): Succ(Zero) = Succ(Zero) { Refl }
+```
+
+@ cases.glob-skips-build-and-hidden-dirs
+workspace_check = true
+tote_errors = []
+files."Tauto.eure" = ```eure
+workspace {
+  members = [glob`*`]
+}
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+workspace = ".."
+```
+files."app/src/main.taut" = ```tauto
+import std::base
+theorem t(): Succ(Zero) = Succ(Zero) { Refl }
+```
+files."target/bogus/Tauto.eure" = ```eure
+package { name = "bogus" version = "0.1.0" }
+workspace = "../.."
+```
+files."target/bogus/src/a.taut" = ```tauto
+import std::base
+fn bad(): Nat { true }
+```
+files."node_modules/pkg/Tauto.eure" = ```eure
+package { name = "pkg" version = "0.1.0" }
+workspace = "../.."
+```
+files."node_modules/pkg/src/a.taut" = ```tauto
+import std::base
+fn bad(): Nat { true }
+```
+files.".hidden/x/Tauto.eure" = ```eure
+package { name = "hidden" version = "0.1.0" }
+workspace = "../.."
+```
+files.".hidden/x/src/a.taut" = ```tauto
+import std::base
+fn bad(): Nat { true }
+```
+
+@ cases.parent-cycle-is-refused
+files_tote = "a/demo"
+load_error = "cycle"
+files."a/Tauto.eure" = ```eure
+workspace {
+  parent = "../b"
+  members = ["demo"]
+}
+```
+files."b/Tauto.eure" = ```eure
+workspace {
+  parent = "../a"
+  members = ["other"]
+}
+```
+files."a/demo/Tauto.eure" = ```eure
+package { name = "demo" version = "0.1.0" }
+workspace = ".."
+```
+files."a/demo/src/main.taut" = ```tauto
+import std::base
+theorem t(): Succ(Zero) = Succ(Zero) { Refl }
+```

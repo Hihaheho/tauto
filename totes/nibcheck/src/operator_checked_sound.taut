@@ -1,8 +1,8 @@
 import "operator_frame.taut"
 import "binding_error_sound.taut"
 import "binding_checked_sound.taut"
-import std::Base
-import std::Text
+import std::base
+import std::text
 import "checked_frame.taut"
 import "checker.taut"
 import "datas_frame.taut"
@@ -14,7 +14,9 @@ import "instantiation_frame.taut"
 import "operation_checked_sound.taut"
 import "ty.taut"
 import "types_decl.taut"
+import "types_decl_head.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify_sound.taut"
 import "written_error_sound.taut"
 import "../../surface/src/surface.taut"
@@ -30,10 +32,9 @@ pub theorem operator_div_frame_checked(
   div: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, operator_div(c, op, a, b, arguments, span, occurrence, div)) {
-  ⊢ CkCheckedFrame(c, operator_div(c, op, a, b, arguments, span, occurrence, div)) from match div {
+  match div {
     true => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => mut1(a, c1),
       ck_divide(c, a, span),
@@ -47,12 +48,10 @@ pub theorem operator_div_frame_checked(
       ignored => c1 => o_c1 => checked_frame_return(c1, a, o_c1)
     )
     false => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored2: Unit, c2: Checker) => mut1(a, c2),
         ck_record_op(c1, a, span, occurrence)
       ),
@@ -65,8 +64,7 @@ pub theorem operator_div_frame_checked(
         ordered
       ),
       ignored => c1 => o_c1 => checked_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c1,
         (ignored2: Unit, c2: Checker) => mut1(a, c2),
         ck_record_op(c1, a, span, occurrence),
@@ -94,10 +92,9 @@ pub theorem operator_compare_frame_checked(
   cmp: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, operator_compare(c, op, a, b, arguments, span, occurrence, cmp)) {
-  ⊢ CkCheckedFrame(c, operator_compare(c, op, a, b, arguments, span, occurrence, cmp)) from match cmp {
+  match cmp {
     true => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => mut1(TyBool, c1),
       ck_number(c, a, span, op),
@@ -135,10 +132,9 @@ pub theorem operator_eq_frame_checked(
   eq: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, operator_eq(c, op, a, b, arguments, span, occurrence, eq)) {
-  ⊢ CkCheckedFrame(c, operator_eq(c, op, a, b, arguments, span, occurrence, eq)) from match eq {
+  match eq {
     true => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => mut1(TyBool, c1),
       ck_pend(c, "PartialEq", a, op, span),
@@ -203,8 +199,7 @@ pub theorem operator_unified_frame_checked(
     operator_unified(c, op, a, b, arguments, span, occurrence, failed)
   ) from match failed {
     true => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => operator_failed_result(
         c1,
@@ -264,12 +259,10 @@ pub theorem operator_binary_frame_checked(
     operator_binary(c, op, a, b, arguments, span, occurrence, boolean)
   ) from match boolean {
     true => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored2: Unit, c2: Checker) => mut1(TyBool, c2),
         ck_expect(c1, b, TyBool, second_span(arguments, span), cat3("`", op, "`"))
       ),
@@ -283,8 +276,7 @@ pub theorem operator_binary_frame_checked(
         ordered
       ),
       ignored => c1 => o_c1 => checked_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c1,
         (ignored2: Unit, c2: Checker) => mut1(TyBool, c2),
         ck_expect(c1, b, TyBool, second_span(arguments, span), cat3("`", op, "`")),
@@ -300,8 +292,7 @@ pub theorem operator_binary_frame_checked(
       )
     )
     false => checked_frame_bind(
-      Bool,
-      Ty,
+      <A: Bool, B: Ty>,
       c,
       (unified: Bool, c1: Checker) => operator_unified(
         c1,
@@ -372,12 +363,10 @@ pub theorem operator_unary_number_frame_checked(
     operator_unary_number(c, op, arguments, span, occurrence, a, number)
   ) from match number {
     true => checked_frame_bind(
-      Unit,
-      Ty,
+      <A: Unit, B: Ty>,
       c,
       (ignored: Unit, c1: Checker) => frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         (ignored2: Unit, c2: Checker) => mut1(a, c2),
         ck_record_op(c1, a, span, occurrence)
       ),
@@ -390,8 +379,7 @@ pub theorem operator_unary_number_frame_checked(
         ordered
       ),
       ignored => c1 => o_c1 => checked_frame_bind(
-        Unit,
-        Ty,
+        <A: Unit, B: Ty>,
         c1,
         (ignored2: Unit, c2: Checker) => mut1(a, c2),
         ck_record_op(c1, a, span, occurrence),
@@ -419,39 +407,6 @@ pub theorem operator_unary_number_frame_checked(
   }
 }
 
-pub theorem operator_unary_frame_checked(
-  c: Checker,
-  op: Text,
-  arguments: List(SurfaceTerm),
-  span: TySpan,
-  occurrence: Option(TermOccurrence),
-  a: Ty,
-  negate: Bool,
-  ordered: CkOrdered(c)
-): CkCheckedFrame(c, operator_unary(c, op, arguments, span, occurrence, a, negate)) {
-  ⊢ CkCheckedFrame(c, operator_unary(c, op, arguments, span, occurrence, a, negate)) from match negate {
-    true => checked_frame_bind(
-      Unit,
-      Ty,
-      c,
-      (ignored: Unit, c1: Checker) => mut1(TyBool, c1),
-      ck_expect(c, a, TyBool, span, "`not`"),
-      ck_expect_run_frame_checked(c, a, TyBool, span, "`not`", ordered),
-      ignored => c1 => o_c1 => checked_frame_return(c1, TyBool, o_c1)
-    )
-    false => operator_unary_number_frame_checked(
-      c,
-      op,
-      arguments,
-      span,
-      occurrence,
-      a,
-      Bool::or(Text::eq(op, "-"), Text::eq(op, "+")),
-      ordered
-    )
-  }
-}
-
 pub theorem operator_more_frame_checked(
   c: Checker,
   op: Text,
@@ -463,7 +418,7 @@ pub theorem operator_more_frame_checked(
   more: List(Ty),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, operator_more(c, op, arguments, span, occurrence, a, b, more)) {
-  ⊢ CkCheckedFrame(c, operator_more(c, op, arguments, span, occurrence, a, b, more)) from match more {
+  match more {
     Nil => checked_frame_rewrap(
       c,
       ck_binary(c, op, a, b, arguments, span, occurrence),
@@ -493,15 +448,15 @@ pub theorem operator_rest_frame_checked(
   rest: List(Ty),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, operator_rest(c, op, arguments, span, occurrence, a, rest)) {
-  ⊢ CkCheckedFrame(c, operator_rest(c, op, arguments, span, occurrence, a, rest)) from match rest {
-    Nil => operator_unary_frame_checked(
+  match rest {
+    Nil => operator_unary_number_frame_checked(
       c,
       op,
       arguments,
       span,
       occurrence,
       a,
-      Text::eq(op, "not"),
+      Bool::or(Text::eq(op, "-"), Text::eq(op, "+")),
       ordered
     )
     Cons(b, more) => operator_more_frame_checked(
@@ -527,7 +482,7 @@ pub theorem operator_operands_frame_checked(
   args: List(Ty),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, operator_operands(c, op, arguments, span, occurrence, args)) {
-  ⊢ CkCheckedFrame(c, operator_operands(c, op, arguments, span, occurrence, args)) from match args {
+  match args {
     Nil => checked_frame_read(
       c,
       ck_rewrap1(ck_operator_bad(c, op, span)),

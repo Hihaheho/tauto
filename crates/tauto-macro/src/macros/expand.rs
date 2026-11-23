@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
+use tauto_surface::identity::Detach as _;
 
 use tauto_parol::Span;
 
@@ -14,15 +15,17 @@ use super::node::Node;
 use super::origin::{EXPANSION_BASE, SpanMap};
 use super::scope::{self, scopes_of, split};
 use super::syn::Lower;
-use crate::eval::{Host, RunError, call_bound_function};
+use crate::macros::runner::{CallError as RunError, Host};
 use tauto_message::{Message, msg};
 
 /// The built-in `include_text!`, which the reader replaces by the file's text before
 /// any macro runs (`tauto::program::include`): no macro may take its name, and a
 /// call of it that a macro writes is an error.
 pub const INCLUDE_TEXT: &str = "include_text";
+/// The built-in `include_bytes!`, read as `include_text!` is, into `Bytes`.
+pub const INCLUDE_BYTES: &str = "include_bytes";
 
-pub const BUILTINS: [&str; 3] = [INCLUDE_TEXT, "syntax", "inductive_syntax"];
+pub const BUILTINS: [&str; 4] = [INCLUDE_TEXT, INCLUDE_BYTES, "syntax", "inductive_syntax"];
 use crate::generated::{declared, fix as generates_fix, mismatch};
 use crate::rows::{RowReport, check_program_rows};
 use crate::surface::{
@@ -39,6 +42,11 @@ pub struct Limits {
     pub output_nodes: usize,
     pub allocations: u64,
     pub input_bytes: usize,
+    /// For each file, the files before it that it neither imports nor is
+    /// read with (another file checked beside it in the same run): what they
+    /// declare is not given to its macros' kernels, as it would not be there
+    /// if the file were checked alone. Empty: every file before is given.
+    pub unseen_files: Vec<Vec<usize>>,
 }
 
 impl Default for Limits {
@@ -50,6 +58,7 @@ impl Default for Limits {
             output_nodes: 100_000,
             allocations: 10_000_000,
             input_bytes: 1 << 20,
+            unseen_files: Vec::new(),
         }
     }
 }
@@ -58,6 +67,7 @@ impl Default for Limits {
 pub struct Options {
     pub limits: Limits,
     pub checker: Arc<dyn super::checker::TypedChecker>,
+    pub runner: Arc<dyn super::runner::MacroRunner>,
 }
 
 impl std::ops::Deref for Options {
@@ -148,7 +158,7 @@ pub fn expand_files_seeing(
     expand_files_in(files, opts, seeing, Vec::new())
 }
 
-/// [`expand_files_seeing`], with the module of each file (`std::Text`), so
+/// [`expand_files_seeing`], with the module of each file (`std::text`), so
 /// that a message can name a declaration of another file by its full name.
 pub fn expand_files_in(
     files: Vec<Vec<Stmt>>,
@@ -169,6 +179,9 @@ pub struct Saved {
     done_ends: Vec<usize>,
     syntaxes: Syntaxes,
     macros: HashMap<String, Reg>,
+    /// Every macro declared so far, in order; `macros` holds those the file being expanded
+    /// sees (`Limits::unseen_files`).
+    registered: Vec<(String, Reg)>,
     done: Vec<Stmt>,
     lib: Option<Rc<Lib>>,
     spans: SpanMap,
@@ -179,6 +192,19 @@ pub struct Saved {
     written: Vec<(usize, crate::surface::Name, String, Span)>,
     typed_macros: HashMap<String, bool>,
     effect_sets: crate::surface::effect_sets::Sets,
+}
+
+impl tauto_surface::identity::Detach for Saved {
+    /// A copy whose name reservations are its own
+    /// ([`tauto_surface::resolve::Resolver::detached`]): an expansion kept for later
+    /// readings is kept and resumed this way, so the files read after it do not
+    /// leave their names in it for the next program.
+    fn detached(&self) -> Self {
+        Self {
+            bindings: self.bindings.detached(),
+            ..self.clone()
+        }
+    }
 }
 
 impl Saved {
@@ -220,11 +246,13 @@ pub fn expand_files_resuming_bound(
         }),
         checker,
         opts,
-        seeing,
+        seen: seeing.iter().flat_map(|v| v.values().cloned()).collect(),
+        seeing: Rc::new(seeing),
         modules,
         done_ends: Vec::new(),
         syntaxes: Syntaxes::default(),
         macros: HashMap::new(),
+        registered: Vec::new(),
         done: Vec::new(),
         file: 0,
         lib: None,
@@ -238,6 +266,7 @@ pub fn expand_files_resuming_bound(
         file_steps: 0,
         file_expanded: false,
         elab_prefix: Vec::new(),
+        elab_prefix_files: Vec::new(),
         elab_module: Vec::new(),
         call_module: Vec::new(),
         call_bound: HashSet::new(),
@@ -258,6 +287,7 @@ pub fn expand_files_resuming_bound(
         e.done_ends = s.done_ends;
         e.syntaxes = s.syntaxes;
         e.macros = s.macros;
+        e.registered = s.registered;
         e.done = s.done;
         e.lib = s.lib;
         e.spans = s.spans;
@@ -280,6 +310,7 @@ pub fn expand_files_resuming_bound(
         e.file_steps = 0;
         e.file_expanded = false;
         e.checker.begin_file(i);
+        e.see_macros();
         let stmts = e.file(stmts);
         e.forget_file_names();
         // The library built for this file holds only the files before it, so the expansion
@@ -291,11 +322,18 @@ pub fn expand_files_resuming_bound(
             s.lib = Some(lib.clone());
         }
         by_file.push(stmts.clone());
+        let mut stmts = stmts;
+        tag_globals(i, &mut stmts);
         e.done.extend(stmts);
         e.done_ends.push(e.done.len());
     }
     if save_before == Some(by_file.len()) {
         saved = Some(e.save(&by_file));
+    }
+    // A place in the text `inductive_syntax!` makes for the proofs is shown where
+    // the declaration is written.
+    for &(start, len, written) in &e.syntaxes.inductive_texts {
+        e.spans.text(start, len, written);
     }
     e.errors.extend(std::mem::take(&mut e.syntaxes.errors));
     e.fixes.extend(std::mem::take(&mut e.syntaxes.fixes));
@@ -303,9 +341,9 @@ pub fn expand_files_resuming_bound(
         registration.function = e.bindings.global(&registration.function);
     }
     let macros: Vec<crate::surface::Name> = e
-        .macros
-        .values()
-        .map(|r| e.bindings.global(&r.function))
+        .registered
+        .iter()
+        .map(|(_, r)| e.bindings.global(&r.function))
         .collect();
     let expansion_only = expansion_only(&e.done, &macros);
     let out = Output {
@@ -407,11 +445,141 @@ mod typed;
 struct Reg {
     function: crate::surface::Name,
     file: usize,
+    /// `pub macro fn`: files other than [`Reg::file`] call it.
+    public: bool,
+    /// What the names of the function's body mean, where its file has a declaration that
+    /// imports at the head of its body: a `Syn::global` written there reads them so.
+    scope: Option<Rc<HashMap<String, String>>>,
+}
+
+thread_local! {
+    /// The declarations of the files of the program being expanded that import at the
+    /// head of their bodies, with what the names of each body mean ([`set_scopes`]).
+    static SCOPES: std::cell::RefCell<tauto_surface::surface::qualify::Scopes> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The declarations of the files of the program the next expansion reads that import at
+/// the head of their bodies (`qualify::files_before_macros_listed`).
+pub fn set_scopes(scopes: tauto_surface::surface::qualify::Scopes) {
+    SCOPES.with(|s| *s.borrow_mut() = scopes);
+}
+
+/// What the names of the body of the function `function` of the file `file` mean, where it
+/// imports at the head of its body.
+/// Else, where another declaration of the file does, what the file sees without the
+/// bodies of those declarations.
+fn scope_of(file: usize, function: &str) -> Option<Rc<HashMap<String, String>>> {
+    SCOPES.with(|s| {
+        let s = s.borrow();
+        let scopes = s.get(file)?;
+        scopes
+            .declarations
+            .iter()
+            .find(|(name, _)| name == function)
+            .map(|(_, seeing)| seeing)
+            .or(scopes.file.as_ref())
+            .map(|seeing| Rc::new(seeing.clone()))
+    })
+}
+
+/// What a `Syn::global` of the macro's program begins its name with, in the program the
+/// macro runs: the place it is written, `\0file:declaration\0`. The name is read as that
+/// place reads it ([`read_tag`]), wherever the function it is written in is called from.
+const TAG: char = '\0';
+
+/// Writes, into each `Syn::global` call of the statements of the file `file`, the place it
+/// is written: the file, and the top-level declaration whose body holds it. What a quote
+/// holds is the syntax a macro makes and is left as written, but for what it splices in.
+fn tag_globals(file: usize, stmts: &mut [Stmt]) {
+    for s in stmts {
+        let declaration = declaration_name(s).unwrap_or_default();
+        let tag = format!("{TAG}{file}:{declaration}{TAG}");
+        crate::surface::walk::roots(s, &mut |t| tag_term(t, &tag, false));
+    }
+}
+
+fn declaration_name(s: &Stmt) -> Option<String> {
+    match s {
+        Stmt::Fn(f) => Some(crate::surface::qualify::short(&f.name).to_string()),
+        Stmt::Theorem(d) | Stmt::Def(d) => {
+            Some(crate::surface::qualify::short(&d.name).to_string())
+        }
+        Stmt::Attributed { stmt, .. } => declaration_name(stmt),
+        _ => None,
+    }
+}
+
+fn tag_term(t: &mut SurfaceTerm, tag: &str, quoted: bool) {
+    match &*t.kind {
+        TermKind::Quote { .. } => {
+            crate::surface::walk::children(t, &mut |c| tag_term(c, tag, true));
+            return;
+        }
+        TermKind::Splice(_) => {
+            crate::surface::walk::children(t, &mut |c| tag_term(c, tag, false));
+            return;
+        }
+        TermKind::App {
+            function,
+            arguments,
+        } if !quoted
+            && arguments.len() == 1
+            && matches!(&*function.kind, TermKind::Var(n)
+                if tauto_surface::bindings::is_library_selected(n, "Syn::global")) =>
+        {
+            let TermKind::App { arguments, .. } = Arc::make_mut(&mut t.kind) else {
+                unreachable!("checked to be an application")
+            };
+            let argument = &mut arguments[0];
+            tag_term(argument, tag, false);
+            let span = argument.span;
+            *argument = match &*argument.kind {
+                TermKind::Text(written) => {
+                    SurfaceTerm::new(TermKind::Text(format!("{tag}{written}")), span)
+                }
+                _ => SurfaceTerm::new(
+                    TermKind::App {
+                        function: Box::new(SurfaceTerm::var(
+                            &tauto_surface::bindings::library_name("concat"),
+                            span,
+                        )),
+                        arguments: vec![
+                            SurfaceTerm::new(TermKind::Text(tag.to_string()), span),
+                            argument.clone(),
+                        ],
+                    },
+                    span,
+                ),
+            };
+            return;
+        }
+        _ => {}
+    }
+    crate::surface::walk::children(t, &mut |c| tag_term(c, tag, quoted));
+}
+
+/// The place a name given to `Syn::global` is written ([`tag_globals`]), and the name.
+fn read_tag(spelling: &str) -> (Option<(usize, &str)>, &str) {
+    let Some(rest) = spelling.strip_prefix(TAG) else {
+        return (None, spelling);
+    };
+    let Some((place, name)) = rest.split_once(TAG) else {
+        return (None, spelling);
+    };
+    let Some((file, declaration)) = place.split_once(':') else {
+        return (None, spelling);
+    };
+    match file.parse() {
+        Ok(file) => (Some((file, declaration)), name),
+        Err(_) => (None, spelling),
+    }
 }
 
 #[derive(Clone)]
 enum Input {
-    Syntax(String),
+    /// The tree of a start symbol of a syntax: its first, or the one named.
+    Syntax(String, Option<String>),
     Plaintext,
     /// A typed macro: the `Judgement` of an expression of the program.
     Judgement,
@@ -468,12 +636,25 @@ impl Lib {
     }
 }
 
+/// An attribute written before a declaration: `@name!(arg) => list`.
+struct Attribute {
+    name: String,
+    arg: SurfaceTerm,
+    generates: Generates,
+    replace: Option<crate::surface::Replace>,
+    span: Span,
+}
+
 struct Expander<'o> {
     bindings: tauto_surface::resolve::Resolver,
     checker: Arc<dyn super::checker::TypedChecker>,
     opts: &'o Options,
     /// What each file's short names mean, by file (`expand_files_seeing`).
-    seeing: Vec<HashMap<String, String>>,
+    seeing: Rc<Vec<HashMap<String, String>>>,
+    /// Every name some file saw before the expansion (the values of
+    /// `seeing`). `seeing` does not change, so this is gathered once rather
+    /// than for every declaration a typed macro expands.
+    seen: std::collections::HashSet<String>,
     /// The short names the file being expanded gives its own declarations,
     /// each with what it meant before.
     file_names: Vec<(String, tauto_surface::bindings::SpellingState)>,
@@ -483,6 +664,9 @@ struct Expander<'o> {
     done_ends: Vec<usize>,
     syntaxes: Syntaxes,
     macros: HashMap<String, Reg>,
+    /// Every macro declared so far, in order; `macros` holds those the file being expanded
+    /// sees (`Limits::unseen_files`).
+    registered: Vec<(String, Reg)>,
     done: Vec<Stmt>,
     file: usize,
     lib: Option<Rc<Lib>>,
@@ -496,6 +680,8 @@ struct Expander<'o> {
     file_expanded: bool,
     /// The declarations before the one a typed macro is in, for `elab_*`.
     elab_prefix: Vec<Stmt>,
+    /// File provenance for each statement in `elab_prefix`.
+    elab_prefix_files: Vec<usize>,
     /// The modules, outermost first, of the declaration a macro runs in.
     elab_module: Vec<String>,
     /// The modules, outermost first, of the declaration whose untyped macro
@@ -527,12 +713,30 @@ enum Made {
 }
 
 impl Expander<'_> {
-    fn global_resolver(&self, macro_name: &str) -> crate::eval::ResolveGlobalFn {
-        let file = self.macros[macro_name].file;
-        let visible = self.seeing.get(file).cloned();
+    fn global_resolver(&self, macro_name: &str) -> crate::macros::runner::ResolveGlobalFn {
+        let reg = &self.macros[macro_name];
+        // A name is read as the place the `Syn::global` is written reads it
+        // ([`tag_globals`]): the body of its declaration, where that imports at the head
+        // of its body, else its file. A `Syn::global` not called where it is written (a
+        // function value) reads it as the macro's function does.
+        let visible = match &reg.scope {
+            Some(scope) => Some((**scope).clone()),
+            None => self.seeing.get(reg.file).cloned(),
+        };
+        let seeing = self.seeing.clone();
         let bindings = self.bindings.clone();
-        Rc::new(move |spelling| {
-            let reference = match &visible {
+        Rc::new(move |tagged| {
+            let (place, spelling) = read_tag(tagged);
+            let here = place.map(|(file, declaration)| {
+                scope_of(file, declaration)
+                    .map(|scope| (*scope).clone())
+                    .or_else(|| seeing.get(file).cloned())
+            });
+            let visible = match &here {
+                Some(here) => here,
+                None => &visible,
+            };
+            let reference = match visible {
                 Some(names) => match names.get(spelling).cloned().or_else(|| {
                     spelling.rmatch_indices("::").find_map(|(at, _)| {
                         names
@@ -557,12 +761,15 @@ impl Expander<'_> {
     /// What the expansion has left so far, with the files it made (`by_file`).
     fn save(&self, by_file: &[Vec<Stmt>]) -> Saved {
         Saved {
-            bindings: self.bindings.clone(),
+            // The expansion goes on from here to the files after: what they reserve
+            // is not kept for the next program that begins with the same files.
+            bindings: self.bindings.detached(),
             files: by_file.len(),
             by_file: by_file.to_vec(),
             done_ends: self.done_ends.clone(),
             syntaxes: self.syntaxes.clone(),
             macros: self.macros.clone(),
+            registered: self.registered.clone(),
             done: self.done.clone(),
             lib: self.lib.clone(),
             spans: self.spans.clone(),
@@ -596,24 +803,13 @@ impl Expander<'_> {
         crate::surface::effect_sets::collect(&stmts, &mut self.effect_sets);
         self.errors.extend(errors);
         self.reserve_file_declarations(&mut stmts);
-        let declarations = self.bindings.declarations();
-        self.errors
-            .extend(crate::surface::effect_sets::expand_resolving(
-                &mut stmts,
-                &self.effect_sets,
-                &mut |name| {
-                    if let Some(spelling) = name.spelling()
-                        && let Some(reference) = declarations.effect(spelling)
-                    {
-                        *name = reference.clone().into();
-                    }
-                },
-            ));
+        self.expand_sets(&mut stmts);
         let mut kept = Vec::new();
         for s in stmts.drain(..) {
             if let Stmt::Macro {
                 name,
                 function,
+                public,
                 span,
             } = s
             {
@@ -626,19 +822,21 @@ impl Expander<'_> {
                         span,
                     );
                 } else {
+                    let scope = scope_of(self.file, &function);
                     let function = self
                         .seeing
                         .get(self.file)
                         .and_then(|visible| visible.get(&function))
                         .cloned()
                         .unwrap_or(function);
-                    self.macros.insert(
-                        name,
-                        Reg {
-                            function: self.bindings.global(&function.into()),
-                            file: self.file,
-                        },
-                    );
+                    let reg = Reg {
+                        function: self.bindings.global(&function.into()),
+                        file: self.file,
+                        public,
+                        scope,
+                    };
+                    self.registered.push((name.clone(), reg.clone()));
+                    self.macros.insert(name, reg);
                 }
             } else {
                 kept.push(s);
@@ -653,7 +851,19 @@ impl Expander<'_> {
         if self.file_expanded {
             let ctors = ctor_names(self.done.iter().chain(&stmts));
             stmts = scope::resolve(stmts, &ctors);
+            if stmts
+                .iter()
+                .any(|s| matches!(s, Stmt::Module { .. } | Stmt::Reexport { .. }))
+            {
+                let (flattened, errors) =
+                    crate::surface::modules::flatten_in_prelude(stmts, &ctors);
+                stmts = flattened;
+                self.errors.extend(errors);
+            }
         }
+        // A row a macro writes names sets as a hand-written row does: they
+        // are written out the same way, in the same declarations.
+        self.expand_sets(&mut stmts);
         let mut stmts = self.step_pass(stmts);
         // Quoted inputs can be copied into several executable positions.
         // Give them separate identities before a typed macro checks its
@@ -663,6 +873,26 @@ impl Expander<'_> {
         }
         self.reserve_file_declarations(&mut stmts);
         self.typed_pass(stmts)
+    }
+
+    /// Writes the effect sets out in the rows of `stmts`, resolving the
+    /// effects a set inserts in the declarations seen here. The rows a macro
+    /// writes go through it again after expansion, so `! {Host}` from a
+    /// macro means what it means written by hand.
+    fn expand_sets(&mut self, stmts: &mut Vec<Stmt>) {
+        let declarations = self.bindings.declarations();
+        self.errors
+            .extend(crate::surface::effect_sets::expand_resolving(
+                stmts,
+                &self.effect_sets,
+                &mut |name| {
+                    if let Some(spelling) = name.spelling()
+                        && let Some(reference) = declarations.effect(spelling)
+                    {
+                        *name = reference.clone().into();
+                    }
+                },
+            ));
     }
 
     /// The short names the file just expanded gave its own declarations
@@ -675,9 +905,9 @@ impl Expander<'_> {
 
     fn reserve_file_declarations(&mut self, stmts: &mut [Stmt]) {
         // A file of `std` that declares a language's type (`Never` of
-        // `std/UInt.taut`) declares the type the prelude names, as the
+        // `std/uint.taut`) declares the type the prelude names, as the
         // kernel reads it: every file writes it by that one name, so a file
-        // that does not import this one (`std/proof/Lang.taut`) means the
+        // that does not import this one (`std/proof/lang.taut`) means the
         // same declaration, and so does the library a macro runs in.
         if let Some(module) = self.modules.get(self.file).cloned() {
             fn language_type(module: &str, statement: &mut Stmt) {
@@ -766,6 +996,30 @@ impl Expander<'_> {
             }
         }
         self.bindings.reserve_declarations(stmts);
+        if let Some(module) = self.modules.get(self.file) {
+            let prefix = format!("{module}::");
+            for statement in stmts {
+                if let Stmt::Reexport {
+                    aliases: Some(aliases),
+                    ..
+                } = statement
+                {
+                    for alias in aliases
+                        .iter()
+                        .filter(|alias| !alias.name.starts_with(&prefix))
+                    {
+                        let full = format!("{prefix}{}", alias.name);
+                        if alias.effect {
+                            self.bindings.source_effect_alias(&full, &alias.target);
+                        } else if let Some(crate::surface::Name::Global(reference)) =
+                            self.bindings.source_reference(&alias.target)
+                        {
+                            self.bindings.source_alias(&full, &reference);
+                        }
+                    }
+                }
+            }
+        }
         self.bindings.source_modules(&self.modules);
     }
 
@@ -777,7 +1031,14 @@ impl Expander<'_> {
                 if let Some(crate::surface::Name::Global(reference)) =
                     self.bindings.source_reference(qualified)
                 {
-                    declarations.source_alias(spelling, reference);
+                    let source = spelling
+                        .strip_prefix('!')
+                        .filter(|_| {
+                            reference.display() != qualified
+                                && declarations.effect(qualified).is_some()
+                        })
+                        .unwrap_or(spelling);
+                    declarations.source_alias(source, reference);
                 }
             }
         }
@@ -824,16 +1085,31 @@ impl Expander<'_> {
                 } => {
                     out.extend(self.stmt_call(call, Some(generates)));
                 }
-                Stmt::Attributed {
-                    name,
-                    arg,
-                    generates,
-                    replace,
-                    stmt,
-                    span,
-                } => {
+                attributed @ Stmt::Attributed { .. } => {
+                    // Attributes written one after another nest, the first outermost; they are
+                    // all given the declaration as written.
+                    let mut attrs = Vec::new();
+                    let mut decl = attributed;
+                    while let Stmt::Attributed {
+                        name,
+                        arg,
+                        generates,
+                        replace,
+                        stmt,
+                        span,
+                    } = decl
+                    {
+                        attrs.push(Attribute {
+                            name,
+                            arg,
+                            generates,
+                            replace,
+                            span,
+                        });
+                        decl = *stmt;
+                    }
                     self.attr_before = out.clone();
-                    out.extend(self.attribute_call(name, arg, generates, replace, *stmt, span))
+                    out.extend(self.attribute_call(attrs, decl))
                 }
                 mut other => {
                     self.roots(&mut other);
@@ -871,7 +1147,12 @@ impl Expander<'_> {
         .unwrap_or_default();
         let depth = self.call_module.len();
         self.call_module.extend(written);
-        let outer = std::mem::replace(&mut self.call_bound, bound_names(s));
+        // A statement of a block sees what the declaration around it binds
+        // too: the parameter `ui` of the `fn` stays the parameter in a macro
+        // input of its second statement, not a declaration named `ui`.
+        let mut bound = self.call_bound.clone();
+        bound.extend(bound_names(s));
+        let outer = std::mem::replace(&mut self.call_bound, bound);
         walk::roots(s, &mut |t| self.term(t));
         self.call_bound = outer;
         self.call_module.truncate(depth);
@@ -952,18 +1233,17 @@ impl Expander<'_> {
     /// `@name!(arg) => fn a, theorem b  decl`: the macro is given `decl` and makes the declarations
     /// besides it, which must be exactly `generates` (kind and name); `decl` stays as written. With
     /// `=> replace K decl, …` the macro changes `decl` instead, and must make it again.
-    fn attribute_call(
-        &mut self,
-        name: String,
-        arg: SurfaceTerm,
-        generates: Generates,
-        replace: Option<crate::surface::Replace>,
-        decl: Stmt,
-        span: Span,
-    ) -> Vec<Stmt> {
+    ///
+    /// Several attributes on one declaration are each given `decl` as written and never see what
+    /// another makes. What they make is added together, after the declaration (rebuilt, if one
+    /// attribute says `replace`), in the order the attributes are written. At most one says
+    /// `replace`.
+    fn attribute_call(&mut self, attrs: Vec<Attribute>, decl: Stmt) -> Vec<Stmt> {
         let mut given = Vec::new();
         declared(&decl, &mut given);
-        if let Some(r) = &replace {
+        let mut replacing: Option<&Attribute> = None;
+        for attr in &attrs {
+            let Some(r) = &attr.replace else { continue };
             if r.word != "replace" {
                 self.error(
                     "macro.replace",
@@ -995,35 +1275,139 @@ impl Expander<'_> {
                 );
                 return vec![decl];
             }
+            if replacing.is_some() {
+                self.error(
+                    "macro.replace",
+                    msg!(
+                        "macro-replace-twice",
+                        kind = &r.kind,
+                        name = r.name.to_string()
+                    ),
+                    r.at,
+                );
+                return vec![decl];
+            }
+            replacing = Some(attr);
         }
         // The declaration is checked first; the macro reads it, and the declarations before
         // it, through `elab_*`. One that does not check is left to report its own errors, and so
         // is a prefix that does not check. A declaration the kernel does not declare (a `struct`
         // or `enum` of the language) has no verdict and is given to the macro as written.
-        let mut before = self.done.clone();
-        before.extend(std::mem::take(&mut self.attr_before));
-        let prefix = crate::surface::modules::resolve_in_prelude(before.clone()).0;
-        let Ok(entries) = self.checker.check_in(&prefix, &decl) else {
-            return vec![decl];
+        let mut before = self.seen_done();
+        let extra = std::mem::take(&mut self.attr_before);
+        let prefix_files = self.inference_context(&extra);
+        before.extend(extra);
+        // Reading the files before again is not the file's own work: with
+        // many files before, it takes most of the file's time limit, and the
+        // declaration would then not check for want of time alone.
+        let checker = self.checker.clone();
+        let mut prefix = Vec::new();
+        checker.outside_file_limit(&mut || {
+            prefix = crate::surface::modules::resolve_in_prelude(before.clone()).0;
+        });
+        // The files before are bound already, and the file's own declarations name what
+        // they import from them as written: bound here, as the check of a typed macro binds
+        // its prefix, a name a declaration of this file imports is the one declared.
+        let mut bound = decl.clone();
+        {
+            let mut bindings = self.bindings.clone();
+            prefix.push(bound);
+            bindings.statements(&mut prefix);
+            bound = prefix.pop().expect("the declaration just pushed");
+        }
+        // The macro reads a declaration that checks. One that does not is given back as written
+        // and is not expanded; that is said here, as the program's own check can pass where this
+        // one fails (the declaration may check with the whole program before it), and the macro
+        // would otherwise be gone without a word.
+        let decl_name = given
+            .first()
+            .map_or(msg!("macro-the-declaration"), |(k, n)| {
+                Message::text(format!("`{k} {n}`"))
+            });
+        let failure = match self
+            .checker
+            .check_in_with_owners(&prefix, &bound, &prefix_files)
+        {
+            Err(e) => Some(Message::text(e)),
+            // A declaration the file's time ran out on has not failed by itself: the check of
+            // the program checks it again, with its own time. The macro is given it as written,
+            // as it is a declaration the kernel has no verdict on.
+            Ok(entries) => match entries.into_iter().last().map(|e| e.verdict) {
+                Some(crate::macros::checker::Verdict::Failed(d))
+                    if d.message.id != "kernel-file-time-limit"
+                        && d.message.id != "kernel-file-time-limit-before" =>
+                {
+                    Some(d.message)
+                }
+                _ => None,
+            },
         };
-        if matches!(
-            entries.into_iter().last().map(|e| e.verdict),
-            Some(crate::macros::checker::Verdict::Failed(_))
-        ) {
+        if let Some(message) = failure {
+            for attr in &attrs {
+                self.error(
+                    "macro.attribute",
+                    msg!(
+                        "macro-attribute-not-run",
+                        name = &attr.name,
+                        decl = decl_name.clone(),
+                        message = message.clone()
+                    ),
+                    attr.span,
+                );
+            }
             return vec![decl];
         }
         before.push(decl.clone());
-        self.elab_prefix = crate::surface::modules::resolve_in_prelude(before).0;
-        let call = SurfaceTerm::new(
-            TermKind::MacroCall {
-                name,
-                arg: Box::new(arg),
-            },
-            span,
-        );
-        let Some(Made::Stmts(made)) = self.call(&call, Some(&decl)) else {
-            return vec![decl];
+        let mut elab_prefix_files = prefix_files.clone();
+        elab_prefix_files.push(self.file);
+        let mut elab_prefix = Vec::new();
+        checker.outside_file_limit(&mut || {
+            elab_prefix =
+                crate::surface::modules::resolve_in_prelude(std::mem::take(&mut before)).0;
+        });
+        // Each macro is given the same declarations: none sees what another makes.
+        let mut replacement: Option<Stmt> = None;
+        let mut extras: Vec<Stmt> = Vec::new();
+        for attr in &attrs {
+            self.elab_prefix = elab_prefix.clone();
+            self.elab_prefix_files = elab_prefix_files.clone();
+            let call = SurfaceTerm::new(
+                TermKind::MacroCall {
+                    name: attr.name.clone(),
+                    arg: Box::new(attr.arg.clone()),
+                },
+                attr.span,
+            );
+            let Some(Made::Stmts(made)) = self.call(&call, Some(&decl)) else {
+                continue;
+            };
+            let Some((again, mut made)) = self.attribute_made(attr, &decl, &given, made) else {
+                continue;
+            };
+            if again.is_some() {
+                replacement = again;
+            }
+            extras.append(&mut made);
+        }
+        let mut out = match replacement {
+            Some(r) => self.stmts(vec![r]),
+            None => self.stmts(vec![decl]),
         };
+        out.extend(self.stmts(extras));
+        out
+    }
+
+    /// What one attribute made, checked against its list: the declaration it was given made
+    /// again (when it says `replace`), and the other declarations. `None` when the macro's output
+    /// is not what the attribute says, which is an error.
+    fn attribute_made(
+        &mut self,
+        attr: &Attribute,
+        decl: &Stmt,
+        given: &[(String, String)],
+        made: Vec<Stmt>,
+    ) -> Option<(Option<Stmt>, Vec<Stmt>)> {
+        let span = attr.span;
         let mut have: Vec<(String, String)> = Vec::new();
         for s in &made {
             if !declared(s, &mut have) {
@@ -1032,12 +1416,31 @@ impl Expander<'_> {
                     msg!("macro-generates-attribute-kinds"),
                     span,
                 );
-                return vec![decl];
+                return None;
             }
         }
+        // A list is written as the file spells its names; a declaration named apart from one of
+        // another file of the same name has its file's module before it, which the list does not
+        // write (`one::src::lib::player` is `player` there).
+        let as_written = |names: &mut Vec<(String, String)>| {
+            let Some(module) = self.modules.get(self.file) else {
+                return;
+            };
+            let prefix = format!("{module}::");
+            for (_, n) in names.iter_mut() {
+                if let Some(rest) = n.strip_prefix(&prefix) {
+                    *n = rest.to_string();
+                }
+            }
+        };
+        as_written(&mut have);
+        let mut written = given.to_vec();
+        as_written(&mut written);
         // The declaration the macro was given is made again exactly when the attribute says `replace`.
-        let again = given.first().and_then(|g| have.iter().position(|h| h == g));
-        match (&replace, again) {
+        let again = written
+            .first()
+            .and_then(|g| have.iter().position(|h| h == g));
+        match (&attr.replace, again) {
             (Some(_), Some(i)) => {
                 have.remove(i);
             }
@@ -1051,29 +1454,30 @@ impl Expander<'_> {
                     ),
                     r.at,
                 );
-                return vec![decl];
+                return None;
             }
             (None, Some(_)) => {
-                let (k, n) = given[0].clone();
+                let (k, n) = written[0].clone();
                 self.error(
                     "macro.replace",
                     msg!("macro-replace-unsaid", kind = &k, name = &n),
                     span,
                 );
                 let mut listed = vec![(format!("replace {k}"), n)];
-                listed.extend(generates.items.iter().cloned());
-                self.fixes.push((span, generates_fix(&generates, &listed)));
-                return vec![decl];
+                listed.extend(attr.generates.items.iter().cloned());
+                self.fixes
+                    .push((span, generates_fix(&attr.generates, &listed)));
+                return None;
             }
             (None, None) => {}
         }
         if !self.generated(
-            &generates,
+            &attr.generates,
             &have,
             span,
             msg!("macro-attribute-list-mismatch"),
         ) {
-            return vec![decl];
+            return None;
         }
         // What an attribute makes is seen as far as the declaration it is written before.
         let mut made = made;
@@ -1084,12 +1488,19 @@ impl Expander<'_> {
                 }
             }
         }
-        if replace.is_some() {
-            return self.stmts(made);
-        }
-        let mut out = self.stmts(vec![decl]);
-        out.extend(self.stmts(made));
-        out
+        // The declaration made again is the one that is `given`, wherever the macro put it.
+        let replacement = match (&attr.replace, again) {
+            (Some(_), Some(_)) => made
+                .iter()
+                .position(|s| {
+                    let mut names = Vec::new();
+                    declared(s, &mut names);
+                    names.first() == given.first()
+                })
+                .map(|j| made.remove(j)),
+            _ => None,
+        };
+        Some((replacement, made))
     }
 
     /// Whether `listed` is what was `made`; if not, the error `macro.generates` with the edit that
@@ -1116,9 +1527,7 @@ impl Expander<'_> {
             None => vec![Stmt::Expr(t)],
             Some(Made::Stmts(stmts)) => {
                 let mut have = Vec::new();
-                for s in &stmts {
-                    declared(s, &mut have);
-                }
+                tauto_surface::generated::declared_together(&stmts, &mut have);
                 let listed = listed.unwrap_or_else(|| crate::generated::unwritten(t.span.end));
                 if !self.generated(&listed, &have, t.span, msg!("macro-call-list-mismatch")) {
                     return vec![Stmt::Expr(t)];
@@ -1127,6 +1536,75 @@ impl Expander<'_> {
             }
             Some(Made::Expr(e)) => self.stmts(vec![Stmt::Expr(e)]),
         }
+    }
+
+    /// The declarations of the files before this one that its macros' kernels are given: all
+    /// of them, but those of the files it does not see (`Limits::unseen_files`).
+    pub(super) fn seen_done(&self) -> Vec<Stmt> {
+        let unseen = match self.opts.unseen_files.get(self.file) {
+            Some(unseen) if !unseen.is_empty() => unseen,
+            _ => return self.done.clone(),
+        };
+        let mut out = Vec::new();
+        let mut start = 0;
+        for (i, &end) in self.done_ends.iter().enumerate() {
+            if !unseen.contains(&i) {
+                out.extend(self.done[start..end].iter().cloned());
+            }
+            start = end;
+        }
+        out.extend(self.done[start..].iter().cloned());
+        out
+    }
+
+    /// Source-file indices aligned with the resolved prefix declarations.
+    /// The checker uses them to determine tote ownership.
+    pub(super) fn inference_context(&self, extra: &[Stmt]) -> Vec<usize> {
+        fn collect(stmts: &[Stmt], file: usize, prefix_files: &mut Vec<usize>) {
+            for stmt in stmts {
+                // Effect sets are removed by resolve_in_prelude before checking.
+                if matches!(stmt, Stmt::Effect(effect) if effect.set.is_some()) {
+                    continue;
+                }
+                prefix_files.push(file);
+            }
+        }
+        let mut prefix_files = Vec::new();
+        let mut start = 0;
+        let unseen = self.opts.unseen_files.get(self.file);
+        for (file, &end) in self.done_ends.iter().enumerate() {
+            if !unseen.is_some_and(|files| files.contains(&file)) {
+                collect(&self.done[start..end], file, &mut prefix_files);
+            }
+            start = end;
+        }
+        collect(&self.done[start..], self.file, &mut prefix_files);
+        collect(extra, self.file, &mut prefix_files);
+        prefix_files
+    }
+
+    /// Makes the macros the file being expanded calls by name those of the files it sees: a
+    /// macro of a file it does not see (`Limits::unseen_files`) is not one it can call, and
+    /// another file may declare one of the same name.
+    fn see_macros(&mut self) {
+        if self.opts.unseen_files.is_empty() {
+            return;
+        }
+        let unseen = self.opts.unseen_files.get(self.file);
+        self.syntaxes
+            .see(&|f| unseen.is_some_and(|u| u.contains(&f)));
+        let mut macros = HashMap::new();
+        for (name, reg) in &self.registered {
+            if !unseen.is_some_and(|u| u.contains(&reg.file)) {
+                macros.insert(name.clone(), reg.clone());
+            }
+        }
+        // What is known of a macro is known of the one its name meant then.
+        self.typed_macros.retain(|name, _| {
+            macros.get(name).map(|r: &Reg| (&r.function, r.file))
+                == self.macros.get(name).map(|r| (&r.function, r.file))
+        });
+        self.macros = macros;
     }
 
     fn done_files(&self) -> Vec<(Option<&str>, &[Stmt])> {
@@ -1157,7 +1635,7 @@ impl Expander<'_> {
         // macro runs functions, and no function sees a statement's names,
         // while a statement that calls a function left out would stop the
         // whole library.
-        let stmts: Vec<Stmt> = self
+        let mut stmts: Vec<Stmt> = self
             .done
             .iter()
             .filter(|s| {
@@ -1168,9 +1646,16 @@ impl Expander<'_> {
             })
             .cloned()
             .collect();
-        let (_, program, report, left_out) = fit_library(&mut self.bindings, stmts, Vec::new());
-        let left_out = explain_left_out(left_out, &self.done, &self.done_files());
-        self.set_library(program, report, left_out, false);
+        // Building the library is not the file's own work: in a tote whose
+        // files before are many, it can take the whole of the file's time,
+        // and the declarations an attribute is given would then not check.
+        let checker = self.checker.clone();
+        checker.outside_file_limit(&mut || {
+            let stmts = std::mem::take(&mut stmts);
+            let (_, program, report, left_out) = fit_library(&mut self.bindings, stmts, Vec::new());
+            let left_out = explain_left_out(left_out, &self.done, &self.done_files());
+            self.set_library(program, report, left_out, false);
+        });
     }
 
     /// The library again, with the declarations of the proof language that
@@ -1225,9 +1710,14 @@ impl Expander<'_> {
             })
             .cloned()
             .collect();
-        let (_, program, report, left_out) = fit_library(&mut self.bindings, stmts, extracted);
-        let left_out = explain_left_out(left_out, &self.done, &self.done_files());
-        self.set_library(program, report, left_out, true);
+        let checker = self.checker.clone();
+        let mut given = Some((stmts, extracted));
+        checker.outside_file_limit(&mut || {
+            let (stmts, extracted) = given.take().expect("built once");
+            let (_, program, report, left_out) = fit_library(&mut self.bindings, stmts, extracted);
+            let left_out = explain_left_out(left_out, &self.done, &self.done_files());
+            self.set_library(program, report, left_out, true);
+        });
     }
 
     fn set_library(
@@ -1255,17 +1745,26 @@ impl Expander<'_> {
         }));
     }
 
-    /// What the function of a macro takes and makes, and whether it may run.
-    fn registration(&mut self, name: &str, at: Span) -> Option<Info> {
-        let function = self.macros[name].function.clone();
-        self.library_holding(&function);
+    /// The library a macro whose function is `function` runs in. Built once a
+    /// macro needs it, and kept for the files after while it holds what they
+    /// call: which files it was built from depends on where it was first
+    /// needed, so a step whose tactic's result was kept on disk asks for it
+    /// too, as running the tactic would have.
+    pub(super) fn library_for(&mut self, function: &crate::surface::Name) {
+        self.library_holding(function);
         if self
             .lib
             .as_ref()
-            .is_some_and(|l| l.function(&function).is_none())
+            .is_some_and(|l| l.function(function).is_none())
         {
             self.library_with_kernel();
         }
+    }
+
+    /// What the function of a macro takes and makes, and whether it may run.
+    fn registration(&mut self, name: &str, at: Span) -> Option<Info> {
+        let function = self.macros[name].function.clone();
+        self.library_for(&function);
         let lib = self.lib.as_ref()?;
         let fail = |this: &mut Self, code: &str, m: Message| {
             this.error(code, m, at);
@@ -1326,11 +1825,10 @@ impl Expander<'_> {
                     .syntaxes
                     .map
                     .iter()
-                    .filter(|(_, s)| s.start_reference.as_ref() == Some(n))
-                    .map(|(sname, _)| sname.clone())
+                    .filter_map(|(sname, s)| Some((sname.clone(), s.start_of(n)?)))
                     .min();
                 match found {
-                    Some(s) => Input::Syntax(s),
+                    Some((s, start)) => Input::Syntax(s, start),
                     None => {
                         return fail(
                             self,
@@ -1390,9 +1888,23 @@ impl Expander<'_> {
                         ),
                     );
                 }
-                if !["macro_error", "macro_warn", "elab", "Div"]
-                    .iter()
-                    .any(|allowed| tauto_surface::bindings::is_library(e, allowed))
+                if ![
+                    "macro_error",
+                    "macro_warn",
+                    "elab",
+                    "div",
+                    "budget",
+                    "budget_memory",
+                    "overflow",
+                    "divzero",
+                    "ref_new",
+                    "ref_get",
+                    "ref_set",
+                    "weak_of",
+                    "weak_get",
+                ]
+                .iter()
+                .any(|allowed| tauto_surface::bindings::is_library_effect(e, allowed))
                 {
                     return fail(
                         self,
@@ -1406,7 +1918,9 @@ impl Expander<'_> {
                 }
             }
         }
-        if let Some((path, why)) = row_error_reached(&lib.program, &lib.rows, reference) {
+        if let Some((path, why)) =
+            crate::rows::row_error_reached(&lib.program, &lib.rows, reference)
+        {
             return fail(
                 self,
                 "macro.row",
@@ -1433,11 +1947,15 @@ impl Expander<'_> {
         };
         let (name, _) = split(marked);
         let call_scopes = scopes_of(marked);
-        if name == INCLUDE_TEXT {
+        if name == INCLUDE_TEXT || name == INCLUDE_BYTES {
             // The reader replaces the calls written in a file; one that comes
             // here was made by a macro, or is in a text read without a file.
             self.error(
-                "macro.include_text",
+                if name == INCLUDE_TEXT {
+                    "macro.include_text"
+                } else {
+                    "macro.include_bytes"
+                },
                 msg!("macro-include-text", name = name),
                 t.span,
             );
@@ -1453,6 +1971,10 @@ impl Expander<'_> {
                 msg!("macro-same-file", name = name),
                 t.span,
             );
+            return None;
+        }
+        if !self.sees_macro(name, t.span) {
+            self.error("macro.private", msg!("macro-private", name = name), t.span);
             return None;
         }
         let name = name.to_string();
@@ -1597,7 +2119,7 @@ impl Expander<'_> {
                 }
                 ("plaintext".to_string(), Node::text(&lit.text))
             }
-            Input::Syntax(s) => {
+            Input::Syntax(s, start) => {
                 if let Some(n) = lit.name.as_deref().filter(|n| *n != s.as_str()) {
                     self.error(
                         "macro.syntax_mismatch",
@@ -1613,7 +2135,10 @@ impl Expander<'_> {
                 }
                 let mut scopes = call_scopes.clone();
                 scopes.push(u64::from(id));
-                match self.syntaxes.read(s, lit, t.span, &scopes) {
+                match self
+                    .syntaxes
+                    .read(s, start.as_deref(), lit, t.span, &scopes)
+                {
                     Ok(n) => (s.clone(), n),
                     Err((m, at)) => {
                         self.errors.push((m, at));
@@ -1662,8 +2187,18 @@ impl Expander<'_> {
         let mut reserved = false;
         let ran = loop {
             let lib = self.lib.as_ref().expect("the library is built");
-            let ran =
-                call_bound_function(&lib.program, &lib.report, &info.function, &args, &mut host);
+            // Running the macro is not the file's own kernel work either.
+            let mut ran = None;
+            self.checker.outside_file_limit(&mut || {
+                ran = Some(self.opts.runner.call(
+                    &lib.program,
+                    &lib.report,
+                    &info.function,
+                    &args,
+                    &mut host,
+                ));
+            });
+            let ran = ran.expect("the macro ran");
             let Err(RunError::NeedExpand(asked)) = ran else {
                 break ran;
             };
@@ -1935,8 +2470,8 @@ impl Expander<'_> {
 /// keep until the macros have run, written short in the library a macro runs
 /// in, as the last pass writes them: the checker of executable code knows a
 /// builtin only by its short name. A function the library declares by that
-/// short name too (`Text::slice` of `std::Text`) takes its full name
-/// (`std::Text::Text::slice`), with every call that means it, so the short
+/// short name too (`Text::slice` of `std::text`) takes its full name
+/// (`std::text::Text::slice`), with every call that means it, so the short
 /// name is left to the builtin the file wrote (a name no source can write,
 /// `Text::slice#library`, when no call writes the full one).
 fn lower_prelude(stmts: &mut [Stmt]) {
@@ -2030,7 +2565,6 @@ fn lower_prelude(stmts: &mut [Stmt]) {
                 }
                 fields.iter_mut().for_each(|(_, a)| pattern(a, lowered));
             }
-            Pattern::Tuple(items) => items.iter_mut().for_each(|a| pattern(a, lowered)),
             _ => {}
         }
     }
@@ -2067,9 +2601,19 @@ fn fit_library(
     // Both are compared by the full names of what they declare (`Nat.max`
     // of `module Nat`).
     stmts = crate::surface::modules::resolve_in_prelude(stmts).0;
+    // The checker of executable code reads the functions of a `mutual` block
+    // as functions of their own (a function sees every other one): left in the
+    // block, they would not be declared, and a macro's function that calls one
+    // would be left out with `… is not defined`.
+    stmts = stmts
+        .into_iter()
+        .flat_map(|s| match s {
+            Stmt::Mutual { items, .. } => items,
+            s => vec![s],
+        })
+        .collect();
     let extracted = crate::surface::modules::resolve_in_prelude(extracted).0;
     lower_prelude(&mut stmts);
-    crate::surface::qualify::sort_labelled_tuples(&mut stmts);
     bindings.statements(&mut stmts);
     if !extracted.is_empty() {
         let names = |s: &Stmt| {
@@ -2081,10 +2625,121 @@ fn fit_library(
             );
             out
         };
+        // The type `nat` as the extracted declarations name it.
+        let mut nat: Option<crate::surface::Name> = None;
+        for e in &extracted {
+            let mut e = e.clone();
+            crate::surface::walk::stmt(&mut e, &mut |t| {
+                if let TermKind::Var(n) = &*t.kind
+                    && n.as_str() == "nat"
+                    && nat.is_none()
+                {
+                    nat = Some(n.clone());
+                }
+            });
+        }
         let from_kernel: HashSet<crate::surface::Name> = extracted.iter().flat_map(names).collect();
         // Every call uses the same representation as the extracted declaration.
         stmts.retain(|s| !names(s).iter().any(|n| from_kernel.contains(n)));
         let own: HashSet<crate::surface::Name> = stmts.iter().flat_map(names).collect();
+        // A function of `std/` that is the length of a builtin of Nib
+        // (`Text::len`) is not written by extraction: a call of it is the
+        // builtin, which gives a `u64`. The source's declaration of it gives
+        // a `Nat`, which does not fit what the extracted declarations take
+        // (`nat`, as they write every `Nat`), so here it is what extraction
+        // writes at a call: the builtin's length as a `nat`.
+        if let Some(nat) = &nat {
+            for s in stmts.iter_mut() {
+                let Stmt::Fn(f) = s else { continue };
+                let short = crate::surface::qualify::short(&f.name).to_string();
+                // `Text::concat` of `std::text` is written with the constructor of `Text`, which
+                // the library does not have: it is the builtin, as extraction writes a call.
+                if short == "Text::concat"
+                    && !f
+                        .name
+                        .as_str()
+                        .starts_with(crate::surface::qualify::PRELUDE_MODULE)
+                    && f.params.len() == 2
+                {
+                    let span = f.body.span;
+                    f.body = SurfaceTerm::new(
+                        TermKind::App {
+                            function: Box::new(SurfaceTerm::var("concat", span)),
+                            arguments: vec![
+                                SurfaceTerm::var(f.params[0].as_str(), span),
+                                SurfaceTerm::var(f.params[1].as_str(), span),
+                            ],
+                        },
+                        span,
+                    );
+                    continue;
+                }
+                // `Text::slice_or_empty` of `std::text` takes `Nat`s: here the Nib prelude's,
+                // which takes the `u64`s of a `nat`, with what takes the length above.
+                if short == "Text::slice_or_empty"
+                    && !f
+                        .name
+                        .as_str()
+                        .starts_with(crate::surface::qualify::PRELUDE_MODULE)
+                    && f.params.len() == 3
+                    && f.param_types.len() == 3
+                {
+                    let span = f.body.span;
+                    let call = |name: &str, args: Vec<SurfaceTerm>| {
+                        SurfaceTerm::new(
+                            TermKind::App {
+                                function: Box::new(SurfaceTerm::var(name, span)),
+                                arguments: args,
+                            },
+                            span,
+                        )
+                    };
+                    let arg = |i: usize| SurfaceTerm::var(f.params[i].as_str(), span);
+                    let body = call(
+                        &short,
+                        vec![
+                            arg(0),
+                            call("U64::of_nat", vec![arg(1)]),
+                            call("U64::of_nat", vec![arg(2)]),
+                        ],
+                    );
+                    f.body = body;
+                    for i in [1, 2] {
+                        if let Some(t) = &mut f.param_types[i] {
+                            t.kind = Arc::new(TermKind::Var(nat.clone()));
+                        }
+                    }
+                    continue;
+                }
+                if !matches!(short.as_str(), "Text::len" | "Array::len" | "Bytes::len")
+                    || f.name
+                        .as_str()
+                        .starts_with(crate::surface::qualify::PRELUDE_MODULE)
+                    || f.params.len() != 1
+                {
+                    continue;
+                }
+                let span = f.body.span;
+                let arg = SurfaceTerm::var(f.params[0].as_str(), span);
+                let builtin = SurfaceTerm::new(
+                    TermKind::App {
+                        function: Box::new(SurfaceTerm::var(&short, span)),
+                        arguments: vec![arg],
+                    },
+                    span,
+                );
+                f.body = SurfaceTerm::new(
+                    TermKind::App {
+                        function: Box::new(SurfaceTerm::var("Nat::of_u64", span)),
+                        arguments: vec![builtin],
+                    },
+                    span,
+                );
+                if let Some(result) = &mut f.result {
+                    result.kind = Arc::new(TermKind::Var(nat.clone()));
+                }
+            }
+        }
         let mut with: Vec<Stmt> = extracted
             .into_iter()
             .filter(|s| !names(s).iter().any(|n| own.contains(n)))
@@ -2101,21 +2756,68 @@ fn fit_library(
     stmts = program.stmts.clone();
     let mut report = check_program(&program);
     let mut left_out = Vec::new();
+    leave_out_failing(&mut stmts, &mut program, &mut report, &mut left_out);
+    (stmts, program, report, left_out)
+}
+
+/// Leaves out of `stmts` what does not check, with the functions that call it, until the program
+/// is right or nothing more is left out. `program` and `report` are those of `stmts`, and are
+/// those of what stays.
+fn leave_out_failing(
+    stmts: &mut Vec<Stmt>,
+    program: &mut Program,
+    report: &mut TypeReport,
+    left_out: &mut Vec<(String, Message)>,
+) {
     for _ in 0..64 {
-        if report.errors.is_empty() {
+        // A declaration whose types check but whose use of values does not
+        // (a borrow it returns) cannot be lowered either: left in, the whole
+        // library would fail to lower, and every macro of the file would fail
+        // with an error of a file it does not use. Left out, the error is the
+        // file's own check's, at the place it is written.
+        let at: Vec<(u32, Message)> = if report.errors.is_empty() {
+            crate::lin::check(program, report, &check_program_rows(program))
+                .into_iter()
+                .map(|e| (e.span.start, e.message))
+                .collect()
+        } else {
+            report
+                .errors
+                .iter()
+                .map(|e| (e.span.start, e.message.clone()))
+                .collect()
+        };
+        if at.is_empty() {
             break;
         }
-        let at: Vec<(u32, Message)> = report
-            .errors
-            .iter()
-            .map(|e| (e.span.start, e.message.clone()))
-            .collect();
         let before = stmts.len();
+        let mut gone: HashSet<crate::surface::Name> = HashSet::new();
+        let any_made = at.iter().any(|(a, _)| *a >= EXPANSION_BASE);
         stmts.retain(|s| match stmt_range(s) {
             Some((lo, hi)) => {
-                let why = at.iter().find(|(a, _)| lo <= *a && *a < hi);
+                // An error at a place the library made (a mapped call written out, which has no
+                // position in the text) is the statement that holds that place.
+                let why = at.iter().find(|(a, _)| lo <= *a && *a < hi).or_else(|| {
+                    if !any_made {
+                        return None;
+                    }
+                    let mut made = HashSet::new();
+                    crate::surface::walk::stmt(&mut s.clone(), &mut |t| {
+                        if t.span.start >= EXPANSION_BASE {
+                            made.insert(t.span.start);
+                        }
+                    });
+                    at.iter().find(|(a, _)| made.contains(a))
+                });
                 if let (Some((_, why)), Stmt::Fn(f)) = (why, s) {
                     left_out.push((f.name.to_string(), why.clone()));
+                }
+                if why.is_some() {
+                    gone.extend(
+                        tauto_surface::bindings::declared_names(std::slice::from_ref(s))
+                            .into_iter()
+                            .cloned(),
+                    );
                 }
                 why.is_none()
             }
@@ -2124,14 +2826,91 @@ fn fit_library(
         if stmts.len() == before {
             break;
         }
+        leave_out_callers(stmts, gone, left_out);
         let (resolved, errors) = crate::surface::modules::resolve_in_prelude(stmts.clone());
-        program = Program {
+        *program = Program {
             stmts: resolved,
             errors,
         };
-        report = check_program(&program);
+        *report = check_program(program);
     }
-    (stmts, program, report, left_out)
+}
+
+/// `program` without the declarations that do not check, nor the functions that call them.
+pub fn leave_out_unchecked(program: Program) -> Program {
+    let mut stmts = program.stmts.clone();
+    let mut program = program;
+    let mut report = check_program(&program);
+    leave_out_failing(&mut stmts, &mut program, &mut report, &mut Vec::new());
+    program
+}
+
+/// Leaves out, with the functions in `gone`, every function that calls one of
+/// them, and every function that calls one of those: each would stop checking
+/// with `… is not defined` the next time the library is checked. Leaving them
+/// out here, by the names their bodies use, takes that check once instead of
+/// once for each step of the chain, which in a library of many files is most
+/// of the time a macro call waits.
+fn leave_out_callers(
+    stmts: &mut Vec<Stmt>,
+    mut gone: HashSet<crate::surface::Name>,
+    left_out: &mut Vec<(String, Message)>,
+) {
+    let kept = |stmts: &[Stmt]| -> HashSet<crate::surface::Name> {
+        tauto_surface::bindings::declared_names(stmts)
+            .into_iter()
+            .cloned()
+            .collect()
+    };
+    // A name still declared by a statement that stays is not gone.
+    let still = kept(stmts);
+    gone.retain(|n| !still.contains(n));
+    while !gone.is_empty() {
+        let mut next = HashSet::new();
+        let mut calls_gone = |f: &crate::surface::FnDecl| -> bool {
+            let Some(n) = crate::rows::free_names_of(f)
+                .into_iter()
+                .find(|n| gone.contains(n))
+            else {
+                return false;
+            };
+            left_out.push((
+                f.name.to_string(),
+                Message::from(format!("{n} is not defined")),
+            ));
+            next.insert(f.name.clone());
+            true
+        };
+        stmts.retain_mut(|s| match s {
+            Stmt::Fn(f) => !calls_gone(f),
+            // The Tauto bodies of an `extern` block call the functions before it (the
+            // `HashMap` of `std::hashmap` calls `UHashMap`'s): one whose callee is left
+            // out is left out of the block, and the rest of the block stays.
+            Stmt::Extern { fns, .. } => {
+                fns.retain(|f| !calls_gone(f));
+                true
+            }
+            _ => true,
+        });
+        let still = kept(stmts);
+        next.retain(|n| !still.contains(n));
+        gone = next;
+    }
+}
+
+impl Expander<'_> {
+    /// Whether the call of macro `name` at `call` may use it: a macro declared `pub`, or one
+    /// a macro of its own file wrote the call of (`docs/design/visibility.md`).
+    fn sees_macro(&self, name: &str, call: Span) -> bool {
+        let Some(reg) = self.macros.get(name) else {
+            return false;
+        };
+        reg.public
+            || origin_expansion(&self.spans, call)
+                .and_then(|e| self.expansions.get(e as usize - 1))
+                .and_then(|e| self.macros.get(&e.macro_name))
+                .is_some_and(|writer| writer.file == reg.file)
+    }
 }
 
 fn origin_expansion(spans: &SpanMap, span: Span) -> Option<u32> {
@@ -2189,7 +2968,7 @@ fn explain_left_out(
     }
     // A type that does not fit, where the function calls a declaration of
     // another file that has the name of a builtin (`Text::len` of `module
-    // Text` of `std::Text`, which gives a `Nat`, for the builtin `Text::len`,
+    // Text` of `std::text`, which gives a `Nat`, for the builtin `Text::len`,
     // which gives a `u64`): the file's name means that declaration, and the
     // builtin keeps its full name.
     let fns: HashMap<&str, &crate::surface::FnDecl> = done
@@ -2408,6 +3187,84 @@ fn ctor_arities<'a>(
     out
 }
 
+fn data_decls<'a>(
+    stmts: impl Iterator<Item = &'a Stmt>,
+) -> std::collections::HashMap<crate::surface::Name, crate::surface::DataDecl> {
+    fn add(
+        s: &Stmt,
+        out: &mut std::collections::HashMap<crate::surface::Name, crate::surface::DataDecl>,
+    ) {
+        match s {
+            Stmt::Enum(d) | Stmt::Struct(d) => {
+                out.insert(d.name.clone(), d.clone());
+            }
+            Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
+                for s in items {
+                    add(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = std::collections::HashMap::new();
+    for s in stmts {
+        add(s, &mut out);
+    }
+    out
+}
+
+fn class_decls<'a>(
+    stmts: impl Iterator<Item = &'a Stmt>,
+) -> std::collections::HashMap<crate::surface::Name, crate::surface::ClassDecl> {
+    fn add(
+        s: &Stmt,
+        out: &mut std::collections::HashMap<crate::surface::Name, crate::surface::ClassDecl>,
+    ) {
+        match s {
+            Stmt::Class(c) => {
+                out.insert(c.name.clone(), c.clone());
+            }
+            Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
+                for s in items {
+                    add(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = std::collections::HashMap::new();
+    for s in stmts {
+        add(s, &mut out);
+    }
+    out
+}
+
+fn fn_decls<'a>(
+    stmts: impl Iterator<Item = &'a Stmt>,
+) -> std::collections::HashMap<crate::surface::Name, crate::surface::FnDecl> {
+    fn add(
+        s: &Stmt,
+        out: &mut std::collections::HashMap<crate::surface::Name, crate::surface::FnDecl>,
+    ) {
+        match s {
+            Stmt::Fn(f) => {
+                out.insert(f.name.clone(), f.clone());
+            }
+            Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
+                for s in items {
+                    add(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = std::collections::HashMap::new();
+    for s in stmts {
+        add(s, &mut out);
+    }
+    out
+}
+
 fn ctor_names<'a>(stmts: impl Iterator<Item = &'a Stmt>) -> HashSet<String> {
     let mut out = HashSet::new();
     let add = |s: &Stmt, out: &mut HashSet<String>| match s {
@@ -2443,72 +3300,10 @@ fn ctor_names<'a>(stmts: impl Iterator<Item = &'a Stmt>) -> HashSet<String> {
 fn kernel_prelude() -> &'static [Stmt] {
     static KERNEL: std::sync::OnceLock<Vec<Stmt>> = std::sync::OnceLock::new();
     KERNEL.get_or_init(|| {
-        crate::surface::parse_program_as_written(tauto_surface::nibstd::KERNEL)
+        tauto_parse::parse_program_as_written(tauto_surface::nibstd::KERNEL)
             .map(|p| p.stmts)
             .unwrap_or_default()
     })
-}
-
-/// A function of the library that `function` reaches whose declared row does
-/// not hold what it performs, with the call path and the row checker's reason.
-/// The macro stage runs the function, so it holds the same rows a run does.
-fn row_error_reached(
-    program: &Program,
-    rows: &RowReport,
-    function: &crate::surface::Name,
-) -> Option<(Vec<String>, String)> {
-    if rows.errors.is_empty() {
-        return None;
-    }
-    let fns: HashMap<&crate::surface::Name, &crate::surface::FnDecl> = program
-        .stmts
-        .iter()
-        .filter_map(|s| match s {
-            Stmt::Fn(f) => Some((&f.name, f)),
-            _ => None,
-        })
-        .collect();
-    let mut seen = HashSet::new();
-    let mut stack = vec![vec![function.clone()]];
-    while let Some(path) = stack.pop() {
-        let here = path.last().expect("a path has a name").clone();
-        if !seen.insert(here.clone()) {
-            continue;
-        }
-        let Some(f) = fns.get(&here) else {
-            continue;
-        };
-        let (lo, hi) = (f.span.start, f.body.span.end.max(f.span.end));
-        if let Some(e) = rows
-            .errors
-            .iter()
-            .find(|e| lo <= e.span.start && e.span.start < hi)
-        {
-            return Some((
-                path.iter().map(ToString::to_string).collect(),
-                e.message.clone(),
-            ));
-        }
-        for n in free_names_of(f) {
-            if fns.contains_key(&n) {
-                let mut next = path.clone();
-                next.push(n);
-                stack.push(next);
-            }
-        }
-    }
-    None
-}
-
-/// The names the body of `f` uses that nothing inside it binds: a parameter, a
-/// `let`, a pattern variable, a λ parameter or a handler's variable hides a
-/// function of the same spelling, as it does where the function runs.
-pub fn free_names_of(f: &crate::surface::FnDecl) -> Vec<crate::surface::Name> {
-    let mut body = f.body.clone();
-    let mut bound: Vec<crate::surface::Name> = f.params.clone();
-    let mut out = Vec::new();
-    free_names_in(&mut body, &mut bound, &mut out);
-    out
 }
 
 /// Every name `s` binds: its parameters, and the binders of its terms.
@@ -2559,151 +3354,24 @@ fn bound_names(s: &mut Stmt) -> HashSet<String> {
         .filter_map(|n| n.spelling().map(str::to_string))
         .collect()
 }
-
-fn free_names_in(
-    t: &mut SurfaceTerm,
-    bound: &mut Vec<crate::surface::Name>,
-    out: &mut Vec<crate::surface::Name>,
-) {
-    use crate::lin::pattern_names;
-    if !matches!(
-        &*t.kind,
-        TermKind::Var(_)
-            | TermKind::Lam { .. }
-            | TermKind::Exists { .. }
-            | TermKind::Block(_)
-            | TermKind::Match { .. }
-            | TermKind::Handle { .. }
-    ) {
-        walk::children(t, &mut |c| free_names_in(c, bound, out));
-        return;
-    }
-    match std::sync::Arc::make_mut(&mut t.kind) {
-        TermKind::Var(n) => {
-            if !bound.contains(n) {
-                out.push(n.clone());
-            }
-        }
-        TermKind::Lam {
-            params,
-            body,
-            types,
-        } => {
-            for ty in types.iter_mut().flatten() {
-                free_names_in(ty, bound, out);
-            }
-            let mark = bound.len();
-            bound.extend(params.iter().cloned());
-            free_names_in(body, bound, out);
-            bound.truncate(mark);
-        }
-        TermKind::Exists {
-            binder,
-            domain,
-            body,
-        } => {
-            free_names_in(domain, bound, out);
-            let mark = bound.len();
-            bound.push(binder.clone());
-            free_names_in(body, bound, out);
-            bound.truncate(mark);
-        }
-        TermKind::Block(stmts) => {
-            let mark = bound.len();
-            for s in stmts.iter_mut() {
-                match s {
-                    Stmt::Let {
-                        name, ty, value, ..
-                    }
-                    | Stmt::Var {
-                        name, ty, value, ..
-                    } => {
-                        if let Some(ty) = ty {
-                            free_names_in(ty, bound, out);
-                        }
-                        free_names_in(value, bound, out);
-                        bound.push(name.clone());
-                    }
-                    Stmt::Assign { name, value, .. } => {
-                        if !bound.contains(name) {
-                            out.push(name.clone());
-                        }
-                        free_names_in(value, bound, out);
-                    }
-                    Stmt::Fn(_) => {
-                        let (name, params) = match &*s {
-                            Stmt::Fn(d) => (d.name.clone(), d.params.clone()),
-                            _ => unreachable!(),
-                        };
-                        bound.push(name);
-                        let inner = bound.len();
-                        bound.extend(params);
-                        walk::roots(s, &mut |u| free_names_in(u, bound, out));
-                        bound.truncate(inner);
-                    }
-                    _ => walk::roots(s, &mut |u| free_names_in(u, bound, out)),
-                }
-            }
-            bound.truncate(mark);
-        }
-        TermKind::Match {
-            scrutinee,
-            result,
-            binder,
-            arms,
-        } => {
-            free_names_in(scrutinee, bound, out);
-            if let Some(r) = result {
-                free_names_in(r, bound, out);
-            }
-            for a in arms {
-                let mark = bound.len();
-                pattern_names(&a.pattern, bound);
-                bound.extend(binder.iter().cloned());
-                if let Some(g) = &mut a.guard {
-                    free_names_in(g, bound, out);
-                }
-                if let Some(g) = &mut a.goal {
-                    free_names_in(g, bound, out);
-                }
-                free_names_in(&mut a.body, bound, out);
-                bound.truncate(mark);
-            }
-        }
-        TermKind::Handle { body, handlers } => {
-            free_names_in(body, bound, out);
-            for h in handlers {
-                let mark = bound.len();
-                match h {
-                    Handler::Return { pattern, body } => {
-                        pattern_names(pattern, bound);
-                        free_names_in(body, bound, out);
-                    }
-                    Handler::Operation {
-                        patterns,
-                        cont,
-                        guard,
-                        body,
-                        ..
-                    } => {
-                        patterns.iter().for_each(|p| pattern_names(p, bound));
-                        bound.extend(cont.iter().cloned());
-                        if let Some(g) = guard {
-                            free_names_in(g, bound, out);
-                        }
-                        free_names_in(body, bound, out);
-                    }
-                }
-                bound.truncate(mark);
-            }
-        }
-        _ => unreachable!("the other kinds are walked by their children"),
-    }
-}
-
 pub(super) fn stmt_range(s: &Stmt) -> Option<(u32, u32)> {
     let span = match s {
-        Stmt::Fn(f) => Span::new(f.span.start, f.body.span.end.max(f.span.end)),
+        Stmt::Fn(f) => {
+            // A body that is written out from a mapping (a call of `U64::xor`) stands at a place
+            // the library made, which is not where the function is written: the end is the
+            // last place of the text it holds.
+            let mut end = f.span.end;
+            if f.body.span.end < EXPANSION_BASE {
+                end = end.max(f.body.span.end);
+            } else {
+                crate::surface::walk::term(&mut f.body.clone(), &mut |t| {
+                    if t.span.end < EXPANSION_BASE {
+                        end = end.max(t.span.end);
+                    }
+                });
+            }
+            Span::new(f.span.start, end)
+        }
         Stmt::Theorem(t) | Stmt::Def(t) => Span::new(
             t.span.start.min(t.ty.span.start),
             t.span.end.max(t.body.as_ref().map_or(0, |b| b.span.end)),

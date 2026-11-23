@@ -1,9 +1,9 @@
 import "program_signature_sources.taut"
 import "instances_normal.taut"
 import "prepare_body_recheck_sound.taut"
-import std::Base
-import std::Map
-import std::Text
+import std::base
+import std::map
+import std::text
 import "checker.taut"
 import "data_names_sound.taut"
 import "datas.taut"
@@ -21,6 +21,9 @@ import "rules_program_signatures.taut"
 import "signature_frame.taut"
 import "signature_registration_context.taut"
 import "types_classes.taut"
+import "types_classes_head.taut"
+import "classes_declare.taut"
+import "classes_expand.taut"
 import "types_run.taut"
 import "unify_sound.taut"
 import "written_context_sound.taut"
@@ -28,14 +31,20 @@ import "written_list_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn signature_append_synthesized(
+  program: List(SurfaceStmt),
   synthesized: List(SurfaceFn),
-  m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  m: Mut1(List(SurfaceFn × Scheme), Checker)
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    List(Pair(SurfaceFn, Scheme)),
-    List(Pair(SurfaceFn, Scheme)),
-    (own: List(Pair(SurfaceFn, Scheme)), next: Checker) => mut1(
-      List::append(own, ck_synthesized_schemes(synthesized, next)),
+    <A: List(SurfaceFn × Scheme), B: List(SurfaceFn × Scheme)>,
+    (own: List(SurfaceFn × Scheme), next: Checker) => mut1(
+      List::append(
+        own,
+        List::append(
+          ck_program_replaceable_fns(program, next),
+          ck_synthesized_schemes(synthesized, next)
+        )
+      ),
       next
     ),
     m
@@ -45,19 +54,22 @@ pub theorem signature_append_synthesized_sound(
   env: Datas,
   program: List(SurfaceStmt),
   synthesized: List(SurfaceFn),
-  m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  m: Mut1(List(SurfaceFn × Scheme), Checker),
   sources: signature_list_sources(ck_val(m)) = signature_program_sources(program),
   derived: ∀ accepted: DiagnosticClean(ck_st(m)). ElaboratedSignatures(env, false, ck_val(m)),
-  clean: DiagnosticClean(ck_st(signature_append_synthesized(synthesized, m)))
-): PreparedSourceSignatures(env, program, ck_val(signature_append_synthesized(synthesized, m))) {
+  clean: DiagnosticClean(ck_st(signature_append_synthesized(program, synthesized, m)))
+): PreparedSourceSignatures(env, program, ck_val(signature_append_synthesized(program, synthesized, m))) {
   ⊢ PreparedSourceSignatures(
     env,
     program,
-    ck_val(signature_append_synthesized(synthesized, m))
+    ck_val(signature_append_synthesized(program, synthesized, m))
   ) from match m {
     mut1(own, next) => PreparedSourceSignatures::Mk(
       own,
-      ck_synthesized_schemes(synthesized, next),
+      List::append(
+        ck_program_replaceable_fns(program, next),
+        ck_synthesized_schemes(synthesized, next)
+      ),
       Refl,
       sources,
       derived(clean)
@@ -70,12 +82,12 @@ pub theorem signature_program_prepared(
   synthesized: List(SurfaceFn),
   normal: CkNormal(c),
   clean: DiagnosticClean(
-    ck_st(signature_append_synthesized(synthesized, ck_program_decls(program, c)))
+    ck_st(signature_append_synthesized(program, synthesized, ck_program_decls(program, c)))
   )
 ): PreparedSourceSignatures(
   ck_datas_of(c),
   program,
-  ck_val(signature_append_synthesized(synthesized, ck_program_decls(program, c)))
+  ck_val(signature_append_synthesized(program, synthesized, ck_program_decls(program, c)))
 ) {
   signature_append_synthesized_sound(
     ck_datas_of(c),
@@ -99,7 +111,7 @@ pub theorem signature_prepared_bind<A: Type>(
   c: Checker,
   program: List(SurfaceStmt),
   m: Mut1(A, Checker),
-  k: (A, Checker) -> Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  k: (A, Checker) -> Mut1(List(SurfaceFn × Scheme), Checker),
   read: CkReadFrame(c, m),
   context: CkNormalFrame(c, m),
   normal: CkNormal(c),
@@ -108,16 +120,16 @@ pub theorem signature_prepared_bind<A: Type>(
   ). ∀ accepted: DiagnosticClean(
     ck_st(k(value, next))
   ). PreparedSourceSignatures(ck_datas_of(next), program, ck_val(k(value, next))),
-  clean: DiagnosticClean(ck_st(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m)))
+  clean: DiagnosticClean(ck_st(frame_bind(<A: A, B: List(SurfaceFn × Scheme)>, k, m)))
 ): PreparedSourceSignatures(
   ck_datas_of(c),
   program,
-  ck_val(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))
+  ck_val(frame_bind(<A: A, B: List(SurfaceFn × Scheme)>, k, m))
 ) {
   ⊢ PreparedSourceSignatures(
     ck_datas_of(c),
     program,
-    ck_val(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))
+    ck_val(frame_bind(<A: A, B: List(SurfaceFn × Scheme)>, k, m))
   ) from match m {
     mut1(value, next) => Eq::subst(
       (env: Datas) => PreparedSourceSignatures(env, program, ck_val(k(value, next))),
@@ -132,11 +144,11 @@ pub fn signature_after_prelude(
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool),
   synthesized: List(SurfaceFn)
-): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+): Mut1(List(SurfaceFn × Scheme), Checker) {
   frame_bind(
-    Unit,
-    List(Pair(SurfaceFn, Scheme)),
+    <A: Unit, B: List(SurfaceFn × Scheme)>,
     (ignored: Unit, next: Checker) => signature_append_synthesized(
+      program,
       synthesized,
       ck_program_decls(program, next)
     ),
@@ -157,11 +169,12 @@ pub theorem signature_after_prelude_sound(
   ck_val(signature_after_prelude(c, prelude, program, own, synthesized))
 ) {
   signature_prepared_bind(
-    Unit,
+    <A: Unit>,
     c,
     program,
     ck_prelude_fns(prelude, c, own),
     (ignored: Unit, next: Checker) => signature_append_synthesized(
+      program,
       synthesized,
       ck_program_decls(program, next)
     ),
@@ -195,10 +208,10 @@ pub theorem signature_after_fields_sound(
   ck_val(registration_fns_after_fields(c, prelude, program, own))
 ) {
   signature_prepared_bind(
-    List(SurfaceFn),
+    <A: List(SurfaceFn)>,
     c,
     program,
-    ck_declare_classes(c, program),
+    ck_declare_all_classes(c, prelude, program),
     (synthesized: List(SurfaceFn), next: Checker) => signature_after_prelude(
       next,
       prelude,
@@ -206,8 +219,8 @@ pub theorem signature_after_fields_sound(
       own,
       synthesized
     ),
-    ck_declare_classes_frame(c, program),
-    ck_declare_classes_normal(c, program),
+    ck_declare_all_classes_frame(c, prelude, program),
+    ck_declare_all_classes_normal(c, prelude, program),
     normal,
     synthesized => next => normal_next => accepted => signature_after_prelude_sound(
       next,
@@ -234,7 +247,7 @@ pub theorem signature_after_names_sound(
   ck_val(registration_fns_after_names(c, prelude, program, own))
 ) {
   signature_prepared_bind(
-    Unit,
+    <A: Unit>,
     c,
     program,
     ck_recheck_datas(types_data_decls(program), c),
@@ -261,7 +274,7 @@ pub theorem data_names_normal(
   c: Checker,
   duplicate: Option(SurfaceData)
 ): CkNormalFrame(c, data_names_check(c, duplicate)) {
-  ⊢ CkNormalFrame(c, data_names_check(c, duplicate)) from match duplicate {
+  match duplicate {
     None => normal => normal
     Some(source) => normal => normal
   }
@@ -280,7 +293,7 @@ pub theorem decl_names_normal(
   c: Checker,
   duplicate: Option(SurfaceFn)
 ): CkNormalFrame(c, decl_names_check(c, duplicate)) {
-  ⊢ CkNormalFrame(c, decl_names_check(c, duplicate)) from match duplicate {
+  match duplicate {
     None => normal => normal
     Some(source) => normal => normal
   }
@@ -308,7 +321,7 @@ pub theorem signature_after_data_names_sound(
   ck_val(registration_fns_after_data_names(c, prelude, program, own))
 ) {
   signature_prepared_bind(
-    Unit,
+    <A: Unit>,
     c,
     program,
     ck_check_fn_names(c, types_function_decls(program)),
@@ -340,7 +353,7 @@ pub theorem signature_fns_source_sound(
   ck_val(registration_fns(c, prelude, program, own))
 ) {
   signature_prepared_bind(
-    Unit,
+    <A: Unit>,
     c,
     program,
     ck_check_data_names(c, types_data_decls(program)),
@@ -377,7 +390,7 @@ pub theorem ck_prepare_fns_source_signatures(
   ck_val(ck_prepare_fns(c, prelude, program, own))
 ) {
   Eq::subst(
-    (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => PreparedSourceSignatures(
+    (m: Mut1(List(SurfaceFn × Scheme), Checker)) => PreparedSourceSignatures(
       ck_datas_of(c),
       program,
       ck_val(m)
@@ -390,7 +403,7 @@ pub theorem ck_prepare_fns_source_signatures(
       own,
       normal,
       Eq::subst(
-        (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => DiagnosticClean(ck_st(m)),
+        (m: Mut1(List(SurfaceFn × Scheme), Checker)) => DiagnosticClean(ck_st(m)),
         registration_fns_unf(c, prelude, program, own),
         clean
       )

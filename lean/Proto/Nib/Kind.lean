@@ -18,9 +18,9 @@ stand for.
   duplicable values (`Proto/Nib/Lin.lean`). The one function value that may
   hold owned values is the continuation `k` of an operation that resumes at
   most once, and it is only ever called.
-* A cell holding an `A` has `A`'s kind. A `var` holds a duplicable value
-  (the use check rejects others), and an owned value's place
-  (`Tm.fresh`) holds an affine or linear one.
+* A place holding an `A` has `A`'s kind; a local function, like a first-class
+  one, is `shared`.
+* The continuation `k`, a local function, is only ever called.
 * A borrow is `shared`: it is only passed on, read and written through
   (`Proto/Nib/Lin.lean` keeps it from being kept).
 * `info` is affine: `more` and `unbounded` consume it.
@@ -99,6 +99,9 @@ structure OwnSig where
   dataKind : Nat → Kind
   quant : Eff → Quant
   tvarKind : Nat → Kind
+  /-- The type variable is bounded to types that hold no borrow: what is
+  put for it is no `Ty.Bv`. -/
+  tvarPlain : Nat → Prop
   rvarQuant : Nat → Quant → Prop
   /-- The program is checked for the second rule of control-flow
   linearity (a linear value lives across nothing that may not resume once)
@@ -117,8 +120,10 @@ mutual
     | .float32 => .copy
     | .never => .copy
     | .fn _ _ _ => .shared
+    | .lfn _ _ _ => .shared
     | .union ts => Tys.kind os ts
-    | .cell A => A.kind os
+    | .place A => A.kind os
+    | .hidden => .copy
     | .info _ _ => .affine
     | .tvar i => os.tvarKind i
     | .tag _ T => T.kind os
@@ -190,7 +195,9 @@ mutual
     | .float32 => False
     | .never => False
     | .fn _ _ _ => False
-    | .cell _ => False
+    | .lfn _ _ _ => False
+    | .place _ => False
+    | .hidden => False
     | .info _ _ => False
     | .tvar _ => False
     | .data _ _ => False
@@ -250,7 +257,9 @@ mutual
     | .float32 => by simp [Ty.inst, Ty.Mv]
     | .never => by simp [Ty.inst, Ty.Mv]
     | .fn _ _ _ => by simp [Ty.inst, Ty.Mv]
-    | .cell _ => by simp [Ty.inst, Ty.Mv]
+    | .lfn _ _ _ => by simp [Ty.inst, Ty.Mv]
+    | .place _ => by simp [Ty.inst, Ty.Mv]
+    | .hidden => by simp [Ty.inst, Ty.Mv]
     | .info _ _ => by simp [Ty.inst, Ty.Mv]
     | .data _ _ => by simp [Ty.inst, Ty.Mv]
 
@@ -259,11 +268,91 @@ mutual
     | t :: ts => by simp only [List.map_cons, Tys.Mv]; rw [Ty.mv_inst hθ t, Tys.mv_inst hθ ts]
 end
 
+mutual
+  /-- `&A`, `&mut A`, a union or tag of one, a data type or a place whose
+  type arguments may be one, or a type variable not bounded to types that
+  hold no borrow: a type some of whose values hold a borrow. -/
+  def Ty.Bv (os : OwnSig) : Ty → Prop
+    | .brw _ => True
+    | .mbrw _ => True
+    | .union ts => Tys.Bv os ts
+    | .tag _ T => T.Bv os
+    | .int _ => False
+    | .bool => False
+    | .unit => False
+    | .text => False
+    | .decimal => False
+    | .float => False
+    | .float32 => False
+    | .never => False
+    | .fn _ _ _ => False
+    | .lfn _ _ _ => False
+    | .hidden => False
+    | .place A => A.Bv os
+    | .info _ _ => False
+    | .tvar i => ¬ os.tvarPlain i
+    | .data _ ts => Tys.Bv os ts
+
+  def Tys.Bv (os : OwnSig) : List Ty → Prop
+    | [] => False
+    | t :: ts => t.Bv os ∨ Tys.Bv os ts
+end
+
+theorem Tys.bv_iff {os : OwnSig} : ∀ {ts : List Ty}, Tys.Bv os ts ↔ ∃ t ∈ ts, t.Bv os
+  | [] => by simp [Tys.Bv]
+  | t :: ts => by
+      simp only [Tys.Bv, Tys.bv_iff (ts := ts), List.mem_cons]
+      constructor
+      · rintro (h | ⟨u, hu, h⟩)
+        · exact ⟨t, .inl rfl, h⟩
+        · exact ⟨u, .inr hu, h⟩
+      · rintro ⟨u, rfl | hu, h⟩
+        · exact .inl h
+        · exact .inr ⟨u, hu, h⟩
+
+/-- What `θ` puts for the type variables bounded to types that hold no
+borrow holds none. -/
+def Inst.NoBv (os : OwnSig) (θ : Inst) : Prop := ∀ i, os.tvarPlain i → ¬ (θ.ty i).Bv os
+
+mutual
+  /-- A type that holds a borrow once `θ` is put in it held one before
+  (or was a type variable that `θ` may put one for). -/
+  theorem Ty.Bv.inst {os : OwnSig} {θ : Inst} (hθ : θ.NoBv os) : ∀ {A : Ty}, (A.inst θ).Bv os → A.Bv os
+    | .brw _, _ => trivial
+    | .mbrw _, _ => trivial
+    | .union ts, h => by simp only [Ty.inst, Ty.Bv] at h ⊢; exact Tys.Bv.inst hθ h
+    | .tag _ T, h => by simp only [Ty.inst, Ty.Bv] at h ⊢; exact Ty.Bv.inst hθ h
+    | .place A, h => by simp only [Ty.inst, Ty.Bv] at h ⊢; exact Ty.Bv.inst hθ h
+    | .data _ ts, h => by simp only [Ty.inst, Ty.Bv] at h ⊢; exact Tys.Bv.inst hθ h
+    | .tvar i, h => by
+        simp only [Ty.inst] at h
+        simp only [Ty.Bv]
+        exact fun hp => hθ i hp h
+    | .int _, h => by simp [Ty.inst, Ty.Bv] at h
+    | .bool, h => by simp [Ty.inst, Ty.Bv] at h
+    | .unit, h => by simp [Ty.inst, Ty.Bv] at h
+    | .text, h => by simp [Ty.inst, Ty.Bv] at h
+    | .decimal, h => by simp [Ty.inst, Ty.Bv] at h
+    | .float, h => by simp [Ty.inst, Ty.Bv] at h
+    | .float32, h => by simp [Ty.inst, Ty.Bv] at h
+    | .never, h => by simp [Ty.inst, Ty.Bv] at h
+    | .fn _ _ _, h => by simp [Ty.inst, Ty.Bv] at h
+    | .lfn _ _ _, h => by simp [Ty.inst, Ty.Bv] at h
+    | .hidden, h => by simp [Ty.inst, Ty.Bv] at h
+    | .info _ _, h => by simp [Ty.inst, Ty.Bv] at h
+
+  theorem Tys.Bv.inst {os : OwnSig} {θ : Inst} (hθ : θ.NoBv os) : ∀ {ts : List Ty}, Tys.Bv os (ts.map (·.inst θ)) → Tys.Bv os ts
+    | [], h => by simp [Tys.Bv] at h
+    | t :: ts, h => by
+        simp only [List.map_cons, Tys.Bv] at h ⊢
+        exact h.imp (Ty.Bv.inst hθ) (Tys.Bv.inst hθ)
+end
+
 /-- What `θ` puts for the type variables fits their bounds, and what it puts
 for the row variables resumes as their bounds allow. -/
 def Inst.Fits (os : OwnSig) (θ : Inst) : Prop :=
   (∀ i, (θ.ty i).kind os ≤ os.tvarKind i) ∧ (∀ i q, Row.quants os (θ.row i) q → os.rvarQuant i q) ∧
-    ∀ i, ¬ (θ.ty i).Mv
+    (∀ i, ¬ (θ.ty i).Mv) ∧ θ.NoBv os
 
 /-- The declarations' kinds and quantities agree with `Sig`: each field's
 kind fits its declaration's at any type arguments; putting types in an
@@ -291,7 +380,9 @@ mutual
     | .never => by simp only [Ty.inst]; exact Kind.le_refl _
     | .fn _ _ _ => by simp only [Ty.inst, Ty.kind]; exact Kind.le_refl _
     | .union ts => by simp only [Ty.inst, Ty.kind]; exact Tys.kind_inst os hθ ts
-    | .cell A => by simp only [Ty.inst, Ty.kind]; exact Ty.kind_inst os hθ A
+    | .place A => by simp only [Ty.inst, Ty.kind]; exact Ty.kind_inst os hθ A
+    | .lfn _ _ _ => by simp only [Ty.inst, Ty.kind]; exact Kind.le_refl _
+    | .hidden => by simp only [Ty.inst]; exact Kind.le_refl _
     | .info _ _ => by simp only [Ty.inst, Ty.kind]; exact Kind.le_refl _
     | .tvar i => by simp only [Ty.inst, Ty.kind]; exact hθ i
     | .tag _ T => by simp only [Ty.inst, Ty.kind]; exact Ty.kind_inst os hθ T

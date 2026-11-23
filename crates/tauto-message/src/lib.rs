@@ -62,6 +62,25 @@ impl Message {
         }
     }
 
+    /// The message with `f` applied to every text in it, nested messages included.
+    pub fn map_text(&self, f: &impl Fn(&str) -> String) -> Message {
+        Message {
+            id: self.id.clone(),
+            args: self
+                .args
+                .iter()
+                .map(|(n, v)| {
+                    let v = match v {
+                        Value::Text(t) => Value::Text(f(t)),
+                        Value::Message(m) => Value::Message(Box::new(m.map_text(f))),
+                        Value::Number(n) => Value::Number(*n),
+                    };
+                    (n.clone(), v)
+                })
+                .collect(),
+        }
+    }
+
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.args.iter().find(|(n, _)| n == name).map(|(_, v)| v)
     }
@@ -96,6 +115,119 @@ impl From<String> for Message {
 impl From<&str> for Message {
     fn from(text: &str) -> Message {
         Message::text(text)
+    }
+}
+
+impl Message {
+    /// The message that `{:?}` wrote as `id(name: value, …)`: a text in Rust
+    /// string syntax, a number, or another message. `None` when `s` is not
+    /// exactly one such message, so plain text is never mistaken for one.
+    pub fn from_debug(s: &str) -> Option<Message> {
+        let mut p = DebugReader { s, at: 0 };
+        let m = p.message()?;
+        (p.at == s.len()).then_some(m)
+    }
+}
+
+struct DebugReader<'a> {
+    s: &'a str,
+    at: usize,
+}
+
+impl DebugReader<'_> {
+    fn rest(&self) -> &str {
+        &self.s[self.at..]
+    }
+
+    fn eat(&mut self, lit: &str) -> bool {
+        let ok = self.rest().starts_with(lit);
+        if ok {
+            self.at += lit.len();
+        }
+        ok
+    }
+
+    fn word(&mut self) -> Option<&str> {
+        let r = self.rest();
+        let n = r
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .unwrap_or(r.len());
+        if n == 0 {
+            return None;
+        }
+        self.at += n;
+        Some(&self.s[self.at - n..self.at])
+    }
+
+    fn message(&mut self) -> Option<Message> {
+        let id = self.word()?.to_string();
+        let mut m = Message::new(id);
+        if self.eat("(") {
+            loop {
+                let name = self.word()?.to_string();
+                if !self.eat(": ") {
+                    return None;
+                }
+                let v = self.value()?;
+                m.args.push((Cow::Owned(name), v));
+                if self.eat(")") {
+                    break;
+                }
+                if !self.eat(", ") {
+                    return None;
+                }
+            }
+        }
+        Some(m)
+    }
+
+    fn value(&mut self) -> Option<Value> {
+        if self.rest().starts_with('"') {
+            return self.string().map(Value::Text);
+        }
+        if self.rest().starts_with(|c: char| c.is_ascii_digit()) {
+            let r = self.rest();
+            let n = r.find(|c: char| !c.is_ascii_digit()).unwrap_or(r.len());
+            let number = r[..n].parse().ok();
+            self.at += n;
+            return number.map(Value::Number);
+        }
+        self.message().map(|m| Value::Message(Box::new(m)))
+    }
+
+    fn string(&mut self) -> Option<String> {
+        self.eat("\"");
+        let mut out = String::new();
+        loop {
+            let c = self.rest().chars().next()?;
+            self.at += c.len_utf8();
+            match c {
+                '"' => return Some(out),
+                '\\' => {
+                    let e = self.rest().chars().next()?;
+                    self.at += e.len_utf8();
+                    match e {
+                        'n' => out.push('\n'),
+                        'r' => out.push('\r'),
+                        't' => out.push('\t'),
+                        '0' => out.push('\0'),
+                        '\\' | '"' | '\'' => out.push(e),
+                        'u' => {
+                            if !self.eat("{") {
+                                return None;
+                            }
+                            let r = self.rest();
+                            let end = r.find('}')?;
+                            let ch = char::from_u32(u32::from_str_radix(&r[..end], 16).ok()?)?;
+                            self.at += end + 1;
+                            out.push(ch);
+                        }
+                        _ => return None,
+                    }
+                }
+                c => out.push(c),
+            }
+        }
     }
 }
 
@@ -178,6 +310,19 @@ impl From<Message> for Value {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_form_reads_back() {
+        let m = Message::new("a-b")
+            .arg("name", "q\"\\\n é")
+            .arg("n", 3u64)
+            .arg("inner", Message::new("x").arg("y", "z"));
+        assert_eq!(Message::from_debug(&format!("{m:?}")), Some(m));
+        assert_eq!(Message::from_debug("plain"), Some(Message::new("plain")));
+        assert_eq!(Message::from_debug("not a message"), None);
+        assert_eq!(Message::from_debug("a(b: \"c\") tail"), None);
+    }
     use super::*;
 
     #[test]

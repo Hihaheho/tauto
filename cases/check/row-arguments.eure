@@ -3,10 +3,10 @@
 
 @ cases.a-row-argument-must-take-every-effect-out
 source = ```nib
-effect pos(): i64 resume <=1
-effect vel(): i64 resume <=1
-struct Grant(!e) { run: () -> i64 ! e }
-fn start<!e>(f: () -> i64 ! e): Grant(e) { Grant { run: f } }
+effect pos(): nat resume <=1
+effect vel(): nat resume <=1
+struct Grant(!e) { run: () -> nat ! e }
+fn start<!e>(f: () -> nat ! e): Grant(e) { Grant { run: f } }
 fn give_pos<!e>(g: Grant(!{pos} ∪ e)): Grant(e) {
   let r := g.run
   Grant {
@@ -16,11 +16,11 @@ fn give_pos<!e>(g: Grant(!{pos} ∪ e)): Grant(e) {
     }
   }
 }
-fn done(g: Grant(!{})): i64 {
+fn done(g: Grant(!{})): nat {
   let r := g.run
   r()
 }
-fn step(): i64 ! {pos, vel} { perform pos() + perform vel() }
+fn step(): nat ! {pos, vel} { perform pos() + perform vel() }
 // `done` takes `Grant(!{})`, so `give_pos` is given `Grant(!{pos})`: the step
 // that also performs `vel` is rejected where it is given.
 let v := done(give_pos(start(step)))
@@ -52,4 +52,4 @@ source = ```nib
 struct Grant(!e) { run: () -> i64 ! e }
 fn f(g: Grant(List(i64))): i64 { 1 }
 ```
-types = "error: Grant takes an effect row here, as in `Grant(!{a | e})`"
+types = "error: Grant takes an effect row here, as in `Grant(!{a} ∪ e)`"

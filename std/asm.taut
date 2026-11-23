@@ -1,73 +1,71 @@
-import "Base.taut" { List }
-import "UInt.taut" { U64 }
-import std::prelude::Macro { Syn, SynCtx, SynDiag, SynExpr, SynIdent, SynSpan, SynToken }
-import std::prelude::Std { List, Result }
+import "base.taut" { List }
+import "uint.taut" { UInt }
+import std::builtin::macro { SynExpr }
+import std::prelude::std { List }
 
 // A register-only model, not a CPU emulator or native assembler.
-module Asm {
-  pub(open) inductive Reg: Type { X0: Reg, X1: Reg, X2: Reg }
-  pub(open) inductive struct State {
-    x0: U64
-    x1: U64
-    x2: U64
+pub(open) inductive Asm::Reg: Type { X0: Asm::Reg, X1: Asm::Reg, X2: Asm::Reg }
+pub(open) inductive struct Asm::State {
+  x0: UInt(64)
+  x1: UInt(64)
+  x2: UInt(64)
+}
+pub(open) inductive Asm::Instr: Type {
+  Mov(dst: Asm::Reg, src: Asm::Reg): Asm::Instr
+  Add(dst: Asm::Reg, lhs: Asm::Reg, rhs: Asm::Reg): Asm::Instr
+  Sub(dst: Asm::Reg, lhs: Asm::Reg, rhs: Asm::Reg): Asm::Instr
+}
+pub fn Asm::read(s: Asm::State, r: Asm::Reg): UInt(64) {
+  match r {
+    Asm::Reg::X0 => s.x0
+    Asm::Reg::X1 => s.x1
+    Asm::Reg::X2 => s.x2
   }
-  pub(open) inductive Instr: Type {
-    Mov(dst: Reg, src: Reg): Instr
-    Add(dst: Reg, lhs: Reg, rhs: Reg): Instr
-    Sub(dst: Reg, lhs: Reg, rhs: Reg): Instr
+}
+pub fn Asm::write(s: Asm::State, r: Asm::Reg, value: UInt(64)): Asm::State {
+  match r {
+    Asm::Reg::X0 => Asm::State { x0: value, x1: s.x1, x2: s.x2 }
+    Asm::Reg::X1 => Asm::State { x0: s.x0, x1: value, x2: s.x2 }
+    Asm::Reg::X2 => Asm::State { x0: s.x0, x1: s.x1, x2: value }
   }
-  pub fn read(s: State, r: Reg): U64 {
-    ⊢ U64 from match r {
-      X0 => s.x0
-      X1 => s.x1
-      X2 => s.x2
-    }
+}
+// All reads use the input state, including when a source aliases the destination.
+pub fn Asm::step(instruction: Asm::Instr, s: Asm::State): Asm::State {
+  match instruction {
+    Asm::Instr::Mov(dst, src) => Asm::write(s, dst, Asm::read(s, src))
+    Asm::Instr::Add(dst, lhs, rhs) => Asm::write(s, dst, UInt::wrapping_add64(Asm::read(s, lhs), Asm::read(s, rhs)))
+    Asm::Instr::Sub(dst, lhs, rhs) => Asm::write(s, dst, UInt::wrapping_sub64(Asm::read(s, lhs), Asm::read(s, rhs)))
   }
-  pub fn write(s: State, r: Reg, value: U64): State {
-    ⊢ State from match r {
-      X0 => State { x0: value, x1: s.x1, x2: s.x2 }
-      X1 => State { x0: s.x0, x1: value, x2: s.x2 }
-      X2 => State { x0: s.x0, x1: s.x1, x2: value }
-    }
+}
+pub fn Asm::run(program: List(Asm::Instr), s: Asm::State): Asm::State {
+  match program {
+    Nil => s
+    Cons(instruction, rest) => Asm::run(rest, Asm::step(instruction, s))
   }
-  // All reads use the input state, including when a source aliases the destination.
-  pub fn step(instruction: Instr, s: State): State {
-    ⊢ State from match instruction {
-      Mov(dst, src) => write(s, dst, read(s, src))
-      Add(dst, lhs, rhs) => write(s, dst, U64::wrapping_add(read(s, lhs), read(s, rhs)))
-      Sub(dst, lhs, rhs) => write(s, dst, U64::wrapping_sub(read(s, lhs), read(s, rhs)))
-    }
-  }
-  pub fn run(program: List(Instr), s: State): State {
-    ⊢ State from match program {
-      Nil => s
-      Cons(instruction, rest) => Asm::run(rest, step(instruction, s))
-    }
-  }
-  // Clients supply a proof term; this specification alone certifies nothing.
-  pub def Hoare(program: List(Instr), pre: (State) -> Prop, post: (State) -> Prop): Prop :=
-  ∀ s: State. pre(s) -> post(Asm::run(program, s))
-  pub theorem read_write(s: State, r: Reg, value: U64): read(write(s, r, value), r) = value {
-    ⊢ read(write(s, r, value), r) = value from match r { X0 => Refl, X1 => Refl, X2 => Refl }
-  }
-  pub theorem run_nil(s: State): Asm::run(Nil, s) = s { Refl }
-  pub theorem run_cons(
-    instruction: Instr,
-    rest: List(Instr),
-    s: State
-  ): Asm::run(Cons(instruction, rest), s) = Asm::run(rest, step(instruction, s)) { Refl }
-  pub theorem run_append(
-    first: List(Instr),
-    second: List(Instr),
-    s: State
-  ): Asm::run(List::append(first, second), s) = Asm::run(second, Asm::run(first, s)) {
-    ⊢ Asm::run(
-      List::append(first, second),
-      s
-    ) = Asm::run(second, Asm::run(first, s)) from match first {
-      Nil => Refl
-      Cons(instruction, rest) => run_append(rest, second, step(instruction, s))
-    }
+}
+// Clients supply a proof term; this specification alone certifies nothing.
+pub def Asm::Hoare(program: List(Asm::Instr), pre: (Asm::State) -> Prop, post: (Asm::State) -> Prop): Prop :=
+∀ s: Asm::State. pre(s) -> post(Asm::run(program, s))
+pub theorem Asm::read_write(s: Asm::State, r: Asm::Reg, value: UInt(64)): Asm::read(Asm::write(s, r, value), r) = value {
+  match r { Asm::Reg::X0 => Refl, Asm::Reg::X1 => Refl, Asm::Reg::X2 => Refl }
+}
+pub theorem Asm::run_nil(s: Asm::State): Asm::run(Nil, s) = s { Refl }
+pub theorem Asm::run_cons(
+  instruction: Asm::Instr,
+  rest: List(Asm::Instr),
+  s: Asm::State
+): Asm::run(Cons(instruction, rest), s) = Asm::run(rest, Asm::step(instruction, s)) { Refl }
+pub theorem Asm::run_append(
+  first: List(Asm::Instr),
+  second: List(Asm::Instr),
+  s: Asm::State
+): Asm::run(List::append(first, second), s) = Asm::run(second, Asm::run(first, s)) {
+  ⊢ Asm::run(
+    List::append(first, second),
+    s
+  ) = Asm::run(second, Asm::run(first, s)) from match first {
+    Nil => Refl
+    Cons(instruction, rest) => Asm::run_append(rest, second, Asm::step(instruction, s))
   }
 }
 
@@ -120,7 +118,7 @@ pub fn asm_instruction(instruction: asm_syntax::Instruction): SynExpr {
     }
   }
 }
-pub fn asm_rest(rest: List(asm_syntax::Program_Rep1)): SynExpr ! {Div} {
+pub fn asm_rest(rest: List(asm_syntax::Program_Rep1)): SynExpr ! {div} {
   match rest {
     Nil => quote { Nil }
     Cons(item, more) => {
@@ -131,7 +129,7 @@ pub fn asm_rest(rest: List(asm_syntax::Program_Rep1)): SynExpr ! {Div} {
   }
 }
 // Produces a program, not a trusted assertion or proof.
-pub macro fn asm(program: asm_syntax::Program): SynExpr ! {Div} {
+pub macro fn asm(program: asm_syntax::Program): SynExpr ! {div} {
   let first := asm_instruction(program.instruction)
   let rest := asm_rest(program.rep)
   quote { Cons($first, $rest) }

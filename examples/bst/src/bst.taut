@@ -1,8 +1,8 @@
-import "../../../std/Base.taut"
-import std::prelude::Ord
+import std::base
+import std::builtin::ord
 
 // A binary search tree of any ordered keys (a set): `where Ord(A)` asks for the order of
-// `std/prelude/Ord.taut`, and `Ord::compare` is the one three-way comparison, so each operation has one
+// `std/builtin/ord.taut`, and `Ord::compare` is the one three-way comparison, so each operation has one
 // `match` on an `Ordering`. `proof/bst.taut` proves that the operations keep the tree ordered and
 // that they do what a set does, from the laws of `Ord` alone.
 
@@ -11,8 +11,8 @@ pub(open) inductive Tree(A: Type): Type {
   MkNode(l: Tree(A), k: A, r: Tree(A)): Tree(A)
 }
 
-pub fn tree_insert<A>(x: A, t: Tree(A)): Tree(A) where Ord(A) {
-  ⊢ Tree(A) from match t {
+pub fn tree_insert<A: Shared>(x: A, t: Tree(A)): Tree(A) where Ord(A) {
+  match t {
     Leaf => MkNode(Leaf, x, Leaf)
     MkNode(l, k, r) => ⊢ Tree(A) from match Ord::compare(x, k) {
       Less => MkNode(tree_insert(x, l), k, r)
@@ -22,8 +22,8 @@ pub fn tree_insert<A>(x: A, t: Tree(A)): Tree(A) where Ord(A) {
   }
 }
 
-pub fn tree_member<A>(x: A, t: Tree(A)): Bool where Ord(A) {
-  ⊢ Bool from match t {
+pub fn tree_member<A: Shared>(x: A, t: Tree(A)): Bool where Ord(A) {
+  match t {
     Leaf => false
     MkNode(l, k, r) => ⊢ Bool from match Ord::compare(x, k) {
       Less => tree_member(x, l)
@@ -33,33 +33,33 @@ pub fn tree_member<A>(x: A, t: Tree(A)): Bool where Ord(A) {
   }
 }
 
-pub fn tree_min<A>(l: Tree(A), k: A): A {
-  ⊢ A from match l {
+pub fn tree_min<A: Shared>(l: Tree(A), k: A): A {
+  match l {
     Leaf => k
-    MkNode(ll, lk, lr) => tree_min(ll, lk)
+    MkNode(ll, lk, ^lr) => tree_min(ll, lk)
   }
 }
 
-pub fn tree_remove_min<A>(t: Tree(A)): Tree(A) {
-  ⊢ Tree(A) from match t {
+pub fn tree_remove_min<A: Shared>(t: Tree(A)): Tree(A) {
+  match t {
     Leaf => Leaf
     MkNode(l, k, r) => ⊢ Tree(A) from match l {
       Leaf => r
-      MkNode(ll, lk, lr) => MkNode(tree_remove_min(l), k, r)
+      MkNode(^ll, ^lk, ^lr) => MkNode(tree_remove_min(l), k, r)
     }
   }
 }
 
 // The two subtrees of a deleted node as one tree: the smallest key of the right one goes to the root.
-pub fn tree_join<A>(l: Tree(A), r: Tree(A)): Tree(A) {
-  ⊢ Tree(A) from match r {
+pub fn tree_join<A: Shared>(l: Tree(A), r: Tree(A)): Tree(A) {
+  match r {
     Leaf => l
     MkNode(rl, rk, rr) => MkNode(l, tree_min(rl, rk), tree_remove_min(MkNode(rl, rk, rr)))
   }
 }
 
-pub fn tree_delete<A>(x: A, t: Tree(A)): Tree(A) where Ord(A) {
-  ⊢ Tree(A) from match t {
+pub fn tree_delete<A: Shared>(x: A, t: Tree(A)): Tree(A) where Ord(A) {
+  match t {
     Leaf => Leaf
     MkNode(l, k, r) => ⊢ Tree(A) from match Ord::compare(x, k) {
       Less => MkNode(tree_delete(x, l), k, r)

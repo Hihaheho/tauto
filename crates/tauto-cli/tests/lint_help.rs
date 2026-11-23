@@ -17,13 +17,13 @@ fn lint_reads_the_taut_files_under_a_directory() {
     let nested = dir.join("src");
     std::fs::create_dir_all(&nested).unwrap();
     std::fs::write(
-        dir.join("Clean.taut"),
+        dir.join("clean.taut"),
         r#"fn one(): Nat { Succ(Zero) }
 "#,
     )
     .unwrap();
     std::fs::write(
-        nested.join("Hole.taut"),
+        nested.join("hole.taut"),
         r#"theorem t(): Nat { ?h }
 "#,
     )
@@ -32,15 +32,15 @@ fn lint_reads_the_taut_files_under_a_directory() {
     let out = tauto(&["lint", dir.to_str().unwrap()]);
     let shown = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{shown}");
-    assert!(shown.contains("Hole.taut:1:"), "{shown}");
+    assert!(shown.contains("hole.taut:1:"), "{shown}");
     assert!(!shown.contains("notes.md"), "{shown}");
     let out = tauto(&["lint", "--json", dir.to_str().unwrap()]);
     let json = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{json}");
     assert!(json.starts_with(r#"[{"file":""#), "{json}");
-    assert!(json.contains(r#"Hole.taut","line":1,"col":"#), "{json}");
+    assert!(json.contains(r#"hole.taut","line":1,"col":"#), "{json}");
     assert!(json.contains(r#""kind":"lint"}"#), "{json}");
-    let clean = dir.join("Clean.taut");
+    let clean = dir.join("clean.taut");
     let out = tauto(&["lint", "--json", clean.to_str().unwrap()]);
     assert_eq!(String::from_utf8_lossy(&out.stdout), "[]\n");
 

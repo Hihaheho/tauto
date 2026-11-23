@@ -1,6 +1,7 @@
+import "messages.taut"
 import "pattern_scope.taut"
 import "../../surface/src/surface.taut"
-import std::Text
+import std::text
 import "checker.taut"
 import "checker_frame.taut"
 import "datas.taut"
@@ -9,6 +10,7 @@ import "pattern_frame.taut"
 import "ty.taut"
 import "types_match.taut"
 import "unify_sound.taut"
+import "../../identity/src/identity.taut"
 
 pub def PatternIH_pattern(
   k: Nat
@@ -48,7 +50,7 @@ pub fn pattern_fields_next(
   borrowed: Option(Bool),
   found: Option(List(DataField))
 ): Mut2(Unit, Checker, Scope) {
-  ⊢ Mut2(Unit, Checker, Scope) from match found {
+  match found {
     None => mut2(Star, c, env)
     Some(fields) => pattern_rewrap(ck_ctor_args_in(j, c, args, fields, borrowed, env, span, at))
   }
@@ -93,8 +95,7 @@ pub fn pattern_ctor_step(
   borrowed: Option(Bool)
 ): Mut2(Unit, Checker, Scope) {
   pattern_bind_one(
-    Option(List(DataField)),
-    Unit,
+    <A: Option(List(DataField)), B: Unit>,
     (found: Option(List(DataField)), c1: Checker) => pattern_fields_next(
       j,
       c1,
@@ -125,8 +126,7 @@ pub theorem pattern_ctor_step_frame(
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, pattern_ctor_step(j, c, name, args, t, env, span, at, borrowed)) {
   pattern_bind_one_frame(
-    Option(List(DataField)),
-    Unit,
+    <A: Option(List(DataField)), B: Unit>,
     c,
     (found: Option(List(DataField)), c1: Checker) => pattern_fields_next(
       j,
@@ -172,11 +172,10 @@ pub fn pattern_args_fields(
   at: Nat,
   fields: List(DataField)
 ): Mut2(Unit, Checker, Scope) {
-  ⊢ Mut2(Unit, Checker, Scope) from match fields {
+  match fields {
     Nil => mut2(Star, c, env)
     Cons(field, more) => pattern_bind(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       (ignored: Unit, c1: Checker, env1: Scope) => pattern_rewrap(
         ck_ctor_args_in(j, c1, rest, more, borrowed, env1, span, at)
       ),
@@ -205,8 +204,7 @@ pub theorem pattern_args_fields_frame(
   ) from match fields {
     Nil => pattern_return_frame(c, env, Star, ordered)
     Cons(field, more) => pattern_bind_frame(
-      Unit,
-      Unit,
+      <A: Unit, B: Unit>,
       c,
       (ignored: Unit, c1: Checker, env1: Scope) => pattern_rewrap(
         ck_ctor_args_in(j, c1, rest, more, borrowed, env1, span, at)
@@ -232,7 +230,7 @@ pub fn pattern_args_step(
   at: Nat,
   args: List(SurfacePattern)
 ): Mut2(Unit, Checker, Scope) {
-  ⊢ Mut2(Unit, Checker, Scope) from match args {
+  match args {
     Nil => mut2(Star, c, env)
     Cons(p, rest) => pattern_args_fields(j, c, p, rest, borrowed, env, span, at, fields)
   }
@@ -251,7 +249,7 @@ pub theorem pattern_args_step_frame(
   ih_ctor_args: PatternIH_ctor_args(j),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, pattern_args_step(j, c, fields, borrowed, env, span, at, args)) {
-  ⊢ CkScopeFrame(c, pattern_args_step(j, c, fields, borrowed, env, span, at, args)) from match args {
+  match args {
     Nil => pattern_return_frame(c, env, Star, ordered)
     Cons(p, rest) => pattern_args_fields_frame(
       j,
@@ -271,7 +269,7 @@ pub theorem pattern_args_step_frame(
 }
 
 pub fn pattern_literal_record(
-  &mut c: Checker,
+  c: &mut Checker,
   negative: Bool,
   magnitude: Nat,
   t: Ty,
@@ -309,7 +307,7 @@ pub fn pattern_bind_name(
   name: Text,
   nullary: Bool
 ): Mut2(Unit, Checker, Scope) {
-  ⊢ Mut2(Unit, Checker, Scope) from match nullary {
+  match nullary {
     true => pattern_rewrap(ck_ctor_pattern_in(j, c, name, Nil, t, env, span, at))
     false => pattern_rewrap(ck_bind_local(c, env, name, t, false, at))
   }
@@ -327,7 +325,7 @@ pub theorem pattern_bind_name_frame(
   ih_ctor_pattern: PatternIH_ctor_pattern(j),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, pattern_bind_name(j, c, t, env, span, at, name, nullary)) {
-  ⊢ CkScopeFrame(c, pattern_bind_name(j, c, t, env, span, at, name, nullary)) from match nullary {
+  match nullary {
     true => pattern_rewrap_frame(
       c,
       ck_ctor_pattern_in(j, c, name, Nil, t, env, span, at),
@@ -351,7 +349,7 @@ pub fn pattern_record(
   name: Text,
   pos: Positional
 ): Mut2(Unit, Checker, Scope) {
-  ⊢ Mut2(Unit, Checker, Scope) from match pos {
+  match pos {
     PositionalOk(args) => pattern_rewrap(ck_ctor_pattern_in(j, c, name, args, t, env, span, at))
     PositionalErr(e) => pattern_lift(env, ck_rewrap1(ck_error(c, e, span)))
   }
@@ -369,7 +367,7 @@ pub theorem pattern_record_frame(
   ih_ctor_pattern: PatternIH_ctor_pattern(j),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, pattern_record(j, c, t, env, span, at, name, pos)) {
-  ⊢ CkScopeFrame(c, pattern_record(j, c, t, env, span, at, name, pos)) from match pos {
+  match pos {
     PositionalOk(args) => pattern_rewrap_frame(
       c,
       ck_ctor_pattern_in(j, c, name, args, t, env, span, at),
@@ -398,9 +396,9 @@ pub fn pattern_step(
   at: Nat,
   p: SurfacePattern
 ): Mut2(Unit, Checker, Scope) {
-  ⊢ Mut2(Unit, Checker, Scope) from match p {
+  match p {
     PtWild => mut2(Star, c, env)
-    PtBind(name) => pattern_bind_name(
+    PtBind(name, _) => pattern_bind_name(
       j,
       c,
       t,
@@ -411,19 +409,17 @@ pub fn pattern_step(
       datas_nullary_expected(ck_datas_of(c), name, ck_resolve(c, t))
     )
     PtInt(negative, magnitude) => pattern_bind_one(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       (i: Ty, c1: Checker) => pattern_bind_one(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored: Unit, c2: Checker) => pattern_lift(env, ck_pattern_literal(c2, i, t, span)),
         pattern_literal_record(c1, negative, magnitude, i, span)
       ),
       ck_fresh_int(c)
     )
-    PtBool(b) => pattern_lift(env, ck_pattern_literal(c, TyBool, t, span))
-    PtText(s) => pattern_lift(env, ck_pattern_literal(c, TyText, t, span))
-    PtCtor(name, args) => pattern_rewrap(ck_ctor_pattern_in(j, c, name, args, t, env, span, at))
+    PtBool(^b) => pattern_lift(env, ck_pattern_literal(c, TyBool, t, span))
+    PtText(^s) => pattern_lift(env, ck_pattern_literal(c, TyText, t, span))
+    PtCtor(name, args) => pattern_rewrap(ck_ctor_pattern_in(j, c, surface_name_text(name), args, t, env, span, at))
     PtRecord(name, fields) => pattern_record(
       j,
       c,
@@ -436,7 +432,11 @@ pub fn pattern_step(
     )
     PtOther(what) => pattern_lift(
       env,
-      ck_rewrap1(ck_error(c, cat2("this pattern is not supported yet: ", what), span))
+      ck_rewrap1(ck_error(c, pattern_not_supported_message(what), span))
+    )
+    PtTyped(^name, ^ty, _) => pattern_lift(
+      env,
+      ck_rewrap1(ck_error(c, pattern_not_supported_message("a typed arm"), span))
     )
   }
 }
@@ -452,9 +452,9 @@ pub theorem pattern_step_frame(
   ih_ctor_pattern: PatternIH_ctor_pattern(j),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, pattern_step(j, c, t, env, span, at, p)) {
-  ⊢ CkScopeFrame(c, pattern_step(j, c, t, env, span, at, p)) from match p {
+  match p {
     PtWild => pattern_return_frame(c, env, Star, ordered)
-    PtBind(name) => pattern_bind_name_frame(
+    PtBind(name, _) => pattern_bind_name_frame(
       j,
       c,
       t,
@@ -467,20 +467,17 @@ pub theorem pattern_step_frame(
       ordered
     )
     PtInt(negative, magnitude) => pattern_bind_one_frame(
-      Ty,
-      Unit,
+      <A: Ty, B: Unit>,
       c,
       (i: Ty, c1: Checker) => pattern_bind_one(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         (ignored: Unit, c2: Checker) => pattern_lift(env, ck_pattern_literal(c2, i, t, span)),
         pattern_literal_record(c1, negative, magnitude, i, span)
       ),
       ck_fresh_int(c),
       run_frame_read(c, ck_fresh_int(c), ck_fresh_int_read_frame(c), ordered),
       i => c1 => o_c1 => pattern_bind_one_frame(
-        Unit,
-        Unit,
+        <A: Unit, B: Unit>,
         c1,
         (ignored: Unit, c2: Checker) => pattern_lift(env, ck_pattern_literal(c2, i, t, span)),
         pattern_literal_record(c1, negative, magnitude, i, span),
@@ -512,8 +509,8 @@ pub theorem pattern_step_frame(
     )
     PtCtor(name, args) => pattern_rewrap_frame(
       c,
-      ck_ctor_pattern_in(j, c, name, args, t, env, span, at),
-      ih_ctor_pattern(c, name, args, t, env, span, at, ordered)
+      ck_ctor_pattern_in(j, c, surface_name_text(name), args, t, env, span, at),
+      ih_ctor_pattern(c, surface_name_text(name), args, t, env, span, at, ordered)
     )
     PtRecord(name, fields) => pattern_record_frame(
       j,
@@ -530,14 +527,29 @@ pub theorem pattern_step_frame(
     PtOther(what) => pattern_lift_frame(
       c,
       env,
-      ck_rewrap1(ck_error(c, cat2("this pattern is not supported yet: ", what), span)),
+      ck_rewrap1(ck_error(c, pattern_not_supported_message(what), span)),
       run_frame_read(
         c,
-        ck_rewrap1(ck_error(c, cat2("this pattern is not supported yet: ", what), span)),
+        ck_rewrap1(ck_error(c, pattern_not_supported_message(what), span)),
         frame_rewrap(
           c,
-          ck_error(c, cat2("this pattern is not supported yet: ", what), span),
-          ck_error_frame(c, cat2("this pattern is not supported yet: ", what), span)
+          ck_error(c, pattern_not_supported_message(what), span),
+          ck_error_frame(c, pattern_not_supported_message(what), span)
+        ),
+        ordered
+      )
+    )
+    PtTyped(name, ty, _) => pattern_lift_frame(
+      c,
+      env,
+      ck_rewrap1(ck_error(c, pattern_not_supported_message("a typed arm"), span)),
+      run_frame_read(
+        c,
+        ck_rewrap1(ck_error(c, pattern_not_supported_message("a typed arm"), span)),
+        frame_rewrap(
+          c,
+          ck_error(c, pattern_not_supported_message("a typed arm"), span),
+          ck_error_frame(c, pattern_not_supported_message("a typed arm"), span)
         ),
         ordered
       )
@@ -579,7 +591,7 @@ pub theorem pattern_pattern_succ_unf(
   at
 ) = pattern_step(j, c, t, env, span, at, p) from match p {
     PtWild => Refl
-    PtBind(name) => Refl
+    PtBind(name, _) => Refl
     PtInt(negative, magnitude) => ⊢ ck_pattern_in(Succ(j), c, PtInt(negative, magnitude), t, env, span, at) = pattern_step(j, c, t, env, span, at, PtInt(negative, magnitude)) from match negative { true => Refl
       false => Refl }
     PtBool(b) => Refl
@@ -587,6 +599,7 @@ pub theorem pattern_pattern_succ_unf(
     PtCtor(name, args) => Refl
     PtRecord(name, fields) => Refl
     PtOther(what) => Refl
+    PtTyped(name, ty, _) => Refl
   } }
 
 pub theorem pattern_ctor_pattern_succ_unf(
@@ -633,7 +646,7 @@ pub def PatternAll(
   k: Nat
 ): Prop := And(PatternIH_pattern(k), And(PatternIH_ctor_pattern(k), PatternIH_ctor_args(k)))
 pub theorem pattern_all(k: Nat): PatternAll(k) {
-  ⊢ PatternAll(k) from match k {
+  match k {
     Zero => AndIntro(
       c => p => t => env => span => at => ordered => AndIntro(ordered, Refl),
       AndIntro(

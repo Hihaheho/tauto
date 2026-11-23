@@ -59,8 +59,8 @@ fn same(files: &[(&str, &str)], args: &[&str]) {
     );
 }
 
-const UGLY: &str = "let x   :=   1\nperform show(\"x\",x)\n";
-const NICE: &str = "let x := 1\nperform show(\"x\", x)\n";
+const UGLY: &str = "let x   :=   1\nshow(&x)\n";
+const NICE: &str = "let x := 1\nshow(&x)\n";
 const BAD: &str = "let x := (\n";
 
 #[test]

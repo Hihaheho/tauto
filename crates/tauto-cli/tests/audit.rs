@@ -41,5 +41,5 @@ fn covers_path_dependencies() {
     let text = audit("calc", true);
     assert!(text.contains(r#""name":"calc""#), "{text}");
     assert!(text.contains(r#""name":"compiler""#), "{text}");
-    assert!(text.contains(r#""effects":["Div","stdout"]"#), "{text}");
+    assert!(text.contains(r#""effects":["div","stdout"]"#), "{text}");
 }

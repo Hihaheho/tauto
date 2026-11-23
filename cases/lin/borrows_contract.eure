@@ -1,0 +1,155 @@
+// `borrows(m)` after a function's result: the result borrows only from the
+// parameters named; the other borrowed parameters are lent for the call alone.
+
+@ cases.unlisted-argument-is-not-frozen-after-the-call
+description = "A borrowed parameter that `borrows(…)` does not name is lent only while the call runs: its owner may move while the result lives."
+source = ```nib
+
+struct(affine) K {}
+struct(affine) F {}
+extern {
+  fn pick(m: &Vec(F), k: &K): Option(&F) borrows(m)
+}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let k := K {}
+let r := pick(&v, &k)
+let moved := k
+r
+```
+lin = "ok"
+
+@ cases.listed-argument-is-frozen
+description = "The parameter `borrows(…)` names stays frozen while the result lives."
+source = ```nib
+
+struct(affine) K {}
+struct(affine) F {}
+extern {
+  fn pick(m: &Vec(F), k: &K): Option(&F) borrows(m)
+}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let k := K {}
+let r := pick(&v, &k)
+let moved := v
+r
+```
+lin = "error: v is frozen by r"
+
+@ cases.without-borrows-every-argument-is-frozen
+description = "Without `borrows(…)` the result borrows from every borrowed parameter."
+source = ```nib
+
+struct(affine) K {}
+struct(affine) F {}
+extern {
+  fn pick(m: &Vec(F), k: &K): Option(&F)
+}
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let k := K {}
+let r := pick(&v, &k)
+let moved := k
+r
+```
+lin = "error: k is frozen by r"
+
+@ cases.body-returning-an-unlisted-borrow-is-an-error
+description = "The body may return only borrows of the parameters `borrows(…)` names."
+source = ```nib
+struct(affine) F {}
+fn second(a: &F, b: &F): &F borrows(a) { b }
+```
+lin = "error: the result borrows b, which is not in borrows(…)"
+
+@ cases.body-returning-an-unlisted-borrow-through-a-call-is-an-error
+description = "What a call in tail position lends counts as the result's borrow."
+source = ```nib
+struct(affine) F {}
+fn id(x: &F): &F { x }
+fn second(a: &F, b: &F): &F borrows(a) { id(&b) }
+```
+lin = "error: the result borrows b, which is not in borrows(…)"
+
+@ cases.body-returning-a-listed-borrow-is-ok
+description = "A body that returns a borrow of the parameter named passes."
+source = ```nib
+struct(affine) F {}
+fn id(x: &F): &F { x }
+fn first(a: &F, b: &F): &F borrows(a) { id(&a) }
+```
+lin = "ok"
+
+@ cases.hashmap-get-freezes-the-map
+extract = true
+description = "`HashMap::get` is declared `borrows(m)`: the map stays frozen while the value read lives."
+source = ```nib
+import std::indexed_map { IndexedMap }
+
+var m: IndexedMap(Text, Vec(i64)) := IndexedMap::new()
+IndexedMap::insert(&mut m, "a", Vec::new())
+let key := "a"
+let v := IndexedMap::get(&m, &key)
+let gone := m
+v
+```
+lin = "error: m is frozen by v"
+
+@ cases.borrows-on-a-result-that-holds-no-borrow
+description = "`borrows(…)` is written only on a function whose result holds a borrow."
+source = ```nib
+struct(affine) F {}
+fn len(a: &F): i64 borrows(a) { 0 }
+```
+types = "error: `borrows(…)` is written on a function whose result i64 holds no borrow"
+
+@ cases.borrows-names-a-parameter-that-lends
+description = "Each name in `borrows(…)` is a parameter that lends a borrow."
+source = ```nib
+struct(affine) F {}
+fn pick(a: &F, b: i64): &F borrows(b) { a }
+```
+types = "error: `b` in `borrows(…)` is not a parameter that lends a borrow"
+
+@ cases.borrows-takes-a-field-path
+description = "`borrows(x.field)` names a field of a parameter; the body may return a borrow inside it."
+source = ```nib
+struct(affine) F {}
+struct P { a: F, b: F }
+fn pa(p: &P): &F borrows(p.a) { &p.a }
+```
+lin = "ok"
+
+@ cases.match-bound-mut-item-keeps-borrows-freeze
+description = "Matching a result declared `borrows(source)` and binding its `&mut` item keeps `source` frozen while the item lives."
+source = ```nib
+enum(shared) Step {
+  Done,
+  Yield(&mut nat)
+}
+fn get(source: &mut nat): Step borrows(source) {
+  Step::Yield(source)
+}
+fn set_nat(n: &mut nat, v: nat): () { *n := v }
+fn alias(source: &mut nat): () {
+  match get(source) {
+    Done => ()
+    Yield(item) => match get(source) {
+      Done => ()
+      Yield(again) => {
+        set_nat(item, 1)
+        set_nat(again, 3)
+        ()
+      }
+    }
+  }
+}
+fn example(): nat {
+  var source := 0
+  alias(&mut source)
+  source
+}
+show(&example())
+```
+lin = "error: source is frozen by item"

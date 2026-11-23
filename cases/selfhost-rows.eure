@@ -51,7 +51,7 @@ source = ```tauto
 fn spin(): i64 { while true { }
  0 }
 fn rec(n: i64): i64 { rec(n) }
-let d := handle { budget(steps: 10) { spin() } } with {
+let d := handle { perform budget(10, () => { spin() }) } with {
   exceeded(i), k => 0
   return v => v
 }
@@ -63,7 +63,7 @@ differential = "rows"
 source = ```tauto
 fn spin(): i64 { while true { }
  0 }
-let d := budget(steps: 10) { spin() }
+let d := perform budget(10, () => { spin() })
 ```
 differential = "rows"
 
@@ -72,7 +72,7 @@ differential = "rows"
 source = ```tauto
 fn spin(): i64 { while true { }
  0 }
-let d := handle { budget(steps: 10) { spin() } } with {
+let d := handle { perform budget(10, () => { spin() }) } with {
   exceeded(i), k => i.unbounded()
   return v => v
 }
@@ -188,5 +188,133 @@ differential = "rows"
 @ cases.rows-match-on-hard-cases-020
 source = ```tauto
 fn f(
+```
+differential = "rows"
+
+// rows_report_an_undefined_effect
+@ cases.rows-report-an-undefined-effect-001
+source = ```tauto
+effect ping(): u64
+fn g(): u64 ! {ping, Pnig} { perform ping() }
+```
+differential = "rows"
+
+// rows_report_an_undefined_effect
+@ cases.rows-report-an-undefined-effect-002
+source = ```tauto
+effect ping(): u64
+fn g(): u64 ! {ping, div} { 1 }
+```
+differential = "rows"
+
+// A function whose row is `!?` is the error `rows-row-hole`, at the `!?`, as the Rust host says it.
+@ cases.rows-row-hole-001
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 !? { perform ask(1) }
+fn g(): i64 { f() }
+```
+differential = "rows"
+
+@ cases.rows-row-hole-002
+source = ```tauto
+fn f(n: i64): i64 !? { g(n) }
+fn g(n: i64): i64 !? { f(n) }
+```
+differential = "rows"
+
+@ cases.rows-row-hole-003
+source = ```tauto
+fn f(n: i64): i64 !? { f(n) }
+```
+differential = "rows"
+
+@ cases.rows-row-hole-004
+source = ```tauto
+effect ask(q: i64): i64
+fn g(): i64 !? { perform ask(1) }
+fn f(): i64 !? { g() }
+fn h(): i64 ! {ask} { f() }
+fn k(): i64 ! {} { f() }
+```
+differential = "rows"
+
+@ cases.rows-row-hole-005
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {ask} { g() }
+fn g(): i64 !? { perform ask(1) }
+```
+differential = "rows"
+
+// Mix of required host signatures and replaceable bodies is refused via --rows.
+@ cases.rows-replaceable-mix-required
+source = ```tauto
+extern {
+  type(affine) Host
+  fn make(): Host {
+    Host {}
+  }
+}
+```
+differential = "rows"
+
+// `pub(open)` on a replaceable extern struct is refused via --rows.
+@ cases.rows-replaceable-open
+source = ```tauto
+extern {
+  pub(open) struct Cell {
+    value: i64,
+  }
+
+  pub fn Cell::new(value: i64): Cell {
+    Cell { value: value }
+  }
+}
+```
+differential = "rows"
+
+// A function in a callback type's row is no effect: the row of a type is
+// read like the row of a signature.
+@ cases.rows-function-in-callback-row
+source = ```tauto
+effect ask(): i64
+fn helper(): i64 { 1 }
+fn run<A>(body: () -> A ! {ask, helper}): A ! {ask} { body() }
+```
+differential = "rows"
+
+@ cases.rows-function-in-own-row
+source = ```tauto
+effect ask(): i64
+fn helper(): i64 { 1 }
+fn g(): i64 ! {ask, helper} { perform ask() }
+```
+differential = "rows"
+
+@ cases.rows-undefined-effect-in-callback-row
+source = ```tauto
+effect ask(): i64
+fn run<A>(body: () -> A ! {ask, Pnig}): A ! {ask} { body() }
+```
+differential = "rows"
+
+// A program's own `effect budget` is not the host's budget, in the
+// self-hosted row checker as in Rust's: the operation is the declaration its
+// name resolves to.
+@ cases.rows-own-budget-effect-is-not-the-hosts
+source = ```tauto
+effect budget(n: i64, f: () -> i64): i64
+fn go(): i64 ! {budget} { perform budget(3, () => 1) }
+fn top(): i64 { handle { go() } with { budget(n, f), k => k(n + 40) } }
+```
+differential = "rows"
+
+// A function written with type arguments in a row is a function, not an
+// effect, in the self-hosted component as in its oracle.
+@ cases.rows-function-with-type-arguments-in-a-row
+source = ```tauto
+fn show_it(): Bool { true }
+fn g(): Unit ! {∀ A. show_it(A)} { () }
 ```
 differential = "rows"

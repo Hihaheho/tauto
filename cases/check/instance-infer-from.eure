@@ -1,0 +1,384 @@
+description = "An instance's infer from condition determines only type arguments justified by ordinary matching."
+
+@ cases.instance-infer-from-owned-type
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 3 }
+}
+fn use(value: Local): Nat {
+  let result := Choose::choose(value)
+  result
+}
+```
+checks_all = "ok"
+
+@ cases.instance-infer-owned-conjunction
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, B: Type, I: Type) { fn choose(value: A, other: B): I }
+instance Choose(Local, Nat, Bool) infer from A ∧ B {
+  fn choose(value: Local, other: Nat): Bool { true }
+}
+```
+checks_all = "ok"
+
+@ cases.instance-infer-unowned-disjunction
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, B: Type, I: Type) { fn choose(value: A, other: B): I }
+instance Choose(Local, Nat, Bool) infer from A ∨ B {
+  fn choose(value: Local, other: Nat): Bool { true }
+}
+```
+checks_all = "ok"
+checks."input/main.taut::Choose(Local, Nat, Bool)" = "error: every infer from path must include a named type defined in this tote"
+
+@ cases.instance-infer-conflict-forward
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 3 }
+}
+instance Choose(Local, Bool) infer from A {
+  fn choose(value: Local): Bool { true }
+}
+```
+checks_all = "ok"
+checks."input/main.taut::Choose(Local, Bool)" = "error: infer from conflicts with another instance of this class"
+
+@ cases.instance-infer-conflict-reverse
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Bool) infer from A {
+  fn choose(value: Local): Bool { true }
+}
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 3 }
+}
+```
+checks_all = "ok"
+checks."input/main.taut::Choose(Local, Nat)" = "error: infer from conflicts with another instance of this class"
+
+@ cases.instance-infer-rejects-ordinary-overlap
+extract = false
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) {
+  fn choose(value: Local): Nat { 1 }
+}
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 2 }
+}
+```
+checks_all = "ok"
+checks."input/main.taut::Choose(Local, Nat)" = "error: already defined"
+differential = "elaborator"
+
+@ cases.instance-infer-keeps-distinct-value-indices
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Read(A: Type, n: Nat) { fn read(value: A): Nat }
+instance Read(Local, 2) { fn read(value: Local): Nat { 2 } }
+instance Read(Local, 3) { fn read(value: Local): Nat { 3 } }
+```
+checks_all = "ok"
+differential = "elaborator"
+
+@ cases.instance-infer-owned-type-in-mutual
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+mutual {
+  inductive Local: Type { Mk: Local }
+  inductive Other: Type { Mk: Other }
+}
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 3 }
+}
+fn use(value: Local): Nat { Choose::choose(value) }
+```
+checks_all = "ok"
+differential = "elaborator"
+
+@ cases.instance-infer-same-tote-other-file
+differential_program = "elaborator"
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/types.taut" = ```tauto
+pub(open) inductive Local: Type { Mk: Local }
+```
+files."app/src/main.taut" = ```tauto
+import "types.taut"
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 3 }
+}
+fn use(value: Local): Nat {
+  let result := Choose::choose(value)
+  result
+}
+```
+tote_errors = []
+
+@ cases.instance-infer-after-imported-instance
+differential_program = "elaborator"
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/types.taut" = ```tauto
+pub(open) inductive Local: Type { Mk: Local }
+pub(open) inductive class Base(A: Type) { fn base(value: A): Nat }
+instance Base(Local) {
+  fn base(value: Local): Nat { 1 }
+}
+```
+files."app/src/main.taut" = ```tauto
+import "types.taut"
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 3 }
+}
+fn use(value: Local): Nat {
+  let result := Choose::choose(value)
+  result
+}
+```
+tote_errors = []
+
+@ cases.instance-infer-dependency-not-owner
+differential_program = "elaborator"
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/types.taut" = ```tauto
+pub(open) inductive Local: Type { Mk: Local }
+```
+files."app/src/main.taut" = ```tauto
+import lib::types { Local }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 3 }
+}
+```
+tote_errors = ["every infer from path must include a named type defined in this tote"]
+
+@ cases.instance-infer-does-not-chain
+extract = false
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive Middle: Type { Mk: Middle }
+inductive class First(A: Type, I: Type) { fn get(value: A): I }
+inductive class Second(I: Type, R: Type) { fn make(value: I): R }
+instance First(Local, Middle) infer from A {
+  fn get(value: Local): Middle { Middle::Mk }
+}
+instance Second(Middle, Nat) infer from I {
+  fn make(value: Middle): Nat { 5 }
+}
+fn build<A: Type, I: Type, R: Type>(value: A): R where First(A, I), Second(I, R) {
+  Second::make(<I: I, R: R>, First::get(<A: A, I: I>, value))
+}
+fn consume<T: Type>(value: T): Nat { 0 }
+fn test(): Nat {
+  let result := build(Local::Mk)
+  consume(result)
+}
+```
+checks_all = "ok"
+checks."input/main.taut::build" = "ok"
+checks."input/main.taut::test" = "error: cannot infer"
+differential = "elaborator"
+
+@ cases.instance-infer-with-known-value-parameter
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, n: Nat, I: Type) { fn choose(value: A): I }
+instance Choose(Local, 2, Bool) infer from A {
+  fn choose(value: Local): Bool { true }
+}
+fn use<A: Type, I: Type>(value: A): I where Choose(A, 2, I) {
+  Choose::choose(<A: A, n: 2, I: I>, value)
+}
+fn test(): Bool {
+  let result := use(Local::Mk)
+  result
+}
+```
+checks_all = "ok"
+differential = "elaborator"
+
+@ cases.instance-infer-rejects-value-parameter-atom
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, n: Nat) { fn choose(value: A): Nat }
+instance Choose(Local, 2) infer from n {
+  fn choose(value: Local): Nat { 3 }
+}
+```
+checks_all = "ok"
+checks."input/main.taut::Choose(Local, 2)" = "error: infer from must name type parameters of this class"
+
+@ cases.instance-infer-independent-nested-call
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+inductive class Nested(A: Type, I: Type) { fn get(value: A): I }
+instance Choose(Local, Nat) infer from A {
+  fn choose(value: Local): Nat { 3 }
+}
+instance Nested(Local, Nat) infer from A {
+  fn get(value: Local): Nat { 4 }
+}
+fn outer<A: Type, I: Type>(value: A, unrelated: Nat): I where Choose(A, I) {
+  Choose::choose(value)
+}
+fn test(): Nat {
+  let result := outer(Local::Mk, Nested::get(Local::Mk))
+  result
+}
+```
+checks_all = "ok"
+differential = "elaborator"
+
+@ cases.instance-infer-default-and-specific
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, S: Type, I: Type) { fn choose(value: A, state: S): I }
+instance Choose(Local, Nat, Nat) infer from A {
+  fn choose(value: Local, state: Nat): Nat { 3 }
+}
+instance Choose(Local, Bool, Bool) infer from A ∧ S {
+  fn choose(value: Local, state: Bool): Bool { true }
+}
+fn use_nat(value: Local, state: Nat): Nat {
+  let result := Choose::choose(value, state)
+  result
+}
+fn use_bool(value: Local, state: Bool): Bool {
+  let result := Choose::choose(value, state)
+  result
+}
+```
+checks_all = "ok"
+
+@ cases.instance-infer-applied-heads-conservatively-conflict
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local(A: Type): Type { Mk(value: A): Local(A) }
+inductive class Choose(A: Type, I: Type) { fn choose(value: A): I }
+instance Choose(Local(Nat), Nat) infer from A {
+  fn choose(value: Local(Nat)): Nat { 3 }
+}
+instance Choose(Local(Bool), Bool) infer from A {
+  fn choose(value: Local(Bool)): Bool { true }
+}
+```
+checks_all = "ok"
+checks."input/main.taut::Choose(Local(Bool), Bool)" = "error: infer from conflicts with another instance of this class"
+
+@ cases.instance-infer-or-one-candidate
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, S: Type, I: Type) { fn choose(value: A, state: S): I }
+instance Choose(Local, Local, Nat) infer from A ∨ S {
+  fn choose(value: Local, state: Local): Nat { 3 }
+}
+fn use(value: Local): Nat {
+  let result := Choose::choose(value, value)
+  result
+}
+```
+checks_all = "ok"
+differential = "elaborator"
+
+@ cases.instance-infer-unicode-parameter
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(入力: Type, 出力: Type) { fn choose(value: 入力): 出力 }
+instance Choose(Local, Nat) infer from 入力 {
+  fn choose(value: Local): Nat { 3 }
+}
+fn use(value: Local): Nat {
+  let result := Choose::choose(value)
+  result
+}
+```
+checks_all = "ok"
+differential = "elaborator"
+
+@ cases.instance-infer-from-expected-argument
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, I: Type) { fn make(): I }
+instance Choose(Local, Nat) infer from A {
+  fn make(): Nat { 3 }
+}
+fn accept(value: Local, number: Nat): Nat { number }
+fn make<A: Type, I: Type>(value: A): I where Choose(A, I) {
+  Choose::make(<A: A, I: I>)
+}
+fn use(value: Local): Nat {
+  let result := make(value)
+  accept(value, result)
+}
+```
+checks_all = "ok"
+
+@ cases.instance-infer-does-not-fill-value-parameter
+extract = false
+imports = [path`../../std/base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Local: Type { Mk: Local }
+inductive class Choose(A: Type, n: Nat) { fn choose(value: A): Nat }
+instance Choose(Local, 2) infer from A {
+  fn choose(value: Local): Nat { 3 }
+}
+fn use<A: Type, n: Nat>(value: A): Nat where Choose(A, n) {
+  Choose::choose(<A: A, n: n>, value)
+}
+fn test(): Nat { use(Local::Mk) }
+```
+checks_all = "ok"
+checks."input/main.taut::use" = "ok"
+checks."input/main.taut::test" = "error: infer from does not determine all required type arguments"
+differential = "elaborator"

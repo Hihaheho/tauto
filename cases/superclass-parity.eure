@@ -1,0 +1,41 @@
+description = "The type checkers agree on inherited dictionary arguments."
+
+@ cases.use-and-forward-inherited-bounds
+source = ```tauto
+class Parent(A: Shared) { fn apply(x: A): A }
+class Middle(A: Shared) where Parent(A) { fn keep(x: A): A }
+class Child(A: Shared) where Middle(A) { fn get(x: A): A }
+instance Parent(Bool) { fn apply(x: Bool): Bool { not(x) } }
+instance Middle(Bool) { fn keep(x: Bool): Bool { x } }
+instance Child(Bool) { fn get(x: Bool): Bool { x } }
+
+fn parent_use<A: Shared>(x: A): A where Parent(A) { Parent::apply(x) }
+fn child_use<A: Shared>(x: A): A where Child(A) { parent_use(Middle::keep(Child::get(x))) }
+fn both<A: Shared>(x: A): A where Child(A), Parent(A) { child_use(x) }
+let result := both(true)
+```
+differential = "types"
+
+@ cases.missing-parent-instance
+source = ```tauto
+class Parent(A: Shared) { fn apply(x: A): A }
+class Child(A: Shared) where Parent(A) { fn get(x: A): A }
+instance Child(Bool) { fn get(x: Bool): Bool { x } }
+fn use_child<A: Shared>(x: A): A where Child(A) { Parent::apply(x) }
+let result := use_child(true)
+```
+differential = "types"
+
+@ cases.cycle-in-parent-declarations
+source = ```tauto
+class Child(A: Shared) where Parent(A) { fn get(x: A): A }
+class Parent(A: Shared) where Child(A) { fn apply(x: A): A }
+```
+differential = "types"
+
+@ cases.parent-requires-the-child-argument
+source = ```tauto
+class Parent(A: Shared) { fn apply(x: A): A }
+class Child(A: Shared) where Parent(Bool) { fn get(x: A): A }
+```
+differential = "types"

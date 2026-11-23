@@ -1,40 +1,42 @@
 import "binding_freshness.taut"
-import std::Base
-import std::Nat
+import std::base
+import std::nat
 import "checker.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "unify_sound.taut"
 
 // Syntactic variable scope, independent of whether a variable is solved.
 mutual {
   pub fn TypeAllocated(limit: Nat, ty: Ty): Prop {
-    ⊢ Prop from match ty {
-      TyInt(width) => True
+    match ty {
+      TyInt(^width) => True
       TyBool => True
       TyText => True
       TyUnit => True
       TyNever => True
       TyDecimal => True
       TyFloat => True
-      TyParam(name, kind) => True
+      TyFloat32 => True
+      TyParam(^name, ^kind) => True
       TyVar(index) => Nat::le(Succ(index), limit) = true
-      TyFn(params, result, kind) => And(
+      TyFn(params, result, ^kind) => And(
         TypeListAllocated(limit, params),
         TypeAllocated(limit, result)
       )
       TyUnion(members) => TypeListAllocated(limit, members)
       TyProduct(members) => TypeListAllocated(limit, members)
-      TyNamed(name, params) => TypeListAllocated(limit, params)
-      TyTagged(tags, inner) => TypeAllocated(limit, inner)
+      TyNamed(^name, params) => TypeListAllocated(limit, params)
+      TyTagged(^tags, inner) => TypeAllocated(limit, inner)
       TyInfo(inner) => TypeAllocated(limit, inner)
-      TyBorrow(inner, mutable) => TypeAllocated(limit, inner)
-      TyPoly(gs, inner) => TypeAllocated(limit, inner)
+      TyBorrow(inner, ^mutable) => TypeAllocated(limit, inner)
+      TyPoly(^gs, inner) => TypeAllocated(limit, inner)
       TyApp(head, arg) => And(TypeAllocated(limit, head), TypeAllocated(limit, arg))
     }
   }
   pub fn TypeListAllocated(limit: Nat, types: List(Ty)): Prop {
-    ⊢ Prop from match types {
+    match types {
       Nil => True
       Cons(head, tail) => And(TypeAllocated(limit, head), TypeListAllocated(limit, tail))
     }
@@ -48,7 +50,7 @@ mutual {
     advanced: Nat::le(before, after) = true,
     h: TypeAllocated(before, ty)
   ): TypeAllocated(after, ty) {
-    ⊢ TypeAllocated(after, ty) from match ty {
+    match ty {
       TyInt(width) => Trivial
       TyBool => Trivial
       TyText => Trivial
@@ -56,6 +58,7 @@ mutual {
       TyNever => Trivial
       TyDecimal => Trivial
       TyFloat => Trivial
+      TyFloat32 => Trivial
       TyParam(name, kind) => Trivial
       TyVar(index) => Nat::le_trans(Succ(index), before, after, h, advanced)
       TyFn(params, result, kind) => AndIntro(
@@ -82,7 +85,7 @@ mutual {
     advanced: Nat::le(before, after) = true,
     h: TypeListAllocated(before, types)
   ): TypeListAllocated(after, types) {
-    ⊢ TypeListAllocated(after, types) from match types {
+    match types {
       Nil => Trivial
       Cons(head, tail) => AndIntro(
         type_allocated_weaken(head, before, after, advanced, And::left(h)),

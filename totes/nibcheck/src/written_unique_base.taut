@@ -1,38 +1,39 @@
 import "written_value_base.taut"
-import std::Map
-import std::Text
+import std::map
+import std::text
 import "datas.taut"
 import "rules_written.taut"
 import "ty.taut"
 import "../../surface/src/surface.taut"
+import "../../identity/src/identity.taut"
 
 // These predicates quantify over the declaration environment as well: it may
 // reject a type expression, but cannot change its successfully elaborated value.
 pub def WrittenTermUnique(
   generics: Ordmap(Text, Ty),
   partial: Bool,
-  borrow: Bool,
+  r#borrow: Bool,
   term: SurfaceTerm,
   t: Ty
 ): Prop := ∀ env: Datas. ∀ other: Ty. ∀ meaning: WrittenTerm(
   env,
   generics,
   partial,
-  borrow,
+  r#borrow,
   term,
   other
 ). t = other
 pub def WrittenKindUnique(
   generics: Ordmap(Text, Ty),
   partial: Bool,
-  borrow: Bool,
+  r#borrow: Bool,
   kind: SurfaceKind,
   t: Ty
 ): Prop := ∀ env: Datas. ∀ other: Ty. ∀ meaning: WrittenKind(
   env,
   generics,
   partial,
-  borrow,
+  r#borrow,
   kind,
   other
 ). t = other
@@ -56,20 +57,20 @@ pub def WrittenParametersUnique(
 pub theorem written_unique_term<env: Datas, generics: Ordmap(
   Text,
   Ty
-), partial: Bool, borrow: Bool, sk: SurfaceKind, start: Nat, end: Nat, other: Ty>(
+), partial: Bool, r#borrow: Bool, sk: SurfaceKind, start: Nat, end: Nat, other: Ty>(
   ast_occurrence: Option(TermOccurrence),
   meaning: WrittenTerm(
     env,
     generics,
     partial,
-    borrow,
+    r#borrow,
     SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
     other
   ),
   t: Ty,
-  ih: WrittenKindUnique(generics, partial, borrow, sk, t)
+  ih: WrittenKindUnique(generics, partial, r#borrow, sk, t)
 ): t = other {
-  ⊢ t = other from match meaning {
+  match meaning {
     Mk(ctor_ast_occurrence, gs, Mode, borrowing, kind, value, begin, finish, inner) => ih(
       env,
       value,
@@ -80,135 +81,39 @@ pub theorem written_unique_term<env: Datas, generics: Ordmap(
 pub theorem written_unique_name<env: Datas, generics: Ordmap(
   Text,
   Ty
-), partial: Bool, borrow: Bool, name: Text, other: Ty>(
-  meaning: WrittenKind(env, generics, partial, borrow, SkVar(name), other),
+), partial: Bool, r#borrow: Bool, name: SurfaceName, other: Ty>(
+  meaning: WrittenKind(env, generics, partial, r#borrow, SkVar(name), other),
   first_env: Datas,
   t: Ty,
-  first: WrittenNameType(first_env, generics, name, partial, t)
+  not_star: (surface_name_text(name) = "std::prelude::Star") -> False,
+  first: WrittenNameType(first_env, generics, surface_name_text(name), partial, t)
 ): t = other {
-  ⊢ t = other from match meaning {
-    WrittenKindName(gs, Mode, borrowing, spelling, value, Named) => Eq::trans(
+  match meaning {
+    WrittenKindName(gs, Mode, borrowing, spelling, value, NotStar, Named) => Eq::trans(
       Eq::sym(written_name_mode_value(first)),
       written_name_mode_value(Named)
     )
+    WrittenKindUnit(gs, Mode, borrowing) => False::elim(not_star(Refl))
+  }
+}
+pub theorem written_unique_row<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, r#borrow: Bool, es: List(RowEntry), other: Ty>(
+  meaning: WrittenKind(env, generics, partial, r#borrow, SkRow(es), other)
+): TyUnit = other {
+  match meaning {
+    WrittenKindRow(gs, Mode, borrowing, row) => Refl
   }
 }
 pub theorem written_unique_unit<env: Datas, generics: Ordmap(
   Text,
   Ty
-), partial: Bool, borrow: Bool, start: Nat, end: Nat, other: Ty>(
-  ast_occurrence: Option(TermOccurrence),
-  meaning: WrittenKind(
-    env,
-    generics,
-    partial,
-    borrow,
-    SkApp(SurfaceTermIndexedMk(SkVar("Tuple"), start, end, ast_occurrence), Nil),
-    other
-  )
+), partial: Bool, r#borrow: Bool, other: Ty>(
+  meaning: WrittenKind(env, generics, partial, r#borrow, SkVar(NameSpelled("std::prelude::Star")), other)
 ): TyUnit = other {
-  ⊢ TyUnit = other from match meaning {
-    WrittenKindUnit(ctor_ast_occurrence, gs, Mode, borrowing, begin, finish) => Refl
-    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, name, args, types, begin, finish, NotTuple, not_info, unbound, SliceBorrowed, arguments, arity) => False::elim(
-      NotTuple(Refl)
-    )
-  }
-}
-pub theorem written_unique_info<env: Datas, generics: Ordmap(
-  Text,
-  Ty
-), partial: Bool, borrow: Bool, start: Nat, end: Nat, arg: SurfaceTerm, other: Ty>(
-  ast_occurrence: Option(TermOccurrence),
-  meaning: WrittenKind(
-    env,
-    generics,
-    partial,
-    borrow,
-    SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
-    other
-  ),
-  t: Ty,
-  ih: WrittenTermUnique(generics, partial, false, arg, t)
-): TyInfo(t) = other {
-  ⊢ TyInfo(t) = other from match meaning {
-    WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, first, value, begin, finish, argument) => Eq::congr(
-      TyInfo,
-      ih(env, value, argument)
-    )
-    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, name, args, types, begin, finish, NotTuple, not_info, unbound, SliceBorrowed, arguments, arity) => False::elim(
-      not_info(Refl, Refl)
-    )
-    WrittenKindGeneric(ctor_ast_occurrence, gs, Mode, borrowing, name, first, head, value, bound, begin, finish, not_info, Parameter, constructor, argument) => False::elim(
-      not_info(Refl)
-    )
-  }
-}
-pub theorem written_unique_borrow<env: Datas, generics: Ordmap(
-  Text,
-  Ty
-), partial: Bool, borrow: Bool, mutable: Bool, body: SurfaceTerm, other: Ty>(
-  meaning: WrittenKind(env, generics, partial, borrow, SkBorrow(mutable, body), other),
-  t: Ty,
-  ih: WrittenTermUnique(generics, partial, true, body, t)
-): TyBorrow(t, mutable) = other {
-  ⊢ TyBorrow(t, mutable) = other from match meaning {
-    WrittenKindBorrow(gs, Mode, borrowing, r#mut, term, value, inner) => Eq::congr(
-      (x: Ty) => TyBorrow(x, r#mut),
-      ih(env, value, inner)
-    )
-  }
-}
-pub theorem written_unique_union<env: Datas, generics: Ordmap(
-  Text,
-  Ty
-), partial: Bool, borrow: Bool, parts: List(
-  SurfaceTerm
-), other: Ty>(
-  meaning: WrittenKind(env, generics, partial, borrow, SkUnion(parts), other),
-  types: List(Ty),
-  ih: WrittenTermsUnique(generics, partial, parts, types)
-): ty_union(types) = other {
-  ⊢ ty_union(types) = other from match meaning {
-    WrittenKindUnion(gs, Mode, borrowing, terms, values, inner) => Eq::congr(
-      ty_union,
-      ih(env, values, inner)
-    )
-    WrittenKindProduct(gs, mode, borrowing, terms, values, inner) => Eq::congr(
-      ty_product,
-      ih(env, values, inner)
-    )
-  }
-}
-
-pub theorem written_unique_product<env: Datas, generics: Ordmap(
-  Text,
-  Ty
-), partial: Bool, borrow: Bool, parts: List(
-  SurfaceTerm
-), other: Ty>(
-  meaning: WrittenKind(env, generics, partial, borrow, SkProduct(parts), other),
-  types: List(Ty),
-  ih: WrittenTermsUnique(generics, partial, parts, types)
-): Eq(Ty, ty_product(types), other) {
-  ⊢ Eq(Ty, ty_product(types), other) from match meaning {
-    WrittenKindProduct(gs, mode, borrowing, terms, values, inner) => Eq::congr(
-      ty_product,
-      ih(env, values, inner)
-    )
-  }
-}
-pub theorem written_unique_tagged<env: Datas, generics: Ordmap(
-  Text,
-  Ty
-), partial: Bool, borrow: Bool, tag: Text, body: SurfaceTerm, other: Ty>(
-  meaning: WrittenKind(env, generics, partial, borrow, SkTagged(tag, body), other),
-  t: Ty,
-  ih: WrittenTermUnique(generics, partial, false, body, t)
-): ty_tagged(Cons(tag, Nil), t) = other {
-  ⊢ ty_tagged(Cons(tag, Nil), t) = other from match meaning {
-    WrittenKindTagged(gs, Mode, borrowing, label, term, value, inner) => Eq::congr(
-      (x: Ty) => ty_tagged(Cons(label, Nil), x),
-      ih(env, value, inner)
-    )
+  match meaning {
+    WrittenKindUnit(gs, Mode, borrowing) => Refl
+    WrittenKindName(gs, Mode, borrowing, spelling, value, NotStar, Named) => False::elim(NotStar(Refl))
   }
 }

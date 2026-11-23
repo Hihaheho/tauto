@@ -1,3 +1,4 @@
+import "messages.taut"
 import "rules_call.taut"
 import "argument_sound.taut"
 import "application_frame.taut"
@@ -6,12 +7,14 @@ import "datas.taut"
 import "datas_frame.taut"
 import "diagnostic_sound.taut"
 import "fits_sound.taut"
+import "fits_sound_head.taut"
 import "ty.taut"
 import "types_infer.taut"
+import "infer_parts.taut"
 import "unify.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
-import std::Text
+import std::text
 
 pub def CallAt(
   c: Checker,
@@ -23,6 +26,7 @@ pub def CallAt(
   KeptOk(ck_kept_of(c)),
   InstAt(c),
   DupAt(c),
+  ck_datas_of(c),
   function,
   args,
   result
@@ -34,7 +38,7 @@ pub theorem call_unborrowed(
   result: Ty,
   inner: CallAt(c, ty_unborrowed(function), args, result)
 ): CallAt(c, function, args, result) {
-  ⊢ CallAt(c, function, args, result) from match function {
+  match function {
     TyInt(w) => inner
     TyBool => inner
     TyText => inner
@@ -42,6 +46,7 @@ pub theorem call_unborrowed(
     TyNever => inner
     TyDecimal => inner
     TyFloat => inner
+    TyFloat32 => inner
     TyFn(ps, ret, kind) => inner
     TyUnion(ys) => inner
     TyProduct(ys) => inner
@@ -138,12 +143,7 @@ pub theorem call_arity_sound(
         ck_st(
           ck_error(
             c,
-            cat4(
-              "a function of ",
-              Text::of_nat(list_len(ps)),
-              " values is given ",
-              Text::of_nat(list_len(args))
-            ),
+            function_argument_count_message(Text::of_nat(list_len(ps)), Text::of_nat(list_len(args))),
             span_of(term)
           )
         )
@@ -152,12 +152,7 @@ pub theorem call_arity_sound(
         ck_rewrap1_id(
           ck_error(
             c,
-            cat4(
-              "a function of ",
-              Text::of_nat(list_len(ps)),
-              " values is given ",
-              Text::of_nat(list_len(args))
-            ),
+            function_argument_count_message(Text::of_nat(list_len(ps)), Text::of_nat(list_len(args))),
             span_of(term)
           )
         ),
@@ -166,12 +161,7 @@ pub theorem call_arity_sound(
       False::elim(
         diagnostic_error_impossible(
           c,
-          cat4(
-            "a function of ",
-            Text::of_nat(list_len(ps)),
-            " values is given ",
-            Text::of_nat(list_len(args))
-          ),
+          function_argument_count_message(Text::of_nat(list_len(ps)), Text::of_nat(list_len(args))),
           span_of(term),
           unwrapped
         )
@@ -187,14 +177,14 @@ pub def CallResult(
   m: Mut1(Ty, Checker)
 ): Prop := And(Grows(c, ck_st(m)), CallAt(ck_st(m), function, args, ck_val(m)))
 pub fn call_return_result(result: Ty, m: Mut1(Unit, Checker)): Mut1(Ty, Checker) {
-  frame_bind(Unit, Ty, (ignored: Unit, next: Checker) => mut1(result, next), m)
+  frame_bind(<A: Unit, B: Ty>, (ignored: Unit, next: Checker) => mut1(result, next), m)
 }
 pub theorem call_return_clean(
   result: Ty,
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(call_return_result(result, m)))
 ): DiagnosticClean(ck_st(m)) {
-  ⊢ DiagnosticClean(ck_st(m)) from match m { mut1(value, state) => clean }
+  match m { mut1(value, state) => clean }
 }
 pub theorem call_return_sound(
   c: Checker,
@@ -207,7 +197,7 @@ pub theorem call_return_sound(
   m: Mut1(Unit, Checker),
   h: ArgumentsResult(c, args, ps, m)
 ): CallResult(c, function, args, call_return_result(result, m)) {
-  ⊢ CallResult(c, function, args, call_return_result(result, m)) from match m {
+  match m {
     mut1(value, state) => AndIntro(
       And::left(h),
       call_resolved_shape(

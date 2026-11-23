@@ -3,25 +3,25 @@
 @ cases.class-call
 source = ```nib
 class Cmp(A: Linear) {
-  fn cmp(&a: A, &b: A): i64
+  fn cmp(a: &A, b: &A): i64
 }
 instance Cmp(i64) {
-  fn cmp(&a: i64, &b: i64): i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
+  fn cmp(a: &i64, b: &i64): i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
 }
-perform show("c", Cmp::cmp(&1, &2))
+show(&Cmp::cmp(&1, &2))
 ```
-shows = ["c = -1"]
+stdout = "-1\n"
 
 @ cases.class-nested-instance
 source = ```nib
 class Cmp(A: Linear) {
-  fn cmp(&a: A, &b: A): i64
+  fn cmp(a: &A, b: &A): i64
 }
 instance Cmp(i64) {
-  fn cmp(&a: i64, &b: i64): i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
+  fn cmp(a: &i64, b: &i64): i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
 }
 instance<A> Cmp(List(A)) where Cmp(A) {
-  fn cmp(&a: List(A), &b: List(A)): i64 {
+  fn cmp(a: &List(A), b: &List(A)): i64 {
     match a {
       Nil => match b {
         Nil => 0
@@ -37,162 +37,183 @@ instance<A> Cmp(List(A)) where Cmp(A) {
     }
   }
 }
-perform show("a", Cmp::cmp(&Cons(1, Cons(2, Nil)), &Cons(1, Cons(3, Nil))))
-perform show("b", Cmp::cmp(&Cons(1, Nil), &Cons(1, Nil)))
+show(&Cmp::cmp(&Cons(1, Cons(2, Nil)), &Cons(1, Cons(3, Nil))))
+show(&Cmp::cmp(&Cons(1, Nil), &Cons(1, Nil)))
 ```
-shows = ["a = -1", "b = 0"]
+stdout = ```
+-1
+0
+```
 
 @ cases.class-constrained-function
 source = ```nib
 class Cmp(A: Linear) {
-  fn cmp(&a: A, &b: A): i64
+  fn cmp(a: &A, b: &A): i64
 }
 instance Cmp(i64) {
-  fn cmp(&a: i64, &b: i64): i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
+  fn cmp(a: &i64, b: &i64): i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
 }
 fn bigger<A: Shared>(a: A, b: A): A where Cmp(A) {
   if Cmp::cmp(&a, &b) < 0 { b } else { a }
 }
-perform show("m", bigger(3, 7))
+show(&bigger(3, 7))
 ```
-shows = ["m = 7"]
+stdout = "7\n"
 
 @ cases.class-two-methods
 source = ```nib
 class Shape(A: Shared) {
-  fn area(&a: A): i64
-  fn name(&a: A): Text
+  fn area(a: &A): nat
+  fn name(a: &A): Text
 }
-struct Sq { side: i64 }
+struct Sq { side: nat }
 instance Shape(Sq) {
-  fn area(&a: Sq): i64 { a.side * a.side }
-  fn name(&a: Sq): Text { "square" }
+  fn area(a: &Sq): nat { a.side * a.side }
+  fn name(a: &Sq): Text { "square" }
 }
 fn describe<A: Shared>(s: A): Text where Shape(A) {
   Shape::name(&s)
 }
-perform show("n", describe(Sq { side: 3 }))
-perform show("a", Shape::area(&Sq { side: 3 }))
+show(&describe(Sq { side: 3 }))
+show(&Shape::area(&Sq { side: 3 }))
 ```
-shows = ["n = \"square\"", "a = 9"]
+stdout = ```
+"square"
+9
+```
 
 @ cases.class-closure-returns
 source = ```nib
 class Cmp(A: Linear) {
-  fn cmp(&a: A, &b: A): i64
+  fn cmp(a: &A, b: &A): i64
 }
 instance Cmp(i64) {
-  fn cmp(&a: i64, &b: i64): i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
+  fn cmp(a: &i64, b: &i64): i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
 }
 fn rank<A: Shared>(base: A): (A) -> i64 where Cmp(A) {
   (x: A) => Cmp::cmp(&x, &base)
 }
 let f := rank(5)
-perform show("r", f(9))
+show(&f(9))
 ```
-shows = ["r = 1"]
+stdout = "1\n"
 
 @ cases.class-method-as-value
 source = ```nib
 class Cmp(A: Linear) {
-  fn cmp(&a: A, &b: A): i64
+  fn cmp(a: &A, b: &A): i64
 }
 instance Cmp(i64) {
-  fn cmp(&a: i64, &b: i64): i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
+  fn cmp(a: &i64, b: &i64): i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
 }
-fn twice(f: (&i64, &i64) -> i64): i64 { f(&1, &2) + f(&2, &1) }
-perform show("t", twice(Cmp::cmp))
+fn twice(f: (&i64, &i64) -> i64): i64 ! {overflow} { f(&1, &2) + f(&2, &1) }
+show(&twice(Cmp::cmp))
 ```
-shows = ["t = 0"]
+stdout = "0\n"
 
 @ cases.std-ord
 source = ```nib
-import std::prelude::Ord
+import std::builtin::ord
 
-perform show("a", Ord::compare(&1, &2))
-perform show("b", Ord::compare(&Cons(1, Nil), &Cons(1, Cons(0, Nil))))
-perform show("c", Ord::compare(&Some(3), &None))
-perform show("d", Ord::compare(&Pair { fst: 1, snd: "b" }, &Pair { fst: 1, snd: "a" }))
+show(&Ord::compare(&1, &2))
+show(&Ord::compare(&Cons(1, Nil), &Cons(1, Cons(0, Nil))))
+show(&Ord::compare(&Some(3), &None))
+show(&Ord::compare(&#(1, "b"), &#(1, "a")))
 ```
-shows = ["a = Less", "b = Less", "c = Greater", "d = Greater"]
+stdout = ```
+Less
+Less
+Greater
+Greater
+```
 
 @ cases.std-sort-and-extremes
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Vec::into_list` yet"
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Classes
+import std::builtin::classes
 
 var v := Vec::new()
 Vec::push(&mut v, 3)
 Vec::push(&mut v, 1)
 Vec::push(&mut v, 2)
 Vec::sort(&mut v)
-perform show("v", Vec::into_list(v))
-perform show("max", List::max(Cons(2, Cons(9, Cons(4, Nil)))))
-perform show("min", List::min(Cons(2, Cons(9, Cons(4, Nil)))))
+show(&Vec::into_list(v))
+show(&List::max(Cons(2, Cons(9, Cons(4, Nil)))))
+show(&List::min(Cons(2, Cons(9, Cons(4, Nil)))))
 ```
-shows = ["v = Cons(1, Cons(2, Cons(3, Nil)))", "max = Some(9)", "min = Some(2)"]
+stdout = ```
+[1, 2, 3]
+Some(9)
+Some(2)
+```
 
 @ cases.std-to-text
 source = ```nib
-import std::prelude::Classes
+import std::builtin::classes
 
-perform show("a", ToText::to_text(&Cons(1, Cons(2, Nil))))
-perform show("b", join(Cons(1, Cons(2, Cons(3, Nil))), "-"))
-perform show("c", ToText::to_text(&Some(true)))
-perform show("d", ToText::to_text(&Pair { fst: 7, snd: "x" }))
+show(&ToText::to_text(&Cons(1, Cons(2, Nil))))
+show(&join(Cons(1, Cons(2, Cons(3, Nil))), "-"))
+show(&ToText::to_text(&Some(true)))
+show(&ToText::to_text(&#(7, "x")))
 ```
-shows = ["a = \"[1, 2]\"", "b = \"1-2-3\"", "c = \"Some(true)\"", "d = \"(7, x)\""]
+stdout = ```
+"[1, 2]"
+"1-2-3"
+"Some(true)"
+"(7, x)"
+```
 
 // A product has instances of `Ord` and `ToText` of its own: in the order of its members,
 // and a product of three is its first member and the product of the other two.
 @ cases.std-ord-and-to-text-of-products
+llvm.unimplemented = "generate: the LLVM backend does not write the builtin `Vec::into_list` yet"
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Classes
-import std::prelude::Ord
+import std::builtin::classes
+import std::builtin::ord
 
-perform show("a", Ord::compare(&#(1, 2), &#(1, 3)))
-perform show("b", Ord::compare(&#(2, 0), &#(1, 9)))
-perform show("c", Ord::compare(&#(1, 2, 3), &#(1, 2, 3)))
-perform show("d", Ord::compare(&#(1, 2, 4), &#(1, 2, 3)))
-perform show("e", ToText::to_text(&#(7, "x")))
-perform show("f", ToText::to_text(&#(1, 2, 3)))
+show(&Ord::compare(&#(1, 2), &#(1, 3)))
+show(&Ord::compare(&#(2, 0), &#(1, 9)))
+show(&Ord::compare(&#(1, 2, 3), &#(1, 2, 3)))
+show(&Ord::compare(&#(1, 2, 4), &#(1, 2, 3)))
+show(&ToText::to_text(&#(7, "x")))
+show(&ToText::to_text(&#(1, 2, 3)))
 var v := Vec::new()
 Vec::push(&mut v, #(2, 1))
 Vec::push(&mut v, #(1, 5))
 Vec::push(&mut v, #(2, 0))
 Vec::push(&mut v, #(1, 2))
 Vec::sort(&mut v)
-perform show("sorted", ToText::to_text(&Vec::into_list(v)))
+show(&ToText::to_text(&Vec::into_list(v)))
 var w := Vec::new()
 Vec::push(&mut w, #(1, 2, 3))
 Vec::push(&mut w, #(1, 1, 9))
 Vec::push(&mut w, #(0, 5, 5))
 Vec::sort(&mut w)
-perform show("sorted3", ToText::to_text(&Vec::into_list(w)))
-perform show("max", List::max(Cons(#(1, 9), Cons(#(3, 0), Cons(#(2, 7), Nil)))))
+show(&ToText::to_text(&Vec::into_list(w)))
+show(&List::max(Cons(#(1, 9), Cons(#(3, 0), Cons(#(2, 7), Nil)))))
 ```
-shows = [
-  "a = Less",
-  "b = Greater",
-  "c = Equal",
-  "d = Greater",
-  "e = \"(7, x)\"",
-  "f = \"(1, (2, 3))\"",
-  "sorted = \"[(1, 2), (1, 5), (2, 0), (2, 1)]\"",
-  "sorted3 = \"[(0, (5, 5)), (1, (1, 9)), (1, (2, 3))]\"",
-  "max = Some(#(3, 0))",
-]
+stdout = ```
+Less
+Greater
+Equal
+Greater
+"(7, x)"
+"(1, (2, 3))"
+"[(1, 2), (1, 5), (2, 0), (2, 1)]"
+"[(0, (5, 5)), (1, (1, 9)), (1, (2, 3))]"
+Some(#(3, 0))
+```
 
 @ cases.user-instance-for-a-std-class
+extract = false
+llvm.unimplemented = "generate: the LLVM backend does not write a `handle` with an arm that does not resume yet"
 source = ```nib
-import std::prelude::Affine
-import std::prelude::Classes
-import std::prelude::Ord
+import std::builtin::classes
+import std::builtin::ord
 
 struct P { x: i64 }
 instance Ord(P) {
-  fn compare(&a: P, &b: P): Ordering { Ord::compare(&a.x, &b.x) }
+  fn compare(a: &P, b: &P): Ordering { Ord::compare(&a.x, &b.x) }
 }
 var v := Vec::new()
 Vec::push(&mut v, P { x: 5 })
@@ -201,63 +222,66 @@ Vec::sort(&mut v)
 let first := handle { Vec::index(&v, 0).x } with {
   out_of_bounds() => 0
 }
-perform show("first", first)
+show(&first)
 ```
-shows = ["first = 2"]
+stdout = "2\n"
 
 @ cases.method-generics-fold
 source = ```nib
-import std::prelude::Shared
 
 class Fold(A: Type) {
-  fn fold<B: Shared>(&a: A, init: B, f: (B, i64) -> B): B
+  fn fold<B: Shared>(a: &A, init: B, f: (B, i64) -> B ! {overflow}): B ! {overflow}
 }
 instance Fold(i64) {
-  fn fold<B: Shared>(&a: i64, init: B, f: (B, i64) -> B): B { f(init, a) }
+  fn fold<B: Shared>(a: &i64, init: B, f: (B, i64) -> B ! {overflow}): B ! {overflow} { f(init, a) }
 }
-fn both<A>(x: A): Text where Fold(A) {
+fn both<A>(x: A): Text ! {overflow} where Fold(A) {
   let n := Fold::fold(&x, 10, (acc, v) => acc + v)
   let t := Fold::fold(&x, "n", (acc, v) => concat(acc, Text::of_i64(v)))
   concat(t, Text::of_i64(n))
 }
-perform show("r", both(5))
+show(&both(5))
 ```
-shows = ["r = \"n515\""]
+stdout = ```
+"n515"
+```
 
 @ cases.method-generics-passed-on
 source = ```nib
 class Fold(A: Type) {
-  fn fold<B: Shared>(&a: A, init: B, f: (B, i64) -> B): B
+  fn fold<B: Shared>(a: &A, init: B, f: (B, nat) -> B): B
 }
-instance Fold(i64) {
-  fn fold<B: Shared>(&a: i64, init: B, f: (B, i64) -> B): B { f(init, a) }
+instance Fold(nat) {
+  fn fold<B: Shared>(a: &nat, init: B, f: (B, nat) -> B): B { f(init, a) }
 }
-fn inner<A>(x: A): i64 where Fold(A) { Fold::fold(&x, 1, (acc, v) => acc + v) }
-fn outer<A>(x: A): i64 where Fold(A) { inner(x) * 2 }
-perform show("r", outer(5))
+fn inner<A>(x: A): nat where Fold(A) { Fold::fold(&x, 1, (acc, v) => acc + v) }
+fn outer<A>(x: A): nat where Fold(A) { inner(x) * 2 }
+let n: nat := 5
+show(&outer(n))
 ```
-shows = ["r = 12"]
+stdout = "12\n"
 
 @ cases.method-generics-nested-instance
 source = ```nib
 class Fold(A: Type) {
-  fn fold<B: Shared>(&a: A, init: B, f: (B, i64) -> B): B
+  fn fold<B: Shared>(a: &A, init: B, f: (B, nat) -> B): B
 }
-instance Fold(i64) {
-  fn fold<B: Shared>(&a: i64, init: B, f: (B, i64) -> B): B { f(init, a) }
+instance Fold(nat) {
+  fn fold<B: Shared>(a: &nat, init: B, f: (B, nat) -> B): B { f(init, a) }
 }
 instance<A: Shared> Fold(List(A)) where Fold(A) {
-  fn fold<B: Shared>(&a: List(A), init: B, f: (B, i64) -> B): B {
+  fn fold<B: Shared>(a: &List(A), init: B, f: (B, nat) -> B): B {
     match a {
       Nil => init
       Cons(x, rest) => Fold::fold(&rest, Fold::fold(&x, init, f), f)
     }
   }
 }
-fn total<A>(x: A): i64 where Fold(A) { Fold::fold(&x, 0, (acc, v) => acc + v) }
-perform show("r", total(Cons(1, Cons(2, Cons(3, Nil)))))
+fn total<A>(x: A): nat where Fold(A) { Fold::fold(&x, 0, (acc, v) => acc + v) }
+let xs: List(nat) := Cons(1, Cons(2, Cons(3, Nil)))
+show(&total(xs))
 ```
-shows = ["r = 6"]
+stdout = "6\n"
 
 @ cases.hkt-functor-list
 source = ```nib
@@ -288,15 +312,15 @@ instance<E: Shared> Functor(Result(E)) {
     }
   }
 }
-fn double_all<F: (Shared) -> Shared>(x: F(i64)): F(i64) where Functor(F) {
-  Functor::map(x, (n: i64) => n * 2)
+fn double_all<F: (Shared) -> Shared>(x: F(nat)): F(nat) where Functor(F) {
+  Functor::map(x, (n: nat) => n * 2)
 }
-fn twice<F: (Shared) -> Shared>(x: F(i64)): F(i64) where Functor(F) {
+fn twice<F: (Shared) -> Shared>(x: F(nat)): F(nat) where Functor(F) {
   double_all(double_all(x))
 }
-perform show("r", Functor::map(Cons(1, Cons(2, Nil)), (n: i64) => n + 1))
+show(&Functor::map(Cons(1, Cons(2, Nil)), (n: nat) => n + 1))
 ```
-shows = ["r = Cons(2, Cons(3, Nil))"]
+stdout = "[2, 3]\n"
 
 @ cases.hkt-generic-use
 source = ```nib
@@ -327,16 +351,19 @@ instance<E: Shared> Functor(Result(E)) {
     }
   }
 }
-fn double_all<F: (Shared) -> Shared>(x: F(i64)): F(i64) where Functor(F) {
-  Functor::map(x, (n: i64) => n * 2)
+fn double_all<F: (Shared) -> Shared>(x: F(nat)): F(nat) where Functor(F) {
+  Functor::map(x, (n: nat) => n * 2)
 }
-fn twice<F: (Shared) -> Shared>(x: F(i64)): F(i64) where Functor(F) {
+fn twice<F: (Shared) -> Shared>(x: F(nat)): F(nat) where Functor(F) {
   double_all(double_all(x))
 }
-perform show("a", double_all(Some(2)))
-perform show("b", double_all(Cons(1, Cons(2, Nil))))
+show(&double_all(Some(2)))
+show(&double_all(Cons(1, Cons(2, Nil))))
 ```
-shows = ["a = Some(4)", "b = Cons(2, Cons(4, Nil))"]
+stdout = ```
+Some(4)
+[2, 4]
+```
 
 @ cases.hkt-generic-use-passed-on
 source = ```nib
@@ -367,15 +394,15 @@ instance<E: Shared> Functor(Result(E)) {
     }
   }
 }
-fn double_all<F: (Shared) -> Shared>(x: F(i64)): F(i64) where Functor(F) {
-  Functor::map(x, (n: i64) => n * 2)
+fn double_all<F: (Shared) -> Shared>(x: F(nat)): F(nat) where Functor(F) {
+  Functor::map(x, (n: nat) => n * 2)
 }
-fn twice<F: (Shared) -> Shared>(x: F(i64)): F(i64) where Functor(F) {
+fn twice<F: (Shared) -> Shared>(x: F(nat)): F(nat) where Functor(F) {
   double_all(double_all(x))
 }
-perform show("a", twice(Some(3)))
+show(&twice(Some(3)))
 ```
-shows = ["a = Some(12)"]
+stdout = "Some(12)\n"
 
 @ cases.hkt-partial-application
 source = ```nib
@@ -406,26 +433,30 @@ instance<E: Shared> Functor(Result(E)) {
     }
   }
 }
-fn double_all<F: (Shared) -> Shared>(x: F(i64)): F(i64) where Functor(F) {
-  Functor::map(x, (n: i64) => n * 2)
+fn double_all<F: (Shared) -> Shared>(x: F(nat)): F(nat) where Functor(F) {
+  Functor::map(x, (n: nat) => n * 2)
 }
-fn twice<F: (Shared) -> Shared>(x: F(i64)): F(i64) where Functor(F) {
+fn twice<F: (Shared) -> Shared>(x: F(nat)): F(nat) where Functor(F) {
   double_all(double_all(x))
 }
-let r: Result(Text, i64) := Err(5)
-perform show("a", Functor::map(r, (n: i64) => n + 1))
-let ok: Result(Text, i64) := Ok("x")
-perform show("b", Functor::map(ok, (n: i64) => n + 1))
+let r: Result(Text, nat) := Err(5)
+show(&Functor::map(r, (n: nat) => n + 1))
+let ok: Result(Text, nat) := Ok("x")
+show(&Functor::map(ok, (n: nat) => n + 1))
 ```
-shows = ["a = Err(6)", "b = Ok(\"x\")"]
+stdout = ```
+Err(6)
+Ok("x")
+```
 
 @ cases.method-row-variable
 source = ```nib
+import std::builtin::os { stdout, stdout_flush }
 class Walk(F: (Shared) -> Shared) {
-  fn each<A: Shared, !e>(x: F(A), f: (A) -> Unit ! {Div} ∪ e): Unit ! {Div} ∪ e
+  fn each<A: Shared, !e>(x: F(A), f: (A) -> Unit ! {div} ∪ e): Unit ! {div} ∪ e
 }
 instance Walk(List) {
-  fn each<A: Shared, !e>(x: List(A), f: (A) -> Unit ! {Div} ∪ e): Unit ! {Div} ∪ e {
+  fn each<A: Shared, !e>(x: List(A), f: (A) -> Unit ! {div} ∪ e): Unit ! {div} ∪ e {
     match x {
       Nil => #()
       Cons(h, t) => {
@@ -435,19 +466,22 @@ instance Walk(List) {
     }
   }
 }
-fn show_all<F: (Shared) -> Shared>(x: F(i64)): Unit where Walk(F) {
-  Walk::each(x, (n: i64) => perform show("n", n))
+fn show_all<F: (Shared) -> Shared>(x: F(i64)): Unit ! {div, stdout, stdout_flush} where Walk(F) {
+  Walk::each(x, (n: i64) => show(&n))
 }
 show_all(Cons(1, Cons(2, Nil)))
 ```
-shows = ["n = 1", "n = 2"]
+stdout = ```
+1
+2
+```
 
 // A proved function over `Ord` runs as it checks.
 
 @ cases.ord-method-argument-lent-once
 source = ```tauto
-import std::Ord
-import std::prelude::Ord
+import std::ord
+import std::builtin::ord
 fn key_eq<K>(a: K, b: K): Bool where Ord(K) {
   ⊢ Bool from match Ord::compare(&a, &b) {
     Less => false
@@ -455,22 +489,20 @@ fn key_eq<K>(a: K, b: K): Bool where Ord(K) {
     Greater => false
   }
 }
-perform show("x", key_eq(1, 1))
+show(&key_eq(1, 1))
 ```
-shows = ["x = true"]
-extract = true
+stdout = "true\n"
 
 @ cases.ord-result-over-borrowed-parameters
 source = ```tauto
-import std::prelude::Ord
+import std::builtin::ord
 
-fn key_order<K: Shared>(&a: K, &b: K): Ordering where Ord(K) {
+fn key_order<K: Shared>(a: &K, b: &K): Ordering where Ord(K) {
   Ord::compare(&a, &b)
 }
-perform show("o", key_order(&1, &2))
+show(&key_order(&1, &2))
 ```
-shows = ["o = Less"]
-extract = true
+stdout = "Less\n"
 
 @ cases.instance-method-matches-a-record
 source = ```tauto
@@ -480,74 +512,64 @@ class Join(A: Type) {
 instance Join(Nat) {
   fn join(a: Nat, b: Nat): Nat { b }
 }
-instance<A, B> Join(Pair(A, B)) where Join(A), Join(B) {
-  fn join(p: Pair(A, B), q: Pair(A, B)): Pair(A, B) {
-    ⊢ Pair(A, B) from match p {
-      Pair { fst: a, snd: b } => ⊢ Pair(A, B) from match q {
-        Pair { fst: c, snd: d } => Pair { fst: Join::join(a, c), snd: Join::join(b, d) }
+instance<A, B> Join(A × B) where Join(A), Join(B) {
+  fn join(p: A × B, q: A × B): A × B {
+    ⊢ (A × B) from match p {
+      #(a, b) => ⊢ (A × B) from match q {
+        #(c, d) => #(Join::join(a, c), Join::join(b, d))
       }
     }
   }
 }
-fn pick(p: Pair(Nat, Nat), q: Pair(Nat, Nat)): Pair(Nat, Nat) { Join::join(p, q) }
-perform show("j", pick(Pair { fst: Zero, snd: Zero }, Pair { fst: Succ(Zero), snd: Zero }))
+fn pick(p: Nat × Nat, q: Nat × Nat): Nat × Nat { Join::join(p, q) }
+show(&pick(#(Zero, Zero), #(Succ(Zero), Zero)))
 ```
-shows = ["j = #(1, 0)"]
-extract = true
+stdout = "#(1, 0)\n"
 
 // A type error in a reachable function is reported beside a class call,
 // rather than attributing that error to the method call.
 @ cases.type-error-beside-a-class-call
-source = ```tauto
-import std::prelude::Ord
-import std::prelude::Os
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::ord
+import std::builtin::os
 
 fn f(x: i64): Ordering { Ord::compare(&x, &x) }
 fn g(): Unit { Os::print("a") }
 g()
-perform show("r", f(1))
+show(&f(1))
 ```
-run_error = "Os::print is how the host answers the standard effects"
-compile_errors.rust = "front: Os::print is how the host answers the standard effects"
-compile_errors.javascript = "front: Os::print is how the host answers the standard effects"
-compile_errors.vm = "front: Os::print is how the host answers the standard effects"
-extract = true
+macro_error = "`Os::print` is not `pub` in the standard library"
 
-// A host primitive carries the effect it answers in its row, and a program
-// cannot call it: the call would skip the program's own handlers and the
+// The host's own functions (the externs of `module Os`, the functions of
+// `module Host`) are not `pub` in the standard library, so a program cannot
+// call them: the call would skip the program's own handlers and the
 // permission check.
 @ cases.a-host-primitive-with-an-effect-row-is-rejected-at-the-call
-source = ```tauto
-import std::prelude::Os
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::os
 
 fn g(): u64 ! {random} { Os::random() }
-perform show("r", g())
+show(&g())
 ```
-run_error = "Os::random is how the host answers the standard effects"
-compile_errors.rust = "front: Os::random is how the host answers the standard effects"
-compile_errors.javascript = "front: Os::random is how the host answers the standard effects"
-compile_errors.vm = "front: Os::random is how the host answers the standard effects"
-extract = true
+macro_error = "`Os::random` is not `pub` in the standard library"
 
 @ cases.a-function-of-the-host-module-is-rejected-at-the-call
-source = ```tauto
-import std::prelude::Os
-import std::prelude::Par
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::builtin::os
+import std::builtin::par
 
 fn g(): Result(List(Text), IoError) ! {wait} { Host::resolve("localhost") }
-perform show("r", g())
+show(&g())
 ```
-run_error = "Host::resolve is how the host answers the standard effects"
-compile_errors.rust = "front: Host::resolve is how the host answers the standard effects"
-compile_errors.javascript = "front: Host::resolve is how the host answers the standard effects"
-compile_errors.vm = "front: Host::resolve is how the host answers the standard effects"
-extract = true
+macro_error = "`Host::resolve` is not `pub` in the standard library"
 
 // A class without laws may have methods with effects; it runs as written, with
 // its instances.
 @ cases.a-class-whose-methods-have-effects-runs
 source = ```tauto
-import std::prelude::Shared
 effect tick(): Unit
 class Render(A: Shared) {
   fn render(build: () -> A ! {tick}): i64 ! {tick}
@@ -559,6 +581,47 @@ let v := handle { Render::render(() => { perform tick(); 1 }) } with {
   tick(), k => k(#())
   return x => x
 }
-perform show("v", v)
+show(&v)
 ```
-shows = ["v = 1"]
+stdout = "1\n"
+
+// An instance head names a type even where a constructor shares its name:
+// `Cancelled` of `std::builtin::par` is both.
+@ cases.instance-head-is-the-type-where-a-constructor-shares-its-name
+source = ```nib
+import std::builtin::par
+
+class Describe(A: Type) {
+  fn describe(x: &A): Text
+}
+
+instance Describe(Cancelled) {
+  fn describe(x: &Cancelled): Text { "cancelled" }
+}
+
+let c := Cancelled {}
+show(&Describe::describe(&c))
+show(&Describe::describe(&Cancelled {}))
+```
+stdout = ```
+"cancelled"
+"cancelled"
+```
+
+@ cases.instance-head-is-the-type-where-a-source-constructor-shares-its-name
+source = ```nib
+struct Cancelled {}
+
+class Describe(A: Type) {
+  fn describe(x: &A): Text
+}
+
+instance Describe(Cancelled) {
+  fn describe(x: &Cancelled): Text { "cancelled" }
+}
+
+show(&Describe::describe(&Cancelled {}))
+```
+stdout = ```
+"cancelled"
+```

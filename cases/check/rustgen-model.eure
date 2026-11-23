@@ -1,17 +1,6 @@
 @ cases.resolved-rust-evaluation-has-no-axioms
 source = path`../../totes/rustgen/model/semantics.taut`
 checks_all = "ok"
-checks."calc_is_white" = "skipped"
-checks."calc_syntax::parse" = "skipped"
-checks."calc_is_rel" = "skipped"
-checks."calc_multiline" = "skipped"
-checks."calc_lay" = "skipped"
-checks."calc_fmt" = "skipped"
-checks."calc_tokens" = "skipped"
-checks."calc_iff" = "skipped"
-checks."calc_last" = "skipped"
-checks."calc_steps" = "skipped"
-checks."calc" = "skipped"
 
 @ cases.source-and-program-semantics-have-no-axioms
 source = path`../../totes/rustgen/model/program.taut`
@@ -33,8 +22,10 @@ checks."rs::Ty::I" = "ok"
 diagnostics = []
 
 @ cases.checked-integers-use-the-written-width
-imports = [path`../../std/Base.taut`, path`../../std/Int.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/integer.taut`]
+imports = [path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/integer.taut`]
 source = ```tauto
+import std::base
+import std::int
 
 pub theorem signed_range(): rs_integer_fits(IntOfNat(127), true, 8) = true { Refl }
 pub theorem signed_overflow(): rs_integer_fits(IntOfNat(128), true, 8) = false { Refl }
@@ -56,21 +47,12 @@ pub theorem native_naturals_do_not_overflow_u64(): rs_natural_binary(
 
 ```
 checks_all = "ok"
-checks."calc_is_white" = "skipped"
-checks."calc_syntax::parse" = "skipped"
-checks."calc_is_rel" = "skipped"
-checks."calc_multiline" = "skipped"
-checks."calc_lay" = "skipped"
-checks."calc_fmt" = "skipped"
-checks."calc_tokens" = "skipped"
-checks."calc_iff" = "skipped"
-checks."calc_last" = "skipped"
-checks."calc_steps" = "skipped"
-checks."calc" = "skipped"
 
 @ cases.partial-moves-preserve-other-fields-and-borrowed-addresses
-imports = [path`../../std/Base.taut`, path`../../std/Int.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`]
+imports = [path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`]
 source = ```tauto
+import std::base
+import std::int
 
 pub theorem partial_move(): rs_save(
   RsHeap(Cons(Some(RsData(7, false, Cons(RsScalar(RsBool(true)), Cons(RsScalar(RsBool(false)), Nil)))), Nil)),
@@ -103,21 +85,12 @@ pub theorem dereference_keeps_identity(): rs_address(
 ) = Some(RsAddr(0, Nil)) { Refl }
 ```
 checks_all = "ok"
-checks."calc_is_white" = "skipped"
-checks."calc_syntax::parse" = "skipped"
-checks."calc_is_rel" = "skipped"
-checks."calc_multiline" = "skipped"
-checks."calc_lay" = "skipped"
-checks."calc_fmt" = "skipped"
-checks."calc_tokens" = "skipped"
-checks."calc_iff" = "skipped"
-checks."calc_last" = "skipped"
-checks."calc_steps" = "skipped"
-checks."calc" = "skipped"
 
 @ cases.guards-preview-before-committing-pattern-moves
-imports = [path`../../std/Base.taut`, path`../../std/Int.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/pattern.taut`]
+imports = [path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/pattern.taut`]
 source = ```tauto
+import std::base
+import std::int
 
 pub theorem preview_preserves_storage(): rs_match_at(
   RsPreview, RsHeap(Cons(Some(RsScalar(RsBool(true))), Nil)), RsBind(RsMove), RsAddr(0, Nil)
@@ -137,21 +110,12 @@ pub theorem reference_pattern_preserves_the_source(): rs_match_at(
 ) = Some(#(Cons(RsReference(RsShared, RsAddr(0, Nil)), Nil), RsHeap(Cons(Some(RsScalar(RsBool(true))), Nil)))) { Refl }
 ```
 checks_all = "ok"
-checks."calc_is_white" = "skipped"
-checks."calc_syntax::parse" = "skipped"
-checks."calc_is_rel" = "skipped"
-checks."calc_multiline" = "skipped"
-checks."calc_lay" = "skipped"
-checks."calc_fmt" = "skipped"
-checks."calc_tokens" = "skipped"
-checks."calc_iff" = "skipped"
-checks."calc_last" = "skipped"
-checks."calc_steps" = "skipped"
-checks."calc" = "skipped"
 
 @ cases.control-and-scope-exit-are-distinct
-imports = [path`../../std/Base.taut`, path`../../std/Int.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/control.taut`, path`../../totes/rustgen/model/semantics.taut`]
+imports = [path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/control.taut`, path`../../totes/rustgen/model/semantics.taut`]
 source = ```tauto
+import std::base
+import std::int
 
 pub fn no_runtime_calls(): RsRuntime {
   RsRuntimeOf((name, args, heap, out, next, trace) => False)
@@ -176,21 +140,11 @@ pub theorem unique_references_are_not_copyable(address: RsAddress,
 }
 ```
 checks_all = "ok"
-checks."calc_is_white" = "skipped"
-checks."calc_syntax::parse" = "skipped"
-checks."calc_is_rel" = "skipped"
-checks."calc_multiline" = "skipped"
-checks."calc_lay" = "skipped"
-checks."calc_fmt" = "skipped"
-checks."calc_tokens" = "skipped"
-checks."calc_iff" = "skipped"
-checks."calc_last" = "skipped"
-checks."calc_steps" = "skipped"
-checks."calc" = "skipped"
 
 @ cases.closures-and-futures-have-explicit-environments
-imports = [path`../../std/Base.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`, path`../../totes/rustgen/model/control.taut`, path`../../totes/rustgen/model/semantics.taut`]
+imports = [path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`, path`../../totes/rustgen/model/control.taut`, path`../../totes/rustgen/model/semantics.taut`]
 source = ```tauto
+import std::base
 pub fn no_runtime_calls(): RsRuntime {
   RsRuntimeOf((name, args, heap, out, next, trace) => False)
 }
@@ -215,21 +169,11 @@ pub theorem await_consumes_the_suspended_computation(): RsEval(
 }
 ```
 checks_all = "ok"
-checks."calc_is_white" = "skipped"
-checks."calc_syntax::parse" = "skipped"
-checks."calc_is_rel" = "skipped"
-checks."calc_multiline" = "skipped"
-checks."calc_lay" = "skipped"
-checks."calc_fmt" = "skipped"
-checks."calc_tokens" = "skipped"
-checks."calc_iff" = "skipped"
-checks."calc_last" = "skipped"
-checks."calc_steps" = "skipped"
-checks."calc" = "skipped"
 
 @ cases.source-trees-and-function-bodies-reach-the-operational-rules
-imports = [path`../../std/Base.taut`, path`../../totes/rustgen/model/syntax.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`, path`../../totes/rustgen/model/control.taut`, path`../../totes/rustgen/model/semantics.taut`, path`../../totes/rustgen/model/source_context.taut`, path`../../totes/rustgen/model/source_forms.taut`, path`../../totes/rustgen/model/source_construct.taut`, path`../../totes/rustgen/model/source_literals.taut`, path`../../totes/rustgen/model/source.taut`, path`../../totes/rustgen/model/program.taut`]
+imports = [path`../../totes/rustgen/model/syntax.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`, path`../../totes/rustgen/model/control.taut`, path`../../totes/rustgen/model/semantics.taut`, path`../../totes/rustgen/model/source_context.taut`, path`../../totes/rustgen/model/source_forms.taut`, path`../../totes/rustgen/model/source_construct.taut`, path`../../totes/rustgen/model/source_literals.taut`, path`../../totes/rustgen/model/source.taut`, path`../../totes/rustgen/model/program.taut`]
 source = ```tauto
+import std::base
 pub fn model_signature(): RsSourceSignature {
   RsSourceSignatureOf(
     Cons(RsSourceTypeOf(rs_source_type_name(Cons("bool", Nil)), RsCopy, None, Nil, None),
@@ -269,8 +213,10 @@ checks.boolean_source_evaluation = "ok"
 checks.function_source_evaluation = "ok"
 
 @ cases.nested-destructors-retain-the-unwind-state
-imports = [path`../../std/Base.taut`, path`../../std/Text.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`, path`../../totes/rustgen/model/control.taut`]
+imports = [path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`, path`../../totes/rustgen/model/control.taut`]
 source = ```tauto
+import std::base
+import std::text
 pub(open) inductive PanicDrop: (Text, List(RsValue), RsStore, RsOutcome(RsValue), RsStore, List(RsEvent)) -> Prop {
   PanicDropFirst<heap: RsStore>: PanicDrop("drop_handle", Cons(RsScalar(RsBool(true)), Cons(RsHandle(0), Nil)), heap, RsPanic, heap, Cons(RsFailure("drop-first"), Nil))
 }
@@ -297,14 +243,3 @@ pub theorem nested_second_panic_skips_the_remaining_field(): RsDrop(
 }
 ```
 checks_all = "ok"
-checks."calc_is_white" = "skipped"
-checks."calc_syntax::parse" = "skipped"
-checks."calc_is_rel" = "skipped"
-checks."calc_multiline" = "skipped"
-checks."calc_lay" = "skipped"
-checks."calc_fmt" = "skipped"
-checks."calc_tokens" = "skipped"
-checks."calc_iff" = "skipped"
-checks."calc_last" = "skipped"
-checks."calc_steps" = "skipped"
-checks."calc" = "skipped"

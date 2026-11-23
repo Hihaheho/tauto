@@ -46,6 +46,7 @@ mod tests {
     }
     #[test]
     fn writing_equality_preserves_the_source_occurrence() {
+        tauto_parse::install();
         let left = var("a");
         let right = var("b");
         let term = SurfaceTerm::app(
@@ -67,6 +68,7 @@ mod tests {
                 params: vec![(Some(n.into()), a)],
                 result: Box::new(b),
                 effects: None,
+                unused: Vec::new(),
             },
             Default::default(),
         )
@@ -77,6 +79,7 @@ mod tests {
                 params: vec![n.into()],
                 body: Box::new(body),
                 types: Vec::new(),
+                unused_params: Vec::new(),
             },
             Default::default(),
         )
@@ -92,6 +95,7 @@ mod tests {
     }
     #[test]
     fn recording_preserves_core_answers_and_restores_state() {
+        tauto_parse::install();
         let ctx = vec![
             ("P".into(), var("Prop")),
             ("Q".into(), var("Prop")),
@@ -151,6 +155,7 @@ mod tests {
 
     #[test]
     fn dependent_application_instantiates_the_result_and_conversion_is_explicit() {
+        tauto_parse::install();
         let ctx = vec![
             ("P".into(), var("Prop")),
             ("a".into(), var("P")),
@@ -181,6 +186,7 @@ mod tests {
 
     #[test]
     fn introduction_and_application_have_scoped_typed_premises() {
+        tauto_parse::install();
         let ctx = vec![
             ("P".into(), var("Prop")),
             ("Q".into(), var("Prop")),
@@ -209,6 +215,7 @@ mod tests {
     }
     #[test]
     fn presentation_queries_distinguish_proofs_from_types_and_unknowns() {
+        tauto_parse::install();
         let kernel = crate::check::Kernel::new();
         let mut inspect = kernel.proof_inspector();
         let context = vec![("P".into(), var("Prop")), ("h".into(), var("P"))];
@@ -235,6 +242,7 @@ mod tests {
 
     #[test]
     fn presentation_reports_actual_unfolded_definitions_without_changing_the_environment() {
+        tauto_parse::install();
         let mut kernel = crate::check::Kernel::new();
         kernel
             .core

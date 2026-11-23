@@ -1,0 +1,21 @@
+description = "An attribute macro checks a file whose skipped class instance has a head with no parameters."
+
+@ cases.attribute-after-nullary-function-instance
+entry = "main.taut"
+files."keep.taut" = ````tauto
+import std::base
+import std::builtin::macro
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) { Cons(s, Nil) }
+````
+files."main.taut" = ````tauto
+import "keep.taut"
+class Handler(F: Type) { fn call(f: F): Nat }
+instance<R> Handler(() -> R) {
+  fn call(f: () -> R): Nat { 3 }
+}
+@keep!(0) => replace fn zero
+fn zero(): Nat { 0 }
+fn called(): Nat { Handler::call(zero) }
+show(&called())
+````
+stdout = "3\n"

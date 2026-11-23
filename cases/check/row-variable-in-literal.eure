@@ -1,0 +1,27 @@
+// A row variable joins a row with `∪`, `! {trace} ∪ e`. Inside the braces a
+// name is an effect, so a declared row variable written there is refused.
+
+@ cases.a-row-variable-is-united-with-a-literal
+source = ```nib
+effect trace(): nat resume <=1
+fn f<!e>(g: () -> nat ! e): nat ! {trace} ∪ e { g() }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.a-row-variable-inside-the-braces-is-refused
+entry = "main.nib"
+files."main.nib" = ```nib
+effect trace(): nat resume <=1
+fn f<!e>(g: () -> nat ! e): nat ! {trace, e} { g() }
+```
+load_error = "`e` is a row variable, not an effect; write it outside the braces, as in `{trace} ∪ e`"
+differential = "surface"
+
+@ cases.a-row-variable-alone-inside-the-braces-is-refused
+entry = "main.nib"
+files."main.nib" = ```nib
+fn f<!e>(g: () -> nat ! e): nat ! {e} { g() }
+```
+load_error = "`e` is a row variable, not an effect; write it outside the braces, as in `{trace} ∪ e`"
+differential = "surface"

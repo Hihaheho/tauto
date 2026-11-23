@@ -1,0 +1,22 @@
+// A playground or an editor checks one program after another with the same
+// compiler, which keeps what it read. Each program sees only its own
+// declarations: a type of the same name in the program checked before does not
+// lend it its constructors.
+
+@ cases.constructors-of-a-type-checked-before-are-not-shown
+checked_before = [```tauto
+enum Role { Admin, Member, Guest }
+
+theorem t(): Member = Member {
+  ?goal
+}
+```]
+source = ```tauto
+enum Role { Owner, Editor, Viewer }
+
+theorem t(): Editor = Editor {
+  ?goal
+}
+```
+checks.t = "incomplete: ?goal"
+holes = [{ declaration => "t", name => "goal", goal => "Role::Editor = Role::Editor", context => [] }]

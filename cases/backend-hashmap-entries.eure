@@ -1,0 +1,51 @@
+// An `IndexedMap` keyed by numbers and by texts: inserted into, read in place,
+// written through a borrow, overwritten, and walked in the order the keys
+// were first inserted; whatever it still holds is released with it.
+@ cases.hashmap-entries
+stdout = ```
+3
+10
+true
+20
+false
+99
+true
+1
+2
+true
+true
+8
+```
+source = ```tauto
+import std::indexed_map { IndexedMap }
+let a := "a"
+let b := "b"
+let c := "c"
+var numbers: IndexedMap(u64, u64) := IndexedMap::new()
+IndexedMap::insert(&mut numbers, 1, 10)
+IndexedMap::insert(&mut numbers, 2, 20)
+IndexedMap::insert(&mut numbers, 3, 30)
+show(&IndexedMap::len(&numbers))
+show(&(match IndexedMap::get(&numbers, &1) { Some(x) => x, None => 0 }))
+show(&(match IndexedMap::insert(&mut numbers, 1, 11) { #(Some(#(_, old)), _) => old == 10, #(None, _) => false }))
+show(&(match IndexedMap::get(&numbers, &2) { Some(x) => x, None => 0 }))
+show(&(match IndexedMap::get(&numbers, &9) { Some(x) => true, None => false }))
+match IndexedMap::get_mut(&mut numbers, &3) {
+  Some(x) => { *x := 99 }
+  None => #()
+}
+show(&IndexedMap::fold(&numbers, 0, (acc: u64, k: &u64, v: &u64) => if k == 3 { v } else { acc }))
+show(&IndexedMap::fold(&numbers, Nil, (acc: List(u64), k: &u64, v: &u64) => { let x: u64 := k; Cons(x, acc) }) == Cons(3, Cons(2, Cons(1, Nil))))
+
+var names: IndexedMap(Text, Vec(u64)) := IndexedMap::new()
+var one: Vec(u64) := Vec::new()
+Vec::push(&mut one, 1)
+IndexedMap::insert(&mut names, "a", one)
+var two: Vec(u64) := Vec::new()
+IndexedMap::insert(&mut names, "b", two)
+show(&(match IndexedMap::insert(&mut names, "a", Vec::new()) { #(Some(#(_, old)), _) => Vec::len(&old), #(None, _) => 9 }))
+show(&IndexedMap::len(&names))
+show(&(match IndexedMap::get(&names, &b) { Some(v) => Vec::len(v) == 0, None => false }))
+show(&(match IndexedMap::get(&names, &c) { Some(v) => false, None => true }))
+show(&(match IndexedMap::get(&names, &a) { Some(v) => Vec::len(v) + 8, None => 0 }))
+```

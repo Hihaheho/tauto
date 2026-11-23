@@ -1,0 +1,680 @@
+import "erased.taut"
+import "extract.taut"
+import "names.taut"
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/unicode.taut"
+import "../../identity/src/identity.taut"
+import std::text
+import std::map
+import std::base
+
+// The declarations of a program, `mutual` blocks read in place.
+pub fn ex_flatten(k: Nat, stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(SurfaceStmt) from match stmts {
+      Nil => Nil
+      Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+        StMutual(items, ^start, ^end) => List::append(ex_flatten(j, items), ex_flatten(j, rest))
+        // An import was read before the program was checked: what it
+        // declares is mapped where the program uses it.
+        StImport(^path, ^start, ^end) => ex_flatten(j, rest)
+        _ => Cons(s, ex_flatten(j, rest))
+      }
+    }
+  }
+}
+
+// A function renamed: its name in a module is the module's name and its own.
+pub fn ex_rename_fn(f: SurfaceFn, name: Text): SurfaceFn {
+  SurfaceFnMk(name, f.generics, f.bounds, f.params, f.r#borrows, f.param_types, f.result, f.effects, f.wheres, f.start, f.end, f.body, f.lends, f.generic_types, f.bound_starts, f.visibility, f.row_hole, f.unused, f.unused_generics, f.unused_params)
+}
+
+pub fn ex_in_module(prefix: Text, name: Text): Text {
+  if prefix == "" { name } else { ex_qualify(prefix, name) }
+}
+
+// The declarations with the functions of each module named by its path
+// (`Hit::after`), the modules kept where they are written.
+pub fn ex_modules(k: Nat, prefix: Text, stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(SurfaceStmt) from match stmts {
+      Nil => Nil
+      Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+        StFn(f) => Cons(StFn(ex_rename_fn(f, ex_in_module(prefix, f.name))), ex_modules(j, prefix, rest))
+        _ => Cons(s, ex_modules(j, prefix, rest))
+      }
+    }
+  }
+}
+
+// The declarations of every module in one list, as `ex_modules` names them.
+pub fn ex_unmodule(k: Nat, stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  match k {
+    Zero => Nil
+    Succ(j) => ⊢ List(SurfaceStmt) from match stmts {
+      Nil => Nil
+      Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+        _ => Cons(s, ex_unmodule(j, rest))
+      }
+    }
+  }
+}
+
+pub fn ex_has_module(stmts: List(SurfaceStmt)): Bool {
+  match stmts {
+    Nil => false
+    Cons(s, rest) => ⊢ Bool from match s {
+      _ => ex_has_module(rest)
+    }
+  }
+}
+
+pub fn ex_named_names(ns: List(SurfaceNamed)): List(Text) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(n.name, ex_named_names(rest))
+  }
+}
+
+pub fn ex_named_types(ns: List(SurfaceNamed)): List(SurfaceTerm) {
+  match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(n.ty, ex_named_types(rest))
+  }
+}
+
+pub fn ex_qualify(family: Text, name: Text): Text { Text::concat_all([family, "::", name]) }
+
+// Whether a family's sort makes it a proposition, as `ex_sort_prop`; a sort
+// `… -> Type`, a family with indices, is data the lowering reads.
+pub fn ex_sort_shell(k: Nat, t: SurfaceTerm): Option(Bool) {
+  match ex_sort_prop(k, t) {
+    Some(p) => Some(p)
+    None => ⊢ Option(Bool) from match t.kind {
+      SkPi(^ps, r, ^e) => ⊢ Option(Bool) from match r.kind {
+        SkVar(n) => if surface_name_text(n) == "Type" { Some(false) } else { None }
+        _ => None
+      }
+      _ => None
+    }
+  }
+}
+
+pub fn ex_has_fn(stmts: List(SurfaceStmt)): Bool {
+  match stmts {
+    Nil => false
+    Cons(s, rest) => ⊢ Bool from match s {
+      StFn(^f) => true
+      _ => ex_has_fn(rest)
+    }
+  }
+}
+
+pub fn ex_without(stmts: List(SurfaceStmt), names: List(Text)): List(SurfaceStmt) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => {
+      let skip := ⊢ Bool from match s {
+        StInductive(i) => er_has(names, i.name)
+        StFn(f) => er_has(names, f.name)
+        _ => false
+      }
+      if skip { ex_without(rest, names) } else { Cons(s, ex_without(rest, names)) }
+    }
+  }
+}
+
+// The families, before their constructors are read: whether each is a
+// proposition. A family in `Type` with indices is not read.
+pub fn ex_shells(k: Nat, stmts: List(SurfaceStmt)): ExResult(List(ExFamily)) {
+  match stmts {
+    Nil => ExOk(Nil)
+    Cons(s, rest) => ⊢ ExResult(List(ExFamily)) from match ex_shells(k, rest) {
+      ExErr(m) => ExErr(m)
+      ExOk(fs) => ⊢ ExResult(List(ExFamily)) from match s {
+        StInductive(i) => ⊢ ExResult(List(ExFamily)) from match ex_sort_shell(k, i.sort) {
+          None => ExErr(Text::concat("a family whose sort extraction does not read: ", i.name))
+          Some(prop) => ExOk(Cons(ExFamily::Mk(i.name, "", prop, false, ex_named_names(i.params), Nil), fs))
+        }
+        _ => ExOk(fs)
+      }
+    }
+  }
+}
+
+pub fn ex_generic_locals(names: List(Text)): List(ExLocal) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(ExLocal::Mk(n, n, RGeneric, None, None), ex_generic_locals(rest))
+  }
+}
+
+// The roles of fields, each read with the ones before it in scope.
+pub fn ex_field_roles(env: ExEnv, ls: List(ExLocal), fs: List(SurfaceNamed)): ExResult(List(ExRole)) {
+  match fs {
+    Nil => ExOk(Nil)
+    Cons(f, rest) => ⊢ ExResult(List(ExRole)) from match ex_role(env.fuel, env, ls, f.ty) {
+      Some(RValue) => ⊢ ExResult(List(ExRole)) from match ex_field_roles(env, Cons(ExLocal::Mk(f.name, f.name, RValue, ex_family_of(env, f.ty), Some(f.ty)), ls), rest) {
+        ExErr(m) => ExErr(m)
+        ExOk(rs) => ExOk(Cons(RValue, rs))
+      }
+      Some(RProof) => ⊢ ExResult(List(ExRole)) from match ex_field_roles(env, Cons(ExLocal::Mk(f.name, f.name, RProof, None, None), ls), rest) {
+        ExErr(m) => ExErr(m)
+        ExOk(rs) => ExOk(Cons(RProof, rs))
+      }
+      _ => ExErr(Text::concat("a field extraction does not read: ", f.name))
+    }
+  }
+}
+
+pub fn ex_has_value(rs: List(ExRole)): Bool {
+  match rs {
+    Nil => false
+    Cons(r, rest) => ⊢ Bool from match r {
+      RValue => true
+      _ => ex_has_value(rest)
+    }
+  }
+}
+
+pub fn ex_params_generic(env: ExEnv, ps: List(SurfaceNamed)): Bool {
+  match ps {
+    Nil => true
+    Cons(p, rest) => ⊢ Bool from match ex_role(env.fuel, env, Nil, p.ty) {
+      Some(RGeneric) => ex_params_generic(env, rest)
+      _ => false
+    }
+  }
+}
+
+pub fn ex_ctors(env: ExEnv, family: Text, params: List(Text), prop: Bool, cs: List(SurfaceCtor)): ExResult(List(ExCtor)) {
+  match cs {
+    Nil => ExOk(Nil)
+    Cons(c, rest) => if c.implicit != 0 && ex_not(prop) { ExErr("implicit constructor parameters are unsupported") } else {
+      let roles: ExResult(List(ExRole)) := if prop { ExOk(Nil) } else { ex_field_roles(env, ex_generic_locals(params), c.params) }
+      ⊢ ExResult(List(ExCtor)) from match roles {
+        ExErr(m) => ExErr(m)
+        ExOk(rs) => ⊢ ExResult(List(ExCtor)) from match ex_ctors(env, family, params, prop, rest) {
+          ExErr(m) => ExErr(m)
+          ExOk(more) => ExOk(Cons(ExCtor::Mk(ex_qualify(family, c.name), c.name, rs, ex_named_names(c.params), ex_named_types(c.params)), more))
+        }
+      }
+    }
+  }
+}
+
+// The families with their constructors, read once all are known.
+pub fn ex_families(env: ExEnv, stmts: List(SurfaceStmt)): ExResult(List(ExFamily)) {
+  match stmts {
+    Nil => ExOk(Nil)
+    Cons(s, rest) => ⊢ ExResult(List(ExFamily)) from match ex_families(env, rest) {
+      ExErr(m) => ExErr(m)
+      ExOk(fs) => ⊢ ExResult(List(ExFamily)) from match s {
+        StInductive(i) => ⊢ ExResult(List(ExFamily)) from match ex_family_get(env.families, i.name) {
+          None => ExErr("a family that was not read")
+          Some(shell) => if ex_not(shell.prop) && ex_not(ex_params_generic(env, i.params)) { ExErr(Text::concat("a family parameter that is not a type is unsupported: ", i.name)) } else {
+            ⊢ ExResult(List(ExFamily)) from match ex_ctors(env, i.name, shell.params, shell.prop, i.constructors) {
+              ExErr(m) => ExErr(m)
+              ExOk(cs) => {
+                let record := ⊢ Bool from match cs {
+                  Cons(c, Nil) => ex_not(shell.prop) && List::length(c.roles) != 0
+                  _ => false
+                }
+                let lonely := ⊢ Bool from match cs {
+                  Cons(c, Nil) => record && ex_not(ex_has_value(c.roles))
+                  _ => false
+                }
+                if lonely { ExErr(Text::concat("a family whose one constructor has only proof fields is unsupported: ", i.name)) } else {
+                  ExOk(Cons(ExFamily::Mk(i.name, shell.written, shell.prop, record, shell.params, cs), fs))
+                }
+              }
+            }
+          }
+        }
+        _ => ExOk(fs)
+      }
+    }
+  }
+}
+
+pub fn ex_set_written(fs: List(ExFamily), name: Text, w: Text): List(ExFamily) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => if f.name == name { Cons(ExFamily::Mk(f.name, w, f.prop, f.record, f.params, f.ctors), rest) } else { Cons(f, ex_set_written(rest, name, w)) }
+  }
+}
+
+// The roles of a function's parameters, each read with the ones before it.
+pub fn ex_fn_roles(env: ExEnv, ls: List(ExLocal), names: List(Text), tys: List(Option(SurfaceTerm))): ExResult(List(ExRole)) {
+  match names {
+    Nil => ExOk(Nil)
+    Cons(n, rest) => ⊢ ExResult(List(ExRole)) from match tys {
+      Nil => ExErr("a parameter without its type")
+      Cons(oty, more) => ⊢ ExResult(List(ExRole)) from match oty {
+        None => ExErr("a parameter without its type is unsupported")
+        Some(ty) => ⊢ ExResult(List(ExRole)) from match ex_role(env.fuel, env, ls, ty) {
+          None => ExErr(Text::concat("a parameter extraction does not read: ", n))
+          Some(r) => ⊢ ExResult(List(ExRole)) from match ex_fn_roles(env, Cons(ExLocal::Mk(n, n, r, ex_family_of(env, ty), Some(ty)), ls), rest, more) {
+            ExErr(m) => ExErr(m)
+            ExOk(rs) => ExOk(Cons(r, rs))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_fn_supported(f: SurfaceFn): Bool {
+  let pure := ⊢ Bool from match f.effects {
+    None => true
+    Some(^es) => false
+  }
+  ex_all_unbounded(f.bounds) && List::length(f.wheres) == 0 && pure
+}
+
+// `<T, U>` with no bound, or `shared`: any other bound is a class, which
+// extraction does not read.
+pub fn ex_all_unbounded(bs: List(Option(Text))): Bool {
+  match bs {
+    Nil => true
+    Cons(b, rest) => ⊢ Bool from match b {
+      None => ex_all_unbounded(rest)
+      Some(c) => c == "shared" && ex_all_unbounded(rest)
+    }
+  }
+}
+
+// The functions' signatures and the names of everything extracted, in the
+// order declared: the helpers' first.
+pub fn ex_declare(env: ExEnv, stmts: List(SurfaceStmt)): ExResult(ExEnv) {
+  match stmts {
+    Nil => ExOk(env)
+    Cons(s, rest) => {
+      let next: ExResult(ExEnv) := ⊢ ExResult(ExEnv) from match s {
+        StInductive(i) => ⊢ ExResult(ExEnv) from match ex_family_get(env.families, i.name) {
+          None => ExErr("a family that was not read")
+          Some(f) => if f.prop { ExOk(env) } else {
+            let a := ex_allocate(env.classes, env.globals, i.name, true)
+            ExOk(ExEnv::Mk(env.classes, env.fuel, ex_set_written(env.families, i.name, a.fst), env.fns, a.snd, env.mapped_fns, env.mapped_types, env.occ_policies))
+          }
+        }
+        StFn(f) => if ex_not(ex_fn_supported(f)) { ExErr(Text::concat("a function extraction does not read: ", f.name)) } else {
+          ⊢ ExResult(ExEnv) from match ex_fn_roles(env, ex_generic_locals(f.generics), f.params, f.param_types) {
+            ExErr(m) => ExErr(Text::concat_all(["in `", f.name, "`: ", m]))
+            ExOk(roles) => {
+              let a := ex_allocate(env.classes, env.globals, f.name, true)
+              ExOk(ExEnv::Mk(env.classes, env.fuel, env.families, List::append(env.fns, Cons(ExFn::Mk(f.name, a.fst, roles), Nil)), a.snd, env.mapped_fns, env.mapped_types, env.occ_policies))
+            }
+          }
+        }
+        StTheorem(^t) => ExOk(env)
+        StDef(^t) => ExOk(env)
+        _ => ExErr("a declaration extraction does not read")
+      }
+      ⊢ ExResult(ExEnv) from match next {
+        ExErr(m) => ExErr(m)
+        ExOk(e) => ex_declare(e, rest)
+      }
+    }
+  }
+}
+
+// The parameters of a function as written: the generics and the values.
+pub fn ex_fn_params(k: Nat, env: ExEnv, s: ExScope, names: List(Text), tys: List(Option(SurfaceTerm)), roles: List(ExRole), gens: List(Text), vals: List(Text)): ExResult(((List(Text) × List(Text)) × ExScope)) {
+  match k {
+    Zero => ExErr("extraction exhausted")
+    Succ(j) => ⊢ ExResult(((List(Text) × List(Text)) × ExScope)) from match names {
+      Nil => ExOk(#(#(text_list_reverse(gens), text_list_reverse(vals)), s))
+      Cons(n, rest) => ⊢ ExResult(((List(Text) × List(Text)) × ExScope)) from match tys {
+        Nil => ExErr("a parameter without its type")
+        Cons(oty, more) => ⊢ ExResult(((List(Text) × List(Text)) × ExScope)) from match roles {
+          Nil => ExErr("a parameter without its role")
+          Cons(r, rs) => ⊢ ExResult(((List(Text) × List(Text)) × ExScope)) from match oty {
+            None => ExErr("a parameter without its type")
+            Some(ty) => ⊢ ExResult(((List(Text) × List(Text)) × ExScope)) from match r {
+              RGeneric => {
+                let b := ex_bind(env, s, n, RGeneric, None, None)
+                ex_fn_params(j, env, b.snd, rest, more, rs, Cons(Text::concat(b.fst, ": Shared"), gens), vals)
+              }
+              RProof => ex_fn_params(j, env, ex_bind_dropped(s, n, RProof, None, None), rest, more, rs, gens, vals)
+              RValue => ⊢ ExResult(((List(Text) × List(Text)) × ExScope)) from match ex_type(j, env, s.locals, ty) {
+                ExErr(m) => ExErr(m)
+                ExOk(tt) => {
+                  let b := ex_bind(env, s, n, RValue, ex_family_of(env, ty), Some(ty))
+                  ex_fn_params(j, env, b.snd, rest, more, rs, gens, Cons(Text::concat_all([b.fst, ": ", tt]), vals))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_generic_params(env: ExEnv, s: ExScope, names: List(Text), acc: List(Text)): (List(Text) × ExScope) {
+  match names {
+    Nil => #(text_list_reverse(acc), s)
+    Cons(n, rest) => {
+      let b := ex_bind(env, s, n, RGeneric, None, None)
+      ex_generic_params(env, b.snd, rest, Cons(Text::concat(b.fst, ": Type"), acc))
+    }
+  }
+}
+
+// A function's own `<T, U>`: each bound as a type, written as it is.
+pub fn ex_fn_generics(env: ExEnv, s: ExScope, names: List(Text), bounds: List(Option(Text)), acc: List(Text)): (List(Text) × ExScope) {
+  match names {
+    Nil => #(acc, s)
+    Cons(n, rest) => {
+      let b := ex_bind(env, s, n, RGeneric, None, None)
+      let bound := ⊢ Text from match bounds {
+        Cons(Some(^c), ^more) => ": Shared"
+        _ => ""
+      }
+      let more := ⊢ List(Option(Text)) from match bounds {
+        Cons(^x, tail) => tail
+        Nil => Nil
+      }
+      ex_fn_generics(env, b.snd, rest, more, Cons(Text::concat(b.fst, bound), acc))
+    }
+  }
+}
+
+pub fn ex_kept_types(ts: List(Text), roles: List(ExRole)): List(Text) { ex_kept_labels(ts, roles) }
+
+pub fn ex_ctor_lines(k: Nat, env: ExEnv, s: ExScope, f: ExFamily, cs: List(ExCtor)): ExResult(List(Text)) {
+  match cs {
+    Nil => ExOk(Nil)
+    Cons(c, rest) => ⊢ ExResult(List(Text)) from match ex_field_types(k, env, s.locals, c.types, c.roles) {
+      ExErr(m) => ExErr(m)
+      ExOk(ts) => ⊢ ExResult(List(Text)) from match ex_ctor_lines(k, env, s, f, rest) {
+        ExErr(m) => ExErr(m)
+        ExOk(more) => {
+          let line := if f.record { ex_join(ex_fields(ex_kept_labels(c.labels, c.roles), ts), ", ") } else {
+            ⊢ Text from match ts {
+              Nil => c.leaf
+              _ => Text::concat_all([c.leaf, "(", ex_join(ts, ", "), ")"])
+            }
+          }
+          ExOk(Cons(Text::concat("  ", line), more))
+        }
+      }
+    }
+  }
+}
+
+pub fn ex_field_types(k: Nat, env: ExEnv, ls: List(ExLocal), tys: List(SurfaceTerm), roles: List(ExRole)): ExResult(List(Text)) {
+  match tys {
+    Nil => ExOk(Nil)
+    Cons(t, rest) => ⊢ ExResult(List(Text)) from match roles {
+      Nil => ExErr("a field without its role")
+      Cons(r, rs) => ⊢ ExResult(List(Text)) from match ex_field_types(k, env, ls, rest, rs) {
+        ExErr(m) => ExErr(m)
+        ExOk(more) => ⊢ ExResult(List(Text)) from match r {
+          RValue => ⊢ ExResult(List(Text)) from match ex_type(k, env, ls, t) {
+            ExErr(m) => ExErr(m)
+            ExOk(tt) => ExOk(Cons(tt, more))
+          }
+          _ => ExOk(more)
+        }
+      }
+    }
+  }
+}
+
+// The module a function is declared in, as a binder of its scope.
+pub fn ex_module_marker(s: SurfaceStmt): List(ExLocal) {
+  match s {
+    StFn(f) => ⊢ List(ExLocal) from match text_split(f.name, "::") {
+      Cons(^first, Cons(^second, ^more)) => Cons(ExLocal::Mk("#module", ex_drop_leaf(f.name), RGeneric, None, None), Nil)
+      _ => Nil
+    }
+    _ => Nil
+  }
+}
+
+// The path of a name without its last segment.
+pub fn ex_drop_leaf(name: Text): Text {
+  ex_slice(name, 0, Nat::sub(Text::len(name), Text::len(ex_leaf(name)) + 2))
+}
+
+mutual {
+// A declaration as extracted; `None` for one that is dropped.
+pub fn ex_stmt(n: Nat, env: ExEnv, leaf: Bool, s: SurfaceStmt): ExResult(Option(Text)) {
+  match n {
+    Zero => ExErr("extraction exhausted")
+    Succ(m) => ex_stmt_here(m, env, leaf, s)
+  }
+}
+
+pub fn ex_stmt_here(m: Nat, env: ExEnv, leaf: Bool, s: SurfaceStmt): ExResult(Option(Text)) {
+  let k := env.fuel
+  let scope := ExScope::Mk(env.globals, ex_module_marker(s))
+  ⊢ ExResult(Option(Text)) from match s {
+    StInductive(i) => ⊢ ExResult(Option(Text)) from match ex_family_get(env.families, i.name) {
+      None => ExErr("a family that was not read")
+      Some(f) => if f.prop { ExOk(None) } else {
+        let g := ex_generic_params(env, scope, f.params, Nil)
+        ⊢ ExResult(Option(Text)) from match ex_ctor_lines(k, env, g.snd, f, f.ctors) {
+          ExErr(m) => ExErr(m)
+          ExOk(lines) => {
+            let params := ⊢ Text from match g.fst {
+              Nil => ""
+              _ => Text::concat_all(["(", ex_join(g.fst, ", "), ")"])
+            }
+            let kind := Text::concat(ex_visibility(i.visibility), if f.record { "struct(shared) " } else { "enum(shared) " })
+            ExOk(Some(Text::concat_all([kind, f.written, params, " {", text_newline(), ex_join(lines, text_newline()), text_newline(), "}"])))
+          }
+        }
+      }
+    }
+    StFn(fd) => ⊢ ExResult(Option(Text)) from match ex_fn_get(env.fns, fd.name) {
+      None => ExErr("a function that was not read")
+      Some(f) => {
+        let own := ex_fn_generics(env, scope, fd.generics, fd.bounds, Nil)
+        ⊢ ExResult(Option(Text)) from match ex_fn_params(k, env, own.snd, fd.params, fd.param_types, f.roles, own.fst, Nil) {
+        ExErr(m) => ExErr(m)
+        ExOk(ps) => ⊢ ExResult(Option(Text)) from match fd.result {
+          None => ExErr("a function without its result type is unsupported")
+          Some(rty) => ⊢ ExResult(Option(Text)) from match ex_role(k, env, ps.snd.locals, rty) {
+            Some(RValue) => ⊢ ExResult(Option(Text)) from match ex_type(k, env, ps.snd.locals, rty) {
+              ExErr(m) => ExErr(m)
+              ExOk(rt) => ⊢ ExResult(Option(Text)) from match ex_fn_body(k, env, ps.snd, fd.name, fd.body, ps.fst.snd) {
+                ExErr(m) => ExErr(Text::concat_all(["in `", fd.name, "`: ", m]))
+                ExOk(body0) => {
+                  let body := body0
+                  let gens := ⊢ Text from match ps.fst.fst {
+                    Nil => ""
+                    _ => Text::concat_all(["<", ex_join(ps.fst.fst, ", "), ">"])
+                  }
+                  ExOk(Some(ex_wrap_path(leaf, f.written, Text::concat_all([ex_visibility(fd.visibility), "fn ", if leaf || ex_has_path(f.written) { ex_leaf(f.written) } else { f.written }, gens, "(", ex_join(ps.fst.snd, ", "), "): ", rt, " ", ex_braced(body.fst)]))))
+                }
+              }
+            }
+            _ => ExErr(Text::concat("a function whose result is a proof or a type is unsupported: ", fd.name))
+          }
+        }
+        }
+      }
+    }
+    _ => ExOk(None)
+  }
+}
+
+pub fn ex_stmts(n: Nat, env: ExEnv, leaf: Bool, stmts: List(SurfaceStmt)): ExResult(List(Text)) {
+  match n {
+    Zero => ExErr("extraction exhausted")
+    Succ(m) => ⊢ ExResult(List(Text)) from match stmts {
+      Nil => ExOk(Nil)
+      Cons(s, rest) => ⊢ ExResult(List(Text)) from match ex_stmt(m, env, leaf, s) {
+        ExErr(e) => ExErr(e)
+        ExOk(o) => ⊢ ExResult(List(Text)) from match ex_stmts(m, env, leaf, rest) {
+          ExErr(e) => ExErr(e)
+          ExOk(more) => ⊢ ExResult(List(Text)) from match o {
+            None => ExOk(more)
+            Some(t) => ExOk(Cons(t, more))
+          }
+        }
+      }
+    }
+  }
+}
+
+}
+
+// The families of the prelude the host maps onto the types of Nib of the same
+// name, unless the program declares one of that name itself.
+pub fn ex_std_stmts(prelude: List(SurfaceStmt), own: List(SurfaceStmt)): List(SurfaceStmt) {
+  match prelude {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+      StInductive(i) => if (i.name == "List" || i.name == "Option" || i.name == "Ordering") && ex_not(er_has(ex_declared_families(own), i.name)) { Cons(s, ex_std_stmts(rest, own)) } else { ex_std_stmts(rest, own) }
+      _ => ex_std_stmts(rest, own)
+    }
+  }
+}
+
+pub fn ex_declared_families(stmts: List(SurfaceStmt)): List(Text) {
+  match stmts {
+    Nil => Nil
+    Cons(s, rest) => ⊢ List(Text) from match s {
+      StInductive(i) => Cons(i.name, ex_declared_families(rest))
+      _ => ex_declared_families(rest)
+    }
+  }
+}
+
+// Each family of the prelude is written by its own name.
+pub fn ex_written_as_named(fs: List(ExFamily), names: List(Text)): List(ExFamily) {
+  match names {
+    Nil => fs
+    Cons(n, rest) => ex_written_as_named(ex_set_written(fs, n, n), rest)
+  }
+}
+
+pub fn ex_self_call(name: Text, params: List(Text)): Text {
+  match params {
+    Cons(p, ^rest) => match text_find(p, ":", 0) {
+      None => Text::concat_all([name, "(", p, ")"])
+      Some(i) => match Text::slice(p, 0, i) {
+        None => name
+        Some(v) => Text::concat_all([name, "(", v, ")"])
+      }
+    }
+    Nil => name
+  }
+}
+
+pub fn ex_fn_body(k: Nat, env: ExEnv, scope: ExScope, name: Text, body: SurfaceTerm, params: List(Text)): ExResult((Text × ExScope)) {
+  if ex_self_named(env, name) { ExOk(#(ex_self_call(name, params), scope)) } else { ex_term(k, env, scope, body) }
+}
+
+pub fn ex_has_path(written: Text): Bool {
+  match text_find(written, "::", 0) {
+    None => false
+    Some(^p) => true
+  }
+}
+
+// A function written outside a module under a path `A::B::f` is `f` inside
+// `module A { module B { … } }`.
+pub fn ex_wrap_path(leaf: Bool, written: Text, text: Text): Text {
+  if leaf || ex_not(ex_has_path(written)) { text } else {
+    ex_wrap_segments(List::reverse(ex_drop_last(text_split(written, "::"))), text)
+  }
+}
+
+pub fn ex_drop_last(xs: List(Text)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match rest {
+      Nil => Nil
+      Cons(^y, ^more) => Cons(x, ex_drop_last(rest))
+    }
+  }
+}
+
+pub fn ex_wrap_segments(segments: List(Text), text: Text): Text {
+  match segments {
+    Nil => text
+    Cons(m, rest) => ex_wrap_segments(rest, Text::concat_all(["module ", m, " {", text_newline(), text, text_newline(), "}"]))
+  }
+}
+
+// `pub` or `pub(open)` as the function was written.
+pub fn ex_visibility(v: SurfaceVis): Text {
+  match v {
+    VisPrivate => ""
+    VisPub => "pub "
+    VisOpen => "pub(open) "
+    VisHandle => "pub(handle) "
+  }
+}
+
+// Modules of one name written one after the other are one module.
+pub fn ex_merge_modules(k: Nat, stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  match k {
+    Zero => stmts
+    Succ(j) => ⊢ List(SurfaceStmt) from match stmts {
+      Nil => Nil
+      Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
+        _ => Cons(s, ex_merge_modules(j, rest))
+      }
+    }
+  }
+}
+
+// The program extracted: the helpers, then each declaration kept.
+pub fn ex_program(
+  classes: UnicodeClasses,
+  fuel: Nat,
+  text: Bool,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  library: List(SurfaceStmt)
+): ExResult(Text) {
+  let helpers := if text { Text::concat(ex_helpers(), ex_text_helpers()) } else { ex_helpers() }
+  let tree := ex_merge_modules(fuel, ex_modules(fuel, "", ex_flatten(fuel, program)))
+  let stmts := ex_unmodule(fuel, tree)
+  let prel := ex_std_stmts(prelude, stmts)
+  let all := List::append(prel, stmts)
+  let policies := ex_collect_occ_policies(ex_flatten(fuel, List::append(library, stmts)))
+  ⊢ ExResult(Text) from match ex_shells(fuel, all) {
+    ExErr(m) => ExErr(m)
+    ExOk(shells) => {
+      let taken := ex_set_all(ex_library(), ex_helper_names(text_lines(helpers)))
+      let fns := ex_mapped_fns()
+      let types := ex_mapped_types()
+      let env0 := ExEnv::Mk(classes, fuel, shells, Nil, taken, fns, types, policies)
+      ⊢ ExResult(Text) from match ex_families(env0, all) {
+        ExErr(m) => ExErr(m)
+        ExOk(fams0) => ⊢ ExResult(Text) from match ex_declare(ExEnv::Mk(classes, fuel, ex_written_as_named(fams0, ex_declared_families(prel)), Nil, taken, fns, types, policies), stmts) {
+          ExErr(m) => ExErr(m)
+          // What the lowering reads is written after the helpers, and left
+          // out of the declarations written as they are.
+          ExOk(env) => ⊢ ExResult(Text) from match er_program(env, stmts) {
+            ExErr(m) => ExErr(m)
+            ExOk(None) => ⊢ ExResult(Text) from match ex_stmts(fuel, env, false, tree) {
+              ExErr(m) => ExErr(m)
+              // Nothing kept: nothing is written, not even the helpers.
+              ExOk(texts) => ⊢ ExResult(Text) from match texts {
+                Nil => ExOk("")
+                _ => ExOk(Text::concat_all([ex_rename_helpers(classes, env.globals, taken, helpers), ex_join(texts, text_newline()), text_newline()]))
+              }
+            }
+            ExOk(Some(lowered)) => if ex_has_module(tree) { ExErr("a module beside lowered data is unsupported") } else { if ex_has_fn(ex_without(stmts, lowered.snd)) { ExErr("a function beside lowered data that does not use it is unsupported") } else {
+              ⊢ ExResult(Text) from match ex_stmts(fuel, env, false, ex_without(stmts, lowered.snd)) {
+              ExErr(m) => ExErr(m)
+              ExOk(texts) => ExOk(Text::concat_all([ex_rename_helpers(classes, env.globals, taken, helpers), ex_join(texts, text_newline()), text_newline(), lowered.fst]))
+            }
+            } }
+          }
+        }
+      }
+    }
+  }
+}

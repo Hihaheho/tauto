@@ -1,10 +1,10 @@
 import "nat.taut"
 import "text.taut"
-import std::Text
-import std::Base
-import std::Nat
+import std::text
+import std::base
+import std::nat
 
-// Decoding undoes encoding (`docs/design/self-host.md`「text と unicode（`totes/text`、`totes/unicode`）」): for every character `c`
+// Decoding undoes encoding (`docs/design/self-host.md`「Proofs」): for every character `c`
 // (below 0x110000 and not a surrogate), `text_decode` reads `c` back from
 // the first byte of `Text::utf8_of_code_point(c)`, with the whole encoding as its
 // length.
@@ -22,14 +22,14 @@ pub fn utf8_round(t: Text, c: Nat): Prop {
 
 // ---- the steps of `Text::utf8_of_code_point` ------------------------------------
 //
-// `Text::utf8_of_code_point` (`std/Text.taut`) in pieces, one function a step:
+// `Text::utf8_of_code_point` (`std/text.taut`) in pieces, one function a step:
 // each is what the encoder computes once the tests before it have failed, so
 // `Text::utf8_of_code_point(c)` is `Text::Mk(Cons(c, Nil))` or `text_utf8_from_128(c)`
 // by computation alone.
 
 // The UTF-8 encoding of a number from 65536 on: four bytes below 0x110000.
 pub fn text_utf8_from_65536(c: Nat): Text {
-  ⊢ Text from match Nat::lt(c, 1114112) {
+  match Nat::lt(c, 1114112) {
     true => Text::Mk(
       Cons(
         Nat::add(Nat::div_nz(c, 262144, Nat::ne_zero(262144, Refl)), 240),
@@ -54,7 +54,7 @@ pub fn text_utf8_from_65536(c: Nat): Text {
 
 // From 2048 on, past the surrogates: three bytes below 65536.
 pub fn text_utf8_past_surrogates(c: Nat): Text {
-  ⊢ Text from match Nat::lt(c, 65536) {
+  match Nat::lt(c, 65536) {
     true => Text::Mk(
       Cons(
         Nat::add(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 224),
@@ -73,7 +73,7 @@ pub fn text_utf8_past_surrogates(c: Nat): Text {
 
 // From 2048 on: nothing for a surrogate.
 pub fn text_utf8_from_2048(c: Nat): Text {
-  ⊢ Text from match Bool::and(Nat::le(55296, c), Nat::lt(c, 57344)) {
+  match Bool::and(Nat::le(55296, c), Nat::lt(c, 57344)) {
     true => Text::Mk(Nil)
     false => text_utf8_past_surrogates(c)
   }
@@ -81,7 +81,7 @@ pub fn text_utf8_from_2048(c: Nat): Text {
 
 // From 128 on: two bytes below 2048.
 pub fn text_utf8_from_128(c: Nat): Text {
-  ⊢ Text from match Nat::lt(c, 2048) {
+  match Nat::lt(c, 2048) {
     true => Text::Mk(
       Cons(
         Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192),
@@ -407,21 +407,21 @@ pub theorem utf8_round_from_128(
 }
 
 pub theorem bool_and_left(a: Bool, b: Bool, h: Bool::and(a, b) = true): a = true {
-  ⊢ a = true from match a {
+  match a {
     false => False::elim(false_ne_true(h))
     true => Refl
   }
 }
 
 pub theorem bool_and_right(a: Bool, b: Bool, h: Bool::and(a, b) = true): b = true {
-  ⊢ b = true from match a {
+  match a {
     false => False::elim(false_ne_true(h))
     true => h
   }
 }
 
 pub theorem bool_not_true(a: Bool, h: not(a) = true): a = false {
-  ⊢ a = false from match a {
+  match a {
     false => Refl
     true => False::elim(false_ne_true(h))
   }

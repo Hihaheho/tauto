@@ -1,0 +1,15 @@
+fn mix(n: u64): u64 ! {div, overflow} {
+    var a: u32 := 2166136261
+    var b: u64 := 1469598103934665603
+    var i: u64 := 0
+    while i < n {
+        let w := U32::of_u64(U64::and(b, 4294967295))
+        a := U32::xor(U32::rotl(a, 5), U32::or(U32::and(w, 65535), U32::shl(a, 3)))
+        a := U32::rotr(U32::xor(a, U32::shr(a, 7)), 11)
+        b := U64::xor(U64::rotl(b, 13), U64::of_u32(a))
+        b := U64::or(U64::and(b, U64::shl(b, 1)), U64::shr(U64::rotr(b, 17), 3))
+        i := i + 1
+    }
+    U64::xor(b, U64::of_u32(a))
+}
+show(&mix(300))

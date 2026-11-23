@@ -1,0 +1,727 @@
+import "../src/decimal.taut"
+import "../src/value.taut"
+import std::base
+import std::list
+import std::nat
+import std::text
+import "../src/write.taut"
+
+// Lengths: every writer puts its bytes in front of the bytes after it, so what it gives is never
+// shorter than those, and a node is always at least one byte. The readers count fuel against
+// these lengths.
+
+pub fn le(a: Nat, b: Nat): Prop {
+  Nat::le(a, b) = true
+}
+
+pub theorem le_tr(a: Nat, b: Nat, c: Nat, h1: le(a, b), h2: le(b, c)): le(a, c) {
+  Nat::le_trans(a, b, c, h1, h2)
+}
+
+pub theorem le_down(a: Nat, b: Nat, h: le(Succ(a), b)): le(a, b) {
+  le_tr(a, Succ(a), b, Nat::le_succ(a), h)
+}
+
+pub theorem le_up(a: Nat, b: Nat, h: le(a, b)): le(a, Succ(b)) {
+  le_tr(a, b, Succ(b), h, Nat::le_succ(b))
+}
+
+pub theorem le_cons(
+  a: Nat,
+  c: Nat,
+  l: List(Nat),
+  h: le(a, List::length(l))
+): le(a, List::length(Cons(c, l))) {
+  le_up(a, List::length(l), h)
+}
+
+pub theorem le_self_cons(c: Nat, l: List(Nat)): le(List::length(l), List::length(Cons(c, l))) {
+  Nat::le_succ(List::length(l))
+}
+
+pub theorem le_app(l: List(Nat), r: List(Nat)): le(List::length(r), List::length(List::append(l, r))) {
+  match l {
+    Nil => Nat::le_refl(List::length(r))
+    Cons(c, t) => le_cons(List::length(r), c, List::append(t, r), le_app(t, r))
+  }
+}
+
+// `a + g ≤ b + g` when `a ≤ b`.
+theorem le_add(a: Nat, b: Nat, g: Nat, h: le(a, b)): le(Nat::add(a, g), Nat::add(b, g)) {
+  match g {
+    Zero => h
+    Succ(k) => le_add(a, b, k, h)
+  }
+}
+
+theorem le_add_self(a: Nat, g: Nat): le(a, Nat::add(a, g)) {
+  match g {
+    Zero => Nat::le_refl(a)
+    Succ(k) => le_up(a, Nat::add(a, k), le_add_self(a, k))
+  }
+}
+
+pub theorem le_succ_self(a: Nat, h: le(Succ(a), a)): False {
+  true_ne_false(Eq::trans(Eq::sym(h), Nat::lt_irrefl(a)))
+}
+
+// A reader with no fuel left is given more bytes than the bytes after them: impossible.
+pub theorem out_of_fuel<P: Prop>(x: Nat, y: Nat, h1: le(Succ(x), y), h2: le(y, Nat::add(x, Zero))): P {
+  False::elim(le_succ_self(x, le_tr(Succ(x), y, x, h1, h2)))
+}
+
+// Moving fuel from the bytes after to the reader: `y ≤ r + g` and `r ≤ q` give `y ≤ q + g`.
+pub theorem le_rest(
+  y: Nat,
+  r: Nat,
+  q: Nat,
+  g: Nat,
+  h: le(y, Nat::add(r, g)),
+  hq: le(r, q)
+): le(y, Nat::add(q, g)) {
+  le_tr(y, Nat::add(r, g), Nat::add(q, g), h, le_add(r, q, g, hq))
+}
+
+pub fn strictly(r: List(Nat), l: List(Nat)): Prop {
+  le(Succ(List::length(r)), List::length(l))
+}
+
+theorem strict_app(
+  l: List(Nat),
+  r: List(Nat),
+  h: list_is_cons(l) = true
+): strictly(r, List::append(l, r)) {
+  match l {
+    Nil => False::elim(false_ne_true(h))
+    Cons(c, t) => le_app(t, r)
+  }
+}
+
+fn list_is_cons(l: List(Nat)): Bool {
+  match l {
+    Nil => false
+    Cons(^c, ^t) => true
+  }
+}
+
+pub theorem strict_weak(
+  r: List(Nat),
+  l: List(Nat),
+  h: strictly(r, l)
+): le(List::length(r), List::length(l)) {
+  le_down(List::length(r), List::length(l), h)
+}
+
+theorem strict_tr(
+  r: List(Nat),
+  m: List(Nat),
+  l: List(Nat),
+  h1: le(List::length(r), List::length(m)),
+  h2: strictly(m, l)
+): strictly(r, l) {
+  le_tr(Succ(List::length(r)), Succ(List::length(m)), List::length(l), h1, h2)
+}
+
+// ---- scalars and keys -------------------------------------------------------------------
+
+theorem digits_cons(n: Nat): list_is_cons(digits(n)) = true {
+  Bool::cases(
+    (y: Bool) => list_is_cons(⊢ List(Nat) from match y {
+      true => Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)
+      false => Nat::digits(n, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))
+    }) = true,
+    Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0),
+    (
+      e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = false
+    ) => Eq::subst(
+      <A: List(Nat),
+      a: List::append(Nat::digits(n, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Nil), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)),
+      b: Nat::digits(n, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))>,
+      (z: List(Nat)) => list_is_cons(z) = true,
+      Eq::sym(digits_acc(n, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil))),
+      app_cons_cons(Nat::digits(n, Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), Nil), Nat::add(Nat::rem_nz(n, 10, Nat::succ_ne_zero(9)), 48), Nil)
+    ),
+    (e: Nat::eq(Nat::div_nz(n, 10, Nat::succ_ne_zero(9)), 0) = true) => Refl
+  )
+}
+
+theorem app_cons_cons(
+  l: List(Nat),
+  x: Nat,
+  a: List(Nat)
+): list_is_cons(List::append(l, Cons(x, a))) = true {
+  match l {
+    Nil => Refl
+    Cons(c, t) => Refl
+  }
+}
+
+theorem put_int_strict(neg: Bool, n: Nat, r: List(Nat)): strictly(r, put_int(neg, n, r)) {
+  match neg {
+    true => le_tr(
+      Succ(List::length(r)),
+      List::length(List::append(digits(n), r)),
+      Succ(List::length(List::append(digits(n), r))),
+      strict_app(digits(n), r, digits_cons(n)),
+      Nat::le_succ(List::length(List::append(digits(n), r)))
+    )
+    false => strict_app(digits(n), r, digits_cons(n))
+  }
+}
+
+pub theorem put_text_mono(t: Text, r: List(Nat)): le(List::length(r), List::length(put_text(t, r))) {
+  le_app(Text::bytes(t), r)
+}
+
+theorem Escape::mono(
+  bs: List(Nat),
+  r: List(Nat)
+): le(List::length(r), List::length(escape_bytes(bs, r))) {
+  match bs {
+    Nil => Nat::le_refl(List::length(r))
+    Cons(c, t) => le_tr(
+      List::length(r),
+      List::length(escape_bytes(t, r)),
+      List::length(escape_byte(c, escape_bytes(t, r))),
+      Escape::mono(t, r),
+      Escape::byte_mono(c, escape_bytes(t, r))
+    )
+  }
+}
+
+theorem Escape::byte_mono(c: Nat, r: List(Nat)): le(List::length(r), List::length(escape_byte(c, r))) {
+  Escape::tested_mono(
+    c,
+    r,
+    Nat::eq(c, 34),
+    Nat::eq(c, 92),
+    Nat::eq(c, 10),
+    Nat::eq(c, 13),
+    Nat::eq(c, 9),
+    Nat::eq(c, 0)
+  )
+}
+
+theorem Escape::tested_mono(
+  c: Nat,
+  r: List(Nat),
+  q: Bool,
+  s: Bool,
+  lf: Bool,
+  cr: Bool,
+  tab: Bool,
+  nul: Bool
+): le(List::length(r), List::length(Escape::tested(c, r, q, s, lf, cr, tab, nul))) {
+  match q {
+    true => le_up(List::length(r), Succ(List::length(r)), Nat::le_succ(List::length(r)))
+    false => match s {
+      true => le_up(List::length(r), Succ(List::length(r)), Nat::le_succ(List::length(r)))
+      false => match lf {
+        true => le_up(List::length(r), Succ(List::length(r)), Nat::le_succ(List::length(r)))
+        false => match cr {
+          true => le_up(List::length(r), Succ(List::length(r)), Nat::le_succ(List::length(r)))
+          false => match tab {
+            true => le_up(List::length(r), Succ(List::length(r)), Nat::le_succ(List::length(r)))
+            false => match nul {
+              true => le_up(List::length(r), Succ(List::length(r)), Nat::le_succ(List::length(r)))
+              false => Nat::le_succ(List::length(r))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+theorem put_string_strict(t: Text, r: List(Nat)): strictly(r, put_string(t, r)) {
+  le_tr(
+    Succ(List::length(r)),
+    List::length(escape_bytes(Text::bytes(t), Cons(34, r))),
+    Succ(List::length(escape_bytes(Text::bytes(t), Cons(34, r)))),
+    Escape::mono(Text::bytes(t), Cons(34, r)),
+    Nat::le_succ(List::length(escape_bytes(Text::bytes(t), Cons(34, r))))
+  )
+}
+
+mutual {
+  theorem key_value_strict(k: Key, r: List(Nat)): strictly(r, put_key_value(k, r)) {
+    match k {
+      Kstr(t) => put_string_strict(t, r)
+      Knum(neg, n) => put_int_strict(neg, n, r)
+      Ktup(ks) => le_cons(
+        Succ(List::length(r)),
+        40,
+        put_key_items(ks, true, Cons(41, r)),
+        key_items_mono(ks, true, Cons(41, r))
+      )
+    }
+  }
+  theorem key_items_mono(
+    ks: List(Key),
+    first: Bool,
+    r: List(Nat)
+  ): le(List::length(r), List::length(put_key_items(ks, first, r))) {
+    match ks {
+      Nil => Nat::le_refl(List::length(r))
+      Cons(k, t) => match first {
+        true => le_tr(
+          List::length(r),
+          List::length(put_key_items(t, false, r)),
+          List::length(put_key_value(k, put_key_items(t, false, r))),
+          key_items_mono(t, false, r),
+          strict_weak(
+            put_key_items(t, false, r),
+            put_key_value(k, put_key_items(t, false, r)),
+            key_value_strict(k, put_key_items(t, false, r))
+          )
+        )
+        false => le_cons(
+          List::length(r),
+          44,
+          Cons(32, put_key_value(k, put_key_items(t, false, r))),
+          le_cons(
+            List::length(r),
+            32,
+            put_key_value(k, put_key_items(t, false, r)),
+            le_tr(
+              List::length(r),
+              List::length(put_key_items(t, false, r)),
+              List::length(put_key_value(k, put_key_items(t, false, r))),
+              key_items_mono(t, false, r),
+              strict_weak(
+                put_key_items(t, false, r),
+                put_key_value(k, put_key_items(t, false, r)),
+                key_value_strict(k, put_key_items(t, false, r))
+              )
+            )
+          )
+        )
+      }
+    }
+  }
+}
+
+// A key is never written as nothing: a name has at least one byte, other keys are quoted or
+// have digits.
+pub theorem put_key_mono(k: Key, r: List(Nat)): le(List::length(r), List::length(put_key(k, r))) {
+  match k {
+    Kstr(t) => Bool::cases(
+      (y: Bool) => le(List::length(r), List::length(⊢ List(Nat) from match y {
+        true => put_text(t, r)
+        false => put_string(t, r)
+      })),
+      is_ident(Text::bytes(t)),
+      (e: is_ident(Text::bytes(t)) = false) => strict_weak(r, put_string(t, r), put_string_strict(t, r)),
+      (e: is_ident(Text::bytes(t)) = true) => put_text_mono(t, r)
+    )
+    Knum(neg, n) => strict_weak(r, put_int(neg, n, r), put_int_strict(neg, n, r))
+    Ktup(ks) => strict_weak(r, put_key_value(Ktup(ks), r), key_value_strict(Ktup(ks), r))
+  }
+}
+
+theorem put_code_strict(l: Lang, t: Text, r: List(Nat)): strictly(r, put_code(l, t, r)) {
+  Bool::cases(
+    (y: Bool) => strictly(r, ⊢ List(Nat) from match y {
+      true => List::append(lang_name(l), Cons(96, put_text(t, Cons(96, r))))
+      false => put_block(l, Text::bytes(t), r)
+    }),
+    fits_inline(Text::bytes(t)),
+    (e: fits_inline(Text::bytes(t)) = false) => le_tr(
+      Succ(List::length(r)),
+      List::length(
+        Cons(
+          10,
+          List::append(Text::bytes(t), List::append(List::replicate(Nat::max(3, Succ(tick_run(Text::bytes(t), 0, 0))), 96), r))
+        )
+      ),
+      List::length(put_block(l, Text::bytes(t), r)),
+      le_tr(
+        List::length(r),
+        List::length(List::append(List::replicate(Nat::max(3, Succ(tick_run(Text::bytes(t), 0, 0))), 96), r)),
+        List::length(List::append(Text::bytes(t), List::append(List::replicate(Nat::max(3, Succ(tick_run(Text::bytes(t), 0, 0))), 96), r))),
+        le_app(List::replicate(Nat::max(3, Succ(tick_run(Text::bytes(t), 0, 0))), 96), r),
+        le_app(Text::bytes(t), List::append(List::replicate(Nat::max(3, Succ(tick_run(Text::bytes(t), 0, 0))), 96), r))
+      ),
+      le_tr(
+        List::length(
+          Cons(
+            10,
+            List::append(Text::bytes(t), List::append(List::replicate(Nat::max(3, Succ(tick_run(Text::bytes(t), 0, 0))), 96), r))
+          )
+        ),
+        List::length(
+          List::append(
+            lang_name(l),
+            Cons(
+              10,
+              List::append(Text::bytes(t), List::append(List::replicate(Nat::max(3, Succ(tick_run(Text::bytes(t), 0, 0))), 96), r))
+            )
+          )
+        ),
+        List::length(put_block(l, Text::bytes(t), r)),
+        le_app(
+          lang_name(l),
+          Cons(
+            10,
+            List::append(Text::bytes(t), List::append(List::replicate(Nat::max(3, Succ(tick_run(Text::bytes(t), 0, 0))), 96), r))
+          )
+        ),
+        le_app(
+          List::replicate(Nat::max(3, Succ(tick_run(Text::bytes(t), 0, 0))), 96),
+          List::append(
+            lang_name(l),
+            Cons(
+              10,
+              List::append(Text::bytes(t), List::append(List::replicate(Nat::max(3, Succ(tick_run(Text::bytes(t), 0, 0))), 96), r))
+            )
+          )
+        )
+      )
+    ),
+    (e: fits_inline(Text::bytes(t)) = true) => le_tr(
+      Succ(List::length(r)),
+      List::length(Cons(96, put_text(t, Cons(96, r)))),
+      List::length(List::append(lang_name(l), Cons(96, put_text(t, Cons(96, r))))),
+      le_tr(
+        Succ(List::length(r)),
+        Succ(List::length(Cons(96, r))),
+        Succ(List::length(put_text(t, Cons(96, r)))),
+        Nat::le_succ(Succ(List::length(r))),
+        put_text_mono(t, Cons(96, r))
+      ),
+      le_app(lang_name(l), Cons(96, put_text(t, Cons(96, r))))
+    )
+  )
+}
+
+theorem put_scalar_text_strict(
+  l: Lang,
+  t: Text,
+  r: List(Nat)
+): strictly(r, put_scalar_text(l, t, r)) {
+  match l {
+    Plaintext => put_string_strict(t, r)
+    Implicit => put_code_strict(Implicit, t, r)
+    Named(n) => put_code_strict(Named(n), t, r)
+  }
+}
+
+pub theorem le_succ3(a: Nat): le(a, Succ(Succ(Succ(a)))) {
+  le_up(a, Succ(Succ(a)), le_up(a, Succ(a), Nat::le_succ(a)))
+}
+
+// What `put_scalar` writes for a value that holds no other value.
+pub fn is_scalar(v: Value): Bool {
+  match v {
+    Vhole(^lb) => true
+    Vnull => true
+    Vbool(^b) => true
+    Vint(^s, ^k) => true
+    Vdec(^s, ^k, ^es, ^x) => true
+    Vtext(^lg, ^t) => true
+    Varr(^xs) => false
+    Vtup(^xs) => false
+    Vmap(^entries) => false
+  }
+}
+
+pub theorem put_scalar_strict(
+  v: Value,
+  r: List(Nat),
+  h: is_scalar(v) = true
+): strictly(r, put_scalar(v, r)) {
+  match v {
+    Vhole(lb) => match lb {
+      None => Nat::le_refl(List::length(r))
+      Some(t) => put_text_mono(t, r)
+    }
+    Vnull => le_succ3(List::length(r))
+    Vbool(b) => match b {
+      true => le_succ3(List::length(r))
+      false => le_up(List::length(r), Succ(Succ(Succ(List::length(r)))), le_succ3(List::length(r)))
+    }
+    Vint(neg, k) => put_int_strict(neg, k, r)
+    Vdec(neg, mant, eneg, e) => strict_tr(
+      r,
+      put_exp(eneg, e, r),
+      put_int(neg, mant, put_exp(eneg, e, r)),
+      strict_weak(
+        r,
+        put_exp(eneg, e, r),
+        le_up(Succ(List::length(r)), List::length(put_int(eneg, e, r)), put_int_strict(eneg, e, r))
+      ),
+      put_int_strict(neg, mant, put_exp(eneg, e, r))
+    )
+    Vtext(lg, t) => put_scalar_text_strict(lg, t, r)
+    Varr(xs) => False::elim(false_ne_true(h))
+    Vtup(xs) => False::elim(false_ne_true(h))
+    Vmap(entries) => False::elim(false_ne_true(h))
+  }
+}
+
+theorem open_ext_mono(h: Bool, x: List(Nat)): le(List::length(x), List::length(open_ext(h, x))) {
+  match h {
+    true => cons4_mono(123, 32, 61, 32, x)
+    false => Nat::le_refl(List::length(x))
+  }
+}
+
+theorem mid_ext_mono(h: Bool, x: List(Nat)): le(List::length(x), List::length(mid_ext(h, x))) {
+  match h {
+    true => le_up(List::length(x), Succ(List::length(x)), Nat::le_succ(List::length(x)))
+    false => Nat::le_refl(List::length(x))
+  }
+}
+
+theorem close_node_mono(
+  v: Value,
+  h: Bool,
+  r: List(Nat)
+): le(List::length(r), List::length(close_node(v, h, r))) {
+  Bool::cases(
+    (y: Bool) => le(List::length(r), List::length(⊢ List(Nat) from match y {
+      true => Cons(125, r)
+      false => r
+    })),
+    Bool::or(is_map(v), h),
+    (e: Bool::or(is_map(v), h) = false) => Nat::le_refl(List::length(r)),
+    (e: Bool::or(is_map(v), h) = true) => Nat::le_succ(List::length(r))
+  )
+}
+
+pub theorem cons4_mono(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  d: Nat,
+  x: List(Nat)
+): le(List::length(x), List::length(Cons(a, Cons(b, Cons(c, Cons(d, x)))))) {
+  le_up(List::length(x), Succ(Succ(Succ(List::length(x)))), le_succ3(List::length(x)))
+}
+
+mutual {
+  pub theorem put_node_strict(n: Node, r: List(Nat)): strictly(r, put_node(n, r)) {
+    match n {
+      Mk(v, ext) => strict_tr(
+        r,
+        put_exts(ext, close_node(v, has_ext(ext), r)),
+        put_v(v, has_ext(ext), put_exts(ext, close_node(v, has_ext(ext), r))),
+        le_tr(
+          List::length(r),
+          List::length(close_node(v, has_ext(ext), r)),
+          List::length(put_exts(ext, close_node(v, has_ext(ext), r))),
+          close_node_mono(v, has_ext(ext), r),
+          put_exts_mono(ext, close_node(v, has_ext(ext), r))
+        ),
+        put_v_strict(v, has_ext(ext), put_exts(ext, close_node(v, has_ext(ext), r)))
+      )
+    }
+  }
+  theorem put_v_strict(v: Value, h: Bool, tail: List(Nat)): strictly(tail, put_v(v, h, tail)) {
+    match v {
+      Vmap(entries) => le_up(
+        List::length(tail),
+        List::length(put_entries(entries, tail)),
+        put_entries_mono(entries, tail)
+      )
+      Varr(xs) => le_tr(
+        Succ(List::length(tail)),
+        List::length(Cons(91, put_items(xs, true, Cons(93, mid_ext(h, tail))))),
+        List::length(open_ext(h, Cons(91, put_items(xs, true, Cons(93, mid_ext(h, tail)))))),
+        le_tr(
+          List::length(tail),
+          List::length(Cons(93, mid_ext(h, tail))),
+          List::length(put_items(xs, true, Cons(93, mid_ext(h, tail)))),
+          le_cons(List::length(tail), 93, mid_ext(h, tail), mid_ext_mono(h, tail)),
+          put_items_mono(xs, true, Cons(93, mid_ext(h, tail)))
+        ),
+        open_ext_mono(h, Cons(91, put_items(xs, true, Cons(93, mid_ext(h, tail)))))
+      )
+      Vtup(xs) => le_tr(
+        Succ(List::length(tail)),
+        List::length(Cons(40, put_items(xs, true, Cons(41, mid_ext(h, tail))))),
+        List::length(open_ext(h, Cons(40, put_items(xs, true, Cons(41, mid_ext(h, tail)))))),
+        le_tr(
+          List::length(tail),
+          List::length(Cons(41, mid_ext(h, tail))),
+          List::length(put_items(xs, true, Cons(41, mid_ext(h, tail)))),
+          le_cons(List::length(tail), 41, mid_ext(h, tail), mid_ext_mono(h, tail)),
+          put_items_mono(xs, true, Cons(41, mid_ext(h, tail)))
+        ),
+        open_ext_mono(h, Cons(40, put_items(xs, true, Cons(41, mid_ext(h, tail)))))
+      )
+      Vhole(lb) => scalar_v_strict(v, h, tail, Refl)
+      Vnull => scalar_v_strict(v, h, tail, Refl)
+      Vbool(b) => scalar_v_strict(v, h, tail, Refl)
+      Vint(sg, k) => scalar_v_strict(v, h, tail, Refl)
+      Vdec(sg, k, es, x) => scalar_v_strict(v, h, tail, Refl)
+      Vtext(lg, t) => scalar_v_strict(v, h, tail, Refl)
+    }
+  }
+  pub theorem put_items_mono(
+    xs: List(Node),
+    first: Bool,
+    r: List(Nat)
+  ): le(List::length(r), List::length(put_items(xs, first, r))) {
+    match xs {
+      Nil => Nat::le_refl(List::length(r))
+      Cons(x, t) => match first {
+        true => le_tr(
+          List::length(r),
+          List::length(put_items(t, false, r)),
+          List::length(put_node(x, put_items(t, false, r))),
+          put_items_mono(t, false, r),
+          strict_weak(
+            put_items(t, false, r),
+            put_node(x, put_items(t, false, r)),
+            put_node_strict(x, put_items(t, false, r))
+          )
+        )
+        false => le_cons(
+          List::length(r),
+          44,
+          Cons(32, put_node(x, put_items(t, false, r))),
+          le_cons(
+            List::length(r),
+            32,
+            put_node(x, put_items(t, false, r)),
+            le_tr(
+              List::length(r),
+              List::length(put_items(t, false, r)),
+              List::length(put_node(x, put_items(t, false, r))),
+              put_items_mono(t, false, r),
+              strict_weak(
+                put_items(t, false, r),
+                put_node(x, put_items(t, false, r)),
+                put_node_strict(x, put_items(t, false, r))
+              )
+            )
+          )
+        )
+      }
+    }
+  }
+  pub theorem put_entries_mono(
+    es: List(Key × Node),
+    r: List(Nat)
+  ): le(List::length(r), List::length(put_entries(es, r))) {
+    match es {
+      Nil => Nat::le_refl(List::length(r))
+      Cons(e, t) => le_tr(
+        List::length(r),
+        List::length(put_entries(t, r)),
+        List::length(put_entry(e, put_entries(t, r))),
+        put_entries_mono(t, r),
+        put_entry_mono(e, put_entries(t, r))
+      )
+    }
+  }
+  theorem put_entry_mono(
+    e: Key × Node,
+    r: List(Nat)
+  ): le(List::length(r), List::length(put_entry(e, r))) {
+    match e {
+      #(k, n) => le_tr(
+        List::length(r),
+        List::length(Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r)))))))),
+        List::length(
+          put_key(k, Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r))))))))
+        ),
+        le_tr(
+          List::length(r),
+          List::length(put_node(n, Cons(44, Cons(32, r)))),
+          List::length(Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r)))))))),
+          le_tr(
+            List::length(r),
+            List::length(Cons(44, Cons(32, r))),
+            List::length(put_node(n, Cons(44, Cons(32, r)))),
+            le_up(List::length(r), Succ(List::length(r)), Nat::le_succ(List::length(r))),
+            strict_weak(
+              Cons(44, Cons(32, r)),
+              put_node(n, Cons(44, Cons(32, r))),
+              put_node_strict(n, Cons(44, Cons(32, r)))
+            )
+          ),
+          cons4_mono(32, 61, 62, 32, put_node(n, Cons(44, Cons(32, r))))
+        ),
+        put_key_mono(k, Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r))))))))
+      )
+    }
+  }
+  pub theorem put_exts_mono(
+    es: List(Text × Node),
+    r: List(Nat)
+  ): le(List::length(r), List::length(put_exts(es, r))) {
+    match es {
+      Nil => Nat::le_refl(List::length(r))
+      Cons(e, t) => le_tr(
+        List::length(r),
+        List::length(put_exts(t, r)),
+        List::length(put_ext_entry(e, put_exts(t, r))),
+        put_exts_mono(t, r),
+        put_ext_entry_mono(e, put_exts(t, r))
+      )
+    }
+  }
+  theorem put_ext_entry_mono(
+    e: Text × Node,
+    r: List(Nat)
+  ): le(List::length(r), List::length(put_ext_entry(e, r))) {
+    match e {
+      #(k, n) => le_tr(
+        List::length(r),
+        List::length(Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r)))))))),
+        List::length(
+          put_ext_key(k, Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r))))))))
+        ),
+        le_tr(
+          List::length(r),
+          List::length(put_node(n, Cons(44, Cons(32, r)))),
+          List::length(Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r)))))))),
+          le_tr(
+            List::length(r),
+            List::length(Cons(44, Cons(32, r))),
+            List::length(put_node(n, Cons(44, Cons(32, r)))),
+            le_up(List::length(r), Succ(List::length(r)), Nat::le_succ(List::length(r))),
+            strict_weak(
+              Cons(44, Cons(32, r)),
+              put_node(n, Cons(44, Cons(32, r))),
+              put_node_strict(n, Cons(44, Cons(32, r)))
+            )
+          ),
+          cons4_mono(32, 61, 62, 32, put_node(n, Cons(44, Cons(32, r))))
+        ),
+        le_cons(
+          List::length(Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r)))))))),
+          36,
+          put_text(k, Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r)))))))),
+          put_text_mono(
+            k,
+            Cons(32, Cons(61, Cons(62, Cons(32, put_node(n, Cons(44, Cons(32, r)))))))
+          )
+        )
+      )
+    }
+  }
+}
+
+theorem scalar_v_strict(
+  v: Value,
+  h: Bool,
+  tail: List(Nat),
+  hs: is_scalar(v) = true
+): strictly(tail, open_ext(h, put_scalar(v, mid_ext(h, tail)))) {
+  le_tr(
+    Succ(List::length(tail)),
+    List::length(put_scalar(v, mid_ext(h, tail))),
+    List::length(open_ext(h, put_scalar(v, mid_ext(h, tail)))),
+    strict_tr(
+      tail,
+      mid_ext(h, tail),
+      put_scalar(v, mid_ext(h, tail)),
+      mid_ext_mono(h, tail),
+      put_scalar_strict(v, mid_ext(h, tail), hs)
+    ),
+    open_ext_mono(h, put_scalar(v, mid_ext(h, tail)))
+  )
+}

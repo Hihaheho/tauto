@@ -1,0 +1,247 @@
+@ cases.a-goal-a-tactic-leaves-with-variables-of-its-own
+entry = "main.taut"
+files."lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by }
+import "lib.taut" { intro }
+
+theorem refl_all(): ∀ n: Nat. n = n {
+  proof!(```
+    By $intro!(()).
+      Let m: Nat. We show m = m. By Refl.
+  ```)
+}
+````
+checks."main.taut::refl_all" = "ok"
+diagnostics = []
+
+@ cases.what-a-tactic-in-a-sentence-proves-is-checked
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::tactic { nat_norm }
+import std::proof::lang { proof }
+import std::proof::forms { proof_we }
+
+theorem bad(a: Nat, b: Nat): Nat::add(a, b) = Nat::mul(a, b) {
+  proof!(```
+    We have Nat::add(a, b) = Nat::mul(a, b) by $nat_norm!(()).
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.a-let-in-the-body-is-not-a-premise-of-the-induction-hypothesis
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case, proof_consider }
+
+pub(open) inductive K: Type {
+  A: K
+  B: K
+}
+
+pub fn f(a: List(K), b: List(K)): List(K) {
+  match a {
+    [] => b
+    [x, ..rest] => f(rest, b)
+  }
+}
+
+theorem f_end(a: List(K), b: List(K)): f(a, b) = b {
+  let g: ∀ k: K. k = k := (k) => Refl
+  proof!(```
+    By induction on a.
+      Case Nil. By Refl.
+      Case Cons(c, rest). Consider c.
+        Case A. By the induction hypothesis, ih: ${∀ d: List(K). f(rest, d) = d}. By ${ih(b)}.
+        Case B. By the induction hypothesis, ih: ${∀ d: List(K). f(rest, d) = d}. By ${ih(b)}.
+  ```)
+}
+
+theorem uses_g(a: List(K), b: List(K)): K::A = K::A {
+  let g: ∀ k: K. k = k := (k) => Refl
+  proof!(```
+    By induction on a.
+      Case Nil. By ${g(K::A)}.
+      Case Cons(c, rest). By ${g(K::A)}.
+  ```)
+}
+````
+checks.f_end = "ok"
+checks.uses_g = "ok"
+diagnostics = []
+
+@ cases.an-induction-hypothesis-written-without-its-generalized-variables-says-its-form
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case, proof_consider }
+
+pub(open) inductive K: Type {
+  A: K
+  B: K
+}
+
+pub fn f(a: List(K), b: List(K)): List(K) {
+  match a {
+    [] => b
+    [x, ..rest] => f(rest, b)
+  }
+}
+
+theorem f_end(a: List(K), b: List(K)): f(a, b) = b {
+  let g: ∀ k: K. k = k := (k) => Refl
+  proof!(```
+    By induction on a.
+      Case Nil. By Refl.
+      Case Cons(c, rest). Consider c.
+        Case A. By the induction hypothesis, ih: f(rest, b) = b. By ${ih}.
+        Case B. By the induction hypothesis, ih: f(rest, b) = b. By ${ih}.
+  ```)
+}
+````
+checks."main.taut::macro" = "error: "
+@ cases.an-induction-hypothesis-written-without-its-generalized-variables-says-its-form.diagnostics[]
+file = "main.taut"
+name = "macro"
+message = "macro.error: proof!: the induction hypothesis is `∀ b. …`: the induction generalizes the variables after the one it is on. Write `h: ∀ b. …` and apply it, as `${h(…)}`"
+
+@ cases.the-goal-determines-the-arguments-of-a-lemma
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by }
+
+theorem congr<A: Type, B: Type, x: A, y: A>(f: (A) -> B, e: x = y): f(x) = f(y) {
+  Eq::congr(f, e)
+}
+
+theorem cancel(a: Nat, b: Nat, c: Nat, h: Nat::add(a, c) = Nat::add(b, c)): a = b {
+  ⊢ a = b from match c {
+    Zero => h
+    Succ(k) => cancel(a, b, k, Eq::congr(Nat::pred, h))
+  }
+}
+
+theorem succ_cong(a: Nat, b: Nat, h: a = b): Succ(a) = Succ(b) {
+  proof!(```
+    [c] By congr.
+    %%
+    [c] h
+  ```)
+}
+
+theorem cancel_zero(a: Nat, b: Nat, h: Nat::add(a, Zero) = Nat::add(b, Zero)): a = b {
+  proof!(```
+    [c] By cancel.
+    %%
+    [c] (Zero, h)
+  ```)
+}
+````
+checks.succ_cong = "ok"
+checks.cancel_zero = "ok"
+diagnostics = []
+
+@ cases.an-argument-the-goal-does-not-determine-is-asked-for
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by }
+
+theorem congr<A: Type, B: Type, x: A, y: A>(f: (A) -> B, e: x = y): f(x) = f(y) {
+  Eq::congr(f, e)
+}
+
+theorem succ_cong(a: Nat, b: Nat, h: a = b): Succ(a) = Succ(b) {
+  proof!(```
+    By congr.
+  ```)
+}
+````
+checks."main.taut::macro" = "error: "
+@ cases.an-argument-the-goal-does-not-determine-is-asked-for.diagnostics[]
+file = "main.taut"
+name = "macro"
+message = "proof!: the goal does not determine the arguments `e`; write them, in order, as the item of the Proof-code"
+
+@ cases.the-skeleton-of-a-proof
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::base
+import std::proof::lang { proof }
+import std::proof::forms { proof_by, proof_case, proof_consider, proof_this, proof_let, proof_assume, proof_take, proof_obtain, proof_we }
+
+theorem none_not_some(x: Nat, e: None = Some(x)): False {
+  ⊢ False from match e {
+  }
+}
+
+// C: the hypothesis `e` mentions `o`; each case reads it with its own type.
+theorem opt_inv(o: Option(Nat), k: Nat, e: o = Some(k)): Some(k) = o {
+  proof!(```
+    Consider o.
+      Case None. This is impossible by e.
+      [s] Case Some(j). By Eq::sym.
+    %%
+    [s] e
+  ```)
+}
+
+// B
+theorem imp_refl(P: Prop): (P) -> P {
+  proof!(```
+    Assume h. By h.
+  ```)
+}
+
+theorem all_refl(): ∀ n: Nat. n = n {
+  proof!(```
+    Let n: Nat. By Refl.
+  ```)
+}
+
+theorem ex_zero(): ∃ n: Nat. n = Zero {
+  proof!(```
+    Take n = Zero. By Refl.
+  ```)
+}
+
+theorem and_swap(P: Prop, Q: Prop, h: And(P, Q)): And(Q, P) {
+  proof!(```
+    Obtain p and q from h.
+      We show both.
+        By q.
+        By p.
+  ```)
+}
+
+theorem or_left(P: Prop, Q: Prop, p: P): Or(P, Q) {
+  proof!(```
+    We show the left. By p.
+  ```)
+}
+
+// A
+theorem trans<A: Type, a: A, b: A, c: A>(h1: a = b, h2: b = c): a = c { Eq::trans(h1, h2) }
+
+theorem chain(a: Nat, b: Nat, c: Nat, d: Nat, h1: a = b, h2: b = c, h3: c = d): a = d {
+  proof!(```
+    By transitivity of trans on h1, h2, h3.
+  ```)
+}
+````
+checks.opt_inv = "ok"
+checks.imp_refl = "ok"
+checks.all_refl = "ok"
+checks.ex_zero = "ok"
+checks.and_swap = "ok"
+checks.or_left = "ok"
+checks.chain = "ok"
+diagnostics = []
